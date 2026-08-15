@@ -26,11 +26,14 @@ printf '%s\n' '{"valid":true,"routing_receipt_id":"receipt-1","expires_at":"2099
 EOF
 chmod +x "$TEST_ROOT/bin/curl"
 export CURL_LOG="$TEST_ROOT/curl.log"
+export CECELIA_ROUTING_VALIDATE_URL='http://host.docker.internal:5221/api/brain/work-routing/validate'
+export CECELIA_ROUTING_VALIDATION_TOKEN='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 
 export CECELIA_TASK_ID=task-1
 export CECELIA_ROUTING_RECEIPT_ID=receipt-1
 export CECELIA_RUN_ID=run-1
 export CECELIA_REPO=perfectuser21/cecelia
+export CECELIA_BRANCH=cp-routing
 export CECELIA_BASE_SHA="$BASE_SHA"
 # shellcheck source=../../skills/dev/scripts/worktree-manage.sh
 # shellcheck disable=SC1091
@@ -50,9 +53,17 @@ run_hook() {
 # 合法 receipt 必须从当前 worktree 读取，并把 run identity 发给 Brain。
 run_hook Bash
 grep -q 'run-1' "$CURL_LOG"
+grep -q 'http://host.docker.internal:5221/api/brain/work-routing/validate' "$CURL_LOG"
+grep -q 'X-Harness-Route-Token: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  "$CURL_LOG"
+
+# Fleet read-only workspace 不可写 .dev-lock；由 trusted Runner 导出的 scoped token
+# 与 server-owned identity 必须仍可完成同一在线校验。
+rm "$TEST_ROOT/worktree/.dev-lock.cp-routing"
+run_hook Bash
 
 # 所有 mutation-capable 及未知工具都必须 fail closed。
-rm "$TEST_ROOT/worktree/.dev-lock.cp-routing"
+unset CECELIA_ROUTING_VALIDATE_URL CECELIA_ROUTING_VALIDATION_TOKEN
 if run_hook Edit >/dev/null 2>&1; then
   echo 'Edit without routing receipt was allowed' >&2
   exit 1

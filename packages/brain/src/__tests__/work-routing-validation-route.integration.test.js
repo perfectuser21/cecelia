@@ -18,4 +18,14 @@ describe('work routing validation route schema', () => {
     }
     expect(source).not.toContain('Date.now() + 60_000');
   });
+
+  it('lets the route verify an attempt-scoped hash instead of exposing the global internal token', async () => {
+    const serverSource = await readFile(new URL('../../server.js', import.meta.url), 'utf8');
+    const routeSource = await readFile(new URL('../routes/work-routing.js', import.meta.url), 'utf8');
+    expect(serverSource).toContain(
+      "app.use('/api/brain/work-routing', workRoutingRoutes);",
+    );
+    expect(routeSource).toContain("req.get('x-harness-route-token')");
+    expect(routeSource).toContain('attempt.callback_secret_hash = $7');
+  });
 });

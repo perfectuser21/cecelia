@@ -8,7 +8,13 @@
 
 
 
-**Brain 版本**: 1.273.51
+**Brain 版本**: 1.273.52
+
+## Brain 1.273.52 — Fleet Routing Receipt Scoped Validation
+
+- Fleet Runner 从 Attempt callback secret 单向派生仅用于路由校验的 SHA-256 token；Provider 不接触原 callback secret 或全局 internal token。
+- 动作 Hook 使用该 token 与 server-owned workspace identity 在线校验 active Attempt，read-only 工作区无需写入 `.dev-lock`。
+- Brain 将 token 精确绑定到 Attempt 的 `callback_secret_hash`，缺失、畸形或失配时 fail-closed。
 
 ## Brain 1.273.51 — Claude Authentication Failover Runner
 

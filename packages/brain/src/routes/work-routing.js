@@ -1,12 +1,41 @@
 import { Router } from 'express';
+import { timingSafeEqual } from 'node:crypto';
 import pool from '../db.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SHA = /^[0-9a-f]{40}$/;
 const REPO = /^[A-Za-z0-9._/-]+$/;
 const BRANCH = /^cp-[a-z0-9][a-z0-9._-]{0,126}$/;
+const ROUTE_TOKEN = /^[a-f0-9]{64}$/;
 
-export async function validateWorkRoutingIdentity(db, input = {}) {
+function secretsEqual(actual, expected) {
+  if (typeof actual !== 'string' || typeof expected !== 'string') return false;
+  const actualBuffer = Buffer.from(actual, 'utf8');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  return actualBuffer.length === expectedBuffer.length
+    && timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function bearerToken(req) {
+  const authorization = req.get('authorization') ?? '';
+  return authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+}
+
+export function workRoutingAuthorization(req) {
+  const expectedInternalToken = process.env.CECELIA_INTERNAL_TOKEN;
+  if (!expectedInternalToken) return { internalAuthorized: true };
+  const suppliedInternalToken = bearerToken(req) || String(req.get('x-internal-token') ?? '').trim();
+  if (secretsEqual(suppliedInternalToken, expectedInternalToken)) {
+    return { internalAuthorized: true };
+  }
+  return { routeToken: String(req.get('x-harness-route-token') ?? '').trim() };
+}
+
+export async function validateWorkRoutingIdentity(
+  db,
+  input = {},
+  { internalAuthorized = false, routeToken = '' } = {},
+) {
   const { routing_receipt_id, task_id, run_id, repo, branch, base_sha } = input;
   if (
     !UUID.test(routing_receipt_id ?? '')
@@ -18,6 +47,13 @@ export async function validateWorkRoutingIdentity(db, input = {}) {
   ) {
     return { status: 400, body: { valid: false, reason_code: 'route_violation' } };
   }
+  if (!internalAuthorized && !ROUTE_TOKEN.test(routeToken)) {
+    return {
+      status: 401,
+      body: { valid: false, reason_code: 'route_validation_unauthorized' },
+    };
+  }
+  const scopedRouteToken = internalAuthorized ? null : routeToken;
   const result = await db.query(
     `SELECT receipt.id,
             run.deadline_at AS expires_at,
@@ -33,6 +69,7 @@ export async function validateWorkRoutingIdentity(db, input = {}) {
                  AND attempt.status IN ('starting', 'running')
                  AND attempt.task_bundle->'inputs'->'workspace_spec'->>'branch' = $5
                  AND attempt.task_bundle->'inputs'->'workspace_spec'->>'base_sha' = $6
+                 AND ($7::text IS NULL OR attempt.callback_secret_hash = $7)
             ) AS active_attempt
        FROM work_routing_receipts receipt
        JOIN tasks task
@@ -60,7 +97,7 @@ export async function validateWorkRoutingIdentity(db, input = {}) {
         AND receipt.router_version = 'work-router-v1'
         AND jsonb_typeof(receipt.map_scope) = 'array'
         AND run.deadline_at > NOW()`,
-    [routing_receipt_id, task_id, repo, run_id, branch, base_sha],
+    [routing_receipt_id, task_id, repo, run_id, branch, base_sha, scopedRouteToken],
   );
   const receipt = result.rows[0];
   if (!receipt) {
@@ -85,7 +122,11 @@ export async function validateWorkRoutingIdentity(db, input = {}) {
 const router = Router();
 router.post('/validate', async (req, res, next) => {
   try {
-    const result = await validateWorkRoutingIdentity(pool, req.body);
+    const result = await validateWorkRoutingIdentity(
+      pool,
+      req.body,
+      workRoutingAuthorization(req),
+    );
     return res.status(result.status).json(result.body);
   } catch (error) {
     return next(error);

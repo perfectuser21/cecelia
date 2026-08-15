@@ -1099,6 +1099,14 @@ finalize_planner_output() {
 # A routed coding Provider may only start with a lock projected by the trusted
 # Runner from the server-issued Attempt identity. The Provider never chooses
 # these fields and cannot turn a non-routed task into an authorized one.
+routing_action_sha256_stream() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  else
+    shasum -a 256 | awk '{print $1}'
+  fi
+}
+
 install_routing_action_gate() {
   local workspace="${WORKTREE_PATH:-/workspace}"
   local routing_values=(
@@ -1110,6 +1118,7 @@ install_routing_action_gate() {
   )
   local present=0
   local value=""
+  unset CECELIA_ROUTING_VALIDATE_URL CECELIA_ROUTING_VALIDATION_TOKEN
   for value in "${routing_values[@]}"; do
     [[ -z "$value" ]] || present=$((present + 1))
   done
@@ -1141,6 +1150,17 @@ install_routing_action_gate() {
     echo "[entrypoint] routing action workspace does not match server identity" >&2
     return 1
   fi
+  local brain_url="${BRAIN_URL:-}"
+  local route_token=""
+  if [[ -z "${HARNESS_CALLBACK_TOKEN:-}" ]] \
+      || [[ ! "$brain_url" =~ ^https?://[^/[:space:]]+$ ]]; then
+    echo "[entrypoint] routing action validation authority is unavailable" >&2
+    return 1
+  fi
+  route_token=$(printf '%s' "$HARNESS_CALLBACK_TOKEN" | routing_action_sha256_stream) || return 1
+  [[ "$route_token" =~ ^[a-f0-9]{64}$ ]] || return 1
+  export CECELIA_ROUTING_VALIDATE_URL="${brain_url%/}/api/brain/work-routing/validate"
+  export CECELIA_ROUTING_VALIDATION_TOKEN="$route_token"
   if [[ "${HARNESS_READ_ONLY:-false}" == "true" ]]; then
     echo "[entrypoint] read-only routing identity validated for receipt=$CECELIA_ROUTING_RECEIPT_ID"
     return 0

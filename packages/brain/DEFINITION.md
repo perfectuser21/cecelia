@@ -1,6 +1,12 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.51
+**Brain 版本**: 1.273.52
+
+## Fleet Routing Receipt Scoped Validation（Brain 1.273.52）
+
+- Runner 只向 Provider 导出 Attempt callback secret 的 SHA-256 路由子令牌，不暴露 callback secret 或全局 internal token。
+- `dev-mode-tool-guard.sh` 在 Fleet read-write/read-only 工作区统一用 server-owned identity + scoped token 调用 `/api/brain/work-routing/validate`。
+- Brain 仅在 active Attempt 的 `callback_secret_hash` 与 scoped token 精确相等时放行，malformed/missing token 在查询前拒绝。
 
 ## Claude Authentication Failover Runner（Brain 1.273.51）
 
