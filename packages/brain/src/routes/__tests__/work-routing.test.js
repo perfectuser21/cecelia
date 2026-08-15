@@ -10,6 +10,7 @@ const INPUT = Object.freeze({
   branch: 'cp-attempt-workspace',
   base_sha: 'a'.repeat(40),
 });
+const ROUTE_TOKEN = 'b'.repeat(64);
 
 describe('validateWorkRoutingIdentity', () => {
   it('authorizes only a canonical receipt/task projection and the active Attempt workspace', async () => {
@@ -20,7 +21,9 @@ describe('validateWorkRoutingIdentity', () => {
       active_attempt: true,
     }] }));
 
-    await expect(validateWorkRoutingIdentity({ query }, INPUT)).resolves.toEqual({
+    await expect(validateWorkRoutingIdentity({ query }, INPUT, {
+      routeToken: ROUTE_TOKEN,
+    })).resolves.toEqual({
       status: 200,
       body: {
         valid: true,
@@ -36,6 +39,7 @@ describe('validateWorkRoutingIdentity', () => {
     expect(sql).toContain("receipt.orchestrator = 'kernel-harness-v2'");
     expect(sql).toContain("attempt.task_bundle->'inputs'->'workspace_spec'->>'branch' = $5");
     expect(sql).toContain("attempt.task_bundle->'inputs'->'workspace_spec'->>'base_sha' = $6");
+    expect(sql).toContain('attempt.callback_secret_hash = $7');
     expect(params).toEqual([
       INPUT.routing_receipt_id,
       INPUT.task_id,
@@ -43,6 +47,7 @@ describe('validateWorkRoutingIdentity', () => {
       INPUT.run_id,
       INPUT.branch,
       INPUT.base_sha,
+      ROUTE_TOKEN,
     ]);
   });
 
@@ -50,6 +55,16 @@ describe('validateWorkRoutingIdentity', () => {
     const query = vi.fn();
     await expect(validateWorkRoutingIdentity({ query }, { ...INPUT, base_sha: 'main' }))
       .resolves.toEqual({ status: 400, body: { valid: false, reason_code: 'route_violation' } });
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed scoped route token before querying authority state', async () => {
+    const query = vi.fn();
+    await expect(validateWorkRoutingIdentity({ query }, INPUT, { routeToken: 'raw-secret' }))
+      .resolves.toEqual({
+        status: 401,
+        body: { valid: false, reason_code: 'route_validation_unauthorized' },
+      });
     expect(query).not.toHaveBeenCalled();
   });
 });

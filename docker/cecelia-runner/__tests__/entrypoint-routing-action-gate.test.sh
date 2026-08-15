@@ -33,8 +33,15 @@ export CECELIA_RUN_ID=33333333-3333-4333-8333-333333333333
 export CECELIA_REPO=cecelia
 export CECELIA_BRANCH=cp-action-gate
 export CECELIA_BASE_SHA="$BASE_SHA"
+export HARNESS_CALLBACK_TOKEN='attempt-callback-secret'
+export BRAIN_URL='http://host.docker.internal:5221'
 
 install_routing_action_gate
+EXPECTED_ROUTE_TOKEN=$(printf '%s' "$HARNESS_CALLBACK_TOKEN" | shasum -a 256 | awk '{print $1}')
+test "$CECELIA_ROUTING_VALIDATION_TOKEN" = "$EXPECTED_ROUTE_TOKEN"
+test "$CECELIA_ROUTING_VALIDATE_URL" = \
+  'http://host.docker.internal:5221/api/brain/work-routing/validate'
+test "$CECELIA_ROUTING_VALIDATION_TOKEN" != "$HARNESS_CALLBACK_TOKEN"
 LOCK="$TEST_ROOT/workspace/.dev-lock.cp-action-gate"
 jq -e --arg base "$BASE_SHA" '
   .task_id == "11111111-1111-4111-8111-111111111111"

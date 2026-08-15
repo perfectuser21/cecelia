@@ -1,11 +1,17 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.51
+**Brain 版本**: 1.273.52
+
+## Fleet Routing Receipt Scoped Validation（Brain 1.273.52）
+
+- Runner 只向 Provider 导出 Attempt callback secret 的 SHA-256 路由子令牌，不暴露 callback secret 或全局 internal token。
+- `dev-mode-tool-guard.sh` 在 Fleet read-write/read-only 工作区统一用 server-owned identity + scoped token 调用 `/api/brain/work-routing/validate`。
+- Brain 仅在 active Attempt 的 `callback_secret_hash` 与 scoped token 精确相等时放行，malformed/missing token 在查询前拒绝。
 
 ## Claude Authentication Failover Runner（Brain 1.273.51）
 
 - Claude 结构化终态中的登录失效、OAuth 过期和认证失败统一映射为 `provider_unavailable`，Harness 在同一 run 内排除失效账户并切换 Provider。
-- Canonical Runner 更新为 `sha256:065bc4ecab7ef582e2fd844af5e3761ab2d430380bd0d0714cb201f319d341ea`，所有 Fleet pin 点同步。
+- Canonical Runner 更新为 `sha256:d811f6759d67a96e9c3157d64a2e87be8bf33291270f265f1d903f7bc914b650`，所有 Fleet pin 点同步。
 
 ## Claude Terminal Receipt Recovery（Brain 1.273.49）
 

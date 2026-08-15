@@ -49,16 +49,32 @@ esac
 if [[ "$MUTATION_CAPABLE" == "true" ]]; then
     BRANCH=$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
     LOCK_FILE="$WORKTREE_ROOT/.dev-lock.$BRANCH"
-    if [[ ! -f "$LOCK_FILE" ]]; then
-        echo '{"decision":"block","reason":"route_violation: live /dev routing receipt lock required"}'
-        exit 2
+    scoped_url="${CECELIA_ROUTING_VALIDATE_URL:-}"
+    scoped_token="${CECELIA_ROUTING_VALIDATION_TOKEN:-}"
+    if [[ -n "$scoped_url" || -n "$scoped_token" ]]; then
+        if [[ ! "$scoped_url" =~ ^https?://[^/[:space:]]+/api/brain/work-routing/validate$ ]] \
+            || [[ ! "$scoped_token" =~ ^[a-f0-9]{64}$ ]]; then
+            echo '{"decision":"block","reason":"route_violation: scoped routing authority malformed"}'
+            exit 2
+        fi
+        routing_receipt_id="${CECELIA_ROUTING_RECEIPT_ID:-}"
+        task_id="${CECELIA_TASK_ID:-}"
+        run_id="${CECELIA_RUN_ID:-}"
+        repo="${CECELIA_REPO:-}"
+        lock_branch="${CECELIA_BRANCH:-}"
+        base_sha="${CECELIA_BASE_SHA:-}"
+    else
+        if [[ ! -f "$LOCK_FILE" ]]; then
+            echo '{"decision":"block","reason":"route_violation: live /dev routing receipt lock required"}'
+            exit 2
+        fi
+        routing_receipt_id=$(jq -r '.routing_receipt_id // empty' "$LOCK_FILE" 2>/dev/null || true)
+        task_id=$(jq -r '.task_id // empty' "$LOCK_FILE" 2>/dev/null || true)
+        run_id=$(jq -r '.run_id // empty' "$LOCK_FILE" 2>/dev/null || true)
+        repo=$(jq -r '.repo // empty' "$LOCK_FILE" 2>/dev/null || true)
+        lock_branch=$(jq -r '.branch // empty' "$LOCK_FILE" 2>/dev/null || true)
+        base_sha=$(jq -r '.base_sha // empty' "$LOCK_FILE" 2>/dev/null || true)
     fi
-    routing_receipt_id=$(jq -r '.routing_receipt_id // empty' "$LOCK_FILE" 2>/dev/null || true)
-    task_id=$(jq -r '.task_id // empty' "$LOCK_FILE" 2>/dev/null || true)
-    run_id=$(jq -r '.run_id // empty' "$LOCK_FILE" 2>/dev/null || true)
-    repo=$(jq -r '.repo // empty' "$LOCK_FILE" 2>/dev/null || true)
-    lock_branch=$(jq -r '.branch // empty' "$LOCK_FILE" 2>/dev/null || true)
-    base_sha=$(jq -r '.base_sha // empty' "$LOCK_FILE" 2>/dev/null || true)
     if [[ -z "$routing_receipt_id" || -z "$task_id" || -z "$run_id" || -z "$repo" \
         || -z "$base_sha" || "$lock_branch" != "$BRANCH" ]]; then
         echo '{"decision":"block","reason":"route_violation: incomplete routing receipt lock"}'
@@ -70,9 +86,15 @@ if [[ "$MUTATION_CAPABLE" == "true" ]]; then
         echo '{"decision":"block","reason":"route_violation: routing baseline is not current lineage"}'
         exit 2
     fi
-    validation=$(curl -fsS --max-time 5 -X POST "${BRAIN_URL:-http://localhost:5221}/api/brain/work-routing/validate" \
-        -H 'Content-Type: application/json' \
-        ${BRAIN_AUTH_TOKEN:+-H "Authorization: Bearer $BRAIN_AUTH_TOKEN"} \
+    validation_url="${scoped_url:-${BRAIN_URL:-http://localhost:5221}/api/brain/work-routing/validate}"
+    auth_args=()
+    if [[ -n "$scoped_token" ]]; then
+        auth_args=(-H "X-Harness-Route-Token: $scoped_token")
+    elif [[ -n "${BRAIN_AUTH_TOKEN:-}" ]]; then
+        auth_args=(-H "Authorization: Bearer $BRAIN_AUTH_TOKEN")
+    fi
+    validation=$(curl -fsS --max-time 5 -X POST "$validation_url" \
+        -H 'Content-Type: application/json' ${auth_args[@]+"${auth_args[@]}"} \
         -d "$(jq -nc --arg routing_receipt_id "$routing_receipt_id" --arg task_id "$task_id" --arg run_id "$run_id" --arg repo "$repo" --arg branch "$BRANCH" --arg base_sha "$base_sha" '{routing_receipt_id:$routing_receipt_id,task_id:$task_id,run_id:$run_id,repo:$repo,branch:$branch,base_sha:$base_sha}')" 2>/dev/null || true)
     if [[ "$(printf '%s' "$validation" | jq -r '.valid // false' 2>/dev/null)" != "true" ]]; then
         echo '{"decision":"block","reason":"route_violation: receipt validation failed"}'
