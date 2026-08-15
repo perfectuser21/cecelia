@@ -1,0 +1,29 @@
+{
+  "initiative_id": "d5407e12-00aa-4601-a464-718b9aa5d275",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅修改 Brain 控制面 shell smoke 的后端输出与 Vitest 回归测试，无 UI 或远端 agent",
+  "implementation_baseline": {
+    "repo": "perfectuser21/cecelia",
+    "base_sha": "aed36ad41bd3d86ff7dc2761bd478df6b3e6f2a0",
+    "frozen": true
+  },
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "让控制面 smoke PASS 回显真实运行时版本并固化回归",
+      "scope": "复用 /api/brain/version 已返回的数据生成最终 PASS 版本文本，永久覆盖硬编码回潮、低 schema 与权威表失败路径",
+      "dod": [
+        "[BEHAVIOR] 真实 smoke 最终 PASS 逐字包含同轮 API 返回的 version",
+        "[BEHAVIOR] schema 低于 430 或权威表检查失败时无 PASS 且非零退出",
+        "[ARTIFACT] 永久 Vitest 回归测试覆盖四个合同用例"
+      ],
+      "files": [
+        "packages/brain/scripts/smoke/harness-control-plane-complete-repair-smoke.sh",
+        "packages/brain/scripts/__tests__/harness-control-plane-repair-version-report.test.mjs"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
