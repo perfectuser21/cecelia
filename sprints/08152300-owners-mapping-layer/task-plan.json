@@ -1,0 +1,34 @@
+{
+  "initiative_id": "8105cfd6-3449-4256-ab43-202b968123ee",
+  "journey_type": "user_facing",
+  "journey_type_reason": "本刀含 apps/dashboard /map Level-2 声明驱动渲染，用户在页面直接感知归属结果，命中 apps/dashboard user_facing。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Brain OWNERS 声明读取器 + 确定性投影 + 冲突即报 + cecelia MJ5 样板 + /map Level-2 渲染",
+      "scope": "新增 owners-reader.js 纯函数（解析/作用域子覆盖父/冲突/合法性/前缀投影）与 scan-owners.js 扫描器（写 fact_snapshot_headers kind=owners，SNAPSHOT_KINDS/REQUIRED_FACT_KINDS 同步）；map 投影/读服务按 OWNERS 声明确定性归属照相层事实，/nodes/:key 出 owned_artifacts、/health 出 owners_conflicts 并使 overall 亮黄；给 packages/brain/src/map 与 apps/dashboard/src/pages/map 贴 cecelia/MJ5 OWNERS 样板；MapPage Level-2 渲染 owned_artifacts。不改照相层四类事实口径、不建平行账本、不重切 GP 骨干。",
+      "dod": [
+        "[BEHAVIOR] owners 扫描后 fact_snapshot_headers kind=owners row_count>=2（B-01）",
+        "[BEHAVIOR] rebuild 后 /map/nodes/MJ5 owned_artifacts 归属样板文件且 capability_key==MJ5（B-02）",
+        "[BEHAVIOR] 冲突 proven-to-fire：非法 capability 声明使 /map/health owners 层与 overall degraded 且不投影（B-04）",
+        "[BEHAVIOR:E2E] /map Level-2 点 MJ5 显示声明驱动真实文件路径（非 UUID），截图留证",
+        "[ARTIFACT] owners-reader.js / scan-owners.js / cecelia MJ5 OWNERS 样板存在，SNAPSHOT_KINDS 与 REQUIRED_FACT_KINDS 含 owners"
+      ],
+      "files": [
+        "packages/brain/src/lib/owners-reader.js",
+        "scripts/scan/scan-owners.js",
+        "scripts/scan/run-all-scans.sh",
+        "packages/brain/src/lib/fact-snapshot-header.js",
+        "packages/brain/src/lib/map-read-service.js",
+        "packages/brain/src/lib/map-projector.js",
+        "packages/brain/src/lib/map-anchor-resolver.js",
+        "packages/brain/src/map/OWNERS",
+        "apps/dashboard/src/pages/map/OWNERS",
+        "apps/api/features/planning/pages/MapPage.tsx"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 110
+    }
+  ]
+}
