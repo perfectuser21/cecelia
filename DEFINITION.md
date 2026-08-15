@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.49
+**Brain 版本**: 1.273.50
+
+## Brain 1.273.50 — Same-Revision Graph Rescan Freshness
+
+- Map radius 继续只读取 projection revision 对应的 immutable graph snapshot 内容。
+- 同 revision 重扫只有在 live graph header 的 revision、scanner version、row count 与 immutable snapshot 全部一致时，才用最新 `scanned_at` 刷新 freshness；身份不一致仍按原 immutable 时间 fail-closed。
 
 ## Brain 1.273.49 — Claude Terminal Receipt Recovery
 

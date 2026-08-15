@@ -248,13 +248,30 @@ export async function loadMapImpactRadius(client, {
       },
     );
   }
+  const { rows: liveHeaders } = await client.query(
+    `SELECT source_revision, scanner_version, scanned_at, row_count
+       FROM fact_snapshot_headers
+      WHERE kind='graph' AND repo=$1`,
+    [repo],
+  );
+  const liveHeader = liveHeaders[0] ?? null;
+  const liveHeaderVerifiesSnapshot = liveHeader?.source_revision === snapshot.snapshot_revision
+    && liveHeader?.scanner_version === snapshot.scanner_version
+    && Number(liveHeader?.row_count) === expectedEdgeCount;
+  // graph-store only advances the live header after it has compared every
+  // canonical edge with the immutable revision snapshot. A matching recent
+  // header is therefore a fresh verification receipt for the same immutable
+  // bytes; a different identity must not refresh their age.
+  const freshnessMetadata = liveHeaderVerifiesSnapshot
+    ? liveHeader
+    : {
+      source_revision: snapshot.snapshot_revision,
+      scanner_version: snapshot.scanner_version,
+      scanned_at: snapshot.scanned_at,
+      row_count: snapshot.row_count,
+    };
   const freshness = computeFreshness({
-    kind: 'graph',
-    repo,
-    source_revision: snapshot.snapshot_revision,
-    scanner_version: snapshot.scanner_version,
-    scanned_at: snapshot.scanned_at,
-    row_count: snapshot.row_count,
+    ...freshnessMetadata,
   }, now);
   const radius = computeMapImpactRadius({
     repo,
