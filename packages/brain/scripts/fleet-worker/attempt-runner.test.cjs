@@ -2790,6 +2790,7 @@ describe('Fleet Worker durable runtime adapters', () => {
         '--network', `cecelia-attempt-${ATTEMPT_ID}`,
         '--env', `CECELIA_TASK_ID=${TASK_ID}`,
         '--env', `HARNESS_TASK_ID=${TASK_ID}`,
+        '--env', 'HARNESS_BRAIN_URL=http://brain.internal:5221',
         '--env', 'HARNESS_NODE=generator',
         '--env', 'HARNESS_MODEL=gpt-5',
         '--env', 'HARNESS_TIMEOUT_SECONDS=300',

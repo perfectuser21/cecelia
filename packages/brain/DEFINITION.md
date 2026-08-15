@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.53
+**Brain 版本**: 1.273.54
+
+## Fleet Generator Brain URL Authority（Brain 1.273.54）
+
+- Dispatcher 与 Fleet Worker 为 Provider 注入服务端权威的 `HARNESS_BRAIN_URL`，Generator Skill 在通用 `BRAIN_URL` 被 Codex 子工具过滤时从该变量恢复，不再于 Step 0 假阻塞。
+- Fleet Worker 版本升级为 `1.272.19`；本地与 Fleet 两条运输路径共享永久回归，原 `BRAIN_URL` 与缺失即拒绝的预检保持不变。
 
 ## Canonical Scoped Routing Runner Pin（Brain 1.273.53）
 

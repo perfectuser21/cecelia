@@ -208,7 +208,7 @@ describe('Fleet NodeProfile registry', () => {
 
     expect(
       listNodeProfiles().map((profile) => profile.version_policy.worker),
-    ).toEqual(['1.272.18', '1.272.18', '1.272.18']);
+    ).toEqual(['1.272.19', '1.272.19', '1.272.19']);
   });
 
   it('publishes macOS 15.6.1 as the shared minimum supported version', async () => {

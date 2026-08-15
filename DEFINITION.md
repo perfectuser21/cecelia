@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.53
+**Brain 版本**: 1.273.54
+
+## Brain 1.273.54 — Fleet Generator Brain URL Authority
+
+- 本地 Dispatcher 与 Fleet Worker 同时注入服务端权威的 `HARNESS_BRAIN_URL`；Codex 子工具环境过滤通用 `BRAIN_URL` 时，Generator 仍可机械恢复真实 Brain 地址并通过强制预检。
+- 保留 `BRAIN_URL` 兼容路径与 fail-closed 语义；Fleet Worker 准入版本同步为 `1.272.19`，旧 Worker 不会被误认成已部署本轮运行合同。
 
 ## Brain 1.273.53 — Canonical Scoped Routing Runner Pin
 
