@@ -641,7 +641,7 @@ describe('R9/R10: append-only attempt callback convergence', () => {
 
     expect(infra).toEqual({
       phase: 'generate',
-      action: 'spawn:generator-fix',
+      action: 'spawn:generator',
       reason: 'callback_infrastructure_blocked',
     });
     expect(semantic).toEqual({
@@ -677,7 +677,7 @@ describe('R9/R10: append-only attempt callback convergence', () => {
 
     expect(r).toEqual({
       phase: 'generate',
-      action: 'spawn:generator-fix',
+      action: 'spawn:generator',
       reason: 'callback_infrastructure_blocked',
     });
   });

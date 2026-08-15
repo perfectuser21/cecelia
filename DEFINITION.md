@@ -2,13 +2,18 @@
 
 **版本**: 2.0.0
 **创建时间**: 2026-02-01
-**最后更新**: 2026-08-15
+**最后更新**: 2026-08-16
 
 
 
 
 
-**Brain 版本**: 1.273.57
+**Brain 版本**: 1.273.58
+
+## Brain 1.273.58 — Generator Infrastructure Retry Identity
+
+- Generator 基础设施失败按 callback 对应的服务端派发动作重试：首次 `spawn:generator` 不再误入需要既有候选的 `spawn:generator-fix`。
+- 已进入 `spawn:generator-fix` 的修复轮仍保持原动作；Provider 不可用、Worker 过期与账号轮换只更换执行目标，不改变实现阶段身份。
 
 ## Brain 1.273.57 — Planner Role Branch Authority
 
