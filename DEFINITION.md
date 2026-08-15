@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.52
+**Brain 版本**: 1.273.53
+
+## Brain 1.273.53 — Canonical Scoped Routing Runner Pin
+
+- Canonical Runner 固定为带 `cecelia.entrypoint.sha256` 与 `cecelia.build.head` 供应链标签的 `sha256:d37d200a39d10ecbbd09cf21e025a608fd31b6c0b812da424081497a9c1a9f81`。
+- Fleet 三机的 NodeProfile、rollout、reconciler、smoke 与安装回归共享同一不可变 digest；Worker 准入版本同步为 `1.272.18`，避免旧进程被误认成已完成本轮分发。
 
 ## Brain 1.273.52 — Fleet Routing Receipt Scoped Validation
 

@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.52
+**Brain 版本**: 1.273.53
+
+## Canonical Scoped Routing Runner Pin（Brain 1.273.53）
+
+- Canonical Runner 更新为带供应链标签的 `sha256:d37d200a39d10ecbbd09cf21e025a608fd31b6c0b812da424081497a9c1a9f81`，所有 Fleet pin 点同步。
+- Fleet Worker 准入版本同步为 `1.272.18`；健康报告仍须同时匹配 exact Runner digest 与 Worker 版本。
 
 ## Fleet Routing Receipt Scoped Validation（Brain 1.273.52）
 
