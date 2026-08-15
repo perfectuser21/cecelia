@@ -1,0 +1,29 @@
+{
+  "initiative_id": "intent:074d698d-2bff-4c0b-a1c1-da55c967cd49:10",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 Brain 侧 fleet-worker 运行时授权与角色权限边界，无 UI、无外部 agent 协议变更，属自治后端回归。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Generator/Publisher 发布运行时权限边界生产回归护栏",
+      "scope": "在 attempt-runner.cjs 的 module.exports.__test__ 暴露四个行为等价纯函数锚点（roleNeedsGitHubCredential / resolveRuntimeRequirements / roleRetainsCandidate / roleIsRemotePublisher，抽自既有 taskExecutionContract/GITHUB_CREDENTIAL_ROLES/候选生命周期，不改流水线、不扩权）；新增 packages/brain/scripts/smoke/generator-publisher-runtime-boundary-smoke.sh 真跑锚点 + 校验 ratchet 台账端点；登记进 packages/quality/smoke-allowlist.txt；bump scripts/ratchet-registry.json 的 smoke_pool.watermark；在 attempt-runner.test.cjs 追加降权拒绝/Generator 无 push/Publisher exact-candidate 永久回归用例（真 in-memory stateStore，禁 mock 被改的边）。",
+      "dod": [
+        "[BEHAVIOR] resolveRuntimeRequirements 拒绝 caller 把 server postgres:true 降为 false，抛 attempt_runtime_requirements_mismatch",
+        "[BEHAVIOR] roleNeedsGitHubCredential generator=false / publisher=true；roleRetainsCandidate 仅 generator+0；roleIsRemotePublisher 仅 publisher",
+        "[BEHAVIOR] bash packages/brain/scripts/smoke/generator-publisher-runtime-boundary-smoke.sh exit 0",
+        "[BEHAVIOR] smoke_pool only_up 且实际 smoke .sh 数 ≥ watermark 且 watermark 已 bump（≥14）",
+        "[ARTIFACT] 四锚点导出 + smoke 文件存在 + smoke 登记 allowlist"
+      ],
+      "files": [
+        "packages/brain/scripts/fleet-worker/attempt-runner.cjs",
+        "packages/brain/scripts/fleet-worker/attempt-runner.test.cjs",
+        "packages/brain/scripts/smoke/generator-publisher-runtime-boundary-smoke.sh",
+        "packages/quality/smoke-allowlist.txt",
+        "scripts/ratchet-registry.json"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
