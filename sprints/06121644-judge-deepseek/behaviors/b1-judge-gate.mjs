@@ -58,13 +58,32 @@ r = await runJudgeGate(
 );
 assert(r.verdict === 'FAIL' && /fail-closed/.test(r.feedback), 'JUDGE_STRICT 裁判失败应 fail-closed FAIL');
 
-// 6) agent FAIL → 不调裁判，直接透传
+// 6) agent FAIL 也必须由独立 Judge 裁定，不能让 Evaluator 单方决定修复方向
 let called = false;
 r = await runJudgeGate(
   { agentVerdict: 'FAIL', agentFeedback: 'happy FAIL', worktreePath: '/tmp/x', sprintDir: 's', instanceLabel: 'i6' },
-  { judgeFn: async () => { called = true; return { verdict: 'PASS', coverage: [] }; }, collectEvidence: evidence(), ...noop }
+  {
+    judgeFn: async () => {
+      called = true;
+      return {
+        verdict: 'FAIL',
+        coverage: [
+          { step: 'step A', passed: true },
+          { step: 'step B', passed: true },
+        ],
+        feedback: '独立裁判确认产品失败',
+        failure_class: 'product_failure',
+        failure_signature: ['judge-confirmed-product-failure'],
+      };
+    },
+    collectEvidence: evidence(),
+    ...noop,
+  }
 );
-assert(r.verdict === 'FAIL' && called === false, 'agent FAIL 应直接透传不调裁判');
+assert(
+  r.verdict === 'FAIL' && r.judged === true && called === true,
+  'agent FAIL 也必须进入独立 Judge',
+);
 
 console.warn = origWarn;
 console.log('OK');

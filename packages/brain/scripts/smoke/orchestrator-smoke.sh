@@ -25,7 +25,14 @@ if (r.action !== 'exit') { console.error('unexpected: ' + JSON.stringify(r)); pr
 # 2. mergeGate 硬门禁：无 verdict 必拒
 node --input-type=module -e "
 import { mergeGate } from './src/orchestrator/gates.js';
-const g = mergeGate({ evaluateVerdict: null, judgeVerdict: null, prHeadSha: 'abc', reviewRequired: false, reviewApproved: false });
+const g = mergeGate({
+  evaluateVerdict: null,
+  judgeVerdict: null,
+  prHeadSha: 'abc',
+  contractIdentity: null,
+  reviewRequired: false,
+  reviewApproved: false,
+});
 if (g.allow !== false) process.exit(1);
 " && ok "mergeGate 无 verdict 拒合" || fail "mergeGate"
 

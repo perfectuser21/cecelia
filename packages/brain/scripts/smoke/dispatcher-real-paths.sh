@@ -17,6 +17,7 @@
 set -eo pipefail  # 不用 -u，python3 子进程偶有空输出导致 "unbound variable"
 
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+DB_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia_test}"
 MAX_WAIT_SEC="${DISPATCHER_SMOKE_MAX_WAIT_SEC:-90}"
 BASE_SHA="$(git rev-parse HEAD)"
 
@@ -56,6 +57,9 @@ d = {
   'change_kind': 'bugfix',
   'base_sha': '$BASE_SHA',
 }
+if '$3' == 'harness_initiative':
+    d['repo_hint'] = 'cecelia'
+    d['map_scope_hint'] = ['F1']
 if '${5:-}': d['project_id'] = '${5:-}'
 extra = os.environ.get('EXTRA_PAYLOAD_JSON', '')
 if extra:
@@ -151,9 +155,9 @@ echo "[Case C] initiative-lock — 同 project 并发 harness_initiative，只 1
 # 每次 smoke 用唯一 project_id 避免跨 run dedup 冲突；UUID 格式必须严格
 PROJ_HEX=$(printf '%012x' $((RANDOM * 32768 + RANDOM)))
 PROJ_ID="00000000-0000-0000-0000-${PROJ_HEX}"
-# N4 orchestrator 硬校验落地后，harness_initiative 任务必须带 payload.orchestrator='skill-relay'，
-# 否则 executor 直接标 terminal failed（不会进 in_progress），initiative-lock 断言会变假绿
-# （两个任务都秒 terminal failed，根本没机会被锁挡住，不是真的验证了锁）。
+DATABASE_URL="$DB_URL" node "$(dirname "$0")/ensure-cecelia-route-authority.mjs"
+# Work Router 由 repo_hint+map_scope_hint 产生 server-owned Kernel authority；调用方不得再
+# 自报已退役的 payload.orchestrator=skill-relay。
 B1_TASK=$(register_task "[smoke-C1-${SMOKE_RUN_ID}] init B1 lock test" "Initiative B1 with sufficiently long description for pre-flight check passing" "harness_initiative" "P2" "$PROJ_ID" '{}')
 B2_TASK=$(register_task "[smoke-C2-${SMOKE_RUN_ID}] init B2 lock test" "Initiative B2 with sufficiently long description for pre-flight check passing" "harness_initiative" "P2" "$PROJ_ID" '{}')
 
