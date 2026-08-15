@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.48
+**Brain 版本**: 1.273.49
+
+## Brain 1.273.49 — Claude Terminal Receipt Recovery
+
+- Runner 的 Claude 非零退出恢复与正常结果提取使用同一信封规则：同时接受受信且逐字匹配的 `structured_output`、object `result` 与 JSON-string `result`，不再把已完成的真实 Planner 错判为 `provider_exit`。
+- Canonical Runner 固定为 `sha256:33a8195883be13252dbb4a2a355e0ee90f7ae89ff6846cde5d898a4bc515561b`；Fleet 三机准入、rollout、reconciler 与回归测试使用同一不可变镜像身份。
 
 ## Brain 1.273.48 — Fleet Codex Admission Pin Closure
 
@@ -107,7 +112,7 @@
 
 - Judge 独立裁决候选与上游证据；只有服务端声明的宿主 Docker、最终 Judge、Publisher、全闸门和完整角色链检查可结构化标记为后置验收。
 - Evaluator 隔离 Git 夹具清除继承的 pushurl 熔断变量，候选仓库的禁止推送边界保持不变。
-- Runner 固定为 `sha256:47fe869774b789fe6aef2e2e93b6a8baa2726b83ab94392d60c702af1c1ec22f`，Fleet Worker 准入版本同步为 `1.272.17`。
+- Runner 固定为 `sha256:33a8195883be13252dbb4a2a355e0ee90f7ae89ff6846cde5d898a4bc515561b`，Fleet Worker 准入版本同步为 `1.272.17`。
 
 ## Brain 1.273.29 — Frozen PR Repair Checkout
 

@@ -2671,7 +2671,16 @@ validate_claude_terminal_receipt() {
           and test("^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$"))
         end
       )
-      and .[0].structured_output == $result[0]
+      and (
+        if .[0].structured_output
+        then .[0].structured_output
+        elif (.[0].result | type) == "object"
+        then .[0].result
+        elif (.[0].result | type) == "string"
+        then (.[0].result | fromjson? // null)
+        else null
+        end
+      ) == $result[0]
       and ($result[0] | type) == "object"
       and ($result[0].status | type) == "string"
       and (["completed","completed_with_concerns","needs_context","blocked"]
