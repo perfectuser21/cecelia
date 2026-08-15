@@ -1,0 +1,30 @@
+{
+  "initiative_id": "intent:7a8e5319-9858-40f8-82a1-56d81907176b:13",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain 后端（Dispatcher/execution-contract）与 Brain smoke，无 UI/远端 agent/engine 路径。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Generator 纳入 server-owned runtime_resources 注入 + generator/publisher 边界回归 + smoke 接入 ratchet",
+      "scope": "让 Dispatcher 为 role=generator 组装的 TaskBundle 获得 server-owned runtime_resources.postgres=true（caller false 不降权）；落 permanent 回归单测（消费真实 buildInputs 组装的 generator bundle）；更新 dispatcher.test.js 冲突断言为新期望；新增源结构 smoke 并双路接入 ratchet（packages/brain/scripts/smoke 权威 + smoke-allowlist 登记 + scripts/smoke 委派 wrapper + ratchet-registry.json smoke_pool watermark 上调）。不扩大任何凭据/权限。",
+      "dod": [
+        "[BEHAVIOR] generator TaskBundle inputs.runtime_resources==={postgres:true,node_deps:true}，caller postgres:false 不降权（permanent vitest 全绿）",
+        "[BEHAVIOR] generator-publisher-boundary-smoke.sh 三条边界全过 exit 0；dispatcher.test.js 冲突断言更新后整段全绿",
+        "[BEHAVIOR] smoke 登记进 smoke-allowlist.txt 且 smoke_pool 计数>=watermark(>=14)、ratchet-guard 通过",
+        "[ARTIFACT] packages/brain/src/orchestrator/__tests__/generator-runtime-resource-boundary.test.js + packages/brain/scripts/smoke/generator-publisher-boundary-smoke.sh + scripts/smoke/generator-publisher-boundary-smoke.sh 存在"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/__tests__/generator-runtime-resource-boundary.test.js",
+        "packages/brain/src/orchestrator/__tests__/dispatcher.test.js",
+        "packages/brain/scripts/smoke/generator-publisher-boundary-smoke.sh",
+        "scripts/smoke/generator-publisher-boundary-smoke.sh",
+        "packages/quality/smoke-allowlist.txt",
+        "scripts/ratchet-registry.json"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
