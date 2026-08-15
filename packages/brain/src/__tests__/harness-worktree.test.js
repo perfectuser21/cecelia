@@ -58,6 +58,68 @@ describe('ensureHarnessWorktree', () => {
     expect(branchArg?.startsWith('harness-v2/')).toBe(false);
   });
 
+  it('clones a local promisor repository from its remote instead of copying incomplete objects', async () => {
+    const calls = [];
+    const localRepo = '/tmp/partial-cecelia';
+    const remoteUrl = 'https://github.com/perfectuser21/cecelia.git';
+    const execFn = async (cmd, args) => {
+      const call = [cmd, ...args].join(' ');
+      calls.push(call);
+      if (call === `git -C ${localRepo} config --bool remote.origin.promisor`) {
+        return { stdout: 'true\n' };
+      }
+      if (call === `git -C ${localRepo} remote get-url origin`) {
+        return { stdout: `${remoteUrl}\n` };
+      }
+      return { stdout: '' };
+    };
+    const statFn = async (candidate) => candidate === localRepo;
+
+    await ensureHarnessWorktree({
+      taskId: 'feedface22222222',
+      baseRepo: localRepo,
+      execFn,
+      statFn,
+      tokenFn: async () => 'ghp_fixture',
+      logFn: () => {},
+    });
+
+    const cloneCall = calls.find((call) => call.startsWith('git clone'));
+    expect(cloneCall).toContain(
+      'https://x-access-token:ghp_fixture@github.com/perfectuser21/cecelia.git',
+    );
+    expect(cloneCall).not.toContain('--local');
+    expect(cloneCall).not.toContain('--no-hardlinks');
+    const setUrlCall = calls.find((call) => call.includes('remote set-url origin'));
+    expect(setUrlCall).toContain(remoteUrl);
+    expect(setUrlCall).not.toContain('ghp_fixture');
+  });
+
+  it('fails closed when a local promisor repository has no usable remote', async () => {
+    const calls = [];
+    const localRepo = '/tmp/broken-partial-cecelia';
+    const execFn = async (cmd, args) => {
+      const call = [cmd, ...args].join(' ');
+      calls.push(call);
+      if (call === `git -C ${localRepo} config --bool remote.origin.promisor`) {
+        return { stdout: 'true\n' };
+      }
+      if (call === `git -C ${localRepo} remote get-url origin`) {
+        throw new Error('origin missing');
+      }
+      return { stdout: '' };
+    };
+
+    await expect(ensureHarnessWorktree({
+      taskId: 'deadcafe22222222',
+      baseRepo: localRepo,
+      execFn,
+      statFn: async (candidate) => candidate === localRepo,
+      logFn: () => {},
+    })).rejects.toThrow('origin missing');
+    expect(calls.some((call) => call.startsWith('git clone'))).toBe(false);
+  });
+
   it('clones without --local when cloneSource is a remote URL', async () => {
     const calls = [];
     const execFn = async (cmd, args) => {

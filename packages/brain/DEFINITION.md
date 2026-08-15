@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.57
+**Brain 版本**: 1.273.59
+
+## Partial Clone Workspace Authority（Brain 1.273.59）
+
+- Harness workspace 检测本地 clone source 的 `remote.origin.promisor`。完整本地仓库继续走无 hardlink 的本地复制；promisor/partial clone 必须从其 canonical origin 远端克隆，避免把未物化 blob 复制成无法 checkout 的任务仓库。
+- promisor source 缺失可用 origin 时 fail-closed，不得降级到 `git clone --local`。远端 token 只用于 clone，随后 origin 必须恢复为无凭据 URL。
 
 ## Planner Role Branch Authority（Brain 1.273.57）
 
