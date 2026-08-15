@@ -1,0 +1,30 @@
+{
+  "initiative_id": "7a8e5319-9858-40f8-82a1-56d81907176b",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅 packages/brain 后端（Dispatcher/execution-contract）与 Brain smoke，无 UI/远端 agent/engine 路径",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Generator 纳入 server-owned runtime_resources.postgres 注入 + 角色边界回归（RED→GREEN + smoke ratchet）",
+      "scope": "Dispatcher 为 role=generator（含 spawn:generator / spawn:generator-fix）注入 server-owned runtime_resources.postgres=true，caller postgres:false 不降权；保持 Generator objective 只产本地候选（禁 push/PR）、Publisher objective 唯一远端发布不被削弱；新增 RED 回归单测并落 orchestrator __tests__ 永久回归；新增依赖免装、无 DB、ENOENT 降级的权威 smoke + top-level 委派 wrapper，接入 smoke_pool ratchet；更新既有 dispatcher.test.js 中锁旧行为的冲突断言。不扩大任何凭据/权限。",
+      "dod": [
+        "[BEHAVIOR] 永久单测绿：generator TaskBundle runtime_resources.postgres===true（default + caller-false + generator-fix 三态），cd packages/brain 跑 src/orchestrator/__tests__/generator-runtime-resource-boundary.test.js",
+        "[BEHAVIOR] 权威 smoke + wrapper 三条边界全过 exit 0；smoke_pool ratchet status=pass 且 watermark 由 13 上调至 >=14",
+        "[BEHAVIOR] 既有 dispatcher.test.js 全绿（proposer/reviewer/evaluator 三态不回退 + generator 冲突断言已更新为新期望）",
+        "[ARTIFACT] packages/brain/src/orchestrator/dispatcher.js generator 纳入 runtime_resources 注入列表且授予 postgres",
+        "[ARTIFACT] packages/brain/scripts/smoke/generator-publisher-boundary-smoke.sh + scripts/smoke/generator-publisher-boundary-smoke.sh（真实委派 wrapper）+ scripts/ratchet-registry.json smoke_pool watermark=14"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/__tests__/generator-runtime-resource-boundary.test.js",
+        "packages/brain/src/orchestrator/__tests__/dispatcher.test.js",
+        "packages/brain/scripts/smoke/generator-publisher-boundary-smoke.sh",
+        "scripts/smoke/generator-publisher-boundary-smoke.sh",
+        "scripts/ratchet-registry.json"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
