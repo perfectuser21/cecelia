@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.59
+**Brain 版本**: 1.273.60
 
 ## Brain 1.273.59 — Partial Clone Workspace Authority
 
