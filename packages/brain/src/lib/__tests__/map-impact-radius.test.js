@@ -102,7 +102,7 @@ describe('loadMapImpactRadius revision authority', () => {
     { node_id: 'artifact-b', node_type: 'artifact', node_key: 'artifact-b', name: 'B', attributes: { repo: 'repo-a', stable_ref: 'src/b.js' } },
   ];
 
-  function clientWithSnapshot(snapshotRows) {
+  function clientWithSnapshot(snapshotRows, liveHeader = null) {
     return { query: vi.fn(async (sql) => {
       const text = String(sql);
       if (text.includes('FROM map_scope_repositories')) {
@@ -124,7 +124,7 @@ describe('loadMapImpactRadius revision authority', () => {
         return { rows: [{ repo: 'repo-a', src_path: 'src/b.js', dst_path: 'src/core.js', edge_type: 'import' }] };
       }
       if (text.includes('FROM fact_snapshot_headers')) {
-        return { rows: [{
+        return { rows: [liveHeader ?? {
           kind: 'graph', repo: 'repo-a', source_revision: revisionB,
           scanner_version: 'live-b', scanned_at: now, row_count: 1,
         }] };
@@ -189,5 +189,67 @@ describe('loadMapImpactRadius revision authority', () => {
       now,
       projectionRunId: runId,
     })).rejects.toMatchObject({ code: 'MAP_RADIUS_GRAPH_SNAPSHOT_INCOMPLETE' });
+  });
+
+  it('uses a recent exact-identity rescan receipt to refresh immutable snapshot freshness', async () => {
+    const oldScan = new Date(now.getTime() - 11 * 60 * 1000);
+    const client = clientWithSnapshot([{
+      snapshot_revision: revisionA,
+      scanner_version: 'graph-v1',
+      scanned_at: oldScan,
+      row_count: 1,
+      repo: 'repo-a',
+      src_path: 'src/a.js',
+      dst_path: 'src/core.js',
+      edge_type: 'import',
+    }], {
+      kind: 'graph', repo: 'repo-a', source_revision: revisionA,
+      scanner_version: 'graph-v1', scanned_at: now, row_count: 1,
+    });
+
+    const result = await loadMapImpactRadius(client, {
+      scopeKey: 'scope-a',
+      repo: 'repo-a',
+      changedFiles: ['src/core.js'],
+      now,
+      projectionRunId: runId,
+    });
+
+    expect(result.freshness).toMatchObject({
+      status: 'fresh',
+      source_revision: revisionA,
+      last_success_at: now.toISOString(),
+    });
+  });
+
+  it('does not refresh freshness when the live rescan identity differs from the immutable snapshot', async () => {
+    const oldScan = new Date(now.getTime() - 11 * 60 * 1000);
+    const client = clientWithSnapshot([{
+      snapshot_revision: revisionA,
+      scanner_version: 'graph-v1',
+      scanned_at: oldScan,
+      row_count: 1,
+      repo: 'repo-a',
+      src_path: 'src/a.js',
+      dst_path: 'src/core.js',
+      edge_type: 'import',
+    }], {
+      kind: 'graph', repo: 'repo-a', source_revision: revisionB,
+      scanner_version: 'graph-v1', scanned_at: now, row_count: 1,
+    });
+
+    const result = await loadMapImpactRadius(client, {
+      scopeKey: 'scope-a',
+      repo: 'repo-a',
+      changedFiles: ['src/core.js'],
+      now,
+      projectionRunId: runId,
+    });
+
+    expect(result.freshness).toMatchObject({
+      status: 'unknown',
+      reason_code: 'snapshot_stale',
+      source_revision: revisionA,
+    });
   });
 });
