@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.55
+**Brain 版本**: 1.273.56
+
+## Fleet Runner Baseline Recovery（Brain 1.273.56）
+
+- Canonical Runner 更新为冻结来源重建的 `sha256:d9087a85a3bbaa668628dfb3166f980a62c3851c8033d5d26e194fc975b55d0a`，NodeProfile、rollout、reconciler 与 smoke 共享同一不可变 pin。
+- Fleet Worker 准入版本同步为 `1.272.20`；恢复过程仍要求 exact digest、entrypoint 供应链标签和真实容器探针全部通过。
 
 ## Generator Local Candidate Runtime Authority（Brain 1.273.55）
 
