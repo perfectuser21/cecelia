@@ -48,6 +48,8 @@ else
   export DB_HOST="$PGHOST" DB_PORT="$PGPORT" DB_USER="$PGUSER" DB_NAME="$PGDB" DB_PASSWORD="$PGPASSWORD"
   export NODE_ENV="${NODE_ENV:-test}"
   export CECELIA_CAPTURE_TRIAGE_LLM=off
+  DATABASE_URL="postgresql://$PGUSER:$PGPASSWORD@$PGHOST:$PGPORT/$PGDB" \
+    node "$SCRIPT_DIR/ensure-cecelia-route-authority.mjs"
 
   RESULT=$(cd "$BRAIN_ROOT" && node -e "
 import('./src/capture-triage.js').then(async (triage) => {

@@ -100,6 +100,7 @@ guard-drill-smoke.sh
 guard-ref-bare-fr-smoke.sh
 harness-commander-phase1-smoke.sh
 harness-commander-phase2-smoke.sh
+harness-control-plane-complete-repair-smoke.sh
 harness-contract-sha-freeze-smoke.sh
 harness-death-classifier-smoke.sh
 harness-death-handlers-smoke.sh

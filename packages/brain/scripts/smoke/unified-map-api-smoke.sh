@@ -45,6 +45,7 @@ cleanup() {
     -c "DELETE FROM map_projection_runs WHERE scope_key='$SMOKE_SCOPE'" \
     -c "DELETE FROM map_manifest_versions WHERE scope_key='$SMOKE_SCOPE'" \
     -c "DELETE FROM map_scope_repositories WHERE scope_key='$SMOKE_SCOPE'" \
+    -c "DELETE FROM graph_snapshot_versions WHERE repo='$SMOKE_REPO'" \
     -c "DELETE FROM fact_snapshot_headers WHERE repo='$SMOKE_REPO'" \
     -c "DELETE FROM decisions WHERE id='$SMOKE_DECISION_ID'" \
     >/dev/null 2>&1 || true
@@ -93,6 +94,12 @@ try {
       ('db_schema',$1,$2,'db-schema-v2',NOW(),0),
       ('graph',$1,$2,'graph-v3',NOW(),0),
       ('test',$1,$2,'test-registry-v2',NOW(),0)`,
+    [repo, revision],
+  );
+  await pool.query(
+    `INSERT INTO graph_snapshot_versions
+      (repo,source_revision,scanner_version,scanned_at,row_count)
+     VALUES ($1,$2,'graph-v3',NOW(),0)`,
     [repo, revision],
   );
   const submitted = await submitMapManifest(pool, manifest);
@@ -177,9 +184,10 @@ RESIDUE="$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "
     (SELECT count(*) FROM map_projection_runs WHERE scope_key='$SMOKE_SCOPE')::text || '|' ||
     (SELECT count(*) FROM map_manifest_versions WHERE scope_key='$SMOKE_SCOPE')::text || '|' ||
     (SELECT count(*) FROM map_scope_repositories WHERE scope_key='$SMOKE_SCOPE')::text || '|' ||
+    (SELECT count(*) FROM graph_snapshot_versions WHERE repo='$SMOKE_REPO')::text || '|' ||
     (SELECT count(*) FROM fact_snapshot_headers WHERE repo='$SMOKE_REPO')::text || '|' ||
     (SELECT count(*) FROM decisions WHERE id='$SMOKE_DECISION_ID')::text")"
-[[ "$RESIDUE" == '0|0|0|0|0' ]] || fail "fixture 残留: $RESIDUE"
+[[ "$RESIDUE" == '0|0|0|0|0|0' ]] || fail "fixture 残留: $RESIDUE"
 pass 'test/scratch fixture 全清零'
 
 printf '%s\n' 'ALL PASS: unified map API smoke'

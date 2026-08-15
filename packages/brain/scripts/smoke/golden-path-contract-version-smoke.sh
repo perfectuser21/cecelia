@@ -15,6 +15,8 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 DATABASE_URL="$DB_URL" REPO_ROOT_CECELIA="$REPO_ROOT" \
   GRAPH_REPOS=cecelia SKIP_GIT_PULL=1 FACT_SNAPSHOT_TEST_MODE=1 MAP_REBUILD_DISABLED=1 \
   bash "$REPO_ROOT/scripts/scan/run-all-scans.sh"
+DATABASE_URL="$DB_URL" node \
+  "$REPO_ROOT/packages/brain/scripts/smoke/ensure-cecelia-route-authority.mjs"
 
 cleanup() {
   [ -n "$GP_ID" ] || return 0
@@ -68,7 +70,7 @@ JOURNEY_ID=$(psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc \
    RETURNING id" | head -1)
 
 request POST /golden-paths \
-  "{\"title\":\"$RUN_KEY\",\"one_liner\":\"真实合同签字生命周期\",\"journey_id\":\"$JOURNEY_ID\",\"change_kind\":\"bugfix\",\"base_repo\":\"cecelia\",\"map_scope\":[\"factory/F1\"]}"
+  "{\"title\":\"$RUN_KEY\",\"one_liner\":\"真实合同签字生命周期\",\"journey_id\":\"$JOURNEY_ID\",\"change_kind\":\"bugfix\",\"base_repo\":\"cecelia\",\"map_scope\":[\"F1\"]}"
 expect_code 201
 GP_ID=$(jq -er '.golden_path.id' <<<"$HTTP_BODY")
 
