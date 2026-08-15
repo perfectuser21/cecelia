@@ -140,9 +140,34 @@ export async function ensureHarnessWorktree(opts) {
   const tokenFn = opts.tokenFn || resolveGitHubToken;
   const isKernelWorkspaceActive = opts.isKernelWorkspaceActive || (async () => false);
   const cloneSourceIsLocal = await statFn(requestedCloneSource).catch(() => false);
-  const cloneSource = cloneSourceIsLocal
+  let cloneSource = cloneSourceIsLocal
     ? requestedCloneSource
     : normalizeRemoteCloneSource(requestedCloneSource);
+  let cloneViaRemote = !cloneSourceIsLocal;
+
+  if (cloneSourceIsLocal) {
+    let isPromisor = false;
+    try {
+      const { stdout: promisor } = await execFn(
+        'git',
+        ['-C', requestedCloneSource, 'config', '--bool', 'remote.origin.promisor'],
+      );
+      isPromisor = String(promisor || '').trim() === 'true';
+    } catch {
+      // 完整本地仓库通常没有 promisor 配置，保留 --local 快速路径。
+    }
+    if (isPromisor) {
+      const { stdout: remoteUrl } = await execFn(
+        'git',
+        ['-C', requestedCloneSource, 'remote', 'get-url', 'origin'],
+      );
+      cloneSource = normalizeRemoteCloneSource(String(remoteUrl || '').trim());
+      if (!cloneSource) {
+        throw new Error(`promisor clone source has no origin: ${requestedCloneSource}`);
+      }
+      cloneViaRemote = true;
+    }
+  }
 
   // H11: opts.wtKey + opts.branch 让 sub-task callers 用复合 key（绕过 shortTaskId ≥8 校验）。
   // initiative-level callers（不传 wtKey/branch）走老路用 shortTaskId(taskId) + makeCpBranchName。
@@ -172,8 +197,12 @@ export async function ensureHarnessWorktree(opts) {
           const url = String(remoteUrl || '').trim();
           let baseRepoGithubUrl = '';
           try {
-            const { stdout: gh } = await execFn('git', ['-C', cloneSource, 'remote', 'get-url', 'origin']);
-            baseRepoGithubUrl = String(gh || '').trim();
+            if (cloneViaRemote) {
+              baseRepoGithubUrl = cloneSource;
+            } else {
+              const { stdout: gh } = await execFn('git', ['-C', cloneSource, 'remote', 'get-url', 'origin']);
+              baseRepoGithubUrl = String(gh || '').trim();
+            }
           } catch { /* cloneSource origin 读不到，下面只校 cloneSource 路径 */ }
           const canonicalUrl = canonicalRemoteUrl(url);
           const canonicalCloneSource = canonicalRemoteUrl(cloneSource);
@@ -219,7 +248,7 @@ export async function ensureHarnessWorktree(opts) {
 
   // H17: 当 cloneSource 是远端 URL（GitHub/SSH）时跳过 --local --no-hardlinks。
   // --local 仅对本地路径有意义（hardlink 优化）；远端 URL 传 --local 部分 git 版本会 fatal。
-  if (cloneSourceIsLocal) {
+  if (!cloneViaRemote) {
     await execFn('git', [
       'clone', '--local', '--no-hardlinks',
       '--branch', 'main', '--single-branch',
@@ -254,7 +283,7 @@ export async function ensureHarnessWorktree(opts) {
   // clone --local 让 origin 默认指向 baseRepo 本地路径，导致 sub-task 节点 (H13) git fetch origin
   // <propose-branch> 失败 — proposer push 到 GitHub origin，本地仓库没 cp-harness-propose-* 分支。
   // H17: cloneSource 已是远端 URL 时 origin 已正确设置，跳过 set-url 步骤。
-  if (cloneSourceIsLocal) {
+  if (!cloneViaRemote) {
     try {
       const { stdout: githubUrl } = await execFn('git', ['-C', cloneSource, 'remote', 'get-url', 'origin']);
       await execFn('git', ['-C', wtPath, 'remote', 'set-url', 'origin', githubUrl.trim()]);

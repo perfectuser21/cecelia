@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.58
+**Brain 版本**: 1.273.59
+
+## Brain 1.273.59 — Partial Clone Workspace Authority
+
+- Harness 检测本地 clone source 的 `remote.origin.promisor`：完整本地仓库继续走无 hardlink 的本地快照；promisor/partial clone 改从 canonical origin 获取完整对象，避免任务工作区缺 blob、无法 checkout。
+- promisor source 缺少可用 origin 时 fail-closed，不降级复制不完整对象；远端凭据仅用于 clone，完成后恢复无凭据 origin URL。
 
 ## Brain 1.273.58 — Generator Infrastructure Retry Identity
 
