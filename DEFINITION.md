@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.57
+**Brain 版本**: 1.273.58
 
 ## Brain 1.273.57 — Planner Role Branch Authority
 
