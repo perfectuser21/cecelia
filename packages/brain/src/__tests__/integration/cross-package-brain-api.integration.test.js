@@ -23,6 +23,10 @@ import request from 'supertest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { cleanupRoutedTasks } from '../helpers/routed-task-cleanup.js';
+import {
+  cleanupActiveCapability,
+  seedActiveCapability,
+} from './helpers/take-map-authority-fixture.js';
 
 // ─── Mock 外部依赖 ────────────────────────────────────────────────────────────
 
@@ -90,6 +94,7 @@ vi.mock('../../openai-client.js', () => ({
 
 const testPool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
 const insertedTaskIds = [];
+const mapFixtureRepo = `cross-package-${process.pid}-${Date.now()}`;
 
 // ─── Express App 工厂（模拟 apps/api 视角调用 Brain）────────────────────────
 
@@ -119,7 +124,8 @@ async function createTestTask(app, overrides = {}) {
     ? {
         mutation_intent: 'write',
         change_kind: 'capability_change',
-        repo_hint: 'cecelia',
+        repo_hint: mapFixtureRepo,
+        map_scope_hint: ['F1'],
         branch: 'cp-cross-package-fixture',
         base_sha: 'a'.repeat(40),
       }
@@ -145,13 +151,21 @@ async function createTestTask(app, overrides = {}) {
 
 describe('Cross-Package Brain API — 核心端点合约验证（真实 PostgreSQL）', () => {
   let app;
+  let mapFixture;
 
   beforeAll(async () => {
+    mapFixture = await seedActiveCapability(testPool, {
+      scopeKey: mapFixtureRepo,
+      repo: mapFixtureRepo,
+      nodeKey: 'F1',
+      ensureRepository: true,
+    });
     app = await makeApp();
   }, 20000);
 
   afterAll(async () => {
     await cleanupRoutedTasks(testPool, insertedTaskIds);
+    await cleanupActiveCapability(testPool, mapFixture);
     await testPool.end();
   });
 

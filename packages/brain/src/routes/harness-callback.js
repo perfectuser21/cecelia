@@ -48,14 +48,13 @@ import {
   normalizeGitSha,
 } from '../orchestrator/pr-head-resolver.js';
 import {
-  defaultGitBranchHeadResolver,
-} from '../orchestrator/git-branch-head-resolver.js';
-import {
   defaultCommitLineageResolver,
 } from '../orchestrator/commit-lineage-resolver.js';
 import { normalizeFailureSignature } from '../orchestrator/convergence-signatures.js';
 import { parseBaseRepo } from '../orchestrator/github-pr-discovery.js';
 import { verifyJudgeCallbackResult } from '../orchestrator/judge-result-verifier.js';
+import { resolveRemoteExactCommitBlob } from '../orchestrator/remote-exact-commit-blob-resolver.js';
+import { persistPlannerRecoveryReceipt } from '../orchestrator/planner-recovery-receipt-store.js';
 
 const router = Router();
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -84,6 +83,28 @@ const TERMINAL_CALLBACK_STATUSES = new Set([
   'failed',
   'cancelled',
 ]);
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
+
+function verifiedContractIdentity(inputs) {
+  const identity = inputs?.contract_identity;
+  if (identity == null) return null;
+  if (
+    typeof identity !== 'object'
+    || !UUID_PATTERN.test(identity.contract_id ?? '')
+    || !SHA256_PATTERN.test(identity.manifest_sha256 ?? '')
+    || !GIT_SHA_PATTERN.test(identity.source_revision ?? '')
+  ) {
+    const error = new Error('frozen_contract_identity_invalid');
+    error.status = 409;
+    throw error;
+  }
+  return {
+    contract_id: identity.contract_id,
+    manifest_sha256: identity.manifest_sha256,
+    source_revision: identity.source_revision,
+  };
+}
 
 function createAttemptCallbackRateLimit({ limit, identifier }) {
   return rateLimit({
@@ -150,7 +171,6 @@ function attemptCommanderCursor(attempt) {
 }
 
 const GITHUB_PULL_REQUEST_URL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/[1-9]\d*\/?$/;
-const CANONICAL_BRANCH = /^cp-[a-z0-9][a-z0-9._-]{0,126}$/;
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
@@ -398,101 +418,15 @@ async function verifyGeneratorPullRequestClaims(
   return { ...result, artifacts };
 }
 
-async function verifyPlannerGitArtifactClaim(attempt, result, resolveBranchHead) {
-  if (
-    attempt.role !== 'planner'
-    || !['completed', 'completed_with_concerns'].includes(result.status)
-    || !['fleet-worker', 'remote-bridge'].includes(attempt.execution_transport)
-  ) {
-    return result;
-  }
-  const inputs = attemptTaskBundle(attempt)?.inputs ?? {};
-  const sprintDir = typeof inputs.sprint_dir === 'string'
-    ? inputs.sprint_dir.replace(/\/+$/, '')
-    : '';
-  const branch = inputs.planner_branch;
-  const repo = inputs.workspace_spec?.repo;
-  const expectedPath = sprintDir ? `${sprintDir}/sprint-prd.md` : '';
-  const claim = (result.artifacts ?? []).find((artifact) => (
-    artifact?.type === 'git_artifact'
-    && artifact.kind === 'planner_prd'
-  ));
-  const claimedSha = normalizeGitSha(claim?.head_sha);
-  if (
-    !claim
-    || !expectedPath
-    || claim.path !== expectedPath
-    || typeof repo !== 'string'
-    || !repo
-    || claim.repo !== repo
-    || !CANONICAL_BRANCH.test(branch ?? '')
-    || claim.branch !== branch
-    || !claimedSha
-  ) {
-    const error = new Error('planner_git_artifact_invalid');
-    error.status = 409;
-    throw error;
-  }
-  let resolvedSha;
-  let pathExists = false;
-  try {
-    const resolved = await resolveBranchHead({
-      repo,
-      branch,
-      path: expectedPath,
-    });
-    resolvedSha = normalizeGitSha(resolved?.head_sha);
-    pathExists = resolved?.path_exists === true;
-  } catch (cause) {
-    const error = new Error('planner_git_artifact_verification_unavailable');
-    error.status = 503;
-    error.cause = cause;
-    throw error;
-  }
-  if (!pathExists) {
-    const error = new Error('planner_git_artifact_path_missing');
-    error.status = 409;
-    throw error;
-  }
-  if (!resolvedSha || resolvedSha !== claimedSha) {
-    const error = new Error('planner_git_artifact_mismatch');
-    error.status = 409;
-    throw error;
-  }
-  const verified = {
-    type: 'git_artifact',
-    kind: 'planner_prd',
-    path: expectedPath,
-    repo,
-    branch,
-    head_sha: resolvedSha,
-    verification_status: 'verified',
-  };
-  return {
-    ...result,
-    artifacts: (result.artifacts ?? []).map((artifact) => (
-      artifact === claim ? verified : artifact
-    )),
-    server_verification: {
-      planner_git_artifact: {
-        method: 'git_branch_head',
-        artifact: {
-          path: expectedPath,
-          repo,
-          branch,
-          head_sha: resolvedSha,
-        },
-      },
-    },
-  };
-}
-
 export async function appendAttemptVerdict(attempt, result, db = pool) {
   if (!result.decision || !['reviewer', 'evaluator'].includes(attempt.role)) return;
   if (!['completed', 'completed_with_concerns'].includes(result.status)) return;
 
   const action = attempt.role === 'reviewer' ? 'verdict:reviewer' : 'verdict:evaluate';
   const inputs = attempt.task_bundle?.inputs ?? {};
+  const contractIdentity = attempt.role === 'evaluator'
+    ? verifiedContractIdentity(inputs)
+    : null;
   const failureSignature = normalizeFailureSignature(result.decision.failure_signature);
   const detail = attempt.role === 'reviewer'
     ? {
@@ -509,6 +443,7 @@ export async function appendAttemptVerdict(attempt, result, db = pool) {
         failure_class: result.decision.failure_class ?? null,
         ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
         feedback: result.decision.reason,
+        ...(contractIdentity == null ? {} : { contract_identity: contractIdentity }),
       };
 
   // One statement + transaction-scoped advisory lock makes callback retries/concurrency
@@ -803,7 +738,7 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
       throw new Error(`attempt_id mismatch: body=${result.attempt_id} path=${attemptId}`);
     }
   } catch (error) {
-    return res.status(400).json({ ok: false, error: error.message });
+    return res.status(error.status || 400).json({ ok: false, error: error.message });
   }
 
   if (attempt.provider && attempt.provider !== 'auto'
@@ -886,6 +821,13 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
   }
 
   const sessionId = result.provider_metadata?.session_id ?? null;
+  if (
+    ['completed', 'completed_with_concerns'].includes(result.status)
+    && ['evaluator', 'judge'].includes(attempt.role)
+    && !sessionId
+  ) {
+    return res.status(409).json({ ok: false, error: 'provider_session_required' });
+  }
   if (sessionId) {
     try {
       await attemptStore.assertFreshRoleSession({
@@ -910,17 +852,16 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
   }
 
   const resolver = req.app.get('kernelPrIdentityResolver') || defaultPrIdentityResolver;
-  const branchHeadResolver = req.app.get('kernelGitBranchHeadResolver')
-    || defaultGitBranchHeadResolver;
   const commitLineageResolver = req.app.get('kernelCommitLineageResolver')
     || defaultCommitLineageResolver;
   let verifiedResult;
+  let plannerExactEvidence = null;
   try {
-    verifiedResult = await verifyPlannerGitArtifactClaim(
-      attempt,
-      result,
-      branchHeadResolver,
-    );
+    const plannerExactResolver = req.app.get('kernelPlannerRecoveryExactBlobResolver')
+      || resolveRemoteExactCommitBlob;
+    const plannerResolution = await plannerExactResolver({ attempt, result });
+    verifiedResult = plannerResolution.sanitizedResult;
+    plannerExactEvidence = plannerResolution.exactEvidence;
     verifiedResult = await verifyGeneratorPullRequestClaims(
       attempt,
       verifiedResult,
@@ -995,13 +936,22 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
   try {
     const receiptWriter = req.app.get('kernelAssertionReceiptWriter')
       || persistTrustedEvaluatorReceipts;
+    const plannerReceiptWriter = req.app.get('kernelPlannerRecoveryReceiptWriter')
+      || persistPlannerRecoveryReceipt;
     const outcome = await attemptStore.recordCallbackTerminal({
       attemptId,
       runId: attempt.run_id,
       leaseOwner,
       leaseGeneration,
       result: verifiedResult,
-      beforeCommit: (client) => receiptWriter(client, { attempt, result: verifiedResult }),
+      beforeCommit: async (client, { attempt: terminalAttempt, result: terminalResult }) => {
+        await receiptWriter(client, { attempt: terminalAttempt, result: terminalResult });
+        await plannerReceiptWriter(client, {
+          terminalAttempt,
+          result: terminalResult,
+          exactEvidence: plannerExactEvidence,
+        });
+      },
     });
     if (!outcome.attempt) {
       return res.status(409).json({
@@ -1011,7 +961,10 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
     }
     return res.json({ ok: true, attemptId, deduped: outcome.deduped });
   } catch (error) {
-    if (error.code === 'assertion_receipt_evidence_invalid') {
+    if (
+      error.code === 'assertion_receipt_evidence_invalid'
+      || error.code === 'planner_recovery_receipt_evidence_invalid'
+    ) {
       return res.status(error.httpStatus ?? 409).json({ ok: false, error: error.code });
     }
     console.error(`[harness-attempt-callback] attempt=${attemptId}: ${error.message}`);

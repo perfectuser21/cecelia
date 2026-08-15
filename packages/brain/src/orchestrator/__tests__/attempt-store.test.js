@@ -1032,13 +1032,19 @@ describe('attempt store', () => {
   ])('本地 candidate 的 %s verdict 锚定 candidate SHA', async (role, action) => {
     const candidateHead = 'd'.repeat(40);
     const staleRemoteHead = 'a'.repeat(40);
+    const contractIdentity = {
+      contract_id: '12121212-1212-4121-8121-121212121212',
+      manifest_sha256: 'e'.repeat(64),
+      source_revision: 'f'.repeat(40),
+    };
+    const coverage = [{ step: 'frozen contract', passed: true, evidence: 'verified' }];
     const callbackResult = {
       status: 'completed',
       summary: `${role} passed local candidate`,
       artifacts: [],
       checks: [],
       provider_metadata: { provider: 'codex' },
-      decision: { outcome: 'PASS', reason: 'candidate verified' },
+      decision: { outcome: 'PASS', reason: 'candidate verified', coverage },
       error: null,
     };
     const running = {
@@ -1055,6 +1061,7 @@ describe('attempt store', () => {
           pull_request: { head_sha: staleRemoteHead },
           candidate: { head_sha: candidateHead },
           pr_head_sha: candidateHead,
+          contract_identity: contractIdentity,
         },
       },
       result: null,
@@ -1088,6 +1095,8 @@ describe('attempt store', () => {
     expect(JSON.parse(projection[1][5])).toMatchObject({
       verdict: 'PASS',
       pr_head_sha: candidateHead,
+      contract_identity: contractIdentity,
+      coverage,
     });
   });
 
@@ -1424,8 +1433,16 @@ describe('attempt store', () => {
     ]);
   });
 
+  it('machine-scoped create fail-closes unless given a Pool or explicit transaction client', async () => {
+    const queryOnlyClient = poolWith({ rows: [{ id: input.id }], rowCount: 1 });
+
+    await expect(createAttemptStore(queryOnlyClient).createAttempt(input))
+      .rejects.toThrow('machine-scoped createAttempt requires a Pool or transactionClient');
+    expect(queryOnlyClient.query).not.toHaveBeenCalled();
+  });
+
   it('按 run/hop 幂等创建 attempt，并持久化冻结 Skill 元数据', async () => {
-    const pool = poolWith({
+    const pool = poolWith({ rows: [], rowCount: 0 }, {
       rows: [{
         id: input.id,
         status: 'queued',
@@ -1433,14 +1450,14 @@ describe('attempt store', () => {
       }],
       rowCount: 1,
     });
-    const store = createAttemptStore(pool);
+    const store = createAttemptStore(pool, { transactionClient: true });
 
     const result = await store.createAttempt(input);
 
     expect(result.id).toBe(input.id);
-    const [sql, values] = pool.query.mock.calls[0];
+    const [sql, values] = pool.query.mock.calls[1];
     expect(sql).toMatch(/INSERT INTO harness_attempts/i);
-    expect(sql).toMatch(/WITH guarded_run AS/i);
+    expect(sql).toMatch(/guarded_run AS MATERIALIZED/i);
     expect(sql).toMatch(/FROM initiative_runs/i);
     expect(sql).toMatch(/phase NOT IN \('done','failed'\)/i);
     expect(sql).toMatch(/FOR KEY SHARE/i);
@@ -1461,12 +1478,182 @@ describe('attempt store', () => {
     ]));
   });
 
+  it('autonomous singleton snapshot 在同一原子语句中先锁 machine，再排除其他 run 的活动 attempt', async () => {
+    const winner = { id: input.id, status: 'queued', machine_id: input.machineId };
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({
+          rows: [{ attempt: winner, machine_capacity_contended: false }],
+          rowCount: 1,
+        })
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+    const capacitySnapshot = {
+      verified: true,
+      machine: input.machineId,
+      capacity: {
+        ok: true,
+        available: 1,
+        physical_capacity: 1,
+        autonomous_progress_floor: true,
+      },
+    };
+
+    await createAttemptStore(pool).createAttempt({
+      ...input,
+      role: 'generator',
+      capacitySnapshot,
+    });
+
+    const [lockSql, lockValues] = client.query.mock.calls[1];
+    const [sql, values] = client.query.mock.calls[2];
+    expect(lockSql).toMatch(/pg_advisory_xact_lock/i);
+    expect(lockValues).toEqual([input.machineId]);
+    expect(sql).toMatch(
+      /status\s+IN\s*\(\s*'queued'\s*,\s*'starting'\s*,\s*'running'\s*\)/i,
+    );
+    expect(sql).toMatch(
+      /COALESCE\(active\.requested_machine_id,\s*active\.machine_id\)\s*=\s*\$8/i,
+    );
+    expect(sql).toMatch(
+      /existing\.run_id\s*=\s*run\.id[\s\S]*existing\.hop\s*=\s*\$3/i,
+    );
+    expect(sql).toMatch(
+      /active\.task_bundle\s*#>>\s*'\{inputs,_server_allocation,autonomous_progress_floor\}'\s*=\s*'true'/i,
+    );
+    expect(values[21]).toBe(true);
+    expect(values[13]).toMatchObject({
+      inputs: {
+        _server_allocation: {
+          autonomous_progress_floor: true,
+          machine_id: input.machineId,
+        },
+      },
+    });
+    expect(client.query.mock.calls.map(([statement]) => statement)).toEqual([
+      'BEGIN',
+      expect.stringMatching(/pg_advisory_xact_lock/i),
+      expect.stringMatching(/INSERT INTO harness_attempts/i),
+      'COMMIT',
+    ]);
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('rolls back and releases its Pool client when attempt INSERT fails', async () => {
+    const insertError = new Error('attempt insert failed');
+    const client = {
+      query: vi.fn()
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ rows: [] })
+        .mockRejectedValueOnce(insertError)
+        .mockResolvedValueOnce({}),
+      release: vi.fn(),
+    };
+    const pool = { query: vi.fn(), connect: vi.fn(async () => client) };
+
+    await expect(createAttemptStore(pool).createAttempt(input)).rejects.toBe(insertError);
+
+    expect(client.query.mock.calls.map(([statement]) => statement)).toEqual([
+      'BEGIN',
+      expect.stringMatching(/pg_advisory_xact_lock/i),
+      expect.stringMatching(/INSERT INTO harness_attempts/i),
+      'ROLLBACK',
+    ]);
+    expect(client.query.mock.calls.some(([statement]) => statement === 'COMMIT')).toBe(false);
+    expect(client.release).toHaveBeenCalledOnce();
+  });
+
+  it('removes a caller-forged singleton allocation marker without a trusted snapshot', async () => {
+    const winner = { id: input.id, status: 'queued' };
+    const pool = poolWith(
+      { rows: [], rowCount: 0 },
+      { rows: [winner], rowCount: 1 },
+    );
+
+    await createAttemptStore(pool, { transactionClient: true }).createAttempt({
+      ...input,
+      bundle: {
+        inputs: {
+          task: 'normal allocation',
+          _server_allocation: { autonomous_progress_floor: true },
+        },
+      },
+    });
+
+    const values = pool.query.mock.calls[1][1];
+    expect(values[13]).toEqual({ inputs: { task: 'normal allocation' } });
+    expect(values[21]).toBe(false);
+  });
+
+  it('autonomous singleton fence 仍返回同 run/hop 的幂等 winner', async () => {
+    const winner = {
+      id: '33333333-3333-4333-8333-333333333333',
+      run_id: input.runId,
+      hop: input.hop,
+      status: 'queued',
+      requested_machine_id: input.machineId,
+    };
+    const pool = poolWith(
+      { rows: [], rowCount: 0 },
+      { rows: [winner], rowCount: 1 },
+    );
+
+    await expect(createAttemptStore(pool, { transactionClient: true }).createAttempt({
+      ...input,
+      id: '44444444-4444-4444-8444-444444444444',
+      role: 'generator',
+      capacitySnapshot: {
+        verified: true,
+        machine: input.machineId,
+        capacity: {
+          ok: true,
+          available: 1,
+          physical_capacity: 1,
+          autonomous_progress_floor: true,
+        },
+      },
+    })).resolves.toEqual(winner);
+  });
+
+  it('machine fence contention 与 terminal/missing 使用不同错误合同', async () => {
+    const pool = poolWith(
+      { rows: [], rowCount: 0 },
+      {
+        rows: [{ attempt: null, machine_capacity_contended: true }],
+        rowCount: 1,
+      },
+    );
+
+    await expect(createAttemptStore(pool, { transactionClient: true }).createAttempt({
+      ...input,
+      role: 'generator',
+      capacitySnapshot: {
+        verified: true,
+        machine: input.machineId,
+        capacity: {
+          ok: true,
+          available: 1,
+          physical_capacity: 1,
+          autonomous_progress_floor: true,
+        },
+      },
+    })).rejects.toThrow(/^autonomous_singleton_capacity_contended$/);
+  });
+
   it('atomically consumes a run-bound map recovery contract only with its generator attempt', async () => {
-    const pool = poolWith({ rows: [{ id: input.id, status: 'queued' }], rowCount: 1 });
+    const pool = poolWith(
+      { rows: [], rowCount: 0 },
+      { rows: [{ id: input.id, status: 'queued' }], rowCount: 1 },
+    );
 
-    await createAttemptStore(pool).createAttempt({ ...input, role: 'generator' });
+    await createAttemptStore(pool, { transactionClient: true })
+      .createAttempt({ ...input, role: 'generator' });
 
-    const [sql, values] = pool.query.mock.calls[0];
+    const [sql, values] = pool.query.mock.calls[1];
     expect(sql).toMatch(/map_recovery_contract_id/i);
     expect(sql).toMatch(/INSERT INTO map_recovery_consumptions/i);
     expect(sql).toMatch(/consumption\.attempt_id = existing\.id/i);
@@ -1480,9 +1667,10 @@ describe('attempt store', () => {
       { rows: [], rowCount: 0 },
       { rows: [], rowCount: 0 },
       { rows: [], rowCount: 0 },
+      { rows: [], rowCount: 0 },
     );
 
-    await expect(createAttemptStore(pool).createAttempt(input))
+    await expect(createAttemptStore(pool, { transactionClient: true }).createAttempt(input))
       .rejects.toThrow(`Kernel run is terminal or missing: ${input.runId}`);
   });
 
@@ -1495,15 +1683,17 @@ describe('attempt store', () => {
     };
     const pool = poolWith(
       { rows: [], rowCount: 0 },
+      { rows: [], rowCount: 0 },
       { rows: [winner], rowCount: 1 },
     );
 
-    await expect(createAttemptStore(pool).createAttempt(input)).resolves.toEqual(winner);
+    await expect(createAttemptStore(pool, { transactionClient: true }).createAttempt(input))
+      .resolves.toEqual(winner);
 
-    expect(pool.query).toHaveBeenCalledTimes(2);
-    expect(pool.query.mock.calls[0][0]).toMatch(/ON CONFLICT \(run_id, hop\) DO NOTHING/i);
-    expect(pool.query.mock.calls[0][0]).not.toMatch(/DO UPDATE/i);
-    expect(pool.query.mock.calls[1]).toEqual([
+    expect(pool.query).toHaveBeenCalledTimes(3);
+    expect(pool.query.mock.calls[1][0]).toMatch(/ON CONFLICT \(run_id, hop\) DO NOTHING/i);
+    expect(pool.query.mock.calls[1][0]).not.toMatch(/DO UPDATE/i);
+    expect(pool.query.mock.calls[2]).toEqual([
       expect.stringMatching(
         /FROM harness_attempts attempt[\s\S]*JOIN initiative_runs run[\s\S]*attempt\.run_id=\$1[\s\S]*attempt\.hop=\$2[\s\S]*FOR KEY SHARE OF run/i,
       ),
@@ -1517,7 +1707,7 @@ describe('attempt store', () => {
       { rows: [{ id: input.id, status: 'running' }], rowCount: 1 },
       { rows: [{ id: input.id, status: 'running' }], rowCount: 1 },
     );
-    const store = createAttemptStore(pool);
+    const store = createAttemptStore(pool, { queryOnlyTestAdapter: true });
 
     await store.markStarting(input.id, { leaseOwner: 'brain-1', leaseSeconds: 90 });
     await store.markRunning(input.id, {
@@ -1545,7 +1735,7 @@ describe('attempt store', () => {
 
   it('watchdog 只能 reclaim 已过期的同一个非终态 attempt', async () => {
     const pool = poolWith({ rows: [{ id: input.id, status: 'starting' }], rowCount: 1 });
-    const store = createAttemptStore(pool);
+    const store = createAttemptStore(pool, { queryOnlyTestAdapter: true });
 
     await store.reclaim(input.id, { leaseOwner: 'watchdog-1', leaseSeconds: 180 });
 
@@ -1638,7 +1828,7 @@ describe('attempt store', () => {
       { rows: [{ id: input.id, status: 'completed' }], rowCount: 1 },
       { rows: [], rowCount: 0 },
     );
-    const store = createAttemptStore(pool);
+    const store = createAttemptStore(pool, { queryOnlyTestAdapter: true });
     const result = { status: 'completed', summary: 'done' };
 
     expect(await store.complete(input.id, result, { leaseOwner: 'brain-1' })).toMatchObject({ deduped: false });
@@ -1650,7 +1840,7 @@ describe('attempt store', () => {
 
   it('semantic refusal 作为成功终态的规范化 failure class 持久化', async () => {
     const pool = poolWith({ rows: [{ id: input.id, status: 'blocked' }], rowCount: 1 });
-    const store = createAttemptStore(pool);
+    const store = createAttemptStore(pool, { queryOnlyTestAdapter: true });
     const result = {
       status: 'blocked',
       summary: 'needs product context',
@@ -1676,7 +1866,7 @@ describe('attempt store', () => {
 
   it('失败也遵循终态幂等守卫', async () => {
     const pool = poolWith({ rows: [{ id: input.id, status: 'failed' }], rowCount: 1 });
-    const store = createAttemptStore(pool);
+    const store = createAttemptStore(pool, { queryOnlyTestAdapter: true });
 
     const outcome = await store.fail(input.id, {
       code: 'launch_failed',
@@ -1694,7 +1884,7 @@ describe('attempt store', () => {
 
   it('claimed failure optionally fences the exact lease generation', async () => {
     const pool = poolWith({ rows: [{ id: input.id, status: 'failed' }], rowCount: 1 });
-    const store = createAttemptStore(pool);
+    const store = createAttemptStore(pool, { queryOnlyTestAdapter: true });
 
     await store.fail(input.id, {
       code: 'launch_failed',
@@ -1716,6 +1906,7 @@ describe('attempt store', () => {
       'runner_failure',
       'brain-1',
       4,
+      false,
     ]);
   });
 

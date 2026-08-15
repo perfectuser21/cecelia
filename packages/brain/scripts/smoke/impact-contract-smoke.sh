@@ -2,6 +2,7 @@
 set -euo pipefail
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 BASE_SHA="$(git rev-parse HEAD)"
+SMOKE_TAG="impact-contract-${GITHUB_RUN_ID:-local}-$$-$RANDOM"
 PASS=0; FAIL=0
 ok()   { echo "  ✅ $1"; ((PASS++)) || true; }
 fail() { echo "  ❌ $1"; ((FAIL++)) || true; }
@@ -9,12 +10,14 @@ fail() { echo "  ❌ $1"; ((FAIL++)) || true; }
 echo "── impact-contract smoke ──"
 RESP_FILE=$(mktemp)
 trap 'rm -f "$RESP_FILE"' EXIT
+DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia_test}" \
+  node "$(dirname "$0")/ensure-cecelia-route-authority.mjs"
 
 # Case 1: change_kind 映射正确（change_kind=bugfix 与 payload.gear=segmented 独立存在）
 # task_type=dev(合法枚举), change_kind=bugfix(显式), payload.gear=segmented(通过 payload 传入)
 TASK=$(curl -sf -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
-  -d "{\"title\":\"smoke:impact-contract\",\"task_type\":\"dev\",\"change_kind\":\"bugfix\",\"base_sha\":\"$BASE_SHA\",\"payload\":{\"gear\":\"segmented\"}}" 2>/dev/null) || \
+  -d "{\"title\":\"smoke:impact-contract:$SMOKE_TAG\",\"task_type\":\"dev\",\"change_kind\":\"bugfix\",\"base_sha\":\"$BASE_SHA\",\"repo_hint\":\"cecelia\",\"map_scope_hint\":[\"F1\"],\"payload\":{\"gear\":\"segmented\",\"smoke_tag\":\"$SMOKE_TAG\"}}" 2>/dev/null) || \
   { fail "POST /tasks 创建失败"; TASK="{}"; }
 
 TASK_ID=$(echo "$TASK" | jq -r '.id // empty' 2>/dev/null)

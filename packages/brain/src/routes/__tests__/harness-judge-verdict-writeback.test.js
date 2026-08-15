@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -27,6 +27,10 @@ let worktree;
 beforeEach(async () => {
   vi.clearAllMocks();
   worktree = mkdtempSync(join(tmpdir(), 'judge-writeback-'));
+  writeFileSync(join(worktree, '.brain-result.json'), JSON.stringify({
+    verdict: 'PASS',
+    feedback: null,
+  }));
   poolQuery.mockImplementation(async (sql, params = []) => {
     if (typeof sql === 'string' && sql.includes('SELECT r.id')) {
       return {
@@ -42,6 +46,25 @@ beforeEach(async () => {
   });
   const routerMod = await import('../harness.js');
   app = express();
+  app.set('kernelOneSessionGroundTruthCollector', async ({ runId, taskId }) => ({
+    run: { id: runId },
+    task: { id: taskId },
+    pr: { head_sha: 'a'.repeat(40) },
+    contract: {
+      approved: true,
+      id: '22222222-3333-4444-8555-666666666666',
+      identity: {
+        contract_id: '22222222-3333-4444-8555-666666666666',
+        manifest_sha256: 'b'.repeat(64),
+        source_revision: 'c'.repeat(40),
+      },
+      artifacts: [{
+        path: 'sprints/judge-writeback/contract-draft.md',
+        content: '# Contract',
+      }],
+    },
+  }));
+  app.set('kernelOneSessionJudgeReceiptWriter', async () => ({ persisted: true }));
   app.use(express.json());
   app.use('/', routerMod.default);
 });

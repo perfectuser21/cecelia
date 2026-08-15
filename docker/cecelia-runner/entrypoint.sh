@@ -597,6 +597,13 @@ prepare_evaluator_provider_identity() {
     -u GITHUB_TOKEN
     -u CECELIA_GITHUB_CREDENTIAL_REF
     -u CECELIA_GITHUB_CREDENTIAL_FIFO
+    -u GIT_DIR
+    -u GIT_COMMON_DIR
+    -u GIT_OBJECT_DIRECTORY
+    -u GIT_ALTERNATE_OBJECT_DIRECTORIES
+    -u GIT_REPLACE_REF_BASE
+    -u GIT_SHALLOW_FILE
+    GIT_NO_REPLACE_OBJECTS=1
   )
   if is_generator_task_bundle; then
     # Provider cannot publish refs. The trusted parent publishes the exact local
@@ -1174,6 +1181,427 @@ frozen_baseline_enabled() {
   [[ "${HARNESS_FROZEN_BASELINE:-false}" == "true" ]]
 }
 
+is_evaluator_dependency_path() {
+  local path="$1"
+  [[ "$path" == node_modules/* || "$path" == */node_modules/* ]]
+}
+
+frozen_sha256_stream() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum | awk '{print $1}'
+  else
+    shasum -a 256 | awk '{print $1}'
+  fi
+}
+
+assert_frozen_evaluator_git_admin_safe() {
+  [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0
+
+  local workspace="${WORKTREE_PATH:-/workspace}"
+  local git_dir=""
+  local common_dir=""
+  local admin_dir=""
+  local replace_ref=""
+  local hazard=""
+  local env_name=""
+
+  for env_name in GIT_DIR GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+    GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_REPLACE_REF_BASE GIT_SHALLOW_FILE; do
+    if [[ -n "${!env_name+x}" ]]; then
+      echo "[entrypoint] frozen evaluator rejected Git identity override: $env_name" >&2
+      return 1
+    fi
+  done
+  git_dir="$(git --no-replace-objects -C "$workspace" \
+    rev-parse --path-format=absolute --absolute-git-dir 2>/dev/null)" || return 1
+  common_dir="$(git --no-replace-objects -C "$workspace" \
+    rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  git_dir="$(cd "$git_dir" && pwd -P)" || return 1
+  common_dir="$(cd "$common_dir" && pwd -P)" || return 1
+
+  replace_ref="$(git --no-replace-objects -C "$workspace" \
+    for-each-ref --format='%(refname)' refs/replace 2>/dev/null)" || return 1
+  if [[ -n "$replace_ref" ]]; then
+    echo "[entrypoint] frozen evaluator rejected Git replacement refs" >&2
+    return 1
+  fi
+  for admin_dir in "$git_dir" "$common_dir"; do
+    for hazard in info/grafts shallow objects/info/alternates \
+      objects/info/http-alternates; do
+      if [[ -e "$admin_dir/$hazard" || -L "$admin_dir/$hazard" ]]; then
+        echo "[entrypoint] frozen evaluator rejected Git admin mechanism: $hazard" >&2
+        return 1
+      fi
+    done
+  done
+}
+
+write_frozen_evaluator_git_identity() {
+  local output_file="$1"
+  local workspace="${WORKTREE_PATH:-/workspace}"
+  local start_sha="${HARNESS_WORKSPACE_START_SHA:-}"
+  local git_dir=""
+  local common_dir=""
+  local head_sha=""
+  local head_ref=""
+  local tree_sha=""
+  local commit_digest=""
+  local tree_digest=""
+  local index_digest=""
+  local refs_digest=""
+  local config_digest=""
+
+  assert_frozen_evaluator_git_admin_safe || return 1
+  workspace="$(cd "$workspace" && pwd -P)" || return 1
+  git_dir="$(git --no-replace-objects -C "$workspace" \
+    rev-parse --path-format=absolute --absolute-git-dir 2>/dev/null)" || return 1
+  common_dir="$(git --no-replace-objects -C "$workspace" \
+    rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  git_dir="$(cd "$git_dir" && pwd -P)" || return 1
+  common_dir="$(cd "$common_dir" && pwd -P)" || return 1
+  head_sha="$(git --no-replace-objects -C "$workspace" \
+    rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" || return 1
+  [[ "$head_sha" == "$start_sha" ]] || return 1
+  head_ref="$(git --no-replace-objects -C "$workspace" \
+    symbolic-ref -q HEAD 2>/dev/null || printf '%s' DETACHED)" || return 1
+  tree_sha="$(git --no-replace-objects -C "$workspace" \
+    rev-parse --verify "${start_sha}^{tree}" 2>/dev/null)" || return 1
+  commit_digest="$(git --no-replace-objects -C "$workspace" \
+    cat-file commit "$start_sha" | frozen_sha256_stream)" || return 1
+  tree_digest="$(git --no-replace-objects -C "$workspace" \
+    ls-tree -r -z --full-tree "$start_sha" | frozen_sha256_stream)" || return 1
+  index_digest="$(git --no-replace-objects -C "$workspace" \
+    ls-files --stage -z | frozen_sha256_stream)" || return 1
+  refs_digest="$(git --no-replace-objects -C "$workspace" \
+    for-each-ref --format='%(objectname) %(refname)' | LC_ALL=C sort \
+    | frozen_sha256_stream)" || return 1
+  config_digest="$(git --no-replace-objects -C "$workspace" \
+    config --local --null --list | frozen_sha256_stream)" || return 1
+  printf '%s\0' "$workspace" "$git_dir" "$common_dir" "$head_sha" "$head_ref" \
+    "$tree_sha" "$commit_digest" "$tree_digest" "$index_digest" \
+    "$refs_digest" "$config_digest" > "$output_file"
+}
+
+capture_frozen_evaluator_git_identity() {
+  [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0
+
+  local identity="$FROZEN_BASELINE_GUARD_DIR/evaluator-git-identity.manifest"
+  local identity_tmp="${identity}.capture.$$"
+  if ! write_frozen_evaluator_git_identity "$identity_tmp"; then
+    rm -f "$identity_tmp"
+    echo "[entrypoint] frozen evaluator Git identity could not be captured" >&2
+    return 1
+  fi
+  mv "$identity_tmp" "$identity" || return 1
+  chmod 0444 "$identity" || return 1
+}
+
+assert_frozen_evaluator_git_identity() {
+  [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0
+
+  local identity="$FROZEN_BASELINE_GUARD_DIR/evaluator-git-identity.manifest"
+  local observed="${identity}.observed.$$"
+  if [[ ! -r "$identity" ]] \
+      || ! write_frozen_evaluator_git_identity "$observed" \
+      || ! cmp -s "$identity" "$observed"; then
+    rm -f "$observed"
+    echo "[entrypoint] frozen evaluator Git identity or admin state drifted" >&2
+    return 1
+  fi
+  rm -f "$observed"
+}
+
+write_frozen_evaluator_dependency_manifest() {
+  local output_file="$1"
+  local workspace="${WORKTREE_PATH:-/workspace}"
+  local max_entries="${2:-250000}"
+  local max_total_bytes="${3:-4294967296}"
+  local max_file_bytes="${4:-268435456}"
+  local explicit_deadline_ms="${5:-}"
+
+  if [[ ! "$max_entries" =~ ^[1-9][0-9]*$ \
+      || ! "$max_total_bytes" =~ ^[1-9][0-9]*$ \
+      || ! "$max_file_bytes" =~ ^[1-9][0-9]*$ \
+      || ( -n "$explicit_deadline_ms" \
+        && ! "$explicit_deadline_ms" =~ ^[1-9][0-9]*$ ) ]]; then
+    return 1
+  fi
+  if ! node - "$workspace" "$output_file" \
+      "$max_entries" "$max_total_bytes" "$max_file_bytes" \
+      "$explicit_deadline_ms" <<'NODE'
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+
+const [workspace, outputFile, entriesArg, totalArg, fileArg, deadlineArg] = process.argv.slice(2);
+const HARD_MAX_ENTRIES = 250_000;
+const HARD_MAX_SCAN_ENTRIES = 500_000;
+const HARD_MAX_TOTAL_BYTES = 4n * 1024n * 1024n * 1024n;
+const HARD_MAX_FILE_BYTES = 256n * 1024n * 1024n;
+const HARD_MAX_MANIFEST_BYTES = 128 * 1024 * 1024;
+const HARD_MAX_PATH_BYTES = 8192;
+const HARD_MAX_DURATION_MS = 120_000;
+const HASH_BUFFER_BYTES = 1024 * 1024;
+
+const maxEntries = Math.min(Number(entriesArg), HARD_MAX_ENTRIES);
+const requestedTotalBytes = BigInt(totalArg);
+const requestedFileBytes = BigInt(fileArg);
+const maxTotalBytes = requestedTotalBytes < HARD_MAX_TOTAL_BYTES
+  ? requestedTotalBytes : HARD_MAX_TOTAL_BYTES;
+const maxFileBytes = requestedFileBytes < HARD_MAX_FILE_BYTES
+  ? requestedFileBytes : HARD_MAX_FILE_BYTES;
+const requestedDeadline = deadlineArg ? Number(deadlineArg) : Number.POSITIVE_INFINITY;
+const attemptDeadline = Date.parse(process.env.HARNESS_DEADLINE_AT ?? '');
+const deadline = Math.min(
+  Date.now() + HARD_MAX_DURATION_MS,
+  requestedDeadline,
+  Number.isFinite(attemptDeadline) ? attemptDeadline : Number.POSITIVE_INFINITY,
+);
+if (!Number.isSafeInteger(maxEntries) || maxEntries < 1
+    || (deadlineArg && !Number.isSafeInteger(requestedDeadline))
+    || !Number.isFinite(deadline) || deadline <= Date.now()) {
+  throw new Error('invalid or expired dependency manifest resource boundary');
+}
+
+const prefix = Buffer.from(`${workspace}/`);
+const workspaceRoot = fs.realpathSync(Buffer.from(workspace), { encoding: 'buffer' });
+const workspacePrefix = Buffer.concat([workspaceRoot, Buffer.from('/')]);
+const separator = Buffer.from([0]);
+const slash = Buffer.from('/');
+const dotGit = Buffer.from('.git');
+const nodeModules = Buffer.from('node_modules');
+const hashBuffer = Buffer.allocUnsafe(HASH_BUFFER_BYTES);
+const outputFd = fs.openSync(outputFile, 'w', 0o600);
+let dependencyEntries = 0;
+let scannedEntries = 0;
+let totalBytes = 0n;
+let manifestBytes = 0;
+
+function checkDeadline() {
+  if (Date.now() >= deadline) throw new Error('dependency manifest deadline exceeded');
+}
+
+function writeAll(buffer) {
+  manifestBytes += buffer.length;
+  if (manifestBytes > HARD_MAX_MANIFEST_BYTES) {
+    throw new Error('dependency manifest byte limit exceeded');
+  }
+  let offset = 0;
+  while (offset < buffer.length) offset += fs.writeSync(outputFd, buffer, offset);
+}
+
+function append(...parts) {
+  for (const part of parts) writeAll(part);
+}
+
+function listChildren(fullPath) {
+  checkDeadline();
+  const directory = fs.opendirSync(fullPath, { encoding: 'buffer', bufferSize: 64 });
+  const children = [];
+  try {
+    for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
+      checkDeadline();
+      scannedEntries += 1;
+      if (scannedEntries > HARD_MAX_SCAN_ENTRIES) {
+        throw new Error('dependency manifest scan entry limit exceeded');
+      }
+      const name = Buffer.isBuffer(entry.name) ? entry.name : Buffer.from(entry.name);
+      children.push(name);
+    }
+  } finally {
+    directory.closeSync();
+  }
+  return children.sort((left, right) => Buffer.compare(left, right));
+}
+
+function hashFile(fullPath, expectedBytes) {
+  if (expectedBytes > maxFileBytes) throw new Error('dependency single-file byte limit exceeded');
+  totalBytes += expectedBytes;
+  if (totalBytes > maxTotalBytes) throw new Error('dependency total byte limit exceeded');
+
+  const hash = crypto.createHash('sha256');
+  const file = fs.openSync(fullPath, 'r');
+  let actualBytes = 0n;
+  try {
+    for (let count = fs.readSync(file, hashBuffer); count > 0;
+      count = fs.readSync(file, hashBuffer)) {
+      checkDeadline();
+      actualBytes += BigInt(count);
+      hash.update(hashBuffer.subarray(0, count));
+    }
+  } finally {
+    fs.closeSync(file);
+  }
+  if (actualBytes !== expectedBytes) throw new Error('dependency file changed during capture');
+  return Buffer.from(hash.digest('hex'));
+}
+
+function record(relativePath, dependencyRootPath) {
+  checkDeadline();
+  dependencyEntries += 1;
+  if (dependencyEntries > maxEntries) throw new Error('dependency manifest entry limit exceeded');
+  if (relativePath.length > HARD_MAX_PATH_BYTES) throw new Error('dependency path byte limit exceeded');
+
+  const fullPath = Buffer.concat([prefix, relativePath]);
+  const stat = fs.lstatSync(fullPath, { bigint: true });
+  const mode = Buffer.from((stat.mode & 0o7777n).toString(8));
+  if (stat.isSymbolicLink()) {
+    if (relativePath.equals(dependencyRootPath)) {
+      throw new Error('dependency root cannot be a symbolic link');
+    }
+    const resolvedTarget = fs.realpathSync(fullPath, { encoding: 'buffer' });
+    if (!resolvedTarget.equals(workspaceRoot)
+        && !resolvedTarget.subarray(0, workspacePrefix.length).equals(workspacePrefix)) {
+      throw new Error('dependency symbolic link escapes the frozen workspace tree');
+    }
+    const target = fs.readlinkSync(fullPath, { encoding: 'buffer' });
+    totalBytes += BigInt(target.length);
+    if (totalBytes > maxTotalBytes) throw new Error('dependency total byte limit exceeded');
+    append(Buffer.from('L\0'), relativePath, separator, mode, separator, target,
+      separator, resolvedTarget, separator);
+  } else if (stat.isDirectory()) {
+    append(Buffer.from('D\0'), relativePath, separator, mode, separator);
+    const children = listChildren(fullPath);
+    for (const child of children) {
+      record(Buffer.concat([relativePath, slash, child]), dependencyRootPath);
+    }
+  } else if (stat.isFile()) {
+    const digest = hashFile(fullPath, stat.size);
+    append(Buffer.from('F\0'), relativePath, separator, mode, separator, digest, separator);
+  } else {
+    throw new Error(`unsupported dependency entry type: ${relativePath.toString('utf8')}`);
+  }
+}
+
+function discover(relativeDirectory) {
+  checkDeadline();
+  const fullDirectory = relativeDirectory.length === 0
+    ? Buffer.from(workspace)
+    : Buffer.concat([prefix, relativeDirectory]);
+  for (const child of listChildren(fullDirectory)) {
+    if (child.equals(dotGit)) continue;
+    const relativePath = relativeDirectory.length === 0
+      ? child : Buffer.concat([relativeDirectory, slash, child]);
+    if (child.equals(nodeModules)) {
+      record(relativePath, relativePath);
+      continue;
+    }
+    const stat = fs.lstatSync(Buffer.concat([prefix, relativePath]));
+    if (stat.isDirectory()) discover(relativePath);
+  }
+}
+
+try {
+  discover(Buffer.alloc(0));
+} finally {
+  fs.closeSync(outputFd);
+}
+NODE
+  then
+    rm -f "$output_file"
+    return 1
+  fi
+}
+
+capture_frozen_evaluator_dependencies() {
+  [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0
+
+  local manifest="$FROZEN_BASELINE_GUARD_DIR/evaluator-dependencies.manifest"
+  local manifest_tmp="${manifest}.capture.$$"
+  if ! write_frozen_evaluator_dependency_manifest "$manifest_tmp"; then
+    rm -f "$manifest_tmp"
+    echo "[entrypoint] frozen evaluator dependencies could not be captured" >&2
+    return 1
+  fi
+  mv "$manifest_tmp" "$manifest" || return 1
+  chmod 0444 "$manifest" || return 1
+}
+
+assert_frozen_evaluator_candidate_tree() {
+  frozen_baseline_enabled || return 0
+  [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0
+
+  local phase="${1:-post-provider}"
+  local workspace="${WORKTREE_PATH:-/workspace}"
+  local start_sha="${HARNESS_WORKSPACE_START_SHA:-}"
+  local evidence_file="${BRAIN_RESULT_FILE:-$workspace/.brain-result.json}"
+  local evidence_parent=""
+  local evidence_path=""
+  local dependency_manifest="$FROZEN_BASELINE_GUARD_DIR/evaluator-dependencies.manifest"
+  local observed_manifest=""
+  local index_flags=""
+  local untracked_paths=""
+  local untracked_path=""
+
+  if ! workspace="$(cd "$workspace" && pwd -P)"; then
+    echo "[entrypoint] frozen evaluator candidate workspace is unreadable" >&2
+    return 1
+  fi
+  if [[ "$evidence_file" != /* ]] \
+      || [[ ! -d "$(dirname "$evidence_file")" ]] \
+      || ! evidence_parent="$(cd "$(dirname "$evidence_file")" && pwd -P)"; then
+    echo "[entrypoint] frozen evaluator evidence directory is not an independent absolute path" >&2
+    return 1
+  fi
+  evidence_path="$evidence_parent/$(basename "$evidence_file")"
+  if [[ "$evidence_path" == "$workspace" \
+      || "$evidence_path" == "$workspace"/* \
+      || ( -e "$evidence_path" && ( ! -f "$evidence_path" || -L "$evidence_path" ) ) ]]; then
+    echo "[entrypoint] frozen evaluator evidence must stay outside the product workspace" >&2
+    return 1
+  fi
+  assert_frozen_evaluator_git_admin_safe || return 1
+  if [[ "$phase" != "pre-provider" ]]; then
+    assert_frozen_evaluator_git_identity || return 1
+  fi
+  if [[ "$(git --no-replace-objects -C "$workspace" \
+      rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)" != "$start_sha" ]]; then
+    echo "[entrypoint] frozen evaluator candidate HEAD drifted from $start_sha" >&2
+    return 1
+  fi
+  if ! git --no-replace-objects -C "$workspace" \
+      diff --cached --quiet --no-ext-diff "$start_sha" -- \
+      || ! git --no-replace-objects -C "$workspace" \
+        diff --quiet --no-ext-diff "$start_sha" --; then
+    echo "[entrypoint] frozen evaluator candidate tracked files drifted" >&2
+    return 1
+  fi
+  if ! index_flags="$(git --no-replace-objects -C "$workspace" \
+      ls-files -v 2>/dev/null)"; then
+    echo "[entrypoint] frozen evaluator candidate index is unreadable" >&2
+    return 1
+  fi
+  if LC_ALL=C grep -Eq '^[a-zS] ' <<< "$index_flags"; then
+    echo "[entrypoint] frozen evaluator candidate index flags drifted" >&2
+    return 1
+  fi
+  if ! untracked_paths="$(git --no-replace-objects -C "$workspace" \
+      ls-files --others -- 2>/dev/null)"; then
+    echo "[entrypoint] frozen evaluator candidate untracked files are unreadable" >&2
+    return 1
+  fi
+  while IFS= read -r untracked_path; do
+    [[ -n "$untracked_path" ]] || continue
+    if is_evaluator_dependency_path "$untracked_path"; then
+      continue
+    fi
+    echo "[entrypoint] frozen evaluator candidate has untracked product file: $untracked_path" >&2
+    return 1
+  done <<< "$untracked_paths"
+  [[ "$phase" == "pre-provider" ]] && return 0
+  if [[ ! -r "$dependency_manifest" ]]; then
+    echo "[entrypoint] frozen evaluator dependency manifest is missing" >&2
+    return 1
+  fi
+  observed_manifest="${dependency_manifest}.observed.$$"
+  if ! write_frozen_evaluator_dependency_manifest "$observed_manifest" \
+      || ! cmp -s "$dependency_manifest" "$observed_manifest"; then
+    rm -f "$observed_manifest"
+    echo "[entrypoint] frozen evaluator installed dependencies drifted" >&2
+    return 1
+  fi
+  rm -f "$observed_manifest"
+}
+
 install_frozen_baseline_guard() {
   frozen_baseline_enabled || return 0
   FROZEN_BASELINE_PROVIDER_ENV=()
@@ -1186,23 +1614,29 @@ install_frozen_baseline_guard() {
     echo "[entrypoint] frozen baseline guard rejected an uncanonical start SHA" >&2
     return 1
   fi
-  if ! git -C "$workspace" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if ! git --no-replace-objects -C "$workspace" \
+      rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "[entrypoint] frozen baseline guard workspace is not a git worktree" >&2
     return 1
   fi
-  if ! git -C "$workspace" cat-file -e "${start_sha}^{commit}" 2>/dev/null; then
+  if ! git --no-replace-objects -C "$workspace" \
+      cat-file -e "${start_sha}^{commit}" 2>/dev/null; then
     echo "[entrypoint] frozen baseline start SHA is absent from the workspace" >&2
     return 1
   fi
-  if [[ "$(git -C "$workspace" rev-parse HEAD 2>/dev/null)" != "$start_sha" ]]; then
+  if [[ "$(git --no-replace-objects -C "$workspace" \
+      rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" != "$start_sha" ]]; then
     echo "[entrypoint] frozen baseline workspace did not start at the pinned SHA" >&2
     return 1
   fi
+  assert_frozen_evaluator_candidate_tree pre-provider || return 1
 
   local check="$FROZEN_BASELINE_GUARD_DIR/lineage-check.sh"
   local baseline_refs="$FROZEN_BASELINE_GUARD_DIR/baseline-refs"
   mkdir -p "$hooks_dir" || return 1
   rm -f "$hooks_dir/pre-push" "$check" "$baseline_refs"
+  capture_frozen_evaluator_git_identity || return 1
+  capture_frozen_evaluator_dependencies || return 1
 
   # 判据不是「start SHA 仍是 HEAD 的祖先」——生产事故里 main 本来就是 0dc4e3c0
   # 的后代，rebase 上去祖先关系照样成立，这条规则一个字都拦不住。真正的不变量是：
@@ -1210,7 +1644,8 @@ install_frozen_baseline_guard() {
   # Provider 启动前给「已存在的血统」拍一张快照（admin clone 里的 main、对照候选
   # 分支、远端跟踪分支都在其中）；之后任何一个落进 start SHA..HEAD 的 commit 只要
   # 在快照可达范围内，就说明 fetch/rebase/merge/pull 把别的血统搬了进来。
-  git -C "$workspace" for-each-ref --format='%(objectname)' refs/heads refs/remotes \
+  git --no-replace-objects -C "$workspace" \
+    for-each-ref --format='%(objectname)' refs/heads refs/remotes \
     | sort -u > "$baseline_refs" || return 1
   chmod 0444 "$baseline_refs" || return 1
 
@@ -1220,18 +1655,18 @@ install_frozen_baseline_guard() {
     printf "START_SHA='%s'\n" "$start_sha"
     printf "BASELINE_REFS='%s'\n" "$baseline_refs"
     printf '%s\n' 'commit="${1:-HEAD}"'
-    printf '%s\n' 'if ! git merge-base --is-ancestor "$START_SHA" "$commit"; then'
+    printf '%s\n' 'if ! git --no-replace-objects merge-base --is-ancestor "$START_SHA" "$commit"; then'
     printf '%s\n' '  echo "frozen_baseline_violation: $commit no longer descends from $START_SHA" >&2'
     printf '%s\n' '  exit 1'
     printf '%s\n' 'fi'
     printf '%s\n' 'exclusions=("^$START_SHA")'
     printf '%s\n' 'while IFS= read -r baseline_sha; do'
     printf '%s\n' '  [[ "$baseline_sha" =~ ^[0-9a-f]{40}$ ]] || continue'
-    printf '%s\n' '  git cat-file -e "${baseline_sha}^{commit}" 2>/dev/null || continue'
+    printf '%s\n' '  git --no-replace-objects cat-file -e "${baseline_sha}^{commit}" 2>/dev/null || continue'
     printf '%s\n' '  exclusions+=("^$baseline_sha")'
     printf '%s\n' 'done < "$BASELINE_REFS"'
-    printf '%s\n' 'introduced="$(git rev-list --count "$START_SHA..$commit")"'
-    printf '%s\n' 'own="$(git rev-list --count "$commit" "${exclusions[@]}")"'
+    printf '%s\n' 'introduced="$(git --no-replace-objects rev-list --count "$START_SHA..$commit")"'
+    printf '%s\n' 'own="$(git --no-replace-objects rev-list --count "$commit" "${exclusions[@]}")"'
     printf '%s\n' 'if [[ "$introduced" != "$own" ]]; then'
     printf '%s\n' '  echo "frozen_baseline_violation: $commit imported $((introduced - own)) commit(s) from another lineage above $START_SHA" >&2'
     printf '%s\n' '  exit 1'
@@ -1301,6 +1736,7 @@ assert_frozen_baseline_lineage() {
     echo "[entrypoint] frozen baseline violated above $start_sha" >&2
     return 1
   fi
+  assert_frozen_evaluator_candidate_tree
 }
 # frozen-baseline-guard:end
 
@@ -1359,8 +1795,10 @@ merge_required_assertion_evidence() {
   )"
 
   jq -e '
-    .status == "completed"
-    and (.decision.outcome as $outcome | ["PASS", "FIXED"] | index($outcome)) != null
+    (.status as $status
+      | ["completed", "completed_with_concerns"] | index($status)) != null
+    and (.decision.outcome as $outcome
+      | ["PASS", "FAIL", "FIXED"] | index($outcome)) != null
   ' "$normalized_result_file" >/dev/null 2>&1 || return 0
 
   if ! jq -e '
@@ -1398,7 +1836,11 @@ merge_required_assertion_evidence() {
 
   if [[ -n "$validation_error" ]]; then
     jq --arg reason "$validation_error" \
-      '.checks = [] | .decision.outcome = "FAIL" | .decision.reason = $reason' \
+      '.checks = []
+       | .decision.outcome = "FAIL"
+       | .decision.reason = $reason
+       | .decision.failure_class = "evidence_invalid"
+       | .decision.failure_signature = ["required_assertion_input_invalid"]' \
       "$normalized_result_file" > "$merged_result_file" &&
       mv "$merged_result_file" "$normalized_result_file"
     return 0
@@ -1429,7 +1871,9 @@ merge_required_assertion_evidence() {
       checkout --detach "$expected_sha" >> "$evidence_dir/worktree-setup.log" 2>&1; then
     jq '.checks = []
         | .decision.outcome = "FAIL"
-        | .decision.reason = "trusted assertion checkout creation failed"' \
+        | .decision.reason = "trusted assertion checkout creation failed"
+        | .decision.failure_class = "evidence_invalid"
+        | .decision.failure_signature = ["required_assertion_checkout_invalid"]' \
       "$normalized_result_file" > "$merged_result_file"
     mv "$merged_result_file" "$normalized_result_file"
     rm -rf "$evidence_dir"
@@ -1453,7 +1897,9 @@ merge_required_assertion_evidence() {
       > "$evidence_dir/dependency-install.log" 2>&1; then
     jq '.checks = []
         | .decision.outcome = "FAIL"
-        | .decision.reason = "trusted assertion dependency install failed"' \
+        | .decision.reason = "trusted assertion dependency install failed"
+        | .decision.failure_class = "evidence_invalid"
+        | .decision.failure_signature = ["required_assertion_dependency_invalid"]' \
       "$normalized_result_file" > "$merged_result_file"
     mv "$merged_result_file" "$normalized_result_file"
     rm -rf "$evidence_dir"
@@ -1555,7 +2001,9 @@ merge_required_assertion_evidence() {
     jq --slurpfile checks "$checks_file" --arg assertion_id "$failed_assertion" \
       '.checks = $checks[0]
        | .decision.outcome = "FAIL"
-       | .decision.reason = ("required assertion failed: " + $assertion_id)' \
+       | .decision.reason = ("required assertion failed: " + $assertion_id)
+       | .decision.failure_class = "product_failure"
+       | .decision.failure_signature = [("required_assertion:" + $assertion_id)]' \
       "$normalized_result_file" > "$merged_result_file"
   else
     jq --slurpfile checks "$checks_file" '.checks = $checks[0]' \
@@ -1850,8 +2298,100 @@ provider_result_schema_json() {
     printf '%s' '{"type":"object","properties":{"schema":{"type":"string","const":"commander-directive/v1"},"run_id":{"type":"string","format":"uuid"},"event_cursor":{"type":"integer","minimum":0},"action":{"type":"string","enum":["continue_default","dispatch_role","retry_attempt","revise_guidance","switch_provider","switch_machine","pause_run","request_human","abort_run"]},"target_role":{"type":["string","null"],"enum":["commander","planner","proposer","reviewer","generator","evaluator","judge",null]},"target_attempt_id":{"anyOf":[{"type":"string","format":"uuid"},{"type":"null"}]},"reason":{"type":"string","minLength":1,"maxLength":4000},"guidance":{"type":["string","null"],"maxLength":4000},"route":{"anyOf":[{"type":"object","properties":{"machine":{"type":["string","null"]},"provider":{"type":["string","null"]},"account":{"type":["string","null"]},"model":{"type":["string","null"]}},"required":["machine","provider","account","model"],"additionalProperties":false},{"type":"null"}]},"evidence_refs":{"type":"array","minItems":1,"maxItems":128,"items":{"type":"string","pattern":"^(event:[1-9][0-9]*|attempt:[0-9a-fA-F-]{36})$"}}},"required":["schema","run_id","event_cursor","action","target_role","target_attempt_id","reason","guidance","route","evidence_refs"],"additionalProperties":false}'
     return
   fi
+  if [[ "$expected_output" == "harness-result/evaluator-v1" ]]; then
+    jq -cn '
+      {
+        type: "object",
+        properties: {
+          status: {type: "string", enum: ["completed", "completed_with_concerns", "needs_context", "blocked"]},
+          summary: {type: "string"},
+          artifacts: {type: "array", items: {type: "string"}},
+          checks: {
+            type: "array",
+            items: {
+              anyOf: [
+                {type: "string"},
+                {
+                  type: "object",
+                  properties: {
+                    command: {type: "string"},
+                    exit_code: {type: "integer"},
+                    log_tail: {type: "string"},
+                    verification_level: {type: "string", enum: ["L1", "L2", "L3"]},
+                    action: {anyOf: [{type: "string"}, {type: "null"}]},
+                    expected: {anyOf: [{type: "string"}, {type: "null"}]},
+                    wait_budget: {anyOf: [{type: "string"}, {type: "null"}]},
+                    evidence: {anyOf: [{type: "string"}, {type: "null"}]}
+                  },
+                  required: ["command", "exit_code", "log_tail", "verification_level", "action", "expected", "wait_budget", "evidence"],
+                  additionalProperties: false
+                }
+              ]
+            }
+          },
+          findings: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: {type: "string"},
+                severity: {type: "string", enum: ["P0", "P1", "P2", "P3"]},
+                title: {type: "string"},
+                expected: {type: "string"},
+                actual: {type: "string"},
+                reproduction_steps: {type: "array", items: {type: "string"}},
+                evidence: {type: "array", items: {type: "string"}},
+                screenshot_paths: {type: "array", items: {type: "string"}}
+              },
+              required: ["id", "severity", "title", "expected", "actual", "reproduction_steps", "evidence", "screenshot_paths"],
+              additionalProperties: false
+            }
+          },
+          screenshots: {type: "array", items: {type: "string"}},
+          exploration_notes: {type: "array", items: {type: "string"}},
+          decision: {
+            anyOf: [
+              {
+                type: "object",
+                properties: {
+                  outcome: {type: "string", enum: ["PASS", "FAIL", "FIXED"]},
+                  reason: {type: "string"},
+                  failure_class: {anyOf: [{type: "string", enum: ["evidence_insufficient", "product_failure", "evidence_invalid"]}, {type: "null"}]},
+                  failure_signature: {
+                    anyOf: [
+                      {
+                        type: "array",
+                        minItems: 1,
+                        maxItems: 64,
+                        uniqueItems: true,
+                        items: {type: "string", minLength: 1, maxLength: 512}
+                      },
+                      {type: "null"}
+                    ]
+                  }
+                },
+                required: ["outcome", "reason", "failure_class", "failure_signature"],
+                additionalProperties: false
+              },
+              {type: "null"}
+            ]
+          },
+          error: {
+            anyOf: [
+              {type: "object", properties: {code: {type: "string"}, message: {type: "string"}}, required: ["code", "message"], additionalProperties: false},
+              {type: "null"}
+            ]
+          },
+          case_file: {type: "null"}
+        },
+        required: ["status", "summary", "artifacts", "checks", "findings", "screenshots", "exploration_notes", "decision", "error", "case_file"],
+        additionalProperties: false
+      }
+    '
+    return
+  fi
   if [[ "$expected_output" == "harness-result/judge-v1" ]]; then
-    printf '%s' '{"type":"object","properties":{"status":{"type":"string","enum":["completed","completed_with_concerns","needs_context","blocked"]},"summary":{"type":"string"},"artifacts":{"type":"array","items":{"type":"string"}},"checks":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"object","properties":{"command":{"type":"string"},"exit_code":{"type":"integer"},"log_tail":{"type":"string"},"verification_level":{"type":"string","enum":["L1","L2","L3"]},"action":{"anyOf":[{"type":"string"},{"type":"null"}]},"expected":{"anyOf":[{"type":"string"},{"type":"null"}]},"wait_budget":{"anyOf":[{"type":"string"},{"type":"null"}]},"evidence":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["command","exit_code","log_tail","verification_level","action","expected","wait_budget","evidence"],"additionalProperties":false}]}},"decision":{"anyOf":[{"type":"object","properties":{"outcome":{"type":"string","enum":["PASS","FAIL"]},"reason":{"type":"string"},"coverage":{"type":"array","items":{"type":"object","properties":{"step":{"type":"string"},"passed":{"type":"boolean"},"evidence":{"type":"string"}},"required":["step","passed","evidence"],"additionalProperties":false}},"failure_class":{"anyOf":[{"type":"string","enum":["evidence_insufficient","product_failure","evidence_invalid"]},{"type":"null"}]},"failure_signature":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["outcome","reason","coverage","failure_class","failure_signature"],"additionalProperties":false},{"type":"null"}]},"error":{"anyOf":[{"type":"object","properties":{"code":{"type":"string"},"message":{"type":"string"}},"required":["code","message"],"additionalProperties":false},{"type":"null"}]},"case_file":{"type":"null"}},"required":["status","summary","artifacts","checks","decision","error","case_file"],"additionalProperties":false}'
+    printf '%s' '{"type":"object","properties":{"status":{"type":"string","enum":["completed","completed_with_concerns","needs_context","blocked"]},"summary":{"type":"string"},"artifacts":{"type":"array","items":{"type":"string"}},"checks":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"object","properties":{"command":{"type":"string"},"exit_code":{"type":"integer"},"log_tail":{"type":"string"},"verification_level":{"type":"string","enum":["L1","L2","L3"]},"action":{"anyOf":[{"type":"string"},{"type":"null"}]},"expected":{"anyOf":[{"type":"string"},{"type":"null"}]},"wait_budget":{"anyOf":[{"type":"string"},{"type":"null"}]},"evidence":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["command","exit_code","log_tail","verification_level","action","expected","wait_budget","evidence"],"additionalProperties":false}]}},"decision":{"anyOf":[{"type":"object","properties":{"outcome":{"type":"string","enum":["PASS","FAIL"]},"reason":{"type":"string"},"coverage":{"type":"array","items":{"type":"object","properties":{"step":{"type":"string"},"passed":{"type":"boolean"},"evidence":{"type":"string"}},"required":["step","passed","evidence"],"additionalProperties":false}},"failure_class":{"anyOf":[{"type":"string","enum":["evidence_insufficient","product_failure","evidence_invalid"]},{"type":"null"}]},"failure_signature":{"anyOf":[{"type":"array","minItems":1,"maxItems":64,"uniqueItems":true,"items":{"type":"string","minLength":1,"maxLength":512}},{"type":"null"}]}},"required":["outcome","reason","coverage","failure_class","failure_signature"],"additionalProperties":false},{"type":"null"}]},"error":{"anyOf":[{"type":"object","properties":{"code":{"type":"string"},"message":{"type":"string"}},"required":["code","message"],"additionalProperties":false},{"type":"null"}]},"case_file":{"type":"null"}},"required":["status","summary","artifacts","checks","decision","error","case_file"],"additionalProperties":false}'
     return
   fi
   printf '%s' '{"type":"object","properties":{"status":{"type":"string","enum":["completed","completed_with_concerns","needs_context","blocked"]},"summary":{"type":"string"},"artifacts":{"type":"array","items":{"type":"string"}},"checks":{"type":"array","items":{"anyOf":[{"type":"string"},{"type":"object","properties":{"command":{"type":"string"},"exit_code":{"type":"integer"},"log_tail":{"type":"string"},"verification_level":{"type":"string","enum":["L1","L2","L3"]},"action":{"anyOf":[{"type":"string"},{"type":"null"}]},"expected":{"anyOf":[{"type":"string"},{"type":"null"}]},"wait_budget":{"anyOf":[{"type":"string"},{"type":"null"}]},"evidence":{"anyOf":[{"type":"string"},{"type":"null"}]}},"required":["command","exit_code","log_tail","verification_level","action","expected","wait_budget","evidence"],"additionalProperties":false}]}},"decision":{"anyOf":[{"type":"object","properties":{"outcome":{"type":"string"},"reason":{"type":"string"},"rubric_scores":{"anyOf":[{"type":"object","properties":{"dod_machineability":{"type":"number"},"scope_match_prd":{"type":"number"},"test_is_red":{"type":"number"},"internal_consistency":{"type":"number"},"risk_registered":{"type":"number"},"verification_oracle_completeness":{"type":"number"},"ci_workflow_alignment":{"type":"number"}},"required":["dod_machineability","scope_match_prd","test_is_red","internal_consistency","risk_registered","verification_oracle_completeness","ci_workflow_alignment"],"additionalProperties":false},{"type":"null"}]}},"required":["outcome","reason","rubric_scores"],"additionalProperties":false},{"type":"null"}]},"error":{"anyOf":[{"type":"object","properties":{"code":{"type":"string"},"message":{"type":"string"}},"required":["code","message"],"additionalProperties":false},{"type":"null"}]},"case_file":{"anyOf":[{"type":"object","properties":{"blockers":{"type":"array","items":{"anyOf":[{"type":"object","properties":{"id":{"type":"string"},"dimension":{"type":"string"},"title":{"type":"string"},"detail":{"type":"string"},"status":{"type":"string"},"why_not_found_earlier":{"type":"string"},"prd_gap":{"type":"string"}},"required":["id","dimension","title","detail","status","why_not_found_earlier","prd_gap"],"additionalProperties":false},{"type":"object","properties":{"id":{"type":"string"},"closure":{"type":"string"}},"required":["id","closure"],"additionalProperties":false}]}},"feedback_md":{"type":"string"}},"required":["blockers","feedback_md"],"additionalProperties":false},{"type":"null"}]}},"required":["status","summary","artifacts","checks","decision","error","case_file"],"additionalProperties":false}'
@@ -2203,6 +2743,7 @@ run_provider_contract() {
   local heartbeat_pid=""
   local safe_line=""
   local commander_contract=false
+  local provider_trust_intact=true
   local attempt_timeout_seconds=""
 
   if ! attempt_timeout_seconds="$(
@@ -2531,17 +3072,29 @@ run_provider_contract() {
     echo "[entrypoint] recovered completed Claude turn from CLI exit $provider_cli_exit_code" >&2
   fi
   if ! terminate_evaluator_provider_processes; then
+    provider_trust_intact=false
     provider_exit=1
     printf '%s\n' '{"error":"provider_descendant_cleanup_failed"}' >> "$STDOUT_FILE"
   fi
-  if ! node /usr/local/lib/cecelia/materialize-frozen-contract-artifacts.cjs \
-      "$task_bundle_file" "${WORKTREE_PATH:-$PWD}"; then
+  # Provider descendants are gone, so this observation cannot be raced by the
+  # untrusted identity. Prove the exact candidate before touching any trusted
+  # assertion, evidence, or success-receipt path.
+  if [[ "$provider_trust_intact" == "true" ]] \
+      && ! assert_frozen_baseline_lineage; then
+    provider_trust_intact=false
     provider_exit=1
-    printf '%s\n' '{"error":"frozen_contract_artifacts_changed"}' >> "$STDOUT_FILE"
+    printf '%s\n' '{"error":"frozen_baseline_violation"}' >> "$STDOUT_FILE"
   fi
-  if ! verify_evaluator_evidence_capsule; then
-    provider_exit=1
-    printf '%s\n' '{"error":"github_evidence_capsule_tampered"}' >> "$STDOUT_FILE"
+  if [[ "$provider_trust_intact" == "true" ]]; then
+    if ! node /usr/local/lib/cecelia/materialize-frozen-contract-artifacts.cjs \
+        "$task_bundle_file" "${WORKTREE_PATH:-$PWD}"; then
+      provider_exit=1
+      printf '%s\n' '{"error":"frozen_contract_artifacts_changed"}' >> "$STDOUT_FILE"
+    fi
+    if ! verify_evaluator_evidence_capsule; then
+      provider_exit=1
+      printf '%s\n' '{"error":"github_evidence_capsule_tampered"}' >> "$STDOUT_FILE"
+    fi
   fi
   redact_provider_credential_file "$result_file" || provider_exit=1
 
@@ -2562,13 +3115,6 @@ run_provider_contract() {
       jq -e 'type == "object" and .status' "$result_file" >/dev/null 2>&1 \
         && provider_success=true
     fi
-  fi
-  # Provider 已退出，改不动这一层。血统断了就把整个 Attempt 判死，
-  # 由 Kernel 侧的 callback 服务端校验做最后一道 fail-closed。
-  if ! assert_frozen_baseline_lineage; then
-    provider_success=false
-    provider_exit=1
-    printf '%s\n' '{"error":"frozen_baseline_violation"}' >> "$STDOUT_FILE"
   fi
   if [[ "$provider_success" == "true" ]]; then
     finalize_proposer_output || {
@@ -2608,7 +3154,8 @@ run_provider_contract() {
       "$provider_exit" \
       "$STDOUT_FILE"
   fi
-  if ! merge_evaluator_evidence "$NORMALIZED_RESULT_FILE"; then
+  if [[ "$provider_trust_intact" == "true" ]] \
+      && ! merge_evaluator_evidence "$NORMALIZED_RESULT_FILE"; then
     jq '
       .checks = []
       | .decision.outcome = "FAIL"

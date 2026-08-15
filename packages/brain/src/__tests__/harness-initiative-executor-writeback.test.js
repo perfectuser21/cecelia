@@ -212,6 +212,7 @@ vi.mock('../harness-skill-relay.js', () => ({
 // ── 被测函数 ─────────────────────────────────────────────────
 
 let triggerCeceliaRun;
+let runHarnessInitiativeRouter;
 
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -220,6 +221,7 @@ beforeEach(async () => {
   vi.resetModules();
   const mod = await import('../executor.js');
   triggerCeceliaRun = mod.triggerCeceliaRun;
+  runHarnessInitiativeRouter = mod.runHarnessInitiativeRouter;
 });
 
 const HARNESS_TASK = {
@@ -239,6 +241,12 @@ const RELAY_TASK = {
   ...HARNESS_TASK,
   id: 'ccccdddd-1234-5678-9012-abcdef012345',
   payload: { ...HARNESS_TASK.payload, orchestrator: 'skill-relay' },
+};
+
+const KERNEL_TASK = {
+  ...RELAY_TASK,
+  id: 'eeeeffff-1234-5678-9012-abcdef012345',
+  payload: { ...RELAY_TASK.payload, harness_runtime: 'kernel-v1' },
 };
 
 // ── 测试 ─────────────────────────────────────────────────────
@@ -324,5 +332,166 @@ describe('triggerCeceliaRun — skill-relay spawn 语义（Issue df107724）', (
     const statuses = mockUpdateTaskStatus.mock.calls.map((c) => c[1]);
     expect(statuses).not.toContain('completed');
     expect(statuses).not.toContain('failed');
+  });
+
+  it('Kernel pre-run 异常且未建 run 时返回失败，不做 task-only 终态回写', async () => {
+    mockSpawnRelay.mockRejectedValue(new Error('impact_capability_missing'));
+
+    const result = await triggerCeceliaRun(KERNEL_TASK);
+
+    expect(result).toMatchObject({
+      success: false,
+      taskId: KERNEL_TASK.id,
+      reason: 'kernel_authority_not_created',
+      error: 'impact_capability_missing',
+    });
+    expect(result.runId).toBeUndefined();
+    expect(mockUpdateTaskStatus).not.toHaveBeenCalled();
+  });
+
+  it('Kernel router 抛错但 DB 已有该 task 的 active v2 run 时恢复 authority 并保持在途', async () => {
+    const runId = '22222222-2222-4222-8222-222222222222';
+    mockSpawnRelay.mockRejectedValue(new Error('post_create_transport_failed'));
+    mockQuery.mockImplementation(async (sql, params) => {
+      if (
+        String(sql).includes('FROM initiative_runs')
+        && String(sql).includes("orchestrator_version = 'v2'")
+        && params?.[0] === KERNEL_TASK.id
+      ) {
+        return { rows: [{ id: runId, phase: 'generate' }] };
+      }
+      return { rows: [] };
+    });
+
+    const result = await triggerCeceliaRun(KERNEL_TASK);
+
+    expect(result).toMatchObject({
+      success: true,
+      taskId: KERNEL_TASK.id,
+      runId,
+      deferred: true,
+      kernelAuthority: 'active',
+      authorityExists: true,
+    });
+    expect(mockUpdateTaskStatus).not.toHaveBeenCalled();
+  });
+
+  it('Kernel router 抛错但 DB 已有该 task 的 terminal v2 run 时返回带 runId 的终态 authority', async () => {
+    const runId = '33333333-3333-4333-8333-333333333333';
+    mockSpawnRelay.mockRejectedValue(new Error('post_terminal_callback_failed'));
+    mockQuery.mockImplementation(async (sql, params) => {
+      if (
+        String(sql).includes('FROM initiative_runs')
+        && String(sql).includes("orchestrator_version = 'v2'")
+        && params?.[0] === KERNEL_TASK.id
+      ) {
+        return { rows: [{ id: runId, phase: 'failed' }] };
+      }
+      return { rows: [] };
+    });
+
+    const result = await triggerCeceliaRun(KERNEL_TASK);
+
+    expect(result).toMatchObject({
+      success: false,
+      taskId: KERNEL_TASK.id,
+      runId,
+      kernelAuthority: 'terminal',
+      authorityExists: true,
+      terminal: true,
+    });
+    expect(mockUpdateTaskStatus).not.toHaveBeenCalled();
+  });
+
+  it('Kernel authority read-back 查询异常时返回 unknown，不伪装成 no authority', async () => {
+    mockSpawnRelay.mockRejectedValue(new Error('post_create_transport_failed'));
+    mockQuery.mockImplementation(async (sql) => {
+      if (String(sql).includes('FROM initiative_runs')) {
+        throw new Error('database connection reset');
+      }
+      return { rows: [] };
+    });
+
+    const result = await triggerCeceliaRun(KERNEL_TASK);
+
+    expect(result).toMatchObject({
+      success: false,
+      taskId: KERNEL_TASK.id,
+      reason: 'kernel_authority_reconciliation_unavailable',
+      authorityUnknown: true,
+    });
+    expect(result.runId).toBeUndefined();
+    expect(mockUpdateTaskStatus).not.toHaveBeenCalled();
+  });
+
+  it('Kernel already_running 无 runId 结果也先 read-back active authority', async () => {
+    const runId = '44444444-4444-4444-8444-444444444444';
+    let releaseSpawn;
+    mockSpawnRelay.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseSpawn = resolve;
+    }));
+    mockQuery.mockImplementation(async (sql, params) => {
+      if (
+        String(sql).includes('FROM initiative_runs')
+        && params?.[0] === KERNEL_TASK.id
+      ) {
+        return { rows: [{ id: runId, phase: 'generate' }] };
+      }
+      return { rows: [] };
+    });
+
+    const firstDrive = runHarnessInitiativeRouter(KERNEL_TASK);
+    await vi.waitFor(() => expect(mockSpawnRelay).toHaveBeenCalledTimes(1));
+    const result = await triggerCeceliaRun(KERNEL_TASK);
+    releaseSpawn({ ok: true, mode: 'kernel-v1', runId });
+    await firstDrive;
+
+    expect(result).toMatchObject({
+      success: true,
+      taskId: KERNEL_TASK.id,
+      runId,
+      deferred: true,
+      kernelAuthority: 'active',
+      authorityExists: true,
+    });
+  });
+
+  it('Kernel pre-run 正常返回 terminal 且 task 已 failed 时不回排复活', async () => {
+    const invalidGearTask = {
+      ...KERNEL_TASK,
+      payload: { ...KERNEL_TASK.payload, gear: 'impossible-gear' },
+    };
+    mockQuery.mockImplementation(async (sql, params) => {
+      if (String(sql).includes('FROM initiative_runs')) return { rows: [] };
+      if (
+        String(sql).includes('SELECT status')
+        && String(sql).includes('FROM tasks')
+        && params?.[0] === invalidGearTask.id
+      ) {
+        return { rows: [{ status: 'failed' }] };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+
+    const result = await triggerCeceliaRun(invalidGearTask);
+
+    expect(result).toMatchObject({
+      success: false,
+      taskId: invalidGearTask.id,
+      reason: 'kernel_pre_run_terminal',
+      taskTerminal: true,
+      terminal: true,
+    });
+    expect(result.runId).toBeUndefined();
+  });
+
+  it('Kernel 真正创建 authority 后把 runId 透传给 dispatcher', async () => {
+    const runId = '11111111-1111-4111-8111-111111111111';
+    mockSpawnRelay.mockResolvedValue({ ok: true, mode: 'kernel-v1', runId, pid: 4242 });
+
+    const result = await triggerCeceliaRun(KERNEL_TASK);
+
+    expect(result).toMatchObject({ success: true, taskId: KERNEL_TASK.id, runId });
+    expect(mockUpdateTaskStatus).not.toHaveBeenCalled();
   });
 });

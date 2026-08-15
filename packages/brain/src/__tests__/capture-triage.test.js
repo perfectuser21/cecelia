@@ -127,7 +127,7 @@ describe('runCaptureTriage 四路落地', () => {
       declared_domain: 'coding',
       declared_change_kind: 'bugfix',
       repo_hint: 'cecelia',
-      map_scope_hint: ['factory/F1'],
+      map_scope_hint: ['F1'],
       base_sha: expect.stringMatching(/^[a-f0-9]{40}$/),
     }));
     const upd = pool.updates[0];
@@ -165,7 +165,7 @@ describe('runCaptureTriage 四路落地', () => {
       declared_domain: 'coding',
       declared_change_kind: 'bugfix',
       repo_hint: 'cecelia',
-      map_scope_hint: ['factory/F1'],
+      map_scope_hint: ['F1'],
     });
     expect(callArg.base_sha).toMatch(/^[a-f0-9]{40}$/);
     expect(callArg.dedupe_key).toBe('capture-triage-line-backlog-a2');

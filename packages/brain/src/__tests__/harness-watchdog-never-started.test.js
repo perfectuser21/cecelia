@@ -12,21 +12,280 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockPoolQuery = vi.hoisted(() => vi.fn());
+const mockPoolConnect = vi.hoisted(() => vi.fn());
 
 vi.mock('../db.js', () => ({
-  default: { query: mockPoolQuery },
+  default: { query: mockPoolQuery, connect: mockPoolConnect },
 }));
 
 let resumeStalledHarnessDrivers;
 
+function isNeverStartedCandidateSql(sql) {
+  return /SELECT/i.test(sql)
+    && /NOT\s+EXISTS/i.test(sql)
+    && /initiative_runs/i.test(sql)
+    && /claimed_at/i.test(sql);
+}
+
+function isTaskLockSql(sql) {
+  return /FROM\s+tasks/i.test(sql) && /FOR\s+UPDATE/i.test(sql);
+}
+
+function isExactRunSql(sql) {
+  return /FROM\s+initiative_runs/i.test(sql) && !/FROM\s+tasks/i.test(sql);
+}
+
 beforeEach(async () => {
   vi.resetModules();
   mockPoolQuery.mockReset();
+  mockPoolConnect.mockReset();
+  mockPoolConnect.mockImplementation(async () => ({
+    query: mockPoolQuery,
+    release: vi.fn(),
+  }));
   const mod = await import('../harness-watchdog.js');
   resumeStalledHarnessDrivers = mod.resumeStalledHarnessDrivers;
 });
 
 describe('resumeStalledHarnessDrivers — never-started branch (fabf6bd6)', () => {
+  it('never-started 候选按版本感知身份排除 v2 current_task、v1 initiative 和无身份 legacy v2 run', async () => {
+    mockPoolQuery.mockImplementation(async () => ({ rows: [] }));
+
+    await resumeStalledHarnessDrivers({});
+
+    const candidateSql = mockPoolQuery.mock.calls
+      .map(([sql]) => String(sql))
+      .find(sql => /claimed_at/i.test(sql) && /NOT\s+EXISTS/i.test(sql));
+    expect(candidateSql).toBeDefined();
+    expect(candidateSql).toMatch(
+      /orchestrator_version\s*=\s*'v2'[\s\S]*current_task_id\s*=\s*t\.id/i,
+    );
+    expect(candidateSql).toMatch(
+      /orchestrator_version\s*=\s*'v1'[\s\S]*initiative_id\s*=\s*t\.id/i,
+    );
+    expect(candidateSql).toMatch(
+      /orchestrator_version\s*=\s*'v2'[\s\S]*current_task_id\s+IS\s+NULL[\s\S]*initiative_id\s*=\s*t\.id/i,
+    );
+  });
+
+  it('候选后在独占 client 事务中锁 task、复核 exact run，确认无 run 才 UPDATE', async () => {
+    const TASK_ID = 'aaaa1111-2222-4333-8444-555566667777';
+    const events = [];
+    const client = {
+      query: vi.fn(async (sql, params) => {
+        const text = String(sql);
+        if (/^BEGIN$/i.test(text)) events.push('begin');
+        else if (isTaskLockSql(text)) {
+          events.push('task-lock');
+          expect(text).toMatch(/status/i);
+          expect(text).toMatch(/claimed_at/i);
+          expect(params).toContain(TASK_ID);
+          return { rows: [{ id: TASK_ID, status: 'in_progress', claimed_at: new Date(0) }] };
+        } else if (isExactRunSql(text)) {
+          events.push('run-recheck');
+          expect(params).toContain(TASK_ID);
+          return { rows: [] };
+        } else if (/UPDATE\s+tasks/i.test(text)) {
+          events.push('update');
+          return { rows: [{ id: TASK_ID }] };
+        } else if (/^COMMIT$/i.test(text)) events.push('commit');
+        else if (/^ROLLBACK$/i.test(text)) events.push('rollback');
+        return { rows: [] };
+      }),
+      release: vi.fn(() => events.push('release')),
+    };
+    const dbPool = {
+      query: vi.fn(async (sql) => {
+        if (isNeverStartedCandidateSql(String(sql))) {
+          events.push('candidate');
+          return { rows: [{ id: TASK_ID }] };
+        }
+        return { rows: [] };
+      }),
+      connect: vi.fn(async () => {
+        events.push('connect');
+        return client;
+      }),
+    };
+    const execFn = vi.fn(() => {
+      events.push('docker');
+      return '';
+    });
+
+    await resumeStalledHarnessDrivers({ pool: dbPool, execFn, maxFreshStarts: 3 });
+
+    expect(events).toEqual([
+      'candidate',
+      'docker',
+      'connect',
+      'begin',
+      'task-lock',
+      'run-recheck',
+      'update',
+      'commit',
+      'release',
+    ]);
+  });
+
+  it('task 锁后出现 v2 exact run → 结束事务且不 UPDATE task', async () => {
+    const TASK_ID = 'bbbb1111-2222-4333-8444-555566667777';
+    const statements = [];
+    const client = {
+      query: vi.fn(async (sql) => {
+        const text = String(sql);
+        statements.push(text);
+        if (isTaskLockSql(text)) {
+          return { rows: [{ id: TASK_ID, status: 'in_progress', claimed_at: new Date(0) }] };
+        }
+        if (isExactRunSql(text)) {
+          return {
+            rows: [{
+              id: 'bbbb2222-2222-4333-8444-555566667777',
+              orchestrator_version: 'v2',
+              current_task_id: TASK_ID,
+            }],
+          };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const dbPool = {
+      query: vi.fn(async (sql) => (
+        isNeverStartedCandidateSql(String(sql))
+          ? { rows: [{ id: TASK_ID }] }
+          : { rows: [] }
+      )),
+      connect: vi.fn(async () => client),
+    };
+
+    const result = await resumeStalledHarnessDrivers({
+      pool: dbPool,
+      execFn: () => '',
+      maxFreshStarts: 3,
+    });
+
+    const allStatements = [
+      ...dbPool.query.mock.calls.map(([sql]) => String(sql)),
+      ...statements,
+    ];
+    expect(statements.some(isExactRunSql)).toBe(true);
+    expect(allStatements.some(sql => /UPDATE\s+tasks/i.test(sql))).toBe(false);
+    expect(statements.some(sql => /^(COMMIT|ROLLBACK)$/i.test(sql))).toBe(true);
+    expect(client.release).toHaveBeenCalledOnce();
+    expect(result.resumed).not.toContain(TASK_ID);
+  });
+
+  it('共享 initiative 的 sibling v2 run 不会保护当前无 run task', async () => {
+    const TASK_ID = 'cccc1111-2222-4333-8444-555566667777';
+    const SIBLING_TASK_ID = 'cccc2222-2222-4333-8444-555566667777';
+    const SHARED_INITIATIVE_ID = 'cccc3333-2222-4333-8444-555566667777';
+    let exactRunSql = '';
+    let updateCalled = false;
+    const client = {
+      query: vi.fn(async (sql) => {
+        const text = String(sql);
+        if (isTaskLockSql(text)) {
+          return { rows: [{ id: TASK_ID, status: 'in_progress', claimed_at: new Date(0) }] };
+        }
+        if (isExactRunSql(text)) {
+          exactRunSql = text;
+          // 数据库里只有共享 initiative 的 sibling v2 run；精确身份查询应返回空。
+          const siblingRun = {
+            initiative_id: SHARED_INITIATIVE_ID,
+            orchestrator_version: 'v2',
+            current_task_id: SIBLING_TASK_ID,
+          };
+          expect(siblingRun.current_task_id).not.toBe(TASK_ID);
+          return { rows: [] };
+        }
+        if (/UPDATE\s+tasks/i.test(text)) {
+          updateCalled = true;
+          return { rows: [{ id: TASK_ID }] };
+        }
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const dbPool = {
+      query: vi.fn(async (sql) => (
+        isNeverStartedCandidateSql(String(sql))
+          ? { rows: [{ id: TASK_ID }] }
+          : { rows: [] }
+      )),
+      connect: vi.fn(async () => client),
+    };
+
+    const result = await resumeStalledHarnessDrivers({
+      pool: dbPool,
+      execFn: () => '',
+      maxFreshStarts: 3,
+    });
+
+    expect(exactRunSql).toMatch(
+      /orchestrator_version\s*=\s*'v2'[\s\S]*current_task_id\s*=\s*\$1/i,
+    );
+    expect(exactRunSql).toMatch(
+      /orchestrator_version\s*=\s*'v2'[\s\S]*current_task_id\s+IS\s+NULL[\s\S]*initiative_id\s*=\s*\$1/i,
+    );
+    expect(updateCalled).toBe(true);
+    expect(result.resumed).toContain(TASK_ID);
+  });
+
+  it('缺少 connect() 的 query-only pool 必须拒绝判死，不能伪造跨连接事务', async () => {
+    const TASK_ID = 'dddd2222-2222-4333-8444-555566667777';
+    const query = vi.fn(async (sql) => (
+      isNeverStartedCandidateSql(String(sql))
+        ? { rows: [{ id: TASK_ID }] }
+        : { rows: [] }
+    ));
+
+    const result = await resumeStalledHarnessDrivers({
+      pool: { query },
+      execFn: () => '',
+      maxFreshStarts: 3,
+    });
+
+    expect(query.mock.calls.some(([sql]) => /UPDATE\s+tasks/i.test(String(sql)))).toBe(false);
+    expect(result.resumed).not.toContain(TASK_ID);
+  });
+
+  it('事务内 exact-run 复核失败时 ROLLBACK 并 release，任务不进入 resumed', async () => {
+    const TASK_ID = 'eeee2222-2222-4333-8444-555566667777';
+    const statements = [];
+    const client = {
+      query: vi.fn(async (sql) => {
+        const text = String(sql);
+        statements.push(text);
+        if (isTaskLockSql(text)) {
+          return { rows: [{ id: TASK_ID, status: 'in_progress', claimed_at: new Date(0) }] };
+        }
+        if (isExactRunSql(text)) throw new Error('forced exact-run read failure');
+        return { rows: [] };
+      }),
+      release: vi.fn(),
+    };
+    const dbPool = {
+      query: vi.fn(async (sql) => (
+        isNeverStartedCandidateSql(String(sql))
+          ? { rows: [{ id: TASK_ID }] }
+          : { rows: [] }
+      )),
+      connect: vi.fn(async () => client),
+    };
+
+    const result = await resumeStalledHarnessDrivers({
+      pool: dbPool,
+      execFn: () => '',
+      maxFreshStarts: 3,
+    });
+
+    expect(statements.some((sql) => /^ROLLBACK$/i.test(sql))).toBe(true);
+    expect(statements.some((sql) => /UPDATE\s+tasks/i.test(sql))).toBe(false);
+    expect(client.release).toHaveBeenCalledOnce();
+    expect(result.resumed).not.toContain(TASK_ID);
+  });
+
   it('SELECT 含 NOT EXISTS initiative_runs + claimed_at 陈旧判据', async () => {
     mockPoolQuery.mockImplementation(async () => ({ rows: [] }));
     await resumeStalledHarnessDrivers({});
@@ -47,6 +306,10 @@ describe('resumeStalledHarnessDrivers — never-started branch (fabf6bd6)', () =
       if (/SELECT/i.test(sql) && /NOT\s+EXISTS/i.test(sql) && /initiative_runs/.test(sql) && /claimed_at/i.test(sql)) {
         return { rows: [{ id: TASK_ID }] };
       }
+      if (isTaskLockSql(sql)) {
+        return { rows: [{ id: TASK_ID, status: 'in_progress', claimed_at: new Date(0) }] };
+      }
+      if (isExactRunSql(sql)) return { rows: [] };
       if (/SELECT/i.test(sql)) return { rows: [] };
       if (/UPDATE\s+tasks/i.test(sql)) {
         updateSql = sql;
@@ -116,6 +379,10 @@ describe('resumeStalledHarnessDrivers — never-started branch (fabf6bd6)', () =
       if (/SELECT/i.test(sql) && /NOT\s+EXISTS/i.test(sql) && /initiative_runs/.test(sql) && /claimed_at/i.test(sql)) {
         return { rows: [{ id: TASK_ID }] };
       }
+      if (isTaskLockSql(sql)) {
+        return { rows: [{ id: TASK_ID, status: 'in_progress', claimed_at: new Date(0) }] };
+      }
+      if (isExactRunSql(sql)) return { rows: [] };
       if (/UPDATE\s+tasks/i.test(sql)) {
         updateSql = sql;
         return { rows: [{ id: TASK_ID }] };
@@ -138,6 +405,10 @@ describe('resumeStalledHarnessDrivers — never-started branch (fabf6bd6)', () =
       if (/SELECT/i.test(sql) && /NOT\s+EXISTS/i.test(sql) && /initiative_runs/.test(sql) && /claimed_at/i.test(sql)) {
         return { rows: [{ id: TASK_ID }] };
       }
+      if (isTaskLockSql(sql)) {
+        return { rows: [{ id: TASK_ID, status: 'in_progress', claimed_at: new Date(0) }] };
+      }
+      if (isExactRunSql(sql)) return { rows: [] };
       if (/UPDATE\s+tasks/i.test(sql)) {
         updateSql = sql;
         return { rows: [{ id: TASK_ID }] };

@@ -80,8 +80,10 @@ export function buildMapEnvelope({
 }) {
   return {
     scope_key: scopeKey,
+    manifest_version_id: manifestVersion?.id ?? null,
     manifest_version: manifestVersion?.version ?? null,
     manifest_digest: manifestVersion?.digest ?? null,
+    projection_run_id: projectionRun?.id ?? null,
     projection_digest: projectionRun?.projection_digest ?? null,
     fact_revisions: projectionRun?.fact_revisions ?? {},
     generated_at: now.toISOString(),
@@ -89,13 +91,69 @@ export function buildMapEnvelope({
   };
 }
 
-async function loadActiveManifest(client, scopeKey, { optional = false, lock = false } = {}) {
+function projectionChanged() {
+  return new MapReadError('map_projection_changed', 'map_projection_changed', 409);
+}
+
+export async function lockMapProjectionAuthority(client, { scopeKey }) {
+  await client.query(
+    'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+    [`map-manifest:${scopeKey}`],
+  );
+  await client.query(
+    'SELECT pg_advisory_xact_lock(hashtext($1::text))',
+    [`map-projection:${scopeKey}`],
+  );
+  const manifestResult = await client.query(
+    `SELECT id, scope_key, version, digest
+       FROM map_manifest_versions
+      WHERE scope_key=$1 AND status='active'
+      FOR SHARE`,
+    [scopeKey],
+  );
+  const projectionResult = await client.query(
+    `SELECT id, scope_key, manifest_version_id, manifest_digest,
+            fact_revisions, projection_digest
+       FROM map_projection_runs
+      WHERE scope_key=$1 AND status='active'
+      FOR SHARE`,
+    [scopeKey],
+  );
+  if (manifestResult.rows.length !== 1 || projectionResult.rows.length !== 1) {
+    throw projectionChanged();
+  }
+  const manifest = manifestResult.rows[0];
+  const projection = projectionResult.rows[0];
+  if (
+    projection.manifest_version_id !== manifest.id
+    || projection.manifest_digest !== manifest.digest
+  ) {
+    throw projectionChanged();
+  }
+  return Object.freeze({
+    manifest_version_id: manifest.id,
+    manifest_digest: manifest.digest,
+    projection_run_id: projection.id,
+    projection_digest: projection.projection_digest,
+    fact_revisions: projection.fact_revisions ?? {},
+  });
+}
+
+async function loadActiveManifest(client, scopeKey, {
+  optional = false,
+  lock = false,
+  authority = null,
+} = {}) {
   const { rows } = await client.query(
     `SELECT id, scope_key, version, source_decision_id, manifest, digest,
             status, created_at, activated_at
        FROM map_manifest_versions
-      WHERE scope_key=$1 AND status='active'${lock ? ' FOR KEY SHARE' : ''}`,
-    [scopeKey],
+      WHERE scope_key=$1
+        ${authority ? 'AND id=$2 AND digest=$3' : "AND status='active'"}
+      ${lock ? 'FOR KEY SHARE' : ''}`,
+    authority
+      ? [scopeKey, authority.manifest_version_id, authority.manifest_digest]
+      : [scopeKey],
   );
   if (!rows[0] && !optional) {
     throw new MapReadError(
@@ -107,13 +165,24 @@ async function loadActiveManifest(client, scopeKey, { optional = false, lock = f
   return rows[0] ?? null;
 }
 
-async function loadActiveProjection(client, scopeKey, { optional = false } = {}) {
+async function loadActiveProjection(client, scopeKey, { optional = false, authority = null } = {}) {
   const { rows } = await client.query(
     `SELECT id, scope_key, manifest_version_id, manifest_digest, fact_revisions,
             projector_version, projection_digest, status, error, created_at, activated_at
        FROM map_projection_runs
-      WHERE scope_key=$1 AND status='active'`,
-    [scopeKey],
+      WHERE scope_key=$1
+        ${authority
+    ? 'AND id=$2 AND projection_digest=$3 AND manifest_version_id=$4 AND manifest_digest=$5'
+    : "AND status='active'"}`,
+    authority
+      ? [
+          scopeKey,
+          authority.projection_run_id,
+          authority.projection_digest,
+          authority.manifest_version_id,
+          authority.manifest_digest,
+        ]
+      : [scopeKey],
   );
   if (!rows[0] && !optional) {
     throw new MapReadError(
@@ -187,9 +256,13 @@ function publicEdge(edge) {
   };
 }
 
-async function loadMapContext(client, { scopeKey, now }) {
-  const manifestVersion = await loadActiveManifest(client, scopeKey);
-  const stateResult = await loadMapNodeStates(client, { scopeKey, now });
+async function loadMapContext(client, { scopeKey, now, authority = null }) {
+  const manifestVersion = await loadActiveManifest(client, scopeKey, { authority });
+  const stateResult = await loadMapNodeStates(client, {
+    scopeKey,
+    now,
+    projectionRunId: authority?.projection_run_id ?? null,
+  });
   const projectionRun = stateResult.projection_run;
   const adapters = await loadMapRepoAdapters(client, scopeKey);
   const repos = adapters.map(({ repo }) => repo);
@@ -201,8 +274,8 @@ async function loadMapContext(client, { scopeKey, now }) {
   return { manifestVersion, projectionRun, adapters, freshness, nodes, edges };
 }
 
-export async function readMap(client, { scopeKey, now }) {
-  const context = await loadMapContext(client, { scopeKey, now });
+export async function readMap(client, { scopeKey, now, authority = null }) {
+  const context = await loadMapContext(client, { scopeKey, now, authority });
   return {
     ...buildMapEnvelope({ scopeKey, ...context, now }),
     shared_prerequisites: context.manifestVersion.manifest.shared_prerequisites,
@@ -247,13 +320,31 @@ export async function readNode(client, { scopeKey, nodeKey, now }) {
 }
 
 export async function readRadius(client, input) {
-  const { scopeKey, now } = input;
-  const manifestVersion = await loadActiveManifest(client, scopeKey);
-  const projectionRun = await loadActiveProjection(client, scopeKey);
+  const { scopeKey, now, authority = null } = input;
+  const manifestVersion = await loadActiveManifest(client, scopeKey, { authority });
+  const projectionRun = await loadActiveProjection(client, scopeKey, { authority });
   const adapters = await loadMapRepoAdapters(client, scopeKey);
   const headers = await loadHeaders(client, adapters.map(({ repo }) => repo));
-  const freshness = summarizeMapFreshness(headers, now, adapters.map(({ repo }) => repo));
-  const radius = await loadMapImpactRadius(client, input);
+  const radius = await loadMapImpactRadius(client, {
+    ...input,
+    projectionRunId: authority?.projection_run_id ?? null,
+  });
+  const authoritativeHeaders = headers.filter((header) => (
+    header.repo !== input.repo || header.kind !== 'graph'
+  ));
+  authoritativeHeaders.push({
+    kind: 'graph',
+    repo: input.repo,
+    source_revision: radius.freshness.source_revision,
+    scanner_version: radius.freshness.scanner_version,
+    scanned_at: radius.freshness.last_success_at,
+    row_count: radius.freshness.row_count,
+  });
+  const freshness = summarizeMapFreshness(
+    authoritativeHeaders,
+    now,
+    adapters.map(({ repo }) => repo),
+  );
   return {
     ...buildMapEnvelope({ scopeKey, manifestVersion, projectionRun, freshness, now }),
     ...radius,

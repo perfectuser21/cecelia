@@ -1,18 +1,6 @@
 import { runJudgeGate } from '../harness-judge.js';
-
-function evaluatorBrainResult(value) {
-  if (!value || typeof value !== 'object') return null;
-  return {
-    verdict: value.decision?.outcome ?? value.verdict ?? null,
-    behavior_tests: Array.isArray(value.behavior_tests)
-      ? value.behavior_tests
-      : Array.isArray(value.checks)
-        ? value.checks
-        : [],
-    judgments_written: value.judgments_written ?? value.decision?.judgments_written,
-    summary: value.summary ?? null,
-  };
-}
+import { parseJudgeDecision } from './execution-contract.js';
+import { normalizeEvaluatorBrainResult } from './evaluator-brain-result.js';
 
 function normalizeEvaluatorPassVerdict(verdict) {
   return ['PASS', 'FIXED', 'PASS_WITH_CONCERNS'].includes(verdict)
@@ -20,18 +8,29 @@ function normalizeEvaluatorPassVerdict(verdict) {
     : verdict;
 }
 
+function requireJudgeProviderOutcome(decision) {
+  const outcome = decision?.outcome ?? decision?.verdict;
+  if (!['PASS', 'FAIL'].includes(outcome)) {
+    const error = new Error('judge_provider_outcome_invalid');
+    error.status = 409;
+    throw error;
+  }
+  return outcome;
+}
+
 export async function verifyJudgeCallbackResult({ attempt, result, dbPool }) {
   if (attempt?.role !== 'judge') return result;
   if (!['completed', 'completed_with_concerns'].includes(result?.status)) return result;
 
   const inputs = attempt.task_bundle?.inputs ?? {};
-  const evaluator = evaluatorBrainResult(inputs.evaluator_result);
+  const evaluator = normalizeEvaluatorBrainResult(inputs.evaluator_result);
   const candidateHeadSha = inputs.candidate?.head_sha ?? null;
   const pr = inputs.pull_request ?? null;
   const unpublishedCandidate = candidateHeadSha != null
     && candidateHeadSha !== pr?.head_sha;
   const targetHeadSha = unpublishedCandidate ? candidateHeadSha : pr?.head_sha ?? candidateHeadSha;
-  const providerDecision = result.decision ?? {};
+  const providerDecision = parseJudgeDecision(result.decision ?? {});
+  const providerOutcome = requireJudgeProviderOutcome(providerDecision);
   const judged = await runJudgeGate({
     agentVerdict: normalizeEvaluatorPassVerdict(evaluator?.verdict),
     agentFeedback: inputs.evaluator_result?.decision?.reason ?? null,
@@ -56,13 +55,20 @@ export async function verifyJudgeCallbackResult({ attempt, result, dbPool }) {
     strict: true,
     dbPool,
     judgeFn: async () => ({
-      verdict: providerDecision.outcome ?? providerDecision.verdict,
+      verdict: providerOutcome,
       coverage: Array.isArray(providerDecision.coverage) ? providerDecision.coverage : [],
       feedback: providerDecision.reason ?? providerDecision.feedback ?? result.summary,
       failure_class: providerDecision.failure_class ?? null,
       failure_signature: providerDecision.failure_signature ?? null,
     }),
   });
+
+  if (judged.judged !== true) {
+    const error = new Error('independent_judge_not_completed');
+    error.status = 409;
+    error.cause = judged.judgeError ?? judged.feedback ?? null;
+    throw error;
+  }
 
   return {
     ...result,
@@ -74,6 +80,7 @@ export async function verifyJudgeCallbackResult({ attempt, result, dbPool }) {
       ...(judged.failure_signature == null
         ? {}
         : { failure_signature: judged.failure_signature }),
+      ...(Array.isArray(judged.coverage) ? { coverage: judged.coverage } : {}),
     },
   };
 }

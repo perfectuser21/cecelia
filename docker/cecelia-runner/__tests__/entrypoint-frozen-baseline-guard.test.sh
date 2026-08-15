@@ -47,7 +47,7 @@ grep -Fq 'if ! install_frozen_baseline_guard; then' "$ENTRYPOINT" || {
   echo "provider path does not arm the frozen baseline guard before execution" >&2
   exit 1
 }
-grep -Fq 'if ! assert_frozen_baseline_lineage; then' "$ENTRYPOINT" || {
+grep -Fq '! assert_frozen_baseline_lineage; then' "$ENTRYPOINT" || {
   echo "provider success path does not re-assert the frozen baseline lineage" >&2
   exit 1
 }

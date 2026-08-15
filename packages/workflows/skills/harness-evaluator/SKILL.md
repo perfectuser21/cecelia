@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.36.2
+version: 1.37.0
 created: 2026-05-06
-updated: 2026-08-12
+updated: 2026-08-15
 changelog:
+  - 1.37.0: Direct Profile 收敛模式——TaskBundle `inputs.evaluation_mode.kind=direct-required-assertions/v1` 时，冻结合同本来就只有 impact required_assertions，合同没有 E2E 段不是失败；Provider 仍做人式真实探索并完整报告 findings/screenshots/exploration_notes，可信 required assertions 由 Runner 在 Provider 退出后逐项执行并合并，任一失败强制最终 FAIL
   - 1.36.2: 冻结合同测试进入人形验收——Runner 在 Evaluator Provider 前要求 PR 内每份 frozen_contract_test 与 TaskBundle approved SHA/路径/原文/SHA-256 完全一致，Provider 后再次复验；Evaluator 必须把这些现成测试当作批准 oracle，缺失或漂移直接 FAIL，禁止自行生成替代测试
   - 1.36.1: required assertions 移出模型执行边界——Evaluator 只完成常规 E2E 并返回结果；Provider 退出后由镜像内 Harness Runner 在 exact PR head 上执行 Kernel 注入命令、计算完整输出摘要并覆盖 checks，任一失败强制 FAIL
   - 1.36.0: Impact Contract 可信断言回执——TaskBundle 含 `required_assertions` 时逐项执行精确命令，HarnessResult `checks` 必须返回 assertion_id、规范 argv、退出码、输出 SHA-256、场景证据和起止时间；缺项或命令漂移直接 FAIL，供已认证 callback 写 append-only receipt
@@ -215,6 +216,16 @@ Kernel 结构化输出示例（`checks` 是 HarnessResult 顶层字段）：
 
 `required_assertions` 的可信执行边界在 Provider 进程结束之后。Harness Runner 会核对工作树 `HEAD == PR_HEAD_SHA`，逐项以精确 argv `bash -lc <command>` 执行，计算完整日志 SHA-256，并写入 assertion/link/revision/digest、机器身份和起止时间。Evaluator 不得自行执行这组命令后填充 `checks`，也不得把 required assertion 写入 `unverifiable`；Runner 的任一结构错误、SHA 漂移或非零退出都会把最终 decision 强制改为 FAIL。
 
+### Server-owned Direct Profile 模式
+
+当 TaskBundle 明确含 `inputs.evaluation_mode.kind="direct-required-assertions/v1"` 时，模式由 Brain 根据不可变 `approval_provenance.kind=direct` 声明，Provider 不得自行进入或退出。Direct Profile 的冻结 `tests/impact-contract.md` 本来就是可信 required assertions 清单，因此：
+
+1. **合同没有 E2E 段不是失败**，也不因缺 `[BEHAVIOR]`、Golden Path 或 `## E2E 验收` 输出 setup FAIL；这些常规合同门只对非 Direct 模式生效。
+2. Provider 仍负责人式探索：读目标、冻结合同和改动，在真实可执行表面进行 happy path、错误输入、重入/重复操作和相邻风险探索；API/后台类改动至少观察真实进程、响应或数据库效果，禁止只凭 CI 汇总给 PASS。
+3. Provider 把探索事实写入 `findings[]`、`screenshots[]`、`exploration_notes[]`，并按真实产品表现给 `decision.outcome=PASS|FAIL`。`checks` 保持空数组，禁止伪造 required assertion 回执。
+4. Runner 会在 Provider 退出后逐项执行 `inputs.required_assertions`，把可信回执合并进 `checks[]`。Provider FAIL 必须保留；Provider PASS 只有在全部 Runner 断言也通过时才可能保持 PASS。
+5. Provider 探索和 Runner 机械断言是并列证据：任何一侧发现真实失败，最终结果都必须 FAIL，禁止用另一侧 PASS 覆盖。
+
 ### 反作弊红线（v1.1 强制 — 不要让 evaluator 过度通过）
 
 对齐 Anthropic harness-design 2026-03 原话："Out of the box, Claude is a poor QA agent...even evaluator needs prompt engineering"。下面 4 条**违反任一直接 FAIL，禁止 PASS**：
@@ -229,7 +240,7 @@ Kernel 结构化输出示例（`checks` 是 HarnessResult 顶层字段）：
 - 合同里若只有 `curl -f /multiply` 没 jq -e → evaluator 跑 → exit 0 → 假 PASS ❌ 漏判
 - → 这是 **contract reviewer 第 6 维 verification_oracle_completeness** 该卡的事，但 evaluator 看到 [BEHAVIOR] 命令缺 jq -e 时必须**在 feedback 里写明 "弱 oracle，schema drift 漏判风险"** 让上游知道
 
-**红线适用范围（v1.20 — 两种入口同等生效）**：以上 4 条红线在 **v1 env 注入路径** 与 **relay prompt 派发路径**（见「Relay 入口协议」）下**同等生效，无任何豁免**。relay 下 2026-07-04 实证的两个假绿面在此点名封死：
+**红线适用范围（v1.20 — 两种入口同等生效）**：除 Brain 明确声明的 `direct-required-assertions/v1` 外，以上 4 条红线在 **v1 env 注入路径** 与 **relay prompt 派发路径**（见「Relay 入口协议」）下同等生效。Direct 模式走上节的人式探索 + Runner 可信断言双轨，不是放宽成 CI-only。relay 下 2026-07-04 实证的两个假绿面在此点名封死：
 
 - **合同 `## E2E 验收` 段缺失 → 必 FAIL**（failed_step=setup，同 Step B-1 现有语义）。relay 下不许因"没有 env 协议"就跳过 B-1 提取直接给 PASS。
 - **合同 [BEHAVIOR] 的 manual:bash 命令一条都没真跑 → 必 FAIL**。看到 vitest / CI 全绿就给 PASS = 违反红线 1；vitest 是 generator 自写单测，**不是 Golden Path 验收 oracle**。relay 下没有 .brain-result.json 消费方也一样：verdict 的唯一合法来源是真跑合同断言的退出码。
@@ -339,6 +350,8 @@ echo "模式 B — 最终 E2E"
 ### 模式 B：最终 E2E 验证
 
 #### Step B-1: 提取 E2E 验收脚本
+
+若且仅若 TaskBundle 的 server-owned `inputs.evaluation_mode.kind` 为 `direct-required-assertions/v1`，不执行本节至 B-2 的合同 E2E 提取/缺失判定，改走上文「Server-owned Direct Profile 模式」完成人式探索并输出结构化结果。Runner 随后执行可信断言。其他模式继续执行以下全部步骤。
 
 ```bash
 CONTRACT="${SPRINT_DIR}/contract-draft.md"

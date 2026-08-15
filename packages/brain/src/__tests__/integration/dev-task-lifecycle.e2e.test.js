@@ -21,180 +21,27 @@ import request from 'supertest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { cleanupRoutedTasks } from '../helpers/routed-task-cleanup.js';
+import {
+  cleanupActiveCapability,
+  seedActiveCapability,
+} from './helpers/take-map-authority-fixture.js';
+import './helpers/dev-task-lifecycle-mocks.js';
 
 const MOCK_PR_URL = 'https://github.com/mock/cecelia/pull/42';
-
-// ─── Mock: callback-processor.js 外部依赖 ──────────────────────────────────────
-
-vi.mock('../../thalamus.js', () => ({
-  processEvent: vi.fn().mockResolvedValue({ level: 'normal', actions: [] }),
-  EVENT_TYPES: { TASK_COMPLETED: 'task_completed', TASK_FAILED: 'task_failed' },
-}));
-
-vi.mock('../../decision-executor.js', () => ({
-  executeDecision: vi.fn().mockResolvedValue(null),
-}));
-
-vi.mock('../../embedding-service.js', () => ({
-  generateTaskEmbeddingAsync: vi.fn().mockResolvedValue(null),
-}));
-
-vi.mock('../../events/taskEvents.js', () => ({
-  publishTaskCompleted: vi.fn(),
-  publishTaskFailed: vi.fn(),
-}));
-
-vi.mock('../../event-bus.js', () => ({
-  ensureEventsTable: vi.fn(),
-  emit: vi.fn().mockResolvedValue(null),
-  queryEvents: vi.fn().mockResolvedValue([]),
-  getEventCounts: vi.fn().mockResolvedValue({}),
-}));
-
-vi.mock('../../notifier.js', () => ({
-  notifyTaskCompleted: vi.fn().mockResolvedValue(null),
-}));
-
-vi.mock('../../alerting.js', () => ({
-  raise: vi.fn().mockResolvedValue(null),
-}));
-
-vi.mock('../../desire-feedback.js', () => ({
-  updateDesireFromTask: vi.fn().mockResolvedValue(null),
-}));
-
-vi.mock('../../routes/shared.js', () => ({
-  resolveRelatedFailureMemories: vi.fn().mockResolvedValue(null),
-  getActiveExecutionPaths: vi.fn(),
-  INVENTORY_CONFIG: {},
-}));
-
-vi.mock('../../progress-ledger.js', () => ({
-  recordProgressStep: vi.fn().mockResolvedValue(null),
-}));
-
-vi.mock('../../code-review-trigger.js', () => ({
-  checkAndCreateCodeReviewTrigger: vi.fn().mockResolvedValue(null),
-}));
-
-// ─── Mock: task-tasks.js 路由依赖 ──────────────────────────────────────────────
-
-vi.mock('../../domain-detector.js', () => ({
-  detectDomain: vi.fn(() => ({ domain: 'agent_ops' })),
-}));
-
-vi.mock('../../task-updater.js', () => ({
-  blockTask: vi.fn(),
-  broadcastTaskState: vi.fn(),
-}));
-
-// ─── Mock: quarantine（同时为 task-tasks.js 提供 FAILURE_CLASS 常量）─────────
-
-vi.mock('../../quarantine.js', () => ({
-  handleTaskFailure: vi.fn().mockResolvedValue({ quarantined: false }),
-  classifyFailure: vi.fn().mockReturnValue({ class: 'unknown', confidence: 0.5 }),
-  FAILURE_CLASS: {
-    NETWORK: 'network',
-    RATE_LIMIT: 'rate_limit',
-    BILLING_CAP: 'billing_cap',
-    AUTH: 'auth',
-    RESOURCE: 'resource',
-  },
-}));
-
-// ─── Mock: circuit-breaker ─────────────────────────────────────────────────────
-
-vi.mock('../../circuit-breaker.js', () => ({
-  recordSuccess: vi.fn().mockResolvedValue(null),
-  recordFailure: vi.fn().mockResolvedValue(null),
-  getState: vi.fn(() => ({ state: 'CLOSED', failures: 0 })),
-  reset: vi.fn(),
-  getAllStates: vi.fn(() => ({})),
-}));
-
-// ─── Mock: executor（processExecutionCallback 动态 import executor.js）────────
-
-vi.mock('../../executor.js', () => ({
-  removeActiveProcess: vi.fn(),
-  setBillingPause: vi.fn(),
-  triggerCeceliaRun: vi.fn(),
-}));
-
-// ─── Mock: docker-executor spawn 中间件（mock cecelia-runner）─────────────────
-// 绕过真实 Docker 调用，立即返回 exit_code=0，测试速度 < 10 分钟。
-// writeDockerCallback 本身不 mock（验证它能正确写入 callback_queue）。
-
-vi.mock('../../spawn/middleware/docker-run.js', () => ({
-  runDocker: vi.fn().mockImplementation(async (_args, ctx) => ({
-    exit_code: 0,
-    stdout: `{"type":"result","result":"pr_url: ${MOCK_PR_URL}\\nTask completed successfully"}`,
-    stderr: '',
-    duration_ms: 50,
-    container: ctx.name,
-    container_id: null,
-    command: `docker run ... ${ctx.name}`,
-    timed_out: false,
-    started_at: new Date().toISOString(),
-    ended_at: new Date().toISOString(),
-  })),
-}));
-
-vi.mock('../../spawn/middleware/account-rotation.js', () => ({
-  resolveAccount: vi.fn().mockResolvedValue(undefined),
-  resolveAccountForOpts: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('../../spawn/middleware/cascade.js', () => ({
-  resolveCascade: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('../../spawn/middleware/cost-cap.js', () => ({
-  checkCostCap: vi.fn().mockResolvedValue(undefined),
-  CostCapExceededError: class CostCapExceededError extends Error {},
-}));
-
-vi.mock('../../spawn/middleware/billing.js', () => ({
-  recordBilling: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('../../spawn/middleware/cap-marking.js', () => ({
-  checkCap: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('../../spawn/middleware/logging.js', () => ({
-  createSpawnLogger: vi.fn().mockReturnValue({ logStart: vi.fn(), logEnd: vi.fn() }),
-}));
-
-vi.mock('../../spawn/middleware/resource-tier.js', () => ({
-  resolveResourceTier: vi.fn().mockReturnValue({
-    tier: 'standard',
-    memoryMB: 4096,
-    cpuCores: 2,
-    timeoutMs: 300000,
-  }),
-  RESOURCE_TIERS: {},
-  TASK_TYPE_TIER: {},
-}));
-
-// ─── Mock: child_process（docker-executor 内 fs 操作不需要真实 docker 二进制）─
-
-vi.mock('child_process', () => ({
-  exec: vi.fn(),
-  execFile: vi.fn(),
-  execSync: vi.fn(),
-  spawn: vi.fn(),
-}));
 
 // ─── 真实 PostgreSQL 连接（验证 DB 写入）─────────────────────────────────────
 
 const testPool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
 const insertedTaskIds = [];
 const runKey = `${process.pid}-${Date.now()}`;
+const mapFixtureRepo = `dev-lifecycle-${runKey}`;
 const codingRoute = {
   change_kind: 'bugfix',
   mutation_intent: 'write',
-  repo_hint: 'cecelia',
-  map_scope_hint: ['cecelia'],
+  repo_hint: mapFixtureRepo,
+  // Coding routes must anchor to an active business capability node. The repo
+  // scope key (`cecelia`) is routing metadata, not a mutation authority.
+  map_scope_hint: ['F1'],
   branch: `cp-e2e-${runKey}`,
   base_sha: 'a'.repeat(40),
 };
@@ -215,8 +62,15 @@ async function makeApp() {
 describe('Dev Task 全链路 E2E — docker spawn → callback → status=completed', () => {
   let app;
   let createdTaskId;
+  let mapFixture;
 
   beforeAll(async () => {
+    mapFixture = await seedActiveCapability(testPool, {
+      scopeKey: mapFixtureRepo,
+      repo: mapFixtureRepo,
+      nodeKey: 'F1',
+      ensureRepository: true,
+    });
     app = await makeApp();
   }, 20000);
 
@@ -232,6 +86,7 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
       );
       await cleanupRoutedTasks(testPool, insertedTaskIds);
     }
+    await cleanupActiveCapability(testPool, mapFixture);
     await testPool.end();
   });
 
@@ -251,8 +106,9 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
           trigger_source: 'api',
           source_id: `dev-lifecycle-success-${runKey}`,
           ...codingRoute,
-        })
-        .expect(201);
+        });
+
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
 
       expect(res.body).toHaveProperty('id');
       expect(res.body.status).toBe('queued');
@@ -453,8 +309,9 @@ describe('Dev Task 全链路 E2E — docker spawn → callback → status=comple
           trigger_source: 'api',
           source_id: `dev-lifecycle-failure-${runKey}`,
           ...codingRoute,
-        })
-        .expect(201);
+        });
+
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
 
       failTaskId = res.body.id;
       insertedTaskIds.push(failTaskId);

@@ -522,11 +522,33 @@ jq -e '
     "command","exit_code","log_tail","verification_level",
     "action","expected","wait_budget","evidence"
   ]
+  and .properties.decision.anyOf[0].properties.failure_signature.anyOf[0] == {
+    "type":"array","minItems":1,"maxItems":64,"uniqueItems":true,
+    "items":{"type":"string","minLength":1,"maxLength":512}
+  }
+  and .properties.decision.anyOf[0].properties.failure_signature.anyOf[1].type == "null"
 ' <<<"$EVALUATOR_SCHEMA" >/dev/null || {
-  echo 'runner schema does not preserve strict evaluator evidence objects' >&2
+  echo 'runner schema does not preserve evaluator evidence/signature objects' >&2
   exit 1
 }
 rm -rf "$EVALUATOR_SCHEMA_TMP"
+
+JUDGE_SCHEMA_TMP="$(mktemp -d)"
+cat > "$JUDGE_SCHEMA_TMP/task.json" <<'JSON'
+{"task_bundle":{"role":"judge","expected_output":"harness-result/judge-v1"}}
+JSON
+JUDGE_SCHEMA="$(provider_result_schema_json "$JUDGE_SCHEMA_TMP/task.json")"
+jq -e '
+  .properties.decision.anyOf[0].properties.failure_signature.anyOf[0] == {
+    "type":"array","minItems":1,"maxItems":64,"uniqueItems":true,
+    "items":{"type":"string","minLength":1,"maxLength":512}
+  }
+  and .properties.decision.anyOf[0].properties.failure_signature.anyOf[1].type == "null"
+' <<<"$JUDGE_SCHEMA" >/dev/null || {
+  echo 'runner Judge schema is inconsistent with normalized failure signatures' >&2
+  exit 1
+}
+rm -rf "$JUDGE_SCHEMA_TMP"
 
 # ── 案卷式 GAN 出口字段必须被 schema 放行（2026-08-05 r36 实证根因）──────────
 # 事故：runner schema 顶层 additionalProperties:false 且 decision 只允许
@@ -847,6 +869,32 @@ jq -e --arg sha "$RUNNER_ASSERTION_SHA" --arg digest "$EXPECTED_RUNNER_DIGEST" '
   exit 1
 }
 
+# Direct profile has no contract E2E by design. Even when the human Evaluator
+# reports a product failure, the trusted Runner must still execute every frozen
+# required assertion and merge those receipts without erasing the human FAIL.
+cat > "$EVIDENCE_TMP/result.json" <<'JSON'
+{"status":"completed","checks":[],"decision":{"outcome":"FAIL","reason":"human exploration found a broken edge case","failure_class":"product_failure","failure_signature":["human_edge_case"]}}
+JSON
+HARNESS_NODE=evaluator EVALUATOR_EVIDENCE_PREPARED=1 \
+  WORKTREE_PATH="$EVIDENCE_TMP" PR_HEAD_SHA="$RUNNER_ASSERTION_SHA" \
+  CECELIA_MACHINE_ID=runner-machine HARNESS_CALLBACK_TOKEN=runner-secret \
+  HARNESS_TASK_BUNDLE_FILE="$EVIDENCE_TMP/assertion-task-bundle.json" \
+  DB_URL=postgresql://runner/assertion_scratch \
+  HARNESS_REQUIRED_ASSERTIONS_JSON="$RUNNER_ASSERTIONS_JSON" \
+  merge_evaluator_evidence "$EVIDENCE_TMP/result.json"
+jq -e '
+  .decision.outcome == "FAIL"
+  and .decision.reason == "human exploration found a broken edge case"
+  and .decision.failure_class == "product_failure"
+  and .decision.failure_signature == ["human_edge_case"]
+  and (.checks | length) == 1
+  and .checks[0].assertion_id == "scripts/smoke/runner-proof.sh"
+  and .checks[0].exit_code == 0
+' "$EVIDENCE_TMP/result.json" >/dev/null || {
+  echo 'runner skipped trusted assertions after a direct human-evaluator FAIL' >&2
+  exit 1
+}
+
 # Provider 与 assertion 若共用 HOME，登录 shell 会加载 Provider 写入的 profile，
 # 从而用假 npx 把不存在的测试伪造成 PASS。Runner 必须使用干净 HOME、固定工具链、
 # 非 shell argv 执行，使该攻击稳定 FAIL。
@@ -944,6 +992,8 @@ HARNESS_NODE=evaluator EVALUATOR_EVIDENCE_PREPARED=1 \
 jq -e '
   .decision.outcome == "FAIL"
   and (.decision.reason | contains("payload is invalid"))
+  and .decision.failure_class == "evidence_invalid"
+  and .decision.failure_signature == ["required_assertion_input_invalid"]
 ' "$EVIDENCE_TMP/result.json" >/dev/null || {
   echo 'runner failed open on malformed required assertion input' >&2
   exit 1
@@ -967,6 +1017,8 @@ HARNESS_NODE=evaluator EVALUATOR_EVIDENCE_PREPARED=1 \
 jq -e '
   .decision.outcome == "FAIL"
   and (.decision.reason | contains("scripts/smoke/failure.sh"))
+  and .decision.failure_class == "product_failure"
+  and .decision.failure_signature == ["required_assertion:scripts/smoke/failure.sh"]
   and .checks[0].exit_code == 7
 ' "$EVIDENCE_TMP/result.json" >/dev/null || {
   echo 'runner allowed a failed required assertion to retain PASS' >&2
@@ -1067,6 +1119,18 @@ grep -q 'HARNESS_ATTEMPT_ID' "$EVALUATOR_SKILL" || {
 grep -Fq 'RESULT_FILE="${BRAIN_RESULT_FILE:-$WORKSPACE/.brain-result.json}"' \
   "$EVALUATOR_SKILL" || {
   echo 'harness-evaluator skill does not honor the injected result file' >&2
+  exit 1
+}
+grep -Fq 'direct-required-assertions/v1' "$EVALUATOR_SKILL" || {
+  echo 'harness-evaluator skill does not recognize the server-owned direct mode' >&2
+  exit 1
+}
+grep -Fq '合同没有 E2E 段不是失败' "$EVALUATOR_SKILL" || {
+  echo 'harness-evaluator direct mode still requires an impossible contract E2E' >&2
+  exit 1
+}
+grep -Fq 'Runner 会在 Provider 退出后逐项执行' "$EVALUATOR_SKILL" || {
+  echo 'harness-evaluator direct mode does not preserve the trusted Runner assertion boundary' >&2
   exit 1
 }
 
@@ -1205,4 +1269,5 @@ if grep -Eq -- '--model[[:space:]]+(sonnet|opus|haiku|gpt-|o[0-9])' <<<"$SECTION
   exit 1
 fi
 
+bash "$SCRIPT_DIR/__tests__/entrypoint-evaluator-worktree-integrity.test.sh"
 echo 'provider-neutral runner contract: PASS'

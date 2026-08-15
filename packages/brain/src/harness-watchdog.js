@@ -23,6 +23,25 @@ import pool from './db.js';
 import { execSync } from 'child_process';
 import { patchKernelRunById } from './orchestrator/kernel-run-store.js';
 
+function runIdentityPredicate(runAlias, taskIdentity) {
+  return `(
+          (${runAlias}.orchestrator_version = 'v2'
+           AND ${runAlias}.current_task_id = ${taskIdentity})
+       OR (${runAlias}.orchestrator_version = 'v1'
+           AND ${runAlias}.initiative_id = ${taskIdentity})
+       OR (${runAlias}.orchestrator_version = 'v2'
+           AND ${runAlias}.current_task_id IS NULL
+           AND ${runAlias}.initiative_id = ${taskIdentity})
+        )`;
+}
+
+async function acquireWatchdogClient(dbPool) {
+  if (typeof dbPool.connect !== 'function') {
+    throw new Error('watchdog transactional pool requires connect()');
+  }
+  return dbPool.connect();
+}
+
 /**
  * 扫描所有 in-flight initiative_runs，标 deadline_at 已过未完成的为 watchdog_overdue。
  *
@@ -280,7 +299,9 @@ export async function resumeStalledHarnessDrivers({
        FROM tasks t
       WHERE t.task_type = 'harness_initiative'
         AND t.status = 'in_progress'
-        AND NOT EXISTS (SELECT 1 FROM initiative_runs ir WHERE ir.initiative_id = t.id)
+        AND NOT EXISTS (
+              SELECT 1 FROM initiative_runs ir
+               WHERE ${runIdentityPredicate('ir', 't.id')})
         AND t.claimed_at IS NOT NULL
         AND t.claimed_at < NOW() - ($1 || ' minutes')::interval
       ORDER BY t.claimed_at ASC
@@ -309,23 +330,72 @@ export async function resumeStalledHarnessDrivers({
         continue;
       }
 
-      const upd = await dbPool.query(
-        `UPDATE tasks SET
-           status = 'failed',
-           claimed_by = NULL,
-           claimed_at = NULL,
-           error_message = 'harness_initiative never started graph (no initiative_runs row, claimed_at stale)',
-           updated_at = NOW()
-         WHERE id = $1 AND status = 'in_progress'
-         RETURNING id`,
-        [row.id]
-      );
-      if (upd.rows.length > 0) {
-        resumed.push(row.id);
-        console.warn(
-          `[harness-watchdog] marked never-started harness task failed: task=${row.id} ` +
-          `(no initiative_runs row, claimed_at stale >${neverStartedThresholdMin}min)`
+      const client = await acquireWatchdogClient(dbPool);
+      let transactionOpen = false;
+      try {
+        await client.query('BEGIN');
+        transactionOpen = true;
+
+        const locked = await client.query(
+          `SELECT id, status, claimed_at
+             FROM tasks
+            WHERE id = $1
+              AND task_type = 'harness_initiative'
+              AND status = 'in_progress'
+              AND claimed_at IS NOT NULL
+              AND claimed_at < NOW() - ($2 || ' minutes')::interval
+            FOR UPDATE`,
+          [row.id, String(neverStartedThresholdMin)]
         );
+        if (locked.rows.length === 0) {
+          await client.query('COMMIT');
+          transactionOpen = false;
+          continue;
+        }
+
+        const exactRun = await client.query(
+          `SELECT ir.id
+             FROM initiative_runs ir
+            WHERE ${runIdentityPredicate('ir', '$1')}
+            LIMIT 1`,
+          [row.id]
+        );
+        if (exactRun.rows.length > 0) {
+          await client.query('COMMIT');
+          transactionOpen = false;
+          continue;
+        }
+
+        const upd = await client.query(
+          `UPDATE tasks SET
+             status = 'failed',
+             claimed_by = NULL,
+             claimed_at = NULL,
+             error_message = 'harness_initiative never started graph (no initiative_runs row, claimed_at stale)',
+             updated_at = NOW()
+           WHERE id = $1 AND status = 'in_progress'
+           RETURNING id`,
+          [row.id]
+        );
+        await client.query('COMMIT');
+        transactionOpen = false;
+
+        if (upd.rows.length > 0) {
+          resumed.push(row.id);
+          console.warn(
+            `[harness-watchdog] marked never-started harness task failed: task=${row.id} ` +
+            `(no initiative_runs row, claimed_at stale >${neverStartedThresholdMin}min)`
+          );
+        }
+      } catch (err) {
+        if (transactionOpen) {
+          try {
+            await client.query('ROLLBACK');
+          } catch { /* 保留原始事务错误 */ }
+        }
+        throw err;
+      } finally {
+        client.release();
       }
     } catch (err) {
       console.error(

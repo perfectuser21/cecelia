@@ -6,6 +6,7 @@
  *       覆盖缺步→FAIL；裁判网络错→fail-open 保留 agent verdict；JUDGE_STRICT=1→fail-closed；
  *       agent FAIL→直接透传不调裁判；coverage 校验 + Golden Path 解析 + 配置解析。
  */
+import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   runJudgeGate,
@@ -277,10 +278,12 @@ describe('runJudgeGate — 三权分立裁判门', () => {
   });
 
   it('agent PASS + 裁判 FAIL → 终判 FAIL（fix 路），feedback=裁判意见', async () => {
+    const coverage = [{ step: 'step A', passed: true }, { step: 'step B', passed: false }];
     const judgeFn = vi.fn().mockResolvedValue({
       verdict: 'FAIL',
-      coverage: [{ step: 'step A', passed: true }, { step: 'step B', passed: false }],
+      coverage,
       feedback: '第二步没有真实证据',
+      failure_signature: ['interactive_step_b_failed'],
     });
     const res = await runJudgeGate(
       { ...baseCtx, agentVerdict: 'PASS', agentFeedback: 'agent 说都过了' },
@@ -289,6 +292,8 @@ describe('runJudgeGate — 三权分立裁判门', () => {
     expect(res.verdict).toBe('FAIL');
     expect(res.judged).toBe(true);
     expect(res.feedback).toContain('第二步没有真实证据');
+    expect(res.coverage).toEqual(coverage);
+    expect(res.failure_signature).toEqual(['interactive_step_b_failed']);
   });
 
   it('裁判 verdict=PASS 但 Golden Path 覆盖缺步 → 终判 FAIL', async () => {
@@ -332,15 +337,24 @@ describe('runJudgeGate — 三权分立裁判门', () => {
     vi.restoreAllMocks();
   });
 
-  it('agent FAIL → 直接透传，不调裁判（运动员已失败，走 fix loop）', async () => {
-    const judgeFn = vi.fn();
+  it('agent FAIL 也必须由独立 Judge 复核，运动员不能独自触发改码', async () => {
+    const judgeFn = vi.fn().mockResolvedValue({
+      verdict: 'FAIL',
+      coverage: [
+        { step: 'step A', passed: false, evidence: 'interactive failure confirmed' },
+        { step: 'step B', passed: true, evidence: 'covered' },
+      ],
+      feedback: 'confirmed product failure',
+      failure_class: 'product_failure',
+    });
     const res = await runJudgeGate(
       { ...baseCtx, agentVerdict: 'FAIL', agentFeedback: 'happy 路 FAIL' },
       { judgeFn, collectEvidence: fakeEvidence(), ...noopWrite }
     );
     expect(res.verdict).toBe('FAIL');
-    expect(res.feedback).toBe('happy 路 FAIL');
-    expect(judgeFn).not.toHaveBeenCalled();
+    expect(res.judged).toBe(true);
+    expect(res.failure_class).toBe('product_failure');
+    expect(judgeFn).toHaveBeenCalledOnce();
   });
 
   it('无合同/Golden Path 证据 → 证据门跳过裁判，保留 agent verdict（不误杀单测/无证据 run）', async () => {
@@ -353,6 +367,82 @@ describe('runJudgeGate — 三权分立裁判门', () => {
     expect(res.verdict).toBe('PASS');
     expect(res.judged).toBe(false);
     expect(judgeFn).not.toHaveBeenCalled();
+  });
+
+  it('受管冻结合同即使没有 E2E/Golden Path 也必须进入独立 AI Judge', async () => {
+    const content = [
+      '# Frozen impact assertions',
+      '',
+      '```json',
+      JSON.stringify({
+        impact_contract_id: 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
+        impact_contract_hash: 'a'.repeat(64),
+        required_assertions: [{
+          assertion_id: 'callback-cas',
+          command: 'npm test -- callback-cas',
+          covers_capability_ids: ['callback-cas'],
+        }],
+      }, null, 2),
+      '```',
+    ].join('\n');
+    const artifact = {
+      type: 'frozen_contract_test',
+      path: 'direct-contracts/routing-receipt/tests/impact-contract.md',
+      content,
+      sha256: createHash('sha256').update(content).digest('hex'),
+      source_sha: 'b'.repeat(40),
+    };
+    const step = 'required_assertion:callback-cas | command:npm test -- callback-cas | capabilities:callback-cas';
+    const judgeFn = vi.fn().mockResolvedValue({
+      verdict: 'FAIL',
+      coverage: [{
+        step,
+        passed: false,
+        deferred: false,
+        evidence: 'Evaluator 只有 CI 汇总，没有证明冻结断言成立',
+      }],
+      feedback: '缺少对冻结影响断言的独立语义验收',
+      failure_class: 'evidence_insufficient',
+    });
+    const emptyEvidence = async () => ({
+      contractE2E: '',
+      goldenPathSteps: [],
+      transcript: 'generic test suite passed',
+      agentStdout: 'generic test suite passed',
+      brainResult: {
+        verdict: 'PASS',
+        behavior_tests: [{ command: 'npm test', exit_code: 0, log_tail: 'ok' }],
+      },
+    });
+
+    const res = await runJudgeGate(
+      {
+        ...baseCtx,
+        agentVerdict: 'PASS',
+        agentFeedback: null,
+        stageFacts: validStageFacts,
+        frozenContractArtifacts: [artifact],
+      },
+      {
+        judgeFn,
+        collectEvidence: emptyEvidence,
+        mechanicalGateFn: async () => ({ pass: true, reasons: [] }),
+        ...noopWrite,
+      },
+    );
+
+    expect(res).toMatchObject({
+      verdict: 'FAIL',
+      judged: true,
+      failure_class: 'evidence_insufficient',
+    });
+    expect(judgeFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goldenPathSteps: [step],
+        frozenContractArtifacts: [artifact],
+      }),
+      expect.any(Object),
+    );
   });
 
   it('精确 PR 验收只有 required_command_evidence 时仍必须进入独立裁判', async () => {
@@ -454,6 +544,15 @@ describe('runJudgeGate — 三权分立裁判门', () => {
 });
 
 describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）', () => {
+  it('coverage 条目必须逐项匹配服务端 rubric step，不能靠相同数组长度冒充覆盖', () => {
+    expect(validateCoverage(
+      [{ step: 'totally different', passed: true, deferred: false, evidence: 'forged' }],
+      ['must save the form'],
+    )).toMatchObject({
+      ok: false,
+      missing: [{ index: 1, step: 'must save the form' }],
+    });
+  });
   it('每步都有 passed=true → ok', () => {
     const r = validateCoverage(
       [{ step: 'a', passed: true }, { step: 'b', passed: true }],

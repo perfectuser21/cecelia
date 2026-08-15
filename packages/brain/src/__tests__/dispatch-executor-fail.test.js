@@ -112,6 +112,24 @@ vi.mock('../account-usage.js', () => ({
   getAuthFailedAccounts: vi.fn().mockReturnValue([]),
 }));
 
+function kernelDispatchTask(id, description) {
+  return {
+    id, title: id, description,
+    task_type: 'harness_initiative', status: 'queued', priority: 'P1',
+    payload: routedCodingPayload(id),
+    created_at: '2026-08-15T00:00:00Z',
+  };
+}
+
+function setupKernelDispatch(task, result) {
+  mockTriggerCeceliaRun.mockResolvedValueOnce(result);
+  for (const rows of [[], [task], [], [{ n: 0 }], [{ id: task.id }], [task], []]) {
+    mockQuery.mockResolvedValueOnce({ rows, rowCount: rows.length });
+  }
+  mockQuery.mockResolvedValueOnce({ rows: [canonicalRoutingReceipt(task)] });
+  mockQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+}
+
 describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=false', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -212,6 +230,99 @@ describe('Bug #1: triggerCeceliaRun 失败时 revert 任务并返回 dispatched=
     // recordFailure 不应该被调用
     expect(mockRecordFailure).not.toHaveBeenCalled();
   });
+
+  it('Kernel executor 声称 success 但没有 runId 时按失败收口并释放 claim', async () => {
+    const task = kernelDispatchTask('kernel-no-authority', '测试 Kernel 假成功不得泄漏 claim');
+    setupKernelDispatch(task, { success: true, taskId: task.id });
+
+    const { dispatchNextTask } = await import('../tick.js');
+    const result = await dispatchNextTask(['goal-1']);
+
+    expect(result).toMatchObject({
+      dispatched: false,
+      reason: 'executor_failed',
+      task_id: task.id,
+      error: 'kernel_authority_not_created',
+    });
+    expect(mockUpdateTask).toHaveBeenCalledWith({ task_id: task.id, status: 'queued' });
+    expect(mockQuery.mock.calls.some(([sql, params]) => (
+      /SET\s+claimed_by = NULL,\s+claimed_at = NULL/.test(String(sql))
+      && params?.[0] === task.id
+    ))).toBe(true);
+    expect(mockQuery.mock.calls.some(([sql, params]) => (
+      /INSERT INTO task_events/.test(String(sql))
+      && params?.[1] === 'failed_dispatch'
+      && params?.[2]?.includes('kernel_authority_not_created')
+    ))).toBe(true);
+  });
+
+  it.each([
+    ['kernel-terminal-authority', 'kernel_terminal_authority', {
+      runId: '33333333-3333-4333-8333-333333333333',
+      kernelAuthority: 'terminal', authorityExists: true,
+    }],
+    ['kernel-pre-run-terminal', 'kernel_pre_run_terminal', { taskTerminal: true }],
+  ])('Kernel terminal fence %s 保持终态并只清理 claim', async (id, reason, extra) => {
+    const task = kernelDispatchTask(id, '测试 Kernel 终态任务不得被 dispatcher 复活');
+    setupKernelDispatch(task, {
+      success: false, taskId: task.id, reason, terminal: true, ...extra,
+    });
+    const { dispatchNextTask } = await import('../tick.js');
+    const result = await dispatchNextTask(['goal-1']);
+    expect(result).toMatchObject({
+      dispatched: false, reason, task_id: task.id, terminal: true,
+      ...(extra.runId ? { run_id: extra.runId } : {}),
+    });
+    expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: task.id, status: 'queued' });
+    expect(mockQuery.mock.calls.some(([sql, params]) => (
+      /SET\s+claimed_by = NULL,\s+claimed_at = NULL/.test(String(sql))
+      && /status\s+IN\s+\('completed', 'failed', 'cancelled', 'canceled'\)/.test(String(sql))
+      && params?.[0] === task.id
+    ))).toBe(true);
+    expect(mockQuery.mock.calls.some(([sql, params]) => (
+      /INSERT INTO task_events/.test(String(sql)) && params?.[1] === 'failed_dispatch'
+    ))).toBe(false);
+    expect(mockRecordFailure).not.toHaveBeenCalled();
+  });
+
+  it('Kernel authority reconciliation 查询失败时保留 claim 交给 Watchdog', async () => {
+    const task = kernelDispatchTask('kernel-authority-unknown', '测试 authority 查询失败不得导致双跑');
+    setupKernelDispatch(task, {
+      success: false,
+      taskId: task.id,
+      reason: 'kernel_authority_reconciliation_unavailable',
+      error: 'database connection reset',
+      authorityUnknown: true,
+    });
+
+    const { dispatchNextTask } = await import('../tick.js');
+    const result = await dispatchNextTask(['goal-1']);
+
+    expect(result).toMatchObject({
+      dispatched: false,
+      reason: 'kernel_authority_reconciliation_unavailable',
+      task_id: task.id,
+      authority_unknown: true,
+    });
+    expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: task.id, status: 'queued' });
+    expect(mockQuery.mock.calls.some(([sql, params]) => (
+      /SET\s+claimed_by = NULL,\s+claimed_at = NULL/.test(String(sql))
+      && params?.[0] === task.id
+    ))).toBe(false);
+    expect(mockQuery.mock.calls.some(([sql, params]) => (
+      /INSERT INTO task_events/.test(String(sql))
+      && params?.[1] === 'kernel_authority_reconciliation_unavailable'
+    ))).toBe(true);
+    expect(mockRecordFailure).not.toHaveBeenCalled();
+    expect(mockRecordDispatchResult).toHaveBeenCalledWith(
+      expect.anything(),
+      false,
+      'kernel_authority_reconciliation_unavailable',
+      undefined,
+      task.id,
+    );
+  });
+
 });
 
 describe('Bug #5: processCortexTask 失败时调用 handleTaskFailure', () => {
@@ -316,7 +427,11 @@ describe('Bug 回归: harness_initiative bridge guard bypass', () => {
     const executorMod = await import('../executor.js');
     executorMod.checkCeceliaRunAvailable.mockResolvedValueOnce({ available: false, error: 'Bridge not running' });
 
-    mockTriggerCeceliaRun.mockResolvedValueOnce({ success: true, taskId: 'harness-task-1' });
+    mockTriggerCeceliaRun.mockResolvedValueOnce({
+      success: true,
+      taskId: 'harness-task-1',
+      runId: '11111111-1111-4111-8111-111111111111',
+    });
 
     const harnessTask = {
       id: 'harness-task-1',

@@ -10,9 +10,11 @@ import { deriveCounters } from '../../orchestrator/counters.js';
 import { derive } from '../../orchestrator/derive.js';
 import { collectGroundTruth } from '../../orchestrator/ground-truth.js';
 import { createKernelHandlers } from '../../orchestrator/kernel-handlers.js';
+import { contractArtifactManifestDigest } from '../../orchestrator/contract-artifacts.js';
 import { PROGRESSING_KERNEL_PHASES, runLoop } from '../../orchestrator/loop.js';
 import { persistKernelRunPhase } from '../../orchestrator/kernel-run-store.js';
 import { createAttemptStore } from '../../orchestrator/attempt-store.js';
+import { resolveRemoteExactCommitBlob } from '../../orchestrator/remote-exact-commit-blob-resolver.js';
 import { resumeStalledRelayRuns } from '../../harness-relay-watchdog.js';
 import callbackRouter, {
   appendAttemptVerdict,
@@ -33,6 +35,49 @@ const THIRD_SHA = 'c'.repeat(40);
 let adminPool;
 let testPool;
 let databaseName;
+
+async function sealFixtureContract({ contractId, sprintDir, sourceRevision = HEAD_SHA }) {
+  const artifact = (path, content) => ({
+    path,
+    content,
+    sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
+    byte_length: Buffer.byteLength(content, 'utf8'),
+    source_revision: sourceRevision,
+  });
+  const artifacts = [
+    artifact(`${sprintDir}/contract-dod.md`, '# DoD\n\n- Kernel fixture is accepted.'),
+    artifact(`${sprintDir}/contract-draft.md`, '# Contract\n\nKernel fixture contract.'),
+    artifact(`${sprintDir}/sprint-prd.md`, '# PRD\n\nKernel fixture objective.'),
+    artifact(`${sprintDir}/tests/kernel-fixture.test.mjs`, 'export default true;'),
+  ];
+  for (const row of artifacts) {
+    await testPool.query(
+      `INSERT INTO initiative_contract_artifacts
+         (contract_id, path, content, sha256, byte_length, source_revision)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        contractId,
+        row.path,
+        row.content,
+        row.sha256,
+        row.byte_length,
+        row.source_revision,
+      ],
+    );
+  }
+  const manifestSha256 = contractArtifactManifestDigest(artifacts);
+  await testPool.query(
+    `INSERT INTO initiative_contract_artifact_seals
+       (contract_id, artifact_count, manifest_sha256, source_revision)
+     VALUES ($1, $2, $3, $4)`,
+    [contractId, artifacts.length, manifestSha256, sourceRevision],
+  );
+  return Object.freeze({
+    contract_id: contractId,
+    manifest_sha256: manifestSha256,
+    source_revision: sourceRevision,
+  });
+}
 
 function quotedIdentifier(value) {
   if (!/^kernel_wiring_[a-z0-9_]+$/.test(value)) {
@@ -114,6 +159,10 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
      VALUES ($1, $2, 1, 'approved', 'prd', 'contract', $3, NOW())`,
     [contractId, initiativeId, HEAD_SHA],
   );
+  const contractIdentity = await sealFixtureContract({
+    contractId,
+    sprintDir: payload.sprint_dir,
+  });
   await testPool.query(
     `INSERT INTO tasks
        (id, title, status, priority, task_type, trigger_source, payload)
@@ -124,13 +173,20 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
     `INSERT INTO work_routing_receipts
        (id, task_id, source, source_id, work_kind, change_kind, pipeline,
         canonical_task_type, default_execution_profile, repo, map_scope,
-        impact_contract_required, orchestrator, router_version, route_reason, evidence)
+        impact_contract_required, orchestrator, router_version, route_reason, evidence,
+        direct_contract_seed, map_scope_validation_version)
      VALUES ($1, $2, 'api', $3, 'coding_mutation', 'bugfix', 'harness',
              'harness_initiative', 'hotfix-v1', 'cecelia', '["cecelia"]'::jsonb,
-             true, 'kernel-harness-v2', 'work-router-v1', 'kernel-pg-fixture', $4::jsonb)`,
+             true, 'kernel-harness-v2', 'work-router-v1', 'kernel-pg-fixture', $4::jsonb,
+             $5::jsonb, 'active-business-node-v1')`,
     [receiptId, taskId, `kernel-pg:${taskId}`, JSON.stringify({
       branch: `cp-kernel-pg-${taskId}`,
       base_sha: HEAD_SHA,
+    }), JSON.stringify({
+      contract_version: 'direct-profile-contract-seed/v1',
+      title: `kernel-pg-${taskId}`,
+      objective: `kernel-pg-${taskId}`,
+      execution_profile: 'hotfix-v1',
     })],
   );
   await testPool.query(
@@ -155,7 +211,7 @@ async function seedRun({ reviewRequired = false, ci = 'pass' } = {}) {
     'UPDATE kernel_controller_sessions SET run_id=$2 WHERE id=$1',
     [controllerSessionId,runId],
   );
-  return { initiativeId, contractId, taskId, receiptId, runId, payload };
+  return { initiativeId, contractId, contractIdentity, taskId, receiptId, runId, payload };
 }
 
 async function seedCallbackAttempt(runId, {
@@ -520,6 +576,14 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
       const run = await seedRun();
       await appendLog(run.runId, {
         hop: 1,
+        action: 'spawn:generator',
+        observed: { pr: { head_sha: HEAD_SHA } },
+        phase: 'generate',
+        gateVerdict: 'allow',
+        detail: { reason: 'contract_approved' },
+      });
+      await appendLog(run.runId, {
+        hop: 2,
         action: 'verdict:evaluate',
         observed: { pr: { head_sha: HEAD_SHA } },
         gateVerdict: 'deny:evaluate_fail',
@@ -527,6 +591,19 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
           verdict: 'FAIL',
           pr_head_sha: HEAD_SHA,
           failure_class: 'product_failure',
+          contract_identity: run.contractIdentity,
+        },
+      });
+      await appendLog(run.runId, {
+        hop: 3,
+        action: 'verdict:judge',
+        observed: { pr: { head_sha: HEAD_SHA } },
+        gateVerdict: 'deny:judge_fail',
+        detail: {
+          verdict: 'FAIL',
+          pr_head_sha: HEAD_SHA,
+          failure_class: 'product_failure',
+          contract_identity: run.contractIdentity,
         },
       });
 
@@ -647,7 +724,12 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
       id: evaluatorAttemptId,
       run_id: run.runId,
       role: 'evaluator',
-      task_bundle: { inputs: { pull_request: { head_sha: HEAD_SHA } } },
+      task_bundle: {
+        inputs: {
+          pull_request: { head_sha: HEAD_SHA },
+          contract_identity: run.contractIdentity,
+        },
+      },
     }, {
       status: 'completed',
       decision: {
@@ -656,6 +738,22 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
         failure_class: 'evidence_invalid',
       },
     }, testPool);
+
+    const attemptStore = createAttemptStore(testPool);
+    const judgeGate = vi.fn()
+      .mockResolvedValueOnce({
+        judged: true,
+        verdict: 'FAIL',
+        feedback: 'evidence invalid and requires evaluator repair',
+        failure_class: 'evidence_invalid',
+      })
+      .mockResolvedValueOnce({
+        judged: true,
+        verdict: 'FAIL',
+        feedback: 'needs human context',
+        failure_class: 'needs_context',
+      });
+    const handlers = createKernelHandlers({ pool: testPool, attemptStore, judgeGate });
 
     const repairDispatches = [];
     const repairResult = await runLoop({
@@ -668,7 +766,63 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
       },
     }, { taskId: run.taskId, runId: run.runId });
     expect(repairResult.exitReason).toBe('task_aborted');
-    expect(repairDispatches).toEqual(['spawn:evaluator-evidence-repair']);
+    expect(repairDispatches).toEqual(['spawn:judge']);
+    await setTaskStatus(run.taskId, 'in_progress');
+
+    const evidenceJudgeAttempt = await attemptStore.createAttempt({
+      id: randomUUID(),
+      runId: run.runId,
+      hop: 3,
+      phase: 'evaluate',
+      role: 'judge',
+      provider: 'independent-judge',
+      bundle: {
+        inputs: {
+          task_id: run.taskId,
+          sprint_dir: run.payload.sprint_dir,
+          worktree_path: '/workspace',
+          contract_identity: run.contractIdentity,
+        },
+      },
+      callbackSecretHash: createHash('sha256').update('judge-secret-1').digest('hex'),
+    });
+    await handlers['spawn:judge']({
+      runId: run.runId,
+      taskId: run.taskId,
+      attempt: evidenceJudgeAttempt,
+      bundle: {
+        inputs: {
+          worktree_path: '/workspace',
+          sprint_dir: run.payload.sprint_dir,
+          contract_identity: run.contractIdentity,
+        },
+      },
+      observed: {
+        pr: { head_sha: HEAD_SHA },
+        evaluateVerdict: {
+          attempt_id: evaluatorAttemptId,
+          verdict: 'FAIL',
+          pr_head_sha: HEAD_SHA,
+          failure_class: 'evidence_invalid',
+          contract_identity: run.contractIdentity,
+        },
+        evaluateResult: null,
+        callbackResult: null,
+      },
+    });
+
+    const evidenceRepairDispatches = [];
+    const evidenceRepairResult = await runLoop({
+      ...loopDeps(),
+      sleep: async () => {},
+      dispatch: async (action) => {
+        evidenceRepairDispatches.push(action);
+        await setTaskStatus(run.taskId, 'aborted');
+        return { status: 'DONE', detail: 'evaluator evidence repair dispatched' };
+      },
+    }, { taskId: run.taskId, runId: run.runId });
+    expect(evidenceRepairResult.exitReason).toBe('task_aborted');
+    expect(evidenceRepairDispatches).toEqual(['spawn:evaluator-evidence-repair']);
     await setTaskStatus(run.taskId, 'in_progress');
 
     const repairedEvaluatorAttemptId = randomUUID();
@@ -676,7 +830,12 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
       id: repairedEvaluatorAttemptId,
       run_id: run.runId,
       role: 'evaluator',
-      task_bundle: { inputs: { pull_request: { head_sha: HEAD_SHA } } },
+      task_bundle: {
+        inputs: {
+          pull_request: { head_sha: HEAD_SHA },
+          contract_identity: run.contractIdentity,
+        },
+      },
     }, {
       status: 'completed',
       decision: {
@@ -686,7 +845,6 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
       },
     }, testPool);
 
-    const attemptStore = createAttemptStore(testPool);
     const judgeAttemptId = randomUUID();
     const judgeAttempt = await attemptStore.createAttempt({
       id: judgeAttemptId,
@@ -700,31 +858,29 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
           task_id: run.taskId,
           sprint_dir: run.payload.sprint_dir,
           worktree_path: '/workspace',
+          contract_identity: run.contractIdentity,
         },
       },
       callbackSecretHash: createHash('sha256').update('judge-secret').digest('hex'),
-    });
-    const handlers = createKernelHandlers({
-      pool: testPool,
-      attemptStore,
-      judgeGate: async () => ({
-        judged: true,
-        verdict: 'FAIL',
-        feedback: 'needs human context',
-        failure_class: 'needs_context',
-      }),
     });
     await handlers['spawn:judge']({
       runId: run.runId,
       taskId: run.taskId,
       attempt: judgeAttempt,
-      bundle: { inputs: { worktree_path: '/workspace', sprint_dir: run.payload.sprint_dir } },
+      bundle: {
+        inputs: {
+          worktree_path: '/workspace',
+          sprint_dir: run.payload.sprint_dir,
+          contract_identity: run.contractIdentity,
+        },
+      },
       observed: {
         pr: { head_sha: HEAD_SHA },
         evaluateVerdict: {
           verdict: 'PASS',
           pr_head_sha: HEAD_SHA,
           failure_class: 'evidence_invalid',
+          contract_identity: run.contractIdentity,
         },
         evaluateResult: null,
         callbackResult: null,
@@ -746,16 +902,21 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
       .toHaveLength(1);
     expect(actions).not.toContain('spawn:generator-fix');
     expect(deriveCounters(decisionRows, { proposeBranchMaxRn: 0 }).fixRound).toBe(0);
-    expect(verdictRows).toHaveLength(3);
+    expect(verdictRows).toHaveLength(4);
     expect(verdictRows[0].detail).toMatchObject({
       verdict: 'FAIL',
       failure_class: 'evidence_invalid',
     });
     expect(verdictRows[1].detail).toMatchObject({
+      verdict: 'FAIL',
+      failure_class: 'evidence_invalid',
+      evaluator_failure_class: 'evidence_invalid',
+    });
+    expect(verdictRows[2].detail).toMatchObject({
       verdict: 'PASS',
       failure_class: 'evidence_invalid',
     });
-    expect(verdictRows[2].detail).toMatchObject({
+    expect(verdictRows[3].detail).toMatchObject({
       verdict: 'FAIL',
       failure_class: 'needs_context',
       evaluator_failure_class: 'evidence_invalid',
@@ -833,6 +994,14 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
     const run = await seedRun();
     await appendLog(run.runId, {
       hop: 1,
+      action: 'spawn:generator',
+      observed: { pr: { head_sha: HEAD_SHA } },
+      phase: 'generate',
+      gateVerdict: 'allow',
+      detail: { reason: 'contract_approved' },
+    });
+    await appendLog(run.runId, {
+      hop: 2,
       action: 'verdict:evaluate',
       observed: { pr: { head_sha: HEAD_SHA } },
       gateVerdict: 'deny:evaluate_fail',
@@ -840,6 +1009,19 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
         verdict: 'FAIL',
         pr_head_sha: HEAD_SHA,
         failure_class: 'product_failure',
+        contract_identity: run.contractIdentity,
+      },
+    });
+    await appendLog(run.runId, {
+      hop: 3,
+      action: 'verdict:judge',
+      observed: { pr: { head_sha: HEAD_SHA } },
+      gateVerdict: 'deny:judge_fail',
+      detail: {
+        verdict: 'FAIL',
+        pr_head_sha: HEAD_SHA,
+        failure_class: 'product_failure',
+        contract_identity: run.contractIdentity,
       },
     });
 
@@ -967,6 +1149,11 @@ describe('Kernel callback convergence on real PostgreSQL', () => {
     const attemptId = randomUUID();
     const plannerBranch = `cp-harness-prd-${attemptId.slice(0, 8)}-a4`;
     const expectedPath = `${run.payload.sprint_dir}/sprint-prd.md`;
+    const exactContent = '# Exact Planner PRD\n\nServer-owned kernel fixture bytes.\n';
+    const contentSha256 = createHash('sha256').update(Buffer.from(exactContent)).digest('hex');
+    const changedFilesDigest = createHash('sha256')
+      .update(JSON.stringify([expectedPath]))
+      .digest('hex');
     const credentialRef = randomUUID();
     const store = createAttemptStore(testPool);
 
@@ -981,10 +1168,12 @@ describe('Kernel callback convergence on real PostgreSQL', () => {
       bundle: {
         expected_output: 'harness-result/planner-v1',
         inputs: {
+          task_id: run.taskId,
           sprint_dir: run.payload.sprint_dir,
           planner_branch: plannerBranch,
           workspace_spec: {
             repo: 'perfectuser21/zenithjoy-workspace',
+            base_sha: SECOND_SHA,
           },
         },
       },
@@ -1009,14 +1198,28 @@ describe('Kernel callback convergence on real PostgreSQL', () => {
       leaseSeconds: 180,
     });
 
-    const resolveBranchHead = vi.fn(async () => ({
-      head_sha: HEAD_SHA,
-      path_exists: true,
+    const resolveBranchHead = vi.fn(async () => HEAD_SHA);
+    const resolveCommitDiff = vi.fn(async () => ({
+      isAncestor: true,
+      changedFiles: [{ path: expectedPath, status: 'modified' }],
+    }));
+    const resolveCommitPathEntry = vi.fn(async () => ({
+      sha: THIRD_SHA,
+      type: 'blob',
+      mode: '100644',
+    }));
+    const readBlobBySha = vi.fn(async () => Buffer.from(exactContent));
+    const exactBlobResolver = vi.fn((input) => resolveRemoteExactCommitBlob(input, {
+      resolveBranchHead,
+      resolveCommitDiff,
+      resolveCommitPathEntry,
+      readBlobBySha,
+      now: () => new Date('2026-08-15T00:00:00.000Z'),
     }));
     const app = express();
     app.use(express.json());
     app.set('pool', testPool);
-    app.set('kernelGitBranchHeadResolver', resolveBranchHead);
+    app.set('kernelPlannerRecoveryExactBlobResolver', exactBlobResolver);
     app.use('/api/brain', callbackRouter);
 
     const callback = await request(app)
@@ -1064,7 +1267,20 @@ describe('Kernel callback convergence on real PostgreSQL', () => {
     expect(resolveBranchHead).toHaveBeenCalledWith({
       repo: 'perfectuser21/zenithjoy-workspace',
       branch: plannerBranch,
+    });
+    expect(resolveCommitDiff).toHaveBeenCalledWith({
+      repo: 'perfectuser21/zenithjoy-workspace',
+      baseSha: SECOND_SHA,
+      headSha: HEAD_SHA,
+    });
+    expect(resolveCommitPathEntry).toHaveBeenCalledWith({
+      repo: 'perfectuser21/zenithjoy-workspace',
+      headSha: HEAD_SHA,
       path: expectedPath,
+    });
+    expect(readBlobBySha).toHaveBeenCalledWith({
+      repo: 'perfectuser21/zenithjoy-workspace',
+      blobSha: THIRD_SHA,
     });
 
     const persistedAttempt = (await testPool.query(
@@ -1094,9 +1310,43 @@ describe('Kernel callback convergence on real PostgreSQL', () => {
               head_sha: HEAD_SHA,
             },
           },
+          planner_recovery_receipt: {
+            head_sha: HEAD_SHA,
+            content_sha256: contentSha256,
+            byte_length: Buffer.byteLength(exactContent),
+            changed_files_digest: changedFilesDigest,
+            verification_method: 'remote_exact_commit_blob',
+          },
         },
       },
     });
+
+    const recoveryReceipt = (await testPool.query(
+      `SELECT predecessor_run_id,source_task_id,planner_attempt_id,
+              repo,base_sha,head_sha,prd_path,resolved_branch,
+              content,content_sha256,byte_length,changed_files,
+              changed_files_digest,verification_method,verified_at
+         FROM planner_recovery_receipts
+        WHERE planner_attempt_id=$1`,
+      [attemptId],
+    )).rows[0];
+    expect(recoveryReceipt).toMatchObject({
+      predecessor_run_id: run.runId,
+      source_task_id: run.taskId,
+      planner_attempt_id: attemptId,
+      repo: 'perfectuser21/zenithjoy-workspace',
+      base_sha: SECOND_SHA,
+      head_sha: HEAD_SHA,
+      prd_path: expectedPath,
+      resolved_branch: plannerBranch,
+      content: exactContent,
+      content_sha256: contentSha256,
+      byte_length: Buffer.byteLength(exactContent),
+      changed_files: [expectedPath],
+      changed_files_digest: changedFilesDigest,
+      verification_method: 'remote_exact_commit_blob',
+    });
+    expect(recoveryReceipt.verified_at.toISOString()).toBe('2026-08-15T00:00:00.000Z');
 
     const callbackEvent = (await testPool.query(
       `SELECT gate_verdict, detail
@@ -1648,14 +1898,22 @@ describe('Kernel approval HTTP route on real PostgreSQL', () => {
       action: 'verdict:evaluate',
       observed: { pr: { head_sha: HEAD_SHA } },
       gateVerdict: 'allow',
-      detail: { verdict: 'PASS', pr_head_sha: HEAD_SHA },
+      detail: {
+        verdict: 'PASS',
+        pr_head_sha: HEAD_SHA,
+        contract_identity: run.contractIdentity,
+      },
     });
     await appendLog(run.runId, {
       hop: 2,
       action: 'verdict:judge',
       observed: { pr: { head_sha: HEAD_SHA } },
       gateVerdict: 'allow',
-      detail: { verdict: 'PASS', pr_head_sha: HEAD_SHA },
+      detail: {
+        verdict: 'PASS',
+        pr_head_sha: HEAD_SHA,
+        contract_identity: run.contractIdentity,
+      },
     });
     await appendLog(run.runId, {
       hop: 3,

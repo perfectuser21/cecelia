@@ -13,7 +13,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$REPO_ROOT"
 
 echo "[smoke] harness-judge: 1) 裁判门逻辑（mock judge）"
-node sprints/06121644-judge-deepseek/behaviors/b1-judge-gate.mjs >/dev/null
+(cd packages/brain && npx vitest run src/__tests__/harness-judge.test.js \
+  -t 'agent FAIL 也必须由独立 Judge 复核') >/dev/null
 echo "[smoke] harness-judge: 裁判门逻辑 OK"
 
 # 解析 ToAPIs 配置（env 优先 → ~/.credentials/toapis.env 兜底）

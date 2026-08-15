@@ -104,6 +104,36 @@ describe('冻结合同测试进入独立裁判证据', () => {
   });
 });
 
+describe('人式 Evaluator 证据进入独立裁判 prompt', () => {
+  it('保留 finding 严重级别、预期/实际、复现证据、截图和探索记录', () => {
+    const prompt = buildJudgePrompt(makeMeta(), {
+      verdict: 'FAIL',
+      behavior_tests: [{ command: 'npm test', exit_code: 0, log_tail: 'passed' }],
+      findings: [{
+        id: 'F-1',
+        severity: 'P1',
+        title: '保存按钮点击后没有反馈',
+        expected: '显示成功提示',
+        actual: '页面静默',
+        reproduction_steps: ['打开表单', '点击保存'],
+        evidence: ['console: POST /save 500'],
+        screenshot_paths: ['/tmp/evidence/save-failed.png'],
+      }],
+      screenshots: ['/tmp/evidence/save-failed.png'],
+      exploration_notes: ['验证了 happy path、错误态和刷新后的持久化'],
+    });
+
+    expect(prompt).toContain('F-1');
+    expect(prompt).toContain('P1');
+    expect(prompt).toContain('保存按钮点击后没有反馈');
+    expect(prompt).toContain('显示成功提示');
+    expect(prompt).toContain('页面静默');
+    expect(prompt).toContain('POST /save 500');
+    expect(prompt).toContain('/tmp/evidence/save-failed.png');
+    expect(prompt).toContain('刷新后的持久化');
+  });
+});
+
 // ─────────────────────────────────────────────
 // BEHAVIOR-3: 条目上限：10 条输入只展开前 8 条
 // ─────────────────────────────────────────────
@@ -160,6 +190,55 @@ describe('[BEHAVIOR-5] 总长度预算 ≤ 6000 字符', () => {
     };
     const compressed = compressBrainResult(brainResult);
     expect(compressed.length).toBeLessThanOrEqual(6000);
+  });
+
+  it('普通 checks 再长也不能把 findings、截图和探索记录挤出 Judge 预算', () => {
+    const compressed = compressBrainResult({
+      behavior_tests: Array.from({ length: 8 }, (_, index) => ({
+        command: `long-command-${index}-${'C'.repeat(300)}`,
+        exit_code: 0,
+        log_tail: 'L'.repeat(800),
+      })),
+      findings: [{
+        id: 'HUMAN-FINDING-KEEP', severity: 'P1', title: '保存按钮静默',
+        expected: '出现成功提示', actual: '页面没有反馈',
+        reproduction_steps: ['打开表单', '点击保存'],
+        evidence: ['POST /save 500'], screenshot_paths: ['/evidence/save.png'],
+      }],
+      screenshots: ['/evidence/HUMAN-SCREENSHOT-KEEP.png'],
+      exploration_notes: ['HUMAN-EXPLORATION-KEEP：覆盖错误态与刷新持久化'],
+    });
+
+    expect(compressed.length).toBeLessThanOrEqual(6000);
+    expect(compressed).toContain('HUMAN-FINDING-KEEP');
+    expect(compressed).toContain('HUMAN-SCREENSHOT-KEEP');
+    expect(compressed).toContain('HUMAN-EXPLORATION-KEEP');
+  });
+
+  it('大量截图也不能把 P0 finding 和探索记录挤出人式证据预算', () => {
+    const compressed = compressBrainResult({
+      screenshots: Array.from({ length: 8 }, (_, index) => (
+        `/evidence/very-long-${index}-${'S'.repeat(500)}.png`
+      )),
+      exploration_notes: [
+        `HUMAN-EXPLORATION-PRESERVE-${'N'.repeat(500)}`,
+      ],
+      findings: [{
+        id: 'P0-FINDING-MUST-PRESERVE',
+        severity: 'P0',
+        title: '生产数据被错误删除',
+        expected: '数据保持完整',
+        actual: '保存动作删除了其他记录',
+        reproduction_steps: ['创建两条记录', '编辑第一条'],
+        evidence: ['数据库只剩一条记录'],
+        screenshot_paths: ['/evidence/p0.png'],
+      }],
+    });
+
+    expect(compressed.length).toBeLessThanOrEqual(6000);
+    expect(compressed).toContain('P0-FINDING-MUST-PRESERVE');
+    expect(compressed).toContain('HUMAN-EXPLORATION-PRESERVE');
+    expect(compressed).toContain('/evidence/very-long-0-');
   });
 });
 

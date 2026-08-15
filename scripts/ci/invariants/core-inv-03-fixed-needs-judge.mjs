@@ -30,6 +30,12 @@ function check(name, cond, detail = '') {
 
 console.log('== CORE-INV-03 FIXED 归一但不直通 merge（gates.js 双裁决门禁）==');
 
+const contractIdentity = Object.freeze({
+  contract_id: '11111111-1111-4111-8111-111111111111',
+  manifest_sha256: 'a'.repeat(64),
+  source_revision: 'b'.repeat(40),
+});
+
 // 1) FIXED→PASS 归一存在（这是刻意设计，不是 bug）
 check("isPassVerdict('FIXED') === true（归一存在）", isPassVerdict('FIXED') === true);
 check("isPassVerdict('PASS') === true", isPassVerdict('PASS') === true);
@@ -37,9 +43,10 @@ check("isPassVerdict('FAIL') === false", isPassVerdict('FAIL') === false);
 
 // 2) FIXED 无 judge 复核必拒（铁律核心：不直通）
 const noJudge = mergeGate({
-  evaluateVerdict: { verdict: 'FIXED', pr_head_sha: 'x' },
+  evaluateVerdict: { verdict: 'FIXED', pr_head_sha: 'x', contract_identity: contractIdentity },
   judgeVerdict: null,
   prHeadSha: 'x',
+  contractIdentity,
   reviewRequired: false,
   reviewApproved: false,
 });
@@ -56,9 +63,10 @@ check(
 
 // 2b) judge verdict 是 stale SHA（旧 commit 的 PASS）同样必拒
 const staleJudge = mergeGate({
-  evaluateVerdict: { verdict: 'FIXED', pr_head_sha: 'x' },
-  judgeVerdict: { verdict: 'PASS', pr_head_sha: 'OLD' },
+  evaluateVerdict: { verdict: 'FIXED', pr_head_sha: 'x', contract_identity: contractIdentity },
+  judgeVerdict: { verdict: 'PASS', pr_head_sha: 'OLD', contract_identity: contractIdentity },
   prHeadSha: 'x',
+  contractIdentity,
   reviewRequired: false,
   reviewApproved: false,
 });
@@ -70,9 +78,10 @@ check(
 
 // 3) 双裁决齐（evaluate FIXED + judge PASS，SHA 匹配）才 allow
 const bothPass = mergeGate({
-  evaluateVerdict: { verdict: 'FIXED', pr_head_sha: 'x' },
-  judgeVerdict: { verdict: 'PASS', pr_head_sha: 'x' },
+  evaluateVerdict: { verdict: 'FIXED', pr_head_sha: 'x', contract_identity: contractIdentity },
+  judgeVerdict: { verdict: 'PASS', pr_head_sha: 'x', contract_identity: contractIdentity },
   prHeadSha: 'x',
+  contractIdentity,
   reviewRequired: false,
   reviewApproved: false,
 });

@@ -9,8 +9,9 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 cd "$ROOT_DIR/packages/brain"
 
 echo "── Kernel bounded-run permanent regression pool ──"
-npx --no-install vitest run \
-  ../../tests/regression/relay-50170af2/*.test.js \
-  --reporter=dot
+for test_file in ../../tests/regression/relay-50170af2/*.test.js; do
+  echo "── $(basename "$test_file")"
+  npx --no-install vitest run "$test_file" --reporter=dot
+done
 
 echo "✅ kernel-bounded-run-smoke: permanent regression pool passed"

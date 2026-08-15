@@ -1,4 +1,8 @@
-import { readMap, readRadius } from '../../lib/map-read-service.js';
+import {
+  lockMapProjectionAuthority,
+  readMap,
+  readRadius,
+} from '../../lib/map-read-service.js';
 import { canonicalAssertionCommandText } from '../../lib/gp-assertion-command.js';
 import { assertionDigest } from '../../lib/journey-assertion-receipt.js';
 import { persistImpactContract } from '../../impact-contract/contract-store.js';
@@ -14,6 +18,35 @@ const MAP_RECOVERY_PATH_PREFIXES = Object.freeze([
   'scripts/scan-graph.mjs',
   'scripts/run-all-scans.sh',
 ]);
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, canonicalJson(value[key])]),
+    );
+  }
+  return value;
+}
+
+function assertProjectionAuthority(authority, map, radius) {
+  const expected = {
+    manifest_version_id: authority?.manifest_version_id,
+    manifest_digest: authority?.manifest_digest,
+    projection_run_id: authority?.projection_run_id,
+    projection_digest: authority?.projection_digest,
+    fact_revisions: canonicalJson(authority?.fact_revisions ?? null),
+  };
+  const matches = [map, radius].every((value) => (
+    value?.manifest_version_id === expected.manifest_version_id
+    && value?.manifest_digest === expected.manifest_digest
+    && value?.projection_run_id === expected.projection_run_id
+    && value?.projection_digest === expected.projection_digest
+    && JSON.stringify(canonicalJson(value?.fact_revisions ?? null))
+      === JSON.stringify(expected.fact_revisions)
+  ));
+  if (!matches) throw new Error('map_projection_changed');
+}
 
 export function assertMapImpactContract({ repo, base_sha, map, impact_contract }) {
   if (!map) throw new Error('map_missing');
@@ -79,6 +112,7 @@ async function resolveScopeKey(client, repo) {
 
 function recoveryReasonCode(error) {
   if (RECOVERY_REASONS.has(error?.code)) return error.code;
+  if (error?.code === 'map_projection_changed') return 'projection_unavailable';
   if (['map_stale', 'map_revision_mismatch', 'map_radius_stale'].includes(error?.message)) {
     return 'scanner_unavailable';
   }
@@ -213,9 +247,11 @@ async function ensureNormalMapImpactPreflight(client, { task, receipt }, deps = 
     : await resolveScopeKey(client, receipt.repo);
   const loadMap = deps.readMap ?? readMap;
   const loadRadius = deps.readRadius ?? readRadius;
+  const lockAuthority = deps.lockMapProjectionAuthority ?? lockMapProjectionAuthority;
   const persistContract = deps.persistContract ?? persistImpactContract;
   const now = deps.now ?? new Date();
-  const map = await loadMap(client, { scopeKey, now });
+  const authority = await lockAuthority(client, { scopeKey });
+  const map = await loadMap(client, { scopeKey, now, authority });
   const repoFreshness = map?.freshness?.repos?.[receipt.repo];
   if (map?.freshness?.status !== 'fresh' || repoFreshness?.status !== 'fresh') {
     throw new Error('map_stale');
@@ -231,6 +267,7 @@ async function ensureNormalMapImpactPreflight(client, { task, receipt }, deps = 
     startNodeKeys: receipt.map_scope,
     changedFiles: [],
     now,
+    authority,
   });
   const radiusRepoFreshness = radius?.freshness?.repos?.[receipt.repo];
   if (radius?.freshness?.status !== 'fresh'
@@ -270,6 +307,7 @@ async function ensureNormalMapImpactPreflight(client, { task, receipt }, deps = 
     };
   });
   if (assertions.length === 0) throw new Error('impact_assertion_missing');
+  assertProjectionAuthority(authority, map, radius);
   const contractBody = {
     schema_version: 1,
     task_id: task.id,

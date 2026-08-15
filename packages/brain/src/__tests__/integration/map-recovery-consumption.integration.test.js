@@ -52,14 +52,21 @@ describeDb('map recovery PostgreSQL consumption', () => {
       `INSERT INTO work_routing_receipts (
          id,task_id,source,source_id,work_kind,change_kind,pipeline,
          canonical_task_type,default_execution_profile,repo,map_scope,
-         impact_contract_required,orchestrator,router_version,route_reason,evidence
+         impact_contract_required,orchestrator,router_version,route_reason,evidence,
+         direct_contract_seed,map_scope_validation_version
        ) VALUES (
          $1,$2,'api',$3,'coding_mutation','bugfix','harness',
          'harness_initiative','hotfix-v1','cecelia',$4::jsonb,
-         true,'kernel-harness-v2','work-router-v1','integration',$5::jsonb
+         true,'kernel-harness-v2','work-router-v1','integration',$5::jsonb,$6::jsonb,
+         'active-business-node-v1'
        )`,
       [receiptId, taskId, `integration:${taskId}`, JSON.stringify(['cap-map']), JSON.stringify({
         branch: 'cp-map-recovery-integration', base_sha: baseSha,
+      }), JSON.stringify({
+        contract_version: 'direct-profile-contract-seed/v1',
+        title: 'map recovery integration',
+        objective: 'map recovery integration',
+        execution_profile: 'hotfix-v1',
       })],
     );
     const lkgBody = {
@@ -125,7 +132,8 @@ describeDb('map recovery PostgreSQL consumption', () => {
     );
     await client.query('UPDATE kernel_controller_sessions SET run_id=$2 WHERE id=$1',
       [controllerSessionId,runId]);
-    const attempt = await createAttemptStore(client).createAttempt({
+    const attemptStore = createAttemptStore(client, { transactionClient: true });
+    const attempt = await attemptStore.createAttempt({
       id: attemptId,
       runId,
       hop: 1,
@@ -147,7 +155,7 @@ describeDb('map recovery PostgreSQL consumption', () => {
       contract_id: preflight.recovery_contract.id,
       attempt_id: attemptId,
     }]);
-    await expect(createAttemptStore(client).createAttempt({
+    await expect(attemptStore.createAttempt({
       id: randomUUID(), runId, hop: 2, phase: 'generate', role: 'generator',
       provider: 'codex', accountId: null, machineId: 'integration',
       callbackSecretHash: 'f'.repeat(64), bundle: {},

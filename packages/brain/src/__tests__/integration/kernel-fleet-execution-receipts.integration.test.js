@@ -52,6 +52,16 @@ const legacyRunId = randomUUID();
 const oldBinaryRunId = randomUUID();
 let client;
 let store;
+const schemaPool = {
+  query(sql, values) {
+    return client.query(sql, values);
+  },
+  async connect() {
+    const transactionClient = await pool.connect();
+    await transactionClient.query(`SET search_path TO ${quotedSchema}, public`);
+    return transactionClient;
+  },
+};
 
 function attemptInput({ runId, hop, machineId }) {
   return {
@@ -137,7 +147,7 @@ beforeAll(async () => {
      ) VALUES ($1,$2,1,'generate','generator','codex','us-mac-m4','{}','old-binary-hash')`,
     [oldBinaryInsertId, oldBinaryRunId],
   );
-  store = createAttemptStore(client);
+  store = createAttemptStore(schemaPool);
 }, 15_000);
 
 afterAll(async () => {
@@ -307,10 +317,14 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
       await winnerClient.query('BEGIN');
       await duplicateClient.query('BEGIN');
 
-      const winner = await createAttemptStore(winnerClient).createAttempt(winnerInput);
+      const winner = await createAttemptStore(winnerClient, {
+        transactionClient: true,
+      }).createAttempt(winnerInput);
       expect(winner.id).toBe(winnerInput.id);
 
-      const duplicatePromise = createAttemptStore(duplicateClient).createAttempt(duplicateInput);
+      const duplicatePromise = createAttemptStore(duplicateClient, {
+        transactionClient: true,
+      }).createAttempt(duplicateInput);
       let observedConflictWait = false;
       for (let attempt = 0; attempt < 100; attempt += 1) {
         const activity = await client.query(
@@ -349,7 +363,7 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
       const launch = vi.fn();
       const start = vi.fn();
       const duplicateDispatch = createDispatcher({
-        attemptStore: createAttemptStore(client),
+        attemptStore: createAttemptStore(schemaPool),
         registry: {
           resolve: vi.fn(() => ({
             name: 'codex',

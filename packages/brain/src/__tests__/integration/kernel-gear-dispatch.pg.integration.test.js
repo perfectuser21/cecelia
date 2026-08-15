@@ -148,11 +148,34 @@ async function driveOneHop({ taskId, runId, payload }) {
   const attemptStore = createAttemptStore(testPool);
   let dispatchedAction = null;
   let dispatchedRole = null;
+  let directContractMaterialized = false;
   try {
     await runLoop(
       {
         pool: testPool,
-        collectGroundTruth: () => collect(taskId, runId, payload),
+        collectGroundTruth: async () => {
+          const observed = await collect(taskId, runId, payload);
+          if (!directContractMaterialized) return observed;
+          const contractId = '11111111-2222-4333-8444-555555555555';
+          return {
+            ...observed,
+            prdExists: true,
+            contract: {
+              approved: true,
+              id: contractId,
+              identity: {
+                contract_id: contractId,
+                manifest_sha256: 'b'.repeat(64),
+                source_revision: 'c'.repeat(40),
+              },
+              artifacts: [],
+              row: {},
+            },
+          };
+        },
+        materializeDirectProfileContract: async () => {
+          directContractMaterialized = true;
+        },
         writeHeartbeat: async () => {},
         now: () => new Date(),
         host: 'kernel-gear-test',
@@ -202,8 +225,8 @@ describe('kernel gear：initiative_runs.gear round-trip + observed.gear 注入�
   it.each([
     ['new_capability','spawn:planner'],
     ['capability_change','spawn:planner'],
-    ['bugfix','spawn:generator'],
-    ['parameter_only','spawn:generator'],
+    ['bugfix','materialize:direct_profile_contract'],
+    ['parameter_only','materialize:direct_profile_contract'],
   ])('%s 真 route receipt→run→ground truth→derive = %s', async (changeKind,action) => {
     const seeded = await seedRoutedKernelTask(testPool, {
       titlePrefix:`four-form-${changeKind}`,changeKind,
@@ -301,7 +324,7 @@ describe('kernel gear：hotfix run 一跳角色分布（真 collectGroundTruth+d
         proposeBranchMaxRn: hotfixObserved.proposeBranchRn,
       }),
     });
-    expect(hotfixDecision.action).toBe('spawn:generator');
+    expect(hotfixDecision.action).toBe('materialize:direct_profile_contract');
 
     const hotfixDispatch = await driveOneHop({
       taskId: hotfix.taskId,

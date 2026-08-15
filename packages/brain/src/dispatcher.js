@@ -123,7 +123,12 @@ async function enforceDispatchRoutingReceipt(task) {
               EXISTS (
                 SELECT 1 FROM work_routing_receipts successor
                  WHERE successor.supersedes_receipt_id = receipt.id
-              ) AS superseded
+              ) AS superseded,
+              EXISTS (
+                SELECT 1 FROM initiative_runs run
+                 WHERE run.current_task_id = receipt.task_id
+                   AND run.orchestrator_version = 'v2'
+              ) AS has_v2_run
          FROM work_routing_receipts receipt
         WHERE receipt.id = $1 AND receipt.task_id = $2`,
       [receiptId, task.id],
@@ -132,7 +137,9 @@ async function enforceDispatchRoutingReceipt(task) {
   }
 
   try {
-    assertDispatchRoutingReceipt(task, receipt);
+    assertDispatchRoutingReceipt(task, receipt, {
+      hasV2Run: receipt?.has_v2_run === true,
+    });
   } catch (error) {
     if (error?.message !== 'route_violation') throw error;
     try {
@@ -841,6 +848,123 @@ export async function dispatchNextTask(goalIds) {
   await enforceDispatchRoutingReceipt(taskToDispatch);
 
   execResult = await triggerCeceliaRun(taskToDispatch);
+
+  if (
+    taskToDispatch.payload?.harness_runtime === 'kernel-v1'
+    && execResult?.success === true
+    && (typeof execResult.runId !== 'string' || execResult.runId.trim() === '')
+  ) {
+    execResult = {
+      ...execResult,
+      success: false,
+      reason: 'kernel_authority_not_created',
+      error: 'kernel_authority_not_created',
+    };
+  }
+
+  if (
+    taskToDispatch.payload?.harness_runtime === 'kernel-v1'
+    && execResult?.success === false
+    && execResult?.authorityUnknown === true
+    && execResult?.reason === 'kernel_authority_reconciliation_unavailable'
+  ) {
+    await recordTaskEventSafe(
+      pool,
+      nextTask.id,
+      'kernel_authority_reconciliation_unavailable',
+      {
+        reason: execResult.reason,
+        error: String(execResult.error || '').slice(0, 300) || null,
+      },
+    );
+    await recordDispatchResult(
+      pool,
+      false,
+      'kernel_authority_reconciliation_unavailable',
+      undefined,
+      nextTask.id,
+    );
+    return {
+      dispatched: false,
+      reason: 'kernel_authority_reconciliation_unavailable',
+      task_id: nextTask.id,
+      authority_unknown: true,
+      actions,
+    };
+  }
+
+  if (
+    taskToDispatch.payload?.harness_runtime === 'kernel-v1'
+    && execResult?.success === false
+    && execResult?.taskTerminal === true
+    && execResult?.reason === 'kernel_pre_run_terminal'
+  ) {
+    await pool.query(
+      `UPDATE tasks
+          SET claimed_by = NULL,
+              claimed_at = NULL,
+              updated_at = NOW()
+        WHERE id = $1
+          AND status IN ('completed', 'failed', 'cancelled', 'canceled')
+      RETURNING status`,
+      [nextTask.id],
+    );
+    await recordDispatchResult(
+      pool,
+      false,
+      'kernel_pre_run_terminal',
+      undefined,
+      nextTask.id,
+    );
+    return {
+      dispatched: false,
+      reason: 'kernel_pre_run_terminal',
+      task_id: nextTask.id,
+      terminal: true,
+      actions,
+    };
+  }
+
+  if (
+    taskToDispatch.payload?.harness_runtime === 'kernel-v1'
+    && execResult?.success === false
+    && execResult?.authorityExists === true
+    && execResult?.kernelAuthority === 'terminal'
+    && typeof execResult?.runId === 'string'
+    && execResult.runId.trim() !== ''
+  ) {
+    const claimCleanup = await pool.query(
+      `UPDATE tasks
+          SET claimed_by = NULL,
+              claimed_at = NULL,
+              updated_at = NOW()
+        WHERE id = $1
+          AND status IN ('completed', 'failed', 'cancelled', 'canceled')
+      RETURNING status`,
+      [nextTask.id],
+    );
+    if (claimCleanup.rowCount === 0) {
+      console.error(
+        `[dispatch] Kernel terminal authority/task status mismatch task=${nextTask.id} `
+        + `run=${execResult.runId}; claim preserved`,
+      );
+    }
+    await recordDispatchResult(
+      pool,
+      false,
+      'kernel_terminal_authority',
+      undefined,
+      nextTask.id,
+    );
+    return {
+      dispatched: false,
+      reason: 'kernel_terminal_authority',
+      task_id: nextTask.id,
+      run_id: execResult.runId,
+      terminal: true,
+      actions,
+    };
+  }
 
   // 5a. Check if executor actually succeeded — revert to queued if not
   if (!execResult.success) {

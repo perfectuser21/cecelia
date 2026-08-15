@@ -27,6 +27,29 @@ function quotedIdentifier(value) {
   return `"${value}"`;
 }
 
+async function seedHistoricalGhost({ attemptId, runId, callbackSecretHash }) {
+  await testPool.query(
+    'ALTER TABLE harness_attempts DISABLE TRIGGER guard_harness_attempt_insert_parent_run',
+  );
+  try {
+    await testPool.query(
+      `INSERT INTO harness_attempts (
+         id, run_id, hop, phase, role, task_bundle, callback_secret_hash,
+         status, lease_owner, lease_expires_at, started_at, updated_at
+       ) VALUES (
+         $1, $2, 1, 'generate', 'generator', '{}'::jsonb, $3,
+         'running', 'dead-worker', NOW() - INTERVAL '1 day',
+         NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day'
+       )`,
+      [attemptId, runId, callbackSecretHash],
+    );
+  } finally {
+    await testPool.query(
+      'ALTER TABLE harness_attempts ENABLE TRIGGER guard_harness_attempt_insert_parent_run',
+    );
+  }
+}
+
 beforeAll(async () => {
   databaseName = `kernel_stale_attempt_${process.pid}_${randomUUID().replaceAll('-', '')}`;
   adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1 });
@@ -328,16 +351,21 @@ describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
     await seedOwnedActiveV2Run(testPool, {
       runId: activeRunId, taskId: activeTaskId, phase: 'generate',
     });
+    await expect(testPool.query(
+      `INSERT INTO harness_attempts (
+         id, run_id, hop, phase, role, task_bundle, callback_secret_hash,
+         status, lease_owner, lease_expires_at
+       ) VALUES ($1, $2, 1, 'generate', 'generator', '{}'::jsonb, $3,
+          'running', 'live-worker', NOW() + INTERVAL '5 minutes')`,
+      [randomUUID(), liveRunId, 'c'.repeat(64)],
+    )).rejects.toThrow(/attempt_parent_run_terminal/);
     await testPool.query(
       `INSERT INTO harness_attempts (
          id, run_id, hop, phase, role, task_bundle, callback_secret_hash,
          status, lease_owner, lease_expires_at
-       ) VALUES
-         ($1, $3, 1, 'generate', 'generator', '{}'::jsonb, $5,
-          'running', 'live-worker', NOW() + INTERVAL '5 minutes'),
-         ($2, $4, 1, 'generate', 'generator', '{}'::jsonb, $5,
+       ) VALUES ($1, $2, 1, 'generate', 'generator', '{}'::jsonb, $3,
           'running', 'stale-worker', NOW() - INTERVAL '5 minutes')`,
-      [randomUUID(), randomUUID(), liveRunId, activeRunId, 'c'.repeat(64)],
+      [randomUUID(), activeRunId, 'c'.repeat(64)],
     );
 
     const dry = await reconcileStaleAttempts({
@@ -348,7 +376,7 @@ describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
     expect(dry).toMatchObject({ proposed: 0, blocked: 0 });
   });
 
-  it('audits one exact expired attempt and converges to zero proposals', async () => {
+  it('audits one exact pre-425 expired attempt and converges to zero proposals', async () => {
     const taskId = randomUUID();
     const runId = randomUUID();
     const attemptId = randomUUID();
@@ -369,17 +397,11 @@ describe('kernel stale attempt reconciliation on real PostgreSQL', () => {
        )`,
       [runId, randomUUID(), taskId],
     );
-    await testPool.query(
-      `INSERT INTO harness_attempts (
-         id, run_id, hop, phase, role, task_bundle, callback_secret_hash,
-         status, lease_owner, lease_expires_at, started_at, updated_at
-       ) VALUES (
-         $1, $2, 1, 'generate', 'generator', '{}'::jsonb, $3,
-         'running', 'dead-worker', NOW() - INTERVAL '1 day',
-         NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day'
-       )`,
-      [attemptId, runId, 'a'.repeat(64)],
-    );
+    await seedHistoricalGhost({
+      attemptId,
+      runId,
+      callbackSecretHash: 'a'.repeat(64),
+    });
 
     const dry = await reconcileStaleAttempts({
       db: testPool,

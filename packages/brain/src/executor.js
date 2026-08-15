@@ -3239,6 +3239,135 @@ export function shouldUseGenericHarnessTaskWriteback(task) {
   return task?.payload?.harness_runtime !== 'kernel-v1';
 }
 
+async function readBackKernelRunAuthority(dbPool, taskId, error) {
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT id, phase
+         FROM initiative_runs
+        WHERE current_task_id = $1
+          AND orchestrator_version = 'v2'
+        ORDER BY (phase IN ('done', 'failed')) ASC,
+                 created_at DESC,
+                 id DESC
+        LIMIT 1`,
+      [taskId],
+    );
+    const run = rows[0] ?? null;
+    if (!run) return null;
+    const terminal = run.phase === 'done' || run.phase === 'failed';
+    return {
+      success: !terminal,
+      taskId,
+      initiative: true,
+      runId: run.id,
+      runPhase: run.phase,
+      authorityExists: true,
+      kernelAuthority: terminal ? 'terminal' : 'active',
+      deferred: !terminal,
+      terminal,
+      reason: terminal ? 'kernel_terminal_authority' : 'kernel_authority_reconciled',
+      error: error?.message?.slice(0, 500),
+    };
+  } catch (readError) {
+    console.error(
+      `[executor] Kernel authority read-back failed task=${taskId}: ${readError.message}`,
+    );
+    return {
+      success: false,
+      taskId,
+      initiative: true,
+      reason: 'kernel_authority_reconciliation_unavailable',
+      error: readError.message?.slice(0, 500),
+      authorityUnknown: true,
+      reconciliationCause: error?.message?.slice(0, 500),
+    };
+  }
+}
+
+export async function reconcileTerminalizedKernelAuthority(dbPool, {
+  taskId,
+  runId,
+  error,
+}) {
+  const unavailable = (message) => ({
+    success: false,
+    taskId,
+    initiative: true,
+    ...(typeof runId === 'string' && runId.trim() ? { runId } : {}),
+    reason: 'kernel_authority_reconciliation_unavailable',
+    error: String(message ?? 'kernel_terminal_authority_unverified').slice(0, 500),
+    authorityUnknown: true,
+    reconciliationCause: error?.message?.slice(0, 500),
+  });
+  if (typeof runId !== 'string' || !runId.trim()) {
+    return unavailable('kernel_terminal_authority_identity_missing');
+  }
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT id, phase
+         FROM initiative_runs
+        WHERE id = $1
+          AND current_task_id = $2
+          AND orchestrator_version = 'v2'
+          AND phase IN ('done', 'failed')`,
+      [runId, taskId],
+    );
+    const run = rows[0];
+    if (!run) return unavailable('kernel_terminal_authority_unverified');
+    return {
+      success: false,
+      taskId,
+      initiative: true,
+      runId: run.id,
+      runPhase: run.phase,
+      authorityExists: true,
+      kernelAuthority: 'terminal',
+      terminal: true,
+      reason: 'kernel_terminal_authority',
+      error: error?.message?.slice(0, 500),
+    };
+  } catch (readError) {
+    console.error(
+      `[executor] Kernel terminal authority read-back failed task=${taskId} run=${runId}: `
+      + readError.message,
+    );
+    return unavailable(readError.message);
+  }
+}
+
+async function readBackKernelPreRunTerminal(dbPool, taskId, error) {
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT status
+         FROM tasks
+        WHERE id = $1`,
+      [taskId],
+    );
+    const status = rows[0]?.status;
+    if (!['completed', 'failed', 'cancelled', 'canceled'].includes(status)) return null;
+    return {
+      success: false,
+      taskId,
+      initiative: true,
+      reason: 'kernel_pre_run_terminal',
+      error: error?.message?.slice(0, 500),
+      taskTerminal: true,
+      terminal: true,
+      taskStatus: status,
+    };
+  } catch (readError) {
+    return {
+      success: false,
+      taskId,
+      initiative: true,
+      reason: 'kernel_authority_reconciliation_unavailable',
+      error: readError.message?.slice(0, 500),
+      authorityUnknown: true,
+      reconciliationCause: error?.message?.slice(0, 500),
+    };
+  }
+}
+
 /**
  * Bug 3 fix: 计算 harness initiative 失败时的 error_message
  * 优先使用 final.error；其次从 final_e2e_verdict=FAIL 的 failed_scenarios 拼装
@@ -3424,6 +3553,45 @@ async function triggerCeceliaRun(task) {
     try {
       const result = await runHarnessInitiativeRouter(task);
       const genericTaskWriteback = shouldUseGenericHarnessTaskWriteback(task);
+      if (
+        !genericTaskWriteback
+        && result?.mode === 'kernel-v1'
+        && result?.terminalized === true
+      ) {
+        return reconcileTerminalizedKernelAuthority(pool, {
+          taskId: task.id,
+          runId: result.runId,
+          error: new Error(result?.error || 'kernel_terminal_authority_unverified'),
+        });
+      }
+      if (!genericTaskWriteback && !result?.runId) {
+        const authority = await readBackKernelRunAuthority(
+          pool,
+          task.id,
+          new Error(result?.error || result?.reason || 'kernel_authority_not_created'),
+        );
+        if (authority) return authority;
+        if (result?.terminal === true) {
+          const taskTerminal = await readBackKernelPreRunTerminal(
+            pool,
+            task.id,
+            new Error(result?.error || result?.reason || 'kernel_pre_run_terminal'),
+          );
+          if (taskTerminal) return taskTerminal;
+        }
+        console.error(
+          `[executor] Kernel pre-run failed before authority creation task=${task.id}: `
+          + `${result?.error || result?.reason || 'kernel_authority_not_created'}`,
+        );
+        return {
+          success: false,
+          taskId: task.id,
+          initiative: true,
+          reason: 'kernel_authority_not_created',
+          error: String(result?.error || result?.reason || 'kernel_authority_not_created')
+            .slice(0, 500),
+        };
+      }
       // B48 ok=null=waiting；relay_spawned=spawn成功非完成（Issue df107724）；
       // deferred=软闸/去重护栏非失败（P1 bug 39b97ade，见 classifyHarnessRelayAction）。
       const action = classifyHarnessRelayAction(result);
@@ -3451,6 +3619,7 @@ async function triggerCeceliaRun(task) {
         taskId: task.id,
         initiative: true,
         fullGraph: true,
+        runId: result.runId,
         threadId: result.threadId,
         attemptN: result.attemptN,
         finalState: result.finalState,
@@ -3466,6 +3635,22 @@ async function triggerCeceliaRun(task) {
         }
       } else {
         console.error(`[executor] Kernel exception task=${task.id}; task-only failure writeback forbidden`);
+        const authority = await readBackKernelRunAuthority(pool, task.id, err);
+        if (authority) {
+          if (authority.authorityUnknown) return authority;
+          console.warn(
+            `[executor] Kernel authority reconciled after exception task=${task.id} `
+            + `run=${authority.runId} phase=${authority.runPhase}`,
+          );
+          return authority;
+        }
+        return {
+          success: false,
+          taskId: task.id,
+          initiative: true,
+          reason: 'kernel_authority_not_created',
+          error: err.message?.slice(0, 500),
+        };
       }
       return { success: true, taskId: task.id, initiative: true, error: err.message?.slice(0, 500) };
     }

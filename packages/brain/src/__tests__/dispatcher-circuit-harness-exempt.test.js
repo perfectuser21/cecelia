@@ -25,7 +25,11 @@ vi.mock('../drain.js', () => ({
   getDrainStartedAt: vi.fn(() => null),
 }));
 
-const mockTriggerCeceliaRun = vi.fn().mockResolvedValue({ success: true, pid: 12345 });
+const mockTriggerCeceliaRun = vi.fn().mockResolvedValue({
+  success: true,
+  pid: 12345,
+  runId: '11111111-1111-4111-8111-111111111111',
+});
 vi.mock('../executor.js', () => ({
   triggerCeceliaRun: (...args) => mockTriggerCeceliaRun(...args),
   checkCeceliaRunAvailable: vi.fn().mockResolvedValue({ available: true }),
@@ -126,7 +130,11 @@ describe('dispatcher circuit-breaker — harness_initiative 豁免', () => {
     mockQuery.mockReset();
     mockQuery.mockResolvedValue({ rows: [] });
     mockIsAllowed.mockReturnValue(true);
-    mockTriggerCeceliaRun.mockResolvedValue({ success: true, pid: 12345 });
+    mockTriggerCeceliaRun.mockResolvedValue({
+      success: true,
+      pid: 12345,
+      runId: '11111111-1111-4111-8111-111111111111',
+    });
   });
 
   it('case 1: harness_initiative + 熔断 OPEN → dispatched（不被拦截）', async () => {

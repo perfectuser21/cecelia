@@ -19,6 +19,14 @@ export function isPassVerdict(verdict) {
   return verdict === 'PASS' || verdict === 'FIXED';
 }
 
+export function sameContractIdentity(left, right) {
+  return left != null
+    && right != null
+    && left.contract_id === right.contract_id
+    && left.manifest_sha256 === right.manifest_sha256
+    && left.source_revision === right.source_revision;
+}
+
 /**
  * mergeGate —— 唯一 merge 权威（spec 4e，F6 双保险仍在）。
  * 前置门 = evaluate PASS + judge PASS + review_gate 人工（mergePrNode:755 + reportNode 自合语义：
@@ -30,12 +38,26 @@ export function isPassVerdict(verdict) {
  * @returns {{allow:boolean, reason:string}}
  */
 export function mergeGate(input) {
-  for (const field of ['evaluateVerdict', 'judgeVerdict', 'prHeadSha', 'reviewRequired', 'reviewApproved']) {
+  for (const field of [
+    'evaluateVerdict',
+    'judgeVerdict',
+    'prHeadSha',
+    'contractIdentity',
+    'reviewRequired',
+    'reviewApproved',
+  ]) {
     if (!(field in input)) {
       throw new Error(`mergeGate: missing required field "${field}"`);
     }
   }
-  const { evaluateVerdict, judgeVerdict, prHeadSha, reviewRequired, reviewApproved } = input;
+  const {
+    evaluateVerdict,
+    judgeVerdict,
+    prHeadSha,
+    contractIdentity,
+    reviewRequired,
+    reviewApproved,
+  } = input;
 
   if (!evaluateVerdict) {
     return { allow: false, reason: 'evaluate_verdict_missing' };
@@ -47,6 +69,9 @@ export function mergeGate(input) {
   if (!isPassVerdict(evaluateVerdict.verdict)) {
     return { allow: false, reason: 'evaluate_not_pass' };
   }
+  if (!sameContractIdentity(evaluateVerdict.contract_identity, contractIdentity)) {
+    return { allow: false, reason: 'stale_evaluate_contract' };
+  }
   if (!judgeVerdict) {
     return { allow: false, reason: 'judge_verdict_missing' };
   }
@@ -55,6 +80,9 @@ export function mergeGate(input) {
   }
   if (!isPassVerdict(judgeVerdict.verdict)) {
     return { allow: false, reason: 'judge_not_pass' };
+  }
+  if (!sameContractIdentity(judgeVerdict.contract_identity, contractIdentity)) {
+    return { allow: false, reason: 'stale_judge_contract' };
   }
   if (reviewRequired && !reviewApproved) {
     return { allow: false, reason: 'review_not_approved' };

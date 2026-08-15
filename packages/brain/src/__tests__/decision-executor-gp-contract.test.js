@@ -81,6 +81,12 @@ function makeSigningClient({ failTaskInsert = false, stale = false } = {}) {
           }],
         };
       }
+      if (/WITH authoritative_scope AS/i.test(compact) && /map_projection_nodes node/i.test(compact)) {
+        return {
+          rows: (params[1] ?? []).map((node_key) => ({ node_key })),
+          rowCount: (params[1] ?? []).length,
+        };
+      }
       if (/pg_advisory_xact_lock/i.test(compact)) {
         return { rows: [] };
       }

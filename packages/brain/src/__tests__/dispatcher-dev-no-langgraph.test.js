@@ -157,6 +157,8 @@ function setupDispatch(task, { receipt = undefined } = {}) {
             pipeline: 'harness',
             canonical_task_type: 'harness_initiative',
             impact_contract_required: true,
+            map_scope_validation_version: 'active-business-node-v1',
+            has_v2_run: false,
           }
         : receipt;
       return Promise.resolve({ rows: canonical ? [canonical] : [] });
@@ -220,6 +222,89 @@ describe('F7: dev 派发迁离 LangGraph', () => {
       payload: expect.objectContaining({ harness_runtime: 'kernel-v1' }),
     }));
     expect(mocks.query.mock.calls.some(([sql]) => String(sql).includes('FROM work_routing_receipts'))).toBe(true);
+  });
+
+  it('queued legacy receipt 有同 task 的 v2 run 时 grandfather 并进入 Kernel executor', async () => {
+    const task = makeRoutedHarnessTask({ id: 'legacy-with-current-task-run' });
+    setupDispatch(task, { receipt: {
+      id: task.payload.routing_receipt_id,
+      task_id: task.id,
+      superseded: false,
+      router_version: 'work-router-v1',
+      work_kind: 'coding_mutation',
+      change_kind: task.payload.change_kind,
+      repo: task.payload.repo,
+      pipeline: 'harness',
+      canonical_task_type: 'harness_initiative',
+      impact_contract_required: true,
+      map_scope_validation_version: null,
+      has_v2_run: true,
+    } });
+
+    const result = await dispatchNextTask(['goal-1']);
+
+    expect(result.dispatched).toBe(true);
+    expect(mocks.triggerCeceliaRun).toHaveBeenCalledWith(expect.objectContaining({ id: task.id }));
+  });
+
+  it('queued legacy receipt 无 v2 run 时仍 fail closed', async () => {
+    const task = makeRoutedHarnessTask({ id: 'legacy-without-run' });
+    setupDispatch(task, { receipt: {
+      id: task.payload.routing_receipt_id,
+      task_id: task.id,
+      superseded: false,
+      router_version: 'work-router-v1',
+      work_kind: 'coding_mutation',
+      change_kind: task.payload.change_kind,
+      repo: task.payload.repo,
+      pipeline: 'harness',
+      canonical_task_type: 'harness_initiative',
+      impact_contract_required: true,
+      map_scope_validation_version: null,
+      has_v2_run: false,
+    } });
+
+    const result = await dispatchNextTask(['goal-1']);
+
+    expect(result).toMatchObject({
+      dispatched: false,
+      reason: 'dispatch_exception',
+      error: 'route_violation',
+    });
+    expect(mocks.triggerCeceliaRun).not.toHaveBeenCalled();
+  });
+
+  it('只认 current_task_id 相同的 v2 run，不按 initiative_id 兄弟 run 放行', async () => {
+    const task = makeRoutedHarnessTask({ id: 'legacy-with-sibling-run' });
+    setupDispatch(task, { receipt: {
+      id: task.payload.routing_receipt_id,
+      task_id: task.id,
+      superseded: false,
+      router_version: 'work-router-v1',
+      work_kind: 'coding_mutation',
+      change_kind: task.payload.change_kind,
+      repo: task.payload.repo,
+      pipeline: 'harness',
+      canonical_task_type: 'harness_initiative',
+      impact_contract_required: true,
+      map_scope_validation_version: null,
+      has_v2_run: false,
+    } });
+
+    const result = await dispatchNextTask(['goal-1']);
+
+    expect(result).toMatchObject({
+      dispatched: false,
+      reason: 'dispatch_exception',
+      error: 'route_violation',
+    });
+    const receiptQuery = mocks.query.mock.calls.find(([sql]) => (
+      String(sql).includes('FROM work_routing_receipts receipt')
+    ));
+    expect(String(receiptQuery?.[0])).toMatch(
+      /initiative_runs[\s\S]+current_task_id\s*=\s*receipt\.task_id/,
+    );
+    expect(mocks.triggerCeceliaRun).not.toHaveBeenCalled();
   });
 
   it('harness task 的 projected receipt 找不到时 fail closed', async () => {

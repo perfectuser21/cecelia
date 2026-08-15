@@ -65,8 +65,13 @@ describe('Unified Map response metadata', () => {
   it('所有读响应共享 manifest/projection/fact revision envelope', () => {
     const result = buildMapEnvelope({
       scopeKey: 'cecelia',
-      manifestVersion: { version: 3, digest: 'b'.repeat(64) },
+      manifestVersion: {
+        id: '11111111-1111-4111-8111-111111111111',
+        version: 3,
+        digest: 'b'.repeat(64),
+      },
       projectionRun: {
+        id: '22222222-2222-4222-8222-222222222222',
         projection_digest: 'c'.repeat(64),
         fact_revisions: { cecelia: revision },
       },
@@ -76,8 +81,10 @@ describe('Unified Map response metadata', () => {
 
     expect(result).toEqual({
       scope_key: 'cecelia',
+      manifest_version_id: '11111111-1111-4111-8111-111111111111',
       manifest_version: 3,
       manifest_digest: 'b'.repeat(64),
+      projection_run_id: '22222222-2222-4222-8222-222222222222',
       projection_digest: 'c'.repeat(64),
       fact_revisions: { cecelia: revision },
       generated_at: now.toISOString(),

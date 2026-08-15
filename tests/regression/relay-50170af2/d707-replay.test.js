@@ -141,6 +141,11 @@ const D707_HOP57_66_REPEATED_FIX = Array.from({ length: 10 }, (_, i) => ({
 
 // 关键 SHA 常量
 const D707_FINAL_SHA = 'dc7e1bc0a97e87d7a93b9f297cb8db6de6ae6cd7';
+const D707_CONTRACT_IDENTITY = Object.freeze({
+  contract_id: '70700000-0000-4000-8000-000000000707',
+  manifest_sha256: '7'.repeat(64),
+  source_revision: '6'.repeat(40),
+});
 
 describe('[BEHAVIOR] B-08 d707 hop 55-66 replay 不产生重复 fix', () => {
   function replayObserved(logRows, overrides = {}) {
@@ -149,7 +154,12 @@ describe('[BEHAVIOR] B-08 d707 hop 55-66 replay 不产生重复 fix', () => {
       run: { phase: 'judge', cost_usd: '5.00' },
       task: { status: 'in_progress', payload: {} },
       prdExists: true,
-      contract: { approved: true, id: 'c-d707', row: {} },
+      contract: {
+        approved: true,
+        id: D707_CONTRACT_IDENTITY.contract_id,
+        identity: D707_CONTRACT_IDENTITY,
+        row: {},
+      },
       pr: {
         url: 'https://github.com/perfectuser21/cecelia/pull/4204',
         state: 'OPEN',
@@ -166,12 +176,14 @@ describe('[BEHAVIOR] B-08 d707 hop 55-66 replay 不产生重复 fix', () => {
         verdict: 'PASS',
         pr_head_sha: D707_FINAL_SHA,
         failure_class: null,
+        contract_identity: D707_CONTRACT_IDENTITY,
       },
       evaluateResult: null,
       judgeVerdict: {
         verdict: 'FAIL',
         pr_head_sha: D707_FINAL_SHA,
         failure_class: 'product_failure',
+        contract_identity: D707_CONTRACT_IDENTITY,
       },
       reviewRequired: false,
       reviewApproved: false,

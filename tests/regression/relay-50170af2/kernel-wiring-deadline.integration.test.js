@@ -201,7 +201,16 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
           run: { phase: 'review', cost_usd: '0', deadline_at: expired },
           task: { status: 'in_progress', payload: {} },
           prdExists: true,
-          contract: { approved: true, id: 'contract-1', row: {} },
+          contract: {
+            approved: true,
+            id: '70000000-0000-4000-8000-000000000007',
+            identity: {
+              contract_id: '70000000-0000-4000-8000-000000000007',
+              manifest_sha256: '7'.repeat(64),
+              source_revision: '6'.repeat(40),
+            },
+            row: {},
+          },
           pr: {
             url: 'https://github.com/example/repo/pull/1',
             state: 'OPEN',
@@ -214,9 +223,25 @@ describe('kernel wiring: deadline fences through the real runLoop', () => {
           proposeBranchRn: 0,
           ganLatestRoundVerdict: null,
           generatorSpawned: true,
-          evaluateVerdict: { verdict: 'PASS', pr_head_sha: headSha },
+          evaluateVerdict: {
+            verdict: 'PASS',
+            pr_head_sha: headSha,
+            contract_identity: {
+              contract_id: '70000000-0000-4000-8000-000000000007',
+              manifest_sha256: '7'.repeat(64),
+              source_revision: '6'.repeat(40),
+            },
+          },
           evaluateResult: null,
-          judgeVerdict: { verdict: 'PASS', pr_head_sha: headSha },
+          judgeVerdict: {
+            verdict: 'PASS',
+            pr_head_sha: headSha,
+            contract_identity: {
+              contract_id: '70000000-0000-4000-8000-000000000007',
+              manifest_sha256: '7'.repeat(64),
+              source_revision: '6'.repeat(40),
+            },
+          },
           reviewRequired: true,
           reviewApproved: false,
           decisionLog: [reviewRequest],

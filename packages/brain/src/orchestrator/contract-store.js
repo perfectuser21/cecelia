@@ -26,6 +26,7 @@ export async function materializeApprovedContract(db, {
   prdContent,
   contractContent,
   artifacts,
+  approvalProvenance = null,
   approvedAt = new Date(),
 }) {
   if (!Number.isInteger(version) || version < 1) {
@@ -48,17 +49,36 @@ export async function materializeApprovedContract(db, {
 
   try {
     if (ownsClient) await client.query('BEGIN');
-    // Lock the initiative in a separate statement. PostgreSQL fixes a statement
-    // snapshot before a contended lock returns, so version allocation must use
-    // a later statement and a fresh snapshot.
-    const runResult = await client.query(
-      `SELECT run.initiative_id, run.contract_id
+    // Serialize the initiative-wide (initiative_id, version) namespace without
+    // assuming initiative_id references tasks. Physical rows then follow the
+    // same current-task-before-run order as finalizeKernelRun.
+    const candidateResult = await client.query(
+      `SELECT run.initiative_id, run.current_task_id
          FROM initiative_runs AS run
-         JOIN tasks AS task ON task.id = run.initiative_id
-        WHERE run.id = $1::uuid
-        FOR UPDATE OF run, task`,
+        WHERE run.id = $1::uuid`,
       [runId],
     );
+    const candidate = candidateResult.rows[0] ?? null;
+    if (candidate) {
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+        [`contract-initiative:${candidate.initiative_id}`],
+      );
+    }
+    const taskResult = candidate?.current_task_id ? await client.query(
+      'SELECT id FROM tasks WHERE id = $1::uuid FOR UPDATE',
+      [candidate.current_task_id],
+    ) : { rows: [] };
+    const lockedTaskId = taskResult.rows[0]?.id ?? null;
+    const runResult = candidate && lockedTaskId ? await client.query(
+      `SELECT run.initiative_id, run.contract_id
+         FROM initiative_runs AS run
+        WHERE run.id = $1::uuid
+          AND run.initiative_id = $2::uuid
+          AND run.current_task_id = $3::uuid
+        FOR UPDATE OF run`,
+      [runId, candidate.initiative_id, lockedTaskId],
+    ) : { rows: [] };
     const run = runResult.rows[0];
     if (!run) {
       throw new Error(`cannot materialize approved contract: run ${runId} not found`);
@@ -71,6 +91,7 @@ export async function materializeApprovedContract(db, {
                   AND contract.branch = $4::text
                   AND contract.prd_content IS NOT DISTINCT FROM $5::text
                   AND contract.contract_content IS NOT DISTINCT FROM $6::text
+                  AND contract.approval_provenance IS NOT DISTINCT FROM $10::jsonb
                   AND (
                     ($7::boolean = false AND seal.contract_id IS NULL)
                     OR ($7::boolean = true
@@ -92,6 +113,7 @@ export async function materializeApprovedContract(db, {
           artifactsProvided,
           frozenArtifacts.length,
           manifestDigest,
+          approvalProvenance == null ? null : JSON.stringify(approvalProvenance),
         ],
       );
       if (!existing.rows[0]) {
@@ -137,10 +159,10 @@ export async function materializeApprovedContract(db, {
        INSERT INTO initiative_contracts
          (initiative_id, version, status, prd_content, contract_content,
           approved_sha, review_rounds, approved_at, branch,
-          created_at, updated_at)
+          approval_provenance, created_at, updated_at)
        SELECT initiative_id, $11::integer, 'approved', $4::text, $5::text,
               $10::text, $2::integer, $6::timestamptz, $3::text,
-              $6::timestamptz, $6::timestamptz
+              $12::jsonb, $6::timestamptz, $6::timestamptz
          FROM run_row
        ON CONFLICT (initiative_id, version) DO UPDATE
          SET status = CASE
@@ -153,6 +175,10 @@ export async function materializeApprovedContract(db, {
              review_rounds = GREATEST(initiative_contracts.review_rounds, EXCLUDED.review_rounds),
              approved_at = COALESCE(initiative_contracts.approved_at, EXCLUDED.approved_at),
              branch = COALESCE(initiative_contracts.branch, EXCLUDED.branch),
+             approval_provenance = COALESCE(
+               initiative_contracts.approval_provenance,
+               EXCLUDED.approval_provenance
+             ),
              updated_at = CASE
                WHEN initiative_contracts.status = 'draft' THEN EXCLUDED.updated_at
                ELSE initiative_contracts.updated_at
@@ -166,6 +192,9 @@ export async function materializeApprovedContract(db, {
            OR initiative_contracts.contract_content IS NOT DISTINCT FROM EXCLUDED.contract_content)
          AND (initiative_contracts.approved_sha IS NULL
            OR initiative_contracts.approved_sha IS NOT DISTINCT FROM EXCLUDED.approved_sha)
+         AND (initiative_contracts.approval_provenance IS NULL
+           OR initiative_contracts.approval_provenance
+                IS NOT DISTINCT FROM EXCLUDED.approval_provenance)
        RETURNING id, initiative_id, version, status, branch
      ), artifact_input AS (
        SELECT path, content, sha256, byte_length, source_revision
@@ -269,6 +298,7 @@ export async function materializeApprovedContract(db, {
       manifestDigest,
       sourceRevision,
       storedVersion,
+      approvalProvenance == null ? null : JSON.stringify(approvalProvenance),
     ],
   );
 

@@ -24,11 +24,13 @@ import {
 } from './human-review-class.js';
 import { normalizeFailureSet } from './convergence-signatures.js';
 import { getVerifiedRemotePlannerPrdArtifact } from './planner-artifact-receipt.js';
+import { loadPlannerRecoveryPrdAuthority } from './planner-recovery-ground-truth.js';
 import { parseHarnessResult, parseTaskBundle } from './execution-contract.js';
 import { resolveImplementationBaseline } from './implementation-baseline.js';
 import { sanitizeDiagnostic } from './failure-persistence.js';
 import { loadCaseFile } from './case-file-store.js';
 import { CASE_FILE_FULL_TEXT_ROUNDS } from './constants.js';
+import { sameContractIdentity } from './gates.js';
 import {
   compareContractArtifactPaths,
   contractArtifactManifestDigest,
@@ -356,6 +358,7 @@ export async function collectGroundTruth(deps, opts) {
   let contractRow = null;
   let contractArtifacts = [];
   let contractArtifactError = null;
+  let contractIdentity = null;
   if (run.contract_id) {
     const cRes = await pool.query('SELECT * FROM initiative_contracts WHERE id = $1', [run.contract_id]);
     contractRow = cRes.rows[0] ?? null;
@@ -396,6 +399,11 @@ export async function collectGroundTruth(deps, opts) {
         if (!sealRowsMatch) {
           throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:seal_mismatch');
         }
+        contractIdentity = Object.freeze({
+          contract_id: run.contract_id,
+          manifest_sha256: manifestDigest,
+          source_revision: contractArtifacts[0].source_revision,
+        });
       } catch (error) {
         contractArtifactError = String(error?.message ?? error).startsWith('FROZEN_CONTRACT_ARTIFACT')
           ? String(error.message)
@@ -409,6 +417,7 @@ export async function collectGroundTruth(deps, opts) {
     row: contractRow,
     artifacts: contractArtifacts,
     artifact_error: contractArtifactError,
+    identity: contractIdentity,
   };
 
   const tRes = await pool.query('SELECT * FROM tasks WHERE id = $1', [taskId]);
@@ -436,6 +445,14 @@ export async function collectGroundTruth(deps, opts) {
     [runId],
   );
   const decisionLog = logRes.rows;
+  const evalRow = latestRow(
+    decisionLog,
+    (row) => row.action === LOG_ACTION.VERDICT_EVALUATE,
+  );
+  const authoritativeEvalDetail = evalRow ? asJson(evalRow.detail) : null;
+  const authoritativeEvalAttemptId = ATTEMPT_ID_PATTERN.test(
+    authoritativeEvalDetail?.attempt_id ?? '',
+  ) ? authoritativeEvalDetail.attempt_id : null;
   const historicalFailureRes = await pool.query(
     `SELECT fix.observed->'failure_set' AS failure_set
        FROM orchestrator_decision_log fix
@@ -457,20 +474,35 @@ export async function collectGroundTruth(deps, opts) {
       )) === index
     ));
 
-  // evaluator 的完整机械证据存于 attempt.result；decision_log 只承载 SHA 锚定 verdict。
-  // 旧 controller 的 .brain-result.json 仍在文件通道读取，供兼容路径兜底。
+  // evaluator 的完整机械证据存于 attempt.result；decision_log 承载其 exact
+  // attempt_id + SHA + contract identity。必须先选 verdict authority，再按 attempt_id
+  // 精确取结果，禁止把一次重试的 verdict 与另一次重试的 result 拼接给 Judge。
   const evaluatorAttemptRes = await pool.query(
-    `SELECT result
+    `SELECT id, task_bundle, result
        FROM harness_attempts
       WHERE run_id = $1
+        AND id = $2
         AND role = 'evaluator'
         AND status IN ('completed', 'completed_with_concerns')
         AND result IS NOT NULL
-      ORDER BY completed_at DESC NULLS LAST, created_at DESC
       LIMIT 1`,
-    [runId],
+    [runId, authoritativeEvalAttemptId],
   );
-  const evaluateResult = asJson(evaluatorAttemptRes.rows[0]?.result);
+  const evaluatorAttempt = evaluatorAttemptRes.rows[0] ?? null;
+  const evaluatorTaskBundle = asJson(evaluatorAttempt?.task_bundle);
+  const candidateEvaluateResult = asJson(evaluatorAttempt?.result);
+  const evaluatorIdentityMatches = evaluatorAttempt != null
+    && evaluatorAttempt.id === authoritativeEvalAttemptId
+    && candidateEvaluateResult?.attempt_id === authoritativeEvalAttemptId
+    && evaluatorTaskBundle?.run_id === runId
+    && evaluatorTaskBundle?.attempt_id === authoritativeEvalAttemptId
+    && evaluatorTaskBundle?.role === 'evaluator'
+    && evaluatorTaskBundle?.inputs?.task_id === taskId
+    && sameContractIdentity(
+      evaluatorTaskBundle?.inputs?.contract_identity,
+      contractIdentity,
+    );
+  const evaluateResult = evaluatorIdentityMatches ? candidateEvaluateResult : null;
   const attemptRes = await pool.query(
     `SELECT id, run_id, hop, phase, role, provider, account_id, machine_id,
             requested_machine_id, actual_machine_id, execution_transport,
@@ -509,6 +541,7 @@ export async function collectGroundTruth(deps, opts) {
   // 本地 PRD 完成是单调里程碑，但历史 boolean 本身不是证据。只回放由
   // collectGroundTruth 生成、且绑定相同逻辑路径的文件观测 provenance；
   // 修复前无 provenance 的 snapshot 必须 fail closed。
+  const plannerRecoveryPrd = await loadPlannerRecoveryPrdAuthority(pool, { run, taskId });
   const replayedFileEvidence = decisionLog
     .map((row) => asJson(row.observed))
     .filter((observed) => (
@@ -517,26 +550,30 @@ export async function collectGroundTruth(deps, opts) {
       && observed.prdEvidence.path === prdPath
     ))
     .at(-1)?.prdEvidence ?? null;
-  const plannerPrdArtifact = getVerifiedRemotePlannerPrdArtifact({
-    runId,
-    task,
-    logRows: decisionLog,
-    attemptRows,
-  });
-  const localPrdExists = Boolean(fileExists(prdPath));
-  const prdExists = localPrdExists
+  const plannerPrdArtifact = plannerRecoveryPrd?.artifact
+    ?? getVerifiedRemotePlannerPrdArtifact({
+      runId,
+      task,
+      logRows: decisionLog,
+      attemptRows,
+    });
+  const localPrdExists = plannerRecoveryPrd == null && Boolean(fileExists(prdPath));
+  const prdExists = plannerRecoveryPrd != null
+    || localPrdExists
     || replayedFileEvidence != null
     || plannerPrdArtifact != null;
-  const prdEvidence = localPrdExists
-    ? Object.freeze({ source: 'brain_file_observation', path: prdPath })
-    : (
-        plannerPrdArtifact == null
-          ? replayedFileEvidence
-          : Object.freeze({
-              source: 'server_verified_git_artifact',
-              artifact: plannerPrdArtifact,
-            })
-      );
+  const prdEvidence = plannerRecoveryPrd?.evidence ?? (
+    localPrdExists
+      ? Object.freeze({ source: 'brain_file_observation', path: prdPath })
+      : (
+          plannerPrdArtifact == null
+            ? replayedFileEvidence
+            : Object.freeze({
+                source: 'server_verified_git_artifact',
+                artifact: plannerPrdArtifact,
+              })
+        )
+  );
   let callbackResult = null;
   if (fileExists(callbackResultPath)) {
     try {
@@ -749,7 +786,6 @@ export async function collectGroundTruth(deps, opts) {
     generatorAttemptHasRuntimeEvidence(row, decisionLog)
   ));
   const candidate = verifiedLocalCandidate(attemptRows, runId, taskId);
-  const evalRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_EVALUATE);
   const judgeRow = latestRow(decisionLog, (r) => r.action === LOG_ACTION.VERDICT_JUDGE);
   const evaluateVerdict = evalRow ? asJson(evalRow.detail) : null;
   const judgeVerdict = judgeRow ? asJson(judgeRow.detail) : null;

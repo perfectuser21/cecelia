@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import { reconcileRequiredCommandEvidence } from './orchestrator/required-command-evidence.js';
+import { parseDirectProfileAssertionRubric } from './orchestrator/direct-profile-rubric.js';
 
 const DEFAULT_BASE_URL = 'https://toapis.com/v1';
 // 最终裁判的模型（TOAPIS_JUDGE_MODEL 可覆盖）。Judge 是全链路最后一道否决闸，
@@ -503,14 +504,14 @@ export function compressBrainResult(brainResult) {
   const MAX_ITEMS = 8;
   const TRUNCATED_MARK = '…（已截断）';
 
-  const parts = [];
+  const generalParts = [];
 
   // 顶层字段
-  if (brainResult.verdict !== undefined) parts.push(`verdict: ${brainResult.verdict}`);
-  if (brainResult.exit_code !== undefined) parts.push(`exit_code: ${brainResult.exit_code}`);
+  if (brainResult.verdict !== undefined) generalParts.push(`verdict: ${brainResult.verdict}`);
+  if (brainResult.exit_code !== undefined) generalParts.push(`exit_code: ${brainResult.exit_code}`);
   if (brainResult.log_tail) {
     const lt = String(brainResult.log_tail);
-    parts.push(`log_tail: ${lt.length > MAX_TOP_LOG ? lt.slice(0, MAX_TOP_LOG) + TRUNCATED_MARK : lt}`);
+    generalParts.push(`log_tail: ${lt.length > MAX_TOP_LOG ? lt.slice(0, MAX_TOP_LOG) + TRUNCATED_MARK : lt}`);
   }
 
   // behavior_tests 逐条展开
@@ -523,16 +524,74 @@ export function compressBrainResult(brainResult) {
     const truncCmd = cmd.length > MAX_CMD ? cmd.slice(0, MAX_CMD) + TRUNCATED_MARK : cmd;
     const lt = String(t.log_tail || '');
     const truncLt = lt.length > MAX_TEST_LOG ? lt.slice(0, MAX_TEST_LOG) + TRUNCATED_MARK : lt;
-    parts.push(`[test-${i}] command: ${truncCmd} | exit_code: ${t.exit_code ?? ''} | log_tail: ${truncLt}`);
+    generalParts.push(`[test-${i}] command: ${truncCmd} | exit_code: ${t.exit_code ?? ''} | log_tail: ${truncLt}`);
   });
 
   if (omitted > 0) {
-    parts.push(`另有 ${omitted} 条已省略`);
+    generalParts.push(`另有 ${omitted} 条已省略`);
   }
 
-  const result = parts.join('\n');
-  // 总预算 6000 字符（硬截）
-  return result.length > 6000 ? result.slice(0, 6000) : result;
+  // 人式验收证据不能被压缩器静默丢掉。每类都做条目/字段上限，最终仍受
+  // 6000 字符总预算约束；这些是待判读数据，不是对 Judge 的新指令。
+  const bounded = (value, max = 500) => {
+    const text = String(value ?? '');
+    return text.length > max ? `${text.slice(0, max)}${TRUNCATED_MARK}` : text;
+  };
+  const screenshotParts = [];
+  const explorationParts = [];
+  const findingParts = [];
+  const screenshots = Array.isArray(brainResult.screenshots)
+    ? brainResult.screenshots.slice(0, 8).map((item) => bounded(item, 500))
+    : [];
+  if (screenshots.length > 0) {
+    screenshotParts.push(`screenshots: ${JSON.stringify(screenshots)}`);
+  }
+  const explorationNotes = Array.isArray(brainResult.exploration_notes)
+    ? brainResult.exploration_notes.slice(0, 8).map((item) => bounded(item, 500))
+    : [];
+  if (explorationNotes.length > 0) {
+    explorationParts.push(`exploration_notes: ${JSON.stringify(explorationNotes)}`);
+  }
+  const findings = Array.isArray(brainResult.findings) ? brainResult.findings.slice(0, 8) : [];
+  findings.forEach((finding, index) => {
+    findingParts.push([
+      `[finding-${index}] id: ${bounded(finding?.id, 80)}`,
+      `severity: ${bounded(finding?.severity, 16)}`,
+      `title: ${bounded(finding?.title, 300)}`,
+      `expected: ${bounded(finding?.expected)}`,
+      `actual: ${bounded(finding?.actual)}`,
+      `reproduction_steps: ${bounded(JSON.stringify(finding?.reproduction_steps ?? []), 800)}`,
+      `evidence: ${bounded(JSON.stringify(finding?.evidence ?? []), 800)}`,
+      `screenshot_paths: ${bounded(JSON.stringify(finding?.screenshot_paths ?? []), 800)}`,
+    ].join(' | '));
+  });
+  if (Array.isArray(brainResult.findings) && brainResult.findings.length > findings.length) {
+    findingParts.push(`另有 ${brainResult.findings.length - findings.length} 条 finding 已省略`);
+  }
+
+  const fitParts = (values, budget) => {
+    let result = '';
+    for (const value of values) {
+      const separator = result.length === 0 ? '' : '\n';
+      const remaining = budget - result.length - separator.length;
+      if (remaining <= 0) break;
+      const text = String(value);
+      result += separator + (text.length > remaining ? text.slice(0, remaining) : text);
+    }
+    return result;
+  };
+  // 人式证据拥有独立保留预算，不能被普通 checks 抢光。无人工证据时，普通证据
+  // 仍可使用完整 6000 字符；有人式证据时至少为其预留一半。
+  // finding 是产品缺陷裁决的最高优先证据，不能被大量截图路径先占满。
+  // 三类分别保留固定预算，因此每类至少能保留首条及显式截断内容。
+  const humanText = [
+    fitParts(findingParts, 1800),
+    fitParts(explorationParts, 600),
+    fitParts(screenshotParts, 600),
+  ].filter(Boolean).join('\n');
+  const generalBudget = humanText.length === 0 ? 6000 : 6000 - humanText.length - 1;
+  const generalText = fitParts(generalParts, generalBudget);
+  return [humanText, generalText].filter(Boolean).join('\n').slice(0, 6000);
 }
 
 export function validateFrozenContractJudgeArtifacts(artifacts) {
@@ -757,7 +816,10 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
   // PRD 声明的每个 Golden Path 步骤必须有 coverage 条目且 passed=true。
   for (let i = 0; i < steps.length; i++) {
     const entry = cov[i];
-    if (!entry) { missing.push({ index: i + 1, step: steps[i] }); continue; }
+    if (!entry || entry.step !== steps[i]) {
+      missing.push({ index: i + 1, step: steps[i] });
+      continue;
+    }
     if (
       entry.passed !== true
       && entry.deferred === true
@@ -1140,8 +1202,8 @@ export async function runMechanicalGate(ctx, deps = {}) {
 }
 
 /**
- * runJudgeGate — 独立裁判门。仅对 agent verdict===PASS 生效（运动员说 PASS 才需复核）。
- * 非 PASS（agent 已 FAIL）直接透传走现有 fix loop，不浪费裁判调用。
+ * runJudgeGate — 独立裁判门。Evaluator 只产出验收事实，无权单独触发合并或改码；
+ * PASS/FAIL 都必须由 Judge 在同一候选与冻结合同上独立裁定。
  *
  * @param {object} ctx  {agentVerdict, agentFeedback, transcript, brainResult, worktreePath, sprintDir, instanceLabel, promptDir, taskId}
  *                       promptDir+taskId 用于定位 evaluator 完整 stdout 转录（#3345 forensics 文件）。
@@ -1150,9 +1212,6 @@ export async function runMechanicalGate(ctx, deps = {}) {
  */
 export async function runJudgeGate(ctx, opts = {}) {
   const { agentVerdict, agentFeedback } = ctx;
-  if (agentVerdict !== 'PASS') {
-    return { verdict: agentVerdict, feedback: agentFeedback || null, judged: false };
-  }
 
   const strict = opts.strict ?? (process.env.JUDGE_STRICT === '1');
   const judgeFn = opts.judgeFn || callDeepSeekJudge;
@@ -1204,6 +1263,29 @@ export async function runJudgeGate(ctx, opts = {}) {
     };
   }
 
+  let directProfileRubric;
+  try {
+    directProfileRubric = parseDirectProfileAssertionRubric(ctx.frozenContractArtifacts);
+  } catch (error) {
+    const fb = `Direct Profile rubric FAIL：${error.message}`;
+    await persistJudgeArtifact({
+      worktreePath: ctx.worktreePath,
+      instanceLabel: ctx.instanceLabel,
+      payload: {
+        agentVerdict,
+        directProfileRubricError: error.message,
+        finalVerdict: 'FAIL',
+        failureClass: 'evidence_invalid',
+      },
+    }, opts);
+    return {
+      verdict: 'FAIL',
+      feedback: fb,
+      judged: true,
+      failure_class: 'evidence_invalid',
+    };
+  }
+
   const ev = await collectFn({
     worktreePath: ctx.worktreePath,
     sprintDir: ctx.sprintDir,
@@ -1237,16 +1319,23 @@ export async function runJudgeGate(ctx, opts = {}) {
     ctx.requiredCommandEvidence,
     ev.brainResult?.behavior_tests,
   );
+  const frozenContractSteps = directProfileRubric.matched
+    ? directProfileRubric.steps
+    : frozenArtifactsPreflight.legacy
+      ? []
+      : ctx.frozenContractArtifacts.map((artifact) => `冻结合同测试：${artifact.path}`);
   const adjudicationSteps = ev.goldenPathSteps?.length
     ? ev.goldenPathSteps
     : requiredEvidence.complete
       ? ctx.requiredCommandEvidence.map((command) => command.trim())
-      : [];
+      : frozenContractSteps;
 
-  // 证据门：无合同 E2E 段且无 Golden Path 步骤 → 裁判没有「该验什么」的独立基准，无法做覆盖对照
-  // → fail-open 保留 agent verdict（不浪费裁判调用，也不在缺证据时凭空否决运动员）。
+  // 证据门：真正的 legacy 路径既无合同 E2E、Golden Path、required command，也无
+  // server-owned 冻结合同测试时，裁判没有「该验什么」的独立基准，保留兼容语义。
+  // 受管合同即使没有 E2E/GP，也必须把冻结测试逐项交给独立 Judge；否则 direct profile
+  // 会把 Evaluator 的普通 CI PASS 直接升级成双 PASS，运动员事实上给自己发奖牌。
   // Fleet 路径从批准后的 TaskBundle 读取锁版本文本；精确 PR 验收可以用已完整对账的
-  // required_command_evidence 作为裁判步骤；旧本地路径回退读取 sprint 文件。
+  // required_command_evidence 或冻结合同测试作为裁判步骤；旧本地路径回退读取 sprint 文件。
   if (!ev.contractE2E && adjudicationSteps.length === 0) {
     console.log('[judge] 无合同/Golden Path 证据可独立判读 → 跳过裁判，保留 agent verdict');
     return { verdict: agentVerdict, feedback: agentFeedback || null, judged: false };
@@ -1307,8 +1396,25 @@ export async function runJudgeGate(ctx, opts = {}) {
     // 误派 Generator 改代码会动到可能本就正确的实现，误派 Evaluator 最多多跑一次取证。
     const failureClass = judgeResult.failure_class ?? 'evidence_insufficient';
     console.warn(`[judge] 裁判终判 FAIL（agent=PASS, judge=${judgeResult.verdict}, coverage_ok=${cov.ok}, failure_class=${failureClass}）→ 进 fix loop`);
-    return { verdict: 'FAIL', feedback: fb, judged: true, failure_class: failureClass };
+    return {
+      verdict: 'FAIL',
+      feedback: fb,
+      judged: true,
+      failure_class: failureClass,
+      coverage: judgeResult.coverage,
+      ...(judgeResult.failure_signature == null
+        ? {}
+        : { failure_signature: judgeResult.failure_signature }),
+    };
   }
   console.log('[judge] 双 PASS（运动员 + 独立裁判）→ 照常 merge');
-  return { verdict: 'PASS', feedback: null, judged: true };
+  return {
+    verdict: 'PASS',
+    feedback: null,
+    judged: true,
+    coverage: judgeResult.coverage,
+    ...(judgeResult.failure_signature == null
+      ? {}
+      : { failure_signature: judgeResult.failure_signature }),
+  };
 }

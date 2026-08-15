@@ -200,7 +200,11 @@ function stateRecord(node, resolved) {
   };
 }
 
-export async function loadMapNodeStates(client, { scopeKey, now = new Date() }) {
+export async function loadMapNodeStates(client, {
+  scopeKey,
+  now = new Date(),
+  projectionRunId = null,
+}) {
   if (!client?.query) {
     throw new MapStateResolverError(
       'MAP_STATE_CLIENT_INVALID',
@@ -211,8 +215,9 @@ export async function loadMapNodeStates(client, { scopeKey, now = new Date() }) 
     `SELECT id, scope_key, manifest_version_id, manifest_digest, fact_revisions,
             projector_version, projection_digest, activated_at
        FROM map_projection_runs
-      WHERE scope_key=$1 AND status='active'`,
-    [scopeKey],
+      WHERE scope_key=$1
+        ${projectionRunId ? 'AND id=$2' : "AND status='active'"}`,
+    projectionRunId ? [scopeKey, projectionRunId] : [scopeKey],
   );
   if (!runs[0]) {
     throw new MapStateResolverError(

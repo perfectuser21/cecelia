@@ -11,6 +11,12 @@
 import { describe, it, expect } from 'vitest';
 import { derive } from '../orchestrator/derive.js';
 
+const CONTRACT_IDENTITY = Object.freeze({
+  contract_id: '11111111-2222-4333-8444-555555555555',
+  manifest_sha256: 'b'.repeat(64),
+  source_revision: 'c'.repeat(40),
+});
+
 const base = () => ({
   run: { phase: 'planning' },
   task: { status: 'in_progress' },
@@ -36,7 +42,11 @@ const approvedWithPassingPr = (changeKind) => ({
   ...base(),
   change_kind: changeKind,
   prdExists: true,
-  contract: { approved: true },
+  contract: {
+    approved: true,
+    id: CONTRACT_IDENTITY.contract_id,
+    identity: CONTRACT_IDENTITY,
+  },
   generatorSpawned: true,
   // generator 干净退出（code 0）——非 null，deriveTask 退出分路读 lastAgentExit.action。
   lastAgentExit: { code: 0, auth_failed: false, action: null },
@@ -93,7 +103,11 @@ describe('四档全部保留 Generate Evaluate Judge 与 merge fence [BEHAVIOR]'
     for (const ck of FOUR) {
       const observed = {
         ...approvedWithPassingPr(ck),
-        evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
+        evaluateVerdict: {
+          verdict: 'PASS',
+          pr_head_sha: 'sha-1',
+          contract_identity: CONTRACT_IDENTITY,
+        },
       };
       const d = derive(observed);
       expect(d.action).toBe('spawn:judge');
@@ -104,8 +118,16 @@ describe('四档全部保留 Generate Evaluate Judge 与 merge fence [BEHAVIOR]'
     for (const ck of FOUR) {
       const observed = {
         ...approvedWithPassingPr(ck),
-        evaluateVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
-        judgeVerdict: { verdict: 'PASS', pr_head_sha: 'sha-1' },
+        evaluateVerdict: {
+          verdict: 'PASS',
+          pr_head_sha: 'sha-1',
+          contract_identity: CONTRACT_IDENTITY,
+        },
+        judgeVerdict: {
+          verdict: 'PASS',
+          pr_head_sha: 'sha-1',
+          contract_identity: CONTRACT_IDENTITY,
+        },
         reviewRequired: false,
       };
       const d = derive(observed);

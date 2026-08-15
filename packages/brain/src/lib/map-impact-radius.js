@@ -151,6 +151,7 @@ export async function loadMapImpactRadius(client, {
   startNodeKeys = [],
   maxDepth = 10,
   now = new Date(),
+  projectionRunId = null,
 }) {
   if (!client?.query) {
     throw new MapImpactRadiusError(
@@ -169,8 +170,9 @@ export async function loadMapImpactRadius(client, {
   const { rows: runs } = await client.query(
     `SELECT id, scope_key, fact_revisions, projection_digest, activated_at
        FROM map_projection_runs
-      WHERE scope_key=$1 AND status='active'`,
-    [scopeKey],
+      WHERE scope_key=$1
+        ${projectionRunId ? 'AND id=$2' : "AND status='active'"}`,
+    projectionRunId ? [scopeKey, projectionRunId] : [scopeKey],
   );
   if (!runs[0]) {
     throw new MapImpactRadiusError(
@@ -190,27 +192,70 @@ export async function loadMapImpactRadius(client, {
        FROM map_projection_edges WHERE run_id=$1 ORDER BY edge_id`,
     [run.id],
   );
-  const { rows: graphEdges } = await client.query(
-    `SELECT repo, src_path, dst_path, edge_type
-       FROM graph_edges WHERE repo=$1 ORDER BY src_path, dst_path, edge_type`,
-    [repo],
-  );
-  const { rows: headers } = await client.query(
-    `SELECT kind, repo, source_revision, scanner_version, scanned_at, row_count
-       FROM fact_snapshot_headers WHERE kind='graph' AND repo=$1`,
-    [repo],
-  );
-  let freshness = computeFreshness(headers[0] ?? null, now);
   const projectionRevision = run.fact_revisions?.[repo] ?? null;
-  if (freshness.status === 'fresh' && projectionRevision !== freshness.source_revision) {
-    freshness = {
-      ...freshness,
-      status: 'unknown',
-      stale: true,
-      reason_code: 'projection_revision_mismatch',
-      projection_source_revision: projectionRevision,
-    };
+  if (typeof projectionRevision !== 'string' || projectionRevision.trim() === '') {
+    throw new MapImpactRadiusError(
+      'MAP_RADIUS_GRAPH_SNAPSHOT_NOT_FOUND',
+      `Projection ${run.id} has no graph fact revision for repository ${repo}`,
+      { scope_key: scopeKey, repo, projection_run_id: run.id },
+    );
   }
+  const { rows: snapshotRows } = await client.query(
+    `SELECT snapshot.source_revision AS snapshot_revision,
+            snapshot.scanner_version, snapshot.scanned_at, snapshot.row_count,
+            edge.repo, edge.src_path, edge.dst_path, edge.edge_type
+       FROM graph_snapshot_versions AS snapshot
+       LEFT JOIN graph_edge_snapshots AS edge
+         ON edge.repo=snapshot.repo
+        AND edge.source_revision=snapshot.source_revision
+      WHERE snapshot.repo=$1 AND snapshot.source_revision=$2
+      ORDER BY edge.src_path, edge.dst_path, edge.edge_type`,
+    [repo, projectionRevision],
+  );
+  const snapshot = snapshotRows[0];
+  if (!snapshot || snapshot.snapshot_revision !== projectionRevision) {
+    throw new MapImpactRadiusError(
+      'MAP_RADIUS_GRAPH_SNAPSHOT_NOT_FOUND',
+      `No immutable graph snapshot exists for repository ${repo} at ${projectionRevision}`,
+      {
+        scope_key: scopeKey,
+        repo,
+        projection_run_id: run.id,
+        projection_source_revision: projectionRevision,
+      },
+    );
+  }
+  const graphEdges = snapshotRows
+    .filter((row) => row.src_path !== null && row.dst_path !== null)
+    .map((row) => ({
+      repo,
+      src_path: row.src_path,
+      dst_path: row.dst_path,
+      edge_type: row.edge_type,
+    }));
+  const expectedEdgeCount = Number(snapshot.row_count);
+  if (!Number.isInteger(expectedEdgeCount) || expectedEdgeCount !== graphEdges.length) {
+    throw new MapImpactRadiusError(
+      'MAP_RADIUS_GRAPH_SNAPSHOT_INCOMPLETE',
+      `Immutable graph snapshot ${repo}@${projectionRevision} is incomplete`,
+      {
+        scope_key: scopeKey,
+        repo,
+        projection_run_id: run.id,
+        projection_source_revision: projectionRevision,
+        expected_edge_count: expectedEdgeCount,
+        actual_edge_count: graphEdges.length,
+      },
+    );
+  }
+  const freshness = computeFreshness({
+    kind: 'graph',
+    repo,
+    source_revision: snapshot.snapshot_revision,
+    scanner_version: snapshot.scanner_version,
+    scanned_at: snapshot.scanned_at,
+    row_count: snapshot.row_count,
+  }, now);
   const radius = computeMapImpactRadius({
     repo,
     changedFiles,
@@ -222,7 +267,9 @@ export async function loadMapImpactRadius(client, {
   });
   return {
     scope_key: scopeKey,
+    projection_run_id: run.id,
     projection_digest: run.projection_digest,
+    fact_revisions: run.fact_revisions,
     projection_source_revision: projectionRevision,
     freshness,
     ...radius,

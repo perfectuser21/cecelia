@@ -37,11 +37,13 @@ export async function seedRoutedKernelTask(pool, {
     `INSERT INTO work_routing_receipts (
        id, task_id, source, source_id, work_kind, change_kind, pipeline,
        canonical_task_type, default_execution_profile, repo, map_scope,
-       impact_contract_required, orchestrator, router_version, route_reason, evidence
+       impact_contract_required, orchestrator, router_version, route_reason, evidence,
+       direct_contract_seed, map_scope_validation_version
      ) VALUES (
        $1, $2, 'integration', $3, 'coding_mutation', $4, 'harness',
        'harness_initiative', $5, 'cecelia', '["F0"]'::jsonb,
-       true, 'kernel-harness-v2', 'work-router-v1', 'integration_fixture', $6::jsonb
+       true, 'kernel-harness-v2', 'work-router-v1', 'integration_fixture', $6::jsonb,
+       $7::jsonb, 'active-business-node-v1'
      )`,
     [
       receiptId,
@@ -53,6 +55,14 @@ export async function seedRoutedKernelTask(pool, {
         branch: `cp-${titlePrefix}-${taskId.slice(0, 8)}`,
         base_sha: 'a'.repeat(40),
       }),
+      ['hotfix-v1', 'parameter-only-v1'].includes(defaultExecutionProfile)
+        ? JSON.stringify({
+          contract_version: 'direct-profile-contract-seed/v1',
+          title: `${titlePrefix}-${taskId}`,
+          objective: `${titlePrefix}-${taskId}`,
+          execution_profile: defaultExecutionProfile,
+        })
+        : null,
     ],
   );
   return { initiativeId, taskId, receiptId, payload: routedPayload };

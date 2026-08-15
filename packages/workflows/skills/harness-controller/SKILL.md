@@ -7,9 +7,11 @@ description: |
   移植 Superpowers 6.0 subagent-driven-development 零件：进度台账 / 文件接力 / 四态出口协议 / 单评审双裁决 / compaction 恢复。
   点火方：Brain harness dispatch（无头）或人工前台（同一份 skill 两种触发，行为一致）。
   /dev 仍是唯一需求入口：本 skill 消费 /dev 路径C 的交接契约（PrepPRD + 铁律清单 + NFR），不做需求对抗。
-version: 2.10.0
+version: 2.11.0
 created: 2026-07-04
 changelog:
+  - 2.11.0: one-session merge authority 收回 Brain——Judge 只读取服务端 exact run/task、当前 PR HEAD 与 immutable frozen contract，并原子写 evaluator/judge receipt；Step 6 禁止客户端 `gh pr merge`，只能调用 exact-run merge API，由服务端重读 receipt、合同身份、HEAD、人工门和 Impact Gate 后执行；任何 graduation/update-branch 新 SHA 都必须重新 Evaluator+Judge，不再允许客户端 re-anchor
+  - 2.10.1: Judge fail-closed——Evaluator PASS/FAIL 都必须进入独立 Judge；Step 5 只有 verdict=PASS 且 judged=true 才允许进入 merge，模型不可用、judged=false、HTTP/JSON 异常与空 verdict 全部禁止放行；CLI 兜底同样要求 judged=true
   - 2.10.0: Controller exact-run cutover——Step 0 通过 canonical POST /relay-runs 幂等取得并持久化 HARNESS_RUN_ID（Brain 已注入时复用，恢复时从 .harness/run-id 读取，并用 exact GET 校验 task 归属）；中间进度、PR URL、Evaluator/Judge verdict 与最终终态全部改走 /relay-runs/by-id/${HARNESS_RUN_ID}，彻底停止按 initiative_id mutation；Judge 请求显式携带 run_id；前台点火也创建 canonical run，不再允许“无 run 裸跑/404 当正常”；run identity 缺失、格式非法或 task 归属不一致均 fail closed
   - 2.9.0: gear 档位：新增 gear=segmented 分叉（骨架棋盘 + 分段串行点绿，移植自 cecelia #4027 harness-gear 一体化 60a80ddc 决策2）——HARNESS_GEAR=segmented 时 Step 1 planner 照跑、Step 2 GAN 透传该档位给 proposer 输出多段 task-plan.json、GAN 后先派骨架 generator 落全红棋盘、再按 task-plan.json 串行段循环 generator(WORKSTREAM_INDEX)+evaluator(SEGMENT_EVAL)，同段 2 次仍败转 escalate，全段绿后走现行全量总验；复用既有 Step 0.1 HARNESS_GEAR 解析与 gear=hotfix 同款 default 不生效声明，不与 2.8.0 hotfix 支路冲突；HARNESS_GEAR 缺失/=default/=hotfix 时本节整节不生效
   - 2.8.0: gear=hotfix 短流程支路（handoff 0716 刀C，fcb459b5-c510-4f45-b41f-e71b100d94f1）——Step 0 新增 HARNESS_GEAR 变量（来源 payload.gear）；当 HARNESS_GEAR=hotfix 时跳过 GAN（proposer/reviewer）直接由 controller 从 thin_prd 锚定断言组装 contract-draft.md/contract-dod.md（输出 [gear=hotfix] skip proposer/reviewer GAN）；两条安全阀铁律：①generator 发现需改 Golden Path 断言 → FATAL 报错升档，禁止顺手改；②thin_prd 缺锚定声明 → 拒绝 hotfix，回退全流程（走完整 GAN 路径）；新增 examples/hotfix-shortflow/ 示例文件；全流程默认档（无 gear 字段）路径零回归
@@ -461,7 +463,7 @@ if [ "$CI_STATUS" = "GREEN" ]; then echo "CI_GREEN"; else echo "CI_FAILED"; fi
 双门过 → 派 evaluator fresh subagent：`调用 Skill(harness-evaluator)`（target_environment 路由由 evaluator skill 自带）。派发前后按「横切纪律 B」自报 node=evaluator。
 
 - **verdict 锚定 PR head SHA 记入台账**；PR 后续有新 commit → 旧 verdict 作废必须重评
-- FIXED 按 PASS 归一（前科语义）；FAIL → 带 feedback 回 Step 3 fix
+- FIXED 按 PASS 归一（前科语义）；PASS/FAIL 都必须携带人式证据进入 Step 5，由独立 Judge 确认后再决定放行或回 Step 3，禁止 Evaluator 单方裁决 merge/fix
 - **evaluator 报 unverifiable[] 非空时（T5 第三态）**：controller 必须逐条兜底——用自己掌握的跨阶段上下文核对（查合同原意/看 PR diff/必要时派 Research subagent 实测）；确认是真缺口 → 按 FAIL 处理回 Step 3；确认可放行 → 记台账后继续。**禁止不核对就当 PASS 放行**
 
 **evaluate_verdict 上报（硬性动作，与台账 append 同时做）**——evaluator 每次出裁决（含 fix loop 重评）后立刻 best-effort 上报，让 initiative_runs.evaluate_verdict 有结构化值（cecelia#3754 起 PATCH 接住该字段；非法值 Brain 只 warn 不 400，绝不阻塞。此前该列全 NULL=裁决只活在台账文本里，机器不可读）：
@@ -480,17 +482,29 @@ curl -s -m 10 -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/by-id/${HARNESS
 ## Step 5: Judge（独立裁判，硬门禁）
 
 - 派发前后按「横切纪律 B」自报 node=judge。
-- 只对 evaluator PASS 复核。**主路径：curl Brain judge API**（跨 repo 化刀3：controller 跑在 relay 容器/第三方 repo 时，cecelia 相对路径脚本不存在，API 是唯一稳定入口；DeepSeek + Golden Path 逐步覆盖校验，逻辑=harness-judge.js 原样）：
+- 对 evaluator PASS/FAIL 都复核。**主路径：curl Brain judge API**（跨 repo 化刀3：controller 跑在 relay 容器/第三方 repo 时，cecelia 相对路径脚本不存在，API 是唯一稳定入口；DeepSeek + Golden Path 逐步覆盖校验，逻辑=harness-judge.js 原样）：
 
 ```bash
 # worktree 必须传宿主绝对路径：容器内用 $HARNESS_WORKTREE_HOST（Brain spawn 注入，brain@1.242.0 起）；
 # 本机前台直跑时即 worktree 绝对路径本身。禁止传容器内 /workspace（Brain 容器读不到）。
+JUDGE_AUTH_ARGS=()
+if [ -n "${CECELIA_INTERNAL_TOKEN:-}" ]; then
+  JUDGE_AUTH_ARGS=(-H "Authorization: Bearer $CECELIA_INTERNAL_TOKEN")
+fi
 JUDGE_RESP=$(curl -s -m 300 -X POST "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/judge" \
+  "${JUDGE_AUTH_ARGS[@]}" \
   -H "Content-Type: application/json" \
   -d "{\"task_id\":\"$HARNESS_TASK_ID\",\"run_id\":\"$HARNESS_RUN_ID\",\"sprint_dir\":\"$SPRINT_DIR\",\"worktree\":\"${HARNESS_WORKTREE_HOST:-$PWD}\"}")
 VERDICT=$(echo "$JUDGE_RESP" | jq -r '.verdict // empty')
+JUDGED=$(echo "$JUDGE_RESP" | jq -r '.judged // false')
 FEEDBACK=$(echo "$JUDGE_RESP" | jq -r '.feedback // ""')
-# HTTP 恒 200：VERDICT=PASS（API 已把 FIXED 归一为 PASS）→ 放行；FAIL/ERROR/空 → 一律按 FAIL 处理
+if [ "$VERDICT" != "PASS" ] || [ "$JUDGED" != "true" ]; then
+  JUDGE_CAN_MERGE=false
+  echo "JUDGE_FAIL: verdict=${VERDICT:-empty} judged=$JUDGED feedback=$FEEDBACK"
+else
+  JUDGE_CAN_MERGE=true
+fi
+# 只有 JUDGE_CAN_MERGE=true 才能进入 Step 6；其余一律携 feedback 回 Step 3，禁止 merge。
 ```
 
 - **judge_verdict 上报（硬性动作，EVA v2，与 Step 4 evaluate_verdict 对称）**——拿到 VERDICT 后立刻 best-effort 上报（DB 实证：judge_verdict 30 条仅 2 非空，病根就是此处从未上报，裁决只活在台账文本里）：
@@ -530,13 +544,37 @@ fi
 - **merge 前 SHA 锚定硬检查（确定性 bash，c66bbedc 实证：锚定后又进代码 commit、未重评直接 merge）**——"新 commit 旧 verdict 作废"不只写在 Step 4，merge 这里必须机械复核：
 
 ```bash
-[ "$(gh pr view <pr> --json headRefOid -q .headRefOid)" = "$ANCHORED_SHA" ] || 回 Step 4 重评
+CURRENT_HEAD=$(gh pr view <pr> --json headRefOid -q .headRefOid)
+if [ "$CURRENT_HEAD" != "$ANCHORED_SHA" ]; then
+  echo "HEAD_CHANGED_REEVALUATION_REQUIRED: anchored=$ANCHORED_SHA current=$CURRENT_HEAD"
+  exit 2
+fi
 ```
 
-  不相等 → **禁止 merge**，回 Step 4 以当前 head 重评（evaluator + judge 都要），台账 append 重评行后才可回到本步。**豁免（v2.7，与下面 update-branch 豁免对称）：head 变化仅由本步「毕业 commit」造成时**——用 `git diff --stat HEAD~1` 证明该 commit 是纯 rename 零内容变更（全部行形如 `old => new`，insertions/deletions 均为 0）——允许以毕业后的 head 直接 re-anchor，不触发 Step 4 全量重评，台账记 re-anchor 行（注明 graduation）
-- merge（唯一权威路径）：evaluator PASS + judge PASS（+ 人工批准如需）→ `gh pr merge --squash --delete-branch`
-  - BEHIND → `gh pr update-branch` ≤3 次；**update 改变 head sha → evaluator/judge verdict 以新 sha 重锚**（轻量 rebase 不重评，台账记 re-anchor 行）
-  - CONFLICTING → 终局 FAIL 上报
+  不相等 → **禁止 merge**，回 Step 4 以当前 head 重评（evaluator + judge 都要），台账 append 重评行后才可回到本步。毕业 commit、update-branch、纯 rename 也都改变候选 SHA，**一律不得客户端 re-anchor**。
+- merge（唯一权威路径）：客户端禁止直接运行 `gh pr merge`。必须把 exact run/task 交给 Brain；Brain 会重读 append-only evaluator/judge receipt、当前冻结合同 identity、当前 PR HEAD、人工 review 门与 Impact Contract merge fence，全部一致才执行带 `--match-head-commit` 的 merge：
+
+```bash
+MERGE_AUTH_ARGS=()
+if [ -n "${CECELIA_INTERNAL_TOKEN:-}" ]; then
+  MERGE_AUTH_ARGS=(-H "Authorization: Bearer $CECELIA_INTERNAL_TOKEN")
+fi
+MERGE_RESP=$(curl -s -m 300 -X POST \
+  "${BRAIN_URL:-http://localhost:5221}/api/brain/harness/runs/${HARNESS_RUN_ID}/merge" \
+  "${MERGE_AUTH_ARGS[@]}" \
+  -H "Content-Type: application/json" \
+  -d "{\"task_id\":\"$HARNESS_TASK_ID\"}")
+MERGE_STATUS=$(echo "$MERGE_RESP" | jq -r '.status // empty')
+if [ "$MERGE_STATUS" != "DONE" ]; then
+  echo "MERGE_NOT_AUTHORIZED: status=${MERGE_STATUS:-empty} response=$MERGE_RESP"
+  # DONE_WITH_CONCERNS 表示服务端已 update branch；HEAD 已变化，必须回 Step 4+5 重评。
+  # BLOCKED/空值/HTTP 错误同样禁止 merge，按响应原因修复后重走服务端权威。
+  exit 2
+fi
+```
+
+  - `DONE_WITH_CONCERNS`（例如 BEHIND 后服务端 update branch）→ 新 SHA，回 Step 4+5。
+  - CONFLICTING / gate deny / authority mismatch → 终局 FAIL 或按服务端原因修复，禁止本地绕行。
 - **派生 staging_e2e（merge 确认后，best-effort，绝不阻塞）**：无论是本 session 自己 `gh pr merge` 成功、还是发现 PR 已被外部合并（`gh pr view` 直接是 MERGED），只要确认 MERGED 就派生一次——这是当前 staging→production 放行层唯一的任务产生入口，漏派会让这条 PR 永远进不了 staging E2E：
 
 ```bash

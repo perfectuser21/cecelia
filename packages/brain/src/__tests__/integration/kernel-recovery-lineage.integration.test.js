@@ -45,6 +45,7 @@ beforeAll(async () => {
       impact_contract_policy text, impact_contract_policy_reason text,
       impact_contract_policy_decision_id text, map_recovery_contract_id uuid,
       contract_id uuid, predecessor_run_id uuid,
+      planner_recovery_receipt_id uuid,
       controller_session_id uuid,
       controller_generation bigint,
       controller_lease_expires_at timestamptz,
@@ -61,6 +62,16 @@ beforeAll(async () => {
       lease_expires_at timestamptz NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE TABLE planner_recovery_receipts (
+      id uuid PRIMARY KEY,
+      predecessor_run_id uuid NOT NULL,
+      source_task_id uuid NOT NULL
+    );
+    CREATE TABLE planner_recovery_consumptions (
+      receipt_id uuid PRIMARY KEY,
+      successor_task_id uuid NOT NULL UNIQUE,
+      routing_receipt_id uuid NOT NULL UNIQUE
     );
     CREATE UNIQUE INDEX one_active_kernel_run
       ON initiative_runs(current_task_id)

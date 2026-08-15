@@ -38,7 +38,7 @@ async function insertInitiative(client, { initiativeId, title }) {
     `INSERT INTO tasks (id, task_type, title, description, status, priority)
      VALUES ($1::uuid, 'harness_initiative', $2, 'dag-endpoint-test', 'queued', 'P2')
      RETURNING id`,
-    [initiativeId, title]
+    [initiativeId, `${title}-${initiativeId}`]
   );
   return r.rows[0].id;
 }
@@ -82,7 +82,15 @@ async function insertSubtask(client, {
        jsonb_build_object('parent_task_id', $4::text, 'fix_rounds', $5::int, 'cost_usd', $6::numeric),
        TIMESTAMPTZ '2026-01-01 00:00:00+00' + ($7 * INTERVAL '1 second'))
      RETURNING id`,
-    [title, status, prUrl, initiativeId, fixRounds, costUsd, sortOrder]
+    [
+      `${title}-${initiativeId.slice(0, 8)}`,
+      status,
+      prUrl,
+      initiativeId,
+      fixRounds,
+      costUsd,
+      sortOrder,
+    ]
   );
   return r.rows[0].id;
 }
@@ -148,7 +156,7 @@ describe('GET /api/brain/initiatives/:id/dag', () => {
     expect(res.body.e2e_acceptance).toEqual({ scenarios: ['s1'] });
     expect(res.body.contract.status).toBe('approved');
     expect(res.body.tasks).toHaveLength(3);
-    expect(res.body.tasks[0].title).toBe('T1');
+    expect(res.body.tasks[0].title).toBe(`T1-${initiativeId.slice(0, 8)}`);
     expect(res.body.tasks[0].pr_url).toBe('https://github.com/a/b/pull/1');
     expect(res.body.tasks[0].fix_rounds).toBe(1);
     expect(res.body.dependencies).toHaveLength(2);

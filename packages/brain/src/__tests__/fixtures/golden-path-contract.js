@@ -85,6 +85,11 @@ export class StatefulContractDb {
         }],
       };
     }
+    if (/WITH authoritative_scope AS/i.test(compact) && /map_projection_nodes node/i.test(compact)) {
+      return {
+        rows: (params[1] ?? []).map((nodeKey) => ({ node_key: nodeKey })),
+      };
+    }
     if (/pg_advisory_xact_lock/i.test(compact)) {
       return { rows: [] };
     }

@@ -124,6 +124,18 @@ try {
     [repo, testPath, sourcePath, revision, now],
   );
   await client.query(
+    `INSERT INTO graph_snapshot_versions
+      (repo,source_revision,scanner_version,scanned_at,row_count)
+     VALUES ($1,$2,'graph-v3',$3,1)`,
+    [repo, revision, now],
+  );
+  await client.query(
+    `INSERT INTO graph_edge_snapshots
+      (repo,source_revision,src_path,dst_path,edge_type,detail)
+     VALUES ($1,$2,$3,$4,'import','{}'::jsonb)`,
+    [repo, revision, testPath, sourcePath],
+  );
+  await client.query(
     `INSERT INTO fact_snapshot_headers
       (kind,repo,source_revision,scanner_version,scanned_at,row_count)
      VALUES

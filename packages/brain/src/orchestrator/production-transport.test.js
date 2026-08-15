@@ -120,6 +120,36 @@ function acceptedResponse(machine) {
 }
 
 describe('production execution transport', () => {
+  it('forwards the exact attempt lease when cancelling through the production transport', async () => {
+    const fetchFn = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: vi.fn(async () => ({ status: 'cleaned', attempt_id: ATTEMPT_ID })),
+    }));
+    const transport = createProductionExecutionTransport({
+      env: configuredEnv(),
+      fetchFn,
+    });
+
+    await expect(transport.cancel({
+      attempt: {
+        id: ATTEMPT_ID,
+        lease_owner: 'attempt-dispatcher-exact',
+        lease_generation: 17,
+      },
+      target: { machine: DEFAULT_LOCAL_MACHINE_ID },
+    })).resolves.toEqual({ status: 'cleaned', attempt_id: ATTEMPT_ID });
+
+    expect(fetchFn).toHaveBeenCalledOnce();
+    expect(fetchFn.mock.calls[0][0]).toBe(
+      `${MACHINE_URLS[DEFAULT_LOCAL_MACHINE_ID]}/harness/attempts/${ATTEMPT_ID}/cancel`,
+    );
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body)).toEqual({
+      lease_owner: 'attempt-dispatcher-exact',
+      lease_generation: 17,
+    });
+  });
+
   it('gives heavy Fleet prepare its own budget without widening normal control requests', async () => {
     expect(DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS).toBe(60_000);
     expect(DEFAULT_REMOTE_BRIDGE_PREPARE_TIMEOUT_MS).toBe(180_000);

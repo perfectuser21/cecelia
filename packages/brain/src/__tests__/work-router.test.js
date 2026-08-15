@@ -15,6 +15,19 @@ describe('unified work router', () => {
     expect(() => normalizeWorkRequest({ source: 'evil', source_id: '1', title: 'x', mutation_intent: 'write' })).toThrow('invalid_source');
   });
 
+  it('rejects equal-rank cross-profile overrides at the canonical router', () => {
+    expect(() => selectPipeline({
+      work_kind: 'coding_mutation',
+      change_kind: 'bugfix',
+      execution_profile_override_request: 'parameter-only-v1',
+    })).toThrow('execution_profile_downgrade_forbidden');
+    expect(() => selectPipeline({
+      work_kind: 'coding_mutation',
+      change_kind: 'parameter_only',
+      execution_profile_override_request: 'hotfix-v1',
+    })).toThrow('execution_profile_downgrade_forbidden');
+  });
+
   it('returns a deterministic complete decision and never infers a repo', () => {
     const request = {
       source: 'api', source_id: 'request-1', title: 'fix', mutation_intent: 'write',

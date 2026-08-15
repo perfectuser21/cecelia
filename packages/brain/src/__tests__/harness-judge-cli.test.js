@@ -54,24 +54,38 @@ describe('main', () => {
     expect(deps.judgeGateFn.mock.calls[0][0].agentVerdict).toBe('PASS');
   });
 
-  it('agent verdict 非 PASS → 透传 FAIL、judged=false、exit 2（judge 不烧钱）', async () => {
-    // fake 如实模拟 runJudgeGate 的透传语义：agentVerdict!==PASS → 原样返回、judged=false
+  it('agent verdict FAIL 仍必须完成 strict 独立 Judge，裁决 FAIL 后 exit 2', async () => {
     const deps = makeDeps({
-      judgeGateFn: vi.fn().mockImplementation(async (ctx) =>
-        ctx.agentVerdict !== 'PASS'
-          ? { verdict: ctx.agentVerdict, feedback: ctx.agentFeedback || null, judged: false }
-          : { verdict: 'PASS', feedback: null, judged: true }),
+      judgeGateFn: vi.fn().mockResolvedValue({
+        verdict: 'FAIL', feedback: 'independent judge confirmed defect', judged: true,
+      }),
     });
     const code = await main([...BASE_ARGS, '--agent-verdict', 'FAIL'], deps);
     expect(code).toBe(2);
-    // runJudgeGate 内部对非 PASS 透传（本 CLI 直接传入让其透传，judgeGateFn 收到 FAIL）
     expect(deps.judgeGateFn.mock.calls[0][0].agentVerdict).toBe('FAIL');
+    expect(deps.judgeGateFn.mock.calls[0][1]).toMatchObject({ strict: true });
   });
 
   it('judgeGateFn 抛错 → exit 1', async () => {
     const deps = makeDeps({ judgeGateFn: vi.fn().mockRejectedValue(new Error('deepseek down')) });
     const code = await main([...BASE_ARGS, '--agent-verdict', 'PASS'], deps);
     expect(code).toBe(1);
+  });
+
+  it('Judge 返回 PASS 但 judged=false 时 CLI fail-closed，且强制 strict 模式', async () => {
+    const deps = makeDeps({
+      judgeGateFn: vi.fn().mockResolvedValue({
+        verdict: 'PASS', feedback: 'provider unavailable', judged: false,
+      }),
+    });
+
+    const code = await main([...BASE_ARGS, '--agent-verdict', 'PASS'], deps);
+
+    expect(code).toBe(1);
+    expect(deps.judgeGateFn).toHaveBeenCalledWith(
+      expect.objectContaining({ agentVerdict: 'PASS' }),
+      expect.objectContaining({ strict: true }),
+    );
   });
 
   it('brain-result 缺失且未给 --agent-verdict → exit 1 带清晰错误', async () => {

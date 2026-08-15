@@ -3,6 +3,10 @@ import { execFileSync } from 'node:child_process';
 
 import { routeWork } from './work-router.js';
 import { isCanonicalTaskBranch } from './orchestrator/workspace-spec.js';
+import {
+  assertRouteSnapshotLaunchAuthority,
+  MAP_SCOPE_VALIDATION_VERSION,
+} from './orchestrator/route-snapshot-authority.js';
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 
@@ -14,6 +18,37 @@ function canonicalJson(value) {
     );
   }
   return value;
+}
+
+const DIRECT_EXECUTION_PROFILES = new Set(['hotfix-v1', 'parameter-only-v1']);
+const DIRECT_SEED_TITLE_MAX_BYTES = 4 * 1024;
+const DIRECT_SEED_OBJECTIVE_MAX_BYTES = 64 * 1024;
+
+function assertDirectSeedByteLimits(title, objective) {
+  if (
+    Buffer.byteLength(title, 'utf8') > DIRECT_SEED_TITLE_MAX_BYTES
+    || Buffer.byteLength(objective, 'utf8') > DIRECT_SEED_OBJECTIVE_MAX_BYTES
+  ) {
+    const error = new Error('DIRECT_PROFILE_CONTRACT_SEED_SIZE_LIMIT');
+    error.code = 'DIRECT_PROFILE_CONTRACT_SEED_SIZE_LIMIT';
+    throw error;
+  }
+}
+
+function normalizeDirectContractSeed(request, decision) {
+  const executionProfile = decision.execution_profile_override
+    ?? decision.default_execution_profile;
+  if (decision.work_kind !== 'coding_mutation'
+      || !DIRECT_EXECUTION_PROFILES.has(executionProfile)) return null;
+  const title = String(request.title ?? '').trim();
+  const objective = String(request.description ?? '').trim() || title;
+  assertDirectSeedByteLimits(title, objective);
+  return Object.freeze({
+    contract_version: 'direct-profile-contract-seed/v1',
+    title,
+    objective,
+    execution_profile: executionProfile,
+  });
 }
 
 function repositoryRoot(repo, repositoryFacts) {
@@ -75,6 +110,46 @@ async function loadRepositoryFacts(client) {
   }));
 }
 
+async function assertMutationMapScopeResolvable(client, decision) {
+  if (decision.work_kind !== 'coding_mutation') return;
+  if (!Array.isArray(decision.map_scope) || decision.map_scope.length === 0) {
+    const error = new Error('routing_map_scope_unresolved');
+    error.code = 'routing_map_scope_unresolved';
+    throw error;
+  }
+  const result = await client.query(
+    `WITH authoritative_scope AS (
+       SELECT mapping.scope_key
+         FROM map_scope_repositories AS mapping
+        WHERE mapping.repo = $1
+        FOR SHARE OF mapping
+     ), requested(node_key) AS (
+       SELECT UNNEST($2::text[])
+     )
+     SELECT requested.node_key
+       FROM requested
+       JOIN authoritative_scope ON TRUE
+       JOIN map_projection_runs run
+         ON run.scope_key = authoritative_scope.scope_key
+        AND run.status = 'active'
+       JOIN map_projection_nodes node
+         ON node.run_id = run.id
+        AND node.node_key = requested.node_key
+        AND node.node_type IN (
+          'value_stream','capability','crosscut','prerequisite','backbone','feature'
+        )
+      ORDER BY requested.node_key
+      FOR SHARE OF run, node`,
+    [decision.repo, decision.map_scope],
+  );
+  const resolved = new Set(result.rows.map((row) => row.node_key));
+  if (decision.map_scope.some((nodeKey) => !resolved.has(nodeKey))) {
+    const error = new Error('routing_map_scope_unresolved');
+    error.code = 'routing_map_scope_unresolved';
+    throw error;
+  }
+}
+
 export async function createRoutedTask(db, request, repositoryFacts = null, options = {}) {
   const ownsTransaction = options.transaction !== 'existing';
   const client = ownsTransaction && typeof db.connect === 'function'
@@ -91,7 +166,13 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
     );
     const existing = await client.query(
       `SELECT r.id AS routing_receipt_id, r.task_id,
-              to_jsonb(r) AS persisted_receipt, t.*
+              to_jsonb(r) AS persisted_receipt, t.*,
+              EXISTS (
+                SELECT 1
+                  FROM initiative_runs historical_run
+                 WHERE historical_run.current_task_id = r.task_id
+                   AND historical_run.orchestrator_version = 'v2'
+              ) AS has_v2_run
          FROM work_routing_receipts r
          JOIN tasks t ON t.id = r.task_id
         WHERE r.source=$1 AND r.source_id=$2 AND r.router_version=$3`,
@@ -126,6 +207,7 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       throw error;
     }
     const task = request.task ?? {};
+    const directContractSeed = normalizeDirectContractSeed(routedRequest, decision);
     const payload = {
       ...(request.metadata || {}),
       ...(task.payload || {}),
@@ -146,6 +228,8 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
     };
     if (existing.rows[0]) {
       const persisted = existing.rows[0].persisted_receipt;
+      const persistedDirectSeed = persisted.direct_contract_seed ?? null;
+      const legacyDirectSeed = directContractSeed != null && persistedDirectSeed == null;
       const sameRoute = persisted.work_kind === decision.work_kind
         && persisted.change_kind === decision.change_kind
         && persisted.pipeline === decision.pipeline
@@ -158,12 +242,24 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         && persisted.impact_contract_required === decision.impact_contract_required
         && persisted.orchestrator === decision.orchestrator
         && JSON.stringify(canonicalJson(persisted.evidence))
-          === JSON.stringify(canonicalJson(decision.evidence));
+          === JSON.stringify(canonicalJson(decision.evidence))
+        && (
+          legacyDirectSeed
+          || JSON.stringify(canonicalJson(persistedDirectSeed))
+            === JSON.stringify(canonicalJson(directContractSeed))
+        );
       if (!sameRoute) {
         const conflict = new Error('work_route_idempotency_conflict');
         conflict.code = 'work_route_idempotency_conflict';
         throw conflict;
       }
+      assertRouteSnapshotLaunchAuthority({
+        taskStatus: existing.rows[0].status,
+        validationVersion: legacyDirectSeed
+          ? null
+          : persisted.map_scope_validation_version,
+        hasV2Run: existing.rows[0].has_v2_run,
+      });
       const persistedDecision = {
         work_kind: persisted.work_kind,
         change_kind: persisted.change_kind,
@@ -178,6 +274,7 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         router_version: persisted.router_version,
         route_reason: persisted.route_reason,
         evidence: persisted.evidence,
+        direct_contract_seed: persisted.direct_contract_seed ?? null,
         decided_at: persisted.created_at,
       };
       if (ownsTransaction) await client.query('COMMIT');
@@ -189,6 +286,7 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         deduplicated: true,
       };
     }
+    await assertMutationMapScopeResolvable(client, decision);
     const taskResult = await client.query(
       `INSERT INTO tasks (
          title, description, priority, task_type, status,
@@ -229,9 +327,9 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
     );
     const taskId = taskResult.rows[0].id;
     const receiptResult = await client.query(
-      `INSERT INTO work_routing_receipts (task_id,source,source_id,work_kind,change_kind,pipeline,canonical_task_type,default_execution_profile,execution_profile_override,repo,map_scope,impact_contract_required,orchestrator,router_version,route_reason,evidence,created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING id`,
-      [taskId, request.source, request.source_id, decision.work_kind, decision.change_kind, decision.pipeline, decision.canonical_task_type, decision.default_execution_profile, decision.execution_profile_override ?? null, decision.repo, JSON.stringify(decision.map_scope), decision.impact_contract_required, decision.orchestrator, decision.router_version, decision.route_reason, JSON.stringify(decision.evidence), decision.decided_at],
+      `INSERT INTO work_routing_receipts (task_id,source,source_id,work_kind,change_kind,pipeline,canonical_task_type,default_execution_profile,execution_profile_override,repo,map_scope,impact_contract_required,orchestrator,router_version,route_reason,evidence,map_scope_validation_version,direct_contract_seed,created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id`,
+      [taskId, request.source, request.source_id, decision.work_kind, decision.change_kind, decision.pipeline, decision.canonical_task_type, decision.default_execution_profile, decision.execution_profile_override ?? null, decision.repo, JSON.stringify(decision.map_scope), decision.impact_contract_required, decision.orchestrator, decision.router_version, decision.route_reason, JSON.stringify(decision.evidence), decision.work_kind === 'coding_mutation' ? MAP_SCOPE_VALIDATION_VERSION : null, directContractSeed == null ? null : JSON.stringify(directContractSeed), decision.decided_at],
     );
     const receiptId = receiptResult.rows[0].id;
     await client.query('UPDATE tasks SET payload = payload || $2::jsonb WHERE id=$1', [taskId, JSON.stringify({ routing_receipt_id: receiptId })]);

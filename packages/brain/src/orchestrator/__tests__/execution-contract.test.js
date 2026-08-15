@@ -395,6 +395,91 @@ describe('HarnessResult contract', () => {
     expect(() => parseHarnessResult(validResult(), role)).toThrow(/decision/);
   });
 
+  it('preserves the human acceptance evidence on an evaluator-v1 result', () => {
+    const findings = [{
+      id: 'F-1',
+      severity: 'P1',
+      title: 'Save is silent',
+      expected: 'A success confirmation is shown.',
+      actual: 'Nothing happens.',
+      reproduction_steps: ['Open the form', 'Click Save'],
+      evidence: ['POST /save returned 500'],
+      screenshot_paths: ['/tmp/evaluator/save-failed.png'],
+    }];
+    const parsed = parseHarnessResult(validResult({
+      decision: {
+        outcome: 'FAIL',
+        reason: 'interactive acceptance failed',
+        failure_class: 'product_failure',
+        failure_signature: ['save_endpoint_500'],
+      },
+      findings,
+      screenshots: ['/tmp/evaluator/save-failed.png'],
+      exploration_notes: ['Covered success, error, and refresh persistence paths.'],
+    }), 'evaluator', 'harness-result/evaluator-v1');
+
+    expect(parsed).toMatchObject({
+      findings,
+      screenshots: ['/tmp/evaluator/save-failed.png'],
+      exploration_notes: ['Covered success, error, and refresh persistence paths.'],
+    });
+  });
+
+  it('rejects a successful evaluator-v1 callback that omits human acceptance evidence', () => {
+    expect(() => parseHarnessResult(validResult({
+      decision: { outcome: 'PASS', reason: 'looks good' },
+    }), 'evaluator', 'harness-result/evaluator-v1')).toThrow(
+      /evaluator_result_human_evidence_required/,
+    );
+  });
+
+  it('拒绝把三个空数组冒充人式探索证据', () => {
+    expect(() => parseHarnessResult(validResult({
+      decision: { outcome: 'PASS', reason: 'looks good' },
+      findings: [],
+      screenshots: [],
+      exploration_notes: [],
+    }), 'evaluator', 'harness-result/evaluator-v1')).toThrow(
+      /evaluator_result_human_evidence_required/,
+    );
+  });
+
+  it.each([
+    ['non-canonical coverage', {
+      outcome: 'PASS', reason: 'forged',
+      coverage: [{ step: 123, passed: 'yes', evidence: {}, deferred: false }],
+      failure_class: null, failure_signature: null,
+    }],
+    ['forged PASS failure metadata', {
+      outcome: 'PASS', reason: 'forged', coverage: [],
+      failure_class: 'forged_class', failure_signature: { bad: true },
+    }],
+    ['scalar failure signature', {
+      outcome: 'FAIL', reason: 'failed', coverage: [],
+      failure_class: 'product_failure', failure_signature: 'save_500',
+    }],
+  ])('rejects %s at the Brain judge-v1 callback boundary', (_label, decision) => {
+    expect(() => parseHarnessResult(validResult({ decision }), 'judge', 'harness-result/judge-v1'))
+      .toThrow(/judge_result_decision_invalid/);
+  });
+
+  it('accepts one canonical judge-v1 decision with an array failure signature', () => {
+    const decision = {
+      outcome: 'FAIL',
+      reason: 'save failed',
+      coverage: [{
+        step: 'A1: save succeeds', passed: false, deferred: false, evidence: 'POST /save 500',
+      }],
+      failure_class: 'product_failure',
+      failure_signature: ['save_500'],
+    };
+    expect(parseHarnessResult(
+      validResult({ decision }),
+      'judge',
+      'harness-result/judge-v1',
+    ).decision).toEqual(decision);
+  });
+
   it('accepts a structured reviewer decision', () => {
     const parsed = parseHarnessResult(validResult({
       decision: { outcome: 'changes_requested', reason: 'Missing recovery check.' },

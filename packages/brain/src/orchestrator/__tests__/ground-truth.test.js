@@ -41,7 +41,12 @@ function fakePool(rowsByTable = {}) {
       if (sql.includes('FROM work_routing_receipts')) return { rows: rowsByTable.work_routing_receipts ?? [] };
       if (sql.includes('FROM harness_attempts')) {
         if (sql.includes("role = 'evaluator'")) {
-          return { rows: rowsByTable.harness_evaluator_attempts ?? [] };
+          const evaluatorRows = rowsByTable.harness_evaluator_attempts ?? [];
+          return {
+            rows: sql.includes('id = $2')
+              ? evaluatorRows.filter((row) => row.id === params?.[1])
+              : evaluatorRows,
+          };
         }
         if ('harness_attempts_result' in rowsByTable) {
           return rowsByTable.harness_attempts_result;
@@ -472,6 +477,11 @@ describe('collectGroundTruth：DB 通道组装', () => {
     const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
 
     expect(observed.contract.artifact_error).toBeNull();
+    expect(observed.contract.identity).toEqual({
+      contract_id: CONTRACT_ID,
+      manifest_sha256: manifestDigest,
+      source_revision: revision,
+    });
     expect(observed.contract.artifacts.map(({ path }) => path)).toEqual(
       canonical.map(({ path }) => path),
     );
@@ -565,16 +575,70 @@ describe('collectGroundTruth：DB 通道组装', () => {
     expect(observed.caseFile).toEqual([]);
   });
 
-  it('读取最新完成 evaluator attempt 的完整 result，供 judge 取机械证据', async () => {
+  it('按权威 evaluator verdict.attempt_id 精确读取 result，不能拼接另一次重试结果', async () => {
+    const evaluatorAttemptId = '22222222-2222-4222-8222-222222222222';
+    const revision = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';
+    const artifact = (path, content) => ({
+      path,
+      content,
+      sha256: createHash('sha256').update(content).digest('hex'),
+      byte_length: Buffer.byteLength(content),
+      source_revision: revision,
+    });
+    const canonicalArtifacts = [
+      artifact('sprints/router/contract-dod.md', '# DoD'),
+      artifact('sprints/router/contract-draft.md', '# Contract'),
+      artifact('sprints/router/sprint-prd.md', '# PRD'),
+      artifact('sprints/router/tests/identity.test.mjs', 'test("identity", () => {})'),
+    ];
+    const manifestSha256 = contractArtifactManifestDigest(canonicalArtifacts);
+    const contractIdentity = {
+      contract_id: CONTRACT_ID,
+      manifest_sha256: manifestSha256,
+      source_revision: revision,
+    };
+    const sealedArtifacts = canonicalArtifacts.map((row) => ({
+      ...row,
+      sealed_artifact_count: canonicalArtifacts.length,
+      sealed_manifest_sha256: manifestSha256,
+      sealed_source_revision: revision,
+    }));
     const evaluatorResult = {
       contract_version: '1.0',
+      attempt_id: evaluatorAttemptId,
       status: 'completed',
       summary: 'all checks passed',
       checks: [{ command: 'npm test', exit_code: 0, log_tail: '12 tests passed' }],
       decision: { outcome: 'PASS', reason: 'verified' },
       provider_metadata: { provider: 'codex', session_id: 'thread-1' },
     };
-    const deps = makeDeps({ rows: { attempts: [{ result: evaluatorResult }] } });
+    const bundleFor = (attemptId) => ({
+      run_id: RUN_ID,
+      attempt_id: attemptId,
+      role: 'evaluator',
+      inputs: { task_id: TASK_ID, contract_identity: contractIdentity },
+    });
+    const deps = makeDeps({ rows: {
+      contracts: [{ id: CONTRACT_ID, status: 'approved' }],
+      contractArtifacts: sealedArtifacts,
+      log: [{
+        hop: 8,
+        action: 'verdict:evaluate',
+        detail: {
+          verdict: 'PASS',
+          attempt_id: evaluatorAttemptId,
+          pr_head_sha: 'b'.repeat(40),
+        },
+      }],
+      evaluatorAttempts: [
+        {
+          id: '33333333-3333-4333-8333-333333333333',
+          task_bundle: bundleFor('33333333-3333-4333-8333-333333333333'),
+          result: { ...evaluatorResult, attempt_id: '33333333-3333-4333-8333-333333333333' },
+        },
+        { id: evaluatorAttemptId, task_bundle: bundleFor(evaluatorAttemptId), result: evaluatorResult },
+      ],
+    } });
 
     const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
 
@@ -582,7 +646,9 @@ describe('collectGroundTruth：DB 通道组装', () => {
     expect(deps.pool.calls.some(([sql, params]) => (
       sql.includes('FROM harness_attempts')
       && sql.includes("role = 'evaluator'")
+      && sql.includes('id = $2')
       && params[0] === RUN_ID
+      && params[1] === evaluatorAttemptId
     ))).toBe(true);
   });
 
@@ -2344,7 +2410,7 @@ describe('collectGroundTruth：决策日志推导字段', () => {
     expect(o.reviewApproved).toBe(true);
   });
 
-  it('same-SHA evidence approval cannot satisfy the later merge gate after evaluator and judge PASS', async () => {
+  it('same-SHA evidence approval and verdicts without current contract identity cannot satisfy merge', async () => {
     const deps = makeDeps({
       rows: {
         run: { pr_url: PR_URL },
@@ -2413,9 +2479,9 @@ describe('collectGroundTruth：决策日志推导字段', () => {
         ganCostUsd: 0,
       },
     })).toMatchObject({
-      phase: 'review',
-      action: 'wait:human_review',
-      reason: 'awaiting_human_review',
+      phase: 'evaluate',
+      action: 'spawn:evaluator',
+      reason: 'no_evaluate_verdict_for_head_sha',
     });
   });
 

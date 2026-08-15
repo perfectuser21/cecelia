@@ -45,6 +45,26 @@ const observed = {
   callbackResult: { transcript: 'private proposer chain of thought' },
 };
 
+function withEvaluatorAuthority(base, contractIdentity) {
+  const evaluatorAttemptId = '66666666-6666-4666-8666-666666666666';
+  return {
+    ...base,
+    contract: { ...base.contract, approved: true, identity: contractIdentity },
+    evaluateVerdict: {
+      verdict: 'PASS',
+      attempt_id: evaluatorAttemptId,
+      pr_head_sha: 'b'.repeat(40),
+      contract_identity: contractIdentity,
+    },
+    evaluateResult: {
+      attempt_id: evaluatorAttemptId,
+      status: 'completed',
+      checks: [],
+      decision: { outcome: 'PASS', reason: 'verified' },
+    },
+  };
+}
+
 function fakeSkill(name) {
   return Object.freeze({
     name,
@@ -147,6 +167,11 @@ describe('createDispatcher', () => {
       head_sha: 'b'.repeat(40),
       machine_id: 'brain-1',
     };
+    const contractIdentity = {
+      contract_id: '55555555-5555-4555-8555-555555555555',
+      manifest_sha256: 'c'.repeat(64),
+      source_revision: 'd'.repeat(40),
+    };
 
     const result = await createDispatcher(deps)('spawn:judge', {
       taskId,
@@ -155,8 +180,15 @@ describe('createDispatcher', () => {
       observed: {
         ...observed,
         candidate,
-        evaluateVerdict: { verdict: 'PASS', pr_head_sha: candidate.head_sha },
+        contract: { ...observed.contract, approved: true, identity: contractIdentity },
+        evaluateVerdict: {
+          verdict: 'PASS',
+          attempt_id: '66666666-6666-4666-8666-666666666666',
+          pr_head_sha: candidate.head_sha,
+          contract_identity: contractIdentity,
+        },
         evaluateResult: {
+          attempt_id: '66666666-6666-4666-8666-666666666666',
           status: 'completed',
           checks: [{ command: 'npm test', exit_code: 0, log_tail: 'passed' }],
           decision: { outcome: 'PASS', reason: 'verified' },
@@ -177,6 +209,48 @@ describe('createDispatcher', () => {
       provider: 'codex',
       machineId: 'brain-1',
     }));
+  });
+
+  it('Judge 派发拒绝把一个 Evaluator verdict 与另一次 attempt result 拼接', async () => {
+    const deps = makeDeps();
+    const contractIdentity = {
+      contract_id: '55555555-5555-4555-8555-555555555555',
+      manifest_sha256: 'c'.repeat(64),
+      source_revision: 'd'.repeat(40),
+    };
+
+    const result = await createDispatcher(deps)('spawn:judge', {
+      taskId,
+      runId,
+      hop: 8,
+      observed: {
+        ...observed,
+        contract: { ...observed.contract, approved: true, identity: contractIdentity },
+        evaluateVerdict: {
+          verdict: 'PASS',
+          attempt_id: '66666666-6666-4666-8666-666666666666',
+          pr_head_sha: 'b'.repeat(40),
+          contract_identity: contractIdentity,
+        },
+        evaluateResult: {
+          attempt_id: '77777777-7777-4777-8777-777777777777',
+          status: 'completed',
+          decision: { outcome: 'PASS', reason: 'different retry' },
+        },
+      },
+      decision: { phase: 'evaluate', reason: 'evaluate_passed_awaiting_judge' },
+      validationClock: {
+        pipeline_started_at: '2026-08-13T00:00:00.000Z',
+        deadline_at: '2026-08-13T01:30:00.000Z',
+      },
+    });
+    expect(result).toMatchObject({
+      status: 'DONE_WITH_CONCERNS',
+      control_status: 'BLOCKED',
+      failure_class: 'assembly_fault',
+      detail: 'judge_evaluator_authority_mismatch',
+    });
+    expect(deps.attemptStore.createAttempt).not.toHaveBeenCalled();
   });
 
   it('publisher 只接收 Judge PASS 的精确候选，并固定到 Generator 实际机器', async () => {
@@ -340,12 +414,17 @@ describe('createDispatcher', () => {
 
   it('Judge 只裁决 pre-Publisher 证据，并显式标记服务端后置验收', async () => {
     const deps = makeDeps();
+    const contractIdentity = {
+      contract_id: '55555555-5555-4555-8555-555555555555',
+      manifest_sha256: 'c'.repeat(64),
+      source_revision: 'd'.repeat(40),
+    };
 
     await createDispatcher(deps)('spawn:judge', {
       taskId,
       runId,
       hop: 10,
-      observed,
+      observed: withEvaluatorAuthority(observed, contractIdentity),
       decision: { phase: 'evaluate', reason: 'evaluate_passed_awaiting_judge' },
     });
 
@@ -365,7 +444,14 @@ describe('createDispatcher', () => {
     expect(bundle.objective).toContain('deferred=true');
   });
 
-  it('批准合同后不重复装载入口 PRD，Evaluator 大合同仍可派发', async () => {
+  it.each([
+    ['Generator', 'spawn:generator', 'generate'],
+    ['Evaluator', 'spawn:evaluator', 'evaluate'],
+  ])('批准合同后不重复装载入口 PRD，%s 大合同仍可派发', async (
+    _role,
+    action,
+    phase,
+  ) => {
     const deps = makeDeps();
     const sourceRevision = '6faaa9f55e9789ffd29fd2760a9b5994df272e86';
     const artifact = (path, content) => ({
@@ -405,12 +491,12 @@ describe('createDispatcher', () => {
       },
     };
 
-    const result = await createDispatcher(deps)('spawn:evaluator', {
+    const result = await createDispatcher(deps)(action, {
       taskId,
       runId,
       hop: 9,
       observed: largeApproved,
-      decision: { phase: 'evaluate', reason: 'no_evaluate_verdict_for_head_sha' },
+      decision: { phase, reason: 'approved_frozen_contract_is_canonical' },
     });
 
     expect(result).toMatchObject({ status: 'LAUNCHED' });
@@ -800,7 +886,7 @@ describe('createDispatcher', () => {
     const plannerPrdArtifact = {
       type: 'git_artifact',
       kind: 'planner_prd',
-      path: 'sprints/provider-neutral/sprint-prd.md',
+      path: 'sprints/recovery-exact/sprint-prd.md',
       repo: 'perfectuser21/cecelia',
       branch: 'cp-harness-prd-aaaaaaaa-a2',
       head_sha: 'a'.repeat(40),
@@ -811,7 +897,11 @@ describe('createDispatcher', () => {
       taskId,
       runId,
       hop: 3,
-      observed: { ...observed, plannerPrdArtifact },
+      observed: {
+        ...observed,
+        task: { ...observed.task, payload: { worktree_path: '/tmp/worktree' } },
+        plannerPrdArtifact,
+      },
       decision: { phase: 'gan', reason: 'awaiting_proposal' },
     });
 
@@ -819,6 +909,8 @@ describe('createDispatcher', () => {
     expect(created.bundle.inputs).toMatchObject({
       planner_branch: plannerPrdArtifact.branch,
       planner_head_sha: plannerPrdArtifact.head_sha,
+      sprint_dir: 'sprints/recovery-exact',
+      prd: { path: plannerPrdArtifact.path },
     });
   });
 
@@ -1411,6 +1503,89 @@ describe('createDispatcher', () => {
 
     const evaluatedBundle = deps.preflightGate.evaluate.mock.calls[0][0].task_bundle;
     expect(evaluatedBundle.inputs.manual_dispatch).toBe(true);
+  });
+
+  it('passes the validated server-owned capacity snapshot into createAttempt', async () => {
+    const deps = makeDeps();
+    const capacitySnapshot = {
+      verified: true,
+      provider: 'codex',
+      account: null,
+      machine: 'brain-1',
+      capability_snapshot_id: 'snapshot-autonomous-singleton',
+      capacity: {
+        ok: true,
+        available: 1,
+        physical_capacity: 1,
+        autonomous_progress_floor: true,
+      },
+    };
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => ({
+        status: 'ok',
+        snapshot: capacitySnapshot,
+        evidence: {},
+      })),
+      validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+    };
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 30,
+      observed,
+      decision: { phase: 'evaluate', reason: 'autonomous_singleton_capacity' },
+    });
+
+    expect(deps.attemptStore.createAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ capacitySnapshot }),
+    );
+  });
+
+  it('returns retryable BLOCKED when autonomous singleton machine capacity is contended', async () => {
+    const deps = makeDeps();
+    deps.preflightGate = {
+      evaluate: vi.fn(async () => ({
+        status: 'ok',
+        snapshot: {
+          verified: true,
+          provider: 'codex',
+          account: null,
+          machine: 'brain-1',
+          capability_snapshot_id: 'snapshot-contended',
+          capacity: {
+            ok: true,
+            available: 1,
+            physical_capacity: 1,
+            autonomous_progress_floor: true,
+          },
+        },
+        evidence: {},
+      })),
+      validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
+    };
+    deps.attemptStore.createAttempt.mockRejectedValueOnce(
+      new Error('autonomous_singleton_capacity_contended'),
+    );
+
+    const result = await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 31,
+      observed,
+      decision: { phase: 'evaluate', reason: 'autonomous_singleton_capacity' },
+    });
+
+    expect(result).toMatchObject({
+      status: 'DONE_WITH_CONCERNS',
+      control_status: 'BLOCKED',
+      fallback_reason: 'autonomous_singleton_capacity_contended',
+      failure_class: 'infrastructure_blocked',
+      should_create_attempt: false,
+      should_enter_generator_fix: false,
+    });
+    expect(deps.attemptStore.markStarting).not.toHaveBeenCalled();
+    expect(deps.launcher.launch).not.toHaveBeenCalled();
   });
 
   it('preserves the source logical cycle for an L0-authorized role retry', async () => {
@@ -2021,6 +2196,15 @@ describe('createDispatcher', () => {
             verification_level: 'L3',
             log_tail: 'Bearer private-token failed',
           }],
+          findings: [{
+            id: 'F-1', severity: 'P1', title: 'token=secret-value; save failed',
+            expected: 'Save succeeds', actual: 'Bearer private-token got 500',
+            reproduction_steps: ['Open form', 'Click Save'],
+            evidence: ['POST /save 500'],
+            screenshot_paths: ['/tmp/evidence/save.png'],
+          }],
+          screenshots: ['/tmp/evidence/save.png'],
+          exploration_notes: ['Checked happy path and Bearer private-token error path'],
           provider_metadata: {
             credential_ref: 'must-not-reach-generator',
             private_chain_of_thought: 'must-not-reach-generator',
@@ -2049,6 +2233,15 @@ describe('createDispatcher', () => {
         verification_level: 'L3',
         log_tail: 'Bearer [REDACTED] failed',
       }],
+      findings: [{
+        id: 'F-1', severity: 'P1', title: 'token=[REDACTED]; save failed',
+        expected: 'Save succeeds', actual: 'Bearer [REDACTED] got 500',
+        reproduction_steps: ['Open form', 'Click Save'],
+        evidence: ['POST /save 500'],
+        screenshot_paths: ['/tmp/evidence/save.png'],
+      }],
+      screenshots: ['/tmp/evidence/save.png'],
+      exploration_notes: ['Checked happy path and Bearer [REDACTED] error path'],
     });
     expect(JSON.stringify(created.bundle.inputs.evaluator_feedback))
       .not.toContain('must-not-reach-generator');
@@ -2298,6 +2491,63 @@ describe('createDispatcher', () => {
     }));
   });
 
+  it('direct approved contract 由服务端声明人式探索 + Runner 可信断言模式，不要求合同 E2E', async () => {
+    const deps = makeDeps();
+    const requiredAssertions = [{
+      assertion_id: 'journey:callback-cas',
+      command: 'npm test -- callback-cas',
+      covers_capability_ids: ['callback-cas'],
+    }];
+
+    await createDispatcher(deps)('spawn:evaluator', {
+      taskId,
+      runId,
+      hop: 7,
+      observed: {
+        ...observed,
+        contract: {
+          approved: true,
+          row: {
+            id: '12121212-1212-4121-8121-121212121212',
+            status: 'approved',
+            approval_provenance: {
+              kind: 'direct',
+              policy_version: 'direct-profile-contract-policy/v1',
+              routing_receipt_id: '66666666-7777-4888-8999-aaaaaaaaaaaa',
+              impact_contract_id: 'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
+              impact_contract_hash: 'a'.repeat(64),
+              input_base_sha: 'b'.repeat(40),
+            },
+          },
+          artifacts: [],
+        },
+        candidate: {
+          type: 'git_candidate',
+          verification_status: 'verified',
+          branch: 'cp-direct-candidate',
+          head_sha: 'c'.repeat(40),
+        },
+      },
+      decision: { phase: 'evaluate', reason: 'candidate_ready' },
+      impactGateReceipt: {
+        stage: 'beforeEvaluate',
+        gate: 'pass',
+        required_assertions: requiredAssertions,
+      },
+    });
+
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(created.bundle.inputs.evaluation_mode).toEqual({
+      kind: 'direct-required-assertions/v1',
+      provider_scope: 'human_exploration',
+      runner_scope: 'trusted_required_assertions',
+      contract_e2e_required: false,
+    });
+    expect(created.bundle.inputs.required_assertions).toEqual(requiredAssertions);
+    expect(created.bundle.objective).toContain('合同没有 E2E 段不是失败');
+    expect(created.bundle.objective).toContain('人式探索');
+  });
+
   it('Evaluator 有未发布候选时用候选 SHA 绑定 PR_HEAD_SHA，而不是旧远端 PR 头', async () => {
     const deps = makeDeps();
     const stalePrHead = 'a'.repeat(40);
@@ -2377,6 +2627,76 @@ describe('createDispatcher', () => {
 
     const inputs = deps.attemptStore.createAttempt.mock.calls[0][0].bundle.inputs;
     expect(inputs.judge_feedback).toEqual(judgeVerdict);
+  });
+
+  it('Judge 判 product_failure 时把当前 SHA 的覆盖缺陷完整交给 Generator-fix', async () => {
+    const deps = makeDeps();
+    const candidateHead = 'c'.repeat(40);
+    const judgeVerdict = {
+      verdict: 'FAIL',
+      pr_head_sha: candidateHead,
+      failure_class: 'product_failure',
+      failure_signature: ['save_endpoint_500'],
+      feedback: '保存按钮真实交互返回 500，产品行为不符合冻结合同。',
+      coverage: [{
+        step: '冻结合同测试：direct-contracts/r/tests/impact-contract.md',
+        passed: false,
+        evidence: 'POST /save → 500',
+      }],
+    };
+
+    await createDispatcher(deps)('spawn:generator-fix', {
+      taskId,
+      runId,
+      hop: 13,
+      observed: {
+        ...observed,
+        candidate: {
+          type: 'git_candidate',
+          verification_status: 'verified',
+          branch: 'cp-judge-product-failure',
+          head_sha: candidateHead,
+        },
+        evaluateVerdict: {
+          verdict: 'PASS',
+          pr_head_sha: candidateHead,
+        },
+        judgeVerdict,
+      },
+      decision: { phase: 'generate', reason: 'judge_product_failure' },
+    });
+
+    const inputs = deps.attemptStore.createAttempt.mock.calls[0][0].bundle.inputs;
+    expect(inputs.judge_feedback).toEqual(judgeVerdict);
+  });
+
+  it.each(['spawn:evaluator', 'spawn:judge'])('%s TaskBundle 绑定 exact frozen contract identity', async (action) => {
+    const deps = makeDeps();
+    const identity = {
+      contract_id: '12121212-1212-4121-8121-121212121212',
+      manifest_sha256: 'a'.repeat(64),
+      source_revision: 'b'.repeat(40),
+    };
+    const contractObserved = {
+      ...observed,
+      contract: {
+        approved: true,
+        row: { id: identity.contract_id, status: 'approved' },
+        artifacts: [],
+        identity,
+      },
+    };
+    await createDispatcher(deps)(action, {
+      taskId,
+      runId,
+      hop: 14,
+      observed: action === 'spawn:judge'
+        ? withEvaluatorAuthority(contractObserved, identity)
+        : contractObserved,
+      decision: { phase: 'evaluate', reason: 'contract_bound_verification' },
+    });
+    const inputs = deps.attemptStore.createAttempt.mock.calls[0][0].bundle.inputs;
+    expect(inputs.contract_identity).toEqual(identity);
   });
 
   it('只把结构化 GitHub 取证请求交给 evaluator TaskBundle', async () => {

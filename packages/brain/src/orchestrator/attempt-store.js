@@ -11,6 +11,12 @@ import { normalizeFailureSignature } from './convergence-signatures.js';
 import { ATTEMPT_COST_ACCRUAL_USD, CASE_FILE_TEXT_MAX_BYTES } from './constants.js';
 import { insertCaseFileRow } from './case-file-store.js';
 import { redactSecrets } from './failure-persistence.js';
+import {
+  MACHINE_CAPACITY_LOCK_SQL,
+  prepareAttemptMachineCapacity,
+  readAttemptCreationOutcome,
+} from './attempt-machine-capacity.js';
+import { createAttemptRunLock } from './attempt-run-lock.js';
 
 const TERMINAL_STATUSES = [
   'completed',
@@ -30,6 +36,9 @@ const SUCCESS_TERMINAL_STATUSES = new Set([
 
 const TERMINAL_SQL = TERMINAL_STATUSES.map((status) => `'${status}'`).join(',');
 const DERIVED_TIME_ROLES = new Set(['judge', 'reporter']);
+const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 
 // 权威裁决终态：只有这两个状态代表"角色真的跑完并产出了结果"。
 // callbackRoleVerdictProjection（既有）与 callbackCaseFileProjection（案卷式
@@ -147,6 +156,15 @@ function callbackRoleVerdictProjection(attempt, result) {
   if (!ADVERSARIAL_TERMINAL_STATUSES.has(result.status)) return null;
 
   const inputs = attemptTaskBundle(attempt).inputs ?? {};
+  const contractIdentity = inputs.contract_identity;
+  if (contractIdentity != null && (
+    typeof contractIdentity !== 'object'
+    || !UUID_PATTERN.test(contractIdentity.contract_id ?? '')
+    || !SHA256_PATTERN.test(contractIdentity.manifest_sha256 ?? '')
+    || !GIT_SHA_PATTERN.test(contractIdentity.source_revision ?? '')
+  )) {
+    throw new Error('frozen_contract_identity_invalid');
+  }
   const verdict = normalizeRoleVerdict(attempt.role, result.decision.outcome);
   const failureSignature = normalizeFailureSignature(result.decision.failure_signature);
   const targetHeadSha = inputs.candidate?.head_sha
@@ -168,6 +186,10 @@ function callbackRoleVerdictProjection(attempt, result) {
         failure_class: result.decision.failure_class ?? null,
         ...(failureSignature == null ? {} : { failure_signature: failureSignature }),
         feedback: result.decision.reason,
+        ...(contractIdentity == null ? {} : { contract_identity: contractIdentity }),
+        ...(Array.isArray(result.decision.coverage)
+          ? { coverage: result.decision.coverage }
+          : {}),
       };
   const allowed = ['APPROVED', 'PASS', 'FIXED'].includes(verdict);
   return {
@@ -415,16 +437,47 @@ async function readConcurrentAttemptWinner(pool, runId, hop) {
   return null;
 }
 
-export function createAttemptStore(pool) {
+export function createAttemptStore(pool, {
+  transactionClient = false,
+  queryOnlyTestAdapter = false,
+} = {}) {
   if (!pool || typeof pool.query !== 'function') {
     throw new Error('createAttemptStore requires a PostgreSQL pool');
   }
 
+  const mutateAfterRunLock = createAttemptRunLock(pool, {
+    transactionClient,
+    queryOnlyTestAdapter,
+  });
+
   return Object.freeze({
     async createAttempt(input) {
       const skill = input.bundle?.skill ?? null;
-      const result = await pool.query(
-        `WITH guarded_run AS (
+      const capacity = prepareAttemptMachineCapacity(input);
+      const isPool = typeof pool.connect === 'function'
+        && typeof pool.release !== 'function';
+      if (
+        input.machineId != null
+        && !isPool
+        && !transactionClient
+        && !queryOnlyTestAdapter
+      ) {
+        throw new Error(
+          'machine-scoped createAttempt requires a Pool or transactionClient',
+        );
+      }
+      const client = isPool
+        ? await pool.connect()
+        : pool;
+      const ownsTransaction = isPool && !transactionClient;
+      const releaseClient = isPool;
+      try {
+        if (ownsTransaction) await client.query('BEGIN');
+        if (input.machineId != null) {
+          await client.query(MACHINE_CAPACITY_LOCK_SQL, [input.machineId]);
+        }
+        const result = await client.query(
+          `WITH guarded_run AS MATERIALIZED (
            SELECT run.id, run.map_recovery_contract_id
              FROM initiative_runs run
             WHERE run.id = $2
@@ -454,6 +507,27 @@ export function createAttemptStore(pool) {
               )
             FOR KEY SHARE OF run
          ),
+         capacity_guard AS MATERIALIZED (
+           SELECT guarded_run.*
+             FROM guarded_run
+            WHERE EXISTS (
+                    SELECT 1
+                      FROM harness_attempts existing
+                     WHERE existing.run_id = guarded_run.id
+                       AND existing.hop = $3
+                  )
+               OR NOT EXISTS (
+                    SELECT 1
+                      FROM harness_attempts active
+                     WHERE COALESCE(active.requested_machine_id, active.machine_id) = $8
+                       AND active.status IN ('queued','starting','running')
+                       AND (
+                         $22::boolean
+                         OR active.task_bundle #>>
+                              '{inputs,_server_allocation,autonomous_progress_floor}' = 'true'
+                       )
+                  )
+         ),
          inserted AS (
            INSERT INTO harness_attempts (
              id, run_id, hop, phase, role, provider, account_id, machine_id,
@@ -463,9 +537,9 @@ export function createAttemptStore(pool) {
              restart_reason, workstream_key, time_derived
            )
            SELECT
-             $1, guarded_run.id, $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+             $1, capacity_guard.id, $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
              $15,$16,$17,$18,$19,$20,$21
-             FROM guarded_run
+             FROM capacity_guard
            ON CONFLICT (run_id, hop) DO NOTHING
            RETURNING *
          ), consumed AS (
@@ -477,12 +551,20 @@ export function createAttemptStore(pool) {
               AND $5 = 'generator'
            RETURNING contract_id, attempt_id
          )
-         SELECT * FROM inserted
+         SELECT to_jsonb(inserted) AS attempt,
+                false AS machine_capacity_contended
+           FROM inserted
          UNION ALL
-         SELECT attempt.*
+         SELECT to_jsonb(attempt) AS attempt,
+                false AS machine_capacity_contended
            FROM harness_attempts attempt
            JOIN guarded_run ON guarded_run.id = attempt.run_id
           WHERE attempt.hop=$3
+         UNION ALL
+         SELECT NULL::jsonb AS attempt,
+                true AS machine_capacity_contended
+           FROM guarded_run
+          WHERE NOT EXISTS (SELECT 1 FROM capacity_guard)
          LIMIT 1`,
         [
           input.id,
@@ -498,7 +580,7 @@ export function createAttemptStore(pool) {
           skill?.name ?? null,
           skill?.version ?? null,
           skill?.digest ?? null,
-          input.bundle,
+          capacity.bundle,
           input.callbackSecretHash,
           input.logicalCycleId ?? `intent:${input.runId}:${input.hop}`,
           input.attemptKind ?? 'initial',
@@ -506,18 +588,26 @@ export function createAttemptStore(pool) {
           input.restartReason ?? null,
           input.workstreamKey ?? 'ws1',
           input.timeDerived ?? DERIVED_TIME_ROLES.has(input.role),
+          capacity.autonomousSingleton,
         ],
-      );
-      const winner = firstRow(result)
-        ?? await readConcurrentAttemptWinner(pool, input.runId, input.hop);
-      if (!winner) {
-        throw new Error(`Kernel run is terminal or missing: ${input.runId}`);
+        );
+        const winner = readAttemptCreationOutcome(result)
+          ?? await readConcurrentAttemptWinner(client, input.runId, input.hop);
+        if (!winner) {
+          throw new Error(`Kernel run is terminal or missing: ${input.runId}`);
+        }
+        if (ownsTransaction) await client.query('COMMIT');
+        return winner;
+      } catch (error) {
+        if (ownsTransaction) await client.query('ROLLBACK').catch(() => {});
+        throw error;
+      } finally {
+        if (releaseClient) client.release();
       }
-      return winner;
     },
 
     async markStarting(id, { leaseOwner, leaseSeconds }) {
-      const result = await pool.query(
+      const result = await mutateAfterRunLock(id, (client) => client.query(
         `UPDATE harness_attempts
             SET status = 'starting',
                 lease_owner = $2,
@@ -527,7 +617,7 @@ export function createAttemptStore(pool) {
           WHERE id = $1 AND status = 'queued'
           RETURNING *`,
         [id, leaseOwner, leaseSeconds],
-      );
+      ));
       return firstRow(result);
     },
 
@@ -540,7 +630,7 @@ export function createAttemptStore(pool) {
       if (!Number.isInteger(leaseGeneration) || leaseGeneration < 0) {
         throw new Error('markRunning requires leaseGeneration');
       }
-      const result = await pool.query(
+      const result = await mutateAfterRunLock(id, (client) => client.query(
         `UPDATE harness_attempts
             SET status = 'running',
                 provider_session_id = $4,
@@ -554,7 +644,7 @@ export function createAttemptStore(pool) {
             AND status IN ('starting','running')
           RETURNING *`,
         [id, leaseOwner, leaseGeneration, providerSessionId, leaseSeconds],
-      );
+      ));
       return firstRow(result);
     },
 
@@ -562,7 +652,7 @@ export function createAttemptStore(pool) {
       if (!Number.isInteger(leaseGeneration) || leaseGeneration < 0) {
         throw new Error('heartbeat requires leaseGeneration');
       }
-      const result = await pool.query(
+      const result = await mutateAfterRunLock(id, (client) => client.query(
         `UPDATE harness_attempts
             SET heartbeat_at = NOW(),
                 lease_expires_at = NOW() + ($4 * INTERVAL '1 second'),
@@ -573,7 +663,7 @@ export function createAttemptStore(pool) {
             AND status IN ('starting','running')
           RETURNING *`,
         [id, leaseOwner, leaseGeneration, leaseSeconds],
-      );
+      ));
       return firstRow(result);
     },
 
@@ -614,7 +704,7 @@ export function createAttemptStore(pool) {
     },
 
     async reclaim(id, { leaseOwner, leaseSeconds }) {
-      const result = await pool.query(
+      const result = await mutateAfterRunLock(id, (client) => client.query(
         `UPDATE harness_attempts
             SET status = 'starting',
                 lease_owner = $2,
@@ -626,7 +716,7 @@ export function createAttemptStore(pool) {
             AND lease_expires_at < NOW()
           RETURNING *`,
         [id, leaseOwner, leaseSeconds],
-      );
+      ));
       return firstRow(result);
     },
 
@@ -656,7 +746,7 @@ export function createAttemptStore(pool) {
       if (!SUCCESS_TERMINAL_STATUSES.has(resultPayload?.status)) {
         throw new Error(`invalid successful terminal status: ${resultPayload?.status}`);
       }
-      const result = await pool.query(
+      const result = await mutateAfterRunLock(id, (client) => client.query(
         `UPDATE harness_attempts
             SET status = $2,
                 result = $3,
@@ -677,7 +767,7 @@ export function createAttemptStore(pool) {
           resultPayload.failure_class ?? null,
           leaseOwner,
         ],
-      );
+      ));
       const attempt = firstRow(result);
       return { attempt, deduped: attempt === null };
     },
@@ -685,12 +775,16 @@ export function createAttemptStore(pool) {
     async fail(
       id,
       { code, message, status = 'failed', failureClass = null },
-      { leaseOwner = null, leaseGeneration = null } = {},
+      {
+        leaseOwner = null,
+        leaseGeneration = null,
+        requireExpired = false,
+      } = {},
     ) {
       if (!['failed', 'cancelled'].includes(status)) {
         throw new Error(`invalid failure status: ${status}`);
       }
-      const result = await pool.query(
+      const result = await mutateAfterRunLock(id, (client) => client.query(
         `UPDATE harness_attempts
             SET status = $2,
                 error_code = $3,
@@ -703,6 +797,11 @@ export function createAttemptStore(pool) {
             AND status NOT IN (${TERMINAL_SQL})
             AND ($6::text IS NULL OR lease_owner = $6)
             AND ($7::integer IS NULL OR lease_generation = $7)
+            AND (
+              $8::boolean IS FALSE
+              OR lease_expires_at IS NULL
+              OR lease_expires_at < NOW()
+            )
           RETURNING *`,
         [
           id,
@@ -712,8 +811,9 @@ export function createAttemptStore(pool) {
           failureClass,
           leaseOwner,
           leaseGeneration,
+          requireExpired,
         ],
-      );
+      ));
       const attempt = firstRow(result);
       return { attempt, deduped: attempt === null };
     },
