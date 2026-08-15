@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.52
+**Brain 版本**: 1.273.53
 
 ## Brain 1.273.52 — Fleet Routing Receipt Scoped Validation
 
