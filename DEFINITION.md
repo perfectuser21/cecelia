@@ -19,7 +19,7 @@
 ## Brain 1.273.51 — Claude Authentication Failover Runner
 
 - Runner 将 Claude 结构化终态中的登录失效、OAuth 过期和认证失败归一为 `provider_unavailable`，由 Harness 在同一 run 排除失效账户并调度下一受信 Provider，而不是把基础设施故障误判成产品失败。
-- Canonical Runner 固定为 `sha256:065bc4ecab7ef582e2fd844af5e3761ab2d430380bd0d0714cb201f319d341ea`；Fleet 三机准入、rollout、reconciler 与回归测试使用同一不可变镜像身份。
+- Canonical Runner 固定为 `sha256:d811f6759d67a96e9c3157d64a2e87be8bf33291270f265f1d903f7bc914b650`；Fleet 三机准入、rollout、reconciler 与回归测试使用同一不可变镜像身份。
 
 ## Brain 1.273.50 — Same-Revision Graph Rescan Freshness
 
