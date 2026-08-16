@@ -8,7 +8,13 @@
 
 
 
-**Brain 版本**: 1.273.64
+**Brain 版本**: 1.273.65
+
+## Brain 1.273.65 — 可信断言执行器以断言所在包为 cwd 跑 vitest + repin Runner
+
+- runner `assertion-exec.mjs` 此前把 vitest 的 cwd 固定在仓库根，monorepo 根 vitest 配置的 include（sprints/**、tests/**、packages/brain/scripts/ci/__tests__/**）不含 packages/*/src/**，`npx vitest run packages/brain/src/.../x.test.js` 恒报 "No test files found, exiting with code 1" → required assertion 必败 → Judge 必 FAIL → fix 轮无限循环（2026-08-16 生产 run dc5c19b7 / 0eb9ac63 实证，两条不同任务同一死法）。
+- 现以断言文件之上最近的 package.json 目录为 cwd（与 `gp-assertion-command.js` packageRoot 同语义），目标按该目录相对路径传入；receipt argv 不变。回归 `docker/cecelia-runner/__tests__/assertion-exec-package-root.test.cjs`（真 vitest 跑通）。
+- canonical Runner digest 重钉为 `sha256:dbaa6b8c619da145aff93d31b226139bede9256eef6bd3e4c15733f9cbe95cf9`（`docker/build.sh` 构建，label `cecelia.build.head=87079e056`），11 处 pin 同步；Fleet Worker 版本 pin 不变。
 
 ## Brain 1.273.64 — Judge coverage.deferred 缺省为 false，裁决回调不再 409 丢失
 
@@ -29,13 +35,13 @@
 
 - 冻结 Evaluator 依赖清单（#4890）此前对 node_modules 全量哈希，vitest 默认把结果缓存写到 `<pkg>/node_modules/.vite/vitest/results.json`，评估跑完事后比对必判 `frozen evaluator installed dependencies drifted`（2026-08-16 生产 run 48d57838 Evaluator f802ded5 隔离区取证：唯一漂移文件即该缓存）。
 - 清单扫描现跳过 node_modules 目录直属的工具缓存目录 `.vite` / `.vitest` / `.cache` / `.vite-temp`；`.bin`、依赖包内容、伪装到包内部的同名目录仍全量哈希比对，篡改语义不变；回归测试 `docker/cecelia-runner/__tests__/entrypoint-evaluator-deps-toolcache-exempt.test.sh`。
-- canonical Runner digest 重钉为 `sha256:6d4188063c065eedf98e38f170e50c010f92549a6fe53e7d80162bc2fb40b193`（`docker/build.sh` 构建，label `cecelia.build.head=e0b4a0c93`），11 处 pin 同步；Fleet Worker 版本 pin 不变。
+- canonical Runner digest 重钉为 `sha256:dbaa6b8c619da145aff93d31b226139bede9256eef6bd3e4c15733f9cbe95cf9`（`docker/build.sh` 构建，label `cecelia.build.head=e0b4a0c93`），11 处 pin 同步；Fleet Worker 版本 pin 不变。
 
 ## Brain 1.273.60 — Runner receipt lock 与冻结评估树断言对齐
 
 - Runner 的 routing action gate（#4872）对 read-write 角色在工作区根写 `.dev-lock.<branch>`；冻结候选树断言（#4890）此前把它当 untracked 产品文件拒绝，导致 read-write Evaluator 起容器即死（`frozen_baseline_guard_unavailable`，2026-08-16 生产 run 17ed9f07 / 0bce0b07 / 987b6822 / 56a1e68d 实证）。
 - 断言现只豁免工作区根下的普通文件 `.dev-lock.*`（目录 / 符号链接 / 子目录同名文件仍按污染处理），其余防篡改语义不变；回归测试 `docker/cecelia-runner/__tests__/entrypoint-evaluator-devlock-exempt.test.sh`。
-- canonical Runner digest 重钉为 `sha256:6d4188063c065eedf98e38f170e50c010f92549a6fe53e7d80162bc2fb40b193`（`docker/build.sh` 构建，label `cecelia.build.head=fab5b118d`），NodeProfile / rollout / reconciler / installer / smoke 全部同步；Fleet Worker 版本 pin 不变。
+- canonical Runner digest 重钉为 `sha256:dbaa6b8c619da145aff93d31b226139bede9256eef6bd3e4c15733f9cbe95cf9`（`docker/build.sh` 构建，label `cecelia.build.head=fab5b118d`），NodeProfile / rollout / reconciler / installer / smoke 全部同步；Fleet Worker 版本 pin 不变。
 
 ## Brain 1.273.59 — Partial Clone Workspace Authority
 
@@ -54,7 +60,7 @@
 
 ## Brain 1.273.56 — Fleet Runner Baseline Recovery
 
-- Canonical Runner 更新为从冻结源码与供应链标签重建并验证的 `sha256:6d4188063c065eedf98e38f170e50c010f92549a6fe53e7d80162bc2fb40b193`；全部 Fleet pin 点保持一致。
+- Canonical Runner 更新为从冻结源码与供应链标签重建并验证的 `sha256:dbaa6b8c619da145aff93d31b226139bede9256eef6bd3e4c15733f9cbe95cf9`；全部 Fleet pin 点保持一致。
 - Fleet Worker 准入版本同步为 `1.272.20`，旧进程或缺失镜像继续 fail-closed；通过正式 rollout 恢复生产节点，不放宽 digest、容器探针或 Runner 合同。
 
 ## Brain 1.273.55 — Generator Local Candidate Runtime Authority
