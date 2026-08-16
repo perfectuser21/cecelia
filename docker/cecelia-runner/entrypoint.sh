@@ -1399,6 +1399,13 @@ const separator = Buffer.from([0]);
 const slash = Buffer.from('/');
 const dotGit = Buffer.from('.git');
 const nodeModules = Buffer.from('node_modules');
+// Test tooling writes its own caches straight under a node_modules root
+// (vitest → node_modules/.vite/vitest/results.json). Those are Evaluator
+// by-products, not installed dependencies, so they stay out of the frozen
+// manifest. Only direct children of a node_modules directory qualify;
+// .bin and anything nested inside a package are still hashed in full.
+const TOOL_CACHE_DIRECTORY_NAMES = ['.vite', '.vitest', '.cache', '.vite-temp']
+  .map((name) => Buffer.from(name));
 const hashBuffer = Buffer.allocUnsafe(HASH_BUFFER_BYTES);
 const outputFd = fs.openSync(outputFile, 'w', 0o600);
 let dependencyEntries = 0;
@@ -1465,6 +1472,17 @@ function hashFile(fullPath, expectedBytes) {
   return Buffer.from(hash.digest('hex'));
 }
 
+function isNodeModulesDirectory(relativePath) {
+  if (relativePath.equals(nodeModules)) return true;
+  const suffix = Buffer.concat([slash, nodeModules]);
+  return relativePath.length > suffix.length
+    && relativePath.subarray(relativePath.length - suffix.length).equals(suffix);
+}
+
+function isToolCacheDirectoryName(name) {
+  return TOOL_CACHE_DIRECTORY_NAMES.some((cacheName) => cacheName.equals(name));
+}
+
 function record(relativePath, dependencyRootPath) {
   checkDeadline();
   dependencyEntries += 1;
@@ -1491,7 +1509,9 @@ function record(relativePath, dependencyRootPath) {
   } else if (stat.isDirectory()) {
     append(Buffer.from('D\0'), relativePath, separator, mode, separator);
     const children = listChildren(fullPath);
+    const isNodeModulesRoot = isNodeModulesDirectory(relativePath);
     for (const child of children) {
+      if (isNodeModulesRoot && isToolCacheDirectoryName(child)) continue;
       record(Buffer.concat([relativePath, slash, child]), dependencyRootPath);
     }
   } else if (stat.isFile()) {
