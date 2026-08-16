@@ -914,7 +914,7 @@ export function derive(observed) {
  */
 function deriveGan(observed) {
   const {
-    counters, proposeBranchRn, proposeBranchSha, ganLatestRoundVerdict,
+    counters, proposeBranchRn, ganLatestRoundVerdict,
   } = observed;
 
   if (caps.budgetExceeded(counters.ganCostUsd)) {
