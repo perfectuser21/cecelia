@@ -1,0 +1,28 @@
+{
+  "initiative_id": "2a8095a4-7ef4-4054-9536-c435c3b451df",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅落在 packages/brain/ 起跑预检与 dispatcher 后端调度逻辑，无 UI / agent 协议 / engine 介入。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "起跑 Map 预检 base_sha 落后 main 按祖先重定基，不永久锁死",
+      "scope": "在 ensureNormalMapImpactPreflight 的 revision 比对处（map-impact-contract.js:256-259）改为祖先分流：source_revision≠base_sha 时，同源后裔且 run 未开始→写 route_rebased 审计事件(cecelia_events,保留旧base_sha)+更新 receipt/task base_sha+重定基 effectiveBaseSha 后继续；分叉/回退/祖先不可达→抛 map_revision_diverged；run 已开始→原 fail-closed 抛 map_revision_mismatch。dispatcher 对失败 error∈{map_revision_diverged,map_stale} 不递增 dispatch_fail_consecutive、不 recordFailure('cecelia-run')、不触发 dispatch_fail_autoblock（与 configError/spawn_deduplicated 豁免同类），任务回 queued。禁改 Map 扫描器/manifest，不放松 digest/radius/assertion 校验。祖先判定与 run-started 判定经注入边界 deps.isAncestor / deps.hasRunStarted（默认实现分别为 git merge-base --is-ancestor 与查 initiative_runs）。",
+      "dod": [
+        "[BEHAVIOR] 同源后裔+run未开始→重定基放行(base_revision=map revision)+route_rebased落库；分叉/不可达→map_revision_diverged；run已开始→map_revision_mismatch；map_stale保持；写事件失败fail-closed。见 contract-dod.md B-01..B-05/B-08/B-09",
+        "[BEHAVIOR] dispatcher 对 map_revision_diverged/map_stale 不计入 dispatch_fail_autoblock 连败。见 contract-dod.md B-06/B-07",
+        "[ARTIFACT] 新增真 PG 集成测试 packages/brain/src/__tests__/integration/map-preflight-rebase.pg.integration.test.js（brain-integration job 跑）",
+        "[ARTIFACT] impact 闸严格性未放松：map-impact-contract.js 仍保留 map_digest_invalid/map_radius_stale/impact_assertion_missing 校验"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/preflight/map-impact-contract.js",
+        "packages/brain/src/dispatcher.js",
+        "packages/brain/src/orchestrator/preflight/map-impact-contract.test.js",
+        "packages/brain/src/__tests__/dispatch-fail-autoblock.test.js",
+        "packages/brain/src/__tests__/integration/map-preflight-rebase.pg.integration.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
