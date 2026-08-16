@@ -1,0 +1,36 @@
+{
+  "initiative_id": "3e578cdc-b0ba-4539-af3a-580b7efd3749",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动集中在 packages/brain/src/orchestrator 与 routes（纯后端调度/kernel 接线），无 UI、无 engine hooks、非远端 agent 协议。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "每条 Run 起手召唤 Commander：Work Router 透传 commander_mode/profile/retry_budget + F1 默认 hybrid + 起手召唤/FR-2 必唤醒 + bundle 看得见闸结论 + 真 canary",
+      "scope": "POST /api/brain/tasks 接受并校验 commander_mode/commander_profile/commander_retry_budget（非法 profile 键 → 400 invalid_commander_profile，不落库），透传进 createRoutedTask 写 tasks.payload；map_scope 含 F1 或 journey e6f803f2 的 coding_mutation 未显式指定时默认 commander_mode=hybrid + 默认 profile（primary codex/team2/us-mac-m4，fallback claude/account2/us-mac-m4），显式 kernel-only 可关，其他线不变；分发层（harness-skill-relay / headed-kernel-runtime）读 payload.commander_mode 传给 createKernelRun 写 initiative_runs.commander_mode；commander-coordinator/commander-wakeup 起手召唤（首跳先于 Planner）+ FR-2 必唤醒节点（同一 gate_verdict 连续≥3 跳唤醒、单次 capacity_contended 不唤醒）；commander-bundle activeRisks 携带 impact_gate.reason/retryable、admission_reasons、attempt.error_code/failure_class 并保持跨 run 隔离；一条真实 F1 bugfix 以 hybrid 从头跑 canary 产出全程 Commander 事件；Brain semver bump 四处同步 + DevGate 三项。不改 kernel 执行权、不给 Commander 绕门禁能力、不改 diff-gate。",
+      "dod": [
+        "[BEHAVIOR] entry-threading 单测绿：createRoutedTask 透传 commander_mode/profile、F1 默认 hybrid、显式 kernel-only 尊重、分发层传 createKernelRun.commanderMode（sprints/08161112-kernel-17ed9f07/tests/commander-entry-threading.test.ts）",
+        "[BEHAVIOR] wakeup-nodes 单测绿：起手召唤 + 同一 gate_verdict 连续≥3 跳唤醒 + 单次 capacity_contended 不唤醒（commander-wakeup-nodes.test.ts）",
+        "[BEHAVIOR] bundle-gates 单测绿：activeRisks 含 impact_gate/admission/attempt 闸结论 + 跨 run 隔离（commander-bundle-gates.test.ts）",
+        "[BEHAVIOR] POST /tasks 非法 commander_profile 键 → 400 invalid_commander_profile 不落库",
+        "[BEHAVIOR] 真 canary（数据写入类）：orchestrator_decision_log ≥5 条 commander.directive_accepted + harness_attempts role=commander completed ≥5 + observation 端点 event_cursor 单调 + ≥1 条异常唤醒 directive 被 kernel 执行/记 request_human",
+        "[BEHAVIOR] Brain semver 四处同步 + DevGate 三项（facts-check / check-version-sync / check-dod-mapping）全过",
+        "[ARTIFACT] packages/brain semver bump 到 1.274.0（package.json / package-lock.json / .brain-versions / DEFINITION.md）"
+      ],
+      "files": [
+        "packages/brain/src/routes/task-tasks.js",
+        "packages/brain/src/work-routing-store.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/orchestrator/headed-kernel-runtime.js",
+        "packages/brain/src/orchestrator/commander-coordinator.js",
+        "packages/brain/src/orchestrator/commander-wakeup.js",
+        "packages/brain/src/orchestrator/commander-bundle.js",
+        "packages/brain/package.json",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
