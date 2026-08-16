@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.63
+**Brain 版本**: 1.273.64
+
+## Judge coverage.deferred 缺省 false（Brain 1.273.64）
+
+- judge-v1 `coverage[].deferred` 缺失按 false 接住，避免 Judge 裁决回调 409 丢失后 kernel 无限重起 Judge；非布尔仍拒绝。
 
 ## capability-change-v1 直出收敛让路 validation-identity 硬门（Brain 1.273.63）
 

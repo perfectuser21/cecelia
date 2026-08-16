@@ -131,7 +131,11 @@ const decisionSchema = z.object({
 const judgeCoverageEntrySchema = z.object({
   step: z.string().min(1),
   passed: z.boolean(),
-  deferred: z.boolean(),
+  // deferred = Judge 显式推迟仅服务端拥有的后置检查；缺省即不推迟。
+  // 2026-08-16 run dc5c19b7 实证：claude provider 只在提示词里看到 schema，Judge 把
+  // "deferred=false" 写进 step 文本而漏掉字段 → strict 409 → runner exit 75 → 裁决丢失
+  // → kernel 无限重起同一个 Judge。字段缺失按 false 接住；非布尔仍拒绝。
+  deferred: z.boolean().default(false),
   evidence: z.string().min(1),
 }).strict();
 

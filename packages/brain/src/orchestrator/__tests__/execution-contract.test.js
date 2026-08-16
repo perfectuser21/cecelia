@@ -480,6 +480,34 @@ describe('HarnessResult contract', () => {
     ).decision).toEqual(decision);
   });
 
+  // 2026-08-16 生产实证（run dc5c19b7 judge 60c0ca16/225b59c5/7f7eee54/019b927c）：
+  // claude provider 只在提示词里看到 schema，Judge 把 "deferred=false" 写进 step 文本而没有
+  // 输出 deferred 字段 → strict schema 409 judge_result_decision_invalid → runner 视为
+  // permanent rejection exit 75 → 裁决丢失 → kernel 租约过期再起同一个 Judge → 无限循环。
+  // deferred 语义是"Judge 显式推迟仅服务端拥有的后置检查"，缺省就是不推迟：默认 false。
+  it('accepts a judge-v1 coverage entry without deferred (defaults to false) instead of 409-looping', () => {
+    const decision = {
+      outcome: 'PASS',
+      reason: 'all covered',
+      coverage: [{
+        step: 'B-01 diff-gate three-classify [deferred=false]', passed: true, evidence: 'Evaluator 7/7',
+      }],
+      failure_class: null,
+      failure_signature: null,
+    };
+    const parsed = parseHarnessResult(validResult({ decision }), 'judge', 'harness-result/judge-v1');
+    expect(parsed.decision.coverage[0].deferred).toBe(false);
+    expect(parsed.decision.coverage[0].step).toBe(decision.coverage[0].step);
+  });
+
+  it('still rejects a non-boolean deferred on judge-v1 coverage', () => {
+    expect(() => parseHarnessResult(validResult({ decision: {
+      outcome: 'PASS', reason: 'x',
+      coverage: [{ step: 'B-01', passed: true, evidence: 'ok', deferred: 'no' }],
+      failure_class: null, failure_signature: null,
+    } }), 'judge', 'harness-result/judge-v1')).toThrow(/judge_result_decision_invalid/);
+  });
+
   it('accepts a structured reviewer decision', () => {
     const parsed = parseHarnessResult(validResult({
       decision: { outcome: 'changes_requested', reason: 'Missing recovery check.' },
