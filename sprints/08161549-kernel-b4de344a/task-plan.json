@@ -1,0 +1,39 @@
+{
+  "initiative_id": "48d57838-7bac-488e-9bc9-feea4c5042d7",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改造仅落 packages/brain/scripts/fleet-worker 后端容器编排 + node-profile 容量算法，无 UI/远端 agent 协议改动，走后台自治验证",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Fleet Runner run 级双容器：工作容器常驻 + Generator 候选落 quarantine + 干净评估容器 + per-run 容量",
+      "scope": "attempt-runner/fleet-worker/workspace-manager 落 run 级工作容器生命周期（创建/复用/exec/终态销毁/reconcile 按 run_id 找回）+ 容器 label cecelia.run_id + container_id 持久化到 initiative_runs.work_container_id + Generator 候选 git bundle 落 host quarantine 卷（只写一次/按 run 清理）+ Evaluator 评估容器从 bundle 干净 clone 到候选 SHA（不 fetch 远端、不继承工作容器文件）+ node-profile per-run 容量（5GB VM ≥2）+ feature flag FLEET_RUN_SCOPED_CONTAINER（默认 on/off 回退）+ Brain semver + DevGate 四处同步；信任边界（非 root/零 cap/push 拒绝/每 attempt 独立 token 不复用 session）不回退",
+      "dod": [
+        "[BEHAVIOR] B-01: 同 run 连续两 attempt 复用同一 container_id，不同 run 不同容器（vitest attempt-runner.test.cjs -t B-01）",
+        "[BEHAVIOR] B-02: run 终态销毁工作容器，reconcile 按 run_id 找回不新建（vitest -t B-02）",
+        "[BEHAVIOR] B-03: 候选落 quarantine bundle + Evaluator 从 bundle 干净 clone HEAD==候选SHA 且无污染（vitest workspace-manager.test.cjs -t B-03）",
+        "[BEHAVIOR] B-04: 信任回归全绿——非 root/零 cap/push 拒绝/token 独立（vitest -t B-04）",
+        "[BEHAVIOR] B-05: per-run 容量 5GB VM 得 ≥2，冻结常量不回退（vitest node-profile.test.js -t B-05）",
+        "[BEHAVIOR] B-06: FLEET_RUN_SCOPED_CONTAINER=off 回退单 attempt 容器命名（vitest -t B-06）",
+        "[ARTIFACT] attempt-runner 暴露 deriveRunContainerName；workspace-manager 暴露 bundleCandidate/cloneFromBundle",
+        "[ARTIFACT] Brain semver bump + 版本四处同步 + DevGate（facts-check / version-sync / DoD→Test 映射）全过"
+      ],
+      "files": [
+        "packages/brain/scripts/fleet-worker/attempt-runner.cjs",
+        "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
+        "packages/brain/scripts/fleet-worker/workspace-manager.cjs",
+        "packages/brain/src/orchestrator/fleet-node/node-profile.js",
+        "packages/brain/scripts/fleet-worker/attempt-runner.test.cjs",
+        "packages/brain/scripts/fleet-worker/workspace-manager.test.cjs",
+        "packages/brain/src/orchestrator/fleet-node/node-profile.test.js",
+        "packages/brain/src/__tests__/integration/",
+        "packages/brain/DEFINITION.md",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 110
+    }
+  ]
+}
