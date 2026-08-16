@@ -1,0 +1,29 @@
+{
+  "initiative_id": "8f55b9ac-8d73-4772-ab3b-3b6ce14eb4de",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全部改动在 packages/brain 纯后端（diff-gate/harness-gates/loop），无 UI、无远端 agent 协议、非 engine hooks/skills",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 按 mapper reason_code 三分类 + 透传 detail + loop/derive 确定性出口路由",
+      "scope": "diff-gate.js 三分类（确定性 reason_code → blocked/retryable:false + detail{unclaimed_files,uncovered_capability_ids}；真新鲜度码 → mapper_stale/retryable:true；未知/畸形 → mapper_contract_invalid/retryable:false）；harness-gates.beforeEvaluate gateReceipt 透传 reason/retryable/detail；loop.js DETERMINISTIC_IMPACT_ERROR_CODES 补入确定性 reason，derive 按 reason 路由 spawn:generator-fix / wait:human_review；Brain semver 四处同步 + DevGate 三项；把 sprints/<dir>/tests/ 冻结测试复制为 packages/brain/src/**/__tests__/ 永久回归（含 PG 集成驱动 impact-gate-deterministic-route.pg.integration.test.js）。radius.js/map-client.js assertMapperContract 不动。",
+      "dod": [
+        "[BEHAVIOR] diff-gate 三分类冻结测试全绿：npx vitest run sprints/08161127-kernel-0bce0b07/tests/diff-gate-classification.test.ts",
+        "[BEHAVIOR] 回归夹具 + 回执透传 + derive 路由冻结测试全绿：diff-gate-regression-fixture / harness-gates-receipt / derive-impact-route",
+        "[BEHAVIOR] 确定性 blocked 真实落 orchestrator_decision_log（scratch 库 psql 复核 gate_verdict + retryable=false + unclaimed_files 非空）",
+        "[ARTIFACT] packages/brain/src/__tests__/integration/impact-gate-deterministic-route.pg.integration.test.js 存在",
+        "[BEHAVIOR] Brain semver 四处同步：bash scripts/check-version-sync.sh"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/harness-gates.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/package.json",
+        "packages/brain/src/__tests__/integration/impact-gate-deterministic-route.pg.integration.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "_comment": "录制件：run d1360a48 (task 0ca4b234) 候选的 radius.js resolveImpactRadius 响应。候选在仓库根新建 DoD.md → unclaimed_files=['DoD.md'] → 快照 fresh 前提下 radius 写入确定性结论 freshness.status='unknown', reason_code='impact_anchor_missing'。用于回归夹具：旧 diff-gate 折叠成 mapper_stale/retryable:true；新 diff-gate 分类为 blocked/impact_anchor_missing/retryable:false，detail.unclaimed_files=['DoD.md']。",
+  "scope": "cecelia",
+  "freshness": {
+    "status": "unknown",
+    "reason_code": "impact_anchor_missing",
+    "checked_at": "2026-08-15T20:08:00.000Z",
+    "mapper_revision": "bc4e864400daf7b4cdafec5af09e4b8b4767a13e"
+  },
+  "changed_files": ["DoD.md", "packages/brain/src/impact-contract/diff-gate.js"],
+  "affected_nodes": [],
+  "required_assertions": [],
+  "unclaimed_files": ["DoD.md"],
+  "fact_revisions": { "cecelia": "bc4e864400daf7b4cdafec5af09e4b8b4767a13e" }
+}
