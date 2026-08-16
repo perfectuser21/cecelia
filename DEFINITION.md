@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.68
+**Brain 版本**: 1.273.69
 
 ## Brain 1.273.68 — 本地候选的 generator-fix 不再携带 pull_request:null
 
