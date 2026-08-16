@@ -1,0 +1,22 @@
+{
+  "_comment": "录制件：run d1360a48（task 0ca4b234 有头签发口）Generator 候选在仓库根新建 DoD.md，radius.js 判无主文件 → impact_anchor_missing。冻结此响应复现旧行为，不依赖实时 Map（Map manifest 已升 v3 认领 DoD.md，实时已不复现）。",
+  "recorded_run_id": "d1360a48",
+  "recorded_task_id": "0ca4b234",
+  "changed_files": [
+    "DoD.md",
+    "packages/brain/src/impact-contract/diff-gate.js"
+  ],
+  "mapper_response": {
+    "freshness": {
+      "status": "unknown",
+      "reason_code": "impact_anchor_missing",
+      "checked_at": "2026-08-15T20:08:00.000Z",
+      "mapper_revision": "bc4e8644"
+    },
+    "fact_revisions": { "cecelia": "bc4e8644" },
+    "changed_files": ["DoD.md", "packages/brain/src/impact-contract/diff-gate.js"],
+    "affected_nodes": [],
+    "required_assertions": [],
+    "unclaimed_files": ["DoD.md"]
+  }
+}

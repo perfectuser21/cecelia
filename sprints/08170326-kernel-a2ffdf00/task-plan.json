@@ -1,0 +1,31 @@
+{
+  "initiative_id": "intent:2a297e73-9fba-41c5-8b07-be0d0588cd9d:12",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动全部落 packages/brain/（diff-gate/orchestrator kernel 后端逻辑），无 UI/agent 协议/engine，纯自治后端。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 透传 reason_code + fail-closed 出口",
+      "scope": "diff-gate.js 按 freshness.reason_code 分三类裁决（确定性 blocked/reason_code 透传/detail，真新鲜度 mapper_stale 可重试保留，未知码 fail-closed mapper_contract_invalid）；harness-gates.js beforeEvaluate gateReceipt 透传 reason/retryable/detail；constants.js 导出并补齐 DETERMINISTIC_IMPACT_ERROR_CODES；loop.js 从 constants 导入并对 retryable:false 走确定性出口；derive.js 按 reason 路由 generator-fix(impact_anchor_missing 一次带 unclaimed_files)/human_review(capability_assertion_coverage_missing)；Brain semver 四处同步；把 sprints/tests 下冻结测试复制到 packages/brain/src/**/__tests__/ 作永久回归。",
+      "dod": [
+        "[BEHAVIOR] diff-gate 三类裁决冻结测试全绿（tests/diff-gate-reason-code.test.ts）",
+        "[BEHAVIOR] harness-gates receipt detail 透传全绿（tests/harness-gates-receipt-detail.test.ts）",
+        "[BEHAVIOR] DETERMINISTIC_IMPACT_ERROR_CODES 集合冻结测试全绿（tests/deterministic-impact-codes.test.ts）",
+        "[BEHAVIOR] run d1360a48 回归夹具全绿（tests/diff-gate-d1360a48-regression.test.ts）",
+        "[BEHAVIOR] Final E2E orchestrator_decision_log 写入 deny:impact:impact_anchor_missing/retryable=false/unclaimed_files 非空（e2e-verify.sh）",
+        "[ARTIFACT] Brain semver 四处同步 + DevGate 三项通过"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/harness-gates.js",
+        "packages/brain/src/orchestrator/constants.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/package.json"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
