@@ -34,9 +34,10 @@ for i in {1..15}; do
 done
 
 # 3. 起 Docker Brain 容器（--force-recreate 确保 compose 配置改动生效，不复用旧容器）
-echo "→ docker-compose up -d --force-recreate node-brain"
+echo "→ docker compose --env-file .env.docker up -d --force-recreate node-brain"
 cd "$ROOT_DIR"
-docker-compose up -d --force-recreate node-brain
+# --env-file 必带：KERNEL_FLEET_BRIDGE_TOKEN 等只在 .env.docker，不带则 compose 插值成空
+docker compose --env-file "$ROOT_DIR/.env.docker" -f "$ROOT_DIR/docker-compose.yml" up -d --force-recreate node-brain
 
 # 4. 等容器 healthy（最多 90 秒 — 含 40s start_period + migration 时间）
 echo "→ 等容器 healthy..."

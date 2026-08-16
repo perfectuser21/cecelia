@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.61
+**Brain 版本**: 1.273.62
+
+## Brain 1.273.62 — Fleet bridge token 以 env_file 为唯一权威 + 启动自检
+
+- `docker-compose.yml` node-brain 的 `environment:` 此前写 `KERNEL_FLEET_BRIDGE_TOKEN=${KERNEL_FLEET_BRIDGE_TOKEN:-}`，compose 里 environment 优先级高于 env_file，任何不带 `--env-file .env.docker` 的 `compose up`（`brain-docker-up.sh` / `brain-rollback.sh`）都把 `.env.docker` 里的 token 盖成空串 → production-transport fail-closed → evaluator callback 503 无限重试（2026-08-16 09:38Z 生产实证：run 48d57838 controller lease 过期判死、dbe7ca64 generator launch 即死）。
+- 覆盖行已删除（`.env.docker` 是 token 唯一来源），两脚本补 `--env-file`；`describeFleetTransportReadiness(env)` 启动自检红日志，`/health` 新增 `fleet_transport{enabled,status,reason,shared_secret_configured,worker_machines}`，enabled 且 unavailable 时顶层 `degraded`（不回显密钥）；守卫 `scripts/smoke/brain-compose-envfile-authority-smoke.sh`（每 PR 静态跑）。
 
 ## Brain 1.273.61 — 冻结 Evaluator 依赖清单豁免测试工具缓存
 

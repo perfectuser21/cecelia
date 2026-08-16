@@ -121,7 +121,7 @@ import { getScanStatus } from './src/task-generator-scheduler.js';
 import { waitForPortFree, listenWithRetry } from './src/startup-port-guard.js';
 import { setupGitCredentials } from './src/lib/git-credentials-setup.js';
 import { bootDurable } from './src/durable/dbos-runtime.js';
-import { createProductionExecutionTransport } from './src/orchestrator/production-transport.js';
+import { createProductionExecutionTransport, describeFleetTransportReadiness } from './src/orchestrator/production-transport.js';
 import { createAttemptCleanupWorker } from './src/orchestrator/attempt-cleanup-worker.js';
 import {
   createAttemptCleanupLoop,
@@ -145,6 +145,19 @@ const kernelFleetTerminalTransport = createProductionExecutionTransport({
   env: process.env,
   fetchFn: globalThis.fetch,
 });
+// 启动自检：fleet transport 未就绪时立刻红日志（/health 同步报 degraded），
+// 不再等第一次 attempt 用到 transport 才炸 execution_transport_unavailable。
+{
+  const fleetReadiness = describeFleetTransportReadiness(process.env);
+  if (fleetReadiness.enabled && fleetReadiness.status !== 'ready') {
+    console.error(
+      `[fleet-transport] NOT READY: ${fleetReadiness.reason} — 所有 Kernel attempt 将 execution_transport_unavailable；`
+      + '检查 Brain 容器是否经 `docker compose --env-file .env.docker up` 重建（KERNEL_FLEET_BRIDGE_TOKEN 只在 .env.docker）',
+    );
+  } else {
+    console.log(`[fleet-transport] ${fleetReadiness.status} workers=${fleetReadiness.worker_machines.join(',') || 'none'}`);
+  }
+}
 const attemptCleanupWorker = createAttemptCleanupWorker({
   pool,
   transport: kernelFleetTerminalTransport,

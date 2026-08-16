@@ -11,6 +11,7 @@ import { getCleanupStats as _getCleanupStats, runTaskCleanup as _runTaskCleanup,
 import { getTickStatus } from '../tick.js';
 import { createProposal, approveProposal, rollbackProposal, rejectProposal, getProposal, listProposals } from '../proposal.js';
 import { probe as dockerRuntimeProbe } from '../docker-runtime-probe.js';
+import { describeFleetTransportReadiness } from '../orchestrator/production-transport.js';
 
 // Constants previously in old alertness.js
 const EVENT_BACKLOG_THRESHOLD = 50;
@@ -144,7 +145,11 @@ router.get('/health', async (req, res) => {
     // 聚合规则：docker_runtime.enabled=true && status='unhealthy' ⇒ 顶层 degraded；
     // status='disabled' 单独不触发 degraded（仅追加字段，不降级）
     const dockerDegraded = !!(docker_runtime && docker_runtime.enabled === true && docker_runtime.status === 'unhealthy');
-    const healthy = tickStatus.loop_running && openBreakers.length === 0 && !dockerDegraded;
+    // fleet_transport.enabled=true && status='unavailable'（token 缺失/过短/无 worker URL）⇒ 顶层 degraded：
+    // 否则 Brain 看似 healthy，Kernel attempt 却全部 execution_transport_unavailable（2026-08-16 生产实证）。
+    const fleet_transport = describeFleetTransportReadiness(process.env);
+    const fleetTransportDegraded = fleet_transport.enabled === true && fleet_transport.status === 'unavailable';
+    const healthy = tickStatus.loop_running && openBreakers.length === 0 && !dockerDegraded && !fleetTransportDegraded;
 
     let cbStatus;
     if (openBreakers.length > 0) {
@@ -193,6 +198,7 @@ router.get('/health', async (req, res) => {
         planner: { status: 'v2' }
       },
       docker_runtime,
+      fleet_transport,
       // FR-02: Gate3 SHA 对账——构建期烙入，运行时不可覆写
       git_sha: process.env.GIT_SHA || 'unknown',
       timestamp: new Date().toISOString()

@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.61
+**Brain 版本**: 1.273.62
+
+## Fleet bridge token 以 env_file 为唯一权威 + 启动自检（Brain 1.273.62）
+
+- `KERNEL_FLEET_BRIDGE_TOKEN` 只来自 `.env.docker`（compose env_file），`docker-compose.yml` 不再在 environment 段用 `${…:-}` 覆盖；`/health` 暴露 `fleet_transport` 就绪态，enabled 且 unavailable ⇒ `degraded`；启动时 `[fleet-transport] NOT READY` 红日志。
 
 ## 冻结 Evaluator 依赖清单豁免测试工具缓存（Brain 1.273.61）
 
