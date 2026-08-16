@@ -1,0 +1,29 @@
+{
+  "_provenance": "Reconstructed from PRD-documented evidence of run d1360a48 (task 0ca4b234). Shape mirrors packages/brain/src/map/radius.js resolveImpactRadius() output: snapshots fresh (fact_revisions=bc4e8644=origin/main) yet a candidate file has no Map anchor, so radius folds the DETERMINISTIC conclusion into freshness with status:'unknown', reason_code:'impact_anchor_missing', and lists the offender in unclaimed_files.",
+  "changed_files": [
+    "DoD.md",
+    "packages/brain/src/impact-contract/diff-gate.js"
+  ],
+  "freshness": {
+    "status": "unknown",
+    "reason_code": "impact_anchor_missing",
+    "checked_at": "2026-08-15T20:08:00.000Z",
+    "mapper_revision": "bc4e8644"
+  },
+  "fact_revisions": {
+    "cecelia": "bc4e8644"
+  },
+  "manifest_digest": "manifest-d1360a48",
+  "projection_digest": "projection-d1360a48",
+  "affected_nodes": [
+    { "capability_id": "impact-contract", "capability_name": "Impact Contract Gate", "owner": "impact-contract", "impact_level": "direct" }
+  ],
+  "required_assertions": [
+    {
+      "assertion_id": "packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+      "command": "npx vitest run packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+      "covers_capability_ids": ["impact-contract"]
+    }
+  ],
+  "unclaimed_files": ["DoD.md"]
+}

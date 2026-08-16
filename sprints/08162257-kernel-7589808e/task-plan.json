@@ -1,0 +1,32 @@
+{
+  "initiative_id": "a4fec681-958e-4450-be5f-c4090a67c7a2",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动全部落在 packages/brain/（diff-gate/harness-gates/loop/derive），纯后端调度决策，无 UI/远端 agent 协议/engine hooks",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 透传 reason_code + fail-closed 出口 + 确定性结论路由",
+      "scope": "diff-gate.js 按 freshness.reason_code 三类分流（真新鲜度→mapper_stale/retryable:true；确定性结论→blocked/<reason_code>/retryable:false+detail；未知→fail-closed mapper_contract_invalid/retryable:false）；harness-gates.js gateReceipt 透传 detail；derive.js 新增 routeDeterministicImpactGate（anchor→generator-fix 一次→human_review；coverage→human_review）并由 loop.js 在 retryable:false 时调用替代无脑 failRun；routes/impact-contracts.js diff-evaluate 对 blocked→409；Brain semver 四处同步 + DevGate 三项。永久回归测试复制 sprints/.../tests/ 到 packages/brain/src/**/__tests__/",
+      "dod": [
+        "[BEHAVIOR] diff-gate impact_anchor_missing→blocked/retryable:false/detail.unclaimed_files；fact_snapshot_stale 回归仍 impact_unknown/mapper_stale/retryable:true；未知 reason→mapper_contract_invalid/retryable:false",
+        "[BEHAVIOR] gateReceipt 透传 detail；routeDeterministicImpactGate 三路由正确",
+        "[BEHAVIOR] E2E scratch 库落 orchestrator_decision_log 行 deny:impact:impact_anchor_missing/retryable:false/unclaimed_files 非空",
+        "[ARTIFACT] Brain semver 四处同步（check-version-sync.sh 通过）"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/harness-gates.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/routes/impact-contracts.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
