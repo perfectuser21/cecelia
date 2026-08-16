@@ -1,0 +1,16 @@
+{
+  "_source": "run d1360a48 (task 0ca4b234) — radius 响应录制件，候选在仓库根新建 DoD.md（Map v3 之前的无主文件）。快照新鲜但确定性结论 impact_anchor_missing。Generator 实现阶段可用真实 GET /api/brain/map/radius 重录覆盖本文件。",
+  "freshness": {
+    "status": "unknown",
+    "reason_code": "impact_anchor_missing",
+    "checked_at": "2026-08-15T20:08:00.000Z",
+    "mapper_revision": "bc4e8644"
+  },
+  "changed_files": ["DoD.md", "packages/brain/src/impact-contract/diff-gate.js"],
+  "affected_nodes": [{ "capability_id": "impact-contract", "owner": null, "severity": "medium" }],
+  "required_assertions": [],
+  "unclaimed_files": ["DoD.md"],
+  "fact_revisions": { "cecelia": "bc4e8644" },
+  "manifest_digest": "sha256:d1360a48manifest",
+  "projection_digest": "sha256:d1360a48projection"
+}

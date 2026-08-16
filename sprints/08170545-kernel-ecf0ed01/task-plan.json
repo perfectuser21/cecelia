@@ -1,0 +1,32 @@
+{
+  "initiative_id": "ecf0ed01-0c2d-473f-8a78-04b323401212",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全部改动落在 packages/brain/src/（diff-gate/harness-gates/loop/derive），纯后端 kernel 决策逻辑，无 UI / 远端 agent。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 按 reason_code 三分类 + 透传 detail + 确定性出口路由（generator-fix / human_review）",
+      "scope": "diff-gate.js 区分真新鲜度/确定性/未知三类并透传 unclaimed_files+capability_ids；harness-gates.js gateReceipt 透传 reason/retryable/detail 并上浮 unclaimed_files；loop.js DETERMINISTIC_IMPACT_ERROR_CODES 补确定性 reason 且把 impact 确定性 deny 记为可路由的 attempt 回执（不再 failRun 直死）；derive.js 按 detail.reason 路由 impact_anchor_missing→generator-fix(一次)/human_review、capability_assertion_coverage_missing→human_review；Brain semver 四处同步。radius.js 不改。冻结测试复制为常驻回归到 packages/brain/src/impact-contract/__tests__/ 与 src/orchestrator/__tests__/。",
+      "dod": [
+        "[BEHAVIOR] diff-gate 三分类：确定性 blocked/retryable=false/detail、fact_snapshot_stale 回归 retryable=true、未知码 fail-closed mapper_contract_invalid",
+        "[BEHAVIOR] harness-gates gateReceipt 透传 reason/retryable/detail",
+        "[BEHAVIOR] derive 按 reason 路由 generator-fix / human_review，不再退避重试",
+        "[BEHAVIOR] Final E2E：orchestrator_decision_log 新增 deny:impact:impact_anchor_missing 行 retryable=false + unclaimed_files 非空",
+        "[ARTIFACT] radius.js 未改 + Brain semver 四处同步 + DevGate 三项通过"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/harness-gates.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate-reason-code.test.js",
+        "packages/brain/src/impact-contract/__tests__/harness-gates-receipt.test.js",
+        "packages/brain/src/orchestrator/__tests__/derive-impact-route.test.js",
+        "packages/brain/package.json"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
