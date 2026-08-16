@@ -1,0 +1,34 @@
+{
+  "initiative_id": "60b238bc-1912-42f4-8f13-b56167a20a70",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain 后端改动（orchestrator 观测/derive 状态机 + 建任务口），无 UI/agent 协议/engine 介入",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "gan_no_push_streak 误判修复：提案 remote base_repo→repo 兜底禁退 origin + derive crossCheckMismatch 门控 + 建任务口回填规范 base_repo URL",
+      "scope": "ground-truth.js 新增导出 resolveProposalRemote 并让 collectGroundTruth 消费（base_repo→repo 兜底、皆空 unresolved 禁退 origin、注入 observed.proposalRemoteUnresolved）；derive.js gan_no_push_streak 只在 crossCheckMismatch===false 触发，mismatch=true 重新观测且不递增 noPushStreak，连续 MAX_OBSERVATION_MISMATCH_STREAK(3) 次以 proposal_observation_mismatch 失败，proposalRemoteUnresolved 以 proposal_remote_unresolved 独立失败；constants.js 加 MAX_OBSERVATION_MISMATCH_STREAK=3；counters.js 加 observationMismatchStreak（trailing verdict:proposal_observation_mismatch 计数，不改 after>before 语义）；work-routing-store.js createRoutedTask 对 coding_mutation 缺 base_repo 时从 map_scope_repositories repo/aliases 规范化写入完整 clone URL；Brain semver 四处同步",
+      "dod": [
+        "[BEHAVIOR] resolveProposalRemote base_repo→repo 兜底出 github URL、皆空 unresolved（sprints/.../tests/ground-truth-proposal-remote.test.js 绿）",
+        "[BEHAVIOR] derive crossCheckMismatch 门控 + proposal_remote_unresolved/proposal_observation_mismatch 独立 reason（derive-observation-gate.test.js 绿）",
+        "[BEHAVIOR] createRoutedTask 缺 base_repo 回填规范 URL 落库（work-routing-base-repo-backfill.test.js 绿）",
+        "[BEHAVIOR] 回归夹具 run 7a8e5319 新代码 proposeBranchRn===1（regression-run-7a8e5319-rn.test.js 绿）",
+        "[BEHAVIOR] brain 受影响模块零回归 + check-version-sync.sh 退出码 0",
+        "[ARTIFACT] ground-truth.js/derive.js/constants.js/work-routing-store.js 含对应实现标记"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/counters.js",
+        "packages/brain/src/orchestrator/constants.js",
+        "packages/brain/src/work-routing-store.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
