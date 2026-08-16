@@ -1825,6 +1825,27 @@ process.stdout.write(String(Math.max(1, Math.min(1800, remaining))));
 NODE
 }
 
+# assertion-config-dir-writable:start
+# vite 5 加载 ESM vitest 配置时必须在配置文件旁写 `<config>.timestamp-*.mjs`
+# （loadConfigFromBundledFile）；断言工作区被 chmod -R a-w 冻结后会 EACCES →
+# "failed to load config" → required assertion 必败（2026-08-16 run a4fec681 实证）。
+# 只给断言所在的包根目录（最近 package.json 所在目录，找不到则工作区根）补 a+w 并加
+# sticky 位：能创建临时文件，不能删除/改名 root 拥有的受跟踪文件；子目录与文件仍只读。
+grant_assertion_config_dir_write() {
+  local workspace="$1" assertion_path="$2" dir
+  [[ -n "$workspace" && -n "$assertion_path" ]] || return 1
+  case "$assertion_path" in
+    /*|*/../*|../*|*/..|..) return 1 ;;
+  esac
+  dir="$workspace/$(dirname "$assertion_path")"
+  [[ -d "$dir" ]] || return 1
+  while [[ "$dir" != "$workspace" && ! -f "$dir/package.json" ]]; do
+    dir="$(dirname "$dir")"
+  done
+  chmod a+w,+t "$dir"
+}
+# assertion-config-dir-writable:end
+
 merge_required_assertion_evidence() {
   local normalized_result_file="$1"
   local assertions_json="${HARNESS_REQUIRED_ASSERTIONS_JSON:-[]}"
@@ -1973,6 +1994,11 @@ merge_required_assertion_evidence() {
     # root、去掉所有写位，同时只补执行断言所需的只读/遍历权限。
     chmod -R a-w,go+rX "$assertion_workspace"
     chmod -R a-w,go+rX "$assertion_git_dir"
+    # vite 需要在断言所在包的 vitest 配置旁写临时 bundled config：只放开那一层目录。
+    while IFS= read -r grant_assertion_id; do
+      [[ -n "$grant_assertion_id" ]] || continue
+      grant_assertion_config_dir_write "$assertion_workspace" "$grant_assertion_id" || true
+    done < <(jq -r '.[] | .assertion_id' <<< "$assertions_json")
   fi
   checks_file="$evidence_dir/checks.json"
   printf '[]\n' > "$checks_file"

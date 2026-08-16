@@ -119,7 +119,9 @@ function execution(repoRoot, parsed) {
     const cwd = packageRootOf(target, repoRoot);
     return {
       ...descriptor, executable: node, cwd,
-      argv: [vitest, 'run', `./${relative(cwd, target)}`, '--'],
+      // --no-cache：冻结（只读）工作区里 vitest 结果缓存写 node_modules/.vite 会 EACCES，
+      // 而 writeToCache 的拒绝会把整次运行判失败；可信断言不需要缓存。
+      argv: [vitest, 'run', '--no-cache', `./${relative(cwd, target)}`, '--'],
     };
   }
   if (shapeValue.kind === 'pytest') {
