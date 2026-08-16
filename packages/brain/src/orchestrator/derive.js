@@ -334,6 +334,31 @@ function noPrSignatureKey(detail) {
   return 'unknown_no_pr';
 }
 
+const GENERATOR_INFRA_RESPAWN_CAP = 4;
+
+/**
+ * 决策日志里 generator 回调的历史形状：是否从未有过 completed/completed_with_concerns 回调，
+ * 以及基础设施类失败（failed/blocked + infrastructure_blocked）的次数。
+ */
+function generatorInfrastructureOnlyHistory(decisionLog) {
+  let neverCompleted = true;
+  let infrastructureFailures = 0;
+  for (const row of sortedLogRows(decisionLog)) {
+    if (row.action !== LOG_ACTION.ATTEMPT_CALLBACK) continue;
+    const detail = callbackDetail(row);
+    if (detail.role !== 'generator') continue;
+    if (['completed', 'completed_with_concerns', 'needs_context'].includes(detail.status)) {
+      neverCompleted = false;
+    } else if (
+      ['failed', 'blocked'].includes(detail.status)
+      && detail.failure_class === 'infrastructure_blocked'
+    ) {
+      infrastructureFailures += 1;
+    }
+  }
+  return { neverCompleted, infrastructureFailures };
+}
+
 function generatorNoPrRoute(observed, currentDetail) {
   const currentKey = noPrSignatureKey(currentDetail);
   const matchingCallbacks = sortedLogRows(observed.decisionLog).filter((row) => {
@@ -1021,6 +1046,17 @@ function deriveTask(observed) {
   if (!implementationTarget) {
     if (!generatorSpawned) {
       return { phase: 'generate', action: 'spawn:generator', reason: 'contract_approved' };
+    }
+    // Generator 从未真正跑过（所有 generator 回调都是基础设施失败：过期账号
+    // provider_unavailable、准入 503 等），就不存在"上一轮候选"可修——进 generator-fix
+    // 只会 generator_fix_workspace_evidence_missing 判死（2026-08-17 run ba3cdfac）。
+    // 继续重派 Generator（dispatcher 会排除已失败的账号目标）；连续 ≥4 次仍无候选才判死。
+    const generatorInfra = generatorInfrastructureOnlyHistory(decisionLog);
+    if (generatorInfra.neverCompleted && generatorInfra.infrastructureFailures > 0) {
+      if (generatorInfra.infrastructureFailures >= GENERATOR_INFRA_RESPAWN_CAP) {
+        return { phase: 'failed', action: ACTION.MARK_FAILED, reason: 'generator_infrastructure_exhausted' };
+      }
+      return { phase: 'generate', action: 'spawn:generator', reason: 'generator_infrastructure_respawn' };
     }
     const crashSignature = generatorCrashSignature(lastAgentExit);
     const currentCrashKey = crashSignatureKey(crashSignature);

@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.66
+**Brain 版本**: 1.273.67
+
+## Brain 1.273.67 — 从未跑起来的 Generator 不进 fix 轮：基础设施失败继续重派 Generator
+
+- kernel derive 3a：`generatorSpawned=true` 但所有 generator 回调都是基础设施失败（过期账号 `provider_unavailable`、准入 503 等，从未有 completed 回调）时，此前落到 `fixRoute('no_pr')` → `spawn:generator-fix` → 需要上一轮工作区证据 → `generator_fix_workspace_evidence_missing` → run 判死 `assembly_fault:WORKSPACE_RESOLUTION_FAILED`（2026-08-17 生产 run ba3cdfac：首个 Generator 落在过期 account1，原地重试又被 fleet 准入 503 挡回后触发）。
+- 现改为继续 `spawn:generator`（reason `generator_infrastructure_respawn`，dispatcher 经 listFailedExecutionTargets 排除已失败账号）；连续 ≥4 次基础设施失败仍无候选才 `generator_infrastructure_exhausted` 判死。回归 `derive-generator-infra-respawn.test.js`。
 
 ## Brain 1.273.66 — 冻结断言工作区允许 vite 写 bundled 配置 + vitest --no-cache + repin Runner
 
