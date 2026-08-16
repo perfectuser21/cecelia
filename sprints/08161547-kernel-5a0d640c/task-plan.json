@@ -1,0 +1,35 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全部改动落在 packages/brain 后端 orchestrator（work-router/kernel-run-store/loop/commander-*），无 UI 与远端交付面",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "每条 Run 起手召唤 Commander：Work Router 透传 + F1 默认 hybrid + FR-2 全程唤醒接线 + 真 canary",
+      "scope": "POST /tasks 与 Work Router 透传并校验 commander_mode/commander_profile/commander_retry_budget（非法 profile→400 invalid_commander_profile）；新增 commander-routing.resolveCommanderRunConfig 实现 F1 线默认 hybrid+默认 profile、显式 kernel-only 覆盖、其他线零回退；createRoutedTask 将三字段透传进 task.payload，createKernelRun 落 initiative_runs.commander_mode；loop hybrid 首跳起手召唤 Commander（directive_accepted 后才派 Planner）并接线 FR-2 必唤醒节点；commander-wakeup 新增连续无进展(同一 gate_verdict≥3 跳)唤醒且单次 capacity_contended/瞬时 503 不唤醒；commander-bundle 新增 deriveCommanderRisks 把 impact_gate reason/retryable、admission_reasons、attempt error_code 提炼进 activeRisks；补 brain-integration 真 PG 测试；Brain semver 四处同步 + DevGate 三项；decisions 写「F1 线默认 hybrid」",
+      "dod": [
+        "[BEHAVIOR] POST /tasks 非法 commander_profile 键 → 400 invalid_commander_profile（curl localhost:5221）",
+        "[BEHAVIOR] commander-routing/wakeup/bundle 三组单测全绿（F1 默认 hybrid、连续无进展唤醒、activeRisks 含闸结论、run 隔离）",
+        "[BEHAVIOR] 真 canary hybrid F1 run：orchestrator_decision_log commander.directive_accepted ≥5 + harness_attempts role=commander completed ≥5 + 观测端点 event_cursor 单调 + 异常唤醒 directive ≥1（psql/curl）",
+        "[ARTIFACT] commander-routing.js 新增 + work-routing-store 透传 + brain-integration 真 PG 测试 + semver 四处同步 + decisions 决策"
+      ],
+      "files": [
+        "packages/brain/src/routes/task-tasks.js",
+        "packages/brain/src/work-routing-store.js",
+        "packages/brain/src/orchestrator/commander-routing.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/commander-coordinator.js",
+        "packages/brain/src/orchestrator/commander-wakeup.js",
+        "packages/brain/src/orchestrator/commander-bundle.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 110
+    }
+  ]
+}
