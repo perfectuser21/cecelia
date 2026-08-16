@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.66
+**Brain 版本**: 1.273.67
+
+## 从未跑起来的 Generator 不进 fix 轮（Brain 1.273.67）
+
+- derive：generator 回调全是基础设施失败时继续 `spawn:generator`（`generator_infrastructure_respawn`），≥4 次判死 `generator_infrastructure_exhausted`；不再走 generator-fix 撞 `generator_fix_workspace_evidence_missing`。
 
 ## 冻结断言工作区允许 vite 写 bundled 配置（Brain 1.273.66）
 
