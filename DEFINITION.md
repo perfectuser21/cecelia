@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.67
+**Brain 版本**: 1.273.68
+
+## Brain 1.273.68 — 本地候选的 generator-fix 不再携带 pull_request:null
+
+- dispatcher 对 `spawn:generator-fix` 一律写 `pull_request: observed.pr ?? null`；候选只在本地（尚无远端 PR）时 runner 的 Generator 终结器用 `inputs | has("pull_request")` 判"有 PR"→ `head_sha`/`changed_files` 为空 → "trusted Generator pull-request evidence invalid" → 每一个 fix 轮都被拒 → 任何 Judge FAIL 直接判死 run（2026-08-17 生产 run b167ec66 attempt bd573380：fix 轮已把 E2E 修绿仍被拒）。
+- 现只有真有远端 PR 时才写 `pull_request`；`pr_branch`/`pr_head_sha` 仍来自本地候选。回归 `dispatcher.test.js`。
 
 ## Brain 1.273.67 — 从未跑起来的 Generator 不进 fix 轮：基础设施失败继续重派 Generator
 

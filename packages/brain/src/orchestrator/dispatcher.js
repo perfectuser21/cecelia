@@ -569,7 +569,11 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
   if (action === 'spawn:generator-fix') {
     common.pr_branch = observed.candidate?.branch ?? observed.pr?.head_ref ?? null;
     common.pr_head_sha = observed.candidate?.head_sha ?? observed.pr?.head_sha ?? null;
-    common.pull_request = observed.pr ?? null;
+    // 候选只在本地（无远端 PR）时不能写 pull_request:null——runner 的 Generator
+    // 终结器用 `inputs | has("pull_request")` 判"有 PR"，null 会让 head_sha/changed_files
+    // 校验必败（"trusted Generator pull-request evidence invalid"），fix 轮永远被拒
+    // （2026-08-17 run b167ec66 attempt bd573380）。
+    if (observed.pr) common.pull_request = observed.pr;
     if (observed.candidate) common.candidate = { ...observed.candidate };
     const evaluatorFeedback = buildEvaluatorFeedback(observed);
     if (evaluatorFeedback) common.evaluator_feedback = evaluatorFeedback;
