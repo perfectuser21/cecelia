@@ -39,9 +39,12 @@ describe('production Kernel capability inputs', () => {
     expect(compose).toContain(
       '- KERNEL_FLEET_REMOTE_ENABLED=${KERNEL_FLEET_REMOTE_ENABLED:-true}',
     );
-    expect(compose).toContain(
-      '- KERNEL_FLEET_BRIDGE_TOKEN=${KERNEL_FLEET_BRIDGE_TOKEN:-}',
-    );
+    // 2026-08-16 09:38Z 生产实证：environment 优先级高于 env_file，
+    // `- KERNEL_FLEET_BRIDGE_TOKEN=${KERNEL_FLEET_BRIDGE_TOKEN:-}` 会在任何不带
+    // --env-file 的 compose up 里把 .env.docker 的 token 盖成空串 → transport fail-closed。
+    // token 只能来自 env_file(.env.docker)。
+    expect(compose).not.toMatch(/^\s*-\s*KERNEL_FLEET_BRIDGE_TOKEN=/m);
+    expect(compose).toMatch(/env_file:\s*\n\s*-\s*(\.\/)?\.env\.docker/);
     expect(compose).toContain(
       '- KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL=${KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL:-http://100.71.151.105:5221}',
     );
