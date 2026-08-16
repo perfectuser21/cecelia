@@ -1,0 +1,33 @@
+{
+  "initiative_id": "dc5c19b7-db51-4492-b2b0-ed9a3f695a01",
+  "journey_type": "autonomous",
+  "journey_type_reason": "变更全在 packages/brain/（kernel/orchestrator 后端逻辑），无 UI、无远端 agent 协议、无 engine hooks，命中 brain→autonomous。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 透传 reason_code 三分类 + consumer 侧 fail-closed 出口",
+      "scope": "diff-gate.js 按 radius reason_code 三分类（(a)真新鲜度→mapper_stale/retryable:true；(b)确定性→blocked/<reason_code>/retryable:false+detail{unclaimed_files,capability_ids}；(c)未知→mapper_contract_invalid/retryable:false）；harness-gates.js gateReceipt 透传 reason/retryable/detail；loop.js DETERMINISTIC_IMPACT_ERROR_CODES 补 5 个确定性 reason + failure_class=impact_contract_invalid 走确定性出口；derive.js 按 reason 路由（impact_anchor_missing→generator-fix 一次携 unclaimed_files→仍失败 human_review；capability_assertion_coverage_missing→直接 human_review）；radius.js/map-client.js 不改；永久回归测试复制到 packages/brain/src/impact-contract/__tests__/；Brain semver bump 四处同步 + DevGate 三项。",
+      "dod": [
+        "[BEHAVIOR] diff-gate 三分类合同测试全绿（tests/diff-gate-reason-classify.test.js）",
+        "[BEHAVIOR] gateReceipt 透传 detail（tests/harness-gates-receipt-passthrough.test.js）",
+        "[BEHAVIOR] derive 按 reason 路由（tests/derive-impact-route.test.js）",
+        "[BEHAVIOR] run d1360a48 回归夹具复现 blocked:impact_anchor_missing（tests/regression-d1360a48.test.js）",
+        "[BEHAVIOR] loop.js DETERMINISTIC_IMPACT_ERROR_CODES 含 5 个确定性 reason",
+        "[BEHAVIOR] Final E2E orchestrator_decision_log 落确定性拦截行 retryable=false + unclaimed_files 非空（e2e-verify.sh）",
+        "[ARTIFACT] 合同冻结测试落 sprints/08161913-kernel-8f826ee6/tests/",
+        "[ARTIFACT] 永久回归测试复制到 packages/brain/src/impact-contract/__tests__/"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/harness-gates.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/impact-contract/__tests__/",
+        "packages/brain/package.json"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
