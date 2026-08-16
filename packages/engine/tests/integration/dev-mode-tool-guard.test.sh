@@ -3,6 +3,13 @@
 
 set -uo pipefail
 
+# 测试必须 hermetic：Fleet-worker / 有头 session 会 export CECELIA_ROUTING_* scoped 身份，
+# 若不清除，hook 会走 scoped-env 分支读到与测试分支不符的身份 → Case C/D/E 误 block。
+# （对齐 dev-mode-routing-receipt-guard.test.sh 的 unset 惯例）
+unset CECELIA_ROUTING_VALIDATE_URL CECELIA_ROUTING_VALIDATION_TOKEN \
+      CECELIA_ROUTING_RECEIPT_ID CECELIA_TASK_ID CECELIA_RUN_ID \
+      CECELIA_REPO CECELIA_BRANCH CECELIA_BASE_SHA CECELIA_ROUTING_REPO CECELIA_ROUTING_BASE_SHA 2>/dev/null || true
+
 THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$THIS_DIR/../../../.." && pwd)"
 GUARD="$REPO_ROOT/hooks/dev-mode-tool-guard.sh"
@@ -110,6 +117,47 @@ activate_dev "$E_REPO" "cp-test-e"
 out=$(run_guard "$E_REPO" "Bash" '"tool_input":{"command":"echo hi"}')
 exit_code=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')
 assert_exit "Case E 放行" "0" "$exit_code"
+
+# Case F: 无 lock + Bash worktree-manage.sh 精确路径 → bootstrap 逃生口放行
+echo ""
+echo "=== Case F: 无 lock + worktree-manage.sh 精确路径 → 放行（bootstrap）==="
+F_REPO="$TMPROOT/case-f"
+make_repo "$F_REPO"
+WTM_PATH="$F_REPO/packages/engine/skills/dev/scripts/worktree-manage.sh"
+out=$(run_guard "$F_REPO" "Bash" "\"tool_input\":{\"command\":\"bash $WTM_PATH init-or-check x --task-id 11111111-1111-4111-8111-111111111111\"}")
+exit_code=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')
+assert_exit "Case F bootstrap 放行" "0" "$exit_code"
+
+# Case G: 无 lock + 非 worktree-manage Bash（echo）→ 仍 block（闸不放松）
+echo ""
+echo "=== Case G: 无 lock + echo → block（route_violation）==="
+G_REPO="$TMPROOT/case-g"
+make_repo "$G_REPO"
+out=$(run_guard "$G_REPO" "Bash" '"tool_input":{"command":"echo ok"}')
+exit_code=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')
+assert_exit "Case G 非 worktree-manage block" "2" "$exit_code"
+assert_contains "Case G reason 含 route_violation" "route_violation" "$out"
+
+# Case H: 有 lock 但 validate 返回 run_attempt_inactive → block
+echo ""
+echo "=== Case H: 有 lock + validate inactive → block ==="
+H_REPO="$TMPROOT/case-h"
+make_repo "$H_REPO" "cp-test-h"
+H_BASE=$(git -C "$H_REPO" rev-parse HEAD)
+cat > "$H_REPO/.dev-lock.cp-test-h" <<EOF
+{"routing_receipt_id":"receipt-h","task_id":"task-h","run_id":"run-h","repo":"cecelia","branch":"cp-test-h","base_sha":"$H_BASE"}
+EOF
+mkdir -p "$TMPROOT/bin-inactive"
+cat > "$TMPROOT/bin-inactive/curl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' '{"valid":false,"reason_code":"run_attempt_inactive"}'
+EOF
+chmod +x "$TMPROOT/bin-inactive/curl"
+stdin_json="{\"session_id\":\"test\",\"cwd\":\"$H_REPO\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"echo ok\"}}"
+out=$(echo "$stdin_json" | PATH="$TMPROOT/bin-inactive:$PATH" bash "$GUARD" 2>&1; echo "EXIT:$?")
+exit_code=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')
+assert_exit "Case H inactive block" "2" "$exit_code"
+assert_contains "Case H reason 含 route_violation" "route_violation" "$out"
 
 echo ""
 echo "=== dev-mode-tool-guard: $PASS PASS / $FAIL FAIL ==="
