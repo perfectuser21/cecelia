@@ -2147,6 +2147,32 @@ describe('createDispatcher', () => {
     });
   });
 
+  // 2026-08-17 生产实证（run b167ec66 attempt bd573380）：候选只在本地（无远端 PR）时
+  // generator-fix bundle 里写 `pull_request: null`；runner 用 `inputs | has("pull_request")`
+  // 判"有 PR"→ head_sha 为空 → "trusted Generator pull-request evidence invalid" →
+  // fix 轮永远被拒 → 任何 Judge FAIL = run 判死。无 PR 时不得写这个键。
+  it('generator-fix 在候选无远端 PR 时不写 pull_request 键（runner 用 has() 判是否有 PR）', async () => {
+    const deps = makeDeps();
+    await createDispatcher(deps)('spawn:generator-fix', {
+      taskId,
+      runId,
+      hop: 12,
+      observed: {
+        ...observed,
+        pr: null,
+        candidate: { branch: 'cp-harness-prd-x', head_sha: 'c'.repeat(40) },
+        contract: {
+          approved: true,
+          row: { branch: 'cp-harness-propose-r2-aaaaaaaa-a6' },
+        },
+      },
+      decision: { phase: 'generate', reason: 'product_failure' },
+    });
+    const created = deps.attemptStore.createAttempt.mock.calls[0][0];
+    expect(Object.hasOwn(created.bundle.inputs, 'pull_request')).toBe(false);
+    expect(created.bundle.inputs.pr_head_sha).toBe('c'.repeat(40));
+  });
+
   it('generator-fix 只接收与当前 PR SHA 和 Attempt 绑定的安全 Evaluator 反馈', async () => {
     const deps = makeDeps();
     const evaluatorAttemptId = '33333333-3333-4333-8333-333333333333';
