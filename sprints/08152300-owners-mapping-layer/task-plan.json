@@ -1,0 +1,36 @@
+{
+  "initiative_id": "92d14f1e-8d63-4629-be3d-d225aa095aac",
+  "journey_type": "user_facing",
+  "journey_type_reason": "本刀触及 apps/dashboard/planning `/map` 页 Level-2 声明驱动渲染，用户可在 UI 直接感知（UI > brain 优先级链），验收含 Playwright mac_web 截图断言",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "MJ5 OWNERS 映射层刀1：Brain 读目录级 OWNERS 声明并确定性投影到地图（不猜归属）",
+      "scope": "新增 OWNERS 声明读取器（kind=owners 事实，只读声明不解析代码）+ 归属决议纯函数（YAML 解析/子覆盖父/冲突检测/key 合法性）+ 地图 rebuild 按声明把照相层事实确定性挂到 capability（owned_artifacts）+ 冲突即报进 /map/health.owners.conflicts 不投影 + cecelia 仓自贴 packages/brain/src/map/OWNERS→cecelia/MJ5 样板 + /map Level-2 声明驱动渲染；不改照相层扫描口径、不改 journey_step_links/GP 封版结构、不贴 zenithjoy OWNERS",
+      "dod": [
+        "[BEHAVIOR] owners 扫描后 /map/health.owners.snapshot.kind==owners 且 row_count>=1（带 source_revision 新鲜度哨兵）",
+        "[BEHAVIOR] rebuild 后 /map/nodes/MJ5 owned_artifacts 非空且含 packages/brain/src/map/ 前缀事实，/map/unclaimed unclaimed_count 严格下降",
+        "[BEHAVIOR] 无声明路径投影后仍无主（unclaimed_count>5000），双重声明进 owners.conflicts 不投影（真 PG 集成测试红→绿）",
+        "[BEHAVIOR] resolver 纯逻辑单测（解析/子覆盖父/冲突/key合法性）先红后绿并入 CI",
+        "[ARTIFACT] packages/brain/src/map/OWNERS 声明 cecelia/MJ5；scripts/scan/scan-owners.mjs 存在",
+        "[BEHAVIOR:E2E] mac_web Playwright /map Level-2 对 MJ5 显示声明驱动文件路径（非 UUID）截图 + 后端 owned_artifacts 交叉验证"
+      ],
+      "files": [
+        "packages/brain/src/lib/owners-resolver.js",
+        "packages/brain/src/lib/owners-projection.js",
+        "packages/brain/src/lib/map-read-service.js",
+        "packages/brain/src/lib/fact-snapshot-header.js",
+        "packages/brain/src/map/projector.js",
+        "scripts/scan/scan-owners.mjs",
+        "scripts/scan/run-all-scans.sh",
+        "packages/brain/src/map/OWNERS",
+        "apps/api/features/planning/pages/MapPage.tsx",
+        "sprints/08152300-owners-mapping-layer/tests/owners-declaration-resolver.test.ts",
+        "sprints/08152300-owners-mapping-layer/tests/owners-projection-conflict.integration.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
