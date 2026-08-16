@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.62
+**Brain 版本**: 1.273.63
 
 ## Brain 1.273.62 — Fleet bridge token 以 env_file 为唯一权威 + 启动自检
 
