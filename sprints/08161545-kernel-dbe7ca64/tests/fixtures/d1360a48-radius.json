@@ -1,0 +1,16 @@
+{
+  "_note": "run d1360a48（task 0ca4b234 有头签发口）录制件：Generator 在仓库根新建 DoD.md，mapper 在快照新鲜前提下返回确定性 impact_anchor_missing + unclaimed_files=['DoD.md']。旧 diff-gate 把它折叠成 mapper_stale/retryable:true → kernel 每 90s 空转直到 deadline。本录制件用于证明消费方分类逻辑（不依赖 live Map；live Map 已升 manifest v3 认领 DoD.md，此处刻意复现历史触发态以守卫消费方）。",
+  "run_id": "d1360a48",
+  "task_id": "0ca4b234",
+  "changed_files": [
+    "DoD.md",
+    "packages/brain/src/headed/signoff.js"
+  ],
+  "mapper_response": {
+    "freshness": { "status": "unknown", "reason_code": "impact_anchor_missing" },
+    "fact_revisions": { "cecelia": "bc4e8644" },
+    "affected_nodes": [],
+    "required_assertions": [],
+    "unclaimed_files": ["DoD.md"]
+  }
+}

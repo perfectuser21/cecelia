@@ -1,0 +1,33 @@
+{
+  "initiative_id": "2d6338ec-af89-405c-9101-de192302e958",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动全在 packages/brain（diff-gate/harness-gates/loop），纯后端调度决策逻辑，无 UI/远端 agent/engine 介入",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 按 reason_code 三分类 + 受理单透传 detail + loop 确定性 impact 出口路由",
+      "scope": "diff-gate.js freshness 消费处按 mapper reason_code 三分类（确定性结论 blocked/retryable:false 携 detail.unclaimed_files/capability_ids；未知 reason_code fail-closed mapper_contract_invalid；真新鲜度五类保持 mapper_stale/retryable:true）；harness-gates.js gateReceipt 透传 reason/retryable/detail 并上提 unclaimed_files；loop.js 补齐 DETERMINISTIC_IMPACT_ERROR_CODES 并新增导出 routeDeterministicImpact，对 retryable:false 走确定性出口（impact_anchor_missing→spawn:generator-fix 一次→human_review；capability_assertion_coverage_missing→human_review）而非无限退避重试；不改 radius.js/map-client.js；Brain semver 四处同步 + DevGate 三项；永久回归测试复制到 packages/brain/src/**/__tests__/",
+      "dod": [
+        "[BEHAVIOR] diff-gate 三分类（blocked/mapper_stale 回归/mapper_contract_invalid fail-closed）冻结测试全绿",
+        "[BEHAVIOR] harness-gates gateReceipt 透传 detail 冻结测试全绿",
+        "[BEHAVIOR] loop DETERMINISTIC_IMPACT_ERROR_CODES + routeDeterministicImpact 路由冻结测试全绿",
+        "[BEHAVIOR] run d1360a48 回归夹具冻结测试全绿",
+        "[ARTIFACT] Brain semver 四处同步 + DevGate 三项通过 + 永久回归测试落 packages/brain/src/**/__tests__/"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/harness-gates.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate-classify.test.js",
+        "packages/brain/src/orchestrator/__tests__/loop-impact-route.test.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
