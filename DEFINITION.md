@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.64
+**Brain 版本**: 1.273.65
 
 ## Brain 1.273.64 — Judge coverage.deferred 缺省为 false，裁决回调不再 409 丢失
 
