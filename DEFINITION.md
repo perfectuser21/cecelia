@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.66
+**Brain 版本**: 1.273.67
 
 ## Brain 1.273.66 — 冻结断言工作区允许 vite 写 bundled 配置 + vitest --no-cache + repin Runner
 
