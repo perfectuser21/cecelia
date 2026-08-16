@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.63
+**Brain 版本**: 1.273.64
+
+## Brain 1.273.64 — Judge coverage.deferred 缺省为 false，裁决回调不再 409 丢失
+
+- judge-v1 决策 schema 此前要求每条 coverage 必带 `deferred:boolean`（strict）；claude provider 只在提示词里看到 schema，Judge 把 `deferred=false` 写进 step 文本而漏掉字段 → 回调 409 `judge_result_decision_invalid` → runner 视为 permanent rejection（exit 75）→ 裁决丢失 → kernel 租约过期后重起同一个 Judge，无限循环（2026-08-16 生产 run dc5c19b7：4 个 Judge attempt 各跑 ~7 分钟全部丢弃）。
+- `deferred` 缺省按 false 接住（语义"Judge 显式推迟仅服务端后置检查"，缺省即不推迟）；非布尔仍拒绝。回归 `execution-contract.test.js`。
 
 ## Brain 1.273.63 — capability-change-v1 直出收敛不再与 validation-identity 硬门热循环
 
