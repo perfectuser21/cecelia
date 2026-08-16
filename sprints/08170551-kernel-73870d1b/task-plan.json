@@ -1,0 +1,29 @@
+{
+  "initiative_id": "27329e04-6874-415f-bc81-4fa72fd63b3c",
+  "journey_type": "autonomous",
+  "journey_type_reason": "全部改动落在 packages/brain/src/orchestrator + work-routing-store，纯后端 kernel 逻辑，无 UI/远端 agent 参与。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "修复 gan_no_push_streak 误判：ground-truth 提案 remote 加 repo 兜底禁退 origin + derive 消费 crossCheckMismatch + work-routing 回填 base_repo URL",
+      "scope": "① ground-truth.js 导出 resolveProposalRemote/observeProposalBranch，用 parseBaseRepo(base_repo) ?? parseBaseRepo(repo) 解析提案 remote，皆空不退 origin 而置 proposalRemoteUnresolved=true 并跳过 ls-remote；collectGroundTruth 内联块改调该导出。② derive.js gan_no_push_streak 仅在 counters.crossCheckMismatch !== true 时触发；observed.proposalRemoteUnresolved=true → mark_failed reason=proposal_remote_unresolved；观测 mismatch 有界（连续 3 次仍 mismatch → proposal_observation_mismatch）。③ work-routing-store.js 导出 canonicalBaseRepoUrl，createRoutedTask 对 coding_mutation 缺 base_repo 时回填 payload.base_repo 完整 clone URL。④ Brain semver 四处同步；⑤ 永久回归测试从 sprints/.../tests 复制进 packages/brain/src/**/__tests__/（DB 写路径用 brain-integration job 真 Postgres 集成测试）。",
+      "dod": [
+        "[BEHAVIOR] sprints/08170551-kernel-73870d1b/tests 全部冻结合同测试转 green（work-routing / ground-truth / derive）",
+        "[BEHAVIOR] node oracle-dryrun-observe.mjs 打印 OK（提案分支观测用 GitHub URL 而非 origin，rn>=1）",
+        "[BEHAVIOR] bash oracle-db-backfill.sh 真 psql 验 payload.base_repo 回填完整 URL",
+        "[BEHAVIOR] 既有 derive.test.js no_push_streak 回归用例保持 green（零回归）",
+        "[ARTIFACT] ground-truth.js/derive.js/work-routing-store.js 三处改动 + package.json semver bump + DevGate 三项通过"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/work-routing-store.js",
+        "packages/brain/package.json",
+        "packages/brain/src/orchestrator/__tests__/"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
