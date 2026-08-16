@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.67
+**Brain 版本**: 1.273.68
+
+## 本地候选的 generator-fix 不携带 pull_request:null（Brain 1.273.68）
+
+- dispatcher：无远端 PR 时 generator-fix bundle 不写 `pull_request` 键（runner 用 has() 判 PR 存在，null 会让 fix 轮必被拒）。
 
 ## 从未跑起来的 Generator 不进 fix 轮（Brain 1.273.67）
 
