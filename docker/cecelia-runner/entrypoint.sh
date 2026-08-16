@@ -1206,6 +1206,16 @@ is_evaluator_dependency_path() {
   [[ "$path" == node_modules/* || "$path" == */node_modules/* ]]
 }
 
+# routing action gate（routing-action-gate 段）会在 read-write 角色启动时往工作区根写
+# runner 自有的 receipt lock `.dev-lock.<branch>`——它是 Runner 基础设施产物，不是候选
+# 产品文件（同 :305 处 status 过滤既有豁免）。冻结候选树断言只豁免工作区根下的普通文件：
+# 目录、符号链接、子目录里的同名文件仍按污染处理，豁免面不扩大。
+is_evaluator_runner_receipt_lock() {
+  local workspace="$1" path="$2"
+  [[ "$path" == .dev-lock.* && "$path" != */* ]] || return 1
+  [[ -f "$workspace/$path" && ! -L "$workspace/$path" ]]
+}
+
 frozen_sha256_stream() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum | awk '{print $1}'
@@ -1602,6 +1612,9 @@ assert_frozen_evaluator_candidate_tree() {
   while IFS= read -r untracked_path; do
     [[ -n "$untracked_path" ]] || continue
     if is_evaluator_dependency_path "$untracked_path"; then
+      continue
+    fi
+    if is_evaluator_runner_receipt_lock "$workspace" "$untracked_path"; then
       continue
     fi
     echo "[entrypoint] frozen evaluator candidate has untracked product file: $untracked_path" >&2
