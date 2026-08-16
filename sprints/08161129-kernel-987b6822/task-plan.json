@@ -1,0 +1,37 @@
+{
+  "initiative_id": "8b90c04b-b288-4744-81f6-e8375a54da32",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "核心改动落在 packages/engine/hooks(dev-mode-tool-guard.sh) + skills/dev/scripts(worktree-manage.sh) 与 Brain work-routing 签发口，属开发流水线闸门修复",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "有头 /dev 收编：Work Router receipt 有头签发口 + hook bootstrap 逃生口",
+      "scope": "Brain 新增 POST /api/brain/work-routing/headed-attempts（校验 routing_receipt_id → 复用 createKernelRun → 写 harness_attempts headed 行，返回 route_token；validate SQL 不改）+ 收尾 PATCH completed；Engine worktree-manage.sh 有 --task-id 时调签发口/改 cp-branch/写六字段 lock/导出 CECELIA_ROUTING_* env；Hook dev-mode-tool-guard.sh 补 worktree-manage.sh 精确路径 bootstrap 逃生口（无 lock 时放行该命令，其余照旧 fail-closed）；Brain semver bump 四处同步 + DevGate；hook 三要素；永久回归测试复制到 packages/brain/src/__tests__/integration/ 与 packages/engine/tests/integration/（合同冻结测试留 sprints/<sprint_dir>/tests/）",
+      "dod": [
+        "[BEHAVIOR] dev-mode-tool-guard.test.sh 全绿：无 lock 时 worktree-manage.sh 精确路径放行、其它 Bash 仍 block、有 lock 但 validate inactive → block",
+        "[BEHAVIOR] headed-attempts.pg.integration.test.js 全绿：无 routing_receipt_id 400、已路由返回 route_token + harness_attempts running/workspace_spec/headed 标记、validate valid:true、completed 后 409 run_attempt_inactive",
+        "[BEHAVIOR] ## E2E 验收 local_api 脚本 exit 0（真 Brain+真 PG+真 hook，5 验收点全过）",
+        "[ARTIFACT] sprints/08161129-kernel-987b6822/tests/contract-red.test.ts 存在（合同冻结路径）；Brain work-routing.js 含 headed-attempts；worktree-manage.sh 含 --task-id + headed-attempts；hook 含 worktree-manage.sh 精确路径逃生口；e2e-seed-routed-task.mjs 存在",
+        "[ARTIFACT] Brain version 四处同步（check-version-sync.sh 过）+ feature-registry changelog 更新"
+      ],
+      "files": [
+        "packages/brain/src/routes/work-routing.js",
+        "packages/brain/src/orchestrator/headed-kernel-runtime.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md",
+        "packages/engine/skills/dev/scripts/worktree-manage.sh",
+        "packages/engine/hooks/dev-mode-tool-guard.sh",
+        "packages/engine/tests/integration/dev-mode-tool-guard.test.sh",
+        "packages/brain/src/__tests__/integration/headed-attempts.pg.integration.test.js",
+        "packages/brain/vitest.integration.config.js",
+        "packages/engine/feature-registry.yml",
+        "sprints/08161129-kernel-987b6822/e2e-seed-routed-task.mjs"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
