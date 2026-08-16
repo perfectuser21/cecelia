@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.63
+**Brain 版本**: 1.273.64
 
 ## Brain 1.273.63 — capability-change-v1 直出收敛不再与 validation-identity 硬门热循环
 
