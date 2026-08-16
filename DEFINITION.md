@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.65
+**Brain 版本**: 1.273.66
 
 ## Brain 1.273.65 — 可信断言执行器以断言所在包为 cwd 跑 vitest + repin Runner
 
