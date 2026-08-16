@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.62
+**Brain 版本**: 1.273.63
+
+## Brain 1.273.63 — capability-change-v1 直出收敛不再与 validation-identity 硬门热循环
+
+- kernel derive 的 `capability-change-v1` 直出分支此前只看 `proposeBranchRn>=1` 就返回 `force_approve_contract`；loop 的 force_approve 被 validation-identity-policy 硬门驳回后只追加一条 `verdict:reviewer`（REVISION，source=validation_identity_policy）决策行再 continue，于是同一 SHA 上 ≈1 跳/秒热循环直到 hop_cap（2026-08-16 生产 run e64c335a：17 分钟 936 跳，run 卡死）。
+- 现与通用 GAN 路径的 F1 修复同语义：最近一条 verdict:reviewer 是硬门驳回【当前】propose SHA → 直出分支让路回 `spawn:proposer`（reason `profile_direct_contract_identity_revision`），proposer 按 REVISION 反馈出新 SHA 后再收敛；共用 helper `latestReviewerLogDeniedByIdentityPolicy`。回归 `packages/brain/src/orchestrator/__tests__/derive-direct-profile-identity-loop.test.js`。
 
 ## Brain 1.273.62 — Fleet bridge token 以 env_file 为唯一权威 + 启动自检
 
