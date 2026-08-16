@@ -15,9 +15,12 @@ git -C "$TEST_ROOT/main" config core.hooksPath /dev/null
 printf 'base\n' > "$TEST_ROOT/main/base.txt"
 git -C "$TEST_ROOT/main" add base.txt
 git -C "$TEST_ROOT/main" commit -m base >/dev/null
-git -C "$TEST_ROOT/main" worktree add -b cp-routing "$TEST_ROOT/worktree" >/dev/null
+# harness 内核 worktree 落在 .claude/worktrees/ 下——receipt 闸只对这类上下文强制（逃生口 issue 03abdbf7）
+WT="$TEST_ROOT/main/.claude/worktrees/harness-v2/worktree"
+mkdir -p "$(dirname "$WT")"
+git -C "$TEST_ROOT/main" worktree add -b cp-routing "$WT" >/dev/null
 
-BASE_SHA=$(git -C "$TEST_ROOT/worktree" rev-parse HEAD)
+BASE_SHA=$(git -C "$WT" rev-parse HEAD)
 mkdir -p "$TEST_ROOT/bin"
 cat > "$TEST_ROOT/bin/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -39,13 +42,13 @@ export CECELIA_BASE_SHA="$BASE_SHA"
 # shellcheck disable=SC1091
 source "$WORKTREE_MANAGE"
 write_routing_dev_lock \
-  "$TEST_ROOT/worktree/.dev-lock.cp-routing" cp-routing test-session "$TEST_ROOT/worktree"
+  "${WT}/.dev-lock.cp-routing" cp-routing test-session "$WT"
 jq -e '.task_id == "task-1" and .routing_receipt_id == "receipt-1" and .run_id == "run-1"' \
-  "$TEST_ROOT/worktree/.dev-lock.cp-routing" >/dev/null
+  "${WT}/.dev-lock.cp-routing" >/dev/null
 
 run_hook() {
   local tool_name="$1"
-  local cwd="${2:-$TEST_ROOT/worktree}"
+  local cwd="${2:-$WT}"
   printf '{"tool_name":"%s","cwd":"%s","tool_input":{}}\n' "$tool_name" "$cwd" \
     | PATH="$TEST_ROOT/bin:$PATH" bash "$HOOK"
 }
@@ -59,7 +62,7 @@ grep -q 'X-Harness-Route-Token: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 
 # Fleet read-only workspace 不可写 .dev-lock；由 trusted Runner 导出的 scoped token
 # 与 server-owned identity 必须仍可完成同一在线校验。
-rm "$TEST_ROOT/worktree/.dev-lock.cp-routing"
+rm "${WT}/.dev-lock.cp-routing"
 run_hook Bash
 
 # 所有 mutation-capable 及未知工具都必须 fail closed。
@@ -77,7 +80,7 @@ fi
 run_hook Read
 
 # 锁中的 baseline 必须是当前 HEAD 的祖先，不能只信 API 的 true。
-cat > "$TEST_ROOT/worktree/.dev-lock.cp-routing" <<EOF
+cat > "${WT}/.dev-lock.cp-routing" <<EOF
 {"task_id":"task-1","routing_receipt_id":"receipt-1","run_id":"run-1","repo":"perfectuser21/cecelia","branch":"cp-routing","base_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 EOF
 if run_hook Bash >/dev/null 2>&1; then
