@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.60
+**Brain 版本**: 1.273.61
 
 ## Brain 1.273.60 — Runner receipt lock 与冻结评估树断言对齐
 
