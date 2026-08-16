@@ -49,6 +49,17 @@ esac
 if [[ "$MUTATION_CAPABLE" == "true" ]]; then
     BRANCH=$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
     LOCK_FILE="$WORKTREE_ROOT/.dev-lock.$BRANCH"
+
+    # Bootstrap 逃生口（issue 03abdbf7）：receipt 闸只针对 Harness 内核派发的 coding worktree
+    # ——它们跑在 .claude/worktrees/ 下、且带 CECELIA_ROUTING_* 作用域授权 env。有头/交互
+    # 会话、launcher 自动落的 per-session worktree（session-* 分支）、人工 /dev 都没有任何
+    # receipt 签发口，若在这里一律 fail-closed 会把它们整段锁死（连 echo 都 route_violation），
+    # 且想修这个闸本身也没法动手——设计评审预警的"fail-closed 自修复死锁、无 bootstrap 逃生口"
+    # 即由此应验。只对上述两类 harness 上下文强制 receipt；其余跳过 receipt 校验，但**仍继续
+    # 往下走 lights/后台-Bash 纪律闸**（那是独立于 receipt 的 /dev 行为约束，不能一并放行）。
+    if [[ "$WORKTREE_ROOT" == *"/.claude/worktrees/"* \
+        || -n "${CECELIA_ROUTING_VALIDATE_URL:-}" \
+        || -n "${CECELIA_ROUTING_VALIDATION_TOKEN:-}" ]]; then
     scoped_url="${CECELIA_ROUTING_VALIDATE_URL:-}"
     scoped_token="${CECELIA_ROUTING_VALIDATION_TOKEN:-}"
     if [[ -n "$scoped_url" || -n "$scoped_token" ]]; then
@@ -99,6 +110,7 @@ if [[ "$MUTATION_CAPABLE" == "true" ]]; then
     if [[ "$(printf '%s' "$validation" | jq -r '.valid // false' 2>/dev/null)" != "true" ]]; then
         echo '{"decision":"block","reason":"route_violation: receipt validation failed"}'
         exit 2
+    fi
     fi
 fi
 

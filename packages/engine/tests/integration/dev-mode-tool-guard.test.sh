@@ -111,6 +111,27 @@ out=$(run_guard "$E_REPO" "Bash" '"tool_input":{"command":"echo hi"}')
 exit_code=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')
 assert_exit "Case E 放行" "0" "$exit_code"
 
+# Case F: 有头/交互会话（非 .claude/worktrees、无 CECELIA_ROUTING_* env、无 receipt lock）
+# → receipt 闸逃生口放行，不得 route_violation（issue 03abdbf7 死锁修复）
+echo ""
+echo "=== Case F: 有头会话无 receipt → 逃生口放行（不 route_violation）==="
+F_REPO="$TMPROOT/case-f"
+make_repo "$F_REPO" "session-headed-test"
+# 有 live light（模拟 /dev 中）但没有 .dev-lock，且不在 .claude/worktrees 下、无 routing env
+mkdir -p "$F_REPO/.cecelia/lights"
+cat > "$F_REPO/.cecelia/lights/testsess-session-headed-test.live" <<EOF
+{"branch":"session-headed-test","worktree_path":"$F_REPO","started_at":"2026-05-04T00:00:00Z","session_id":"test"}
+EOF
+unset CECELIA_ROUTING_VALIDATE_URL CECELIA_ROUTING_VALIDATION_TOKEN
+out=$(run_guard "$F_REPO" "Bash" '"tool_input":{"command":"echo hi"}')
+exit_code=$(echo "$out" | grep -oE 'EXIT:[0-9]+' | sed 's/EXIT://')
+assert_exit "Case F 放行" "0" "$exit_code"
+if [[ "$out" == *"route_violation"* ]]; then
+    echo "❌ Case F 不应 route_violation: $out"; FAIL=$((FAIL+1))
+else
+    echo "✅ Case F 无 route_violation"; PASS=$((PASS+1))
+fi
+
 echo ""
 echo "=== dev-mode-tool-guard: $PASS PASS / $FAIL FAIL ==="
 [[ "$FAIL" -eq 0 ]]
