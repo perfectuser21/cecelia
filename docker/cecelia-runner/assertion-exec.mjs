@@ -95,6 +95,19 @@ function findUp(start, root, suffix) {
   fail(`${suffix} is unavailable`);
 }
 
+// vitest 必须在断言文件所在的最近 package.json 目录里跑（与 Brain 侧
+// gp-assertion-command.js packageRoot 同语义）：monorepo 根 vitest 配置的 include
+// 不含 packages/*/src/**，从仓库根跑会 "No test files found, exiting with code 1"
+// （2026-08-16 生产 run dc5c19b7 / 0eb9ac63：required assertion 必败 → Judge 必 FAIL）。
+function packageRootOf(target, repoRoot) {
+  for (let current = dirname(target); within(repoRoot, current) || current === repoRoot;
+    current = dirname(current)) {
+    if (existsSync(join(current, 'package.json'))) return current;
+    if (current === repoRoot) break;
+  }
+  return repoRoot;
+}
+
 function execution(repoRoot, parsed) {
   const shapeValue = shape(parsed.assertion_id);
   const descriptor = canonical(shapeValue);
@@ -103,15 +116,20 @@ function execution(repoRoot, parsed) {
   if (shapeValue.kind === 'vitest') {
     const node = trustedFile(process.execPath, 'node');
     const vitest = findUp(dirname(target), repoRoot, 'node_modules/vitest/vitest.mjs');
-    return { ...descriptor, executable: node, argv: [vitest, 'run', target, '--'] };
+    const cwd = packageRootOf(target, repoRoot);
+    return {
+      ...descriptor, executable: node, cwd,
+      argv: [vitest, 'run', `./${relative(cwd, target)}`, '--'],
+    };
   }
   if (shapeValue.kind === 'pytest') {
     const python = trustedFile('/usr/bin/python3', 'python3');
-    return { ...descriptor, executable: python, argv: ['-m', 'pytest', '--', target] };
+    return { ...descriptor, executable: python, cwd: repoRoot, argv: ['-m', 'pytest', '--', target] };
   }
   return {
     ...descriptor,
     executable: trustedFile('/bin/bash', 'bash'),
+    cwd: repoRoot,
     argv: [target],
   };
 }
@@ -126,7 +144,7 @@ if (process.argv[2] === '--describe') {
 }
 if (process.argv[2] !== '--run') fail('expected --describe or --run');
 const child = spawnSync(command.executable, command.argv, {
-  cwd: repoRoot,
+  cwd: command.cwd,
   env: {
     HOME: process.env.HOME ?? '/nonexistent',
     PATH: '/usr/local/bin:/usr/bin:/bin',
