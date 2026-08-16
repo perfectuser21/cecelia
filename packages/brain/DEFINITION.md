@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.62
+**Brain 版本**: 1.273.63
+
+## capability-change-v1 直出收敛让路 validation-identity 硬门（Brain 1.273.63）
+
+- derive 直出分支：硬门刚驳回当前 propose SHA → `spawn:proposer`（`profile_direct_contract_identity_revision`），不再对同一 SHA 重复 `force_approve_contract` 热循环。
 
 ## Fleet bridge token 以 env_file 为唯一权威 + 启动自检（Brain 1.273.62）
 

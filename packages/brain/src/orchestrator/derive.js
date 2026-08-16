@@ -182,6 +182,21 @@ function applyHopFence(decision, counters) {
   return decision;
 }
 
+/**
+ * 最近一条 verdict:reviewer 决策行是否为 validation-identity-policy 硬门驳回【当前】propose SHA。
+ * 通用 GAN 趋势闸（F1）与 capability-change-v1 直出收敛分支共用：命中时都必须让路回
+ * spawn:proposer，否则同一 SHA 反复 force_approve → 撞硬门 → REVISION 的热循环。
+ */
+function latestReviewerLogDeniedByIdentityPolicy(observed) {
+  const latestReviewerLogRow = [...sortedLogRows(observed.decisionLog)]
+    .reverse()
+    .find((row) => row.action === LOG_ACTION.VERDICT_REVIEWER);
+  if (!latestReviewerLogRow) return false;
+  const detail = asStructuredJson(latestReviewerLogRow.detail) ?? {};
+  return detail?.source === 'validation_identity_policy'
+    && detail?.contract_sha === observed.proposeBranchSha;
+}
+
 function sortedLogRows(decisionLog) {
   return Array.isArray(decisionLog)
     ? [...decisionLog].sort((a, b) => Number(a.hop) - Number(b.hop))
@@ -832,8 +847,17 @@ export function derive(observed) {
       );
     }
     if (!contract.approved) {
+      // 直出收敛 × validation-identity-policy 硬门（2026-08-16 run e64c335a 实证）：
+      // loop 的 force_approve_contract 分支被硬门驳回后只写一条
+      // verdict:reviewer(REVISION, source=validation_identity_policy) 决策行；若这里
+      // 仍按 rn>=1 返回 force_approve_contract，就是同一 SHA 上 ≈1 跳/秒的热循环
+      // （936 跳/17 分钟）直到 hop_cap。与通用 GAN 路径的 F1 修复同语义：硬门驳回了
+      // 当前 propose SHA → 让路回 spawn:proposer，让 proposer 按 REVISION 反馈出新 SHA。
+      const identityPolicyBlockedCurrentSha = latestReviewerLogDeniedByIdentityPolicy(observed);
       const decision = observed.proposeBranchRn >= 1
-        ? { phase: 'gan', action: ACTION.FORCE_APPROVE_CONTRACT, reason: 'profile_direct_contract_convergence' }
+        ? (identityPolicyBlockedCurrentSha
+          ? { phase: 'gan', action: ACTION.SPAWN_PROPOSER, reason: 'profile_direct_contract_identity_revision' }
+          : { phase: 'gan', action: ACTION.FORCE_APPROVE_CONTRACT, reason: 'profile_direct_contract_convergence' })
         : { phase: 'gan', action: ACTION.SPAWN_PROPOSER, reason: 'profile_direct_contract_proposal' };
       return applyHopFence(decision, counters);
     }
@@ -936,11 +960,7 @@ function deriveGan(observed) {
   const latestReviewerLogRow = [...sortedLogRows(observed.decisionLog)]
     .reverse()
     .find((row) => row.action === LOG_ACTION.VERDICT_REVIEWER);
-  const latestReviewerLogDetail = latestReviewerLogRow
-    ? (asStructuredJson(latestReviewerLogRow.detail) ?? {})
-    : null;
-  const identityPolicyBlockedCurrentSha = latestReviewerLogDetail?.source === 'validation_identity_policy'
-    && latestReviewerLogDetail?.contract_sha === proposeBranchSha;
+  const identityPolicyBlockedCurrentSha = latestReviewerLogDeniedByIdentityPolicy(observed);
 
   // 合同故障重开后（reopen 行比最新 reviewer verdict 新 = proposer 还没出修复轮）：
   // 趋势闸必须让路。案卷未变，趋势仍会判 diverging/oscillating——若不让路，
