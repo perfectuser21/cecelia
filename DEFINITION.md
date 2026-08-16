@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.67
+**Brain 版本**: 1.273.68
 
 ## Brain 1.273.67 — 从未跑起来的 Generator 不进 fix 轮：基础设施失败继续重派 Generator
 
