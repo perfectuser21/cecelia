@@ -1,0 +1,14 @@
+{
+  "_source": "recorded radius/mapper response for run d1360a48 (task 0ca4b234), Generator 候选在仓库根新建 DoD.md，快照新鲜前提下判定为 impact_anchor_missing（会话独享录制件，禁止改用共享 /tmp）",
+  "changed_files": ["DoD.md", "packages/brain/src/impact-contract/diff-gate.js"],
+  "freshness": {
+    "status": "unknown",
+    "reason_code": "impact_anchor_missing",
+    "checked_at": "2026-08-15T20:08:00.000Z",
+    "mapper_revision": "bc4e8644bc4e8644bc4e8644bc4e8644bc4e8644"
+  },
+  "fact_revisions": { "cecelia": "bc4e8644bc4e8644bc4e8644bc4e8644bc4e8644" },
+  "affected_nodes": [],
+  "required_assertions": [],
+  "unclaimed_files": ["DoD.md"]
+}

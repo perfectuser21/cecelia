@@ -1,0 +1,32 @@
+{
+  "initiative_id": "ba3cdfac-4211-4e90-8ebd-c1248766abba",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动全部在 packages/brain（kernel 编排层 diff-gate/loop/derive），无 UI、无远端 agent 协议、非 engine hooks，纯后端自治链路",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 按 reason_code 三分类 + gateReceipt 透传 + loop/derive 确定性路由 + fail-closed 出口",
+      "scope": "diff-gate.js 三分类（确定性 reason_code→blocked/retryable:false+detail；真新鲜度→mapper_stale/retryable:true；未知→mapper_contract_invalid/retryable:false）；harness-gates.js gateReceipt 透传 detail；loop.js DETERMINISTIC_IMPACT_ERROR_CODES 补确定性 reason 且 retryable:false 不走 infrastructure_blocked 退避；derive.js 新增 routeDeterministicImpact 并导出 loop 的 DETERMINISTIC 集合；Brain semver 四处同步；永久回归测试复制进 packages/brain/src/**/__tests__/",
+      "dod": [
+        "[BEHAVIOR] B-01 diff-gate 三分类 + run d1360a48 夹具（tests/diff-gate-reason-code.test.ts 全过）",
+        "[BEHAVIOR] B-02 harness-gates beforeEvaluate gateReceipt 透传 detail（tests/harness-gates-receipt.test.ts 全过）",
+        "[BEHAVIOR] B-03 loop DETERMINISTIC 集合 + derive.routeDeterministicImpact 路由（tests/impact-route.test.ts 全过）",
+        "[BEHAVIOR] B-05 orchestrator_decision_log 落 deny:impact:impact_anchor_missing/retryable:false/unclaimed_files 非空（tests/e2e/impact-decision-log.mjs，需 ${DB_URL}）",
+        "[ARTIFACT] Brain semver 四处同步（package.json/package-lock.json/.brain-versions/DEFINITION.md）+ DevGate 三项通过"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/harness-gates.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
