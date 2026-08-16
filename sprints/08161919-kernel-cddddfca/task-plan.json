@@ -1,0 +1,29 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "变更全部落在 packages/brain（orchestrator + 建单口），无 UI/agent 协议/engine 参与。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "修复 gan_no_push_streak 误判：提案 remote base_repo→repo 回退禁 origin 兜底 + derive crossCheckMismatch 守卫 + 建单口回填 base_repo",
+      "scope": "ground-truth.js 提案 remote 解析加 payload.repo 回退与 proposalRemoteUnresolved 标志（禁退 origin）；derive.js gan_no_push_streak 触发门加 crossCheckMismatch 守卫并新增 proposal_remote_unresolved/proposal_observation_mismatch 两个独立 failure_reason；work-routing-store.js createRoutedTask 对 coding_mutation 缺 base_repo 时从 map_scope_repositories repo/aliases 回填规范 clone URL；Brain semver 四处同步；将三份冻结单测复制进 packages/brain/src/**/__tests__/ 作永久回归。",
+      "dod": [
+        "[BEHAVIOR] ground-truth 提案 remote 对 GitHub URL 观测 rn=1 且不退 origin（tests/ground-truth-proposal-remote.test.js）",
+        "[BEHAVIOR] base_repo+repo 皆缺 → proposalRemoteUnresolved=true 不跑 ls-remote origin",
+        "[BEHAVIOR] derive crossCheckMismatch=true 不触发 gan_no_push_streak；proposalRemoteUnresolved=true → reason=proposal_remote_unresolved；false 分支零回归",
+        "[BEHAVIOR] createRoutedTask 缺 base_repo 落库 payload.base_repo=完整 GitHub URL（单测 + 真 PG psql 回读）",
+        "[ARTIFACT] 冻结单测在 sprints/08161919-kernel-cddddfca/tests/，永久回归复制到 packages/brain/src/**/__tests__/",
+        "[ARTIFACT] Brain 版本 semver bump 四处同步，DevGate 三项通过"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/work-routing-store.js",
+        "packages/brain/package.json"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
