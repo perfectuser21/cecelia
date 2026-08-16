@@ -80,6 +80,50 @@ function guardWorkerConfiguration(worker, {
   });
 }
 
+/**
+ * 纯函数：从 env 描述 fleet execution transport 的就绪态（启动自检 / /health 暴露）。
+ * 绝不回显密钥本身，只报告是否配置及长度是否达标（与 guardWorkerConfiguration 同阈值 32）。
+ *
+ * 2026-08-16 09:38Z 生产实证：Brain 容器被不带 --env-file 的 compose 重建后
+ * KERNEL_FLEET_BRIDGE_TOKEN 为空，此前只在第一次 attempt 用到 transport 时才炸
+ * （execution_transport_unavailable），callback 503 无限重试直到 run lease 过期。
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {{enabled:boolean,status:'ready'|'unavailable'|'disabled',reason:?string,
+ *           shared_secret_configured:boolean,worker_machines:string[]}}
+ */
+export function describeFleetTransportReadiness(env = process.env) {
+  const enabled = env.KERNEL_FLEET_REMOTE_ENABLED === 'true';
+  const sharedSecret = env.KERNEL_FLEET_BRIDGE_TOKEN;
+  const workerMachines = Object.entries({
+    'us-mac-m4': env.FLEET_WORKER_US_MAC_M4_URL,
+    'xian-mac-m4': env.FLEET_WORKER_XIAN_MAC_M4_URL,
+    'xian-mac-m1': env.FLEET_WORKER_XIAN_MAC_M1_URL,
+  }).filter(([, url]) => isValidHttpBaseUrl(url)).map(([machine]) => machine);
+  const secretConfigured = typeof sharedSecret === 'string' && sharedSecret.length >= 32;
+  let status = 'ready';
+  let reason = null;
+  if (!enabled) {
+    status = 'disabled';
+  } else if (typeof sharedSecret !== 'string' || sharedSecret.length === 0) {
+    status = 'unavailable';
+    reason = 'shared_secret_missing';
+  } else if (sharedSecret.length < 32) {
+    status = 'unavailable';
+    reason = 'shared_secret_too_short';
+  } else if (workerMachines.length === 0) {
+    status = 'unavailable';
+    reason = 'worker_urls_missing';
+  }
+  return Object.freeze({
+    enabled,
+    status,
+    reason,
+    shared_secret_configured: secretConfigured,
+    worker_machines: workerMachines,
+  });
+}
+
 export function createProductionExecutionTransport({
   env = {},
   localMachineId = DEFAULT_LOCAL_MACHINE_ID,

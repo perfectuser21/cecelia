@@ -104,7 +104,10 @@ services:
       # Phase 4B: all canonical machines use the authenticated Fleet Worker
       # Attempt API. An absent/short token remains fail-closed in the transport.
       - KERNEL_FLEET_REMOTE_ENABLED=${KERNEL_FLEET_REMOTE_ENABLED:-true}
-      - KERNEL_FLEET_BRIDGE_TOKEN=${KERNEL_FLEET_BRIDGE_TOKEN:-}
+      # KERNEL_FLEET_BRIDGE_TOKEN 只来自 env_file(.env.docker)——不要在这里写
+      # `${KERNEL_FLEET_BRIDGE_TOKEN:-}`：environment 优先级高于 env_file，任何不带
+      # --env-file 的 compose up 都会把 token 盖成空串（2026-08-16 09:38Z 生产实证，
+      # 守卫 scripts/smoke/brain-compose-envfile-authority-smoke.sh）。
       # Workspace + PostgreSQL + stopped Runner preparation is intentionally
       # heavier than inspect/start/cancel, so it has an independent budget.
       - KERNEL_FLEET_PREPARE_TIMEOUT_MS=${KERNEL_FLEET_PREPARE_TIMEOUT_MS:-180000}
