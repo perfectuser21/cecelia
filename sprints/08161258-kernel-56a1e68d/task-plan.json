@@ -1,0 +1,47 @@
+{
+  "initiative_id": "56a1e68d-1ab4-4b5a-b729-71c3d3d1c8f2",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain（fleet worker 容器生命周期 + 容量核算 + DB 迁移），纯后端调度，无 UI 与远端 agent 协议。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Fleet Runner run 级双容器：工作容器常驻复用 + 候选 bundle→quarantine + Evaluator 干净容器 + 容量按并发 run 计 + feature flag",
+      "scope": "run 级工作容器 cecelia-fleet-run-<run8>（首建/复用/exec/销毁/reconcile 按 run_id）；Generator 候选 git bundle 落 quarantine 卷；Evaluator eval 容器 cecelia-fleet-eval-<attempt8> 从 bundle 干净 clone（不 fetch、防污染、损坏显式失败）；容量改按并发 run 容器数（每 run mem 2GB/cpu 2）+ autonomous_singleton per-run；migration 431 加 container_id 列；feature flag FLEET_RUN_SCOPED_CONTAINER 默认 on/off 回退；trust 边界不变。",
+      "dod": [
+        "[BEHAVIOR] 同 run 两 attempt 复用同一工作容器、不同 run 不同容器（B-01）",
+        "[BEHAVIOR] reconcile 按 run_id 找回活跃 run 容器不误删、终态销毁（B-02）",
+        "[BEHAVIOR] flag off 回退单 attempt 命名（B-03）",
+        "[BEHAVIOR] 候选 bundle→干净 clone HEAD==候选 SHA + 防污染 + 损坏失败（B-04/05/06）",
+        "[BEHAVIOR] 容量 5GB→≥2 并发 run + autonomous_singleton per-run（B-07/08）",
+        "[BEHAVIOR] 信任回归全绿（B-09）",
+        "[BEHAVIOR] container_id 落库同 run 共享（真 PG，migration 431）（B-10）",
+        "[BEHAVIOR] Brain semver + DevGate 三件套（B-11）",
+        "[ARTIFACT] migration 431 + pg-integration 登记 + feature flag"
+      ],
+      "files": [
+        "packages/brain/scripts/fleet-worker/attempt-runner.cjs",
+        "packages/brain/scripts/fleet-worker/attempt-runner.test.cjs",
+        "packages/brain/scripts/fleet-worker/workspace-manager.cjs",
+        "packages/brain/scripts/fleet-worker/workspace-manager.test.cjs",
+        "packages/brain/scripts/fleet-worker/fleet-worker.cjs",
+        "packages/brain/scripts/fleet-worker/attempt-resources.cjs",
+        "packages/brain/src/orchestrator/fleet-node/node-profile.js",
+        "packages/brain/src/orchestrator/fleet-node/node-profile.test.js",
+        "packages/brain/src/orchestrator/preflight/production-probes.js",
+        "packages/brain/src/orchestrator/attempt-machine-capacity.js",
+        "packages/brain/src/orchestrator/attempt-machine-capacity.test.js",
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/migrations/431_run_container_id.sql",
+        "packages/brain/src/__tests__/integration/migration-431-run-container-id.pg.integration.test.js",
+        "packages/brain/vitest.config.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
