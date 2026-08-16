@@ -1,6 +1,11 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.59
+**Brain 版本**: 1.273.60
+
+## Runner Receipt Lock 与冻结评估树断言对齐（Brain 1.273.60）
+
+- Runner routing action gate 写入工作区根的 `.dev-lock.<branch>` 是 Runner 自有 receipt lock，不是候选产品文件；冻结候选树断言只豁免该根级普通文件，目录 / 符号链接 / 子目录同名文件仍视为污染。
+- canonical Runner digest 重钉为 `sha256:3cbe96ca7c614d93f1263eaf1e890d7c492da0965076e0c2cf2c4c204fbe3e19`，Fleet Worker 版本 pin 不变。
 
 ## Partial Clone Workspace Authority（Brain 1.273.59）
 
@@ -14,7 +19,7 @@
 
 ## Fleet Runner Baseline Recovery（Brain 1.273.56）
 
-- Canonical Runner 更新为冻结来源重建的 `sha256:d9087a85a3bbaa668628dfb3166f980a62c3851c8033d5d26e194fc975b55d0a`，NodeProfile、rollout、reconciler 与 smoke 共享同一不可变 pin。
+- Canonical Runner 更新为冻结来源重建的 `sha256:3cbe96ca7c614d93f1263eaf1e890d7c492da0965076e0c2cf2c4c204fbe3e19`，NodeProfile、rollout、reconciler 与 smoke 共享同一不可变 pin。
 - Fleet Worker 准入版本同步为 `1.272.20`；恢复过程仍要求 exact digest、entrypoint 供应链标签和真实容器探针全部通过。
 
 ## Generator Local Candidate Runtime Authority（Brain 1.273.55）
