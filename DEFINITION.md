@@ -8,7 +8,13 @@
 
 
 
-**Brain 版本**: 1.273.74
+**Brain 版本**: 1.273.75
+
+## Brain 1.273.75 — 覆盖闸收敛到机械可保证的边界（位置对齐，措辞不再否决）
+
+- 1.273.73 要求裁判回显 `step_index`，但裁判（DeepSeek，调用未强制 response schema）实际交回 **17 条 coverage、0 条带 step_index**（2026-08-18 生产 run df347d50）——机械判定不能建立在"LLM 自愿配合字段格式"上。
+- 覆盖判定最终收敛为：优先 `step_index`，否则按位置（prompt 已要求按顺序给出）；只检查"每个 PRD 步骤都有条目"和"没有 passed=false"。措辞比对彻底退出否决路径——它拦不住真造假（复制 PRD 原文当 step 名即可绕过），却会把裁判正常的技术复述判死并拖成无限 recollect。"裁判是否老实逐步核对"由不可伪造的那层兜住：Runner 亲自执行且 SHA 逐字节匹配的冻结 required_assertions + Evaluator/Judge 双独立复核。
+- 同步更新既有防伪测试语义（防"漏检步骤"仍在：条目数不足照旧判缺步）；brain 单测 1215 files 13270 tests 全绿。
 
 ## Brain 1.273.74 — GitHub 能力探针探目标仓库，不探 /user
 
