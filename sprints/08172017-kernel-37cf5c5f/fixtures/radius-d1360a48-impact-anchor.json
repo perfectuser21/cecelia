@@ -1,0 +1,16 @@
+{
+  "_source": "run d1360a48 (task 0ca4b234 有头签发口) mapper /map/radius 录制件；候选在仓库根新建 DoD.md（Map 无主文件）。与 radius.js resolveImpactRadius 的 impact_anchor_missing 输出同形。若可取回真实录制原文，generator 用真实原文替换本占位（结构不变）。",
+  "freshness": {
+    "status": "unknown",
+    "reason_code": "impact_anchor_missing",
+    "checked_at": "2026-08-15T20:08:11.000Z",
+    "mapper_revision": "bc4e864400daf7b4cdafec5af09e4b8b4767a13e"
+  },
+  "changed_files": ["DoD.md"],
+  "affected_nodes": [],
+  "required_assertions": [],
+  "unclaimed_files": ["DoD.md"],
+  "fact_revisions": { "cecelia": "bc4e864400daf7b4cdafec5af09e4b8b4767a13e" },
+  "manifest_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "projection_digest": "0000000000000000000000000000000000000000000000000000000000000000"
+}
