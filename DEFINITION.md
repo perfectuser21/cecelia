@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.75
+**Brain 版本**: 1.273.76
+
+## Brain 1.273.76 — 人审出口对本地候选可用（Judge FAIL 后不再是死路）
+
+- `wait:human_review` handler 要求 PR URL 才能起预览并通知；Kernel 本地候选流程 `pr=null`（只有 Runner 冻结过的候选分支 + head_sha），于是 1.273.72 修好的止损闸把 run 正确送进人审后，派发被 `human review requires a valid PR URL` 挡回、同状态重复 → `blocked_same_state:BLOCKED` 判死（2026-08-18 生产 run c4339041 实证）。这是"PR 时代假设漏进本地候选流程"的第三例（前两例：第 19 类 `pull_request:null`、第 24 类止损闸读 `pr.head_sha`）。
+- 有远端 PR 时行为逐字不变（按 PR 号起预览环境）；只有候选时，通知带 `candidate_branch` + `pr_head_sha` 请人直接审阅冻结候选，返回 DONE（人审是挂起态，不是失败）。既无 PR 也无候选仍 BLOCKED（不放行无审阅对象的人审）。回归 `kernel-handlers.test.js` 新增 2 段。
 
 ## Brain 1.273.75 — 覆盖闸收敛到机械可保证的边界（位置对齐，措辞不再否决）
 

@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.75
+**Brain 版本**: 1.273.76
+
+## 人审出口对本地候选可用（Brain 1.273.76）
+
+- `wait:human_review` 在无远端 PR 时用冻结候选（分支+head_sha）请求人审并返回 DONE，不再因缺 PR URL 被 blocked_same_state 判死；无 PR 且无候选仍 BLOCKED。
 
 ## 覆盖闸按位置对齐（Brain 1.273.75）
 
