@@ -553,6 +553,33 @@ describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）
       missing: [{ index: 1, step: 'must save the form' }],
     });
   });
+  // 2026-08-17 生产实证（run 6125d565：14 轮 recollect / 5 次 judge FAIL / 空转 3.5 小时；
+  // run c4722d84 同病）：PRD Golden Path 步骤是整段中文长句，Judge 用自己的措辞复述
+  // （"Golden Path S2：ground-truth base_repo→repo 兜底…"）→ 严格全等匹配判"缺步" →
+  // FAIL(evidence_insufficient) → recollect → 同样再判缺步，永远到不了 merge。
+  // 覆盖判定必须按语义锚点匹配（保序 + 关键前缀双向包含），仍拒绝空泛/张冠李戴条目。
+  it('裁判用自己的措辞复述同一步骤（含步骤关键前缀）算覆盖，不判缺步', () => {
+    const steps = [
+      'kernel 在 GAN 循环中调用 ground-truth 观测提案分支数（proposeBranchRn）。缺 payload.base_repo 时用 payload.repo 短名兜底解析为规范 GitHub clone URL；两者都解析不到时禁止退 origin',
+      'derive 消费观测：gan_no_push_streak 只允许在 counters.crossCheckMismatch===false 时触发',
+    ];
+    const r = validateCoverage([
+      { step: 'Golden Path S1：kernel 在 GAN 循环中调用 ground-truth 观测提案分支数（proposeBranchRn）', passed: true, deferred: false, evidence: 'ground-truth.js:353 逐行复核' },
+      { step: 'S2 — derive 消费观测：gan_no_push_streak 只允许在 counters.crossCheckMismatch===false 时触发', passed: true, deferred: false, evidence: 'derive.js 门控真跑' },
+    ], steps);
+    expect(r.missing).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('措辞完全无关的条目仍判缺步（放宽不等于放行）', () => {
+    const r = validateCoverage(
+      [{ step: '我检查了一些东西，一切正常', passed: true, evidence: 'x' }],
+      ['kernel 在 GAN 循环中调用 ground-truth 观测提案分支数（proposeBranchRn）'],
+    );
+    expect(r.ok).toBe(false);
+    expect(r.missing).toHaveLength(1);
+  });
+
   it('每步都有 passed=true → ok', () => {
     const r = validateCoverage(
       [{ step: 'a', passed: true }, { step: 'b', passed: true }],
