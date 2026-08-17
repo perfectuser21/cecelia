@@ -1,0 +1,42 @@
+{
+  "initiative_id": "c81fbaab-2aff-404f-b15e-d12cfa6e6814",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动全部在 packages/brain（diff-gate/harness-gates/loop/derive），纯后端调度决策逻辑，无 UI / agent 协议。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 透传 reason_code + 确定性结论 fail-closed 出口",
+      "scope": "diff-gate.js 按 mapper freshness.reason_code 三类分流（真新鲜度→mapper_stale/retryable:true；确定性结论→blocked/retryable:false + detail{unclaimed_files,capability_ids}；未知→mapper_contract_invalid/retryable:false）；harness-gates.js gateReceipt 透传 reason/retryable/detail/unclaimed_files；loop.js/derive.js 对 impact retryable:false 结论走确定性出口（不 blanket failRun/不 infrastructure 退避），按 reason 路由 spawn:generator-fix（impact_anchor_missing，携 unclaimed_files；unclaimed_files 空则直接 human_review；同签名二次失败→human_review）/ wait:human_review（capability_assertion_coverage_missing）。DETERMINISTIC_IMPACT_ERROR_CODES 补确定性 reason。Brain semver bump 1.273.69 四处同步。radius.js / map-client.js 不改。冻结测试已在 sprints/08170944-kernel-4eb00a75/tests/；Generator 须把这 4 个测试 + 夹具的永久副本复制到 packages/brain/src/**/__tests__/ 并交付 e2e/impact-gate-e2e.mjs。",
+      "dod": [
+        "[BEHAVIOR] B-01 diff-gate impact_anchor_missing → blocked/retryable=false/detail.unclaimed_files",
+        "[BEHAVIOR] B-02 diff-gate capability_assertion_coverage_missing → blocked/retryable=false/detail.capability_ids",
+        "[BEHAVIOR] B-03 diff-gate fact_snapshot_stale → impact_unknown/mapper_stale/retryable=true（回归保护）",
+        "[BEHAVIOR] B-04 diff-gate 未知 reason_code → impact_unknown/mapper_contract_invalid/retryable=false（fail-closed）",
+        "[BEHAVIOR] B-05 harness-gates gateReceipt 透传 reason/retryable/detail/unclaimed_files",
+        "[BEHAVIOR] B-06 loop/derive impact_anchor_missing → 路由 spawn:generator-fix + intent 透传",
+        "[BEHAVIOR] B-07 loop/derive capability_assertion_coverage_missing → 路由 wait:human_review",
+        "[BEHAVIOR] B-08 回归夹具 run d1360a48 录制件 → 新代码 blocked:impact_anchor_missing",
+        "[BEHAVIOR] B-09 Final E2E scratch 库 orchestrator_decision_log 落 deny:impact:impact_anchor_missing/retryable=false/unclaimed_files 非空",
+        "[ARTIFACT] Brain semver 1.273.69 四处同步 + DevGate facts-check/version-sync/dod-mapping 三项过"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/harness-gates.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate-reason-code.test.js",
+        "packages/brain/src/impact-contract/__tests__/harness-gates-reason-code.test.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate-regression-d1360a48.test.js",
+        "packages/brain/src/orchestrator/__tests__/loop-impact-deterministic-route.test.js",
+        "sprints/08170944-kernel-4eb00a75/e2e/impact-gate-e2e.mjs",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
