@@ -629,6 +629,56 @@ describe('judge FAIL 反馈不得硬截掉打回原因（Alex 08-17 拍板：完
   });
 });
 
+describe('validateCoverage 位置对齐兜底（裁判不回显 step_index 的实证）', () => {
+  // 2026-08-18 生产实证（run df347d50 的 judge）：1.273.73 的 prompt 已明确要求每条 coverage
+  // 回显 step_index，但裁判（DeepSeek，无 response schema 强制）交回 17 条 coverage、
+  // **0 条带 step_index** —— 机械判定不能建立在"LLM 自愿配合"上。prompt 同时要求"按顺序
+  // 给出"，所以位置对齐是唯一可靠判据：cov[i] ↔ steps[i]，只看 passed，不比对措辞。
+  // 文字锚点降级为"位置缺失时的补救匹配"，不再作为否决条件。
+  const prdSteps = [
+    '**触发**：Generator 产出本地候选，kernel 在 spawn:evaluator 前经 harness-gates.js 调 diff-gate 评估 impact',
+    '**系统处理**：mapper_stale 保留 retryable=true 交由 kernel 重试',
+    '**出口**：确定性结论 fail-closed 并透传 reason_code',
+  ];
+
+  it('裁判按顺序给满条目但不带 step_index、措辞全改写 → 算覆盖', () => {
+    const r = validateCoverage([
+      { step: 'GP Step 1 — impact_anchor_missing → blocked/retryable=false', passed: true, deferred: false, evidence: 'diff-gate.js:242 真跑 7/7' },
+      { step: 'GP Step 2 — mapper_stale 保留 retryable=true', passed: true, deferred: false, evidence: 'B-02 5/5' },
+      { step: 'GP Step 3 — fail-closed 出口透传 reason_code', passed: true, deferred: false, evidence: 'loop.js 门控真跑' },
+    ], prdSteps);
+    expect(r.missing).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('条目数少于步骤数 → 缺的那些步仍判缺步', () => {
+    const r = validateCoverage([
+      { step: 'GP Step 1', passed: true, evidence: 'ok' },
+    ], prdSteps);
+    expect(r.ok).toBe(false);
+    expect(r.missing.map((m) => m.index)).toEqual([2, 3]);
+  });
+
+  it('位置对齐的条目 passed=false → 记 failed（不是缺步）', () => {
+    const r = validateCoverage([
+      { step: 'GP Step 1', passed: true, evidence: 'ok' },
+      { step: 'GP Step 2', passed: false, evidence: '命令无输出' },
+      { step: 'GP Step 3', passed: true, evidence: 'ok' },
+    ], prdSteps);
+    expect(r.missing).toEqual([]);
+    expect(r.failed.map((f) => f.index)).toEqual([2]);
+  });
+
+  it('带 step_index 时仍优先按序号对齐（乱序回显也能对上）', () => {
+    const r = validateCoverage([
+      { step_index: 3, step: 'C', passed: true, evidence: 'ok' },
+      { step_index: 1, step: 'A', passed: true, evidence: 'ok' },
+      { step_index: 2, step: 'B', passed: true, evidence: 'ok' },
+    ], prdSteps);
+    expect(r.ok).toBe(true);
+  });
+});
+
 describe('validateCoverage 按 step_index 对齐（文字匹配不可靠——2026-08-17 实证）', () => {
   // 生产 run 94141560 / 6b0a3de1：Judge 自己判 PASS，但服务端覆盖检查因文字对不上判"缺步"
   // 把整体拖成 FAIL → recollect。同一步的两种写法零字面重叠：
