@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.73
+**Brain 版本**: 1.273.74
+
+## GitHub 探针探目标仓库（Brain 1.273.74）
+
+- capability gate 的 GitHub 探针改探 TaskBundle 里的目标仓库 `/repos/<owner>/<name>`，`/user` 仅作无 repo 上下文时的回落；GitHub 局部故障不再让全链停摆。
 
 ## Judge 覆盖按 step_index 对齐（Brain 1.273.73）
 

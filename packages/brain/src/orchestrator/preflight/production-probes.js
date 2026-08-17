@@ -33,6 +33,14 @@ function boundedBaseSlots(value, canonicalCapacity) {
  * Thin adapter around state owned by the long-running Brain process.
  * Returned values deliberately exclude credentials and raw response bodies.
  */
+const GITHUB_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+/** 从探针输入里取 owner/name（TaskBundle 的 workspace_spec.repo 是唯一权威来源）。 */
+function githubRepoFromInput(input) {
+  const repo = input?.task_bundle?.inputs?.workspace_spec?.repo;
+  return typeof repo === 'string' && GITHUB_REPO_PATTERN.test(repo) ? repo : null;
+}
+
 export function createProductionCapabilityProbes(deps = {}) {
   const registry = deps.registry;
   const fetchFn = deps.fetchFn ?? globalThis.fetch;
@@ -267,15 +275,24 @@ export function createProductionCapabilityProbes(deps = {}) {
       };
     },
 
-    async probeGitHub() {
+    async probeGitHub(input = {}) {
       let token;
       try {
         token = await resolveGitHubTokenFn();
       } catch {
         return { ok: false, signature: 'github_token_unavailable' };
       }
+      // 探"真正要用的资源"，不探 /user：2026-08-17 GitHub /user 端点 503
+      // （githubstatus: Partially Degraded）而目标仓库 /repos 端点 200，
+      // 却让每次 Evaluator 派发都被 github_http_503 挡回、run 全线停摆。
+      // 有 repo 上下文（TaskBundle workspace_spec.repo，形如 owner/name）就探该仓库；
+      // 拿不到 repo 才回落 /user 保持旧行为。任何非 2xx 仍 fail-closed。
+      const repo = githubRepoFromInput(input);
+      const url = repo
+        ? `https://api.github.com/repos/${repo}`
+        : 'https://api.github.com/user';
       try {
-        const response = await fetchFn('https://api.github.com/user', {
+        const response = await fetchFn(url, {
           headers: {
             Accept: 'application/vnd.github+json',
             Authorization: `Bearer ${token}`,
@@ -291,6 +308,14 @@ export function createProductionCapabilityProbes(deps = {}) {
           };
         }
         const body = await response.json();
+        if (repo) {
+          const fullName = typeof body?.full_name === 'string' ? body.full_name : null;
+          return {
+            ok: fullName != null,
+            repo: fullName ?? repo,
+            ...(fullName ? {} : { signature: 'github_identity_missing' }),
+          };
+        }
         return {
           ok: typeof body?.login === 'string' && body.login.length > 0,
           login: typeof body?.login === 'string' ? body.login : null,

@@ -498,8 +498,9 @@ describe('production capability probes', () => {
   // 于是每次派 Evaluator 都被 github_http_503 挡回，两条 run 在 evaluate 段停摆。
   // 探针必须探"真正要用的资源"：有 repo 上下文时探 repo 端点，无上下文才回落 /user。
   it('有 repo 上下文时探 repo 端点；/user 故障不影响判定', async () => {
+    const createProductionCapabilityProbes = await loadFactory();
     const calls = [];
-    const probes = createProductionProbes({
+    const probes = createProductionCapabilityProbes({
       pool: { query: async () => ({ rows: [] }) },
       fetchFn: async (url) => {
         calls.push(String(url));
@@ -522,7 +523,8 @@ describe('production capability probes', () => {
   });
 
   it('repo 端点 404/403 仍 fail-closed（探针不是免检通道）', async () => {
-    const probes = createProductionProbes({
+    const createProductionCapabilityProbes = await loadFactory();
+    const probes = createProductionCapabilityProbes({
       pool: { query: async () => ({ rows: [] }) },
       fetchFn: async () => ({ ok: false, status: 403, json: async () => ({}) }),
       resolveGitHubTokenFn: async () => 'gh-token',
