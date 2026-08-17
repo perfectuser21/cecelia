@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.69
+**Brain 版本**: 1.273.70
+
+## Brain 1.273.70 — Judge 覆盖判定按语义锚点 + 打回原因不再被截断
+
+- `validateCoverage` 此前要求 `coverage[i].step` 与 PRD Golden Path 步骤**逐字节全等**；Judge 用自己的措辞复述同一步（"Golden Path S2：<要点>"）就被判"缺步" → FAIL(evidence_insufficient) → recollect → 同样再判缺步。2026-08-17 生产 run 6125d565：14 轮 recollect / 5 次 judge FAIL / 空转 3.5 小时；c4722d84 同病。现改为语义锚点匹配（规范化去空白标点后双向前缀包含，锚点 ≥8 字符），措辞无关的条目仍判缺步。
+- `formatJudgeFeedback` 把机械判定（缺步/未通过步）排到裁判长篇意见之前——原顺序下末尾 `slice(0,1500)` 正好切掉"缺了哪几步"，recollect Evaluator 只拿到评语、无可执行要求，于是原样再跑。同时 Judge FAIL verdict 新增结构化 `coverage_gaps{missing,failed,deferred}`（不受截断影响），经 dispatcher `judge_feedback` 原样下发给 recollect Evaluator。
 
 ## Brain 1.273.69 — 冻结评估树漂移取证 + repin Runner
 
