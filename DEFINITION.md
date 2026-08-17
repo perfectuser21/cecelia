@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.77
+**Brain 版本**: 1.273.78
 
 ## Brain 1.273.77 — GitHub 凭据装载不依赖 GitHub 在线 + repin Runner
 
