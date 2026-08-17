@@ -1,0 +1,30 @@
+{
+  "initiative_id": "aefe34cd-de9a-4368-b4ad-e54ee9e5e85b",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动全在 packages/brain（harness kernel 编排/观测逻辑），纯后端自治流程，无 UI/agent 协议。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "修复 gan_no_push_streak 误判：ground-truth remote 解析退 origin + 缺 base_repo 不兜底 + 建单口回填",
+      "scope": "packages/brain 三处：(A) ground-truth.js 导出 observeProposalBranch，remote 解析 parseBaseRepo(base_repo) ?? parseBaseRepo(repo)，双空置 proposalRemoteUnresolved 且不退 origin；(B) derive.js gan_no_push_streak 加 crossCheckMismatch===false 前置 + 新增 proposal_remote_unresolved / proposal_observation_mismatch 两个 failure_reason 分支（含 proposalObservationMismatchStreak 计数）；(C) work-routing-store.js createRoutedTask 对 coding_mutation 缺 base_repo 时从 map_scope_repositories repo/aliases 回填规范 clone URL。永久回归测试复制到 packages/brain/src/**/__tests__/。Brain semver 四处同步，DevGate 三项通过。",
+      "dod": [
+        "[BEHAVIOR] observeProposalBranch 走 GitHub URL 不退 origin / 双空置 proposalRemoteUnresolved / 回归夹具 rn=0→rn=1（sprints/08170843-kernel-0a8f1e2f/tests/ground-truth-proposal-remote.test.js 全绿）",
+        "[BEHAVIOR] derive crossCheckMismatch=true 不判 gan_no_push_streak；proposalRemoteUnresolved→proposal_remote_unresolved；mismatch≥3→proposal_observation_mismatch；零回归保留 gan_no_push_streak（tests/derive-no-push-gate.test.js 全绿）",
+        "[BEHAVIOR] createRoutedTask 缺 base_repo 回填完整 GitHub URL（tests/work-routing-base-repo-backfill.test.js 全绿）",
+        "[ARTIFACT] ground-truth.js 导出 observeProposalBranch；derive.js 含两个新 failure_reason 字符串值",
+        "[BEHAVIOR] E2E local_api：POST 不带 base_repo 的 harness_initiative → psql 查 tasks.payload->>'base_repo' == 完整 URL；kernel dry-run 观测走 GitHub URL 非 origin",
+        "[ARTIFACT] Brain semver 四处同步 + DevGate 三项（check-version-sync / facts-check / check-dod-mapping）exit 0"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/counters.js",
+        "packages/brain/src/work-routing-store.js",
+        "packages/brain/package.json"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
