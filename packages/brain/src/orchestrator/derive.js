@@ -111,8 +111,42 @@ function hasNewerEvaluatePassThanJudge(decisionLog, currentHeadSha) {
  */
 function recollectSnapshotMatchesHead(observedSnapshot, currentHeadSha) {
   const snapshot = asStructuredJson(observedSnapshot) ?? {};
-  const sha = snapshot.trigger_sha ?? snapshot.pr?.head_sha ?? null;
+  const sha = snapshot.trigger_sha
+    ?? snapshot.pr?.head_sha
+    ?? snapshot.candidate?.head_sha
+    ?? null;
   return sha === currentHeadSha;
+}
+
+/**
+ * 本轮候选上是否已经因"证据不足"重新取证过。
+ *
+ * 只按快照 SHA 比对在本地候选流程（Kernel 常态：pr=null，buildSnapshot 也不记录
+ * candidate.head_sha）恒为 false —— 止损闸永不生效，Judge 每判一次 evidence_insufficient
+ * 就再派一个 Evaluator，2026-08-17 生产 run 6b0a3de1 空转 17 轮、6125d565 空转 14 轮。
+ * 因此改为「本轮候选」计数：从决策日志尾部往回数，遇到产生新候选的 generator/generator-fix
+ * 即停（新候选 = 新一轮，重新给一次取证机会），期间出现过 recollect 派发就算已取证过。
+ */
+function alreadyRecollectedOnCurrentCandidate(decisionLog, currentHeadSha) {
+  for (const row of [...sortedLogRows(decisionLog)].reverse()) {
+    if (GENERATOR_ACTIONS.has(row.action)) return false;
+    if (row.action !== ACTION.SPAWN_EVALUATOR) continue;
+    const detail = asStructuredJson(row.detail) ?? {};
+    if (detail.reason !== 'judge_evidence_insufficient_recollect') continue;
+    if (
+      recollectSnapshotMatchesHead(row.observed, currentHeadSha)
+      || !recollectSnapshotHasHead(row.observed)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 快照里是否记录了可比对的候选 SHA（没有就无法按 SHA 判定，只能按候选轮次计数）。 */
+function recollectSnapshotHasHead(observedSnapshot) {
+  const snapshot = asStructuredJson(observedSnapshot) ?? {};
+  return (snapshot.trigger_sha ?? snapshot.pr?.head_sha ?? snapshot.candidate?.head_sha) != null;
 }
 
 /** fix 分路统一出口；fixRound 只作观测，终止由结构化收敛探测器决定。 */
@@ -1173,10 +1207,9 @@ function deriveFailureClassRoute(
     // 取证（Evaluator 的活），产品实现往往完全正确——派 Generator 改代码是改错了人，
     // 还会动到本来对的实现。重派 Evaluator 按 Judge 的具体要求重新取证。
     // 防死循环：同一 SHA 已因此重新取证过一次仍判证据不足 → 回落人工。
-    const alreadyRecollected = (decisionLog ?? []).some(
-      (r) => r.action === ACTION.SPAWN_EVALUATOR
-        && (asStructuredJson(r.detail) ?? {}).reason === 'judge_evidence_insufficient_recollect'
-        && recollectSnapshotMatchesHead(r.observed, currentHeadSha),
+    const alreadyRecollected = alreadyRecollectedOnCurrentCandidate(
+      decisionLog ?? [],
+      currentHeadSha,
     );
     if (alreadyRecollected) {
       return {

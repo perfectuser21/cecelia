@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.71
+**Brain 版本**: 1.273.72
+
+## Brain 1.273.72 — 证据不足止损闸对本地候选生效（recollect 无限空转根因）
+
+- derive 的"同一候选只重新取证一次"止损闸按快照 `trigger_sha`/`pr.head_sha` 比对当前 head；Kernel 本地候选流程 `pr=null` 且 `buildSnapshot` 不记录 candidate SHA，比较恒为 `null === <sha>` = false，**闸永不生效** —— Judge 每判一次 `evidence_insufficient` 就再派一个 Evaluator：2026-08-17 生产 run 6b0a3de1 空转 17 轮、6125d565 空转 14 轮（每轮约 95 秒）。
+- 改为按「本轮候选」计数：从决策日志尾部回溯，遇到 `spawn:generator`/`spawn:generator-fix`（新候选 = 新一轮）即停并重新给一次取证机会；期间出现过 recollect 派发即判已取证 → 转 `wait:human_review`（`evidence_insufficient_after_recollect`）。快照带 SHA 时仍按 SHA 精确比对。回归 `derive-judge-recollect-cap.test.js`。
 
 ## Brain 1.273.71 — 打回原因不做散文截断（1500 硬截拔除）
 

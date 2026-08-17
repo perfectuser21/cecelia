@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.71
+**Brain 版本**: 1.273.72
+
+## 证据不足止损闸对本地候选生效（Brain 1.273.72）
+
+- recollect 止损改按「本轮候选」计数（遇 generator/generator-fix 重新计），不再依赖 pr.head_sha 快照；本地候选流程（pr=null）下同一候选最多重新取证一次，之后转人审。
 
 ## 打回原因不做散文截断（Brain 1.273.71）
 
