@@ -5,10 +5,11 @@ description: |
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator 本地候选；远端发布只由 Judge PASS 后的可信 Publisher 执行。
-version: 7.15.0
+version: 7.16.0
 created: 2026-04-08
-updated: 2026-08-15
+updated: 2026-08-17
 changelog:
+  - 7.16.0: Fleet 路由分支纪律（生产 run aefe34cd/attempt 086b67f0 + run 1224e340/attempt b0620304 实证，同条件二象性又一例）——Kernel fleet 工作区的分支由服务端签发（workspace_spec.branch=cp-route-api-*，routing action gate 拦截切分支，Runner 终结器要求 branch --show-current 必须等于该分支），而 Step 2 原文命令 git checkout -b cp-<时间戳> 自建分支：守规则=被闸拦死零产出/自作主张=侥幸活。修法：Step 2 按「当前分支是否服务端签发」分叉——工作区已在 cp-* 分支（fleet 档常态，CECELIA_ROUTING_* 注入）时禁止任何 checkout/switch，直接在当前分支上追加 Red/Green 两 commit；仅 relay/本地档（分支非 cp-* 前缀）才走原自建分支路径
   - 7.15.0: Generator 与 Kernel 本地候选协议对齐——Generator 只提交并返回 `local_candidate_committed`，不得写远端或创建 PR；Runner 冻结候选后交独立 Evaluator/Judge，只有可信 Publisher 可以发布、建 PR、等待 CI 与合并
   - 7.14.1: Fleet Codex 环境兼容——从 Runner 服务端注入的 HARNESS_BRAIN_URL 恢复 BRAIN_URL，避免 Codex 子工具环境过滤通用 BRAIN_URL 后 Generator 在 Step 0 假阻塞；原 BRAIN_URL 仍优先兼容
   - 7.14.0: 冻结测试制品协议闭环——冻结档测试的唯一来源改为 TaskBundle `inputs.artifacts[]` 的 `frozen_contract_test` 描述；Runner 在 Provider 前按 approved SHA + SHA-256 原样落盘、Provider 后复验，Generator 只消费现成文件并拒绝自行重建
@@ -245,27 +246,37 @@ fi
 
 **为什么强制 cp-\***：仓库 `hooks/branch-protect.sh` 硬编码只接受 `^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$`。任何其他命名（如 Brain worktree 默认的 `harness-v2/task-<uuid>`）在 CI 的 branch-naming check 上直接挂。
 
+**⚠️ Fleet 档（Kernel 派发）先判死规则**：Kernel fleet 工作区的分支是**服务端签发的**
+（`workspace_spec.branch`，形如 `cp-route-api-*`）。routing action gate 会拦截任何切分支动作，
+Runner 终结器要求候选必须停在这条分支上（`git branch --show-current` == 签发分支），
+自建分支 = 候选被拒 + 零产出（2026-08-17 run aefe34cd / 1224e340 实证）。
+
 ```bash
-# TASK_ID 从 env HARNESS_TASK_ID 读，Brain dispatch 必注入
-if [ -z "${HARNESS_TASK_ID:-}" ]; then
-  echo "ERROR: HARNESS_TASK_ID 未设置，无法构造合规分支名"
-  exit 1
+CURRENT_BRANCH="$(git branch --show-current)"
+if [[ "$CURRENT_BRANCH" == cp-* ]]; then
+  # Fleet 档：分支已由服务端签发（常伴 CECELIA_ROUTING_* 注入）。
+  # 禁止 git checkout -b / git switch / 任何切分支动作——直接在当前分支上做 Red/Green。
+  BRANCH="$CURRENT_BRANCH"
+  echo "[step2] 使用服务端签发分支：$BRANCH（fleet 档，跳过自建分支）"
+else
+  # relay/本地档：工作区在 harness-v2/task-<uuid> 等非 cp-* 分支上，才需要自建 cp-* 分支。
+  if [ -z "${HARNESS_TASK_ID:-}" ]; then
+    echo "ERROR: HARNESS_TASK_ID 未设置，无法构造合规分支名"
+    exit 1
+  fi
+  TASK_ID_SHORT="${HARNESS_TASK_ID:0:8}"
+  # 分支名必须按仓库规约 cp-MMDDHHNN-* （详见 hooks/branch-protect.sh）
+  BRANCH="cp-$(TZ=Asia/Shanghai date +%m%d%H%M)-${TASK_ID_SHORT}"
+  if ! [[ "$BRANCH" =~ ^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$ ]]; then
+    echo "ERROR: 构造的分支名不合规：$BRANCH"
+    exit 1
+  fi
+  git checkout -b "$BRANCH"
 fi
-TASK_ID_SHORT="${HARNESS_TASK_ID:0:8}"
-
-# 分支名必须按仓库规约 cp-MMDDHHNN-* （详见 hooks/branch-protect.sh）
-BRANCH="cp-$(TZ=Asia/Shanghai date +%m%d%H%M)-${TASK_ID_SHORT}"
-
-# 合法性自检（跟 hooks/branch-protect.sh 同规则）
-if ! [[ "$BRANCH" =~ ^cp-[0-9]{8,10}-[a-z0-9][a-z0-9_-]*$ ]]; then
-  echo "ERROR: 构造的分支名不合规：$BRANCH"
-  exit 1
-fi
-
-git checkout -b "$BRANCH"
 ```
 
 **禁止事项**：
+- **Fleet 档禁止一切 `git checkout -b` / `git switch -c`**——当前分支已是 `cp-*` 就是签发分支，动它必死
 - 禁止直接在 Brain 创建的 `harness-v2/task-<uuid>` 分支上 commit（CI branch-naming check 会挂）
 - 禁止用 `harness-v2/...`、`feature/...`、`fix/...` 等前缀（本仓库只放行 `cp-*`）
 - 禁止跳过合法性自检直接 checkout
