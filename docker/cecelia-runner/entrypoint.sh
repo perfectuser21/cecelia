@@ -1613,6 +1613,17 @@ assert_frozen_evaluator_candidate_tree() {
       || ! git --no-replace-objects -C "$workspace" \
         diff --quiet --no-ext-diff "$start_sha" --; then
     echo "[entrypoint] frozen evaluator candidate tracked files drifted" >&2
+    # 取证（2026-08-17 run 2a297e73 attempt 53ee02fb：宿主复刻同一候选干净，容器内却漂移，
+    # 只有一行结论查不出是谁改了什么）：只打印路径/状态/模式，不打印内容。
+    {
+      echo "[entrypoint] drift detail: git status (tracked, first 20)"
+      git --no-replace-objects -C "$workspace" status --porcelain=v1 --untracked-files=no 2>&1 | head -20
+      echo "[entrypoint] drift detail: git diff --stat --summary vs $start_sha (first 20)"
+      git --no-replace-objects -C "$workspace" diff --stat --summary --no-ext-diff "$start_sha" -- 2>&1 | head -20
+      echo "[entrypoint] drift detail: git diff --cached --stat vs $start_sha (first 10)"
+      git --no-replace-objects -C "$workspace" diff --cached --stat --no-ext-diff "$start_sha" -- 2>&1 | head -10
+      echo "[entrypoint] drift detail: core.filemode=$(git -C "$workspace" config --get core.filemode 2>/dev/null) core.autocrlf=$(git -C "$workspace" config --get core.autocrlf 2>/dev/null)"
+    } >&2
     return 1
   fi
   if ! index_flags="$(git --no-replace-objects -C "$workspace" \

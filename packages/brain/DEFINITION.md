@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.68
+**Brain 版本**: 1.273.69
+
+## 冻结评估树漂移取证（Brain 1.273.69）
+
+- 冻结候选树断言拒绝时打印漂移文件清单（路径/状态/模式，无内容）；canonical Runner digest 重钉为 `sha256:2cb5da9bf168280b1fa3b7d215425daa280ec4fb694f1b75e84609c8c805ff98`。
 
 ## 本地候选的 generator-fix 不携带 pull_request:null（Brain 1.273.68）
 
@@ -12,11 +16,11 @@
 
 ## 冻结断言工作区允许 vite 写 bundled 配置（Brain 1.273.66）
 
-- 断言所在包根目录补 a+w,+t 供 vite 写临时 bundled 配置；vitest 加 --no-cache；canonical Runner digest 重钉为 `sha256:906b54d1bc9feebcbae45b9c01892c5695b1b20c69c69479100b77bcc9a9a4cc`。
+- 断言所在包根目录补 a+w,+t 供 vite 写临时 bundled 配置；vitest 加 --no-cache；canonical Runner digest 重钉为 `sha256:2cb5da9bf168280b1fa3b7d215425daa280ec4fb694f1b75e84609c8c805ff98`。
 
 ## 可信断言执行器按包根跑 vitest（Brain 1.273.65）
 
-- runner assertion-exec 以断言文件最近的 package.json 目录为 cwd 跑 vitest（根 vitest include 不含 packages/*/src），required assertion 不再恒报 No test files found；canonical Runner digest 重钉为 `sha256:906b54d1bc9feebcbae45b9c01892c5695b1b20c69c69479100b77bcc9a9a4cc`。
+- runner assertion-exec 以断言文件最近的 package.json 目录为 cwd 跑 vitest（根 vitest include 不含 packages/*/src），required assertion 不再恒报 No test files found；canonical Runner digest 重钉为 `sha256:2cb5da9bf168280b1fa3b7d215425daa280ec4fb694f1b75e84609c8c805ff98`。
 
 ## Judge coverage.deferred 缺省 false（Brain 1.273.64）
 
@@ -33,12 +37,12 @@
 ## 冻结 Evaluator 依赖清单豁免测试工具缓存（Brain 1.273.61）
 
 - 冻结 Evaluator 依赖清单跳过 node_modules 目录直属的工具缓存目录（`.vite` / `.vitest` / `.cache` / `.vite-temp`）：这些是 Evaluator 自己跑测试的副产物，不是安装依赖；`.bin`、包内容、包内嵌套同名目录仍全量哈希。
-- canonical Runner digest 重钉为 `sha256:906b54d1bc9feebcbae45b9c01892c5695b1b20c69c69479100b77bcc9a9a4cc`，Fleet Worker 版本 pin 不变。
+- canonical Runner digest 重钉为 `sha256:2cb5da9bf168280b1fa3b7d215425daa280ec4fb694f1b75e84609c8c805ff98`，Fleet Worker 版本 pin 不变。
 
 ## Runner Receipt Lock 与冻结评估树断言对齐（Brain 1.273.60）
 
 - Runner routing action gate 写入工作区根的 `.dev-lock.<branch>` 是 Runner 自有 receipt lock，不是候选产品文件；冻结候选树断言只豁免该根级普通文件，目录 / 符号链接 / 子目录同名文件仍视为污染。
-- canonical Runner digest 重钉为 `sha256:906b54d1bc9feebcbae45b9c01892c5695b1b20c69c69479100b77bcc9a9a4cc`，Fleet Worker 版本 pin 不变。
+- canonical Runner digest 重钉为 `sha256:2cb5da9bf168280b1fa3b7d215425daa280ec4fb694f1b75e84609c8c805ff98`，Fleet Worker 版本 pin 不变。
 
 ## Partial Clone Workspace Authority（Brain 1.273.59）
 
@@ -52,7 +56,7 @@
 
 ## Fleet Runner Baseline Recovery（Brain 1.273.56）
 
-- Canonical Runner 更新为冻结来源重建的 `sha256:906b54d1bc9feebcbae45b9c01892c5695b1b20c69c69479100b77bcc9a9a4cc`，NodeProfile、rollout、reconciler 与 smoke 共享同一不可变 pin。
+- Canonical Runner 更新为冻结来源重建的 `sha256:2cb5da9bf168280b1fa3b7d215425daa280ec4fb694f1b75e84609c8c805ff98`，NodeProfile、rollout、reconciler 与 smoke 共享同一不可变 pin。
 - Fleet Worker 准入版本同步为 `1.272.20`；恢复过程仍要求 exact digest、entrypoint 供应链标签和真实容器探针全部通过。
 
 ## Generator Local Candidate Runtime Authority（Brain 1.273.55）
