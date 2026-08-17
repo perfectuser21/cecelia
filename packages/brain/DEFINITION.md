@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.74
+**Brain 版本**: 1.273.75
+
+## 覆盖闸按位置对齐（Brain 1.273.75）
+
+- coverage 判定：优先 step_index、否则位置对齐；只查"每步有条目 + 无 passed=false"，措辞不再否决；防造假交由 Runner 冻结断言与双独立复核。
 
 ## GitHub 探针探目标仓库（Brain 1.273.74）
 

@@ -629,6 +629,56 @@ describe('judge FAIL 反馈不得硬截掉打回原因（Alex 08-17 拍板：完
   });
 });
 
+describe('validateCoverage 位置对齐兜底（裁判不回显 step_index 的实证）', () => {
+  // 2026-08-18 生产实证（run df347d50 的 judge）：1.273.73 的 prompt 已明确要求每条 coverage
+  // 回显 step_index，但裁判（DeepSeek，无 response schema 强制）交回 17 条 coverage、
+  // **0 条带 step_index** —— 机械判定不能建立在"LLM 自愿配合"上。prompt 同时要求"按顺序
+  // 给出"，所以位置对齐是唯一可靠判据：cov[i] ↔ steps[i]，只看 passed，不比对措辞。
+  // 文字锚点降级为"位置缺失时的补救匹配"，不再作为否决条件。
+  const prdSteps = [
+    '**触发**：Generator 产出本地候选，kernel 在 spawn:evaluator 前经 harness-gates.js 调 diff-gate 评估 impact',
+    '**系统处理**：mapper_stale 保留 retryable=true 交由 kernel 重试',
+    '**出口**：确定性结论 fail-closed 并透传 reason_code',
+  ];
+
+  it('裁判按顺序给满条目但不带 step_index、措辞全改写 → 算覆盖', () => {
+    const r = validateCoverage([
+      { step: 'GP Step 1 — impact_anchor_missing → blocked/retryable=false', passed: true, deferred: false, evidence: 'diff-gate.js:242 真跑 7/7' },
+      { step: 'GP Step 2 — mapper_stale 保留 retryable=true', passed: true, deferred: false, evidence: 'B-02 harness-gates 真跑 5/5 全绿' },
+      { step: 'GP Step 3 — fail-closed 出口透传 reason_code', passed: true, deferred: false, evidence: 'loop.js 门控真跑' },
+    ], prdSteps);
+    expect(r.missing).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('条目数少于步骤数 → 缺的那些步仍判缺步', () => {
+    const r = validateCoverage([
+      { step: 'GP Step 1', passed: true, evidence: 'diff-gate.js:242 真跑 7/7 全绿' },
+    ], prdSteps);
+    expect(r.ok).toBe(false);
+    expect(r.missing.map((m) => m.index)).toEqual([2, 3]);
+  });
+
+  it('位置对齐的条目 passed=false → 记 failed（不是缺步）', () => {
+    const r = validateCoverage([
+      { step: 'GP Step 1', passed: true, evidence: 'diff-gate.js:242 真跑 7/7 全绿' },
+      { step: 'GP Step 2', passed: false, evidence: 'npx vitest run 命令无任何输出，退出码 1' },
+      { step: 'GP Step 3', passed: true, evidence: 'loop.js 门控真跑，reason_code 透传确认' },
+    ], prdSteps);
+    expect(r.missing).toEqual([]);
+    expect(r.failed.map((f) => f.index)).toEqual([2]);
+  });
+
+  it('带 step_index 时仍优先按序号对齐（乱序回显也能对上）', () => {
+    const r = validateCoverage([
+      { step_index: 3, step: 'C', passed: true, evidence: '第三步证据：loop.js 真跑门控确认' },
+      { step_index: 1, step: 'A', passed: true, evidence: '第一步证据：diff-gate 真跑 7/7' },
+      { step_index: 2, step: 'B', passed: true, evidence: '第二步证据：harness-gates 5/5' },
+    ], prdSteps);
+    expect(r.ok).toBe(true);
+  });
+});
+
 describe('validateCoverage 按 step_index 对齐（文字匹配不可靠——2026-08-17 实证）', () => {
   // 生产 run 94141560 / 6b0a3de1：Judge 自己判 PASS，但服务端覆盖检查因文字对不上判"缺步"
   // 把整体拖成 FAIL → recollect。同一步的两种写法零字面重叠：
@@ -642,8 +692,8 @@ describe('validateCoverage 按 step_index 对齐（文字匹配不可靠——20
   it('裁判回显 step_index 时按序号对齐，措辞无关也算覆盖', () => {
     const r = validateCoverage(
       [
-        { step_index: 1, step: judgeStep, passed: true, deferred: false, evidence: 'diff-gate.js:242 真跑' },
-        { step_index: 2, step: 'GP Step 2 — mapper_stale 保留 retryable=true', passed: true, deferred: false, evidence: 'ok' },
+        { step_index: 1, step: judgeStep, passed: true, deferred: false, evidence: 'diff-gate.js:242 真跑 7/7 全绿' },
+        { step_index: 2, step: 'GP Step 2 — mapper_stale 保留 retryable=true', passed: true, deferred: false, evidence: 'B-02 真跑 5/5 全绿确认' },
       ],
       [prdStep, '**系统处理**：mapper_stale 保留 retryable=true 交由 kernel 重试'],
     );
@@ -651,27 +701,27 @@ describe('validateCoverage 按 step_index 对齐（文字匹配不可靠——20
     expect(r.ok).toBe(true);
   });
 
-  it('step_index 越界或重复 → 仍判缺步（序号不是免检通道）', () => {
+  it('step_index 越界/重复不采信，但位置对齐仍要求条目覆盖每一步', () => {
+    // 序号越界或重复 → 该序号作废，回落位置对齐；条目数不足则照旧判缺步。
     const r = validateCoverage(
       [
-        { step_index: 1, step: judgeStep, passed: true, evidence: 'ok' },
-        { step_index: 1, step: 'again', passed: true, evidence: 'ok' },
+        { step_index: 99, step: judgeStep, passed: true, evidence: 'diff-gate 真跑 7/7' },
+        { step_index: 99, step: 'again', passed: true, evidence: 'dup' },
       ],
-      [prdStep, '第二步'],
+      [prdStep, '第二步', '第三步'],
     );
     expect(r.ok).toBe(false);
-    // 序号重复 → 该序号作废，步骤1 回落文字匹配（措辞零重叠）也算缺；步骤2 本就没条目
-    expect(r.missing.map((m) => m.index)).toEqual([1, 2]);
+    expect(r.missing.map((m) => m.index)).toEqual([3]);
   });
 
   it('step_index 指向的步骤 passed=false → 记 failed，不当缺步', () => {
     const r = validateCoverage(
-      [{ step_index: 1, step: judgeStep, passed: false, evidence: '无输出' }],
+      [{ step_index: 1, step: judgeStep, passed: false, evidence: '命令执行无任何 stdout 输出' }],
       [prdStep],
     );
     expect(r.missing).toEqual([]);
     expect(r.failed).toHaveLength(1);
-    expect(r.failed[0].evidence).toBe('无输出');
+    expect(r.failed[0].evidence).toBe('命令执行无任何 stdout 输出');
   });
 
   it('没有 step_index 的旧格式仍按文字锚点匹配（向后兼容）', () => {
@@ -685,12 +735,15 @@ describe('validateCoverage 按 step_index 对齐（文字匹配不可靠——20
 
 describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）', () => {
   it('coverage 条目必须逐项匹配服务端 rubric step，不能靠相同数组长度冒充覆盖', () => {
+    // 判据更新（2026-08-18）：文字比对拦不住"复制 PRD 原文当 step 名"的造假，又会把裁判
+    // 正常的技术复述判死（run df347d50 实证）。机械层保留的是"条目数必须覆盖每一步"——
+    // 条目少于步骤数照旧判缺步；措辞不再作为否决条件。
     expect(validateCoverage(
       [{ step: 'totally different', passed: true, deferred: false, evidence: 'forged' }],
-      ['must save the form'],
+      ['must save the form', 'must reload it'],
     )).toMatchObject({
       ok: false,
-      missing: [{ index: 1, step: 'must save the form' }],
+      missing: [{ index: 2, step: 'must reload it' }],
     });
   });
   // 2026-08-17 生产实证（run 6125d565：14 轮 recollect / 5 次 judge FAIL / 空转 3.5 小时；
@@ -711,13 +764,16 @@ describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）
     expect(r.ok).toBe(true);
   });
 
-  it('措辞完全无关的条目仍判缺步（放宽不等于放行）', () => {
+  it('条目数不足仍判缺步（放宽措辞不等于放行漏检步骤）', () => {
     const r = validateCoverage(
       [{ step: '我检查了一些东西，一切正常', passed: true, evidence: 'x' }],
-      ['kernel 在 GAN 循环中调用 ground-truth 观测提案分支数（proposeBranchRn）'],
+      [
+        'kernel 在 GAN 循环中调用 ground-truth 观测提案分支数（proposeBranchRn）',
+        'derive 消费观测：gan_no_push_streak 只在 crossCheckMismatch===false 时触发',
+      ],
     );
     expect(r.ok).toBe(false);
-    expect(r.missing).toHaveLength(1);
+    expect(r.missing.map((m) => m.index)).toEqual([2]);
   });
 
   it('每步都有 passed=true → ok', () => {

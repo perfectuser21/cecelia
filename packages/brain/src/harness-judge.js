@@ -816,6 +816,14 @@ function stepMatchesDeferredCheck(step, deferredChecks) {
 // 覆盖判定改为语义锚点匹配：保序对齐不变，步骤名做规范化（去空白/标点/大小写）后
 // 双向前缀包含即算同一步；措辞完全无关的条目仍判缺步（放宽不等于放行）。
 const COVERAGE_STEP_ANCHOR_LENGTH = 24;
+// 覆盖闸的机械边界（2026-08-18 权衡记录，Alex 关注的"打回原因必须可执行"同源）：
+// 原设计要求 coverage[i].step 逐字等于 PRD 步骤，用文字比对防裁判造假。实测这条闸
+// ① 拦不住真造假（把 PRD 原文复制成 step 名即可绕过）；② 会把裁判正常的技术复述判死
+// （run df347d50：17 条 coverage 全部改写措辞、0 条回显 step_index，裁判自判 PASS 却被
+// 判"缺步"拖成 FAIL → recollect 空转）。
+// 因此机械层只保证它真能保证的事：每个 PRD 步骤都有对应条目（按 step_index，否则按位置）
+// 且没有 passed=false。"裁判是否老实逐步核对"由不可伪造的那一层兜——Runner 亲自执行、
+// SHA 逐字节匹配的冻结 required_assertions，以及 Evaluator/Judge 双独立复核。
 
 function normalizeCoverageStep(value) {
   return String(value ?? '')
@@ -855,10 +863,16 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
   }
 
   // PRD 声明的每个 Golden Path 步骤必须有 coverage 条目且 passed=true。
+  // 对齐优先级：① 裁判回显的 step_index（乱序也能对上）② 位置（prompt 要求按顺序给出）。
+  // 不再把"措辞对不上"当缺步：裁判用技术断言复述业务语言步骤是常态，而机械判定不能
+  // 建立在 LLM 自愿配合文字/字段格式之上（2026-08-18 run df347d50：17 条 coverage、
+  // 0 条带 step_index、措辞全改写 —— 裁判自判 PASS 却被判缺步拖成 FAIL）。
+  // 文字锚点只在"位置上那条明显是另一步"时用来兜底提示，不作为否决条件。
   for (let i = 0; i < steps.length; i++) {
     const entry = byIndex.get(i + 1) ?? cov[i];
-    const alignedByIndex = byIndex.get(i + 1) != null;
-    if (!entry || (!alignedByIndex && !coverageStepMatches(entry.step, steps[i]))) {
+    // 防伪判据换成"证据实质性"而不是"措辞匹配"：裁判要冒充覆盖，就得为每一步编出
+    // 具体证据引用；而措辞匹配既拦不住复制 PRD 原文的伪造，又会把正常的技术复述判死。
+    if (!entry) {
       missing.push({ index: i + 1, step: steps[i] });
       continue;
     }
