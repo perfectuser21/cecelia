@@ -354,6 +354,37 @@ describe('kernel deterministic handlers', () => {
     expect(result.status).toBe('DONE');
   });
 
+  // 2026-08-18 生产实证（run c4339041）：Judge 判 evidence_insufficient → 止损闸转
+  // wait:human_review（1.273.72 修好的出口）→ 该 handler 要求 PR URL，本地候选流程
+  // （Kernel 常态，pr=null，只有候选分支 + head_sha）拿不到 → BLOCKED → 同状态重复
+  // → blocked_same_state 判死。人审是 Judge FAIL 的正常出口，不能因为没有远端 PR 就变死路。
+  it('本地候选（无远端 PR）也能进人审：用候选分支+SHA 请求人工审阅', async () => {
+    const d = deps();
+    const ctx = context();
+    ctx.observed.pr = null;
+    ctx.observed.candidate = {
+      branch: 'cp-route-api-abc123',
+      head_sha: 'c'.repeat(40),
+    };
+    const result = await createKernelHandlers(d)['wait:human_review'](ctx);
+
+    expect(result.status).toBe('DONE');
+    expect(d.notifyReview).toHaveBeenCalledWith(expect.objectContaining({
+      task_id: taskId,
+      candidate_branch: 'cp-route-api-abc123',
+      pr_head_sha: 'c'.repeat(40),
+    }));
+  });
+
+  it('既无 PR 也无候选 → 仍 BLOCKED（不放行无对象的人审）', async () => {
+    const d = deps();
+    const ctx = context();
+    ctx.observed.pr = null;
+    ctx.observed.candidate = null;
+    await expect(createKernelHandlers(d)['wait:human_review'](ctx))
+      .resolves.toMatchObject({ status: 'BLOCKED' });
+  });
+
   it('merge 按 GitHub 真相处理 CLEAN / BEHIND / CONFLICTING', async () => {
     const cleanDeps = deps();
     const clean = createKernelHandlers(cleanDeps)['merge_pr'];
