@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.70
+**Brain 版本**: 1.273.71
+
+## Brain 1.273.71 — 打回原因不做散文截断（1500 硬截拔除）
+
+- Judge FAIL 反馈的 1500 字符硬截随裁判首版 #3372（2026-06-12）引入，无理由记载；同一文件给裁判喂的合同正文限 24000、证据 6000、`sanitizeDiagnostic` 2000，唯独"发回重做的原因"给 1500。实测（run 6125d565）：缺步清单与裁判要求必被切掉其一，recollect Evaluator 拿不到可执行输入 → 空转。
+- 现在三段（缺步 / 未通过步 / 裁判意见）完整保留，只留 32000 防日志膨胀上限（LLM 输出本身受 max_tokens 约束）；结构化 `coverage_gaps` 不受文本长度影响。recollect Evaluator 的 TaskBundle 同时携带 `required_assertions`（合同断言）+ `judge_feedback`（含 coverage_gaps），生产 attempt 实测三者齐备。
 
 ## Brain 1.273.70 — Judge 覆盖判定按语义锚点 + 打回原因不再被截断
 

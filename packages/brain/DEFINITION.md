@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.70
+**Brain 版本**: 1.273.71
+
+## 打回原因不做散文截断（Brain 1.273.71）
+
+- Judge FAIL 反馈取消 1500 硬截（改 32000 膨胀护栏）；缺步/未过步/裁判意见三段完整下发，结构化 coverage_gaps 与合同 required_assertions 一并注入下一轮 Evaluator。
 
 ## Judge 覆盖语义锚点匹配 + 打回原因不截断（Brain 1.273.70）
 
