@@ -1,0 +1,11 @@
+{
+  "_recording": "run d1360a48 (task 0ca4b234 有头签发口) 的 mapper/radius 响应录制件；候选在仓库根新建 DoD.md，Map 无主文件 → 确定性 impact_anchor_missing。radius.js 结论本身正确，本 sprint 只改消费方 diff-gate。",
+  "changed_files": ["DoD.md", "packages/brain/src/orchestrator/derive.js"],
+  "radius_response": {
+    "freshness": { "status": "unknown", "reason_code": "impact_anchor_missing", "checked_at": "2026-08-15T20:08:00.000Z", "mapper_revision": "bc4e8644bc4e8644bc4e8644bc4e8644bc4e8644" },
+    "fact_revisions": { "perfectuser21/cecelia": "bc4e8644bc4e8644bc4e8644bc4e8644bc4e8644" },
+    "affected_nodes": [{ "capability_id": "harness-kernel" }],
+    "required_assertions": [],
+    "unclaimed_files": ["DoD.md"]
+  }
+}

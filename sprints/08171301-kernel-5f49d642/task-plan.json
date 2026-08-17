@@ -1,0 +1,28 @@
+{
+  "initiative_id": null,
+  "journey_type": "autonomous",
+  "journey_type_reason": "全部改动落在 packages/brain/（diff-gate/harness-gates/loop/derive），纯后端 kernel 调度逻辑，无 UI/agent 协议/engine 触及",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 按 reason_code 三分类透传 + 确定性结论 fail-closed 出口路由",
+      "scope": "diff-gate.js 消费 mapper freshness.reason_code 三分类（真新鲜度→mapper_stale/retryable=true；确定性→blocked/reason=原码/retryable=false + detail.unclaimed_files/capability_ids；未知→mapper_contract_invalid/retryable=false）；harness-gates.js beforeEvaluate gateReceipt 透传 reason/retryable/detail；loop.js retryable=false 的 impact 结论不按 infrastructure_blocked 退避；derive.js 补 DETERMINISTIC_IMPACT_ERROR_CODES + failure_class=impact_contract_invalid + reason→(generator-fix|human_review) 路由；Brain semver 四处同步；永久回归测试复制到 packages/brain/src/**/__tests__/",
+      "dod": [
+        "[BEHAVIOR] diff-gate 三分类 + gateReceipt 透传 + derive 路由 + Final E2E 决策日志行（见 contract-dod.md B-01..B-08）",
+        "[BEHAVIOR] 回归保护：真新鲜度 reason_code 仍 mapper_stale/retryable=true；FR-4 既有 pass/extend/drift 不回退",
+        "[ARTIFACT] diff-gate.js/loop.js 含确定性 reason_code 与 impact_contract_invalid；e2e 驱动引用真 appendHop",
+        "[ARTIFACT] Brain semver 四处同步 + DevGate 三项（facts-check / check-version-sync / check-dod-mapping）过"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/harness-gates.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/package.json"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
