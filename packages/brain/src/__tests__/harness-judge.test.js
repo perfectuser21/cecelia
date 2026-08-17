@@ -543,6 +543,48 @@ describe('runJudgeGate — 三权分立裁判门', () => {
   });
 });
 
+describe('judge FAIL 反馈：可执行要求优先，且结构化不被截断（run 6125d565 空转实证）', () => {
+  // 2026-08-17 run 6125d565：judge_feedback 每轮都带到了 recollect Evaluator（bundle 里有），
+  // 但 formatJudgeFeedback 先放裁判长篇意见、末尾 slice(0,1500)——"缺了哪几步"正好被截断，
+  // Evaluator 拿到的是一段没有可执行要求的评语 → 照原样再跑一遍 → 14 轮空转。
+  // 修法：机械判定（缺步/未过步）排在最前，且以结构化 coverage_gaps 字段随 verdict 下发（不截断）。
+  it('缺步清单排在裁判长篇意见之前且带结构化 coverage_gaps', async () => {
+    const { runJudgeGate } = await import('../harness-judge.js');
+    const longOpinion = '裁'.repeat(1600);
+    const r = await runJudgeGate(
+      {
+        worktreePath: '/tmp/x',
+        sprintDir: 'sprints/x',
+        stageFacts: { pr_state: 'OPEN', pr_merged: false, merge_gate_approved: false },
+        agentVerdict: 'PASS',
+      },
+      {
+        collectEvidence: async () => ({
+          contractE2E: 'e2e script',
+          goldenPathSteps: ['步骤一：真实保存表单并回读', '步骤二：失败时回滚并提示'],
+          transcript: 't',
+          agentStdout: 's',
+          brainResult: {},
+        }),
+        judgeFn: async () => ({
+          verdict: 'FAIL',
+          failure_class: 'evidence_insufficient',
+          feedback: longOpinion,
+          coverage: [{ step: '步骤一：真实保存表单并回读', passed: true, evidence: 'ok' }],
+        }),
+        persistFn: async () => {},
+        mechanicalGateFn: async () => ({ pass: true, reasons: [] }),
+      },
+    );
+    expect(r.verdict).toBe('FAIL');
+    expect(r.feedback).toContain('缺步');
+    expect(r.feedback.indexOf('缺步')).toBeLessThan(r.feedback.indexOf('裁判意见'));
+    expect(r.coverage_gaps).toMatchObject({
+      missing: [{ index: 2, step: '步骤二：失败时回滚并提示' }],
+    });
+  });
+});
+
 describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）', () => {
   it('coverage 条目必须逐项匹配服务端 rubric step，不能靠相同数组长度冒充覆盖', () => {
     expect(validateCoverage(
