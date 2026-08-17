@@ -660,8 +660,8 @@ describe('validateCoverage 按 step_index 对齐（文字匹配不可靠——20
       [prdStep, '第二步'],
     );
     expect(r.ok).toBe(false);
-    expect(r.missing).toHaveLength(1);
-    expect(r.missing[0].index).toBe(2);
+    // 序号重复 → 该序号作废，步骤1 回落文字匹配（措辞零重叠）也算缺；步骤2 本就没条目
+    expect(r.missing.map((m) => m.index)).toEqual([1, 2]);
   });
 
   it('step_index 指向的步骤 passed=false → 记 failed，不当缺步', () => {
