@@ -1,0 +1,12 @@
+{
+  "_source": "run d1360a48 (task 0ca4b234) 生产复现录制件；快照全部 fresh，候选在仓库根新建无主文件 DoD.md → radius 判定 impact_anchor_missing。字段值取自 PRD 陈述的真实观测（unclaimed_files=[DoD.md]）；非字节级抓包，见 contract-draft.md 未覆盖真实链路清单。",
+  "run_id": "d1360a48",
+  "changed_files": ["DoD.md", "packages/brain/src/some-change.js"],
+  "radius_response": {
+    "freshness": { "status": "unknown", "reason_code": "impact_anchor_missing", "checked_at": "2026-08-15T20:08:00.000Z", "mapper_revision": "bc4e8644" },
+    "fact_revisions": { "cecelia": "bc4e8644" },
+    "affected_nodes": [],
+    "required_assertions": [],
+    "unclaimed_files": ["DoD.md"]
+  }
+}

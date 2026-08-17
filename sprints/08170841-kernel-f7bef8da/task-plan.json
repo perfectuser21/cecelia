@@ -1,0 +1,33 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动全在 packages/brain（kernel impact-contract/orchestrator 后端），无 UI/agent 协议/engine，验收走本地 evaluator curl+psql。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 按 reason_code 三分类 + gateReceipt 透传 detail + derive 确定性出口路由",
+      "scope": "diff-gate.js 把 mapper freshness 按 reason_code 分为真新鲜度(retryable=true)/确定性(blocked,retryable=false,带detail)/未知(mapper_contract_invalid,retryable=false)三类；harness-gates.js 导出 gateReceipt 并透传 detail；loop.js 对 retryable:false 的 impact 不进 infrastructure_blocked 退避；derive.js 补 DETERMINISTIC_IMPACT_ERROR_CODES 并把 impact_anchor_missing 路由 generator-fix(携 unclaimed_files)、capability_assertion_coverage_missing 路由 human_review、二次仍 blocked 路由 human_review；Brain semver 四处 + DevGate 三项；永久回归复制到 packages/brain/src/**/__tests__/。radius.js / map-client.js 不改。",
+      "dod": [
+        "[BEHAVIOR] diff-gate 按 reason_code 三分类（确定性 blocked/retryable=false + detail；真新鲜度仍 retryable=true；未知 fail-closed）",
+        "[BEHAVIOR] gateReceipt 透传 reason/retryable/detail 且已导出",
+        "[BEHAVIOR] derive 对 retryable:false 确定性 impact 路由 generator-fix / human_review，不再无限重派 spawn:evaluator",
+        "[BEHAVIOR] 回归 d1360a48：无主文件 DoD.md → blocked:impact_anchor_missing",
+        "[BEHAVIOR] Final E2E：确定性 blocked 真落 orchestrator_decision_log（时间窗）",
+        "[ARTIFACT] Brain semver 四处同步 + DevGate 三项通过"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/harness-gates.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
