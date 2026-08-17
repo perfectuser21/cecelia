@@ -6,10 +6,11 @@ description: |
   evaluator 在 CI 绿之后、PR merge 之前真启服务 + 跑 contract 的 manual:bash 命令验真行为。
   PASS → 允许 merge；FAIL → 不 merge，带反馈打回 Generator 在 PR 分支 fix loop（main 不变动）。
   单模式（harness v2 始终 IS_FINAL_E2E=true）：读 contract-draft.md 的 ## E2E 验收 脚本，按 target_environment 派发跑 Golden Path 端到端真实行为。
-version: 1.37.0
+version: 1.38.0
 created: 2026-05-06
-updated: 2026-08-15
+updated: 2026-08-17
 changelog:
+  - 1.38.0: findings 留证不落产品树（生产 run 0ffb9473 attempt 7f356183 实证，守规则必死型）——L2 原文要求"同时落 ${SPRINT_DIR}/findings.md"，而 Kernel 冻结档 Provider 退出后的候选树断言把任何 untracked 产品文件判为篡改（exit 1，整个 verdict 丢失）。修法：findings 唯一权威载体 = verdict JSON 顶层 findings[]；文件留证改落证据舱 ${HARNESS_EVIDENCE_CAPSULE_DIR}/findings.md（Runner 专设、不在产品树），无证据舱 env（relay/本地档）才允许写 ${SPRINT_DIR}/findings.md。产品工作区在冻结档下禁止新建任何文件
   - 1.37.0: Direct Profile 收敛模式——TaskBundle `inputs.evaluation_mode.kind=direct-required-assertions/v1` 时，冻结合同本来就只有 impact required_assertions，合同没有 E2E 段不是失败；Provider 仍做人式真实探索并完整报告 findings/screenshots/exploration_notes，可信 required assertions 由 Runner 在 Provider 退出后逐项执行并合并，任一失败强制最终 FAIL
   - 1.36.2: 冻结合同测试进入人形验收——Runner 在 Evaluator Provider 前要求 PR 内每份 frozen_contract_test 与 TaskBundle approved SHA/路径/原文/SHA-256 完全一致，Provider 后再次复验；Evaluator 必须把这些现成测试当作批准 oracle，缺失或漂移直接 FAIL，禁止自行生成替代测试
   - 1.36.1: required assertions 移出模型执行边界——Evaluator 只完成常规 E2E 并返回结果；Provider 退出后由镜像内 Harness Runner 在 exact PR head 上执行 Kernel 注入命令、计算完整输出摘要并覆盖 checks，任一失败强制 FAIL
@@ -1162,7 +1163,7 @@ BREOF
 
 **FLAKY 判定（接缝步骤 ×2）**：步骤名带 `[接缝×2]` 标注的条目重复执行 2 次（动作+观察+Test 全流程）。两次结果不一致（exit_code 或关键观察不同）→ 整体 verdict FAIL，`failed_step` 写 `FLAKY:<步骤名>`，log_excerpt 附两次差异。flaky 即 bug，禁止取"较好的一次"。
 
-**L2 意外观察（findings[] — 断言只回答问的问题，人还报告没人问的问题）**：执行任何步骤（含 L3 探索）时凡"不对劲"——卡顿、控制台报错、布局歪、慢响应、日志异常——**步骤照过，观察必留**：记入 verdict JSON 顶层 `findings[]` 数组（additive 字段，v1 消费方忽略未知字段无害，先例 `unverifiable[]`），同时落 `${SPRINT_DIR}/findings.md` 文件留证：
+**L2 意外观察（findings[] — 断言只回答问的问题，人还报告没人问的问题）**：执行任何步骤（含 L3 探索）时凡"不对劲"——卡顿、控制台报错、布局歪、慢响应、日志异常——**步骤照过，观察必留**：记入 verdict JSON 顶层 `findings[]` 数组（additive 字段，v1 消费方忽略未知字段无害，先例 `unverifiable[]`）——**这是 findings 的唯一权威载体**。文件留证写到**证据舱**：`${HARNESS_EVIDENCE_CAPSULE_DIR}/findings.md`（Kernel 冻结档必有该 env；它不在产品树里）。**冻结档下禁止往产品工作区（含 `${SPRINT_DIR}/`）新建任何文件**——Provider 退出后的候选树断言把 untracked 产品文件判为篡改，整个 verdict 会被丢弃（run 0ffb9473 实证）。仅 relay/本地档（无 `HARNESS_EVIDENCE_CAPSULE_DIR`）才允许落 `${SPRINT_DIR}/findings.md`：
 
 ```json
 {"verdict":"PASS","task_id":"$TASK_ID","attempt_id":"${HARNESS_ATTEMPT_ID:-}","findings":[{"severity":"P2","step":"B-01","observation":"保存按钮点击后 3s 才出 toast，页面无 loading 态","evidence":"screenshots/b01-save-toast.png"}], ...}
