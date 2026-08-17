@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.72
+**Brain 版本**: 1.273.73
+
+## Brain 1.273.73 — Judge 覆盖判定按 step_index 对齐（文字匹配彻底退役为兜底）
+
+- 覆盖检查此前只能靠文字判断"这步覆盖没覆盖"。2026-08-17 生产 run 94141560 / 6b0a3de1 实证：同一步 PRD 原文与裁判措辞可以**零字面重叠**（PRD `**触发**：Generator 产出本地候选，kernel 在 spawn:evaluator 前经 harness-gates.js 调 diff-gate 评估 impact` vs 裁判 `GP Step 1 — impact_anchor_missing → blocked/retryable=false`），于是裁判自己判 PASS 的 run 被覆盖检查判"缺步"拖成 FAIL → recollect。语义锚点匹配（1.273.70）对这种改写无效。
+- 裁判 prompt 已给编号步骤，现要求每条 coverage 回显 `step_index`（1-based）；`validateCoverage` 按序号对齐，序号越界/重复/非整数一律不采信并回落文字锚点（序号不是免检通道），无 `step_index` 的旧格式保持文字匹配向后兼容。回归 `harness-judge.test.js` 新增 4 段。
 
 ## Brain 1.273.72 — 证据不足止损闸对本地候选生效（recollect 无限空转根因）
 

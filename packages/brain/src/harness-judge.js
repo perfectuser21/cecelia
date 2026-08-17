@@ -712,7 +712,9 @@ export function buildJudgePrompt(input, brainResultOverride) {
     brainResult ? compressBrainResult(brainResult) : '（无）',
     '',
     '## 裁判规则',
-    '- 对 Golden Path 每一步，按顺序给出一条 coverage 条目（step 字段回显该步），passed=true/false。',
+    '- 对 Golden Path 每一步，按顺序给出一条 coverage 条目，passed=true/false。',
+    '- **每条 coverage 必须回显 `step_index`（上面 Golden Path 列表里该步的编号，从 1 开始）**；',
+    '  `step` 字段写你对该步的描述即可（服务端按 step_index 对齐，不比对文字措辞）。',
     '- 每条 coverage 必须同时给出 deferred=true/false。只有服务端后置验收边界明确列出的未来检查可 deferred=true；',
     '  deferred 步骤必须 passed=false，并给出当前阶段已经满足的时序前提，不得因此把整体 verdict 判为 FAIL。',
     '- 证据中能确证该步真实通过 → passed=true，evidence 引用证据原文片段；',
@@ -837,10 +839,26 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
   const missing = [];
   const failed = [];
   const deferred = [];
+  // 按 step_index 建索引（1-based，裁判回显 prompt 里给的编号）。文字匹配不可靠：
+  // 同一步 PRD 原文与裁判措辞可以零字面重叠（2026-08-17 run 94141560 实证），
+  // 靠文字判"覆盖没覆盖"会把裁判自己判 PASS 的 run 拖成 FAIL → recollect 空转。
+  // 序号不是免检通道：越界/重复/非整数一律不采信，回落文字锚点匹配。
+  const byIndex = new Map();
+  for (const entry of cov) {
+    const idx = entry?.step_index;
+    if (!Number.isInteger(idx) || idx < 1 || idx > steps.length) continue;
+    if (byIndex.has(idx)) {
+      byIndex.set(idx, null); // 重复回显 → 该序号作废
+      continue;
+    }
+    byIndex.set(idx, entry);
+  }
+
   // PRD 声明的每个 Golden Path 步骤必须有 coverage 条目且 passed=true。
   for (let i = 0; i < steps.length; i++) {
-    const entry = cov[i];
-    if (!entry || !coverageStepMatches(entry.step, steps[i])) {
+    const entry = byIndex.get(i + 1) ?? cov[i];
+    const alignedByIndex = byIndex.get(i + 1) != null;
+    if (!entry || (!alignedByIndex && !coverageStepMatches(entry.step, steps[i]))) {
       missing.push({ index: i + 1, step: steps[i] });
       continue;
     }
@@ -857,9 +875,10 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
     }
   }
   // 即使无 Golden Path，裁判自报覆盖里出现 passed=false 也判失败。
+  const consumed = new Set([...byIndex.values()].filter(Boolean));
   for (let i = steps.length; i < cov.length; i++) {
     const entry = cov[i];
-    if (!entry || entry.passed !== false) continue;
+    if (!entry || entry.passed !== false || consumed.has(entry)) continue;
     const step = entry.step || `coverage[${i}]`;
     if (
       entry.deferred === true

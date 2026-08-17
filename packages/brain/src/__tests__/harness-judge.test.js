@@ -629,6 +629,60 @@ describe('judge FAIL 反馈不得硬截掉打回原因（Alex 08-17 拍板：完
   });
 });
 
+describe('validateCoverage 按 step_index 对齐（文字匹配不可靠——2026-08-17 实证）', () => {
+  // 生产 run 94141560 / 6b0a3de1：Judge 自己判 PASS，但服务端覆盖检查因文字对不上判"缺步"
+  // 把整体拖成 FAIL → recollect。同一步的两种写法零字面重叠：
+  //   PRD:   "**触发**：Generator 产出本地候选，kernel 在 spawn:evaluator 前经 harness-gates.js 调 diff-gate 评估 impact"
+  //   Judge: "GP Step 1 — impact_anchor_missing → blocked/retryable=false"
+  // 靠文字判"这步覆盖没覆盖"本身不可靠；prompt 已给 Judge 编号步骤，改按回显的
+  // step_index 对齐（1-based），保留文字锚点作为兜底。
+  const prdStep = '**触发**：Generator 产出本地候选，kernel 在 spawn:evaluator 前经 harness-gates.js 调 diff-gate 评估 impact';
+  const judgeStep = 'GP Step 1 — impact_anchor_missing → blocked/retryable=false';
+
+  it('裁判回显 step_index 时按序号对齐，措辞无关也算覆盖', () => {
+    const r = validateCoverage(
+      [
+        { step_index: 1, step: judgeStep, passed: true, deferred: false, evidence: 'diff-gate.js:242 真跑' },
+        { step_index: 2, step: 'GP Step 2 — mapper_stale 保留 retryable=true', passed: true, deferred: false, evidence: 'ok' },
+      ],
+      [prdStep, '**系统处理**：mapper_stale 保留 retryable=true 交由 kernel 重试'],
+    );
+    expect(r.missing).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('step_index 越界或重复 → 仍判缺步（序号不是免检通道）', () => {
+    const r = validateCoverage(
+      [
+        { step_index: 1, step: judgeStep, passed: true, evidence: 'ok' },
+        { step_index: 1, step: 'again', passed: true, evidence: 'ok' },
+      ],
+      [prdStep, '第二步'],
+    );
+    expect(r.ok).toBe(false);
+    // 序号重复 → 该序号作废，步骤1 回落文字匹配（措辞零重叠）也算缺；步骤2 本就没条目
+    expect(r.missing.map((m) => m.index)).toEqual([1, 2]);
+  });
+
+  it('step_index 指向的步骤 passed=false → 记 failed，不当缺步', () => {
+    const r = validateCoverage(
+      [{ step_index: 1, step: judgeStep, passed: false, evidence: '无输出' }],
+      [prdStep],
+    );
+    expect(r.missing).toEqual([]);
+    expect(r.failed).toHaveLength(1);
+    expect(r.failed[0].evidence).toBe('无输出');
+  });
+
+  it('没有 step_index 的旧格式仍按文字锚点匹配（向后兼容）', () => {
+    const r = validateCoverage(
+      [{ step: '步骤一：真实保存并回读', passed: true, evidence: 'ok' }],
+      ['步骤一：真实保存并回读'],
+    );
+    expect(r.ok).toBe(true);
+  });
+});
+
 describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）', () => {
   it('coverage 条目必须逐项匹配服务端 rubric step，不能靠相同数组长度冒充覆盖', () => {
     expect(validateCoverage(
