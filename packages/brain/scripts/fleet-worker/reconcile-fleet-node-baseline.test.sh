@@ -254,7 +254,7 @@ write_executable "$fake_bin/codesign" \
 
 write_executable "$fake_bin/docker" \
   '#!/usr/bin/env bash' \
-  'runner_digest="sha256:2cb5da9bf168280b1fa3b7d215425daa280ec4fb694f1b75e84609c8c805ff98"' \
+  'runner_digest="sha256:bec4e67c1f91b6c0434c4ea49d079ef01f101a02aa03b45856b5e0e8e98b802f"' \
   'postgres_digest="sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62"' \
   'postgres_reference="pgvector/pgvector:pg15@$postgres_digest"' \
   'postgres_tag="pgvector/pgvector:pg15"' \
