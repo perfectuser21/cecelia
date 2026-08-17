@@ -1,6 +1,10 @@
 # Brain 模块定义
 
-**Brain 版本**: 1.273.69
+**Brain 版本**: 1.273.70
+
+## Judge 覆盖语义锚点匹配 + 打回原因不截断（Brain 1.273.70）
+
+- coverage 步骤名按语义锚点匹配（不再逐字节全等），Judge 复述措辞不再判缺步；FAIL 反馈把缺步/未过步排在裁判意见之前，并附结构化 `coverage_gaps` 随 judge_feedback 下发。
 
 ## 冻结评估树漂移取证（Brain 1.273.69）
 

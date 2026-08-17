@@ -807,6 +807,30 @@ function stepMatchesDeferredCheck(step, deferredChecks) {
     (DEFERRED_CHECK_PATTERNS[check] ?? []).some((pattern) => pattern.test(text)));
 }
 
+// Golden Path 步骤是 PRD 里的整段中文长句；Judge 用自己的措辞复述同一步是常态
+// （"Golden Path S2：<步骤要点>"）。逐字节全等匹配会把这种复述判成"缺步" →
+// FAIL(evidence_insufficient) → recollect → 再判缺步，run 永远收敛不了
+// （2026-08-17 run 6125d565：14 轮 recollect / 5 次 judge FAIL / 空转 3.5 小时）。
+// 覆盖判定改为语义锚点匹配：保序对齐不变，步骤名做规范化（去空白/标点/大小写）后
+// 双向前缀包含即算同一步；措辞完全无关的条目仍判缺步（放宽不等于放行）。
+const COVERAGE_STEP_ANCHOR_LENGTH = 24;
+
+function normalizeCoverageStep(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, '');
+}
+
+export function coverageStepMatches(entryStep, goldenPathStep) {
+  const entry = normalizeCoverageStep(entryStep);
+  const step = normalizeCoverageStep(goldenPathStep);
+  if (!entry || !step) return false;
+  if (entry === step) return true;
+  const anchor = Math.min(COVERAGE_STEP_ANCHOR_LENGTH, entry.length, step.length);
+  if (anchor < 8) return false;
+  return entry.includes(step.slice(0, anchor)) || step.includes(entry.slice(0, anchor));
+}
+
 export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [] } = {}) {
   const cov = Array.isArray(coverage) ? coverage : [];
   const steps = Array.isArray(goldenPathSteps) ? goldenPathSteps : [];
@@ -816,7 +840,7 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
   // PRD 声明的每个 Golden Path 步骤必须有 coverage 条目且 passed=true。
   for (let i = 0; i < steps.length; i++) {
     const entry = cov[i];
-    if (!entry || entry.step !== steps[i]) {
+    if (!entry || !coverageStepMatches(entry.step, steps[i])) {
       missing.push({ index: i + 1, step: steps[i] });
       continue;
     }
@@ -849,16 +873,22 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
   return { ok: missing.length === 0 && failed.length === 0, missing, failed, deferred };
 }
 
+// 反馈顺序 = 下一轮能照做的东西优先（2026-08-17 run 6125d565 实证）：裁判长篇意见
+// 排在前面时，末尾 1500 字符截断正好切掉"缺了哪几步"，Evaluator 拿到的只有评语，
+// 于是原样再跑一遍 —— 14 轮 recollect 全是空转。机械判定放最前，裁判意见垫后；
+// 结构化 coverage_gaps 另走 verdict 字段（不受截断影响）。
+const JUDGE_FEEDBACK_MAX_CHARS = 1500;
+
 function formatJudgeFeedback({ judgeResult, cov, agentVerdict }) {
   const parts = [`独立裁判终判 FAIL（运动员自报 ${agentVerdict}，裁判=${judgeResult.verdict}）。`];
-  if (judgeResult.feedback) parts.push(`裁判意见：${judgeResult.feedback}`);
   if (cov.missing.length) {
     parts.push('Golden Path 缺步（无 coverage 覆盖）：' + cov.missing.map((m) => `#${m.index} ${m.step}`).join('；'));
   }
   if (cov.failed.length) {
     parts.push('Golden Path 未通过步骤：' + cov.failed.map((f) => `#${f.index} ${f.step}${f.evidence ? `（证据：${f.evidence}）` : ''}`).join('；'));
   }
-  return parts.join('\n').slice(0, 1500);
+  if (judgeResult.feedback) parts.push(`裁判意见：${judgeResult.feedback}`);
+  return parts.join('\n').slice(0, JUDGE_FEEDBACK_MAX_CHARS);
 }
 
 // ── 裁判产物落盘（judge-<instance>.json，按运行实例命名取证） ─────────────────
@@ -1401,6 +1431,13 @@ export async function runJudgeGate(ctx, opts = {}) {
       feedback: fb,
       judged: true,
       failure_class: failureClass,
+      // 结构化打回原因：feedback 会被截断，这份不会——下一轮 Evaluator/Generator
+      // 照着 missing/failed 就知道要补什么，不必从评语里猜。
+      coverage_gaps: {
+        missing: cov.missing,
+        failed: cov.failed,
+        ...(cov.deferred.length ? { deferred: cov.deferred } : {}),
+      },
       coverage: judgeResult.coverage,
       ...(judgeResult.failure_signature == null
         ? {}
