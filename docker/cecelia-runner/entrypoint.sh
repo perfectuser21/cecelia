@@ -113,16 +113,35 @@ prepare_github_credential() {
   export GH_CONFIG_DIR="$config_dir"
   unset GH_TOKEN GITHUB_TOKEN
 
-  if ! gh auth login \
-      --hostname github.com \
-      --git-protocol https \
-      --with-token \
-      < "$fifo" >/dev/null 2>&1; then
-    unset CECELIA_GITHUB_CREDENTIAL_FIFO
+  # FIFO 只能读一次：先取进变量，再喂给 gh。
+  local envelope_token=""
+  IFS= read -r envelope_token < "$fifo" || true
+  unset CECELIA_GITHUB_CREDENTIAL_FIFO
+  if [[ -z "$envelope_token" ]]; then
     umask "$prior_umask"
     return 1
   fi
-  unset CECELIA_GITHUB_CREDENTIAL_FIFO
+  # `gh auth login --with-token` 会**在线**校验 token；GitHub /user 端点间歇性 503 时
+  # （2026-08-18 githubstatus: Partial System Outage）它整体失败，凭据装不上，容器 exit 1，
+  # 每个需要 GitHub 的角色随机死（run 0089d866 的 planner/proposer 实证）。
+  # 凭据装载是本地动作，不该依赖 GitHub 在线：登录失败就回落为直接写 hosts.yml，
+  # 把"GitHub 到底能不能用"留给真正调用它的那一步去判定（该失败时照样失败）。
+  if ! printf '%s\n' "$envelope_token" | gh auth login \
+      --hostname github.com \
+      --git-protocol https \
+      --with-token >/dev/null 2>&1; then
+    if ! printf '%s\n' \
+        'github.com:' \
+        "    oauth_token: $envelope_token" \
+        '    git_protocol: https' \
+        > "$config_dir/hosts.yml"; then
+      envelope_token=""
+      umask "$prior_umask"
+      return 1
+    fi
+    echo "[entrypoint] gh online validation unavailable; wrote credential locally" >&2
+  fi
+  envelope_token=""
 
   if [[ ! -s "$config_dir/hosts.yml" ]]; then
     umask "$prior_umask"

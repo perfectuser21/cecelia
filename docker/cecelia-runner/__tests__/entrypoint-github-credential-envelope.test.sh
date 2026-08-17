@@ -79,6 +79,55 @@ if grep -q "$TOKEN" "$GH_CALLS"; then
 fi
 test -z "${CECELIA_GITHUB_CREDENTIAL_FIFO:-}"
 
+# 2026-08-18 生产事故（run 0089d866 的 planner c5c122c6 与 proposer f501e9e6）：
+# GitHub /user 端点间歇性 503（githubstatus: Partial System Outage）时
+# `gh auth login --with-token` 会因为在线校验 token 失败而整体失败 →
+# "[entrypoint] GitHub CredentialEnvelope rejected" → 容器 exit 1 → 角色随机死。
+# 凭据装载是本地动作，不该依赖 GitHub 在线：gh 登录失败时必须回落为直接写 hosts.yml，
+# 让真正需要 GitHub 的那一步自己去面对故障（该失败时照样失败）。
+GH_OFFLINE_HOME="$TEST_ROOT/gh-config-offline"
+GH_OFFLINE_CALLS="$TEST_ROOT/gh-calls-offline"
+gh() {
+  printf '%s\n' "$*" >> "$GH_OFFLINE_CALLS"
+  if [[ "$1 $2" == "auth login" ]]; then
+    IFS= read -r _discarded_token || true
+    return 1   # 模拟 GitHub 在线校验不可用
+  fi
+  return 1
+}
+OFFLINE_SOURCE="$TEST_ROOT/github-token-offline.fifo"
+printf '%s\n' "$TOKEN" > "$OFFLINE_SOURCE"
+export CECELIA_GITHUB_CREDENTIAL_REF=44444444-4444-4444-8444-444444444444
+export CECELIA_GITHUB_CREDENTIAL_FIFO="$OFFLINE_SOURCE"
+GITHUB_CREDENTIAL_SECRET=""
+
+if ! prepare_github_credential "$GH_OFFLINE_HOME"; then
+  echo "credential envelope rejected while GitHub online validation was unavailable" >&2
+  exit 1
+fi
+test -f "$GH_OFFLINE_HOME/hosts.yml"
+test "$(file_mode "$GH_OFFLINE_HOME/hosts.yml")" = "600"
+grep -q "$TOKEN" "$GH_OFFLINE_HOME/hosts.yml"
+test "$GITHUB_CREDENTIAL_SECRET" = "$TOKEN"
+if grep -q "$TOKEN" "$GH_OFFLINE_CALLS"; then
+  echo "GitHub token leaked into gh argv on the offline fallback path" >&2
+  exit 1
+fi
+
+# 拿不到 token（fifo 空）时仍必须拒绝——回落不是"无凭据也放行"
+EMPTY_SOURCE="$TEST_ROOT/github-token-empty.fifo"
+: > "$EMPTY_SOURCE"
+export CECELIA_GITHUB_CREDENTIAL_FIFO="$EMPTY_SOURCE"
+GITHUB_CREDENTIAL_SECRET=""
+if prepare_github_credential "$TEST_ROOT/gh-config-empty" 2>/dev/null; then
+  echo "credential envelope accepted an empty token" >&2
+  exit 1
+fi
+# 复原后续用例依赖的状态（上面两段只验证凭据装载路径本身）
+GITHUB_CREDENTIAL_SECRET="$TOKEN"
+export GH_CONFIG_DIR="$GH_HOME"
+unset CECELIA_GITHUB_CREDENTIAL_FIFO
+
 REDACTED_OUTPUT="$(
   unset CECELIA_EXECUTOR
   printf 'provider accidentally printed %s\n' "$TOKEN" \
