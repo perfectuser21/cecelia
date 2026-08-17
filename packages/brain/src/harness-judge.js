@@ -873,11 +873,14 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
   return { ok: missing.length === 0 && failed.length === 0, missing, failed, deferred };
 }
 
-// 反馈顺序 = 下一轮能照做的东西优先（2026-08-17 run 6125d565 实证）：裁判长篇意见
-// 排在前面时，末尾 1500 字符截断正好切掉"缺了哪几步"，Evaluator 拿到的只有评语，
-// 于是原样再跑一遍 —— 14 轮 recollect 全是空转。机械判定放最前，裁判意见垫后；
-// 结构化 coverage_gaps 另走 verdict 字段（不受截断影响）。
-const JUDGE_FEEDBACK_MAX_CHARS = 1500;
+// 打回原因 = 下一轮唯一的输入，不做散文截断（Alex 2026-08-17 拍板）。
+// 历史：1500 字符硬截随裁判首版 #3372 引入，无理由记载——同一文件给裁判喂的合同正文
+// 限 24000、证据 6000、sanitizeDiagnostic 2000，唯独"发回重做的原因"给 1500。
+// run 6125d565 实证：缺步清单或裁判要求必被切掉其一，recollect Evaluator 拿不到
+// 可执行要求 → 14 轮空转 3.5 小时。现在三段（缺步/未过步/裁判意见）完整保留；
+// 机械判定排在最前；只保留一个防日志膨胀的宽上限（LLM 输出本身受 max_tokens 约束）。
+// 结构化 coverage_gaps 另走 verdict 字段，任何情况下都不受文本长度影响。
+const JUDGE_FEEDBACK_MAX_CHARS = 32000;
 
 function formatJudgeFeedback({ judgeResult, cov, agentVerdict }) {
   const parts = [`独立裁判终判 FAIL（运动员自报 ${agentVerdict}，裁判=${judgeResult.verdict}）。`];
