@@ -1,0 +1,33 @@
+{
+  "initiative_id": "94141560-f3b2-4428-b0ca-441167c33978",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动全在 packages/brain 后端（orchestrator/work-routing-store），无 UI/远端 agent/engine 路径，属纯后端自治。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "修复 gan_no_push_streak 误判：提案 remote base_repo→repo 兜底禁退 origin + derive 观测消费 + 建任务口回填 base_repo",
+      "scope": "A) ground-truth.js 导出 resolveProposalRemote（parseBaseRepo(base_repo)??parseBaseRepo(repo)，皆无置 observed.proposalRemoteUnresolved=true 且不 ls-remote origin）；B) derive.js：gan_no_push_streak 仅 counters.crossCheckMismatch===false 触发，crossCheckMismatch===true 走 wait:running(proposal_observation_mismatch) 重观测、连续 3 次 mark_failed(proposal_observation_mismatch)，proposalRemoteUnresolved 走 mark_failed(proposal_remote_unresolved)；C) work-routing-store.js 导出 canonicalRepoCloneUrl 并在 createRoutedTask 对 coding_mutation 缺 base_repo 时回填规范 URL；Brain semver 四处同步；永久回归测试复制到 packages/brain/src/**/__tests__/ + 新增 work-routing-base-repo.integration.test.js 真 PG 验落库。",
+      "dod": [
+        "[BEHAVIOR] ground-truth 提案 remote 解析：base_repo 空+repo=cecelia → ls-remote 打 GitHub URL 且 proposeBranchRn=1；皆空 → 不打 origin 且 proposalRemoteUnresolved=true（tests/ground-truth-proposal-remote.test.ts 全过）",
+        "[BEHAVIOR] derive 消费观测：crossCheckMismatch=true 不误判 gan_no_push_streak（重观测≤3 次）+ proposalRemoteUnresolved→proposal_remote_unresolved（tests/derive-gan-observation.test.ts 全过）",
+        "[BEHAVIOR] canonicalRepoCloneUrl 规范化短名/别名→完整 URL、未知短名返回 null（tests/work-routing-base-repo.test.ts 全过）",
+        "[BEHAVIOR] DB 写路径真验：缺 base_repo 的 coding_mutation 任务落库 payload.base_repo 为完整 URL（真 PG 集成测试 + psql 时间窗查询）",
+        "[ARTIFACT] Brain semver 四处同步（package.json/package-lock.json/.brain-versions/DEFINITION.md），check-version-sync.sh 通过",
+        "[ARTIFACT] DevGate 三项通过（facts-check.mjs / check-version-sync.sh / check-dod-mapping.cjs）"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/work-routing-store.js",
+        "packages/brain/src/__tests__/integration/work-routing-base-repo.integration.test.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
