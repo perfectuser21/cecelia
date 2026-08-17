@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.73
+**Brain 版本**: 1.273.74
+
+## Brain 1.273.74 — GitHub 能力探针探目标仓库，不探 /user
+
+- 2026-08-17 生产事故：`api.github.com/user` 返回 503（githubstatus: Partially Degraded Service），而真正要用的 `api.github.com/repos/perfectuser21/cecelia` 返回 200；capability gate 拿 `/user` 当 GitHub 可用性探针，于是每次 Evaluator 派发都被 `github_http_503` 挡回，两条在跑的 run 全线停在 evaluate（gh CLI 同样 503，确认是 GitHub 侧局部故障而非凭据问题）。
+- 探针改探"真正要用的资源"：TaskBundle `inputs.workspace_spec.repo`（owner/name）存在时探 `/repos/<owner>/<name>`，取不到 repo 才回落 `/user`；任何非 2xx 仍 fail-closed（403/404 照旧拒）。回归 `production-probes.test.js` 新增 2 段 + `production-wiring.test.js` mock 同步。
 
 ## Brain 1.273.73 — Judge 覆盖判定按 step_index 对齐（文字匹配彻底退役为兜底）
 

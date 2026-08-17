@@ -298,6 +298,10 @@ describe('production capability wiring', () => {
       if (String(url) === 'https://api.github.com/user') {
         return response({ login: 'cecelia-ci' });
       }
+      // 探针改探"真正要用的仓库"（Brain 1.273.74）：/repos/<owner>/<name>
+      if (String(url).startsWith('https://api.github.com/repos/')) {
+        return response({ full_name: String(url).replace('https://api.github.com/repos/', '') });
+      }
       throw new Error(`unexpected fetch: ${url}`);
     });
     const pool = {
@@ -444,6 +448,10 @@ describe('production capability wiring', () => {
       }
       if (String(url) === 'https://api.github.com/user') {
         return response({ login: 'cecelia-ci' });
+      }
+      // 探针改探"真正要用的仓库"（Brain 1.273.74）：/repos/<owner>/<name>
+      if (String(url).startsWith('https://api.github.com/repos/')) {
+        return response({ full_name: String(url).replace('https://api.github.com/repos/', '') });
       }
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -600,6 +608,10 @@ describe('production capability wiring', () => {
       }
       if (String(url) === 'https://api.github.com/user') {
         return response({ login: 'cecelia-ci' });
+      }
+      // 探针改探"真正要用的仓库"（Brain 1.273.74）：/repos/<owner>/<name>
+      if (String(url).startsWith('https://api.github.com/repos/')) {
+        return response({ full_name: String(url).replace('https://api.github.com/repos/', '') });
       }
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -1101,6 +1113,10 @@ describe('production capability wiring', () => {
       }
       if (String(url) === 'https://api.github.com/user') {
         return response({ login: 'cecelia-ci' });
+      }
+      // 探针改探"真正要用的仓库"（Brain 1.273.74）：/repos/<owner>/<name>
+      if (String(url).startsWith('https://api.github.com/repos/')) {
+        return response({ full_name: String(url).replace('https://api.github.com/repos/', '') });
       }
       throw new Error(`unexpected fetch: ${url}`);
     });

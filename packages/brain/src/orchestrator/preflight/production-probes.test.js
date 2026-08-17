@@ -493,6 +493,49 @@ describe('production capability probes', () => {
     expect(JSON.stringify(github)).not.toContain('top-secret');
   });
 
+  // 2026-08-17 生产事故：GitHub 的 /user 端点 503（githubstatus: Partially Degraded），
+  // 而我们真正要用的 /repos/<owner>/<repo> 是 200 —— kernel 却拿 /user 当 GitHub 可用性探针，
+  // 于是每次派 Evaluator 都被 github_http_503 挡回，两条 run 在 evaluate 段停摆。
+  // 探针必须探"真正要用的资源"：有 repo 上下文时探 repo 端点，无上下文才回落 /user。
+  it('有 repo 上下文时探 repo 端点；/user 故障不影响判定', async () => {
+    const createProductionCapabilityProbes = await loadFactory();
+    const calls = [];
+    const probes = createProductionCapabilityProbes({
+      pool: { query: async () => ({ rows: [] }) },
+      fetchFn: async (url) => {
+        calls.push(String(url));
+        if (String(url).includes('/user')) {
+          return { ok: false, status: 503, json: async () => ({}) };
+        }
+        return { ok: true, status: 200, json: async () => ({ full_name: 'perfectuser21/cecelia' }) };
+      },
+      resolveGitHubTokenFn: async () => 'gh-token',
+      env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
+      requestTimeoutMs: 100,
+    });
+    const github = await probes.probeGitHub({
+      task_bundle: { inputs: { workspace_spec: { repo: 'perfectuser21/cecelia' } } },
+    });
+    expect(github.ok).toBe(true);
+    expect(github.repo).toBe('perfectuser21/cecelia');
+    expect(calls.some((u) => u.includes('/repos/perfectuser21/cecelia'))).toBe(true);
+    expect(calls.some((u) => u.endsWith('/user'))).toBe(false);
+  });
+
+  it('repo 端点 404/403 仍 fail-closed（探针不是免检通道）', async () => {
+    const createProductionCapabilityProbes = await loadFactory();
+    const probes = createProductionCapabilityProbes({
+      pool: { query: async () => ({ rows: [] }) },
+      fetchFn: async () => ({ ok: false, status: 403, json: async () => ({}) }),
+      resolveGitHubTokenFn: async () => 'gh-token',
+      env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
+      requestTimeoutMs: 100,
+    });
+    await expect(probes.probeGitHub({
+      task_bundle: { inputs: { workspace_spec: { repo: 'perfectuser21/cecelia' } } },
+    })).resolves.toMatchObject({ ok: false, signature: 'github_http_403', http_status: 403 });
+  });
+
   it('redacts credential suffixes from nested capability evidence', () => {
     expect(buildCapabilityEvidence({
       access_token: 'access-secret',
