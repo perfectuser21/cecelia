@@ -152,7 +152,31 @@ export function createKernelHandlers(deps) {
     async 'wait:human_review'(ctx) {
       const url = ctx.observed.pr?.url;
       const number = prNumber(url);
-      if (!number) return { status: 'BLOCKED', detail: 'human review requires a valid PR URL' };
+      // 本地候选流程（Kernel 常态）没有远端 PR，只有 Runner 冻结过的候选分支 + head_sha。
+      // 人审是 Judge FAIL 后的正常出口，不能因为"拿不到 PR URL"就变成死路：
+      // 2026-08-18 run c4339041 实证 —— BLOCKED 重复后被 blocked_same_state 判死。
+      // 有 PR 时行为不变（预览环境按 PR 号起）；只有候选时通知带分支+SHA，请人直接看候选。
+      const candidate = ctx.observed.candidate ?? null;
+      if (!number) {
+        const candidateSha = candidate?.head_sha ?? null;
+        const candidateBranch = candidate?.branch ?? null;
+        if (!candidateSha || !candidateBranch) {
+          return { status: 'BLOCKED', detail: 'human review requires a PR URL or a frozen candidate' };
+        }
+        await deps.notifyReview({
+          task_id: ctx.taskId,
+          title: ctx.observed.task?.title,
+          pr_url: null,
+          candidate_branch: candidateBranch,
+          preview_url: null,
+          run_id: ctx.runId,
+          pr_head_sha: candidateSha,
+        });
+        return {
+          status: 'DONE',
+          detail: `human review requested (local candidate ${candidateBranch}@${candidateSha.slice(0, 9)})`,
+        };
+      }
       const payload = ctx.observed.task?.payload ?? {};
       const branch = payload.pr_branch ?? payload.branch_name ?? `pr-${number}`;
       const port = await deps.allocatePort(number, branch, payload.base_repo, deps.pool);
