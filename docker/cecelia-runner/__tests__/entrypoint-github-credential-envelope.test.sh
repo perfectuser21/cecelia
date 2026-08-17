@@ -123,6 +123,10 @@ if prepare_github_credential "$TEST_ROOT/gh-config-empty" 2>/dev/null; then
   echo "credential envelope accepted an empty token" >&2
   exit 1
 fi
+# 复原后续用例依赖的状态（上面两段只验证凭据装载路径本身）
+GITHUB_CREDENTIAL_SECRET="$TOKEN"
+export GH_CONFIG_DIR="$GH_HOME"
+unset CECELIA_GITHUB_CREDENTIAL_FIFO
 
 REDACTED_OUTPUT="$(
   unset CECELIA_EXECUTOR
