@@ -585,6 +585,50 @@ describe('judge FAIL 反馈：可执行要求优先，且结构化不被截断�
   });
 });
 
+describe('judge FAIL 反馈不得硬截掉打回原因（Alex 08-17 拍板：完整注入，不做散文截断）', () => {
+  // 1500 字符硬截来自 2026-06-12 #3372 裁判首版，无理由记载：同文件给裁判喂合同正文
+  // 24000 / 证据 6000 / sanitizeDiagnostic 2000，唯独"发回重做的原因"给 1500——
+  // run 6125d565 实证正好切掉缺步清单，14 轮 recollect 全空转。
+  it('长裁判意见 + 多条缺步：三段（缺步/未过步/裁判意见）都完整保留', async () => {
+    const { runJudgeGate } = await import('../harness-judge.js');
+    const longOpinion = '裁'.repeat(4000);
+    const steps = Array.from({ length: 12 }, (_, i) => `步骤${i + 1}：${'描述'.repeat(50)}`);
+    const r = await runJudgeGate(
+      {
+        worktreePath: '/tmp/x',
+        sprintDir: 'sprints/x',
+        stageFacts: { pr_state: 'OPEN', pr_merged: false, merge_gate_approved: false },
+        agentVerdict: 'PASS',
+      },
+      {
+        collectEvidence: async () => ({
+          contractE2E: 'e2e script',
+          goldenPathSteps: steps,
+          transcript: 't',
+          agentStdout: 's',
+          brainResult: {},
+        }),
+        judgeFn: async () => ({
+          verdict: 'FAIL',
+          failure_class: 'evidence_insufficient',
+          feedback: longOpinion,
+          coverage: [{ step: steps[0], passed: true, evidence: 'ok' }],
+        }),
+        persistFn: async () => {},
+        mechanicalGateFn: async () => ({ pass: true, reasons: [] }),
+      },
+    );
+    // 每一条缺步都必须出现在 feedback 里（最后一条最容易被截掉）
+    for (const step of steps.slice(1)) {
+      expect(r.feedback, `缺步被截断：${step.slice(0, 12)}`).toContain(step);
+    }
+    // 裁判意见的实质内容同样不能被砍掉——recollect Evaluator 要照着它补证据，
+    // 只留一个"裁判意见："标签等于没给要求。
+    expect(r.feedback, '裁判意见被硬截').toContain(longOpinion);
+    expect(r.coverage_gaps.missing).toHaveLength(11);
+  });
+});
+
 describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）', () => {
   it('coverage 条目必须逐项匹配服务端 rubric step，不能靠相同数组长度冒充覆盖', () => {
     expect(validateCoverage(
