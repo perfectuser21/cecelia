@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.82
+**Brain 版本**: 1.273.83
+
+## Brain 1.273.83 — 注册 publisher 角色容量权重，解开 Judge PASS 后"最后一米"的阻塞
+
+- 生产 run `f8096052` **首次拿到 `verdict:judge / allow`**（Brain 日志：`双 PASS（运动员 + 独立裁判）→ 照常 merge`），随即进入 `publish:approved_ref` 发布精确候选 ref，却被 `dispatch preflight blocked: all_execution_targets_exhausted` 挡住。
+- 根因：`dispatcher.js` 的 `publish:approved_ref` 声明 `role: 'publisher'`，而 `node-profile.js` 的 `ROLE_WEIGHTS` **从未注册该角色** → `getRoleCapacity` 抛 `unknown_fleet_role` → 容量算 0（`machine_health.ok=true` 但 `machine_capacity.ok=false`）。Publisher 在设计上一直完整存在（有 objective；Generator/Judge 的 objective 均写明 "Publisher owns remote publication after Judge PASS"），只是**在此之前从没有 run 走到 Judge PASS**，漏注册就一直没被发现。
+- 修法：注册 `publisher: 1`（只做 git 发布，不跑测试、不起 Provider 推理，与 reporter 同为最轻档）。
+- 回归两段：publisher 权重 1 / 8 基础槽算 8；**并新增守卫——扫 `dispatcher.js` 里所有 `role:` 声明，逐个断言能算出容量**，防止下次新增角色再漏（只补一个角色挡不住同类复发）。
 
 ## Brain 1.273.82 — deferred 判定只认合同白名单，不再依赖裁判填字段
 
