@@ -1447,7 +1447,29 @@ export async function runJudgeGate(ctx, opts = {}) {
   const cov = validateCoverage(judgeResult.coverage, adjudicationSteps, {
     deferredChecks: ctx.verificationStage?.deferred_checks,
   });
-  const finalFail = judgeResult.verdict === 'FAIL' || !cov.ok;
+  // 裁判自报 FAIL，但唯一依据是"服务端后置延后项"时按覆盖数据纠正。
+  // 2026-08-18 run ce703092：裁判把五个 deferred_checks 合并成一条 coverage 标 deferred=true，
+  // 在 feedback 里**自己写明**"Per objective these must not force the overall verdict to FAIL"
+  // （prompt 第 719 行也是这么要求的），然后照样把顶层 verdict 写成 FAIL。而这里原本无条件
+  // 采信裁判自报，cov.ok=true 也救不回来 → PASS 的 run 一路走到人审，merge 永远够不着。
+  // 这与本文件既有的判断同源：**机械判定不能建立在"LLM 自愿配合字段格式/指令"之上**。
+  // 纠正的边界卡死，裁判对真实问题的否决权一分不减：
+  //   ① 覆盖判定必须自身通过（failed / missing 全空）
+  //   ② 必须确实存在合同白名单内的 deferred 条目（否则无从谈"唯一依据"）
+  //   ③ failure_class 不是 product_failure —— 裁判一旦指认实质缺陷，一律不纠正
+  const judgeSelfFail = judgeResult.verdict === 'FAIL';
+  const deferredOnlyFail = judgeSelfFail
+    && cov.ok
+    && cov.deferred.length > 0
+    && judgeResult.failure_class !== 'product_failure';
+  if (deferredOnlyFail) {
+    console.warn(
+      `[judge] 裁判自报 FAIL 但唯一依据是合同声明的延后项`
+      + `（deferred=${cov.deferred.length}，failed=0，missing=0）→ 按覆盖数据纠正为 PASS。`
+      + `延后项：${cov.deferred.map((d) => d.step).join(' / ').slice(0, 200)}`,
+    );
+  }
+  const finalFail = (judgeSelfFail && !deferredOnlyFail) || !cov.ok;
 
   await persistJudgeArtifact({
     worktreePath: ctx.worktreePath,
