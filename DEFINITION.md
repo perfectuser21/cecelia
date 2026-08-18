@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.78
+**Brain 版本**: 1.273.79
+
+## Brain 1.273.79 — 候选 worktree 加 TTL 回收，不再无限驻留吃光磁盘
+
+- `attempt-runner.cjs` 的 `reconcile()` 对 `status='candidate'` 无条件 `continue`：候选 worktree 是**设计上要保留**的（后续 evaluator/judge 复用同一棵树），但保留没有终点。`retainedCandidateState` 一直在写 `retained_at`，此前**没有任何地方消费它**。2026-08-18 实测 25 棵候选树堆到 27GB 吃光磁盘 → 容量闸 `insufficient_free_space` → 所有 PR 的 preview 被拒。
+- reconcile 现在消费 `retained_at`：超过 `CANDIDATE_RETENTION_TTL_MS`（24h，可经 `candidateRetentionTtlMs` 注入）的候选树走 `workspaceManager.cleanup`，写 `candidate_retention_expired` 墓碑，并从 `retainedAttemptIds` 移除，让 workspace/resource 两级 reconcile 一并放行回收；返回值新增 `reclaimed_candidates`。
+- **时间戳缺失或不可解析一律判为未过期**（fail-safe）——宁可多占一阵磁盘，也不能误删后续 attempt 正等着复用的候选树。TTL 内的候选树行为一字不变。
+- 回归 `attempt-runner.test.cjs` 两段：超 TTL 候选被回收且 cleanup 收到对应 workspace；新鲜候选保持 `candidate` 状态且 `cleanup` 一次都不许调。
 
 ## Brain 1.273.78 — fleet-worker /health 并发探测共享单次探测，不再把后来者判成节点不可准入
 

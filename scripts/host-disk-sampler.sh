@@ -53,7 +53,10 @@ LOCK_DIR="${RUNTIME_DIR}/host-disk-sampler.lock"
 LOCK_STALE_SECONDS="${HOST_DISK_LOCK_STALE_SECONDS:-300}"
 
 if [ -d "$LOCK_DIR" ]; then
+  # BSD stat 用 -f，GNU stat 用 -c；GNU 的 -f 是 --file-system，遇到 %m 不报错却吐出
+  # 非数字，直接喂进算术展开会在 set -e 下打死整个脚本。必须校验是纯数字。
   LOCK_MTIME=$(stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c %Y "$LOCK_DIR" 2>/dev/null || echo 0)
+  [[ "$LOCK_MTIME" =~ ^[0-9]+$ ]] || LOCK_MTIME=0
   LOCK_AGE=$(( $(date +%s) - LOCK_MTIME ))
   if [ "$LOCK_AGE" -ge "$LOCK_STALE_SECONDS" ]; then
     echo "[host-disk-sampler] 锁已陈旧（持有 ${LOCK_AGE}s ≥ ${LOCK_STALE_SECONDS}s），判定上一轮已死，抢占继续采样" >&2

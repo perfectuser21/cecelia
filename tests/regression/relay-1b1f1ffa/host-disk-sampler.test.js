@@ -45,77 +45,81 @@ describe('host-disk-sampler.sh [BEHAVIOR]', () => {
     expect(content).toMatch(/set -euo pipefail/);
   });
 
-  // 2026-08-18：diskutil 挂死 5 小时，脚本外层的 flock -n 让后续每分钟的 cron 静默跳过，
-  // 样本永久陈旧 → 容量闸 sample_stale → 所有 PR 的 Deploy Preview 必挂。
-  // 采样命令必须有超时，卡住的探测要降级而不是把整台机器的容量判断拖死。
-  it('diskutil 卡死时在超时内退出并仍写出样本（降级而非挂死）', () => {
-    const workDir = mkdtempSync(join(tmpdir(), 'sampler-hang-'));
-    const binDir = join(workDir, 'fakebin');
-    mkdirSync(binDir, { recursive: true });
-    // 真的挂住的 diskutil：不 mock 被测脚本，只让它依赖的外部命令卡住
-    writeFileSync(join(binDir, 'diskutil'), '#!/bin/sh\nsleep 300\n', { mode: 0o755 });
-    try {
-      const startedAt = Date.now();
-      const run = spawnSync('bash', [SAMPLER], {
-        env: {
-          ...process.env,
-          CECELIA_DEPLOY_ROOT: workDir,
-          // 脚本显式前置系统 PATH（防 cron PATH 事故），所以注入靠显式钩子而非 PATH 覆盖
-          CECELIA_DISKUTIL_BIN: join(binDir, 'diskutil'),
-          HOST_DISK_SAMPLE_TIMEOUT_SECONDS: '5',
-        },
-        encoding: 'utf8',
-        timeout: 90_000,
-      });
-      const elapsedMs = Date.now() - startedAt;
+  // 这两条验的是 macOS 专用采样器的超时与锁语义：脚本依赖 diskutil / /System/Volumes/Data / APFS，
+  // 且 BSD 与 GNU 的 stat 行为不同。在 ubuntu runner 上语义不成立，只在 darwin 跑。
+  describe.runIf(process.platform === 'darwin')('macOS 采样器韧性', () => {
+    // 2026-08-18：diskutil 挂死 5 小时，脚本外层的 flock -n 让后续每分钟的 cron 静默跳过，
+    // 样本永久陈旧 → 容量闸 sample_stale → 所有 PR 的 Deploy Preview 必挂。
+    // 采样命令必须有超时，卡住的探测要降级而不是把整台机器的容量判断拖死。
+    it('diskutil 卡死时在超时内退出并仍写出样本（降级而非挂死）', () => {
+      const workDir = mkdtempSync(join(tmpdir(), 'sampler-hang-'));
+      const binDir = join(workDir, 'fakebin');
+      mkdirSync(binDir, { recursive: true });
+      // 真的挂住的 diskutil：不 mock 被测脚本，只让它依赖的外部命令卡住
+      writeFileSync(join(binDir, 'diskutil'), '#!/bin/sh\nsleep 300\n', { mode: 0o755 });
+      try {
+        const startedAt = Date.now();
+        const run = spawnSync('bash', [SAMPLER], {
+          env: {
+            ...process.env,
+            CECELIA_DEPLOY_ROOT: workDir,
+            // 脚本显式前置系统 PATH（防 cron PATH 事故），所以注入靠显式钩子而非 PATH 覆盖
+            CECELIA_DISKUTIL_BIN: join(binDir, 'diskutil'),
+            HOST_DISK_SAMPLE_TIMEOUT_SECONDS: '5',
+          },
+          encoding: 'utf8',
+          timeout: 90_000,
+        });
+        const elapsedMs = Date.now() - startedAt;
 
-      expect(run.status).toBe(0);
-      expect(elapsedMs).toBeLessThan(60_000);
-      // 卡住必须出声，否则又是一次"安静地不干活"
-      expect(run.stderr).toMatch(/超时|timed out/i);
+        expect(run.status).toBe(0);
+        expect(elapsedMs).toBeLessThan(60_000);
+        // 卡住必须出声，否则又是一次"安静地不干活"
+        expect(run.stderr).toMatch(/超时|timed out/i);
 
-      const jsonPath = join(workDir, '.runtime', 'host-disk.json');
-      expect(existsSync(jsonPath)).toBe(true);
-      const data = JSON.parse(readFileSync(jsonPath, 'utf8'));
-      // diskutil 拿不到 → 退化为 data_avail_bytes，采样整体仍然成立
-      expect(Number.isInteger(data.effective_free_bytes)).toBe(true);
-      expect(data.effective_free_bytes).toBeGreaterThan(0);
-      expect(data.apfs_unallocated_bytes).toBe(data.data_avail_bytes);
-    } finally {
-      rmSync(workDir, { recursive: true, force: true });
-    }
-  });
+        const jsonPath = join(workDir, '.runtime', 'host-disk.json');
+        expect(existsSync(jsonPath)).toBe(true);
+        const data = JSON.parse(readFileSync(jsonPath, 'utf8'));
+        // diskutil 拿不到 → 退化为 data_avail_bytes，采样整体仍然成立
+        expect(Number.isInteger(data.effective_free_bytes)).toBe(true);
+        expect(data.effective_free_bytes).toBeGreaterThan(0);
+        expect(data.apfs_unallocated_bytes).toBe(data.data_avail_bytes);
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
+    });
 
-  it('单飞在脚本内实现：并发时跳过要出声，且陈旧锁能自愈抢占', () => {
-    const workDir = mkdtempSync(join(tmpdir(), 'sampler-lock-'));
-    const lockDir = join(workDir, '.runtime', 'host-disk-sampler.lock');
-    try {
-      // ① 新鲜锁在场 → 跳过，但必须在 stderr 出声（静默跳过 = 故障隐身）
-      mkdirSync(lockDir, { recursive: true });
-      const skipped = spawnSync('bash', [SAMPLER], {
-        env: { ...process.env, CECELIA_DEPLOY_ROOT: workDir },
-        encoding: 'utf8',
-      });
-      expect(skipped.status).toBe(0);
-      expect(skipped.stderr).toMatch(/仍在运行|still running/i);
-      expect(existsSync(join(workDir, '.runtime', 'host-disk.json'))).toBe(false);
+    it('单飞在脚本内实现：并发时跳过要出声，且陈旧锁能自愈抢占', () => {
+      const workDir = mkdtempSync(join(tmpdir(), 'sampler-lock-'));
+      const lockDir = join(workDir, '.runtime', 'host-disk-sampler.lock');
+      try {
+        // ① 新鲜锁在场 → 跳过，但必须在 stderr 出声（静默跳过 = 故障隐身）
+        mkdirSync(lockDir, { recursive: true });
+        const skipped = spawnSync('bash', [SAMPLER], {
+          env: { ...process.env, CECELIA_DEPLOY_ROOT: workDir },
+          encoding: 'utf8',
+        });
+        expect(skipped.status).toBe(0);
+        expect(skipped.stderr).toMatch(/仍在运行|still running/i);
+        expect(existsSync(join(workDir, '.runtime', 'host-disk.json'))).toBe(false);
 
-      // ② 陈旧锁（上一轮已被超时杀死却没来得及清锁）→ 必须抢占并完成采样，
-      //    否则一次挂死就等于永久停摆。
-      const stale = new Date(Date.now() - 3600_000);
-      utimesSync(lockDir, stale, stale);
-      const recovered = spawnSync('bash', [SAMPLER], {
-        env: { ...process.env, CECELIA_DEPLOY_ROOT: workDir, HOST_DISK_LOCK_STALE_SECONDS: '120' },
-        encoding: 'utf8',
-      });
-      expect(recovered.status).toBe(0);
-      expect(recovered.stderr).toMatch(/陈旧|stale/i);
-      expect(existsSync(join(workDir, '.runtime', 'host-disk.json'))).toBe(true);
+        // ② 陈旧锁（上一轮已被超时杀死却没来得及清锁）→ 必须抢占并完成采样，
+        //    否则一次挂死就等于永久停摆。
+        const stale = new Date(Date.now() - 3600_000);
+        utimesSync(lockDir, stale, stale);
+        const recovered = spawnSync('bash', [SAMPLER], {
+          env: { ...process.env, CECELIA_DEPLOY_ROOT: workDir, HOST_DISK_LOCK_STALE_SECONDS: '120' },
+          encoding: 'utf8',
+        });
+        expect(recovered.status).toBe(0);
+        expect(recovered.stderr).toMatch(/陈旧|stale/i);
+        expect(existsSync(join(workDir, '.runtime', 'host-disk.json'))).toBe(true);
 
-      // 正常收尾必须把锁还回去，否则下一轮又被自己挡住
-      expect(existsSync(lockDir)).toBe(false);
-    } finally {
-      rmSync(workDir, { recursive: true, force: true });
-    }
+        // 正常收尾必须把锁还回去，否则下一轮又被自己挡住
+        expect(existsSync(lockDir)).toBe(false);
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
+    });
   });
 });

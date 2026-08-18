@@ -816,6 +816,44 @@ describe('Fleet Worker Attempt runner', () => {
     });
   });
 
+  // 2026-08-18：reconcile 对 status='candidate' 无条件 continue，候选 worktree 永久驻留。
+  // retainedCandidateState 早就写了 retained_at，却没有任何地方消费它——25 个候选树堆到
+  // 27GB 吃光磁盘，容量闸开始拒绝所有 PR 的 preview。候选树要保留给后续 attempt 复用，
+  // 但保留必须有终点。
+  it('reconciliation reclaims a retained candidate workspace past its TTL', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    const stale = new Date(Date.now() - 72 * 3600_000).toISOString();
+    Object.assign(deps.stateStore.states.get(ATTEMPT_ID), {
+      status: 'candidate',
+      container_id: null,
+      retained_at: stale,
+    });
+    const restarted = createRunner(deps);
+
+    await expect(restarted.reconcile()).resolves.toMatchObject({
+      reclaimed_candidates: [ATTEMPT_ID],
+    });
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledWith(deps.workspace);
+  });
+
+  it('reconciliation keeps a freshly retained candidate workspace', async () => {
+    const deps = dependencies();
+    await createRunner(deps).prepare(request());
+    Object.assign(deps.stateStore.states.get(ATTEMPT_ID), {
+      status: 'candidate',
+      container_id: null,
+      retained_at: new Date().toISOString(),
+    });
+    const restarted = createRunner(deps);
+
+    const result = await restarted.reconcile();
+    expect(result.reclaimed_candidates ?? []).not.toContain(ATTEMPT_ID);
+    // 还在 TTL 内的候选树是后续 attempt 要复用的，绝不能删
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({ status: 'candidate' });
+  });
+
   it('exact-finalizes a starting Attempt when delivery was not durably committed', async () => {
     const deps = dependencies();
     await createRunner(deps).prepare(request());
