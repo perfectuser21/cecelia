@@ -43,10 +43,73 @@ JSON_PATH="${RUNTIME_DIR}/host-disk.json"
 
 mkdir -p "$RUNTIME_DIR"
 
+# ── 单飞 + 陈旧锁自愈 ────────────────────────────────────────────────────────
+# 2026-08-18 事故：diskutil 挂死 5 小时，而 crontab 外层用的是 `flock -n`——后续
+# 每分钟的采样全部**静默**跳过，样本永久陈旧 → 容量闸 sample_stale → 所有 PR 的
+# Deploy Preview 必挂。两条教训写进脚本：①单飞归脚本自己管，不依赖调用方；
+# ②跳过必须出声，静默跳过等于故障隐身；③持锁者卡死后锁要能被抢占，否则一次挂死
+# 就是永久停摆。
+LOCK_DIR="${RUNTIME_DIR}/host-disk-sampler.lock"
+LOCK_STALE_SECONDS="${HOST_DISK_LOCK_STALE_SECONDS:-300}"
+
+if [ -d "$LOCK_DIR" ]; then
+  LOCK_MTIME=$(stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c %Y "$LOCK_DIR" 2>/dev/null || echo 0)
+  LOCK_AGE=$(( $(date +%s) - LOCK_MTIME ))
+  if [ "$LOCK_AGE" -ge "$LOCK_STALE_SECONDS" ]; then
+    echo "[host-disk-sampler] 锁已陈旧（持有 ${LOCK_AGE}s ≥ ${LOCK_STALE_SECONDS}s），判定上一轮已死，抢占继续采样" >&2
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+  fi
+fi
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  echo "[host-disk-sampler] 上一轮仍在运行，本轮跳过；连续出现说明采样卡住，样本会变陈旧" >&2
+  exit 0
+fi
+trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+
+# ── 带超时地跑一条采样命令 ──────────────────────────────────────────────────
+# macOS 自带没有 coreutils 的 timeout，不能依赖它存在；用后台进程 + 轮询实现，
+# 超时就把整个进程组打掉（diskutil 会派生子进程）。
+SAMPLE_TIMEOUT_SECONDS="${HOST_DISK_SAMPLE_TIMEOUT_SECONDS:-20}"
+
+run_with_timeout() {
+  # $1=输出文件，其余=要执行的命令
+  local out_file="$1"; shift
+  local waited=0 pid
+
+  ( "$@" >"$out_file" 2>/dev/null ) &
+  pid=$!
+
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$SAMPLE_TIMEOUT_SECONDS" ]; then
+      kill -9 "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      echo "[host-disk-sampler] 采样命令超时（${SAMPLE_TIMEOUT_SECONDS}s）已强杀：$*" >&2
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid" 2>/dev/null || true
+  return 0
+}
+
 # ── 采样 data_avail_bytes（df，1024-blocks 换算字节）──────────────────────────
-DF_LINE=$(df -k /System/Volumes/Data 2>/dev/null | tail -1 || true)
+DF_OUT="${RUNTIME_DIR}/.host-disk-df.$$"
+DF_LINE=""
+if run_with_timeout "$DF_OUT" df -k /System/Volumes/Data; then
+  DF_LINE=$(tail -1 "$DF_OUT" 2>/dev/null || true)
+fi
 if [ -z "$DF_LINE" ]; then
-  DF_LINE=$(df -k / | tail -1)
+  if run_with_timeout "$DF_OUT" df -k /; then
+    DF_LINE=$(tail -1 "$DF_OUT" 2>/dev/null || true)
+  fi
+fi
+rm -f "$DF_OUT"
+if [ -z "$DF_LINE" ]; then
+  # df 都拿不到就没有任何可信数据了——必须硬失败，绝不能写出半真的样本让容量闸误放行。
+  echo "[host-disk-sampler] df 采样失败或超时，拒绝写出样本" >&2
+  exit 1
 fi
 AVAIL_BLOCKS=$(echo "$DF_LINE" | awk '{print $4}')
 DATA_AVAIL_BYTES=$((AVAIL_BLOCKS * 1024))
@@ -54,7 +117,15 @@ USAGE_PCT_RAW=$(echo "$DF_LINE" | awk '{print $5}' | tr -d '%')
 USAGE_PCT=${USAGE_PCT_RAW:-0}
 
 # ── 采样 apfs_unallocated_bytes（diskutil Container Free Space）─────────────
-APFS_LINE=$(diskutil info / 2>/dev/null | grep -m1 "Container Free Space" || true)
+# CECELIA_DISKUTIL_BIN：测试钩子（同 CECELIA_DEPLOY_ROOT 惯例）。脚本显式前置系统
+# PATH 以防 cron PATH 事故，因此注入必须走显式变量而不是 PATH 覆盖。
+DISKUTIL_BIN="${CECELIA_DISKUTIL_BIN:-diskutil}"
+DISKUTIL_OUT="${RUNTIME_DIR}/.host-disk-diskutil.$$"
+APFS_LINE=""
+if run_with_timeout "$DISKUTIL_OUT" "$DISKUTIL_BIN" info /; then
+  APFS_LINE=$(grep -m1 "Container Free Space" "$DISKUTIL_OUT" 2>/dev/null || true)
+fi
+rm -f "$DISKUTIL_OUT"
 APFS_UNALLOCATED_BYTES=""
 if [ -n "$APFS_LINE" ]; then
   APFS_UNALLOCATED_BYTES=$(echo "$APFS_LINE" | sed -nE 's/.*\(([0-9]+) Bytes\).*/\1/p')
