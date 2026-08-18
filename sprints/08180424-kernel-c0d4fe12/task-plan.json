@@ -1,0 +1,27 @@
+{
+  "initiative_id": "ce703092-f7f4-442d-86bb-54eb39339b71",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain/（impact-contract diff-gate + orchestrator loop 回归），纯后端调度逻辑，无 UI/远端 agent。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate Step 3a 按 freshness.status 分流：unknown 透传 reason_code + fail-closed，stale 维持瞬态",
+      "scope": "改 diff-gate.js Step 3a：freshness.status==='unknown' → 透传 Map reason_code 到 reason/reason_code 且 retryable:false（缺 reason_code 用兜底常量 impact_unknown_no_reason_code，仍 retryable:false）；freshness.status==='stale'（及其它非 fresh/非 unknown）→ 维持 mapper_stale + retryable:true。补 diff-gate 与 loop 回归测试。loop.js 代码不改。",
+      "dod": [
+        "[BEHAVIOR] unknown → reason/reason_code 透传且 retryable:false，reason!=='mapper_stale'（sprints/.../tests/diff-gate-deterministic.test.js 全绿）",
+        "[BEHAVIOR] stale → mapper_stale + retryable:true 语义不变；mapper_unavailable 瞬态不变",
+        "[BEHAVIOR] loop 确定性 impact gate（retryable:false）→ exitReason impact_gate_deterministic 且无 backoff sleep",
+        "[ARTIFACT] diff-gate.js 含 freshness.status 分流 + reason_code 透传 + retryable:false"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+        "packages/brain/src/orchestrator/__tests__/loop.test.js",
+        "sprints/08180424-kernel-c0d4fe12/tests/diff-gate-deterministic.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
