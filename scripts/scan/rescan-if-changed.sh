@@ -14,6 +14,46 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
+# ── 单飞 + 陈旧锁自愈 ────────────────────────────────────────────────────────
+# 2026-08-17 事故:cron 每 5 分钟起一次,而一次全量扫描要 15-40 分钟,脚本无锁 →
+# 每 5 分钟叠一个,实测堆到 11 个 rescan + 13 个 scan-graph 进程占 3.7GB,OOM 杀掉
+# 镜像构建、fleet 准入报 node_not_base_admitted、map_stale 频发。锁必须归脚本自己
+# 管(不依赖调用方 cron 行),跳过必须出声(静默跳过=故障隐身),持锁者卡死后锁要能
+# 被抢占(否则一次挂死就是永久停摆)。
+LOCK_DIR="${RESCAN_LOCK_DIR:-/tmp/cecelia-rescan.lock}"
+LOCK_STALE_SECONDS="${RESCAN_LOCK_STALE_SECONDS:-3600}"
+
+if [ -d "$LOCK_DIR" ]; then
+  # BSD 用 `stat -f %m`,GNU 用 `stat -c %Y`。不能用 `A || B` 串联:GNU 的 -f 是
+  # --file-system,遇到 %m **不报错**却吐出 "?",于是永远轮不到 -c %Y,锁年龄恒为 0 →
+  # 每轮都判陈旧抢占 → 单飞在 Linux 上彻底失效。必须逐个探测 + 校验纯数字才采纳。
+  LOCK_MTIME=""
+  for STAT_PROBE in "-f %m" "-c %Y"; do
+    # shellcheck disable=SC2086
+    CANDIDATE=$(stat $STAT_PROBE "$LOCK_DIR" 2>/dev/null || true)
+    if [[ "$CANDIDATE" =~ ^[0-9]+$ ]]; then LOCK_MTIME="$CANDIDATE"; break; fi
+  done
+  if [ -n "$LOCK_MTIME" ]; then
+    LOCK_AGE=$(( $(date +%s) - LOCK_MTIME ))
+    if [ "$LOCK_AGE" -ge "$LOCK_STALE_SECONDS" ]; then
+      echo "[rescan] 锁已陈旧(持有 ${LOCK_AGE}s ≥ ${LOCK_STALE_SECONDS}s),判定上一轮已死,抢占继续扫描" >&2
+      rmdir "$LOCK_DIR" 2>/dev/null || true
+    fi
+  else
+    # 判不出年龄就保守当作"仍在运行":误判陈旧会去抢占,而并发扫描正是本 PR 要防的雪崩。
+    echo "[rescan] 无法判定锁年龄(stat 不可用),保守视为上一轮仍在运行" >&2
+  fi
+fi
+
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  echo "[rescan] 上一轮扫描仍在运行,本轮跳过;连续出现说明扫描卡住,快照会变陈旧" >&2
+  exit 0
+fi
+trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+
+# 扫描本身也要有上限:卡死的扫描会一直占着锁,把后续每一轮都挡在门外。
+SCAN_TIMEOUT_SECONDS="${RESCAN_SCAN_TIMEOUT_SECONDS:-2400}"
+
 STATE_FILE="${RESCAN_STATE_FILE:-/tmp/registry-scan-last-sha}"
 SCAN_CMD="${RESCAN_SCAN_CMD:-bash scripts/scan/run-all-scans.sh}"
 MAX_AGE_SEC="${RESCAN_MAX_AGE_SEC:-${RESCAN_MAX_AGE_SECONDS:-600}}"
@@ -42,7 +82,25 @@ if [ "$REMOTE_SHA" = "$LAST_SHA" ] && (( AGE_SEC < MAX_AGE_SEC )); then
 fi
 
 echo "=== rescan-if-changed: main ${LAST_SHA:0:9} -> ${REMOTE_SHA:0:9} age=${AGE_SEC}s $(date '+%F %T %Z') ==="
-if EXPECTED_SCAN_SHA="$REMOTE_SHA" $SCAN_CMD; then
+run_scan_with_timeout() {
+  EXPECTED_SCAN_SHA="$REMOTE_SHA" $SCAN_CMD &
+  local pid=$! waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$SCAN_TIMEOUT_SECONDS" ]; then
+      # 连同扫描派生的子进程一起打掉,否则 scan-graph 会变成孤儿继续吃内存
+      pkill -9 -P "$pid" 2>/dev/null || true
+      kill -9 "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      echo "[rescan] 扫描超时(${SCAN_TIMEOUT_SECONDS}s)已强杀,本轮不记账,下一轮重试" >&2
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid"
+}
+
+if run_scan_with_timeout; then
   STATE_TMP="${STATE_FILE}.tmp.$$"
   printf '%s|%s\n' "$REMOTE_SHA" "$NOW_EPOCH" > "$STATE_TMP"
   mv "$STATE_TMP" "$STATE_FILE"
