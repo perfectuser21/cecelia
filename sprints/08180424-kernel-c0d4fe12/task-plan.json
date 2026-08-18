@@ -1,0 +1,30 @@
+{
+  "initiative_id": "03d646af-68b2-4e99-af87-80bbd7d2f323",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动全在 packages/brain（impact-contract Gate + orchestrator loop），纯后端调度/决策逻辑，无 UI 无远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff/Structure Gate 透传 freshness.reason_code + 确定性 stale fail-closed，loop 依 retryable 归 failure_class",
+      "scope": "新增 impact-contract/mapper-stale.js（DETERMINISTIC_STALE_REASON_CODES 白名单 + classifyMapperStale）；diff-gate.js 与 structure-gate.js 的 mapper_stale 分支改用 classifyMapperStale 透传 reason_code 并置确定性 retryable:false；从 loop.js receipt 消费路径抽出 orchestrator/impact-block-classify.js（classifyImpactBlockFailureClass）并接回 loop；更新 structure-gate.test.js 中折叠成裸 mapper_stale 的既有断言为透传后的 reason_code",
+      "dod": [
+        "[BEHAVIOR] 确定性 stale → gate impact_unknown/blocked + reason=reason_code + retryable:false（tests/mapper-stale-fail-closed.test.ts B-01/B-03/B-05）",
+        "[BEHAVIOR] 瞬时/缺失/unknown stale → retryable:true（B-02）",
+        "[BEHAVIOR] loop classifyImpactBlockFailureClass：确定性→impact_contract_invalid，瞬时→infrastructure_blocked（B-04）",
+        "[BEHAVIOR] packages/brain 既有 gate 套件全绿（含更新后的 structure-gate stale 断言，B-06）",
+        "[ARTIFACT] impact-contract/mapper-stale.js 与 orchestrator/impact-block-classify.js 存在且被 gate/loop 引用"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/mapper-stale.js",
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/structure-gate.js",
+        "packages/brain/src/orchestrator/impact-block-classify.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/impact-contract/__tests__/structure-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 50
+    }
+  ]
+}
