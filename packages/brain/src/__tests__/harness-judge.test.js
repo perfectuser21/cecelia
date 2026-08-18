@@ -169,6 +169,74 @@ describe('arbitrateContractAppeal — Generator 合同申诉的独立仲裁', ()
   });
 });
 
+describe('deferred 判定不依赖裁判填 deferred 字段（真实 payload 形态）', () => {
+  // 2026-08-18 离线回放 run ce703092 的**真实** judge payload 发现：五条 server-owned
+  // 条目全是 `passed:false, deferred:FALSE`，而 `evidence` 正文以 "deferred=true. Named in
+  // verification_stage.deferred_checks..." 开头 —— 裁判把 deferred 声明写进了自然语言证据，
+  // 结构化字段却填 false。#4948/#4949 都要求 entry.deferred===true，于是在真实数据上
+  // **一条都不生效**（测试用理想数据 deferred:true 全绿，生产照旧 FAIL）。
+  // 结论：合同的 deferred_checks 白名单已经声明了哪些是服务端后置项，裁判对这些项报
+  // passed=false 只能理解为"我无从验证"，而非"它失败了"——它本就没有验证它们的职责。
+  // 因此判定只认**合同白名单 + passed=false**，不再要求裁判承认。
+  const prdSteps = ['**触发**：运行器在宿主上核验容器实况', '**出口**：服务端给出最终裁决'];
+
+  it('deferred 字段为 false 但步骤命中合同白名单 → 仍按 deferred 处理', () => {
+    const r = validateCoverage([
+      { step_index: 1, step: 'step-1 真实业务步骤', passed: true, deferred: false, evidence: '真跑 5/5' },
+      { step_index: 2, step: 'step-2 真实业务步骤', passed: true, deferred: false, evidence: '真跑 23/23' },
+      {
+        step: 'host_docker_inspect (server-owned)',
+        passed: false,
+        deferred: false,
+        evidence: 'deferred=true. Named in verification_stage.deferred_checks; owned by server gate',
+      },
+      {
+        step: 'judge_verdict emission (server-owned downstream)',
+        passed: false,
+        deferred: false,
+        evidence: "deferred=true. This role's own future server-recorded verdict",
+      },
+    ], prdSteps, { deferredChecks: ['host_docker_inspect', 'judge_verdict'] });
+
+    expect(r.failed).toEqual([]);
+    expect(r.deferred.length).toBe(2);
+    expect(r.ok).toBe(true);
+  });
+
+  it('不在合同白名单内的步骤 passed=false → 仍算 failed（白名单是唯一授权来源）', () => {
+    const r = validateCoverage([
+      { step_index: 1, step: 'step-1 真实业务步骤', passed: false, deferred: false, evidence: '命令无输出退出码 1' },
+      { step_index: 2, step: 'step-2 真实业务步骤', passed: true, deferred: false, evidence: 'ok' },
+      {
+        step: 'host_docker_inspect (server-owned)',
+        passed: false,
+        deferred: false,
+        evidence: 'deferred=true. server owned',
+      },
+    ], prdSteps, { deferredChecks: ['host_docker_inspect'] });
+
+    expect(r.ok).toBe(false);
+    expect(r.failed.map((f) => f.index)).toEqual([1]);
+    expect(r.deferred.length).toBe(1);
+  });
+
+  it('合同没声明任何 deferred_checks → 裁判怎么写都算 failed', () => {
+    const r = validateCoverage([
+      { step_index: 1, step: 'step-1', passed: true, deferred: false, evidence: 'ok' },
+      { step_index: 2, step: 'step-2', passed: true, deferred: false, evidence: 'ok' },
+      {
+        step: 'host_docker_inspect (server-owned)',
+        passed: false,
+        deferred: true,
+        evidence: 'deferred=true. 我说了算',
+      },
+    ], prdSteps, { deferredChecks: [] });
+
+    expect(r.ok).toBe(false);
+    expect(r.failed.length).toBe(1);
+  });
+});
+
 describe('裁判自报 FAIL 但唯一依据是合法 deferred → 服务端按覆盖数据纠正', () => {
   // 2026-08-18 生产实证（run ce703092）：裁判把五个服务端延后检查合并成一条 coverage，
   // 标了 deferred=true，并在 feedback 里**自己写明**
