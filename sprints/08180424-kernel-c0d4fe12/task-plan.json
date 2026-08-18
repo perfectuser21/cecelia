@@ -1,0 +1,27 @@
+{
+  "initiative_id": "08180424-kernel-c0d4fe12",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅在 packages/brain orchestrator + impact-contract 后端 gate 决策，无 UI/远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 步骤 3a 透传 reason_code + fail-closed 终态出口",
+      "scope": "diff-gate.js 步骤 3a：透传 mapperResult.freshness.reason_code 到返回体 reason_code；status==='unknown' 或 reason_code∈终态集合 → retryable:false，瞬态 stale/reason_code=null → retryable:true；确认 gateReceipt 透传 reason_code/retryable（如需）；新增确定性回归断言进 brain __tests__",
+      "dod": [
+        "[BEHAVIOR] status=unknown 结论透传 reason_code 且 retryable=false（B-01/B-04）",
+        "[BEHAVIOR] 瞬态 stale/reason_code=null 保留 mapper_stale/retryable=true（B-02/B-03）",
+        "[BEHAVIOR] reason_code/retryable 经真实 gateReceipt 抵达 loop（B-05）",
+        "[BEHAVIOR] INV fail-closed：unknown 结论绝不进 pass/extend",
+        "[ARTIFACT] diff-gate.js 含 TERMINAL_FRESHNESS_REASON_CODES + reason_code 透传",
+        "[ARTIFACT] brain __tests__/diff-gate.test.js 含确定性 fail-closed 回归断言"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
