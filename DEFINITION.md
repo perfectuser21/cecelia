@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.80
+**Brain 版本**: 1.273.81
+
+## Brain 1.273.81 — 裁判自报 FAIL 但唯一依据是合法 deferred 时按覆盖数据纠正
+
+- 生产 run `ce703092`：裁判把五个 `deferred_checks` 合并成一条 coverage 标 `deferred=true`，并在 feedback 里**自己写明** "Per objective these must not force the overall verdict to FAIL"（prompt 也是这么要求的），然后照样把顶层 `verdict` 写成 FAIL。而 `finalFail = judgeResult.verdict === 'FAIL' || !cov.ok` **无条件采信裁判自报**，1.273.80 修好的 `cov.ok=true` 也救不回来 → Evaluator PASS、Judge 实质也 PASS 的 run 仍一路走到人审，merge 永远够不着。
+- 这是 1.273.80 那个死锁的**另一半**：上一轮只加固了覆盖判定一侧，没堵住"裁判自报 verdict"一侧。同源判断：**机械判定不能建立在 LLM 自愿配合指令之上**。
+- 纠正边界卡死，裁判对真实问题的否决权一分不减：① 覆盖判定自身必须通过（`failed`/`missing` 全空）② 必须确实存在合同白名单内的 `deferred` 条目 ③ `failure_class` 不是 `product_failure`。命中时打 warn 日志留痕。
+- 回归 `harness-judge.test.js` 三段：唯一依据是合法 deferred → 纠正为 PASS；存在真实 failed → 保持 FAIL；`product_failure` → 保持 FAIL。
 
 ## Brain 1.273.80 — Judge 的 deferred 白名单改按裁判措辞匹配，解开"永远 FAIL"的结构性死锁
 

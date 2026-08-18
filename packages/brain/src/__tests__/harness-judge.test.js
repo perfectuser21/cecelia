@@ -169,6 +169,92 @@ describe('arbitrateContractAppeal — Generator 合同申诉的独立仲裁', ()
   });
 });
 
+describe('裁判自报 FAIL 但唯一依据是合法 deferred → 服务端按覆盖数据纠正', () => {
+  // 2026-08-18 生产实证（run ce703092）：裁判把五个服务端延后检查合并成一条 coverage，
+  // 标了 deferred=true，并在 feedback 里**自己写明**
+  // "Per objective these must not force the overall verdict to FAIL."
+  // —— 然后照样把顶层 verdict 写成 FAIL。prompt 第 719 行也明确写了同一条规则。
+  // 而服务端 `finalFail = judgeResult.verdict === 'FAIL' || !cov.ok` 无条件采信裁判自报，
+  // 于是 cov.ok=true 也救不回来。这是"机械判定不能建立在 LLM 自愿配合之上"的又一例：
+  // 上一轮（#4948）只加固了覆盖判定一侧，没堵住裁判自报 verdict 这一侧。
+  const deferredCtx = {
+    worktreePath: '/tmp/judge-selffail',
+    sprintDir: 'sprints/x',
+    stageFacts: { pr_state: 'OPEN', pr_merged: false, merge_gate_approved: false },
+    agentVerdict: 'PASS',
+    verificationStage: { deferred_checks: ['host_docker_inspect', 'judge_verdict'] },
+  };
+  const deps = (judgeFn) => ({
+    collectEvidence: async () => ({
+      contractE2E: 'e2e script',
+      goldenPathSteps: ['step1'],
+      transcript: 't',
+      agentStdout: 's',
+      brainResult: {},
+    }),
+    judgeFn,
+    persistFn: async () => {},
+    mechanicalGateFn: async () => ({ pass: true, reasons: [] }),
+  });
+
+  it('所有 passed=false 都是合同白名单内的 deferred → 纠正为 PASS', async () => {
+    const { runJudgeGate } = await import('../harness-judge.js');
+    const r = await runJudgeGate(deferredCtx, deps(async () => ({
+      verdict: 'FAIL',
+      failure_class: 'evidence_insufficient',
+      coverage: [
+        { step_index: 1, step: 'step1', passed: true, deferred: false, evidence: '真跑 5/5' },
+        {
+          step: 'Downstream server-owned gate checks (host_docker_inspect, judge_verdict)',
+          passed: false,
+          deferred: true,
+          evidence: 'owned by the authoritative server mechanical gate post-Judge',
+        },
+      ],
+      feedback: 'Per objective these must not force the overall verdict to FAIL.',
+    })));
+    expect(r.verdict).toBe('PASS');
+  });
+
+  it('存在真实 failed 条目 → 保持 FAIL（否决权不受影响）', async () => {
+    const { runJudgeGate } = await import('../harness-judge.js');
+    const r = await runJudgeGate(deferredCtx, deps(async () => ({
+      verdict: 'FAIL',
+      failure_class: 'evidence_insufficient',
+      coverage: [
+        { step_index: 1, step: 'step1', passed: false, deferred: false, evidence: '命令无输出，退出码 1' },
+        {
+          step: 'Downstream server-owned gate checks (judge_verdict)',
+          passed: false,
+          deferred: true,
+          evidence: 'server-owned',
+        },
+      ],
+      feedback: '真有问题',
+    })));
+    expect(r.verdict).toBe('FAIL');
+  });
+
+  it('裁判给 product_failure → 保持 FAIL（实质问题一律不纠正）', async () => {
+    const { runJudgeGate } = await import('../harness-judge.js');
+    const r = await runJudgeGate(deferredCtx, deps(async () => ({
+      verdict: 'FAIL',
+      failure_class: 'product_failure',
+      coverage: [
+        { step_index: 1, step: 'step1', passed: true, deferred: false, evidence: 'ok' },
+        {
+          step: 'Downstream server-owned gate checks (judge_verdict)',
+          passed: false,
+          deferred: true,
+          evidence: 'server-owned',
+        },
+      ],
+      feedback: '实现有缺陷',
+    })));
+    expect(r.verdict).toBe('FAIL');
+  });
+});
+
 describe('Judge FAIL 必须带 failure_class（r41 实证：null → 全部死等人工）', () => {
   // r41 实证：Judge 判 FAIL 但 failure_class=null → derive 归入 unknown 分支
   // → wait:human_review 死等。Judge 是最后一道闸，它一 FAIL 就必然卡人工，
