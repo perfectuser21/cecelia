@@ -329,4 +329,51 @@ if GIT_CONFIG_COUNT=invalid install_frozen_baseline_guard; then
 fi
 test "${#FROZEN_BASELINE_PROVIDER_ENV[@]}" -eq 0
 
+# ── 9. 每条失败路径都必须把具体原因写进 FROZEN_BASELINE_GUARD_FAILURE ──
+# 2026-08-18 生产：run c04f7c31 的 Evaluator 报 frozen_baseline_guard_unavailable，
+# 但容器日志 0 行、worker 日志无记录、attempt.result 只有一句
+# "runner could not arm the frozen baseline lineage guard" —— 10 条失败路径里
+# 6 条是裸的 `|| return 1` 完全静默，剩下 4 条只写 stderr 而容器一退出就丢。
+# 结果是这个间歇性故障**复现了也查不出**。失败必须自带原因。
+CASE="$(new_case failure-reason)"
+WS="$CASE/workspace"
+export WORKTREE_PATH="$WS"
+export FROZEN_BASELINE_GUARD_DIR="$CASE/guard"
+
+# 9a. 非法 start SHA
+FROZEN_BASELINE_GUARD_FAILURE=''
+HARNESS_WORKSPACE_START_SHA='not-a-sha' install_frozen_baseline_guard && {
+  echo "guard accepted an uncanonical start SHA" >&2; exit 1; }
+if [[ -z "${FROZEN_BASELINE_GUARD_FAILURE:-}" ]]; then
+  echo "guard did not record a failure reason for uncanonical start SHA" >&2
+  exit 1
+fi
+case "$FROZEN_BASELINE_GUARD_FAILURE" in
+  *sha*|*SHA*) ;;
+  *) echo "failure reason does not identify the start SHA problem: $FROZEN_BASELINE_GUARD_FAILURE" >&2; exit 1 ;;
+esac
+
+# 9b. workspace 不是 git worktree
+FROZEN_BASELINE_GUARD_FAILURE=''
+NOT_A_REPO="$CASE/not-a-repo"; mkdir -p "$NOT_A_REPO"
+HEAD_SHA="$(git -C "$WS" rev-parse HEAD)"
+WORKTREE_PATH="$NOT_A_REPO" HARNESS_WORKSPACE_START_SHA="$HEAD_SHA" \
+  install_frozen_baseline_guard && {
+  echo "guard accepted a non-worktree workspace" >&2; exit 1; }
+if [[ -z "${FROZEN_BASELINE_GUARD_FAILURE:-}" ]]; then
+  echo "guard did not record a failure reason for a non-worktree workspace" >&2
+  exit 1
+fi
+
+# 9c. 调用方必须把原因带进 provider 失败载荷（否则容器一退出证据就没了）
+grep -Fq 'FROZEN_BASELINE_GUARD_FAILURE' "$ENTRYPOINT" || {
+  echo "entrypoint does not surface the guard failure reason" >&2
+  exit 1
+}
+grep -A 8 'if ! install_frozen_baseline_guard; then' "$ENTRYPOINT" \
+  | grep -Fq 'FROZEN_BASELINE_GUARD_FAILURE' || {
+  echo "provider bootstrap failure does not carry the guard failure reason" >&2
+  exit 1
+}
+
 echo "entrypoint frozen baseline guard tests passed"
