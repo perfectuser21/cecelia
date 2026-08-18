@@ -1685,41 +1685,53 @@ assert_frozen_evaluator_candidate_tree() {
   rm -f "$observed_manifest"
 }
 
+# 失败原因寄存器：容器一退出 stderr 就没了，而 attempt.result 里只有一句泛泛的
+# "could not arm the frozen baseline lineage guard" —— 2026-08-18 run c04f7c31
+# 复现了这个间歇性故障却查不出是 10 条路径里的哪一条（容器日志 0 行）。
+# 每条失败路径都必须把具体原因写进这里，由调用方带进 provider 失败载荷。
+FROZEN_BASELINE_GUARD_FAILURE=''
+
+frozen_baseline_guard_fail() {
+  FROZEN_BASELINE_GUARD_FAILURE="$1"
+  echo "[entrypoint] frozen baseline guard failed: $1" >&2
+  return 1
+}
+
 install_frozen_baseline_guard() {
   frozen_baseline_enabled || return 0
   FROZEN_BASELINE_PROVIDER_ENV=()
+  FROZEN_BASELINE_GUARD_FAILURE=''
 
   local workspace="${WORKTREE_PATH:-/workspace}"
   local start_sha="${HARNESS_WORKSPACE_START_SHA:-}"
   local hooks_dir="$FROZEN_BASELINE_GUARD_DIR/hooks"
 
   if [[ ! "$start_sha" =~ ^[0-9a-f]{40}$ ]]; then
-    echo "[entrypoint] frozen baseline guard rejected an uncanonical start SHA" >&2
-    return 1
+    frozen_baseline_guard_fail "uncanonical start SHA: '${start_sha}'" || return 1
   fi
   if ! git --no-replace-objects -C "$workspace" \
       rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "[entrypoint] frozen baseline guard workspace is not a git worktree" >&2
-    return 1
+    frozen_baseline_guard_fail "workspace is not a git worktree: '${workspace}'" || return 1
   fi
   if ! git --no-replace-objects -C "$workspace" \
       cat-file -e "${start_sha}^{commit}" 2>/dev/null; then
-    echo "[entrypoint] frozen baseline start SHA is absent from the workspace" >&2
-    return 1
+    frozen_baseline_guard_fail "start SHA ${start_sha} absent from workspace ${workspace}" || return 1
   fi
   if [[ "$(git --no-replace-objects -C "$workspace" \
       rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" != "$start_sha" ]]; then
-    echo "[entrypoint] frozen baseline workspace did not start at the pinned SHA" >&2
-    return 1
+    frozen_baseline_guard_fail "workspace HEAD $(git --no-replace-objects -C "$workspace" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || echo '<unreadable>') != pinned ${start_sha}" || return 1
   fi
-  assert_frozen_evaluator_candidate_tree pre-provider || return 1
+  assert_frozen_evaluator_candidate_tree pre-provider \
+    || frozen_baseline_guard_fail 'candidate tree assertion failed (pre-provider)' || return 1
 
   local check="$FROZEN_BASELINE_GUARD_DIR/lineage-check.sh"
   local baseline_refs="$FROZEN_BASELINE_GUARD_DIR/baseline-refs"
-  mkdir -p "$hooks_dir" || return 1
+  mkdir -p "$hooks_dir" || frozen_baseline_guard_fail "cannot create hooks dir ${hooks_dir}" || return 1
   rm -f "$hooks_dir/pre-push" "$check" "$baseline_refs"
-  capture_frozen_evaluator_git_identity || return 1
-  capture_frozen_evaluator_dependencies || return 1
+  capture_frozen_evaluator_git_identity \
+    || frozen_baseline_guard_fail 'cannot capture git identity' || return 1
+  capture_frozen_evaluator_dependencies \
+    || frozen_baseline_guard_fail 'cannot capture dependency manifest' || return 1
 
   # 判据不是「start SHA 仍是 HEAD 的祖先」——生产事故里 main 本来就是 0dc4e3c0
   # 的后代，rebase 上去祖先关系照样成立，这条规则一个字都拦不住。真正的不变量是：
@@ -1729,8 +1741,10 @@ install_frozen_baseline_guard() {
   # 在快照可达范围内，就说明 fetch/rebase/merge/pull 把别的血统搬了进来。
   git --no-replace-objects -C "$workspace" \
     for-each-ref --format='%(objectname)' refs/heads refs/remotes \
-    | sort -u > "$baseline_refs" || return 1
-  chmod 0444 "$baseline_refs" || return 1
+    | sort -u > "$baseline_refs" \
+    || frozen_baseline_guard_fail 'cannot snapshot baseline refs' || return 1
+  chmod 0444 "$baseline_refs" \
+    || frozen_baseline_guard_fail 'cannot seal baseline refs read-only' || return 1
 
   {
     printf '%s\n' '#!/usr/bin/env bash'
@@ -2975,7 +2989,7 @@ run_provider_contract() {
     write_provider_bootstrap_failure \
       "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
       'Frozen baseline guard rejected' frozen_baseline_guard_unavailable \
-      'runner could not arm the frozen baseline lineage guard' \
+      "runner could not arm the frozen baseline lineage guard: ${FROZEN_BASELINE_GUARD_FAILURE:-unknown reason}" \
       "${CREDENTIAL_REF:-}" "${CREDENTIAL_COPY_MUTATED:-false}"
     return 1
   fi
