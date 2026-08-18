@@ -70,5 +70,47 @@ rm -f "$MARK"
 RC=0; RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" RESCAN_NOW_EPOCH=1601 bash "$SCRIPT" >/dev/null 2>&1 || RC=$?
 if [[ $RC -eq 0 && -f "$MARK" ]]; then pass "SHA 稳定但扫描账龄超过10分钟:仍触发刷新"; else fail "稳定 SHA 超龄后未刷新(rc=$RC,state=$(cat "$STATE"))"; fi
 
+# 7 单飞:上一轮还在跑时必须跳过,且要出声(静默跳过=故障隐身)
+# 2026-08-17 事故:cron 每5分钟起一次,单次全量扫描要 15-40 分钟,无锁 → 堆到
+# 11 个 rescan + 13 个 scan-graph 进程占 3.7GB → OOM 杀镜像构建、node_not_base_admitted。
+LOCKDIR="${RESCAN_LOCK_DIR:-$TMPD/rescan.lock}"
+echo "old-sha-000|0" > "$STATE"; rm -f "$MARK"; mkdir -p "$LOCKDIR"
+OUT="$TMPD/skip.err"; RC=0
+RESCAN_LOCK_DIR="$LOCKDIR" RESCAN_NOW_EPOCH=99999 RESCAN_STATE_FILE="$STATE" \
+  RESCAN_SCAN_CMD="$STUB_OK" bash "$SCRIPT" >/dev/null 2>"$OUT" || RC=$?
+if [[ $RC -eq 0 && ! -f "$MARK" ]] && grep -qE "仍在运行|still running" "$OUT"; then
+  pass "并发:跳过本轮且在 stderr 出声"
+else
+  fail "并发未被单飞拦住或跳过时不出声(rc=$RC, mark=$([[ -f $MARK ]] && echo yes || echo no), err=$(head -c 120 "$OUT"))"
+fi
+
+# 8 陈旧锁自愈:持锁者卡死后必须能被抢占,否则一次挂死=永久停摆
+touch -t 200001010000 "$LOCKDIR" 2>/dev/null || true
+OUT2="$TMPD/stale.err"; rm -f "$MARK"; RC=0
+RESCAN_LOCK_DIR="$LOCKDIR" RESCAN_LOCK_STALE_SECONDS=60 RESCAN_NOW_EPOCH=99999 \
+  RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" bash "$SCRIPT" >/dev/null 2>"$OUT2" || RC=$?
+if [[ $RC -eq 0 && -f "$MARK" ]] && grep -qE "陈旧|stale" "$OUT2"; then
+  pass "陈旧锁:抢占并完成扫描"
+else
+  fail "陈旧锁未被抢占(rc=$RC, mark=$([[ -f $MARK ]] && echo yes || echo no), err=$(head -c 120 "$OUT2"))"
+fi
+
+# 9 正常收尾必须把锁还回去,否则下一轮被自己挡住
+if [[ ! -d "$LOCKDIR" ]]; then pass "正常收尾释放锁"; else fail "锁残留: $LOCKDIR"; fi
+
+# 10 扫描卡死必须被超时打断,不能一直占着锁
+STUB_HANG="$TMPD/stub-hang.sh"
+printf '#!/usr/bin/env bash\nsleep 300\n' > "$STUB_HANG"; chmod +x "$STUB_HANG"
+echo "old-sha-000|0" > "$STATE"; OUT3="$TMPD/hang.err"; RC=0
+START=$(date +%s)
+RESCAN_LOCK_DIR="$TMPD/rescan2.lock" RESCAN_SCAN_TIMEOUT_SECONDS=5 RESCAN_NOW_EPOCH=99999 \
+  RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_HANG" bash "$SCRIPT" >/dev/null 2>"$OUT3" || RC=$?
+ELAPSED=$(( $(date +%s) - START ))
+if (( ELAPSED < 60 )) && grep -qE "超时|timed out" "$OUT3" && [[ ! -d "$TMPD/rescan2.lock" ]]; then
+  pass "扫描卡死:超时打断、出声、释放锁"
+else
+  fail "扫描卡死未被超时打断(elapsed=${ELAPSED}s, err=$(head -c 120 "$OUT3"))"
+fi
+
 echo ""; echo "结果: PASS=$PASS FAIL=$ERRORS"
 [[ $ERRORS -eq 0 ]] || exit 1
