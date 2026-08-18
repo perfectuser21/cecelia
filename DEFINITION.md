@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.79
+**Brain 版本**: 1.273.80
+
+## Brain 1.273.80 — Judge 的 deferred 白名单改按裁判措辞匹配，解开"永远 FAIL"的结构性死锁
+
+- 生产 run `40582e11` 的裁决书自相矛盾：正文写着"裁判=PASS"却终判 FAIL，未通过步骤是 #12 `host_docker_inspect` 与 #13 `judge_verdict`。这两步裁判都正确标了 `deferred=true` 并给了理由（只读沙箱没有 Docker CLI；以及"自己尚未做出的裁决"无法自证）。
+- 根因：`stepMatchesDeferredCheck` 拿去比对白名单的是 **PRD 原文步骤**（中文长句），而不是**裁判声明 defer 的那条 coverage entry**（措辞是英文 check 名）。匹配不上 → deferred 不被承认 → 落进 `failed`。后果是只要合同里含服务端机械闸或自指步骤，Judge 就**永远 FAIL**。
+- 修法：匹配对象扩展为 PRD 原文步骤 **+ coverage entry 的 step**，任一命中即承认。**放宽的只是措辞来源，不是权限**——能否 defer 仍由合同的 `verification_stage.deferred_checks` 白名单决定，裁判无法自行扩大范围。
+- 回归 `harness-judge.test.js` 两段：裁判用 check 名措辞声明 deferred 必须被承认为 deferred（`ok=true`）；合同没把该检查列进 `deferred_checks` 时，裁判自称 deferred 也照样算 `failed`。
 
 ## Brain 1.273.79 — 候选 worktree 加 TTL 回收，不再无限驻留吃光磁盘
 

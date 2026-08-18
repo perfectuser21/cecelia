@@ -803,10 +803,20 @@ const DEFERRED_CHECK_PATTERNS = Object.freeze({
   ],
 });
 
-function stepMatchesDeferredCheck(step, deferredChecks) {
-  const text = String(step ?? '');
+// 匹配对象必须同时含 PRD 原文步骤**和裁判声明 defer 的那条 coverage entry**。
+// 2026-08-18 run 40582e11：裁判把 #12/#13 正确标了 deferred=true（只读沙箱没有 Docker
+// CLI、以及"自己尚未做出的裁决"），措辞用的是 check 名（"host_docker_inspect — host
+// Docker container inspection"），而这里只拿 PRD 原文（中文长句）去比对白名单，匹配不上
+// → deferred 不被承认 → 落进 failed。结果是：只要合同里有服务端机械闸或自指步骤，
+// Judge 就永远 FAIL，裁决书正文写着"裁判=PASS"却终判 FAIL 的自相矛盾。
+// 放宽匹配对象不等于放行：能不能 defer 仍由**合同**的 verification_stage.deferred_checks
+// 白名单说了算，裁判无法自行扩大范围。
+function stepMatchesDeferredCheck(step, deferredChecks, entryStep = null) {
+  const candidates = [String(step ?? ''), String(entryStep ?? '')].filter(Boolean);
   return (Array.isArray(deferredChecks) ? deferredChecks : []).some((check) =>
-    (DEFERRED_CHECK_PATTERNS[check] ?? []).some((pattern) => pattern.test(text)));
+    (DEFERRED_CHECK_PATTERNS[check] ?? []).some(
+      (pattern) => candidates.some((text) => pattern.test(text)),
+    ));
 }
 
 // Golden Path 步骤是 PRD 里的整段中文长句；Judge 用自己的措辞复述同一步是常态
@@ -879,7 +889,7 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
     if (
       entry.passed !== true
       && entry.deferred === true
-      && stepMatchesDeferredCheck(steps[i], deferredChecks)
+      && stepMatchesDeferredCheck(steps[i], deferredChecks, entry.step)
     ) {
       deferred.push({ index: i + 1, step: steps[i] });
       continue;
@@ -896,7 +906,7 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
     const step = entry.step || `coverage[${i}]`;
     if (
       entry.deferred === true
-      && stepMatchesDeferredCheck(step, deferredChecks)
+      && stepMatchesDeferredCheck(step, deferredChecks, entry.step)
     ) {
       deferred.push({ index: i + 1, step });
       continue;
