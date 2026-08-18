@@ -1,0 +1,26 @@
+{
+  "initiative_id": "b961d089-c80f-4e8a-ac26-375e4976512c",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅落在 packages/brain/ 纯后端 impact-contract 门禁逻辑，无 UI/agent/engine 参与",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 步骤 3a 透传 reason_code + 确定性 stale fail-closed 出口",
+      "scope": "在 evaluateDiffGate 步骤 3a：非 fresh 时透传 mapperResult.freshness.reason_code；freshness.status==='stale' 返回 retryable:false（fail-closed 终态），unknown/缺失保持 retryable:true；reason 字面仍为 'mapper_stale'。不改 fresh/revision/digest/drift/extend/mapper 异常分支",
+      "dod": [
+        "[BEHAVIOR] stale+reason_code → gate=impact_unknown, reason_code 透传, retryable=false（node 断言真实 evaluateDiffGate）",
+        "[BEHAVIOR] stale reason_code 缺失 → retryable=false, reason_code=null",
+        "[BEHAVIOR] unknown → retryable=true 且 reason_code 透传（不冤杀瞬时态）",
+        "[BEHAVIOR] sprint 新测试 + 既有 diff-gate.test.js 回归全绿",
+        "[ARTIFACT] packages/brain/src/impact-contract/diff-gate.js 步骤 3a 分支已透传 reason_code 且 stale 走 retryable:false"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 40
+    }
+  ]
+}
