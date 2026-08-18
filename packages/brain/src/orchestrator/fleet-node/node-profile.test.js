@@ -259,6 +259,11 @@ describe('Fleet NodeProfile registry', () => {
     ['evaluator', 4, 2],
     ['judge', 4, 2],
     ['reporter', 1, 8],
+    // 2026-08-18 生产实证：Judge 首次 PASS 后走 publish:approved_ref，dispatcher 用
+    // role:'publisher'，而权重表没注册它 → getRoleCapacity 抛 unknown_fleet_role →
+    // 容量算 0 → all_execution_targets_exhausted，run 卡在"最后一米"。
+    // Publisher 只做 git 发布（推精确候选 ref），不跑测试，与 reporter 同为最轻档。
+    ['publisher', 1, 8],
   ])('applies the %s role weight %i to eight base slots', async (role, weight, expected) => {
     const { getRoleCapacity } = await loadContract();
     expect(getRoleCapacity({ baseCapacity: 8, role })).toEqual({
@@ -266,6 +271,23 @@ describe('Fleet NodeProfile registry', () => {
       weight,
       capacity: expected,
     });
+  });
+
+  // 防再漏：dispatcher 每个 spawn/publish 条目声明的 role 都必须能算出容量。
+  // 单靠"给权重表补一个角色"挡不住下一次——新增角色时照样会忘。
+  it('every role dispatcher can dispatch has a registered capacity weight', async () => {
+    const { getRoleCapacity } = await loadContract();
+    const dispatcherSrc = await import('node:fs/promises')
+      .then((fs) => fs.readFile(new URL('../dispatcher.js', import.meta.url), 'utf8'));
+    const roles = [...dispatcherSrc.matchAll(/role:\s*'([a-z_]+)'/g)].map((m) => m[1]);
+
+    expect(roles.length).toBeGreaterThan(5);
+    for (const role of [...new Set(roles)]) {
+      expect(
+        () => getRoleCapacity({ baseCapacity: 8, role }),
+        `dispatcher 可派发角色 '${role}' 未注册容量权重`,
+      ).not.toThrow();
+    }
   });
 
   it('fails closed for unknown, empty, and non-string roles', async () => {
