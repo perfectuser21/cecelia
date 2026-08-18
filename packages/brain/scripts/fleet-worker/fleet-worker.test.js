@@ -238,7 +238,7 @@ describe('Fleet Worker health-only service', () => {
     server.close();
   });
 
-  it('rejects concurrent expensive probes without queuing and reprobes after release', async () => {
+  it('serves concurrent probers from the single in-flight probe and reprobes after release', async () => {
     const { createFleetWorkerServer } = await loadServerContract();
     let releaseFirst;
     const firstPending = new Promise((resolve) => { releaseFirst = resolve; });
@@ -253,22 +253,50 @@ describe('Fleet Worker health-only service', () => {
     const firstPendingResponse = request(server, 'GET', '/health');
     expect(probeHealth).toHaveBeenCalledTimes(1);
 
-    const busy = await request(server, 'GET', '/health');
-
-    expect(busy.statusCode).toBe(503);
-    expect(JSON.parse(busy.body)).toEqual({ error: 'health_probe_busy' });
-    expect(Buffer.byteLength(busy.body, 'utf8')).toBeLessThanOrEqual(1_024);
+    // Kernel dispatch admission reads this endpoint per run, and every run polls
+    // from its own orchestrator process — turning a mid-probe caller away marks
+    // the whole node not-admitted and strands the run in planning.
+    const joinerPendingResponse = request(server, 'GET', '/health');
     expect(probeHealth).toHaveBeenCalledTimes(1);
 
     releaseFirst();
-    const first = await firstPendingResponse;
-    const next = await request(server, 'GET', '/health');
+    const [first, joiner] = await Promise.all([firstPendingResponse, joinerPendingResponse]);
 
     expect(first.statusCode).toBe(200);
+    expect(joiner.statusCode).toBe(200);
+    expect(JSON.parse(joiner.body).observed_at).toBe(JSON.parse(first.body).observed_at);
+    expect(probeHealth).toHaveBeenCalledTimes(1);
+
+    const next = await request(server, 'GET', '/health');
+
     expect(next.statusCode).toBe(200);
     expect(JSON.parse(first.body).observed_at)
       .not.toBe(JSON.parse(next.body).observed_at);
     expect(probeHealth).toHaveBeenCalledTimes(2);
+    server.close();
+  });
+
+  it('fails every concurrent prober closed when the shared probe throws', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    let rejectFirst;
+    const firstPending = new Promise((resolve, reject) => { rejectFirst = reject; });
+    const probeHealth = vi.fn(async () => {
+      await firstPending;
+      return safeHealth(1);
+    });
+    const server = createFleetWorkerServer({ probeHealth, healthCacheTtlMs: 0 });
+
+    const firstPendingResponse = request(server, 'GET', '/health');
+    const joinerPendingResponse = request(server, 'GET', '/health');
+    expect(probeHealth).toHaveBeenCalledTimes(1);
+
+    rejectFirst(new Error('probe blew up'));
+    const [first, joiner] = await Promise.all([firstPendingResponse, joinerPendingResponse]);
+
+    expect(first.statusCode).toBe(503);
+    expect(joiner.statusCode).toBe(503);
+    expect(JSON.parse(joiner.body)).toEqual({ error: 'health_probe_failed' });
+    expect(Buffer.byteLength(joiner.body, 'utf8')).toBeLessThanOrEqual(1_024);
     server.close();
   });
 
