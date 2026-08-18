@@ -24,14 +24,24 @@ LOCK_DIR="${RESCAN_LOCK_DIR:-/tmp/cecelia-rescan.lock}"
 LOCK_STALE_SECONDS="${RESCAN_LOCK_STALE_SECONDS:-3600}"
 
 if [ -d "$LOCK_DIR" ]; then
-  # BSD stat 用 -f,GNU stat 用 -c;GNU 的 -f 是 --file-system,遇到 %m 不报错却
-  # 吐出非数字,必须校验是纯数字再进算术展开。
-  LOCK_MTIME=$(stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c %Y "$LOCK_DIR" 2>/dev/null || echo 0)
-  [[ "$LOCK_MTIME" =~ ^[0-9]+$ ]] || LOCK_MTIME=0
-  LOCK_AGE=$(( $(date +%s) - LOCK_MTIME ))
-  if [ "$LOCK_AGE" -ge "$LOCK_STALE_SECONDS" ]; then
-    echo "[rescan] 锁已陈旧(持有 ${LOCK_AGE}s ≥ ${LOCK_STALE_SECONDS}s),判定上一轮已死,抢占继续扫描" >&2
-    rmdir "$LOCK_DIR" 2>/dev/null || true
+  # BSD 用 `stat -f %m`,GNU 用 `stat -c %Y`。不能用 `A || B` 串联:GNU 的 -f 是
+  # --file-system,遇到 %m **不报错**却吐出 "?",于是永远轮不到 -c %Y,锁年龄恒为 0 →
+  # 每轮都判陈旧抢占 → 单飞在 Linux 上彻底失效。必须逐个探测 + 校验纯数字才采纳。
+  LOCK_MTIME=""
+  for STAT_PROBE in "-f %m" "-c %Y"; do
+    # shellcheck disable=SC2086
+    CANDIDATE=$(stat $STAT_PROBE "$LOCK_DIR" 2>/dev/null || true)
+    if [[ "$CANDIDATE" =~ ^[0-9]+$ ]]; then LOCK_MTIME="$CANDIDATE"; break; fi
+  done
+  if [ -n "$LOCK_MTIME" ]; then
+    LOCK_AGE=$(( $(date +%s) - LOCK_MTIME ))
+    if [ "$LOCK_AGE" -ge "$LOCK_STALE_SECONDS" ]; then
+      echo "[rescan] 锁已陈旧(持有 ${LOCK_AGE}s ≥ ${LOCK_STALE_SECONDS}s),判定上一轮已死,抢占继续扫描" >&2
+      rmdir "$LOCK_DIR" 2>/dev/null || true
+    fi
+  else
+    # 判不出年龄就保守当作"仍在运行":误判陈旧会去抢占,而并发扫描正是本 PR 要防的雪崩。
+    echo "[rescan] 无法判定锁年龄(stat 不可用),保守视为上一轮仍在运行" >&2
   fi
 fi
 
