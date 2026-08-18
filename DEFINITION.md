@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.84
+**Brain 版本**: 1.273.85
+
+## Brain 1.273.85 — harness_attempts.role 约束补 publisher（migration 431）
+
+- 生产 run `40ed8a23` **首次走到 publish 阶段**（Judge 双 PASS → `publish:approved_ref allow`），随即写 attempt 行时撞上 `harness_attempts_role_check`，run 直接终态：`kernel_process_fatal: new row for relation "harness_attempts"`。
+- 该约束只列了 8 个角色（planner/proposer/reviewer/generator/evaluator/judge/reporter/commander），**没有 publisher**。
+- Publisher 的注册点共三处，此前漏了两处：① dispatcher 条目（一直都有）② fleet `ROLE_WEIGHTS` 容量权重（#4951 已补）③ 本 DB 约束（migration 431）。**在此之前从没有 run 走到过 Judge PASS 之后，所以两处漏注册一直没被发现。**
+- migration 431 + rollback 431.down；scratch 库验证：迁移前插 publisher 复现生产同款报错，迁移后可插入，非法角色仍被拒。
 
 ## Brain 1.273.84 — frozen baseline guard 失败自带原因 + runner digest 重钉
 
