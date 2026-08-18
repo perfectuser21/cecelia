@@ -1,0 +1,27 @@
+{
+  "initiative_id": "4f0a98b7-6347-4acd-a2f2-771ce7e67893",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅落 packages/brain/ 的 GAN 编排纯后端观测逻辑，无 UI/agent 协议/engine 介入。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "修复 gan_no_push_streak 误判：提案 remote 兜底链(base_repo→repo) + 无法解析 slug 时 fail-closed 不发致盲 origin 盲查",
+      "scope": "ground-truth.js 提案 remote 解析补 ?? taskPayload.repo 兜底链（与 discoverPrFromGithub 对齐）；GITHUB_REPO_PATTERN 无法解析 slug 时不发出 git ls-remote --heads origin（origin 空结果不作未推送权威）。同源新增回归到 brain 包内 orchestrator 测试（marker gan_no_push_streak-fallback-regression）。不改 MAX_NO_PUSH_STREAK/deriveGan/caps/parseBaseRepo/PR 发现路径。",
+      "dod": [
+        "[BEHAVIOR] 缺 base_repo 有 repo → ls-remote 打 https://github.com/perfectuser21/cecelia.git 不退 origin（B-01）",
+        "[BEHAVIOR] 均不可解析 → fail-closed 不发出 ls-remote --heads origin（B-03）",
+        "[BEHAVIOR] 正确观测 derive 不产生 gan_no_push_streak（B-05）；base_repo 正常零回归（B-04）",
+        "[BEHAVIOR] brain 包内 orchestrator 测试全绿含新增 marker 用例（B-06）",
+        "[ARTIFACT] ground-truth.js 用 parseBaseRepo(taskPayload.base_repo ?? taskPayload.repo)"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/__tests__/ground-truth.test.js",
+        "sprints/08180432-kernel-364584d3/tests/gan-nopush-remote.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
