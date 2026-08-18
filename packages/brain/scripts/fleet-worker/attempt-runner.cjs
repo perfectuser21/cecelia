@@ -18,6 +18,11 @@ const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3
 const CONTAINER_NAME_PATTERN = /^cecelia-fleet-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const IMAGE_DIGEST_PATTERN = /^(?:[a-z0-9][a-z0-9._/-]*@)?sha256:[a-f0-9]{64}$/;
 const MOUNT_ACCESS_PRINCIPAL_PATTERN = /^[A-Za-z_][A-Za-z0-9._-]{0,63}$/;
+// 候选 worktree 保留时长上限。候选树要留给后续 attempt（evaluator/judge）复用，
+// 但保留必须有终点：2026-08-18 实测 25 棵候选树堆到 27GB 吃光磁盘，容量闸随即
+// 拒绝所有 PR 的 preview。retainedCandidateState 一直在写 retained_at，此前没有
+// 任何地方消费它。
+const CANDIDATE_RETENTION_TTL_MS = 24 * 60 * 60 * 1000;
 const PROVIDER_FIELDS = new Set([
   'provider',
   'command',
@@ -1383,6 +1388,8 @@ function createAttemptRunner({
   githubCredentialConsumer,
   resourceManager = NO_RUNTIME_RESOURCE_MANAGER,
   claudeAccountsRoot = null,
+  candidateRetentionTtlMs = CANDIDATE_RETENTION_TTL_MS,
+  now = () => Date.now(),
 } = {}) {
   validateDependencies({
     workspaceManager,
@@ -1571,6 +1578,14 @@ function createAttemptRunner({
     });
     await stateStore.save(tombstone);
     return tombstone;
+  }
+
+  function candidateRetentionExpired(state) {
+    const retainedAt = Date.parse(state?.retained_at ?? '');
+    // 时间戳缺失或不可解析 → 一律判为"未过期"。宁可多占一阵磁盘，也不能误删
+    // 后续 attempt 正等着复用的候选树。
+    if (!Number.isFinite(retainedAt)) return false;
+    return now() - retainedAt >= candidateRetentionTtlMs;
   }
 
   function retainedCandidateState(state) {
@@ -2389,6 +2404,7 @@ function createAttemptRunner({
         activeStates.map((state) => state.attempt_id),
       );
       const cleanedAttempts = [];
+      const reclaimedCandidates = [];
 
       for (const state of ownedStates) {
         if (state.status === 'candidate') {
@@ -2404,6 +2420,16 @@ function createAttemptRunner({
             await releaseResources(state);
             await releaseSourceCandidate(state);
             await stateStore.save(retainedCandidateState(state));
+          }
+          // 候选树留给后续 attempt 复用，但保留要有终点：超过 TTL 说明它等的那个
+          // 后续 attempt 再也不会来了，磁盘不能一直替它兜着。TTL 内的一律不动。
+          if (candidateRetentionExpired(state)) {
+            const reclaimed = await workspaceManager.cleanup(state.workspace);
+            if (['cleaned', 'already_clean'].includes(reclaimed.status)) {
+              await persistTerminalTombstone(state, 'candidate_retention_expired');
+              reclaimedCandidates.push(state.attempt_id);
+              retainedAttemptIds.delete(state.attempt_id);
+            }
           }
           continue;
         }
@@ -2483,6 +2509,7 @@ function createAttemptRunner({
 
       return Object.freeze({
         cleaned_attempts: Object.freeze(cleanedAttempts),
+        reclaimed_candidates: Object.freeze(reclaimedCandidates),
         removed_orphan_containers: Object.freeze(removedOrphanContainers),
         cleaned_orphan_workspaces: Object.freeze(
           workspaceReconciliation.cleaned_attempts ?? [],
