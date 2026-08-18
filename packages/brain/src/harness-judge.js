@@ -813,10 +813,19 @@ const DEFERRED_CHECK_PATTERNS = Object.freeze({
 // 白名单说了算，裁判无法自行扩大范围。
 function stepMatchesDeferredCheck(step, deferredChecks, entryStep = null) {
   const candidates = [String(step ?? ''), String(entryStep ?? '')].filter(Boolean);
-  return (Array.isArray(deferredChecks) ? deferredChecks : []).some((check) =>
-    (DEFERRED_CHECK_PATTERNS[check] ?? []).some(
+  return (Array.isArray(deferredChecks) ? deferredChecks : []).some((check) => {
+    const name = String(check ?? '').trim();
+    if (!name) return false;
+    // check 名本身即模式：合同声明 `host_docker_inspect`，裁判就照写
+    // `host_docker_inspect (server-owned)`。人工枚举的 DEFERRED_CHECK_PATTERNS 只列了
+    // 空格写法（/host docker/i）匹配不上下划线原名 —— 2026-08-18 离线回放实证。
+    // 先按原名字面匹配，再回落到人工同义模式（覆盖中文/变体措辞）。
+    const literal = new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    if (candidates.some((text) => literal.test(text))) return true;
+    return (DEFERRED_CHECK_PATTERNS[name] ?? []).some(
       (pattern) => candidates.some((text) => pattern.test(text)),
-    ));
+    );
+  });
 }
 
 // Golden Path 步骤是 PRD 里的整段中文长句；Judge 用自己的措辞复述同一步是常态
@@ -886,9 +895,15 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
       missing.push({ index: i + 1, step: steps[i] });
       continue;
     }
+    // 只认**合同白名单**，不要求裁判把 deferred 字段填对。
+    // 2026-08-18 离线回放 run ce703092 真实 payload：五条 server-owned 条目全是
+    // `deferred:false`，而 deferred 声明写在 evidence 正文（"deferred=true. Named in
+    // verification_stage.deferred_checks..."）。要求 entry.deferred===true 的话，
+    // 修复在真实数据上一条都不生效——测试用理想数据全绿，生产照旧 FAIL。
+    // 语义依据：合同已声明这些是服务端后置项，裁判对它们报 passed=false 只能理解为
+    // "我无从验证"，而不是"它失败了"——它本就没有验证它们的职责和能力。
     if (
       entry.passed !== true
-      && entry.deferred === true
       && stepMatchesDeferredCheck(steps[i], deferredChecks, entry.step)
     ) {
       deferred.push({ index: i + 1, step: steps[i] });
@@ -904,10 +919,7 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
     const entry = cov[i];
     if (!entry || entry.passed !== false || consumed.has(entry)) continue;
     const step = entry.step || `coverage[${i}]`;
-    if (
-      entry.deferred === true
-      && stepMatchesDeferredCheck(step, deferredChecks, entry.step)
-    ) {
+    if (stepMatchesDeferredCheck(step, deferredChecks, entry.step)) {
       deferred.push({ index: i + 1, step });
       continue;
     }

@@ -8,7 +8,15 @@
 
 
 
-**Brain 版本**: 1.273.81
+**Brain 版本**: 1.273.82
+
+## Brain 1.273.82 — deferred 判定只认合同白名单，不再依赖裁判填字段
+
+- 离线回放 run `ce703092` 的**生产原始 payload** 发现：五条 server-owned 条目全是 `deferred:false`，而 deferred 声明写在 `evidence` 正文（"deferred=true. Named in verification_stage.deferred_checks..."）。1.273.80/81 都要求 `entry.deferred === true`，**在真实数据上一条都不生效**——测试用理想数据 `deferred:true` 全绿，生产照旧 FAIL。
+- 另一处：白名单模式只列了空格写法（`/host docker/i`），匹配不上合同与裁判都在用的下划线原名 `host_docker_inspect`。
+- 修法：① 判定**只认合同白名单 + `passed=false`**，不要求裁判承认——合同已声明这些是服务端后置项，裁判对它们报 `passed=false` 只能理解为"我无从验证"，它本就没有验证它们的职责；② **check 名本身即匹配模式**（转义后字面匹配），人工同义模式降为回落。
+- 真实 payload 回放：修复前 `failed=5 / deferred=0 / cov.ok=false → FAIL`，修复后 `failed=0 / deferred=5 / cov.ok=true → 命中纠正 → PASS`。
+- 回归 3 段：字段为 false 但命中白名单仍按 deferred；不在白名单的 `passed=false` 仍算 failed；合同没声明任何 `deferred_checks` 时裁判怎么写都算 failed。
 
 ## Brain 1.273.81 — 裁判自报 FAIL 但唯一依据是合法 deferred 时按覆盖数据纠正
 
