@@ -1,0 +1,27 @@
+{
+  "initiative_id": "cef72fa2-227c-4c39-a61e-35f8b6ab2dc0",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅落在 packages/brain 的 impact-contract Gate 纯后端 kernel 决策逻辑，无 UI/agent 协议/engine 参与",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 步骤 3a 透传 reason_code 并对确定性终态 fail-closed（retryable:false）",
+      "scope": "diff-gate.js 步骤 3a（mapper_stale 分支）把 mapperResult.freshness.reason_code 原样透传进返回体；按确定性白名单集合(no_anchor/anchor_missing/revision_mismatch/manifest_projection_mismatch/fail_current_revision)置 retryable:false，其余(暂态/缺失/未知)保持 retryable:true 且 gate 恒为 impact_unknown；diff-gate.test.js 增永久回归。仅改步骤 3a，不动 3b/异常出口/orchestrator 循环骨架。",
+      "dod": [
+        "[BEHAVIOR] 确定性 no_anchor 透传 reason_code 且 retryable:false（node verify --case deterministic）",
+        "[BEHAVIOR] 确定性 5 code 全 retryable:false、暂态 4 code 全 retryable:true（deterministic_all + transient）",
+        "[BEHAVIOR] reason_code 缺失保留 mapper_stale + retryable:true；Mapper 抛异常出口不变（null_reason + mapper_unavailable）",
+        "[BEHAVIOR] fail-closed 不变量：所有分支 gate=impact_unknown 绝不放行（fail_closed）",
+        "[BEHAVIOR] brain diff-gate 回归套件全绿含新增透传用例（cd packages/brain && npx vitest ...）",
+        "[ARTIFACT] diff-gate.js 步骤 3a 透传 reason_code + 确定性判定；diff-gate.test.js 含永久回归"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
