@@ -1,0 +1,25 @@
+{
+  "initiative_id": "08180424-kernel-c0d4fe12",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 后端 Diff Impact Gate 判定逻辑，无 UI/agent 协议/engine",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "diff-gate.js 步骤 3a 透传确定性 reason_code + fail-closed retryable 分类",
+      "scope": "在 evaluateDiffGate 步骤 3a（freshness.status !== 'fresh'）定义确定性 reason_code 集合，透传 mapperResult.freshness.reason_code 到 reason/reason_code，确定性码→retryable:false，瞬态(fact_snapshot_stale)/缺失→mapper_stale+retryable:true；在 diff-gate.test.js 补确定性/瞬态/向后兼容回归断言",
+      "dod": [
+        "[BEHAVIOR] 确定性码 projection_revision_mismatch/capability_not_in_active_projection 透传且 retryable:false（对应 contract-dod B-01/B-02）",
+        "[BEHAVIOR] 瞬态 fact_snapshot_stale 保持 retryable:true，null/缺失回退 mapper_stale+retryable:true（B-03/B-04/B-05）",
+        "[ARTIFACT] diff-gate.js 定义 DETERMINISTIC_STALE_REASON_CODES 集合并透传 reason_code",
+        "[ARTIFACT] diff-gate.test.js 含新增断言（projection_revision_mismatch + fact_snapshot_stale）"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
