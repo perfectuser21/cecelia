@@ -8,7 +8,13 @@
 
 
 
-**Brain 版本**: 1.273.77
+**Brain 版本**: 1.273.78
+
+## Brain 1.273.78 — fleet-worker /health 并发探测共享单次探测，不再把后来者判成节点不可准入
+
+- 派发准入探针读 worker `/health`，而每条 run 跑在各自的 orchestrator 子进程、各持一份探测客户端，准入缓存 TTL 仅 1s——并发探测是常态。`fleet-worker.cjs` 的单飞用布尔 `probeInFlight`，探测进行中的后来者直接 503 `health_probe_busy`，Brain 侧读成 `worker_http_503` → `node_not_base_admitted` → `dispatch preflight blocked`。生产 run `b0294bf8`/`12b7fbcc` 因此卡在 planning 326 跳零推进；容器内连打 20 次 `/health` 实测 5 次 503。
+- 布尔锁改共享 in-flight Promise：并发探测者 await 同一次探测、同得 200 且 `observed_at` 一致，"绝不同时跑两次昂贵探测"的原意不变；探测本身失败时所有等待者一并 fail-closed 503 `health_probe_failed`。探测同步发起，避免延迟一个微任务被第二个请求钻空子开出重复探测。
+- 回归 `fleet-worker.test.js` 两段：并发共享结果且 `probeHealth` 只调一次；共享探测抛错时两个请求都收 503 `health_probe_failed`。
 
 ## Brain 1.273.77 — GitHub 凭据装载不依赖 GitHub 在线 + repin Runner
 
