@@ -20,7 +20,10 @@ cd "$(dirname "$0")/../.." || exit 1
 # 镜像构建、fleet 准入报 node_not_base_admitted、map_stale 频发。锁必须归脚本自己
 # 管(不依赖调用方 cron 行),跳过必须出声(静默跳过=故障隐身),持锁者卡死后锁要能
 # 被抢占(否则一次挂死就是永久停摆)。
-LOCK_DIR="${RESCAN_LOCK_DIR:-/tmp/cecelia-rescan.lock}"
+# 锁路径必须与调用方(crontab 应急期用的 /tmp/cecelia-rescan.lock)**错开**：
+# 两层用同一路径时，外层先 mkdir 占住，脚本进来一看"锁已存在且新鲜"就直接跳过，
+# 结果是扫描一轮都不跑。2026-08-18 实测坐实过一次。
+LOCK_DIR="${RESCAN_LOCK_DIR:-/tmp/cecelia-rescan-script.lock}"
 LOCK_STALE_SECONDS="${RESCAN_LOCK_STALE_SECONDS:-3600}"
 
 if [ -d "$LOCK_DIR" ]; then
