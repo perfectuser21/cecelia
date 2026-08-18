@@ -1,0 +1,27 @@
+{
+  "initiative_id": "55e2bf02-e491-42c7-a6f3-b3bb46429f8d",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain 后端影响合同/编排逻辑，无 UI、无远端 agent 协议、非 engine hooks",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 3a 透传 freshness.reason_code 并按 status 对确定性结论 fail-closed 出口",
+      "scope": "改 diff-gate.js 步骤 3a：透传 mapperResult.freshness.reason_code；status==='stale' 保持 retryable:true，status==='unknown' 置 retryable:false（fail-closed 终止），freshness/reason_code 缺失时保守兜底 reason='mapper_stale'+retryable:false；补 diff-gate.test.js 与 loop.test.js 回归断言。既有 4 类 impact_unknown 出口与 fresh happy path 不得回退。",
+      "dod": [
+        "[BEHAVIOR] unknown/impact_anchor_missing → {reason:'impact_anchor_missing',reason_code:'impact_anchor_missing',retryable:false}（sprint 契约测试 B-01 绿）",
+        "[BEHAVIOR] stale/fact_snapshot_stale → {reason:'fact_snapshot_stale',reason_code:'fact_snapshot_stale',retryable:true}（B-02 绿）",
+        "[BEHAVIOR] freshness 缺失 / reason_code null → {reason:'mapper_stale',retryable:false} 保守 fail-closed（B-03/B-04 绿）",
+        "[BEHAVIOR] orchestrator loop 消费透传后 reason_code 产出 deny:impact:impact_anchor_missing 且 retryable:false → impact_contract_invalid 终止（B-05 绿，loop.test.js 回归）",
+        "[ARTIFACT] diff-gate.js 3a 段落含 reason_code 透传与 retryable:false 出口"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+        "packages/brain/src/orchestrator/__tests__/loop.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
