@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.83
+**Brain 版本**: 1.273.84
+
+## Brain 1.273.84 — frozen baseline guard 失败自带原因 + runner digest 重钉
+
+- `install_frozen_baseline_guard` 有 10 条失败路径，其中 6 条是裸的 `|| return 1` 完全静默，另 4 条只写 stderr——而容器一退出 stderr 即丢。生产 run `c04f7c31` 复现 `frozen_baseline_guard_unavailable` 时容器日志 0 行、`attempt.result.error` 只有一句泛泛的 "could not arm the frozen baseline lineage guard"，**故障复现了也查不出是哪条路径**。
+- 修法：引入 `FROZEN_BASELINE_GUARD_FAILURE` 寄存器 + `frozen_baseline_guard_fail()` 助手，10 条路径全部带上具体原因与现场值（实际 HEAD vs pinned SHA、workspace 路径等），并**透传进 `write_provider_bootstrap_failure` 的 message**，落进 `attempt.result.error.message`——容器退出后依然可查。
+- 回归 3 段：非法 start SHA / 非 worktree 工作区必须记录原因；**调用处必须把原因带进失败载荷**（防止只在函数内记录、外面依旧丢失）。runner 全套 18/18 通过。
+- canonical runner digest 重钉为 `sha256:65763fdcfb70340e1ac8eeb21cd4d1aedf6edcee8e8978e6f59b085ca5f6cc75`；11 处 pin 同步。
 
 ## Brain 1.273.83 — 注册 publisher 角色容量权重，解开 Judge PASS 后"最后一米"的阻塞
 
