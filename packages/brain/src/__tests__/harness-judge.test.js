@@ -629,6 +629,58 @@ describe('judge FAIL 反馈不得硬截掉打回原因（Alex 08-17 拍板：完
   });
 });
 
+describe('validateCoverage deferred 白名单匹配（judge 侧措辞）', () => {
+  // 2026-08-18 生产实证（run 40582e11 的 judge）：裁决书自相矛盾——正文写着"裁判=PASS"，
+  // 却终判 FAIL，未通过步骤是 #12 host_docker_inspect 与 #13 judge_verdict。这两步裁判
+  // 都正确标了 deferred=true 并说明理由（只读沙箱没有 Docker CLI、自己尚未做出的裁决），
+  // 可 stepMatchesDeferredCheck 拿去匹配白名单的是 **PRD 原文步骤**，而不是裁判声明 defer
+  // 的那条 coverage entry。PRD 原文是中文长句，匹配不上英文 check 名 → deferred 不被承认
+  // → 落进 failed → 只要合同里有服务端机械闸或自指步骤，Judge 就永远 FAIL（结构性死锁）。
+  const prdSteps = [
+    '**触发**：运行器在宿主上核验容器实况，确认候选镜像与冻结基线一致',
+    '**出口**：服务端给出最终裁决并据此决定是否放行合并',
+  ];
+
+  it('裁判用 check 名措辞声明 deferred → 承认为 deferred，不算 failed', () => {
+    const r = validateCoverage([
+      {
+        step_index: 1,
+        step: 'host_docker_inspect — host Docker container inspection',
+        passed: false,
+        deferred: true,
+        evidence: 'server-mechanical-gate owned per verification_stage.deferred_checks',
+      },
+      {
+        step_index: 2,
+        step: 'judge_verdict — own future server verdict',
+        passed: false,
+        deferred: true,
+        evidence: 'deferred to server gate',
+      },
+    ], prdSteps, { deferredChecks: ['host_docker_inspect', 'judge_verdict'] });
+
+    expect(r.failed).toEqual([]);
+    expect(r.deferred.map((d) => d.index)).toEqual([1, 2]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('合同没把该检查列进 deferred_checks → 裁判自称 deferred 也照样算 failed', () => {
+    const r = validateCoverage([
+      {
+        step_index: 1,
+        step: 'host_docker_inspect — host Docker container inspection',
+        passed: false,
+        deferred: true,
+        evidence: '我说了算',
+      },
+      { step_index: 2, step: 'judge_verdict', passed: true, deferred: false, evidence: 'ok' },
+    ], prdSteps, { deferredChecks: [] });
+
+    expect(r.ok).toBe(false);
+    expect(r.failed.map((f) => f.index)).toEqual([1]);
+  });
+});
+
 describe('validateCoverage 位置对齐兜底（裁判不回显 step_index 的实证）', () => {
   // 2026-08-18 生产实证（run df347d50 的 judge）：1.273.73 的 prompt 已明确要求每条 coverage
   // 回显 step_index，但裁判（DeepSeek，无 response schema 强制）交回 17 条 coverage、
