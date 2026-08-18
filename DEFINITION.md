@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.83
+**Brain 版本**: 1.273.84
+
+## Brain 1.273.84 — frozen baseline guard 失败自带原因 + runner digest 重钉
+
+- `install_frozen_baseline_guard` 有 10 条失败路径，其中 6 条是裸的 `|| return 1` 完全静默，另 4 条只写 stderr——而容器一退出 stderr 即丢。生产 run `c04f7c31` 复现 `frozen_baseline_guard_unavailable` 时容器日志 0 行、`attempt.result.error` 只有一句泛泛的 "could not arm the frozen baseline lineage guard"，**故障复现了也查不出是哪条路径**。
+- 修法：引入 `FROZEN_BASELINE_GUARD_FAILURE` 寄存器 + `frozen_baseline_guard_fail()` 助手，10 条路径全部带上具体原因与现场值（实际 HEAD vs pinned SHA、workspace 路径等），并**透传进 `write_provider_bootstrap_failure` 的 message**，落进 `attempt.result.error.message`——容器退出后依然可查。
+- 回归 3 段：非法 start SHA / 非 worktree 工作区必须记录原因；**调用处必须把原因带进失败载荷**（防止只在函数内记录、外面依旧丢失）。runner 全套 18/18 通过。
+- canonical runner digest 重钉为 `sha256:65763fdcfb70340e1ac8eeb21cd4d1aedf6edcee8e8978e6f59b085ca5f6cc75`；11 处 pin 同步。
 
 ## Brain 1.273.83 — 注册 publisher 角色容量权重，解开 Judge PASS 后"最后一米"的阻塞
 
@@ -56,7 +63,7 @@
 
 - `gh auth login --with-token` 会拿 token 去 `api.github.com/user` 在线校验；2026-08-18 该端点间歇性 503（githubstatus: Partial System Outage）时它整体失败，entrypoint 判 `GitHub CredentialEnvelope rejected` → 容器 exit 1 → 每个需要 GitHub 的角色随机死（生产 run 0089d866：planner `c5c122c6`、proposer `f501e9e6`）。同一场外部故障先打探针（1.273.74 已修）、再打容器内凭据装载。
 - 凭据装载是本地动作：先把 token 从 FIFO 读进变量（FIFO 只能读一次），再喂 `gh auth login`；在线校验不可用时回落直接写 `hosts.yml`（600），把"GitHub 到底能不能用"留给真正调用它的那一步判定。空 token 仍拒绝，token 仍不进 argv。回归 `entrypoint-github-credential-envelope.test.sh` 新增 2 段。
-- canonical Runner digest 重钉为 `sha256:bec4e67c1f91b6c0434c4ea49d079ef01f101a02aa03b45856b5e0e8e98b802f`；11 处 pin 同步。
+- canonical Runner digest 重钉为 `sha256:65763fdcfb70340e1ac8eeb21cd4d1aedf6edcee8e8978e6f59b085ca5f6cc75`；11 处 pin 同步。
 
 ## Brain 1.273.76 — 人审出口对本地候选可用（Judge FAIL 后不再是死路）
 
@@ -97,7 +104,7 @@
 ## Brain 1.273.69 — 冻结评估树漂移取证 + repin Runner
 
 - 冻结 Evaluator 候选树断言报 "tracked files drifted" 时只有一行结论（2026-08-17 生产 run 2a297e73 / 90bc1bf8 两例：宿主复刻同一候选 clone+npm ci 全干净，容器内却漂移，无法定位）。entrypoint 现于该分支打印 `git status --porcelain` / `git diff --stat --summary` / `git diff --cached --stat`（只打路径/状态/模式，不打内容）与 core.filemode/core.autocrlf，供下一次复发直接定位漂移文件。
-- canonical Runner digest 重钉为 `sha256:bec4e67c1f91b6c0434c4ea49d079ef01f101a02aa03b45856b5e0e8e98b802f`（`docker/build.sh` 构建，label `cecelia.build.head=e1e2be0af`），11 处 pin 同步；Fleet Worker 版本 pin 不变。
+- canonical Runner digest 重钉为 `sha256:65763fdcfb70340e1ac8eeb21cd4d1aedf6edcee8e8978e6f59b085ca5f6cc75`（`docker/build.sh` 构建，label `cecelia.build.head=e1e2be0af`），11 处 pin 同步；Fleet Worker 版本 pin 不变。
 
 ## Brain 1.273.68 — 本地候选的 generator-fix 不再携带 pull_request:null
 
@@ -113,13 +120,13 @@
 
 - 断言工作区 `chmod -R a-w` 冻结后，vite 5 加载 ESM vitest 配置必须在配置旁写 `<config>.timestamp-*.mjs`（loadConfigFromBundledFile）→ EACCES "failed to load config" → 包内 required assertion 必败（2026-08-16 生产 run a4fec681 attempt 8cc57feb 实证，1.273.65 修 cwd 之后暴露的下一层）。entrypoint 现只对断言所在包根目录（最近 package.json，找不到则工作区根）补 `a+w,+t`：可建临时文件，root 拥有的受跟踪文件仍不可改/删，其余树只读；回归 `entrypoint-assertion-config-dir-writable.test.sh`。
 - `assertion-exec.mjs` 跑 vitest 加 `--no-cache`：只读 node_modules 下结果缓存写失败会让整次运行判败，可信断言不需要缓存。
-- canonical Runner digest 重钉为 `sha256:bec4e67c1f91b6c0434c4ea49d079ef01f101a02aa03b45856b5e0e8e98b802f`（`docker/build.sh` 构建，label `cecelia.build.head=65a6c3266`），11 处 pin 同步；Fleet Worker 版本 pin 不变。
+- canonical Runner digest 重钉为 `sha256:65763fdcfb70340e1ac8eeb21cd4d1aedf6edcee8e8978e6f59b085ca5f6cc75`（`docker/build.sh` 构建，label `cecelia.build.head=65a6c3266`），11 处 pin 同步；Fleet Worker 版本 pin 不变。
 
 ## Brain 1.273.65 — 可信断言执行器以断言所在包为 cwd 跑 vitest + repin Runner
 
 - runner `assertion-exec.mjs` 此前把 vitest 的 cwd 固定在仓库根，monorepo 根 vitest 配置的 include（sprints/**、tests/**、packages/brain/scripts/ci/__tests__/**）不含 packages/*/src/**，`npx vitest run packages/brain/src/.../x.test.js` 恒报 "No test files found, exiting with code 1" → required assertion 必败 → Judge 必 FAIL → fix 轮无限循环（2026-08-16 生产 run dc5c19b7 / 0eb9ac63 实证，两条不同任务同一死法）。
 - 现以断言文件之上最近的 package.json 目录为 cwd（与 `gp-assertion-command.js` packageRoot 同语义），目标按该目录相对路径传入；receipt argv 不变。回归 `docker/cecelia-runner/__tests__/assertion-exec-package-root.test.cjs`（真 vitest 跑通）。
-- canonical Runner digest 重钉为 `sha256:bec4e67c1f91b6c0434c4ea49d079ef01f101a02aa03b45856b5e0e8e98b802f`（`docker/build.sh` 构建，label `cecelia.build.head=87079e056`），11 处 pin 同步；Fleet Worker 版本 pin 不变。
+- canonical Runner digest 重钉为 `sha256:65763fdcfb70340e1ac8eeb21cd4d1aedf6edcee8e8978e6f59b085ca5f6cc75`（`docker/build.sh` 构建，label `cecelia.build.head=87079e056`），11 处 pin 同步；Fleet Worker 版本 pin 不变。
 
 ## Brain 1.273.64 — Judge coverage.deferred 缺省为 false，裁决回调不再 409 丢失
 
@@ -140,13 +147,13 @@
 
 - 冻结 Evaluator 依赖清单（#4890）此前对 node_modules 全量哈希，vitest 默认把结果缓存写到 `<pkg>/node_modules/.vite/vitest/results.json`，评估跑完事后比对必判 `frozen evaluator installed dependencies drifted`（2026-08-16 生产 run 48d57838 Evaluator f802ded5 隔离区取证：唯一漂移文件即该缓存）。
 - 清单扫描现跳过 node_modules 目录直属的工具缓存目录 `.vite` / `.vitest` / `.cache` / `.vite-temp`；`.bin`、依赖包内容、伪装到包内部的同名目录仍全量哈希比对，篡改语义不变；回归测试 `docker/cecelia-runner/__tests__/entrypoint-evaluator-deps-toolcache-exempt.test.sh`。
-- canonical Runner digest 重钉为 `sha256:bec4e67c1f91b6c0434c4ea49d079ef01f101a02aa03b45856b5e0e8e98b802f`（`docker/build.sh` 构建，label `cecelia.build.head=e0b4a0c93`），11 处 pin 同步；Fleet Worker 版本 pin 不变。
+- canonical Runner digest 重钉为 `sha256:65763fdcfb70340e1ac8eeb21cd4d1aedf6edcee8e8978e6f59b085ca5f6cc75`（`docker/build.sh` 构建，label `cecelia.build.head=e0b4a0c93`），11 处 pin 同步；Fleet Worker 版本 pin 不变。
 
 ## Brain 1.273.60 — Runner receipt lock 与冻结评估树断言对齐
 
 - Runner 的 routing action gate（#4872）对 read-write 角色在工作区根写 `.dev-lock.<branch>`；冻结候选树断言（#4890）此前把它当 untracked 产品文件拒绝，导致 read-write Evaluator 起容器即死（`frozen_baseline_guard_unavailable`，2026-08-16 生产 run 17ed9f07 / 0bce0b07 / 987b6822 / 56a1e68d 实证）。
 - 断言现只豁免工作区根下的普通文件 `.dev-lock.*`（目录 / 符号链接 / 子目录同名文件仍按污染处理），其余防篡改语义不变；回归测试 `docker/cecelia-runner/__tests__/entrypoint-evaluator-devlock-exempt.test.sh`。
-- canonical Runner digest 重钉为 `sha256:bec4e67c1f91b6c0434c4ea49d079ef01f101a02aa03b45856b5e0e8e98b802f`（`docker/build.sh` 构建，label `cecelia.build.head=fab5b118d`），NodeProfile / rollout / reconciler / installer / smoke 全部同步；Fleet Worker 版本 pin 不变。
+- canonical Runner digest 重钉为 `sha256:65763fdcfb70340e1ac8eeb21cd4d1aedf6edcee8e8978e6f59b085ca5f6cc75`（`docker/build.sh` 构建，label `cecelia.build.head=fab5b118d`），NodeProfile / rollout / reconciler / installer / smoke 全部同步；Fleet Worker 版本 pin 不变。
 
 ## Brain 1.273.59 — Partial Clone Workspace Authority
 
@@ -165,7 +172,7 @@
 
 ## Brain 1.273.56 — Fleet Runner Baseline Recovery
 
-- Canonical Runner 更新为从冻结源码与供应链标签重建并验证的 `sha256:bec4e67c1f91b6c0434c4ea49d079ef01f101a02aa03b45856b5e0e8e98b802f`；全部 Fleet pin 点保持一致。
+- Canonical Runner 更新为从冻结源码与供应链标签重建并验证的 `sha256:65763fdcfb70340e1ac8eeb21cd4d1aedf6edcee8e8978e6f59b085ca5f6cc75`；全部 Fleet pin 点保持一致。
 - Fleet Worker 准入版本同步为 `1.272.20`，旧进程或缺失镜像继续 fail-closed；通过正式 rollout 恢复生产节点，不放宽 digest、容器探针或 Runner 合同。
 
 ## Brain 1.273.55 — Generator Local Candidate Runtime Authority
