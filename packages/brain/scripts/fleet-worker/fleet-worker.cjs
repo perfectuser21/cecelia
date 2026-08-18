@@ -522,7 +522,11 @@ function createFleetWorkerServer(options = {}) {
     : DEFAULT_HEALTH_CACHE_TTL_MS;
   const nowFn = typeof options.now === 'function' ? options.now : Date.now;
   let healthCache = null;
-  let probeInFlight = false;
+  // Shared in-flight probe, not a boolean lock: dispatch admission reads /health
+  // once per run from a separate orchestrator process, so turning a mid-probe
+  // caller away marks the node not-admitted. Joiners await the same probe, which
+  // keeps the "never run two expensive probes at once" guarantee intact.
+  let probeInFlight = null;
   let attemptReady = attemptRunner === null;
   let reconciliationFailed = false;
 
@@ -547,26 +551,41 @@ function createFleetWorkerServer(options = {}) {
         writeJson(response, 200, projectHealth(healthCache.report));
         return;
       }
-      if (probeInFlight) {
-        writeJson(response, 503, { error: 'health_probe_busy' });
-        return;
+      if (!probeInFlight) {
+        // Start the probe synchronously so a probe is already under way before
+        // this handler yields — a deferred start would let a second request slip
+        // in and open a duplicate probe.
+        let started;
+        try {
+          started = Promise.resolve(probeHealth());
+        } catch (error) {
+          started = Promise.reject(error);
+        }
+        probeInFlight = started
+          .then((health) => {
+            if (healthCacheTtlMs > 0) {
+              const effectiveTtl = healthSelfChecksReady(health)
+                ? healthCacheTtlMs
+                : Math.min(healthCacheTtlMs, 1_000);
+              healthCache = { report: health, expiresAt: nowFn() + effectiveTtl };
+            }
+            return health;
+          })
+          .catch((error) => {
+            healthCache = null;
+            throw error;
+          })
+          .finally(() => {
+            probeInFlight = null;
+          });
       }
 
-      probeInFlight = true;
+      const joined = probeInFlight;
       try {
-        const health = await probeHealth();
-        if (healthCacheTtlMs > 0) {
-          const effectiveTtl = healthSelfChecksReady(health)
-            ? healthCacheTtlMs
-            : Math.min(healthCacheTtlMs, 1_000);
-          healthCache = { report: health, expiresAt: nowFn() + effectiveTtl };
-        }
+        const health = await joined;
         writeJson(response, 200, projectHealth(health));
       } catch {
-        healthCache = null;
         writeJson(response, 503, { error: 'health_probe_failed' });
-      } finally {
-        probeInFlight = false;
       }
       return;
     }
