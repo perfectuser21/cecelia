@@ -112,5 +112,20 @@ else
   fail "扫描卡死未被超时打断(elapsed=${ELAPSED}s, err=$(head -c 120 "$OUT3"))"
 fi
 
+# 11 脚本内锁不得与 crontab 外层应急锁同路径
+# 2026-08-18 回归:两层同路径时外层先占住,脚本每轮都判"上一轮仍在运行"直接跳过,
+# 扫描一轮都不跑。这里用真实的外层锁复现,不是形式检查。
+OUTER_LOCK=/tmp/cecelia-rescan.lock
+rm -rf "$OUTER_LOCK"; mkdir "$OUTER_LOCK"
+echo "old-sha-000|0" > "$STATE"; rm -f "$MARK"; OUT4="$TMPD/outer.err"; RC=0
+RESCAN_NOW_EPOCH=99999 RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" \
+  bash "$SCRIPT" >/dev/null 2>"$OUT4" || RC=$?
+rmdir "$OUTER_LOCK" 2>/dev/null || true
+if [[ $RC -eq 0 && -f "$MARK" ]]; then
+  pass "外层同名锁在场时脚本仍能扫描(锁路径已错开)"
+else
+  fail "脚本被外层锁挡住,扫描不执行(rc=$RC, err=$(head -c 120 "$OUT4"))"
+fi
+
 echo ""; echo "结果: PASS=$PASS FAIL=$ERRORS"
 [[ $ERRORS -eq 0 ]] || exit 1
