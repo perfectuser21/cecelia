@@ -227,6 +227,35 @@ describe('expired Fleet attempt reconciliation', () => {
     expect(deps.attemptStore.heartbeat).not.toHaveBeenCalled();
   });
 
+  // 2026-08-19 生产实证（run 1080c7f5 / attempt 248d96f8）：worker 在 finalize 阶段因 worktree
+  // Permission denied 把 attempt 置为 quarantined；reconciler 只认识 missing/terminal/prepared/running，
+  // 对 quarantined 落到 worker_attempt_state_unresolved → 每 90s 一次 infrastructure_blocked，
+  // attempt 在 Brain 端永远 running → 单例槽永久被占 → 整台机器的 harness 全部 wait:capacity。
+  // quarantine 在结构上只发生在容器退出后（finalize 阶段），不存在重复执行风险：
+  // 应直接终态化并要求替换（不依赖 cancel 确认——worker 的 cancel 对 quarantined 会再次 quarantine，
+  // 永远凑不出 cleaned/already_clean）。
+  it('terminalizes a quarantined Worker attempt as replacement_required instead of blocking forever', async () => {
+    const deps = makeDeps({
+      launcher: {
+        inspect: vi.fn(async () => ({ status: 'quarantined', attempt_id: ATTEMPT.id })),
+        start: vi.fn(),
+        cancel: vi.fn(async () => ({ status: 'quarantined', attempt_id: ATTEMPT.id })),
+      },
+    });
+
+    const result = await reconcileExpiredAttempt({ attempt: VERIFIED_ATTEMPT, ...deps });
+
+    expect(deps.launcher.start).not.toHaveBeenCalled();
+    expect(deps.attemptStore.heartbeat).not.toHaveBeenCalled();
+    expect(deps.terminalize).toHaveBeenCalledWith(expect.objectContaining({
+      attemptId: ATTEMPT.id,
+      code: 'worker_attempt_quarantined_after_lease',
+      failureClass: 'infrastructure_blocked',
+    }));
+    expect(result).toMatchObject({ status: 'replacement_required', attempt_id: ATTEMPT.id });
+    expect(result.status).not.toBe('infrastructure_blocked');
+  });
+
   it('fails closed when exact terminal tombstone cancellation is unavailable', async () => {
     const deps = makeDeps({
       launcher: {

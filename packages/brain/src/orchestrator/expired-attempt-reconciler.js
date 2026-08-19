@@ -14,6 +14,7 @@ const CANONICAL_FLEET_TARGETS = new Set([
 const TERMINAL_CODES = new Set([
   'worker_attempt_missing_after_lease',
   'worker_attempt_replacement_required_after_lease',
+  'worker_attempt_quarantined_after_lease',
 ]);
 
 function bounded(value, maximum = 1_000) {
@@ -402,6 +403,27 @@ export async function reconcileExpiredAttempt({
 
   if (inspected?.status === 'terminal') {
     return cancelAndReplace({ launcher, terminalize, attempt, target, machine });
+  }
+
+  // Worker 已把该 attempt 隔离（quarantined）：这只发生在 finalize 阶段——容器已退出、
+  // 只是工作区清不掉（典型：worktree 目录 Permission denied）。不存在重复执行风险，也
+  // 不能走 cancelAndReplace：worker 的 cancel 对 quarantined 会再次 quarantine，永远凑不出
+  // cleaned/already_clean，reconciler 会在 worker_attempt_state_unresolved 上每 90s 空转，
+  // attempt 在 Brain 端永远 running，单例槽永久被占，整台机器的 harness 全部 wait:capacity
+  // （2026-08-19 run 1080c7f5 / attempt 248d96f8 实证，决策 109dd8eb，F1 step1 守卫在
+  // tests/gp/f1/step1-quarantined-attempt-frees-slot.test.js）。直接终态化并要求替换。
+  if (inspected?.status === 'quarantined') {
+    return terminalizeRecovery({
+      terminalize,
+      input: terminalInput(
+        attempt,
+        machine,
+        'worker_attempt_quarantined_after_lease',
+        'Worker quarantined the attempt workspace after the container exited; execution cannot resume',
+      ),
+      status: 'replacement_required',
+      attemptId: attempt.id,
+    });
   }
 
   const activeWorker = (
