@@ -11,7 +11,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 import attemptRunnerModule from '../../../packages/brain/scripts/fleet-worker/attempt-runner.cjs';
-import { reconcileExpiredAttempt } from '../../../packages/brain/src/orchestrator/expired-attempt-reconciler.js';
+import { reconcileExpiredAttempt, createExpiredAttemptAuthority } from '../../../packages/brain/src/orchestrator/expired-attempt-reconciler.js';
 
 const { createAttemptRunner } = attemptRunnerModule;
 
@@ -144,5 +144,32 @@ describe('F1 step1 接单进车间 — worker quarantined 的过期 attempt 不�
       code: 'worker_attempt_quarantined_after_lease',
     }));
     expect(heartbeat).not.toHaveBeenCalled();
+  });
+
+  it('生产 terminalize authority 接受 worker_attempt_quarantined_after_lease（码白名单不能漏）', async () => {
+    // authority 先校验码再碰 DB：码不在白名单会直接 throw「terminal code invalid」——
+    // 单测 mock 的 terminalize 抓不到这个，必须直击真 authority。
+    // 假 pool：锁行返回空 → authority 走 attempt_identity_mismatch 回滚，说明码已过白名单。
+    const calls = [];
+    const client = {
+      query: vi.fn(async (sql) => { calls.push(String(sql)); return { rows: [] }; }),
+      release: vi.fn(),
+    };
+    const pool = { connect: async () => client };
+    const authority = createExpiredAttemptAuthority(pool);
+
+    const result = await authority.terminalize({
+      attemptId: ATTEMPT_ID,
+      runId: RUN_ID,
+      leaseOwner: LEASE.owner,
+      leaseGeneration: LEASE.generation,
+      code: 'worker_attempt_quarantined_after_lease',
+      failureClass: 'infrastructure_blocked',
+      machineId: WORKER_ID,
+      message: 'test',
+    });
+
+    expect(result).toMatchObject({ attempt: null, conflict: 'attempt_identity_mismatch' });
+    expect(calls.some((q) => /BEGIN/i.test(q))).toBe(true);
   });
 });
