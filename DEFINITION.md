@@ -8,7 +8,13 @@
 
 
 
-**Brain 版本**: 1.273.90
+**Brain 版本**: 1.273.91
+
+## Brain 1.273.91 — fleet worker 5xx 留下真实原因
+
+worker 对 5xx 把 `error.message` 换成通用 `attempt_operation_failed` 且自己一行日志不写，
+`remote_bridge_prepare_http_500` 因此在响应体和日志里都看不到真因。现在 5xx 在服务端
+留证（method/url/status/reason），响应体仍是通用码，不改变对外契约。
 
 ## Brain 1.273.90 — publisher trusted-transport 回执不再被判 provider_mismatch
 

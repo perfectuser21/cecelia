@@ -1461,3 +1461,105 @@ describe('Fleet Worker launchd plist template', () => {
     expect(template).toContain('<string>/Users/Shared/cecelia-fleet-tmp</string>');
   });
 });
+
+describe('worker 5xx 必须留下真实原因（run 2a813900 生产实证）', () => {
+  const WORKER_TOKEN = 'w'.repeat(48);
+  // 2026-08-19 生产实证：publisher 成功后 kernel 再向 worker /prepare 时收到 500，
+  // run 直接死于 kernel_process_fatal:remote_bridge_prepare_http_500。而排查时发现
+  // 真因**在任何地方都不可见**：
+  //   ① 响应体把 error.message 换成通用的 'attempt_operation_failed'
+  //   ② worker 自己一行日志都不写（stderr fd 可写，size 停在 8-11）
+  // 这是今天第三次遇到同一失败模式（frozen baseline guard #4952、publisher 的 20 个
+  // 无声 return 1），共同点是：**失败时不留原因，故障只能靠猜**。
+  //
+  // 边界：响应体保持通用码不变（不把内部细节回给调用方），只在服务端留证。
+  async function postPrepare(server, body = { attempt_id: 'a' }) {
+    const { createServer } = await import('node:http');
+    void createServer;
+    return new Promise((resolve) => {
+      const chunks = [];
+      const request = Readable.from([JSON.stringify(body)]);
+      request.method = 'POST';
+      request.url = '/harness/attempts/prepare';
+      request.headers = { authorization: `Bearer ${WORKER_TOKEN}` };
+      const response = {
+        statusCode: 200,
+        setHeader() {},
+        writeHead(code) { this.statusCode = code; },
+        end(payload) {
+          if (payload) chunks.push(payload);
+          resolve({ status: this.statusCode, body: chunks.join('') });
+        },
+      };
+      server.emit('request', request, response);
+    });
+  }
+
+  it('prepare 抛非预期错误时，真实原因写进 stderr（响应体仍是通用码）', async () => {
+    const { createFleetWorkerServer } = await import('./fleet-worker.cjs');
+    const errors = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args) => {
+      errors.push(args.join(' '));
+    });
+
+    try {
+      const server = createFleetWorkerServer({
+        attemptToken: WORKER_TOKEN,
+        machineId: 'us-mac-m4',
+        probeHealth: async () => ({}),
+        attemptRunner: {
+          prepare: async () => { throw new Error('docker_daemon_unreachable_at_prepare'); },
+          start: async () => ({}),
+          inspect: async () => ({}),
+          cancel: async () => ({}),
+          terminal: async () => ({}),
+          reconcile: async () => ({}),
+        },
+      });
+
+      const result = await postPrepare(server);
+
+      // 对外契约不变：仍是 500 + 通用码，不泄露内部细节
+      expect(result.status).toBe(500);
+      expect(result.body).toContain('attempt_operation_failed');
+      // 但服务端必须留下真实原因，否则 500 永远无法定位
+      expect(
+        errors.join('\n'),
+        'worker 5xx 未留下真实原因 —— remote_bridge_prepare_http_500 将无从排查',
+      ).toContain('docker_daemon_unreachable_at_prepare');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('4xx 不写 5xx 错误日志（客户端错误不污染故障信号）', async () => {
+    const { createFleetWorkerServer } = await import('./fleet-worker.cjs');
+    const errors = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args) => {
+      errors.push(args.join(' '));
+    });
+
+    try {
+      const server = createFleetWorkerServer({
+        attemptToken: WORKER_TOKEN,
+        machineId: 'us-mac-m4',
+        probeHealth: async () => ({}),
+        attemptRunner: {
+          prepare: async () => { throw new Error('attempt_bundle_invalid'); },
+          start: async () => ({}),
+          inspect: async () => ({}),
+          cancel: async () => ({}),
+          terminal: async () => ({}),
+          reconcile: async () => ({}),
+        },
+      });
+
+      const result = await postPrepare(server);
+
+      expect(result.status).toBe(400);
+      expect(errors.join('\n')).not.toContain('worker_request_failed');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
