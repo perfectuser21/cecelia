@@ -8,6 +8,7 @@
  */
 import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { DEFERRED_ACCEPTANCE_CHECKS } from '../orchestrator/dispatcher.js';
 import {
   runJudgeGate,
   validateCoverage,
@@ -1328,5 +1329,73 @@ describe('runJudgeGate — 把 promptDir/taskId 透传给 collectEvidence', () =
     expect(passedCtx.taskId).toBe('task-xyz');
     // judgeFn 也拿到 agentStdout
     expect(judgeFn.mock.calls[0][0].agentStdout).toBe('s');
+  });
+});
+
+describe('validateCoverage — server-owned required_assertions 延后项（run 80459597 生产实证）', () => {
+  // 2026-08-19 生产实证（run 80459597 的 judge，Brain 1.273.88）：裁决书 13 条 coverage、
+  // 9 条 passed=true，4 条 passed=false 且**全部 deferred:false**（defer 声明写在 evidence
+  // 正文里，与 run ce703092 同形）。其中三条命中白名单进 deferred，唯独
+  // "server 机械门禁 required_assertions … 由 server-owned Runner 于 Provider 退出后执行"
+  // 落单进 failed → cov.ok=false → finalFail，裁决书正文却写着"裁判=PASS…故不阻断 PASS"。
+  //
+  // 结构性理由（不是放宽判据）：required_assertions 由 server-owned Runner 在 **Provider
+  // 退出之后** 于 exact PR head 执行，而 judge 自身运行在 Provider 生命周期**之内** ——
+  // 它没有也不可能有这条的证据。裁判对它报 passed=false 只能理解为"我无从验证"，
+  // 而非"它失败了"。白名单漏收此项的净效果：judge FAIL → recollect → evaluator 重跑
+  // → judge 再撞同一条 → evaluator↔judge 无限空转，merge 永远够不着。
+  const prdSteps = [
+    '**触发**：Impact Gate 被调用，非 fresh 分支进入并读取 freshness.status',
+    '**系统处理**：瞬态 stale → retryable:true 且透传具体 reason_code',
+    '**出口**：确定性 unknown → fail-closed retryable:false 且透传具体 reason_code',
+    'server 机械门禁 required_assertions (ground-truth.test.js) 在 exact PR head 由 server-owned Runner 于 Provider 退出后执行',
+    'Publisher result / all_gates_passed 决策',
+    'completed role chain / judge 自身未来 server 裁决',
+    'host_docker_inspect 主机容器/资源核验',
+  ];
+
+  // 生产原文逐字照抄（含 evidence 里的 "deferred=true —" 前缀与 deferred:false 字段）
+  const productionCoverage = [
+    { step_index: 1, step: 'GP Step1: Impact Gate 被调用，非 fresh 分支进入并读取 freshness.status/reason_code', passed: true, deferred: false, evidence: 'deferred=false — diff-gate.js L227 与 structure-gate.js L128 同构进入非 fresh 分支' },
+    { step_index: 2, step: 'GP Step2 / B-02 / B-04: 瞬态 stale → retryable:true 且透传具体 reason_code（非 mapper_stale）', passed: true, deferred: false, evidence: 'deferred=false — diff-gate L234 retryable=true，透传 fact_snapshot_stale' },
+    { step_index: 3, step: 'GP Step3 / B-01 / B-03: 确定性 unknown → fail-closed retryable:false 且透传具体 reason_code', passed: true, deferred: false, evidence: 'deferred=false — gate=impact_unknown retryable=false，均非 mapper_stale' },
+    { step_index: 4, step: 'server 机械门禁 required_assertions (ground-truth.test.js) 在 exact PR head 由 server-owned Runner 于 Provider 退出后执行', passed: false, deferred: false, evidence: 'deferred=true — 满足前置：evaluator 正确未自跑该 required_assertion、checks 中不含其结果、未伪造回执（provider_metadata server_resource_cleanup_receipt status=cleaned/verified）。属 server 机械门禁所有，按 verdict_scope 不纳入 judge FAIL 判据' },
+    { step_index: 5, step: 'Publisher result / all_gates_passed 决策', passed: false, deferred: false, evidence: 'deferred=true — Publisher 结果与 all_gates_passed 为本 judge 之后的下游决策，deferred_checks 明列' },
+    { step_index: 6, step: 'completed role chain / judge 自身未来 server 裁决', passed: false, deferred: false, evidence: 'deferred=true — judge_verdict 与完成的 role chain 由 server 汇总，不得自我要求' },
+    { step_index: 7, step: 'host_docker_inspect 主机容器/资源核验', passed: false, deferred: false, evidence: 'deferred=true — 主机 Docker 检查为 server 机械门禁 deferred_checks 明列项，只读 judge 无主机视野' },
+  ];
+
+  it('生产原始 payload 回放：server-owned required_assertions 算 deferred 而非 failed', () => {
+    const r = validateCoverage(productionCoverage, prdSteps, {
+      deferredChecks: [...DEFERRED_ACCEPTANCE_CHECKS],
+    });
+
+    // 修复前：failed=[#4]（server required_assertions 落单）→ ok=false → finalFail
+    expect(r.failed, 'server-owned 后置断言不该算产品失败').toEqual([]);
+    expect(r.deferred.map((d) => d.index)).toEqual([4, 5, 6, 7]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('白名单每一项都必须可匹配（防止新增 check 名忘了配 pattern 再造死锁）', () => {
+    // 三次死锁都源于"白名单里有名字、匹配侧却认不出" —— 用真实白名单逐项守。
+    for (const check of DEFERRED_ACCEPTANCE_CHECKS) {
+      const r = validateCoverage(
+        [{ step_index: 1, step: check, passed: false, deferred: false, evidence: 'server-owned' }],
+        [check],
+        { deferredChecks: [...DEFERRED_ACCEPTANCE_CHECKS] },
+      );
+      expect(r.failed, `白名单项 ${check} 匹配不上，会重演 judge 死锁`).toEqual([]);
+      expect(r.ok, `白名单项 ${check} 未被承认为 deferred`).toBe(true);
+    }
+  });
+
+  it('真实产品失败不因本次放宽而被误判为 deferred', () => {
+    const r = validateCoverage(
+      [{ step_index: 1, step: '**出口**：确定性 unknown → fail-closed 透传 reason_code', passed: false, deferred: true, evidence: '断言未通过：实际返回 mapper_stale' }],
+      ['**出口**：确定性 unknown → fail-closed 透传 reason_code'],
+      { deferredChecks: [...DEFERRED_ACCEPTANCE_CHECKS] },
+    );
+    expect(r.ok, '普通产品步骤失败必须照旧判死').toBe(false);
+    expect(r.failed.map((f) => f.index)).toEqual([1]);
   });
 });

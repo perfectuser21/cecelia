@@ -30,12 +30,17 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_EVALUATOR_FEEDBACK_CHECKS = 20;
 const MAX_JUDGE_FEEDBACK_COVERAGE = 40;
 const RUNTIME_RESULT_ROLES = new Set(['reviewer', 'evaluator', 'judge', 'reporter']);
-const DEFERRED_ACCEPTANCE_CHECKS = Object.freeze([
+export const DEFERRED_ACCEPTANCE_CHECKS = Object.freeze([
   'host_docker_inspect',
   'judge_verdict',
   'publisher_result',
   'all_gates_passed',
   'completed_role_chain',
+  // required_assertions 由 server-owned Runner 在 **Provider 退出之后** 于 exact PR head
+  // 执行，而 evaluator/judge 都运行在 Provider 生命周期之内 —— 结构上不可能持有它的结果。
+  // 2026-08-19 run 80459597：漏收此项使 judge 把"我无从验证"当成产品失败，
+  // FAIL → recollect → evaluator 重跑 → 再撞同一条，evaluator↔judge 无限空转。
+  'server_required_assertions',
 ]);
 
 export function assertDispatchRoutingReceipt(task, receipt, { hasV2Run = false } = {}) {

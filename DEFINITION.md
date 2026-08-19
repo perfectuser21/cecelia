@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.88
+**Brain 版本**: 1.273.89
+
+## Brain 1.273.89 — judge deferred 白名单收录 server-owned required_assertions
+
+`required_assertions` 由 server-owned Runner 在 **Provider 退出之后** 于 exact PR head 执行，
+而 judge 自身运行在 Provider 生命周期**之内**，结构上不可能持有它的结果。白名单漏收此项时，
+judge 把"我无从验证"当成产品失败 → FAIL → recollect → evaluator 重跑 → 再撞同一条，
+evaluator↔judge 无限空转（run 80459597 生产实证）。
 
 ## Brain 1.273.88 — capability-gate 加账号额度闸（kernel 派发的真正选号点）
 
