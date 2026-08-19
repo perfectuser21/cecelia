@@ -56,6 +56,9 @@ import { verifyJudgeCallbackResult } from '../orchestrator/judge-result-verifier
 import { resolveRemoteExactCommitBlob } from '../orchestrator/remote-exact-commit-blob-resolver.js';
 import { persistPlannerRecoveryReceipt } from '../orchestrator/planner-recovery-receipt-store.js';
 
+// publisher 走可信传输通道（不经 LLM provider），见下方 provider 一致性校验。
+const TRUSTED_TRANSPORT_PROVIDER = 'trusted-transport';
+
 const router = Router();
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const FLEET_CODEX_METADATA_FIELDS = new Set([
@@ -741,7 +744,18 @@ router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (r
     return res.status(error.status || 400).json({ ok: false, error: error.message });
   }
 
+  // publisher 不跑 LLM：entrypoint.sh 的 is_publisher_task_bundle 分支把 provider 改写成
+  // 'trusted-transport'（它只做 push + gh pr create），而 attempt.provider 记的是 dispatcher
+  // 分配的 LLM 账号（claude/codex）。两者本就不该相等。
+  // 2026-08-19 run 42d10d71 生产实证：这道校验把 publisher 的成功回执判成 provider_mismatch
+  // 409，而 409 不在容器的可重试码里 → entrypoint 判 permanent rejection → exit 75 立刻退出
+  // → Brain 端 attempt 永远 starting → 被 reconciler 当僵尸 cancel。净效果是候选分支和 PR
+  // 都已真实产出（#4962/#4957），run 却永远拿不到 publish 成功、走不到 merge。
+  // 放行面严格限定在 role=publisher + 'trusted-transport'，其它角色照旧逐字比对。
+  const trustedTransportCallback = attempt.role === 'publisher'
+    && result.provider_metadata.provider === TRUSTED_TRANSPORT_PROVIDER;
   if (attempt.provider && attempt.provider !== 'auto'
+      && !trustedTransportCallback
       && result.provider_metadata.provider !== attempt.provider) {
     return res.status(409).json({
       ok: false,

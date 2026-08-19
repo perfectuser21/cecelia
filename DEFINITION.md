@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.89
+**Brain 版本**: 1.273.90
+
+## Brain 1.273.90 — publisher trusted-transport 回执不再被判 provider_mismatch
+
+publisher 不跑 LLM（entrypoint 把 provider 改写成 `trusted-transport`，只做 push + gh pr create），
+而 `attempt.provider` 记的是 dispatcher 分配的 LLM 账号。回调的 provider 逐字比对把 publisher
+的**成功**回执判成 409，容器判永久拒绝后 exit 75 立刻退出 → Brain 端 attempt 永远 starting →
+被 reconciler 当僵尸 cancel。净效果：候选分支与 PR 都已真实产出，run 却永远走不到 merge。
 
 ## Brain 1.273.89 — judge deferred 白名单收录 server-owned required_assertions
 
