@@ -1936,7 +1936,12 @@ describe('Fleet Worker Attempt runner', () => {
     expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
   });
 
-  it('publisher exit=0 后释放 source Generator candidate，不留下持久工作区', async () => {
+  // 2026-08-19 决策 109dd8eb / run 0bccc85d 实证：publisher 成功后 CI 可能红，kernel 会派
+  // generator-fix 基于同一候选续改（source_attempt_id 指向它）。此前这里释放候选 →
+  // generator-fix /prepare 500 workspace_source_attempt_unavailable → run 死。
+  // 候选的回收由 ① generator-fix 产出新候选时释放旧候选 ② reconcile 24h TTL 兜底。
+  // 边上的真零件断言见 tests/gp/f1/step3-generator-fix-after-publish.test.js。
+  it('publisher exit=0 后保留 source Generator candidate（供 CI 红后的 generator-fix 续改）', async () => {
     let resolveExit;
     const containerExit = new Promise((resolve) => {
       resolveExit = resolve;
@@ -1986,8 +1991,8 @@ describe('Fleet Worker Attempt runner', () => {
         status: 'terminal',
       });
     });
-    expect(deps.workspaceManager.cleanup).toHaveBeenCalledWith(sourceWorkspace);
-    expect(deps.stateStore.states.has(ATTEMPT_ID)).toBe(false);
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalledWith(sourceWorkspace);
+    expect(deps.stateStore.states.get(ATTEMPT_ID)).toMatchObject({ status: 'candidate' });
   });
 
   it('generator-fix 产出新 candidate 后释放被替代的 source candidate', async () => {

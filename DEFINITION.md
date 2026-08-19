@@ -8,7 +8,13 @@
 
 
 
-**Brain 版本**: 1.273.93
+**Brain 版本**: 1.273.94
+
+## Brain 1.273.94 — publisher 成功后不释放 generator 候选（F1 步骤 3 造完真验）
+
+决策 109dd8eb。此前 publisher exit=0 释放候选，CI 红后 generator-fix 以同一候选为 source
+→ worker /prepare 500 workspace_source_attempt_unavailable（run 2a813900 / 0bccc85d 同死法）。
+「CI 红 → 修 → 绿 → merge」这条边首次打通；守卫落在 tests/gp/f1/step3-*（真零件，产物闸）。
 
 ## Brain 1.273.93 — capability-change-v1 撤销免对抗直出，合同尺度走 GAN
 

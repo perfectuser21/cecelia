@@ -1478,10 +1478,12 @@ function createAttemptRunner({
     });
   }
 
+  // 只有 generator（含 generator-fix）产出**新**候选时才释放被替代的旧候选。
+  // publisher 不在此列（2026-08-19 决策 109dd8eb）：发布 ≠ 候选寿命终点，CI 红后还要续改。
   async function releaseSourceCandidate(state) {
     const sourceAttemptId = state.workspace?.source_attempt_id;
     if (
-      !['publisher', 'generator'].includes(state.role)
+      state.role !== 'generator'
       || !UUID_PATTERN.test(sourceAttemptId ?? '')
       || sourceAttemptId === state.attempt_id
     ) return;
@@ -1697,9 +1699,13 @@ function createAttemptRunner({
           attempt_id: state.attempt_id,
         });
       }
-      if (state.role === 'publisher' && expected?.statusCode === 0) {
-        await releaseSourceCandidate(state);
-      }
+      // publisher 成功后**不**释放 source Generator candidate（2026-08-19 决策 109dd8eb，
+      // run 2a813900 / 0bccc85d 实证）：发布只是把候选推到远端、开了 PR，CI 仍可能红，
+      // kernel 会派 spawn:generator-fix 以同一候选为 source_attempt_id 续改——此前这里释放
+      // 候选，generator-fix /prepare 直接 500 workspace_source_attempt_unavailable，
+      // 「CI 红 → 修 → 绿 → merge」这条路从来没走通过。候选回收由两处承担：
+      // ① generator-fix 产出新候选时释放被替代的旧候选（上方 retainsGeneratorCandidate 分支）
+      // ② reconcile 的 24h 候选 TTL 兜底（PR #4945）。
       const result = await cleanupWorkspaceState(state, { deleteState: false });
       if (result.status === 'cleaned') {
         await persistTerminalTombstone(
