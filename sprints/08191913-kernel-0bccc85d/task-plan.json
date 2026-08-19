@@ -1,0 +1,31 @@
+{
+  "initiative_id": "intent:482e2c9e-d923-456f-8775-886e0ec7afcb:4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅落在 packages/brain（impact-contract gate + orchestrator loop + routes），纯后端内核逻辑，无 UI/agent 协议路径",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 透传 reason_code 并 fail-closed 出口",
+      "scope": "diff-gate.js 步骤 3a 与 structure-gate.js 规则 3 按 freshness.status 分流：瞬态 stale→retryable:true 透传具体 reason_code，确定性 unknown→retryable:false fail-closed 透传 reason_code；diff-evaluate HTTP 路由按 retryable 分 422/503 + doc 同步；全仓库 grep 同步硬编码 mapper_stale 断言并新增 fail-closed + loop 消费终止回归用例（loop.js 无 production 改动，仅回归锁）",
+      "dod": [
+        "[BEHAVIOR] B-01 瞬态 stale → diff-gate retryable:true 透传 reason_code（node checks/assert-diff-stale-passthrough.mjs exit 0）",
+        "[BEHAVIOR] B-02 确定性 unknown → diff-gate fail-closed retryable:false 透传 reason_code（node checks/assert-diff-unknown-failclosed.mjs exit 0）",
+        "[BEHAVIOR] B-03 structure-gate 同语义分流（node checks/assert-structure-split.mjs exit 0）",
+        "[BEHAVIOR] B-04 边界缺 reason_code 保守 fallback（node checks/assert-missing-reason.mjs exit 0）",
+        "[BEHAVIOR] B-05 全仓库回归绿含 loop 消费终止锁 + grep 同步（packages/brain vitest 三文件全绿）",
+        "[ARTIFACT] diff-gate.js 3a / structure-gate.js 规则 3 / routes diff-evaluate 按 retryable 分流"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/structure-gate.js",
+        "packages/brain/src/routes/impact-contracts.js",
+        "packages/brain/src/impact-contract/__tests__/harness-gates.test.js",
+        "packages/brain/src/impact-contract/__tests__/structure-gate.test.js",
+        "packages/brain/src/orchestrator/__tests__/loop.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
