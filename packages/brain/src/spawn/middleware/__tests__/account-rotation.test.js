@@ -36,6 +36,33 @@ describe('resolveAccount() account-rotation middleware', () => {
     expect(opts.env.CECELIA_CREDENTIALS).toBe('account2');
   });
 
+  // 2026-08-19 生产（run 4c867fb4）：account1 七天额度 100%，但没有任何 capped/authFailed
+  // 标记——因为标记只在**真收到 429 回调后**才由 markAuthFailure 打上。于是
+  // needsFallback=false，中间件直接放行 explicit=account1，每个角色都必须先撞一次
+  // 429、失败、再重派才切到 account2：proposer/generator/evaluator/judge 各浪费一轮，
+  // 而 publisher 撞上后租约直接过期 → infrastructure_blocked → 整跑落人审。
+  // 结论：**光看标记不够，必须看账号当前是否真的还能用**。
+  it('rotates away from an explicit account whose quota is already exhausted', async () => {
+    const opts = { env: { CECELIA_CREDENTIALS: 'account1' } };
+    const deps = makeDeps({ isAccountUsable: (id) => id !== 'account1' });
+    await resolveAccount(opts, { deps });
+    expect(opts.env.CECELIA_CREDENTIALS).toBe('account2');
+  });
+
+  it('keeps an explicit account that is still usable', async () => {
+    const opts = { env: { CECELIA_CREDENTIALS: 'account1' } };
+    const deps = makeDeps({ isAccountUsable: () => true });
+    await resolveAccount(opts, { deps });
+    expect(opts.env.CECELIA_CREDENTIALS).toBe('account1');
+  });
+
+  it('keeps explicit account when usability probe is unavailable (fail-open, 不改变既有行为)', async () => {
+    const opts = { env: { CECELIA_CREDENTIALS: 'account1' } };
+    const deps = makeDeps();           // 不提供 isAccountUsable
+    await resolveAccount(opts, { deps });
+    expect(opts.env.CECELIA_CREDENTIALS).toBe('account1');
+  });
+
   it('selects best account when none explicit', async () => {
     const opts = { env: {} };
     await resolveAccount(opts, { deps: makeDeps() });
