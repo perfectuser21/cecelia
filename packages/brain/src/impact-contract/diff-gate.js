@@ -198,11 +198,32 @@ export async function evaluateDiffGate({
 
   // --- 步骤 3：校验 Mapper 可判定性 ---
 
-  // 3a. Mapper stale（freshness.status !== 'fresh'）→ impact_unknown
+  // 3a. Mapper 非 fresh（freshness.status !== 'fresh'）→ impact_unknown，按 status 语义分流
+  //     - 确定性 unknown（Map 已判定该 diff 不可解析/坐标不存在）→ fail-closed（retryable:false）
+  //     - 其余非 fresh（瞬态 stale / freshness 缺失）→ 保守按瞬态（retryable:true）
+  //     两分支均透传 Mapper 给出的具体 reason_code，不再无条件折叠成通用 mapper_stale。
+  //     判别器与 structure-gate 规则 3 逐字段一致（[语义跨端一致]，判变端/终验端不分叉）。
   if (!mapperResult?.freshness || mapperResult.freshness.status !== 'fresh') {
+    const freshness = mapperResult?.freshness ?? null;
+    // 空串视同缺失走 fallback，避免透传空 reason 遮蔽根因
+    const passthroughCode = (typeof freshness?.reason_code === 'string' && freshness.reason_code !== '')
+      ? freshness.reason_code
+      : null;
+    if (freshness && freshness.status === 'unknown') {
+      const reasonCode = passthroughCode ?? 'impact_unknown';
+      return {
+        gate: 'impact_unknown',
+        reason: reasonCode,
+        reason_code: reasonCode,
+        retryable: false,
+      };
+    }
+    // 显式 else 兜底：瞬态 stale / freshness 缺失 → 有界重试
+    const reasonCode = passthroughCode ?? 'mapper_stale';
     return {
       gate: 'impact_unknown',
-      reason: 'mapper_stale',
+      reason: reasonCode,
+      reason_code: reasonCode,
       retryable: true,
     };
   }

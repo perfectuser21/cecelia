@@ -119,9 +119,24 @@ export async function evaluateStructureGate({
     return buildBlockedResult('mapper_unavailable', 503);
   }
 
-  // --- 规则 3：Mapper stale（freshness.status !== 'fresh'）---
+  // --- 规则 3：Mapper 非 fresh（freshness.status !== 'fresh'）→ 按 status 语义分流 ---
+  //     与 diff-gate 步骤 3a 同一判别器（[语义跨端一致]，判变端/终验端不分叉）：
+  //     - 确定性 unknown → fail-closed（retryable:false，httpStatus 422）
+  //     - 其余非 fresh（瞬态 stale / freshness 缺失）→ 保守瞬态（retryable:true，httpStatus 503）
+  //     两分支均透传 Mapper 给出的具体 reason_code，不再无条件折叠成通用 mapper_stale。
   if (!mapperResult?.freshness || mapperResult.freshness.status !== 'fresh') {
-    return buildBlockedResult('mapper_stale', 503);
+    const freshness = mapperResult?.freshness ?? null;
+    // 空串视同缺失走 fallback，避免透传空 reason 遮蔽根因
+    const passthroughCode = (typeof freshness?.reason_code === 'string' && freshness.reason_code !== '')
+      ? freshness.reason_code
+      : null;
+    if (freshness && freshness.status === 'unknown') {
+      const reasonCode = passthroughCode ?? 'impact_unknown';
+      return buildBlockedResult(reasonCode, 422, { reason_code: reasonCode });
+    }
+    // 显式 else 兜底：瞬态 stale / freshness 缺失 → 有界重试
+    const reasonCode = passthroughCode ?? 'mapper_stale';
+    return buildBlockedResult(reasonCode, 503, { reason_code: reasonCode });
   }
 
   // --- 规则 4：revision mismatch ---

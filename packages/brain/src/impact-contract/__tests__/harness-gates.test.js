@@ -409,6 +409,34 @@ describe('Harness Impact Gate 生产接线适配器', () => {
     expect(result).toMatchObject({ gate: 'blocked', reason: 'mapper_stale', retryable: true });
   });
 
+  it('merge 前 Diff 复算确定性 unknown（retryable:false）→ beforeMerge 透传 fail-closed retryable:false', async () => {
+    const hash = 'c'.repeat(64);
+    const active = {
+      id: 'contract-source', task_id: TASK_ID, repo: 'perfectuser21/cecelia',
+      base_revision: BASE_SHA, contract_hash: hash,
+    };
+    const gates = createHarnessImpactGates({
+      db: {},
+      getActiveContract: vi.fn().mockResolvedValue(active),
+      readChangedFiles: vi.fn().mockResolvedValue(['packages/brain/src/tick.js']),
+      diffGate: vi.fn().mockResolvedValue({
+        gate: 'impact_unknown', reason: 'impact_unknown', reason_code: 'impact_unknown', retryable: false,
+      }),
+      verifyMergeFence: vi.fn(),
+    });
+
+    const result = await gates.beforeMerge({
+      task: { id: TASK_ID, payload: {} },
+      pr: { head_sha: HEAD_SHA },
+      decisionLog: [{ detail: { impact_gate: {
+        stage: 'diff', gate: 'pass', head_revision: HEAD_SHA, contract_hash: hash,
+      } } }],
+      run: { id: RUN_ID, impact_contract_policy: 'required' },
+    });
+
+    expect(result).toMatchObject({ gate: 'blocked', reason: 'impact_unknown', retryable: false });
+  });
+
   it('merge 只接受当前 head 与 active contract hash 的 Diff PASS 回执', () => {
     const hash = 'c'.repeat(64);
     const decisionLog = [{

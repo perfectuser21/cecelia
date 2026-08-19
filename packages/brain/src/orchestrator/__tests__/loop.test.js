@@ -353,6 +353,68 @@ describe('runLoop：全链 planning→done', () => {
     });
   });
 
+  it('Diff Gate 确定性 unknown（retryable:false）→ 立即终止 intent，不进入基础设施空转', async () => {
+    const headSha = 'b'.repeat(40);
+    const observedSeq = [
+      obs({
+        generatorSpawned: true,
+        pr: { url: 'u', state: 'OPEN', ci: 'pass', merged: false, head_sha: headSha },
+        decisionLog: [{ hop: 1, action: 'spawn:generator', created_at: '2026-07-04T12:00:00Z' }],
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, sleeps, setHopBase } = makeEnv({ observedSeq });
+    setHopBase(1);
+    deps.impactGate.beforeEvaluate.mockResolvedValue({
+      gate: 'impact_unknown',
+      stage: 'diff',
+      reason: 'impact_unknown',
+      reason_code: 'impact_unknown',
+      retryable: false,
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('impact_gate_deterministic');
+    expect(deps.dispatch).not.toHaveBeenCalledWith('spawn:evaluator', expect.anything());
+    // fail-closed 立即终止：不退避、不空转
+    expect(sleeps).toEqual([]);
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'impact_gate_deterministic:impact_unknown',
+    });
+  });
+
+  it('Diff Gate 瞬态 stale（retryable:true）→ 退避不终止（infrastructure_blocked），非确定性终止', async () => {
+    const headSha = 'b'.repeat(40);
+    const observedSeq = [
+      obs({
+        generatorSpawned: true,
+        pr: { url: 'u', state: 'OPEN', ci: 'pass', merged: false, head_sha: headSha },
+        decisionLog: [{ hop: 1, action: 'spawn:generator', created_at: '2026-07-04T12:00:00Z' }],
+      }),
+      obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
+    ];
+    const { deps, sleeps, setHopBase } = makeEnv({ observedSeq });
+    setHopBase(1);
+    deps.impactGate.beforeEvaluate.mockResolvedValue({
+      gate: 'impact_unknown',
+      stage: 'diff',
+      reason: 'fact_snapshot_stale',
+      reason_code: 'fact_snapshot_stale',
+      retryable: true,
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    // 瞬态 → 退避复探（sleep 一次），不走确定性终止分支
+    expect(result.exitReason).not.toBe('impact_gate_deterministic');
+    expect(sleeps).toEqual([POLL_INTERVAL_MS]);
+    expect(deps.dispatch).not.toHaveBeenCalledWith('spawn:evaluator', expect.anything());
+  });
+
   it('Impact schema 确定性错误精确终止且不进入基础设施重试', async () => {
     const observedSeq = [obs({ generatorSpawned: false })];
     const { deps, sleeps } = makeEnv({ observedSeq });

@@ -238,7 +238,9 @@ router.post('/tasks/:taskId/impact-contract/evaluate', internalAuthOrLoopback, a
  *   pass     → 200 + { gate: 'pass', verdict: 'pass', ... }
  *   extend   → 200 + { gate: 'extend', verdict: 'extend', added_nodes: [...], ... }
  *   drift    → 409 + { gate: 'drift', reason_code: 'CONTRACT_IMPACT_DRIFT', added_nodes: [...], ... }
- *   blocked  → 503 + { gate: 'impact_unknown', reason: '...', retryable: true }
+ *   impact_unknown（瞬态 stale，retryable:true）  → 503 + { gate: 'impact_unknown', reason: '...', retryable: true }
+ *   impact_unknown（确定性 unknown，retryable:false）→ 422 + { gate: 'impact_unknown', reason: '...', retryable: false }
+ *     确定性 unknown 走 fail-closed：非重试语义不再冒充 503 retryable，避免 orchestrator 无限空转。
  *
  * sprint: 08110022-relay-d96c9fa0 ws4
  */
@@ -263,9 +265,11 @@ router.post('/tasks/:taskId/impact-contract/diff-evaluate', internalAuthOrLoopba
     });
 
     // 根据 gate 裁决确定 HTTP 状态码
+    // impact_unknown 依 retryable 分流：确定性 unknown（retryable:false）→ 422 fail-closed；
+    // 瞬态 stale（retryable !== false）→ 503 retryable（不变）。与内核语义一致，HTTP 表面不分叉。
     let httpStatus;
     if (result.gate === 'impact_unknown') {
-      httpStatus = 503;
+      httpStatus = result.retryable === false ? 422 : 503;
     } else if (result.gate === 'drift') {
       httpStatus = 409;
     } else {

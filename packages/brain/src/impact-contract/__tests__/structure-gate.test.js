@@ -68,6 +68,18 @@ function makeStaleFreshnessMapClient() {
   });
 }
 
+// 模拟 Mapper 返回确定性 unknown freshness（Map 已判定该 diff 不可解析/坐标不存在）
+function makeUnknownFreshnessMapClient() {
+  return async ({ repo, baseRevision }) => ({
+    manifest_digest: 'stub_manifest_digest',
+    projection_digest: 'stub_projection_digest',
+    fact_revisions: { [repo || 'cecelia']: baseRevision || 'stub_revision' },
+    freshness: { status: 'unknown', reason_code: 'impact_unknown' },
+    affected_nodes: [],
+    required_assertions: [],
+  });
+}
+
 // 模拟 Mapper 返回 revision mismatch（fact_revisions 与合同 base_revision 不同）
 function makeRevisionMismatchMapClient() {
   return async ({ repo }) => ({
@@ -145,14 +157,15 @@ describe('FR-3 Structure Gate', () => {
       expect(result.gate).toBe('blocked');
     });
 
-    test('Mapper stale 响应包含 reason=mapper_stale', async () => {
+    test('Mapper stale 响应透传具体 reason_code（ttl_exceeded），不折叠成通用 mapper_stale', async () => {
       const result = await evaluateStructureGate({
         db: null,
         task: BASE_TASK,
         contract: BASE_CONTRACT,
         mapClient: makeStaleFreshnessMapClient(),
       });
-      expect(result.reason).toBe('mapper_stale');
+      expect(result.reason).toBe('ttl_exceeded');
+      expect(result.reason).not.toBe('mapper_stale');
     });
 
     test('Mapper stale 响应包含 retryable=true', async () => {
@@ -163,6 +176,33 @@ describe('FR-3 Structure Gate', () => {
         mapClient: makeStaleFreshnessMapClient(),
       });
       expect(result.retryable).toBe(true);
+    });
+
+  });
+
+  describe('不可判定情形二·b：Mapper 确定性 unknown（fail-closed，与 diff-gate 同语义）', () => {
+
+    test('Mapper unknown 时 Structure Gate 阻断且 fail-closed（retryable=false，httpStatus=422）', async () => {
+      const result = await evaluateStructureGate({
+        db: null,
+        task: BASE_TASK,
+        contract: BASE_CONTRACT,
+        mapClient: makeUnknownFreshnessMapClient(),
+      });
+      expect(result.gate).toBe('blocked');
+      expect(result.retryable).toBe(false);
+      expect(result.httpStatus).toBe(422);
+    });
+
+    test('Mapper unknown 响应透传具体 reason_code（impact_unknown），不折叠成 mapper_stale', async () => {
+      const result = await evaluateStructureGate({
+        db: null,
+        task: BASE_TASK,
+        contract: BASE_CONTRACT,
+        mapClient: makeUnknownFreshnessMapClient(),
+      });
+      expect(result.reason).toBe('impact_unknown');
+      expect(result.reason).not.toBe('mapper_stale');
     });
 
   });
