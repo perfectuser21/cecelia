@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.88
+**Brain 版本**: 1.273.89
 
 ## Brain 1.273.88 — capability-gate 加账号额度闸（kernel 派发的真正选号点）
 
