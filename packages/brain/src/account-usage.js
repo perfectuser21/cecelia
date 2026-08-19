@@ -20,6 +20,9 @@ const USAGE_THRESHOLD = 80;       // 5h 超过此百分比则跳过
 const SONNET_7D_THRESHOLD = 100;  // sonnet 7d 满载阈值（≥ 此值时不可用 Sonnet，尝试 Opus）
 const OPUS_7D_THRESHOLD = 95;     // 7d all-models Opus 满载阈值（≥ 此值时降级 Haiku）
 const HAIKU_7D_THRESHOLD = 100;   // 7d all-models 完全满载阈值（≥ 此值时跳过账号）
+
+// 最近一次取到的用量快照，供 isAccountUsable() 同步判定（避免在派发热路径上发网络请求）
+let _lastUsageSnapshot = null;
 const ANTHROPIC_USAGE_API = 'https://api.anthropic.com/api/oauth/usage';
 
 // 模型 ID → quota tier 映射
@@ -672,6 +675,29 @@ function effectivePct(pct, resetsAt) {
  *   modelId: 完整模型 ID（如 'claude-sonnet-4-6'）
  *   null → 所有账号不可用，调用方降级到 MiniMax
  */
+/**
+ * 账号当前是否真的还能派活（同步判据，供 account-rotation 中间件在放行 explicit
+ * 账号前自检）。
+ *
+ * 2026-08-19 run 4c867fb4 的教训：capped / authFailed 都是**事后标记**——只有真收到
+ * 429 回调后才由 markAuthFailure 打上。account1 七天额度早已 100%，却因为还没人撞过
+ * 而毫无标记，于是每个角色都得先撞一次 429 再重派；publisher 撞上后租约直接过期，
+ * 整跑落人审。所以"能不能用"必须**看当前用量**，不能只看标记。
+ *
+ * 用最近一次缓存的用量做判定（不发网络请求，中间件在派发热路径上）；缓存缺失时
+ * 返回 true（fail-open）——本函数只负责选号，准入 fail-closed 由派发闸另行把关。
+ */
+export function isAccountUsable(accountId, usageSnapshot = _lastUsageSnapshot) {
+  if (!accountId) return true;
+  if (isSpendingCapped(accountId) || isAuthFailed(accountId)) return false;
+  const u = usageSnapshot?.[accountId];
+  if (!u) return true;
+  if (u.extra_used) return false;
+  if ((u.five_hour_pct ?? 0) >= USAGE_THRESHOLD) return false;
+  if ((u.seven_day_pct ?? 0) >= HAIKU_7D_THRESHOLD) return false;
+  return true;
+}
+
 export async function selectBestAccount(options = {}) {
   await proactiveTokenCheck();
   const { model: requestedModel, cascade: requestedCascade } = options;
@@ -679,6 +705,7 @@ export async function selectBestAccount(options = {}) {
   const accounts = options.accounts || ACCOUNTS;
   try {
     const usage = await getAccountUsage(false, accounts);
+    _lastUsageSnapshot = usage;
 
     const SEVEN_DAY_MS = 7 * 24 * 3600 * 1000;
     const now = Date.now();

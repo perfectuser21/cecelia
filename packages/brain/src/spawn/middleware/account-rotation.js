@@ -16,18 +16,31 @@ export async function resolveAccount(opts, ctx = {}) {
   opts.env = opts.env || {};
   try {
     const deps = ctx.deps || await import('../../account-usage.js');
-    const { isSpendingCapped, isAuthFailed, selectBestAccount } = deps;
+    const {
+      isSpendingCapped, isAuthFailed, selectBestAccount, isAccountUsable,
+    } = deps;
     const explicit = opts.env.CECELIA_CREDENTIALS;
     const capped = explicit ? isSpendingCapped(explicit) : false;
     const authFailed = explicit ? isAuthFailed(explicit) : false;
-    const needsFallback = !explicit || capped || authFailed;
+    // capped / authFailed 都是**事后标记**：只有真收到 429 回调后 markAuthFailure 才打上。
+    // 2026-08-19 run 4c867fb4：account1 七天额度已 100%，却因为还没人撞过它而没有任何
+    // 标记 → needsFallback=false → 直接放行 → proposer/generator/evaluator/judge 逐个
+    // 先撞一次 429 再重派，publisher 撞上后租约直接过期，整跑落人审。
+    // 因此还要**主动看账号当前是否真的可用**（额度/资格），不能只信标记。
+    // 探针不可用时保持既有行为（fail-open）——这里的职责是选号，不是准入闸。
+    const quotaExhausted = explicit && typeof isAccountUsable === 'function'
+      ? !isAccountUsable(explicit)
+      : false;
+    const needsFallback = !explicit || capped || authFailed || quotaExhausted;
     if (!needsFallback) return;
     // OAuth token 自动刷新，无需 session ≥ 4h 的限制
     const selection = await selectBestAccount({ cascade: opts.cascade });
     if (!selection || !selection.accountId) return;
     const taskId = ctx.taskId || opts.task?.id || 'unknown';
     if (explicit && explicit !== selection.accountId) {
-      const reason = capped ? 'spending-capped' : (authFailed ? 'auth-failed' : 'unset');
+      const reason = capped
+        ? 'spending-capped'
+        : (authFailed ? 'auth-failed' : (quotaExhausted ? 'quota-exhausted' : 'unset'));
       console.log(`[account-rotation] rotate: ${explicit} ${reason} → ${selection.accountId} (task=${taskId})`);
     } else if (!explicit) {
       console.log(`[account-rotation] select: ${selection.accountId} model=${selection.model} (task=${taskId})`);
