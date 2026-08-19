@@ -8,7 +8,13 @@
 
 
 
-**Brain 版本**: 1.273.86
+**Brain 版本**: 1.273.87
+
+## Brain 1.273.87 — isAccountUsable 自取用量，修 1.273.86 的快照死循环
+
+- 1.273.86 引入的 `isAccountUsable()` 读的是只在 `selectBestAccount` 里赋值的用量快照，而中间件恰恰是"看起来不需要 fallback"才不调 `selectBestAccount` → **快照永远为空 → 永远 fail-open → 修复等于没做**。生产 run `2150e1b7` 的 planner 照旧被派到额度已满的 account1 并失败。
+- 修法：`isAccountUsable()` 改为 async 并**自己调 `getAccountUsage(false)`**（走本地缓存，不打网络，可安全置于派发热路径）；中间件相应 `await`。取不到用量时仍 fail-open。
+- 回归新增一段：**未填充任何快照时判据仍必须被调用并生效**（断言 explicit 账号确实被问过），钉死这个死循环。account-rotation 12/12 通过。
 
 ## Brain 1.273.86 — 额度已耗尽的显式账号也要换号（不再每个角色先撞一次 429）
 

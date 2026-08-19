@@ -21,8 +21,6 @@ const SONNET_7D_THRESHOLD = 100;  // sonnet 7d 满载阈值（≥ 此值时不�
 const OPUS_7D_THRESHOLD = 95;     // 7d all-models Opus 满载阈值（≥ 此值时降级 Haiku）
 const HAIKU_7D_THRESHOLD = 100;   // 7d all-models 完全满载阈值（≥ 此值时跳过账号）
 
-// 最近一次取到的用量快照，供 isAccountUsable() 同步判定（避免在派发热路径上发网络请求）
-let _lastUsageSnapshot = null;
 const ANTHROPIC_USAGE_API = 'https://api.anthropic.com/api/oauth/usage';
 
 // 模型 ID → quota tier 映射
@@ -687,10 +685,22 @@ function effectivePct(pct, resetsAt) {
  * 用最近一次缓存的用量做判定（不发网络请求，中间件在派发热路径上）；缓存缺失时
  * 返回 true（fail-open）——本函数只负责选号，准入 fail-closed 由派发闸另行把关。
  */
-export function isAccountUsable(accountId, usageSnapshot = _lastUsageSnapshot) {
+export async function isAccountUsable(accountId, usageSnapshot = null) {
   if (!accountId) return true;
   if (isSpendingCapped(accountId) || isAuthFailed(accountId)) return false;
-  const u = usageSnapshot?.[accountId];
+  // 必须**自己取**用量，不能依赖别处填充的快照：快照原先只在 selectBestAccount 里
+  // 赋值，而中间件正是因为"看起来不需要 fallback"才不调 selectBestAccount —— 快照
+  // 永远是空的，判据永远 fail-open，等于没改（2026-08-19 首次修复即栽在这个死循环上）。
+  // getAccountUsage(false) 走本地缓存，不打网络，可安全放在派发热路径。
+  let u = usageSnapshot?.[accountId];
+  if (!u) {
+    try {
+      const usage = await getAccountUsage(false, ACCOUNTS);
+      u = usage?.[accountId];
+    } catch {
+      return true; // 取不到用量时 fail-open：本函数只负责选号，准入 fail-closed 由派发闸把关
+    }
+  }
   if (!u) return true;
   if (u.extra_used) return false;
   if ((u.five_hour_pct ?? 0) >= USAGE_THRESHOLD) return false;
@@ -705,7 +715,6 @@ export async function selectBestAccount(options = {}) {
   const accounts = options.accounts || ACCOUNTS;
   try {
     const usage = await getAccountUsage(false, accounts);
-    _lastUsageSnapshot = usage;
 
     const SEVEN_DAY_MS = 7 * 24 * 3600 * 1000;
     const now = Date.now();
