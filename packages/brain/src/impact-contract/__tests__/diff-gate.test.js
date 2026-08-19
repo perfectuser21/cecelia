@@ -564,4 +564,63 @@ describe('FR-4 Diff Impact Gate', () => {
 
   });
 
+  // 永久回归（sprint 08191302-kernel-2a813900）：步骤 3a 确定性 reason_code 透传 + fail-closed。
+  // 根因：旧代码把一切 freshness.status !== 'fresh' 折叠成 mapper_stale + retryable:true，
+  // 确定性 deny 被换成通用 mapper_stale 无限重试空转（runs f62c7e87 / d1360a48）。
+  describe('步骤 3a：Mapper 非 fresh 时 reason_code 透传 + fail-closed', () => {
+    const staleDb = () => ({ query: vi.fn(async () => ({ rows: [{
+      id: 'contract-3a', repo: 'cecelia', base_revision: 'base',
+      contract_body: { affected_capabilities: [], required_assertions: [] },
+    }] })) });
+
+    test('确定性 reason_code（freshness 内）透传且 retryable=false，不折叠成 mapper_stale', async () => {
+      const result = await evaluateDiffGate({
+        db: staleDb(), taskId: 'task-3a-det', repo: 'cecelia', headRevision: 'head',
+        mapClient: async () => ({
+          freshness: { status: 'stale', reason_code: 'projection_revision_mismatch' },
+          affected_nodes: [], required_assertions: [],
+        }),
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.reason).toBe('projection_revision_mismatch');
+      expect(result.reason_code).toBe('projection_revision_mismatch');
+      expect(result.retryable).toBe(false);
+    });
+
+    test('顶层确定性 reason_code 缺 retryable 字段时 Gate 仍判 retryable=false', async () => {
+      const result = await evaluateDiffGate({
+        db: staleDb(), taskId: 'task-3a-top', repo: 'cecelia', headRevision: 'head',
+        mapClient: async () => ({
+          reason_code: 'provider_denied', freshness: { status: 'stale' },
+          affected_nodes: [], required_assertions: [],
+        }),
+      });
+      expect(result.reason).toBe('provider_denied');
+      expect(result.retryable).toBe(false);
+    });
+
+    test('真·瞬时 stale（reason_code=null）保留 mapper_stale + retryable=true', async () => {
+      const result = await evaluateDiffGate({
+        db: staleDb(), taskId: 'task-3a-transient', repo: 'cecelia', headRevision: 'head',
+        mapClient: async () => ({
+          freshness: { status: 'stale', reason_code: null },
+          affected_nodes: [], required_assertions: [],
+        }),
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.reason).toBe('mapper_stale');
+      expect(result.retryable).toBe(true);
+    });
+
+    test('既无 freshness 也无 reason_code 时 fail-closed（mapper_stale + retryable=true，绝不假绿）', async () => {
+      const result = await evaluateDiffGate({
+        db: staleDb(), taskId: 'task-3a-indeterminate', repo: 'cecelia', headRevision: 'head',
+        mapClient: async () => ({ affected_nodes: [], required_assertions: [] }),
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.reason).toBe('mapper_stale');
+      expect(result.retryable).toBe(true);
+    });
+  });
+
 });
