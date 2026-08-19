@@ -564,4 +564,85 @@ describe('FR-4 Diff Impact Gate', () => {
 
   });
 
+  // ── r19：步骤3a 确定性 reason_code 透传 + fail-closed 出口 ──
+  // 根因回归：Mapper 给出确定性 stale 结论（携带 reason_code）时，gate 曾一律折叠成
+  // generic mapper_stale + retryable:true，导致 orchestrator 无限重试真实卡点被吞。
+  describe('步骤3a：确定性 reason_code 透传 + fail-closed（r19）', () => {
+
+    // 复用同一个 active contract：db 只是外层边界（被 stub 返回合同行），
+    // 被改的边是 evaluateDiffGate 内部 3a 分支逻辑本身（真实执行，不 mock）。
+    const activeContractDb = () => ({
+      query: vi.fn(async () => ({ rows: [{
+        id: 'contract-3a', repo: 'cecelia', change_kind: 'bugfix', base_revision: 'base',
+        contract_body: {
+          affected_capabilities: [{ capability_id: 'impact-contract' }],
+          required_assertions: [],
+        },
+      }] })),
+    });
+
+    test('确定性 stale 结论透传 reason_code 并 fail-closed retryable false', async () => {
+      const mapClient = vi.fn(async () => ({
+        freshness: { status: 'stale', reason_code: 'projection_revision_mismatch' },
+      }));
+      const result = await evaluateDiffGate({
+        db: activeContractDb(), taskId: 'task-3a-det', repo: 'cecelia', headRevision: 'head', mapClient,
+      });
+      expect(result).toMatchObject({
+        gate: 'impact_unknown',
+        reason: 'projection_revision_mismatch',
+        reason_code: 'projection_revision_mismatch',
+        retryable: false,
+      });
+    });
+
+    test('unknown status 携带 reason_code 同样透传并 fail-closed retryable false', async () => {
+      const mapClient = vi.fn(async () => ({
+        freshness: { status: 'unknown', reason_code: 'map_scope_undeclared' },
+      }));
+      const result = await evaluateDiffGate({
+        db: activeContractDb(), taskId: 'task-3a-unknown', repo: 'cecelia', headRevision: 'head', mapClient,
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.reason).toBe('map_scope_undeclared');
+      expect(result.reason_code).toBe('map_scope_undeclared');
+      expect(result.retryable).toBe(false);
+    });
+
+    test('瞬时 stale 无 reason_code 保留 mapper_stale retryable true 不误杀', async () => {
+      const mapClient = vi.fn(async () => ({
+        freshness: { status: 'stale', reason_code: null },
+      }));
+      const result = await evaluateDiffGate({
+        db: activeContractDb(), taskId: 'task-3a-transient', repo: 'cecelia', headRevision: 'head', mapClient,
+      });
+      expect(result).toMatchObject({
+        gate: 'impact_unknown',
+        reason: 'mapper_stale',
+        retryable: true,
+      });
+    });
+
+    test('freshness 完全缺失视为瞬时 stale retryable true 不误杀', async () => {
+      const mapClient = vi.fn(async () => ({ affected_nodes: [] }));
+      const result = await evaluateDiffGate({
+        db: activeContractDb(), taskId: 'task-3a-missing', repo: 'cecelia', headRevision: 'head', mapClient,
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.reason).toBe('mapper_stale');
+      expect(result.retryable).toBe(true);
+    });
+
+    test('Mapper 抛错仍为 mapper_unavailable retryable true 与确定性 stale 区分', async () => {
+      const mapClient = vi.fn(async () => { throw new Error('boom'); });
+      const result = await evaluateDiffGate({
+        db: activeContractDb(), taskId: 'task-3a-throw', repo: 'cecelia', headRevision: 'head', mapClient,
+      });
+      expect(result).toMatchObject({
+        gate: 'impact_unknown', reason: 'mapper_unavailable', retryable: true,
+      });
+    });
+
+  });
+
 });

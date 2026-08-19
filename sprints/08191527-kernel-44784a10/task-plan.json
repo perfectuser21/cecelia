@@ -1,0 +1,26 @@
+{
+  "initiative_id": "a167ed42-3908-4568-a70a-10d6a451aaae",
+  "journey_type": "autonomous",
+  "journey_type_reason": "变更落在 packages/brain/src/impact-contract（纯后端 harness 编码闸），无 UI/agent-bridge/engine 触点",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "diff-gate.js 步骤3a 透传确定性 reason_code + fail-closed retryable 判定",
+      "scope": "在 evaluateDiffGate 步骤3a（freshness.status ≠ 'fresh'）分支：若 freshness.reason_code 非空则原样透传进 verdict.reason/verdict.reason_code 并置 retryable=false（fail-closed 终态）；reason_code 为空/缺失（含 freshness 整体缺失）则保留 reason='mapper_stale'、retryable=true；Mapper throw 的 mapper_unavailable 分支不动。仅改 diff-gate.js，不碰 structure-gate.js / Mapper 生成逻辑 / 对账与 compare 流程",
+      "dod": [
+        "[BEHAVIOR] 确定性 stale（reason_code 非空）→ verdict.reason==reason_code==该码 且 retryable=false 且 gate=impact_unknown",
+        "[BEHAVIOR] 瞬时 stale（reason_code 为 null/缺失）→ verdict.reason=mapper_stale 且 retryable=true（不误杀）",
+        "[BEHAVIOR] diff-gate.test.js 全量回归全绿（原有 4 类情形 + 新增 5 条 3a 用例）",
+        "[ARTIFACT] packages/brain/src/impact-contract/diff-gate.js 3a 分支含 reason_code 透传 + retryable:false 出口",
+        "[ARTIFACT] packages/brain/src/impact-contract/__tests__/diff-gate.test.js 含 步骤3a describe（永久回归）"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
