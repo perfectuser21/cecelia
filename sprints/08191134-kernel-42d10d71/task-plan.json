@@ -1,0 +1,31 @@
+{
+  "initiative_id": "42d10d71-da72-4485-8c7e-eb3fabb592d9",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain 纯后端 harness 内核（impact gate 决策 + orchestrator 控制流），无 UI/agent 协议/engine 路径。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 确定性 reason_code 透传 + 确定性→fail-closed 出口",
+      "scope": "在 diff-gate.js 与 structure-gate.js 将确定性 Map 结论（revision_mismatch / manifest_digest_mismatch / projection_digest_mismatch）的 reason_code 原样透传（不折叠成 mapper_stale）并标 retryable=false；保留真瞬态 stale/unavailable/revision_evidence_missing 的 retryable=true。orchestrator loop.js 确定性→fail-closed 出口（impact_contract_invalid → failRun('impact_gate_deterministic:<reason>'), 0 退避）作为行为保证验证，瞬态有限重试回归不破坏。两端同一 reason_code 必须同一 retryable 分桶（语义一致铁律）。",
+      "dod": [
+        "[BEHAVIOR] 确定性 revision/digest mismatch 返回具体 reason_code + retryable=false（合同 deterministic-fail-closed.test.ts 全过）",
+        "[BEHAVIOR] 瞬态 mapper_stale/unavailable/revision_evidence_missing 保持 retryable=true（回归守卫）",
+        "[BEHAVIOR] orchestrator 确定性 receipt → failRun('impact_gate_deterministic:<reason>') 0 退避（loop.test.js）",
+        "[BEHAVIOR] 两端 reason_code 同一 retryable 分桶（语义一致铁律 B-06）",
+        "[ARTIFACT] diff-gate.js / structure-gate.js 确定性分支 retryable=false"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/structure-gate.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+        "packages/brain/src/impact-contract/__tests__/structure-gate.test.js",
+        "packages/brain/src/orchestrator/__tests__/loop.test.js",
+        "sprints/08191134-kernel-42d10d71/tests/deterministic-fail-closed.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
