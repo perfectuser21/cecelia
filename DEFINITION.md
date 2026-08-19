@@ -8,7 +8,13 @@
 
 
 
-**Brain 版本**: 1.273.92
+**Brain 版本**: 1.273.93
+
+## Brain 1.273.93 — capability-change-v1 撤销免对抗直出，合同尺度走 GAN
+
+决策 b14dc8e4 撤销 29ae54ae 的「capability_change=免对抗直出」条款。改能力线只省意图层
+（轻 planner），合同未批准时走 deriveGan（proposer↔reviewer 收敛），不再 rn>=1 自动盖章。
+生产实证：08-15 后零 reviewer attempt，合同由 proposer 独白直出，缺陷只能等下游 CI 炸。
 
 ## Brain 1.273.92 — server_required_assertions 按术语匹配，不依赖裁判措辞
 
