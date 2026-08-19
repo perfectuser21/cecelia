@@ -906,19 +906,15 @@ export function derive(observed) {
       );
     }
     if (!contract.approved) {
-      // 直出收敛 × validation-identity-policy 硬门（2026-08-16 run e64c335a 实证）：
-      // loop 的 force_approve_contract 分支被硬门驳回后只写一条
-      // verdict:reviewer(REVISION, source=validation_identity_policy) 决策行；若这里
-      // 仍按 rn>=1 返回 force_approve_contract，就是同一 SHA 上 ≈1 跳/秒的热循环
-      // （936 跳/17 分钟）直到 hop_cap。与通用 GAN 路径的 F1 修复同语义：硬门驳回了
-      // 当前 propose SHA → 让路回 spawn:proposer，让 proposer 按 REVISION 反馈出新 SHA。
-      const identityPolicyBlockedCurrentSha = latestReviewerLogDeniedByIdentityPolicy(observed);
-      const decision = observed.proposeBranchRn >= 1
-        ? (identityPolicyBlockedCurrentSha
-          ? { phase: 'gan', action: ACTION.SPAWN_PROPOSER, reason: 'profile_direct_contract_identity_revision' }
-          : { phase: 'gan', action: ACTION.FORCE_APPROVE_CONTRACT, reason: 'profile_direct_contract_convergence' })
-        : { phase: 'gan', action: ACTION.SPAWN_PROPOSER, reason: 'profile_direct_contract_proposal' };
-      return applyHopFence(decision, counters);
+      // 决策 b14dc8e4（2026-08-19）撤销 29ae54ae 的「capability_change=免对抗直出」：
+      // 改能力线只省意图层（轻 planner），合同尺度必须有对抗——proposer 交稿后由 reviewer 审，
+      // 收敛靠真裁决，不靠 rn>=1 自动盖章。生产实证：08-15 后零 reviewer attempt，合同由
+      // proposer 独白直出，缺陷只能等下游 CI 门禁炸出来。
+      // 与 new-capability-v1 同走 deriveGan；validation-identity-policy 硬门的防热循环
+      // （run e64c335a，936 跳/17 分钟）由 deriveGan 自带的 F1 守卫承担：硬门驳回当前 SHA
+      // 落 verdict:reviewer(REVISION) 行 → ganLatestRoundVerdict='REVISION' → 趋势闸让路 →
+      // spawn:proposer。不再需要专属分支复制一份同款逻辑。
+      return applyHopFence(deriveGan(observed), counters);
     }
     return applyHopFence(deriveTask(observed), counters);
   }
