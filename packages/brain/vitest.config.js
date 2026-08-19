@@ -103,6 +103,10 @@ export default defineConfig({
       // 刀1 毕业池（2026-07-14）：sprint 测试经 scripts/graduate-sprint-tests.mjs
       // 毕业进 tests/regression/<sprint-slug>/，永久留 CI（test-pyramid-guard A1/A3 锁死）。
       '../../tests/regression/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      // GP 步骤断言（决策 109dd8eb 产物闸）：流水线路径的修复守卫必须落在
+      // tests/gp/<journey>/step<N>-*.test.* 这条「边」上，并由 brain-unit 真跑。
+      // 不进 include = 文件在、没人跑 = 产物闸形同虚设。
+      '../../tests/gp/**/*.{test,spec}.?(c|m)[jt]s?(x)',
     ],
     // 以下测试需要真实 PostgreSQL 连接或有其他 CI 环境 pre-existing 失败
     // brain-unit 跑纯单元测试（有 vi.mock('db.js') 的），集成测试走 brain-integration
