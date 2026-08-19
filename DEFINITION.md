@@ -8,7 +8,13 @@
 
 
 
-**Brain 版本**: 1.273.91
+**Brain 版本**: 1.273.92
+
+## Brain 1.273.92 — server_required_assertions 按术语匹配，不依赖裁判措辞
+
+#4961 的 pattern 照着上一轮中文长句写，要求同时出现 server-owned/机械门禁/Provider-退出后；
+裁判换成英文简短措辞就漏了，judge 死锁复发（run 4ab267a7）。required_assertions 是专有名词，
+特指 server-owned Runner 在 Provider 退出后执行的机械门禁断言，按术语本身匹配。
 
 ## Brain 1.273.91 — fleet worker 5xx 留下真实原因
 
