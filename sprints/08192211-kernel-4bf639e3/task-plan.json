@@ -1,0 +1,27 @@
+{
+  "initiative_id": "4bf639e3-ae06-4133-8d59-8c19bf3bc9af",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅落在 packages/brain/ 后端 Gate 判定逻辑，无 UI/远端 agent/engine 介入。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 步骤 3a：透传 reason_code + 确定性 unknown fail-closed",
+      "scope": "改 diff-gate.js 步骤 3a（freshness 非 fresh 分支）：区分瞬态 stale（freshness.status==='stale' → retryable:true）与确定性 unknown（'unknown'/缺字段/未知 status → retryable:false, fail-closed），两类都透传 freshness.reason_code 进返回 reason/reason_code，reason_code 缺失时占位 'unknown'，绝不回退 'mapper_stale'。不改步骤 3b、Mapper 本体、kernel 重试调度、DB 写路径。让 sprint 回归测试 diff-gate-reason-passthrough.test.js 全绿，既有 brain 单测无回退。",
+      "dod": [
+        "[BEHAVIOR] 瞬态 stale 透传具体 reason_code 且 retryable:true（非 mapper_stale）— 对应 contract-dod.md B-01",
+        "[BEHAVIOR] 确定性 unknown fail-closed retryable:false 且透传具体 reason_code — B-02",
+        "[BEHAVIOR] 边界缺 reason_code/未知 status → fail-closed 占位 unknown 不回退 mapper_stale — B-03",
+        "[BEHAVIOR] 所有非 fresh 分支 reason 绝不等于 mapper_stale（堵无限重试出口）— B-04",
+        "[BEHAVIOR] 既有 brain 单测无回退（diff-gate.test.js + harness-gates.test.js 全绿）— B-05",
+        "[ARTIFACT] diff-gate.js 步骤 3a 返回值含 reason_code 字段且不再硬编码 mapper_stale"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "sprints/08192211-kernel-4bf639e3/tests/diff-gate-reason-passthrough.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 40
+    }
+  ]
+}
