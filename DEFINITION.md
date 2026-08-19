@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.85
+**Brain 版本**: 1.273.86
+
+## Brain 1.273.86 — 额度已耗尽的显式账号也要换号（不再每个角色先撞一次 429）
+
+- `account-rotation` 中间件原判据 `needsFallback = !explicit || capped || authFailed`，而 capped/authFailed 都是**事后标记**——只有真收到 429 回调后 `markAuthFailure` 才打上。
+- 2026-08-19 run `4c867fb4`：account1 七天额度已 100%，却因还没人撞过而毫无标记 → 直接放行 → proposer / generator / evaluator / judge **逐个先撞一次 429 再重派**，累计浪费十余分钟；publisher 撞上后租约直接过期（`worker_attempt_replacement_required_after_lease` / `infrastructure_blocked`），整跑落人审。
+- 修法：新增 `isAccountUsable()`（复用既有资格判据 + 最近一次用量快照，同步、不发网络请求），中间件在放行 explicit 账号前主动自检当前额度；探针不可用时 fail-open，保持既有行为（本中间件只负责选号，准入 fail-closed 由派发闸把关）。轮换日志新增 `quota-exhausted` 原因。
+- 回归 3 段：额度耗尽必须换号；仍可用必须保留；探针缺失时保持原行为。
 
 ## Brain 1.273.85 — harness_attempts.role 约束补 publisher（migration 431）
 
