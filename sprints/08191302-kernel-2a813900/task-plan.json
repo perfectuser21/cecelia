@@ -1,0 +1,27 @@
+{
+  "initiative_id": "db17a4bf-f95b-4095-bd14-7e163af903e1",
+  "journey_type": "autonomous",
+  "journey_type_reason": "变更落在 packages/brain/src/impact-contract/（纯后端 harness gate 决策逻辑），无 UI/agent 协议/engine 介入。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 步骤 3a：透传 Mapper 确定性 reason_code + fail-closed 出口，消除 mapper_stale 无限重试",
+      "scope": "改 packages/brain/src/impact-contract/diff-gate.js 步骤 3a：Mapper 返回非 fresh 且携带非空确定性 reason_code（顶层或 freshness 内）时，出口 reason 透传该 reason_code、reason_code 回填、retryable=false（fail-closed 终态）；仅无 reason_code 的真·瞬时 stale 保留 reason='mapper_stale'+retryable=true。既无 freshness 也无 reason_code 时不可判定，保持 fail-closed retryable=true 绝不假绿。其它 impact_unknown 分支语义不变。新增永久回归到 packages/brain/src/impact-contract/__tests__/diff-gate.test.js。",
+      "dod": [
+        "[BEHAVIOR] 确定性 reason_code 透传且 retryable=false（B-01/B-02/B-05）",
+        "[BEHAVIOR] 真·瞬时 stale 保留 mapper_stale+retryable=true（B-03）",
+        "[BEHAVIOR] 不可判定 fail-closed 绝不假绿（B-04）",
+        "[BEHAVIOR] package diff-gate.test.js 全绿，既有断言不破坏（B-06）",
+        "[ARTIFACT] diff-gate.js 步骤 3a 含 reason_code 透传 + mapper_stale 保留分支",
+        "[ARTIFACT] diff-gate.test.js 含 mapper_stale + retryable 永久回归"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 40
+    }
+  ]
+}
