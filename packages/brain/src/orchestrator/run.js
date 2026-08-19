@@ -271,6 +271,18 @@ export async function buildRealDeps(overrides = {}) {
         ...productionProbes,
         probeTimeoutMs: overrides.preflightProbeTimeoutMs ?? 25_000,
         snapshotTtlMs: overrides.preflightSnapshotTtlMs ?? 1_000,
+        // 额度闸接线：认证探针只回答"能不能登录"，回答不了"还有没有额度"。
+        // 不接这一根线的话额度闸就是死代码（2026-08-19 连修两处都因为改在不参与
+        // kernel 派发的路径上而毫无效果，教训见 capability-gate.js 内注释）。
+        isAccountUsable: overrides.isAccountUsable
+          ?? (async (accountId) => {
+            try {
+              const { isAccountUsable } = await import('../account-usage.js');
+              return await isAccountUsable(accountId);
+            } catch {
+              return true; // fail-open：选号闸不承担准入 fail-closed 职责
+            }
+          }),
       });
     const detached = await import('../spawn/detached.js');
     const spawnDetached = overrides.spawnDetached ?? detached.spawnDockerDetached;

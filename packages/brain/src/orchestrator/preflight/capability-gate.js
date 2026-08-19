@@ -187,6 +187,26 @@ export function createCapabilityGate(deps = {}) {
         continue;
       }
 
+      // 额度闸：凭据有效 ≠ 账号可用。
+      // 2026-08-19 生产（run 4c867fb4 / 2150e1b7 / 80459597）：account1 七天额度 100%，
+      // 但凭据完全有效 → probeProviderAuth 返回 ok → 直接选中 → 每个角色都撞 429 再重派；
+      // publisher 撞上后没有重派余地，租约过期即 infrastructure_blocked，整跑作废。
+      // 认证探针只回答"这个号能不能登录"，回答不了"这个号还有没有额度"，必须单独判。
+      // 放在认证探针**之前**：额度已满的号连探针都不该浪费。
+      // 未注入判据时 fail-open，保持既有行为（本闸只负责选号，准入 fail-closed 另有闸门）。
+      if (typeof deps.isAccountUsable === 'function' && candidate?.account) {
+        let usable = true;
+        try {
+          usable = await deps.isAccountUsable(candidate.account);
+        } catch {
+          usable = true;
+        }
+        if (!usable) {
+          fallbackReason = 'account_quota_exhausted';
+          continue;
+        }
+      }
+
       try {
         providerAuth = requirements.provider_auth
           ? await probe(() => deps.probeProviderAuth({ ...candidate, task_bundle: taskBundle }))
