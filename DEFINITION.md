@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.94
+**Brain 版本**: 1.273.95
+
+## Brain 1.273.95 — reconciler 认识 worker quarantined，过期 attempt 不再永久占槽（F1 步骤 1）
+
+worker 在 finalize 因 worktree Permission denied 把 attempt 置 quarantined；reconciler 不认识该状态
+→ 每 90s infrastructure_blocked → attempt 永远 running → 单例槽永久被占 → 全机 harness wait:capacity
+（run 1080c7f5 实证）。现直接终态化 worker_attempt_quarantined_after_lease 并要求替换。
+守卫落在 tests/gp/f1/step1-*（真 attempt-runner + 真 reconciler）。
 
 ## Brain 1.273.94 — publisher 成功后不释放 generator 候选（F1 步骤 3 造完真验）
 
