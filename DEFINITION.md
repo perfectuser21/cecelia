@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.92
+**Brain 版本**: 1.273.93
 
 ## Brain 1.273.92 — server_required_assertions 按术语匹配，不依赖裁判措辞
 
