@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.91
+**Brain 版本**: 1.273.92
 
 ## Brain 1.273.91 — fleet worker 5xx 留下真实原因
 
