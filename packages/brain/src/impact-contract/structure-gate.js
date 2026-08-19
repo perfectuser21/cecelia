@@ -23,7 +23,23 @@ import { normalizeFreshnessEvidence } from './contract-schema.js';
 // ---------- 结果构建工具 ----------
 
 /**
+ * 确定性 reason_code（base_sha 冻结下重试不自愈）→ retryable=false（fail-closed）。
+ * 与 diff-gate.js 的确定性分桶保持语义一致（同一 reason_code 同一 retryable 桶）。
+ * revision_evidence_missing 虽同为 409，但属瞬态（证据可补齐）→ 不在此集，retryable=true。
+ */
+const DETERMINISTIC_BLOCK_REASONS = new Set([
+  'revision_mismatch',
+  'manifest_digest_mismatch',
+  'projection_digest_mismatch',
+  'contract_missing',
+]);
+
+/**
  * buildBlockedResult(reason, httpStatus, extra) — 构建 blocked 结果对象。
+ *
+ * retryable 按 reason_code 类别分桶（非仅 httpStatus）：确定性 reason → false（fail-closed），
+ * 瞬态 503/409 → true。避免把确定性 revision_mismatch 与瞬态 revision_evidence_missing
+ * （同为 409）折叠成同一 retryable。
  *
  * @param {string} reason  机器可读 reason code
  * @param {number} httpStatus  HTTP 状态码
@@ -31,10 +47,13 @@ import { normalizeFreshnessEvidence } from './contract-schema.js';
  * @returns {{ gate: 'blocked', reason: string, retryable: boolean, httpStatus: number }}
  */
 function buildBlockedResult(reason, httpStatus, extra = {}) {
+  const retryable = DETERMINISTIC_BLOCK_REASONS.has(reason)
+    ? false
+    : httpStatus === 503 || httpStatus === 409;
   return {
     gate: 'blocked',
     reason,
-    retryable: httpStatus === 503 || httpStatus === 409,
+    retryable,
     httpStatus,
     ...extra,
   };

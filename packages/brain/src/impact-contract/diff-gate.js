@@ -220,18 +220,21 @@ export async function evaluateDiffGate({
     }
     const mapperRevision = mapperResult.fact_revisions[repoKey];
     if (mapperRevision !== expectedFactRevision) {
+      // 确定性：base_sha 冻结下 revision 不一致重试不会自愈 → fail-closed
       return {
         gate: 'impact_unknown',
         reason: 'revision_mismatch',
-        retryable: true,
+        retryable: false,
       };
     }
   }
   if (contract?.manifest_digest && mapperResult.manifest_digest !== contract.manifest_digest) {
-    return { gate: 'impact_unknown', reason: 'manifest_digest_mismatch', retryable: true };
+    // 确定性 digest 漂移 → fail-closed（重试不自愈）
+    return { gate: 'impact_unknown', reason: 'manifest_digest_mismatch', retryable: false };
   }
   if (contract?.projection_digest && mapperResult.projection_digest !== contract.projection_digest) {
-    return { gate: 'impact_unknown', reason: 'projection_digest_mismatch', retryable: true };
+    // 确定性 digest 漂移 → fail-closed（重试不自愈）
+    return { gate: 'impact_unknown', reason: 'projection_digest_mismatch', retryable: false };
   }
 
   // --- 步骤 4：对账 ---

@@ -374,6 +374,31 @@ describe('runLoop：全链 planning→done', () => {
     });
   });
 
+  it('确定性 resolved-receipt（retryable=false）→ impact_gate_deterministic 立即 fail-closed，0 退避', async () => {
+    // 本 sprint 补的 resolved-receipt 路径：Gate 正常 resolve 出确定性 impact_unknown
+    // （非抛错），retryable=false → orchestrator 立即 failRun，不派发、不退避。
+    const observedSeq = [obs({ generatorSpawned: false })];
+    const { deps, sleeps } = makeEnv({ observedSeq });
+    deps.impactGate.beforeGenerate.mockResolvedValue({
+      gate: 'impact_unknown',
+      stage: 'diff',
+      reason: 'revision_mismatch',
+      retryable: false,
+    });
+
+    const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(result.exitReason).toBe('impact_gate_deterministic');
+    expect(deps.dispatch).not.toHaveBeenCalled();
+    expect(sleeps).toEqual([]);
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, {
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      outcome: 'failed',
+      reason: 'impact_gate_deterministic:revision_mismatch',
+    });
+  });
+
   it('Dispatcher assembly fault 一次精确终止，不消耗同态 BLOCKED 次数', async () => {
     const observedSeq = [obs({ generatorSpawned: false })];
     const { deps, sleeps } = makeEnv({
