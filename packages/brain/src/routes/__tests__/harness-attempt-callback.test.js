@@ -2444,4 +2444,63 @@ describe('POST /harness/attempts/:attemptId/callback', () => {
     expect(responses[30].status).toBe(429);
     expect(mocks.store.getById).toHaveBeenCalledTimes(30);
   });
+
+  describe('publisher trusted-transport 回执（run 42d10d71 生产实证）', () => {
+    // 2026-08-19 生产实证：publisher 每次都真的把活干完了——候选分支推上远端、PR 建出来
+    // （#4962 / #4957 都是它建的），可回执被 Brain 自己挡在门外：
+    //   attempt.provider = 'claude'（dispatcher 分配 LLM 账号时写的）
+    //   result.provider_metadata.provider = 'trusted-transport'
+    //     （entrypoint.sh 的 is_publisher_task_bundle 分支强制改写——publisher 不跑 LLM，
+    //       它是可信传输通道，只做 push + gh pr create）
+    // → provider_mismatch 409。而 409 不在容器的可重试码里（000|408|425|429|5??），
+    //   entrypoint 判定 permanent rejection → EXIT_CODE=75 立刻退出（实测容器只活 22 秒）
+    //   → Brain 端 attempt 永远停在 starting → 5 分钟后被 expired-attempt-reconciler
+    //   当僵尸 cancel 掉，落 worker_attempt_replacement_required_after_lease。
+    // 净效果：**全链跑通、PR 已产出，却永远拿不到 publish 成功**，run 走不到 merge。
+    function publisherAttempt(overrides = {}) {
+      return {
+        ...attempt,
+        role: 'publisher',
+        provider: 'claude',
+        execution_transport: 'fleet-worker',
+        ...overrides,
+      };
+    }
+
+    const publisherResult = {
+      ...validResult,
+      provider_metadata: { provider: 'trusted-transport', session_id: null },
+    };
+
+    it('publisher 回执用 trusted-transport 时不再被判 provider_mismatch', async () => {
+      mocks.store.getById.mockResolvedValue(publisherAttempt());
+
+      const response = await postCallback(app, publisherResult);
+
+      expect(response.status).not.toBe(409);
+      expect(response.body.error ?? '').not.toMatch(/provider_mismatch/);
+    });
+
+    it('非 publisher 角色报 trusted-transport 照旧判 provider_mismatch（不放宽 LLM 角色）', async () => {
+      mocks.store.getById.mockResolvedValue(publisherAttempt({ role: 'evaluator' }));
+
+      const response = await postCallback(app, publisherResult);
+
+      expect(response.status).toBe(409);
+      expect(response.body.error).toMatch(/provider_mismatch/);
+    });
+
+    it('publisher 冒充另一个 LLM provider 仍judged为 mismatch', async () => {
+      mocks.store.getById.mockResolvedValue(publisherAttempt());
+
+      const response = await postCallback(app, {
+        ...validResult,
+        provider_metadata: { provider: 'codex', session_id: 'thread-x' },
+      });
+
+      expect(response.status).toBe(409);
+      expect(response.body.error).toMatch(/provider_mismatch/);
+    });
+  });
+
 });
