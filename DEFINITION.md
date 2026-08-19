@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.87
+**Brain 版本**: 1.273.88
+
+## Brain 1.273.88 — capability-gate 加账号额度闸（kernel 派发的真正选号点）
+
+- kernel attempt 的账号选择在 `preflight/capability-gate.js` 的候选循环里，判据只有 `probeProviderAuth`（凭据能否认证），**完全不看额度**。account1 七天额度 100% 但凭据完全有效 → 探针 ok → 直接选中 → 每个角色都撞 429 再重派；publisher 撞上后没有重派余地，租约过期即 `infrastructure_blocked`，整跑作废（run `4c867fb4` / `2150e1b7` / `80459597` 连续三跑）。
+- **此前两次修复都改错了地方**：1.273.86 改 `spawn/middleware/account-rotation`、1.273.87 改其快照来源——那条路径根本不参与 kernel attempt 派发；而带 `is_account_capped` 的 `resolveExecutionTarget` 全仓从未被调用。
+- 修法：候选循环在**认证探针之前**先查额度（额度已满的号连探针都不该浪费），拒因 `account_quota_exhausted`；并在 `run.js` 把 `isAccountUsable` 真正注入生产 gate——不接这根线额度闸就是死代码。未注入判据时 fail-open，保持既有行为。
+- 回归 3 段：认证通过但额度耗尽必须跳过（并断言**没有**对该账号发认证探针）；额度正常必须保留；未注入判据保持原行为。preflight + account-rotation 合计 94/94 通过。
 
 ## Brain 1.273.87 — isAccountUsable 自取用量，修 1.273.86 的快照死循环
 
