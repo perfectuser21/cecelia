@@ -25,6 +25,20 @@ import {
 import { compareImpactContract } from './diff-compare.js';
 export { compareImpactContract } from './diff-compare.js';
 
+/**
+ * 确定性终态 reason_code 白名单（r19）：Mapper 给出这些结论时，重试不会自愈，
+ * Gate 必须 fail-closed（retryable:false），终止 orchestrator 无限空转。
+ * 来源枚举：state-resolver.js / structure-gate.js / diff-compare.js。
+ * 白名单外（暂态/缺失/未知）一律保守 retryable:true，但 gate 恒为 impact_unknown（绝不放行）。
+ */
+const DETERMINISTIC_REASON_CODES = new Set([
+  'no_anchor',
+  'anchor_missing',
+  'revision_mismatch',
+  'manifest_projection_mismatch',
+  'fail_current_revision',
+]);
+
 // ---------- 副作用操作 ----------
 
 /**
@@ -199,12 +213,20 @@ export async function evaluateDiffGate({
   // --- 步骤 3：校验 Mapper 可判定性 ---
 
   // 3a. Mapper stale（freshness.status !== 'fresh'）→ impact_unknown
+  // r19：透传 Map 的 freshness.reason_code——确定性终态 fail-closed（retryable:false），
+  // 暂态/缺失/未知保留 mapper_stale 语义且 retryable:true。gate 恒为 impact_unknown（绝不放行）。
   if (!mapperResult?.freshness || mapperResult.freshness.status !== 'fresh') {
-    return {
+    const reasonCode = mapperResult?.freshness?.reason_code;
+    const stale = {
       gate: 'impact_unknown',
       reason: 'mapper_stale',
       retryable: true,
     };
+    if (reasonCode) {
+      stale.reason_code = reasonCode;
+      stale.retryable = !DETERMINISTIC_REASON_CODES.has(reasonCode);
+    }
+    return stale;
   }
 
   // 3b. revision mismatch（事实投影必须与合同 base revision 对齐）→ impact_unknown
