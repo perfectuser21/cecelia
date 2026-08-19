@@ -1,0 +1,28 @@
+{
+  "initiative_id": "4ab267a7-a921-4ef5-a0d4-c07b9ebd8d4d",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 后端 impact-contract gate 逻辑，无 UI / 远端 agent / engine 参与",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff/Structure Impact Gate 非 fresh 分支按 freshness.status 分流透传 reason_code + 确定性 fail-closed",
+      "scope": "diff-gate.js 与 structure-gate.js 的非 fresh 分支：status=stale→retryable:true 透传 reason_code；status=unknown/其它/freshness 缺失→retryable:false 透传或确定性兜底码，不再折叠 mapper_stale；两 gate 语义一致。更新既有断言并新增 impact_anchor_missing 永久回归到真实测试文件。",
+      "dod": [
+        "[BEHAVIOR] diff-gate 确定性 unknown(impact_anchor_missing) retryable:false 且透传 reason_code（探针 jq -e）",
+        "[BEHAVIOR] diff-gate 瞬态 stale 透传 reason_code retryable:true；freshness 缺失 fail-closed",
+        "[BEHAVIOR] structure-gate 同构：确定性 unknown retryable:false 透传，与 diff-gate 语义一致",
+        "[BEHAVIOR] packages/brain 内 diff-gate.test.js + structure-gate.test.js 全绿（含新增回归）",
+        "[ARTIFACT] diff-gate.js / structure-gate.js 非 fresh 分支引用 reason_code 分流"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/structure-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+        "packages/brain/src/impact-contract/__tests__/structure-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
