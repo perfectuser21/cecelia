@@ -63,6 +63,21 @@ describe('resolveAccount() account-rotation middleware', () => {
     expect(opts.env.CECELIA_CREDENTIALS).toBe('account1');
   });
 
+  // 2026-08-19 首次修复的翻车：isAccountUsable 原先读一个只在 selectBestAccount 里
+  // 赋值的快照，而中间件恰恰是"看起来不需要 fallback"才不调 selectBestAccount ——
+  // 快照永远为空 → 永远 fail-open → 修复等于没做，planner 照旧被派到额度满的 account1。
+  // 因此判据必须**自己拿到用量**，不能依赖调用方先填快照。
+  it('consults usability even when no snapshot was ever populated', async () => {
+    const seen = [];
+    const opts = { env: { CECELIA_CREDENTIALS: 'account1' } };
+    const deps = makeDeps({
+      isAccountUsable: async (id) => { seen.push(id); return false; },
+    });
+    await resolveAccount(opts, { deps });
+    expect(seen).toEqual(['account1']);          // 必须真的被问过
+    expect(opts.env.CECELIA_CREDENTIALS).toBe('account2');
+  });
+
   it('selects best account when none explicit', async () => {
     const opts = { env: {} };
     await resolveAccount(opts, { deps: makeDeps() });

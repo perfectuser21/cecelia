@@ -29,7 +29,7 @@ export async function resolveAccount(opts, ctx = {}) {
     // 因此还要**主动看账号当前是否真的可用**（额度/资格），不能只信标记。
     // 探针不可用时保持既有行为（fail-open）——这里的职责是选号，不是准入闸。
     const quotaExhausted = explicit && typeof isAccountUsable === 'function'
-      ? !isAccountUsable(explicit)
+      ? !(await isAccountUsable(explicit))
       : false;
     const needsFallback = !explicit || capped || authFailed || quotaExhausted;
     if (!needsFallback) return;
