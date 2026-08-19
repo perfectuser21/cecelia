@@ -795,14 +795,16 @@ const DEFERRED_CHECK_PATTERNS = Object.freeze({
   judge_verdict: [/judge_verdict/i, /judge verdict/i, /服务端.*judge.*pass/i, /裁判.*终判/i],
   publisher_result: [/publisher[_ ]result/i, /publisher/i, /发布.*结果/i],
   all_gates_passed: [/all_gates_passed/i, /all gates passed/i],
-  // 同时要求 required_assertions 与 server-owned/机械门禁/Provider-退出后 语义，
-  // 普通断言失败（不带归属限定）不会命中，放行面不扩大。
+  // required_assertions 在本合同体系里是**专有名词**：特指 server-owned Runner 在 Provider
+  // 退出后于 exact head 执行的机械门禁断言。judge 活在 Provider 生命周期之内，对它报
+  // passed=false 只能是"我无从验证"，不是"它失败了"。
+  // 2026-08-19 run 4ab267a7：初版 pattern 照着上一轮的中文长句写，要求同时出现
+  // server-owned/机械门禁/Provider-退出后 之一；裁判换成英文简短措辞
+  // "required_assertions F1 (ground-truth.test.js) at exact head" 就漏了 → judge 死锁复发。
+  // 按术语本身匹配，不再要求裁判复述归属——机械判定不能建立在 LLM 措辞习惯之上。
   server_required_assertions: [
-    /server[_ -]?required[_ ]assertions?/i,
-    /server[- ]owned[\s\S]{0,80}required[_ ]assertions?/i,
-    /required[_ ]assertions?[\s\S]{0,80}server[- ]owned/i,
-    /机械门禁[\s\S]{0,40}required[_ ]assertions?/i,
-    /required[_ ]assertions?[\s\S]{0,80}Provider\s*退出后/i,
+    /required[_ ]assertions?/i,
+    /机械门禁/,
   ],
   completed_role_chain: [
     /completed[_ ]role[_ ]chain/i,

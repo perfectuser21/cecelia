@@ -1399,3 +1399,42 @@ describe('validateCoverage — server-owned required_assertions 延后项（run 
     expect(r.failed.map((f) => f.index)).toEqual([1]);
   });
 });
+
+describe('server_required_assertions 匹配不依赖裁判措辞（run 4ab267a7 生产实证）', () => {
+  // 2026-08-19 run 4ab267a7：#4961 加的白名单项裁判**确实引用了**
+  // （evidence 写 "named in verification_stage.deferred_checks (server_required_assertions)"），
+  // 可 step 措辞换成英文简短版 "required_assertions F1 (ground-truth.test.js) at exact head"，
+  // 而 #4961 的 pattern 要求同时出现 server-owned / 机械门禁 / Provider-退出后 之一
+  // （照着上一轮的中文长句写的）→ 匹配不上 → 落进 failed → judge FAIL → recollect →
+  // 人审。同一个 bug 换个措辞就复发。
+  //
+  // 判断：required_assertions 在本合同体系里是**专有名词**，特指 server-owned Runner 在
+  // Provider 退出后于 exact head 执行的机械门禁断言。judge 活在 Provider 生命周期内，
+  // 对它报 passed=false 只能是"我无从验证"。因此按术语本身匹配，不再要求裁判复述归属。
+  const WORDINGS = [
+    'required_assertions F1 (ground-truth.test.js) at exact head',
+    'server 机械门禁 required_assertions (ground-truth.test.js) 在 exact PR head 由 server-owned Runner 于 Provider 退出后执行',
+    'server_required_assertions',
+    'Required Assertions executed by server-owned Runner',
+  ];
+
+  it.each(WORDINGS)('措辞「%s」都算 deferred', (wording) => {
+    const r = validateCoverage(
+      [{ step_index: 1, step: wording, passed: false, deferred: false, evidence: 'deferred=true: named in deferred_checks' }],
+      [wording],
+      { deferredChecks: [...DEFERRED_ACCEPTANCE_CHECKS] },
+    );
+    expect(r.failed, `措辞变体未被认出，judge 死锁会复发：${wording}`).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it('不含该术语的普通产品步骤失败照旧判死', () => {
+    const r = validateCoverage(
+      [{ step_index: 1, step: '**出口**：确定性 unknown → fail-closed 透传 reason_code', passed: false, deferred: true, evidence: '断言未通过' }],
+      ['**出口**：确定性 unknown → fail-closed 透传 reason_code'],
+      { deferredChecks: [...DEFERRED_ACCEPTANCE_CHECKS] },
+    );
+    expect(r.ok).toBe(false);
+    expect(r.failed.map((f) => f.index)).toEqual([1]);
+  });
+});
