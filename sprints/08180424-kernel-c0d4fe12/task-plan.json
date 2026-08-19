@@ -1,0 +1,31 @@
+{
+  "initiative_id": "9aa38737-eb07-43a4-b53b-49c0e6181316",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain/ 纯后端 impact-contract gate 逻辑，无 UI/agent 协议/engine 参与",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff/Structure Impact Gate 透传 Map 真实 reason_code + 按 freshness.status 分流 fail-closed 出口",
+      "scope": "让 diff-gate.js 与 structure-gate.js 对 freshness.status !== 'fresh' 分支透传 mapperResult.freshness.reason_code（缺失时用 status 派生值，禁 mapper_stale 兜底），并按 status 分流 retryable：stale→true，unknown/其它非fresh/null→false（fail-closed，diff 仍 impact_unknown、structure 仍 blocked）；确认 harness-gates.js receipt 透传具体 reason_code；同步更新存量 structure-gate stale 断言为透传真码的回归断言。不改 map/radius.js、不改 revision/digest 等其它裁决分支、不改 harness 重试上限。",
+      "dod": [
+        "[BEHAVIOR] 确定性 unknown freshness → diff:impact_unknown / structure:blocked，retryable=false，reason 透传具体 reason_code（非 mapper_stale）",
+        "[BEHAVIOR] 瞬态 stale freshness → retryable=true，reason 透传具体 reason_code（非 mapper_stale）",
+        "[BEHAVIOR] freshness 缺失/null → fail-closed 非重试，reason!==mapper_stale",
+        "[BEHAVIOR] harness-gates beforeEvaluate receipt 携带真实 reason_code 且 retryable=false 传播（sprints/08180424-kernel-c0d4fe12/tests/impact-gate-reason-code.test.js 全绿）",
+        "[BEHAVIOR] packages/brain 三个 gate 存量单元测试全绿（含更新后的 stale reason 回归断言）",
+        "[ARTIFACT] sprints/08180424-kernel-c0d4fe12/tests/impact-gate-reason-code.test.js 存在且覆盖复现"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/structure-gate.js",
+        "packages/brain/src/impact-contract/harness-gates.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+        "packages/brain/src/impact-contract/__tests__/structure-gate.test.js",
+        "packages/brain/src/impact-contract/__tests__/harness-gates.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
