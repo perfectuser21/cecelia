@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.94
+**Brain 版本**: 1.273.95
 
 ## Brain 1.273.94 — publisher 成功后不释放 generator 候选（F1 步骤 3 造完真验）
 
