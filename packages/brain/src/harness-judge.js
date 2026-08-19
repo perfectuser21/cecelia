@@ -795,6 +795,15 @@ const DEFERRED_CHECK_PATTERNS = Object.freeze({
   judge_verdict: [/judge_verdict/i, /judge verdict/i, /服务端.*judge.*pass/i, /裁判.*终判/i],
   publisher_result: [/publisher[_ ]result/i, /publisher/i, /发布.*结果/i],
   all_gates_passed: [/all_gates_passed/i, /all gates passed/i],
+  // 同时要求 required_assertions 与 server-owned/机械门禁/Provider-退出后 语义，
+  // 普通断言失败（不带归属限定）不会命中，放行面不扩大。
+  server_required_assertions: [
+    /server[_ -]?required[_ ]assertions?/i,
+    /server[- ]owned[\s\S]{0,80}required[_ ]assertions?/i,
+    /required[_ ]assertions?[\s\S]{0,80}server[- ]owned/i,
+    /机械门禁[\s\S]{0,40}required[_ ]assertions?/i,
+    /required[_ ]assertions?[\s\S]{0,80}Provider\s*退出后/i,
+  ],
   completed_role_chain: [
     /completed[_ ]role[_ ]chain/i,
     /role[- ]chain/i,

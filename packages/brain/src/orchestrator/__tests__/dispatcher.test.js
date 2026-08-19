@@ -405,6 +405,7 @@ describe('createDispatcher', () => {
         'publisher_result',
         'all_gates_passed',
         'completed_role_chain',
+        'server_required_assertions',
       ],
     });
     expect(bundle.objective).toContain('Do not launch a nested Controller or Harness role chain');
@@ -438,6 +439,7 @@ describe('createDispatcher', () => {
         'publisher_result',
         'all_gates_passed',
         'completed_role_chain',
+        'server_required_assertions',
       ],
     });
     expect(bundle.objective).toContain('must not require its own future server verdict');
