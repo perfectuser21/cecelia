@@ -46,6 +46,67 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('capability gate 账号额度闸', () => {
+  // 2026-08-19 生产：kernel 的账号选择在这里，判据只有 probeProviderAuth（凭据能否认证），
+  // **完全不看额度**。account1 七天额度 100% 但凭据完全有效 → 探针 ok → 直接选中 → 每个
+  // 角色都撞 429；publisher 撞上后租约过期，整跑作废（run 4c867fb4 / 2150e1b7 / 80459597）。
+  // 此前两次修复（account-rotation 中间件、isAccountUsable 快照）都改错了地方——那条路径
+  // 根本不参与 kernel attempt 派发；带 is_account_capped 的 resolveExecutionTarget 也从未被调用。
+  it('skips a candidate whose account quota is exhausted even though auth probes fine', async () => {
+    const deps = healthyGateDeps();
+    deps.isAccountUsable = vi.fn(async (accountId) => accountId !== 'account1');
+    const gate = createCapabilityGate(deps);
+
+    const result = await gate.evaluate({
+      preferred_target: { provider: 'claude', account: 'account1', machine: 'us-mac-m4' },
+      candidate_targets: [
+        { provider: 'claude', account: 'account1', machine: 'us-mac-m4' },
+        { provider: 'claude', account: 'account2', machine: 'us-mac-m4' },
+      ],
+      requirements: {},
+      task_bundle: { logical_cycle: 'intent:quota-gate' },
+    });
+
+    expect(result.status).toBe('ok');
+    expect(result.snapshot?.account).toBe('account2');
+    // 额度已满的账号连认证探针都不该浪费
+    expect(deps.probeProviderAuth).not.toHaveBeenCalledWith(
+      expect.objectContaining({ account: 'account1' }),
+    );
+  });
+
+  it('keeps the preferred account when its quota is fine', async () => {
+    const deps = healthyGateDeps();
+    deps.isAccountUsable = vi.fn(async () => true);
+    const gate = createCapabilityGate(deps);
+
+    const result = await gate.evaluate({
+      preferred_target: { provider: 'claude', account: 'account1', machine: 'us-mac-m4' },
+      candidate_targets: [{ provider: 'claude', account: 'account1', machine: 'us-mac-m4' }],
+      requirements: {},
+      task_bundle: { logical_cycle: 'intent:quota-ok' },
+    });
+
+    expect(result.status).toBe('ok');
+    expect(result.snapshot?.account).toBe('account1');
+  });
+
+  it('keeps existing behaviour when the quota probe is not injected (fail-open)', async () => {
+    const deps = healthyGateDeps();   // 不注入 isAccountUsable
+    const gate = createCapabilityGate(deps);
+
+    const result = await gate.evaluate({
+      preferred_target: { provider: 'claude', account: 'account1', machine: 'us-mac-m4' },
+      candidate_targets: [{ provider: 'claude', account: 'account1', machine: 'us-mac-m4' }],
+      requirements: {},
+      task_bundle: { logical_cycle: 'intent:quota-absent' },
+    });
+
+    expect(result.status).toBe('ok');
+    expect(result.snapshot?.account).toBe('account1');
+  });
+});
+
 describe('capability gate stable helpers', () => {
   it('解析冻结 requirements 并递归脱敏结构化 evidence', () => {
     expect(parseCapabilityRequirements({
