@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.95
+**Brain 版本**: 1.273.96
 
 ## Brain 1.273.95 — reconciler 认识 worker quarantined，过期 attempt 不再永久占槽（F1 步骤 1）
 
