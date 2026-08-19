@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.93
+**Brain 版本**: 1.273.94
 
 ## Brain 1.273.93 — capability-change-v1 撤销免对抗直出，合同尺度走 GAN
 
