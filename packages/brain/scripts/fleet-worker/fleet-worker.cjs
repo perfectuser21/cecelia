@@ -656,6 +656,17 @@ function createFleetWorkerServer(options = {}) {
       const errorCode = statusCode >= 500
         ? 'attempt_operation_failed'
         : safeString(error.message, 'invalid_request');
+      if (statusCode >= 500) {
+        // 5xx 的真实原因不回给调用方（不泄露内部细节），但必须在服务端留证：
+        // 2026-08-19 run 2a813900——publisher 成功后 /prepare 返回 500，run 直接死于
+        // kernel_process_fatal:remote_bridge_prepare_http_500，而真因在响应体（被换成
+        // 通用码）和日志（worker 一行不写）里**都看不到**，故障只能靠猜。
+        console.error(
+          `[fleet-worker] worker_request_failed method=${safeString(request.method, '-')}`
+          + ` url=${safeString(request.url, '-')} status=${statusCode}`
+          + ` reason=${safeString(error?.message, 'unknown')}`,
+        );
+      }
       writeJson(response, statusCode, { error: errorCode });
     }
   });
