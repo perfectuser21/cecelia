@@ -564,4 +564,67 @@ describe('FR-4 Diff Impact Gate', () => {
 
   });
 
+  // r19：runs f62c7e87 / d1360a48 在 deny:impact:mapper_stale 无限空转——步骤 3a 把任何
+  // freshness.status !== 'fresh' 折叠成 mapper_stale + retryable:true，丢弃确定性 reason_code。
+  describe('r19 步骤 3a reason_code 透传 + 确定性终态 fail-closed', () => {
+    const DETERMINISTIC = ['no_anchor', 'anchor_missing', 'revision_mismatch', 'manifest_projection_mismatch', 'fail_current_revision'];
+    const TRANSIENT = ['map_unavailable', 'resolver_error', 'fact_stale', 'fact_snapshot_stale'];
+
+    const staleDb = () => ({
+      query: vi.fn(async () => ({ rows: [{
+        id: 'contract-r19', task_id: 'task-r19', repo: 'cecelia', base_revision: 'base',
+        contract_body: { affected_capabilities: [], required_assertions: [] },
+      }] })),
+    });
+    const runStale = (reasonCode) => evaluateDiffGate({
+      db: staleDb(), taskId: 'task-r19', repo: 'cecelia', headRevision: 'head',
+      mapClient: vi.fn(async () => {
+        const freshness = { status: 'stale' };
+        if (reasonCode !== undefined) freshness.reason_code = reasonCode;
+        return { freshness, affected_nodes: [], required_assertions: [] };
+      }),
+    });
+
+    test('确定性结论 no_anchor 透传 reason_code 且 retryable:false（fail-closed 出口）', async () => {
+      const r = await runStale('no_anchor');
+      expect(r.gate).toBe('impact_unknown');
+      expect(r.reason_code).toBe('no_anchor');
+      expect(r.retryable).toBe(false);
+    });
+
+    test('确定性终态集合每个 code 均 retryable:false 且原样透传', async () => {
+      for (const code of DETERMINISTIC) {
+        const r = await runStale(code);
+        expect(r.reason_code).toBe(code);
+        expect(r.retryable).toBe(false);
+        expect(r.gate).toBe('impact_unknown');
+      }
+    });
+
+    test('暂态原因仍 retryable:true 且透传（不误判为终态）', async () => {
+      for (const code of TRANSIENT) {
+        const r = await runStale(code);
+        expect(r.reason_code).toBe(code);
+        expect(r.retryable).toBe(true);
+        expect(r.gate).toBe('impact_unknown');
+      }
+    });
+
+    test('reason_code 缺失时保留 mapper_stale 语义且 retryable:true', async () => {
+      const r = await runStale(undefined);
+      expect(r.gate).toBe('impact_unknown');
+      expect(r.reason).toBe('mapper_stale');
+      expect(r.retryable).toBe(true);
+      expect(r.reason_code).toBeFalsy();
+    });
+
+    test('fail-closed 不变量：所有不可判定分支 gate 恒为 impact_unknown 绝不放行', async () => {
+      for (const code of [...DETERMINISTIC, ...TRANSIENT, undefined]) {
+        const r = await runStale(code);
+        expect(r.gate).toBe('impact_unknown');
+        expect(['pass', 'extend', 'drift']).not.toContain(r.verdict);
+      }
+    });
+  });
+
 });
