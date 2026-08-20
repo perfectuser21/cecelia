@@ -69,7 +69,7 @@ function envelope({ role = 'generator', artifacts = [testArtifact()], contractAr
     contract: { approved_sha: approvedSha },
     artifacts,
   };
-  if (contractArtifacts !== undefined) inputs.contract_artifacts = contractArtifacts;
+  if (contractArtifacts !== null) inputs.contract_artifacts = contractArtifacts;
   return { task_bundle: { role, inputs } };
 }
 
@@ -111,7 +111,8 @@ describe('A. materializer 物化合同文档（inputs.contract_artifacts）', ()
   });
 
   it('A4 bundle 无 contract_artifacts 字段（legacy/旧 Brain）→ 只物化 tests，不失败', () => {
-    materializeFrozenContractArtifacts(envelope({ contractArtifacts: undefined }), workspace);
+    // envelope 用 null 哨兵表达「字段整个缺席」（undefined 会被解构默认值吃掉）
+    materializeFrozenContractArtifacts(envelope({ contractArtifacts: null }), workspace);
     expect(fs.existsSync(path.join(workspace, testArtifact().path))).toBe(true);
     expect(fs.existsSync(path.join(workspace, DOCS[0].path))).toBe(false);
   });
@@ -148,7 +149,7 @@ describe('B. entrypoint 预提交 chore(harness): import contract（真 bash + �
     const gitEnv = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
     fs.writeFileSync(path.join(workspace, 'base.txt'), 'base');
     execFileSync('git', ['-C', workspace, 'add', 'base.txt'], { env: gitEnv });
-    execFileSync('git', ['-C', workspace, 'commit', '-q', '-m', 'base'], { env: gitEnv });
+    execFileSync('git', ['-C', workspace, '-c', 'core.hooksPath=/dev/null', 'commit', '-q', '--no-verify', '-m', 'base'], { env: gitEnv });
     materializeFrozenContractArtifacts(envelope(), workspace);
     fs.writeFileSync(path.join(workspace, 'junk.txt'), '与合同无关的杂物');
     const bundlePath = path.join(workspace, '.bundle.json');

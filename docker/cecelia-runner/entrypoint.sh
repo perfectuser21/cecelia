@@ -261,6 +261,32 @@ is_untrusted_provider_task_bundle() {
   is_evaluator_task_bundle || is_generator_task_bundle
 }
 
+# Red 纯净化（r30 结构根因，run ee2f9ff9 attempt 0a2c004e 方案 b）：
+# 物化后的合同产物（tests + contract-draft/dod/sprint-prd）在血统闸安装后、Provider
+# 启动前由 Runner 机械预提交为 `chore(harness): import contract`。TDD 顺序闸 v5.1 已
+# 预留「Red 之前的 import contract 预提交」豁免；血统闸 lineage 检查只认 attempt 新写
+# commit，该 commit 天然通过。Provider 的 (Red) 因此不再混入合同文档。
+# 幂等：fix 重入 / 文件已 tracked 时无 staged 内容，静默跳过。
+import_contract_artifacts_precommit() {
+  local task_bundle_file="$1"
+  local workspace="${WORKTREE_PATH:-$PWD}"
+  local paths p staged=0
+  paths="$(jq -r '[((.task_bundle.inputs.artifacts // [])[] | .path), ((.task_bundle.inputs.contract_artifacts // [])[] | .path)] | unique | .[]' "$task_bundle_file" 2>/dev/null)" || return 1
+  [[ -n "$paths" ]] || return 0
+  while IFS= read -r p; do
+    [[ -n "$p" && -f "$workspace/$p" ]] || continue
+    if ! git -C "$workspace" ls-files --error-unmatch -- "$p" >/dev/null 2>&1; then
+      git -C "$workspace" add -- "$p" || return 1
+      staged=1
+    fi
+  done <<< "$paths"
+  [[ "$staged" == "1" ]] || return 0
+  git -C "$workspace" \
+    -c user.name='cecelia-runner' -c user.email='runner@cecelia.local' \
+    commit --no-verify -m 'chore(harness): import contract' >/dev/null || return 1
+  echo "[entrypoint] pre-committed contract artifacts as 'chore(harness): import contract'" >&2
+}
+
 # generator-trusted-publisher:start
 TRUSTED_GITHUB_CONFIG_DIR=""
 TRUSTED_PUBLISH_REMOTE_URL=""
@@ -2995,6 +3021,15 @@ run_provider_contract() {
       "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
       'Frozen baseline guard rejected' frozen_baseline_guard_unavailable \
       "runner could not arm the frozen baseline lineage guard: ${FROZEN_BASELINE_GUARD_FAILURE:-unknown reason}" \
+      "${CREDENTIAL_REF:-}" "${CREDENTIAL_COPY_MUTATED:-false}"
+    return 1
+  fi
+
+  if is_generator_task_bundle && ! import_contract_artifacts_precommit "$task_bundle_file"; then
+    write_provider_bootstrap_failure \
+      "$NORMALIZED_RESULT_FILE" "$HARNESS_ATTEMPT_ID" "$provider" \
+      'Contract import pre-commit rejected' frozen_contract_artifacts_invalid \
+      'runner could not pre-commit materialized contract artifacts for a pure Red baseline' \
       "${CREDENTIAL_REF:-}" "${CREDENTIAL_COPY_MUTATED:-false}"
     return 1
   fi

@@ -31,7 +31,7 @@ BUNDLE="$TEST_ROOT/bundle.json"
 SPRINT='sprints/example'
 mkdir -p "$WORKSPACE"
 git -C "$WORKSPACE" init -q -b cp-test
-git -C "$WORKSPACE" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
+git -C "$WORKSPACE" -c core.hooksPath=/dev/null -c user.name=t -c user.email=t@t commit -q --no-verify --allow-empty -m base
 
 # 物化产物（文档 + tests）为 untracked 文件 + 一个无关杂物
 mkdir -p "$WORKSPACE/$SPRINT/tests"
