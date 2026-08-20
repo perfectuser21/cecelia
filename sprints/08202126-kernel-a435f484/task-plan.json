@@ -1,0 +1,28 @@
+{
+  "initiative_id": "intent:1e27d4da-5979-4cca-85ac-93f895031770:4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅在 packages/brain（impact-contract Gate 后端裁决），无 UI/agent/engine 介入，纯后端自治链路。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff/Structure Impact Gate 对确定性 stale 结论透传 reason_code 并 fail-closed（retryable:false）出口",
+      "scope": "diff-gate.js 步骤 3a 与 structure-gate.js 规则 3 的 stale 分支：当 freshness.reason_code 为非空字符串（确定性结论）时透传 reason_code 且 retryable:false、不再输出通用 reason:'mapper_stale'；freshness.reason_code 为空/缺失（真瞬态）时保留 reason:'mapper_stale' + retryable:true。不改 Mapper 算法、不改 loop.js/harness-gates.js。",
+      "dod": [
+        "[BEHAVIOR] 确定性 stale → diff gate {gate:'impact_unknown', reason_code:<透传>, retryable:false}，不含通用 reason:'mapper_stale'（node verify-gate.mjs det-diff / mask-diff OK）",
+        "[BEHAVIOR] 确定性 stale → structure gate {gate:'blocked', reason_code:<透传>, retryable:false}（node verify-gate.mjs det-structure OK）",
+        "[BEHAVIOR] 真瞬态 unknown（无 reason_code）→ 两端保留 retryable:true（transient-diff / transient-structure OK）；Mapper 抛错保留 mapper_unavailable retryable:true（unavail-diff OK）",
+        "[BEHAVIOR] sprint 合同 vitest 6 项全绿（npx vitest run sprints/08202126-kernel-a435f484/tests/ 6 passed）",
+        "[ARTIFACT] packages/brain/src/impact-contract/diff-gate.js 与 structure-gate.js stale 分支按 reason_code 分流"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/structure-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+        "packages/brain/src/impact-contract/__tests__/structure-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
