@@ -564,4 +564,64 @@ describe('FR-4 Diff Impact Gate', () => {
 
   });
 
+  // 永久 CI 回归（sprint 08201044-kernel-425c5279）：非 fresh 分支按 freshness.status
+  // 二分并透传 reason_code——瞬态 stale 可重试，确定性 unknown/缺失 fail-closed 收敛，
+  // 确定性出口绝不折叠成裸 mapper_stale。
+  describe('非 fresh 分支：透传 reason_code + 确定性 unknown fail-closed', () => {
+    const gate = (freshness) =>
+      evaluateDiffGate({ mapClient: async () => ({ freshness }) });
+
+    test('瞬态 stale + 有码 → retryable:true 且透传具体 reason_code', async () => {
+      const r = await gate({ status: 'stale', reason_code: 'fact_snapshot_stale' });
+      expect(r).toMatchObject({
+        gate: 'impact_unknown',
+        reason: 'fact_snapshot_stale',
+        reason_code: 'fact_snapshot_stale',
+        retryable: true,
+      });
+    });
+
+    test('瞬态 stale 缺码 → 瞬态兜底码 mapper_stale 且 retryable:true', async () => {
+      const r = await gate({ status: 'stale' });
+      expect(r.retryable).toBe(true);
+      expect(r.reason).toBe('mapper_stale');
+      expect(r.reason_code).toBeNull();
+    });
+
+    test('确定性 unknown + 有码 → retryable:false 透传码，绝不 mapper_stale', async () => {
+      const r = await gate({ status: 'unknown', reason_code: 'graph_projection_revision_mismatch' });
+      expect(r).toMatchObject({
+        gate: 'impact_unknown',
+        reason: 'graph_projection_revision_mismatch',
+        reason_code: 'graph_projection_revision_mismatch',
+        retryable: false,
+      });
+      expect(r.reason).not.toBe('mapper_stale');
+    });
+
+    test('确定性 unknown 缺码 → 确定性兜底码 mapper_unknown 且 retryable:false', async () => {
+      const r = await gate({ status: 'unknown' });
+      expect(r.retryable).toBe(false);
+      expect(r.reason).toBe('mapper_unknown');
+      expect(r.reason).not.toBe('mapper_stale');
+      expect(r.reason_code).toBeNull();
+    });
+
+    test('freshness 缺失 → fail-closed retryable:false，绝不 mapper_stale 绝不 pass', async () => {
+      const r = await gate(null);
+      expect(r.gate).toBe('impact_unknown');
+      expect(r.gate).not.toBe('pass');
+      expect(r.retryable).toBe(false);
+      expect(r.reason).toBe('mapper_unknown');
+      expect(r.reason).not.toBe('mapper_stale');
+    });
+
+    test('其它非 fresh 值（枚举外，防御）→ 确定性 fail-closed 收敛', async () => {
+      const r = await gate({ status: 'STALE' });
+      expect(r.gate).toBe('impact_unknown');
+      expect(r.retryable).toBe(false);
+      expect(r.reason).toBe('mapper_unknown');
+    });
+  });
+
 });
