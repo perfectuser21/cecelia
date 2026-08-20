@@ -1,0 +1,27 @@
+{
+  "initiative_id": "83ef467f-713e-4186-b1c2-779d22dc2713",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain 后端影响门纯逻辑，无 UI/agent 协议/engine 介入",
+  "map_scope_note": "[MAP_NOT_CONFIGURED] payload.map_scope=['F1'] 但 map_repo/expected_files 缺失，未取 radius；已知回归约束改从 diff-gate.test.js 直接锚定",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "diff-gate.js step 3a 透传 freshness.reason_code + 按 status 区分 retryable（unknown→false fail-closed，stale→true）",
+      "scope": "改 packages/brain/src/impact-contract/diff-gate.js step 3a 非 fresh 分支：读 mapperResult.freshness.reason_code 写入返回 reason_code；status==='unknown'→retryable:false（确定性 fail-closed 出口），status==='stale'（及 freshness 缺失等其它非 fresh）→retryable:true；reason 取 reason_code，缺失回退 'mapper_stale'；unknown 缺 reason_code 落确定性占位 'mapper_unknown'。gate 恒 impact_unknown 不放行。把 4 条回归用例落入 packages/brain/src/impact-contract/__tests__/diff-gate.test.js。bump packages/brain/package.json 版本并四处同步。3b 及之后分支语义保持不变。",
+      "dod": [
+        "[BEHAVIOR] unknown→reason_code 透传且 retryable false；stale→reason_code 透传且 retryable true；unknown 缺 reason_code 落占位仍 false（diff-gate.test.js -t 用例全绿）",
+        "[BEHAVIOR] packages/brain diff-gate.test.js 全套回归绿（既有 3b+ 分支不回退）",
+        "[ARTIFACT] diff-gate.js step 3a 透传 freshness.reason_code 且按 status 区分 retryable",
+        "[ARTIFACT] DevGate 三闸通过（facts-check / check-version-sync / check-dod-mapping）"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+        "packages/brain/package.json"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
