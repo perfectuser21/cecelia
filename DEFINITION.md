@@ -8,7 +8,15 @@
 
 
 
-**Brain 版本**: 1.273.100
+**Brain 版本**: 1.273.101
+
+## Brain 1.273.101 — 合同封印校验 Test Contract 路径可解析（F1 步骤 3，r33 fix 死循环）
+
+run 7f939e7c 实证：proposer 照模板把省略号路径 sprints/.../tests/… 写进 Test Contract 表，
+封印放行；CI 覆盖检查在 generator 后才红；generator-fix 唯一修法=改封印文档，被文档不可变
+复核（1.273.99）正确拦截 → 三次 provider_exit 确定性死循环。修法：materializeApprovedContract
+封印时用 CI 同一条解析链（test-contract-paths.cjs）校验 sprints/ 前缀声明可映射冻结产物，
+解析不到拒绝封印（propose 轮即失败，proposer 可重写）。proposer SKILL 9.26.0 同步死规则。
 
 ## Brain 1.273.100 — Judge coverage 结构性 deferred 底座（F1 步骤 3，r31 揭示的第三半）
 
