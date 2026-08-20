@@ -814,6 +814,30 @@ const DEFERRED_CHECK_PATTERNS = Object.freeze({
   ],
 });
 
+// 结构性 deferred 底座（2026-08-20 run 1e27d4da r31 实证，"裁判=PASS 却终判 FAIL"第三半）：
+// 上表键集是 kernel 自身机械门的专有名词——这些检查在**每一个** kernel run 里都由服务端
+// 执行（Runner 后置断言/publisher/judge 落库/角色链核对），Judge 活在 Provider 生命周期内，
+// 结构上不可能验证它们。此前"能不能 defer 由合同 verification_stage.deferred_checks 白名单
+// 说了算"，但 proposer 从不生成该白名单（r31 合同全文 0 次出现 deferred）→ 白名单恒空 →
+// 裁判正确标 deferred 的步骤全落 failed → FAIL(evidence_insufficient) → recollect 同形 FAIL
+// → 止损闸停人审，产品实现正确的 run 死于覆盖机械层。
+// 结构性事实不该由每份合同重复声明：底座并入白名单，合同只能扩充、不能低于底座。
+// 防拆闸不变式不变：defer 仍必须命中服务端专名（literal 或 patterns），纯产品措辞不认。
+const STRUCTURAL_DEFERRED_CHECKS = Object.freeze(Object.keys(DEFERRED_CHECK_PATTERNS));
+
+// 结构底座的额外闸（防"修死锁滑成拆闸门"）：同一个专名可出现在两种语境——
+// ① 服务端后置断言本身（"required_assertions run by Runner after Provider exit"，合法 defer）
+// ② 裁判指控取证缺口（"Evaluator 没有证明冻结断言成立"，必须保持 FAIL）。
+// 区分信号 = 裁判是否**声明了延后**：deferred 字段为 true，或 step/evidence 正文出现
+// deferred 声明（ce703092 实证裁判常把声明写在 evidence 而不填字段）。
+// 合同白名单路径不受此闸影响（合同显式授权，语义无歧义）。
+function entryDeclaresDeferral(entry) {
+  if (entry?.deferred === true) return true;
+  return [entry?.step, entry?.evidence].some(
+    (text) => /deferred/i.test(String(text ?? '')),
+  );
+}
+
 // 匹配对象必须同时含 PRD 原文步骤**和裁判声明 defer 的那条 coverage entry**。
 // 2026-08-18 run 40582e11：裁判把 #12/#13 正确标了 deferred=true（只读沙箱没有 Docker
 // CLI、以及"自己尚未做出的裁决"），措辞用的是 check 名（"host_docker_inspect — host
@@ -822,8 +846,12 @@ const DEFERRED_CHECK_PATTERNS = Object.freeze({
 // Judge 就永远 FAIL，裁决书正文写着"裁判=PASS"却终判 FAIL 的自相矛盾。
 // 放宽匹配对象不等于放行：能不能 defer 仍由**合同**的 verification_stage.deferred_checks
 // 白名单说了算，裁判无法自行扩大范围。
-function stepMatchesDeferredCheck(step, deferredChecks, entryStep = null) {
-  const candidates = [String(step ?? ''), String(entryStep ?? '')].filter(Boolean);
+// entryEvidence 也是匹配候选（ce703092 教训延伸，r31 实证）：裁判把 deferred 依据写在
+// evidence 正文（"DEFERRED — owned by server mechanical gate (all_gates_passed/...)"）而
+// step 文字不含专名是生产常态。evidence 与 step 同为裁判文字、信任等级相同，纳入候选
+// 不新增攻击面——判据仍是服务端专名命中，不是"出现 deferred 字样"。
+function stepMatchesDeferredCheck(step, deferredChecks, entryStep = null, entryEvidence = null) {
+  const candidates = [String(step ?? ''), String(entryStep ?? ''), String(entryEvidence ?? '')].filter(Boolean);
   return (Array.isArray(deferredChecks) ? deferredChecks : []).some((check) => {
     const name = String(check ?? '').trim();
     if (!name) return false;
@@ -872,6 +900,16 @@ export function coverageStepMatches(entryStep, goldenPathStep) {
 }
 
 export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [] } = {}) {
+  const contractDeferredChecks = Array.isArray(deferredChecks) ? deferredChecks : [];
+  // 合同白名单（显式授权，无歧义）与结构底座（kernel 机械门专名 + 裁判延后声明双条件）
+  // 叠加，只增不减；合同缺失/未声明时底座独立生效。
+  const matchesDeferred = (step, entry) => (
+    stepMatchesDeferredCheck(step, contractDeferredChecks, entry?.step)
+    || (
+      entryDeclaresDeferral(entry)
+      && stepMatchesDeferredCheck(step, STRUCTURAL_DEFERRED_CHECKS, entry?.step, entry?.evidence)
+    )
+  );
   const cov = Array.isArray(coverage) ? coverage : [];
   const steps = Array.isArray(goldenPathSteps) ? goldenPathSteps : [];
   const missing = [];
@@ -915,7 +953,7 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
     // "我无从验证"，而不是"它失败了"——它本就没有验证它们的职责和能力。
     if (
       entry.passed !== true
-      && stepMatchesDeferredCheck(steps[i], deferredChecks, entry.step)
+      && matchesDeferred(steps[i], entry)
     ) {
       deferred.push({ index: i + 1, step: steps[i] });
       continue;
@@ -930,7 +968,7 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
     const entry = cov[i];
     if (!entry || entry.passed !== false || consumed.has(entry)) continue;
     const step = entry.step || `coverage[${i}]`;
-    if (stepMatchesDeferredCheck(step, deferredChecks, entry.step)) {
+    if (matchesDeferred(step, entry)) {
       deferred.push({ index: i + 1, step });
       continue;
     }
