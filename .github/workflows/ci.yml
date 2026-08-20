@@ -439,7 +439,7 @@ jobs:
           cache: npm
           cache-dependency-path: packages/brain/package-lock.json
       - name: Install brain deps（trust-boundary 等测试 import packages/brain/src）
-        run: npm ci --prefix packages/brain --no-audit --no-fund
+        run: cd packages/brain && npm ci --no-audit --no-fund
       - name: Run cecelia-runner shell tests
         run: |
           for t in docker/cecelia-runner/__tests__/*.test.sh; do
