@@ -64,6 +64,11 @@ COPY --from=deps /repo/package-lock.json /repo/package-lock.json
 # 源代码
 COPY packages/brain/server.js ./
 COPY packages/brain/src/ ./src/
+# 封印闸 contract-test-paths-seal.js 与 CI 共用同一条 Test Contract 解析链（同一把尺子）。
+# 库 SSOT 在 repo 根 scripts/lib（engine devgate / pyramid-guard 同用），容器内镜像到
+# /app/scripts/ 供 src 内相对 require（缺失时 Brain 启动即死 fail-closed，smoke 把关）。
+COPY scripts/lib/test-contract-paths.cjs ./scripts/lib/
+COPY scripts/extract-contract-e2e.cjs ./scripts/
 COPY packages/brain/config/ ./config/
 COPY packages/brain/migrations/ ./migrations/
 COPY packages/brain/package.json ./

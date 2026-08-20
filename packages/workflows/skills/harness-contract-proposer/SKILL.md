@@ -4,10 +4,11 @@ description: |
   Harness Contract Proposer — Harness v5 GAN Layer 2a：
   读 PRD，GAN 对抗写 Golden Path 合同（每步含真实验证命令）；
   Reviewer APPROVED 后倒推拆 task-plan.json。
-version: 9.25.0
+version: 9.26.0
 created: 2026-04-08
 updated: 2026-08-17
 changelog:
+  - 9.26.0: Test Contract 表 Test File 死规则（r33 run 7f939e7c 实证）——必须写完整真实路径（`sprints/<本sprint目录>/tests/<文件名>`），禁止 `sprints/.../` 省略号占位：封印闸 assertTestContractResolvable 会在批准时用 CI 同一条解析链校验该列，解析不到直接拒绝封印（FROZEN_CONTRACT_TEST_CONTRACT_UNRESOLVABLE），合同过不了批准；省略号合同曾把 generator-fix 逼进「改封印文档 → 不可变复核拦截」确定性死循环
   - 9.25.0: E2E vitest 工作目录死规则（生产 runs 90bc1bf8/6125d565/b167ec66 三例同病）——合同 E2E 脚本从仓库根跑 `npx vitest run packages/<pkg>/src/...` 必命中根 vitest.config.js include（只覆盖 sprints/**、tests/**、packages/brain/scripts/ci/__tests__/**）→ "No test files found" exit 1 → Evaluator 必 FAIL → 白烧一轮 fix。死规则：E2E 段内任何 vitest 对 packages/<pkg>/src/** 的调用必须 `(cd packages/<pkg> && npx vitest run --no-cache ./src/...)` 子 shell 执行（用该包自己的 vitest 配置）；sprints/**、tests/** 的合同测试才允许从仓库根跑
   - 9.24.0: 从 task.payload.map_scope/map_repo 读取 Unified Map 与 radius，合同必跑断言改用 must_run_assertions，不再由 registry 各自猜当前地图
   - 9.23.0: playground sprint 测试栈死规则（kernel 收尾三修，run 8374ab73/25eb2072 案卷）——playground 合同的 vitest 测试文件必须用 `describe/it/expect`（Vitest），**禁止 `node:test`/`assert`**：仓库 required CI（Sprint Tests 实跑、TDD Commit 顺序检查）只认 Vitest，合同批准 node:test 后 generator 无法在不越权改共享门禁的前提下让 CI 全绿，只能报合同故障码申诉，run 死循环。同段强调：playground/ 下的实现文件（如 `playground/server.js`）**是**该 sprint 唯一合法实现路径，TDD 门禁的"prod code needs a prior failing test"要求由该目录下的 `tests/*.test.ts` 满足，proposer 写 BEHAVIOR 验证命令与 vitest 测试文件时不得假设它会被识别为共享 `packages/*/src` 代码（两者判定路径不同，不要混用共享门禁措辞误导 generator）。
@@ -1280,8 +1281,16 @@ echo "✅ 生产环境 Golden Path 验证通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 整个 Sprint | `tests/xxx.test.ts` | {行为列表} | → N failures |
+| 整个 Sprint | `sprints/<本sprint目录>/tests/xxx.test.ts` | {行为列表} | → N failures |
 ````
+
+**Test Contract 表「Test File」路径死规则（v9.26 — r33 run 7f939e7c 实证）**：
+
+Test File 列必须写**完整真实路径**（`sprints/<本sprint目录>/tests/<文件名>`），禁止
+`sprints/.../` 省略号占位。封印闸 `assertTestContractResolvable` 在批准时用 CI 同一条
+解析链校验该列——解析不到冻结产物直接拒绝封印（`FROZEN_CONTRACT_TEST_CONTRACT_UNRESOLVABLE`）。
+省略号合同曾把 generator-fix 逼进「改封印文档 → 不可变复核拦截」确定性死循环（三次
+provider_exit 同因）。repo 既有测试（`packages/...`）可照常引用，不受此闸约束。
 
 **Test Contract 表「BEHAVIOR 覆盖」命名死规则（v9.5 — 07-04 四跑 4/4 踩坑）**：
 

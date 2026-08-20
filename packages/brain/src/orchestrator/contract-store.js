@@ -2,6 +2,7 @@ import {
   contractArtifactManifestDigest,
   validateContractArtifacts,
 } from './contract-artifacts.js';
+import { assertTestContractResolvable } from './contract-test-paths-seal.js';
 
 function assertArtifactProjection(artifacts, prdContent, contractContent) {
   const byPath = new Map(artifacts.map((artifact) => [artifact.path, artifact.content]));
@@ -40,6 +41,9 @@ export async function materializeApprovedContract(db, {
     ? validateContractArtifacts(artifacts, { requireTests: true, requireCore: true })
     : [];
   if (artifactsProvided) assertArtifactProjection(frozenArtifacts, prdContent, contractContent);
+  // r33（run 7f939e7c）：Test Contract 表不可解析的合同不许封印——否则 CI 覆盖检查
+  // 在 generator 之后才红，fix 只能改封印文档，被不可变复核拦成确定性死循环。
+  if (artifactsProvided) assertTestContractResolvable(contractContent, frozenArtifacts);
   const manifestDigest = artifactsProvided
     ? contractArtifactManifestDigest(frozenArtifacts)
     : null;
