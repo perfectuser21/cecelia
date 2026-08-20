@@ -1,0 +1,25 @@
+{
+  "initiative_id": "f329517b-60bb-46bb-bc5c-26af8dfdf763",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain 后端 orchestrator + impact-contract 逻辑，无 UI/agent 协议/engine 触点",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate step 3a 透传 freshness.reason_code + 确定性 fail-closed 出口",
+      "scope": "在 diff-gate.js step 3a（Mapper 非-fresh 折叠分支）：定义确定性 freshness reason_code 集合常量；命中集合时返回 {gate:'impact_unknown', reason:<code>, reason_code:<code>, retryable:false} 终结 run；集合外/缺失 reason_code 保持 {reason:'mapper_stale', retryable:true} 不误杀。不改 loop.js/Mapper。",
+      "dod": [
+        "[BEHAVIOR] 确定性 reason_code → retryable:false 且透传真实 reason_code（对应 tests/diff-gate-reason-code.test.js）",
+        "[BEHAVIOR] 非确定性/缺失 reason_code → 保持 mapper_stale/retryable:true",
+        "[BEHAVIOR] packages/brain 既有 gate 回归全绿（子 shell 切包根跑）",
+        "[ARTIFACT] diff-gate.js 内置确定性 freshness reason_code 集合常量"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
