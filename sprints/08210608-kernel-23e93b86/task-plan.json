@@ -1,0 +1,26 @@
+{
+  "initiative_id": "7f939e7c-8ec3-44e4-b946-63eaa31aabb2",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain/ 后端 Impact Contract 闸门分支逻辑，无 UI / 无远端 agent 协议。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "diff-gate.js step 3a 非 fresh 出口按 status 分流 + 透传 reason_code",
+      "scope": "改 evaluateDiffGate step 3a：freshness.status==='unknown' → 透传 reason_code 作 reason 且 retryable:false（fail-closed 终局）；==='stale' → retryable:true 且 reason 优先透传 reason_code（无则回退 mapper_stale）；freshness 缺失/非三枚举 → fail-closed retryable:false（无 code 回退 mapper_unknown）。新增回归永久落 diff-gate.test.js 并保持既有 20 例全绿。不改 step 4-6 对账、不改 structure-gate.js、不改 Mapper 产出侧。",
+      "dod": [
+        "[BEHAVIOR] unknown → reason 透传 reason_code 且 retryable:false（node 直调 evaluateDiffGate 断言）",
+        "[BEHAVIOR] stale → retryable:true 且 reason 优先透传 reason_code（无则 mapper_stale）",
+        "[BEHAVIOR] freshness 缺失 → fail-closed retryable:false（不假绿）",
+        "[BEHAVIOR] 既有 mapper_unavailable/revision_mismatch 出口零回退 + brain diff-gate.test.js 全绿",
+        "[ARTIFACT] diff-gate.js 含 stale 分流分支 + reason_code 透传"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
