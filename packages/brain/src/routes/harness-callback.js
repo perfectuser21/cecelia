@@ -704,6 +704,20 @@ router.post('/harness/attempts/:attemptId/heartbeat', heartbeatRateLimit, async 
 });
 
 router.post('/harness/attempts/:attemptId/callback', callbackRateLimit, async (req, res) => {
+  // 4xx/5xx 拒绝留痕（2026-08-20 run 425c5279 attempt d9b8a653 实证）：容器 exit=75 =
+  // 回执被永久拒绝，而 Brain 端**零日志**——哪个状态码、哪条分支拒的，全靠猜。
+  // 回执是 attempt 的终态申明，拒掉它 = 判死这个 attempt，必须留下拒因。
+  // 响应体与状态码一律不变，只补服务端日志（同 fleet-worker 5xx 留痕的边界，PR #4965）。
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    if (res.statusCode >= 400) {
+      console.warn(
+        `[harness-callback] rejected attempt=${req.params.attemptId}`
+        + ` status=${res.statusCode} error=${body?.error ?? 'unknown'}`,
+      );
+    }
+    return originalJson(body);
+  };
   const { attemptId } = req.params;
   const db = requestDatabase(req);
   const attemptStore = createAttemptStore(db);
