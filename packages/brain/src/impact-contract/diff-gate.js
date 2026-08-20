@@ -198,16 +198,29 @@ export async function evaluateDiffGate({
 
   // --- 步骤 3：校验 Mapper 可判定性 ---
 
-  // 3a. Mapper stale（freshness.status !== 'fresh'）→ impact_unknown
-  if (!mapperResult?.freshness || mapperResult.freshness.status !== 'fresh') {
+  // 3a. Mapper stale/unknown（freshness.status !== 'fresh'）→ impact_unknown（fail-closed）
+  //   透传 freshness.reason_code，并按确定性 status 区分可重试性：
+  //     - status==='unknown'（确定性结论，重算同结果）→ retryable:false，停止无限重试；
+  //       缺 reason_code 时落确定性占位 'mapper_unknown'（不回退成可重试）
+  //     - status==='stale' / freshness 缺失 / 其它非 fresh（瞬态）→ retryable:true；
+  //       缺 reason_code 时为 null
+  //   reason 供下游 loop.js 拼 deny:impact:<reason>：取 reason_code，为 null 时回退字面 'mapper_stale'
+  const freshness = mapperResult?.freshness;
+  if (!freshness || freshness.status !== 'fresh') {
+    const isDeterministicUnknown = freshness?.status === 'unknown';
+    const rawReasonCode = freshness?.reason_code ?? null;
+    const reasonCode = isDeterministicUnknown
+      ? (rawReasonCode ?? 'mapper_unknown')
+      : rawReasonCode;
     return {
       gate: 'impact_unknown',
-      reason: 'mapper_stale',
-      retryable: true,
+      reason: reasonCode ?? 'mapper_stale',
+      reason_code: reasonCode,
+      retryable: !isDeterministicUnknown,
     };
   }
 
-  // 3b. revision mismatch（事实投影必须与合同 base revision 对齐）→ impact_unknown
+  // 步骤 3b. revision mismatch（事实投影必须与合同 base revision 对齐）→ impact_unknown
   const expectedFactRevision = contract?.base_revision;
   if (expectedFactRevision) {
     const repoKey = repo || contract?.repo || Object.keys(mapperResult.fact_revisions ?? {})[0];
