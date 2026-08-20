@@ -438,6 +438,9 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: packages/brain/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
       - name: Install brain deps（trust-boundary 等测试 import packages/brain/src）
         run: cd packages/brain && npm ci --no-audit --no-fund
       - name: Run cecelia-runner shell tests

@@ -23,7 +23,7 @@ function zipBytes(entries) {
     archive,
     JSON.stringify(entries),
   ]);
-  assert.equal(result.status, 0, result.stderr?.toString());
+  assert.equal(result.status, 0, `${result.error ?? ''} ${result.stderr?.toString() ?? ''}`);
   const bytes = fs.readFileSync(archive);
   fs.rmSync(root, { recursive: true, force: true });
   return bytes;
