@@ -564,4 +564,47 @@ describe('FR-4 Diff Impact Gate', () => {
 
   });
 
+  // 永久回归：Diff Impact Gate 步骤 3a 透传 mapper 确定性 reason_code + fail-closed 出口
+  // 复现 runs f62c7e87 / d1360a48 的 deny:impact:mapper_stale 无限重试空转（r19/r28）。
+  // 终态裁决在任何 db.query 之前返回，故 db=undefined + 注入 mapClient 即可覆盖。
+  describe('步骤 3a：mapper 非 fresh 透传 reason_code + 终态 fail-closed（r19/r28 空转根因）', () => {
+    const runGate = (freshness) => evaluateDiffGate({
+      db: undefined,
+      taskId: 'stale-gate',
+      headRevision: 'deadbeef',
+      changedFiles: ['packages/brain/src/x.js'],
+      mapClient: async () => ({ freshness, fact_revisions: {}, affected_nodes: [], required_assertions: [] }),
+    });
+
+    test('终态 unknown/capability_not_in_active_projection 透传 reason_code 且 retryable=false（不空转）', async () => {
+      const r = await runGate({ status: 'unknown', reason_code: 'capability_not_in_active_projection' });
+      expect(r.gate).toBe('impact_unknown');
+      expect(r.reason_code).toBe('capability_not_in_active_projection');
+      expect(r.reason).toBe('capability_not_in_active_projection');
+      expect(r.reason).not.toBe('mapper_stale');
+      expect(r.retryable).toBe(false);
+    });
+
+    test('真瞬态 stale/fact_snapshot_stale 保持 retryable=true（既有行为不回退）', async () => {
+      const r = await runGate({ status: 'stale', reason_code: 'fact_snapshot_stale' });
+      expect(r.gate).toBe('impact_unknown');
+      expect(r.reason_code).toBe('fact_snapshot_stale');
+      expect(r.retryable).toBe(true);
+    });
+
+    test('reason_code 缺失但 non-fresh 时 fail-closed 兜底 retryable=false（禁未知即重试）', async () => {
+      const r = await runGate({ status: 'unknown' });
+      expect(r.gate).toBe('impact_unknown');
+      expect(r.reason_code ?? null).toBe(null);
+      expect(r.retryable).toBe(false);
+    });
+
+    test('终态 stale/manifest_projection_mismatch fail-closed retryable=false（reason≠mapper_stale）', async () => {
+      const r = await runGate({ status: 'stale', reason_code: 'manifest_projection_mismatch' });
+      expect(r.reason_code).toBe('manifest_projection_mismatch');
+      expect(r.retryable).toBe(false);
+      expect(r.reason).not.toBe('mapper_stale');
+    });
+  });
+
 });

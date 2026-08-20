@@ -25,6 +25,19 @@ import {
 import { compareImpactContract } from './diff-compare.js';
 export { compareImpactContract } from './diff-compare.js';
 
+// ---------- 常量 ----------
+
+/**
+ * TRANSIENT_FRESHNESS_REASON_CODES — mapper freshness 非 fresh 时的「真瞬态」白名单。
+ *
+ * 仅白名单命中的 reason_code 判 retryable=true（重试可自愈）；其余一切
+ * （终态结论 / null / 缺失 / 未知新增值）一律 fail-closed 非重试，防「未知即重试」空转。
+ *
+ * 成员必须与 packages/brain/src/map/radius.js baseFreshness 的枚举字面同步
+ * （[status枚举全grep] 铁律）：fact_snapshot_stale = fact 快照刷新在途，重试可自愈。
+ */
+const TRANSIENT_FRESHNESS_REASON_CODES = new Set(['fact_snapshot_stale']);
+
 // ---------- 副作用操作 ----------
 
 /**
@@ -198,12 +211,17 @@ export async function evaluateDiffGate({
 
   // --- 步骤 3：校验 Mapper 可判定性 ---
 
-  // 3a. Mapper stale（freshness.status !== 'fresh'）→ impact_unknown
+  // 3a. Mapper 非 fresh（freshness.status !== 'fresh'）→ impact_unknown
+  //   透传 mapper 自带的确定性 reason_code；仅真瞬态白名单命中才 retryable=true，
+  //   终态结论 / null / 缺失一律 fail-closed 非重试（防 deny:impact:mapper_stale 空转，r19/r28）。
   if (!mapperResult?.freshness || mapperResult.freshness.status !== 'fresh') {
+    const freshnessReasonCode = mapperResult?.freshness?.reason_code ?? null;
     return {
       gate: 'impact_unknown',
-      reason: 'mapper_stale',
-      retryable: true,
+      // reason 透传真实 reason_code；缺失时回退常量 'mapper_stale'（避免 deny:impact:null）
+      reason: freshnessReasonCode ?? 'mapper_stale',
+      reason_code: freshnessReasonCode,
+      retryable: TRANSIENT_FRESHNESS_REASON_CODES.has(freshnessReasonCode),
     };
   }
 
