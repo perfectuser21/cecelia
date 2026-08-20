@@ -221,12 +221,15 @@ describe('deferred 判定不依赖裁判填 deferred 字段（真实 payload 形
     expect(r.deferred.length).toBe(1);
   });
 
-  it('合同没声明任何 deferred_checks → 裁判怎么写都算 failed', () => {
+  // 2026-08-20 run 1e27d4da（r31）语义变更：kernel 机械门专名（DEFERRED_CHECK_PATTERNS
+  // 键集）升为结构性 deferred 底座——host_docker_inspect 等在每个 run 都由服务端执行，
+  // 不再依赖合同逐份声明。防伪边界改由「非专名不认」承担：
+  it('合同没声明 deferred_checks → 非 kernel 专名的自定义检查自称 deferred 照样算 failed', () => {
     const r = validateCoverage([
       { step_index: 1, step: 'step-1', passed: true, deferred: false, evidence: 'ok' },
       { step_index: 2, step: 'step-2', passed: true, deferred: false, evidence: 'ok' },
       {
-        step: 'host_docker_inspect (server-owned)',
+        step: 'custom_scratch_probe (server-owned)',
         passed: false,
         deferred: true,
         evidence: 'deferred=true. 我说了算',
@@ -235,6 +238,22 @@ describe('deferred 判定不依赖裁判填 deferred 字段（真实 payload 形
 
     expect(r.ok).toBe(false);
     expect(r.failed.length).toBe(1);
+  });
+
+  it('kernel 专名 + 裁判延后声明 → 结构底座承认 deferred（r31 修法，无需合同白名单）', () => {
+    const r = validateCoverage([
+      { step_index: 1, step: 'step-1', passed: true, deferred: false, evidence: 'ok' },
+      { step_index: 2, step: 'step-2', passed: true, deferred: false, evidence: 'ok' },
+      {
+        step: 'host_docker_inspect (server-owned)',
+        passed: false,
+        deferred: true,
+        evidence: 'deferred=true. server mechanical gate owns this',
+      },
+    ], prdSteps, { deferredChecks: [] });
+
+    expect(r.ok).toBe(true);
+    expect(r.deferred.length).toBe(1);
   });
 });
 
@@ -819,11 +838,13 @@ describe('validateCoverage deferred 白名单匹配（judge 侧措辞）', () =>
     expect(r.ok).toBe(true);
   });
 
-  it('合同没把该检查列进 deferred_checks → 裁判自称 deferred 也照样算 failed', () => {
+  it('合同没把该检查列进 deferred_checks → 非 kernel 专名检查自称 deferred 照样算 failed', () => {
+    // 数据换用非专名（r31 结构底座语义变更后，kernel 专名不再依赖合同声明；
+    // 白名单防伪边界由自定义检查名承担）：
     const r = validateCoverage([
       {
         step_index: 1,
-        step: 'host_docker_inspect — host Docker container inspection',
+        step: 'custom_env_probe — external environment inspection',
         passed: false,
         deferred: true,
         evidence: '我说了算',
@@ -1016,7 +1037,8 @@ describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）
     expect(validateCoverage(coverage, steps, {
       deferredChecks: ['judge_verdict', 'all_gates_passed', 'completed_role_chain'],
     })).toMatchObject({ ok: true, deferred: [{ index: 2, step: steps[1] }] });
-    expect(validateCoverage(coverage, steps)).toMatchObject({ ok: false });
+    // r31 结构底座：kernel 专名 + deferred:true 声明 → 合同未声明白名单也承认（语义变更）
+    expect(validateCoverage(coverage, steps)).toMatchObject({ ok: true });
   });
   it('允许 Judge 在 Golden Path 之外附加服务端声明的 deferred 后置检查', () => {
     const steps = ['Knife 0-5 实现验收'];
@@ -1039,7 +1061,8 @@ describe('validateCoverage — 代码判 coverage 覆盖（不信裁判文字）
         step: 'B-07 / B-08 real-runner container + host Docker seam',
       }],
     });
-    expect(validateCoverage(coverage, steps)).toMatchObject({ ok: false });
+    // r31 结构底座：host docker 专名 + deferred:true 声明 → 无白名单也承认（语义变更）
+    expect(validateCoverage(coverage, steps)).toMatchObject({ ok: true });
   });
 });
 

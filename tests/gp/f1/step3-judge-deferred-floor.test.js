@@ -79,6 +79,24 @@ describe('validateCoverage：server-owned 结构性 deferred 底座（r31 死循
     expect(cov.ok).toBe(false);
   });
 
+  it('防拆闸：专名命中但裁判未声明延后（取证缺口指控）→ 保持 failed（527 形状）', () => {
+    // 同一个词两种语境：required_assertions 出现在"裁判指控 Evaluator 没证明冻结断言成立"
+    // 时是真缺口，必须 FAIL——结构底座要求专名命中 + 延后声明双条件。
+    const steps = ['required_assertion:callback-cas | command:npm test -- callback-cas'];
+    const cov = validateCoverage(
+      [{
+        step: steps[0],
+        passed: false,
+        deferred: false,
+        evidence: 'Evaluator 只有 CI 汇总，没有证明冻结断言成立',
+      }],
+      steps,
+      {},
+    );
+    expect(cov.ok).toBe(false);
+    expect(cov.failed.length).toBe(1);
+  });
+
   it('合同白名单仍可扩充自定义检查（只增不减）', () => {
     const steps = ['custom_e2e_probe 在生产环境执行'];
     const cov = validateCoverage(

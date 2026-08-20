@@ -8,7 +8,16 @@
 
 
 
-**Brain 版本**: 1.273.99
+**Brain 版本**: 1.273.100
+
+## Brain 1.273.100 — Judge coverage 结构性 deferred 底座（F1 步骤 3，r31 揭示的第三半）
+
+run 1e27d4da（r31）实证：裁判两轮意见全 PASS，但合同无 verification_stage.deferred_checks
+（proposer 从不生成）→ coverage 白名单恒空 → 裁判正确标 deferred 的 server-owned 后置步骤
+全落 failed → FAIL(evidence_insufficient) → recollect 同形 → 止损闸停人审。修法：
+DEFERRED_CHECK_PATTERNS 键集（kernel 机械门专名）升为结构底座，defer 需专名命中 +
+裁判延后声明双条件（同词"required_assertions"的取证缺口指控语境保持 FAIL）；
+匹配候选纳入 evidence 正文（裁判常把声明写在 evidence，ce703092 延伸）。合同白名单只增不减。
 
 ## Brain 1.273.99 — generator 合同产物预提交，(Red) 天然纯净（F1 步骤 3，r30 结构根因）
 
