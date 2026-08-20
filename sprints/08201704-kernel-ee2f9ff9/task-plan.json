@@ -1,0 +1,27 @@
+{
+  "initiative_id": "ee2f9ff9-29d7-462c-b818-7abe6fe6adde",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅 packages/brain/ 纯后端 impact-contract 裁决纯函数，无 UI/远端 agent/engine 参与",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "evaluateDiffGate step 3a 确定性结论透传 reason_code + fail-closed 有界出口",
+      "scope": "在 diff-gate.js step 3a（freshness 非 fresh 折叠分支）区分真·瞬态过期 vs 确定性结论：瞬态白名单（fact_snapshot_stale/fact_stale/projection_revision_missing）保留 mapper_stale+retryable:true；其余（含缺失/空）透传 reason_code+retryable:false 有界终止。同步在 __tests__/diff-gate.test.js 新增永久回归用例。",
+      "dod": [
+        "[BEHAVIOR] 确定性 reason_code 透传且 retryable=false（对应 contract-dod.md B-01/INV-1）",
+        "[BEHAVIOR] 真·瞬态 fact_snapshot_stale 仍 mapper_stale+retryable=true（B-02）",
+        "[BEHAVIOR] reason_code 缺失 → fail-closed retryable=false（B-03）",
+        "[BEHAVIOR] Mapper 抛异常回归 mapper_unavailable+retryable=true（B-04）",
+        "[BEHAVIOR] 永久回归套件全绿（B-05）",
+        "[ARTIFACT] diff-gate.js 含瞬态白名单常量 + 确定性 fail-closed 分支"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 40
+    }
+  ]
+}
