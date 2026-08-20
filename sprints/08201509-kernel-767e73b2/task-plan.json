@@ -1,0 +1,26 @@
+{
+  "initiative_id": "767e73b2-fdf9-483a-abc2-a7833167e6f0",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改动 packages/brain/ 后端 impact 门禁函数分支，无 UI / 无远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "diff-gate 步骤 3a 透传 reason_code + 按 freshness.status 分流 retryable（unknown 终态 fail-closed / stale 瞬态可重试）",
+      "scope": "改 packages/brain/src/impact-contract/diff-gate.js 步骤 3a mapper 非 fresh 折叠点：原样透传 mapperResult.freshness.reason_code 到出口 reason_code，reason 携带该 code（缺失兜底 mapper_<status>），freshness.status==='unknown'/缺失→retryable:false，status==='stale'→retryable:true；并把三条新回归断言加进 packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+      "dod": [
+        "[BEHAVIOR] 终态 unknown 出口 retryable:false 且透传 reason_code（对应合同 B-01）",
+        "[BEHAVIOR] 瞬态 stale 出口 retryable:true 且透传具体 reason_code、非裸 mapper_stale（对应合同 B-02）",
+        "[BEHAVIOR] reason_code 缺失兜底 retryable:false、reason_code=null、不崩溃（对应合同 B-03）",
+        "[BEHAVIOR] 既有 revision_mismatch/digest/drift/fresh 出口语义零回退（对应合同 B-04/B-05）",
+        "[ARTIFACT] diff-gate.js 步骤 3a 不再返回裸 reason:'mapper_stale'，含 reason_code 透传 + status 分流"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
