@@ -566,6 +566,40 @@ function attemptCallbackRoute(observed) {
       reason: 'callback_semantic_refusal',
     };
   }
+  // runner_failure = 基础设施故障（容器/guard/依赖装配起不来），不是产品失败。
+  // 2026-08-19/20 run 4bf639e3 与 0749688a 同死法实证：judge 已 PASS、PR 已产出、
+  // generator-fix 已完成，evaluator 的 runner 一次没起来 → 通用 mark_failed 烧掉整条 run。
+  // 与 infrastructure_blocked / account_exhausted 同族：有界重派同角色（≤2 次重试），
+  // 超限进人审兜底——不轮换账号（那是 account_exhausted 的语义），不无限重试。
+  // 守卫（真 derive，产物闸）：tests/gp/f1/step3-runner-failure-retry.test.js
+  if (status === 'failed' && failureClass === 'runner_failure') {
+    const priorRunnerFailures = sortedLogRows(observed.decisionLog).filter((r) => (
+      r.action === LOG_ACTION.ATTEMPT_CALLBACK
+      && Number(r.hop) < Number(row.hop)
+      && callbackDetail(r).status === 'failed'
+      && callbackDetail(r).failure_class === 'runner_failure'
+    )).length;
+    if (priorRunnerFailures >= 2) {
+      return {
+        phase: 'review',
+        action: ACTION.WAIT_HUMAN_REVIEW,
+        reason: 'callback_runner_failure_exhausted',
+      };
+    }
+    const retry = infrastructureRetryForCallback(role, row, observed.decisionLog);
+    if (!retry) {
+      return {
+        phase: 'review',
+        action: ACTION.WAIT_HUMAN_REVIEW,
+        reason: 'callback_runner_failure_route_unknown',
+      };
+    }
+    return {
+      phase: retry.phase,
+      action: retry.action,
+      reason: 'callback_runner_failure_retry',
+    };
+  }
   if (status === 'failed') {
     return {
       phase: 'failed',
