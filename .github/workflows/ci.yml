@@ -428,11 +428,18 @@ jobs:
     needs: changes
     if: needs.changes.outputs.runner == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: packages/brain/package-lock.json
+      - name: Install brain deps（trust-boundary 等测试 import packages/brain/src）
+        run: npm ci --prefix packages/brain --no-audit --no-fund
       - name: Run cecelia-runner shell tests
         run: |
           for t in docker/cecelia-runner/__tests__/*.test.sh; do
