@@ -564,4 +564,72 @@ describe('FR-4 Diff Impact Gate', () => {
 
   });
 
+  describe('步骤 3a：Mapper 非 fresh → 透传 reason_code + 按 status 分流 retryable', () => {
+
+    function stubContractDb(baseRevision = 'base') {
+      return {
+        query: vi.fn(async () => ({
+          rows: [{
+            id: 'contract-3a',
+            repo: 'cecelia',
+            base_revision: baseRevision,
+            contract_body: { affected_capabilities: [], required_assertions: [] },
+          }],
+        })),
+      };
+    }
+
+    const nonFreshMapper = (freshness) => async () => ({
+      manifest_digest: 'm',
+      projection_digest: 'p',
+      fact_revisions: { cecelia: 'base' },
+      affected_nodes: [],
+      required_assertions: [],
+      freshness,
+    });
+
+    test('确定性终态 unknown → retryable:false 且透传具体 reason_code（不再无限重试）', async () => {
+      const r = await evaluateDiffGate({
+        db: stubContractDb(),
+        taskId: 't',
+        repo: 'cecelia',
+        headRevision: 'h',
+        mapClient: nonFreshMapper({ status: 'unknown', reason_code: 'impact_anchor_missing' }),
+      });
+      expect(r.gate).toBe('impact_unknown');
+      expect(r.retryable).toBe(false);
+      expect(r.reason_code).toBe('impact_anchor_missing');
+      expect(r.reason).not.toBe('mapper_stale');
+      expect(r.reason).toContain('impact_anchor_missing');
+    });
+
+    test('瞬态 stale → retryable:true 且透传具体 reason_code（非裸 mapper_stale）', async () => {
+      const r = await evaluateDiffGate({
+        db: stubContractDb(),
+        taskId: 't',
+        repo: 'cecelia',
+        headRevision: 'h',
+        mapClient: nonFreshMapper({ status: 'stale', reason_code: 'fact_snapshot_stale' }),
+      });
+      expect(r.gate).toBe('impact_unknown');
+      expect(r.retryable).toBe(true);
+      expect(r.reason_code).toBe('fact_snapshot_stale');
+      expect(r.reason).not.toBe('mapper_stale');
+    });
+
+    test('reason_code 缺失兜底 → 不崩溃、终态 fail-closed、reason_code=null', async () => {
+      const r = await evaluateDiffGate({
+        db: stubContractDb(),
+        taskId: 't',
+        repo: 'cecelia',
+        headRevision: 'h',
+        mapClient: nonFreshMapper({ status: 'unknown', reason_code: null }),
+      });
+      expect(r.gate).toBe('impact_unknown');
+      expect(r.retryable).toBe(false);
+      expect(r.reason_code).toBe(null);
+    });
+
+  });
+
 });
