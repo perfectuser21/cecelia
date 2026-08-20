@@ -1,0 +1,27 @@
+{
+  "initiative_id": "b7aecbef-1799-4b79-9e4d-23a8edc2c943",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain 后端 harness 裁决纯函数，无 UI/无真机/无远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 透传 mapper reason_code + 确定性结论 fail-closed 非重试出口",
+      "scope": "改 packages/brain/src/impact-contract/diff-gate.js 步骤 3a（freshness 非 fresh 折叠点）：透传 mapperResult.freshness.reason_code；新增显式瞬态白名单 TRANSIENT_FRESHNESS_REASON_CODES={fact_snapshot_stale}，命中→retryable:true，其余（终态+null/缺失）→retryable:false fail-closed；不新增 gate 枚举值。永久回归测试落入 __tests__/diff-gate.test.js。既有分支语义不回退。",
+      "dod": [
+        "[BEHAVIOR] 终态 reason_code（capability_not_in_active_projection / manifest_projection_mismatch）透传且 retryable=false，reason≠mapper_stale（B-01/B-04）",
+        "[BEHAVIOR] 真瞬态 fact_snapshot_stale 透传且 retryable=true（B-02）",
+        "[BEHAVIOR] reason_code 缺失 non-fresh 时 retryable=false fail-closed 兜底（B-03）",
+        "[BEHAVIOR] 既有 diff-gate.test.js 全套不回退 + 白名单字面同步 radius.js（INV-1）",
+        "[ARTIFACT] diff-gate.js 含 TRANSIENT_FRESHNESS_REASON_CODES 白名单常量",
+        "[ARTIFACT] __tests__/diff-gate.test.js 含终态 reason_code + retryable 回归断言"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
