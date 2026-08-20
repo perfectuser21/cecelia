@@ -1585,10 +1585,22 @@ capture_frozen_evaluator_dependencies() {
   chmod 0444 "$manifest" || return 1
 }
 
+# 候选树断言的明细寄存器：容器一退出 stderr 就没了（--rm），外层寄存器只有
+# "candidate tree assertion failed (pre-provider)" 一句——2026-08-20 run 0749688a 复现了
+# 该故障却查不出是 12 条分支里的哪一条（宿主重放全绿）。每条分支必须把具体原因写在这。
+FROZEN_EVALUATOR_TREE_ASSERT_DETAIL=''
+
+frozen_tree_assert_fail() {
+  FROZEN_EVALUATOR_TREE_ASSERT_DETAIL="$1"
+  echo "[entrypoint] $1" >&2
+  return 1
+}
+
 assert_frozen_evaluator_candidate_tree() {
   frozen_baseline_enabled || return 0
   [[ "${HARNESS_NODE:-}" == "evaluator" ]] || return 0
 
+  FROZEN_EVALUATOR_TREE_ASSERT_DETAIL=''
   local phase="${1:-post-provider}"
   local workspace="${WORKTREE_PATH:-/workspace}"
   local start_sha="${HARNESS_WORKSPACE_START_SHA:-}"
@@ -1602,21 +1614,18 @@ assert_frozen_evaluator_candidate_tree() {
   local untracked_path=""
 
   if ! workspace="$(cd "$workspace" && pwd -P)"; then
-    echo "[entrypoint] frozen evaluator candidate workspace is unreadable" >&2
-    return 1
+    frozen_tree_assert_fail "candidate workspace is unreadable: ${WORKTREE_PATH:-/workspace}" || return 1
   fi
   if [[ "$evidence_file" != /* ]] \
       || [[ ! -d "$(dirname "$evidence_file")" ]] \
       || ! evidence_parent="$(cd "$(dirname "$evidence_file")" && pwd -P)"; then
-    echo "[entrypoint] frozen evaluator evidence directory is not an independent absolute path" >&2
-    return 1
+    frozen_tree_assert_fail "evidence directory is not an independent absolute path: ${evidence_file}" || return 1
   fi
   evidence_path="$evidence_parent/$(basename "$evidence_file")"
   if [[ "$evidence_path" == "$workspace" \
       || "$evidence_path" == "$workspace"/* \
       || ( -e "$evidence_path" && ( ! -f "$evidence_path" || -L "$evidence_path" ) ) ]]; then
-    echo "[entrypoint] frozen evaluator evidence must stay outside the product workspace" >&2
-    return 1
+    frozen_tree_assert_fail "evidence path must stay outside the product workspace: ${evidence_path}" || return 1
   fi
   assert_frozen_evaluator_git_admin_safe || return 1
   if [[ "$phase" != "pre-provider" ]]; then
@@ -1624,13 +1633,13 @@ assert_frozen_evaluator_candidate_tree() {
   fi
   if [[ "$(git --no-replace-objects -C "$workspace" \
       rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)" != "$start_sha" ]]; then
-    echo "[entrypoint] frozen evaluator candidate HEAD drifted from $start_sha" >&2
-    return 1
+    frozen_tree_assert_fail "candidate HEAD $(git --no-replace-objects -C "$workspace" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || echo '<unreadable>') drifted from pinned ${start_sha}" || return 1
   fi
   if ! git --no-replace-objects -C "$workspace" \
       diff --cached --quiet --no-ext-diff "$start_sha" -- \
       || ! git --no-replace-objects -C "$workspace" \
         diff --quiet --no-ext-diff "$start_sha" --; then
+    FROZEN_EVALUATOR_TREE_ASSERT_DETAIL="candidate tracked files drifted: $(git --no-replace-objects -C "$workspace" status --porcelain=v1 --untracked-files=no 2>/dev/null | head -3 | tr '\n' ';')"
     echo "[entrypoint] frozen evaluator candidate tracked files drifted" >&2
     # 取证（2026-08-17 run 2a297e73 attempt 53ee02fb：宿主复刻同一候选干净，容器内却漂移，
     # 只有一行结论查不出是谁改了什么）：只打印路径/状态/模式，不打印内容。
@@ -1647,17 +1656,14 @@ assert_frozen_evaluator_candidate_tree() {
   fi
   if ! index_flags="$(git --no-replace-objects -C "$workspace" \
       ls-files -v 2>/dev/null)"; then
-    echo "[entrypoint] frozen evaluator candidate index is unreadable" >&2
-    return 1
+    frozen_tree_assert_fail "candidate index is unreadable" || return 1
   fi
   if LC_ALL=C grep -Eq '^[a-zS] ' <<< "$index_flags"; then
-    echo "[entrypoint] frozen evaluator candidate index flags drifted" >&2
-    return 1
+    frozen_tree_assert_fail "candidate index flags drifted: $(LC_ALL=C grep -E '^[a-zS] ' <<< "$index_flags" | head -3 | tr '\n' ';')" || return 1
   fi
   if ! untracked_paths="$(git --no-replace-objects -C "$workspace" \
       ls-files --others -- 2>/dev/null)"; then
-    echo "[entrypoint] frozen evaluator candidate untracked files are unreadable" >&2
-    return 1
+    frozen_tree_assert_fail "candidate untracked files are unreadable" || return 1
   fi
   while IFS= read -r untracked_path; do
     [[ -n "$untracked_path" ]] || continue
@@ -1667,20 +1673,17 @@ assert_frozen_evaluator_candidate_tree() {
     if is_evaluator_runner_receipt_lock "$workspace" "$untracked_path"; then
       continue
     fi
-    echo "[entrypoint] frozen evaluator candidate has untracked product file: $untracked_path" >&2
-    return 1
+    frozen_tree_assert_fail "candidate has untracked product file: ${untracked_path}" || return 1
   done <<< "$untracked_paths"
   [[ "$phase" == "pre-provider" ]] && return 0
   if [[ ! -r "$dependency_manifest" ]]; then
-    echo "[entrypoint] frozen evaluator dependency manifest is missing" >&2
-    return 1
+    frozen_tree_assert_fail "dependency manifest is missing: ${dependency_manifest}" || return 1
   fi
   observed_manifest="${dependency_manifest}.observed.$$"
   if ! write_frozen_evaluator_dependency_manifest "$observed_manifest" \
       || ! cmp -s "$dependency_manifest" "$observed_manifest"; then
     rm -f "$observed_manifest"
-    echo "[entrypoint] frozen evaluator installed dependencies drifted" >&2
-    return 1
+    frozen_tree_assert_fail "installed dependencies drifted vs pinned manifest" || return 1
   fi
   rm -f "$observed_manifest"
 }
@@ -1722,7 +1725,7 @@ install_frozen_baseline_guard() {
     frozen_baseline_guard_fail "workspace HEAD $(git --no-replace-objects -C "$workspace" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || echo '<unreadable>') != pinned ${start_sha}" || return 1
   fi
   assert_frozen_evaluator_candidate_tree pre-provider \
-    || frozen_baseline_guard_fail 'candidate tree assertion failed (pre-provider)' || return 1
+    || frozen_baseline_guard_fail "candidate tree assertion failed (pre-provider): ${FROZEN_EVALUATOR_TREE_ASSERT_DETAIL:-unspecified branch}" || return 1
 
   local check="$FROZEN_BASELINE_GUARD_DIR/lineage-check.sh"
   local baseline_refs="$FROZEN_BASELINE_GUARD_DIR/baseline-refs"

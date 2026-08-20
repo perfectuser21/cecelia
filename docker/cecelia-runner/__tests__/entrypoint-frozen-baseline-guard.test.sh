@@ -376,4 +376,25 @@ grep -A 8 'if ! install_frozen_baseline_guard; then' "$ENTRYPOINT" \
   exit 1
 }
 
+# ── 9x. 候选树断言失败时，寄存器必须带具体分支明细（2026-08-20 run 0749688a）──
+# 外层只有 "candidate tree assertion failed (pre-provider)" 一句时，宿主重放全绿也查不出
+# 是 12 条分支里的哪一条。这里造一个 untracked 产品文件，断言寄存器点名它。
+CASE="$(new_case tree-assert-detail)"
+WS="$CASE/workspace"
+export WORKTREE_PATH="$WS"
+export FROZEN_BASELINE_GUARD_DIR="$CASE/guard"
+export HARNESS_NODE=evaluator
+export BRAIN_RESULT_FILE="$CASE/brain-result.json"
+HEAD_SHA="$(git -C "$WS" rev-parse HEAD)"
+echo dirty > "$WS/untracked-product-file.txt"
+FROZEN_BASELINE_GUARD_FAILURE=''
+HARNESS_WORKSPACE_START_SHA="$HEAD_SHA" install_frozen_baseline_guard && {
+  echo "guard accepted an untracked product file" >&2; exit 1; }
+case "$FROZEN_BASELINE_GUARD_FAILURE" in
+  *untracked-product-file.txt*) ;;
+  *) echo "tree assert detail missing from register: $FROZEN_BASELINE_GUARD_FAILURE" >&2; exit 1 ;;
+esac
+rm -f "$WS/untracked-product-file.txt"
+unset HARNESS_NODE BRAIN_RESULT_FILE
+
 echo "entrypoint frozen baseline guard tests passed"

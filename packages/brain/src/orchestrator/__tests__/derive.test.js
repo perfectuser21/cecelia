@@ -682,19 +682,38 @@ describe('R9/R10: append-only attempt callback convergence', () => {
     });
   });
 
-  it('runner failure is terminal instead of a blind machine retry', () => {
-    const r = derive(baseObserved({
+  // 2026-08-20 语义修正（决策 109dd8eb，r25/r26 实证）：runner_failure 改为有界重派（≤2）——
+  // 不再"blind machine retry"担忧成立时的一刀终态；界由 callback 计数守，第 3 次进人审。
+  // 完整语义见 tests/gp/f1/step3-runner-failure-retry.test.js（产物闸守卫）。
+  it('runner failure retries bounded（首次重派，第 3 次进人审，不再一刀终态）', () => {
+    const first = derive(baseObserved({
       pr: null,
       decisionLog: [
         { hop: 1, action: 'spawn:generator', observed: {} },
         callback(3, { status: 'failed', failure_class: 'runner_failure' }),
       ],
     }));
+    expect(first).toEqual({
+      phase: 'generate',
+      action: 'spawn:generator',
+      reason: 'callback_runner_failure_retry',
+    });
 
-    expect(r).toEqual({
-      phase: 'failed',
-      action: 'mark_failed',
-      reason: 'callback_runner_failure',
+    const third = derive(baseObserved({
+      pr: null,
+      decisionLog: [
+        { hop: 1, action: 'spawn:generator', observed: {} },
+        callback(3, { status: 'failed', failure_class: 'runner_failure' }),
+        { hop: 4, action: 'spawn:generator', observed: {} },
+        callback(6, { status: 'failed', failure_class: 'runner_failure' }),
+        { hop: 7, action: 'spawn:generator', observed: {} },
+        callback(9, { status: 'failed', failure_class: 'runner_failure' }),
+      ],
+    }));
+    expect(third).toEqual({
+      phase: 'review',
+      action: 'wait:human_review',
+      reason: 'callback_runner_failure_exhausted',
     });
   });
 
