@@ -73,7 +73,15 @@ export async function persistTrustedEvaluatorReceipts(db, { attempt, result }) {
   if (result?.status !== 'completed' || !['PASS', 'FIXED'].includes(outcome)) return [];
 
   const impactGate = asObject(inputs.impact_gate);
-  const sourceSha = inputs.pull_request?.head_sha ?? impactGate.head_revision;
+  // 候选头优先（2026-08-20 run 767e73b2 实证，r21 以来第二轮 evaluator 全部死亡的总根因）：
+  // generator-fix 在候选上追加 commit 后，远端 PR 仍指向旧头——本地候选流的常态。
+  // Runner 在 exact 候选头上执行 required_assertions（回执正确），此处却拿滞后的
+  // PR 头做基准 → 409 assertion_receipt_evidence_invalid → 容器 exit 75 → run 死。
+  // 与 dispatcher.js 同一教训（"远端 PR 可能仍指向旧头，不能覆盖候选身份"）。
+  // impact_gate.head_revision = 闸门放行 spawn:evaluator 时真实验的 revision，是唯一权威。
+  const sourceSha = impactGate.head_revision
+    ?? inputs.candidate?.head_sha
+    ?? inputs.pull_request?.head_sha;
   const machineId = attempt.actual_machine_id
     ?? result.provider_metadata?.machine_id
     ?? attempt.machine_id;

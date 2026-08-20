@@ -8,7 +8,13 @@
 
 
 
-**Brain 版本**: 1.273.97
+**Brain 版本**: 1.273.98
+
+## Brain 1.273.98 — 断言回执 source_sha 候选头优先（F1 步骤 3，r21 以来总根因）
+
+run 767e73b2 实证：generator-fix 追加 commit 后远端 PR 仍指旧头；assertion-receipts 拿
+PR 旧头当基准，Runner 在 exact 候选头上的正确回执被判 assertion_receipt_evidence_invalid
+→ 409 → 容器 exit 75 → run 死。改为 impact_gate.head_revision（闸门真实验的 revision）优先。
 
 ## Brain 1.273.97 — manifest guard 不绑流水线期限 + 回执拒绝留痕（F1 步骤 3）
 
