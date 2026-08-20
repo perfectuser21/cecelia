@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.100
+**Brain 版本**: 1.273.101
 
 ## Brain 1.273.100 — Judge coverage 结构性 deferred 底座（F1 步骤 3，r31 揭示的第三半）
 
