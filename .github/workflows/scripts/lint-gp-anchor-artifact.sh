@@ -23,7 +23,7 @@ BASE_REF="${1:-origin/main}"
 echo "🔍 lint-gp-anchor-artifact — base: $BASE_REF"
 
 # 流水线路径（kernel harness 2.0 的执行面）
-PIPELINE_RE='^(packages/brain/src/orchestrator/|packages/brain/src/routes/harness-|packages/brain/src/harness-|docker/|packages/brain/scripts/fleet-worker/)'
+PIPELINE_RE='^(packages/brain/src/orchestrator/|packages/brain/src/routes/harness-|packages/brain/src/harness-|packages/brain/src/impact-contract/|docker/|packages/brain/scripts/fleet-worker/)'
 TEST_FILE_RE='(\.(test|spec)\.(c|m)?[jt]sx?$|/__tests__/|/tests/)'
 STEP_TEST_RE='^tests/gp/[a-z0-9_-]+/step[0-9]+-[a-z0-9_-]+\.test\.(c|m)?[jt]sx?$'
 

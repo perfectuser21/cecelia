@@ -17,13 +17,16 @@ const HEAD_SHA = 'b8be843d8a35064690a40e885eb235fc8523ea62';
 function zipBytes(entries) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'github-evidence-zip-'));
   const archive = path.join(root, 'artifact.zip');
+  // entries 经临时文件传递：大 fixture 走 argv 在 Linux 上撞 MAX_ARG_STRLEN（E2BIG）
+  const entriesFile = path.join(root, 'entries.json');
+  fs.writeFileSync(entriesFile, JSON.stringify(entries));
   const result = spawnSync('python3', [
     '-c',
-    'import json,sys,zipfile\nwith zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:\n  for name, content in json.loads(sys.argv[2]).items(): z.writestr(name, content.encode())',
+    'import json,sys,zipfile\nwith zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:\n  for name, content in json.load(open(sys.argv[2])).items(): z.writestr(name, content.encode())',
     archive,
-    JSON.stringify(entries),
+    entriesFile,
   ]);
-  assert.equal(result.status, 0, result.stderr?.toString());
+  assert.equal(result.status, 0, `${result.error ?? ''} ${result.stderr?.toString() ?? ''}`);
   const bytes = fs.readFileSync(archive);
   fs.rmSync(root, { recursive: true, force: true });
   return bytes;

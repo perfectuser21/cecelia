@@ -63,4 +63,41 @@ if node "$MATERIALIZER" "$BUNDLE.bad-digest" "$WORKSPACE" 2>/dev/null; then
   exit 1
 fi
 
+# ── contract_artifacts 文档物化（Red 纯净化：r30 结构根因修法）──────────────
+DOC_CONTENT='# 合同正文'
+DOC_DIGEST="$(printf '%s' "$DOC_CONTENT" | shasum -a 256 | awk '{print $1}')"
+DOC_PATH='sprints/example/contract-draft.md'
+
+jq -n \
+  --arg content "$CONTENT" --arg digest "$DIGEST" --arg source "$SOURCE_SHA" --arg path "$TEST_PATH" \
+  --arg dcontent "$DOC_CONTENT" --arg ddigest "$DOC_DIGEST" --arg dpath "$DOC_PATH" \
+  '{task_bundle:{role:"generator",inputs:{sprint_dir:"sprints/example",contract:{approved_sha:$source},
+    artifacts:[{type:"frozen_contract_test",path:$path,content:$content,sha256:$digest,source_sha:$source}],
+    contract_artifacts:[
+      {path:$path,content:$content,sha256:$digest,byte_length:($content|length),source_revision:$source},
+      {path:$dpath,content:$dcontent,sha256:$ddigest,byte_length:($dcontent|length),source_revision:$source}
+    ]}}}' > "$BUNDLE.docs"
+
+node "$MATERIALIZER" "$BUNDLE.docs" "$WORKSPACE"
+test "$(cat "$WORKSPACE/$DOC_PATH")" = "$DOC_CONTENT" || {
+  echo 'generator did not materialize the contract document' >&2
+  exit 1
+}
+
+# 文档漂移 → 拒绝
+chmod u+w "$WORKSPACE/$DOC_PATH"
+printf '%s' 'provider rewrote the contract' > "$WORKSPACE/$DOC_PATH"
+if node "$MATERIALIZER" "$BUNDLE.docs" "$WORKSPACE" 2>/dev/null; then
+  echo 'materializer accepted a divergent contract document' >&2
+  exit 1
+fi
+
+# evaluator 候选缺文档 → 拒绝
+rm -f "$WORKSPACE/$DOC_PATH"
+jq '.task_bundle.role = "evaluator"' "$BUNDLE.docs" > "$BUNDLE.docs-evaluator"
+if node "$MATERIALIZER" "$BUNDLE.docs-evaluator" "$WORKSPACE" 2>/dev/null; then
+  echo 'evaluator accepted a candidate missing its contract document' >&2
+  exit 1
+fi
+
 echo 'entrypoint frozen contract artifacts: PASS'

@@ -33,6 +33,7 @@ jobs:
       engine: ${{ steps.detect.outputs.engine }}
       workspace: ${{ steps.detect.outputs.workspace }}
       compose: ${{ steps.detect.outputs.compose }}
+      runner: ${{ steps.detect.outputs.runner }}
       dod: ${{ steps.detect.outputs.dod }}
       quality: ${{ steps.detect.outputs.quality }}
       mcp_readonly: ${{ steps.detect.outputs.mcp_readonly }}
@@ -48,6 +49,7 @@ jobs:
             echo "engine=true" >> $GITHUB_OUTPUT
             echo "workspace=true" >> $GITHUB_OUTPUT
             echo "compose=true" >> $GITHUB_OUTPUT
+            echo "runner=true" >> $GITHUB_OUTPUT
             echo "mcp_readonly=true" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -57,6 +59,7 @@ jobs:
             echo "engine=true"   >> $GITHUB_OUTPUT
             echo "workspace=true" >> $GITHUB_OUTPUT
             echo "compose=true"  >> $GITHUB_OUTPUT
+            echo "runner=true"   >> $GITHUB_OUTPUT
             echo "dod=true"      >> $GITHUB_OUTPUT
             echo "quality=true"  >> $GITHUB_OUTPUT
             echo "mcp_readonly=true" >> $GITHUB_OUTPUT
@@ -69,6 +72,7 @@ jobs:
             echo "engine=true"   >> $GITHUB_OUTPUT
             echo "workspace=true" >> $GITHUB_OUTPUT
             echo "compose=true"  >> $GITHUB_OUTPUT
+            echo "runner=true"   >> $GITHUB_OUTPUT
             echo "dod=true"      >> $GITHUB_OUTPUT
             echo "quality=true"  >> $GITHUB_OUTPUT
             echo "mcp_readonly=true" >> $GITHUB_OUTPUT
@@ -80,6 +84,7 @@ jobs:
           echo "engine=$(echo "$CHANGED" | grep -q '^packages/engine/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "workspace=$(echo "$CHANGED" | grep -qE '^apps/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "compose=$(echo "$CHANGED" | grep -qE '^(docker-compose\.yml|packages/brain/Dockerfile|scripts/brain-(docker-up|docker-down|build)\.sh)$' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "runner=$(echo "$CHANGED" | grep -qE '^docker/cecelia-runner/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "dod=$(echo "$CHANGED" | grep -qE '^(DoD\.md|DoD\.cp-|task-card\.md|task-card-|\.task-|\.dod-|TASK_CARD\.cp-|PRD\.cp-)' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "quality=$(echo "$CHANGED" | grep -qE '^packages/quality/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "mcp_readonly=$(echo "$CHANGED" | grep -qE '^packages/mcp-readonly/' && echo true || echo false)" >> $GITHUB_OUTPUT
@@ -412,6 +417,44 @@ jobs:
             [[ -f "$t" ]] || continue
             echo "::group::$(basename "$t")"
             bash "$t" || exit 1
+            echo "::endgroup::"
+          done
+
+  # ─── Runner shell 测试（docker/cecelia-runner/__tests__/）──────────────
+  # 2026-08-20 失明点修复：该目录 19 个 .test.sh + 2 个 .test.cjs 此前无任何 CI job 执行
+  # （entrypoint/materializer 的回归守卫全部 CI 盲区）。glob 模式：新加测试自动接 CI。
+  runner-tests-shell:
+    name: Runner Shell Tests (cecelia-runner 套)
+    needs: changes
+    if: needs.changes.outputs.runner == 'true' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: packages/brain/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install brain deps（trust-boundary 等测试 import packages/brain/src）
+        run: cd packages/brain && npm ci --no-audit --no-fund
+      - name: Run cecelia-runner shell tests
+        run: |
+          for t in docker/cecelia-runner/__tests__/*.test.sh; do
+            [[ -f "$t" ]] || continue
+            echo "::group::$(basename "$t")"
+            bash "$t" || exit 1
+            echo "::endgroup::"
+          done
+          for t in docker/cecelia-runner/__tests__/*.test.cjs; do
+            [[ -f "$t" ]] || continue
+            echo "::group::$(basename "$t")"
+            node "$t" || exit 1
             echo "::endgroup::"
           done
 
@@ -1921,7 +1964,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-gp-anchor-artifact, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, mcp-readonly-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-gp-anchor-artifact, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, mcp-readonly-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell, runner-tests-shell]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -1962,6 +2005,7 @@ jobs:
           check "harness-dod-integrity"  "${{ needs.harness-dod-integrity.result }}"
           check "harness-contract-lint"  "${{ needs.harness-contract-lint.result }}"
           check "docker-infra-smoke"     "${{ needs.docker-infra-smoke.result }}"
+          check "runner-tests-shell"     "${{ needs.runner-tests-shell.result }}"
           check "lint-test-pairing"      "${{ needs.lint-test-pairing.result }}"
           check "lint-feature-has-smoke" "${{ needs.lint-feature-has-smoke.result }}"
           check "lint-gp-anchor-artifact" "${{ needs.lint-gp-anchor-artifact.result }}"

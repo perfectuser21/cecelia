@@ -5,10 +5,11 @@ description: |
   读取 GAN 对抗已批准的 contract-draft.md + tests/*.test.ts + contract-dod.md，按 TDD 纪律两次 commit（commit 1 = 测试 Red / commit 2 = 实现 Green）。
   融入 4 个 superpowers：test-driven-development / verification-before-completion / systematic-debugging / requesting-code-review。
   CONTRACT IS LAW：合同里有的全实现，合同外一字不加；测试文件从合同原样复制，commit 1 后不可修改（由 evaluator CONTRACT-IS-LAW 与 judge 复核把关；CI 机械闸 lint-contract-test-immutability 落地后由其强制）。一个 Sprint = 一个 Generator 本地候选；远端发布只由 Judge PASS 后的可信 Publisher 执行。
-version: 7.16.0
+version: 7.17.0
 created: 2026-04-08
-updated: 2026-08-17
+updated: 2026-08-20
 changelog:
+  - 7.17.0: Red 纯净化（r30 run ee2f9ff9 attempt 0a2c004e 结构根因修法·方案 b）——冻结档下 Runner 在血统闸安装后、Provider 启动前已把全部合同产物（contract-draft.md/contract-dod.md/sprint-prd.md + tests）物化并预提交为 `chore(harness): import contract`（TDD 闸 v5.1 预留豁免）。Generator 开工时这些文件已 tracked 且只读（0444）：禁止再落盘、改写或自行从合同文内抽取 DoD——直接读文件进入 Red，Red commit 天然只含 DoD.md + red-evidence.md（TESTS_ALREADY_PRESENT 分支）。仅当盘上确实缺文件（旧镜像兜底）才按 bundle 落盘
   - 7.16.0: Fleet 路由分支纪律（生产 run aefe34cd/attempt 086b67f0 + run 1224e340/attempt b0620304 实证，同条件二象性又一例）——Kernel fleet 工作区的分支由服务端签发（workspace_spec.branch=cp-route-api-*，routing action gate 拦截切分支，Runner 终结器要求 branch --show-current 必须等于该分支），而 Step 2 原文命令 git checkout -b cp-<时间戳> 自建分支：守规则=被闸拦死零产出/自作主张=侥幸活。修法：Step 2 按「当前分支是否服务端签发」分叉——工作区已在 cp-* 分支（fleet 档常态，CECELIA_ROUTING_* 注入）时禁止任何 checkout/switch，直接在当前分支上追加 Red/Green 两 commit；仅 relay/本地档（分支非 cp-* 前缀）才走原自建分支路径
   - 7.15.0: Generator 与 Kernel 本地候选协议对齐——Generator 只提交并返回 `local_candidate_committed`，不得写远端或创建 PR；Runner 冻结候选后交独立 Evaluator/Judge，只有可信 Publisher 可以发布、建 PR、等待 CI 与合并
   - 7.14.1: Fleet Codex 环境兼容——从 Runner 服务端注入的 HARNESS_BRAIN_URL 恢复 BRAIN_URL，避免 Codex 子工具环境过滤通用 BRAIN_URL 后 Generator 在 Step 0 假阻塞；原 BRAIN_URL 仍优先兼容
@@ -193,7 +194,7 @@ fi
 - 禁止 `git push --force` / `--force-with-lease`——冻结档只做 fast-forward 追加
 - 禁止 `git push --no-verify`——运输层 pre-push 血统闸不是建议
 - 唯一合法动作：在 `HARNESS_WORKSPACE_START_SHA` 之上**追加** Red/Green commit，留下本地候选
-- 合同资产来源：冻结档下**只认 TaskBundle inputs.contract**（见 Step 1 冻结分支）——盘上没有 sprint 目录不是拒工理由，bundle 里有合同就落盘开工
+- 合同资产来源：冻结档下**只认 TaskBundle inputs.contract**（见 Step 1 冻结分支）——Runner 常态已把合同产物物化并预提交为 `chore(harness): import contract`（文件已 tracked、只读），直接读文件开工；盘上确实没有时（旧镜像兜底）按 bundle 落盘，缺 sprint 目录不是拒工理由
 
 > 这些禁令由 Runner 的候选血统闸、Provider 退出后的血统断言、Brain callback 服务端 lineage 校验三层机械执行。任何一层发现 `HARNESS_WORKSPACE_START_SHA` 不再是 HEAD 的祖先，Attempt 判死、候选不被 Publisher 接受。
 
@@ -209,15 +210,16 @@ fi
 if [[ "${HARNESS_FROZEN_BASELINE:-false}" == "true" ]]; then
   # ── 冻结档:合同资产的唯一合法来源 = TaskBundle inputs.contract(Brain 锁定版) ──
   # 合同分支是 fleet 工作区本地产物,不在远端;冻结档禁 fetch 任何分支。
-  # TaskBundle 里的 contract_content / e2e_acceptance / prd_content 就是 GAN 批准后
-  # 的锁定官方版本——把它们原样落盘到 ${SPRINT_DIR}/ 不是"自行重写测试",而是
-  # 装配官方资产,与 git show 取文件完全等价:
-  #   contract_content → ${SPRINT_DIR}/contract-draft.md(全文原样)
-  #   合同文内声明的 DoD 段 → ${SPRINT_DIR}/contract-dod.md(原样抽取)
-  #   inputs.artifacts[type=frozen_contract_test] → Runner 已按 path/content 原样落盘，
-  #     并在 Provider 前后核对 approved_sha/source_sha/sha256；Generator 只能读取、
-  #     git add、执行这些文件，禁止改写、补写或根据合同描述自行重建
-  # 落盘后照常进入 Red 阶段;这些文件受 CONTRACT IS LAW 约束,commit 1 后不可修改。
+  # 7.17.0 起(Red 纯净化):Runner 已在 Provider 启动前把全部合同产物物化并预提交为
+  # `chore(harness): import contract`——包括:
+  #   inputs.contract_artifacts[] → ${SPRINT_DIR}/contract-draft.md / contract-dod.md /
+  #     sprint-prd.md(canonical 字节,Brain 封印集 requireCore 保证齐全)
+  #   inputs.artifacts[type=frozen_contract_test] → ${SPRINT_DIR}/tests/**
+  # 这些文件开工时已 tracked 且只读(0444)。Generator 只能读取与执行:
+  #   禁止改写/补写/重新落盘,禁止自行从合同文内抽取 DoD 段(canonical 版已在盘上)。
+  # 因此 Red commit 天然走 TESTS_ALREADY_PRESENT 分支(= DoD.md + red-evidence.md),
+  # 不会混入合同文档。仅当盘上确实缺某文件(旧镜像兜底)才按 bundle 内容原样落盘。
+  # 这些文件受 CONTRACT IS LAW 约束,commit 1 后不可修改;Runner 在 Provider 退出后复验。
   #
   # FROZEN_CONTRACT_ARTIFACTS_MISSING 只允许在一种情况上报:TaskBundle 的
   # inputs.contract 里没有 contract_content，或 inputs.artifacts 为空/摘要不合法
