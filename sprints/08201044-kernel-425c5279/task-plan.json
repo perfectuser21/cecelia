@@ -1,0 +1,29 @@
+{
+  "initiative_id": "f14c2962-3ba5-4a21-b3ec-97a4856778df",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 纯后端 Impact Gate 判定逻辑，无 UI / agent 协议 / engine hook",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 非 fresh 分支按 freshness.status 二分并透传 reason_code",
+      "scope": "改 diff-gate.js 步骤 3a 非 fresh 分支：stale→retryable:true、unknown/缺失/其它非 fresh→retryable:false（fail-closed），reason 透传 freshness.reason_code（缺失时 stale 用 mapper_stale 兜底、确定性用 mapper_unknown 兜底），并落 reason_code 字段；确定性出口绝不折叠成裸 mapper_stale。既有 revision/digest/mapper_unavailable/db_unavailable/contract_missing/fresh 后续对账路径一字不改。同步更新 diff-gate.test.js / harness-gates.test.js 回归与 loop.test.js 的 gateVerdict 断言。",
+      "dod": [
+        "[BEHAVIOR] 确定性 unknown → gate=impact_unknown、retryable=false、reason=透传具体 code 且 !== mapper_stale（对应合同 B-01/INV-1/INV-2）",
+        "[BEHAVIOR] 瞬态 stale → retryable=true、reason/reason_code 透传具体 code（对应合同 B-02）",
+        "[BEHAVIOR] 边界兜底：unknown 无码=mapper_unknown、freshness 缺失 fail-closed 非 mapper_stale、stale 无码=mapper_stale（对应合同 B-03）",
+        "[BEHAVIOR] orchestrator loop.test.js「Diff Gate」用例全过，确定性 gateVerdict !== deny:impact:mapper_stale（对应合同 B-05）",
+        "[ARTIFACT] diff-gate.js 源码含 freshness.status==='stale' 二分 + mapper_unknown 确定性兜底码 + reason_code 透传"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+        "packages/brain/src/impact-contract/__tests__/harness-gates.test.js",
+        "packages/brain/src/orchestrator/__tests__/loop.test.js",
+        "packages/brain/src/__tests__/harness-judge.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
