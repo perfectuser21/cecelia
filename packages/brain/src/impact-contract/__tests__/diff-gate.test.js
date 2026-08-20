@@ -564,4 +564,50 @@ describe('FR-4 Diff Impact Gate', () => {
 
   });
 
+  describe('step 3a：确定性结论 fail-closed 有界出口（不再折叠成 mapper_stale 空转）', () => {
+
+    const callFreshness = (reason_code, status = 'stale') => evaluateDiffGate({
+      taskId: 'diffgate-3a',
+      repo: 'cecelia',
+      headRevision: 'head',
+      mapClient: async () => ({ freshness: { status, reason_code } }),
+    });
+
+    test('确定性 reason_code revision_mismatch 透传且 retryable=false（不空转）', async () => {
+      const r = await callFreshness('revision_mismatch');
+      expect(r.reason).toBe('revision_mismatch');
+      expect(r.reason_code).toBe('revision_mismatch');
+      expect(r.retryable).toBe(false);
+      expect(r.reason).not.toBe('mapper_stale');
+    });
+
+    test('确定性 terminal 码 fail_current_revision（status=unknown）透传且 retryable=false', async () => {
+      const r = await callFreshness('fail_current_revision', 'unknown');
+      expect(r.reason).toBe('fail_current_revision');
+      expect(r.retryable).toBe(false);
+      expect(r.reason).not.toBe('mapper_stale');
+    });
+
+    test('真·瞬态过期 fact_snapshot_stale 仍 mapper_stale + retryable=true（不被误伤）', async () => {
+      const r = await callFreshness('fact_snapshot_stale');
+      expect(r.reason).toBe('mapper_stale');
+      expect(r.retryable).toBe(true);
+    });
+
+    test('reason_code 缺失 → fail-closed retryable=false，reason 非 mapper_stale/unknown', async () => {
+      const r = await callFreshness(null);
+      expect(r.retryable).toBe(false);
+      expect(r.reason).not.toBe('mapper_stale');
+      expect(r.reason).not.toBe('unknown');
+    });
+
+    test('确定性结论幂等：同输入两次 reason_code 与 retryable 一致', async () => {
+      const a = await callFreshness('revision_mismatch');
+      const b = await callFreshness('revision_mismatch');
+      expect(a.reason_code).toBe(b.reason_code);
+      expect(a.retryable).toBe(b.retryable);
+    });
+
+  });
+
 });

@@ -25,6 +25,19 @@ import {
 import { compareImpactContract } from './diff-compare.js';
 export { compareImpactContract } from './diff-compare.js';
 
+// ---------- 步骤 3a：freshness 非 fresh 折叠分支的可判定性分类 ----------
+//
+// 真·瞬态过期白名单：事实快照/扫描/投影尚未建立，重新扫描/重算即自愈。
+// 命中白名单 → 保留 mapper_stale + retryable:true（不误伤原瞬态重试语义）。
+// 白名单之外的任何非 fresh reason_code（含 state-resolver / radius 的 terminal 码）
+// 均为确定性结论 → 透传 reason_code + retryable:false（fail-closed 有界出口，不空转）。
+// 来源：radius.js:82/85、state-resolver.js:190。
+const TRANSIENT_FRESHNESS_REASON_CODES = new Set([
+  'fact_snapshot_stale',
+  'fact_stale',
+  'projection_revision_missing',
+]);
+
 // ---------- 副作用操作 ----------
 
 /**
@@ -198,12 +211,36 @@ export async function evaluateDiffGate({
 
   // --- 步骤 3：校验 Mapper 可判定性 ---
 
-  // 3a. Mapper stale（freshness.status !== 'fresh'）→ impact_unknown
+  // 3a. Mapper 非 fresh → 区分确定性结论 vs 真·瞬态过期（fail-closed 有界出口）
   if (!mapperResult?.freshness || mapperResult.freshness.status !== 'fresh') {
+    const freshnessReasonCode = mapperResult?.freshness?.reason_code ?? null;
+
+    // 真·瞬态过期（可自愈）→ 保留原重试语义，不被误伤
+    if (freshnessReasonCode && TRANSIENT_FRESHNESS_REASON_CODES.has(freshnessReasonCode)) {
+      return {
+        gate: 'impact_unknown',
+        reason: 'mapper_stale',
+        reason_code: freshnessReasonCode,
+        retryable: true,
+      };
+    }
+
+    // 确定性结论（携带非瞬态 reason_code）→ 透传 reason_code + fail-closed 有界终止
+    if (freshnessReasonCode) {
+      return {
+        gate: 'impact_unknown',
+        reason: freshnessReasonCode,
+        reason_code: freshnessReasonCode,
+        retryable: false,
+      };
+    }
+
+    // reason_code 缺失/为空 → fail-closed 默认（不吞成 unknown、不转回无限重试）
     return {
       gate: 'impact_unknown',
-      reason: 'mapper_stale',
-      retryable: true,
+      reason: 'mapper_stale_indeterminate',
+      reason_code: 'mapper_stale_indeterminate',
+      retryable: false,
     };
   }
 
