@@ -55,16 +55,20 @@ describe('derive account_exhausted 非终态轮换（429 周限不判 run 终态
     expect(r.phase).not.toBe('terminal');
   });
 
-  it('普通 runner_failure 仍判 run 终态（回归护栏，非配额语义不误轮换）', () => {
+  // 2026-08-20 语义修正（决策 109dd8eb 批次，run 4bf639e3/0749688a 实证）：
+  // runner_failure 是基础设施故障，改为有界重派（≤2 次）不再一刀判终态——
+  // r25/r26 里 judge 已 PASS、PR 已产出，一次 guard 起不来烧掉全部工作。
+  // 原「非配额语义不误轮换」的护栏语义由 reason 区分保留：
+  // runner_failure 走 callback_runner_failure_retry（不轮换账号语义），
+  // account_exhausted 才走 callback_account_exhausted（轮换账号）。
+  it('普通 runner_failure 有界重派（reason 与 account_exhausted 区分，不误轮换）', () => {
     const r = derive(baseObserved({
       decisionLog: [
         callbackRow(3, { status: 'failed', failure_class: 'runner_failure', role: 'generator' }),
       ],
     }));
-    expect(r).toMatchObject({
-      phase: 'failed',
-      action: 'mark_failed',
-      reason: 'callback_runner_failure',
-    });
+    expect(r.phase).not.toBe('failed');
+    expect(r.reason).toBe('callback_runner_failure_retry');
+    expect(r.reason).not.toBe('callback_account_exhausted');
   });
 });
