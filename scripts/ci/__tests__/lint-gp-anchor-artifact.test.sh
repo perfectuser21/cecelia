@@ -101,4 +101,11 @@ echo "// t" > "$R/packages/brain/src/orchestrator/__tests__/derive.test.js"
 commit_all s6
 check "S6 只改流水线下的测试 → 跳过" "$(run_lint)" 0
 
+# S7 impact-contract/ 属流水线路径（#4982 漏判实证：assertion-receipts.js 改动未触发闸）
+reset_branch
+mkdir -p "$R/packages/brain/src/impact-contract"
+echo "export const g = 1;" > "$R/packages/brain/src/impact-contract/diff-gate.js"
+commit_all s7
+check "S7 impact-contract 改动无步骤断言 → 拦" "$(run_lint)" 1
+
 [ "$FAIL" -eq 0 ] && echo "ALL PASS" || { echo "SOME FAIL"; exit 1; }
