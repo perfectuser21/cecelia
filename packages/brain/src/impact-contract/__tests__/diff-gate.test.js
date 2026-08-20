@@ -564,4 +564,80 @@ describe('FR-4 Diff Impact Gate', () => {
 
   });
 
+  // ── step 3a 非 fresh 分支：透传 reason_code + 按 status 区分可重试性（fail-closed 出口）──
+  // 复现 bug（runs f62c7e87/d1360a48 deny:impact:mapper_stale 空转）：旧实现把所有非 fresh
+  // 情形折叠成 { reason:'mapper_stale', retryable:true }，吞掉 Mapper 的 freshness.reason_code，
+  // 并把确定性 unknown 也当瞬态无限重试。
+  describe('step 3a — reason_code 透传 + 确定性 fail-closed 出口', () => {
+    const baseArgs = {
+      db: null,
+      taskId: 'task-red-001',
+      headRevision: 'head-red',
+      changedFiles: ['packages/brain/src/impact-contract/diff-gate.js'],
+      repo: 'cecelia',
+    };
+
+    test('step 3a: freshness.status unknown 透传 reason_code 且 retryable false', async () => {
+      const result = await evaluateDiffGate({
+        ...baseArgs,
+        mapClient: async () => ({
+          freshness: { status: 'unknown', reason_code: 'capability_not_in_active_projection' },
+        }),
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.reason_code).toBe('capability_not_in_active_projection');
+      expect(result.retryable).toBe(false);
+    });
+
+    test('step 3a: freshness.status stale 透传 reason_code 且 retryable true', async () => {
+      const result = await evaluateDiffGate({
+        ...baseArgs,
+        mapClient: async () => ({
+          freshness: { status: 'stale', reason_code: 'fact_snapshot_stale' },
+        }),
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.reason_code).toBe('fact_snapshot_stale');
+      expect(result.retryable).toBe(true);
+    });
+
+    test('step 3a: unknown 缺 reason_code 落确定性占位且 retryable false', async () => {
+      const result = await evaluateDiffGate({
+        ...baseArgs,
+        mapClient: async () => ({
+          freshness: { status: 'unknown' },
+        }),
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.retryable).toBe(false);
+      // 确定性占位：非 null（不回退成可重试），且是稳定非空字符串
+      expect(typeof result.reason_code).toBe('string');
+      expect(result.reason_code.length).toBeGreaterThan(0);
+    });
+
+    test('step 3a: stale 缺 reason_code 透传 null 且 retryable true', async () => {
+      const result = await evaluateDiffGate({
+        ...baseArgs,
+        mapClient: async () => ({
+          freshness: { status: 'stale' },
+        }),
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.retryable).toBe(true);
+      expect(result.reason_code ?? null).toBe(null);
+    });
+
+    test('step 3a: 非 fresh 分支 gate 恒为 impact_unknown', async () => {
+      for (const freshness of [
+        { status: 'unknown', reason_code: 'impact_anchor_missing' },
+        { status: 'stale', reason_code: 'fact_snapshot_stale' },
+      ]) {
+        const result = await evaluateDiffGate({ ...baseArgs, mapClient: async () => ({ freshness }) });
+        // fail-closed 铁律：非 fresh 绝不放行为 pass/extend/drift
+        expect(result.gate).toBe('impact_unknown');
+        expect(['pass', 'extend', 'drift']).not.toContain(result.gate);
+      }
+    });
+  });
+
 });
