@@ -15,10 +15,27 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
-const {
-  parseTestContract,
-  resolveContractTestFile,
-} = require('../../../../scripts/lib/test-contract-paths.cjs');
+// 解析链 SSOT = repo 根 scripts/lib（CI 的 check-test-coverage 同源同尺）。两个运行环境
+// 路径不同：repo checkout 里在 ../../../../scripts/lib；Brain 容器镜像里 Dockerfile 把它
+// COPY 到 /app/scripts/lib（本文件在 /app/src/orchestrator → ../../scripts/lib）。
+// 双候选、都缺则 throw（Brain 启动即死 fail-closed，docker smoke 把关，禁静默放行）。
+function loadTestContractPaths() {
+  const candidates = [
+    '../../scripts/lib/test-contract-paths.cjs',
+    '../../../../scripts/lib/test-contract-paths.cjs',
+  ];
+  for (const candidate of candidates) {
+    try {
+      return require(candidate);
+    } catch (error) {
+      if (error.code !== 'MODULE_NOT_FOUND' || !String(error.message).includes('test-contract-paths')) {
+        throw error;
+      }
+    }
+  }
+  throw new Error('test-contract-paths.cjs unavailable in both container and checkout layouts');
+}
+const { parseTestContract, resolveContractTestFile } = loadTestContractPaths();
 
 const VIRTUAL_ROOT = '/contract-seal';
 
