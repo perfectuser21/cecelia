@@ -198,12 +198,27 @@ export async function evaluateDiffGate({
 
   // --- 步骤 3：校验 Mapper 可判定性 ---
 
-  // 3a. Mapper stale（freshness.status !== 'fresh'）→ impact_unknown
-  if (!mapperResult?.freshness || mapperResult.freshness.status !== 'fresh') {
+  // 3a. Mapper 非 fresh（freshness.status !== 'fresh'）→ impact_unknown，按 status 语义分流：
+  //   - stale（瞬态过期）→ retryable:true；reason 优先透传 reason_code，无则回退 mapper_stale
+  //   - unknown（Map 确定性结论）→ fail-closed 终局出口 retryable:false；reason 优先透传 reason_code，无则回退 mapper_unknown
+  //   - freshness 缺失 / status 非三枚举（Mapper 契约违背，非瞬态抖动）→ fail-closed retryable:false，不假绿
+  const freshness = mapperResult?.freshness;
+  if (!freshness || freshness.status !== 'fresh') {
+    const reasonCode = freshness?.reason_code ?? null;
+    if (freshness?.status === 'stale') {
+      return {
+        gate: 'impact_unknown',
+        reason: reasonCode || 'mapper_stale',
+        reason_code: reasonCode,
+        retryable: true,
+      };
+    }
+    // unknown（确定性结论）与 freshness 缺失/结构异常统一走 fail-closed 终局出口
     return {
       gate: 'impact_unknown',
-      reason: 'mapper_stale',
-      retryable: true,
+      reason: reasonCode || 'mapper_unknown',
+      reason_code: reasonCode,
+      retryable: false,
     };
   }
 

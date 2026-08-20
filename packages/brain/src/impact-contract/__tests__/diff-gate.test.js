@@ -564,4 +564,62 @@ describe('FR-4 Diff Impact Gate', () => {
 
   });
 
+  describe('step 3a 非 fresh 出口按 status 语义分流（reason_code 透传 + fail-closed）', () => {
+
+    test('unknown 确定性结论透传 reason_code 且 retryable false（fail-closed 终局出口）', async () => {
+      const result = await evaluateDiffGate({
+        db: null,
+        taskId: 'task-unknown',
+        mapClient: async () => ({ freshness: { status: 'unknown', reason_code: 'capability_not_in_active_projection' } }),
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.reason).toBe('capability_not_in_active_projection');
+      expect(result.retryable).toBe(false);
+    });
+
+    test('unknown 无 reason_code 回退 mapper_unknown 且 retryable false', async () => {
+      const result = await evaluateDiffGate({
+        db: null,
+        taskId: 'task-unknown-null',
+        mapClient: async () => ({ freshness: { status: 'unknown', reason_code: null } }),
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.reason).toBe('mapper_unknown');
+      expect(result.retryable).toBe(false);
+    });
+
+    test('stale 瞬态过期透传 reason_code 且 retryable true', async () => {
+      const result = await evaluateDiffGate({
+        db: null,
+        taskId: 'task-stale',
+        mapClient: async () => ({ freshness: { status: 'stale', reason_code: 'projection_snapshot_expired' } }),
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.reason).toBe('projection_snapshot_expired');
+      expect(result.retryable).toBe(true);
+    });
+
+    test('stale 无 reason_code 回退 mapper_stale 且 retryable true', async () => {
+      const result = await evaluateDiffGate({
+        db: null,
+        taskId: 'task-stale-null',
+        mapClient: async () => ({ freshness: { status: 'stale', reason_code: null } }),
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.reason).toBe('mapper_stale');
+      expect(result.retryable).toBe(true);
+    });
+
+    test('freshness 缺失 fail-closed 且 retryable false（不假绿）', async () => {
+      const result = await evaluateDiffGate({
+        db: null,
+        taskId: 'task-missing-freshness',
+        mapClient: async () => ({ affected_nodes: [] }),
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.retryable).toBe(false);
+    });
+
+  });
+
 });
