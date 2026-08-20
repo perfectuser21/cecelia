@@ -1399,12 +1399,11 @@ const maxTotalBytes = requestedTotalBytes < HARD_MAX_TOTAL_BYTES
 const maxFileBytes = requestedFileBytes < HARD_MAX_FILE_BYTES
   ? requestedFileBytes : HARD_MAX_FILE_BYTES;
 const requestedDeadline = deadlineArg ? Number(deadlineArg) : Number.POSITIVE_INFINITY;
-const attemptDeadline = Date.parse(process.env.HARNESS_DEADLINE_AT ?? '');
-const deadline = Math.min(
-  Date.now() + HARD_MAX_DURATION_MS,
-  requestedDeadline,
-  Number.isFinite(attemptDeadline) ? attemptDeadline : Number.POSITIVE_INFINITY,
-);
+// 不并入 HARNESS_DEADLINE_AT（2026-08-20 run 425c5279 实证）：流水线期限一过，
+// post-provider 复核一进门就 throw，PASS 判词被错报成「installed dependencies drifted」；
+// pre-provider 侧同 throw = r25 的「cannot capture dependency manifest」。超时执法属于
+// kernel（automation_deadline_exceeded），guard 自己的预算是 HARD_MAX_DURATION_MS 硬顶。
+const deadline = Math.min(Date.now() + HARD_MAX_DURATION_MS, requestedDeadline);
 if (!Number.isSafeInteger(maxEntries) || maxEntries < 1
     || (deadlineArg && !Number.isSafeInteger(requestedDeadline))
     || !Number.isFinite(deadline) || deadline <= Date.now()) {
@@ -1680,8 +1679,11 @@ assert_frozen_evaluator_candidate_tree() {
     frozen_tree_assert_fail "dependency manifest is missing: ${dependency_manifest}" || return 1
   fi
   observed_manifest="${dependency_manifest}.observed.$$"
-  if ! write_frozen_evaluator_dependency_manifest "$observed_manifest" \
-      || ! cmp -s "$dependency_manifest" "$observed_manifest"; then
+  if ! write_frozen_evaluator_dependency_manifest "$observed_manifest"; then
+    rm -f "$observed_manifest"
+    frozen_tree_assert_fail "cannot rebuild dependency manifest for verification (scanner failed, NOT drift)" || return 1
+  fi
+  if ! cmp -s "$dependency_manifest" "$observed_manifest"; then
     rm -f "$observed_manifest"
     frozen_tree_assert_fail "installed dependencies drifted vs pinned manifest" || return 1
   fi

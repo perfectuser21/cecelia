@@ -397,4 +397,29 @@ esac
 rm -f "$WS/untracked-product-file.txt"
 unset HARNESS_NODE BRAIN_RESULT_FILE
 
+# ── 9y. 流水线期限已过 ≠ 依赖清单不能扫（2026-08-20 run 425c5279 实证）──
+# manifest 扫描器曾把 HARNESS_DEADLINE_AT 并进自己的死线：第二轮 evaluator 在期限后
+# 完成，post-provider 复核一进门 throw「invalid or expired dependency manifest resource
+# boundary」，外层错报「installed dependencies drifted」，把 PASS 判词换成失败；
+# pre-provider 侧同 throw = r25 的「cannot capture dependency manifest」。
+# 超时执法属于 kernel（automation_deadline_exceeded），guard 自己的预算是 120s 硬顶。
+CASE="$(new_case deadline-independence)"
+WS="$CASE/workspace"
+export WORKTREE_PATH="$WS"
+export FROZEN_BASELINE_GUARD_DIR="$CASE/guard"
+export HARNESS_NODE=evaluator
+export BRAIN_RESULT_FILE="$CASE/brain-result.json"
+HEAD_SHA="$(git -C "$WS" rev-parse HEAD)"
+FROZEN_BASELINE_GUARD_FAILURE=''
+if ! HARNESS_DEADLINE_AT='2020-01-01T00:00:00.000Z'     HARNESS_WORKSPACE_START_SHA="$HEAD_SHA" install_frozen_baseline_guard; then
+  echo "guard refused to arm because pipeline deadline passed: $FROZEN_BASELINE_GUARD_FAILURE" >&2
+  exit 1
+fi
+# post-provider 复核同样不受期限影响（干净树应通过）
+if ! HARNESS_DEADLINE_AT='2020-01-01T00:00:00.000Z'     HARNESS_WORKSPACE_START_SHA="$HEAD_SHA" assert_frozen_evaluator_candidate_tree post-provider; then
+  echo "post-provider assert failed on clean tree due to pipeline deadline: $FROZEN_EVALUATOR_TREE_ASSERT_DETAIL" >&2
+  exit 1
+fi
+unset HARNESS_NODE BRAIN_RESULT_FILE
+
 echo "entrypoint frozen baseline guard tests passed"
