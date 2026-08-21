@@ -28,6 +28,7 @@ function gateReceipt(stage, result, extra = {}) {
     stage,
     gate: result.gate,
     reason: result.reason ?? result.reason_code ?? null,
+    reason_code: result.reason_code ?? null,
     retryable: result.retryable ?? false,
     contract_id: result.contract?.id ?? null,
     contract_hash: result.contract?.contract_hash ?? null,
