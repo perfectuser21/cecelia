@@ -77,6 +77,33 @@ describe('封印时 Test Contract 表路径可解析校验（r33 fix 死循环�
     expect(() => assertTestContractResolvable('# 合同\n\n正文', ARTIFACTS)).not.toThrow();
   });
 
+  it('r39 形态：BEHAVIOR 覆盖名不是冻结 it() 名子串 → 拒绝封印（封印后双不可变，fix 无解）', () => {
+    // run d2334022 实证：CI「Test Contract 覆盖检查」在 generator 后才发现覆盖名与 it()
+    // 不匹配；合同与冻结测试封印后双不可变，fix 改哪边都被拦 → 死局。
+    // 封印时用与 check-test-coverage 相同的匹配语义（it/test 名双向小写子串）提前拦截。
+    const testContent = [
+      "it('unknown 状态透传 reason_code 且 retryable false', () => {});",
+      "it('瞬时 stale 保持可重试', () => {});",
+    ].join('\n');
+    const arts = [
+      artifact(`${SPRINT}/contract-draft.md`),
+      { path: `${SPRINT}/tests/a.test.js`, content: testContent, sha256: 'a'.repeat(64), source_revision: 'b'.repeat(40) },
+    ];
+    const badTable = '## Test Contract\n\n| 功能 | Test File | BEHAVIOR 覆盖 | 红证据 |\n|---|---|---|---|\n| x | `' + SPRINT + '/tests/a.test.js` | `透传 reason_code 且 retryable:false` | FAIL |\n';
+    expect(() => assertTestContractResolvable(badTable, arts))
+      .toThrow(/FROZEN_CONTRACT_TEST_CONTRACT_UNRESOLVABLE/);
+  });
+
+  it('覆盖名是冻结 it() 名子串 → 封印通过', () => {
+    const testContent = "it('unknown 状态透传 reason_code 且 retryable false', () => {});";
+    const arts = [
+      artifact(`${SPRINT}/contract-draft.md`),
+      { path: `${SPRINT}/tests/a.test.js`, content: testContent, sha256: 'a'.repeat(64), source_revision: 'b'.repeat(40) },
+    ];
+    const goodTable = '## Test Contract\n\n| 功能 | Test File | BEHAVIOR 覆盖 | 红证据 |\n|---|---|---|---|\n| x | `' + SPRINT + '/tests/a.test.js` | `透传 reason_code 且 retryable false` | FAIL |\n';
+    expect(() => assertTestContractResolvable(goodTable, arts)).not.toThrow();
+  });
+
   it('接线：materializeApprovedContract 封印路径真调用本校验', () => {
     const src = fs.readFileSync(
       path.resolve(path.dirname(fileURLToPath(import.meta.url)),
