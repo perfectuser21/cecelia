@@ -23,6 +23,7 @@ import {
   transitionGapStatus,
 } from './gap-store.js';
 import { compareImpactContract } from './diff-compare.js';
+import { isRetryableReason } from './retry-classification.js';
 export { compareImpactContract } from './diff-compare.js';
 
 // ---------- 副作用操作 ----------
@@ -199,11 +200,15 @@ export async function evaluateDiffGate({
   // --- 步骤 3：校验 Mapper 可判定性 ---
 
   // 3a. Mapper stale（freshness.status !== 'fresh'）→ impact_unknown
+  //   透传 Mapper 携带的具体 reason_code（如 projection_digest_mismatch），不折叠成笼统
+  //   mapper_stale；无具体 reason_code 时回落 mapper_stale。retryable 由 reason 分流决定
+  //   （确定性终态 / 未知 reason → false，fail-closed；瞬态 → true）。
   if (!mapperResult?.freshness || mapperResult.freshness.status !== 'fresh') {
+    const reason = mapperResult?.freshness?.reason_code || 'mapper_stale';
     return {
       gate: 'impact_unknown',
-      reason: 'mapper_stale',
-      retryable: true,
+      reason,
+      retryable: isRetryableReason(reason),
     };
   }
 
@@ -220,18 +225,19 @@ export async function evaluateDiffGate({
     }
     const mapperRevision = mapperResult.fact_revisions[repoKey];
     if (mapperRevision !== expectedFactRevision) {
+      // 确定性终态：base revision 稳定 mismatch，重试永不收敛 → fail-closed
       return {
         gate: 'impact_unknown',
         reason: 'revision_mismatch',
-        retryable: true,
+        retryable: isRetryableReason('revision_mismatch'),
       };
     }
   }
   if (contract?.manifest_digest && mapperResult.manifest_digest !== contract.manifest_digest) {
-    return { gate: 'impact_unknown', reason: 'manifest_digest_mismatch', retryable: true };
+    return { gate: 'impact_unknown', reason: 'manifest_digest_mismatch', retryable: isRetryableReason('manifest_digest_mismatch') };
   }
   if (contract?.projection_digest && mapperResult.projection_digest !== contract.projection_digest) {
-    return { gate: 'impact_unknown', reason: 'projection_digest_mismatch', retryable: true };
+    return { gate: 'impact_unknown', reason: 'projection_digest_mismatch', retryable: isRetryableReason('projection_digest_mismatch') };
   }
 
   // --- 步骤 4：对账 ---

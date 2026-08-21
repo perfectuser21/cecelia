@@ -213,14 +213,14 @@ describe('FR-3 Structure Gate', () => {
       expect(result.reason).toBe('revision_mismatch');
     });
 
-    test('revision mismatch 响应包含 retryable=true', async () => {
+    test('revision mismatch 响应包含 retryable=false（确定性终态，同源对齐）', async () => {
       const result = await evaluateStructureGate({
         db: null,
         task: BASE_TASK,
         contract: BASE_CONTRACT,
         mapClient: makeRevisionMismatchMapClient(),
       });
-      expect(result.retryable).toBe(true);
+      expect(result.retryable).toBe(false);
     });
 
   });

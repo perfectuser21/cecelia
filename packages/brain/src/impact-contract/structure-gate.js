@@ -19,6 +19,7 @@
 import { queryImpactRadius } from './map-client.js';
 import { persistImpactContract } from './contract-store.js';
 import { normalizeFreshnessEvidence } from './contract-schema.js';
+import { isRetryableReason } from './retry-classification.js';
 
 // ---------- 结果构建工具 ----------
 
@@ -34,7 +35,9 @@ function buildBlockedResult(reason, httpStatus, extra = {}) {
   return {
     gate: 'blocked',
     reason,
-    retryable: httpStatus === 503 || httpStatus === 409,
+    // 同源对齐 diff-gate：retryable 按 reason 分流（瞬态白名单 → true，确定性终态
+    // 如 revision_mismatch → false，fail-closed），不再单纯由 httpStatus 推导。
+    retryable: isRetryableReason(reason),
     httpStatus,
     ...extra,
   };

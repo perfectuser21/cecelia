@@ -336,7 +336,7 @@ describe('FR-4 Diff Impact Gate', () => {
         manifestDigest: '1'.repeat(64), projectionDigest: '2'.repeat(64),
       }));
       expect(result).toMatchObject({
-        gate: 'impact_unknown', reason: 'manifest_digest_mismatch', retryable: true,
+        gate: 'impact_unknown', reason: 'manifest_digest_mismatch', retryable: false,
       });
       expect(persistContract).not.toHaveBeenCalled();
     });
@@ -559,7 +559,8 @@ describe('FR-4 Diff Impact Gate', () => {
 
       expect(result.gate).toBe('impact_unknown');
       expect(result.reason).toBe('revision_mismatch');
-      expect(result.retryable).toBe(true);
+      // 确定性终态：revision 稳定 mismatch 重试永不收敛 → fail-closed（不可重试）
+      expect(result.retryable).toBe(false);
     });
 
   });
