@@ -23,7 +23,7 @@ function repoFromTask(task) {
   return githubMatch?.[1] ?? normalized;
 }
 
-function gateReceipt(stage, result, extra = {}) {
+export function gateReceipt(stage, result, extra = {}) {
   return {
     stage,
     gate: result.gate,

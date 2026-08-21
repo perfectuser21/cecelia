@@ -25,6 +25,14 @@ import {
 import { compareImpactContract } from './diff-compare.js';
 export { compareImpactContract } from './diff-compare.js';
 
+// 瞬时可重试的 freshness reason_code 白名单（快照/投影尚未就绪，重试后可能变绿）。
+// 白名单外的任何 reason_code（确定性结论 + 未来未知码）一律 fail-closed（retryable:false），
+// 未来若 radius.js 新增瞬时码需同步扩此白名单，否则安全侧默认不放行重试而非无限重试。
+const TRANSIENT_FRESHNESS_REASON_CODES = new Set([
+  'fact_snapshot_stale',
+  'projection_revision_missing',
+]);
+
 // ---------- 副作用操作 ----------
 
 /**
@@ -199,11 +207,19 @@ export async function evaluateDiffGate({
   // --- 步骤 3：校验 Mapper 可判定性 ---
 
   // 3a. Mapper stale（freshness.status !== 'fresh'）→ impact_unknown
+  //   透传具体 reason_code 并按「瞬时白名单 vs 确定性」分类 retryable：
+  //   - freshness 对象整体缺失（reason_code 视为 null）→ 视为 Mapper 尚未产出的瞬时态，
+  //     reason 回落 mapper_stale，retryable:true。
+  //   - reason_code 命中瞬时白名单（快照/投影尚未就绪）→ retryable:true。
+  //   - 其余任何确定性/未知/未来 reason_code → fail-closed（retryable:false），
+  //     符合 diff-gate.js:12「任何不可判定情形绝不假绿」铁律，避免确定性结论被当瞬时无限重试。
   if (!mapperResult?.freshness || mapperResult.freshness.status !== 'fresh') {
+    const reasonCode = mapperResult?.freshness?.reason_code ?? null;
+    const retryable = reasonCode === null || TRANSIENT_FRESHNESS_REASON_CODES.has(reasonCode);
     return {
       gate: 'impact_unknown',
-      reason: 'mapper_stale',
-      retryable: true,
+      reason: reasonCode ?? 'mapper_stale',
+      retryable,
     };
   }
 
