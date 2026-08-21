@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.103
+**Brain 版本**: 1.273.104
+
+## Brain 1.273.104 — F1 认领 tests/gp/（F1 步骤 3，r35 第六层）
+
+run e1f52e3f 实证：产物闸强制 fix 产出 tests/gp 断言，Map manifest F1 不认领 tests/ →
+radius unclaimed → impact_anchor_missing → 生产 diff-gate 折叠 mapper_stale 无限 backoff
+（f9f943fc 同源），evaluator 永远派不出去。修：manifest F1 path_prefixes 加 tests/gp/ +
+断言测试防回退。两个闸的产物/认领清单必须同步演进。
 
 ## Brain 1.273.103 — canonical runner digest 重钉 42327acf（102 镜像被 prune 误清）
 
