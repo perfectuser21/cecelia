@@ -33,6 +33,14 @@ describe('canonical runner digest pin 一致性', () => {
     }
   });
 
+  it('DEFINITION.md 最新版本条目记录的 digest 与代码 pin 一致（repin 留痕完整）', () => {
+    const codeDigest = listNodeProfiles()[0].runner_image_digest;
+    const definition = fs.readFileSync(path.join(ROOT, 'DEFINITION.md'), 'utf8');
+    // 最新一条「重钉」记录必须等于当前代码 pin——防 repin 只改代码不留痕（r36 批次实证补强）
+    const noted = definition.match(/重钉为 `(sha256:[a-f0-9]{64})`/);
+    expect(noted?.[1], 'DEFINITION 需记录最新重钉 digest').toBe(codeDigest);
+  });
+
   it('rollout / reconcile / installer 脚本 pin 一致（防 repin 漏改）', () => {
     const codeDigest = listNodeProfiles()[0].runner_image_digest;
     for (const rel of [
