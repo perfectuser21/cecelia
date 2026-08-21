@@ -68,6 +68,23 @@ export function assertTestContractResolvable(contractContent, artifacts) {
     });
     if (!resolution.resolvedPath) {
       unresolved.push(testFile);
+      continue;
+    }
+    // r39（run d2334022）：BEHAVIOR 覆盖名与冻结 it() 名不匹配时，CI 覆盖检查在
+    // generator 后才红，而合同与冻结测试封印后双不可变 → fix 无解死局。封印时用
+    // check-test-coverage 相同的匹配语义（it/test 名提取 + 双向小写子串）提前拦截。
+    if (!testFile.endsWith('.sh')) {
+      const rel = path.relative(VIRTUAL_ROOT, resolution.resolvedPath).split(path.sep).join('/');
+      const artifact = (Array.isArray(artifacts) ? artifacts : []).find((a) => a?.path === rel);
+      const content = typeof artifact?.content === 'string' ? artifact.content : '';
+      const itNames = [...content.matchAll(/\b(?:it|test)\(['"]([^'"]+)['"]/g)].map((m) => m[1]);
+      for (const behavior of (Array.isArray(row?.behaviors) ? row.behaviors : [])) {
+        const found = itNames.some(
+          (n) => n.toLowerCase().includes(String(behavior).toLowerCase())
+            || String(behavior).toLowerCase().includes(n.toLowerCase()),
+        );
+        if (!found) unresolved.push(`${testFile}#behavior:${behavior}`);
+      }
     }
   }
   if (unresolved.length > 0) {
