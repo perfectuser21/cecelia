@@ -1215,6 +1215,18 @@ function materializeContractArtifacts(workspacePath, artifacts) {
     if (!destination.startsWith(workspacePrefix)) {
       throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:path_escape');
     }
+    // r40（run 08b3b2b5）：evaluator 候选 checkout 后（fix 勾过的 contract-dod=[x]）被本
+    // 函数用封印 [ ] 版 O_TRUNC 覆盖 → runner 的 candidate tree assertion 正确报 drift →
+    // evaluator 必死。worker 只负责补缺失文件（generator 全新工作区场景）；已存在文件的
+    // 一致性由 runner materializer（含 contract-dod checkbox 豁免）与树断言权威校验，
+    // worker 覆盖只会破坏候选。
+    let existsAlready = false;
+    try {
+      existsAlready = fs.lstatSync(destination).isFile();
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+    if (existsAlready) continue;
     let writeFd = null;
     let readFd = null;
     try {

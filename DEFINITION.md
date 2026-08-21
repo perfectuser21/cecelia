@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.108
+**Brain 版本**: 1.273.109
+
+## Brain 1.273.109 — worker 物化只补缺失文件（F1 步骤 3，r40 evaluator 回写案卷）
+
+run 08b3b2b5：fix 首次干净通过全部复核后，evaluator prepare 的 worker materializeContractArtifacts
+无条件 O_TRUNC 把候选里 fix 勾过的 contract-dod.md 回写成封印版 → candidate tree assertion
+正确报 drift → evaluator 两连死。修：worker 只补缺失文件；已存在文件的一致性由 runner
+materializer（checkbox 豁免）与树断言权威校验。部署面=fleet-rollout（worker 侧脚本）。
 
 ## Brain 1.273.108 — 封印闸扩展 BEHAVIOR 覆盖名校验（F1 步骤 3，r39 双不可变死局）
 
