@@ -203,7 +203,11 @@ export function createKernelHandlers(deps) {
       const pr = ctx.observed.pr;
       if (!pr?.url) return { status: 'BLOCKED', detail: 'merge requires PR URL' };
       if (pr.merged || pr.state === 'MERGED') return { status: 'DONE', detail: 'already merged' };
-      if (pr.mergeStateStatus === 'CONFLICTING') {
+      // run 08b3b2b5 案卷：GitHub GraphQL mergeStateStatus 的冲突枚举值是
+      // 'DIRTY'（'CONFLICTING' 属于 `mergeable` 字段的枚举）。只判 CONFLICTING
+      // 时 DIRTY 漏网直接 `gh pr merge` → "not mergeable" throw →
+      // kernel_process_fatal 烧掉整条 run。两个值都拦，fail-closed。
+      if (pr.mergeStateStatus === 'DIRTY' || pr.mergeStateStatus === 'CONFLICTING') {
         return { status: 'BLOCKED', detail: 'PR has merge conflicts' };
       }
       if (pr.mergeStateStatus === 'BEHIND') {
@@ -232,10 +236,20 @@ export function createKernelHandlers(deps) {
           return { status: 'BLOCKED', detail: fence.reason ?? 'impact merge fence failed' };
         }
       }
-      deps.execCmd(
-        `gh pr merge ${shellQuote(pr.url)} --squash --delete-branch `
-        + `--match-head-commit ${shellQuote(pr.head_sha)}`,
-      );
+      // merge 命令失败（观测与 GitHub 实况的竞态：刚变 DIRTY/BEHIND、head 刚动）
+      // 是可观测、可重试的外部状态，不是进程性 fatal——降级 BLOCKED 让下一轮
+      // 重新观测路由，绝不因一条 gh 命令烧掉整条 run（run 08b3b2b5 案卷）。
+      try {
+        deps.execCmd(
+          `gh pr merge ${shellQuote(pr.url)} --squash --delete-branch `
+          + `--match-head-commit ${shellQuote(pr.head_sha)}`,
+        );
+      } catch (error) {
+        return {
+          status: 'BLOCKED',
+          detail: `merge command failed: ${String(error?.message ?? error).slice(0, 200)}`,
+        };
+      }
       return { status: 'DONE', detail: 'merge requested' };
     },
 
