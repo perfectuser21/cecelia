@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.107
+**Brain 版本**: 1.273.108
+
+## Brain 1.273.108 — 封印闸扩展 BEHAVIOR 覆盖名校验（F1 步骤 3，r39 双不可变死局）
+
+run d2334022 实证第四层 learning 漏项：表 BEHAVIOR 覆盖名非冻结 it() 名子串（v9.5 死规则）
+在 generator 后才被 CI 发现，封印后合同与冻结测试双不可变 → fix 无解。封印时用
+check-test-coverage 同一匹配语义（it/test 名双向小写子串）提前拦截，propose 轮可重写。
+原则重申：不可变产物的全部机械可校验性质必须在封印时点校验完。
 
 ## Brain 1.273.107 — mapCiStatus BEHIND 严判（F1 步骤 3，r34/r38 merge 空转根因）
 

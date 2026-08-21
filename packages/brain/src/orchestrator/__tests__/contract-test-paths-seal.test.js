@@ -6,7 +6,7 @@ import { assertTestContractResolvable } from '../contract-test-paths-seal.js';
 const SPRINT = 'sprints/08210608-kernel-x';
 const ARTIFACTS = [
   { path: `${SPRINT}/contract-draft.md` },
-  { path: `${SPRINT}/tests/a.test.js` },
+  { path: `${SPRINT}/tests/a.test.js`, content: "it('y', () => {});" },
 ];
 
 function table(testFile) {

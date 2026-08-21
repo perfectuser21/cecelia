@@ -28,7 +28,7 @@ const ARTIFACTS = [
   artifact(`${SPRINT}/contract-draft.md`),
   artifact(`${SPRINT}/contract-dod.md`),
   artifact(`${SPRINT}/sprint-prd.md`),
-  artifact(`${SPRINT}/tests/diff-gate-reason-passthrough.test.js`),
+  { path: `${SPRINT}/tests/diff-gate-reason-passthrough.test.js`, content: "it('unknown 状态透传 reason_code 且 retryable false', () => {});\nit('unknown 无 reason_code 回退 mapper_unknown', () => {});", sha256: 'a'.repeat(64), source_revision: 'b'.repeat(40) },
 ];
 
 // r33 真实合同表形态（省略号 + 反引号 + `+` 连接 repo 既有测试 + 「同上」行）：
