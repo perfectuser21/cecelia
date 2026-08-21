@@ -1,0 +1,29 @@
+{
+  "initiative_id": "intent:a12024ee-3c15-42a6-9224-3d2cfe3a798d:4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅落 packages/brain/ 后端 impact-contract 门禁分类逻辑，无 UI / 无远端 agent 协议，属自治后端。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff/Structure Impact Gate 透传具体 reason_code + 确定性终态 fail-closed 出口（retryable:false），瞬态保持可重试",
+      "scope": "让 diff-gate.js 与 structure-gate.js 对 Mapper 不可判定结论透传具体 reason_code（不再折叠成笼统 mapper_stale）；按 reason 枚举白名单分流——基础设施类瞬态(mapper_unavailable/db_unavailable/mapper_stale/revision_evidence_missing 等)保持 retryable:true，确定性终态(稳定 revision/manifest/projection digest mismatch)及未知 reason 走 fail-closed 出口 retryable:false；同步更新既有单测中对终态 retryable 的旧断言。不改 loop.js（终态出口 loop.js:1661-1664 既有）、Mapper freshness 计算、全局重试上限。",
+      "dod": [
+        "[BEHAVIOR] 确定性终态(projection/manifest/revision digest mismatch)透传具体 reason_code 且 retryable=false —— 对应冻结测试 \"终态\" 用例",
+        "[BEHAVIOR] 基础设施类瞬态(mapper_unavailable/mapper_stale/revision_evidence_missing)保持 retryable=true —— 对应冻结测试 \"瞬态\" 用例",
+        "[BEHAVIOR] freshness 携带具体 reason_code 时透传、未知 reason 默认 fail-closed retryable=false —— 对应 \"透传\"/\"未知\" 用例",
+        "[BEHAVIOR] structure-gate 同源折叠对齐(终态 retryable=false、瞬态 retryable=true) —— 对应 \"Structure Gate\" 用例",
+        "[BEHAVIOR] 既有 impact-contract 回归全绿(旧终态 retryable 断言同步更新)",
+        "[ARTIFACT] sprints/08211504-kernel-e9e0db8f/tests/diff-impact-gate-reason-passthrough.test.js 存在并全绿"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/structure-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+        "packages/brain/src/impact-contract/__tests__/structure-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
