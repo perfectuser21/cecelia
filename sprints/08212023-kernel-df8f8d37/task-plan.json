@@ -1,0 +1,28 @@
+{
+  "initiative_id": "08b3b2b5-ac29-4ae1-9693-d2345135631d",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain 后端 kernel gate 判定逻辑，无 UI / agent 协议 / engine hooks。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 步骤 3a 透传 freshness.reason_code + 依确定性名单判 retryable，gateReceipt 透传 reason_code",
+      "scope": "diff-gate.js 3a 出口：透传 mapperResult.freshness.reason_code 到结果 reason_code；确定性 reason_code（projection_revision_mismatch 等结构性/revision 不一致码）→ retryable:false 且 reason 展示真码；瞬时白名单（fact_snapshot_stale/projection_revision_missing）或 reason_code 缺失 → retryable:true（reason 缺失回退 mapper_stale）。harness-gates.js：导出 gateReceipt 并在收据透传 reason_code 字段。不改其它 impact_unknown 出口 / Map 服务端 / kernel 重试调度器。",
+      "dod": [
+        "[BEHAVIOR] 确定性 reason_code 透传真码且 retryable=false（node sprints/08212023-kernel-df8f8d37/tests/dod-assert.mjs deterministic_mismatch）",
+        "[BEHAVIOR] 瞬时/缺失 reason_code 保留 retryable=true（transient_fact_stale / transient_null）",
+        "[BEHAVIOR] gateReceipt 透传 reason_code 且 retryable 随之（receipt_passthrough）",
+        "[BEHAVIOR] 冻结 sprint 测试 diff-gate-reason-code.test.js 全绿",
+        "[ARTIFACT] diff-gate.js 含 TRANSIENT_FRESHNESS_REASON_CODES 常量与 reason_code 透传",
+        "[ARTIFACT] harness-gates.js 导出 gateReceipt 且收据含 reason_code 字段"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/harness-gates.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
