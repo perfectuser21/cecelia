@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.105
+**Brain 版本**: 1.273.106
 
 ## Brain 1.273.105 — proposer finalizer push 前树校验（F1 步骤 3，r36 第七层）
 
