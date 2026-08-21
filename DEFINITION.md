@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.102
+**Brain 版本**: 1.273.103
 
 ## Brain 1.273.102 — contract-dod.md checkbox-only 豁免（F1 步骤 3，r34 第五层）
 
