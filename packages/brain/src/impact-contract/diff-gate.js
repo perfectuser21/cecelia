@@ -208,12 +208,17 @@ export async function evaluateDiffGate({
     // 用 ?? 而非 falsy：freshness 缺失或无 reason_code 字段才落 null；空串等具体码保留为确定性。
     const reasonCode = mapperResult?.freshness?.reason_code ?? null;
     const retryable = reasonCode === null || TRANSIENT_FRESHNESS_CODES.includes(reasonCode);
+    const unclaimedFiles = Array.isArray(mapperResult?.freshness?.unclaimed_files)
+      ? mapperResult.freshness.unclaimed_files.slice(0, 64)
+      : null;
     return {
       gate: 'impact_unknown',
       // 归因标签：具体 reason_code 存在则用之；仅 null（纯瞬时兜底）回落 mapper_stale。
       reason: reasonCode ?? 'mapper_stale',
       reason_code: reasonCode,
       retryable,
+      // r43 案卷：确定性判死必须可考古——unclaimed 清单随 gate 结果落 evidence。
+      ...(unclaimedFiles ? { unclaimed_files: unclaimedFiles } : {}),
     };
   }
 

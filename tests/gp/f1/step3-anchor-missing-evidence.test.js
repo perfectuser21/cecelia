@@ -20,7 +20,7 @@ function radiusDeps() {
     manifest_version_id: 'mv-1',
     manifest_digest: 'digest-1',
     projection_digest: 'pd-1',
-    source_revisions: { cecelia: REV },
+    fact_revisions: { cecelia: REV },
   };
   return {
     db: {
@@ -70,12 +70,11 @@ describe('F1 step3：impact_anchor_missing 留痕 unclaimed 文件清单（r43 �
 
   it('diff-gate 3a：unclaimed_files 透传进 gate 返回（kernel evidence 可考古）', async () => {
     const gate = await evaluateDiffGate({
-      db: { query: vi.fn(async () => ({ rows: [] })) },
+      db: null,
       taskId: 't-1',
       repo: 'cecelia',
       headRevision: 'b'.repeat(40),
       changedFiles: ['apps/unclaimed/file.js'],
-      contract: { base_revision: REV, repo: 'cecelia', contract_hash: 'h' },
       mapClient: async () => ({
         freshness: {
           status: 'unknown',
