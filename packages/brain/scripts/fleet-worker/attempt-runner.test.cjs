@@ -3301,3 +3301,34 @@ describe('Fleet claude 单链挂载（attempt d80312c0 Not logged in 案卷回�
     }
   });
 });
+
+describe('worker 物化不覆盖已存在合同文件（r40 evaluator 候选被回写封印版案卷）', () => {
+  const { materializeContractArtifacts } = require('./attempt-runner.cjs').__test__;
+  const mk = () => fs.mkdtempSync(path.join(os.tmpdir(), 'no-trunc-'));
+  const art = (p, content) => ({
+    path: p, content,
+    sha256: crypto.createHash('sha256').update(content).digest('hex'),
+    byte_length: Buffer.byteLength(content),
+    source_revision: 'b'.repeat(40),
+  });
+
+  it('已存在文件（候选 fix 勾选版）不被封印版覆盖——一致性归 runner 校验', () => {
+    // r40 run 08b3b2b5：evaluator checkout 候选（contract-dod=[x]）后，worker 物化用封印
+    // [ ] 版 O_TRUNC 覆盖 → candidate tree assertion 报 drift → evaluator 必死。
+    const ws = mk();
+    const rel = 'sprints/x/contract-dod.md';
+    fs.mkdirSync(path.dirname(path.join(ws, rel)), { recursive: true });
+    fs.writeFileSync(path.join(ws, rel), '- [x] done');
+    materializeContractArtifacts(ws, [art(rel, '- [ ] done')]);
+    expect(fs.readFileSync(path.join(ws, rel), 'utf8')).toBe('- [x] done');
+    fs.rmSync(ws, { recursive: true, force: true });
+  });
+
+  it('缺失文件照常写入（generator 场景不变）', () => {
+    const ws = mk();
+    const rel = 'sprints/x/tests/a.test.ts';
+    materializeContractArtifacts(ws, [art(rel, 'RED')]);
+    expect(fs.readFileSync(path.join(ws, rel), 'utf8')).toBe('RED');
+    fs.rmSync(ws, { recursive: true, force: true });
+  });
+});

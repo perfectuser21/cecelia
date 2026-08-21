@@ -2534,6 +2534,7 @@ module.exports = {
   __test__: Object.freeze({
     defaultWriteCredential,
     defaultWriteGitHubCredential,
+    materializeContractArtifacts,
   }),
   createAttemptRunner,
   createDockerAdapter,
