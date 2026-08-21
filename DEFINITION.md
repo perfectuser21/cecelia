@@ -8,7 +8,15 @@
 
 
 
-**Brain 版本**: 1.273.106
+**Brain 版本**: 1.273.107
+
+## Brain 1.273.107 — mapCiStatus BEHIND 严判（F1 步骤 3，r34/r38 merge 空转根因）
+
+PR BEHIND 时 mergeStateStatus 非 BLOCKED，「非 BLOCKED ⇒ 红项皆非 required」豁免失真：
+required 双红被判 pass → derive 4e merge_pr 空转死循环，fix 路由（3c ci_fail）永远到不了
+（r34 判死主因；r38 手动 update-branch 又引发头漂移权威失配二次伤害）。修：BEHIND 与
+BLOCKED 同款严判；UNSTABLE 等豁免保持（0955c884）。运行时 SOP：头漂移救法=force PR 头
+回 judge 授权候选头。
 
 ## Brain 1.273.106 — manifest v5 落盘：F1 认领 DoD.md（F1 步骤 3，r37 尾件）
 
