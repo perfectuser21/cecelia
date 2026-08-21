@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.107
+**Brain 版本**: 1.273.108
 
 ## Brain 1.273.107 — mapCiStatus BEHIND 严判（F1 步骤 3，r34/r38 merge 空转根因）
 
