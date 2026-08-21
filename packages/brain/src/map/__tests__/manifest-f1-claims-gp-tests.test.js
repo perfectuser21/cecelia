@@ -21,4 +21,12 @@ describe('cecelia map manifest：F1 认领 GP 步骤断言路径', () => {
     expect(f1, 'manifest 必须有 F1').toBeTruthy();
     expect(f1.path_prefixes).toContain('tests/gp/');
   });
+
+  it('F1 exact_paths 认领 fix 常规根文件（r37：DoD 勾选与版本 bump 产物 unclaimed 卡 evaluator）', () => {
+    const manifest = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
+    const f1 = manifest.capabilities.find((cap) => cap.key === 'F1');
+    for (const p of ['DoD.md', '.brain-versions', 'DEFINITION.md', 'package-lock.json']) {
+      expect(f1.exact_paths, `F1 必须认领 ${p}`).toContain(p);
+    }
+  });
 });
