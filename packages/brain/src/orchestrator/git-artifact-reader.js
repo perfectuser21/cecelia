@@ -26,6 +26,30 @@ function assertSupportedRepo(repo) {
   }
 }
 
+/**
+ * 存量 contract 兼容（2026-08-22 r40 run 08b3b2b5 hop 182 生产死锁）：
+ * harness_impact_contracts 存量 239 条 repo 存的是短名（'cecelia'），跨仓库安全
+ * 加固后 assertSupportedRepo 只认 owner/repo 全名，短名直接 throw；readChangedFiles
+ * 的 catch 把它折叠成 git_diff_unavailable(retryable=true) → merge 闸每轮重试每轮死。
+ * 修：短名在白名单内做唯一后缀规范化（'cecelia' → 'perfectuser21/cecelia'）。
+ * 白名单外/歧义仍 fail-closed——信任边界不放松，只兼容既有权威仓库的历史写法。
+ */
+export function normalizeArtifactRepo(repo) {
+  if (repo == null) return null;
+  const value = String(repo);
+  if (value.includes('/')) {
+    assertSupportedRepo(value);
+    return value;
+  }
+  const matches = WORKSPACE_REPOSITORIES.filter(
+    (candidate) => candidate.split('/')[1] === value,
+  );
+  if (matches.length !== 1) {
+    throw new Error(`git artifact repo must be a supported authoritative repository: ${value}`);
+  }
+  return matches[0];
+}
+
 function originRepo(cwd) {
   let url;
   try {
@@ -46,8 +70,8 @@ function originRepo(cwd) {
  */
 function resolveFetchRemote(cwd, repo, remoteUrlForRepo) {
   if (repo == null) return 'origin';
-  assertSupportedRepo(repo);
-  return originRepo(cwd) === repo.toLowerCase() ? 'origin' : remoteUrlForRepo(repo);
+  const canonical = normalizeArtifactRepo(repo);
+  return originRepo(cwd) === canonical.toLowerCase() ? 'origin' : remoteUrlForRepo(canonical);
 }
 
 function assertRepositoryRelative(filePath) {
