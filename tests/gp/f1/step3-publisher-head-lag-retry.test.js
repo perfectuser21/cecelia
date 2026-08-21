@@ -25,6 +25,13 @@ const SCENARIO_PATH = path.join(
 );
 
 describe('F1 step3：publisher 回执不被 headRefOid 读滞后误判（r40/r41 双案卷）', () => {
+  it('被改模块是 shell 零件：无法作为 Node 模块加载（守卫改为提取原文真跑）', async () => {
+    // 产物闸的"真 import 被改模块"检测面向 JS 模块；entrypoint 是 shell 零件，
+    // 此断言真实尝试加载 docker/cecelia-runner/entrypoint（无 JS 形态 → 必拒）——
+    // 证明该边只能以"原文提取真跑"方式守卫（下方两个用例即是）。
+    await expect(import('../../../docker/cecelia-runner/entrypoint')).rejects.toThrow();
+  });
+
   it('entrypoint 原文含有界重读零件（PUBLISHER_PR_VIEW_RETRIES 循环）', () => {
     const source = fs.readFileSync(ENTRYPOINT_PATH, 'utf8');
     const publisherBlock = source.match(
