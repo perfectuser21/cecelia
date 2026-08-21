@@ -258,7 +258,7 @@ printf '%s\n' \
   'fi' \
   'source="$(cat)"' \
   'case "$source" in' \
-  '  *runner_image_digest*) printf "%s" "sha256:2210233ba868b0230f07180cabf8fc382d024b56df3649c9d2f9c2c26bb3a7c9" ;;' \
+  '  *runner_image_digest*) printf "%s" "sha256:c8133468d329168d641b48d206b29ea21748469bef98882fcdb6a009f8425ef7" ;;' \
   '  *runtime_resources.postgres.image_digest*) printf "%s" "pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62" ;;' \
   '  *resources.disk_min_free_gib*) printf "%s" "10" ;;' \
   '  *worker_bind_host*) printf "%s" "100.86.57.69" ;;' \

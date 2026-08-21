@@ -11,7 +11,7 @@ node --input-type=module <<'NODE'
 import { listNodeProfiles } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const expectedDigest =
-  'sha256:2210233ba868b0230f07180cabf8fc382d024b56df3649c9d2f9c2c26bb3a7c9';
+  'sha256:c8133468d329168d641b48d206b29ea21748469bef98882fcdb6a009f8425ef7';
 const profiles = listNodeProfiles();
 
 if (profiles.length !== 3) throw new Error(`expected 3 canonical nodes, got ${profiles.length}`);
