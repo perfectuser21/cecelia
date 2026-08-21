@@ -932,6 +932,13 @@ finalize_proposer_output() {
       >/dev/null || return 1
   fi
 
+  # r36（run 40f00669）：Provider 自己 commit 时可能把冻结测试留在盘上没提交（文档进树、
+  # tests 没进），上面的盘检查拦不住——push 出去的树缺测试，封印 requireTests 在 reviewer
+  # APPROVED 之后才拦（太晚太贵且 proposer 无反馈重试机会）。push 前按 HEAD 树校验。
+  if [[ -z "$(git -C "$workspace_abs" ls-tree -r HEAD --name-only -- "$sprint_dir/tests" 2>/dev/null | head -1)" ]]; then
+    echo "[entrypoint] proposer finalizer contract tests missing from HEAD tree: $sprint_dir/tests" >&2
+    return 1
+  fi
   git -C "$workspace_abs" push origin "HEAD:refs/heads/$branch" >/dev/null || return 1
   git -C "$workspace_abs" ls-remote --exit-code --heads origin "refs/heads/$branch" \
     >/dev/null || return 1
