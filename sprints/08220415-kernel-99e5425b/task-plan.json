@@ -1,0 +1,26 @@
+{
+  "initiative_id": "intent:f44bdef7-24ac-4193-9dbc-0e5b2787b648:4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 纯后端 harness Diff Impact Gate 裁决逻辑，无 UI/agent 协议/engine",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 3a 透传 freshness.reason_code + 确定性码 fail-closed 出口 + gateReceipt 透传",
+      "scope": "diff-gate.js 步骤 3a 非 fresh 出口读取 mapperResult.freshness.reason_code 写入结果 reason_code；瞬时白名单(fact_snapshot_stale/projection_revision_missing)与 null 保留 retryable=true，其余确定性码 retryable=false；harness-gates.js gateReceipt 返回对象新增透传 reason_code，deny 标签不再裸 mapper_stale",
+      "dod": [
+        "[BEHAVIOR] 确定性码 no_anchor 透传进 reason_code 且 retryable=false（B-01）",
+        "[BEHAVIOR] 瞬时白名单二码与 null 保留 retryable=true（B-02/B-03）",
+        "[BEHAVIOR] gateReceipt diff deny 标签透传具体 reason_code 不再裸 mapper_stale（B-04）",
+        "[BEHAVIOR] 白名单外未知码归确定性 fail-closed retryable=false（B-05）",
+        "[ARTIFACT] diff-gate.js 3a 与 harness-gates.js gateReceipt 均含 reason_code 透传"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/harness-gates.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 40
+    }
+  ]
+}
