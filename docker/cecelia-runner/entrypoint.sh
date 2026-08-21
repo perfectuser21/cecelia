@@ -465,8 +465,27 @@ publish_approved_generator_candidate() {
       --repo "$repo" --json url,headRefOid --jq '"\(.url)|\(.headRefOid)"')" || return 1
   fi
   IFS='|' read -r pr_url pr_head <<< "$pr_info"
-  if [[ ! "$pr_url" =~ ^https://github\.com/${repo}/pull/[1-9][0-9]*$ ]] \
-      || [[ "$pr_head" != "$head_sha" ]]; then
+  if [[ ! "$pr_url" =~ ^https://github\.com/${repo}/pull/[1-9][0-9]*$ ]]; then
+    echo "[entrypoint] trusted publisher PR head mismatch" >&2
+    return 1
+  fi
+  # r40 hop171 / r41 hop52 案卷：push 成功且 ls-remote 已确认远端 ref==head_sha 后，
+  # `gh pr view` 的 headRefOid 仍可能读到旧头（GitHub API 读复制滞后）。URL 合法但
+  # head 不一致时有界重读；仍不一致才判失败——重试只等 API 追上，不放松身份校验。
+  local head_lag_retries
+  head_lag_retries="${PUBLISHER_PR_VIEW_RETRIES:-5}"
+  while [[ "$pr_head" != "$head_sha" ]] && (( head_lag_retries > 0 )); do
+    head_lag_retries=$((head_lag_retries - 1))
+    sleep 3
+    pr_info="$(GH_CONFIG_DIR="$TRUSTED_GITHUB_CONFIG_DIR" gh pr view "$branch" \
+      --repo "$repo" --json url,headRefOid --jq '"\(.url)|\(.headRefOid)"')" || return 1
+    IFS='|' read -r pr_url pr_head <<< "$pr_info"
+    if [[ ! "$pr_url" =~ ^https://github\.com/${repo}/pull/[1-9][0-9]*$ ]]; then
+      echo "[entrypoint] trusted publisher PR head mismatch" >&2
+      return 1
+    fi
+  done
+  if [[ "$pr_head" != "$head_sha" ]]; then
     echo "[entrypoint] trusted publisher PR head mismatch" >&2
     return 1
   fi
