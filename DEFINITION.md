@@ -8,8 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.112
+**Brain 版本**: 1.273.113
 
+## Brain 1.273.113 — runner digest repin bd9f49ca（publisher 读滞后重试进镜像）
+
+1.273.112 的 entrypoint 修复构建进 runner 镜像（build head 2c3341a6e），canonical Runner digest 重钉为 `sha256:bd9f49cade888003e29558137c32a9c2f95867052d8418dc161dafd8a7833edb`，全部 pin 位置同步（历史条目保留旧 digest 原文）。
 ## Brain 1.273.112 — publisher 对 headRefOid 读滞后有界重读（F1 步骤 3，r40/r41 双案卷）
 
 r40 hop171 与 r41 hop52 同因：publisher push 成功且 ls-remote 确认后立刻 gh pr view，GitHub API headRefOid 读滞后返回旧头 → PR head mismatch → publisher_authority_invalid，实际发布已完成。修：URL 合法但 head 不一致时有界重读（PUBLISHER_PR_VIEW_RETRIES 默认 5 次×3s），仍不一致才失败；重试不放松身份校验（负向用例保留）。
