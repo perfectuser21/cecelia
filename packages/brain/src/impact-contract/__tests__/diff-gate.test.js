@@ -564,4 +564,73 @@ describe('FR-4 Diff Impact Gate', () => {
 
   });
 
+  // ── r36：Diff Impact Gate 步骤 3a — 确定性 Map 结论透传 reason_code + fail-closed ──
+  // 复现 runs f62c7e87 / d1360a48：Mapper 已给确定性 deny 结论，却被折叠成
+  // mapper_stale + retryable:true 无限重试空转。修复后确定性结论必须透传 reason_code
+  // 并以 retryable:false 终态出口收尾；仅真正瞬时不新鲜（无 reason_code）保留 mapper_stale 重试。
+  describe('步骤3a：Mapper 非 fresh 分流（确定性 fail-closed vs 瞬时 retryable）', () => {
+
+    // 构造一个返回指定 freshness 的 stale Mapper，其余字段占位（3a 在任何 digest/revision 检查前返回）
+    const staleMapper = (freshness) => vi.fn(async () => ({
+      manifest_digest: '1'.repeat(64),
+      projection_digest: '2'.repeat(64),
+      fact_revisions: { cecelia: 'base' },
+      freshness,
+      affected_nodes: [],
+      required_assertions: [],
+    }));
+
+    const activeContractDb = () => ({
+      query: vi.fn(async () => ({ rows: [{
+        id: 'contract-stale', repo: 'cecelia', base_revision: 'base',
+        contract_body: { affected_capabilities: [], required_assertions: [] },
+      }] })),
+    });
+
+    test('确定性结论（stale + reason_code=deny:impact:*）透传 reason_code 且 retryable=false，不折叠成 mapper_stale', async () => {
+      const mapClient = staleMapper({ status: 'stale', reason_code: 'deny:impact:manifest_unclaimed' });
+      const result = await evaluateDiffGate({
+        db: activeContractDb(), taskId: 'task-3a-deny', repo: 'cecelia', headRevision: 'head', mapClient,
+      });
+      // 透传原始确定性码
+      expect(result.reason_code).toBe('deny:impact:manifest_unclaimed');
+      // fail-closed 终态：不可重试
+      expect(result.retryable).toBe(false);
+      // 不再折叠成通用 mapper_stale
+      expect(result.reason).not.toBe('mapper_stale');
+      // 仍走既有 impact_unknown gate（不新增枚举）
+      expect(result.gate).toBe('impact_unknown');
+    });
+
+    test('unknown 状态携带确定性 reason_code 时同样 fail-closed 透传（默认宁停不空转）', async () => {
+      const mapClient = staleMapper({ status: 'unknown', reason_code: 'deny:impact:projection_missing' });
+      const result = await evaluateDiffGate({
+        db: activeContractDb(), taskId: 'task-3a-unknown', repo: 'cecelia', headRevision: 'head', mapClient,
+      });
+      expect(result.reason_code).toBe('deny:impact:projection_missing');
+      expect(result.retryable).toBe(false);
+      expect(result.gate).toBe('impact_unknown');
+    });
+
+    test('真正瞬时不新鲜（stale 无 reason_code）保留 mapper_stale + retryable=true（重试语义不回退）', async () => {
+      const mapClient = staleMapper({ status: 'stale' });
+      const result = await evaluateDiffGate({
+        db: activeContractDb(), taskId: 'task-3a-transient', repo: 'cecelia', headRevision: 'head', mapClient,
+      });
+      expect(result.reason).toBe('mapper_stale');
+      expect(result.retryable).toBe(true);
+      expect(result.gate).toBe('impact_unknown');
+    });
+
+    test('reason_code 为空字符串/空白视为瞬时，保留 mapper_stale 重试（边界：不当确定性结论）', async () => {
+      const mapClient = staleMapper({ status: 'stale', reason_code: '   ' });
+      const result = await evaluateDiffGate({
+        db: activeContractDb(), taskId: 'task-3a-empty', repo: 'cecelia', headRevision: 'head', mapClient,
+      });
+      expect(result.reason).toBe('mapper_stale');
+      expect(result.retryable).toBe(true);
+    });
+
+  });
+
 });

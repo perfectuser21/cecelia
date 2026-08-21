@@ -1,0 +1,25 @@
+{
+  "initiative_id": "0f76c348-6d89-4856-beb6-90b366548f3b",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅落 packages/brain/ 纯后端 impact-contract 裁决逻辑，无 UI / 远端 agent / engine 介入",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 步骤3a 确定性 reason_code 透传 + fail-closed 出口分流",
+      "scope": "在 evaluateDiffGate 步骤 3a 将 freshness 非 fresh 分支拆分为两条：freshness.reason_code 非空白 → 透传该 reason_code 且 retryable:false（fail-closed 终态，reason 非 mapper_stale）；否则保留既有 mapper_stale + retryable:true。不改步骤 1/2/3b/4/5 及 Mapper 产出实现。",
+      "dod": [
+        "[BEHAVIOR] 确定性 stale/unknown+reason_code → verdict 透传 reason_code 且 retryable=false、reason!=mapper_stale、gate=impact_unknown（B-01/B-02）",
+        "[BEHAVIOR] 瞬时 stale 无/空白 reason_code → verdict reason=mapper_stale 且 retryable=true（B-03/B-04，语义不回退）",
+        "[BEHAVIOR] diff-gate.test.js 全量套件绿，既有 pass/extend/drift/fail-closed 回归不回退（INV-1/B-05）",
+        "[ARTIFACT] diff-gate.test.js 含步骤3a 分流回归 describe 块"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
