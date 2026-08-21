@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.110
+**Brain 版本**: 1.273.111
 
 ## Brain 1.273.110 — git-artifact-reader 兼容存量短名 contract repo（F1 步骤 3，r40 merge 闸案卷）
 
