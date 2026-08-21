@@ -8,8 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.113
+**Brain 版本**: 1.273.114
 
+## Brain 1.273.114 — Diff Impact Gate 透传 freshness.reason_code + 确定性码 fail-closed 出口（F1 步骤 3，r42）
+
+`evaluateDiffGate` 步骤 3a 把 Mapper 任意非 fresh freshness 一律折叠成裸 `mapper_stale` + `retryable:true`，确定性结论（no_anchor/revision_mismatch/resolver_error 等）被当瞬时无限重试 → run 空转。修：3a 出口透传 `freshness.reason_code`，瞬时白名单（`fact_snapshot_stale`/`projection_revision_missing`）与 `null` 保留 `retryable:true`，其余确定性码 fail-closed（`retryable:false`）；`gateReceipt` 透传 `reason_code` 使 deny 标签归因到具体码，不再裸 `mapper_stale`。3a 仍返回 `impact_unknown` 不假绿。
 ## Brain 1.273.113 — runner digest repin bd9f49ca（publisher 读滞后重试进镜像）
 
 1.273.112 的 entrypoint 修复构建进 runner 镜像（build head 2c3341a6e），canonical Runner digest 重钉为 `sha256:bd9f49cade888003e29558137c32a9c2f95867052d8418dc161dafd8a7833edb`，全部 pin 位置同步（历史条目保留旧 digest 原文）。

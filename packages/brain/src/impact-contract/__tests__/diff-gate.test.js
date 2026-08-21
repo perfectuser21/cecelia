@@ -565,3 +565,60 @@ describe('FR-4 Diff Impact Gate', () => {
   });
 
 });
+
+// ── 回归（既有 diff-gate 契约不破）——对应 sprint 08220415-kernel-99e5425b 合同 ## Test Contract
+// 最后一行「回归」：r42 reason_code 透传改动只碰 3a 非 fresh 出口，本块守 fresh 路径与
+// 3b revision_mismatch 出口在改动后仍不变（现绿，改后仍绿）。
+describe('回归（既有 diff-gate 契约不破）', () => {
+
+  test('fresh 路径不变：freshness=fresh 不进 3a 出口（本 sprint 3a reason_code 改动不影响 fresh 路径）', async () => {
+    const BASE = 'base-fresh-abc';
+    const mapClient = async () => ({
+      freshness: { status: 'fresh' },
+      affected_nodes: [],
+      required_assertions: [],
+      fact_revisions: { cecelia: BASE },
+    });
+    const result = await evaluateDiffGate({
+      db: { query: vi.fn(async () => ({ rows: [{
+        id: 'contract-fresh', repo: 'cecelia', base_revision: BASE,
+        contract_body: { affected_capabilities: [], required_assertions: [] },
+      }] })) },
+      taskId: 'task-fresh-regress',
+      mapClient,
+      headRevision: 'head-fresh',
+      repo: 'cecelia',
+      changedFiles: ['packages/brain/src/tick.js'],
+    });
+    // fresh 且 revision 对齐 → 走既有对账判 pass；3a 出口未进入，reason 不是裸 mapper_stale
+    expect(result.gate).toBe('pass');
+    expect(result.reason).not.toBe('mapper_stale');
+    expect(result.reason_code).toBe(null);
+  });
+
+  test('revision_mismatch 路径不变（补充行，非冻结产物）', async () => {
+    const mapClient = async () => ({
+      freshness: { status: 'fresh' },
+      affected_nodes: ['tick-loop'],
+      required_assertions: [],
+      // fact_revisions 与合同 base_revision 不对齐 → 3b revision mismatch 出口
+      fact_revisions: { cecelia: 'stale999' },
+    });
+    const result = await evaluateDiffGate({
+      db: { query: vi.fn(async () => ({ rows: [{
+        id: 'contract-revmis', repo: 'cecelia', base_revision: 'base123',
+        contract_body: { affected_capabilities: [], required_assertions: [] },
+      }] })) },
+      taskId: 'task-revmis-regress',
+      mapClient,
+      headRevision: 'head-revmis',
+      repo: 'cecelia',
+      changedFiles: ['packages/brain/src/tick.js'],
+    });
+    // 3b revision mismatch 出口本 sprint 不改：仍 impact_unknown / revision_mismatch / retryable=true
+    expect(result.gate).toBe('impact_unknown');
+    expect(result.reason).toBe('revision_mismatch');
+    expect(result.retryable).toBe(true);
+  });
+
+});
