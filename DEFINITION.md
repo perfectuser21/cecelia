@@ -8,7 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.105
+**Brain 版本**: 1.273.106
+
+## Brain 1.273.106 — manifest v5 落盘：F1 认领 DoD.md（F1 步骤 3，r37 尾件）
+
+r37 实证 generator 勾选根 DoD.md 被 radius 判 unclaimed → anchor_missing → gate 折叠
+mapper_stale backoff。DB v5 已先行注册激活（r38 据此发车）；本版落盘文件+断言防回退。
+复盘结论：合同投影 pin 语义不可变（触发器正确拦截），manifest 升级追不上在途合同，
+重跑是正规出路。
 
 ## Brain 1.273.105 — proposer finalizer push 前树校验（F1 步骤 3，r36 第七层）
 
