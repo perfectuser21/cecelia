@@ -1,0 +1,26 @@
+{
+  "initiative_id": "e1f52e3f-1ced-474c-886b-f15019286df4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain/ 纯后端影响半径裁决逻辑，无 UI/agent 协议/engine 参与",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "diff-gate.js 步骤 3a 透传 freshness.reason_code + 按 status 决定 retryable（unknown/缺失→fail-closed）",
+      "scope": "把 diff-gate.js 步骤 3a 的常量出口 { reason:'mapper_stale', retryable:true } 改为：reason 透传 mapperResult.freshness.reason_code（缺失/null 回退 'mapper_stale'），retryable = (freshness.status==='stale')；gate 恒保持 impact_unknown。步骤 1/2/3b/4/5 与 Mapper、dispatcher 消费端不动。并把新增 red 回归同步进 packages/brain/src/impact-contract/__tests__/diff-gate.test.js 永久保留。",
+      "dod": [
+        "[BEHAVIOR] unknown 结构性确定结论 → { gate:'impact_unknown', reason:<真实 reason_code>, retryable:false }（终局，不再空转）",
+        "[BEHAVIOR] stale 事实快照滞后 → { reason:<真实 reason_code>, retryable:true }（保留自愈重试，不回退）",
+        "[BEHAVIOR] reason_code 缺失/null 或 freshness 缺失 → reason 回退 'mapper_stale'，retryable 按 status（unknown/无→false）",
+        "[BEHAVIOR] 全仓既有 diff-gate.test.js 20 断言保持绿（无回退）",
+        "[ARTIFACT] sprints/08211041-kernel-638f9ae4/tests/diff-gate-reason-code.test.js 4 条断言全绿"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
