@@ -21,6 +21,26 @@ function digest(content) {
  *
  * 校验失败一律 throw；CLI 入口负责转译为 stderr + exit 1（行为与旧版一致）。
  */
+
+// contract-dod.md 完成状态豁免（2026-08-21 run 00e0d542 attempt 28dd21b6，r34 第五层）：
+// 条目**内容**受 CONTRACT IS LAW 保护不可改，但 checkbox 完成状态翻转（- [ ] → - [x]）
+// 是 DoD 的固有生命周期——CI 门禁（dod-format-check / harness-contract-lint）本来就要求
+// 实现完成后全勾。逐行比对：每处差异必须是同一行的 `- [ ]` 前缀翻转为 `- [x]`，
+// 行数不同/文本改动/反向翻转（[x]→[ ]）一律不豁免。
+function isCheckboxOnlyProgress(sealed, actual) {
+  const sealedLines = String(sealed).split('\n');
+  const actualLines = String(actual).split('\n');
+  if (sealedLines.length !== actualLines.length) return false;
+  const box = /^(\s*)- \[ \](.*)$/;
+  for (let i = 0; i < sealedLines.length; i += 1) {
+    if (sealedLines[i] === actualLines[i]) continue;
+    const m = sealedLines[i].match(box);
+    if (!m) return false;
+    if (actualLines[i] !== `${m[1]}- [x]${m[2]}`) return false;
+  }
+  return true;
+}
+
 function materializeFrozenContractArtifacts(envelope, workspacePath) {
   const bundle = envelope?.task_bundle;
   const role = bundle?.role;
@@ -106,7 +126,9 @@ function materializeFrozenContractArtifacts(envelope, workspacePath) {
 
       if (fs.existsSync(target)) {
         const existing = fs.readFileSync(target, 'utf8');
-        if (existing !== doc.content) {
+        if (existing !== doc.content
+            && !(doc.path.endsWith('/contract-dod.md')
+              && isCheckboxOnlyProgress(doc.content, existing))) {
           throw new Error(`frozen contract document diverged: ${doc.path}`);
         }
       } else if (role === 'evaluator') {
