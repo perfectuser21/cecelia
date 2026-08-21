@@ -1,0 +1,28 @@
+{
+  "initiative_id": "5bfc1af9-2ae2-4496-8fee-882e8af3df1e",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain/ impact-contract 纯后端裁决逻辑，无 UI / agent 协议 / engine 介入",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 3a 透传 reason_code 并按确定性 fail-closed",
+      "scope": "evaluateDiffGate 第 3a 步透传 mapperResult.freshness.reason_code 到返回 reason；瞬时白名单 {fact_snapshot_stale, projection_revision_missing} 或 reason_code==null → retryable:true，其余确定性/未知码 → retryable:false（默认 fail-closed）；导出 gateReceipt 使其可被单测覆盖，确认透传具体 reason_code 不回落裸 mapper_stale",
+      "dod": [
+        "[BEHAVIOR] 确定性 reason_code → reason 具体码 + retryable=false（对应合同 B-01/B-05）",
+        "[BEHAVIOR] 瞬时白名单两码与 null → retryable=true（对应合同 B-02/B-03/B-04）",
+        "[BEHAVIOR] gateReceipt('diff', 结果).reason 为具体码，非裸 mapper_stale（对应合同 B-06）",
+        "[BEHAVIOR] 冻结合同测试 6 条全绿，既有 diff-gate/harness-gates 回归不回退",
+        "[ARTIFACT] sprints/08220132-kernel-d133c55c/tests/diff-gate-reason-code.contract.test.ts 存在"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/harness-gates.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+        "sprints/08220132-kernel-d133c55c/tests/diff-gate-reason-code.contract.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
