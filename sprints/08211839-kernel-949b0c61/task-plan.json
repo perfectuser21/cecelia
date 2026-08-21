@@ -1,0 +1,28 @@
+{
+  "initiative_id": "intent:d2334022-6176-461c-9f17-26a12b7642b4:4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain 后端 impact-contract gate 逻辑，无 UI / 无远端 agent 协议 → autonomous。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff/Structure Impact Gate 透传 freshness.reason_code + 确定性 fail-closed 出口",
+      "scope": "diff-gate.js step 3a 与 structure-gate.js 同款折叠点改为透传 Mapper freshness.reason_code；新建共享白名单 freshness-codes.js（DETERMINISTIC_FRESHNESS_REASON_CODES + isDeterministicFreshnessReason）决定 retryable（确定性→false，瞬态/reason_code缺失→true）；更新既有 structure-gate.test.js mapper_stale 断言以匹配透传语义。",
+      "dod": [
+        "[BEHAVIOR] diff-gate 确定性 reason_code 透传且 retryable:false，瞬态 retryable:true，reason_code 缺失回退 mapper_stale",
+        "[BEHAVIOR] structure-gate 同款折叠点透传且确定性 retryable:false",
+        "[BEHAVIOR] 同一确定性结论重复进 Gate 判定稳定不震荡（幂等）",
+        "[ARTIFACT] packages/brain/src/impact-contract/freshness-codes.js 共享白名单常量存在"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/structure-gate.js",
+        "packages/brain/src/impact-contract/freshness-codes.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+        "packages/brain/src/impact-contract/__tests__/structure-gate.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
