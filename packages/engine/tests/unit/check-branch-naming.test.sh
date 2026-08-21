@@ -31,6 +31,13 @@ assert_pass "cp-* 8位时间戳"      "cp-07211200-fix-something"
 assert_pass "cp-* 10位时间戳"     "cp-0721120059-fix-something"
 assert_pass "dependabot 单包"     "dependabot/npm_and_yarn/axios-1.18.0"
 assert_pass "dependabot 多包组"   "dependabot/npm_and_yarn/packages/engine/brace-expansion-and-vitest-coverage-v8-3.2.4-4.1.10"
+# r41 案卷（run 5bfc1af9 / PR #5006）：kernel Work Router 生成 cp-route-api-<hex8>
+# 分支，受信 publisher 以此发布——是合法造分支方，闸必须放行；变体仍拒。
+assert_pass "kernel 受信分支"     "cp-route-api-57334245"
+assert_pass "kernel 受信分支2"    "cp-route-api-9da20638"
+assert_fail "kernel 格式过短"     "cp-route-api-1234"
+assert_fail "kernel 格式非hex"    "cp-route-api-zzzzzzzz"
+assert_fail "kernel 格式带尾巴"   "cp-route-api-57334245-evil"
 assert_fail "随意命名分支"        "random-feature-branch"
 assert_fail "feature/* 分支"      "feature/something"
 
