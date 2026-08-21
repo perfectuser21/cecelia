@@ -8,8 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.111
+**Brain 版本**: 1.273.112
 
+## Brain 1.273.112 — publisher 对 headRefOid 读滞后有界重读（F1 步骤 3，r40/r41 双案卷）
+
+r40 hop171 与 r41 hop52 同因：publisher push 成功且 ls-remote 确认后立刻 gh pr view，GitHub API headRefOid 读滞后返回旧头 → PR head mismatch → publisher_authority_invalid，实际发布已完成。修：URL 合法但 head 不一致时有界重读（PUBLISHER_PR_VIEW_RETRIES 默认 5 次×3s），仍不一致才失败；重试不放松身份校验（负向用例保留）。
 ## Brain 1.273.111 — merge_pr 的 DIRTY 枚举盲区修复（F1 步骤 3，r40 终局案卷）
 
 r40（run 08b3b2b5 hop 217/218）merge_pr 撞真冲突 PR 被 kernel_process_fatal 判 run 终态。根因：mergeStateStatus 冲突枚举=DIRTY，代码判 CONFLICTING（mergeable 字段的枚举）→ DIRTY 漏网直接 gh pr merge → not mergeable throw → fatal。修：DIRTY 并入冲突分支 BLOCKED；gh merge 命令失败降级 BLOCKED 不 fatal。
