@@ -565,3 +565,87 @@ describe('FR-4 Diff Impact Gate', () => {
   });
 
 });
+
+// Test Contract 补充行（非冻结产物）：本 sprint 改动 3a mapper_stale 出口时，
+// 既有其它 impact_unknown 出口（contract_missing / mapper_unavailable / manifest_digest_mismatch）
+// 行为不得回退。真调 evaluateDiffGate（不 mock 被改模块），仅注入外层 db / mapClient。
+describe('FR-4 Diff Impact Gate 回归：既有出口不回退（reason_code 透传改动的邻边守卫）', () => {
+
+  test('回归 · 不回退既有 contract_missing 出口（无 active contract → fail-closed retryable:false，且不调用 Mapper）', async () => {
+    const db = { query: vi.fn(async () => ({ rows: [] })) };
+    const mapClient = vi.fn();
+
+    const result = await evaluateDiffGate({ db, taskId: 'regress-contract-missing', mapClient });
+
+    expect(result).toMatchObject({
+      gate: 'impact_unknown',
+      reason: 'contract_missing',
+      retryable: false,
+    });
+    expect(mapClient).not.toHaveBeenCalled();
+  });
+
+  test('回归 · 不回退既有 mapper_unavailable 出口（Mapper 抛异常 → fail-closed retryable:true）', async () => {
+    const db = {
+      query: vi.fn(async () => ({
+        rows: [{
+          id: 'contract-regress',
+          repo: 'cecelia',
+          base_revision: 'base',
+          contract_body: { affected_capabilities: [], required_assertions: [] },
+        }],
+      })),
+    };
+    const mapClient = async () => { throw new Error('ECONNREFUSED: Mapper unreachable'); };
+
+    const result = await evaluateDiffGate({
+      db,
+      taskId: 'regress-mapper-unavailable',
+      repo: 'cecelia',
+      headRevision: 'head',
+      mapClient,
+    });
+
+    expect(result).toMatchObject({
+      gate: 'impact_unknown',
+      reason: 'mapper_unavailable',
+      retryable: true,
+    });
+  });
+
+  test('回归 · 不回退既有 manifest_digest_mismatch 出口（fresh 但 manifest digest 漂移 → retryable:true）', async () => {
+    const db = {
+      query: vi.fn(async () => ({
+        rows: [{
+          id: 'contract-regress-digest',
+          repo: 'cecelia',
+          base_revision: 'base',
+          manifest_digest: 'manifest-digest-A',
+          contract_body: { affected_capabilities: [], required_assertions: [] },
+        }],
+      })),
+    };
+    const mapClient = async () => ({
+      freshness: { status: 'fresh' },
+      affected_nodes: [],
+      required_assertions: [],
+      fact_revisions: { cecelia: 'base' },
+      manifest_digest: 'manifest-digest-B',
+    });
+
+    const result = await evaluateDiffGate({
+      db,
+      taskId: 'regress-manifest-digest',
+      repo: 'cecelia',
+      headRevision: 'head',
+      mapClient,
+    });
+
+    expect(result).toMatchObject({
+      gate: 'impact_unknown',
+      reason: 'manifest_digest_mismatch',
+      retryable: true,
+    });
+  });
+
+});
