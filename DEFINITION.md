@@ -8,8 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.110
+**Brain 版本**: 1.273.111
 
+## Brain 1.273.111 — merge_pr 的 DIRTY 枚举盲区修复（F1 步骤 3，r40 终局案卷）
+
+r40（run 08b3b2b5 hop 217/218）merge_pr 撞真冲突 PR 被 kernel_process_fatal 判 run 终态。根因：mergeStateStatus 冲突枚举=DIRTY，代码判 CONFLICTING（mergeable 字段的枚举）→ DIRTY 漏网直接 gh pr merge → not mergeable throw → fatal。修：DIRTY 并入冲突分支 BLOCKED；gh merge 命令失败降级 BLOCKED 不 fatal。
 ## Brain 1.273.110 — git-artifact-reader 兼容存量短名 contract repo（F1 步骤 3，r40 merge 闸案卷）
 
 r40（run 08b3b2b5 hop 182）merge_pr 被 deny:impact:git_diff_unavailable 无限重试卡死。根因：harness_impact_contracts 存量 239 条 repo 存短名（cecelia），跨仓库安全加固后 assertSupportedRepo 只认 owner/repo 全名，短名 throw 被 readChangedFiles 折叠成 git_diff_unavailable。修：normalizeArtifactRepo 对白名单内唯一后缀短名规范化，白名单外/歧义仍 fail-closed。
