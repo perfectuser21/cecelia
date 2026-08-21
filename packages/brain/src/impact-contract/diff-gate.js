@@ -25,6 +25,10 @@ import {
 import { compareImpactContract } from './diff-compare.js';
 export { compareImpactContract } from './diff-compare.js';
 
+// 瞬时 freshness 白名单（固定，来源 PRD/task 冻结）：这些码或 reason_code==null 保留 retryable=true；
+// 其余具体码一律视为确定性 → fail-closed（retryable=false），宁停勿空转。
+const TRANSIENT_FRESHNESS_CODES = ['fact_snapshot_stale', 'projection_revision_missing'];
+
 // ---------- 副作用操作 ----------
 
 /**
@@ -198,12 +202,18 @@ export async function evaluateDiffGate({
 
   // --- 步骤 3：校验 Mapper 可判定性 ---
 
-  // 3a. Mapper stale（freshness.status !== 'fresh'）→ impact_unknown
+  // 3a. Mapper 非 fresh（freshness.status !== 'fresh' 或 freshness 缺失）→ impact_unknown
+  // 透传 freshness.reason_code；确定性码 fail-closed（retryable=false），瞬时白名单/null 保留可重试。
   if (!mapperResult?.freshness || mapperResult.freshness.status !== 'fresh') {
+    // 用 ?? 而非 falsy：freshness 缺失或无 reason_code 字段才落 null；空串等具体码保留为确定性。
+    const reasonCode = mapperResult?.freshness?.reason_code ?? null;
+    const retryable = reasonCode === null || TRANSIENT_FRESHNESS_CODES.includes(reasonCode);
     return {
       gate: 'impact_unknown',
-      reason: 'mapper_stale',
-      retryable: true,
+      // 归因标签：具体 reason_code 存在则用之；仅 null（纯瞬时兜底）回落 mapper_stale。
+      reason: reasonCode ?? 'mapper_stale',
+      reason_code: reasonCode,
+      retryable,
     };
   }
 
