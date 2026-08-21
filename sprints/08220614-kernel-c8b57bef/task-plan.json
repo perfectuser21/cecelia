@@ -1,0 +1,24 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅落 packages/brain/src/orchestrator/derive.js 纯调度决策逻辑，无 UI / 远端 agent 协议 / engine hooks。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "publisher 进 INFRA_RETRY_ACTION_BY_ROLE：runner_failure 有界重派不再 route_unknown",
+      "scope": "在 derive.js 的 INFRA_RETRY_ACTION_BY_ROLE 表新增一条 publisher: { phase: 'publish', action: ACTION.PUBLISH_APPROVED_REF }，使 publisher 的 runner_failure/infrastructure_blocked/account_exhausted 回调享有界重派 + 超限人审兜底，不再 route_unknown。不改计数/阈值语义、不改 dispatcher、不改其他角色条目。",
+      "dod": [
+        "[BEHAVIOR] publisher 首次 runner_failure 回调 → derive 返回 { phase:'publish', action:'publish:approved_ref', reason:'callback_runner_failure_retry' }（对应冻结测试全绿）",
+        "[BEHAVIOR] publisher ≥2 次 runner_failure → derive 返回 wait:human_review + callback_runner_failure_exhausted（计数语义不变）",
+        "[BEHAVIOR] 非 publisher 角色（evaluator/judge/generator）路由零漂移，既有 tests/gp/f1/step3-runner-failure-retry.test.js 5 条断言不动",
+        "[ARTIFACT] INFRA_RETRY_ACTION_BY_ROLE 含 publisher 条目，action=ACTION.PUBLISH_APPROVED_REF"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
