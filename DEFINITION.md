@@ -8,11 +8,14 @@
 
 
 
-**Brain 版本**: 1.273.115
+**Brain 版本**: 1.273.116
 
 ## Brain 1.273.114 — Diff Impact Gate 透传 freshness.reason_code + 确定性码 fail-closed 出口（F1 步骤 3，r42）
 
 `evaluateDiffGate` 步骤 3a 把 Mapper 任意非 fresh freshness 一律折叠成裸 `mapper_stale` + `retryable:true`，确定性结论（no_anchor/revision_mismatch/resolver_error 等）被当瞬时无限重试 → run 空转。修：3a 出口透传 `freshness.reason_code`，瞬时白名单（`fact_snapshot_stale`/`projection_revision_missing`）与 `null` 保留 `retryable:true`，其余确定性码 fail-closed（`retryable:false`）；`gateReceipt` 透传 `reason_code` 使 deny 标签归因到具体码，不再裸 `mapper_stale`。3a 仍返回 `impact_unknown` 不假绿。
+## Brain 1.273.116 — impact_anchor_missing 留痕 unclaimed 文件清单（F1 步骤 3，r43 案卷）
+
+r43（run 19759355 hop38）被 deny:impact:impact_anchor_missing 确定性判死但 evidence 不含哪个文件 unclaimed，事后同输入复现 unclaimed=[]（瞬态时序不可回放）。修：radius freshness 带 unclaimed_files（≤64），diff-gate 3a 透传进 gate 返回随 evidence 落 decision_log 可考古。
 ## Brain 1.273.115 — shepherd 不再对 kernel 任务 auto-merge（F1 步骤 3，r42 fence 旁路案卷）
 
 r42（run f44bdef7 / PR #5012）实证：shepherd 的 kernel 豁免只认旧 harness_mode 字段，kernel-v1 任务漏网被 auto-merge，capability-change 的人批 merge fence 被整个旁路。修：SQL 过滤加 task_type<>harness_initiative + 行级 isKernelSovereignTask 双保险，merge 主权唯一归 kernel merge_pr。

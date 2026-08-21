@@ -383,7 +383,13 @@ export async function resolveImpactRadius(input = {}, {
   } else if (missingCapability) {
     freshness = { status: 'unknown', reason_code: 'capability_not_in_active_projection' };
   } else if (unclaimedFiles.length > 0) {
-    freshness = { status: 'unknown', reason_code: 'impact_anchor_missing' };
+    // r43 案卷（run 19759355 hop38）：确定性判死必须可考古——留痕哪些文件 unclaimed，
+    // 否则瞬态时序毛刺与真结构缺陷无法区分（现场不可回放）。
+    freshness = {
+      status: 'unknown',
+      reason_code: 'impact_anchor_missing',
+      unclaimed_files: unclaimedFiles.slice(0, 64),
+    };
   } else if (unsafeAssertions) {
     freshness = { status: 'unknown', reason_code: 'unsafe_assertion_ref' };
   } else if (ambiguousAssertions) {
