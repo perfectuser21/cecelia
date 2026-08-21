@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.111
+**Brain 版本**: 1.273.112
+
+## Brain 1.273.112 — Diff Impact Gate 3a 透传 reason_code 并按确定性 fail-closed（F1 步骤 2，r41 案卷）
+
+`evaluateDiffGate` 第 3a 步把 Mapper `freshness.status !== 'fresh'` 的所有情形折叠成裸 `mapper_stale/retryable:true`，确定性 reason_code（重试不会变）被当瞬时态无限重试，run 空转到不了 merge fence。修：3a 透传具体 `freshness.reason_code` 到 `reason`，按瞬时白名单（`fact_snapshot_stale`/`projection_revision_missing` 或 freshness 缺失）判 `retryable:true`，其余确定性/未知码 fail-closed（`retryable:false`）；`gateReceipt` 导出并透传具体码。
 
 ## Brain 1.273.111 — merge_pr 的 DIRTY 枚举盲区修复（F1 步骤 3，r40 终局案卷）
 

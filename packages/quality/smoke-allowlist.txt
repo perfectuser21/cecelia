@@ -51,6 +51,7 @@ conversations-smoke.sh
 decision-system-smoke.sh
 decisions-dedup-smoke.sh
 dev-env-db-guard-smoke.sh
+diff-gate-reason-code-smoke.sh
 direction-proposer-t4-smoke.sh
 disk-guard-smoke.sh
 dispatch-allocation-guide-smoke.sh

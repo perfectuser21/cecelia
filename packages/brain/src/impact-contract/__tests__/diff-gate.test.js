@@ -564,4 +564,51 @@ describe('FR-4 Diff Impact Gate', () => {
 
   });
 
+  // 回归补充（Test Contract 声明）：3a reason_code 分类改动后，既有 pass/extend/drift/revision
+  // 分支的裁决语义不得回退。复用既有断言，把这几条边钉在回归里。
+  describe('回归：3a reason_code 改动不回退既有分支', () => {
+
+    test('复用同断言，保证既有 pass 分支不回退（实际影响 ⊆ 声明且被断言覆盖仍判 pass）', () => {
+      const assertion = {
+        assertion_id: 'impact-contract.test.js',
+        command: 'npm test',
+        covers_capability_ids: ['impact-contract'],
+      };
+      const result = compareImpactContract(
+        ['impact-contract', 'task-routing'],
+        ['impact-contract'],
+        [assertion],
+        [assertion],
+      );
+      expect(result.verdict).toBe('pass');
+      expect(result.added_nodes).toEqual([]);
+      expect(result.reason_code).toBe(null);
+    });
+
+    test('revision 分支不回退（fact_revisions 与合同 base_revision 不对齐仍 impact_unknown/revision_mismatch）', async () => {
+      const HEAD = 'abc123';
+      const mockMapClient = async () => ({
+        freshness: { status: 'fresh' },
+        affected_nodes: ['tick-loop'],
+        required_assertions: [],
+        fact_revisions: { 'cecelia': 'stale999' },
+      });
+      const result = await evaluateDiffGate({
+        db: { query: vi.fn(async () => ({ rows: [{
+          id: 'contract-revision', repo: 'cecelia', base_revision: 'base123',
+          contract_body: { affected_capabilities: [], required_assertions: [] },
+        }] })) },
+        taskId: 'task-regression-revision',
+        mapClient: mockMapClient,
+        headRevision: HEAD,
+        repo: 'cecelia',
+        changedFiles: ['packages/brain/src/tick.js'],
+      });
+      expect(result.gate).toBe('impact_unknown');
+      expect(result.reason).toBe('revision_mismatch');
+      expect(result.retryable).toBe(true);
+    });
+
+  });
+
 });
