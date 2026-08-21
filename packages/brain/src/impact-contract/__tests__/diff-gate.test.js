@@ -565,3 +565,71 @@ describe('FR-4 Diff Impact Gate', () => {
   });
 
 });
+
+// ── 回归（r37）：步骤 3a 透传 Map 自带 reason_code + 确定性结论 fail-closed 出口 ──
+// 根因：runs f62c7e87 / d1360a48 撞 deny:impact:mapper_stale 空转——步骤 3a 把 freshness.status
+// 任何非 fresh 一律折叠成恒定 reason:'mapper_stale' + retryable:true，丢弃 Map 已给出的确定性
+// reason_code，导致确定性结论被误判为可重试而无限重排。
+describe('FR-4 回归：Diff Impact Gate reason_code 透传 + fail-closed 出口（r37）', () => {
+  function staleDb() {
+    return {
+      query: vi.fn(async () => ({
+        rows: [{
+          id: 'c-r37', repo: 'cecelia', base_revision: 'base123',
+          contract_body: { affected_capabilities: [], required_assertions: [] },
+        }],
+      })),
+    };
+  }
+  const base = () => ({
+    db: staleDb(), taskId: 'task-r37', headRevision: 'headsha0001',
+    repo: 'cecelia', changedFiles: ['packages/brain/src/impact-contract/diff-gate.js'],
+  });
+
+  test('stale + 确定性 reason_code → 透传 reason_code 且 retryable=false', async () => {
+    const result = await evaluateDiffGate({
+      ...base(),
+      mapClient: async () => ({
+        freshness: { status: 'stale', reason_code: 'MAP_DELETED_NODE' },
+        affected_nodes: [], required_assertions: [],
+      }),
+    });
+    expect(result.gate).toBe('impact_unknown');
+    expect(result.reason_code).toBe('MAP_DELETED_NODE');
+    expect(result.retryable).toBe(false);
+  });
+
+  test('unknown 无 reason_code → 短暂不可判定 retryable=true', async () => {
+    const result = await evaluateDiffGate({
+      ...base(),
+      mapClient: async () => ({
+        freshness: { status: 'unknown', reason_code: null },
+        affected_nodes: [], required_assertions: [],
+      }),
+    });
+    expect(result.reason_code).toBe(null);
+    expect(result.retryable).toBe(true);
+  });
+
+  test('freshness 缺失 → 终态可观察不假绿（gate=impact_unknown，非 pass）', async () => {
+    const result = await evaluateDiffGate({
+      ...base(),
+      mapClient: async () => ({ affected_nodes: [], required_assertions: [] }),
+    });
+    expect(result.gate).toBe('impact_unknown');
+    expect(result.verdict).toBeUndefined();
+    expect(result.reason_code).toBe(null);
+  });
+
+  test('reason_code 为下游未知的新枚举值 → 原样透传不崩溃', async () => {
+    const result = await evaluateDiffGate({
+      ...base(),
+      mapClient: async () => ({
+        freshness: { status: 'stale', reason_code: 'BRAND_NEW_ENUM_9999' },
+        affected_nodes: [], required_assertions: [],
+      }),
+    });
+    expect(result.reason_code).toBe('BRAND_NEW_ENUM_9999');
+    expect(result.retryable).toBe(false);
+  });
+});

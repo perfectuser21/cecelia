@@ -1,0 +1,27 @@
+{
+  "initiative_id": "6cd7610b-853f-4f9f-b18b-0e2f9d2a6cfd",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain/src/impact-contract/ 纯后端 gate 裁决，无 UI/agent/engine 命中，落 autonomous。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate 步骤 3a 透传 reason_code + 确定性结论 fail-closed 出口",
+      "scope": "在 evaluateDiffGate 步骤 3a（freshness.status !== 'fresh' 分支）透传 mapperResult.freshness.reason_code 进 verdict；reason_code 非空（Map 确定性结论）→ retryable:false（fail-closed 终态），reason_code 为 null（freshness 缺失或 unknown 短暂不可判定）→ retryable:true；不改其余分支、不改 map-client、不改调度重排器。",
+      "dod": [
+        "[BEHAVIOR] stale+确定性 reason_code 透传该 reason_code 且 retryable=false（对应 sprint 冻结测试 + DoD B-01）",
+        "[BEHAVIOR] unknown 无 reason_code → reason_code=null 且 retryable=true（DoD B-02）",
+        "[BEHAVIOR] freshness 缺失 → gate=impact_unknown 终态不假绿（DoD B-03）",
+        "[BEHAVIOR] reason_code 未知新枚举值透传不崩溃（DoD B-04）",
+        "[ARTIFACT] packages/brain/src/impact-contract/diff-gate.js 步骤 3a 含 reason_code 透传逻辑"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js",
+        "packages/brain/src/impact-contract/__tests__/diff-gate.test.js",
+        "sprints/08211355-kernel-6cd7610b/tests/diff-gate-reason-code.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 40
+    }
+  ]
+}
