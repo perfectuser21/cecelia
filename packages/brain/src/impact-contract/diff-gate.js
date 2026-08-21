@@ -198,12 +198,17 @@ export async function evaluateDiffGate({
 
   // --- 步骤 3：校验 Mapper 可判定性 ---
 
-  // 3a. Mapper stale（freshness.status !== 'fresh'）→ impact_unknown
-  if (!mapperResult?.freshness || mapperResult.freshness.status !== 'fresh') {
+  // 3a. Mapper 非 fresh（freshness.status !== 'fresh'）→ impact_unknown
+  //   - 透传真实 freshness.reason_code（缺失/null 回退常量 mapper_stale，保底不假绿）；
+  //   - 按 freshness.status 决定 retryable：'stale'（事实快照滞后，可自愈）→ true；
+  //     'unknown'（结构性确定结论）/ freshness 整体缺失 → false（fail-closed 终局，
+  //     dispatcher 依 retryable=false 停止重新点火，不再空转）。
+  const freshness = mapperResult?.freshness;
+  if (!freshness || freshness.status !== 'fresh') {
     return {
       gate: 'impact_unknown',
-      reason: 'mapper_stale',
-      retryable: true,
+      reason: freshness?.reason_code || 'mapper_stale',
+      retryable: freshness?.status === 'stale',
     };
   }
 
