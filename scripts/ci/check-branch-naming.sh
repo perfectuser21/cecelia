@@ -18,6 +18,13 @@ if echo "$BRANCH" | grep -qE '^dependabot/'; then
   exit 0
 fi
 
+# kernel Work Router 受信分支（r41 案卷 run 5bfc1af9 / PR #5006）：
+# 受信 publisher 按 routing receipt 的 cp-route-api-<hex8> 发布，是合法造分支方。
+if echo "$BRANCH" | grep -qE '^cp-route-api-[0-9a-f]{8}$'; then
+  echo "✅ kernel 受信分支: $BRANCH"
+  exit 0
+fi
+
 # 兼容 8 位 (MMDDHHNN) 与 10 位 (MMDDHHMMSS) 时间戳
 if echo "$BRANCH" | grep -qE '^cp-[0-9]{8,10}-[a-z0-9-]+$'; then
   echo "✅ 分支命名规范: $BRANCH"
