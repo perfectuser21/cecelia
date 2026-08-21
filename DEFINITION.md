@@ -8,8 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.109
+**Brain 版本**: 1.273.110
 
+## Brain 1.273.110 — git-artifact-reader 兼容存量短名 contract repo（F1 步骤 3，r40 merge 闸案卷）
+
+r40（run 08b3b2b5 hop 182）merge_pr 被 deny:impact:git_diff_unavailable 无限重试卡死。根因：harness_impact_contracts 存量 239 条 repo 存短名（cecelia），跨仓库安全加固后 assertSupportedRepo 只认 owner/repo 全名，短名 throw 被 readChangedFiles 折叠成 git_diff_unavailable。修：normalizeArtifactRepo 对白名单内唯一后缀短名规范化，白名单外/歧义仍 fail-closed。
 ## Brain 1.273.109 — worker 物化只补缺失文件（F1 步骤 3，r40 evaluator 回写案卷）
 
 run 08b3b2b5：fix 首次干净通过全部复核后，evaluator prepare 的 worker materializeContractArtifacts
