@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.112
+**Brain 版本**: 1.273.113
 
 ## Brain 1.273.112 — publisher 对 headRefOid 读滞后有界重读（F1 步骤 3，r40/r41 双案卷）
 
