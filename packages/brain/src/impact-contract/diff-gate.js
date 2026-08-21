@@ -25,6 +25,17 @@ import {
 import { compareImpactContract } from './diff-compare.js';
 export { compareImpactContract } from './diff-compare.js';
 
+/**
+ * 瞬时 staleness 白名单 —— 数据层未追上（后台重扫事实 / 重建投影可转 fresh），
+ * 保留 retryable:true。其余非 null reason_code 视为确定性结论（结构性/revision
+ * 不一致，重跑同一 gate 永不转 fresh），fail-closed 落 retryable:false；reason_code
+ * 缺失（null）退回旧瞬时语义 retryable:true。名单锚定 map/radius.js 生产端 reason_code 词表。
+ */
+const TRANSIENT_FRESHNESS_REASON_CODES = new Set([
+  'fact_snapshot_stale',
+  'projection_revision_missing',
+]);
+
 // ---------- 副作用操作 ----------
 
 /**
@@ -199,11 +210,18 @@ export async function evaluateDiffGate({
   // --- 步骤 3：校验 Mapper 可判定性 ---
 
   // 3a. Mapper stale（freshness.status !== 'fresh'）→ impact_unknown
+  // 透传 Mapper 给出的 freshness.reason_code，并依确定性名单判 retryable：
+  //   - reason_code 命中瞬时白名单或缺失（null）→ retryable:true（可刷新 staleness 不被卡死）；
+  //   - 其余非 null reason_code（结构性/revision 不一致，重试永不转 fresh）→ 确定性 fail-closed retryable:false。
+  // 确定性判定以 reason_code 为准，不看 status 字面（'unknown' 与 'stale' 同规则）。
   if (!mapperResult?.freshness || mapperResult.freshness.status !== 'fresh') {
+    const reasonCode = mapperResult?.freshness?.reason_code ?? null;
+    const retryable = reasonCode == null || TRANSIENT_FRESHNESS_REASON_CODES.has(reasonCode);
     return {
       gate: 'impact_unknown',
-      reason: 'mapper_stale',
-      retryable: true,
+      reason: reasonCode ?? 'mapper_stale',
+      reason_code: reasonCode,
+      retryable,
     };
   }
 
