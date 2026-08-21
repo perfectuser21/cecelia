@@ -1,0 +1,24 @@
+{
+  "initiative_id": "00e0d542-85ab-4faf-bf41-255154f6e891",
+  "journey_type": "autonomous",
+  "journey_type_reason": "变更落在 packages/brain/ 纯后端 impact-contract 判定逻辑，无 UI / 无远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "Diff Impact Gate step 3a 透传 reason_code + 确定性结论 fail-closed 出口",
+      "scope": "在 diff-gate.js step 3a 非 fresh 分支：透传 mapperResult.freshness.reason_code 到返回体 reason_code（无来源则 null，不虚构）；freshness 带 reason_code 的确定性结论返回 retryable:false（含未知枚举默认 fail-closed），无 reason_code 的暂时性 stale 保守返回 retryable:true。复现空转的永久回归测试已由本 sprint 提供（sprints/.../tests/），generator 只需让其转绿且不破坏既有 diff-gate 套件",
+      "dod": [
+        "[BEHAVIOR] 确定性 stale 透传 reason_code 且 retryable:false（sprint 契约测试 3 场景全绿）",
+        "[BEHAVIOR] 无 reason_code 暂时性 stale 仍 retryable:true 未被误杀",
+        "[BEHAVIOR] 仓库既有 diff-gate.test.js 全绿、fail-closed 铁律不破、无回归",
+        "[ARTIFACT] sprints/08210802-kernel-117c47e9/tests/diff-gate-mapper-stale-reason-code.test.js 复现断言在 CI 收录路径永久保留"
+      ],
+      "files": [
+        "packages/brain/src/impact-contract/diff-gate.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
