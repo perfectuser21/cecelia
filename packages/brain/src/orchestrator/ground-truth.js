@@ -72,7 +72,7 @@ const GENERATOR_RUNTIME_ERROR_CODES = new Set([
   'provider_timeout',
 ]);
 
-function mapCiStatus(checkRows, mergeStateStatus = null) {
+export function mapCiStatus(checkRows, mergeStateStatus = null) {
   if (!Array.isArray(checkRows) || checkRows.length === 0) return 'pending'; // CI 尚未挂上 → 视为 pending
   const hasFail = checkRows.some((c) => CI_FAIL_STATES.has(c.state));
   if (hasFail) {
@@ -83,7 +83,12 @@ function mapCiStatus(checkRows, mergeStateStatus = null) {
     // 失败的都是非 required，不算 fail；BLOCKED 且仍有未落定 check = 可能是
     // required 还在跑，等全部落定再裁，避免把"非 required 已红 + required 在跑"
     // 误判成 fail 白吃 fix round。
-    if (String(mergeStateStatus ?? '').toUpperCase() !== 'BLOCKED') {
+    // r34/r38 实证：BEHIND 时 GitHub 不报 BLOCKED，但 required 红照样 merge 不了——
+    // 「非 BLOCKED ⇒ 红项皆非 required」的豁免对 BEHIND 不成立（曾把 required 双红判
+    // pass，derive 走 merge_pr 空转死循环、fix 路由永远到不了）。BEHIND 与 BLOCKED
+    // 同款严判；UNSTABLE/CLEAN 等豁免保持（0955c884 案卷）。
+    const mergeState = String(mergeStateStatus ?? '').toUpperCase();
+    if (mergeState !== 'BLOCKED' && mergeState !== 'BEHIND') {
       const settled = checkRows.filter((c) => !CI_FAIL_STATES.has(c.state));
       if (settled.length === 0 || settled.every((c) => CI_PASS_STATES.has(c.state))) {
         return 'pass';
