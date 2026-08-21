@@ -145,14 +145,16 @@ describe('FR-3 Structure Gate', () => {
       expect(result.gate).toBe('blocked');
     });
 
-    test('Mapper stale 响应包含 reason=mapper_stale', async () => {
+    test('Mapper stale 透传真实 reason_code（非白名单 ttl_exceeded → 瞬态）', async () => {
+      // r39：stale 折叠点不再一律硬编码 mapper_stale，而是透传 Mapper 真实 reason_code。
+      // fixture reason_code=ttl_exceeded 不在确定性白名单 → 瞬态透传，retryable 仍为 true。
       const result = await evaluateStructureGate({
         db: null,
         task: BASE_TASK,
         contract: BASE_CONTRACT,
         mapClient: makeStaleFreshnessMapClient(),
       });
-      expect(result.reason).toBe('mapper_stale');
+      expect(result.reason).toBe('ttl_exceeded');
     });
 
     test('Mapper stale 响应包含 retryable=true', async () => {

@@ -19,6 +19,7 @@
 import { queryImpactRadius } from './map-client.js';
 import { persistImpactContract } from './contract-store.js';
 import { normalizeFreshnessEvidence } from './contract-schema.js';
+import { isDeterministicFreshnessReason } from './freshness-codes.js';
 
 // ---------- 结果构建工具 ----------
 
@@ -120,7 +121,15 @@ export async function evaluateStructureGate({
   }
 
   // --- 规则 3：Mapper stale（freshness.status !== 'fresh'）---
+  //   透传 Mapper 真实 reason_code：确定性结论 fail-closed（retryable:false，HTTP 422），
+  //   瞬态结论透传 + retryable:true（HTTP 503）；reason_code 缺失/空则保守回退
+  //   mapper_stale + retryable:true（HTTP 503，不假绿、不误终止）。
   if (!mapperResult?.freshness || mapperResult.freshness.status !== 'fresh') {
+    const reasonCode = mapperResult?.freshness?.reason_code;
+    if (reasonCode) {
+      const httpStatus = isDeterministicFreshnessReason(reasonCode) ? 422 : 503;
+      return buildBlockedResult(reasonCode, httpStatus, { reason_code: reasonCode });
+    }
     return buildBlockedResult('mapper_stale', 503);
   }
 

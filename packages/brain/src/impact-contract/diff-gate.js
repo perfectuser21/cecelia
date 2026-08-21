@@ -23,6 +23,7 @@ import {
   transitionGapStatus,
 } from './gap-store.js';
 import { compareImpactContract } from './diff-compare.js';
+import { isDeterministicFreshnessReason } from './freshness-codes.js';
 export { compareImpactContract } from './diff-compare.js';
 
 // ---------- 副作用操作 ----------
@@ -199,7 +200,19 @@ export async function evaluateDiffGate({
   // --- 步骤 3：校验 Mapper 可判定性 ---
 
   // 3a. Mapper stale（freshness.status !== 'fresh'）→ impact_unknown
+  //   透传 Mapper 真实 reason_code：确定性结论 fail-closed（retryable:false，终止空转），
+  //   瞬态结论透传 + retryable:true（仍可重试自愈）；reason_code 缺失/空则保守回退
+  //   mapper_stale + retryable:true（不假绿、不误终止）。
   if (!mapperResult?.freshness || mapperResult.freshness.status !== 'fresh') {
+    const reasonCode = mapperResult?.freshness?.reason_code;
+    if (reasonCode) {
+      return {
+        gate: 'impact_unknown',
+        reason: reasonCode,
+        reason_code: reasonCode,
+        retryable: !isDeterministicFreshnessReason(reasonCode),
+      };
+    }
     return {
       gate: 'impact_unknown',
       reason: 'mapper_stale',
