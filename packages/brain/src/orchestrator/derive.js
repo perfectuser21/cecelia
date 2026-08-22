@@ -292,7 +292,48 @@ function infrastructureRetryForCallback(role, callbackRow, decisionLog) {
   };
 }
 
-function latestUnconsumedAttemptResult(decisionLog) {
+/**
+ * diagnostic 类人审（非 merge_gate，由 callback_runner_failure_exhausted /
+ * callback_semantic_refusal 等原因触发的 wait:human_review）被批准后应消费的「触发 callback hop」集合。
+ *
+ * r40 hop174/177 实证根因：diagnostic 人审被 approve 后只落一行 verdict:human_review，
+ * observed 里没有字段承载「这条 diagnostic 审已批准」，derive 纯函数重放读不到消费信号 →
+ * 仍算出 wait:human_review → 无出口死等。修法：把「触发该 review 的 callback hop」（记录在
+ * effect:human_review_requested 请求行的 detail.callback_hop）在批准生效后并入 answeredCallbackHops，
+ * 令 latestUnconsumedAttemptResult 跳过该 callback → derive 回主链重试原动作。
+ *
+ * 双锚定（fail-closed，宁可死等也不误消费）：
+ *   - review_class !== 'merge_gate'（merge_gate 语义不变，仍由 ground-truth reviewApproved/mergeGate 处理）
+ *   - detail.approved === true
+ *   - approval.review_request_hop 命中该 request 行的 hop
+ *   - request 请求锚定的 pr.head_sha 与 approval.pr_head_sha 都等于当前 currentHeadSha（stale 批准不消费）
+ * 任一不满足 → 不消费（无批准 / stale / merge_gate 三条负向都保持 wait:human_review）。
+ */
+function diagnosticConsumedCallbackHops(decisionLog, currentHeadSha) {
+  const rows = sortedLogRows(decisionLog);
+  const consumed = new Set();
+  for (const request of rows) {
+    if (request.action !== LOG_ACTION.HUMAN_REVIEW_REQUESTED) continue;
+    const requestDetail = callbackDetail(request);
+    const callbackHop = Number(requestDetail.callback_hop);
+    if (!Number.isInteger(callbackHop)) continue;
+    const requestHeadSha = (asStructuredJson(request.observed) ?? {}).pr?.head_sha ?? null;
+    if (requestHeadSha !== currentHeadSha) continue;
+    const approved = rows.some((row) => {
+      if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW) return false;
+      const detail = asStructuredJson(row.detail) ?? {};
+      return detail.approved === true
+        && detail.review_class !== 'merge_gate'
+        && detail.pr_head_sha === currentHeadSha
+        && Number(row.hop) > Number(request.hop)
+        && String(detail.review_request_hop) === String(request.hop);
+    });
+    if (approved) consumed.add(callbackHop);
+  }
+  return consumed;
+}
+
+function latestUnconsumedAttemptResult(decisionLog, currentHeadSha = null) {
   const rows = sortedLogRows(decisionLog);
   const latestSpawn = [...rows].reverse().find(
     (row) => typeof row.action === 'string' && row.action.startsWith('spawn:'),
@@ -304,6 +345,10 @@ function latestUnconsumedAttemptResult(decisionLog) {
     ))
     .map((row) => Number(callbackDetail(row).callback_hop))
     .filter(Number.isInteger));
+  // diagnostic 人审批准消费：触发 callback hop 并入已应答集合，令其被跳过。
+  for (const hop of diagnosticConsumedCallbackHops(decisionLog, currentHeadSha)) {
+    answeredCallbackHops.add(hop);
+  }
   return [...rows].reverse().find((row) => {
     const detail = callbackDetail(row);
     const isAttemptCallback = row.action === LOG_ACTION.ATTEMPT_CALLBACK;
@@ -423,7 +468,7 @@ function generatorNoPrRoute(observed, currentDetail) {
 }
 
 function attemptCallbackRoute(observed) {
-  const row = latestUnconsumedAttemptResult(observed.decisionLog);
+  const row = latestUnconsumedAttemptResult(observed.decisionLog, observed.pr?.head_sha ?? null);
   if (!row) return null;
   const detail = callbackDetail(row);
   const { status, failure_class: failureClass, role } = detail;
