@@ -40,7 +40,20 @@ const { parseTestContract, resolveContractTestFile } = loadTestContractPaths();
 const VIRTUAL_ROOT = '/contract-seal';
 
 export function assertTestContractResolvable(contractContent, artifacts, { readRepoFile } = {}) {
-  const rows = parseTestContract(String(contractContent ?? ''));
+  const content = String(contractContent ?? '');
+  // r51（run 587f4f0e，r45 族第 4 变体）：manual 命令带 vitest -t 过滤时，其余用例
+  // 被 skip，输出形如 "1 passed | 2 skipped (3)"——精确尾缀 grep "N passed (N)"
+  // 必败 → CI 确定性红且冻结后 fix 无权修。封印时静态拦：同一行命令既含 ` -t `
+  // 又含 passed-精确尾缀 grep 的，拒封印打回 proposer（换 grep -qE "[1-9][0-9]* passed"）。
+  for (const line of content.split('\n')) {
+    if (!/manual:|vitest/.test(line)) continue;
+    if (/\s-t\s+["']/.test(line) && /grep[^|]*passed \([0-9]+\)/.test(line)) {
+      throw new Error(
+        `FROZEN_CONTRACT_TEST_CONTRACT_FRAGILE_GREP:${line.trim().slice(0, 160)}`,
+      );
+    }
+  }
+  const rows = parseTestContract(content);
   const artifactPaths = new Set(
     (Array.isArray(artifacts) ? artifacts : [])
       .map((artifact) => artifact?.path)

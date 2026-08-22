@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.123
+**Brain 版本**: 1.273.124
+
+## Brain 1.273.124 — seal 静态拦 -t 过滤下必败的精确 grep（F1 步骤 3，r51 案卷）
+
+r51（run 587f4f0e，r45 族第 4 变体）：冻结 contract-dod 的 manual 命令 grep "1 passed (1)" 在 vitest -t 过滤下必败（实际 "1 passed | N skipped (M)"）→ CI 确定性红且 fix 无权改冻结文档，四连死。修：封印时静态拦同行含 -t 过滤 + passed-精确尾缀 grep 的命令（FRAGILE_GREP 拒封印打回 proposer 换宽松式）；无 -t 整文件跑允许精确尾缀。
 
 ## Brain 1.273.123 — seal BEHAVIOR↔it 校验扩展到 repo 路径行（F1 步骤 3，r50 案卷）
 
