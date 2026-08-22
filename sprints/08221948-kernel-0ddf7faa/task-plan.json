@@ -1,0 +1,25 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain/ kernel 编排纯后端逻辑，无 UI/agent 协议/engine 介入",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "validation-clock：锚 hop 之后每次 generator-fix 顺延一个 timeout_seconds",
+      "scope": "让 resolveValidationClock 的 deadline = anchor_started + (1+fixCount)*timeoutSeconds（fixCount=锚 hop 之后已落库的 spawn:generator-fix 行数），并让 persisted 校验容忍顺延后的 deadline；fixCount=0 时逐字节等于现行为；runner 侧不改",
+      "dod": [
+        "[BEHAVIOR] 冻结测试 sprints/08221948-kernel-0ddf7faa/tests/validation-clock-fix-extension.test.js 全绿（顺延×2/1、容忍、有界线性、零回归）",
+        "[BEHAVIOR] 既有 packages/brain/src/orchestrator/__tests__/validation-clock.test.js 11 断言零回归全绿",
+        "[ARTIFACT] packages/brain/src/orchestrator/validation-clock.js 含 fixCount 顺延计算"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/validation-clock.js",
+        "packages/brain/src/orchestrator/__tests__/validation-clock.test.js",
+        "sprints/08221948-kernel-0ddf7faa/tests/validation-clock-fix-extension.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
