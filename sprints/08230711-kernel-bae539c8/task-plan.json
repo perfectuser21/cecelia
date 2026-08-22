@@ -1,0 +1,24 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "变更落在 packages/brain/src/orchestrator（纯后端 kernel derive 纯函数），无 UI / 无远端 agent 协议 / 无 engine hooks。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "derive priorRunnerFailures 按角色窗口化——跨角色不再误耗 runner_failure 重派额度",
+      "scope": "在 packages/brain/src/orchestrator/derive.js 的 runner_failure 有界重派分支中，priorRunnerFailures 统计只累计与当前 callback 同角色（callbackDetail(r).role === role）的 runner_failure 行；每角色各自 ≤2 次重派额度、跨角色互不占用、同角色累计语义不变。",
+      "dod": [
+        "[BEHAVIOR] 跨角色不误耗：evaluator 已 2 次 runner_failure 后 publisher 首次 runner_failure 仍走 publish 重派（reason=callback_runner_failure_retry）",
+        "[BEHAVIOR] 同角色有界语义不变：evaluator 同角色第 3 次 runner_failure 仍进人审 exhausted",
+        "[BEHAVIOR] 既有 9 条 runner_failure 守卫零回退（tests/gp/f1/ 两文件全绿）",
+        "[ARTIFACT] derive.js priorRunnerFailures filter 含 callbackDetail(r).role === role 同角色过滤条件"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 40
+    }
+  ]
+}
