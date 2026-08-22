@@ -1,72 +1,63 @@
-contract_branch: cp-harness-propose-r1-99e5425b-rf44bdef7-a4
-sprint_dir: sprints/08220415-kernel-99e5425b
+contract_branch: cp-harness-propose-r1-bc9deca8-rd25d6fb5-a10
+sprint_dir: sprints/08220748-kernel-bc9deca8
 
 ---
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Sprint: Diff Impact Gate reason_code 透传 + 确定性码 fail-closed 出口 [r42]
+# Contract DoD — Sprint: publisher 进 INFRA_RETRY_ACTION_BY_ROLE（runner_failure 有界重派不再 route_unknown）
 
-**范围**: `diff-gate.js` 步骤 3a 出口透传 `freshness.reason_code` + 确定性/瞬时分流 `retryable`；`harness-gates.js` `gateReceipt` 透传 `reason_code`（deny 标签不再裸 `mapper_stale`）
+**范围**: 仅在 `packages/brain/src/orchestrator/derive.js` 的 `INFRA_RETRY_ACTION_BY_ROLE` 增加一行 `publisher: { phase: 'publish', action: ACTION.PUBLISH_APPROVED_REF }` + 配套 RED→GREEN 冻结回归测试。不改额度语义、不改其它角色映射、不改 publisher 派发/执行、不改 dispatcher/attempt-store。
 **大小**: S
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] diff-gate.js 步骤 3a 出口读取并透传 freshness.reason_code
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/impact-contract/diff-gate.js','utf8');if(!/freshness[^\n]*reason_code/.test(c)||!/retryable/.test(c))process.exit(1)"
-
-- [x] [ARTIFACT] harness-gates.js gateReceipt 返回对象含 reason_code 字段
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/impact-contract/harness-gates.js','utf8');const g=c.slice(c.indexOf('function gateReceipt'),c.indexOf('function gateReceipt')+400);if(!/reason_code/.test(g))process.exit(1)"
-
-- [x] [ARTIFACT] 冻结回归测试文件存在且含五类分流覆盖
-  Test: node -e "const c=require('fs').readFileSync('sprints/08220415-kernel-99e5425b/tests/diff-gate-reason-code.test.ts','utf8');if(!/B-01/.test(c)||!/B-04/.test(c)||!/B-05/.test(c))process.exit(1)"
-
-## BEHAVIOR 条目
-
-- [x] [BEHAVIOR] [L2] B-01: 确定性码 no_anchor 透传进 reason_code 且 fail-closed
-  动作: 注入 mapClient 返回 freshness={status:'stale',reason_code:'no_anchor'} + 受控 db，调用真实 evaluateDiffGate
-  预期观察: gate=impact_unknown，result.reason_code==='no_anchor'（不再丢弃），result.retryable===false（fail-closed 停机）
-  等待预算: 0s
-  留证: vitest -t "B-01" 命令输出末 5 行（含 pass）
-  Test: manual:bash -c 'cd "$(git rev-parse --show-toplevel)"; npx vitest run sprints/08220415-kernel-99e5425b/tests/diff-gate-reason-code.test.ts -t "B-01" --no-cache'
+- [ ] [ARTIFACT] derive.js 的 INFRA_RETRY_ACTION_BY_ROLE 含 publisher 条目，映射到原始派发动作 publish:approved_ref
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/derive.js','utf8');if(!/publisher:\s*\{\s*phase:\s*'publish',\s*action:\s*ACTION\.PUBLISH_APPROVED_REF\s*\}/.test(c))process.exit(1)"
   期望: exit 0
 
-- [x] [BEHAVIOR] [L2] B-02: 瞬时白名单 fact_snapshot_stale / projection_revision_missing 保留 retryable=true
-  动作: 注入 mapClient 分别返回 freshness.reason_code=fact_snapshot_stale 与 projection_revision_missing，调用真实 evaluateDiffGate
-  预期观察: 两码均 reason_code 透传且 result.retryable===true（瞬时可重试不停机）
-  等待预算: 0s
-  留证: vitest -t "B-02" 命令输出末 5 行（含 pass）
-  Test: manual:bash -c 'cd "$(git rev-parse --show-toplevel)"; npx vitest run sprints/08220415-kernel-99e5425b/tests/diff-gate-reason-code.test.ts -t "B-02" --no-cache'
+- [ ] [ARTIFACT] 冻结回归测试文件存在且真调 derive（零 mock 被改边）
+  Test: node -e "const c=require('fs').readFileSync('sprints/08220748-kernel-bc9deca8/tests/publisher-runner-failure-retry.test.js','utf8');if(!c.includes('import { derive }')||/vi\.mock|sinon|stub/.test(c))process.exit(1)"
   期望: exit 0
 
-- [x] [BEHAVIOR] [L2] B-03: freshness 缺失时 reason_code=null 且 retryable=true
-  动作: 注入 mapClient 返回不含 freshness 的结果（保守当瞬时），调用真实 evaluateDiffGate
-  预期观察: gate=impact_unknown，result.reason_code===null，result.retryable===true
-  等待预算: 0s
-  留证: vitest -t "B-03" 命令输出末 5 行（含 pass）
-  Test: manual:bash -c 'cd "$(git rev-parse --show-toplevel)"; npx vitest run sprints/08220415-kernel-99e5425b/tests/diff-gate-reason-code.test.ts -t "B-03" --no-cache'
-  期望: exit 0
+## BEHAVIOR 条目（五行剧本，manual:bash 内嵌单行命令，evaluator 原样跑）
 
-- [x] [BEHAVIOR] [L2] B-04: gateReceipt diff deny 标签透传具体 reason_code，不再裸 mapper_stale
-  动作: 经真实 createHarnessImpactGates(...).beforeEvaluate 走真实 gateReceipt，注入 diffGate 返回 {gate:'impact_unknown',reason_code:'no_anchor',retryable:false}
-  预期观察: 回执 receipt.reason_code==='no_anchor' 且 receipt.reason==='no_anchor'（非裸 'mapper_stale'）
+- [ ] [BEHAVIOR] [L2] B-01: publisher runner_failure 首次触发 derive 返回 publish 重派而非 route_unknown
+  动作: 构造含一条 publisher runner_failure attempt_callback 的 decisionLog，调用真实 derive（不 stub）
+  预期观察: derive 返回 { phase:'publish', action:'publish:approved_ref', reason:'callback_runner_failure_retry' }，reason 不再是 callback_runner_failure_route_unknown
   等待预算: 0s
-  留证: vitest -t "B-04" 命令输出末 5 行（含 pass）
-  Test: manual:bash -c 'cd "$(git rev-parse --show-toplevel)"; npx vitest run sprints/08220415-kernel-99e5425b/tests/diff-gate-reason-code.test.ts -t "B-04" --no-cache'
-  期望: exit 0
+  留证: vitest --reporter=verbose 输出（含 B-01 ✓ 与 Tests 1 passed）
+  Test: manual:bash -c 'OUT=$(npx vitest run sprints/08220748-kernel-bc9deca8/tests/publisher-runner-failure-retry.test.js -t "B-01" --reporter=verbose 2>&1); echo "$OUT" | grep -qE "Tests[[:space:]]+1 passed" || { echo "$OUT" | tail -30; echo "FAIL: B-01 未通过（可能仍返回 route_unknown）"; exit 1; }; echo OK'
 
-- [x] [BEHAVIOR] [L2] B-05: 白名单外未知 reason_code 归确定性 fail-closed retryable=false
-  动作: 注入 mapClient 返回 freshness.reason_code='some_unknown_code'（白名单外），调用真实 evaluateDiffGate
-  预期观察: reason_code 透传该未知码，result.retryable===false（默认 fail-closed，宁停勿空转）
+- [ ] [BEHAVIOR] [L2] B-02: publisher runner_failure 累计 ≥2 次 → 人审兜底 exhausted（有界，不无限重派）
+  动作: 构造含 3 条 publisher runner_failure（前 2 条已重派）的 decisionLog，调用真实 derive
+  预期观察: derive 返回 { phase:'review', action:'wait:human_review', reason:'callback_runner_failure_exhausted' }
   等待预算: 0s
-  留证: vitest -t "B-05" 命令输出末 5 行（含 pass）
-  Test: manual:bash -c 'cd "$(git rev-parse --show-toplevel)"; npx vitest run sprints/08220415-kernel-99e5425b/tests/diff-gate-reason-code.test.ts -t "B-05" --no-cache'
-  期望: exit 0
+  留证: vitest --reporter=verbose 输出（含 B-02 ✓）
+  Test: manual:bash -c 'OUT=$(npx vitest run sprints/08220748-kernel-bc9deca8/tests/publisher-runner-failure-retry.test.js -t "B-02" --reporter=verbose 2>&1); echo "$OUT" | grep -qE "Tests[[:space:]]+1 passed" || { echo "$OUT" | tail -30; echo "FAIL: B-02 exhausted 兜底未通过"; exit 1; }; echo OK'
 
-- [x] [BEHAVIOR] [L2] INV-fail-closed: 3a 非 fresh 出口仍返回 impact_unknown 绝不假绿放行（铁律强化不破）
-  动作: 跑整套冻结回归，确认所有非 fresh 分流的 gate 均为 impact_unknown（无 pass/extend 假绿）
-  预期观察: 整文件全绿，无任一非 fresh 分支返回 pass/extend
+- [ ] [BEHAVIOR] [L2] B-03: 回归——非 publisher（evaluator）runner_failure 路由完全不变
+  动作: 构造 evaluator runner_failure 首次回调 decisionLog，调用真实 derive
+  预期观察: derive 返回 { phase:'evaluate', action:'spawn:evaluator', reason:'callback_runner_failure_retry' }（与本次改动前一致）
   等待预算: 0s
-  留证: 整文件 vitest --reporter=verbose 输出（含 passed 汇总）
-  Test: manual:bash -c 'cd "$(git rev-parse --show-toplevel)"; npx vitest run sprints/08220415-kernel-99e5425b/tests/diff-gate-reason-code.test.ts --no-cache --reporter=verbose'
-  期望: exit 0
+  留证: vitest --reporter=verbose 输出（含 B-03 ✓）
+  Test: manual:bash -c 'OUT=$(npx vitest run sprints/08220748-kernel-bc9deca8/tests/publisher-runner-failure-retry.test.js -t "B-03" --reporter=verbose 2>&1); echo "$OUT" | grep -qE "Tests[[:space:]]+1 passed" || { echo "$OUT" | tail -30; echo "FAIL: B-03 evaluator 回归被破坏"; exit 1; }; echo OK'
+
+- [ ] [BEHAVIOR] [L2] B-04: 边界——publisher 普通 failed（无 failure_class）不受本次改动影响，仍判终态
+  动作: 构造 publisher status=failed 但无 failure_class 的回调 decisionLog，调用真实 derive
+  预期观察: derive 返回 { phase:'failed', action:'mark_failed' }，reason 不为 callback_runner_failure_retry、action 不为 publish:approved_ref
+  等待预算: 0s
+  留证: vitest --reporter=verbose 输出（含 B-04 ✓）
+  Test: manual:bash -c 'OUT=$(npx vitest run sprints/08220748-kernel-bc9deca8/tests/publisher-runner-failure-retry.test.js -t "B-04" --reporter=verbose 2>&1); echo "$OUT" | grep -qE "Tests[[:space:]]+1 passed" || { echo "$OUT" | tail -30; echo "FAIL: B-04 边界终态被误放宽"; exit 1; }; echo OK'
+
+- [ ] [BEHAVIOR] [L2] INV-1 [重试身份]: publisher runner_failure 重派动作字面 == 原始服务端派发动作 publish:approved_ref（不静态误映射，避免候选不存在 WORKSPACE_RESOLUTION_FAILED）
+  动作: 复用 B-01 冻结测试，断言 derive 返回 action 字面等于 dispatcher.js:118 的 publisher 派发动作 'publish:approved_ref'
+  预期观察: derive 返回 action==='publish:approved_ref'（B-01 已逐字断言）
+  等待预算: 0s
+  留证: B-01 vitest 输出
+  Test: manual:bash -c 'OUT=$(npx vitest run sprints/08220748-kernel-bc9deca8/tests/publisher-runner-failure-retry.test.js -t "B-01" --reporter=verbose 2>&1); echo "$OUT" | grep -qE "Tests[[:space:]]+1 passed" || { echo "$OUT" | tail -30; echo "FAIL: INV-1 重试身份未满足"; exit 1; }; grep -q "publish:approved_ref" packages/brain/src/orchestrator/dispatcher.js || { echo "FAIL: dispatcher publisher 派发动作校验失败"; exit 1; }; echo OK'
+
+### 铁律映射（历史约束三源 · 铁律清单）
+
+- INV-1 [重试身份]：见上方 [BEHAVIOR] INV-1（publisher 重派动作 == 原始派发动作 publish:approved_ref）。
+- INV-2 [Planner分支]：N/A —— 本 sprint 仅改 derive 路由表，不触及 planner workspace/branch checkout。
