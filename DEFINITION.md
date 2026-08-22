@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.122
+**Brain 版本**: 1.273.123
+
+## Brain 1.273.123 — seal BEHAVIOR↔it 校验扩展到 repo 路径行（F1 步骤 3，r50 案卷）
+
+r50（run a998d588，r45 族第 3 变体）：合同 Test Contract 表 repo 既有路径行 BEHAVIOR 散文措辞无法匹配 it() 名；seal 只查 sprints/ 行 → CI 红修法在冻结文档 → fix 三连死。修：assertTestContractResolvable 注入 readRepoFile（loop 传 readGitFile@approvedSha）时对 repo 行同尺校验；文件读不到=登记不存在测试同拒；未注入保持现行为。
 
 ## Brain 1.273.121 — seal 拒绝打回 proposer 重写并携带拒绝反馈（F1 步骤 3，r48 案卷）
 

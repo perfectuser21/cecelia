@@ -989,6 +989,14 @@ async function runLoopOwned(
         prdContent: artifacts.prdContent,
         contractContent: artifacts.contractContent,
         ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
+        // r50 案卷：repo 路径行的 BEHAVIOR↔it 校验需要读 approved SHA 下的 repo 文件
+        ...(typeof deps.readGitFile === 'function'
+          ? {
+            readRepoFile: (filePath) => deps.readGitFile(approvedSha, filePath, {
+              repo: asPayload(observed.task?.payload).base_repo ?? null,
+            }),
+          }
+          : {}),
         approvedAt: now(),
       }, {
         runId: resolvedRunId,

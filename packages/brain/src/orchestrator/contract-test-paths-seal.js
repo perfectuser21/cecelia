@@ -39,7 +39,7 @@ const { parseTestContract, resolveContractTestFile } = loadTestContractPaths();
 
 const VIRTUAL_ROOT = '/contract-seal';
 
-export function assertTestContractResolvable(contractContent, artifacts) {
+export function assertTestContractResolvable(contractContent, artifacts, { readRepoFile } = {}) {
   const rows = parseTestContract(String(contractContent ?? ''));
   const artifactPaths = new Set(
     (Array.isArray(artifacts) ? artifacts : [])
@@ -73,7 +73,30 @@ export function assertTestContractResolvable(contractContent, artifacts) {
   const unresolved = [];
   for (const row of rows) {
     const testFile = String(row?.testFile ?? '');
-    if (!testFile.startsWith('sprints/')) continue;
+    if (!testFile.startsWith('sprints/')) {
+      // r50（run a998d588，r45 族第 3 变体）：repo 既有路径行的 BEHAVIOR 措辞
+      // 无法匹配 it() 名时，CI 覆盖检查红的唯一修法在冻结 contract-draft →
+      // fix 死锁。注入 readRepoFile 时用同一把尺在封印时点校验；文件读不到 =
+      // 登记了不存在的 repo 测试，同拒。未注入时保持现行为（零回归兜底）。
+      if (typeof readRepoFile !== 'function' || testFile.endsWith('.sh')) continue;
+      let repoContent = null;
+      try {
+        repoContent = String(readRepoFile(testFile) ?? '');
+      } catch {
+        unresolved.push(testFile);
+        continue;
+      }
+      const repoItNames = [...repoContent.matchAll(/\b(?:it|test)\(['"]([^'"]+)['"]/g)]
+        .map((m) => m[1]);
+      for (const behavior of (Array.isArray(row?.behaviors) ? row.behaviors : [])) {
+        const found = repoItNames.some(
+          (n) => n.toLowerCase().includes(String(behavior).toLowerCase())
+            || String(behavior).toLowerCase().includes(n.toLowerCase()),
+        );
+        if (!found) unresolved.push(`${testFile}#behavior:${behavior}`);
+      }
+      continue;
+    }
     const resolution = resolveContractTestFile({
       root: VIRTUAL_ROOT,
       contractPath,
