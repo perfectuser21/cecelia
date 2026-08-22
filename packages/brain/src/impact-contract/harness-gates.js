@@ -32,6 +32,11 @@ function gateReceipt(stage, result, extra = {}) {
     retryable: result.retryable ?? false,
     contract_id: result.contract?.id ?? null,
     contract_hash: result.contract?.contract_hash ?? null,
+    // r44 案卷：#5015 把 unclaimed_files 修在 evaluateDiffGate 返回，但本白名单
+    // 丢字段导致 evidence 仍不可考古——确定性判死的清单必须随收据透传。
+    ...(Array.isArray(result.unclaimed_files)
+      ? { unclaimed_files: result.unclaimed_files.slice(0, 64) }
+      : {}),
     ...extra,
   };
 }
@@ -466,3 +471,5 @@ export function createHarnessImpactGates({
     },
   });
 }
+
+export const __test__ = Object.freeze({ gateReceipt });

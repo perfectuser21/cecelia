@@ -8,11 +8,15 @@
 
 
 
-**Brain 版本**: 1.273.116
+**Brain 版本**: 1.273.117
 
 ## Brain 1.273.114 — Diff Impact Gate 透传 freshness.reason_code + 确定性码 fail-closed 出口（F1 步骤 3，r42）
 
 `evaluateDiffGate` 步骤 3a 把 Mapper 任意非 fresh freshness 一律折叠成裸 `mapper_stale` + `retryable:true`，确定性结论（no_anchor/revision_mismatch/resolver_error 等）被当瞬时无限重试 → run 空转。修：3a 出口透传 `freshness.reason_code`，瞬时白名单（`fact_snapshot_stale`/`projection_revision_missing`）与 `null` 保留 `retryable:true`，其余确定性码 fail-closed（`retryable:false`）；`gateReceipt` 透传 `reason_code` 使 deny 标签归因到具体码，不再裸 `mapper_stale`。3a 仍返回 `impact_unknown` 不假绿。
+## Brain 1.273.117 — 投影换代窗口空 capability 集按瞬态处理（F1 步骤 3，r43/r44 双死案卷）
+
+r43+r44 fix 轮后同点双死：gate 撞投影换代窗口（rescan 每 ~10 分钟），capabilityNodes 空集 → 全部文件误判 unclaimed → impact_anchor_missing 确定性杀 run；事后带 digest 复刻总 fresh。修：radius 空 capability 集报 projection_capabilities_empty（瞬态可重试）；diff-gate 白名单收编该码；gateReceipt 透传 unclaimed_files（#5015 被白名单丢字段的补刀）。
+
 ## Brain 1.273.116 — impact_anchor_missing 留痕 unclaimed 文件清单（F1 步骤 3，r43 案卷）
 
 r43（run 19759355 hop38）被 deny:impact:impact_anchor_missing 确定性判死但 evidence 不含哪个文件 unclaimed，事后同输入复现 unclaimed=[]（瞬态时序不可回放）。修：radius freshness 带 unclaimed_files（≤64），diff-gate 3a 透传进 gate 返回随 evidence 落 decision_log 可考古。

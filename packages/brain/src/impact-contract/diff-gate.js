@@ -27,7 +27,7 @@ export { compareImpactContract } from './diff-compare.js';
 
 // 瞬时 freshness 白名单（固定，来源 PRD/task 冻结）：这些码或 reason_code==null 保留 retryable=true；
 // 其余具体码一律视为确定性 → fail-closed（retryable=false），宁停勿空转。
-const TRANSIENT_FRESHNESS_CODES = ['fact_snapshot_stale', 'projection_revision_missing'];
+const TRANSIENT_FRESHNESS_CODES = ['fact_snapshot_stale', 'projection_revision_missing', 'projection_capabilities_empty'];
 
 // ---------- 副作用操作 ----------
 
