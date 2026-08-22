@@ -1,69 +1,65 @@
-contract_branch: cp-harness-propose-r1-3354cd28-r0ec96030-a10
-sprint_dir: sprints/08221235-kernel-3354cd28
+contract_branch: cp-harness-propose-r1-dd912609-r9be53aff-a10
+sprint_dir: sprints/08221753-kernel-dd912609
 
 ---
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Sprint: publisher 纳入 INFRA_RETRY_ACTION_BY_ROLE（runner_failure 有界重派）
+# Contract DoD — Sprint: diagnostic 类人审批准后 derive 消费该批准并重试原动作 [r49]
 
-**范围**: `packages/brain/src/orchestrator/derive.js` 的 `INFRA_RETRY_ACTION_BY_ROLE` 增加一行 `publisher: { phase: 'publish', action: ACTION.PUBLISH_APPROVED_REF }`；新增冻结回归测试守卫 publisher runner_failure 有界重派路由。
-**大小**: S
+**范围**: `packages/brain/src/orchestrator/` 内 `derive.js`（diagnostic 批准消费 + 回主链重试原动作）、`ground-truth.js`（diagnostic APPROVED verdict 观测 → open_human_review=false + 触发 callback hop 入消费集合）、必要时 `loop.js`（open_human_review 计算纳入 diagnostic 消费）；冻结回归测试。
+**大小**: M
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] derive.js 的 INFRA_RETRY_ACTION_BY_ROLE 含 publisher 表项（phase=publish, action=ACTION.PUBLISH_APPROVED_REF）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/derive.js','utf8');const m=c.match(/INFRA_RETRY_ACTION_BY_ROLE\s*=\s*Object\.freeze\(\{[\s\S]*?\}\)/);if(!m||!/publisher:\s*\{\s*phase:\s*'publish',\s*action:\s*ACTION\.PUBLISH_APPROVED_REF\s*\}/.test(m[0]))process.exit(1)"
+- [ ] [ARTIFACT] 冻结回归测试文件存在且覆盖正向消费 + 双负向 + merge_gate 不变量
+  Test: node -e "const c=require('fs').readFileSync('sprints/08221753-kernel-dd912609/tests/diagnostic-human-review-consume.test.js','utf8');if(!c.includes('消费该批准并重试原动作')||!c.includes('merge_gate 类批准不触发 diagnostic 消费'))process.exit(1)"
+  期望: exit 0
 
-- [x] [ARTIFACT] 冻结测试文件存在且真调 real derive（不 mock 被改的边）
-  Test: node -e "const c=require('fs').readFileSync('sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js','utf8');if(!c.includes(\"from '../../../packages/brain/src/orchestrator/derive.js'\")||/vi\.mock|sinon|stub/.test(c))process.exit(1)"
+- [ ] [ARTIFACT] derive.js 含 diagnostic 人审批准消费路由（非 merge_gate 批准的消费/重试实现）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/derive.js','utf8');if(!/diagnostic|review_class/.test(c))process.exit(1)"
+  期望: exit 0
 
-## BEHAVIOR 条目（五行剧本，内嵌 manual:bash 命令，evaluator 直接跑）
+## BEHAVIOR 条目（内嵌可执行 manual: 命令，autonomous — 纯函数 vitest 重放）
 
-- [x] [BEHAVIOR] [L2] B-01: publisher runner_failure 首次 → derive 返回 publish 重派动作（不再 route_unknown）
-  动作: 构造 decisionLog 含一条 publisher attempt_callback（status=failed, failure_class=runner_failure, role=publisher, priorRunnerFailures<2），调用真 derive(observed)
-  预期观察: derive 返回 { phase:'publish', action:'publish:approved_ref', reason:'callback_runner_failure_retry' }；reason 不含 route_unknown
+- [ ] [BEHAVIOR] [L2] B-01: diagnostic 人审批准后 derive 消费该批准并重试原动作（本轮 RED 驱动）
+  动作: 构造 decisionLog（evaluator runner_failure ×3 exhausted → diagnostic human_review_requested(callback_hop=9) → verdict:human_review approved/review_class=diagnostic/pr_head_sha 匹配），调 derive(observed)
+  预期观察: derive 返回 action 非 wait:human_review 且 phase=evaluate（回主链重试原 evaluator 动作），脱离人审死等
   等待预算: 0s
-  留证: vitest -t "publish 重派动作" 输出末 20 行（含 passed 行）
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "publish 重派动作" 2>&1); printf '%s\n' "$O"; echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" && ! echo "$O" | grep -q "callback_runner_failure_route_unknown" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
+  留证: vitest 命令输出末 5 行（含 1 passed）
+  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}" && npx vitest run sprints/08221753-kernel-dd912609/tests/diagnostic-human-review-consume.test.js -t "消费该批准并重试原动作" --reporter=basic'
 
-- [x] [BEHAVIOR] [L2] B-02: publisher runner_failure 首次不判 run 终态
-  动作: 同 B-01 输入，调用真 derive(observed)
-  预期观察: derive 返回 phase != 'failed' 且 action != 'mark_failed'（基础设施故障不烧 run）
+- [ ] [BEHAVIOR] [L2] B-02: 无批准 diagnostic review 仍 wait:human_review（负向 A，不误放行）
+  动作: 构造 decisionLog（exhausted diagnostic human_review_requested 但无 verdict:human_review 批准行），调 derive(observed)
+  预期观察: derive 返回 action=wait:human_review、reason=callback_runner_failure_exhausted
   等待预算: 0s
-  留证: vitest -t "不判 run 终态" 输出 passed 行
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "不判 run 终态" 2>&1); printf '%s\n' "$O"; echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
+  留证: vitest 命令输出末 5 行
+  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}" && npx vitest run sprints/08221753-kernel-dd912609/tests/diagnostic-human-review-consume.test.js -t "无批准 diagnostic review 无对应 APPROVED verdict" --reporter=basic'
 
-- [x] [BEHAVIOR] [L2] B-03: 超限守恒 — 第 3 次 publisher runner_failure 仍进人审 exhausted
-  动作: 构造 decisionLog 含 3 条 publisher runner_failure callback（priorRunnerFailures≥2），调用真 derive(observed)
-  预期观察: derive 返回 { phase:'review', action:'wait:human_review', reason:'callback_runner_failure_exhausted' }（补表不改超限兜底）
+- [ ] [BEHAVIOR] [L2] B-03: stale 批准 pr_head_sha 与请求不符仍 wait:human_review（负向 B，陈旧批准不消费）
+  动作: 构造 decisionLog（diagnostic 批准但 detail.pr_head_sha 与请求 head_sha 不符），调 derive(observed)
+  预期观察: derive 返回 action=wait:human_review（陈旧批准不消费）
   等待预算: 0s
-  留证: vitest -t "超限守恒" 输出 passed 行
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "超限守恒" 2>&1); printf '%s\n' "$O"; echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
+  留证: vitest 命令输出末 5 行
+  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}" && npx vitest run sprints/08221753-kernel-dd912609/tests/diagnostic-human-review-consume.test.js -t "stale 批准 pr_head_sha 与请求不符" --reporter=basic'
 
-- [x] [BEHAVIOR] [L2] B-04: 负向 — publisher 普通 failed（无 failure_class）照旧判终态
-  动作: 构造 decisionLog 含一条 publisher failed callback（无 failure_class），调用真 derive(observed)
-  预期观察: derive 返回 { phase:'failed', action:'mark_failed', reason:'callback_failed' }（不被本次放宽触碰）
+- [ ] [BEHAVIOR] [L2] B-04: INV merge_gate 语义不变——merge_gate 类批准不触发 diagnostic 消费
+  动作: 构造 decisionLog（同正向但 verdict:human_review 的 review_class=merge_gate），调 derive(observed)
+  预期观察: derive 返回 action=wait:human_review（merge_gate 批准由 mergeGate 路径处理，diagnostic 消费分支不命中）
   等待预算: 0s
-  留证: vitest -t "负向" 输出 passed 行
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "负向" 2>&1); printf '%s\n' "$O"; echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
+  留证: vitest 命令输出末 5 行
+  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}" && npx vitest run sprints/08221753-kernel-dd912609/tests/diagnostic-human-review-consume.test.js -t "merge_gate 类批准不触发 diagnostic 消费" --reporter=basic'
 
-- [x] [BEHAVIOR] [L2] B-05: 回归守恒 — evaluator runner_failure 首次仍重派 evaluator（累积 FR 不回退）
-  动作: 构造 decisionLog 含一条 evaluator runner_failure callback，调用真 derive(observed)
-  预期观察: derive 返回 { phase:'evaluate', action:'spawn:evaluator', reason:'callback_runner_failure_retry' }（既有角色行为不受本次改动回退）
+- [ ] [BEHAVIOR] [L2] INV-1: 语义守恒——repo 既有 derive 全套零回归（merge_gate/evidence_repair/rejected/runner_failure 有界重派均不受影响）
+  动作: 从 packages/brain 包根子 shell 跑既有 derive.test.js 全套
+  预期观察: 既有 derive 套件全绿，无因本次改动新增失败
   等待预算: 0s
-  留证: vitest -t "回归守恒" 输出 passed 行
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "回归守恒" 2>&1); printf '%s\n' "$O"; echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
+  留证: vitest 命令输出末 5 行（含 Test Files passed）
+  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}/packages/brain" && npx vitest run --no-cache ./src/orchestrator/__tests__/derive.test.js --reporter=basic'
 
-## Invariant 覆盖（铁律逐条映射）
-
-- [x] [BEHAVIOR] [L2] INV-1 [重派同族] runner_failure 有界重派同角色 ≤2 次、超限进人审：由 B-01（首次重派）+ B-03（第 3 次 exhausted）联合守卫
-  动作: 见 B-01 与 B-03
-  预期观察: 首次 retry / 超限 exhausted 两态并存，重派额度不突破 2 次
+- [ ] [BEHAVIOR] [L2] INV-2: 观测层零回归——ground-truth 投影既有用例全绿（diagnostic 消费观测新增不破坏 reviewApproved/mergeGate 观测）
+  动作: 从 packages/brain 包根子 shell 跑既有 ground-truth.test.js 全套
+  预期观察: 既有 ground-truth 套件全绿
   等待预算: 0s
-  留证: B-01 + B-03 vitest 输出
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "publish 重派动作" 2>&1); P=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "超限守恒" 2>&1); printf '%s\n' "$O" "$P"; echo "$O" | grep -qE "[1-9][0-9]* passed" && echo "$P" | grep -qE "[1-9][0-9]* passed" || { echo FAIL; exit 1; }; echo OK'
-
-- INV-2 [基础设施重试身份] 基础设施重派复用同角色相位/动作、不变更执行身份：由 B-01 守卫（publisher 重派返回 publisher 既有 action=publish:approved_ref，相位=publish，非 spawn:* 换身份）
-- INV-3 [冻结在途] run 在途 Commander 不合任何 PR：N/A — 属 Commander 合并纪律，非 derive 单测可执行断言；本 sprint 不触碰 merge fence 逻辑
-- INV-4 [封印强制登记] 合同 Test Contract 表必须登记全部冻结测试：N/A（可执行断言）— 由 contract-draft.md 的 `## Test Contract` 表结构满足，封印闸 assertTestContractResolvable 批准时校验
+  留证: vitest 命令输出末 5 行
+  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}/packages/brain" && npx vitest run --no-cache ./src/orchestrator/__tests__/ground-truth.test.js --reporter=basic'
