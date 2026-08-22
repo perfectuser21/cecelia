@@ -21,7 +21,14 @@ const emptyAnchorProjection = async () => ({
   nodes: [], edges: [], issues: [], fact_revisions: {},
 });
 
-function successfulClient() {
+const BACKBONE_STEPS = [
+  { step_key: 'f1-step-1', name: '接单进车间即分档', promise: '接单后分档', status: 'active', display_order: 1, capability_code: 'F1' },
+  { step_key: 'f1-step-2', name: '合同即法律', promise: '合同生效', status: 'active', display_order: 2, capability_code: 'F1' },
+  { step_key: 'f1-step-3', name: '造完真验', promise: '造完验收', status: 'active', display_order: 3, capability_code: 'F1' },
+  { step_key: 'f1-step-4', name: '交付有回执', promise: '交付回执', status: 'active', display_order: 4, capability_code: 'F1' },
+];
+
+function successfulClient({ backboneRows = [] } = {}) {
   return {
     query: vi.fn(async (sql, params) => {
       if (/FROM map_manifest_versions[\s\S]*status = 'active'/i.test(sql)) {
@@ -29,14 +36,18 @@ function successfulClient() {
       }
       if (/INSERT INTO map_projection_runs/i.test(sql)) return { rows: [{ id: runId }], rowCount: 1 };
       if (/INSERT INTO map_projection_nodes/i.test(sql)) {
-        return { rows: [], rowCount: JSON.parse(params[1]).length };
+        // Batch bulk insert uses jsonb_to_recordset($2::jsonb); backbone inserts use individual VALUES ($1,$2,...)
+        if (/jsonb_to_recordset/i.test(sql)) return { rows: [], rowCount: JSON.parse(params[1]).length };
+        return { rows: [], rowCount: 1 };
       }
       if (/INSERT INTO map_projection_edges/i.test(sql)) {
-        return { rows: [], rowCount: JSON.parse(params[1]).length };
+        if (/jsonb_to_recordset/i.test(sql)) return { rows: [], rowCount: JSON.parse(params[1]).length };
+        return { rows: [], rowCount: 1 };
       }
       if (/UPDATE map_projection_runs[\s\S]*status = 'active'/i.test(sql)) {
         return { rows: [{ id: runId, status: 'active' }], rowCount: 1 };
       }
+      if (/FROM journey_steps/i.test(sql)) return { rows: backboneRows };
       return { rows: [], rowCount: 0 };
     }),
   };
@@ -156,5 +167,30 @@ describe('projectMapManifest', () => {
     expect(result.projection.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({ node_type: 'feature', node_key: featureKey }),
     ]));
+  });
+
+  it('backbone 步骤在 insertEdges 后、activateRun 前写入投影 run', async () => {
+    const client = successfulClient({ backboneRows: BACKBONE_STEPS });
+    await projectMapManifest({
+      client, manifestVersion, loadAnchorProjection: emptyAnchorProjection,
+    });
+
+    const calls = client.query.mock.calls;
+    const sqls = calls.map(([sql]) => sql);
+    const firstEdgeBatch = sqls.findIndex((s) => /INSERT INTO map_projection_edges.*jsonb_to_recordset/is.test(s));
+    const firstBackboneNode = sqls.findIndex((s) => /INSERT INTO map_projection_nodes.*'backbone'/is.test(s));
+    const superseded = sqls.findIndex((s) => /SET status = 'superseded'/i.test(s));
+
+    // backbone inserts happen after bulk edges and before activation
+    expect(firstEdgeBatch).toBeGreaterThan(-1);
+    expect(firstBackboneNode).toBeGreaterThan(firstEdgeBatch);
+    expect(superseded).toBeGreaterThan(firstBackboneNode);
+
+    // 4 backbone nodes + 4 backbone edges inserted
+    const backboneNodeInserts = calls.filter(([s]) => /INSERT INTO map_projection_nodes.*'backbone'/is.test(s));
+    const backboneEdgeInserts = calls.filter(([s]) => /INSERT INTO map_projection_edges.*'contains'/is.test(s)
+      && !/jsonb_to_recordset/i.test(s));
+    expect(backboneNodeInserts).toHaveLength(4);
+    expect(backboneEdgeInserts).toHaveLength(4);
   });
 });

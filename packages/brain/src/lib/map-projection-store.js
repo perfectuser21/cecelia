@@ -1,5 +1,5 @@
 import { loadMapAnchorProjection } from './map-anchor-resolver.js';
-import { buildMapProjection, MAP_PROJECTOR_VERSION } from './map-projector.js';
+import { buildMapProjection, MAP_PROJECTOR_VERSION, stableMapEdgeId, stableMapNodeId } from './map-projector.js';
 
 export class MapProjectionStoreError extends Error {
   constructor(code, message, details = undefined) {
@@ -143,6 +143,47 @@ async function insertEdges(client, runId, edges) {
   }
 }
 
+async function insertBackboneNodes(client, runId, scopeKey) {
+  const { rows } = await client.query(
+    `SELECT LOWER(j.capability_code) || '-step-' || js.step_number AS step_key,
+            js.name, js.promise, js.status,
+            js.step_number AS display_order,
+            j.capability_code
+       FROM journey_steps js
+       JOIN journeys j ON j.id = js.journey_id
+      WHERE j.biz_area = $1
+        AND j.capability_code IS NOT NULL
+      ORDER BY j.capability_code, js.step_number`,
+    [scopeKey],
+  );
+  for (const row of rows) {
+    const backboneNodeId = stableMapNodeId(scopeKey, 'backbone', row.step_key);
+    await client.query(
+      `INSERT INTO map_projection_nodes
+         (run_id, node_id, node_type, node_key, name, source_refs, attributes)
+       VALUES ($1, $2, 'backbone', $3, $4, '[]'::jsonb, $5::jsonb)
+       ON CONFLICT (run_id, node_type, node_key) DO NOTHING`,
+      [runId, backboneNodeId, row.step_key, row.name,
+        JSON.stringify({
+          promise: row.promise,
+          status: row.status,
+          display_order: row.display_order,
+          step_key: row.step_key,
+        })],
+    );
+    const capabilityNodeId = stableMapNodeId(scopeKey, 'capability', row.capability_code);
+    const edgeKey = `${row.capability_code}:${row.step_key}`;
+    await client.query(
+      `INSERT INTO map_projection_edges
+         (run_id, edge_id, edge_type, edge_key, from_node_id, to_node_id, source_refs, attributes)
+       VALUES ($1, $2, 'contains', $3, $4, $5, '[]'::jsonb, '{}'::jsonb)
+       ON CONFLICT (run_id, edge_type, edge_key) DO NOTHING`,
+      [runId, stableMapEdgeId(scopeKey, 'contains', edgeKey),
+        edgeKey, capabilityNodeId, backboneNodeId],
+    );
+  }
+}
+
 async function activateRun(client, scopeKey, runId) {
   await client.query(
     `UPDATE map_projection_runs
@@ -205,6 +246,7 @@ export async function projectMapManifest({
   const runId = await insertRun(client, authoritativeManifest, projection);
   await insertNodes(client, runId, projection.nodes);
   await insertEdges(client, runId, projection.edges);
+  await insertBackboneNodes(client, runId, authoritativeManifest.scope_key);
   const projectionRun = await activateRun(client, authoritativeManifest.scope_key, runId);
   return { projection_run: projectionRun, projection };
 }

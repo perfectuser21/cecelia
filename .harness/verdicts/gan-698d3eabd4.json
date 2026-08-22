@@ -1,0 +1,21 @@
+{
+  "verdict": "APPROVED",
+  "round": 1,
+  "invariant_coverage": "6/6",
+  "judgments_written": 7,
+  "rubric_scores": {
+    "independent_tests": {"score": 9, "max": 10, "note": "D2 mock 策略未明确"},
+    "golden_path_completeness": {"score": 10, "max": 10},
+    "mechanical_verification": {"score": 9, "max": 10, "note": "D4 selector 未给出"},
+    "invariant_coverage": {"score": 10, "max": 10},
+    "e2e_authenticity": {"score": 9, "max": 10, "note": "D4 断言未写 selector"},
+    "uncovered_paths": {"score": 9, "max": 10},
+    "manual_bash_determinism": {"score": 10, "max": 10}
+  },
+  "cautions": [
+    "C-1: D2 mock 注入策略未明确（low）",
+    "C-2: D4 Playwright 断言未给出具体 selector（low）",
+    "C-3: D2 SQL 未说明 scopeKey===biz_area 等价关系（low）"
+  ],
+  "ci_file_note": "CI 路径为 .github/workflows/ci.yml，非 workspace-ci.yml"
+}
