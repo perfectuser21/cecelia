@@ -1,0 +1,25 @@
+{
+  "initiative_id": "intent:0ec96030-b5e4-40e6-9901-fe1473e43011:10",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain/ 编排层 derive.js，纯后端调度决策，无 UI/agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "publisher 纳入 INFRA_RETRY_ACTION_BY_ROLE：runner_failure 有界重派，不再 route_unknown",
+      "scope": "在 derive.js 的 INFRA_RETRY_ACTION_BY_ROLE 增加 publisher 表项，使 publisher runner_failure 首次/第 2 次同 run 有界重派（phase=publish, action=publish:approved_ref, reason=callback_runner_failure_retry），超限第 3 次仍进人审 exhausted；不改重派额度与其他角色分支",
+      "dod": [
+        "[BEHAVIOR] publisher runner_failure 首次经真 derive 返回 { phase:'publish', action:'publish:approved_ref', reason:'callback_runner_failure_retry' }，reason 不再 callback_runner_failure_route_unknown",
+        "[BEHAVIOR] 第 3 次 publisher runner_failure 仍返回 callback_runner_failure_exhausted 进人审（超限守恒）",
+        "[BEHAVIOR] evaluator runner_failure 首次仍重派 evaluator（既有角色行为不回退）",
+        "[ARTIFACT] derive.js INFRA_RETRY_ACTION_BY_ROLE 含 publisher: { phase: 'publish', action: ACTION.PUBLISH_APPROVED_REF }"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js",
+        "sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
