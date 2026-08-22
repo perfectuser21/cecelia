@@ -44,7 +44,7 @@ function parseTestContract(content) {
     }
 
     const behaviors = behaviorsRaw
-      .split(/[/,、]/)
+      .split(/[/,、;；]/)
       .map((behavior) => behavior.trim().replace(/^`|`$/g, ""))
       .filter(Boolean);
     rows.push({ ws, testFile, behaviors });

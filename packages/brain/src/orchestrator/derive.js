@@ -1030,6 +1030,29 @@ function deriveGan(observed) {
   // F2(b)（审查修复）：真实 reviewer APPROVED 是权威 verdict，趋势闸绝不能覆盖/劫持它——
   // 这里必须无条件先判，不受下面的趋势闸影响。
   if (ganLatestRoundVerdict === 'APPROVED') {
+    // r47（run 6abf8fba）案卷：封印校验拒绝的合同（Test Contract 表缺登记/不可解析）
+    // 是 proposer 的可重写缺陷。本轮 SHA 存在 seal_rejected 行时不得重试物化
+    // （会确定性再拒死循环）——打回 GAN 重写；限额沿用 reopen 一次，超限进人审。
+    const sealRejected = sortedLogRows(observed.decisionLog).some((r) => (
+      r.action === 'verdict:contract_seal_rejected'
+      && callbackDetail(r).propose_branch_sha === observed.proposeBranchSha
+    ));
+    if (sealRejected) {
+      const priorSealReopens = sortedLogRows(observed.decisionLog)
+        .filter((r) => r.action === ACTION.REOPEN_GAN_CONTRACT).length;
+      if (priorSealReopens < 1) {
+        return {
+          phase: 'gan',
+          action: ACTION.REOPEN_GAN_CONTRACT,
+          reason: 'contract_seal_rejected_reopen_gan',
+        };
+      }
+      return {
+        phase: 'review',
+        action: ACTION.WAIT_HUMAN_REVIEW,
+        reason: 'contract_seal_rejected_exhausted',
+      };
+    }
     return { phase: 'gan', action: 'persist_contract_approval', reason: 'approved_pending_persist' };
   }
 
