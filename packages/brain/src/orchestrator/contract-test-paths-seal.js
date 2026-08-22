@@ -41,12 +41,26 @@ const VIRTUAL_ROOT = '/contract-seal';
 
 export function assertTestContractResolvable(contractContent, artifacts) {
   const rows = parseTestContract(String(contractContent ?? ''));
-  if (rows.length === 0) return;
   const artifactPaths = new Set(
     (Array.isArray(artifacts) ? artifacts : [])
       .map((artifact) => artifact?.path)
       .filter((p) => typeof p === 'string' && p.length > 0),
   );
+  // r45（run 6de78554）死锁案卷：proposer 漏产 ## Test Contract 表（rows=0）时旧逻辑
+  // 直接放行，CI 覆盖闸在 generator 后才红，而 contract-draft 已冻结（守卫正确拒改）
+  // → fix 结构性无解。封印时点强制：artifacts 里每个冻结测试文件都必须被表登记；
+  // 缺表/漏登记拒封印，打回 proposer 可重写轮。
+  const frozenTestFiles = [...artifactPaths].filter(
+    (p) => /\/tests\//.test(p) && /\.(test\.[cm]?[jt]sx?|test\.sh|mjs)$/.test(p),
+  );
+  const registered = new Set(rows.map((row) => String(row?.testFile ?? '')));
+  const unregistered = frozenTestFiles.filter((p) => !registered.has(p));
+  if (unregistered.length > 0) {
+    throw new Error(
+      `FROZEN_CONTRACT_TEST_CONTRACT_UNREGISTERED:${unregistered.join(',')}`,
+    );
+  }
+  if (rows.length === 0) return;
   const draftPath = [...artifactPaths].find((p) => p.endsWith('/contract-draft.md'));
   const sprintDir = draftPath
     ? draftPath.slice(0, -'/contract-draft.md'.length)

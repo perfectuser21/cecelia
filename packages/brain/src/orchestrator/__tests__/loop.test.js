@@ -274,7 +274,7 @@ describe('runLoop：全链 planning→done', () => {
     deps.listGitFiles = vi.fn(() => ['sprints/full-chain/tests/golden-path.test.mjs']);
     deps.readGitFile = vi.fn((_sha, filePath) => ({
       'sprints/full-chain/sprint-prd.md': '# PRD',
-      'sprints/full-chain/contract-draft.md': '# Contract',
+      'sprints/full-chain/contract-draft.md': '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| gp | `sprints/full-chain/tests/golden-path.test.mjs` | `golden` | FAIL |',
       'sprints/full-chain/contract-dod.md': '# DoD',
       'sprints/full-chain/tests/golden-path.test.mjs': 'test("golden path", () => {});',
     })[filePath]);
@@ -1250,9 +1250,9 @@ describe('runLoop：控制 action 自消费', () => {
     const { deps, sqls, sleeps } = makeEnv({ observedSeq });
     const files = {
       'sprints/kernel-contract/sprint-prd.md': '# PRD',
-      'sprints/kernel-contract/contract-draft.md': '# Contract',
+      'sprints/kernel-contract/contract-draft.md': '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| red | `sprints/kernel-contract/tests/red.test.js` | `red` | FAIL |',
       'sprints/kernel-contract/contract-dod.md': '# DoD',
-      'sprints/kernel-contract/tests/red.test.js': 'throw new Error("RED");',
+      'sprints/kernel-contract/tests/red.test.js': 'it("red", () => { throw new Error("RED"); });',
     };
     deps.listGitFiles = vi.fn(() => ['sprints/kernel-contract/tests/red.test.js']);
     deps.fileExists = vi.fn(() => false);
@@ -1301,9 +1301,9 @@ describe('runLoop：控制 action 自消费', () => {
     deps.listGitFiles = vi.fn(() => ['sprints/kernel-contract/tests/red.test.js']);
     deps.readGitFile = vi.fn((_sha, filePath) => ({
       'sprints/kernel-contract/sprint-prd.md': '# PRD',
-      'sprints/kernel-contract/contract-draft.md': '# Contract',
+      'sprints/kernel-contract/contract-draft.md': '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| red | `sprints/kernel-contract/tests/red.test.js` | `red` | FAIL |',
       'sprints/kernel-contract/contract-dod.md': '# DoD',
-      'sprints/kernel-contract/tests/red.test.js': 'throw new Error("RED");',
+      'sprints/kernel-contract/tests/red.test.js': 'it("red", () => { throw new Error("RED"); });',
     })[filePath]);
     deps.materializeApprovedContract = vi.fn(async () => {
       throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:seal_mismatch');
@@ -1352,12 +1352,16 @@ describe('runLoop：控制 action 自消费', () => {
       'sprints/kernel-contract/contract-draft.md': [
         '# Contract',
         'ATTEMPT_ID="1884647e-b67a-4bfd-a44c-3d2e84509526"',
+        '## Test Contract',
+        '| 功能 | Test File | BEHAVIOR | 红证据 |',
+        '|---|---|---|---|',
+        '| red | `sprints/kernel-contract/tests/red.test.js` | `red` | FAIL |',
       ].join('\n'),
       'sprints/kernel-contract/contract-dod.md': [
         '# DoD',
         'capability_snapshot_id=13eb5828-b09a-4e76-ba5e-14309f842263',
       ].join('\n'),
-      'sprints/kernel-contract/tests/red.test.js': 'throw new Error("RED");',
+      'sprints/kernel-contract/tests/red.test.js': 'it("red", () => { throw new Error("RED"); });',
     })[filePath]);
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
@@ -1397,7 +1401,7 @@ describe('runLoop：控制 action 自消费', () => {
     const { deps, sqls } = makeEnv({ observedSeq });
     const files = {
       [`${sprintDir}/sprint-prd.md`]: '# PRD',
-      [`${sprintDir}/contract-draft.md`]: '# Contract',
+      [`${sprintDir}/contract-draft.md`]: `# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| t | \`${sprintDir}/tests/router.test.mjs\` | \`router\` | FAIL |`,
       [`${sprintDir}/contract-dod.md`]: '# DoD',
       [`${sprintDir}/tests/router.test.mjs`]: 'test("router", () => {})',
     };
@@ -1450,7 +1454,15 @@ describe('runLoop：控制 action 自消费', () => {
     const { deps } = makeEnv({ observedSeq });
     deps.fileExists = vi.fn(() => false);
     deps.listGitFiles = vi.fn(() => ['sprints/kernel-contract/tests/red.test.js']);
-    deps.readGitFile = vi.fn(() => '# frozen artifact');
+    // r45 封印新语义：contract-draft 必须登记全部冻结测试
+    deps.readGitFile = vi.fn((_sha, filePath) => {
+      const f = String(filePath);
+      if (f.endsWith('contract-draft.md')) {
+        return '# frozen artifact\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| red | `sprints/kernel-contract/tests/red.test.js` | `red` | FAIL |';
+      }
+      if (f.endsWith('red.test.js')) return 'it("red", () => { throw new Error("RED"); });';
+      return '# frozen artifact';
+    });
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
 
@@ -1533,7 +1545,7 @@ describe('runLoop：控制 action 自消费', () => {
     const { deps, sqls } = makeEnv({ observedSeq });
     const files = {
       [`${sprintDir}/sprint-prd.md`]: '# PRD',
-      [`${sprintDir}/contract-draft.md`]: '# Contract',
+      [`${sprintDir}/contract-draft.md`]: `# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| t | \`${sprintDir}/tests/recovery.test.mjs\` | \`recovery\` | FAIL |`,
       [`${sprintDir}/contract-dod.md`]: '# DoD',
       [`${sprintDir}/tests/recovery.test.mjs`]: 'test("recovery", () => {})',
     };
@@ -1583,7 +1595,7 @@ describe('runLoop：控制 action 自消费', () => {
     const { deps, sqls } = makeEnv({ observedSeq });
     const files = {
       [`${sprintDir}/sprint-prd.md`]: '# PRD',
-      [`${sprintDir}/contract-draft.md`]: '# Contract',
+      [`${sprintDir}/contract-draft.md`]: `# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| t | \`${sprintDir}/tests/force.test.mjs\` | \`force\` | FAIL |`,
       [`${sprintDir}/contract-dod.md`]: '# DoD',
       [`${sprintDir}/tests/force.test.mjs`]: 'test("force", () => {})',
     };
@@ -1627,9 +1639,9 @@ describe('runLoop：控制 action 自消费', () => {
     const { deps, sqls, appended } = makeEnv({ observedSeq });
     const files = {
       'sprints/kernel-contract/sprint-prd.md': '# PRD',
-      'sprints/kernel-contract/contract-draft.md': '# Contract',
+      'sprints/kernel-contract/contract-draft.md': '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| red | `sprints/kernel-contract/tests/red.test.js` | `red` | FAIL |',
       'sprints/kernel-contract/contract-dod.md': '# DoD',
-      'sprints/kernel-contract/tests/red.test.js': 'throw new Error("RED");',
+      'sprints/kernel-contract/tests/red.test.js': 'it("red", () => { throw new Error("RED"); });',
     };
     deps.listGitFiles = vi.fn(() => ['sprints/kernel-contract/tests/red.test.js']);
     deps.fileExists = vi.fn(() => false);
@@ -1705,9 +1717,9 @@ describe('runLoop：控制 action 自消费', () => {
     deps.listGitFiles = vi.fn(() => ['sprints/kernel-contract/tests/red.test.js']);
     deps.readGitFile = vi.fn((_sha, filePath) => ({
       'sprints/kernel-contract/sprint-prd.md': '# PRD',
-      'sprints/kernel-contract/contract-draft.md': '# Contract',
+      'sprints/kernel-contract/contract-draft.md': '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| red | `sprints/kernel-contract/tests/red.test.js` | `red` | FAIL |',
       'sprints/kernel-contract/contract-dod.md': '# DoD',
-      'sprints/kernel-contract/tests/red.test.js': 'throw new Error("RED");',
+      'sprints/kernel-contract/tests/red.test.js': 'it("red", () => { throw new Error("RED"); });',
     })[filePath]);
     const originalQuery = deps.pool.query;
     deps.pool.query = vi.fn(async (sql, params) => {
