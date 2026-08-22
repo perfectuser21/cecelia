@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.118
+**Brain 版本**: 1.273.119
 
 ## Brain 1.273.114 — Diff Impact Gate 透传 freshness.reason_code + 确定性码 fail-closed 出口（F1 步骤 3，r42）
 
