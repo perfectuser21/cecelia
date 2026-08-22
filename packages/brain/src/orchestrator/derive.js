@@ -624,6 +624,7 @@ function attemptCallbackRoute(observed) {
       && Number(r.hop) < Number(row.hop)
       && callbackDetail(r).status === 'failed'
       && callbackDetail(r).failure_class === 'runner_failure'
+      && callbackDetail(r).role === role
     )).length;
     if (priorRunnerFailures >= 2) {
       return {
