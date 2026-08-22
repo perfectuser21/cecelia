@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.119
+**Brain 版本**: 1.273.120
+
+## Brain 1.273.120 — 封印拒绝走 reopen GAN + 解析器支持分号（F1 步骤 3，r47 案卷）
+
+r47（run 6abf8fba）：seal 新码 FROZEN_CONTRACT_TEST_CONTRACT_* 不匹配 frozenArtifactErrorCode 前缀 → throw 逃出 kernel_process_fatal 杀 run；且合同不合格本应打回 proposer。修：loop 捕该系列码写 verdict:contract_seal_rejected 行（不 failRun），derive 在 persist 前观察该行 → REOPEN_GAN_CONTRACT（限额沿用，超限人审）；parseTestContract 分隔符加分号（CI 与 seal 同一把尺）。
 
 ## Brain 1.273.114 — Diff Impact Gate 透传 freshness.reason_code + 确定性码 fail-closed 出口（F1 步骤 3，r42）
 

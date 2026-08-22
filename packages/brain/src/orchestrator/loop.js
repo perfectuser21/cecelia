@@ -363,10 +363,17 @@ async function markRunFailed(deps, runId, taskId, reason, {
 }
 
 function frozenArtifactErrorCode(error) {
-  return String(error?.message ?? '').match(/FROZEN_CONTRACT_ARTIFACT[A-Z_]*/)?.[0] ?? null;
+  // r47（run 6abf8fba）案卷：seal 的 FROZEN_CONTRACT_TEST_CONTRACT_* 码曾因前缀
+  // 只匹配 ARTIFACT 系列而逃出本函数 → kernel_process_fatal 杀 run。放宽到全部
+  // FROZEN_CONTRACT_ 家族；TEST_CONTRACT 系列由调用方走 reopen GAN 分支。
+  return String(error?.message ?? '').match(/FROZEN_CONTRACT_[A-Z_]+/)?.[0] ?? null;
 }
 
-async function materializeApprovedContractOrFail(deps, params, { failRun }) {
+function isSealContractRejection(code) {
+  return typeof code === 'string' && code.startsWith('FROZEN_CONTRACT_TEST_CONTRACT_');
+}
+
+async function materializeApprovedContractOrFail(deps, params, { failRun, recordSealRejection }) {
   const materialize = deps.materializeApprovedContract ?? materializeApprovedContract;
   try {
     await materialize(deps.pool, params);
@@ -374,6 +381,13 @@ async function materializeApprovedContractOrFail(deps, params, { failRun }) {
   } catch (error) {
     const code = frozenArtifactErrorCode(error);
     if (!code) throw error;
+    // r47 案卷：合同不合格（Test Contract 表缺登记/不可解析）是 proposer 的可重写
+    // 缺陷——发生在合同还能改的时点，打回 GAN 重写（derive 消费该行走 reopen），
+    // 绝不 failRun 终态。
+    if (isSealContractRejection(code) && typeof recordSealRejection === 'function') {
+      await recordSealRejection(code, String(error?.message ?? '').slice(0, 300));
+      return { seal_rejected: code };
+    }
     await failRun(`assembly_fault:${code}`);
     return code;
   }
@@ -976,7 +990,31 @@ async function runLoopOwned(
         contractContent: artifacts.contractContent,
         ...(artifacts.artifacts ? { artifacts: artifacts.artifacts } : {}),
         approvedAt: now(),
-      }, { runId: resolvedRunId, taskId, failRun });
+      }, {
+        runId: resolvedRunId,
+        taskId,
+        failRun,
+        recordSealRejection: async (code, detailText) => {
+          const rejectHop = await next(deps.pool, resolvedRunId);
+          await append(deps.pool, {
+            runId: resolvedRunId,
+            hop: rejectHop,
+            observed: buildSnapshot(observed, fullCounters, 'verdict:contract_seal_rejected'),
+            derivedPhase: 'gan',
+            gateVerdict: 'allow',
+            action: 'verdict:contract_seal_rejected',
+            detail: {
+              code,
+              detail: detailText,
+              propose_branch_sha: observed.proposeBranchSha ?? null,
+            },
+          });
+        },
+      });
+      if (artifactFailure && artifactFailure.seal_rejected) {
+        await beat();
+        continue; // derive 下一跳观察 seal_rejected 行 → reopen GAN
+      }
       if (artifactFailure) return { exitReason: 'assembly_fault', hops };
       await beat();
       continue;
@@ -1709,3 +1747,5 @@ export async function runLoop(deps, params) {
     throw error;
   }
 }
+
+export const __test__ = Object.freeze({ frozenArtifactErrorCode, isSealContractRejection });

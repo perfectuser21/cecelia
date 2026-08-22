@@ -21,25 +21,30 @@ const { parseTestContract } = require('../../../scripts/lib/test-contract-paths.
 
 const SHA = 'a'.repeat(40);
 
+// 与 packages/brain/src/orchestrator/__tests__/derive.test.js 的 baseObserved/gan
+// 同形（REQUIRED_FIELDS 全给），聚焦 seal_rejected 分支。
 function ganObserved(extra = {}) {
   return {
-    run: { id: 'r-1', phase: 'gan', cost_usd: 0 },
-    task: { status: 'in_progress', payload: {} },
+    run: { phase: 'gan' },
+    task: { status: 'in_progress' },
+    prdExists: true,
+    contract: { approved: false },
     pr: null,
     candidate: null,
-    contract: { approved: false, id: null },
+    inflight: { containers: [], host_pids: [], attempts: [] },
+    lastAgentExit: { code: 0, auth_failed: false },
     proposeBranch: 'cp-harness-propose-r1-x',
     proposeBranchSha: SHA,
     proposeBranchRn: 1,
     ganLatestRoundVerdict: 'APPROVED',
     ganLatestRoundContractSha: SHA,
+    generatorSpawned: false,
     evaluateVerdict: null,
     judgeVerdict: null,
     reviewRequired: false,
     reviewApproved: false,
-    counters: {},
+    counters: { hops: 5, fixRound: 0, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0 },
     decisionLog: [],
-    generatorSpawned: false,
     ...extra,
   };
 }
