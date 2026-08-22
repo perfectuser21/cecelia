@@ -1,0 +1,26 @@
+{
+  "initiative_id": "intent:9be53aff-685a-4ca3-b445-4a129a3e4237:10",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动全在 packages/brain/src/orchestrator/ harness kernel 纯函数，无 UI/无远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "diagnostic 类人审批准后 derive 消费该批准并回主链重试原动作",
+      "scope": "ground-truth 观测 diagnostic 类 APPROVED verdict（hop+sha 双锚定）→ open_human_review=false + 触发 callback hop 入消费集合（复用 latestUnconsumedAttemptResult/answeredCallbackHops 语义）；derive 消费后不再 wait:human_review，沿原动作相位回主链重试；merge_gate 类批准语义完全不变；两条负向（无批准/stale sha）仍 wait",
+      "dod": [
+        "[BEHAVIOR] diagnostic 批准（hop+sha 匹配）→ derive().action !== wait:human_review 且 phase=evaluate（对应冻结测试正向用例）",
+        "[BEHAVIOR] 无批准 / stale sha / merge_gate 类批准 → derive().action === wait:human_review（三条负向/不变量）",
+        "[ARTIFACT] sprints/08221753-kernel-dd912609/tests/diagnostic-human-review-consume.test.js 全绿；repo 既有 derive.test.js / ground-truth.test.js 零回归"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "packages/brain/src/orchestrator/__tests__/derive.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
