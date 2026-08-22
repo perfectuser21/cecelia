@@ -1,0 +1,27 @@
+{
+  "initiative_id": "6abf8fba-47f3-4775-ab7a-21c7303f86c7",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain/ 内 kernel 纯函数 derive/ground-truth，无 UI / 无远端 agent，属自治后端状态机",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "diagnostic 类人审批准后 derive 消费该批准并回主链重试原动作",
+      "scope": "derive.js 导出共享纯函数 diagnosticApprovalConsumedCallbackHops(decisionLog)（按 latestUnconsumedAttemptResult 消费语义反推触发 callback hop，锚定 diagnostic APPROVED verdict 的 review_class/review_request_hop/pr_head_sha），latestUnconsumedAttemptResult 把收割 hop 并入 answeredCallbackHops 使 attemptCallbackRoute 越过已消费 callback 回主链；ground-truth.js 复用同判据导出 openHumanReviewFromLog 并在 collectGroundTruth 返回体装配 open_human_review。merge_gate/evidence_repair/convergence 消费语义不变。",
+      "dod": [
+        "[BEHAVIOR] B-01 批准被消费后 derive 返回 phase≠review 的重试原动作（spawn:evaluator）",
+        "[BEHAVIOR] B-02/B-03 无批准/stale SHA 仍 wait:human_review",
+        "[BEHAVIOR] B-04 merge_gate 批准仍 merge_pr（回归护栏）",
+        "[BEHAVIOR] B-05/B-06 共享判据 + openHumanReviewFromLog 语义正确",
+        "[ARTIFACT] derive.js 导出 diagnosticApprovalConsumedCallbackHops、ground-truth.js 装配 open_human_review"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "sprints/08221541-kernel-e09572b3/tests/step3-diagnostic-review-approval-consumed.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
