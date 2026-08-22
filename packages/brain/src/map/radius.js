@@ -275,6 +275,12 @@ export async function resolveImpactRadius(input = {}, {
     generated_at: new Date().toISOString(),
   };
   const projectionCapabilities = await capabilityNodes(projection.id);
+  // r43/r44 双死案卷（2026-08-22）：投影换代窗口（rescan 每 ~10 分钟）内
+  // capability 节点可能尚未物化完，空集合会让全部改动文件被误判 unclaimed →
+  // impact_anchor_missing 确定性杀 run。空集 = 投影不完整 = 瞬态，可重试。
+  if (freshness.status === 'fresh' && projectionCapabilities.length === 0) {
+    freshness = { status: 'unknown', reason_code: 'projection_capabilities_empty' };
+  }
   const activeCapabilityIds = projectionCapabilities.map(row => row.node_key);
   const [
     { rows: graphSnapshotRows }, { rows: featureRows },
