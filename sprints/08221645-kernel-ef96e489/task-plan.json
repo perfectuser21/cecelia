@@ -1,0 +1,26 @@
+{
+  "initiative_id": "intent:40d02a52-5707-4a6d-8226-2bbacad053ad:10",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain/src/orchestrator/（kernel derive/loop 纯后端状态机），无 UI/agent 协议/engine 介入",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "diagnostic 类人审批准后 derive 消费该批准并重试原动作",
+      "scope": "derive.js latestUnconsumedAttemptResult 把 diagnostic 类 APPROVED（review_class=diagnostic + pr_head_sha 与请求快照 head_sha 相符）人审批准纳入 answeredCallbackHops 消费集合，消费触发它的原 attempt callback hop，使 attemptCallbackRoute 回主链重试原动作，不再 wait:human_review；merge_gate 类语义不变。loop.js loadRunDeadlineState 收紧 NOT EXISTS 使 open_human_review 与 derive 消费谓词对齐（brain-integration CI 真 PG 覆盖）。",
+      "dod": [
+        "[BEHAVIOR] B-01 diagnostic APPROVED（hop 匹配+SHA 相符）→ derive 不再 wait:human_review，回主链重派原动作",
+        "[BEHAVIOR] B-02 无对应 APPROVED / B-03 SHA 不符 → 仍 wait:human_review（负向不放行）",
+        "[BEHAVIOR] B-04 + INV merge_gate 语义逐字节不变",
+        "[ARTIFACT] sprints/08221645-kernel-ef96e489/tests/diagnostic-human-review-consume.test.js 冻结落盘"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/loop.js",
+        "sprints/08221645-kernel-ef96e489/tests/diagnostic-human-review-consume.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
