@@ -85,6 +85,26 @@ describe('F1 step3 — runner_failure 有界重派，不再一刀杀 run', () =>
     });
   });
 
+  it('per-role 窗口：evaluator 2 次 runner_failure 不占用 publisher 额度（跨角色不互耗）', () => {
+    const r = derive(baseObserved({
+      run: { phase: 'publish' },
+      decisionLog: [
+        cb(21, { status: 'failed', failure_class: 'runner_failure', role: 'evaluator' }),
+        { hop: 22, action: 'spawn:evaluator', detail: { reason: 'callback_runner_failure_retry' } },
+        cb(25, { status: 'failed', failure_class: 'runner_failure', role: 'evaluator' }),
+        { hop: 26, action: 'spawn:evaluator', detail: { reason: 'callback_runner_failure_retry' } },
+        cb(29, { status: 'failed', failure_class: 'runner_failure', role: 'publisher' }),
+      ],
+    }));
+    // evaluator 的 2 次窗口不落进 publisher 的额度：publisher 首败仍重派，非 exhausted
+    expect(r.phase).not.toBe('review');
+    expect(r).toMatchObject({
+      phase: 'publish',
+      action: 'publish:approved_ref',
+      reason: 'callback_runner_failure_retry',
+    });
+  });
+
   it('负向：product 类失败（无 failure_class）照旧判终态，不被本次放宽', () => {
     const r = derive(baseObserved({
       decisionLog: [
