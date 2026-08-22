@@ -25,35 +25,35 @@ journey_type: autonomous
   预期观察: derive 返回 { phase:'publish', action:'publish:approved_ref', reason:'callback_runner_failure_retry' }；reason 不含 route_unknown
   等待预算: 0s
   留证: vitest -t "publish 重派动作" 输出末 20 行（含 passed 行）
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "publish 重派动作" 2>&1); echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" && ! echo "$O" | grep -q "callback_runner_failure_route_unknown" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
+  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "publish 重派动作" 2>&1); printf '%s\n' "$O"; echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" && ! echo "$O" | grep -q "callback_runner_failure_route_unknown" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
 
 - [x] [BEHAVIOR] [L2] B-02: publisher runner_failure 首次不判 run 终态
   动作: 同 B-01 输入，调用真 derive(observed)
   预期观察: derive 返回 phase != 'failed' 且 action != 'mark_failed'（基础设施故障不烧 run）
   等待预算: 0s
   留证: vitest -t "不判 run 终态" 输出 passed 行
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "不判 run 终态" 2>&1); echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
+  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "不判 run 终态" 2>&1); printf '%s\n' "$O"; echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
 
 - [x] [BEHAVIOR] [L2] B-03: 超限守恒 — 第 3 次 publisher runner_failure 仍进人审 exhausted
   动作: 构造 decisionLog 含 3 条 publisher runner_failure callback（priorRunnerFailures≥2），调用真 derive(observed)
   预期观察: derive 返回 { phase:'review', action:'wait:human_review', reason:'callback_runner_failure_exhausted' }（补表不改超限兜底）
   等待预算: 0s
   留证: vitest -t "超限守恒" 输出 passed 行
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "超限守恒" 2>&1); echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
+  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "超限守恒" 2>&1); printf '%s\n' "$O"; echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
 
 - [x] [BEHAVIOR] [L2] B-04: 负向 — publisher 普通 failed（无 failure_class）照旧判终态
   动作: 构造 decisionLog 含一条 publisher failed callback（无 failure_class），调用真 derive(observed)
   预期观察: derive 返回 { phase:'failed', action:'mark_failed', reason:'callback_failed' }（不被本次放宽触碰）
   等待预算: 0s
   留证: vitest -t "负向" 输出 passed 行
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "负向" 2>&1); echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
+  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "负向" 2>&1); printf '%s\n' "$O"; echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
 
 - [x] [BEHAVIOR] [L2] B-05: 回归守恒 — evaluator runner_failure 首次仍重派 evaluator（累积 FR 不回退）
   动作: 构造 decisionLog 含一条 evaluator runner_failure callback，调用真 derive(observed)
   预期观察: derive 返回 { phase:'evaluate', action:'spawn:evaluator', reason:'callback_runner_failure_retry' }（既有角色行为不受本次改动回退）
   等待预算: 0s
   留证: vitest -t "回归守恒" 输出 passed 行
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "回归守恒" 2>&1); echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
+  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "回归守恒" 2>&1); printf '%s\n' "$O"; echo "$O" | grep -qE "[1-9][0-9]* passed" && ! echo "$O" | grep -q "No test files found" || { echo "$O" | tail -20; echo FAIL; exit 1; }; echo OK'
 
 ## Invariant 覆盖（铁律逐条映射）
 
@@ -62,7 +62,7 @@ journey_type: autonomous
   预期观察: 首次 retry / 超限 exhausted 两态并存，重派额度不突破 2 次
   等待预算: 0s
   留证: B-01 + B-03 vitest 输出
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "publish 重派动作" 2>&1); P=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "超限守恒" 2>&1); echo "$O" | grep -qE "[1-9][0-9]* passed" && echo "$P" | grep -qE "[1-9][0-9]* passed" || { echo FAIL; exit 1; }; echo OK'
+  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}"; O=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "publish 重派动作" 2>&1); P=$(npx vitest run sprints/08221235-kernel-3354cd28/tests/publisher-runner-failure-retry.test.js --no-cache -t "超限守恒" 2>&1); printf '%s\n' "$O" "$P"; echo "$O" | grep -qE "[1-9][0-9]* passed" && echo "$P" | grep -qE "[1-9][0-9]* passed" || { echo FAIL; exit 1; }; echo OK'
 
 - INV-2 [基础设施重试身份] 基础设施重派复用同角色相位/动作、不变更执行身份：由 B-01 守卫（publisher 重派返回 publisher 既有 action=publish:approved_ref，相位=publish，非 spawn:* 换身份）
 - INV-3 [冻结在途] run 在途 Commander 不合任何 PR：N/A — 属 Commander 合并纪律，非 derive 单测可执行断言；本 sprint 不触碰 merge fence 逻辑
