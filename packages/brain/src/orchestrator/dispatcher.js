@@ -486,6 +486,20 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
     if (observed.ganLatestRoundReviewFeedback) {
       common.review_feedback = { ...observed.ganLatestRoundReviewFeedback };
     }
+    // r48（run 40d02a52）案卷：seal 机械闸拒绝的重写轮必须让 proposer 看到拒绝
+    // 原因（否则盲写必然再拒）。取最新 contract_seal_rejected 行注入。
+    const sealRejectedRow = [...(observed.decisionLog ?? [])]
+      .sort((a, b) => Number(b.hop) - Number(a.hop))
+      .find((row) => row.action === 'verdict:contract_seal_rejected');
+    if (sealRejectedRow) {
+      const sealDetail = typeof sealRejectedRow.detail === 'object' && sealRejectedRow.detail
+        ? sealRejectedRow.detail : {};
+      common.seal_rejection = {
+        code: String(sealDetail.code ?? '').slice(0, 120),
+        detail: String(sealDetail.detail ?? '').slice(0, 300),
+        instruction: '合同被封印机械闸拒绝：## Test Contract 表必须逐行登记 artifacts 里每个冻结测试的完整路径，且 BEHAVIOR 与冻结测试 it() 名互为子串（多值用 / 或 ; 分隔）。请修正后重新提交。',
+      };
+    }
   }
   if (spec.role === 'reviewer') {
     common.contract_branch = observed.proposeBranch ?? observed.contract?.row?.propose_branch ?? null;

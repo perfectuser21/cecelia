@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.120
+**Brain 版本**: 1.273.121
+
+## Brain 1.273.121 — seal 拒绝打回 proposer 重写并携带拒绝反馈（F1 步骤 3，r48 案卷）
+
+r48（run 40d02a52）：seal 拒绝→reopen 后派 reviewer 重审同文本（看不到 seal 错误必然再 APPROVED）→ exhausted → GAN 阶段人审无 PR 不可行 → blocked_same_state 终态。修：derive 的 seal_rejected 分支直接 spawn:proposer（contract_seal_rejected_rewrite）；dispatcher 把最新拒绝 code/detail/指引注入 proposer bundle 的 seal_rejection；限额按 seal_rejected 行数 ≥2 → mark_failed（seal_rejected_exhausted 诚实终态）。
 
 ## Brain 1.273.120 — 封印拒绝走 reopen GAN + 解析器支持分号（F1 步骤 3，r47 案卷）
 

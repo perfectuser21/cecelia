@@ -1038,20 +1038,17 @@ function deriveGan(observed) {
       && callbackDetail(r).propose_branch_sha === observed.proposeBranchSha
     ));
     if (sealRejected) {
-      const priorSealReopens = sortedLogRows(observed.decisionLog)
-        .filter((r) => r.action === ACTION.REOPEN_GAN_CONTRACT).length;
-      if (priorSealReopens < 1) {
-        return {
-          phase: 'gan',
-          action: ACTION.REOPEN_GAN_CONTRACT,
-          reason: 'contract_seal_rejected_reopen_gan',
-        };
+      // r48（run 40d02a52）案卷：此前打回 reviewer 重审同一份文本——reviewer 看不到
+      // seal 错误必然再 APPROVED，同 SHA 拒绝行仍在 → 死循环。正解=打回 proposer
+      // 重写（dispatcher 把 seal 拒绝 code/detail 注入 proposer feedback）。
+      // 限额按全 run seal_rejected 行数：≥2 次说明重写也修不动（或 skill 缺教），
+      // GAN 阶段无 PR 无候选、人审站不可用 → 诚实 mark_failed，不再 BLOCKED 死。
+      const sealRejectionCount = sortedLogRows(observed.decisionLog)
+        .filter((r) => r.action === 'verdict:contract_seal_rejected').length;
+      if (sealRejectionCount >= 2) {
+        return { phase: 'failed', action: 'mark_failed', reason: 'seal_rejected_exhausted' };
       }
-      return {
-        phase: 'review',
-        action: ACTION.WAIT_HUMAN_REVIEW,
-        reason: 'contract_seal_rejected_exhausted',
-      };
+      return { phase: 'gan', action: 'spawn:proposer', reason: 'contract_seal_rejected_rewrite' };
     }
     return { phase: 'gan', action: 'persist_contract_approval', reason: 'approved_pending_persist' };
   }

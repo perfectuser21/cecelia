@@ -57,7 +57,7 @@ describe('F1 step3：封印拒绝走 reopen GAN 不杀 run（r47 案卷）', () 
     expect(code).toMatch(/^FROZEN_CONTRACT_TEST_CONTRACT_/);
   });
 
-  it('derive：本轮 SHA 有 contract_seal_rejected 行 → REOPEN_GAN_CONTRACT（打回 proposer）', () => {
+  it('derive：本轮 SHA 有 contract_seal_rejected 行 → spawn:proposer 重写（r48 案卷：reviewer 重审同文本必死循环）', () => {
     const decision = derive(ganObserved({
       decisionLog: [{
         hop: 20,
@@ -65,14 +65,18 @@ describe('F1 step3：封印拒绝走 reopen GAN 不杀 run（r47 案卷）', () 
         detail: { code: 'FROZEN_CONTRACT_TEST_CONTRACT_UNRESOLVABLE:x', propose_branch_sha: SHA },
       }],
     }));
-    expect(decision.action).toBe('reopen_gan_contract');
-    expect(decision.reason).toBe('contract_seal_rejected_reopen_gan');
+    expect(decision.action).toBe('spawn:proposer');
+    expect(decision.reason).toBe('contract_seal_rejected_rewrite');
   });
 
-  it('derive：seal 拒绝 + 已 reopen 过一次 → wait:human_review（限额沿用不死循环）', () => {
+  it('derive：第 2 次 seal 拒绝 → mark_failed 诚实终态（r48 案卷：GAN 阶段人审无 PR 不可行）', () => {
     const decision = derive(ganObserved({
       decisionLog: [
-        { hop: 10, action: 'reopen_gan_contract', detail: {} },
+        {
+          hop: 10,
+          action: 'verdict:contract_seal_rejected',
+          detail: { code: 'FROZEN_CONTRACT_TEST_CONTRACT_UNREGISTERED:x', propose_branch_sha: 'c'.repeat(40) },
+        },
         {
           hop: 30,
           action: 'verdict:contract_seal_rejected',
@@ -80,7 +84,8 @@ describe('F1 step3：封印拒绝走 reopen GAN 不杀 run（r47 案卷）', () 
         },
       ],
     }));
-    expect(decision.action).toBe('wait:human_review');
+    expect(decision.action).toBe('mark_failed');
+    expect(decision.reason).toBe('seal_rejected_exhausted');
   });
 
   it('derive：seal_rejected 行属于旧 SHA → 不影响本轮 approve 落库（负向）', () => {
