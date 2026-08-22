@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.123
+**Brain 版本**: 1.273.124
 
 ## Brain 1.273.123 — seal BEHAVIOR↔it 校验扩展到 repo 路径行（F1 步骤 3，r50 案卷）
 
