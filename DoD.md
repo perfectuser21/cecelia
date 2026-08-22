@@ -1,65 +1,77 @@
-contract_branch: cp-harness-propose-r1-dd912609-r9be53aff-a10
-sprint_dir: sprints/08221753-kernel-dd912609
+contract_branch: cp-harness-propose-r1-0ddf7faa-ra998d588-a10
+sprint_dir: sprints/08221948-kernel-0ddf7faa
 
 ---
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Sprint: diagnostic 类人审批准后 derive 消费该批准并重试原动作 [r49]
+# Contract DoD — Sprint: 验证窗对多轮 fix 链自动顺延
 
-**范围**: `packages/brain/src/orchestrator/` 内 `derive.js`（diagnostic 批准消费 + 回主链重试原动作）、`ground-truth.js`（diagnostic APPROVED verdict 观测 → open_human_review=false + 触发 callback hop 入消费集合）、必要时 `loop.js`（open_human_review 计算纳入 diagnostic 消费）；冻结回归测试。
-**大小**: M
+**范围**: `packages/brain/src/orchestrator/validation-clock.js` 的 `resolveValidationClock` / `persistedClock` — 锚 hop 之后每出现一次 `spawn:generator-fix` 即把窗口顺延一个 `timeoutSeconds`（deadline = anchor_started + (1+fixCount)*timeout），persisted 容忍顺延后 deadline。runner 侧不变。
+**大小**: S
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] 冻结回归测试文件存在且覆盖正向消费 + 双负向 + merge_gate 不变量
-  Test: node -e "const c=require('fs').readFileSync('sprints/08221753-kernel-dd912609/tests/diagnostic-human-review-consume.test.js','utf8');if(!c.includes('消费该批准并重试原动作')||!c.includes('merge_gate 类批准不触发 diagnostic 消费'))process.exit(1)"
-  期望: exit 0
+- [ ] [ARTIFACT] `resolveValidationClock` 顺延实现落在受影响文件（不越界改 runner）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/validation-clock.js','utf8');if(!/generator-fix/.test(c)||!/timeoutSeconds/.test(c))process.exit(1)"
 
-- [x] [ARTIFACT] derive.js 含 diagnostic 人审批准消费路由（非 merge_gate 批准的消费/重试实现）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/derive.js','utf8');if(!/diagnostic|review_class/.test(c))process.exit(1)"
-  期望: exit 0
+- [ ] [ARTIFACT] 冻结 sprint 测试存在并含顺延断言
+  Test: node -e "const c=require('fs').readFileSync('sprints/08221948-kernel-0ddf7faa/tests/validation-clock-fix-extension.test.js','utf8');if(!c.includes('resolveValidationClock')||!c.includes('generator-fix'))process.exit(1)"
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令，autonomous — 纯函数 vitest 重放）
+## BEHAVIOR 条目（五行剧本，全部 real-exec，evaluator GREEN 阶段执行）
 
-- [x] [BEHAVIOR] [L2] B-01: diagnostic 人审批准后 derive 消费该批准并重试原动作（本轮 RED 驱动）
-  动作: 构造 decisionLog（evaluator runner_failure ×3 exhausted → diagnostic human_review_requested(callback_hop=9) → verdict:human_review approved/review_class=diagnostic/pr_head_sha 匹配），调 derive(observed)
-  预期观察: derive 返回 action 非 wait:human_review 且 phase=evaluate（回主链重试原 evaluator 动作），脱离人审死等
+- [ ] [BEHAVIOR] [L2] B-01: 冻结 sprint 测试全绿（从仓库根跑，命中根 vitest include sprints/**）
+  动作: 从仓库根执行 `npx vitest run` 冻结测试文件
+  预期观察: 6 个用例全部通过，无 failed
   等待预算: 0s
-  留证: vitest 命令输出末 5 行（含 1 passed）
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}" && npx vitest run sprints/08221753-kernel-dd912609/tests/diagnostic-human-review-consume.test.js -t "消费该批准并重试原动作" --reporter=basic'
+  留证: /tmp/frozen.log 末尾 `Tests N passed`
+  Test: manual:bash -c 'cd /workspace && OUT=$(npx vitest run sprints/08221948-kernel-0ddf7faa/tests/validation-clock-fix-extension.test.js --no-cache 2>&1); echo "$OUT" | grep -qE "[0-9]+ failed" && { echo FAIL; exit 1; }; echo "$OUT" | grep -qE "Tests +[0-9]+ passed" || { echo FAIL; exit 1; }; echo OK'
 
-- [x] [BEHAVIOR] [L2] B-02: 无批准 diagnostic review 仍 wait:human_review（负向 A，不误放行）
-  动作: 构造 decisionLog（exhausted diagnostic human_review_requested 但无 verdict:human_review 批准行），调 derive(observed)
-  预期观察: derive 返回 action=wait:human_review、reason=callback_runner_failure_exhausted
+- [ ] [BEHAVIOR] [L2] B-02: 2 次 generator-fix → 窗口顺延两个 timeout（one timeout per generator-fix）
+  动作: 构造锚 hop + 2 个 spawn:generator-fix 的 decisionLog，调 resolveValidationClock
+  预期观察: deadline_at == started + 3*timeout（2026-08-04T01:02:13.199Z）
   等待预算: 0s
-  留证: vitest 命令输出末 5 行
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}" && npx vitest run sprints/08221753-kernel-dd912609/tests/diagnostic-human-review-consume.test.js -t "无批准 diagnostic review 无对应 APPROVED verdict" --reporter=basic'
+  留证: vitest -t 该用例输出 `Tests 1 passed`
+  Test: manual:bash -c 'cd /workspace && npx vitest run sprints/08221948-kernel-0ddf7faa/tests/validation-clock-fix-extension.test.js --no-cache -t "one timeout per generator-fix" 2>&1 | grep -qE "Tests +1 passed" || { echo FAIL; exit 1; }; echo OK'
 
-- [x] [BEHAVIOR] [L2] B-03: stale 批准 pr_head_sha 与请求不符仍 wait:human_review（负向 B，陈旧批准不消费）
-  动作: 构造 decisionLog（diagnostic 批准但 detail.pr_head_sha 与请求 head_sha 不符），调 derive(observed)
-  预期观察: derive 返回 action=wait:human_review（陈旧批准不消费）
+- [ ] [BEHAVIOR] [L2] B-03: 1 次 generator-fix → 窗口顺延一个 timeout（exactly one timeout for a single generator-fix）
+  动作: 构造锚 hop + 1 个 spawn:generator-fix 的 decisionLog，调 resolveValidationClock
+  预期观察: deadline_at == started + 2*timeout（2026-08-03T23:02:13.199Z）
   等待预算: 0s
-  留证: vitest 命令输出末 5 行
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}" && npx vitest run sprints/08221753-kernel-dd912609/tests/diagnostic-human-review-consume.test.js -t "stale 批准 pr_head_sha 与请求不符" --reporter=basic'
+  留证: vitest -t 该用例输出 `Tests 1 passed`
+  Test: manual:bash -c 'cd /workspace && npx vitest run sprints/08221948-kernel-0ddf7faa/tests/validation-clock-fix-extension.test.js --no-cache -t "exactly one timeout for a single generator-fix" 2>&1 | grep -qE "Tests +1 passed" || { echo FAIL; exit 1; }; echo OK'
 
-- [x] [BEHAVIOR] [L2] B-04: INV merge_gate 语义不变——merge_gate 类批准不触发 diagnostic 消费
-  动作: 构造 decisionLog（同正向但 verdict:human_review 的 review_class=merge_gate），调 derive(observed)
-  预期观察: derive 返回 action=wait:human_review（merge_gate 批准由 mergeGate 路径处理，diagnostic 消费分支不命中）
+- [ ] [BEHAVIOR] [L2] B-04: persisted 锚 detail 已顺延值不误判 invalid（tolerates a persisted anchor clock already advanced）
+  动作: 锚 detail.deadline_at 写成顺延后值 + 2 个 fix，调 resolveValidationClock
+  预期观察: 不 throw validation_clock_invalid，返回 deadline == started + 3*timeout
   等待预算: 0s
-  留证: vitest 命令输出末 5 行
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}" && npx vitest run sprints/08221753-kernel-dd912609/tests/diagnostic-human-review-consume.test.js -t "merge_gate 类批准不触发 diagnostic 消费" --reporter=basic'
+  留证: vitest -t 该用例输出 `Tests 1 passed`
+  Test: manual:bash -c 'cd /workspace && npx vitest run sprints/08221948-kernel-0ddf7faa/tests/validation-clock-fix-extension.test.js --no-cache -t "tolerates a persisted anchor clock already advanced" 2>&1 | grep -qE "Tests +1 passed" || { echo FAIL; exit 1; }; echo OK'
 
-- [x] [BEHAVIOR] [L2] INV-1: 语义守恒——repo 既有 derive 全套零回归（merge_gate/evidence_repair/rejected/runner_failure 有界重派均不受影响）
-  动作: 从 packages/brain 包根子 shell 跑既有 derive.test.js 全套
-  预期观察: 既有 derive 套件全绿，无因本次改动新增失败
+- [ ] [BEHAVIOR] [L2] INV-1 [有界运行] B-05: 顺延窗口精确线性有界（finite and exactly linear for a bounded fix count）
+  动作: 构造锚 hop + 5 个 spawn:generator-fix 的 decisionLog，调 resolveValidationClock
+  预期观察: deadline_at == started + 6*timeout（2026-08-04T07:02:13.199Z），有限、精确线性、不无界增长
   等待预算: 0s
-  留证: vitest 命令输出末 5 行（含 Test Files passed）
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}/packages/brain" && npx vitest run --no-cache ./src/orchestrator/__tests__/derive.test.js --reporter=basic'
+  留证: vitest -t 该用例输出 `Tests 1 passed`
+  Test: manual:bash -c 'cd /workspace && npx vitest run sprints/08221948-kernel-0ddf7faa/tests/validation-clock-fix-extension.test.js --no-cache -t "finite and exactly linear for a bounded fix count" 2>&1 | grep -qE "Tests +1 passed" || { echo FAIL; exit 1; }; echo OK'
 
-- [x] [BEHAVIOR] [L2] INV-2: 观测层零回归——ground-truth 投影既有用例全绿（diagnostic 消费观测新增不破坏 reviewApproved/mergeGate 观测）
-  动作: 从 packages/brain 包根子 shell 跑既有 ground-truth.test.js 全套
-  预期观察: 既有 ground-truth 套件全绿
+- [ ] [BEHAVIOR] [L2] INV-2 [零回归] B-06: 零 fix 窗口逐字节不变（byte-for-byte unchanged when no generator-fix）
+  动作: decisionLog 仅含锚 hop（无 generator-fix），调 resolveValidationClock
+  预期观察: deadline_at == started + 1*timeout（2026-08-03T21:02:13.199Z），与现行为逐字节一致
   等待预算: 0s
-  留证: vitest 命令输出末 5 行
-  Test: manual:bash -c 'cd "${WORKSPACE_PATH:-/workspace}/packages/brain" && npx vitest run --no-cache ./src/orchestrator/__tests__/ground-truth.test.js --reporter=basic'
+  留证: vitest -t 该用例输出 `Tests 1 passed`
+  Test: manual:bash -c 'cd /workspace && npx vitest run sprints/08221948-kernel-0ddf7faa/tests/validation-clock-fix-extension.test.js --no-cache -t "byte-for-byte unchanged when no generator-fix" 2>&1 | grep -qE "Tests +1 passed" || { echo FAIL; exit 1; }; echo OK'
+
+- [ ] [BEHAVIOR] [L2] INV-2 [零回归] B-07: 既有 kernel validation-clock 测试全绿（子 shell 用包自身 vitest 配置）
+  动作: cd packages/brain，跑既有 src/orchestrator/__tests__/validation-clock.test.js
+  预期观察: 既有 11 断言全通过，无 failed
+  等待预算: 0s
+  留证: /tmp/pkg.log 末尾 `Tests 11 passed`
+  Test: manual:bash -c 'cd /workspace/packages/brain && OUT=$(npx vitest run src/orchestrator/__tests__/validation-clock.test.js --no-cache 2>&1); echo "$OUT" | grep -qE "[0-9]+ failed" && { echo FAIL; exit 1; }; echo "$OUT" | grep -qE "Tests +[0-9]+ passed" || { echo FAIL; exit 1; }; echo OK'
+
+## Invariant 铁律映射（Step 1.3）
+
+- INV-1 [有界运行] → B-05（顺延窗口精确线性、有限；fixCount 由既有 fix 轮上限约束，函数层不引入无界循环/溢出）
+- INV-2 [零回归] → B-06 + B-07（fixCount=0 逐字节一致 + 既有 11 断言全绿）
+- INV-3 [runner 不变] → N/A：本 sprint 受影响文件仅 `validation-clock.js` + 冻结测试，不触及 runner 断言预算逻辑（不在受影响文件清单，无对应交付物可断言）
+- INV-4 [凭据隔离] → N/A：本 sprint 为 kernel 纯计算函数改动，无凭据/授权操作
