@@ -1,0 +1,22 @@
+{
+  "initiative_id": "intent:6de78554-098f-42f8-b1ff-92052f28300f:30",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 纯后端 derive 决策逻辑，无 UI/agent 协议/engine 参与",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "publisher 进 INFRA_RETRY_ACTION_BY_ROLE，runner_failure 有界重派不再 route_unknown",
+      "scope": "在 derive.js 的 INFRA_RETRY_ACTION_BY_ROLE 增加 publisher: { phase:'publish', action:ACTION.PUBLISH_APPROVED_REF }，使 publisher runner_failure 与 evaluator/judge 同享有界重派；计数逻辑不动",
+      "dod": [
+        "[BEHAVIOR] publisher 首次 runner_failure → derive 返回 {phase:'publish', action:'publish:approved_ref', reason:'callback_runner_failure_retry'}",
+        "[BEHAVIOR] publisher 第 3 次 runner_failure → wait:human_review + callback_runner_failure_exhausted",
+        "[BEHAVIOR] repo 既有 step3 runner_failure 回归全绿（回归不退）",
+        "[ARTIFACT] derive.js INFRA_RETRY_ACTION_BY_ROLE 含 publisher 条目"
+      ],
+      "files": ["packages/brain/src/orchestrator/derive.js", "sprints/08220937-kernel-37bf8673/tests/publisher-runner-failure-retry.test.js", "tests/gp/f1/step3-runner-failure-retry.test.js"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
