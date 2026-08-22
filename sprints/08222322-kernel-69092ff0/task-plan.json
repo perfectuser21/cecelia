@@ -1,0 +1,24 @@
+{
+  "initiative_id": "587f4f0e-f945-4b8d-97a3-8229a3746812",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain/src/orchestrator（kernel 后端 derive 决策纯函数），无 UI / 无远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "priorRunnerFailures 统计按当前 callback 角色窗口化",
+      "scope": "在 derive.js runner_failure 分支的 priorRunnerFailures filter 增加同角色过滤条件（callbackDetail(r).role === role），使每角色各自享有 ≤2 次重派额度、跨角色互不占用；不改阈值/路由/其它 failure_class 分支",
+      "dod": [
+        "[BEHAVIOR] 跨角色不互耗——evaluator 2 败后 publisher 首败仍重派（callback_runner_failure_retry），对应合同 B-01",
+        "[BEHAVIOR] 同角色 3 连败第 3 次仍 exhausted（callback_runner_failure_exhausted），负向语义不变，对应合同 B-02",
+        "[BEHAVIOR] 缺 role 字段历史行不计入当前角色窗口，对应合同 B-03",
+        "[ARTIFACT] derive.js priorRunnerFailures filter 含 callbackDetail(r).role === role"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
