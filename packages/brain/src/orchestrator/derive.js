@@ -244,6 +244,7 @@ const INFRA_RETRY_ACTION_BY_ROLE = Object.freeze({
   generator: { phase: 'generate', action: ACTION.SPAWN_GENERATOR_FIX },
   evaluator: { phase: 'evaluate', action: ACTION.SPAWN_EVALUATOR },
   judge: { phase: 'judge', action: ACTION.SPAWN_JUDGE },
+  publisher: { phase: 'publish', action: ACTION.PUBLISH_APPROVED_REF },
   reporter: { phase: 'done', action: ACTION.SPAWN_CANARY },
 });
 
