@@ -239,6 +239,7 @@ tasks-ability-id-smoke.sh
 theater-mismatch-smoke.sh
 three-tier-smoke.sh
 triage-officer-smoke.sh
+validation-clock-fix-extension-smoke.sh
 version-endpoint-smoke.sh
 vocab-alias-smoke.sh
 workbench-projection-smoke.sh
