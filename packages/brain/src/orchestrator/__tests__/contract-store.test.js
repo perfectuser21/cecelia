@@ -415,14 +415,14 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract 合同重开后�
   function artifactsFor(root, sourceRevision) {
     return Object.freeze([
       reopenArtifact(root, 'contract-dod.md', '# DoD', sourceRevision),
-      reopenArtifact(root, 'contract-draft.md', '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| x | `tests/x.test.mjs` | `x` | FAIL |', sourceRevision),
+      reopenArtifact(root, 'contract-draft.md', `# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| x | \`${root}/tests/x.test.mjs\` | \`x\` | FAIL |`, sourceRevision),
       reopenArtifact(root, 'sprint-prd.md', '# PRD', sourceRevision),
       reopenArtifact(root, 'tests/x.test.mjs', 'test("x", () => {})', sourceRevision),
     ]);
   }
   // prdContent / contractContent 必须与 artifacts 投影一致（assertArtifactProjection）。
   const PRD = '# PRD';
-  const CONTRACT = '# Contract\n\n# DoD';
+  const CONTRACT = `# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| x | \`sprints/reopen-r5/tests/x.test.mjs\` | \`x\` | FAIL |\n\n# DoD`;
 
   beforeAll(async () => {
     reopenClient = await reopenPool.connect();
