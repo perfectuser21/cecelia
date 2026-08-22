@@ -49,7 +49,7 @@ const GOOD_TABLE = R33_TABLE.replace(
 describe('封印时 Test Contract 表路径可解析校验（r33 fix 死循环回归）', () => {
   it('r33 真实省略号路径 → 封印拒绝（throw UNRESOLVABLE）', () => {
     expect(() => assertTestContractResolvable(R33_TABLE, ARTIFACTS))
-      .toThrow(/FROZEN_CONTRACT_TEST_CONTRACT_UNRESOLVABLE/);
+      .toThrow(/FROZEN_CONTRACT_TEST_CONTRACT_/);
   });
 
   it('完整真实路径（能映射到冻结产物）→ 封印通过', () => {
@@ -59,10 +59,10 @@ describe('封印时 Test Contract 表路径可解析校验（r33 fix 死循环�
   it('sprints/ 前缀但产物集合里不存在该文件 → 拒绝', () => {
     const table = GOOD_TABLE.replace('diff-gate-reason-passthrough', 'ghost-test');
     expect(() => assertTestContractResolvable(table, ARTIFACTS))
-      .toThrow(/FROZEN_CONTRACT_TEST_CONTRACT_UNRESOLVABLE/);
+      .toThrow(/FROZEN_CONTRACT_TEST_CONTRACT_/);
   });
 
-  it('repo 既有路径（packages/...）不在封印职责内 → 不拦（CI 照管）', () => {
+  it('repo 既有路径（packages/...）不在封印职责内 → 不拦（CI 照管；r45 后需无冻结测试）', () => {
     const table = `
 ## Test Contract
 
@@ -70,11 +70,15 @@ describe('封印时 Test Contract 表路径可解析校验（r33 fix 死循环�
 |---|---|---|---|
 | 回归 | \`packages/brain/src/impact-contract/__tests__/diff-gate.test.js\` | \`x\` | FAIL |
 `;
-    expect(() => assertTestContractResolvable(table, ARTIFACTS)).not.toThrow();
+    const NO_TEST_ARTIFACTS = ARTIFACTS.filter((a) => !a.path.includes('/tests/'));
+    expect(() => assertTestContractResolvable(table, NO_TEST_ARTIFACTS)).not.toThrow();
   });
 
-  it('无 Test Contract 表（legacy 合同）→ 不拦', () => {
-    expect(() => assertTestContractResolvable('# 合同\n\n正文', ARTIFACTS)).not.toThrow();
+  it('无 Test Contract 表 → 无冻结测试不拦；带冻结测试拒封印（r45 死锁案卷）', () => {
+    const NO_TEST_ARTIFACTS = ARTIFACTS.filter((a) => !a.path.includes('/tests/'));
+    expect(() => assertTestContractResolvable('# 合同\n\n正文', NO_TEST_ARTIFACTS)).not.toThrow();
+    expect(() => assertTestContractResolvable('# 合同\n\n正文', ARTIFACTS))
+      .toThrow(/FROZEN_CONTRACT_TEST_CONTRACT_UNREGISTERED/);
   });
 
   it('r39 形态：BEHAVIOR 覆盖名不是冻结 it() 名子串 → 拒绝封印（封印后双不可变，fix 无解）', () => {
@@ -91,7 +95,7 @@ describe('封印时 Test Contract 表路径可解析校验（r33 fix 死循环�
     ];
     const badTable = '## Test Contract\n\n| 功能 | Test File | BEHAVIOR 覆盖 | 红证据 |\n|---|---|---|---|\n| x | `' + SPRINT + '/tests/a.test.js` | `透传 reason_code 且 retryable:false` | FAIL |\n';
     expect(() => assertTestContractResolvable(badTable, arts))
-      .toThrow(/FROZEN_CONTRACT_TEST_CONTRACT_UNRESOLVABLE/);
+      .toThrow(/FROZEN_CONTRACT_TEST_CONTRACT_/);
   });
 
   it('覆盖名是冻结 it() 名子串 → 封印通过', () => {

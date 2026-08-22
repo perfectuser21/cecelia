@@ -8,11 +8,15 @@
 
 
 
-**Brain 版本**: 1.273.117
+**Brain 版本**: 1.273.118
 
 ## Brain 1.273.114 — Diff Impact Gate 透传 freshness.reason_code + 确定性码 fail-closed 出口（F1 步骤 3，r42）
 
 `evaluateDiffGate` 步骤 3a 把 Mapper 任意非 fresh freshness 一律折叠成裸 `mapper_stale` + `retryable:true`，确定性结论（no_anchor/revision_mismatch/resolver_error 等）被当瞬时无限重试 → run 空转。修：3a 出口透传 `freshness.reason_code`，瞬时白名单（`fact_snapshot_stale`/`projection_revision_missing`）与 `null` 保留 `retryable:true`，其余确定性码 fail-closed（`retryable:false`）；`gateReceipt` 透传 `reason_code` 使 deny 标签归因到具体码，不再裸 `mapper_stale`。3a 仍返回 `impact_unknown` 不假绿。
+## Brain 1.273.118 — 封印闸强制 Test Contract 表登记冻结测试（F1 步骤 3，r45 死锁案卷）
+
+r45（run 6de78554）结构死锁：proposer 漏产 ## Test Contract 表（rows=0 旧校验放行），CI 覆盖闸在 generator 后才红，contract-draft 已冻结（守卫正确拒改）→ fix 修好全部代码层门禁仍无路。修：封印时 artifacts 每个冻结测试文件必须被表登记，缺表/漏登记拒封印（FROZEN_CONTRACT_TEST_CONTRACT_UNREGISTERED，打回 proposer 可重写轮）。
+
 ## Brain 1.273.117 — 投影换代窗口空 capability 集按瞬态处理（F1 步骤 3，r43/r44 双死案卷）
 
 r43+r44 fix 轮后同点双死：gate 撞投影换代窗口（rescan 每 ~10 分钟），capabilityNodes 空集 → 全部文件误判 unclaimed → impact_anchor_missing 确定性杀 run；事后带 digest 复刻总 fresh。修：radius 空 capability 集报 projection_capabilities_empty（瞬态可重试）；diff-gate 白名单收编该码；gateReceipt 透传 unclaimed_files（#5015 被白名单丢字段的补刀）。

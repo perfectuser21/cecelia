@@ -27,7 +27,7 @@ function artifact(path, content) {
 }
 const artifacts = Object.freeze([
   artifact('sprints/router/contract-dod.md', '# DoD'),
-  artifact('sprints/router/contract-draft.md', '# Contract'),
+  artifact('sprints/router/contract-draft.md', '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| routing | `sprints/router/tests/routing.test.mjs` | `routing` | FAIL |'),
   artifact('sprints/router/sprint-prd.md', '# PRD'),
   artifact('sprints/router/tests/routing.test.mjs', 'test("routing", () => {})'),
 ]);
@@ -176,7 +176,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       version: 2,
       branch: 'cp-harness-propose-r2-22222222-a8',
       prdContent: '# PRD',
-      contractContent: '# Contract\n\n# DoD',
+      contractContent: '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| routing | `sprints/router/tests/routing.test.mjs` | `routing` | FAIL |\n\n# DoD',
       artifacts,
       approvedAt,
     });
@@ -238,7 +238,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       version: 2,
       branch: 'cp-harness-propose-r2-22222222-a8',
       prdContent: '# PRD',
-      contractContent: '# Contract\n\n# DoD',
+      contractContent: '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| routing | `sprints/router/tests/routing.test.mjs` | `routing` | FAIL |\n\n# DoD',
       artifacts,
       approvedAt,
     })).resolves.toMatchObject({ id: contract.id, status: 'approved' });
@@ -248,7 +248,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       version: 2,
       branch: 'cp-harness-propose-r2-22222222-a8',
       prdContent: '# PRD',
-      contractContent: '# Contract\n\n# DoD',
+      contractContent: '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| routing | `sprints/router/tests/routing.test.mjs` | `routing` | FAIL |\n\n# DoD',
       artifacts: artifacts.map((item) => item.path.endsWith('/tests/routing.test.mjs')
         ? { ...item, content: 'mutated' }
         : item),
@@ -266,7 +266,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       version: 2,
       branch: 'cp-harness-propose-r2-22222222-a8',
       prdContent: '# MUTATED PRD',
-      contractContent: '# Contract\n\n# DoD',
+      contractContent: '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| routing | `sprints/router/tests/routing.test.mjs` | `routing` | FAIL |\n\n# DoD',
       artifacts: undefined,
       approvedAt,
     })).rejects.toThrow(/evidence mismatch|approved_contract_immutable_mismatch/i);
@@ -276,7 +276,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       version: 2,
       branch: 'cp-different-branch',
       prdContent: '# PRD',
-      contractContent: '# Contract\n\n# DoD',
+      contractContent: '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| routing | `sprints/router/tests/routing.test.mjs` | `routing` | FAIL |\n\n# DoD',
       artifacts,
       approvedAt,
     })).rejects.toThrow(/evidence mismatch|approved_contract_immutable_mismatch/i);
@@ -310,7 +310,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
       version: 3,
       branch: 'cp-new-r3',
       prdContent: '# PRD',
-      contractContent: '# Contract\n\n# DoD',
+      contractContent: '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| routing | `sprints/router/tests/routing.test.mjs` | `routing` | FAIL |\n\n# DoD',
       artifacts: rerunArtifacts,
     });
 
@@ -359,7 +359,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
           version: 3,
           branch: 'cp-concurrent-a-r3',
           prdContent: '# PRD',
-          contractContent: '# Contract\n\n# DoD',
+          contractContent: '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| routing | `sprints/router/tests/routing.test.mjs` | `routing` | FAIL |\n\n# DoD',
           artifacts: artifactsFor(firstRevision),
         }),
         materializeApprovedContract(secondPool, {
@@ -367,7 +367,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
           version: 3,
           branch: 'cp-concurrent-b-r3',
           prdContent: '# PRD',
-          contractContent: '# Contract\n\n# DoD',
+          contractContent: '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| routing | `sprints/router/tests/routing.test.mjs` | `routing` | FAIL |\n\n# DoD',
           artifacts: artifactsFor(secondRevision),
         }),
       ]);
@@ -415,14 +415,14 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract 合同重开后�
   function artifactsFor(root, sourceRevision) {
     return Object.freeze([
       reopenArtifact(root, 'contract-dod.md', '# DoD', sourceRevision),
-      reopenArtifact(root, 'contract-draft.md', '# Contract', sourceRevision),
+      reopenArtifact(root, 'contract-draft.md', `# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| x | \`${root}/tests/x.test.mjs\` | \`x\` | FAIL |`, sourceRevision),
       reopenArtifact(root, 'sprint-prd.md', '# PRD', sourceRevision),
       reopenArtifact(root, 'tests/x.test.mjs', 'test("x", () => {})', sourceRevision),
     ]);
   }
   // prdContent / contractContent 必须与 artifacts 投影一致（assertArtifactProjection）。
   const PRD = '# PRD';
-  const CONTRACT = '# Contract\n\n# DoD';
+  const CONTRACT = `# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| x | \`sprints/reopen-r5/tests/x.test.mjs\` | \`x\` | FAIL |\n\n# DoD`;
 
   beforeAll(async () => {
     reopenClient = await reopenPool.connect();
@@ -664,7 +664,7 @@ describe('materializeApprovedContract concurrency contract', () => {
       version: 2,
       branch: 'cp-harness-propose-r2-22222222-a8',
       prdContent: '# PRD',
-      contractContent: '# Contract\n\n# DoD',
+      contractContent: '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| routing | `sprints/router/tests/routing.test.mjs` | `routing` | FAIL |\n\n# DoD',
       artifacts,
       approvedAt: new Date('2026-07-22T15:00:00Z'),
     })).resolves.toMatchObject({ status: 'approved' });
@@ -712,7 +712,7 @@ describe('materializeApprovedContract concurrency contract', () => {
       version: 2,
       branch: 'cp-harness-propose-r2-22222222-a8',
       prdContent: '# PRD',
-      contractContent: '# Contract\n\n# DoD',
+      contractContent: '# Contract\n\n## Test Contract\n\n| 功能 | Test File | BEHAVIOR | 红证据 |\n|---|---|---|---|\n| routing | `sprints/router/tests/routing.test.mjs` | `routing` | FAIL |\n\n# DoD',
       artifacts,
       approvedAt: new Date('2026-07-22T15:00:00Z'),
     })).rejects.toThrow('FROZEN_CONTRACT_ARTIFACT_INVALID:seal_mismatch');
