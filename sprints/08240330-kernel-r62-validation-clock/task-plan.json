@@ -1,0 +1,28 @@
+{
+  "initiative_id": "f2a2c4cc-2270-4227-ad27-597de0e90ba1",
+  "journey_type": "autonomous",
+  "journey_type_reason": "变更是 kernel validation clock 的纯后端确定性计算",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 validation clock 按 fix 轮有界顺延",
+      "scope": "让前 6 次成功 generator-fix 依 hop 刷新 pipeline clock，第 7 次起封顶，并保持零 fix 与 fail-closed 语义",
+      "dod": [
+        "[BEHAVIOR] r50 型长跑在最近合法 fix deadline 内存活，6 次可刷新且第 7 次不再刷新",
+        "[BEHAVIOR] 零 fix 与等价 decision-log 重放结果保持一致",
+        "[ARTIFACT] Brain DEFINITION 版本同步"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/validation-clock.js",
+        "packages/brain/DEFINITION.md",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "sprints/08240330-kernel-r62-validation-clock/tests/validation-clock-fix-extension.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
