@@ -9,8 +9,8 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] 生产纯函数实现、冻结 F1 回归测试与 Brain `DEFINITION.md` 版本同步进入同一交付
-  Test: node -e "const fs=require('fs');for(const p of ['packages/brain/src/orchestrator/validation-clock.js','packages/brain/DEFINITION.md','sprints/08240010-kernel-r59-validation-clock/tests/validation-clock-fix-extension.test.js'])fs.accessSync(p)"
+- [ ] [ARTIFACT] 生产纯函数实现、sprint 冻结测试、`tests/gp/f1/` 永久回归测试与 Brain `DEFINITION.md` 版本同步进入同一交付
+  Test: node -e "const fs=require('fs');for(const p of ['packages/brain/src/orchestrator/validation-clock.js','packages/brain/DEFINITION.md','sprints/08240010-kernel-r59-validation-clock/tests/validation-clock-fix-extension.test.js','tests/gp/f1/validation-clock-fix-extension.test.js'])fs.accessSync(p)"
 
 ## BEHAVIOR 条目
 
@@ -41,6 +41,13 @@ journey_type: autonomous
   等待预算: 0s
   留证: Vitest 精确对象断言与 exit code。
   Test: manual:bash -c 'npx vitest run --no-cache sprints/08240010-kernel-r59-validation-clock/tests/validation-clock-fix-extension.test.js -t "无 fix 轮时保持首次 generator 原点语义"'
+
+- [ ] [BEHAVIOR] [L2] B-05: 非成功 fix 派发不得成为新原点
+  动作: 真调生产函数，传入 `spawn:generator-fix` intent 与匹配的 `result:dispatch` BLOCKED 行，但不传匹配 `effect:attempt_launched`。
+  预期观察: validation clock 精确保持首次 Generator 原点和原 deadline，不使用失败 fix 的时间。
+  等待预算: 0s
+  留证: Vitest 精确 clock 对象 diff 与进程 exit code。
+  Test: manual:bash -c 'npx vitest run --no-cache sprints/08240010-kernel-r59-validation-clock/tests/validation-clock-fix-extension.test.js -t "非成功 fix 派发没有 launched effect 时不得顺延"'
 
 ## Invariant 条目
 

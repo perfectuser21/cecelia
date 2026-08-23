@@ -6,16 +6,18 @@
     {
       "task_id": "ws1",
       "title": "实现 validation clock 按 fix 轮有界顺延",
-      "scope": "使 pipeline validation clock 按 hop 采用最多前 6 次成功 generator-fix 的最后一行为新原点，同时保持无 fix、existing-PR、fail-closed 与人审 deadline 语义",
+      "scope": "使 pipeline validation clock 仅采用具有匹配 effect:attempt_launched 回执的 generator-fix intent，按 hop 取最多前 6 次成功派发的最后一行为新原点，同时保持失败派发、无 fix、existing-PR、fail-closed 与人审 deadline 语义",
       "dod": [
         "[BEHAVIOR] r50 型日志在第 1 次 fix 新期限内保持存活",
         "[BEHAVIOR] 乱序日志确定性选第 6 次 fix 且第 7 次以后不顺延",
+        "[BEHAVIOR] 缺少 launched effect 的失败 generator-fix 派发不顺延",
         "[BEHAVIOR] 无 fix 与既有 validation clock 测试零回归",
         "[ARTIFACT] 更新 validation-clock.js、冻结 F1 测试与 Brain DEFINITION.md 版本"
       ],
       "files": [
         "packages/brain/src/orchestrator/validation-clock.js",
         "packages/brain/DEFINITION.md",
+        "tests/gp/f1/validation-clock-fix-extension.test.js",
         "sprints/08240010-kernel-r59-validation-clock/tests/validation-clock-fix-extension.test.js"
       ],
       "depends_on": [],

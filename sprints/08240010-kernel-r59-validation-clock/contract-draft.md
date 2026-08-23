@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -15,10 +15,10 @@ N/A — 任务无 HTTP 响应；`resolveValidationClock` 继续返回既有 `{pi
 
 | 要素 | 本次答案 |
 |---|---|
-| FR（做什么） | 每个成功 `spawn:generator-fix` 日志行把 pipeline validation clock 原点推进到该行，最多采用前 6 次 fix。 |
+| FR（做什么） | 每个具有匹配 `effect:attempt_launched` 成功回执的 `spawn:generator-fix` 日志行把 pipeline validation clock 原点推进到该派发 intent 行，最多采用前 6 次 fix。 |
 | NFR（做得多好） | 纯函数、按 hop 确定性重放；`timeout_seconds` 默认值与算法不变。 |
 | Invariant（永不违反） | 无 fix、existing-PR、fail-closed、人审 deadline 语义不回退；不得读取墙钟或进程内计数。 |
-| 判定点（怎么知道） | decision log 中的 `spawn:generator-fix` 行即既有成功派发决策事实，按数值 hop 升序计数。 |
+| 判定点（怎么知道） | decision log 中 `effect:attempt_launched.detail.dispatch_hop` 指回 `spawn:generator-fix` intent，且 `dispatch_action` 字面等于 `spawn:generator-fix`，才构成成功派发；只有 intent 或匹配 `result:dispatch` BLOCKED/NEEDS_CONTEXT 均不成功。 |
 | 保质期（何时过期） | 只要 decision-log action/hop 契约有效即有效；其契约变化时由 Kernel owner 更新。 |
 | 死亡告警（停了谁知道） | 第 6 次 fix 的新 deadline 到期后仍由既有 validation clock fail-closed 路径告警/判死。 |
 | 失败语义（挂了怎么办） | 缺时钟或畸形时间继续抛既有错误；第 7 次及以后 fix 不延长，不降级放行。 |
@@ -44,7 +44,7 @@ N/A — 纯内部 Kernel 判定函数，不对外暴露 agent 输入。
 
 覆盖父路 F1「工厂 · 开发闭环」第 3-3 步。
 
-[首次 Generator 建钟] → [有效 fix 按 hop 重置原点] → [最多采用 6 次] → [Evaluator/Judge 复用确定期限]
+[首次 Generator 建钟] → [launched effect 证明 fix 派发成功] → [有效 fix 按 hop 重置原点] → [最多采用 6 次] → [Evaluator/Judge 复用确定期限]
 
 ### Step 1: 无 fix 时沿用首次 Generator 原点
 **来源**: `[FROM_PRD]` — PRD「边界情况：没有 spawn:generator-fix 时，原点与现有语义完全一致」。
@@ -90,6 +90,17 @@ npx vitest run --no-cache sprints/08240010-kernel-r59-validation-clock/tests/val
 ```
 **硬阈值**: 原点不得晚于第 6 次 fix；以上命令 exit 0，过期后沿既有路径判死。
 
+### Step 5: 非成功 fix 派发不得顺延
+**来源**: `[FROM_PRD]` — PRD「非成功派发不得成为新原点」。
+
+**可观测行为**: `spawn:generator-fix` intent 后没有匹配的 `effect:attempt_launched`，而是出现 `result:dispatch` 且 status 为 `BLOCKED`，validation clock 仍锚定首次 Generator。
+
+**验证命令**:
+```bash
+npx vitest run --no-cache sprints/08240010-kernel-r59-validation-clock/tests/validation-clock-fix-extension.test.js -t '非成功 fix 派发没有 launched effect 时不得顺延'
+```
+**硬阈值**: 原点精确保持 `2026-08-20T00:00:00.000Z`、deadline 精确保持 `2026-08-20T01:30:00.000Z`；以上命令 exit 0。
+
 ## Invariant 覆盖映射
 
 - INV-1 重试身份：N/A，本 sprint 不改派发路由，只消费既有成功 action 日志。
@@ -100,7 +111,7 @@ npx vitest run --no-cache sprints/08240010-kernel-r59-validation-clock/tests/val
 ## 禁 mock 边清单
 
 - `tests/gp/f1` ↔ `packages/brain/src/orchestrator/validation-clock.js`：冻结测试必须真 import 生产模块，禁止复制函数、`vi.mock`、stub 或替身。
-- `resolveValidationClock` ↔ `orchestrator_decision_log` 行 shape：测试必须传真实 `{hop, action, created_at, detail}` shape，禁止以进程内 fix 计数替代日志重放。
+- `resolveValidationClock` ↔ `orchestrator_decision_log` 行 shape：测试必须传真实 intent `{hop, action, created_at, detail}` 与成功 effect `{action:'effect:attempt_launched',detail:{dispatch_hop,dispatch_action}}`/失败 result `{action:'result:dispatch',detail:{dispatch_hop,dispatch_action,status}}` shape，禁止以进程内 fix 计数替代日志重放。
 
 ## 接缝清单
 
@@ -140,10 +151,11 @@ set -euo pipefail
 : "${CAPABILITY_SNAPSHOT_ID:?Runner must inject current capability snapshot}"
 test "$(git merge-base HEAD 422633217348366974b6c28ceeaba7f587070a51)" = "422633217348366974b6c28ceeaba7f587070a51"
 npx vitest run --no-cache sprints/08240010-kernel-r59-validation-clock/tests/validation-clock-fix-extension.test.js
+npx vitest run --no-cache tests/gp/f1/validation-clock-fix-extension.test.js
 (cd packages/brain && npx vitest run --no-cache ./src/orchestrator/__tests__/validation-clock.test.js)
 ```
 
-**通过标准**: 两组真实 import 测试均 exit 0；冻结测试 4/4 通过，既有语义测试全绿。
+**通过标准**: 两组真实 import 测试均 exit 0；冻结测试 5/5 通过，既有语义测试全绿。
 
 ## Test Contract
 
@@ -153,8 +165,11 @@ npx vitest run --no-cache sprints/08240010-kernel-r59-validation-clock/tests/val
 | hop 重放与第 6 次上限 | `sprints/08240010-kernel-r59-validation-clock/tests/validation-clock-fix-extension.test.js` | `乱序输入仍按 hop 重放并选第 6 次 fix 为新原点` | 当前实现返回首次 Generator 原点，精确对象断言失败 |
 | 超限判死 | `sprints/08240010-kernel-r59-validation-clock/tests/validation-clock-fix-extension.test.js` | `第 7 次及以后 fix 不再顺延并沿用第 6 次期限` | 当前实现错误停在首次 Generator，而非第 6 次 fix |
 | 无 fix 零回归 | `sprints/08240010-kernel-r59-validation-clock/tests/validation-clock-fix-extension.test.js` | `无 fix 轮时保持首次 generator 原点语义` | 补充回归，现实现应保持通过 |
+| 失败派发不顺延 | `sprints/08240010-kernel-r59-validation-clock/tests/validation-clock-fix-extension.test.js` | `非成功 fix 派发没有 launched effect 时不得顺延` | 若实现只按 intent action 计数，会错误返回失败 fix 的新原点 |
+| F1 永久回归（补充） | `tests/gp/f1/validation-clock-fix-extension.test.js` | `非成功 fix 派发没有 launched effect 时不得顺延` | 与冻结测试同为 RED，并进入仓库 F1 required suite |
 
 ## Notes
 
 - contract-gate: applicable (`packages/brain/src/lib/contract-gate.js` exists)。
 - 本合同不修改 `timeout_seconds` 默认值、不修改人审 deadline、不扩展其他时钟。
+- 成功派发的唯一日志判据是匹配的 `effect:attempt_launched`；`result:dispatch` 的 `BLOCKED`/`NEEDS_CONTEXT` 以及孤立 intent 均不得顺延。
