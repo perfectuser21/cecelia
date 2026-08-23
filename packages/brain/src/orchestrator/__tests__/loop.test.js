@@ -814,7 +814,11 @@ describe('runLoop：hybrid Commander boundary', () => {
     );
   });
 
-  it('loud-fails hybrid mode without an explicit Commander primary', async () => {
+  // 第 27.5 批（决策 e3afa828，r56 run 4c6a461c 案卷）：hybrid 成为缺省后，
+  // 无显式 primary 不再 loud-fail——回退内置缺省 profile 并正常继续（否则常态
+  // 任务注册全部秒死）。「防拿错账号」由回退值是显式声明的常量/env 保证；
+  // 非法 profile 形状仍 fail-closed throw（tests/gp/f1/step3-commander-default-profile）。
+  it('hybrid mode without an explicit Commander primary falls back to the default profile and continues', async () => {
     const { deps } = makeEnv({
       observedSeq: [
         obs({
@@ -827,17 +831,24 @@ describe('runLoop：hybrid Commander boundary', () => {
           prdExists: false,
           contract: { approved: false, id: CONTRACT_ID },
         }),
+        obs({ run: { id: RUN_ID, phase: 'done', cost_usd: 0 } }),
       ],
     });
     deps.commanderCoordinator = {
       reconcile: vi.fn().mockResolvedValue({ kind: 'bypass' }),
     };
 
-    await expect(
-      runLoop(deps, { taskId: TASK_ID, runId: RUN_ID }),
-    ).rejects.toThrow();
-    expect(deps.commanderCoordinator.reconcile).not.toHaveBeenCalled();
-    expect(deps.dispatch).not.toHaveBeenCalled();
+    await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
+    expect(deps.commanderCoordinator.reconcile).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runProfile: expect.objectContaining({
+          mode: 'hybrid',
+          commander: expect.objectContaining({
+            primary: expect.objectContaining({ provider: 'codex', account: 'team2' }),
+          }),
+        }),
+      }),
+    );
   });
 
   it('keeps non-hybrid dispatch behavior byte-for-byte when coordinator bypasses', async () => {
