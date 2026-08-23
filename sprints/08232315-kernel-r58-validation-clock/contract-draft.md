@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Notes
 
@@ -57,7 +57,18 @@ npx vitest run --no-cache sprints/08232315-kernel-r58-validation-clock/tests/val
 ```
 **硬阈值**: 最多 6 次顺延；第七次输入时仍返回第六次的 `00:06:00Z` 起点及 `00:07:40Z` deadline；由上述两个测试精确断言。
 
-### Step 4: 防伪约束保持
+### Step 4: 失败或非派发行不得重锚
+**来源**: `[FROM_PRD]` — PRD「边界情况」明确要求只计算成功派发的 `spawn:generator-fix`，失败或非派发行不得改变原点。
+
+**可观测行为**: 首次 generator 后出现失败 callback 与非派发请求行时，时钟仍严格锚定首次 generator。
+
+**验证命令**:
+```bash
+npx vitest run --no-cache sprints/08232315-kernel-r58-validation-clock/tests/validation-clock-bounded-fix-extension.test.ts -t '失败或非派发行不得改变时钟原点'
+```
+**硬阈值**: `pipeline_started_at=00:00:00Z`、`deadline_at=00:01:40Z`，失败 callback 与非 `spawn:generator-fix` action 均不参与计数；由上述 `toEqual` 精确断言。
+
+### Step 5: 防伪约束保持
 **来源**: `[AI_ADDED]` — 防止实现通过修改默认 timeout、人审 deadline 或依赖当前时间/数组输入顺序绕过 PRD。
 
 **可观测行为**: 实现只从 decision log 的 action/hop/持久化时间推导，且改动不触及 timeout 默认值和人审 deadline。
@@ -158,11 +169,11 @@ git diff "$BASE_SHA"...HEAD -- packages/brain/src/orchestrator/loop.js | grep -E
 printf 'validation-clock E2E passed; attempt=%s snapshot=%s\n' "$HARNESS_ATTEMPT_ID" "$CAPABILITY_SNAPSHOT_ID"
 ```
 
-通过标准：四个测试全部通过，冻结基线为 implementation baseline，测试无 mock，默认 timeout 与人审 deadline 未被更改。
+通过标准：五个测试全部通过，冻结基线为 implementation baseline，测试无 mock，默认 timeout 与人审 deadline 未被更改。
 
 ## Test Contract
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 冻结 RED 合同 | `sprints/08232315-kernel-r58-validation-clock/tests/validation-clock-bounded-fix-extension.test.ts` | `r50 两轮 fix 后原窗口耗尽但最近 fix 窗口内仍存活`; `前六次 fix 各自按 hop 顺序成为新原点且输入可重放`; `第七次 fix 不再顺延并保留第六次原点使超时照常判死`; `无 fix 轮时继续以首次 generator 为原点` | 现实现选择首次 generator，前三个新增语义失败 |
-| 永久 GP 回归（Generator 落盘） | `tests/gp/f1/validation-clock-bounded-fix-extension.test.js` | 同上四个测试名逐字保留 | RED commit 后实现 commit 点绿 |
+| 冻结 RED 合同 | `sprints/08232315-kernel-r58-validation-clock/tests/validation-clock-bounded-fix-extension.test.ts` | `r50 两轮 fix 后原窗口耗尽但最近 fix 窗口内仍存活`; `前六次 fix 各自按 hop 顺序成为新原点且输入可重放`; `第七次 fix 不再顺延并保留第六次原点使超时照常判死`; `无 fix 轮时继续以首次 generator 为原点`; `失败或非派发行不得改变时钟原点` | 现实现选择首次 generator，前三个新增语义失败；边界用例永久防止错误扩大可重锚 action 集合 |
+| 永久 GP 回归（Generator 落盘） | `tests/gp/f1/validation-clock-bounded-fix-extension.test.js` | 同上五个测试名逐字保留 | RED commit 后实现 commit 点绿 |

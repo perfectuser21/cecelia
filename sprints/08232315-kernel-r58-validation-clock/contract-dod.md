@@ -10,7 +10,7 @@ journey_type: autonomous
 ## ARTIFACT 条目
 
 - [ ] [ARTIFACT] `packages/brain/src/orchestrator/validation-clock.js` 实现有界 fix 重锚，`packages/brain/DEFINITION.md` 版本同步。
-  Test: git diff --name-only 422633217348366974b6c28ceeaba7f587070a51...HEAD | grep -E '^(packages/brain/src/orchestrator/validation-clock.js|packages/brain/DEFINITION.md)$'
+  Test: bash -c 'CHANGED=$(git diff --name-only 422633217348366974b6c28ceeaba7f587070a51...HEAD); grep -qx "packages/brain/src/orchestrator/validation-clock.js" <<<"$CHANGED" && grep -qx "packages/brain/DEFINITION.md" <<<"$CHANGED"'
 - [ ] [ARTIFACT] 永久 GP 测试位于 `tests/gp/f1/validation-clock-bounded-fix-extension.test.js` 且真 import 目标模块。
   Test: node -e "const fs=require('fs');const p='tests/gp/f1/validation-clock-bounded-fix-extension.test.js';const c=fs.readFileSync(p,'utf8');const frozen=fs.readFileSync('sprints/08232315-kernel-r58-validation-clock/tests/validation-clock-bounded-fix-extension.test.ts','utf8');if(!c.includes('sprints/08232315-kernel-r58-validation-clock/tests/validation-clock-bounded-fix-extension.test.ts')||!frozen.includes('packages/brain/src/orchestrator/validation-clock.js')||/vi\\.mock|jest\\.mock|sinon\\.stub/.test(c+frozen))process.exit(1)"
 
@@ -44,9 +44,16 @@ journey_type: autonomous
   留证: Vitest verbose 输出与精确对象断言。
   Test: manual:bash -c 'npx vitest run --no-cache sprints/08232315-kernel-r58-validation-clock/tests/validation-clock-bounded-fix-extension.test.ts -t "无 fix 轮时继续以首次 generator 为原点"'
 
+- [ ] [BEHAVIOR] [L2] B-05: 失败或非派发行不重锚
+  动作: 在首次 generator 后加入失败的 generator-fix callback 与非派发请求 action，再调用真实目标模块。
+  预期观察: 两行均被排除，pipeline 起点与 deadline 保持首次 generator 的精确值。
+  等待预算: 0s
+  留证: Vitest verbose 输出与精确对象断言差异。
+  Test: manual:bash -c 'npx vitest run --no-cache sprints/08232315-kernel-r58-validation-clock/tests/validation-clock-bounded-fix-extension.test.ts -t "失败或非派发行不得改变时钟原点"'
+
 - [ ] [BEHAVIOR] [L2] INV-1: 首次 generator 与 generator-fix 身份不混淆
   动作: 运行四场景全集并检查各自精确起点。
-  预期观察: 0 fix 用首次 generator，1-6 fix 用对应最新 fix，7 fix 仍用第六次。
+  预期观察: 0 fix 用首次 generator，1-6 fix 用对应最新 fix，7 fix 仍用第六次，失败或非派发行不重锚。
   等待预算: 0s
   留证: 全套 Vitest verbose 输出。
   Test: manual:bash -c 'npx vitest run --no-cache sprints/08232315-kernel-r58-validation-clock/tests/validation-clock-bounded-fix-extension.test.ts --reporter=verbose'

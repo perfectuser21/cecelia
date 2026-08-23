@@ -87,4 +87,25 @@ describe('validation clock bounded generator-fix extension [BEHAVIOR]', () => {
       deadline_at: '2026-08-23T00:01:40.000Z',
     });
   });
+
+  it('失败或非派发行不得改变时钟原点', () => {
+    const clock = resolveValidationClock({
+      action: 'spawn:evaluator',
+      decisionLog: [
+        row(10, 'spawn:generator', '2026-08-23T00:00:00.000Z'),
+        {
+          ...row(20, 'verdict:generator-fix-callback', '2026-08-23T00:01:00.000Z'),
+          detail: { status: 'failed', failure_class: 'infrastructure_blocked' },
+        },
+        row(30, 'generator-fix-requested', '2026-08-23T00:02:00.000Z'),
+      ],
+      intentAt: '2026-08-23T00:02:30.000Z',
+      timeoutSeconds,
+    });
+
+    expect(clock).toEqual({
+      pipeline_started_at: '2026-08-23T00:00:00.000Z',
+      deadline_at: '2026-08-23T00:01:40.000Z',
+    });
+  });
 });
