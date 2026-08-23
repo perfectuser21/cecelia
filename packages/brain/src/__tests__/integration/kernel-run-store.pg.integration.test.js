@@ -314,7 +314,8 @@ describe('Kernel run store PostgreSQL concurrency', () => {
       [taskId],
     );
     expect(active.rows).toHaveLength(1);
-    expect(active.rows[0].commander_mode).toBe('kernel-only');
+    // 第 27 批（决策 e3afa828）：缺省反转为 hybrid
+    expect(active.rows[0].commander_mode).toBe('hybrid');
   });
 
   it('persists and returns an explicit hybrid mode through the canonical API', async () => {
@@ -347,7 +348,7 @@ describe('Kernel run store PostgreSQL concurrency', () => {
     expect(loaded.commander_mode).toBe('hybrid');
   });
 
-  it('persists kernel-only when the Store input omits commander mode', async () => {
+  it('persists hybrid when the Store input omits commander mode (第27批缺省反转)', async () => {
     const taskId = randomUUID();
     const initiativeId = randomUUID();
     await insertTask(taskId, initiativeId);
@@ -361,7 +362,7 @@ describe('Kernel run store PostgreSQL concurrency', () => {
       [created.run.id],
     );
 
-    expect(persisted.rows).toEqual([{ commander_mode: 'kernel-only' }]);
+    expect(persisted.rows).toEqual([{ commander_mode: 'hybrid' }]);
   });
 
   it('uses one lock order for create/finalize interleaving without deadlock', async () => {

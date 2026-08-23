@@ -120,6 +120,55 @@ function hasNewerEvaluatePassThanJudge(decisionLog, currentHeadSha) {
  * verdict 必然经 verdictForAuthority 锚定 currentHeadSha，候选换头必经 generator 行
  * 重置计数，轮内计数不会误伤合法场景。
  */
+/**
+ * evidence_insufficient_after_recollect 人审是否已被批准（r55 出口补缺）。
+ * 双锚定：请求行 review_reason 精确匹配 + 批准行 review_request_hop 指回该请求行
+ * 且 pr_head_sha 等于当前候选头。任一不满足 → 未批准。
+ */
+function recollectReviewApproved(decisionLog, currentHeadSha) {
+  const rows = sortedLogRows(decisionLog);
+  return rows.some((request) => {
+    if (request.action !== LOG_ACTION.HUMAN_REVIEW_REQUESTED) return false;
+    const requestDetail = asStructuredJson(request.detail) ?? {};
+    if (requestDetail.review_reason !== 'evidence_insufficient_after_recollect') return false;
+    return rows.some((row) => {
+      if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW) return false;
+      const detail = asStructuredJson(row.detail) ?? {};
+      return detail.approved === true
+        && detail.pr_head_sha === currentHeadSha
+        && Number(row.hop) > Number(request.hop)
+        && String(detail.review_request_hop) === String(request.hop);
+    });
+  });
+}
+
+/**
+ * 全局熔断器（决策 e3afa828）：同一 spawn action + 同一 detail.reason 在本轮候选内
+ * （无 generator/generator-fix 重置）已连续出现 ≥GLOBAL_LOOP_BREAKER_THRESHOLD 次
+ * → 下一次同派发强制转人审。专用闸被未知变体绕过时的机械兜底（r54 9×recollect、
+ * 6b0a3de1 17 轮、6125d565 14 轮同族实证：没有兜底就烧到人来发现）。
+ * 纯 decisionLog 行计数，可重放。
+ */
+const GLOBAL_LOOP_BREAKER_THRESHOLD = 5;
+function globalLoopBreakerTripped(decisionLog, decision) {
+  if (!decision || typeof decision.action !== 'string' || !decision.action.startsWith('spawn:')) {
+    return false;
+  }
+  let streak = 0;
+  for (const row of [...sortedLogRows(decisionLog)].reverse()) {
+    if (GENERATOR_ACTIONS.has(row.action)) break;
+    if (!String(row.action ?? '').startsWith('spawn:')) continue;
+    const detail = asStructuredJson(row.detail) ?? {};
+    if (row.action === decision.action && detail.reason === decision.reason) {
+      streak += 1;
+      if (streak >= GLOBAL_LOOP_BREAKER_THRESHOLD) return true;
+      continue;
+    }
+    break;
+  }
+  return false;
+}
+
 function alreadyRecollectedOnCurrentCandidate(decisionLog) {
   for (const row of [...sortedLogRows(decisionLog)].reverse()) {
     if (GENERATOR_ACTIONS.has(row.action)) return false;
@@ -853,6 +902,20 @@ function evidenceReplayRoute(decisionLog, currentHeadSha, currentVerdict) {
 }
 
 export function derive(observed) {
+  const deriveResult = deriveInner(observed);
+  // 全局熔断器：任何 spawn 决策若与本轮候选内已连续 ≥5 次的同 action+同 reason
+  // 派发相同 → 强制人审。放在最外层，专用闸失守时兜底。
+  if (globalLoopBreakerTripped(observed?.decisionLog ?? [], deriveResult)) {
+    return {
+      phase: 'review',
+      action: ACTION.WAIT_HUMAN_REVIEW,
+      reason: 'global_loop_breaker',
+    };
+  }
+  return deriveResult;
+}
+
+function deriveInner(observed) {
   assertObservedShape(observed);
   const { run, task, prdExists, contract, pr, inflight, counters } = observed;
 
@@ -1287,6 +1350,17 @@ function deriveFailureClassRoute(
     // 防死循环：同一 SHA 已因此重新取证过一次仍判证据不足 → 回落人工。
     const alreadyRecollected = alreadyRecollectedOnCurrentCandidate(decisionLog ?? []);
     if (alreadyRecollected) {
+      // 出口（r55 run f51ba12b 实证补缺）：该 reason 的人审被 APPROVED（请求行
+      // review_reason 匹配 + 批准行 review_request_hop/pr_head_sha 双锚定）即
+      // 人工认定证据充分——本地候选路由 publish（下游仍有 CI + merge fence 兜底），
+      // 不再死等。无批准/锚不匹配 → 保持 wait（闸语义不回退）。
+      if (recollectReviewApproved(decisionLog ?? [], currentHeadSha)) {
+        return {
+          phase: 'publish',
+          action: ACTION.PUBLISH_APPROVED_REF,
+          reason: 'evidence_insufficient_human_approved',
+        };
+      }
       return {
         phase: 'review',
         action: ACTION.WAIT_HUMAN_REVIEW,

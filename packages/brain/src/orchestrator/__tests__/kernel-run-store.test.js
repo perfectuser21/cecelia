@@ -489,7 +489,8 @@ describe('Kernel run store creation authority', () => {
       TASK_ID,
       'kernel_dispatch',
       'trusted',
-      'kernel-only',
+      // 第 27 批（决策 e3afa828）：缺省反转为 hybrid，常态 run 全带 Commander
+      'hybrid',
       // sprint 08091640：gear 入参缺省写 NULL（= default 语义，存量行零变化）。
       null,
       'required',

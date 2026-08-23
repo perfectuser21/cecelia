@@ -111,7 +111,8 @@ describe('legacy POST /orchestrator/relay-runs/:initiative_id', () => {
       host: 'foreground',
       deadlineHours: 6,
       createdSource: 'foreground_handoff',
-      commanderMode: 'kernel-only',
+      // 第 27 批（决策 e3afa828）：API 不再固化缺省，undefined 透传 store 统一裁决
+      commanderMode: undefined,
       predecessorRunId: null,
     }), {});
     // foreground 也不能注入 Controller identity，由 store 事务签发。

@@ -72,15 +72,20 @@ async function handleReviewDecision(req, res, { approved }) {
     );
     const run = runResult.rows[0];
     if (!run) return res.status(404).json({ error: 'kernel run/task not found' });
-    if (!run.pr_url) return res.status(409).json({ error: 'run has no pull request' });
 
-    const currentSha = await resolver(run.pr_url);
-    if (!currentSha) return res.status(409).json({ error: 'current PR head unavailable' });
-    if (requestedSha !== currentSha) {
-      return res.status(409).json({
-        error: 'stale_sha',
-        current_pr_head_sha: currentSha,
-      });
+    // 本地候选（发布前 pr_url 为空，r55 run f51ba12b 实证）：无远端 PR 可解析，
+    // 改用 review 请求行 detail.candidate_head_sha 与调用方 pr_head_sha 全等锚定——
+    // SHA 锚定强度等同 PR 路径，只是权威来源换成 kernel 落库的请求行。
+    let currentSha = null;
+    if (run.pr_url) {
+      currentSha = await resolver(run.pr_url);
+      if (!currentSha) return res.status(409).json({ error: 'current PR head unavailable' });
+      if (requestedSha !== currentSha) {
+        return res.status(409).json({
+          error: 'stale_sha',
+          current_pr_head_sha: currentSha,
+        });
+      }
     }
 
     const requestResult = hopProvided
@@ -94,20 +99,38 @@ async function handleReviewDecision(req, res, { approved }) {
         [runId, reviewRequestHop],
       )
       : await dbPool.query(
-        `SELECT hop, observed, detail, created_at
-           FROM orchestrator_decision_log
-          WHERE run_id=$1::uuid
-            AND action='effect:human_review_requested'
-            AND observed->'pr'->>'head_sha'=$2
-          ORDER BY hop DESC
-          LIMIT 1`,
-        [runId, currentSha],
+        run.pr_url
+          ? `SELECT hop, observed, detail, created_at
+               FROM orchestrator_decision_log
+              WHERE run_id=$1::uuid
+                AND action='effect:human_review_requested'
+                AND observed->'pr'->>'head_sha'=$2
+              ORDER BY hop DESC
+              LIMIT 1`
+          : `SELECT hop, observed, detail, created_at
+               FROM orchestrator_decision_log
+              WHERE run_id=$1::uuid
+                AND action='effect:human_review_requested'
+                AND detail->>'candidate_head_sha'=$2
+              ORDER BY hop DESC
+              LIMIT 1`,
+        [runId, run.pr_url ? currentSha : requestedSha],
       );
     const requestRow = requestResult.rows[0];
     const requestObserved = asJson(requestRow?.observed);
     const requestDetail = asJson(requestRow?.detail);
-    if (!requestRow || requestObserved.pr?.head_sha !== currentSha) {
-      return res.status(409).json({ error: 'human_review_request_not_found_for_sha' });
+    if (run.pr_url) {
+      if (!requestRow || requestObserved.pr?.head_sha !== currentSha) {
+        return res.status(409).json({ error: 'human_review_request_not_found_for_sha' });
+      }
+    } else {
+      if (!requestRow || requestDetail.candidate_head_sha !== requestedSha) {
+        return res.status(409).json({
+          error: 'stale_sha',
+          detail: 'no PR; pr_head_sha must equal the review request candidate_head_sha',
+        });
+      }
+      currentSha = requestedSha;
     }
     const resolvedReviewRequestHop = hopProvided ? reviewRequestHop : Number(requestRow.hop);
     const reviewClass = reviewClassForReason(requestDetail.review_reason);
