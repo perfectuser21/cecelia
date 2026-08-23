@@ -24,4 +24,3 @@ describe('Dashboard 系统总图冻结合同', () => {
     expect(systemHub).not.toMatch(/path:\s*['"]\/map['"]/);
   });
 });
-
