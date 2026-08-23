@@ -1,0 +1,24 @@
+{
+  "initiative_id": "2167c976-d5f5-4ade-83ee-6f86c706755e",
+  "journey_type": "autonomous",
+  "journey_type_reason": "变更是 provider 无关的 orchestrator kernel 纯函数判定逻辑",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 validation clock 按成功 fix 派发有界顺延",
+      "scope": "让 validation clock 识别按 hop 配对的成功 generator-fix 派发，最多以六次 fix 为新原点，保留无 fix 与既有 PR 语义",
+      "dod": [
+        "[BEHAVIOR] r50 场景在六次上限内存活，第七次不顺延，无成功 receipt 不顺延",
+        "[ARTIFACT] validation-clock.js、Brain DEFINITION.md 与 tests/gp/f1 回归测试"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/validation-clock.js",
+        "packages/brain/DEFINITION.md",
+        "tests/gp/f1/validation-clock-fix-extension.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
