@@ -1,72 +1,72 @@
-contract_branch: cp-harness-propose-r2-15338469-re2a90fce-a12
-sprint_dir: sprints/08230906-kernel-15338469
+contract_branch: cp-harness-propose-r1-b54ca99b-re243f543-a18
+sprint_dir: sprints/08231856-kernel-r57-validation-clock
 
 ---
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Sprint: capability preflight failed_targets 时效窗口豁免（记仇不跨修复期）
+# Contract DoD — Sprint: validation clock 按 fix 轮有界顺延（长跑 run 不再被固定窗口误杀）[r57]
 
-**范围**: `packages/brain/src/orchestrator/attempt-store.js` 的 `listFailedExecutionTargets` 增加基于 `created_at` 的时效窗口 WHERE 过滤 + 读 `HARNESS_FAILED_TARGET_TTL_HOURS`（默认 2h）；同步更新 repo 既有断言含第三参数。
+**范围**: `packages/brain/src/orchestrator/validation-clock.js` 的 `resolveValidationClock` —— 把「永远锚定首个 generator 原点」改为「按 `spawn:generator-fix` 行数有界顺延到最新 generator 系 spawn 行 created_at 重算 timeout_seconds、上限 6 次」的纯函数逻辑。
 **大小**: S
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] 冻结 sprint 测试文件存在且含 created_at make_interval 窗口断言
-  Test: node -e "const c=require('fs').readFileSync('sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts','utf8');if(!c.includes('make_interval')||!c.includes('HARNESS_FAILED_TARGET_TTL_HOURS'))process.exit(1)"
+- [ ] [ARTIFACT] 本 sprint 冻结守卫存在且真 import real validation-clock.js，断言有界顺延语义
+  Test: node -e "const c=require('fs').readFileSync('sprints/08231856-kernel-r57-validation-clock/tests/step3-validation-clock-fix-extension.test.js','utf8');if(!c.includes(\"from '../../../packages/brain/src/orchestrator/validation-clock.js'\")||!c.includes('deadline 顺延到最新 fix 原点'))process.exit(1)"
   期望: exit 0
 
-- [x] [ARTIFACT] attempt-store.js 读取 HARNESS_FAILED_TARGET_TTL_HOURS 且 SQL 含 created_at 时效窗口
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/attempt-store.js','utf8');if(!c.includes('HARNESS_FAILED_TARGET_TTL_HOURS')||!/created_at\s*>=\s*NOW\(\)\s*-\s*make_interval/.test(c))process.exit(1)"
+- [ ] [ARTIFACT] validation-clock.js 硬编码顺延上限常量 VALIDATION_CLOCK_EXTENSION_LIMIT = 6（有界续命铁律）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/validation-clock.js','utf8');if(!/VALIDATION_CLOCK_EXTENSION_LIMIT\s*=\s*6\b/.test(c))process.exit(1)"
   期望: exit 0
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令；autonomous / local_api）
+## BEHAVIOR 条目（内嵌可执行 manual: 命令，vitest 冻结守卫；带 -t 过滤统一用 grep -qE "[1-9][0-9]* passed" 宽松式）
 
-- [x] [BEHAVIOR] [L1] B-01: 默认 2 小时窗口 SQL 用 created_at make_interval 过滤且第三参数为 2
-  动作: 不设 HARNESS_FAILED_TARGET_TTL_HOURS，调 listFailedExecutionTargets 并断言发往 pool.query 的 SQL 与绑定参数
-  预期观察: SQL 含 `created_at >= NOW() - make_interval(hours => $3)`，params 为 `[runId, role, 2]`（对应冻结测试通过）
+- [ ] [BEHAVIOR] [L2] B-01: 2 轮 generator-fix 后 deadline 顺延到最新 fix 原点 created_at + timeout（RED→GREEN 核心）
+  动作: 构造 decisionLog（首 generator + 2 行 spawn:generator-fix，最新 fix 携 stale persisted detail 锚在首原点），调 real resolveValidationClock({action:'spawn:generator-fix', ...})
+  预期观察: 返回 {pipeline_started_at: 最新 fix.created_at, deadline_at: 最新 fix.created_at + timeout}，忽略 stale detail（re-derive，纯函数可重放）
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "默认 2 小时窗口经 created_at make_interval 过滤且第三参数为 2" 2>&1'
+  留证: vitest 输出末行（含 passed 计数）进 behavior_tests.log_tail
+  Test: manual:bash -c 'npx vitest run sprints/08231856-kernel-r57-validation-clock/tests/step3-validation-clock-fix-extension.test.js -t "deadline 顺延到最新 fix 原点" 2>&1 | grep -qE "[1-9][0-9]* passed"'
 
-- [x] [BEHAVIOR] [L1] B-02: HARNESS_FAILED_TARGET_TTL_HOURS 覆盖窗口小时数进第三参数
-  动作: 设 HARNESS_FAILED_TARGET_TTL_HOURS=5，调 listFailedExecutionTargets 并断言第三绑定参数
-  预期观察: params 第三项为 5（env 覆盖生效）
+- [ ] [BEHAVIOR] [L2] B-02: 顺延超上限 —— 7 轮 generator-fix deadline 冻结在第 6 次顺延原点（防无限续命）
+  动作: 构造 decisionLog（首 generator + 7 行 spawn:generator-fix），调 real resolveValidationClock({action:'spawn:evaluator', ...})
+  预期观察: 返回 pipeline_started_at = 第6次 fix.created_at（第7次被上限截断，不作原点），deadline_at = 第6次 fix.created_at + timeout
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "覆盖窗口小时数进第三参数" 2>&1'
+  留证: vitest 输出末行进 behavior_tests.log_tail
+  Test: manual:bash -c 'npx vitest run sprints/08231856-kernel-r57-validation-clock/tests/step3-validation-clock-fix-extension.test.js -t "deadline 冻结在第 6 次顺延原点" 2>&1 | grep -qE "[1-9][0-9]* passed"'
 
-- [x] [BEHAVIOR] [L1] B-03: 非法 HARNESS_FAILED_TARGET_TTL_HOURS 回退默认 2 小时
-  动作: 设 HARNESS_FAILED_TARGET_TTL_HOURS=not-a-number，调 listFailedExecutionTargets 并断言第三绑定参数
-  预期观察: params 第三项回退为 2（非法值不破坏 preflight）
+- [ ] [BEHAVIOR] [L2] B-03: 边界 —— 恰好 6 轮 generator-fix 仍顺延到第 6 次原点（上限内不冻结）
+  动作: 构造 decisionLog（首 generator + 6 行 spawn:generator-fix），调 real resolveValidationClock({action:'spawn:judge', ...})
+  预期观察: 返回 pipeline_started_at = 第6次 fix.created_at，deadline_at = 第6次 fix.created_at + timeout（min(6,6)=6，上限内仍顺延）
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "回退默认 2 小时" 2>&1'
+  留证: vitest 输出末行进 behavior_tests.log_tail
+  Test: manual:bash -c 'npx vitest run sprints/08231856-kernel-r57-validation-clock/tests/step3-validation-clock-fix-extension.test.js -t "恰好 6 轮 generator-fix 仍顺延到第 6 次原点" 2>&1 | grep -qE "[1-9][0-9]* passed"'
 
-- [x] [BEHAVIOR] [L1] B-04: 窗口边界采用窗口内含语义使用大于等于比较
-  动作: 调 listFailedExecutionTargets 并断言 SQL 用 `>=` 而非 `>` 比较 created_at
-  预期观察: SQL 含 `created_at >=`，不含 `created_at > NOW`（窗口内含）
+- [ ] [BEHAVIOR] [L2] B-04: 回归守恒 —— 无 generator-fix 行时窗口仍以首 generator 原点算（语义不变）
+  动作: 构造 decisionLog（仅首 generator，无 fix 行），调 real resolveValidationClock({action:'spawn:generator-fix', ...})
+  预期观察: 返回 {pipeline_started_at: 首 generator.created_at, deadline_at: 首 generator.created_at + timeout}（fixCount=0 分支，走既有 persistedClock 语义）
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "窗口内含语义使用大于等于比较" 2>&1'
+  留证: vitest 输出末行进 behavior_tests.log_tail
+  Test: manual:bash -c 'npx vitest run sprints/08231856-kernel-r57-validation-clock/tests/step3-validation-clock-fix-extension.test.js -t "窗口仍以首 generator 原点算" 2>&1 | grep -qE "[1-9][0-9]* passed"'
 
-- [x] [BEHAVIOR] [L1] INV-1 B-05: 窗口内失败记录仍映射为执行目标保持记仇语义不变（负向不变量）
-  动作: mock pool 返回一条窗口内失败行，调 listFailedExecutionTargets 断言返回映射
-  预期观察: 返回 `[{provider,account,machine}]` 逐字映射，记仇语义不变（连续新鲜失败仍计入）
+- [ ] [BEHAVIOR] [L2] B-05: fail-closed 守恒 —— 非 generator 系且无有效 origin 仍抛 validation_clock_required
+  动作: 调 real resolveValidationClock({action:'spawn:judge', decisionLog:[], ...})（空 log、下游角色无时钟）
+  预期观察: 抛 Error('validation_clock_required')（顺延逻辑不成为绕过 fail-closed 的旁路）
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "记仇语义不变" 2>&1'
+  留证: vitest 输出末行进 behavior_tests.log_tail
+  Test: manual:bash -c 'npx vitest run sprints/08231856-kernel-r57-validation-clock/tests/step3-validation-clock-fix-extension.test.js -t "仍抛 validation_clock_required" 2>&1 | grep -qE "[1-9][0-9]* passed"'
 
-- [x] [BEHAVIOR] [L1] INV-1 B-06: repo 既有终态失败执行目标 SQL 分支不回退（含更新后第三参数）
-  动作: 在 packages/brain 包内跑 repo 既有 attempt-store 断言（status/error_code 豁免分支 + 更新后第三参数 2）
-  预期观察: 既有 SQL 分支（failed/cancelled、blocked+infrastructure_blocked、error_code NOT IN 豁免）不变，params 更新为含第三参数
+- [ ] [BEHAVIOR] [L2] B-06: 既有 validation-clock 回归零回退（11 条 it 全绿，子 shell 用 packages/brain vitest 配置）
+  动作: 子 shell 切进 packages/brain 跑既有 __tests__/validation-clock.test.js（fixCount=0 各分支：首原点/verified_pr/fail-closed/malformed/authoring role）
+  预期观察: 11 条 it 全绿，本 sprint 顺延逻辑不改变任何 fixCount=0 结果
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'cd packages/brain && npx vitest run --no-cache ./src/orchestrator/__tests__/attempt-store.test.js -t "终态失败执行目标" 2>&1'
+  留证: vitest 输出末行进 behavior_tests.log_tail
+  Test: manual:bash -c 'cd packages/brain && npx vitest run --no-cache ./src/orchestrator/__tests__/validation-clock.test.js 2>&1 | grep -qE "[1-9][0-9]* passed"'
 
-- [x] [BEHAVIOR] [L1] B-07: repo 路径回归——时效窗口默认 2h 且 env 覆盖进 SQL 第三参数
-  动作: 在 packages/brain 包内跑 repo 新增 TTL 回归断言（默认 2 与 env=5 两分支）
-  预期观察: 默认无 env → 第三参数 2 且 SQL 含 created_at make_interval；env=5 → 第三参数 5
-  等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'cd packages/brain && npx vitest run --no-cache ./src/orchestrator/__tests__/attempt-store.test.js -t "覆盖进 SQL 第三参数" 2>&1'
+## Invariant 覆盖（铁律逐条映射）
+
+- INV-1 [有界续命] validation clock 顺延每 run ≤6 次，超上限不再顺延、到期照常判死，禁无限续命 → 覆盖于 B-02（7 轮冻结第 6 次）+ B-03（恰好 6 轮仍顺延，min(n,6) 边界）+ ARTIFACT VALIDATION_CLOCK_EXTENSION_LIMIT=6
+- INV-2 [fail-closed 守恒] 保留 validation_clock_required 默认 fail-closed，顺延逻辑不得成为绕过旁路 → 覆盖于 B-05 + B-06（malformed → validation_clock_invalid 守恒）
+- INV-3 [纯函数可重放] 判定只依赖 decisionLog 行（hop 时序 + created_at），除 Date.now 外禁墙钟/外部状态；同 log 多次调用恒等 → 覆盖于 B-01（忽略 stale detail、re-derive from created_at）+ 全部用例无外部输入依赖
+- INV-4 [红先行] bug 修复前先写复现 RED 测试、修复后永久留作回归守卫不得删 → 覆盖于 Test Contract 冻结守卫（RED: 3 failed | 2 passed (5) 已实证）+ 落 sprints/**/tests/ 经根 vitest 常驻 CI
