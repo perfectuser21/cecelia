@@ -420,7 +420,6 @@ describe('Commander coordinator', () => {
 
   it.each([
     ['semantic refusal', 'blocked', 'semantic_refusal', 'needs_context'],
-    ['unknown runner text', 'failed', 'runner_failure', 'unclassified_failure'],
   ])('does not cross Provider for %s', async (_name, status, failureClass, errorCode) => {
     const deps = dependencies();
     deps.attemptStore.getLatestCommanderAttempt.mockResolvedValue({
@@ -454,7 +453,38 @@ describe('Commander coordinator', () => {
     );
   });
 
-  it('requests human review after every declared target is exhausted', async () => {
+  // 第 29 批（r60 案卷）：非 semantic 的基础设施/未分类失败不再人审停工——
+  // 降级 continue 走 kernel 默认决策（Commander 是监理不是承重墙）。
+  it('degrades to kernel default for unknown runner text instead of human review', async () => {
+    const deps = dependencies();
+    deps.attemptStore.getLatestCommanderAttempt.mockResolvedValue({
+      id: commanderAttemptId,
+      run_id: runId,
+      role: 'commander',
+      status: 'failed',
+      provider: 'codex',
+      account_id: 'team4',
+      requested_machine_id: 'us-mac-m4',
+      failure_class: 'runner_failure',
+      error_code: 'unclassified_failure',
+      logical_cycle_id: 'commander-wakeup:5',
+      task_bundle: {
+        inputs: { commander_bundle: { event_cursor: 5 } },
+      },
+      result: null,
+    });
+
+    const outcome = await createCommanderCoordinator(deps).reconcile(context());
+
+    expect(outcome.kind).toBe('continue');
+    expect(outcome.degraded).toBe(true);
+    expect(outcome.decision.action).not.toBe('wait:human_review');
+    expect(deps.appendDecision).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'commander.failover_started' }),
+    );
+  });
+
+  it('degrades to kernel default after every declared target is exhausted (第29批)', async () => {
     const lineage = commanderTargets.map((target, index) => ({
       id: index === 2 ? commanderAttemptId : randomUUID(),
       run_id: runId,
@@ -480,14 +510,11 @@ describe('Commander coordinator', () => {
 
     const outcome = await createCommanderCoordinator(deps).reconcile(context());
 
-    expect(outcome).toMatchObject({
-      kind: 'continue',
-      decision: {
-        action: 'wait:human_review',
-        reason: 'commander_failover_exhausted',
-      },
-      authoritative_hop: 12,
-    });
+    expect(outcome.kind).toBe('continue');
+    expect(outcome.degraded).toBe(true);
+    expect(outcome.degraded_reason).toBe('commander_failover_exhausted');
+    expect(outcome.decision.action).not.toBe('wait:human_review');
+    expect(outcome.authoritative_hop).toBe(12);
     expect(deps.appendDecision).toHaveBeenCalledWith(expect.objectContaining({
       action: 'commander.failover_completed',
       gateVerdict: 'deny:all_execution_targets_exhausted',

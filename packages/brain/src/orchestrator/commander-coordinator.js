@@ -65,6 +65,21 @@ function humanReviewDecision(input, reason) {
   };
 }
 
+// r60 run 918422f4 案卷（第 29 批件①）：Commander 是监理不是承重墙。基础设施类
+// 失败（lease 过期/容器死/5xx）穷尽 failover 后不再人审停工——降级 continue 走
+// kernel 默认决策（kernel-only 语义，长期验证安全），decision.reason 带 degraded
+// 标记留痕。semantic_refusal（Commander 明确拒绝，可能发现真问题）不走此路。
+function degradeToKernelDecision(input, reason) {
+  return {
+    kind: 'continue',
+    degraded: true,
+    degraded_reason: reason,
+    decision: {
+      ...input.defaultDecision,
+    },
+  };
+}
+
 function isFailoverEligible(attempt) {
   return ['failed', 'cancelled'].includes(attempt?.status)
     && INFRASTRUCTURE_FAILURE_CLASSES.has(attempt?.failure_class)
@@ -221,12 +236,15 @@ export function createCommanderCoordinator({
       nextCursor,
     });
     if (!advanced) return { kind: 'wait', reason: 'commander_cursor_conflict' };
+    if (reason !== 'commander_semantic_refusal') {
+      return degradeToKernelDecision(input, reason);
+    }
     return humanReviewDecision(input, reason);
   }
 
   async function failoverFrom(input, currentState, latestAttempt, newEvents) {
     if (currentState.status === 'failed') {
-      return humanReviewDecision(input, 'commander_failover_exhausted');
+      return degradeToKernelDecision(input, 'commander_failover_exhausted');
     }
     if (!isFailoverEligible(latestAttempt)) {
       const reason = latestAttempt.failure_class === 'semantic_refusal'
