@@ -20,7 +20,7 @@ const ATTEMPT = Object.freeze({
   callbackSecret: 's'.repeat(32),
 });
 const TARGET = Object.freeze({ provider: 'claude', account: 'account2', machine: 'us-mac-m4' });
-const BUNDLE = Object.freeze({ inputs: {} });
+const BUNDLE = Object.freeze({ inputs: {}, role: 'generator', constraints: { timeout_seconds: 5400 } });
 
 function makeTransport(fetchFn, extra = {}) {
   return createRemoteBridgeTransport({
