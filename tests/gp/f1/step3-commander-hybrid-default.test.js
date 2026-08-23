@@ -19,6 +19,8 @@ const BASE_INPUT = {
   initiativeId: '33333333-3333-4333-8333-333333333333',
   host: 'test-host',
   deadlineHours: 8,
+  phase: 'planning',
+  createdSource: 'kernel_dispatch',
 };
 
 afterEach(() => {

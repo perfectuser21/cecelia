@@ -475,6 +475,7 @@ export async function collectEvidence(ctx, deps = {}) {
   const t = String(transcript || '');
   return {
     contractE2E: extractE2ESection(contractText),
+    uncoveredChainAnchors: parseUncoveredRealChainAnchors(contractText),
     goldenPathSteps: parseGoldenPathSteps(prdText),
     transcript: t.length > TRANSCRIPT_CAP ? t.slice(-TRANSCRIPT_CAP) : t,
     agentStdout: cappedStdout,
@@ -867,6 +868,38 @@ function stepMatchesDeferredCheck(step, deferredChecks, entryStep = null, entryE
   });
 }
 
+// ── 合同「未覆盖真实链路清单」第三路 deferred 白名单（r55 run f51ba12b 实证）───
+// 冻结合同的 CANNOT_VERIFY 登记表（proposer 登记、reviewer 审过、seal 冻结）是
+// 比裁判措辞更高信任等级的来源：裁判对该表登记的接缝报 passed=false 只能是
+// "结构上无从验证"，不是"它失败了"。从表格条目提取代码锚 token（file.js:line、
+// 反引号片段）作为匹配模式——裁判必须①声明延后 ②措辞命中合同登记的具体链路点，
+// 两者缺一仍落 failed。产品功能步骤不会出现在该表，不构成拆闸。
+const UNCOVERED_CHAIN_SECTION_RE = /##[^\n]*未覆盖真实链路[^\n]*\n([\s\S]*?)(?=\n##\s|$)/;
+export function parseUncoveredRealChainAnchors(contractText) {
+  const text = String(contractText ?? '');
+  const section = UNCOVERED_CHAIN_SECTION_RE.exec(text)?.[1];
+  if (!section) return [];
+  const anchors = new Set();
+  // file.js:line 形态（代码位置专名，跨措辞稳定）
+  for (const m of section.matchAll(/[\w./-]+\.(?:js|mjs|cjs|ts|sh|py|sql):\d+/g)) {
+    anchors.add(m[0]);
+  }
+  // 反引号代码片段（长度 ≥6 才算锚，短词如 `db` 区分度不足）
+  for (const m of section.matchAll(/`([^`\n]{6,120})`/g)) {
+    anchors.add(m[1].trim());
+  }
+  return [...anchors];
+}
+
+function entryMatchesUncoveredAnchor(entry, anchors) {
+  if (!Array.isArray(anchors) || anchors.length === 0) return false;
+  const candidates = [entry?.step, entry?.evidence].map((t) => String(t ?? ''));
+  return anchors.some((anchor) => {
+    const literal = new RegExp(String(anchor).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    return candidates.some((text) => literal.test(text));
+  });
+}
+
 // Golden Path 步骤是 PRD 里的整段中文长句；Judge 用自己的措辞复述同一步是常态
 // （"Golden Path S2：<步骤要点>"）。逐字节全等匹配会把这种复述判成"缺步" →
 // FAIL(evidence_insufficient) → recollect → 再判缺步，run 永远收敛不了
@@ -899,7 +932,7 @@ export function coverageStepMatches(entryStep, goldenPathStep) {
   return entry.includes(step.slice(0, anchor)) || step.includes(entry.slice(0, anchor));
 }
 
-export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [] } = {}) {
+export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [], uncoveredChainAnchors = [] } = {}) {
   const contractDeferredChecks = Array.isArray(deferredChecks) ? deferredChecks : [];
   // 合同白名单（显式授权，无歧义）与结构底座（kernel 机械门专名 + 裁判延后声明双条件）
   // 叠加，只增不减；合同缺失/未声明时底座独立生效。
@@ -908,6 +941,12 @@ export function validateCoverage(coverage, goldenPathSteps, { deferredChecks = [
     || (
       entryDeclaresDeferral(entry)
       && stepMatchesDeferredCheck(step, STRUCTURAL_DEFERRED_CHECKS, entry?.step, entry?.evidence)
+    )
+    // 第三路：冻结合同「未覆盖真实链路清单」登记的接缝（r55 实证）——裁判声明
+    // 延后 + 命中合同登记的代码锚，缺一不可。
+    || (
+      entryDeclaresDeferral(entry)
+      && entryMatchesUncoveredAnchor(entry, uncoveredChainAnchors)
     )
   );
   const cov = Array.isArray(coverage) ? coverage : [];
@@ -1507,6 +1546,7 @@ export async function runJudgeGate(ctx, opts = {}) {
 
   const cov = validateCoverage(judgeResult.coverage, adjudicationSteps, {
     deferredChecks: ctx.verificationStage?.deferred_checks,
+    uncoveredChainAnchors: ev.uncoveredChainAnchors ?? [],
   });
   // 裁判自报 FAIL，但唯一依据是"服务端后置延后项"时按覆盖数据纠正。
   // 2026-08-18 run ce703092：裁判把五个 deferred_checks 合并成一条 coverage 标 deferred=true，

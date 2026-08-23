@@ -323,26 +323,32 @@ function buildSnapshot(observed, counters, action, reason = null) {
 }
 
 function humanReviewDetail(observed, reason) {
+  // 本地候选（发布前 pr=null）的人审请求必须带结构化候选头锚，approve API 才能
+  // 在无 PR 时做 SHA 锚定放行（r55 实证：无此锚 → 409 run-has-no-pull-request 死门）。
+  const candidateHeadSha = observed?.candidate?.head_sha ?? observed?.pr?.head_sha ?? null;
+  const withAnchor = (detail) => (
+    candidateHeadSha ? { ...detail, candidate_head_sha: candidateHeadSha } : detail
+  );
   if ([
     'evidence_invalid:repeated_signature',
     'unknown:missing_failure_signature',
   ].includes(reason)) {
     const verdict = structuredEvidenceVerdict(observed);
-    if (!verdict) return { review_reason: reason };
-    return {
+    if (!verdict) return withAnchor({ review_reason: reason });
+    return withAnchor({
       review_reason: reason,
       failure_signature: normalizeFailureSignature(verdict.failure_signature),
-    };
+    });
   }
   if (isFailureSetReview(reason)) {
     const failureSet = currentProductFailureSet(observed);
-    return {
+    return withAnchor({
       review_reason: reason,
       failure_set: failureSet,
       failure_set_key: failureSetKey(failureSet),
-    };
+    });
   }
-  return { review_reason: reason };
+  return withAnchor({ review_reason: reason });
 }
 
 async function markRunFailed(deps, runId, taskId, reason, {
@@ -1761,4 +1767,4 @@ export async function runLoop(deps, params) {
   }
 }
 
-export const __test__ = Object.freeze({ frozenArtifactErrorCode, isSealContractRejection, buildSnapshot });
+export const __test__ = Object.freeze({ frozenArtifactErrorCode, isSealContractRejection, buildSnapshot, humanReviewDetail });

@@ -98,8 +98,12 @@ function validateCreateInput(input) {
   if (!Number.isFinite(input?.deadlineHours) || input.deadlineHours <= 0) {
     throw new Error(`invalid Kernel run deadline hours: ${input?.deadlineHours}`);
   }
+  // 缺省反转（决策 3f53bb8e/e3afa828，缺口 17ed9f07）：未显式传 commanderMode 时
+  // 默认 'hybrid'——常态 kernel run 全带 Commander LLM 监理（r54 无限 recollect 实证
+  // 29 个 run 全 kernel-only、Commander 0 参与）。env KERNEL_COMMANDER_MODE_DEFAULT
+  // 为逃生阀；非法值不静默吞，走下方统一校验 fail-closed。
   const commanderMode = input?.commanderMode === undefined
-    ? 'kernel-only'
+    ? (process.env.KERNEL_COMMANDER_MODE_DEFAULT ?? 'hybrid')
     : input.commanderMode;
   if (!VALID_COMMANDER_MODES.has(commanderMode)) {
     throw new Error(`invalid Kernel run commander mode: ${commanderMode}`);
@@ -1030,4 +1034,5 @@ export const __test__ = {
   CREATED_SOURCES,
   ELIGIBLE_TASK_TYPES,
   TERMINAL_TASK_STATUSES,
+  validateCreateInput,
 };
