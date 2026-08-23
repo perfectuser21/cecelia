@@ -422,9 +422,9 @@ async function createRelayRun(req, res, legacyInitiativeId = null) {
   const taskId = body.current_task_id;
   const createdSource = body.created_source;
   const startPhase = body.phase || 'planning';
-  const commanderMode = body.commander_mode === undefined
-    ? 'kernel-only'
-    : body.commander_mode;
+  // 第 27 批（决策 e3afa828）：缺省不在 API 层固化——undefined 透传给
+  // kernel-run-store 统一裁决（store 缺省 hybrid，env 逃生阀在 store）。
+  const commanderMode = body.commander_mode;
 
   if (
     !UUID_RE.test(initiativeId ?? '')
@@ -442,7 +442,7 @@ async function createRelayRun(req, res, legacyInitiativeId = null) {
       allowed: CREATE_PHASES,
     });
   }
-  if (!CREATE_COMMANDER_MODES.has(commanderMode)) {
+  if (commanderMode !== undefined && !CREATE_COMMANDER_MODES.has(commanderMode)) {
     return res.status(400).json({
       error: 'invalid commander_mode',
       allowed: COMMANDER_MODES,
