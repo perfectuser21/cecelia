@@ -181,8 +181,8 @@ async function getFactRevisions(scopeKey, queryable = pool) {
 }
 
 /**
- * 运行投影器（原子切换 active run）
- * 使用 migration 405 schema: manifest_version_id, status='building'/'active', activated_at
+ * 运行投影器（两阶段原子化：materializing 中间态 → 单事务翻转 active/superseded）
+ * 使用 migration 405 + 432 schema: manifest_version_id, status='materializing'/'active', activated_at
  * @param {{ manifestId, manifestDigest, scopeKey, manifest }} opts
  * @returns {{ runId, projectionDigest, nodeCount, edgeCount }}
  */
@@ -204,11 +204,12 @@ export async function runProjection({
   try {
     if (ownsTransaction) await client.query('BEGIN');
 
-    // 创建投影 run 记录（migration 405: manifest_version_id, 'building' status）
+    // 创建投影 run 记录：中间态 'materializing'（换代窗口内对读者不可见）
+    // 全量物化节点/边后，才在同一事务内翻转 active/superseded（两阶段原子化）。
     const { rows: runRows } = await client.query(
       `INSERT INTO map_projection_runs
          (scope_key, manifest_version_id, manifest_digest, fact_revisions, projector_version, projection_digest, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'building')
+       VALUES ($1, $2, $3, $4, $5, $6, 'materializing')
        RETURNING id`,
       [scopeKey, manifestId, manifestDigest, JSON.stringify(factRevisions), PROJECTOR_VERSION, projectionDigest]
     );
