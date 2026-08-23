@@ -956,8 +956,26 @@ async function runLoopOwned(
         approvedSha,
       );
       if (artifacts.missing.length > 0) {
-        await failRun('approved_but_contract_artifacts_missing');
-        return { exitReason: 'approved_but_contract_artifacts_missing', hops };
+        // r62 案卷（第 31 批）：产物缺失（如 proposer 没建冻结测试）与 seal 拒绝
+        // 同属"合同还能改的时点的可重写缺陷"——走同一条 reopen 路：落
+        // seal_rejected 行（code=ARTIFACTS_MISSING，detail 列缺失清单），derive
+        // 既有分路带反馈重开 proposer（≥2 次才 seal_rejected_exhausted 判死）。
+        const rejectHop = await next(deps.pool, resolvedRunId);
+        await append(deps.pool, {
+          runId: resolvedRunId,
+          hop: rejectHop,
+          observed: buildSnapshot(observed, fullCounters, 'verdict:contract_seal_rejected'),
+          derivedPhase: 'gan',
+          gateVerdict: 'allow',
+          action: 'verdict:contract_seal_rejected',
+          detail: {
+            code: 'FROZEN_CONTRACT_ARTIFACTS_MISSING',
+            detail: artifacts.missing.slice(0, 8).join(','),
+            propose_branch_sha: observed.proposeBranchSha ?? null,
+          },
+        });
+        await beat();
+        continue;
       }
       const identityPolicy = evaluateValidationIdentityPolicy(artifacts.contractContent);
       if (!identityPolicy.ok) {

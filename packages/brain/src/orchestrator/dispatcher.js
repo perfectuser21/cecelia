@@ -147,6 +147,9 @@ export function sealRejectionInstruction(code) {
   if (c.includes('UNREGISTERED')) {
     return '合同被封印机械闸拒绝：## Test Contract 表必须逐行登记 artifacts 里每个冻结测试的完整路径，且 BEHAVIOR 与冻结测试 it() 名互为子串（多值用 / 或 ; 分隔）。请修正后重新提交。';
   }
+  if (c.includes('ARTIFACTS_MISSING')) {
+    return '合同被封印机械闸拒绝：合同产物不齐——sprint 目录必须包含 sprint-prd.md、contract-draft.md、contract-dod.md 与 tests/ 下至少一个冻结测试文件，全部真实创建并 commit 进 propose 分支。缺失清单见 detail。';
+  }
   if (c.includes('FRAGILE_GREP')) {
     return '合同被封印机械闸拒绝：manual 命令含脆弱的 grep 通过数断言（-t 且 grep passed(N)）。请改为稳健断言（退出码/结构化输出比对），不要依赖精确通过数文本。';
   }

@@ -56,6 +56,8 @@ describe('loop：artifacts missing 落 seal_rejected 行重开而非判死（r62
     };
     const seq = [observedPersist, observedDone];
     let i = 0;
+    let hopCounter = 0;
+    const persistedRows = [];
     const deps = {
       pool: {
         query: vi.fn().mockImplementation(async (sql) => {
@@ -65,13 +67,32 @@ describe('loop：artifacts missing 落 seal_rejected 行重开而非判死（r62
           return { rows: [] };
         }),
       },
-      collectGroundTruth: vi.fn().mockImplementation(async () => seq[Math.min(i++, seq.length - 1)]),
-      appendDecision: vi.fn().mockImplementation(async (_pool, row) => { appended.push(row); return appended.length; }),
-      nextHop: vi.fn().mockImplementation(async () => appended.length + 1),
-      dispatch: vi.fn(),
-      heartbeat: vi.fn(),
-      updateRunPhase: vi.fn(),
-      failRun: vi.fn(),
+      collectGroundTruth: vi.fn().mockImplementation(async () => {
+        const value = seq[Math.min(i, seq.length - 1)];
+        i++;
+        return { ...value, decisionLog: [...value.decisionLog, ...persistedRows] };
+      }),
+      nextHop: vi.fn(async () => { hopCounter++; return hopCounter; }),
+      appendHop: vi.fn(async (entry) => {
+        appended.push(entry);
+        persistedRows.push({
+          hop: entry.hop, action: entry.action, observed: entry.observed,
+          gate_verdict: entry.gateVerdict, detail: entry.detail,
+        });
+      }),
+      writeHeartbeat: vi.fn(async () => {}),
+      dispatch: vi.fn(async () => ({ status: 'DONE', detail: 'ok' })),
+      impactGate: {
+        beforeGenerate: vi.fn(async () => ({ gate: 'pass', stage: 'structure' })),
+        beforeEvaluate: vi.fn(async () => ({ gate: 'pass', stage: 'diff' })),
+        beforeMerge: vi.fn(async () => ({ gate: 'pass', stage: 'merge' })),
+      },
+      finalizeRun: vi.fn(async () => ({ changed: true, outcome: 'failed', runId: RUN_ID, taskId: TASK_ID })),
+      sleep: vi.fn(async () => {}),
+      now: () => new Date('2026-08-24T04:00:00Z'),
+      host: 'test-host',
+      pid: 4242,
+      log: vi.fn(),
       // 不提供 readGitFile/listGitFiles → frozenContractArtifacts 必 missing
     };
     return { deps, appended };
