@@ -1,0 +1,27 @@
+{
+  "initiative_id": "e243f543-2b3f-42f4-b128-896e2083d50b",
+  "journey_type": "autonomous",
+  "journey_type_reason": "变更落在 packages/brain/src/orchestrator（纯后端 kernel 纯函数），无 UI / 无远端 agent 协议 / 无 engine hooks",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "resolveValidationClock 按 spawn:generator-fix 行数有界顺延到最新 generator 系原点（上限 6 次）",
+      "scope": "改 packages/brain/src/orchestrator/validation-clock.js 的 resolveValidationClock：把 firstValidationOrigin 永远取 [0] 首原点，改为——统计 decisionLog 中 spawn:generator-fix 行数 boundedExtensions=min(fixCount,6)；boundedExtensions===0 走既有 persistedClock(首原点)（语义不变）；>=1 时新原点=第 boundedExtensions 个 generator-fix 行，用 exactClock(该行.created_at, timeoutSeconds) re-derive 窗口（不复用 stale persisted detail）。新增顺延上限常量 VALIDATION_CLOCK_EXTENSION_LIMIT=6。不改 timeout_seconds 默认值、不动 verified_existing_pr / fail-closed / null 分支语义。",
+      "dod": [
+        "[BEHAVIOR] 2 轮 generator-fix 后 deadline 顺延到最新 fix 原点 created_at + timeout（re-derive，忽略 stale detail）",
+        "[BEHAVIOR] 7 轮 generator-fix deadline 冻结在第 6 次顺延原点（防无限续命）；恰好 6 轮仍顺延到第 6 次原点",
+        "[BEHAVIOR] 无 fix 行时窗口仍以首 generator 原点算（回归守恒）；非 generator 系无有效 origin 仍抛 validation_clock_required",
+        "[BEHAVIOR] 既有 packages/brain/src/orchestrator/__tests__/validation-clock.test.js 11 条零回退",
+        "[ARTIFACT] validation-clock.js 含 VALIDATION_CLOCK_EXTENSION_LIMIT = 6",
+        "[ARTIFACT] sprints/08231856-kernel-r57-validation-clock/tests/step3-validation-clock-fix-extension.test.js 冻结守卫 5 条全绿"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/validation-clock.js",
+        "sprints/08231856-kernel-r57-validation-clock/tests/step3-validation-clock-fix-extension.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
