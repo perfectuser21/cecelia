@@ -36,6 +36,17 @@ const SUCCESS_TERMINAL_STATUSES = new Set([
 
 const TERMINAL_SQL = TERMINAL_STATUSES.map((status) => `'${status}'`).join(',');
 const DERIVED_TIME_ROLES = new Set(['judge', 'reporter']);
+const DEFAULT_FAILED_TARGET_TTL_HOURS = 2;
+
+// listFailedExecutionTargets 时效窗口：只统计最近 N 小时内 created_at 的失败记录，
+// 让「修复期之前」的陈旧失败自动退役，不再跨修复期拉黑执行目标。每次调用时读 env
+// （非模块加载期固化），非法/未设置回退默认 2h。
+function resolveFailedTargetTtlHours() {
+  const parsed = Number(process.env.HARNESS_FAILED_TARGET_TTL_HOURS);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_FAILED_TARGET_TTL_HOURS;
+  return Math.floor(parsed);
+}
+
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
@@ -1110,11 +1121,13 @@ export function createAttemptStore(pool, {
     },
 
     async listFailedExecutionTargets(runId, role) {
+      const ttlHours = resolveFailedTargetTtlHours();
       const result = await pool.query(
         `SELECT provider, account_id, requested_machine_id
            FROM harness_attempts
           WHERE run_id=$1
             AND role=$2
+            AND created_at >= NOW() - make_interval(hours => $3)
             AND (
               status IN ('failed','cancelled')
               OR (status='blocked' AND failure_class='infrastructure_blocked')
@@ -1127,7 +1140,7 @@ export function createAttemptStore(pool, {
               )
             )
           ORDER BY hop`,
-        [runId, role],
+        [runId, role, ttlHours],
       );
       return result.rows.map((row) => ({
         provider: row.provider,
