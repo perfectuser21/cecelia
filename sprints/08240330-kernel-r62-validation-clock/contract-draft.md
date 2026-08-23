@@ -1,9 +1,9 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## 实现基线与证据来源
 
 - 权威实现基线：`perfectuser21/cecelia@a2cebdf64bcc60bac00fd9cb21c6fa1940a23aff`（冻结；不得被本角色 checkout SHA 替换）。
-- 本角色 checkout：`1157cb61d987e967ce3d58e59ee7779be5b1b59d`，仅用于合同起草。
+- 本角色 checkout 仅用于选择合同起草工作树；其 SHA 不构成、也不替换权威实现基线。
 - PRD：`sprints/08240330-kernel-r62-validation-clock/sprint-prd.md` 与 bundle `thin_prd`。
 - 代码事实：`packages/brain/src/orchestrator/validation-clock.js` 当前按 hop 取首个 Generator action 作为固定原点。
 - Unified Map：`[MAP_NOT_CONFIGURED]`，payload 未提供 `map_scope/map_repo`；无 `must_run_assertions`。
@@ -86,7 +86,7 @@ N/A — 本 sprint 无设备、agent 或 webhook 请求 shape；输入是 loop.j
 
 **验证命令**:
 ```bash
-npx vitest run --no-cache sprints/08240330-kernel-r62-validation-clock/tests/validation-clock-fix-extension.test.ts -t '前 6 次成功 fix 均按 hop 选择最近一轮作为新原点'
+npx vitest run --no-cache tests/gp/f1/validation-clock-fix-extension.test.ts -t '前 6 次成功 fix 均按 hop 选择最近一轮作为新原点'
 ```
 **硬阈值**: exit code = 0；第 6 次 fix 的 ISO 时间为 `pipeline_started_at`。
 
@@ -97,7 +97,7 @@ npx vitest run --no-cache sprints/08240330-kernel-r62-validation-clock/tests/val
 
 **验证命令**:
 ```bash
-npx vitest run --no-cache sprints/08240330-kernel-r62-validation-clock/tests/validation-clock-fix-extension.test.ts -t 'r50 型长跑在最近成功 fix deadline 内保持存活'
+npx vitest run --no-cache tests/gp/f1/validation-clock-fix-extension.test.ts -t 'r50 型长跑在最近成功 fix deadline 内保持存活'
 ```
 **硬阈值**: exit code = 0；原点 `02:00Z`，deadline `03:30Z`，观察时刻 `02:30Z`。
 
@@ -108,7 +108,7 @@ npx vitest run --no-cache sprints/08240330-kernel-r62-validation-clock/tests/val
 
 **验证命令**:
 ```bash
-npx vitest run --no-cache sprints/08240330-kernel-r62-validation-clock/tests/validation-clock-fix-extension.test.ts -t '第 7 次 fix 不再顺延并按第 6 次 deadline 判死'
+npx vitest run --no-cache tests/gp/f1/validation-clock-fix-extension.test.ts -t '第 7 次 fix 不再顺延并按第 6 次 deadline 判死'
 ```
 **硬阈值**: exit code = 0；原点必须为 `06:00Z` 且 deadline ≤ `07:45Z`。
 
@@ -119,7 +119,7 @@ npx vitest run --no-cache sprints/08240330-kernel-r62-validation-clock/tests/val
 
 **验证命令**:
 ```bash
-npx vitest run --no-cache sprints/08240330-kernel-r62-validation-clock/tests/validation-clock-fix-extension.test.ts -t '无 fix 轮语义不变且相同 hop 输入可确定重放'
+npx vitest run --no-cache tests/gp/f1/validation-clock-fix-extension.test.ts -t '无 fix 轮语义不变且相同 hop 输入可确定重放'
 ```
 **硬阈值**: exit code = 0；原点 `00:00Z`、deadline `01:30Z`，两次结果深相等。
 
@@ -148,7 +148,7 @@ npx vitest run --no-cache sprints/08240330-kernel-r62-validation-clock/tests/val
 ```bash
 #!/bin/bash
 set -euo pipefail
-SPRINT_TEST='sprints/08240330-kernel-r62-validation-clock/tests/validation-clock-fix-extension.test.ts'
+SPRINT_TEST='tests/gp/f1/validation-clock-fix-extension.test.ts'
 test -f "$SPRINT_TEST"
 npx vitest run --no-cache "$SPRINT_TEST" --reporter=verbose
 (cd packages/brain && npx vitest run --no-cache ./src/orchestrator/__tests__/validation-clock.test.js --reporter=verbose)
@@ -172,8 +172,7 @@ node -e "const p=require('./packages/brain/package.json');const fs=require('fs')
 
 | 功能 | BEHAVIOR 覆盖 | Test File | 预期红证据 |
 |---|---|---|---|
-| r50 存活 | `r50 型长跑在最近成功 fix deadline 内保持存活` | `sprints/08240330-kernel-r62-validation-clock/tests/validation-clock-fix-extension.test.ts` | 基线返回初始原点，断言失败 |
-| 6 次边界 | `前 6 次成功 fix 均按 hop 选择最近一轮作为新原点` | `sprints/08240330-kernel-r62-validation-clock/tests/validation-clock-fix-extension.test.ts` | 基线仍返回初始原点，断言失败 |
-| 第 7 次判死 | `第 7 次 fix 不再顺延并按第 6 次 deadline 判死` | `sprints/08240330-kernel-r62-validation-clock/tests/validation-clock-fix-extension.test.ts` | 基线未采用第 6 次原点，断言失败 |
-| 零 fix 重放 | `无 fix 轮语义不变且相同 hop 输入可确定重放` | `sprints/08240330-kernel-r62-validation-clock/tests/validation-clock-fix-extension.test.ts` | 基线应继续通过，证明无回归 |
-
+| r50 存活 | `r50 型长跑在最近成功 fix deadline 内保持存活` | `tests/gp/f1/validation-clock-fix-extension.test.ts` | 基线返回初始原点，断言失败 |
+| 6 次边界 | `前 6 次成功 fix 均按 hop 选择最近一轮作为新原点` | `tests/gp/f1/validation-clock-fix-extension.test.ts` | 基线仍返回初始原点，断言失败 |
+| 第 7 次判死 | `第 7 次 fix 不再顺延并按第 6 次 deadline 判死` | `tests/gp/f1/validation-clock-fix-extension.test.ts` | 基线未采用第 6 次原点，断言失败 |
+| 零 fix 重放 | `无 fix 轮语义不变且相同 hop 输入可确定重放` | `tests/gp/f1/validation-clock-fix-extension.test.ts` | 基线应继续通过，证明无回归 |

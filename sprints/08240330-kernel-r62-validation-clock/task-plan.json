@@ -18,7 +18,7 @@
         "packages/brain/package.json",
         "packages/brain/package-lock.json",
         ".brain-versions",
-        "sprints/08240330-kernel-r62-validation-clock/tests/validation-clock-fix-extension.test.ts"
+        "tests/gp/f1/validation-clock-fix-extension.test.ts"
       ],
       "depends_on": [],
       "complexity": "S",
