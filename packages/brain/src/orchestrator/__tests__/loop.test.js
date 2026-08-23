@@ -1510,8 +1510,15 @@ describe('runLoop：控制 action 自消费', () => {
 
     const result = await runLoop(deps, { taskId: TASK_ID, runId: RUN_ID });
 
-    expect(result.exitReason).toBe('approved_but_contract_artifacts_missing');
+    // 第 31 批（r62 案卷）：artifacts missing 不再直接判死——落 seal_rejected 行
+    // 走 reopen（≥2 次 seal_rejected_exhausted 仍判死，安全边界不变）。本用例的
+    // 核心断言保持：非法 base_repo 绝不回退本仓 origin 读取。
+    expect(result.exitReason).not.toBe('approved_but_contract_artifacts_missing');
     expect(deps.readGitFile).not.toHaveBeenCalled();
+    expect(deps.appendHop.mock.calls.some(([entry]) => (
+      entry.action === 'verdict:contract_seal_rejected'
+      && entry.detail?.code === 'FROZEN_CONTRACT_ARTIFACTS_MISSING'
+    ))).toBe(true);
   });
 
   it('APPROVED 没有不可变合同 SHA 时 fail closed，不读取可变 branch', async () => {
