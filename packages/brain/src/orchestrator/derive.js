@@ -105,48 +105,29 @@ function hasNewerEvaluatePassThanJudge(decisionLog, currentHeadSha) {
 }
 
 /**
- * recollect 落库快照是否锚定在 currentHeadSha（issue dbea513f 缺陷1）：
- * 生产实证 spawn:evaluator 落库 observed 快照顶层【缺】trigger_sha（只有 pr.head_sha），
- * 故 trigger_sha 优先、缺失时回退 observed.pr.head_sha 兜底匹配，防死循环 guard 才能触发。
- */
-function recollectSnapshotMatchesHead(observedSnapshot, currentHeadSha) {
-  const snapshot = asStructuredJson(observedSnapshot) ?? {};
-  const sha = snapshot.trigger_sha
-    ?? snapshot.pr?.head_sha
-    ?? snapshot.candidate?.head_sha
-    ?? null;
-  return sha === currentHeadSha;
-}
-
-/**
  * 本轮候选上是否已经因"证据不足"重新取证过。
  *
  * 只按快照 SHA 比对在本地候选流程（Kernel 常态：pr=null，buildSnapshot 也不记录
  * candidate.head_sha）恒为 false —— 止损闸永不生效，Judge 每判一次 evidence_insufficient
  * 就再派一个 Evaluator，2026-08-17 生产 run 6b0a3de1 空转 17 轮、6125d565 空转 14 轮。
- * 因此改为「本轮候选」计数：从决策日志尾部往回数，遇到产生新候选的 generator/generator-fix
- * 即停（新候选 = 新一轮，重新给一次取证机会），期间出现过 recollect 派发就算已取证过。
+ * 2026-08-23 run 9487158a 再犯变体：候选流下 derive 用候选头当 currentHeadSha，而
+ * 快照记录的是滞后的 PR 头——快照「有头但是错的头」，SHA 既不匹配也不缺失，
+ * 按 SHA 锚定的闸再次恒 false，烧掉 9 个 Evaluator 才被人工击杀。
+ *
+ * 故判定不依赖快照 SHA 锚定，纯按「本轮候选」计数：从决策日志尾部往回数，遇到产生
+ * 新候选的 generator/generator-fix 即停（新候选 = 新一轮，重新给一次取证机会），
+ * 期间出现过 recollect 派发就算已取证过。安全性：能进 evidence_insufficient 分支的
+ * verdict 必然经 verdictForAuthority 锚定 currentHeadSha，候选换头必经 generator 行
+ * 重置计数，轮内计数不会误伤合法场景。
  */
-function alreadyRecollectedOnCurrentCandidate(decisionLog, currentHeadSha) {
+function alreadyRecollectedOnCurrentCandidate(decisionLog) {
   for (const row of [...sortedLogRows(decisionLog)].reverse()) {
     if (GENERATOR_ACTIONS.has(row.action)) return false;
     if (row.action !== ACTION.SPAWN_EVALUATOR) continue;
     const detail = asStructuredJson(row.detail) ?? {};
-    if (detail.reason !== 'judge_evidence_insufficient_recollect') continue;
-    if (
-      recollectSnapshotMatchesHead(row.observed, currentHeadSha)
-      || !recollectSnapshotHasHead(row.observed)
-    ) {
-      return true;
-    }
+    if (detail.reason === 'judge_evidence_insufficient_recollect') return true;
   }
   return false;
-}
-
-/** 快照里是否记录了可比对的候选 SHA（没有就无法按 SHA 判定，只能按候选轮次计数）。 */
-function recollectSnapshotHasHead(observedSnapshot) {
-  const snapshot = asStructuredJson(observedSnapshot) ?? {};
-  return (snapshot.trigger_sha ?? snapshot.pr?.head_sha ?? snapshot.candidate?.head_sha) != null;
 }
 
 /** fix 分路统一出口；fixRound 只作观测，终止由结构化收敛探测器决定。 */
@@ -1304,10 +1285,7 @@ function deriveFailureClassRoute(
     // 取证（Evaluator 的活），产品实现往往完全正确——派 Generator 改代码是改错了人，
     // 还会动到本来对的实现。重派 Evaluator 按 Judge 的具体要求重新取证。
     // 防死循环：同一 SHA 已因此重新取证过一次仍判证据不足 → 回落人工。
-    const alreadyRecollected = alreadyRecollectedOnCurrentCandidate(
-      decisionLog ?? [],
-      currentHeadSha,
-    );
+    const alreadyRecollected = alreadyRecollectedOnCurrentCandidate(decisionLog ?? []);
     if (alreadyRecollected) {
       return {
         phase: 'review',

@@ -265,6 +265,11 @@ function buildSnapshot(observed, counters, action, reason = null) {
       );
     }
   }
+  if (action === ACTION.SPAWN_EVALUATOR && reason === 'judge_evidence_insufficient_recollect') {
+    // recollect 派发锚定的是 derive 实际采用的验收头：候选流下为候选头，远端 PR
+    // 可能仍指向 fix 前旧头（run 9487158a 实证）——记录真实验收头供事后排查锚定。
+    snapshot.trigger_sha = observed.candidate?.head_sha ?? observed.pr?.head_sha ?? null;
+  }
   if (action === ACTION.SPAWN_GENERATOR_FIX) {
     const infrastructureRetry = reason === 'callback_infrastructure_blocked';
     snapshot.trigger_sha = observed.pr?.head_sha ?? null;
@@ -1756,4 +1761,4 @@ export async function runLoop(deps, params) {
   }
 }
 
-export const __test__ = Object.freeze({ frozenArtifactErrorCode, isSealContractRejection });
+export const __test__ = Object.freeze({ frozenArtifactErrorCode, isSealContractRejection, buildSnapshot });
