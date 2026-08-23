@@ -37,7 +37,15 @@ const DEFAULT_COMMANDER_PROFILE = Object.freeze({
     model: 'gpt-5.6-sol',
     machine: 'us-mac-m4',
   }),
-  fallbacks: Object.freeze([]),
+  // r60 run 918422f4 案卷（第 29 批件②）：fallbacks 空=单点，primary 一次
+  // lease 过期就穷尽 failover。补 claude 目标消单点。
+  fallbacks: Object.freeze([
+    Object.freeze({
+      provider: 'claude',
+      account: 'account2',
+      machine: 'us-mac-m4',
+    }),
+  ]),
 });
 
 export function parseCommanderProfile({ commanderMode, payload }) {
