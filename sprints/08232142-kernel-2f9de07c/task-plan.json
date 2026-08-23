@@ -1,0 +1,27 @@
+{
+  "initiative_id": "2f9de07c-866a-4930-927b-bd6897497f48",
+  "journey_type": "user_facing",
+  "journey_type_reason": "用户通过 Dashboard 浏览器入口探索 live 系统总图并观察 UI 状态。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "上线 Dashboard live 系统总图页",
+      "scope": "实现 system-hub 可达的双 scope live 地图呈现、三层探索、搜索、证明与关系面板，以及加载/空/错误/freshness 状态。",
+      "dod": [
+        "[BEHAVIOR] 页面统计与当前 scope 的真实 /api/brain/map 响应逐项一致，快速切换不串数据。",
+        "[BEHAVIOR] 用户可展开/搜索节点并查看证明、横切件和交接关系。",
+        "[BEHAVIOR] 非 fresh、失败和空数据均显示明确状态且不假装成功。",
+        "[ARTIFACT] MapPage、planning manifest 路由及回归测试进入 CI。"
+      ],
+      "files": [
+        "apps/api/features/planning/pages/MapPage.tsx",
+        "apps/api/features/planning/index.ts",
+        "apps/dashboard/src/pages/map/MapPage.test.tsx",
+        "apps/dashboard/src/pages/map/MapPage.auth.test.tsx"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
