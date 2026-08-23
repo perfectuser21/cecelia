@@ -125,21 +125,36 @@ function hasNewerEvaluatePassThanJudge(decisionLog, currentHeadSha) {
  * 双锚定：请求行 review_reason 精确匹配 + 批准行 review_request_hop 指回该请求行
  * 且 pr_head_sha 等于当前候选头。任一不满足 → 未批准。
  */
-function recollectReviewApproved(decisionLog, currentHeadSha) {
+function latestRecollectReviewApproval(decisionLog, currentHeadSha) {
   const rows = sortedLogRows(decisionLog);
-  return rows.some((request) => {
-    if (request.action !== LOG_ACTION.HUMAN_REVIEW_REQUESTED) return false;
+  let latest = null;
+  for (const request of rows) {
+    if (request.action !== LOG_ACTION.HUMAN_REVIEW_REQUESTED) continue;
     const requestDetail = asStructuredJson(request.detail) ?? {};
-    if (requestDetail.review_reason !== 'evidence_insufficient_after_recollect') return false;
-    return rows.some((row) => {
-      if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW) return false;
+    if (requestDetail.review_reason !== 'evidence_insufficient_after_recollect') continue;
+    for (const row of rows) {
+      if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW) continue;
       const detail = asStructuredJson(row.detail) ?? {};
-      return detail.approved === true
+      if (
+        detail.approved === true
         && detail.pr_head_sha === currentHeadSha
         && Number(row.hop) > Number(request.hop)
-        && String(detail.review_request_hop) === String(request.hop);
-    });
-  });
+        && String(detail.review_request_hop) === String(request.hop)
+      ) {
+        if (latest == null || Number(row.hop) > Number(latest.hop)) latest = row;
+      }
+    }
+  }
+  return latest;
+}
+
+/** 批准解锁的重取证是否已在批准之后派发过（批准只解锁一次——r57 案卷第 28 批）。 */
+function approvedRetryAlreadySpawned(decisionLog, approvalHop) {
+  return sortedLogRows(decisionLog).some((row) => (
+    row.action === ACTION.SPAWN_EVALUATOR
+    && Number(row.hop) > Number(approvalHop)
+    && (asStructuredJson(row.detail) ?? {}).reason === 'recollect_human_approved_retry'
+  ));
 }
 
 /**
@@ -170,11 +185,22 @@ function globalLoopBreakerTripped(decisionLog, decision) {
 }
 
 function alreadyRecollectedOnCurrentCandidate(decisionLog) {
-  for (const row of [...sortedLogRows(decisionLog)].reverse()) {
+  const rows = sortedLogRows(decisionLog);
+  // r57 案卷（第 28 批件①）：容量闸 BLOCKED 的派发没真跑，不算一次取证机会。
+  const blockedDispatchHops = new Set(rows
+    .filter((row) => {
+      if (row.action !== 'result:dispatch') return false;
+      const detail = asStructuredJson(row.detail) ?? {};
+      return detail.status === 'BLOCKED' && Number.isFinite(Number(detail.dispatch_hop));
+    })
+    .map((row) => Number((asStructuredJson(row.detail) ?? {}).dispatch_hop)));
+  for (const row of [...rows].reverse()) {
     if (GENERATOR_ACTIONS.has(row.action)) return false;
     if (row.action !== ACTION.SPAWN_EVALUATOR) continue;
     const detail = asStructuredJson(row.detail) ?? {};
-    if (detail.reason === 'judge_evidence_insufficient_recollect') return true;
+    if (detail.reason !== 'judge_evidence_insufficient_recollect') continue;
+    if (blockedDispatchHops.has(Number(row.hop))) continue;
+    return true;
   }
   return false;
 }
@@ -1350,15 +1376,17 @@ function deriveFailureClassRoute(
     // 防死循环：同一 SHA 已因此重新取证过一次仍判证据不足 → 回落人工。
     const alreadyRecollected = alreadyRecollectedOnCurrentCandidate(decisionLog ?? []);
     if (alreadyRecollected) {
-      // 出口（r55 run f51ba12b 实证补缺）：该 reason 的人审被 APPROVED（请求行
-      // review_reason 匹配 + 批准行 review_request_hop/pr_head_sha 双锚定）即
-      // 人工认定证据充分——本地候选路由 publish（下游仍有 CI + merge fence 兜底），
-      // 不再死等。无批准/锚不匹配 → 保持 wait（闸语义不回退）。
-      if (recollectReviewApproved(decisionLog ?? [], currentHeadSha)) {
+      // 出口（r55 补缺→r57 修正，第 28 批件②）：批准语义=解锁一次重取证。
+      // r57 实证直通 publish 撞 publisher 授权链（只认 judge PASS）assembly_fault
+      // 判死——授权链不可绕。批准后重派 evaluator 按裁判要求取证，PASS→judge
+      // PASS→自然发布。批准只解锁一次：批准后已重派过且仍走到这里（judge 再
+      // FAIL）→ 再次人审。
+      const approval = latestRecollectReviewApproval(decisionLog ?? [], currentHeadSha);
+      if (approval && !approvedRetryAlreadySpawned(decisionLog ?? [], approval.hop)) {
         return {
-          phase: 'publish',
-          action: ACTION.PUBLISH_APPROVED_REF,
-          reason: 'evidence_insufficient_human_approved',
+          phase: 'evaluate',
+          action: ACTION.SPAWN_EVALUATOR,
+          reason: 'recollect_human_approved_retry',
         };
       }
       return {
