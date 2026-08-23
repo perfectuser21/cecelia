@@ -95,8 +95,13 @@ export function assertTestContractResolvable(contractContent, artifacts, { readR
       let repoContent = null;
       try {
         repoContent = String(readRepoFile(testFile) ?? '');
-      } catch {
-        unresolved.push(testFile);
+      } catch (readError) {
+        // 失败留真实原因（r61 冤案：底层是 repo 白名单 throw，被吞成裸路径后
+        // 误诊为 proposer 没建文件，两轮点火全冤杀）。
+        const cause = String(readError?.message ?? readError ?? 'unknown')
+          .replace(/[\s,]+/g, ' ')
+          .slice(0, 160);
+        unresolved.push(`${testFile}#read_error:${cause}`);
         continue;
       }
       const repoItNames = [...repoContent.matchAll(/\b(?:it|test)\(['"]([^'"]+)['"]/g)]

@@ -37,6 +37,17 @@ function assertSupportedRepo(repo) {
 export function normalizeArtifactRepo(repo) {
   if (repo == null) return null;
   const value = String(repo);
+  // 完整 GitHub URL 形态归一（r61 run d117a28a 冤案，第 30 批）：任务注册死规矩
+  // 要求 payload.base_repo 必须完整 URL，seal 的 readRepoFile 又把它原样传进来——
+  // 白名单只认 owner/repo 时 URL 必 throw，被上游 catch 吞成 UNRESOLVABLE 冤杀
+  // 合法合同。先提取 owner/repo 再走同一白名单，信任边界不变。
+  const urlMatch = value.trim()
+    .match(/^(?:https:\/\/[^/]+\/|git@[^:]+:|ssh:\/\/[^/]+\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/);
+  if (urlMatch) {
+    const canonical = urlMatch[1].toLowerCase();
+    assertSupportedRepo(canonical);
+    return canonical;
+  }
   if (value.includes('/')) {
     assertSupportedRepo(value);
     return value;
