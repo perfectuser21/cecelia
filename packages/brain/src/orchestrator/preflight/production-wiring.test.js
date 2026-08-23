@@ -1070,7 +1070,11 @@ describe('production capability wiring', () => {
       decision: { phase: 'generate' },
     })).rejects.toThrow('remote_bridge_prepare_request_failed');
 
+    // 第 32 批①：prepare 网络失败有界重试 3 次（不再一击 fatal），随后 cancel。
+    // 核心断言不变：绝不回退本地 Docker。
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([
+      'http://xian-m1.internal:5231/harness/attempts/prepare',
+      'http://xian-m1.internal:5231/harness/attempts/prepare',
       'http://xian-m1.internal:5231/harness/attempts/prepare',
       `http://xian-m1.internal:5231/harness/attempts/${ATTEMPT_ID}/cancel`,
     ]);

@@ -153,6 +153,9 @@ export function createRemoteBridgeTransport({
   timeoutMs = 10000,
   prepareTimeoutMs = timeoutMs,
   startTimeoutMs = timeoutMs,
+  prepareRetries = 3,
+  prepareRetryDelayMs = 5000,
+  sleepFn = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
 } = {}) {
   const machineUrls = copyBridgeUrls(bridgeUrls);
   const configuredSecret = sharedSecret;
@@ -164,6 +167,19 @@ export function createRemoteBridgeTransport({
   const configuredTimeout = timeoutMs;
   const configuredPrepareTimeout = prepareTimeoutMs;
   const configuredStartTimeout = startTimeoutMs;
+
+  // 第 32 批件①（issue 02c3e0ef，r58/r63/r64 三杀）：prepare 的 5xx/网络失败/超时
+  // 是瞬态类故障，一次失败就 kernel_process_fatal 全 run 判死不成比例——有界重试。
+  // 409 conflict 与 4xx 属语义错误，重试无意义，保持一次即抛。
+  const configuredPrepareRetries = Math.max(1, Math.min(6, Number(prepareRetries) || 1));
+  const configuredPrepareRetryDelay = Math.max(0, Number(prepareRetryDelayMs) || 0);
+  const configuredSleep = sleepFn;
+  function isRetryablePrepareError(error) {
+    const message = String(error?.message ?? '');
+    // timeout 不重试：deadline 是硬契约（消费 body 期间仍生效），且三杀案例全是
+    // 5xx/网络错误；重试 timeout 会把单次 deadline 变成 N 倍。
+    return /^remote_bridge_prepare_(http_5\d\d|request_failed)$/.test(message);
+  }
 
   function resolveBridge(target) {
     if (enabled !== true) {
@@ -341,7 +357,7 @@ export function createRemoteBridgeTransport({
       const workspace = disposableCanaryWorkspace(bundle, attempt.id);
       const workspaceSpec = copyWorkspaceSpec(bundle);
       const runtimeResources = copyRuntimeResources(bundle);
-      return request(
+      const attemptPrepare = () => request(
         'prepare',
         `${bridgeUrl}/harness/attempts/prepare`,
         {
@@ -417,6 +433,19 @@ export function createRemoteBridgeTransport({
           });
         },
       );
+      let lastError = null;
+      for (let round = 1; round <= configuredPrepareRetries; round += 1) {
+        try {
+          return await attemptPrepare();
+        } catch (error) {
+          lastError = error;
+          if (!isRetryablePrepareError(error) || round === configuredPrepareRetries) {
+            throw error;
+          }
+          await configuredSleep(configuredPrepareRetryDelay);
+        }
+      }
+      throw lastError ?? new Error('remote_bridge_prepare_request_failed');
     },
 
     async start({ attempt, target } = {}) {
