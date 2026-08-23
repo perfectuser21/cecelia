@@ -8,6 +8,13 @@
 // derive.js 的 INFRA_RETRY_ACTION_BY_ROLE 已挂 evaluator/judge/generator，唯独 publisher
 // 缺表项 → infrastructureRetryForCallback('publisher', …) 返回 undefined → derive 落
 // callback_runner_failure_route_unknown 进人审。本 sprint 补齐 publisher，语义与其他角色一致。
+//
+// r52（sprint 08230711-kernel-bae539c8）追记：priorRunnerFailures 统计口径从「全 run 全角色」
+// 收窄为「同角色」（filter 增加 `&& callbackDetail(r).role === role`）。本守卫下方「回归守恒：
+// evaluator runner_failure 首次仍重派 evaluator」一条即验证 publisher 补齐后 evaluator 角色
+// 行为零回退——同一条被改的 derive 边上，publisher 的有界重派额度不再被其他角色跨角色误耗。
+// 跨角色窗口化的新增红→绿断言落在冻结守卫
+// sprints/08230711-kernel-bae539c8/tests/step3-runner-failure-role-window.test.js。
 import { describe, it, expect } from 'vitest';
 import { derive } from '../../../packages/brain/src/orchestrator/derive.js';
 
