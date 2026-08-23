@@ -1989,7 +1989,7 @@ describe('attempt store', () => {
       expect.stringMatching(
         /status IN \('failed','cancelled'\).*OR.*status='blocked'.*failure_class='infrastructure_blocked'/is,
       ),
-      [input.runId, 'generator'],
+      [input.runId, 'generator', 2],
     );
     expect(pool.query.mock.calls[0][0]).toMatch(
       /error_code NOT IN\s*\(\s*'worker_attempt_missing_after_lease',\s*'worker_attempt_replacement_required_after_lease'\s*\)/i,
@@ -1997,6 +1997,27 @@ describe('attempt store', () => {
     expect(pool.query.mock.calls[0][0]).toMatch(
       /error_code IS NULL\s+OR error_code NOT IN/i,
     );
+  });
+
+  it('时效窗口默认 2 小时且经 HARNESS_FAILED_TARGET_TTL_HOURS 覆盖进 SQL 第三参数', async () => {
+    const prior = process.env.HARNESS_FAILED_TARGET_TTL_HOURS;
+    try {
+      delete process.env.HARNESS_FAILED_TARGET_TTL_HOURS;
+      const pool = poolWith({ rows: [], rowCount: 0 });
+      await createAttemptStore(pool).listFailedExecutionTargets(input.runId, 'generator');
+      expect(pool.query.mock.calls[0][0]).toMatch(
+        /created_at\s*>=\s*NOW\(\)\s*-\s*make_interval\s*\(\s*hours\s*=>\s*\$3\s*\)/i,
+      );
+      expect(pool.query.mock.calls[0][1]).toEqual([input.runId, 'generator', 2]);
+
+      process.env.HARNESS_FAILED_TARGET_TTL_HOURS = '5';
+      const pool2 = poolWith({ rows: [], rowCount: 0 });
+      await createAttemptStore(pool2).listFailedExecutionTargets(input.runId, 'generator');
+      expect(pool2.query.mock.calls[0][1]).toEqual([input.runId, 'generator', 5]);
+    } finally {
+      if (prior === undefined) delete process.env.HARNESS_FAILED_TARGET_TTL_HOURS;
+      else process.env.HARNESS_FAILED_TARGET_TTL_HOURS = prior;
+    }
   });
 
   it('uses bounded SQL to read the latest Commander Attempt', async () => {

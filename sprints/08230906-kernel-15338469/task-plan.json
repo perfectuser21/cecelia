@@ -1,0 +1,25 @@
+{
+  "initiative_id": "e2a90fce-6cb5-4be3-ad05-4547660c93b9",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯后端改动，仅涉及 packages/brain/ 的 attempt-store 查询，无 UI/agent 协议/engine。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "listFailedExecutionTargets 增加 created_at 时效窗口过滤 + HARNESS_FAILED_TARGET_TTL_HOURS（默认 2h）",
+      "scope": "在 attempt-store.js 的 listFailedExecutionTargets 查询 WHERE 增加 created_at >= NOW() - make_interval(hours => $3) 时效窗口，第三绑定参数为解析后的 TTL 小时数（读 HARNESS_FAILED_TARGET_TTL_HOURS，默认 2，非法回退 2，窗口内含 >=）；同步更新 repo 既有断言使其含第三参数。窗口内记仇语义与既有 error_code 豁免叠加不变。",
+      "dod": [
+        "[BEHAVIOR] 冻结 sprint 测试 failed-target-ttl.test.ts 全绿（默认 2h/env 覆盖/非法回退/窗口内含/记仇不变）",
+        "[BEHAVIOR] repo attempt-store.test.js 全套绿（终态失败执行目标 + 时效窗口第三参数回归）",
+        "[ARTIFACT] attempt-store.js 含 HARNESS_FAILED_TARGET_TTL_HOURS 读取与 created_at make_interval 窗口"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/src/orchestrator/__tests__/attempt-store.test.js",
+        "sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
