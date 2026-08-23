@@ -258,3 +258,4 @@ scripts/ops/janitor.sh
 kernel-controller-ownership-smoke.sh
 kernel-controller-lease-renewal-smoke.sh
 publisher-infra-retry-smoke.sh
+failed-target-ttl-smoke.sh
