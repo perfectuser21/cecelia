@@ -136,6 +136,23 @@ const OBJECTIVES = Object.freeze({
   commander: 'Observe one bounded Run snapshot and return exactly one provider-neutral Commander Directive.',
 });
 
+// 封印拒绝反馈按 code 分文案（r59 run 741f5052 案卷，第 28 批件④）：固定文案
+// 「逐行登记」在 UNRESOLVABLE（文件不存在）时误导 proposer 改表不建文件，
+// 两轮同错 seal_rejected_exhausted 判死。指令必须对症。
+export function sealRejectionInstruction(code) {
+  const c = String(code ?? '');
+  if (c.includes('UNRESOLVABLE')) {
+    return '合同被封印机械闸拒绝：## Test Contract 表所列路径的测试文件在 propose 分支上不存在。必须把每个表中路径的测试文件真实创建（含可执行断言）并 commit 进 propose 分支——只改表格不建文件会再次被拒。';
+  }
+  if (c.includes('UNREGISTERED')) {
+    return '合同被封印机械闸拒绝：## Test Contract 表必须逐行登记 artifacts 里每个冻结测试的完整路径，且 BEHAVIOR 与冻结测试 it() 名互为子串（多值用 / 或 ; 分隔）。请修正后重新提交。';
+  }
+  if (c.includes('FRAGILE_GREP')) {
+    return '合同被封印机械闸拒绝：manual 命令含脆弱的 grep 通过数断言（-t 且 grep passed(N)）。请改为稳健断言（退出码/结构化输出比对），不要依赖精确通过数文本。';
+  }
+  return `合同被封印机械闸拒绝（${c || '未知代码'}）：请依据 detail 中的具体原因修正合同后重新提交，不要原样重交。`;
+}
+
 export function resolveAction(action) {
   const spec = ACTION_SPECS[action];
   if (!spec) throw new Error(`unsupported action: ${action}`);
@@ -497,7 +514,7 @@ function buildInputs(action, spec, ctx, attemptMetadata) {
       common.seal_rejection = {
         code: String(sealDetail.code ?? '').slice(0, 120),
         detail: String(sealDetail.detail ?? '').slice(0, 300),
-        instruction: '合同被封印机械闸拒绝：## Test Contract 表必须逐行登记 artifacts 里每个冻结测试的完整路径，且 BEHAVIOR 与冻结测试 it() 名互为子串（多值用 / 或 ; 分隔）。请修正后重新提交。',
+        instruction: sealRejectionInstruction(String(sealDetail.code ?? '')),
       };
     }
   }

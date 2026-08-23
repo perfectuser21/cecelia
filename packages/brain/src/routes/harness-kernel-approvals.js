@@ -73,11 +73,26 @@ async function handleReviewDecision(req, res, { approved }) {
     const run = runResult.rows[0];
     if (!run) return res.status(404).json({ error: 'kernel run/task not found' });
 
-    // 本地候选（发布前 pr_url 为空，r55 run f51ba12b 实证）：无远端 PR 可解析，
-    // 改用 review 请求行 detail.candidate_head_sha 与调用方 pr_head_sha 全等锚定——
-    // SHA 锚定强度等同 PR 路径，只是权威来源换成 kernel 落库的请求行。
+    // 候选头优先锚定（r55→r57 第 28 批件③）：fix 后候选未发布时 PR 头滞后于
+    // 真实验收头是常态。请求行 detail.candidate_head_sha 与调用方 pr_head_sha
+    // 全等即可放行（权威=kernel 落库的请求行，锚定强度等同 PR 路径）；候选头
+    // 锚不上再回落 PR 头路径。
+    const candidateRequestResult = await dbPool.query(
+      `SELECT hop, observed, detail, created_at
+         FROM orchestrator_decision_log
+        WHERE run_id=$1::uuid
+          AND action='effect:human_review_requested'
+          AND detail->>'candidate_head_sha'=$2
+        ORDER BY hop DESC
+        LIMIT 1`,
+      [runId, requestedSha],
+    );
+    const candidateRequestRow = candidateRequestResult.rows[0] ?? null;
+
     let currentSha = null;
-    if (run.pr_url) {
+    if (candidateRequestRow) {
+      currentSha = requestedSha;
+    } else if (run.pr_url) {
       currentSha = await resolver(run.pr_url);
       if (!currentSha) return res.status(409).json({ error: 'current PR head unavailable' });
       if (requestedSha !== currentSha) {
@@ -88,49 +103,46 @@ async function handleReviewDecision(req, res, { approved }) {
       }
     }
 
-    const requestResult = hopProvided
-      ? await dbPool.query(
-        `SELECT hop, observed, detail, created_at
-           FROM orchestrator_decision_log
-          WHERE run_id=$1::uuid
-            AND hop=$2
-            AND action='effect:human_review_requested'
-          LIMIT 1`,
-        [runId, reviewRequestHop],
-      )
-      : await dbPool.query(
-        run.pr_url
-          ? `SELECT hop, observed, detail, created_at
-               FROM orchestrator_decision_log
-              WHERE run_id=$1::uuid
-                AND action='effect:human_review_requested'
-                AND observed->'pr'->>'head_sha'=$2
-              ORDER BY hop DESC
-              LIMIT 1`
-          : `SELECT hop, observed, detail, created_at
-               FROM orchestrator_decision_log
-              WHERE run_id=$1::uuid
-                AND action='effect:human_review_requested'
-                AND detail->>'candidate_head_sha'=$2
-              ORDER BY hop DESC
-              LIMIT 1`,
-        [runId, run.pr_url ? currentSha : requestedSha],
-      );
-    const requestRow = requestResult.rows[0];
+    let requestRow = candidateRequestRow;
+    if (!requestRow) {
+      const requestResult = hopProvided
+        ? await dbPool.query(
+          `SELECT hop, observed, detail, created_at
+             FROM orchestrator_decision_log
+            WHERE run_id=$1::uuid
+              AND hop=$2
+              AND action='effect:human_review_requested'
+            LIMIT 1`,
+          [runId, reviewRequestHop],
+        )
+        : await dbPool.query(
+          `SELECT hop, observed, detail, created_at
+             FROM orchestrator_decision_log
+            WHERE run_id=$1::uuid
+              AND action='effect:human_review_requested'
+              AND observed->'pr'->>'head_sha'=$2
+            ORDER BY hop DESC
+            LIMIT 1`,
+          [runId, currentSha],
+        );
+      requestRow = requestResult.rows[0];
+    }
     const requestObserved = asJson(requestRow?.observed);
     const requestDetail = asJson(requestRow?.detail);
-    if (run.pr_url) {
-      if (!requestRow || requestObserved.pr?.head_sha !== currentSha) {
-        return res.status(409).json({ error: 'human_review_request_not_found_for_sha' });
-      }
-    } else {
-      if (!requestRow || requestDetail.candidate_head_sha !== requestedSha) {
-        return res.status(409).json({
-          error: 'stale_sha',
-          detail: 'no PR; pr_head_sha must equal the review request candidate_head_sha',
-        });
-      }
-      currentSha = requestedSha;
+    if (!requestRow) {
+      return res.status(409).json({
+        error: currentSha ? 'human_review_request_not_found_for_sha' : 'stale_sha',
+        detail: currentSha ? undefined : 'pr_head_sha matches neither a candidate_head_sha review request nor the PR head',
+      });
+    }
+    if (!candidateRequestRow && run.pr_url && requestObserved.pr?.head_sha !== currentSha) {
+      return res.status(409).json({ error: 'human_review_request_not_found_for_sha' });
+    }
+    if (!currentSha) {
+      return res.status(409).json({
+        error: 'stale_sha',
+        detail: 'no PR; pr_head_sha must equal the review request candidate_head_sha',
+      });
     }
     const resolvedReviewRequestHop = hopProvided ? reviewRequestHop : Number(requestRow.hop);
     const reviewClass = reviewClassForReason(requestDetail.review_reason);

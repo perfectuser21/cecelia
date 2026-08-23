@@ -86,15 +86,16 @@ const reviewApproved = (hop, requestHop) => ({
 });
 
 describe('derive：recollect 人审被批准后有出口', () => {
-  it('APPROVED 行匹配请求 hop 与候选头 → 本地候选路由 publish，不再 wait', () => {
+  // 第 28 批修正（r57 assembly_fault 案卷）：approve 不再直通 publish（publisher
+  // 授权链只认 judge PASS），语义改为解锁一次重取证。
+  it('APPROVED 行匹配请求 hop 与候选头 → 路由重取证 retry，不再 wait', () => {
     const r = derive(observed([
       recollectSpawn(22),
       reviewRequest(31),
       reviewApproved(32, 31),
     ]));
-    expect(r.action).not.toBe('wait:human_review');
-    expect(r.phase).toBe('publish');
-    expect(r.reason).toBe('evidence_insufficient_human_approved');
+    expect(r.action).toBe('spawn:evaluator');
+    expect(r.reason).toBe('recollect_human_approved_retry');
   });
 
   it('负向：无批准行 → 仍 wait:human_review（闸语义不回退）', () => {
@@ -178,6 +179,10 @@ describe('approve 路由：本地候选（无 PR）可批准', () => {
           return { rows: [{ run_id: RUN_ID, task_id: TASK_ID, pr_url: null }], rowCount: 1 };
         }
         if (normalized.includes("action='effect:human_review_requested'")) {
+          if (normalized.includes('candidate_head_sha')) {
+            const rows = decisionLog.filter((r) => r.detail?.candidate_head_sha === params[1]);
+            return { rows, rowCount: rows.length };
+          }
           return { rows: decisionLog.slice(0, 1), rowCount: 1 };
         }
         return { rows: [], rowCount: 0 };

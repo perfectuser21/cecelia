@@ -89,11 +89,13 @@ describe('③ approve 路由：有 PR 但候选未发布时按候选头放行（
           return { rows: [{ run_id: RUN_ID, task_id: TASK_ID, pr_url: 'https://github.com/x/y/pull/1' }], rowCount: 1 };
         }
         if (normalized.includes("action='effect:human_review_requested'")) {
-          if (normalized.includes('candidate_head_sha') && params[1] === CANDIDATE_SHA) {
-            return { rows: decisionLog.slice(0, 1), rowCount: 1 };
+          if (normalized.includes('candidate_head_sha')) {
+            const rows = decisionLog.filter((r) => r.detail?.candidate_head_sha === params[1]);
+            return { rows, rowCount: rows.length };
           }
           if (normalized.includes("observed->'pr'->>'head_sha'")) {
-            return { rows: decisionLog.filter((r) => r.observed?.pr?.head_sha === params[1]), rowCount: 1 };
+            const rows = decisionLog.filter((r) => r.observed?.pr?.head_sha === params[1]);
+            return { rows, rowCount: rows.length };
           }
           return { rows: decisionLog.slice(0, 1), rowCount: 1 };
         }
