@@ -120,8 +120,9 @@ describe('canonical POST /orchestrator/relay-runs', () => {
       });
 
     expect(response.status).toBe(201);
+    // 第 27 批（决策 e3afa828）：API 不固化缺省，undefined 透传 store 统一裁决（store 缺省 hybrid）
     expect(mockCreateKernelRun).toHaveBeenCalledWith(mockPool, expect.objectContaining({
-      commanderMode: 'kernel-only',
+      commanderMode: undefined,
     }), {});
   });
 
