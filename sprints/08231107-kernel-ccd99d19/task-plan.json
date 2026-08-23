@@ -1,0 +1,26 @@
+{
+  "initiative_id": "intent:9487158a-9e2d-4f30-8e9c-5bab667d6ea9:4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动仅落在 packages/brain/src/map/ 纯后端 kernel（投影物化/读取谓词）+ 一个 migration，无 UI、无远端 agent、无 engine hooks。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "投影物化两阶段原子化：materializing 中间态 + 单事务翻转 active/superseded + 读取侧 active-only 锁定",
+      "scope": "projector.js runProjection 新 run 以 status='materializing' 写入并全量物化节点/边后，单事务翻转 new='active'+old='superseded'；新增 migration 把 materializing 纳入 map_projection_runs.status CHECK 与 activation_shape（activated_at IS NULL 分支）；读取侧（getActiveProjection/getProjectionForRevision 及 capabilityNodes 依赖的 active 选择）只见 active（materializing/building 不可见，superseded 仍可读）；交付真 PG 集成测试补位。",
+      "dod": [
+        "[BEHAVIOR] runProjection 以 materializing 写新 run 且物化全量后单事务翻转 active/superseded（sprints/08231107-kernel-ccd99d19/tests/projection-two-phase.test.js RED→GREEN）",
+        "[BEHAVIOR] 读取侧 active 选择排除 materializing 残行、revision 查找仍可读 superseded",
+        "[ARTIFACT] 新增 migration 放开 map_projection_runs.status CHECK 纳入 materializing",
+        "[ARTIFACT] packages/brain/src/__tests__/integration/map-projection-two-phase.pg.integration.test.js（brain-integration 真 PG）"
+      ],
+      "files": [
+        "packages/brain/src/map/projector.js",
+        "packages/brain/migrations/4XX_map_projection_materializing.sql",
+        "packages/brain/src/__tests__/integration/map-projection-two-phase.pg.integration.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
