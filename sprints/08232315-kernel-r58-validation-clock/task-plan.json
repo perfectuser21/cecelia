@@ -1,0 +1,29 @@
+{
+  "initiative_id": "02b52d67-0421-46d0-aab8-90cf0de4595c",
+  "journey_type": "autonomous",
+  "journey_type_reason": "Harness kernel 的纯后端 validation clock 判定逻辑",
+  "implementation_baseline": "422633217348366974b6c28ceeaba7f587070a51",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 validation clock 按 fix 轮有界顺延",
+      "scope": "让前六次成功 generator-fix 按 hop 成为 pipeline clock 新原点，第七次不再顺延，失败或非派发行不重锚，并保持无 fix 与人审 deadline 语义",
+      "dod": [
+        "[BEHAVIOR] r50 两轮 fix 后旧窗口耗尽但最近 fix 窗口内仍存活",
+        "[BEHAVIOR] 第七次 fix 不续命且无 fix 轮语义不变",
+        "[BEHAVIOR] 失败或非派发行不得改变时钟原点",
+        "[ARTIFACT] RED-first 永久回归测试位于 tests/gp/f1/",
+        "[ARTIFACT] packages/brain/DEFINITION.md 版本同步"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/validation-clock.js",
+        "packages/brain/src/orchestrator/__tests__/validation-clock.test.js",
+        "tests/gp/f1/validation-clock-bounded-fix-extension.test.js",
+        "packages/brain/DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
