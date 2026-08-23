@@ -13,6 +13,10 @@ const GENERATOR_ACTIONS = new Set([
 
 export const VERIFIED_EXISTING_PR_ORIGIN = 'verified_existing_pr';
 
+// 有界续命铁律：validation 窗口按 spawn:generator-fix 轮顺延，每 run 最多顺延 6 次；
+// 超上限冻结在第 6 次顺延原点、到期照常判死，禁无限续命。
+const VALIDATION_CLOCK_EXTENSION_LIMIT = 6;
+
 function asObject(value) {
   if (!value) return {};
   if (typeof value === 'object') return value;
@@ -59,7 +63,7 @@ export function resolveValidationClock({
   allowEvaluatorOrigin = false,
 }) {
   if (!VALIDATION_ACTIONS.has(action)) return null;
-  const firstValidationOrigin = [...decisionLog]
+  const validationOrigins = [...decisionLog]
     .filter((row) => (
       GENERATOR_ACTIONS.has(row?.action)
       || (
@@ -67,7 +71,18 @@ export function resolveValidationClock({
         && asObject(row?.detail).validation_origin === VERIFIED_EXISTING_PR_ORIGIN
       )
     ))
-    .sort((a, b) => Number(a.hop) - Number(b.hop))[0];
+    .sort((a, b) => Number(a.hop) - Number(b.hop));
+  // 按 spawn:generator-fix 轮有界顺延：每轮 fix 把窗口重锚到「最新」generator 系 spawn 行的
+  // created_at 重算 timeout_seconds；顺延次数 = decisionLog 中 spawn:generator-fix 行数，
+  // 上限 VALIDATION_CLOCK_EXTENSION_LIMIT 次，超上限冻结在第 6 次顺延原点（防无限续命）。
+  const fixOrigins = validationOrigins.filter((row) => row?.action === 'spawn:generator-fix');
+  const boundedExtensions = Math.min(fixOrigins.length, VALIDATION_CLOCK_EXTENSION_LIMIT);
+  if (boundedExtensions >= 1) {
+    // 纯函数可重放：只取新原点 created_at re-derive 窗口，忽略 fix 行上「一次顺延之前」的
+    // stale persisted detail（否则锚点落后一次顺延，长跑 run 仍被误杀）。
+    return exactClock(fixOrigins[boundedExtensions - 1].created_at, timeoutSeconds);
+  }
+  const firstValidationOrigin = validationOrigins[0];
   if (firstValidationOrigin) {
     return persistedClock(firstValidationOrigin, timeoutSeconds);
   }
