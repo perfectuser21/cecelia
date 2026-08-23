@@ -10,6 +10,15 @@ const origin = (hop: number, action: string, startedAt: string) => ({
     deadline_at: new Date(Date.parse(startedAt) + timeoutSeconds * 1000).toISOString(),
   },
 });
+const launched = (hop: number, dispatchHop: number, dispatchAction = 'spawn:generator-fix') => ({
+  hop,
+  action: 'effect:attempt_launched',
+  detail: {
+    dispatch_hop: dispatchHop,
+    dispatch_action: dispatchAction,
+    attempt_id: `00000000-0000-4000-8000-${String(hop).padStart(12, '0')}`,
+  },
+});
 
 describe('validation clock 按 generator-fix 有界顺延 [BEHAVIOR]', () => {
   it('r50 型场景以最新成功 fix 原点重算后保持存活', () => {
@@ -18,6 +27,7 @@ describe('validation clock 按 generator-fix 有界顺延 [BEHAVIOR]', () => {
       decisionLog: [
         origin(10, 'spawn:generator', '2026-08-24T00:00:00.000Z'),
         origin(30, 'spawn:generator-fix', '2026-08-24T02:30:00.000Z'),
+        launched(31, 30),
       ],
     });
     expect(clock).toEqual({
@@ -28,7 +38,10 @@ describe('validation clock 按 generator-fix 有界顺延 [BEHAVIOR]', () => {
 
   it('第六次成功 fix 仍以第六次 fix 原点顺延', () => {
     const rows = [origin(1, 'spawn:generator', '2026-08-24T00:00:00.000Z')];
-    for (let n = 1; n <= 6; n += 1) rows.push(origin(1 + n, 'spawn:generator-fix', `2026-08-24T0${n}:00:00.000Z`));
+    for (let n = 1; n <= 6; n += 1) {
+      rows.push(origin(n * 10, 'spawn:generator-fix', `2026-08-24T0${n}:00:00.000Z`));
+      rows.push(launched(n * 10 + 1, n * 10));
+    }
     expect(resolveValidationClock({ action: 'spawn:judge', decisionLog: rows, intentAt: '2026-08-24T06:10:00.000Z', timeoutSeconds })).toEqual({
       pipeline_started_at: '2026-08-24T06:00:00.000Z', deadline_at: '2026-08-24T07:30:00.000Z',
     });
@@ -36,9 +49,25 @@ describe('validation clock 按 generator-fix 有界顺延 [BEHAVIOR]', () => {
 
   it('第七次成功 fix 超限且不得把原点延到第七次', () => {
     const rows = [origin(1, 'spawn:generator', '2026-08-24T00:00:00.000Z')];
-    for (let n = 1; n <= 7; n += 1) rows.push(origin(1 + n, 'spawn:generator-fix', `2026-08-24T0${n}:00:00.000Z`));
+    for (let n = 1; n <= 7; n += 1) {
+      rows.push(origin(n * 10, 'spawn:generator-fix', `2026-08-24T0${n}:00:00.000Z`));
+      rows.push(launched(n * 10 + 1, n * 10));
+    }
     expect(resolveValidationClock({ action: 'spawn:judge', decisionLog: rows.reverse(), intentAt: '2026-08-24T07:10:00.000Z', timeoutSeconds })).toEqual({
       pipeline_started_at: '2026-08-24T06:00:00.000Z', deadline_at: '2026-08-24T07:30:00.000Z',
+    });
+  });
+
+  it('无匹配 attempt_launched 回执的 fix intent 不顺延', () => {
+    expect(resolveValidationClock({
+      action: 'spawn:evaluator', timeoutSeconds, intentAt: '2026-08-24T03:20:00.000Z',
+      decisionLog: [
+        origin(1, 'spawn:generator', '2026-08-24T00:00:00.000Z'),
+        origin(10, 'spawn:generator-fix', '2026-08-24T02:30:00.000Z'),
+        launched(11, 9),
+      ],
+    })).toEqual({
+      pipeline_started_at: '2026-08-24T00:00:00.000Z', deadline_at: '2026-08-24T01:30:00.000Z',
     });
   });
 

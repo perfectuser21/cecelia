@@ -6,7 +6,7 @@
     {
       "task_id": "ws1",
       "title": "实现 validation clock 按 fix 轮有界顺延",
-      "scope": "使 resolveValidationClock 按 hop 选择前六次成功 generator-fix 中最新原点，同时保持无 fix、fail-closed 与 timeout 参数语义",
+      "scope": "使 resolveValidationClock 按 dispatch_hop/dispatch_action 关联 launch effect，仅按 hop 选择前六次成功 generator-fix 中最新原点，同时保持无 fix、fail-closed 与 timeout 参数语义",
       "dod": [
         "[BEHAVIOR] r50 场景使用最新有效 fix deadline，第七次不再顺延，无 fix 语义不变",
         "[ARTIFACT] validation-clock.js、DEFINITION.md 与冻结回归测试"

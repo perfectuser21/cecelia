@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## 实现基线与证据来源
 
@@ -24,10 +24,10 @@ N/A — 本任务只修改内部纯函数，无 HTTP 响应或 DB schema。
 
 | 要素 | 本次答案 |
 |---|---|
-| FR（做什么） | 每个已记录的成功 `spawn:generator-fix` 至多六次重置 pipeline validation clock 原点 |
+| FR（做什么） | 每个有匹配 `effect:attempt_launched` 回执的 `spawn:generator-fix` 至多六次重置 pipeline validation clock 原点 |
 | NFR（做得多好） | 保持 5400 秒默认值；仅按 hop 排序；同一日志输入可重放 |
 | Invariant（永不违反） | 第七次及以后不续期；无 fix 行保持原语义；fail-closed 不变 |
-| 判定点（怎么知道） | 决策日志中带完整有效持久化时钟的 `spawn:generator-fix` 行代表成功派发 |
+| 判定点（怎么知道） | fix intent 仅在存在 `detail.dispatch_hop=intent.hop` 且 `detail.dispatch_action=spawn:generator-fix` 的后续 `effect:attempt_launched` 时代表成功派发 |
 | 保质期（何时过期） | 能力随日志 schema 有效；若成功派发记账 schema 变更，需同步修订 |
 | 死亡告警（停了谁知道） | 冻结回归测试与 Sprint Tests 在 PR CI 当轮失败并阻塞合并 |
 | 失败语义（挂了怎么办） | 时钟字段残缺或非法继续抛错；不得放行或读取进程内补偿状态 |
@@ -37,13 +37,14 @@ N/A — 本任务只修改内部纯函数，无 HTTP 响应或 DB schema。
 
 | 判定点 | 候选方法 | 所选方法 | 依据 | 误判后果 |
 |---|---|---|---|---|
-| 成功 fix 派发的日志识别 | A. action 即算成功；B. action 且完整有效 persisted clock | B. 完整有效 persisted clock | append 记录已派发决策及其时钟，且现有 parser 对残缺字段 fail-closed | 失败派发错误续期或健康 run 被误杀 |
+| 成功 fix 派发的日志识别 | A. intent action 即算成功；B. intent 与后续 launch effect 按 dispatch_hop/dispatch_action 匹配 | B. 匹配 `effect:attempt_launched` | `loop.js` 在 dispatch 前写 intent，launch effect 才是成功回执 | 失败派发错误续期或健康 run 被误杀 |
 
 ### 失败语义声明
 
 | 场景 | 失败行为 | 重试幂等？ | 降级策略 |
 |---|---|---|---|
 | 时钟字段非法或残缺 | 抛 `validation_clock_invalid`，不生成 deadline | 是，同日志重放同结果 | 无降级，fail-closed |
+| fix intent 无匹配 launch effect | 不顺延，继续使用此前有效原点 | 是 | 不把 intent 当成功；等待后续真实回执 |
 | fix 次数超过六次 | 忽略第七及以后原点，使用第六次有效原点 | 是 | 到 deadline 照常判死 |
 
 ### 输入对抗面
@@ -65,19 +66,19 @@ N/A — 不对外暴露 agent 输入接口；输入为内部决策日志行。
 
 **硬阈值**: 原点 `00:00:00Z`，deadline 精确为 `01:30:00Z`；命令 exit 0。
 
-### Step 2: r50 型健康修复循环按最新成功 fix 顺延
+### Step 2: 仅匹配成功回执的 fix 才顺延
 **来源**: `[FROM_PRD]` — Golden Path 第 2 步与 RED r50 场景。
 
-**可观测行为**: 旧 deadline 已过但成功 fix 后仍在新窗口时，返回 fix 原点与新 deadline。
+**可观测行为**: 旧 deadline 已过但 fix intent 有后续匹配的 `effect:attempt_launched` 时，返回该 intent 的持久化原点与新 deadline；无回执或回执 `dispatch_hop` 不匹配时保持此前原点。
 
-**验证命令**: `npx vitest run --no-cache tests/gp/f1/validation-clock-fix-extension.test.js -t 'r50 型场景旧 deadline 已过但最新成功 fix 窗口仍存活'`
+**验证命令**: `npx vitest run --no-cache tests/gp/f1/validation-clock-fix-extension.test.js -t 'r50 型场景旧 deadline 已过但最新成功 fix 窗口仍存活|无匹配 attempt_launched 回执的 fix intent 不顺延'`
 
-**硬阈值**: deadline 精确为 `2026-08-24T04:00:00.000Z`；命令 exit 0。
+**硬阈值**: 匹配回执时 deadline 精确为 `2026-08-24T04:00:00.000Z`；无匹配回执时精确为 `2026-08-24T01:30:00.000Z`；命令 exit 0。
 
 ### Step 3: 六次顺延封顶
 **来源**: `[FROM_PRD]` — Golden Path 第 3 步与边界情况。
 
-**可观测行为**: 第六次 fix 可续期，第七次及以后不改变有效原点。
+**可观测行为**: 按 hop 关联并只计有匹配 launch effect 的 fix；第六次成功 fix 可续期，第七次成功 fix 及以后不改变有效原点。
 
 **验证命令**: `npx vitest run --no-cache sprints/08240633-kernel-r65-validation-clock/tests/validation-clock-fix-extension.test.ts -t '第六次成功 fix|第七次成功 fix'`
 
@@ -94,12 +95,13 @@ N/A — 不对外暴露 agent 输入接口；输入为内部决策日志行。
 
 ## 禁 mock 边清单
 
+- `spawn:generator-fix` intent ↔ 关联 `effect:attempt_launched`（本单修改成功派发识别，必须按 `dispatch_hop` 与 `dispatch_action` 真关联，禁止 mock 或把 intent 当回执）
 - 决策日志行序列 ↔ `resolveValidationClock`（本单改调度时钟输入选择，冻结测试必须真实 import 目标模块且不得 mock）
 - `resolveValidationClock` ↔ `persistedClock/exactClock`（必须真实校验持久化原点与 timeout 计算）
 
 ## 真实调用方请求 shape
 
-N/A — 无设备、agent 或 webhook 请求；调用方是 `loop.js`，以 `{action, decisionLog, intentAt, timeoutSeconds, allowEvaluatorOrigin}` 直接调用纯函数。
+N/A — 无设备、agent 或 webhook 请求；调用方是 `loop.js`，以 `{action, decisionLog, intentAt, timeoutSeconds, allowEvaluatorOrigin}` 调用纯函数。成功回执 shape 为 `{action:"effect:attempt_launched", detail:{dispatch_hop:<fix intent hop>, dispatch_action:"spawn:generator-fix", attempt_id:<runtime id>}}`，不得用 authoring attempt 字面值。
 
 ## 未覆盖真实链路清单
 
@@ -136,14 +138,14 @@ ELAPSED=$(( $(date +%s) - START ))
 echo "OK: validation clock bounded replay contract passed in ${ELAPSED}s"
 ```
 
-通过标准：7 个断言全部通过、exit 0、总耗时小于 30 秒。该纯函数无 DB、登录或 HTTP 资源需求。
+通过标准：9 个断言全部通过、exit 0、总耗时小于 30 秒。该纯函数无 DB、登录或 HTTP 资源需求。
 
 ## Test Contract
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 冻结合同测试 | `sprints/08240633-kernel-r65-validation-clock/tests/validation-clock-fix-extension.test.ts` | `r50 型场景以最新成功 fix 原点重算后保持存活`; `第六次成功 fix`; `第七次成功 fix 超限`; `无 fix 轮保持首次 generator 原点语义` | 当前实现 4 项中 3 项失败 |
-| F1 Golden Path 回归 | `tests/gp/f1/validation-clock-fix-extension.test.js` | `r50 型场景旧 deadline 已过但最新成功 fix 窗口仍存活`; `第七次 fix 不得突破六次顺延上限`; `无 fix 轮仍使用首次 generator 原点` | 当前实现 3 项中 2 项失败 |
+| 冻结合同测试 | `sprints/08240633-kernel-r65-validation-clock/tests/validation-clock-fix-extension.test.ts` | `r50 型场景以最新成功 fix 原点重算后保持存活`; `第六次成功 fix`; `第七次成功 fix 超限`; `无匹配 attempt_launched 回执的 fix intent 不顺延`; `无 fix 轮保持首次 generator 原点语义` | 当前实现 5 项中 3 项失败 |
+| F1 Golden Path 回归 | `tests/gp/f1/validation-clock-fix-extension.test.js` | `r50 型场景旧 deadline 已过但最新成功 fix 窗口仍存活`; `第七次 fix 不得突破六次顺延上限`; `无匹配 attempt_launched 回执的 fix intent 不顺延`; `无 fix 轮仍使用首次 generator 原点` | 当前实现 4 项中 2 项失败 |
 
 ## Notes
 
