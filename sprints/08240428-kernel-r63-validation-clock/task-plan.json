@@ -1,0 +1,24 @@
+{
+  "initiative_id": "6137ff62-4480-4cac-8c0d-5d09494906b8",
+  "journey_type": "autonomous",
+  "journey_type_reason": "provider 无关编排内核的纯后端 validation clock 决策",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 validation clock 按 fix 轮有界顺延",
+      "scope": "使成功 generator-fix 按 hop 刷新 clock，最多 6 次，并保持无 fix 与 timeout 语义",
+      "dod": [
+        "[BEHAVIOR] r50、乱序重放、6 次封顶与无 fix 回归测试全部通过",
+        "[ARTIFACT] validation-clock.js、DEFINITION.md 与 tests/gp/f1 回归测试落盘"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/validation-clock.js",
+        "packages/brain/DEFINITION.md",
+        "tests/gp/f1/validation-clock-fix-extension.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}
