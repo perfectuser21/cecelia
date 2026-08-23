@@ -1,0 +1,29 @@
+{
+  "initiative_id": "intent:f51ba12b-0d1f-4ea5-bb46-ef08565f955a:4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 纯后端 orchestrator 纯函数逻辑，无 UI/远端 agent/engine hooks",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "validation clock 按 fix 轮自动顺延（有界）——resolveValidationClock 选点逻辑修复",
+      "scope": "改 packages/brain/src/orchestrator/validation-clock.js 的 resolveValidationClock：存在 spawn:generator-fix 时以最新 generator 系 spawn（GENERATOR_ACTIONS 按 hop 升序第 min(fixCount,6) 个）的 created_at 为新原点重算窗口（顺延、重新起算 timeout_seconds）；顺延有界（每 run ≤6 次），超上限锚定第 6 轮不前移；无 fix 轮语义不变；fail-closed/evaluator-origin/malformed 三既有语义不回退；纯函数只依赖 decisionLog 行 hop 时序（禁 Date.now 外墙钟）。绿阶段把冻结测试提升为永久守卫 tests/gp/f1/step3-validation-clock-fix-round-slide.test.js。",
+      "dod": [
+        "[BEHAVIOR] 两轮 fix 后时钟顺延至最新 generator-fix（deadline_at==T0+2h+5400s），长跑 run 存活",
+        "[BEHAVIOR] 顺延重新起算——忽略 fix 行陈旧 persisted 时钟以其 spawn 时刻为新原点",
+        "[BEHAVIOR] 顺延有界——超过 6 次上限锚定第 6 次 fix 不前移（防无限续命）",
+        "[BEHAVIOR] 无 fix 轮时窗口语义不变；repo 既有 validation-clock 单测全绿（fail-closed 不回退）",
+        "[BEHAVIOR] 纯函数可重放——同一 decisionLog 两次调用结果一致",
+        "[ARTIFACT] packages/brain/src/orchestrator/validation-clock.js 顺延逻辑落地",
+        "[ARTIFACT] tests/gp/f1/step3-validation-clock-fix-round-slide.test.js 永久 F1 守卫提升"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/validation-clock.js",
+        "sprints/08231440-kernel-r55-validation-clock/tests/step3-validation-clock-fix-round-slide.test.js",
+        "tests/gp/f1/step3-validation-clock-fix-round-slide.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
