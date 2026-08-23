@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -79,11 +79,11 @@ gp-anchor: skipped (product-map.json not found)
 ### Step 4: 仅成功派发贡献顺延
 **来源**: `[AI_ADDED]` — 把 PRD 的“派发成功”冻结为 loop.js 的 `attempt:launched` receipt，防止仅持久化 intent 但 dispatch 前失败时假续命。
 
-**可观测行为**: 无匹配 launch receipt 的 fix intent 不改变时钟。
+**可观测行为**: 无匹配 launch receipt 的 fix intent 不改变时钟；receipt 必须同时匹配 fix intent 的 `dispatch_hop` 与 `dispatch_action=spawn:generator-fix`；同一 fix 的重复 receipt 最多计数一次。
 
-**验证命令**: `npx vitest run --no-cache sprints/08240522-kernel-r64-validation-clock/tests/validation-clock-fix-extension.test.ts -t '没有成功 launch receipt'`
+**验证命令**: `npx vitest run --no-cache sprints/08240522-kernel-r64-validation-clock/tests/validation-clock-fix-extension.test.ts -t '没有成功 launch receipt|重复 launch receipt|dispatch_hop 或 dispatch_action'`
 
-**硬阈值**: 返回原始 clock；命令 exit 0。
+**硬阈值**: 无 receipt 或 hop/action 不匹配时返回原始 clock；重复 receipt 不占用额外顺延名额，第六个唯一 fix 仍建立 `00:06:00Z` 原点；命令 exit 0。
 
 ## 真实调用方请求 shape
 
@@ -128,7 +128,7 @@ npx vitest run --no-cache tests/gp/f1/validation-clock-fix-extension.test.ts
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| fix 有界顺延冻结合同 | `sprints/08240522-kernel-r64-validation-clock/tests/validation-clock-fix-extension.test.ts` | `r50 场景最近一次成功 fix`；`恰好六次成功 fix`；`第七次成功 fix`；`没有成功 launch receipt` | baseline 返回原始 clock，3 failures |
+| fix 有界顺延冻结合同 | `sprints/08240522-kernel-r64-validation-clock/tests/validation-clock-fix-extension.test.ts` | `r50 场景最近一次成功 fix`；`恰好六次成功 fix`；`第七次成功 fix`；`没有成功 launch receipt`；`重复 launch receipt`；`dispatch_hop 或 dispatch_action` | baseline 返回原始 clock，5 failures |
 | F1 回归入口 | `tests/gp/f1/validation-clock-fix-extension.test.ts` | `成功派发的 generator-fix 最多六次重置 validation clock` | baseline 返回原始 clock，1 failure |
 
 ## Notes

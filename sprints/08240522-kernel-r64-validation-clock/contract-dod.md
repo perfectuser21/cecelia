@@ -44,6 +44,20 @@ journey_type: autonomous
   留证: Vitest verbose 输出与 exit_code。
   Test: manual:bash -c 'npx vitest run --no-cache sprints/08240522-kernel-r64-validation-clock/tests/validation-clock-fix-extension.test.ts -t "没有成功 launch receipt"'
 
+- [ ] [BEHAVIOR] [L2] B-05: 同一 fix 的重复 receipt 最多贡献一次顺延
+  动作: 为第一个 fix 追加重复 attempt:launched receipt，并保留六个唯一成功 fix 后调用真实 resolveValidationClock。
+  预期观察: 重复 receipt 不占额外名额，第六个唯一 fix 仍建立 00:06:00Z 原点。
+  等待预算: 0s
+  留证: Vitest verbose 输出与 exit_code。
+  Test: manual:bash -c 'npx vitest run --no-cache sprints/08240522-kernel-r64-validation-clock/tests/validation-clock-fix-extension.test.ts -t "重复 launch receipt"'
+
+- [ ] [BEHAVIOR] [L2] B-06: receipt 的 dispatch_hop 与 dispatch_action 必须共同匹配
+  动作: 在一个已成功 fix 后，分别输入 hop 指向不存在 intent、action 指向 spawn:generator 的 receipt，再调用真实 resolveValidationClock。
+  预期观察: 两类不匹配 receipt 均不使后续 generator-fix 顺延，仍返回首个合法 fix 的 clock。
+  等待预算: 0s
+  留证: Vitest verbose 输出与 exit_code。
+  Test: manual:bash -c 'npx vitest run --no-cache sprints/08240522-kernel-r64-validation-clock/tests/validation-clock-fix-extension.test.ts -t "dispatch_hop 或 dispatch_action"'
+
 ## Invariant 覆盖
 
 - [ ] [BEHAVIOR] [L2] INV-1 已有 PR clock fail-closed 与 evaluator-origin 例外不回退

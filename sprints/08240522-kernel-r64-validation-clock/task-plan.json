@@ -8,7 +8,7 @@
       "title": "实现 validation clock 按成功 fix 派发有界顺延",
       "scope": "让 validation clock 识别按 hop 配对的成功 generator-fix 派发，最多以六次 fix 为新原点，保留无 fix 与既有 PR 语义",
       "dod": [
-        "[BEHAVIOR] r50 场景在六次上限内存活，第七次不顺延，无成功 receipt 不顺延",
+        "[BEHAVIOR] r50 场景在六次上限内存活，第七次不顺延；重复 receipt 去重，dispatch_hop/dispatch_action 不匹配不顺延",
         "[ARTIFACT] validation-clock.js、Brain DEFINITION.md 与 tests/gp/f1 回归测试"
       ],
       "files": [
