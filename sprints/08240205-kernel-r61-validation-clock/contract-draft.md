@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -151,6 +151,7 @@ git ls-files --error-unmatch sprints/08240205-kernel-r61-validation-clock/tests/
 
 ## Notes
 
+- seal-closure `FROZEN_CONTRACT_TEST_CONTRACT_UNRESOLVABLE`：已确认 `tests/gp/f1/validation-clock-fix-extension.test.js` 含真实 Vitest 断言并进入本轮 propose 分支 commit；Test Contract 保持完整真实路径，旧实现实跑得到 3 failed / 1 passed 的 RED 证据。
 - contract-gate: enabled (`packages/brain/src/lib/contract-gate.js` exists).
 - 实现基线固定为 `d4f4d4c29b524fee34c8855de2f434fd04a4b9f6`；本角色 checkout SHA 仅用于起草，不替换实现基线。
 - GAN authoring identity 不固化到验收；未来 Evaluator/Judge 身份仅从 Runner 注入的 `HARNESS_*` 与 `CAPABILITY_SNAPSHOT_ID` late-bind。

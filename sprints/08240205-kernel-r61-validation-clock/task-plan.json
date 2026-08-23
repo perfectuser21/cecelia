@@ -15,7 +15,8 @@
       "files": [
         "packages/brain/src/orchestrator/validation-clock.js",
         "packages/brain/DEFINITION.md",
-        "tests/gp/f1/validation-clock-fix-extension.test.js"
+        "tests/gp/f1/validation-clock-fix-extension.test.js",
+        "sprints/08240205-kernel-r61-validation-clock/tests/validation-clock-fix-extension.test.js"
       ],
       "depends_on": [],
       "complexity": "S",
