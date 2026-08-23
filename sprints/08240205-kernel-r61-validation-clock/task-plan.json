@@ -1,0 +1,25 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "变更是 Brain orchestrator 的纯函数 deadline 判定，无用户界面或外部 API。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 validation clock 按前 6 次 generator-fix 有界顺延",
+      "scope": "在冻结实现基线之上，仅调整 resolveValidationClock 原点选择并同步 Brain DEFINITION，使无 fix、最多 6 次 fix、超限与重放语义满足合同。",
+      "dod": [
+        "[BEHAVIOR] r50 长跑选择第 6 次 fix 为原点且第 7 次不继续顺延",
+        "[BEHAVIOR] 无 fix 与相同日志重放语义保持确定性",
+        "[ARTIFACT] packages/brain/DEFINITION.md 同步行为版本"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/validation-clock.js",
+        "packages/brain/DEFINITION.md",
+        "tests/gp/f1/validation-clock-fix-extension.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
