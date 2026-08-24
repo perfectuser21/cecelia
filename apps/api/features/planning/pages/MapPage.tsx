@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+import { buildMindmapTree, toMindElixirData } from './mapMindmap';
 
 type MapState = 'green' | 'red' | 'gray' | 'unknown' | 'not_applicable';
 
@@ -220,6 +222,48 @@ export default function MapPage() {
     return capabilities.filter(({ key }) => !grouped.has(key));
   }, [capabilities, capabilityForStream, streams]);
 
+  const mindmapRef = useRef<HTMLDivElement>(null);
+  const mindmapTree = useMemo(() => (map ? buildMindmapTree(map.nodes, map.edges) : []), [map]);
+
+  // mind-elixir 三层脑图挂载（additive）。init() 依赖真实布局/canvas API，jsdom/happy-dom
+  // 下 feature-detect + try/catch 双重 guard 跳过，语义 DOM 照常渲染、权威回归测试不受影响。
+  useEffect(() => {
+    const container = mindmapRef.current;
+    if (!container || !map) return undefined;
+    let disposed = false;
+
+    const canRenderMindmap = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        return typeof canvas.getContext === 'function' && Boolean(canvas.getContext('2d'));
+      } catch {
+        return false;
+      }
+    };
+    if (!canRenderMindmap()) return undefined;
+
+    void (async () => {
+      try {
+        const mod = await import('mind-elixir');
+        if (disposed || !mindmapRef.current) return;
+        const MindElixir = (mod as { default?: unknown }).default ?? mod;
+        const instance = new (MindElixir as new (opts: unknown) => { init: (data: unknown) => void })({
+          el: container,
+          direction: 2,
+          draggable: false,
+          contextMenu: false,
+          toolBar: false,
+          nodeMenu: false,
+        });
+        instance.init(toMindElixirData(map.scope_key, mindmapTree));
+      } catch {
+        // 无 mind-elixir / jsdom 无 canvas：降级跳过，仅真浏览器挂载脑图。
+      }
+    })();
+
+    return () => { disposed = true; };
+  }, [map, mindmapTree]);
+
   const receipt = selectedEvidence?.node.state_details?.receipt as Record<string, unknown> | undefined;
   const capabilityCrosscuts = useMemo(() => {
     if (!map || !selectedCapability) return [];
@@ -271,6 +315,21 @@ export default function MapPage() {
             <span>{map.summary.boundaries} 条边界</span>
             <span>{map.summary.crosscuts} 项横切件</span>
             <span>{map.summary.prerequisites} 项共享前置</span>
+          </section>
+
+          {map.freshness.status !== 'fresh' && (
+            <div role="status" className="mb-6 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+              投影非最新（{map.freshness.reason_code ?? map.freshness.status}），当前展示的地图可能陈旧。
+            </div>
+          )}
+
+          <section aria-label="脑图" className="mb-8">
+            <h2 className="mb-3 text-lg font-semibold">三层脑图（价值流 → 能力 → 特性）</h2>
+            <div
+              ref={mindmapRef}
+              data-testid="map-mindmap"
+              className="h-96 w-full rounded-xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900"
+            />
           </section>
 
           <section aria-labelledby="level-one" className="mb-8">
