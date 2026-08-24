@@ -1,0 +1,34 @@
+{
+  "initiative_id": "919d957f-8873-4f75-a7e6-8e75dabb43c5",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 纯后端 orchestrator 纯函数，无 UI/agent 协议/engine 路径。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "resolveValidationClock 按 fix 轮自动顺延（有界 6）+ 版本 bump 四处 + DoD 映射",
+      "scope": "改 resolveValidationClock：decision_log 含 N 条 spawn:generator-fix 行时以第 min(N,6) 条 fix（按 hop 排序）为新原点重算 deadline；N=0 语义不变；fail-closed 不削弱。同步 version bump 四处、覆盖根 DoD.md 为本 sprint DoD。不改 timeout_seconds 默认值、不动人审 deadline、不做真库 loop.js 集成。",
+      "dod": [
+        "[BEHAVIOR] r50 replay：2 条 generator-fix 后 deadline 顺延到最后一条 fix 原点（旧判死新存活），见 contract-dod.md B-01",
+        "[BEHAVIOR] 有界冻结：7 条 generator-fix 时 deadline 冻结在第 6 条原点，见 B-02",
+        "[BEHAVIOR] 无 generator-fix 行时结果与现状逐字节一致，见 B-03",
+        "[BEHAVIOR] fail-closed 保留：缺原点抛 validation_clock_required（B-04）、detail 不自洽抛 validation_clock_invalid（B-06）",
+        "[BEHAVIOR] 既有 packages/brain/src/orchestrator/__tests__/validation-clock.test.js 11 条断言全绿不回退",
+        "[ARTIFACT] tests/gp/f1/step3-validation-clock-fix-round-deferral.test.js 与 sprints/08250010-kernel-r70-validation-clock/tests/validation-clock-fix-round-deferral.test.js 冻结测试转绿",
+        "[ARTIFACT] 版本 bump 四处同步（package.json / package-lock.json / .brain-versions / DEFINITION.md）通过 check-version-sync"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/validation-clock.js",
+        "tests/gp/f1/step3-validation-clock-fix-round-deferral.test.js",
+        "packages/brain/package.json",
+        "package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md",
+        "DoD.md",
+        "sprints/08250010-kernel-r70-validation-clock/**"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
