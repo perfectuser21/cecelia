@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 2)
 
 ## Notes
 
@@ -148,16 +148,55 @@ await page.getByRole('link', { name: /系统总图|地图/ }).click();
 await page.getByRole('heading', { name: '通用地图' }).waitFor({ timeout: 10000 });
 await page.screenshot({ path: `${process.env.SPRINT_DIR}/screenshots/staging-map-initial.png`, fullPage: true });
 const body = page.locator('body');
-if (!(await body.textContent()).includes(`Manifest v${api.manifest_version}`)) throw new Error('manifest 不一致');
-if (!(await body.textContent()).includes(api.freshness.status === 'fresh' ? '新鲜' : api.freshness.status)) throw new Error('freshness 不一致');
+const text = async () => await body.textContent() || '';
+if (!(await text()).includes(`Manifest v${api.manifest_version}`)) throw new Error('manifest 不一致');
+if (!(await text()).includes(api.freshness.status === 'fresh' ? '新鲜' : api.freshness.status)) throw new Error('freshness 不一致');
 const capabilityCount = api.nodes.filter(n => n.type === 'capability').length;
 await page.getByText(`${capabilityCount} 个 Capability`).waitFor();
-await page.getByLabel('搜索').fill(api.nodes.find(n => n.type === 'capability').name);
+
+// 三层、折叠、证明/覆盖、横切件与交接必须由真实 DOM 证明。
+const capability = api.nodes.find(n => n.type === 'capability' && api.edges.some(e => e.from === n.key && e.type === 'contains'));
+if (!capability) throw new Error('API 无可下钻 Capability');
+const featureEdge = api.edges.find(e => e.from === capability.key && e.type === 'contains');
+const feature = api.nodes.find(n => n.key === featureEdge?.to);
+await page.getByRole('button', { name: new RegExp(capability.name) }).click();
+await page.getByRole('heading', { name: new RegExp('Level 2') }).waitFor();
+if (feature && !(await text()).includes(feature.name)) throw new Error('Feature 层未展示');
+await page.getByText(/证明|Assertion/).first().waitFor();
+await page.getByText(/覆盖|Coverage/).first().waitFor();
+await page.getByRole('heading', { name: '横切件' }).waitFor();
+for (const edge of api.edges.filter(e => e.type === 'hands_off_to')) {
+  const label = edge.attributes?.statement;
+  if (label && !(await text()).includes(label)) throw new Error(`交接未展示: ${label}`);
+}
+const collapse = page.getByRole('button', { name: new RegExp(`折叠.*${capability.name}|${capability.name}.*折叠`) });
+await collapse.click();
+if (feature && await page.getByText(feature.name, { exact: true }).isVisible()) throw new Error('折叠后 Feature 仍可见');
+await page.getByRole('button', { name: new RegExp(capability.name) }).click();
+
+// 搜索保留匹配节点与祖先层级；清空后验证无结果反馈。
+await page.getByLabel('搜索').fill(capability.name);
+await page.getByText(capability.name, { exact: true }).waitFor();
+const parentEdge = api.edges.find(e => e.to === capability.key && e.type === 'contains');
+const parent = api.nodes.find(n => n.key === parentEdge?.from);
+if (parent && !(await text()).includes(parent.name)) throw new Error('搜索未保留祖先层级');
+await page.getByLabel('搜索').fill(`no-match-${Date.now()}`);
+await page.getByText(/没有匹配|无搜索结果/).waitFor();
+await page.getByLabel('搜索').fill('');
 await page.screenshot({ path: `${process.env.SPRINT_DIR}/screenshots/staging-map-search.png`, fullPage: true });
+
+// 快速双切换：等待最后 scope 的响应与 DOM，旧 scope 必须消失。
 await page.getByLabel('Scope').selectOption('zenithjoy-workspace');
 await page.getByRole('button', { name: '加载' }).click();
-await page.waitForResponse(r => r.url().includes('scope=zenithjoy-workspace') && r.ok());
-if ((await body.textContent()).includes(`cecelia ${api.fact_revisions.cecelia?.slice(0, 12)}`)) throw new Error('旧 scope 残留');
+await page.getByLabel('Scope').selectOption('cecelia');
+await page.getByRole('button', { name: '加载' }).click();
+await page.getByLabel('Scope').selectOption('zenithjoy-workspace');
+const lastResponse = page.waitForResponse(r => r.url().includes('scope=zenithjoy-workspace') && r.ok());
+await page.getByRole('button', { name: '加载' }).click();
+const zenApi = await (await lastResponse).json();
+await page.getByText(`Manifest v${zenApi.manifest_version}`).waitFor();
+if (!(await text()).includes('zenithjoy-workspace')) throw new Error('最后 scope 未胜出');
+if ((await text()).includes(`cecelia ${api.fact_revisions.cecelia?.slice(0, 12)}`)) throw new Error('旧 scope 残留');
 await page.screenshot({ path: `${process.env.SPRINT_DIR}/screenshots/staging-map-scope.png`, fullPage: true });
 await browser.close();
 JS
@@ -184,5 +223,5 @@ API_JSON="$API_JSON" SPRINT_DIR="$SPRINT_DIR" node /tmp/map-final-e2e.mjs
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 系统总图实时投影 | `sprints/08240802-kernel-b3da4db6/tests/map-page-contract.test.ts` | `map API 实时投影必须转换为三层可见模型`；`失败或空投影必须清除上一 scope` | MapPage 投影模块尚不存在，import/断言失败 |
+| 系统总图实时投影 | `sprints/08240802-kernel-b3da4db6/tests/map-page-contract.test.ts` | `map API 实时投影必须转换为三层可见模型`；`失败或空投影必须清除上一 scope`；`搜索必须保留匹配能力的祖先层级`；`非 fresh、HTTP 失败和空 nodes`；`双 scope 响应竞态必须只提交最后一次选择` | MapPage 投影模块与竞态控制器尚不存在，import/断言失败 |
 | 页面完整交互（补充） | `apps/dashboard/src/pages/map/MapPage.test.tsx` | `Level 1 展示冻结清单`；`从 Capability 下钻`；`第二个 scope` | MapPage 尚不存在，suite FAIL |

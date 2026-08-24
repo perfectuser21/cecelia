@@ -21,28 +21,28 @@ journey_type: user_facing
   预期观察: 页面显示通用地图、Manifest 版本、freshness 徽标及与 API 相同的 Capability 数量。
   等待预算: 10s
   留证: `sprints/08240802-kernel-b3da4db6/screenshots/staging-map-initial.png` 与 Playwright 输出。
-  Test: manual:bash -c 'curl -sf "localhost:5221/api/brain/map?scope=cecelia" | jq -e ".scope_key==\"cecelia\" and (.manifest_version|type==\"number\") and (.freshness.status|type==\"string\") and ([.nodes[]|select(.type==\"capability\")]|length>0)"'
+  Test: manual:bash -c 'awk '\''/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```/{exit} b{print}'\'' sprints/08240802-kernel-b3da4db6/contract-draft.md >/tmp/map-contract-e2e.sh && bash /tmp/map-contract-e2e.sh'
 
-- [ ] [BEHAVIOR] [L2] B-02: 三层图包含价值流、能力、特性、证明及交接关系
+- [ ] [BEHAVIOR] [L3] B-02: 三层图包含价值流、能力、特性、证明及交接关系 [接缝×2]
   动作: 在页面展开一个 Capability 并继续打开 Assertion 证据。
   预期观察: Feature、证明数/覆盖条、receipt、横切件与 hands_off_to 交接均可见。
   等待预算: 10s
-  留证: Dashboard Vitest 运行日志与最终页面截图。
-  Test: manual:bash -c '(cd apps/dashboard && npx vitest run --no-cache src/pages/map/MapPage.test.tsx)'
+  留证: `sprints/08240802-kernel-b3da4db6/screenshots/staging-map-initial.png` 与 Playwright DOM 断言输出。
+  Test: manual:bash -c 'awk '\''/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```/{exit} b{print}'\'' sprints/08240802-kernel-b3da4db6/contract-draft.md >/tmp/map-contract-e2e.sh && bash /tmp/map-contract-e2e.sh'
 
 - [ ] [BEHAVIOR] [L3] B-03: 双 scope 切换与搜索只展示最终匹配层级 [接缝×2]
   动作: 搜索一个真实 Capability，再快速切换 cecelia 与 zenithjoy-workspace 并加载。
   预期观察: 搜索保留匹配节点祖先；最终视图 scope 等于最后选择且不残留旧 revision。
   等待预算: 10s
   留证: `sprints/08240802-kernel-b3da4db6/screenshots/staging-map-search.png` 与 `staging-map-scope.png`。
-  Test: manual:bash -c 'for S in cecelia zenithjoy-workspace; do curl -sf "localhost:5221/api/brain/map?scope=$S" | jq -e --arg s "$S" ".scope_key==\$s and (.nodes|type==\"array\")" >/dev/null || exit 1; done'
+  Test: manual:bash -c 'awk '\''/^## E2E 验收/{f=1;next} f&&/^## /{exit} f&&/^```bash/{b=1;next} b&&/^```/{exit} b{print}'\'' sprints/08240802-kernel-b3da4db6/contract-draft.md >/tmp/map-contract-e2e.sh && bash /tmp/map-contract-e2e.sh'
 
 - [ ] [BEHAVIOR] [L2] B-04: 非 fresh、请求失败、空投影与无搜索结果均 fail closed
-  动作: 执行页面回归测试覆盖 stale、HTTP 失败、空 nodes、无匹配及竞态响应。
+  动作: 执行本 sprint 冻结测试，以可控响应覆盖 stale、HTTP 失败、空 nodes、无匹配及竞态响应。
   预期观察: 显示明确警示/空态，旧 scope 节点被清除，非 fresh 不显示成功态。
   等待预算: 10s
-  留证: Vitest 失败/通过用例明细。
-  Test: manual:bash -c '(cd apps/dashboard && npx vitest run --no-cache src/pages/map/MapPage.test.tsx)'
+  留证: 冻结 Vitest 的逐用例输出，包含五个字面测试名。
+  Test: manual:bash -c 'npx vitest run --no-cache sprints/08240802-kernel-b3da4db6/tests/map-page-contract.test.ts --reporter=verbose'
 
 - [ ] [BEHAVIOR] [L2] INV-1: 实现基线、分支与验证命令纪律未回退
   动作: 核查当前提交祖先、工作分支与冻结测试执行结果。
