@@ -1,0 +1,29 @@
+{
+  "initiative_id": "7564804c-3e4e-47f0-8981-8e060f16e095",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ orchestrator 纯后端纯函数，无 UI / agent 协议 / engine 路径",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "resolveValidationClock 按 spawn:generator-fix 轮自动顺延 deadline 原点（有界 6 次）",
+      "scope": "改 packages/brain/src/orchestrator/validation-clock.js：generator origin 路径下，按 decisionLog 中 spawn:generator-fix 行的 hop 升序取第 min(次数,6) 行的 created_at 作为顺延原点重算 deadline；无 fix 轮/existing-PR origin 路径保持旧语义逐字节不变；纯函数只依赖 hop 时序与 created_at，不读持久化 detail、不读系统时钟",
+      "dod": [
+        "[BEHAVIOR] B-01 顺延：downstream 采纳最近 generator-fix 原点（复刻 r50 存活）",
+        "[BEHAVIOR] B-02 有界：fix 轮 > 6 冻结第 6 次 fix，deadline 不再增长",
+        "[BEHAVIOR] B-03 语义不变：无 fix 轮时与旧逻辑逐字节一致",
+        "[BEHAVIOR] INV-1 existing-PR evaluator origin 复用路径不顺延",
+        "[BEHAVIOR] B-05 恰好 6 轮 fix 采纳第 6 次（边界）",
+        "[BEHAVIOR] REG 既有 validation-clock 11 条单测零回归",
+        "[ARTIFACT] 冻结契约测试真 import 被改模块"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/validation-clock.js",
+        "sprints/08241515-kernel-r68-validation-clock/tests/validation-clock-fix-extension.test.ts",
+        "tests/gp/f1/step3-validation-clock-fix-round-extension.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
