@@ -89,7 +89,7 @@
 ## Fleet Runner Baseline Recovery（Brain 1.273.56）
 
 - Canonical Runner 更新为冻结来源重建的 `sha256:65763fdcfb70340e1ac8eeb21cd4d1aedf6edcee8e8978e6f59b085ca5f6cc75`，NodeProfile、rollout、reconciler 与 smoke 共享同一不可变 pin。
-- Fleet Worker 准入版本同步为 `1.272.20`；恢复过程仍要求 exact digest、entrypoint 供应链标签和真实容器探针全部通过。
+- Fleet Worker 准入版本同步为 `1.273.136`；恢复过程仍要求 exact digest、entrypoint 供应链标签和真实容器探针全部通过。
 
 ## Generator Local Candidate Runtime Authority（Brain 1.273.55）
 

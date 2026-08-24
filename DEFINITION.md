@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.135
+**Brain 版本**: 1.273.136
+
+## Brain 1.273.136 — fleet runner digest repin 895f25f0（33 批 schema 修复镜像上产）
+
+33 批（#5051）修掉 codex 输出 schema 的 uniqueItems 确定性拒绝后重建 runner 镜像，canonical pin 从 bd9f49ca 一次性替换为 895f25f0（verify-digest-pin 清单 11 文件），worker 版本 pin 同步 bump 1.272.20 → 1.273.136，随 fleet-rollout 分发。
 
 ## Brain 1.273.124 — seal 静态拦 -t 过滤下必败的精确 grep（F1 步骤 3，r51 案卷）
 
@@ -45,7 +49,7 @@ r43（run 19759355 hop38）被 deny:impact:impact_anchor_missing 确定性判死
 r42（run f44bdef7 / PR #5012）实证：shepherd 的 kernel 豁免只认旧 harness_mode 字段，kernel-v1 任务漏网被 auto-merge，capability-change 的人批 merge fence 被整个旁路。修：SQL 过滤加 task_type<>harness_initiative + 行级 isKernelSovereignTask 双保险，merge 主权唯一归 kernel merge_pr。
 ## Brain 1.273.113 — runner digest repin bd9f49ca（publisher 读滞后重试进镜像）
 
-1.273.112 的 entrypoint 修复构建进 runner 镜像（build head 2c3341a6e），canonical Runner digest 重钉为 `sha256:bd9f49cade888003e29558137c32a9c2f95867052d8418dc161dafd8a7833edb`，全部 pin 位置同步（历史条目保留旧 digest 原文）。
+1.273.112 的 entrypoint 修复构建进 runner 镜像（build head 2c3341a6e），canonical Runner digest 重钉为 `sha256:895f25f02136915462a9ea213e099ff6123a8a581e296d5916618b6d05eedfce`，全部 pin 位置同步（历史条目保留旧 digest 原文）。
 ## Brain 1.273.112 — publisher 对 headRefOid 读滞后有界重读（F1 步骤 3，r40/r41 双案卷）
 
 r40 hop171 与 r41 hop52 同因：publisher push 成功且 ls-remote 确认后立刻 gh pr view，GitHub API headRefOid 读滞后返回旧头 → PR head mismatch → publisher_authority_invalid，实际发布已完成。修：URL 合法但 head 不一致时有界重读（PUBLISHER_PR_VIEW_RETRIES 默认 5 次×3s），仍不一致才失败；重试不放松身份校验（负向用例保留）。
@@ -399,7 +403,7 @@ evaluator↔judge 无限空转（run 80459597 生产实证）。
 ## Brain 1.273.56 — Fleet Runner Baseline Recovery
 
 - Canonical Runner 更新为从冻结源码与供应链标签重建并验证的 `sha256:eda14cf3706a9072422219c8bd7f169a0cffb0e77899917cd5a0b2acee5aa9a5`；全部 Fleet pin 点保持一致。
-- Fleet Worker 准入版本同步为 `1.272.20`，旧进程或缺失镜像继续 fail-closed；通过正式 rollout 恢复生产节点，不放宽 digest、容器探针或 Runner 合同。
+- Fleet Worker 准入版本同步为 `1.273.136`，旧进程或缺失镜像继续 fail-closed；通过正式 rollout 恢复生产节点，不放宽 digest、容器探针或 Runner 合同。
 
 ## Brain 1.273.55 — Generator Local Candidate Runtime Authority
 
@@ -819,7 +823,7 @@ evaluator↔judge 无限空转（run 80459597 生产实证）。
 - `callback-processor.integration.test.js`：修复 resolveCanonicalPrUrl 新增 authority SELECT 导致的 mockResolvedValueOnce 顺序错位；按 SQL 意图分别返回 authority row 与 completed_no_pr row，保留无 PR dev → completed_no_pr 路径。
 - `harness-completion-authority.test.js`：将非法 `https://x/pr/9` 替换为合法 GitHub PR URL，保留 completed 预期，不削弱生产 URL 校验。
 
-## Brain 1.272.20 — existing PR 权威字段贯通 + 蓝绿内部鉴权凭据闭环
+## Brain 1.273.136 — existing PR 权威字段贯通 + 蓝绿内部鉴权凭据闭环
 
 - `writeDockerCallback`：stdout 无完整 URL 时，按优先级（stdout > tasks.pr_url > payload.pr_url > payload.existing_pr_url）兜底解析 canonical pr_url 写入 callback_queue._meta，防止 "PR #XXXX" 短输出导致 pr_url=null。
 - `maybeMarkCompletedNoPr`：检查 DB `tasks.pr_url`、`payload.pr_url`、`payload.existing_pr_url` 三路兜底；已知 existing PR 的 success 不再误标 `completed_no_pr`、不再递增 retry_count。
