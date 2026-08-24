@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.136
+**Brain 版本**: 1.273.137
+
+## Brain 1.273.137 — validation clock 按 fix 轮自动顺延（有界 6，F1 步骤 3，r70）
+
+`resolveValidationClock` 在 decision_log 含 N 条 `spawn:generator-fix` 行时，以 hop 时序中第 min(N,6) 条 fix 行为新原点重算 deadline（顺延上限 6，超限冻结在第 6 条原点照常判死）；无 fix 行时语义逐字节不变；缺原点 / detail 不自洽仍 fail-closed 抛 `validation_clock_required` / `validation_clock_invalid`。纯函数只依赖入参 action+hop，可重放。消除长跑多 fix 轮 run 被误杀需人工 psql 续命的稳定性缺口。
 
 ## Brain 1.273.136 — fleet runner digest repin 895f25f0（33 批 schema 修复镜像上产）
 

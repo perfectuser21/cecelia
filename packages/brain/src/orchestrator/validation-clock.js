@@ -13,6 +13,10 @@ const GENERATOR_ACTIONS = new Set([
 
 export const VERIFIED_EXISTING_PR_ORIGIN = 'verified_existing_pr';
 
+// 顺延上限：decision_log 每出现一条 spawn:generator-fix 行，validation clock 原点
+// 最多前移到第 6 条 fix 行；从第 7 条起不再顺延，deadline 冻结在第 6 条原点照常判死。
+const MAX_FIX_DEFERRALS = 6;
+
 function asObject(value) {
   if (!value) return {};
   if (typeof value === 'object') return value;
@@ -59,7 +63,7 @@ export function resolveValidationClock({
   allowEvaluatorOrigin = false,
 }) {
   if (!VALIDATION_ACTIONS.has(action)) return null;
-  const firstValidationOrigin = [...decisionLog]
+  const validationOrigins = [...decisionLog]
     .filter((row) => (
       GENERATOR_ACTIONS.has(row?.action)
       || (
@@ -67,9 +71,16 @@ export function resolveValidationClock({
         && asObject(row?.detail).validation_origin === VERIFIED_EXISTING_PR_ORIGIN
       )
     ))
-    .sort((a, b) => Number(a.hop) - Number(b.hop))[0];
-  if (firstValidationOrigin) {
-    return persistedClock(firstValidationOrigin, timeoutSeconds);
+    .sort((a, b) => Number(a.hop) - Number(b.hop));
+  // 顺延（有界）：decision_log 含 N 条 spawn:generator-fix 行时，以 hop 时序中第
+  // min(N,6) 条 fix 行为新原点重算 deadline；N=0 时退回首个 validation 原点（语义不变）。
+  // 只依赖入参 action+hop，同输入必同输出（可重放）。
+  const fixRows = validationOrigins.filter((row) => row?.action === 'spawn:generator-fix');
+  const validationOrigin = fixRows.length > 0
+    ? fixRows[Math.min(fixRows.length, MAX_FIX_DEFERRALS) - 1]
+    : validationOrigins[0];
+  if (validationOrigin) {
+    return persistedClock(validationOrigin, timeoutSeconds);
   }
   if (action === 'spawn:evaluator' && allowEvaluatorOrigin === true) {
     return exactClock(intentAt, timeoutSeconds);
