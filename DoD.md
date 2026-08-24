@@ -1,72 +1,80 @@
-contract_branch: cp-harness-propose-r2-15338469-re2a90fce-a12
-sprint_dir: sprints/08230906-kernel-15338469
+contract_branch: cp-harness-propose-r1-0fefbcc2-r919d957f-a34
+sprint_dir: sprints/08250010-kernel-r70-validation-clock
 
 ---
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Sprint: capability preflight failed_targets 时效窗口豁免（记仇不跨修复期）
+# Contract DoD — Sprint: validation clock 按 fix 轮自动顺延（有界）[r70]
 
-**范围**: `packages/brain/src/orchestrator/attempt-store.js` 的 `listFailedExecutionTargets` 增加基于 `created_at` 的时效窗口 WHERE 过滤 + 读 `HARNESS_FAILED_TARGET_TTL_HOURS`（默认 2h）；同步更新 repo 既有断言含第三参数。
+**范围**: `packages/brain/src/orchestrator/validation-clock.js` 的 `resolveValidationClock`：decision_log 含 N 条 `spawn:generator-fix` 行时，以第 min(N,6) 条 fix 行（按 hop 排序）为新原点重算 deadline（顺延有界 6）；N=0 语义不变；fail-closed 不削弱。
 **大小**: S
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] 冻结 sprint 测试文件存在且含 created_at make_interval 窗口断言
-  Test: node -e "const c=require('fs').readFileSync('sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts','utf8');if(!c.includes('make_interval')||!c.includes('HARNESS_FAILED_TARGET_TTL_HOURS'))process.exit(1)"
+- [x] [ARTIFACT] sprint 封印冻结测试存在且含 fix 行顺延 + 有界 + fail-closed 断言
+  Test: manual:bash -c "node -e \"const c=require('fs').readFileSync('sprints/08250010-kernel-r70-validation-clock/tests/validation-clock-fix-round-deferral.test.js','utf8'); if(!c.includes('spawn:generator-fix')||!c.includes('2026-08-03T13:30:00.000Z')||!c.includes('2026-08-03T17:30:00.000Z')||!c.includes('validation_clock_invalid')) process.exit(1)\""
   期望: exit 0
 
-- [x] [ARTIFACT] attempt-store.js 读取 HARNESS_FAILED_TARGET_TTL_HOURS 且 SQL 含 created_at 时效窗口
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/attempt-store.js','utf8');if(!c.includes('HARNESS_FAILED_TARGET_TTL_HOURS')||!/created_at\s*>=\s*NOW\(\)\s*-\s*make_interval/.test(c))process.exit(1)"
+- [x] [ARTIFACT] gp 闸冻结测试存在且含 r50 顺延 + 有界断言
+  Test: manual:bash -c "node -e \"const c=require('fs').readFileSync('tests/gp/f1/step3-validation-clock-fix-round-deferral.test.js','utf8'); if(!c.includes('2026-08-03T13:30:00.000Z')||!c.includes('2026-08-03T17:30:00.000Z')) process.exit(1)\""
   期望: exit 0
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令；autonomous / local_api）
+## BEHAVIOR 条目（内嵌可执行 manual: 命令；autonomous / local_api，纯函数进程内直调无 DB）
 
-- [x] [BEHAVIOR] [L1] B-01: 默认 2 小时窗口 SQL 用 created_at make_interval 过滤且第三参数为 2
-  动作: 不设 HARNESS_FAILED_TARGET_TTL_HOURS，调 listFailedExecutionTargets 并断言发往 pool.query 的 SQL 与绑定参数
-  预期观察: SQL 含 `created_at >= NOW() - make_interval(hours => $3)`，params 为 `[runId, role, 2]`（对应冻结测试通过）
+- [x] [BEHAVIOR] [L2] B-01: r50 replay — 2 条 generator-fix 后 deadline 顺延到最后一条 fix 原点（旧判死新存活）
+  动作: 构造 decision_log = 1 条 spawn:generator(10:00) + 2 条 spawn:generator-fix(11:00/12:00)，以 downstream action=spawn:evaluator 调 resolveValidationClock
+  预期观察: 返回 pipeline_started_at=12:00、deadline_at=13:30（新原点=最后一条 fix；旧逻辑返回 11:30）
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "默认 2 小时窗口经 created_at make_interval 过滤且第三参数为 2" 2>&1'
+  留证: node 命令 stdout 末行 `OK 2026-08-03T13:30:00.000Z`
+  Test: manual:bash -c "node --input-type=module -e \"const {resolveValidationClock}=await import('./packages/brain/src/orchestrator/validation-clock.js'); const log=[{hop:10,action:'spawn:generator',created_at:'2026-08-03T10:00:00.000Z'},{hop:20,action:'spawn:generator-fix',created_at:'2026-08-03T11:00:00.000Z'},{hop:30,action:'spawn:generator-fix',created_at:'2026-08-03T12:00:00.000Z'}]; const r=resolveValidationClock({action:'spawn:evaluator',decisionLog:log,intentAt:'2026-08-03T12:30:00.000Z',timeoutSeconds:5400}); if(r.pipeline_started_at!=='2026-08-03T12:00:00.000Z'||r.deadline_at!=='2026-08-03T13:30:00.000Z'){console.error('FAIL',JSON.stringify(r));process.exit(1)} console.log('OK',r.deadline_at)\""
+  期望: exit 0 且 stdout 含 OK 2026-08-03T13:30:00.000Z
 
-- [x] [BEHAVIOR] [L1] B-02: HARNESS_FAILED_TARGET_TTL_HOURS 覆盖窗口小时数进第三参数
-  动作: 设 HARNESS_FAILED_TARGET_TTL_HOURS=5，调 listFailedExecutionTargets 并断言第三绑定参数
-  预期观察: params 第三项为 5（env 覆盖生效）
+- [x] [BEHAVIOR] [L2] B-02: 有界冻结 — 7 条 generator-fix 时 deadline 冻结在第 6 条原点（超限不再顺延）
+  动作: 构造 1 条 generator(10:00) + 7 条 generator-fix(11:00..17:00)，以 action=spawn:judge 调用
+  预期观察: 返回 pipeline_started_at=16:00（第 6 条 fix）、deadline_at=17:30（非第 7 条 18:30）
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "覆盖窗口小时数进第三参数" 2>&1'
+  留证: node 命令 stdout 末行 `OK 2026-08-03T17:30:00.000Z`
+  Test: manual:bash -c "node --input-type=module -e \"const {resolveValidationClock}=await import('./packages/brain/src/orchestrator/validation-clock.js'); const log=[{hop:10,action:'spawn:generator',created_at:'2026-08-03T10:00:00.000Z'}]; for(let i=0;i<7;i++){log.push({hop:20+i*10,action:'spawn:generator-fix',created_at:'2026-08-03T'+String(11+i).padStart(2,'0')+':00:00.000Z'})} const r=resolveValidationClock({action:'spawn:judge',decisionLog:log,intentAt:'2026-08-03T18:00:00.000Z',timeoutSeconds:5400}); if(r.pipeline_started_at!=='2026-08-03T16:00:00.000Z'||r.deadline_at!=='2026-08-03T17:30:00.000Z'){console.error('FAIL',JSON.stringify(r));process.exit(1)} console.log('OK',r.deadline_at)\""
+  期望: exit 0 且 stdout 含 OK 2026-08-03T17:30:00.000Z
 
-- [x] [BEHAVIOR] [L1] B-03: 非法 HARNESS_FAILED_TARGET_TTL_HOURS 回退默认 2 小时
-  动作: 设 HARNESS_FAILED_TARGET_TTL_HOURS=not-a-number，调 listFailedExecutionTargets 并断言第三绑定参数
-  预期观察: params 第三项回退为 2（非法值不破坏 preflight）
+- [x] [BEHAVIOR] [L2] B-03: regression-nofix — 无 generator-fix 行时 deadline 与现状逐字节一致
+  动作: 构造仅 1 条 generator(10:00)（无 fix 行），以 action=spawn:evaluator 调用
+  预期观察: 返回 pipeline_started_at=10:00、deadline_at=11:30（首 generator 原点，语义不变）
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "回退默认 2 小时" 2>&1'
+  留证: node 命令 stdout 末行 `OK 2026-08-03T11:30:00.000Z`
+  Test: manual:bash -c "node --input-type=module -e \"const {resolveValidationClock}=await import('./packages/brain/src/orchestrator/validation-clock.js'); const r=resolveValidationClock({action:'spawn:evaluator',decisionLog:[{hop:10,action:'spawn:generator',created_at:'2026-08-03T10:00:00.000Z'}],intentAt:'2026-08-03T10:20:00.000Z',timeoutSeconds:5400}); if(r.pipeline_started_at!=='2026-08-03T10:00:00.000Z'||r.deadline_at!=='2026-08-03T11:30:00.000Z'){console.error('FAIL',JSON.stringify(r));process.exit(1)} console.log('OK',r.deadline_at)\""
+  期望: exit 0 且 stdout 含 OK 2026-08-03T11:30:00.000Z
 
-- [x] [BEHAVIOR] [L1] B-04: 窗口边界采用窗口内含语义使用大于等于比较
-  动作: 调 listFailedExecutionTargets 并断言 SQL 用 `>=` 而非 `>` 比较 created_at
-  预期观察: SQL 含 `created_at >=`，不含 `created_at > NOW`（窗口内含）
+- [x] [BEHAVIOR] [L2] B-04: invariant-failclosed — downstream 角色缺原点仍 fail-closed
+  动作: 以 action=spawn:evaluator、decisionLog=[] 调用（下游角色无 generator clock）
+  预期观察: 抛 Error 且 message 含 validation_clock_required（拦截，不静默放行）
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "窗口内含语义使用大于等于比较" 2>&1'
+  留证: node 命令 stdout 末行 `OK threw ...validation_clock_required`
+  Test: manual:bash -c "node --input-type=module -e \"const {resolveValidationClock}=await import('./packages/brain/src/orchestrator/validation-clock.js'); try{resolveValidationClock({action:'spawn:evaluator',decisionLog:[],intentAt:'2026-08-03T10:00:00.000Z',timeoutSeconds:5400});console.error('FAIL no throw');process.exit(1)}catch(e){if(!String(e.message).includes('validation_clock_required')){console.error('FAIL',e.message);process.exit(1)} console.log('OK threw',e.message)}\""
+  期望: exit 0 且 stdout 含 OK threw
 
-- [x] [BEHAVIOR] [L1] INV-1 B-05: 窗口内失败记录仍映射为执行目标保持记仇语义不变（负向不变量）
-  动作: mock pool 返回一条窗口内失败行，调 listFailedExecutionTargets 断言返回映射
-  预期观察: 返回 `[{provider,account,machine}]` 逐字映射，记仇语义不变（连续新鲜失败仍计入）
+- [x] [BEHAVIOR] [L2] B-05: replay-order — 乱序 hop 传入按 hop 排序后取顺延原点，可重放
+  动作: 用与 B-01 相同的行但数组顺序打乱（fix30, gen10, fix20），调用
+  预期观察: 返回 deadline_at=13:30（按 hop 排序后同 B-01，结果不依赖数组顺序）
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "记仇语义不变" 2>&1'
+  留证: node 命令 stdout 末行 `OK 2026-08-03T13:30:00.000Z`
+  Test: manual:bash -c "node --input-type=module -e \"const {resolveValidationClock}=await import('./packages/brain/src/orchestrator/validation-clock.js'); const log=[{hop:30,action:'spawn:generator-fix',created_at:'2026-08-03T12:00:00.000Z'},{hop:10,action:'spawn:generator',created_at:'2026-08-03T10:00:00.000Z'},{hop:20,action:'spawn:generator-fix',created_at:'2026-08-03T11:00:00.000Z'}]; const r=resolveValidationClock({action:'spawn:evaluator',decisionLog:log,intentAt:'2026-08-03T12:30:00.000Z',timeoutSeconds:5400}); if(r.deadline_at!=='2026-08-03T13:30:00.000Z'){console.error('FAIL',JSON.stringify(r));process.exit(1)} console.log('OK',r.deadline_at)\""
+  期望: exit 0 且 stdout 含 OK 2026-08-03T13:30:00.000Z
 
-- [x] [BEHAVIOR] [L1] INV-1 B-06: repo 既有终态失败执行目标 SQL 分支不回退（含更新后第三参数）
-  动作: 在 packages/brain 包内跑 repo 既有 attempt-store 断言（status/error_code 豁免分支 + 更新后第三参数 2）
-  预期观察: 既有 SQL 分支（failed/cancelled、blocked+infrastructure_blocked、error_code NOT IN 豁免）不变，params 更新为含第三参数
+- [x] [BEHAVIOR] [L2] B-06: persisted-inconsistent — 顺延原点 detail 自相矛盾时 fail-closed
+  动作: 构造最后一条 fix 携带自相矛盾 detail(pipeline_started_at=12:00, deadline_at=14:00，与 12:00+5400s=13:30 不符)，调用
+  预期观察: 抛 Error 且 message 含 validation_clock_invalid（顺延原点复用 persistedClock 一致性校验，防造假）
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'cd packages/brain && npx vitest run --no-cache ./src/orchestrator/__tests__/attempt-store.test.js -t "终态失败执行目标" 2>&1'
+  留证: node 命令 stdout 末行 `OK threw ...validation_clock_invalid`
+  Test: manual:bash -c "node --input-type=module -e \"const {resolveValidationClock}=await import('./packages/brain/src/orchestrator/validation-clock.js'); const log=[{hop:10,action:'spawn:generator',created_at:'2026-08-03T10:00:00.000Z'},{hop:20,action:'spawn:generator-fix',created_at:'2026-08-03T12:05:00.000Z',detail:{pipeline_started_at:'2026-08-03T12:00:00.000Z',deadline_at:'2026-08-03T14:00:00.000Z'}}]; try{resolveValidationClock({action:'spawn:evaluator',decisionLog:log,intentAt:'2026-08-03T12:30:00.000Z',timeoutSeconds:5400});console.error('FAIL no throw');process.exit(1)}catch(e){if(!String(e.message).includes('validation_clock_invalid')){console.error('FAIL',e.message);process.exit(1)} console.log('OK threw',e.message)}\""
+  期望: exit 0 且 stdout 含 OK threw
 
-- [x] [BEHAVIOR] [L1] B-07: repo 路径回归——时效窗口默认 2h 且 env 覆盖进 SQL 第三参数
-  动作: 在 packages/brain 包内跑 repo 新增 TTL 回归断言（默认 2 与 env=5 两分支）
-  预期观察: 默认无 env → 第三参数 2 且 SQL 含 created_at make_interval；env=5 → 第三参数 5
-  等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'cd packages/brain && npx vitest run --no-cache ./src/orchestrator/__tests__/attempt-store.test.js -t "覆盖进 SQL 第三参数" 2>&1'
+## Invariant 覆盖（历史约束三源 — 铁律逐条映射）
+
+- [x] [BEHAVIOR] INV-1 [fail-closed]: 顺延逻辑不得使缺失原点时静默放行 —— 由 B-04（缺原点抛 validation_clock_required）+ B-06（detail 不自洽抛 validation_clock_invalid）共同覆盖
+  Test: manual:bash -c "node --input-type=module -e \"const {resolveValidationClock}=await import('./packages/brain/src/orchestrator/validation-clock.js'); let ok=0; try{resolveValidationClock({action:'spawn:judge',decisionLog:[],intentAt:'2026-08-03T10:00:00.000Z',timeoutSeconds:5400})}catch(e){if(String(e.message).includes('validation_clock_required'))ok++} if(ok!==1){console.error('FAIL fail-closed 被削弱');process.exit(1)} console.log('OK fail-closed 保留')\""
+  期望: exit 0 且 stdout 含 OK fail-closed 保留
+- INV-2 [planner-branch] N/A：本 sprint 不涉及 planner workspace 分支操作（proposer 只写合同产物，不 checkout/switch）。
+- INV-3 [合同边界] N/A（非可执行行为断言）：可写白名单已在 contract-draft.md「可写白名单」段显式含全部 CI 门禁产物，禁建计划外文件、禁锁死为仅实现文件。
+- INV-4 [纯函数] 由 B-05（乱序可重放）+ determinism 冻结测试覆盖：只依赖入参 action+hop，同输入必同输出。
