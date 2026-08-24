@@ -1,72 +1,68 @@
-contract_branch: cp-harness-propose-r2-15338469-re2a90fce-a12
-sprint_dir: sprints/08230906-kernel-15338469
+contract_branch: cp-harness-propose-r2-9daed395-r08b55939-a89
+sprint_dir: sprints/08241956-kernel-9daed395
 
 ---
 skeleton: false
-journey_type: autonomous
+journey_type: user_facing
 ---
-# Contract DoD — Sprint: capability preflight failed_targets 时效窗口豁免（记仇不跨修复期）
+# Contract DoD — Sprint: 系统总图页上线（map 投影现算 + mind-elixir 三层脑图）
 
-**范围**: `packages/brain/src/orchestrator/attempt-store.js` 的 `listFailedExecutionTargets` 增加基于 `created_at` 的时效窗口 WHERE 过滤 + 读 `HARNESS_FAILED_TARGET_TTL_HOURS`（默认 2h）；同步更新 repo 既有断言含第三参数。
-**大小**: S
+**范围**: 在既有 `apps/api/features/planning/pages/MapPage.tsx`（live 现算总图页，已绿）上 **additive** 叠加 mind-elixir 三层可折叠脑图 + 纯函数 view-model + `apps/dashboard/package.json` 依赖；不删改既有语义 DOM，不新增/改后端端点，不新建顶层目录。
+**大小**: M
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] 冻结 sprint 测试文件存在且含 created_at make_interval 窗口断言
-  Test: node -e "const c=require('fs').readFileSync('sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts','utf8');if(!c.includes('make_interval')||!c.includes('HARNESS_FAILED_TARGET_TTL_HOURS'))process.exit(1)"
-  期望: exit 0
+- [ ] [ARTIFACT] apps/dashboard/package.json 声明 mind-elixir 依赖（MIT）
+  Test: node -e "const p=require('/workspace/apps/dashboard/package.json');const d={...(p.dependencies||{}),...(p.devDependencies||{})};if(!d['mind-elixir'])process.exit(1)"
 
-- [x] [ARTIFACT] attempt-store.js 读取 HARNESS_FAILED_TARGET_TTL_HOURS 且 SQL 含 created_at 时效窗口
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/orchestrator/attempt-store.js','utf8');if(!c.includes('HARNESS_FAILED_TARGET_TTL_HOURS')||!/created_at\s*>=\s*NOW\(\)\s*-\s*make_interval/.test(c))process.exit(1)"
-  期望: exit 0
+- [ ] [ARTIFACT] view-model 纯函数落在 planning 内部并导出 buildMindmapTree
+  Test: node -e "const c=require('fs').readFileSync('/workspace/apps/api/features/planning/pages/mapMindmap.ts','utf8');if(!/export\s+function\s+buildMindmapTree|export\s+const\s+buildMindmapTree/.test(c))process.exit(1)"
 
-## BEHAVIOR 条目（内嵌可执行 manual: 命令；autonomous / local_api）
+- [ ] [ARTIFACT] MapPage.tsx 挂载 mind-elixir 容器且引用 view-model（不删既有语义 DOM）
+  Test: node -e "const c=require('fs').readFileSync('/workspace/apps/api/features/planning/pages/MapPage.tsx','utf8');if(!c.includes('map-mindmap')||!c.includes('mapMindmap')||!c.includes('通用地图'))process.exit(1)"
 
-- [x] [BEHAVIOR] [L1] B-01: 默认 2 小时窗口 SQL 用 created_at make_interval 过滤且第三参数为 2
-  动作: 不设 HARNESS_FAILED_TARGET_TTL_HOURS，调 listFailedExecutionTargets 并断言发往 pool.query 的 SQL 与绑定参数
-  预期观察: SQL 含 `created_at >= NOW() - make_interval(hours => $3)`，params 为 `[runId, role, 2]`（对应冻结测试通过）
+## BEHAVIOR 条目（五行剧本，内嵌 manual:bash 单行命令）
+
+- [ ] [BEHAVIOR] [L2] B-01: mind-elixir view-model 从 contains 边推导三层脑图
+  动作: 运行本 sprint 冻结测试 sprints/08241956-kernel-9daed395/tests/map-mindmap.test.ts
+  预期观察: buildMindmapTree(nodes,edges) 返回 2 个价值流根，能力挂在其价值流下，特性经折叠 backbone 挂在能力下（三层嵌套），测试全绿
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "默认 2 小时窗口经 created_at make_interval 过滤且第三参数为 2" 2>&1'
+  留证: vitest 输出末 5 行（含 Tests passed）
+  Test: manual:bash -c 'cd /workspace && npx vitest run sprints/08241956-kernel-9daed395/tests/map-mindmap.test.ts --reporter=dot'
 
-- [x] [BEHAVIOR] [L1] B-02: HARNESS_FAILED_TARGET_TTL_HOURS 覆盖窗口小时数进第三参数
-  动作: 设 HARNESS_FAILED_TARGET_TTL_HOURS=5，调 listFailedExecutionTargets 并断言第三绑定参数
-  预期观察: params 第三项为 5（env 覆盖生效）
+- [ ] [BEHAVIOR] [L2] B-02: 权威回归测试保持 4/4 全绿（mind-elixir additive 不回归）
+  动作: 运行既有权威测试 apps/dashboard/src/pages/map/MapPage.test.tsx
+  预期观察: 原有 4 条断言（唯一 /map 注册、Level1 全景、下钻 receipt、第二 scope 回退）全过，退出码 0
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "覆盖窗口小时数进第三参数" 2>&1'
+  留证: vitest 输出（Test Files 1 passed / Tests 4 passed）
+  Test: manual:bash -c 'cd /workspace/apps/dashboard && npx vitest run src/pages/map/MapPage.test.tsx --reporter=dot'
 
-- [x] [BEHAVIOR] [L1] B-03: 非法 HARNESS_FAILED_TARGET_TTL_HOURS 回退默认 2 小时
-  动作: 设 HARNESS_FAILED_TARGET_TTL_HOURS=not-a-number，调 listFailedExecutionTargets 并断言第三绑定参数
-  预期观察: params 第三项回退为 2（非法值不破坏 preflight）
+- [ ] [BEHAVIOR] [L2] B-03: /map 页渲染 mind-elixir 容器且非 fresh 出现可见提示（stale mock 单测）
+  动作: 运行 apps/dashboard/src/pages/map/ 全部组件测试（含新增 mindmap 容器断言 + stale freshness 提示断言）
+  预期观察: 渲染 MapPage 出现 data-testid=map-mindmap 容器；freshness.status!=fresh 时出现可见提示元素（role=status 或警示文案），测试全绿
   等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "回退默认 2 小时" 2>&1'
+  留证: vitest 输出（含 mindmap/stale 用例通过）
+  Test: manual:bash -c 'cd /workspace/apps/dashboard && npx vitest run src/pages/map/ --reporter=dot'
 
-- [x] [BEHAVIOR] [L1] B-04: 窗口边界采用窗口内含语义使用大于等于比较
-  动作: 调 listFailedExecutionTargets 并断言 SQL 用 `>=` 而非 `>` 比较 created_at
-  预期观察: SQL 含 `created_at >=`，不含 `created_at > NOW`（窗口内含）
-  等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "窗口内含语义使用大于等于比较" 2>&1'
+- [ ] [BEHAVIOR] [L2] B-04: cecelia scope 现算 summary == 2 价值流 / 11 能力（页面读数与 API 一致） [接缝×2]
+  动作: 现算读取 GET /api/brain/map?scope=cecelia 的 summary
+  预期观察: value_streams==2 且 capabilities==11（与页面 DOM 文案同值，E2E 交叉验证）
+  等待预算: 10s
+  留证: curl+jq 输出（summary JSON）
+  Test: manual:bash -c 'S=$(curl -sf --max-time 10 "localhost:5221/api/brain/map?scope=cecelia"); echo "$S" | jq -e ".summary.value_streams==2 and .summary.capabilities==11" || { echo FAIL; exit 1; }; echo OK'
 
-- [x] [BEHAVIOR] [L1] INV-1 B-05: 窗口内失败记录仍映射为执行目标保持记仇语义不变（负向不变量）
-  动作: mock pool 返回一条窗口内失败行，调 listFailedExecutionTargets 断言返回映射
-  预期观察: 返回 `[{provider,account,machine}]` 逐字映射，记仇语义不变（连续新鲜失败仍计入）
-  等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'npx vitest run sprints/08230906-kernel-15338469/tests/failed-target-ttl.test.ts -t "记仇语义不变" 2>&1'
+- [ ] [BEHAVIOR] [L2] B-05: error path — 缺 scope 参数返回 4xx（不静默兜底）
+  动作: 请求 GET /api/brain/map（不带 scope）
+  预期观察: HTTP 400（MAP_SCOPE_REQUIRED），非 200 假绿
+  等待预算: 6s
+  留证: curl 状态码输出
+  Test: manual:bash -c 'CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 6 "localhost:5221/api/brain/map"); [ "$CODE" = "400" ] || { echo "FAIL: HTTP=$CODE"; exit 1; }; echo OK'
 
-- [x] [BEHAVIOR] [L1] INV-1 B-06: repo 既有终态失败执行目标 SQL 分支不回退（含更新后第三参数）
-  动作: 在 packages/brain 包内跑 repo 既有 attempt-store 断言（status/error_code 豁免分支 + 更新后第三参数 2）
-  预期观察: 既有 SQL 分支（failed/cancelled、blocked+infrastructure_blocked、error_code NOT IN 豁免）不变，params 更新为含第三参数
-  等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'cd packages/brain && npx vitest run --no-cache ./src/orchestrator/__tests__/attempt-store.test.js -t "终态失败执行目标" 2>&1'
+## BEHAVIOR:E2E 条目（user_facing 专属，Mode B final-e2e 跑，mac_web）
 
-- [x] [BEHAVIOR] [L1] B-07: repo 路径回归——时效窗口默认 2h 且 env 覆盖进 SQL 第三参数
-  动作: 在 packages/brain 包内跑 repo 新增 TTL 回归断言（默认 2 与 env=5 两分支）
-  预期观察: 默认无 env → 第三参数 2 且 SQL 含 created_at make_interval；env=5 → 第三参数 5
-  等待预算: 0s
-  留证: 命令输出末行（含 passed 计数）
-  Test: manual:bash -c 'cd packages/brain && npx vitest run --no-cache ./src/orchestrator/__tests__/attempt-store.test.js -t "覆盖进 SQL 第三参数" 2>&1'
+- [ ] [BEHAVIOR:E2E] 用户完整走完 Golden Path（打开 /#/map → 语义全景+mind-elixir 脑图 → scope 切换重渲染 → freshness 徽标），截图可视化验证
+  Screenshots:
+    - 01-initial.png   期望：/#/map 加载，通用地图标题可见，2 条价值流 / 11 个 Capability 与 API summary 一致
+    - 02-action.png    期望：mind-elixir 容器可见非空，freshness 徽标显示「新鲜」
+    - 03-result.png    期望：scope 切到 zenithjoy-workspace 后数字变为该 scope summary（5/20），无旧 scope 残留
+  期望：所有截图与期望描述一致，脚本 exit 0（详见 contract-draft.md ## E2E 验收）
