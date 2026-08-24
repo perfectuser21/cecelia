@@ -1,0 +1,31 @@
+{
+  "initiative_id": "89957abc-5c64-45fb-8be6-2d52b58b0e35",
+  "journey_type": "user_facing",
+  "journey_type_reason": "主体是 apps/dashboard 前端 + apps/api/features/planning 的 /map 页面，走浏览器打开 Cecelia Dashboard（localhost:5174），mac_web Playwright 验收。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "系统总图页 /map 升级为直连 /api/brain/map 现算的三层可折叠 mind-elixir 脑图",
+      "scope": "改造 apps/api/features/planning/pages/MapPage.tsx 为 live-fetch 三层可折叠 mind-elixir 脑图（价值流→能力→特性，含测试证明数/覆盖条、横切件与 handoff 面板、scope 切换、搜索、freshness 徽标与非 fresh 过期提示、空/错误态不白屏、并发 last-wins）；view-model/组件配套放 apps/api/features/planning 内部；apps/api/features/system-hub/index.ts 保证 /map 可达；apps/dashboard/package.json 新增 mind-elixir(MIT) 依赖；写 apps/dashboard/e2e/map.spec.ts（禁 page.route 拦截 /api/brain/map）；更新 apps/dashboard/src/pages/map/MapPage.test.tsx 保持 /map 路由存在并通过。禁止新建顶层目录，不改后端投影算法。",
+      "dod": [
+        "[BEHAVIOR] cecelia scope 现算返回 2 价值流、11 能力且节点数量/名称与 API 一致（curl+jq，见 contract-dod B-01/B-02）",
+        "[BEHAVIOR] freshness 非 fresh 时页面出现可见过期提示 + reason_code，禁止静默判 fresh（B-03 + E2E cross-check）",
+        "[BEHAVIOR] 空/错误态不白屏 + scope 并发 last-wins（dashboard 组件测试，B-04）",
+        "[BEHAVIOR] mind-elixir(MIT) 入依赖 + /map 路由与 dashboard MapPage 测试 keep-green（B-05）",
+        "[BEHAVIOR:E2E] Playwright 打开 /map 三层脑图/切 scope/搜索/freshness 提示并截图（mode B）",
+        "[ARTIFACT] apps/dashboard/package.json 含 mind-elixir；MapPage.tsx 接入 mind-elixir；apps/dashboard/e2e/map.spec.ts 存在且不 page.route 拦截 map API"
+      ],
+      "files": [
+        "apps/api/features/planning/pages/MapPage.tsx",
+        "apps/api/features/planning/",
+        "apps/api/features/system-hub/index.ts",
+        "apps/dashboard/src/pages/map/MapPage.test.tsx",
+        "apps/dashboard/package.json",
+        "apps/dashboard/e2e/map.spec.ts"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
