@@ -549,7 +549,7 @@ jq -e '
     "action","expected","wait_budget","evidence"
   ]
   and .properties.decision.anyOf[0].properties.failure_signature.anyOf[0] == {
-    "type":"array","minItems":1,"maxItems":64,"uniqueItems":true,
+    "type":"array","minItems":1,"maxItems":64,
     "items":{"type":"string","minLength":1,"maxLength":512}
   }
   and .properties.decision.anyOf[0].properties.failure_signature.anyOf[1].type == "null"
@@ -566,7 +566,7 @@ JSON
 JUDGE_SCHEMA="$(provider_result_schema_json "$JUDGE_SCHEMA_TMP/task.json")"
 jq -e '
   .properties.decision.anyOf[0].properties.failure_signature.anyOf[0] == {
-    "type":"array","minItems":1,"maxItems":64,"uniqueItems":true,
+    "type":"array","minItems":1,"maxItems":64,
     "items":{"type":"string","minLength":1,"maxLength":512}
   }
   and .properties.decision.anyOf[0].properties.failure_signature.anyOf[1].type == "null"
