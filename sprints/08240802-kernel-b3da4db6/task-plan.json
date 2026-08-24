@@ -1,0 +1,27 @@
+{
+  "initiative_id": "b3da4db6-9d2a-40ea-8de9-7860adcaa4a3",
+  "journey_type": "user_facing",
+  "journey_type_reason": "用户通过 Dashboard 浏览器进入系统总图并操作双 scope、搜索和折叠。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "上线 Dashboard 系统总图实时投影页",
+      "scope": "实现 system-hub 入口、双 scope 实时地图、三层浏览、证明覆盖、横切交接、搜索及异常状态。",
+      "dod": [
+        "[BEHAVIOR] mac_web 浏览器显示与真实 map API 一致的 manifest、freshness、节点层级及最终 scope",
+        "[BEHAVIOR] stale/失败/空投影不保留旧数据且显示明确状态",
+        "[ARTIFACT] planning feature manifest 唯一注册 /map 并登记 mind-elixir"
+      ],
+      "files": [
+        "apps/core/features/planning/pages/MapPage.tsx",
+        "apps/core/features/planning/pages/map-view-model.ts",
+        "apps/core/features/planning/index.ts",
+        "apps/dashboard/package.json",
+        "apps/dashboard/src/pages/map/MapPage.test.tsx"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
