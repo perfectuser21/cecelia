@@ -1,0 +1,29 @@
+{
+  "initiative_id": "8bb8252f-29b4-4c34-acb9-1accda7ddfcf",
+  "journey_type": "user_facing",
+  "journey_type_reason": "涉及 apps/dashboard 与 apps/api/features/planning 的用户可见 /map 总图页，前端页面渲染",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "在既有 /map 现算总图页上 additive 叠加 mind-elixir 三层脑图 + view-model + 依赖",
+      "scope": "keep-green 增量：不删改既有语义 DOM、不改后端、不新建顶层目录，只在 planning 内部加 mind-elixir 三层可折叠脑图（价值流→能力→特性）与纯函数 view-model，并把 mind-elixir 依赖加进 apps/dashboard/package.json；权威 MapPage.test.tsx 保持 4/4 全绿",
+      "dod": [
+        "[BEHAVIOR] 冻结 view-model 测试 sprints/08241956-kernel-9daed395/tests/map-mindmap.test.ts 全绿（三层结构推导）",
+        "[BEHAVIOR] apps/dashboard/src/pages/map/MapPage.test.tsx 保持 4/4 全绿（additive 不回归）",
+        "[BEHAVIOR] apps/dashboard/src/pages/map/ 组件测试含 map-mindmap 容器断言 + 非 fresh 可见提示（stale mock）全绿",
+        "[ARTIFACT] apps/dashboard/package.json 含 mind-elixir 依赖",
+        "[ARTIFACT] apps/api/features/planning/pages/mapMindmap.ts 导出 buildMindmapTree",
+        "[ARTIFACT] apps/api/features/planning/pages/MapPage.tsx 挂载 data-testid=map-mindmap 容器并引用 view-model"
+      ],
+      "files": [
+        "apps/api/features/planning/pages/MapPage.tsx",
+        "apps/api/features/planning/pages/mapMindmap.ts",
+        "apps/dashboard/package.json",
+        "apps/dashboard/src/pages/map/"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
