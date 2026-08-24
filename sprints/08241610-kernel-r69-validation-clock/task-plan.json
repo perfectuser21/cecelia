@@ -1,0 +1,26 @@
+{
+  "initiative_id": "cf7e6c30-d24b-4c90-aa13-e6cc5333d24b",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 后端 orchestrator 纯函数与单元测试，无 UI/agent 协议/engine。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "resolveValidationClock 按 fix 轮有界顺延（上限 6，纯函数可重放）",
+      "scope": "修改 packages/brain/src/orchestrator/validation-clock.js：每个出现在 decision-log 中的 spawn:generator-fix 行成为新 clock 原点，deadline=该 fix 持久化时间+timeout_seconds；顺延上限 6 次，第 7+ 个 fix 不再前移锚点；0 fix 轮与 verified_existing_pr 语义不变；不改 timeout_seconds 默认值 5400、不动人审 deadline。冻结测试落 tests/gp/f1/step3-validation-clock-fix-extend.test.js。严禁写 tests/regression/ 或任何合同外目录。",
+      "dod": [
+        "[BEHAVIOR] 冻结测试 tests/gp/f1/step3-validation-clock-fix-extend.test.js 6 用例全绿（r50 复刻存活 + 有界 + 0 fix 不变 + 可重放 + verified 不变量）",
+        "[BEHAVIOR] 既有 packages/brain/src/orchestrator/__tests__/validation-clock.test.js 11/11 不退（INV-1）",
+        "[BEHAVIOR] 顺延有界：7+ fix 轮锚停第 6 个 fix，deadline 不前移到第 7 个",
+        "[BEHAVIOR] 合同外路径零写入：变更文件 ⊆ 合同 claim 集合，tests/regression/ 无新增",
+        "[ARTIFACT] packages/brain/src/orchestrator/validation-clock.js 含 generator-fix 顺延 + 上限 6 逻辑"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/validation-clock.js",
+        "tests/gp/f1/step3-validation-clock-fix-extend.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
