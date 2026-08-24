@@ -1,0 +1,25 @@
+{
+  "initiative_id": "e60e3a93-6e6e-42ff-9b51-31440e7ebbf0",
+  "journey_type": "autonomous",
+  "journey_type_reason": "变更是 Brain 内部纯函数 validation clock 行为",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 validation clock 按成功 fix 轮有界顺延",
+      "scope": "按 decision log hop 时序选择最多六次成功 generator-fix 原点，保持失败派发、超限、无 fix 与既有 fail-closed 语义",
+      "dod": [
+        "[BEHAVIOR] r50 类健康 run 以最新有效 fix 重置 pipeline deadline",
+        "[BEHAVIOR] 第七次及以后不顺延，失败派发不顺延，无 fix 语义不变",
+        "[ARTIFACT] validation-clock.js、Brain DEFINITION 版本同步与永久 GP 回归测试"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/validation-clock.js",
+        "packages/brain/DEFINITION.md",
+        "tests/gp/f1/step3-validation-clock-fix-extension.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
