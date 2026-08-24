@@ -1,0 +1,25 @@
+{
+  "initiative_id": "ceda84c2-9722-42a1-85d3-b2b0e4250be0",
+  "journey_type": "autonomous",
+  "journey_type_reason": "变更是 Brain Kernel 纯函数的后端判定逻辑",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "实现 validation clock 按 fix 轮有界顺延",
+      "scope": "让前 6 次获得匹配 effect:attempt_launched 回执的 generator-fix 重置 pipeline clock，失败或被阻断的 intent 不顺延，并保持超限、无 fix、fail-closed 与人审 deadline 语义",
+      "dod": [
+        "[BEHAVIOR] r50 场景仅在 fix 成功派发回执后存活，失败或阻断 intent 不顺延，第 7 次成功 fix 不再顺延，日志可确定性重放",
+        "[ARTIFACT] validation-clock 实现、Brain 版本同步与冻结测试均进提交"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/validation-clock.js",
+        "packages/brain/DEFINITION.md",
+        ".brain-versions",
+        "tests/gp/f1/validation-clock-fix-extension.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
