@@ -12,12 +12,17 @@
 //    （request.observed.pr.head_sha === currentHeadSha）必败——candidate_head_sha
 //    锚（r55 #5048 已写进 detail）没有被消费端认。
 //
-// 修法（本批）：
-// a) derive attemptCallbackRoute 的三个 route_unknown 分支决策对象带
-//    callbackHop: Number(row.hop)（照 contract_fault_appeal 先例）；
+// 修法（#5058 本批）：
+// a) derive attemptCallbackRoute 的 route_unknown 分支决策对象带 callbackHop: Number(row.hop)；
 // b) loop 落 human_review_requested 请求行时 detail 落 callback_hop（decision.callbackHop）；
 // c) diagnosticConsumedCallbackHops 请求行头锚支持 detail.candidate_head_sha 回落；
 // d) attemptCallbackRoute/derive 传入消费函数的 currentHeadSha 支持候选头回落。
+//
+// r75 升级（本 sprint）：commander infra 过期纳入有界（上限 5）重试。故 route_unknown 前提
+// 从「单条 expired」升级为「已达重试上限（5 条 expired，末条 hop=112）」——此时才 wait+callbackHop；
+// 人 approve 消费 hop112 后，下一条未消费行为 hop109（序号 4 < 5）→ 不再挂人审，run 继续。
+// 消费闭环断言语义不变（达上限 wait + callbackHop，approve 后消费出口）；新增一条 r75 子用例
+// 覆盖「未达上限（单条 commander 过期，<5）→ 不再挂人审」。
 //
 // 按 GP 产物闸规矩写在边上：真 derive，不 mock 被改的边。
 import { describe, it, expect } from 'vitest';
@@ -61,12 +66,14 @@ const expiredCommanderReconciled = (hop) => ({
   },
 });
 
-const routeUnknownChain = () => ([
+// r75：route_unknown 前提 = 已达重试上限（5 条 commander infra expired，末条 hop=112）。
+const CAP_EXPIRED_HOPS = [103, 105, 107, 109, 112];
+const capReachedChain = () => ([
   { hop: 101, action: 'spawn:commander', observed: {} },
-  expiredCommanderReconciled(112),
+  ...CAP_EXPIRED_HOPS.map((hop) => expiredCommanderReconciled(hop)),
 ]);
 
-// 本地候选请求行：observed.pr=null，detail 带 candidate_head_sha（#5048）+ callback_hop（本批修法 a/b）
+// 本地候选请求行：observed.pr=null，detail 带 candidate_head_sha（#5048）+ callback_hop（#5058 修法 a/b）
 const localCandidateReviewRequest = (hop, patch = {}) => ({
   hop,
   action: 'effect:human_review_requested',
@@ -91,24 +98,35 @@ const humanApproval = (hop, patch = {}) => ({
   },
 });
 
-describe('F1 step3 — route_unknown 人审批准候选头锚消费（r70 案卷）', () => {
-  it('route_unknown 决策对象带 callbackHop（loop 落盘请求行锚的来源）', () => {
-    const r = derive(baseObserved({ decisionLog: routeUnknownChain() }));
+describe('F1 step3 — route_unknown 人审批准候选头锚消费（r70 案卷 · r75 有界升级）', () => {
+  it('达重试上限（5 条 expired）route_unknown 决策对象带 callbackHop=112（loop 落盘请求行锚的来源）', () => {
+    const r = derive(baseObserved({ decisionLog: capReachedChain() }));
     expect(r.action).toBe('wait:human_review');
     expect(r.reason).toBe('callback_infrastructure_route_unknown');
     expect(r.callbackHop).toBe(112);
   });
 
+  it('r75 未达上限（单条 commander 过期，<5）→ 不再挂人审（改由 coordinator 重派）', () => {
+    const r = derive(baseObserved({
+      decisionLog: [
+        { hop: 101, action: 'spawn:commander', observed: {} },
+        expiredCommanderReconciled(112),
+      ],
+    }));
+    expect(r.action).not.toBe('wait:human_review');
+    expect(r.reason).not.toBe('callback_infrastructure_route_unknown');
+  });
+
   it('本地候选（pr=null）批准 → 候选头锚双匹配消费，不再 wait:human_review', () => {
     const r = derive(baseObserved({
-      decisionLog: [...routeUnknownChain(), localCandidateReviewRequest(114), humanApproval(115, { review_request_hop: 114 })],
+      decisionLog: [...capReachedChain(), localCandidateReviewRequest(114), humanApproval(115, { review_request_hop: 114 })],
     }));
     expect(r.action).not.toBe('wait:human_review');
   });
 
   it('负向：无批准 → 仍 wait:human_review（fail-closed）', () => {
     const r = derive(baseObserved({
-      decisionLog: [...routeUnknownChain(), localCandidateReviewRequest(114)],
+      decisionLog: [...capReachedChain(), localCandidateReviewRequest(114)],
     }));
     expect(r.action).toBe('wait:human_review');
     expect(r.reason).toBe('callback_infrastructure_route_unknown');
@@ -117,7 +135,7 @@ describe('F1 step3 — route_unknown 人审批准候选头锚消费（r70 案卷
   it('负向：批准的 pr_head_sha 与候选头不符（stale 批准）→ 不消费仍 wait', () => {
     const r = derive(baseObserved({
       decisionLog: [
-        ...routeUnknownChain(),
+        ...capReachedChain(),
         localCandidateReviewRequest(114),
         humanApproval(115, { review_request_hop: 114, pr_head_sha: 'a'.repeat(40) }),
       ],
@@ -128,7 +146,7 @@ describe('F1 step3 — route_unknown 人审批准候选头锚消费（r70 案卷
   it('负向：请求行既无 callback_hop 也无候选头锚 → 不消费仍 wait（不误放历史坏行）', () => {
     const r = derive(baseObserved({
       decisionLog: [
-        ...routeUnknownChain(),
+        ...capReachedChain(),
         localCandidateReviewRequest(114, { callback_hop: undefined, candidate_head_sha: undefined }),
         humanApproval(115, { review_request_hop: 114 }),
       ],
