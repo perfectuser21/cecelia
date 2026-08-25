@@ -61,9 +61,13 @@ const expiredCommanderReconciled = (hop) => ({
   },
 });
 
+// r74：route_unknown 前提升级为「已达重试上限」——5 条 commander infra expired
+// （末条 hop=112）。commander 纳入有界重试后，只有累计达上限（≥5）才 wait:human_review，
+// 故消费闭环的场景铺垫必须是达上限链；callbackHop / 请求行 callback_hop=112 锚定不变。
+const CHAIN_HOPS = [103, 105, 107, 109, 112];
 const routeUnknownChain = () => ([
   { hop: 101, action: 'spawn:commander', observed: {} },
-  expiredCommanderReconciled(112),
+  ...CHAIN_HOPS.map((hop) => expiredCommanderReconciled(hop)),
 ]);
 
 // 本地候选请求行：observed.pr=null，detail 带 candidate_head_sha（#5048）+ callback_hop（本批修法 a/b）
@@ -91,12 +95,23 @@ const humanApproval = (hop, patch = {}) => ({
   },
 });
 
-describe('F1 step3 — route_unknown 人审批准候选头锚消费（r70 案卷）', () => {
-  it('route_unknown 决策对象带 callbackHop（loop 落盘请求行锚的来源）', () => {
+describe('F1 step3 — route_unknown 人审批准候选头锚消费（r70 案卷 · r74 达上限铺垫）', () => {
+  it('达上限（5 条 commander infra 过期）route_unknown 决策对象带 callbackHop=112', () => {
     const r = derive(baseObserved({ decisionLog: routeUnknownChain() }));
     expect(r.action).toBe('wait:human_review');
     expect(r.reason).toBe('callback_infrastructure_route_unknown');
     expect(r.callbackHop).toBe(112);
+  });
+
+  it('r74 未达上限（单条 commander 过期，<5）→ 不再挂人审（有界重试）', () => {
+    const r = derive(baseObserved({
+      decisionLog: [
+        { hop: 101, action: 'spawn:commander', observed: {} },
+        expiredCommanderReconciled(112),
+      ],
+    }));
+    expect(r.action).not.toBe('wait:human_review');
+    expect(r.reason).not.toBe('callback_infrastructure_route_unknown');
   });
 
   it('本地候选（pr=null）批准 → 候选头锚双匹配消费，不再 wait:human_review', () => {
