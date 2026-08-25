@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.138
+**Brain 版本**: 1.273.139
+
+## Brain 1.273.139 — 毕业池产物豁免 unclaimed 判死（F1 步骤 3，r68/r72 案卷）
+
+r68（run 7564804c）+ r72（run b448e642）双实证：controller 毕业机械步（SKILL 2.7.0）按设计把 sprints/<sprint>/tests/ 搬进全局毕业池 tests/regression/ 与 scripts/smoke/e2e/，但 map 半径 unclaimed 判定不认识毕业池（无 per-capability 锚）→ 毕业产物被 diff gate 判 impact_anchor_missing（non-retryable）直接杀 run——毕业步与 impact gate 自相矛盾。修：unclaimed 判定豁免毕业池前缀（精确带斜杠防相似前缀蹭豁免）；其余未锚路径照旧 fail-closed。
 
 ## Brain 1.273.137 — route_unknown 人审批准消费锚闭环（F1 步骤 3，r70 案卷）
 
