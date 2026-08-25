@@ -1,0 +1,36 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/src/orchestrator 纯后端 orchestrator 函数，无 UI/agent 协议/engine",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "resolveValidationClock 按 fix 轮自动顺延（有界 6）",
+      "scope": "让 pipeline validation clock 在 decisionLog 含 spawn:generator-fix 时原点顺延到最后一次（有界第 6 次）fix 行 created_at；无 fix 轮语义完全不变；纯函数可重放，只依赖 hop 时序",
+      "dod": [
+        "[BEHAVIOR] 复刻 r50 场景：多次 fix 后原点顺延到最后一次 fix，旧判死→新存活（gp/f1 + sprint 冻结测试全绿）",
+        "[BEHAVIOR] 顺延有界：满 6 次后原点冻结第 6 次 fix，第 7 次不再顺延照常判死",
+        "[BEHAVIOR] 无 fix 轮语义不变：既有 11 条 brain 单测不回归",
+        "[ARTIFACT] packages/brain/src/orchestrator/validation-clock.js 落地 fix 轮顺延分支（spawn:generator-fix 过滤 + 有界常量 6）",
+        "[ARTIFACT] 冻结测试落 sprints/<sprint_dir>/tests/ 与 tests/gp/f1/，真 import validation-clock.js"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/validation-clock.js",
+        "tests/gp/f1/step3-validation-clock-fix-round-extend.test.js",
+        "sprints/08250940-kernel-r71-validation-clock/tests/validation-clock-fix-round-extend.test.ts",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md",
+        "sprints/08250940-kernel-r71-validation-clock/DoD.md",
+        "sprints/08250940-kernel-r71-validation-clock/contract-draft.md",
+        "sprints/08250940-kernel-r71-validation-clock/contract-dod.md",
+        "sprints/08250940-kernel-r71-validation-clock/red-evidence.md",
+        "sprints/08250940-kernel-r71-validation-clock/task-plan.json"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
