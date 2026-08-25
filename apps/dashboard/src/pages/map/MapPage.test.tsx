@@ -1,3 +1,5 @@
+// 权威回归：本文件被 sprint 08241956-kernel-9daed395 合同 B-02 引用为
+// mind-elixir additive 改动「不回归」的 ground truth（4 条断言必须保持全绿）。
 import { existsSync } from 'node:fs';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
