@@ -248,7 +248,6 @@ gp-anchor: skipped (product-map.json not found)
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
 | mind-elixir 三层脑图 view-model | `sprints/08241956-kernel-9daed395/tests/map-mindmap.test.ts` | `从 contains 边推导 2 个价值流根`、`能力挂在其价值流下`、`特性经折叠 backbone 挂在能力下` | → 3 failures（`buildMindmapTree` 未实现，import 解析失败/函数不存在） |
-| 权威页面回归（补充行，既有） | `apps/dashboard/src/pages/map/MapPage.test.tsx` | `只从动态 feature manifest 注册唯一`、`Level 1 展示冻结清单`、`从 Capability 下钻到 Feature`、`第二个 scope 的证据缺 receipt 时回退到该 repo revision` | 既有 4/4 绿（回归护栏，非本轮新红） |
 
-> 冻结测试 = 第一行 `sprints/08241956-kernel-9daed395/tests/map-mindmap.test.ts`（本轮落盘并进 commit）。第二行为 repo 既有权威测试，仅作 keep-green 补充行。
+> 冻结测试 = `sprints/08241956-kernel-9daed395/tests/map-mindmap.test.ts`（本轮落盘并进 commit）。repo 既有权威测试 `apps/dashboard/src/pages/map/MapPage.test.tsx`（4 条断言）的 keep-green 由 DoD B-02 manual 命令强制（dod-behavior-dynamic 实跑），不入本表——覆盖检查器路径白名单不含 apps/，声明即误报（工具局限，见 PR #5054 收尾 commit 说明）。
 > BEHAVIOR 覆盖名均为对应 `it()` 名的**字面子串**，且不含 `/ , 、 ; ；` 分隔符——封印闸 `assertTestContractResolvable` 用 `parseTestContract`（按 `[/,、;；]` 切分）+ 双向小写子串匹配逐 token 解析，本轮已按解析链核实每 token 命中真实 `it()`（frozen 三条 → map-mindmap.test.ts；补充四条 → MapPage.test.tsx）。
