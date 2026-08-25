@@ -1,0 +1,32 @@
+{
+  "initiative_id": "intent:da3aa553-9325-4fcb-b14d-040f9372e252:18",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动纯落 packages/brain/src/orchestrator/derive.js kernel 后端纯函数路由，无 UI/agent/engine 触点，属自治后台调度。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "commander lease 过期 infrastructure 有界自动重派，根除每轮 route_unknown 人审",
+      "scope": "在 derive.js 的 attemptCallbackRoute infrastructure_blocked 分支为 role=commander 增加有界自动重派：累计 < 5 次重派 spawn:commander（reason=callback_infrastructure_blocked），达上限第 6 次回落 wait:human_review（reason=callback_infrastructure_route_unknown + callbackHop 锚）。计数只读 orchestrator_decision_log 行时序，不引入新状态存储；不动 account_exhausted/runner_failure/semantic_refusal 既有分支，不改 lease/收割器/diagnostic 消费。",
+      "dod": [
+        "[BEHAVIOR] 单次 commander 过期 infra → derive 返回 spawn:commander/callback_infrastructure_blocked（tests/gp/f1/step3-commander-infra-retry-r73.test.js 全 7 绿）",
+        "[BEHAVIOR] 达上限第 6 次 → wait:human_review/callback_infrastructure_route_unknown/callbackHop=111（fail-closed）",
+        "[BEHAVIOR] 负向零回归：planner infra 路由不变 + commander semantic_refusal/account_exhausted/runner_failure 语义不变",
+        "[ARTIFACT] Brain 版本四处同步 bump（package.json + package-lock.json + .brain-versions + DEFINITION.md）到 1.273.140"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/constants.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md",
+        "DoD.md",
+        "tests/gp/f1/step3-commander-infra-retry-r73.test.js",
+        "sprints/08251720-kernel-r73-commander-retry/tests/commander-infra-retry-r73.test.ts"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
