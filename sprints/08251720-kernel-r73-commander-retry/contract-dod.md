@@ -1,6 +1,3 @@
-contract_branch: cp-harness-propose-r1-d442333e-rda3aa553-a18
-sprint_dir: sprints/08251720-kernel-r73-commander-retry
-
 ---
 skeleton: false
 journey_type: autonomous
@@ -57,15 +54,15 @@ journey_type: autonomous
   动作: 传 4 次历史过期 infra + 当前第 5 次（prior=4<5）的 decisionLog 给 derive
   预期观察: derive 返回 action='spawn:commander' / reason='callback_infrastructure_blocked'（改前 FAIL，改后 PASS）
   等待预算: 0s
-  留证: vitest -t '未达上限' 输出（1 passed）
-  Test: manual:bash -c 'npx vitest run /workspace/tests/gp/f1/step3-commander-infra-retry-r73.test.js -t "未达上限" 2>&1 | grep -qE "1 passed" || exit 1'
+  留证: vitest -t '第 5 次' 输出（1 passed）
+  Test: manual:bash -c 'npx vitest run /workspace/tests/gp/f1/step3-commander-infra-retry-r73.test.js -t "第 5 次" 2>&1 | grep -qE "1 passed" || exit 1'
 
 - [ ] [BEHAVIOR] [L2] B-03: 达上限（累计第 6 次失败）→ wait:human_review + callbackHop 锚（fail-closed）
   动作: 传 5 次历史过期 infra + 当前第 6 次（prior=5≥5，末尾 hop=111）的 decisionLog 给 derive
   预期观察: derive 返回 action='wait:human_review' / reason='callback_infrastructure_route_unknown' / callbackHop=111
   等待预算: 0s
-  留证: vitest -t '达上限' 输出（1 passed）
-  Test: manual:bash -c 'npx vitest run /workspace/tests/gp/f1/step3-commander-infra-retry-r73.test.js -t "达上限" 2>&1 | grep -qE "1 passed" || exit 1'
+  留证: vitest -t 'fail-closed' 输出（1 passed）
+  Test: manual:bash -c 'npx vitest run /workspace/tests/gp/f1/step3-commander-infra-retry-r73.test.js -t "fail-closed" 2>&1 | grep -qE "1 passed" || exit 1'
 
 - [ ] [BEHAVIOR] [L2] B-04: 负向 planner 过期 infra 重试路由不变（spawn:planner，零回归）
   动作: 传 planner spawn + planner 过期 infra 重放链给 derive
