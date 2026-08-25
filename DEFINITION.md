@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.136
+**Brain 版本**: 1.273.137
+
+## Brain 1.273.137 — route_unknown 人审批准消费锚闭环（F1 步骤 3，r70 案卷）
+
+r70（run 919d957f）：commander attempt lease 过期 reconcile → wait:human_review(callback_infrastructure_route_unknown)，人 approve 后批准永不被消费死等 6h+。两缺口：①derive 的三个 route_unknown 分支决策不带 callbackHop → 请求行无 callback_hop，消费第一锚必败；②本地候选（pr=null）请求行 observed.pr=null，消费第二锚必败（candidate_head_sha 未被消费端认）。修：三分支带 callbackHop + loop 请求行落 callback_hop + 消费端头锚回落 candidate_head_sha + attemptCallbackRoute 的 currentHeadSha 候选头回落；无任何头锚仍不消费（fail-closed）。
 
 ## Brain 1.273.136 — fleet runner digest repin 895f25f0（33 批 schema 修复镜像上产）
 
