@@ -1,0 +1,36 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain/ 的 kernel 编排纯函数 derive.js，无 UI、无远端 agent 协议，属后端自主决策路由。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "commander lease 过期有界重派根除 route_unknown 人审（derive.js 纯函数）",
+      "scope": "在 packages/brain/src/orchestrator/derive.js 的 attemptCallbackRoute infrastructure_blocked 分支内，为 role='commander' 加降级续跑路由：新增有界计数 helper commanderInfrastructureFailureCount（数同 run 内 role=commander 且 failure_class=infrastructure_blocked 的 effect:expired_attempt_reconciled(status=failed) 与 verdict:attempt_callback(status∈failed/blocked) 行）+ 常量 COMMANDER_INFRA_RETRY_CAP=5；低于上限返回非阻塞让主链在当前 phase 续跑（禁发 spawn:commander——dispatcher 需 coordinator context），达上限 fail-closed 返回 wait:human_review(reason=callback_infrastructure_route_unknown, callbackHop=Number(row.hop))。非 commander 角色与非 infrastructure 失败类分支逐字不变。并把 tests/gp/f1/step3-route-unknown-review-approve-consume.test.js 的 routeUnknownChain() 迁移为交替 spawn/expired ×5 的达上限形状，保留 #5058 消费锚回归覆盖。版本 bump 四处同步（packages/brain/package.json + package-lock.json + .brain-versions + DEFINITION.md）。Green commit message 用 fix( 前缀。",
+      "dod": [
+        "[BEHAVIOR] commander infra 单次过期 → derive.action ≠ wait:human_review（主链续跑）",
+        "[BEHAVIOR] commander infra 累计达上限5 → wait:human_review(callback_infrastructure_route_unknown) 带 callbackHop 锚",
+        "[BEHAVIOR] 角色隔离 planner infra 与失败类隔离 commander account_exhausted 语义逐字不变",
+        "[BEHAVIOR] 既有 brain derive 单测不回归（子 shell packages/brain vitest）",
+        "[ARTIFACT] derive.js 含 commanderInfrastructureFailureCount + COMMANDER_INFRA_RETRY_CAP=5 + role==='commander' 分支",
+        "[ARTIFACT] 冻结测试 tests/gp/f1/step3-commander-infra-retry-bounded.test.js 与 sprints/08251420-kernel-r72-commander-retry/tests/commander-infra-retry-bounded.test.ts 全绿",
+        "[ARTIFACT] #5058 消费锚回归测试迁移为达上限交替链且全绿",
+        "[ARTIFACT] Brain 版本四处同步 bump"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js",
+        "tests/gp/f1/step3-commander-infra-retry-bounded.test.js",
+        "tests/gp/f1/step3-route-unknown-review-approve-consume.test.js",
+        "sprints/08251420-kernel-r72-commander-retry/tests/commander-infra-retry-bounded.test.ts",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md",
+        "DoD.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}

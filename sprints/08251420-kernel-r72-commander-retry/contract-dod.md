@@ -1,6 +1,3 @@
-contract_branch: cp-harness-propose-r1-c09e60ce-rb448e642-a26
-sprint_dir: sprints/08251420-kernel-r72-commander-retry
-
 ---
 skeleton: false
 journey_type: autonomous
