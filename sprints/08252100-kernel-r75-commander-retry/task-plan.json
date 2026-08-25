@@ -1,0 +1,32 @@
+{
+  "initiative_id": "intent:470107cf-f0f1-4cdb-9ae4-25dde574bd20:18",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain/ 后端 kernel 编排纯函数，无 UI / agent 协议 / engine 介入",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "commander lease 过期纳入有界（上限 5）infrastructure 重试，根除每轮 route_unknown 人审",
+      "scope": "在 derive.js attemptCallbackRoute 的 infrastructure_blocked 分支，为 role=commander 加有界重试：同 run 内 commander infra 类 expired 行（hop≤当前行）序号 <5 时不挂人审（返回不阻塞路由，主链继续，coordinator 重派），≥5 时 fail-closed wait:human_review 带 callbackHop；非 commander / 非 infra 语义不变。同步更新既有 #5058 回归测试场景铺垫；版本四处 bump 1.273.139→1.273.140。禁改收割器/回执传输层/#5058 消费函数本体/workspace 回收策略/lease 时长。",
+      "dod": [
+        "[BEHAVIOR] 单条/累计<5 commander infra 过期 → derive 返回 action≠wait:human_review（tests/gp/f1/step3-commander-lease-expired-retry.test.js）",
+        "[BEHAVIOR] 达上限（≥5）→ wait:human_review + reason=callback_infrastructure_route_unknown + callbackHop=末条 expired 行 hop",
+        "[BEHAVIOR] 非commander(planner)/commander非infra(account_exhausted) 语义不变",
+        "[BEHAVIOR] 既有 #5058 测试 6 用例全绿（达上限场景铺垫 + r75 未达上限子用例 + 消费闭环）",
+        "[ARTIFACT] derive.js 含 COMMANDER_INFRA_RETRY_CAP + role=commander 有界分支；版本四处 1.273.140 同步"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js",
+        "tests/gp/f1/step3-commander-lease-expired-retry.test.js",
+        "tests/gp/f1/step3-route-unknown-review-approve-consume.test.js",
+        "sprints/08252100-kernel-r75-commander-retry/tests/commander-lease-expired-retry-bounded.test.ts",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
