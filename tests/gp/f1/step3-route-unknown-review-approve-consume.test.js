@@ -61,12 +61,26 @@ const expiredCommanderReconciled = (hop) => ({
   },
 });
 
+// r72 迁移（#5058 消费锚在新语义下保留）：单条 commander 过期不再挂人审（根因已修，
+// 由 derive 降级续跑）。要让 route_unknown 人审重新成立，须复刻「同 run 内 commander
+// infrastructure 失败累计达上限（COMMANDER_INFRA_RETRY_CAP=5）」的 production 形状——
+// 交替 spawn:commander / expired_attempt_reconciled ×5，最新收割行 hop=110 即触发人审的
+// callback hop 锚。本文件其余批准消费断言语义逐字保留（仅锚点随新链尾 hop 从 112→110）。
 const routeUnknownChain = () => ([
   { hop: 101, action: 'spawn:commander', observed: {} },
-  expiredCommanderReconciled(112),
+  expiredCommanderReconciled(102),
+  { hop: 103, action: 'spawn:commander', observed: {} },
+  expiredCommanderReconciled(104),
+  { hop: 105, action: 'spawn:commander', observed: {} },
+  expiredCommanderReconciled(106),
+  { hop: 107, action: 'spawn:commander', observed: {} },
+  expiredCommanderReconciled(108),
+  { hop: 109, action: 'spawn:commander', observed: {} },
+  expiredCommanderReconciled(110),
 ]);
 
 // 本地候选请求行：observed.pr=null，detail 带 candidate_head_sha（#5048）+ callback_hop（本批修法 a/b）
+// r72：callback_hop 锚随新链尾从 112→110（触发人审的最新 commander 收割行 hop）。
 const localCandidateReviewRequest = (hop, patch = {}) => ({
   hop,
   action: 'effect:human_review_requested',
@@ -74,7 +88,7 @@ const localCandidateReviewRequest = (hop, patch = {}) => ({
   detail: {
     review_reason: 'callback_infrastructure_route_unknown',
     candidate_head_sha: CAND_SHA,
-    callback_hop: 112,
+    callback_hop: 110,
     ...patch,
   },
 });
@@ -96,7 +110,7 @@ describe('F1 step3 — route_unknown 人审批准候选头锚消费（r70 案卷
     const r = derive(baseObserved({ decisionLog: routeUnknownChain() }));
     expect(r.action).toBe('wait:human_review');
     expect(r.reason).toBe('callback_infrastructure_route_unknown');
-    expect(r.callbackHop).toBe(112);
+    expect(r.callbackHop).toBe(110);
   });
 
   it('本地候选（pr=null）批准 → 候选头锚双匹配消费，不再 wait:human_review', () => {
