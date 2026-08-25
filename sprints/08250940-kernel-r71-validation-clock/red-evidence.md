@@ -21,3 +21,6 @@
    Duration  158ms (transform 12ms, setup 0ms, collect 11ms, tests 7ms, environment 0ms, prepare 34ms)
 
 ```
+
+## 修复轮 re-freeze（CI 结构闸修复，实现不变）
+本轮为 fix attempt：实现 `validation-clock.js`（fix 轮顺延，有界 6）已在前序 Green commit 落地并本地真跑通过（node 直跑纯函数三场景断言全绿）。本次仅补齐 CI 结构闸所需产物（DoD 勾选 / brain 版本 bump / feature smoke），不改任何测试断言与实现逻辑。
