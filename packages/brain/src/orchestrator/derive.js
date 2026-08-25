@@ -348,6 +348,28 @@ function infrastructureRetryForCallback(role, callbackRow, decisionLog) {
   };
 }
 
+// r72 案卷（run b448e642，r70/r71 双实证）：commander 是监理角色（非承重墙），attempt 被
+// lease 过期收割（infrastructure_blocked）时应降级续跑而非每轮挂人审。有界兜底——同一 run
+// 内 commander 的 infrastructure 类失败累计达此上限后 fail-closed 回落 wait:human_review，
+// 禁止无限重派（planner/proposer/… 已有重试路由，commander 是唯一漏网角色）。
+const COMMANDER_INFRA_RETRY_CAP = 5;
+
+// 计数口径：同 run 内 role=commander 且 failure_class=infrastructure_blocked 的历史收割/
+// 失败回调条数（effect:expired_attempt_reconciled 或 verdict:attempt_callback，status∈{failed,blocked}）。
+// 纯函数按 decision_log 行时序统计，只读不存，同输入同输出。
+function commanderInfrastructureFailureCount(decisionLog) {
+  return sortedLogRows(decisionLog).filter((row) => {
+    if (
+      row.action !== LOG_ACTION.EXPIRED_ATTEMPT_RECONCILED
+      && row.action !== LOG_ACTION.ATTEMPT_CALLBACK
+    ) return false;
+    const detail = callbackDetail(row);
+    return detail.role === 'commander'
+      && detail.failure_class === 'infrastructure_blocked'
+      && (detail.status === 'failed' || detail.status === 'blocked');
+  }).length;
+}
+
 /**
  * diagnostic 类人审（非 merge_gate，由 callback_runner_failure_exhausted /
  * callback_semantic_refusal 等原因触发的 wait:human_review）被批准后应消费的「触发 callback hop」集合。
@@ -568,6 +590,21 @@ function attemptCallbackRoute(observed) {
     (status === 'blocked' || status === 'failed')
     && failureClass === 'infrastructure_blocked'
   ) {
+    // r72 案卷：commander 是监理角色，infrastructure 类失败降级续跑（不发 spawn:commander
+    // ——该 action 需 commander-coordinator context，dispatcher 无 context 会抛错；commander
+    // 的实际重派由 coordinator 独立完成）。低于上限时返回 null 让主链在当前 phase 前进，对主链
+    // 完全透明；累计达上限 fail-closed 回落 route_unknown 人审带 callbackHop 锚（禁无限重派）。
+    if (role === 'commander') {
+      if (commanderInfrastructureFailureCount(observed.decisionLog) >= COMMANDER_INFRA_RETRY_CAP) {
+        return {
+          phase: 'review',
+          action: ACTION.WAIT_HUMAN_REVIEW,
+          reason: 'callback_infrastructure_route_unknown',
+          callbackHop: Number(row.hop),
+        };
+      }
+      return null;
+    }
     const retry = infrastructureRetryForCallback(role, row, observed.decisionLog);
     if (!retry) {
       // r70 案卷：route_unknown 人审的请求行必须带触发 callback hop 锚，否则
