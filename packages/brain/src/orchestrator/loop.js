@@ -1718,6 +1718,11 @@ async function runLoopOwned(
         detail: {
           dispatch_hop: hop,
           result: result.detail ?? null,
+          // r70 案卷：请求行必须落触发 callback hop 锚，diagnostic 批准消费
+          // （diagnosticConsumedCallbackHops）靠它命中被消费的 callback。
+          ...(Number.isInteger(Number(decision.callbackHop))
+            ? { callback_hop: Number(decision.callbackHop) }
+            : {}),
           ...humanReviewDetail(observed, decision.reason),
         },
       });

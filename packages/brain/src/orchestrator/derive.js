@@ -373,8 +373,12 @@ function diagnosticConsumedCallbackHops(decisionLog, currentHeadSha) {
     const requestDetail = callbackDetail(request);
     const callbackHop = Number(requestDetail.callback_hop);
     if (!Number.isInteger(callbackHop)) continue;
-    const requestHeadSha = (asStructuredJson(request.observed) ?? {}).pr?.head_sha ?? null;
-    if (requestHeadSha !== currentHeadSha) continue;
+    // r70 案卷：本地候选（发布前 pr=null）的请求行头锚回落 detail.candidate_head_sha
+    // （#5048 写入），否则第二锚必败批准永不消费。无任何头锚仍不消费（fail-closed）。
+    const requestHeadSha = (asStructuredJson(request.observed) ?? {}).pr?.head_sha
+      ?? requestDetail.candidate_head_sha
+      ?? null;
+    if (requestHeadSha == null || requestHeadSha !== currentHeadSha) continue;
     const approved = rows.some((row) => {
       if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW) return false;
       const detail = asStructuredJson(row.detail) ?? {};
@@ -524,7 +528,12 @@ function generatorNoPrRoute(observed, currentDetail) {
 }
 
 function attemptCallbackRoute(observed) {
-  const row = latestUnconsumedAttemptResult(observed.decisionLog, observed.pr?.head_sha ?? null);
+  // r70 案卷：本地候选（发布前 pr=null）用候选头做消费锚，与 approve API 的
+  // 候选头锚定放行（#5042/#5048）同一 SHA 语义。
+  const row = latestUnconsumedAttemptResult(
+    observed.decisionLog,
+    observed.pr?.head_sha ?? observed.candidate?.head_sha ?? null,
+  );
   if (!row) return null;
   const detail = callbackDetail(row);
   const { status, failure_class: failureClass, role } = detail;
@@ -561,10 +570,13 @@ function attemptCallbackRoute(observed) {
   ) {
     const retry = infrastructureRetryForCallback(role, row, observed.decisionLog);
     if (!retry) {
+      // r70 案卷：route_unknown 人审的请求行必须带触发 callback hop 锚，否则
+      // diagnosticConsumedCallbackHops 双锚定必败 → 批准永不被消费无出口死等。
       return {
         phase: 'review',
         action: ACTION.WAIT_HUMAN_REVIEW,
         reason: 'callback_infrastructure_route_unknown',
+        callbackHop: Number(row.hop),
       };
     }
     return {
@@ -584,6 +596,7 @@ function attemptCallbackRoute(observed) {
         phase: 'review',
         action: ACTION.WAIT_HUMAN_REVIEW,
         reason: 'callback_account_exhausted_route_unknown',
+        callbackHop: Number(row.hop),
       };
     }
     return {
@@ -695,6 +708,7 @@ function attemptCallbackRoute(observed) {
         phase: 'review',
         action: ACTION.WAIT_HUMAN_REVIEW,
         reason: 'callback_runner_failure_route_unknown',
+        callbackHop: Number(row.hop),
       };
     }
     return {
