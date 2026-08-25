@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.139
+**Brain 版本**: 1.273.140
+
+## Brain 1.273.140 — commander lease 过期有界自动重派（F1 步骤 3，r74 案卷）
+
+commander 是监理角色但不在 derive.js 的 INFRA_RETRY_ACTION_BY_ROLE 重试表，故其 attempt lease 过期被收割器 reconcile（effect:expired_attempt_reconciled, failure_class=infrastructure_blocked）后 infrastructureRetryForCallback 返回 undefined → 每轮 wait:human_review(callback_infrastructure_route_unknown)，破坏 zero-human-gate。修：把 commander infrastructure 类过期纳入有界（上限 COMMANDER_INFRA_RETRY_CAP=5）自动重派——同 run 内累计序号（hop≤当前行的该类过期条数）<5 时 attemptCallbackRoute 返回 null 不挂人审（主链继续，重派由 commanderCoordinator 独立完成）；达上限 fail-closed 仍 wait:human_review 带 callbackHop 锚（与 #5058 消费闭环兼容）。非 commander / 非 infrastructure 失败语义完全不变。
 
 ## Brain 1.273.139 — 毕业池产物豁免 unclaimed 判死（F1 步骤 3，r68/r72 案卷）
 

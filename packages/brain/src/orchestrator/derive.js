@@ -304,6 +304,31 @@ const INFRA_RETRY_ACTION_BY_ROLE = Object.freeze({
   reporter: { phase: 'done', action: ACTION.SPAWN_CANARY },
 });
 
+// r74 案卷：commander 是监理角色，不在 INFRA_RETRY_ACTION_BY_ROLE（其重派由
+// commanderCoordinator 在下一 tick 独立完成，重派安全无副作用）。故 commander attempt
+// lease 过期被收割器 reconcile 后 infrastructureRetryForCallback 返回 undefined →
+// 直接 wait:human_review（callback_infrastructure_route_unknown），每轮都要人审，
+// 破坏 zero-human-gate。修法：把 commander infrastructure 类过期纳入「有界」自动重派——
+// 同 run 内累计 < 上限时不挂人审（返回不阻塞路由，主链继续，交 coordinator 重派）；
+// 达上限（fail-closed 兜底）仍挂人审带 callbackHop 锚。
+const COMMANDER_INFRA_RETRY_CAP = 5;
+
+// 统计该 run decisionLog 里 role=commander 且 failure_class=infrastructure_blocked 的
+// effect:expired_attempt_reconciled 行、hop ≤ currentHop 的条数（= 当前行在 commander infra
+// 过期序列里的序号）。用 hop≤当前行序号而非全 run 总数：保证有界判定单调——approve 消费末条后，
+// 前序条按各自序号（4/3/...）仍 < 上限判「重派」，不会因总数=5 而全部误判达上限死等。
+function commanderInfraExpirySeq(decisionLog, currentHop) {
+  const currentHopNum = Number(currentHop);
+  return sortedLogRows(decisionLog).filter((entry) => {
+    if (entry.action !== LOG_ACTION.EXPIRED_ATTEMPT_RECONCILED) return false;
+    const entryDetail = callbackDetail(entry);
+    return entryDetail.role === 'commander'
+      && entryDetail.status === 'failed'
+      && entryDetail.failure_class === 'infrastructure_blocked'
+      && Number(entry.hop) <= currentHopNum;
+  }).length;
+}
+
 const GENERATOR_ACTIONS = new Set([
   ACTION.SPAWN_GENERATOR,
   ACTION.SPAWN_GENERATOR_FIX,
@@ -570,6 +595,13 @@ function attemptCallbackRoute(observed) {
   ) {
     const retry = infrastructureRetryForCallback(role, row, observed.decisionLog);
     if (!retry) {
+      // r74 案卷：commander 纳入有界自动重派——同 run 内 commander infrastructure 类
+      // 过期累计序号 < 上限时不挂人审（返回不阻塞路由，主链继续，重派由
+      // commanderCoordinator 在下一 tick 独立完成）；达上限才 fail-closed 挂人审带锚。
+      if (role === 'commander'
+        && commanderInfraExpirySeq(observed.decisionLog, row.hop) < COMMANDER_INFRA_RETRY_CAP) {
+        return null;
+      }
       // r70 案卷：route_unknown 人审的请求行必须带触发 callback hop 锚，否则
       // diagnosticConsumedCallbackHops 双锚定必败 → 批准永不被消费无出口死等。
       return {
