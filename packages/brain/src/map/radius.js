@@ -15,6 +15,10 @@ import { canonicalAssertionCommandText } from '../lib/gp-assertion-command.js';
 const GIT_SHA = /^[0-9a-f]{40}$/i;
 const MAX_CHANGED_FILES = 1000;
 const MAX_PATH_LENGTH = 1024;
+// 毕业机械步（controller SKILL 2.7.0 graduate-sprint-tests.mjs）的目标池：设计内
+// 全局目录，无 per-capability 锚，unclaimed 判定豁免（前缀精确到带斜杠，防
+// tests/regression-fake/ 类相似前缀蹭豁免）。
+const GRADUATION_POOL_PREFIXES = Object.freeze(['tests/regression/', 'scripts/smoke/e2e/']);
 const MAX_TOTAL_PATH_BYTES = 128 * 1024;
 const MAX_CAPABILITY_IDS = 256;
 
@@ -337,6 +341,12 @@ export async function resolveImpactRadius(input = {}, {
   }
   const unclaimedFiles = [];
   for (const file of changedFiles) {
+    // r68/r72 双实证：controller 毕业机械步（SKILL 2.7.0）把 sprints/<sprint>/tests/
+    // 搬进全局毕业池（tests/regression/、scripts/smoke/e2e/），该池无 per-capability
+    // 锚，unclaimed 判定必把毕业产物当越权 → impact_anchor_missing 确定性杀 run。
+    // 毕业池是设计内目标目录（质量由 test-pyramid-guard 棘轮与 CI 把守），豁免出
+    // unclaimed；其余未锚路径照旧 fail-closed。
+    if (GRADUATION_POOL_PREFIXES.some((prefix) => file.startsWith(prefix))) continue;
     const reached = reachable(adjacency, [file], { dir: 'rev', maxDepth: 10 });
     const matched = classified.filter((feature) => feature.anchors.some(
       (anchor) => anchor.matched_node && reached.has(anchor.matched_node),
