@@ -11,6 +11,9 @@ const GENERATOR_ACTIONS = new Set([
   'spawn:generator-fix',
 ]);
 
+// fix 轮顺延上限（有界）：满 6 次后原点冻结在第 6 次 fix，第 7 次起不再顺延照常判死。
+const MAX_FIX_ROUND_EXTENSIONS = 6;
+
 export const VERIFIED_EXISTING_PR_ORIGIN = 'verified_existing_pr';
 
 function asObject(value) {
@@ -59,6 +62,16 @@ export function resolveValidationClock({
   allowEvaluatorOrigin = false,
 }) {
   if (!VALIDATION_ACTIONS.has(action)) return null;
+  // fix 轮顺延：decisionLog 含 spawn:generator-fix 时，pipeline clock 原点顺延到最后一次
+  // （有界第 6 次）fix 行的 created_at，deadline = 该时刻 + timeout_seconds。以 hop 升序为唯一
+  // 输入（纯函数可重放），越界的第 7 次起不再顺延。无 fix 轮时完全回落到下方原有逻辑。
+  const fixRows = [...decisionLog]
+    .filter((row) => row?.action === 'spawn:generator-fix')
+    .sort((a, b) => Number(a.hop) - Number(b.hop));
+  if (fixRows.length > 0) {
+    const boundedIndex = Math.min(fixRows.length, MAX_FIX_ROUND_EXTENSIONS) - 1;
+    return persistedClock(fixRows[boundedIndex], timeoutSeconds);
+  }
   const firstValidationOrigin = [...decisionLog]
     .filter((row) => (
       GENERATOR_ACTIONS.has(row?.action)
