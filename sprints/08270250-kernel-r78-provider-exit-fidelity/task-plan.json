@@ -1,0 +1,48 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain 内核路由与 docker/cecelia-runner 回执归一化，纯后端/kernel，无 UI 无远端 agent 协议交互",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "结构化上报保真透传，根除 provider_exit 语义埋没",
+      "scope": "runner 侧把「结构化终态识别→保真透传 vs 降级 provider_exit」抽为纯函数 classifyProviderTerminal（entrypoint.sh normalize 前先调用，识别到结构化终态即保真透传，禁降级）；kernel 侧 derive 对 CONTRACT_* 家族错误码取路由优先级，走既有合同故障重开 GAN，不进 failed_targets 黑名单、不按 infrastructure 重试；负向真崩溃语义不变。Green commit 用 fix( 前缀，Red commit 只 git add 精确 *.test.js 路径。",
+      "dod": [
+        "[BEHAVIOR] kernel CONTRACT_* 家族路由 arbitrate:contract_fault（合同重开 GAN），不进 infra 重试/黑名单",
+        "[BEHAVIOR] runner classifier 三类结构化终态（success/commander/BLOCKED+CONTRACT_*）passthrough=true，error.code 病族保真",
+        "[BEHAVIOR] 负向：无结构化产出真崩溃/超时 → provider_exit/provider_timeout，kernel 仍 infrastructure 有界重派（语义不变）",
+        "[ARTIFACT] classifyProviderTerminal 纯函数导出 + entrypoint.sh 真接线（源码检视）+ 版本四处 bump"
+      ],
+      "files": [
+        "docker/cecelia-runner/structured-terminal-classifier.cjs",
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "tests/gp/f1/step3-provider-exit-structured-fidelity.test.js",
+        "sprints/08270250-kernel-r78-provider-exit-fidelity/tests/step3-provider-exit-structured-fidelity.test.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "claim_whitelist": [
+        "docker/cecelia-runner/structured-terminal-classifier.cjs",
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "tests/gp/f1/step3-provider-exit-structured-fidelity.test.js",
+        "sprints/08270250-kernel-r78-provider-exit-fidelity/**",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md",
+        "packages/brain/src/orchestrator/__tests__/**",
+        "tests/gp/f1/step3-runner-failure-retry.test.js"
+      ],
+      "claim_whitelist_note": "除白名单外禁止创建计划外文件；白名单为可写上界非锁死清单（dispatcher.js/相邻回归测试仅在行为变更确需时才改）。若 CONTRACT_* 路由优先级与既有 derive/ground-truth 回归测试冲突，须把该测试一并 claim 更新（PRD 要求 7）。",
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
