@@ -376,13 +376,14 @@ describe('kernel deterministic handlers', () => {
     }));
   });
 
-  it('既无 PR 也无候选 → 仍 BLOCKED（不放行无对象的人审）', async () => {
+  it('既无 PR 也无候选 → 无锚降级落地 DONE（r77 案卷：BLOCKED 会被 blocked_same_state 秒死）', async () => {
     const d = deps();
     const ctx = context();
     ctx.observed.pr = null;
     ctx.observed.candidate = null;
-    await expect(createKernelHandlers(d)['wait:human_review'](ctx))
-      .resolves.toMatchObject({ status: 'BLOCKED' });
+    const result = await createKernelHandlers(d)['wait:human_review'](ctx);
+    expect(result.status).toBe('DONE');
+    expect(String(result.detail)).toContain('unanchored');
   });
 
   it('merge 按 GitHub 真相处理 CLEAN / BEHIND / CONFLICTING', async () => {
