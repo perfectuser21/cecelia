@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.139
+**Brain 版本**: 1.273.140
+
+## Brain 1.273.140 — commander lease 过期有界自动重派（F1 步骤 3，r70-r75 五轮案卷）
+
+r70-r75 五轮实证：commander attempt 被 lease 过期收割（worker_attempt_replacement_required_after_lease, infrastructure_blocked）后 infrastructureRetryForCallback 对 commander 无重试路由 → 每轮挂 wait:human_review(route_unknown) 需人批。修（收编 r75 kernel 产实现）：commander 纳入 infrastructure 重试路由按 phase 重派，同 run 累计 5 次达上限仍回人审（fail-closed，决策对象保留 callbackHop 与 #5058 消费锚兼容）；同步更新 #5058 回归测试首用例为上限场景。r72-r75 四轮自举尝试分别死于毕业步误杀（#5063 已修）/合同矛盾/workspace 回收/deadline 撞钟——实现四轮全绿，最终人工收编交付。
 
 ## Brain 1.273.139 — 毕业池产物豁免 unclaimed 判死（F1 步骤 3，r68/r72 案卷）
 
