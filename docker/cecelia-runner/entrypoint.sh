@@ -2740,6 +2740,19 @@ run_with_attempt_timeout() {
   return "$normalized_exit"
 }
 
+# r78：结构化终态识别 SSOT（与 vitest 共用 docker/cecelia-runner/structured-terminal-classifier.cjs）。
+# provider 进程 exit≠0 时先识别 result_file 是否含结构化终态（success 结果 / commander 成功指令 /
+# 结构化 BLOCKED+CONTRACT_*），识别到即保真透传（禁无条件降级 provider_exit）。输出决策 JSON 到 stdout。
+classify_provider_terminal() {
+  local result_file="$1"
+  local provider_exit="$2"
+  local commander_contract="$3"
+  node "$(dirname "${BASH_SOURCE[0]}")/structured-terminal-classifier.cjs" \
+    --result-file "$result_file" \
+    --provider-exit "$provider_exit" \
+    --commander-contract "$commander_contract" 2>/dev/null
+}
+
 normalize_provider_failure() {
   local normalized_file="$1"
   local attempt_id="$2"
@@ -2749,6 +2762,27 @@ normalize_provider_failure() {
   local credential_copy_mutated="$6"
   local provider_exit="$7"
   local stdout_file="$8"
+  local result_file="${9:-}"
+  local commander_contract="${10:-false}"
+
+  # r78：provider_exit≠0 时先用 structured-terminal-classifier 识别结构化终态。识别到即保真
+  # 透传（以已验证的结构化终态覆盖 exit code），落原样 status + error.code 病族，禁降级 provider_exit。
+  # 仅当无结构化产出（passthrough=false）才落到下方 provider_exit/provider_timeout 归一化。
+  if [[ -n "$result_file" && -s "$result_file" ]]; then
+    local classify_json
+    classify_json=$(classify_provider_terminal "$result_file" "$provider_exit" "$commander_contract") || classify_json=""
+    if [[ -n "$classify_json" ]] \
+        && jq -e '.passthrough == true' <<<"$classify_json" >/dev/null 2>&1; then
+      jq \
+        --arg provider "$provider" \
+        --arg session "$session_id" \
+        --arg credential_ref "$credential_ref" \
+        --argjson credential_copy_mutated "$credential_copy_mutated" \
+        '. + {provider_metadata: (.provider_metadata // ({provider:$provider,session_id:(if $session == "" then null else $session end)} + (if $credential_ref == "" then {} else {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} end)))}' \
+        "$result_file" > "$normalized_file"
+      return
+    fi
+  fi
 
   if [[ "$provider_exit" -eq 124 ]]; then
     jq -n \
@@ -3366,7 +3400,9 @@ run_provider_contract() {
       "$CREDENTIAL_REF" \
       "$CREDENTIAL_COPY_MUTATED" \
       "$provider_exit" \
-      "$STDOUT_FILE"
+      "$STDOUT_FILE" \
+      "$result_file" \
+      "$commander_contract"
   fi
   if [[ "$provider_trust_intact" == "true" ]] \
       && ! merge_evaluator_evidence "$NORMALIZED_RESULT_FILE"; then

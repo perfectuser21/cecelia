@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.142
+**Brain 版本**: 1.273.143
 
 ## Brain 1.273.142 — commander runner_failure 重派补漏 + 早期无锚人审落地（F1 步骤 3，r77 案卷）
 

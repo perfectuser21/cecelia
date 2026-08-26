@@ -585,9 +585,31 @@ function attemptCallbackRoute(observed) {
       reason: 'callback_needs_context',
     };
   }
+  // CONTRACT_* 家族取路由优先级（r78）：Generator 报出的合同故障码（结构化 BLOCKED + CONTRACT_*）
+  // 即便残留 failure_class=infrastructure_blocked，也不得被下面的 infrastructure_blocked 短路分支
+  // 吞成有界重派/黑名单——那会丢失原因病族、回退病根。这里先算出「是否 generator 合同故障」，
+  // 把这一子集从 infra 分支排除，落到下方合同故障仲裁分支重开 GAN；负向 provider_exit 语义不变。
+  // 核心 token 子集匹配（run 8374ab73 实证）：精确集合比对对付不了多词/丢词漂移，改用「报出的
+  // token 集合是否包含某条核心组合的全部 token」——只挑区分度最高的词，防过宽误伤无关产品 bug。
+  const CONTRACT_FAULT_CORE_TOKENS = [
+    ['SELF', 'CONTRADICTION'], // CONTRACT_SELF_CONTRADICTION
+    ['TEST', 'UNSATISFIABLE'], // CONTRACT_TEST_UNSATISFIABLE
+    ['CI', 'CONFLICT'], // CONTRACT_CI_SCOPE_CONFLICT（SCOPE 非必需——已实证会被丢）
+  ];
+  const reportedTokens = new Set(String(detail.error_code ?? '').toUpperCase().split('_').filter(Boolean));
+  const matchesContractFaultCode = CONTRACT_FAULT_CORE_TOKENS.some(
+    (core) => core.every((token) => reportedTokens.has(token)),
+  );
+  // 合同故障分支实际受理面：generator 上报 blocked（或 failed+semantic_refusal）+ CONTRACT_* 码。
+  // 与 infrastructure_blocked 分支的重叠仅在 status==='blocked'（failed+semantic_refusal 与 infra 互斥），
+  // 故此谓词从 infra 短路分支排除的正是「generator + blocked + CONTRACT_*」这一子集，其余不变。
+  const isGeneratorContractFault = role === 'generator'
+    && (status === 'blocked' || (status === 'failed' && failureClass === 'semantic_refusal'))
+    && matchesContractFaultCode;
   if (
     (status === 'blocked' || status === 'failed')
     && failureClass === 'infrastructure_blocked'
+    && !isGeneratorContractFault
   ) {
     if (role === 'commander') {
       // commander 有界 infrastructure 重试（r75）。累计口径：该 run decisionLog 里 role=commander
@@ -659,27 +681,10 @@ function attemptCallbackRoute(observed) {
   // 不动，回落人工。
   // CONTRACT_CI_SCOPE_CONFLICT(r43 实证):合同的改动范围限定与仓库级 CI 硬要求
   // (如 test-registry.yaml 登记制)客观冲突——执行者无法在不违约的前提下修复 CI。
-  // 核心 token 组合(F6/codexC 案卷,run 8374ab73 实证):精确 token 集合比对(排序后
-  // 整体相等)对付得了词序漂移,对付不了"多词/丢词"漂移——LLM 报
-  // APPROVED_CONTRACT_CI_CONFLICT(比 CONTRACT_CI_SCOPE_CONFLICT 多了修饰词
-  // APPROVED、少了 SCOPE),精确集合比对两头不沾直接漏判掉回死等人工。改用
-  // "报出的 token 集合是否包含某条核心组合的全部 token"子集匹配——SCOPE/其余
-  // 修饰词不是语义必需,只挑每条码里区分度最高的词做核心组合,防止过度放宽
-  // 误把无关产品 bug 路由成合同申诉。
-  const CONTRACT_FAULT_CORE_TOKENS = [
-    ['SELF', 'CONTRADICTION'], // CONTRACT_SELF_CONTRADICTION
-    ['TEST', 'UNSATISFIABLE'], // CONTRACT_TEST_UNSATISFIABLE
-    ['CI', 'CONFLICT'], // CONTRACT_CI_SCOPE_CONFLICT（SCOPE 非必需——已实证会被丢）
-  ];
-  const reportedTokens = new Set(String(detail.error_code ?? '').toUpperCase().split('_').filter(Boolean));
-  const matchesContractFaultCode = CONTRACT_FAULT_CORE_TOKENS.some(
-    (core) => core.every((token) => reportedTokens.has(token)),
-  );
-  if (
-    role === 'generator'
-    && (status === 'blocked' || (status === 'failed' && failureClass === 'semantic_refusal'))
-    && matchesContractFaultCode
-  ) {
+  // 判定用上方 attemptCallbackRoute 顶部已算的 isGeneratorContractFault
+  // （CONTRACT_FAULT_CORE_TOKENS 子集匹配，r78 起提前到 infra 分支之前，令 CONTRACT_*
+  // 家族即便残留 infrastructure_blocked 也取路由优先级，不被 infra 短路吞掉）。
+  if (isGeneratorContractFault) {
     // 仲裁制(Alex 拍板 2026-08-06):Generator 的合同故障码只是"申诉",不能
     // 自动成立——被审查者不能自己触发对审查产物(合同)的推翻。独立仲裁器
     // (Judge 同模型)裁定后才分流:成立→重开 GAN;驳回→打回 generator-fix

@@ -12,60 +12,60 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [ ] [ARTIFACT] runner 结构化终态识别纯函数 SSOT 存在并导出 classifyProviderTerminal
+- [x] [ARTIFACT] runner 结构化终态识别纯函数 SSOT 存在并导出 classifyProviderTerminal
   Test: node -e "const m=require('./docker/cecelia-runner/structured-terminal-classifier.cjs'); if(typeof m.classifyProviderTerminal!=='function')process.exit(1)"
 
-- [ ] [ARTIFACT] RED 步骤断言文件存在且真 import 被改模块（derive.js + classifier），不 vi.mock 被改边
+- [x] [ARTIFACT] RED 步骤断言文件存在且真 import 被改模块（derive.js + classifier），不 vi.mock 被改边
   Test: node -e "const c=require('fs').readFileSync('tests/gp/f1/step3-provider-exit-structured-fidelity.test.js','utf8'); if(!c.includes('orchestrator/derive.js')||!c.includes('structured-terminal-classifier')||/vi\.mock/.test(c))process.exit(1)"
 
-- [ ] [ARTIFACT] 版本四处同步 bump（DevGate check-version-sync）
+- [x] [ARTIFACT] 版本四处同步 bump（DevGate check-version-sync）
   Test: bash scripts/check-version-sync.sh
 
 ## BEHAVIOR 条目（五行剧本，纯函数重放；postgres=false 用 node/vitest，禁 psql/curl）
 
-- [ ] [BEHAVIOR] [L2] B-01: kernel 对 CONTRACT_* 家族错误码路由合同故障重开 GAN，不进 infra 重试
+- [x] [BEHAVIOR] [L2] B-01: kernel 对 CONTRACT_* 家族错误码路由合同故障重开 GAN，不进 infra 重试
   动作: 以「结构化 BLOCKED + error_code=CONTRACT_TEST_UNSATISFIABLE，残留 failure_class=infrastructure_blocked」callback 调 derive
   预期观察: derive 返回 action=arbitrate:contract_fault、reason=contract_fault_appeal、phase=gan（非 spawn:generator-fix/infra 重试）
   等待预算: 0s
   留证: vitest 输出末 5 行（含该 it PASS）
   Test: manual:bash -c 'cd packages/brain && npx vitest run --no-cache ../../tests/gp/f1/step3-provider-exit-structured-fidelity.test.js -t "路由到合同故障重开" --reporter=dot'
 
-- [ ] [BEHAVIOR] [L2] B-02: 真崩溃 provider_exit（非 CONTRACT_*）仍按 infrastructure 有界重派（负向铁律）
+- [x] [BEHAVIOR] [L2] B-02: 真崩溃 provider_exit（非 CONTRACT_*）仍按 infrastructure 有界重派（负向铁律）
   动作: 以「status=failed, error_code=provider_exit, failure_class=infrastructure_blocked」callback 调 derive
   预期观察: derive 返回 phase=generate、action=spawn:generator-fix、reason=callback_infrastructure_blocked，且 action≠arbitrate:contract_fault
   等待预算: 0s
   留证: vitest 输出末 5 行（含该 it PASS）
   Test: manual:bash -c 'cd packages/brain && npx vitest run --no-cache ../../tests/gp/f1/step3-provider-exit-structured-fidelity.test.js -t "仍按 infrastructure 有界重派" --reporter=dot'
 
-- [ ] [BEHAVIOR] [L2] B-03: runner 识别结构化成功终态（exit≠0）保真透传为成功，不降级 provider_exit
+- [x] [BEHAVIOR] [L2] B-03: runner 识别结构化成功终态（exit≠0）保真透传为成功，不降级 provider_exit
   动作: 以「providerExit=1, structuredResult={status:completed_with_concerns}」调 classifyProviderTerminal
   预期观察: 返回 passthrough=true、status=completed_with_concerns、errorCode=null
   等待预算: 0s
   留证: vitest 输出末 5 行（含该 it PASS）
   Test: manual:bash -c 'cd packages/brain && npx vitest run --no-cache ../../tests/gp/f1/step3-provider-exit-structured-fidelity.test.js -t "结构化成功终态" --reporter=dot'
 
-- [ ] [BEHAVIOR] [L2] B-04: r77 复刻——commander 成功指令（exit≠0）保真透传，不降级 provider_exit
+- [x] [BEHAVIOR] [L2] B-04: r77 复刻——commander 成功指令（exit≠0）保真透传，不降级 provider_exit
   动作: 以「providerExit=1, structuredResult={schema:commander-directive/v1}, commanderContract=true」调 classifyProviderTerminal
   预期观察: 返回 passthrough=true、status=completed、errorCode=null
   等待预算: 0s
   留证: vitest 输出末 5 行（含该 it PASS）
   Test: manual:bash -c 'cd packages/brain && npx vitest run --no-cache ../../tests/gp/f1/step3-provider-exit-structured-fidelity.test.js -t "commander 成功指令" --reporter=dot'
 
-- [ ] [BEHAVIOR] [L2] B-05: r69 复刻——结构化 BLOCKED + CONTRACT_* 保真透传，error.code 病族不丢
+- [x] [BEHAVIOR] [L2] B-05: r69 复刻——结构化 BLOCKED + CONTRACT_* 保真透传，error.code 病族不丢
   动作: 以「providerExit=1, structuredResult={status:blocked, error:{code:CONTRACT_TEST_UNSATISFIABLE}}」调 classifyProviderTerminal
   预期观察: 返回 passthrough=true、status=blocked、errorCode=CONTRACT_TEST_UNSATISFIABLE（原样保留）
   等待预算: 0s
   留证: vitest 输出末 5 行（含该 it PASS）
   Test: manual:bash -c 'cd packages/brain && npx vitest run --no-cache ../../tests/gp/f1/step3-provider-exit-structured-fidelity.test.js -t "错误码保真透传，error.code 病族不丢" --reporter=dot'
 
-- [ ] [BEHAVIOR] [L2] B-06: 无结构化产出的真崩溃/超时/垃圾结构映射 provider_exit / provider_timeout（负向不透传）
+- [x] [BEHAVIOR] [L2] B-06: 无结构化产出的真崩溃/超时/垃圾结构映射 provider_exit / provider_timeout（负向不透传）
   动作: 以 structuredResult=null(exit1/exit124) 及垃圾结构 {foo:1} 调 classifyProviderTerminal
   预期观察: null+exit1→passthrough=false,failureCode=provider_exit；exit124→provider_timeout；垃圾结构→passthrough=false,provider_exit
   等待预算: 0s
   留证: vitest 输出末 5 行（含该 it PASS）
   Test: manual:bash -c 'cd packages/brain && npx vitest run --no-cache ../../tests/gp/f1/step3-provider-exit-structured-fidelity.test.js -t "无结构化产出的真实崩溃" --reporter=dot'
 
-- [ ] [BEHAVIOR] [L2] INV-接线: entrypoint.sh 真调 classifier 且 bash 语法通过（铁律「接线用源码检视」，接缝）
+- [x] [BEHAVIOR] [L2] INV-接线: entrypoint.sh 真调 classifier 且 bash 语法通过（铁律「接线用源码检视」，接缝）
   动作: grep entrypoint.sh 引用 structured-terminal-classifier，并 bash -n 校验语法
   预期观察: grep 命中且 bash -n 退出 0
   等待预算: 0s
