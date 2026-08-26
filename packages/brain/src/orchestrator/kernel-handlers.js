@@ -161,7 +161,22 @@ export function createKernelHandlers(deps) {
         const candidateSha = candidate?.head_sha ?? null;
         const candidateBranch = candidate?.branch ?? null;
         if (!candidateSha || !candidateBranch) {
-          return { status: 'BLOCKED', detail: 'human review requires a PR URL or a frozen candidate' };
+          // r77 案卷（run 06aea1e3）：GAN 早期候选未冻结时返回 BLOCKED 会被
+          // blocked_same_state 两连秒死——人审请求本身成死路。降级为无锚落地：
+          // 通知带 run_id、pr_head_sha=null，保住人来判断的机会而非机器秒死。
+          await deps.notifyReview({
+            task_id: ctx.taskId,
+            title: ctx.observed.task?.title,
+            pr_url: null,
+            candidate_branch: null,
+            preview_url: null,
+            run_id: ctx.runId,
+            pr_head_sha: null,
+          });
+          return {
+            status: 'DONE',
+            detail: `human review requested (unanchored, early-phase run ${ctx.runId})`,
+          };
         }
         await deps.notifyReview({
           task_id: ctx.taskId,

@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.141
+**Brain 版本**: 1.273.142
+
+## Brain 1.273.142 — commander runner_failure 重派补漏 + 早期无锚人审落地（F1 步骤 3，r77 案卷）
+
+r77（run 06aea1e3）双实证：①37 批 commander 有界重派只覆盖 infrastructure_blocked，runner_failure 分支漏（每次仍挂人审）；②GAN 早期候选未冻结时人审请求 dispatch 返回 BLOCKED → blocked_same_state 两连秒死（人审通道第 4 个无出口场景）。修：①runner_failure 分支给 commander 同款有界重派（序号 <5 回主链，≥5 fail-closed 挂人审带 callbackHop）；②无 PR 无候选时人审降级为无锚落地（DONE + 通知带 run_id、pr_head_sha=null），保住人来判断的机会。附案卷：commander 的 claude 返回 success JSON 却被 runner 包装成 provider_exit——语义埋没病第三实证（r78 主题）。
 
 ## Brain 1.273.141 — breaker 批准消费 + 本地候选人审停表（F1 步骤 3，r76 案卷）
 

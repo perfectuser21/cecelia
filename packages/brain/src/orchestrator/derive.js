@@ -735,6 +735,26 @@ function attemptCallbackRoute(observed) {
   // 超限进人审兜底——不轮换账号（那是 account_exhausted 的语义），不无限重试。
   // 守卫（真 derive，产物闸）：tests/gp/f1/step3-runner-failure-retry.test.js
   if (status === 'failed' && failureClass === 'runner_failure') {
+    if (role === 'commander') {
+      // r77 案卷（run 06aea1e3）：37 批 commander 有界重派只覆盖 infrastructure_blocked，
+      // runner_failure 分支漏——commander 的 attempt 以 runner_failure 收场仍每次挂人审。
+      // 同款有界：序号 < CAP 不挂人审回主链（重派由 commanderCoordinator 下一 tick 负责）；
+      // ≥ CAP fail-closed 挂人审带 callbackHop 锚。
+      const commanderRunnerFailureSeq = sortedLogRows(observed.decisionLog).filter((r) => (
+        r.action === LOG_ACTION.ATTEMPT_CALLBACK
+        && Number(r.hop) <= Number(row.hop)
+        && callbackDetail(r).role === 'commander'
+        && callbackDetail(r).status === 'failed'
+        && callbackDetail(r).failure_class === 'runner_failure'
+      )).length;
+      if (commanderRunnerFailureSeq < COMMANDER_INFRA_RETRY_CAP) return null;
+      return {
+        phase: 'review',
+        action: ACTION.WAIT_HUMAN_REVIEW,
+        reason: 'callback_runner_failure_route_unknown',
+        callbackHop: Number(row.hop),
+      };
+    }
     const priorRunnerFailures = sortedLogRows(observed.decisionLog).filter((r) => (
       r.action === LOG_ACTION.ATTEMPT_CALLBACK
       && Number(r.hop) < Number(row.hop)
