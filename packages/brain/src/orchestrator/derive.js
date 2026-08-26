@@ -165,13 +165,26 @@ function approvedRetryAlreadySpawned(decisionLog, approvalHop) {
  * 纯 decisionLog 行计数，可重放。
  */
 const GLOBAL_LOOP_BREAKER_THRESHOLD = 5;
-function globalLoopBreakerTripped(decisionLog, decision) {
+function globalLoopBreakerTripped(decisionLog, decision, currentHeadSha = null) {
   if (!decision || typeof decision.action !== 'string' || !decision.action.startsWith('spawn:')) {
     return false;
   }
   let streak = 0;
   for (const row of [...sortedLogRows(decisionLog)].reverse()) {
     if (GENERATOR_ACTIONS.has(row.action)) break;
+    // r76 案卷（run 35bddb0e）：breaker 人审 APPROVED 无消费逻辑，批准后 streak
+    // 仍 ≥5 继续 wait，run 空等到 deadline。批准（候选头命中，stale 不认）作为
+    // streak 重置点——放行一次原派发；同因再攒满阈值 → 再熔断（fail-closed 不变）。
+    if (row.action === LOG_ACTION.VERDICT_HUMAN_REVIEW) {
+      const detail = asStructuredJson(row.detail) ?? {};
+      if (
+        detail.approved === true
+        && detail.review_class !== 'merge_gate'
+        && currentHeadSha != null
+        && detail.pr_head_sha === currentHeadSha
+      ) break;
+      continue;
+    }
     if (!String(row.action ?? '').startsWith('spawn:')) continue;
     const detail = asStructuredJson(row.detail) ?? {};
     if (row.action === decision.action && detail.reason === decision.reason) {
@@ -978,8 +991,10 @@ function evidenceReplayRoute(decisionLog, currentHeadSha, currentVerdict) {
 export function derive(observed) {
   const deriveResult = deriveInner(observed);
   // 全局熔断器：任何 spawn 决策若与本轮候选内已连续 ≥5 次的同 action+同 reason
-  // 派发相同 → 强制人审。放在最外层，专用闸失守时兜底。
-  if (globalLoopBreakerTripped(observed?.decisionLog ?? [], deriveResult)) {
+  // 派发相同 → 强制人审。放在最外层，专用闸失守时兜底。批准消费的当前头
+  // 支持本地候选回落（r76 案卷）。
+  const breakerHeadSha = observed?.pr?.head_sha ?? observed?.candidate?.head_sha ?? null;
+  if (globalLoopBreakerTripped(observed?.decisionLog ?? [], deriveResult, breakerHeadSha)) {
     return {
       phase: 'review',
       action: ACTION.WAIT_HUMAN_REVIEW,

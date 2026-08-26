@@ -475,6 +475,20 @@ async function markRunPaused(pool, runId, observed) {
   );
 }
 
+/**
+ * 人审挂起停表判定（r76 案卷：本地候选 pr=null 时旧逻辑永不停表，挂人审 6h
+ * 烧穿 automation_deadline_exceeded）。头锚支持候选头回落；无任何头锚不停表
+ * （fail-closed：旧 SHA 的人审不能暂停新 SHA 的活动时钟——原语义保留）。
+ */
+function humanReviewDeadlinePauseActive({
+  decisionAction, hasOpenHumanReview, reviewHeadSha, currentHeadSha,
+}) {
+  return decisionAction === ACTION.WAIT_HUMAN_REVIEW
+    && hasOpenHumanReview === true
+    && currentHeadSha != null
+    && reviewHeadSha === currentHeadSha;
+}
+
 async function loadRunDeadlineState(pool, runId) {
   const deadlineResult = await pool.query(
     'SELECT deadline_at FROM initiative_runs WHERE id = $1',
@@ -483,6 +497,7 @@ async function loadRunDeadlineState(pool, runId) {
   const reviewResult = await pool.query(
     `SELECT request.hop AS review_request_hop,
             request.observed,
+            request.detail,
             request.observed #>> '{pr,head_sha}' AS review_head_sha,
             request.created_at
        FROM orchestrator_decision_log request
@@ -505,7 +520,11 @@ async function loadRunDeadlineState(pool, runId) {
   return {
     deadline_at: deadline.deadline_at ?? null,
     review_request_hop: review.review_request_hop ?? null,
-    review_head_sha: review.review_head_sha ?? reviewObserved.pr?.head_sha ?? null,
+    // r76 案卷：本地候选请求行 observed.pr=null，头锚回落 detail.candidate_head_sha
+    review_head_sha: review.review_head_sha
+      ?? reviewObserved.pr?.head_sha
+      ?? asPayload(review.detail).candidate_head_sha
+      ?? null,
     open_human_review: review.review_request_hop != null,
   };
 }
@@ -735,10 +754,12 @@ async function runLoopOwned(
     );
     // collect 前只凭“有开放 request”允许进行一次外部对账；collect 后必须确认
     // request 仍锚定当前 GitHub head，旧 SHA 的人审不能暂停新 SHA 的活动时钟。
-    let deadlinePaused = defaultDecision.action === ACTION.WAIT_HUMAN_REVIEW
-      && hasOpenHumanReview
-      && Boolean(observed.pr?.head_sha)
-      && deadlineState.review_head_sha === observed.pr.head_sha;
+    let deadlinePaused = humanReviewDeadlinePauseActive({
+      decisionAction: defaultDecision.action,
+      hasOpenHumanReview,
+      reviewHeadSha: deadlineState.review_head_sha,
+      currentHeadSha: observed.pr?.head_sha ?? observed.candidate?.head_sha ?? null,
+    });
     const decisionIsTerminal = [
       ACTION.EXIT,
       ACTION.MARK_FAILED,
@@ -1728,7 +1749,8 @@ async function runLoopOwned(
       });
       hops++;
       // effect 已持久化且 snapshot 锚定当前 SHA；从这一刻起人审等待停表。
-      deadlinePaused = Boolean(observed.pr?.head_sha);
+      // r76 案卷：本地候选（pr=null）人审同样停表，候选头回落。
+      deadlinePaused = Boolean(observed.pr?.head_sha ?? observed.candidate?.head_sha);
     }
 
     if (controlStatus === 'NEEDS_CONTEXT' || controlStatus === 'BLOCKED') {
@@ -1790,4 +1812,10 @@ export async function runLoop(deps, params) {
   }
 }
 
-export const __test__ = Object.freeze({ frozenArtifactErrorCode, isSealContractRejection, buildSnapshot, humanReviewDetail });
+export const __test__ = Object.freeze({
+  frozenArtifactErrorCode,
+  isSealContractRejection,
+  buildSnapshot,
+  humanReviewDetail,
+  humanReviewDeadlinePauseActive,
+});

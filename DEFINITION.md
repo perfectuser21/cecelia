@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.140
+**Brain 版本**: 1.273.141
+
+## Brain 1.273.141 — breaker 批准消费 + 本地候选人审停表（F1 步骤 3，r76 案卷）
+
+r76（run 35bddb0e）双实证：①global_loop_breaker 人审 APPROVED 无消费逻辑（第 3 个批准出口盲区），批准后 streak 仍 ≥5 继续 wait，run 空等；②deadlinePaused 依赖 pr.head_sha，本地候选（pr=null）人审挂起不停表，6h 烧穿 automation_deadline_exceeded（r75/r76 连撞共同深因，"人审 deadline 不冻结"精确定位）。修：①breaker 扫描以候选头命中的 APPROVED 行为 streak 重置点（放行一次原派发，同因再攒满再熔断）；②停表判定抽纯函数 humanReviewDeadlinePauseActive，请求行与当前头双双支持候选头回落，无头锚不停表（fail-closed）。
 
 ## Brain 1.273.140 — commander lease 过期有界自动重派（F1 步骤 3，r70-r75 五轮案卷）
 
