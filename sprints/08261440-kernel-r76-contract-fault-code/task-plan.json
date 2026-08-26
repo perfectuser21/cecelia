@@ -1,0 +1,29 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain/scripts/codex-bridge/kernel-attempt-handler.cjs（harness kernel 回执分类纯函数），无 UI、无远端 bridge 协议变更。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "generator 合同故障码保真透传：kernel-attempt-handler close 非零退出先读结构化 BLOCKED 写盘，保真透传 CONTRACT_* error_code，真崩溃仍 provider_exit",
+      "scope": "在 kernel-attempt-handler.cjs 新增纯函数 reconcileProviderCloseResult({code,resultPath,attemptId})：code===0 走既有 parseHarnessResult；code!==0 先尝试读写盘 result，若合法结构化且 status='blocked' 且 error.code 非空字符串 → 保真返回该 result，否则回落 failedHarnessResult(provider_exit_<code>)。close 处理器改用它。版本四处 bump。不改 derive.js（既有 CONTRACT_* 路由不动）。",
+      "dod": [
+        "[BEHAVIOR] 结构化 BLOCKED + CONTRACT_* 非零退出保真透传（B-01/B-02）；真崩溃 / 非法写盘 / 非 blocked 回落 provider_exit（B-03/B-04/B-05）；零退出回归不变（B-06）",
+        "[ARTIFACT] kernel-attempt-handler.cjs 导出 reconcileProviderCloseResult 且 close 处理器改用它",
+        "[ARTIFACT] 冻结合同测试与 tests/gp/f1 回归测试转绿"
+      ],
+      "files": [
+        "packages/brain/scripts/codex-bridge/kernel-attempt-handler.cjs",
+        "sprints/08261440-kernel-r76-contract-fault-code/tests/step3-contract-fault-code-passthrough.test.js",
+        "tests/gp/f1/step3-contract-fault-code-passthrough.test.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        "packages/brain/.brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
