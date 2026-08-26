@@ -1,0 +1,33 @@
+{
+  "initiative_id": "06aea1e3-31a6-4989-a24c-758b4c59f74e",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落 packages/brain/scripts/codex-bridge（harness kernel runner 回执构造）+ 纯函数分类，无 UI、无远端 agent 协议、非 engine hook，属纯后端自治链路",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "runner 非零退出保真透传 generator 结构化 CONTRACT_* 合同故障码，根除 provider_exit 语义埋没 [r77]",
+      "scope": "在 packages/brain/scripts/codex-bridge/kernel-attempt-handler.cjs 抽出并导出纯函数 resolveProviderCloseResult({resultPath,attemptId,exitCode})：exit 0 走 parseHarnessResult；非零退出下若 resultPath 存在合法结构化 result 且 error.code 匹配 ^CONTRACT_[A-Z0-9_]+$ 则保真透传该结构化 result，否则回落 failedHarnessResult(provider_exit_${code})；child.once('close') 分支改调它，外层 catch 仍兜 provider_result_invalid。判定只凭结构化 result.error.code（禁 grep stdout）。不改 derive.js / execution-contract.js（保真透传后既有 kernel 合同故障重开 GAN 路径已正确）。让 6 条冻结 BEHAVIOR 全绿并同步 bump 版本四处。",
+      "dod": [
+        "[BEHAVIOR] 非零退出下结构化 CONTRACT_SELF_CONTRADICTION 保真透传（error.code 不降级为 provider_exit），对应 contract-dod.md B-02",
+        "[BEHAVIOR] 全链复刻 r69：runner 保真 → kernel 分类 semantic_refusal（非 infrastructure）→ derive 路由 arbitrate:contract_fault，对应冻结测试全链用例",
+        "[BEHAVIOR] 负向 真崩溃（无结构化 result）仍 provider_exit_${code}/failed，语义不变，对应 B-03",
+        "[BEHAVIOR] 边界 非 CONTRACT_ 结构化 code 回落 provider_exit（只凭结构化 code），对应 B-05/B-04",
+        "[ARTIFACT] resolveProviderCloseResult 已导出，close 分支改调它；冻结测试与 tests/gp/f1 永久回归真 import 被改文件（无 vi.mock）",
+        "[ARTIFACT] 版本 bump 四处同步（package.json/package-lock.json/.brain-versions/DEFINITION.md 至 1.273.142）+ 根 DoD.md"
+      ],
+      "files": [
+        "packages/brain/scripts/codex-bridge/kernel-attempt-handler.cjs",
+        "sprints/08270110-kernel-r77-contract-fault-code/tests/contract-fault-code-passthrough.test.ts",
+        "tests/gp/f1/step3-contract-fault-code-passthrough.test.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md",
+        "DoD.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
