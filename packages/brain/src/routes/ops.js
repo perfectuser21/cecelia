@@ -1529,12 +1529,29 @@ router.post('/feishu/event', async (req, res) => {
 
             // 如果批次中有图片，取最后一张
             const batchImageContent = batch.slice().reverse().find(m => m.imageContent)?.imageContent || null;
-            const modeAResult = await handleChat(contextPrefix, {
-              source: 'feishu',
-              sender_name: primarySender.senderName,
-              user_id: primarySender.userId,
-              relationship: primarySender.relationship,
-            }, [], batchImageContent);
+            // 若批次含图片且 handleChat 因图片异常失败，降级为纯文字重试，确保文字消息不丢失
+            const groupHasTextMsg = batch.some(m => m.text && m.text !== '[图片]');
+            let modeAResult;
+            try {
+              modeAResult = await handleChat(contextPrefix, {
+                source: 'feishu',
+                sender_name: primarySender.senderName,
+                user_id: primarySender.userId,
+                relationship: primarySender.relationship,
+              }, [], batchImageContent);
+            } catch (chatErr) {
+              if (batchImageContent && groupHasTextMsg) {
+                console.warn('[feishu/group] handleChat 图片处理失败，降级纯文字重试:', chatErr.message);
+                modeAResult = await handleChat(contextPrefix, {
+                  source: 'feishu',
+                  sender_name: primarySender.senderName,
+                  user_id: primarySender.userId,
+                  relationship: primarySender.relationship,
+                }, [], null);
+              } else {
+                throw chatErr;
+              }
+            }
             const reply = modeAResult?.reply;
             if (!reply) {
               console.warn('[feishu/group] handleChat 无回复，跳过');
@@ -1646,12 +1663,29 @@ router.post('/feishu/event', async (req, res) => {
             }
             if (thalamusRouted) return;
             // thalamus 未处理 → fallback 到 handleChat
-            const fallbackResult = await handleChat(combinedText, {
-              source: 'feishu',
-              sender_name: primary.senderName,
-              user_id: primary.userId,
-              relationship: primary.relationship,
-            }, p2pHistory, batchImageContent);
+            // 若批次含图片且 handleChat 因图片异常失败，降级为纯文字重试，确保文字消息不丢失
+            const p2pHasTextMsg = batch.some(m => m.text && m.text !== '[图片]');
+            let fallbackResult;
+            try {
+              fallbackResult = await handleChat(combinedText, {
+                source: 'feishu',
+                sender_name: primary.senderName,
+                user_id: primary.userId,
+                relationship: primary.relationship,
+              }, p2pHistory, batchImageContent);
+            } catch (chatErr) {
+              if (batchImageContent && p2pHasTextMsg) {
+                console.warn('[feishu/p2p] handleChat 图片处理失败，降级纯文字重试:', chatErr.message);
+                fallbackResult = await handleChat(combinedText, {
+                  source: 'feishu',
+                  sender_name: primary.senderName,
+                  user_id: primary.userId,
+                  relationship: primary.relationship,
+                }, p2pHistory, null);
+              } else {
+                throw chatErr;
+              }
+            }
             const fallbackReply = fallbackResult?.reply;
             if (!fallbackReply) return;
             saveUnifiedConversation(openId, 'feishu_p2p', null, combinedText, fallbackReply, null).catch(() => {});
