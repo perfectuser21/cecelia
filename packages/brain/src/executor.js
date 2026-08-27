@@ -3089,16 +3089,19 @@ async function _driveHarnessInitiative(task, opts = {}) {
 
   // harness gear 档位硬校验（07-17 一体化设计决策1，同 missing_orchestrator_flag 处理形态）：
   // payload.gear 非法值（不在 GEAR_VALUES 枚举）→ 点火即 terminal failed，不再继续往下走
-  // （不 spawn relay session）。缺省/合法值 → deriveGear 不抛错，行为与现行完全一致（零回归）。
-  try {
-    const { deriveGear } = await import('./harness-skill-relay.js');
-    deriveGear(task);
-  } catch (gearErr) {
-    await markInitiativeTerminalFailed(dbPool, task.id, 'invalid_gear', gearErr.message);
-    console.error(
-      `[executor] task=${task.id} 非法 gear（值=${task?.payload?.gear ?? '(missing)'}），标 terminal failed: ${gearErr.message}`
-    );
-    return { ok: false, error: 'invalid_gear', terminal: true };
+  // （不 spawn relay session）。缺省/合法值 → 通过，行为与现行完全一致（零回归）。
+  // 注：此处内联枚举而非 import harness-skill-relay.js，避免测试 mock 截断该模块时 deriveGear 不可用。
+  {
+    const _gear = task?.payload?.gear;
+    const _GEAR_VALUES = ['default', 'hotfix', 'segmented'];
+    if (_gear !== undefined && _gear !== null && !_GEAR_VALUES.includes(_gear)) {
+      const gearErr = new Error(`invalid_gear: ${_gear}`);
+      await markInitiativeTerminalFailed(dbPool, task.id, 'invalid_gear', gearErr.message);
+      console.error(
+        `[executor] task=${task.id} 非法 gear（值=${_gear}），标 terminal failed: ${gearErr.message}`
+      );
+      return { ok: false, error: 'invalid_gear', terminal: true };
+    }
   }
 
   // gp_anchor 硬校验（GP锚定闭环刀4 — 仅当 base_repo 含 zenithjoy-workspace 时生效，
