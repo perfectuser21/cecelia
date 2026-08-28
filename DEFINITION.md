@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.142
+**Brain 版本**: 1.273.143
+
+## Brain 1.273.143 — 信任断言基础设施失败归因修正 + 留证（F1 步骤 3，r75/r79 案卷）
+
+r75+r79（run 7867ae4a）双实证：runner entrypoint 信任断言复核在容器冷装 npm 依赖失败（网络抖动/预算超时）时，把 evaluator 真实 PASS（合同 7/7+回归 5/5）改判 FAIL evidence_invalid（required_assertion_dependency_invalid）→ evidence repair → repeated_signature 人审 → 撞钟杀 run——基础设施故障被错误归因为产品证据无效；且失败路径 rm -rf evidence_dir 删掉安装日志（失败不留原因）。修：①derive 对 ASSERTION_INFRA_SIGNATURES（dependency/checkout invalid）按基础设施有界重派 evaluator（同签名同 head <5 次重派，≥5 fail-closed 人审），其他 evidence_invalid 签名语义不变；②entrypoint 失败分支把 dependency-install.log 尾部 4KB 并入 result（decision.evidence_tail）。entrypoint 变更需重建镜像+repin（41 批）。
 
 ## Brain 1.273.142 — commander runner_failure 重派补漏 + 早期无锚人审落地（F1 步骤 3，r77 案卷）
 
