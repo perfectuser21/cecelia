@@ -17,6 +17,7 @@ import { AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED } from './attempt-machine-capac
 import { assertRouteSnapshotLaunchAuthority } from './route-snapshot-authority.js';
 import { DIRECT_PROFILE_CONTRACT_POLICY_VERSION } from './direct-profile-contract.js';
 import { sameContractIdentity } from './gates.js';
+import { isContractFaultCode } from './ground-truth.js';
 import {
   implementationBaselineFromTaskPayload,
   implementationBaselineFromWorkspace,
@@ -1153,10 +1154,14 @@ export function createDispatcher(deps) {
         task_id: ctx.observed.task.id ?? ctx.taskId,
         logical_cycle: attemptMetadata.logicalCycleId,
       };
-      const failedTargets = await deps.attemptStore.listFailedExecutionTargets?.(
-        ctx.runId,
-        spec.role,
-      ) ?? [];
+      // r80: 滤掉 CONTRACT_* 合同故障 target（不按 infrastructure 拉黑），
+      // 真 provider 崩溃 / 超时 target 仍进黑名单（负向语义不变）。
+      const failedTargets = filterBlacklistableTargets(
+        await deps.attemptStore.listFailedExecutionTargets?.(
+          ctx.runId,
+          spec.role,
+        ) ?? [],
+      );
       const preflight = await deps.preflightGate.evaluate({
         preferred_target: resolvedPreferredTarget,
         candidate_targets: candidateTargets,
@@ -1737,6 +1742,16 @@ export function createDetachedLauncher({
   });
 }
 
+// r80: failed_targets 拉黑过滤——CONTRACT_* 合同故障的 target 不进黑名单
+// （合同故障走重开 GAN，不按 infrastructure 拉黑重试）；真 provider 崩溃 / 超时
+// 与 error_code=null 的历史行仍保留拉黑（负向语义不变，generator_infrastructure_retry_identity 不改）。
+// 纯函数可重放且不 mutate 入参（返回新数组）。
+function filterBlacklistableTargets(targets) {
+  if (!Array.isArray(targets)) return [];
+  return targets.filter((target) => !isContractFaultCode(target?.error_code));
+}
+
 export const __test__ = {
   ACTION_SPECS, buildInputs, buildBundle, executionConfig, enforceBundleSizeLimit,
+  filterBlacklistableTargets,
 };

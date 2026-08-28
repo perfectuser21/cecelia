@@ -72,6 +72,31 @@ const GENERATOR_RUNTIME_ERROR_CODES = new Set([
   'provider_timeout',
 ]);
 
+// r80: 病族边界 SSOT——真基础设施故障（provider 进程崩溃 / 超时，无结构化产出）才归入
+// 可重试的基础设施病族。CONTRACT_* 家族是执行体上报的合同故障真因，绝不入此病族
+// （否则合同故障被当基础设施重试并拉黑 target → run 死，r69/r76/r77 三次实证）。
+export function isInfrastructureErrorCode(code) {
+  return GENERATOR_RUNTIME_ERROR_CODES.has(code);
+}
+
+// r80: CONTRACT_* 家族命中——与 derive.js 的 token 子集匹配语义严格一致（同命中集合、
+// 同不误判集合）。核心 token 组合对付词序漂移（CONTRACT_SCOPE_CI_CONFLICT）与多词/丢词
+// 漂移（APPROVED_CONTRACT_CI_CONFLICT）；只挑区分度最高的词做核心组合，防止过度放宽把
+// 无关产品 bug（如 CONTRACT_MISSING_FIXTURE）误路由成合同申诉。
+export const CONTRACT_FAULT_CORE_TOKENS = [
+  ['SELF', 'CONTRADICTION'], // CONTRACT_SELF_CONTRADICTION
+  ['TEST', 'UNSATISFIABLE'], // CONTRACT_TEST_UNSATISFIABLE
+  ['CI', 'CONFLICT'], // CONTRACT_CI_SCOPE_CONFLICT（SCOPE 非必需——已实证会被丢）
+];
+export function isContractFaultCode(code) {
+  const reportedTokens = new Set(
+    String(code ?? '').toUpperCase().split('_').filter(Boolean),
+  );
+  return CONTRACT_FAULT_CORE_TOKENS.some(
+    (core) => core.every((token) => reportedTokens.has(token)),
+  );
+}
+
 export function mapCiStatus(checkRows, mergeStateStatus = null) {
   if (!Array.isArray(checkRows) || checkRows.length === 0) return 'pending'; // CI 尚未挂上 → 视为 pending
   const hasFail = checkRows.some((c) => CI_FAIL_STATES.has(c.state));

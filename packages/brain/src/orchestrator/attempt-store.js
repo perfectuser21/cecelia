@@ -1123,7 +1123,7 @@ export function createAttemptStore(pool, {
     async listFailedExecutionTargets(runId, role) {
       const ttlHours = resolveFailedTargetTtlHours();
       const result = await pool.query(
-        `SELECT provider, account_id, requested_machine_id
+        `SELECT provider, account_id, requested_machine_id, error_code, failure_class
            FROM harness_attempts
           WHERE run_id=$1
             AND role=$2
@@ -1146,6 +1146,9 @@ export function createAttemptStore(pool, {
         provider: row.provider,
         account: row.account_id,
         machine: row.requested_machine_id,
+        // r80: 携 error_code 供上层 filterBlacklistableTargets 过滤 CONTRACT_* 合同故障
+        error_code: row.error_code ?? null,
+        failure_class: row.failure_class ?? null,
       }));
     },
 

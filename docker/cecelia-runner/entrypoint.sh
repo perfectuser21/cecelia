@@ -2746,6 +2746,44 @@ run_with_attempt_timeout() {
   return "$normalized_exit"
 }
 
+# r80: 结构化终态识别（根除 provider_exit 语义埋没）。
+# CLI 退出码非零可与真结构化终态并存（r69 结构化 BLOCKED / r77 success 结果 JSON 实证），
+# 单看退出码就一律降级为 provider_exit 会埋没真因。本函数解析 provider stdout 里的结构化
+# 终态并归一分类：
+#   success（status=completed/completed_with_concerns 或 commander-directive/v1） → __structured_success__
+#   结构化 BLOCKED（status=blocked 且 error.code 非空字符串）               → 该真因码（字面保真）
+#   真崩溃 / 结构化 failed / 畸形 / 空 / 不可读                              → 空（fail-safe 落回 provider_exit）
+# 纯函数可重放：相同 stdout 恒得相同分类，无时钟 / 随机；解析失败绝不抛出（return 0 + 空输出）。
+detect_structured_terminal() {
+  local stdout_file="$1"
+  [[ -n "$stdout_file" && -r "$stdout_file" && -s "$stdout_file" ]] || return 0
+  local classification
+  classification="$(
+    jq -rs '
+      (.[-1] // {}) as $last
+      | (
+          if ($last.structured_output | type) == "object" then $last.structured_output
+          elif ($last.result | type) == "object" then $last.result
+          elif ($last.result | type) == "string" then ($last.result | fromjson? // null)
+          elif ($last | type) == "object" then $last
+          else null
+          end
+        ) as $terminal
+      | if ($terminal | type) != "object" then ""
+        elif ($terminal.schema? == "commander-directive/v1") then "__structured_success__"
+        elif (($terminal.status? == "completed") or ($terminal.status? == "completed_with_concerns")) then "__structured_success__"
+        elif ($terminal.status? == "blocked")
+             and (($terminal.error?.code | type) == "string")
+             and (($terminal.error.code | length) > 0)
+          then $terminal.error.code
+        else ""
+        end
+    ' "$stdout_file" 2>/dev/null || printf ''
+  )"
+  printf '%s' "$classification"
+  return 0
+}
+
 normalize_provider_failure() {
   local normalized_file="$1"
   local attempt_id="$2"
@@ -2765,6 +2803,24 @@ normalize_provider_failure() {
       --argjson credential_copy_mutated "$credential_copy_mutated" \
       --argjson exit_code "$provider_exit" \
       '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"provider process timed out",artifacts:[],checks:[],decision:null,error:{code:"provider_timeout",message:"provider exceeded the TaskBundle timeout",exit_code:$exit_code},provider_metadata:({provider:$provider,session_id:(if $session == "" then null else $session end)} + (if $credential_ref == "" then {} else {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} end))}' \
+      > "$normalized_file"
+    return
+  fi
+
+  # r80: 结构化终态保真透传——有结构化 BLOCKED（携真因码）时禁止降级为 provider_exit。
+  # 只对「有结构化终态」生效；无结构化产出的真崩溃继续走下方 provider_exit（负向语义不变）。
+  local structured_terminal
+  structured_terminal="$(detect_structured_terminal "$stdout_file")"
+  if [[ -n "$structured_terminal" && "$structured_terminal" != "__structured_success__" ]]; then
+    jq -n \
+      --arg attempt "$attempt_id" \
+      --arg provider "$provider" \
+      --arg session "$session_id" \
+      --arg credential_ref "$credential_ref" \
+      --argjson credential_copy_mutated "$credential_copy_mutated" \
+      --arg failure_code "$structured_terminal" \
+      --argjson exit_code "$provider_exit" \
+      '{contract_version:"1.0",attempt_id:$attempt,status:"blocked",summary:"provider reported a structured terminal state",artifacts:[],checks:[],decision:null,error:{code:$failure_code,message:"structured terminal preserved verbatim (not downgraded to provider_exit)",exit_code:$exit_code},provider_metadata:({provider:$provider,session_id:(if $session == "" then null else $session end)} + (if $credential_ref == "" then {} else {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} end))}' \
       > "$normalized_file"
     return
   fi

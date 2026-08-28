@@ -28,6 +28,7 @@ import {
   generatorCrashSignature,
   normalizeFailureSignature,
 } from './convergence-signatures.js';
+import { isContractFaultCode } from './ground-truth.js';
 
 const REQUIRED_FIELDS = [
   'run', 'task', 'prdExists', 'contract', 'pr', 'inflight', 'lastAgentExit',
@@ -674,15 +675,9 @@ function attemptCallbackRoute(observed) {
   // "报出的 token 集合是否包含某条核心组合的全部 token"子集匹配——SCOPE/其余
   // 修饰词不是语义必需,只挑每条码里区分度最高的词做核心组合,防止过度放宽
   // 误把无关产品 bug 路由成合同申诉。
-  const CONTRACT_FAULT_CORE_TOKENS = [
-    ['SELF', 'CONTRADICTION'], // CONTRACT_SELF_CONTRADICTION
-    ['TEST', 'UNSATISFIABLE'], // CONTRACT_TEST_UNSATISFIABLE
-    ['CI', 'CONFLICT'], // CONTRACT_CI_SCOPE_CONFLICT（SCOPE 非必需——已实证会被丢）
-  ];
-  const reportedTokens = new Set(String(detail.error_code ?? '').toUpperCase().split('_').filter(Boolean));
-  const matchesContractFaultCode = CONTRACT_FAULT_CORE_TOKENS.some(
-    (core) => core.every((token) => reportedTokens.has(token)),
-  );
+  // r80: token 子集匹配收敛到 ground-truth.js 的 isContractFaultCode（SSOT），
+  // 避免核心 token 组合在 derive 与 ground-truth 两处复制漂移（语义严格一致）。
+  const matchesContractFaultCode = isContractFaultCode(detail.error_code);
   if (
     role === 'generator'
     && (status === 'blocked' || (status === 'failed' && failureClass === 'semantic_refusal'))

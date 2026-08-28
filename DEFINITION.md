@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.144
+**Brain 版本**: 1.273.145
 
 ## Brain 1.273.144 — fleet runner digest repin b3ff98ff（40 批信任断言留证镜像上产）
 
