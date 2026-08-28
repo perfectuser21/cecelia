@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.143
+**Brain 版本**: 1.273.144
+
+## Brain 1.273.144 — fleet runner digest repin b3ff98ff（40 批信任断言留证镜像上产）
+
+40 批（#5079）修 entrypoint 信任断言失败留证后重建 runner 镜像，canonical pin 从 895f25f0 一次性替换为 b3ff98ff（verify-digest-pin 清单），worker 版本 pin 同步 bump 1.273.136 → 1.273.144，随 fleet-rollout 分发。
 
 ## Brain 1.273.143 — 信任断言基础设施失败归因修正 + 留证（F1 步骤 3，r75/r79 案卷）
 
@@ -73,7 +77,7 @@ r43（run 19759355 hop38）被 deny:impact:impact_anchor_missing 确定性判死
 r42（run f44bdef7 / PR #5012）实证：shepherd 的 kernel 豁免只认旧 harness_mode 字段，kernel-v1 任务漏网被 auto-merge，capability-change 的人批 merge fence 被整个旁路。修：SQL 过滤加 task_type<>harness_initiative + 行级 isKernelSovereignTask 双保险，merge 主权唯一归 kernel merge_pr。
 ## Brain 1.273.113 — runner digest repin bd9f49ca（publisher 读滞后重试进镜像）
 
-1.273.112 的 entrypoint 修复构建进 runner 镜像（build head 2c3341a6e），canonical Runner digest 重钉为 `sha256:895f25f02136915462a9ea213e099ff6123a8a581e296d5916618b6d05eedfce`，全部 pin 位置同步（历史条目保留旧 digest 原文）。
+1.273.112 的 entrypoint 修复构建进 runner 镜像（build head 2c3341a6e），canonical Runner digest 重钉为 `sha256:b3ff98ff69092e4a904e493f23a271054f06bfefe796ea165d98ebc359facbbf`，全部 pin 位置同步（历史条目保留旧 digest 原文）。
 ## Brain 1.273.112 — publisher 对 headRefOid 读滞后有界重读（F1 步骤 3，r40/r41 双案卷）
 
 r40 hop171 与 r41 hop52 同因：publisher push 成功且 ls-remote 确认后立刻 gh pr view，GitHub API headRefOid 读滞后返回旧头 → PR head mismatch → publisher_authority_invalid，实际发布已完成。修：URL 合法但 head 不一致时有界重读（PUBLISHER_PR_VIEW_RETRIES 默认 5 次×3s），仍不一致才失败；重试不放松身份校验（负向用例保留）。
