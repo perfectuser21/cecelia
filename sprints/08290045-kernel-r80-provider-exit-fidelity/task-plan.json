@@ -1,0 +1,30 @@
+{
+  "initiative_id": "5100560e-f89f-415d-b521-8b9fb7d26e25",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain/src/orchestrator（kernel 分类/派发）+ docker/cecelia-runner/entrypoint.sh 后端回执链路，无 UI/无远端 agent 协议，属自治后台。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "结构化上报保真透传：entrypoint 不降级 provider_exit + kernel CONTRACT_* 病族边界与 failed_targets 过滤",
+      "scope": "runner/entrypoint 检测结构化终态时回执保真透传真因（不写 provider_exit）；ground-truth 导出病族边界纯函数（CONTRACT_* 不入基础设施病族）；dispatcher 过滤 failed_targets（CONTRACT_* 不拉黑，真崩溃仍拉黑）；attempt-store listFailedExecutionTargets 返回 error_code 供过滤。负向：无结构化真崩溃/超时语义不变。",
+      "dod": [
+        "[BEHAVIOR] runner 结构化 BLOCKED + CONTRACT_* 保真透传，回执 error.code 非 provider_exit（B-01）",
+        "[BEHAVIOR] kernel CONTRACT_* 不入基础设施病族且不进 failed_targets（B-03/B-04）",
+        "[BEHAVIOR] 负向：无结构化真崩溃仍 provider_exit / 超时仍 provider_timeout（B-05）",
+        "[ARTIFACT] entrypoint.sh detect_structured_terminal + ground-truth 病族纯函数 + dispatcher filterBlacklistableTargets 落地，版本 bump 四处同步"
+      ],
+      "files": [
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/package.json",
+        "sprints/08290045-kernel-r80-provider-exit-fidelity/tests/provider-exit-fidelity.test.js",
+        "tests/gp/f1/step3-provider-exit-fidelity-r80.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
