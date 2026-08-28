@@ -1,0 +1,37 @@
+{
+  "initiative_id": "7867ae4a-3c3b-48ed-8793-1f0ae303a1b6",
+  "journey_type": "autonomous",
+  "journey_type_reason": "修复 harness kernel 自驱 GAN 循环内部的失败归因与 runner 回执归一化，无 UI/远端产品 agent 旅程，验收为纯后端离线重放。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "结构化上报保真透传：runner 归一化优先透传结构化终态 + kernel CONTRACT_* 分流锁定",
+      "scope": "runner（entrypoint.sh）在包装 provider_exit 前先检测执行体结构化终态并保真透传：normalize_provider_failure 收 result_file，命中合法结构化 BLOCKED（status∈枚举且 error.code 非空非 provider_* 家族）时透传其 status+error.code；validate_claude_terminal_receipt 认可 commander-directive/v1 成功信封（对齐 codex 已有旁路）。kernel（ground-truth.js）导出 GENERATOR_RUNTIME_ERROR_CODES 并确认 CONTRACT_* 排除；derive.js CONTRACT_* → 合同故障重开分支维持。真崩溃无结构化产出仍 provider_exit/infrastructure（负向不动）。版本 bump 四处。RED 先行复刻 r69/r77。",
+      "dod": [
+        "[BEHAVIOR] runner 保真透传结构化 BLOCKED 的 CONTRACT_* 码，不埋没为 provider_exit（B-01）",
+        "[BEHAVIOR] runner 认可 commander-directive/v1 成功信封（B-02）",
+        "[BEHAVIOR] kernel CONTRACT_* → arbitrate:contract_fault，不进 failed_targets（B-03）",
+        "[BEHAVIOR] GENERATOR_RUNTIME_ERROR_CODES 排除 CONTRACT_* 家族（B-04）",
+        "[BEHAVIOR] 负向不动：真崩溃无结构化产出 → provider_exit/infrastructure（INV-1）",
+        "[ARTIFACT] 冻结合同测试 + F1 永久回归全绿；版本四处同步过 check-version-sync.sh"
+      ],
+      "files": [
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/derive.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md",
+        "sprints/08280010-kernel-r79-provider-exit-fidelity/tests/provider-exit-fidelity.test.js",
+        "tests/gp/f1/step3-provider-exit-fidelity.test.js",
+        "sprints/08280010-kernel-r79-provider-exit-fidelity/contract-draft.md",
+        "sprints/08280010-kernel-r79-provider-exit-fidelity/contract-dod.md",
+        "sprints/08280010-kernel-r79-provider-exit-fidelity/task-plan.json"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
