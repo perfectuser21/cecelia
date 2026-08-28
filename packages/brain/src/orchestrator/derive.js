@@ -325,6 +325,14 @@ const INFRA_RETRY_ACTION_BY_ROLE = Object.freeze({
 // 主链继续）；累计 ≥ CAP 时 fail-closed 兜底仍挂人审带 callbackHop 锚（禁无界重试）。
 const COMMANDER_INFRA_RETRY_CAP = 5;
 
+// r75/r79 案卷：runner 信任断言复核步骤的基础设施类失败签名（entrypoint.sh 产出）。
+// 命中这些签名的 evidence_invalid verdict 按基础设施有界重派，不进 evidence repair。
+const ASSERTION_INFRA_SIGNATURES = new Set([
+  'required_assertion_dependency_invalid',
+  'required_assertion_checkout_invalid',
+]);
+const ASSERTION_INFRA_RETRY_CAP = 5;
+
 const GENERATOR_ACTIONS = new Set([
   ACTION.SPAWN_GENERATOR,
   ACTION.SPAWN_GENERATOR_FIX,
@@ -1447,6 +1455,37 @@ function deriveFailureClassRoute(
   }
 
   if (fc === 'evidence_invalid') {
+    // r75/r79 案卷（run 7867ae4a）：runner 信任断言复核的 npm 冷装/checkout 失败是
+    // 基础设施故障（网络抖动/预算超时），不是产品证据无效——按 evidence repair
+    // 处理会走 repeated_signature 人审然后撞钟杀掉 evaluator 实际 PASS 的 run。
+    // 改为有界基础设施重派：同签名同 head 的 FAIL verdict 计数 < CAP 重派 evaluator；
+    // ≥ CAP fail-closed 挂人审。其他 evidence_invalid 签名语义不变。
+    const infraSignature = normalizeFailureSignature(currentVerdict?.failure_signature)
+      ?.find((s) => ASSERTION_INFRA_SIGNATURES.has(s)) ?? null;
+    if (infraSignature) {
+      const infraFailCount = sortedLogRows(decisionLog).filter((row) => {
+        if (![LOG_ACTION.VERDICT_EVALUATE, LOG_ACTION.VERDICT_JUDGE].includes(row.action)) {
+          return false;
+        }
+        const detail = asStructuredJson(row.detail) ?? {};
+        return detail.failure_class === 'evidence_invalid'
+          && detail.pr_head_sha === currentHeadSha
+          && (normalizeFailureSignature(detail.failure_signature) ?? [])
+            .includes(infraSignature);
+      }).length;
+      if (infraFailCount < ASSERTION_INFRA_RETRY_CAP) {
+        return {
+          phase: 'evaluate',
+          action: ACTION.SPAWN_EVALUATOR,
+          reason: 'assertion_infrastructure_retry',
+        };
+      }
+      return {
+        phase: 'review',
+        action: ACTION.WAIT_HUMAN_REVIEW,
+        reason: 'assertion_infrastructure_exhausted',
+      };
+    }
     // INV-K6：只按 SHA + 结构化签名回放。第二次同签名停在人审；
     // 人工批准只解锁一次，批准后的 repair 再产出同签名即终局。
     return evidenceReplayRoute(decisionLog, currentHeadSha, currentVerdict);

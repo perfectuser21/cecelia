@@ -2070,11 +2070,17 @@ merge_required_assertion_evidence() {
         "$node_bin" /usr/local/lib/node_modules/npm/bin/npm-cli.js \
         ci --ignore-scripts --no-audit --no-fund) \
       > "$evidence_dir/dependency-install.log" 2>&1; then
-    jq '.checks = []
+    # r75/r79 案卷：失败路径此前 rm -rf 连 dependency-install.log 一起删（失败不留
+    # 原因）——真实败因（网络/预算/包名）永远不可考古。保留日志尾部进 result。
+    local install_log_tail
+    install_log_tail="$(tail -c 4000 "$evidence_dir/dependency-install.log" 2>/dev/null || printf 'install log unavailable')"
+    jq --arg evidence_tail "$install_log_tail" \
+      '.checks = []
         | .decision.outcome = "FAIL"
         | .decision.reason = "trusted assertion dependency install failed"
         | .decision.failure_class = "evidence_invalid"
-        | .decision.failure_signature = ["required_assertion_dependency_invalid"]' \
+        | .decision.failure_signature = ["required_assertion_dependency_invalid"]
+        | .decision.evidence_tail = $evidence_tail' \
       "$normalized_result_file" > "$merged_result_file"
     mv "$merged_result_file" "$normalized_result_file"
     rm -rf "$evidence_dir"
