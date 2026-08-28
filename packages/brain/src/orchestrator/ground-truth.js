@@ -67,7 +67,11 @@ const GENERATOR_SPAWN_ACTIONS = new Set([
   ACTION.SPAWN_GENERATOR,
   ACTION.SPAWN_GENERATOR_FIX,
 ]);
-const GENERATOR_RUNTIME_ERROR_CODES = new Set([
+// 归因口径锁（r79）：runner 侧 provider 崩溃/超时归一化码的权威集合。
+// 导出供 kernel 失败归因分流与 sprint/F1 回归测试锁定——CONTRACT_* 家族
+// （合同故障申诉）绝不落此 Set，否则会被误判为基础设施 runtime error 而进
+// 黑名单/infrastructure 重试，埋没合同故障重开 GAN 的正确路径。
+export const GENERATOR_RUNTIME_ERROR_CODES = new Set([
   'provider_exit',
   'provider_timeout',
 ]);

@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.142
+**Brain 版本**: 1.273.143
+
+## Brain 1.273.143 — 结构化上报保真透传，根除 provider_exit 语义埋没（F1 步骤 3，r79 案卷）
+
+r69/r76/r77 三实证：执行体产出结构化终态（generator 结构化 BLOCKED + CONTRACT_* / commander success 结果 JSON），provider CLI 却残留非零退出，runner 回执链路把它降级成 `provider_exit`——kernel 据此进 `failed_targets` 黑名单 / 按 infrastructure 重试，合同故障重开 GAN 的正确路径永远走不到。修：①runner `normalize_provider_failure` 在包装 provider_exit 前先检测 result_file 是否是合法结构化信封（status∈枚举、error.code 非空且非 provider_* 家族），命中则原样透传 status+error.code；②`validate_claude_terminal_receipt` 认可 `commander-directive/v1` 成功信封（对齐 codex 旁路），上游据此恢复 provider_exit=0 走成功透传；③`ground-truth.js` 导出 `GENERATOR_RUNTIME_ERROR_CODES` 锁定归因口径（含 provider_exit/provider_timeout，排除 CONTRACT_* 家族）。铁律 [负向不动]：真崩溃无结构化产出仍归一 provider_exit/provider_timeout，kernel 仍走 infrastructure 有界重派，黑名单语义不变。
 
 ## Brain 1.273.142 — commander runner_failure 重派补漏 + 早期无锚人审落地（F1 步骤 3，r77 案卷）
 

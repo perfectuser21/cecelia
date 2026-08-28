@@ -2749,6 +2749,7 @@ normalize_provider_failure() {
   local credential_copy_mutated="$6"
   local provider_exit="$7"
   local stdout_file="$8"
+  local result_file="${9:-}"
 
   if [[ "$provider_exit" -eq 124 ]]; then
     jq -n \
@@ -2759,6 +2760,37 @@ normalize_provider_failure() {
       --argjson credential_copy_mutated "$credential_copy_mutated" \
       --argjson exit_code "$provider_exit" \
       '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"provider process timed out",artifacts:[],checks:[],decision:null,error:{code:"provider_timeout",message:"provider exceeded the TaskBundle timeout",exit_code:$exit_code},provider_metadata:({provider:$provider,session_id:(if $session == "" then null else $session end)} + (if $credential_ref == "" then {} else {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} end))}' \
+      > "$normalized_file"
+    return
+  fi
+
+  # r79 保真透传：provider CLI 非零退出，但执行体已把结构化终态写进 result_file。
+  # 在包装 provider_exit 之前，先检测 result_file 是否是合法结构化信封——status ∈ 枚举、
+  # 携带非空且非 provider_* 家族的 error.code（如 CONTRACT_SELF_CONTRADICTION 的结构化
+  # BLOCKED）。命中则原样透传该 status + error.code，禁止降级为 provider_exit，否则合同
+  # 故障会被埋没（r69/r76 病根）。判定锚点是 result 信封而非退出码（PRD 假设 L58）；
+  # 缺 error.code / error.code 空串 / status 不在枚举 → 不命中，落下方 provider_exit 兜底
+  # （PRD [负向不动]）。
+  if [[ -n "$result_file" && -s "$result_file" ]] \
+      && jq -e '
+        type == "object"
+        and (.error | type) == "object"
+        and (.error.code | type) == "string"
+        and (.error.code | length) > 0
+        and (.error.code | ascii_downcase | startswith("provider_") | not)
+        and (.status as $s
+          | ($s | type) == "string"
+          and (["completed","completed_with_concerns","needs_context","blocked"]
+            | index($s)) != null)
+      ' "$result_file" >/dev/null 2>&1; then
+    jq -n \
+      --slurpfile result "$result_file" \
+      --arg attempt "$attempt_id" \
+      --arg provider "$provider" \
+      --arg session "$session_id" \
+      --arg credential_ref "$credential_ref" \
+      --argjson credential_copy_mutated "$credential_copy_mutated" \
+      '$result[0] + {contract_version:"1.0",attempt_id:$attempt,provider_metadata:({provider:$provider,session_id:(if $session == "" then null else $session end)} + (if $credential_ref == "" then {} else {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} end))}' \
       > "$normalized_file"
     return
   fi
@@ -2878,14 +2910,19 @@ validate_claude_terminal_receipt() {
         end
       ) == $result[0]
       and ($result[0] | type) == "object"
-      and ($result[0].status | type) == "string"
-      and (["completed","completed_with_concerns","needs_context","blocked"]
-        | index($result[0].status)) != null
-      and ($result[0].summary | type) == "string"
-      and ($result[0].artifacts | type) == "array"
-      and ($result[0].checks | type) == "array"
-      and (($result[0].decision | type) == "object" or $result[0].decision == null)
-      and (($result[0].error | type) == "object" or $result[0].error == null)
+      and (
+        (
+          ($result[0].status | type) == "string"
+          and (["completed","completed_with_concerns","needs_context","blocked"]
+            | index($result[0].status)) != null
+          and ($result[0].summary | type) == "string"
+          and ($result[0].artifacts | type) == "array"
+          and ($result[0].checks | type) == "array"
+          and (($result[0].decision | type) == "object" or $result[0].decision == null)
+          and (($result[0].error | type) == "object" or $result[0].error == null)
+        )
+        or $result[0].schema == "commander-directive/v1"
+      )
   ' "$stdout_file" >/dev/null 2>&1
 }
 
@@ -3366,7 +3403,8 @@ run_provider_contract() {
       "$CREDENTIAL_REF" \
       "$CREDENTIAL_COPY_MUTATED" \
       "$provider_exit" \
-      "$STDOUT_FILE"
+      "$STDOUT_FILE" \
+      "$result_file"
   fi
   if [[ "$provider_trust_intact" == "true" ]] \
       && ! merge_evaluator_evidence "$NORMALIZED_RESULT_FILE"; then
