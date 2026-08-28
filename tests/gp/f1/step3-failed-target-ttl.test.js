@@ -49,9 +49,22 @@ describe('F1/step3 preflight failed_targets 时效窗口豁免（真 attempt-sto
   it('窗口内失败记录仍映射为执行目标（记仇语义不变）', async () => {
     delete process.env.HARNESS_FAILED_TARGET_TTL_HOURS;
     const pool = stubPool([
-      { provider: 'claude', account_id: 'account1', requested_machine_id: 'us-mac-m4' },
+      // r80: 行携 error_code / failure_class（供上层 filterBlacklistableTargets 过滤合同故障）
+      {
+        provider: 'claude',
+        account_id: 'account1',
+        requested_machine_id: 'us-mac-m4',
+        error_code: 'provider_exit',
+        failure_class: null,
+      },
     ]);
     const targets = await createAttemptStore(pool).listFailedExecutionTargets(RUN_ID, 'generator');
-    expect(targets).toEqual([{ provider: 'claude', account: 'account1', machine: 'us-mac-m4' }]);
+    expect(targets).toEqual([{
+      provider: 'claude',
+      account: 'account1',
+      machine: 'us-mac-m4',
+      error_code: 'provider_exit',
+      failure_class: null,
+    }]);
   });
 });
