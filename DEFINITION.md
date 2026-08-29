@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.147
+**Brain 版本**: 1.273.148
+
+## Brain 1.273.148 — Commander 分权翻转 Phase A（F1 步骤 3，决策 08-29，r80 案卷）
+
+两周 30 轮案卷归类：所有程序性死亡的共同形状=机械层在信息不全时做不可逆判死，Commander 只有建议权且被三把锁锁成旁观者（r80 精确定位：validator ACTIVE_PHASES 无 review/failed → 人审期一律 invalid_phase；deadline 过期一律拒 → 无续命权；executor dispatch_role 只许同意机械层已想派角色 → 橡皮图章，"派 reviewer"被拒后双方僵死 4h）。修：①validator 加 review/failed 相位、过期只拒 continue_default（逼明确决定），cost 仍硬约束；②executor dispatch_role 允许改派任意非 commander 角色（角色→相位映射，generator 非首派映射 fix 保血统），快路径不变；③loop hybrid 下 deadline fence×3 与 blocked_same_state 不直接 failRun，改覆盖 defaultDecision=MARK_FAILED 走既有 pre_terminal 会诊，Commander 改派救活后 deadline 宽限 +30min（DEADLINE_GRACE_MINUTES），Commander 不可用/同意 → fail-closed 回原判死；kernel-only 模式行为不变。公章（merge/publish/seal）授权链一字未动。
 
 ## Brain 1.273.147 — provider_exit 语义保真透传（F1 步骤 3，r69/r77 案卷，七跑收编交付）
 
