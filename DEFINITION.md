@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.149
+**Brain 版本**: 1.273.150
 
 ## Brain 1.273.149 — 静默等待活锁三修（F1 步骤 3，r80 案卷复盘，第 46 批）
 r80（run 5100560e）真相推翻"控制循环半死"初判：hop 206 Commander 提案后，控制循环每 90s 照常迭代续租却 4h39m 一行不写——①协调器 stale 拒绝后的替换派发用 material 事件最大游标建 bundle、状态游标却推进到全部事件最大游标，尾巴事件非 material 时替换提案天生"已消费"，从未裁决就被 dispatchFor→continue 静默丢弃（确定性活锁发生器）；②机械层默认 wait:human_review 的去重按 SHA+reason 命中 hop 182 已批准并消费的旧请求，不再通知任何人；③纯等待分支只心跳不落行无上限，监工/watchdog/Commander 三层全瞎。修：①buildCommanderBundle 接受显式 eventCursor（只许向前），替换派发传 nextCursor 对齐，且 stale 场景强制派替换；②人审去重只认未裁决请求（verdict:human_review.review_request_hop 指回者不算）；③新增 silent-wait.js，静默等待点（人审等待/wait:running/Commander 在途/过期 attempt 收养）≥15 分钟无新行 → 落 result:wait_stalled 行（计时归零，15 分钟一拍）+ 发 run.wait_stalled 事件（material，唤醒 Commander 会诊）+ P1 告警；run.js 把 runEventStore 递给 loop。决策不变，只让停摆成为事实。
