@@ -574,6 +574,27 @@ function failedHarnessResult(attemptId, message) {
   };
 }
 
+// 回执归因 SSOT（r82 保真透传）：provider 退出码 + resultPath → 终态归因。
+// 病根：非零退出码曾无条件把已落盘的结构化终态（含 CONTRACT_* 家族错误码）覆写成
+// provider_exit_<code>，合同故障被误当进程崩溃拉黑重试。修法——先尝试解析 resultPath 的
+// 合法结构化终态；存在即原样透传（status + error.code 保真，退出码不覆盖语义），仅在无合法
+// 结构化产出时才回落：成功退出但结果非法 → provider_result_invalid；非零退出 → provider_exit_<code>。
+function resolveProviderTerminalResult({ code, resultPath, attemptId }) {
+  let structured = null;
+  try {
+    structured = parseHarnessResult(resultPath);
+  } catch {
+    structured = null;
+  }
+  if (structured) {
+    return structured;
+  }
+  if (code === 0) {
+    return failedHarnessResult(attemptId, 'provider_result_invalid');
+  }
+  return failedHarnessResult(attemptId, `provider_exit_${String(code)}`);
+}
+
 function cancelledHarnessResult(attemptId) {
   return {
     contract_version: '1.0',
@@ -734,14 +755,11 @@ function startProvider({
   child.stdout.on('data', () => {});
   child.stderr.on('data', () => {});
   child.once('close', (code) => {
-    let result;
-    try {
-      result = code === 0
-        ? parseHarnessResult(resultPath)
-        : failedHarnessResult(request.attempt_id, `provider_exit_${String(code)}`);
-    } catch {
-      result = failedHarnessResult(request.attempt_id, 'provider_result_invalid');
-    }
+    const result = resolveProviderTerminalResult({
+      code,
+      resultPath,
+      attemptId: request.attempt_id,
+    });
     void complete(result);
   });
   child.stdin.end(request.provider_spec.stdin);
@@ -1131,4 +1149,5 @@ function createKernelAttemptHandler({
 module.exports = {
   KernelAttemptError,
   createKernelAttemptHandler,
+  resolveProviderTerminalResult,
 };

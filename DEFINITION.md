@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.146
+**Brain 版本**: 1.273.147
+
+## Brain 1.273.147 — provider_exit 语义保真透传（F1 步骤 3，r69/r77 案卷，七跑收编交付）
+
+失败不留原因病族三实证（r69 generator 合同死锁分析被包装 provider_exit / r76 同类 / r77 commander 的 success 结果 JSON 被判 provider_exit failed）。r76-r82 七轮自举同主题全灭——修 provider_exit 的 run 每次死于 provider_exit（结构性鸡生蛋），最后四轮实现全绿死于基础设施墙（各墙已由 137-146 逐一拆除）。收编 r82 kernel 产实现（PR#5087 候选）：attempt-store 结构化终态保真（CONTRACT_* 家族与 success 结果不再降级 provider_exit）+ kernel-attempt-handler 透传，合同故障走重开 GAN 路径不进黑名单；真实进程崩溃语义不变。
 
 ## Brain 1.273.146 — fleet runner digest repin 720c9c7b（42 批预算保底镜像上产）
 
