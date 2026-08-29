@@ -1,59 +1,90 @@
-contract_branch: cp-harness-propose-r1-9c835025-rda98a76a-a34
-sprint_dir: sprints/08250940-kernel-r71-validation-clock
+contract_branch: cp-harness-propose-r2-1484b353-rcb371d5f-a36
+sprint_dir: sprints/08290210-kernel-r81-provider-exit-fidelity
 
 ---
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Sprint: kernel validation clock 按 fix 轮自动顺延（有界）[r71]
+# Contract DoD — Sprint: 结构化上报保真透传，根除 provider_exit 语义埋没 [r81]
 
-**范围**: 仅改 `packages/brain/src/orchestrator/validation-clock.js` 的 `resolveValidationClock`：decisionLog 含 `spawn:generator-fix` 时原点顺延到最后一次（有界第 6 次）fix 行 created_at；无 fix 轮语义不变。不改 `timeout_seconds` 默认值、不动人审 deadline 分支、不动 `persistedClock` malformed 校验。冻结测试落 `sprints/<sprint_dir>/tests/` 与 `tests/gp/f1/`（真 import 被改文件，禁 mock 被改的边）。
-**大小**: S
+**范围**: `normalize_provider_failure`（entrypoint）+ `kernel-attempt-handler` close-result 解析的结构化终态前置读取与保真透传；CONTRACT_* 家族分类进合同故障重开路径的护栏断言。
+**大小**: M
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] validation-clock.js 落地 fix 轮顺延分支（含 spawn:generator-fix 过滤 + 有界常量 6）
-  Test: node -e "const c=require('fs').readFileSync('/workspace/packages/brain/src/orchestrator/validation-clock.js','utf8');if(!/spawn:generator-fix/.test(c)||!/\b6\b/.test(c))process.exit(1)"
+- [ ] [ARTIFACT] kernel-attempt-handler 导出纯函数 resolveProviderCloseResult
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/scripts/codex-bridge/kernel-attempt-handler.cjs','utf8');if(!/resolveProviderCloseResult/.test(c)||!/module\.exports[\s\S]*resolveProviderCloseResult/.test(c))process.exit(1)"
 
-- [x] [ARTIFACT] sprint 冻结合同测试文件存在且真 import 被改文件
-  Test: node -e "const c=require('fs').readFileSync('/workspace/sprints/08250940-kernel-r71-validation-clock/tests/validation-clock-fix-round-extend.test.ts','utf8');if(!c.includes('validation-clock.js')||!c.includes('resolveValidationClock'))process.exit(1)"
+- [ ] [ARTIFACT] 冻结 RED 测试落盘 sprints/<sprint_dir>/tests/（seal 闸校验路径）
+  Test: node -e "const c=require('fs').readFileSync('sprints/08290210-kernel-r81-provider-exit-fidelity/tests/step3-provider-exit-structured-fidelity.test.js','utf8');if(!c.includes('resolveProviderCloseResult')||!c.includes('normalize_provider_failure'))process.exit(1)"
 
-- [x] [ARTIFACT] F1 gp/f1 冻结测试文件存在且真 import 被改文件
-  Test: node -e "const c=require('fs').readFileSync('/workspace/tests/gp/f1/step3-validation-clock-fix-round-extend.test.js','utf8');if(!c.includes('validation-clock.js')||!c.includes('resolveValidationClock'))process.exit(1)"
+- [ ] [ARTIFACT] 需求3 分类护栏测试落盘 tests/gp/f1/
+  Test: node -e "const c=require('fs').readFileSync('tests/gp/f1/step3-contract-fault-not-infrastructure.test.js','utf8');if(!c.includes('ARBITRATE_CONTRACT_FAULT'))process.exit(1)"
 
-## BEHAVIOR 条目（五行剧本，内嵌 manual:bash 单行命令）
+- [ ] [ARTIFACT] 版本 bump 四处同步（check-version-sync）
+  Test: manual:bash -c 'bash scripts/check-version-sync.sh'
 
-- [x] [BEHAVIOR] [L2] B-01: 复刻 r50 场景多次 fix 后原点顺延到最后一次 fix（旧判死→新存活）
-  动作: 从仓库根真跑 tests/gp/f1/step3-validation-clock-fix-round-extend.test.js（真 import validation-clock.js，传含 3 个 spawn:generator-fix 行的真实 decisionLog）
-  预期观察: resolveValidationClock 对 spawn:evaluator/judge/generator-fix 均返回 pipeline_started_at=最后 fix(04:00)、deadline_at=05:30（非旧 generator 原点 00:00/01:30），8 条全绿
+## BEHAVIOR 条目（五行剧本 · L2 服务端真验 · 真 import/真跑被改边，禁 mock）
+
+- [ ] [BEHAVIOR] [L2] B-01: kernel-attempt-handler 导出可离线重放纯函数 resolveProviderCloseResult
+  动作: 真 import packages/brain/scripts/codex-bridge/kernel-attempt-handler.cjs，读取导出成员
+  预期观察: typeof resolveProviderCloseResult === 'function'（当前未导出 → RED）
   等待预算: 0s
-  留证: vitest 输出末 5 行（含 Tests 8 passed）
-  Test: manual:bash -c 'cd /workspace && npx vitest run tests/gp/f1/step3-validation-clock-fix-round-extend.test.js --no-cache --reporter=dot'
+  留证: vitest basic 报告末 10 行（含该 it 绿）
+  Test: manual:bash -c 'npx vitest run sprints/08290210-kernel-r81-provider-exit-fidelity/tests/step3-provider-exit-structured-fidelity.test.js -t "导出纯函数 resolveProviderCloseResult" --reporter=basic'
 
-- [x] [BEHAVIOR] [L2] B-02: 顺延有界——满 6 次后原点冻结第 6 次 fix，第 7 次不再顺延照常判死
-  动作: 真跑 gp/f1 冻结测试中「有界 顺延满6次后照常判死」用例（decisionLog 含 7 个整点 fix）
-  预期观察: pipeline_started_at=第 6 次 fix(06:00)、deadline_at=07:30，第 7 次 fix(07:00) 不成为原点，用例绿
+- [ ] [BEHAVIOR] [L2] B-02: 非零退出 + 结构化 success → 透传 completed（埋没点①②，r77/r76）
+  动作: 喂 exit 1 + 合法结构化 success result.json，分别过纯函数 resolveProviderCloseResult 与真跑 bash normalize_provider_failure
+  预期观察: 两侧回执 status=="completed"（当前实现覆盖为 failed/provider_exit → RED）
   等待预算: 0s
-  留证: vitest -t 过滤输出（1 passed）
-  Test: manual:bash -c 'cd /workspace && npx vitest run tests/gp/f1/step3-validation-clock-fix-round-extend.test.js -t "有界 顺延满6次后照常判死" --no-cache --reporter=dot'
+  留证: vitest 报告（① out.status、② normalized.status 均 completed）
+  Test: manual:bash -c 'npx vitest run sprints/08290210-kernel-r81-provider-exit-fidelity/tests/step3-provider-exit-structured-fidelity.test.js -t "结构化 success result → 透传 completed" --reporter=basic'
 
-- [x] [BEHAVIOR] [L2] B-03: 纯函数可重放——fix 行乱序/重复 hop 以 hop 升序取最后合法 fix
-  动作: 真跑 gp/f1 冻结测试中「纯函数可重放」用例（同输入不同数组顺序）
-  预期观察: 打乱 decisionLog 数组顺序，resolveValidationClock 结果一致（原点=hop 最大的 fix=04:00），用例绿
+- [ ] [BEHAVIOR] [L2] B-03: 非零退出 + 结构化 BLOCKED+CONTRACT_* → 保真透传 error.code（埋没点①②，r69）
+  动作: 喂 exit 1 + 结构化 BLOCKED（error.code=CONTRACT_TEST_UNSATISFIABLE），过纯函数与真跑 bash normalize_provider_failure
+  预期观察: 两侧回执 status=="blocked" 且 error.code=="CONTRACT_TEST_UNSATISFIABLE"（当前覆盖为 provider_exit → RED）
   等待预算: 0s
-  留证: vitest -t 过滤输出（1 passed）
-  Test: manual:bash -c 'cd /workspace && npx vitest run tests/gp/f1/step3-validation-clock-fix-round-extend.test.js -t "纯函数可重放" --no-cache --reporter=dot'
+  留证: vitest 报告（error.code 保真）
+  Test: manual:bash -c 'npx vitest run sprints/08290210-kernel-r81-provider-exit-fidelity/tests/step3-provider-exit-structured-fidelity.test.js -t "结构化 BLOCKED + CONTRACT_* → 保真透传 error.code" --reporter=basic'
 
-- [x] [BEHAVIOR] [L2] B-04: sprint 冻结合同测试全绿（replay 顺延 + 有界 + 无 fix 回归）
-  动作: 从仓库根真跑 sprints/08250940-kernel-r71-validation-clock/tests/validation-clock-fix-round-extend.test.ts
-  预期观察: 3 条用例全绿（复刻 r50 顺延存活 / 顺延有界满 6 判死 / 无 fix 轮语义不变原点=首个 generator）
+- [ ] [BEHAVIOR] [L2] B-04: INV-1 负向 kernel — 无 result.json（真崩溃）→ provider_exit_${code} 语义不变
+  动作: 喂 exit 3 + 无 result.json，过纯函数 resolveProviderCloseResult
+  预期观察: 回执 status=="failed" 且 error.code=="provider_exit_3"（透传闸不误伤真崩溃）
   等待预算: 0s
-  留证: vitest 输出末 5 行（含 Tests 3 passed）
-  Test: manual:bash -c 'cd /workspace && npx vitest run sprints/08250940-kernel-r71-validation-clock/tests/validation-clock-fix-round-extend.test.ts --no-cache --reporter=dot'
+  留证: vitest 报告（负向绿）
+  Test: manual:bash -c 'npx vitest run sprints/08290210-kernel-r81-provider-exit-fidelity/tests/step3-provider-exit-structured-fidelity.test.js -t "provider_exit_${code} 语义不变" --reporter=basic'
 
-- [x] [BEHAVIOR] [L2] B-05: 无 fix 轮语义不变——既有 11 条 brain 单测不回归
-  动作: 子 shell 切进 packages/brain 用包内 vitest 配置真跑 src/orchestrator/__tests__/validation-clock.test.js
-  预期观察: 既有 11 条断言全过（首个 generator 共享窗口 / 持久化 clock 复用 / malformed fail-closed / authoring 返回 null），退出码 0，无回归
+- [ ] [BEHAVIOR] [L2] B-05: 负向 kernel — exit 0 + 非法 result.json → provider_result_invalid 语义不变
+  动作: 喂 exit 0 + 非法 JSON result.json，过纯函数 resolveProviderCloseResult
+  预期观察: 回执 status=="failed" 且 error.code=="provider_result_invalid"（解析失败回退不变）
   等待预算: 0s
-  留证: vitest 输出末 5 行（含 Tests 11 passed）
-  Test: manual:bash -c 'cd /workspace/packages/brain && npx vitest run --no-cache ./src/orchestrator/__tests__/validation-clock.test.js --reporter=dot'
+  留证: vitest 报告
+  Test: manual:bash -c 'npx vitest run sprints/08290210-kernel-r81-provider-exit-fidelity/tests/step3-provider-exit-structured-fidelity.test.js -t "provider_result_invalid 语义不变" --reporter=basic'
+
+- [ ] [BEHAVIOR] [L2] B-06: INV-1 负向 entrypoint — 无 result.json（真崩溃）→ provider_exit 语义不变
+  动作: 真跑 bash normalize_provider_failure，喂 exit 1 + 良性崩溃 stdout + 无 result.json
+  预期观察: normalized status=="failed" 且 error.code=="provider_exit"（黑名单语义不动）
+  等待预算: 0s
+  留证: vitest 报告（负向绿）
+  Test: manual:bash -c 'npx vitest run sprints/08290210-kernel-r81-provider-exit-fidelity/tests/step3-provider-exit-structured-fidelity.test.js -t "provider_exit 语义不变" --reporter=basic'
+
+- [ ] [BEHAVIOR] [L2] B-07: 铁律 entrypoint — exit 124（超时）→ provider_timeout 语义不变
+  动作: 真跑 bash normalize_provider_failure，喂 exit 124（即便存在合法 success result.json）
+  预期观察: normalized error.code=="provider_timeout"（超时优先，不被结构化 success 透传抢占）
+  等待预算: 0s
+  留证: vitest 报告
+  Test: manual:bash -c 'npx vitest run sprints/08290210-kernel-r81-provider-exit-fidelity/tests/step3-provider-exit-structured-fidelity.test.js -t "exit 124（超时）→ provider_timeout" --reporter=basic'
+
+- [ ] [BEHAVIOR] [L2] B-08: 需求3 — CONTRACT_* 结构化 BLOCKED → 合同故障重开（arbitrate:contract_fault）非 infrastructure
+  动作: 真 import derive，喂 generator status=blocked + error.code=CONTRACT_TEST_UNSATISFIABLE 回执
+  预期观察: derive 返回 action==ARBITRATE_CONTRACT_FAULT 且 reason==contract_fault_appeal（不进 failed_targets/infrastructure）
+  等待预算: 0s
+  留证: vitest 报告
+  Test: manual:bash -c 'npx vitest run tests/gp/f1/step3-contract-fault-not-infrastructure.test.js -t "error.code=CONTRACT_TEST_UNSATISFIABLE" --reporter=basic'
+
+- [ ] [BEHAVIOR] [L2] B-09: 需求3 对照 — provider_exit（infrastructure）不进合同故障重开路径
+  动作: 真 import derive，喂 generator status=failed + failure_class=infrastructure_blocked + error.code=provider_exit
+  预期观察: derive 返回 action != ARBITRATE_CONTRACT_FAULT 且 != REOPEN_GAN_CONTRACT，reason==callback_infrastructure_blocked
+  等待预算: 0s
+  留证: vitest 报告
+  Test: manual:bash -c 'npx vitest run tests/gp/f1/step3-contract-fault-not-infrastructure.test.js -t "provider_exit（infrastructure）→ 不进合同故障重开路径" --reporter=basic'
