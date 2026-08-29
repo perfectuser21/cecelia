@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.144
+**Brain 版本**: 1.273.145
+
+## Brain 1.273.145 — assertion npm 预算保底 600s（F1 步骤 3，r75/r79/r80/r81 四杀根治）
+
+四轮实证的"依赖装失败"病族真根因：runner_assertion_budget_seconds=min(1800, deadline 余量)，run 后期重取证（recollect/人审后重派）余量常只剩秒级 → 616 包冷装必超时 SIGTERM → evaluator 真实 PASS 被改判 FAIL。修：预算=max(600, min(1800, 余量))——保底 600s，宁可 run 略超 deadline（validation clock 有 fix 轮顺延兜底）不杀全绿 run；deadline 无效回落 configured 语义不变。entrypoint 变更需重建镜像+repin（43 批）。
 
 ## Brain 1.273.144 — fleet runner digest repin b3ff98ff（40 批信任断言留证镜像上产）
 
