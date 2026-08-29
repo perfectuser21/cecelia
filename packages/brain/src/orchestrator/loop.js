@@ -62,6 +62,10 @@ const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // 静默失败）。
 export const PROGRESSING_KERNEL_PHASES = new Set(['planning', 'gan', 'generate', 'evaluate', 'judge']);
 
+// 分权翻转：Commander 把拟判死的 run 改派救活后，deadline 宽限分钟数（有界续命——
+// 每次救活只续这么多，cost/hop 硬上限不受影响）。
+export const DEADLINE_GRACE_MINUTES = 30;
+
 /** runId 缺省解析：task 当前挂着的最新 v2 run（双轨期 D7：过滤 orchestrator_version，防误伤 v1/LangGraph run） */
 async function resolveRunId(pool, taskId) {
   const { rows } = await pool.query(
@@ -491,7 +495,7 @@ function humanReviewDeadlinePauseActive({
 
 async function loadRunDeadlineState(pool, runId) {
   const deadlineResult = await pool.query(
-    'SELECT deadline_at FROM initiative_runs WHERE id = $1',
+    'SELECT deadline_at, commander_mode FROM initiative_runs WHERE id = $1',
     [runId],
   );
   const reviewResult = await pool.query(
@@ -519,6 +523,7 @@ async function loadRunDeadlineState(pool, runId) {
   const reviewObserved = asPayload(review.observed);
   return {
     deadline_at: deadline.deadline_at ?? null,
+    commander_mode: deadline.commander_mode ?? 'kernel-only',
     review_request_hop: review.review_request_hop ?? null,
     // r76 案卷：本地候选请求行 observed.pr=null，头锚回落 detail.candidate_head_sha
     review_head_sha: review.review_head_sha
@@ -657,6 +662,14 @@ async function runLoopOwned(
     return now() >= new Date(run.deadline_at);
   }
 
+  // 分权翻转（r80 案卷，决策 08-29）：hybrid 模式下机械层失去判死权——deadline
+  // fence / blocked_same_state 不再直接 failRun，而是把"拟判死"记为
+  // pendingTerminalReason，下一轮覆盖 defaultDecision=MARK_FAILED 走既有 pre_terminal
+  // 会诊，由 Commander 裁决（改派/重试/升人/终局）。Commander 不可用或同意 →
+  // fail-closed 回原判死。Commander 改派救活后 run deadline 宽限 DEADLINE_GRACE。
+  let pendingTerminalReason = null;
+  let deferredTerminalReason = null;
+
   while (true) {
     // ---- Deadline fence 1：collect 前 ----
     // collect 会调用 git/gh/docker，过期 run 不应再触发任何外部观测。
@@ -664,7 +677,9 @@ async function runLoopOwned(
     const hasOpenHumanReview = deadlineState.open_human_review === true
       || deadlineState.open_human_review === 'true'
       || deadlineState.review_request_hop != null;
-    if (deadlineExceeded(deadlineState) && !hasOpenHumanReview) {
+    const hybridCommander = deadlineState.commander_mode === 'hybrid'
+      && Boolean(deps.commanderCoordinator);
+    if (deadlineExceeded(deadlineState) && !hasOpenHumanReview && !hybridCommander) {
       await failRun('automation_deadline_exceeded');
       return { exitReason: 'automation_deadline_exceeded', hops };
     }
@@ -739,7 +754,7 @@ async function runLoopOwned(
     // pollCount 从 DB 持久化推导（Sprint 07231527 Blocking 2：进程内变量改为 DB 推导）
     const pollCount = counters.pollCount;
     const fullCounters = { ...counters, pollCount, ganCostUsd: Number(observed.run.cost_usd ?? 0) };
-    const defaultDecision = derive({
+    let defaultDecision = derive({
       ...observed,
       noProgress: counters.noProgress,
       noProgressReason: counters.noProgressReason,
@@ -768,9 +783,26 @@ async function runLoopOwned(
 
     // ---- Deadline fence 2：derive 后 ----
     // wait/control 分支都在此 fence 之后，不能绕开硬上限。
-    if (deadlineExceeded(observed.run) && !deadlinePaused && !decisionIsTerminal) {
-      await failRun('automation_deadline_exceeded');
-      return { exitReason: 'automation_deadline_exceeded', hops };
+    // 分权翻转：hybrid 下拟判死（deadline / 上一轮 blocked_same_state / fence3 顺延）
+    // 覆盖为 MARK_FAILED 交 Commander 会诊，不直接 failRun。
+    if (pendingTerminalReason && hybridCommander && !decisionIsTerminal) {
+      deferredTerminalReason = pendingTerminalReason;
+      pendingTerminalReason = null;
+      defaultDecision = { phase: 'failed', action: ACTION.MARK_FAILED, reason: deferredTerminalReason };
+      decision = defaultDecision;
+      log(`[orchestrator] hybrid: 拟判死 ${deferredTerminalReason} 交 Commander 会诊`);
+    } else if (deadlineExceeded(observed.run) && !deadlinePaused && !decisionIsTerminal) {
+      if (hybridCommander) {
+        deferredTerminalReason = 'automation_deadline_exceeded';
+        defaultDecision = { phase: 'failed', action: ACTION.MARK_FAILED, reason: deferredTerminalReason };
+        decision = defaultDecision;
+        log('[orchestrator] hybrid: deadline 已过，拟判死交 Commander 会诊');
+      } else {
+        await failRun('automation_deadline_exceeded');
+        return { exitReason: 'automation_deadline_exceeded', hops };
+      }
+    } else {
+      deferredTerminalReason = null;
     }
 
     if (dryRun) {
@@ -908,6 +940,23 @@ async function runLoopOwned(
           ? directiveResult.decision
           : defaultDecision;
         retryDispatchContext = directiveResult.dispatch_context ?? null;
+        // 分权翻转：拟判死被 Commander 改派救活 → deadline 宽限，避免下一跳再次撞钟
+        // 反复会诊（每跳一次 Commander 派发是可见的烧钱）。同意判死/被拒 → 原路 failRun。
+        if (
+          directiveResult.accepted
+          && deferredTerminalReason
+          && decision.action !== ACTION.MARK_FAILED
+        ) {
+          await deps.pool.query(
+            `UPDATE initiative_runs
+                SET deadline_at = GREATEST(COALESCE(deadline_at, NOW()), NOW()) + ($2::int * INTERVAL '1 minute'),
+                    updated_at = NOW()
+              WHERE id = $1::uuid AND phase NOT IN ('done', 'failed')`,
+            [resolvedRunId, DEADLINE_GRACE_MINUTES],
+          );
+          log(`[orchestrator] hybrid: Commander 改派救活（原拟 ${deferredTerminalReason}），deadline 宽限 +${DEADLINE_GRACE_MINUTES}min`);
+          deferredTerminalReason = null;
+        }
       }
     }
 
@@ -1622,9 +1671,18 @@ async function runLoopOwned(
 
     // ---- Deadline fence 3：dispatch 前 ----
     // intent 持久化与真实副作用之间仍可能跨过 deadline；此时保留审计 intent，但不派发。
+    // 分权翻转：hybrid 下顺延到下一轮 fence 2 交 Commander 会诊（Commander 刚改派
+    // 救活并宽限过 deadline 的情况下此处不会触发）。
     if (deadlineExceeded(observed.run) && !deadlinePaused) {
-      await failRun('automation_deadline_exceeded');
-      return { exitReason: 'automation_deadline_exceeded', hops };
+      if (hybridCommander && decision.action !== 'spawn:commander') {
+        pendingTerminalReason = 'automation_deadline_exceeded';
+        await beat();
+        continue;
+      }
+      if (!hybridCommander) {
+        await failRun('automation_deadline_exceeded');
+        return { exitReason: 'automation_deadline_exceeded', hops };
+      }
     }
 
     // gateVerdict deny（derive 与 mergeGate 意见不一致 = 观测竞态）→ 不派发，按 BLOCKED 同态处理
@@ -1781,6 +1839,14 @@ async function runLoopOwned(
       const streak = currentBlockedStreak + 1; // 本轮实际 streak
       log(`[orchestrator] hop ${hop} ${decision.action} → ${controlStatus} (streak ${streak}): ${result.detail ?? ''}`);
       if (streak >= BLOCKED_SAME_STATE_CAP) {
+        // 分权翻转：hybrid 下不直接判死，拟判死交下一轮 Commander 会诊。
+        if (hybridCommander) {
+          pendingTerminalReason = `blocked_same_state:${controlStatus}`;
+          log(`[orchestrator] hybrid: ${pendingTerminalReason} 达上限，拟判死交 Commander 会诊`);
+          await beat();
+          await sleep(POLL_INTERVAL_MS);
+          continue;
+        }
         await failRun(`blocked_same_state:${controlStatus}`);
         return { exitReason: 'blocked_same_state', hops };
       }

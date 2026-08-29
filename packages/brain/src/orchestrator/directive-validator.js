@@ -13,6 +13,11 @@ const ACTIVE_PHASES = new Set([
   'generate',
   'evaluate',
   'paused',
+  // 分权翻转（r80 案卷，决策 08-29）：人审挂起期与判死前会诊是 Commander 最该
+  // 说话的时刻，此前被 invalid_phase 一律拒绝 → 它只能旁观机械层僵死。
+  // merge/publish 仍不在列（公章不给）。
+  'review',
+  'failed',
 ]);
 
 function rejected(reasonCode) {
@@ -79,7 +84,10 @@ export function validateCommanderDirective(directive, {
   }
   const nowMs = new Date(now).getTime();
   const deadlineMs = new Date(deadlineAt).getTime();
-  if (!Number.isFinite(nowMs) || !Number.isFinite(deadlineMs) || nowMs >= deadlineMs) {
+  const pastDeadline = !Number.isFinite(nowMs) || !Number.isFinite(deadlineMs) || nowMs >= deadlineMs;
+  // 分权翻转：钟过了 Commander 有续命权——过期只拒 continue_default（逼它明确决定：
+  // 改派/重试/升人/终局），不再一律封口。cost 预算仍是硬约束（钱是公章）。
+  if (pastDeadline && parsed.action === 'continue_default') {
     return rejected('deadline_exceeded');
   }
 

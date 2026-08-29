@@ -85,7 +85,7 @@ describe('Commander L0 Directive executor', () => {
     expect(result.decision).toBe(defaultDecision);
   });
 
-  it('allows only the role legal at the current Kernel boundary', async () => {
+  it('dispatch_role：同意机械层角色原样放行；改派其他角色按映射接受；commander 自身仍拒绝（分权翻转 r80 案卷）', async () => {
     const executor = createCommanderDirectiveExecutor(dependencies());
     await expect(executor.execute({
       directive: directive({ action: 'dispatch_role', target_role: 'planner' }),
@@ -96,8 +96,19 @@ describe('Commander L0 Directive executor', () => {
       decision: defaultDecision,
       effect: 'dispatch_role',
     });
+    // 分权翻转前此处被 illegal_role_at_kernel_boundary 拒绝（橡皮图章）；现在改派
+    // 被接受并映射到角色相位，generator 非首派映射 generator-fix 保留候选血统。
     await expect(executor.execute({
       directive: directive({ action: 'dispatch_role', target_role: 'generator' }),
+      defaultDecision,
+      validation: validation(),
+    })).resolves.toMatchObject({
+      accepted: true,
+      effect: 'dispatch_role',
+      decision: { phase: 'generate', action: 'spawn:generator-fix' },
+    });
+    await expect(executor.execute({
+      directive: directive({ action: 'dispatch_role', target_role: 'commander' }),
       defaultDecision,
       validation: validation(),
     })).resolves.toMatchObject({

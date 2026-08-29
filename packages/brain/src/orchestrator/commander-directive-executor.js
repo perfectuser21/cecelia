@@ -20,6 +20,16 @@ const ROLE_BY_ACTION = Object.freeze({
   'spawn:judge': 'judge',
 });
 
+// Commander 改派时角色→相位映射（与 derive 各 spawn 决策的 phase 一致）。
+const DISPATCH_PHASE_BY_ROLE = Object.freeze({
+  planner: 'planning',
+  proposer: 'gan',
+  reviewer: 'gan',
+  generator: 'generate',
+  evaluator: 'evaluate',
+  judge: 'evaluate',
+});
+
 function rejected(reasonCode) {
   return Object.freeze({
     accepted: false,
@@ -96,10 +106,26 @@ export function createCommanderDirectiveExecutor({
     }
     if (parsed.action === 'dispatch_role') {
       const legalRole = ROLE_BY_ACTION[defaultDecision.action] ?? null;
-      if (!legalRole || parsed.target_role !== legalRole) {
+      if (legalRole && parsed.target_role === legalRole) {
+        // 快路径：Commander 同意机械层已想派的角色，原样放行（行为不变）。
+        return accepted('dispatch_role', defaultDecision);
+      }
+      // 分权翻转（r80 案卷）：此前 target_role ≠ 机械层角色一律
+      // illegal_role_at_kernel_boundary——Commander 只是橡皮图章，说"派 reviewer"
+      // 被拒后与机械层双双僵死 4h。现允许改派任意非 commander 角色，角色→相位
+      // 映射；generator 在非首派场景映射为 generator-fix 保留候选血统。
+      const phase = DISPATCH_PHASE_BY_ROLE[parsed.target_role] ?? null;
+      if (!phase || parsed.target_role === 'commander') {
         return rejected('illegal_role_at_kernel_boundary');
       }
-      return accepted('dispatch_role', defaultDecision);
+      const action = parsed.target_role === 'generator'
+        ? (defaultDecision.action === 'spawn:generator' ? 'spawn:generator' : 'spawn:generator-fix')
+        : `spawn:${parsed.target_role}`;
+      return accepted('dispatch_role', {
+        phase,
+        action,
+        reason: `commander_dispatch:${parsed.reason}`,
+      });
     }
     if (parsed.action === 'retry_attempt') {
       if (
