@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.146
+**Brain 版本**: 1.273.147
 
 ## Brain 1.273.146 — fleet runner digest repin 720c9c7b（42 批预算保底镜像上产）
 

@@ -1134,9 +1134,12 @@ export function createAttemptStore(pool, {
             )
             AND (
               error_code IS NULL
-              OR error_code NOT IN (
-                'worker_attempt_missing_after_lease',
-                'worker_attempt_replacement_required_after_lease'
+              OR (
+                error_code NOT LIKE 'CONTRACT_%'
+                AND error_code NOT IN (
+                  'worker_attempt_missing_after_lease',
+                  'worker_attempt_replacement_required_after_lease'
+                )
               )
             )
           ORDER BY hop`,

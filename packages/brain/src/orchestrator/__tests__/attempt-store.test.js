@@ -1995,7 +1995,7 @@ describe('attempt store', () => {
       /error_code NOT IN\s*\(\s*'worker_attempt_missing_after_lease',\s*'worker_attempt_replacement_required_after_lease'\s*\)/i,
     );
     expect(pool.query.mock.calls[0][0]).toMatch(
-      /error_code IS NULL\s+OR error_code NOT IN/i,
+      /error_code IS NULL\s+OR\s*\(\s*error_code NOT LIKE 'CONTRACT_%'\s+AND error_code NOT IN/i,
     );
   });
 
