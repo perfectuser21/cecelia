@@ -111,6 +111,9 @@ export const LOG_ACTION = Object.freeze({
   ATTEMPT_CLEANUP_CONFIRMED: 'effect:attempt_cleanup_confirmed',
   ATTEMPT_CALLBACK: 'verdict:attempt_callback',
   DISPATCH_RESULT: 'result:dispatch',
+  // 第 46 批（r80 案卷）：纯等待分支 ≥ SILENT_WAIT_STALL_MS 无新行时落的心跳行，
+  // 停摆可见 + 计时归零；伴随 run.wait_stalled 事件唤醒 Commander。
+  WAIT_STALLED: 'result:wait_stalled',
   // Sprint 07231527：generator-fix callback verdict（no-progress 推导依赖）
   VERDICT_GENERATOR_FIX_CALLBACK: 'verdict:generator-fix-callback',
   // 合同申诉仲裁(2026-08-06):Generator 报合同故障码后,独立仲裁器的裁定行

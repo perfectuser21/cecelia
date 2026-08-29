@@ -38,6 +38,7 @@ export function buildCommanderBundle({
   activeRisks,
   budgets,
   allowedActions,
+  eventCursor = null,
 }) {
   if (!state || state.run_id !== runId) {
     throw new Error('commander_bundle_run_mismatch');
@@ -61,6 +62,14 @@ export function buildCommanderBundle({
     if (message.event_cursor > latestCursor) {
       throw new Error('commander_bundle_message_ahead_of_events');
     }
+  }
+  // 第 46 批（r80 案卷）：调用方可显式指定 bundle 游标（stale 替换派发传状态将推进到的
+  // nextCursor）。material 事件的最大游标 < 全部事件的最大游标时，bundle 若只按事件算
+  // 会天生落后状态游标，下一轮被当 stale 静默丢弃——确定性活锁发生器。只许向前不许倒拨。
+  if (eventCursor != null) {
+    requireCursor(eventCursor, 'commander_bundle_cursor_invalid');
+    if (eventCursor < latestCursor) throw new Error('commander_bundle_cursor_behind_events');
+    latestCursor = eventCursor;
   }
   const contractMessages = actorMessages.map(actorMessageContract);
 

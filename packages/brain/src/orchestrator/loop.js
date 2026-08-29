@@ -51,6 +51,7 @@ import {
 } from './convergence-signatures.js';
 import { finalizeKernelRun, persistKernelRunPhase } from './kernel-run-store.js';
 import { oldestExpiredAttempt } from './expired-attempt-reconciler.js';
+import { detectSilentWaitStall } from './silent-wait.js';
 import { sanitizeDiagnostic } from './failure-persistence.js';
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -324,6 +325,16 @@ function buildSnapshot(observed, counters, action, reason = null) {
     snapshot.review_reason = reason;
   }
   return snapshot;
+}
+
+/** 请求行是否已有裁决（verdict:human_review.detail.review_request_hop 指回该请求 hop） */
+function humanReviewRequestDecided(decisionLog, requestHop) {
+  return (Array.isArray(decisionLog) ? decisionLog : []).some((row) => {
+    if (row.action !== LOG_ACTION.VERDICT_HUMAN_REVIEW) return false;
+    const detail = asStructuredJson(row.detail) ?? {};
+    return detail.review_request_hop != null
+      && String(detail.review_request_hop) === String(requestHop);
+  });
 }
 
 function humanReviewDetail(observed, reason) {
@@ -626,6 +637,78 @@ async function runLoopOwned(
     controllerGeneration,
   });
 
+  // ---- 第 46 批（r80 案卷）：静默等待心跳行 ----
+  // 纯等待分支（人审去重等待 / wait:running / Commander 在途 / 过期 attempt 收养）只心跳
+  // 不落行、无上限：r80 每 90s 续租却 4h39m 一行不写，监工 SQL / watchdog / Commander
+  // 三层全瞎。进入静默等待时若决策日志 ≥15 分钟无新行 → 落 result:wait_stalled 行
+  // （计时归零，15 分钟一拍）+ 发 run.wait_stalled 事件（material，Commander 被叫醒会诊）
+  // + P1 告警。不改任何决策，只让停摆变成事实。返回非 null = 必须退出循环。
+  const silentWait = async (observed, waitingOn) => {
+    if (!dryRun) {
+      const stall = detectSilentWaitStall({ decisionLog: observed.decisionLog, now: now() });
+      if (stall.stalled) {
+        const stallHop = await next(deps.pool, resolvedRunId);
+        const idleMinutes = Math.floor(stall.idle_ms / 60000);
+        const stallDetail = {
+          waiting_on: waitingOn,
+          idle_minutes: idleMinutes,
+          last_hop: stall.last_hop,
+          last_action: stall.last_action,
+          last_row_at: stall.last_row_at,
+        };
+        try {
+          await append(deps.pool, {
+            runId: resolvedRunId,
+            hop: stallHop,
+            observed: { phase: observed.run?.phase ?? null, ...stallDetail },
+            derivedPhase: observed.run?.phase ?? null,
+            gateVerdict: null,
+            action: LOG_ACTION.WAIT_STALLED,
+            detail: stallDetail,
+          });
+          hops++;
+        } catch (error) {
+          if (error instanceof SingletonConflictError) {
+            return { exitReason: 'singleton_conflict', hops };
+          }
+          throw error;
+        }
+        log(
+          `[orchestrator] hop ${stallHop} ${LOG_ACTION.WAIT_STALLED}: ${idleMinutes}min 无新决策行`
+          + `（waiting_on=${waitingOn} last ${stall.last_action}@${stall.last_hop}）`,
+        );
+        if (typeof deps.runEventStore?.append === 'function') {
+          try {
+            await deps.runEventStore.append({
+              runId: resolvedRunId,
+              eventType: 'run.wait_stalled',
+              sourceType: 'initiative_run',
+              sourceId: resolvedRunId,
+              sourceVersion: stallHop,
+              payload: stallDetail,
+            });
+          } catch (error) {
+            log(`[orchestrator] run.wait_stalled 事件发送失败 run=${resolvedRunId}: ${error.message}`);
+          }
+        }
+        try {
+          const { raise } = await import('../alerting.js');
+          await raise(
+            'P1',
+            'kernel_wait_stalled',
+            `Kernel run 静默等待 ${idleMinutes}min（${waitingOn}）：run=${resolvedRunId} `
+            + `task=${taskId} last=${stall.last_action}@${stall.last_hop}`,
+          );
+        } catch (error) {
+          log(`[orchestrator] kernel_wait_stalled P1 告警发送失败 run=${resolvedRunId}: ${error.message}`);
+        }
+      }
+    }
+    await beat();
+    await sleep(POLL_INTERVAL_MS);
+    return null;
+  };
+
   // Controller proof 必须是首个可观察动作。旧 generation 在这里立即让位，
   // 不能先 collect、resume 或写 terminal 状态。
   if (!dryRun && (controllerSessionId !== null || heartbeat === defaultWriteHeartbeat)) {
@@ -690,6 +773,7 @@ async function runLoopOwned(
       ...groundTruthPaths,
     });
 
+
     // Expired Fleet attempts are reconciled before derive can mistake a stale
     // starting/running row for live work forever. The Worker keeps the original
     // owner/generation: changing only the DB lease would fence out its callback.
@@ -713,8 +797,8 @@ async function runLoopOwned(
         return { exitReason: 'singleton_conflict', hops };
       }
       if (['adopted_prepared', 'adopted_running'].includes(recovery.status)) {
-        await beat();
-        await sleep(POLL_INTERVAL_MS);
+        const exit = await silentWait(observed, `expired_attempt_${recovery.status}`);
+        if (exit) return exit;
         continue;
       }
       if (recovery.status === 'infrastructure_blocked') {
@@ -870,8 +954,8 @@ async function runLoopOwned(
         hops++;
       }
       if (commanderResult.kind === 'wait') {
-        await beat();
-        await sleep(POLL_INTERVAL_MS);
+        const exit = await silentWait(observed, `commander_${commanderResult.reason ?? 'wait'}`);
+        if (exit) return exit;
         continue;
       }
       if (commanderResult.kind === 'dispatch') {
@@ -1441,6 +1525,10 @@ async function runLoopOwned(
       const reviewAlreadyRequested = observed.decisionLog.some(
         (row) => {
           if (row.action !== LOG_ACTION.HUMAN_REVIEW_REQUESTED) return false;
+          // 第 46 批（r80 案卷）：已裁决（verdict:human_review 指回该 hop）的旧请求不再
+          // 挡住新请求——r80 的 hop 182 早被批准并消费，derive 再次要求人审时被它去重，
+          // 4h39m 无人被通知。
+          if (humanReviewRequestDecided(observed.decisionLog, row.hop)) return false;
           const snapshot = asStructuredJson(row.observed) ?? {};
           const detail = asStructuredJson(row.detail) ?? {};
           if (snapshot.pr?.head_sha !== observed.pr?.head_sha) return false;
@@ -1468,14 +1556,14 @@ async function runLoopOwned(
         },
       );
       if (reviewAlreadyRequested) {
-        await beat();
-        await sleep(POLL_INTERVAL_MS);
+        const exit = await silentWait(observed, 'human_review_pending');
+        if (exit) return exit;
         continue;
       }
     }
     if (decision.action === ACTION.WAIT_RUNNING) {
-      await beat();
-      await sleep(POLL_INTERVAL_MS);
+      const exit = await silentWait(observed, 'wait_running');
+      if (exit) return exit;
       continue;
     }
     if (decision.action === ACTION.WAIT_GENERATOR_FIX_CALLBACK) {
@@ -1884,4 +1972,5 @@ export const __test__ = Object.freeze({
   buildSnapshot,
   humanReviewDetail,
   humanReviewDeadlinePauseActive,
+  humanReviewRequestDecided,
 });
