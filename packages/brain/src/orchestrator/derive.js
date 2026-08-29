@@ -556,6 +556,27 @@ function generatorNoPrRoute(observed, currentDetail) {
   };
 }
 
+// r81 回归护栏：把「结构化合同故障码 → contract_fault（非 infrastructure）」的判定
+// 抽成单一真源纯谓词。埋没点①②修好、结构化终态保真到达 kernel 后，这里是最后一道
+// 分类闸——用「报出的 token 集合是否含某条核心组合的全部 token」子集匹配对付词序/
+// 多词/丢词漂移（F6 案卷 run 8374ab73 实证 APPROVED_CONTRACT_CI_CONFLICT 会被精确集合
+// 比对两头漏判）。抽成命名谓词后，未来重构不能再把 CONTRACT_* 结构化 BLOCKED 悄悄
+// 改回 infrastructure 误分类而不动这一处真源。
+const CONTRACT_FAULT_CORE_TOKENS = [
+  ['SELF', 'CONTRADICTION'], // CONTRACT_SELF_CONTRADICTION
+  ['TEST', 'UNSATISFIABLE'], // CONTRACT_TEST_UNSATISFIABLE
+  ['CI', 'CONFLICT'], // CONTRACT_CI_SCOPE_CONFLICT（SCOPE 非必需——已实证会被丢）
+];
+
+function isStructuredContractFaultCode(errorCode) {
+  const reportedTokens = new Set(
+    String(errorCode ?? '').toUpperCase().split('_').filter(Boolean),
+  );
+  return CONTRACT_FAULT_CORE_TOKENS.some(
+    (core) => core.every((token) => reportedTokens.has(token)),
+  );
+}
+
 function attemptCallbackRoute(observed) {
   // r70 案卷：本地候选（发布前 pr=null）用候选头做消费锚，与 approve API 的
   // 候选头锚定放行（#5042/#5048）同一 SHA 语义。
@@ -674,15 +695,7 @@ function attemptCallbackRoute(observed) {
   // "报出的 token 集合是否包含某条核心组合的全部 token"子集匹配——SCOPE/其余
   // 修饰词不是语义必需,只挑每条码里区分度最高的词做核心组合,防止过度放宽
   // 误把无关产品 bug 路由成合同申诉。
-  const CONTRACT_FAULT_CORE_TOKENS = [
-    ['SELF', 'CONTRADICTION'], // CONTRACT_SELF_CONTRADICTION
-    ['TEST', 'UNSATISFIABLE'], // CONTRACT_TEST_UNSATISFIABLE
-    ['CI', 'CONFLICT'], // CONTRACT_CI_SCOPE_CONFLICT（SCOPE 非必需——已实证会被丢）
-  ];
-  const reportedTokens = new Set(String(detail.error_code ?? '').toUpperCase().split('_').filter(Boolean));
-  const matchesContractFaultCode = CONTRACT_FAULT_CORE_TOKENS.some(
-    (core) => core.every((token) => reportedTokens.has(token)),
-  );
+  const matchesContractFaultCode = isStructuredContractFaultCode(detail.error_code);
   if (
     role === 'generator'
     && (status === 'blocked' || (status === 'failed' && failureClass === 'semantic_refusal'))

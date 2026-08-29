@@ -2755,7 +2755,9 @@ normalize_provider_failure() {
   local credential_copy_mutated="$6"
   local provider_exit="$7"
   local stdout_file="$8"
-  local result_file="$9"
+  # 第 9 位为被改边新增的结构化终态入参，既有 8 参调用方（含回归 shell 测试）未传；
+  # entrypoint 全程 set -u，裸 $9 未绑定即中断，故用 ${9:-} 默认空串（无结构化产出语义不变）。
+  local result_file="${9:-}"
 
   if [[ "$provider_exit" -eq 124 ]]; then
     jq -n \

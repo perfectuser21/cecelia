@@ -81,13 +81,35 @@ function checkContract(contractPath) {
       );
       continue;
     }
-    if (!resolution.resolvedPath) {
+    // 与 contract-test-paths-seal.js（封印闸）对齐：非 sprints/ 的 repo 既有路径行
+    // （如 tests/gp/f1/xxx.test.js 分类护栏）在封印时走 readRepoFile 字面仓库路径校验，
+    // 但本 CI 覆盖检查只走 resolveContractTestFile——后者按设计把裸 tests/ 行映射到
+    // sprint 相对 / 毕业 regression 目标，解析不到字面仓库根路径，于是封印放行的合法合同
+    // 在 generator 产出后才红、fix 无解。此处兜底：resolver 解析失败且该行是安全的
+    // 非 sprints/ repo 相对路径、文件确在字面仓库根位置存在时，采信字面路径（镜像封印语义）。
+    let testFilePath = resolution.resolvedPath;
+    if (!testFilePath) {
+      const normalized = String(row.testFile).replace(/\\/g, "/");
+      const safeRepoRelative =
+        !normalized.startsWith("sprints/") &&
+        !path.isAbsolute(normalized) &&
+        !normalized.split("/").includes("..");
+      if (safeRepoRelative) {
+        const literal = path.resolve(root, normalized);
+        if (
+          literal.startsWith(root + path.sep) &&
+          fs.existsSync(literal)
+        ) {
+          testFilePath = literal;
+        }
+      }
+    }
+    if (!testFilePath) {
       violations.push(
         `${row.ws}: 声明的测试文件不存在 — ${row.testFile}；尝试候选: ${attempted}`
       );
       continue;
     }
-    const testFilePath = resolution.resolvedPath;
     // .sh 合同测试：可执行验收脚本，无 it()/test() 结构，跳过 behavior 匹配
     if (row.testFile.endsWith(".sh")) continue;
     const testContent = fs.readFileSync(testFilePath, "utf-8");
