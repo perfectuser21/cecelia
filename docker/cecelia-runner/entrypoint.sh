@@ -1915,18 +1915,9 @@ runner_evidence_timestamp() {
 }
 
 runner_assertion_budget_seconds() {
-  node - "${HARNESS_DEADLINE_AT:-}" "${HARNESS_TIMEOUT_SECONDS:-1800}" <<'NODE'
-const deadline = Date.parse(process.argv[2]);
-const configured = Number(process.argv[3]);
-const fallback = Number.isSafeInteger(configured) && configured > 0 ? configured : 1800;
-const remaining = Number.isFinite(deadline)
-  ? Math.floor((deadline - Date.now()) / 1000)
-  : fallback;
-// r75/r79/r80/r81 四杀根治：deadline 尾期（recollect/人审后重派）余量常只剩秒级，
-// 616 包冷装必超时 SIGTERM → evaluator 真实 PASS 被改判 FAIL。保底 600s 让安装
-// 完成——宁可 run 略超 deadline（validation clock 有 fix 轮顺延兜底），不杀全绿 run。
-process.stdout.write(String(Math.max(600, Math.min(1800, remaining))));
-NODE
+  # 预算公式单一事实源在 assertion-budget.mjs（r75/r79/r80/r81 四杀根治：保底 600s）。
+  node /usr/local/lib/cecelia/assertion-budget.mjs \
+    "${HARNESS_DEADLINE_AT:-}" "${HARNESS_TIMEOUT_SECONDS:-1800}"
 }
 
 # assertion-config-dir-writable:start
