@@ -1916,8 +1916,13 @@ runner_evidence_timestamp() {
 
 runner_assertion_budget_seconds() {
   # 预算公式单一事实源在 assertion-budget.mjs（r75/r79/r80/r81 四杀根治：保底 600s）。
-  node /usr/local/lib/cecelia/assertion-budget.mjs \
-    "${HARNESS_DEADLINE_AT:-}" "${HARNESS_TIMEOUT_SECONDS:-1800}"
+  # 镜像内路径优先；repo 内直跑/契约测试（sed 抽段 eval，BASH_SOURCE 失效但
+  # 调用方 shell 有 SCRIPT_DIR）回退到脚本同目录。
+  local budget_mjs=/usr/local/lib/cecelia/assertion-budget.mjs
+  if [[ ! -f "$budget_mjs" ]]; then
+    budget_mjs="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)}/assertion-budget.mjs"
+  fi
+  node "$budget_mjs" "${HARNESS_DEADLINE_AT:-}" "${HARNESS_TIMEOUT_SECONDS:-1800}"
 }
 
 # assertion-config-dir-writable:start
