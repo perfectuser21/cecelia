@@ -8,6 +8,8 @@ const MATERIAL_EVENT_REASONS = Object.freeze({
   'attempt.failed': 'attempt_terminal',
   'attempt.expired': 'attempt_terminal',
   'actor.message': 'actor_message',
+  // 第 46 批：控制循环静默等待超阈值发的事件——机械层卡住时 Commander 必须被叫醒。
+  'run.wait_stalled': 'wait_stalled',
 });
 
 const COMMANDER_CONTROL_EVENTS = new Set([

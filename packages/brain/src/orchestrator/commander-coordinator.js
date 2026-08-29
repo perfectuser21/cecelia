@@ -169,11 +169,13 @@ export function createCommanderCoordinator({
     logicalCycleId = null,
     retryOfAttemptId = null,
     restartReason = null,
+    eventCursor = null,
   }) {
     const [target] = targets;
     if (!target) throw new Error('commander_dispatch_target_missing');
     const attemptId = randomUUID();
     const bundle = buildCommanderBundle({
+      eventCursor,
       runId: input.run.id,
       commanderAttemptId: attemptId,
       state: currentState,
@@ -207,7 +209,7 @@ export function createCommanderCoordinator({
     };
   }
 
-  async function dispatchFor(input, currentState, newEvents) {
+  async function dispatchFor(input, currentState, newEvents, { eventCursor = null } = {}) {
     const wakeup = classifyCommanderWakeup({
       runId: input.run.id,
       stateCursor: currentState.event_cursor,
@@ -221,6 +223,7 @@ export function createCommanderCoordinator({
       events: wakeup.events,
       reasons: wakeup.reasons,
       targets: declaredTargets(input),
+      eventCursor,
     });
   }
 
@@ -349,6 +352,11 @@ export function createCommanderCoordinator({
     const bundleCursor = Number(
       latestAttempt.task_bundle?.inputs?.commander_bundle?.event_cursor,
     );
+    // 状态游标 > bundle 游标 = 该提案已被裁决消费（control 返回后 advanceCursor 是唯一的
+    // 消费标记），此后每轮只按新 material 事件决定是否再唤醒。第 46 批（r80 案卷）：
+    // 替换派发曾用 material 事件最大游标建 bundle、状态却推进到全部事件最大游标——
+    // 提案天生"已消费"、从未裁决就被静默丢弃。修在下方替换派发处（eventCursor 对齐），
+    // 此处消费语义保持不变。
     if (
       !Number.isSafeInteger(bundleCursor)
       || bundleCursor < 0
@@ -372,7 +380,21 @@ export function createCommanderCoordinator({
         reasonCode: 'stale_event_cursor',
         directive,
       });
-      const replacement = await dispatchFor(input, currentState, staleEvents);
+      // 替换派发必须带 eventCursor=nextCursor：bundle 游标与状态游标对齐，下一轮不再
+      // 天生滞后。滞后场景下 material 事件可能全在状态游标之前（classify 过滤掉 → 无
+      // wake），但提案已被拒绝，不派替换就是把 Commander 静默踢出局——强制派。
+      const wakeup = classifyCommanderWakeup({
+        runId,
+        stateCursor: currentState.event_cursor,
+        events: staleEvents,
+        defaultDecision: input.defaultDecision,
+      });
+      const replacement = await createDispatch(input, currentState, {
+        events: wakeup.events,
+        reasons: wakeup.reasons.length > 0 ? wakeup.reasons : ['stale_directive_replacement'],
+        targets: declaredTargets(input),
+        eventCursor: nextCursor,
+      });
       const advanced = await commanderStore.advanceCursor(runId, {
         expectedCursor: currentState.event_cursor,
         nextCursor,

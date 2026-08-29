@@ -438,6 +438,8 @@ export async function buildRealDeps(overrides = {}) {
     commanderCoordinator,
     commanderDirectiveExecutor,
     ...(reconcileExpired ? { reconcileExpiredAttempt: reconcileExpired } : {}),
+    // 第 46 批：loop 静默等待停摆时发 run.wait_stalled 事件唤醒 Commander。
+    runEventStore: eventStore,
     host: os.hostname(),
     pid: process.pid,
   };
