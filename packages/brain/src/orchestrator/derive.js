@@ -1363,6 +1363,27 @@ function deriveTask(observed) {
         reason: 'repeated_generator_crash_signature',
       };
     }
+    // r73 根治：合同重开纪元内的 no_pr——旧候选 workspace 属已作废的第一版合同，
+    // generator-fix 必撞 workspace_source_attempt_unavailable → WORKSPACE_RESOLUTION_FAILED
+    // 终局。改为从冻结基线重写（全新 generator）。纪元起点 = 最新 reopen_gan_contract 行；
+    // 纪元后尚未派过全新 generator 时才重写，已派过则回落既有 fix 语义（有界，不无限重发）。
+    // reopen 行 hop 字段异常时 Number 比较为 false → 保守回落 fix（fail-safe，不误升级为无界重发）。
+    const noPrRows = sortedLogRows(decisionLog);
+    const latestReopenHop = [...noPrRows].reverse()
+      .find((row) => row.action === ACTION.REOPEN_GAN_CONTRACT)?.hop ?? null;
+    if (latestReopenHop != null) {
+      const freshGeneratorAfterReopen = noPrRows.some((row) => (
+        row.action === ACTION.SPAWN_GENERATOR
+        && Number(row.hop) > Number(latestReopenHop)
+      ));
+      if (!freshGeneratorAfterReopen) {
+        return {
+          phase: 'generate',
+          action: 'spawn:generator',
+          reason: 'contract_reopened_fresh_generator',
+        };
+      }
+    }
     // generator 已退出且无 PR（no_pr）→ 计入 fix_round
     // （修订声明：旧图 routeAfterParse !pr_url→no_pr(END) 直接终局，新语义=可重试入 fix 上限）
     return fixRoute('no_pr');
