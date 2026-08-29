@@ -2755,6 +2755,7 @@ normalize_provider_failure() {
   local credential_copy_mutated="$6"
   local provider_exit="$7"
   local stdout_file="$8"
+  local result_file="$9"
 
   if [[ "$provider_exit" -eq 124 ]]; then
     jq -n \
@@ -2766,6 +2767,27 @@ normalize_provider_failure() {
       --argjson exit_code "$provider_exit" \
       '{contract_version:"1.0",attempt_id:$attempt,status:"failed",summary:"provider process timed out",artifacts:[],checks:[],decision:null,error:{code:"provider_timeout",message:"provider exceeded the TaskBundle timeout",exit_code:$exit_code},provider_metadata:({provider:$provider,session_id:(if $session == "" then null else $session end)} + (if $credential_ref == "" then {} else {credential_ref:$credential_ref,credential_copy_mutated:$credential_copy_mutated} end))}' \
       > "$normalized_file"
+    return
+  fi
+
+  # r81 埋没点②：进程非零退出（且非 124 超时）与「执行体已写出合法结构化终态」正交。
+  # 构造失败回执前先读 result.json——若已是合法结构化终态则原样透传，禁止覆盖成
+  # provider_exit。透传闸位于 124 超时分支之后（超时优先，不被结构化 success 抢占）、
+  # auth-unavailable 检测之前（结构化合同终态优先级最高）。放行两族：
+  #   success 家族：contract_version=="1.0" 且 status ∈ {completed,completed_with_concerns,needs_context}
+  #   结构化 BLOCKED：error.code 匹配 ^CONTRACT_（合同故障家族）
+  # 无结构化产出/半截 JSON（parse 失败）不放行，回退既有 provider_exit 语义不变。
+  if [[ -n "$result_file" && -s "$result_file" ]] \
+      && jq -e '
+        (.contract_version == "1.0")
+        and (
+          (.status as $s
+            | ["completed","completed_with_concerns","needs_context"]
+            | index($s)) != null
+          or ((.error.code // "") | test("^CONTRACT_"))
+        )
+      ' "$result_file" >/dev/null 2>&1; then
+    cat "$result_file" > "$normalized_file"
     return
   fi
 
@@ -3372,7 +3394,8 @@ run_provider_contract() {
       "$CREDENTIAL_REF" \
       "$CREDENTIAL_COPY_MUTATED" \
       "$provider_exit" \
-      "$STDOUT_FILE"
+      "$STDOUT_FILE" \
+      "$result_file"
   fi
   if [[ "$provider_trust_intact" == "true" ]] \
       && ! merge_evaluator_evidence "$NORMALIZED_RESULT_FILE"; then

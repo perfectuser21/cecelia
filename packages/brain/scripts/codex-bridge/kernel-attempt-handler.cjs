@@ -560,6 +560,21 @@ function parseHarnessResult(resultPath) {
   return result;
 }
 
+// r81 埋没点①：进程非零退出与「执行体已写出合法结构化终态」正交（CLI 可诊断非零 +
+// 成功产出并存，正是 r69/r77 根因）。close handler 不再在 code !== 0 时直接盖章
+// provider_exit_${code} 丢弃 result.json，而是先 parseHarnessResult 保真透传；仅当无
+// 结构化产出（缺失/非法）才回退——exit 0 → provider_result_invalid，exit !=0 →
+// provider_exit_${code}（负向语义不变）。抽为纯函数以便离线重放（禁 mock 被改的边）。
+function resolveProviderCloseResult({ exitCode, resultPath, attemptId }) {
+  try {
+    return parseHarnessResult(resultPath);
+  } catch {
+    return exitCode === 0
+      ? failedHarnessResult(attemptId, 'provider_result_invalid')
+      : failedHarnessResult(attemptId, `provider_exit_${String(exitCode)}`);
+  }
+}
+
 function failedHarnessResult(attemptId, message) {
   return {
     contract_version: '1.0',
@@ -734,15 +749,11 @@ function startProvider({
   child.stdout.on('data', () => {});
   child.stderr.on('data', () => {});
   child.once('close', (code) => {
-    let result;
-    try {
-      result = code === 0
-        ? parseHarnessResult(resultPath)
-        : failedHarnessResult(request.attempt_id, `provider_exit_${String(code)}`);
-    } catch {
-      result = failedHarnessResult(request.attempt_id, 'provider_result_invalid');
-    }
-    void complete(result);
+    void complete(resolveProviderCloseResult({
+      exitCode: code,
+      resultPath,
+      attemptId: request.attempt_id,
+    }));
   });
   child.stdin.end(request.provider_spec.stdin);
   return child;
@@ -1131,4 +1142,5 @@ function createKernelAttemptHandler({
 module.exports = {
   KernelAttemptError,
   createKernelAttemptHandler,
+  resolveProviderCloseResult,
 };
