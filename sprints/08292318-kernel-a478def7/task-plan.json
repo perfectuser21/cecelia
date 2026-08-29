@@ -1,0 +1,29 @@
+{
+  "initiative_id": "32873c79-819d-446a-80fd-7ab8e592ffb4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain/ 纯后端 derive 路由，无 UI/远端 agent/engine hooks，命中 brain→autonomous。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "derive no_pr 合同重开纪元路由：派全新 generator 根除 WORKSPACE_RESOLUTION_FAILED（r73）",
+      "scope": "在 packages/brain/src/orchestrator/derive.js 的 deriveTask 3a no_pr 分支，识别 decisionLog 的 REOPEN_GAN_CONTRACT 纪元：纪元后未派全新 generator 时返回 spawn:generator(contract_reopened_fresh_generator)，已派过则回落既有 fixRoute('no_pr')；无 reopen 行时逐字节等价现行。让冻结测试与 tests/gp/f1 副本全绿，并同步 bump 版本四处。",
+      "dod": [
+        "[BEHAVIOR] node sprints/08292318-kernel-a478def7/route-oracle.mjs reopen → spawn:generator/contract_reopened_fresh_generator（B-01/B-04）",
+        "[BEHAVIOR] node sprints/08292318-kernel-a478def7/route-oracle.mjs bounded/negative → spawn:generator-fix/no_pr（B-02/B-03，负向语义不变）",
+        "[ARTIFACT] derive.js 含 contract_reopened_fresh_generator 路由；冻结测试与 tests/gp/f1 副本全绿；check-version-sync.sh 通过"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js",
+        "sprints/08292318-kernel-a478def7/tests/derive-reopen-fresh-generator.test.js",
+        "tests/gp/f1/step3-contract-reopen-fresh-generator.test.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
