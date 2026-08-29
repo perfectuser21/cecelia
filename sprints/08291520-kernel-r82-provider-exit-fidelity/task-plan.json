@@ -1,0 +1,35 @@
+{
+  "initiative_id": "r82-provider-exit-fidelity",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 Brain 内核 orchestrator 数据流 + 回执链路纯函数归因，无 UI/engine/用户交互，属自治后台链路。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "结构化上报保真透传，根除 provider_exit 语义埋没：回执归因保真 + failed_targets 排除 CONTRACT_*",
+      "scope": "让执行体产出的结构化终态（success JSON / 结构化 BLOCKED + CONTRACT_* 家族错误码）在回执链路保真透传，非零退出码不覆写成 provider_exit；kernel 的 failed_targets 采集排除 CONTRACT_* 家族。真崩溃（无结构化产出）负向语义零回归。",
+      "dod": [
+        "[BEHAVIOR] 结构化 BLOCKED + CONTRACT_* 遇非零退出保真透传，error.code 不被埋没成 provider_exit（复刻 r69/r77）",
+        "[BEHAVIOR] attempt-store.listFailedExecutionTargets 的 SQL 排除 CONTRACT_* 家族（NOT LIKE 'CONTRACT_%' 或 NOT IN），时效窗口谓词保留",
+        "[BEHAVIOR] 负向不回退：无结构化产出的真崩溃 + 非零退出仍归 provider_exit（语义不变）",
+        "[BEHAVIOR] 冻结 sprint 测试与 tests/gp/f1 companion 全绿；check-version-sync 通过",
+        "[ARTIFACT] 版本四处同步 bump（package.json / package-lock.json / .brain-versions / DEFINITION.md）"
+      ],
+      "files": [
+        "packages/brain/scripts/codex-bridge/kernel-attempt-handler.cjs",
+        "packages/brain/src/orchestrator/attempt-store.js",
+        "packages/brain/src/orchestrator/ground-truth.js",
+        "packages/brain/src/orchestrator/dispatcher.js",
+        "docker/cecelia-runner/entrypoint.sh",
+        "sprints/08291520-kernel-r82-provider-exit-fidelity/tests/r82-provider-exit-fidelity.test.js",
+        "tests/gp/f1/step3-contract-fault-fidelity-not-provider-exit.test.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 60
+    }
+  ]
+}
