@@ -1,0 +1,31 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯后端 kernel/harness 回执分类逻辑（packages/brain + docker/cecelia-runner），无 UI、无远端 agent 协议，纯函数可重放",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "结构化终态保真透传 + CONTRACT_* 分类护栏（根除 provider_exit 语义埋没）",
+      "scope": "runner/entrypoint 与 kernel bridge 在构造失败回执前先读结构化终态 result.json，合法结构化终态（success 或结构化 BLOCKED+CONTRACT_*）原样透传，不覆盖 provider_exit；kernel bridge close-result 解析抽取为导出纯函数 resolveProviderCloseResult；无结构化产出/真崩溃/exit124 仍按 provider_exit/provider_result_invalid/provider_timeout（语义不变）；CONTRACT_* 分类走既有合同故障重开路径（补护栏）。行为变更冲突的既有回归测试一并更新。Green commit 用 fix( 前缀。",
+      "dod": [
+        "[BEHAVIOR] 非零退出 + 结构化 success/BLOCKED+CONTRACT_* → entrypoint 与 kernel bridge 双侧保真透传（冻结测试全绿）",
+        "[BEHAVIOR] 无结构化产出/真崩溃 → provider_exit/provider_result_invalid 语义不变；exit124 → provider_timeout 不变",
+        "[BEHAVIOR] CONTRACT_* 结构化 BLOCKED → derive 走 arbitrate:contract_fault，不进 failed_targets/infrastructure",
+        "[ARTIFACT] kernel-attempt-handler.cjs 导出 resolveProviderCloseResult；版本 bump 四处同步（check-version-sync）"
+      ],
+      "files": [
+        "docker/cecelia-runner/entrypoint.sh",
+        "packages/brain/scripts/codex-bridge/kernel-attempt-handler.cjs",
+        "sprints/08290210-kernel-r81-provider-exit-fidelity/tests/step3-provider-exit-structured-fidelity.test.js",
+        "tests/gp/f1/step3-contract-fault-not-infrastructure.test.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 60
+    }
+  ]
+}
