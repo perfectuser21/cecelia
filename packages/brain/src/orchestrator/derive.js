@@ -338,6 +338,14 @@ const GENERATOR_ACTIONS = new Set([
   ACTION.SPAWN_GENERATOR_FIX,
 ]);
 
+// r84 案卷（run 32873c79）：merge gate 前 PR 与 main 冲突的 GitHub mergeStateStatus 枚举。
+// DIRTY/CONFLICTING 时 GitHub 不触发 pull_request 工作流（CI 永不绿），merge_pr 遇之只 BLOCKED，
+// 只能死等或 automation_deadline_exceeded 判死——改路由 generator-fix rebase 自愈。
+const PR_CONFLICT_MERGE_STATES = new Set(['DIRTY', 'CONFLICTING']);
+// 有界：同一 run 已累计 ≥3 条 pr_conflict_rebase 意图行仍 DIRTY → 升人审（第 4 次才升）。
+// 阈值 3 < 全局熔断阈值 5（GLOBAL_LOOP_BREAKER_THRESHOLD），本专用闸先兜住。
+const PR_CONFLICT_REBASE_CAP = 3;
+
 const CONTEXT_RETRY_PHASE_BY_ACTION = Object.freeze({
   [ACTION.SPAWN_PLANNER]: 'planning',
   [ACTION.SPAWN_PROPOSER]: 'gan',
@@ -1317,6 +1325,49 @@ function deriveGan(observed) {
 }
 
 /**
+ * merge gate 前的 PR 冲突自愈路由（r84 案卷 run 32873c79）。
+ *
+ * 双 PASS 且 PR 存在、未 merged，且 observed.pr.mergeStateStatus ∈ {DIRTY, CONFLICTING} 时，
+ * 优先于 wait:poll_ci / merge_pr / wait:human_review 返回 spawn:generator-fix(pr_conflict_rebase)——
+ * DIRTY 时 GitHub 不触发 pull_request CI（永不绿），按 CI 死等是 r83 死因；同一 run 已累计
+ * ≥PR_CONFLICT_REBASE_CAP 条 reason=pr_conflict_rebase 意图行仍 DIRTY → wait:human_review
+ * (pr_conflict_unresolved)（第 4 次才升人审，人审请求行由 loop.humanReviewDetail 带候选头锚）。
+ *
+ * 计数只认 reason=pr_conflict_rebase 的 spawn:generator-fix 意图行（纯 decisionLog 可重放，
+ * 其它 reason 的 generator-fix 不占本界额度）。非冲突枚举 / 缺失 / null / UNKNOWN / 已 merged /
+ * 非双 PASS → 返回 null，既有路由一字不变（不劫持尚在评审中的 DIRTY PR）。
+ */
+function mergeGateConflictRoute(observed) {
+  const { pr } = observed;
+  if (!pr || pr.merged) return null;
+  if (!PR_CONFLICT_MERGE_STATES.has(pr.mergeStateStatus)) return null;
+
+  // 仅在 merge gate（双 PASS 锚定当前 head + 冻结合同身份）命中。
+  const contractIdentity = observed.contract?.identity ?? null;
+  const evalRow = verdictForAuthority(observed.evaluateVerdict, pr.head_sha, contractIdentity);
+  const judgeRow = verdictForAuthority(observed.judgeVerdict, pr.head_sha, contractIdentity);
+  if (!evalRow || !isPassVerdict(evalRow.verdict)) return null;
+  if (!judgeRow || !isPassVerdict(judgeRow.verdict)) return null;
+
+  const rebaseIntents = sortedLogRows(observed.decisionLog).filter((row) => (
+    row.action === ACTION.SPAWN_GENERATOR_FIX
+    && (asStructuredJson(row.detail) ?? {}).reason === 'pr_conflict_rebase'
+  )).length;
+  if (rebaseIntents >= PR_CONFLICT_REBASE_CAP) {
+    return {
+      phase: 'review',
+      action: ACTION.WAIT_HUMAN_REVIEW,
+      reason: 'pr_conflict_unresolved',
+    };
+  }
+  return {
+    phase: 'generate',
+    action: ACTION.SPAWN_GENERATOR_FIX,
+    reason: 'pr_conflict_rebase',
+  };
+}
+
+/**
  * 规则 3/4/5：contract approved 后的 generate → evaluate → judge → review → merge 主线。
  */
 function deriveTask(observed) {
@@ -1410,6 +1461,13 @@ function deriveTask(observed) {
   ) {
     return fixRoute(lastAgentExit.auth_failed ? 'auth_failed' : 'container_exit');
   }
+
+  // merge gate 前 PR 冲突自愈（r84 案卷 run 32873c79）：DIRTY/CONFLICTING 双 PASS →
+  // spawn:generator-fix(pr_conflict_rebase)，优先于 ci poll / merge_pr / human_review；
+  // 有界超限（≥PR_CONFLICT_REBASE_CAP）升人审(pr_conflict_unresolved)。放在 CI 分路前，
+  // 因 DIRTY 时 GitHub 不触发 pull_request → 按 ci=pending 死等（r83 死因）必须被本闸拦截。
+  const conflictRoute = mergeGateConflictRoute(observed);
+  if (conflictRoute) return applyHopFence(conflictRoute, counters);
 
   // 3b. ci pending → poll；超限（20×90s）→ failed
   // （修订声明：旧 routeAfterPoll timeout→END，新=failed 终局，语义等价）
