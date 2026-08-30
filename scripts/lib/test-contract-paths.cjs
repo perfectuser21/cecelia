@@ -94,9 +94,14 @@ function isWithinRoot(root, candidate) {
   );
 }
 
+// 第 49 批（r83/r84 案卷）：GP 步骤断言按决策 109dd8eb 固定落仓库根 tests/gp/<journey>/，
+// 此前不在仓库根前缀表里 → 被当作 sprint 相对路径解析 → CI「Test Contract 覆盖检查」对
+// kernel 产出的每个 PR 必红（候选只找 sprints/<dir>/tests/gp/… 与 tests/regression/…），
+// generator-fix 无解。tests/gp/ 计入仓库根路径。
 function repositoryRelativePath(testFile) {
   return /^(?:sprints|packages|scripts)\//.test(testFile) ||
-    testFile.startsWith("tests/regression/")
+    testFile.startsWith("tests/regression/") ||
+    testFile.startsWith("tests/gp/")
     ? testFile
     : null;
 }
