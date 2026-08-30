@@ -39,8 +39,8 @@ for i in $(seq 1 "$DISPATCH_RETRIES"); do
     break
   fi
   DETAIL=$(printf '%s' "$RESP" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("detail") or "")' 2>/dev/null || echo "")
-  if printf '%s' "$DETAIL" | grep -qiE 'capacity|contended'; then
-    echo "  ⏳ 第 $i 次：机器容量被占（$DETAIL），60s 后重试"
+  if printf '%s' "$DETAIL" | grep -qiE 'capacity|contended|node_not_base_admitted|preflight blocked'; then
+    echo "  ⏳ 第 $i 次：节点容量/准入受限（$DETAIL），60s 后重试"
     sleep 60
     continue
   fi
@@ -49,7 +49,7 @@ for i in $(seq 1 "$DISPATCH_RETRIES"); do
 done
 
 if [ -z "$ATTEMPT_ID" ]; then
-  echo "⚠️  连续 $DISPATCH_RETRIES 次容量被占，软跳过（端点本身已返回结构化 502，非缺陷）"
+  echo "⚠️  连续 $DISPATCH_RETRIES 次节点容量/准入受限（CI 临时 Brain 无 fleet 节点属预期），软跳过——端点已返回结构化 502；真环境验证由部署后 post-deploy smoke 承担"
   exit 0
 fi
 echo "  LAUNCHED attempt=$ATTEMPT_ID，轮询终态…"
