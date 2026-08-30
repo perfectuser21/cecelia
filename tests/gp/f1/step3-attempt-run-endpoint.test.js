@@ -64,11 +64,16 @@ describe('POST /api/brain/harness/attempt-run', () => {
       allow_unscoped: true,
       source_id: 'v4-bridge:bbbbbbbb-0000-0000-0000-000000000002',
     }));
+    // 主权闸（migration 423）：先建 active controller 会话，run 的租约字段从会话行复制。
+    const sessionInsert = sqls.find(([sql]) => /INSERT INTO kernel_controller_sessions/.test(sql));
+    expect(sessionInsert).toBeTruthy();
+    expect(sessionInsert[0]).toMatch(/'active'/);
     const runInsert = sqls.find(([sql]) => /INSERT INTO initiative_runs/.test(sql));
     expect(runInsert).toBeTruthy();
     expect(runInsert[0]).toMatch(/'v2'/);
     expect(runInsert[0]).toMatch(/current_task_id/);
     expect(runInsert[0]).toMatch(/created_source/);
+    expect(runInsert[0]).toMatch(/FROM kernel_controller_sessions/);
     expect(dispatchFn).toHaveBeenCalledWith('spawn:canary', expect.objectContaining({
       hop: 7,
       runId: 'bbbbbbbb-0000-0000-0000-000000000002',
@@ -121,9 +126,12 @@ describe('GET /api/brain/harness/attempt-run/:id', () => {
       started_at: 't1', completed_at: 't2', created_at: 't0', updated_at: 't2',
       callback_secret_hash: 'MUST_NOT_LEAK', lease_owner: 'x',
     };
-    const { app } = makeApp({ getById: async () => row });
+    const { app, sqls } = makeApp({ getById: async () => row });
     const res = await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
     expect(res.status).toBe(200);
+    // 终态自动收尾：桥接 run→done、session→closed（只动 created_source='v4-bridge'）
+    expect(sqls.some(([sql]) => /SET phase='done'/.test(sql) && /created_source = 'v4-bridge'/.test(sql))).toBe(true);
+    expect(sqls.some(([sql]) => /kernel_controller_sessions SET status='closed'/.test(sql))).toBe(true);
     expect(res.body.result).toEqual({ decision: { outcome: 'CANARY_OK' } });
     expect(res.body.status).toBe('completed');
     expect(res.body.callback_secret_hash).toBeUndefined();

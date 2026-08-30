@@ -32,6 +32,10 @@ export const ALLOWED_ROLES = Object.freeze([
   'judge',
 ]);
 
+const TERMINAL_ATTEMPT_STATUSES = new Set([
+  'completed', 'completed_with_concerns', 'failed', 'cancelled', 'blocked', 'needs_context',
+]);
+
 const ATTEMPT_PROJECTION = Object.freeze([
   'id', 'run_id', 'role', 'status', 'result', 'failure_class', 'error_code',
   'error_message', 'provider', 'account_id', 'requested_machine_id',
@@ -110,14 +114,35 @@ export function createHarnessAttemptRunRouter({
       if (!created?.success || !taskId) {
         return res.status(502).json({ error: 'task_anchor_failed', detail: created?.error ?? 'createTask returned no task id' });
       }
-      await pool.query(
-        `INSERT INTO initiative_runs
-           (id, initiative_id, current_task_id, created_source, phase,
-            orchestrator_version, orchestrator_host, started_at)
-         VALUES ($1::uuid, $1::uuid, $2::uuid, 'v4-bridge', 'gan', 'v2', 'v4-bridge', NOW())
-         ON CONFLICT (id) DO NOTHING`,
-        [runId, taskId],
+      // 主权闸（migration 423）：活跃 v2 run 必须挂 active controller 会话且租约字段与
+      // 会话逐位一致。桥接自己充当 controller：session（2h 租约）→ run（租约从 session
+      // 行复制，保证 IS NOT DISTINCT FROM）→ 回填 session.run_id。
+      const { rows: existingRun } = await pool.query(
+        'SELECT id FROM initiative_runs WHERE id = $1::uuid', [runId],
       );
+      if (existingRun.length === 0) {
+        const sessionId = uuid();
+        await pool.query(
+          `INSERT INTO kernel_controller_sessions
+             (id, run_id, task_id, generation, source, status, last_heartbeat_at, lease_expires_at)
+           VALUES ($1, NULL, $2::uuid, 1, 'v4-bridge', 'active', NOW(), NOW() + INTERVAL '2 hours')`,
+          [sessionId, taskId],
+        );
+        await pool.query(
+          `INSERT INTO initiative_runs
+             (id, initiative_id, current_task_id, created_source, phase,
+              orchestrator_version, orchestrator_host, started_at,
+              controller_session_id, controller_generation, controller_lease_expires_at)
+           SELECT $1::uuid, $1::uuid, $2::uuid, 'v4-bridge', 'gan', 'v2', 'v4-bridge', NOW(),
+                  session.id, session.generation, session.lease_expires_at
+             FROM kernel_controller_sessions session WHERE session.id = $3`,
+          [runId, taskId, sessionId],
+        );
+        await pool.query(
+          'UPDATE kernel_controller_sessions SET run_id = $1::uuid WHERE id = $2',
+          [runId, sessionId],
+        );
+      }
       const { rows: [{ hop }] } = await pool.query(
         'SELECT COALESCE(MAX(hop), 0) + 1 AS hop FROM harness_attempts WHERE run_id = $1',
         [runId],
@@ -167,6 +192,20 @@ export function createHarnessAttemptRunRouter({
       const store = await getStore();
       const row = await store.getById(req.params.attemptId);
       if (!row) return res.status(404).json({ error: 'attempt_not_found' });
+      // attempt 终态即收尾桥接 run（只动 created_source='v4-bridge' 的行）：run→done、
+      // session→closed。不留永活 run 干扰监工停摆扫描与「在途禁合 PR」计数。
+      if (TERMINAL_ATTEMPT_STATUSES.has(row.status) && row.run_id) {
+        await pool.query(
+          `UPDATE initiative_runs SET phase='done', completed_at=COALESCE(completed_at, NOW())
+            WHERE id = $1::uuid AND created_source = 'v4-bridge' AND phase NOT IN ('done','failed')`,
+          [row.run_id],
+        );
+        await pool.query(
+          `UPDATE kernel_controller_sessions SET status='closed'
+            WHERE run_id = $1::uuid AND source = 'v4-bridge' AND status = 'active'`,
+          [row.run_id],
+        );
+      }
       const out = {};
       for (const key of ATTEMPT_PROJECTION) out[key] = row[key] ?? null;
       return res.json(out);
