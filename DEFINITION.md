@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.153
+**Brain 版本**: 1.273.154
+
+## Brain 1.273.154 — attempt-run 桥接加固：派发失败回滚 + 冒烟带内部 token（第 52 批）
+
+- `routes/harness-attempt-run.js`：POST 派发未 LAUNCHED 或抛异常时，回滚本次调用新建的桥接资源（run→failed、controller session→closed、task 锚→cancelled）；复用既有 run_id 时绝不回滚。根除 51 批首夜「失败派发留 3 条孤儿活跃 run」需人工 SQL 清理的问题。
+- `scripts/smoke/attempt-run-smoke.sh`：宿主→容器不算 loopback，自动取 CECELIA_INTERNAL_TOKEN（env 优先，回退 docker exec）带 Bearer；CI 无 token 场景照旧裸跑 loopback。
 
 ## Brain 1.273.153 — attempt-run 薄端点：V4 画布 Worker 的单角色接线（第 51 批，决策 bc242b62）
 coding 迁 OpenClaw×n8n V4 骨架后，阶段执行仍复用 Brain fleet 派发，但此前不存在任何 HTTP 面能「派发一个角色 attempt 并取回 harness_attempts.result」。新增 `POST /api/brain/harness/attempt-run`（internalAuthOrLoopback；角色白名单九执行角色；复用 buildRealDeps().dispatch；observed.task 不带 task_type/work_kind 走 routing receipt 既有放行口；run 行写 orchestrator_version='v2'；支持复用 run_id 多阶段共享）与 `GET /api/brain/harness/attempt-run/:attemptId`（投影含 result/failure_class，凭据哈希与租约不外泄）。dispatch 未 LAUNCHED → 502 带 control_status/detail，不假装成功。

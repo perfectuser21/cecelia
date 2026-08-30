@@ -121,7 +121,30 @@ export function createHarnessAttemptRunRouter({
       const { rows: existingRun } = await pool.query(
         'SELECT id FROM initiative_runs WHERE id = $1::uuid', [runId],
       );
-      if (existingRun.length === 0) {
+      const createdRunHere = existingRun.length === 0;
+      // 第 52 批：派发未 LAUNCHED / 抛错时回滚本次新建的桥接资源，不留孤儿活跃 run
+      //（51 批首夜留了 3 条，人工清理过）。只回滚本调用创建的 run/session/task 锚。
+      const rollback = async () => {
+        if (!createdRunHere) return;
+        try {
+          await pool.query(
+            `UPDATE initiative_runs SET phase='failed', completed_at=NOW()
+              WHERE id = $1::uuid AND orchestrator_host = 'v4-bridge' AND phase NOT IN ('done','failed')`,
+            [runId],
+          );
+          await pool.query(
+            `UPDATE kernel_controller_sessions SET status='closed'
+              WHERE run_id = $1::uuid AND source = 'v4-bridge' AND status = 'active'`,
+            [runId],
+          );
+          await pool.query(
+            `UPDATE tasks SET status='cancelled', updated_at=NOW()
+              WHERE id = $1::uuid AND trigger_source = 'v4_bridge' AND status = 'in_progress'`,
+            [taskId],
+          );
+        } catch { /* 回滚失败不掩盖原始错误 */ }
+      };
+      if (createdRunHere) {
         const sessionId = uuid();
         await pool.query(
           `INSERT INTO kernel_controller_sessions
@@ -150,7 +173,9 @@ export function createHarnessAttemptRunRouter({
       );
 
       const deps = await getDeps();
-      const launched = await deps.dispatch(`spawn:${role}`, {
+      let launched;
+      try {
+        launched = await deps.dispatch(`spawn:${role}`, {
         taskId: runId,
         runId,
         hop: Number(hop),
@@ -165,10 +190,15 @@ export function createHarnessAttemptRunRouter({
           run: { id: runId, phase: 'gan' },
           contract: { row: { propose_branch: cleanPayload.branch ?? 'v4-bridge' } },
         },
-      });
+        });
+      } catch (dispatchError) {
+        await rollback();
+        return res.status(500).json({ error: 'attempt_run_failed', detail: String(dispatchError?.message ?? dispatchError) });
+      }
 
       const attemptId = launched?.attempt_id ?? launched?.attemptId ?? null;
       if (launched?.status !== 'LAUNCHED' || !attemptId) {
+        await rollback();
         return res.status(502).json({
           error: 'dispatch_not_launched',
           status: launched?.status ?? null,
