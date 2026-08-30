@@ -41,4 +41,15 @@ if printf '%s' "$PR_TITLE" | grep -qE '^feat\(harness\):'; then
   exit 0
 fi
 
+# Kernel Harness 2.0（kernel-v1）产出的 PR：分支固定 cp-route-api-*、标题固定
+# 「Harness approved candidate <task>」，不带 feat(harness): 前缀。第 50 批（r84 #5095
+# 案卷，2026-08-30）：此前被当普通 cp-* PR 抢先合并，kernel 的 merge gate 人审
+# （capability-change-v1 强制人工盖章）根本没轮到。merge 由 kernel 的 merge_pr 在人审
+# 通过后执行；分支前缀与标题任一命中即跳过。
+if printf '%s' "$HEAD_BRANCH" | grep -qE '^cp-route-api-' \
+  || printf '%s' "$PR_TITLE" | grep -qE '^Harness approved candidate'; then
+  echo "SKIP: kernel-owned PR（cp-route-api-* 分支 / Harness approved candidate 标题），跳过 CI 通用 auto-merge，merge 归 kernel merge gate（人审后 merge_pr）"
+  exit 0
+fi
+
 echo "MERGE"

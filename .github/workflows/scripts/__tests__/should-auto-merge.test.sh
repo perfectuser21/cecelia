@@ -33,6 +33,17 @@ assert_decision "SKIP" "harness PR（feat(harness):）→ 跳过 auto-merge" \
   "cp-0704084753-abc" "feat(harness): 抖音发布 skeleton"
 
 # 普通手动 /dev 的 fix 类 PR → 正常走 auto-merge（不能误伤 /dev 流程，关键）。
+# 第 50 批（r84 案卷，2026-08-30）：Kernel Harness 2.0 产出的 PR 分支固定 cp-route-api-*、
+# 标题固定「Harness approved candidate <task>」，不带 feat(harness): 前缀 → 此前被当普通
+# cp-* PR 抢先合并（#5095），kernel 的 merge gate 人审（capability-change-v1 强制）
+# 根本没轮到——公章被 CI 旁路。分支前缀与标题任一命中都必须 SKIP。
+assert_decision "SKIP" "kernel v1 PR（cp-route-api-* 分支）→ 跳过 auto-merge，merge 归 kernel 人审" \
+  "cp-route-api-5c25873d" "Harness approved candidate 3a6e8f56-dbf8-4230-b58e-6105f1d82639"
+assert_decision "SKIP" "kernel v1 PR（仅标题命中 Harness approved candidate）→ 跳过 auto-merge" \
+  "cp-0830123456-kernel-x" "Harness approved candidate 3a6e8f56-dbf8-4230-b58e-6105f1d82639"
+assert_decision "SKIP" "kernel v1 PR（仅分支命中 cp-route-api-）→ 跳过 auto-merge" \
+  "cp-route-api-5c25873d" "fix(kernel): 任意标题"
+
 assert_decision "MERGE" "普通 fix(brain) PR → 正常 auto-merge" \
   "cp-0704084753-abc" "fix(brain): 修复调度队头阻塞"
 
