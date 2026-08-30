@@ -54,9 +54,16 @@ describe('POST /api/brain/harness/attempt-run', () => {
       attempt_id: 'aaaaaaaa-0000-0000-0000-000000000001',
       role: 'canary',
     });
+    // migration 375 硬约束：v2 run 行必须带 current_task_id（FK→tasks）与 created_source，
+    // 所以先落惰性 task 行（in_progress+claimed，tick 不捡）再落 run 行。
+    const taskInsert = sqls.find(([sql]) => /INSERT INTO tasks/.test(sql));
+    expect(taskInsert).toBeTruthy();
+    expect(taskInsert[0]).toMatch(/'in_progress'/);
     const runInsert = sqls.find(([sql]) => /INSERT INTO initiative_runs/.test(sql));
     expect(runInsert).toBeTruthy();
     expect(runInsert[0]).toMatch(/'v2'/);
+    expect(runInsert[0]).toMatch(/current_task_id/);
+    expect(runInsert[0]).toMatch(/created_source/);
     expect(dispatchFn).toHaveBeenCalledWith('spawn:canary', expect.objectContaining({
       hop: 7,
       runId: 'bbbbbbbb-0000-0000-0000-000000000002',

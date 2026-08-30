@@ -85,10 +85,21 @@ export function createHarnessAttemptRunRouter({
       delete cleanPayload.work_kind;
 
       const runId = typeof body.run_id === 'string' && body.run_id ? body.run_id : uuid();
+      // v2 run 行有硬约束（migration 375）：current_task_id（FK→tasks.id）与 created_source
+      // 非空。落一行惰性 task（in_progress+claimed，tick 不会捡走）作为 run 的身份锚。
+      await pool.query(
+        `INSERT INTO tasks (id, title, description, task_type, status, tenant_id, skill,
+                            claimed_by, claimed_at, payload)
+         VALUES ($1::uuid, $2, $3, 'v4_stage', 'in_progress', 'default', 'v4-bridge',
+                 'v4-bridge', NOW(), $4::jsonb)
+         ON CONFLICT (id) DO NOTHING`,
+        [runId, title, String(body.description ?? body.objective ?? title), JSON.stringify(cleanPayload)],
+      );
       await pool.query(
         `INSERT INTO initiative_runs
-           (id, initiative_id, phase, orchestrator_version, orchestrator_host, started_at)
-         VALUES ($1::uuid, $1::uuid, 'gan', 'v2', 'v4-bridge', NOW())
+           (id, initiative_id, current_task_id, created_source, phase,
+            orchestrator_version, orchestrator_host, started_at)
+         VALUES ($1::uuid, $1::uuid, $1::uuid, 'v4-bridge', 'gan', 'v2', 'v4-bridge', NOW())
          ON CONFLICT (id) DO NOTHING`,
         [runId],
       );
