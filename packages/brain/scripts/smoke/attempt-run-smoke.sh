@@ -21,11 +21,18 @@ if [ "$PROBE_CODE" = "404" ]; then
   exit 0
 fi
 
+# workspace 规格需要 base_sha；不依赖 Brain 侧 REPO_ROOT 的 git（CI 起的 Brain 没有仓），
+# 由本脚本显式解析 origin/main 头传入。
+BASE_SHA=$(git ls-remote https://github.com/perfectuser21/cecelia.git refs/heads/main | cut -f1)
+if ! printf '%s' "$BASE_SHA" | grep -qE '^[0-9a-f]{40}$'; then
+  echo "::error::无法解析 cecelia main 头（git ls-remote）"; exit 1
+fi
+
 ATTEMPT_ID=""
 for i in $(seq 1 "$DISPATCH_RETRIES"); do
   RESP=$(curl -s -m 60 -X POST "$BRAIN_URL/api/brain/harness/attempt-run" \
     -H "Content-Type: application/json" \
-    -d '{"role":"canary","title":"attempt-run smoke: read-only fleet canary","payload":{"sprint_dir":"/var/empty/attempt-run-smoke","role_assignments":{"canary":{"provider":"codex","account":"team1"},"reporter":{"provider":"codex","account":"team1"}}}}')
+    -d "{\"role\":\"canary\",\"title\":\"attempt-run smoke: read-only fleet canary\",\"payload\":{\"sprint_dir\":\"/var/empty/attempt-run-smoke\",\"base_repo\":\"https://github.com/perfectuser21/cecelia.git\",\"base_sha\":\"$BASE_SHA\",\"branch\":\"cp-attempt-run-smoke\",\"role_assignments\":{\"canary\":{\"provider\":\"codex\",\"account\":\"team1\"},\"reporter\":{\"provider\":\"codex\",\"account\":\"team1\"}}}}")
   STATUS=$(printf '%s' "$RESP" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("status") or d.get("error") or "")' 2>/dev/null || echo parse_error)
   if [ "$STATUS" = "LAUNCHED" ]; then
     ATTEMPT_ID=$(printf '%s' "$RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin)["attempt_id"])')
