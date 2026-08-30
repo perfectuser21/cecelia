@@ -55,10 +55,12 @@ function declaredTargets(input) {
 }
 
 function humanReviewDecision(input, reason) {
+  // 第 48 批：拟判死（phase=failed）升人审时相位落 review——人审是停表等人，不是终局。
+  const phase = input.defaultDecision.phase === 'failed' ? 'review' : input.defaultDecision.phase;
   return {
     kind: 'continue',
     decision: {
-      phase: input.defaultDecision.phase,
+      phase,
       action: 'wait:human_review',
       reason,
     },
@@ -80,10 +82,16 @@ function degradeToKernelDecision(input, reason) {
   };
 }
 
+// 第 48 批（r83 案卷）：基础设施类失败一律可 failover——r83 的 Commander 因
+// worker_attempt_replacement_required_after_lease（infrastructure_blocked）失败，错误码不在
+// 白名单 → 被判"不可 failover" → 状态永久 failed → 7h 无人会诊 → deadline 静默判死。
+// 错误码白名单只作补充（failure_class 缺失时仍可按码放行）。
 function isFailoverEligible(attempt) {
   return ['failed', 'cancelled'].includes(attempt?.status)
-    && INFRASTRUCTURE_FAILURE_CLASSES.has(attempt?.failure_class)
-    && COMMANDER_FAILOVER_CODES.has(attempt?.error_code);
+    && (
+      INFRASTRUCTURE_FAILURE_CLASSES.has(attempt?.failure_class)
+      || COMMANDER_FAILOVER_CODES.has(attempt?.error_code)
+    );
 }
 
 function requireDependency(value, name, method) {
@@ -227,12 +235,19 @@ export function createCommanderCoordinator({
     });
   }
 
-  async function stopForHuman(input, currentState, newEvents, reason) {
+  async function stopForHuman(input, currentState, newEvents, reason, latestAttempt = null) {
     const stopped = await commanderStore.updateMemory(input.run.id, {
       expectedCursor: currentState.event_cursor,
       status: 'failed',
     });
     if (!stopped) return { kind: 'wait', reason: 'commander_cursor_conflict' };
+    // 第 48 批：Commander 停机必须留痕——r83 的停机无行无日志，7h 后才在尸检里看见。
+    await appendCommanderDecision(input, {
+      action: 'commander.stopped',
+      gateVerdict: `deny:${reason}`,
+      attemptId: latestAttempt?.id ?? null,
+      reasonCode: reason,
+    });
     const nextCursor = maxCursor(newEvents, currentState.event_cursor);
     const advanced = await commanderStore.advanceCursor(input.run.id, {
       expectedCursor: currentState.event_cursor,
@@ -245,15 +260,49 @@ export function createCommanderCoordinator({
     return humanReviewDecision(input, reason);
   }
 
+  // 第 48 批（r83 案卷）：Commander 状态 failed 后遇拟判死（默认决策 mark_failed）——
+  // 此前直接降级 continue = 机械层判死照旧执行，"交 Commander 会诊"是一句空话。
+  // 现改为：先复活一次（重置 ready + 新派 Commander，谱系 commander-revive:<run>），
+  // 复活谱系已存在仍拟判死 → 升人审停表，由人裁决；非拟判死场景保持降级（第 29 批语义）。
+  async function reviveOrPark(input, currentState, latestAttempt) {
+    const reviveCycle = `commander-revive:${input.run.id}`;
+    const revived = await attemptStore.listCommanderFailoverLineage(input.run.id, reviveCycle);
+    if (revived.length > 0 || latestAttempt?.logical_cycle_id === reviveCycle) {
+      return humanReviewDecision(input, 'commander_unavailable_pre_terminal');
+    }
+    const ready = await commanderStore.updateMemory(input.run.id, {
+      expectedCursor: currentState.event_cursor,
+      status: 'ready',
+    });
+    if (!ready) return { kind: 'wait', reason: 'commander_cursor_conflict' };
+    const authoritativeHop = await appendCommanderDecision(input, {
+      action: 'commander.revived',
+      gateVerdict: 'allow',
+      attemptId: latestAttempt?.id ?? null,
+      reasonCode: 'commander_revive_pre_terminal',
+    });
+    const dispatch = await createDispatch(input, currentState, {
+      events: [],
+      reasons: ['kernel_pre_terminal', 'commander_revive'],
+      targets: declaredTargets(input),
+      logicalCycleId: reviveCycle,
+      restartReason: 'commander_revive',
+    });
+    return { ...dispatch, authoritative_hop: authoritativeHop };
+  }
+
   async function failoverFrom(input, currentState, latestAttempt, newEvents) {
     if (currentState.status === 'failed') {
+      if (input.defaultDecision?.action === 'mark_failed') {
+        return reviveOrPark(input, currentState, latestAttempt);
+      }
       return degradeToKernelDecision(input, 'commander_failover_exhausted');
     }
     if (!isFailoverEligible(latestAttempt)) {
       const reason = latestAttempt.failure_class === 'semantic_refusal'
         ? 'commander_semantic_refusal'
         : 'commander_failure_not_failover_eligible';
-      return stopForHuman(input, currentState, newEvents, reason);
+      return stopForHuman(input, currentState, newEvents, reason, latestAttempt);
     }
 
     const logicalCycleId = latestAttempt.logical_cycle_id;
@@ -263,6 +312,7 @@ export function createCommanderCoordinator({
         currentState,
         newEvents,
         'commander_failover_lineage_missing',
+        latestAttempt,
       );
     }
     const lineage = await attemptStore.listCommanderFailoverLineage(
@@ -290,6 +340,7 @@ export function createCommanderCoordinator({
         currentState,
         newEvents,
         'commander_failover_exhausted',
+        latestAttempt,
       );
       return {
         ...stopped,
