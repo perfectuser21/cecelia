@@ -114,6 +114,63 @@ describe('POST /api/brain/harness/attempt-run', () => {
     expect(res.status).toBe(502);
     expect(res.body).toMatchObject({ error: 'dispatch_not_launched', control_status: 'BLOCKED', detail: 'node_not_base_admitted' });
   });
+
+  // 第 52 批：派发失败不许留孤儿活跃桥接资源（51 批首夜留了 3 条活跃 run，人工 SQL 清的）。
+  it('第52批：dispatch 未 LAUNCHED 且 run 是本调用新建 → 回滚 run→failed、session→closed、task 锚→cancelled', async () => {
+    const { app, sqls } = makeApp({
+      dispatch: async () => ({ status: 'DONE_WITH_CONCERNS', control_status: 'BLOCKED', fallback_reason: 'node_not_base_admitted' }),
+    });
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'canary', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    expect(res.status).toBe(502);
+    expect(sqls.some(([sql]) => /initiative_runs SET phase='failed'/.test(sql) && /orchestrator_host = 'v4-bridge'/.test(sql))).toBe(true);
+    expect(sqls.some(([sql]) => /kernel_controller_sessions SET status='closed'/.test(sql) && /source = 'v4-bridge'/.test(sql))).toBe(true);
+    const taskRollback = sqls.find(([sql]) => /tasks SET status='cancelled'/.test(sql));
+    expect(taskRollback).toBeTruthy();
+    expect(taskRollback[0]).toMatch(/trigger_source = 'v4_bridge'/);
+    expect(taskRollback[1]).toEqual(['dddddddd-0000-0000-0000-000000000004']);
+  });
+
+  it('第52批：dispatch 抛异常 → 500 且同样回滚（不留活跃 run）', async () => {
+    const { app, sqls } = makeApp({
+      dispatch: async () => { throw new Error('remote_bridge_prepare_http_503'); },
+    });
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'canary', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    expect(res.status).toBe(500);
+    expect(res.body.detail).toMatch(/remote_bridge_prepare_http_503/);
+    expect(sqls.some(([sql]) => /initiative_runs SET phase='failed'/.test(sql))).toBe(true);
+  });
+
+  it('第52批：复用已存在的 run_id 时派发失败 → 绝不回滚（run/session/task 属于更早的调用）', async () => {
+    const sqls = [];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        sqls.push([sql, params]);
+        if (/SELECT id FROM initiative_runs/.test(sql)) return { rows: [{ id: params[0] }] };
+        if (/MAX\(hop\)/.test(sql)) return { rows: [{ hop: 2 }] };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const router = createHarnessAttemptRunRouter({
+      pool,
+      buildDeps: async () => ({ dispatch: async () => ({ status: 'DONE_WITH_CONCERNS', control_status: 'BLOCKED' }) }),
+      attemptStoreFactory: async () => ({ getById: async () => null }),
+      createTaskFn: async () => ({ success: true, task: { id: 'dddddddd-0000-0000-0000-000000000004' } }),
+      uuid: () => 'bbbbbbbb-0000-0000-0000-000000000002',
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain/harness', router);
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'planner', title: 'x', run_id: 'cccccccc-0000-0000-0000-000000000003', payload: { sprint_dir: 'y' },
+    });
+    expect(res.status).toBe(502);
+    expect(sqls.some(([sql]) => /SET phase='failed'/.test(sql))).toBe(false);
+    expect(sqls.some(([sql]) => /SET status='cancelled'/.test(sql))).toBe(false);
+  });
 });
 
 describe('GET /api/brain/harness/attempt-run/:id', () => {
