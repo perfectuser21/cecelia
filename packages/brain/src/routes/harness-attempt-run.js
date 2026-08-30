@@ -97,7 +97,9 @@ export function createHarnessAttemptRunRouter({
         source_id: `v4-bridge:${runId}`,
         title,
         description: String(body.description ?? body.objective ?? title),
-        task_type: 'v4_stage',
+        // task_type 受 tasks_task_type_check 枚举约束，无法新增专用值；锚 task 建成
+        // in_progress 永不被 tick 派发，选惰性合法类型 data。
+        task_type: 'data',
         status: 'in_progress',
         priority: 'P2',
         trigger_source: 'v4_bridge',
