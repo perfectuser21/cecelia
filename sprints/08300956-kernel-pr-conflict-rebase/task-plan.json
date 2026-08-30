@@ -1,0 +1,30 @@
+{
+  "initiative_id": "intent:698bc118-64c8-43a6-b8f7-dc87647eb012:19",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅改 packages/brain/ 纯后端路由函数 derive.js，无 UI/远端 agent/engine 介入",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "derive.js 新增 DIRTY/CONFLICTING → generator-fix rebase 有界路由 + 超界升人审",
+      "scope": "merge gate 前对 observed.pr(未 merged)的 mergeStateStatus∈{DIRTY,CONFLICTING} 路由 spawn:generator-fix(pr_conflict_rebase)，优先于 poll_ci/merge_pr/human_review；同一 run 已累计 ≥3 条 reason=pr_conflict_rebase 意图行仍 DIRTY → wait:human_review(pr_conflict_unresolved)；非冲突枚举/已 merged 既有路由一字不变；版本 bump 四处到 1.273.152",
+      "dod": [
+        "[BEHAVIOR] DIRTY/CONFLICTING 双PASS → derive() 返回 spawn:generator-fix, reason=pr_conflict_rebase（优先于 poll_ci/merge_pr/human_review）",
+        "[BEHAVIOR] 已 ≥3 条 pr_conflict_rebase 意图行仍 DIRTY → wait:human_review, reason=pr_conflict_unresolved",
+        "[BEHAVIOR] 负向 BEHIND/CLEAN/BLOCKED/UNSTABLE/null/UNKNOWN 与已 merged 路由不变",
+        "[ARTIFACT] tests/gp/f1/ + sprints/.../tests/ 两处冻结回归 GREEN；版本四处同步 1.273.152"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/derive.js",
+        "tests/gp/f1/step3-pr-conflict-rebase-route.test.js",
+        "sprints/08300956-kernel-pr-conflict-rebase/tests/pr-conflict-rebase-route.test.js",
+        "packages/brain/package.json",
+        "packages/brain/package-lock.json",
+        ".brain-versions",
+        "DEFINITION.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 45
+    }
+  ]
+}
