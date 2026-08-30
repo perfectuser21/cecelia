@@ -130,7 +130,7 @@ describe('GET /api/brain/harness/attempt-run/:id', () => {
     const res = await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
     expect(res.status).toBe(200);
     // 终态自动收尾：桥接 run→done、session→closed（只动 created_source='v4-bridge'）
-    expect(sqls.some(([sql]) => /SET phase='done'/.test(sql) && /created_source = 'v4-bridge'/.test(sql))).toBe(true);
+    expect(sqls.some(([sql]) => /SET phase='done'/.test(sql) && /orchestrator_host = 'v4-bridge'/.test(sql))).toBe(true);
     expect(sqls.some(([sql]) => /kernel_controller_sessions SET status='closed'/.test(sql))).toBe(true);
     expect(res.body.result).toEqual({ decision: { outcome: 'CANARY_OK' } });
     expect(res.body.status).toBe('completed');

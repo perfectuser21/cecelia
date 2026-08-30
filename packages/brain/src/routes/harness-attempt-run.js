@@ -133,7 +133,7 @@ export function createHarnessAttemptRunRouter({
              (id, initiative_id, current_task_id, created_source, phase,
               orchestrator_version, orchestrator_host, started_at,
               controller_session_id, controller_generation, controller_lease_expires_at)
-           SELECT $1::uuid, $1::uuid, $2::uuid, 'v4-bridge', 'gan', 'v2', 'v4-bridge', NOW(),
+           SELECT $1::uuid, $1::uuid, $2::uuid, 'foreground_handoff', 'gan', 'v2', 'v4-bridge', NOW(),
                   session.id, session.generation, session.lease_expires_at
              FROM kernel_controller_sessions session WHERE session.id = $3`,
           [runId, taskId, sessionId],
@@ -192,12 +192,12 @@ export function createHarnessAttemptRunRouter({
       const store = await getStore();
       const row = await store.getById(req.params.attemptId);
       if (!row) return res.status(404).json({ error: 'attempt_not_found' });
-      // attempt 终态即收尾桥接 run（只动 created_source='v4-bridge' 的行）：run→done、
+      // attempt 终态即收尾桥接 run（只动 orchestrator_host='v4-bridge' 的行；created_source 是封闭枚举，取 foreground_handoff）：run→done、
       // session→closed。不留永活 run 干扰监工停摆扫描与「在途禁合 PR」计数。
       if (TERMINAL_ATTEMPT_STATUSES.has(row.status) && row.run_id) {
         await pool.query(
           `UPDATE initiative_runs SET phase='done', completed_at=COALESCE(completed_at, NOW())
-            WHERE id = $1::uuid AND created_source = 'v4-bridge' AND phase NOT IN ('done','failed')`,
+            WHERE id = $1::uuid AND orchestrator_host = 'v4-bridge' AND phase NOT IN ('done','failed')`,
           [row.run_id],
         );
         await pool.query(
