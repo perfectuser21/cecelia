@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.150
+**Brain 版本**: 1.273.151
 
 ## Brain 1.273.150 — 合同重开纪元派全新 generator，根除 WORKSPACE_RESOLUTION_FAILED 必死（F1 步骤 3，第 47 批，r83 kernel 产出收编）
 r73 案卷：合同重开（reopen_gan_contract）后 derive 仍按旧纪元 candidate 派 generator-fix，候选工作区已随旧合同释放 → WORKSPACE_RESOLUTION_FAILED 必死。修：合同重开纪元且无 PR 时派全新 spawn:generator（不带候选血统）。本修复由 kernel run 32873c79（r83）零人碰产出至 judge PASS + merge gate，因基线早于 45 批（版本号撞车 DIRTY）+ 人审期 head 漂移致 deadline 判死，由人肉收编为普通批次（决策：Alex 08-30 选 A）。
