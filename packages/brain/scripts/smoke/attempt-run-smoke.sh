@@ -13,6 +13,14 @@ DISPATCH_RETRIES="${DISPATCH_RETRIES:-3}"
 
 echo "🔍 attempt-run smoke — $BRAIN_URL"
 
+# 鸡生蛋守卫：端点尚未部署（旧版本 Brain 返回 404/HTML）→ 软跳过。
+# real-env-smoke 在 PR 阶段对着未含本端点的生产 Brain 跑；真验证发生在 brain-deploy 部署后。
+PROBE_CODE=$(curl -s -m 15 -o /dev/null -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/attempt-run" -H "Content-Type: application/json" -d '{}')
+if [ "$PROBE_CODE" = "404" ]; then
+  echo "⚠️  端点未部署（HTTP 404，Brain 版本落后于本 PR），软跳过；部署后由 post-deploy smoke 真跑"
+  exit 0
+fi
+
 ATTEMPT_ID=""
 for i in $(seq 1 "$DISPATCH_RETRIES"); do
   RESP=$(curl -s -m 60 -X POST "$BRAIN_URL/api/brain/harness/attempt-run" \
