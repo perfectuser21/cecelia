@@ -8,6 +8,13 @@
 # 部署窗口常有在途 attempt，这不是本端点的缺陷；其它失败一律硬红。
 set -euo pipefail
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+# 宿主→容器不算 loopback：生产 Brain 配了 CECELIA_INTERNAL_TOKEN 时必须带 Bearer。
+# 取法：env 优先，其次 docker exec；都没有（CI 临时 Brain 无 token）则裸跑走 loopback。
+TOKEN="${BRAIN_INTERNAL_TOKEN:-}"
+if [ -z "$TOKEN" ] && command -v docker >/dev/null 2>&1; then
+  TOKEN=$(docker exec cecelia-node-brain printenv CECELIA_INTERNAL_TOKEN 2>/dev/null || true)
+fi
+AUTH=(); [ -n "$TOKEN" ] && AUTH=(-H "Authorization: Bearer $TOKEN")
 POLL_LIMIT="${POLL_LIMIT:-40}"          # 40 × 15s = 10 分钟
 DISPATCH_RETRIES="${DISPATCH_RETRIES:-3}"
 
@@ -15,7 +22,7 @@ echo "🔍 attempt-run smoke — $BRAIN_URL"
 
 # 鸡生蛋守卫：端点尚未部署（旧版本 Brain 返回 404/HTML）→ 软跳过。
 # real-env-smoke 在 PR 阶段对着未含本端点的生产 Brain 跑；真验证发生在 brain-deploy 部署后。
-PROBE_CODE=$(curl -s -m 15 -o /dev/null -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/attempt-run" -H "Content-Type: application/json" -d '{}')
+PROBE_CODE=$(curl -s -m 15 -o /dev/null -w "%{http_code}" "${AUTH[@]}" -X POST "$BRAIN_URL/api/brain/harness/attempt-run" -H "Content-Type: application/json" -d '{}')
 if [ "$PROBE_CODE" = "404" ]; then
   echo "⚠️  端点未部署（HTTP 404，Brain 版本落后于本 PR），软跳过；部署后由 post-deploy smoke 真跑"
   exit 0
@@ -30,7 +37,7 @@ fi
 
 ATTEMPT_ID=""
 for i in $(seq 1 "$DISPATCH_RETRIES"); do
-  RESP=$(curl -s -m 60 -X POST "$BRAIN_URL/api/brain/harness/attempt-run" \
+  RESP=$(curl -s -m 60 "${AUTH[@]}" -X POST "$BRAIN_URL/api/brain/harness/attempt-run" \
     -H "Content-Type: application/json" \
     -d "{\"role\":\"canary\",\"title\":\"attempt-run smoke: read-only fleet canary\",\"payload\":{\"sprint_dir\":\"/var/empty/attempt-run-smoke\",\"base_repo\":\"https://github.com/perfectuser21/cecelia.git\",\"base_sha\":\"$BASE_SHA\",\"branch\":\"cp-attempt-run-smoke\",\"role_assignments\":{\"canary\":{\"provider\":\"codex\",\"account\":\"team1\"},\"reporter\":{\"provider\":\"codex\",\"account\":\"team1\"}}}}")
   STATUS=$(printf '%s' "$RESP" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("status") or d.get("error") or "")' 2>/dev/null || echo parse_error)
@@ -55,7 +62,7 @@ fi
 echo "  LAUNCHED attempt=$ATTEMPT_ID，轮询终态…"
 
 for i in $(seq 1 "$POLL_LIMIT"); do
-  ROW=$(curl -s -m 30 "$BRAIN_URL/api/brain/harness/attempt-run/$ATTEMPT_ID")
+  ROW=$(curl -s -m 30 "${AUTH[@]}" "$BRAIN_URL/api/brain/harness/attempt-run/$ATTEMPT_ID")
   ST=$(printf '%s' "$ROW" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status") or "")' 2>/dev/null || echo "")
   case "$ST" in
     completed)
