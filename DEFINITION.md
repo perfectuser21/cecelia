@@ -8,7 +8,10 @@
 
 
 
-**Brain 版本**: 1.273.152
+**Brain 版本**: 1.273.153
+
+## Brain 1.273.153 — attempt-run 薄端点：V4 画布 Worker 的单角色接线（第 51 批，决策 bc242b62）
+coding 迁 OpenClaw×n8n V4 骨架后，阶段执行仍复用 Brain fleet 派发，但此前不存在任何 HTTP 面能「派发一个角色 attempt 并取回 harness_attempts.result」。新增 `POST /api/brain/harness/attempt-run`（internalAuthOrLoopback；角色白名单九执行角色；复用 buildRealDeps().dispatch；observed.task 不带 task_type/work_kind 走 routing receipt 既有放行口；run 行写 orchestrator_version='v2'；支持复用 run_id 多阶段共享）与 `GET /api/brain/harness/attempt-run/:attemptId`（投影含 result/failure_class，凭据哈希与租约不外泄）。dispatch 未 LAUNCHED → 502 带 control_status/detail，不假装成功。
 
 ## Brain 1.273.151 — Commander 失联不再静默判死（F1 步骤 3，第 48 批，r83 案卷）
 r83 尸检：Commander attempt 因 worker_attempt_replacement_required_after_lease（infrastructure_blocked）失败，错误码不在 failover 白名单 → 判"不可 failover" → 状态永久 failed（无行无日志）→ 7h 每轮降级机械层 → 人肉推新 head 让 humanReviewDeadlinePauseActive（要求 head 全等）解除冻结 → deadline 早过 → 默认 mark_failed 直接执行，"交 Commander 会诊"是空话。修：①isFailoverEligible 按 failure_class 基础设施类即可 failover（错误码白名单只作补充）；②状态 failed 遇拟判死先复活一次（重置 ready + 新派 Commander，谱系 commander-revive:<run>，落 commander.revived 行），复活谱系已存在 → 升人审停表（wait:human_review / commander_unavailable_pre_terminal，相位 review），非拟判死保持降级；③stopForHuman 落 commander.stopped 行留痕；④人审等待期停表不再要求请求行 head 与当前 head 全等（r76"stale 不停表"让位：等人期间时钟不能杀人）。
