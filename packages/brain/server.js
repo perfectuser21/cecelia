@@ -73,6 +73,7 @@ import notesRoutes from './src/routes/notes.js';
 import harnessRoutes from './src/routes/harness.js';
 import harnessRoutesRouter from './src/routes/harness.routes.js';
 import harnessCommanderRouter from './src/routes/harness-commander.js';
+import { createHarnessAttemptRunRouter } from './src/routes/harness-attempt-run.js';
 import harnessInterruptsRouter from './src/routes/harness-interrupts.js';
 import harnessReviewsRouter from './src/routes/harness-pending-reviews.js';
 import harnessKernelApprovalsRouter from './src/routes/harness-kernel-approvals.js';
@@ -441,6 +442,8 @@ app.get('/api/brain/issues', async (req, res) => {
 app.use('/api/brain', abilitiesRouter);
 app.use('/api/brain', goldenPathsRouter);
 app.use('/api/brain/harness', harnessCommanderRouter);
+// 第 51 批（决策 bc242b62）：V4 画布 Worker 的单角色 attempt 接线（派发+轮询结果）。
+app.use('/api/brain/harness', createHarnessAttemptRunRouter({ pool }));
 app.use('/api/brain/harness', harnessRoutesRouter);
 app.use('/api/brain/harness', harnessRoutes);
 app.use('/api/brain/harness-interrupts', harnessInterruptsRouter);
