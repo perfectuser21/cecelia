@@ -27,21 +27,23 @@ function makeApp({ dispatch, getById } = {}) {
     status: 'LAUNCHED', attempt_id: 'aaaaaaaa-0000-0000-0000-000000000001', lease_owner: 'controller-x:1',
   })));
   const store = { getById: vi.fn(getById ?? (async () => null)) };
+  const createTaskFn = vi.fn(async () => ({ success: true, task: { id: 'dddddddd-0000-0000-0000-000000000004' } }));
   const router = createHarnessAttemptRunRouter({
     pool,
     buildDeps: async () => ({ dispatch: dispatchFn }),
     attemptStoreFactory: async () => store,
+    createTaskFn,
     uuid: () => 'bbbbbbbb-0000-0000-0000-000000000002',
   });
   const app = express();
   app.use(express.json());
   app.use('/api/brain/harness', router);
-  return { app, pool, sqls, dispatchFn, store };
+  return { app, pool, sqls, dispatchFn, store, createTaskFn };
 }
 
 describe('POST /api/brain/harness/attempt-run', () => {
   it('happy：canary 角色 → 建 v2 run 行、按 MAX(hop)+1 派发、202 带 attempt_id', async () => {
-    const { app, sqls, dispatchFn } = makeApp();
+    const { app, sqls, dispatchFn, createTaskFn } = makeApp();
     const res = await request(app).post('/api/brain/harness/attempt-run').send({
       role: 'canary',
       title: 'v4 桥接连通性金丝雀',
@@ -54,11 +56,14 @@ describe('POST /api/brain/harness/attempt-run', () => {
       attempt_id: 'aaaaaaaa-0000-0000-0000-000000000001',
       role: 'canary',
     });
-    // migration 375 硬约束：v2 run 行必须带 current_task_id（FK→tasks）与 created_source，
-    // 所以先落惰性 task 行（in_progress+claimed，tick 不捡）再落 run 行。
-    const taskInsert = sqls.find(([sql]) => /INSERT INTO tasks/.test(sql));
-    expect(taskInsert).toBeTruthy();
-    expect(taskInsert[0]).toMatch(/'in_progress'/);
+    // migration 375 硬约束：v2 run 行必须带 current_task_id（FK→tasks）与 created_source；
+    // task 锚必须走正门 createTask（inventory 守卫禁止直接 INSERT INTO tasks），status 直接
+    // in_progress 防 tick 捡走。
+    expect(createTaskFn).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'in_progress',
+      allow_unscoped: true,
+      source_id: 'v4-bridge:bbbbbbbb-0000-0000-0000-000000000002',
+    }));
     const runInsert = sqls.find(([sql]) => /INSERT INTO initiative_runs/.test(sql));
     expect(runInsert).toBeTruthy();
     expect(runInsert[0]).toMatch(/'v2'/);

@@ -43,6 +43,7 @@ export function createHarnessAttemptRunRouter({
   pool,
   buildDeps = null,
   attemptStoreFactory = null,
+  createTaskFn = null,
   uuid = randomUUID,
 } = {}) {
   if (!pool || typeof pool.query !== 'function') {
@@ -86,22 +87,35 @@ export function createHarnessAttemptRunRouter({
 
       const runId = typeof body.run_id === 'string' && body.run_id ? body.run_id : uuid();
       // v2 run 行有硬约束（migration 375）：current_task_id（FK→tasks.id）与 created_source
-      // 非空。落一行惰性 task（in_progress+claimed，tick 不会捡走）作为 run 的身份锚。
-      await pool.query(
-        `INSERT INTO tasks (id, title, description, task_type, status, tenant_id, skill,
-                            claimed_by, claimed_at, payload)
-         VALUES ($1::uuid, $2, $3, 'v4_stage', 'in_progress', 'default', 'v4-bridge',
-                 'v4-bridge', NOW(), $4::jsonb)
-         ON CONFLICT (id) DO NOTHING`,
-        [runId, title, String(body.description ?? body.objective ?? title), JSON.stringify(cleanPayload)],
-      );
+      // 非空。task 行必须走正门 createTask（task-creation-inventory 守卫禁止任何模块直接
+      // INSERT INTO tasks）；status 直接建成 in_progress，tick 不会捡走。source_id 幂等：
+      // 同一 run_id 复用同一 task 锚。
+      const createTask = createTaskFn
+        ?? (await import('../actions.js')).createTask;
+      const created = await createTask({
+        db: pool,
+        source: 'child',
+        source_id: `v4-bridge:${runId}`,
+        title,
+        description: String(body.description ?? body.objective ?? title),
+        task_type: 'v4_stage',
+        status: 'in_progress',
+        priority: 'P2',
+        trigger_source: 'v4_bridge',
+        allow_unscoped: true,
+        payload: cleanPayload,
+      });
+      const taskId = created?.task?.id ?? null;
+      if (!created?.success || !taskId) {
+        return res.status(502).json({ error: 'task_anchor_failed', detail: created?.error ?? 'createTask returned no task id' });
+      }
       await pool.query(
         `INSERT INTO initiative_runs
            (id, initiative_id, current_task_id, created_source, phase,
             orchestrator_version, orchestrator_host, started_at)
-         VALUES ($1::uuid, $1::uuid, $1::uuid, 'v4-bridge', 'gan', 'v2', 'v4-bridge', NOW())
+         VALUES ($1::uuid, $1::uuid, $2::uuid, 'v4-bridge', 'gan', 'v2', 'v4-bridge', NOW())
          ON CONFLICT (id) DO NOTHING`,
-        [runId],
+        [runId, taskId],
       );
       const { rows: [{ hop }] } = await pool.query(
         'SELECT COALESCE(MAX(hop), 0) + 1 AS hop FROM harness_attempts WHERE run_id = $1',
