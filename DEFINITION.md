@@ -8,7 +8,10 @@
 
 
 
-**Brain 版本**: 1.273.150
+**Brain 版本**: 1.273.151
+
+## Brain 1.273.151 — Commander 失联不再静默判死（F1 步骤 3，第 48 批，r83 案卷）
+r83 尸检：Commander attempt 因 worker_attempt_replacement_required_after_lease（infrastructure_blocked）失败，错误码不在 failover 白名单 → 判"不可 failover" → 状态永久 failed（无行无日志）→ 7h 每轮降级机械层 → 人肉推新 head 让 humanReviewDeadlinePauseActive（要求 head 全等）解除冻结 → deadline 早过 → 默认 mark_failed 直接执行，"交 Commander 会诊"是空话。修：①isFailoverEligible 按 failure_class 基础设施类即可 failover（错误码白名单只作补充）；②状态 failed 遇拟判死先复活一次（重置 ready + 新派 Commander，谱系 commander-revive:<run>，落 commander.revived 行），复活谱系已存在 → 升人审停表（wait:human_review / commander_unavailable_pre_terminal，相位 review），非拟判死保持降级；③stopForHuman 落 commander.stopped 行留痕；④人审等待期停表不再要求请求行 head 与当前 head 全等（r76"stale 不停表"让位：等人期间时钟不能杀人）。
 
 ## Brain 1.273.150 — 合同重开纪元派全新 generator，根除 WORKSPACE_RESOLUTION_FAILED 必死（F1 步骤 3，第 47 批，r83 kernel 产出收编）
 r73 案卷：合同重开（reopen_gan_contract）后 derive 仍按旧纪元 candidate 派 generator-fix，候选工作区已随旧合同释放 → WORKSPACE_RESOLUTION_FAILED 必死。修：合同重开纪元且无 PR 时派全新 spawn:generator（不带候选血统）。本修复由 kernel run 32873c79（r83）零人碰产出至 judge PASS + merge gate，因基线早于 45 批（版本号撞车 DIRTY）+ 人审期 head 漂移致 deadline 判死，由人肉收编为普通批次（决策：Alex 08-30 选 A）。

@@ -498,10 +498,13 @@ async function markRunPaused(pool, runId, observed) {
 function humanReviewDeadlinePauseActive({
   decisionAction, hasOpenHumanReview, reviewHeadSha, currentHeadSha,
 }) {
+  // 第 48 批（r83 案卷）：正在等人（决策=wait:human_review 且有开放请求）就停表，不再要求
+  // 请求行 head 与当前 head 全等——人肉 rebase 推新 head 那一轮，冻结解除 + deadline 早过
+  // → 20 秒判死。等人期间时钟不能杀人；stale 请求会在下一轮被重新请求（46 批去重只认未裁决）。
+  void reviewHeadSha;
   return decisionAction === ACTION.WAIT_HUMAN_REVIEW
     && hasOpenHumanReview === true
-    && currentHeadSha != null
-    && reviewHeadSha === currentHeadSha;
+    && currentHeadSha != null;
 }
 
 async function loadRunDeadlineState(pool, runId) {

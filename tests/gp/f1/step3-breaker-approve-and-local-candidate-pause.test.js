@@ -130,14 +130,14 @@ describe('F1 step3 — 本地候选人审停表（r76 案卷②）', () => {
     expect(paused).toBe(true);
   });
 
-  it('负向：请求行头锚与当前头不符（stale 人审）→ 不停表', () => {
+  it('请求行头锚与当前头不符但仍在等人 → 停表（第 48 批翻案 r83：等人期间时钟不杀人）', () => {
     const paused = loopTest.humanReviewDeadlinePauseActive({
       decisionAction: 'wait:human_review',
       hasOpenHumanReview: true,
       reviewHeadSha: 'a'.repeat(40),
       currentHeadSha: CAND_SHA,
     });
-    expect(paused).toBe(false);
+    expect(paused).toBe(true);
   });
 
   it('负向：无开放人审 → 不停表', () => {

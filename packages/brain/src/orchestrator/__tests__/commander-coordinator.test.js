@@ -455,7 +455,9 @@ describe('Commander coordinator', () => {
 
   // 第 29 批（r60 案卷）：非 semantic 的基础设施/未分类失败不再人审停工——
   // 降级 continue 走 kernel 默认决策（Commander 是监理不是承重墙）。
-  it('degrades to kernel default for unknown runner text instead of human review', async () => {
+  // 第 48 批（r83 案卷）：runner_failure 属基础设施类，先 failover 到下一目标；穷尽后才降级
+  // （下一用例）。此前"未知 runner 文本"直接降级 = Commander 一次瞬态失败就永久出局。
+  it('fails over on unknown runner text (infrastructure class) instead of degrading immediately', async () => {
     const deps = dependencies();
     deps.attemptStore.getLatestCommanderAttempt.mockResolvedValue({
       id: commanderAttemptId,
@@ -476,10 +478,10 @@ describe('Commander coordinator', () => {
 
     const outcome = await createCommanderCoordinator(deps).reconcile(context());
 
-    expect(outcome.kind).toBe('continue');
-    expect(outcome.degraded).toBe(true);
-    expect(outcome.decision.action).not.toBe('wait:human_review');
-    expect(deps.appendDecision).not.toHaveBeenCalledWith(
+    expect(outcome.kind).toBe('dispatch');
+    expect(outcome.context.target).toMatchObject({ provider: 'claude', account: 'account1' });
+    expect(outcome.decision?.action).not.toBe('wait:human_review');
+    expect(deps.appendDecision).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'commander.failover_started' }),
     );
   });
