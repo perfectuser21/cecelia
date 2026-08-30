@@ -87,8 +87,7 @@ export function createHarnessAttemptRunRouter({
 
       const runId = typeof body.run_id === 'string' && body.run_id ? body.run_id : uuid();
       // v2 run 行有硬约束（migration 375）：current_task_id（FK→tasks.id）与 created_source
-      // 非空。task 行必须走正门 createTask（task-creation-inventory 守卫禁止任何模块直接
-      // INSERT INTO tasks）；status 直接建成 in_progress，tick 不会捡走。source_id 幂等：
+      // 非空。task 行必须走正门 createTask（task-creation-inventory 守卫禁止任何模块绕过原子路由仓直写 tasks 表）；status 直接建成 in_progress，tick 不会捡走。source_id 幂等：
       // 同一 run_id 复用同一 task 锚。
       const createTask = createTaskFn
         ?? (await import('../actions.js')).createTask;
