@@ -99,7 +99,8 @@ export function createHarnessAttemptRunRouter({
         db: pool,
         source: 'child',
         source_id: `v4-bridge:${runId}`,
-        title,
+        // idx_tasks_dedup_active 对活跃任务按标题去重；锚 task 标题拼 run 短 id 保证唯一
+        title: `${title} [${runId.slice(0, 8)}]`,
         description: String(body.description ?? body.objective ?? title),
         // task_type 受 tasks_task_type_check 枚举约束，无法新增专用值；锚 task 建成
         // in_progress 永不被 tick 派发，选惰性合法类型 data。
