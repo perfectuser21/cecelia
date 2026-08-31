@@ -1,0 +1,22 @@
+{
+  "initiative_id": "9dadd07f-d125-4b87-8746-aadf22498f5e",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "交付物是面向 Harness 调用方的内部桥接使用说明文档",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增一页中文说明，覆盖端点与鉴权、九项角色、payload 规则和派发失败回滚",
+      "dod": [
+        "[BEHAVIOR] 文档四节可由冻结测试逐项解析",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是唯一实现交付文件"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
