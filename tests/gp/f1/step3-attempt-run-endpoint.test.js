@@ -194,6 +194,46 @@ describe('POST /api/brain/harness/attempt-run', () => {
 // 共享 run。52 批的 GET 自动收尾会在首个角色终态后立刻关 run，故：keep_open 建
 // orchestrator_host='v4-bridge-shared' 的 run（GET 收尾天然跳过），配显式 close 口；
 // 且一切收尾路径必须连锚 task 一起闭合（此前 GET 收尾漏关锚 task，in_progress 泄漏）。
+// 第 56 批：金丝雀 #7 实证——reviewer 的 workspace 由 observed.proposeBranch/proposeBranchSha
+// 决定（dispatcher.js reviewer 段），proposer 的由 observed.plannerPrdArtifact，evaluator/judge
+// 的由 observed.candidate。桥接此前不透传 → reviewer 永远在 main 的全新 workspace 里找不到
+// proposer 推的合同产物（连续两发金丝雀 REVISION）。
+describe('第56批：角色续接字段透传', () => {
+  it('第56批：payload 的续接字段映射进 observed（proposeBranch/Sha/Rn、plannerPrdArtifact、candidate）', async () => {
+    const { app, dispatchFn } = makeApp();
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'reviewer',
+      title: 'contract review',
+      payload: {
+        sprint_dir: 'sprints/x',
+        propose_branch: 'cp-harness-propose-r1-dddddddd-rbbbbbbbb-a1',
+        propose_branch_sha: 'a'.repeat(40),
+        propose_branch_rn: 1,
+        planner_prd_artifact: { kind: 'planner_prd', path: 'sprints/x/sprint-prd.md', branch: 'cp-prd', head_sha: 'b'.repeat(40), verification_status: 'verified' },
+        candidate: { branch: 'cp-cand', head_sha: 'c'.repeat(40) },
+      },
+    });
+    expect(res.status).toBe(202);
+    const ctx = dispatchFn.mock.calls[0][1];
+    expect(ctx.observed.proposeBranch).toBe('cp-harness-propose-r1-dddddddd-rbbbbbbbb-a1');
+    expect(ctx.observed.proposeBranchSha).toBe('a'.repeat(40));
+    expect(ctx.observed.proposeBranchRn).toBe(1);
+    expect(ctx.observed.plannerPrdArtifact).toMatchObject({ verification_status: 'verified', head_sha: 'b'.repeat(40) });
+    expect(ctx.observed.candidate).toMatchObject({ branch: 'cp-cand' });
+  });
+
+  it('第56批：不传续接字段 → observed 里不出现这些键（不给 dispatcher 塞 null 干扰兜底链）', async () => {
+    const { app, dispatchFn } = makeApp();
+    await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'canary', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    const ctx = dispatchFn.mock.calls[0][1];
+    expect('proposeBranch' in ctx.observed).toBe(false);
+    expect('plannerPrdArtifact' in ctx.observed).toBe(false);
+    expect('candidate' in ctx.observed).toBe(false);
+  });
+});
+
 describe('第54批：桥接 run 生命周期', () => {
   it('keep_open:true → run 建成 orchestrator_host=v4-bridge-shared（GET 自动收尾不会碰它）', async () => {
     const { app, sqls } = makeApp();
