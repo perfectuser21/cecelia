@@ -1,0 +1,23 @@
+{
+  "initiative_id": "554edd60-62d1-47d6-bfa9-f8b95d538625",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "仅为现有 Harness attempt-run 桥接接口新增运维使用说明，不改变产品 UI 或运行逻辑",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "在 docs/current/ 新增一页中文说明，覆盖两端点用途、鉴权、九项角色、payload 必填字段和派发失败回滚；不改任何代码",
+      "dod": [
+        "[BEHAVIOR] 冻结测试验证四个必需主题及九项角色完整出现",
+        "[BEHAVIOR] 权威 baseline diff 仅包含 docs/current/ 下的实现文件",
+        "[ARTIFACT] docs/current/ATTEMPT_RUN_BRIDGE_GUIDE.md"
+      ],
+      "files": [
+        "docs/current/ATTEMPT_RUN_BRIDGE_GUIDE.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
