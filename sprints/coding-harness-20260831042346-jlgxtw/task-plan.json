@@ -1,0 +1,22 @@
+{
+  "initiative_id": "b3bfb49e-773a-43e0-b583-0db6da34edb5",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "交付物是面向开发者的内部 Harness API 使用说明文档",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "编写 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增中文说明，覆盖端点用途、鉴权、九项角色、payload 字段与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 验证文档完整覆盖 PRD 四节",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
