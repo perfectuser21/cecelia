@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.157
+**Brain 版本**: 1.273.158
+
+## Brain 1.273.158 — 桥接透传角色续接字段（第 56 批）
+
+- `routes/harness-attempt-run.js`：payload 的 `propose_branch`/`propose_branch_sha`/`propose_branch_rn`/`planner_prd_artifact`/`candidate` 映射进 dispatch ctx 的 `observed.proposeBranch`/`proposeBranchSha`/`proposeBranchRn`/`plannerPrdArtifact`/`candidate`——dispatcher 据此决定 reviewer/proposer/evaluator/judge 的 workspace 起点。金丝雀 #7 实证：不透传则 reviewer 永远在 main 全新 workspace 找不到 proposer 推的合同产物。不传时不塞键。
 
 ## Brain 1.273.157 — 收尾锚 task 改经 run.current_task_id 定位（第 55 批热修）
 
