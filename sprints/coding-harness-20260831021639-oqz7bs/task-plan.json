@@ -1,0 +1,22 @@
+{
+  "initiative_id": "ed4552cc-bd34-420e-b29c-40a0b69cc1d7",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "交付物是开发者调用既有 attempt-run 桥接端点的中文说明文档",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "编写 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增中文说明，覆盖端点鉴权、九角色、payload 与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 对四个 PRD 主题的文档内容断言全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge.md 存在"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
