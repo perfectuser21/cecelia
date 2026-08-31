@@ -176,6 +176,28 @@ export function createHarnessAttemptRunRouter({
         [runId],
       );
 
+      // 第 56 批：角色续接字段（金丝雀 #7 实证）。dispatcher 用 observed.proposeBranch/
+      // proposeBranchSha 决定 reviewer 的 workspace、observed.plannerPrdArtifact 决定
+      // proposer 的、observed.candidate 决定 evaluator/judge 的。桥接不透传则续接角色
+      // 永远在 main 全新 workspace 里看不到上一角色推的产物。不传时不塞键（避免 null
+      // 干扰 dispatcher 的兜底链）。
+      const chained = {};
+      if (typeof cleanPayload.propose_branch === 'string' && cleanPayload.propose_branch) {
+        chained.proposeBranch = cleanPayload.propose_branch;
+      }
+      if (typeof cleanPayload.propose_branch_sha === 'string' && cleanPayload.propose_branch_sha) {
+        chained.proposeBranchSha = cleanPayload.propose_branch_sha;
+      }
+      if (Number.isInteger(cleanPayload.propose_branch_rn)) {
+        chained.proposeBranchRn = cleanPayload.propose_branch_rn;
+      }
+      if (cleanPayload.planner_prd_artifact && typeof cleanPayload.planner_prd_artifact === 'object') {
+        chained.plannerPrdArtifact = cleanPayload.planner_prd_artifact;
+      }
+      if (cleanPayload.candidate && typeof cleanPayload.candidate === 'object') {
+        chained.candidate = cleanPayload.candidate;
+      }
+
       const deps = await getDeps();
       let launched;
       // 第 53 批：ctx.taskId / observed.task.id 必须是锚 task id（bundle.inputs.task_id 取自
@@ -197,6 +219,7 @@ export function createHarnessAttemptRunRouter({
           },
           run: { id: runId, phase: 'gan' },
           contract: { row: { propose_branch: cleanPayload.branch ?? 'v4-bridge' } },
+          ...chained,
         },
         });
       } catch (dispatchError) {
