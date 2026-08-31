@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.154
+**Brain 版本**: 1.273.155
+
+## Brain 1.273.155 — attempt-run 派发用锚 task id，根除 planner 回执权威闸必炸（第 53 批）
+
+- `routes/harness-attempt-run.js`：派发 ctx 的 `taskId` / `observed.task.id` 改用锚 task id（此前拿 runId 冒充）。生产实证（attempt f6059e0f）：bundle.inputs.task_id=runId 会被 migration 428 的 planner 回执权威触发器拒（source_task_id ≠ run.current_task_id → 回执 500 无限重试），且执行体查 /api/brain/tasks/<runId> 404 拿不到 payload.thin_prd。
 
 ## Brain 1.273.154 — attempt-run 桥接加固：派发失败回滚 + 冒烟带内部 token（第 52 批）
 

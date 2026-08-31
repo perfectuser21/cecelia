@@ -83,6 +83,22 @@ describe('POST /api/brain/harness/attempt-run', () => {
     expect(ctx.observed.task.payload.work_kind).toBeUndefined();
   });
 
+  // 第 53 批：ctx.taskId / observed.task.id 必须是锚 task id，不能拿 runId 冒充。
+  // 冒充的后果（生产实证 attempt f6059e0f）：①bundle.inputs.task_id=runId → planner 回执被
+  // migration 428 权威触发器拒（source_task_id ≠ run.current_task_id）→ 回执 500 无限重试；
+  // ②执行体查 /api/brain/tasks/<runId> 404，拿不到 payload.thin_prd。
+  it('第53批：派发 ctx 用锚 task id（taskId/observed.task.id），runId 只走 runId 字段', async () => {
+    const { app, dispatchFn } = makeApp();
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'planner', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    expect(res.status).toBe(202);
+    const ctx = dispatchFn.mock.calls[0][1];
+    expect(ctx.taskId).toBe('dddddddd-0000-0000-0000-000000000004');
+    expect(ctx.observed.task.id).toBe('dddddddd-0000-0000-0000-000000000004');
+    expect(ctx.observed.run.id).toBe('bbbbbbbb-0000-0000-0000-000000000002');
+  });
+
   it('复用调用方给的 run_id（同一 V4 run 多阶段共享）；work_kind 被剥离', async () => {
     const { app, dispatchFn } = makeApp();
     const res = await request(app).post('/api/brain/harness/attempt-run').send({

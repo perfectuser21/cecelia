@@ -174,15 +174,19 @@ export function createHarnessAttemptRunRouter({
 
       const deps = await getDeps();
       let launched;
+      // 第 53 批：ctx.taskId / observed.task.id 必须是锚 task id（bundle.inputs.task_id 取自
+      // observed.task.id）。拿 runId 冒充会被 migration 428 的回执权威触发器拒
+      //（source_task_id ≠ run.current_task_id → planner 回执 500 无限重试），且执行体查
+      // /api/brain/tasks/<runId> 404 拿不到 payload。
       try {
         launched = await deps.dispatch(`spawn:${role}`, {
-        taskId: runId,
+        taskId,
         runId,
         hop: Number(hop),
         decision: { phase: 'gan' },
         observed: {
           task: {
-            id: runId,
+            id: taskId,
             title,
             description: String(body.description ?? body.objective ?? title),
             payload: cleanPayload,
