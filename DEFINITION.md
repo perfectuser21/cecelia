@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.160
+**Brain 版本**: 1.273.161
 
 ## Brain 1.273.160 — GET attempt 投影暴露 workspace_base_sha（第 58 批）
 
