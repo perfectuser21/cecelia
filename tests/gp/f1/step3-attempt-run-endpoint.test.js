@@ -366,6 +366,63 @@ describe('第54批：桥接 run 生命周期', () => {
 
 // 第 55 批：54 批的锚 task 收尾 SQL 引用了不存在的 tasks.source_id 列（source_id 实际
 // 存在 work_routing_receipts；GP fake pool 测不出列名，真库 GET 轮询终态即 500）。
+// 第 59 批：金丝雀 #13 实证——GET 自动收尾对共享 run（keep_open）正确跳过了 run 行，
+// 但 session/锚 task 的关闭没带 host 守卫：proposer 终态被 GET 一碰，锚 task 即 completed，
+// relay-watchdog house-keeping 按「task 完了」把活跃共享 run 收割为 done，级联枪毙刚起跑
+// 的 reviewer（parent_run_terminal）。三条收尾 SQL 必须同一 host 语义。
+describe('第59批：共享 run 的 GET 收尾守卫', () => {
+  it('终态 attempt 挂在 v4-bridge-shared run 上 → GET 不关 session、不关锚 task、不动 run', async () => {
+    const row = { id: 'aaaaaaaa-0000-0000-0000-000000000001', run_id: 'r-shared', role: 'proposer', status: 'completed', result: {} };
+    const sqls = [];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        sqls.push([sql, params]);
+        if (/SELECT orchestrator_host FROM initiative_runs/.test(sql)) return { rows: [{ orchestrator_host: 'v4-bridge-shared' }] };
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+    const router = createHarnessAttemptRunRouter({
+      pool,
+      buildDeps: async () => ({ dispatch: vi.fn() }),
+      attemptStoreFactory: async () => ({ getById: async () => row }),
+      createTaskFn: async () => ({ success: true, task: { id: 'x' } }),
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain/harness', router);
+    const res = await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
+    expect(res.status).toBe(200);
+    expect(sqls.some(([sql]) => /kernel_controller_sessions SET status='closed'/.test(sql))).toBe(false);
+    expect(sqls.some(([sql]) => /tasks SET status='completed'/.test(sql))).toBe(false);
+    expect(sqls.some(([sql]) => /initiative_runs SET phase='done'/.test(sql))).toBe(false);
+  });
+
+  it('终态 attempt 挂在普通 v4-bridge run 上 → 三件套照常收尾', async () => {
+    const row = { id: 'aaaaaaaa-0000-0000-0000-000000000001', run_id: 'r-solo', role: 'canary', status: 'completed', result: {} };
+    const sqls = [];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        sqls.push([sql, params]);
+        if (/SELECT orchestrator_host FROM initiative_runs/.test(sql)) return { rows: [{ orchestrator_host: 'v4-bridge' }] };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const router = createHarnessAttemptRunRouter({
+      pool,
+      buildDeps: async () => ({ dispatch: vi.fn() }),
+      attemptStoreFactory: async () => ({ getById: async () => row }),
+      createTaskFn: async () => ({ success: true, task: { id: 'x' } }),
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain/harness', router);
+    await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
+    expect(sqls.some(([sql]) => /initiative_runs SET phase='done'/.test(sql))).toBe(true);
+    expect(sqls.some(([sql]) => /kernel_controller_sessions SET status='closed'/.test(sql))).toBe(true);
+    expect(sqls.some(([sql]) => /tasks SET status='completed'/.test(sql))).toBe(true);
+  });
+});
+
 describe('第55批：收尾 SQL 列名', () => {
   it('第55批：一切锚 task 收尾 SQL 禁引用 tasks.source_id，必须经 run.current_task_id 定位', async () => {
     const row = { id: 'aaaaaaaa-0000-0000-0000-000000000001', run_id: 'r', role: 'canary', status: 'completed', result: {} };
