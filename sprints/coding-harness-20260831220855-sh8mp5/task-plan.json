@@ -1,0 +1,22 @@
+{
+  "initiative_id": "none",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯文档说明，不改变 API、UI 或执行链路",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "基于权威实现基线新增一页中文说明，准确覆盖端点、鉴权、角色、payload 与派发失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结测试逐项证明宿主/远端 Bearer 义务、九角色、三个必填字段、可省略 base_sha 与三个回滚终态",
+        "[ARTIFACT] docs/current/attempt-run-bridge-usage.md 是相对权威实现基线的唯一变更文件"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-usage.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
