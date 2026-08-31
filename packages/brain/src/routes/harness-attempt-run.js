@@ -380,6 +380,10 @@ export function createHarnessAttemptRunRouter({
       }
       const out = {};
       for (const key of ATTEMPT_PROJECTION) out[key] = row[key] ?? null;
+      // 第 58 批：暴露首次派发冻结的基线（金丝雀 #8：同 run 两次派发各自现解析 main 头，
+      // 中间 main 前进 → 合同基线与 reviewer 权威基线必然冲突）。Worker 取此值传给同一
+      // workflow run 的所有后续派发（payload.base_sha 显式基线）。bundle 其余内容不泄。
+      out.workspace_base_sha = row.task_bundle?.inputs?.workspace_spec?.base_sha ?? null;
       return res.json(out);
     } catch (error) {
       return res.status(500).json({ error: 'attempt_lookup_failed', detail: String(error?.message ?? error) });
