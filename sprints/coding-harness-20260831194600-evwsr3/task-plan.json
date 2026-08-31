@@ -1,0 +1,22 @@
+{
+  "initiative_id": "none",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是内部 API 的中文说明文档，仅需工作区文本与 diff 验收。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接中文使用说明",
+      "scope": "仅在 docs/current/ 新增说明页，准确覆盖端点、鉴权、九项角色、payload 与失败回滚。",
+      "dod": [
+        "[BEHAVIOR] 五类文档内容通过冻结 Vitest 合同测试",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是唯一实现产物"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
