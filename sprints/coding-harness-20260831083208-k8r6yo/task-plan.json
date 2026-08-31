@@ -1,0 +1,22 @@
+{
+  "initiative_id": "b67387e5-17b1-4aad-a948-ffc86742ff7c",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是后端桥接接口的中文说明文档，不包含 UI 或运行时行为变更。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "在 docs/current 新增中文说明，覆盖端点、鉴权、九项角色、payload 和派发失败回滚，不修改代码。",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 逐项验证文档四类事实并通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge.md 存在且范围外变更为零"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
