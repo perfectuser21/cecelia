@@ -1,0 +1,22 @@
+{
+  "initiative_id": "61595ce1-bf4f-4475-922e-32e4ad0486d4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯文档说明，不改变 UI、API 或运行链路",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增一页中文说明，准确记录两个端点、鉴权、九角色、payload 与派发失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结测试与 E2E 对四节内容、九角色和 task_request_hash 全部断言通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-usage.md 是唯一产品范围变更"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-usage.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
