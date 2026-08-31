@@ -1,0 +1,22 @@
+{
+  "initiative_id": "54804532-14cc-4b7a-bcee-f3c756c30ccf",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "交付物是面向维护者的内部 API 使用说明文档",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增一页中文文档，覆盖端点与鉴权、九角色、payload 字段及派发失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结校验器的 endpoints、roles、payload、rollback、all 五种模式全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
