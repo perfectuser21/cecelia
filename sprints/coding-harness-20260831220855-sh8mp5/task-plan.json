@@ -1,0 +1,23 @@
+{
+  "initiative_id": "01ea621b-30de-4139-bbb5-8d60ffb92dd7",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅新增中文说明文档，以工作区文件内容和冻结基线产品 diff 验收",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增单页中文说明，覆盖端点、鉴权、九角色、payload 和派发失败回滚，不修改任何其他产品文件",
+      "dod": [
+        "[BEHAVIOR] 文档准确覆盖两个端点、鉴权、九角色、payload 与三个回滚终态",
+        "[BEHAVIOR] 相对 0f52356135922cf5031406dae629211837c3de92 的产品 diff 排除本 sprint 冻结合同产物后仅含目标文档",
+        "[ARTIFACT] docs/current/attempt-run-bridge-usage.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-usage.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
