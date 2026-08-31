@@ -1,0 +1,22 @@
+{
+  "initiative_id": "9e85678a-7dde-409b-aa56-7aa97a98dd67",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "交付物是面向开发与运维调用方的既有 Harness 桥接接口说明文档",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "在 docs/current 下新增一页中文说明，覆盖端点、鉴权、九角色、payload 与失败回滚，不修改代码",
+      "dod": [
+        "[BEHAVIOR] 冻结测试验证四个 PRD 主题全部出现在文档中且语义正确",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在并包含中文"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
