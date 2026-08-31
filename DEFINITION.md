@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.155
+**Brain 版本**: 1.273.156
 
 ## Brain 1.273.155 — attempt-run 派发用锚 task id，根除 planner 回执权威闸必炸（第 53 批）
 
