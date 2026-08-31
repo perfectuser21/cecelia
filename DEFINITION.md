@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.159
+**Brain 版本**: 1.273.160
+
+## Brain 1.273.160 — GET attempt 投影暴露 workspace_base_sha（第 58 批）
+
+- `routes/harness-attempt-run.js`：GET 投影新增 `workspace_base_sha`（取自 task_bundle.inputs.workspace_spec.base_sha，bundle 其余不泄）。金丝雀 #8 实证：同一 V4 run 的多次派发各自现解析 main 头做基线，期间 main 前进则合同基线与 reviewer 权威基线必然冲突（REVISION 死循环）。Worker 从首次派发取该值，显式传给同 run 全部后续派发冻结统一基线。
 
 ## Brain 1.273.159 — contract-seal 薄端点：V4 seal 阶段工具面（第 57 批）
 
