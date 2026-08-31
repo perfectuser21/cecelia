@@ -1,0 +1,22 @@
+{
+  "initiative_id": "none",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是 Brain attempt-run 后端接口的中文说明文档，不含用户界面变化",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增一页中文说明，覆盖两个端点用途与鉴权、九项角色、payload 字段和派发失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 的五个文档行为用例全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在且无范围外改动"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
