@@ -1,0 +1,22 @@
+{
+  "initiative_id": "8237ddac-01ad-4ad1-b452-97b56e20c3fb",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "交付物是现有 Harness 内部桥接 API 的开发者使用说明，不改变用户界面或运行逻辑",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "编写 attempt-run 桥接使用说明",
+      "scope": "在 docs/current 下新增中文说明页，覆盖两个端点、鉴权、九角色、payload 字段和失败回滚，不修改应用代码",
+      "dod": [
+        "[BEHAVIOR] 冻结测试逐项解析说明页并验证 PRD 四类事实",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在且包含中文"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
