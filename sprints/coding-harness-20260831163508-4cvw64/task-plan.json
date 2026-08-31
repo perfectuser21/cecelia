@@ -1,0 +1,22 @@
+{
+  "initiative_id": "5fcf71d2-9f16-4d82-836d-a35573bc5c0c",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "交付物是供开发与运维调用 attempt-run 桥接端点时查阅的技术说明文档",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "在 docs/current 下新增中文说明，准确覆盖端点、鉴权、角色、payload 与失败回滚，不修改代码",
+      "dod": [
+        "[BEHAVIOR] 冻结测试逐节验证四类必需内容且全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在并包含中文"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
