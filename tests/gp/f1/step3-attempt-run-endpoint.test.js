@@ -140,7 +140,7 @@ describe('POST /api/brain/harness/attempt-run', () => {
       role: 'canary', title: 'x', payload: { sprint_dir: 'y' },
     });
     expect(res.status).toBe(502);
-    expect(sqls.some(([sql]) => /initiative_runs SET phase='failed'/.test(sql) && /orchestrator_host = 'v4-bridge'/.test(sql))).toBe(true);
+    expect(sqls.some(([sql]) => /initiative_runs SET phase='failed'/.test(sql) && /orchestrator_host IN \('v4-bridge','v4-bridge-shared'\)/.test(sql))).toBe(true);
     expect(sqls.some(([sql]) => /kernel_controller_sessions SET status='closed'/.test(sql) && /source = 'v4-bridge'/.test(sql))).toBe(true);
     const taskRollback = sqls.find(([sql]) => /tasks SET status='cancelled'/.test(sql));
     expect(taskRollback).toBeTruthy();
@@ -202,7 +202,7 @@ describe('第54批：桥接 run 生命周期', () => {
     });
     expect(res.status).toBe(202);
     const runInsert = sqls.find(([sql]) => /INSERT INTO initiative_runs/.test(sql));
-    expect(runInsert[0]).toMatch(/'v4-bridge-shared'/);
+    expect(runInsert[1]).toContain('v4-bridge-shared');
   });
 
   it('POST /attempt-run/close → run→done、session→closed、锚 task→completed（双 host 值都认）', async () => {
