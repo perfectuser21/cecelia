@@ -189,6 +189,41 @@ describe('POST /api/brain/harness/attempt-run', () => {
   });
 });
 
+// 第 54 批：桥接 run 生命周期（金丝雀 #6b 实证：contract 阶段 proposer/reviewer 各开独立
+// run+全新 workspace，proposer 的 contract_artifacts 对 reviewer 不可见 → 同阶段多角色必须
+// 共享 run。52 批的 GET 自动收尾会在首个角色终态后立刻关 run，故：keep_open 建
+// orchestrator_host='v4-bridge-shared' 的 run（GET 收尾天然跳过），配显式 close 口；
+// 且一切收尾路径必须连锚 task 一起闭合（此前 GET 收尾漏关锚 task，in_progress 泄漏）。
+describe('第54批：桥接 run 生命周期', () => {
+  it('keep_open:true → run 建成 orchestrator_host=v4-bridge-shared（GET 自动收尾不会碰它）', async () => {
+    const { app, sqls } = makeApp();
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'proposer', title: 'x', keep_open: true, payload: { sprint_dir: 'y' },
+    });
+    expect(res.status).toBe(202);
+    const runInsert = sqls.find(([sql]) => /INSERT INTO initiative_runs/.test(sql));
+    expect(runInsert[0]).toMatch(/'v4-bridge-shared'/);
+  });
+
+  it('POST /attempt-run/close → run→done、session→closed、锚 task→completed（双 host 值都认）', async () => {
+    const { app, sqls } = makeApp();
+    const res = await request(app).post('/api/brain/harness/attempt-run/close').send({
+      run_id: 'cccccccc-0000-0000-0000-000000000003',
+    });
+    expect(res.status).toBe(200);
+    expect(sqls.some(([sql]) => /SET phase='done'/.test(sql) && /'v4-bridge-shared'/.test(sql))).toBe(true);
+    expect(sqls.some(([sql]) => /kernel_controller_sessions SET status='closed'/.test(sql))).toBe(true);
+    expect(sqls.some(([sql]) => /tasks SET status='completed'/.test(sql) && /trigger_source = 'v4_bridge'/.test(sql))).toBe(true);
+  });
+
+  it('GET 终态自动收尾必须连锚 task 一起 completed（52 批漏关，in_progress 泄漏）', async () => {
+    const row = { id: 'aaaaaaaa-0000-0000-0000-000000000001', run_id: 'r', role: 'canary', status: 'completed', result: {} };
+    const { app, sqls } = makeApp({ getById: async () => row });
+    await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
+    expect(sqls.some(([sql]) => /tasks SET status='completed'/.test(sql) && /trigger_source = 'v4_bridge'/.test(sql))).toBe(true);
+  });
+});
+
 describe('GET /api/brain/harness/attempt-run/:id', () => {
   it('返回含 result / failure_class 的投影（attempt-telemetry 不给的字段这里必须给）', async () => {
     const row = {
