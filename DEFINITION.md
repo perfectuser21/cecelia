@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.157
+**Brain 版本**: 1.273.158
 
 ## Brain 1.273.157 — 收尾锚 task 改经 run.current_task_id 定位（第 55 批热修）
 
