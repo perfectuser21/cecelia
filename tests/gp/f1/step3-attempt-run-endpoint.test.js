@@ -202,6 +202,32 @@ describe('POST /api/brain/harness/attempt-run', () => {
 // Test Contract 可解析、artifact projection、防篡改守卫、幂等封印），此前只有 loop 内部
 // 能调。HK Worker 拿不到文件全文 → 端点必须由 Brain 自己按 approved_sha 从 git 读回
 //（collectApprovedContractArtifacts），Worker 只提供坐标（run_id/sprint_dir/branch/sha）。
+// 第 58 批：金丝雀 #8 实证——proposer/reviewer 各自派发时 Brain 现解析 main 头做基线，
+// 两次派发之间 main 前进 → 合同里的 base_sha 与 reviewer 的权威基线必然冲突（REVISION
+// 死循环）。修法：GET 投影暴露首次派发冻结的 workspace_base_sha，Worker 取出后传给
+// 同一 workflow run 的所有后续派发（POST 本就支持显式 base_sha 跳过解析）。
+describe('第58批：GET 投影暴露 workspace_base_sha', () => {
+  it('GET 返回 task_bundle.inputs.workspace_spec.base_sha 为 workspace_base_sha；bundle 其余内容不泄', async () => {
+    const row = {
+      id: 'aaaaaaaa-0000-0000-0000-000000000001', run_id: 'r', role: 'planner', status: 'completed',
+      result: {}, task_bundle: { inputs: { workspace_spec: { base_sha: 'f'.repeat(40), repo: 'x/y' }, callback_secret: 'NO_LEAK' } },
+    };
+    const { app } = makeApp({ getById: async () => row });
+    const res = await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
+    expect(res.status).toBe(200);
+    expect(res.body.workspace_base_sha).toBe('f'.repeat(40));
+    expect(res.body.task_bundle).toBeUndefined();
+  });
+
+  it('bundle 缺失时 workspace_base_sha=null，不炸', async () => {
+    const row = { id: 'aaaaaaaa-0000-0000-0000-000000000001', run_id: 'r', role: 'canary', status: 'completed', result: {} };
+    const { app } = makeApp({ getById: async () => row });
+    const res = await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
+    expect(res.status).toBe(200);
+    expect(res.body.workspace_base_sha).toBe(null);
+  });
+});
+
 describe('第57批：POST /attempt-run/contract-seal', () => {
   const sealBody = {
     run_id: 'cccccccc-0000-0000-0000-000000000003',
