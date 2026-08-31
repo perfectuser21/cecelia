@@ -358,7 +358,20 @@ export function createHarnessAttemptRunRouter({
       if (!row) return res.status(404).json({ error: 'attempt_not_found' });
       // attempt 终态即收尾桥接 run（只动 orchestrator_host='v4-bridge' 的行；created_source 是封闭枚举，取 foreground_handoff）：run→done、
       // session→closed。不留永活 run 干扰监工停摆扫描与「在途禁合 PR」计数。
+      // 第 59 批（金丝雀 #13 案卷）：共享 run（keep_open）的收尾必须整体跳过——此前只有
+      // run 行带 host 守卫，session/锚 task 没带：proposer 终态被 GET 一碰锚 task 即
+      // completed，relay-watchdog house-keeping 按「task 完了」把活跃共享 run 收割为
+      // done，级联 cancel 刚起跑的 reviewer（parent_run_terminal）。共享 run 只由显式
+      // close 口收尾。
+      let terminalRunHost = null;
       if (TERMINAL_ATTEMPT_STATUSES.has(row.status) && row.run_id) {
+        const { rows: hostRows } = await pool.query(
+          'SELECT orchestrator_host FROM initiative_runs WHERE id = $1::uuid',
+          [row.run_id],
+        );
+        terminalRunHost = hostRows[0]?.orchestrator_host ?? null;
+      }
+      if (terminalRunHost === 'v4-bridge') {
         await pool.query(
           `UPDATE initiative_runs SET phase='done', completed_at=COALESCE(completed_at, NOW())
             WHERE id = $1::uuid AND orchestrator_host = 'v4-bridge' AND phase NOT IN ('done','failed')`,

@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.160
+**Brain 版本**: 1.273.161
+
+## Brain 1.273.161 — 共享 run 的 GET 收尾整体跳过（第 59 批热修）
+
+- `routes/harness-attempt-run.js`：GET 终态收尾先查 run 的 orchestrator_host，仅 `v4-bridge` 走三件套收尾；`v4-bridge-shared` 整体跳过（此前 session/锚 task 关闭没带 host 守卫——金丝雀 #13 实证：proposer 终态被 GET 一碰锚 task 即 completed，relay-watchdog house-keeping 按「task 完了」把活跃共享 run 收割为 done，级联 cancel 刚起跑的 reviewer）。共享 run 只由显式 close 口收尾。
 
 ## Brain 1.273.160 — GET attempt 投影暴露 workspace_base_sha（第 58 批）
 
