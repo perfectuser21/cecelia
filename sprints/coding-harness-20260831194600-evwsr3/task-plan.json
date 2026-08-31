@@ -1,0 +1,22 @@
+{
+  "initiative_id": "23bcf468-7976-492e-9e09-f1f31d3b16d2",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是内部 API 的中文使用说明，无 UI 或远端 agent 行为变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅新增 docs/current/attempt-run-bridge-guide.md，准确记录端点用途、鉴权、九角色、payload 和失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结测试精确验证四节内容与九角色全集",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是唯一产品实现产物"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
