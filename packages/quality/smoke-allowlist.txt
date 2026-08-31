@@ -42,6 +42,7 @@ codex-grok-launcher-supervisor-smoke.sh
 codex-headed-dispatch-smoke.sh
 codex-test-gen-smoke.sh
 compute-ssh-reachability-smoke.sh
+contract-seal-smoke.sh
 conversation-agent-smoke.sh
 conversation-capture-human-gate-smoke.sh
 conversation-capture-multitool-smoke.sh

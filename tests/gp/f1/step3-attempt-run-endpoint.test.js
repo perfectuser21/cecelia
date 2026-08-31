@@ -198,6 +198,70 @@ describe('POST /api/brain/harness/attempt-run', () => {
 // 决定（dispatcher.js reviewer 段），proposer 的由 observed.plannerPrdArtifact，evaluator/judge
 // 的由 observed.candidate。桥接此前不透传 → reviewer 永远在 main 的全新 workspace 里找不到
 // proposer 推的合同产物（连续两发金丝雀 REVISION）。
+// 第 57 批：V4 seal 阶段工具面。kernel 的 seal=materializeApprovedContract（机械校验：
+// Test Contract 可解析、artifact projection、防篡改守卫、幂等封印），此前只有 loop 内部
+// 能调。HK Worker 拿不到文件全文 → 端点必须由 Brain 自己按 approved_sha 从 git 读回
+//（collectApprovedContractArtifacts），Worker 只提供坐标（run_id/sprint_dir/branch/sha）。
+describe('第57批：POST /attempt-run/contract-seal', () => {
+  const sealBody = {
+    run_id: 'cccccccc-0000-0000-0000-000000000003',
+    sprint_dir: 'sprints/x',
+    branch: 'cp-harness-propose-r1-x',
+    approved_sha: 'a'.repeat(40),
+  };
+  function makeSealApp({ collect, materialize } = {}) {
+    const collectFn = vi.fn(collect ?? (() => ({
+      artifacts: [{ path: 'sprints/x/sprint-prd.md' }],
+      prdContent: 'PRD', contractContent: 'DRAFT\n\nDOD',
+    })));
+    const materializeFn = vi.fn(materialize ?? (async () => ({ contract: { id: 'ct-1', version: 1, status: 'approved' } })));
+    const router = createHarnessAttemptRunRouter({
+      pool: { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) },
+      buildDeps: async () => ({ dispatch: vi.fn() }),
+      attemptStoreFactory: async () => ({ getById: async () => null }),
+      createTaskFn: async () => ({ success: true, task: { id: 'dddddddd-0000-0000-0000-000000000004' } }),
+      sealDepsFactory: async () => ({ collectArtifacts: collectFn, materialize: materializeFn }),
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain/harness', router);
+    return { app, collectFn, materializeFn };
+  }
+
+  it('happy：坐标齐 → Brain 读回产物并调 materialize（runId/branch/version/prd/contract/artifacts）→ 200', async () => {
+    const { app, collectFn, materializeFn } = makeSealApp();
+    const res = await request(app).post('/api/brain/harness/attempt-run/contract-seal').send(sealBody);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(collectFn).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRevision: 'a'.repeat(40), sprintDir: 'sprints/x',
+    }));
+    expect(materializeFn).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      runId: sealBody.run_id, branch: sealBody.branch, version: 1,
+      prdContent: 'PRD', contractContent: 'DRAFT\n\nDOD',
+    }));
+  });
+
+  it('负向：缺 approved_sha / 非 40hex → 400；缺 sprint_dir/branch/run_id → 400', async () => {
+    const { app } = makeSealApp();
+    for (const omit of ['run_id', 'sprint_dir', 'branch', 'approved_sha']) {
+      const body = { ...sealBody }; delete body[omit];
+      expect((await request(app).post('/api/brain/harness/attempt-run/contract-seal').send(body)).status).toBe(400);
+    }
+    expect((await request(app).post('/api/brain/harness/attempt-run/contract-seal').send({ ...sealBody, approved_sha: 'zzz' })).status).toBe(400);
+  });
+
+  it('负向：机械校验拒绝（FROZEN_* / seal 冲突）→ 409 结构化 code，不吞成 500', async () => {
+    const { app } = makeSealApp({
+      collect: () => { throw new Error('FROZEN_CONTRACT_ARTIFACTS_MISSING:tests'); },
+    });
+    const res = await request(app).post('/api/brain/harness/attempt-run/contract-seal').send(sealBody);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('contract_seal_rejected');
+    expect(res.body.detail).toMatch(/FROZEN_CONTRACT_ARTIFACTS_MISSING:tests/);
+  });
+});
+
 describe('第56批：角色续接字段透传', () => {
   it('第56批：payload 的续接字段映射进 observed（proposeBranch/Sha/Rn、plannerPrdArtifact、candidate）', async () => {
     const { app, dispatchFn } = makeApp();

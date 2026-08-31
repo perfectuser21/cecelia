@@ -43,11 +43,14 @@ const ATTEMPT_PROJECTION = Object.freeze([
   'started_at', 'completed_at', 'created_at', 'updated_at',
 ]);
 
+const SHA40 = /^[a-f0-9]{40}$/;
+
 export function createHarnessAttemptRunRouter({
   pool,
   buildDeps = null,
   attemptStoreFactory = null,
   createTaskFn = null,
+  sealDepsFactory = null,
   uuid = randomUUID,
 } = {}) {
   if (!pool || typeof pool.query !== 'function') {
@@ -62,6 +65,29 @@ export function createHarnessAttemptRunRouter({
       return buildRealDeps({ pool });
     })();
     return depsPromise;
+  };
+  let sealDepsPromise = null;
+  const getSealDeps = () => {
+    sealDepsPromise ??= (async () => {
+      if (sealDepsFactory) return sealDepsFactory();
+      const { collectApprovedContractArtifacts } = await import('../orchestrator/contract-artifacts.js');
+      const { materializeApprovedContract } = await import('../orchestrator/contract-store.js');
+      const { readGitArtifact, listGitArtifacts } = await import('../orchestrator/git-artifact-reader.js');
+      const repoRoot = process.env.REPO_ROOT || process.cwd();
+      return {
+        collectArtifacts: (params) => collectApprovedContractArtifacts({
+          ...params,
+          readGitFile: (sha, filePath, opts = {}) => readGitArtifact(sha, filePath, {
+            cwd: repoRoot, repo: opts.repo ?? null,
+          }),
+          listGitFiles: (sha, prefix, opts = {}) => listGitArtifacts(sha, prefix, {
+            cwd: repoRoot, repo: opts.repo ?? null,
+          }),
+        }),
+        materialize: materializeApprovedContract,
+      };
+    })();
+    return sealDepsPromise;
   };
   let storePromise = null;
   const getStore = () => {
@@ -246,6 +272,54 @@ export function createHarnessAttemptRunRouter({
       });
     } catch (error) {
       return res.status(500).json({ error: 'attempt_run_failed', detail: String(error?.message ?? error) });
+    }
+  });
+
+  // 第 57 批：V4 seal 阶段工具面。Worker（HK，无仓库 checkout）只给坐标，Brain 按
+  // approved_sha 从 git 读回合同产物（sprint-prd / contract-draft / contract-dod / tests）
+  // 并走 materializeApprovedContract 机械封印——Test Contract 可解析、artifact projection、
+  // 防篡改守卫、幂等，全部沿用 kernel 的原子函数。校验拒绝回 409 结构化（Worker 据此
+  // blocked 或带原因打回 proposer），不吞成 500。
+  router.post('/attempt-run/contract-seal', internalAuthOrLoopback, async (req, res) => {
+    try {
+      const body = req.body ?? {};
+      const runId = String(body.run_id ?? '');
+      const sprintDir = String(body.sprint_dir ?? '').replace(/\/$/, '');
+      const branch = String(body.branch ?? '');
+      const approvedSha = String(body.approved_sha ?? '');
+      if (!runId) return res.status(400).json({ error: 'run_id_required' });
+      if (!sprintDir) return res.status(400).json({ error: 'sprint_dir_required' });
+      if (!branch) return res.status(400).json({ error: 'branch_required' });
+      if (!SHA40.test(approvedSha)) return res.status(400).json({ error: 'approved_sha_invalid' });
+      const version = Number.isInteger(body.version) && body.version >= 1 ? body.version : 1;
+      const sealDeps = await getSealDeps();
+      let collected;
+      try {
+        collected = await sealDeps.collectArtifacts({
+          sourceRevision: approvedSha,
+          sprintDir,
+          repo: typeof body.repo === 'string' && body.repo ? body.repo : null,
+        });
+      } catch (error) {
+        return res.status(409).json({ error: 'contract_seal_rejected', detail: String(error?.message ?? error) });
+      }
+      try {
+        const sealed = await sealDeps.materialize(pool, {
+          runId,
+          version,
+          branch,
+          prdContent: collected.prdContent,
+          contractContent: collected.contractContent,
+          artifacts: collected.artifacts,
+          approvalProvenance: typeof body.approval_provenance === 'string'
+            ? body.approval_provenance : null,
+        });
+        return res.json({ ok: true, run_id: runId, version, sealed: sealed ?? null });
+      } catch (error) {
+        return res.status(409).json({ error: 'contract_seal_rejected', detail: String(error?.message ?? error) });
+      }
+    } catch (error) {
+      return res.status(500).json({ error: 'contract_seal_failed', detail: String(error?.message ?? error) });
     }
   });
 
