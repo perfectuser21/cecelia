@@ -59,7 +59,7 @@ if [ -z "$ATTEMPT_ID" ]; then
   echo "⚠️  连续 $DISPATCH_RETRIES 次节点容量/准入受限（CI 临时 Brain 无 fleet 节点属预期），软跳过——端点已返回结构化 502；真环境验证由部署后 post-deploy smoke 承担"
   exit 0
 fi
-echo "  LAUNCHED attempt=$ATTEMPT_ID，轮询终态…"
+echo "  LAUNCHED attempt=${ATTEMPT_ID}，轮询终态…"
 
 for i in $(seq 1 "$POLL_LIMIT"); do
   ROW=$(curl -s -m 30 "${AUTH[@]}" "$BRAIN_URL/api/brain/harness/attempt-run/$ATTEMPT_ID")
