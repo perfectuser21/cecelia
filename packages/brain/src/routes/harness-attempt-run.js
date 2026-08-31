@@ -244,8 +244,9 @@ export function createHarnessAttemptRunRouter({
       );
       await pool.query(
         `UPDATE tasks SET status='completed', updated_at=NOW()
-          WHERE source_id = $1 AND trigger_source = 'v4_bridge' AND status = 'in_progress'`,
-        [`v4-bridge:${runId}`],
+          WHERE id = (SELECT current_task_id FROM initiative_runs WHERE id = $1::uuid)
+            AND trigger_source = 'v4_bridge' AND status = 'in_progress'`,
+        [runId],
       );
       return res.json({ ok: true, run_id: runId, run_closed: runClosed > 0 });
     } catch (error) {
@@ -271,11 +272,13 @@ export function createHarnessAttemptRunRouter({
             WHERE run_id = $1::uuid AND source = 'v4-bridge' AND status = 'active'`,
           [row.run_id],
         );
-        // 锚 task 一并闭合（52 批漏了这步，data 型 in_progress 锚会永久堆积）
+        // 锚 task 一并闭合（52 批漏了这步，data 型 in_progress 锚会永久堆积）。
+        // 第 55 批：tasks 表没有 source_id 列，必须经 run.current_task_id 定位。
         await pool.query(
           `UPDATE tasks SET status='completed', updated_at=NOW()
-            WHERE source_id = $1 AND trigger_source = 'v4_bridge' AND status = 'in_progress'`,
-          [`v4-bridge:${row.run_id}`],
+            WHERE id = (SELECT current_task_id FROM initiative_runs WHERE id = $1::uuid)
+              AND trigger_source = 'v4_bridge' AND status = 'in_progress'`,
+          [row.run_id],
         );
       }
       const out = {};

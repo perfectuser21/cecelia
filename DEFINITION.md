@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.156
+**Brain 版本**: 1.273.157
+
+## Brain 1.273.157 — 收尾锚 task 改经 run.current_task_id 定位（第 55 批热修）
+
+- `routes/harness-attempt-run.js`：54 批的锚 task 收尾 SQL 引用了不存在的 `tasks.source_id` 列（GP fake pool 测不出列名，真库 GET 轮询终态即 500）。改为 `WHERE id = (SELECT current_task_id FROM initiative_runs WHERE id=$1)`。教训：涉及真表列的 SQL 修改必须在真库冒烟里走到该路径。
 
 ## Brain 1.273.156 — 桥接 run 生命周期：keep_open 共享 run + 显式收尾口 + 锚 task 随收尾闭合（第 54 批）
 
