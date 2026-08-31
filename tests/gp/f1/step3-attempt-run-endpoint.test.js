@@ -213,14 +213,41 @@ describe('第54批：桥接 run 生命周期', () => {
     expect(res.status).toBe(200);
     expect(sqls.some(([sql]) => /SET phase='done'/.test(sql) && /'v4-bridge-shared'/.test(sql))).toBe(true);
     expect(sqls.some(([sql]) => /kernel_controller_sessions SET status='closed'/.test(sql))).toBe(true);
-    expect(sqls.some(([sql]) => /tasks SET status='completed'/.test(sql) && /trigger_source = 'v4_bridge'/.test(sql))).toBe(true);
+    // 第 55 批：tasks 表没有 source_id 列（54 批 SQL 真库必炸）——锚 task 必须经
+    // initiative_runs.current_task_id 定位。
+    const taskClose = sqls.find(([sql]) => /tasks SET status='completed'/.test(sql));
+    expect(taskClose).toBeTruthy();
+    expect(taskClose[0]).toMatch(/trigger_source = 'v4_bridge'/);
+    expect(taskClose[0]).toMatch(/current_task_id FROM initiative_runs/);
+    expect(taskClose[0]).not.toMatch(/source_id/);
   });
 
   it('GET 终态自动收尾必须连锚 task 一起 completed（52 批漏关，in_progress 泄漏）', async () => {
     const row = { id: 'aaaaaaaa-0000-0000-0000-000000000001', run_id: 'r', role: 'canary', status: 'completed', result: {} };
     const { app, sqls } = makeApp({ getById: async () => row });
     await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
-    expect(sqls.some(([sql]) => /tasks SET status='completed'/.test(sql) && /trigger_source = 'v4_bridge'/.test(sql))).toBe(true);
+    const taskClose = sqls.find(([sql]) => /tasks SET status='completed'/.test(sql));
+    expect(taskClose).toBeTruthy();
+    expect(taskClose[0]).toMatch(/trigger_source = 'v4_bridge'/);
+    expect(taskClose[0]).toMatch(/current_task_id FROM initiative_runs/);
+    expect(taskClose[0]).not.toMatch(/source_id/);
+  });
+});
+
+// 第 55 批：54 批的锚 task 收尾 SQL 引用了不存在的 tasks.source_id 列（source_id 实际
+// 存在 work_routing_receipts；GP fake pool 测不出列名，真库 GET 轮询终态即 500）。
+describe('第55批：收尾 SQL 列名', () => {
+  it('第55批：一切锚 task 收尾 SQL 禁引用 tasks.source_id，必须经 run.current_task_id 定位', async () => {
+    const row = { id: 'aaaaaaaa-0000-0000-0000-000000000001', run_id: 'r', role: 'canary', status: 'completed', result: {} };
+    const { app, sqls } = makeApp({ getById: async () => row });
+    await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
+    await request(app).post('/api/brain/harness/attempt-run/close').send({ run_id: 'cccccccc-0000-0000-0000-000000000003' });
+    const taskCloses = sqls.filter(([sql]) => /UPDATE tasks SET/.test(sql));
+    expect(taskCloses.length).toBeGreaterThanOrEqual(2);
+    for (const [sql] of taskCloses) {
+      expect(sql).not.toMatch(/source_id/);
+      expect(sql).toMatch(/current_task_id FROM initiative_runs/);
+    }
   });
 });
 
