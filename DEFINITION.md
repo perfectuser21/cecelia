@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.155
+**Brain 版本**: 1.273.156
+
+## Brain 1.273.156 — 桥接 run 生命周期：keep_open 共享 run + 显式收尾口 + 锚 task 随收尾闭合（第 54 批）
+
+- `routes/harness-attempt-run.js`：①POST 接受 `keep_open:true` → run 建成 `orchestrator_host='v4-bridge-shared'`（GET 终态自动收尾只认 'v4-bridge'，天然跳过），同阶段多角色（proposer→reviewer）复用同一 run_id 才能互见 contract_artifacts（金丝雀 #6b 实证）；②新增 `POST /attempt-run/close`：run→done、session→closed、锚 task→completed（双 host 值都认）；③GET 自动收尾与回滚补关锚 task（此前 data 型 in_progress 锚永久堆积）。
 
 ## Brain 1.273.155 — attempt-run 派发用锚 task id，根除 planner 回执权威闸必炸（第 53 批）
 

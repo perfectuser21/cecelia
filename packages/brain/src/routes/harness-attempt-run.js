@@ -90,6 +90,10 @@ export function createHarnessAttemptRunRouter({
       delete cleanPayload.work_kind;
 
       const runId = typeof body.run_id === 'string' && body.run_id ? body.run_id : uuid();
+      // 第 54 批：keep_open=true 建 orchestrator_host='v4-bridge-shared' 的 run——GET 终态
+      // 自动收尾只认 'v4-bridge'，天然跳过共享 run；同阶段多角色（proposer→reviewer）复用
+      // 同一 run_id 才能互见 contract_artifacts（金丝雀 #6b 实证），最后由显式 close 口收尾。
+      const orchestratorHost = body.keep_open === true ? 'v4-bridge-shared' : 'v4-bridge';
       // v2 run 行有硬约束（migration 375）：current_task_id（FK→tasks.id）与 created_source
       // 非空。task 行必须走正门 createTask（task-creation-inventory 守卫禁止任何模块绕过原子路由仓直写 tasks 表）；status 直接建成 in_progress，tick 不会捡走。source_id 幂等：
       // 同一 run_id 复用同一 task 锚。
@@ -129,7 +133,7 @@ export function createHarnessAttemptRunRouter({
         try {
           await pool.query(
             `UPDATE initiative_runs SET phase='failed', completed_at=NOW()
-              WHERE id = $1::uuid AND orchestrator_host = 'v4-bridge' AND phase NOT IN ('done','failed')`,
+              WHERE id = $1::uuid AND orchestrator_host IN ('v4-bridge','v4-bridge-shared') AND phase NOT IN ('done','failed')`,
             [runId],
           );
           await pool.query(
@@ -157,10 +161,10 @@ export function createHarnessAttemptRunRouter({
              (id, initiative_id, current_task_id, created_source, phase,
               orchestrator_version, orchestrator_host, started_at,
               controller_session_id, controller_generation, controller_lease_expires_at)
-           SELECT $1::uuid, $1::uuid, $2::uuid, 'foreground_handoff', 'gan', 'v2', 'v4-bridge', NOW(),
+           SELECT $1::uuid, $1::uuid, $2::uuid, 'foreground_handoff', 'gan', 'v2', $4, NOW(),
                   session.id, session.generation, session.lease_expires_at
              FROM kernel_controller_sessions session WHERE session.id = $3`,
-          [runId, taskId, sessionId],
+          [runId, taskId, sessionId, orchestratorHost],
         );
         await pool.query(
           'UPDATE kernel_controller_sessions SET run_id = $1::uuid WHERE id = $2',
@@ -222,6 +226,33 @@ export function createHarnessAttemptRunRouter({
     }
   });
 
+  // 第 54 批：显式收尾口——共享 run（keep_open）由调用方在阶段结束时关闭；普通 run 也可提前关。
+  router.post('/attempt-run/close', internalAuthOrLoopback, async (req, res) => {
+    try {
+      const runId = String(req.body?.run_id ?? '');
+      if (!runId) return res.status(400).json({ error: 'run_id_required' });
+      const { rowCount: runClosed } = await pool.query(
+        `UPDATE initiative_runs SET phase='done', completed_at=COALESCE(completed_at, NOW())
+          WHERE id = $1::uuid AND orchestrator_host IN ('v4-bridge','v4-bridge-shared')
+            AND phase NOT IN ('done','failed')`,
+        [runId],
+      );
+      await pool.query(
+        `UPDATE kernel_controller_sessions SET status='closed'
+          WHERE run_id = $1::uuid AND source = 'v4-bridge' AND status = 'active'`,
+        [runId],
+      );
+      await pool.query(
+        `UPDATE tasks SET status='completed', updated_at=NOW()
+          WHERE source_id = $1 AND trigger_source = 'v4_bridge' AND status = 'in_progress'`,
+        [`v4-bridge:${runId}`],
+      );
+      return res.json({ ok: true, run_id: runId, run_closed: runClosed > 0 });
+    } catch (error) {
+      return res.status(500).json({ error: 'attempt_run_close_failed', detail: String(error?.message ?? error) });
+    }
+  });
+
   router.get('/attempt-run/:attemptId', internalAuthOrLoopback, async (req, res) => {
     try {
       const store = await getStore();
@@ -239,6 +270,12 @@ export function createHarnessAttemptRunRouter({
           `UPDATE kernel_controller_sessions SET status='closed'
             WHERE run_id = $1::uuid AND source = 'v4-bridge' AND status = 'active'`,
           [row.run_id],
+        );
+        // 锚 task 一并闭合（52 批漏了这步，data 型 in_progress 锚会永久堆积）
+        await pool.query(
+          `UPDATE tasks SET status='completed', updated_at=NOW()
+            WHERE source_id = $1 AND trigger_source = 'v4_bridge' AND status = 'in_progress'`,
+          [`v4-bridge:${row.run_id}`],
         );
       }
       const out = {};
