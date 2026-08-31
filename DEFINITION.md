@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.158
+**Brain 版本**: 1.273.159
+
+## Brain 1.273.159 — contract-seal 薄端点：V4 seal 阶段工具面（第 57 批）
+
+- `routes/harness-attempt-run.js`：新增 `POST /api/brain/harness/attempt-run/contract-seal`。Worker 只给坐标（run_id/sprint_dir/branch/approved_sha），Brain 按 SHA 从 git 读回合同产物（collectApprovedContractArtifacts，自动 fetch 缺失 commit）并走 materializeApprovedContract 机械封印（Test Contract 可解析、artifact projection、防篡改守卫、幂等）。校验拒绝回 409 结构化 `contract_seal_rejected`。
 
 ## Brain 1.273.158 — 桥接透传角色续接字段（第 56 批）
 
