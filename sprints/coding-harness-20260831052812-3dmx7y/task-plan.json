@@ -1,0 +1,22 @@
+{
+  "initiative_id": "5b44523e-9826-457e-b68f-10cec05f06a2",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅新增内部 Harness API 中文使用说明，无 UI 或 API 实现变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "在 docs/current 新增一页中文文档，覆盖端点、鉴权、九角色、payload 与失败回滚契约",
+      "dod": [
+        "[BEHAVIOR] 文档四节契约通过冻结测试，九角色与生产 SSOT 精确相等",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是唯一产品变更文件"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
