@@ -1,0 +1,23 @@
+{
+  "initiative_id": "d4146c5d-1430-4fe1-8d17-bdb01b505b50",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是后端桥接 API 的中文说明文档，不涉及 UI 或远端代理实现变更。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增中文说明，准确覆盖端点、鉴权、九项角色、payload 与失败回滚。",
+      "dod": [
+        "[BEHAVIOR] 冻结测试精确验证角色章节集合恰等于九项白名单并反向拒绝远端免鉴权误述",
+        "[BEHAVIOR] 冻结测试验证两个端点、payload 义务和三对象失败回滚",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在且为中文"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
