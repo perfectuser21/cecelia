@@ -20,6 +20,8 @@ function makeApp({ dispatch, getById } = {}) {
     query: vi.fn(async (sql, params) => {
       sqls.push([sql, params]);
       if (/MAX\(hop\)/.test(sql)) return { rows: [{ hop: 7 }] };
+      // 第 59 批起 GET 收尾先查 run host；默认答普通 run（共享 run 场景各测试自建 pool）
+      if (/SELECT orchestrator_host FROM initiative_runs/.test(sql)) return { rows: [{ orchestrator_host: 'v4-bridge' }] };
       return { rows: [], rowCount: 1 };
     }),
   };
