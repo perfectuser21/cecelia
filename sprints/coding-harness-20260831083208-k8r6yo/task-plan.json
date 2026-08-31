@@ -1,0 +1,23 @@
+{
+  "initiative_id": "01789af6-e412-4f64-a690-de8b2932c429",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "交付物是既有 Harness 内部桥接端点的使用说明，不改变用户界面或运行时实现。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "在 docs/current 下新增中文说明页，覆盖既有端点用途、鉴权、九角色、payload 与派发失败回滚，不修改应用代码。",
+      "dod": [
+        "[BEHAVIOR] 冻结文档测试四项全部通过",
+        "[BEHAVIOR] 相对实现基线无目标文档之外的实现改动",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
