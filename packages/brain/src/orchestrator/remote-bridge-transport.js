@@ -401,7 +401,22 @@ export function createRemoteBridgeTransport({
             throw new Error('remote_bridge_prepare_conflict');
           }
           if (response?.status !== 202) {
-            throw new Error(`remote_bridge_prepare_http_${String(response?.status)}`);
+            // 第 61 批（失败不留原因病）：fleet 对 4xx 把结构化错误码放在响应体 {error}，
+            // 只拼接白名单字符的短码，其余（含任何敏感串）一律不拼不泄。
+            let bodyCode = '';
+            const status = Number(response?.status);
+            if (status >= 400 && status < 500) {
+              // 只读 4xx（5xx 通用码无信息且既有清理契约要求不读挂起 body）；300ms 兜底防挂
+              try {
+                const body = await Promise.race([
+                  response.json(),
+                  new Promise((resolve) => { setTimeout(() => resolve(null), 300); }),
+                ]);
+                const candidate = String(body?.error ?? '');
+                if (/^[a-zA-Z0-9_.:-]{1,80}$/.test(candidate)) bodyCode = `:${candidate}`;
+              } catch { /* body 不可读时保持纯状态码 */ }
+            }
+            throw new Error(`remote_bridge_prepare_http_${String(response?.status)}${bodyCode}`);
           }
 
           const receipt = await parseJson(response, 'prepare', signal);

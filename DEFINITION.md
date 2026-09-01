@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.162
+**Brain 版本**: 1.273.163
+
+## Brain 1.273.163 — remote bridge 4xx 错误带响应体错误码（第 61 批）
+
+- `orchestrator/remote-bridge-transport.js`：prepare 非 2xx 时，对 4xx 读响应体 {error}（白名单字符 ≤80、300ms 兜底防挂），拼成 `remote_bridge_prepare_http_400:<code>`；5xx 不读（既有未读 body 清理契约）。根除「失败不留原因」病在此层的表现（generator 预演实证 http_400 只能靠猜）。
 
 ## Brain 1.273.162 — 桥接透传冻结合同身份（第 60 批）
 
