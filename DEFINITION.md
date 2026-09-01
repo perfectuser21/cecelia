@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.164
+**Brain 版本**: 1.273.165
+
+## Brain 1.273.165 — validationClock 默认窗口对齐 5400s（第 63 批）
+
+- `routes/harness-attempt-run.js`：钟默认窗口 3600→5400s，与 dispatcher bundle 默认一致（fleet 硬校验 deadline-start===timeout_seconds*1000；生产预演实证 validation_clock_invalid）。
 
 ## Brain 1.273.164 — 桥接验证类角色带 validationClock（第 62 批）
 

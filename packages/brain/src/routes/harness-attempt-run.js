@@ -234,8 +234,10 @@ export function createHarnessAttemptRunRouter({
           action: `spawn:${role}`,
           decisionLog: [],
           intentAt: new Date().toISOString(),
+          // 第 63 批：fleet 硬校验 钟窗口 === bundle.constraints.timeout_seconds*1000，
+          // dispatcher 默认 5400——两处都读 payload.timeout_seconds，默认值必须一致。
           timeoutSeconds: Number.isInteger(cleanPayload.timeout_seconds) && cleanPayload.timeout_seconds > 0
-            ? cleanPayload.timeout_seconds : 3600,
+            ? cleanPayload.timeout_seconds : 5400,
           allowEvaluatorOrigin: true,
         }) ?? undefined;
       }
