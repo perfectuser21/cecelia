@@ -1,0 +1,22 @@
+{
+  "initiative_id": "da9ee073-8860-485c-a1c8-3fc095c3602a",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是现有 Harness API 的纯中文使用说明，不改变 UI 或运行时行为",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增中文说明，覆盖两个端点、鉴权、九角色、payload 与失败回滚合同",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 验证文档四类必需说明全部存在且无真实 token",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是唯一产品交付变更"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
