@@ -323,6 +323,19 @@ describe('第62批：验证类角色带 validationClock', () => {
       .toBe(5400 * 1000);
   });
 
+  // 第 64 批：judge 无 decisionLog 时 resolveValidationClock 抛 validation_clock_required
+  //（kernel 语义要求 generator origin）——桥接改为自构钟（judge 预演实证）。
+  it('第64批：judge 同样带钟且窗口=5400s', async () => {
+    const { app, dispatchFn } = makeApp();
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'judge', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    expect(res.status).toBe(202);
+    const clock = dispatchFn.mock.calls[0][1].validationClock;
+    expect(new Date(clock.deadline_at).getTime() - new Date(clock.pipeline_started_at).getTime())
+      .toBe(5400 * 1000);
+  });
+
   it('evaluator 同样带钟；canary/planner 不带', async () => {
     const { app, dispatchFn } = makeApp();
     await request(app).post('/api/brain/harness/attempt-run').send({
