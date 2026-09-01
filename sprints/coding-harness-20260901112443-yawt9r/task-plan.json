@@ -1,0 +1,22 @@
+{
+  "initiative_id": "9cf769fc-f388-4ee1-bf82-b7b97ff06ae3",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是 Harness API 的纯文档说明，不改变 UI、API 或远端 agent 行为",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅新增 docs/current/attempt-run-bridge-guide.md，完整说明两个端点、鉴权、九项角色、payload 与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 文档的两个端点用途、鉴权、九项角色、payload 和三对象失败回滚均通过冻结测试",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是唯一产品交付变更"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
