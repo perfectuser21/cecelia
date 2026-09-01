@@ -1,0 +1,22 @@
+{
+  "initiative_id": "615f934f-72c1-4566-8e37-c7dc1a389af9",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是 Cecelia 内部 API 的中文静态说明页，无运行时行为变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "在 docs/current/ 新增一页中文说明，覆盖创建、查询、鉴权、九项角色、payload 与派发失败回滚，不修改代码",
+      "dod": [
+        "[BEHAVIOR] 文档准确覆盖两个端点、鉴权、九项角色、payload 规则和三个回滚终态",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在且为中文"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
