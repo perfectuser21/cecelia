@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.167
+**Brain 版本**: 1.273.168
+
+## Brain 1.273.168 — publish-pr 薄端点：V4 publish 阶段工具面（第 66 批）
+
+- `routes/harness-attempt-run.js`：新增 `POST /api/brain/harness/attempt-run/publish-pr`。三条硬规矩：①开 PR 前核对远端分支头===head_sha（防漂移候选被发布，不符 409 publish_head_mismatch）；②幂等（422 时查同分支 open PR 返回既有）；③绝不启用 auto-merge——merge 公章属于画布人审线。凭据复用 resolveGitHubToken。
 
 ## Brain 1.273.167 — judge 派发桥接组装 evaluator 权威（第 65 批）
 
