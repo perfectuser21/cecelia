@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.163
+**Brain 版本**: 1.273.164
+
+## Brain 1.273.164 — 桥接验证类角色带 validationClock（第 62 批）
+
+- `routes/harness-attempt-run.js`：generator/generator-fix/evaluator/judge 派发时 ctx 带 `validationClock`（resolveValidationClock，空 decisionLog、派发时刻起表、timeout 默认 3600s 可由 payload.timeout_seconds 覆盖）——fleet 对验证类 bundle 硬要求（r71 机制；61 批诊断改进拿到的真码 validation_clock_required）。
 
 ## Brain 1.273.163 — remote bridge 4xx 错误带响应体错误码（第 61 批）
 

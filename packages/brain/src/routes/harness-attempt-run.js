@@ -19,6 +19,7 @@
 import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
+import { resolveValidationClock } from '../orchestrator/validation-clock.js';
 
 export const ALLOWED_ROLES = Object.freeze([
   'canary',
@@ -224,6 +225,21 @@ export function createHarnessAttemptRunRouter({
         chained.candidate = cleanPayload.candidate;
       }
 
+      // 第 62 批：fleet 对验证类角色 bundle 硬要求 validation clock（r71 机制）。桥接每
+      // 阶段独立 run、无 decisionLog，钟以派发时刻起表（timeout 默认 3600s，可由
+      // payload.timeout_seconds 覆盖）。
+      let validationClock;
+      if (['generator', 'generator-fix', 'evaluator', 'judge'].includes(role)) {
+        validationClock = resolveValidationClock({
+          action: `spawn:${role}`,
+          decisionLog: [],
+          intentAt: new Date().toISOString(),
+          timeoutSeconds: Number.isInteger(cleanPayload.timeout_seconds) && cleanPayload.timeout_seconds > 0
+            ? cleanPayload.timeout_seconds : 3600,
+          allowEvaluatorOrigin: true,
+        }) ?? undefined;
+      }
+
       const deps = await getDeps();
       let launched;
       // 第 53 批：ctx.taskId / observed.task.id 必须是锚 task id（bundle.inputs.task_id 取自
@@ -235,6 +251,7 @@ export function createHarnessAttemptRunRouter({
         taskId,
         runId,
         hop: Number(hop),
+        ...(validationClock ? { validationClock } : {}),
         decision: { phase: 'gan' },
         observed: {
           task: {
