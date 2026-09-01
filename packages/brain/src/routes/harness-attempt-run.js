@@ -19,7 +19,6 @@
 import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
-import { resolveValidationClock } from '../orchestrator/validation-clock.js';
 
 export const ALLOWED_ROLES = Object.freeze([
   'canary',
@@ -228,18 +227,19 @@ export function createHarnessAttemptRunRouter({
       // 第 62 批：fleet 对验证类角色 bundle 硬要求 validation clock（r71 机制）。桥接每
       // 阶段独立 run、无 decisionLog，钟以派发时刻起表（timeout 默认 3600s，可由
       // payload.timeout_seconds 覆盖）。
+      // 第 64 批：resolveValidationClock 的 kernel 语义要求 judge 有 generator origin
+      //（桥接每阶段独立 run 无 decisionLog 必抛 validation_clock_required，judge 预演实证）
+      // ——桥接自构钟。第 63 批口径不变：窗口必须精确等于 bundle timeout（fleet 唯一硬
+      // 校验项，dispatcher 默认 5400，两处都读 payload.timeout_seconds）。
       let validationClock;
       if (['generator', 'generator-fix', 'evaluator', 'judge'].includes(role)) {
-        validationClock = resolveValidationClock({
-          action: `spawn:${role}`,
-          decisionLog: [],
-          intentAt: new Date().toISOString(),
-          // 第 63 批：fleet 硬校验 钟窗口 === bundle.constraints.timeout_seconds*1000，
-          // dispatcher 默认 5400——两处都读 payload.timeout_seconds，默认值必须一致。
-          timeoutSeconds: Number.isInteger(cleanPayload.timeout_seconds) && cleanPayload.timeout_seconds > 0
-            ? cleanPayload.timeout_seconds : 5400,
-          allowEvaluatorOrigin: true,
-        }) ?? undefined;
+        const clockTimeoutSeconds = Number.isInteger(cleanPayload.timeout_seconds) && cleanPayload.timeout_seconds > 0
+          ? cleanPayload.timeout_seconds : 5400;
+        const startedMs = Date.now();
+        validationClock = Object.freeze({
+          pipeline_started_at: new Date(startedMs).toISOString(),
+          deadline_at: new Date(startedMs + clockTimeoutSeconds * 1000).toISOString(),
+        });
       }
 
       const deps = await getDeps();
