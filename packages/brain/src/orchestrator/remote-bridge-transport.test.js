@@ -757,6 +757,24 @@ describe('remote Bridge prepare', () => {
     await expect(prepare).rejects.not.toThrow(CALLBACK_TOKEN);
   });
 
+  // 第 61 批：失败不留原因病（memory failure-without-reason-pattern）——fleet 对 4xx 把
+  // 结构化错误码放在响应体 {error}，透传层此前丢弃 → 调用方只见 http_400 只能靠猜。
+  it('第61批：非 2xx 且响应体带合法错误码 → 错误信息追加 :code（可诊断）', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(400, { error: 'frozen_contract_identity_invalid' }));
+    const transport = createTransport({ fetchFn });
+    await expect(transport.prepare(prepareInput())).rejects.toThrow(
+      'remote_bridge_prepare_http_400:frozen_contract_identity_invalid',
+    );
+  });
+
+  it('第61批：响应体错误码不合法（含空格/超长/敏感串）→ 不拼接，不泄露', async () => {
+    const fetchFn = vi.fn(async () => jsonResponse(400, { error: `bad ${CALLBACK_TOKEN} value` }));
+    const transport = createTransport({ fetchFn });
+    const prepare = transport.prepare(prepareInput());
+    await expect(prepare).rejects.toThrow('remote_bridge_prepare_http_400');
+    await expect(prepare).rejects.not.toThrow(CALLBACK_TOKEN);
+  });
+
   it.each([
     ['non-accepted response', { status: 'queued' }, 'remote_bridge_prepare_not_accepted'],
     ['empty job id', {
