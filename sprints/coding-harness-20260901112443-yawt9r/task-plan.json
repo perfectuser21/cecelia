@@ -1,0 +1,22 @@
+{
+  "initiative_id": "c93f43ad-3b70-4e96-ad83-6752c3331061",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是 Cecelia Harness API 的纯文档说明，无 UI 或运行时行为变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增一页中文说明，准确覆盖两个端点用途、鉴权、九项角色、payload 字段与派发失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结测试与 E2E 内容断言覆盖 PRD 四个主题并全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是唯一产品交付变更"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
