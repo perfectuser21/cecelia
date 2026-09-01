@@ -1,0 +1,22 @@
+{
+  "initiative_id": "baf7d070-4ce4-4875-be99-ef9f48e6b507",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付仅为 Cecelia 内部 attempt-run API 的中文静态说明",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增中文说明，覆盖两个端点、鉴权、九角色、payload 字段与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 对文档五项行为断言全部通过",
+        "[ARTIFACT] 相对实现基线的产品 diff 仅含 docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
