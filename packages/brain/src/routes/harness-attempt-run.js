@@ -244,7 +244,20 @@ export function createHarnessAttemptRunRouter({
             payload: cleanPayload,
           },
           run: { id: runId, phase: 'gan' },
-          contract: { row: { propose_branch: cleanPayload.branch ?? 'v4-bridge' } },
+          // 第 60 批：冻结合同身份（generator/evaluator/judge 装配合同的钥匙——dispatcher
+          // 见 row.id 即自动从 git 按 approved_sha 装配冻结产物；缺则 fleet prepare 必 400）
+          contract: (typeof cleanPayload.contract_id === 'string' && cleanPayload.contract_id)
+            ? {
+              approved: true,
+              row: {
+                id: cleanPayload.contract_id,
+                approved_sha: cleanPayload.approved_sha,
+                ...(Number.isInteger(cleanPayload.contract_version)
+                  ? { version: cleanPayload.contract_version } : {}),
+                propose_branch: cleanPayload.branch ?? 'v4-bridge',
+              },
+            }
+            : { row: { propose_branch: cleanPayload.branch ?? 'v4-bridge' } },
           ...chained,
         },
         });

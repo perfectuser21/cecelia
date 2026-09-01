@@ -290,6 +290,43 @@ describe('第57批：POST /attempt-run/contract-seal', () => {
   });
 });
 
+// 第 60 批：generator/evaluator/judge 的 bundle 需要冻结合同（dispatcher 见
+// observed.contract.row.id 即自动从 git 装配 collectFrozenContractArtifacts）。
+// 桥接此前只给 propose_branch 空壳 → fleet prepare 必 400（generator 预演实证）。
+describe('第60批：冻结合同身份透传', () => {
+  it('payload.contract_id/approved_sha/contract_version → observed.contract.row + approved 标记', async () => {
+    const { app, dispatchFn } = makeApp();
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'generator', title: 'x',
+      payload: {
+        sprint_dir: 'sprints/x', branch: 'cp-prop-r1',
+        contract_id: 'cccccccc-1111-4111-8111-000000000009',
+        approved_sha: 'c'.repeat(40),
+        contract_version: 1,
+      },
+    });
+    expect(res.status).toBe(202);
+    const ctx = dispatchFn.mock.calls[0][1];
+    expect(ctx.observed.contract.approved).toBe(true);
+    expect(ctx.observed.contract.row).toMatchObject({
+      id: 'cccccccc-1111-4111-8111-000000000009',
+      approved_sha: 'c'.repeat(40),
+      version: 1,
+      propose_branch: 'cp-prop-r1',
+    });
+  });
+
+  it('不带 contract_id → observed.contract 保持旧形状（不塞 approved/id）', async () => {
+    const { app, dispatchFn } = makeApp();
+    await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'canary', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    const ctx = dispatchFn.mock.calls[0][1];
+    expect(ctx.observed.contract.approved).toBeUndefined();
+    expect(ctx.observed.contract.row.id).toBeUndefined();
+  });
+});
+
 describe('第56批：角色续接字段透传', () => {
   it('第56批：payload 的续接字段映射进 observed（proposeBranch/Sha/Rn、plannerPrdArtifact、candidate）', async () => {
     const { app, dispatchFn } = makeApp();
