@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.161
+**Brain 版本**: 1.273.162
+
+## Brain 1.273.162 — 桥接透传冻结合同身份（第 60 批）
+
+- `routes/harness-attempt-run.js`：payload 带 `contract_id`（+`approved_sha`/`contract_version`）时，observed.contract 组装成 `{approved:true, row:{id, approved_sha, version, propose_branch}}`——dispatcher 见 row.id 即自动按 approved_sha 从 git 装配冻结合同产物（generator/evaluator/judge 的 bundle 硬前提；缺则 fleet prepare 400，generator 单模块预演实证）。不带 contract_id 保持旧形状。
 
 ## Brain 1.273.161 — 共享 run 的 GET 收尾整体跳过（第 59 批热修）
 
