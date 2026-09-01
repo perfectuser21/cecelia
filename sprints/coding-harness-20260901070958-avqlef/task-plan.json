@@ -1,0 +1,23 @@
+{
+  "initiative_id": "baf7d070-4ce4-4875-be99-ef9f48e6b507",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付为仓库内既有 attempt-run API 的中文静态说明，无 UI 或运行时行为变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接中文使用说明",
+      "scope": "仅新增 docs/current/attempt-run-bridge-guide.md，准确说明端点、鉴权、九角色闭集、payload 与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 中文说明包含两个端点用途、远端 Bearer 鉴权、精确九角色闭集、payload 字段和三对象回滚终态",
+        "[BEHAVIOR] 相对冻结实现基线的唯一产品变更为 docs/current/attempt-run-bridge-guide.md",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
