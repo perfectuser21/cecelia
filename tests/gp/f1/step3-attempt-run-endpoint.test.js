@@ -295,6 +295,70 @@ describe('第57批：POST /attempt-run/contract-seal', () => {
 // 桥接此前只给 propose_branch 空壳 → fleet prepare 必 400（generator 预演实证）。
 // 第 62 批：fleet 对验证类角色（generator/evaluator）bundle 硬要求 validation clock
 //（r71 机制），桥接不带 → prepare 400:validation_clock_required（61 批诊断改进后拿到真码）。
+// 第 65 批：judge 派发要求 observed 里有与合同身份一致的 evaluator 权威（dispatcher
+// judge_evaluator_authority_mismatch 闸，judge 预演实证）。桥接按 payload.evaluate_attempt_id
+// 查 attempt、按 contract_id 查封印表组 identity，组装 evaluateVerdict/evaluateResult。
+describe('第65批：judge 桥接组装 evaluator 权威', () => {
+  it('judge + evaluate_attempt_id → observed 带 evaluateVerdict/evaluateResult/contract.identity 且身份一致', async () => {
+    const evalResult = {
+      attempt_id: 'eeeeeeee-0000-4000-8000-000000000005', status: 'completed',
+      summary: 's', decision: { outcome: 'FAIL', reason: 'r' }, checks: [],
+    };
+    const sqls = [];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        sqls.push([sql, params]);
+        if (/MAX\(hop\)/.test(sql)) return { rows: [{ hop: 1 }] };
+        if (/SELECT orchestrator_host FROM initiative_runs/.test(sql)) return { rows: [{ orchestrator_host: 'v4-bridge' }] };
+        if (/initiative_contract_artifact_seals/.test(sql)) return { rows: [{ manifest_sha256: 'a'.repeat(64), source_revision: 'b'.repeat(40) }] };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const dispatchFn = vi.fn(async () => ({ status: 'LAUNCHED', attempt_id: 'aaaaaaaa-0000-0000-0000-000000000001' }));
+    const router = createHarnessAttemptRunRouter({
+      pool,
+      buildDeps: async () => ({ dispatch: dispatchFn }),
+      attemptStoreFactory: async () => ({ getById: async () => ({ id: 'eeeeeeee-0000-4000-8000-000000000005', status: 'completed', result: evalResult }) }),
+      createTaskFn: async () => ({ success: true, task: { id: 'dddddddd-0000-0000-0000-000000000004' } }),
+      uuid: () => 'bbbbbbbb-0000-0000-0000-000000000002',
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain/harness', router);
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'judge', title: 'x',
+      payload: {
+        sprint_dir: 'y',
+        contract_id: 'cccccccc-1111-4111-8111-000000000009',
+        approved_sha: 'c'.repeat(40),
+        evaluate_attempt_id: 'eeeeeeee-0000-4000-8000-000000000005',
+        candidate: { repo: 'perfectuser21/cecelia', branch: 'cp-x', head_sha: 'd'.repeat(40) },
+      },
+    });
+    expect(res.status).toBe(202);
+    const ctx = dispatchFn.mock.calls[0][1];
+    const identity = { contract_id: 'cccccccc-1111-4111-8111-000000000009', manifest_sha256: 'a'.repeat(64), source_revision: 'b'.repeat(40) };
+    expect(ctx.observed.contract.identity).toEqual(identity);
+    expect(ctx.observed.evaluateVerdict).toMatchObject({
+      attempt_id: 'eeeeeeee-0000-4000-8000-000000000005',
+      verdict: 'FAIL',
+      pr_head_sha: 'd'.repeat(40),
+      contract_identity: identity,
+    });
+    expect(ctx.observed.evaluateResult.attempt_id).toBe('eeeeeeee-0000-4000-8000-000000000005');
+  });
+
+  it('judge 带 evaluate_attempt_id 但 attempt 不存在 → 400 结构化', async () => {
+    const { app } = makeApp({ getById: async () => null });
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'judge', title: 'x',
+      payload: { sprint_dir: 'y', contract_id: 'cccccccc-1111-4111-8111-000000000009', evaluate_attempt_id: 'eeeeeeee-0000-4000-8000-000000000005' },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('evaluate_attempt_not_found');
+  });
+});
+
 describe('第62批：验证类角色带 validationClock', () => {
   it('generator 派发 ctx 带 validationClock（pipeline_started_at/deadline_at ISO）', async () => {
     const { app, dispatchFn } = makeApp();
