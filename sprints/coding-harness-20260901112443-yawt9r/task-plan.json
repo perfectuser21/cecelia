@@ -1,0 +1,22 @@
+{
+  "initiative_id": "7a0cbf37-21d0-47e2-9320-50f737142124",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是 Harness API 的纯文档说明，不改变 UI 或运行时行为",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增一页中文说明，覆盖冻结 PRD 的端点、鉴权、九项角色、payload 与失败回滚合同",
+      "dod": [
+        "[BEHAVIOR] 冻结测试验证两个端点用途、鉴权、九项角色、payload 与三对象回滚",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是唯一 docs/current 交付变更且无代码改动"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
