@@ -1,0 +1,23 @@
+{
+  "initiative_id": "a1ee2a93-3e8e-42bc-a3cf-d7da2cfc0443",
+  "journey_type": "autonomous",
+  "journey_type_reason": "只新增 Cecelia attempt-run 桥接中文说明，不改变运行时或 UI。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接中文使用说明",
+      "scope": "在 docs/current/attempt-run-bridge.md 说明两个端点、鉴权、九项角色、payload 与派发失败回滚；不修改其他产品文件。",
+      "dod": [
+        "[BEHAVIOR] 冻结文档测试五项断言全部通过",
+        "[BEHAVIOR] 相对 implementation baseline 的产品差异仅为 docs/current/attempt-run-bridge.md",
+        "[ARTIFACT] docs/current/attempt-run-bridge.md 存在且为中文"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
