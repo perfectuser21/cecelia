@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.165
+**Brain 版本**: 1.273.166
+
+## Brain 1.273.166 — 桥接自构验收钟（第 64 批）
+
+- `routes/harness-attempt-run.js`：resolveValidationClock 的 kernel 语义要求 judge 有 generator origin（桥接无 decisionLog 必抛，judge 预演实证）——改为自构钟对象，窗口口径同 63 批（精确=bundle timeout，默认 5400s）。
 
 ## Brain 1.273.165 — validationClock 默认窗口对齐 5400s（第 63 批）
 
