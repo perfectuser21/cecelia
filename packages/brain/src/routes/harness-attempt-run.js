@@ -242,6 +242,44 @@ export function createHarnessAttemptRunRouter({
         });
       }
 
+      // 第 65 批：judge 派发要求 observed 里有与合同身份逐位一致的 evaluator 权威
+      //（dispatcher judge_evaluator_authority_mismatch 闸，judge 预演实证）。桥接按
+      // evaluate_attempt_id 查 attempt、按 contract_id 查封印表组 identity。
+      let judgeAuthority = null;
+      if (role === 'judge' && typeof cleanPayload.evaluate_attempt_id === 'string' && cleanPayload.evaluate_attempt_id) {
+        const store = await getStore();
+        const evalAttempt = await store.getById(cleanPayload.evaluate_attempt_id);
+        if (!evalAttempt || !evalAttempt.result) {
+          await rollback();
+          return res.status(400).json({ error: 'evaluate_attempt_not_found', evaluate_attempt_id: cleanPayload.evaluate_attempt_id });
+        }
+        let identity = null;
+        if (typeof cleanPayload.contract_id === 'string' && cleanPayload.contract_id) {
+          const { rows: sealRows } = await pool.query(
+            'SELECT manifest_sha256, source_revision FROM initiative_contract_artifact_seals WHERE contract_id = $1::uuid',
+            [cleanPayload.contract_id],
+          );
+          if (sealRows[0]) {
+            identity = {
+              contract_id: cleanPayload.contract_id,
+              manifest_sha256: sealRows[0].manifest_sha256,
+              source_revision: sealRows[0].source_revision,
+            };
+          }
+        }
+        const evalResult = evalAttempt.result;
+        judgeAuthority = {
+          identity,
+          evaluateResult: evalResult,
+          evaluateVerdict: {
+            attempt_id: evalResult.attempt_id ?? evalAttempt.id,
+            verdict: evalResult.decision?.outcome ?? null,
+            pr_head_sha: cleanPayload.candidate?.head_sha ?? null,
+            contract_identity: identity,
+          },
+        };
+      }
+
       const deps = await getDeps();
       let launched;
       // 第 53 批：ctx.taskId / observed.task.id 必须是锚 task id（bundle.inputs.task_id 取自
@@ -268,6 +306,7 @@ export function createHarnessAttemptRunRouter({
           contract: (typeof cleanPayload.contract_id === 'string' && cleanPayload.contract_id)
             ? {
               approved: true,
+              ...(judgeAuthority?.identity ? { identity: judgeAuthority.identity } : {}),
               row: {
                 id: cleanPayload.contract_id,
                 approved_sha: cleanPayload.approved_sha,
@@ -278,6 +317,10 @@ export function createHarnessAttemptRunRouter({
             }
             : { row: { propose_branch: cleanPayload.branch ?? 'v4-bridge' } },
           ...chained,
+          ...(judgeAuthority ? {
+            evaluateVerdict: judgeAuthority.evaluateVerdict,
+            evaluateResult: judgeAuthority.evaluateResult,
+          } : {}),
         },
         });
       } catch (dispatchError) {

@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.166
+**Brain 版本**: 1.273.167
+
+## Brain 1.273.167 — judge 派发桥接组装 evaluator 权威（第 65 批）
+
+- `routes/harness-attempt-run.js`：judge 派发带 `evaluate_attempt_id` 时，桥接查 attempt 组 `observed.evaluateVerdict/evaluateResult`，按 `contract_id` 查封印表（manifest_sha256/source_revision）组 `observed.contract.identity`——judge_evaluator_authority_mismatch 闸要求两侧身份逐位一致（judge 预演实证）。attempt 不存在 → 400 evaluate_attempt_not_found（先回滚）。
 
 ## Brain 1.273.166 — 桥接自构验收钟（第 64 批）
 
