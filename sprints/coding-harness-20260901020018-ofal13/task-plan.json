@@ -1,0 +1,22 @@
+{
+  "initiative_id": "833877a9-2159-4300-9682-8efd68805562",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是 Cecelia 后端桥接 API 的中文使用说明，不涉及 UI 或远端 agent 协议变更。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "在 docs/current/ 新增一页中文说明，严格覆盖两个端点、鉴权、九角色、payload 必填语义与派发失败回滚，不修改代码。",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 严格核对四节、九角色精确集合、payload 字段语义及回滚三元组",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在且为中文"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
