@@ -293,6 +293,36 @@ describe('第57批：POST /attempt-run/contract-seal', () => {
 // 第 60 批：generator/evaluator/judge 的 bundle 需要冻结合同（dispatcher 见
 // observed.contract.row.id 即自动从 git 装配 collectFrozenContractArtifacts）。
 // 桥接此前只给 propose_branch 空壳 → fleet prepare 必 400（generator 预演实证）。
+// 第 62 批：fleet 对验证类角色（generator/evaluator）bundle 硬要求 validation clock
+//（r71 机制），桥接不带 → prepare 400:validation_clock_required（61 批诊断改进后拿到真码）。
+describe('第62批：验证类角色带 validationClock', () => {
+  it('generator 派发 ctx 带 validationClock（pipeline_started_at/deadline_at ISO）', async () => {
+    const { app, dispatchFn } = makeApp();
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'generator', title: 'x',
+      payload: { sprint_dir: 'y', contract_id: 'cccccccc-1111-4111-8111-000000000009', approved_sha: 'c'.repeat(40) },
+    });
+    expect(res.status).toBe(202);
+    const ctx = dispatchFn.mock.calls[0][1];
+    expect(typeof ctx.validationClock?.pipeline_started_at).toBe('string');
+    expect(typeof ctx.validationClock?.deadline_at).toBe('string');
+    expect(new Date(ctx.validationClock.deadline_at).getTime())
+      .toBeGreaterThan(new Date(ctx.validationClock.pipeline_started_at).getTime());
+  });
+
+  it('evaluator 同样带钟；canary/planner 不带', async () => {
+    const { app, dispatchFn } = makeApp();
+    await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'evaluator', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    expect(dispatchFn.mock.calls[0][1].validationClock?.deadline_at).toBeTruthy();
+    await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'canary', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    expect(dispatchFn.mock.calls[1][1].validationClock).toBeUndefined();
+  });
+});
+
 describe('第60批：冻结合同身份透传', () => {
   it('payload.contract_id/approved_sha/contract_version → observed.contract.row + approved 标记', async () => {
     const { app, dispatchFn } = makeApp();
