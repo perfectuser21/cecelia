@@ -1,0 +1,22 @@
+{
+  "initiative_id": "none",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是 Cecelia 后端桥接 API 的静态中文使用说明，不涉及 UI 或远端 agent 协议变更。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明文档",
+      "scope": "在 docs/current 下新增一页中文说明，准确覆盖冻结 PRD 指定的端点、鉴权、九角色、payload 与失败回滚事实，不修改代码。",
+      "dod": [
+        "[BEHAVIOR] 文档完整覆盖端点、鉴权、九角色、payload 与失败回滚",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
