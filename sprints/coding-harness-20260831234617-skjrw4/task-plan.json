@@ -1,0 +1,21 @@
+{
+  "initiative_id": "29914d0f-21f2-4ee9-a6b7-4f8cae448bb3",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "交付物是开发者使用的 attempt-run 桥接接口说明文档",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "在 docs/current 下新增一页中文说明，覆盖两个端点、鉴权、九角色、payload 必填字段与派发失败回滚；不修改代码",
+      "dod": [
+        "[BEHAVIOR] 冻结测试的四项文档内容断言全部通过",
+        "[BEHAVIOR] 相对权威基线的实现侧变更仅包含目标文档",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在"
+      ],
+      "files": ["docs/current/attempt-run-bridge-guide.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
