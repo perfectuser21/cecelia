@@ -1,0 +1,20 @@
+{
+  "initiative_id": "7ed66da8-036a-4bc9-abd3-3a4f9276dbc9",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是内部 Harness API 的静态操作说明，不包含 UI 或运行行为变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增中文说明，覆盖端点、鉴权、九项角色、payload 与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结测试的五个 Golden Path 断言全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是唯一产品变更文件"
+      ],
+      "files": ["docs/current/attempt-run-bridge-guide.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
