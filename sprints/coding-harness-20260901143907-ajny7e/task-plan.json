@@ -1,0 +1,22 @@
+{
+  "initiative_id": "7ed66da8-036a-4bc9-abd3-3a4f9276dbc9",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "交付物是开发者使用的版本化接口说明文档，不改变运行时产品行为",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增中文说明页，覆盖端点、鉴权、九项角色、payload 与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结测试对五个 Golden Path 内容断言全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是唯一产品交付文件"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
