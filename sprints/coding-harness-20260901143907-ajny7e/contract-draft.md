@@ -1,4 +1,4 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 3)
 
 ## 合同基线与范围
 
@@ -64,21 +64,21 @@ N/A — 仅记录既有端点，不修改设备/agent 调用协议；文档须�
 
 [阅读说明] → [按边界理解发起与查询] → [识别允许输入] → [识别失败收口]
 
-### Step 1: 找到说明并理解两个端点
+### Step 1: 找到中文说明与四节结构
 **来源**: `[FROM_PRD]` — PRD「Golden Path」第 1 项。
 
-**可观测行为**: 中文文档位于指定路径，并分别说明 POST 用于异步发起、GET 用于按 attempt id 查询。
+**可观测行为**: 中文文档位于指定路径，正文含中文，且二级标题严格且仅为「端点用途与鉴权」「角色白名单」「payload 必填字段」「派发失败自动回滚」四节。
 
-**验证命令**: `npx vitest run --no-cache sprints/coding-harness-20260901143907-ajny7e/tests/attempt-run-bridge-guide.test.ts -t '中文标题与两个端点用途完整'`
+**验证命令**: `npx vitest run --no-cache sprints/coding-harness-20260901143907-ajny7e/tests/attempt-run-bridge-guide.test.ts -t '中文正文与四节结构完整'`
 
 **硬阈值**: 指定测试 1/1 通过，exit code = 0。
 
-### Step 2: 正确理解鉴权边界
+### Step 2: 正确理解两个端点用途与鉴权边界
 **来源**: `[FROM_PRD]` — PRD「Golden Path」第 2 项及「边界情况」。
 
-**可观测行为**: 读者不会把 loopback 例外误解成宿主/远端免鉴权。
+**可观测行为**: 第一节分别说明 POST 发起、GET 查询，并且读者不会把 loopback 例外误解成宿主/远端免鉴权。
 
-**验证命令**: `npx vitest run --no-cache sprints/coding-harness-20260901143907-ajny7e/tests/attempt-run-bridge-guide.test.ts -t '鉴权规则区分 loopback 与宿主远端'`
+**验证命令**: `npx vitest run --no-cache sprints/coding-harness-20260901143907-ajny7e/tests/attempt-run-bridge-guide.test.ts -t '两个端点用途与鉴权规则完整'`
 
 **硬阈值**: `internalAuthOrLoopback` 与 Bearer 要求均命中，exit code = 0。
 
@@ -111,9 +111,11 @@ set -euo pipefail
 SPRINT_DIR='sprints/coding-harness-20260901143907-ajny7e'
 BASE_SHA='5d25dcd6addb8ba30c742281b682589a3b95eaab'
 npx vitest run --no-cache "$SPRINT_DIR/tests/attempt-run-bridge-guide.test.ts" --reporter=verbose
-CHANGED=$(git diff --name-only "$BASE_SHA"...HEAD -- docs/current | sort)
-[ "$CHANGED" = 'docs/current/attempt-run-bridge-guide.md' ] || { echo "FAIL: 实现文档变更集合不唯一: $CHANGED"; exit 1; }
-git diff --name-only "$BASE_SHA"...HEAD -- packages apps scripts | grep -q . && { echo 'FAIL: 出现代码改动'; exit 1; } || true
+ALL_CHANGED=$(git diff --name-only "$BASE_SHA"...HEAD | sort)
+IMPLEMENTATION_CHANGED=$(printf '%s\n' "$ALL_CHANGED" | grep -v "^$SPRINT_DIR/" || true)
+[ "$IMPLEMENTATION_CHANGED" = 'docs/current/attempt-run-bridge-guide.md' ] || { echo "FAIL: 全仓实现变更集合不唯一: $IMPLEMENTATION_CHANGED"; exit 1; }
+UNAUTHORIZED=$(printf '%s\n' "$ALL_CHANGED" | grep -v "^$SPRINT_DIR/" | grep -v '^docs/current/attempt-run-bridge-guide.md$' || true)
+[ -z "$UNAUTHORIZED" ] || { echo "FAIL: 全仓存在未授权变更: $UNAUTHORIZED"; exit 1; }
 echo 'OK: attempt-run 桥接使用说明合同验收通过'
 ```
 
@@ -131,7 +133,7 @@ echo 'OK: attempt-run 桥接使用说明合同验收通过'
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| attempt-run 桥接说明 | `sprints/coding-harness-20260901143907-ajny7e/tests/attempt-run-bridge-guide.test.ts` | 中文标题与两个端点用途完整；鉴权规则区分 loopback 与宿主远端；角色白名单恰好列出九项固定角色；payload 字段与失败回滚链完整 | 目标文档尚不存在，4 tests failed |
+| attempt-run 桥接说明 | `sprints/coding-harness-20260901143907-ajny7e/tests/attempt-run-bridge-guide.test.ts` | 中文正文与四节结构完整；两个端点用途与鉴权规则完整；角色白名单恰好列出九项固定角色；payload 字段与失败回滚链完整；全仓实现变更集合唯一 | 目标文档尚不存在，5 tests failed |
 
 ## Notes
 
