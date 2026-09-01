@@ -51,6 +51,7 @@ export function createHarnessAttemptRunRouter({
   attemptStoreFactory = null,
   createTaskFn = null,
   sealDepsFactory = null,
+  publishDepsFactory = null,
   uuid = randomUUID,
 } = {}) {
   if (!pool || typeof pool.query !== 'function') {
@@ -88,6 +89,15 @@ export function createHarnessAttemptRunRouter({
       };
     })();
     return sealDepsPromise;
+  };
+  let publishDepsPromise = null;
+  const getPublishDeps = () => {
+    publishDepsPromise ??= (async () => {
+      if (publishDepsFactory) return publishDepsFactory();
+      const { resolveGitHubToken } = await import('../harness-credentials.js');
+      return { resolveToken: resolveGitHubToken, fetchFn: globalThis.fetch };
+    })();
+    return publishDepsPromise;
   };
   let storePromise = null;
   const getStore = () => {
@@ -395,6 +405,72 @@ export function createHarnessAttemptRunRouter({
       }
     } catch (error) {
       return res.status(500).json({ error: 'contract_seal_failed', detail: String(error?.message ?? error) });
+    }
+  });
+
+  // 第 66 批：V4 publish 阶段工具面。开 PR 可逆可自动，三条硬规矩：①开 PR 前核对远端
+  // 分支头===head_sha（防漂移候选被发布）；②幂等（同分支已有 open PR → 返回既有）；
+  // ③绝不启用 auto-merge——merge 公章属于画布人审线。
+  router.post('/attempt-run/publish-pr', internalAuthOrLoopback, async (req, res) => {
+    try {
+      const body = req.body ?? {};
+      const repo = typeof body.repo === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(body.repo)
+        ? body.repo : 'perfectuser21/cecelia';
+      const branch = String(body.branch ?? '');
+      const headSha = String(body.head_sha ?? '');
+      const title = String(body.title ?? '').trim();
+      const base = typeof body.base === 'string' && body.base ? body.base : 'main';
+      if (!branch.startsWith('cp-')) return res.status(400).json({ error: 'branch_must_be_cp' });
+      if (!SHA40.test(headSha)) return res.status(400).json({ error: 'head_sha_invalid' });
+      if (!title) return res.status(400).json({ error: 'title_required' });
+      const { resolveToken, fetchFn } = await getPublishDeps();
+      const token = await resolveToken();
+      const gh = (url, opts = {}) => fetchFn(`https://api.github.com/repos/${repo}${url}`, {
+        ...opts,
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        signal: AbortSignal.timeout(15_000),
+      });
+      const refResp = await gh(`/git/ref/heads/${encodeURIComponent(branch)}`);
+      if (!refResp.ok) {
+        return res.status(409).json({ error: 'publish_branch_unavailable', status: refResp.status });
+      }
+      const refJson = await refResp.json();
+      const remoteSha = refJson?.object?.sha ?? null;
+      if (remoteSha !== headSha) {
+        return res.status(409).json({ error: 'publish_head_mismatch', remote_sha: remoteSha, expected: headSha });
+      }
+      const createResp = await gh('/pulls', {
+        method: 'POST',
+        body: JSON.stringify({
+          title,
+          head: branch,
+          base,
+          body: typeof body.body === 'string' ? body.body : '',
+          draft: false,
+        }),
+      });
+      if (createResp.status === 201 || createResp.ok) {
+        const pr = await createResp.json();
+        return res.json({ ok: true, pr_url: pr.html_url, pr_number: pr.number });
+      }
+      if (createResp.status === 422) {
+        const listResp = await gh(`/pulls?state=open&head=${encodeURIComponent(`${repo.split('/')[0]}:${branch}`)}`);
+        if (listResp.ok) {
+          const prs = await listResp.json();
+          if (Array.isArray(prs) && prs[0]) {
+            return res.json({ ok: true, pr_url: prs[0].html_url, pr_number: prs[0].number, existing: true });
+          }
+        }
+        return res.status(409).json({ error: 'publish_pr_conflict' });
+      }
+      return res.status(502).json({ error: 'publish_pr_failed', status: createResp.status });
+    } catch (error) {
+      return res.status(500).json({ error: 'publish_pr_failed', detail: String(error?.message ?? error) });
     }
   });
 
