@@ -310,6 +310,19 @@ describe('第62批：验证类角色带 validationClock', () => {
       .toBeGreaterThan(new Date(ctx.validationClock.pipeline_started_at).getTime());
   });
 
+  // 第 63 批：fleet 硬校验 钟窗口 === bundle.constraints.timeout_seconds*1000（dispatcher
+  // 默认 5400）。桥接钟默认曾是 3600 → validation_clock_invalid（生产预演实证）。两处都读
+  // payload.timeout_seconds，默认值必须同为 5400。
+  it('第63批：默认钟窗口=5400s（与 dispatcher bundle 默认对齐）', async () => {
+    const { app, dispatchFn } = makeApp();
+    await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'generator', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    const clock = dispatchFn.mock.calls[0][1].validationClock;
+    expect(new Date(clock.deadline_at).getTime() - new Date(clock.pipeline_started_at).getTime())
+      .toBe(5400 * 1000);
+  });
+
   it('evaluator 同样带钟；canary/planner 不带', async () => {
     const { app, dispatchFn } = makeApp();
     await request(app).post('/api/brain/harness/attempt-run').send({
