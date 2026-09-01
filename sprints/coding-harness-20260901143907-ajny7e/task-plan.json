@@ -1,0 +1,20 @@
+{
+  "initiative_id": "none",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是既有 Harness API 的内部中文操作说明，不改变用户界面或运行行为",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增一页中文文档，覆盖两个端点、鉴权、九项角色、payload 与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结文档测试四项全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是唯一实现交付文件"
+      ],
+      "files": ["docs/current/attempt-run-bridge-guide.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
