@@ -1,0 +1,22 @@
+{
+  "initiative_id": "none",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "文档面向 Harness attempt-run 开发派发流程。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅新增中文说明文档，覆盖端点与鉴权、九项角色、payload 字段和失败自动回滚。",
+      "dod": [
+        "[BEHAVIOR] 四项冻结文档测试全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在且实现差异无越界"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
