@@ -230,6 +230,70 @@ describe('第58批：GET 投影暴露 workspace_base_sha', () => {
   });
 });
 
+// 第 66 批：V4 publish 阶段工具面。开 PR 是可逆动作可自动，但两条硬规矩：
+// ①开 PR 前必须核对远端分支头===head_sha（防漂移候选被发布）；②幂等（同 head 已有
+// open PR → 返回既有 PR，不重复开）；③绝不启用 auto-merge（merge 公章归人审线）。
+describe('第66批：POST /attempt-run/publish-pr', () => {
+  const pubBody = {
+    branch: 'cp-harness-propose-r1-x', head_sha: 'a'.repeat(40),
+    title: 'Harness approved candidate xyz', body: 'body',
+  };
+  function makePubApp({ refSha, createStatus = 201, createJson, listPrs } = {}) {
+    const calls = [];
+    const fetchFn = vi.fn(async (url, opts = {}) => {
+      calls.push([url, opts.method ?? 'GET']);
+      if (/git\/ref\/heads/.test(url)) return { ok: true, status: 200, json: async () => ({ object: { sha: refSha ?? 'a'.repeat(40) } }) };
+      if (/\/pulls\?/.test(url)) return { ok: true, status: 200, json: async () => (listPrs ?? []) };
+      if (/\/pulls$/.test(url)) return { ok: createStatus === 201, status: createStatus, json: async () => (createJson ?? { html_url: 'https://github.com/x/y/pull/9', number: 9 }) };
+      return { ok: false, status: 500, json: async () => ({}) };
+    });
+    const router = createHarnessAttemptRunRouter({
+      pool: { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) },
+      buildDeps: async () => ({ dispatch: vi.fn() }),
+      attemptStoreFactory: async () => ({ getById: async () => null }),
+      createTaskFn: async () => ({ success: true, task: { id: 'x' } }),
+      publishDepsFactory: async () => ({ resolveToken: async () => 'tok', fetchFn }),
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain/harness', router);
+    return { app, fetchFn, calls };
+  }
+
+  it('happy：核头一致 → 开 PR → 200 带 pr_url/number；绝不调 auto-merge', async () => {
+    const { app, calls } = makePubApp({});
+    const res = await request(app).post('/api/brain/harness/attempt-run/publish-pr').send(pubBody);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, pr_url: 'https://github.com/x/y/pull/9', pr_number: 9 });
+    expect(calls.some(([url]) => /merge/.test(url))).toBe(false);
+  });
+
+  it('防漂移：远端头 ≠ head_sha → 409 publish_head_mismatch，不开 PR', async () => {
+    const { app, calls } = makePubApp({ refSha: 'f'.repeat(40) });
+    const res = await request(app).post('/api/brain/harness/attempt-run/publish-pr').send(pubBody);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('publish_head_mismatch');
+    expect(calls.some(([url, m]) => /\/pulls$/.test(url) && m === 'POST')).toBe(false);
+  });
+
+  it('幂等：422 already exists → 查同 head open PR 返回既有', async () => {
+    const { app } = makePubApp({
+      createStatus: 422,
+      listPrs: [{ html_url: 'https://github.com/x/y/pull/7', number: 7 }],
+    });
+    const res = await request(app).post('/api/brain/harness/attempt-run/publish-pr').send(pubBody);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, pr_number: 7, existing: true });
+  });
+
+  it('负向：branch 非 cp-* / head_sha 非 40hex / 缺 title → 400', async () => {
+    const { app } = makePubApp({});
+    expect((await request(app).post('/api/brain/harness/attempt-run/publish-pr').send({ ...pubBody, branch: 'main' })).status).toBe(400);
+    expect((await request(app).post('/api/brain/harness/attempt-run/publish-pr').send({ ...pubBody, head_sha: 'zzz' })).status).toBe(400);
+    expect((await request(app).post('/api/brain/harness/attempt-run/publish-pr').send({ ...pubBody, title: '' })).status).toBe(400);
+  });
+});
+
 describe('第57批：POST /attempt-run/contract-seal', () => {
   const sealBody = {
     run_id: 'cccccccc-0000-0000-0000-000000000003',
