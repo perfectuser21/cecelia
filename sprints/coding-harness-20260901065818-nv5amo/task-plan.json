@@ -1,0 +1,23 @@
+{
+  "initiative_id": "24cad39f-b7a5-47dd-a062-b70024bab879",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "交付 Harness attempt-run 桥接的开发与派发使用说明文档",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "只在 docs/current 新增一页中文文档，准确说明两个端点、鉴权、九项角色、payload 字段与派发失败回滚，不修改产品代码",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 逐节验证端点、鉴权、九项角色、payload 与回滚说明",
+        "[BEHAVIOR] 相对实现基线无产品代码变化且目标文档恰好一页",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
