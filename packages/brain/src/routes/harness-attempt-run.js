@@ -129,7 +129,10 @@ export function createHarnessAttemptRunRouter({
       // 第 54 批：keep_open=true 建 orchestrator_host='v4-bridge-shared' 的 run——GET 终态
       // 自动收尾只认 'v4-bridge'，天然跳过共享 run；同阶段多角色（proposer→reviewer）复用
       // 同一 run_id 才能互见 contract_artifacts（金丝雀 #6b 实证），最后由显式 close 口收尾。
-      const orchestratorHost = body.keep_open === true ? 'v4-bridge-shared' : 'v4-bridge';
+      // 第 69 批（决策 d2de68fb）：generator 的候选保留工作区必须活到 judge 用完——
+      // 共享 run 不再依赖调用方旗标（#31/#36 两次死于 Worker 忘带），角色即语义。
+      const orchestratorHost = (body.keep_open === true || ['generator', 'generator-fix'].includes(role))
+        ? 'v4-bridge-shared' : 'v4-bridge';
       // v2 run 行有硬约束（migration 375）：current_task_id（FK→tasks.id）与 created_source
       // 非空。task 行必须走正门 createTask（task-creation-inventory 守卫禁止任何模块绕过原子路由仓直写 tasks 表）；status 直接建成 in_progress，tick 不会捡走。source_id 幂等：
       // 同一 run_id 复用同一 task 锚。
