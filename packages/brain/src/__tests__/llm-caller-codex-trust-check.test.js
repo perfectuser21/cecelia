@@ -66,28 +66,31 @@ describe('callCodexHeadless — spawn 参数行为验证', () => {
     reportCall: vi.fn(async () => {}),
   }));
 
+  // 2026-09-02：callCodexHeadless 的 API Key fallback 已被禁止（生产曾因此静默烧钱
+  // ~24 美元且无告警，见 commit 5e59d2151）——无可用 OAuth team 账号时现在直接 throw，
+  // 不再碰 OPENAI_API_KEY。要让执行到达 spawn()，mock 必须让 getNextCodexTeamHome()
+  // 找到一个"真实可用"的 team 账号（team1），而不是继续依赖已被禁止的 fallback 路径。
+  // auth.json 只要求 `tokens` 字段有值（见 llm-caller.js getNextCodexTeamHome()）。
   vi.doMock('fs', () => ({
-    readFileSync: vi.fn(() => { throw new Error('no team home in test'); }),
+    readFileSync: vi.fn((path) => {
+      if (String(path).includes('.codex-team1')) {
+        return JSON.stringify({
+          tokens: { access_token: 'test-access-token', refresh_token: 'test-refresh-token' },
+        });
+      }
+      throw new Error(`unexpected readFileSync path in test: ${path}`);
+    }),
   }));
-
-  let prevOpenAIKey;
 
   beforeEach(() => {
     capturedArgs = null;
     closeHandler = null;
     stdoutDataHandler = null;
     vi.clearAllMocks();
-    // fs 被 mock 成必抛错，getNextCodexTeamHome()/getOpenAIKey() 的 readFileSync 分支
-    // 都会失败；没有这个 env fallback，callCodexHeadless 会在"无可用 OAuth team 账号，
-    // 且 OpenAI API key 不存在"这一步提前抛错，spawn 永远不会被调用，断言无法验证目标行为。
-    prevOpenAIKey = process.env.OPENAI_API_KEY;
-    process.env.OPENAI_API_KEY = 'test-fake-key';
   });
 
   afterEach(() => {
     vi.resetModules();
-    if (prevOpenAIKey === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = prevOpenAIKey;
   });
 
   it('callLLM(codex provider) 调用 spawn 时参数含 --skip-git-repo-check', async () => {

@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.170
+**Brain 版本**: 1.273.171
+
+## Brain 1.273.171 — 关闭 Codex OAuth 掉线时静默 fallback 到 API Key 计费
+
+`llm-caller.js` 的 `callCodexHeadless()`：两个 Codex OAuth team 账号全部不可用时，此前会静默改用 `OPENAI_API_KEY` 直接按量计费调用 Codex CLI，曾在生产环境静默烧掉约 24 美元且无任何告警。现改为直接抛错，交给 `callLLM()` 既有的 anthropic-api 紧急兜底机制接管（该机制未改动）。排查 AFFiNE AI 故障时顺带发现，决策 `7cecc252`。
 
 ## Brain 1.273.170 — fleet runner digest repin 74afa123（第 68 批，prune 误删重建）
 

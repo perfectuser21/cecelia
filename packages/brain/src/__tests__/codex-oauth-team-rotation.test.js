@@ -36,8 +36,12 @@ describe('callCodexHeadless OAuth team 轮换', () => {
     expect(SRC).toContain('delete env.OPENAI_API_KEY');
   });
 
-  it('源码包含 fallback 到 API key 逻辑', () => {
-    expect(SRC).toContain('fallback 到 API key');
+  it('源码不应再包含 fallback 到 API key 的逻辑（2026-09-02 已禁止，防止重新引入按量计费）', () => {
+    // 曾经的危险模式：无可用 team 账号时把 apiKey 塞进 env 直接计费调用 codex，
+    // 期间静默烧掉约 24 美元。修复后应直接抛错，绝不能再把 apiKey 赋值给
+    // env.OPENAI_API_KEY / env.CODEX_API_KEY。
+    expect(SRC).not.toContain('env.OPENAI_API_KEY = apiKey');
+    expect(SRC).not.toContain('env.CODEX_API_KEY = apiKey');
   });
 });
 

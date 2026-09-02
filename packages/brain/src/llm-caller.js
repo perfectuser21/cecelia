@@ -587,7 +587,7 @@ let _codexTeamIndex = 0;
 /**
  * 获取下一个可用的 Codex team 账号 HOME 路径（round-robin）
  * 检查 auth.json 存在且 tokens 字段有值（OAuth 登录状态）
- * 若无可用 team 账号，返回 null（fallback 到 API key）
+ * 若无可用 team 账号，返回 null（调用方直接抛错，不再 fallback 到 API key 计费）
  */
 function getNextCodexTeamHome() {
   for (let i = 0; i < CODEX_TEAM_HOMES.length; i++) {
@@ -609,7 +609,8 @@ function getNextCodexTeamHome() {
 /**
  * 通过 codex exec 无头调用 Codex（走 OAuth 订阅账号，不消耗 API 额度）
  * model ID 格式: "codex/<model-name>"，传给 -m 时去掉前缀
- * 优先使用 ~/.codex-teamX OAuth 账号（CODEX_HOME），fallback 到 API key
+ * 只使用 ~/.codex-teamX OAuth 账号（CODEX_HOME）；全部账号掉线时直接抛错，
+ * 禁止 fallback 到 API key 计费调用
  */
 async function callCodexHeadless(prompt, model, options = {}) {
   const timeout = options.timeout || 120000;
@@ -618,21 +619,20 @@ async function callCodexHeadless(prompt, model, options = {}) {
 
   // 优先用 OAuth team 账号（走订阅，不消耗 API 额度）
   const teamHome = getNextCodexTeamHome();
-  const env = { ...process.env };
-  if (teamHome) {
-    env.CODEX_HOME = teamHome;
-    // 删除 API key，确保走 OAuth 而非直接计费
-    delete env.OPENAI_API_KEY;
-    delete env.CODEX_API_KEY;
-    console.log(`[llm-caller] codex 使用 OAuth team 账号: ${teamHome}`);
-  } else {
-    // fallback：无 team 账号时用 API key
-    const apiKey = getOpenAIKey();
-    if (!apiKey) throw new Error('Codex: 无可用 OAuth team 账号，且 OpenAI API key 不存在');
-    env.OPENAI_API_KEY = apiKey;
-    env.CODEX_API_KEY = apiKey;
-    console.warn('[llm-caller] codex 无可用 OAuth team 账号，fallback 到 API key');
+  if (!teamHome) {
+    // 2026-09-02：曾经这里会 fallback 到 OPENAI_API_KEY 直接计费调用 Codex，
+    // 在 team 账号掉线期间静默烧掉约 24 美元且无任何告警。禁止这条路径——
+    // 直接失败，交给 callLLM() 既有的 anthropic-api 紧急兜底机制接管。
+    throw new Error(
+      'Codex: 无可用 OAuth team 账号（team1/team2 全部掉线），已禁止 fallback 到 API Key 计费，请检查 codex 账号登录状态'
+    );
   }
+  const env = { ...process.env };
+  env.CODEX_HOME = teamHome;
+  // 删除 API key，确保走 OAuth 而非直接计费
+  delete env.OPENAI_API_KEY;
+  delete env.CODEX_API_KEY;
+  console.log(`[llm-caller] codex 使用 OAuth team 账号: ${teamHome}`);
 
   return new Promise((resolve, reject) => {
     // --skip-git-repo-check: brain 进程 cwd 不是 git 仓库（容器内 /app），
