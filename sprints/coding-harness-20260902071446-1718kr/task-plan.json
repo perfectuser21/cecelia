@@ -1,0 +1,22 @@
+{
+  "initiative_id": "305d6290-4bd7-4ca5-94e4-e46a624f6b98",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是内部 API 的静态中文使用说明，无 UI 操作或真实派发。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增一页中文说明，准确覆盖端点与鉴权、九项角色、payload 字段及失败回滚。",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 对四节内容、封闭角色枚举和负向字段语义全部通过",
+        "[ARTIFACT] 相对 implementation baseline 排除 sprint 合同目录后只新增 docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
