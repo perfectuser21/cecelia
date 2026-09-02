@@ -8,13 +8,13 @@
 
 
 
-**Brain 版本**: 1.273.171
+**Brain 版本**: 1.273.172
 
 ## Brain 1.273.171 — 关闭 Codex OAuth 掉线时静默 fallback 到 API Key 计费
 
 `llm-caller.js` 的 `callCodexHeadless()`：两个 Codex OAuth team 账号全部不可用时，此前会静默改用 `OPENAI_API_KEY` 直接按量计费调用 Codex CLI，曾在生产环境静默烧掉约 24 美元且无任何告警。现改为直接抛错，交给 `callLLM()` 既有的 anthropic-api 紧急兜底机制接管（该机制未改动）。排查 AFFiNE AI 故障时顺带发现，决策 `7cecc252`。
 
-## Brain 1.273.171 — generator 强制共享 run（第 69 批，决策 d2de68fb）
+## Brain 1.273.172 — generator 强制共享 run（第 69 批，决策 d2de68fb）
 
 - `routes/harness-attempt-run.js`：generator/generator-fix 角色无条件建 `v4-bridge-shared` run（候选保留工作区活到 judge）——keep_open 旗标依赖物理消除（金丝雀 #31/#36 两次死于 Worker 忘带；止损评估方案 A）。
 
