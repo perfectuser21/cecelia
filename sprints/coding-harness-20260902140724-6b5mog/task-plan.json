@@ -1,0 +1,24 @@
+{
+  "initiative_id": "ea61a16d-15f4-4dcb-bd45-23e5e9476df3",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是仓库内 Harness API 中文使用说明，无 UI 或运行时行为变更",
+  "task_request_hash": "83916a00537fa91361e9226d897605f62da559f9c65f04cdac3badec865baf81",
+  "implementation_baseline": "d32b864de5adf8d3083c91f31ed3f5f7f58be985",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增一页中文说明，覆盖端点、鉴权、九项角色、payload 与派发失败回滚",
+      "dod": [
+        "[BEHAVIOR] 四类正负 oracle 验证说明语义完整且无误导",
+        "[ARTIFACT] canonical 非 sprint 变更集合仅含 docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
