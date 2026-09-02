@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.172
+**Brain 版本**: 1.273.173
+
+## Brain 1.273.173 — 桥接从封印表装回合同产物（第 70 批）
+
+- `routes/harness-attempt-run.js`：generator/generator-fix/evaluator/judge 派发带 `contract_id` 时，从 `initiative_contract_artifacts` 装回全套产物到 `observed.contract.artifacts`——金丝雀 #37 实证：bundle 缺 contract-draft/dod 正文时 generator 按 CONTRACT IS LAW 正确拒绝（needs_context FROZEN_CONTRACT_ARTIFACTS_MISSING）。
 
 ## Brain 1.273.172 — generator 强制共享 run（第 69 批，决策 d2de68fb）
 

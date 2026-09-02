@@ -255,6 +255,20 @@ export function createHarnessAttemptRunRouter({
         });
       }
 
+      // 第 70 批（金丝雀 #37 案卷）：seal 已把合同产物封进 initiative_contract_artifacts，
+      // generator/evaluator/judge 的 bundle 需要全套（contract-draft/dod 正文）——按
+      // contract_id 从封印表装回 observed.contract.artifacts（CONTRACT IS LAW 的供给侧）。
+      let contractArtifacts;
+      if (typeof cleanPayload.contract_id === 'string' && cleanPayload.contract_id
+        && ['generator', 'generator-fix', 'evaluator', 'judge'].includes(role)) {
+        const { rows: artifactRows } = await pool.query(
+          `SELECT path, content, sha256, byte_length, source_revision
+             FROM initiative_contract_artifacts WHERE contract_id = $1::uuid ORDER BY path`,
+          [cleanPayload.contract_id],
+        );
+        if (artifactRows.length > 0) contractArtifacts = artifactRows;
+      }
+
       // 第 65 批：judge 派发要求 observed 里有与合同身份逐位一致的 evaluator 权威
       //（dispatcher judge_evaluator_authority_mismatch 闸，judge 预演实证）。桥接按
       // evaluate_attempt_id 查 attempt、按 contract_id 查封印表组 identity。
@@ -319,6 +333,7 @@ export function createHarnessAttemptRunRouter({
           contract: (typeof cleanPayload.contract_id === 'string' && cleanPayload.contract_id)
             ? {
               approved: true,
+              ...(contractArtifacts ? { artifacts: contractArtifacts } : {}),
               ...(judgeAuthority?.identity ? { identity: judgeAuthority.identity } : {}),
               row: {
                 id: cleanPayload.contract_id,
