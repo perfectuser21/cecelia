@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.171
+**Brain 版本**: 1.273.172
+
+## Brain 1.273.172 — generator 强制共享 run（第 69 批，决策 d2de68fb）
+
+- `routes/harness-attempt-run.js`：generator/generator-fix 角色无条件建 `v4-bridge-shared` run（候选保留工作区活到 judge）——keep_open 旗标依赖物理消除（金丝雀 #31/#36 两次死于 Worker 忘带；止损评估方案 A）。
 
 ## Brain 1.273.171 — 关闭 Codex OAuth 掉线时静默 fallback 到 API Key 计费
 

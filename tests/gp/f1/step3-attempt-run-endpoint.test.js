@@ -627,6 +627,31 @@ describe('第56批：角色续接字段透传', () => {
   });
 });
 
+// 第 69 批（决策 d2de68fb，止损评估方案A）：金丝雀 #31/#36 两次死于「Worker 忘带
+// keep_open」——旗标依赖物理消除：generator/generator-fix 角色无条件建共享 run
+//（候选保留工作区必须活到 judge），不看 payload 有没有旗标。
+describe('第69批：generator 强制共享 run', () => {
+  it('generator 不带 keep_open 也建 v4-bridge-shared run', async () => {
+    const { app, sqls } = makeApp();
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'generator', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    expect(res.status).toBe(202);
+    const runInsert = sqls.find(([sql]) => /INSERT INTO initiative_runs/.test(sql));
+    expect(runInsert[1]).toContain('v4-bridge-shared');
+  });
+
+  it('canary/planner 等普通角色不受影响，仍建 v4-bridge', async () => {
+    const { app, sqls } = makeApp();
+    await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'planner', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    const runInsert = sqls.find(([sql]) => /INSERT INTO initiative_runs/.test(sql));
+    expect(runInsert[1]).toContain('v4-bridge');
+    expect(runInsert[1]).not.toContain('v4-bridge-shared');
+  });
+});
+
 describe('第54批：桥接 run 生命周期', () => {
   it('keep_open:true → run 建成 orchestrator_host=v4-bridge-shared（GET 自动收尾不会碰它）', async () => {
     const { app, sqls } = makeApp();
