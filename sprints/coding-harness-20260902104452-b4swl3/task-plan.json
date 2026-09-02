@@ -1,0 +1,23 @@
+{
+  "initiative_id": "08c485b7-94ec-4af8-b5dc-ac19b28e52b6",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是 Brain 内部 attempt-run API 的静态中文使用说明，无 UI 或运行时代码变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接中文使用说明",
+      "scope": "仅新增 docs/current/attempt-run-bridge-guide.md，覆盖冻结 PRD 的端点用途、鉴权、九项角色、payload 与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 合同验证文档全部语义并通过",
+        "[BEHAVIOR] 相对基线 48f6fae42a05d9ecb3e32cd5354b2ba94bf591a3 的 canonical diff 排除 Sprint 合同后仅含目标文档",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 为新增中文文档"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
