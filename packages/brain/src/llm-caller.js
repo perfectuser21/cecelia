@@ -587,7 +587,7 @@ let _codexTeamIndex = 0;
 /**
  * 获取下一个可用的 Codex team 账号 HOME 路径（round-robin）
  * 检查 auth.json 存在且 tokens 字段有值（OAuth 登录状态）
- * 若无可用 team 账号，返回 null（fallback 到 API key）
+ * 若无可用 team 账号，返回 null（调用方直接抛错，不再 fallback 到 API key 计费）
  */
 function getNextCodexTeamHome() {
   for (let i = 0; i < CODEX_TEAM_HOMES.length; i++) {
@@ -609,7 +609,8 @@ function getNextCodexTeamHome() {
 /**
  * 通过 codex exec 无头调用 Codex（走 OAuth 订阅账号，不消耗 API 额度）
  * model ID 格式: "codex/<model-name>"，传给 -m 时去掉前缀
- * 优先使用 ~/.codex-teamX OAuth 账号（CODEX_HOME），fallback 到 API key
+ * 只使用 ~/.codex-teamX OAuth 账号（CODEX_HOME）；全部账号掉线时直接抛错，
+ * 禁止 fallback 到 API key 计费调用
  */
 async function callCodexHeadless(prompt, model, options = {}) {
   const timeout = options.timeout || 120000;
