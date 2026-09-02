@@ -1,0 +1,23 @@
+{
+  "initiative_id": "3ebe6cce-cc9b-4b47-b71c-b852b973940d",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是仓库内的 Brain attempt-run API 中文使用说明，不包含 UI 交互。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增一页中文说明，准确覆盖端点、鉴权、九项角色、payload 与失败回滚语义。",
+      "dod": [
+        "[BEHAVIOR] 冻结测试逐字验证四节内容与封闭九项角色集合",
+        "[BEHAVIOR] canonical 全仓 diff 相对冻结基线仅包含目标说明页",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
