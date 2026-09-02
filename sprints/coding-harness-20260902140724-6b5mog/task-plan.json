@@ -1,0 +1,23 @@
+{
+  "initiative_id": "e94bcb54-e996-4097-83aa-d0acacc98c80",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是 Cecelia 内部 Harness API 的静态中文使用说明",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅新增 docs/current/attempt-run-bridge-guide.md，覆盖两个端点与鉴权、九项角色、payload 字段和派发失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结测试验证文档四节内容及正负 oracle",
+        "[BEHAVIOR] 相对 d32b864de5adf8d3083c91f31ed3f5f7f58be985 的产品差异仅为指定文档",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
