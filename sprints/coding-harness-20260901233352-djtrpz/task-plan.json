@@ -1,0 +1,22 @@
+{
+  "initiative_id": "none",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是既有 Harness API 的中文使用说明，不改变运行时行为",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅新增 docs/current/attempt-run-bridge-guide.md，准确说明两个端点、鉴权边界、九项角色、payload 必填性与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 的四个章节级用例全部通过，矛盾表述负向 oracle 生效",
+        "[ARTIFACT] 产品 diff 精确等于 docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
