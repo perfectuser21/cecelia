@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.171
+**Brain 版本**: 1.273.172
 
 ## Brain 1.273.171 — 关闭 Codex OAuth 掉线时静默 fallback 到 API Key 计费
 
