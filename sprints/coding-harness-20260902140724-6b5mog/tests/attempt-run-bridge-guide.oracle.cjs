@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const TASK_REQUEST_HASH = '83916a00537fa91361e9226d897605f62da559f9c65f04cdac3badec865baf81';
 const IMPLEMENTATION_BASELINE = 'd32b864de5adf8d3083c91f31ed3f5f7f58be985';
 const docPath = 'docs/current/attempt-run-bridge-guide.md';
-const text = fs.readFileSync(docPath, 'utf8');
+let text;
 const mode = process.argv[2];
 
 function demand(condition, message) {
@@ -12,6 +12,7 @@ function demand(condition, message) {
 }
 
 function section(title) {
+  text ??= fs.readFileSync(docPath, 'utf8');
   const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const match = text.match(new RegExp(`^## ${escaped}\\s*$([\\s\\S]*?)(?=^## |\\Z)`, 'm'));
   demand(match, `缺少章节：${title}`);
@@ -42,6 +43,24 @@ if (mode === 'endpoints-auth') {
   const s = section('派发失败自动回滚');
   for (const pair of [['run','failed'], ['session','closed'], ['task','cancelled']]) demand(new RegExp(`${pair[0]}\\s*(?:→|->)\\s*${pair[1]}`).test(s), `缺回滚映射 ${pair.join('→')}`);
   demand(/自动/.test(s), '未说明自动回滚');
+} else if (mode === 'manager-feedback') {
+  const sprintDir = 'sprints/coding-harness-20260902140724-6b5mog';
+  const draft = fs.readFileSync(`${sprintDir}/contract-draft.md`, 'utf8');
+  const dod = fs.readFileSync(`${sprintDir}/contract-dod.md`, 'utf8');
+  const carrier = fs.readFileSync(`${sprintDir}/tests/attempt-run-bridge-guide.test.ts`, 'utf8');
+  for (const artifact of [draft, dod, carrier]) demand(artifact.includes(TASK_REQUEST_HASH), '三件套载体缺冻结 task_request_hash');
+  demand(draft.includes('source_stage_attempt: 2'), '缺 source_stage_attempt=2');
+  demand(draft.includes('source_idempotency_key: coding-harness-20260902140724-6b5mog:a1:contract:2'), '缺 source_idempotency_key');
+  demand(draft.includes('unresolved: []'), '缺 unresolved=[]');
+  const fixes = [
+    'Exact frozen task_request_hash inside contract-draft.md, contract-dod.md, and Test Contract carrier',
+    'Pair every positive oracle one-to-one with a concrete negative oracle',
+    'Fresh reviewer APPROVED with blockers empty',
+    'Complete seal_coordinates from approved SHA',
+  ];
+  for (const fix of fixes) demand(draft.includes(fix), `缺 fresh evidence 修正项: ${fix}`);
+  demand(draft.includes('oracle.cjs manager-feedback'), '缺 manager feedback DoD/Test Contract 执行入口');
+  demand(dod.includes('source_stage_attempt=2') && dod.includes('unresolved=[]'), 'DoD 缺精确 manager feedback ack');
 } else {
   throw new Error(`未知 oracle: ${mode}; frozen=${TASK_REQUEST_HASH}; baseline=${IMPLEMENTATION_BASELINE}`);
 }

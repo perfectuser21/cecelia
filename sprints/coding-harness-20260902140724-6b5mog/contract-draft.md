@@ -1,7 +1,24 @@
-# Sprint Contract Draft (Round 1)
+# Sprint Contract Draft (Round 3)
 
 task_request_hash: `83916a00537fa91361e9226d897605f62da559f9c65f04cdac3badec865baf81`
 implementation_baseline: `d32b864de5adf8d3083c91f31ed3f5f7f58be985`
+
+## manager_feedback_ack
+
+```yaml
+source_stage_attempt: 2
+source_idempotency_key: coding-harness-20260902140724-6b5mog:a1:contract:2
+unresolved: []
+```
+
+| 修正项 | 本轮 fresh evidence | 执行入口 |
+|---|---|---|
+| Exact frozen task_request_hash inside contract-draft.md, contract-dod.md, and Test Contract carrier | 三个冻结载体均逐字写入 `83916a00537fa91361e9226d897605f62da559f9c65f04cdac3badec865baf81` | `node sprints/coding-harness-20260902140724-6b5mog/tests/attempt-run-bridge-guide.oracle.cjs manager-feedback` |
+| Pair every positive oracle one-to-one with a concrete negative oracle | 冻结测试的五个 `it()` 分别核验端点/鉴权、角色、payload、回滚、manager feedback；各 oracle 同时包含正向命中与反向排除 | `npx vitest run sprints/coding-harness-20260902140724-6b5mog/tests/attempt-run-bridge-guide.test.ts --reporter=verbose` |
+| Fresh reviewer APPROVED with blockers empty | 本轮合同只登记验收要求，不预造 reviewer 结论；Reviewer 必须针对本轮 `contract_sha` 产出 `APPROVED` 且 `blockers=[]` 的新证据 | Reviewer 对本轮提交执行 contract review，并以本轮 `contract_sha` 为证据锚点 |
+| Complete seal_coordinates from approved SHA | 封印坐标必须在 Reviewer 批准后从同一个 approved SHA 生成，禁止复用 attempt 2 坐标 | approval gate 以本轮 approved SHA 生成并核验完整 `seal_coordinates` |
+
+以上四项均属于本轮新鲜证据要求；后两项是后续角色产物，未产生前不得宣称已满足。
 
 ## Response Schema（推导来源: PRD字面）
 
@@ -132,7 +149,8 @@ echo "OK: attempt-run 桥接说明与 canonical 范围验收通过"
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 桥接说明完整性与范围 | `sprints/coding-harness-20260902140724-6b5mog/tests/attempt-run-bridge-guide.test.ts` | `两个端点与鉴权规则正负 oracle 配对`、`角色白名单恰好九项且排除非白名单角色`、`payload 必填与 base_sha 可选正负 oracle 配对`、`派发失败回滚三对象终态完整` | 目标文档尚不存在，4 tests fail |
+| 桥接说明完整性与范围 | `sprints/coding-harness-20260902140724-6b5mog/tests/attempt-run-bridge-guide.test.ts` | `两个端点与鉴权规则正负 oracle 配对`、`角色白名单恰好九项且排除非白名单角色`、`payload 必填与 base_sha 可选正负 oracle 配对`、`派发失败回滚三对象终态完整` | 目标文档尚不存在，4 tests fail；manager feedback 合同自检通过 |
+| manager feedback 可机械确认 | `sprints/coding-harness-20260902140724-6b5mog/tests/attempt-run-bridge-guide.test.ts` | `manager feedback ack 与四项 fresh evidence 执行入口完整` | 缺任一精确 ack 字段、四项登记或执行入口时 test fail |
 
 ## 探索提示（L3 探索层 — evaluator 剧本全过后执行）
 

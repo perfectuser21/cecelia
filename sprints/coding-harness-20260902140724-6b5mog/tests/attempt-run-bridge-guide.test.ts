@@ -14,4 +14,5 @@ describe(`attempt-run 桥接说明 [BEHAVIOR] ${TASK_REQUEST_HASH.slice(0, 8)} $
   it('角色白名单恰好九项且排除非白名单角色', () => expect(run('roles')).toContain('OK roles'));
   it('payload 必填与 base_sha 可选正负 oracle 配对', () => expect(run('payload')).toContain('OK payload'));
   it('派发失败回滚三对象终态完整', () => expect(run('rollback')).toContain('OK rollback'));
+  it('manager feedback ack 与四项 fresh evidence 执行入口完整', () => expect(run('manager-feedback')).toContain('OK manager-feedback'));
 });

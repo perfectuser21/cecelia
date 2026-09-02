@@ -7,6 +7,8 @@ journey_type: autonomous
 task_request_hash: `83916a00537fa91361e9226d897605f62da559f9c65f04cdac3badec865baf81`
 implementation_baseline: `d32b864de5adf8d3083c91f31ed3f5f7f58be985`
 
+manager_feedback_ack: `source_stage_attempt=2; source_idempotency_key=coding-harness-20260902140724-6b5mog:a1:contract:2; unresolved=[]`
+
 **范围**: 仅新增 `docs/current/attempt-run-bridge-guide.md`，不改代码或其他文档。
 **大小**: S
 
@@ -16,6 +18,8 @@ implementation_baseline: `d32b864de5adf8d3083c91f31ed3f5f7f58be985`
   Test: node -e "const fs=require('fs');const p='docs/current/attempt-run-bridge-guide.md';const s=fs.readFileSync(p,'utf8');if(!/[一-龥]/.test(s))process.exit(1)"
 - [ ] [ARTIFACT] canonical 非 sprint 变更集合严格等于唯一目标文档
   Test: BASE_SHA=d32b864de5adf8d3083c91f31ed3f5f7f58be985 bash -c 'ACTUAL=$(git diff --name-only "$BASE_SHA"...HEAD | grep -v "^sprints/coding-harness-20260902140724-6b5mog/" | sort); [ "$ACTUAL" = "docs/current/attempt-run-bridge-guide.md" ]'
+- [ ] [ARTIFACT] manager feedback ack 精确写入且四项 fresh evidence 有执行入口
+  Test: node sprints/coding-harness-20260902140724-6b5mog/tests/attempt-run-bridge-guide.oracle.cjs manager-feedback
 
 ## BEHAVIOR 条目
 
@@ -53,6 +57,13 @@ implementation_baseline: `d32b864de5adf8d3083c91f31ed3f5f7f58be985`
   等待预算: 0s
   留证: 四条 oracle 的 OK stdout
   Test: manual:bash -c 'for x in endpoints-auth roles payload rollback; do node sprints/coding-harness-20260902140724-6b5mog/tests/attempt-run-bridge-guide.oracle.cjs "$x"; done'
+
+- [ ] [BEHAVIOR] [L2] B-05: manager feedback ack 与四项 fresh evidence 可机械核验
+  动作: 执行 manager-feedback oracle 读取本轮合同、DoD 与冻结 Test Contract carrier
+  预期观察: 精确确认 source_stage_attempt=2、指定 source_idempotency_key、unresolved=[]，并找到四项修正的本轮证据及执行入口
+  等待预算: 0s
+  留证: oracle stdout 中的 `OK manager-feedback`
+  Test: manual:bash -c 'node sprints/coding-harness-20260902140724-6b5mog/tests/attempt-run-bridge-guide.oracle.cjs manager-feedback'
 
 ### 其余 Invariant 映射
 
