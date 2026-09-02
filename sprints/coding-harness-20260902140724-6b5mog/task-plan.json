@@ -1,0 +1,22 @@
+{
+  "initiative_id": "e7574647-5768-4dd3-aa34-9b7b37832c15",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付 Cecelia 内部 Harness API 的静态中文使用说明，不涉及 UI 或远端 Agent 行为变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增一页中文说明，准确覆盖两个端点、鉴权、九项角色、payload 和派发失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 对四个 Golden Path 内容段及基线范围 oracle 全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在且为中文"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
