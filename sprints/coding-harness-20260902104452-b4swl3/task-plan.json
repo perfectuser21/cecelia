@@ -1,0 +1,23 @@
+{
+  "initiative_id": "9951eda1-a864-4847-b133-babaa04812fa",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物为 Brain 内部桥接 API 的静态中文使用说明",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增一页中文说明，准确覆盖冻结 PRD 的四类契约内容",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 合同对端点、鉴权、九角色、payload 与回滚的正反 oracle 全通过",
+        "[BEHAVIOR] 相对实现基线 48f6fae42a05d9ecb3e32cd5354b2ba94bf591a3 的 canonical diff 仅新增目标说明页",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
