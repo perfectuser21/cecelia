@@ -6,23 +6,34 @@ const GUIDE = resolve(process.cwd(), 'docs/current/attempt-run-bridge-guide.md')
 const readGuide = () => readFileSync(GUIDE, 'utf8');
 
 describe('attempt-run 桥接使用说明 [BEHAVIOR]', () => {
-  it('POST 创建与 GET 状态查询给出可执行语义 oracle', () => {
+  it('POST 返回 202 LAUNCHED 与非空 IDs，GET 覆盖六项终态和 404 失败语义', () => {
     const text = readGuide();
-    expect(text).toContain('POST /api/brain/harness/attempt-run');
-    expect(text).toContain('HTTP 202');
-    expect(text).toMatch(/\.status\s*==\s*"LAUNCHED"/);
-    expect(text).toContain('GET /api/brain/harness/attempt-run/:id');
-    expect(text).toMatch(/\.id\s*==\s*\$id/);
-    expect(text).toMatch(/completed_with_concerns/);
+    const post = text.match(/## POST \/api\/brain\/harness\/attempt-run([\s\S]*?)(?=\n## )/)?.[1] ?? '';
+    expect(post).toContain('HTTP 202');
+    expect(post).toMatch(/\.status\s*==\s*"LAUNCHED"/);
+    expect(post).toMatch(/\.run_id\s*\|\s*(length\s*>\s*0|strings)/);
+    expect(post).toMatch(/\.attempt_id\s*\|\s*(length\s*>\s*0|strings)/);
+
+    const get = text.match(/## GET \/api\/brain\/harness\/attempt-run\/:id([\s\S]*?)(?=\n## )/)?.[1] ?? '';
+    expect(get).toMatch(/\.id\s*==\s*\$id/);
+    for (const status of ['completed', 'completed_with_concerns', 'failed', 'cancelled', 'blocked', 'needs_context']) {
+      expect(get).toContain(status);
+    }
+    expect(get).toContain('HTTP 404');
+    expect(get).toContain('attempt_not_found');
+    expect(get).toMatch(/404[^\n]*(失败|FAIL)|失败[^\n]*404/i);
   });
 
   it('鉴权区分 loopback 与宿主远端且不泄露令牌', () => {
     const text = readGuide();
-    expect(text).toContain('internalAuthOrLoopback');
-    expect(text).toContain('Authorization: Bearer <CECELIA_INTERNAL_TOKEN>');
-    expect(text).toMatch(/loopback[\s\S]*无需/);
-    expect(text).toMatch(/宿主|远端/);
-    expect(text).not.toMatch(/CECELIA_INTERNAL_TOKEN\s*=\s*[^<\s`$][^\s`]*/);
+    const section = text.match(/## 鉴权方式([\s\S]*?)(?=\n## )/)?.[1] ?? '';
+    for (const endpoint of ['POST /api/brain/harness/attempt-run', 'GET /api/brain/harness/attempt-run/:id']) {
+      expect(section).toMatch(new RegExp(endpoint.replace(/[/:]/g, '\\$&') + '[^\\n]*internalAuthOrLoopback'));
+    }
+    expect(section).toContain('Authorization: Bearer <CECELIA_INTERNAL_TOKEN>');
+    expect(section).toMatch(/loopback[\s\S]*无需/);
+    expect(section).toMatch(/宿主|远端/);
+    expect(section).not.toMatch(/CECELIA_INTERNAL_TOKEN\s*=\s*[^<\s`$][^\s`]*/);
   });
 
   it('角色白名单逐项列出九项角色', () => {

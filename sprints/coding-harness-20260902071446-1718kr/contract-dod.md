@@ -14,16 +14,16 @@ journey_type: autonomous
 
 ## BEHAVIOR 条目
 
-- [ ] [BEHAVIOR] [L1] B-01: POST 创建与 GET 状态查询给出可执行语义 oracle
+- [ ] [BEHAVIOR] [L1] B-01: POST 返回 202 LAUNCHED 与非空 IDs，GET 覆盖六项终态和 404 失败语义
   动作: 阅读 POST 示例及其 HTTP 202/LAUNCHED/ID 断言，再阅读 GET 轮询示例
-  预期观察: POST 成功条件可机检，GET 使用 attempt_id 且明确成功终态与 404 失败语义
+  预期观察: POST 同时校验 HTTP 202、LAUNCHED、非空 run_id/attempt_id；GET 使用 attempt_id，明列六项终态，并把 HTTP 404 + attempt_not_found 判为失败
   等待预算: 0s
   留证: Vitest 定向测试输出
-  Test: manual:bash -c 'npx vitest run --no-cache sprints/coding-harness-20260902071446-1718kr/tests/attempt-run-bridge-guide.test.ts -t "POST 创建与 GET 状态查询给出可执行语义 oracle"'
+  Test: manual:bash -c 'npx vitest run --no-cache sprints/coding-harness-20260902071446-1718kr/tests/attempt-run-bridge-guide.test.ts -t "POST 返回 202 LAUNCHED 与非空 IDs，GET 覆盖六项终态和 404 失败语义"'
 
 - [ ] [BEHAVIOR] [L1] B-02: 鉴权区分 loopback 与宿主远端且不泄露令牌
   动作: 阅读鉴权章节并比较本机 loopback 与宿主/远端请求要求
-  预期观察: 两端点标明 internalAuthOrLoopback，远端带 Bearer 占位符且无真实 token
+  预期观察: POST 与 GET 各自标明 internalAuthOrLoopback，远端带 Bearer 占位符且无真实 token
   等待预算: 0s
   留证: Vitest 定向测试输出
   Test: manual:bash -c 'npx vitest run --no-cache sprints/coding-harness-20260902071446-1718kr/tests/attempt-run-bridge-guide.test.ts -t "鉴权区分 loopback 与宿主远端且不泄露令牌"'
