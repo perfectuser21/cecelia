@@ -1,0 +1,21 @@
+{
+  "initiative_id": "9951eda1-a864-4847-b133-babaa04812fa",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物为 Brain 内部 API 的静态中文使用说明",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增一页中文说明，覆盖端点鉴权、九项角色、payload 与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 四项文档内容冻结测试全部通过",
+        "[BEHAVIOR] 冻结 BASE_SHA 范围 oracle 仅返回目标文档",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在"
+      ],
+      "files": ["docs/current/attempt-run-bridge-guide.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
