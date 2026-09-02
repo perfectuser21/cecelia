@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.168
+**Brain 版本**: 1.273.169
+
+## Brain 1.273.169 — merge-pr 薄端点：执行已获人审批准的合并（第 67 批，决策 3d7d64e1）
+
+- `routes/harness-attempt-run.js`：新增 `POST /api/brain/harness/attempt-run/merge-pr`。公章语义不变：人审卡片=批准，端点=执行已批决定。防线：①PR 当前头===head_sha（批哪个头合哪个头，409 merge_head_mismatch）②merge 带 sha 双保险 ③只合 cp-*→main ④幂等（已合并返回既有）。此类 PR 在 CI auto-merge 豁免名单内，本端点为唯一合并路径。
 
 ## Brain 1.273.168 — publish-pr 薄端点：V4 publish 阶段工具面（第 66 批）
 

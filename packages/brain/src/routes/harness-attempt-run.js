@@ -474,6 +474,60 @@ export function createHarnessAttemptRunRouter({
     }
   });
 
+  // 第 67 批（决策 3d7d64e1，封版唯一例外）：执行已获人审批准的合并。公章语义：
+  // Alex 点人审卡片=批准，本端点=执行已批决定（画布只有人审通过才到 merge 格；
+  // 这类 PR 标题在 CI auto-merge 豁免名单里，本端点是全系统唯一合并路径）。
+  // 防线：①PR 当前头===head_sha（批哪个头合哪个头）②merge 带 sha 双保险
+  // ③只合 cp-*→main ④幂等。
+  router.post('/attempt-run/merge-pr', internalAuthOrLoopback, async (req, res) => {
+    try {
+      const body = req.body ?? {};
+      const repo = typeof body.repo === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(body.repo)
+        ? body.repo : 'perfectuser21/cecelia';
+      const prNumber = body.pr_number;
+      const headSha = String(body.head_sha ?? '');
+      if (!Number.isInteger(prNumber) || prNumber < 1) return res.status(400).json({ error: 'pr_number_invalid' });
+      if (!SHA40.test(headSha)) return res.status(400).json({ error: 'head_sha_invalid' });
+      const { resolveToken, fetchFn } = await getPublishDeps();
+      const token = await resolveToken();
+      const gh = (url, opts = {}) => fetchFn(`https://api.github.com/repos/${repo}${url}`, {
+        ...opts,
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${token}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        signal: AbortSignal.timeout(20_000),
+      });
+      const prResp = await gh(`/pulls/${prNumber}`);
+      if (!prResp.ok) return res.status(409).json({ error: 'merge_pr_unavailable', status: prResp.status });
+      const pr = await prResp.json();
+      if (pr.merged === true) {
+        return res.json({ ok: true, merged: true, existing: true, merge_commit_sha: pr.merge_commit_sha ?? null });
+      }
+      if (pr.state !== 'open') return res.status(409).json({ error: 'merge_pr_not_open', state: pr.state });
+      if (pr.base?.ref !== 'main' || !String(pr.head?.ref ?? '').startsWith('cp-')) {
+        return res.status(409).json({ error: 'merge_branch_not_allowed', head: pr.head?.ref, base: pr.base?.ref });
+      }
+      if (pr.head?.sha !== headSha) {
+        return res.status(409).json({ error: 'merge_head_mismatch', current_head: pr.head?.sha, approved_head: headSha });
+      }
+      const mergeResp = await gh(`/pulls/${prNumber}/merge`, {
+        method: 'PUT',
+        body: JSON.stringify({ merge_method: 'squash', sha: headSha }),
+      });
+      if (!mergeResp.ok) {
+        return res.status(mergeResp.status === 405 || mergeResp.status === 409 ? 409 : 502)
+          .json({ error: 'merge_failed', status: mergeResp.status });
+      }
+      const merged = await mergeResp.json();
+      return res.json({ ok: true, merged: merged.merged === true, merge_commit_sha: merged.sha ?? null });
+    } catch (error) {
+      return res.status(500).json({ error: 'merge_pr_failed', detail: String(error?.message ?? error) });
+    }
+  });
+
   // 第 54 批：显式收尾口——共享 run（keep_open）由调用方在阶段结束时关闭；普通 run 也可提前关。
   router.post('/attempt-run/close', internalAuthOrLoopback, async (req, res) => {
     try {
