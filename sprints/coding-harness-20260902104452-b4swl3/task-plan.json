@@ -1,0 +1,20 @@
+{
+  "initiative_id": "bd9e360a-b728-4b7b-b476-9d9cefe850ad",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是 Brain 内部 attempt-run API 的静态中文使用说明",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增一页中文说明，覆盖冻结合同的四类内容",
+      "dod": [
+        "[BEHAVIOR] 四个独立章节通过冻结 Vitest 正负断言",
+        "[ARTIFACT] 实现 diff 仅含 docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": ["docs/current/attempt-run-bridge-guide.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
