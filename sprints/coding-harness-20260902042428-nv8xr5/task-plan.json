@@ -1,0 +1,22 @@
+{
+  "initiative_id": "2a748f96-af3f-44b1-9f23-5230152d6863",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅新增 Harness attempt-run 后端接口的中文静态说明，无 UI 或真实端点调用",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接中文使用说明",
+      "scope": "仅在 docs/current/ 新增一页中文说明，覆盖端点用途、鉴权、九项角色白名单、payload 与派发失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 验证文档完整覆盖四类必需内容",
+        "[ARTIFACT] docs/current/attempt-run-bridge-usage.md 是唯一非 sprint 合同变更"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-usage.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
