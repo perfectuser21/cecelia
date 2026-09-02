@@ -94,7 +94,7 @@ test -f docs/current/attempt-run-bridge-guide.md && grep -q 'attempt-run 桥接�
 
 **验证命令**:
 ```bash
-npx vitest run --no-cache sprints/coding-harness-20260902071446-1718kr/tests/attempt-run-bridge-guide.test.ts -t 'POST 创建与 GET 状态查询给出可执行语义 oracle|鉴权区分 loopback 与宿主远端且不泄露令牌|角色白名单逐项列出九项角色|payload 必填三字段且 base_sha 可省略由生产 Brain 自解析'
+npx vitest run --no-cache sprints/coding-harness-20260902071446-1718kr/tests/attempt-run-bridge-guide.test.ts -t 'POST 返回 202 LAUNCHED 与非空 IDs，GET 覆盖六项终态和 404 失败语义|鉴权区分 loopback 与宿主远端且不泄露令牌|角色白名单逐项列出九项角色|payload 必填三字段且 base_sha 可省略由生产 Brain 自解析'
 ```
 **硬阈值**: 4 个定向测试全部通过；其中 POST 必须校验 HTTP 202、`LAUNCHED`、非空 `run_id`/`attempt_id`，鉴权测试必须逐端点校验 `internalAuthOrLoopback`；命令 exit 0。
 
