@@ -1,0 +1,23 @@
+{
+  "initiative_id": "08c485b7-94ec-4af8-b5dc-ac19b28e52b6",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付为 Brain 内部桥接 API 的静态中文说明，无用户界面或运行时代码变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增一页中文说明，准确记录现有端点、鉴权、角色、payload 与失败回滚契约",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 对四节正文的封闭集合及正负 oracle 全部通过",
+        "[BEHAVIOR] 从固定实现基线执行 canonical git diff 后，实现差异仅为新增目标文档",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在且为中文四节说明"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
