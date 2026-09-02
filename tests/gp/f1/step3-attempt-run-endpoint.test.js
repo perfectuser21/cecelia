@@ -233,6 +233,86 @@ describe('第58批：GET 投影暴露 workspace_base_sha', () => {
 // 第 66 批：V4 publish 阶段工具面。开 PR 是可逆动作可自动，但两条硬规矩：
 // ①开 PR 前必须核对远端分支头===head_sha（防漂移候选被发布）；②幂等（同 head 已有
 // open PR → 返回既有 PR，不重复开）；③绝不启用 auto-merge（merge 公章归人审线）。
+// 第 67 批（决策 3d7d64e1，封版唯一例外）：merge-pr 端点执行已获人审批准的合并。
+// 公章语义：Alex 点人审卡片=批准；端点=执行已批决定（画布只有人审后才到 merge 格）。
+// 防线：①合并前核对 PR 当前头===head_sha（批哪个头合哪个头）②GitHub merge 带 sha 双保险
+// ③只合 cp-*→main ④幂等（已合并返回既有）。
+describe('第67批：POST /attempt-run/merge-pr', () => {
+  const mergeBody = { pr_number: 9, head_sha: 'a'.repeat(40) };
+  function makeMergeApp({ prJson, mergeStatus = 200, mergeJson } = {}) {
+    const calls = [];
+    const fetchFn = vi.fn(async (url, opts = {}) => {
+      calls.push([url, opts.method ?? 'GET', opts.body]);
+      if (/\/pulls\/9$/.test(url)) return { ok: true, status: 200, json: async () => (prJson ?? {
+        state: 'open', merged: false, number: 9,
+        head: { sha: 'a'.repeat(40), ref: 'cp-harness-propose-r1-x' }, base: { ref: 'main' },
+      }) };
+      if (/\/pulls\/9\/merge$/.test(url)) return { ok: mergeStatus === 200, status: mergeStatus, json: async () => (mergeJson ?? { merged: true, sha: 'm'.repeat(40) }) };
+      return { ok: false, status: 500, json: async () => ({}) };
+    });
+    const router = createHarnessAttemptRunRouter({
+      pool: { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) },
+      buildDeps: async () => ({ dispatch: vi.fn() }),
+      attemptStoreFactory: async () => ({ getById: async () => null }),
+      createTaskFn: async () => ({ success: true, task: { id: 'x' } }),
+      publishDepsFactory: async () => ({ resolveToken: async () => 'tok', fetchFn }),
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain/harness', router);
+    return { app, calls };
+  }
+
+  it('happy：头一致 → squash merge（带 sha 双保险）→ 200 merged', async () => {
+    const { app, calls } = makeMergeApp({});
+    const res = await request(app).post('/api/brain/harness/attempt-run/merge-pr').send(mergeBody);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, merged: true });
+    const mergeCall = calls.find(([url, m]) => /\/merge$/.test(url) && m === 'PUT');
+    expect(mergeCall).toBeTruthy();
+    const body = JSON.parse(mergeCall[2]);
+    expect(body).toMatchObject({ merge_method: 'squash', sha: 'a'.repeat(40) });
+  });
+
+  it('防漂移：PR 当前头 ≠ 批准头 → 409 merge_head_mismatch，不合并', async () => {
+    const { app, calls } = makeMergeApp({ prJson: {
+      state: 'open', merged: false, number: 9,
+      head: { sha: 'f'.repeat(40), ref: 'cp-x' }, base: { ref: 'main' },
+    } });
+    const res = await request(app).post('/api/brain/harness/attempt-run/merge-pr').send(mergeBody);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('merge_head_mismatch');
+    expect(calls.some(([url, m]) => /\/merge$/.test(url))).toBe(false);
+  });
+
+  it('防越权：base 非 main 或分支非 cp-* → 409', async () => {
+    const { app } = makeMergeApp({ prJson: {
+      state: 'open', merged: false, number: 9,
+      head: { sha: 'a'.repeat(40), ref: 'feature/x' }, base: { ref: 'main' },
+    } });
+    const res = await request(app).post('/api/brain/harness/attempt-run/merge-pr').send(mergeBody);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('merge_branch_not_allowed');
+  });
+
+  it('幂等：PR 已 merged → 200 existing，不再调 merge', async () => {
+    const { app, calls } = makeMergeApp({ prJson: {
+      state: 'closed', merged: true, number: 9, merge_commit_sha: 'm'.repeat(40),
+      head: { sha: 'a'.repeat(40), ref: 'cp-x' }, base: { ref: 'main' },
+    } });
+    const res = await request(app).post('/api/brain/harness/attempt-run/merge-pr').send(mergeBody);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, merged: true, existing: true });
+    expect(calls.some(([url]) => /\/merge$/.test(url))).toBe(false);
+  });
+
+  it('参数闸：pr_number 非正整数 / head_sha 非 40hex → 400', async () => {
+    const { app } = makeMergeApp({});
+    expect((await request(app).post('/api/brain/harness/attempt-run/merge-pr').send({ pr_number: 0, head_sha: 'a'.repeat(40) })).status).toBe(400);
+    expect((await request(app).post('/api/brain/harness/attempt-run/merge-pr').send({ pr_number: 9, head_sha: 'zzz' })).status).toBe(400);
+  });
+});
+
 describe('第66批：POST /attempt-run/publish-pr', () => {
   const pubBody = {
     branch: 'cp-harness-propose-r1-x', head_sha: 'a'.repeat(40),
