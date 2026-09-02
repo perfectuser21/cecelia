@@ -1,0 +1,23 @@
+{
+  "initiative_id": "e9e94714-c9a9-4649-80b2-d72ba10f0caa",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是 Cecelia 内部 attempt-run API 的中文说明文档，不执行真实派发或 UI 操作",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增中文说明，覆盖端点用途与鉴权、九角色白名单、payload 字段和派发失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结测试逐项验证四节内容与九项角色",
+        "[BEHAVIOR] 相对 implementation baseline 的唯一产品变更是目标文档",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
