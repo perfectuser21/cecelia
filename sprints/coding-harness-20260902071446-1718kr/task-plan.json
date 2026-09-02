@@ -1,0 +1,23 @@
+{
+  "initiative_id": "fa8e1208-57e5-494e-ac6e-91063373aab1",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付为内部 API 的中文静态说明，不执行真实派发或 UI 操作",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅新增 docs/current/attempt-run-bridge-guide.md，完整说明端点、鉴权、九角色、payload 与派发失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结测试验证 POST 创建与 GET 状态查询的可执行语义 oracle",
+        "[BEHAVIOR] 冻结测试验证鉴权、九角色、payload 和三对象失败回滚",
+        "[ARTIFACT] 相对 implementation baseline 的生产差异仅含新文档"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
