@@ -618,21 +618,20 @@ async function callCodexHeadless(prompt, model, options = {}) {
 
   // 优先用 OAuth team 账号（走订阅，不消耗 API 额度）
   const teamHome = getNextCodexTeamHome();
-  const env = { ...process.env };
-  if (teamHome) {
-    env.CODEX_HOME = teamHome;
-    // 删除 API key，确保走 OAuth 而非直接计费
-    delete env.OPENAI_API_KEY;
-    delete env.CODEX_API_KEY;
-    console.log(`[llm-caller] codex 使用 OAuth team 账号: ${teamHome}`);
-  } else {
-    // fallback：无 team 账号时用 API key
-    const apiKey = getOpenAIKey();
-    if (!apiKey) throw new Error('Codex: 无可用 OAuth team 账号，且 OpenAI API key 不存在');
-    env.OPENAI_API_KEY = apiKey;
-    env.CODEX_API_KEY = apiKey;
-    console.warn('[llm-caller] codex 无可用 OAuth team 账号，fallback 到 API key');
+  if (!teamHome) {
+    // 2026-09-02：曾经这里会 fallback 到 OPENAI_API_KEY 直接计费调用 Codex，
+    // 在 team 账号掉线期间静默烧掉约 24 美元且无任何告警。禁止这条路径——
+    // 直接失败，交给 callLLM() 既有的 anthropic-api 紧急兜底机制接管。
+    throw new Error(
+      'Codex: 无可用 OAuth team 账号（team1/team2 全部掉线），已禁止 fallback 到 API Key 计费，请检查 codex 账号登录状态'
+    );
   }
+  const env = { ...process.env };
+  env.CODEX_HOME = teamHome;
+  // 删除 API key，确保走 OAuth 而非直接计费
+  delete env.OPENAI_API_KEY;
+  delete env.CODEX_API_KEY;
+  console.log(`[llm-caller] codex 使用 OAuth team 账号: ${teamHome}`);
 
   return new Promise((resolve, reject) => {
     // --skip-git-repo-check: brain 进程 cwd 不是 git 仓库（容器内 /app），
