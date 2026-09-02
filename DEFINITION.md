@@ -8,9 +8,9 @@
 
 
 
-**Brain 版本**: 1.273.169
+**Brain 版本**: 1.273.170
 
-## Brain 1.273.169b — fleet runner digest repin 74afa123（第 68 批，prune 误删重建）
+## Brain 1.273.170 — fleet runner digest repin 74afa123（第 68 批，prune 误删重建）
 
 磁盘治理 `docker image prune --until=48h` 误删 cecelia/runner:latest → fleet 探针 docker unavailable → 全部派发 node_not_base_admitted。重建镜像后按 repin 清单一次性 720c9c7b → `sha256:74afa123d31ff6eda7b3dff213ecba0ac28e5d8f1b74bc40ade3e71dd635721a`（LaunchDaemon env 热修 + 仓内全部 pin 位置同步；历史条目保留旧 digest 原文）。教训：prune 必须白名单排除 pinned 镜像。
 
