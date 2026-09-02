@@ -1,0 +1,22 @@
+{
+  "initiative_id": "none",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是 Cecelia 仓库内部 Harness API 的静态中文使用说明",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "编写 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增一页中文文档，覆盖冻结 PRD 指定的四类内容",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 对两个端点、鉴权与九项角色、payload 和失败回滚的断言全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是唯一产品交付文件"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
