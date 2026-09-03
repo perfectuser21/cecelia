@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.175
+**Brain 版本**: 1.273.176
+
+## Brain 1.273.176 — evaluator/judge 服务端权威注入候选坐标与基线（第 73 批）
+
+- `routes/harness-attempt-run.js` POST /attempt-run：r40 双死因（evaluate a1 工人**编造**格式合法的 base_sha——锚 task uuid 前缀续写 40hex；a2 工人**丢失**候选坐标——check-handoffs 只查缺漏与格式防不住编造值）。修：evaluator/judge 派发 ①run_id 必填（400 `role_requires_bridge_run`）②candidate 五坐标+base_sha 由服务端从本 run 最新 completed generator/generator-fix attempt 的 `git_candidate` 产物覆写（fleet 验证过的权威，Worker 抄的值一律无视）③查无候选 409 `candidate_not_found`。铁律「机械判定不能建立在 LLM 自愿配合上」在坐标转交层收口。HK coding-evaluator/judge skill 已同步注明（run_id 必带、坐标勿自抄）。
 
 ## Brain 1.273.175 — publish-pr 补候选推送线（第 72 批）
 
