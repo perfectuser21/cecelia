@@ -18,6 +18,7 @@ import request from 'supertest';
 import { createHarnessAttemptRunRouter } from '../../../packages/brain/src/routes/harness-attempt-run.js';
 
 const RUN_ID = 'cccccccc-0000-0000-0000-000000000009';
+const GEN_RUN_ID = 'eeeeeeee-1111-0000-0000-000000000008';
 const GEN_ATTEMPT = '76283ef5-0b9f-491f-8bb0-1d1a118c07e9';
 const GIT_CANDIDATE = {
   type: 'git_candidate',
@@ -35,7 +36,7 @@ function makeApp({ generatorRow } = {}) {
       if (/SELECT orchestrator_host FROM initiative_runs/.test(sql)) return { rows: [{ orchestrator_host: 'v4-bridge' }] };
       if (/role IN \('generator','generator-fix'\)/.test(sql)) {
         return { rows: generatorRow === undefined
-          ? [{ id: GEN_ATTEMPT, result: { artifacts: ['a-doc.md', GIT_CANDIDATE] } }]
+          ? [{ id: GEN_ATTEMPT, run_id: GEN_RUN_ID, result: { artifacts: ['a-doc.md', GIT_CANDIDATE] } }]
           : (generatorRow ? [generatorRow] : []) };
       }
       return { rows: [], rowCount: 1 };
@@ -84,7 +85,7 @@ describe('F1 step3 — evaluator/judge 服务端权威注入（r40 契约）', (
       branch: 'cp-harness-propose-r1-x-a1',
       head_sha: '9'.repeat(40),
       source_attempt_id: GEN_ATTEMPT,
-      bridge_run_id: RUN_ID,
+      bridge_run_id: GEN_RUN_ID,
     });
     expect(ctx.observed.task.payload.candidate).toEqual(ctx.observed.candidate);
     expect(ctx.observed.task.payload.base_sha).toBe('8'.repeat(40));
@@ -101,13 +102,21 @@ describe('F1 step3 — evaluator/judge 服务端权威注入（r40 契约）', (
     expect(dispatchFn.mock.calls[0][1].observed.candidate.head_sha).toBe('9'.repeat(40));
   });
 
-  it('evaluator 不带 run_id → 400 role_requires_bridge_run，不建任何资源', async () => {
-    const { app, createTaskFn } = makeApp();
+  it('第74批：工人不带 run_id → 照常按 sprint_dir 注入并把 run 归位到 generator 的 run', async () => {
+    const { app, dispatchFn } = makeApp();
     const body = evalBody(); delete body.run_id;
     const res = await request(app).post('/api/brain/harness/attempt-run').send(body);
-    expect(res.status).toBe(400);
-    expect(res.body.error).toBe('role_requires_bridge_run');
-    expect(createTaskFn).not.toHaveBeenCalled();
+    expect(res.status).toBe(202);
+    expect(res.body.run_id).toBe(GEN_RUN_ID);
+    expect(dispatchFn.mock.calls[0][1].observed.candidate.bridge_run_id).toBe(GEN_RUN_ID);
+  });
+
+  it('第74批：工人递错 run_id（r42 案卷：拿 contract 的 run 当 generate 的）→ 仍按 sprint_dir 命中并归位', async () => {
+    const { app, dispatchFn } = makeApp();
+    const res = await request(app).post('/api/brain/harness/attempt-run').send(evalBody());
+    expect(res.status).toBe(202);
+    expect(res.body.run_id).toBe(GEN_RUN_ID);
+    expect(dispatchFn.mock.calls[0][1].runId).toBe(GEN_RUN_ID);
   });
 
   it('run 内无 completed generator → 409 candidate_not_found，不建任何资源', async () => {
