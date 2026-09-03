@@ -1,0 +1,23 @@
+{
+  "initiative_id": "a78b37aa-c951-4cbb-976b-a7b70e975af2",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "文档服务于 Harness attempt-run 派发与查询开发流程，不改变产品行为",
+  "task_request_hash": "64de302ba99ea7e35a528afdc12dbeaa8eede8d1076c32f7fef385b0504b9709",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅新增 docs/current/attempt-run-bridge-guide.md，准确说明既有端点、鉴权、九角色、payload 与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 合同验证五类正向说明及其负向 oracle",
+        "[ARTIFACT] 唯一产品工件为 docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
