@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.176
+**Brain 版本**: 1.273.177
+
+## Brain 1.273.177 — 候选定位改 sprint_dir 寻址（第 74 批）
+
+- `routes/harness-attempt-run.js`：r42 案卷——工人把 contract 共享 run 当 generate 共享 run 递给 evaluate 派发，73 批 fail-fast 正确拦截但 17 连拦致死。定位键也不信工人：按 `task_bundle inputs.sprint_dir`（每工作流唯一、每格必带、服务端已校验）匹配最新 completed generator/generator-fix attempt，`runId` 一并覆写为该 attempt 的 run（close 所有权契约：evaluate/judge 必须活在 generate 开的共享 run 里）。工人递错/不递 run_id 均照常注入。
 
 ## Brain 1.273.176 — evaluator/judge 服务端权威注入候选坐标与基线（第 73 批）
 
