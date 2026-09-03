@@ -1,0 +1,22 @@
+{
+  "initiative_id": "7dd5d25b-5914-4a8d-b3a5-baa3c1dfa83a",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是既有 Brain 桥接 API 的中文说明文档，无 UI 或真实派发副作用变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增中文说明，准确记录两个端点、鉴权、封闭九项角色、payload 与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结测试验证文档四节及正负 oracle 全部通过",
+        "[ARTIFACT] docs/current/attempt-run-桥接使用说明.md 是唯一产品产物"
+      ],
+      "files": [
+        "docs/current/attempt-run-桥接使用说明.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
