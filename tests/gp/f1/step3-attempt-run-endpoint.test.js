@@ -557,6 +557,56 @@ describe('第62批：验证类角色带 validationClock', () => {
   });
 });
 
+// 第 70 批（金丝雀 #37 案卷）：seal 把合同产物封进 initiative_contract_artifacts，但桥接
+// 派发 generator 时 observed.contract.artifacts 为空 → bundle 缺 contract-draft/dod 全文
+// → generator 按 CONTRACT IS LAW 正确拒绝（needs_context FROZEN_CONTRACT_ARTIFACTS_MISSING）。
+// 修法：payload.contract_id 存在时从封印表装回全套产物。
+describe('第70批：封印表装回合同产物', () => {
+  it('generator + contract_id → observed.contract.artifacts 从 DB 装回（含 path/content/sha256）', async () => {
+    const rows = [
+      { path: 'sprints/x/sprint-prd.md', content: 'PRD', sha256: 'a'.repeat(64), byte_length: 3, source_revision: 'c'.repeat(40) },
+      { path: 'sprints/x/contract-draft.md', content: 'DRAFT', sha256: 'b'.repeat(64), byte_length: 5, source_revision: 'c'.repeat(40) },
+    ];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        if (/MAX\(hop\)/.test(sql)) return { rows: [{ hop: 1 }] };
+        if (/SELECT orchestrator_host FROM initiative_runs/.test(sql)) return { rows: [{ orchestrator_host: 'v4-bridge-shared' }] };
+        if (/FROM initiative_contract_artifacts/.test(sql)) return { rows };
+        return { rows: [], rowCount: 1 };
+      }),
+    };
+    const dispatchFn = vi.fn(async () => ({ status: 'LAUNCHED', attempt_id: 'aaaaaaaa-0000-0000-0000-000000000001' }));
+    const router = createHarnessAttemptRunRouter({
+      pool,
+      buildDeps: async () => ({ dispatch: dispatchFn }),
+      attemptStoreFactory: async () => ({ getById: async () => null }),
+      createTaskFn: async () => ({ success: true, task: { id: 'dddddddd-0000-0000-0000-000000000004' } }),
+      uuid: () => 'bbbbbbbb-0000-0000-0000-000000000002',
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api/brain/harness', router);
+    const res = await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'generator', title: 'x',
+      payload: { sprint_dir: 'sprints/x', contract_id: 'cccccccc-1111-4111-8111-000000000009', approved_sha: 'c'.repeat(40) },
+    });
+    expect(res.status).toBe(202);
+    const ctx = dispatchFn.mock.calls[0][1];
+    expect(Array.isArray(ctx.observed.contract.artifacts)).toBe(true);
+    expect(ctx.observed.contract.artifacts).toHaveLength(2);
+    expect(ctx.observed.contract.artifacts[1]).toMatchObject({ path: 'sprints/x/contract-draft.md', content: 'DRAFT' });
+  });
+
+  it('不带 contract_id → 不查封印表、artifacts 不出现', async () => {
+    const { app, dispatchFn, sqls } = makeApp();
+    await request(app).post('/api/brain/harness/attempt-run').send({
+      role: 'canary', title: 'x', payload: { sprint_dir: 'y' },
+    });
+    expect(sqls.some(([sql]) => /initiative_contract_artifacts/.test(sql))).toBe(false);
+    expect(dispatchFn.mock.calls[0][1].observed.contract.artifacts).toBeUndefined();
+  });
+});
+
 describe('第60批：冻结合同身份透传', () => {
   it('payload.contract_id/approved_sha/contract_version → observed.contract.row + approved 标记', async () => {
     const { app, dispatchFn } = makeApp();
