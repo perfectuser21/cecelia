@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.174
+**Brain 版本**: 1.273.175
+
+## Brain 1.273.175 — publish-pr 补候选推送线（第 72 批）
+
+- `routes/harness-attempt-run.js` publish-pr：V4 候选不推远端为设计（generate/evaluate/judge 全在 fleet 本地工作区），全链此前无任何环节推送候选分支——远端 ref 必 404，publish 格必死 `publish_branch_unavailable`（r40 预演抓获，未烧金丝雀）。修：body 收 `source_attempt_id`（candidate_coordinates 既有字段），ref 404 时起一次性只读容器进 fleet 候选工作区（`fleet-mounts/worktrees/<attempt>`）验 `HEAD===head_sha` 后推 `<sha>:refs/heads/<cp-branch>` 再开 PR（响应带 `pushed:true`）。绝不 force：远端已存在但头不一致仍 409 `publish_head_mismatch`；ref 非 404 失败不盲推；工作区已释放 → 409 `candidate_workspace_unavailable`。HK coding-publisher skill 同步加字段（已热改+备份）。
 
 ## Brain 1.273.174 — judge 机械闸认封印测试产物（第 71 批）
 
