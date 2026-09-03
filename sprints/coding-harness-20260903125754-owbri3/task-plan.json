@@ -1,0 +1,23 @@
+{
+  "initiative_id": "intent:786a917c-3e50-4c03-9adb-d5c3a8e0119a:1",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是 attempt-run 后端桥接 API 的静态中文使用说明，不修改运行行为",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅新增一页中文文档，准确说明两个端点、鉴权、九角色封闭集合、payload 与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 的五组正负 oracle 全部通过",
+        "[BEHAVIOR] 固定 b99c580d7fe8ca4cbf0ee834e13c91df02b57369 基线的 implementation diff 恰好一份 docs/current 文档",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
