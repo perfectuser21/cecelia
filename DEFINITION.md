@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.179
+**Brain 版本**: 1.273.180
 
 ## Brain 1.273.179 — publish-pr 头不一致时尝试 fast-forward 推送（第 76 批）
 
