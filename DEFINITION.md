@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.177
+**Brain 版本**: 1.273.178
+
+## Brain 1.273.178 — 候选定位认 completed_with_concerns（第 75 批）
+
+- `routes/harness-attempt-run.js`：r43 案卷——generator 终态 `completed_with_concerns`（INV-2 shell 展开边角，候选产物完好且 Commander 已验收放行），注入查询只认 `completed` → evaluate 断供 candidate_not_found。修：状态过滤加 `completed_with_concerns`——阶段验收权在 Commander，桥接不重审。
 
 ## Brain 1.273.177 — 候选定位改 sprint_dir 寻址（第 74 批）
 

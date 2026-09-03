@@ -35,6 +35,7 @@ function makeApp({ generatorRow } = {}) {
       if (/MAX\(hop\)/.test(sql)) return { rows: [{ hop: 7 }] };
       if (/SELECT orchestrator_host FROM initiative_runs/.test(sql)) return { rows: [{ orchestrator_host: 'v4-bridge' }] };
       if (/role IN \('generator','generator-fix'\)/.test(sql)) {
+        if (!/completed_with_concerns/.test(sql)) return { rows: [] }; // 第75批契约：状态过滤必须含 completed_with_concerns
         return { rows: generatorRow === undefined
           ? [{ id: GEN_ATTEMPT, run_id: GEN_RUN_ID, result: { artifacts: ['a-doc.md', GIT_CANDIDATE] } }]
           : (generatorRow ? [generatorRow] : []) };
@@ -132,6 +133,13 @@ describe('F1 step3 — evaluator/judge 服务端权威注入（r40 契约）', (
     const res = await request(app).post('/api/brain/harness/attempt-run').send(evalBody());
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('candidate_not_found');
+  });
+
+  it('第75批：generator 终态 completed_with_concerns（r43 案卷）→ 候选照常注入', async () => {
+    const { app, dispatchFn } = makeApp({ generatorRow: { id: GEN_ATTEMPT, run_id: GEN_RUN_ID, result: { artifacts: [GIT_CANDIDATE] } } });
+    const res = await request(app).post('/api/brain/harness/attempt-run').send(evalBody());
+    expect(res.status).toBe(202);
+    expect(dispatchFn.mock.calls[0][1].observed.candidate.head_sha).toBe('9'.repeat(40));
   });
 
   it('generator 角色不受影响：无 run_id 照常派发', async () => {
