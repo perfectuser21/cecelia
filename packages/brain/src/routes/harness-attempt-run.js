@@ -186,7 +186,8 @@ export function createHarnessAttemptRunRouter({
         const { rows: genRows } = await pool.query(
           `SELECT id, run_id, result FROM harness_attempts
             WHERE task_bundle->'inputs'->>'sprint_dir' = $1
-              AND role IN ('generator','generator-fix') AND status = 'completed'
+              AND role IN ('generator','generator-fix')
+              AND status IN ('completed','completed_with_concerns')
             ORDER BY created_at DESC LIMIT 1`,
           [sprintDir],
         );
