@@ -1,0 +1,22 @@
+{
+  "initiative_id": "none",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是后端桥接 API 的中文使用说明，无 UI 或运行时代码变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "编写 attempt-run 桥接使用说明",
+      "scope": "仅新增一页中文文档，准确说明两个端点、鉴权、九角色、payload 与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 八对十六项正负 oracle 全部通过，固定基线产品 diff 仅含目标文档",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
