@@ -44,6 +44,50 @@ const ATTEMPT_PROJECTION = Object.freeze([
 ]);
 
 const SHA40 = /^[a-f0-9]{40}$/;
+const ATTEMPT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// V4 候选不推远端为设计（generate/evaluate/judge 全在 fleet 本地工作区）。publish 是唯一
+// 允许仓库写终态的格子，推送因此归本端点：起一次性只读容器进 fleet 候选工作区
+// （fleet-mounts/worktrees/<source_attempt_id>，judge 验过头的那份），容器内先验
+// HEAD===head_sha 再推 <sha>:refs/heads/<cp-branch>——绝不 force、绝不推别的 ref。
+const FLEET_WORKTREES_ROOT = process.env.CECELIA_FLEET_WORKTREES_ROOT
+  || '/Users/Shared/cecelia-fleet-tmp/fleet-mounts/worktrees';
+
+async function pushCandidateViaDocker({ sourceAttemptId, branch, headSha, repo, token }) {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const execFileP = promisify(execFile);
+  const workspace = `${FLEET_WORKTREES_ROOT}/${sourceAttemptId}`;
+  const script = 'set -e; '
+    + 'ACTUAL=$(git -c safe.directory=/ws rev-parse HEAD); '
+    + 'if [ "$ACTUAL" != "$HEAD_SHA" ]; then echo "CANDIDATE_HEAD_MISMATCH:$ACTUAL"; exit 42; fi; '
+    + 'git -c safe.directory=/ws push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$HEAD_SHA:refs/heads/$BRANCH"';
+  try {
+    await execFileP('docker', [
+      'run', '--rm',
+      '-v', `${workspace}:/ws:ro`,
+      '-w', '/ws',
+      '-e', `HEAD_SHA=${headSha}`,
+      '-e', `BRANCH=${branch}`,
+      '-e', `REPO=${repo}`,
+      '-e', `GH_TOKEN=${token}`,
+      '--entrypoint', '/bin/sh',
+      'cecelia/runner:latest',
+      '-c', script,
+    ], { timeout: 180_000, maxBuffer: 4 * 1024 * 1024 });
+    return { ok: true };
+  } catch (error) {
+    const output = `${error?.stderr ?? ''}\n${error?.stdout ?? ''}`;
+    const sanitized = output.replace(/x-access-token:[^@]+@/g, 'x-access-token:***@').slice(0, 500);
+    if (/bind source path does not exist|no such file or directory.*fleet-mounts/i.test(output)) {
+      return { ok: false, error: 'candidate_workspace_unavailable', detail: sanitized };
+    }
+    if (/CANDIDATE_HEAD_MISMATCH/.test(output)) {
+      return { ok: false, error: 'candidate_head_mismatch', detail: sanitized };
+    }
+    return { ok: false, error: 'candidate_push_failed', detail: sanitized };
+  }
+}
 
 export function createHarnessAttemptRunRouter({
   pool,
@@ -95,7 +139,11 @@ export function createHarnessAttemptRunRouter({
     publishDepsPromise ??= (async () => {
       if (publishDepsFactory) return publishDepsFactory();
       const { resolveGitHubToken } = await import('../harness-credentials.js');
-      return { resolveToken: resolveGitHubToken, fetchFn: globalThis.fetch };
+      return {
+        resolveToken: resolveGitHubToken,
+        fetchFn: globalThis.fetch,
+        pushCandidateFn: pushCandidateViaDocker,
+      };
     })();
     return publishDepsPromise;
   };
@@ -441,7 +489,7 @@ export function createHarnessAttemptRunRouter({
       if (!branch.startsWith('cp-')) return res.status(400).json({ error: 'branch_must_be_cp' });
       if (!SHA40.test(headSha)) return res.status(400).json({ error: 'head_sha_invalid' });
       if (!title) return res.status(400).json({ error: 'title_required' });
-      const { resolveToken, fetchFn } = await getPublishDeps();
+      const { resolveToken, fetchFn, pushCandidateFn } = await getPublishDeps();
       const token = await resolveToken();
       const gh = (url, opts = {}) => fetchFn(`https://api.github.com/repos/${repo}${url}`, {
         ...opts,
@@ -453,12 +501,29 @@ export function createHarnessAttemptRunRouter({
         },
         signal: AbortSignal.timeout(15_000),
       });
+      const sourceAttemptId = typeof body.source_attempt_id === 'string'
+        && ATTEMPT_UUID.test(body.source_attempt_id) ? body.source_attempt_id : null;
       const refResp = await gh(`/git/ref/heads/${encodeURIComponent(branch)}`);
-      if (!refResp.ok) {
+      let remoteSha = null;
+      let pushed = false;
+      if (refResp.ok) {
+        const refJson = await refResp.json();
+        remoteSha = refJson?.object?.sha ?? null;
+      } else if (refResp.status === 404 && sourceAttemptId && typeof pushCandidateFn === 'function') {
+        // V4：候选从未推远端（设计），ref 404 是常态——从 fleet 候选工作区验头后推送。
+        // ref 非 404 的失败（限流/鉴权/网络）不推送，如实报 unavailable。
+        const pushResult = await pushCandidateFn({ sourceAttemptId, branch, headSha, repo, token });
+        if (!pushResult?.ok) {
+          return res.status(409).json({
+            error: pushResult?.error ?? 'candidate_push_failed',
+            ...(pushResult?.detail ? { detail: pushResult.detail } : {}),
+          });
+        }
+        remoteSha = headSha;
+        pushed = true;
+      } else {
         return res.status(409).json({ error: 'publish_branch_unavailable', status: refResp.status });
       }
-      const refJson = await refResp.json();
-      const remoteSha = refJson?.object?.sha ?? null;
       if (remoteSha !== headSha) {
         return res.status(409).json({ error: 'publish_head_mismatch', remote_sha: remoteSha, expected: headSha });
       }
@@ -474,7 +539,7 @@ export function createHarnessAttemptRunRouter({
       });
       if (createResp.status === 201 || createResp.ok) {
         const pr = await createResp.json();
-        return res.json({ ok: true, pr_url: pr.html_url, pr_number: pr.number });
+        return res.json({ ok: true, pr_url: pr.html_url, pr_number: pr.number, ...(pushed ? { pushed: true } : {}) });
       }
       if (createResp.status === 422) {
         const listResp = await gh(`/pulls?state=open&head=${encodeURIComponent(`${repo.split('/')[0]}:${branch}`)}`);
