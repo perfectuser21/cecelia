@@ -22,6 +22,15 @@ function makeApp({ dispatch, getById } = {}) {
       if (/MAX\(hop\)/.test(sql)) return { rows: [{ hop: 7 }] };
       // 第 59 批起 GET 收尾先查 run host；默认答普通 run（共享 run 场景各测试自建 pool）
       if (/SELECT orchestrator_host FROM initiative_runs/.test(sql)) return { rows: [{ orchestrator_host: 'v4-bridge' }] };
+      // 第 73 批：evaluator/judge 派发前服务端从本 run 的 generator attempt 取 git_candidate
+      // 权威坐标——默认答一份合法候选，让既有 judge/evaluator 用例继续走通。
+      if (/role IN \('generator','generator-fix'\)/.test(sql)) {
+        return { rows: [{ id: '76283ef5-0b9f-491f-8bb0-1d1a118c07e9', result: { artifacts: [{
+          type: 'git_candidate', repo: 'perfectuser21/cecelia', branch: 'cp-harness-propose-r1-x-a1',
+          base_sha: '8'.repeat(40), head_sha: 'a'.repeat(40),
+          source_attempt_id: '76283ef5-0b9f-491f-8bb0-1d1a118c07e9',
+        }] } }] };
+      }
       return { rows: [], rowCount: 1 };
     }),
   };
@@ -127,7 +136,7 @@ describe('POST /api/brain/harness/attempt-run', () => {
       dispatch: async () => ({ status: 'DONE_WITH_CONCERNS', control_status: 'BLOCKED', fallback_reason: 'node_not_base_admitted' }),
     });
     const res = await request(app).post('/api/brain/harness/attempt-run').send({
-      role: 'evaluator', title: 'x', payload: { sprint_dir: 'y' },
+      role: 'planner', title: 'x', payload: { sprint_dir: 'y' },
     });
     expect(res.status).toBe(502);
     expect(res.body).toMatchObject({ error: 'dispatch_not_launched', control_status: 'BLOCKED', detail: 'node_not_base_admitted' });
@@ -455,6 +464,14 @@ describe('第65批：judge 桥接组装 evaluator 权威', () => {
         if (/MAX\(hop\)/.test(sql)) return { rows: [{ hop: 1 }] };
         if (/SELECT orchestrator_host FROM initiative_runs/.test(sql)) return { rows: [{ orchestrator_host: 'v4-bridge' }] };
         if (/initiative_contract_artifact_seals/.test(sql)) return { rows: [{ manifest_sha256: 'a'.repeat(64), source_revision: 'b'.repeat(40) }] };
+        // 第 73 批：judge 派发前服务端注入 git_candidate 权威坐标（head 与本用例断言一致）
+        if (/role IN \('generator','generator-fix'\)/.test(sql)) {
+          return { rows: [{ id: '76283ef5-0b9f-491f-8bb0-1d1a118c07e9', result: { artifacts: [{
+            type: 'git_candidate', repo: 'perfectuser21/cecelia', branch: 'cp-x',
+            base_sha: '8'.repeat(40), head_sha: 'd'.repeat(40),
+            source_attempt_id: '76283ef5-0b9f-491f-8bb0-1d1a118c07e9',
+          }] } }] };
+        }
         return { rows: [], rowCount: 1 };
       }),
     };
@@ -470,7 +487,7 @@ describe('第65批：judge 桥接组装 evaluator 权威', () => {
     app.use(express.json());
     app.use('/api/brain/harness', router);
     const res = await request(app).post('/api/brain/harness/attempt-run').send({
-      role: 'judge', title: 'x',
+      role: 'judge', title: 'x', run_id: 'cccccccc-0000-0000-0000-000000000009',
       payload: {
         sprint_dir: 'y',
         contract_id: 'cccccccc-1111-4111-8111-000000000009',
@@ -495,7 +512,7 @@ describe('第65批：judge 桥接组装 evaluator 权威', () => {
   it('judge 带 evaluate_attempt_id 但 attempt 不存在 → 400 结构化', async () => {
     const { app } = makeApp({ getById: async () => null });
     const res = await request(app).post('/api/brain/harness/attempt-run').send({
-      role: 'judge', title: 'x',
+      role: 'judge', title: 'x', run_id: 'cccccccc-0000-0000-0000-000000000009',
       payload: { sprint_dir: 'y', contract_id: 'cccccccc-1111-4111-8111-000000000009', evaluate_attempt_id: 'eeeeeeee-0000-4000-8000-000000000005' },
     });
     expect(res.status).toBe(400);
@@ -536,7 +553,7 @@ describe('第62批：验证类角色带 validationClock', () => {
   it('第64批：judge 同样带钟且窗口=5400s', async () => {
     const { app, dispatchFn } = makeApp();
     const res = await request(app).post('/api/brain/harness/attempt-run').send({
-      role: 'judge', title: 'x', payload: { sprint_dir: 'y' },
+      role: 'judge', title: 'x', run_id: 'cccccccc-0000-0000-0000-000000000009', payload: { sprint_dir: 'y' },
     });
     expect(res.status).toBe(202);
     const clock = dispatchFn.mock.calls[0][1].validationClock;
@@ -547,7 +564,7 @@ describe('第62批：验证类角色带 validationClock', () => {
   it('evaluator 同样带钟；canary/planner 不带', async () => {
     const { app, dispatchFn } = makeApp();
     await request(app).post('/api/brain/harness/attempt-run').send({
-      role: 'evaluator', title: 'x', payload: { sprint_dir: 'y' },
+      role: 'evaluator', title: 'x', run_id: 'cccccccc-0000-0000-0000-000000000009', payload: { sprint_dir: 'y' },
     });
     expect(dispatchFn.mock.calls[0][1].validationClock?.deadline_at).toBeTruthy();
     await request(app).post('/api/brain/harness/attempt-run').send({
