@@ -1,0 +1,22 @@
+{
+  "initiative_id": "none",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是既有后端桥接 API 的中文使用说明，仅做只读内容与范围验证",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅新增 docs/current/attempt-run-桥接使用说明.md，覆盖冻结 PRD 的四类说明与安全示例",
+      "dod": [
+        "[BEHAVIOR] 冻结文档合同测试全部通过且九角色集合正负 oracle 成立",
+        "[ARTIFACT] docs/current/attempt-run-桥接使用说明.md 存在"
+      ],
+      "files": [
+        "docs/current/attempt-run-桥接使用说明.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
