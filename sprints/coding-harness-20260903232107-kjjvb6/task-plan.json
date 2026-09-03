@@ -1,0 +1,23 @@
+{
+  "initiative_id": "67ff949e-f545-424f-9aca-3e948c3e4794",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是后端桥接接口的静态中文使用说明，无 UI 或运行时行为变更。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅新增 docs/current/attempt-run-bridge-guide.md，以封闭枚举说明两个端点、鉴权、九角色、payload 字段和派发失败回滚。",
+      "dod": [
+        "[BEHAVIOR] 冻结合同测试验证五组正向与负向 oracle 全部通过",
+        "[BEHAVIOR] canonical 全仓 diff 相对 807519cd97385f72f2e32d683b7430f84220116f 只含四个合同产物和一页目标文档",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
