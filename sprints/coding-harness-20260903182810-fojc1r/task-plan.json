@@ -1,0 +1,22 @@
+{
+  "initiative_id": "intent:e69af360-1265-4870-a9e3-5f8fc5778fd7:1",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是后端桥接的静态中文使用说明，不包含 UI 操作。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增中文说明，准确覆盖端点、鉴权、九角色、payload 和失败回滚。",
+      "dod": [
+        "[BEHAVIOR] 冻结测试对文档五类内容及范围的正负 oracle 全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-usage.md 是唯一实现产物"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-usage.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
