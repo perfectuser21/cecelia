@@ -1,0 +1,20 @@
+{
+  "initiative_id": "c880ce17-c465-4fa1-a781-662d4c12431c",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是后端桥接 API 的中文静态使用说明，不修改运行行为",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接中文使用说明",
+      "scope": "仅新增一页中文文档，准确记录冻结生产契约",
+      "dod": [
+        "[BEHAVIOR] 两端点、鉴权、九角色、payload 和失败回滚通过正负 oracle",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是唯一产品差异"
+      ],
+      "files": ["docs/current/attempt-run-bridge-guide.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
