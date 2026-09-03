@@ -1,0 +1,21 @@
+{
+  "initiative_id": "35403f42-a844-4f75-b8e2-ea4f72f060e4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是可由仓库脚本机械验收的内部接口中文说明文档",
+  "task_request_hash": "aecb99079a0f3f82a833c6ff55d42e5903af6050d73033b574511db5dfd00e4f",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增中文说明，覆盖端点鉴权、九项角色、payload 规则和失败回滚",
+      "dod": [
+        "[BEHAVIOR] 四节内容通过正向与负向 oracle，角色白名单恰好为九项封闭集合",
+        "[ARTIFACT] docs/current/attempt-run-bridge.md 是冻结合同目录之外的唯一变更"
+      ],
+      "files": ["docs/current/attempt-run-bridge.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
