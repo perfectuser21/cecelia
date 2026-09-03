@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.173
+**Brain 版本**: 1.273.174
+
+## Brain 1.273.174 — judge 机械闸认封印测试产物（第 71 批）
+
+- `harness-judge.js` runMechanicalGate②：sprint 目录文件扫描为零时，认 `ctx.frozenContractArtifacts` 中 sprint `tests/` 路径的封印产物计数（封印集装载已过 `requireTests:true` + seal 对账，密封证据即测试存在性证明）。根除 r39（run 2se9fh）误杀：V4 judge 走 Brain API 时 authority worktree 回落 kernel 默认路径（锚 task 无 `worktree_path`，候选文件在桥接工作区）→ 文件扫描必零；docs-only 合同 DoD 用 [ARTIFACT] 条目 → [BEHAVIOR] 计数也零 → 双零 FAIL（`contract_tests=0`），与 judge 自身重跑冻结测试 6/6 全过自相矛盾。封印集缺席（kernel 旧路径）行为不变。
 
 ## Brain 1.273.173 — 桥接从封印表装回合同产物（第 70 批）
 

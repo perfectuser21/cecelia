@@ -1180,6 +1180,17 @@ export async function runMechanicalGate(ctx, deps = {}) {
     const files = await listTestFilesFn(sprintRoot);
     testCount = Array.isArray(files) ? files.length : 0;
   } catch { testCount = 0; }
+  if (testCount === 0 && Array.isArray(ctx.frozenContractArtifacts)) {
+    // V4 fleet 派发（r39 2se9fh）：judge 宿主 worktree 是 kernel 默认路径，候选文件在
+    // 桥接工作区，文件扫描必零。封印集装载时已过 validateContractArtifacts
+    // ({requireTests:true}) + seal 对账——sprint tests/ 条目的密封证据即测试存在性证明。
+    const sealedTestPrefix = `${String(ctx.sprintDir || '').replace(/\/$/, '')}/tests/`;
+    testCount = ctx.frozenContractArtifacts.filter((artifact) => (
+      typeof artifact?.path === 'string'
+      && sealedTestPrefix !== '/tests/'
+      && artifact.path.startsWith(sealedTestPrefix)
+    )).length;
+  }
   if (testCount === 0) {
     let behaviorCount = countConcreteBehaviorLines(ctx.contractText);
     if (behaviorCount === 0) {
