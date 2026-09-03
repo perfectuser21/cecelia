@@ -25,7 +25,7 @@ function makeApp({ dispatch, getById } = {}) {
       // 第 73 批：evaluator/judge 派发前服务端从本 run 的 generator attempt 取 git_candidate
       // 权威坐标——默认答一份合法候选，让既有 judge/evaluator 用例继续走通。
       if (/role IN \('generator','generator-fix'\)/.test(sql)) {
-        return { rows: [{ id: '76283ef5-0b9f-491f-8bb0-1d1a118c07e9', result: { artifacts: [{
+        return { rows: [{ id: '76283ef5-0b9f-491f-8bb0-1d1a118c07e9', run_id: 'cccccccc-0000-0000-0000-000000000009', result: { artifacts: [{
           type: 'git_candidate', repo: 'perfectuser21/cecelia', branch: 'cp-harness-propose-r1-x-a1',
           base_sha: '8'.repeat(40), head_sha: 'a'.repeat(40),
           source_attempt_id: '76283ef5-0b9f-491f-8bb0-1d1a118c07e9',
@@ -466,7 +466,7 @@ describe('第65批：judge 桥接组装 evaluator 权威', () => {
         if (/initiative_contract_artifact_seals/.test(sql)) return { rows: [{ manifest_sha256: 'a'.repeat(64), source_revision: 'b'.repeat(40) }] };
         // 第 73 批：judge 派发前服务端注入 git_candidate 权威坐标（head 与本用例断言一致）
         if (/role IN \('generator','generator-fix'\)/.test(sql)) {
-          return { rows: [{ id: '76283ef5-0b9f-491f-8bb0-1d1a118c07e9', result: { artifacts: [{
+          return { rows: [{ id: '76283ef5-0b9f-491f-8bb0-1d1a118c07e9', run_id: 'cccccccc-0000-0000-0000-000000000009', result: { artifacts: [{
             type: 'git_candidate', repo: 'perfectuser21/cecelia', branch: 'cp-x',
             base_sha: '8'.repeat(40), head_sha: 'd'.repeat(40),
             source_attempt_id: '76283ef5-0b9f-491f-8bb0-1d1a118c07e9',

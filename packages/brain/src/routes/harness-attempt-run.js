@@ -173,30 +173,31 @@ export function createHarnessAttemptRunRouter({
       const cleanPayload = { ...payload };
       delete cleanPayload.work_kind;
 
-      const runId = typeof body.run_id === 'string' && body.run_id ? body.run_id : uuid();
+      let runId = typeof body.run_id === 'string' && body.run_id ? body.run_id : uuid();
 
-      // 第 73 批（r40 双死因案卷）：evaluator/judge 的候选坐标与基线不再信 Worker 抄写
-      //（a1 编造了格式合法的 base_sha，a2 丢失坐标——check-handoffs 只查缺漏与格式，
-      // 防不住格式合法的编造值）。权威源=本 run 最新 completed generator/generator-fix
-      // attempt 的 git_candidate 产物（五坐标俱全且经 fleet 验证）。必须在 createTask 前
-      // 覆写：implementation_baseline 从锚 task payload 取（source=task_payload）。
+      // 第 73 批（r40 双死因案卷）：evaluator/judge 的候选坐标与基线不再信 Worker 抄写。
+      // 第 74 批（r42 案卷）：定位键也不信——工人把 contract 共享 run 当 generate 共享 run
+      // 递进来，73 批 fail-fast 连拦 17 次致死。sprint_dir 每个工作流唯一且每格 payload
+      // 必带（服务端已校验非空），按它匹配最新 completed generator/generator-fix attempt，
+      // runId 一并覆写为该 attempt 的 run（close 所有权契约：evaluate/judge 必须活在
+      // generate 开的共享 run 里）。必须在 createTask 前覆写：implementation_baseline
+      // 从锚 task payload 取（source=task_payload）。
       if (['evaluator', 'judge'].includes(role)) {
-        if (!(typeof body.run_id === 'string' && body.run_id)) {
-          return res.status(400).json({ error: 'role_requires_bridge_run', role });
-        }
         const { rows: genRows } = await pool.query(
-          `SELECT id, result FROM harness_attempts
-            WHERE run_id = $1::uuid AND role IN ('generator','generator-fix') AND status = 'completed'
+          `SELECT id, run_id, result FROM harness_attempts
+            WHERE task_bundle->'inputs'->>'sprint_dir' = $1
+              AND role IN ('generator','generator-fix') AND status = 'completed'
             ORDER BY created_at DESC LIMIT 1`,
-          [runId],
+          [sprintDir],
         );
         const genResult = genRows[0]?.result ?? null;
         const gitCandidate = Array.isArray(genResult?.artifacts)
           ? genResult.artifacts.find((a) => a && typeof a === 'object' && a.type === 'git_candidate')
           : null;
         if (!gitCandidate || !SHA40.test(String(gitCandidate.head_sha ?? ''))) {
-          return res.status(409).json({ error: 'candidate_not_found', run_id: runId });
+          return res.status(409).json({ error: 'candidate_not_found', sprint_dir: sprintDir });
         }
+        runId = genRows[0].run_id;
         cleanPayload.candidate = {
           repo: gitCandidate.repo,
           branch: gitCandidate.branch,
