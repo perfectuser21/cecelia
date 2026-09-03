@@ -1,0 +1,23 @@
+{
+  "initiative_id": "0b510b44-85f7-4908-adbd-b3f8957564b4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅新增并静态验收后端桥接 API 的中文使用说明，无 UI 或运行管线变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增一页中文文档，准确说明端点、鉴权、九角色、payload 与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 合同验证四节内容、封闭枚举和负向 oracle",
+        "[BEHAVIOR] 从冻结 base SHA 检查实现 diff 严格只有目标文档",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
