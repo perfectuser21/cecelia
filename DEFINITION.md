@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.178
+**Brain 版本**: 1.273.179
+
+## Brain 1.273.179 — publish-pr 头不一致时尝试 fast-forward 推送（第 76 批）
+
+- `routes/harness-attempt-run.js` publish-pr：r47 案卷——judge 全 PASS 后 publish 409 `publish_head_mismatch`：候选分支与 planner 预推的提案分支同名，远端头=旧 PRD commit，判过的候选是其后代。修：mismatch 且带 `source_attempt_id` 时尝试非强制推送（git 原生 fast-forward-only 即安全栏，非 FF 必败），推败才 409 并带 `push_error`。无 source_attempt_id 行为不变。
 
 ## Brain 1.273.178 — 候选定位认 completed_with_concerns（第 75 批）
 
