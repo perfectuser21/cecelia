@@ -1,0 +1,21 @@
+{
+  "initiative_id": "f78011c6-2402-4a68-9b0d-f5a86c4d584a",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是内部 API 桥接说明文档，无 UI 或运行时行为变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅新增 docs/current/attempt-run-bridge-usage.md，中文说明两个端点、鉴权边界、封闭九角色、payload 必填/可省略字段及派发失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 的五项正负 oracle 全部通过",
+        "[BEHAVIOR] 相对冻结基线的产品 diff 严格等于指定文档路径",
+        "[ARTIFACT] docs/current/attempt-run-bridge-usage.md"
+      ],
+      "files": ["docs/current/attempt-run-bridge-usage.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
