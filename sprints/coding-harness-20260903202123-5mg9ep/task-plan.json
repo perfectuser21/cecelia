@@ -1,0 +1,20 @@
+{
+  "initiative_id": "aa2a4efb-ebff-460f-b0aa-563a3ea0e027",
+  "journey_type": "dev_pipeline",
+  "journey_type_reason": "交付物是 Harness attempt-run 开发流水线桥接合同的中文说明文档。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增一页中文说明，覆盖冻结 PRD 的端点、鉴权、角色、payload 与回滚语义。",
+      "dod": [
+        "[BEHAVIOR] 冻结测试以封闭集合和正负 oracle 验证四节合同",
+        "[ARTIFACT] docs/current/attempt-run-bridge.md 是唯一生产变更"
+      ],
+      "files": ["docs/current/attempt-run-bridge.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
