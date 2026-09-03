@@ -561,7 +561,26 @@ export function createHarnessAttemptRunRouter({
         return res.status(409).json({ error: 'publish_branch_unavailable', status: refResp.status });
       }
       if (remoteSha !== headSha) {
-        return res.status(409).json({ error: 'publish_head_mismatch', remote_sha: remoteSha, expected: headSha });
+        // 第 76 批（r47 案卷）：候选分支与 planner 预推的提案分支同名，远端头=旧 PRD
+        // commit——判过的候选是它的后代。尝试非强制推送：git 原生 fast-forward-only
+        // 即安全栏（非 FF 推送必败），推败才如实报 mismatch。
+        if (sourceAttemptId && typeof pushCandidateFn === 'function') {
+          const pushResult = await pushCandidateFn({ sourceAttemptId, branch, headSha, repo, token });
+          if (pushResult?.ok) {
+            remoteSha = headSha;
+            pushed = true;
+          } else {
+            return res.status(409).json({
+              error: 'publish_head_mismatch',
+              remote_sha: remoteSha,
+              expected: headSha,
+              push_error: pushResult?.error ?? 'candidate_push_failed',
+              ...(pushResult?.detail ? { detail: pushResult.detail } : {}),
+            });
+          }
+        } else {
+          return res.status(409).json({ error: 'publish_head_mismatch', remote_sha: remoteSha, expected: headSha });
+        }
       }
       const createResp = await gh('/pulls', {
         method: 'POST',
