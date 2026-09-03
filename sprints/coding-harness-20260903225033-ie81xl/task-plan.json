@@ -1,0 +1,20 @@
+{
+  "initiative_id": "9a9005f0-ab52-4d05-9ad6-9302d2489f80",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅交付后端桥接 API 的静态中文使用说明，无 UI 或代码改动",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增一页中文说明，覆盖四节冻结内容与正负 oracle",
+      "dod": [
+        "[BEHAVIOR] 四个独立章节通过 10 个正负及范围 oracle",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是唯一产品改动"
+      ],
+      "files": ["docs/current/attempt-run-bridge-guide.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
