@@ -1,0 +1,22 @@
+{
+  "initiative_id": "71b3e836-d523-487e-992d-006f60b5fab4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是内部 attempt-run 端点的中文使用说明，可由仓库内静态合同机械验收。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增中文说明，覆盖端点鉴权、九项角色、payload 和失败回滚。",
+      "dod": [
+        "[BEHAVIOR] 文档的四类内容通过正向与负向 oracle，且九角色为恰好九项封闭集合。",
+        "[ARTIFACT] docs/current/attempt-run-bridge.md 是相对冻结基线的唯一实现变更。"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
