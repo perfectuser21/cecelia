@@ -1,0 +1,20 @@
+{
+  "initiative_id": "137ce9e9-7703-4b93-b53f-628d57403186",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是后端桥接使用说明文档，不涉及 UI 操作。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增一页中文说明，覆盖冻结 PRD 的四类信息。",
+      "dod": [
+        "[BEHAVIOR] 冻结测试逐字验证端点鉴权、九项角色、payload 与回滚语义",
+        "[ARTIFACT] docs/current/attempt-run-bridge-usage.md 是唯一生产变更"
+      ],
+      "files": ["docs/current/attempt-run-bridge-usage.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
