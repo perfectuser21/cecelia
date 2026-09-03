@@ -85,9 +85,30 @@ describe('F1 step4 — publish-pr 候选推送线（r40 抢修契约）', () => 
     expect(calls.some(([url, m]) => /\/pulls$/.test(url) && m === 'POST')).toBe(false);
   });
 
-  it('远端已存在但头不一致 + source_attempt_id → 仍 409 publish_head_mismatch（绝不 force push）', async () => {
-    const { app, pushCandidateFn } = makeApp({ refStatus: 200, refSha: 'f'.repeat(40) });
+  it('第76批：远端已存在但头不一致（planner 预推提案分支，r47 案卷）→ 尝试非强制推送，成功则开 PR', async () => {
+    const { app, pushCandidateFn, calls } = makeApp({ refStatus: 200, refSha: 'f'.repeat(40) });
     const res = await request(app).post('/api/brain/harness/attempt-run/publish-pr').send(pubBody);
+    expect(pushCandidateFn).toHaveBeenCalledWith(expect.objectContaining({ headSha: pubBody.head_sha }));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, pushed: true });
+    expect(calls.some(([url, m]) => /\/pulls$/.test(url) && m === 'POST')).toBe(true);
+  });
+
+  it('第76批：头不一致且推送失败（非 fast-forward）→ 409 publish_head_mismatch 带 push_error', async () => {
+    const { app } = makeApp({
+      refStatus: 200, refSha: 'f'.repeat(40),
+      pushResult: { ok: false, error: 'candidate_push_failed', detail: 'non-fast-forward' },
+    });
+    const res = await request(app).post('/api/brain/harness/attempt-run/publish-pr').send(pubBody);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('publish_head_mismatch');
+    expect(res.body.push_error).toBe('candidate_push_failed');
+  });
+
+  it('第76批：头不一致但无 source_attempt_id → 仍直接 409（无处可推）', async () => {
+    const { app, pushCandidateFn } = makeApp({ refStatus: 200, refSha: 'f'.repeat(40) });
+    const body = { ...pubBody }; delete body.source_attempt_id;
+    const res = await request(app).post('/api/brain/harness/attempt-run/publish-pr').send(body);
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('publish_head_mismatch');
     expect(pushCandidateFn).not.toHaveBeenCalled();
