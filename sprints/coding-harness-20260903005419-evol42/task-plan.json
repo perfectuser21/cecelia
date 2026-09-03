@@ -1,0 +1,22 @@
+{
+  "initiative_id": "7295ade6-648c-4054-b857-c907249a2c3a",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是后端桥接 API 的中文使用说明，仅做本地只读文档与范围验收",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "在 docs/current/ 新增唯一中文说明页，覆盖冻结 PRD 的端点、鉴权、九角色、payload 与失败回滚合同",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 验证四节正负 oracle、封闭枚举与唯一产品范围",
+        "[ARTIFACT] docs/current/attempt-run-桥接使用说明.md 存在"
+      ],
+      "files": [
+        "docs/current/attempt-run-桥接使用说明.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
