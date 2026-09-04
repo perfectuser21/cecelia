@@ -1,0 +1,20 @@
+{
+  "initiative_id": "110d4e2d-3e69-4a61-8e2e-9d41f4b72391",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是内部 Harness API 中文说明文档，不改变运行时行为",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "在 docs/current 下新增唯一一页中文说明，覆盖冻结 PRD 的四类内容",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 的 6 个文档与范围用例全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在"
+      ],
+      "files": ["docs/current/attempt-run-bridge-guide.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
