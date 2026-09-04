@@ -1,0 +1,21 @@
+{
+  "initiative_id": "ae4b5db1-51dc-4fce-885d-4d8c8a649fbf",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅交付 Cecelia 内部 Harness API 中文使用说明并执行工作区文档验收",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅新增 docs/current/attempt-run-bridge-usage.md，准确覆盖端点鉴权、九角色、payload 与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 冻结合同测试验证四节、九角色封闭集合、payload 和完整回滚语义",
+        "[BEHAVIOR] canonical Git diff 验证实现范围只有目标 Markdown 文档",
+        "[ARTIFACT] docs/current/attempt-run-bridge-usage.md"
+      ],
+      "files": ["docs/current/attempt-run-bridge-usage.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
