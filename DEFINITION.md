@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.179
+**Brain 版本**: 1.273.180
+
+## Brain 1.273.180 — contract-seal 引用完备性校验（第 77 批）
+
+- `routes/harness-attempt-run.js` contract-seal：r51 案卷——合同把 `sprints/<dir>/task-plan.json` 列进范围白名单却从未提交，seal 照封，40 分钟后 generate 才按 CONTRACT IS LAW 拦停。修：落印前扫描合同/PRD 正文中 sprint 内合同期管理文件（contract-draft/dod、sprint-prd、task-plan、tests/**）的全路径引用，缺席 → 409 `contract_references_missing_artifact` 带清单即刻打回 contract 格（重试 5 分钟 vs generate 陪葬 40 分钟）。generator 自产文件（red-evidence 等）不在管理家族，零误伤。
 
 ## Brain 1.273.179 — publish-pr 头不一致时尝试 fast-forward 推送（第 76 批）
 
