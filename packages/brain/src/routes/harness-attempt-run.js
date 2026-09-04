@@ -563,8 +563,29 @@ export function createHarnessAttemptRunRouter({
         },
         signal: AbortSignal.timeout(15_000),
       });
-      const sourceAttemptId = typeof body.source_attempt_id === 'string'
+      let sourceAttemptId = typeof body.source_attempt_id === 'string'
         && ATTEMPT_UUID.test(body.source_attempt_id) ? body.source_attempt_id : null;
+      // 第 78 批（r53 案卷）：Commander 台账的 candidate_coordinates 曾只记四字段，
+      // publish 工人递不出 source_attempt_id → 端点没尝试 FF 推送就报 mismatch。
+      // 服务端自给：按 git_candidate.branch===branch 反查最新 completed generator
+      //（74 批同源权威模式），工人带不带字段都能推。
+      if (!sourceAttemptId) {
+        const { rows: genRows } = await pool.query(
+          `SELECT id, result FROM harness_attempts
+            WHERE role IN ('generator','generator-fix') AND status IN ('completed','completed_with_concerns')
+              AND result::text LIKE '%git_candidate%'
+            ORDER BY created_at DESC LIMIT 20`,
+        );
+        for (const row of genRows) {
+          const cand = Array.isArray(row.result?.artifacts)
+            ? row.result.artifacts.find((a) => a && typeof a === 'object' && a.type === 'git_candidate')
+            : null;
+          if (cand?.branch === branch) {
+            sourceAttemptId = cand.source_attempt_id ?? row.id;
+            break;
+          }
+        }
+      }
       const refResp = await gh(`/git/ref/heads/${encodeURIComponent(branch)}`);
       let remoteSha = null;
       let pushed = false;

@@ -74,8 +74,17 @@ describe('F1 step4 — publish-pr 候选推送线（r40 抢修契约）', () => 
     expect(calls.some(([url, m]) => /\/pulls$/.test(url) && m === 'POST')).toBe(true);
   });
 
-  it('远端 ref 404 + 无 source_attempt_id → 409 publish_branch_unavailable（行为不变）', async () => {
+  it('第78批改约：ref 404 + 无 source_attempt_id → 分支反查命中即推送开 PR', async () => {
     const { app, pushCandidateFn } = makeApp({ refStatus: 404 });
+    const body = { ...pubBody }; delete body.source_attempt_id;
+    const res = await request(app).post('/api/brain/harness/attempt-run/publish-pr').send(body);
+    expect(pushCandidateFn).toHaveBeenCalledWith(expect.objectContaining({ sourceAttemptId: SRC_ATTEMPT }));
+    expect(res.status).toBe(200);
+  });
+
+  it('第78批改约：ref 404 + 无字段且反查无候选 → 409 publish_branch_unavailable', async () => {
+    const { app, pool, pushCandidateFn } = makeApp({ refStatus: 404 });
+    pool.query.mockImplementation(async () => ({ rows: [], rowCount: 1 }));
     const body = { ...pubBody }; delete body.source_attempt_id;
     const res = await request(app).post('/api/brain/harness/attempt-run/publish-pr').send(body);
     expect(res.status).toBe(409);
@@ -133,13 +142,12 @@ describe('F1 step4 — publish-pr 候选推送线（r40 抢修契约）', () => 
     expect(pushCandidateFn).not.toHaveBeenCalled();
   });
 
-  it('source_attempt_id 非 UUID → 视同缺席（不调推送）→ 409 publish_branch_unavailable', async () => {
+  it('第78批改约：source_attempt_id 非 UUID → 视同缺席但反查兜底 → 用反查值推送（禁止直接用非法值）', async () => {
     const { app, pushCandidateFn } = makeApp({ refStatus: 404 });
     const res = await request(app).post('/api/brain/harness/attempt-run/publish-pr')
       .send({ ...pubBody, source_attempt_id: '../../etc' });
-    expect(res.status).toBe(409);
-    expect(res.body.error).toBe('publish_branch_unavailable');
-    expect(pushCandidateFn).not.toHaveBeenCalled();
+    expect(pushCandidateFn).toHaveBeenCalledWith(expect.objectContaining({ sourceAttemptId: SRC_ATTEMPT }));
+    expect(res.status).toBe(200);
   });
 
   it('远端 ref 非 404 的失败（如 500）→ 409 publish_branch_unavailable，不盲目推送', async () => {
