@@ -490,6 +490,32 @@ export function createHarnessAttemptRunRouter({
       } catch (error) {
         return res.status(409).json({ error: 'contract_seal_rejected', detail: String(error?.message ?? error) });
       }
+      // 第 77 批（r51 案卷）：引用完备性——合同/PRD 正文引用的 sprint 内**合同期管理文件**
+      //（contract-draft/dod、sprint-prd、task-plan、tests/**）必须已在封印集。r51 的合同把
+      // task-plan.json 列进范围白名单却从未提交，seal 照封，40 分钟后 generate 才按
+      // CONTRACT IS LAW 拦停。fail-fast 到这里：打回 contract 格重试只要 5 分钟。
+      // generator 自产文件（red-evidence.md 等）不在管理家族，引用不受限（零误伤）。
+      {
+        const managedRe = /^(?:contract-draft\.md|contract-dod\.md|sprint-prd\.md|task-plan\.json|tests\/[A-Za-z0-9._/-]+)$/;
+        const sealedPaths = new Set((collected.artifacts ?? []).map((a) => a?.path));
+        const refText = `${collected.contractContent ?? ''}\n${collected.prdContent ?? ''}`;
+        const escaped = sprintDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const refRe = new RegExp(`${escaped}/([A-Za-z0-9._/-]+)`, 'g');
+        const missing = new Set();
+        let refMatch;
+        while ((refMatch = refRe.exec(refText)) !== null) {
+          const rel = refMatch[1].replace(/[.]+$/, '');
+          if (!managedRe.test(rel)) continue;
+          const full = `${sprintDir}/${rel}`;
+          if (!sealedPaths.has(full)) missing.add(full);
+        }
+        if (missing.size > 0) {
+          return res.status(409).json({
+            error: 'contract_references_missing_artifact',
+            missing: [...missing],
+          });
+        }
+      }
       try {
         const sealed = await sealDeps.materialize(pool, {
           runId,
