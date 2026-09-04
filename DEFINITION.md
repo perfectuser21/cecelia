@@ -8,7 +8,13 @@
 
 
 
-**Brain 版本**: 1.273.181
+**Brain 版本**: 1.273.182
+
+## Brain 1.273.182 — 九格交接 schema 化（第 79 批）
+
+- 新增 `orchestrator/handoff-schemas.js`：五类交接对象（`planner_prd_artifact`/`seal_coordinates`/`sealed_contract`/`candidate_coordinates`/`published_pr`）的字段+格式契约（zod），`validateHandoffObject` 单件校验、`validateStageEvidence` 阶段级校验（该格必交的件缺席或字段坏 → 结构化 issue 清单，点名到字段）。沿用 commander-contract 防泄密判据（交接对象禁夹带密钥）。
+- 背景：多 agent 流水线的 bug 通常活在交接处（Anthropic building-effective-agents 及多 agent 失效模式研究一致结论），本仓三发实证 r40（编造 40hex 假 sha）/r42（递错 run）/r53（少第五字段）。两层互补：本模块管**形状**，取值真伪由第 73/74/78 批的服务端权威注入管。
+- 本批只交付校验器本体（可被桥接与 Commander 两端调用）；派发点接线单独一批，避免一次改动过大。
 
 ## Brain 1.273.181 — publish-pr 分支反查候选（第 78 批）
 
