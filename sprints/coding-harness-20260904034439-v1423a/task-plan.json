@@ -1,0 +1,23 @@
+{
+  "initiative_id": "none",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅交付 Cecelia 仓库内部 Harness API 中文使用说明，不修改运行时行为",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "在 docs/current 下新增唯一中文说明，完整记录端点、鉴权、九项角色、payload 与失败回滚契约，不改代码",
+      "dod": [
+        "[BEHAVIOR] 冻结测试验证五类信息的正向要求与负向禁令",
+        "[BEHAVIOR] canonical 全仓 diff 从固定实现基线起仅含四个合同产物与唯一说明文档",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
