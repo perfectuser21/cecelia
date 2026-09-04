@@ -1,0 +1,20 @@
+{
+  "initiative_id": "086ab323-0160-4df9-87df-ce280db28812",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物为仓库内部静态使用说明，无 UI 或运行时行为变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "在 docs/current 下新增唯一一页中文说明，覆盖冻结 PRD 的四类内容与实现基线规则",
+      "dod": [
+        "[BEHAVIOR] 冻结 Vitest 的六项正反向内容与范围断言全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 是排除 sprints 后唯一变更"
+      ],
+      "files": ["docs/current/attempt-run-bridge-guide.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
