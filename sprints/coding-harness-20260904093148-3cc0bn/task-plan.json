@@ -1,0 +1,22 @@
+{
+  "initiative_id": "8fe6da45-9163-4e87-9ee5-002ae7d814ad",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅新增 Cecelia 内部 API 的中文使用说明，无 UI 或 API 行为变更",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增一页中文文档，覆盖端点用途、鉴权、九项角色、payload 字段和失败回滚",
+      "dod": [
+        "[BEHAVIOR] 文档读者可获得 PRD 指定的四类完整操作信息",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在且为中文"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
