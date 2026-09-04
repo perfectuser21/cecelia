@@ -1,0 +1,23 @@
+{
+  "initiative_id": "1077de32-0c7d-4d87-bbe9-9965fad01fd6",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付静态 Harness API 中文说明，不改变用户界面或运行时行为",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current/ 新增一页中文说明，覆盖冻结 PRD 的端点、鉴权、九角色、payload/基线与失败回滚",
+      "dod": [
+        "[BEHAVIOR] 九个冻结 Vitest 测试全部通过，且每项正向规则均有负向 oracle",
+        "[BEHAVIOR] 相对 bdaca81b5cbf78929fa3d8eeac2a24cae6113b98 排除 sprints 后仅交付 docs/current/attempt-run-bridge-guide.md",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": [
+        "docs/current/attempt-run-bridge-guide.md"
+      ],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
