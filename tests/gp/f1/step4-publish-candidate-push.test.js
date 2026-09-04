@@ -36,8 +36,17 @@ function makeApp({ refStatus = 404, refSha, pushResult } = {}) {
     return { ok: false, status: 500, json: async () => ({}) };
   });
   const pushCandidateFn = vi.fn(async () => pushResult ?? { ok: true });
+  const pool = { query: vi.fn(async (sql) => {
+    if (/git_candidate/.test(sql) || /role IN \('generator','generator-fix'\)/.test(sql)) {
+      return { rows: [{ id: SRC_ATTEMPT, run_id: 'cccccccc-0000-0000-0000-000000000009', result: { artifacts: [{
+        type: 'git_candidate', repo: 'perfectuser21/cecelia', branch: pubBody.branch,
+        base_sha: '8'.repeat(40), head_sha: pubBody.head_sha, source_attempt_id: SRC_ATTEMPT,
+      }] } }] };
+    }
+    return { rows: [], rowCount: 1 };
+  }) };
   const router = createHarnessAttemptRunRouter({
-    pool: { query: vi.fn(async () => ({ rows: [], rowCount: 1 })) },
+    pool,
     buildDeps: async () => ({ dispatch: vi.fn() }),
     attemptStoreFactory: async () => ({ getById: async () => null }),
     createTaskFn: async () => ({ success: true, task: { id: 'x' } }),
@@ -46,7 +55,7 @@ function makeApp({ refStatus = 404, refSha, pushResult } = {}) {
   const app = express();
   app.use(express.json());
   app.use('/api/brain/harness', router);
-  return { app, fetchFn, calls, pushCandidateFn };
+  return { app, fetchFn, calls, pushCandidateFn, pool };
 }
 
 describe('F1 step4 — publish-pr 候选推送线（r40 抢修契约）', () => {
@@ -65,8 +74,17 @@ describe('F1 step4 — publish-pr 候选推送线（r40 抢修契约）', () => 
     expect(calls.some(([url, m]) => /\/pulls$/.test(url) && m === 'POST')).toBe(true);
   });
 
-  it('远端 ref 404 + 无 source_attempt_id → 409 publish_branch_unavailable（行为不变）', async () => {
+  it('第78批改约：ref 404 + 无 source_attempt_id → 分支反查命中即推送开 PR', async () => {
     const { app, pushCandidateFn } = makeApp({ refStatus: 404 });
+    const body = { ...pubBody }; delete body.source_attempt_id;
+    const res = await request(app).post('/api/brain/harness/attempt-run/publish-pr').send(body);
+    expect(pushCandidateFn).toHaveBeenCalledWith(expect.objectContaining({ sourceAttemptId: SRC_ATTEMPT }));
+    expect(res.status).toBe(200);
+  });
+
+  it('第78批改约：ref 404 + 无字段且反查无候选 → 409 publish_branch_unavailable', async () => {
+    const { app, pool, pushCandidateFn } = makeApp({ refStatus: 404 });
+    pool.query.mockImplementation(async () => ({ rows: [], rowCount: 1 }));
     const body = { ...pubBody }; delete body.source_attempt_id;
     const res = await request(app).post('/api/brain/harness/attempt-run/publish-pr').send(body);
     expect(res.status).toBe(409);
@@ -105,8 +123,18 @@ describe('F1 step4 — publish-pr 候选推送线（r40 抢修契约）', () => 
     expect(res.body.push_error).toBe('candidate_push_failed');
   });
 
-  it('第76批：头不一致但无 source_attempt_id → 仍直接 409（无处可推）', async () => {
+  it('第78批：无 source_attempt_id → 按分支反查候选并推送（r53 台账缺字段案卷）', async () => {
     const { app, pushCandidateFn } = makeApp({ refStatus: 200, refSha: 'f'.repeat(40) });
+    const body = { ...pubBody }; delete body.source_attempt_id;
+    const res = await request(app).post('/api/brain/harness/attempt-run/publish-pr').send(body);
+    expect(pushCandidateFn).toHaveBeenCalledWith(expect.objectContaining({ sourceAttemptId: SRC_ATTEMPT }));
+    expect(res.status).toBe(200);
+    expect(res.body.pushed).toBe(true);
+  });
+
+  it('第78批：无 source_attempt_id 且反查无候选 → 409 publish_head_mismatch（行为兜底）', async () => {
+    const { app, pool, pushCandidateFn } = makeApp({ refStatus: 200, refSha: 'f'.repeat(40) });
+    pool.query.mockImplementation(async () => ({ rows: [], rowCount: 1 }));
     const body = { ...pubBody }; delete body.source_attempt_id;
     const res = await request(app).post('/api/brain/harness/attempt-run/publish-pr').send(body);
     expect(res.status).toBe(409);
@@ -114,13 +142,12 @@ describe('F1 step4 — publish-pr 候选推送线（r40 抢修契约）', () => 
     expect(pushCandidateFn).not.toHaveBeenCalled();
   });
 
-  it('source_attempt_id 非 UUID → 视同缺席（不调推送）→ 409 publish_branch_unavailable', async () => {
+  it('第78批改约：source_attempt_id 非 UUID → 视同缺席但反查兜底 → 用反查值推送（禁止直接用非法值）', async () => {
     const { app, pushCandidateFn } = makeApp({ refStatus: 404 });
     const res = await request(app).post('/api/brain/harness/attempt-run/publish-pr')
       .send({ ...pubBody, source_attempt_id: '../../etc' });
-    expect(res.status).toBe(409);
-    expect(res.body.error).toBe('publish_branch_unavailable');
-    expect(pushCandidateFn).not.toHaveBeenCalled();
+    expect(pushCandidateFn).toHaveBeenCalledWith(expect.objectContaining({ sourceAttemptId: SRC_ATTEMPT }));
+    expect(res.status).toBe(200);
   });
 
   it('远端 ref 非 404 的失败（如 500）→ 409 publish_branch_unavailable，不盲目推送', async () => {

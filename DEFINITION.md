@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.180
+**Brain 版本**: 1.273.181
+
+## Brain 1.273.181 — publish-pr 分支反查候选（第 78 批）
+
+- `routes/harness-attempt-run.js` publish-pr：r53 案卷——judge 三 PASS 后 publish 409，因 Commander 台账 `candidate_coordinates` 只记四字段无 `source_attempt_id`，端点未尝试 FF 推送。修：字段缺席/非法时按 `git_candidate.branch===branch` 反查最新 completed(±concerns) generator/generator-fix（74 批同源权威模式），反查命中即推送；无候选保持原 409。台账规格已同步补第五字段（HK skill 热改）。
 
 ## Brain 1.273.180 — contract-seal 引用完备性校验（第 77 批）
 
