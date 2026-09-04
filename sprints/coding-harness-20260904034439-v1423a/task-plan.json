@@ -1,0 +1,20 @@
+{
+  "initiative_id": "df7041db-222c-4e17-80e5-3509fbcd2fd4",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是内部 Harness API 使用文档，不改变运行时行为",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增一页中文文档，覆盖 PRD 冻结的五类使用信息",
+      "dod": [
+        "[BEHAVIOR] 五组内容测试与 canonical 范围 oracle 全部通过",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md 存在且为中文"
+      ],
+      "files": ["docs/current/attempt-run-bridge-guide.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
