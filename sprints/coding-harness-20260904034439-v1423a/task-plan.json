@@ -1,0 +1,21 @@
+{
+  "initiative_id": "none",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是 Cecelia 内部 Harness API 的静态中文使用说明",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "新增 attempt-run 桥接使用说明",
+      "scope": "仅在 docs/current 新增一页中文说明，覆盖冻结 PRD 的四类信息",
+      "dod": [
+        "[BEHAVIOR] 冻结测试的五项文档内容断言全部通过",
+        "[BEHAVIOR] 相对冻结基线排除 sprints 后仅新增指定说明页",
+        "[ARTIFACT] docs/current/attempt-run-bridge-guide.md"
+      ],
+      "files": ["docs/current/attempt-run-bridge-guide.md"],
+      "depends_on": [],
+      "complexity": "S",
+      "estimated_minutes": 30
+    }
+  ]
+}
