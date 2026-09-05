@@ -1,0 +1,23 @@
+{
+  "initiative_id": null,
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain/src/orchestrator 的机械校验器，纯 Node 后端自主流水线，无 UI/bridge/engine hooks",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "check-handoffs.mjs 契约 schema 化：CHECKS 扩为 CONTRACTS（coding 九格 + leadgen 八格）",
+      "scope": "新建 packages/brain/src/orchestrator/check-handoffs.mjs：导出 CODING_CELLS（派生自 home-sequencer STAGE_ORDER）、LEADGEN_CELLS（8 格 SSOT）、ASSERTION_CATEGORIES（六类冻结）、CONTRACTS（17 格三段断言）、evaluateAssertion（六类可参数化断言引擎，复用 handoff-schemas 真实 shape 校验）、runCellContracts + CLI（PASS/FAIL/UNDECIDABLE 结构化判定 + 退出码，未知格显式报错）",
+      "dod": [
+        "[BEHAVIOR] CONTRACTS 覆盖 coding 九格 + leadgen 八格共 17 格（--cells 输出 coding=9 leadgen=8 total=17）",
+        "[BEHAVIOR] 缺字段交接对象 → artifact_compliance FAIL 点名字段；record_persisted 无 resolver → UNDECIDABLE 不判 PASS；未知格 → unknown_cell 显式报错不静默 PASS",
+        "[ARTIFACT] packages/brain/src/orchestrator/check-handoffs.mjs 落位并复用真实 handoff-schemas/home-sequencer"
+      ],
+      "files": [
+        "packages/brain/src/orchestrator/check-handoffs.mjs"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
