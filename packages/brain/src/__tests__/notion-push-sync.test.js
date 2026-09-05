@@ -264,6 +264,8 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
     mockNotionReq.mockResolvedValueOnce(FEATURE_SCHEMA_WITH_PROGRESS); // GET database schema
     mockNotionReq.mockResolvedValueOnce({}); // PATCH page
     mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE advancement_items
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // pushOpsAgents: getOpsNotionDbs（无配置，静默跳过）
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // pushOpsSchedules: getOpsNotionDbs（无配置，静默跳过）
 
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
@@ -303,6 +305,8 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
     });
     mockNotionReq.mockResolvedValueOnce({ properties: {} }); // GET schema，无目标属性
     mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE advancement_items
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // pushOpsAgents: getOpsNotionDbs（无配置，静默跳过）
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // pushOpsSchedules: getOpsNotionDbs（无配置，静默跳过）
 
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
