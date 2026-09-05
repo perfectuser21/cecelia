@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.184
+**Brain 版本**: 1.273.185
+
+## Brain 1.273.185 — check-handoffs 契约 schema 化（第 82 批）
+
+- 新增 `orchestrator/check-handoffs.mjs`：CHECKS 扩为 CONTRACTS——coding 九格（派生自真实 `home-sequencer.STAGE_ORDER`）+ leadgen 八格，每格 precondition/postcondition/side_effects 三段、六类可参数化断言（artifact_compliance/record_persisted/externally_visible/state_transition/numeric_threshold/negative_boundary），输出确定性 PASS/FAIL/UNDECIDABLE + 退出码（0/1/2）。
+- INV-1 机械判定不信 handoff 抄写值：artifact_compliance/negative_boundary 真调 `handoff-schemas.validateHandoffObject`；record_persisted/externally_visible 只走 `ctx.resolvers.*`，resolver 缺席 → UNDECIDABLE（fail-closed）；未知格显式 `unknown_cell` 抛错，绝不静默 PASS。
 
 ## Brain 1.273.184 — 常驻监工唤醒器（第 81 批）
 
