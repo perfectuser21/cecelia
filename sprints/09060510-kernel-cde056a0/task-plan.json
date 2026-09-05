@@ -1,0 +1,35 @@
+{
+  "initiative_id": "intent:3ce9f4bd-71da-4f45-a07b-011ed028e1f1:19",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯后端/CI 判定器 eval 基础设施，node/vitest + 版本控制文件核对，不涉 apps/dashboard 或远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "金标集 v0 + LLM 判定器 eval 通过率棘轮进 CI",
+      "scope": "建金标集 v0 fixtures（5 类标注）+ eval 脚本真跑出通过率 + 棘轮阈值单调只升持久化 + CI eval job 接线 + 4 条纯代码不变量（序列固化/缓存命中零视觉调用/视觉 null fail-closed/契约完备性 lint）。判定器视觉 null fail-closed 绑定既有 arbitrateContractAppeal 真实原语。postgres=false 无 DB，全部 node/vitest + 文件核对。",
+      "dod": [
+        "[BEHAVIOR] node run-eval.mjs 真跑出 [0,1] 真实通过率，total=5，keys 完整（B-02）",
+        "[BEHAVIOR] 阈值高于通过率时 eval 非零退出，棘轮不许降（B-03）",
+        "[BEHAVIOR] 视觉 null 必 fail-closed 不当 pass 放行（B-04）",
+        "[BEHAVIOR] 缓存命中底层判定器零调用（B-05）",
+        "[BEHAVIOR] 空金标集 eval 非零退出防假绿（B-06）",
+        "[BEHAVIOR] 契约完备性 lint 缺 pre|post|side_effects 即 fail（B-07）",
+        "[BEHAVIOR] CI 至少一个 workflow 真实执行 run-eval.mjs（B-08）",
+        "[ARTIFACT] packages/quality/eval/gold-eval.mjs 导出契约 API",
+        "[ARTIFACT] fixtures/gold-set-v0/manifest.json 五类标注 + ratchet-threshold.json + skill-contracts.json"
+      ],
+      "files": [
+        "packages/quality/eval/gold-eval.mjs",
+        "packages/quality/eval/run-eval.mjs",
+        "packages/quality/eval/fixtures/gold-set-v0/manifest.json",
+        "packages/quality/eval/ratchet-threshold.json",
+        "packages/quality/eval/skill-contracts.json",
+        ".github/workflows/ci.yml",
+        "packages/brain/src/harness-judge.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
