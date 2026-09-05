@@ -1,0 +1,28 @@
+{
+  "initiative_id": "e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain 路由/调度层（work-router + 新增 capability-gate），纯后端自主流程，无 UI/远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "new_capability 四格路由前置三镜头 capability-gate + postcondition/NFR 三数落 decisions",
+      "scope": "新增 capability-gate 门禁模块并接线到 work-router/createRoutedTask：new_capability 在选 pipeline 前必经三镜头对抗，过闸产出一句 postcondition + NFR 三数写 decisions(category=nfr,level=step,target_type=journey_step)，未过闸/产物不完整/落库失败一律 fail-closed；非 new_capability 路由行为不变",
+      "dod": [
+        "[BEHAVIOR] new_capability 过闸后 decisions 落 nfr/step/journey_step active 行且 context.nfr 三数为 number（driver pass + psql 时间窗）",
+        "[BEHAVIOR] reject / 产物不完整 / 落库失败 均 fail-closed 抛对应 code 且不写 nfr",
+        "[BEHAVIOR] 非 new_capability（bugfix/parameter_only/capability_change）四格路由行为逐字不变",
+        "[ARTIFACT] packages/brain/src/capability-gate.js 导出 runCapabilityGate，work-routing-store.js 接线调用"
+      ],
+      "files": [
+        "packages/brain/src/capability-gate.js",
+        "packages/brain/src/work-routing-store.js",
+        "packages/brain/src/harness-skill-relay.js",
+        "packages/brain/src/__tests__/work-router.test.js",
+        "packages/brain/src/__tests__/integration/capability-gate.integration.test.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
