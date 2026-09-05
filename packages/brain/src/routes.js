@@ -35,6 +35,7 @@ import opsPanoramaRouter from './routes/ops-panorama.js';
 import kernelReviewsRouter from './routes/harness-kernel-approvals.js';
 import impactContractsRouter from './routes/impact-contracts.js';
 import harnessGapsRouter from './routes/gaps.js';
+import agentOpsRouter from './routes/agent-ops.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -110,5 +111,8 @@ router.use('/', impactContractsRouter);
 // Gap Ledger — GET/POST /harness/gaps, GET /harness/gaps/:id/events, PATCH /harness/gaps/:id/status
 // （FR-5 Gap 生命周期台账，sprint 08110022-relay-d96c9fa0 ws5）
 router.use('/harness/gaps', harnessGapsRouter);
+
+// 运行舱只读投影 — GET /agent-ops/agents, /agent-ops/calendar（指挥舱 G1 S1 刀1）
+router.use('/agent-ops', agentOpsRouter);
 
 export default router;
