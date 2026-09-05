@@ -8,7 +8,13 @@
 
 
 
-**Brain 版本**: 1.273.182
+**Brain 版本**: 1.273.183
+
+## Brain 1.273.183 — Commander Harness 回家·序列器核心（第 80 批）
+
+- 新增 `orchestrator/home-sequencer.js`：coding 线三代合流架构的确定性核心——完整格序（init+九格+finalize）、四档 change_kind 裁剪表（决策 29ae54ae：new_capability 全链 / capability_change 免对抗 / bugfix 跳 plan 免人审 / parameter_only 最轻且 evaluator 保留）、裁定词路由（r54 evaluate FAIL→generator-fix、#51/#52 seal blocked→contract、c8 publish 确定性 409→终局、attempt≥4 熔断）、收口摘要蒸馏（≤1200B，交接件坐标原样保留）、监工回复封闭词表解析。
+- 架构（Alex 2026-09-05 拍板）：顺序=本模块死代码；判断=常驻监工 claude -p --resume（一 run 一会话，只喂蒸馏收口摘要）；状态=台账；手=现役 fleet 多 provider 不动。判断力永不写进死代码（Kernel derive.js 1640 行血训）。已实证：fojc1r 重放 8/8 含 c8 盲区题、v1423a 跨格对质、单唤醒 10-13 秒。
+- 本批只交付确定性核心；监工唤醒器与派发驱动接线在后续批。leadgen 留 OpenClaw 不动。
 
 ## Brain 1.273.182 — 九格交接 schema 化（第 79 批）
 
