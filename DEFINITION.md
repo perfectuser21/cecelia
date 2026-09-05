@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.186
+**Brain 版本**: 1.273.187
+
+## Brain 1.273.187 — 结晶判官（Crystal 件4，认领 kernel 遗孤 PR#5163）
+
+- 新增 crystal-judge scheduler job（北京 05:00 窗口+当日去重）+ `POST /crystal/run` / `GET /crystal/report` 路由 + 迁移 434（原 433 与 ops 撞号改 434）：OpenClaw 八格六指标聚合（n_runs/成功率/token/时延/新分支率/broken_count）→ 三态判决（promote/keep_llm/demote）→ 每日结晶报告落库。铁律进引擎：判定层不蒸馏（INV-1）、探针强制（INV-2）、N≥20、固化件碎 3 降级、优先级=频率×失败率（决策 28ca1f69）。kernel run 2e593e10 完成实现后死于 automation_deadline，按认领规则人工 rebase 收割。
 
 ## Brain 1.273.186 — 投影自动重建 scheduler job（Crystal 件9，map_radius_stale 根治）
 
