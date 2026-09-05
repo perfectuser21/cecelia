@@ -8,7 +8,12 @@
 
 
 
-**Brain 版本**: 1.273.184
+**Brain 版本**: 1.273.185
+
+## Brain 1.273.185 — 指挥舱运行舱 ops 投影（第 82 批）
+
+- 新增 `ops-collector.js`（scheduler job，5min 自 gate，复用 host-exec ssh 逃逸）三腿采集本机 launchd / HK OpenClaw / GHA cron → `ops_agents` / `ops_schedule_entries` / `ops_source_heartbeats`（迁移 433）只读投影；per-source 心跳（单腿断只灰对应分区）、0条=可疑不写空快照、宁 stale 不假数据、meta 白名单禁凭据、OpenClaw 只读 docker exec 写死路径、next_run 采集端算绝对 UTC（DST 正确）。
+- 新增 `routes/agent-ops.js`：`GET /agent-ops/agents|calendar` 现算（per-source freshness、42P01→503 migration_pending、recurring_tasks 死排程标 ⚠️）；`notion-push-sync` 加两库 upsert 推送；`host-exec.js` 从 launchd-patrol 提取共享三件套。指挥舱 G1 S1 加厚刀1，决策 1f4fbc0f。
 
 ## Brain 1.273.184 — 常驻监工唤醒器（第 81 批）
 
