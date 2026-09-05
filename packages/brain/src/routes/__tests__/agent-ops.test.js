@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildAgentsPayload, buildCalendarPayload, SKILL_BY_TASK_TYPE } from '../routes/agent-ops.js';
+import { buildAgentsPayload, buildCalendarPayload, SKILL_BY_TASK_TYPE } from '../agent-ops.js';
 
 function poolReturning(rowsBySql) {
   return { query: async (sql) => {
