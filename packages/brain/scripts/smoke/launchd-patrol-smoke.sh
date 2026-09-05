@@ -20,7 +20,7 @@ const checks = [
   ['com.cecelia.bridge', 'bridge 在必查名单'],
   ['launchctl print-disabled system', 'disabled 表核对'],
   ['host_unreachable', '宿主不可达 fail-open'],
-  ['BatchMode=yes', 'ssh 逃逸 BatchMode'],
+  [\"from './host-exec.js'\", 'ssh 逃逸三件套已提取至 host-exec（复用）'],
 ];
 const missing = checks.filter(([p]) => !src.includes(p));
 if (missing.length > 0) {
@@ -28,7 +28,13 @@ if (missing.length > 0) {
   missing.forEach(([,desc]) => console.error('  - ' + desc));
   process.exit(1);
 }
-console.log('launchd-patrol.js 结构正确 ✓');
+// ssh 逃逸能力（BatchMode）随提取搬到 host-exec.js，改在真源处断言
+const hostExec = fs.readFileSync('packages/brain/src/host-exec.js', 'utf8');
+if (!hostExec.includes('BatchMode=yes') || !hostExec.includes('export function buildHostCmd')) {
+  console.error('FAIL: host-exec.js 缺 ssh 逃逸 BatchMode / buildHostCmd 导出');
+  process.exit(1);
+}
+console.log('launchd-patrol.js 结构正确（ssh 逃逸经 host-exec）✓');
 "
 
 echo "[launchd-patrol-smoke] 2. scheduler-jobs.js 已注册 launchd-patrol"

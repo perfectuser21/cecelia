@@ -266,3 +266,4 @@ failed-target-ttl-smoke.sh
 handoff-schemas-smoke.sh
 home-sequencer-smoke.sh
 commander-invoker-smoke.sh
+ops-registry-smoke.sh
