@@ -13,6 +13,8 @@
  * 是上游合同病）、c8（publish 确定性 409 终局）、r54 打转熔断（attempt≥4）。
  */
 
+import { validateStageEvidence } from './handoff-schemas.js';
+
 /** 完整格序：init + 九格 + finalize（画布验证过的骨架原样继承） */
 export const STAGE_ORDER = Object.freeze([
   '__run_init', 'plan', 'contract', 'seal', 'generate',
@@ -113,6 +115,15 @@ export function buildCheckpointDigest(envelope) {
     summary = summary.slice(0, Math.floor(summary.length * 0.9));
   }
   return `${fixed}摘要:${summary}`;
+}
+
+/**
+ * 双层收口·机械层（先于监工运行）：79 批交接件 schema 校验。
+ * 不合格 → 就地打回并点名字段，不劳烦监工；合格才蒸馏摘要唤醒监工裁质量。
+ * @returns {{ok: boolean, issues: string[]}}
+ */
+export function mechanicalCheckpoint(stage, evidence) {
+  return validateStageEvidence(stage, evidence);
 }
 
 /**

@@ -53,3 +53,17 @@ describe('home-sequencer 模块 API', () => {
     expect(parseCommanderReply('').verdict).toBeNull();
   });
 });
+
+describe('双层收口·机械层（组合 79 批 schema 校验）', () => {
+  it('generate 缺 candidate_coordinates → 机械层拒收，点名交接件', async () => {
+    const { mechanicalCheckpoint } = await import('../home-sequencer.js');
+    const r = mechanicalCheckpoint('generate', [{ type: 'note', text: 'x' }]);
+    expect(r.ok).toBe(false);
+    expect(r.issues.join()).toMatch(/candidate_coordinates/);
+  });
+
+  it('无交接要求的格（cleanup）→ 放行，零误伤', async () => {
+    const { mechanicalCheckpoint } = await import('../home-sequencer.js');
+    expect(mechanicalCheckpoint('cleanup', []).ok).toBe(true);
+  });
+});
