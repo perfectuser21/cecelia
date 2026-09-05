@@ -1,0 +1,31 @@
+{
+  "initiative_id": "intent:2e593e10-28a7-4834-bd61-f6389a2bd379:105",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅 packages/brain 纯后端（定时任务/台账/判决/报告/registry），无 UI 无远端 agent 协议",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "结晶判官：结晶台账 + 三态判决引擎 + 每日结晶报告 + registry回写/证据规范",
+      "scope": "新建 migration 433 四表（crystal_ledger/crystal_verdict/crystal_report/crystal_locator_registry）；纯函数判决引擎 verdict-engine.js（三态规则 + 固化优先级）；evidence.js（trial+timestamp 文件名 + 禁覆盖）；grids.js（OpenClaw 八格常量）；crystal-judge.js（八格只读聚合六指标 → 落台账 → 判决 → 每日报告，源只读、data_gap 降级）；scheduler-jobs.js 注册 crystal-judge 每日任务；routes/crystal.js 四端点（run/report/locator/evidence-validate）挂进 routes.js",
+      "dod": [
+        "[BEHAVIOR] POST /crystal/run 后 crystal_ledger 八格落库、crystal_verdict 八格三态带依据、GET /crystal/report 返回八格建议（含六项指标）",
+        "[BEHAVIOR] N<20 的格判决必为 keep_llm；判定层永不 promote；无 postcondition 不晋升；固化件 7 天碎 3 次判 demote",
+        "[BEHAVIOR] locator 复合键 model|app_version|density 回写（缺键 400）；证据文件名缺 trial+timestamp→400、复用覆盖→409",
+        "[ARTIFACT] migration 433 四表 + routes/crystal.js 挂载 + scheduler-jobs crystal-judge 注册"
+      ],
+      "files": [
+        "packages/brain/migrations/433_crystal_judge.sql",
+        "packages/brain/src/crystal/verdict-engine.js",
+        "packages/brain/src/crystal/evidence.js",
+        "packages/brain/src/crystal/grids.js",
+        "packages/brain/src/crystal-judge.js",
+        "packages/brain/src/routes/crystal.js",
+        "packages/brain/src/routes.js",
+        "packages/brain/src/scheduler-jobs.js"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 110
+    }
+  ]
+}
