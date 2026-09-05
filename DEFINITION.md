@@ -8,7 +8,13 @@
 
 
 
-**Brain 版本**: 1.273.183
+**Brain 版本**: 1.273.184
+
+## Brain 1.273.184 — 常驻监工唤醒器（第 81 批）
+
+- 新增 `orchestrator/commander-invoker.js`：监工"记忆常驻、进程不常驻"形态——一 run 一个 Claude Code 会话（`--session-id` 开局喂 charter+冻结题目，`--resume` 逐收口唤醒），每次只喂 home-sequencer 蒸馏摘要（>1200B 直接抛 digest_too_large，喂食纪律是闸不是建议）。裁定+分析写 `sequencer_ledger`（迁移 432）双职责：审计 + 会话丢失重建源。
+- 唤醒失败三级降级：①同会话重问一次（点明机器行格式）②`rebuildSessionFromLedger` 从台账回放裁定史重开会话 ③verdict=null 升人——封闭词表解析失败绝不猜。charter 判则含瞬时/持久基础设施故障之分（v1423a 重放偏差的纠正）。
+- 机制实证（建模前）：fojc1r 重放 8/8 含 c8 盲区题、v1423a 跨格对质、单唤醒 10-13 秒。
 
 ## Brain 1.273.183 — Commander Harness 回家·序列器核心（第 80 批）
 
