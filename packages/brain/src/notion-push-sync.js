@@ -484,6 +484,99 @@ async function pushAdvancementItems(pool, token) {
   }
 }
 
+// ─── ops 运行舱两库（指挥舱 G1 S1 刀1，task 6fcb5356）───────────────────────────
+// DB id 不硬编码：来自 working_memory key='ops_notion_dbs'（scripts/ops/create-ops-notion-dbs.js 一次性写入）。
+// kv 缺失=库未创建（运维状态，静默跳过不刷错误）；value.disabled=true 为终止态（库被删，禁自动重建防平行库）。
+
+export function isMissingDatabaseError(err) {
+  return !!(err?.message && err.message.includes('Could not find database'));
+}
+
+export function buildOpsAgentNotionProperties(r) {
+  const p = {
+    Name: { title: [{ text: { content: String(r.name).slice(0, 200) } }] },
+    Source: { select: { name: r.source } },
+    Host: { select: { name: r.host_alias } },
+    Status: { select: { name: r.status } },
+  };
+  if (r.agent_type) p.Type = { rich_text: buildRichText(r.agent_type) };
+  if (r.last_seen_at) p.LastSeen = { date: { start: new Date(r.last_seen_at).toISOString() } };
+  return p;
+}
+
+export function buildOpsScheduleNotionProperties(r, suspicious = false) {
+  const p = {
+    Name: { title: [{ text: { content: String(r.label).slice(0, 200) } }] },
+    Source: { select: { name: r.source } },
+    Host: { select: { name: r.host_alias } },
+    Kind: { select: { name: r.kind } },
+    Schedule: { rich_text: buildRichText(r.schedule_desc) },
+    Suspicious: { checkbox: !!suspicious },
+    Active: { checkbox: r.active !== false },
+  };
+  if (r.next_run_utc) p.NextRun = { date: { start: new Date(r.next_run_utc).toISOString() } };
+  if (r.last_state) p.LastState = { rich_text: buildRichText(r.last_state) };
+  return p;
+}
+
+async function getOpsNotionDbs(pool) {
+  const { rows } = await pool.query(`SELECT value_json FROM working_memory WHERE key = 'ops_notion_dbs'`);
+  return rows[0]?.value_json || null;
+}
+
+async function disableOpsPush(pool, errMsg) {
+  await pool.query(
+    `UPDATE working_memory SET value_json = value_json || '{"disabled":true}'::jsonb, updated_at = NOW()
+     WHERE key = 'ops_notion_dbs'`);
+  await logSyncError(pool, `[ops-push] Notion 库不可访问已停推（终止态，禁自动重建）: ${errMsg}`);
+}
+
+async function upsertOpsRows(pool, token, { table, dbId, rows, buildProps }) {
+  for (const r of rows) {
+    try {
+      const properties = buildProps(r);
+      if (r.notion_id) {
+        await notionReq(token, `/pages/${r.notion_id}`, 'PATCH', { properties });
+      } else {
+        const page = await notionReq(token, '/pages', 'POST', { parent: { database_id: dbId }, properties });
+        await pool.query(`UPDATE ${table} SET notion_id = $1 WHERE id = $2`, [page.id, r.id]);
+      }
+      await pool.query(`UPDATE ${table} SET notion_synced_at = NOW() WHERE id = $1`, [r.id]);
+    } catch (err) {
+      if (isMissingDatabaseError(err)) { await disableOpsPush(pool, err.message); return; }
+      if (isStaleRelationError(err)) { // 页被人删 → 清 notion_id 下轮重建该页
+        await pool.query(`UPDATE ${table} SET notion_id = NULL WHERE id = $1`, [r.id]);
+        continue;
+      }
+      console.warn(`[notion-push-sync] ${table} ${r.id} 推送失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
+}
+
+async function pushOpsAgents(pool, token) {
+  const dbs = await getOpsNotionDbs(pool);
+  if (!dbs?.agents_db || dbs.disabled) return;
+  const { rows } = await pool.query(
+    `SELECT * FROM ops_agents
+     WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
+     ORDER BY updated_at LIMIT 50`);
+  await upsertOpsRows(pool, token, { table: 'ops_agents', dbId: dbs.agents_db, rows, buildProps: buildOpsAgentNotionProperties });
+}
+
+async function pushOpsSchedules(pool, token) {
+  const dbs = await getOpsNotionDbs(pool);
+  if (!dbs?.calendar_db || dbs.disabled) return;
+  const { rows } = await pool.query(
+    `SELECT * FROM ops_schedule_entries
+     WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
+     ORDER BY updated_at LIMIT 50`);
+  await upsertOpsRows(pool, token, {
+    table: 'ops_schedule_entries', dbId: dbs.calendar_db, rows,
+    buildProps: (r) => buildOpsScheduleNotionProperties(r, false),
+  });
+}
+
 export async function runNotionPushSync(pool) {
   let token;
   try {
@@ -501,4 +594,6 @@ export async function runNotionPushSync(pool) {
   await pushDecisions(pool, token);
   await pushInitiativeContracts(pool, token);
   await pushAdvancementItems(pool, token);
+  await pushOpsAgents(pool, token);
+  await pushOpsSchedules(pool, token);
 }
