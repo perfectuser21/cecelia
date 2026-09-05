@@ -1,0 +1,28 @@
+{
+  "initiative_id": "kernel-c07dfadc",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动集中在 packages/brain 后端（map 投影 / golden_path SSOT / run 终态回写），无 UI/agent 协议/engine hook；E2E 走 local_api curl+psql。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "map 画布层：golden_path→canvas/stage/feature 投影(SSOT) + run 终态回写 step 成熟度 + /api/brain/map 体检表读出",
+      "scope": "在 map-projector.js 新增 projectGoldenPathCanvas 纯投影（ability→canvas/step→stage/feature→技能体，有序、空不报错）并并入 buildMapProjection；新增 migration 把 canvas/stage 并入 map_projection_nodes.node_type CHECK（保留既有枚举）；在 map-projection-store.js 新增 writebackStepMaturity（scope 锁 + 幂等跳过 + 不写脏）；在 kernel-run-store.js 新增 applyRunTerminalMaturity 并挂到 finalizeKernelRun 终态副作用；map-read-service readMap 暴露 stage 节点与 summary.stages/stage_maturity 体检摘要。",
+      "dod": [
+        "[BEHAVIOR] projectGoldenPathCanvas 对 golden_path steps 生成有序 stage 节点、feature 技能体、空 steps 画布为空不报错（tests/canvas-projection.test.ts 绿）",
+        "[BEHAVIOR] writebackStepMaturity 存在 step 回写落库 passing/failing、缺失 step 幂等跳过不写脏；applyRunTerminalMaturity 终态锚接力（tests/maturity-writeback.integration.test.ts 真 PG 绿 + verify-writeback.mjs OK）",
+        "[BEHAVIOR] GET /api/brain/map?scope 暴露 stage 节点 + summary.stages/stage_maturity；缺 scope 返 400",
+        "[ARTIFACT] 新增 migration 扩展 node_type CHECK 含 canvas/stage（tests/node-type-migration.test.ts 绿）"
+      ],
+      "files": [
+        "packages/brain/src/lib/map-projector.js",
+        "packages/brain/src/lib/map-projection-store.js",
+        "packages/brain/src/lib/map-read-service.js",
+        "packages/brain/src/orchestrator/kernel-run-store.js",
+        "packages/brain/migrations/"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
