@@ -1,7 +1,7 @@
 # 指挥舱运行舱 · 刀1 设计：ops 统一注册投影 + 编排日历
 
 - 日期：2026-09-05 ｜ Brain task 6fcb5356 ｜ gp 804520f5 ｜ 决策 1f4fbc0f（档位A 只看不控）
-- 完整 PrepPRD（含 GAN 对抗吸收记录）：`sprints/09052225-ops-registry-calendar/prep-prd.md`——**实现细节以 PrepPRD §设计修订 D1-D5 为准**，本文只固化架构决策与测试策略。
+- 完整 PrepPRD（含 GAN 对抗吸收记录）：`docs/superpowers/specs/2026-09-05-ops-registry-calendar-prep-prd.md`——**实现细节以 PrepPRD §设计修订 D1-D5 为准**，本文只固化架构决策与测试策略。
 
 ## 目标一句话
 把散在四层账本（Brain 队列 / 各机 launchd / OpenClaw clawdbot.json / cron）里的"有哪些 agent、什么任务什么时间在哪台机器跑"聚合成 Brain 里的只读投影，经现有 notion-push 管道映射到 Notion 两张库，主理人手机可看，且任何采集失败诚实标灰、绝不显示假数据。

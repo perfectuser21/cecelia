@@ -4,7 +4,7 @@
 
 **Goal:** Brain 内新增 ops 只读投影（agent/机器清单 + 编排日历），由 scheduler job 复用 launchd-patrol 的 ssh 逃逸范式拉取宿主 launchd / HK OpenClaw / GHA cron，经 GET 端点现算输出，并以 upsert 模式推送 Notion 两库。
 
-**Architecture:** 拉取模型（无宿主 daemon、无写端点）：scheduler-jobs 每 5min 跑 `runOpsCollector(pool)` → 容器内 ssh 逃逸宿主采三路 → 写 ops_agents / ops_schedule_entries / ops_source_heartbeats（per-source 心跳，宁 stale 不假数据）→ `GET /api/brain/agent-ops/agents|calendar` 现算（含 freshness 与 recurring_tasks 死排程 ⚠️）→ notion-push-sync 两个 upsert push 函数。设计契约见 `docs/superpowers/specs/2026-09-05-ops-registry-calendar-design.md` 与 `sprints/09052225-ops-registry-calendar/prep-prd.md`（**契约违反即 bug**）。
+**Architecture:** 拉取模型（无宿主 daemon、无写端点）：scheduler-jobs 每 5min 跑 `runOpsCollector(pool)` → 容器内 ssh 逃逸宿主采三路 → 写 ops_agents / ops_schedule_entries / ops_source_heartbeats（per-source 心跳，宁 stale 不假数据）→ `GET /api/brain/agent-ops/agents|calendar` 现算（含 freshness 与 recurring_tasks 死排程 ⚠️）→ notion-push-sync 两个 upsert push 函数。设计契约见 `docs/superpowers/specs/2026-09-05-ops-registry-calendar-design.md` 与 `docs/superpowers/specs/2026-09-05-ops-registry-calendar-prep-prd.md`（**契约违反即 bug**）。
 
 **Tech Stack:** node ESM + express + pg + vitest；Intl.DateTimeFormat 做 DST 正确的 next_run 推算；Notion REST（notionReq 复用）。
 
