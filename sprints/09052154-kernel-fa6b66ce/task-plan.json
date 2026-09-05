@@ -1,0 +1,28 @@
+{
+  "initiative_id": "1aa5c2ee-fdcd-4230-a051-68181c7b9cf5",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动落在 packages/brain（POST /api/brain/tasks 入口路由 + task-router 四格逻辑），纯后端自主流程，无 UI/远端 agent。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "四格路由器：task 入口增 artifact_kind + answer_known 并按四格路由到 routed_lane",
+      "scope": "在 task-router.js 新增并导出 classifyArtifactKind（规则判 code/execution）、judgeAnswerKnown（一次 LLM 调用 + 确定性兜底，llm 依赖可注入）、routeFourQuadrant（四格 → dev/prototype_dev/canvas_skill/skill_explore 全函数）；在 POST /api/brain/tasks 处理链（routes/task-tasks.js）接线三者，把 artifact_kind/answer_known/routed_lane 合并进 payload 并在响应体顶层镜像暴露；新增回放脚本产出 30 真实任务分格完备准确率报告。",
+      "dod": [
+        "[BEHAVIOR] POST /api/brain/tasks 响应含 artifact_kind∈{code,execution}、answer_known∈{true,false}、routed_lane∈四值集合（对应合同 B-01/B-03）",
+        "[BEHAVIOR] 三字段真落 tasks.payload，psql 5 分钟窗验证（B-02）",
+        "[BEHAVIOR] 空 description 仍 201 且 artifact_kind 有确定值（B-04）",
+        "[BEHAVIOR] 冻结 vitest 四格互斥完备 + LLM 兜底套件全绿（B-05）",
+        "[BEHAVIOR] 回放报告 completeness_rate==1 且四格计数和==total（B-06）",
+        "[ARTIFACT] sprints/09052154-kernel-fa6b66ce/replay-four-lane-accuracy.mjs 存在且调 routeFourQuadrant + 查 tasks 表"
+      ],
+      "files": [
+        "packages/brain/src/task-router.js",
+        "packages/brain/src/routes/task-tasks.js",
+        "sprints/09052154-kernel-fa6b66ce/replay-four-lane-accuracy.mjs"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
