@@ -36,6 +36,7 @@ import kernelReviewsRouter from './routes/harness-kernel-approvals.js';
 import impactContractsRouter from './routes/impact-contracts.js';
 import harnessGapsRouter from './routes/gaps.js';
 import agentOpsRouter from './routes/agent-ops.js';
+import crystalRouter from './routes/crystal.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
@@ -114,5 +115,8 @@ router.use('/harness/gaps', harnessGapsRouter);
 
 // 运行舱只读投影 — GET /agent-ops/agents, /agent-ops/calendar（指挥舱 G1 S1 刀1）
 router.use('/agent-ops', agentOpsRouter);
+// Crystal 结晶判官 — POST /crystal/run, GET /crystal/report, POST /crystal/locator,
+// POST /crystal/evidence/validate（结晶台账+三态判决+每日报告，Crystal 第4件）
+router.use('/crystal', crystalRouter);
 
 export default router;
