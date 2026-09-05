@@ -11,6 +11,7 @@
 2. **采集器用 LaunchAgent**——否决：本机 gui/501 域不存在，~/Library/LaunchAgents 永不加载（launchd-patrol.js:6-8 实证）。→ 系统域 LaunchDaemon + 登记 MUST_LOAD_DAEMONS。
 3. **Notion 沿用现有一次性建页 push 模式**——否决：心跳/状态数据每 5 分钟变化，一次性模式页面永远停在首次快照。→ upsert 模式（有 notion_id 则 PATCH），日历行=排程条目非运行流水。
 4. **Notion 作为编排控制入口**——拍板否决（决策 1f4fbc0f）：Notion Worker 回写链路已退役，档位B 不做。
+5. **宿主 push LaunchDaemon 采集器 + POST /agent-ops/report 写端点**（PrepPRD D2/D3 原案）——计划阶段否决，改为 **Brain 内 scheduler job 拉取**（`runOpsCollector`，复用 launchd-patrol 的 host-exec ssh 逃逸范式）。理由：①正面消解 challenger"双采集链真相源打架"缺口——全系统只剩一条采集路径；②整类风险随写端点消失：internal token fail-open、5221/5222 静默错投、宿主 spool/单飞锁残留、LaunchAgent 永不加载、MUST_LOAD_DAEMONS 漏登记；③采集器停摆天然由现有 scheduler_job_last_run 哨兵覆盖。PrepPRD D2 的"fail-closed 鉴权/env 断言/spool"等条目随写端点一并作废，其余契约（per-source 心跳、宁 stale 不假数据、白名单、写死路径、0条可疑、UTC next_run）原样保留并已落进实施计划的测试断言。
 
 ## 架构（三个独立单元 + 清晰接口）
 ```
