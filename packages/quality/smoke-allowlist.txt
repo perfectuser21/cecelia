@@ -264,3 +264,4 @@ kernel-controller-lease-renewal-smoke.sh
 publisher-infra-retry-smoke.sh
 failed-target-ttl-smoke.sh
 handoff-schemas-smoke.sh
+home-sequencer-smoke.sh
