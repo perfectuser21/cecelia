@@ -151,17 +151,19 @@ async function writeAgentsSnapshot(pool, source, host, agents, collectedAt) {
 async function writeSchedulesSnapshot(pool, source, host, entries, collectedAt) {
   for (const s of entries) {
     await pool.query(
+      // updated_at 显式写 collectedAt（应用时钟），与下方 deactivation 阈值同源——
+      // 若用 NOW()（DB 时钟）而 DB 时钟落后于应用时钟，本轮刚写的行会 updated_at < collectedAt 被误标 active=FALSE 闪断。
       `INSERT INTO ops_schedule_entries (source, host_alias, label, kind, schedule_desc, next_run_utc, last_state, last_exit_code, active, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,NOW())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9)
        ON CONFLICT (source, host_alias, label) DO UPDATE SET
          kind=EXCLUDED.kind, schedule_desc=EXCLUDED.schedule_desc, next_run_utc=EXCLUDED.next_run_utc,
-         last_state=EXCLUDED.last_state, last_exit_code=EXCLUDED.last_exit_code, active=TRUE, updated_at=NOW()`,
-      [source, host, s.label, s.kind, s.schedule_desc || '', s.next_run_utc || null, s.last_state || null, s.last_exit_code ?? null]
+         last_state=EXCLUDED.last_state, last_exit_code=EXCLUDED.last_exit_code, active=TRUE, updated_at=$9`,
+      [source, host, s.label, s.kind, s.schedule_desc || '', s.next_run_utc || null, s.last_state || null, s.last_exit_code ?? null, collectedAt]
     );
   }
   if (entries.length) {
     await pool.query(
-      `UPDATE ops_schedule_entries SET active=FALSE, updated_at=NOW()
+      `UPDATE ops_schedule_entries SET active=FALSE, updated_at=$3
        WHERE source=$1 AND host_alias=$2 AND active=TRUE AND updated_at < $3`,
       [source, host, collectedAt]
     );
