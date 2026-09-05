@@ -1,0 +1,41 @@
+{
+  "initiative_id": "intent:89cb9884-8ed6-4598-9a69-8130668a1e5a:153",
+  "journey_type": "autonomous",
+  "journey_type_reason": "判定器 eval 是纯后端/CI 质量闸，无 UI、无远端 agent，落 tests/gp/f1 + scripts/ratchet-* + CI workflow，纯 node 确定性逻辑",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "判定器金标集 v0 + eval 通过率棘轮 + 4 条纯代码用例进 CI",
+      "scope": "新增金标集 v0 数据集与 ground-truth manifest、eval 计分模块（evalGoldenSet/cachedJudge/failClosedJudge/checkRatchet/assertMonotonic/lintSkillContract/EVAL_STEPS）、阈值基线文件、eval runner CLI；把 golden_eval_pass_rate 追加进既有 scripts/ratchet-registry.json(only_up) 与 ratchet-guard.mjs measure()；新增 golden-eval-ratchet.yml CI job；把 4 条纯代码用例 port 进 tests/gp/f1/ 作永久回归。不改判定器算法、不新增视觉 provider、不触碰 packages/brain/src。",
+      "dod": [
+        "[BEHAVIOR] eval 金标集 v0 通过率可算出且 ≥ 入库阈值（B-01）",
+        "[BEHAVIOR] 降阈提交被棘轮拦截·阈值只升不降（B-02）",
+        "[BEHAVIOR] 缓存命中二次判定视觉调用计数为 0（B-03）",
+        "[BEHAVIOR] 视觉返回 null 必 fail-closed 判 FAIL（B-04）",
+        "[BEHAVIOR] 契约缺 pre/post/side_effects 任一段触发 lint FAIL（B-05）",
+        "[BEHAVIOR] 判定步骤序列固化不漂移（B-06）",
+        "[BEHAVIOR] 金标集为空/标签缺失 eval 直接 FAIL（B-07）",
+        "[ARTIFACT] tests/gp/f1/eval/harness-visual-eval.mjs 存在且导出六件套",
+        "[ARTIFACT] tests/gp/f1/fixtures/golden-set-v0/manifest.json 五类标注齐全",
+        "[ARTIFACT] scripts/ratchet-registry.json 追加 golden_eval_pass_rate(only_up)",
+        "[ARTIFACT] .github/workflows/golden-eval-ratchet.yml eval job 装配"
+      ],
+      "files": [
+        "tests/gp/f1/eval/harness-visual-eval.mjs",
+        "tests/gp/f1/eval/run-golden-eval.mjs",
+        "tests/gp/f1/fixtures/golden-set-v0/manifest.json",
+        "tests/gp/f1/fixtures/golden-set-v0/threshold.json",
+        "tests/gp/f1/fixtures/golden-set-v0/reference-verdicts.json",
+        "tests/gp/f1/fixtures/golden-set-v0/skill-contracts.json",
+        "tests/gp/f1/fixtures/golden-set-v0/screenshots/",
+        "tests/gp/f1/step5-golden-eval-ratchet.test.js",
+        "scripts/ratchet-registry.json",
+        "scripts/ratchet-guard.mjs",
+        ".github/workflows/golden-eval-ratchet.yml"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
