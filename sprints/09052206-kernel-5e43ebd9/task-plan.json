@@ -1,0 +1,32 @@
+{
+  "initiative_id": "e138c364-c5c8-42e1-acbb-949134133bb7",
+  "journey_type": "autonomous",
+  "journey_type_reason": "交付物是纯后台 skill 资产（审技能契约 + 写 Brain decisions），无 UI、无远端 agent、非 engine hooks。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "skill-contract-auditor：固化 09-05 轻对抗审技能契约 skill + scan.mjs 确定性流水线 + 基准 fixtures",
+      "scope": "新增 packages/workflows/skills/skill-contract-auditor/SKILL.md（固化提示词，三缺陷面，与 harness-contract-reviewer 区分）；scan.mjs（导出 rankFindings/parseSkillContract/persistJudgments 纯函数 + CLI：--contract/--findings/--brain-url/--source-ref/--out/--batch/--out-dir）；fixtures（search-account-contract.md + search-account-findings.json 8 条含 4 判定假设 + zero-vuln + invalid + overflow 10 条 + batch/ 目录）；判定假设洞经既有 POST /api/brain/strategic-decisions 写 decisions(category=judgment)。让冻结测试与 E2E 全绿。",
+      "dod": [
+        "[BEHAVIOR] search_account 基准输出 8 条、severity 降序、第一条 critical 死因（B-01）",
+        "[BEHAVIOR] 判定假设洞真实写入 Brain decisions(category=judgment)，psql 回读 >=4（B-03）",
+        "[BEHAVIOR] 零漏洞返回空清单、非法契约报错不产假空、>8 截断、Brain 不可达只告警（B-02/04/05/06）",
+        "[ARTIFACT] SKILL.md + scan.mjs + fixtures 存在，冻结测试 sprints/09052206-kernel-5e43ebd9/tests/ 转绿"
+      ],
+      "files": [
+        "packages/workflows/skills/skill-contract-auditor/SKILL.md",
+        "packages/workflows/skills/skill-contract-auditor/scan.mjs",
+        "packages/workflows/skills/skill-contract-auditor/fixtures/search-account-contract.md",
+        "packages/workflows/skills/skill-contract-auditor/fixtures/search-account-findings.json",
+        "packages/workflows/skills/skill-contract-auditor/fixtures/zero-vuln-contract.md",
+        "packages/workflows/skills/skill-contract-auditor/fixtures/zero-vuln-findings.json",
+        "packages/workflows/skills/skill-contract-auditor/fixtures/invalid-contract.md",
+        "packages/workflows/skills/skill-contract-auditor/fixtures/overflow-findings.json",
+        "packages/workflows/skills/skill-contract-auditor/fixtures/batch/"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
