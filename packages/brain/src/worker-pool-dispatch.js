@@ -55,7 +55,9 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
   const { host, opts: sshOpts } = deps.ssh || defaultSshPrefix();
   // 宿主直跑（测试/本机进程）时不套 ssh。先转义反斜杠再转义引号——只转义引号
   // 会被 \" 序列绕过（CodeQL js/incomplete-sanitization）
-  const wrap = (cmd) => (host ? `ssh ${sshOpts} ${host} "${cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : cmd);
+  // $ 也必须转义:双引号包裹的 ssh 参数里 $(...)/$VAR 会被本地(容器)shell 先展开——
+  // 金丝雀案:$(cat promptFile) 在容器求值(无宿主文件)→ 发射命令落地成 claude-launch.sh ""
+  const wrap = (cmd) => (host ? `ssh ${sshOpts} ${host} "${cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$')}"` : cmd);
 
   // ── 1. 槽位盘点（stdout 判读，exit code 不可信）────────────────────────────
   const slotState = {};
