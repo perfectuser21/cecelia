@@ -270,3 +270,4 @@ commander-invoker-smoke.sh
 ops-registry-smoke.sh
 map-canvas-align-smoke.sh
 ops-graph-smoke.sh
+four-cell-router-smoke.sh
