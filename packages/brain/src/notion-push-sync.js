@@ -531,6 +531,23 @@ export function buildOpsRelationProperties(u, idByName) {
   return { CanCall: { relation: ids } }; // 空数组=清掉历史残留关系
 }
 
+
+/** run 记录行（刀6）：一次执行 = 一行。crashed 无耗时则不发 Minutes（禁编造 0）。 */
+export function buildOpsRunNotionProperties(r, wfName) {
+  const when = r.started_at ? new Date(r.started_at) : null;
+  const label = `${wfName || r.wf_id} · ${when ? when.toISOString().slice(5, 16).replace('T', ' ') : r.run_id}`;
+  const p = {
+    Name: { title: [{ text: { content: label.slice(0, 200) } }] },
+    Status: { select: { name: r.status || 'unknown' } },
+    RunId: { rich_text: buildRichText(String(r.run_id)) },
+  };
+  if (r.machine) p.Machine = { select: { name: r.machine } };
+  if (r.mode) p.Mode = { select: { name: r.mode } };
+  if (typeof r.duration_sec === 'number') p.Minutes = { number: Math.round(r.duration_sec / 60) };
+  if (when) p.StartedAt = { date: { start: when.toISOString() } };
+  return p;
+}
+
 async function getOpsNotionDbs(pool) {
   const { rows } = await pool.query(`SELECT value_json FROM working_memory WHERE key = 'ops_notion_dbs'`);
   return rows[0]?.value_json || null;
@@ -625,6 +642,7 @@ async function pushOpsGraph(pool, token) {
   // 必须在建页之后——relation 需要目标页的 notion_id。Workflow（反向）由 Notion 自动生成。
   await syncOpsMembersRelation(pool, token);
   await pushOpsWorkflows(pool, token);   // 业务流程库（刀4）
+  await pushOpsRuns(pool, token);        // run 记录库（刀6）
 }
 
 // ─── 业务流程库「Ops Workflows」（刀4）────────────────────────────────
@@ -640,6 +658,13 @@ export function buildOpsWorkflowNotionProperties(w) {
   };
   const stages = w.meta?.stages || [];
   if (stages.length) p.Flow = { rich_text: buildRichText(stages.join(' → ')) }; // 流程长什么样
+  // 健康汇总（刀6）：无 run 数据时不发，避免显示假 0
+  if (w.machine) p.Machine = { select: { name: w.machine } };
+  if (typeof w.run_total === 'number') p.Runs = { number: w.run_total };
+  if (typeof w.run_success_rate === 'number') p.SuccessRate = { number: w.run_success_rate };
+  if (typeof w.run_avg_sec === 'number') p.AvgMinutes = { number: Math.round(w.run_avg_sec / 60) };
+  if (w.last_run_at) p.LastRun = { date: { start: new Date(w.last_run_at).toISOString() } };
+  if (w.last_run_status) p.LastStatus = { select: { name: w.last_run_status } };
   if (w.node_count != null) p.Nodes = { number: w.node_count };
   if (w.wf_id) p.WfId = { rich_text: buildRichText(w.wf_id) };
   return p; // Agents（跨库 relation）第二阶段补
@@ -695,6 +720,34 @@ async function pushOpsWorkflows(pool, token) {
     } catch (err) {
       if (isMissingDatabaseError(err)) return;
       console.warn(`[notion-push-sync] workflow relation ${w.wf_id} 失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
+}
+
+
+/**
+ * run 推送（刀6）：只推**业务流程**的 run（有阶段的，日均 10-21 轮）；
+ * 通道/触发器类（日均 154-234 次、4 秒一次）只在流程行上看汇总，不推明细——
+ * 否则 2800 条 4 秒记录会把视线淹没（主理人 2026-09-06 定调）。
+ */
+async function pushOpsRuns(pool, token) {
+  const dbs = await getOpsNotionDbs(pool);
+  if (!dbs?.runs_db || dbs.disabled) return;
+  const { rows } = await pool.query(
+    `SELECT r.*, w.name AS wf_name
+     FROM ops_runs r
+     JOIN ops_workflows w ON w.source = r.source AND w.wf_id = r.wf_id
+     WHERE w.stage_count > 0 AND r.notion_synced_at IS NULL
+     ORDER BY r.started_at DESC LIMIT 100`);
+  for (const r of rows) {
+    try {
+      const properties = buildOpsRunNotionProperties(r, r.wf_name);
+      const page = await notionReq(token, '/pages', 'POST', { parent: { database_id: dbs.runs_db }, properties });
+      await pool.query(`UPDATE ops_runs SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2`, [page.id, r.id]);
+    } catch (err) {
+      if (isMissingDatabaseError(err)) { await disableOpsPush(pool, err.message); return; }
+      console.warn(`[notion-push-sync] run ${r.run_id} 推送失败: ${err.message}`);
       await logSyncError(pool, err.message);
     }
   }
