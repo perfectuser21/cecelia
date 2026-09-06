@@ -81,6 +81,8 @@ coverage/
 *.png
 *.jpg
 *.jpeg
+# 金标集截图是 CI 固定输入（LLM 判定器 eval），必须进 repo
+!packages/quality/skill-distillation/goldset/*.png
 
 # Archive (old PRDs, DODs, etc.)
 .archive/

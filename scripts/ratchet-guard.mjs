@@ -94,6 +94,15 @@ async function measure(metric, baseline, brainBase, root) {
       const files = walkSh(path.join(root, 'scripts', 'smoke'));
       return { value: files.length, detail: `scripts/smoke/ .sh 脚本数` };
     }
+    case 'goldset_eval_threshold': {
+      // 阈值本体在 eval-threshold.json，goldset-eval CI job 用它断言通过率；
+      // 本指标守护的是阈值不被调低（only_up）——为过 CI 降阈值 = 越水位即红
+      const p = path.join(root, 'packages', 'quality', 'skill-distillation', 'eval-threshold.json');
+      let v;
+      try { v = JSON.parse(fs.readFileSync(p, 'utf8')).pass_rate_min; } catch { v = null; }
+      if (typeof v !== 'number') return { value: null, skipped: true, reason: `eval-threshold.json 缺失或 pass_rate_min 非数字` };
+      return { value: v, detail: `pass_rate_min@${path.relative(root, p)}` };
+    }
     default:
       return { value: null, skipped: true, reason: `未知指标 ${metric.name}` };
   }

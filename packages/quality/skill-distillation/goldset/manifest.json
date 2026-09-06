@@ -1,0 +1,20 @@
+{
+  "version": "v0",
+  "captured_at": "2026-09-06T10:09:37+08:00",
+  "device": "MAA-AN00|40.3.0|524",
+  "task": "search_account: 抖音搜索 langzi63485 停在「用户」结果页",
+  "judge": "user_list_page",
+  "params": { "target": "langzi63485" },
+  "samples": [
+    { "file": "goldset-user_list-20260906100937-1.png", "label": "user_list", "expected": true },
+    { "file": "goldset-user_list-20260906100937-2.png", "label": "user_list", "expected": true },
+    { "file": "goldset-desktop-20260906100937-1.png", "label": "desktop", "expected": false },
+    { "file": "goldset-desktop-20260906100937-2.png", "label": "desktop", "expected": false },
+    { "file": "goldset-calculator-20260906100937-1.png", "label": "calculator", "expected": false },
+    { "file": "goldset-calculator-20260906100937-2.png", "label": "calculator", "expected": false },
+    { "file": "goldset-search_history-20260906100937-1.png", "label": "search_history", "expected": false },
+    { "file": "goldset-search_history-20260906100937-2.png", "label": "search_history", "expected": false },
+    { "file": "goldset-suggest-20260906100937-1.png", "label": "suggest", "expected": false },
+    { "file": "goldset-suggest-20260906100937-2.png", "label": "suggest", "expected": false }
+  ]
+}
