@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.186
+**Brain 版本**: 1.273.187
 
 ## Brain 1.273.186 — 投影自动重建 scheduler job（Crystal 件9，map_radius_stale 根治）
 
