@@ -275,3 +275,4 @@ capability-gate-smoke.sh
 check-handoffs-smoke.sh
 ops-workflows-smoke.sh
 worker-pool-dispatch-smoke.sh
+ops-runs-smoke.sh

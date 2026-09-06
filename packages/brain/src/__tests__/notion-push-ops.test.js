@@ -126,3 +126,49 @@ describe('buildWorkflowAgentsRelation（workflow → agent 跨库关联）', () 
     expect(buildWorkflowAgentsRelation({ uses_agents: [] }, new Map()).Agents.relation).toEqual([]);
   });
 });
+
+describe('buildOpsRunNotionProperties（run 记录库）', () => {
+  it('run 行：流程/状态/机器/耗时/开始时间', async () => {
+    const { buildOpsRunNotionProperties } = await import('../notion-push-sync.js');
+    const p = buildOpsRunNotionProperties({
+      run_id: '101', wf_id: 'AwrSocialLeadgenV4', status: 'success', mode: 'webhook',
+      machine: 'hk-vps', started_at: new Date('2026-09-06T01:00:00Z'), duration_sec: 2280,
+    }, '智能获客 V4');
+    expect(p.Name.title[0].text.content).toContain('智能获客 V4');
+    expect(p.Status.select.name).toBe('success');
+    expect(p.Machine.select.name).toBe('hk-vps');
+    expect(p.Minutes.number).toBe(38);            // 2280s → 38 分钟
+    expect(p.StartedAt.date.start).toBe('2026-09-06T01:00:00.000Z');
+    expect(p.RunId.rich_text[0].text.content).toBe('101');
+  });
+  it('crashed 无耗时 → Minutes 不发（禁编造 0）', async () => {
+    const { buildOpsRunNotionProperties } = await import('../notion-push-sync.js');
+    const p = buildOpsRunNotionProperties({ run_id: '9', wf_id: 'X', status: 'crashed', machine: 'hk-vps', duration_sec: null, started_at: new Date() }, 'X');
+    expect(p.Minutes).toBeUndefined();
+    expect(p.Status.select.name).toBe('crashed');
+  });
+});
+
+describe('buildOpsWorkflowNotionProperties — 健康汇总列（刀6）', () => {
+  it('带 run 汇总时透出次数/成功率/平均分钟/最近', async () => {
+    const { buildOpsWorkflowNotionProperties } = await import('../notion-push-sync.js');
+    const p = buildOpsWorkflowNotionProperties({
+      source: 'n8n', wf_id: 'W', name: '智能获客', active: true, stage_count: 8,
+      machine: 'hk-vps', run_total: 191, run_success_rate: 80, run_avg_sec: 2280,
+      last_run_at: new Date('2026-09-06T12:46:00Z'), last_run_status: 'running', meta: { stages: [] },
+    });
+    expect(p.Machine.select.name).toBe('hk-vps');
+    expect(p.Runs.number).toBe(191);
+    expect(p.SuccessRate.number).toBe(80);
+    expect(p.AvgMinutes.number).toBe(38);
+    expect(p.LastRun.date.start).toBe('2026-09-06T12:46:00.000Z');
+    expect(p.LastStatus.select.name).toBe('running');
+  });
+  it('无 run 数据时这些列不发（不显示假 0）', async () => {
+    const { buildOpsWorkflowNotionProperties } = await import('../notion-push-sync.js');
+    const p = buildOpsWorkflowNotionProperties({ source: 'n8n', wf_id: 'W', name: 'X', active: false, stage_count: 0, meta: {} });
+    expect(p.Runs).toBeUndefined();
+    expect(p.SuccessRate).toBeUndefined();
+    expect(p.Machine).toBeUndefined();
+  });
+});
