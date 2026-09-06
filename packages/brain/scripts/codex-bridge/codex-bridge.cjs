@@ -44,16 +44,35 @@ const RUNNER_SH = process.env.RUNNER_SH
 const WORK_DIR = process.env.WORK_DIR
   || path.join(os.homedir(), 'repos/cecelia');
 
+// 把仓库标识归一化成 owner/repo slug。上游 payload.base_repo 的写法不统一：
+// harness_initiative 任务存的是完整 URL（https://github.com/perfectuser21/cecelia），
+// 老调用方传短 slug（perfectuser21/cecelia），还可能带 .git 后缀或尾部斜杠。
+// 不归一化就用 === 比较，完整 URL 永远匹配不上，整类任务在派发阶段被兜底 throw
+// 掐死（生产实测 legacy_workspace_repo_not_supported:https://github.com/...）。
+function normalizeRepoSlug(baseRepo) {
+  if (!baseRepo) return baseRepo;
+  return String(baseRepo)
+    .trim()
+    // https://github.com/ 或 https://x-access-token:TOKEN@github.com/
+    .replace(/^https?:\/\/(?:[^@/]*@)?github\.com\//i, '')
+    // git@github.com:owner/repo
+    .replace(/^git@github\.com:/i, '')
+    .replace(/\.git$/i, '')
+    .replace(/\/+$/, '');
+}
+
 function resolveLegacyWorkDir({ baseRepo, workDir, defaultWorkDir = WORK_DIR } = {}) {
-  if (baseRepo === 'perfectuser21/cecelia' || (!baseRepo && !workDir)) {
+  const repoSlug = normalizeRepoSlug(baseRepo);
+  if (repoSlug === 'perfectuser21/cecelia' || (!baseRepo && !workDir)) {
     return defaultWorkDir;
   }
-  if (baseRepo === 'perfectuser21/zenithjoy-workspace') {
+  if (repoSlug === 'perfectuser21/zenithjoy-workspace') {
     const zenithjoyWorkDir = process.env.ZENITHJOY_WORK_DIR;
     if (!zenithjoyWorkDir) throw new Error('legacy_workspace_not_configured:perfectuser21/zenithjoy-workspace');
     return zenithjoyWorkDir;
   }
   if (!baseRepo && workDir) return workDir;
+  // 错误信息保留调用方传进来的原始写法，便于从日志直接看出上游存了什么
   throw new Error(`legacy_workspace_repo_not_supported:${baseRepo}`);
 }
 
@@ -782,6 +801,7 @@ module.exports = {
   kernelHealthEvidence,
   loadRawAuth,
   normalizeExecutionTimeoutMs,
+  normalizeRepoSlug,
   resolveLegacyWorkDir,
   setupInjectedAccounts,
 };
