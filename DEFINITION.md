@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.278.3
+**Brain 版本**: 1.278.4
 
 ## Brain 1.278.3 — 判官口粮第一铲：近 30 天 run 数据回填 crystal_ledger
 

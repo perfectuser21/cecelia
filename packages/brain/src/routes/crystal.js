@@ -2,7 +2,8 @@
  * Crystal 结晶判官路由（挂在 /api/brain/crystal）
  *
  * POST /run              — 触发判官：八格聚合→三态判决→每日报告落库（同步、幂等）
- * GET  /report[?date=]   — 查询每日结晶报告（八格建议 + 三态 + 依据 + 六项指标），缺省最近一日
+ * GET  /report[?date=]   — 查询每日结晶报告（当天审了哪些段），缺省最近一日
+ * GET  /units            — 全景视图：按段取最新有效判决 + 时效标记（现在所有段各是什么状态）
  * POST /locator          — registry 回写（复合键 model|app_version|density，缺一即 400）
  * POST /evidence/validate — 证据留存规范校验（缺 trial/timestamp→400；复用覆盖→409）
  * POST /evidence         — 运行证据入库（判官口粮通道，幂等键 unit_key+verified_at）＋就地重判该段
@@ -12,7 +13,7 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
-import { runCrystalJudge, beijingDateStr, judgeUnit } from '../crystal-judge.js';
+import { runCrystalJudge, beijingDateStr, judgeUnit, buildUnitsView } from '../crystal-judge.js';
 import { parseEvidenceFilename, assertNoOverwrite } from '../crystal/evidence.js';
 
 const router = Router();
@@ -228,6 +229,24 @@ router.post('/evidence', async (req, res) => {
     });
   } catch (err) {
     console.error('[crystal] /evidence failed:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/brain/crystal/units
+ * 全景视图 —— 回答「现在所有段各是什么状态」，而不是「某一天判了谁」。
+ *
+ * /report 按 report_date 切，而判决单位 = 漏斗八格 ∪ 当日有证据的段，
+ * 已晋升的段第二天没跑就不在当日报告里（2026-09-07 实测：search_account
+ * 09-06 判 promote，09-07 的报告中没有它）。覆盖率视图必须按段取最新判决。
+ */
+router.get('/units', async (_req, res) => {
+  try {
+    const view = await buildUnitsView(pool);
+    return res.json(view);
+  } catch (err) {
+    console.error('[crystal] /units failed:', err);
     return res.status(500).json({ error: err.message });
   }
 });
