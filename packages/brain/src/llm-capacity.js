@@ -9,7 +9,12 @@ const USABLE_THRESHOLD = 90;
 const CODEX_USAGE_API = 'https://chatgpt.com/backend-api/wham/usage';
 
 // team1~5 auth.json 全在本机（07-21 拍板 a1c86e2e：t1=Pro 大池，跨机只发 token 不跨机执行）
-const CODEX_ACCOUNTS = [
+//
+// 导出为 Codex 账号的**单一来源**：llm-caller.js 的调用池由它派生。
+// 曾经两处各写一份，llm-caller 只有 team1/team2 而这里有 5 个，导致 T3/T4/T5
+// 三个满额度账号从未被调用，容量统计却按 5 个账号规划（2026-09-06 实测）。
+// 加账号只改这一处；tests/gp/g5/step1-codex-account-pool-consistency 机械校验一致性。
+export const CODEX_ACCOUNTS = [
   { vendor: 'codex', name: 'team1', home: join(homedir(), '.codex-team1') },
   { vendor: 'codex', name: 'team2', home: join(homedir(), '.codex-team2') },
   { vendor: 'codex', name: 'team3', home: join(homedir(), '.codex-team3') },

@@ -46,10 +46,15 @@ describe('callCodexHeadless OAuth team 轮换', () => {
 });
 
 describe('getNextCodexTeamHome round-robin 逻辑', () => {
-  it('team1 目录存在且有 auth.json tokens 时返回 team1 路径', () => {
-    // 静态验证：CODEX_TEAM_HOMES 包含 .codex-team1
-    expect(SRC).toContain('.codex-team1');
-    expect(SRC).toContain('.codex-team2');
+  it('轮换池实际包含 team1 与 team2 的账号目录', async () => {
+    // 原断言检查源码里出现字面量 '.codex-team1'/'.codex-team2'。
+    // 2026-09-06 起 CODEX_TEAM_HOMES 改为从 llm-capacity.js 的 CODEX_ACCOUNTS 派生
+    // （修的是 llm-caller 只有 team1/team2 而登记表有 5 个、T3/T4/T5 从未被调用），
+    // 源码里不再出现这些字面量。改成断运行时真实值——比断源码文本更强：
+    // 派生写错、登记表被删账号，这条都会红，而文本断言只能看见字符串在不在。
+    const { CODEX_TEAM_HOMES } = await import('../llm-caller.js');
+    expect(CODEX_TEAM_HOMES).toContain(join(homedir(), '.codex-team1'));
+    expect(CODEX_TEAM_HOMES).toContain(join(homedir(), '.codex-team2'));
   });
 
   it('auth.tokens 是选择 team 账号的条件', () => {
