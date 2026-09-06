@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.273.195
+**Brain 版本**: 1.273.196
 
 ## Brain 1.273.195 — 契约 schema 化(Crystal 件2,认领 kernel 遗孤 PR#5162,九件收官)
 
