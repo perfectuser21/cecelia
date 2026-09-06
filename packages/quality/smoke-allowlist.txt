@@ -33,6 +33,7 @@ cascade-list-smoke.sh
 ci-patrol-wiring-smoke.sh
 circuit-breaker-persist-smoke.sh
 crystal-evidence-feed-smoke.sh
+crystal-units-view-smoke.sh
 crystal-judge-smoke.sh
 circuit-breaker-reset-smoke.sh
 claude-headed-dispatch-smoke.sh

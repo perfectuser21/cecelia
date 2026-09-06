@@ -289,6 +289,81 @@ export async function runCrystalJudge(dbPool = pool, now = new Date()) {
   return { ok: true, report_date: reportDate, grid_count: gridCount, verdicts };
 }
 
+/** PG 的 numeric 会以字符串回来；视图对外必须是数字，否则前端做算术会拼字符串。 */
+function asNum(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** 把 PG date 或 'YYYY-MM-DD' 统一成 'YYYY-MM-DD' */
+function dateStr(v) {
+  if (!v) return null;
+  if (typeof v === 'string') return v.slice(0, 10);
+  return new Date(v).toISOString().slice(0, 10);
+}
+
+/**
+ * 判官全景视图：按段取「最新一条有效判决」，而不是「某一天判了谁」。
+ *
+ * 每日报告（crystal_report）回答的是当天审了哪些段；但判决单位 =
+ * 漏斗八格 ∪ 当日有证据的段，已晋升的段第二天没跑就不在其中，于是从报告里凭空
+ * 消失（2026-09-07 实测：search_account 09-06 判 promote，09-07 的报告里没有它）。
+ * 覆盖率视图要的是「现在所有段各是什么状态」，故按段取最新判决，状态保持到被推翻。
+ *
+ * 同时给判决打时效：超过 demoteWindowDays 没有新判决即 stale。判决是有保质期的——
+ * 一个长期不跑的 promote 不该被当成此刻仍然可信；这与「碎了自动退回」是同一条精神
+ * 的另一面（长期不验证亦是风险）。stale 只标注不改判，改判仍须凭证据。
+ *
+ * @param {import('pg').Pool} dbPool
+ * @param {Date} [now]
+ * @param {number} [windowDays] 陈旧阈值，默认与降级观察窗一致
+ */
+export async function buildUnitsView(dbPool, now = new Date(), windowDays = CRYSTAL_THRESHOLDS.demoteWindowDays) {
+  const asOf = beijingDateStr(now);
+  const { rows } = await dbPool.query(
+    `SELECT DISTINCT ON (v.grid_key)
+            v.grid_key, v.funnel_cell, v.report_date, v.verdict, v.basis,
+            l.n_runs, l.success_rate, l.token_cost, l.latency_ms, l.broken_count, l.data_gap
+       FROM crystal_verdict v
+       LEFT JOIN crystal_ledger l
+         ON l.grid_key = v.grid_key AND l.report_date = v.report_date
+      ORDER BY v.grid_key, v.report_date DESC`,
+  );
+
+  const summary = { total: 0, promote: 0, keep_llm: 0, demote: 0, stale: 0, with_data: 0 };
+  const units = (rows ?? []).map((r) => {
+    const vd = dateStr(r.report_date);
+    const ageDays = vd ? Math.round((Date.parse(asOf) - Date.parse(vd)) / 86400000) : null;
+    const stale = ageDays !== null && ageDays > windowDays;
+
+    summary.total += 1;
+    if (r.verdict in summary) summary[r.verdict] += 1;
+    if (stale) summary.stale += 1;
+    if (r.data_gap === false) summary.with_data += 1;
+
+    return {
+      unit_key: r.grid_key,
+      funnel_cell: r.funnel_cell ?? null,
+      verdict: r.verdict,
+      basis: r.basis ?? {},
+      verdict_date: vd,
+      verdict_age_days: ageDays,
+      stale,
+      data_gap: r.data_gap === true,
+      metrics: {
+        n_runs: asNum(r.n_runs) ?? 0,
+        success_rate: asNum(r.success_rate),
+        token_cost: asNum(r.token_cost) ?? 0,
+        latency_ms: asNum(r.latency_ms),
+        broken_count: asNum(r.broken_count) ?? 0,
+      },
+    };
+  });
+
+  return { as_of: asOf, stale_after_days: windowDays, summary, units };
+}
+
 /**
  * scheduler 入口：北京窗口（北京 05:00，UTC 21:00，5min 内）+ 当日去重（当日已有报告则跳过）。
  * @param {import('pg').Pool} [dbPool]
