@@ -104,8 +104,8 @@ describe('判决单位册页含编码九格（否则今天没跑就整条线从�
 describe('接线幂等（syncCodingEvidence）', () => {
   it('把 attempts 聚合结果 upsert 进 crystal_run_evidence，冲突键 (unit_key, verified_at)', async () => {
     const attempts = [
-      { report_date: '2026-09-05', grid: 'generate', status: 'completed', duration_ms: 1000 },
-      { report_date: '2026-09-05', grid: 'generate', status: 'failed', duration_ms: 2000 },
+      { report_date: '2026-09-05', phase: 'generate', status: 'completed', duration_ms: 1000 },
+      { report_date: '2026-09-05', phase: 'generate', status: 'failed', duration_ms: 2000 },
     ];
     const p = poolWith([], { 'FROM harness_attempts': attempts, 'FROM sequencer_ledger': [] });
     const r = await syncCodingEvidence({ dbPool: p, days: 30, force: true, now: new Date('2026-09-07T00:00:00Z') });
@@ -116,7 +116,7 @@ describe('接线幂等（syncCodingEvidence）', () => {
   });
 
   it('dry-run 只算不写库', async () => {
-    const attempts = [{ report_date: '2026-09-05', grid: 'plan', status: 'completed', duration_ms: 10 }];
+    const attempts = [{ report_date: '2026-09-05', phase: 'planning', status: 'completed', duration_ms: 10 }];
     const p = poolWith([], { 'FROM harness_attempts': attempts, 'FROM sequencer_ledger': [] });
     const r = await syncCodingEvidence({ dbPool: p, days: 30, dryRun: true, force: true, now: new Date('2026-09-07T00:00:00Z') });
     expect(p.seen.some((q) => /INSERT INTO crystal_run_evidence/i.test(q.sql))).toBe(false);
@@ -125,8 +125,8 @@ describe('接线幂等（syncCodingEvidence）', () => {
 
   it('两代格序都吃：kernel 相与 home-sequencer 格名归到同一判决单位', async () => {
     const p = poolWith([], {
-      'FROM harness_attempts': [{ report_date: '2026-09-05', grid: 'generate', status: 'completed', duration_ms: 10 }],
-      'FROM sequencer_ledger': [{ report_date: '2026-09-05', grid: 'generate', status: 'completed', duration_ms: null }],
+      'FROM harness_attempts': [{ report_date: '2026-09-05', phase: 'generate', status: 'completed', duration_ms: 10 }],
+      'FROM sequencer_ledger': [{ report_date: '2026-09-05', stage_id: 'generate', verdict: 'accepted' }],
     });
     const r = await syncCodingEvidence({ dbPool: p, days: 30, force: true, now: new Date('2026-09-07T00:00:00Z') });
     expect(r.evidence_rows).toBe(1);

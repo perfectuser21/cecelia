@@ -1,0 +1,14 @@
+-- 440: crystal_ledger.cost_gap — 把「成本证据缺口」与「整源数据缺口」在账面上分开
+--
+-- 病灶（2026-09-07 实测）：判官只要拿不到 baseline_tokens 就把整行降级成
+-- n_runs=0 / success_rate=null / data_gap=true。对 OpenClaw 视觉段（有 verify-*.json 带
+-- token）无所谓；但编码线九格有几百次真实成败、天生没有 token 源（task_run_metrics
+-- 2026-08-23 断流、kernel attempt 不记 token），一律抹成「没跑过」等于用一种诚实
+-- （不编成本）换来另一种谎。
+--
+-- 拆成两个标志：
+--   data_gap = 源不可达 / 一行证据都没有（件4 原语义，不动）
+--   cost_gap = 有真实跑量，只是算不出「不固化要烧多少」
+-- 两者都不许晋升（判决引擎语义不变），区别只在账本与判决 basis 说的是不是实话。
+-- 既有行默认 FALSE：历史行要么真有 token（search_account），要么已是 data_gap。
+ALTER TABLE crystal_ledger ADD COLUMN IF NOT EXISTS cost_gap BOOLEAN NOT NULL DEFAULT FALSE;
