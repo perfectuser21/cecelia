@@ -329,6 +329,16 @@ def fetch_authkey_from_1password() -> str:
 
 
 def cache_authkey(key: str) -> None:
+    """Mirror the authkey into ~/.credentials/tailscale.env (0600).
+
+    明文落盘是 CLAUDE.md 既定的凭据策略——「1Password 是唯一源 → 双写
+    ~/.credentials/(chmod 600) → 绝不提交 git」。本机 ~/.credentials/ 下
+    所有 *.env 均为此形态。watchdog 需要它是因为：tailnet 断开时 1Password
+    同样不可达，没有本地副本就自救不了。
+
+    权限用 os.open(0o600) 在创建瞬间落定，而非先写后 chmod——后者在两步
+    之间存在文件为默认 0644 的窗口。
+    """
     try:
         CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
         existing = ""
@@ -339,8 +349,15 @@ def cache_authkey(key: str) -> None:
             )
             if existing and not existing.endswith("\n"):
                 existing += "\n"
-        CREDENTIALS_FILE.write_text(f"{existing}TAILSCALE_AUTHKEY={key}\n", encoding="utf-8")
-        os.chmod(CREDENTIALS_FILE, 0o600)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(CREDENTIALS_FILE, flags, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            # codeql[py/clear-text-storage-sensitive-data] 见 docstring：
+            # 明文本地副本是既定凭据策略，权限已收敛到 0600 且不进 git。
+            handle.write(f"{existing}TAILSCALE_AUTHKEY={key}\n")
     except OSError:
         pass  # 缓存失败不影响本次重认证
 

@@ -221,6 +221,8 @@ jobs:
     name: Ops Tailscale Watchdog Regression
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
