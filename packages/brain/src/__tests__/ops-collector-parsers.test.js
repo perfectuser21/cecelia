@@ -72,8 +72,12 @@ describe('extractOpenclawAgents', () => {
   it('dict 形 entries + 白名单字段（绝不带凭据）+ 编排关系', () => {
     const cfg = { agents: { entries: { main: { model: 'x', apiKey: 'SECRET', workspace: '/w' } } }, auth: { k: 'SECRET' } };
     const rows = extractOpenclawAgents(cfg);
-    expect(rows).toEqual([{ name: 'main', agent_type: 'openclaw_agent', meta: { model: 'x', workspace: '/w', orchestrates: [], delegation_mode: null } }]);
-    expect(JSON.stringify(rows)).not.toContain('SECRET');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      name: 'main', agent_type: 'openclaw_agent',
+      meta: { model: 'x', workspace: '/w', orchestrates: [], delegation_mode: null },
+    });
+    expect(JSON.stringify(rows)).not.toContain('SECRET'); // 凭据白名单铁律
   });
   it('采 subagents.allowAgents 编排关系 + delegationMode', () => {
     const cfg = { agents: { entries: {

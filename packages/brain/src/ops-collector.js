@@ -89,18 +89,87 @@ export function extractOpenclawAgents(config) {
       const orchestrates = Array.isArray(sa?.allowAgents)
         ? sa.allowAgents.filter((x) => typeof x === 'string')
         : [];
+      // model 可能是字符串或 { primary, fallbacks }
+      const model = typeof e.model === 'string' ? e.model
+        : (typeof e.model?.primary === 'string' ? e.model.primary : null);
+      const id = e.identity || {};
       return {
         name: String(e.id || e.name || ''),
         agent_type: 'openclaw_agent',
-        meta: { // 白名单——clawdbot.json 含明文凭据，绝不整份入库
-          model: typeof e.model === 'string' ? e.model : null,
+        meta: { // 白名单——clawdbot.json 含明文凭据（apiKey/auth），绝不整份入库
+          model,
           workspace: typeof e.workspace === 'string' ? e.workspace : null,
+          agent_dir: typeof e.agentDir === 'string' ? e.agentDir : null,
           orchestrates,
           delegation_mode: typeof sa?.delegationMode === 'string' ? sa.delegationMode : null,
+          // 人设（agent 是什么角色）
+          identity_name: typeof id.name === 'string' ? id.name : null,
+          identity_theme: typeof id.theme === 'string' ? id.theme : null,
+          identity_emoji: typeof id.emoji === 'string' ? id.emoji : null,
+          // skill 才是最小执行单元——agent 只是承载它的容器
+          skills: Array.isArray(e.skills) ? e.skills.filter((x) => typeof x === 'string') : [],
+          tools_allow: Array.isArray(e.tools?.alsoAllow) ? e.tools.alsoAllow.filter((x) => typeof x === 'string') : [],
+          tools_deny: Array.isArray(e.tools?.deny) ? e.tools.deny.filter((x) => typeof x === 'string') : [],
+          // 组织维度（花名册）：归属 + 岗位类型
+          org: inferAgentOrg(String(e.id || e.name || '')),
+          role_type: inferAgentRoleType(String(e.id || e.name || '')),
         },
       };
     })
     .filter((a) => a.name);
+}
+
+/**
+ * skill 提取：skill 是最小执行单元（真正定义"怎么干"的那层），与 agent 多对多——
+ * 实证 social-leadgen-workflow 被 4 个 agent 共用。汇总每个 skill 被哪些 agent 使用。
+ */
+export function extractOpenclawSkills(config) {
+  const entries = config?.agents?.entries;
+  const list = Array.isArray(entries) ? entries
+    : entries && typeof entries === 'object'
+      ? Object.entries(entries).map(([id, v]) => ({ id, ...(v || {}) }))
+      : [];
+  const usedBy = new Map();
+  for (const e of list) {
+    const owner = String(e?.id || e?.name || '');
+    for (const s of e?.skills || []) {
+      if (typeof s !== 'string') continue;
+      if (!usedBy.has(s)) usedBy.set(s, []);
+      if (owner) usedBy.get(s).push(owner);
+    }
+  }
+  return [...usedBy.entries()].map(([name, used]) => ({ name, used_by: used.sort() }))
+    .sort((a, b) => b.used_by.length - a.used_by.length || a.name.localeCompare(b.name));
+}
+
+
+// ─── 组织维度（数字员工花名册）────────────────────────────────────────
+// 主理人 2026-09-06 定调：管理单位是 agent（数字员工，组部门/分职责），
+// skill 是可共享能力——同一套 social-* skill 装在悦升号和金诺号两个不同身份上。
+const ORG_PREFIX = [
+  ['zenithjoy-', '悦升'], ['jinoshengyuan-', '金诺盛源'],
+  ['affine-jinnuo', '金诺盛源'], ['affine-yuesheng', '悦升'],
+];
+/** 组织归属：按命名前缀推（无前缀=自家内部平台 agent）。认不出不硬猜租户。 */
+export function inferAgentOrg(name = '') {
+  const n = String(name);
+  for (const [p, org] of ORG_PREFIX) if (n.startsWith(p)) return org;
+  return '内部平台';
+}
+
+const ROLE_RULES = [
+  [/-router$|^.*-router$/, 'router'],
+  [/commander/, 'commander'],
+  [/-worker$|worker$/, 'worker'],
+  [/^verifier$|verifier/, 'verifier'],
+  [/^curator$|curator/, 'curator'],
+  [/social-media|ai-office|office-operator|research/, 'operator'],
+];
+/** 岗位类型：同一 skill 可装在不同岗位上，故岗位与能力分开表达。认不出=通用 agent。 */
+export function inferAgentRoleType(name = '') {
+  const n = String(name);
+  for (const [re, role] of ROLE_RULES) if (re.test(n)) return role;
+  return 'agent';
 }
 
 export function parseGhaCron(out) {
@@ -120,6 +189,164 @@ export const HK_OPENCLAW_CMD =
 
 export const PLIST_DUMP_CMD =
   'for f in /Library/LaunchDaemons/*.plist; do echo "== $f"; /usr/bin/plutil -convert json -o - "$f" 2>/dev/null; echo ""; done';
+
+// ─── n8n workflow（真业务流程，非"谁召唤谁"）───────────────────────────
+// 实证：AwrSocialLeadgenV4「Social Leadgen V4」8 阶段(手机预检/视频发现/全文判定/评论采集/
+// 线索评分/去重配送…)，每阶段经 OpcCmdStageCallV4 通道单点调 agentId=work-commander。
+// 故 agent 归属必须走**传递闭包**（主流程自身不含 agentId，只有子流程有）。
+
+/** 只数「阶段 X」节点——裁决/入口/准备节点不算业务阶段 */
+export function countStages(nodes = []) {
+  return (nodes || []).filter((n) => String(n?.name || '').startsWith('阶段')).length;
+}
+
+export function parseN8nWorkflows(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((w) => {
+    const nodes = w?.nodes || [];
+    return {
+      wf_id: String(w?.id || ''),
+      name: String(w?.name || ''),
+      active: w?.active === true,
+      node_count: nodes.length,
+      stage_count: countStages(nodes),
+      meta: {
+        stages: buildStageFlow(w),   // 按真实连线的执行序，非画布摆放序
+        // 画布骨架（仅节点名/类型+连线，无参数/凭据）——供 Notion 页画流程图
+        canvas: {
+          nodes: nodes.map((n) => ({ name: n?.name, type: n?.type })),
+          connections: w?.connections || {},
+        },
+      },
+    };
+  }).filter((r) => r.wf_id);
+}
+
+/** 一个画布调用的子流程 id（executeWorkflow 节点，workflowId 可能是字符串或 {value}） */
+function subWorkflowIds(w) {
+  const out = new Set();
+  for (const n of w?.nodes || []) {
+    if (!String(n?.type || '').includes('executeWorkflow')) continue;
+    let wid = n?.parameters?.workflowId;
+    if (wid && typeof wid === 'object') wid = wid.value || wid.cachedResultName;
+    if (typeof wid === 'string' && wid) out.add(wid);
+  }
+  return out;
+}
+
+/**
+ * 传递闭包解析一条流程真正用到的 agent：自身 agentId 引用 ∪ 所有子流程的（递归）。
+ * seen 防循环调用死循环。
+ */
+export function resolveWorkflowAgents(wfId, allWorkflows, seen = new Set()) {
+  if (!wfId || seen.has(wfId)) return [];
+  seen.add(wfId);
+  const w = (allWorkflows || []).find((x) => x?.id === wfId);
+  if (!w) return [];
+  // 真实格式（实证 OpcCmdStageCallV4）：agent 走 HTTP 头 x-openclaw-agent-id，
+  // 形如 {"name":"x-openclaw-agent-id","value":"work-commander"}；也兼容 JSON 字段 agentId 写法。
+  // 序列化后字符串参数内的引号会被转义，故正则容忍反斜杠。
+  const raw = JSON.stringify(w);
+  const found = new Set([
+    ...[...raw.matchAll(/x-openclaw-agent-id\\?["'],?\s*\\?["']?value\\?["']?\s*:\s*\\?["']([a-z0-9-]{3,40})/gi)].map((m) => m[1]),
+    ...[...raw.matchAll(/agentId\\?["']\s*:\s*\\?["']([a-z0-9-]{3,40})/gi)].map((m) => m[1]),
+  ]);
+  for (const sub of subWorkflowIds(w)) {
+    for (const a of resolveWorkflowAgents(sub, allWorkflows, seen)) found.add(a);
+  }
+  return [...found].sort();
+}
+
+// ─── 流程图（Notion 页正文画出每条 workflow 长什么样）──────────────────
+const stageName = (n) => String(n || '').replace(/^阶段\s*/, '');
+const isStage = (n) => String(n || '').startsWith('阶段');
+
+/** 按真实连线走出业务阶段顺序（不靠 nodes 数组顺序，那是画布摆放次序不是执行序） */
+export function buildStageFlow(w) {
+  const nodes = w?.nodes || [];
+  const conn = w?.connections || {};
+  const stages = nodes.filter((n) => isStage(n?.name)).map((n) => n.name);
+  if (!stages.length) return [];
+  if (!Object.keys(conn).length) return stages.map(stageName);
+
+  // 从入口出发走连线，记录遇到的阶段顺序；防环
+  const entry = nodes.find((n) => String(n?.type || '').includes('webhook'))?.name
+    || Object.keys(conn)[0];
+  const order = [];
+  const seen = new Set();
+  const walk = (name) => {
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    if (isStage(name) && !order.includes(name)) order.push(name);
+    for (const out of conn[name]?.main || []) {
+      for (const t of out || []) walk(t?.node);
+    }
+  };
+  walk(entry);
+  // 连线走不到的阶段（孤立分支）补在后面，不丢
+  for (const s of stages) if (!order.includes(s)) order.push(s);
+  return order.map(stageName);
+}
+
+/** 画成 mermaid flowchart。无业务阶段的流程返回 null（不画空图）。 */
+export function buildWorkflowMermaid(w) {
+  const flow = buildStageFlow(w);
+  if (!flow.length) return null;
+  const lines = ['flowchart TD'];
+  const id = (i) => `S${i + 1}`;
+  flow.forEach((s, i) => {
+    lines.push(`  ${id(i)}["${i + 1}. ${s}"]`);
+  });
+  for (let i = 0; i < flow.length - 1; i++) {
+    lines.push(`  ${id(i)}["${i + 1}. ${flow[i]}"] --> ${id(i + 1)}["${i + 2}. ${flow[i + 1]}"]`);
+  }
+  // 裁决可中止：每阶段后若有 switch 分支到归档，标一条中止出口
+  const hasAbort = (w?.nodes || []).some((n) => String(n?.name || '').includes('中止'));
+  if (hasAbort) {
+    lines.push('  ABORT["⛔ 中止归档"]');
+    flow.forEach((s, i) => lines.push(`  ${id(i)} -.裁决不通过.-> ABORT`));
+  }
+  return lines.join('\n');
+}
+
+/** Notion 页正文 blocks：流程图 + 阶段清单 + 节点构成说明 */
+export function buildWorkflowPageBlocks(w, row = {}) {
+  const blocks = [];
+  const para = (t) => ({ object: 'block', type: 'paragraph',
+    paragraph: { rich_text: [{ type: 'text', text: { content: String(t).slice(0, 1800) } }] } });
+  const head = (t) => ({ object: 'block', type: 'heading_3',
+    heading_3: { rich_text: [{ type: 'text', text: { content: t } }] } });
+
+  const mermaid = buildWorkflowMermaid(w);
+  if (mermaid) {
+    blocks.push(head('流程图'));
+    blocks.push({ object: 'block', type: 'code',
+      code: { language: 'mermaid', rich_text: [{ type: 'text', text: { content: mermaid.slice(0, 1900) } }] } });
+    blocks.push(head('业务阶段'));
+    buildStageFlow(w).forEach((s) => blocks.push({
+      object: 'block', type: 'numbered_list_item',
+      numbered_list_item: { rich_text: [{ type: 'text', text: { content: s } }] },
+    }));
+  }
+  blocks.push(head('画布构成'));
+  const types = {};
+  for (const n of w?.nodes || []) {
+    const t = String(n?.type || '').split('.').pop();
+    types[t] = (types[t] || 0) + 1;
+  }
+  const detail = Object.entries(types).map(([t, c]) => `${t}×${c}`).join('、');
+  blocks.push(para(
+    `共 ${row.node_count ?? (w?.nodes || []).length} 个节点，其中业务阶段 ${row.stage_count ?? 0} 个。` +
+    `\n节点构成：${detail || '无'}` +
+    `\n（Nodes=画布全部节点，含入口/准备/裁决/告警等技术脚手架；Stages=真正的业务阶段）`));
+  const agents = row.uses_agents || [];
+  if (agents.length) blocks.push(para(`执行 agent：${agents.join('、')}`));
+  return blocks;
+}
+
+export const N8N_LIST_CMD =
+  "ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no root@100.86.118.99 " +
+  "'docker exec n8n sh -c \"n8n export:workflow --all --output=/tmp/ops-all.json >/dev/null 2>&1; cat /tmp/ops-all.json\"'";
 
 export const GHA_CRON_CMD =
   "grep -RnoE \"cron: *'[^']+'\" /Users/administrator/perfect21/cecelia/.github/workflows /Users/administrator/perfect21/zenithjoy-workspace/.github/workflows 2>/dev/null || true";
@@ -246,8 +473,17 @@ export async function runOpsCollector(pool, opts = {}) {
     try { cfg = JSON.parse(raw); } catch { throw new Error(`parse_error: clawdbot.json 非法 JSON（前100字符: ${String(raw).slice(0, 100)}）`); }
     const agents = extractOpenclawAgents(cfg);
     await writeAgentsSnapshot(pool, 'openclaw', 'hk-vps', agents, collectedAt);
+    // skill 投影（最小执行单元，与 agent 多对多）
+    const skills = extractOpenclawSkills(cfg);
+    for (const sk of skills) {
+      await pool.query(
+        `INSERT INTO ops_skills (source, name, used_by, updated_at)
+         VALUES ('openclaw',$1,$2,$3)
+         ON CONFLICT (source, name) DO UPDATE SET used_by=EXCLUDED.used_by, updated_at=EXCLUDED.updated_at`,
+        [sk.name, JSON.stringify(sk.used_by), collectedAt]);
+    }
     await writeHeartbeat(pool, 'openclaw', 'hk-vps', 'ok', null, null, collectedAt);
-    results.openclaw = { ok: true, agents: agents.length };
+    results.openclaw = { ok: true, agents: agents.length, skills: skills.length };
   } catch (e) {
     const [status, code] = classifyError(e);
     await writeHeartbeat(pool, 'openclaw', 'hk-vps', status, code, e.message);
@@ -264,6 +500,34 @@ export async function runOpsCollector(pool, opts = {}) {
     const [status, code] = classifyError(e);
     await writeHeartbeat(pool, 'gha', 'github', status, code, e.message);
     results.gha = { ok: false };
+  }
+
+  // —— 腿4: n8n workflow@hk-vps（业务流程，非"谁召唤谁"）——
+  // 解析失败整份丢弃沿用上轮+stale（同 OpenClaw 腿契约）；agent 归属走传递闭包。
+  try {
+    const raw = run(N8N_LIST_CMD);
+    let all;
+    try { all = JSON.parse(raw); } catch { throw new Error(`parse_error: n8n 导出非法 JSON（前100字符: ${String(raw).slice(0, 100)}）`); }
+    const rows = parseN8nWorkflows(all);
+    if (rows.length === 0) throw new Error('parse_error: n8n 解析出 0 条流程（0=可疑，禁当真空）');
+    for (const r of rows) {
+      await pool.query(
+        `INSERT INTO ops_workflows (source, wf_id, name, active, node_count, stage_count, uses_agents, meta, updated_at)
+         VALUES ('n8n',$1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (source, wf_id) DO UPDATE SET
+           name=EXCLUDED.name, active=EXCLUDED.active, node_count=EXCLUDED.node_count,
+           stage_count=EXCLUDED.stage_count, uses_agents=EXCLUDED.uses_agents,
+           meta=EXCLUDED.meta, updated_at=EXCLUDED.updated_at`,
+        [r.wf_id, r.name, r.active, r.node_count, r.stage_count,
+         JSON.stringify(resolveWorkflowAgents(r.wf_id, all)), JSON.stringify(r.meta), collectedAt]
+      );
+    }
+    await writeHeartbeat(pool, 'n8n', 'hk-vps', 'ok', null, null, collectedAt);
+    results.n8n = { ok: true, workflows: rows.length };
+  } catch (e) {
+    const [status, code] = classifyError(e);
+    await writeHeartbeat(pool, 'n8n', 'hk-vps', status, code, e.message);
+    results.n8n = { ok: false };
   }
 
   return { ok: true, results };

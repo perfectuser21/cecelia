@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.196
+**Brain 版本**: 1.273.197
+
+## Brain 1.273.197 — 运行舱刀4/5：业务流程库+skill最小单元（第 84 批）
+
+- 三层打通：workflow(n8n业务流程) → agent(数字员工,含归属/岗位) → skill(最小执行单元,与agent多对多)。migration 436/437；采集器第4腿采 n8n；mermaid 流程图按真实连线；召唤权限正名 CanCall/CalledBy。
 
 ## Brain 1.273.195 — 契约 schema 化(Crystal 件2,认领 kernel 遗孤 PR#5162,九件收官)
 

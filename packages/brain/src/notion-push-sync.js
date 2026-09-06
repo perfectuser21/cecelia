@@ -1,5 +1,6 @@
 import { notionReq, getToken } from './recurring-notion-sync.js';
 import { computeProgress } from './advancement-progress.js';
+import { buildWorkflowPageBlocks } from './ops-collector.js';
 
 const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
 const FEATURE_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
@@ -506,14 +507,28 @@ export function buildOpsUnitNotionProperties(u) {
   // 已被 recurring-notion-sync 占用不推本库——故 Notion 图谱不设该列（避免恒 false 误导）。
   // 死排程识别在 /agent-ops/graph API 层保留（Dashboard 刀3 消费），Notion 是过渡展示子集。
   if (u.agent_type) p.Type = { rich_text: buildRichText(u.agent_type) };
-  if (Array.isArray(u.orchestrated_by) && u.orchestrated_by.length) {
-    p.Workflow = { rich_text: buildRichText(u.orchestrated_by.join(', ')) }; // 编排它的父（图，可多父）
-  }
   if (u.schedule_desc) p.Schedule = { rich_text: buildRichText(u.schedule_desc) };
-  if (u.kind) p.Kind = { select: { name: u.kind } };
   if (u.next_run_utc) p.NextRun = { date: { start: new Date(u.next_run_utc).toISOString() } };
   if (u.last_seen_at) p.LastSeen = { date: { start: new Date(u.last_seen_at).toISOString() } };
+  // Members/Workflow 是同库 relation，需目标页 id → 第二阶段 buildOpsRelationProperties 补。
+  // Kind 列已删（45/67 为空，信息量太低）。
   return p;
+}
+
+/**
+ * 第二阶段：同库 relation 自关联。Members = 它编排谁（relation → 本库）；
+ * Workflow（谁编排它）由 Notion dual_property 反向自动生成，不手工发——
+ * 故共享 agent（如 dev 被 main+work-commander 编排）只需两个父各自发一次，
+ * dev 那行的 Workflow 自动出现两个值，数据仍只存一份。
+ * @param {{name:string, orchestrates?:string[]}} u
+ * @param {Map<string,string>} idByName  agent 名 → 已建 Notion 页 id
+ */
+export function buildOpsRelationProperties(u, idByName) {
+  const ids = (u.orchestrates || [])
+    .map((child) => idByName.get(child))
+    .filter(Boolean)                    // 下级页尚未建 → 跳过，不发 undefined id
+    .map((id) => ({ id }));
+  return { CanCall: { relation: ids } }; // 空数组=清掉历史残留关系
 }
 
 async function getOpsNotionDbs(pool) {
@@ -602,9 +617,106 @@ async function pushOpsGraph(pool, token) {
     buildProps: (s) => buildOpsUnitNotionProperties({
       source: s.source, host_alias: s.host_alias, name: s.label, agent_type: 'schedule',
       status: 'active', role: 'scheduled', orchestrated_by: [],
-      kind: s.kind, schedule_desc: s.schedule_desc, next_run_utc: s.next_run_utc,
+      schedule_desc: s.schedule_desc, next_run_utc: s.next_run_utc,
     }),
   });
+
+  // 3. relation 阶段：所有页建完后，给编排者补 Members（同库自关联）。
+  // 必须在建页之后——relation 需要目标页的 notion_id。Workflow（反向）由 Notion 自动生成。
+  await syncOpsMembersRelation(pool, token);
+  await pushOpsWorkflows(pool, token);   // 业务流程库（刀4）
+}
+
+// ─── 业务流程库「Ops Workflows」（刀4）────────────────────────────────
+// 与图谱库的区别：workflow=业务流程（智能获客8阶段），agent=执行资源。
+// 主理人 2026-09-06 纠正：allowAgents 是"谁能召唤谁"的权限，不是 workflow。
+
+export function buildOpsWorkflowNotionProperties(w) {
+  const p = {
+    Name: { title: [{ text: { content: String(w.name).slice(0, 200) } }] },
+    Source: { select: { name: w.source || 'n8n' } },  // 采集器行未带 source 时按来源默认
+    Active: { checkbox: w.active === true },
+    Stages: { number: w.stage_count ?? 0 },
+  };
+  const stages = w.meta?.stages || [];
+  if (stages.length) p.Flow = { rich_text: buildRichText(stages.join(' → ')) }; // 流程长什么样
+  if (w.node_count != null) p.Nodes = { number: w.node_count };
+  if (w.wf_id) p.WfId = { rich_text: buildRichText(w.wf_id) };
+  return p; // Agents（跨库 relation）第二阶段补
+}
+
+/** workflow → 它用到的 agent（跨库 relation 指向图谱库） */
+export function buildWorkflowAgentsRelation(w, agentIdByName) {
+  const ids = (w.uses_agents || [])
+    .map((n) => agentIdByName.get(n))
+    .filter(Boolean)
+    .map((id) => ({ id }));
+  return { Agents: { relation: ids } };
+}
+
+async function pushOpsWorkflows(pool, token) {
+  const dbs = await getOpsNotionDbs(pool);
+  if (!dbs?.workflows_db || dbs.disabled) return;
+  const { rows } = await pool.query(
+    `SELECT * FROM ops_workflows
+     WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
+     ORDER BY updated_at LIMIT 50`);
+  // 建页时带正文 children（流程图 mermaid + 阶段清单 + 画布构成）；raw 画布存 meta.raw_nodes
+  for (const w of rows) {
+    try {
+      const properties = buildOpsWorkflowNotionProperties(w);
+      if (w.notion_id) {
+        await notionReq(token, `/pages/${w.notion_id}`, 'PATCH', { properties });
+      } else {
+        const children = w.meta?.canvas ? buildWorkflowPageBlocks(w.meta.canvas, w) : undefined;
+        const page = await notionReq(token, '/pages', 'POST',
+          { parent: { database_id: dbs.workflows_db }, properties, ...(children ? { children } : {}) });
+        await pool.query(`UPDATE ops_workflows SET notion_id = $1 WHERE id = $2`, [page.id, w.id]);
+      }
+      await pool.query(`UPDATE ops_workflows SET notion_synced_at = NOW() WHERE id = $1`, [w.id]);
+    } catch (err) {
+      if (isMissingDatabaseError(err)) { await disableOpsPush(pool, err.message); return; }
+      console.warn(`[notion-push-sync] workflow ${w.wf_id} 推送失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
+  // 跨库 relation：workflow → agent（需图谱库页 id）
+  const agentIdByName = new Map(
+    (await pool.query(`SELECT name, notion_id FROM ops_agents WHERE notion_id IS NOT NULL`)).rows
+      .map((r) => [r.name, r.notion_id]));
+  const withAgents = (await pool.query(
+    `SELECT wf_id, uses_agents, notion_id FROM ops_workflows
+     WHERE notion_id IS NOT NULL AND jsonb_array_length(uses_agents) > 0`)).rows;
+  for (const w of withAgents) {
+    try {
+      const props = buildWorkflowAgentsRelation(w, agentIdByName);
+      if (!props.Agents.relation.length) continue;
+      await notionReq(token, `/pages/${w.notion_id}`, 'PATCH', { properties: props });
+    } catch (err) {
+      if (isMissingDatabaseError(err)) return;
+      console.warn(`[notion-push-sync] workflow relation ${w.wf_id} 失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
+}
+
+/** 给有召唤权限的 agent 补 CanCall relation（同库自关联，反向=CalledBy）。目标页未建则下轮自愈。 */
+async function syncOpsMembersRelation(pool, token) {
+  const { rows } = await pool.query(
+    `SELECT name, meta, notion_id FROM ops_agents WHERE notion_id IS NOT NULL`);
+  const idByName = new Map(rows.map((r) => [r.name, r.notion_id]));
+  const orchestrators = rows.filter((r) => (r.meta?.orchestrates || []).length > 0);
+  for (const o of orchestrators) {
+    try {
+      const props = buildOpsRelationProperties({ name: o.name, orchestrates: o.meta.orchestrates }, idByName);
+      if (!props.CanCall.relation.length) continue; // 下级页全未建，等下轮
+      await notionReq(token, `/pages/${o.notion_id}`, 'PATCH', { properties: props });
+    } catch (err) {
+      if (isMissingDatabaseError(err)) return;      // 库没了，停推（终止态）
+      console.warn(`[notion-push-sync] ops relation ${o.name} 失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
 }
 
 export async function runNotionPushSync(pool) {
