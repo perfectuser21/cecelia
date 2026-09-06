@@ -5,13 +5,14 @@
  * GET  /report[?date=]   — 查询每日结晶报告（八格建议 + 三态 + 依据 + 六项指标），缺省最近一日
  * POST /locator          — registry 回写（复合键 model|app_version|density，缺一即 400）
  * POST /evidence/validate — 证据留存规范校验（缺 trial/timestamp→400；复用覆盖→409）
+ * POST /evidence         — 运行证据入库（判官口粮通道，幂等键 unit_key+verified_at）
  *
  * 决策 28ca1f69：判定层不蒸馏 / 探针强制 / registry是数据 / 证据留痕 / 固化优先级。
  */
 
 import { Router } from 'express';
 import pool from '../db.js';
-import { runCrystalJudge } from '../crystal-judge.js';
+import { runCrystalJudge, beijingDateStr } from '../crystal-judge.js';
 import { parseEvidenceFilename, assertNoOverwrite } from '../crystal/evidence.js';
 
 const router = Router();
@@ -118,6 +119,99 @@ router.post('/evidence/validate', async (req, res) => {
     return res.json({ ok: true, trial: parsed.trial, timestamp: parsed.timestamp });
   } catch (err) {
     console.error('[crystal] /evidence/validate failed:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/brain/crystal/evidence
+ * 运行证据入库 —— 判官的口粮通道。接收 crystal-verify.mjs 产出的 verify-*.json。
+ *
+ * 判官原先读不到任何真实运行数据（aggregateGridMetrics 是返回空值的桩），
+ * 台账恒为 n_runs=0/data_gap=true。本端点就是那根缺失的管子。
+ *
+ * baseline_tokens（不固化则需消耗的 LLM token）是选填但**判官必需**：缺了判官会
+ * 诚实记 data_gap 而非拿热路径成本顶替——因为判决引擎的 cost_benefit =
+ * n_runs × token_cost 衡量的是「不固化要烧多少」，取错方向差一个数量级。
+ *
+ * 幂等：同一段同一次校验重复上报走 (unit_key, verified_at) upsert，不产生重复行。
+ */
+router.post('/evidence', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const unitKey = b.unit_key || b.sequence;
+    const verifiedAt = b.verified_at;
+    const runs = Number(b.runs);
+    const passes = Number(b.passes);
+
+    const missing = [];
+    if (!unitKey) missing.push('unit_key|sequence');
+    if (!verifiedAt) missing.push('verified_at');
+    if (!Number.isFinite(runs)) missing.push('runs');
+    if (!Number.isFinite(passes)) missing.push('passes');
+    if (missing.length) {
+      return res.status(400).json({ error: 'missing_required_fields', missing });
+    }
+    if (passes > runs) {
+      return res.status(400).json({ error: 'passes_exceeds_runs', runs, passes });
+    }
+
+    const reportDate = b.report_date || beijingDateStr(new Date(verifiedAt));
+
+    const { rows } = await pool.query(
+      `INSERT INTO crystal_run_evidence
+         (unit_key, funnel_cell, report_date, runs, passes, baseline_tokens, hot_path_tokens,
+          avg_ms, device, crystallized, pure_hot_path, has_postcondition,
+          new_branch_count, broken_count, raw, verified_at, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16, NOW())
+       ON CONFLICT (unit_key, verified_at) DO UPDATE SET
+         funnel_cell = EXCLUDED.funnel_cell,
+         report_date = EXCLUDED.report_date,
+         runs = EXCLUDED.runs,
+         passes = EXCLUDED.passes,
+         baseline_tokens = EXCLUDED.baseline_tokens,
+         hot_path_tokens = EXCLUDED.hot_path_tokens,
+         avg_ms = EXCLUDED.avg_ms,
+         device = EXCLUDED.device,
+         crystallized = EXCLUDED.crystallized,
+         pure_hot_path = EXCLUDED.pure_hot_path,
+         has_postcondition = EXCLUDED.has_postcondition,
+         new_branch_count = EXCLUDED.new_branch_count,
+         broken_count = EXCLUDED.broken_count,
+         raw = EXCLUDED.raw
+       RETURNING id, unit_key, report_date, runs, passes, baseline_tokens`,
+      [
+        unitKey,
+        b.funnel_cell ?? null,
+        reportDate,
+        runs,
+        passes,
+        b.baseline_tokens ?? null,
+        b.hot_path_tokens ?? b.avg_tokens ?? null,
+        b.avg_ms ?? null,
+        b.device ?? null,
+        b.crystallized === true,
+        b.pure_hot_path === true,
+        b.has_postcondition === true,
+        Number(b.new_branch_count) || 0,
+        Number(b.broken_count) || Math.max(0, runs - passes),
+        JSON.stringify(b),
+        verifiedAt,
+      ],
+    );
+
+    const row = rows[0];
+    return res.json({
+      ok: true,
+      evidence: row,
+      // 明说判官会不会吃到，避免"入库了却仍 data_gap"这种静默困惑
+      judge_usable: row.baseline_tokens !== null,
+      note: row.baseline_tokens === null
+        ? '缺 baseline_tokens：判官将记 data_gap（不拿热路径成本顶替）'
+        : undefined,
+    });
+  } catch (err) {
+    console.error('[crystal] /evidence failed:', err);
     return res.status(500).json({ error: err.message });
   }
 });
