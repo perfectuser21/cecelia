@@ -333,5 +333,33 @@ export async function runOpsCollector(pool, opts = {}) {
     results.gha = { ok: false };
   }
 
+  // —— 腿4: n8n workflow@hk-vps（业务流程，非"谁召唤谁"）——
+  // 解析失败整份丢弃沿用上轮+stale（同 OpenClaw 腿契约）；agent 归属走传递闭包。
+  try {
+    const raw = run(N8N_LIST_CMD);
+    let all;
+    try { all = JSON.parse(raw); } catch { throw new Error(`parse_error: n8n 导出非法 JSON（前100字符: ${String(raw).slice(0, 100)}）`); }
+    const rows = parseN8nWorkflows(all);
+    if (rows.length === 0) throw new Error('parse_error: n8n 解析出 0 条流程（0=可疑，禁当真空）');
+    for (const r of rows) {
+      await pool.query(
+        `INSERT INTO ops_workflows (source, wf_id, name, active, node_count, stage_count, uses_agents, meta, updated_at)
+         VALUES ('n8n',$1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (source, wf_id) DO UPDATE SET
+           name=EXCLUDED.name, active=EXCLUDED.active, node_count=EXCLUDED.node_count,
+           stage_count=EXCLUDED.stage_count, uses_agents=EXCLUDED.uses_agents,
+           meta=EXCLUDED.meta, updated_at=EXCLUDED.updated_at`,
+        [r.wf_id, r.name, r.active, r.node_count, r.stage_count,
+         JSON.stringify(resolveWorkflowAgents(r.wf_id, all)), JSON.stringify(r.meta), collectedAt]
+      );
+    }
+    await writeHeartbeat(pool, 'n8n', 'hk-vps', 'ok', null, null, collectedAt);
+    results.n8n = { ok: true, workflows: rows.length };
+  } catch (e) {
+    const [status, code] = classifyError(e);
+    await writeHeartbeat(pool, 'n8n', 'hk-vps', status, code, e.message);
+    results.n8n = { ok: false };
+  }
+
   return { ok: true, results };
 }
