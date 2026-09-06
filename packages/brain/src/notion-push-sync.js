@@ -634,7 +634,7 @@ async function pushOpsGraph(pool, token) {
 export function buildOpsWorkflowNotionProperties(w) {
   const p = {
     Name: { title: [{ text: { content: String(w.name).slice(0, 200) } }] },
-    Source: { select: { name: w.source } },
+    Source: { select: { name: w.source || 'n8n' } },  // 采集器行未带 source 时按来源默认
     Active: { checkbox: w.active === true },
     Stages: { number: w.stage_count ?? 0 },
   };
