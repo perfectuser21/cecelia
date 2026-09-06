@@ -273,3 +273,4 @@ four-cell-router-smoke.sh
 capability-gate-smoke.sh
 check-handoffs-smoke.sh
 ops-workflows-smoke.sh
+worker-pool-dispatch-smoke.sh
