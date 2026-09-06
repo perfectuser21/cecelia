@@ -35,4 +35,17 @@ if (!src.includes('claimed_by IS NULL')) { console.error('FAIL: 预占缺 CAS �
 console.log('并发2/预占/记账 ✓');
 "
 
+echo "[worker-pool-smoke] 4. 第四病两道闸：发射前僵尸检测 + 发射后探活"
+node -e "
+const fs = require('fs');
+const src = fs.readFileSync('packages/brain/src/worker-pool-dispatch.js', 'utf8');
+// 只查代码（剥注释）：注释里提到 liveness_timeout 不算数,否则删了实现也能假绿
+const code = src.split('\n').filter(l => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+if (!code.includes('kill-session')) { console.error('FAIL: 缺僵尸槽清理（残留 claude 占槽）'); process.exit(1); }
+if (!code.includes('FROM dispatch_events')) { console.error('FAIL: 僵尸判定缺在途任务关联查询（会误杀真在干活的槽）'); process.exit(1); }
+if (!code.includes('liveness_timeout')) { console.error('FAIL: 缺发射后探活（同轮/跨轮重复发射会复发）'); process.exit(1); }
+if (!code.includes('LIVENESS_TIMEOUT_MS')) { console.error('FAIL: 探活窗口常量缺失'); process.exit(1); }
+console.log('僵尸检测 + 探活 ✓');
+"
+
 echo "[worker-pool-smoke] ALL PASS"
