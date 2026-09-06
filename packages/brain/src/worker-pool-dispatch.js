@@ -61,10 +61,14 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
   const slotState = {};
   for (const slot of WORKER_SLOTS) {
     try {
+      // 探针用 list-panes 而非 display-message:真机实证 display-message -p -t
+      // <不存在的会话> 返回空串+rc=0(不报错),|| echo MISSING 不触发,空串被判
+      // busy → 全槽假忙永不派发(09-06 金丝雀案 busy=3)。list-panes 对不存在
+      // 会话真报错。多 pane 时取首行;空串防御性归为 missing。
       const out = String(execFn(wrap(
-        `tmux display-message -p -t ${slot} '#{pane_current_command}' 2>/dev/null || echo MISSING`
-      ))).trim();
-      slotState[slot] = out.includes('MISSING') ? 'missing' : (IDLE_COMMANDS.has(out) ? 'idle' : 'busy');
+        `tmux list-panes -t ${slot} -F '#{pane_current_command}' 2>/dev/null || echo MISSING`
+      ))).trim().split('\n')[0].trim();
+      slotState[slot] = (!out || out.includes('MISSING')) ? 'missing' : (IDLE_COMMANDS.has(out) ? 'idle' : 'busy');
     } catch {
       slotState[slot] = 'missing'; // tmux server 未起等同全空闲可建
     }

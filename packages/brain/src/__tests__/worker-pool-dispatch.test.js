@@ -28,11 +28,16 @@ function makeExecFn(slotStates = {}) {
   const calls = [];
   const fn = vi.fn((cmd, opts) => {
     calls.push({ cmd, opts });
-    const m = cmd.match(/display-message[^']*-t (slot\d+)/);
+    // 探针必须是 list-panes:真机实证 display-message -p -t <不存在的会话> 返回
+    // 空串+rc=0(而非报错),空串既非 MISSING 也非 shell 名 → 全槽误判 busy
+    // (09-06 金丝雀案:busy=3 而宿主根本没有 slot7-9)。list-panes 对不存在
+    // 会话报错 → || echo MISSING 真触发。
+    const m = cmd.match(/list-panes[^']*-t (slot\d+)/);
     if (m) {
       const st = slotStates[m[1]] ?? 'MISSING';
       return st === 'MISSING' ? 'MISSING\n' : `${st}\n`;
     }
+    if (/display-message/.test(cmd)) return ''; // 模拟真机行为:空串 rc=0
     return '';
   });
   fn.calls = calls;
@@ -90,6 +95,23 @@ describe('槽位判定与发射', () => {
     expect(inserts[0][1].join(' ')).toMatch(/dispatched/);
   });
 
+  it('探针必须 list-panes:display-message 对不存在会话返回空串 rc=0 会全槽假忙(金丝雀案 busy=3)', async () => {
+    // 真机行为:宿主无 slot7-9 时 display-message 探针返回 ''+rc=0,旧代码把空串判 busy
+    // → concurrency_cap 永不派发。本用例锁死:探针走 list-panes,且空串归 missing 可派发。
+    const calls = [];
+    const execFn = vi.fn((cmd, opts) => {
+      calls.push(cmd);
+      if (/display-message/.test(cmd)) return ''; // 旧探针在真机上的返回
+      if (/list-panes/.test(cmd)) return 'MISSING\n';
+      return '';
+    });
+    const pool = makePool([QUEUED_TASK]);
+    const r = await runWorkerPoolDispatch(pool, { execFn, now: () => 10_000_000, ssh: { host: null, opts: '' } });
+    expect(calls.some(c => /list-panes/.test(c))).toBe(true);
+    expect(r.skipped).not.toBe('concurrency_cap');
+    expect(r.dispatched).toBe(1);
+  });
+
   it('slot 不存在（MISSING）→ 先 new-session 再 send-keys', async () => {
     const execFn = makeExecFn({ slot7: 'node', slot8: 'node', slot9: 'MISSING' });
     // 两忙已达上限 → 不发射；改成一忙：
@@ -121,7 +143,7 @@ describe('并发上限', () => {
     const r = await runWorkerPoolDispatch(pool, { execFn });
     expect(r.dispatched).toBe(0);
     expect(r.skipped).toBe('concurrency_cap');
-    expect(execFn.calls.every(c => /display-message/.test(c.cmd))).toBe(true);
+    expect(execFn.calls.every(c => /list-panes/.test(c.cmd))).toBe(true);
     const claims = pool.query.mock.calls.filter(([sql]) => /UPDATE tasks/i.test(sql));
     expect(claims.length).toBe(0);
   });
