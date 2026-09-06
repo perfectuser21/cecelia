@@ -205,6 +205,145 @@ router.post('/golden_path', async (req, res) => {
   }
 });
 
+// ---------- 件7：map↔画布对齐（map=SSOT，决策 e66cf847）----------
+
+const RUN_RESULT_VERDICTS = ['completed', 'failed'];
+
+// GET /api/brain/golden_path/canvas?owner_task_id=...
+//   只读画布生成器：golden_path（L4 step，order_no）→ n8n V4 骨架 stages JSON。
+//   V4 黄金格式 {id, skill, label, objective, index, max_attempts}（源自 AwrSocialLeadgenV4 冻结合同节点），
+//   扩展 step_id/feature_id/order_no/maturity/last_run——stage 必须显式携带 step_id，
+//   回写按 step_id 对号入座（name 会改、order_no 会插队）。
+//   index 用数组位置（连续 1..N），V4 画布按 ctx.stages[i] 下标取格；order_no 保留原值。
+//   不写 n8n：画布热更由调用方走 n8n 公共 REST（deactivate/activate），禁 import:workflow（掉 webhook）。
+router.get('/golden_path/canvas', async (req, res) => {
+  try {
+    const { owner_task_id } = req.query;
+    if (!owner_task_id)
+      return res.status(400).json({ error: 'owner_task_id is required' });
+    let taskRows;
+    try {
+      ({ rows: taskRows } = await pool.query(
+        'SELECT id, title FROM tasks WHERE id=$1', [owner_task_id]
+      ));
+    } catch (err) {
+      if (err.code === '22P02')
+        return res.status(400).json({ error: `invalid owner_task_id: ${owner_task_id}` });
+      throw err;
+    }
+    if (!taskRows.length)
+      return res.status(404).json({ error: `owner_task_id not found in tasks: ${owner_task_id}` });
+    const { rows } = await pool.query(
+      `SELECT gp.id, gp.order_no, gp.note,
+              jf.id AS feature_id, jf.name AS feature_name, jf.workflow_ref,
+              jf.thickness, jf.status AS feature_status,
+              r.run_id AS last_run_id, r.verdict AS last_verdict, r.created_at AS last_run_at
+       FROM golden_path gp
+       LEFT JOIN journey_features jf ON jf.id = gp.feature_id
+       LEFT JOIN LATERAL (
+         SELECT run_id, verdict, created_at
+         FROM golden_path_run_receipts
+         WHERE golden_path_id = gp.id
+         ORDER BY created_at DESC LIMIT 1
+       ) r ON true
+       WHERE gp.owner_task_id = $1
+       ORDER BY gp.order_no ASC`,
+      [owner_task_id]
+    );
+    if (!rows.length)
+      return res.status(404).json({ error: `no golden_path steps for owner_task_id: ${owner_task_id}` });
+    const stages = rows.map((row, i) => ({
+      id: `step-${i + 1}`,
+      index: i + 1,
+      order_no: row.order_no,
+      step_id: row.id,
+      feature_id: row.feature_id,
+      skill: row.workflow_ref || null,
+      label: row.feature_name || row.note || `step-${i + 1}`,
+      objective: row.note || '',
+      max_attempts: 2,
+      maturity: row.thickness || null,
+      feature_status: row.feature_status || null,
+      last_run: row.last_run_id
+        ? { run_id: row.last_run_id, verdict: row.last_verdict, at: row.last_run_at }
+        : null,
+    }));
+    res.json({
+      source: 'golden_path',
+      schema_version: 1,
+      owner_task_id,
+      canvas_name: taskRows[0].title,
+      total_steps: stages.length,
+      stages,
+      generated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[abilities] GET /golden_path/canvas error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/brain/golden_path/:id/run-result — run 终态回写 step 成熟度
+//   verdict 封闭词表 completed|failed；幂等键 (golden_path_id, run_id)（重放返回 200 idempotent）。
+//   成熟度单级推进：completed 且 feature.status='planned' → 'working'，其余一律不动
+//   （加厚靠真实反馈、禁跳级；done 需要更强验收证据，不在本端点自动打）。
+//   UPDATE 带 status='planned' 谓词：并发重放/人工改状态时绝不回退或跳级。
+router.post('/golden_path/:id/run-result', async (req, res) => {
+  try {
+    const { run_id, verdict, evidence } = req.body || {};
+    if (!run_id) return res.status(400).json({ error: 'run_id is required' });
+    if (!RUN_RESULT_VERDICTS.includes(verdict))
+      return res.status(400).json({ error: `verdict must be one of: ${RUN_RESULT_VERDICTS.join('|')}` });
+    let stepRows;
+    try {
+      ({ rows: stepRows } = await pool.query(
+        `SELECT gp.id, gp.feature_id, jf.status AS feature_status
+         FROM golden_path gp
+         LEFT JOIN journey_features jf ON jf.id = gp.feature_id
+         WHERE gp.id=$1`, [req.params.id]
+      ));
+    } catch (err) {
+      if (err.code === '22P02')
+        return res.status(400).json({ error: `invalid golden_path id: ${req.params.id}` });
+      throw err;
+    }
+    if (!stepRows.length)
+      return res.status(404).json({ error: `golden_path step not found: ${req.params.id}` });
+    const step = stepRows[0];
+    const { rows: receiptRows } = await pool.query(
+      `INSERT INTO golden_path_run_receipts (golden_path_id, run_id, verdict, evidence)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (golden_path_id, run_id) DO NOTHING
+       RETURNING id`,
+      [step.id, run_id, verdict, JSON.stringify(evidence || {})]
+    );
+    if (!receiptRows.length) {
+      // 同 (step, run) 重放：幂等返回，不重复写、不二次推进
+      return res.json({ idempotent: true, golden_path_id: step.id, run_id });
+    }
+    let featurePromotion = null;
+    if (verdict === 'completed' && step.feature_id && step.feature_status === 'planned') {
+      const { rows: promoted } = await pool.query(
+        `UPDATE journey_features SET status='working', updated_at=now()
+         WHERE id=$1 AND status='planned' RETURNING id, status`,
+        [step.feature_id]
+      );
+      if (promoted.length)
+        featurePromotion = { feature_id: step.feature_id, from: 'planned', to: 'working' };
+    }
+    res.status(201).json({
+      receipt_id: receiptRows[0].id,
+      golden_path_id: step.id,
+      run_id,
+      verdict,
+      feature_promotion: featurePromotion,
+    });
+  } catch (err) {
+    console.error('[abilities] POST /golden_path/:id/run-result error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // PATCH /api/brain/golden_path/:id
 router.patch('/golden_path/:id', async (req, res) => {
   try {
