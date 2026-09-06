@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.276.1
+**Brain 版本**: 1.277.0
 
 ## Brain 1.276.0 — 并行血管P1:worker池自动派发 scheduler job
 
