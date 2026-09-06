@@ -46,8 +46,7 @@ async function ensureDb(title, properties, parentPageId) {
 const GRAPH_PROPS = {
   Name: { title: {} }, Source: { select: {} }, Machine: { select: {} },
   Role: { select: {} },              // orchestrator / member / solo / scheduled
-  Workflow: { rich_text: {} },       // 编排它的父（图，可多父，逗号分隔）
-  Type: { rich_text: {} }, Kind: { select: {} },
+  Type: { rich_text: {} },
   Schedule: { rich_text: {} },       // 空=常驻/按需；有值=定时
   Repeat: { checkbox: {} }, NextRun: { date: {} }, LastSeen: { date: {} },
   Status: { select: {} },
@@ -60,6 +59,23 @@ const main = async () => {
   const parentPageId = journeyDb.parent?.page_id;
   if (!parentPageId) throw new Error('取不到 AI Hub parent page id（JOURNEY_DB.parent 非 page）');
   const graph_db = await ensureDb('Ops 运行图谱', GRAPH_PROPS, parentPageId);
+
+  // 同库 relation 自关联必须建库后单独 PATCH（建库时无法引用尚不存在的自己）。
+  // dual_property：Members(它编排谁) ↔ Workflow(谁编排它) 双向自动同步——
+  // 共享 agent(如 dev 被 main+work-commander 编排)只存一份，Workflow 自动多值。
+  const db = await notion(`/databases/${graph_db}`);
+  if (!db.properties?.Members) {
+    await notion(`/databases/${graph_db}`, 'PATCH', {
+      properties: {
+        Members: { relation: { database_id: graph_db, type: 'dual_property',
+          dual_property: { synced_property_name: 'Workflow' } } },
+      },
+    });
+    console.log('✅ 已加同库 relation: Members ↔ Workflow（双向自动）');
+  } else {
+    console.log('✅ Members relation 已存在，跳过');
+  }
+
   const kv = await fetch(`${BRAIN}/api/brain/kv/ops_notion_dbs`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ graph_db }),

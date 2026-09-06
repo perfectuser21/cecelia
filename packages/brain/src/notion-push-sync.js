@@ -506,14 +506,28 @@ export function buildOpsUnitNotionProperties(u) {
   // 已被 recurring-notion-sync 占用不推本库——故 Notion 图谱不设该列（避免恒 false 误导）。
   // 死排程识别在 /agent-ops/graph API 层保留（Dashboard 刀3 消费），Notion 是过渡展示子集。
   if (u.agent_type) p.Type = { rich_text: buildRichText(u.agent_type) };
-  if (Array.isArray(u.orchestrated_by) && u.orchestrated_by.length) {
-    p.Workflow = { rich_text: buildRichText(u.orchestrated_by.join(', ')) }; // 编排它的父（图，可多父）
-  }
   if (u.schedule_desc) p.Schedule = { rich_text: buildRichText(u.schedule_desc) };
-  if (u.kind) p.Kind = { select: { name: u.kind } };
   if (u.next_run_utc) p.NextRun = { date: { start: new Date(u.next_run_utc).toISOString() } };
   if (u.last_seen_at) p.LastSeen = { date: { start: new Date(u.last_seen_at).toISOString() } };
+  // Members/Workflow 是同库 relation，需目标页 id → 第二阶段 buildOpsRelationProperties 补。
+  // Kind 列已删（45/67 为空，信息量太低）。
   return p;
+}
+
+/**
+ * 第二阶段：同库 relation 自关联。Members = 它编排谁（relation → 本库）；
+ * Workflow（谁编排它）由 Notion dual_property 反向自动生成，不手工发——
+ * 故共享 agent（如 dev 被 main+work-commander 编排）只需两个父各自发一次，
+ * dev 那行的 Workflow 自动出现两个值，数据仍只存一份。
+ * @param {{name:string, orchestrates?:string[]}} u
+ * @param {Map<string,string>} idByName  agent 名 → 已建 Notion 页 id
+ */
+export function buildOpsRelationProperties(u, idByName) {
+  const ids = (u.orchestrates || [])
+    .map((child) => idByName.get(child))
+    .filter(Boolean)                    // 下级页尚未建 → 跳过，不发 undefined id
+    .map((id) => ({ id }));
+  return { Members: { relation: ids } }; // 空数组=清掉历史残留关系
 }
 
 async function getOpsNotionDbs(pool) {
@@ -602,9 +616,32 @@ async function pushOpsGraph(pool, token) {
     buildProps: (s) => buildOpsUnitNotionProperties({
       source: s.source, host_alias: s.host_alias, name: s.label, agent_type: 'schedule',
       status: 'active', role: 'scheduled', orchestrated_by: [],
-      kind: s.kind, schedule_desc: s.schedule_desc, next_run_utc: s.next_run_utc,
+      schedule_desc: s.schedule_desc, next_run_utc: s.next_run_utc,
     }),
   });
+
+  // 3. relation 阶段：所有页建完后，给编排者补 Members（同库自关联）。
+  // 必须在建页之后——relation 需要目标页的 notion_id。Workflow（反向）由 Notion 自动生成。
+  await syncOpsMembersRelation(pool, token);
+}
+
+/** 给有下级的 agent 补 Members relation（同库自关联）。目标页未建则本轮跳过，下轮自愈。 */
+async function syncOpsMembersRelation(pool, token) {
+  const { rows } = await pool.query(
+    `SELECT name, meta, notion_id FROM ops_agents WHERE notion_id IS NOT NULL`);
+  const idByName = new Map(rows.map((r) => [r.name, r.notion_id]));
+  const orchestrators = rows.filter((r) => (r.meta?.orchestrates || []).length > 0);
+  for (const o of orchestrators) {
+    try {
+      const props = buildOpsRelationProperties({ name: o.name, orchestrates: o.meta.orchestrates }, idByName);
+      if (!props.Members.relation.length) continue; // 下级页全未建，等下轮
+      await notionReq(token, `/pages/${o.notion_id}`, 'PATCH', { properties: props });
+    } catch (err) {
+      if (isMissingDatabaseError(err)) return;      // 库没了，停推（终止态）
+      console.warn(`[notion-push-sync] ops relation ${o.name} 失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
 }
 
 export async function runNotionPushSync(pool) {
