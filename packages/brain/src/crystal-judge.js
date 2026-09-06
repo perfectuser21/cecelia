@@ -28,15 +28,12 @@ export function beijingDateStr(now = new Date()) {
   return `${y}-${m}-${d}`;
 }
 
-/**
- * best-effort 聚合单格六项指标。源未落本地表 → 数据缺口降级（不误判）。
- * 返回结构含判决引擎所需的判定标志（has_postcondition/is_hardened/is_judgment_layer/data_gap）。
- */
-async function aggregateGridMetrics(_dbPool, gridKey) {
-  // 数据源（n8n execution_entity / 采集器 / postcondition）本地未落表，判官对源只读。
-  // 本 sprint 无本地真目标可读 → 该格数据缺口，保持纯 LLM（PRD 边界③ / 接缝 3）。
+/** 数据缺口时的诚实降级值：不误判为成功/失败（件4 PRD 边界③ 语义原样保留）。 */
+function gapMetrics(unitKey, extra = {}) {
   return {
-    grid_key: gridKey,
+    grid_key: unitKey,
+    unit_key: unitKey,
+    funnel_cell: null,
     n_runs: 0,
     success_rate: null,
     token_cost: 0,
@@ -47,6 +44,106 @@ async function aggregateGridMetrics(_dbPool, gridKey) {
     is_hardened: false,
     is_judgment_layer: false,
     data_gap: true,
+    ...extra,
+  };
+}
+
+function toNum(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * 聚合单个判决单位（段）当日六项指标 —— 判官的口粮入口。
+ *
+ * 数据源 crystal_run_evidence（迁移 438），由 POST /crystal/evidence 从 crystal-verify.mjs
+ * 的 verify-*.json 搬运入库。判官对源只读，只写 crystal_* 表（件4 NFR 数据完整性不变）。
+ *
+ * token_cost 取 baseline_tokens 而非 hot_path_tokens：判决引擎用 n_runs × token_cost 与
+ * 固化成本基线比大小，衡量的是「不固化要烧多少」。取热路径会把收益算小一个数量级
+ * （实测 696 vs 10158，差 14.6 倍），导致永远达不到基线、永远晋升不了。
+ * 缺 baseline 时记 data_gap，不拿热路径顶替、不臆造。
+ *
+ * @param {import('pg').Pool} dbPool
+ * @param {string} unitKey 判决单位键（段名，如 search_account；历史漏斗格 og1..og8 同样有效）
+ * @param {string} reportDate YYYY-MM-DD（北京时区）
+ */
+export async function aggregateUnitMetrics(dbPool, unitKey, reportDate) {
+  let rows = [];
+  try {
+    const r = await dbPool.query(
+      `SELECT unit_key, funnel_cell, runs, passes, baseline_tokens, hot_path_tokens,
+              avg_ms, crystallized, has_postcondition, new_branch_count, broken_count
+         FROM crystal_run_evidence
+        WHERE unit_key = $1 AND report_date = $2`,
+      [unitKey, reportDate],
+    );
+    rows = r?.rows ?? [];
+  } catch (err) {
+    // 表缺失/源不可达 → 降级数据缺口，绝不误判（件4 PRD 边界③）
+    console.warn(`[crystal-judge] 证据读取失败 unit=${unitKey}（降级 data_gap）:`, err.message);
+    return gapMetrics(unitKey);
+  }
+
+  if (rows.length === 0) return gapMetrics(unitKey);
+
+  let runs = 0;
+  let passes = 0;
+  let broken = 0;
+  let newBranch = 0;
+  let msWeighted = 0;
+  let baselineWeighted = 0;
+  let baselineMissing = false;
+  let hasPostcondition = false;
+  let isHardened = false;
+  let funnelCell = null;
+
+  for (const row of rows) {
+    const n = toNum(row.runs) ?? 0;
+    runs += n;
+    passes += toNum(row.passes) ?? 0;
+    broken += toNum(row.broken_count) ?? 0;
+    newBranch += toNum(row.new_branch_count) ?? 0;
+
+    const ms = toNum(row.avg_ms);
+    if (ms !== null) msWeighted += ms * (n || 1);
+
+    const base = toNum(row.baseline_tokens);
+    if (base === null) baselineMissing = true;
+    else baselineWeighted += base * (n || 1);
+
+    if (row.has_postcondition) hasPostcondition = true;
+    if (row.crystallized) isHardened = true;
+    if (!funnelCell && row.funnel_cell) funnelCell = row.funnel_cell;
+  }
+
+  const weight = runs || rows.length;
+
+  // 缺 baseline 无法衡量固化收益 → 诚实记缺口，不用热路径成本顶替
+  if (baselineMissing) {
+    return gapMetrics(unitKey, {
+      funnel_cell: funnelCell,
+      has_postcondition: hasPostcondition,
+      is_hardened: isHardened,
+    });
+  }
+
+  return {
+    grid_key: unitKey,
+    unit_key: unitKey,
+    funnel_cell: funnelCell,
+    n_runs: runs,
+    success_rate: runs > 0 ? passes / runs : null,
+    token_cost: baselineWeighted / weight,
+    latency_ms: msWeighted > 0 ? msWeighted / weight : null,
+    new_branch_rate: runs > 0 ? newBranch / runs : 0,
+    broken_count: broken,
+    has_postcondition: hasPostcondition,
+    is_hardened: isHardened,
+    // 判定层标志由证据显式携带；未标注即非判定层（INV-1 仅在显式标注时生效）
+    is_judgment_layer: false,
+    data_gap: false,
   };
 }
 
@@ -70,18 +167,35 @@ export async function runCrystalJudge(dbPool = pool, now = new Date()) {
   const dataGaps = [];
   let gridCount = 0;
 
-  for (const gridKey of OPENCLAW_LEADGEN_GRIDS) {
+  // 判决单位 = 漏斗八格（件4 第一批被告，无证据则诚实记 data_gap）
+  //          ∪ 当日有运行证据的段（决策 28ca1f69 第④条：蒸馏分段进行，判决粒度是段）
+  const judgedUnits = [...OPENCLAW_LEADGEN_GRIDS];
+  try {
+    const { rows } = await dbPool.query(
+      `SELECT DISTINCT unit_key FROM crystal_run_evidence WHERE report_date = $1`,
+      [reportDate],
+    );
+    for (const r of rows ?? []) {
+      if (r.unit_key && !judgedUnits.includes(r.unit_key)) judgedUnits.push(r.unit_key);
+    }
+  } catch (err) {
+    // 证据表不可读 → 只审八格，保持件4 原行为，不阻断
+    console.warn('[crystal-judge] 段清单读取失败（只审漏斗八格）:', err.message);
+  }
+
+  for (const gridKey of judgedUnits) {
     try {
-      const metrics = await aggregateGridMetrics(dbPool, gridKey);
+      const metrics = await aggregateUnitMetrics(dbPool, gridKey, reportDate);
       const { verdict, basis } = classifyCrystalVerdict(metrics, CRYSTAL_THRESHOLDS);
       const sixMetrics = pickSixMetrics(metrics);
 
       // 台账：六项指标落库（幂等键 report_date+grid_key，同日重跑刷新 created_at 供时间窗计数）
       await dbPool.query(
         `INSERT INTO crystal_ledger
-           (report_date, grid_key, n_runs, success_rate, token_cost, latency_ms, new_branch_rate, broken_count, data_gap, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW(), NOW())
+           (report_date, grid_key, n_runs, success_rate, token_cost, latency_ms, new_branch_rate, broken_count, data_gap, funnel_cell, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW(), NOW())
          ON CONFLICT (report_date, grid_key) DO UPDATE SET
+           funnel_cell = EXCLUDED.funnel_cell,
            n_runs = EXCLUDED.n_runs,
            success_rate = EXCLUDED.success_rate,
            token_cost = EXCLUDED.token_cost,
@@ -101,19 +215,21 @@ export async function runCrystalJudge(dbPool = pool, now = new Date()) {
           sixMetrics.new_branch_rate,
           sixMetrics.broken_count,
           metrics.data_gap,
+          metrics.funnel_cell ?? null,
         ],
       );
 
       // 判决：每格有且仅有 1 条（UNIQUE 冲突 upsert，防重复判决），带依据 basis
       await dbPool.query(
-        `INSERT INTO crystal_verdict (report_date, grid_key, verdict, basis, created_at, updated_at)
-         VALUES ($1,$2,$3,$4::jsonb, NOW(), NOW())
+        `INSERT INTO crystal_verdict (report_date, grid_key, verdict, basis, funnel_cell, created_at, updated_at)
+         VALUES ($1,$2,$3,$4::jsonb,$5, NOW(), NOW())
          ON CONFLICT (report_date, grid_key) DO UPDATE SET
            verdict = EXCLUDED.verdict,
            basis = EXCLUDED.basis,
+           funnel_cell = EXCLUDED.funnel_cell,
            created_at = NOW(),
            updated_at = NOW()`,
-        [reportDate, gridKey, verdict, JSON.stringify(basis)],
+        [reportDate, gridKey, verdict, JSON.stringify(basis), metrics.funnel_cell ?? null],
       );
 
       verdicts.push({ grid_key: gridKey, verdict });
