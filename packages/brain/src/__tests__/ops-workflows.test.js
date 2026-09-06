@@ -13,10 +13,14 @@ const FIXTURE = [
     ],
   },
   {
+    // 真实格式（实证 OpcCmdStageCallV4）：agent 走 HTTP 头 x-openclaw-agent-id，不是 JSON 字段
     id: 'OpcCmdStageCallV4', name: 'OPC Commander Stage Call V4（通道单点）', active: true,
     nodes: [
       { name: '调用 Work Commander', type: 'n8n-nodes-base.httpRequest',
-        parameters: { jsonBody: '{"agentId":"work-commander","input":"x"}' } },
+        parameters: { sendHeaders: true, headerParameters: { parameters: [
+          { name: 'x-openclaw-agent-id', value: 'work-commander' },
+          { name: 'x-openclaw-session', value: 'abc' },
+        ] } } },
     ],
   },
   {

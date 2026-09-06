@@ -121,6 +121,73 @@ export const HK_OPENCLAW_CMD =
 export const PLIST_DUMP_CMD =
   'for f in /Library/LaunchDaemons/*.plist; do echo "== $f"; /usr/bin/plutil -convert json -o - "$f" 2>/dev/null; echo ""; done';
 
+// ─── n8n workflow（真业务流程，非"谁召唤谁"）───────────────────────────
+// 实证：AwrSocialLeadgenV4「Social Leadgen V4」8 阶段(手机预检/视频发现/全文判定/评论采集/
+// 线索评分/去重配送…)，每阶段经 OpcCmdStageCallV4 通道单点调 agentId=work-commander。
+// 故 agent 归属必须走**传递闭包**（主流程自身不含 agentId，只有子流程有）。
+
+/** 只数「阶段 X」节点——裁决/入口/准备节点不算业务阶段 */
+export function countStages(nodes = []) {
+  return (nodes || []).filter((n) => String(n?.name || '').startsWith('阶段')).length;
+}
+
+export function parseN8nWorkflows(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((w) => {
+    const nodes = w?.nodes || [];
+    return {
+      wf_id: String(w?.id || ''),
+      name: String(w?.name || ''),
+      active: w?.active === true,
+      node_count: nodes.length,
+      stage_count: countStages(nodes),
+      meta: {
+        stages: nodes.filter((n) => String(n?.name || '').startsWith('阶段'))
+          .map((n) => String(n.name).replace(/^阶段\s*/, '')),
+      },
+    };
+  }).filter((r) => r.wf_id);
+}
+
+/** 一个画布调用的子流程 id（executeWorkflow 节点，workflowId 可能是字符串或 {value}） */
+function subWorkflowIds(w) {
+  const out = new Set();
+  for (const n of w?.nodes || []) {
+    if (!String(n?.type || '').includes('executeWorkflow')) continue;
+    let wid = n?.parameters?.workflowId;
+    if (wid && typeof wid === 'object') wid = wid.value || wid.cachedResultName;
+    if (typeof wid === 'string' && wid) out.add(wid);
+  }
+  return out;
+}
+
+/**
+ * 传递闭包解析一条流程真正用到的 agent：自身 agentId 引用 ∪ 所有子流程的（递归）。
+ * seen 防循环调用死循环。
+ */
+export function resolveWorkflowAgents(wfId, allWorkflows, seen = new Set()) {
+  if (!wfId || seen.has(wfId)) return [];
+  seen.add(wfId);
+  const w = (allWorkflows || []).find((x) => x?.id === wfId);
+  if (!w) return [];
+  // 真实格式（实证 OpcCmdStageCallV4）：agent 走 HTTP 头 x-openclaw-agent-id，
+  // 形如 {"name":"x-openclaw-agent-id","value":"work-commander"}；也兼容 JSON 字段 agentId 写法。
+  // 序列化后字符串参数内的引号会被转义，故正则容忍反斜杠。
+  const raw = JSON.stringify(w);
+  const found = new Set([
+    ...[...raw.matchAll(/x-openclaw-agent-id\\?["'],?\s*\\?["']?value\\?["']?\s*:\s*\\?["']([a-z0-9-]{3,40})/gi)].map((m) => m[1]),
+    ...[...raw.matchAll(/agentId\\?["']\s*:\s*\\?["']([a-z0-9-]{3,40})/gi)].map((m) => m[1]),
+  ]);
+  for (const sub of subWorkflowIds(w)) {
+    for (const a of resolveWorkflowAgents(sub, allWorkflows, seen)) found.add(a);
+  }
+  return [...found].sort();
+}
+
+export const N8N_LIST_CMD =
+  "ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no root@100.86.118.99 " +
+  "'docker exec n8n sh -c \"n8n export:workflow --all --output=/tmp/ops-all.json >/dev/null 2>&1; cat /tmp/ops-all.json\"'";
+
 export const GHA_CRON_CMD =
   "grep -RnoE \"cron: *'[^']+'\" /Users/administrator/perfect21/cecelia/.github/workflows /Users/administrator/perfect21/zenithjoy-workspace/.github/workflows 2>/dev/null || true";
 
