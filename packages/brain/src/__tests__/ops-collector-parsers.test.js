@@ -69,11 +69,24 @@ describe('computeNextRunUTC（DST 正确，America/Los_Angeles）', () => {
 });
 
 describe('extractOpenclawAgents', () => {
-  it('dict 形 entries + 白名单字段（绝不带凭据）', () => {
+  it('dict 形 entries + 白名单字段（绝不带凭据）+ 编排关系', () => {
     const cfg = { agents: { entries: { main: { model: 'x', apiKey: 'SECRET', workspace: '/w' } } }, auth: { k: 'SECRET' } };
     const rows = extractOpenclawAgents(cfg);
-    expect(rows).toEqual([{ name: 'main', agent_type: 'openclaw_agent', meta: { model: 'x', workspace: '/w' } }]);
+    expect(rows).toEqual([{ name: 'main', agent_type: 'openclaw_agent', meta: { model: 'x', workspace: '/w', orchestrates: [], delegation_mode: null } }]);
     expect(JSON.stringify(rows)).not.toContain('SECRET');
+  });
+  it('采 subagents.allowAgents 编排关系 + delegationMode', () => {
+    const cfg = { agents: { entries: {
+      main: { subagents: { allowAgents: ['dev', 'infra'], delegationMode: 'prefer', requireAgentId: true } },
+    } } };
+    const r = extractOpenclawAgents(cfg)[0];
+    expect(r.meta.orchestrates).toEqual(['dev', 'infra']);
+    expect(r.meta.delegation_mode).toBe('prefer');
+  });
+  it('无 subagents 的单 agent → orchestrates 空数组', () => {
+    const r = extractOpenclawAgents({ agents: { entries: { curator: { model: 'y' } } } })[0];
+    expect(r.meta.orchestrates).toEqual([]);
+    expect(r.meta.delegation_mode).toBeNull();
   });
   it('array 形 entries 也认', () => {
     expect(extractOpenclawAgents({ agents: { entries: [{ id: 'dev' }] } })[0].name).toBe('dev');

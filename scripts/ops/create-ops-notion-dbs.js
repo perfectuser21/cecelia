@@ -42,28 +42,30 @@ async function ensureDb(title, properties, parentPageId) {
   return db.id;
 }
 
-const AGENTS_PROPS = {
-  Name: { title: {} }, Source: { select: {} }, Host: { select: {} },
-  Type: { rich_text: {} }, Status: { select: {} }, LastSeen: { date: {} },
-};
-const CALENDAR_PROPS = {
-  Name: { title: {} }, Source: { select: {} }, Host: { select: {} }, Kind: { select: {} },
-  Schedule: { rich_text: {} }, NextRun: { date: {} }, LastState: { rich_text: {} },
-  Suspicious: { checkbox: {} }, Active: { checkbox: {} },
+// 合并单库「Ops 运行图谱」：一行=一个运行单元（agent 或排程），调度/编排都是属性。
+const GRAPH_PROPS = {
+  Name: { title: {} }, Source: { select: {} }, Machine: { select: {} },
+  Role: { select: {} },              // orchestrator / member / solo / scheduled
+  Workflow: { rich_text: {} },       // 编排它的父（图，可多父，逗号分隔）
+  Type: { rich_text: {} }, Kind: { select: {} },
+  Schedule: { rich_text: {} },       // 空=常驻/按需；有值=定时
+  Repeat: { checkbox: {} }, NextRun: { date: {} }, LastSeen: { date: {} },
+  Status: { select: {} },
+  // Suspicious（死排程）列暂不设：其唯一数据源 brain_recurring 因 notion_page_id 占用不推本库，
+  // 恒 false 会误导；死排程识别在 /agent-ops/graph API 层保留供 Dashboard 消费。
 };
 
 const main = async () => {
   const journeyDb = await notion(`/databases/${JOURNEY_DB}`);
   const parentPageId = journeyDb.parent?.page_id;
   if (!parentPageId) throw new Error('取不到 AI Hub parent page id（JOURNEY_DB.parent 非 page）');
-  const agents_db = await ensureDb('Ops Agents & 机器', AGENTS_PROPS, parentPageId);
-  const calendar_db = await ensureDb('Ops 编排日历', CALENDAR_PROPS, parentPageId);
+  const graph_db = await ensureDb('Ops 运行图谱', GRAPH_PROPS, parentPageId);
   const kv = await fetch(`${BRAIN}/api/brain/kv/ops_notion_dbs`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agents_db, calendar_db }),
+    body: JSON.stringify({ graph_db }),
   }).then((r) => r.json());
   if (!kv.ok) throw new Error(`kv 写入失败: ${JSON.stringify(kv)}`);
-  console.log('✅ kv ops_notion_dbs 已写入，下一轮 notion-push 自动开始推送');
+  console.log('✅ kv ops_notion_dbs={graph_db} 已写入，下一轮 notion-push 自动推合并库（旧两库停推，数据保留待手删）');
 };
 
 main().catch((e) => { console.error('❌', e.message); process.exit(1); });

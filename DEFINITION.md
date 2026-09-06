@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.187
+**Brain 版本**: 1.273.188
+
+## Brain 1.273.188 — 运行舱刀2：两库合并+编排关系可见（第 83 批）
+
+- `extractOpenclawAgents` meta 增采 `orchestrates`(=subagents.allowAgents)+`delegation_mode`(免 migration)；`GET /agent-ops/graph` 合并投影(computeAgentRole 双向判定 orchestrator/member/solo + agent 与 schedule 按 name==label 去重为运行单元行 + 孤儿排程独立行)；Notion 两库合并为单库「Ops 运行图谱」(buildOpsUnitNotionProperties + pushOpsGraph，kv 改 graph_db)。决策 ac7a0911，G1 S1 加厚刀2。
 
 ## Brain 1.273.186 — 投影自动重建 scheduler job（Crystal 件9，map_radius_stale 根治）
 

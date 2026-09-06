@@ -83,14 +83,23 @@ export function extractOpenclawAgents(config) {
       : null;
   if (!list) throw new Error('schema_drift: agents.entries 缺失或形状未知');
   return list
-    .map((e) => ({
-      name: String(e.id || e.name || ''),
-      agent_type: 'openclaw_agent',
-      meta: { // 白名单——clawdbot.json 含明文凭据，绝不整份入库
-        model: typeof e.model === 'string' ? e.model : null,
-        workspace: typeof e.workspace === 'string' ? e.workspace : null,
-      },
-    }))
+    .map((e) => {
+      const sa = e.subagents;
+      // 编排关系：subagents.allowAgents = 这个 agent 能编排的下级 agent 清单（图，dev 可被多父编排）。
+      const orchestrates = Array.isArray(sa?.allowAgents)
+        ? sa.allowAgents.filter((x) => typeof x === 'string')
+        : [];
+      return {
+        name: String(e.id || e.name || ''),
+        agent_type: 'openclaw_agent',
+        meta: { // 白名单——clawdbot.json 含明文凭据，绝不整份入库
+          model: typeof e.model === 'string' ? e.model : null,
+          workspace: typeof e.workspace === 'string' ? e.workspace : null,
+          orchestrates,
+          delegation_mode: typeof sa?.delegationMode === 'string' ? sa.delegationMode : null,
+        },
+      };
+    })
     .filter((a) => a.name);
 }
 

@@ -268,3 +268,4 @@ home-sequencer-smoke.sh
 commander-invoker-smoke.sh
 ops-registry-smoke.sh
 map-canvas-align-smoke.sh
+ops-graph-smoke.sh
