@@ -61,24 +61,46 @@ const main = async () => {
   const graph_db = await ensureDb('Ops 运行图谱', GRAPH_PROPS, parentPageId);
 
   // 同库 relation 自关联必须建库后单独 PATCH（建库时无法引用尚不存在的自己）。
-  // dual_property：Members(它编排谁) ↔ Workflow(谁编排它) 双向自动同步——
-  // 共享 agent(如 dev 被 main+work-commander 编排)只存一份，Workflow 自动多值。
+  // dual_property：CanCall(它能召唤谁) ↔ CalledBy(谁能召唤它) 双向自动同步。
+  // 注意：这是**召唤权限**（allowAgents），不是业务 workflow——后者在 Ops Workflows 库。
   const db = await notion(`/databases/${graph_db}`);
-  if (!db.properties?.Members) {
+  if (!db.properties?.CanCall) {
     await notion(`/databases/${graph_db}`, 'PATCH', {
       properties: {
-        Members: { relation: { database_id: graph_db, type: 'dual_property',
-          dual_property: { synced_property_name: 'Workflow' } } },
+        CanCall: { relation: { database_id: graph_db, type: 'dual_property',
+          dual_property: { synced_property_name: 'CalledBy' } } },
       },
     });
-    console.log('✅ 已加同库 relation: Members ↔ Workflow（双向自动）');
+    console.log('✅ 已加同库 relation: CanCall(可召唤) ↔ CalledBy(被谁召唤)');
   } else {
-    console.log('✅ Members relation 已存在，跳过');
+    console.log('✅ CanCall relation 已存在，跳过');
+  }
+
+  // 业务流程库（刀4）：workflow 是业务流程（智能获客8阶段），与图谱库的 agent（执行资源）分开。
+  const workflows_db = await ensureDb('Ops Workflows', {
+    Name: { title: {} }, Source: { select: {} }, Active: { checkbox: {} },
+    Stages: { number: {} },        // 业务阶段数
+    Flow: { rich_text: {} },       // 阶段序列：手机预检 → 视频发现 → …
+    Nodes: { number: {} }, WfId: { rich_text: {} },
+  }, parentPageId);
+
+  // 跨库 relation：workflow → 它用到的 agent（指向图谱库），反向自动生成 Workflows 列
+  const wdb = await notion(`/databases/${workflows_db}`);
+  if (!wdb.properties?.Agents) {
+    await notion(`/databases/${workflows_db}`, 'PATCH', {
+      properties: {
+        Agents: { relation: { database_id: graph_db, type: 'dual_property',
+          dual_property: { synced_property_name: 'Workflows' } } },
+      },
+    });
+    console.log('✅ 已加跨库 relation: Workflows.Agents ↔ 图谱库.Workflows');
+  } else {
+    console.log('✅ Agents relation 已存在，跳过');
   }
 
   const kv = await fetch(`${BRAIN}/api/brain/kv/ops_notion_dbs`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ graph_db }),
+    body: JSON.stringify({ graph_db, workflows_db }),
   }).then((r) => r.json());
   if (!kv.ok) throw new Error(`kv 写入失败: ${JSON.stringify(kv)}`);
   console.log('✅ kv ops_notion_dbs={graph_db} 已写入，下一轮 notion-push 自动推合并库（旧两库停推，数据保留待手删）');

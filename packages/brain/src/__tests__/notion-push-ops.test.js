@@ -15,8 +15,8 @@ describe('buildOpsUnitNotionProperties（第一阶段：建页，不含 relation
     expect(p.Role.select.name).toBe('member');
     expect(p.LastSeen.date.start).toBe('2026-09-05T12:00:00.000Z');
     expect(p.Repeat.checkbox).toBe(false);
-    expect(p.Workflow).toBeUndefined();  // relation 在第二阶段补
-    expect(p.Members).toBeUndefined();
+    expect(p.CalledBy).toBeUndefined();  // relation 在第二阶段补
+    expect(p.CanCall).toBeUndefined();
   });
 
   it('Kind 列已删（45/67 为空，信息量太低）', () => {
@@ -49,28 +49,28 @@ describe('buildOpsRelationProperties（第二阶段：同库 relation 自关联�
     ['curator', 'page-curator'],
   ]);
 
-  it('Members = 它编排谁（relation 指向本库）', () => {
+  it('CanCall = 它能召唤谁（relation 指向本库）', () => {
     const p = buildOpsRelationProperties({ name: 'work-commander', orchestrates: ['dev', 'curator'] }, idByName);
-    expect(p.Members.relation).toEqual([{ id: 'page-dev' }, { id: 'page-curator' }]);
+    expect(p.CanCall.relation).toEqual([{ id: 'page-dev' }, { id: 'page-curator' }]);
   });
 
   it('共享 agent：dev 被 main+work-commander 编排 → 两个父各自的 Members 都含 dev', () => {
     const pm = buildOpsRelationProperties({ name: 'main', orchestrates: ['dev'] }, idByName);
     const pw = buildOpsRelationProperties({ name: 'work-commander', orchestrates: ['dev'] }, idByName);
-    expect(pm.Members.relation).toEqual([{ id: 'page-dev' }]);
-    expect(pw.Members.relation).toEqual([{ id: 'page-dev' }]);
-    // Workflow 反向由 Notion dual_property 自动生成，不手工发
-    expect(pm.Workflow).toBeUndefined();
+    expect(pm.CanCall.relation).toEqual([{ id: 'page-dev' }]);
+    expect(pw.CanCall.relation).toEqual([{ id: 'page-dev' }]);
+    // CalledBy 反向由 Notion dual_property 自动生成，不手工发
+    expect(pm.CalledBy).toBeUndefined();
   });
 
-  it('无下级 → Members 发空数组（清掉可能的历史残留）', () => {
+  it('无下级 → CanCall 发空数组（清掉可能的历史残留）', () => {
     const p = buildOpsRelationProperties({ name: 'curator', orchestrates: [] }, idByName);
-    expect(p.Members.relation).toEqual([]);
+    expect(p.CanCall.relation).toEqual([]);
   });
 
   it('下级页尚未建（不在映射里）→ 跳过该项，不发 undefined id', () => {
     const p = buildOpsRelationProperties({ name: 'main', orchestrates: ['dev', '还没建的'] }, idByName);
-    expect(p.Members.relation).toEqual([{ id: 'page-dev' }]);
+    expect(p.CanCall.relation).toEqual([{ id: 'page-dev' }]);
   });
 });
 
