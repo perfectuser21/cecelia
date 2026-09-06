@@ -12,7 +12,7 @@
 
 ## Brain 1.273.188 — 结晶判官（Crystal 件4，认领 kernel 遗孤）
 
-- 新增 crystal-judge scheduler job（北京 05:00 窗口+当日去重）+ `POST /crystal/run` / `GET /crystal/report` / `POST /crystal/locator` / `POST /crystal/evidence/validate` + 迁移 434（原 433 与 ops 撞号改号）：OpenClaw 八格六指标聚合 → 三态判决（promote/keep_llm/demote）→ 每日结晶报告落库。铁律进引擎：判定层不蒸馏（INV-1）、探针强制（INV-2）、N≥20、固化件碎 3 降级、优先级=频率×失败率（决策 28ca1f69）。kernel run 2e593e10 完成实现后死于 automation_deadline，按认领规则收割（PR#5170，替代 #5163）。顺治两雷：根 package-lock workspace 版本错配致 npm10 edgesOut、CI 0MB 毒 npm 缓存清除。
+- 新增 crystal-judge scheduler job（北京 05:00 窗口+当日去重）+ `POST /crystal/run` / `GET /crystal/report` / `POST /crystal/locator` / `POST /crystal/evidence/validate` + 迁移 435（原 433 与 ops 撞号改号）：OpenClaw 八格六指标聚合 → 三态判决（promote/keep_llm/demote）→ 每日结晶报告落库。铁律进引擎：判定层不蒸馏（INV-1）、探针强制（INV-2）、N≥20、固化件碎 3 降级、优先级=频率×失败率（决策 28ca1f69）。kernel run 2e593e10 完成实现后死于 automation_deadline，按认领规则收割（PR#5170，替代 #5163）。顺治两雷：根 package-lock workspace 版本错配致 npm10 edgesOut、CI 0MB 毒 npm 缓存清除。
 
 ## Brain 1.273.187 — map↔画布对齐（Crystal 件7，worker B）：只读画布生成器 + run 终态回写（PR#5169，changelog 由件4 补记）
 

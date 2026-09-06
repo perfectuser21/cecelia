@@ -7,13 +7,13 @@ journey_type: autonomous
 ---
 # Contract DoD — Sprint: Crystal 第4件:结晶判官（结晶台账 + 三态判决 + 每日结晶报告）
 
-**范围**: packages/brain 后端 — 结晶判官定时任务 + `runCrystalJudge()`；结晶台账/判决/报告/locator 四表（migration 434）；三态判决纯函数引擎；证据留存规范；registry 回写；Brain 查询端点。第一批被告 = OpenClaw leadgen 八格。
+**范围**: packages/brain 后端 — 结晶判官定时任务 + `runCrystalJudge()`；结晶台账/判决/报告/locator 四表（migration 435）；三态判决纯函数引擎；证据留存规范；registry 回写；Brain 查询端点。第一批被告 = OpenClaw leadgen 八格。
 **大小**: L
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] migration `packages/brain/migrations/434_crystal_judge.sql` 建四表（crystal_ledger / crystal_verdict / crystal_report / crystal_locator_registry）
-  Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/434_crystal_judge.sql','utf8');for(const t of ['crystal_ledger','crystal_verdict','crystal_report','crystal_locator_registry'])if(!c.includes(t))process.exit(1)"
+- [x] [ARTIFACT] migration `packages/brain/migrations/435_crystal_judge.sql` 建四表（crystal_ledger / crystal_verdict / crystal_report / crystal_locator_registry）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/435_crystal_judge.sql','utf8');for(const t of ['crystal_ledger','crystal_verdict','crystal_report','crystal_locator_registry'])if(!c.includes(t))process.exit(1)"
 
 - [x] [ARTIFACT] 路由模块 `packages/brain/src/routes/crystal.js` 存在且已挂进 routes.js（`router.use('/crystal'`）
   Test: node -e "const fs=require('fs');fs.accessSync('packages/brain/src/routes/crystal.js');const r=fs.readFileSync('packages/brain/src/routes.js','utf8');if(!/router\.use\('\/crystal'/.test(r))process.exit(1)"
