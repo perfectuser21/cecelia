@@ -112,6 +112,27 @@ describe('槽位判定与发射', () => {
     expect(r.dispatched).toBe(1);
   });
 
+  it('ssh 套壳时 $(cat promptFile) 必须转义 $:否则容器侧先求值成空串(金丝雀案 claude-launch.sh "")', async () => {
+    // wrap() 只转义 \\ 和 ":双引号内的 $(...) 会被容器 shell 先展开——容器没有宿主的
+    // prompt 文件 → cat 失败 → 发射命令落地成 claude-launch.sh "",worker 空转。
+    const calls = [];
+    const execFn = vi.fn((cmd, opts) => {
+      calls.push(cmd);
+      if (/list-panes/.test(cmd)) return 'MISSING\n';
+      return '';
+    });
+    const pool = makePool([QUEUED_TASK]);
+    const r = await runWorkerPoolDispatch(pool, {
+      execFn, now: () => 20_000_000,
+      ssh: { host: 'administrator@host.docker.internal', opts: '-o BatchMode=yes' },
+    });
+    expect(r.dispatched).toBe(1);
+    const sk = calls.find(c => /send-keys/.test(c));
+    // ssh 双引号包裹里,$ 必须以 \$ 形态出现才能活到宿主端求值
+    expect(sk).toMatch(/\\\$\(cat /);
+    expect(sk).not.toMatch(/[^\\]\$\(cat /);
+  });
+
   it('slot 不存在（MISSING）→ 先 new-session 再 send-keys', async () => {
     const execFn = makeExecFn({ slot7: 'node', slot8: 'node', slot9: 'MISSING' });
     // 两忙已达上限 → 不发射；改成一忙：
