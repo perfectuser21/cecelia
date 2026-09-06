@@ -19,6 +19,7 @@ import { join } from 'path';
 import { spawn } from 'child_process';
 import { getActiveProfile } from './model-profile.js';
 import { selectBestAccount, markAuthFailure, verifyAccountTokenLive } from './account-usage.js';
+import { CODEX_ACCOUNTS } from './llm-capacity.js';
 import { reportCall } from './langfuse-reporter.js';
 
 const BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
@@ -578,10 +579,13 @@ export async function callLLMStream(agentId, prompt, options = {}, onChunk) {
 }
 
 // Codex OAuth team 账号目录列表（round-robin 轮换）
-const CODEX_TEAM_HOMES = [
-  join(homedir(), '.codex-team1'),
-  join(homedir(), '.codex-team2'),
-];
+//
+// 从 llm-capacity.js 的 CODEX_ACCOUNTS 派生，不再各写一份。
+// 2026-09-06 事故：这里曾硬编码只有 team1/team2，而 llm-capacity 登记了 team1~team5，
+// 结果 T3/T4/T5 三个 5h 与 7d 均为 0% 的满额度账号从未被派过活，
+// 调度侧却按 5 个账号的容量做规划。加账号只改 llm-capacity.js 一处。
+// 导出供 tests/gp/g5/step1-codex-account-pool-consistency 机械校验两者一致。
+export const CODEX_TEAM_HOMES = CODEX_ACCOUNTS.map((a) => a.home);
 let _codexTeamIndex = 0;
 
 /**
@@ -623,8 +627,9 @@ async function callCodexHeadless(prompt, model, options = {}) {
     // 2026-09-02：曾经这里会 fallback 到 OPENAI_API_KEY 直接计费调用 Codex，
     // 在 team 账号掉线期间静默烧掉约 24 美元且无任何告警。禁止这条路径——
     // 直接失败，交给 callLLM() 既有的 anthropic-api 紧急兜底机制接管。
+    const poolNames = CODEX_ACCOUNTS.map((a) => a.name).join('/');
     throw new Error(
-      'Codex: 无可用 OAuth team 账号（team1/team2 全部掉线），已禁止 fallback 到 API Key 计费，请检查 codex 账号登录状态'
+      `Codex: 无可用 OAuth team 账号（${poolNames} 全部掉线），已禁止 fallback 到 API Key 计费，请检查 codex 账号登录状态`
     );
   }
   const env = { ...process.env };
