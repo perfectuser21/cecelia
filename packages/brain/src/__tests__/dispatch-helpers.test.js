@@ -55,6 +55,18 @@ describe('selectNextDispatchableTask — headed_manual 派发排除', () => {
     expect(sql).toContain("COALESCE(t.payload->>'headed_manual', 'false') <> 'true'");
   });
 
+  it('候选 SQL 谓词排除 payload.parallel_worker=true（worker 池专属,禁 kernel tick 抢单)', async () => {
+    // 案卷 09-06:金丝雀 d8963868 挂 parallel_worker:true 入队,kernel tick(2min)抢在
+    // worker-pool job(5min gate)前叼走——两个派发器猎同一个池。修法同 headed_manual:谓词层收窄。
+    mockQuery.mockResolvedValue({ rows: [] });
+    const { selectNextDispatchableTask } = await import('../dispatch-helpers.js');
+
+    await selectNextDispatchableTask(null, []);
+
+    const sql = mockQuery.mock.calls[0][0];
+    expect(sql).toContain("COALESCE(t.payload->>'parallel_worker', 'false') <> 'true'");
+  });
+
   it('无 headed 旗标任务正常入选（排除只收窄不误伤）', async () => {
     const task = {
       id: 'task-normal-1',

@@ -77,6 +77,9 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
       -- 对两种写法都返回文本 'true'）的任务留给有头人工执行，不进无头自动派发。
       -- 只做收窄/排除（NFR：不放宽探测/派发基底谓词）。
       AND COALESCE(t.payload->>'headed_manual', 'false') <> 'true'
+      -- payload.parallel_worker=true 是 worker 池专属(worker-pool-dispatch.js 扫描),
+      -- kernel tick 禁抢——09-06 金丝雀实证 tick(2min)必快过 worker-pool(5min gate)
+      AND COALESCE(t.payload->>'parallel_worker', 'false') <> 'true'
       AND t.task_type NOT IN ('content-pipeline', 'content-export', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review',
                                'harness_ci_watch', 'harness_deploy_watch')
       ${excludeClause}
