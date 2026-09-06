@@ -37,6 +37,9 @@ async function visionFn(system, user, imgPath) {
     ],
     temperature: 0,
     max_tokens: 400,
+    // 显式声明非流式：中转 API 在未声明时会偶发以 SSE（data: {...}）返回，
+    // 下游 r.json() 直接抛 SyntaxError 崩掉整个 eval 进程。
+    stream: false,
   };
   const r = await fetch(`${BASE_URL.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
@@ -49,8 +52,28 @@ async function visionFn(system, user, imgPath) {
     console.error(`  ⚠️ LLM HTTP ${r.status}: ${errBody.slice(0, 200)}`);
     return null;
   }
-  const j = await r.json();
-  return j.choices?.[0]?.message?.content ?? null;
+  // 不用 r.json()：上游偶发返回 SSE，未捕获的 SyntaxError 会终止整个 eval
+  // （2026-09-06 实测：连续两次 CI 因此 exit 1，阻塞全部 PR 合并）。
+  const raw = await r.text();
+  try {
+    const j = JSON.parse(raw);
+    return j.choices?.[0]?.message?.content ?? null;
+  } catch {
+    // SSE 回退：逐个 data: 块找出带内容的那个
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const payload = trimmed.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      try {
+        const chunk = JSON.parse(payload);
+        const text = chunk.choices?.[0]?.delta?.content ?? chunk.choices?.[0]?.message?.content;
+        if (text) return text;
+      } catch { /* 跳过不完整的块 */ }
+    }
+    console.error(`  ⚠️ LLM 返回无法解析的响应（前 200 字符）: ${raw.slice(0, 200)}`);
+    return null;
+  }
 }
 
 const manifest = JSON.parse(readFileSync(path.join(GOLDSET_DIR, 'manifest.json'), 'utf8'));
