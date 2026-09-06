@@ -1,5 +1,6 @@
 import { notionReq, getToken } from './recurring-notion-sync.js';
 import { computeProgress } from './advancement-progress.js';
+import { buildWorkflowPageBlocks } from './ops-collector.js';
 
 const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
 const FEATURE_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
@@ -660,10 +661,25 @@ async function pushOpsWorkflows(pool, token) {
     `SELECT * FROM ops_workflows
      WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
      ORDER BY updated_at LIMIT 50`);
-  await upsertOpsRows(pool, token, {
-    table: 'ops_workflows', dbId: dbs.workflows_db, rows,
-    buildProps: buildOpsWorkflowNotionProperties,
-  });
+  // 建页时带正文 children（流程图 mermaid + 阶段清单 + 画布构成）；raw 画布存 meta.raw_nodes
+  for (const w of rows) {
+    try {
+      const properties = buildOpsWorkflowNotionProperties(w);
+      if (w.notion_id) {
+        await notionReq(token, `/pages/${w.notion_id}`, 'PATCH', { properties });
+      } else {
+        const children = w.meta?.canvas ? buildWorkflowPageBlocks(w.meta.canvas, w) : undefined;
+        const page = await notionReq(token, '/pages', 'POST',
+          { parent: { database_id: dbs.workflows_db }, properties, ...(children ? { children } : {}) });
+        await pool.query(`UPDATE ops_workflows SET notion_id = $1 WHERE id = $2`, [page.id, w.id]);
+      }
+      await pool.query(`UPDATE ops_workflows SET notion_synced_at = NOW() WHERE id = $1`, [w.id]);
+    } catch (err) {
+      if (isMissingDatabaseError(err)) { await disableOpsPush(pool, err.message); return; }
+      console.warn(`[notion-push-sync] workflow ${w.wf_id} 推送失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
   // 跨库 relation：workflow → agent（需图谱库页 id）
   const agentIdByName = new Map(
     (await pool.query(`SELECT name, notion_id FROM ops_agents WHERE notion_id IS NOT NULL`)).rows

@@ -142,8 +142,12 @@ export function parseN8nWorkflows(list) {
       node_count: nodes.length,
       stage_count: countStages(nodes),
       meta: {
-        stages: nodes.filter((n) => String(n?.name || '').startsWith('阶段'))
-          .map((n) => String(n.name).replace(/^阶段\s*/, '')),
+        stages: buildStageFlow(w),   // 按真实连线的执行序，非画布摆放序
+        // 画布骨架（仅节点名/类型+连线，无参数/凭据）——供 Notion 页画流程图
+        canvas: {
+          nodes: nodes.map((n) => ({ name: n?.name, type: n?.type })),
+          connections: w?.connections || {},
+        },
       },
     };
   }).filter((r) => r.wf_id);
@@ -182,6 +186,93 @@ export function resolveWorkflowAgents(wfId, allWorkflows, seen = new Set()) {
     for (const a of resolveWorkflowAgents(sub, allWorkflows, seen)) found.add(a);
   }
   return [...found].sort();
+}
+
+// ─── 流程图（Notion 页正文画出每条 workflow 长什么样）──────────────────
+const stageName = (n) => String(n || '').replace(/^阶段\s*/, '');
+const isStage = (n) => String(n || '').startsWith('阶段');
+
+/** 按真实连线走出业务阶段顺序（不靠 nodes 数组顺序，那是画布摆放次序不是执行序） */
+export function buildStageFlow(w) {
+  const nodes = w?.nodes || [];
+  const conn = w?.connections || {};
+  const stages = nodes.filter((n) => isStage(n?.name)).map((n) => n.name);
+  if (!stages.length) return [];
+  if (!Object.keys(conn).length) return stages.map(stageName);
+
+  // 从入口出发走连线，记录遇到的阶段顺序；防环
+  const entry = nodes.find((n) => String(n?.type || '').includes('webhook'))?.name
+    || Object.keys(conn)[0];
+  const order = [];
+  const seen = new Set();
+  const walk = (name) => {
+    if (!name || seen.has(name)) return;
+    seen.add(name);
+    if (isStage(name) && !order.includes(name)) order.push(name);
+    for (const out of conn[name]?.main || []) {
+      for (const t of out || []) walk(t?.node);
+    }
+  };
+  walk(entry);
+  // 连线走不到的阶段（孤立分支）补在后面，不丢
+  for (const s of stages) if (!order.includes(s)) order.push(s);
+  return order.map(stageName);
+}
+
+/** 画成 mermaid flowchart。无业务阶段的流程返回 null（不画空图）。 */
+export function buildWorkflowMermaid(w) {
+  const flow = buildStageFlow(w);
+  if (!flow.length) return null;
+  const lines = ['flowchart TD'];
+  const id = (i) => `S${i + 1}`;
+  flow.forEach((s, i) => {
+    lines.push(`  ${id(i)}["${i + 1}. ${s}"]`);
+  });
+  for (let i = 0; i < flow.length - 1; i++) {
+    lines.push(`  ${id(i)}["${i + 1}. ${flow[i]}"] --> ${id(i + 1)}["${i + 2}. ${flow[i + 1]}"]`);
+  }
+  // 裁决可中止：每阶段后若有 switch 分支到归档，标一条中止出口
+  const hasAbort = (w?.nodes || []).some((n) => String(n?.name || '').includes('中止'));
+  if (hasAbort) {
+    lines.push('  ABORT["⛔ 中止归档"]');
+    flow.forEach((s, i) => lines.push(`  ${id(i)} -.裁决不通过.-> ABORT`));
+  }
+  return lines.join('\n');
+}
+
+/** Notion 页正文 blocks：流程图 + 阶段清单 + 节点构成说明 */
+export function buildWorkflowPageBlocks(w, row = {}) {
+  const blocks = [];
+  const para = (t) => ({ object: 'block', type: 'paragraph',
+    paragraph: { rich_text: [{ type: 'text', text: { content: String(t).slice(0, 1800) } }] } });
+  const head = (t) => ({ object: 'block', type: 'heading_3',
+    heading_3: { rich_text: [{ type: 'text', text: { content: t } }] } });
+
+  const mermaid = buildWorkflowMermaid(w);
+  if (mermaid) {
+    blocks.push(head('流程图'));
+    blocks.push({ object: 'block', type: 'code',
+      code: { language: 'mermaid', rich_text: [{ type: 'text', text: { content: mermaid.slice(0, 1900) } }] } });
+    blocks.push(head('业务阶段'));
+    buildStageFlow(w).forEach((s, i) => blocks.push({
+      object: 'block', type: 'numbered_list_item',
+      numbered_list_item: { rich_text: [{ type: 'text', text: { content: s } }] },
+    }));
+  }
+  blocks.push(head('画布构成'));
+  const types = {};
+  for (const n of w?.nodes || []) {
+    const t = String(n?.type || '').split('.').pop();
+    types[t] = (types[t] || 0) + 1;
+  }
+  const detail = Object.entries(types).map(([t, c]) => `${t}×${c}`).join('、');
+  blocks.push(para(
+    `共 ${row.node_count ?? (w?.nodes || []).length} 个节点，其中业务阶段 ${row.stage_count ?? 0} 个。` +
+    `\n节点构成：${detail || '无'}` +
+    `\n（Nodes=画布全部节点，含入口/准备/裁决/告警等技术脚手架；Stages=真正的业务阶段）`));
+  const agents = row.uses_agents || [];
+  if (agents.length) blocks.push(para(`执行 agent：${agents.join('、')}`));
+  return blocks;
 }
 
 export const N8N_LIST_CMD =
