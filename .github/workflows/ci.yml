@@ -37,6 +37,7 @@ jobs:
       dod: ${{ steps.detect.outputs.dod }}
       quality: ${{ steps.detect.outputs.quality }}
       mcp_readonly: ${{ steps.detect.outputs.mcp_readonly }}
+      distill: ${{ steps.detect.outputs.distill }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,6 +52,7 @@ jobs:
             echo "compose=true" >> $GITHUB_OUTPUT
             echo "runner=true" >> $GITHUB_OUTPUT
             echo "mcp_readonly=true" >> $GITHUB_OUTPUT
+            echo "distill=true" >> $GITHUB_OUTPUT
             exit 0
           fi
           # 改动 A：push 事件（含 push 到 main）直接全量，不依赖恒空的 diff
@@ -63,6 +65,7 @@ jobs:
             echo "dod=true"      >> $GITHUB_OUTPUT
             echo "quality=true"  >> $GITHUB_OUTPUT
             echo "mcp_readonly=true" >> $GITHUB_OUTPUT
+            echo "distill=true"  >> $GITHUB_OUTPUT
             exit 0
           fi
           CHANGED=$(git diff --name-only "$BASE_REF"...HEAD 2>/dev/null || echo "")
@@ -76,6 +79,7 @@ jobs:
             echo "dod=true"      >> $GITHUB_OUTPUT
             echo "quality=true"  >> $GITHUB_OUTPUT
             echo "mcp_readonly=true" >> $GITHUB_OUTPUT
+            echo "distill=true"  >> $GITHUB_OUTPUT
             exit 0
           fi
           # brain=true 触发 brain-unit 等。sprints/ 的 test 文件不再触发（07-10 断源）：
@@ -88,6 +92,7 @@ jobs:
           echo "dod=$(echo "$CHANGED" | grep -qE '^(DoD\.md|DoD\.cp-|task-card\.md|task-card-|\.task-|\.dod-|TASK_CARD\.cp-|PRD\.cp-)' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "quality=$(echo "$CHANGED" | grep -qE '^packages/quality/' && echo true || echo false)" >> $GITHUB_OUTPUT
           echo "mcp_readonly=$(echo "$CHANGED" | grep -qE '^packages/mcp-readonly/' && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "distill=$(echo "$CHANGED" | grep -qE '^packages/quality/skill-distillation/' && echo true || echo false)" >> $GITHUB_OUTPUT
 
   # ─── Docker Infrastructure Smoke ──────────────────────────
   # 保护 Brain 容器化基础设施（compose / Dockerfile / up/down 脚本）
@@ -1565,6 +1570,28 @@ jobs:
       - name: Quality Package Tests
         run: cd packages/quality && npm ci && npm test
 
+  # ─── 金标集 LLM 判定器 eval（通过率棘轮）────────────────────
+  # Crystal 件5（决策 ca9f3d7b/28ca1f69）：LLM 部分进 CI 的条件是输入固定
+  # （静态截图金标集），断言形式 = 通过率 ≥ 阈值。阈值在 eval-threshold.json，
+  # 只许升——由 ratchet-guard 指标 goldset_eval_threshold（only_up）守护。
+  # toapis 不可用 = 诚实红（不 skip）；paths 过滤（distill）把爆炸半径限制在
+  # skill-distillation 变更的 PR，无关 PR 不被外部服务抖动绑架。
+  goldset-eval:
+    needs: changes
+    if: needs.changes.outputs.distill == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 金标集 eval（真 LLM，输入固定，通过率 ≥ 阈值）
+        env:
+          TOAPIS_API_KEY: ${{ secrets.TOAPIS_API_KEY }}
+          TOAPIS_BASE_URL: ${{ secrets.TOAPIS_BASE_URL }}
+        run: node packages/quality/skill-distillation/scripts/goldset-eval.mjs
+
   # ─── MCP Readonly: Unit Tests ──────────────────────────────
   # 只读 MCP Server（Notion AI 查询 Cecelia 状态用），此前零 CI 覆盖（08-11
   # 跨任务整体审查发现的结构性缺口）。DB 相关测试（db.test.js / 部分
@@ -1964,7 +1991,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-gp-anchor-artifact, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, mcp-readonly-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell, runner-tests-shell]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-gp-anchor-artifact, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, goldset-eval, mcp-readonly-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell, runner-tests-shell]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -2020,6 +2047,7 @@ jobs:
           check "real-env-smoke"         "${{ needs.real-env-smoke.result }}"
           check "workspace-api-smoke"    "${{ needs.workspace-api-smoke.result }}"
           check "quality-tests"         "${{ needs.quality-tests.result }}"
+          check "goldset-eval"          "${{ needs.goldset-eval.result }}"
           check "mcp-readonly-tests"    "${{ needs.mcp-readonly-tests.result }}"
           check "dispatch-worker-test"   "${{ needs.dispatch-worker-test.result }}"
           check "brain-version-bump-gate" "${{ needs.brain-version-bump-gate.result }}"
