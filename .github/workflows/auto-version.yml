@@ -5,6 +5,12 @@ on:
     branches: [main]
     paths:
       - 'packages/brain/**'
+      - 'changes/**'
+
+# 串行化:两个 feature 快速连合时,后一次 run 会基于最新 main 生成超越版 PR(见 supersede 步)
+concurrency:
+  group: auto-version
+  cancel-in-progress: false
 
 jobs:
   bump:
@@ -43,74 +49,20 @@ jobs:
           elif echo "$MSG" | grep -qE '^fix(\(.+\))?:'; then
             echo "type=patch" >> $GITHUB_OUTPUT
           else
-            echo "type=none" >> $GITHUB_OUTPUT
+            # chore/docs 等默认不 bump,但如果携带 changes/ 碎片(条目待发布)则按 patch 处理
+            if ls changes/*.md 2>/dev/null | grep -vi 'README.md' >/dev/null; then
+              echo "type=patch" >> $GITHUB_OUTPUT
+            else
+              echo "type=none" >> $GITHUB_OUTPUT
+            fi
           fi
 
-      - name: Bump version
+      - name: Apply version bump + consume changes fragments
         if: steps.check.outputs.skip == 'false' && steps.bump.outputs.type != 'none'
         run: |
-          BUMP_TYPE="${{ steps.bump.outputs.type }}"
-          echo "Bump type: $BUMP_TYPE"
-
-          # Read current version
-          CURRENT=$(node -e "process.stdout.write(require('./packages/brain/package.json').version)")
-          echo "Current version: $CURRENT"
-
-          # Split version
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-
-          # Bump
-          case "$BUMP_TYPE" in
-            major)
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-              ;;
-            minor)
-              MINOR=$((MINOR + 1))
-              PATCH=0
-              ;;
-            patch)
-              PATCH=$((PATCH + 1))
-              ;;
-          esac
-
-          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          echo "New version: $NEW_VERSION"
-
-          # 1. Update packages/brain/package.json
-          node -e "
-            const fs = require('fs');
-            const pkg = JSON.parse(fs.readFileSync('packages/brain/package.json', 'utf8'));
-            pkg.version = '$NEW_VERSION';
-            fs.writeFileSync('packages/brain/package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-
-          # 2. Update packages/brain/package-lock.json (top-level + packages[""] entry)
-          if [ -f "packages/brain/package-lock.json" ]; then
-            node -e "
-              const fs = require('fs');
-              const lock = JSON.parse(fs.readFileSync('packages/brain/package-lock.json', 'utf8'));
-              lock.version = '$NEW_VERSION';
-              if (lock.packages && lock.packages['']) {
-                lock.packages[''].version = '$NEW_VERSION';
-              }
-              fs.writeFileSync('packages/brain/package-lock.json', JSON.stringify(lock, null, 2) + '\n');
-            "
-          fi
-
-          # 3. Update .brain-versions
-          echo "$NEW_VERSION" > .brain-versions
-
-          # 4. Update DEFINITION.md "Brain 版本" line
-          if [ -f "DEFINITION.md" ]; then
-            sed -i "s/\*\*Brain 版本\*\*: .*/\*\*Brain 版本\*\*: $NEW_VERSION/" DEFINITION.md
-          fi
-
-          # 5. Update packages/brain/VERSION
-          if [ -f "packages/brain/VERSION" ]; then
-            echo "$NEW_VERSION" > packages/brain/VERSION
-          fi
+          # 版本五件套统一应用器:brain 双 package 文件 + 根 lock workspace 条目 +
+          # .brain-versions + DEFINITION 版本行/VERSION;并消费 changes/*.md 碎片为 DEFINITION 条目
+          node packages/brain/scripts/auto-version-apply.mjs --bump "${{ steps.bump.outputs.type }}"
 
       - name: Create version bump PR
         if: steps.check.outputs.skip == 'false' && steps.bump.outputs.type != 'none'
@@ -124,6 +76,13 @@ jobs:
 
           NEW_VERSION=$(node -e "process.stdout.write(require('./packages/brain/package.json').version)")
           BRANCH_NAME="auto-version-bump-${NEW_VERSION}"
+
+          # 超越式接管:本 run 基于最新 main 重算了全部碎片,旧的未合并 bot PR 已过时,先关掉防双写
+          for OLD in $(gh pr list --state open --json headRefName -q '.[].headRefName' | grep '^auto-version-bump-' || true); do
+            if [ "$OLD" != "$BRANCH_NAME" ]; then
+              gh pr close "$OLD" --comment "superseded by ${BRANCH_NAME}" --delete-branch || true
+            fi
+          done
 
           # Delete remote branch if it exists (from a previous failed run)
           git push origin --delete "$BRANCH_NAME" 2>/dev/null || true
