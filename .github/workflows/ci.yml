@@ -211,6 +211,26 @@ jobs:
       - name: Registry 完整性检查
         run: node scripts/registry-lint.mjs
 
+  # ─── Ops: Tailscale Watchdog 回归（始终运行，无外部依赖）──────
+  # 根 vitest.config.js 虽 include tests/regression/**，但它 import 'vitest/config'
+  # 而根 package.json 未声明 vitest（只有 dependency-cruiser），加载即 MODULE_NOT_FOUND；
+  # CI 里其余 vitest 调用都 cd 进 packages/* 用各自 config。两者叠加的结果是
+  # tests/regression/** 从未被整目录执行过。本 job 用不依赖 'vitest/config' 的
+  # 专用 config + npx 零安装显式跑，确保这个守卫真在 CI 生效，而非写了没进 CI 的假绿。
+  ops-tailscale-watchdog:
+    name: Ops Tailscale Watchdog Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Watchdog 回归测试
+        run: npx --yes vitest@3 run --config tests/regression/tailscale-login-watchdog/vitest.config.mjs --reporter=verbose
+
   # ─── ESLint（brain 或 workspace 变更时）──────────────────────
   eslint:
     needs: changes
