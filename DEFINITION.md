@@ -8,7 +8,13 @@
 
 
 
-**Brain 版本**: 1.277.4
+**Brain 版本**: 1.278.0
+
+## Brain 1.278.0 — 运行舱刀6：run 记录 + 流程健康汇总
+
+- migration 439 `ops_runs`（每次执行的机器/状态/耗时；crashed 无 stoppedAt 时 duration 留 NULL，禁编造）+ `ops_workflows` 加 machine / run_total / run_success_rate / run_avg_sec / last_run_at / last_run_status 六列。
+- 采集器第 5 腿：从 n8n `execution_entity`（hk-vps 容器 zenithjoy-db-postgres，非 sqlite）采执行历史 4481 条并回填流程健康汇总。实证智能获客成功率 80% 均 38 分/日均 21 轮、编码流水线 89% 均 70 分/日均 10 轮。
+- Notion 新增 `Ops Runs` 库：只推有业务阶段的流程 run（日均 10-21 条）；通道/触发器类（日均 154-234 次、4 秒一次）只在流程行看汇总，避免噪音淹没视线。指挥舱 G1 S1，task bfad945f。
 
 ## Brain 1.277.4 — worker 池槽位探针修复(并行血管 P1 补丁2)
 
