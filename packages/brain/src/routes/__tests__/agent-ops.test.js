@@ -1,5 +1,77 @@
 import { describe, it, expect } from 'vitest';
-import { buildAgentsPayload, buildCalendarPayload, SKILL_BY_TASK_TYPE } from '../agent-ops.js';
+import { buildAgentsPayload, buildCalendarPayload, buildGraphPayload, computeAgentRole, SKILL_BY_TASK_TYPE } from '../agent-ops.js';
+
+describe('computeAgentRole', () => {
+  it('orchestrates 非空 → orchestrator（即使也被编排）', () => {
+    expect(computeAgentRole(['dev', 'infra'], ['main'])).toBe('orchestrator');
+  });
+  it('只被编排不编排 → member', () => {
+    expect(computeAgentRole([], ['main', 'work-commander'])).toBe('member');
+  });
+  it('都不 → solo', () => {
+    expect(computeAgentRole([], [])).toBe('solo');
+  });
+});
+
+describe('buildGraphPayload', () => {
+  const now = new Date('2026-09-05T12:00:00Z');
+  function graphPool() {
+    return poolReturning({
+      'FROM ops_agents': [
+        { source: 'openclaw', host_alias: 'hk-vps', name: 'main', status: 'active', last_seen_at: now, meta: { orchestrates: ['dev', 'work-commander'] } },
+        { source: 'openclaw', host_alias: 'hk-vps', name: 'work-commander', status: 'active', last_seen_at: now, meta: { orchestrates: ['dev'] } },
+        { source: 'openclaw', host_alias: 'hk-vps', name: 'dev', status: 'active', last_seen_at: now, meta: { orchestrates: [] } },
+        { source: 'openclaw', host_alias: 'hk-vps', name: 'curator', status: 'active', last_seen_at: now, meta: { orchestrates: [] } },
+        { source: 'launchd', host_alias: 'local', name: 'com.cecelia.backup-db', status: 'active', last_seen_at: now, meta: {} },
+      ],
+      'FROM ops_schedule_entries': [
+        { source: 'launchd', host_alias: 'local', label: 'com.cecelia.backup-db', kind: 'launchd_calendar', schedule_desc: 'calendar 3:30', next_run_utc: now, active: true },
+        { source: 'gha', host_alias: 'github', label: 'cecelia/nightly.yml', kind: 'gha_cron', schedule_desc: 'cron 0 19 * * *', next_run_utc: null, active: true },
+      ],
+      'FROM ops_source_heartbeats': [
+        { source: 'openclaw', host_alias: 'hk-vps', last_report_at: now, source_status: 'ok' },
+        { source: 'launchd', host_alias: 'local', last_report_at: now, source_status: 'ok' },
+        { source: 'gha', host_alias: 'github', last_report_at: now, source_status: 'ok' },
+      ],
+      'FROM recurring_tasks': [],
+    });
+  }
+
+  it('role 现算：main=orchestrator, dev=member(父=main,work-commander), curator=solo', async () => {
+    const p = await buildGraphPayload(graphPool(), now);
+    const byName = Object.fromEntries(p.units.map((u) => [u.name, u]));
+    expect(byName['main'].role).toBe('orchestrator');
+    expect(byName['work-commander'].role).toBe('orchestrator');
+    expect(byName['dev'].role).toBe('member');
+    expect(byName['dev'].orchestrated_by.sort()).toEqual(['main', 'work-commander']);
+    expect(byName['curator'].role).toBe('solo');
+  });
+
+  it('launchd agent 与 schedule 合并为一行（不重复），带调度属性', async () => {
+    const p = await buildGraphPayload(graphPool(), now);
+    const backup = p.units.filter((u) => u.name === 'com.cecelia.backup-db');
+    expect(backup.length).toBe(1);
+    expect(backup[0].schedule_desc).toContain('3:30');
+    expect(backup[0].next_run_utc).toBeTruthy();
+    expect(backup[0].role).toBe('solo');
+  });
+
+  it('孤儿排程（gha 无对应 agent）独立成行 role=scheduled', async () => {
+    const p = await buildGraphPayload(graphPool(), now);
+    const gha = p.units.find((u) => u.name === 'cecelia/nightly.yml');
+    expect(gha).toBeTruthy();
+    expect(gha.role).toBe('scheduled');
+    expect(gha.schedule_desc).toContain('cron');
+  });
+
+  it('per-source freshness 附加到每行 + 表缺失 503', async () => {
+    const p = await buildGraphPayload(graphPool(), now);
+    expect(p.units.every((u) => u.stale === false)).toBe(true);
+    expect(p.global_stale).toBe(false);
+    const bad = { query: async () => { const e = new Error('relation "ops_agents" does not exist'); e.code = '42P01'; throw e; } };
+    await expect(buildGraphPayload(bad, now)).rejects.toMatchObject({ reason_code: 'migration_pending' });
+  });
+});
 
 function poolReturning(rowsBySql) {
   return { query: async (sql) => {
