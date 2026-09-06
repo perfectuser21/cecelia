@@ -33,6 +33,12 @@ assert_pass "dependabot 单包"     "dependabot/npm_and_yarn/axios-1.18.0"
 assert_pass "dependabot 多包组"   "dependabot/npm_and_yarn/packages/engine/brace-expansion-and-vitest-coverage-v8-3.2.4-4.1.10"
 # r41 案卷（run 5bfc1af9 / PR #5006）：kernel Work Router 生成 cp-route-api-<hex8>
 # 分支，受信 publisher 以此发布——是合法造分支方，闸必须放行；变体仍拒。
+# 碎片化发版（PR#5179）：auto-version.yml bot 产出 auto-version-bump-<semver> 分支,
+# 是合并后版本五件套的唯一发布通道——历史上 bot PR 全死在本闸,必须放行;变体仍拒。
+assert_pass "auto-version bot 分支" "auto-version-bump-1.274.0"
+assert_fail "auto-version 非语义版" "auto-version-bump-latest"
+assert_fail "auto-version 带尾巴"   "auto-version-bump-1.274.0-evil"
+
 assert_pass "kernel 受信分支"     "cp-route-api-57334245"
 assert_pass "kernel 受信分支2"    "cp-route-api-9da20638"
 assert_fail "kernel 格式过短"     "cp-route-api-1234"
