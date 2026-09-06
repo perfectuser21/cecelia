@@ -9,7 +9,7 @@
  *   - promote  晋升（固化）：N≥minRuns ∧ 成功率≥minSuccessRate ∧ 新分支率≤maxNewBranchRate
  *               ∧ 有 postcondition ∧ 频率×token成本 > 固化成本基线
  *   - demote   降级：固化件在窗口内碎次数达阈（broken_count ≥ demoteBreaks）
- *   - keep_llm 保持纯 LLM：数据不足 / 变体未收敛 / 无探针 / 判定层 / 数据缺口 / 未达标
+ *   - keep_llm 保持纯 LLM：数据不足 / 变体未收敛 / 无探针 / 判定层 / 数据缺口 / 成本缺口 / 未达标
  *
  * 铁律（决策 28ca1f69）：
  *   INV-1 判定层不蒸馏：is_judgment_layer 永不出 promote。
@@ -78,6 +78,16 @@ export function classifyCrystalVerdict(metrics = {}, thresholds = CRYSTAL_THRESH
     return {
       verdict: 'keep_llm',
       basis: { rule: 'data_insufficient', n_runs, min_runs: t.minRuns },
+    };
+  }
+
+  // 成本证据缺口：跑量是真的，只是没有 token 源，算不出「不固化要烧多少」。
+  // 与 data_gap 分开报，否则读账的人会以为这一格根本没跑过（编码九格实测跑了几百次，
+  // 混报 data_gap 会把 n_runs 一并抹成 0）。没有成本证据同样不许晋升，语义不变。
+  if (m.cost_gap) {
+    return {
+      verdict: 'keep_llm',
+      basis: { rule: 'cost_evidence_missing', n_runs, success_rate: num(m.success_rate, null) },
     };
   }
 

@@ -40,3 +40,30 @@ describe('crystallizePriority = 频率×失败率(INV-5)', () => {
     expect(crystallizePriority({ n_runs: 100, success_rate: 1 })).toBeCloseTo(0, 6);
   });
 });
+
+// 判官口粮第二铲（2026-09-07）：编码线九格有真实成败但无 token 源。
+// 缺成本证据必须与「整条源不可达」区分开——前者账本上是真数只是算不出固化收益，
+// 后者是什么都不知道。混为一谈会把跑过 30 次的格子在报告里写成 n_runs=0。
+describe('成本证据缺口（cost_gap）独立成规则', () => {
+  it('cost_gap → keep_llm 且 basis 点名 cost_evidence_missing', () => {
+    const r = classifyCrystalVerdict(P({ cost_gap: true, token_cost: 0 }));
+    expect(r.verdict).toBe('keep_llm');
+    expect(r.basis.rule).toBe('cost_evidence_missing');
+  });
+  it('cost_gap 时 basis 带上真实次数与成功率（判决基于真数，不是空账）', () => {
+    const r = classifyCrystalVerdict(P({ cost_gap: true, token_cost: 0, n_runs: 30, success_rate: 0.8 }));
+    expect(r.basis.n_runs).toBe(30);
+    expect(r.basis.success_rate).toBe(0.8);
+  });
+  it('数据缺口优先于成本缺口（什么都没有时不必再报成本）', () => {
+    expect(classifyCrystalVerdict(P({ data_gap: true, cost_gap: true })).basis.rule).toBe('data_gap');
+  });
+  it('次数不足优先于成本缺口（先说没跑够，再说算不出收益）', () => {
+    const r = classifyCrystalVerdict(P({ cost_gap: true, n_runs: 3 }));
+    expect(r.basis.rule).toBe('data_insufficient');
+  });
+  it('判定层仍然压倒一切（INV-1 不因成本缺口改口）', () => {
+    expect(classifyCrystalVerdict(P({ cost_gap: true, is_judgment_layer: true })).basis.rule)
+      .toBe('judgment_layer_never_harden');
+  });
+});

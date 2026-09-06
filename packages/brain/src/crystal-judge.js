@@ -6,13 +6,18 @@
  * （report_date+grid_key upsert 刷新 created_at）。
  *
  * NFR 数据完整性：判官对数据源只读、best-effort 拉取，只写 crystal_* 表。
- * 数据源（n8n execution_entity / HK 裁决流水采集器 / postcondition 结果）本地库尚未落表
- * （PRD 假设①：外部/未接入）→ 取不到即该格 data_gap=true / n_runs=0，报告标注数据缺口，
- * 不误判为成功/失败（PRD 边界③）。源接入不在本 sprint 范围（接缝 3 logic-done）。
+ * 数据源：判官只吃 crystal_run_evidence（迁移 438）。取不到证据即 data_gap=true / n_runs=0，
+ * 报告标注数据缺口，不误判为成功/失败（PRD 边界③）。
+ *
+ * 2026-09-07 第二铲：判决单位册页从「漏斗八格」扩到「漏斗八格 + 编码线九格」，
+ * 编码线证据由 crystal/coding-evidence.js 从 harness_attempts / sequencer_ledger 搬运；
+ * 同时把「成本证据缺口(cost_gap)」从「整源缺口(data_gap)」里拆出来——编码线有真实跑量
+ * 但无 token 源，混报会把跑过几百次的格子在账上写成 n_runs=0。
  */
 
 import pool from './db.js';
 import { OPENCLAW_LEADGEN_GRIDS } from './crystal/grids.js';
+import { CODING_GRIDS, codingUnitKey } from './crystal/coding-grids.js';
 import { classifyCrystalVerdict, CRYSTAL_THRESHOLDS } from './crystal/verdict-engine.js';
 
 const SIX_METRIC_KEYS = ['n_runs', 'success_rate', 'token_cost', 'latency_ms', 'new_branch_rate', 'broken_count'];
@@ -44,6 +49,7 @@ function gapMetrics(unitKey, extra = {}) {
     is_hardened: false,
     is_judgment_layer: false,
     data_gap: true,
+    cost_gap: false,
     ...extra,
   };
 }
@@ -134,14 +140,14 @@ export async function aggregateUnitMetrics(
 
   const weight = runs || rows.length;
 
-  // 缺 baseline 无法衡量固化收益 → 诚实记缺口，不用热路径成本顶替
-  if (baselineMissing) {
-    return gapMetrics(unitKey, {
-      funnel_cell: funnelCell,
-      has_postcondition: hasPostcondition,
-      is_hardened: isHardened,
-    });
-  }
+  // 缺 baseline 无法衡量固化收益 → 记**成本**缺口，不用热路径成本顶替、也不臆造。
+  //
+  // 但缺口只在成本这一维：跑量/成功率/耗时都是真数（编码九格实测跑了几百次）。
+  // 早先这里返回 gapMetrics 把整行抹成 n_runs=0/success_rate=null，等于用一种诚实
+  // （不编成本）换来另一种谎（把跑过的说成没跑过）。故拆成 cost_gap 与 data_gap 两个标志：
+  //   data_gap = 整条源不可达/一行证据都没有；cost_gap = 有真数但算不出固化收益。
+  // 两者都不许晋升（判决引擎语义不变），区别只在账本与 basis 说的是不是实话。
+  const costGap = baselineMissing;
 
   return {
     grid_key: unitKey,
@@ -149,7 +155,7 @@ export async function aggregateUnitMetrics(
     funnel_cell: funnelCell,
     n_runs: runs,
     success_rate: runs > 0 ? passes / runs : null,
-    token_cost: baselineWeighted / weight,
+    token_cost: costGap ? 0 : baselineWeighted / weight,
     latency_ms: msWeighted > 0 ? msWeighted / weight : null,
     new_branch_rate: runs > 0 ? newBranch / runs : 0,
     broken_count: broken,
@@ -158,6 +164,7 @@ export async function aggregateUnitMetrics(
     // 判定层标志由证据显式携带；未标注即非判定层（INV-1 仅在显式标注时生效）
     is_judgment_layer: false,
     data_gap: false,
+    cost_gap: costGap,
   };
 }
 
@@ -188,8 +195,8 @@ export async function judgeUnit(dbPool, unitKey, reportDate) {
   // 台账：六项指标落库（幂等键 report_date+grid_key，同日重跑刷新 created_at 供时间窗计数）
   await dbPool.query(
     `INSERT INTO crystal_ledger
-       (report_date, grid_key, n_runs, success_rate, token_cost, latency_ms, new_branch_rate, broken_count, data_gap, funnel_cell, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW(), NOW())
+       (report_date, grid_key, n_runs, success_rate, token_cost, latency_ms, new_branch_rate, broken_count, data_gap, cost_gap, funnel_cell, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, NOW(), NOW())
      ON CONFLICT (report_date, grid_key) DO UPDATE SET
        funnel_cell = EXCLUDED.funnel_cell,
        n_runs = EXCLUDED.n_runs,
@@ -199,6 +206,7 @@ export async function judgeUnit(dbPool, unitKey, reportDate) {
        new_branch_rate = EXCLUDED.new_branch_rate,
        broken_count = EXCLUDED.broken_count,
        data_gap = EXCLUDED.data_gap,
+       cost_gap = EXCLUDED.cost_gap,
        created_at = NOW(),
        updated_at = NOW()`,
     [
@@ -211,6 +219,8 @@ export async function judgeUnit(dbPool, unitKey, reportDate) {
       sixMetrics.new_branch_rate,
       sixMetrics.broken_count,
       metrics.data_gap,
+      // token_cost=0 单看像「成本真是 0」，必须有这一列把「算不出」写在账面上
+      metrics.cost_gap === true,
       metrics.funnel_cell ?? null,
     ],
   );
@@ -228,7 +238,7 @@ export async function judgeUnit(dbPool, unitKey, reportDate) {
     [reportDate, unitKey, verdict, JSON.stringify(basis), metrics.funnel_cell ?? null],
   );
 
-  return { unit_key: unitKey, verdict, basis, metrics: sixMetrics, data_gap: metrics.data_gap };
+  return { unit_key: unitKey, verdict, basis, metrics: sixMetrics, data_gap: metrics.data_gap, cost_gap: metrics.cost_gap === true };
 }
 
 /**
@@ -245,8 +255,13 @@ export async function runCrystalJudge(dbPool = pool, now = new Date()) {
   let gridCount = 0;
 
   // 判决单位 = 漏斗八格（件4 第一批被告，无证据则诚实记 data_gap）
+  //          ∪ 编码线九格（第二批被告：回家序列器的格序，证据源 harness_attempts /
+  //            sequencer_ledger，由 crystal/coding-evidence.js 搬进 crystal_run_evidence）
   //          ∪ 当日有运行证据的段（决策 28ca1f69 第④条：蒸馏分段进行，判决粒度是段）
-  const judgedUnits = [...OPENCLAW_LEADGEN_GRIDS];
+  //
+  // 九格必须常驻册页而不能只靠「当日有证据」触发：判决按滚动窗口聚合，某天没跑不代表
+  // 这一格没有状态；只按当日证据取册会让整条编码线在没跑的那天从报告里凭空消失。
+  const judgedUnits = [...OPENCLAW_LEADGEN_GRIDS, ...CODING_GRIDS.map(codingUnitKey)];
   try {
     const { rows } = await dbPool.query(
       `SELECT DISTINCT unit_key FROM crystal_run_evidence WHERE report_date = $1`,
@@ -324,7 +339,7 @@ export async function buildUnitsView(dbPool, now = new Date(), windowDays = CRYS
   const { rows } = await dbPool.query(
     `SELECT DISTINCT ON (v.grid_key)
             v.grid_key, v.funnel_cell, v.report_date, v.verdict, v.basis,
-            l.n_runs, l.success_rate, l.token_cost, l.latency_ms, l.broken_count, l.data_gap
+            l.n_runs, l.success_rate, l.token_cost, l.latency_ms, l.broken_count, l.data_gap, l.cost_gap
        FROM crystal_verdict v
        LEFT JOIN crystal_ledger l
          ON l.grid_key = v.grid_key AND l.report_date = v.report_date
@@ -351,6 +366,7 @@ export async function buildUnitsView(dbPool, now = new Date(), windowDays = CRYS
       verdict_age_days: ageDays,
       stale,
       data_gap: r.data_gap === true,
+      cost_gap: r.cost_gap === true,
       metrics: {
         n_runs: asNum(r.n_runs) ?? 0,
         success_rate: asNum(r.success_rate),
