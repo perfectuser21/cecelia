@@ -43,13 +43,13 @@ describe('buildOpsUnitNotionProperties（合并单库 · 纯函数 oracle）', (
     expect(p.Role.select.name).toBe('solo');
   });
 
-  it('suspicious 死排程透出 checkbox', () => {
+  it('Notion 图谱不设 Suspicious 列（数据源不推本库，避免恒 false 误导）', () => {
     const p = buildOpsUnitNotionProperties({
       source: 'brain', host_alias: 'local', name: '死的', status: 'active',
       role: 'scheduled', orchestrated_by: [], kind: 'brain_recurring',
       schedule_desc: '0 4 * * *', next_run_utc: null, suspicious: true, last_seen_at: null,
     });
-    expect(p.Suspicious.checkbox).toBe(true);
+    expect(p.Suspicious).toBeUndefined();
     expect(p.NextRun).toBeUndefined();
   });
 });

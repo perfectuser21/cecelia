@@ -50,7 +50,9 @@ const GRAPH_PROPS = {
   Type: { rich_text: {} }, Kind: { select: {} },
   Schedule: { rich_text: {} },       // 空=常驻/按需；有值=定时
   Repeat: { checkbox: {} }, NextRun: { date: {} }, LastSeen: { date: {} },
-  Status: { select: {} }, Suspicious: { checkbox: {} },
+  Status: { select: {} },
+  // Suspicious（死排程）列暂不设：其唯一数据源 brain_recurring 因 notion_page_id 占用不推本库，
+  // 恒 false 会误导；死排程识别在 /agent-ops/graph API 层保留供 Dashboard 消费。
 };
 
 const main = async () => {

@@ -16,5 +16,12 @@
 - /agent-ops/graph 合并投影端点(computeAgentRole + buildGraphPayload,agent+schedule 去重,role/workflow 现算,孤儿排程独立行)
 - Notion 合并单库「Ops 运行图谱」(buildOpsUnitNotionProperties + pushOpsGraph,kv graph_db,旧两库停推数据保留)
 
-- [ ] merge 后:brain-deploy 重建 + 跑 create-ops-notion-dbs.js 建新库 + 手删旧两库(Ops Agents&机器 / Ops 编排日历)
-- [ ] 刀3:Dashboard 运行舱页消费 /agent-ops/graph
+- [ ] merge 后部署 runbook（顺序不能错）：
+  1. brain-deploy.sh 重建镜像（在 cecelia-deploy-main）
+  2. 宿主跑 create-ops-notion-dbs.js 建新库「Ops 运行图谱」+ 写 kv graph_db
+  3. **一次性切库重置**（终审 W2）：`psql cecelia -c "UPDATE ops_agents SET notion_id=NULL,notion_synced_at=NULL; UPDATE ops_schedule_entries SET notion_id=NULL,notion_synced_at=NULL"`——否则已同步行会 PATCH 旧库、新库空。上线前先 `SELECT count(*) FILTER(WHERE notion_id IS NOT NULL)` 确认需重置（生产 batch85 已同步过=需要）
+  4. 等一轮 notion-push → 新库出行；手删旧两库(Ops Agents&机器 / Ops 编排日历)
+- [ ] 刀3:Dashboard 运行舱页消费 /agent-ops/graph（含 brain_recurring+suspicious，API 层完整）
+
+### 终审 W1 决定（信息卫生）
+Notion 图谱不设 Suspicious 列：其唯一数据源 brain_recurring 因 notion_page_id 被 recurring-notion-sync 占用不推本库，设列必恒 false 误导。死排程识别下沉到 API 层（/agent-ops/graph 保留 suspicious），Notion 是过渡展示子集。

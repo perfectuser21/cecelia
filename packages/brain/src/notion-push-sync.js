@@ -501,8 +501,10 @@ export function buildOpsUnitNotionProperties(u) {
     Status: { select: { name: u.status || 'active' } },
     Role: { select: { name: u.role || 'solo' } },
     Repeat: { checkbox: !!u.schedule_desc },          // 有调度=定时重复
-    Suspicious: { checkbox: !!u.suspicious },
   };
+  // Suspicious（死排程）当前唯一数据源是 recurring_tasks，而 brain_recurring 因 notion_page_id
+  // 已被 recurring-notion-sync 占用不推本库——故 Notion 图谱不设该列（避免恒 false 误导）。
+  // 死排程识别在 /agent-ops/graph API 层保留（Dashboard 刀3 消费），Notion 是过渡展示子集。
   if (u.agent_type) p.Type = { rich_text: buildRichText(u.agent_type) };
   if (Array.isArray(u.orchestrated_by) && u.orchestrated_by.length) {
     p.Workflow = { rich_text: buildRichText(u.orchestrated_by.join(', ')) }; // 编排它的父（图，可多父）

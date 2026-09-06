@@ -23,7 +23,8 @@
 
 ### D3 Notion 合并为单库（废两库）
 - `create-ops-notion-dbs.js` 改：建一个「Ops 运行图谱」库（属性 Name/Source/Machine/**Role**(select)/**Workflow**(rich_text 父编排者名,逗号分隔)/**Schedule**(rich_text,空=常驻)/**Repeat**(checkbox,定时类)/Status/LastSeen/NextRun/Suspicious）；kv `ops_notion_dbs` 改为 `{graph_db}`（旧 agents_db/calendar_db 停推，数据不动待主理人手删）
-- notion-push：`pushOpsAgents` 改推 graph_db 且 buildProps 增 role/workflow/schedule（先拉全体算 orchestrated_by map）；`pushOpsSchedules` 改为只推**无对应 agent 的孤儿排程**(gha/brain_recurring)到同一 graph_db；两者 notion_id 各自回填各自底表
+- notion-push：`pushOpsGraph` 推 graph_db——agent 行(role/workflow/合并调度) + 无对应 agent 的孤儿排程(gha/launchd)，两者 notion_id 各自回填各自底表。**brain_recurring 不推 Notion**（其 notion_page_id 已被 recurring-notion-sync 占用，另推需加列；死排程识别在 /agent-ops/graph API 层保留供 Dashboard 消费，Notion 图谱是过渡展示子集，故不设 Suspicious 列避免恒 false 误导）。
+- **切库迁移（一次性 runbook，不进 create 脚本）**：生产此前已跑 create 脚本同步过旧库 → ops_agents/ops_schedule_entries.notion_id 指向旧库页。切 kv 为 graph_db 后必须 psql 重置 notion_id/notion_synced_at=NULL，否则 upsert 走 PATCH 旧库页、新库空缺=交付失效。上线前先 psql 查非空数量判定是否需执行。
 
 ## 判定点登记（decisions e035dad8；均只读视图低危）
 | 判定点 | 候选 | 所选 | 依据 | 误判后果 |
