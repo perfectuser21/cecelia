@@ -13,6 +13,12 @@
  * - 发射即记 dispatch_events(dispatched)；发射失败记 failed_dispatch + 回滚 claim
  * - ssh 套壳后 exit code 不可靠（雷11 先例）：探活判断只信 stdout 内容
  * - prompt 经宿主文件交付（内联进引号嵌套必炸，harness headed 先例）
+ * - 第四病（09-07）：发射即认为成功 → pane 接管有秒级延迟窗口。
+ *   ① 发射前僵尸检测：busy 槽在 DB 里找不到在途任务对应 = 空启动残留 claude，
+ *      kill-session 后按 missing 重建（只碰 slot7-9，只杀无在途任务的）
+ *   ② 发射后阻塞探活：轮询到 pane_current_command 离开 shell 才算 dispatched，
+ *      超时记 failed_dispatch(liveness_timeout) + 回滚 claim。本轮返回时 pane 已 busy，
+ *      同轮与跨轮（16:38 发 A→16:43 仍判 idle→B 打进 A 的 composer）重复发射一并根治
  */
 import { existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
@@ -23,6 +29,9 @@ export const MAX_CONCURRENT = 2;
 const IDLE_COMMANDS = new Set(['zsh', 'bash', 'sh', 'fish']);
 const INTERVAL_MS = parseInt(process.env.CECELIA_WORKER_POOL_INTERVAL_MS || String(5 * 60 * 1000), 10);
 const HOST_REPO = process.env.CECELIA_HOST_REPO || '/Users/administrator/perfect21/cecelia';
+/** 发射后探活：pane 必须在此窗口内离开 shell，否则判发射失败 */
+const LIVENESS_TIMEOUT_MS = parseInt(process.env.CECELIA_WORKER_LIVENESS_TIMEOUT_MS || '10000', 10);
+const LIVENESS_POLL_MS = parseInt(process.env.CECELIA_WORKER_LIVENESS_POLL_MS || '2000', 10);
 const PROMPT_DIR = '/tmp/cecelia-host-prompts';
 
 let lastRunAt = 0;
@@ -59,9 +68,10 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
   // 金丝雀案:$(cat promptFile) 在容器求值(无宿主文件)→ 发射命令落地成 claude-launch.sh ""
   const wrap = (cmd) => (host ? `ssh ${sshOpts} ${host} "${cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$')}"` : cmd);
 
+  const sleep = deps.sleep || ((ms) => new Promise(r => setTimeout(r, ms)));
+
   // ── 1. 槽位盘点（stdout 判读，exit code 不可信）────────────────────────────
-  const slotState = {};
-  for (const slot of WORKER_SLOTS) {
+  const probeSlot = (slot) => {
     try {
       // 探针用 list-panes 而非 display-message:真机实证 display-message -p -t
       // <不存在的会话> 返回空串+rc=0(不报错),|| echo MISSING 不触发,空串被判
@@ -70,18 +80,57 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
       const out = String(execFn(wrap(
         `tmux list-panes -t ${slot} -F '#{pane_current_command}' 2>/dev/null || echo MISSING`
       ))).trim().split('\n')[0].trim();
-      slotState[slot] = (!out || out.includes('MISSING')) ? 'missing' : (IDLE_COMMANDS.has(out) ? 'idle' : 'busy');
+      return (!out || out.includes('MISSING')) ? 'missing' : (IDLE_COMMANDS.has(out) ? 'idle' : 'busy');
     } catch {
-      slotState[slot] = 'missing'; // tmux server 未起等同全空闲可建
+      return 'missing'; // tmux server 未起等同全空闲可建
+    }
+  };
+  const slotState = {};
+  for (const slot of WORKER_SLOTS) slotState[slot] = probeSlot(slot);
+
+  // ── 1.5 僵尸检测：busy 槽找不到在途任务对应 = 空启动残留 claude ─────────────
+  // 不清掉的话:① 白占产能 ② send-keys 会打进残留 claude 的 composer 空转。
+  // 保守三重限制:只看 slot7-9、只杀 DB 里无在途任务认领的、查库失败一律不杀。
+  const zombies = [];
+  const busySlots = WORKER_SLOTS.filter(s => slotState[s] === 'busy');
+  if (busySlots.length) {
+    let activeSlots = null;
+    try {
+      const { rows } = await pool.query(
+        `SELECT DISTINCT split_part(de.reason, ':', 2) AS slot
+           FROM dispatch_events de
+           JOIN tasks t ON t.id = de.task_id
+          WHERE de.event_type = 'dispatched'
+            AND de.reason LIKE 'worker_pool:%'
+            AND t.claimed_by = 'interactive-dev-skill'
+            AND t.status IN ('queued', 'in_progress')`
+      );
+      activeSlots = new Set((rows || []).map(r => String(r.slot || '').trim()));
+    } catch (err) {
+      console.warn(`[worker-pool] 僵尸判定查库失败,保守不清理: ${err.message}`);
+    }
+    if (activeSlots) {
+      for (const slot of busySlots) {
+        if (activeSlots.has(slot)) continue; // 有在途任务认领 → 真在干活,绝不碰
+        try {
+          execFn(wrap(`tmux kill-session -t ${slot} 2>/dev/null || true`));
+          slotState[slot] = 'missing'; // 按 missing 走 new-session 重建
+          zombies.push(slot);
+          console.log(`[worker-pool] 清理僵尸槽 slot=${slot}（无在途任务对应）`);
+        } catch (err) {
+          console.warn(`[worker-pool] 僵尸清理失败 slot=${slot}: ${err.message}`);
+        }
+      }
     }
   }
+
   const busy = WORKER_SLOTS.filter(s => slotState[s] === 'busy').length;
-  if (busy >= MAX_CONCURRENT) return { skipped: 'concurrency_cap', dispatched: 0, busy };
+  if (busy >= MAX_CONCURRENT) return { skipped: 'concurrency_cap', dispatched: 0, busy, zombies };
 
   const budget = MAX_CONCURRENT - busy;
   const freeSlots = WORKER_SLOTS.filter(s => slotState[s] !== 'busy');
   const capacity = Math.min(budget, freeSlots.length);
-  if (capacity <= 0) return { skipped: 'no_free_slot', dispatched: 0, busy };
+  if (capacity <= 0) return { skipped: 'no_free_slot', dispatched: 0, busy, zombies };
 
   // ── 2. 扫队列（parallel_worker:true 或 canvas+exploratory）────────────────
   const { rows: tasks } = await pool.query(
@@ -93,7 +142,7 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
       LIMIT $1`,
     [capacity]
   );
-  if (!tasks.length) return { skipped: 'queue_empty', dispatched: 0, busy };
+  if (!tasks.length) return { skipped: 'queue_empty', dispatched: 0, busy, zombies };
 
   // ── 3. 逐任务：预占 → 发射 → 记账 ─────────────────────────────────────────
   let dispatched = 0;
@@ -126,13 +175,27 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
       execFn(wrap(
         `tmux send-keys -t ${slot} 'cd ${HOST_REPO} && bash scripts/claude-launch.sh "$(cat ${promptFile})"' Enter`
       ));
+
+      // 发射后阻塞探活：pane 必须真离开 shell 才算发射成功。
+      // 不等 = 本轮返回时 pane 还是 zsh，下一轮探测判 idle → 同一个槽被二次发射，
+      // 命令打进上一个 claude 的 composer（09-07 16:38→16:43 现场案）。
+      const attempts = Math.max(1, Math.ceil(LIVENESS_TIMEOUT_MS / LIVENESS_POLL_MS));
+      let alive = false;
+      for (let i = 0; i < attempts; i++) {
+        if (probeSlot(slot) === 'busy') { alive = true; break; }
+        if (i < attempts - 1) await sleep(LIVENESS_POLL_MS);
+      }
+      if (!alive) {
+        throw new Error(`liveness_timeout: pane ${LIVENESS_TIMEOUT_MS}ms 内未离开 shell`);
+      }
+      slotState[slot] = 'busy'; // 本轮内其他任务不得再瞄这个槽
+
       await pool.query(
         `INSERT INTO dispatch_events (task_id, event_type, reason) VALUES ($1, $2, $3)`,
         [task.id, 'dispatched', `worker_pool:${slot}`]
       );
       console.log(`[worker-pool] dispatched task=${task.id} slot=${slot}`);
       dispatched++;
-      slotIdx++;
     } catch (err) {
       console.error(`[worker-pool] 发射失败 task=${task.id} slot=${slot}: ${err.message}`);
       try {
@@ -148,6 +211,9 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
         console.warn(`[worker-pool] 失败记账/回滚异常（non-fatal）: ${accountErr.message}`);
       }
     }
+    // 成败都推进：失败的槽（含探活超时）本轮绝不给下一个任务复用——
+    // 旧代码失败时不推进，第二个任务照打同一个槽 = 同轮重复发射
+    slotIdx++;
   }
-  return { dispatched, busy };
+  return { dispatched, busy, zombies };
 }
