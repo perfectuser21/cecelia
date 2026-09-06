@@ -98,9 +98,25 @@ const main = async () => {
     console.log('✅ Agents relation 已存在，跳过');
   }
 
+
+  // run 记录库（刀6）：只存业务流程的每次执行（通道类只在流程行看汇总）
+  const runs_db = await ensureDb('Ops Runs', {
+    Name: { title: {} }, Status: { select: {} }, Machine: { select: {} },
+    Mode: { select: {} }, Minutes: { number: {} }, StartedAt: { date: {} },
+    RunId: { rich_text: {} },
+  }, parentPageId);
+  const rdb = await notion(`/databases/${runs_db}`);
+  if (!rdb.properties?.Workflow) {
+    await notion(`/databases/${runs_db}`, 'PATCH', {
+      properties: { Workflow: { relation: { database_id: workflows_db, type: 'dual_property',
+        dual_property: { synced_property_name: 'Runs明细' } } } },
+    });
+    console.log('✅ 已加跨库 relation: Runs.Workflow ↔ Workflows.Runs明细');
+  }
+
   const kv = await fetch(`${BRAIN}/api/brain/kv/ops_notion_dbs`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ graph_db, workflows_db }),
+    body: JSON.stringify({ graph_db, workflows_db, runs_db }),
   }).then((r) => r.json());
   if (!kv.ok) throw new Error(`kv 写入失败: ${JSON.stringify(kv)}`);
   console.log('✅ kv ops_notion_dbs={graph_db} 已写入，下一轮 notion-push 自动推合并库（旧两库停推，数据保留待手删）');

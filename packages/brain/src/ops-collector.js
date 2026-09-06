@@ -172,6 +172,78 @@ export function inferAgentRoleType(name = '') {
   return 'agent';
 }
 
+
+// ─── run 记录（n8n 执行历史）────────────────────────────────────────────
+// 数据源实证：n8n 用 Postgres（非 sqlite），hk-vps 容器 zenithjoy-db-postgres 库 n8n
+// 表 execution_entity。字段 workflowId/status(success|error|crashed)/startedAt/stoppedAt/mode。
+// 频次实证（12天）：业务流程日均 10-21 轮、每轮 38-70 分钟；通道类日均 154-234 次、4秒-9分钟。
+// token 消耗 n8n 不记录（在 OpenClaw 会话侧），本模块不含。
+
+export function parseN8nRuns(list, machine) {
+  if (!Array.isArray(list)) return [];
+  return list.map((e) => {
+    const started = e?.startedAt ? new Date(e.startedAt) : null;
+    const stopped = e?.stoppedAt ? new Date(e.stoppedAt) : null;
+    // crashed 常无 stoppedAt → duration 留 null，禁编造耗时
+    const duration = started && stopped ? Math.round((stopped - started) / 1000) : null;
+    return {
+      run_id: String(e?.id ?? ''),
+      wf_id: String(e?.workflowId ?? ''),
+      status: String(e?.status ?? ''),
+      mode: e?.mode ? String(e.mode) : null,
+      machine: machine || null,
+      started_at: started ? started.toISOString() : null,
+      stopped_at: stopped ? stopped.toISOString() : null,
+      duration_sec: duration,
+    };
+  }).filter((r) => r.run_id && r.wf_id);
+}
+
+/**
+ * 业务流程 vs 通道/触发器：有业务阶段的才是业务流程。
+ * 用途：业务流程的 run 全量推 Notion（一天几十条）；通道类只推汇总（日均上百次会淹没视线）。
+ */
+export function isBusinessWorkflow(wf) {
+  return (wf?.stage_count ?? 0) > 0;
+}
+
+/** 流程健康汇总：次数/成功率/平均耗时/最近一次。没样本不编造成功率。 */
+export function summarizeRuns(runs = []) {
+  const list = Array.isArray(runs) ? runs : [];
+  const total = list.length;
+  const success = list.filter((r) => r.status === 'success').length;
+  const withDur = list.filter((r) => typeof r.duration_sec === 'number');
+  const sorted = [...list].filter((r) => r.started_at)
+    .sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+  return {
+    total,
+    success,
+    failed: total - success,                       // error + crashed 都算失败
+    success_rate: total ? Math.round((success / total) * 100) : null,
+    avg_duration_sec: withDur.length
+      ? Math.round(withDur.reduce((s, r) => s + r.duration_sec, 0) / withDur.length)
+      : null,                                      // 全崩无耗时 → null 而非 0
+    last_run_at: sorted[0]?.started_at ?? null,
+    last_status: sorted[0]?.status ?? null,
+  };
+}
+
+// n8n 执行历史查询（hk-vps 容器内 psql，输出 JSON）。限 45 天窗口避免拉全表。
+// SQL 是代码内固定常量（无任何外部输入拼接），双引号按 shell 需要**直接写成转义形态**，
+// 不做运行时 replace 转义——避免不完整转义（未处理反斜杠）的安全告警。
+const N8N_RUNS_SQL_ESCAPED = [
+  'SELECT json_agg(t) FROM (',
+  '  SELECT id, \\"workflowId\\", status, mode, \\"startedAt\\", \\"stoppedAt\\"',
+  '  FROM execution_entity',
+  '  WHERE \\"startedAt\\" > NOW() - make_interval(days => 45)',
+  '  ORDER BY \\"startedAt\\" DESC LIMIT 5000',
+  ') t',
+].join(' ');
+
+export const N8N_RUNS_CMD =
+  'ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no root@100.86.118.99 ' +
+  `'docker exec zenithjoy-db-postgres psql -U n8n -d n8n -tAc "${N8N_RUNS_SQL_ESCAPED}"'`;
+
 export function parseGhaCron(out) {
   const rows = [];
   for (const line of String(out).split('\n')) {
@@ -500,6 +572,43 @@ export async function runOpsCollector(pool, opts = {}) {
     const [status, code] = classifyError(e);
     await writeHeartbeat(pool, 'gha', 'github', status, code, e.message);
     results.gha = { ok: false };
+  }
+
+  // —— 腿5: n8n run 执行历史@hk-vps（每次跑的记录 + 流程健康汇总）——
+  try {
+    const rawRuns = run(N8N_RUNS_CMD);
+    let runList;
+    try { runList = JSON.parse(rawRuns || '[]'); } catch { throw new Error(`parse_error: n8n run 导出非法 JSON（前100字符: ${String(rawRuns).slice(0, 100)}）`); }
+    const runs = parseN8nRuns(runList, 'hk-vps');
+    if (runs.length === 0) throw new Error('parse_error: n8n 执行历史解析出 0 条（0=可疑，禁当真空）');
+    for (const r of runs) {
+      await pool.query(
+        `INSERT INTO ops_runs (source, run_id, wf_id, status, mode, machine, started_at, stopped_at, duration_sec)
+         VALUES ('n8n',$1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (source, run_id) DO UPDATE SET
+           status=EXCLUDED.status, stopped_at=EXCLUDED.stopped_at, duration_sec=EXCLUDED.duration_sec`,
+        [r.run_id, r.wf_id, r.status, r.mode, r.machine, r.started_at, r.stopped_at, r.duration_sec]);
+    }
+    // 回填每条流程的健康汇总 + 机器
+    const byWf = new Map();
+    for (const r of runs) {
+      if (!byWf.has(r.wf_id)) byWf.set(r.wf_id, []);
+      byWf.get(r.wf_id).push(r);
+    }
+    for (const [wfId, list] of byWf) {
+      const s = summarizeRuns(list);
+      await pool.query(
+        `UPDATE ops_workflows SET machine='hk-vps', run_total=$1, run_success_rate=$2,
+           run_avg_sec=$3, last_run_at=$4, last_run_status=$5, updated_at=NOW()
+         WHERE source='n8n' AND wf_id=$6`,
+        [s.total, s.success_rate, s.avg_duration_sec, s.last_run_at, s.last_status, wfId]);
+    }
+    await writeHeartbeat(pool, 'n8n-runs', 'hk-vps', 'ok', null, null, collectedAt);
+    results.n8n_runs = { ok: true, runs: runs.length, workflows: byWf.size };
+  } catch (e) {
+    const [status, code] = classifyError(e);
+    await writeHeartbeat(pool, 'n8n-runs', 'hk-vps', status, code, e.message);
+    results.n8n_runs = { ok: false };
   }
 
   // —— 腿4: n8n workflow@hk-vps（业务流程，非"谁召唤谁"）——
