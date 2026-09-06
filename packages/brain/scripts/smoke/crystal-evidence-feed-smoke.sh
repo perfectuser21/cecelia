@@ -61,13 +61,45 @@ if (e.data_gap !== true || e.n_runs !== 0 || e.success_rate !== null) { console.
 console.log('  ✓ 无证据保留件4 诚实降级语义');
 "
 
-echo "[evidence-feed-smoke] 6. POST /evidence 端点已挂"
+echo "[evidence-feed-smoke] 5b. 聚合按滚动窗口，不按自然日切断"
+node -e "
+const fs = require('fs');
+const src = fs.readFileSync('packages/brain/src/crystal-judge.js', 'utf8');
+// 用 includes 而非正则：SQL 占位符含 dollar 符，在 bash 双引号里怎么转义都会被展开
+// 单日等值 = minRuns 变成「单日内跑够 20 次」，今天10次明天10次永远停在10
+const singleDay = src.includes('AND report_date = ');
+if (singleDay) { console.error('聚合退回单日等值切断（跨天不累计）'); process.exit(1); }
+if (!src.includes('AND report_date <= ')) { console.error('聚合缺窗口右端条件'); process.exit(1); }
+if (!src.includes('AND report_date > (')) { console.error('聚合缺窗口左端条件'); process.exit(1); }
+if (!src.includes('windowDays = CRYSTAL_THRESHOLDS.demoteWindowDays')) { console.error('窗口未与降级观察窗对齐'); process.exit(1); }
+if (!src.includes('export async function judgeUnit')) { console.error('judgeUnit 未导出（无法入库即判）'); process.exit(1); }
+console.log('  ✓ 滚动窗口 + 窗口与降级观察窗一致 + judgeUnit 可独立触发');
+"
+
+node --input-type=module -e "
+const { aggregateUnitMetrics, judgeUnit } = await import('./packages/brain/src/crystal-judge.js');
+const poolOf = (rows) => ({ query: async (sql) => /crystal_run_evidence/i.test(sql) ? { rows, rowCount: rows.length } : { rows: [], rowCount: 0 } });
+const b = { unit_key:'search_account', funnel_cell:'source', baseline_tokens:10158, hot_path_tokens:696,
+  avg_ms:24000, crystallized:true, has_postcondition:true, new_branch_count:0, broken_count:0 };
+const m = await aggregateUnitMetrics(poolOf([
+  { ...b, report_date:'2026-09-05', runs:10, passes:10 },
+  { ...b, report_date:'2026-09-06', runs:10, passes:10 }]), 'search_account', '2026-09-06');
+if (m.n_runs !== 20) { console.error('跨天未累计: n_runs=' + m.n_runs); process.exit(1); }
+const r = await judgeUnit(poolOf([
+  { ...b, report_date:'2026-09-05', runs:10, passes:10 },
+  { ...b, report_date:'2026-09-06', runs:10, passes:10 }]), 'search_account', '2026-09-06');
+if (r.verdict !== 'promote') { console.error('跨天跑够20次未判 promote: ' + r.verdict + ' ' + JSON.stringify(r.basis)); process.exit(1); }
+console.log('  ✓ 跨天累计 n_runs=20 → judgeUnit 判 promote');
+"
+
+echo "[evidence-feed-smoke] 6. POST /evidence 端点已挂 + 入库即判"
 node -e "
 const fs = require('fs');
 const src = fs.readFileSync('packages/brain/src/routes/crystal.js', 'utf8');
 if (!/router\.post\(\s*'\/evidence'/.test(src)) { console.error('缺 POST /evidence 端点'); process.exit(1); }
 if (!src.includes('crystal_run_evidence')) { console.error('端点未写 crystal_run_evidence'); process.exit(1); }
 if (!/ON CONFLICT \(unit_key, verified_at\)/.test(src)) { console.error('端点非幂等'); process.exit(1); }
+if (!src.includes('judgeUnit(pool, unitKey, reportDate)')) { console.error('入库后未就地重判'); process.exit(1); }
 console.log('  ✓ POST /evidence 已挂且幂等');
 "
 

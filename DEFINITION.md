@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.277.1
+**Brain 版本**: 1.277.2
 
 ## Brain 1.277.1 — worker 池任务对 kernel tick 隔离(并行血管 P1 补丁)
 

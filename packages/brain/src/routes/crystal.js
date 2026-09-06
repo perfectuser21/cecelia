@@ -5,14 +5,14 @@
  * GET  /report[?date=]   — 查询每日结晶报告（八格建议 + 三态 + 依据 + 六项指标），缺省最近一日
  * POST /locator          — registry 回写（复合键 model|app_version|density，缺一即 400）
  * POST /evidence/validate — 证据留存规范校验（缺 trial/timestamp→400；复用覆盖→409）
- * POST /evidence         — 运行证据入库（判官口粮通道，幂等键 unit_key+verified_at）
+ * POST /evidence         — 运行证据入库（判官口粮通道，幂等键 unit_key+verified_at）＋就地重判该段
  *
  * 决策 28ca1f69：判定层不蒸馏 / 探针强制 / registry是数据 / 证据留痕 / 固化优先级。
  */
 
 import { Router } from 'express';
 import pool from '../db.js';
-import { runCrystalJudge, beijingDateStr } from '../crystal-judge.js';
+import { runCrystalJudge, beijingDateStr, judgeUnit } from '../crystal-judge.js';
 import { parseEvidenceFilename, assertNoOverwrite } from '../crystal/evidence.js';
 
 const router = Router();
@@ -201,6 +201,17 @@ router.post('/evidence', async (req, res) => {
     );
 
     const row = rows[0];
+
+    // 入库即判：证据一进来就地重算这一段的判决，不必等次日 05:00 的全量窗口。
+    // 判决按滚动窗口聚合，所以「今天第 20 次」入库的瞬间就能翻成 promote。
+    // 判决失败不回滚入库——证据已经是事实，判决可由每日全量兜底重算。
+    let judged = null;
+    try {
+      judged = await judgeUnit(pool, unitKey, reportDate);
+    } catch (err) {
+      console.warn(`[crystal] 入库后即判失败 unit=${unitKey}（证据已落库，等每日全量兜底）:`, err.message);
+    }
+
     return res.json({
       ok: true,
       evidence: row,
@@ -209,6 +220,8 @@ router.post('/evidence', async (req, res) => {
       note: row.baseline_tokens === null
         ? '缺 baseline_tokens：判官将记 data_gap（不拿热路径成本顶替）'
         : undefined,
+      // 就地判决结果：调用方入库后立刻知道这一段现在算什么状态、离晋升还差什么
+      verdict: judged ? { verdict: judged.verdict, basis: judged.basis, metrics: judged.metrics } : null,
     });
   } catch (err) {
     console.error('[crystal] /evidence failed:', err);
