@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.192
+**Brain 版本**: 1.273.194
+
+## Brain 1.273.194 — 三镜头接新入口(Crystal 件6,认领 kernel 遗孤 PR#5166)
+
+- capability-gate.js 接线 work-routing-store:new_capability 必经三镜头闸,reject 即 fail-closed;pass 必须带 postcondition+NFR 三数。首次接上主链。kernel aa069d30 死于 evaluate deadline 后认领。
 
 ## Brain 1.273.192 — 四格路由器(Crystal 件1)
 

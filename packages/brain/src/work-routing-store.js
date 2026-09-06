@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 import { routeWork } from './work-router.js';
+import { runCapabilityGate } from './capability-gate.js';
 import { isCanonicalTaskBranch } from './orchestrator/workspace-spec.js';
 import {
   assertRouteSnapshotLaunchAuthority,
@@ -287,6 +288,23 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       };
     }
     await assertMutationMapScopeResolvable(client, decision);
+    // 三镜头能力级前置门禁：new_capability 在选 pipeline 后、物化 task 前必经三镜头对抗，
+    // 判决 + postcondition + NFR 三数落 decisions（同事务，reject/落库失败 → ROLLBACK 不建 task）。
+    // adjudicate 由生产接线（harness-skill-relay 的 capability-controller relay）注入；
+    // 未注入时不触发门禁，保持既有路由行为不变（三镜头本体是更外层第三方推理边界）。
+    const adjudicateCapability = options.adjudicateCapability;
+    if (decision.change_kind === 'new_capability' && typeof adjudicateCapability === 'function') {
+      const capabilityStepId = options.capabilityStepId
+        ?? request.step_id
+        ?? request.journey_step_id
+        ?? null;
+      await runCapabilityGate(client, {
+        changeKind: decision.change_kind,
+        stepId: capabilityStepId,
+        request: routedRequest,
+        adjudicate: adjudicateCapability,
+      });
+    }
     const taskResult = await client.query(
       `INSERT INTO tasks (
          title, description, priority, task_type, status,
