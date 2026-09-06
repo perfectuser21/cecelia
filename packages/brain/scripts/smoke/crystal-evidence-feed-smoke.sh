@@ -5,7 +5,7 @@
 #   2. crystal-judge.js 的桩函数 aggregateGridMetrics 已彻底移除，aggregateUnitMetrics 已导出
 #   3. 判官真读证据：注入含证据的假 pool → data_gap=false 且 n_runs>0（桩函数恒 true，回退即红）
 #   4. token_cost 取 baseline_tokens 不取 hot_path_tokens（取错方向差一个数量级，永远晋升不了）
-#   5. 缺 baseline 时诚实记 data_gap，不拿热路径顶替
+#   5. 缺 baseline 时记 cost_gap（成本缺口）而非 data_gap：跑量是真的，抹成 0 是另一种谎
 #   6. routes/crystal.js 挂了 POST /evidence 入库端点
 #   7.（live，Brain 可达时）真调 POST /api/brain/crystal/evidence 入库 → 再查 DB 确认记录
 #      存在且字段正确 → 跑判官 → 确认该段 ledger 行 data_gap=false；Brain 不可达则跳过不判失败
@@ -52,9 +52,10 @@ if (m.token_cost === 696) { console.error('token_cost 取了热路径成本（�
 console.log('  ✓ 判官吃到证据: n_runs=' + m.n_runs + ' success_rate=' + m.success_rate + ' token_cost=' + m.token_cost);
 
 const g = await aggregateUnitMetrics(poolOf([{ ...EV, baseline_tokens: null }]), 'search_account', '2026-09-06');
-if (g.data_gap !== true) { console.error('缺 baseline 未诚实降级'); process.exit(1); }
+if (g.cost_gap !== true) { console.error('缺 baseline 未记成本缺口'); process.exit(1); }
 if (g.token_cost === 696) { console.error('缺 baseline 时拿热路径顶替了'); process.exit(1); }
-console.log('  ✓ 缺 baseline 诚实记 data_gap，未用热路径顶替');
+if (g.n_runs !== EV.runs) { console.error('缺 baseline 把真实跑量抹掉了: ' + g.n_runs); process.exit(1); }
+console.log('  ✓ 缺 baseline 记 cost_gap（跑量保真、未用热路径顶替）');
 
 const e = await aggregateUnitMetrics(poolOf([]), 'never_ran', '2026-09-06');
 if (e.data_gap !== true || e.n_runs !== 0 || e.success_rate !== null) { console.error('无证据未保留件4 不误判语义'); process.exit(1); }

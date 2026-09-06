@@ -35,6 +35,7 @@ circuit-breaker-persist-smoke.sh
 crystal-evidence-feed-smoke.sh
 crystal-units-view-smoke.sh
 crystal-judge-smoke.sh
+crystal-coding-evidence-smoke.sh
 circuit-breaker-reset-smoke.sh
 claude-headed-dispatch-smoke.sh
 cockpit-route-wire-smoke.sh
