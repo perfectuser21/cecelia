@@ -440,8 +440,17 @@ export async function runOpsCollector(pool, opts = {}) {
     try { cfg = JSON.parse(raw); } catch { throw new Error(`parse_error: clawdbot.json 非法 JSON（前100字符: ${String(raw).slice(0, 100)}）`); }
     const agents = extractOpenclawAgents(cfg);
     await writeAgentsSnapshot(pool, 'openclaw', 'hk-vps', agents, collectedAt);
+    // skill 投影（最小执行单元，与 agent 多对多）
+    const skills = extractOpenclawSkills(cfg);
+    for (const sk of skills) {
+      await pool.query(
+        `INSERT INTO ops_skills (source, name, used_by, updated_at)
+         VALUES ('openclaw',$1,$2,$3)
+         ON CONFLICT (source, name) DO UPDATE SET used_by=EXCLUDED.used_by, updated_at=EXCLUDED.updated_at`,
+        [sk.name, JSON.stringify(sk.used_by), collectedAt]);
+    }
     await writeHeartbeat(pool, 'openclaw', 'hk-vps', 'ok', null, null, collectedAt);
-    results.openclaw = { ok: true, agents: agents.length };
+    results.openclaw = { ok: true, agents: agents.length, skills: skills.length };
   } catch (e) {
     const [status, code] = classifyError(e);
     await writeHeartbeat(pool, 'openclaw', 'hk-vps', status, code, e.message);
