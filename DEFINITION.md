@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.189
+**Brain 版本**: 1.273.192
+
+## Brain 1.273.192 — 四格路由器(Crystal 件1)
+
+- work-router 两轴 artifact_kind × answer_known;execution 永不进 kernel-harness-v2(meta 三杀手案卷回归防线),路由 canvas/exploratory 免 impact contract;code 类老契约字节不动;intake 默认 tenant_id:default 不算执行标记(30 任务回放实证)。
 
 ## Brain 1.273.189 — 结晶判官(Crystal 件4,认领 kernel 遗孤)
 
