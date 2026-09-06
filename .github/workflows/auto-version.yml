@@ -24,6 +24,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          # 用 PAT 而非 GITHUB_TOKEN:GITHUB_TOKEN 推的分支/开的 PR 不触发任何
+          # pull_request workflow(GitHub 防递归),bot PR 会永远 0 CI 挂死(09-06 #5190 案)
+          token: ${{ secrets.GH_PAT_BOT || github.token }}
 
       - name: Check if commit is auto-version
         id: check
@@ -67,7 +70,8 @@ jobs:
       - name: Create version bump PR
         if: steps.check.outputs.skip == 'false' && steps.bump.outputs.type != 'none'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 同上:PAT 开的 PR 才会触发 CI;无 PAT 时降级 GITHUB_TOKEN(PR 需人工 close/reopen 触发)
+          GH_TOKEN: ${{ secrets.GH_PAT_BOT || secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
