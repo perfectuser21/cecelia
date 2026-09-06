@@ -48,6 +48,42 @@ export function normalizeWorkRequest(input = {}) {
   return request;
 }
 
+// ── 四格路由两轴(Crystal 件1,决策 ca9f3d7b/28ca1f69)────────────────────
+// 轴1 artifact_kind:code(交付=PR)| execution(交付=run)。
+// 案卷:09-05/06 execution/meta 类工作被塞进 kernel 线,遭三种确定性杀手绞杀 0/7。
+export const ARTIFACT_KINDS = Object.freeze(['code', 'execution']);
+const EXECUTION_MARKERS = Object.freeze(['tenant_id', 'device_id', 'canvas', 'workflow']);
+const EXPLORE_WORDS = /(探索|调研|不知道|先跑|看看再|spike)/i;
+
+export function classifyArtifactKind(request = {}) {
+  if (request.artifact_kind != null) {
+    if (!ARTIFACT_KINDS.includes(request.artifact_kind)) throw new Error('invalid_artifact_kind');
+    return request.artifact_kind; // 显式声明优先
+  }
+  const payload = request.payload ?? {};
+  // intake 会给所有任务默认注入 tenant_id:'default'(30 任务回放实证),
+  // 只有"真租户"才是执行标记;device/canvas/workflow 无默认注入,存在即标记。
+  const marked = (k) => {
+    const v = payload[k] ?? request[k];
+    if (v == null) return false;
+    if (k === 'tenant_id' && v === 'default') return false;
+    return true;
+  };
+  if (EXECUTION_MARKERS.some(marked)) return 'execution';
+  return 'code'; // repo/分支标记与默认都归 code(左列老路)
+}
+
+// 轴2 answer_known:答案现在说得出来吗?显式 > change_kind 语义 > 探索词 > 默认 true。
+// (LLM 一次调用判定留给后续增量——intake 是同步热路径,不加外呼。)
+export function classifyAnswerKnown(request = {}) {
+  if (typeof request.answer_known === 'boolean') return request.answer_known;
+  const kind = request.declared_change_kind ?? request.change_kind;
+  if (kind === 'bugfix' || kind === 'parameter_only') return true; // 已诊断/机械改
+  const text = `${request.description ?? ''} ${request.title ?? ''}`;
+  if (EXPLORE_WORDS.test(text)) return false;
+  return true;
+}
+
 export function classifyWork(request) {
   if (request.mutation_intent === 'write' || request.mutation_intent === 'unknown') return 'coding_mutation';
   if (request.declared_domain === 'content') return 'content_creation';
@@ -68,6 +104,27 @@ export function resolveRepo(request, repositoryFacts = []) {
 }
 
 export function selectPipeline(input) {
+  const axes = {
+    artifact_kind: input.artifact_kind ?? 'code',
+    answer_known: input.answer_known ?? true,
+  };
+  // 【核心回归防线】execution 类永不进 kernel-harness-v2(meta 三杀手案卷):
+  // 交付物是一次 run 而非 PR,impact 锚/验证钟/装配层对它全是错的尺子。
+  // v1 落点:pipeline=canvas,canonical=exploratory(既有枚举,语义=先跑),
+  // 无自动执行体认领 → 停在 queued 供画布线/人工 claim,胜于确定性绞杀。
+  if (input.work_kind === 'coding_mutation' && axes.artifact_kind === 'execution') {
+    return {
+      work_kind: input.work_kind,
+      change_kind: input.change_kind ?? null,
+      pipeline: 'canvas',
+      canonical_task_type: 'exploratory',
+      default_execution_profile: null,
+      execution_profile_override: null,
+      impact_contract_required: false,
+      orchestrator: 'canvas-v4',
+      ...axes,
+    };
+  }
   if (input.work_kind === 'coding_mutation') {
     if (!input.change_kind) throw new Error('change_kind_required');
     if (!CHANGE_KINDS.includes(input.change_kind)) throw new Error('invalid_change_kind');
@@ -82,7 +139,7 @@ export function selectPipeline(input) {
         throw new Error('execution_profile_downgrade_forbidden');
       }
     }
-    return { work_kind: input.work_kind, change_kind: input.change_kind, pipeline: 'harness', canonical_task_type: 'harness_initiative', default_execution_profile: defaultProfile, execution_profile_override: override, impact_contract_required: true, orchestrator: 'kernel-harness-v2' };
+    return { work_kind: input.work_kind, change_kind: input.change_kind, pipeline: 'harness', canonical_task_type: 'harness_initiative', default_execution_profile: defaultProfile, execution_profile_override: override, impact_contract_required: true, orchestrator: 'kernel-harness-v2', ...axes };
   }
   const nonCoding = {
     content_creation: ['content', 'content-pipeline'],
@@ -95,16 +152,22 @@ export function selectPipeline(input) {
   if (requestedTaskType != null && !/^[a-z][a-z0-9_-]*$/.test(requestedTaskType)) {
     throw new Error('invalid_requested_task_type');
   }
-  return { work_kind: input.work_kind, change_kind: null, pipeline: nonCoding[0], canonical_task_type: requestedTaskType ?? nonCoding[1], default_execution_profile: null, impact_contract_required: false, orchestrator: nonCoding[0] };
+  return { work_kind: input.work_kind, change_kind: null, pipeline: nonCoding[0], canonical_task_type: requestedTaskType ?? nonCoding[1], default_execution_profile: null, impact_contract_required: false, orchestrator: nonCoding[0], ...axes };
 }
 
 export function routeWork(input, repositoryFacts = []) {
   const request = normalizeWorkRequest(input);
   const work_kind = classifyWork(request);
-  const repo = work_kind === 'coding_mutation' ? resolveRepo(request, repositoryFacts) : null;
+  const artifact_kind = classifyArtifactKind(request);
+  const answer_known = classifyAnswerKnown(request);
+  // execution 类交付物是 run,不强制解析 repo(map/impact 尺子不适用)
+  const repo = (work_kind === 'coding_mutation' && artifact_kind === 'code')
+    ? resolveRepo(request, repositoryFacts) : null;
   return {
     ...selectPipeline({
       work_kind,
+      artifact_kind,
+      answer_known,
       change_kind: request.declared_change_kind,
       requested_task_type: request.requested_task_type,
       execution_profile_override_request: request.execution_profile_override_request,
