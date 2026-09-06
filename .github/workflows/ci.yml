@@ -484,22 +484,35 @@ jobs:
           done
 
   # ─── Ops shell 测试（scripts/ops/__tests__/）────────────────────
-  # janitor 等宿主 DevOps 脚本的回归测试。glob 模式：目录内新加 *.test.sh 自动接 CI。
+  # janitor / credentials 等宿主 DevOps 脚本的回归测试。
+  # glob 模式：__tests__ 下任意子目录新加 *.test.sh 自动接 CI。
   # 背景：2026-08-10 发现该目录 4 个测试自迁入起零执行（无 job 引用），本 job 补上。
+  # 2026-09-07：glob 原来写死 janitor/，新建的 credentials/ 一条都跑不到——
+  #   同一个坑第二次。改成 find 递归，以后新开子目录不用再改这里。
   ops-tests-shell:
-    name: Ops Shell Tests (janitor 套)
+    name: Ops Shell Tests (scripts/ops)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
       - name: Run ops shell tests
         run: |
-          for t in scripts/ops/__tests__/janitor/*.test.sh; do
-            [[ -f "$t" ]] || continue
-            echo "::group::$(basename "$t")"
+          found=0
+          while IFS= read -r t; do
+            found=$((found + 1))
+            echo "::group::${t#scripts/ops/__tests__/}"
             bash "$t" || exit 1
             echo "::endgroup::"
-          done
+          done < <(find scripts/ops/__tests__ -name '*.test.sh' -type f | sort)
+          # 一个都没找到 = glob 又断了。静默通过比失败更危险。
+          if [ "$found" -eq 0 ]; then
+            echo "::error::scripts/ops/__tests__ 下一个 *.test.sh 都没找到——本 job 在空转"
+            exit 1
+          fi
+          echo "共执行 $found 个 ops shell 测试"
 
   # ─── Dashboard 部署放行闸 smoke（repo 根 scripts/smoke/）──────
   # 守 deploy-local.sh 的两段式部署：自检 → 起常驻 staging + 写放行标记 →【停住】，
