@@ -323,7 +323,7 @@ export function buildWorkflowPageBlocks(w, row = {}) {
     blocks.push({ object: 'block', type: 'code',
       code: { language: 'mermaid', rich_text: [{ type: 'text', text: { content: mermaid.slice(0, 1900) } }] } });
     blocks.push(head('业务阶段'));
-    buildStageFlow(w).forEach((s, i) => blocks.push({
+    buildStageFlow(w).forEach((s) => blocks.push({
       object: 'block', type: 'numbered_list_item',
       numbered_list_item: { rich_text: [{ type: 'text', text: { content: s } }] },
     }));
