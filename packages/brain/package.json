@@ -46,8 +46,5 @@
     "supertest": "^7.2.2",
     "vitest": "^1.6.1"
   },
-  "version": "1.273.185",
-  "overrides": {
-    "fast-uri": "^3.1.6"
-  }
+  "version": "1.273.186"
 }

@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.185
+**Brain 版本**: 1.273.186
+
+## Brain 1.273.186 — 投影自动重建 scheduler job（Crystal 件9，map_radius_stale 根治）
+
+- 新增 `map-projection-refresh.js`（scheduler job，3min 自 gate，env `CECELIA_MAP_PROJECTION_REFRESH_INTERVAL_MS` 可调）：比较各 active scope 的 fact_snapshot_headers 四 kind revision 与 map_projection_runs.fact_revisions，漂移即调 map-read-service.rebuild；扫描中窗口（kind 缺/revision 不一致）静默跳过留 reason；多 scope 单点失败不连坐、console.error 留两侧 revision。案卷：09-05/06 生产两轮确定性 map_radius_stale（投影换代随 kernel 闲置 08-30 起停转），手动 rebuild 即愈实证 3 次。决策 8f22f71c。
 
 ## Brain 1.273.185 — 指挥舱运行舱 ops 投影（第 82 批）
 

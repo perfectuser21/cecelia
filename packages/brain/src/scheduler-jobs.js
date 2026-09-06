@@ -18,6 +18,7 @@ import { runCaptureTriage } from './capture-triage.js';
 import { runReceiptCollector } from './receipt-collector.js';
 import { runLaunchdPatrol } from './launchd-patrol.js';
 import { runGpShelfLife } from './gp-shelf-life.js';
+import { maybeRefreshMapProjections } from './map-projection-refresh.js';
 import { maybeRunDirectionProposer } from './direction-proposer.js';
 import { runPostdeployVerifier } from './postdeploy-verifier.js';
 import { runSevenRingAuditJob } from './seven-ring-audit.js';
@@ -59,6 +60,7 @@ export const JOBS = [
   { name: 'battle-report', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeGenerateBattleReport, description: '作战日报（北京06:00窗口+当日去重自 gate）' },
   { name: 'capture-triage', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runCaptureTriage, description: '收件箱四路分诊（自带10min间隔gate+批量上限，T10）' },
   { name: 'receipt-collector', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runReceiptCollector, description: '回执核销（自带10min间隔gate，pending超30min标timeout，T4）' },
+  { name: 'map-projection-refresh', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRefreshMapProjections, description: '地图投影保鲜：fact_snapshot_headers 与 active 投影 fact_revisions 漂移即 rebuild（自带3min gate；09-05/06 map_radius_stale 案，决策 8f22f71c）' },
   { name: 'gp-shelf-life', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runGpShelfLife, description: 'GP 保质期 delta（自带10min gate，approved 超 review_after 置 expired；报备否决窗过期自动生效，GP1/T1）' },
   { name: 'launchd-patrol', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runLaunchdPatrol, description: '宿主 launchd 服务巡检（自带15min gate，manifest核对，异常P1+Bark，a5a6209a）' },
   { name: 'direction-proposer', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeRunDirectionProposer, description: '每周方向菜单（自带北京周一05:30窗口+20h去重，候选写golden_paths+缺口全景写working_memory，GP4/T4）' },
