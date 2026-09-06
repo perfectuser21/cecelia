@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke: crystal-judge — Crystal 第4件「结晶判官」（结晶台账 + 三态判决 + 每日结晶报告）
 # 验证：
-#   1. migration 434 建齐四表（crystal_ledger/verdict/report/locator_registry）
+#   1. migration 435 建齐四表（crystal_ledger/verdict/report/locator_registry）
 #   2. routes/crystal.js 存在且已挂进 routes.js（router.use('/crystal'）
 #   3. crystal-judge.js 只写 crystal_* 表（NFR 数据完整性：对 n8n/采集器/postcondition 源只读）
 #   4. scheduler-jobs.js 注册每日 crystal-judge 定时任务
@@ -12,17 +12,17 @@ set -euo pipefail
 
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 
-echo "[crystal-smoke] 1. migration 434 建齐四表"
+echo "[crystal-smoke] 1. migration 435 建齐四表"
 node -e "
 const fs = require('fs');
-const sql = fs.readFileSync('packages/brain/migrations/434_crystal_judge.sql', 'utf8');
+const sql = fs.readFileSync('packages/brain/migrations/435_crystal_judge.sql', 'utf8');
 const tables = ['crystal_ledger', 'crystal_verdict', 'crystal_report', 'crystal_locator_registry'];
 const missing = tables.filter((t) => !sql.includes(t));
 if (missing.length) { console.error('缺表: ' + missing.join(', ')); process.exit(1); }
 // 复合键约束（每格 1 判决 / registry 复合键）
 if (!/UNIQUE\s*\(report_date, ?grid_key\)/i.test(sql)) { console.error('缺 crystal_verdict/ledger UNIQUE(report_date,grid_key)'); process.exit(1); }
 if (!/UNIQUE\s*\(model, ?app_version, ?density\)/i.test(sql)) { console.error('缺 locator UNIQUE(model,app_version,density)'); process.exit(1); }
-console.log('migration 434 四表 + 复合键约束齐全 ✓');
+console.log('migration 435 四表 + 复合键约束齐全 ✓');
 "
 
 echo "[crystal-smoke] 2. routes/crystal.js 已挂进 routes.js"
