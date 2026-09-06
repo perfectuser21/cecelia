@@ -96,7 +96,7 @@ export async function aggregateUnitMetrics(
     rows = r?.rows ?? [];
   } catch (err) {
     // 表缺失/源不可达 → 降级数据缺口，绝不误判（件4 PRD 边界③）
-    console.warn(`[crystal-judge] 证据读取失败 unit=${unitKey}（降级 data_gap）:`, err.message);
+    console.warn('[crystal-judge] 证据读取失败（降级 data_gap）unit=%s: %s', unitKey, err.message);
     return gapMetrics(unitKey);
   }
 
@@ -269,7 +269,7 @@ export async function runCrystalJudge(dbPool = pool, now = new Date()) {
       gridCount++;
     } catch (err) {
       // 单段失败不阻断其余段（失败语义声明）；写 Brain log
-      console.warn(`[crystal-judge] unit ${gridKey} 判决失败（跳过）:`, err.message);
+      console.warn('[crystal-judge] 单段判决失败（跳过）unit=%s: %s', gridKey, err.message);
     }
   }
 

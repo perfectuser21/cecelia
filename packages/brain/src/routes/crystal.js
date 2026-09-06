@@ -209,7 +209,10 @@ router.post('/evidence', async (req, res) => {
     try {
       judged = await judgeUnit(pool, unitKey, reportDate);
     } catch (err) {
-      console.warn(`[crystal] 入库后即判失败 unit=${unitKey}（证据已落库，等每日全量兜底）:`, err.message);
+      // unitKey 来自 req.body：放进模板字符串就落在 console.warn 的格式串位置，
+      // 请求方塞 %s 之类即可影响日志输出（CodeQL: externally-controlled format string）。
+      // 格式串必须是固定字面量，外部值一律走参数位。
+      console.warn('[crystal] 入库后即判失败（证据已落库，等每日全量兜底）unit=%s: %s', unitKey, err.message);
     }
 
     return res.json({
