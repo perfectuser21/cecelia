@@ -282,7 +282,7 @@ echo "✅ Golden Path 验证通过（六类全 PASS + 负向真拦 + 未知格�
 
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
 |---|---|---|---|
-| 整个 Sprint（CONTRACTS schema 化 + 六类断言引擎 + 边界拦截） | `sprints/09052200-kernel-b6faa20c/tests/check-handoffs-contracts.test.mjs` | 恰为 home-sequencer STAGE_ORDER 去掉 init/finalize 的九格 / 恰 8 格且与 CODING_CELLS 无交集 / 恰为六类且冻结不可变 / 覆盖全部 17 格且每格含 precondition/postcondition/side_effects 三段 / 合规交接对象判 PASS / 缺 source_attempt_id 判 FAIL 并点名字段 / 合法迁移判 PASS 非法迁移判 FAIL / 达标判 PASS 未达标判 FAIL / 越界输入被真拦判 PASS 漏网判 FAIL / 无 db resolver 判 UNDECIDABLE 不判 PASS / resolver 计数达标判 PASS 不足判 FAIL / 无 probe resolver 判 UNDECIDABLE 不判 PASS / 未知格标识抛错 / 存在 FAIL 或 UNDECIDABLE 时 ok=false | import check-handoffs.mjs 失败（文件不存在）→ 13 tests 全红（已实证：Failed to load url check-handoffs.mjs） |
+| 整个 Sprint（CONTRACTS schema 化 + 六类断言引擎 + 边界拦截） | `sprints/09052200-kernel-b6faa20c/tests/check-handoffs-contracts.test.js` | 恰为 home-sequencer STAGE_ORDER 去掉 init/finalize 的九格 / 恰 8 格且与 CODING_CELLS 无交集 / 恰为六类且冻结不可变 / 覆盖全部 17 格且每格含 precondition/postcondition/side_effects 三段 / 合规交接对象判 PASS / 缺 source_attempt_id 判 FAIL 并点名字段 / 合法迁移判 PASS 非法迁移判 FAIL / 达标判 PASS 未达标判 FAIL / 越界输入被真拦判 PASS 漏网判 FAIL / 无 db resolver 判 UNDECIDABLE 不判 PASS / resolver 计数达标判 PASS 不足判 FAIL / 无 probe resolver 判 UNDECIDABLE 不判 PASS / 未知格标识抛错 / 存在 FAIL 或 UNDECIDABLE 时 ok=false | import check-handoffs.mjs 失败（文件不存在）→ 13 tests 全红（已实证：Failed to load url check-handoffs.mjs） |
 
 ## notes
 
