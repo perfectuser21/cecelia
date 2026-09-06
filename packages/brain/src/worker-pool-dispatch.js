@@ -53,8 +53,9 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
   const execFn = deps.execFn
     || ((cmd, opts) => execSync(cmd, { encoding: 'utf8', timeout: 30000, ...opts }));
   const { host, opts: sshOpts } = deps.ssh || defaultSshPrefix();
-  // 宿主直跑（测试/本机进程）时不套 ssh
-  const wrap = (cmd) => (host ? `ssh ${sshOpts} ${host} "${cmd.replace(/"/g, '\\"')}"` : cmd);
+  // 宿主直跑（测试/本机进程）时不套 ssh。先转义反斜杠再转义引号——只转义引号
+  // 会被 \" 序列绕过（CodeQL js/incomplete-sanitization）
+  const wrap = (cmd) => (host ? `ssh ${sshOpts} ${host} "${cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : cmd);
 
   // ── 1. 槽位盘点（stdout 判读，exit code 不可信）────────────────────────────
   const slotState = {};
