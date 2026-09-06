@@ -71,12 +71,16 @@ describe('F1 step1 · 结晶判官必须吃到运行证据', () => {
   });
 
   // 诚实优先：缺 baseline 时不许拿热路径成本顶替（那会把 cost_benefit 算小一个数量级），
-  // 也不许臆造，直接记数据缺口。
-  it('证据缺 baseline_tokens 时记 data_gap，不用热路径成本顶替', async () => {
+  // 也不许臆造。2026-09-07 第二铲纠偏：缺的只是**成本**维度，运行维度是真数——
+  // 再把 n_runs 抹成 0 就成了另一种谎（编码线跑了 30 次会被写成没跑过）。
+  // 故拆成两个标志：cost_gap=成本算不出，data_gap=整条源不可达。
+  it('证据缺 baseline_tokens 时记 cost_gap（不用热路径成本顶替，也不抹掉真实次数）', async () => {
     const noBaseline = { ...REAL_EVIDENCE, baseline_tokens: null };
     const m = await aggregateUnitMetrics(poolReturning([noBaseline]), 'search_account', '2026-09-06');
-    expect(m.data_gap).toBe(true);
+    expect(m.cost_gap).toBe(true);
     expect(m.token_cost).not.toBe(696);
+    expect(m.data_gap).toBe(false);
+    expect(m.n_runs).toBe(REAL_EVIDENCE.runs);
   });
 
   it('库里没有该段证据时仍诚实降级为 data_gap（保留件4 的不误判语义）', async () => {
