@@ -110,6 +110,9 @@ export function extractOpenclawAgents(config) {
           skills: Array.isArray(e.skills) ? e.skills.filter((x) => typeof x === 'string') : [],
           tools_allow: Array.isArray(e.tools?.alsoAllow) ? e.tools.alsoAllow.filter((x) => typeof x === 'string') : [],
           tools_deny: Array.isArray(e.tools?.deny) ? e.tools.deny.filter((x) => typeof x === 'string') : [],
+          // 组织维度（花名册）：归属 + 岗位类型
+          org: inferAgentOrg(String(e.id || e.name || '')),
+          role_type: inferAgentRoleType(String(e.id || e.name || '')),
         },
       };
     })
@@ -137,6 +140,36 @@ export function extractOpenclawSkills(config) {
   }
   return [...usedBy.entries()].map(([name, used]) => ({ name, used_by: used.sort() }))
     .sort((a, b) => b.used_by.length - a.used_by.length || a.name.localeCompare(b.name));
+}
+
+
+// ─── 组织维度（数字员工花名册）────────────────────────────────────────
+// 主理人 2026-09-06 定调：管理单位是 agent（数字员工，组部门/分职责），
+// skill 是可共享能力——同一套 social-* skill 装在悦升号和金诺号两个不同身份上。
+const ORG_PREFIX = [
+  ['zenithjoy-', '悦升'], ['jinoshengyuan-', '金诺盛源'],
+  ['affine-jinnuo', '金诺盛源'], ['affine-yuesheng', '悦升'],
+];
+/** 组织归属：按命名前缀推（无前缀=自家内部平台 agent）。认不出不硬猜租户。 */
+export function inferAgentOrg(name = '') {
+  const n = String(name);
+  for (const [p, org] of ORG_PREFIX) if (n.startsWith(p)) return org;
+  return '内部平台';
+}
+
+const ROLE_RULES = [
+  [/-router$|^.*-router$/, 'router'],
+  [/commander/, 'commander'],
+  [/-worker$|worker$/, 'worker'],
+  [/^verifier$|verifier/, 'verifier'],
+  [/^curator$|curator/, 'curator'],
+  [/social-media|ai-office|office-operator|research/, 'operator'],
+];
+/** 岗位类型：同一 skill 可装在不同岗位上，故岗位与能力分开表达。认不出=通用 agent。 */
+export function inferAgentRoleType(name = '') {
+  const n = String(name);
+  for (const [re, role] of ROLE_RULES) if (re.test(n)) return role;
+  return 'agent';
 }
 
 export function parseGhaCron(out) {
