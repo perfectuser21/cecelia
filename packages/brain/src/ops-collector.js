@@ -89,18 +89,54 @@ export function extractOpenclawAgents(config) {
       const orchestrates = Array.isArray(sa?.allowAgents)
         ? sa.allowAgents.filter((x) => typeof x === 'string')
         : [];
+      // model 可能是字符串或 { primary, fallbacks }
+      const model = typeof e.model === 'string' ? e.model
+        : (typeof e.model?.primary === 'string' ? e.model.primary : null);
+      const id = e.identity || {};
       return {
         name: String(e.id || e.name || ''),
         agent_type: 'openclaw_agent',
-        meta: { // 白名单——clawdbot.json 含明文凭据，绝不整份入库
-          model: typeof e.model === 'string' ? e.model : null,
+        meta: { // 白名单——clawdbot.json 含明文凭据（apiKey/auth），绝不整份入库
+          model,
           workspace: typeof e.workspace === 'string' ? e.workspace : null,
+          agent_dir: typeof e.agentDir === 'string' ? e.agentDir : null,
           orchestrates,
           delegation_mode: typeof sa?.delegationMode === 'string' ? sa.delegationMode : null,
+          // 人设（agent 是什么角色）
+          identity_name: typeof id.name === 'string' ? id.name : null,
+          identity_theme: typeof id.theme === 'string' ? id.theme : null,
+          identity_emoji: typeof id.emoji === 'string' ? id.emoji : null,
+          // skill 才是最小执行单元——agent 只是承载它的容器
+          skills: Array.isArray(e.skills) ? e.skills.filter((x) => typeof x === 'string') : [],
+          tools_allow: Array.isArray(e.tools?.alsoAllow) ? e.tools.alsoAllow.filter((x) => typeof x === 'string') : [],
+          tools_deny: Array.isArray(e.tools?.deny) ? e.tools.deny.filter((x) => typeof x === 'string') : [],
         },
       };
     })
     .filter((a) => a.name);
+}
+
+/**
+ * skill 提取：skill 是最小执行单元（真正定义"怎么干"的那层），与 agent 多对多——
+ * 实证 social-leadgen-workflow 被 4 个 agent 共用。汇总每个 skill 被哪些 agent 使用。
+ */
+export function extractOpenclawSkills(config) {
+  const entries = config?.agents?.entries;
+  const list = Array.isArray(entries) ? entries
+    : entries && typeof entries === 'object'
+      ? Object.entries(entries).map(([id, v]) => ({ id, ...(v || {}) }))
+      : [];
+  const usedBy = new Map();
+  for (const e of list) {
+    const owner = String(e?.id || e?.name || '');
+    for (const s of e?.skills || []) {
+      if (typeof s !== 'string') continue;
+      if (!usedBy.has(s)) usedBy.set(s, []);
+      if (owner) usedBy.get(s).push(owner);
+    }
+  }
+  return [...usedBy.entries()].map(([name, used]) => ({ name, used_by: used.sort() }))
+    .sort((a, b) => b.used_by.length - a.used_by.length || a.name.localeCompare(b.name));
 }
 
 export function parseGhaCron(out) {
