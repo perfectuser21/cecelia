@@ -1,6 +1,3 @@
-contract_branch: cp-harness-propose-r1-b6faa20c-rb690296f-a136
-sprint_dir: sprints/09052200-kernel-b6faa20c
-
 ---
 skeleton: false
 journey_type: autonomous
@@ -12,45 +9,45 @@ journey_type: autonomous
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] check-handoffs.mjs 落位且导出六个契约符号
+- [ ] [ARTIFACT] check-handoffs.mjs 落位且导出六个契约符号
   Test: manual:bash -c 'F=packages/brain/src/orchestrator/check-handoffs.mjs; grep -q CONTRACTS $F && grep -q CODING_CELLS $F && grep -q LEADGEN_CELLS $F && grep -q ASSERTION_CATEGORIES $F && grep -q evaluateAssertion $F && grep -q runCellContracts $F'
   期望: exit 0
 
-- [x] [ARTIFACT] 复用真实 handoff-schemas（禁 mock 边：import 真实 validateHandoffObject，不另写形状校验）
+- [ ] [ARTIFACT] 复用真实 handoff-schemas（禁 mock 边：import 真实 validateHandoffObject，不另写形状校验）
   Test: manual:bash -c 'F=packages/brain/src/orchestrator/check-handoffs.mjs; grep -q handoff-schemas $F && grep -q validateHandoffObject $F && grep -q home-sequencer $F && grep -q STAGE_ORDER $F'
   期望: exit 0
 
 ## BEHAVIOR 条目（五行剧本 — 内嵌可执行 manual: 命令，CLI + 冻结 fixture，断言对象为校验器真实输出）
 
-- [x] [BEHAVIOR] [L2] B-01: CONTRACTS 覆盖 coding 九格 + leadgen 八格共 17 格
+- [ ] [BEHAVIOR] [L2] B-01: CONTRACTS 覆盖 coding 九格 + leadgen 八格共 17 格
   动作: 跑 `check-handoffs.mjs --cells` 子命令
   预期观察: stdout 出现 `CELLS coding=9 leadgen=8 total=17`
   等待预算: 0s
   留证: CLI stdout（CELLS 行）
   Test: manual:bash -c 'node packages/brain/src/orchestrator/check-handoffs.mjs --cells | grep -q "coding=9 leadgen=8 total=17"'
 
-- [x] [BEHAVIOR] [L2] B-02: 缺 source_attempt_id 交接对象 → artifact_compliance FAIL 并点名字段
+- [ ] [BEHAVIOR] [L2] B-02: 缺 source_attempt_id 交接对象 → artifact_compliance FAIL 并点名字段
   动作: 对 generate 格跑缺 source_attempt_id 的候选交接对象 fixture
   预期观察: 结果 JSON 出现 FAIL 且 reason 含 `source_attempt_id`（点名到缺失字段，非笼统失败）
   等待预算: 0s
   留证: CLI stdout（含 source_attempt_id 的 FAIL 判定）
   Test: manual:bash -c 'node packages/brain/src/orchestrator/check-handoffs.mjs generate sprints/09052200-kernel-b6faa20c/tests/fixtures/candidate-missing-source.json | grep -q source_attempt_id'
 
-- [x] [BEHAVIOR] [L2] B-03: record_persisted 无 db resolver → UNDECIDABLE 不判 PASS（INV-1 fail-closed，忽略 handoff 自报 db_count）
+- [ ] [BEHAVIOR] [L2] B-03: record_persisted 无 db resolver → UNDECIDABLE 不判 PASS（INV-1 fail-closed，忽略 handoff 自报 db_count）
   动作: 对 generate 格跑合规但自报 `db_count:999`/`persisted:true` 的 fixture，且不提供 context
   预期观察: 结果 JSON 出现 `UNDECIDABLE`（record_persisted 走权威 resolver 而非 handoff 自报值），且 `SUMMARY ... ok=false`
   等待预算: 0s
   留证: CLI stdout（UNDECIDABLE + ok=false）
   Test: manual:bash -c 'node packages/brain/src/orchestrator/check-handoffs.mjs generate sprints/09052200-kernel-b6faa20c/tests/fixtures/candidate-forged-dbcount.json | grep -q UNDECIDABLE'
 
-- [x] [BEHAVIOR] [L2] B-04: 未知格标识 → 显式报 unknown_cell，绝不静默 PASS
+- [ ] [BEHAVIOR] [L2] B-04: 未知格标识 → 显式报 unknown_cell，绝不静默 PASS
   动作: 用未定义 CONTRACTS 的格标识 `bogus_cell` 跑合规 fixture
   预期观察: stdout 出现 `unknown_cell`（显式报错），绝不出现 `ok=true`
   等待预算: 0s
   留证: CLI stdout（unknown_cell）
   Test: manual:bash -c 'node packages/brain/src/orchestrator/check-handoffs.mjs bogus_cell sprints/09052200-kernel-b6faa20c/tests/fixtures/candidate-compliant.json | grep -q unknown_cell'
 
-- [x] [BEHAVIOR] [L2] B-05: 纯类目断言（state_transition + numeric_threshold）合规输入全 PASS → ok=true exit 0
+- [ ] [BEHAVIOR] [L2] B-05: 纯类目断言（state_transition + numeric_threshold）合规输入全 PASS → ok=true exit 0
   动作: 对 evaluate 格跑合规 fixture（prev/next 合法迁移 + score 达标）
   预期观察: stdout 出现 `SUMMARY cell=evaluate ok=true`（state_transition 合法迁移 + numeric_threshold 达标均 PASS）
   等待预算: 0s

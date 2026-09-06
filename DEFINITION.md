@@ -8,7 +8,11 @@
 
 
 
-**Brain 版本**: 1.273.194
+**Brain 版本**: 1.273.195
+
+## Brain 1.273.195 — 契约 schema 化(Crystal 件2,认领 kernel 遗孤 PR#5162,九件收官)
+
+- check-handoffs 收编 brain(orchestrator/check-handoffs.mjs 337行):CONTRACTS={CODING九格+LEADGEN}可执行 pre/postcondition 断言集+冻结合同测试14断言+smoke+Test Contract 登记同步(.mjs→.js)。kernel b690296f 死于 deadline 后认领。
 
 ## Brain 1.273.194 — 三镜头接新入口(Crystal 件6,认领 kernel 遗孤 PR#5166)
 
