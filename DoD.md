@@ -120,3 +120,4 @@ journey_type: autonomous
 - [x] PR 合并后回写 Brain tasks/{task_id} status=completed
 
 > 认领收尾附注:size 闸经 harness label 豁免(kernel 产物);dod-behavior 由 playground 锁定根治。
+
