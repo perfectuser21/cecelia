@@ -2,7 +2,9 @@
 node_modules/
 
 # Playground 子项目（W19 walking skeleton 测试床，独立子项目无需 lockfile 跟踪）
-playground/package-lock.json
+# playground/package-lock.json 曾被忽略(90c1cc8301 W19 骨架期保持轻量);09-06 起入库锁定——
+# 无锁裸装使 dod-behavior-dynamic 的 playground npm install 在 runner 上确定性 edgesOut 崩溃
+# (本地 mac/docker npm10.8/10.9 四种组合均无法复现,浮动解析在 runner 独有环境炸),锁定根治。
 
 # Environment (ALL .env files except .env.example)
 .env
