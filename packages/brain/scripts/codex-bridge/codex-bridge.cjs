@@ -51,14 +51,18 @@ const WORK_DIR = process.env.WORK_DIR
 // 掐死（生产实测 legacy_workspace_repo_not_supported:https://github.com/...）。
 function normalizeRepoSlug(baseRepo) {
   if (!baseRepo) return baseRepo;
-  return String(baseRepo)
-    .trim()
-    // https://github.com/ 或 https://x-access-token:TOKEN@github.com/
-    .replace(/^https?:\/\/(?:[^@/]*@)?github\.com\//i, '')
-    // git@github.com:owner/repo
-    .replace(/^git@github\.com:/i, '')
-    .replace(/\.git$/i, '')
-    .replace(/\/+$/, '');
+  let s = String(baseRepo).trim();
+  // https://github.com/ 或 https://x-access-token:TOKEN@github.com/
+  s = s.replace(/^https?:\/\/(?:[^@/]*@)?github\.com\//i, '');
+  // git@github.com:owner/repo
+  s = s.replace(/^git@github\.com:/i, '');
+  if (/\.git$/i.test(s)) s = s.slice(0, -4);
+  // 去尾部斜杠用字符循环而非 /\/+$/：后者没有起始锚点，正则引擎要在每个位置
+  // 重试，对 "a////…/" 这类输入退化成 O(n²)（CodeQL: Polynomial regular
+  // expression used on uncontrolled data）。baseRepo 来自 DB payload，属不可控输入。
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) end -= 1;
+  return end === s.length ? s : s.slice(0, end);
 }
 
 function resolveLegacyWorkDir({ baseRepo, workDir, defaultWorkDir = WORK_DIR } = {}) {
