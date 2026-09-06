@@ -492,30 +492,25 @@ export function isMissingDatabaseError(err) {
   return !!(err?.message && err.message.includes('Could not find database'));
 }
 
-export function buildOpsAgentNotionProperties(r) {
+// 合并单库「Ops 运行图谱」：一行=一个运行单元（agent 或排程），role/workflow/schedule 都是属性。
+export function buildOpsUnitNotionProperties(u) {
   const p = {
-    Name: { title: [{ text: { content: String(r.name).slice(0, 200) } }] },
-    Source: { select: { name: r.source } },
-    Host: { select: { name: r.host_alias } },
-    Status: { select: { name: r.status } },
+    Name: { title: [{ text: { content: String(u.name).slice(0, 200) } }] },
+    Source: { select: { name: u.source } },
+    Machine: { select: { name: u.host_alias } },
+    Status: { select: { name: u.status || 'active' } },
+    Role: { select: { name: u.role || 'solo' } },
+    Repeat: { checkbox: !!u.schedule_desc },          // 有调度=定时重复
+    Suspicious: { checkbox: !!u.suspicious },
   };
-  if (r.agent_type) p.Type = { rich_text: buildRichText(r.agent_type) };
-  if (r.last_seen_at) p.LastSeen = { date: { start: new Date(r.last_seen_at).toISOString() } };
-  return p;
-}
-
-export function buildOpsScheduleNotionProperties(r, suspicious = false) {
-  const p = {
-    Name: { title: [{ text: { content: String(r.label).slice(0, 200) } }] },
-    Source: { select: { name: r.source } },
-    Host: { select: { name: r.host_alias } },
-    Kind: { select: { name: r.kind } },
-    Schedule: { rich_text: buildRichText(r.schedule_desc) },
-    Suspicious: { checkbox: !!suspicious },
-    Active: { checkbox: r.active !== false },
-  };
-  if (r.next_run_utc) p.NextRun = { date: { start: new Date(r.next_run_utc).toISOString() } };
-  if (r.last_state) p.LastState = { rich_text: buildRichText(r.last_state) };
+  if (u.agent_type) p.Type = { rich_text: buildRichText(u.agent_type) };
+  if (Array.isArray(u.orchestrated_by) && u.orchestrated_by.length) {
+    p.Workflow = { rich_text: buildRichText(u.orchestrated_by.join(', ')) }; // 编排它的父（图，可多父）
+  }
+  if (u.schedule_desc) p.Schedule = { rich_text: buildRichText(u.schedule_desc) };
+  if (u.kind) p.Kind = { select: { name: u.kind } };
+  if (u.next_run_utc) p.NextRun = { date: { start: new Date(u.next_run_utc).toISOString() } };
+  if (u.last_seen_at) p.LastSeen = { date: { start: new Date(u.last_seen_at).toISOString() } };
   return p;
 }
 
@@ -554,26 +549,59 @@ async function upsertOpsRows(pool, token, { table, dbId, rows, buildProps }) {
   }
 }
 
-async function pushOpsAgents(pool, token) {
+// 合并推送：agent 行（带 role/workflow/合并调度）+ 孤儿排程行，全推同一个 graph_db。
+async function pushOpsGraph(pool, token) {
   const dbs = await getOpsNotionDbs(pool);
-  if (!dbs?.agents_db || dbs.disabled) return;
-  const { rows } = await pool.query(
+  if (!dbs?.graph_db || dbs.disabled) return;
+
+  // 全局：算 orchestrated_by（child→[parents]）+ active schedule 索引（供 agent 行合并 + 孤儿判定）
+  const allAgents = (await pool.query(`SELECT name, meta FROM ops_agents`)).rows;
+  const orchestratedBy = new Map();
+  for (const a of allAgents) {
+    for (const child of a.meta?.orchestrates || []) {
+      if (!orchestratedBy.has(child)) orchestratedBy.set(child, []);
+      orchestratedBy.get(child).push(a.name);
+    }
+  }
+  const allSched = (await pool.query(`SELECT * FROM ops_schedule_entries WHERE active = TRUE`)).rows;
+  const schedByKey = new Map(allSched.map((s) => [`${s.source}|${s.host_alias}|${s.label}`, s]));
+  const agentKeys = new Set((await pool.query(`SELECT source, host_alias, name FROM ops_agents`)).rows
+    .map((a) => `${a.source}|${a.host_alias}|${a.name}`));
+
+  // 1. agent 行（合并对应调度）
+  const agentRows = (await pool.query(
     `SELECT * FROM ops_agents
      WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
-     ORDER BY updated_at LIMIT 50`);
-  await upsertOpsRows(pool, token, { table: 'ops_agents', dbId: dbs.agents_db, rows, buildProps: buildOpsAgentNotionProperties });
-}
-
-async function pushOpsSchedules(pool, token) {
-  const dbs = await getOpsNotionDbs(pool);
-  if (!dbs?.calendar_db || dbs.disabled) return;
-  const { rows } = await pool.query(
-    `SELECT * FROM ops_schedule_entries
-     WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
-     ORDER BY updated_at LIMIT 50`);
+     ORDER BY updated_at LIMIT 50`)).rows;
   await upsertOpsRows(pool, token, {
-    table: 'ops_schedule_entries', dbId: dbs.calendar_db, rows,
-    buildProps: (r) => buildOpsScheduleNotionProperties(r, false),
+    table: 'ops_agents', dbId: dbs.graph_db, rows: agentRows,
+    buildProps: (a) => {
+      const orchestrates = a.meta?.orchestrates || [];
+      const parents = orchestratedBy.get(a.name) || [];
+      const sched = schedByKey.get(`${a.source}|${a.host_alias}|${a.name}`);
+      return buildOpsUnitNotionProperties({
+        source: a.source, host_alias: a.host_alias, name: a.name, agent_type: a.agent_type,
+        status: a.status, last_seen_at: a.last_seen_at,
+        role: orchestrates.length ? 'orchestrator' : (parents.length ? 'member' : 'solo'),
+        orchestrated_by: parents,
+        kind: sched?.kind ?? null, schedule_desc: sched?.schedule_desc ?? null, next_run_utc: sched?.next_run_utc ?? null,
+      });
+    },
+  });
+
+  // 2. 孤儿排程行（无对应 agent，如 gha）→ 独立行 role=scheduled
+  const orphanRows = (await pool.query(
+    `SELECT * FROM ops_schedule_entries
+     WHERE active = TRUE AND (notion_synced_at IS NULL OR updated_at > notion_synced_at)
+     ORDER BY updated_at LIMIT 50`)).rows
+    .filter((s) => !agentKeys.has(`${s.source}|${s.host_alias}|${s.label}`));
+  await upsertOpsRows(pool, token, {
+    table: 'ops_schedule_entries', dbId: dbs.graph_db, rows: orphanRows,
+    buildProps: (s) => buildOpsUnitNotionProperties({
+      source: s.source, host_alias: s.host_alias, name: s.label, agent_type: 'schedule',
+      status: 'active', role: 'scheduled', orchestrated_by: [],
+      kind: s.kind, schedule_desc: s.schedule_desc, next_run_utc: s.next_run_utc,
+    }),
   });
 }
 
@@ -594,6 +622,5 @@ export async function runNotionPushSync(pool) {
   await pushDecisions(pool, token);
   await pushInitiativeContracts(pool, token);
   await pushAdvancementItems(pool, token);
-  await pushOpsAgents(pool, token);
-  await pushOpsSchedules(pool, token);
+  await pushOpsGraph(pool, token);
 }
