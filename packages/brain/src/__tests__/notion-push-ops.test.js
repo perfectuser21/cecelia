@@ -81,3 +81,48 @@ describe('isMissingDatabaseError', () => {
     expect(isMissingDatabaseError(null)).toBe(false);
   });
 });
+
+describe('buildOpsWorkflowNotionProperties（业务流程库）', () => {
+  it('流程行：名字/阶段数/active/阶段序列', async () => {
+    const { buildOpsWorkflowNotionProperties } = await import('../notion-push-sync.js');
+    const p = buildOpsWorkflowNotionProperties({
+      source: 'n8n', wf_id: 'AwrSocialLeadgenV4', name: 'Social Leadgen V4（8阶段触达）',
+      active: true, stage_count: 8, node_count: 38,
+      meta: { stages: ['手机预检', '视频发现', '全文判定'] },
+    });
+    expect(p.Name.title[0].text.content).toBe('Social Leadgen V4（8阶段触达）');
+    expect(p.Source.select.name).toBe('n8n');
+    expect(p.Active.checkbox).toBe(true);
+    expect(p.Stages.number).toBe(8);
+    expect(p.Flow.rich_text[0].text.content).toBe('手机预检 → 视频发现 → 全文判定');
+    expect(p.Agents).toBeUndefined(); // relation 第二阶段补
+  });
+
+  it('无阶段的流程（如通道单点）：Flow 不发', async () => {
+    const { buildOpsWorkflowNotionProperties } = await import('../notion-push-sync.js');
+    const p = buildOpsWorkflowNotionProperties({
+      source: 'n8n', wf_id: 'OpcCmdStageCallV4', name: '通道单点',
+      active: true, stage_count: 0, meta: { stages: [] },
+    });
+    expect(p.Flow).toBeUndefined();
+    expect(p.Stages.number).toBe(0);
+  });
+});
+
+describe('buildWorkflowAgentsRelation（workflow → agent 跨库关联）', () => {
+  it('按 uses_agents 名字映射到图谱库页 id', async () => {
+    const { buildWorkflowAgentsRelation } = await import('../notion-push-sync.js');
+    const idByName = new Map([['work-commander', 'page-wc'], ['dev', 'page-dev']]);
+    const p = buildWorkflowAgentsRelation({ uses_agents: ['work-commander'] }, idByName);
+    expect(p.Agents.relation).toEqual([{ id: 'page-wc' }]);
+  });
+  it('agent 页未建 → 跳过不发 undefined', async () => {
+    const { buildWorkflowAgentsRelation } = await import('../notion-push-sync.js');
+    const p = buildWorkflowAgentsRelation({ uses_agents: ['work-commander', '没建的'] }, new Map([['work-commander', 'page-wc']]));
+    expect(p.Agents.relation).toEqual([{ id: 'page-wc' }]);
+  });
+  it('无 agent → 空数组（清残留）', async () => {
+    const { buildWorkflowAgentsRelation } = await import('../notion-push-sync.js');
+    expect(buildWorkflowAgentsRelation({ uses_agents: [] }, new Map()).Agents.relation).toEqual([]);
+  });
+});
