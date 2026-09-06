@@ -39,3 +39,18 @@ describe('EXEC_TIMEOUT_MS', () => {
     expect(EXEC_TIMEOUT_MS).toBeGreaterThan(0);
   });
 });
+
+describe('defaultExec — 大输出不炸（ENOBUFS 回归）', () => {
+  it('导出 EXEC_MAX_BUFFER 且 ≥ 64MB（n8n 画布 2.1MB + run 查询数 MB，默认 1MB 必炸）', async () => {
+    const { EXEC_MAX_BUFFER } = await import('../host-exec.js');
+    expect(typeof EXEC_MAX_BUFFER).toBe('number');
+    expect(EXEC_MAX_BUFFER).toBeGreaterThanOrEqual(64 * 1024 * 1024);
+  });
+
+  it('defaultExec 真跑大输出（2MB）不抛 ENOBUFS', async () => {
+    const { defaultExec } = await import('../host-exec.js');
+    // 生成 ~2MB 输出，复现 n8n 画布导出的体量
+    const out = defaultExec('head -c 2100000 /dev/zero | tr "\\0" "x"');
+    expect(out.length).toBeGreaterThan(2_000_000);
+  });
+});
