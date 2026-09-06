@@ -44,16 +44,39 @@ const RUNNER_SH = process.env.RUNNER_SH
 const WORK_DIR = process.env.WORK_DIR
   || path.join(os.homedir(), 'repos/cecelia');
 
+// 把仓库标识归一化成 owner/repo slug。上游 payload.base_repo 的写法不统一：
+// harness_initiative 任务存的是完整 URL（https://github.com/perfectuser21/cecelia），
+// 老调用方传短 slug（perfectuser21/cecelia），还可能带 .git 后缀或尾部斜杠。
+// 不归一化就用 === 比较，完整 URL 永远匹配不上，整类任务在派发阶段被兜底 throw
+// 掐死（生产实测 legacy_workspace_repo_not_supported:https://github.com/...）。
+function normalizeRepoSlug(baseRepo) {
+  if (!baseRepo) return baseRepo;
+  let s = String(baseRepo).trim();
+  // https://github.com/ 或 https://x-access-token:TOKEN@github.com/
+  s = s.replace(/^https?:\/\/(?:[^@/]*@)?github\.com\//i, '');
+  // git@github.com:owner/repo
+  s = s.replace(/^git@github\.com:/i, '');
+  if (/\.git$/i.test(s)) s = s.slice(0, -4);
+  // 去尾部斜杠用字符循环而非 /\/+$/：后者没有起始锚点，正则引擎要在每个位置
+  // 重试，对 "a////…/" 这类输入退化成 O(n²)（CodeQL: Polynomial regular
+  // expression used on uncontrolled data）。baseRepo 来自 DB payload，属不可控输入。
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) end -= 1;
+  return end === s.length ? s : s.slice(0, end);
+}
+
 function resolveLegacyWorkDir({ baseRepo, workDir, defaultWorkDir = WORK_DIR } = {}) {
-  if (baseRepo === 'perfectuser21/cecelia' || (!baseRepo && !workDir)) {
+  const repoSlug = normalizeRepoSlug(baseRepo);
+  if (repoSlug === 'perfectuser21/cecelia' || (!baseRepo && !workDir)) {
     return defaultWorkDir;
   }
-  if (baseRepo === 'perfectuser21/zenithjoy-workspace') {
+  if (repoSlug === 'perfectuser21/zenithjoy-workspace') {
     const zenithjoyWorkDir = process.env.ZENITHJOY_WORK_DIR;
     if (!zenithjoyWorkDir) throw new Error('legacy_workspace_not_configured:perfectuser21/zenithjoy-workspace');
     return zenithjoyWorkDir;
   }
   if (!baseRepo && workDir) return workDir;
+  // 错误信息保留调用方传进来的原始写法，便于从日志直接看出上游存了什么
   throw new Error(`legacy_workspace_repo_not_supported:${baseRepo}`);
 }
 
@@ -782,6 +805,7 @@ module.exports = {
   kernelHealthEvidence,
   loadRawAuth,
   normalizeExecutionTimeoutMs,
+  normalizeRepoSlug,
   resolveLegacyWorkDir,
   setupInjectedAccounts,
 };
