@@ -49,6 +49,14 @@ st="$(q "SELECT status FROM ops_agents WHERE source='openclaw' AND host_alias='$
 [[ "$cnt" == "1" && "$st" == "offline" ]] || fail "upsert 应幂等更新，实得 cnt=$cnt status=$st"
 pass "ops_agents upsert 幂等"
 
+# 3.5 编排关系（刀2）：meta.orchestrates 存取，供 role/workflow 现算
+q "INSERT INTO ops_agents (source,host_alias,name,status,last_seen_at,meta) VALUES
+   ('openclaw','${TAG}-hk','orch','active',NOW(),'{\"orchestrates\":[\"child-a\",\"child-b\"],\"delegation_mode\":\"prefer\"}'::jsonb)
+   ON CONFLICT (source,host_alias,name) DO UPDATE SET meta=EXCLUDED.meta" >/dev/null
+orch="$(q "SELECT jsonb_array_length(meta->'orchestrates') FROM ops_agents WHERE source='openclaw' AND host_alias='${TAG}-hk' AND name='orch'")"
+[[ "$orch" == "2" ]] || fail "meta.orchestrates 应存 2 个下级，实得 $orch"
+pass "编排关系 meta.orchestrates 存取（role/workflow 现算数据源）"
+
 # 4. W1: deactivation 用应用时钟 collectedAt，刚写入行不被误标
 T0="2026-09-05T00:00:00Z"; T1="2026-09-05T00:05:00Z"
 # 旧行 updated_at=T0；本轮 collectedAt=T1 写入新行 updated_at=T1
