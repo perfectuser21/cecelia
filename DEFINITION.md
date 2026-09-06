@@ -8,7 +8,17 @@
 
 
 
-**Brain 版本**: 1.274.2
+**Brain 版本**: 1.276.0
+
+## Brain 1.276.0 — 并行血管P1:worker池自动派发 scheduler job
+
+- 新增 `worker-pool-dispatch` scheduler job(5min自gate):扫 queued 的 parallel_worker/canvas+exploratory 任务→tmux slot7-9 发射交互 /dev worker(slot1-6 是 harness 地盘,白名单铁律进 smoke)
+- 并发上限2;CAS 预占 claimed_by=interactive-dev-skill(/dev claim 409 预占约定);发射即记 dispatch_events,失败 failed_dispatch+回滚 claim
+- prompt 经宿主文件交付;SSH 逃逸对齐 harness headed 先例(任务 873acc6d)
+
+## Brain 1.275.0 — watchdog never-started 有头豁免条目补录（并行血管P2，随 1.274.1 上产）
+
+- harness-watchdog 区段 C：claimed_by 含 interactive-dev-skill 且 claimed_at < 40min（HEADED_CLAIM_GRACE_MINUTES）不判 never-started——有头 /dev 会话 PrepPRD/TDD 阶段本就不写 initiative_runs，docker 容器探测救不了有头；候选 SELECT 与事务内 FOR UPDATE 双处谓词防 TOCTOU；超 40min 无 run 活动落回原判死。09-06 战役误杀 4 次案卷，decision 45a2bcfb。（功能已随 #5183/1.274.1 上产；条目走碎片补录——#5183 合并抢跑于五件套改造 push 之前）
 
 ## Brain 1.274.0 — 版本发布碎片化(并行血管 P3)
 
