@@ -187,7 +187,9 @@ process.exit(9);
   };
 
   return {
-    run: () => spawnSync('/usr/bin/python3', [ENFORCER, '--once'], { env, encoding: 'utf8' }),
+    // 走 PATH 上的 python3：/usr/bin/python3 是 macOS 专属路径，
+    // 硬编码它这组用例就只能在本机跑、进不了 ubuntu CI。
+    run: () => spawnSync('python3', [ENFORCER, '--once'], { env, encoding: 'utf8' }),
     calls: () => {
       try { return readFileSync(callsFile, 'utf8').trim().split('\n').filter(Boolean); }
       catch { return []; }

@@ -228,8 +228,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Watchdog 回归测试
+      # 三组各有专用 config（root 锁在各自目录），必须逐个跑；
+      # 少跑一个就等于那一组回归写了没进 CI。
+      - name: login-watchdog 回归测试
         run: npx --yes vitest@3 run --config tests/regression/tailscale-login-watchdog/vitest.config.mjs --reporter=verbose
+      - name: us-exit enforcer 回归测试（含 9-07 计数器残留）
+        run: npx --yes vitest@3 run --config tests/regression/tailscale-us-exit/vitest.config.mjs --reporter=verbose
+      - name: health-watchdog 回归测试
+        run: npx --yes vitest@3 run --config tests/regression/tailscale-health-watchdog/vitest.config.mjs --reporter=verbose
 
   # ─── ESLint（brain 或 workspace 变更时）──────────────────────
   eslint:
