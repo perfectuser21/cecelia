@@ -1,0 +1,29 @@
+{
+  "name": "open_publish",
+  "version": 1,
+  "distilled_from": "traces/trace-open_publish-2026-09-07T00-23-01-837Z.json, traces/trace-open_publish-2026-09-07T00-22-31-645Z.json, traces/trace-open_publish-2026-09-07T00-21-58-756Z.json",
+  "distilled_at": "2026-09-07T00:28:19.818Z",
+  "converged_over": 3,
+  "reset_app": true,
+  "precondition": [
+    {
+      "type": "foreground_package",
+      "value": "com.ss.android.ugc.aweme",
+      "note": "实测失败案例：App 没起来即整条挂掉，reset_app 后仍须验前台"
+    }
+  ],
+  "steps": [
+    {
+      "op": "tapRole",
+      "role": "publish_button",
+      "describe": "底部导航栏中间的加号发布按钮",
+      "wait_ms": 1500
+    }
+  ],
+  "postcondition": {
+    "type": "foreground_activity",
+    "value": "com.ss.android.ugc.aweme.shortvideo.ui.VideoRecordNewActivity",
+    "note": "「进没进拍摄页」安卓自己有确定性答案，不必问 LLM 看截图：零 token、不会看错，且权限弹窗遮挡时前台会变成弹窗因而顺带被抓住。判定层不蒸馏管的是语义推断，不管系统状态读取。"
+  },
+  "side_effects": []
+}

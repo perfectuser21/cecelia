@@ -1,0 +1,47 @@
+{
+  "name": "search_account_v4",
+  "version": 1,
+  "distilled_from": "traces/trace-search_account_v2-2026-09-06T16-09-21-686Z.json, traces/trace-search_account_v2-2026-09-06T16-16-45-229Z.json, traces/trace-search_account_v2-2026-09-06T16-18-05-612Z.json",
+  "distilled_at": "2026-09-06T16:26:20.747Z",
+  "converged_over": 2,
+  "reset_app": true,
+  "precondition": [
+    {
+      "type": "foreground_package",
+      "value": "com.ss.android.ugc.aweme",
+      "note": "实测失败案例：App 没起来即整条挂掉，reset_app 后仍须验前台"
+    }
+  ],
+  "steps": [
+    {
+      "op": "tapRole",
+      "role": "search_entry",
+      "describe": "顶部右侧的搜索按钮",
+      "wait_ms": 1500
+    },
+    {
+      "op": "type",
+      "textFrom": "target",
+      "wait_ms": 800
+    },
+    {
+      "op": "tapRole",
+      "role": "search_button",
+      "describe": "点击右上角搜索按钮执行账号搜索",
+      "wait_ms": 1500
+    },
+    {
+      "op": "tapRole",
+      "role": "tab_users",
+      "describe": "搜索结果中的用户标签页",
+      "wait_ms": 1500
+    }
+  ],
+  "postcondition": {
+    "type": "vision",
+    "describe": "这张安卓截图里，「在抖音里搜索账号 langzi63485，并切换到搜索结果的「用户」标签页」这件事是否已经完成？",
+    "needs_review": true,
+    "note": "自动生成的草稿断言，人工复核后去掉 needs_review。判定层永不蒸馏成硬编码。"
+  },
+  "side_effects": []
+}
