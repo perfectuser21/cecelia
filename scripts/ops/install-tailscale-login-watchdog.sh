@@ -47,11 +47,15 @@ sudo /usr/bin/install -d -o "$UID_NUM" -m 0700 "$STATE_DIR"
 
 echo "▸ 写入 $NEW_PLIST"
 mkdir -p "$AGENTS_DIR"
-/usr/bin/python3 - "$NEW_PLIST" "$NEW_LABEL" "$INSTALLED_SCRIPT" "$LOG_FILE" "$HOST_NAME" <<'PY'
+# perfect21 是西安执行机的 primary 美国出口，重认证会把 exit node 广播冲掉
+# （9-06 实测 ExitNodeOption=False），装机时默认打开事后补广播。
+ADVERTISE_EXIT="${CECELIA_LOGIN_WATCHDOG_ADVERTISE_EXIT:-1}"
+
+/usr/bin/python3 - "$NEW_PLIST" "$NEW_LABEL" "$INSTALLED_SCRIPT" "$LOG_FILE" "$HOST_NAME" "$ADVERTISE_EXIT" <<'PY'
 import plistlib
 import sys
 
-plist_path, label, script_path, log_file, host_name = sys.argv[1:6]
+plist_path, label, script_path, log_file, host_name, advertise_exit = sys.argv[1:7]
 payload = {
     "Label": label,
     "ProgramArguments": ["/usr/bin/python3", script_path, "--once"],
@@ -62,6 +66,7 @@ payload = {
     "EnvironmentVariables": {
         "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         "CECELIA_TS_WATCHDOG_HOSTNAME": host_name,
+        "CECELIA_LOGIN_WATCHDOG_ADVERTISE_EXIT": advertise_exit,
     },
 }
 with open(plist_path, "wb") as handle:
