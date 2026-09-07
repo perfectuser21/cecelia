@@ -1,9 +1,10 @@
 {
-  "name": "search_account_v3",
+  "name": "search_account_rmx",
   "version": 1,
-  "distilled_from": "traces/trace-search_account_v2-2026-09-06T16-09-21-686Z.json, traces/trace-search_account_v2-2026-09-06T16-16-45-229Z.json, traces/trace-search_account_v2-2026-09-06T16-18-05-612Z.json",
-  "distilled_at": "2026-09-06T16:24:14.253Z",
-  "converged_over": 2,
+  "distilled_from": "traces/trace-search_account_rmx-2026-09-07T06-56-09-395Z.json",
+  "distilled_at": "2026-09-07T07:49:18.436Z",
+  "converged_over": 1,
+  "baseline_tokens": 9731,
   "reset_app": true,
   "precondition": [
     {
@@ -16,13 +17,24 @@
     {
       "op": "tapRole",
       "role": "search_button",
-      "describe": "顶部右上角的搜索入口",
+      "describe": "右上角的搜索入口",
+      "wait_ms": 1500
+    },
+    {
+      "op": "type",
+      "textFrom": "target",
+      "wait_ms": 800
+    },
+    {
+      "op": "tapRole",
+      "role": "search_button",
+      "describe": "点击右上角的搜索按钮提交账号搜索",
       "wait_ms": 1500
     },
     {
       "op": "tapRole",
       "role": "tab_users",
-      "describe": "搜索结果页顶部的「用户」标签页",
+      "describe": "搜索结果顶部的用户标签页",
       "wait_ms": 1500
     }
   ],

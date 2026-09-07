@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { moduleDir } from './platform.mjs';
-import { reportEvidence } from './evidence-report.mjs';
+import { reportEvidence, baselineWarning } from './evidence-report.mjs';
 
 const args = {};
 for (let i = 2; i < process.argv.length; i += 2) args[process.argv[i].replace(/^--/, '')] = process.argv[i + 1];
@@ -16,6 +16,9 @@ const here = moduleDir(import.meta.url);
 // 读序列定义只为一件事：判断它有没有 postcondition 探针。
 // 这个事实要随证据一起交给判官——「无探针不许固化」那道闸靠它。
 const seqDef = JSON.parse(fs.readFileSync(args.sequence, 'utf8'));
+// 开跑前就喊，别等跑完几十秒才发现证据是废的
+const _baselineWarn = baselineWarning(seqDef);
+if (_baselineWarn) console.error(`[baseline] ${_baselineWarn}`);
 
 const results = [];
 for (let i = 1; i <= runs; i += 1) {
