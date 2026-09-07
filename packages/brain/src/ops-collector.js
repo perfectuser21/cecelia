@@ -319,6 +319,33 @@ export function rollupWorkflowMaturity(stages = [], stageBySkill = new Map()) {
   return { stage: weakest.lvl, bottleneck: allSame ? null : weakest.stage };
 }
 
+
+/**
+ * 版本历史（刀7）：只在 eval 分数或 DisCo 档位**真的变了**时追加一代。
+ * 采集器每 5 分钟跑一次，若无条件追加会灌成流水账——历史要的是"演进节点"不是心跳。
+ */
+async function recordSkillVersionIfChanged(pool, skillRow, name, ev, st) {
+  const { rows: [last] } = await pool.query(
+    `SELECT generation, eval_score, disco_stage FROM ops_skill_versions
+     WHERE skill_id=$1 ORDER BY generation DESC LIMIT 1`, [skillRow.id]);
+  const changed = !last
+    || last.eval_score !== ev.score
+    || last.disco_stage !== st.stage;
+  if (!changed) return;
+  const gen = (last?.generation ?? 0) + 1;
+  const note = !last ? '首次记录'
+    : [last.eval_score !== ev.score ? `分数 ${last.eval_score ?? '-'}→${ev.score ?? '-'}` : null,
+       last.disco_stage !== st.stage ? `档位 ${last.disco_stage ?? '-'}→${st.stage}` : null]
+      .filter(Boolean).join('；');
+  await pool.query(
+    `INSERT INTO ops_skill_versions (skill_id, skill_name, generation, eval_score, eval_baseline,
+                                     eval_raw, disco_stage, stage_reason, change_note)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (skill_id, generation) DO NOTHING`,
+    [skillRow.id, name, gen, ev.score, ev.baseline, ev.raw || null, st.stage, st.reason, note]);
+  await pool.query(`UPDATE ops_skills SET generation=$1 WHERE id=$2`, [gen, skillRow.id]);
+}
+
 export function parseGhaCron(out) {
   const rows = [];
   for (const line of String(out).split('\n')) {
@@ -621,13 +648,35 @@ export async function runOpsCollector(pool, opts = {}) {
     const agents = extractOpenclawAgents(cfg);
     await writeAgentsSnapshot(pool, 'openclaw', 'hk-vps', agents, collectedAt);
     // skill 投影（最小执行单元，与 agent 多对多）
+    // 双写消除（刀7）：真相源是 ops_agents.meta.skills（直接来自 clawdbot.json 的 agent 定义）；
+    // ops_skills.used_by 是它的**派生反向索引**，每轮由 extractOpenclawSkills 从同一份 cfg 现算，
+    // 不接受任何其他写入方——避免两处各写一份而分叉。
     const skills = extractOpenclawSkills(cfg);
+    // eval 分数来自 skill_registry.metadata.eval_score（180 个 skill 中 14 个有真分数；
+    // skill_evals 表 19 条全是 e2e 测试垃圾，不可用）
+    const evalRows = (await pool.query(
+      `SELECT name, metadata->>'eval_score' AS es FROM skill_registry WHERE metadata->>'eval_score' IS NOT NULL`)).rows;
+    const evalByName = new Map(evalRows.map((r) => [String(r.name).replace(/^\//, ''), r.es]));
     for (const sk of skills) {
-      await pool.query(
-        `INSERT INTO ops_skills (source, name, used_by, updated_at)
-         VALUES ('openclaw',$1,$2,$3)
-         ON CONFLICT (source, name) DO UPDATE SET used_by=EXCLUDED.used_by, updated_at=EXCLUDED.updated_at`,
-        [sk.name, JSON.stringify(sk.used_by), collectedAt]);
+      const ev = parseEvalScore(evalByName.get(sk.name));
+      const st = inferDiscoStage({
+        name: sk.name,
+        runs: null, successRate: null, hasPostcondition: null,  // 逐 skill 的运行数据下一刀接（run 目前只到 workflow 粒度）
+      });
+      const { rows: [row] } = await pool.query(
+        `INSERT INTO ops_skills (source, name, used_by, eval_score, eval_baseline, eval_raw,
+                                 disco_stage, stage_reason, stage_confident, updated_at)
+         VALUES ('openclaw',$1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT (source, name) DO UPDATE SET
+           used_by=EXCLUDED.used_by, eval_score=EXCLUDED.eval_score,
+           eval_baseline=EXCLUDED.eval_baseline, eval_raw=EXCLUDED.eval_raw,
+           disco_stage=EXCLUDED.disco_stage, stage_reason=EXCLUDED.stage_reason,
+           stage_confident=EXCLUDED.stage_confident, updated_at=EXCLUDED.updated_at
+         RETURNING id, generation`,
+        [sk.name, JSON.stringify(sk.used_by), ev.score, ev.baseline, ev.raw || null,
+         st.stage, st.reason, st.confident, collectedAt]);
+      // 版本历史：只在**分数或档位真变了**时追加一代，避免每 5 分钟灌一行流水
+      if (row) await recordSkillVersionIfChanged(pool, row, sk.name, ev, st);
     }
     await writeHeartbeat(pool, 'openclaw', 'hk-vps', 'ok', null, null, collectedAt);
     results.openclaw = { ok: true, agents: agents.length, skills: skills.length };
