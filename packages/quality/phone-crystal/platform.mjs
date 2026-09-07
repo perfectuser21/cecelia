@@ -8,10 +8,23 @@
 import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export function resolveTmpRoot(env = process.env) {
   return env.AB_TMP || join(tmpdir(), 'ab');
+}
+
+/**
+ * 模块自身所在目录。
+ *
+ * 必须走 fileURLToPath，不能拿 URL 的 pathname 当路径用：
+ * 后者在 Windows 上返回 `/C:/Users/...`（带前导斜杠），join 之后拼成
+ * `C:\C:\...` 双盘符。09-07 在 xian-rog 上实测炸过一次。
+ * 有一条源码静态守卫盯着这个写法不许回潮（见 step1-phone-crystal-module-dir 测试）。
+ */
+export function moduleDir(importMetaUrl) {
+  return dirname(fileURLToPath(importMetaUrl));
 }
 
 // 缩放器探测链：按顺序试，谁能用用谁。

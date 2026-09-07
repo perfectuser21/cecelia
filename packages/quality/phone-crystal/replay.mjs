@@ -7,13 +7,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as L from './lib.mjs';
 import { evaluatePostcondition } from './postcondition.mjs';
+import { moduleDir } from './platform.mjs';
 
 const args = {};
 for (let i = 2; i < process.argv.length; i += 2) args[process.argv[i].replace(/^--/, '')] = process.argv[i + 1];
 if (!args.sequence) { console.error('need --sequence'); process.exit(2); }
 
 const seq = JSON.parse(fs.readFileSync(args.sequence, 'utf8'));
-const REG = path.join(path.dirname(new URL(import.meta.url).pathname), 'registry.json');
+const REG = path.join(moduleDir(import.meta.url), 'registry.json');
 const regKey = () => `${L.deviceModel()}|${L.appVersion()}|${L.density()}`;
 const loadReg = () => (fs.existsSync(REG) ? JSON.parse(fs.readFileSync(REG, 'utf8')) : {});
 const saveReg = (r) => fs.writeFileSync(REG, JSON.stringify(r, null, 2));

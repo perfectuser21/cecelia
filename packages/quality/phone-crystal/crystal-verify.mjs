@@ -6,11 +6,12 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { moduleDir } from './platform.mjs';
 
 const args = {};
 for (let i = 2; i < process.argv.length; i += 2) args[process.argv[i].replace(/^--/, '')] = process.argv[i + 1];
 const runs = Number(args.runs ?? 3);
-const here = path.dirname(new URL(import.meta.url).pathname);
+const here = moduleDir(import.meta.url);
 
 const results = [];
 for (let i = 1; i <= runs; i += 1) {
