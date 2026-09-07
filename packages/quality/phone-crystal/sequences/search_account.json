@@ -1,0 +1,21 @@
+{
+  "name": "search_account",
+  "version": 1,
+  "distilled_from": "09-05 A/B 实验 B 臂轨迹(memory skill-distillation-ab-verified.md)",
+  "reset_app": true,
+  "precondition": [
+    { "type": "foreground_package", "value": "com.ss.android.ugc.aweme", "note": "B臂第4轮死因:抖音没起来。reset_app 后仍必须验前台。" }
+  ],
+  "steps": [
+    { "op": "tapRole", "role": "search_entry", "describe": "抖音首页右上角的「搜索」入口(放大镜图标)", "wait_ms": 1500 },
+    { "op": "type", "textFrom": "target", "wait_ms": 800 },
+    { "op": "key", "code": "KEYCODE_ENTER", "wait_ms": 2500 },
+    { "op": "tapRole", "role": "tab_users", "describe": "搜索结果页顶部的「用户」标签页", "wait_ms": 2000 }
+  ],
+  "postcondition": {
+    "type": "vision",
+    "describe": "这张抖音截图里,是否已经处于「搜索结果的用户列表页」并且出现了账号「{target}」?",
+    "note": "HONOR 上 uiautomator 在抖音搜索页必死(永不idle),postcondition 只能视觉;能 dump XML 的机型未来可降级为 XML 断言"
+  },
+  "side_effects": ["导航状态改变到搜索结果页"]
+}

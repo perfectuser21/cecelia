@@ -1,0 +1,52 @@
+{
+  "MAA-AN00|40.3.0|524": {
+    "search_entry": {
+      "x": 946,
+      "y": 75,
+      "learned_at": "2026-09-05T03:46:59.637Z",
+      "restored": "2026-09-07 distill 误覆盖后恢复"
+    },
+    "tab_users": {
+      "x": 256,
+      "y": 132,
+      "learned_at": "2026-09-05T03:47:14.680Z",
+      "restored": "2026-09-07 distill 误覆盖后恢复"
+    },
+    "search_button": {
+      "x": 919,
+      "y": 62,
+      "learned_at": "2026-09-06T16:14:17.752Z",
+      "learned_from": "traces/trace-search_account_v2-2026-09-06T16-09-21-686Z.json"
+    },
+    "search_history_item": {
+      "x": 186,
+      "y": 167,
+      "learned_at": "2026-09-06T16:14:17.752Z",
+      "learned_from": "traces/trace-search_account_v2-2026-09-06T16-09-21-686Z.json"
+    },
+    "search_clear_icon": {
+      "x": 640,
+      "y": 74,
+      "learned_at": "2026-09-06T16:14:17.752Z",
+      "learned_from": "traces/trace-search_account_v2-2026-09-06T16-09-21-686Z.json"
+    },
+    "clear_text": {
+      "x": 798,
+      "y": 68,
+      "learned_at": "2026-09-06T16:14:17.752Z",
+      "learned_from": "traces/trace-search_account_v2-2026-09-06T16-09-21-686Z.json"
+    },
+    "search_clear_button": {
+      "x": 756,
+      "y": 75,
+      "learned_at": "2026-09-06T16:14:17.752Z",
+      "learned_from": "traces/trace-search_account_v2-2026-09-06T16-09-21-686Z.json"
+    },
+    "publish_button": {
+      "x": 500,
+      "y": 945,
+      "learned_at": "2026-09-07T00:28:19.817Z",
+      "learned_from": "traces/trace-open_publish-2026-09-07T00-23-01-837Z.json,traces/trace-open_publish-2026-09-07T00-22-31-645Z.json,traces/trace-open_publish-2026-09-07T00-21-58-756Z.json"
+    }
+  }
+}

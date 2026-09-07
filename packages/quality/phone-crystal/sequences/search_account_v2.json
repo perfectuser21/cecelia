@@ -1,0 +1,77 @@
+{
+  "name": "search_account_v2",
+  "version": 1,
+  "distilled_from": "traces/trace-search_account_v2-2026-09-06T16-09-21-686Z.json（trial 2026-09-06T16-09-21-686Z）",
+  "distilled_at": "2026-09-06T16:14:17.752Z",
+  "reset_app": true,
+  "precondition": [
+    {
+      "type": "foreground_package",
+      "value": "com.ss.android.ugc.aweme",
+      "note": "实测失败案例：App 没起来即整条挂掉，reset_app 后仍须验前台"
+    }
+  ],
+  "steps": [
+    {
+      "op": "tapRole",
+      "role": "search_button",
+      "describe": "顶部右上角的搜索入口",
+      "wait_ms": 1500
+    },
+    {
+      "op": "tapRole",
+      "role": "search_history_item",
+      "describe": "历史记录里的账号 langzi63485",
+      "wait_ms": 1500
+    },
+    {
+      "op": "tapRole",
+      "role": "search_entry",
+      "describe": "顶部搜索输入框",
+      "wait_ms": 1500
+    },
+    {
+      "op": "tapRole",
+      "role": "search_clear_icon",
+      "describe": "搜索框内的清除按钮，用来清空当前输入",
+      "wait_ms": 1500
+    },
+    {
+      "op": "tapRole",
+      "role": "clear_text",
+      "describe": "清除搜索框里当前的关键词",
+      "wait_ms": 1500
+    },
+    {
+      "op": "tapRole",
+      "role": "search_clear_button",
+      "describe": "搜索框内用于清空当前关键词的叉号按钮",
+      "wait_ms": 1500
+    },
+    {
+      "op": "tapRole",
+      "role": "search_clear_button",
+      "describe": "搜索框内清除当前关键词的按钮",
+      "wait_ms": 1500
+    },
+    {
+      "op": "tapRole",
+      "role": "search_history_item",
+      "describe": "历史记录里的账号 langzi63485",
+      "wait_ms": 1500
+    },
+    {
+      "op": "tapRole",
+      "role": "tab_users",
+      "describe": "搜索结果页顶部的「用户」标签页",
+      "wait_ms": 1500
+    }
+  ],
+  "postcondition": {
+    "type": "vision",
+    "describe": "这张安卓截图里，「在抖音里搜索账号 langzi63485，并切换到搜索结果的「用户」标签页」这件事是否已经完成？",
+    "needs_review": true,
+    "note": "自动生成的草稿断言，必须人工复核后去掉 needs_review。判定层永不蒸馏成硬编码。"
+  },
+  "side_effects": []
+}
