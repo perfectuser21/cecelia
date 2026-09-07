@@ -92,6 +92,14 @@ _DAEMON_ABSENT_MARKERS = (
     "tailscale_status_unavailable",
 )
 
+# 2026-09-07: 计数器过期语义。此前计数是裸整数，只在"成功 tick"时清零；
+# 一旦某次事故以失败收场（机器重启、Tailscale 重装、巡检被 launchd 停掉），
+# 残留计数就会一直躺在盘上。9-07 xian-m4 断网事故里，故障刚开始的第一条
+# 错误日志就是 consecutive_failures=51 —— 上面两个阈值的容错保护等于不存在，
+# 第一秒就拉闸。改为记录 last_failure_ts，超过 5 倍 StartInterval 没有新失败
+# 即视为上一次事故的残留，从 0 重计。
+COUNTER_EXPIRY_SECONDS = int(os.environ.get("CECELIA_US_EXIT_COUNTER_EXPIRY", "300"))
+
 
 class EnforcementError(RuntimeError):
     """The required US-only exit invariant could not be established."""
@@ -102,28 +110,51 @@ def is_daemon_absent_error(message: str) -> bool:
     return any(marker in lowered for marker in _DAEMON_ABSENT_MARKERS)
 
 
-def read_failure_count() -> int:
+def read_count(path: Path, now: float | None = None) -> int:
+    """读计数，过期或格式不认识一律当 0。
+
+    旧的裸整数格式没有时间戳，无法判断新鲜度，按过期处理——宁可少算一次
+    容错，也不能把上一次事故的计数带进这一次。
+    """
     try:
-        return int(FAILURE_COUNT_FILE.read_text().strip())
+        payload = json.loads(path.read_text())
     except (OSError, ValueError):
         return 0
+    if not isinstance(payload, dict):
+        return 0
+    try:
+        count = int(payload.get("count") or 0)
+        last_failure_ts = float(payload.get("last_failure_ts") or 0)
+    except (TypeError, ValueError):
+        return 0
+    if (now if now is not None else time.time()) - last_failure_ts > COUNTER_EXPIRY_SECONDS:
+        return 0
+    return max(count, 0)
+
+
+def write_count(path: Path, count: int, now: float | None = None) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "count": count,
+        "last_failure_ts": now if now is not None else time.time(),
+    }
+    path.write_text(json.dumps(payload, sort_keys=True))
+
+
+def read_failure_count() -> int:
+    return read_count(FAILURE_COUNT_FILE)
 
 
 def write_failure_count(count: int) -> None:
-    FAILURE_COUNT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    FAILURE_COUNT_FILE.write_text(str(count))
+    write_count(FAILURE_COUNT_FILE, count)
 
 
 def read_daemon_absent_count() -> int:
-    try:
-        return int(DAEMON_ABSENT_COUNT_FILE.read_text().strip())
-    except (OSError, ValueError):
-        return 0
+    return read_count(DAEMON_ABSENT_COUNT_FILE)
 
 
 def write_daemon_absent_count(count: int) -> None:
-    DAEMON_ABSENT_COUNT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DAEMON_ABSENT_COUNT_FILE.write_text(str(count))
+    write_count(DAEMON_ABSENT_COUNT_FILE, count)
 
 
 def target_command(command: list[str]) -> tuple[list[str], dict[str, str]]:
