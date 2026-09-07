@@ -36,6 +36,11 @@ const RECOVERY_INTERVAL_MS = parseInt(
 
 // harness 任务由 harness-watchdog（心跳判据）专管，排除出 wall-clock 超时管辖。
 // 与 zombie-reaper 豁免列表 + pipeline-watchdog HARNESS_TASK_TYPES 对齐（含两种历史拼写）。
+// 每轮最多解封几个 blocked 任务。沿用死代码里的 5（tick-runner.js:179）：
+// 解封是把任务放回 queued，一次放太多会让派发层瞬间被打满。
+// 积压 200+ 时按每 5 分钟 5 个的速度疏通，几小时排空，不会冲垮下游。
+const UNBLOCK_BATCH_LIMIT = 5;
+
 const HARNESS_TASK_TYPES = new Set([
   'harness_initiative', 'harness_task', 'harness_evaluate',
   'harness_contract_propose', 'harness_contract_review',
@@ -72,6 +77,7 @@ export async function runRecoveryOnce(opts = {}) {
   let pipelinesCancelled = 0;
   let tasksTimedOut = 0;
   let orphansRequeued = 0;
+  let blockedRecovered = 0;
 
   // 1. cleanupStaleClaims — 周期释放 stale claim（原仅 Brain 启动时跑一次）
   try {
@@ -119,12 +125,25 @@ export async function runRecoveryOnce(opts = {}) {
     console.warn(`[recovery-loop] probeTaskLiveness failed (non-fatal): ${err.message}`);
   }
 
-  // 5. 无条件可观测性：每次执行都打一行"我在跑"，即使全 0
+  // 5. unblockExpiredTasks — blocked_until 到期 → 回 queued
+  //    第五条断在 executeTick 里的安全网。前四条 2026-06-27 审计时被接回来了，
+  //    这条漏掉，于是从 Wave 2（2026-05-04）起再没跑过——09-07 实测积压 217 个
+  //    blocked，其中 15 个 TTL 早已过期。没有它，被阻塞的任务就只能等人工去捞。
+  try {
+    const fn = opts.unblockExpiredTasks
+      || (await import('./task-updater.js')).unblockExpiredTasks;
+    const recovered = await fn({ limit: UNBLOCK_BATCH_LIMIT });
+    blockedRecovered = Array.isArray(recovered) ? recovered.length : (recovered || 0);
+  } catch (err) {
+    console.warn(`[recovery-loop] unblockExpiredTasks failed (non-fatal): ${err.message}`);
+  }
+
+  // 6. 无条件可观测性：每次执行都打一行"我在跑"，即使全 0
   console.log(
-    `[recovery-loop] staleReleased=${staleReleased} pipelinesCancelled=${pipelinesCancelled} tasksTimedOut=${tasksTimedOut} orphansRequeued=${orphansRequeued}`
+    `[recovery-loop] staleReleased=${staleReleased} pipelinesCancelled=${pipelinesCancelled} tasksTimedOut=${tasksTimedOut} orphansRequeued=${orphansRequeued} blockedRecovered=${blockedRecovered}`
   );
 
-  return { staleReleased, pipelinesCancelled, tasksTimedOut, orphansRequeued };
+  return { staleReleased, pipelinesCancelled, tasksTimedOut, orphansRequeued, blockedRecovered };
 }
 
 /**
