@@ -244,6 +244,108 @@ export const N8N_RUNS_CMD =
   'ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no root@100.86.118.99 ' +
   `'docker exec zenithjoy-db-postgres psql -U n8n -d n8n -tAc "${N8N_RUNS_SQL_ESCAPED}"'`;
 
+
+// ─── DisCo 成熟度（刀7）─────────────────────────────────────────────────
+// 判据来自主理人拍板（决策「Workflow 执行体形态定线：走 Skill-DisCo 路线」）：
+//   三档 = software3(提示词即程序,跑完即弃) / disco(技能体+契约+LLM调度层) / code(不可逆写入,永远纯代码)
+//   固化三条必须同时满足：形状跨多次重复 + 变体已探明 + 碎了能当场发现(有探针)
+//   分档看**执行频率与变体收敛度**，不是任务复杂度
+// 成熟度挂 skill（被蒸馏的主体，有版本演进）；agent/workflow 的成熟度是**算出来的**。
+
+export const DISCO_STAGES = ['software3', 'disco', 'code'];
+const STAGE_RANK = { software3: 0, disco: 1, code: 2 };
+
+/** 频率下限：低于此不值得固化（跑完即弃）。变体收敛线：成功率稳定在此之上才算探明。 */
+export const DISCO_MIN_RUNS = 20;
+export const DISCO_CONVERGED_RATE = 90;
+
+/** 从 skill_registry.metadata.eval_score 提分数。非分数文本返回 null，禁编造。 */
+export function parseEvalScore(raw) {
+  const text = raw == null ? '' : String(raw);
+  const out = { score: null, baseline: null, raw: text };
+  if (!text) return out;
+  // 对照式：with_skill 16/16 (100%) vs without_skill 6/16 (38%)
+  const pair = text.match(/with_skill[^(]*\((\d+)%\)[\s\S]*?without_skill[^(]*\((\d+)%\)/i);
+  if (pair) { out.score = Number(pair[1]); out.baseline = Number(pair[2]); return out; }
+  // 单值：27/27 (100%)
+  const single = text.match(/\((\d+)%\)/);
+  if (single) { out.score = Number(single[1]); return out; }
+  return out;
+}
+
+/**
+ * 判 DisCo 档位。机器只算它能算的（频率/成功率/有无探针），
+ * 「变体已探明」需要看失败形状——机器给建议，confident=false 时等人确认。
+ */
+export function inferDiscoStage(m = {}) {
+  // 不可逆写入永远纯代码（merge/publish/发帖/写生产库/发钱）
+  if (m.irreversible) {
+    return { stage: 'code', confident: true, reason: '不可逆写入，按决策永远纯代码' };
+  }
+  const { runs, successRate, hasPostcondition } = m;
+  if (runs == null || successRate == null || hasPostcondition == null) {
+    return { stage: 'software3', confident: false, reason: '数据不全（缺频率/成功率/探针信息），等人确认' };
+  }
+  if (!hasPostcondition) {
+    return { stage: 'software3', confident: true, reason: '无探针（postcondition）不许固化——碎了发现不了' };
+  }
+  if (runs < DISCO_MIN_RUNS) {
+    return { stage: 'software3', confident: true, reason: `执行 ${runs} 次未达固化门槛 ${DISCO_MIN_RUNS}，跑完即弃` };
+  }
+  if (successRate < DISCO_CONVERGED_RATE) {
+    return { stage: 'software3', confident: true, reason: `成功率 ${successRate}% 仍在波动，变体未收敛（<${DISCO_CONVERGED_RATE}%）` };
+  }
+  return { stage: 'disco', confident: true, reason: `执行 ${runs} 次、成功率 ${successRate}%、有探针——三条固化判据齐备` };
+}
+
+/** agent 成熟度 = 它当前装备的 skill 的最低档（一个还在试错，整体就没固化）。 */
+export function rollupAgentMaturity(skillNames = [], stageBySkill = new Map()) {
+  const known = (skillNames || []).map((n) => [n, stageBySkill.get(n)]).filter(([, st]) => st);
+  if (!known.length) return { stage: null, weakest: null };
+  let weakest = known[0];
+  for (const cur of known) if (STAGE_RANK[cur[1]] < STAGE_RANK[weakest[1]]) weakest = cur;
+  return { stage: weakest[1], weakest: weakest[0] };
+}
+
+/** workflow 成熟度 = 各阶段 skill 的最低档（木桶），并点名瓶颈阶段——下一刀该固化谁。 */
+export function rollupWorkflowMaturity(stages = [], stageBySkill = new Map()) {
+  const known = (stages || [])
+    .map((s) => ({ stage: s.stage, skill: s.skill, lvl: stageBySkill.get(s.skill) }))
+    .filter((x) => x.lvl);
+  if (!known.length) return { stage: null, bottleneck: null };
+  let weakest = known[0];
+  for (const cur of known) if (STAGE_RANK[cur.lvl] < STAGE_RANK[weakest.lvl]) weakest = cur;
+  const allSame = known.every((x) => x.lvl === weakest.lvl);
+  return { stage: weakest.lvl, bottleneck: allSame ? null : weakest.stage };
+}
+
+
+/**
+ * 版本历史（刀7）：只在 eval 分数或 DisCo 档位**真的变了**时追加一代。
+ * 采集器每 5 分钟跑一次，若无条件追加会灌成流水账——历史要的是"演进节点"不是心跳。
+ */
+async function recordSkillVersionIfChanged(pool, skillRow, name, ev, st) {
+  const { rows: [last] } = await pool.query(
+    `SELECT generation, eval_score, disco_stage FROM ops_skill_versions
+     WHERE skill_id=$1 ORDER BY generation DESC LIMIT 1`, [skillRow.id]);
+  const changed = !last
+    || last.eval_score !== ev.score
+    || last.disco_stage !== st.stage;
+  if (!changed) return;
+  const gen = (last?.generation ?? 0) + 1;
+  const note = !last ? '首次记录'
+    : [last.eval_score !== ev.score ? `分数 ${last.eval_score ?? '-'}→${ev.score ?? '-'}` : null,
+       last.disco_stage !== st.stage ? `档位 ${last.disco_stage ?? '-'}→${st.stage}` : null]
+      .filter(Boolean).join('；');
+  await pool.query(
+    `INSERT INTO ops_skill_versions (skill_id, skill_name, generation, eval_score, eval_baseline,
+                                     eval_raw, disco_stage, stage_reason, change_note)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (skill_id, generation) DO NOTHING`,
+    [skillRow.id, name, gen, ev.score, ev.baseline, ev.raw || null, st.stage, st.reason, note]);
+  await pool.query(`UPDATE ops_skills SET generation=$1 WHERE id=$2`, [gen, skillRow.id]);
+}
+
 export function parseGhaCron(out) {
   const rows = [];
   for (const line of String(out).split('\n')) {
@@ -546,13 +648,35 @@ export async function runOpsCollector(pool, opts = {}) {
     const agents = extractOpenclawAgents(cfg);
     await writeAgentsSnapshot(pool, 'openclaw', 'hk-vps', agents, collectedAt);
     // skill 投影（最小执行单元，与 agent 多对多）
+    // 双写消除（刀7）：真相源是 ops_agents.meta.skills（直接来自 clawdbot.json 的 agent 定义）；
+    // ops_skills.used_by 是它的**派生反向索引**，每轮由 extractOpenclawSkills 从同一份 cfg 现算，
+    // 不接受任何其他写入方——避免两处各写一份而分叉。
     const skills = extractOpenclawSkills(cfg);
+    // eval 分数来自 skill_registry.metadata.eval_score（180 个 skill 中 14 个有真分数；
+    // skill_evals 表 19 条全是 e2e 测试垃圾，不可用）
+    const evalRows = (await pool.query(
+      `SELECT name, metadata->>'eval_score' AS es FROM skill_registry WHERE metadata->>'eval_score' IS NOT NULL`)).rows;
+    const evalByName = new Map(evalRows.map((r) => [String(r.name).replace(/^\//, ''), r.es]));
     for (const sk of skills) {
-      await pool.query(
-        `INSERT INTO ops_skills (source, name, used_by, updated_at)
-         VALUES ('openclaw',$1,$2,$3)
-         ON CONFLICT (source, name) DO UPDATE SET used_by=EXCLUDED.used_by, updated_at=EXCLUDED.updated_at`,
-        [sk.name, JSON.stringify(sk.used_by), collectedAt]);
+      const ev = parseEvalScore(evalByName.get(sk.name));
+      const st = inferDiscoStage({
+        name: sk.name,
+        runs: null, successRate: null, hasPostcondition: null,  // 逐 skill 的运行数据下一刀接（run 目前只到 workflow 粒度）
+      });
+      const { rows: [row] } = await pool.query(
+        `INSERT INTO ops_skills (source, name, used_by, eval_score, eval_baseline, eval_raw,
+                                 disco_stage, stage_reason, stage_confident, updated_at)
+         VALUES ('openclaw',$1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT (source, name) DO UPDATE SET
+           used_by=EXCLUDED.used_by, eval_score=EXCLUDED.eval_score,
+           eval_baseline=EXCLUDED.eval_baseline, eval_raw=EXCLUDED.eval_raw,
+           disco_stage=EXCLUDED.disco_stage, stage_reason=EXCLUDED.stage_reason,
+           stage_confident=EXCLUDED.stage_confident, updated_at=EXCLUDED.updated_at
+         RETURNING id, generation`,
+        [sk.name, JSON.stringify(sk.used_by), ev.score, ev.baseline, ev.raw || null,
+         st.stage, st.reason, st.confident, collectedAt]);
+      // 版本历史：只在**分数或档位真变了**时追加一代，避免每 5 分钟灌一行流水
+      if (row) await recordSkillVersionIfChanged(pool, row, sk.name, ev, st);
     }
     await writeHeartbeat(pool, 'openclaw', 'hk-vps', 'ok', null, null, collectedAt);
     results.openclaw = { ok: true, agents: agents.length, skills: skills.length };
