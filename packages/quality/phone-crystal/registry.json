@@ -48,5 +48,36 @@
       "learned_at": "2026-09-07T00:28:19.817Z",
       "learned_from": "traces/trace-open_publish-2026-09-07T00-23-01-837Z.json,traces/trace-open_publish-2026-09-07T00-22-31-645Z.json,traces/trace-open_publish-2026-09-07T00-21-58-756Z.json"
     }
+  },
+  "RMX3478|40.0.0|480": {
+    "search_button": {
+      "x": 877,
+      "y": 74,
+      "learned_at": "2026-09-07T07:49:18.436Z",
+      "learned_from": "traces/trace-search_account_rmx-2026-09-07T06-56-09-395Z.json"
+    },
+    "tab_users": {
+      "x": 228,
+      "y": 117,
+      "learned_at": "2026-09-07T07:49:18.436Z",
+      "learned_from": "traces/trace-search_account_rmx-2026-09-07T06-56-09-395Z.json"
+    }
+  },
+  "MAA-AN00|39.7.0|524": {
+    "search_entry": {
+      "x": 941,
+      "y": 76,
+      "learned_at": "2026-09-07T09:13:28.971Z"
+    },
+    "search_button": {
+      "x": 894,
+      "y": 84,
+      "learned_at": "2026-09-07T09:13:46.460Z"
+    },
+    "tab_users": {
+      "x": 275,
+      "y": 154,
+      "learned_at": "2026-09-07T09:14:03.480Z"
+    }
   }
 }

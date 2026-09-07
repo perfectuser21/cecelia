@@ -4,6 +4,7 @@
   "distilled_from": "traces/trace-search_account_v2-2026-09-06T16-09-21-686Z.json, traces/trace-search_account_v2-2026-09-06T16-16-45-229Z.json, traces/trace-search_account_v2-2026-09-06T16-18-05-612Z.json",
   "distilled_at": "2026-09-06T16:26:20.747Z",
   "converged_over": 2,
+  "baseline_tokens": 10158,
   "reset_app": true,
   "precondition": [
     {

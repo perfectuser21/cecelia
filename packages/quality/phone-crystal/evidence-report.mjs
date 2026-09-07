@@ -29,6 +29,23 @@ export function averageBaselineTokens(traces) {
   return Math.round(vals.reduce((s, v) => s + v, 0) / vals.length);
 }
 
+/**
+ * 开跑前检查：序列有没有经济基线。缺了就返回一句说清后果的警告，否则 null。
+ *
+ * 不阻断执行——验证「这个序列还能不能跑通」与「它值不值得固化」是两件事，
+ * 前者任何时候都有价值。但必须喊出来：真机跑一次要几十秒 + 独占设备，
+ * 跑完才发现证据因缺基线而算不出经济账，那些时间补不回来。
+ *
+ * 09-07 实测代价：search_account_v4 的 12 条证据带空基线回流，
+ * 把一个已 promote 的技能打回 keep_llm。
+ */
+export function baselineWarning(seq = {}) {
+  if (Number.isFinite(seq?.baseline_tokens)) return null;
+  return `序列「${seq?.name ?? '(未命名)'}」没有 baseline_tokens：`
+    + '本次证据回流后判官会判 cost_evidence_missing，该段无法晋升。'
+    + '基线来自探索阶段纯 LLM 的 token 消耗，可重新蒸馏或手工回填。';
+}
+
 export function buildEvidencePayload(verdict, seq = {}) {
   const runs = Number(verdict.runs) || 0;
   const passes = Number(verdict.passes) || 0;
