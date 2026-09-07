@@ -50,9 +50,80 @@ LOCK_FILE = Path(
     )
 )
 
+# 2026-09-03: 连续失败容错。此前任何一次瞬时错误（tailscale CLI 超时、
+# configd 抖动导致 socket 短暂不可达等）都会立刻 fail-closed 拉闸，
+# 把 configd watchdog 崩溃这类和"选错出口"完全无关的瞬时故障也放大成
+# 用户全网断流。容错阈值内只记录不拉闸，超过阈值才真正拉闸，
+# 一次成功即清零计数。
+CONSECUTIVE_FAILURE_THRESHOLD = int(
+    os.environ.get("CECELIA_US_EXIT_FAILURE_THRESHOLD", "3")
+)
+FAILURE_COUNT_FILE = Path(
+    os.path.expanduser(
+        os.environ.get(
+            "CECELIA_US_EXIT_FAILURE_COUNT_FILE",
+            "/var/db/cecelia/tailscale-us-exit/failure-count.txt",
+        )
+    )
+)
+
+# 2026-09-04: 单独区分"daemon/socket 本身不可达"这一类错误。这类错误
+# 发生时 utun 隧道接口根本不存在，旧规则里 "pass ... on utunN" 天然匹配
+# 不上任何流量，非LAN流量早已落到默认的 block drop——主动再拉一次闸
+# 对安全边界没有增量收益，却会把"正在重装/重启 Tailscale"这种正常维护
+# 窗口放大成整机失联，且要等下一次"healthy"巡检才能解闸。给这一类错误
+# 单独更宽松的阈值（默认10次≈10分钟），不影响"daemon有响应但选错出口"
+# 这种真正的合规违规——那类错误仍然沿用上面 3 次的严格阈值。
+DAEMON_ABSENT_FAILURE_THRESHOLD = int(
+    os.environ.get("CECELIA_US_EXIT_DAEMON_ABSENT_THRESHOLD", "10")
+)
+DAEMON_ABSENT_COUNT_FILE = Path(
+    os.path.expanduser(
+        os.environ.get(
+            "CECELIA_US_EXIT_DAEMON_ABSENT_COUNT_FILE",
+            "/var/db/cecelia/tailscale-us-exit/daemon-absent-count.txt",
+        )
+    )
+)
+_DAEMON_ABSENT_MARKERS = (
+    "no such file or directory",
+    "connection refused",
+    "tailscale_binary_not_found",
+    "tailscale_status_unavailable",
+)
+
 
 class EnforcementError(RuntimeError):
     """The required US-only exit invariant could not be established."""
+
+
+def is_daemon_absent_error(message: str) -> bool:
+    lowered = message.lower()
+    return any(marker in lowered for marker in _DAEMON_ABSENT_MARKERS)
+
+
+def read_failure_count() -> int:
+    try:
+        return int(FAILURE_COUNT_FILE.read_text().strip())
+    except (OSError, ValueError):
+        return 0
+
+
+def write_failure_count(count: int) -> None:
+    FAILURE_COUNT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    FAILURE_COUNT_FILE.write_text(str(count))
+
+
+def read_daemon_absent_count() -> int:
+    try:
+        return int(DAEMON_ABSENT_COUNT_FILE.read_text().strip())
+    except (OSError, ValueError):
+        return 0
+
+
+def write_daemon_absent_count(count: int) -> None:
+    DAEMON_ABSENT_COUNT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    DAEMON_ABSENT_COUNT_FILE.write_text(str(count))
 
 
 def target_command(command: list[str]) -> tuple[list[str], dict[str, str]]:
@@ -436,6 +507,8 @@ def main() -> int:
             changed = enforce(binary, chosen, prefs)
             firewall.apply(allow_tunnel=True)
             persist_state(chosen, reason, fail_closed)
+            write_failure_count(0)
+            write_daemon_absent_count(0)
             emit(
                 "fail_closed" if fail_closed else "healthy",
                 changed=changed,
@@ -445,12 +518,42 @@ def main() -> int:
             )
             return 2 if fail_closed else 0
         except (EnforcementError, OSError, subprocess.SubprocessError) as exc:
-            try:
-                if "firewall" in locals():
-                    firewall.apply(allow_tunnel=False)
-            except (EnforcementError, OSError, subprocess.SubprocessError) as firewall_exc:
-                emit("firewall_error", error=str(firewall_exc))
-            emit("error", error=str(exc))
+            message = str(exc)
+            if is_daemon_absent_error(message):
+                failures = read_daemon_absent_count() + 1
+                write_daemon_absent_count(failures)
+                fail_closed_applied = False
+                if failures >= DAEMON_ABSENT_FAILURE_THRESHOLD:
+                    fail_closed_applied = True
+                    try:
+                        if "firewall" in locals():
+                            firewall.apply(allow_tunnel=False)
+                    except (EnforcementError, OSError, subprocess.SubprocessError) as firewall_exc:
+                        emit("firewall_error", error=str(firewall_exc))
+                emit(
+                    "error",
+                    error=message,
+                    error_class="daemon_absent",
+                    consecutive_failures=failures,
+                    fail_closed_applied=fail_closed_applied,
+                )
+                return 3
+            failures = read_failure_count() + 1
+            write_failure_count(failures)
+            fail_closed_applied = False
+            if failures >= CONSECUTIVE_FAILURE_THRESHOLD:
+                fail_closed_applied = True
+                try:
+                    if "firewall" in locals():
+                        firewall.apply(allow_tunnel=False)
+                except (EnforcementError, OSError, subprocess.SubprocessError) as firewall_exc:
+                    emit("firewall_error", error=str(firewall_exc))
+            emit(
+                "error",
+                error=message,
+                consecutive_failures=failures,
+                fail_closed_applied=fail_closed_applied,
+            )
             return 3
 
 
