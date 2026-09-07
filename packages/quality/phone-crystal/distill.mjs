@@ -14,6 +14,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { mergeLocators } from './locators.mjs';
+import { averageBaselineTokens } from './evidence-report.mjs';
 
 // 布尔标志与键值对分开解析：原先按「每两个 argv 一对」硬走，--dry 这种无值标志
 // 会把后面参数全部错位，且 args.dry 恒为 undefined 导致干跑失效、真写了文件
@@ -128,6 +129,9 @@ const seq = {
   distilled_from: tracePaths.join(', '),
   distilled_at: new Date().toISOString(),
   converged_over: usable.length,
+  // 经济账的基线：探索时纯 LLM 跑这件事烧了多少 token。
+  // 判官的 cost_benefit 靠它，缺了这条经济门永远过不去。
+  baseline_tokens: averageBaselineTokens(usable),
   reset_app: true,
   precondition: [
     { type: 'foreground_package', value: 'com.ss.android.ugc.aweme',

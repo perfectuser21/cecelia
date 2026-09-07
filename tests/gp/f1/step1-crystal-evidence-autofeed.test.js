@@ -21,7 +21,9 @@
 //    本地验证已经花掉了真机时间，如果回流悄悄失败，人会以为账本在涨。
 
 import { describe, it, expect, vi } from 'vitest';
-import { buildEvidencePayload, reportEvidence } from '../../../packages/quality/phone-crystal/evidence-report.mjs';
+import {
+  buildEvidencePayload, reportEvidence, averageBaselineTokens,
+} from '../../../packages/quality/phone-crystal/evidence-report.mjs';
 
 const VERDICT = {
   sequence: 'open_publish',
@@ -66,6 +68,35 @@ describe('F1 step1 · 证据 payload 映射', () => {
   it('失败次数按 runs-passes 推导，不靠调用方自觉', () => {
     const p = buildEvidencePayload({ ...VERDICT, passes: 1 }, {});
     expect(p.broken_count).toBe(2);
+  });
+});
+
+// 判官的经济门要算 cost_benefit = 基线成本 / 热路径成本。
+// 没有基线这道门永远过不了 —— 证据回流了却依旧晋升不了，等于白回流。
+// 09-07 实测：search_account_v4 回流后仍是 keep_llm，就因为 token_cost=0。
+//
+// 基线不需要另测：探索阶段本来就是纯 LLM 在跑，那时烧的 token 就是基线。
+// 它是序列的固有属性（蒸馏时定下），不是每次验证都要重测的东西。
+describe('F1 step1 · 经济账基线', () => {
+  it('从探索轨迹取平均 token 作为基线', () => {
+    expect(averageBaselineTokens([{ tokens: 2026 }, { tokens: 2040 }, { tokens: 1984 }])).toBe(2017);
+  });
+
+  it('没有轨迹 → null，不编造', () => {
+    expect(averageBaselineTokens([])).toBeNull();
+    expect(averageBaselineTokens(null)).toBeNull();
+  });
+
+  it('序列带基线 → 随证据交给判官', () => {
+    const p = buildEvidencePayload(VERDICT, { baseline_tokens: 2017, postcondition: {} });
+    expect(p.baseline_tokens).toBe(2017);
+  });
+
+  // null 和 0 必须分得开：null = 没测过（判官该按数据缺口处理），
+  // 0 = 测过且真的不烧 token。填 0 冒充"已知"会让判官算出假的经济账。
+  it('序列没基线 → null，不退化成 0', () => {
+    const p = buildEvidencePayload(VERDICT, { postcondition: {} });
+    expect(p.baseline_tokens).toBeNull();
   });
 });
 

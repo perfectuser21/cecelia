@@ -25,5 +25,6 @@
     "value": "com.ss.android.ugc.aweme.shortvideo.ui.VideoRecordNewActivity",
     "note": "「进没进拍摄页」安卓自己有确定性答案，不必问 LLM 看截图：零 token、不会看错，且权限弹窗遮挡时前台会变成弹窗因而顺带被抓住。判定层不蒸馏管的是语义推断，不管系统状态读取。"
   },
-  "side_effects": []
+  "side_effects": [],
+  "baseline_tokens": 2017
 }
