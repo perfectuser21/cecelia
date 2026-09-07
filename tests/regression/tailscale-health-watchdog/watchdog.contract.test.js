@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');
 const WATCHDOG = join(REPO_ROOT, 'scripts/ops/tailscale-health-watchdog.py');
+const INSTALLER = join(REPO_ROOT, 'scripts/ops/install-tailscale-health-watchdog.sh');
 const tempDirs = [];
 
 afterEach(() => {
@@ -66,25 +67,27 @@ process.exit(0);
   writeFileSync(fakePkill, recorder('pkill'));
   for (const bin of [fakeTailscale, fakeOpen, fakePkill]) chmodSync(bin, 0o755);
 
+  const env = {
+    ...process.env,
+    TAILSCALE_BIN: fakeTailscale,
+    FAKE_STATUS_FILE: statusFile,
+    FAKE_CALLS_FILE: callsFile,
+    FAKE_STATUS_FAILS: String(statusFails),
+    CECELIA_TS_HEALTH_STATE_FILE: stateFile,
+    CECELIA_TS_HEALTH_LOCK_FILE: join(dir, 'watchdog.lock'),
+    CECELIA_TS_HEALTH_DISABLED_FILE: join(dir, 'DISABLED'),
+    CECELIA_TS_HEALTH_OPEN_BIN: fakeOpen,
+    CECELIA_TS_HEALTH_PKILL_BIN: fakePkill,
+  };
+
   return {
     dir,
     stateFile,
+    env,
     run: (extraArgs = [], extraEnv = {}) => {
       const result = spawnSync('python3', [WATCHDOG, '--once', ...extraArgs], {
         encoding: 'utf8',
-        env: {
-          ...process.env,
-          TAILSCALE_BIN: fakeTailscale,
-          FAKE_STATUS_FILE: statusFile,
-          FAKE_CALLS_FILE: callsFile,
-          FAKE_STATUS_FAILS: String(statusFails),
-          CECELIA_TS_HEALTH_STATE_FILE: stateFile,
-          CECELIA_TS_HEALTH_LOCK_FILE: join(dir, 'watchdog.lock'),
-          CECELIA_TS_HEALTH_DISABLED_FILE: join(dir, 'DISABLED'),
-          CECELIA_TS_HEALTH_OPEN_BIN: fakeOpen,
-          CECELIA_TS_HEALTH_PKILL_BIN: fakePkill,
-          ...extraEnv,
-        },
+        env: { ...env, ...extraEnv },
       });
       return {
         ...result,
@@ -247,5 +250,100 @@ describe('tailscale-health-watchdog', () => {
     const attempt = result.emitted.find((e) => e.action === 'restart_attempted');
     expect(attempt, result.stderr).toBeDefined();
     expect(attempt.round).toBe(1);
+  });
+});
+
+// LaunchDaemon / plutil / launchctl 全是 macOS 专属，ubuntu runner 上
+// /usr/bin/plutil 不存在会直接 127（tailscale-us-exit 那组同样的守卫）。
+describe.runIf(process.platform === 'darwin')('LaunchDaemon 安装器', () => {
+  function installerDirs(fixture) {
+    return {
+      plistDir: join(fixture.dir, 'LaunchDaemons'),
+      libexecDir: join(fixture.dir, 'system-libexec'),
+      stateDir: join(fixture.dir, 'system-state'),
+      logDir: join(fixture.dir, 'system-log'),
+    };
+  }
+
+  function install(fixture, extraArgs = [], extraEnv = {}) {
+    const dirs = installerDirs(fixture);
+    const result = spawnSync('/bin/bash', [
+      INSTALLER,
+      '--system-plist-dir', dirs.plistDir,
+      '--system-libexec-dir', dirs.libexecDir,
+      '--system-state-dir', dirs.stateDir,
+      '--system-log-dir', dirs.logDir,
+      ...extraArgs,
+    ], { env: { ...fixture.env, ...extraEnv }, encoding: 'utf8' });
+    return { ...result, ...dirs };
+  }
+
+  it('本机身份不在目标机白名单时，在写入任何系统文件前拒绝安装', () => {
+    // 这个 daemon 会强杀 network-extension，装错机器等于给别人断网。
+    const fixture = makeFixture({ hostName: 'perfect21' });
+
+    const result = install(fixture, ['--no-load']);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain('unapproved_client');
+    expect(existsSync(join(result.libexecDir, 'tailscale-health-watchdog.py'))).toBe(false);
+    expect(existsSync(join(result.plistDir, 'com.cecelia.tailscale-health-watchdog.plist'))).toBe(false);
+    expect(existsSync(result.stateDir)).toBe(false);
+    expect(existsSync(result.logDir)).toBe(false);
+  });
+
+  it('生成合法的 root LaunchDaemon：每 60 秒跑一次 --once', () => {
+    const fixture = makeFixture({ hostName: 'mac-mini-m4-xian' });
+
+    const result = install(fixture, ['--no-load']);
+
+    expect(result.status, result.stderr).toBe(0);
+    const plist = join(result.plistDir, 'com.cecelia.tailscale-health-watchdog.plist');
+    const lint = spawnSync('/usr/bin/plutil', ['-lint', plist], { encoding: 'utf8' });
+    expect(lint.status, lint.stderr).toBe(0);
+    const plistText = readFileSync(plist, 'utf8');
+    expect(plistText).toContain('<string>com.cecelia.tailscale-health-watchdog</string>');
+    expect(plistText).toContain(`${result.libexecDir}/tailscale-health-watchdog.py`);
+    expect(plistText).toContain('<string>--once</string>');
+    expect(plistText).toMatch(/<key>StartInterval<\/key>\s*<integer>60<\/integer>/);
+    expect(plistText).toContain(`<string>${result.stateDir}/state.json</string>`);
+    expect(plistText).toContain(`<string>${result.logDir}/tailscale-health-watchdog.log</string>`);
+    expect(existsSync(join(result.libexecDir, 'tailscale-health-watchdog.py'))).toBe(true);
+  });
+
+  it('加载时先 bootout 旧 label 再 enable/bootstrap/kickstart', () => {
+    const fixture = makeFixture({ hostName: 'mac-mini-m4-xian' });
+    const launchctlLog = join(fixture.dir, 'launchctl.log');
+    const fakeLaunchctl = join(fixture.dir, 'launchctl');
+    const fakeSudo = join(fixture.dir, 'sudo');
+    writeFileSync(fakeLaunchctl, '#!/bin/bash\necho "$*" >> "$FAKE_LAUNCHCTL_LOG"\nexit 0\n');
+    writeFileSync(fakeSudo, '#!/bin/bash\nexec "$@"\n');
+    chmodSync(fakeLaunchctl, 0o755);
+    chmodSync(fakeSudo, 0o755);
+
+    const result = install(fixture, [], {
+      CECELIA_LAUNCHCTL_BIN: fakeLaunchctl,
+      CECELIA_SUDO_BIN: fakeSudo,
+      FAKE_LAUNCHCTL_LOG: launchctlLog,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const calls = readFileSync(launchctlLog, 'utf8');
+    expect(calls).toContain('bootout system/com.cecelia.tailscale-health-watchdog');
+    expect(calls).toContain('enable system/com.cecelia.tailscale-health-watchdog');
+    expect(calls).toContain(
+      `bootstrap system ${result.plistDir}/com.cecelia.tailscale-health-watchdog.plist`);
+    expect(calls).toContain('kickstart -k system/com.cecelia.tailscale-health-watchdog');
+  });
+
+  it('脚本有语法错误时拒绝安装（别把坏脚本推上生产）', () => {
+    const fixture = makeFixture({ hostName: 'mac-mini-m4-xian' });
+    const brokenSource = join(fixture.dir, 'broken-watchdog.py');
+    writeFileSync(brokenSource, 'def run_once(:\n    pass\n');
+
+    const result = install(fixture, ['--no-load'], { CECELIA_TS_HEALTH_SOURCE: brokenSource });
+
+    expect(result.status).not.toBe(0);
+    expect(existsSync(join(result.libexecDir, 'tailscale-health-watchdog.py'))).toBe(false);
   });
 });
