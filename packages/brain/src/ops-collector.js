@@ -244,6 +244,81 @@ export const N8N_RUNS_CMD =
   'ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no root@100.86.118.99 ' +
   `'docker exec zenithjoy-db-postgres psql -U n8n -d n8n -tAc "${N8N_RUNS_SQL_ESCAPED}"'`;
 
+
+// ─── DisCo 成熟度（刀7）─────────────────────────────────────────────────
+// 判据来自主理人拍板（决策「Workflow 执行体形态定线：走 Skill-DisCo 路线」）：
+//   三档 = software3(提示词即程序,跑完即弃) / disco(技能体+契约+LLM调度层) / code(不可逆写入,永远纯代码)
+//   固化三条必须同时满足：形状跨多次重复 + 变体已探明 + 碎了能当场发现(有探针)
+//   分档看**执行频率与变体收敛度**，不是任务复杂度
+// 成熟度挂 skill（被蒸馏的主体，有版本演进）；agent/workflow 的成熟度是**算出来的**。
+
+export const DISCO_STAGES = ['software3', 'disco', 'code'];
+const STAGE_RANK = { software3: 0, disco: 1, code: 2 };
+
+/** 频率下限：低于此不值得固化（跑完即弃）。变体收敛线：成功率稳定在此之上才算探明。 */
+export const DISCO_MIN_RUNS = 20;
+export const DISCO_CONVERGED_RATE = 90;
+
+/** 从 skill_registry.metadata.eval_score 提分数。非分数文本返回 null，禁编造。 */
+export function parseEvalScore(raw) {
+  const text = raw == null ? '' : String(raw);
+  const out = { score: null, baseline: null, raw: text };
+  if (!text) return out;
+  // 对照式：with_skill 16/16 (100%) vs without_skill 6/16 (38%)
+  const pair = text.match(/with_skill[^(]*\((\d+)%\)[\s\S]*?without_skill[^(]*\((\d+)%\)/i);
+  if (pair) { out.score = Number(pair[1]); out.baseline = Number(pair[2]); return out; }
+  // 单值：27/27 (100%)
+  const single = text.match(/\((\d+)%\)/);
+  if (single) { out.score = Number(single[1]); return out; }
+  return out;
+}
+
+/**
+ * 判 DisCo 档位。机器只算它能算的（频率/成功率/有无探针），
+ * 「变体已探明」需要看失败形状——机器给建议，confident=false 时等人确认。
+ */
+export function inferDiscoStage(m = {}) {
+  // 不可逆写入永远纯代码（merge/publish/发帖/写生产库/发钱）
+  if (m.irreversible) {
+    return { stage: 'code', confident: true, reason: '不可逆写入，按决策永远纯代码' };
+  }
+  const { runs, successRate, hasPostcondition } = m;
+  if (runs == null || successRate == null || hasPostcondition == null) {
+    return { stage: 'software3', confident: false, reason: '数据不全（缺频率/成功率/探针信息），等人确认' };
+  }
+  if (!hasPostcondition) {
+    return { stage: 'software3', confident: true, reason: '无探针（postcondition）不许固化——碎了发现不了' };
+  }
+  if (runs < DISCO_MIN_RUNS) {
+    return { stage: 'software3', confident: true, reason: `执行 ${runs} 次未达固化门槛 ${DISCO_MIN_RUNS}，跑完即弃` };
+  }
+  if (successRate < DISCO_CONVERGED_RATE) {
+    return { stage: 'software3', confident: true, reason: `成功率 ${successRate}% 仍在波动，变体未收敛（<${DISCO_CONVERGED_RATE}%）` };
+  }
+  return { stage: 'disco', confident: true, reason: `执行 ${runs} 次、成功率 ${successRate}%、有探针——三条固化判据齐备` };
+}
+
+/** agent 成熟度 = 它当前装备的 skill 的最低档（一个还在试错，整体就没固化）。 */
+export function rollupAgentMaturity(skillNames = [], stageBySkill = new Map()) {
+  const known = (skillNames || []).map((n) => [n, stageBySkill.get(n)]).filter(([, st]) => st);
+  if (!known.length) return { stage: null, weakest: null };
+  let weakest = known[0];
+  for (const cur of known) if (STAGE_RANK[cur[1]] < STAGE_RANK[weakest[1]]) weakest = cur;
+  return { stage: weakest[1], weakest: weakest[0] };
+}
+
+/** workflow 成熟度 = 各阶段 skill 的最低档（木桶），并点名瓶颈阶段——下一刀该固化谁。 */
+export function rollupWorkflowMaturity(stages = [], stageBySkill = new Map()) {
+  const known = (stages || [])
+    .map((s) => ({ stage: s.stage, skill: s.skill, lvl: stageBySkill.get(s.skill) }))
+    .filter((x) => x.lvl);
+  if (!known.length) return { stage: null, bottleneck: null };
+  let weakest = known[0];
+  for (const cur of known) if (STAGE_RANK[cur.lvl] < STAGE_RANK[weakest.lvl]) weakest = cur;
+  const allSame = known.every((x) => x.lvl === weakest.lvl);
+  return { stage: weakest.lvl, bottleneck: allSame ? null : weakest.stage };
+}
+
 export function parseGhaCron(out) {
   const rows = [];
   for (const line of String(out).split('\n')) {
