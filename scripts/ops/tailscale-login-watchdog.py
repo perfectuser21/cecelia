@@ -380,6 +380,30 @@ def reauth(binary: str, authkey: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def advertise_exit_node(binary: str) -> None:
+    """重认证之后把 exit node 广播补回来（env 开关，默认关）。
+
+    2026-09-06 watchdog 重认证后 perfect21 的 ExitNodeOption 变成 False，
+    西安执行机随即失去 primary 美国出口，只剩 sf-vps 一条备用链路。
+    修不了源头：`tailscale up` 带 exit-node 相关 flag 会覆盖现有 prefs
+    （见 reauth() 的说明），所以只能事后补一刀幂等的 set。
+    这一刀失败不改变重认证本身的结论，只记日志——网络已经恢复，
+    广播没恢复是"冗余度下降"而不是"断网"。
+    """
+    if os.environ.get("CECELIA_LOGIN_WATCHDOG_ADVERTISE_EXIT") != "1":
+        return
+    try:
+        result = run_tailscale([binary, "set", "--advertise-exit-node"], timeout=30)
+    except (subprocess.SubprocessError, OSError) as exc:
+        emit("advertise_exit_failed", reason=str(exc)[:300])
+        return
+    if result.returncode != 0:
+        emit(
+            "advertise_exit_failed",
+            reason=(result.stderr.strip() or f"exit={result.returncode}")[:300],
+        )
+
+
 def self_ips(status: dict[str, Any] | None) -> list[str]:
     if not status:
         return []
@@ -422,12 +446,17 @@ def reconcile() -> int:
     action = decision["action"]
 
     if action in ("ok", "backoff", "disabled", "restart_daemon"):
-        if action == "ok":
+        # backoff 是重认证失败的延续，计数必须留着让退避阶梯继续爬；
+        # 其余三条都不是"重认证失败"，计数留着只会让下一次真故障从残留值起跳
+        # （9-07 案卷：consecutive_failures=51，退避直接顶到 1800 秒）。
+        if action in ("ok", "disabled", "restart_daemon"):
             state["consecutive_failures"] = 0
+        if action == "ok":
             ips = self_ips(status)
             if ips:
                 state["last_ip"] = ips[0]
-            persist_state(state)
+        # 四条路径统一落盘：只在内存里清零等于没清。
+        persist_state(state)
         emit(action, reason=decision["reason"], warnings=decision["warnings"])
         # restart_daemon / disabled 需要人工介入，用非 0 返回码让 launchd 日志留痕
         return 2 if action in ("restart_daemon", "disabled") else 0
@@ -458,6 +487,7 @@ def reconcile() -> int:
         return 3
 
     state["consecutive_failures"] = 0
+    advertise_exit_node(binary)
     verified = load_json(binary, ["status", "--json"])
     current_ips = self_ips(verified)
     if current_ips:

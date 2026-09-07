@@ -170,6 +170,14 @@ process.exit(9);
     CECELIA_US_EXIT_SECONDARY_ID: 'node-secondary-us',
     CECELIA_US_EXIT_STATE_FILE: join(dir, 'state.json'),
     CECELIA_US_EXIT_LOCK_FILE: join(dir, 'lock'),
+    // 9-03/9-04 部署版引入双阈值容错：计数文件必须落到临时目录（默认路径
+    // /var/db/cecelia 在测试环境不可写），阈值置 1 让本组用例继续断言
+    // 「一次违规立刻 fail-closed」这一原始不变量；容错与过期语义本身由
+    // failure-counter-expiry.contract.test.js 覆盖。
+    CECELIA_US_EXIT_FAILURE_COUNT_FILE: join(dir, 'failure-count.json'),
+    CECELIA_US_EXIT_DAEMON_ABSENT_COUNT_FILE: join(dir, 'daemon-absent-count.json'),
+    CECELIA_US_EXIT_FAILURE_THRESHOLD: '1',
+    CECELIA_US_EXIT_DAEMON_ABSENT_THRESHOLD: '1',
     FAKE_STATUS_FILE: statusFile,
     FAKE_RUNTIME_FILE: runtimeFile,
     FAKE_CALLS_FILE: callsFile,
@@ -179,7 +187,9 @@ process.exit(9);
   };
 
   return {
-    run: () => spawnSync('/usr/bin/python3', [ENFORCER, '--once'], { env, encoding: 'utf8' }),
+    // 走 PATH 上的 python3：/usr/bin/python3 是 macOS 专属路径，
+    // 硬编码它这组用例就只能在本机跑、进不了 ubuntu CI。
+    run: () => spawnSync('python3', [ENFORCER, '--once'], { env, encoding: 'utf8' }),
     calls: () => {
       try { return readFileSync(callsFile, 'utf8').trim().split('\n').filter(Boolean); }
       catch { return []; }
