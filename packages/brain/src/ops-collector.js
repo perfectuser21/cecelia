@@ -412,6 +412,57 @@ export function aggregateStageStats(executions, stageToSkill = {}) {
   return out;
 }
 
+
+/**
+ * 阶段名 → 执行它的 skill（刀8）。目前手工维护：n8n 阶段名与 skill 名不同源，
+ * 无法自动推断。改阶段名会让映射失效且**不报错**——故 aggregateStageStats 对
+ * 未知阶段一律跳过（禁硬塞给某个 skill），未映射阶段可由 /agent-ops/graph 观察到。
+ */
+export const STAGE_TO_SKILL = {
+  手机预检: 'douyin-phone-runtime',
+  视频发现: 'social-video-discovery',
+  全文判定: 'social-video-qualifier',
+  评论采集: 'social-comment-lead-collector',
+  线索评分: 'social-comment-lead-scorer',
+  去重配送: 'social-lead-delivery',
+  线索触达: 'social-lead-outreach',
+  手机归位: 'douyin-phone-runtime',
+};
+
+// 阶段级执行数据查询（限量避免拉爆：每条 ~80KB）
+export const N8N_STAGE_DATA_CMD =
+  'ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no root@100.86.118.99 ' +
+  `'docker exec zenithjoy-db-postgres psql -U n8n -d n8n -tAc "SELECT json_agg(t.d) FROM (SELECT d.data::json AS d FROM execution_data d JOIN execution_entity e ON e.id=d.\"executionId\" WHERE e.\"startedAt\" > NOW() - make_interval(days => 30) ORDER BY d.\"executionId\" DESC LIMIT 300) t"'`;
+
+
+/**
+ * eval 分数入库通道（刀8-B 框架）。真机评测跑完后调它把分数落成新的一代，
+ * Notion 上自动出演进曲线。评测执行本身需真机（xian-m4/HONOR/抖音）+ 评测集，另行安排。
+ * 判据来自 09-05 A/B 实测方法：有 skill 臂 vs 无 skill 臂同题同模型对照。
+ */
+export function buildEvalRecord({ skill, withSkill, withoutSkill, total, suite, note } = {}) {
+  if (!skill) throw new Error('skill 必填');
+  if (!Number.isFinite(total) || total <= 0) throw new Error('total（评测题数）必填且为正');
+  if (!Number.isFinite(withSkill) || withSkill < 0) throw new Error('withSkill 必填');
+  if (withSkill > total) throw new Error(`withSkill(${withSkill}) 超过 total(${total})`);
+  if (withoutSkill != null && withoutSkill > total) throw new Error(`withoutSkill 超过 total`);
+  const pct = (n) => Math.round((n / total) * 100);
+  const score = pct(withSkill);
+  const baseline = withoutSkill == null ? null : pct(withoutSkill);
+  const raw = baseline == null
+    ? `${withSkill}/${total} (${score}%)${suite ? ` [${suite}]` : ''}`
+    : `with_skill ${withSkill}/${total} (${score}%) vs without_skill ${withoutSkill}/${total} (${baseline}%)${suite ? ` [${suite}]` : ''}`;
+  return {
+    skill_name: skill,
+    eval_score: score,
+    eval_baseline: baseline,
+    lift: baseline == null ? null : score - baseline,   // 提升幅度=这个 skill 到底值不值
+    eval_raw: raw,
+    suite: suite || null,
+    change_note: [suite ? `评测集 ${suite}` : null, note].filter(Boolean).join('；') || '评测入库',
+  };
+}
+
 export function parseGhaCron(out) {
   const rows = [];
   for (const line of String(out).split('\n')) {
@@ -725,9 +776,15 @@ export async function runOpsCollector(pool, opts = {}) {
     const evalByName = new Map(evalRows.map((r) => [String(r.name).replace(/^\//, ''), r.es]));
     for (const sk of skills) {
       const ev = parseEvalScore(evalByName.get(sk.name));
+      // 用上刀8-A 归因出的真实运行数据（上一轮写入），使档位可自动判定
+      const { rows: [prev] } = await pool.query(
+        `SELECT runs, run_success_rate, has_postcondition FROM ops_skills WHERE source='openclaw' AND name=$1`,
+        [sk.name]);
       const st = inferDiscoStage({
         name: sk.name,
-        runs: null, successRate: null, hasPostcondition: null,  // 逐 skill 的运行数据下一刀接（run 目前只到 workflow 粒度）
+        runs: prev?.runs ?? null,
+        successRate: prev?.run_success_rate ?? null,
+        hasPostcondition: prev?.has_postcondition ?? null,
       });
       const { rows: [row] } = await pool.query(
         `INSERT INTO ops_skills (source, name, used_by, eval_score, eval_baseline, eval_raw,
@@ -792,6 +849,25 @@ export async function runOpsCollector(pool, opts = {}) {
            run_avg_sec=$3, last_run_at=$4, last_run_status=$5, updated_at=NOW()
          WHERE source='n8n' AND wf_id=$6`,
         [s.total, s.success_rate, s.avg_duration_sec, s.last_run_at, s.last_status, wfId]);
+    }
+    // 阶段级归因（刀8-A）：逐 skill 的真实运行次数/成功率/耗时。
+    // 失败不影响 run 记录本身——归因是增益不是前提。
+    try {
+      const rawStages = run(N8N_STAGE_DATA_CMD);
+      const execList = JSON.parse(rawStages || '[]') || [];
+      const parsed = execList.map((x) => parseN8nExecutionStages(x));
+      const stats = aggregateStageStats(parsed, STAGE_TO_SKILL);
+      for (const [skillName, st] of stats) {
+        await pool.query(
+          `UPDATE ops_skills SET runs=$1, run_success=$2, run_success_rate=$3,
+             run_avg_sec=$4, run_stats_at=$5, updated_at=NOW()
+           WHERE source='openclaw' AND name=$6`,
+          [st.runs, st.success, st.success_rate, st.avg_sec, collectedAt, skillName]);
+      }
+      results.stage_attribution = { ok: true, skills: stats.size, executions: parsed.length };
+    } catch (e) {
+      console.warn('[ops-collector] 阶段归因失败（不影响 run 记录）:', e.message?.slice(0, 160));
+      results.stage_attribution = { ok: false };
     }
     await writeHeartbeat(pool, 'n8n-runs', 'hk-vps', 'ok', null, null, collectedAt);
     results.n8n_runs = { ok: true, runs: runs.length, workflows: byWf.size };
