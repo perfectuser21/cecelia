@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeIntervalBaseline, classifyLiveness } from '../ops-liveness.js';
+import { computeIntervalBaseline, classifyLiveness, summarizeLiveness } from '../ops-liveness.js';
 
 // 判据来自决策「失联判定按各流程自己的历史节奏自动算」：
 // 各流程节奏差百倍（通道类 4 秒/次 vs 智能获客 70 分钟/次 vs 编码流水线 2.4 小时/次），
@@ -97,5 +97,39 @@ describe('classifyLiveness — 判活/黄/红', () => {
     // 再多停 3 小时就该红
     const later = classifyLiveness({ lastRunAt: ago(24 * 3600), baselineSec: 70 * 60, runCount: 206, now: NOW });
     expect(later.liveness).toBe('dead');
+  });
+});
+
+describe('summarizeLiveness — 从一条流程的 run 列表直接得出活性（采集器接线用）', () => {
+  const NOW = Date.parse('2026-09-08T12:00:00Z');
+  const mk = (isoList) => isoList.map((s) => ({ started_at: new Date(s), status: 'success' }));
+
+  it('智能获客真实形态：规律 70 分钟一轮、最后一轮在 20.4 小时前 → 黄且带出基线', () => {
+    const runs = [];
+    // 从 09-07 15:18 往前推 40 轮，每 70 分钟一轮
+    const last = Date.parse('2026-09-07T15:36:00Z');
+    for (let i = 0; i < 40; i += 1) runs.push({ started_at: new Date(last - i * 70 * 60000), status: 'success' });
+    const r = summarizeLiveness(runs, NOW);
+    expect(r.baseline_interval_sec).toBe(4200);
+    expect(r.liveness).toBe('warn');
+    expect(r.silent_sec).toBeGreaterThan(20 * 3600);
+  });
+
+  it('从未跑过的流程（空列表）→ cold，全字段 null 不抛', () => {
+    const r = summarizeLiveness([], NOW);
+    expect(r.liveness).toBe('cold');
+    expect(r.baseline_interval_sec).toBeNull();
+    expect(r.silent_sec).toBeNull();
+  });
+
+  it('刚跑过的活流程 → ok', () => {
+    const runs = [];
+    for (let i = 0; i < 30; i += 1) runs.push({ started_at: new Date(NOW - i * 600000), status: 'success' });
+    expect(summarizeLiveness(runs, NOW).liveness).toBe('ok');
+  });
+
+  it('缺 started_at 的脏数据不参与基线计算也不抛', () => {
+    const runs = [...mk(['2026-09-08T11:00:00Z', '2026-09-08T11:10:00Z']), { status: 'error' }];
+    expect(() => summarizeLiveness(runs, NOW)).not.toThrow();
   });
 });
