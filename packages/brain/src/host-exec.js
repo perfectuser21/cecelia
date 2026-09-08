@@ -12,10 +12,15 @@ export const EXEC_TIMEOUT_MS = 20_000;
 // 第4腿（n8n workflow）因此静默转 parse_error。给足余量，宁可占内存不可丢数据。
 export const EXEC_MAX_BUFFER = 128 * 1024 * 1024;
 
-export function defaultExec(cmd) {
+/**
+ * @param {string} cmd
+ * @param {{timeoutMs?:number}} [opts] 重命令（如拉 24MB 阶段执行数据）可放宽超时——
+ *   默认 20s 会 ETIMEDOUT（2026-09-08 实证：阶段归因拉 300×80KB 必超）。超时机制本身保留。
+ */
+export function defaultExec(cmd, opts = {}) {
   return execSync(cmd, {
     encoding: 'utf8',
-    timeout: EXEC_TIMEOUT_MS,
+    timeout: opts.timeoutMs ?? EXEC_TIMEOUT_MS,
     maxBuffer: EXEC_MAX_BUFFER,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
