@@ -583,6 +583,29 @@ async function upsertOpsRows(pool, token, { table, dbId, rows, buildProps }) {
   }
 }
 
+/**
+ * 运行舱专用推送入口（scheduler-jobs 的 ops-notion-push 调这个）。
+ *
+ * 为什么不复用 runNotionPushSync：那条链的唯一入口是 legacy-notion-push-scheduler，
+ * 既没人 import 又要 NOTION_LEGACY_PUSH_ENABLED=true 才跑——等于整条链没接电
+ * （2026-09-08 查实：Notion 运行舱四库停更两天就是这个原因）。而启用整条 legacy 链
+ * 会连带推 journeys/issues/decisions 等 8 条已被有意停用的投影，风险不可控。
+ * 故只把 ops 这一段接到现代调度层。
+ */
+export async function runOpsNotionPush(pool) {
+  let token;
+  try {
+    token = getToken();
+  } catch {
+    return { ok: false, reason: 'no_token' };
+  }
+  const dbs = await getOpsNotionDbs(pool);
+  if (!dbs?.graph_db) return { ok: false, reason: 'not_configured' };
+  if (dbs.disabled) return { ok: false, reason: 'disabled' };
+  await pushOpsGraph(pool, token);
+  return { ok: true };
+}
+
 // 合并推送：agent 行（带 role/workflow/合并调度）+ 孤儿排程行，全推同一个 graph_db。
 async function pushOpsGraph(pool, token) {
   const dbs = await getOpsNotionDbs(pool);
@@ -667,7 +690,76 @@ export function buildOpsWorkflowNotionProperties(w) {
   if (w.last_run_status) p.LastStatus = { select: { name: w.last_run_status } };
   if (w.node_count != null) p.Nodes = { number: w.node_count };
   if (w.wf_id) p.WfId = { rich_text: buildRichText(w.wf_id) };
+  // 活性（443）：看板要一眼看出"还会不会跑"，不能让人拿最后运行时间自己去减。
+  // 起因：业务流程停跑 20.4 小时，四表全绿因为它们只答"跑过多少次"。
+  if (w.liveness) {
+    p.Liveness = { select: { name: LIVENESS_LABEL[w.liveness] || LIVENESS_LABEL.cold } };
+    if (typeof w.silent_sec === 'number') {
+      p.SilentFor = { rich_text: buildRichText(formatSilentFor(w.silent_sec)) };
+    }
+  }
+  // 人工列（owner/note/priority/starred/enable_intent）一律不发：
+  // Notion 是它们的真相源，推回去会把主理人刚改的冲掉。
   return p; // Agents（跨库 relation）第二阶段补
+}
+
+/** 活性灯：手机上扫一眼就能挑出红的 */
+const LIVENESS_LABEL = {
+  ok: '🟢 正常',
+  warn: '🟡 放缓',
+  dead: '🔴 失联',
+  cold: '⚪ 数据不足',
+};
+
+/** 静默时长按量级换单位——固定用小时会出现"停了 0.0 小时"这种废话 */
+export function formatSilentFor(sec) {
+  const s = Number(sec);
+  if (!Number.isFinite(s) || s < 0) return '';
+  if (s < 60) return `停了 ${Math.round(s)} 秒`;
+  if (s < 3600) return `停了 ${Math.round(s / 60)} 分钟`;
+  if (s < 86400) return `停了 ${(s / 3600).toFixed(1)} 小时`;
+  return `停了 ${(s / 86400).toFixed(1)} 天`;
+}
+
+/** DisCo 合法档位——人工覆盖只认这三个，乱填一律忽略免得把档位写脏 */
+const VALID_STAGES = new Set(['software3', 'disco', 'code']);
+
+/**
+ * 从 Notion 页面读回**人工列**。机器列即使人改了也一概不读——
+ * 它们的真相源在 n8n/OpenClaw，下一轮推送会覆盖回去。
+ * 空值读成 null（不是 undefined）：人主动清空一个字段必须能传达到 Brain。
+ */
+export function buildOpsManualReadback(page) {
+  const props = page?.properties;
+  if (!props || typeof props !== 'object') return {};
+  const out = {};
+  const text = (k) => {
+    const rt = props[k]?.rich_text;
+    if (!Array.isArray(rt)) return undefined;
+    const v = rt.map((x) => x?.plain_text ?? '').join('').trim();
+    return v || null;
+  };
+  const select = (k) => {
+    if (!(k in props)) return undefined;
+    return props[k]?.select?.name ?? null;
+  };
+  const check = (k) => (typeof props[k]?.checkbox === 'boolean' ? props[k].checkbox : undefined);
+
+  const owner = text('Owner'); if (owner !== undefined) out.owner_manual = owner;
+  const note = text('Note'); if (note !== undefined) out.note_manual = note;
+  const org = text('Org'); if (org !== undefined) out.org_manual = org;
+  const role = text('RoleManual'); if (role !== undefined) out.role_manual = role;
+  const prio = select('Priority'); if (prio !== undefined) out.priority_manual = prio;
+  const star = check('Starred'); if (star !== undefined) out.starred = star;
+  const stage = select('Stage');
+  if (stage !== undefined && (stage === null || VALID_STAGES.has(stage))) out.stage_manual = stage;
+  const enabled = check('Enabled'); if (enabled !== undefined) out.enable_intent = enabled;
+  return out;
+}
+
+/** 生效档位：人工优先，人工空则用自动判定值 */
+export function effectiveStage(skill = {}) {
+  return skill.stage_manual ?? skill.disco_stage ?? null;
 }
 
 /** workflow → 它用到的 agent（跨库 relation 指向图谱库） */
