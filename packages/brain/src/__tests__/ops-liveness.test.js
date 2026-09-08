@@ -86,9 +86,16 @@ describe('classifyLiveness — 判活/黄/红', () => {
     expect(r.liveness).toBe('warn');
   });
 
-  it('本次真实事故可复现：智能获客停 20.4 小时应判红', () => {
-    // 09-07 15:18 最后一跑，09-08 12:00 查看，中间 20.4 小时无人察觉
+  it('本次真实事故可复现：智能获客停 20.4 小时必须离开 ok 态', () => {
+    // 09-07 15:18 最后一跑，09-08 12:00 才被人工考古发现，中间 20.4 小时无人察觉。
+    // 该流程基线 70 分钟 → 黄 5.8h / 红 23.3h，所以 20.4h 落在黄区而非红区。
+    // 这里不为了让本案例变红去调倍数（那会让高频流程误报）——事故的核心诉求是
+    // 「不能还显示正常」，黄已足够在看板上炸出来。
     const r = classifyLiveness({ lastRunAt: ago(20.4 * 3600), baselineSec: 70 * 60, runCount: 206, now: NOW });
-    expect(r.liveness).toBe('dead');
+    expect(r.liveness).not.toBe('ok');
+    expect(r.liveness).toBe('warn');
+    // 再多停 3 小时就该红
+    const later = classifyLiveness({ lastRunAt: ago(24 * 3600), baselineSec: 70 * 60, runCount: 206, now: NOW });
+    expect(later.liveness).toBe('dead');
   });
 });
