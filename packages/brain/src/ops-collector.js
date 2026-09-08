@@ -430,9 +430,18 @@ export const STAGE_TO_SKILL = {
 };
 
 // 阶段级执行数据查询（限量避免拉爆：每条 ~80KB）
+const N8N_STAGE_SQL = [
+  'SELECT json_agg(t.d) FROM (',
+  '  SELECT d.data::json AS d FROM execution_data d',
+  '  JOIN execution_entity e ON e.id = d.$$executionId$$',
+  '  WHERE e.$$startedAt$$ > NOW() - make_interval(days => 30)',
+  '  ORDER BY d.$$executionId$$ DESC LIMIT 300',
+  ') t'
+].join(' ').replace(/[$][$]/g, String.fromCharCode(92, 34));  // $$ → \" （shell 内的转义双引号）
+
 export const N8N_STAGE_DATA_CMD =
   'ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no root@100.86.118.99 ' +
-  `'docker exec zenithjoy-db-postgres psql -U n8n -d n8n -tAc "SELECT json_agg(t.d) FROM (SELECT d.data::json AS d FROM execution_data d JOIN execution_entity e ON e.id=d.\"executionId\" WHERE e.\"startedAt\" > NOW() - make_interval(days => 30) ORDER BY d.\"executionId\" DESC LIMIT 300) t"'`;
+  `'docker exec zenithjoy-db-postgres psql -U n8n -d n8n -tAc "${N8N_STAGE_SQL}"'`;
 
 
 /**
