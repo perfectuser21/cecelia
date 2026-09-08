@@ -435,8 +435,12 @@ const N8N_STAGE_SQL = [
   '  SELECT d.data::json AS d FROM execution_data d',
   '  JOIN execution_entity e ON e.id = d.$$executionId$$',
   '  WHERE e.$$startedAt$$ > NOW() - make_interval(days => 30)',
-  '  ORDER BY d.$$executionId$$ DESC LIMIT 300',
-  ') t'
+  // 只拉真正含业务阶段的执行：120 条里仅 7 条有（其余是通道/触发器的轻量 run），
+  // 不筛的话 19.5MB 里 96% 是废数据，95 秒贴近超时上限（2026-09-08 实证）
+  // 用 chr() 拼中文字面量，避开 shell/psql 多层引号转义（LIKE 里不能用双引号）
+  '    AND position(chr(38454) || chr(27573) || chr(32) IN d.data) > 0',
+  '  ORDER BY d.$$executionId$$ DESC LIMIT 30',
+  ') t',
 ].join(' ').replace(/[$][$]/g, String.fromCharCode(92, 34));  // $$ → \" （shell 内的转义双引号）
 
 export const N8N_STAGE_DATA_CMD =
@@ -862,7 +866,9 @@ export async function runOpsCollector(pool, opts = {}) {
     // 阶段级归因（刀8-A）：逐 skill 的真实运行次数/成功率/耗时。
     // 失败不影响 run 记录本身——归因是增益不是前提。
     try {
-      const rawStages = run(N8N_STAGE_DATA_CMD);
+      // 阶段数据体积大（~80KB/条），单独放宽超时——默认 20s 拉 120 条必 ETIMEDOUT
+      // （2026-09-08 生产实证：拉 300 条 ≈24MB 超时，归因整段跳过）
+      const rawStages = exec(buildHostCmd(N8N_STAGE_DATA_CMD, inContainer, opts.keyExistsFn), { timeoutMs: 120_000 });
       const execList = JSON.parse(rawStages || '[]') || [];
       const parsed = execList.map((x) => parseN8nExecutionStages(x));
       const stats = aggregateStageStats(parsed, STAGE_TO_SKILL);
