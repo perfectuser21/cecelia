@@ -472,6 +472,25 @@ export function buildEvalRecord({ skill, withSkill, withoutSkill, total, suite, 
   };
 }
 
+
+/**
+ * 从 SKILL.md 判断有无探针（postcondition）。决策要求：无探针不许固化——
+ * 因为"碎了能当场发现"是固化三条件之一。只认**结构化声明**，
+ * 随口一句"记得验证"不算（那不是机器能检查的东西）。
+ */
+export function detectPostcondition(doc) {
+  const t = String(doc || '');
+  if (!t) return false;
+  const PATTERNS = [
+    /产出契约/,                       // 业务 skill 实际写法（含 metrics 必填 + 最小 evidence）
+    /postcondition/i,
+    /后置条件/,
+    /最小\s*evidence/i,              // "真实模式 completed 的最小 evidence"
+    /evidence\s*(必须|必填)/,
+  ];
+  return PATTERNS.some((re) => re.test(t));
+}
+
 export function parseGhaCron(out) {
   const rows = [];
   for (const line of String(out).split('\n')) {
@@ -787,26 +806,29 @@ export async function runOpsCollector(pool, opts = {}) {
       const ev = parseEvalScore(evalByName.get(sk.name));
       // 用上刀8-A 归因出的真实运行数据（上一轮写入），使档位可自动判定
       const { rows: [prev] } = await pool.query(
-        `SELECT runs, run_success_rate, has_postcondition FROM ops_skills WHERE source='openclaw' AND name=$1`,
+        `SELECT runs, run_success_rate, doc_excerpt FROM ops_skills WHERE source='openclaw' AND name=$1`,
         [sk.name]);
+      // 探针从 SKILL.md 正文现判（doc_excerpt 由 SKILL.md 采集写入）
+      const hasProbe = prev?.doc_excerpt ? detectPostcondition(prev.doc_excerpt) : null;
       const st = inferDiscoStage({
         name: sk.name,
         runs: prev?.runs ?? null,
         successRate: prev?.run_success_rate ?? null,
-        hasPostcondition: prev?.has_postcondition ?? null,
+        hasPostcondition: hasProbe,
       });
       const { rows: [row] } = await pool.query(
         `INSERT INTO ops_skills (source, name, used_by, eval_score, eval_baseline, eval_raw,
-                                 disco_stage, stage_reason, stage_confident, updated_at)
-         VALUES ('openclaw',$1,$2,$3,$4,$5,$6,$7,$8,$9)
+                                 disco_stage, stage_reason, stage_confident, has_postcondition, updated_at)
+         VALUES ('openclaw',$1,$2,$3,$4,$5,$6,$7,$8,$10,$9)
          ON CONFLICT (source, name) DO UPDATE SET
            used_by=EXCLUDED.used_by, eval_score=EXCLUDED.eval_score,
            eval_baseline=EXCLUDED.eval_baseline, eval_raw=EXCLUDED.eval_raw,
            disco_stage=EXCLUDED.disco_stage, stage_reason=EXCLUDED.stage_reason,
-           stage_confident=EXCLUDED.stage_confident, updated_at=EXCLUDED.updated_at
+           stage_confident=EXCLUDED.stage_confident,
+           has_postcondition=EXCLUDED.has_postcondition, updated_at=EXCLUDED.updated_at
          RETURNING id, generation`,
         [sk.name, JSON.stringify(sk.used_by), ev.score, ev.baseline, ev.raw || null,
-         st.stage, st.reason, st.confident, collectedAt]);
+         st.stage, st.reason, st.confident, collectedAt, hasProbe]);
       // 版本历史：只在**分数或档位真变了**时追加一代，避免每 5 分钟灌一行流水
       if (row) await recordSkillVersionIfChanged(pool, row, sk.name, ev, st);
     }
