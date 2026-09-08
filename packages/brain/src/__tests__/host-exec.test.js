@@ -54,3 +54,17 @@ describe('defaultExec — 大输出不炸（ENOBUFS 回归）', () => {
     expect(out.length).toBeGreaterThan(2_000_000);
   });
 });
+
+describe('defaultExec — 重命令可放宽超时（归因 ETIMEDOUT 回归）', () => {
+  it('接受 opts.timeoutMs 覆盖默认 20s（拉 24MB 阶段数据必然超默认值）', async () => {
+    const { defaultExec, EXEC_TIMEOUT_MS } = await import('../host-exec.js');
+    expect(EXEC_TIMEOUT_MS).toBe(20_000);
+    // 跑一条耗时 >1s 的命令，用 3s 超时应成功（证明 opts 生效且未被默认值截断）
+    const out = defaultExec('sleep 1 && echo slow-ok', { timeoutMs: 3000 });
+    expect(out.trim()).toBe('slow-ok');
+  });
+  it('超时仍然生效——不是把超时关掉了', async () => {
+    const { defaultExec } = await import('../host-exec.js');
+    expect(() => defaultExec('sleep 3', { timeoutMs: 500 })).toThrow();
+  });
+});
