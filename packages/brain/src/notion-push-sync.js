@@ -666,6 +666,23 @@ async function pushOpsGraph(pool, token) {
   await syncOpsMembersRelation(pool, token);
   await pushOpsWorkflows(pool, token);   // 业务流程库（刀4）
   await pushOpsRuns(pool, token);        // run 记录库（刀6）
+  await pushOpsSkills(pool, token);      // 技能池（此前无任何推送代码，靠手动灌数据）
+}
+
+// ─── 技能池「Ops Skills」──────────────────────────────────
+// 此前这个库只存在于 Notion：19 条 notion_id 是早前一次性手动脚本灌的，
+// 仓库里没有任何代码维护它——与 Notion 停更同一类病（手动做的事没固化）。
+async function pushOpsSkills(pool, token) {
+  const dbs = await getOpsNotionDbs(pool);
+  if (!dbs?.skills_db || dbs.disabled) return;
+  const rows = (await pool.query(
+    `SELECT * FROM ops_skills
+     WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
+     ORDER BY updated_at LIMIT 50`)).rows;
+  await upsertOpsRows(pool, token, {
+    table: 'ops_skills', dbId: dbs.skills_db, rows,
+    buildProps: buildOpsSkillNotionProperties,
+  });
 }
 
 // ─── 业务流程库「Ops Workflows」（刀4）────────────────────────────────
@@ -719,6 +736,30 @@ export function formatSilentFor(sec) {
   if (s < 3600) return `停了 ${Math.round(s / 60)} 分钟`;
   if (s < 86400) return `停了 ${(s / 3600).toFixed(1)} 小时`;
   return `停了 ${(s / 86400).toFixed(1)} 天`;
+}
+
+/**
+ * 技能池机器列。人工列（Stage/Owner/Note/Priority/Starred）一律不发——
+ * Stage 正是主理人推翻自动判定的地方，推回去就把人改的冲掉了。
+ */
+export function buildOpsSkillNotionProperties(s) {
+  const p = {
+    Name: { title: [{ text: { content: String(s.name ?? '').slice(0, 200) } }] },
+    Source: { select: { name: s.source || 'openclaw' } },
+    UsedBy: { number: Array.isArray(s.used_by) ? s.used_by.length : 0 },
+  };
+  if (s.generation != null) p.Generation = { number: s.generation };
+  if (typeof s.eval_score === 'number') p.EvalScore = { number: s.eval_score };
+  // 无运行数据的不发假 0——19 个 skill 里 17 个还没有阶段归因数据
+  if (typeof s.runs === 'number') p.Runs = { number: s.runs };
+  if (typeof s.run_success_rate === 'number') p.SuccessRate = { number: s.run_success_rate };
+  if (typeof s.run_avg_sec === 'number') p.AvgSeconds = { number: s.run_avg_sec };
+  if (s.disco_stage) p.DiscoStage = { select: { name: s.disco_stage } };
+  // 判定依据必须一起给：只给档位不给理由，人没法判断该不该推翻它
+  if (s.stage_reason) p.StageReason = { rich_text: buildRichText(String(s.stage_reason).slice(0, 500)) };
+  // 探针未知（null）不发——false 会被误读成"已确认没有探针"
+  if (typeof s.has_postcondition === 'boolean') p.HasProbe = { checkbox: s.has_postcondition };
+  return p;
 }
 
 /** DisCo 合法档位——人工覆盖只认这三个，乱填一律忽略免得把档位写脏 */
