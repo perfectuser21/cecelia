@@ -346,6 +346,72 @@ async function recordSkillVersionIfChanged(pool, skillRow, name, ev, st) {
   await pool.query(`UPDATE ops_skills SET generation=$1 WHERE id=$2`, [gen, skillRow.id]);
 }
 
+
+// ─── 阶段级归因（刀8-A）───────────────────────────────────────────────
+// n8n execution_data.data 是**扁平化指针格式**：顶层数组，字符串数字=索引引用。
+// 实证：runData 含全部节点，每个「阶段 X」节点带 executionStatus 与 executionTime（毫秒）。
+// 价值：流程级 status=success ≠ 每阶段都成功（实测有 success 的 run 走了中止归档），
+// 逐 skill 的真实成功率只能从这里来。
+
+/** 扁平指针解引用：字符串数字 → 取数组对应项；否则原样。 */
+function derefFlat(flat, v) {
+  return (typeof v === 'string' && /^\d+$/.test(v)) ? flat[Number(v)] : v;
+}
+
+export function parseN8nExecutionStages(flat) {
+  const empty = { stages: [], last_node: null };
+  if (!Array.isArray(flat) || flat.length === 0) return empty;
+  try {
+    const resultData = derefFlat(flat, flat[0]?.resultData);
+    if (!resultData || typeof resultData !== 'object') return empty;
+    const runData = derefFlat(flat, resultData.runData);
+    if (!runData || typeof runData !== 'object') return empty;
+    const lastNode = derefFlat(flat, resultData.lastNodeExecuted);
+    const stages = [];
+    for (const [nodeName, ptr] of Object.entries(runData)) {
+      if (!String(nodeName).startsWith('阶段')) continue;   // 裁决/准备等非业务阶段不计
+      const runs = derefFlat(flat, ptr);
+      const first = Array.isArray(runs) ? derefFlat(flat, runs[0]) : null;
+      if (!first || typeof first !== 'object') continue;
+      const ms = Number(derefFlat(flat, first.executionTime));
+      stages.push({
+        stage: String(nodeName).replace(/^阶段\s*/, ''),
+        status: String(derefFlat(flat, first.executionStatus) || 'unknown'),
+        duration_sec: Number.isFinite(ms) ? Math.round(ms / 1000) : null,
+      });
+    }
+    return { stages, last_node: typeof lastNode === 'string' ? lastNode : null };
+  } catch {
+    return empty;   // 一条坏记录不能让整条采集腿死
+  }
+}
+
+/** 按 阶段→skill 映射汇总：每个 skill 跑了几次、成功率、平均耗时。映射不到的阶段跳过。 */
+export function aggregateStageStats(executions, stageToSkill = {}) {
+  const acc = new Map();
+  for (const ex of (Array.isArray(executions) ? executions : [])) {
+    for (const st of (ex?.stages || [])) {
+      const skill = stageToSkill[st.stage];
+      if (!skill) continue;                              // 未知阶段绝不硬塞给某个 skill
+      if (!acc.has(skill)) acc.set(skill, { runs: 0, success: 0, _sum: 0, _n: 0 });
+      const a = acc.get(skill);
+      a.runs += 1;
+      if (st.status === 'success') a.success += 1;
+      if (typeof st.duration_sec === 'number') { a._sum += st.duration_sec; a._n += 1; }
+    }
+  }
+  const out = new Map();
+  for (const [skill, a] of acc) {
+    out.set(skill, {
+      runs: a.runs,
+      success: a.success,
+      success_rate: Math.round((a.success / a.runs) * 100),
+      avg_sec: a._n ? Math.round(a._sum / a._n) : null,
+    });
+  }
+  return out;
+}
+
 export function parseGhaCron(out) {
   const rows = [];
   for (const line of String(out).split('\n')) {
