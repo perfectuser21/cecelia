@@ -18,7 +18,8 @@ const emitted = [...push.matchAll(/\bp\.([A-Za-z][A-Za-z0-9]*)\s*=/g)].map((m) =
 const wfCols = new Set(Object.keys(OPS_DB_PROPS.workflows));
 const unitCols = new Set(Object.keys(OPS_DB_PROPS.graph));
 const runCols = new Set(Object.keys(OPS_DB_PROPS.runs));
-const known = new Set([...wfCols, ...unitCols, ...runCols]);
+const skillCols = new Set(Object.keys(OPS_DB_PROPS.skills));
+const known = new Set([...wfCols, ...unitCols, ...runCols, ...skillCols]);
 const missing = [...new Set(emitted)].filter((c) => !known.has(c));
 if (missing.length) fail('推送发了库定义里没有的列: ' + missing.join(', ') + ' —— 上线即 400 静默停更');
 pass('推送用到的 ' + new Set(emitted).size + ' 个列全在库定义里');
@@ -49,5 +50,14 @@ for (const db of ['graph', 'workflows', 'skills', 'runs']) {
 if (!script.includes('skills_db')) fail('建库脚本未纳管 skills_db');
 if (!script.includes('ensureProps')) fail('建库脚本没有幂等补列——复用已有库时不补列正是本次事故根因');
 pass('四库定义齐全，skills 已纳管，补列幂等');
+
+// ⑤ kv 里每个库都必须有对应的推送函数——本次遗漏正是「库纳管了但没写推送」，
+//    Skills 库因此继续显示凌晨的手动灌入快照，新加的 14 列全空。
+for (const [db, fn] of [['graph_db','pushOpsGraph'],['workflows_db','pushOpsWorkflows'],['runs_db','pushOpsRuns'],['skills_db','pushOpsSkills']]) {
+  if (!script.includes(db)) fail('建库脚本未纳管 ' + db);
+  if (!push.includes('async function ' + fn)) fail(db + ' 已纳管但缺推送函数 ' + fn + ' —— 库会停在手动灌入的旧快照');
+  if (!push.includes('await ' + fn + '(')) fail(fn + ' 已定义但没人调用 —— 等于死代码（Notion 停更两天就是这么来的）');
+}
+pass('四库都有推送函数且都被调用');
 console.log('OK ops-notion-schema-smoke passed');
 "
