@@ -7,6 +7,8 @@
  *   NOTION_API_KEY=$(op item get "Notion" --vault CS --fields credential --reveal | tr -d '"') \
  *     node scripts/ops/create-ops-notion-dbs.js
  */
+import { OPS_DB_PROPS, diffMissingProps } from '../../packages/brain/src/ops-notion-schema.js';
+
 const NOTION = 'https://api.notion.com/v1';
 const BRAIN = process.env.BRAIN_URL || 'http://localhost:5221';
 const TOKEN = process.env.NOTION_API_KEY;
@@ -30,6 +32,21 @@ async function findDbByTitle(title) {
   return r.results.find((d) => (d.title?.[0]?.plain_text || '') === title)?.id || null;
 }
 
+/**
+ * 幂等补列：复用已有库时把缺的列 PATCH 上去。
+ * 血训（09-06 记过一次，09-08 又踩）：只在新建时带 properties，复用时不补 →
+ * 代码里新加列 → 推送 400 "X is not a property that exists" → 逐行 catch 吞掉 → 静默停更。
+ */
+async function ensureProps(dbId, wanted, label) {
+  const db = await notion(`/databases/${dbId}`);
+  const missing = diffMissingProps(db.properties, wanted);
+  const names = Object.keys(missing);
+  if (names.length === 0) { console.log(`✅ ${label} 列齐全，跳过`); return 0; }
+  await notion(`/databases/${dbId}`, 'PATCH', { properties: missing });
+  console.log(`✅ ${label} 已补 ${names.length} 列: ${names.join(', ')}`);
+  return names.length;
+}
+
 async function ensureDb(title, properties, parentPageId) {
   const existing = await findDbByTitle(title);
   if (existing) { console.log(`✅ 已存在复用: ${title} → ${existing}`); return existing; }
@@ -42,23 +59,12 @@ async function ensureDb(title, properties, parentPageId) {
   return db.id;
 }
 
-// 合并单库「Ops 运行图谱」：一行=一个运行单元（agent 或排程），调度/编排都是属性。
-const GRAPH_PROPS = {
-  Name: { title: {} }, Source: { select: {} }, Machine: { select: {} },
-  Role: { select: {} },              // orchestrator / member / solo / scheduled
-  Type: { rich_text: {} },
-  Schedule: { rich_text: {} },       // 空=常驻/按需；有值=定时
-  Repeat: { checkbox: {} }, NextRun: { date: {} }, LastSeen: { date: {} },
-  Status: { select: {} },
-  // Suspicious（死排程）列暂不设：其唯一数据源 brain_recurring 因 notion_page_id 占用不推本库，
-  // 恒 false 会误导；死排程识别在 /agent-ops/graph API 层保留供 Dashboard 消费。
-};
-
 const main = async () => {
   const journeyDb = await notion(`/databases/${JOURNEY_DB}`);
   const parentPageId = journeyDb.parent?.page_id;
   if (!parentPageId) throw new Error('取不到 AI Hub parent page id（JOURNEY_DB.parent 非 page）');
-  const graph_db = await ensureDb('Ops 运行图谱', GRAPH_PROPS, parentPageId);
+  const graph_db = await ensureDb('Ops 运行图谱', OPS_DB_PROPS.graph, parentPageId);
+  await ensureProps(graph_db, OPS_DB_PROPS.graph, 'Ops 运行图谱');
 
   // 同库 relation 自关联必须建库后单独 PATCH（建库时无法引用尚不存在的自己）。
   // dual_property：CanCall(它能召唤谁) ↔ CalledBy(谁能召唤它) 双向自动同步。
@@ -77,12 +83,8 @@ const main = async () => {
   }
 
   // 业务流程库（刀4）：workflow 是业务流程（智能获客8阶段），与图谱库的 agent（执行资源）分开。
-  const workflows_db = await ensureDb('Ops Workflows', {
-    Name: { title: {} }, Source: { select: {} }, Active: { checkbox: {} },
-    Stages: { number: {} },        // 业务阶段数
-    Flow: { rich_text: {} },       // 阶段序列：手机预检 → 视频发现 → …
-    Nodes: { number: {} }, WfId: { rich_text: {} },
-  }, parentPageId);
+  const workflows_db = await ensureDb('Ops Workflows', OPS_DB_PROPS.workflows, parentPageId);
+  await ensureProps(workflows_db, OPS_DB_PROPS.workflows, 'Ops Workflows');
 
   // 跨库 relation：workflow → 它用到的 agent（指向图谱库），反向自动生成 Workflows 列
   const wdb = await notion(`/databases/${workflows_db}`);
@@ -100,11 +102,8 @@ const main = async () => {
 
 
   // run 记录库（刀6）：只存业务流程的每次执行（通道类只在流程行看汇总）
-  const runs_db = await ensureDb('Ops Runs', {
-    Name: { title: {} }, Status: { select: {} }, Machine: { select: {} },
-    Mode: { select: {} }, Minutes: { number: {} }, StartedAt: { date: {} },
-    RunId: { rich_text: {} },
-  }, parentPageId);
+  const runs_db = await ensureDb('Ops Runs', OPS_DB_PROPS.runs, parentPageId);
+  await ensureProps(runs_db, OPS_DB_PROPS.runs, 'Ops Runs');
   const rdb = await notion(`/databases/${runs_db}`);
   if (!rdb.properties?.Workflow) {
     await notion(`/databases/${runs_db}`, 'PATCH', {
@@ -114,9 +113,14 @@ const main = async () => {
     console.log('✅ 已加跨库 relation: Runs.Workflow ↔ Workflows.Runs明细');
   }
 
+  // 技能池库：此前只存在于 Notion、由一次性手动脚本灌数据，仓库里没有任何代码维护它
+  // （与 Notion 停更同一类病：手动做的事没固化）。这里纳管并写进 kv，让推送/回读能找到它。
+  const skills_db = await ensureDb('Ops Skills', OPS_DB_PROPS.skills, parentPageId);
+  await ensureProps(skills_db, OPS_DB_PROPS.skills, 'Ops Skills');
+
   const kv = await fetch(`${BRAIN}/api/brain/kv/ops_notion_dbs`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ graph_db, workflows_db, runs_db }),
+    body: JSON.stringify({ graph_db, workflows_db, runs_db, skills_db }),
   }).then((r) => r.json());
   if (!kv.ok) throw new Error(`kv 写入失败: ${JSON.stringify(kv)}`);
   console.log('✅ kv ops_notion_dbs={graph_db} 已写入，下一轮 notion-push 自动推合并库（旧两库停推，数据保留待手删）');
