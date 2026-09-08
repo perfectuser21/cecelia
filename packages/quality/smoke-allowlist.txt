@@ -279,3 +279,4 @@ ops-workflows-smoke.sh
 worker-pool-dispatch-smoke.sh
 ops-runs-smoke.sh
 ops-skill-versions-smoke.sh
+ops-skill-stats-smoke.sh
