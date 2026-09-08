@@ -7,6 +7,7 @@
  */
 import { existsSync } from 'fs';
 import { defaultExec, buildHostCmd } from './host-exec.js';
+import { summarizeLiveness } from './ops-liveness.js';
 
 export const OWN_LABEL_RE = /(cecelia|zenithjoy|perfect21|openclaw|claude|n8n|cloudflare)/i;
 export const INTERVAL_MS = parseInt(process.env.OPS_COLLECTOR_INTERVAL_MS || String(5 * 60 * 1000), 10);
@@ -879,11 +880,19 @@ export async function runOpsCollector(pool, opts = {}) {
     }
     for (const [wfId, list] of byWf) {
       const s = summarizeRuns(list);
+      // 活性判定：这条流程还会不会跑（按它自己的历史节奏，不是一刀切阈值）。
+      // 只写机器列，人工列（owner/note/priority/starred/enable_intent）不在 SET 里，
+      // 采集永远不会冲掉主理人在 Notion 上填的东西。
+      const lv = summarizeLiveness(list, Date.now());
       await pool.query(
         `UPDATE ops_workflows SET machine='hk-vps', run_total=$1, run_success_rate=$2,
-           run_avg_sec=$3, last_run_at=$4, last_run_status=$5, updated_at=NOW()
-         WHERE source='n8n' AND wf_id=$6`,
-        [s.total, s.success_rate, s.avg_duration_sec, s.last_run_at, s.last_status, wfId]);
+           run_avg_sec=$3, last_run_at=$4, last_run_status=$5,
+           baseline_interval_sec=$6, liveness=$7, silent_sec=$8,
+           warn_after_sec=$9, dead_after_sec=$10, liveness_at=NOW(), updated_at=NOW()
+         WHERE source='n8n' AND wf_id=$11`,
+        [s.total, s.success_rate, s.avg_duration_sec, s.last_run_at, s.last_status,
+         lv.baseline_interval_sec, lv.liveness, lv.silent_sec,
+         lv.warn_after_sec, lv.dead_after_sec, wfId]);
     }
     // 阶段级归因（刀8-A）：逐 skill 的真实运行次数/成功率/耗时。
     // 失败不影响 run 记录本身——归因是增益不是前提。

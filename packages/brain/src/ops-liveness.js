@@ -74,3 +74,22 @@ export function classifyLiveness({ lastRunAt, baselineSec, runCount, now } = {})
     dead_after_sec: Math.round(deadAfter),
   };
 }
+
+/**
+ * 采集器接线用：给一条流程的 run 列表，直接得出可落盘的活性字段。
+ * 把「算基线 → 找最后一次 → 判定」三步收在一起，避免调用方各写一遍。
+ * @param {Array<{started_at:*}>} runs 该流程的运行记录（顺序不限）
+ * @param {number} now 当前时间戳
+ */
+export function summarizeLiveness(runs = [], now = Date.now()) {
+  const list = (Array.isArray(runs) ? runs : []).filter((r) => r?.started_at);
+  const started = list.map((r) => r.started_at);
+  const baseline = computeIntervalBaseline(started);
+  const lastRunAt = started.length
+    ? started.reduce((a, b) => (toMs(a) >= toMs(b) ? a : b))
+    : null;
+  return {
+    baseline_interval_sec: baseline,
+    ...classifyLiveness({ lastRunAt, baselineSec: baseline, runCount: list.length, now }),
+  };
+}
