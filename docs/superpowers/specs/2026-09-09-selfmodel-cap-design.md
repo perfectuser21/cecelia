@@ -42,3 +42,11 @@ archiveWhere = deleteWhere =
 - 读路径改动（getSelfModel 语义不变：最新一行即当前人格）
 - 写入频率治理（72 条/天是否合理属行为调优，另议）
 - 归档行的二次压缩存储（gzip 归档文件已足够）
+
+## 执行结果（2026-09-09 实测）
+
+- 库 5820MB → **1871MB（≤2GB 目标达成）**；self_model 7,076 行 → 30 行（蒸馏快照 + 29 条历史）
+- 蒸馏快照 124KB（身份段 15KB + 4 个月度蒸馏 + 9 月最新 356 条原文），`/api/brain/self-model` 已返回蒸馏版
+- 历史全量归档 `~/cecelia-backups/db-slim-20260909-knife2/`（self_model 历史 2.4GB gz + 其余 8 规则少量）
+- 顺手修复：db-slim 归档文件改按规则名命名（同表多规则原会互相覆盖）
+- 核心表零变化；Brain /context 200
