@@ -21,6 +21,14 @@ ALLOWLIST=(
   #   不能修：修复需 vitest 1.x → 4.x 跨 3 个 major，破坏性极大（全测试套件重写风险）。
   #   移除条件：vitest 升级到 ≥4.1.8 后删除本行。TODO(deps): 跟踪 vitest 大版本升级。
   "GHSA-5xrq-8626-4rwp"
+  # GHSA-82fw-gwwq-j7x9 — Vitest @vitest/mocker Path Traversal / 任意文件读取（via redirect）。
+  #   不可利用：仅 dev 依赖（vitest 及其 mocker），漏洞前提是 vitest 的 mock 服务
+  #            对外提供文件；CI 与生产从不把 vitest 暴露给不可信输入，仅跑仓内可信测试代码。
+  #   不能修：修复需 @vitest/coverage-v8 5.0.0（semver major），全仓 6 个 workspace
+  #            的 vitest（1.x/2.x/3.x/4.x 混布）需跨 major 统一升级，破坏性极大。
+  #   移除条件：vitest 全仓升级到含修复的 major 后删除本行。TODO(deps): 与
+  #            GHSA-5xrq-8626-4rwp 同一 vitest 大版本升级 track 一起处理。
+  "GHSA-82fw-gwwq-j7x9"
 )
 
 JSON=$(npm audit --audit-level=critical --json 2>/dev/null || true)
