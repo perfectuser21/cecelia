@@ -79,3 +79,10 @@ export function buildCutoff(days) { ... }
 - parent_checkpoint_id 置 NULL（LangGraph resume 不受影响，时间旅行 API 本系统未用）
 - pg_repack（引入依赖不值当，VACUUM FULL 够用）
 - 备份迁对象存储/NAS（属迁移刀，不在本刀）
+
+## 执行结果（2026-09-09 第一刀实测）
+
+- 库 9631MB → **5820MB**；删除 6.75M 行（memory_stream 454,513 / graph 快照 2,395,850+365 / events 943,658 / metrics 1,943,947 / checkpoint 三表 1,007,356），全部先归档至 `~/cecelia-backups/db-slim-20260909/`（8 个 csv.gz，共 ~185MB）
+- 核心表零变化；ms 剩余 67,033 与基线推算分毫不差；graph 保留 22,081 行、孤儿 version 0
+- scan-graph 三 repo 回归通过（含雷点 revision 041438e3），Brain /context 200，守卫 proven-to-fire
+- **未达 ≤2GB 的原因（用户拍板接受）**：剩余大头是 self_model 记忆 7,075 条 / 3.8GB（设计上永不过期、读取端只取最新一条、单条已膨胀至 1MB+，2026-08 单月写入 1.9GB）。保留策略与膨胀根因另行立项（决策 aa975f19）。
