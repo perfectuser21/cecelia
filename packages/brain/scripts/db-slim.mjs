@@ -95,11 +95,19 @@ async function batchDelete(pool, rule) {
 
 async function apply(pool) {
   console.log(`[db-slim] apply — 归档目录: ${ARCHIVE_DIR}`);
+
+  // 阶段 1: 全量归档（任何删除发生前）。此时所有 archiveWhere 都能看到完整数据，
+  // 不能按规则交叉"归档→删除"串行推进——否则后面规则的 archiveWhere 可能因为
+  // 前序规则已删除的行而失真（见 ckpt 组：checkpoints_old 删完后，
+  // checkpoint_writes_orphan/checkpoint_blobs_orphan 的 archiveWhere 命中归零，
+  // 但 deleteWhere 的孤儿谓词此时才成立，会导致孤儿行不归档直接删）。
+  console.log('  --- 阶段 1: 归档 ---');
+  const hits = new Map();
   for (const rule of SLIM_RULES) {
     const { rows } = await pool.query(`SELECT count(*)::bigint AS n FROM ${rule.table} WHERE ${rule.archiveWhere}`);
     const hit = Number(rows[0].n);
+    hits.set(rule.name, hit);
     console.log(`  ${rule.name}: 命中 ${hit} 行`);
-    if (hit === 0 && !rule.txGroup) { console.log('    跳过（0 行）'); continue; }
     if (rule.preAssert) {
       const a = await pool.query(rule.preAssert.sql);
       if (a.rows[0].n !== 0) throw new Error(`${rule.name} preAssert 失败: ${a.rows[0].n} ≠ 0`);
@@ -107,11 +115,22 @@ async function apply(pool) {
     if (hit > 0) {
       const f = archiveRule(rule);
       console.log(`    已归档 → ${f}`);
+    } else {
+      console.log('    跳过归档（0 行）');
     }
-    const deleted = await batchDelete(pool, rule);
-    console.log(`    已删除 ${deleted} 行`);
   }
+
+  // 阶段 2: 统一分批删除（deleteWhere 不变）。txGroup 内孤儿谓词只有在前序
+  // 规则删除完成后才成立，所以这里一律跑 batchDelete；0 行删除无害。
+  console.log('  --- 阶段 2: 删除 ---');
+  for (const rule of SLIM_RULES) {
+    const deleted = await batchDelete(pool, rule);
+    console.log(`  ${rule.name}: 已删除 ${deleted} 行`);
+  }
+
+  // 阶段 3: VACUUM
   if (!NO_VACUUM) {
+    console.log('  --- 阶段 3: VACUUM ---');
     const tables = [...new Set(SLIM_RULES.map((r) => r.table))];
     for (const t of tables) {
       console.log(`  VACUUM (FULL, ANALYZE) ${t} ...`);
