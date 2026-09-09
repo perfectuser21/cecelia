@@ -53,6 +53,7 @@ conversation-capture-smoke.sh
 conversation-ttl-archiver-smoke.sh
 conversations-smoke.sh
 decision-system-smoke.sh
+db-slim-knife3-smoke.sh
 db-slim-smoke.sh
 decisions-dedup-smoke.sh
 dev-env-db-guard-smoke.sh

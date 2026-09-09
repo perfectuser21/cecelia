@@ -11,7 +11,7 @@ describe('db-slim-rules', () => {
     }
   });
 
-  it('9 条规则覆盖设计文档全部目标表', () => {
+  it('13 条规则覆盖设计文档全部目标表', () => {
     expect(SLIM_RULES.map((r) => r.name)).toEqual([
       'memory_stream_expired',
       'graph_edge_snapshots_stale',
@@ -22,6 +22,10 @@ describe('db-slim-rules', () => {
       'checkpoint_writes_orphan',
       'checkpoint_blobs_orphan',
       'memory_stream_selfmodel_history',
+      'map_projection_edges_superseded',
+      'map_projection_nodes_superseded',
+      'map_projection_runs_superseded',
+      'harness_attempts_terminal_old',
     ]);
   });
 
@@ -43,10 +47,12 @@ describe('db-slim-rules', () => {
     expect(SLIM_RULES[idxEdges].deleteWhere).not.toContain('harness_impact_contracts');
   });
 
-  it('cecelia_events 保 30 天并带 cortex_analyses FK 断言', () => {
+  it('cecelia_events 保 7 天并带 cortex_analyses FK 断言', () => {
     const r = SLIM_RULES.find((x) => x.name === 'cecelia_events_old');
-    expect(r.deleteWhere).toBe("created_at < NOW() - INTERVAL '30 days'");
+    expect(r.deleteWhere).toBe("created_at < NOW() - INTERVAL '7 days'");
+    expect(r.archiveWhere).toBe(r.deleteWhere);
     expect(r.preAssert.sql).toContain('cortex_analyses');
+    expect(r.preAssert.sql).toContain("'7 days'");
     expect(r.preAssert.expectZero).toBe(true);
   });
 
@@ -69,12 +75,51 @@ describe('db-slim-rules', () => {
     expect(b.archiveWhere).toContain("'7 days'");
   });
 
-  it('self_model 历史规则：保留最新 30 条，其余归档删除', () => {
+  it('self_model 历史规则：保留最新 5 条，其余归档删除', () => {
     const r = SLIM_RULES.find((x) => x.name === 'memory_stream_selfmodel_history');
     expect(r.table).toBe('memory_stream');
     expect(r.deleteWhere).toContain("source_type = 'self_model'");
     expect(r.deleteWhere).toContain('ORDER BY created_at DESC');
-    expect(r.deleteWhere).toContain('LIMIT 30');
+    expect(r.deleteWhere).toContain('LIMIT 5');
+    expect(r.archiveWhere).toBe(r.deleteWhere);
+  });
+
+  it('map_projection 组：edges < nodes < runs（FK 先子后父，同 status 语义）', () => {
+    const idxEdges = SLIM_RULES.findIndex((x) => x.name === 'map_projection_edges_superseded');
+    const idxNodes = SLIM_RULES.findIndex((x) => x.name === 'map_projection_nodes_superseded');
+    const idxRuns = SLIM_RULES.findIndex((x) => x.name === 'map_projection_runs_superseded');
+    expect(idxEdges).toBeLessThan(idxNodes);
+    expect(idxNodes).toBeLessThan(idxRuns);
+
+    const edges = SLIM_RULES[idxEdges];
+    expect(edges.table).toBe('map_projection_edges');
+    expect(edges.deleteWhere).toContain('NOT EXISTS');
+    expect(edges.deleteWhere).toContain('map_projection_runs r');
+    expect(edges.deleteWhere).toContain('r.id = map_projection_edges.run_id');
+    expect(edges.deleteWhere).toContain("r.status = 'active'");
+    expect(edges.archiveWhere).toBe(edges.deleteWhere);
+
+    const nodes = SLIM_RULES[idxNodes];
+    expect(nodes.table).toBe('map_projection_nodes');
+    expect(nodes.deleteWhere).toContain('NOT EXISTS');
+    expect(nodes.deleteWhere).toContain('map_projection_runs r');
+    expect(nodes.deleteWhere).toContain('r.id = map_projection_nodes.run_id');
+    expect(nodes.deleteWhere).toContain("r.status = 'active'");
+    expect(nodes.archiveWhere).toBe(nodes.deleteWhere);
+
+    const runs = SLIM_RULES[idxRuns];
+    expect(runs.table).toBe('map_projection_runs');
+    expect(runs.deleteWhere).toBe("status <> 'active'");
+    expect(runs.archiveWhere).toBe(runs.deleteWhere);
+  });
+
+  it('harness_attempts 终态规则：30 天前的四种终态', () => {
+    const r = SLIM_RULES.find((x) => x.name === 'harness_attempts_terminal_old');
+    expect(r.table).toBe('harness_attempts');
+    expect(r.deleteWhere).toContain("'30 days'");
+    for (const status of ['completed', 'completed_with_concerns', 'failed', 'cancelled']) {
+      expect(r.deleteWhere).toContain(status);
+    }
     expect(r.archiveWhere).toBe(r.deleteWhere);
   });
 
