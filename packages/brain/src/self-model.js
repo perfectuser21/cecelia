@@ -168,6 +168,41 @@ export async function initSeed(dbPool) {
   }
 }
 
+// ── 滚动窗口（防 O(n²) 滚雪球）────────────────────────────────
+// 每次演化存完整快照的设计在写入量大后无界膨胀（实测 7,075 行 / 3.8GB，
+// 峰值 72 条/天）。上限内保留：头部身份段（首个日期条目之前，即种子/蒸馏
+// 人格，永不裁）+ 尽可能多的近期日期条目；超限从最老条目裁起，最新条目
+// 永不裁。
+export const MAX_SELF_MODEL_BYTES = 131072;
+
+const DATED_ENTRY_SPLIT = /\n\n(?=\[\d{4}-\d{2}-\d{2}\] )/;
+const DATED_ENTRY_START = /^\[\d{4}-\d{2}-\d{2}\] /;
+
+export function trimSelfModelContent(content) {
+  if (Buffer.byteLength(content, 'utf8') <= MAX_SELF_MODEL_BYTES) return content;
+
+  const parts = content.split(DATED_ENTRY_SPLIT);
+  const head = DATED_ENTRY_START.test(parts[0]) ? null : parts.shift();
+
+  const SEP_BYTES = 2; // '\n\n'
+  const sizes = parts.map((p) => Buffer.byteLength(p, 'utf8'));
+  let total = (head ? Buffer.byteLength(head, 'utf8') : -SEP_BYTES)
+    + sizes.reduce((sum, s) => sum + SEP_BYTES + s, 0);
+
+  let drop = 0;
+  while (drop < parts.length - 1 && total > MAX_SELF_MODEL_BYTES) {
+    total -= SEP_BYTES + sizes[drop];
+    drop += 1;
+  }
+
+  const kept = [head, ...parts.slice(drop)].filter((x) => x !== null);
+  const result = kept.join('\n\n');
+  if (Buffer.byteLength(result, 'utf8') > MAX_SELF_MODEL_BYTES) {
+    console.warn('[self-model] 头部身份段+最新条目仍超上限，按原样存储（需人工蒸馏头部）');
+  }
+  return result;
+}
+
 // ── 更新（演化，不是替换）─────────────────────────────────────────
 
 /**
@@ -190,7 +225,7 @@ export async function updateSelfModel(newInsight, dbPool, options = {}) {
   const db = dbPool || pool;
   const current = await getSelfModel(db);
   const date = new Date().toISOString().slice(0, 10);
-  const evolved = `${current}\n\n[${date}] ${newInsight.trim()}`;
+  const evolved = trimSelfModelContent(`${current}\n\n[${date}] ${newInsight.trim()}`);
 
   // ttlDays 严格校验（防 SQL 注入：拼到 SQL 而非走 $param）
   let expiresClause = 'NULL';
