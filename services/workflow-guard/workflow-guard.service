@@ -8,8 +8,9 @@ Type=simple
 # 必须跑在 Commander 账本所在主机：授权要读 state/workflow-runs/<run>__<attempt>.json
 Environment=GUARD_STATE_DIR=/opt/openclaw/workspaces-root/clawd-work-commander/state/workflow-runs
 Environment=GUARD_PORT=8477
-# 只监听回环，对外一律经 tailscale serve 暴露到 tailnet，绝不上公网
-Environment=GUARD_HOST=127.0.0.1
+# 只绑 Tailscale 地址：本机有公网 IP，绑 0.0.0.0 等于把"发写入令牌"的接口挂到公网上。
+# tailnet 内的 worker（XIAN-M4-PHONE 等）用 http://100.86.118.99:8477 直连即可，无需 tailscale serve。
+Environment=GUARD_HOST=100.86.118.99
 ExecStart=/usr/bin/env node /opt/workflow-guard/src/main.mjs
 Restart=always
 RestartSec=5
