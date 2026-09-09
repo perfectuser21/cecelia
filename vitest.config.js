@@ -17,6 +17,10 @@ export default defineConfig({
       'packages/brain/scripts/ci/__tests__/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       'tests/regression/**/*.{test,spec}.?(c|m)[jt]s?(x)',
       'tests/**/*.{test,spec}.?(c|m)[jt]s?(x)',
+      // services/**：部署到 hk-vps 等外部主机的独立小服务（如 workflow-guard）。
+      // 它们不属于 brain 包，但必须进 CI——这类东西过去只存在于目标机器上、没有 git 源，
+      // 正是「手动做的事没固化」那类病的温床。
+      'services/**/__tests__/**/*.{test,spec}.?(c|m)[jt]s?(x)',
     ],
     exclude: [
       'sprints/archive/**',
