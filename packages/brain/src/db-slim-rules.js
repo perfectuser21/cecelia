@@ -41,12 +41,12 @@ export const SLIM_RULES = [
   {
     name: 'cecelia_events_old',
     table: 'cecelia_events',
-    archiveWhere: "created_at < NOW() - INTERVAL '30 days'",
-    deleteWhere: "created_at < NOW() - INTERVAL '30 days'",
+    archiveWhere: "created_at < NOW() - INTERVAL '7 days'",
+    deleteWhere: "created_at < NOW() - INTERVAL '7 days'",
     preAssert: {
       sql: `SELECT count(*)::int AS n FROM cortex_analyses c
             JOIN cecelia_events e ON e.id = c.event_id
-            WHERE e.created_at < NOW() - INTERVAL '30 days'`,
+            WHERE e.created_at < NOW() - INTERVAL '7 days'`,
       expectZero: true,
     },
   },
@@ -102,13 +102,37 @@ export const SLIM_RULES = [
       SELECT id FROM memory_stream
       WHERE source_type = 'self_model'
       ORDER BY created_at DESC
-      LIMIT 30
+      LIMIT 5
     )`,
     deleteWhere: `source_type = 'self_model' AND id NOT IN (
       SELECT id FROM memory_stream
       WHERE source_type = 'self_model'
       ORDER BY created_at DESC
-      LIMIT 30
+      LIMIT 5
     )`,
+  },
+  {
+    name: 'map_projection_edges_superseded',
+    table: 'map_projection_edges',
+    archiveWhere: `NOT EXISTS (SELECT 1 FROM map_projection_runs r WHERE r.id = map_projection_edges.run_id AND r.status = 'active')`,
+    deleteWhere: `NOT EXISTS (SELECT 1 FROM map_projection_runs r WHERE r.id = map_projection_edges.run_id AND r.status = 'active')`,
+  },
+  {
+    name: 'map_projection_nodes_superseded',
+    table: 'map_projection_nodes',
+    archiveWhere: `NOT EXISTS (SELECT 1 FROM map_projection_runs r WHERE r.id = map_projection_nodes.run_id AND r.status = 'active')`,
+    deleteWhere: `NOT EXISTS (SELECT 1 FROM map_projection_runs r WHERE r.id = map_projection_nodes.run_id AND r.status = 'active')`,
+  },
+  {
+    name: 'map_projection_runs_superseded',
+    table: 'map_projection_runs',
+    archiveWhere: "status <> 'active'",
+    deleteWhere: "status <> 'active'",
+  },
+  {
+    name: 'harness_attempts_terminal_old',
+    table: 'harness_attempts',
+    archiveWhere: `created_at < NOW() - INTERVAL '30 days' AND status IN ('completed','completed_with_concerns','failed','cancelled')`,
+    deleteWhere: `created_at < NOW() - INTERVAL '30 days' AND status IN ('completed','completed_with_concerns','failed','cancelled')`,
   },
 ];
