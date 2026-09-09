@@ -45,3 +45,10 @@
 - projection_outbox/suggestions 等小表的行清理（vacuumdb 回收死空间已够，行是活数据）
 - tasks 表清理（业务台账，只 vacuum）
 - us-vps 迁移准备（下一任务）
+
+## 执行结果（2026-09-09 实测）
+
+- 库 1879MB → **848MB**（目标 ≤900MB 超额达成）；三刀累计 9631MB → 848MB（-91%）
+- 删除：superseded 投影 86.2 万行（4,672 个历史版本）、events 36.5 万行（收紧 7d）、终态 attempts 1,273 行、self_model 25 行；active 投影 245 edges/224 nodes 分毫未动（删前删后一致）
+- 全库 vacuumdb --full 回收长尾死空间；13 份归档在 ~/cecelia-backups/db-slim-20260909-knife3/
+- map API / context 200；核心表零变化
