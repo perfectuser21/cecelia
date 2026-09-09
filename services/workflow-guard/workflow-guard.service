@@ -1,0 +1,20 @@
+[Unit]
+Description=Workflow write-guard authorizer (Commander ledger side)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 必须跑在 Commander 账本所在主机：授权要读 state/workflow-runs/<run>__<attempt>.json
+Environment=GUARD_STATE_DIR=/opt/openclaw/workspaces-root/clawd-work-commander/state/workflow-runs
+Environment=GUARD_PORT=8477
+# 只监听回环，对外一律经 tailscale serve 暴露到 tailnet，绝不上公网
+Environment=GUARD_HOST=127.0.0.1
+ExecStart=/usr/bin/env node /opt/workflow-guard/src/main.mjs
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
