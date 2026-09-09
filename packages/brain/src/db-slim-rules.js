@@ -95,4 +95,20 @@ export const SLIM_RULES = [
       WHERE c.thread_id = checkpoint_blobs.thread_id
     )`,
   },
+  {
+    name: 'memory_stream_selfmodel_history',
+    table: 'memory_stream',
+    archiveWhere: `source_type = 'self_model' AND id NOT IN (
+      SELECT id FROM memory_stream
+      WHERE source_type = 'self_model'
+      ORDER BY created_at DESC
+      LIMIT 30
+    )`,
+    deleteWhere: `source_type = 'self_model' AND id NOT IN (
+      SELECT id FROM memory_stream
+      WHERE source_type = 'self_model'
+      ORDER BY created_at DESC
+      LIMIT 30
+    )`,
+  },
 ];

@@ -21,6 +21,8 @@ import {
   updateSelfModel,
   SELF_MODEL_SEED,
   SelfModelWriteDeniedError,
+  trimSelfModelContent,
+  MAX_SELF_MODEL_BYTES,
 } from '../self-model.js';
 import { attemptUnauthorizedWrite } from './fixtures/self-model-attacker.js';
 
@@ -271,5 +273,57 @@ describe('getSelfModelRecord', () => {
 
     expect(record.content).toBe(SELF_MODEL_SEED);
     expect(record.version).toBe(0);
+  });
+});
+
+// ── 滚动窗口（防 O(n²) 滚雪球，2026-09-09 第二刀）──────────────
+
+describe('trimSelfModelContent 滚动窗口', () => {
+  const HEAD = '我是 Cecelia，这是头部身份段（蒸馏人格），永不裁剪。';
+  const entry = (i) =>
+    `[2026-0${(i % 8) + 1}-1${i % 9}] 第 ${i} 条洞察：` + 'x'.repeat(180);
+  const build = (n) => HEAD + '\n\n' + Array.from({ length: n }, (_, i) => entry(i)).join('\n\n');
+
+  it('MAX_SELF_MODEL_BYTES 为 128KB', () => {
+    expect(MAX_SELF_MODEL_BYTES).toBe(131072);
+  });
+
+  it('欠限内容原样返回', () => {
+    const c = build(10);
+    expect(trimSelfModelContent(c)).toBe(c);
+  });
+
+  it('超限时裁到上限以内，且从最老条目开始裁', () => {
+    const c = build(1200); // ~1200 × ~200B ≈ 240KB，超 128KB
+    expect(Buffer.byteLength(c, 'utf8')).toBeGreaterThan(MAX_SELF_MODEL_BYTES);
+    const trimmed = trimSelfModelContent(c);
+    expect(Buffer.byteLength(trimmed, 'utf8')).toBeLessThanOrEqual(MAX_SELF_MODEL_BYTES);
+    expect(trimmed.startsWith(HEAD)).toBe(true);              // 头部保留
+    expect(trimmed).toContain('第 1199 条洞察');               // 最新条目保留
+    expect(trimmed).not.toContain('第 0 条洞察');              // 最老条目被裁
+  });
+
+  it('头部+最新条目仍超限时原样返回该最小组合（不丢新洞察）', () => {
+    const bigHead = 'H'.repeat(MAX_SELF_MODEL_BYTES);
+    const c = bigHead + '\n\n[2026-09-09] 新洞察';
+    const trimmed = trimSelfModelContent(c);
+    expect(trimmed).toContain('新洞察');
+    expect(trimmed.startsWith('H')).toBe(true);
+  });
+
+  it('updateSelfModel 落库内容不超上限', async () => {
+    const huge = build(1200);
+    mockQuery.mockReset();
+    // getSelfModel 的 SELECT 返回超大 current；INSERT 捕获参数
+    mockQuery.mockImplementation((sql) => {
+      if (/SELECT content/.test(sql)) return Promise.resolve({ rows: [{ content: huge, created_at: new Date() }] });
+      return Promise.resolve({ rows: [] });
+    });
+    await updateSelfModel('这是新洞察', { query: mockQuery });
+    const insertCall = mockQuery.mock.calls.find(([sql]) => /INSERT INTO memory_stream/.test(sql));
+    expect(insertCall).toBeTruthy();
+    const stored = insertCall[1][0];
+    expect(Buffer.byteLength(stored, 'utf8')).toBeLessThanOrEqual(MAX_SELF_MODEL_BYTES);
+    expect(stored).toContain('这是新洞察');
   });
 });

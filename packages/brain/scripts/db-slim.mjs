@@ -68,7 +68,8 @@ async function check(pool) {
 
 function archiveRule(rule) {
   mkdirSync(ARCHIVE_DIR, { recursive: true });
-  const out = path.join(ARCHIVE_DIR, `${rule.table}.csv.gz`);
+  // 按规则名命名（同一表可有多条规则，如 memory_stream 的 expired 与 selfmodel_history，按表名会互相覆盖）
+  const out = path.join(ARCHIVE_DIR, `${rule.name}.csv.gz`);
   const copySql = `COPY (SELECT * FROM ${rule.table} WHERE ${rule.archiveWhere.replace(/\n/g, ' ')}) TO STDOUT WITH CSV HEADER`;
   execSync(`psql "${DB_URL}" -c ${JSON.stringify(copySql)} | gzip > ${JSON.stringify(out)}`, {
     stdio: ['ignore', 'ignore', 'inherit'], shell: '/bin/bash',

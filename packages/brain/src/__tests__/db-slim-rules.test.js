@@ -11,7 +11,7 @@ describe('db-slim-rules', () => {
     }
   });
 
-  it('8 条规则覆盖设计文档全部目标表', () => {
+  it('9 条规则覆盖设计文档全部目标表', () => {
     expect(SLIM_RULES.map((r) => r.name)).toEqual([
       'memory_stream_expired',
       'graph_edge_snapshots_stale',
@@ -21,6 +21,7 @@ describe('db-slim-rules', () => {
       'checkpoints_old',
       'checkpoint_writes_orphan',
       'checkpoint_blobs_orphan',
+      'memory_stream_selfmodel_history',
     ]);
   });
 
@@ -66,6 +67,15 @@ describe('db-slim-rules', () => {
     expect(w.archiveWhere).not.toBe(w.deleteWhere);
     expect(w.archiveWhere).toContain("'7 days'");
     expect(b.archiveWhere).toContain("'7 days'");
+  });
+
+  it('self_model 历史规则：保留最新 30 条，其余归档删除', () => {
+    const r = SLIM_RULES.find((x) => x.name === 'memory_stream_selfmodel_history');
+    expect(r.table).toBe('memory_stream');
+    expect(r.deleteWhere).toContain("source_type = 'self_model'");
+    expect(r.deleteWhere).toContain('ORDER BY created_at DESC');
+    expect(r.deleteWhere).toContain('LIMIT 30');
+    expect(r.archiveWhere).toBe(r.deleteWhere);
   });
 
   it('每条规则字段齐全', () => {
