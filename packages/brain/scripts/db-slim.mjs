@@ -66,7 +66,60 @@ async function check(pool) {
   console.log(`[db-slim] ✅ 库 ${gb.toFixed(2)} GB ≤ ${MAX_DB_GB} GB`);
 }
 
-async function apply() { throw new Error('apply 未实现'); }
+function archiveRule(rule) {
+  mkdirSync(ARCHIVE_DIR, { recursive: true });
+  const out = path.join(ARCHIVE_DIR, `${rule.table}.csv.gz`);
+  const copySql = `COPY (SELECT * FROM ${rule.table} WHERE ${rule.archiveWhere.replace(/\n/g, ' ')}) TO STDOUT WITH CSV HEADER`;
+  execSync(`psql "${DB_URL}" -c ${JSON.stringify(copySql)} | gzip > ${JSON.stringify(out)}`, {
+    stdio: ['ignore', 'ignore', 'inherit'], shell: '/bin/bash',
+  });
+  if (!existsSync(out) || statSync(out).size === 0) {
+    throw new Error(`归档文件为空: ${out}`);
+  }
+  return out;
+}
+
+async function batchDelete(pool, rule) {
+  let total = 0;
+  for (;;) {
+    const { rowCount } = await pool.query(
+      `DELETE FROM ${rule.table} WHERE ctid IN (
+         SELECT ctid FROM ${rule.table} WHERE ${rule.deleteWhere} LIMIT ${BATCH})`
+    );
+    total += rowCount;
+    if (rowCount === 0) break;
+    console.log(`    ${rule.table}: 已删 ${total} 行...`);
+  }
+  return total;
+}
+
+async function apply(pool) {
+  console.log(`[db-slim] apply — 归档目录: ${ARCHIVE_DIR}`);
+  for (const rule of SLIM_RULES) {
+    const { rows } = await pool.query(`SELECT count(*)::bigint AS n FROM ${rule.table} WHERE ${rule.archiveWhere}`);
+    const hit = Number(rows[0].n);
+    console.log(`  ${rule.name}: 命中 ${hit} 行`);
+    if (hit === 0 && !rule.txGroup) { console.log('    跳过（0 行）'); continue; }
+    if (rule.preAssert) {
+      const a = await pool.query(rule.preAssert.sql);
+      if (a.rows[0].n !== 0) throw new Error(`${rule.name} preAssert 失败: ${a.rows[0].n} ≠ 0`);
+    }
+    if (hit > 0) {
+      const f = archiveRule(rule);
+      console.log(`    已归档 → ${f}`);
+    }
+    const deleted = await batchDelete(pool, rule);
+    console.log(`    已删除 ${deleted} 行`);
+  }
+  if (!NO_VACUUM) {
+    const tables = [...new Set(SLIM_RULES.map((r) => r.table))];
+    for (const t of tables) {
+      console.log(`  VACUUM (FULL, ANALYZE) ${t} ...`);
+      await pool.query(`VACUUM (FULL, ANALYZE) ${t}`);
+    }
+  }
+  console.log(`[db-slim] 完成。库大小: ${(await dbSizeGb(pool)).toFixed(2)} GB`);
+}
 
 async function main() {
   const pool = new Pool({ connectionString: DB_URL });
