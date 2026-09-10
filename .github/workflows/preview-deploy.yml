@@ -61,7 +61,7 @@ jobs:
         id: start_preview
         if: steps.check_ts.outputs.configured == 'true'
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
           BRANCH_NAME: ${{ github.head_ref }}
@@ -87,7 +87,7 @@ jobs:
         id: wait_active
         if: steps.check_ts.outputs.configured == 'true'
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
           BRANCH_NAME: ${{ github.head_ref }}
@@ -100,7 +100,7 @@ jobs:
         id: get_host
         if: steps.check_ts.outputs.configured == 'true'
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           HOST=$(echo "$BRAIN_URL" | sed -E 's#^https?://##; s#:[0-9]+$##')
           echo "host=$HOST" >> $GITHUB_OUTPUT

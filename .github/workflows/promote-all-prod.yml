@@ -144,7 +144,7 @@ jobs:
       - name: 触发生产部署（Brain + Dashboard）
         env:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           set -uo pipefail
           if [ -z "${DEPLOY_TOKEN:-}" ]; then
@@ -180,7 +180,7 @@ jobs:
 
       - name: 等待生产部署完成
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           set -uo pipefail
           echo "轮询 /api/brain/deploy/status（最多 300s）..."
@@ -209,7 +209,7 @@ jobs:
 
       - name: Production Smoke（验 5221 真健康）
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           set -uo pipefail
           echo "验证生产 Brain 健康..."

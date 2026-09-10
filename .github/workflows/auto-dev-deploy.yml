@@ -47,7 +47,7 @@ jobs:
       - name: 触发 Dev 部署（dev:true）
         env:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           set -uo pipefail
           if [ -z "${DEPLOY_TOKEN:-}" ]; then
@@ -78,7 +78,7 @@ jobs:
 
       - name: 等待 Dev 部署完成
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           set -uo pipefail
           echo "轮询 /api/brain/deploy/dev/status (max 300s)..."
@@ -107,7 +107,7 @@ jobs:
 
       - name: Dev 健康验证（5220）
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           set -uo pipefail
           HOST=$(echo "$BRAIN_URL" | sed -E 's#^https?://##; s#:[0-9]+$##')

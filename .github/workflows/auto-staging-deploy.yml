@@ -55,7 +55,7 @@ jobs:
 
       - name: 等待 Production 同 SHA 就绪
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           set -euo pipefail
           EXPECTED_SHA="$GITHUB_SHA" MAX_WAIT_SECONDS=900 POLL_INTERVAL_SECONDS=10 \
@@ -64,7 +64,7 @@ jobs:
       - name: 触发 Staging 部署（staging:true，绝不 promote）
         env:
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           set -uo pipefail
           if [ -z "${DEPLOY_TOKEN:-}" ]; then
@@ -95,7 +95,7 @@ jobs:
 
       - name: 等待 Staging 部署完成
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           set -uo pipefail
           echo "轮询 /api/brain/deploy/staging/status (max 300s)..."
@@ -130,7 +130,7 @@ jobs:
 
       - name: Staging Smoke（验 5222 真健康）
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           set -uo pipefail
           if [ "${STAGING_SKIPPED:-0}" = "1" ]; then
