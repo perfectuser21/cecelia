@@ -681,6 +681,8 @@ jobs:
         run: bash scripts/ci/__tests__/smoke-core-no-jq.test.sh
       - name: lint-gp-anchor-artifact 六场景自测（决策 109dd8eb）
         run: bash scripts/ci/__tests__/lint-gp-anchor-artifact.test.sh
+      - name: brain-deploy-url 必须指向 us-vps（2026-09-11 迁移守卫）
+        run: bash scripts/ci/__tests__/brain-deploy-url-points-to-us-vps.test.sh
 
   # ─── GP 锚产物闸（决策 109dd8eb ①）────────────────────────────
   # 闸从「声明」挪到「产物」：PR 触碰流水线路径（orchestrator / harness routes /

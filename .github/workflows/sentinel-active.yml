@@ -25,7 +25,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  DEFAULT_PROBE_URL: "http://100.71.151.105:5221"
+  DEFAULT_PROBE_URL: "http://100.79.41.61:5221"
   ISSUE_LABEL: heartbeat-sentinel
   ISSUE_TITLE_PREFIX: "[heartbeat-sentinel]"
 

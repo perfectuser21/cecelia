@@ -49,7 +49,7 @@ jobs:
       - name: E2E Nightly Runner（真实 staging 5222）
         if: ${{ github.event.inputs.dry_run != 'true' }}
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
           BARK_TOKEN: ${{ secrets.BARK_TOKEN }}
         run: |
           set -uo pipefail
@@ -73,7 +73,7 @@ jobs:
       - name: 失败诊断
         if: failure()
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
         run: |
           HOST=$(echo "$BRAIN_URL" | sed -E 's#^https?://##; s#:[0-9]+$##')
           echo "::error::E2E nightly smoke 失败 — 请检查 staging ${HOST}:5222"
