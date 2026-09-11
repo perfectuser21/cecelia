@@ -15,15 +15,11 @@ services:
   node-brain:
     image: cecelia-brain:${BRAIN_VERSION:-latest}
     container_name: cecelia-node-brain
-    ports:
-      - "5221:5221"
-      # Acceptance 公网 listener（刀1，决策 c08c2173/4303a326）：容器内 0.0.0.0:5223，
-      # 宿主侧 pf 封 en0/en1 公网网卡，仅 cloudflared(brain-acceptance.zenjoymedia.media)→localhost:5223 可达。
-      # env 注入走 env_file(.env.docker)：ACCEPTANCE_API_TOKEN（缺省=listener 不启动 fail-closed）+ ACCEPTANCE_PUBLIC_HOST=0.0.0.0
-      - "5223:5223"
-      # 预览 Brain 端口范围（per-PR preview environments，由 preview-env-start.sh 在容器内启动）
-      # 容器内的预览 Brain 进程绑定到 5300-5399，需对外暴露才能被 GitHub Actions 健康检查到（via Tailscale）
-      - "5300-5399:5300-5399"
+    # us-vps 上 Postgres 只监听 127.0.0.1（未对外开放到 docker 网桥），且现役容器一直是这样
+    # 跑的（docker inspect 实测 NetworkMode=host）——沿用 host 网络模式，不走 bridge+端口映射。
+    # host 模式下容器与宿主共享网络栈，容器内 localhost 直接就是宿主 localhost，不需要
+    # ports 段（host 模式下 compose 会拒绝一起声明），也不需要 host.docker.internal 解析。
+    network_mode: host
     read_only: true
     tmpfs:
       - /tmp:size=100M
@@ -97,8 +93,8 @@ services:
       - KERNEL_FLEET_PREPARE_TIMEOUT_MS=${KERNEL_FLEET_PREPARE_TIMEOUT_MS:-180000}
       # Xian Workers must be able to call the US Brain over Tailscale.
       - KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL=${KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL:-http://100.71.151.105:5221}
-      # host.docker.internal: Linux Docker 需要 --add-host 或 extra_hosts 才能解析，见下方 extra_hosts
-      - DB_HOST=${DB_HOST:-host.docker.internal}
+      # host 网络模式下容器与宿主共享网络栈，localhost 直接可达宿主 Postgres（listen 127.0.0.1）
+      - DB_HOST=${DB_HOST:-localhost}
       - DB_PORT=${DB_PORT:-5432}
       - DB_NAME=${DB_NAME:-cecelia}
       - DB_USER=${DB_USER:-cecelia}
@@ -146,9 +142,10 @@ services:
       - NOTION_INBOX_DB_ID=${NOTION_INBOX_DB_ID:-b45ca2cb-9c90-83f1-bc41-81ad0b86c1b1}
       # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here
       # FEISHU_OWNER_OPEN_IDS is provided via env_file (.env.docker) — same reason, do NOT override here
-    # Linux Docker 默认不解析 host.docker.internal（macOS/OrbStack 原生支持），显式加映射。
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # ⚠️ 已知遗留：FLEET_WORKER_US_MAC_M4_URL/BRAIN_API/ZJ_STAGING_HOST 三个默认值仍是
+      # host.docker.internal，host 网络模式下这个域名不会被解析——这三个指向的服务本来就在
+      # 别的物理机（mmv/M4），跟网络模式无关，us-vps 真正需要这些功能时必须在 .env.docker
+      # 里显式覆盖成对应机器的真实 Tailscale 地址，不是本次修复范围（本次只解决 DB 连通性）。
     # compose standalone cgroup 限额（deploy.resources 只在 Docker Swarm 模式生效）
     # 容器 memory cap 必须 ≥ 运行时 node 堆上限 + 容器开销余量。
     # Dockerfile CMD: node --max-old-space-size=3072 → 3G 堆；4G = 3G 堆 + ~1G 容器/native 开销。
