@@ -99,10 +99,17 @@ echo "$DRY_OUT_LINUX" | grep -q "docker-compose.us-vps.yml" \
   || fail "COMPOSE_FILE 覆盖未生效于 dry-run 输出"
 
 DRY_OUT_DEFAULT=$(cd "$(git rev-parse --show-toplevel)" && bash scripts/brain-deploy.sh --dry-run 2>&1) || true
-if echo "$DRY_OUT_DEFAULT" | grep -q "docker-compose.us-vps.yml"; then
-  fail "未覆盖 COMPOSE_FILE 时 dry-run 默认引用了 Linux compose 文件（macOS 现有行为回归）"
+# 期望值随当前 uname -s 走，跟 brain-deploy.sh 的探测逻辑保持同一份真相：
+# 本机是 Linux（CI runner 全 ubuntu-latest）→ 默认应该选 docker-compose.us-vps.yml；
+# 本机是 Darwin（mmv 等）→ 默认应该选 docker-compose.yml，不能默认切到 Linux 文件。
+if [ "$(uname -s)" = "Linux" ]; then
+  echo "$DRY_OUT_DEFAULT" | grep -q "docker-compose.us-vps.yml" \
+    && ok "[运行时] 本机是 Linux，未覆盖 COMPOSE_FILE 时 dry-run 默认选中 docker-compose.us-vps.yml" \
+    || fail "本机是 Linux，但未覆盖 COMPOSE_FILE 时 dry-run 没有默认选中 docker-compose.us-vps.yml"
 else
-  ok "[运行时] 未覆盖 COMPOSE_FILE 时 dry-run 默认行为不变（不引用 docker-compose.us-vps.yml）"
+  echo "$DRY_OUT_DEFAULT" | grep -q "docker-compose.us-vps.yml" \
+    && fail "本机是 ${OSTYPE:-非Linux}，未覆盖 COMPOSE_FILE 时 dry-run 却默认引用了 Linux compose 文件（回归）" \
+    || ok "[运行时] 本机非 Linux，未覆盖 COMPOSE_FILE 时 dry-run 默认行为不变（不引用 docker-compose.us-vps.yml）"
 fi
 
 echo "结果: PASS=$PASS FAIL=$FAIL"
