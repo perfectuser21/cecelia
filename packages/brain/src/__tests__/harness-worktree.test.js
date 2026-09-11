@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ensureHarnessWorktree, cleanupHarnessWorktree } from '../harness-worktree.js';
+import { ensureHarnessWorktree, cleanupHarnessWorktree, DEFAULT_BASE_REPO } from '../harness-worktree.js';
 
 describe('ensureHarnessWorktree', () => {
   it('returns existing path when dir is a git repo (idempotent)', async () => {
@@ -20,7 +20,7 @@ describe('ensureHarnessWorktree', () => {
       execFn, statFn,
       logFn: () => {},
     });
-    expect(p).toBe('/Users/administrator/perfect21/cecelia/.claude/worktrees/harness-v2/task-abcdef12');
+    expect(p).toBe(`${DEFAULT_BASE_REPO}/.claude/worktrees/harness-v2/task-abcdef12`);
     expect(calls.some(c => c.includes('clone'))).toBe(false);
     expect(calls.some(c => c.includes('worktree add'))).toBe(false);
   });
@@ -32,7 +32,7 @@ describe('ensureHarnessWorktree', () => {
       return { stdout: '' };
     };
     // wtPath doesn't exist (false), cloneSource is local (true)
-    const wtPath = '/Users/administrator/perfect21/cecelia/.claude/worktrees/harness-v2/task-beefcafe';
+    const wtPath = `${DEFAULT_BASE_REPO}/.claude/worktrees/harness-v2/task-beefcafe`;
     const statFn = async (p) => p === '/tmp/cec';
 
     const p = await ensureHarnessWorktree({

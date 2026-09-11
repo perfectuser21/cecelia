@@ -6,9 +6,13 @@ import { readdir, rm } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import pool from '../db.js'
+import { DEFAULT_BASE_REPO } from '../harness-worktree.js'
 
+// 复用 harness-worktree.js 的 DEFAULT_BASE_REPO（已按平台区分 Linux/macOS），
+// 不再独立维护一份硬编码 macOS 路径——否则 us-vps 上这个 cron 永远收割不到任何东西
+// （HARNESS_WORKTREE_BASE 未配置时静默 no-op，existsSync 对不存在路径返回 false）。
 const WORKTREE_BASE = process.env.HARNESS_WORKTREE_BASE ||
-  '/Users/administrator/perfect21/cecelia/.claude/worktrees/harness-v2'
+  join(DEFAULT_BASE_REPO, '.claude', 'worktrees', 'harness-v2')
 const TERMINAL_STATUSES = ['completed', 'failed', 'archived']
 const GRACE_MS = 24 * 60 * 60 * 1000 // 24h
 

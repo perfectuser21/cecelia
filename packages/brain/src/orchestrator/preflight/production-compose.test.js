@@ -48,8 +48,11 @@ describe('production Kernel capability inputs', () => {
     expect(compose).toContain(
       '- KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL=${KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL:-http://100.71.151.105:5221}',
     );
+    // brain-deploy.sh 现在按 uname -s 自动选 compose 文件（docker-compose.yml 或
+    // docker-compose.us-vps.yml），-f 参数是 ${COMPOSE_FILE} 变量，不再是硬编码文件名
+    // （us-vps 部署适配，PR#5279）。
     expect(deploy).toMatch(
-      /docker compose --env-file "\$ROOT_DIR\/\.env\.docker" \\\s+-f "\$ROOT_DIR\/docker-compose\.yml" up -d/,
+      /docker compose --env-file "\$ROOT_DIR\/\.env\.docker" \\\s+-f "\$ROOT_DIR\/\$\{COMPOSE_FILE\}" up -d/,
     );
     const sidecarComposeCalls = sidecar.match(
       /docker compose --env-file "\$DEPLOY_ROOT\/\.env\.docker" \\\s+-f "\$DEPLOY_ROOT\/docker-compose\.yml" up -d node-brain/g,

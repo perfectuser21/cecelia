@@ -46,7 +46,12 @@ function redactRemoteUrl(source) {
 
 const execFile = promisify(execFileCb);
 
-export const DEFAULT_BASE_REPO = '/Users/administrator/perfect21/cecelia';
+// us-vps(Linux) 上没有交互式开发，只有一份 checkout（REPO_ROOT，见 docker-compose.us-vps.yml
+// 注释），worktree 物理位置和克隆源都应该是它；macOS(mmv) 上保持硬编码的"活人主仓"路径不变
+// （REPO_ROOT 在 macOS 上指向的是另一个"CD 专用部署根"，两者历来是两份不同 checkout）。
+export const DEFAULT_BASE_REPO = process.platform === 'linux'
+  ? (process.env.REPO_ROOT || '/root/cecelia')
+  : '/Users/administrator/perfect21/cecelia';
 
 /**
  * 计算 harness sub-task worktree 路径（SSOT）。
