@@ -1,0 +1,176 @@
+# == us-vps (Linux) Production Environment ==
+# docker-compose.yml 的 Linux 专属版本（决策：Brain us-vps(Linux)部署-compose策略，
+# 拍板"为 Linux 单建 docker-compose.us-vps.yml，与 macOS 的 docker-compose.yml 互不牵连"）。
+# 只砍掉账号绑定类挂载（.claude / .claude-account1~3 / .codex-team1~5 / .grok ——
+# 按「引擎-机器绑定铁律」Claude/Codex 只在 mmv 跑，us-vps 不需要这些账号挂载，
+# 且这些宿主路径在 Linux 上本来就不存在）。其余挂载全部保留，只是把宿主路径
+# 从 /Users/administrator/... 改指 Linux 路径 /root/...（决策：...凭据挂载裁剪范围细化）。
+#
+# Build first: bash scripts/brain-build.sh
+# Deploy:      bash scripts/brain-deploy.sh（会按 uname -s 自动选到本文件）
+
+name: cecelia
+
+services:
+  node-brain:
+    image: cecelia-brain:${BRAIN_VERSION:-latest}
+    container_name: cecelia-node-brain
+    ports:
+      - "5221:5221"
+      # Acceptance 公网 listener（刀1，决策 c08c2173/4303a326）：容器内 0.0.0.0:5223，
+      # 宿主侧 pf 封 en0/en1 公网网卡，仅 cloudflared(brain-acceptance.zenjoymedia.media)→localhost:5223 可达。
+      # env 注入走 env_file(.env.docker)：ACCEPTANCE_API_TOKEN（缺省=listener 不启动 fail-closed）+ ACCEPTANCE_PUBLIC_HOST=0.0.0.0
+      - "5223:5223"
+      # 预览 Brain 端口范围（per-PR preview environments，由 preview-env-start.sh 在容器内启动）
+      # 容器内的预览 Brain 进程绑定到 5300-5399，需对外暴露才能被 GitHub Actions 健康检查到（via Tailscale）
+      - "5300-5399:5300-5399"
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M
+    volumes:
+      # Docker socket: Brain 调 dockerd spawn 兄弟 pipeline 容器
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Skills SSOT（B57/B58）：.claude/skills/* 是指向这里的 symlink，不 mount 则容器内
+      # symlink 悬空 → harness SKILL 加载失败（loadSkillContent 全 miss）；dist 未 mount 则
+      # Brain 无法 dispatch relay。us-vps 上需要这两个仓库分别 clone 到 /root/ 下。
+      - /root/zenithjoy-skills:/root/zenithjoy-skills:ro
+      - /root/zenithjoy-skills-dist:/root/zenithjoy-skills-dist:ro
+      # 凭据：DB/内部服务凭据 SSOT。HOST_HOME=/root + Dockerfile ENV HOME 对齐宿主路径，
+      # 这样 Brain os.homedir() 和 docker-executor 构造的子容器 mount 源都能解析。
+      - /root/.credentials:/root/.credentials:ro
+      # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
+      - /root/cecelia/packages/workflows:/root/cecelia/packages/workflows:ro
+      # Config: OKR validation spec (read-only, mounted at /config for validate-okr-structure.js)
+      - /root/cecelia/packages/config:/config:ro
+      # HEARTBEAT.md (read-write for GET/PUT API)
+      - /root/cecelia/HEARTBEAT.md:/HEARTBEAT.md:rw
+      # workers.config.json (read-write for PUT /staff/workers API)
+      - /root/cecelia/packages/workflows/staff/workers.config.json:/root/cecelia/packages/workflows/staff/workers.config.json:rw
+      # Worktree 根目录（Brain spawn harness/pipeline 容器时要 mount 宿主 worktree）
+      - /root/cecelia/.claude/worktrees:/root/cecelia/.claude/worktrees:rw
+      - /root/worktrees:/root/worktrees:rw
+      # Content pipeline 产物目录（docker-executor existsFn 检查要求 Brain 可见宿主该路径，
+      # 否则不挂给 pipeline container，产物写到 ephemeral 空间 --rm 丢失。见 PR #2527 后续修）
+      - /root/content-output:/root/content-output:rw
+      - /root/claude-output:/root/claude-output:rw
+      # SSH：pipeline-export.sh 跑 "ssh nas" 上传 NAS，docker-executor 挂给 pipeline container
+      - /root/.ssh:/root/.ssh:ro
+      # Git + gh config（harness / pipeline container 做 git commit / gh pr 需要）
+      - /root/.gitconfig:/root/.gitconfig:ro
+      - /root/.config/gh:/root/.config/gh:ro
+      # 部署根：us-vps 只有一份 checkout（不像 macOS 区分"活人主仓"和"CD 专用部署根"，
+      # us-vps 上没有交互式开发，单一 checkout 同时充当主仓库挂载和 REPO_ROOT）。
+      - /root/cecelia:/root/cecelia:rw
+      # Prompt 文件目录：Brain 写 prompt 文件这里（docker-executor writePromptFile），
+      # 子容器 mount 源必须由宿主 docker daemon 解析 → 必须宿主路径。
+      - /root/claude-output/cecelia-prompts:/tmp/cecelia-prompts:rw
+      # Timezone (read-only)
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - .env.docker
+      # 所有 checkout / cron / 蓝绿部署共用宿主凭据 SSOT；首次部署自动生成。
+      - path: ${CECELIA_INTERNAL_ENV_FILE:-/root/.credentials/cecelia-internal.env}
+        required: false
+    environment:
+      - NODE_ENV=production
+      - TZ=Asia/Shanghai
+      - ENV_REGION=${ENV_REGION:-us}
+      # Universal Map repo→scope 身份绑定；拒绝仅 basename 相同的跨仓证据冒用。
+      - CECELIA_MAP_REPO_SCOPES=${CECELIA_MAP_REPO_SCOPES:-perfectuser21/cecelia=cecelia,cecelia=cecelia}
+      # Kernel controller 固定留在 US M4；Docker hostname 不是可调度机器身份。
+      - CECELIA_MACHINE_ID=${CECELIA_MACHINE_ID:-us-mac-m4}
+      # Fleet Node admission is mandatory. Brain accepts only these canonical
+      # server-owned Worker endpoints and caches their evidence for at most 90s.
+      - FLEET_WORKER_US_MAC_M4_URL=${FLEET_WORKER_US_MAC_M4_URL:-http://host.docker.internal:5231}
+      - FLEET_WORKER_XIAN_MAC_M4_URL=${FLEET_WORKER_XIAN_MAC_M4_URL:-http://100.86.57.69:5231}
+      - FLEET_WORKER_XIAN_MAC_M1_URL=${FLEET_WORKER_XIAN_MAC_M1_URL:-http://100.88.166.55:5231}
+      - FLEET_NODE_ADMISSION_CACHE_TTL_MS=${FLEET_NODE_ADMISSION_CACHE_TTL_MS:-1000}
+      # Phase 4B: all canonical machines use the authenticated Fleet Worker
+      # Attempt API. An absent/short token remains fail-closed in the transport.
+      - KERNEL_FLEET_REMOTE_ENABLED=${KERNEL_FLEET_REMOTE_ENABLED:-true}
+      # KERNEL_FLEET_BRIDGE_TOKEN 只来自 env_file(.env.docker)——不要在这里写
+      # `${KERNEL_FLEET_BRIDGE_TOKEN:-}`：environment 优先级高于 env_file，任何不带
+      # --env-file 的 compose up 都会把 token 盖成空串（2026-08-16 09:38Z 生产实证，
+      # 守卫 scripts/smoke/brain-compose-envfile-authority-smoke.sh）。
+      # Workspace + PostgreSQL + stopped Runner preparation is intentionally
+      # heavier than inspect/start/cancel, so it has an independent budget.
+      - KERNEL_FLEET_PREPARE_TIMEOUT_MS=${KERNEL_FLEET_PREPARE_TIMEOUT_MS:-180000}
+      # Xian Workers must be able to call the US Brain over Tailscale.
+      - KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL=${KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL:-http://100.71.151.105:5221}
+      # host.docker.internal: Linux Docker 需要 --add-host 或 extra_hosts 才能解析，见下方 extra_hosts
+      - DB_HOST=${DB_HOST:-host.docker.internal}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-cecelia}
+      - DB_USER=${DB_USER:-cecelia}
+      - DB_PASSWORD=${DB_PASSWORD:-cecelia}
+      # review 门审批 token（issue afc50c30）：只注入 Brain 本容器，relay/harness 执行体
+      # 容器不挂载——执行体物理上无法伪造人工批准。值从部署机根 .env（gitignored）/
+      # ~/.credentials/cecelia-brain.env 注入；缺省空 → 路由 503 fail-closed。
+      - HARNESS_REVIEW_APPROVER_TOKEN=${HARNESS_REVIEW_APPROVER_TOKEN:-}
+      - BRAIN_PORT=5221
+      - CECELIA_TICK_ENABLED=${CECELIA_TICK_ENABLED:-true}
+      # Concurrency: auto-calculated from hardware (CPU/memory) via slot-allocator.js
+      # CECELIA_MAX_SEATS: hard cap on concurrent slots (overrides auto-calc, set 0 to disable)
+      - CECELIA_MAX_SEATS=10
+      # CECELIA_BUDGET_SLOTS: budget-layer cap (< MAX_SEATS), reserves 3 slots for burst buffer + INTERACTIVE_RESERVE
+      - CECELIA_BUDGET_SLOTS=7
+      - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
+      - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
+      - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
+      # Bark 告警推送 token（source ~/.credentials/bark.env 后由宿主 shell 展开）
+      - BARK_TOKEN=${BARK_TOKEN:-}
+      # us-vps 上没有交互式 Claude Code（引擎-机器绑定铁律），此路径不会被真正调用，
+      # 保留字段结构一致性，值指向本机 REPO_ROOT 对应位置。
+      - CECELIA_RUN_PATH=/root/cecelia/packages/brain/scripts/cecelia-run.sh
+      - HOST_HOME=/root
+      # 部署根：us-vps 单一 checkout 同时充当 REPO_ROOT（见上方 volumes 注释）
+      - REPO_ROOT=/root/cecelia
+      # 专用部署根，deploy-local.sh 守卫自愈到 origin/main（脏/落后时硬 reset 而非静默降级）
+      - CECELIA_DEPLOY_AUTORESET=1
+      # Codex CLI 容器内位置（由 Dockerfile npm install -g @openai/codex 装到 /usr/local/bin/codex）
+      # us-vps 上不会有 codex relay 子容器被派发（Codex 只在 mmv 跑），保留常量避免代码里
+      # 读取 undefined 路径；CODEX_HOME/CODEX_RELAY_HOME 因对应挂载已裁剪，不注入。
+      - CODEX_BIN=/usr/local/bin/codex
+      # Brain 容器里 /tmp/cecelia-prompts 对应的宿主路径（docker-executor 用它构造子容器 mount 源）
+      - HOST_PROMPT_DIR=/root/claude-output/cecelia-prompts
+      # ZenithJoy API — harness-sprint-state skill 写 sprint_states/journey_steps 用
+      - BRAIN_API=http://host.docker.internal:5200
+      # ZenithJoy 蓝绿护栏：staging-e2e-runner.js 健康检查 :5201，需指向宿主（容器内 localhost 不通宿主端口）
+      - ZJ_STAGING_HOST=host.docker.internal
+      # P0-fix: Brain 写发布回执到独立 zenithjoy 库（zenithjoy-db.js 依赖此变量）
+      # 未设 → 静默落回 cecelia.zenithjoy schema（拆库目的失效）
+      - ZENITHJOY_DB_NAME=zenithjoy
+      # Notion Inbox 采集凭据（F6加厚，notion-capture-ingest.js）
+      # 未配置时静默跳过，不影响其他 job（fail-open，非关键路径）
+      - NOTION_INBOX_TOKEN=${NOTION_INBOX_TOKEN:-}
+      - NOTION_INBOX_DB_ID=${NOTION_INBOX_DB_ID:-b45ca2cb-9c90-83f1-bc41-81ad0b86c1b1}
+      # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here
+      # FEISHU_OWNER_OPEN_IDS is provided via env_file (.env.docker) — same reason, do NOT override here
+    # Linux Docker 默认不解析 host.docker.internal（macOS/OrbStack 原生支持），显式加映射。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # compose standalone cgroup 限额（deploy.resources 只在 Docker Swarm 模式生效）
+    # 容器 memory cap 必须 ≥ 运行时 node 堆上限 + 容器开销余量。
+    # Dockerfile CMD: node --max-old-space-size=3072 → 3G 堆；4G = 3G 堆 + ~1G 容器/native 开销。
+    mem_limit: 4g
+    mem_reservation: 1g
+    cpus: 2.0
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2'
+        reservations:
+          memory: 1G
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5221/api/brain/tick/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
