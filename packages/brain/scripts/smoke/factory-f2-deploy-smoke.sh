@@ -80,6 +80,12 @@ if [ -f docker-compose.us-vps.yml ]; then
   grep -q "/var/run/docker.sock:/var/run/docker.sock" docker-compose.us-vps.yml \
     && ok "[结构] docker-compose.us-vps.yml 保留 docker.sock 挂载" \
     || fail "docker-compose.us-vps.yml 丢失 docker.sock 挂载（非账号相关，不该被裁剪）"
+  grep -q "network_mode: host" docker-compose.us-vps.yml \
+    && ok "[结构] docker-compose.us-vps.yml 用 host 网络模式（us-vps Postgres 只监听127.0.0.1）" \
+    || fail "docker-compose.us-vps.yml 未用 host 网络模式，Linux上连不上只监听127.0.0.1的DB"
+  grep -q "read_only: false" docker-compose.us-vps.yml \
+    && ok "[结构] docker-compose.us-vps.yml read_only:false（生产实测read_only:true会搞坏SSH多路复用）" \
+    || fail "docker-compose.us-vps.yml 不是 read_only:false，可能重新踩SSH socket创建失败的坑"
 else
   fail "docker-compose.us-vps.yml 不存在，跳过内容断言"
 fi
@@ -111,6 +117,19 @@ else
     && fail "本机是 ${OSTYPE:-非Linux}，未覆盖 COMPOSE_FILE 时 dry-run 却默认引用了 Linux compose 文件（回归）" \
     || ok "[运行时] 本机非 Linux，未覆盖 COMPOSE_FILE 时 dry-run 默认行为不变（不引用 docker-compose.us-vps.yml）"
 fi
+
+# [结构] CECELIA_INTERNAL_ENV_FILE 默认值不能硬编码 macOS 路径（跟 REPO_ROOT 同类坑：
+# us-vps 上实测 brain-deploy.sh --dry-run 会把这个变量默认值打成 /Users/administrator/...，
+# 容器里没有这个路径，ensure_cecelia_internal_token 在真实（非 dry-run）执行时会失败）
+grep -q '/Users/administrator/\.credentials/cecelia-internal\.env' scripts/brain-deploy.sh \
+  && fail "brain-deploy.sh 仍硬编码 macOS 路径 /Users/administrator/.credentials/cecelia-internal.env 作为 CECELIA_INTERNAL_ENV_FILE 默认值" \
+  || ok "[结构] brain-deploy.sh 不再硬编码 macOS 凭据路径"
+
+# [运行时] HOST_HOME 切到 /root（模拟 us-vps）时，凭据文件默认路径应该跟着变
+DRY_OUT_HOSTHOME_ROOT=$(cd "$(git rev-parse --show-toplevel)" && HOST_HOME=/root bash scripts/brain-deploy.sh --dry-run 2>&1) || true
+echo "$DRY_OUT_HOSTHOME_ROOT" | grep -q '/root/\.credentials/cecelia-internal\.env' \
+  && ok "[运行时] HOST_HOME=/root 时凭据文件默认路径跟着变成 /root/.credentials/cecelia-internal.env" \
+  || fail "HOST_HOME=/root 时 dry-run 输出未见 /root/.credentials/cecelia-internal.env"
 
 echo "结果: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
