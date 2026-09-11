@@ -59,5 +59,18 @@ else
   red "goals.js /health 未暴露 fleet_transport（token 缺失将继续静默到第一次 attempt 才炸）"
 fi
 
+echo "[D] docker-compose.yml / docker-compose.us-vps.yml：environment 段不得覆盖 BARK_TOKEN"
+# 同一个坑（2026-09-11 us-vps 生产实证）：BARK_TOKEN 曾经也这样写，
+# 不带宿主 shell export 的 compose up 会把 .env.docker 里的真实 token 盖成空串，
+# Bark 告警静默失效且没有任何报错。
+for f in docker-compose.yml docker-compose.us-vps.yml; do
+  if grep -nE '^\s*-\s*BARK_TOKEN=' "$ROOT_DIR/$f" >/dev/null; then
+    red "$f 仍在 environment 段写 BARK_TOKEN=…（会盖掉 env_file 值，Bark 告警会静默失效）"
+    grep -nE '^\s*-\s*BARK_TOKEN=' "$ROOT_DIR/$f"
+  else
+    green "$f environment 段无 BARK_TOKEN 覆盖行"
+  fi
+done
+
 if [[ $FAIL -eq 0 ]]; then echo "PASS: brain-compose-envfile-authority-smoke"; exit 0; fi
 echo "FAIL: brain-compose-envfile-authority-smoke"; exit 1

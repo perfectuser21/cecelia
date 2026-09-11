@@ -117,8 +117,10 @@ services:
       - CECELIA_TICK_INTERVAL_MS=${CECELIA_TICK_INTERVAL_MS:-5000}
       - DISPATCH_TIMEOUT_MINUTES=${DISPATCH_TIMEOUT_MINUTES:-60}
       - FEISHU_BOT_WEBHOOK=${FEISHU_BOT_WEBHOOK:-}
-      # Bark 告警推送 token（source ~/.credentials/bark.env 后由宿主 shell 展开）
-      - BARK_TOKEN=${BARK_TOKEN:-}
+      # BARK_TOKEN only comes from env_file (.env.docker) — 不要在这里写
+      # `${BARK_TOKEN:-}`：environment 优先级高于 env_file，任何不带宿主 shell
+      # 预先 export BARK_TOKEN 的 `compose up` 都会把 .env.docker 里的真实 token
+      # 盖成空串 → Bark 告警静默失效（2026-09-11 us-vps 生产实证）。
       # us-vps 上没有交互式 Claude Code（引擎-机器绑定铁律），此路径不会被真正调用，
       # 保留字段结构一致性，值指向本机 REPO_ROOT 对应位置。
       - CECELIA_RUN_PATH=/root/cecelia/packages/brain/scripts/cecelia-run.sh
