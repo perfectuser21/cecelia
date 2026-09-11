@@ -15,7 +15,9 @@ source "$SCRIPT_DIR/lib/internal-auth-token.sh"
 
 VERSION=$(node -e "console.log(require('$BRAIN_DIR/package.json').version)")
 ENV_REGION="${ENV_REGION:-us}"
-CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:-/Users/administrator/.credentials/cecelia-internal.env}"
+# 默认凭据路径跟着 HOST_HOME 走（macOS/us-vps 两份 compose 都在容器 env 里显式设了
+# HOST_HOME=/Users/administrator 或 /root），不再硬编码 macOS 路径。
+CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:-${HOST_HOME:-$HOME}/.credentials/cecelia-internal.env}"
 export CECELIA_INTERNAL_ENV_FILE
 
 # ── 部署状态文件：供 Brain 重启后感知 deploy 结果 ──────────────────────────

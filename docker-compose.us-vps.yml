@@ -20,7 +20,11 @@ services:
     # host 模式下容器与宿主共享网络栈，容器内 localhost 直接就是宿主 localhost，不需要
     # ports 段（host 模式下 compose 会拒绝一起声明），也不需要 host.docker.internal 解析。
     network_mode: host
-    read_only: true
+    # 生产切换实测(2026-09-11)：read_only:true 会让 fleet worker 的 SSH 控制 socket
+    # 创建失败(unix_listener: cannot bind ... Read-only file system)，跨机器 SSH 多路复用
+    # 功能悄悄失效。现役容器一直以来就是 read_only:false 在跑(docker inspect 实测)，
+    # 沿用这个已验证的宽松策略，不引入这个未经验证的加固。
+    read_only: false
     tmpfs:
       - /tmp:size=100M
     volumes:
