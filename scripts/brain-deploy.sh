@@ -274,7 +274,17 @@ if ! docker info >/dev/null 2>&1 || ! docker inspect cecelia-node-brain >/dev/nu
     fi
 fi
 
-echo "=== Deploying cecelia-brain v${VERSION} (region=${ENV_REGION}, mode=${DEPLOY_MODE}) ==="
+# ── Compose 文件选择：Linux(us-vps) 用专属文件，其余(macOS/mmv)用默认文件 ────
+# COMPOSE_FILE 允许环境变量显式覆盖（测试/未来手动指定用），缺省按 uname -s 自动探测。
+if [[ -z "${COMPOSE_FILE:-}" ]]; then
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        COMPOSE_FILE="docker-compose.us-vps.yml"
+    else
+        COMPOSE_FILE="docker-compose.yml"
+    fi
+fi
+
+echo "=== Deploying cecelia-brain v${VERSION} (region=${ENV_REGION}, mode=${DEPLOY_MODE}, compose=${COMPOSE_FILE}) ==="
 echo ""
 
 # ── 主机 home 目录（兼容 Docker 镜像内 /home/xx 和 macOS /Users/xxx）────────
@@ -282,6 +292,7 @@ HOST_HOME="${HOST_HOME:-$HOME}"
 
 if [[ "$DRY_RUN" == true ]]; then
     echo "[dry-run] DEPLOY_MODE=${DEPLOY_MODE}"
+    echo "[dry-run] COMPOSE_FILE=${COMPOSE_FILE}"
     echo "[dry-run] ROOT_DIR=${ROOT_DIR}"
     echo "[dry-run] HOST_HOME=${HOST_HOME}"
     echo ""
@@ -435,10 +446,10 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     fi
 
     if [[ "$DRY_RUN" == true ]]; then
-        echo "  [dry-run] docker compose up -d node-brain (cecelia-brain:${VERSION})"
+        echo "  [dry-run] docker compose -f ${COMPOSE_FILE} up -d node-brain (cecelia-brain:${VERSION})"
     elif ! BRAIN_VERSION="${VERSION}" ENV_REGION="${ENV_REGION}" \
       docker compose --env-file "$ROOT_DIR/.env.docker" \
-        -f "$ROOT_DIR/docker-compose.yml" up -d node-brain; then
+        -f "$ROOT_DIR/${COMPOSE_FILE}" up -d node-brain; then
         echo ""
         echo "[FAIL] docker compose up -d failed. Rolling back..."
         if [ -f "$VERSIONS_FILE" ] && [ "$(wc -l < "$VERSIONS_FILE")" -ge 2 ]; then
@@ -446,12 +457,12 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
             echo "  Rolling back to v${PREV_VERSION}..."
             BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
               docker compose --env-file "$ROOT_DIR/.env.docker" \
-                -f "$ROOT_DIR/docker-compose.yml" up -d node-brain || true
+                -f "$ROOT_DIR/${COMPOSE_FILE}" up -d node-brain || true
             echo "  Rolled back to v${PREV_VERSION}"
         else
             echo "  No previous version found. Stopping container."
             docker compose --env-file "$ROOT_DIR/.env.docker" \
-              -f "$ROOT_DIR/docker-compose.yml" stop node-brain || true
+              -f "$ROOT_DIR/${COMPOSE_FILE}" stop node-brain || true
         fi
         exit 1
     fi
@@ -700,12 +711,12 @@ else
         echo "  Rolling back to v${PREV_VERSION}..."
         BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
           docker compose --env-file "$ROOT_DIR/.env.docker" \
-            -f "$ROOT_DIR/docker-compose.yml" up -d node-brain
+            -f "$ROOT_DIR/${COMPOSE_FILE}" up -d node-brain
         echo "  Rolled back to v${PREV_VERSION}"
     else
         echo "  No previous version found. Stopping container."
         docker compose --env-file "$ROOT_DIR/.env.docker" \
-          -f "$ROOT_DIR/docker-compose.yml" stop node-brain
+          -f "$ROOT_DIR/${COMPOSE_FILE}" stop node-brain
     fi
 fi
 
