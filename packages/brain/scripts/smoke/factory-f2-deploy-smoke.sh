@@ -61,6 +61,50 @@ if [ "${FIRE_TEST:-0}" = "1" ]; then
   fail "FIRE_TEST 自炸（proven-to-fire 验证口）"
 fi
 
+# ── us-vps(Linux) 部署适配（GP 199ae170 加厚，decisions category=deployment）──
+
+# [结构] docker-compose.us-vps.yml 存在
+[ -f docker-compose.us-vps.yml ] \
+  && ok "[结构] docker-compose.us-vps.yml 存在" || fail "docker-compose.us-vps.yml 缺失"
+
+# [结构] Linux compose 文件不含账号绑定类挂载（引擎-机器绑定铁律：Claude/Codex 只在 mmv 跑）
+if [ -f docker-compose.us-vps.yml ]; then
+  if grep -qE '\.claude-account[0-9]|\.codex-team[0-9]|/\.grok:' docker-compose.us-vps.yml; then
+    fail "docker-compose.us-vps.yml 仍含账号绑定类挂载（claude-account/codex-team/grok）"
+  else
+    ok "[结构] docker-compose.us-vps.yml 不含账号绑定类挂载"
+  fi
+  grep -q "REPO_ROOT=/root/cecelia" docker-compose.us-vps.yml \
+    && ok "[结构] docker-compose.us-vps.yml REPO_ROOT 指向 Linux 路径 /root/cecelia" \
+    || fail "docker-compose.us-vps.yml 未把 REPO_ROOT 改指 /root/cecelia"
+  grep -q "/var/run/docker.sock:/var/run/docker.sock" docker-compose.us-vps.yml \
+    && ok "[结构] docker-compose.us-vps.yml 保留 docker.sock 挂载" \
+    || fail "docker-compose.us-vps.yml 丢失 docker.sock 挂载（非账号相关，不该被裁剪）"
+else
+  fail "docker-compose.us-vps.yml 不存在，跳过内容断言"
+fi
+
+# [结构] brain-deploy.sh 按 uname -s 自动选择 compose 文件，且允许 COMPOSE_FILE 覆盖
+grep -q 'COMPOSE_FILE' scripts/brain-deploy.sh \
+  && ok "[结构] brain-deploy.sh 定义 COMPOSE_FILE 变量" || fail "brain-deploy.sh 未定义 COMPOSE_FILE 变量"
+grep -qE 'uname -s.*Linux|Linux.*uname -s' scripts/brain-deploy.sh \
+  && ok "[结构] brain-deploy.sh 含 uname -s 探测 Linux 分支" || fail "brain-deploy.sh 缺 uname -s 探测"
+grep -q 'docker-compose.us-vps.yml' scripts/brain-deploy.sh \
+  && ok "[结构] brain-deploy.sh 引用 docker-compose.us-vps.yml" || fail "brain-deploy.sh 未引用 docker-compose.us-vps.yml"
+
+# [运行时] --dry-run 配合 COMPOSE_FILE 覆盖，验证选择逻辑真的生效（而不只是字符串存在于脚本里）
+DRY_OUT_LINUX=$(cd "$(git rev-parse --show-toplevel)" && COMPOSE_FILE=docker-compose.us-vps.yml bash scripts/brain-deploy.sh --dry-run 2>&1) || true
+echo "$DRY_OUT_LINUX" | grep -q "docker-compose.us-vps.yml" \
+  && ok "[运行时] COMPOSE_FILE=docker-compose.us-vps.yml 覆盖后 dry-run 引用该文件" \
+  || fail "COMPOSE_FILE 覆盖未生效于 dry-run 输出"
+
+DRY_OUT_DEFAULT=$(cd "$(git rev-parse --show-toplevel)" && bash scripts/brain-deploy.sh --dry-run 2>&1) || true
+if echo "$DRY_OUT_DEFAULT" | grep -q "docker-compose.us-vps.yml"; then
+  fail "未覆盖 COMPOSE_FILE 时 dry-run 默认引用了 Linux compose 文件（macOS 现有行为回归）"
+else
+  ok "[运行时] 未覆盖 COMPOSE_FILE 时 dry-run 默认行为不变（不引用 docker-compose.us-vps.yml）"
+fi
+
 echo "结果: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 exit 0
