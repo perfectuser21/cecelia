@@ -69,7 +69,7 @@ fi
 
 # [结构] Linux compose 文件不含账号绑定类挂载（引擎-机器绑定铁律：Claude/Codex 只在 mmv 跑）
 if [ -f docker-compose.us-vps.yml ]; then
-  if grep -qE '\.claude-account[0-9]|\.codex-team[0-9]|/\.grok:' docker-compose.us-vps.yml; then
+  if grep -qE '^\s*- .*(\.claude-account[0-9]|\.codex-team[0-9]|/\.grok:)' docker-compose.us-vps.yml; then
     fail "docker-compose.us-vps.yml 仍含账号绑定类挂载（claude-account/codex-team/grok）"
   else
     ok "[结构] docker-compose.us-vps.yml 不含账号绑定类挂载"

@@ -1,7 +1,7 @@
 # == us-vps (Linux) Production Environment ==
 # docker-compose.yml 的 Linux 专属版本（决策：Brain us-vps(Linux)部署-compose策略，
 # 拍板"为 Linux 单建 docker-compose.us-vps.yml，与 macOS 的 docker-compose.yml 互不牵连"）。
-# 只砍掉账号绑定类挂载（claude / claude-account 1~3 / codex-team 1~5 / grok ——
+# 只砍掉账号绑定类挂载（.claude / .claude-account1~3 / .codex-team1~5 / .grok ——
 # 按「引擎-机器绑定铁律」Claude/Codex 只在 mmv 跑，us-vps 不需要这些账号挂载，
 # 且这些宿主路径在 Linux 上本来就不存在）。其余挂载全部保留，只是把宿主路径
 # 从 /Users/administrator/... 改指 Linux 路径 /root/...（决策：...凭据挂载裁剪范围细化）。
