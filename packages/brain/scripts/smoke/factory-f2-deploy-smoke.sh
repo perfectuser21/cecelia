@@ -131,6 +131,17 @@ echo "$DRY_OUT_HOSTHOME_ROOT" | grep -q '/root/\.credentials/cecelia-internal\.e
   && ok "[运行时] HOST_HOME=/root 时凭据文件默认路径跟着变成 /root/.credentials/cecelia-internal.env" \
   || fail "HOST_HOME=/root 时 dry-run 输出未见 /root/.credentials/cecelia-internal.env"
 
+# [结构] harness-worktree.js 的 DEFAULT_BASE_REPO 不能永远硬编码 macOS 路径——
+# us-vps 生产实测：golden_path_proposal 任务在 loadSkillBundle 成功后，下一步建
+# worktree 时 git clone 源仍是 /Users/administrator/perfect21/cecelia，Linux 上不存在，
+# 整个任务直接 fatal 失败。
+grep -q "process.platform === 'linux'" packages/brain/src/harness-worktree.js \
+  && ok "[结构] harness-worktree.js DEFAULT_BASE_REPO 按 platform 区分 Linux/macOS" \
+  || fail "harness-worktree.js DEFAULT_BASE_REPO 未区分 Linux，us-vps 上会 clone 一个不存在的 macOS 路径"
+grep -q "process.env.REPO_ROOT || '/root/cecelia'" packages/brain/src/harness-worktree.js \
+  && ok "[结构] harness-worktree.js Linux 分支跟着 REPO_ROOT 走(缺省 /root/cecelia)" \
+  || fail "harness-worktree.js Linux 分支未接 REPO_ROOT"
+
 echo "结果: PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 exit 0
