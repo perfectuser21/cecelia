@@ -73,6 +73,8 @@ vi.mock('../platform-utils.js', async (importOriginal) => {
     getDmesgInfo: vi.fn(() => ''),
     getBrainRssMB: vi.fn(() => 100),
     evaluateMemoryHealth: vi.fn(() => ({ action: 'ok', reason: 'healthy' })),
+    sampleBrainCpuUsage: vi.fn(() => 5),
+    evaluateCpuHealth: vi.fn(() => ({ action: 'proceed', reason: 'mock' })),
     IS_DARWIN: false,
   };
 });

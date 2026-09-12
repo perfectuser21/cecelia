@@ -115,6 +115,8 @@ vi.mock('../platform-utils.js', async (importOriginal) => {
       system_threshold_mb: 600, brain_rss_danger_mb: 1500, brain_rss_warn_mb: 1000,
     })),
     getBrainRssMB: vi.fn(() => 200),
+    sampleBrainCpuUsage: vi.fn(() => 5),
+    evaluateCpuHealth: vi.fn(() => ({ action: 'proceed', reason: 'mock' })),
     IS_DARWIN: false,
   };
 });

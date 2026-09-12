@@ -79,6 +79,15 @@ vi.mock('../platform-utils.js', () => ({
     brain_rss_danger_mb: 1500,
     brain_rss_warn_mb: 1000,
   })),
+  // PIVOT 2026-09-12: Brain self CPU% vs system-wide /proc/stat separation
+  sampleBrainCpuUsage: vi.fn(() => 5),
+  evaluateCpuHealth: vi.fn(() => ({
+    brain_cpu_ok: true,
+    action: 'proceed',
+    reason: 'mock',
+    brain_cpu_pct: 5,
+    brain_cpu_busy_pct: 50,
+  })),
 }));
 
 // ================================================================
