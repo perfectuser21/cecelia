@@ -35,8 +35,11 @@ services:
       # Brain 无法 dispatch relay。us-vps 上需要这两个仓库分别 clone 到 /root/ 下。
       - /root/zenithjoy-skills:/root/zenithjoy-skills:ro
       - /root/zenithjoy-skills-dist:/root/zenithjoy-skills-dist:ro
-      # 凭据：DB/内部服务凭据 SSOT。HOST_HOME=/root + Dockerfile ENV HOME 对齐宿主路径，
-      # 这样 Brain os.homedir() 和 docker-executor 构造的子容器 mount 源都能解析。
+      # 凭据：DB/内部服务凭据 SSOT。下方 environment 段显式 override HOME=/root，
+      # 这样 Brain os.homedir() 才能解析到这里挂载的真实路径（Dockerfile 镜像烙入的
+      # ENV HOME=/Users/administrator 是 macOS 专属值，此前一直未被 override，
+      # 2026-09-12 生产实证：导致 os.homedir() 拼错路径，harness-credentials.js
+      # 读不到这份凭据文件 → github_token_unavailable）。
       - /root/.credentials:/root/.credentials:ro
       # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
       - /root/cecelia/packages/workflows:/root/cecelia/packages/workflows:ro
@@ -124,6 +127,13 @@ services:
       # us-vps 上没有交互式 Claude Code（引擎-机器绑定铁律），此路径不会被真正调用，
       # 保留字段结构一致性，值指向本机 REPO_ROOT 对应位置。
       - CECELIA_RUN_PATH=/root/cecelia/packages/brain/scripts/cecelia-run.sh
+      # Dockerfile 镜像烙入 ENV HOME=/Users/administrator（macOS 专属，供 macOS 侧
+      # os.homedir()/docker-executor 子容器 mount 路径对齐用）。Linux 上必须显式
+      # override 成真实宿主 home，否则容器内所有直接调用 os.homedir() 的代码
+      # （如 harness-credentials.js 解析 GitHub token 文件路径）都会拼错成一个
+      # 容器内不存在的路径。2026-09-12 生产实证：golden_path_proposal 任务因此
+      # 报 github_token_unavailable。
+      - HOME=/root
       - HOST_HOME=/root
       # 部署根：us-vps 单一 checkout 同时充当 REPO_ROOT（见上方 volumes 注释）
       - REPO_ROOT=/root/cecelia
