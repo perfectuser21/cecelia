@@ -11,6 +11,12 @@
  * - D1-4: checkServerResources() cpuPressure 使用真实 CPU%
  * - D1-5: metrics 保留 load_avg_1m 新增 cpu_usage_pct
  * - D1-6: platform-utils 返回 null 时 graceful fallback
+ * - D2-1: 系统级 CPU 压力高但 Brain 自身 CPU 低 → 降级为 warn，effectiveSlots 不清零
+ *   （PIVOT 2026-09-12：同款 memory pivot 2026-04-18，Docker 不隔离 /proc/stat，容器内
+ *   读到的是宿主机全局 CPU，us-vps 生产实证 Brain 自己 0.11% CPU 却被同机 openclaw-gateway
+ *   等容器拖累判定 pool_c_full，全局拒绝派发）
+ * - D2-2: Brain 自身 CPU 真的高 → 依然 halt（不是无脑放行）
+ * - D2-3: metrics 暴露 brain_cpu_pct 供可观测性
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -23,6 +29,14 @@ const mockGetDmesgInfo = vi.hoisted(() => vi.fn(() => null));
 const mockCountClaudeProcesses = vi.hoisted(() => vi.fn(() => 0));
 const mockCalculatePhysicalCapacity = vi.hoisted(() => vi.fn(() => 4));
 const mockGetAvailableMemoryMB = vi.hoisted(() => vi.fn(() => 8192));
+const mockSampleBrainCpuUsage = vi.hoisted(() => vi.fn(() => 5));
+const mockEvaluateCpuHealth = vi.hoisted(() => vi.fn(() => ({
+  brain_cpu_ok: true,
+  action: 'proceed',
+  reason: 'mock',
+  brain_cpu_pct: 5,
+  brain_cpu_busy_pct: 50,
+})));
 
 // Mock platform-utils — the cross-platform abstraction layer
 vi.mock('../platform-utils.js', () => ({
@@ -49,6 +63,9 @@ vi.mock('../platform-utils.js', () => ({
     brain_rss_danger_mb: 1500,
     brain_rss_warn_mb: 1000,
   })),
+  // PIVOT 2026-09-12: Brain self CPU% vs system-wide /proc/stat separation
+  sampleBrainCpuUsage: mockSampleBrainCpuUsage,
+  evaluateCpuHealth: mockEvaluateCpuHealth,
 }));
 
 // Mock fs (executor.js may import readFileSync for other uses)
@@ -179,5 +196,60 @@ describe('checkServerResources CPU 压力 — D1-4/D1-5', () => {
     expect(result.ok).toBe(false);
     expect(result.effectiveSlots).toBe(0);
     expect(result.reason).toContain('CPU');
+  });
+});
+
+describe('checkServerResources Brain 自身 CPU pivot — D2', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSampleBrainCpuUsage.mockReturnValue(5);
+    mockEvaluateCpuHealth.mockReturnValue({
+      brain_cpu_ok: true,
+      action: 'proceed',
+      reason: 'mock',
+      brain_cpu_pct: 5,
+      brain_cpu_busy_pct: 50,
+    });
+    _resetResourceHistory();
+  });
+
+  it('D2-1: 宿主机 CPU 高但 Brain 自身 CPU 低 → 降级为 warn，effectiveSlots 不清零', () => {
+    // sampleCpuUsage()（system-wide，/proc/stat，容器内实为宿主机全局值）报 90%——
+    // us-vps 生产实证：这就是 Brain 自己 0.11% CPU 却被同机 openclaw-gateway
+    // 等容器拖累触发 pool_c_full 的真实场景。evaluateCpuHealth 判定 Brain 自身
+    // 闲（action=warn）时，不应该把 cpuPressure 保持在 >=1.0 halt 区间。
+    mockSampleCpuUsage.mockReturnValue(90);
+    mockEvaluateCpuHealth.mockReturnValue({
+      brain_cpu_ok: true,
+      action: 'warn',
+      reason: 'system busy but brain idle (mock)',
+      brain_cpu_pct: 3,
+      brain_cpu_busy_pct: 50,
+    });
+    const result = checkServerResources();
+    expect(result.metrics.cpu_pressure).toBeLessThan(0.9);
+    expect(result.metrics.cpu_health_action).toBe('warn');
+  });
+
+  it('D2-2: Brain 自身 CPU 真的高 → 依然 halt（不是无脑放行）', () => {
+    mockSampleCpuUsage.mockReturnValue(90);
+    mockEvaluateCpuHealth.mockReturnValue({
+      brain_cpu_ok: false,
+      action: 'halt',
+      reason: 'brain itself busy (mock)',
+      brain_cpu_pct: 85,
+      brain_cpu_busy_pct: 50,
+    });
+    const result = checkServerResources();
+    expect(result.metrics.cpu_pressure).toBeGreaterThanOrEqual(1.0);
+    expect(result.ok).toBe(false);
+    expect(result.effectiveSlots).toBe(0);
+  });
+
+  it('D2-3: metrics 暴露 brain_cpu_pct 供可观测性', () => {
+    mockSampleCpuUsage.mockReturnValue(20);
+    mockSampleBrainCpuUsage.mockReturnValue(7);
+    const result = checkServerResources();
+    expect(result.metrics).toHaveProperty('brain_cpu_pct', 7);
   });
 });
