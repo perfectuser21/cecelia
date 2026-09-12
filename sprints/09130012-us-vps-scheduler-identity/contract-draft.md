@@ -70,6 +70,20 @@ bash scripts/ci/__tests__/us-vps-local-execution-disabled.test.sh
 
 ---
 
+## Test Contract
+
+| 功能 | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| 闸落在 GP 步骤上（F1 step1） | `tests/gp/f1/step1-local-execution-guard.test.js` | 拒绝派发 | → 4 failures（闸未实现时 `spawnSkillRelaySession` 不返回 `local_execution_disabled_on_scheduler`）|
+| 咽喉拦所有派发路径 | `tests/gp/f1/step1-local-execution-guard.test.js` | 咽喉语义 | → 同上，普通 skill-relay 未被拦 |
+| 闸行为与可注入性（relay 单测） | `packages/brain/src/__tests__/harness-skill-relay.test.js` | 不留半态 | → 3 failures（实测 commit-1：3 failed / 2 passed）|
+| 缺省放行防误杀 | `packages/brain/src/__tests__/harness-skill-relay.test.js` | 行为零变化 | → 该两条在 commit-1 时即为绿（闸不存在时默认放行本来就对，构成防误杀基线）|
+| 闸必须可注入 env | `packages/brain/src/__tests__/harness-skill-relay.test.js` | 源码哨兵 | → 1 failure（闸不存在，源码无 `CECELIA_LOCAL_EXECUTION_ENABLED`）|
+| 配置形态守卫（含防回归改身份） | `scripts/ci/__tests__/us-vps-local-execution-disabled.test.sh` | 四条断言全绿 | → 已 proven-to-fire：改坏 worker 地址即报红，还原后全绿 |
+| `/health` 角色声明可观测 | `packages/brain/scripts/smoke/local-execution-guard-smoke.sh` | 五条断言 | → 已 proven-to-fire：对未部署新代码的生产 Brain 跑即 fail-closed（缺 `local_execution` 字段）|
+
+---
+
 ## 硬阈值（Final 验收）
 
 | # | 断言 | 命令 | 状态 |
