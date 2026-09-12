@@ -161,11 +161,25 @@ router.get('/health', async (req, res) => {
     }
 
     const uptimeSeconds = Math.floor(process.uptime());
+    // 本机执行角色声明（us-vps 纯调度器化，铁律 96054a8b）。
+    // 故意不参与 healthy 判定：scheduler_only 是正常运行形态而非故障——us-vps 上就该是
+    // 这个值。它存在的意义是让「这台 Brain 到底会不会自己接活干」变成可观测事实，而不是
+    // 要靠翻 compose 才知道。缺省视为 executor（行为零变化，与闸的缺省放行一致）。
+    const localExecutionEnabled = process.env.CECELIA_LOCAL_EXECUTION_ENABLED !== 'false';
+    const local_execution = {
+      enabled: localExecutionEnabled,
+      role: localExecutionEnabled ? 'executor' : 'scheduler_only',
+      guard: 'harness-skill-relay.spawnSkillRelaySession',
+      reason: localExecutionEnabled
+        ? null
+        : 'CECELIA_LOCAL_EXECUTION_ENABLED=false — 本机执行已禁用，harness 派发一律拒绝并要求下放 Mac worker（决策 96054a8b）',
+    };
     res.json({
       status: healthy ? 'healthy' : 'degraded',
       // Gate3 部署效果确认依赖 version：assert-deploy-effect.sh 断言"跑的是预期版本 + uptime 新鲜"
       version: pkg.version,
       xian_bridge_status,
+      local_execution,
       uptime: uptimeSeconds,
       uptime_seconds: uptimeSeconds,
       active_pipelines: activePipelinesResult.rows[0].cnt,
