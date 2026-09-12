@@ -403,6 +403,29 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     console.warn(`[skill-relay][preview-guard] BRAIN_PREVIEW=${previewFlag} — refusing harness spawn task=${task?.id}`);
     return { ok: false, mode: RELAY_FLAG, error: 'preview_brain_harness_spawn_forbidden' };
   }
+  // 本机执行闸（us-vps 纯调度器化第一刀，方案 A —— 主理人 2026-09-13 拍板，
+  // 纠正决策 26c1e763 supersede 962281b2）。铁律 96054a8b：us-vps 上的 Brain 只当
+  // 任务调度器/分发器，真实执行负载全部下放 Mac worker。
+  //
+  // 为什么另开变量而不是用 CECELIA_MACHINE_ID 表达「我是调度器」：
+  //  · 它的语义是「fleet 可调度节点身份 + 凭据签发权」，不是宿主物理机标识
+  //    （canonical-machine-id.js 注释明示 hostname 被刻意忽略）；
+  //  · credential-broker.js:144 与 github-credential-broker.js:36 硬编码要求
+  //    controllerMachineId === 'us-mac-m4'——这台 Brain 必须自称 us-mac-m4 因为它是
+  //    凭据权威，改身份会让远程派发到 MMV 也签不出凭据，全面 fail-closed；
+  //  · 另有六处 allowlist（kernel 启动校验/canonical id/preflight 探针/两个 broker/
+  //    派发目标表）都假设它恒等于 us-mac-m4。
+  // 故用独立变量表达宿主角色，那六处一处都不碰。
+  //
+  // 拦在这里而不是 launchKernelProcess 内部：此处是所有 harness 派发路径的唯一咽喉
+  // （与上面 preview-guard 同位），拒绝时既不建 run 也不碰 worktree，不留半态——
+  // 避免「建了 run 再失败 → spawn 返回 pid 算 ok → 静默卡到租约过期」那条死法。
+  // 缺省或 'true' 一律放行 = 行为零变化；只有显式 'false' 才拦。
+  const localExecutionEnabled = (deps.env ?? process.env).CECELIA_LOCAL_EXECUTION_ENABLED;
+  if (localExecutionEnabled === 'false') {
+    console.warn(`[skill-relay][local-exec-guard] CECELIA_LOCAL_EXECUTION_ENABLED=false — refusing local harness spawn task=${task?.id}（执行须下放 Mac worker，见决策 96054a8b）`);
+    return { ok: false, mode: RELAY_FLAG, error: 'local_execution_disabled_on_scheduler' };
+  }
   const dbPool = deps.pool || pool;
   const now = deps.now || (() => new Date());
   const initiativeId = task.payload?.initiative_id || task.id; // B51: initiative_id = task.id

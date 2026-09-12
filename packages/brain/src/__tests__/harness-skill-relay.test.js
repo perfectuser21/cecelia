@@ -880,15 +880,19 @@ describe('本机执行闸 CECELIA_LOCAL_EXECUTION_ENABLED（us-vps 纯调度器�
     expect(deps.spawnFn).toHaveBeenCalled();
   });
 
-  it('源码哨兵：闸必须可注入 env，且位于 createKernelRun 之前', async () => {
+  it('源码哨兵：闸必须读可注入的 env（防重演「测了一段生产不可达代码」）', async () => {
     const { readFile } = await import('node:fs/promises');
     const src = await readFile(new URL('../harness-skill-relay.js', import.meta.url), 'utf8');
     expect(src).toMatch(/CECELIA_LOCAL_EXECUTION_ENABLED/);
-    // 闸必须读 deps.env ?? process.env，否则测不到 —— 会重演「测了一段生产不可达代码」
+    // 必须走 (deps.env ?? process.env) 这个可注入形式。直接读 process.env 会让闸
+    // 在测试里不可控，正是阻碍1（production-transport.js:137 判入参默认值 → 四个
+    // 生产调用方全不传 → if 恒为假 → 守卫是死代码）那个错误的形状。
+    expect(src).toMatch(/\(deps\.env \?\? process\.env\)\.CECELIA_LOCAL_EXECUTION_ENABLED/);
+    // 闸必须在 spawnSkillRelaySession 函数体内（咽喉），不在 _spawnKernelRuntime 里 ——
+    // 后者已经建过 run，拦在那儿会留半态。
+    const entryIdx = src.indexOf('export async function spawnSkillRelaySession');
     const guardIdx = src.indexOf('CECELIA_LOCAL_EXECUTION_ENABLED');
-    const createRunIdx = src.indexOf('deps.createKernelRun');
-    expect(guardIdx).toBeGreaterThan(-1);
-    expect(createRunIdx).toBeGreaterThan(-1);
-    expect(guardIdx).toBeLessThan(createRunIdx);
+    expect(entryIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeGreaterThan(entryIdx);
   });
 });

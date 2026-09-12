@@ -84,7 +84,19 @@ services:
       - CECELIA_MACHINE_ID=${CECELIA_MACHINE_ID:-us-mac-m4}
       # Fleet Node admission is mandatory. Brain accepts only these canonical
       # server-owned Worker endpoints and caches their evidence for at most 90s.
-      - FLEET_WORKER_US_MAC_M4_URL=${FLEET_WORKER_US_MAC_M4_URL:-http://host.docker.internal:5231}
+      # 2026-09-13：默认值从 host.docker.internal 改为 MMV 真实 Tailscale 地址。
+      # 原占位符在 host 网络模式的 Linux 容器里不解析，导致 Claude 类任务（铁律
+      # ca6bf8e7：Claude 只在 MMV 跑）的远程派发目标不可达。MMV 侧 fleet-worker 已于
+      # 同日修好：绑定地址从 127.0.0.1 改为 Tailscale IP，Brain 容器实测 HTTP 200、
+      # docker/container/postgres 全绿。
+      - FLEET_WORKER_US_MAC_M4_URL=${FLEET_WORKER_US_MAC_M4_URL:-http://100.71.151.105:5231}
+      # 本机执行闸（铁律 96054a8b：us-vps 只当调度器，执行全下放 Mac worker）。
+      # 拦在 harness-skill-relay.js 的 spawnSkillRelaySession 咽喉上，拒绝时不建 run。
+      # 注意：故意不用 CECELIA_MACHINE_ID 表达这件事——那个变量的语义是「fleet 可调度
+      # 节点身份 + 凭据签发权」，credential-broker.js:144 与 github-credential-broker.js:36
+      # 硬编码要求它等于 us-mac-m4，改了会掐断凭据签发导致全面 fail-closed（纠正决策
+      # 26c1e763 supersede 962281b2）。所以 CECELIA_MACHINE_ID 保持 us-mac-m4 不动。
+      - CECELIA_LOCAL_EXECUTION_ENABLED=${CECELIA_LOCAL_EXECUTION_ENABLED:-false}
       - FLEET_WORKER_XIAN_MAC_M4_URL=${FLEET_WORKER_XIAN_MAC_M4_URL:-http://100.86.57.69:5231}
       - FLEET_WORKER_XIAN_MAC_M1_URL=${FLEET_WORKER_XIAN_MAC_M1_URL:-http://100.88.166.55:5231}
       - FLEET_NODE_ADMISSION_CACHE_TTL_MS=${FLEET_NODE_ADMISSION_CACHE_TTL_MS:-1000}
@@ -158,10 +170,12 @@ services:
       - NOTION_INBOX_DB_ID=${NOTION_INBOX_DB_ID:-b45ca2cb-9c90-83f1-bc41-81ad0b86c1b1}
       # OPENAI_API_KEY is provided via env_file (.env.docker) — do NOT override here
       # FEISHU_OWNER_OPEN_IDS is provided via env_file (.env.docker) — same reason, do NOT override here
-      # ⚠️ 已知遗留：FLEET_WORKER_US_MAC_M4_URL/BRAIN_API/ZJ_STAGING_HOST 三个默认值仍是
-      # host.docker.internal，host 网络模式下这个域名不会被解析——这三个指向的服务本来就在
+      # ⚠️ 已知遗留（2026-09-13 部分消除）：BRAIN_API/ZJ_STAGING_HOST 两个默认值仍是
+      # host.docker.internal，host 网络模式下这个域名不会被解析——它们指向的服务本来就在
       # 别的物理机（mmv/M4），跟网络模式无关，us-vps 真正需要这些功能时必须在 .env.docker
-      # 里显式覆盖成对应机器的真实 Tailscale 地址，不是本次修复范围（本次只解决 DB 连通性）。
+      # 里显式覆盖成对应机器的真实 Tailscale 地址。
+      # FLEET_WORKER_US_MAC_M4_URL 已于 2026-09-13 就地改成真实地址（见上），不再属于此遗留：
+      # 实测 .env.docker 里从未定义过它，所以「必须显式覆盖」这条从来没被兑现，默认值一直生效。
     # compose standalone cgroup 限额（deploy.resources 只在 Docker Swarm 模式生效）
     # 容器 memory cap 必须 ≥ 运行时 node 堆上限 + 容器开销余量。
     # Dockerfile CMD: node --max-old-space-size=3072 → 3G 堆；4G = 3G 堆 + ~1G 容器/native 开销。
