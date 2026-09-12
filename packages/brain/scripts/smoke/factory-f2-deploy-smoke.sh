@@ -86,6 +86,14 @@ if [ -f docker-compose.us-vps.yml ]; then
   grep -q "read_only: false" docker-compose.us-vps.yml \
     && ok "[结构] docker-compose.us-vps.yml read_only:false（生产实测read_only:true会搞坏SSH多路复用）" \
     || fail "docker-compose.us-vps.yml 不是 read_only:false，可能重新踩SSH socket创建失败的坑"
+  # [结构] HOME 必须显式 override 成 /root——Dockerfile 烙入 ENV HOME=/Users/administrator
+  # (macOS 专属)，Linux 容器内 os.homedir() 若不被 override 会继续解析成这个不存在的路径。
+  # 生产实测(2026-09-12)：harness-credentials.js 的 resolveGitHubToken() 用 os.homedir()
+  # 拼 GitHub token 文件回退路径，us-vps 上永远拼错 → github_token_unavailable，
+  # 是 golden_path_proposal 任务(feef7d3f)卡死/失败的真根因。
+  grep -qE '^\s*- HOME=/root\s*$' docker-compose.us-vps.yml \
+    && ok "[结构] docker-compose.us-vps.yml environment 段 override HOME=/root（修复 os.homedir() 误解析）" \
+    || fail "docker-compose.us-vps.yml 未 override HOME=/root，Linux 容器内 os.homedir() 会继续解析成镜像烙入的 macOS 路径 /Users/administrator，导致 harness-credentials.js 等依赖 os.homedir() 的代码全部拼错路径"
 else
   fail "docker-compose.us-vps.yml 不存在，跳过内容断言"
 fi
