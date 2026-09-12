@@ -824,3 +824,71 @@ describe('spawnSkillRelaySession preview 隔离闸（2026-08-05 preview-4643 事
     }
   });
 });
+
+/**
+ * us-vps 纯调度器化第一刀（方案 A，主理人 2026-09-13 拍板；纠正决策 26c1e763
+ * supersede 962281b2）：新增 CECELIA_LOCAL_EXECUTION_ENABLED 表达宿主角色，
+ * 拦在 spawnSkillRelaySession 这个「所有 harness 派发路径的唯一咽喉」上。
+ *
+ * 为什么不改 CECELIA_MACHINE_ID（原方案已证伪，三条硬阻碍逐条亲验）：
+ *  1. production-transport.js:137 那道守卫是死代码 —— 判据是入参 localMachineId，
+ *     默认值即 DEFAULT_LOCAL_MACHINE_ID，而 server.js:145 / attempt-cleanup-worker.js:208
+ *     等四个生产调用方全不传它，if 恒为假；
+ *  2. 本文件对 machineId 的引用数为 0，本机 spawn 判据只有 payload.harness_runtime，
+ *     改身份拦不住它（改 env 不减 VPS 一丝 CPU）；
+ *  3. credential-broker.js:144 与 github-credential-broker.js:36 硬编码
+ *     controllerMachineId !== 'us-mac-m4' 即 fail —— 这台 Brain 必须自称 us-mac-m4
+ *     因为它是凭据权威，改身份会让远程派发也签不出凭据，全面 fail-closed。
+ *
+ * PrepPRD: sprints/09130012-us-vps-scheduler-identity/prep-prd.md
+ */
+describe('本机执行闸 CECELIA_LOCAL_EXECUTION_ENABLED（us-vps 纯调度器化）', () => {
+  it('=false 时拒绝 kernel-v1 派发，且不建 run、不碰 worktree（不留半态）', async () => {
+    const deps = makeDeps({ env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' } });
+    const kernelTask = {
+      ...TASK,
+      payload: { ...TASK.payload, harness_runtime: 'kernel-v1' },
+    };
+    const r = await spawnSkillRelaySession(kernelTask, deps);
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('local_execution_disabled_on_scheduler');
+    // 关键：拦在咽喉，绝不能建了 run 再失败（否则又是半态 + 静默卡到租约过期）
+    expect(deps.createKernelRun).not.toHaveBeenCalled();
+    expect(deps.ensureWt).not.toHaveBeenCalled();
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('=false 时同样拒绝普通 skill-relay 派发（咽喉拦所有路径，不只 kernel-v1）', async () => {
+    const deps = makeDeps({ env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' } });
+    const r = await spawnSkillRelaySession(TASK, deps);
+    expect(r.ok).toBe(false);
+    expect(r.error).toBe('local_execution_disabled_on_scheduler');
+    expect(deps.spawnFn).not.toHaveBeenCalled();
+  });
+
+  it('未设置时行为零变化（防误杀：默认放行，走正常派发路径）', async () => {
+    const deps = makeDeps({ env: {} });
+    const r = await spawnSkillRelaySession(TASK, deps);
+    expect(r.error).not.toBe('local_execution_disabled_on_scheduler');
+    expect(deps.spawnFn).toHaveBeenCalled();
+  });
+
+  it("='true' 时放行（显式开启也不拦）", async () => {
+    const deps = makeDeps({ env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'true' } });
+    const r = await spawnSkillRelaySession(TASK, deps);
+    expect(r.error).not.toBe('local_execution_disabled_on_scheduler');
+    expect(deps.spawnFn).toHaveBeenCalled();
+  });
+
+  it('源码哨兵：闸必须可注入 env，且位于 createKernelRun 之前', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../harness-skill-relay.js', import.meta.url), 'utf8');
+    expect(src).toMatch(/CECELIA_LOCAL_EXECUTION_ENABLED/);
+    // 闸必须读 deps.env ?? process.env，否则测不到 —— 会重演「测了一段生产不可达代码」
+    const guardIdx = src.indexOf('CECELIA_LOCAL_EXECUTION_ENABLED');
+    const createRunIdx = src.indexOf('deps.createKernelRun');
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(createRunIdx).toBeGreaterThan(-1);
+    expect(guardIdx).toBeLessThan(createRunIdx);
+  });
+});
