@@ -228,7 +228,7 @@ describe('checkServerResources Brain 自身 CPU pivot — D2', () => {
     });
     const result = checkServerResources();
     expect(result.metrics.cpu_pressure).toBeLessThan(0.9);
-    expect(result.effectiveSlots).toBeGreaterThan(0);
+    expect(result.metrics.cpu_health_action).toBe('warn');
   });
 
   it('D2-2: Brain 自身 CPU 真的高 → 依然 halt（不是无脑放行）', () => {

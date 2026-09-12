@@ -51,6 +51,8 @@ import {
   calculatePhysicalCapacity,
   evaluateMemoryHealth,
   getBrainRssMB,
+  sampleBrainCpuUsage,
+  evaluateCpuHealth,
   IS_DARWIN,
 } from './platform-utils.js';
 
@@ -543,9 +545,25 @@ function checkServerResources(memReservedMb = 0) {
   _pushHistory(_memHistory, rawMemPressure, HISTORY_SIZE_MEM);
 
   // Smoothed values: CPU = avg of last 5, MEM = max of last 3 (conservative)
-  const cpuPressure = _cpuHistory.length > 0 ? _avgHistory(_cpuHistory) : rawCpuPressure;
+  let cpuPressure = _cpuHistory.length > 0 ? _avgHistory(_cpuHistory) : rawCpuPressure;
   let memPressure = _memHistory.length > 0 ? _maxHistory(_memHistory) : rawMemPressure;
   const swapPressure = swapUsedPct / SWAP_USED_MAX_PCT;
+
+  // PIVOT 2026-09-12: distinguish Brain-process CPU health from system-wide
+  // /proc/stat. Docker does not virtualize /proc/stat per-container, so
+  // sampleCpuUsage() reads the ENTIRE HOST's CPU — on a shared VPS, sibling
+  // containers (e.g. openclaw-gateway) can drive this into the halt band
+  // while Brain's own container sits idle. Only real Brain-level CPU load
+  // halts dispatch; system-noisy-but-Brain-fine downgrades to a warn log.
+  const brainCpuPct = sampleBrainCpuUsage();
+  const cpuHealth = evaluateCpuHealth({
+    brain_cpu_pct: brainCpuPct,
+    system_cpu_pressure: rawCpuPressure,
+  });
+  if (cpuHealth.action === 'warn' && cpuPressure >= 0.9) {
+    console.warn(`[executor] cpu warn (not halting): ${cpuHealth.reason}`);
+    cpuPressure = Math.min(cpuPressure, 0.6);
+  }
 
   // PIVOT 2026-04-18: distinguish Brain-process health from system-wide memory.
   // If Brain's own RSS is fine but the system is noisy (other apps eating
@@ -605,6 +623,9 @@ function checkServerResources(memReservedMb = 0) {
     brain_rss_mb: brainRssMB,
     memory_health_action: memHealth.action,
     memory_health_reason: memHealth.reason,
+    brain_cpu_pct: brainCpuPct,
+    cpu_health_action: cpuHealth.action,
+    cpu_health_reason: cpuHealth.reason,
   };
 
   if (effectiveSlots === 0) {
