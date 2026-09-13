@@ -21,6 +21,7 @@ const {
 } = require('./github-credential-envelope.cjs');
 const { probeFleetWorkerHealth } = require('./node-probe.cjs');
 const { createWorkspaceManager } = require('./workspace-manager.cjs');
+const { createOrchestratorRunner } = require('./orchestrator-runner.cjs');
 
 const MAX_STRING_LENGTH = 1_024;
 const MAX_RESPONSE_BYTES = 65_536;
@@ -29,6 +30,7 @@ const DEFAULT_HEALTH_CACHE_TTL_MS = 30_000;
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 5_231;
 const ATTEMPT_ACTION_PATH = /^\/harness\/attempts\/([a-f0-9-]+)\/(inspect|start|cancel|terminal)$/;
+const ORCHESTRATOR_ACTION_PATH = /^\/harness\/orchestrators\/([a-f0-9-]+)\/(start|inspect|terminal)$/;
 const UNTRUSTED_WORKSPACE_FIELDS = new Set([
   'cwd',
   'worktree_path',
@@ -180,6 +182,11 @@ function writeJson(response, statusCode, value) {
 
 function validAttemptRunner(value) {
   return ['prepare', 'start', 'inspect', 'cancel', 'terminal', 'reconcile']
+    .every((method) => typeof value?.[method] === 'function');
+}
+
+function validOrchestratorRunner(value) {
+  return ['prepare', 'start', 'inspect', 'terminal']
     .every((method) => typeof value?.[method] === 'function');
 }
 
@@ -413,8 +420,16 @@ function createFleetWorkerRuntime({
     // claude attempt 会在 prepare 时 loud-fail attempt_claude_home_unavailable。
     claudeAccountsRoot: env.CECELIA_ORBSTACK_HOME ?? null,
   });
+  const orchestratorRunner = createOrchestratorRunner({
+    workspaceManager,
+    dataRoot: roots.state,
+    hostname: workerId,
+    maxConcurrent: Number(env.CECELIA_ORCHESTRATOR_MAX_CONCURRENT ?? 2),
+    env,
+  });
   return Object.freeze({
     attemptRunner,
+    orchestratorRunner,
     attemptToken,
     roots,
     runnerImageDigest,
@@ -506,6 +521,9 @@ function createFleetWorkerServer(options = {}) {
   const attemptRunner = validAttemptRunner(options.attemptRunner)
     ? options.attemptRunner
     : null;
+  const orchestratorRunner = validOrchestratorRunner(options.orchestratorRunner)
+    ? options.orchestratorRunner
+    : null;
   const attemptToken = options.attemptToken;
   const machineId = safeString(options.machineId, 'us-mac-m4');
   const maximumRequestBytes = Number.isInteger(options.maxRequestBytes)
@@ -586,6 +604,53 @@ function createFleetWorkerServer(options = {}) {
         writeJson(response, 200, projectHealth(health));
       } catch {
         writeJson(response, 503, { error: 'health_probe_failed' });
+      }
+      return;
+    }
+
+    if (request.url?.startsWith('/harness/orchestrators')) {
+      if (!orchestratorRunner) {
+        writeJson(response, 404, { error: 'not_found' });
+        return;
+      }
+      if (!validBearer(request, attemptToken)) {
+        writeJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+      try {
+        if (
+          request.method === 'POST'
+          && request.url === '/harness/orchestrators/prepare'
+        ) {
+          const body = await readJson(request, maximumRequestBytes);
+          writeJson(response, 202, await orchestratorRunner.prepare(body));
+          return;
+        }
+        const orchestratorMatch = request.url.match(ORCHESTRATOR_ACTION_PATH);
+        if (request.method === 'POST' && orchestratorMatch) {
+          const [, orchestratorId, action] = orchestratorMatch;
+          const body = await readJson(request, maximumRequestBytes);
+          writeJson(
+            response,
+            200,
+            await orchestratorRunner[action](orchestratorId, body),
+          );
+          return;
+        }
+        writeJson(response, 404, { error: 'not_found' });
+      } catch (error) {
+        const statusCode = requestErrorStatus(error);
+        if (statusCode >= 500) {
+          console.error(
+            `[fleet-worker] orchestrator_request_failed url=${request.url}`
+            + ` reason=${error?.message}`,
+          );
+        }
+        writeJson(
+          response,
+          statusCode,
+          { error: safeString(error.message, 'invalid_request') },
+        );
       }
       return;
     }
@@ -686,6 +751,7 @@ function main(env = process.env) {
   const server = createFleetWorkerServer({
     env,
     attemptRunner: runtime.attemptRunner,
+    orchestratorRunner: runtime.orchestratorRunner,
     attemptToken: runtime.attemptToken,
     machineId: env.CECELIA_MACHINE_ID,
     runnerImageDigest: env.CECELIA_RUNNER_DIGEST,
