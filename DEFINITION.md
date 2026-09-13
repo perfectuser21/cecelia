@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.288.0
+**Brain 版本**: 1.288.1
 
 ## 1.283.0
 
@@ -48,6 +48,10 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.288.1 — alertness CPU 指标邻居负载免疫
+
+- fix(brain): alertness collectCPUMetric 从全机 loadavg 改为 Brain 自身进程 CPU（PR#5290 executor 同病同修）——修复 us-vps 上 openclaw 邻居把 loadavg 顶高导致 Escalation 误升 emergency_brake+safe_mode 把调度器自己刹停；全机压力保留为 system_pressure_pct 观测字段
 
 ## Brain 1.288.0 — orchestrator 远程化 + 机器角色模型：CI 闸配套
 
