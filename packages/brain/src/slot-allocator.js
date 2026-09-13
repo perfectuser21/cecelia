@@ -20,7 +20,7 @@ import {
   getBrainRssMB,
 } from './platform-utils.js';
 import { calculateBudgetState } from './token-budget-planner.js';
-import { getFleetStatus, getRemoteCapacity } from './fleet-resource-cache.js';
+import { getFleetStatus, getRemoteCapacity, getTotalEffectiveSlots } from './fleet-resource-cache.js';
 import { getMachineVitals } from './machine-vitals.js';
 import { checkQuotaGuard } from './quota-guard.js';
 import { getAvailableAccountCount } from './account-usage.js';
@@ -410,9 +410,17 @@ async function calculateSlotBudget() {
   const userMode = detectUserMode(sessions);
   const userSlotsUsed = sessions.headed.length;
 
-  // Dynamic model: resource pressure determines effective slots
+  // Dynamic model: resource pressure determines effective slots.
+  // 2026-09-13 调度器模式分流（handoff 202609131958 next_steps#1）：闸
+  // CECELIA_LOCAL_EXECUTION_ENABLED=false（us-vps 纯调度器，决策 96054a8b）时
+  // 本机不执行任务，派发容量必须取 fleet worker 聚合——本机 checkServerResources
+  // 在共享 VPS 上被邻居容器压成 0，曾致 tick 恒 pool_c_full 永不自动派发。
+  // 闸缺省/true（MMV 执行机模式）保持本机来源，行为零变化。
   const resources = checkServerResources();
-  const effectiveSlots = resources.effectiveSlots;
+  const schedulerMode = process.env.CECELIA_LOCAL_EXECUTION_ENABLED === 'false';
+  const effectiveSlots = schedulerMode
+    ? getTotalEffectiveSlots()
+    : resources.effectiveSlots;
 
   // Running processes = headed sessions (ps, accurate for real user sessions) +
   // DB counts for dispatched tasks (authoritative truth for in_progress).
@@ -535,6 +543,7 @@ async function calculateSlotBudget() {
     resources: {
       effectiveSlots,
       maxPressure: resources.metrics.max_pressure,
+      capacity_source: schedulerMode ? 'fleet_workers_http' : 'local_machine',
     },
     tokenPressure: tokenInfo,
     budgetState: budgetState ? {

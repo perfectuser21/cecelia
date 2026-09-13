@@ -12,7 +12,8 @@
  *   - offline_reason: 'no_ping_grace_exceeded' | 'fetch_failed' | null
  */
 
-import { SERVERS, COMPUTE_SERVERS, collectLocalStats, collectRemoteUnixStats } from './routes/infra-status.js';
+import { SERVERS, COMPUTE_SERVERS } from './routes/infra-status.js';
+import { workerBridgeUrlFor } from './machine-registry.js';
 import { calculatePhysicalCapacity } from './platform-utils.js';
 
 const REFRESH_INTERVAL_MS = 30_000; // 30 秒
@@ -43,11 +44,42 @@ let _refreshTimer = null;
  * @param {object} server
  * @param {number|null} prevLastPingAt — 上次成功 ping 的时间戳（来自缓存）
  */
+const WORKER_HEALTH_TIMEOUT_MS = 5_000;
+
+/** 经 fleet-worker /health 采集一台 worker 的资源（映射为旧 stats 形状，公式零变化） */
+async function collectWorkerHttpStats(server) {
+  const baseUrl = workerBridgeUrlFor(server.id, process.env);
+  if (!baseUrl) throw new Error(`worker_url_unresolvable:${server.id}`);
+  const response = await fetch(`${baseUrl}/health`, {
+    signal: AbortSignal.timeout(WORKER_HEALTH_TIMEOUT_MS),
+  });
+  if (!response?.ok) throw new Error(`worker_health_http_${response?.status}`);
+  const health = await response.json();
+  const r = health?.resources;
+  if (!r || !Number.isFinite(r.cpu_cores)) {
+    throw new Error('worker_health_resources_missing');
+  }
+  return {
+    status: 'online',
+    cpu: {
+      cores: r.cpu_cores,
+      usagePercent: Number(r.cpu_pressure_percent) || 0,
+    },
+    memory: {
+      totalGB: (Number(r.memory_bytes) || 0) / (1024 ** 3),
+      usagePercent: Number(r.memory_pressure_percent) || 0,
+    },
+  };
+}
+
 async function collectServerStats(server, prevLastPingAt) {
   try {
-    const stats = server.isLocal
-      ? collectLocalStats()
-      : await collectRemoteUnixStats(server);
+    // 2026-09-13 采集改 fleet-worker HTTP /health（handoff 202609131958 next_steps#1）：
+    // 旧路径两条全是病——isLocal 采到【Brain 所在机】（Brain 迁 us-vps 后把 VPS 被
+    // openclaw 邻居顶高的压力记在 us-mac-m4 头上 → effectiveSlots=0 → tick 永不派发）；
+    // ssh 采集在 Brain 容器内无通路恒 offline。worker :5231 /health 自带 resources 段
+    //（三台实测可达），且「health 可达」恰好就是「能接活」的正确语义。
+    const stats = await collectWorkerHttpStats(server);
 
     const totalMemMB = Math.round(stats.memory.totalGB * 1024);
     const cpuCores = stats.cpu.cores;

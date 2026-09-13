@@ -74,6 +74,7 @@ vi.mock('../fleet-resource-cache.js', () => ({
   getFleetStatus: vi.fn(() => []),
   getRemoteCapacity: vi.fn(() => null),
   isServerOnline: vi.fn(() => false),
+  getTotalEffectiveSlots: vi.fn(() => 7),
 }));
 
 import { execSync } from 'child_process';
@@ -1392,5 +1393,53 @@ describe('dispatch-helpers: bypass marker on candidates', () => {
     );
     expect(src).toContain('shouldBypassBackpressure');
     expect(src).toContain('_bypass_backpressure');
+  });
+});
+
+// ── 2026-09-13 调度器模式容量来源分流（handoff 202609131958 next_steps#1）──
+// 闸 CECELIA_LOCAL_EXECUTION_ENABLED=false（us-vps 纯调度器）时本机不执行任务，
+// 派发容量必须取 fleet worker 聚合（getTotalEffectiveSlots），而不是被 openclaw
+// 邻居污染的本机 checkServerResources（其 effectiveSlots 恒 0 → tick 永不派发）。
+// 闸缺省/true（MMV 执行机模式）保持本机来源，行为零变化。
+describe('calculateSlotBudget — 调度器模式容量来源分流', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    _resetSlotBuffer();
+    execSync.mockReturnValue('');
+    pool.query.mockResolvedValue({ rows: [{ count: '0' }] });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('闸=false：本机 effectiveSlots=0 也照常用 fleet 聚合派发', async () => {
+    vi.stubEnv('CECELIA_LOCAL_EXECUTION_ENABLED', 'false');
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 0, // 调度器本机被邻居压成 0——不得影响派发
+      metrics: { max_pressure: 0.95 },
+    });
+    const budget = await calculateSlotBudget();
+    expect(budget.resources.effectiveSlots).toBe(7); // fleet 聚合 mock 值
+    expect(budget.taskPool.available).toBeGreaterThan(0);
+    expect(budget.dispatchAllowed).toBe(true);
+  });
+
+  it('闸缺省：仍用本机 checkServerResources（执行机模式零变化）', async () => {
+    checkServerResources.mockReturnValue({
+      effectiveSlots: 12,
+      metrics: { max_pressure: 0.1 },
+    });
+    const budget = await calculateSlotBudget();
+    expect(budget.resources.effectiveSlots).toBe(12);
+  });
+
+  it('闸=false 但 fleet 聚合也为 0（全 worker 离线）→ 不派发（fail-closed）', async () => {
+    vi.stubEnv('CECELIA_LOCAL_EXECUTION_ENABLED', 'false');
+    const { getTotalEffectiveSlots } = await import('../fleet-resource-cache.js');
+    getTotalEffectiveSlots.mockReturnValue(0);
+    checkServerResources.mockReturnValue({ effectiveSlots: 12, metrics: { max_pressure: 0.1 } });
+    const budget = await calculateSlotBudget();
+    expect(budget.dispatchAllowed).toBe(false);
   });
 });
