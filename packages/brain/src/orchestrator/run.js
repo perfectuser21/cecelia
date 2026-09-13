@@ -65,12 +65,9 @@ import {
   createExpiredAttemptAuthority,
   reconcileExpiredAttempt,
 } from './expired-attempt-reconciler.js';
+import { listCanonicalMachineIds } from './preflight/canonical-machine-id.js';
 
-const CANONICAL_MACHINE_IDS = new Set([
-  'us-mac-m4',
-  'xian-mac-m4',
-  'xian-mac-m1',
-]);
+const CANONICAL_MACHINE_IDS = new Set(listCanonicalMachineIds());
 
 /** 解析 --task-id / --run-id / --controller-session-id / --resume-token / --dry-run */
 export function parseArgs(argv) {

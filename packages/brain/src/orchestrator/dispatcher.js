@@ -13,6 +13,7 @@ import {
 import { deriveCapabilityRequirements } from './preflight/requirements.js';
 import { expandUnresolvedAccountTargets } from './preflight/execution-targets.js';
 import { HARNESS_BUNDLE_MAX_BYTES } from './constants.js';
+import { resolvePrimaryWorkerId } from '../machine-registry.js';
 import { AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED } from './attempt-machine-capacity.js';
 import { assertRouteSnapshotLaunchAuthority } from './route-snapshot-authority.js';
 import { DIRECT_PROFILE_CONTRACT_POLICY_VERSION } from './direct-profile-contract.js';
@@ -1505,7 +1506,7 @@ export function createDetachedLauncher({
   sessionRoot = process.env.CECELIA_HARNESS_SESSION_DIR
     ?? path.join(os.tmpdir(), 'cecelia-harness-sessions'),
   ensureDir = mkdirSync,
-  machineId = 'us-mac-m4',
+  machineId = resolvePrimaryWorkerId(),
 }) {
   const requestedContainerId = (attempt, generation = attempt?.lease_generation) => (
     localContainerIdForAttempt(attempt?.id, generation)

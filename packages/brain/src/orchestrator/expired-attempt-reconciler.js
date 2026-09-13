@@ -1,4 +1,5 @@
 import { LOG_ACTION } from './constants.js';
+import { listCanonicalMachineIds } from './preflight/canonical-machine-id.js';
 
 const INFLIGHT_STATUSES = new Set(['starting', 'running']);
 const PREPARED_WORKER_STATUSES = new Set(['prepared', 'starting']);
@@ -6,11 +7,7 @@ const CONFIRMED_CANCEL_STATUSES = new Set([
   'cleaned',
   'already_clean',
 ]);
-const CANONICAL_FLEET_TARGETS = new Set([
-  'us-mac-m4',
-  'xian-mac-m4',
-  'xian-mac-m1',
-]);
+const CANONICAL_FLEET_TARGETS = new Set(listCanonicalMachineIds());
 const TERMINAL_CODES = new Set([
   'worker_attempt_missing_after_lease',
   'worker_attempt_replacement_required_after_lease',
