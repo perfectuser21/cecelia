@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.288.1
+**Brain 版本**: 1.288.2
 
 ## 1.283.0
 
@@ -48,6 +48,10 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.288.2 — 远程 kernel 派发 createdSource 白名单修复
+
+- fix(brain): _spawnKernelRuntimeRemote 的 createdSource 从不在白名单的 kernel_dispatch_remote 改用既有枚举 kernel_dispatch（铁律 76cb816c 不扩枚举）；此前 createKernelRun 抛 invalid created source 致 dispatch_fail_autoblock 把远程任务打 blocked
 
 ## Brain 1.288.1 — alertness CPU 指标邻居负载免疫
 
