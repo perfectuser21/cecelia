@@ -9,6 +9,8 @@ import {
 } from 'node:fs';
 import path from 'node:path';
 
+import { isPrimaryWorker } from '../machine-registry.js';
+
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const ACCOUNT_PATTERN = /^team[1-5]$/;
 const MACHINES = new Set(['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1']);
@@ -141,7 +143,7 @@ export function createCredentialBroker({
       machineId,
       deadlineAt,
     } = {}) {
-      if (controllerMachineId !== 'us-mac-m4') {
+      if (!isPrimaryWorker(controllerMachineId)) {
         fail('credential_broker_us_authority_required');
       }
       if (!UUID_PATTERN.test(attemptId ?? '')) fail('credential_attempt_invalid');

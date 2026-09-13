@@ -1,6 +1,8 @@
 import { Buffer } from 'node:buffer';
 import { createHash, randomUUID as nodeRandomUUID } from 'node:crypto';
 
+import { isPrimaryWorker } from '../machine-registry.js';
+
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const MACHINES = new Set(['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1']);
 const MAX_TOKEN_BYTES = 16_384;
@@ -33,7 +35,7 @@ export function createGitHubCredentialBroker({
       machineId,
       deadlineAt,
     } = {}) {
-      if (controllerMachineId !== 'us-mac-m4') {
+      if (!isPrimaryWorker(controllerMachineId)) {
         fail('github_credential_broker_us_authority_required');
       }
       if (!UUID_PATTERN.test(attemptId ?? '')) {
