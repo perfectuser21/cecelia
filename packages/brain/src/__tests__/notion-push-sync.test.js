@@ -319,3 +319,41 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
     expect(updateCall).toBeTruthy();
   });
 });
+
+// 2026-09-13 回归锁：SUB_AREA_NOTION_IDS 曾整表 404（页面不存在的死 ID 烙在代码里），
+// 每条 brain/engine issue 推送 404 → 被静默标已同步（notion_id 空）= 无声丢弃两天。
+// 真 ID 实查自 Sub Area 库 300c40c2-ba63-82d5-9ec1-81990d181950；此处锁死当前取值，
+// 防止死 ID 回归（网络探活无法进 CI，用取值锁 + 部署后 push 日志作运行时验证）。
+describe('SUB_AREA_NOTION_IDS 死 ID 回归锁', () => {
+  const REAL_PAGES = {
+    cecelia: '7e7c40c2-ba63-839d-b0bc-017f1cc7d49d',
+    zenithjoy: 'cf5c40c2-ba63-82c8-a00a-015c593f6268',
+    dashboard: 'a17c40c2-ba63-83e2-b922-8197b09af030',
+  };
+  const DEAD_IDS = [
+    '5c0c40c2-ba63-8184-bc3d-f1c5e48caee4',
+    '64bc40c2-ba63-81b0-a7e2-c2f7bb3b2e31',
+    '7e7c40c2-ba63-8117-8d5d-e3e18a3c6b04',
+    '8acc40c2-ba63-810b-8e07-c5c3d34d8e13',
+    'cf5c40c2-ba63-8182-9b3e-f2d1a4e5c6f0',
+    'a17c40c2-ba63-83e2-9c3d-b4e2f1a5c7d8',
+  ];
+
+  it('映射只允许指向实查存在的页面，死 ID 一个不许出现', async () => {
+    const fs = await import('node:fs');
+    const src = fs.readFileSync(
+      new URL('../notion-push-sync.js', import.meta.url),
+      'utf8',
+    );
+    for (const dead of DEAD_IDS) {
+      expect(src.includes(dead), `死 ID ${dead} 不得回归`).toBe(false);
+    }
+    for (const real of Object.values(REAL_PAGES)) {
+      expect(src.includes(real), `真页面 ${real} 必须在映射中`).toBe(true);
+    }
+    // notion-create-issue.js 的 sub-area 枚举全部要有映射（否则该区 issue 无 Sub Area 关系）
+    for (const key of ['brain', 'engine', 'dashboard', 'zenithjoy', 'multi-agent']) {
+      expect(src).toMatch(new RegExp(`['"]?${key}['"]?:\\s*'[0-9a-f-]{36}'`));
+    }
+  });
+});
