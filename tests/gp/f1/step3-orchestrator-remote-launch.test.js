@@ -48,6 +48,20 @@ describe('GP F1 step3 — orchestrator 远程派发', () => {
     expect(bridgeCalls[1][1]).toMatchObject({ run_id: RUN_ID, controller_generation: 1 });
   });
 
+  it('createdSource 必须落在 kernel-run-store 白名单（用既有枚举 kernel_dispatch）', async () => {
+    // 回归锁（2026-09-13 生产实锤）：kernel_dispatch_remote 不在 CREATED_SOURCES
+    // 白名单（JS + migration 430 DB CHECK 双层）→ createKernelRun 抛 invalid
+    // created source → dispatch_fail_autoblock 3 连击把任务打 blocked。
+    // mock createRun 挡不住白名单层——用入参断言锁死。
+    const bridgeCalls = [];
+    const deps = fakeDeps(bridgeCalls);
+    await spawnSkillRelaySession(kernelTask(), deps);
+    expect(deps.createKernelRun).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ createdSource: 'kernel_dispatch' }),
+    );
+  });
+
   it('闸=false + 远程 prepare 失败 → run finalize failed 且错误透传（禁静默）', async () => {
     const bridgeCalls = [];
     const deps = fakeDeps(bridgeCalls);
