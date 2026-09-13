@@ -640,17 +640,17 @@ function createFleetWorkerServer(options = {}) {
         writeJson(response, 404, { error: 'not_found' });
       } catch (error) {
         const statusCode = requestErrorStatus(error);
+        // 5xx 真实原因不回给调用方，只留服务端日志（同 attempt 段 run 2a813900 教训）。
+        const errorCode = statusCode >= 500
+          ? 'orchestrator_operation_failed'
+          : safeString(error.message, 'invalid_request');
         if (statusCode >= 500) {
           console.error(
             `[fleet-worker] orchestrator_request_failed url=${request.url}`
-            + ` reason=${error?.message}`,
+            + ` reason=${safeString(error?.message, 'unknown')}`,
           );
         }
-        writeJson(
-          response,
-          statusCode,
-          { error: safeString(error.message, 'invalid_request') },
-        );
+        writeJson(response, statusCode, { error: errorCode });
       }
       return;
     }
