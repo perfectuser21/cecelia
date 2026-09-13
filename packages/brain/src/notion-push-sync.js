@@ -13,13 +13,17 @@ const SKILL_REGISTRY_DB  = '353c40c2-ba63-81bf-ae3e-f0e6fa3753d7';
 const STEPS_DB           = '369c40c2-ba63-812c-9f35-e7e43db25014';
 const STEP_LINKS_DB      = '369c40c2-ba63-81e2-b95a-e5e3d0592676';
 
+// 2026-09-13 实测修复：旧 6 个 ID 对 Notion API 全 404（页面早已不存在），
+// 导致每条 brain/engine issue 推送 404 → isStaleRelationError 静默标已同步
+// （notion_id 为空）= 无声丢弃。真 ID 取自 Sub Area 库
+// 300c40c2-ba63-82d5-9ec1-81990d181950 实查（承诺地图分区），映射按 repo 区归就近价值区。
 const SUB_AREA_NOTION_IDS = {
-  brain:         '5c0c40c2-ba63-8184-bc3d-f1c5e48caee4',
-  engine:        '64bc40c2-ba63-81b0-a7e2-c2f7bb3b2e31',
-  cecelia:       '7e7c40c2-ba63-8117-8d5d-e3e18a3c6b04',
-  'multi-agent': '8acc40c2-ba63-810b-8e07-c5c3d34d8e13',
-  zenithjoy:     'cf5c40c2-ba63-8182-9b3e-f2d1a4e5c6f0',
-  dashboard:     'a17c40c2-ba63-83e2-9c3d-b4e2f1a5c7d8',
+  brain:         '7e7c40c2-ba63-839d-b0bc-017f1cc7d49d', // Cecelia
+  engine:        '7e7c40c2-ba63-839d-b0bc-017f1cc7d49d', // Cecelia
+  cecelia:       '7e7c40c2-ba63-839d-b0bc-017f1cc7d49d', // Cecelia
+  'multi-agent': '7e7c40c2-ba63-839d-b0bc-017f1cc7d49d', // Cecelia
+  zenithjoy:     'cf5c40c2-ba63-82c8-a00a-015c593f6268', // ZenithJoy
+  dashboard:     'a17c40c2-ba63-83e2-b922-8197b09af030', // Dashboard
 };
 
 function buildRichText(text) {
