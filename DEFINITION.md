@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.288.3
+**Brain 版本**: 1.288.4
 
 ## 1.283.0
 
@@ -48,6 +48,11 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.288.4 — fleet 容量喂数改 worker HTTP，自动派发解堵
+
+- fix(brain): fleet-resource-cache 采集从 ssh/isLocal 改为 fleet-worker :5231 /health HTTP（machine-registry 解析地址）——旧 isLocal 路径在 Brain 迁 us-vps 后把 VPS 被邻居顶高的压力记在 us-mac-m4 头上致 effectiveSlots=0
+- fix(brain): slot-allocator 调度器模式（CECELIA_LOCAL_EXECUTION_ENABLED=false）派发容量改取 fleet worker 聚合 getTotalEffectiveSlots；执行机模式保持本机来源零变化——终结 tick 恒 pool_c_full 永不自动派发
 
 ## Brain 1.288.3 — Notion 驾驶舱推送复活
 
