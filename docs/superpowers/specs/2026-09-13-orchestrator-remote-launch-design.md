@@ -3,6 +3,7 @@
 task: 7c95ef71-d566-4782-a841-3be038328276
 决策: 2e756506（方案B）/ 96054a8b（invariant 纯调度器）/ ca6bf8e7（invariant 引擎-机器绑定）
 判定点: e3a41ecc（闸语义）/ 0eef6860（判活）/ d3281fb0（回调）/ 854888a0（槽位）
+DB 通路: a9773a84（审核补拍：postgres 加听 Tailscale）
 归位: 工厂价值流 · 横切件（执行基座）· 动作类型=置换（承诺零变化的底层大手术）
 
 ## 1. 问题
@@ -62,6 +63,27 @@ orchestrator (primary 宿主上的裸进程)
 
 Brain 判活：只看 heartbeat 新鲜度（3min），不再要求 host 匹配 + kill(pid,0)  [判定点 0eef6860]
 ```
+
+### 3.5 DB 通路（审核 P0 补，决策 a9773a84）
+
+**orchestrator 对 Brain 的真正脐带是 DB，不是 HTTP**（初版设计漏了这条，审核实测补上）：
+`run.js:166-204` 全身直连 pg Pool（attemptStore / commanderStore / eventStore / actorInbox /
+decision-log），`heartbeat.js` 的心跳+租约续约直接 `UPDATE kernel_controller_sessions +
+initiative_runs`。us-vps postgres 仅听 127.0.0.1，不通则远程 orchestrator 一个字都写不进去。
+
+拍板方案：**us-vps postgres 加听 Tailscale IP**（100.79.41.61），pg_hba 仅放行 tailnet
+网段（100.64.0.0/10）+ scram-sha-256；MMV orchestrator 以 `DB_HOST=100.79.41.61` 直连。
+零新增活动部件，Mac Studio 到货复用同一条路。（SSH 隧道被否：新增活动部件且 MMV 本机
+5432 被自己的 postgres 占用；Brain HTTP API 被否：方案 C 级重构。）
+
+配套事实与守卫：
+- HTTP 回调已实测可行：us-vps 5221 听 `*:5221`，MMV 直打 200 —— 判定点 d3281fb0
+  从「待验证」升级为「已验证」。
+- MMV 本机 postgres 无同名 `cecelia` 库，误连是**响亮失败**而非静默 split-brain——但这是
+  运气不是守卫：**orchestrator 启动时必须校验 DB 身份**（读 schema version / 机器标记，
+  不符即拒启），教训引用 memory info-logic-rebuild（本地临时 Brain 必须 scratch 库）。
+- pg 配置变更属网络面变更，主理人已确认（a9773a84），实施排在部署步骤，改完跑
+  `pg_hba` 收窄验证：非 tailnet 源连接必须被拒。
 
 ### 为什么 orchestrator 是裸进程而不是容器
 
@@ -126,6 +148,8 @@ attempt 等 orchestrator 释放槽位，**自锁**。并发越高越必然触发
 | 心跳查询异常/字段缺失 | 沿用 fail-open → `unknown`（kernel-liveness 既有铁律，不得改成判死） |
 | 凭据签发失败 | fail-closed，且错误必须区分「非权威机」与「凭据本身不可用」 |
 | orchestrator 槽位耗尽 | 排队等待，**不得**挤占 attempt 池（否则自锁，见 4.4） |
+| DB 写失败（心跳/租约） | orchestrator 侧 lease 丢失即 throw（heartbeat.js:41 既有路径）→ 进程自杀，防止 Brain 判死重拉后旧进程双跑；实现时必须验证 throw 真会终止进程而非被上层吞掉 |
+| 连错 DB | 启动时 DB 身份校验不符 → 拒启 + 明确 reason（防将来 worker 机上出现同名库变成静默 split-brain） |
 
 写库并发：所有「SELECT 判态再 UPDATE」一律用 `UPDATE … WHERE`（铁律 761f242b）；
 往 task.result 塞回执用固定子键（铁律 55f0d846，jsonb `||` 是浅合并）。
@@ -141,6 +165,7 @@ attempt 等 orchestrator 释放槽位，**自锁**。并发越高越必然触发
 | 凭据回归 | **先写 failing test 锁住现有签发行为，再改 broker**；断言非 primary 机仍 fail-closed |
 | worker 配置守卫 | `scripts/ci/__tests__/*.test.sh` —— 改坏 worker 地址/角色即报红 |
 | smoke | `packages/brain/scripts/smoke/orchestrator-remote-launch-smoke.sh`（须登记 smoke-allowlist.txt，否则棘轮闸红） |
+| DB 身份校验 unit | 喂假库（无标记/错标记）断言拒启；喂对标记断言放行 |
 | **proven-to-fire** | 手杀 primary 上的 orchestrator 进程，亲眼看 Brain 3 分钟内判死——没见它报红过不算守卫 |
 
 ## 7. 验收标准
@@ -162,3 +187,4 @@ attempt 等 orchestrator 释放槽位，**自锁**。并发越高越必然触发
 2. 远程化主干（worker 端点 + launchKernelProcess + 判活）
 3. 闸语义反转
 4. **最后**动两个 credential broker（先 failing test 锁住现有行为）
+5. 部署段：us-vps pg 加听 Tailscale + pg_hba 收窄（已获确认 a9773a84）→ 验证非 tailnet 源被拒 → MMV 侧 DB_HOST 切换
