@@ -1309,6 +1309,157 @@ describe('Fleet Worker Attempt API', () => {
   });
 });
 
+describe('Fleet Worker Orchestrator API', () => {
+  const token = 'fleet-worker-token-at-least-32-bytes';
+  const auth = { authorization: `Bearer ${token}` };
+  const runId = '44444444-4444-4444-8444-444444444444';
+  const taskId = '55555555-5555-4555-8555-555555555555';
+
+  function orchestratorRunnerDouble() {
+    return {
+      prepare: vi.fn(async (body) => ({
+        orchestrator_id: body.run_id,
+        status: 'prepared',
+        worktree_path: '/ws/x',
+        base_sha: '0123456789abcdef0123456789abcdef01234567',
+        pid: null,
+        host: 'us-mac-m4',
+      })),
+      start: vi.fn(async (id) => ({
+        orchestrator_id: id,
+        status: 'running',
+        pid: 77,
+        host: 'us-mac-m4',
+      })),
+      inspect: vi.fn(async (id) => ({ orchestrator_id: id, status: 'running' })),
+      terminal: vi.fn(async (id) => ({ orchestrator_id: id, status: 'done' })),
+    };
+  }
+
+  it('accepts an authenticated orchestrator prepare with 202 and the receipt body', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const orchestratorRunner = orchestratorRunnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      orchestratorRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(server, 'POST', '/harness/orchestrators/prepare', {
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: { run_id: runId, task_id: taskId, repo: 'perfectuser21/cecelia' },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(JSON.parse(response.body)).toEqual({
+      orchestrator_id: runId,
+      status: 'prepared',
+      worktree_path: '/ws/x',
+      base_sha: '0123456789abcdef0123456789abcdef01234567',
+      pid: null,
+      host: 'us-mac-m4',
+    });
+    expect(orchestratorRunner.prepare).toHaveBeenCalledWith({
+      run_id: runId,
+      task_id: taskId,
+      repo: 'perfectuser21/cecelia',
+    });
+    server.close();
+  });
+
+  it('returns pid/host from orchestrator start with 200', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const orchestratorRunner = orchestratorRunnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      orchestratorRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(
+      server,
+      'POST',
+      `/harness/orchestrators/${runId}/start`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: { controller_session_id: taskId, controller_generation: 1 },
+      },
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      orchestrator_id: runId,
+      status: 'running',
+      pid: 77,
+      host: 'us-mac-m4',
+    });
+    expect(orchestratorRunner.start).toHaveBeenCalledWith(runId, {
+      controller_session_id: taskId,
+      controller_generation: 1,
+    });
+    server.close();
+  });
+
+  it('rejects an unauthenticated orchestrator prepare before runner invocation', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const orchestratorRunner = orchestratorRunnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      orchestratorRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(server, 'POST', '/harness/orchestrators/prepare', {
+      headers: { 'content-type': 'application/json' },
+      body: { run_id: runId, task_id: taskId },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(JSON.parse(response.body)).toEqual({ error: 'unauthorized' });
+    expect(orchestratorRunner.prepare).not.toHaveBeenCalled();
+    server.close();
+  });
+
+  it('returns 404 for an unknown orchestrator action', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const orchestratorRunner = orchestratorRunnerDouble();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      orchestratorRunner,
+      attemptToken: token,
+    });
+
+    const response = await request(
+      server,
+      'POST',
+      `/harness/orchestrators/${runId}/bogus`,
+      {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: {},
+      },
+    );
+
+    expect(response.statusCode).toBe(404);
+    server.close();
+  });
+
+  it('returns 404 for orchestrator routes when no orchestratorRunner is wired', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      attemptToken: token,
+    });
+
+    const response = await request(server, 'POST', '/harness/orchestrators/prepare', {
+      headers: { ...auth, 'content-type': 'application/json' },
+      body: { run_id: runId, task_id: taskId },
+    });
+
+    expect(response.statusCode).toBe(404);
+    server.close();
+  });
+});
+
 describe('Fleet Worker production runtime assembly', () => {
   it('uses one explicit Worker-owned repository allowlist for Cecelia and ZenithJoy', async () => {
     const { createFleetRepoAllowlist } = await loadServerContract();
