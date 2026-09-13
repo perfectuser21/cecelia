@@ -343,7 +343,12 @@ async function _spawnKernelRuntimeRemote(task, { dbPool, now, initiativeId, deps
     abilityId: task.ability_id || task.payload?.ability_id || null,
     host: 'kernel-v1',
     deadlineHours: 8,
-    createdSource: 'kernel_dispatch_remote',
+    // created_source 用既有枚举 kernel_dispatch（枚举语义常量只许一份，铁律 76cb816c；
+    // DB CHECK 约束 migration 430 同为该集合）。远程与否由 task.payload.execution_location
+    // 与 initiative_runs.orchestrator_host 表达，不新增枚举值。
+    // 2026-09-13 生产实锤：kernel_dispatch_remote 不在两层白名单 → createKernelRun 抛
+    // invalid created source → dispatch_fail_autoblock 3 连击把任务打 blocked。
+    createdSource: 'kernel_dispatch',
     gear,
   });
   const runId = created.run?.id;
