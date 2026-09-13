@@ -29,11 +29,25 @@ describe('fleet-resource-cache', () => {
 
   beforeEach(async () => {
     vi.useFakeTimers();
+    // 2026-09-13 采集传输换为 worker HTTP：本块断言意图不变（3台/online/slots），
+    // 铺垫从 collect* mock 换成 fetch stub（三台全通）。
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        schema_version: 'fleet-node-health/v1',
+        resources: {
+          cpu_cores: 10, memory_bytes: 16 * 1024 ** 3,
+          cpu_pressure_percent: 20, memory_pressure_percent: 40,
+        },
+      }),
+    })));
     fleetCache = await import('../fleet-resource-cache.js');
   });
 
   afterEach(() => {
     fleetCache.stopFleetRefresh();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
     vi.resetModules();
   });
@@ -130,12 +144,12 @@ describe('容量采集走 worker HTTP（弃 ssh/isLocal）', () => {
   it('stats 来自 worker /health 映射，且不再触碰 ssh/local 采集', async () => {
     fleetCache.startFleetRefresh();
     await vi.advanceTimersByTimeAsync(100);
-    const cap = fleetCache.getRemoteCapacity('us-mac-m4');
-    expect(cap.online).toBe(true);
-    expect(cap.stats.cpu.cores).toBe(10);
-    expect(cap.stats.cpu.usagePercent).toBeCloseTo(16.3, 1);
-    expect(cap.stats.memory.usagePercent).toBe(54);
-    expect(cap.stats.memory.totalGB).toBeCloseTo(16, 1);
+    const entry = fleetCache.getFleetStatus().find((e) => e.id === 'us-mac-m4');
+    expect(entry.online).toBe(true);
+    expect(entry.cpu.cores).toBe(10);
+    expect(entry.cpu.usagePercent).toBeCloseTo(16.3, 1);
+    expect(entry.memory.usagePercent).toBe(54);
+    expect(entry.memory.totalGB).toBeCloseTo(16, 1);
     // 病根路径必须一次都没被调用（isLocal 采到调度器自身=毒源）
     expect(infra.collectLocalStats).not.toHaveBeenCalled();
     expect(infra.collectRemoteUnixStats).not.toHaveBeenCalled();
@@ -144,7 +158,7 @@ describe('容量采集走 worker HTTP（弃 ssh/isLocal）', () => {
   it('worker HTTP 不可达 → offline:fetch_failed（fail-closed，不回落毒源）', async () => {
     fleetCache.startFleetRefresh();
     await vi.advanceTimersByTimeAsync(100);
-    const m1 = fleetCache.getRemoteCapacity('xian-mac-m1'); // HEALTH 未配 → fetch 抛
+    const m1 = fleetCache.getFleetStatus().find((e) => e.id === 'xian-mac-m1'); // HEALTH 未配 → fetch 抛
     expect(m1.online).toBe(false);
     expect(m1.offline_reason).toBe('fetch_failed');
     expect(infra.collectLocalStats).not.toHaveBeenCalled();
