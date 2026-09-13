@@ -843,19 +843,34 @@ describe('spawnSkillRelaySession preview 隔离闸（2026-08-05 preview-4643 事
  * PrepPRD: sprints/09130012-us-vps-scheduler-identity/prep-prd.md
  */
 describe('本机执行闸 CECELIA_LOCAL_EXECUTION_ENABLED（us-vps 纯调度器化）', () => {
-  it('=false 时拒绝 kernel-v1 派发，且不建 run、不碰 worktree（不留半态）', async () => {
-    const deps = makeDeps({ env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' } });
+  // 闸语义反转（决策 e3a41ecc，2026-09-13，本文件描述的三条硬阻碍分析之后追加）：
+  // kernel-v1 headless 不再一刀切拒绝，改经 orchestrator-remote-bridge 远程派发；
+  // 本机 ensureWt/spawnFn（本机 launchKernelProcess 那条链）仍然一次都不能碰——
+  // 半态风险不变，只是「半态」换成了「本机误起」。
+  it('=false 时 kernel-v1 headless 经桥远程派发，不本机建 worktree/spawn（不留半态）', async () => {
+    const bridgeCalls = [];
+    const deps = makeDeps({
+      env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' },
+      orchestratorBridge: {
+        targetMachineId: 'primary-under-test',
+        prepare: vi.fn(async (input) => { bridgeCalls.push(['prepare', input]); return { worktree_path: '/ws/r', status: 'prepared' }; }),
+        start: vi.fn(async (input) => { bridgeCalls.push(['start', input]); return { pid: 4242, host: 'primary-under-test', status: 'running' }; }),
+      },
+    });
     const kernelTask = {
       ...TASK,
       payload: { ...TASK.payload, harness_runtime: 'kernel-v1' },
     };
     const r = await spawnSkillRelaySession(kernelTask, deps);
-    expect(r.ok).toBe(false);
-    expect(r.error).toBe('local_execution_disabled_on_scheduler');
-    // 关键：拦在咽喉，绝不能建了 run 再失败（否则又是半态 + 静默卡到租约过期）
-    expect(deps.createKernelRun).not.toHaveBeenCalled();
+    expect(r.ok).toBe(true);
+    expect(r.remote).toBe(true);
+    expect(r.pid).toBe(4242);
+    // 关键：远程路径不碰本机执行原语，本机不留半态
     expect(deps.ensureWt).not.toHaveBeenCalled();
     expect(deps.spawnFn).not.toHaveBeenCalled();
+    // run 仍要建（供远端 controller 认领），只是不再本机 launchKernelProcess
+    expect(deps.createKernelRun).toHaveBeenCalled();
+    expect(bridgeCalls.map(([op]) => op)).toEqual(['prepare', 'start']);
   });
 
   it('=false 时同样拒绝普通 skill-relay 派发（咽喉拦所有路径，不只 kernel-v1）', async () => {

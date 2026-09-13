@@ -55,6 +55,10 @@ describe('GP F1 step3 — orchestrator 远程派发', () => {
     const result = await spawnSkillRelaySession(kernelTask(), deps);
     expect(result.ok).toBe(false);
     expect(result.error).toContain('orchestrator_bridge_prepare_http_429');
+    // terminalized:true 与本机版 _spawnKernelRuntime 失败返回逐字段同构——executor.js:3243
+    // 靠这个字段把动作归为 'terminalized' 并走 reconcileTerminalizedKernelAuthority 核验；
+    // 缺了会落进 executor.js:3639 的 else 分支打出误导性 error 日志并跳过终态核验。
+    expect(result.terminalized).toBe(true);
     expect(deps.finalizeRun).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ outcome: 'failed' }));
   });
 
