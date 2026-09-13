@@ -126,6 +126,7 @@ export async function loadActiveKernelRun(db, taskId, { forUpdate = false } = {}
   const { rows } = await db.query(
     `SELECT id, initiative_id, current_task_id, phase,
             orchestrator_heartbeat_at, orchestrator_pid, orchestrator_host,
+            controller_lease_expires_at,
             started_at, created_source, predecessor_run_id,
             planner_recovery_receipt_id, commander_mode,
             impact_contract_policy, impact_contract_policy_reason,
@@ -145,7 +146,9 @@ export async function loadKernelRunById(db, runId) {
   const { rows } = await db.query(
     `SELECT id, initiative_id, current_task_id, phase,
             orchestrator_version, orchestrator_heartbeat_at,
-            orchestrator_pid, orchestrator_host, started_at, updated_at,
+            orchestrator_pid, orchestrator_host,
+            controller_lease_expires_at,
+            started_at, updated_at,
             deadline_at, completed_at, failure_reason, pr_url,
             evaluate_verdict, judge_verdict, cost_usd, created_source,
             record_trust_status, record_trust_reason, predecessor_run_id,
