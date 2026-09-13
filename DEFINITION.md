@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.288.2
+**Brain 版本**: 1.288.3
 
 ## 1.283.0
 
@@ -48,6 +48,10 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.288.3 — Notion 驾驶舱推送复活
+
+- fix(brain): SUB_AREA_NOTION_IDS 整表死 ID（对 Notion API 全 404）换为 Sub Area 库实查真 ID——此前每条 brain/engine issue 推送 404 被静默标已同步（notion_id 空）无声丢弃；配合 us-vps 补配 NOTION_API_KEY（09-11 迁机丢失致同步链静默停摆两天）
 
 ## Brain 1.288.2 — 远程 kernel 派发 createdSource 白名单修复
 
