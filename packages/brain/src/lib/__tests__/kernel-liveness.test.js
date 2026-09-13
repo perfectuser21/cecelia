@@ -184,6 +184,60 @@ describe('assessKernelLiveness — 心跳信号（第一顺位）', () => {
   });
 });
 
+describe('assessKernelLiveness — 租约信号（跨主机唯一判死通道，判定点 0eef6860 / 决策 a9773a84）', () => {
+  // orchestrator 远程起在 primary worker 上时，pid 探活恒 host 不匹配（fail-open →
+  // unknown），进程真死也发现不了。租约过期补的是这条盲区，且不破坏 fail-open 铁律：
+  // 心跳写失败时 orchestrator 自己 throw controller_lease_renewal_lost
+  // （packages/brain/src/orchestrator/heartbeat.js:40）→ handleKernelProcessFatal
+  // （packages/brain/src/orchestrator/run.js:500）→ process.exit(1)
+  // （packages/brain/src/orchestrator/run.js:561）自杀。
+  // 所以「租约过期」不是"我不知道"，是"它要么已经死了、要么已经自杀退出"——
+  // 是 orchestrator 自己签发又自己没能续上的正面死亡证据，不是查询缺失或探测失败。
+  it('租约过期 + 心跳过期 → dead（远程 orchestrator 唯一判死通道）', async () => {
+    const now = Date.parse('2026-09-13T00:10:00Z');
+    const pool = poolWithRun(runRow({
+      orchestrator_heartbeat_at: new Date(now - 10 * 60_000).toISOString(),
+      controller_lease_expires_at: new Date(now - 60_000).toISOString(),
+      orchestrator_pid: 123,
+      orchestrator_host: 'remote-host',
+    }));
+    const r = await assessKernelLiveness({
+      pool, task: kernelTask(), now: () => now, hostFn: () => HOST,
+    });
+    expect(r).toMatchObject({ verdict: 'dead', reason: 'controller_lease_expired' });
+  });
+
+  it('心跳新鲜时租约字段不参与（① 先行，即便租约已过期也不影响 alive）', async () => {
+    const now = Date.parse('2026-09-13T00:10:00Z');
+    const pool = poolWithRun(runRow({
+      orchestrator_heartbeat_at: new Date(now - 30_000).toISOString(),
+      controller_lease_expires_at: new Date(now - 60_000).toISOString(),
+      orchestrator_pid: 123,
+      orchestrator_host: 'remote-host',
+    }));
+    const r = await assessKernelLiveness({
+      pool, task: kernelTask(), now: () => now, hostFn: () => HOST,
+    });
+    expect(r.verdict).toBe('alive');
+    expect(r.source).toBe('heartbeat');
+  });
+
+  it('租约列缺失（legacy run）→ 回落 pid 探活，host 不匹配仍 unknown（fail-open 不破）', async () => {
+    const now = Date.parse('2026-09-13T00:10:00Z');
+    const pool = poolWithRun(runRow({
+      orchestrator_heartbeat_at: new Date(now - 10 * 60_000).toISOString(),
+      controller_lease_expires_at: null,
+      orchestrator_pid: 123,
+      orchestrator_host: 'remote-host',
+    }));
+    const r = await assessKernelLiveness({
+      pool, task: kernelTask(), now: () => now, hostFn: () => HOST,
+    });
+    expect(r.verdict).toBe('unknown');
+    expect(r.reason).toBe('host_mismatch');
+  });
+});
+
 describe('assessKernelLiveness — pid 信号（第二顺位）', () => {
   const now = Date.parse('2026-07-27T01:20:00Z');
   const staleRun = (over = {}) => runRow({
