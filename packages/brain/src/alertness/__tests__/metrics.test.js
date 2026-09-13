@@ -51,7 +51,7 @@ describe('alertness CPU 指标 —— 邻居负载免疫（PR#5290 同款语义�
       user: Math.round(ratio * (Date.now() - t0) * 1000), // µs
       system: 0,
     }));
-    const { collectMetrics } = await import('../../alertness/metrics.js');
+    const { collectMetrics } = await import('../metrics.js');
     let last = null;
     for (let i = 0; i < 8; i += 1) { // 首采样建基线 + 7 个增量样本冲过平滑窗
       await new Promise((r) => { setTimeout(r, 15); });
