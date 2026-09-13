@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { resolvePrimaryWorkerId } from '../machine-registry.js';
 import { signMachineAttestation } from './machine-attestation.js';
 import {
   createProductionExecutionTransport,
@@ -120,6 +121,13 @@ function acceptedResponse(machine) {
 }
 
 describe('production execution transport', () => {
+  // 派生锁（文档性断言）：锁 DEFAULT_LOCAL_MACHINE_ID 与 primary 角色解析同源。
+  // 注意它无法侦测「字面量写回」回归——那由 scripts/ci/__tests__/machine-registry-role-guard.test.sh
+  // 的全仓 grep 守卫执法（禁 'us-mac-m4' 出现在判断逻辑）。
+  it('DEFAULT_LOCAL_MACHINE_ID 由 primary 角色派生（禁字面量）', () => {
+    expect(DEFAULT_LOCAL_MACHINE_ID).toBe(resolvePrimaryWorkerId());
+  });
+
   it('forwards the exact attempt lease when cancelling through the production transport', async () => {
     const fetchFn = vi.fn(async () => ({
       ok: true,

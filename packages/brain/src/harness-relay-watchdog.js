@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { execSync } from 'node:child_process';
 
 import pool from './db.js';
+import { isPrimaryWorker } from './machine-registry.js';
 import { createAttemptStore } from './orchestrator/attempt-store.js';
 import { HEADED_HOSTS, HEADED_TMUX_PREFIXES } from './harness-skill-relay.js';
 import {
@@ -349,7 +350,7 @@ function shortId(id) {
 
 function isProvableLegacyLocalParent(attempt, target) {
   return (
-    target?.machine === 'us-mac-m4'
+    isPrimaryWorker(target?.machine)
     && attempt?.local_container_naming === 'legacy-unsuffixed'
   );
 }

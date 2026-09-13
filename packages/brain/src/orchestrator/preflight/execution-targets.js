@@ -1,13 +1,16 @@
+import { resolvePrimaryWorkerId, listComputeWorkerIds } from '../../machine-registry.js';
+
+const PRIMARY = resolvePrimaryWorkerId();
 const CODEX_ACCOUNTS = Object.freeze(['team1', 'team2', 'team3', 'team4', 'team5']);
-const MACHINES = Object.freeze(['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1']);
+const MACHINES = Object.freeze(listComputeWorkerIds());
 
 const VERIFIED_TARGETS = Object.freeze([
   ...CODEX_ACCOUNTS.flatMap((account) => (
     MACHINES.map((machine) => Object.freeze({ provider: 'codex', account, machine }))
   )),
-  Object.freeze({ provider: 'claude', account: 'account1', machine: 'us-mac-m4' }),
-  Object.freeze({ provider: 'claude', account: 'account2', machine: 'us-mac-m4' }),
-  Object.freeze({ provider: 'grok', account: 'grok', machine: 'us-mac-m4' }),
+  Object.freeze({ provider: 'claude', account: 'account1', machine: PRIMARY }),
+  Object.freeze({ provider: 'claude', account: 'account2', machine: PRIMARY }),
+  Object.freeze({ provider: 'grok', account: 'grok', machine: PRIMARY }),
 ]);
 
 function targetKey(target) {

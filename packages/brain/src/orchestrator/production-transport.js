@@ -1,6 +1,7 @@
+import { resolvePrimaryWorkerId } from '../machine-registry.js';
 import { createRemoteBridgeTransport } from './remote-bridge-transport.js';
 
-export const DEFAULT_LOCAL_MACHINE_ID = 'us-mac-m4';
+export const DEFAULT_LOCAL_MACHINE_ID = resolvePrimaryWorkerId();
 export const DEFAULT_WORKER_BRAIN_URL = 'http://host.docker.internal:5221';
 export const DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS = 60_000;
 export const DEFAULT_REMOTE_BRIDGE_PREPARE_TIMEOUT_MS = 180_000;

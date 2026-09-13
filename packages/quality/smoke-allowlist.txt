@@ -287,3 +287,4 @@ ops-skill-stats-smoke.sh
 ops-probe-detect-smoke.sh
 ops-cockpit-sync-smoke.sh
 ops-notion-schema-smoke.sh
+orchestrator-remote-launch-smoke.sh

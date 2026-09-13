@@ -26,6 +26,7 @@ import {
   finalizeKernelRun,
 } from './orchestrator/kernel-run-store.js';
 import { spawnHeadedKernelRuntime } from './orchestrator/headed-kernel-runtime.js';
+import { createOrchestratorBridge } from './orchestrator-remote-bridge.js';
 
 const RELAY_FLAG = 'skill-relay';
 const RELAY_DEADLINE_HOURS = 6;
@@ -319,6 +320,80 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
   }
 }
 
+/**
+ * _spawnKernelRuntimeRemote — us-vps 纯调度器化闸开着时的 kernel-v1 headless 路径
+ * （决策 e3a41ecc）。与 _spawnKernelRuntime 结构刻意同构：同样先 createKernelRun
+ * 拿 durable authority，唯一区别是不在本机 ensureHarnessWorktree/launchKernelProcess，
+ * 改经 orchestrator-remote-bridge 把 prepare（建远端 worktree）+ start（远端起
+ * kernel 进程）都交给 primary worker。
+ */
+async function _spawnKernelRuntimeRemote(task, { dbPool, now, initiativeId, deps }) {
+  const bridge = deps.orchestratorBridge
+    ?? createOrchestratorBridge({ env: deps.env ?? process.env });
+  const sprintDir = task.payload?.sprint_dir
+    || `sprints/${stampMMDDHHNN(now())}-kernel-${shortId(task.id)}`;
+  const reviewRequired = deriveReviewRequired(task);
+  const gear = deriveGear(task);
+  const createRun = deps.createKernelRun ?? createKernelRun;
+  const created = await createRun(dbPool, {
+    taskId: task.id,
+    initiativeId,
+    phase: 'planning',
+    journeyId: task.payload?.journey_id || null,
+    abilityId: task.ability_id || task.payload?.ability_id || null,
+    host: 'kernel-v1',
+    deadlineHours: 8,
+    createdSource: 'kernel_dispatch_remote',
+    gear,
+  });
+  const runId = created.run?.id;
+  if (!runId) throw new Error('kernel-v1 run authority returned no id');
+  if (!created.created) {
+    return { ok: false, mode: 'kernel-v1', deferred: true, reason: 'kernel_run_exists', runId };
+  }
+  try {
+    const prep = await bridge.prepare({
+      run_id: runId,
+      task_id: task.id,
+      repo: parseBaseRepoOrDefault(task.payload?.base_repo),
+      ...(task.payload?.base_sha ? { base_sha: task.payload.base_sha } : {}),
+    });
+    const started = await bridge.start({
+      run_id: runId,
+      controller_session_id: created.run.controller_session_id,
+      controller_generation: Number(created.run.controller_generation),
+    });
+    await dbPool.query(
+      `UPDATE tasks SET payload = COALESCE(payload,'{}'::jsonb) || $2::jsonb, updated_at=NOW() WHERE id=$1`,
+      [task.id, JSON.stringify({
+        harness_runtime: 'kernel-v1',
+        sprint_dir: sprintDir,
+        worktree_path: prep.worktree_path,
+        execution_location: `remote:${bridge.targetMachineId}`,
+        review_required: reviewRequired,
+      })],
+    );
+    console.log(`[skill-relay][kernel-v1] remote-launched run=${runId} machine=${bridge.targetMachineId} pid=${started.pid ?? '?'}`);
+    return { ok: true, mode: 'kernel-v1', runId, remote: true, pid: started.pid, host: started.host, sprintDir, worktreePath: prep.worktree_path };
+  } catch (error) {
+    const finalizeRun = deps.finalizeRun ?? finalizeKernelRun;
+    await finalizeRun(dbPool, {
+      runId, expectedTaskId: task.id, outcome: 'failed',
+      reason: `kernel_remote_launch_failed:${error.message}`,
+    });
+    return { ok: false, mode: 'kernel-v1', runId, error: error.message, terminalized: true };
+  }
+}
+
+/** base_repo（URL 或 owner/name）→ worker repoAllowlist 键；解析不出回落 cecelia。 */
+function parseBaseRepoOrDefault(baseRepo) {
+  if (typeof baseRepo === 'string') {
+    const m = baseRepo.match(/([\w-]+\/[\w.-]+?)(?:\.git)?$/);
+    if (m) return m[1];
+  }
+  return 'perfectuser21/cecelia';
+}
+
 async function _spawnHeadedKernelRuntime(task, context) {
   const { dbPool, now, initiativeId, short, deps } = context;
   return spawnHeadedKernelRuntime({
@@ -421,11 +496,14 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   // （与上面 preview-guard 同位），拒绝时既不建 run 也不碰 worktree，不留半态——
   // 避免「建了 run 再失败 → spawn 返回 pid 算 ok → 静默卡到租约过期」那条死法。
   // 缺省或 'true' 一律放行 = 行为零变化；只有显式 'false' 才拦。
-  const localExecutionEnabled = (deps.env ?? process.env).CECELIA_LOCAL_EXECUTION_ENABLED;
-  if (localExecutionEnabled === 'false') {
-    console.warn(`[skill-relay][local-exec-guard] CECELIA_LOCAL_EXECUTION_ENABLED=false — refusing local harness spawn task=${task?.id}（执行须下放 Mac worker，见决策 96054a8b）`);
-    return { ok: false, mode: RELAY_FLAG, error: 'local_execution_disabled_on_scheduler' };
-  }
+  //
+  // 闸语义反转（决策 e3a41ecc，2026-09-13）：闸的原意是「禁止调度器自己本机起活，
+  // 放行远程」，不是「禁止一切执行」。kernel-v1 headless 路径可以经
+  // orchestrator-remote-bridge 把执行权交给远端 primary worker（Task 6 交付），
+  // 因此这里只计算标志、不再提前 return；headed kernel（尚无远程头模式）与所有
+  // 非 kernel 路径在闸=true 时维持一刀切拒绝，错误码不变。
+  const localExecutionDisabled =
+    (deps.env ?? process.env).CECELIA_LOCAL_EXECUTION_ENABLED === 'false';
   const dbPool = deps.pool || pool;
   const now = deps.now || (() => new Date());
   const initiativeId = task.payload?.initiative_id || task.id; // B51: initiative_id = task.id
@@ -437,12 +515,24 @@ export async function spawnSkillRelaySession(task, deps = {}) {
   // kernel-v1 路径与 executor 无关（使用 launchKernelProcess，不走头/无头路由），
   // 必须在 executor 白名单校验之前处理，避免 executor='auto' 被误拦截。
   if (task.payload?.harness_runtime === 'kernel-v1' && isHeaded) {
+    if (localExecutionDisabled) {
+      console.warn(`[skill-relay][local-exec-guard] headed kernel 无法远程化 task=${task?.id}`);
+      return { ok: false, mode: RELAY_FLAG, error: 'local_execution_disabled_on_scheduler' };
+    }
     return _spawnHeadedKernelRuntime(task, {
       dbPool, now, short, initiativeId, deps,
     });
   }
   if (task.payload?.harness_runtime === 'kernel-v1') {
+    if (localExecutionDisabled) {
+      // 判定点 e3a41ecc：闸语义=「禁本机起，放行远程」——这是闸 reason 文案的原意
+      return _spawnKernelRuntimeRemote(task, { dbPool, now, initiativeId, deps });
+    }
     return _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps });
+  }
+  if (localExecutionDisabled) {
+    console.warn(`[skill-relay][local-exec-guard] CECELIA_LOCAL_EXECUTION_ENABLED=false — refusing local harness spawn task=${task?.id}（执行须下放 Mac worker，见决策 96054a8b）`);
+    return { ok: false, mode: RELAY_FLAG, error: 'local_execution_disabled_on_scheduler' };
   }
 
   // INV-8: unsupported executor loud-fail（三处文件 —— harness-skill-relay.js 这处）

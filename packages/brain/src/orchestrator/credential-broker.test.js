@@ -8,6 +8,7 @@ import {
   createCredentialBroker,
   createFileCredentialLoader,
 } from './credential-broker.js';
+import { resolvePrimaryWorkerId } from '../machine-registry.js';
 
 const ATTEMPT_ID = '11111111-1111-4111-8111-111111111111';
 const NOW = Date.parse('2026-07-27T15:00:00.000Z');
@@ -149,6 +150,38 @@ describe('central Codex Credential Broker', () => {
       machineId: 'xian-mac-m4',
       deadlineAt: DEADLINE,
     })).rejects.toThrow('credential_payload_too_large');
+  });
+});
+
+describe('权威判据锁定（角色置换前基线）', () => {
+  it('primary worker（resolvePrimaryWorkerId()）放行：issue 走到凭据加载', async () => {
+    const loadCredential = vi.fn(async () => authJson());
+    const result = await broker({
+      controllerMachineId: resolvePrimaryWorkerId(),
+      loadCredential,
+    }).issue({
+      attemptId: ATTEMPT_ID,
+      accountId: 'team4',
+      machineId: 'xian-mac-m4',
+      deadlineAt: DEADLINE,
+    });
+
+    expect(loadCredential).toHaveBeenCalledTimes(1);
+    expect(result.credential_ref).toBe('22222222-2222-4222-8222-222222222222');
+  });
+
+  it.each([
+    ['非 primary 机器（us-vps）', 'us-vps'],
+    ['未知控制器（undefined）', undefined],
+  ])('%s fail-closed，错误码不变', async (_label, controllerMachineId) => {
+    const loadCredential = vi.fn(async () => authJson());
+    await expect(broker({ controllerMachineId, loadCredential }).issue({
+      attemptId: ATTEMPT_ID,
+      accountId: 'team4',
+      machineId: 'xian-mac-m4',
+      deadlineAt: DEADLINE,
+    })).rejects.toThrow('credential_broker_us_authority_required');
+    expect(loadCredential).not.toHaveBeenCalled();
   });
 });
 

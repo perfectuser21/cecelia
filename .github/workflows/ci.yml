@@ -685,6 +685,8 @@ jobs:
         run: bash scripts/ci/__tests__/brain-deploy-url-points-to-us-vps.test.sh
       - name: us-vps 必须保持纯调度器形态（铁律 96054a8b / 纠正决策 26c1e763）
         run: bash scripts/ci/__tests__/us-vps-local-execution-disabled.test.sh
+      - name: machine-registry 角色守卫（primary 唯一性 + us-mac-m4 字面量白名单棘轮）
+        run: bash scripts/ci/__tests__/machine-registry-role-guard.test.sh
 
   # ─── GP 锚产物闸（决策 109dd8eb ①）────────────────────────────
   # 闸从「声明」挪到「产物」：PR 触碰流水线路径（orchestrator / harness routes /
