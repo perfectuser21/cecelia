@@ -11,6 +11,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import os from 'os';
 
+// CI 单测分片无 PostgreSQL：collectMetrics 的响应时间/队列指标会查库，
+// 与本测试无关——stub 掉 db.js（本测试只断言 CPU 指标）。
+vi.mock('../../db.js', () => ({
+  default: {
+    query: async () => ({ rows: [] }),
+    connect: async () => ({ query: async () => ({ rows: [] }), release: () => {} }),
+  },
+  getPoolHealth: () => ({ total: 1, idle: 1, waiting: 0 }),
+}));
+
 describe('alertness CPU 指标 —— 邻居负载免疫（PR#5290 同款语义）', () => {
   let cpuUsageSpy;
   let loadavgSpy;
