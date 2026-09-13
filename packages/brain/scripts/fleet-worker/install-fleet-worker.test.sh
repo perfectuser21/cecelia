@@ -839,6 +839,7 @@ installed_worker="$runtime_dir/fleet-worker.cjs"
 installed_probe="$runtime_dir/node-probe.cjs"
 installed_workspace_manager="$runtime_dir/workspace-manager.cjs"
 installed_attempt_runner="$runtime_dir/attempt-runner.cjs"
+installed_orchestrator_runner="$runtime_dir/orchestrator-runner.cjs"
 installed_attempt_resources="$runtime_dir/attempt-resources.cjs"
 installed_credential_envelope="$runtime_dir/credential-envelope.cjs"
 installed_github_credential_envelope="$runtime_dir/github-credential-envelope.cjs"
@@ -849,6 +850,8 @@ installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.pl
   || fail "--apply did not install a stable Worker runtime"
 [[ -f "$installed_workspace_manager" && -f "$installed_attempt_runner" ]] \
   || fail "--apply omitted the Workspace/Attempt runtime modules"
+[[ -f "$installed_orchestrator_runner" ]] \
+  || fail "--apply omitted the Orchestrator runtime module"
 [[ -f "$installed_attempt_resources" ]] \
   || fail "--apply omitted the Attempt resource runtime module"
 [[ -f "$installed_credential_envelope" ]] \

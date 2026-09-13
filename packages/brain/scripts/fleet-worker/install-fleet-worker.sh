@@ -30,6 +30,7 @@ WORKER_SOURCE="$SCRIPT_DIR/fleet-worker.cjs"
 PROBE_SOURCE="$SCRIPT_DIR/node-probe.cjs"
 WORKSPACE_MANAGER_SOURCE="$SCRIPT_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SOURCE="$SCRIPT_DIR/attempt-runner.cjs"
+ORCHESTRATOR_RUNNER_SOURCE="$SCRIPT_DIR/orchestrator-runner.cjs"
 ATTEMPT_RESOURCES_SOURCE="$SCRIPT_DIR/attempt-resources.cjs"
 CREDENTIAL_ENVELOPE_SOURCE="$SCRIPT_DIR/credential-envelope.cjs"
 GITHUB_CREDENTIAL_ENVELOPE_SOURCE="$SCRIPT_DIR/github-credential-envelope.cjs"
@@ -47,6 +48,7 @@ STAGED_WORKER=''
 STAGED_PROBE=''
 STAGED_WORKSPACE_MANAGER=''
 STAGED_ATTEMPT_RUNNER=''
+STAGED_ORCHESTRATOR_RUNNER=''
 STAGED_ATTEMPT_RESOURCES=''
 STAGED_CREDENTIAL_ENVELOPE=''
 STAGED_GITHUB_CREDENTIAL_ENVELOPE=''
@@ -77,6 +79,7 @@ COMMAND_PATH="$TOOLCHAIN_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr
 WORKER_SCRIPT="$RUNTIME_DIR/fleet-worker.cjs"
 WORKSPACE_MANAGER_SCRIPT="$RUNTIME_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SCRIPT="$RUNTIME_DIR/attempt-runner.cjs"
+ORCHESTRATOR_RUNNER_SCRIPT="$RUNTIME_DIR/orchestrator-runner.cjs"
 ATTEMPT_RESOURCES_SCRIPT="$RUNTIME_DIR/attempt-resources.cjs"
 CREDENTIAL_ENVELOPE_SCRIPT="$RUNTIME_DIR/credential-envelope.cjs"
 GITHUB_CREDENTIAL_ENVELOPE_SCRIPT="$RUNTIME_DIR/github-credential-envelope.cjs"
@@ -543,6 +546,7 @@ render_plist() {
   [[ -n "$NODE_EXECUTABLE" ]] || die "prerequisite_node"
   [[ -f "$WORKER_SOURCE" && -f "$PROBE_SOURCE" \
     && -f "$WORKSPACE_MANAGER_SOURCE" && -f "$ATTEMPT_RUNNER_SOURCE" \
+    && -f "$ORCHESTRATOR_RUNNER_SOURCE" \
     && -f "$ATTEMPT_RESOURCES_SOURCE" \
     && -f "$CREDENTIAL_ENVELOPE_SOURCE" \
     && -f "$GITHUB_CREDENTIAL_ENVELOPE_SOURCE" ]] \
@@ -624,6 +628,7 @@ cleanup_transaction() {
   [[ -z "$STAGED_PROBE" ]] || rm -f "$STAGED_PROBE"
   [[ -z "$STAGED_WORKSPACE_MANAGER" ]] || rm -f "$STAGED_WORKSPACE_MANAGER"
   [[ -z "$STAGED_ATTEMPT_RUNNER" ]] || rm -f "$STAGED_ATTEMPT_RUNNER"
+  [[ -z "$STAGED_ORCHESTRATOR_RUNNER" ]] || rm -f "$STAGED_ORCHESTRATOR_RUNNER"
   [[ -z "$STAGED_ATTEMPT_RESOURCES" ]] || rm -f "$STAGED_ATTEMPT_RESOURCES"
   [[ -z "$STAGED_CREDENTIAL_ENVELOPE" ]] || rm -f "$STAGED_CREDENTIAL_ENVELOPE"
   [[ -z "$STAGED_GITHUB_CREDENTIAL_ENVELOPE" ]] \
@@ -637,6 +642,7 @@ cleanup_transaction() {
       "$BACKUP_DIR/probe" \
       "$BACKUP_DIR/workspace-manager" \
       "$BACKUP_DIR/attempt-runner" \
+      "$BACKUP_DIR/orchestrator-runner" \
       "$BACKUP_DIR/attempt-resources" \
       "$BACKUP_DIR/credential-envelope" \
       "$BACKUP_DIR/github-credential-envelope" \
@@ -669,6 +675,9 @@ prepare_transaction_paths() {
     mktemp "$RUNTIME_DIR/.workspace-manager.cjs.XXXXXX"
   )"
   STAGED_ATTEMPT_RUNNER="$(mktemp "$RUNTIME_DIR/.attempt-runner.cjs.XXXXXX")"
+  STAGED_ORCHESTRATOR_RUNNER="$(
+    mktemp "$RUNTIME_DIR/.orchestrator-runner.cjs.XXXXXX"
+  )"
   STAGED_ATTEMPT_RESOURCES="$(mktemp "$RUNTIME_DIR/.attempt-resources.cjs.XXXXXX")"
   STAGED_CREDENTIAL_ENVELOPE="$(
     mktemp "$RUNTIME_DIR/.credential-envelope.cjs.XXXXXX"
@@ -688,6 +697,7 @@ stage_generation() {
   cp "$PROBE_SOURCE" "$STAGED_PROBE"
   cp "$WORKSPACE_MANAGER_SOURCE" "$STAGED_WORKSPACE_MANAGER"
   cp "$ATTEMPT_RUNNER_SOURCE" "$STAGED_ATTEMPT_RUNNER"
+  cp "$ORCHESTRATOR_RUNNER_SOURCE" "$STAGED_ORCHESTRATOR_RUNNER"
   cp "$ATTEMPT_RESOURCES_SOURCE" "$STAGED_ATTEMPT_RESOURCES"
   cp "$CREDENTIAL_ENVELOPE_SOURCE" "$STAGED_CREDENTIAL_ENVELOPE"
   cp "$GITHUB_CREDENTIAL_ENVELOPE_SOURCE" "$STAGED_GITHUB_CREDENTIAL_ENVELOPE"
@@ -697,6 +707,7 @@ stage_generation() {
   chmod 0644 \
     "$STAGED_WORKSPACE_MANAGER" \
     "$STAGED_ATTEMPT_RUNNER" \
+    "$STAGED_ORCHESTRATOR_RUNNER" \
     "$STAGED_ATTEMPT_RESOURCES" \
     "$STAGED_CREDENTIAL_ENVELOPE" \
     "$STAGED_GITHUB_CREDENTIAL_ENVELOPE"
@@ -982,6 +993,9 @@ prior_workspace_manager_mode="$(
 prior_attempt_runner_mode="$(
   snapshot_file "$ATTEMPT_RUNNER_SCRIPT" "$BACKUP_DIR/attempt-runner"
 )"
+prior_orchestrator_runner_mode="$(
+  snapshot_file "$ORCHESTRATOR_RUNNER_SCRIPT" "$BACKUP_DIR/orchestrator-runner"
+)"
 prior_attempt_resources_mode="$(
   snapshot_file "$ATTEMPT_RESOURCES_SCRIPT" "$BACKUP_DIR/attempt-resources"
 )"
@@ -1015,6 +1029,9 @@ placement_ok=true
   || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_ATTEMPT_RUNNER" "$ATTEMPT_RUNNER_SCRIPT" \
+  || placement_ok=false
+[[ "$placement_ok" == false ]] \
+  || "$MOVE" "$STAGED_ORCHESTRATOR_RUNNER" "$ORCHESTRATOR_RUNNER_SCRIPT" \
   || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_ATTEMPT_RESOURCES" "$ATTEMPT_RESOURCES_SCRIPT" \
@@ -1078,6 +1095,11 @@ if [[ "$launch_ok" != true ]]; then
     "$ATTEMPT_RUNNER_SCRIPT" \
     "$BACKUP_DIR/attempt-runner" \
     "$prior_attempt_runner_mode" \
+    || rollback_ok=false
+  restore_file \
+    "$ORCHESTRATOR_RUNNER_SCRIPT" \
+    "$BACKUP_DIR/orchestrator-runner" \
+    "$prior_orchestrator_runner_mode" \
     || rollback_ok=false
   restore_file \
     "$ATTEMPT_RESOURCES_SCRIPT" \
