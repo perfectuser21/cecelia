@@ -26,6 +26,17 @@ describe('orchestrator-remote-bridge', () => {
       .rejects.toThrow('orchestrator_bridge_prepare_http_429:orchestrator_slots_exhausted');
   });
 
+  it('2xx 但 response.json() 解析失败 → 不静默 null，抛 invalid_json', async () => {
+    const fetchFn = vi.fn(async () => ({
+      ok: true,
+      status: 202,
+      json: async () => { throw new SyntaxError('Unexpected end of JSON input'); },
+    }));
+    const bridge = createOrchestratorBridge({ env: ENV, fetchFn });
+    await expect(bridge.prepare({ run_id: RUN_ID, task_id: RUN_ID }))
+      .rejects.toThrow('orchestrator_bridge_prepare_invalid_json');
+  });
+
   it('token 缺失 fail-closed', () => {
     expect(() => createOrchestratorBridge({ env: { FLEET_WORKER_US_MAC_M4_URL: 'http://w' } }))
       .toThrow('orchestrator_bridge_token_missing');

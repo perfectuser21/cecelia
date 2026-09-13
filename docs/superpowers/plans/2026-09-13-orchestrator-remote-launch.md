@@ -1169,8 +1169,13 @@ git commit -m "chore(brain): orchestrator 远程化 CI 配套——contract/smok
 ## 部署段（非代码任务，merge 后按序执行；均已获主理人确认）
 
 1. **us-vps postgres 开 Tailscale 监听**（决策 a9773a84）：`listen_addresses = 'localhost, 100.79.41.61'` + pg_hba `host cecelia cecelia 100.64.0.0/10 scram-sha-256` → reload → **验证非 tailnet 源被拒**
-2. **MMV fleet-worker 更新**：主 checkout 拉 main → launchd **`bootout` + `bootstrap`**（`kickstart` 不重读 plist，09-13 交接单坑）→ worker env 加 `DB_HOST=100.79.41.61 DB_PORT=5432 DB_NAME=cecelia DB_USER=cecelia DB_PASSWORD=<凭据>`（从 1Password/CS 取）与 `CECELIA_ORCHESTRATOR_MAX_CONCURRENT=2`
-3. **us-vps Brain**：compose 增 `KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL=http://100.79.41.61:5221`（判定点 d3281fb0：回调直指，去掉绕 MMV socat）→ 手动 build+切换（流程照交接单「部署实操（09-13 补）」，含 baseline tag / build 后清盘 / 一次性容器验证）
+2. **MMV fleet-worker 更新**：主 checkout 拉 main → launchd **`bootout` + `bootstrap`**（`kickstart` 不重读 plist，09-13 交接单坑）→ worker env 加 `DB_HOST=100.79.41.61 DB_PORT=5432 DB_NAME=cecelia DB_USER=cecelia DB_PASSWORD=<凭据>`（从 1Password/CS 取）与 `CECELIA_ORCHESTRATOR_MAX_CONCURRENT=2`。
+   **终审 I1 纠偏**：orchestrator（`packages/brain/src/orchestrator/run.js`）是 orchestrator-runner.cjs 用 `spawn(..., { env: {...process.env} })` 拉起的子进程，它读的是**自己进程的 env**（即 MMV fleet-worker 的 launchd env，透传给子进程），不是 us-vps Brain 的 env。它内部还要经 `production-transport.js` 回连三台 worker 派 attempt、回调 Brain 写终态——所以下面这三类必须配在**这一步的 MMV worker env**里，而不是只在步骤 3 的 us-vps Brain compose：
+   - `FLEET_WORKER_US_MAC_M4_URL` / `FLEET_WORKER_XIAN_MAC_M4_URL` / `FLEET_WORKER_XIAN_MAC_M1_URL`（三台 worker 桥地址；缺了 orchestrator 派不出 attempt）
+   - `KERNEL_FLEET_BRIDGE_TOKEN`（与 us-vps Brain 用同一份共享密钥，从 1Password/CS 取）
+   - `KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL=http://100.79.41.61:5221`（orchestrator 回调 Brain 写终态用；同判定点 d3281fb0，直指不绕 socat）
+3. **us-vps Brain**：compose 增 `KERNEL_FLEET_REMOTE_CALLBACK_BASE_URL=http://100.79.41.61:5221`（判定点 d3281fb0：回调直指，去掉绕 MMV socat）→ 手动 build+切换（流程照交接单「部署实操（09-13 补）」，含 baseline tag / build 后清盘 / 一次性容器验证）。
+   **注**：这里的配置是 Brain 本机 fallback 用（Brain 自身若走本地执行分支时读取）；对**远程 orchestrator**实际生效的是步骤 2 里配在 MMV worker env 的那一份——两处值应保持一致，但物理落点不同，改一处漏另一处会出现"Brain 侧配了、orchestrator 侧读不到"的假配置。
 4. **端到端验收**：重放靶子 task `feef7d3f-c08e-4ee1-acba-a6a4e626edf2` → `initiative_runs.orchestrator_host` 应为 MMV；us-vps `ps aux | grep orchestrator/run.js` 应空
 5. **proven-to-fire**：MMV 上 `kill <orchestrator pid>` → 观察 Brain 在租约到期（默认 300s，run.js:418）+ 一个 watchdog 周期内判死重拉——**亲眼看它报红才算守卫**
 

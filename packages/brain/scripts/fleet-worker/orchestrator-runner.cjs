@@ -149,9 +149,22 @@ function createOrchestratorRunner({
           ...(logPath ? { CECELIA_KERNEL_LOG_PATH: logPath } : {}),
         },
       });
+      // C2（终审）：detached spawn 的异步 ENOENT/EACCES 走 'error' 事件；不监听=
+      // uncaughtException=整个 fleet-worker 进程崩（连坐 attempt 面）。必须在同步
+      // pid 检查之前挂上，因为 error 事件也可能在下一个 tick 就到。
+      child.once('error', (err) => {
+        job.status = 'failed';
+        console.error(`[orchestrator-runner] spawn_error run=${runId}: ${err?.message}`);
+      });
       if (!Number.isInteger(child.pid) || child.pid <= 0) {
         throw httpError('orchestrator_spawn_failed', 502);
       }
+      // C1（终审）：orchestrator 槽位只借不还——进程退出即释放槽位，否则 active()
+      // 恒占坑，第 3 个 prepare 起 orchestrator_slots_exhausted。detached+unref 下
+      // exit 事件在父进程（fleet-worker）存活期间仍会送达。
+      child.once('exit', (code) => {
+        job.status = code === 0 ? 'done' : 'failed';
+      });
       child.unref?.();
       job.pid = child.pid;
       job.status = 'running';
@@ -160,12 +173,16 @@ function createOrchestratorRunner({
     },
 
     async inspect(runId) {
+      if (!UUID_RE.test(runId ?? '')) throw httpError('orchestrator_run_id_invalid', 400);
       const job = jobs.get(runId);
       if (!job) throw httpError('orchestrator_not_found', 404);
       return receipt(job, hostname);
     },
 
+    // 预留端点：当前无生产调用方（Brain 侧将来终态回执用）。槽位释放已由 start()
+    // 里 spawn 后挂的 exit 钩子承担，本端点不再是槽位释放的唯一路径。
     async terminal(runId, body) {
+      if (!UUID_RE.test(runId ?? '')) throw httpError('orchestrator_run_id_invalid', 400);
       const job = jobs.get(runId);
       if (!job) throw httpError('orchestrator_not_found', 404);
       job.status = body?.outcome === 'failed' ? 'failed' : 'done';
