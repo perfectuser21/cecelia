@@ -1,7 +1,11 @@
+import { listComputeWorkerIds, resolvePrimaryWorkerId } from '../../machine-registry.js';
+
+// 顺序保证：primary 必须排第一——execution-transport.js 用解构
+// [LOCAL_MACHINE_ID, ...REMOTE] = listCanonicalMachineIds()，首位即本机语义。
+const primaryId = resolvePrimaryWorkerId();
 const CANONICAL_MACHINE_IDS = Object.freeze([
-  'us-mac-m4',
-  'xian-mac-m4',
-  'xian-mac-m1',
+  primaryId,
+  ...listComputeWorkerIds().filter((id) => id !== primaryId),
 ]);
 
 const CANONICAL_MACHINE_SET = new Set(CANONICAL_MACHINE_IDS);

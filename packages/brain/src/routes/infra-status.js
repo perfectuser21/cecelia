@@ -12,76 +12,16 @@ import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import pool from '../db.js';
 import { checkAndAlertExpiringCredentials, checkCredentialExpiry } from '../credential-expiry-checker.js';
+import { MACHINES, listComputeWorkerIds } from '../machine-registry.js';
 
 const execAsync = promisify(exec);
 const router = Router();
 
-// 能跑编程任务的机器（供 fleet-resource-cache 使用）
-export const COMPUTE_SERVERS = ['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1'];
+// 设备清单：从 machine-registry.js 派生（SSOT，见该文件顶部决策注释）
+export const SERVERS = MACHINES;
 
-// 设备清单（Tailscale IP）
-export const SERVERS = [
-  {
-    id: 'us-mac-m4',
-    name: '美国 Mac mini M4',
-    location: '威斯康星',
-    tailscaleIp: '100.71.151.105',
-    publicIp: '38.23.47.81',
-    role: '主力研发机',
-    isLocal: true,
-  },
-  {
-    id: 'us-vps',
-    name: '美国 VPS',
-    location: '加州',
-    tailscaleIp: '100.79.41.61',
-    publicIp: '134.199.234.147',
-    role: '公网中转 exit node',
-    sshUser: 'root',
-  },
-  {
-    id: 'hk-vps',
-    name: '香港 VPS',
-    location: '香港',
-    tailscaleIp: '100.86.118.99',
-    publicIp: '124.156.138.116',
-    role: 'CI runner + 公网',
-    sshUser: 'root',
-  },
-  {
-    id: 'xian-mac-m1',
-    name: '西安 Mac mini M1',
-    location: '西安',
-    tailscaleIp: '100.88.166.55',
-    role: 'L4 E2E CI 测试',
-    sshUser: 'xx-macmini',
-  },
-  {
-    id: 'xian-mac-m4',
-    name: '西安 Mac mini M4',
-    location: '西安',
-    tailscaleIp: '100.86.57.69',
-    role: 'Codex 主力机',
-    sshUser: 'jinnuoshengyuan',
-  },
-  {
-    id: 'xian-pc',
-    name: '西安 PC (Windows)',
-    location: '西安',
-    tailscaleIp: '100.97.242.124',
-    role: 'Playwright 被控端',
-    sshUser: 'xuxia',
-    isWindows: true,
-  },
-  {
-    id: 'nas',
-    name: 'NAS',
-    location: '西安',
-    tailscaleIp: '100.110.241.76',
-    role: '存储',
-    sshUser: '徐啸',
-  },
-];
+// 能跑编程任务的机器（供 fleet-resource-cache 使用）
+export const COMPUTE_SERVERS = listComputeWorkerIds();
 
 const DEFAULT_SSH_IDENTITY = () =>
   process.env.CECELIA_SSH_IDENTITY || path.join(process.env.HOME || '', '.ssh', 'air2');
