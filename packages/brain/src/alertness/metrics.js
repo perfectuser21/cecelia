@@ -11,6 +11,7 @@
 
 import os from 'os';
 import pool, { getPoolHealth } from '../db.js';
+import { evaluateCpuHealth } from '../platform-utils.js';
 
 // ============================================================
 // 阈值定义
@@ -128,10 +129,44 @@ function collectMemoryMetric() {
 /**
  * 收集 CPU 指标
  */
+// Brain 自身 CPU 采样态（本模块自持，不与 platform-utils 的 executor 单例采样器
+// 共享——两个消费方交错调同一单例会互相缩短对方的采样窗口）
+let _prevCpuUsage = null;
+let _prevCpuSampleMs = null;
+
+function sampleOwnCpuPct() {
+  const nowMs = Date.now();
+  const usage = process.cpuUsage();
+  if (!_prevCpuUsage) {
+    _prevCpuUsage = usage;
+    _prevCpuSampleMs = nowMs;
+    return null;
+  }
+  const elapsedMs = nowMs - _prevCpuSampleMs;
+  const deltaUs = (usage.user - _prevCpuUsage.user) + (usage.system - _prevCpuUsage.system);
+  _prevCpuUsage = usage;
+  _prevCpuSampleMs = nowMs;
+  if (elapsedMs <= 0) return null;
+  return Math.round((deltaUs / 1000 / elapsedMs) * 100);
+}
+
 function collectCPUMetric() {
-  const loadAvg = os.loadavg()[0]; // 1分钟负载均值
+  const loadAvg = os.loadavg()[0]; // 1分钟负载均值（全机——Docker 不隔离 /proc/loadavg）
   const cpuCount = os.cpus().length;
-  const cpuPercent = Math.round((loadAvg / cpuCount) * 100);
+  const systemPressurePct = Math.round((loadAvg / cpuCount) * 100);
+
+  // 2026-09-13 生产实锤（与 PR#5290 executor 同病同修）：us-vps 上 openclaw
+  // 邻居把全机 loadavg 顶到 200%+ 而 Brain 自身只有 0-5%，旧实现把邻居负载
+  // 报成自己的 HIGH_LOAD → Escalation 升到 emergency_brake 把调度器自己刹停。
+  // 语义修正：报警器官测的是 Brain 自己的病——value 取 Brain 进程自身 CPU；
+  // 全机压力保留为观测字段 system_pressure_pct，不参与阈值判定。
+  const brainCpuPct = sampleOwnCpuPct();
+  const verdict = evaluateCpuHealth({
+    brain_cpu_pct: brainCpuPct ?? 0,
+    system_cpu_pressure: cpuCount > 0 ? loadAvg / cpuCount : 0,
+  });
+  // 首采样无增量（null）→ 保守取 0（fail-open：宁可少报一拍不误刹）
+  const cpuPercent = brainCpuPct ?? 0;
 
   // 添加到历史，用于平滑
   cpuHistory.push(cpuPercent);
@@ -152,6 +187,8 @@ function collectCPUMetric() {
     unit: '%',
     raw: cpuPercent,
     loadAvg,
+    system_pressure_pct: systemPressurePct,
+    cpu_health_action: verdict.action,
     timestamp: Date.now()
   };
 }
