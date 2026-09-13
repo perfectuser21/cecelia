@@ -288,3 +288,4 @@ ops-probe-detect-smoke.sh
 ops-cockpit-sync-smoke.sh
 ops-notion-schema-smoke.sh
 orchestrator-remote-launch-smoke.sh
+notion-tasks-push-smoke.sh

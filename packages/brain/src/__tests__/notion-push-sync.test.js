@@ -47,6 +47,7 @@ describe('runNotionPushSync', () => {
     mockQuery.mockResolvedValueOnce({ rows: [journey] }); // journeys NULL
     mockQuery.mockResolvedValueOnce({ rows: [] });         // features NULL
     mockQuery.mockResolvedValueOnce({ rows: [] });         // issues NULL
+    mockQuery.mockResolvedValueOnce({ rows: [] });         // tasks NULL (2026-09-13 pushTasks 挂链新增档位)
     mockQuery.mockResolvedValue({ rows: [] });             // skill_registry / journey_steps / journey_step_links (new)
 
     mockNotionReq.mockResolvedValueOnce({ id: 'notion-page-id-1' });
@@ -133,6 +134,7 @@ describe('runNotionPushSync — new push functions', () => {
       .mockResolvedValueOnce({ rows: [] })            // journeys select
       .mockResolvedValueOnce({ rows: [] })            // features select
       .mockResolvedValueOnce({ rows: [] })            // issues select
+      .mockResolvedValueOnce({ rows: [] })            // tasks select (pushTasks 档位)
       .mockResolvedValueOnce({ rows: [mockSkill] })   // skill_registry select
       .mockResolvedValue({ rows: [] });               // journey_steps / journey_step_links + UPDATE
 
@@ -169,6 +171,7 @@ describe('runNotionPushSync — step_link Order 属性降级回归 [ARTIFACT R4]
       .mockResolvedValueOnce({ rows: [] })          // journeys
       .mockResolvedValueOnce({ rows: [] })          // features
       .mockResolvedValueOnce({ rows: [] })          // issues
+      .mockResolvedValueOnce({ rows: [] })          // tasks (pushTasks 档位)
       .mockResolvedValueOnce({ rows: [] })          // skill_registry
       .mockResolvedValueOnce({ rows: [] })          // journey_steps
       .mockResolvedValueOnce({ rows: [stepLink] }) // journey_step_links → 1 行
@@ -252,6 +255,7 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] }); // journeys
     mockQuery.mockResolvedValueOnce({ rows: [] }); // features
     mockQuery.mockResolvedValueOnce({ rows: [] }); // issues
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // tasks (pushTasks 档位)
     mockQuery.mockResolvedValueOnce({ rows: [] }); // skill_registry
     mockQuery.mockResolvedValueOnce({ rows: [] }); // journey_steps
     mockQuery.mockResolvedValueOnce({ rows: [] }); // journey_step_links
@@ -296,6 +300,7 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // tasks (pushTasks 档位)
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
@@ -355,5 +360,81 @@ describe('SUB_AREA_NOTION_IDS 死 ID 回归锁', () => {
     for (const key of ['brain', 'engine', 'dashboard', 'zenithjoy', 'multi-agent']) {
       expect(src).toMatch(new RegExp(`['"]?${key}['"]?:\\s*'[0-9a-f-]{36}'`));
     }
+  });
+});
+
+// ── 2026-09-13 Tasks 推送（Notion 任务编排双向·push 半边）──────────────
+// Notion Tasks 库 d5bc40c2 早已存在（Status/Plan Date/Area 字段齐）但 Brain 从未接线。
+// 设计要点：
+//  1. 只推「活任务(queued/in_progress/blocked) + 近7天终态」，历史不进驾驶舱
+//  2. 幂等指纹 notion_props.pushed_status：tasks.updated_at 被 tick 定时 touch
+//     （memory brain-status-drift），不能当增量判据；status 没变就不重推
+//  3. 13483 条历史 notion_id 是旧时代遗产指向别处——仅当 notion_props 带本系统
+//     指纹才允许 PATCH，否则一律 create 新页并覆盖（防打错对象）
+describe('pushTasks — Brain tasks → Notion Tasks 库', () => {
+  const TASKS_DB = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
+
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockNotionReq.mockReset();
+  });
+
+  function drainOthers() {
+    // runNotionPushSync 里 pushTasks 之前/之后的其他 push 全部空转
+    mockQuery.mockResolvedValue({ rows: [] });
+  }
+
+  it('活任务无本系统指纹 → 即使有历史 notion_id 也 create 新页（禁 PATCH 旧对象）', async () => {
+    const task = {
+      id: 't-uuid-1', title: '修复 X', status: 'queued', priority: 'P1',
+      task_type: 'dev', notion_id: 'legacy-old-page-id', notion_props: null,
+    };
+    drainOthers();
+    const mod = await import('../notion-push-sync.js');
+    mockNotionReq.mockResolvedValue({ id: 'new-task-page-1' });
+    await mod.pushTasksForTest({ query: mockQuery }, 'fake-token', [task]);
+    const create = mockNotionReq.mock.calls.find((c) => c[1] === '/pages' && c[2] === 'POST');
+    expect(create).toBeTruthy();
+    expect(create[3].parent.database_id).toBe(TASKS_DB);
+    expect(create[3].properties.Status.status.name).toBe('Delegated'); // queued→Delegated
+    expect(create[3].properties.Name.title[0].text.content).toContain('[P1]');
+    const patched = mockNotionReq.mock.calls.find((c) => String(c[1]).includes('legacy-old-page-id'));
+    expect(patched).toBeUndefined();
+  });
+
+  it('带本系统指纹且 status 变化 → PATCH 更新既有页', async () => {
+    const task = {
+      id: 't-uuid-2', title: '跑批', status: 'completed', priority: 'P2',
+      task_type: 'dev', notion_id: 'our-page-2',
+      notion_props: { pushed_status: 'in_progress' },
+    };
+    const mod = await import('../notion-push-sync.js');
+    mockNotionReq.mockResolvedValue({ id: 'our-page-2' });
+    await mod.pushTasksForTest({ query: mockQuery }, 'fake-token', [task]);
+    const patch = mockNotionReq.mock.calls.find((c) => c[1] === '/pages/our-page-2' && c[2] === 'PATCH');
+    expect(patch).toBeTruthy();
+    expect(patch[3].properties.Status.status.name).toBe('Done'); // completed→Done
+  });
+
+  it('status 映射全表：blocked→Planned / failed→Cancelled / in_progress→In Progress', async () => {
+    const mod = await import('../notion-push-sync.js');
+    expect(mod.TASK_STATUS_TO_NOTION.blocked).toBe('Planned');
+    expect(mod.TASK_STATUS_TO_NOTION.failed).toBe('Cancelled');
+    expect(mod.TASK_STATUS_TO_NOTION.in_progress).toBe('In Progress');
+    expect(mod.TASK_STATUS_TO_NOTION.queued).toBe('Delegated');
+    expect(mod.TASK_STATUS_TO_NOTION.completed).toBe('Done');
+  });
+
+  it('推送成功后写回幂等指纹（notion_props.pushed_status=当前 status）', async () => {
+    const task = {
+      id: 't-uuid-3', title: 'Y', status: 'queued', priority: 'P2',
+      task_type: 'dev', notion_id: null, notion_props: null,
+    };
+    const mod = await import('../notion-push-sync.js');
+    mockNotionReq.mockResolvedValue({ id: 'new-3' });
+    await mod.pushTasksForTest({ query: mockQuery }, 'fake-token', [task]);
+    const upd = mockQuery.mock.calls.find((c) => /UPDATE tasks/.test(c[0]) && /notion_props/.test(c[0]));
+    expect(upd).toBeTruthy();
+    expect(upd[1]).toContain('t-uuid-3');
   });
 });

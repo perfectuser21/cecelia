@@ -44,6 +44,7 @@ describe('pushJourneyStepLinks — Order 属性降级 [BEHAVIOR]', () => {
       .mockResolvedValueOnce({ rows: [] })   // journeys (empty)
       .mockResolvedValueOnce({ rows: [] })   // features (empty)
       .mockResolvedValueOnce({ rows: [] })   // issues (empty)
+      .mockResolvedValueOnce({ rows: [] })   // tasks (empty, pushTasks 档位)
       .mockResolvedValueOnce({ rows: [] })   // skill_registry (empty)
       .mockResolvedValueOnce({ rows: [] })   // journey_steps (empty)
       .mockResolvedValueOnce({ rows: [stepLink] }) // journey_step_links → 1 row
@@ -100,6 +101,7 @@ describe('pushJourneyStepLinks — Order 属性降级 [BEHAVIOR]', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] }) // tasks (pushTasks 档位)
       .mockResolvedValueOnce({ rows: [stepLink] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })

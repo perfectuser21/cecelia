@@ -9,6 +9,18 @@ const ISSUES_DB  = 'a17c40c2-ba63-82fb-9888-8152cefe29ec';
 const DECISIONS_DB           = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 const INITIATIVE_CONTRACTS_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 
+// Notion 任务编排库（2026-09-13 双向·push 半边接线；库早已存在但 Brain 从未接）
+const NOTION_TASKS_DB = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
+export const TASK_STATUS_TO_NOTION = Object.freeze({
+  queued: 'Delegated',
+  in_progress: 'In Progress',
+  blocked: 'Planned',
+  completed: 'Done',
+  failed: 'Cancelled',
+  canceled: 'Cancelled',
+  cancelled: 'Cancelled',
+});
+
 const SKILL_REGISTRY_DB  = '353c40c2-ba63-81bf-ae3e-f0e6fa3753d7';
 const STEPS_DB           = '369c40c2-ba63-812c-9f35-e7e43db25014';
 const STEP_LINKS_DB      = '369c40c2-ba63-81e2-b95a-e5e3d0592676';
@@ -210,6 +222,75 @@ async function pushIssues(pool, token) {
       await logSyncError(pool, err.message);
       if (isStaleRelationError(err)) {
         await pool.query('UPDATE issues SET notion_synced_at=NOW() WHERE id=$1', [issue.id]).catch(() => {});
+      }
+    }
+  }
+}
+
+/**
+ * Brain tasks → Notion Tasks 库（d5bc40c2）。
+ * 三条纪律：
+ *  1. 范围=活任务(queued/in_progress/blocked)+近7天终态，历史不进驾驶舱；
+ *  2. 幂等指纹 notion_props.pushed_status——tasks.updated_at 被 tick 定时 touch
+ *     不能当增量判据，status 未变不重推；
+ *  3. 13483 条历史 notion_id 是旧时代遗产指向别处：仅当 notion_props 带本指纹
+ *     才 PATCH，否则一律 create 新页并覆盖（防打错对象）。
+ */
+async function pushTasks(pool, token) {
+  const { rows } = await pool.query(`
+    SELECT id, title, status, priority, task_type, notion_id, notion_props
+      FROM tasks
+     WHERE (notion_props->>'pushed_status') IS DISTINCT FROM status
+       AND (
+         status IN ('queued','in_progress','blocked')
+         OR (status IN ('completed','failed','canceled','cancelled')
+             AND updated_at > NOW() - INTERVAL '7 days')
+       )
+     ORDER BY updated_at DESC
+     LIMIT 10`);
+  await pushTaskRows(pool, token, rows);
+}
+
+/** 可测内核：对给定行执行推送（导出仅供测试注入行数据） */
+export async function pushTasksForTest(pool, token, rows) {
+  return pushTaskRows(pool, token, rows);
+}
+
+async function pushTaskRows(pool, token, rows) {
+  for (const t of rows) {
+    try {
+      const notionStatus = TASK_STATUS_TO_NOTION[t.status] || 'Planned';
+      const properties = {
+        Name: { title: [{ text: { content: `[${t.priority || 'P2'}] ${String(t.title || '').slice(0, 180)}` } }] },
+        Status: { status: { name: notionStatus } },
+        Description: { rich_text: buildRichText(`${t.task_type || 'task'} · brain:${t.id}`) },
+      };
+      const managed = t.notion_props && t.notion_props.pushed_status && t.notion_id;
+      if (managed) {
+        await notionReq(token, `/pages/${t.notion_id}`, 'PATCH', { properties });
+        await pool.query(
+          `UPDATE tasks SET notion_props = COALESCE(notion_props,'{}'::jsonb) || jsonb_build_object('pushed_status', $2::text), notion_synced_at=NOW() WHERE id=$1`,
+          [t.id, t.status],
+        );
+      } else {
+        const page = await notionReq(token, '/pages', 'POST', {
+          parent: { database_id: NOTION_TASKS_DB },
+          properties,
+        });
+        await pool.query(
+          `UPDATE tasks SET notion_id=$2, notion_props = COALESCE(notion_props,'{}'::jsonb) || jsonb_build_object('pushed_status', $3::text), notion_synced_at=NOW() WHERE id=$1`,
+          [t.id, page.id, t.status],
+        );
+      }
+    } catch (err) {
+      console.warn(`[notion-push-sync] task ${t.id} 推送失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+      // 我方页面被人在 Notion 删除 → 清指纹与 id，下轮 create 重建
+      if (/404/.test(err.message) && t.notion_props?.pushed_status) {
+        await pool.query(
+          `UPDATE tasks SET notion_id=NULL, notion_props = notion_props - 'pushed_status' WHERE id=$1`,
+          [t.id],
+        ).catch(() => {});
       }
     }
   }
@@ -920,6 +1001,7 @@ export async function runNotionPushSync(pool) {
   await pushJourneys(pool, token);
   await pushJourneyFeatures(pool, token);
   await pushIssues(pool, token);
+  await pushTasks(pool, token);
   await pushSkillRegistry(pool, token);
   await pushJourneySteps(pool, token);
   await pushJourneyStepLinks(pool, token);
