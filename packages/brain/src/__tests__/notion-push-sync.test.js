@@ -47,6 +47,7 @@ describe('runNotionPushSync', () => {
     mockQuery.mockResolvedValueOnce({ rows: [journey] }); // journeys NULL
     mockQuery.mockResolvedValueOnce({ rows: [] });         // features NULL
     mockQuery.mockResolvedValueOnce({ rows: [] });         // issues NULL
+    mockQuery.mockResolvedValueOnce({ rows: [] });         // tasks NULL (2026-09-13 pushTasks 挂链新增档位)
     mockQuery.mockResolvedValue({ rows: [] });             // skill_registry / journey_steps / journey_step_links (new)
 
     mockNotionReq.mockResolvedValueOnce({ id: 'notion-page-id-1' });
@@ -133,6 +134,7 @@ describe('runNotionPushSync — new push functions', () => {
       .mockResolvedValueOnce({ rows: [] })            // journeys select
       .mockResolvedValueOnce({ rows: [] })            // features select
       .mockResolvedValueOnce({ rows: [] })            // issues select
+      .mockResolvedValueOnce({ rows: [] })            // tasks select (pushTasks 档位)
       .mockResolvedValueOnce({ rows: [mockSkill] })   // skill_registry select
       .mockResolvedValue({ rows: [] });               // journey_steps / journey_step_links + UPDATE
 
@@ -169,6 +171,7 @@ describe('runNotionPushSync — step_link Order 属性降级回归 [ARTIFACT R4]
       .mockResolvedValueOnce({ rows: [] })          // journeys
       .mockResolvedValueOnce({ rows: [] })          // features
       .mockResolvedValueOnce({ rows: [] })          // issues
+      .mockResolvedValueOnce({ rows: [] })          // tasks (pushTasks 档位)
       .mockResolvedValueOnce({ rows: [] })          // skill_registry
       .mockResolvedValueOnce({ rows: [] })          // journey_steps
       .mockResolvedValueOnce({ rows: [stepLink] }) // journey_step_links → 1 行
@@ -252,6 +255,7 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] }); // journeys
     mockQuery.mockResolvedValueOnce({ rows: [] }); // features
     mockQuery.mockResolvedValueOnce({ rows: [] }); // issues
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // tasks (pushTasks 档位)
     mockQuery.mockResolvedValueOnce({ rows: [] }); // skill_registry
     mockQuery.mockResolvedValueOnce({ rows: [] }); // journey_steps
     mockQuery.mockResolvedValueOnce({ rows: [] }); // journey_step_links
@@ -296,6 +300,7 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // tasks (pushTasks 档位)
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
