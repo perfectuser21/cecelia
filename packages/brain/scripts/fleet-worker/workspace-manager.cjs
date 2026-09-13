@@ -596,4 +596,5 @@ function createWorkspaceManager({
 
 module.exports = {
   createWorkspaceManager,
+  validateSpec,
 };

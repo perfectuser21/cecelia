@@ -75,27 +75,48 @@ function createOrchestratorRunner({
       const existing = jobs.get(runId);
       if (existing) {
         if (existing.status === 'prepared') return receipt(existing, hostname); // 幂等重放
+        // 'preparing'（并发重放，不等待）或其它非终态一律视为冲突
         throw httpError('orchestrator_already_exists', 409);
       }
       if (active() >= maxConcurrent) throw httpError('orchestrator_slots_exhausted', 429);
-      const baseSha = SHA_RE.test(body?.base_sha ?? '') ? body.base_sha : await resolveMainSha(repo);
-      const workspace = await workspaceManager.prepare(
-        { repo, branch: 'main', base_sha: baseSha, attempt_id: runId, run_id: runId },
-        { nodeDeps: true },
-      );
+      // 槽位预占（Fix 2）：检查通过后、任何 await 之前立刻登记占位状态，
+      // 防止并发 prepare 在 await 窗口内一起挤过 active() 检查、共同抢占同一个槽位。
       const job = {
-        runId, taskId: body.task_id, status: 'prepared',
-        worktreePath: workspace.path, baseSha, pid: null, host: hostname, startedAt: null,
+        runId, taskId: body.task_id, status: 'preparing',
+        worktreePath: null, baseSha: null, pid: null, host: hostname, startedAt: null,
       };
       jobs.set(runId, job);
-      return receipt(job, hostname);
+      try {
+        const baseSha = SHA_RE.test(body?.base_sha ?? '') ? body.base_sha : await resolveMainSha(repo);
+        // Fix 1：spec 形状对齐 workspace-manager.cjs 真实 validateSpec（SPEC_FIELDS 白名单
+        // 严格拒绝未知字段，task_id 不进 spec；branch 必须匹配 BRANCH_PATTERN=cp-*；
+        // expected_head_sha 必须显式 null；mode 必须 read-write，因为 kernel 会在 worktree
+        // 里 ensureGitCommit 提交产物）。
+        const spec = {
+          repo,
+          branch: `cp-orch-${runId.slice(0, 8)}`,
+          base_sha: baseSha,
+          expected_head_sha: null,
+          mode: 'read-write',
+          run_id: runId,
+          attempt_id: runId,
+        };
+        const workspace = await workspaceManager.prepare(spec, { nodeDeps: true });
+        job.worktreePath = workspace.path;
+        job.baseSha = baseSha;
+        job.status = 'prepared';
+        return receipt(job, hostname);
+      } catch (err) {
+        jobs.delete(runId); // 预占失败，释放槽位
+        throw err;
+      }
     },
 
     async start(runId, body) {
       const job = jobs.get(runId);
       if (!job) throw httpError('orchestrator_not_prepared', 404);
       if (job.status === 'running') return receipt(job, hostname); // 幂等重放
-      if (job.status !== 'prepared') throw httpError(`orchestrator_not_startable:${job.status}`, 409);
+      if (job.status !== 'prepared') throw httpError('orchestrator_not_startable', 409);
       const sessionId = body?.controller_session_id;
       const generation = Number(body?.controller_generation);
       if (!UUID_RE.test(sessionId ?? '') || !Number.isSafeInteger(generation) || generation < 1) {
