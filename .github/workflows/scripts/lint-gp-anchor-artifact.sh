@@ -56,12 +56,19 @@ if [ -z "$STEP_TESTS" ]; then
   exit 1
 fi
 
-# 被改模块的 basename（不带扩展名），用于匹配 import / mock
+# 被改模块的 basename（不带扩展名），用于匹配 import / mock。
+# .sh 流水线件（installer/巡检脚本）JS 无法 import —— 单列一组，
+# 步骤断言只要真读/真执行它（文件内出现其 basename）即算在边上
+#（2026-09-13 #5303 实证：installer 缺件守卫只能以读真文件形态存在）。
 declare -a MOD_BASES=()
+declare -a SH_BASES=()
 while IFS= read -r f; do
   [ -z "$f" ] && continue
   b=$(basename "$f"); b="${b%.*}"
-  MOD_BASES+=("$b")
+  case "$f" in
+    *.sh) SH_BASES+=("$b") ;;
+    *) MOD_BASES+=("$b") ;;
+  esac
 done <<< "$PIPELINE_CHANGED"
 
 FAIL=0
@@ -82,17 +89,23 @@ while IFS= read -r t; do
       IMPORTS_CHANGED=1
     fi
   done
+  for b in ${SH_BASES[@]+"${SH_BASES[@]}"}; do
+    if grep -nE "${b}" "$t" >/dev/null 2>&1; then
+      IMPORTS_CHANGED=1
+      echo "  ✅ 真引用了被改 shell 模块 ${b}（读/执行真文件）"
+    fi
+  done
   if [ "$IMPORTS_CHANGED" -eq 1 ]; then
     ANY_EDGE=1
-    echo "  ✅ 真 import 了被改模块"
+    echo "  ✅ 守卫在被改模块的边上"
   else
-    echo "  ⚠️  未 import 任何被改模块：${MOD_BASES[*]}"
+    echo "  ⚠️  未触及任何被改模块：${MOD_BASES[*]+${MOD_BASES[*]}} ${SH_BASES[*]+${SH_BASES[*]}}"
   fi
 done <<< "$STEP_TESTS"
 
 if [ "$ANY_EDGE" -eq 0 ]; then
   echo "::error::lint-gp-anchor-artifact 失败 — 步骤断言文件没有 import 任何被改的流水线模块（守卫不在这条边上）"
-  echo "  被改模块：${MOD_BASES[*]}"
+  echo "  被改模块：${MOD_BASES[*]+${MOD_BASES[*]}} ${SH_BASES[*]+${SH_BASES[*]}}"
   FAIL=1
 fi
 
