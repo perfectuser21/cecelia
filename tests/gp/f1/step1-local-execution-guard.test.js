@@ -77,19 +77,37 @@ function deps(env) {
 }
 
 describe('F1 step1 · 调度器机器不许自己接活干', () => {
-  it('CECELIA_LOCAL_EXECUTION_ENABLED=false → 拒绝派发，且不建 run 不碰 worktree', async () => {
-    const d = deps({ CECELIA_LOCAL_EXECUTION_ENABLED: 'false' });
+  // 决策 e3a41ecc（09-13 追加）：闸语义反转——kernel-v1 headless 不再一刀切拒绝，
+  // 改道 orchestrator-remote-bridge 把执行权交给远端 primary worker；本机
+  // ensureWt/launchKernel/spawnFn 仍然一次都不能碰（不留半态、不本机 spawn）。
+  it('CECELIA_LOCAL_EXECUTION_ENABLED=false + kernel-v1 headless → 经桥远程派发，不本机 spawn', async () => {
+    const bridgeCalls = [];
+    const d = {
+      ...deps({ CECELIA_LOCAL_EXECUTION_ENABLED: 'false' }),
+      createKernelRun: vi.fn(async () => ({
+        created: true,
+        run: { id: 'bbbbbbbb-cccc-4ddd-8eee-ffff11112222', controller_session_id: 'cccccccc-dddd-4eee-8fff-000011112222', controller_generation: 1 },
+      })),
+      orchestratorBridge: {
+        targetMachineId: 'primary-under-test',
+        prepare: vi.fn(async (input) => { bridgeCalls.push(['prepare', input]); return { worktree_path: '/ws/r', status: 'prepared' }; }),
+        start: vi.fn(async (input) => { bridgeCalls.push(['start', input]); return { pid: 4242, host: 'primary-under-test', status: 'running' }; }),
+      },
+    };
     const r = await spawnSkillRelaySession(
       { ...TASK, payload: { ...TASK.payload, harness_runtime: 'kernel-v1' } },
       d,
     );
-    expect(r.ok).toBe(false);
-    expect(r.error).toBe('local_execution_disabled_on_scheduler');
-    // 关键断言：拦在咽喉，不留半态
-    expect(d.createKernelRun).not.toHaveBeenCalled();
+    expect(r.ok).toBe(true);
+    expect(r.remote).toBe(true);
+    expect(r.pid).toBe(4242);
+    // 关键断言：远程路径不碰本机执行原语
     expect(d.ensureWt).not.toHaveBeenCalled();
     expect(d.launchKernel).not.toHaveBeenCalled();
     expect(d.spawnFn).not.toHaveBeenCalled();
+    // 远程 run 仍要建（供 controller/worker 侧认领），但走的是桥而不是本机 launchKernel
+    expect(d.createKernelRun).toHaveBeenCalled();
+    expect(bridgeCalls.map(([op]) => op)).toEqual(['prepare', 'start']);
   });
 
   it('闸拦所有派发路径，不只 kernel-v1（咽喉语义）', async () => {
