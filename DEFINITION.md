@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.292.2
+**Brain 版本**: 1.293.0
 
 ## 1.283.0
 
@@ -48,6 +48,12 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.293.0 — workflow_run 进 tasks 账 + 排班员 v1
+
+- OpenClaw/n8n 派发不再绕账：派发即建 workflow_run task（operations 路线），run 终态自动收账（决策 2dbabb48）
+- 排班员 v1：同 workflow 在途互斥（⏸ 排队回执，Delegated 即队列自动重试）+ Plan Date 时间窗（🕐 到点自动派发）
+- 状态回执防雪球：⚠/⏸/🕐/▶ 尾巴剥离后重拼；migration 446 扩 task_type 枚举
 
 ## Brain 1.292.2 — OpenClaw 采集腿改本机直取（容器已迁 us-vps）
 
