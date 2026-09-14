@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.289.0
+**Brain 版本**: 1.290.0
 
 ## 1.283.0
 
@@ -48,6 +48,10 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.290.0 — Notion 排单接手（双向·pull 半边）
+
+- feat(brain): runNotionTaskPull——主理人在 Notion Tasks 库把行拖到 Delegated 即排单，Brain 建任务并回执 brain:<id> ✓已接管 进 Description；幂等（已带 brain: 标记跳过）；接手先落 blocked 等 map 路由（防 tick 撞墙 autoblock）；与 push 并联进 legacy scheduler 默认周期
 
 ## Brain 1.289.0 — Notion 任务编排接线（双向·push 半边）
 
