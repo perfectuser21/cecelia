@@ -696,6 +696,108 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
     expect(runsSql).toContain('stopped_at');
   });
 
+  it('派发成功即入 tasks 账：workflow_run task（operations 路线，payload 含 run_id/wf_id）', async () => {
+    // 一切执行进 tasks 账（决策 2dbabb48）：OpenClaw run 不再绕账
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200 })));
+    stubOpsLookup({
+      wfRow: { wf_id: 'AwrSocialLeadgenV4', name: 'Social Leadgen V4', dispatch: { webhook_url: 'https://x/run' } },
+      agentRow: { name: 'affine-yuesheng', dispatch: { template: 'yueshengyun-daily.json' } },
+    });
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'wf-task-1' } });
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [relationPage()] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({ tenant_id: 'yueshengyun' }),
+    });
+    expect(mockCreateRoutedTask).toHaveBeenCalledTimes(1);
+    const req = mockCreateRoutedTask.mock.calls[0][1];
+    expect(req.requested_task_type).toBe('workflow_run');
+    expect(req.declared_domain).toBe('operations');
+    expect(req.mutation_intent).not.toBe('write'); // 不得误入编码路线
+    expect(req.metadata.wf_id).toBe('AwrSocialLeadgenV4');
+    expect(req.metadata.run_id).toMatch(/^notion-/);
+    expect(req.metadata.notion_page_id).toBe(relationPage().id);
+    expect(req.task.status).toBe('in_progress'); // 派发即在跑
+  });
+
+  it('排班员v1·在途互斥：同 workflow 已有 in_progress run → 不派发、⏸ 排队回执', async () => {
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn());
+    mockQuery.mockImplementation(async (sql) => {
+      if (/FROM ops_workflows/.test(sql)) return { rows: [{ wf_id: 'AwrSocialLeadgenV4', name: 'Social Leadgen V4', dispatch: { webhook_url: 'https://x/run' } }] };
+      if (/FROM ops_agents/.test(sql)) return { rows: [{ name: 'affine-yuesheng', dispatch: { template: 'a.json' } }] };
+      if (/task_type='workflow_run'/.test(sql) && /in_progress/.test(sql)) {
+        return { rows: [{ id: 'busy-task', run_id: 'notion-busy-1' }] };
+      }
+      return { rows: [] };
+    });
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [relationPage()] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({}),
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+    const patch = mockNotionReq.mock.calls.find((c) => c[2] === 'PATCH');
+    expect(JSON.stringify(patch[3])).toContain('⏸ 排队');
+  });
+
+  it('排班员v1·时间窗：Plan Date 在未来 → 不派发、🕐 排期回执', async () => {
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn());
+    stubOpsLookup({ wfRow: { wf_id: 'X', name: 'X', dispatch: { webhook_url: 'https://x/run' } } });
+    const page = relationPage();
+    const future = new Date(Date.now() + 3600_000).toISOString();
+    page.properties['Plan Date'] = { type: 'date', date: { start: future } };
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [page] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({}),
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    const patch = mockNotionReq.mock.calls.find((c) => c[2] === 'PATCH');
+    expect(JSON.stringify(patch[3])).toContain('🕐');
+  });
+
+  it('状态回执不滚雪球：desc 已含旧状态尾巴时剥离后再拼', async () => {
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn());
+    stubOpsLookup({}); // workflow 反查空 → ⚠ 回执
+    const page = relationPage({ withAgent: false });
+    page.properties.Description.rich_text = [{ plain_text: '给客户跑一轮 · ⚠ 派发未成(旧错误)', text: { content: 'x' } }];
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [page] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({}),
+    });
+    const patch = mockNotionReq.mock.calls.find((c) => c[2] === 'PATCH');
+    const text = patch[3].properties.Description.rich_text[0].text.content;
+    expect(text).toContain('给客户跑一轮');
+    expect((text.match(/⚠/g) || []).length).toBe(1); // 旧 ⚠ 被剥离，不叠加
+  });
+
+  it('syncOpenClawRuns 终态回写 workflow_run task：success→completed', async () => {
+    const mod = await import('../notion-push-sync.js');
+    const sqls = [];
+    mockQuery.mockImplementation(async (sql, params) => {
+      sqls.push({ sql: String(sql), params });
+      if (/FROM ops_runs/.test(sql)) {
+        return { rows: [{ run_id: 'notion-3dbc40c2ba63809392bfdc952f9a1079-1757800000000', status: 'success' }] };
+      }
+      return { rows: [] };
+    });
+    await mod.syncOpenClawRunsForTest({ query: mockQuery }, 'fake-token');
+    const upd = sqls.find((q) => /UPDATE tasks/.test(q.sql) && /workflow_run/.test(q.sql));
+    expect(upd).toBeTruthy();
+    expect(upd.params).toContain('completed');
+    expect(upd.params).toContain('notion-3dbc40c2ba63809392bfdc952f9a1079-1757800000000');
+  });
+
   it('syncOpenClawRuns：ops_runs 终态 → 反解 page id 推 Status Done', async () => {
     const mod = await import('../notion-push-sync.js');
     mockQuery.mockResolvedValueOnce({
