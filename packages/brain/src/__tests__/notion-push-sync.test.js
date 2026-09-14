@@ -620,7 +620,10 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
         return { mode: 'daily', tenant_id: 'yueshengyun', control_token: 'ct', task_request: { task_name: 'x' } };
       },
     });
-    expect(mockCreateRoutedTask).not.toHaveBeenCalled(); // 不走编码路线
+    // 走 workflow_run 账而非编码路线（2026-09-14 决策 2dbabb48 后建账是预期行为）
+    const routed = mockCreateRoutedTask.mock.calls.map((c) => c[1]);
+    expect(routed.every((r) => r.requested_task_type === 'workflow_run')).toBe(true);
+    expect(routed.some((r) => r.requested_task_type === 'dev')).toBe(false);
     expect(readCalls).toEqual(['yueshengyun-daily.json']); // 模板来自 agent.dispatch（数据行，非代码枚举）
     expect(fetchCalls.length).toBe(1);
     expect(fetchCalls[0][0]).toContain('agentic-workflow-runner-v4/run'); // 入口来自 workflow.dispatch.webhook_url

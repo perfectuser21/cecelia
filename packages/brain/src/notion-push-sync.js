@@ -338,9 +338,15 @@ async function pullNotionTasks(pool, token, opts = {}) {
       if (/brain:/.test(desc)) continue; // 已接手，幂等跳过
       if (/run:notion-/.test(desc)) continue; // OpenClaw 已派发，幂等跳过
 
-      // Workflow relation 分流：选了真实业务 workflow 行 → 直接派 n8n 画布，不建编码任务
+      // Workflow relation 分流：选了真实业务 workflow 行 → 派 n8n 画布 + 入 workflow_run 账
       const wfRelation = (props.Workflow?.relation ?? [])[0]?.id ?? null;
       if (wfRelation) {
+        // 排班员 v1a·时间窗：Plan Date 在未来 = 意图排期，到点后自然进派发流程
+        const planStart = props['Plan Date']?.date?.start ?? null;
+        if (planStart && new Date(planStart).getTime() > Date.now()) {
+          await writeStatusReceipt(token, page, desc, `🕐 已排期 ${planStart}，到点自动派发`);
+          continue;
+        }
         await dispatchOpenClawFromNotion({
           pool, token, page, desc,
           workflowNotionId: wfRelation,
@@ -412,6 +418,22 @@ export async function runNotionTaskPull(pool) {
   await syncOpenClawRuns(pool, token);
 }
 
+// 状态回执尾巴（⚠/⏸/🕐/▶）可被下一轮覆盖——剥离后再拼，防 desc 滚雪球
+const STATUS_TAIL_RE = /\s*·?\s*(?:▶ 已派发|⚠ 派发[未失][成败]|⏸ 排队|🕐 已排期)[\s\S]*$/;
+function stripStatusTail(desc) {
+  return String(desc || '').replace(STATUS_TAIL_RE, '').trim();
+}
+
+async function writeStatusReceipt(token, page, desc, status) {
+  const base = stripStatusTail(desc);
+  const receipt = `${base ? base + ' · ' : ''}${status}`;
+  await notionReq(token, `/pages/${page.id}`, 'PATCH', {
+    properties: {
+      Description: { rich_text: [{ type: 'text', text: { content: receipt.slice(0, 1900) } }] },
+    },
+  });
+}
+
 function defaultReadTemplate(dir, file) {
   return JSON.parse(readFileSync(joinPath(dir, file), 'utf8'));
 }
@@ -427,12 +449,7 @@ async function dispatchOpenClawFromNotion({
 }) {
   const norm = (id) => String(id).replace(/-/g, '');
   const failReceipt = async (why) => {
-    const receipt = `${desc ? desc + ' · ' : ''}⚠ 派发未成(${String(why).slice(0, 80)})`;
-    await notionReq(token, `/pages/${page.id}`, 'PATCH', {
-      properties: {
-        Description: { rich_text: [{ type: 'text', text: { content: receipt.slice(0, 1900) } }] },
-      },
-    });
+    await writeStatusReceipt(token, page, desc, `⚠ 派发未成(${String(why).slice(0, 80)})`);
     console.warn(`[notion-pull] OpenClaw 派发未成 page=${page.id}: ${why}`);
   };
   const { rows: wfRows } = await pool.query(
@@ -451,6 +468,19 @@ async function dispatchOpenClawFromNotion({
     if (!agent) return failReceipt('agent_not_in_ops：所选行不在 ops_agents 账上');
   }
   const executorLabel = agent ? `${wf.name}·${agent.name}` : wf.name;
+  // 排班员 v1b·在途互斥：同 workflow 已有 in_progress run（物理资源相同）→ 排队。
+  // Delegated 行本身就是队列：不改 Status，下轮 pull 自动重试 = 资源释放自动放行。
+  const { rows: busyRows } = await pool.query(
+    `SELECT id, payload->>'run_id' AS run_id FROM tasks
+      WHERE task_type='workflow_run' AND status='in_progress'
+        AND payload->>'wf_id' = $1 LIMIT 1`,
+    [wf.wf_id],
+  );
+  if (busyRows[0]) {
+    await writeStatusReceipt(token, page, desc,
+      `⏸ 排队：${wf.name} 在途(run:${busyRows[0].run_id ?? busyRows[0].id})，完成后自动派发`);
+    return;
+  }
   const webhookUrl = wf.dispatch?.webhook_url || env.N8N_V4_WEBHOOK_URL;
   if (!webhookUrl) return failReceipt(`no_webhook_url：给 ops_workflows(${wf.wf_id}).dispatch 配 webhook_url`);
   const template = agent?.dispatch?.template || wf.dispatch?.default_template || null;
@@ -479,9 +509,32 @@ async function dispatchOpenClawFromNotion({
   } catch (err) {
     detail = err.message;
   }
+  if (ok) {
+    // 一切执行进 tasks 账（决策 2dbabb48）：run 入账 workflow_run（operations 路线，
+    // 不解析 repo/branch），source_id=run_id 天然幂等；终态由 syncOpenClawRuns 回写。
+    try {
+      await createRoutedTask(pool, {
+        source: 'inbox',
+        source_id: runId,
+        title: `[run] ${executorLabel}`,
+        description: '来自 Notion 排单的业务流程 run',
+        mutation_intent: 'none',
+        declared_domain: 'operations',
+        requested_task_type: 'workflow_run',
+        metadata: {
+          run_id: runId, wf_id: wf.wf_id, agent_name: agent?.name ?? null,
+          notion_page_id: page.id,
+        },
+        task: { status: 'in_progress', priority: 'P2' },
+      });
+    } catch (err) {
+      console.warn(`[notion-pull] workflow_run 入账失败（不阻塞派发）: ${err.message}`);
+    }
+  }
+  const base = stripStatusTail(desc);
   const receipt = ok
-    ? `${desc ? desc + ' · ' : ''}▶ 已派发 ${executorLabel} run:${runId}`
-    : `${desc ? desc + ' · ' : ''}⚠ 派发失败(${detail.slice(0, 60)})，请重试或联系 Brain`;
+    ? `${base ? base + ' · ' : ''}▶ 已派发 ${executorLabel} run:${runId}`
+    : `${base ? base + ' · ' : ''}⚠ 派发失败(${detail.slice(0, 60)})，请重试或联系 Brain`;
   const properties = {
     Description: { rich_text: [{ type: 'text', text: { content: receipt.slice(0, 1900) } }] },
   };
@@ -509,6 +562,19 @@ async function syncOpenClawRuns(pool, token) {
     if (!m) continue;
     const pageId = m[1].replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
     const done = ['success', 'completed'].includes(r.status);
+    // 事件账闭环：workflow_run task 随 run 终态收账（幂等：仅 in_progress 行）
+    try {
+      await pool.query(
+        `UPDATE tasks SET status=$2,
+                result = COALESCE(result,'{}'::jsonb) || jsonb_build_object('run_status', $3::text),
+                updated_at=NOW()
+          WHERE task_type='workflow_run' AND status='in_progress'
+            AND payload->>'run_id' = $1`,
+        [r.run_id, done ? 'completed' : 'failed', r.status],
+      );
+    } catch (err) {
+      console.warn(`[notion-pull] workflow_run task 收账失败 ${r.run_id}: ${err.message}`);
+    }
     try {
       await notionReq(token, `/pages/${pageId}`, 'PATCH', {
         properties: { Status: { status: { name: done ? 'Done' : 'Cancelled' } } },
