@@ -1,5 +1,7 @@
 import { notionReq, getToken } from './recurring-notion-sync.js';
 import { createRoutedTask } from './work-routing-store.js';
+import { readFileSync } from 'node:fs';
+import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 
@@ -12,6 +14,12 @@ const INITIATIVE_CONTRACTS_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 
 // Notion 任务编排库（2026-09-13 双向·push 半边接线；库早已存在但 Brain 从未接）
 const NOTION_TASKS_DB = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
+// 排单分流 OpenClaw（2026-09-14）：执行方 select → n8n V4 获客画布（现役双租户模板）
+export const OPENCLAW_EXECUTORS = Object.freeze({
+  'OpenClaw·悦升获客': { tenant: 'yueshengyun', template: 'yueshengyun-daily.json' },
+  'OpenClaw·金诺获客': { tenant: 'jinoshengyuan', template: 'jinoshengyuan-daily.json' },
+});
+
 export const TASK_STATUS_TO_NOTION = Object.freeze({
   queued: 'Delegated',
   in_progress: 'In Progress',
@@ -307,7 +315,7 @@ async function pushTaskRows(pool, token, rows) {
  *  · notion_props.pushed_status 写入=当前 status，防 pushTasks 反手改用户的 Delegated
  *  · Name 前缀 [P0-3] 解析 priority，缺省 P2；回执 `brain:<id> ✓已接管` PATCH 回页面
  */
-async function pullNotionTasks(pool, token) {
+async function pullNotionTasks(pool, token, opts = {}) {
   let resp;
   try {
     resp = await notionReq(token, `/databases/${NOTION_TASKS_DB}/query`, 'POST', {
@@ -327,6 +335,21 @@ async function pullNotionTasks(pool, token) {
         .map((t) => t.plain_text ?? t.text?.content ?? '').join('');
       if (!name) continue;
       if (/brain:/.test(desc)) continue; // 已接手，幂等跳过
+      if (/run:notion-/.test(desc)) continue; // OpenClaw 已派发，幂等跳过
+
+      // 执行方分流：OpenClaw·* → 直接派 n8n V4 画布，不建编码任务
+      const executor = props['执行方']?.select?.name ?? null;
+      if (executor && OPENCLAW_EXECUTORS[executor]) {
+        await dispatchOpenClawFromNotion({
+          token, page, desc,
+          spec: OPENCLAW_EXECUTORS[executor],
+          executorLabel: executor,
+          env: opts.env ?? process.env,
+          readTemplateFn: opts.readTemplateFn ?? defaultReadTemplate,
+          fetchFn: opts.fetchFn ?? globalThis.fetch,
+        });
+        continue;
+      }
 
       const m = name.match(/^\[(P[0-3])\]\s*(.+)$/);
       const priority = m ? m[1] : 'P2';
@@ -384,12 +407,96 @@ async function pullNotionTasks(pool, token) {
 export async function runNotionTaskPull(pool) {
   const token = getToken();
   if (!token) return;
-  return pullNotionTasks(pool, token);
+  await pullNotionTasks(pool, token);
+  await syncOpenClawRuns(pool, token);
+}
+
+function defaultReadTemplate(dir, file) {
+  return JSON.parse(readFileSync(joinPath(dir, file), 'utf8'));
+}
+
+/** OpenClaw 排单派发：注入唯一 run_id（内嵌 pageid32 供终态反解）→ POST n8n V4 webhook */
+async function dispatchOpenClawFromNotion({
+  token, page, desc, spec, executorLabel, env, readTemplateFn, fetchFn,
+}) {
+  const webhookUrl = env.N8N_V4_WEBHOOK_URL;
+  if (!webhookUrl) {
+    console.warn('[notion-pull] N8N_V4_WEBHOOK_URL 未配置，OpenClaw 排单跳过');
+    return;
+  }
+  const dispatchDir = env.OPENCLAW_DISPATCH_DIR || '/opt/openclaw/dispatch';
+  let payload;
+  try {
+    payload = readTemplateFn(dispatchDir, spec.template);
+  } catch (err) {
+    console.warn(`[notion-pull] OpenClaw 模板 ${spec.template} 读取失败: ${err.message}`);
+    return;
+  }
+  const pageId32 = String(page.id).replace(/-/g, '');
+  const runId = `notion-${pageId32}-${Date.now()}`;
+  payload = { ...payload, run_id: runId, attempt_id: 'a1' };
+  let ok = false;
+  let detail = '';
+  try {
+    const resp = await fetchFn(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(90_000),
+    });
+    ok = !!resp?.ok;
+    if (!ok) detail = `http_${resp?.status}`;
+  } catch (err) {
+    detail = err.message;
+  }
+  const receipt = ok
+    ? `${desc ? desc + ' · ' : ''}▶ 已派发 ${executorLabel} run:${runId}`
+    : `${desc ? desc + ' · ' : ''}⚠ 派发失败(${detail.slice(0, 60)})，请重试或联系 Brain`;
+  const properties = {
+    Description: { rich_text: [{ type: 'text', text: { content: receipt.slice(0, 1900) } }] },
+  };
+  if (ok) properties.Status = { status: { name: 'In Progress' } };
+  await notionReq(token, `/pages/${page.id}`, 'PATCH', { properties });
+  console.log(`[notion-pull] OpenClaw 派发${ok ? '成功' : '失败'} ${executorLabel} run=${runId}`);
+}
+
+/** OpenClaw run 终态 → 反解 page id 推 Notion Status（Done/Cancelled） */
+async function syncOpenClawRuns(pool, token) {
+  let rows;
+  try {
+    ({ rows } = await pool.query(`
+      SELECT run_id, status FROM ops_runs
+       WHERE run_id LIKE 'notion-%'
+         AND status IN ('success','completed','failed','error','cancelled')
+         AND (finished_at IS NULL OR finished_at > NOW() - INTERVAL '2 days')
+       LIMIT 20`));
+  } catch (err) {
+    console.warn(`[notion-pull] ops_runs 查询失败: ${err.message}`);
+    return;
+  }
+  for (const r of rows ?? []) {
+    const m = String(r.run_id).match(/^notion-([0-9a-f]{32})-/);
+    if (!m) continue;
+    const pageId = m[1].replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+    const done = ['success', 'completed'].includes(r.status);
+    try {
+      await notionReq(token, `/pages/${pageId}`, 'PATCH', {
+        properties: { Status: { status: { name: done ? 'Done' : 'Cancelled' } } },
+      });
+    } catch (err) {
+      console.warn(`[notion-pull] run 终态回写 ${pageId} 失败: ${err.message}`);
+    }
+  }
+}
+
+/** 可测导出 */
+export async function syncOpenClawRunsForTest(pool, token) {
+  return syncOpenClawRuns(pool, token);
 }
 
 /** 可测内核导出（直接注入 token） */
-export async function pullNotionTasksForTest(pool, token) {
-  return pullNotionTasks(pool, token);
+export async function pullNotionTasksForTest(pool, token, opts = {}) {
+  return pullNotionTasks(pool, token, opts);
 }
 
 async function pushSkillRegistry(pool, token) {

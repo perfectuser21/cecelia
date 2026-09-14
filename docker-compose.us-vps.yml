@@ -35,6 +35,8 @@ services:
       # Brain 无法 dispatch relay。us-vps 上需要这两个仓库分别 clone 到 /root/ 下。
       - /root/zenithjoy-skills:/root/zenithjoy-skills:ro
       - /root/zenithjoy-skills-dist:/root/zenithjoy-skills-dist:ro
+      # OpenClaw 排单模板（Notion 执行方分流 → n8n V4 获客画布，2026-09-14）
+      - /opt/openclaw/dispatch:/opt/openclaw/dispatch:ro
       # 凭据：DB/内部服务凭据 SSOT。下方 environment 段显式 override HOME=/root，
       # 这样 Brain os.homedir() 才能解析到这里挂载的真实路径（Dockerfile 镜像烙入的
       # ENV HOME=/Users/administrator 是 macOS 专属值，此前一直未被 override，
@@ -97,6 +99,8 @@ services:
       # 硬编码要求它等于 us-mac-m4，改了会掐断凭据签发导致全面 fail-closed（纠正决策
       # 26c1e763 supersede 962281b2）。所以 CECELIA_MACHINE_ID 保持 us-mac-m4 不动。
       - CECELIA_LOCAL_EXECUTION_ENABLED=${CECELIA_LOCAL_EXECUTION_ENABLED:-false}
+      # Notion 排单分流 OpenClaw：hk-vps n8n V4 画布（Tailscale HTTPS，实测可达）
+      - N8N_V4_WEBHOOK_URL=${N8N_V4_WEBHOOK_URL:-https://vps-hk.tailce7a8b.ts.net:8444/webhook/agentic-workflow-runner-v4/run}
       - FLEET_WORKER_XIAN_MAC_M4_URL=${FLEET_WORKER_XIAN_MAC_M4_URL:-http://100.86.57.69:5231}
       - FLEET_WORKER_XIAN_MAC_M1_URL=${FLEET_WORKER_XIAN_MAC_M1_URL:-http://100.88.166.55:5231}
       - FLEET_NODE_ADMISSION_CACHE_TTL_MS=${FLEET_NODE_ADMISSION_CACHE_TTL_MS:-1000}
