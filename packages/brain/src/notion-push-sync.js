@@ -14,11 +14,12 @@ const INITIATIVE_CONTRACTS_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 
 // Notion 任务编排库（2026-09-13 双向·push 半边接线；库早已存在但 Brain 从未接）
 const NOTION_TASKS_DB = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
-// 排单分流 OpenClaw（2026-09-14）：执行方 select → n8n V4 获客画布（现役双租户模板）
-export const OPENCLAW_EXECUTORS = Object.freeze({
-  'OpenClaw·悦升获客': { tenant: 'yueshengyun', template: 'yueshengyun-daily.json' },
-  'OpenClaw·金诺获客': { tenant: 'jinoshengyuan', template: 'jinoshengyuan-daily.json' },
-});
+// 排单分流 OpenClaw（2026-09-14 v2 数据驱动）：Tasks 库 relation「Workflow」「Agent」
+// 指向运行舱四表的真实 Notion 行（workflows_db/graph_db，见 working_memory.ops_notion_dbs），
+// pull 反查 ops_workflows/ops_agents.notion_id 拿 dispatch 人工列（migration 444）：
+//   workflow.dispatch.webhook_url  = 派发入口（缺省回退 env.N8N_V4_WEBHOOK_URL）
+//   agent.dispatch.template        = 租户任务模板文件名（OPENCLAW_DISPATCH_DIR 下）
+// 禁止在代码里枚举执行方——排单可选项即两张 ops 表本身（决策：主理人 2026-09-14 纠正）。
 
 export const TASK_STATUS_TO_NOTION = Object.freeze({
   queued: 'Delegated',
@@ -337,13 +338,13 @@ async function pullNotionTasks(pool, token, opts = {}) {
       if (/brain:/.test(desc)) continue; // 已接手，幂等跳过
       if (/run:notion-/.test(desc)) continue; // OpenClaw 已派发，幂等跳过
 
-      // 执行方分流：OpenClaw·* → 直接派 n8n V4 画布，不建编码任务
-      const executor = props['执行方']?.select?.name ?? null;
-      if (executor && OPENCLAW_EXECUTORS[executor]) {
+      // Workflow relation 分流：选了真实业务 workflow 行 → 直接派 n8n 画布，不建编码任务
+      const wfRelation = (props.Workflow?.relation ?? [])[0]?.id ?? null;
+      if (wfRelation) {
         await dispatchOpenClawFromNotion({
-          token, page, desc,
-          spec: OPENCLAW_EXECUTORS[executor],
-          executorLabel: executor,
+          pool, token, page, desc,
+          workflowNotionId: wfRelation,
+          agentNotionId: (props.Agent?.relation ?? [])[0]?.id ?? null,
           env: opts.env ?? process.env,
           readTemplateFn: opts.readTemplateFn ?? defaultReadTemplate,
           fetchFn: opts.fetchFn ?? globalThis.fetch,
@@ -415,22 +416,51 @@ function defaultReadTemplate(dir, file) {
   return JSON.parse(readFileSync(joinPath(dir, file), 'utf8'));
 }
 
-/** OpenClaw 排单派发：注入唯一 run_id（内嵌 pageid32 供终态反解）→ POST n8n V4 webhook */
+/**
+ * OpenClaw 排单派发（relation 版）：Notion relation 页 id → 反查 ops_workflows /
+ * ops_agents（notion_id 归一去杠比对）→ dispatch 人工列取入口与模板 →
+ * 注入唯一 run_id（内嵌 pageid32 供终态反解）→ POST n8n webhook。
+ * 一切缺配置都写 ⚠ 回执到页面（不含幂等标记，修好配置下轮自动重派）。
+ */
 async function dispatchOpenClawFromNotion({
-  token, page, desc, spec, executorLabel, env, readTemplateFn, fetchFn,
+  pool, token, page, desc, workflowNotionId, agentNotionId, env, readTemplateFn, fetchFn,
 }) {
-  const webhookUrl = env.N8N_V4_WEBHOOK_URL;
-  if (!webhookUrl) {
-    console.warn('[notion-pull] N8N_V4_WEBHOOK_URL 未配置，OpenClaw 排单跳过');
-    return;
+  const norm = (id) => String(id).replace(/-/g, '');
+  const failReceipt = async (why) => {
+    const receipt = `${desc ? desc + ' · ' : ''}⚠ 派发未成(${String(why).slice(0, 80)})`;
+    await notionReq(token, `/pages/${page.id}`, 'PATCH', {
+      properties: {
+        Description: { rich_text: [{ type: 'text', text: { content: receipt.slice(0, 1900) } }] },
+      },
+    });
+    console.warn(`[notion-pull] OpenClaw 派发未成 page=${page.id}: ${why}`);
+  };
+  const { rows: wfRows } = await pool.query(
+    `SELECT wf_id, name, dispatch FROM ops_workflows WHERE replace(notion_id::text,'-','') = $1 LIMIT 1`,
+    [norm(workflowNotionId)],
+  );
+  const wf = wfRows[0];
+  if (!wf) return failReceipt('workflow_not_in_ops：所选行不在 ops_workflows 账上');
+  let agent = null;
+  if (agentNotionId) {
+    const { rows } = await pool.query(
+      `SELECT name, dispatch FROM ops_agents WHERE replace(notion_id::text,'-','') = $1 LIMIT 1`,
+      [norm(agentNotionId)],
+    );
+    agent = rows[0] ?? null;
+    if (!agent) return failReceipt('agent_not_in_ops：所选行不在 ops_agents 账上');
   }
+  const executorLabel = agent ? `${wf.name}·${agent.name}` : wf.name;
+  const webhookUrl = wf.dispatch?.webhook_url || env.N8N_V4_WEBHOOK_URL;
+  if (!webhookUrl) return failReceipt(`no_webhook_url：给 ops_workflows(${wf.wf_id}).dispatch 配 webhook_url`);
+  const template = agent?.dispatch?.template || wf.dispatch?.default_template || null;
+  if (!template) return failReceipt('no_template：给所选 Agent 的 ops_agents.dispatch 配 template（或 workflow 配 default_template）');
   const dispatchDir = env.OPENCLAW_DISPATCH_DIR || '/opt/openclaw/dispatch';
   let payload;
   try {
-    payload = readTemplateFn(dispatchDir, spec.template);
+    payload = readTemplateFn(dispatchDir, template);
   } catch (err) {
-    console.warn(`[notion-pull] OpenClaw 模板 ${spec.template} 读取失败: ${err.message}`);
-    return;
+    return failReceipt(`template_read_failed(${template}): ${err.message}`);
   }
   const pageId32 = String(page.id).replace(/-/g, '');
   const runId = `notion-${pageId32}-${Date.now()}`;

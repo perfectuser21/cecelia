@@ -560,12 +560,15 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
   });
 });
 
-// ── 2026-09-14 排单分流 OpenClaw（执行方字段路由）───────────────────────
-// Notion Tasks「执行方」select：OpenClaw·悦升获客 / OpenClaw·金诺获客 →
-// 不建编码任务，直接注入 run_id 后 POST n8n V4 webhook（现役获客画布），
-// 回执「▶ 已派发 run:notion-<pageid32>-<ts>」并把页面 Status 推到 In Progress；
+// ── 2026-09-14 排单分流 OpenClaw（relation 数据驱动版）─────────────────
+// Notion Tasks relation「Workflow」「Agent」指向运行舱四表的真实 Notion 行；
+// pull 反查 ops_workflows/ops_agents.notion_id（归一去杠）取 dispatch 人工列
+// （webhook_url / template），注入 run_id 后 POST webhook；缺配置写 ⚠ 回执。
 // run_id 内嵌完整 page id（去横杠 32 位）供终态同步反解页面。
-describe('pullNotionTasks — OpenClaw 执行方分流', () => {
+describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
+  const WF_NOTION = 'aaaa40c2-ba63-8001-9001-000000000001';
+  const AGENT_NOTION = 'bbbb40c2-ba63-8002-9002-000000000002';
+
   beforeEach(() => {
     mockQuery.mockReset();
     mockNotionReq.mockReset();
@@ -573,56 +576,104 @@ describe('pullNotionTasks — OpenClaw 执行方分流', () => {
     vi.unstubAllGlobals();
   });
 
-  function openclawPage(executor) {
+  function relationPage({ withAgent = true } = {}) {
     return {
       id: '3dbc40c2-ba63-8093-92bf-dc952f9a1079',
       properties: {
         Name: { type: 'title', title: [{ plain_text: '今天跑一轮获客', text: { content: '今天跑一轮获客' } }] },
         Description: { type: 'rich_text', rich_text: [] },
         Status: { type: 'status', status: { name: 'Delegated' } },
-        '执行方': { type: 'select', select: { name: executor } },
+        Workflow: { type: 'relation', relation: [{ id: WF_NOTION }] },
+        Agent: { type: 'relation', relation: withAgent ? [{ id: AGENT_NOTION }] : [] },
       },
     };
   }
 
-  it('执行方=OpenClaw·悦升获客 → POST V4 webhook 注入 run_id/attempt_id，不建编码任务', async () => {
+  /** mockQuery 按 SQL 分流：ops_workflows/ops_agents 反查返回 dispatch 行 */
+  function stubOpsLookup({ wfRow, agentRow } = {}) {
+    mockQuery.mockImplementation(async (sql) => {
+      if (/FROM ops_workflows/.test(sql)) return { rows: wfRow ? [wfRow] : [] };
+      if (/FROM ops_agents/.test(sql)) return { rows: agentRow ? [agentRow] : [] };
+      return { rows: [] };
+    });
+  }
+
+  it('选 Workflow+Agent relation → 反查 ops 两表 dispatch，POST webhook 注入 run_id，不建编码任务', async () => {
     const mod = await import('../notion-push-sync.js');
     const fetchCalls = [];
     vi.stubGlobal('fetch', vi.fn(async (url, init) => {
       fetchCalls.push([url, JSON.parse(init.body)]);
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
     }));
+    stubOpsLookup({
+      wfRow: { wf_id: 'AwrSocialLeadgenV4', name: 'Social Leadgen V4', dispatch: { webhook_url: 'https://hk.example:8444/webhook/agentic-workflow-runner-v4/run' } },
+      agentRow: { name: 'affine-yuesheng', dispatch: { template: 'yueshengyun-daily.json' } },
+    });
+    const readCalls = [];
     mockNotionReq.mockImplementation(async (t, path) => (
-      String(path).includes('/query')
-        ? { results: [openclawPage('OpenClaw·悦升获客')] }
-        : {}
+      String(path).includes('/query') ? { results: [relationPage()] } : {}
     ));
     await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
-      env: {
-        N8N_V4_WEBHOOK_URL: 'https://hk.example:8444/webhook/agentic-workflow-runner-v4/run',
-        OPENCLAW_DISPATCH_DIR: '/nonexistent-for-test',
+      env: { OPENCLAW_DISPATCH_DIR: '/nonexistent-for-test' },
+      readTemplateFn: (dir, file) => {
+        readCalls.push(file);
+        return { mode: 'daily', tenant_id: 'yueshengyun', control_token: 'ct', task_request: { task_name: 'x' } };
       },
-      readTemplateFn: () => ({ mode: 'daily', tenant_id: 'yueshengyun', control_token: 'ct', task_request: { task_name: 'x' } }),
     });
     expect(mockCreateRoutedTask).not.toHaveBeenCalled(); // 不走编码路线
+    expect(readCalls).toEqual(['yueshengyun-daily.json']); // 模板来自 agent.dispatch（数据行，非代码枚举）
     expect(fetchCalls.length).toBe(1);
-    expect(fetchCalls[0][0]).toContain('agentic-workflow-runner-v4/run');
+    expect(fetchCalls[0][0]).toContain('agentic-workflow-runner-v4/run'); // 入口来自 workflow.dispatch.webhook_url
     const body = fetchCalls[0][1];
     expect(body.tenant_id).toBe('yueshengyun');
     expect(body.attempt_id).toBe('a1');
     expect(body.run_id).toMatch(/^notion-3dbc40c2ba63809392bfdc952f9a1079-\d+$/); // 内嵌 pageid32
-    // 回执 + Status 推 In Progress
     const patch = mockNotionReq.mock.calls.find((c) => c[2] === 'PATCH');
     const pj = JSON.stringify(patch[3]);
     expect(pj).toContain('已派发');
+    expect(pj).toContain('Social Leadgen V4·affine-yuesheng'); // 回执标签=真实行名
     expect(pj).toContain('In Progress');
+  });
+
+  it('所选 Workflow 不在 ops_workflows 账上 → ⚠ 回执不派发，不建编码任务', async () => {
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn());
+    stubOpsLookup({}); // 反查空
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [relationPage({ withAgent: false })] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({}),
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+    const patch = mockNotionReq.mock.calls.find((c) => c[2] === 'PATCH');
+    expect(JSON.stringify(patch[3])).toContain('workflow_not_in_ops');
+  });
+
+  it('Agent 未选且 workflow 无 default_template → ⚠ 回执提示配置缺口', async () => {
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn());
+    stubOpsLookup({
+      wfRow: { wf_id: 'AwrSocialLeadgenV4', name: 'Social Leadgen V4', dispatch: { webhook_url: 'https://x/run' } },
+    });
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [relationPage({ withAgent: false })] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({}),
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    const patch = mockNotionReq.mock.calls.find((c) => c[2] === 'PATCH');
+    expect(JSON.stringify(patch[3])).toContain('no_template');
   });
 
   it('Description 已含派发标记 run:notion- → 幂等跳过', async () => {
     const mod = await import('../notion-push-sync.js');
-    const page = openclawPage('OpenClaw·金诺获客');
-    page.properties.Description.rich_text = [{ plain_text: '▶ 已派发 run:notion-abc-1 · OpenClaw', text: { content: 'x' } }];
+    const page = relationPage();
+    page.properties.Description.rich_text = [{ plain_text: '▶ 已派发 run:notion-abc-1', text: { content: 'x' } }];
     vi.stubGlobal('fetch', vi.fn());
+    stubOpsLookup({ wfRow: { wf_id: 'X', name: 'X', dispatch: {} } });
     mockNotionReq.mockImplementation(async (t, path) => (
       String(path).includes('/query') ? { results: [page] } : {}
     ));

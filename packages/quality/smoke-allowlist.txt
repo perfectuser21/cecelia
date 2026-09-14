@@ -291,3 +291,4 @@ orchestrator-remote-launch-smoke.sh
 notion-tasks-push-smoke.sh
 notion-tasks-pull-smoke.sh
 notion-openclaw-dispatch-smoke.sh
+notion-workflow-relation-smoke.sh
