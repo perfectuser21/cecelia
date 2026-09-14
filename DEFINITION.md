@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.291.0
+**Brain 版本**: 1.292.0
 
 ## 1.283.0
 
@@ -48,6 +48,12 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.292.0 — Notion 排单 OpenClaw 分流改 relation 数据驱动
+
+- Tasks 库派发从硬编码「执行方」select 改为 relation「Workflow」「Agent」指向运行舱四表真实 Notion 行
+- pull 反查 ops_workflows/ops_agents.notion_id 取 dispatch 人工列（migration 444：webhook_url / template）
+- 删除 OPENCLAW_EXECUTORS 代码枚举；smoke 反向守卫防回潮；缺配置写 ⚠ 回执可自愈重派
 
 ## Brain 1.291.0 — 排单分流 OpenClaw（执行方路由）
 
