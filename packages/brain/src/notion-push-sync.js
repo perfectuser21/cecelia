@@ -296,6 +296,78 @@ async function pushTaskRows(pool, token, rows) {
   }
 }
 
+/**
+ * Notion Tasks 库 → Brain 接手（双向·pull 半边，2026-09-14）。
+ * 主理人在 Notion 新建行并把 Status 拖到 Delegated 即"排单"：
+ *  · 只认 Status=Delegated 且 Description 不含 brain: 标记的页（幂等防重复接手）
+ *  · 接手任务落 status='blocked'——map 扫描器未迁 us-vps 前 kernel 准入不通，
+ *    直接 queued 会被 tick 抓去撞墙三连 autoblock；error_message 注明等待路由。
+ *    map 刀落地后由 unblock 流程放行。
+ *  · notion_props.pushed_status 写入=当前 status，防 pushTasks 反手改用户的 Delegated
+ *  · Name 前缀 [P0-3] 解析 priority，缺省 P2；回执 `brain:<id> ✓已接管` PATCH 回页面
+ */
+async function pullNotionTasks(pool, token) {
+  let resp;
+  try {
+    resp = await notionReq(token, `/databases/${NOTION_TASKS_DB}/query`, 'POST', {
+      page_size: 20,
+      filter: { property: 'Status', status: { equals: 'Delegated' } },
+    });
+  } catch (err) {
+    console.warn(`[notion-pull] Tasks 库查询失败: ${err.message}`);
+    return;
+  }
+  for (const page of resp?.results ?? []) {
+    try {
+      const props = page.properties ?? {};
+      const name = (props.Name?.title ?? [])
+        .map((t) => t.plain_text ?? t.text?.content ?? '').join('').trim();
+      const desc = (props.Description?.rich_text ?? [])
+        .map((t) => t.plain_text ?? t.text?.content ?? '').join('');
+      if (!name) continue;
+      if (/brain:/.test(desc)) continue; // 已接手，幂等跳过
+
+      const m = name.match(/^\[(P[0-3])\]\s*(.+)$/);
+      const priority = m ? m[1] : 'P2';
+      const title = m ? m[2] : name;
+
+      const { rows } = await pool.query(
+        `INSERT INTO tasks (title, task_type, status, priority, description, error_message, payload, notion_id, notion_props)
+         VALUES ($1, 'dev', 'blocked', $2,
+                 '来自 Notion Tasks 编排（主理人排单）',
+                 'awaiting_execution_route: map 扫描器迁移后由 unblock 放行',
+                 jsonb_build_object('source', 'notion_tasks_db', 'notion_page_id', $3::text),
+                 $3, jsonb_build_object('pushed_status', 'blocked', 'origin', 'notion'))
+         RETURNING id`,
+        [title, priority, page.id],
+      );
+      const taskId = rows?.[0]?.id;
+      const receipt = `${desc ? desc + ' · ' : ''}brain:${taskId} ✓已接管`;
+      await notionReq(token, `/pages/${page.id}`, 'PATCH', {
+        properties: {
+          Description: { rich_text: [{ type: 'text', text: { content: receipt.slice(0, 1900) } }] },
+        },
+      });
+      console.log(`[notion-pull] 接手排单 "${title}" → task ${taskId}`);
+    } catch (err) {
+      console.warn(`[notion-pull] 页面 ${page?.id} 接手失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
+}
+
+/** 正式入口：由 legacy-notion-push-scheduler 与 push 并联周期调用 */
+export async function runNotionTaskPull(pool) {
+  const token = getToken();
+  if (!token) return;
+  return pullNotionTasks(pool, token);
+}
+
+/** 可测内核导出（直接注入 token） */
+export async function pullNotionTasksForTest(pool, token) {
+  return pullNotionTasks(pool, token);
+}
+
 async function pushSkillRegistry(pool, token) {
   const { rows } = await pool.query(
     `SELECT * FROM skill_registry WHERE notion_synced_at IS NULL LIMIT 10`
