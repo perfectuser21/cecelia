@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { runOpsCollector, __resetOpsCollectorForTest, HK_OPENCLAW_CMD } from '../ops-collector.js';
+import { runOpsCollector, __resetOpsCollectorForTest, LOCAL_OPENCLAW_CMD } from '../ops-collector.js';
 
 function fakePool() {
   const queries = [];
@@ -32,10 +32,25 @@ beforeEach(() => __resetOpsCollectorForTest());
 
 describe('runOpsCollector', () => {
   it('OpenClaw 命令写死容器内路径（禁 find/通配）', () => {
-    expect(HK_OPENCLAW_CMD).toContain('docker exec openclaw-gateway cat /root/.openclaw/clawdbot.json');
-    expect(HK_OPENCLAW_CMD).toContain('BatchMode=yes');
-    expect(HK_OPENCLAW_CMD).toContain('ConnectTimeout=6');
-    expect(HK_OPENCLAW_CMD).not.toContain('find');
+    expect(LOCAL_OPENCLAW_CMD).toContain('docker exec openclaw-gateway cat /root/.openclaw/clawdbot.json');
+    expect(LOCAL_OPENCLAW_CMD).not.toContain('find');
+  });
+
+  it('OpenClaw 腿本机直取：不 ssh hk-vps，host_alias 记 us-vps（容器 09-12 已迁 us-vps）', async () => {
+    // 2026-09-14 生产实证：openclaw-gateway 在 us-vps 本机，旧命令 ssh hk-vps 报
+    // "No such container"，腿常年 unreachable。同机容器经挂载的 docker.sock 直取。
+    expect(LOCAL_OPENCLAW_CMD).not.toContain('ssh');
+    expect(LOCAL_OPENCLAW_CMD).not.toContain('100.86.118.99');
+    const pool = fakePool();
+    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'clawdbot.json': CLAW_OK, 'workflows': '', 'readlink': '/var/db/timezone/zoneinfo/America/Los_Angeles' });
+    const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
+    expect(r.results.openclaw.ok).toBe(true);
+    const agentWrites = pool.queries.filter((q) => q.sql.includes('INSERT INTO ops_agents') && q.params?.[0] === 'openclaw');
+    expect(agentWrites.length).toBeGreaterThan(0);
+    for (const q of agentWrites) expect(q.params[1]).toBe('us-vps');
+    const hb = pool.queries.filter((q) => q.sql.includes('ops_source_heartbeats') && q.params?.[0] === 'openclaw');
+    expect(hb.length).toBeGreaterThan(0);
+    for (const q of hb) expect(q.params[1]).toBe('us-vps');
   });
 
   it('全部成功：三路各写快照+心跳 ok', async () => {
