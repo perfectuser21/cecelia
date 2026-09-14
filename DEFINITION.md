@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.292.0
+**Brain 版本**: 1.292.1
 
 ## 1.283.0
 
@@ -48,6 +48,11 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.292.1 — 修 syncOpenClawRuns 引用不存在列 finished_at
+
+- ops_runs 真实列为 stopped_at；旧 SQL 次次抛错被 catch，OpenClaw 终态→Notion Status 同步腿从未生效（09-14 生产实证）
+- 回归用例断言 SQL 不得含 finished_at
 
 ## Brain 1.292.0 — Notion 排单 OpenClaw 分流改 relation 数据驱动
 
