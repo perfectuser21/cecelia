@@ -27,6 +27,11 @@ services:
     read_only: false
     tmpfs:
       - /tmp:size=100M
+      # ssh ControlMaster socket 目录：宿主 /root/.ssh 以 ro 挂入，宿主 ssh config 的
+      # ControlPath 指向 ~/.ssh/sockets/ → 容器内建 socket 撞 Read-only file system，
+      # ops-collector 的 hk-vps ssh 逃逸全灭（09-09 起运行舱账断更 5 天的根因）。
+      # 以 tmpfs 覆盖该子路径恢复可写，不放松 .ssh 本体的 ro。
+      - /root/.ssh/sockets:size=1M
     volumes:
       # Docker socket: Brain 调 dockerd spawn 兄弟 pipeline 容器
       - /var/run/docker.sock:/var/run/docker.sock
