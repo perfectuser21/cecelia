@@ -684,6 +684,18 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
+  it('syncOpenClawRuns 的 SQL 只用 ops_runs 真实列（stopped_at，不存在 finished_at）', async () => {
+    // 2026-09-14 生产实证：finished_at 列不存在 → 查询次次抛错被 catch，终态同步腿从未生效
+    const mod = await import('../notion-push-sync.js');
+    const sqls = [];
+    mockQuery.mockImplementation(async (sql) => { sqls.push(String(sql)); return { rows: [] }; });
+    await mod.syncOpenClawRunsForTest({ query: mockQuery }, 'fake-token');
+    const runsSql = sqls.find((q) => /FROM ops_runs/.test(q));
+    expect(runsSql).toBeTruthy();
+    expect(runsSql).not.toContain('finished_at');
+    expect(runsSql).toContain('stopped_at');
+  });
+
   it('syncOpenClawRuns：ops_runs 终态 → 反解 page id 推 Status Done', async () => {
     const mod = await import('../notion-push-sync.js');
     mockQuery.mockResolvedValueOnce({
