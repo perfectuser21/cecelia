@@ -498,7 +498,7 @@ async function syncOpenClawRuns(pool, token) {
       SELECT run_id, status FROM ops_runs
        WHERE run_id LIKE 'notion-%'
          AND status IN ('success','completed','failed','error','cancelled')
-         AND (finished_at IS NULL OR finished_at > NOW() - INTERVAL '2 days')
+         AND (stopped_at IS NULL OR stopped_at > NOW() - INTERVAL '2 days')
        LIMIT 20`));
   } catch (err) {
     console.warn(`[notion-pull] ops_runs 查询失败: ${err.message}`);
