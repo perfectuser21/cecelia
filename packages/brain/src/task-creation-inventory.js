@@ -44,6 +44,8 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'post-publish-data-collector.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'progress-reviewer.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'proposal.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  // 2026-09-14 Notion 排单接手（双向·pull）：主理人 Notion Tasks 库 Delegated → createRoutedTask
+  { module: 'notion-push-sync.js', source: 'notion_tasks_db', creates_executable_task: true, migration_status: 'routed' },
   { module: 'recurring.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'review-gate.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/capture-atoms.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },

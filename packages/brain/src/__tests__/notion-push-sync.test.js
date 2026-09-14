@@ -16,6 +16,10 @@ vi.mock('../recurring-notion-sync.js', () => ({
   notionReq: mockNotionReq,
   getToken: () => 'fake-token',
 }));
+const mockCreateRoutedTask = vi.fn();
+vi.mock('../work-routing-store.js', () => ({
+  createRoutedTask: mockCreateRoutedTask,
+}));
 
 describe('runNotionPushSync', () => {
   beforeEach(() => {
@@ -452,6 +456,7 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
   beforeEach(() => {
     mockQuery.mockReset();
     mockNotionReq.mockReset();
+    mockCreateRoutedTask.mockReset();
   });
 
   function notionPage({ id, name, desc = '' }) {
@@ -473,15 +478,25 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
       }
       return {};
     });
-    mockQuery.mockResolvedValue({ rows: [{ id: 'new-task-uuid-1' }] });
+    mockQuery.mockResolvedValue({ rows: [] });
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'new-task-uuid-1' } });
 
     await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token');
 
-    const ins = mockQuery.mock.calls.find((c) => /INSERT INTO tasks/.test(c[0]));
-    expect(ins).toBeTruthy();
-    expect(ins[1]).toContain('测试：给我修个东西'); // 去掉 [P1] 前缀后的标题
-    expect(ins[1]).toContain('P1');
-    expect(ins[0]).toMatch(/blocked/);
+    // 建任务必须走原子路由账房（task-creation-inventory 守卫）
+    expect(mockCreateRoutedTask).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        source: 'notion_tasks_db',
+        source_id: 'np-1',
+        title: '测试：给我修个东西', // 去掉 [P1] 前缀
+        task: expect.objectContaining({ priority: 'P1' }),
+      }),
+    );
+    // 接手后落 blocked 等执行路由
+    const upd = mockQuery.mock.calls.find((c) => /UPDATE tasks SET status='blocked'/.test(c[0]));
+    expect(upd).toBeTruthy();
+    expect(upd[1]).toContain('new-task-uuid-1');
     const patch = mockNotionReq.mock.calls.find((c) => c[1] === '/pages/np-1' && c[2] === 'PATCH');
     expect(patch).toBeTruthy();
     const descText = JSON.stringify(patch[3]);
@@ -497,8 +512,7 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
       return {};
     });
     await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token');
-    const ins = mockQuery.mock.calls.find((c) => /INSERT INTO tasks/.test(c[0]));
-    expect(ins).toBeUndefined();
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
   });
 
   it('无前缀标题 → priority 缺省 P2，标题原样', async () => {
@@ -509,10 +523,15 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
       }
       return {};
     });
-    mockQuery.mockResolvedValue({ rows: [{ id: 'new-task-uuid-3' }] });
+    mockQuery.mockResolvedValue({ rows: [] });
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'new-task-uuid-3' } });
     await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token');
-    const ins = mockQuery.mock.calls.find((c) => /INSERT INTO tasks/.test(c[0]));
-    expect(ins[1]).toContain('随手排的活');
-    expect(ins[1]).toContain('P2');
+    expect(mockCreateRoutedTask).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        title: '随手排的活',
+        task: expect.objectContaining({ priority: 'P2' }),
+      }),
+    );
   });
 });

@@ -1,4 +1,5 @@
 import { notionReq, getToken } from './recurring-notion-sync.js';
+import { createRoutedTask } from './work-routing-store.js';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 
@@ -331,17 +332,34 @@ async function pullNotionTasks(pool, token) {
       const priority = m ? m[1] : 'P2';
       const title = m ? m[2] : name;
 
-      const { rows } = await pool.query(
-        `INSERT INTO tasks (title, task_type, status, priority, description, error_message, payload, notion_id, notion_props)
-         VALUES ($1, 'dev', 'blocked', $2,
-                 '来自 Notion Tasks 编排（主理人排单）',
-                 'awaiting_execution_route: map 扫描器迁移后由 unblock 放行',
-                 jsonb_build_object('source', 'notion_tasks_db', 'notion_page_id', $3::text),
-                 $3, jsonb_build_object('pushed_status', 'blocked', 'origin', 'notion'))
-         RETURNING id`,
-        [title, priority, page.id],
+      // 建任务必须走原子路由账房（task-creation-inventory 守卫），获得 Routing Receipt。
+      // source_id=Notion 页 id → 账房自带幂等（同页重放拿回同一 task）。
+      const routed = await createRoutedTask(pool, {
+        source: 'notion_tasks_db',
+        source_id: page.id,
+        title,
+        description: '来自 Notion Tasks 编排（主理人排单）',
+        requested_task_type: 'dev',
+        declared_change_kind: 'capability_change',
+        metadata: { source: 'notion_tasks_db', notion_page_id: page.id },
+        map_scope_hint: ['F2', 'execution_pool'],
+        task: { priority, status: 'queued' },
+      });
+      const taskId = routed?.task?.id ?? routed?.task_id;
+      if (!taskId) throw new Error('routed_task_id_missing');
+      // 接手先落 blocked——map 扫描器未迁 us-vps 前 kernel 准入不通，直接 queued
+      // 会被 tick 抓去三连 autoblock；同步写 notion 列与幂等指纹（防 pushTasks
+      // 反手改用户设的 Delegated）。map 刀后由 unblock 放行。
+      await pool.query(
+        `UPDATE tasks SET status='blocked',
+                error_message='awaiting_execution_route: map 扫描器迁移后由 unblock 放行',
+                notion_id=$2,
+                notion_props = COALESCE(notion_props,'{}'::jsonb)
+                  || jsonb_build_object('pushed_status','blocked','origin','notion'),
+                updated_at=NOW()
+          WHERE id=$1`,
+        [taskId, page.id],
       );
-      const taskId = rows?.[0]?.id;
       const receipt = `${desc ? desc + ' · ' : ''}brain:${taskId} ✓已接管`;
       await notionReq(token, `/pages/${page.id}`, 'PATCH', {
         properties: {
