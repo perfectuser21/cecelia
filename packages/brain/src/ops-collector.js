@@ -507,9 +507,10 @@ export function parseGhaCron(out) {
   return rows;
 }
 
-export const HK_OPENCLAW_CMD =
-  "ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no root@100.86.118.99 " +
-  "'docker exec openclaw-gateway cat /root/.openclaw/clawdbot.json'"; // 写死真身路径：宿主同名文件5份含旧备份
+// OpenClaw 容器 2026-09-12 起与 Brain 同驻 us-vps：经挂载的 docker.sock 本机直取，
+// 不走 buildHostCmd 逃逸（旧 ssh hk-vps 版在迁移后必然 No such container，腿常年 unreachable）。
+export const LOCAL_OPENCLAW_CMD =
+  "docker exec openclaw-gateway cat /root/.openclaw/clawdbot.json"; // 写死真身路径：宿主同名文件5份含旧备份
 
 export const PLIST_DUMP_CMD =
   'for f in /Library/LaunchDaemons/*.plist; do echo "== $f"; /usr/bin/plutil -convert json -o - "$f" 2>/dev/null; echo ""; done';
@@ -790,13 +791,13 @@ export async function runOpsCollector(pool, opts = {}) {
     results.launchd = { ok: false };
   }
 
-  // —— 腿2: openclaw@hk-vps ——（解析失败整份丢弃，沿用上轮+stale）
+  // —— 腿2: openclaw@us-vps ——（解析失败整份丢弃，沿用上轮+stale；同机容器不走 host 逃逸）
   try {
-    const raw = run(HK_OPENCLAW_CMD);
+    const raw = exec(LOCAL_OPENCLAW_CMD);
     let cfg;
     try { cfg = JSON.parse(raw); } catch { throw new Error(`parse_error: clawdbot.json 非法 JSON（前100字符: ${String(raw).slice(0, 100)}）`); }
     const agents = extractOpenclawAgents(cfg);
-    await writeAgentsSnapshot(pool, 'openclaw', 'hk-vps', agents, collectedAt);
+    await writeAgentsSnapshot(pool, 'openclaw', 'us-vps', agents, collectedAt);
     // skill 投影（最小执行单元，与 agent 多对多）
     // 双写消除（刀7）：真相源是 ops_agents.meta.skills（直接来自 clawdbot.json 的 agent 定义）；
     // ops_skills.used_by 是它的**派生反向索引**，每轮由 extractOpenclawSkills 从同一份 cfg 现算，
@@ -837,11 +838,11 @@ export async function runOpsCollector(pool, opts = {}) {
       // 版本历史：只在**分数或档位真变了**时追加一代，避免每 5 分钟灌一行流水
       if (row) await recordSkillVersionIfChanged(pool, row, sk.name, ev, st);
     }
-    await writeHeartbeat(pool, 'openclaw', 'hk-vps', 'ok', null, null, collectedAt);
+    await writeHeartbeat(pool, 'openclaw', 'us-vps', 'ok', null, null, collectedAt);
     results.openclaw = { ok: true, agents: agents.length, skills: skills.length };
   } catch (e) {
     const [status, code] = classifyError(e);
-    await writeHeartbeat(pool, 'openclaw', 'hk-vps', status, code, e.message);
+    await writeHeartbeat(pool, 'openclaw', 'us-vps', status, code, e.message);
     results.openclaw = { ok: false };
   }
 
