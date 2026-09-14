@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.290.0
+**Brain 版本**: 1.290.1
 
 ## 1.283.0
 
@@ -48,6 +48,10 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.290.1 — 排单接手路由参数修正
+
+- fix(brain): Notion 排单接手补齐 work-router 硬校验四参数（source=inbox/mutation_intent=write/repo_hint=cecelia/blocked_at）——实吃首单逐个踩出，修正后 5min 周期自动接手真正生效
 
 ## Brain 1.290.0 — Notion 排单接手（双向·pull 半边）
 
