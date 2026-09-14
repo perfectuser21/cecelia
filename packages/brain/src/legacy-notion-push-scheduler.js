@@ -1,9 +1,15 @@
-import { runNotionPushSync } from './notion-push-sync.js';
+import { runNotionPushSync, runNotionTaskPull } from './notion-push-sync.js';
+
+// 2026-09-14：push 与 Tasks 拉取（主理人 Notion 排单接手）并联为默认周期动作
+async function runPushAndPull(pool) {
+  await runNotionPushSync(pool);
+  await runNotionTaskPull(pool);
+}
 
 export function scheduleLegacyNotionPush(pool, {
   env = process.env,
   setIntervalFn = setInterval,
-  run = runNotionPushSync,
+  run = runPushAndPull,
   logger = console,
 } = {}) {
   if (env.NOTION_LEGACY_PUSH_ENABLED !== 'true') {

@@ -1,4 +1,5 @@
 import { notionReq, getToken } from './recurring-notion-sync.js';
+import { createRoutedTask } from './work-routing-store.js';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 
@@ -294,6 +295,95 @@ async function pushTaskRows(pool, token, rows) {
       }
     }
   }
+}
+
+/**
+ * Notion Tasks 库 → Brain 接手（双向·pull 半边，2026-09-14）。
+ * 主理人在 Notion 新建行并把 Status 拖到 Delegated 即"排单"：
+ *  · 只认 Status=Delegated 且 Description 不含 brain: 标记的页（幂等防重复接手）
+ *  · 接手任务落 status='blocked'——map 扫描器未迁 us-vps 前 kernel 准入不通，
+ *    直接 queued 会被 tick 抓去撞墙三连 autoblock；error_message 注明等待路由。
+ *    map 刀落地后由 unblock 流程放行。
+ *  · notion_props.pushed_status 写入=当前 status，防 pushTasks 反手改用户的 Delegated
+ *  · Name 前缀 [P0-3] 解析 priority，缺省 P2；回执 `brain:<id> ✓已接管` PATCH 回页面
+ */
+async function pullNotionTasks(pool, token) {
+  let resp;
+  try {
+    resp = await notionReq(token, `/databases/${NOTION_TASKS_DB}/query`, 'POST', {
+      page_size: 20,
+      filter: { property: 'Status', status: { equals: 'Delegated' } },
+    });
+  } catch (err) {
+    console.warn(`[notion-pull] Tasks 库查询失败: ${err.message}`);
+    return;
+  }
+  for (const page of resp?.results ?? []) {
+    try {
+      const props = page.properties ?? {};
+      const name = (props.Name?.title ?? [])
+        .map((t) => t.plain_text ?? t.text?.content ?? '').join('').trim();
+      const desc = (props.Description?.rich_text ?? [])
+        .map((t) => t.plain_text ?? t.text?.content ?? '').join('');
+      if (!name) continue;
+      if (/brain:/.test(desc)) continue; // 已接手，幂等跳过
+
+      const m = name.match(/^\[(P[0-3])\]\s*(.+)$/);
+      const priority = m ? m[1] : 'P2';
+      const title = m ? m[2] : name;
+
+      // 建任务必须走原子路由账房（task-creation-inventory 守卫），获得 Routing Receipt。
+      // source_id=Notion 页 id → 账房自带幂等（同页重放拿回同一 task）。
+      const routed = await createRoutedTask(pool, {
+        source: 'notion_tasks_db',
+        source_id: page.id,
+        title,
+        description: '来自 Notion Tasks 编排（主理人排单）',
+        requested_task_type: 'dev',
+        declared_change_kind: 'capability_change',
+        metadata: { source: 'notion_tasks_db', notion_page_id: page.id },
+        map_scope_hint: ['F2', 'execution_pool'],
+        task: { priority, status: 'queued' },
+      });
+      const taskId = routed?.task?.id ?? routed?.task_id;
+      if (!taskId) throw new Error('routed_task_id_missing');
+      // 接手先落 blocked——map 扫描器未迁 us-vps 前 kernel 准入不通，直接 queued
+      // 会被 tick 抓去三连 autoblock；同步写 notion 列与幂等指纹（防 pushTasks
+      // 反手改用户设的 Delegated）。map 刀后由 unblock 放行。
+      await pool.query(
+        `UPDATE tasks SET status='blocked',
+                error_message='awaiting_execution_route: map 扫描器迁移后由 unblock 放行',
+                notion_id=$2,
+                notion_props = COALESCE(notion_props,'{}'::jsonb)
+                  || jsonb_build_object('pushed_status','blocked','origin','notion'),
+                updated_at=NOW()
+          WHERE id=$1`,
+        [taskId, page.id],
+      );
+      const receipt = `${desc ? desc + ' · ' : ''}brain:${taskId} ✓已接管`;
+      await notionReq(token, `/pages/${page.id}`, 'PATCH', {
+        properties: {
+          Description: { rich_text: [{ type: 'text', text: { content: receipt.slice(0, 1900) } }] },
+        },
+      });
+      console.log(`[notion-pull] 接手排单 "${title}" → task ${taskId}`);
+    } catch (err) {
+      console.warn(`[notion-pull] 页面 ${page?.id} 接手失败: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
+}
+
+/** 正式入口：由 legacy-notion-push-scheduler 与 push 并联周期调用 */
+export async function runNotionTaskPull(pool) {
+  const token = getToken();
+  if (!token) return;
+  return pullNotionTasks(pool, token);
+}
+
+/** 可测内核导出（直接注入 token） */
+export async function pullNotionTasksForTest(pool, token) {
+  return pullNotionTasks(pool, token);
 }
 
 async function pushSkillRegistry(pool, token) {
