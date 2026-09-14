@@ -477,8 +477,9 @@ async function dispatchOpenClawFromNotion({
     [wf.wf_id],
   );
   if (busyRows[0]) {
+    // 文案禁写 run: 前缀——会命中 pull 幂等跳过正则 /run:notion-/，排队行永不重试（09-14 实证死锁）
     await writeStatusReceipt(token, page, desc,
-      `⏸ 排队：${wf.name} 在途(run:${busyRows[0].run_id ?? busyRows[0].id})，完成后自动派发`);
+      `⏸ 排队：${wf.name} 在途(${busyRows[0].run_id ?? busyRows[0].id})，完成后自动派发`);
     return;
   }
   const webhookUrl = wf.dispatch?.webhook_url || env.N8N_V4_WEBHOOK_URL;

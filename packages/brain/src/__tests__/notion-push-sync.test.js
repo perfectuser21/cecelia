@@ -748,6 +748,28 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
     expect(JSON.stringify(patch[3])).toContain('⏸ 排队');
   });
 
+  it('⏸ 排队回执不得含 run:notion- 幂等标记（防队列死锁）', async () => {
+    // 2026-09-14 生产实证死锁：回执写 run:<run_id>（notion-…）命中 pull 幂等跳过
+    // 正则 /run:notion-/，排队行被当作已派发永不重试——资源释放后死等。
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn());
+    mockQuery.mockImplementation(async (sql) => {
+      if (/FROM ops_workflows/.test(sql)) return { rows: [{ wf_id: 'AwrSocialLeadgenV4', name: 'Social Leadgen V4', dispatch: { webhook_url: 'https://x/run' } }] };
+      if (/task_type='workflow_run'/.test(sql) && /in_progress/.test(sql)) {
+        return { rows: [{ id: 'busy-task', run_id: 'notion-busy-1' }] };
+      }
+      return { rows: [] };
+    });
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [relationPage({ withAgent: false })] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({}),
+    });
+    const patch = mockNotionReq.mock.calls.find((c) => c[2] === 'PATCH');
+    expect(JSON.stringify(patch[3])).not.toContain('run:notion-');
+  });
+
   it('排班员v1·时间窗：Plan Date 在未来 → 不派发、🕐 排期回执', async () => {
     const mod = await import('../notion-push-sync.js');
     vi.stubGlobal('fetch', vi.fn());
