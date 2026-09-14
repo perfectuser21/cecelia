@@ -487,7 +487,6 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
     expect(mockCreateRoutedTask).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        source: 'notion_tasks_db',
         source_id: 'np-1',
         title: '测试：给我修个东西', // 去掉 [P1] 前缀
         task: expect.objectContaining({ priority: 'P1' }),
@@ -533,5 +532,30 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
         task: expect.objectContaining({ priority: 'P2' }),
       }),
     );
+  });
+
+  it('排单必须带齐 work-router 硬校验参数（实吃首单 c90a6ce4 逐个踩出）', async () => {
+    // ①source 枚举无 notion_tasks_db → inbox ②mutation_intent 必填
+    // ③repo_hint 缺失即 repo_unknown ④blocked 落库须带 blocked_at（chk 约束）
+    const mod = await import('../notion-push-sync.js');
+    mockNotionReq.mockImplementation(async (token, path) => {
+      if (String(path).includes('/query')) {
+        return { results: [notionPage({ id: 'np-4', name: '参数完备单' })] };
+      }
+      return {};
+    });
+    mockQuery.mockResolvedValue({ rows: [] });
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'new-task-uuid-4' } });
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token');
+    expect(mockCreateRoutedTask).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        source: 'inbox',
+        mutation_intent: 'write',
+        repo_hint: 'cecelia',
+      }),
+    );
+    const upd = mockQuery.mock.calls.find((c) => /UPDATE tasks SET status='blocked'/.test(c[0]));
+    expect(upd[0]).toMatch(/blocked_at=NOW\(\)/);
   });
 });
