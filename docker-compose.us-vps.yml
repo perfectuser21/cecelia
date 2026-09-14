@@ -106,6 +106,11 @@ services:
       - CECELIA_LOCAL_EXECUTION_ENABLED=${CECELIA_LOCAL_EXECUTION_ENABLED:-false}
       # Notion 排单分流 OpenClaw：hk-vps n8n V4 画布（Tailscale HTTPS，实测可达）
       - N8N_V4_WEBHOOK_URL=${N8N_V4_WEBHOOK_URL:-https://vps-hk.tailce7a8b.ts.net:8444/webhook/agentic-workflow-runner-v4/run}
+      # ops-collector 的 host-exec 逃逸目标：MMV 时代默认 administrator@host.docker.internal
+      # （ssh 回 Mac 宿主），us-vps 是 Linux 该域名不解析且宿主无 launchctl/gh——五条采集腿
+      # 全灭致运行舱账断更（09-09~14 实证）。指到 primary worker MMV（launchctl/gh/hk-vps
+      # 跳板本来就在 Mac）。IP 见 machine-registry.js us-mac-m4.tailscaleIp；Mac Studio 迁移时同步改。
+      - CECELIA_HOST_EXEC_SSH=${CECELIA_HOST_EXEC_SSH:-administrator@100.71.151.105}
       - FLEET_WORKER_XIAN_MAC_M4_URL=${FLEET_WORKER_XIAN_MAC_M4_URL:-http://100.86.57.69:5231}
       - FLEET_WORKER_XIAN_MAC_M1_URL=${FLEET_WORKER_XIAN_MAC_M1_URL:-http://100.88.166.55:5231}
       - FLEET_NODE_ADMISSION_CACHE_TTL_MS=${FLEET_NODE_ADMISSION_CACHE_TTL_MS:-1000}
