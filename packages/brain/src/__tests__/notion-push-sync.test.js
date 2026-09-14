@@ -438,3 +438,81 @@ describe('pushTasks — Brain tasks → Notion Tasks 库', () => {
     expect(upd[1]).toContain('t-uuid-3');
   });
 });
+
+// ── 2026-09-14 Tasks 拉取（双向·pull 半边）────────────────────────────
+// 主理人在 Notion Tasks 库新建行并把 Status 拖到 Delegated → Brain 接手：
+// 在 tasks 表建任务并把 `brain:<id> ✓已接管` 回执写进该页 Description。
+// 纪律：
+//  1. 只认 Status=Delegated 且 Description 不含 brain: 标记的页（幂等，防重复接手）
+//  2. 接手任务先落 status='blocked'（error_message 注明等待执行路由）——map 扫描器
+//     未迁 us-vps 前 kernel 准入不通，直接 queued 会被 tick 抓去撞墙三连 autoblock；
+//     notion_props.pushed_status 同步写入=当前 status，防 pushTasks 反手改用户的 Delegated
+//  3. Name 前缀 [P0-3] 解析为 priority，缺省 P2
+describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockNotionReq.mockReset();
+  });
+
+  function notionPage({ id, name, desc = '' }) {
+    return {
+      id,
+      properties: {
+        Name: { type: 'title', title: [{ plain_text: name, text: { content: name } }] },
+        Description: { type: 'rich_text', rich_text: desc ? [{ plain_text: desc, text: { content: desc } }] : [] },
+        Status: { type: 'status', status: { name: 'Delegated' } },
+      },
+    };
+  }
+
+  it('Delegated 无 brain 标记 → INSERT 任务(blocked) + PATCH 回执进 Description', async () => {
+    const mod = await import('../notion-push-sync.js');
+    mockNotionReq.mockImplementation(async (token, path, method) => {
+      if (String(path).includes('/query')) {
+        return { results: [notionPage({ id: 'np-1', name: '[P1] 测试：给我修个东西' })] };
+      }
+      return {};
+    });
+    mockQuery.mockResolvedValue({ rows: [{ id: 'new-task-uuid-1' }] });
+
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token');
+
+    const ins = mockQuery.mock.calls.find((c) => /INSERT INTO tasks/.test(c[0]));
+    expect(ins).toBeTruthy();
+    expect(ins[1]).toContain('测试：给我修个东西'); // 去掉 [P1] 前缀后的标题
+    expect(ins[1]).toContain('P1');
+    expect(ins[0]).toMatch(/blocked/);
+    const patch = mockNotionReq.mock.calls.find((c) => c[1] === '/pages/np-1' && c[2] === 'PATCH');
+    expect(patch).toBeTruthy();
+    const descText = JSON.stringify(patch[3]);
+    expect(descText).toContain('brain:new-task-uuid-1');
+  });
+
+  it('Description 已含 brain: 标记 → 幂等跳过（不重复建任务）', async () => {
+    const mod = await import('../notion-push-sync.js');
+    mockNotionReq.mockImplementation(async (token, path) => {
+      if (String(path).includes('/query')) {
+        return { results: [notionPage({ id: 'np-2', name: '旧单', desc: 'brain:existing-id ✓已接管' })] };
+      }
+      return {};
+    });
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token');
+    const ins = mockQuery.mock.calls.find((c) => /INSERT INTO tasks/.test(c[0]));
+    expect(ins).toBeUndefined();
+  });
+
+  it('无前缀标题 → priority 缺省 P2，标题原样', async () => {
+    const mod = await import('../notion-push-sync.js');
+    mockNotionReq.mockImplementation(async (token, path) => {
+      if (String(path).includes('/query')) {
+        return { results: [notionPage({ id: 'np-3', name: '随手排的活' })] };
+      }
+      return {};
+    });
+    mockQuery.mockResolvedValue({ rows: [{ id: 'new-task-uuid-3' }] });
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token');
+    const ins = mockQuery.mock.calls.find((c) => /INSERT INTO tasks/.test(c[0]));
+    expect(ins[1]).toContain('随手排的活');
+    expect(ins[1]).toContain('P2');
+  });
+});
