@@ -334,13 +334,18 @@ async function pullNotionTasks(pool, token) {
 
       // 建任务必须走原子路由账房（task-creation-inventory 守卫），获得 Routing Receipt。
       // source_id=Notion 页 id → 账房自带幂等（同页重放拿回同一 task）。
+      // 2026-09-14 实吃第一单踩出的四个路由参数（work-router 硬校验）：
+      // source 枚举无 notion_tasks_db → 归 inbox（主理人收件箱语义）；
+      // mutation_intent 必填（排单默认 write）；repo_hint 必须唯一匹配仓库事实。
       const routed = await createRoutedTask(pool, {
-        source: 'notion_tasks_db',
+        source: 'inbox',
         source_id: page.id,
         title,
         description: '来自 Notion Tasks 编排（主理人排单）',
         requested_task_type: 'dev',
         declared_change_kind: 'capability_change',
+        mutation_intent: 'write',
+        repo_hint: 'cecelia',
         metadata: { source: 'notion_tasks_db', notion_page_id: page.id },
         map_scope_hint: ['F2', 'execution_pool'],
         task: { priority, status: 'queued' },
@@ -352,6 +357,7 @@ async function pullNotionTasks(pool, token) {
       // 反手改用户设的 Delegated）。map 刀后由 unblock 放行。
       await pool.query(
         `UPDATE tasks SET status='blocked',
+                blocked_at=NOW(),
                 error_message='awaiting_execution_route: map 扫描器迁移后由 unblock 放行',
                 notion_id=$2,
                 notion_props = COALESCE(notion_props,'{}'::jsonb)
