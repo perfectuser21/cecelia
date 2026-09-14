@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.290.1
+**Brain 版本**: 1.291.0
 
 ## 1.283.0
 
@@ -48,6 +48,10 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.291.0 — 排单分流 OpenClaw（执行方路由）
+
+- feat(brain): Notion Tasks「执行方」select 路由——OpenClaw·悦升获客/金诺获客 直接注入 run_id(内嵌 pageid32) POST hk-vps n8n V4 获客画布，回执「▶已派发 run:…」并推 In Progress；ops_runs 终态反解 page 推 Done/Cancelled；Cecelia编码/空 走既有编码路线。compose 挂 /opt/openclaw/dispatch:ro + N8N_V4_WEBHOOK_URL
 
 ## Brain 1.290.1 — 排单接手路由参数修正
 
