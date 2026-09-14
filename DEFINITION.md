@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.292.1
+**Brain 版本**: 1.292.2
 
 ## 1.283.0
 
@@ -48,6 +48,11 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.292.2 — OpenClaw 采集腿改本机直取（容器已迁 us-vps）
+
+- 旧命令 ssh hk-vps 找 openclaw-gateway 在 09-12 容器迁移后必然 No such container，腿常年 unreachable
+- 改经挂载 docker.sock 本机 docker exec 直取；host_alias 账随 migration 445 迁 us-vps（保 notion_id）
 
 ## Brain 1.292.1 — 修 syncOpenClawRuns 引用不存在列 finished_at
 
