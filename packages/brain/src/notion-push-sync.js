@@ -1,6 +1,6 @@
 import { notionReq, getToken } from './recurring-notion-sync.js';
 import { createRoutedTask } from './work-routing-store.js';
-import { execSync as nodeExecSync } from 'child_process';
+import { execFileSync as nodeExecFileSync } from 'child_process';
 import { sshTargetFor } from './machine-registry.js';
 import { readFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
@@ -422,6 +422,15 @@ export async function runNotionTaskPull(pool) {
   await reapSshWorkflowRuns(pool, token);
 }
 
+// ssh 直派公共参数：execFile 数组形式，本地不经 shell（CodeQL js/command-line-injection 面）
+const SSH_BASE_ARGS = Object.freeze([
+  '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'BatchMode=yes',
+  '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=no',
+]);
+function defaultSshExec(args) {
+  return nodeExecFileSync('ssh', args, { encoding: 'utf8', timeout: 30_000 });
+}
+
 // 状态回执尾巴（⚠/⏸/🕐/▶）可被下一轮覆盖——剥离后再拼，防 desc 滚雪球
 const STATUS_TAIL_RE = /\s*·?\s*(?:▶ 已派发|⚠ 派发[未失][成败]|⏸ 排队|🕐 已排期)[\s\S]*$/;
 function stripStatusTail(desc) {
@@ -500,10 +509,12 @@ async function dispatchOpenClawFromNotion({
     const exitPath = `~/brain-runs/${runIdSsh}.exit`;
     const logPath = `~/brain-runs/${runIdSsh}.log`;
     const remote = `mkdir -p ~/brain-runs && nohup sh -c '${command.replace(/'/g, `'\\''`)}; echo $? > ${exitPath}' > ${logPath} 2>&1 & echo DISPATCHED`;
-    const sshCmd = `ssh -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${target} ${JSON.stringify(remote)}`;
-    const execFn = execFnIn ?? ((cmd) => nodeExecSync(cmd, { encoding: 'utf8', timeout: 30_000 }));
+    // execFile 参数数组：remote 作为 ssh 的单个 argv 传递，本地 shell 零解释
+    // （dispatch.command 本就是"要执行的命令"数据行，写入权=运维权；这里只堵本地注入面）
+    const sshArgs = [...SSH_BASE_ARGS, target, remote];
+    const execFn = execFnIn ?? defaultSshExec;
     try {
-      execFn(sshCmd);
+      execFn(sshArgs);
     } catch (err) {
       return failReceipt(`ssh_dispatch_failed(${machine}): ${String(err.message).slice(0, 60)}`);
     }
@@ -605,7 +616,7 @@ async function dispatchOpenClawFromNotion({
  */
 const SSH_RUN_TIMEOUT_MS = 6 * 3600_000;
 async function reapSshWorkflowRuns(pool, token, opts = {}) {
-  const execFn = opts.execFn ?? ((cmd) => nodeExecSync(cmd, { encoding: 'utf8', timeout: 20_000 }));
+  const execFn = opts.execFn ?? defaultSshExec;
   let rows;
   try {
     ({ rows } = await pool.query(`
@@ -624,7 +635,7 @@ async function reapSshWorkflowRuns(pool, token, opts = {}) {
       let exitCode = null;
       try {
         const target = sshTargetFor(r.machine);
-        const out = execFn(`ssh -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${target} "cat ~/brain-runs/${r.run_id}.exit 2>/dev/null || echo NO_EXIT"`);
+        const out = execFn([...SSH_BASE_ARGS, target, `cat ~/brain-runs/${r.run_id}.exit 2>/dev/null || echo NO_EXIT`]);
         const trimmed = String(out).trim();
         if (/^\d+$/.test(trimmed)) exitCode = parseInt(trimmed, 10);
       } catch (err) {

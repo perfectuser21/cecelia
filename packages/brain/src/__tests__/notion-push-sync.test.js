@@ -716,7 +716,7 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
     ));
     await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
       env: {}, readTemplateFn: () => ({}),
-      execFn: (cmd) => { execCalls.push(cmd); return 'DISPATCHED'; },
+      execFn: (args) => { execCalls.push(Array.isArray(args) ? args.join(' ') : args); return 'DISPATCHED'; },
     });
     expect(globalThis.fetch).not.toHaveBeenCalled(); // 不走 webhook
     expect(execCalls.length).toBe(1);
@@ -744,7 +744,7 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
       String(path).includes('/query') ? { results: [relationPage({ withAgent: false })] } : {}
     ));
     await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
-      env: {}, readTemplateFn: () => ({}), execFn: (cmd) => { execCalls.push(cmd); return ''; },
+      env: {}, readTemplateFn: () => ({}), execFn: (args) => { execCalls.push(args); return ''; },
     });
     expect(execCalls.length).toBe(0);
     expect(mockCreateRoutedTask).not.toHaveBeenCalled();
@@ -767,7 +767,8 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
       }
       return { rows: [] };
     });
-    const execFn = (cmd) => {
+    const execFn = (args) => {
+      const cmd = args.join(' ');
       if (cmd.includes(pageOk)) return '0\n';
       if (cmd.includes(pageBad)) return '1\n';
       return '';
