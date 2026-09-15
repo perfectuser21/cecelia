@@ -38,6 +38,7 @@ export const MACHINES = Object.freeze([
     publicIp: '38.23.47.81',
     role: '主力研发机',
     isLocal: true,
+    sshUser: 'administrator',
     machineRole: MACHINE_ROLES.PRIMARY,
   },
   {
@@ -128,4 +129,16 @@ export function workerBridgeUrlFor(machineId, env = process.env) {
   if (env[envKey]) return env[envKey];
   if (!machine.tailscaleIp) return null;
   return `http://${machine.tailscaleIp}:5231`;
+}
+
+/**
+ * ssh 直派目标解析：机器 id → 'user@tailscaleIp'。
+ * 排单直驾通道（dispatch.channel='ssh'）用它把「在哪台机干」翻成可执行地址；
+ * 缺 sshUser/tailscaleIp 的机器不可直派，显式抛错而非静默拼坏地址。
+ */
+export function sshTargetFor(machineId) {
+  const m = MACHINES.find((x) => x.id === machineId);
+  if (!m) throw new Error(`ssh_target_unknown_machine:${String(machineId)}`);
+  if (!m.sshUser || !m.tailscaleIp) throw new Error(`ssh_target_not_dispatchable:${machineId}`);
+  return `${m.sshUser}@${m.tailscaleIp}`;
 }

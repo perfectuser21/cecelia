@@ -293,3 +293,4 @@ notion-tasks-pull-smoke.sh
 notion-openclaw-dispatch-smoke.sh
 notion-workflow-relation-smoke.sh
 workflow-run-ledger-smoke.sh
+machine-ssh-dispatch-smoke.sh

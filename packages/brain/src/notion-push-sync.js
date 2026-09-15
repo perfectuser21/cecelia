@@ -1,5 +1,7 @@
 import { notionReq, getToken } from './recurring-notion-sync.js';
 import { createRoutedTask } from './work-routing-store.js';
+import { execSync as nodeExecSync } from 'child_process';
+import { sshTargetFor } from './machine-registry.js';
 import { readFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
@@ -354,6 +356,7 @@ async function pullNotionTasks(pool, token, opts = {}) {
           env: opts.env ?? process.env,
           readTemplateFn: opts.readTemplateFn ?? defaultReadTemplate,
           fetchFn: opts.fetchFn ?? globalThis.fetch,
+          execFn: opts.execFn,
         });
         continue;
       }
@@ -416,6 +419,7 @@ export async function runNotionTaskPull(pool) {
   if (!token) return;
   await pullNotionTasks(pool, token);
   await syncOpenClawRuns(pool, token);
+  await reapSshWorkflowRuns(pool, token);
 }
 
 // 状态回执尾巴（⚠/⏸/🕐/▶）可被下一轮覆盖——剥离后再拼，防 desc 滚雪球
@@ -445,7 +449,7 @@ function defaultReadTemplate(dir, file) {
  * 一切缺配置都写 ⚠ 回执到页面（不含幂等标记，修好配置下轮自动重派）。
  */
 async function dispatchOpenClawFromNotion({
-  pool, token, page, desc, workflowNotionId, agentNotionId, env, readTemplateFn, fetchFn,
+  pool, token, page, desc, workflowNotionId, agentNotionId, env, readTemplateFn, fetchFn, execFn: execFnIn,
 }) {
   const norm = (id) => String(id).replace(/-/g, '');
   const failReceipt = async (why) => {
@@ -480,6 +484,55 @@ async function dispatchOpenClawFromNotion({
     // 文案禁写 run: 前缀——会命中 pull 幂等跳过正则 /run:notion-/，排队行永不重试（09-14 实证死锁）
     await writeStatusReceipt(token, page, desc,
       `⏸ 排队：${wf.name} 在途(${busyRows[0].run_id ?? busyRows[0].id})，完成后自动派发`);
+    return;
+  }
+  // ssh 直派通道（决策 2026-09-15：任务自动填机器直接下派）——直驾线入口。
+  // 派发=目标机 nohup 起后台批，exit code 落 ~/brain-runs/<run_id>.exit 由收割器回收。
+  if (wf.dispatch?.channel === 'ssh') {
+    const machine = wf.dispatch.machine;
+    const command = wf.dispatch.command;
+    if (!machine) return failReceipt(`no_machine：给 ops_workflows(${wf.wf_id}).dispatch 配 machine`);
+    if (!command) return failReceipt(`no_command：给 ops_workflows(${wf.wf_id}).dispatch 配 command`);
+    let target;
+    try { target = sshTargetFor(machine); } catch (err) { return failReceipt(err.message); }
+    const pageId32ssh = String(page.id).replace(/-/g, '');
+    const runIdSsh = `notion-${pageId32ssh}-${Date.now()}`;
+    const exitPath = `~/brain-runs/${runIdSsh}.exit`;
+    const logPath = `~/brain-runs/${runIdSsh}.log`;
+    const remote = `mkdir -p ~/brain-runs && nohup sh -c '${command.replace(/'/g, `'\''`)}; echo $? > ${exitPath}' > ${logPath} 2>&1 & echo DISPATCHED`;
+    const sshCmd = `ssh -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${target} ${JSON.stringify(remote)}`;
+    const execFn = execFnIn ?? ((cmd) => nodeExecSync(cmd, { encoding: 'utf8', timeout: 30_000 }));
+    try {
+      execFn(sshCmd);
+    } catch (err) {
+      return failReceipt(`ssh_dispatch_failed(${machine}): ${String(err.message).slice(0, 60)}`);
+    }
+    try {
+      await createRoutedTask(pool, {
+        source: 'inbox',
+        source_id: runIdSsh,
+        title: `[run] ${wf.name}@${machine}`,
+        description: '来自 Notion 排单的直驾 run（ssh 直派）',
+        mutation_intent: 'none',
+        declared_domain: 'operations',
+        requested_task_type: 'workflow_run',
+        metadata: {
+          run_id: runIdSsh, wf_id: wf.wf_id, channel: 'ssh', machine,
+          notion_page_id: page.id, exit_path: `brain-runs/${runIdSsh}.exit`,
+        },
+        task: { status: 'in_progress', priority: 'P2' },
+      });
+    } catch (err) {
+      console.warn(`[notion-pull] ssh 直派入账失败（不阻塞）: ${err.message}`);
+    }
+    const baseSsh = stripStatusTail(desc);
+    await notionReq(token, `/pages/${page.id}`, 'PATCH', {
+      properties: {
+        Description: { rich_text: [{ type: 'text', text: { content: `${baseSsh ? baseSsh + ' · ' : ''}▶ 已派发 ${wf.name}@${machine} run:${runIdSsh}`.slice(0, 1900) } }] },
+        Status: { status: { name: 'In Progress' } },
+      },
+    });
+    console.log(`[notion-pull] ssh 直派成功 ${wf.wf_id}@${machine} run=${runIdSsh}`);
     return;
   }
   const webhookUrl = wf.dispatch?.webhook_url || env.N8N_V4_WEBHOOK_URL;
@@ -542,6 +595,72 @@ async function dispatchOpenClawFromNotion({
   if (ok) properties.Status = { status: { name: 'In Progress' } };
   await notionReq(token, `/pages/${page.id}`, 'PATCH', { properties });
   console.log(`[notion-pull] OpenClaw 派发${ok ? '成功' : '失败'} ${executorLabel} run=${runId}`);
+}
+
+/**
+ * ssh 直派收割器：轮询 in_progress 的 ssh 型 workflow_run，去目标机读
+ * ~/brain-runs/<run_id>.exit —— 有 exit code 即收账（0→completed/Done，
+ * 非零→failed/Cancelled）；无 exit 且开跑超 6 小时判 failed(timeout)。
+ * 目标机零反向依赖：不需要它能回连 Brain，收割是 Brain 主动伸手。
+ */
+const SSH_RUN_TIMEOUT_MS = 6 * 3600_000;
+async function reapSshWorkflowRuns(pool, token, opts = {}) {
+  const execFn = opts.execFn ?? ((cmd) => nodeExecSync(cmd, { encoding: 'utf8', timeout: 20_000 }));
+  let rows;
+  try {
+    ({ rows } = await pool.query(`
+      SELECT id, payload->>'run_id' AS run_id, payload->>'machine' AS machine,
+             payload->>'notion_page_id' AS notion_page_id, created_at
+        FROM tasks
+       WHERE task_type='workflow_run' AND status='in_progress'
+         AND payload->>'channel' = 'ssh'
+       LIMIT 20`));
+  } catch (err) {
+    console.warn(`[notion-pull] ssh 收割查询失败: ${err.message}`);
+    return;
+  }
+  for (const r of rows ?? []) {
+    try {
+      let exitCode = null;
+      try {
+        const target = sshTargetFor(r.machine);
+        const out = execFn(`ssh -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${target} "cat ~/brain-runs/${r.run_id}.exit 2>/dev/null || echo NO_EXIT"`);
+        const trimmed = String(out).trim();
+        if (/^\d+$/.test(trimmed)) exitCode = parseInt(trimmed, 10);
+      } catch (err) {
+        console.warn(`[notion-pull] ssh 收割 ${r.run_id} 探测失败: ${err.message}`);
+      }
+      let status = null;
+      let note = '';
+      if (exitCode !== null) {
+        status = exitCode === 0 ? 'completed' : 'failed';
+        note = `exit=${exitCode}`;
+      } else if (Date.now() - new Date(r.created_at).getTime() > SSH_RUN_TIMEOUT_MS) {
+        status = 'failed';
+        note = 'timeout>6h';
+      }
+      if (!status) continue;
+      await pool.query(
+        `UPDATE tasks SET status=$2,
+                result = COALESCE(result,'{}'::jsonb) || jsonb_build_object('run_status', $3::text),
+                updated_at=NOW()
+          WHERE id=$1 AND status='in_progress'`,
+        [r.id, status, note],
+      );
+      if (r.notion_page_id) {
+        await notionReq(token, `/pages/${r.notion_page_id}`, 'PATCH', {
+          properties: { Status: { status: { name: status === 'completed' ? 'Done' : 'Cancelled' } } },
+        }).catch((err) => console.warn(`[notion-pull] ssh 收割回写 ${r.notion_page_id} 失败: ${err.message}`));
+      }
+      console.log(`[notion-pull] ssh 收割 ${r.run_id} → ${status}(${note})`);
+    } catch (err) {
+      console.warn(`[notion-pull] ssh 收割 ${r.run_id} 失败: ${err.message}`);
+    }
+  }
+}
+
+export async function reapSshWorkflowRunsForTest(pool, token, opts = {}) {
+  return reapSshWorkflowRuns(pool, token, opts);
 }
 
 /** OpenClaw run 终态 → 反解 page id 推 Notion Status（Done/Cancelled） */
