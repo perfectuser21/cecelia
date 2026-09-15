@@ -614,14 +614,14 @@ async function dispatchOpenClawFromNotion({
  * 非零→failed/Cancelled）；无 exit 且开跑超 6 小时判 failed(timeout)。
  * 目标机零反向依赖：不需要它能回连 Brain，收割是 Brain 主动伸手。
  */
-const SSH_RUN_TIMEOUT_MS = 6 * 3600_000;
 async function reapSshWorkflowRuns(pool, token, opts = {}) {
   const execFn = opts.execFn ?? defaultSshExec;
   let rows;
   try {
     ({ rows } = await pool.query(`
       SELECT id, payload->>'run_id' AS run_id, payload->>'machine' AS machine,
-             payload->>'notion_page_id' AS notion_page_id, created_at
+             payload->>'notion_page_id' AS notion_page_id,
+             (created_at < NOW() - INTERVAL '6 hours') AS is_stale
         FROM tasks
        WHERE task_type='workflow_run' AND status='in_progress'
          AND payload->>'channel' = 'ssh'
@@ -646,7 +646,8 @@ async function reapSshWorkflowRuns(pool, token, opts = {}) {
       if (exitCode !== null) {
         status = exitCode === 0 ? 'completed' : 'failed';
         note = `exit=${exitCode}`;
-      } else if (Date.now() - new Date(r.created_at).getTime() > SSH_RUN_TIMEOUT_MS) {
+      } else if (r.is_stale) {
+        // 时区案（2026-09-15）：判据在 SQL 内比较，禁 JS 解析无时区 created_at
         status = 'failed';
         note = 'timeout>6h';
       }
