@@ -12,7 +12,11 @@ import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync } 
 export const DOCTRINE_MARK = '## 跑场下放铁律';
 const STATE = '/opt/openclaw/state';
 const WORKSPACES = '/opt/openclaw/workspaces-root';
-const MEM_LIMIT_MB = 1400;
+// 2026-09-16 escort 误伤案校正：网关多会话正常工作态 1.4-1.7G（夜间值守更高），
+// 旧阈值 1400 把正常体温当泄漏一天误摁 9 次、打断在跑 escort。默认抬到 2000，
+// 容器 cgroup 硬顶同步抬 2.29G（阈值必须 < 硬顶，否则守卫永远抢不到 OOM 前面）。
+// env 可调免发版；真泄漏判据改由 memlog 观测线甄别（会话归零后不回落=真漏）。
+const MEM_LIMIT_MB = parseInt(process.env.OPENCLAW_MEM_LIMIT_MB || '2000', 10);
 const RUNNERS = Object.freeze([
   { name: 'MMV', ip: '100.71.151.105', user: 'administrator' },
   { name: 'XIAN-M4', ip: '100.86.57.69', user: 'jinnuoshengyuan' },
@@ -27,8 +31,8 @@ export function parseMemMB(s) {
 }
 
 /** 判定 agent 的 cron 在整/半点执行（±3min）——该窗口内顺延重启 */
-export function memGuardDecision({ mb, minute }) {
-  if (mb == null || mb < MEM_LIMIT_MB) return 'ok';
+export function memGuardDecision({ mb, minute, limitMb = MEM_LIMIT_MB }) {
+  if (mb == null || mb < limitMb) return 'ok';
   if (minute >= 57 || minute <= 3 || (minute >= 27 && minute <= 33)) return 'defer';
   return 'restart';
 }
@@ -127,6 +131,14 @@ export async function runOpenclawGuards(_pool, opts = {}) {
     const raw = io.exec('docker', ['stats', '--no-stream', '--format', '{{.MemUsage}}', 'openclaw-gateway']);
     const mb = parseMemMB(String(raw).split('/')[0]);
     const decision = memGuardDecision({ mb, minute: io.now().getMinutes() });
+    // 泄漏甄别观测线（escort 案后立）：会话数归零后 mem 不回落基线才是真泄漏。
+    try {
+      const ps = io.exec('docker', ['top', 'openclaw-gateway', '-eo', 'comm']);
+      const lines = String(ps).split('\n');
+      const sessions = lines.filter((l) => /^openclaw$/.test(l.trim())).length;
+      const mcp = lines.filter((l) => l.includes('node')).length;
+      io.log(`memlog mem=${mb}MB sessions=${sessions} nodeprocs=${mcp} decision=${decision}`);
+    } catch { /* 观测失败不影响守卫 */ }
     if (decision === 'restart') {
       io.log(`gateway 内存 ${mb}MB 超阈，温和重启回收泄漏`);
       io.exec('docker', ['restart', 'openclaw-gateway'], { timeout: 120_000 });
