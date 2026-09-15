@@ -36,3 +36,12 @@ describe('machine-registry（角色模型 SSOT）', () => {
     expect(listComputeWorkerIds()).not.toContain('us-vps');
   });
 });
+
+describe('sshTargetFor（ssh 直派路由）', () => {
+  it('机器 id → user@tailscaleIp；未知机器/不可直派显式抛错', async () => {
+    const { sshTargetFor } = await import('../machine-registry.js');
+    expect(sshTargetFor('xian-mac-m4')).toBe('jinnuoshengyuan@100.86.57.69');
+    expect(sshTargetFor('us-mac-m4')).toBe('administrator@100.71.151.105');
+    expect(() => sshTargetFor('no-such')).toThrow(/ssh_target_unknown_machine/);
+  });
+});

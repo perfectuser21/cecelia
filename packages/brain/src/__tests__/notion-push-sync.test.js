@@ -699,6 +699,109 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
     expect(runsSql).toContain('stopped_at');
   });
 
+  it('ssh 直派通道：dispatch.channel=ssh → ssh 目标机 nohup 执行，不 POST webhook，入账带 machine', async () => {
+    // 决策 2026-09-15：任务默认自动填机器直接下派——直驾线（cron+adb 脚本）接进排单
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn());
+    stubOpsLookup({
+      wfRow: { wf_id: 'JinoHarvestDirect', name: '金诺采收·直驾', dispatch: {
+        channel: 'ssh', machine: 'xian-mac-m4',
+        command: 'zsh ~/bin-harvest/batch-harvest.sh jinoshengyuan-work ~/words.txt rvX',
+      } },
+    });
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'wf-task-ssh' } });
+    const execCalls = [];
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [relationPage({ withAgent: false })] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({}),
+      execFn: (args) => { execCalls.push(Array.isArray(args) ? args.join(' ') : args); return 'DISPATCHED'; },
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled(); // 不走 webhook
+    expect(execCalls.length).toBe(1);
+    const cmd = execCalls[0];
+    expect(cmd).toContain('jinnuoshengyuan@100.86.57.69'); // machine-registry 路由出目标
+    expect(cmd).toContain('nohup');
+    expect(cmd).toContain('batch-harvest.sh');
+    expect(cmd).toMatch(/brain-runs\/notion-[0-9a-f]+-\d+\.exit/); // exit 回执文件
+    const req = mockCreateRoutedTask.mock.calls[0][1];
+    expect(req.requested_task_type).toBe('workflow_run');
+    expect(req.metadata.channel).toBe('ssh');
+    expect(req.metadata.machine).toBe('xian-mac-m4');
+    const patch = mockNotionReq.mock.calls.find((c) => c[2] === 'PATCH');
+    const pj = JSON.stringify(patch[3]);
+    expect(pj).toContain('已派发');
+    expect(pj).toContain('In Progress');
+  });
+
+  it('ssh 直派缺 command → ⚠ 回执提示配置缺口，不执行', async () => {
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn());
+    stubOpsLookup({ wfRow: { wf_id: 'X', name: 'X', dispatch: { channel: 'ssh', machine: 'xian-mac-m4' } } });
+    const execCalls = [];
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [relationPage({ withAgent: false })] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({}), execFn: (args) => { execCalls.push(args); return ''; },
+    });
+    expect(execCalls.length).toBe(0);
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+    const patch = mockNotionReq.mock.calls.find((c) => c[2] === 'PATCH');
+    expect(JSON.stringify(patch[3])).toContain('no_command');
+  });
+
+  it('ssh 直派收割：exit=0 → task completed + Notion Done；exit=1 → failed + Cancelled', async () => {
+    const mod = await import('../notion-push-sync.js');
+    const sqls = [];
+    const pageOk = '3dbc40c2ba63809392bfdc952f9a1079';
+    const pageBad = '3dbc40c2ba63809392bfdc952f9a1080';
+    mockQuery.mockImplementation(async (sql, params) => {
+      sqls.push({ sql: String(sql), params });
+      if (/payload->>'channel' = 'ssh'/.test(sql) && /SELECT/.test(sql)) {
+        return { rows: [
+          { id: 't-ok', run_id: `notion-${pageOk}-1`, machine: 'xian-mac-m4', notion_page_id: '3dbc40c2-ba63-8093-92bf-dc952f9a1079', created_at: new Date().toISOString() },
+          { id: 't-bad', run_id: `notion-${pageBad}-1`, machine: 'xian-mac-m4', notion_page_id: '3dbc40c2-ba63-8093-92bf-dc952f9a1080', created_at: new Date().toISOString() },
+        ] };
+      }
+      return { rows: [] };
+    });
+    const execFn = (args) => {
+      const cmd = args.join(' ');
+      if (cmd.includes(pageOk)) return '0\n';
+      if (cmd.includes(pageBad)) return '1\n';
+      return '';
+    };
+    await mod.reapSshWorkflowRunsForTest({ query: mockQuery }, 'fake-token', { execFn });
+    const updOk = sqls.find((q) => /UPDATE tasks/.test(q.sql) && q.params?.includes('t-ok'));
+    expect(updOk.params).toContain('completed');
+    const updBad = sqls.find((q) => /UPDATE tasks/.test(q.sql) && q.params?.includes('t-bad'));
+    expect(updBad.params).toContain('failed');
+    const patches = mockNotionReq.mock.calls.filter((c) => c[2] === 'PATCH');
+    expect(JSON.stringify(patches.find((c) => c[1].includes('1079'))[3])).toContain('Done');
+    expect(JSON.stringify(patches.find((c) => c[1].includes('1080'))[3])).toContain('Cancelled');
+  });
+
+  it('ssh 直派收割：无 exit 文件未超时不动；超 6 小时判 failed(timeout)', async () => {
+    const mod = await import('../notion-push-sync.js');
+    const sqls = [];
+    mockQuery.mockImplementation(async (sql, params) => {
+      sqls.push({ sql: String(sql), params });
+      if (/payload->>'channel' = 'ssh'/.test(sql) && /SELECT/.test(sql)) {
+        return { rows: [
+          { id: 't-young', run_id: 'notion-aaaa-1', machine: 'xian-mac-m4', notion_page_id: null, created_at: new Date().toISOString() },
+          { id: 't-stale', run_id: 'notion-bbbb-1', machine: 'xian-mac-m4', notion_page_id: null, created_at: new Date(Date.now() - 7 * 3600_000).toISOString() },
+        ] };
+      }
+      return { rows: [] };
+    });
+    await mod.reapSshWorkflowRunsForTest({ query: mockQuery }, 'fake-token', { execFn: () => 'NO_EXIT' });
+    expect(sqls.some((q) => /UPDATE tasks/.test(q.sql) && q.params?.includes('t-young'))).toBe(false);
+    const stale = sqls.find((q) => /UPDATE tasks/.test(q.sql) && q.params?.includes('t-stale'));
+    expect(stale.params).toContain('failed');
+  });
+
   it('派发成功即入 tasks 账：workflow_run task（operations 路线，payload 含 run_id/wf_id）', async () => {
     // 一切执行进 tasks 账（决策 2dbabb48）：OpenClaw run 不再绕账
     const mod = await import('../notion-push-sync.js');
