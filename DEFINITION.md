@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.293.1
+**Brain 版本**: 1.294.0
 
 ## 1.283.0
 
@@ -48,6 +48,12 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.294.0 — 机器路由 ssh 直派：排单自动填机器直接下派
+
+- dispatch 新通道 channel=ssh：machine+command 落数据行，Brain 经 machine-registry sshTargetFor 路由到目标机 nohup 起批（直驾线接进 Notion 排单）
+- 收割器 reapSshWorkflowRuns：轮询读目标机 ~/brain-runs/<run_id>.exit 收账（0→Done/非零→Cancelled/超 6h timeout），目标机零反向依赖
+- machine-registry 补 us-mac-m4 sshUser；workflow_run 账带 channel/machine 维度
 
 ## Brain 1.293.1 — 修排班员 ⏸ 回执污染幂等标记致队列死锁
 
