@@ -761,8 +761,8 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
       sqls.push({ sql: String(sql), params });
       if (/payload->>'channel' = 'ssh'/.test(sql) && /SELECT/.test(sql)) {
         return { rows: [
-          { id: 't-ok', run_id: `notion-${pageOk}-1`, machine: 'xian-mac-m4', notion_page_id: '3dbc40c2-ba63-8093-92bf-dc952f9a1079', created_at: new Date().toISOString() },
-          { id: 't-bad', run_id: `notion-${pageBad}-1`, machine: 'xian-mac-m4', notion_page_id: '3dbc40c2-ba63-8093-92bf-dc952f9a1080', created_at: new Date().toISOString() },
+          { id: 't-ok', run_id: `notion-${pageOk}-1`, machine: 'xian-mac-m4', notion_page_id: '3dbc40c2-ba63-8093-92bf-dc952f9a1079', is_stale: false },
+          { id: 't-bad', run_id: `notion-${pageBad}-1`, machine: 'xian-mac-m4', notion_page_id: '3dbc40c2-ba63-8093-92bf-dc952f9a1080', is_stale: false },
         ] };
       }
       return { rows: [] };
@@ -783,15 +783,18 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
     expect(JSON.stringify(patches.find((c) => c[1].includes('1080'))[3])).toContain('Cancelled');
   });
 
-  it('ssh 直派收割：无 exit 文件未超时不动；超 6 小时判 failed(timeout)', async () => {
+  it('ssh 直派收割：超时判据在 SQL 内算（is_stale），禁 JS 解析 created_at（时区案）', async () => {
+    // 2026-09-15 生产实证：created_at 无时区字符串被 UTC 容器错解（LA 差 7h），
+    // 刚派发的 run 被误判 timeout>6h 收成 failed。判据必须 DB 内比较。
     const mod = await import('../notion-push-sync.js');
     const sqls = [];
     mockQuery.mockImplementation(async (sql, params) => {
       sqls.push({ sql: String(sql), params });
       if (/payload->>'channel' = 'ssh'/.test(sql) && /SELECT/.test(sql)) {
+        expect(sql).toMatch(/INTERVAL '6 hours'/); // 判据在 SQL
         return { rows: [
-          { id: 't-young', run_id: 'notion-aaaa-1', machine: 'xian-mac-m4', notion_page_id: null, created_at: new Date().toISOString() },
-          { id: 't-stale', run_id: 'notion-bbbb-1', machine: 'xian-mac-m4', notion_page_id: null, created_at: new Date(Date.now() - 7 * 3600_000).toISOString() },
+          { id: 't-young', run_id: 'notion-aaaa-1', machine: 'xian-mac-m4', notion_page_id: null, is_stale: false },
+          { id: 't-stale', run_id: 'notion-bbbb-1', machine: 'xian-mac-m4', notion_page_id: null, is_stale: true },
         ] };
       }
       return { rows: [] };
