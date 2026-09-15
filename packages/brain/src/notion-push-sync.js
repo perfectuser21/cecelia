@@ -499,7 +499,7 @@ async function dispatchOpenClawFromNotion({
     const runIdSsh = `notion-${pageId32ssh}-${Date.now()}`;
     const exitPath = `~/brain-runs/${runIdSsh}.exit`;
     const logPath = `~/brain-runs/${runIdSsh}.log`;
-    const remote = `mkdir -p ~/brain-runs && nohup sh -c '${command.replace(/'/g, `'\''`)}; echo $? > ${exitPath}' > ${logPath} 2>&1 & echo DISPATCHED`;
+    const remote = `mkdir -p ~/brain-runs && nohup sh -c '${command.replace(/'/g, `'\\''`)}; echo $? > ${exitPath}' > ${logPath} 2>&1 & echo DISPATCHED`;
     const sshCmd = `ssh -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${target} ${JSON.stringify(remote)}`;
     const execFn = execFnIn ?? ((cmd) => nodeExecSync(cmd, { encoding: 'utf8', timeout: 30_000 }));
     try {
