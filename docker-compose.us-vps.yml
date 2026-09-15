@@ -191,15 +191,18 @@ services:
       # FLEET_WORKER_US_MAC_M4_URL 已于 2026-09-13 就地改成真实地址（见上），不再属于此遗留：
       # 实测 .env.docker 里从未定义过它，所以「必须显式覆盖」这条从来没被兑现，默认值一直生效。
     # compose standalone cgroup 限额（deploy.resources 只在 Docker Swarm 模式生效）
-    # 容器 memory cap 必须 ≥ 运行时 node 堆上限 + 容器开销余量。
-    # Dockerfile CMD: node --max-old-space-size=3072 → 3G 堆；4G = 3G 堆 + ~1G 容器/native 开销。
-    mem_limit: 4g
+    # us-vps 零执行铁律物理闸（决策 95477a66）：宿主仅 3.8G，原 4g limit > 整机 = 零保护，
+    # Brain 失控可拖死全机。收紧至 2.5g——Brain 常态数百 MB，2.5G 已是 5 倍余量；
+    # node 堆上限仍为 3072（Dockerfile CMD），极端下堆超 2.5G 会被 cgroup 硬杀并由
+    # restart 拉起（in_progress 恢复机制已有）——宁可 Brain 单死重启，不可整机陪葬。
+    # debt: 后续把 CMD 堆参数对齐到 2048 以恢复"先 GC 后杀"的正常次序。
+    mem_limit: 2.5g
     mem_reservation: 1g
     cpus: 2.0
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: 2.5G
           cpus: '2'
         reservations:
           memory: 1G
