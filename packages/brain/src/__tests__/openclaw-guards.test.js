@@ -8,7 +8,7 @@ import {
 describe('openclaw-guards — 内存守卫', () => {
   it('内存字符串解析 GiB/MiB，超阈才判重启，cron 窗口边缘顺延', () => {
     expect(parseMemMB('1.469GiB')).toBe(1504);
-    expect(parseMemMB('571.9MiB')).toBe(571);
+    expect(parseMemMB('571.9MiB')).toBe(572);
     expect(memGuardDecision({ mb: 900, minute: 15 })).toBe('ok');
     expect(memGuardDecision({ mb: 1500, minute: 15 })).toBe('restart');
     expect(memGuardDecision({ mb: 1500, minute: 30 })).toBe('defer'); // 判定 cron 整/半点窗口

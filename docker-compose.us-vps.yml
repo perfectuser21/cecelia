@@ -42,6 +42,9 @@ services:
       - /root/zenithjoy-skills-dist:/root/zenithjoy-skills-dist:ro
       # OpenClaw 排单模板（Notion 执行方分流 → n8n V4 获客画布，2026-09-14）
       - /opt/openclaw/dispatch:/opt/openclaw/dispatch:ro
+      # openclaw-guards（决策 95477a66 收编）：守卫 job 需要读写网关配置/路由 conf/agent 教义
+      - /opt/openclaw/state:/opt/openclaw/state
+      - /opt/openclaw/workspaces-root:/opt/openclaw/workspaces-root
       # 凭据：DB/内部服务凭据 SSOT。下方 environment 段显式 override HOME=/root，
       # 这样 Brain os.homedir() 才能解析到这里挂载的真实路径（Dockerfile 镜像烙入的
       # ENV HOME=/Users/administrator 是 macOS 专属值，此前一直未被 override，
