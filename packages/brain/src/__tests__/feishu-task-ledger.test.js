@@ -258,13 +258,11 @@ describe('飞书 API 客户端', () => {
     ];
     let n = 0;
     const urls = [];
-    const fetchFn = async (url) => { urls.push(url); return jsonRes(pages[n]); };
-    const origFetch = async (url) => { urls.push(url); const r = jsonRes(pages[n]); n += 1; return r; };
-    const out = await fetchGroupMessages({ fetchFn: origFetch, token: 'tk', chatId: 'c1', startTimeSec: 100 });
+    const fetchFn = async (url) => { urls.push(url); const r = jsonRes(pages[n]); n += 1; return r; };
+    const out = await fetchGroupMessages({ fetchFn, token: 'tk', chatId: 'c1', startTimeSec: 100 });
     expect(out.map((m) => m.message_id)).toEqual(['m1', 'm2']);
     expect(urls[0]).toContain('start_time=100');
     expect(urls[1]).toContain('page_token=p2');
-    expect(typeof fetchFn).toBe('function');
   });
 
   it('fetchGroupMessages 遇到 API 错误码抛错', async () => {

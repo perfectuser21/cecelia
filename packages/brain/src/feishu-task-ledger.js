@@ -182,3 +182,45 @@ export async function classifyCandidates(groups, { callLLM }) {
     .map((g, i) => ({ ...g, classification: types[i] }))
     .filter((g) => g.classification === 'task');
 }
+
+const FEISHU_BASE = 'https://open.feishu.cn/open-apis';
+
+async function feishuJson(fetchFn, url, init) {
+  const res = await fetchFn(url, init);
+  const body = await res.json();
+  if (body?.code !== 0) {
+    throw new Error(`feishu_api_error: ${body?.msg ?? 'unknown'} (code=${body?.code})`);
+  }
+  return body;
+}
+
+export async function fetchTenantToken({ fetchFn, appId, appSecret }) {
+  const body = await feishuJson(fetchFn, `${FEISHU_BASE}/auth/v3/tenant_access_token/internal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+  });
+  return body.tenant_access_token;
+}
+
+/** bot 自身 open_id——身份判定只认它，显示名可被改 */
+export async function fetchBotOpenId({ fetchFn, token }) {
+  const body = await feishuJson(fetchFn, `${FEISHU_BASE}/bot/v3/info`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return body?.bot?.open_id ?? null;
+}
+
+export async function fetchGroupMessages({ fetchFn, token, chatId, startTimeSec }) {
+  const out = [];
+  let pageToken = null;
+  do {
+    let url = `${FEISHU_BASE}/im/v1/messages?container_id_type=chat&container_id=${chatId}`
+      + `&page_size=50&sort_type=ByCreateTimeDesc&start_time=${startTimeSec}`;
+    if (pageToken) url += `&page_token=${pageToken}`;
+    const body = await feishuJson(fetchFn, url, { headers: { Authorization: `Bearer ${token}` } });
+    out.push(...(body.data?.items ?? []));
+    pageToken = body.data?.has_more ? body.data?.page_token : null;
+  } while (pageToken);
+  return out;
+}
