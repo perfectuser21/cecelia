@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.298.1
+**Brain 版本**: 1.298.2
 
 ## 1.283.0
 
@@ -48,6 +48,12 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.298.2 — 飞书交办入账修两处静默错判
+
+- **证据覆盖窗口**：OpenClaw 会清理老 `task_runs`（实测只保 7 天），而归集回溯 14 天。早于最早一条 run 的消息「查不到执行记录」只说明记录被清了，不代表没人干——原实现照判 `dropped`，会往主理人账本灌一批假的「派了没人管」。新增 `resolveEvidenceFloor()` 取 run 最早时间戳为下界，早于下界一律判 `unknown` 不入账；回溯默认收敛到 7 天与 run 保留期对齐。
+- **blocked 必带 blocked_at**：`tasks` 表有 `chk_blocked_at_not_null` 约束，status=blocked 不带 blocked_at 会让整批入账在 INSERT 处报错、`created` 恒为 0（2026-09-16 E2E 实证，两个群同时失败）。
+- smoke 补两道闸并均 proven-to-fire（注入缺陷各自报红，还原恢复绿）。
 
 ## Brain 1.298.1 — 飞书交办入账去 LLM 化 + 修 mentions 漏判
 
