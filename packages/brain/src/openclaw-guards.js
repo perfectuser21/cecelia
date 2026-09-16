@@ -10,6 +10,9 @@ import { execFileSync } from 'child_process';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync } from 'fs';
 
 export const DOCTRINE_MARK = '## 跑场下放铁律';
+// docker top 的 ps args 必须含 pid，否则 daemon 报 "Couldn't find PID field in ps output"
+// （2026-09-16 实证：-eo comm 导致观测线一直空跑，错误被 catch 吞掉）
+export const MEMLOG_PS_ARGS = Object.freeze(['top', 'openclaw-gateway', '-eo', 'pid,comm']);
 const STATE = '/opt/openclaw/state';
 const WORKSPACES = '/opt/openclaw/workspaces-root';
 // 2026-09-16 escort 误伤案校正：网关多会话正常工作态 1.4-1.7G（夜间值守更高），
@@ -85,6 +88,28 @@ export function doctrineSeedPlan({ template, workspaces }) {
     .map((w) => ({ dir: w.dir, append: `\n${doctrine}\n` }));
 }
 
+/**
+ * 触达线活性判据（2026-09-16 空转 22h 静默案）：
+ * 读 xian-m4 ~/outreach.log 尾部，看最近若干 tick 是否「只失败不出单」。
+ * 拟人跳过/无待触达是正常态（idle），不得误报；有成功单即 healthy。
+ */
+export function parseOutreachHealth(logTail) {
+  const lines = String(logTail || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return { verdict: 'unknown', stalledTicks: 0, reason: null };
+  let stalled = 0;
+  let reason = null;
+  for (const l of lines) {
+    if (/单#\d+:/.test(l) || /已发送|发送成功/.test(l)) {
+      return { verdict: 'healthy', stalledTicks: 0, reason: null };
+    }
+    const m = l.match(/话术缺失: (\S+)|发送失败|锁获取失败|异常/);
+    if (m) { stalled += 1; reason = reason || (m[1] ? `NO_SCRIPT(${m[1].replace('NO_SCRIPT ', '')})` : m[0]); }
+  }
+  if (stalled >= 3) return { verdict: 'stalled', stalledTicks: stalled, reason };
+  if (stalled > 0) return { verdict: 'degraded', stalledTicks: stalled, reason };
+  return { verdict: 'idle', stalledTicks: 0, reason: null };
+}
+
 export function pickRunner(probeFn) {
   for (const r of RUNNERS) {
     if (probeFn(`${r.user}@${r.ip}`)) return r;
@@ -133,7 +158,7 @@ export async function runOpenclawGuards(_pool, opts = {}) {
     const decision = memGuardDecision({ mb, minute: io.now().getMinutes() });
     // 泄漏甄别观测线（escort 案后立）：会话数归零后 mem 不回落基线才是真泄漏。
     try {
-      const ps = io.exec('docker', ['top', 'openclaw-gateway', '-eo', 'comm']);
+      const ps = io.exec('docker', MEMLOG_PS_ARGS);
       const lines = String(ps).split('\n');
       const sessions = lines.filter((l) => /^openclaw$/.test(l.trim())).length;
       const mcp = lines.filter((l) => l.includes('node')).length;
@@ -196,6 +221,23 @@ export async function runOpenclawGuards(_pool, opts = {}) {
       io.log('全部跑场不可达，保持现状');
     }
   } catch (e) { out.router = { error: e.message }; }
+
+  // ⑤ 触达线活性（空转必须上浮，不再静默）
+  try {
+    const target = 'jinnuoshengyuan@100.86.57.69';
+    const tail = io.exec('ssh', ['-i', `${STATE}/mmv_key`, '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
+      '-o', 'StrictHostKeyChecking=accept-new', target, 'tail -12 ~/outreach.log 2>/dev/null || true']);
+    const health = parseOutreachHealth(tail);
+    out.outreach = health;
+    if (health.verdict === 'stalled') {
+      io.log(`触达线空转 ${health.stalledTicks} 轮（${health.reason}）——告警上浮`);
+      if (opts.raiseFn) {
+        await opts.raiseFn('P1', 'outreach_stalled',
+          `触达线空转 ${health.stalledTicks} 轮：${health.reason}。检查飞书话术表「启用状态」。`,
+          { debounce: { windowMin: 180, threshold: 1 } });
+      }
+    }
+  } catch (e) { out.outreach = { error: e.message }; }
 
   return out;
 }

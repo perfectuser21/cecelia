@@ -13,6 +13,8 @@ if (m.memGuardDecision({mb:2100,minute:15}) !== "restart") fail("内存守卫判
 if (m.memGuardDecision({mb:1700,minute:15}) !== "ok") fail("正常工作态误伤(escort案)");
 if (!m.pickRunner((h)=>h.includes("100.71"))) fail("跑场路由失灵");
 if (typeof m.runOpenclawGuards !== "function") fail("job 入口未导出");
+if (m.parseOutreachHealth("[t] 话术缺失: NO_SCRIPT B\n[t] 话术缺失: NO_SCRIPT B\n[t] 话术缺失: NO_SCRIPT B").verdict !== "stalled") fail("触达活性检查失灵");
+if (!m.MEMLOG_PS_ARGS.join(" ").includes("pid")) fail("memlog ps 参数缺 pid");
 console.log("✅ openclaw-guards-smoke OK");
 '
 grep -q "openclaw-guards" "$SRC/scheduler-jobs.js" || { echo "❌ scheduler 未注册"; exit 1; }
