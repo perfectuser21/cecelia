@@ -9,6 +9,7 @@ import {
   buildContextText, runFeishuTaskLedger,
   maybeRunFeishuTaskLedger, _resetFeishuLedgerGate,
   resolveDisposition, dispositionToStatus, parseRunRows, resolveEvidenceFloor,
+  classifyBotReply, resolveOutcome, outcomeToStatus, cleanTitle,
 } from '../feishu-task-ledger.js';
 import { TASK_CREATION_INVENTORY } from '../task-creation-inventory.js';
 
@@ -520,5 +521,135 @@ describe('buildTaskRequest — blocked 必带 blocked_at（回归）', () => {
     });
     expect(r.task.status).toBe('completed');
     expect(r.task.blocked_at ?? null).toBe(null);
+  });
+});
+
+// ── 四类根因：看秋米回复内容，而非只看有没有执行记录 ─────────────────────
+// 2026-09-16 E2E 实证：秋米每条都回了，回复里就写着为什么没干。
+// 全部用例取自悦升云端群真实回复原文。
+describe('classifyBotReply — 从秋米回复识别根因', () => {
+  it('系统故障：401 / invalid api key', () => {
+    expect(classifyBotReply('HTTP 401: authentication_error: invalid api key (request_id: 06f15cba)'))
+      .toBe('fault');
+  });
+
+  it('系统故障：设备连不上', () => {
+    expect(classifyBotReply('当前还没能连接到可用工作手机，暂时无法读取抖音昵称和抖音号，也未创建 Skill。'))
+      .toBe('fault');
+  });
+
+  it('系统故障：模型provider内部错误', () => {
+    expect(classifyBotReply('⚠️ The model provider returned a temporary internal error before replying.'))
+      .toBe('fault');
+  });
+
+  it('等主理人补料：请把资料发来', () => {
+    expect(classifyBotReply('可以，先把两份资料发来。我会按资料拆成 6 个朋友圈 AI 员工 Skill。还需要确认两点：'))
+      .toBe('waiting');
+  });
+
+  it('等主理人补料：请提供/需要确认', () => {
+    expect(classifyBotReply('请把两份资料发来，我会据此整理每个朋友圈 AI 员工的职责')).toBe('waiting');
+  });
+
+  it('已完成：已整理并创建 + 回读核验', () => {
+    expect(classifyBotReply('已整理并创建飞书文档，包含选品、测品、店铺、供应链、退货、回款、数据复盘及补充问题：跨境电商咨询问题清单｜文档已回读核验。'))
+      .toBe('done');
+  });
+
+  it('纯咨询答复：给了诊断和下一步，不算交办完成也不算故障', () => {
+    expect(classifyBotReply('问题不是安装失败，而是缺少输入文件。按顺序执行：cd "/Users/suyanqing/Downloads" find . -iname "*.xlsx"'))
+      .toBe('answer');
+  });
+
+  it('空回复 → none', () => {
+    expect(classifyBotReply('')).toBe('none');
+    expect(classifyBotReply(null)).toBe('none');
+  });
+
+  it('故障优先级高于完成词（回复里两者都有时按故障算）', () => {
+    expect(classifyBotReply('已创建部分内容，但 HTTP 401: invalid api key，未能继续')).toBe('fault');
+  });
+});
+
+describe('resolveOutcome — 根因 + 执行记录 合成最终判定', () => {
+  const mk = (ts, type = 'user', text = '帮我做6个skill') => ({
+    message_id: 'm' + ts, create_time: String(ts),
+    sender: { sender_type: type, id: type === 'app' ? 'ou_bot' : 'ou_alex' },
+    body: { content: JSON.stringify({ text }) },
+  });
+
+  it('有 run → done（真干了）', () => {
+    const h = mk(1_000_000);
+    expect(resolveOutcome({
+      head: h, messageIds: [h.message_id], messages: [h],
+      runs: [{ created_at: 1_000_060, task_kind: 'exec' }],
+    })).toBe('done');
+  });
+
+  it('无 run 但回复说已创建 → done（用 MCP 直接干的，不留 run）', () => {
+    const h = mk(2_000_000);
+    const r = mk(2_000_030, 'app', '已整理并创建飞书文档，文档已回读核验');
+    expect(resolveOutcome({ head: h, messageIds: [h.message_id], messages: [h, r], runs: [] }))
+      .toBe('done');
+  });
+
+  it('回复是故障 → fault（要告警）', () => {
+    const h = mk(3_000_000);
+    const r = mk(3_000_030, 'app', 'HTTP 401: invalid api key');
+    expect(resolveOutcome({ head: h, messageIds: [h.message_id], messages: [h, r], runs: [] }))
+      .toBe('fault');
+  });
+
+  it('回复是等补料 → waiting（球在主理人）', () => {
+    const h = mk(4_000_000);
+    const r = mk(4_000_030, 'app', '先把两份资料发来，还需要确认两点');
+    expect(resolveOutcome({ head: h, messageIds: [h.message_id], messages: [h, r], runs: [] }))
+      .toBe('waiting');
+  });
+
+  it('纯咨询答复 → answer（不入账）', () => {
+    const h = mk(5_000_000, 'user', '表在哪');
+    const r = mk(5_000_030, 'app', '在这个链接里');
+    expect(resolveOutcome({ head: h, messageIds: [h.message_id], messages: [h, r], runs: [] }))
+      .toBe('answer');
+  });
+
+  it('完全没回 → silent（不入账，实测全是闲聊）', () => {
+    const h = mk(6_000_000, 'user', '你真好');
+    expect(resolveOutcome({ head: h, messageIds: [h.message_id], messages: [h], runs: [] }))
+      .toBe('silent');
+  });
+
+  it('证据窗口外 → unknown', () => {
+    const h = mk(100);
+    expect(resolveOutcome({
+      head: h, messageIds: [h.message_id], messages: [h], runs: [], evidenceFloorMs: 500_000,
+    })).toBe('unknown');
+  });
+});
+
+describe('outcomeToStatus — 只有 done/fault/waiting 入账', () => {
+  it('done→completed, fault/waiting→blocked, 其余不入账', () => {
+    expect(outcomeToStatus('done')).toBe('completed');
+    expect(outcomeToStatus('fault')).toBe('blocked');
+    expect(outcomeToStatus('waiting')).toBe('blocked');
+    expect(outcomeToStatus('answer')).toBe(null);
+    expect(outcomeToStatus('silent')).toBe(null);
+    expect(outcomeToStatus('unknown')).toBe(null);
+  });
+
+  it('任何 outcome 都不产出 queued', () => {
+    for (const o of ['done', 'fault', 'waiting', 'answer', 'silent', 'unknown']) {
+      expect(outcomeToStatus(o)).not.toBe('queued');
+    }
+  });
+});
+
+describe('cleanTitle — 去掉 @_user_N 占位与多余空白', () => {
+  it('去掉飞书 @ 占位符', () => {
+    expect(cleanTitle('@_user_1 帮我建三个飞书文档')).toBe('帮我建三个飞书文档');
+    expect(cleanTitle('帮我建文档@_user_1')).toBe('帮我建文档');
+    expect(cleanTitle('@_user_12  多个   空白 ')).toBe('多个 空白');
   });
 });
