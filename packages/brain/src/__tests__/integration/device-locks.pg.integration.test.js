@@ -28,9 +28,11 @@ function quotedIdentifier(value) {
 
 async function seedTask(status) {
   const taskId = randomUUID();
+  // title 带 taskId 唯一化：tasks 表 idx_tasks_dedup_active 对活跃任务按
+  // (title, goal_id, project_id) 去重，同名 title 会撞唯一索引
   await testPool.query(
-    "INSERT INTO tasks (id,title,status) VALUES ($1,'device lock test',$2)",
-    [taskId, status],
+    'INSERT INTO tasks (id,title,status) VALUES ($1,$2,$3)',
+    [taskId, `device lock test ${taskId}`, status],
   );
   return taskId;
 }
