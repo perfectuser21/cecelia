@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.296.1
+**Brain 版本**: 1.296.2
 
 ## 1.283.0
 
@@ -48,6 +48,11 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.296.2 — 守卫补 agent 级模型漂移检测（6 个本机 embedded 漏网）
+
+- defaults 切跑场池后，media/dev/work-commander/zenithjoy-owner/yujin/suyanqing 六个 agent 有显式 sol 覆盖绕过默认值，仍在 us-vps 本机跑推理——守卫此前只查 defaults 是盲区
+- checkConfigDrift 逐个点名 agent 级 sol；restoreConfigShape 一并拉回池（保留 fallbacks 断池兜底）
 
 ## Brain 1.296.1 — 修错库孤儿链接无限重试（push 噪音 269次/2h）
 
