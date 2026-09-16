@@ -49,3 +49,29 @@ export function selectCandidates(messages, group, botOpenId) {
     return (m.mentions ?? []).some((x) => x?.id?.open_id === botOpenId);
   });
 }
+
+/** 归一化文本用于重发比对：去空白、去标点、截断 */
+function normalizeForDedupe(text) {
+  return text.replace(/\s+/g, '').replace(/[，。！？、,.!?~…]/g, '').slice(0, 60);
+}
+
+/**
+ * 判据 3：重发去重
+ * 实测同一任务因秋米无响应被重发 3 次（「整理商品表格」06:30/06:52/06:54）；
+ * 不去重则一个活记三行。同发送人 + 归一化文本相同 + 窗口内 → 合并，保留最早一条为 head。
+ */
+export function dedupeResends(candidates, windowMs = 30 * 60 * 1000) {
+  const sorted = [...(candidates ?? [])].sort(
+    (a, b) => Number(a.create_time) - Number(b.create_time),
+  );
+  const groups = [];
+  for (const m of sorted) {
+    const key = `${m.sender?.id}::${normalizeForDedupe(messageText(m))}`;
+    const hit = groups.find(
+      (g) => g.key === key && Number(m.create_time) - Number(g.head.create_time) <= windowMs,
+    );
+    if (hit) hit.messageIds.push(m.message_id);
+    else groups.push({ key, head: m, messageIds: [m.message_id] });
+  }
+  return groups.map(({ head, messageIds }) => ({ head, messageIds }));
+}
