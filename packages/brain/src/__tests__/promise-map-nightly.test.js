@@ -306,3 +306,53 @@ describe('[S4-N13] A5 扫描链停更 >24h → fail', () => {
     expect(a5.detail).toMatch(/150|停更|小时/);
   });
 });
+
+// ── [S4-N14/N15] A6 skill 账本一致性（复活 skill_drift_alerts）──────
+// 2026-09-16 实查四处分叉：磁盘 94 / clawdbot.json agent 引用 19 /
+// skill_registry(openclaw) 31 / Notion Skill Registry 341。
+// 四个数各走各的，无人在数，故立此断言。
+describe('[S4-N14] A6 skill 账本两处一致 → pass', () => {
+  it('A6 passes when registry and ops_skills agree', async () => {
+    const pool = makePool(vi.fn(async (sql) => {
+      if (typeof sql === 'string' && sql.includes('skill_registry') && sql.includes('count')) {
+        return { rows: [{ count: '19' }] };
+      }
+      if (typeof sql === 'string' && sql.includes('ops_skills')) return { rows: [{ count: '19' }] };
+      if (typeof sql === 'string' && sql.includes('fact_snapshot_headers')) {
+        return { rows: [{ repo: 'cecelia', kind: 'api', age_hours: '1' }] };
+      }
+      if (typeof sql === 'string' && sql.includes('COUNT(*)')) return { rows: [{ count: '0' }] };
+      return { rows: [] };
+    }));
+    const assertions = await buildNightlyAssertions(pool);
+    const a6 = assertions.find(a => a.key === 'skill_ledger_consistency');
+    expect(a6).toBeTruthy();
+    expect(a6.ok).toBe(true);
+  });
+});
+
+describe('[S4-N15] A6 skill 账本分叉 → fail 且写 skill_drift_alerts', () => {
+  it('A6 fails, reports the gap, and records a drift alert', async () => {
+    const writes = [];
+    const pool = makePool(vi.fn(async (sql, params) => {
+      if (typeof sql === 'string' && sql.includes('INSERT INTO skill_drift_alerts')) {
+        writes.push({ sql, params }); return { rows: [] };
+      }
+      if (typeof sql === 'string' && sql.includes('skill_registry') && sql.includes('count')) {
+        return { rows: [{ count: '31' }] };
+      }
+      if (typeof sql === 'string' && sql.includes('ops_skills')) return { rows: [{ count: '19' }] };
+      if (typeof sql === 'string' && sql.includes('fact_snapshot_headers')) {
+        return { rows: [{ repo: 'cecelia', kind: 'api', age_hours: '1' }] };
+      }
+      if (typeof sql === 'string' && sql.includes('COUNT(*)')) return { rows: [{ count: '0' }] };
+      return { rows: [] };
+    }));
+    const assertions = await buildNightlyAssertions(pool);
+    const a6 = assertions.find(a => a.key === 'skill_ledger_consistency');
+    expect(a6.ok).toBe(false);
+    expect(a6.detail).toMatch(/31/);
+    expect(a6.detail).toMatch(/19/);
+    expect(writes.length).toBeGreaterThan(0);
+  });
+});
