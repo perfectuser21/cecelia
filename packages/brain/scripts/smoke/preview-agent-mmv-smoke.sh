@@ -82,6 +82,35 @@ if ! grep -q "克隆源库 \${PREVIEW_SOURCE_DB} 不存在" scripts/preview-env-
 fi
 echo "OK: 克隆源可配置且有明确报错"
 
+echo "[preview-agent-mmv-smoke] 7b. 安装脚本必须注入 DB_NAME（执行机没有生产库 cecelia）"
+if ! grep -q "<key>DB_NAME</key>" scripts/preview-agent-install.sh; then
+  echo "FAIL: launchd 未注入 DB_NAME —— db-config.js 会默认连 'cecelia'，而执行机上没有该库，"
+  echo "      /preview/start 直接 500 database \"cecelia\" does not exist（2026-09-17 实测）"
+  exit 1
+fi
+echo "OK: DB_NAME 已注入"
+
+echo "[preview-agent-mmv-smoke] 7c. 代理必须自己定时采样磁盘"
+if ! grep -q "host-disk-sampler.sh" "$AGENT"; then
+  echo "FAIL: 代理没有跑磁盘采样 —— capacity-gate 要求样本 <180s，"
+  echo "      而系统里没有任何 cron/systemd/scheduler 在跑采样器（2026-09-16 查实），"
+  echo "      样本必然过期，准入永远 sample_stale"
+  exit 1
+fi
+if ! grep -qE "setInterval\(sampleDisk" "$AGENT"; then
+  echo "FAIL: 只采一次不够 —— 样本 180s 就过期，必须周期性刷新"
+  exit 1
+fi
+echo "OK: 代理自带定时采样"
+
+echo "[preview-agent-mmv-smoke] 7d. 预览 Brain 启动必须带 ENV_REGION"
+if ! grep -q 'ENV_REGION=' scripts/preview-env-start.sh; then
+  echo "FAIL: 预览 Brain 启动未注入 ENV_REGION —— selfcheck 会报"
+  echo "      [FAIL] ENV_REGION: not set / [FAIL] DB Region Match（2026-09-17 实测）"
+  exit 1
+fi
+echo "OK: ENV_REGION 已注入"
+
 echo "[preview-agent-mmv-smoke] 8. 代理语法可执行"
 node --check "$AGENT" 2>/dev/null || { echo "FAIL: $AGENT 语法错误"; exit 1; }
 bash -n scripts/preview-env-start.sh || { echo "FAIL: preview-env-start.sh 语法错误"; exit 1; }

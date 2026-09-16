@@ -29,6 +29,9 @@
  *     等于在内网裸奔，宁可起不来也不能默默敞着。
  */
 import express from 'express';
+import { execFile } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import previewRoutes from '../packages/brain/src/routes/preview.js';
 
 // 端口选 5241 而非邻近号段：5221 是 socat（转发 us-vps），5231 已被 fleet-node-health
@@ -44,6 +47,24 @@ if (!process.env.DEPLOY_TOKEN) {
   console.error('  修法：launchd plist 里注入 DEPLOY_TOKEN（与 GitHub secret 同值）。');
   process.exit(1);
 }
+
+// ── 磁盘采样：代理自己定时跑，不外包给 cron ──────────────────────────────
+// capacity-gate 要求样本不超过 SAMPLE_STALE_SECONDS(180s)，否则判 sample_stale 拒绝准入。
+// 2026-09-16 挖出来的第一层病因就是"没有任何东西在定时跑 host-disk-sampler.sh"——
+// crontab 没有、systemd 没有、scheduler 也没注册，于是样本要么不存在要么过期。
+// 放进代理而不是另装一个 launchd：能不能起预览本就是代理的职责，一个服务负责到底，
+// 少一个会悄悄死掉又没人发现的独立组件。
+const AGENT_DIR = dirname(fileURLToPath(import.meta.url));
+const SAMPLER = join(AGENT_DIR, 'host-disk-sampler.sh');
+const SAMPLE_INTERVAL_MS = 60_000; // 远小于 180s 过期线，留足重试余量
+
+function sampleDisk() {
+  execFile('bash', [SAMPLER], { timeout: 45_000 }, (err) => {
+    if (err) console.warn(`[preview-agent] 磁盘采样失败（下轮重试）: ${err.message}`);
+  });
+}
+sampleDisk();
+setInterval(sampleDisk, SAMPLE_INTERVAL_MS).unref?.();
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));

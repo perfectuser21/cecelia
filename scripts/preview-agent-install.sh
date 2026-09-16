@@ -53,7 +53,12 @@ cat > "$PLIST" <<PLISTEOF
     <key>PREVIEW_AGENT_PORT</key><string>5241</string>
     <!-- 绑 Tailscale 地址：CI 经内网进来，不暴露公网 -->
     <key>PREVIEW_AGENT_HOST</key><string>100.71.151.105</string>
-    <!-- 执行机上没有生产库 cecelia，用 staging 做克隆源（schema 443 > 最低要求 430） -->
+    <!-- 代理自身连的库。db-config.js 默认连 'cecelia'，而执行机上根本没有这个库
+         （生产库在 us-vps）——不注入这项，/preview/start 会 500
+         database "cecelia" does not exist（2026-09-17 实测）。
+         preview_environments 记录就落在这个库里。 -->
+    <key>DB_NAME</key><string>cecelia_staging</string>
+    <!-- 克隆源：执行机上没有生产库 cecelia，用 staging（schema 443 > 最低要求 430） -->
     <key>PREVIEW_SOURCE_DB</key><string>cecelia_staging</string>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
