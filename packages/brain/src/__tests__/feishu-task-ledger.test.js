@@ -3,7 +3,9 @@
  * 判据来源：主理人 2026-09-16 拍板（决策 1c6679cd / 判定点 398d5f36）
  */
 import { describe, it, expect } from 'vitest';
-import { GROUPS, selectCandidates, dedupeResends } from '../feishu-task-ledger.js';
+import {
+  GROUPS, selectCandidates, dedupeResends, resolveReplyEvidence, buildTaskRequest,
+} from '../feishu-task-ledger.js';
 
 const BOT = 'ou_bot123';
 const msg = (o) => ({
@@ -97,5 +99,75 @@ describe('dedupeResends 判据3', () => {
       m('d2', 60_000, '帮我建个多维表'),
     ]);
     expect(out).toHaveLength(2);
+  });
+});
+
+describe('resolveReplyEvidence 回执判定', () => {
+  const head = { create_time: '1000000', sender: { sender_type: 'user', id: 'ou_alex' } };
+  const bot = (ts) => ({ create_time: String(ts), sender: { sender_type: 'app', id: 'ou_bot' } });
+
+  it('30min 内机器人有回复 → 已响应', () => {
+    expect(resolveReplyEvidence(head, [head, bot(1_000_000 + 60_000)])).toBe(true);
+  });
+
+  it('机器人回复在交办之前 → 不算响应', () => {
+    expect(resolveReplyEvidence(head, [bot(999_000), head])).toBe(false);
+  });
+
+  it('超过 30min 才回复 → 不算响应', () => {
+    expect(resolveReplyEvidence(head, [head, bot(1_000_000 + 31 * 60 * 1000)])).toBe(false);
+  });
+
+  it('全程无机器人消息 → 未响应', () => {
+    expect(resolveReplyEvidence(head, [head])).toBe(false);
+  });
+});
+
+describe('buildTaskRequest 入账参数', () => {
+  const head = {
+    message_id: 'om_x1',
+    create_time: '1789500000000',
+    sender: { sender_type: 'user', id: 'ou_alex' },
+    body: { content: JSON.stringify({ text: '帮我建三个飞书文档，分别填写公司信息、产品信息、目标人群' }) },
+  };
+  const group = { chatId: 'oc_ee3f', name: '悦升云端', requireMention: true };
+
+  it('source_id 用飞书 message_id 做幂等键', () => {
+    const r = buildTaskRequest({ head, messageIds: ['om_x1'], group, botReplied: true, contextText: 'ctx' });
+    expect(r.source).toBe('inbox');
+    expect(r.source_id).toBe('om_x1');
+  });
+
+  it('有机器人回复 → completed；无回复 → blocked', () => {
+    expect(buildTaskRequest({ head, messageIds: ['om_x1'], group, botReplied: true, contextText: '' }).task.status)
+      .toBe('completed');
+    expect(buildTaskRequest({ head, messageIds: ['om_x1'], group, botReplied: false, contextText: '' }).task.status)
+      .toBe('blocked');
+  });
+
+  it('绝不产出 queued —— queued 会被 Brain tick 捡走真执行群消息', () => {
+    for (const replied of [true, false]) {
+      const r = buildTaskRequest({ head, messageIds: ['om_x1'], group, botReplied: replied, contextText: '' });
+      expect(r.task.status).not.toBe('queued');
+    }
+  });
+
+  it('非编码工单：mutation_intent=none / domain=operations', () => {
+    const r = buildTaskRequest({ head, messageIds: ['om_x1'], group, botReplied: true, contextText: '' });
+    expect(r.mutation_intent).toBe('none');
+    expect(r.declared_domain).toBe('operations');
+    expect(r.requested_task_type).toBe('workflow_run');
+  });
+
+  it('title 截断到 60 字，metadata 带全部 message_id 与群信息', () => {
+    const r = buildTaskRequest({
+      head, messageIds: ['om_x1', 'om_x2'], group, botReplied: false, contextText: '上下文',
+    });
+    expect(r.title.length).toBeLessThanOrEqual(60);
+    expect(r.metadata.feishu_message_ids).toEqual(['om_x1', 'om_x2']);
+    expect(r.metadata.chat_name).toBe('悦升云端');
+    expect(r.metadata.bot_replied).toBe(false);
+    expect(r.metadata.ledger_only).toBe(true);
+    expect(r.description).toContain('上下文');
   });
 });
