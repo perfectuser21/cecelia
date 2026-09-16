@@ -941,3 +941,35 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
     expect(JSON.stringify(patch[3])).toContain('Done');
   });
 });
+
+// 2026-09-16 噪音案：249 条 legacy notion_id 指向「错库」页面（schema 不符），
+// PATCH 返回 400 而非 404 → 不命中既有 stale 解绑分支 → 每轮重试刷屏（269次/2h）。
+describe('pushTasks — 错库孤儿链接解绑（400 schema 不符）', () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockNotionReq.mockReset();
+  });
+  it('PATCH 400 property 不存在 → 解绑 notion_id+清指纹（下轮重建），不无限重试', async () => {
+    const mod = await import('../notion-push-sync.js');
+    const task = {
+      id: 'task-1', title: 'T', status: 'in_progress', priority: 'P2',
+      notion_id: '3dbc40c2-ba63-819e-86bf-fa741a997099',
+      notion_props: { pushed_status: 'queued' },
+    };
+    const sqls = [];
+    mockQuery.mockImplementation(async (sql, params) => {
+      sqls.push({ sql: String(sql), params });
+      return { rows: [] };
+    });
+    mockNotionReq.mockImplementation(async (t, path, method) => {
+      if (method === 'PATCH') {
+        throw new Error('Notion PATCH /pages/xxx → 400: Status is expected to be select. Description is not a property that exists.');
+      }
+      return {};
+    });
+    await mod.pushTasksForTest({ query: mockQuery }, 'fake-token', [task]);
+    const unbind = sqls.find((q) => /notion_id=NULL/.test(q.sql));
+    expect(unbind).toBeTruthy();
+    expect(unbind.params).toContain('task-1');
+  });
+});
