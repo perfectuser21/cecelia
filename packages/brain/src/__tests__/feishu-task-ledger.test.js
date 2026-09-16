@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
   GROUPS, selectCandidates, dedupeResends, resolveReplyEvidence, buildTaskRequest,
   buildClassifyPrompt, parseClassifyResult, classifyCandidates,
+  fetchTenantToken, fetchBotOpenId, fetchGroupMessages,
 } from '../feishu-task-ledger.js';
 
 const BOT = 'ou_bot123';
@@ -229,5 +230,46 @@ describe('判据2 LLM 语义分类', () => {
     let called = false;
     await classifyCandidates([], { callLLM: async () => { called = true; return { text: '[]' }; } });
     expect(called).toBe(false);
+  });
+});
+
+const jsonRes = (obj) => ({ ok: true, json: async () => obj });
+
+describe('飞书 API 客户端', () => {
+  it('fetchTenantToken 取 token', async () => {
+    const fetchFn = async () => jsonRes({ code: 0, tenant_access_token: 'tk1' });
+    expect(await fetchTenantToken({ fetchFn, appId: 'a', appSecret: 'b' })).toBe('tk1');
+  });
+
+  it('fetchTenantToken 非 0 code 抛错', async () => {
+    const fetchFn = async () => jsonRes({ code: 99991663, msg: 'app not found' });
+    await expect(fetchTenantToken({ fetchFn, appId: 'a', appSecret: 'b' })).rejects.toThrow('app not found');
+  });
+
+  it('fetchBotOpenId 取 bot.open_id（不按显示名）', async () => {
+    const fetchFn = async () => jsonRes({ code: 0, bot: { open_id: 'ou_bot9', app_name: '秋米' } });
+    expect(await fetchBotOpenId({ fetchFn, token: 'tk' })).toBe('ou_bot9');
+  });
+
+  it('fetchGroupMessages 自动翻页并合并', async () => {
+    const pages = [
+      { code: 0, data: { items: [{ message_id: 'm1' }], has_more: true, page_token: 'p2' } },
+      { code: 0, data: { items: [{ message_id: 'm2' }], has_more: false } },
+    ];
+    let n = 0;
+    const urls = [];
+    const fetchFn = async (url) => { urls.push(url); return jsonRes(pages[n]); };
+    const origFetch = async (url) => { urls.push(url); const r = jsonRes(pages[n]); n += 1; return r; };
+    const out = await fetchGroupMessages({ fetchFn: origFetch, token: 'tk', chatId: 'c1', startTimeSec: 100 });
+    expect(out.map((m) => m.message_id)).toEqual(['m1', 'm2']);
+    expect(urls[0]).toContain('start_time=100');
+    expect(urls[1]).toContain('page_token=p2');
+    expect(typeof fetchFn).toBe('function');
+  });
+
+  it('fetchGroupMessages 遇到 API 错误码抛错', async () => {
+    const fetchFn = async () => jsonRes({ code: 230002, msg: 'no permission' });
+    await expect(fetchGroupMessages({ fetchFn, token: 'tk', chatId: 'c1', startTimeSec: 1 }))
+      .rejects.toThrow('no permission');
   });
 });
