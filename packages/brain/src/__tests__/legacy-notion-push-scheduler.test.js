@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { scheduleLegacyNotionPush } from '../legacy-notion-push-scheduler.js';
 
@@ -24,5 +25,11 @@ describe('legacy Notion push scheduler', () => {
     expect(setIntervalFn).toHaveBeenCalledTimes(1);
     await setIntervalFn.mock.calls[0][0]();
     expect(run).toHaveBeenCalledWith(pool);
+  });
+
+  it('server.js 必须接线 scheduleLegacyNotionPush——调度入口孤儿化即红（2026-09-08/09-16 先例）', () => {
+    const src = readFileSync(new URL('../../server.js', import.meta.url), 'utf8');
+    expect(src).toContain("import('./src/legacy-notion-push-scheduler.js')");
+    expect(src).toMatch(/scheduleLegacyNotionPush\(pool\)/);
   });
 });
