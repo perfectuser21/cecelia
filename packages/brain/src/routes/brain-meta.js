@@ -1695,6 +1695,8 @@ router.get('/device-locks', async (_req, res) => {
 /**
  * POST /api/brain/device-locks/acquire
  * 申请设备锁（单条原子 UPDATE 抢锁，无 check-then-act 竞态；语义见 device-lock-helpers.js）
+ * 契约：locked_by 传 tasks 表 uuid 会参与派发对账（sweeper 按任务活跃度回收）；
+ * 非 uuid 身份（手工占用如 'manual-alex'）只受 TTL 管理，不被对账秒扫。
  * body: { device_name, locked_by, ttl_minutes? }
  * 返回: { acquired: true, lock } 或 { acquired: false, locked_by, expires_at }
  */

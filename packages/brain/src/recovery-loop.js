@@ -69,6 +69,7 @@ async function defaultFetchInProgress(dbPool) {
  * @param {Function} [opts.autoFailTimedOutTasks]
  * @param {Function} [opts.fetchInProgress]
  * @param {Function} [opts.probeTaskLiveness]
+ * @param {Function} [opts.sweepStaleDeviceLocks]
  * @returns {Promise<{staleReleased:number, pipelinesCancelled:number, tasksTimedOut:number, orphansRequeued:number}>}
  */
 export async function runRecoveryOnce(opts = {}) {
@@ -138,7 +139,20 @@ export async function runRecoveryOnce(opts = {}) {
     console.warn(`[recovery-loop] unblockExpiredTasks failed (non-fatal): ${err.message}`);
   }
 
-  // 6. 无条件可观测性：每次执行都打一行"我在跑"，即使全 0
+  // 6. 设备锁对账（G5 横切件）：释放持有任务已非活跃的锁——正确性主保证，
+  //    覆盖 executor 多处终态直写 / psql 直设 / task 被删等一切回写旁路。
+  //    只回收 uuid 形状持有者：手工/脚本身份（非 task id）的锁不被秒扫，
+  //    由 TTL 过期 + acquire 双重判据自然解开。
+  try {
+    const sweep = opts.sweepStaleDeviceLocks
+      || (await import('./device-lock-helpers.js')).sweepStaleDeviceLocks;
+    const swept = await sweep();
+    if (swept > 0) console.log(`[recovery-loop] released ${swept} stale device lock(s)`);
+  } catch (err) {
+    console.warn(`[recovery-loop] sweepStaleDeviceLocks failed (non-fatal): ${err.message}`);
+  }
+
+  // 7. 无条件可观测性：每次执行都打一行"我在跑"，即使全 0
   console.log(
     `[recovery-loop] staleReleased=${staleReleased} pipelinesCancelled=${pipelinesCancelled} tasksTimedOut=${tasksTimedOut} orphansRequeued=${orphansRequeued} blockedRecovered=${blockedRecovered}`
   );

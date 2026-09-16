@@ -69,12 +69,16 @@ export async function releaseDeviceLocksHeldBy(taskId, pool = defaultPool) {
  * quarantined/blocked/dep_failed/archived 等一切非活跃态）→ 立即释放。
  * 注意 queued 算活跃：dispatch revert 回 queued 的任务保留锁，二次派发走同持有者
  * reacquire；真死的 queued 由其自身超时链收尾。
+ * uuid 守卫：只回收 locked_by 是 uuid 形状（tasks.id）的行——非 uuid 持有者
+ * （手工 acquire 的自由身份如 'manual-alex'）在 tasks 表必然无对应行，没守卫
+ * 会被对账秒扫；它们靠 TTL 过期 + acquire 双重判据解开。
  */
 export async function sweepStaleDeviceLocks(pool = defaultPool) {
   const { rowCount } = await pool.query(
     `UPDATE device_locks
         SET locked_by = NULL, locked_at = NULL, expires_at = NULL
       WHERE locked_by IS NOT NULL
+        AND locked_by ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
         AND NOT EXISTS (
           SELECT 1 FROM tasks t
            WHERE t.id::text = device_locks.locked_by

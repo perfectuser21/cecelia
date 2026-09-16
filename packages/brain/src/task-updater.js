@@ -84,6 +84,16 @@ export async function updateTaskStatus(taskId, status, additionalFields = {}) {
 
     const updatedTask = result.rows[0];
 
+    // 终态/非活跃态 → 即时释放设备锁（低延迟优化；正确性由 recovery-loop sweeper 兜底）
+    if (!['queued', 'in_progress'].includes(status)) {
+      try {
+        const { releaseDeviceLocksHeldBy } = await import('./device-lock-helpers.js');
+        await releaseDeviceLocksHeldBy(taskId);
+      } catch (err) {
+        console.warn(`[task-updater] device lock release failed (non-fatal): ${err.message}`);
+      }
+    }
+
     // Broadcast to WebSocket clients
     broadcastTaskUpdate(updatedTask);
 

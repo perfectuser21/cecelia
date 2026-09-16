@@ -193,6 +193,22 @@ describe.sequential('device-lock-helpers on PostgreSQL', () => {
     expect(rows[0].locked_by).toBe(String(queuedHolder));
   }, 15_000);
 
+  it('sweepStaleDeviceLocks：非 uuid 持有者（手工 acquire）→ 不回收（uuid 守卫）', async () => {
+    // 手工/脚本身份（如 'manual-alex'）在 tasks 表必然无对应行，没 uuid 守卫会被
+    // 对账秒扫；它们靠 TTL 过期 + acquire 双重判据解开。
+    await testPool.query(
+      'UPDATE device_locks SET locked_by=$1, locked_at=NOW(), expires_at=NOW() + INTERVAL \'30 minutes\' WHERE device_name=$2',
+      ['manual-alex', PHONE],
+    );
+    const swept = await sweepStaleDeviceLocks(testPool);
+    expect(swept).toBe(0);
+    const { rows } = await testPool.query(
+      'SELECT locked_by FROM device_locks WHERE device_name=$1',
+      [PHONE],
+    );
+    expect(rows[0].locked_by).toBe('manual-alex');
+  }, 15_000);
+
   it('sweepStaleDeviceLocks：持有 task id 不存在于 tasks 表 → 释放', async () => {
     const ghostTaskId = randomUUID();
     await testPool.query(
