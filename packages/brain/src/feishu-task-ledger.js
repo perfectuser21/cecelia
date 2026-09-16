@@ -75,3 +75,50 @@ export function dedupeResends(candidates, windowMs = 30 * 60 * 1000) {
   }
   return groups.map(({ head, messageIds }) => ({ head, messageIds }));
 }
+
+const REPLY_WINDOW_MS = 30 * 60 * 1000;
+
+/**
+ * 执行回执（主理人拍板：用机器回复当凭据）
+ * 交办后 windowMs 内同群出现机器人消息 = 已响应。
+ */
+export function resolveReplyEvidence(head, allMessages, windowMs = REPLY_WINDOW_MS) {
+  const t0 = Number(head.create_time);
+  return (allMessages ?? []).some((m) => {
+    if (m?.sender?.sender_type !== 'app') return false;
+    const dt = Number(m.create_time) - t0;
+    return dt > 0 && dt <= windowMs;
+  });
+}
+
+/**
+ * 组装 createRoutedTask 入参。
+ * 铁律：status 只能是 completed / blocked，绝不 queued——
+ * queued + claimed_by IS NULL 会被 Brain tick 每 2 分钟捡走，真去"执行"群里的客户对话。
+ */
+export function buildTaskRequest({ head, messageIds, group, botReplied, contextText }) {
+  const text = messageText(head).trim();
+  return {
+    source: 'inbox',
+    source_id: head.message_id,
+    title: text.replace(/\s+/g, ' ').slice(0, 60),
+    description: contextText ? `${text}\n\n--- 群内上下文 ---\n${contextText}` : text,
+    mutation_intent: 'none',
+    declared_domain: 'operations',
+    requested_task_type: 'workflow_run',
+    metadata: {
+      feishu_message_id: head.message_id,
+      feishu_message_ids: messageIds,
+      chat_id: group.chatId,
+      chat_name: group.name,
+      sender_open_id: head.sender?.id ?? null,
+      create_time: head.create_time,
+      bot_replied: botReplied,
+      ledger_only: true,
+    },
+    task: {
+      status: botReplied ? 'completed' : 'blocked',
+      priority: 'P2',
+    },
+  };
+}
