@@ -113,6 +113,9 @@ export function resolveReplyEvidence(head, allMessages, windowMs = REPLY_WINDOW_
  */
 export function buildTaskRequest({ head, messageIds, group, botReplied, contextText, disposition }) {
   const text = messageText(head).trim();
+  const status = disposition
+    ? dispositionToStatus(disposition)
+    : (botReplied ? 'completed' : 'blocked');
   return {
     source: 'inbox',
     source_id: head.message_id,
@@ -133,8 +136,11 @@ export function buildTaskRequest({ head, messageIds, group, botReplied, contextT
       ledger_only: true,
     },
     task: {
-      status: disposition ? dispositionToStatus(disposition) : (botReplied ? 'completed' : 'blocked'),
+      status,
       priority: 'P2',
+      // DB 约束 chk_blocked_at_not_null：status=blocked 时 blocked_at 必须非空，
+      // 缺了会让整批入账在 INSERT 处报错、created 恒为 0（2026-09-16 E2E 实证）
+      ...(status === 'blocked' ? { blocked_at: new Date().toISOString() } : {}),
     },
   };
 }
@@ -230,10 +236,25 @@ export function loadAgentRuns({ execFileFn, agentId, sinceMs, dbPath = OPENCLAW_
  * 重发组内任一条命中即算 executed（实测 run 常挂在后一次重发上，而 head 取最早那条）。
  * automation_run 是 cron 定时的自主动作，与群消息无关，不算响应。
  */
-export function resolveDisposition({ head, messageIds, messages, runs, windowMs = EXEC_WINDOW_MS }) {
+/**
+ * 证据覆盖下界：OpenClaw 会清理老 run（实测只保 7 天），早于最早一条 run 的消息，
+ * "没有 run" 可能只是记录被清了，不能据此判定"没人干"。取 run 最早时间戳为下界；
+ * 一条 run 都没有时回退到扫描起点（此时整段都不可信，全判 unknown）。
+ */
+export function resolveEvidenceFloor(runs, fallbackMs) {
+  const stamps = (runs ?? []).map((r) => Number(r?.created_at)).filter((n) => Number.isFinite(n));
+  return stamps.length ? Math.min(...stamps) : fallbackMs;
+}
+
+export function resolveDisposition({
+  head, messageIds, messages, runs, windowMs = EXEC_WINDOW_MS, evidenceFloorMs = null,
+}) {
   const ids = new Set(messageIds ?? [head.message_id]);
   const groupMsgs = (messages ?? []).filter((m) => ids.has(m.message_id));
   const stamps = (groupMsgs.length ? groupMsgs : [head]).map((m) => Number(m.create_time));
+
+  // 早于证据覆盖范围 → 无从判断，宁可不入账，也不能把"记录被清了"说成"派了没人管"
+  if (evidenceFloorMs != null && Math.max(...stamps) < evidenceFloorMs) return 'unknown';
 
   const executed = (runs ?? []).some((r) => {
     if (r?.task_kind === 'automation_run') return false;
@@ -251,14 +272,15 @@ export function resolveDisposition({ head, messageIds, messages, runs, windowMs 
   return replied ? 'answered' : 'dropped';
 }
 
-/** 三态 → 入账状态；answered 返回 null 表示不入账。任何一态都不得产出 queued。 */
+/** 判定 → 入账状态；answered/unknown 返回 null 表示不入账。任何一态都不得产出 queued。 */
 export function dispositionToStatus(disposition) {
   if (disposition === 'executed') return 'completed';
   if (disposition === 'dropped') return 'blocked';
   return null;
 }
 
-const LOOKBACK_SEC = 14 * 24 * 3600;
+// 与 OpenClaw task_runs 保留期对齐（实测只保 7 天）；扫更早的消息也无证据可判
+const LOOKBACK_SEC = 7 * 24 * 3600;
 
 /** 取 head 前后各 radius 条做上下文——「你拉个会议」这类短指令离开上下文不可解 */
 export function buildContextText(head, messages, radius = 3) {
@@ -303,7 +325,7 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
   const botOpenId = await fetchBot(token);
   let scanned = 0;
   let created = 0;
-  const stats = { executed: 0, answered: 0, dropped: 0 };
+  const stats = { executed: 0, answered: 0, dropped: 0, unknown: 0 };
   const errors = [];
 
   for (const group of GROUPS) {
@@ -315,10 +337,11 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
       if (deduped.length === 0) continue;
 
       const runs = loadRuns({ agentId: group.agentId, sinceMs: sinceSec * 1000 });
+      const evidenceFloorMs = resolveEvidenceFloor(runs, sinceSec * 1000);
 
       for (const c of deduped) {
         const disposition = resolveDisposition({
-          head: c.head, messageIds: c.messageIds, messages, runs,
+          head: c.head, messageIds: c.messageIds, messages, runs, evidenceFloorMs,
         });
         stats[disposition] += 1;
         const status = dispositionToStatus(disposition);
@@ -341,7 +364,8 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
     }
   }
   console.log(`[feishu-task-ledger] scanned=${scanned} created=${created} `
-    + `executed=${stats.executed} answered=${stats.answered} dropped=${stats.dropped}`);
+    + `executed=${stats.executed} answered=${stats.answered} dropped=${stats.dropped} `
+    + `unknown=${stats.unknown}`);
   return { scanned, created, stats, errors };
 }
 

@@ -259,11 +259,15 @@ describe('runFeishuTaskLedger', () => {
       fetchTokenFn: async () => 'tk',
       fetchBotOpenIdFn: async () => 'ou_bot',
       fetchMessagesFn: async ({ chatId }) => (chatId === 'oc_ee3fe04cf2541c4187f0fc054ae826de' ? msgs : []),
-      loadAgentRunsFn: () => [{ created_at: 1_000_060, task_kind: 'exec', runtime: 'cli' }],
+      // 第一条 run 早于所有消息 → 证据覆盖范围涵盖三条消息；第二条才是 m1 的执行记录
+      loadAgentRunsFn: () => [
+        { created_at: 500_000, task_kind: 'exec', runtime: 'cli' },
+        { created_at: 1_000_060, task_kind: 'exec', runtime: 'cli' },
+      ],
       createRoutedTaskFn: async (_db, req) => { created.push(req); return { task: { id: 'x' } }; },
       sinceSec: 1,
     });
-    expect(out.stats).toEqual({ executed: 1, answered: 1, dropped: 1 });
+    expect(out.stats).toEqual({ executed: 1, answered: 1, dropped: 1, unknown: 0 });
     expect(created.map((r) => r.source_id).sort()).toEqual(['m1', 'm3']);
     expect(created.find((r) => r.source_id === 'm1').task.status).toBe('completed');
     expect(created.find((r) => r.source_id === 'm3').task.status).toBe('blocked');
