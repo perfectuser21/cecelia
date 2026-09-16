@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   parseMemMB, memGuardDecision, checkConfigDrift, restoreConfigShape,
   doctrineSeedPlan, pickRunner, renderRouterConf, DOCTRINE_MARK,
+  parseOutreachHealth, MEMLOG_PS_ARGS,
 } from '../openclaw-guards.js';
 
 // us-vps 零执行守卫收编 Brain（决策 95477a66）：宿主散装 cron → Brain scheduler job。
@@ -73,5 +74,47 @@ describe('openclaw-guards — 跑场路由', () => {
     expect(conf).toContain('HostName 100.71.151.105');
     expect(conf).toContain('User administrator');
     expect(conf).toContain('IdentityFile /root/.openclaw/mmv_key');
+  });
+});
+
+// 2026-09-16 触达线空转案：话术全「停用」→ tick 每 30min 报 NO_SCRIPT 后静默退出，
+// 连续 22 小时零触达无人知晓。活性检查补进守卫，静默失败必须上浮。
+describe('openclaw-guards — 触达线活性', () => {
+  const tick = (t, msg) => `[${t}] ${msg}`;
+  it('连续空转（无成功发送）判 stalled 并给出原因', () => {
+    const log = [
+      tick('0916-09:00:00', '话术缺失: NO_SCRIPT B'),
+      tick('0916-09:30:00', '话术缺失: NO_SCRIPT B'),
+      tick('0916-10:02:26', '话术缺失: NO_SCRIPT B'),
+    ].join('\n');
+    const h = parseOutreachHealth(log);
+    expect(h.verdict).toBe('stalled');
+    expect(h.reason).toMatch(/NO_SCRIPT/);
+    expect(h.stalledTicks).toBe(3);
+  });
+  it('有成功发送则判 healthy（拟人跳过不算故障）', () => {
+    const log = [
+      tick('0916-09:00:00', '拟人跳过本tick'),
+      tick('0916-09:30:00', '话术缺失: NO_SCRIPT B'),
+      tick('0916-10:00:00', '单#12: 张三(dy123) via 主号 [profile]'),
+    ].join('\n');
+    expect(parseOutreachHealth(log).verdict).toBe('healthy');
+  });
+  it('全是拟人跳过/无待触达 → idle，不误报', () => {
+    const log = [
+      tick('0916-09:00:00', '拟人跳过本tick'),
+      tick('0916-09:30:00', '无待触达单'),
+    ].join('\n');
+    expect(parseOutreachHealth(log).verdict).toBe('idle');
+  });
+  it('空日志不崩，判 unknown', () => {
+    expect(parseOutreachHealth('').verdict).toBe('unknown');
+  });
+});
+
+describe('openclaw-guards — memlog 观测线', () => {
+  it('docker top 参数必须含 pid（否则 daemon 报 Couldn\'t find PID field）', () => {
+    // 2026-09-16 实证：-eo comm 缺 pid 字段被 docker daemon 拒绝，观测线一直空跑
+    expect(MEMLOG_PS_ARGS.join(' ')).toMatch(/pid/);
   });
 });
