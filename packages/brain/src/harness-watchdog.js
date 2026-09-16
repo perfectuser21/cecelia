@@ -351,7 +351,7 @@ export async function resumeStalledHarnessDrivers({
         transactionOpen = true;
 
         const locked = await client.query(
-          `SELECT id, status, claimed_at
+          `SELECT id, status, claimed_at, claimed_by, executor_kind
              FROM tasks
             WHERE id = $1
               AND task_type = 'harness_initiative'
@@ -381,17 +381,38 @@ export async function resumeStalledHarnessDrivers({
           continue;
         }
 
-        const upd = await client.query(
-          `UPDATE tasks SET
-             status = 'failed',
-             claimed_by = NULL,
-             claimed_at = NULL,
-             error_message = 'harness_initiative never started graph (no initiative_runs row, claimed_at stale)',
-             updated_at = NOW()
-           WHERE id = $1 AND status = 'in_progress'
-           RETURNING id`,
-          [row.id]
-        );
+        // 有头会话降级处置（2026-09-16）：豁免只看 claimed_at（开工那一刻），认不出
+        // "还在干活"——认真干了 44/118 分钟的会话和 40 分钟前死掉的长得一样。
+        // 判 failed 是终端态（状态机 allowed:[]），API 无法回正、只能直写 DB；
+        // executor-contracts 给 headed-session 定的也是 release-claim-and-alert 而非 fail。
+        // 故有头一律降级为 blocked：人工可见、可恢复、不会被 tick 抢跑重复执行。
+        const lockedRow = locked.rows[0];
+        const isHeaded = lockedRow.executor_kind === 'headed-session'
+          || String(lockedRow.claimed_by ?? '').includes('interactive-dev-skill');
+        const upd = isHeaded
+          ? await client.query(
+            `UPDATE tasks SET
+               status = 'blocked',
+               blocked_at = NOW(),
+               claimed_by = NULL,
+               claimed_at = NULL,
+               error_message = 'headed session stale: no initiative_runs row past grace — 降级 blocked（可恢复），非 failed',
+               updated_at = NOW()
+             WHERE id = $1 AND status = 'in_progress'
+             RETURNING id`,
+            [row.id]
+          )
+          : await client.query(
+            `UPDATE tasks SET
+               status = 'failed',
+               claimed_by = NULL,
+               claimed_at = NULL,
+               error_message = 'harness_initiative never started graph (no initiative_runs row, claimed_at stale)',
+               updated_at = NOW()
+             WHERE id = $1 AND status = 'in_progress'
+             RETURNING id`,
+            [row.id]
+          );
         await client.query('COMMIT');
         transactionOpen = false;
 

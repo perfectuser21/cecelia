@@ -254,6 +254,7 @@ three-tier-smoke.sh
 triage-officer-smoke.sh
 version-endpoint-smoke.sh
 vocab-alias-smoke.sh
+watchdog-headed-not-failed-smoke.sh
 workbench-projection-smoke.sh
 warroom-line-command-smoke.sh
 warroom-readonly-api-smoke.sh
