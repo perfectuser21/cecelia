@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.299.1
+**Brain 版本**: 1.299.2
 
 ## 1.283.0
 
@@ -48,6 +48,13 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.299.2 — 修 host-disk-sampler 的 DEPLOY_ROOT 自推断
+
+- `git -C <repo>/scripts rev-parse --git-common-dir` 返回的是**相对 `-C` 目录**的路径（实测 `../.git`）。旧实现只处理了返回值恰好等于 `.git` 的情况，其余走 `dirname` + `cd`，而 `cd` 的基准是「调用者的当前工作目录」而非 `SCRIPT_DIR`——同一个 bug 在三种环境算出三个不同的错答案：本机交互少一层（`…/perfect21`）、SSH 非交互少两层（`/Users`，直接 `mkdir: Permission denied`）、容器内与 `capacity-gate` 读取路径不一致。
+- 后果：样本落错地方 → `capacity-gate` 报 `sample_missing` → **预览环境永久 503**（自 09-09 起 842 次历史记录归零）。
+- 修法：一律在 `SCRIPT_DIR` 下解析，让相对路径有正确基准；无 git 信息时回退 `SCRIPT_DIR/..` 而非硬编码某台机器的绝对路径。
+- 回归测试补 3 条**不传 `CECELIA_DEPLOY_ROOT`** 的用例——既有用例全部显式传它，把推断逻辑整个绕过去了，这正是 bug 能长期存活的原因。
 
 ## Brain 1.299.1 — harness-watchdog 不再把有头会话判成 failed
 
