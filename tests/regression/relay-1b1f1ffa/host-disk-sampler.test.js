@@ -3,9 +3,9 @@
 // 本文件不被 evaluator 当 oracle 读取，但必须真跑真失败（禁 mock 被测边：真 bash 脚本 + 真文件系统）。
 import { describe, it, expect } from 'vitest';
 import { execSync, spawnSync } from 'child_process';
-import { existsSync, readFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, utimesSync } from 'fs';
+import { existsSync, readFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, utimesSync, copyFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join, resolve } from 'path';
+import { join, resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -121,5 +121,46 @@ describe('host-disk-sampler.sh [BEHAVIOR]', () => {
         rmSync(workDir, { recursive: true, force: true });
       }
     });
+  });
+});
+
+// ── DEPLOY_ROOT 自推断（2026-09-16 实证）──────────────────────────────────
+// 上面所有用例都显式传 CECELIA_DEPLOY_ROOT，把推断逻辑整个绕过去了——
+// 而生产环境从不传它，走的正是推断路径。于是这个 bug 活了很久：
+//   git -C <repo>/scripts rev-parse --git-common-dir  →  "../.git"（相对 -C 目录）
+//   脚本只处理了返回值恰好等于 ".git" 的情况，其余走 dirname + cd，
+//   而 cd 的基准是「当前工作目录」不是 scripts/，于是解析出错。
+// 实测同一 bug 在三种环境算出三个不同的错答案：
+//   本机交互 → /Users/administrator/perfect21（少一层）
+//   SSH 非交互 → /Users（少两层，mkdir 直接 Permission denied）
+//   us-vps 容器 → 与 capacity-gate 读取路径不一致
+// capacity-gate 读 <repo>/.runtime/host-disk.json，读不到就 sample_missing → 预览环境永久 503。
+describe('host-disk-sampler.sh — DEPLOY_ROOT 自推断（不传 CECELIA_DEPLOY_ROOT）', () => {
+  function makeFakeRepo() {
+    const root = mkdtempSync(join(tmpdir(), 'sampler-root-'));
+    mkdirSync(join(root, 'scripts'), { recursive: true });
+    copyFileSync(SAMPLER, join(root, 'scripts', 'host-disk-sampler.sh'));
+    execSync('git init -q && git config user.email t@t && git config user.name t', { cwd: root, stdio: 'pipe' });
+    return root;
+  }
+
+  it('从 repo 根目录调用 → 样本落在 <repo>/.runtime/，不落到父目录', () => {
+    const root = makeFakeRepo();
+    execSync('bash scripts/host-disk-sampler.sh', { cwd: root, stdio: 'pipe' });
+    expect(existsSync(join(root, '.runtime', 'host-disk.json'))).toBe(true);
+    expect(existsSync(join(dirname(root), '.runtime', 'host-disk.json'))).toBe(false);
+  });
+
+  it('从任意无关目录调用（模拟 SSH 非交互）→ 仍落在 <repo>/.runtime/', () => {
+    const root = makeFakeRepo();
+    const elsewhere = mkdtempSync(join(tmpdir(), 'sampler-cwd-'));
+    execSync(`bash "${join(root, 'scripts', 'host-disk-sampler.sh')}"`, { cwd: elsewhere, stdio: 'pipe' });
+    expect(existsSync(join(root, '.runtime', 'host-disk.json'))).toBe(true);
+    expect(existsSync(join(elsewhere, '.runtime', 'host-disk.json'))).toBe(false);
+  });
+
+  it('样本落点必须与 capacity-gate 的读取路径一致（<repo>/.runtime/host-disk.json）', () => {
+    const gate = readFileSync(join(REPO_ROOT, 'packages/brain/src/capacity-gate.js'), 'utf8');
+    expect(gate).toMatch(/join\(REPO_ROOT,\s*'\.runtime',\s*'host-disk\.json'\)/);
   });
 });
