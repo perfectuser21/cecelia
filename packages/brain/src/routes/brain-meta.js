@@ -9,6 +9,7 @@ import { getAccountUsage, selectBestAccount } from '../account-usage.js';
 import websocketService, { WS_EVENTS as _WS_EVENTS } from '../websocket.js';
 import { handleChat, handleChatStream } from '../orchestrator-chat.js';
 import { acquireDeviceLock } from '../device-lock-helpers.js';
+import { rateLimit } from 'express-rate-limit';
 
 const router = Router();
 
@@ -1759,12 +1760,15 @@ router.post('/device-locks/release', async (req, res) => {
   }
 });
 
+// 内网限流：宽松额度防误伤，同时满足 DB 访问限流要求（CodeQL js/missing-rate-limiting）
+const deviceRegisterLimiter = rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false });
+
 /**
  * POST /api/brain/device-locks/register
  * 幂等注册/更新设备（手机换宿主重注册即可；不碰锁字段）
  * body: { device_name, host?, device_type? }
  */
-router.post('/device-locks/register', async (req, res) => {
+router.post('/device-locks/register', deviceRegisterLimiter, async (req, res) => {
   try {
     const { device_name, host = null, device_type = 'phone' } = req.body;
     if (!device_name) {
