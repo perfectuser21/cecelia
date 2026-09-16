@@ -9,6 +9,7 @@ import {
   fetchTenantToken, fetchBotOpenId, fetchGroupMessages,
   buildContextText, runFeishuTaskLedger,
   maybeRunFeishuTaskLedger, _resetFeishuLedgerGate,
+  resolveDisposition, dispositionToStatus, parseRunRows,
 } from '../feishu-task-ledger.js';
 import { TASK_CREATION_INVENTORY } from '../task-creation-inventory.js';
 
@@ -378,5 +379,140 @@ describe('maybeRunFeishuTaskLedger 自 gate', () => {
     await maybeRunFeishuTaskLedger({}, { env: {}, now: () => 1 });
     const out = await maybeRunFeishuTaskLedger({}, { env: {}, now: () => 61 * 60 * 1000 });
     expect(out.skipped).toBe('missing_credentials');
+  });
+});
+
+// ── 回归：飞书历史消息 API 的 mentions[].id 是字符串，不是 {open_id} ──────────
+// 2026-09-16 生产实证：im/v1/messages 返回 {"id":"ou_xxx","id_type":"open_id","name":"徐啸"}，
+// 而 webhook 事件里是 {"id":{"open_id":"ou_xxx"}}。模块原先只认后者 →
+// requireMention 群候选恒空 → 悦升云端群一条都入不了账。
+describe('selectCandidates — mentions.id 两种形态都要认（回归）', () => {
+  const group = { chatId: 'c1', name: '悦升云端', requireMention: true };
+  const BOT2 = 'ou_bot123';
+  const mk = (id, mentions) => ({
+    message_id: id,
+    create_time: '1000',
+    sender: { sender_type: 'user', id: 'ou_alex' },
+    mentions,
+    body: { content: JSON.stringify({ text: '帮我建三个飞书文档' }) },
+  });
+
+  it('扁平字符串形态（历史消息 API）能匹配', () => {
+    const out = selectCandidates(
+      [mk('h1', [{ id: BOT2, id_type: 'open_id', name: '秋米' }])], group, BOT2,
+    );
+    expect(out.map((m) => m.message_id)).toEqual(['h1']);
+  });
+
+  it('嵌套对象形态（webhook 事件）能匹配', () => {
+    const out = selectCandidates([mk('w1', [{ id: { open_id: BOT2 } }])], group, BOT2);
+    expect(out.map((m) => m.message_id)).toEqual(['w1']);
+  });
+
+  it('扁平形态下 @ 的是人仍然不入选', () => {
+    const out = selectCandidates(
+      [mk('h2', [{ id: 'ou_xuxiao', id_type: 'open_id', name: '徐啸' }])], group, BOT2,
+    );
+    expect(out).toEqual([]);
+  });
+});
+
+// ── 三态机械判定：有 run / 无 run 但有回复 / 无 run 也没回复 ────────────────
+describe('resolveDisposition 三态机械判定（零 LLM）', () => {
+  const heads = (ts) => ({
+    message_id: 'm' + ts,
+    create_time: String(ts),
+    sender: { sender_type: 'user', id: 'ou_alex' },
+    body: { content: JSON.stringify({ text: '帮我建三个飞书文档' }) },
+  });
+  const botMsg = (ts) => ({
+    message_id: 'b' + ts, create_time: String(ts),
+    sender: { sender_type: 'app', id: 'ou_bot' },
+    body: { content: JSON.stringify({ text: '好的' }) },
+  });
+  const run = (ts) => ({ created_at: ts });
+
+  it('交办后窗口内有 run → executed（任务，已办）', () => {
+    const d = resolveDisposition({
+      head: heads(1_000_000), messageIds: ['m1000000'],
+      messages: [heads(1_000_000)], runs: [run(1_000_000 + 60_000)],
+    });
+    expect(d).toBe('executed');
+  });
+
+  it('无 run 但秋米有回复 → answered（当场答完的提问，不入账）', () => {
+    const d = resolveDisposition({
+      head: heads(2_000_000), messageIds: ['m2000000'],
+      messages: [heads(2_000_000), botMsg(2_000_000 + 30_000)], runs: [],
+    });
+    expect(d).toBe('answered');
+  });
+
+  it('无 run 也没回复 → dropped（派了没人管，必须入账 blocked）', () => {
+    const d = resolveDisposition({
+      head: heads(3_000_000), messageIds: ['m3000000'],
+      messages: [heads(3_000_000)], runs: [],
+    });
+    expect(d).toBe('dropped');
+  });
+
+  it('重发组内任一条命中 run 即算 executed（run 常挂在后一次重发上）', () => {
+    // 实测：06:30 首发无响应 → 06:52 重发才触发 run；head 取最早那条
+    const first = heads(4_000_000);
+    const resend = heads(4_000_000 + 22 * 60 * 1000);
+    const d = resolveDisposition({
+      head: first,
+      messageIds: [first.message_id, resend.message_id],
+      messages: [first, resend],
+      runs: [run(4_000_000 + 22 * 60 * 1000 + 60_000)],
+    });
+    expect(d).toBe('executed');
+  });
+
+  it('run 发生在交办之前 → 不算', () => {
+    const d = resolveDisposition({
+      head: heads(5_000_000), messageIds: ['m5000000'],
+      messages: [heads(5_000_000)], runs: [run(5_000_000 - 60_000)],
+    });
+    expect(d).toBe('dropped');
+  });
+
+  it('automation_run（cron 定时）不算响应群消息的执行', () => {
+    const d = resolveDisposition({
+      head: heads(6_000_000), messageIds: ['m6000000'],
+      messages: [heads(6_000_000)],
+      runs: [{ created_at: 6_000_000 + 60_000, task_kind: 'automation_run' }],
+    });
+    expect(d).toBe('dropped');
+  });
+});
+
+describe('dispositionToStatus 三态 → 入账状态', () => {
+  it('executed → completed；dropped → blocked；answered → 不入账(null)', () => {
+    expect(dispositionToStatus('executed')).toBe('completed');
+    expect(dispositionToStatus('dropped')).toBe('blocked');
+    expect(dispositionToStatus('answered')).toBe(null);
+  });
+
+  it('三态都不产出 queued', () => {
+    for (const d of ['executed', 'answered', 'dropped']) {
+      expect(dispositionToStatus(d)).not.toBe('queued');
+    }
+  });
+});
+
+describe('parseRunRows — sqlite CLI -json 输出解析', () => {
+  it('解析出 created_at 数值与 task_kind', () => {
+    const rows = parseRunRows('[{"created_at":1789500000000,"task_kind":"exec","runtime":"cli"}]');
+    expect(rows).toEqual([{ created_at: 1789500000000, task_kind: 'exec', runtime: 'cli' }]);
+  });
+
+  it('空输出 → 空数组（库里该 agent 无 run 是正常情况）', () => {
+    expect(parseRunRows('')).toEqual([]);
+    expect(parseRunRows('[]')).toEqual([]);
+  });
+
+  it('坏输出 → 空数组，不抛错（守卫不能因第三方库异常而崩）', () => {
+    expect(parseRunRows('Error: no such table')).toEqual([]);
   });
 });
