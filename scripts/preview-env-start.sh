@@ -226,7 +226,20 @@ fi
 # 实测必现 "source database is being accessed by other users"（PR#3809验证发现）。
 # 改用 pg_dump | pg_restore 管道直传：不依赖模板库无连接，也不落盘（避免容器 tmpfs 限制）。
 # 临时方案——2.5GB 库约 50s+，后续用定期刷新的无连接快照库当 TEMPLATE 做真正的快速克隆（另立任务）。
-log "Step 4: 克隆数据库 cecelia → ${DB_NAME}（pg_dump|pg_restore）..."
+# 克隆源可配置（2026-09-17）：预览环境下放执行机后，源库不再必然叫 cecelia——
+# MMV 上只有 cecelia_staging/scratch/test，生产库 cecelia 在 us-vps。预览的用途是
+# "看改动效果"，用 staging 数据完全够，且避免把生产数据复制进临时环境。
+PREVIEW_SOURCE_DB="${PREVIEW_SOURCE_DB:-cecelia}"
+
+if ! PGPASSWORD="${DB_PASSWORD:-cecelia}" psql -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" \
+     -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${PREVIEW_SOURCE_DB}'" 2>/dev/null | grep -q 1; then
+  log "ERROR: 克隆源库 ${PREVIEW_SOURCE_DB} 不存在于 ${DB_HOST:-localhost}"
+  log "  本机可用库：$(PGPASSWORD="${DB_PASSWORD:-cecelia}" psql -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" -d postgres -tAc "SELECT string_agg(datname,', ') FROM pg_database WHERE datname LIKE 'cecelia%'" 2>/dev/null)"
+  log "  修法：用 PREVIEW_SOURCE_DB 指定实际存在的源库（执行机上通常是 cecelia_staging）"
+  exit 1
+fi
+
+log "Step 4: 克隆数据库 ${PREVIEW_SOURCE_DB} → ${DB_NAME}（pg_dump|pg_restore）..."
 # 先检查/删除旧库（幂等）
 PGPASSWORD="${DB_PASSWORD:-cecelia}" dropdb \
   -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" \
@@ -248,7 +261,7 @@ done
 if PGPASSWORD="${DB_PASSWORD:-cecelia}" pg_dump \
     -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" -Fc \
     "${PGDUMP_EXCLUDE_ARGS[@]}" \
-    cecelia 2>>"$LOG_FILE" \
+    "$PREVIEW_SOURCE_DB" 2>>"$LOG_FILE" \
     | PGPASSWORD="${DB_PASSWORD:-cecelia}" pg_restore \
       -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" \
       --no-owner --no-acl -d "$DB_NAME" 2>>"$LOG_FILE"; then
