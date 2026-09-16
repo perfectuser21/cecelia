@@ -14,6 +14,8 @@
  *   ③ 重发去重（实测同一任务因无响应被重发 3 次）
  * 全部纯函数内核 + 注入式 IO，可单测。
  */
+import { callLLM as defaultCallLLM } from './llm-caller.js';
+import { createRoutedTask as defaultCreateRoutedTask } from './work-routing-store.js';
 
 /** 在册群（来源：OpenClaw clawdbot.json channels.feishu.accounts.main，此处固化，运行时不读第三方配置） */
 export const GROUPS = Object.freeze([
@@ -223,4 +225,74 @@ export async function fetchGroupMessages({ fetchFn, token, chatId, startTimeSec 
     pageToken = body.data?.has_more ? body.data?.page_token : null;
   } while (pageToken);
   return out;
+}
+
+const LOOKBACK_SEC = 14 * 24 * 3600;
+
+/** 取 head 前后各 radius 条做上下文——「你拉个会议」这类短指令离开上下文不可解 */
+export function buildContextText(head, messages, radius = 3) {
+  const sorted = [...messages].sort((a, b) => Number(a.create_time) - Number(b.create_time));
+  const idx = sorted.findIndex((m) => m.message_id === head.message_id);
+  if (idx < 0) return '';
+  return sorted
+    .slice(Math.max(0, idx - radius), idx + radius + 1)
+    .map((m) => {
+      const who = m.sender?.sender_type === 'app' ? '秋米' : '人';
+      const mark = m.message_id === head.message_id ? '>>> ' : '    ';
+      return `${mark}[${who}] ${messageText(m).replace(/\s+/g, ' ').slice(0, 120)}`;
+    })
+    .join('\n');
+}
+
+/** scheduler 入口：拉群消息 → 三道判据 → 入账 */
+export async function runFeishuTaskLedger(pool, deps = {}) {
+  const env = deps.env ?? process.env;
+  const appId = env.FEISHU_APP_ID;
+  const appSecret = env.FEISHU_APP_SECRET;
+  if (!appId || !appSecret) {
+    console.warn('[feishu-task-ledger] 缺 FEISHU_APP_ID/FEISHU_APP_SECRET，跳过');
+    return { skipped: 'missing_credentials', scanned: 0, created: 0 };
+  }
+  const fetchFn = deps.fetchFn ?? globalThis.fetch;
+  const fetchToken = deps.fetchTokenFn ?? (() => fetchTenantToken({ fetchFn, appId, appSecret }));
+  const fetchBot = deps.fetchBotOpenIdFn ?? ((token) => fetchBotOpenId({ fetchFn, token }));
+  const fetchMessages = deps.fetchMessagesFn
+    ?? (({ token, chatId, startTimeSec }) => fetchGroupMessages({
+      fetchFn, token, chatId, startTimeSec,
+    }));
+  const callLLMFn = deps.callLLM ?? defaultCallLLM;
+  const createTask = deps.createRoutedTaskFn ?? defaultCreateRoutedTask;
+  const sinceSec = deps.sinceSec ?? Math.floor(Date.now() / 1000) - LOOKBACK_SEC;
+
+  const token = await fetchToken();
+  const botOpenId = await fetchBot(token);
+  let scanned = 0;
+  let created = 0;
+  const errors = [];
+
+  for (const group of GROUPS) {
+    try {
+      const messages = await fetchMessages({ token, chatId: group.chatId, startTimeSec: sinceSec });
+      scanned += messages.length;
+      const candidates = selectCandidates(messages, group, botOpenId);
+      const deduped = dedupeResends(candidates);
+      const tasks = await classifyCandidates(deduped, { callLLM: callLLMFn });
+      for (const t of tasks) {
+        const req = buildTaskRequest({
+          head: t.head,
+          messageIds: t.messageIds,
+          group,
+          botReplied: resolveReplyEvidence(t.head, messages),
+          contextText: buildContextText(t.head, messages),
+        });
+        req.metadata.classification = t.classification;
+        await createTask(pool, req);
+        created += 1;
+      }
+    } catch (err) {
+      console.error(`[feishu-task-ledger] 群 ${group.chatId} 处理失败: ${err.message}`);
+      errors.push(group.chatId);
+    }
+  }
+  return { scanned, created, errors };
 }
