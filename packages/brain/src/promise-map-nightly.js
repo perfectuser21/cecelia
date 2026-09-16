@@ -174,6 +174,47 @@ export async function buildNightlyAssertions(queryPool) {
     });
   }
 
+  // ── A6: skill 账本一致性（复活 skill_drift_alerts，不新建表）──────
+  // 2026-09-16 实查四处分叉：磁盘 94 / clawdbot.json agent 引用 19 /
+  // skill_registry(openclaw) 31 / Notion Skill Registry 341。四个数各走各的，
+  // 没有任何一处在数数，所以烂了没人知道。
+  // 本刀 thin：先盯 Brain 内部两处（账本 vs 运行舱投影）。
+  // ops_skills 是 ops-collector 每 5min 从 clawdbot.json 现算的派生投影，
+  // skill_registry 是账本真身——两者对不上即账实分叉。
+  // Notion 那一处由 pushSkillRegistry 的 upsert + 孤儿检测覆盖（下一刀加厚）。
+  const registryCountRes = await queryPool.query(
+    `select count(*)::int AS count FROM skill_registry
+      WHERE location = 'openclaw' OR name LIKE 'openclaw/%'`);
+  const opsCountRes = await queryPool.query(
+    `SELECT count(*)::int AS count FROM ops_skills WHERE source = 'openclaw'`);
+  const registryCount = Number(registryCountRes?.rows?.[0]?.count ?? 0);
+  const opsCount = Number(opsCountRes?.rows?.[0]?.count ?? 0);
+  const ledgerConsistent = registryCount === opsCount;
+
+  if (!ledgerConsistent) {
+    // 落账到 skill_drift_alerts（该表 2026-07-17 后已停更，此处复用而非新建）。
+    // UNIQUE(skill_name, drift_date) 保证每天一条，重跑幂等。
+    await queryPool.query(
+      `INSERT INTO skill_drift_alerts (skill_name, ssot_version, snapshot_version, drift_date)
+       VALUES ($1, $2, $3, CURRENT_DATE)
+       ON CONFLICT (skill_name, drift_date)
+       DO UPDATE SET ssot_version = EXCLUDED.ssot_version,
+                     snapshot_version = EXCLUDED.snapshot_version,
+                     detected_at = NOW()`,
+      ['__skill_ledger_count__', `registry=${registryCount}`, `ops_skills=${opsCount}`],
+    ).catch(() => {});
+  }
+
+  results.push({
+    key: 'skill_ledger_consistency',
+    label: 'skill 账本一致性',
+    ok: ledgerConsistent,
+    detail: ledgerConsistent
+      ? `skill_registry 与 ops_skills 均为 ${registryCount} 个 openclaw skill`
+      : `账实分叉：skill_registry(openclaw)=${registryCount}，ops_skills(openclaw)=${opsCount}，`
+        + `差 ${Math.abs(registryCount - opsCount)} 个；已记入 skill_drift_alerts`,
+  });
+
   return results;
 }
 
