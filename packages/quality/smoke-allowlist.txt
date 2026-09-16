@@ -228,6 +228,7 @@ seven-ring-audit-smoke.sh
 skill-eval-formb-smoke.sh
 skill-eval-report-smoke.sh
 skill-eval-smoke.sh
+skill-ledger-reconcile-smoke.sh
 skill-relay-smoke.sh
 slot-accounting-smoke.sh
 slot-admission-smoke.sh
