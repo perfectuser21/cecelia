@@ -738,9 +738,36 @@ export async function pullNotionTasksForTest(pool, token, opts = {}) {
   return pullNotionTasks(pool, token, opts);
 }
 
+/**
+ * Brain skill_registry → Notion Skill Registry 库（353c40c2）。
+ *
+ * 病根（2026-09-16 实测）：原实现是 insert-only（`WHERE notion_synced_at IS NULL`），
+ * 首推之后 Brain 侧改 description/status/location 永远不会再同步，Notion 那行
+ * 停在首次写入那一刻——这是 Notion 341 行 vs Brain 180 行账实分叉的机制原因之一。
+ *
+ * 修法照 pushTasks 的成熟模式（幂等指纹 + managed 才 PATCH）：
+ *  1. 指纹 metadata.pushed_digest = md5(name|description|status|location)，
+ *     SELECT 直接在 SQL 里比对，新行与内容变更行一并捞出，未变的不重推（防 Notion 限流）；
+ *  2. 仅当 notion_id 与本指纹键同时存在（managed）才 PATCH，否则 create——
+ *     历史 notion_id 可能是旧时代遗产指向别的库，盲 PATCH 会打错对象；
+ *  3. 404（页面被人删）或错库 400 → 清 notion_id 与指纹，下轮 create 重建。
+ *
+ * 指纹写回用 jsonb 固定子键合并（`|| jsonb_build_object`），不整体覆盖 metadata——
+ * metadata 同时装着 eval_score 等别的键（ops-collector.js 在读），整体覆盖会抹掉它们。
+ */
+const SKILL_DIGEST_SQL = `md5(
+  coalesce(name,'') || '|' || coalesce(description,'') || '|' ||
+  coalesce(status,'') || '|' || coalesce(location,'')
+)`;
+
 async function pushSkillRegistry(pool, token) {
   const { rows } = await pool.query(
-    `SELECT * FROM skill_registry WHERE notion_synced_at IS NULL LIMIT 10`
+    `SELECT id, name, description, location, status, notion_id, metadata,
+            ${SKILL_DIGEST_SQL} AS pushed_digest
+       FROM skill_registry
+      WHERE (metadata->>'pushed_digest') IS DISTINCT FROM ${SKILL_DIGEST_SQL}
+      ORDER BY updated_at DESC NULLS LAST
+      LIMIT 10`
   );
   for (const s of rows) {
     try {
@@ -752,17 +779,39 @@ async function pushSkillRegistry(pool, token) {
       if (s.location) {
         properties['Source'] = { select: { name: s.location } };
       }
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: SKILL_REGISTRY_DB },
-        properties,
-      });
-      await pool.query(
-        'UPDATE skill_registry SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, s.id]
-      );
+      const managed = Boolean(s.notion_id && s.metadata?.pushed_digest);
+      if (managed) {
+        await notionReq(token, `/pages/${s.notion_id}`, 'PATCH', { properties });
+        await pool.query(
+          `UPDATE skill_registry
+              SET metadata = COALESCE(metadata,'{}'::jsonb) || jsonb_build_object('pushed_digest', $2::text),
+                  notion_synced_at = NOW()
+            WHERE id = $1`,
+          [s.id, s.pushed_digest]
+        );
+      } else {
+        const page = await notionReq(token, '/pages', 'POST', {
+          parent: { database_id: SKILL_REGISTRY_DB },
+          properties,
+        });
+        await pool.query(
+          `UPDATE skill_registry
+              SET notion_id = $2,
+                  metadata = COALESCE(metadata,'{}'::jsonb) || jsonb_build_object('pushed_digest', $3::text),
+                  notion_synced_at = NOW()
+            WHERE id = $1`,
+          [s.id, page.id, s.pushed_digest]
+        );
+      }
     } catch (err) {
       console.warn(`[notion-push-sync] skill ${s.id} 推送失败: ${err.message}`);
       await logSyncError(pool, err.message);
+      if ((/404/.test(err.message) && s.metadata?.pushed_digest) || isWrongDatabaseError(err)) {
+        await pool.query(
+          `UPDATE skill_registry SET notion_id = NULL, metadata = metadata - 'pushed_digest' WHERE id = $1`,
+          [s.id]
+        ).catch(() => {});
+      }
     }
   }
 }
