@@ -22,6 +22,7 @@
  */
 import { existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
 
 export const WORKER_SLOTS = ['slot7', 'slot8', 'slot9'];
 export const MAX_CONCURRENT = 2;
@@ -159,6 +160,24 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
     );
     if (claim.rowCount === 0) continue; // 别人抢先，换下一个任务
 
+    // 设备锁（G5 横切件，task 104ab89f）：CAS 预占之后、发射 tmux 之前抢锁。
+    // 持有者=task.id（与 dispatcher 同键，sweepStaleDeviceLocks 才认得），不是预占名。
+    // 抢不到 → 回滚 claim 留下轮扫描；unknown_device 也留队列——worker-pool 无
+    // terminal 语义，判死在 dispatcher 侧。acquire 抛错 fail-closed 按被占处理。
+    const deviceSerial = task.payload?.device_serial;
+    if (deviceSerial) {
+      const lockResult = await acquireDeviceLock(task.id, deviceSerial, task.payload?.device_ttl_minutes)
+        .catch((e) => { console.error(`[worker-pool] device lock error: ${e.message}`); return { result: 'locked' }; });
+      if (lockResult.result !== 'acquired') {
+        console.log(`[worker-pool] device ${deviceSerial} unavailable (${lockResult.result}), revert task ${task.id}`);
+        await pool.query(
+          `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = 'interactive-dev-skill'`,
+          [task.id],
+        );
+        continue; // 槽位没动过，不推进 slotIdx，留给下一个任务
+      }
+    }
+
     const prompt = [
       `/dev --task-id ${task.id} —— ${task.title || ''}`,
       `claim 若 409 且 claimed_by=interactive-dev-skill 属预占,继续执行勿停。`,
@@ -207,6 +226,11 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
           `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = 'interactive-dev-skill'`,
           [task.id]
         );
+        // 发射失败 revert 处同步释放设备锁（G5 同 dispatcher 原则）：任务回 queued
+        // 不该继续占设备；下轮重派走同持有者 reacquire，漏放由 sweeper 对账兜底
+        if (deviceSerial) {
+          try { await releaseDeviceLocksHeldBy(task.id); } catch (e) { console.error(`[worker-pool] device lock release failed (non-fatal): ${e.message}`); }
+        }
       } catch (accountErr) {
         console.warn(`[worker-pool] 失败记账/回滚异常（non-fatal）: ${accountErr.message}`);
       }
