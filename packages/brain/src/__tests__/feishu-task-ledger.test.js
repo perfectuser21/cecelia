@@ -5,7 +5,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   GROUPS, selectCandidates, dedupeResends, resolveReplyEvidence, buildTaskRequest,
-  buildClassifyPrompt, parseClassifyResult, classifyCandidates,
   fetchTenantToken, fetchBotOpenId, fetchGroupMessages,
   buildContextText, runFeishuTaskLedger,
   maybeRunFeishuTaskLedger, _resetFeishuLedgerGate,
@@ -175,65 +174,6 @@ describe('buildTaskRequest 入账参数', () => {
     expect(r.metadata.bot_replied).toBe(false);
     expect(r.metadata.ledger_only).toBe(true);
     expect(r.description).toContain('上下文');
-  });
-});
-
-describe('判据2 LLM 语义分类', () => {
-  const g = (id, text) => ({
-    head: {
-      message_id: id,
-      create_time: '1000',
-      sender: { id: 'ou_alex' },
-      body: { content: JSON.stringify({ text }) },
-    },
-    messageIds: [id],
-  });
-
-  it('prompt 含四档定义与真实反例（规则法已否决）', () => {
-    const p = buildClassifyPrompt([{ index: 1, text: '帮我建三个飞书文档' }]);
-    expect(p).toContain('task');
-    expect(p).toContain('question');
-    expect(p).toContain('debug_paste');
-    expect(p).toContain('chat');
-    expect(p).toContain('你拉个会议');
-    expect(p).toContain('现在的模型是什么');
-  });
-
-  it('parseClassifyResult 解析 JSON 数组', () => {
-    const out = parseClassifyResult(
-      '[{"index":1,"type":"task"},{"index":2,"type":"question"}]',
-      [{ index: 1 }, { index: 2 }],
-    );
-    expect(out).toEqual(['task', 'question']);
-  });
-
-  it('parseClassifyResult 容忍 markdown 代码围栏', () => {
-    const out = parseClassifyResult('```json\n[{"index":1,"type":"task"}]\n```', [{ index: 1 }]);
-    expect(out).toEqual(['task']);
-  });
-
-  it('LLM 返回不可解析时全部降级为 chat（宁漏不错记）', () => {
-    expect(parseClassifyResult('抱歉我无法回答', [{ index: 1 }, { index: 2 }])).toEqual(['chat', 'chat']);
-  });
-
-  it('未知类别降级为 chat', () => {
-    expect(parseClassifyResult('[{"index":1,"type":"urgent"}]', [{ index: 1 }])).toEqual(['chat']);
-  });
-
-  it('classifyCandidates 只放行 task', async () => {
-    const callLLM = async () => ({ text: '[{"index":1,"type":"task"},{"index":2,"type":"question"}]' });
-    const out = await classifyCandidates(
-      [g('m1', '帮我建三个飞书文档'), g('m2', '表在哪')],
-      { callLLM },
-    );
-    expect(out.map((x) => x.head.message_id)).toEqual(['m1']);
-    expect(out[0].classification).toBe('task');
-  });
-
-  it('空输入不调 LLM', async () => {
-    let called = false;
-    await classifyCandidates([], { callLLM: async () => { called = true; return { text: '[]' }; } });
-    expect(called).toBe(false);
   });
 });
 

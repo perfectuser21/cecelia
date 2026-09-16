@@ -14,7 +14,6 @@
  *   ③ 重发去重（实测同一任务因无响应被重发 3 次）
  * 全部纯函数内核 + 注入式 IO，可单测。
  */
-import { callLLM as defaultCallLLM } from './llm-caller.js';
 import { createRoutedTask as defaultCreateRoutedTask } from './work-routing-store.js';
 
 /** 在册群（来源：OpenClaw clawdbot.json channels.feishu.accounts.main，此处固化，运行时不读第三方配置） */
@@ -123,66 +122,6 @@ export function buildTaskRequest({ head, messageIds, group, botReplied, contextT
       priority: 'P2',
     },
   };
-}
-
-const CLASSES = Object.freeze(['task', 'question', 'debug_paste', 'chat']);
-
-/**
- * 判据 2 的 prompt（主理人拍板：秋米能即答、没调 agent 去干的不算任务）。
- * 规则法已否决——「你拉个会议」5 字是任务，「现在的模型是什么」7 字是提问，
- * 长度与关键词都不可分，必须语义判。示例全部取自真实群消息。
- */
-export function buildClassifyPrompt(items) {
-  const lines = items
-    .map((it) => `${it.index}. ${it.text.replace(/\s+/g, ' ').slice(0, 300)}`)
-    .join('\n');
-  return `你在判断飞书群里主理人发给 AI 助理「秋米」的消息，哪些是真正布置的任务。
-
-四档分类：
-- task：要求秋米执行动作并产出结果。例：「帮我建三个飞书文档，分别填写公司信息、产品信息、目标人群」「把抖音读昵称这个操作沉淀成一个 Skill」「你拉个会议」
-- question：只是索取信息，秋米答一句就完了。例：「表在哪」「现在的模型是什么」「悦升云端的获客列表在哪？」
-- debug_paste：粘贴报错、终端输出、日志求解释，不是交办新活
-- chat：状态告知、闲聊、确认。例：「授权成功了」「在吗？」「他还在找」
-
-判断要点：要求秋米去"做一件事并交付产出"才是 task；秋米当场回答一句就能完结的不是 task。
-
-待分类消息：
-${lines}
-
-只输出 JSON 数组，不要任何解释文字，格式：
-[{"index":1,"type":"task"},{"index":2,"type":"question"}]`;
-}
-
-/** 解析分类结果；任何不可解析/未知类别一律降级 chat（宁漏不错记） */
-export function parseClassifyResult(raw, items) {
-  const fallback = items.map(() => 'chat');
-  const text = String(raw ?? '').replace(/```json/gi, '').replace(/```/g, '').trim();
-  const start = text.indexOf('[');
-  const end = text.lastIndexOf(']');
-  if (start < 0 || end <= start) return fallback;
-  let parsed;
-  try {
-    parsed = JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return fallback;
-  }
-  if (!Array.isArray(parsed)) return fallback;
-  const byIndex = new Map(parsed.map((p) => [Number(p?.index), String(p?.type)]));
-  return items.map((it) => {
-    const t = byIndex.get(Number(it.index));
-    return CLASSES.includes(t) ? t : 'chat';
-  });
-}
-
-/** 判据 2：过 LLM，只放行 task */
-export async function classifyCandidates(groups, { callLLM }) {
-  if (!groups || groups.length === 0) return [];
-  const items = groups.map((g, i) => ({ index: i + 1, text: messageText(g.head) }));
-  const { text } = await callLLM('thalamus', buildClassifyPrompt(items), { timeout: 60_000 });
-  const types = parseClassifyResult(text, items);
-  return groups
-    .map((g, i) => ({ ...g, classification: types[i] }))
-    .filter((g) => g.classification === 'task');
 }
 
 const FEISHU_BASE = 'https://open.feishu.cn/open-apis';
