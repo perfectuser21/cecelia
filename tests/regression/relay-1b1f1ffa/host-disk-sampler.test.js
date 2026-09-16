@@ -137,7 +137,10 @@ describe('host-disk-sampler.sh [BEHAVIOR]', () => {
 // capacity-gate 读 <repo>/.runtime/host-disk.json，读不到就 sample_missing → 预览环境永久 503。
 describe('host-disk-sampler.sh — DEPLOY_ROOT 自推断（不传 CECELIA_DEPLOY_ROOT）', () => {
   function makeFakeRepo() {
-    const root = mkdtempSync(join(tmpdir(), 'sampler-root-'));
+    // 多套一层：确保 dirname(root) 是本用例独占的干净目录，
+    // 否则多个用例共用 /tmp，父目录断言会被别处残留污染。
+    const box = mkdtempSync(join(tmpdir(), 'sampler-box-'));
+    const root = join(box, 'repo');
     mkdirSync(join(root, 'scripts'), { recursive: true });
     copyFileSync(SAMPLER, join(root, 'scripts', 'host-disk-sampler.sh'));
     execSync('git init -q && git config user.email t@t && git config user.name t', { cwd: root, stdio: 'pipe' });
