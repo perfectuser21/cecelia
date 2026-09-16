@@ -99,6 +99,16 @@ function isStaleRelationError(err) {
   return err.message && err.message.includes('Could not find page');
 }
 
+/**
+ * 400 schema 不符 = notion_id 指向「错库」页面（legacy 遗留绑错库），
+ * 属性名/类型对不上 → 解绑重建才是出路，重试一万次也不会成功。
+ * 2026-09-16 实证：249 条 legacy 行每轮重试刷屏（269 次/2h 日志噪音）。
+ */
+function isWrongDatabaseError(err) {
+  const m = err?.message || '';
+  return /400/.test(m) && /is not a property that exists|is expected to be/.test(m);
+}
+
 async function logSyncError(pool, errMsg) {
   await pool.query(
     `INSERT INTO notion_sync_log (direction, records_synced, records_failed, error_message)
@@ -297,8 +307,9 @@ async function pushTaskRows(pool, token, rows) {
     } catch (err) {
       console.warn(`[notion-push-sync] task ${t.id} 推送失败: ${err.message}`);
       await logSyncError(pool, err.message);
-      // 我方页面被人在 Notion 删除 → 清指纹与 id，下轮 create 重建
-      if (/404/.test(err.message) && t.notion_props?.pushed_status) {
+      // 我方页面被人在 Notion 删除(404)，或 legacy id 绑到错库(400 schema 不符)
+      // → 清指纹与 id，下轮 create 重建到正确的库
+      if ((/404/.test(err.message) && t.notion_props?.pushed_status) || isWrongDatabaseError(err)) {
         await pool.query(
           `UPDATE tasks SET notion_id=NULL, notion_props = notion_props - 'pushed_status' WHERE id=$1`,
           [t.id],
