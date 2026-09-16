@@ -13,19 +13,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-vi.mock('../db.js', () => ({
+vi.mock('../../db.js', () => ({
   default: { query: vi.fn() },
 }));
-vi.mock('../llm-caller.js', () => ({ callLLM: vi.fn() }));
-vi.mock('../user-profile.js', () => ({
+vi.mock('../../llm-caller.js', () => ({ callLLM: vi.fn() }));
+vi.mock('../../user-profile.js', () => ({
   loadUserProfile: vi.fn(),
   upsertUserProfile: vi.fn(),
 }));
-vi.mock('../orchestrator-realtime.js', () => ({
+vi.mock('../../orchestrator-realtime.js', () => ({
   getRealtimeConfig: vi.fn(),
   handleRealtimeTool: vi.fn(),
 }));
-vi.mock('../model-profile.js', () => ({
+vi.mock('../../model-profile.js', () => ({
   loadActiveProfile: vi.fn(),
   getActiveProfile: vi.fn(),
   switchProfile: vi.fn(),
@@ -34,15 +34,15 @@ vi.mock('../model-profile.js', () => ({
   batchUpdateAgentModels: vi.fn(),
   updateAgentCascade: vi.fn(),
 }));
-vi.mock('../account-usage.js', () => ({
+vi.mock('../../account-usage.js', () => ({
   getAccountUsage: vi.fn(),
   selectBestAccount: vi.fn(),
 }));
-vi.mock('../websocket.js', () => ({
+vi.mock('../../websocket.js', () => ({
   default: { emit: vi.fn() },
   WS_EVENTS: {},
 }));
-vi.mock('../orchestrator-chat.js', () => ({
+vi.mock('../../orchestrator-chat.js', () => ({
   handleChat: vi.fn(),
   handleChatStream: vi.fn(),
 }));
@@ -52,8 +52,8 @@ let pool;
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  pool = (await import('../db.js')).default;
-  const brainMetaRoutes = (await import('../routes/brain-meta.js')).default;
+  pool = (await import('../../db.js')).default;
+  const brainMetaRoutes = (await import('../brain-meta.js')).default;
   app = express();
   app.use(express.json());
   app.use('/api/brain', brainMetaRoutes);
