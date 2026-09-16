@@ -153,6 +153,8 @@ describe('[S4-N7] 全部通过 → sentinel 写入，返回 failures=0', () => {
       .mockResolvedValueOnce({ rows: [] })
       // A3b: no steps without promise
       .mockResolvedValueOnce({ rows: [] })
+      // A5: 事实快照全部新鲜（2026-09-16 新增断言）
+      .mockResolvedValueOnce({ rows: [{ repo: 'cecelia', kind: 'api', age_hours: '1.2' }] })
       // sentinel write
       .mockResolvedValueOnce({ rows: [] });
 
@@ -264,5 +266,43 @@ describe('[S4-N11] A2 旁路检测与 S2 闸同口径', () => {
     expect(a2Sql).toContain('task_type');
     expect(Array.isArray(a2Params)).toBe(true);
     expect(a2Params.length).toBeGreaterThanOrEqual(3); // cutoff + exempt types + exempt actions
+  });
+});
+
+// ── [S4-N12/N13] A5 事实快照自身年龄（守夜人盲区补丁）──────────────
+// 2026-09-16 实证：扫描链因 cron 指向已迁移的库而全挂 6 天，
+// map-projection-refresh 只比「headers vs 投影」，两边同旧即判定"不漂移"，
+// 正确地跳过 rebuild——它防的是 headers 新了投影旧了，防不了 headers 自己停更。
+// 后果：13 个任务积压 + cecelia-run 熔断 OPEN，烂 6 天无人知。
+describe('[S4-N12] A5 事实快照新鲜 → pass', () => {
+  it('A5 passes when newest snapshot is within 24h', async () => {
+    const pool = makePool(vi.fn(async (sql) => {
+      if (typeof sql === 'string' && sql.includes('fact_snapshot_headers')) {
+        return { rows: [{ repo: 'cecelia', kind: 'api', age_hours: '2.5' }] };
+      }
+      if (typeof sql === 'string' && sql.includes('COUNT(*)')) return { rows: [{ count: '0' }] };
+      return { rows: [] };
+    }));
+    const assertions = await buildNightlyAssertions(pool);
+    const a5 = assertions.find(a => a.key === 'fact_snapshot_freshness');
+    expect(a5).toBeTruthy();
+    expect(a5.ok).toBe(true);
+  });
+});
+
+describe('[S4-N13] A5 扫描链停更 >24h → fail', () => {
+  it('A5 fails and names the stalled repo when scanner stopped', async () => {
+    const pool = makePool(vi.fn(async (sql) => {
+      if (typeof sql === 'string' && sql.includes('fact_snapshot_headers')) {
+        return { rows: [{ repo: 'cecelia', kind: 'api', age_hours: '150.2' }] };
+      }
+      if (typeof sql === 'string' && sql.includes('COUNT(*)')) return { rows: [{ count: '0' }] };
+      return { rows: [] };
+    }));
+    const assertions = await buildNightlyAssertions(pool);
+    const a5 = assertions.find(a => a.key === 'fact_snapshot_freshness');
+    expect(a5.ok).toBe(false);
+    expect(a5.detail).toContain('cecelia');
+    expect(a5.detail).toMatch(/150|停更|小时/);
   });
 });
