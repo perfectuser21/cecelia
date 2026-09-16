@@ -8,7 +8,8 @@ import {
   fetchTenantToken, fetchBotOpenId, fetchGroupMessages,
   buildContextText, runFeishuTaskLedger,
   maybeRunFeishuTaskLedger, _resetFeishuLedgerGate,
-  resolveDisposition, dispositionToStatus, parseRunRows, resolveEvidenceFloor,
+  parseRunRows, resolveEvidenceFloor,
+  firstBotReplyExcerpt, repliesFor,
   classifyBotReply, resolveOutcome, outcomeToStatus, cleanTitle,
 } from '../feishu-task-ledger.js';
 import { TASK_CREATION_INVENTORY } from '../task-creation-inventory.js';
@@ -240,7 +241,7 @@ describe('runFeishuTaskLedger', () => {
     expect(out.skipped).toBe('missing_credentials');
   });
 
-  it('端到端三态：有 run 的入 completed，被答复的不入账，没人管的入 blocked', async () => {
+  it('端到端四类根因：done/fault/waiting 入账，answer/silent 不入账', async () => {
     const created = [];
     const mk = (id, ts, text, type = 'user') => ({
       message_id: id,
@@ -250,17 +251,20 @@ describe('runFeishuTaskLedger', () => {
       body: { content: JSON.stringify({ text }) },
     });
     const msgs = [
-      mk('m1', 1_000_000, '帮我建三个飞书文档'),          // 有 run → completed
-      mk('m2', 2_000_000, '表在哪'),                      // 无 run 但被答 → 不入账
-      mk('b2', 2_000_030, '在这里', 'app'),
-      mk('m3', 3_000_000, '帮我做6个朋友圈AI员工的skill'), // 无 run 也没人答 → blocked
+      mk('m1', 1_000_000, '帮我整理成一个表格'),                       // 有 run → done
+      mk('m2', 2_000_000, '表在哪'),
+      mk('b2', 2_000_030, '在这个链接里', 'app'),                       // 普通答复 → 不入账
+      mk('m3', 3_000_000, '把抖音读昵称沉淀成一个 Skill'),
+      mk('b3', 3_000_030, 'HTTP 401: invalid api key', 'app'),          // 故障 → blocked
+      mk('m4', 4_000_000, '帮我做6个朋友圈AI员工的skill'),
+      mk('b4', 4_000_030, '可以，先把两份资料发来', 'app'),             // 等补料 → blocked
+      mk('m5', 5_000_000, '你真好'),                                    // 没人回 → 不入账
     ];
     const out = await runFeishuTaskLedger({}, {
       env: { FEISHU_APP_ID: 'a', FEISHU_APP_SECRET: 'b' },
       fetchTokenFn: async () => 'tk',
       fetchBotOpenIdFn: async () => 'ou_bot',
       fetchMessagesFn: async ({ chatId }) => (chatId === 'oc_ee3fe04cf2541c4187f0fc054ae826de' ? msgs : []),
-      // 第一条 run 早于所有消息 → 证据覆盖范围涵盖三条消息；第二条才是 m1 的执行记录
       loadAgentRunsFn: () => [
         { created_at: 500_000, task_kind: 'exec', runtime: 'cli' },
         { created_at: 1_000_060, task_kind: 'exec', runtime: 'cli' },
@@ -268,10 +272,22 @@ describe('runFeishuTaskLedger', () => {
       createRoutedTaskFn: async (_db, req) => { created.push(req); return { task: { id: 'x' } }; },
       sinceSec: 1,
     });
-    expect(out.stats).toEqual({ executed: 1, answered: 1, dropped: 1, unknown: 0 });
-    expect(created.map((r) => r.source_id).sort()).toEqual(['m1', 'm3']);
-    expect(created.find((r) => r.source_id === 'm1').task.status).toBe('completed');
-    expect(created.find((r) => r.source_id === 'm3').task.status).toBe('blocked');
+    expect(out.stats.done).toBe(1);
+    expect(out.stats.fault).toBe(1);
+    expect(out.stats.waiting).toBe(1);
+    expect(out.stats.answer).toBe(1);
+    expect(out.stats.silent).toBe(1);
+    expect(created.map((r) => r.source_id).sort()).toEqual(['m1', 'm3', 'm4']);
+
+    const byId = Object.fromEntries(created.map((r) => [r.source_id, r]));
+    expect(byId.m1.task.status).toBe('completed');
+    expect(byId.m3.task.status).toBe('blocked');
+    expect(byId.m4.task.status).toBe('blocked');
+    // 故障/等待类必须附上秋米原话，主理人不用回群里翻
+    expect(byId.m3.metadata.bot_reply_excerpt).toContain('401');
+    expect(byId.m4.metadata.bot_reply_excerpt).toContain('资料发来');
+    // title 不得残留飞书 @ 占位符
+    expect(created.every((r) => !r.title.includes('@_user_'))).toBe(true);
     expect(created.every((r) => r.task.status !== 'queued')).toBe(true);
   });
 
@@ -354,89 +370,6 @@ describe('selectCandidates — mentions.id 两种形态都要认（回归）', (
 });
 
 // ── 三态机械判定：有 run / 无 run 但有回复 / 无 run 也没回复 ────────────────
-describe('resolveDisposition 三态机械判定（零 LLM）', () => {
-  const heads = (ts) => ({
-    message_id: 'm' + ts,
-    create_time: String(ts),
-    sender: { sender_type: 'user', id: 'ou_alex' },
-    body: { content: JSON.stringify({ text: '帮我建三个飞书文档' }) },
-  });
-  const botMsg = (ts) => ({
-    message_id: 'b' + ts, create_time: String(ts),
-    sender: { sender_type: 'app', id: 'ou_bot' },
-    body: { content: JSON.stringify({ text: '好的' }) },
-  });
-  const run = (ts) => ({ created_at: ts });
-
-  it('交办后窗口内有 run → executed（任务，已办）', () => {
-    const d = resolveDisposition({
-      head: heads(1_000_000), messageIds: ['m1000000'],
-      messages: [heads(1_000_000)], runs: [run(1_000_000 + 60_000)],
-    });
-    expect(d).toBe('executed');
-  });
-
-  it('无 run 但秋米有回复 → answered（当场答完的提问，不入账）', () => {
-    const d = resolveDisposition({
-      head: heads(2_000_000), messageIds: ['m2000000'],
-      messages: [heads(2_000_000), botMsg(2_000_000 + 30_000)], runs: [],
-    });
-    expect(d).toBe('answered');
-  });
-
-  it('无 run 也没回复 → dropped（派了没人管，必须入账 blocked）', () => {
-    const d = resolveDisposition({
-      head: heads(3_000_000), messageIds: ['m3000000'],
-      messages: [heads(3_000_000)], runs: [],
-    });
-    expect(d).toBe('dropped');
-  });
-
-  it('重发组内任一条命中 run 即算 executed（run 常挂在后一次重发上）', () => {
-    // 实测：06:30 首发无响应 → 06:52 重发才触发 run；head 取最早那条
-    const first = heads(4_000_000);
-    const resend = heads(4_000_000 + 22 * 60 * 1000);
-    const d = resolveDisposition({
-      head: first,
-      messageIds: [first.message_id, resend.message_id],
-      messages: [first, resend],
-      runs: [run(4_000_000 + 22 * 60 * 1000 + 60_000)],
-    });
-    expect(d).toBe('executed');
-  });
-
-  it('run 发生在交办之前 → 不算', () => {
-    const d = resolveDisposition({
-      head: heads(5_000_000), messageIds: ['m5000000'],
-      messages: [heads(5_000_000)], runs: [run(5_000_000 - 60_000)],
-    });
-    expect(d).toBe('dropped');
-  });
-
-  it('automation_run（cron 定时）不算响应群消息的执行', () => {
-    const d = resolveDisposition({
-      head: heads(6_000_000), messageIds: ['m6000000'],
-      messages: [heads(6_000_000)],
-      runs: [{ created_at: 6_000_000 + 60_000, task_kind: 'automation_run' }],
-    });
-    expect(d).toBe('dropped');
-  });
-});
-
-describe('dispositionToStatus 三态 → 入账状态', () => {
-  it('executed → completed；dropped → blocked；answered → 不入账(null)', () => {
-    expect(dispositionToStatus('executed')).toBe('completed');
-    expect(dispositionToStatus('dropped')).toBe('blocked');
-    expect(dispositionToStatus('answered')).toBe(null);
-  });
-
-  it('三态都不产出 queued', () => {
-    for (const d of ['executed', 'answered', 'dropped']) {
-      expect(dispositionToStatus(d)).not.toBe('queued');
-    }
-  });
-});
-
 describe('parseRunRows — sqlite CLI -json 输出解析', () => {
   it('解析出 created_at 数值与 task_kind', () => {
     const rows = parseRunRows('[{"created_at":1789500000000,"task_kind":"exec","runtime":"cli"}]');
@@ -456,49 +389,6 @@ describe('parseRunRows — sqlite CLI -json 输出解析', () => {
 // ── 证据覆盖窗口：OpenClaw task_runs 只保 7 天，早于它的消息不能硬判 ──────────
 // 2026-09-16 E2E 实证：回溯 14 天但 run 表最早只到 09-09，09-03~09-08 的消息
 // 全被误判成 dropped → 会往主理人账本灌一堆假的"派了没人管"。
-describe('resolveDisposition — 证据覆盖窗口（回归）', () => {
-  const mk = (ts, type = 'user') => ({
-    message_id: 'm' + ts, create_time: String(ts),
-    sender: { sender_type: type, id: type === 'app' ? 'ou_bot' : 'ou_alex' },
-    body: { content: JSON.stringify({ text: '帮我建三个飞书文档' }) },
-  });
-
-  it('消息早于 run 证据下界 → unknown（不入账，不当成没人管）', () => {
-    const head = mk(1_000_000);
-    const d = resolveDisposition({
-      head, messageIds: [head.message_id], messages: [head], runs: [],
-      evidenceFloorMs: 2_000_000,
-    });
-    expect(d).toBe('unknown');
-  });
-
-  it('消息晚于证据下界 → 正常三态判定', () => {
-    const head = mk(3_000_000);
-    const d = resolveDisposition({
-      head, messageIds: [head.message_id], messages: [head], runs: [],
-      evidenceFloorMs: 2_000_000,
-    });
-    expect(d).toBe('dropped');
-  });
-
-  it('不传 evidenceFloorMs 时行为不变（向后兼容）', () => {
-    const head = mk(4_000_000);
-    expect(resolveDisposition({
-      head, messageIds: [head.message_id], messages: [head], runs: [],
-    })).toBe('dropped');
-  });
-
-  it('unknown 不入账', () => {
-    expect(dispositionToStatus('unknown')).toBe(null);
-  });
-
-  it('resolveEvidenceFloor 取 run 最早时间戳；无 run 时回退到扫描下界', () => {
-    expect(resolveEvidenceFloor([{ created_at: 500 }, { created_at: 900 }], 100)).toBe(500);
-    expect(resolveEvidenceFloor([], 12345)).toBe(12345);
-  });
-});
-
-// ── blocked 必须带 blocked_at，否则撞 DB 约束 chk_blocked_at_not_null ────────
 describe('buildTaskRequest — blocked 必带 blocked_at（回归）', () => {
   const head = {
     message_id: 'om_b', create_time: '1789500000000',
@@ -651,5 +541,38 @@ describe('cleanTitle — 去掉 @_user_N 占位与多余空白', () => {
     expect(cleanTitle('@_user_1 帮我建三个飞书文档')).toBe('帮我建三个飞书文档');
     expect(cleanTitle('帮我建文档@_user_1')).toBe('帮我建文档');
     expect(cleanTitle('@_user_12  多个   空白 ')).toBe('多个 空白');
+  });
+});
+
+// ── 回复归属：不能串台（回归）────────────────────────────────────────────
+// 2026-09-16 实测：只按 30min 窗口取回复，「表在哪」会把 17 分钟后另一件事的
+// 401 回复认成自己的 → 被误判成系统故障。回复窗口必须截止到下一条人发的消息。
+describe('repliesFor — 回复归属不串台', () => {
+  const mk = (id, ts, text, type = 'user') => ({
+    message_id: id, create_time: String(ts),
+    sender: { sender_type: type, id: type === 'app' ? 'ou_bot' : 'ou_alex' },
+    body: { content: JSON.stringify({ text }) },
+  });
+
+  it('只取到下一条人发消息之前的机器人回复', () => {
+    const msgs = [
+      mk('u1', 1000, '表在哪'),
+      mk('b1', 1030, '在这个链接里', 'app'),
+      mk('u2', 2000, '把抖音沉淀成Skill'),
+      mk('b2', 2030, 'HTTP 401: invalid api key', 'app'),
+    ];
+    expect(repliesFor(msgs[0], msgs).map((m) => m.message_id)).toEqual(['b1']);
+    expect(repliesFor(msgs[2], msgs).map((m) => m.message_id)).toEqual(['b2']);
+  });
+
+  it('串台场景下 outcome 不被邻居的故障回复污染', () => {
+    const msgs = [
+      mk('u1', 1000, '表在哪'),
+      mk('b1', 1030, '在这个链接里', 'app'),
+      mk('u2', 2000, '把抖音沉淀成Skill'),
+      mk('b2', 2030, 'HTTP 401: invalid api key', 'app'),
+    ];
+    expect(resolveOutcome({ head: msgs[0], messageIds: ['u1'], messages: msgs, runs: [] })).toBe('answer');
+    expect(resolveOutcome({ head: msgs[2], messageIds: ['u2'], messages: msgs, runs: [] })).toBe('fault');
   });
 });
