@@ -9,10 +9,17 @@ describe('openclaw-guards — 内存守卫', () => {
   it('内存字符串解析 GiB/MiB，超阈才判重启，cron 窗口边缘顺延', () => {
     expect(parseMemMB('1.469GiB')).toBe(1504);
     expect(parseMemMB('571.9MiB')).toBe(572);
-    expect(memGuardDecision({ mb: 900, minute: 15 })).toBe('ok');
-    expect(memGuardDecision({ mb: 1500, minute: 15 })).toBe('restart');
-    expect(memGuardDecision({ mb: 1500, minute: 30 })).toBe('defer'); // 判定 cron 整/半点窗口
-    expect(memGuardDecision({ mb: 1500, minute: 59 })).toBe('defer');
+    expect(memGuardDecision({ mb: 2100, minute: 15 })).toBe('restart');
+    expect(memGuardDecision({ mb: 2100, minute: 30 })).toBe('defer'); // 判定 cron 整/半点窗口
+    expect(memGuardDecision({ mb: 2100, minute: 59 })).toBe('defer');
+  });
+
+  it('阈值校正（escort 误伤案）：正常工作态 1.7G 不得触发重启，env 可调免发版', () => {
+    // 2026-09-16 生产实证：网关多会话正常工作态 1.4-1.7G（夜间值守更高），
+    // 旧阈值 1400 把正常体温当泄漏一天误摁 9 次、打断在跑 escort。
+    expect(memGuardDecision({ mb: 1700, minute: 15 })).toBe('ok');
+    expect(memGuardDecision({ mb: 1450, minute: 15 })).toBe('ok'); // 旧阈值下会误伤的点
+    expect(memGuardDecision({ mb: 1600, minute: 15, limitMb: 1500 })).toBe('restart'); // 可调参
   });
 });
 

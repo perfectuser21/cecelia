@@ -9,7 +9,8 @@ MOD="$SRC/openclaw-guards.js" node --input-type=module -e '
 const m = await import("file://" + process.env.MOD);
 const fail = (msg) => { console.error("❌ " + msg); process.exit(1); };
 if (m.checkConfigDrift({agents:{defaults:{model:{primary:"openai/gpt-5.6-sol"}}}}) === null) fail("漂移检测失灵");
-if (m.memGuardDecision({mb:1500,minute:15}) !== "restart") fail("内存守卫判定失灵");
+if (m.memGuardDecision({mb:2100,minute:15}) !== "restart") fail("内存守卫判定失灵");
+if (m.memGuardDecision({mb:1700,minute:15}) !== "ok") fail("正常工作态误伤(escort案)");
 if (!m.pickRunner((h)=>h.includes("100.71"))) fail("跑场路由失灵");
 if (typeof m.runOpenclawGuards !== "function") fail("job 入口未导出");
 console.log("✅ openclaw-guards-smoke OK");
