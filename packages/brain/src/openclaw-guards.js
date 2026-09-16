@@ -53,10 +53,25 @@ function findAppServer(o) {
   return null;
 }
 
+// 本机 embedded runtime 的模型（无 agentRuntime:codex）= 会话在网关同机跑。
+// 跑场池模型走 ssh 管子到 MMV/M4/M1。sol 只允许出现在 fallbacks（断池保命）。
+const LOCAL_EMBEDDED_MODEL = 'openai/gpt-5.6-sol';
+const POOL_MODEL = 'openai/gpt-5.6-terra';
+
+function primaryOf(model) {
+  if (!model) return null;
+  return typeof model === 'string' ? model : model.primary ?? null;
+}
+
 /** 返回 null=形状合规；否则返回漂移描述 */
 export function checkConfigDrift(cfg) {
   const primary = cfg?.agents?.defaults?.model?.primary;
-  if (primary !== 'openai/gpt-5.6-terra') return `primary回落:${primary}`;
+  if (primary !== POOL_MODEL) return `primary回落:${primary}`;
+  // agent 级覆盖会绕过 defaults（2026-09-16 实证 6 个 agent 仍在本机跑）——逐个点名
+  const local = Object.entries(cfg?.agents?.entries || {})
+    .filter(([, a]) => primaryOf(a.model) === LOCAL_EMBEDDED_MODEL)
+    .map(([name]) => name);
+  if (local.length > 0) return `agent本机embedded漏网:${local.join(',')}`;
   const a = findAppServer(cfg);
   if (!a || a.command !== '/usr/bin/ssh') return 'appServer非ssh下放形态';
   if (!(a.args || []).join(' ').includes('session-runner')) return 'appServer未走跑场池别名';
@@ -65,8 +80,17 @@ export function checkConfigDrift(cfg) {
 
 export function restoreConfigShape(cfg) {
   const d = JSON.parse(JSON.stringify(cfg));
-  d.agents.defaults.model.primary = 'openai/gpt-5.6-terra';
-  d.agents.defaults.model.fallbacks = ['openai/gpt-5.6-sol'];
+  d.agents.defaults.model.primary = POOL_MODEL;
+  d.agents.defaults.model.fallbacks = [LOCAL_EMBEDDED_MODEL];
+  // agent 级 sol 覆盖一并拉回池（保留原 fallbacks 作断池兜底）
+  for (const a of Object.values(d.agents.entries || {})) {
+    if (primaryOf(a.model) !== LOCAL_EMBEDDED_MODEL) continue;
+    const prevFallbacks = (typeof a.model === 'object' && a.model.fallbacks) || [];
+    a.model = {
+      primary: POOL_MODEL,
+      fallbacks: prevFallbacks.length ? prevFallbacks : [LOCAL_EMBEDDED_MODEL],
+    };
+  }
   const a = findAppServer(d);
   if (a) {
     a.command = '/usr/bin/ssh';

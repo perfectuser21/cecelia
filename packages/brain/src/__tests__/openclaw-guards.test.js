@@ -118,3 +118,39 @@ describe('openclaw-guards — memlog 观测线', () => {
     expect(MEMLOG_PS_ARGS.join(' ')).toMatch(/pid/);
   });
 });
+
+// 2026-09-16 漏网案：defaults.primary 已切跑场池，但 6 个 agent 有显式 sol（embedded）
+// 覆盖绕过默认值，仍在 us-vps 本机跑推理——守卫只查 defaults 是盲区。
+describe('openclaw-guards — agent 级模型漂移（本机 embedded 漏网）', () => {
+  const base = {
+    agents: {
+      defaults: { model: { primary: 'openai/gpt-5.6-terra', fallbacks: ['openai/gpt-5.6-sol'] } },
+      entries: {
+        infra: { model: { primary: 'openai/gpt-5.6-terra' } },
+        media: { model: { primary: 'openai/gpt-5.6-sol' } },
+        dev: { model: 'openai/gpt-5.6-sol' },
+      },
+    },
+    plugins: { entries: { codex: { config: { appServer: { command: '/usr/bin/ssh', args: ['-F', 'x', 'session-runner'] } } } } },
+  };
+  it('agent 级 sol 覆盖被判漂移（点名漏网者）', () => {
+    const drift = checkConfigDrift(base);
+    expect(drift).toMatch(/media/);
+    expect(drift).toMatch(/dev/);
+    expect(drift).not.toMatch(/infra/);
+  });
+  it('restoreConfigShape 把 agent 级覆盖一并拉回跑场池', () => {
+    const fixed = restoreConfigShape(base);
+    expect(checkConfigDrift(fixed)).toBeNull();
+    expect(fixed.agents.entries.media.model.primary).toBe('openai/gpt-5.6-terra');
+    expect(fixed.agents.entries.dev.model.primary ?? fixed.agents.entries.dev.model).toBe('openai/gpt-5.6-terra');
+    // 不该动没问题的
+    expect(fixed.agents.entries.infra.model.primary).toBe('openai/gpt-5.6-terra');
+  });
+  it('fallbacks 里的 sol 是断池保命兜底，不算漂移', () => {
+    const ok = JSON.parse(JSON.stringify(base));
+    delete ok.agents.entries.media;
+    delete ok.agents.entries.dev;
+    expect(checkConfigDrift(ok)).toBeNull();
+  });
+});
