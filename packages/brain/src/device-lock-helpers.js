@@ -67,8 +67,9 @@ export async function releaseDeviceLocksHeldBy(taskId, pool = defaultPool) {
 /**
  * 对账式释放：持有任务已非活跃（不在 queued/in_progress，含 task 被删/psql 直设
  * quarantined/blocked/dep_failed/archived 等一切非活跃态）→ 立即释放。
- * 注意 queued 算活跃：dispatch revert 回 queued 的任务保留锁，二次派发走同持有者
- * reacquire；真死的 queued 由其自身超时链收尾。
+ * 注意 queued 算活跃：sweeper 不扫 queued 持有者，保护"acquire 成功→任务尚在
+ * 派发中"的窗口不被对账误放（revert 点自身会主动释放；万一漏放，二次派发走
+ * 同持有者 reacquire 自愈，真死的 queued 由其自身超时链收尾）。
  * uuid 守卫：只回收 locked_by 是 uuid 形状（tasks.id）的行——非 uuid 持有者
  * （手工 acquire 的自由身份如 'manual-alex'）在 tasks 表必然无对应行，没守卫
  * 会被对账秒扫；它们靠 TTL 过期 + acquire 双重判据解开。
