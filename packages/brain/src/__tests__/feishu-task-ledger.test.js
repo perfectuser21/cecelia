@@ -8,6 +8,7 @@ import {
   buildClassifyPrompt, parseClassifyResult, classifyCandidates,
   fetchTenantToken, fetchBotOpenId, fetchGroupMessages,
   buildContextText, runFeishuTaskLedger,
+  maybeRunFeishuTaskLedger, _resetFeishuLedgerGate,
 } from '../feishu-task-ledger.js';
 import { TASK_CREATION_INVENTORY } from '../task-creation-inventory.js';
 
@@ -360,5 +361,22 @@ describe('task-creation-inventory 登记', () => {
     expect(row).toBeTruthy();
     expect(row.source).toBe('inbox');
     expect(row.creates_executable_task).toBe(false);
+  });
+});
+
+describe('maybeRunFeishuTaskLedger 自 gate', () => {
+  it('60 分钟内第二次调用被 gate 挡下', async () => {
+    _resetFeishuLedgerGate();
+    const first = await maybeRunFeishuTaskLedger({}, { env: {}, now: () => 1_000_000 });
+    expect(first.skipped).toBe('missing_credentials');
+    const second = await maybeRunFeishuTaskLedger({}, { env: {}, now: () => 1_000_000 + 60_000 });
+    expect(second.skipped).toBe('cooldown');
+  });
+
+  it('超过 60 分钟后放行', async () => {
+    _resetFeishuLedgerGate();
+    await maybeRunFeishuTaskLedger({}, { env: {}, now: () => 1 });
+    const out = await maybeRunFeishuTaskLedger({}, { env: {}, now: () => 61 * 60 * 1000 });
+    expect(out.skipped).toBe('missing_credentials');
   });
 });
