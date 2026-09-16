@@ -21,7 +21,7 @@ Brain 无手机级资源互斥：多个 RPA 任务（发布/点赞/采集）并�
 | ANGYVB4227006983 | xian-m4 | phone |
 | ANGYVB4402004137 | xian-m4 | phone |
 
-schema_version 插行 + selfcheck EXPECTED_SCHEMA_VERSION 同步。
+schema_version 插行。selfcheck EXPECTED_SCHEMA_VERSION **不 bump**（豁免记录：selfcheck.js:28 是地板语义 `DB >= expected`，431-447 共 17 个 migration 均未 bump 属既定惯例；bump 反而要求生产先跑 448 才能过自检，平添部署顺序耦合）。
 
 **2. `src/device-lock-helpers.js`**（新模块，三个函数，全部单条原子 SQL）：
 
