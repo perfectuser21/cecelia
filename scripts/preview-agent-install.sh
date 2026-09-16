@@ -21,7 +21,7 @@ PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 # 否则 capacity-gate 按自己的位置算 REPO_ROOT，会去另一个目录找采样文件，
 # 报 sample_missing（2026-09-17 在 worktree 里实测到过这个差异）。
 if [[ "$REPO_ROOT" != "/Users/administrator/perfect21/cecelia" ]]; then
-  echo "⚠️  当前不在部署根（$REPO_ROOT）"
+  echo "⚠️  当前不在部署根（${REPO_ROOT}）"
   echo "   代理必须与 capacity-gate 同 repo，请在 /Users/administrator/perfect21/cecelia 下执行"
   exit 1
 fi
