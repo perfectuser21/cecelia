@@ -14,13 +14,15 @@
  *   ③ 重发去重（实测同一任务因无响应被重发 3 次）
  * 全部纯函数内核 + 注入式 IO，可单测。
  */
+import { execFileSync } from 'node:child_process';
+
 import { createRoutedTask as defaultCreateRoutedTask } from './work-routing-store.js';
 
 /** 在册群（来源：OpenClaw clawdbot.json channels.feishu.accounts.main，此处固化，运行时不读第三方配置） */
 export const GROUPS = Object.freeze([
-  Object.freeze({ chatId: 'oc_ee3fe04cf2541c4187f0fc054ae826de', name: '悦升云端', requireMention: true }),
-  Object.freeze({ chatId: 'oc_ef60d6e3f199d90dd695b6ecc213d662', name: 'VPS 状态', requireMention: false }),
-  Object.freeze({ chatId: 'oc_e5ff09de4c2e30a332df0d3cf87f41ae', name: '外部Ai体验区', requireMention: true }),
+  Object.freeze({ chatId: 'oc_ee3fe04cf2541c4187f0fc054ae826de', name: '悦升云端', requireMention: true, agentId: 'zenithjoy-router' }),
+  Object.freeze({ chatId: 'oc_ef60d6e3f199d90dd695b6ecc213d662', name: 'VPS 状态', requireMention: false, agentId: 'zenithjoy-router' }),
+  Object.freeze({ chatId: 'oc_e5ff09de4c2e30a332df0d3cf87f41ae', name: '外部Ai体验区', requireMention: true, agentId: 'zenithjoy-router' }),
 ]);
 
 /** 从飞书消息体里取纯文本（text / post 两种 msg_type） */
@@ -38,6 +40,18 @@ export function messageText(m) {
 }
 
 /**
+ * 取 mention 对象里的 open_id。
+ * 飞书两套形态：历史消息 API(im/v1/messages) 返回扁平 {"id":"ou_xxx","id_type":"open_id"}，
+ * webhook 事件返回嵌套 {"id":{"open_id":"ou_xxx"}}。
+ * 2026-09-16 生产实证：只认嵌套形态 → requireMention 群候选恒空 → 一条都入不了账。
+ */
+export function mentionOpenId(mention) {
+  const id = mention?.id;
+  if (typeof id === 'string') return id;
+  return id?.open_id ?? null;
+}
+
+/**
  * 判据 1：这条消息是不是"给秋米的"
  * requireMention 群必须 @ 到 bot 的 open_id（禁按显示名匹配——名字可改，open_id 不会）；
  * 非 requireMention 群（如 VPS 状态）所有人发消息都算。
@@ -47,7 +61,7 @@ export function selectCandidates(messages, group, botOpenId) {
     if (m?.sender?.sender_type !== 'user') return false;
     if (!messageText(m).trim()) return false;
     if (!group.requireMention) return true;
-    return (m.mentions ?? []).some((x) => x?.id?.open_id === botOpenId);
+    return (m.mentions ?? []).some((x) => mentionOpenId(x) === botOpenId);
   });
 }
 
@@ -97,7 +111,7 @@ export function resolveReplyEvidence(head, allMessages, windowMs = REPLY_WINDOW_
  * 铁律：status 只能是 completed / blocked，绝不 queued——
  * queued + claimed_by IS NULL 会被 Brain tick 每 2 分钟捡走，真去"执行"群里的客户对话。
  */
-export function buildTaskRequest({ head, messageIds, group, botReplied, contextText }) {
+export function buildTaskRequest({ head, messageIds, group, botReplied, contextText, disposition }) {
   const text = messageText(head).trim();
   return {
     source: 'inbox',
@@ -115,10 +129,11 @@ export function buildTaskRequest({ head, messageIds, group, botReplied, contextT
       sender_open_id: head.sender?.id ?? null,
       create_time: head.create_time,
       bot_replied: botReplied,
+      disposition: disposition ?? null,
       ledger_only: true,
     },
     task: {
-      status: botReplied ? 'completed' : 'blocked',
+      status: disposition ? dispositionToStatus(disposition) : (botReplied ? 'completed' : 'blocked'),
       priority: 'P2',
     },
   };
@@ -166,6 +181,83 @@ export async function fetchGroupMessages({ fetchFn, token, chatId, startTimeSec 
   return out;
 }
 
+const OPENCLAW_DB = process.env.OPENCLAW_DB_PATH || '/opt/openclaw/state/state/openclaw.sqlite';
+const EXEC_WINDOW_MS = 10 * 60 * 1000;
+
+/** 解析 sqlite3 -json 输出；任何异常一律返回空数组（第三方库出问题不能拖垮守卫） */
+export function parseRunRows(raw) {
+  const t = String(raw ?? '').trim();
+  if (!t) return [];
+  const a = t.indexOf('[');
+  const b = t.lastIndexOf(']');
+  if (a < 0 || b <= a) return [];
+  try {
+    const parsed = JSON.parse(t.slice(a, b + 1));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 读 OpenClaw 的执行流水（只读！这是第三方状态库，写它=污染别人）。
+ * 容器内无 node:sqlite（Node 20，22.5+ 才内置），用镜像自带的 sqlite3 CLI。
+ * created_at 是毫秒时间戳，不是 datetime 字符串——用日期函数比较恒返回 0 行。
+ */
+export function loadAgentRuns({ execFileFn, agentId, sinceMs, dbPath = OPENCLAW_DB }) {
+  const sql = `SELECT created_at, COALESCE(task_kind,'') AS task_kind, runtime
+               FROM task_runs
+               WHERE agent_id='${agentId}' AND created_at > ${Math.floor(sinceMs)}
+               ORDER BY created_at`;
+  try {
+    const out = execFileFn('sqlite3', ['-readonly', '-json', dbPath, sql], {
+      encoding: 'utf8',
+      timeout: 30_000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    return parseRunRows(out);
+  } catch (err) {
+    console.warn(`[feishu-task-ledger] 读 OpenClaw run 失败（降级为无 run）: ${err.message}`);
+    return [];
+  }
+}
+
+/**
+ * 三态机械判定（主理人 2026-09-16 拍板，零 LLM）：
+ *   executed —— 交办后窗口内秋米真产生了执行记录 → 是任务，已办
+ *   answered —— 没执行记录但秋米回了话 → 当场答完的提问，不是任务
+ *   dropped  —— 既没执行也没回话 → 派了没人管的活，正是主理人最该看见的
+ * 重发组内任一条命中即算 executed（实测 run 常挂在后一次重发上，而 head 取最早那条）。
+ * automation_run 是 cron 定时的自主动作，与群消息无关，不算响应。
+ */
+export function resolveDisposition({ head, messageIds, messages, runs, windowMs = EXEC_WINDOW_MS }) {
+  const ids = new Set(messageIds ?? [head.message_id]);
+  const groupMsgs = (messages ?? []).filter((m) => ids.has(m.message_id));
+  const stamps = (groupMsgs.length ? groupMsgs : [head]).map((m) => Number(m.create_time));
+
+  const executed = (runs ?? []).some((r) => {
+    if (r?.task_kind === 'automation_run') return false;
+    const t = Number(r?.created_at);
+    return stamps.some((t0) => t - t0 > 0 && t - t0 <= windowMs);
+  });
+  if (executed) return 'executed';
+
+  const t0 = Math.min(...stamps);
+  const replied = (messages ?? []).some((m) => {
+    if (m?.sender?.sender_type !== 'app') return false;
+    const dt = Number(m.create_time) - t0;
+    return dt > 0 && dt <= REPLY_WINDOW_MS;
+  });
+  return replied ? 'answered' : 'dropped';
+}
+
+/** 三态 → 入账状态；answered 返回 null 表示不入账。任何一态都不得产出 queued。 */
+export function dispositionToStatus(disposition) {
+  if (disposition === 'executed') return 'completed';
+  if (disposition === 'dropped') return 'blocked';
+  return null;
+}
+
 const LOOKBACK_SEC = 14 * 24 * 3600;
 
 /** 取 head 前后各 radius 条做上下文——「你拉个会议」这类短指令离开上下文不可解 */
@@ -183,7 +275,10 @@ export function buildContextText(head, messages, radius = 3) {
     .join('\n');
 }
 
-/** scheduler 入口：拉群消息 → 三道判据 → 入账 */
+/**
+ * scheduler 入口：拉群消息 → 机械判据 → 入账
+ * 全程零 LLM：@对象靠 open_id 比对，"是不是真派了活"靠 OpenClaw 执行流水，都是查表。
+ */
 export async function runFeishuTaskLedger(pool, deps = {}) {
   const env = deps.env ?? process.env;
   const appId = env.FEISHU_APP_ID;
@@ -199,7 +294,8 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
     ?? (({ token, chatId, startTimeSec }) => fetchGroupMessages({
       fetchFn, token, chatId, startTimeSec,
     }));
-  const callLLMFn = deps.callLLM ?? defaultCallLLM;
+  const loadRuns = deps.loadAgentRunsFn
+    ?? ((args) => loadAgentRuns({ execFileFn: execFileSync, ...args }));
   const createTask = deps.createRoutedTaskFn ?? defaultCreateRoutedTask;
   const sinceSec = deps.sinceSec ?? Math.floor(Date.now() / 1000) - LOOKBACK_SEC;
 
@@ -207,6 +303,7 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
   const botOpenId = await fetchBot(token);
   let scanned = 0;
   let created = 0;
+  const stats = { executed: 0, answered: 0, dropped: 0 };
   const errors = [];
 
   for (const group of GROUPS) {
@@ -215,16 +312,26 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
       scanned += messages.length;
       const candidates = selectCandidates(messages, group, botOpenId);
       const deduped = dedupeResends(candidates);
-      const tasks = await classifyCandidates(deduped, { callLLM: callLLMFn });
-      for (const t of tasks) {
-        const req = buildTaskRequest({
-          head: t.head,
-          messageIds: t.messageIds,
-          group,
-          botReplied: resolveReplyEvidence(t.head, messages),
-          contextText: buildContextText(t.head, messages),
+      if (deduped.length === 0) continue;
+
+      const runs = loadRuns({ agentId: group.agentId, sinceMs: sinceSec * 1000 });
+
+      for (const c of deduped) {
+        const disposition = resolveDisposition({
+          head: c.head, messageIds: c.messageIds, messages, runs,
         });
-        req.metadata.classification = t.classification;
+        stats[disposition] += 1;
+        const status = dispositionToStatus(disposition);
+        if (!status) continue; // answered = 当场答完的提问，不入账
+
+        const req = buildTaskRequest({
+          head: c.head,
+          messageIds: c.messageIds,
+          group,
+          botReplied: resolveReplyEvidence(c.head, messages),
+          contextText: buildContextText(c.head, messages),
+          disposition,
+        });
         await createTask(pool, req);
         created += 1;
       }
@@ -233,7 +340,9 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
       errors.push(group.chatId);
     }
   }
-  return { scanned, created, errors };
+  console.log(`[feishu-task-ledger] scanned=${scanned} created=${created} `
+    + `executed=${stats.executed} answered=${stats.answered} dropped=${stats.dropped}`);
+  return { scanned, created, stats, errors };
 }
 
 const GATE_INTERVAL_MS = 60 * 60 * 1000;

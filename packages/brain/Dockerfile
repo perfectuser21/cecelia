@@ -28,7 +28,9 @@ ENV GIT_SHA=${GIT_SHA}
 # postgresql-client (createdb/dropdb/psql)：WS1 预览闸 preview-env-start.sh 用
 # `createdb -T cecelia cecelia_preview_<PR>` 克隆生产快照做数据隔离，容器内此前没装过，
 # 实测(PR#3801) Step4 直接报 "createdb: command not found" 失败退出。
-RUN apk add --no-cache curl bash procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client \
+# sqlite：feishu-task-ledger 只读查 OpenClaw 执行流水（判断秋米有没有真派 agent 去干活）。
+# 容器是 Node 20，node:sqlite 要 22.5+ 才内置；CLI 只占 ~1.5MB，且 -readonly 能防写穿第三方状态库。
+RUN apk add --no-cache curl bash procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client sqlite \
  && adduser -D -u 1001 cecelia
 
 # Install Codex CLI globally so triggerCodexReview() in executor.js can spawn it.

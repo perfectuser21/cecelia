@@ -239,44 +239,35 @@ describe('runFeishuTaskLedger', () => {
     expect(out.skipped).toBe('missing_credentials');
   });
 
-  it('端到端：只有 task 入账，且用 createRoutedTask', async () => {
+  it('端到端三态：有 run 的入 completed，被答复的不入账，没人管的入 blocked', async () => {
     const created = [];
+    const mk = (id, ts, text, type = 'user') => ({
+      message_id: id,
+      create_time: String(ts),
+      sender: { sender_type: type, id: type === 'app' ? 'ou_bot' : 'ou_alex' },
+      mentions: type === 'user' ? [{ id: 'ou_bot', id_type: 'open_id', name: '秋米' }] : [],
+      body: { content: JSON.stringify({ text }) },
+    });
     const msgs = [
-      {
-        message_id: 'm1',
-        create_time: '2000',
-        sender: { sender_type: 'user', id: 'ou_alex' },
-        mentions: [{ id: { open_id: 'ou_bot' } }],
-        body: { content: JSON.stringify({ text: '帮我建三个飞书文档' }) },
-      },
-      {
-        message_id: 'm2',
-        create_time: '3000',
-        sender: { sender_type: 'user', id: 'ou_alex' },
-        mentions: [{ id: { open_id: 'ou_bot' } }],
-        body: { content: JSON.stringify({ text: '表在哪' }) },
-      },
-      {
-        message_id: 'm3',
-        create_time: '4000',
-        sender: { sender_type: 'app', id: 'ou_bot' },
-        body: { content: JSON.stringify({ text: '好的，已建好' }) },
-      },
+      mk('m1', 1_000_000, '帮我建三个飞书文档'),          // 有 run → completed
+      mk('m2', 2_000_000, '表在哪'),                      // 无 run 但被答 → 不入账
+      mk('b2', 2_000_030, '在这里', 'app'),
+      mk('m3', 3_000_000, '帮我做6个朋友圈AI员工的skill'), // 无 run 也没人答 → blocked
     ];
     const out = await runFeishuTaskLedger({}, {
       env: { FEISHU_APP_ID: 'a', FEISHU_APP_SECRET: 'b' },
       fetchTokenFn: async () => 'tk',
       fetchBotOpenIdFn: async () => 'ou_bot',
       fetchMessagesFn: async ({ chatId }) => (chatId === 'oc_ee3fe04cf2541c4187f0fc054ae826de' ? msgs : []),
-      callLLM: async () => ({ text: '[{"index":1,"type":"task"},{"index":2,"type":"question"}]' }),
+      loadAgentRunsFn: () => [{ created_at: 1_000_060, task_kind: 'exec', runtime: 'cli' }],
       createRoutedTaskFn: async (_db, req) => { created.push(req); return { task: { id: 'x' } }; },
       sinceSec: 1,
     });
-    expect(out.created).toBe(1);
-    expect(created).toHaveLength(1);
-    expect(created[0].source_id).toBe('m1');
-    expect(created[0].task.status).toBe('completed');
-    expect(created[0].task.status).not.toBe('queued');
+    expect(out.stats).toEqual({ executed: 1, answered: 1, dropped: 1 });
+    expect(created.map((r) => r.source_id).sort()).toEqual(['m1', 'm3']);
+    expect(created.find((r) => r.source_id === 'm1').task.status).toBe('completed');
+    expect(created.find((r) => r.source_id === 'm3').task.status).toBe('blocked');
+    expect(created.every((r) => r.task.status !== 'queued')).toBe(true);
   });
 
   it('单群失败不影响其他群（错误隔离）', async () => {
@@ -288,7 +279,7 @@ describe('runFeishuTaskLedger', () => {
         if (chatId === 'oc_ee3fe04cf2541c4187f0fc054ae826de') throw new Error('boom');
         return [];
       },
-      callLLM: async () => ({ text: '[]' }),
+      loadAgentRunsFn: () => [],
       createRoutedTaskFn: async () => ({ task: { id: 'x' } }),
       sinceSec: 1,
     });
