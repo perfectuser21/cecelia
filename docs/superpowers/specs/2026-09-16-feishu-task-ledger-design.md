@@ -43,7 +43,9 @@
 
 ### 判据 1 — @ 的必须是秋米（机械，纯函数）
 实测 14 天 232 条带 @ 的人发消息中，被 @ 对象为：徐啸 101 / **秋米 81** / 于瑾 29 / 苏彦卿 23。
-`requireMention=true` 的群：`mentions[].name === '秋米'` 才入候选；`false` 的群：所有 `sender_type==='user'` 消息入候选。
+`requireMention=true` 的群：`mentions[].id.open_id === <bot open_id>` 才入候选；`false` 的群：所有 `sender_type==='user'` 消息入候选。
+
+> bot open_id 运行时从 `GET bot/v3/info` 取（返回 `bot.open_id`），**不硬编码、不按显示名匹配**——显示名可被改，open_id 不会。取一次缓存在进程内。
 
 ### 判据 2 — 秋米能即答、没调 agent 干活的不算任务（语义，LLM）
 分类四档，仅 `task` 入账：
@@ -108,7 +110,7 @@ Brain 容器当前**无飞书凭据**（实测 `FEISHU_APP_SECRET` 为空）；�
 
 | 导出 | 类型 | 职责 |
 |---|---|---|
-| `selectCandidates(messages, groupConfig, botName)` | 纯函数 | 判据 1 |
+| `selectCandidates(messages, groupConfig, botOpenId)` | 纯函数 | 判据 1 |
 | `dedupeResends(candidates, windowMs)` | 纯函数 | 判据 3 |
 | `resolveReplyEvidence(candidate, messages, windowMs)` | 纯函数 | 回执 → completed/blocked |
 | `buildTaskRequest(candidate, classification)` | 纯函数 | 组装 createRoutedTask 入参 |
