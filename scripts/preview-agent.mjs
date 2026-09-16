@@ -31,7 +31,10 @@
 import express from 'express';
 import previewRoutes from '../packages/brain/src/routes/preview.js';
 
-const PORT = Number(process.env.PREVIEW_AGENT_PORT || 5231);
+// 端口选 5241 而非邻近号段：5221 是 socat（转发 us-vps），5231 已被 fleet-node-health
+// 占用（2026-09-17 实测返回 {"error":"not_found"}，且 lsof 在普通权限下看不到它）。
+// 换端口前请先 curl 探一下，别只信 lsof。
+const PORT = Number(process.env.PREVIEW_AGENT_PORT || 5241);
 // 默认只听回环；生产由 launchd 传 Tailscale 地址进来。绝不默认 0.0.0.0。
 const HOST = process.env.PREVIEW_AGENT_HOST || '127.0.0.1';
 

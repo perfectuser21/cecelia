@@ -1,6 +1,6 @@
 name: Preview Cleanup
 
-# ⚠️ 预览环境在执行机（MMV:5231）起，不在 us-vps，也不走 MMV:5221：
+# ⚠️ 预览环境在执行机（MMV:5241）起，不在 us-vps，也不走 MMV:5221：
 #    · 起预览 = 起 Brain 实例 + 克隆数据库 = 执行活，违反 us-vps 零执行铁律（决策 96054a8b）
 #    · MMV:5221 是 socat，会把流量整个转发到 us-vps —— 必须错开端口才能留在本机
 #    · preview-env-start.sh 硬编码 Mac 路径、磁盘门槛 38.5G 按 Mac 盘设计，
@@ -53,7 +53,7 @@ jobs:
         id: brain_stop
         if: steps.check_ts.outputs.configured == 'true'
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5231' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5241' }}
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
         run: |

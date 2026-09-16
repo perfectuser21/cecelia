@@ -10,7 +10,7 @@
 # 例外1：scripts/codex-request.sh 里同一个 IP 是 SSH 直连 mac-mini-m4-us 本机
 # 用的（无头 codex 账号穿透包），跟 Brain HTTP API 无关，不在本测试断言范围。
 #
-# 例外2（2026-09-17）：预览环境代理 100.71.151.105:5231 是**有意**指向执行机的。
+# 例外2（2026-09-17）：预览环境代理 100.71.151.105:5241 是**有意**指向执行机的。
 # 起预览环境 = 起 Brain 实例 + 克隆数据库 = 执行活，按零执行铁律（决策 96054a8b）
 # 必须下放执行机；且整套预览功能本就是 Mac 专用（启动脚本硬编码 /Users/administrator
 # 路径、磁盘门槛 38.5G 按 Mac 盘设计，us-vps 根分区 24G 数学上不可能过）——
@@ -18,7 +18,7 @@
 #
 # 端口正好能区分两种语义，据此精化断言而不是整体豁免：
 #   :5221 = Brain HTTP API      → 必须指 us-vps（本测试的原意，继续严守）
-#   :5231 = 预览执行代理         → 必须指执行机（scripts/preview-agent.mjs）
+#   :5241 = 预览执行代理         → 必须指执行机（scripts/preview-agent.mjs）
 # 只禁带 5221 端口的旧本机地址，既保住原有保护力，也不再逼着执行活搬回 us-vps。
 #
 # DoD：.github/workflows/*.yml 里不能再出现旧 IP，且 brain-ci-deploy.yml 的
@@ -31,12 +31,12 @@ GATE3="$WORKFLOWS_DIR/brain-ci-deploy.yml"
 OLD_IP="100.71.151.105"
 NEW_IP="100.79.41.61"
 BRAIN_PORT="5221"      # Brain HTTP API
-AGENT_PORT="5231"      # 预览执行代理（scripts/preview-agent.mjs）
+AGENT_PORT="5241"      # 预览执行代理（scripts/preview-agent.mjs）
 FAIL=0
 
 echo "== 全部 workflow 的 Brain 相关默认地址必须指向 us-vps =="
 
-# 只拦"本机 IP + Brain API 端口"——指向执行代理端口(5231)的是下放，不是漏改
+# 只拦"本机 IP + Brain API 端口"——指向执行代理端口(5241)的是下放，不是漏改
 STALE=$(grep -rl "${OLD_IP}:${BRAIN_PORT}" "$WORKFLOWS_DIR"/*.yml 2>/dev/null || true)
 if [ -n "$STALE" ]; then
   echo "  ❌ 以下 workflow 的 Brain 地址仍指向旧本机 (${OLD_IP}:${BRAIN_PORT})："

@@ -50,8 +50,8 @@ describe('preview-agent — 存在性与形状', () => {
     expect(s).toMatch(/PREVIEW_AGENT_HOST|127\.0\.0\.1/);
   });
 
-  it('默认端口 5231，与 socat 占用的 5221 错开', () => {
-    expect(src()).toMatch(/5231/);
+  it('默认端口 5241，与 socat 占用的 5221 错开', () => {
+    expect(src()).toMatch(/5241/);
   });
 });
 
@@ -60,7 +60,7 @@ describe('preview-agent — CI 指向执行机', () => {
 
   it('workflow 默认地址指向 MMV 的代理端口，不再指 us-vps', () => {
     const s = wf();
-    expect(s).toMatch(/100\.71\.151\.105:5231/);
+    expect(s).toMatch(/100\.71\.151\.105:5241/);
     expect(s).not.toMatch(/100\.79\.41\.61:5221/);
   });
 

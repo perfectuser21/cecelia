@@ -57,8 +57,8 @@ if [ "$WF" != "/dev/null" ]; then
     echo "FAIL: CI 指向 MMV:5221，那是 socat 端口，会把流量整个转发到 us-vps"
     exit 1
   fi
-  if ! grep -q "100.71.151.105:5231" "$WF"; then
-    echo "FAIL: CI 未指向 MMV 代理端口 5231"
+  if ! grep -q "100.71.151.105:5241" "$WF"; then
+    echo "FAIL: CI 未指向 MMV 代理端口 5241"
     exit 1
   fi
   echo "OK: CI 指向执行机代理端口"

@@ -50,7 +50,7 @@ cat > "$PLIST" <<PLISTEOF
   <key>EnvironmentVariables</key>
   <dict>
     <key>DEPLOY_TOKEN</key><string>${DEPLOY_TOKEN}</string>
-    <key>PREVIEW_AGENT_PORT</key><string>5231</string>
+    <key>PREVIEW_AGENT_PORT</key><string>5241</string>
     <!-- 绑 Tailscale 地址：CI 经内网进来，不暴露公网 -->
     <key>PREVIEW_AGENT_HOST</key><string>100.71.151.105</string>
     <!-- 执行机上没有生产库 cecelia，用 staging 做克隆源（schema 443 > 最低要求 430） -->
@@ -71,5 +71,5 @@ launchctl bootstrap "gui/$(id -u)" "$PLIST"
 launchctl kickstart -k "gui/$(id -u)/${LABEL}"
 
 echo "✅ 已装载 ${LABEL}"
-echo "   验证：curl -s http://100.71.151.105:5231/api/brain/health"
+echo "   验证：curl -s http://100.71.151.105:5241/api/brain/health"
 echo "   日志：~/Library/Logs/preview-agent.log"
