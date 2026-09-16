@@ -508,3 +508,65 @@ describe('resumeStalledHarnessDrivers — never-started branch (fabf6bd6)', () =
     expect(r.resumed).toContain(TASK_ID);
   });
 });
+
+// ── 有头会话超 grace 后不得再判 failed（2026-09-16 实证）──────────────────
+// 根因：豁免只看 claimed_at（开工那一刻），不看"是否仍在活动"。认真干了 44/118 分钟
+// 的有头会话，和 40 分钟前就死掉的会话，在 watchdog 眼里一模一样。
+// 更要命的是判死方式：failed 是终端态，API 无法回正（状态机 allowed:[]），只能直写 DB。
+// 本次会话 4 个有头任务全中：abcbc09f / 2091c21b / 9e949390 / 27600369。
+describe('resumeStalledHarnessDrivers — 有头会话超 grace 降级为 blocked 而非 failed', () => {
+  function stubNeverStartedFlow({ claimedBy, executorKind }) {
+    const captured = { updateSql: null, updateParams: null };
+    mockPoolQuery.mockImplementation(async (sql, params) => {
+      if (isNeverStartedCandidateSql(sql)) return { rows: [{ id: 'task-headed' }] };
+      if (isTaskLockSql(sql)) {
+        return {
+          rows: [{
+            id: 'task-headed',
+            status: 'in_progress',
+            claimed_at: new Date(Date.now() - 90 * 60 * 1000).toISOString(),
+            claimed_by: claimedBy,
+            executor_kind: executorKind,
+          }],
+        };
+      }
+      if (isExactRunSql(sql)) return { rows: [] };
+      if (/UPDATE\s+tasks/i.test(sql)) {
+        captured.updateSql = sql;
+        captured.updateParams = params;
+        return { rows: [{ id: 'task-headed' }] };
+      }
+      return { rows: [] };
+    });
+    return captured;
+  }
+
+  it('有头任务（interactive-dev-skill）超 grace → blocked，绝不 failed', async () => {
+    const captured = stubNeverStartedFlow({
+      claimedBy: 'interactive-dev-skill',
+      executorKind: 'headed-session',
+    });
+    await resumeStalledHarnessDrivers({ staleMinutesA: 20 });
+    expect(captured.updateSql).toBeTruthy();
+    expect(captured.updateSql).not.toMatch(/status\s*=\s*'failed'/i);
+    expect(captured.updateSql).toMatch(/status\s*=\s*'blocked'/i);
+  });
+
+  it('有头任务降级时必须写 blocked_at（DB 约束 chk_blocked_at_not_null）', async () => {
+    const captured = stubNeverStartedFlow({
+      claimedBy: 'interactive-dev-skill',
+      executorKind: 'headed-session',
+    });
+    await resumeStalledHarnessDrivers({ staleMinutesA: 20 });
+    expect(captured.updateSql).toMatch(/blocked_at\s*=/i);
+  });
+
+  it('非有头任务（自动流水线）仍按原样判 failed —— 那条路径是对的', async () => {
+    const captured = stubNeverStartedFlow({
+      claimedBy: 'cecelia-relay-container',
+      executorKind: 'relay-container',
+    });
+    await resumeStalledHarnessDrivers({ staleMinutesA: 20 });
+    expect(captured.updateSql).toMatch(/status\s*=\s*'failed'/i);
+  });
+});
