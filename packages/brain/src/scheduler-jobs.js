@@ -44,6 +44,7 @@ import { runProjectionOutbox } from './projection/outbox.js';
 import { runNotionTaskCommandIngest } from './projection/notion.js';
 import { runOpsCollector } from './ops-collector.js';
 import { runOpenclawGuards } from './openclaw-guards.js';
+import { maybeRunFeishuTaskLedger } from './feishu-task-ledger.js';
 import { raise as raiseAlert } from './alerting.js';
 import { runOpsNotionPush } from './notion-push-sync.js';
 import { runOpsNotionIngest } from './ops-notion-ingest.js';
@@ -104,6 +105,7 @@ export const JOBS = [
   { name: 'projection-outbox', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runProjectionOutbox, description: '本地数据库到 Notion/Obsidian 等可拆卸 projection 的通用 outbox' },
   { name: 'ops-collector', needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsCollector(pool), description: '运行舱采集器（5min自gate，宿主launchctl+HK OpenClaw+GHA cron→ops_*投影，per-source心跳，G1 S1 刀1，task 6fcb5356）' },
   { name: 'openclaw-guards', needsPool: true, timeoutMs: 180_000, handler: (pool) => runOpenclawGuards(pool, { raiseFn: raiseAlert }), description: 'us-vps 零执行守卫（决策95477a66收编）：网关内存回收/配置漂移还原/agent教义补种/会话跑场探活路由/触达线活性告警，5min自gate，前身为宿主散装crontab' },
+  { name: 'feishu-task-ledger', needsPool: true, timeoutMs: 120_000, handler: (pool) => maybeRunFeishuTaskLedger(pool), description: '飞书群交办入账（决策1c6679cd）：群里派给秋米的活经三道判据（@对象/语义/重发去重）入 tasks 账并投影 Notion，自 gate 60min' },
   // 顺序要紧：先采集再推送，否则推的是上一轮的旧数（尤其 liveness 要用最新 last_run_at 算）
   { name: 'ops-notion-push', needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionPush(pool), description: '运行舱四表推 Notion 驾驶舱（机器列单向覆盖含活性告警）。旧链挂在无人import的legacy-notion-push-scheduler上从不执行，致Notion停更两天，故单独接现代调度层' },
   { name: 'ops-notion-ingest', needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionIngest(pool, { execFn: defaultExec }), description: '运行舱人工列回读（Notion→Brain，last_edited_time增量）。含停用意图落实——主理人拍板直接生效真停n8n，故幂等+留痕+失败落enable_error显红' },

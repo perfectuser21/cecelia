@@ -296,3 +296,17 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
   }
   return { scanned, created, errors };
 }
+
+const GATE_INTERVAL_MS = 60 * 60 * 1000;
+let _lastRunAt = 0;
+
+/** 测试用：重置 gate 状态 */
+export function _resetFeishuLedgerGate() { _lastRunAt = 0; }
+
+/** scheduler 每 60s 调一次，本函数自 gate 到 60min 一跑 */
+export async function maybeRunFeishuTaskLedger(pool, deps = {}) {
+  const now = (deps.now ?? Date.now)();
+  if (_lastRunAt && now - _lastRunAt < GATE_INTERVAL_MS) return { skipped: 'cooldown' };
+  _lastRunAt = now;
+  return runFeishuTaskLedger(pool, deps);
+}
