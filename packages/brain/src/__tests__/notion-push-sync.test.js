@@ -85,6 +85,25 @@ describe('runNotionPushSync', () => {
     );
     expect(updateCall).toBeUndefined();
   });
+
+  it('journey 推送 404 Could not find page 时 touch notion_synced_at 永久停推（stale relation 退避，与 features/issues 同款）', async () => {
+    // 2026-09-16 实证：JOURNEY_DB 父页面未共享给 integration → 4 条 journey 每 5min 重试×永续=日志洪水。
+    // features/issues 的 catch 都有 isStaleRelationError 退避，journeys 漏配——本用例锁住补配。
+    const journey = { id: 'j-stale', name: 'X', journey_type: 'dev_pipeline', description: null, maturity: 'not_started', status: 'active', e2e_test_path: null, area_notion_id: null };
+    mockQuery.mockResolvedValueOnce({ rows: [journey] });
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    mockNotionReq.mockRejectedValueOnce(new Error('Notion POST /pages → 404: Could not find page with ID: 21a53f41-3ec5-80a3-88da-dbd501acaa2b.'));
+
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await expect(runNotionPushSync({ query: mockQuery })).resolves.not.toThrow();
+
+    const updateCall = mockQuery.mock.calls.find(
+      c => typeof c[0] === 'string' && c[0].includes('UPDATE journeys') && c[0].includes('notion_synced_at')
+    );
+    expect(updateCall).toBeTruthy();
+    expect(updateCall[1]).toEqual(['j-stale']);
+  });
 });
 
 describe('runNotionPushSync — new push functions', () => {

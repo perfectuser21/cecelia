@@ -152,6 +152,9 @@ async function pushJourneys(pool, token) {
     } catch (err) {
       console.warn(`[notion-push-sync] journey ${j.id} 推送失败: ${err.message}`);
       await logSyncError(pool, err.message);
+      if (isStaleRelationError(err)) {
+        await pool.query('UPDATE journeys SET notion_synced_at=NOW() WHERE id=$1', [j.id]).catch(() => {});
+      }
     }
   }
 }
