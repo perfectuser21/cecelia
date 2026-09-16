@@ -179,6 +179,20 @@ describe.sequential('device-lock-helpers on PostgreSQL', () => {
     expect(byName[PHONE_2]).toBe(String(liveTask));
   }, 15_000);
 
+  it('sweepStaleDeviceLocks：持有任务 status=queued → 不释放（queued 算活跃）', async () => {
+    // 钉住反直觉语义：dispatch revert 回 queued 的任务保留锁，
+    // 二次派发走同持有者 reacquire；sweep 不得误扫。
+    const queuedHolder = await seedTask('queued');
+    expect((await acquireDeviceLock(queuedHolder, PHONE, 30, testPool)).result).toBe('acquired');
+    const swept = await sweepStaleDeviceLocks(testPool);
+    expect(swept).toBe(0);
+    const { rows } = await testPool.query(
+      'SELECT locked_by FROM device_locks WHERE device_name=$1',
+      [PHONE],
+    );
+    expect(rows[0].locked_by).toBe(String(queuedHolder));
+  }, 15_000);
+
   it('sweepStaleDeviceLocks：持有 task id 不存在于 tasks 表 → 释放', async () => {
     const ghostTaskId = randomUUID();
     await testPool.query(
