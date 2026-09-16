@@ -40,6 +40,7 @@ import { raise } from './alerting.js';
 import { checkAnchor } from './anchor-check.js';
 import { applyDispatchAllocationGuide } from './dispatch-allocation-guide.js';
 import { getLlmCapacitySnapshot } from './llm-capacity.js';
+import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -108,6 +109,18 @@ const _RETIRED_HARNESS_TYPES_DISPATCH = new Set([
 
 // 私有计时器（旧只写不读，保留 hook 给未来 telemetry）
 let _lastDispatchTime = 0;
+
+// 设备锁释放（G5 横切件，task 104ab89f）：claim 后 revert/清理路径统一走这里。
+// 只有 payload.device_serial 的任务可能持锁——无 serial 直接跳过，不给普通任务加
+// DB round-trip。释放失败不致命（sweepStaleDeviceLocks 对账兜底）。
+async function releaseDeviceLockIfHeld(task) {
+  if (!task?.payload?.device_serial || !task?.id) return;
+  try {
+    await releaseDeviceLocksHeldBy(task.id);
+  } catch (e) {
+    console.error(`[dispatch] device lock release failed (non-fatal): ${e.message}`);
+  }
+}
 
 async function enforceDispatchRoutingReceipt(task) {
   const isCoding = task?.task_type === 'dev'
@@ -446,6 +459,7 @@ export async function dispatchNextTask(goalIds) {
           `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
           [nextTask.id]
         );
+        await releaseDeviceLockIfHeld(nextTask);
         await pool.query(
           `UPDATE tasks SET status = 'failed', error_message = $2 WHERE id = $1`,
           [nextTask.id, String(err.message || 'dispatch_exception').slice(0, 500)]
@@ -713,6 +727,44 @@ export async function dispatchNextTask(goalIds) {
       }
     }
 
+    // 3e. 设备锁（G5 横切件，task 104ab89f）：payload.device_serial 存在时派前必抢。
+    //     必须在原子 claim 之后（claim 前抢会踩 pre-flight/HOL 等 8+ 条拒绝路径泄漏锁）。
+    const deviceSerial = guidedCandidate?.payload?.device_serial;
+    if (deviceSerial) {
+      let lockResult;
+      try {
+        lockResult = await acquireDeviceLock(candidate.id, deviceSerial, guidedCandidate?.payload?.device_ttl_minutes);
+      } catch (lockErr) {
+        console.error(`[dispatch] device lock acquire error (task=${candidate.id}): ${lockErr.message}`);
+        lockResult = { result: 'locked', holder: { locked_by: 'acquire_error' } }; // fail-closed：报错按被占跳过
+      }
+      if (lockResult.result === 'unknown_device') {
+        tickLog(`[dispatch] task ${candidate.id} device_serial=${deviceSerial} 未注册 → terminal failed`);
+        await pool.query(
+          `UPDATE tasks SET status='failed', completed_at=NOW(), claimed_by=NULL, claimed_at=NULL,
+             error_message=$2,
+             payload = COALESCE(payload,'{}'::jsonb) || jsonb_build_object('failure_class','unknown_device')
+           WHERE id=$1`,
+          [candidate.id, `device_serial "${deviceSerial}" not registered in device_locks — register via POST /api/brain/device-locks/register`]
+        );
+        await recordDispatchResult(pool, false, 'unknown_device', undefined, candidate.id);
+        attempt--;
+        holSkipIds.push(candidate.id);
+        continue;
+      }
+      if (lockResult.result === 'locked') {
+        tickLog(`[dispatch] HOL skip: device ${deviceSerial} locked by ${lockResult.holder?.locked_by}, skipping task ${candidate.id}`);
+        await pool.query(`UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`, [candidate.id]);
+        holSkipIds.push(candidate.id);
+        if (holSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+          await recordDispatchResult(pool, false, 'hol_skip_cap_exceeded');
+          return { dispatched: false, reason: 'hol_skip_cap_exceeded', hol_skipped: holSkipIds.length, actions };
+        }
+        attempt--;
+        continue;
+      }
+    }
+
     // Passed all checks — this is the task to dispatch
     nextTask = guidedCandidate;
     break;
@@ -736,6 +788,7 @@ export async function dispatchNextTask(goalIds) {
       `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
       [nextTask.id]
     );
+    await releaseDeviceLockIfHeld(nextTask);
     return { dispatched: false, reason: 'update_failed', task_id: nextTask.id, actions };
   }
 
@@ -758,6 +811,7 @@ export async function dispatchNextTask(goalIds) {
   if (needsBridgeCheck && !isAllowed('cecelia-run')) {
     await updateTask({ task_id: nextTask.id, status: 'queued' });
     await pool.query('UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1', [nextTask.id]);
+    await releaseDeviceLockIfHeld(nextTask);
     await recordDispatchResult(pool, false, 'circuit_breaker_open', undefined, nextTask.id);
     return { dispatched: false, reason: 'circuit_breaker_open', actions };
   }
@@ -773,6 +827,7 @@ export async function dispatchNextTask(goalIds) {
       `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
       [nextTask.id]
     );
+    await releaseDeviceLockIfHeld(nextTask);
     await logTickDecision(
       'tick',
       `cecelia-run not available, task reverted to queued`,
@@ -983,6 +1038,7 @@ export async function dispatchNextTask(goalIds) {
       `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`,
       [nextTask.id]
     );
+    await releaseDeviceLockIfHeld(nextTask);
     // configError 表示系统配置错误（如容器漏装 codex CLI），不属于运行时执行失败，
     // 不应累积 cecelia-run breaker（否则配置漂移会 trip breaker 阻断所有 dispatch）。
     // spawn_deduplicated 是 DB 级去重命中（良性防重入，跨进程/跨重启防双 spawn），
