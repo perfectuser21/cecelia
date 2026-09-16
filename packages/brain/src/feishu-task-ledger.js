@@ -112,10 +112,9 @@ export function resolveReplyEvidence(head, allMessages, windowMs = REPLY_WINDOW_
  * queued + claimed_by IS NULL 会被 Brain tick 每 2 分钟捡走，真去"执行"群里的客户对话。
  */
 export function buildTaskRequest({ head, messageIds, group, botReplied, contextText, disposition }) {
-  const text = messageText(head).trim();
-  const status = disposition
-    ? dispositionToStatus(disposition)
-    : (botReplied ? 'completed' : 'blocked');
+  const text = cleanTitle(messageText(head));
+  const status = outcomeToStatus(disposition)
+    ?? (botReplied ? 'completed' : 'blocked');
   return {
     source: 'inbox',
     source_id: head.message_id,
@@ -228,6 +227,117 @@ export function loadAgentRuns({ execFileFn, agentId, sinceMs, dbPath = OPENCLAW_
   }
 }
 
+// ── 根因识别：秋米"为什么没干"，答案就在它自己的回复里 ──────────────────────
+// 2026-09-16 实证：机器回复有固定套话，用关键词就能分根因，不需要 LLM 去猜人说的话。
+// 顺序即优先级：故障 > 等补料 > 已完成 > 普通答复。
+
+/** 系统故障：认证失效、设备离线、上游报错——这类要起告警，是真坏了 */
+const FAULT_PATTERNS = [
+  /\b40[13]\b/, /invalid api key/i, /authentication_error/i, /unauthorized/i,
+  /internal error/i, /temporary .*error/i, /rate.?limit/i,
+  /(还没能|无法|未能|不能)(连接|访问|读取|获取)/, /(离线|不在线|连不上)/,
+  /credit balance is too low/i, /quota|用量上限/,
+];
+/** 等主理人补东西：球在人那边，不是系统的问题 */
+const WAITING_PATTERNS = [
+  /(请|先)?(把|将).{0,12}(发来|发给我|提供|上传)/, /(需要|还需)(你|您)?(确认|提供|补充)/,
+  /还需要确认/, /请确认/, /等(你|您)(的)?(确认|回复|资料)/,
+  // 注意：不要匹配裸的「缺少 X」——秋米说「问题不是安装失败，而是缺少输入文件」
+  // 是在做诊断，不是在等主理人补料（2026-09-16 实测边界）。只认带请求语气的。
+];
+/** 已经干完了：即使没留 run 记录（用 MCP 直接做的） */
+const DONE_PATTERNS = [
+  /已(创建|整理|生成|完成|建好|写好|同步|上传|发布)/, /已回读核验/, /创建(成功|完毕)/,
+];
+
+/**
+ * 从秋米的一条回复判断根因。
+ * 返回 fault | waiting | done | answer | none
+ */
+export function classifyBotReply(text) {
+  const t = String(text ?? '').trim();
+  if (!t) return 'none';
+  if (FAULT_PATTERNS.some((re) => re.test(t))) return 'fault';
+  if (WAITING_PATTERNS.some((re) => re.test(t))) return 'waiting';
+  if (DONE_PATTERNS.some((re) => re.test(t))) return 'done';
+  return 'answer';
+}
+
+/** 去掉飞书 @ 占位符（历史消息 API 把 @某人 渲染成 @_user_N）与多余空白 */
+export function cleanTitle(text) {
+  return String(text ?? '').replace(/@_user_\d+/g, '').replace(/\s+/g, ' ').trim();
+}
+
+const OUTCOME_PRIORITY = Object.freeze(['fault', 'waiting', 'done', 'answer']);
+
+/**
+ * 合成最终判定：执行记录 + 秋米回复根因。
+ *   done    —— 有 run，或回复说已完成（MCP 直接干的不留 run）→ 入账 completed
+ *   fault   —— 回复是系统故障 → 入账 blocked，附故障原文，可直接起告警
+ *   waiting —— 回复在等主理人补料 → 入账 blocked，球在主理人
+ *   answer  —— 普通答复（咨询答完即止）→ 不入账
+ *   silent  —— 完全没回（实测全是闲聊碎片）→ 不入账
+ *   unknown —— 早于 run 证据覆盖范围，无从判断 → 不入账
+ */
+export function resolveOutcome({
+  head, messageIds, messages, runs, windowMs = EXEC_WINDOW_MS, evidenceFloorMs = null,
+}) {
+  const ids = new Set(messageIds ?? [head.message_id]);
+  const groupMsgs = (messages ?? []).filter((m) => ids.has(m.message_id));
+  const stamps = (groupMsgs.length ? groupMsgs : [head]).map((m) => Number(m.create_time));
+  if (evidenceFloorMs != null && Math.max(...stamps) < evidenceFloorMs) return 'unknown';
+
+  const executed = (runs ?? []).some((r) => {
+    if (r?.task_kind === 'automation_run') return false;
+    const t = Number(r?.created_at);
+    return stamps.some((t0) => t - t0 > 0 && t - t0 <= windowMs);
+  });
+
+  // 回复归属：以重发组最后一条为起点（重发后秋米才会回），到下一条人发消息为止
+  const lastStamp = Math.max(...stamps);
+  const anchor = (groupMsgs.length ? groupMsgs : [head])
+    .find((m) => Number(m.create_time) === lastStamp) ?? head;
+  const replies = repliesFor(anchor, messages, windowMs === EXEC_WINDOW_MS ? REPLY_WINDOW_MS : windowMs);
+  if (replies.length === 0) return executed ? 'done' : 'silent';
+
+  const kinds = replies.map((m) => classifyBotReply(messageText(m)));
+  for (const k of OUTCOME_PRIORITY) {
+    if (kinds.includes(k)) return (k === 'answer' && executed) ? 'done' : k;
+  }
+  return executed ? 'done' : 'answer';
+}
+
+/**
+ * 取属于这条交办的秋米回复：从交办时刻起，到「下一条人发的消息」为止（或 windowMs 封顶）。
+ * 2026-09-16 实测：群里消息密集，只按 30min 窗口取会串台——「表在哪」会把 17 分钟后
+ * 另一件事的 401 回复认成自己的，于是被误判成系统故障。
+ */
+export function repliesFor(head, messages, windowMs = REPLY_WINDOW_MS) {
+  const t0 = Number(head.create_time);
+  const sorted = [...(messages ?? [])].sort((a, b) => Number(a.create_time) - Number(b.create_time));
+  const nextUser = sorted.find((m) => m?.sender?.sender_type === 'user' && Number(m.create_time) > t0);
+  const ceiling = Math.min(
+    t0 + windowMs,
+    nextUser ? Number(nextUser.create_time) : Number.POSITIVE_INFINITY,
+  );
+  return sorted.filter((m) => m?.sender?.sender_type === 'app'
+    && Number(m.create_time) > t0
+    && Number(m.create_time) < ceiling);
+}
+
+/** 取交办后第一条秋米回复的摘录，作为"为什么卡住"的证据附在账目上 */
+export function firstBotReplyExcerpt(head, messages, windowMs = REPLY_WINDOW_MS, maxLen = 200) {
+  const reply = repliesFor(head, messages, windowMs)[0];
+  return reply ? cleanTitle(messageText(reply)).slice(0, maxLen) : null;
+}
+
+/** 判定 → 入账状态；只有 done/fault/waiting 入账，其余返回 null。任何一态都不得产出 queued。 */
+export function outcomeToStatus(outcome) {
+  if (outcome === 'done') return 'completed';
+  if (outcome === 'fault' || outcome === 'waiting') return 'blocked';
+  return null;
+}
+
 /**
  * 三态机械判定（主理人 2026-09-16 拍板，零 LLM）：
  *   executed —— 交办后窗口内秋米真产生了执行记录 → 是任务，已办
@@ -244,39 +354,6 @@ export function loadAgentRuns({ execFileFn, agentId, sinceMs, dbPath = OPENCLAW_
 export function resolveEvidenceFloor(runs, fallbackMs) {
   const stamps = (runs ?? []).map((r) => Number(r?.created_at)).filter((n) => Number.isFinite(n));
   return stamps.length ? Math.min(...stamps) : fallbackMs;
-}
-
-export function resolveDisposition({
-  head, messageIds, messages, runs, windowMs = EXEC_WINDOW_MS, evidenceFloorMs = null,
-}) {
-  const ids = new Set(messageIds ?? [head.message_id]);
-  const groupMsgs = (messages ?? []).filter((m) => ids.has(m.message_id));
-  const stamps = (groupMsgs.length ? groupMsgs : [head]).map((m) => Number(m.create_time));
-
-  // 早于证据覆盖范围 → 无从判断，宁可不入账，也不能把"记录被清了"说成"派了没人管"
-  if (evidenceFloorMs != null && Math.max(...stamps) < evidenceFloorMs) return 'unknown';
-
-  const executed = (runs ?? []).some((r) => {
-    if (r?.task_kind === 'automation_run') return false;
-    const t = Number(r?.created_at);
-    return stamps.some((t0) => t - t0 > 0 && t - t0 <= windowMs);
-  });
-  if (executed) return 'executed';
-
-  const t0 = Math.min(...stamps);
-  const replied = (messages ?? []).some((m) => {
-    if (m?.sender?.sender_type !== 'app') return false;
-    const dt = Number(m.create_time) - t0;
-    return dt > 0 && dt <= REPLY_WINDOW_MS;
-  });
-  return replied ? 'answered' : 'dropped';
-}
-
-/** 判定 → 入账状态；answered/unknown 返回 null 表示不入账。任何一态都不得产出 queued。 */
-export function dispositionToStatus(disposition) {
-  if (disposition === 'executed') return 'completed';
-  if (disposition === 'dropped') return 'blocked';
-  return null;
 }
 
 // 与 OpenClaw task_runs 保留期对齐（实测只保 7 天）；扫更早的消息也无证据可判
@@ -325,7 +402,7 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
   const botOpenId = await fetchBot(token);
   let scanned = 0;
   let created = 0;
-  const stats = { executed: 0, answered: 0, dropped: 0, unknown: 0 };
+  const stats = { done: 0, fault: 0, waiting: 0, answer: 0, silent: 0, unknown: 0 };
   const errors = [];
 
   for (const group of GROUPS) {
@@ -340,12 +417,12 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
       const evidenceFloorMs = resolveEvidenceFloor(runs, sinceSec * 1000);
 
       for (const c of deduped) {
-        const disposition = resolveDisposition({
+        const outcome = resolveOutcome({
           head: c.head, messageIds: c.messageIds, messages, runs, evidenceFloorMs,
         });
-        stats[disposition] += 1;
-        const status = dispositionToStatus(disposition);
-        if (!status) continue; // answered = 当场答完的提问，不入账
+        stats[outcome] = (stats[outcome] ?? 0) + 1;
+        const status = outcomeToStatus(outcome);
+        if (!status) continue; // answer/silent/unknown 不入账
 
         const req = buildTaskRequest({
           head: c.head,
@@ -353,8 +430,10 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
           group,
           botReplied: resolveReplyEvidence(c.head, messages),
           contextText: buildContextText(c.head, messages),
-          disposition,
+          disposition: outcome,
         });
+        // 故障/等待类附上秋米原话，主理人一眼看到卡在哪，不用回群里翻
+        req.metadata.bot_reply_excerpt = firstBotReplyExcerpt(c.head, messages);
         await createTask(pool, req);
         created += 1;
       }
@@ -364,8 +443,8 @@ export async function runFeishuTaskLedger(pool, deps = {}) {
     }
   }
   console.log(`[feishu-task-ledger] scanned=${scanned} created=${created} `
-    + `executed=${stats.executed} answered=${stats.answered} dropped=${stats.dropped} `
-    + `unknown=${stats.unknown}`);
+    + `done=${stats.done} fault=${stats.fault} waiting=${stats.waiting} `
+    + `answer=${stats.answer} silent=${stats.silent} unknown=${stats.unknown}`);
   return { scanned, created, stats, errors };
 }
 
