@@ -96,7 +96,7 @@ describe('runWorkerPoolDispatch — 设备锁旁路接线（G5 横切件 task 10
     expect(mockAcquireDeviceLock).toHaveBeenCalledWith(PHONE_TASK.id, SERIAL, undefined);
   });
 
-  it('①b unknown_device 同样回滚留队列（worker-pool 无 terminal 语义，判死在 dispatcher 侧）', async () => {
+  it('①b unknown_device → 终态 failed（与 dispatcher 同款：parallel_worker 任务不进 dispatcher 候选，留队列=永久空转）', async () => {
     mockAcquireDeviceLock.mockResolvedValue({ result: 'unknown_device' });
     const execFn = makeExecFn();
     const pool = makePool([PHONE_TASK]);
@@ -105,13 +105,37 @@ describe('runWorkerPoolDispatch — 设备锁旁路接线（G5 横切件 task 10
 
     expect(r.dispatched).toBe(0);
     expect(execFn.calls.some(c => /send-keys/.test(c.cmd))).toBe(false);
+    // 终态 UPDATE：status='failed' + error_message 含 serial 与注册指引 + failure_class
+    const failUpdate = pool.query.mock.calls.find(([sql, params]) =>
+      /UPDATE tasks/i.test(sql)
+      && /status\s*=\s*'failed'/.test(sql)
+      && Array.isArray(params) && params[0] === PHONE_TASK.id
+      && params.some((p) => typeof p === 'string' && p.includes(SERIAL) && p.includes('register'))
+    );
+    expect(failUpdate).toBeTruthy();
+    expect(failUpdate[0]).toMatch(/failure_class/);
+    expect(failUpdate[0]).toMatch(/unknown_device/);
+    // 终态 UPDATE 自带 claimed_by=NULL 清理，不能再走 locked 分支的回滚语句
+    expect(failUpdate[0]).toMatch(/claimed_by\s*=\s*NULL/i);
+  });
+
+  it('①d locked 与 unknown_device 分野：locked 只回滚不判死', async () => {
+    mockAcquireDeviceLock.mockResolvedValue({
+      result: 'locked',
+      holder: { device_name: SERIAL, locked_by: 'other-task-id' },
+    });
+    const execFn = makeExecFn();
+    const pool = makePool([PHONE_TASK]);
+
+    await runWorkerPoolDispatch(pool, { execFn, sleep: noSleep });
+
+    // locked：绝不打 failed，只回滚 claim 留下轮
+    const failUpdate = pool.query.mock.calls.find(([sql]) => /status\s*=\s*'failed'/.test(sql));
+    expect(failUpdate).toBeFalsy();
     const rollback = pool.query.mock.calls.find(([sql]) =>
       /claimed_by\s*=\s*NULL/i.test(sql) && /interactive-dev-skill/.test(sql)
     );
     expect(rollback).toBeTruthy();
-    // 绝不把任务打成 failed（无 terminal 语义）
-    const failUpdate = pool.query.mock.calls.find(([sql]) => /status\s*=\s*'failed'/.test(sql));
-    expect(failUpdate).toBeFalsy();
   });
 
   it('② acquired → 正常发射', async () => {
@@ -168,5 +192,12 @@ describe('runWorkerPoolDispatch — 设备锁旁路接线（G5 横切件 task 10
 
     expect(r.dispatched).toBe(0);
     expect(execFn.calls.some(c => /send-keys/.test(c.cmd))).toBe(false);
+    // fail-closed = 按被占处理：只回滚留下轮，绝不判死
+    const failUpdate = pool.query.mock.calls.find(([sql]) => /status\s*=\s*'failed'/.test(sql));
+    expect(failUpdate).toBeFalsy();
+    const rollback = pool.query.mock.calls.find(([sql]) =>
+      /claimed_by\s*=\s*NULL/i.test(sql) && /interactive-dev-skill/.test(sql)
+    );
+    expect(rollback).toBeTruthy();
   });
 });

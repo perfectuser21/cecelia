@@ -162,14 +162,42 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
 
     // 设备锁（G5 横切件，task 104ab89f）：CAS 预占之后、发射 tmux 之前抢锁。
     // 持有者=task.id（与 dispatcher 同键，sweepStaleDeviceLocks 才认得），不是预占名。
-    // 抢不到 → 回滚 claim 留下轮扫描；unknown_device 也留队列——worker-pool 无
-    // terminal 语义，判死在 dispatcher 侧。acquire 抛错 fail-closed 按被占处理。
+    // locked → 回滚 claim 留下轮扫描重试；unknown_device → 终态 failed（与 dispatcher
+    // 同款）——parallel_worker 任务被 dispatch-helpers 永久排除在 dispatcher 候选外，
+    // 留队列=永久静默空转+堵扫描窗口。acquire 抛错 fail-closed 按被占处理。
     const deviceSerial = task.payload?.device_serial;
     if (deviceSerial) {
       const lockResult = await acquireDeviceLock(task.id, deviceSerial, task.payload?.device_ttl_minutes)
-        .catch((e) => { console.error(`[worker-pool] device lock error: ${e.message}`); return { result: 'locked' }; });
+        .catch((e) => {
+          console.error(`[worker-pool] device lock acquire error (task=${task.id}): ${e.message}`);
+          return { result: 'locked', holder: { locked_by: 'acquire_error' } }; // fail-closed：报错按被占跳过
+        });
+      if (lockResult.result === 'unknown_device') {
+        console.error(`[worker-pool] task=${task.id} device_serial=${deviceSerial} 未注册 → terminal failed`);
+        try {
+          await pool.query(
+            `UPDATE tasks SET status='failed', completed_at=NOW(), claimed_by=NULL, claimed_at=NULL,
+               error_message=$2,
+               payload = COALESCE(payload,'{}'::jsonb) || jsonb_build_object('failure_class','unknown_device')
+             WHERE id=$1`,
+            [task.id, `device_serial "${deviceSerial}" not registered in device_locks — register via POST /api/brain/device-locks/register`],
+          );
+        } catch (markErr) {
+          // 终态标记失败 → 降级回滚 claim 留下轮（防 claim 泄漏静默卡死）
+          console.error(`[worker-pool] unknown_device terminal mark failed (task=${task.id}): ${markErr.message}`);
+          try {
+            await pool.query(
+              `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = 'interactive-dev-skill'`,
+              [task.id],
+            );
+          } catch (releaseErr) {
+            console.error(`[worker-pool] claim release failed (non-fatal, task=${task.id}): ${releaseErr.message}`);
+          }
+        }
+        continue; // 槽位没动过，不推进 slotIdx，留给下一个任务
+      }
       if (lockResult.result !== 'acquired') {
-        console.log(`[worker-pool] device ${deviceSerial} unavailable (${lockResult.result}), revert task ${task.id}`);
+        console.log(`[worker-pool] device ${deviceSerial} locked by ${lockResult.holder?.locked_by}, revert task ${task.id}`);
         await pool.query(
           `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = 'interactive-dev-skill'`,
           [task.id],

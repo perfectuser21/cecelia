@@ -267,6 +267,58 @@ describe('dispatchNextTask — 设备锁接线（G5 横切件 task 104ab89f）',
     expect(releasedClaimIds).toContain(PHONE_TASK.id);
   });
 
+  it('分支1 fail-closed：acquire 抛错 → 按被占处理，释放 claim 且不派发', async () => {
+    candidates = [PHONE_TASK];
+    mockAcquireDeviceLock.mockRejectedValue(new Error('db down'));
+
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    const result = await dispatchNextTask([]);
+
+    expect(mockAcquireDeviceLock).toHaveBeenCalledWith(PHONE_TASK.id, SERIAL, undefined);
+    expect(releasedClaimIds).toContain(PHONE_TASK.id);
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+    expect(result.dispatched).toBe(false);
+  });
+
+  it('revert 释放：acquired 后 executor 不可用（no_executor）→ releaseDeviceLocksHeldBy 被调用', async () => {
+    candidates = [PHONE_TASK];
+    mockAcquireDeviceLock.mockResolvedValue({
+      result: 'acquired',
+      lock: { device_name: SERIAL, locked_by: PHONE_TASK.id },
+    });
+    mockCheckAvailable.mockResolvedValue({ available: false, error: 'bridge down' });
+
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    const result = await dispatchNextTask([]);
+
+    expect(result.dispatched).toBe(false);
+    expect(releasedClaimIds).toContain(PHONE_TASK.id);
+    expect(mockReleaseDeviceLocksHeldBy).toHaveBeenCalledWith(PHONE_TASK.id);
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+  });
+
+  it('revert 释放：acquired 后 circuit breaker 拦截 → releaseDeviceLocksHeldBy 被调用', async () => {
+    candidates = [PHONE_TASK];
+    mockAcquireDeviceLock.mockResolvedValue({
+      result: 'acquired',
+      lock: { device_name: SERIAL, locked_by: PHONE_TASK.id },
+    });
+    const cb = await import('../circuit-breaker.js');
+    cb.isAllowed.mockReturnValue(false);
+    try {
+      const { dispatchNextTask } = await import('../dispatcher.js');
+      const result = await dispatchNextTask([]);
+
+      expect(result.dispatched).toBe(false);
+      expect(result.reason).toBe('circuit_breaker_open');
+      expect(releasedClaimIds).toContain(PHONE_TASK.id);
+      expect(mockReleaseDeviceLocksHeldBy).toHaveBeenCalledWith(PHONE_TASK.id);
+      expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+    } finally {
+      cb.isAllowed.mockReturnValue(true); // clearAllMocks 不还原实现，必须手动复原
+    }
+  });
+
   it('revert 释放：acquired 后 executor 派发失败 → releaseDeviceLocksHeldBy 被调用（锁不泄漏到 TTL）', async () => {
     candidates = [PHONE_TASK];
     mockAcquireDeviceLock.mockResolvedValue({

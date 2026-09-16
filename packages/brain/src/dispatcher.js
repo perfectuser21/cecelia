@@ -740,16 +740,32 @@ export async function dispatchNextTask(goalIds) {
       }
       if (lockResult.result === 'unknown_device') {
         tickLog(`[dispatch] task ${candidate.id} device_serial=${deviceSerial} 未注册 → terminal failed`);
-        await pool.query(
-          `UPDATE tasks SET status='failed', completed_at=NOW(), claimed_by=NULL, claimed_at=NULL,
-             error_message=$2,
-             payload = COALESCE(payload,'{}'::jsonb) || jsonb_build_object('failure_class','unknown_device')
-           WHERE id=$1`,
-          [candidate.id, `device_serial "${deviceSerial}" not registered in device_locks — register via POST /api/brain/device-locks/register`]
-        );
+        // 候选循环不在 postClaimException 覆盖范围：terminal UPDATE 必须自带 try/catch，
+        // 抛错=claim 泄漏该任务永远起不来（照 anchor 闸分支形状）。
+        try {
+          await pool.query(
+            `UPDATE tasks SET status='failed', completed_at=NOW(), claimed_by=NULL, claimed_at=NULL,
+               error_message=$2,
+               payload = COALESCE(payload,'{}'::jsonb) || jsonb_build_object('failure_class','unknown_device')
+             WHERE id=$1`,
+            [candidate.id, `device_serial "${deviceSerial}" not registered in device_locks — register via POST /api/brain/device-locks/register`]
+          );
+        } catch (markErr) {
+          // 终态标记失败 → 降级为释放 claim、按 skip 继续（此分支锁未抢到，无锁可放）
+          console.error(`[dispatch] unknown_device terminal mark failed (task=${candidate.id}): ${markErr.message}`);
+          try {
+            await pool.query(`UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1`, [candidate.id]);
+          } catch (releaseErr) {
+            console.error(`[dispatch] claim release failed (non-fatal, task=${candidate.id}): ${releaseErr.message}`);
+          }
+        }
         await recordDispatchResult(pool, false, 'unknown_device', undefined, candidate.id);
-        attempt--;
         holSkipIds.push(candidate.id);
+        if (holSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+          await recordDispatchResult(pool, false, 'hol_skip_cap_exceeded');
+          return { dispatched: false, reason: 'hol_skip_cap_exceeded', hol_skipped: holSkipIds.length, actions };
+        }
+        attempt--;
         continue;
       }
       if (lockResult.result === 'locked') {
