@@ -95,12 +95,16 @@ describe('runNotionPushSync — new push functions', () => {
     mockQuery.mockResolvedValue({ rows: [] });
   });
 
-  it('calls pushSkillRegistry — queries skill_registry WHERE notion_synced_at IS NULL', async () => {
+  it('calls pushSkillRegistry — 查 skill_registry 待推送行（指纹不匹配即待推，含新行与内容变更行）', async () => {
+    // 原断言为 `notion_synced_at IS NULL`（insert-only 时代契约）。
+    // 2026-09-16 改 upsert 后判据换成 metadata.pushed_digest 比对，
+    // 已同步但内容变更的行也必须被捞出重推，否则 Brain 改了 Notion 永不更新。
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
     const calls = mockQuery.mock.calls.map(c => c[0]);
-    const skillQuery = calls.find(q => q && q.includes('skill_registry') && q.includes('notion_synced_at IS NULL'));
+    const skillQuery = calls.find(q => q && q.includes('skill_registry') && q.includes('pushed_digest'));
     expect(skillQuery).toBeTruthy();
+    expect(skillQuery).not.toContain('notion_synced_at IS NULL');
   });
 
   it('calls pushJourneySteps — queries journey_steps WHERE notion_synced_at IS NULL', async () => {
@@ -126,6 +130,42 @@ describe('runNotionPushSync — new push functions', () => {
     const linksQuery = calls.find(q => q && q.includes('journey_step_links') && q.includes('notion_synced_at IS NULL'));
     expect(linksQuery).toBeTruthy();
     expect(linksQuery).toContain('cell_kind IS NULL');
+  });
+
+  it('pushSkillRegistry 对已同步但内容变更的 skill 执行 PATCH 而非跳过 — insert-only 缺陷回归', async () => {
+    // 症状：SELECT 只捞 notion_synced_at IS NULL，已同步的行改了 description
+    // 永远不会再推，Notion 停在首次写入那一刻（Notion 341 行 vs Brain 180 行分叉的机制原因之一）
+    const changedSkill = {
+      id: 'skill-changed', name: 'openclaw/coding-judge',
+      description: '改过的描述', status: 'active', location: 'openclaw',
+      notion_id: 'notion-page-existing',
+      metadata: { pushed_digest: 'stale-digest-from-last-push' },
+    };
+    mockNotionReq.mockResolvedValue({ id: 'notion-page-existing' });
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })               // journeys
+      .mockResolvedValueOnce({ rows: [] })               // features
+      .mockResolvedValueOnce({ rows: [] })               // issues
+      .mockResolvedValueOnce({ rows: [] })               // tasks
+      .mockResolvedValueOnce({ rows: [changedSkill] })   // skill_registry
+      .mockResolvedValue({ rows: [] });
+
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+
+    expect(mockNotionReq).toHaveBeenCalledWith(
+      'fake-token', '/pages/notion-page-existing', 'PATCH',
+      expect.objectContaining({ properties: expect.any(Object) })
+    );
+  });
+
+  it('pushSkillRegistry SELECT 用指纹比对而非 notion_synced_at IS NULL — 否则改动永不重推', async () => {
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+    const calls = mockQuery.mock.calls.map(c => c[0]);
+    const skillQuery = calls.find(q => q && q.includes('skill_registry') && q.includes('SELECT'));
+    expect(skillQuery).toBeTruthy();
+    expect(skillQuery).toContain('pushed_digest');
   });
 
   it('pushes skill to Notion skill_registry DB when notion_synced_at is null', async () => {

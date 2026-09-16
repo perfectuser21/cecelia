@@ -17,6 +17,8 @@ import { ANCHOR_EXEMPT_TASK_TYPES, ANCHOR_EXEMPT_ACTIONS, ANCHOR_LEGACY_CUTOFF_D
 
 export const SENTINEL_KEY = 'promise-map-nightly';
 export const NIGHTLY_HOUR_UTC = 2;     // 北京时间 10:00
+/** 事实快照停更判定阈值（小时）——与 run-all-scans.sh 头注释哨兵口径同源 */
+export const SNAPSHOT_STALE_HOURS = 24;
 const DEDUP_WINDOW_MS = 23 * 3600 * 1000;
 
 const SRC_DIR = dirname(fileURLToPath(import.meta.url));
@@ -131,6 +133,88 @@ export async function buildNightlyAssertions(queryPool) {
     detail: missingGates.length === 0
       ? `3 个闸文件均存在（S1/S2/S3）`
       : `${missingGates.length} 个闸文件缺失：${missingGates.map(f => f.split('/').pop()).join(', ')}`,
+  });
+
+  // ── A5: 事实快照自身年龄（守夜人盲区补丁）────────────────
+  // 病根(2026-09-16 实证)：本机 cron 的扫描链 DATABASE_URL 指向 09-10 大迁移后
+  // 已不存在的本地库，每 5 分钟失败一次，fact_snapshot_headers 冻在 09-09。
+  // map-projection-refresh 只比「headers vs 投影 fact_revisions」，两边同旧 →
+  // 判定"不漂移" → 正确地跳过 rebuild。它防的是 headers 新了投影旧了，
+  // 防不了 headers 自己停更。后果：派发 preflight 全抛 map_stale，13 个任务
+  // 积压 + cecelia-run 熔断 OPEN，烂 6 天无人知。
+  // 本断言直接盯"数据自身多久没动"，覆盖所有"上游停更"类盲区。
+  // 24h 阈值与 run-all-scans.sh 头注释的哨兵口径一致（停摆 >24h 即 stale）。
+  // 单条断言查询异常不得掀翻整轮对账（其余 4 条仍需产出），故取值带兜底
+  const snapshotResult = await queryPool.query(`
+    SELECT repo, kind,
+           EXTRACT(EPOCH FROM (NOW() - scanned_at)) / 3600 AS age_hours
+      FROM fact_snapshot_headers
+     ORDER BY scanned_at ASC`);
+  const snapshotRows = snapshotResult?.rows ?? [];
+  const staleSnapshots = snapshotRows.filter(r => Number(r.age_hours) > SNAPSHOT_STALE_HOURS);
+  if (snapshotRows.length === 0) {
+    results.push({
+      key: 'fact_snapshot_freshness',
+      label: '事实快照新鲜度',
+      ok: false,
+      detail: 'fact_snapshot_headers 空表——扫描链从未成功跑过',
+    });
+  } else {
+    results.push({
+      key: 'fact_snapshot_freshness',
+      label: '事实快照新鲜度',
+      ok: staleSnapshots.length === 0,
+      detail: staleSnapshots.length === 0
+        ? `${snapshotRows.length} 份快照均在 ${SNAPSHOT_STALE_HOURS}h 内`
+        : `${staleSnapshots.length} 份快照停更超 ${SNAPSHOT_STALE_HOURS}h：`
+          + staleSnapshots
+            .slice(0, 5)
+            .map(r => `${r.repo}/${r.kind} 已 ${Math.round(Number(r.age_hours))} 小时`)
+            .join('，'),
+    });
+  }
+
+  // ── A6: skill 账本一致性（复活 skill_drift_alerts，不新建表）──────
+  // 2026-09-16 实查四处分叉：磁盘 94 / clawdbot.json agent 引用 19 /
+  // skill_registry(openclaw) 31 / Notion Skill Registry 341。四个数各走各的，
+  // 没有任何一处在数数，所以烂了没人知道。
+  // 本刀 thin：先盯 Brain 内部两处（账本 vs 运行舱投影）。
+  // ops_skills 是 ops-collector 每 5min 从 clawdbot.json 现算的派生投影，
+  // skill_registry 是账本真身——两者对不上即账实分叉。
+  // Notion 那一处由 pushSkillRegistry 的 upsert + 孤儿检测覆盖（下一刀加厚）。
+  const registryCountRes = await queryPool.query(
+    `select count(*)::int AS count FROM skill_registry
+      WHERE location = 'openclaw' OR name LIKE 'openclaw/%'`);
+  const opsCountRes = await queryPool.query(
+    `SELECT count(*)::int AS count FROM ops_skills WHERE source = 'openclaw'`);
+  const registryCount = Number(registryCountRes?.rows?.[0]?.count ?? 0);
+  const opsCount = Number(opsCountRes?.rows?.[0]?.count ?? 0);
+  const ledgerConsistent = registryCount === opsCount;
+
+  if (!ledgerConsistent) {
+    // 落账到 skill_drift_alerts（该表 2026-07-17 后已停更，此处复用而非新建）。
+    // UNIQUE(skill_name, drift_date) 保证每天一条，重跑幂等。
+    await queryPool.query(
+      `INSERT INTO skill_drift_alerts (skill_name, ssot_version, snapshot_version, drift_date)
+       VALUES ($1, $2, $3, CURRENT_DATE)
+       ON CONFLICT (skill_name, drift_date)
+       DO UPDATE SET ssot_version = EXCLUDED.ssot_version,
+                     snapshot_version = EXCLUDED.snapshot_version,
+                     detected_at = NOW()`,
+      ['__skill_ledger_count__', `registry=${registryCount}`, `ops_skills=${opsCount}`],
+    ).catch(() => {});
+  }
+
+  results.push({
+    key: 'skill_ledger_consistency',
+    label: 'skill 账本一致性',
+    ok: ledgerConsistent,
+    detail: ledgerConsistent
+      ? `skill_registry 与 ops_skills 均为 ${registryCount} 个 openclaw skill`
+      : `账实分叉：skill_registry(openclaw)=${registryCount}`
+        + (registryCount === 0 ? '（账本尚未收录任何 openclaw skill）' : '')
+        + `，ops_skills(openclaw)=${opsCount}，差 ${Math.abs(registryCount - opsCount)} 个；`
+        + `已记入 skill_drift_alerts`,
   });
 
   return results;
