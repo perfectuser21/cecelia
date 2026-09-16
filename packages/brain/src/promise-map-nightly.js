@@ -211,8 +211,10 @@ export async function buildNightlyAssertions(queryPool) {
     ok: ledgerConsistent,
     detail: ledgerConsistent
       ? `skill_registry 与 ops_skills 均为 ${registryCount} 个 openclaw skill`
-      : `账实分叉：skill_registry(openclaw)=${registryCount}，ops_skills(openclaw)=${opsCount}，`
-        + `差 ${Math.abs(registryCount - opsCount)} 个；已记入 skill_drift_alerts`,
+      : `账实分叉：skill_registry(openclaw)=${registryCount}`
+        + (registryCount === 0 ? '（账本尚未收录任何 openclaw skill）' : '')
+        + `，ops_skills(openclaw)=${opsCount}，差 ${Math.abs(registryCount - opsCount)} 个；`
+        + `已记入 skill_drift_alerts`,
   });
 
   return results;
