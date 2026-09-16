@@ -8,7 +8,7 @@ import {
   fetchTenantToken, fetchBotOpenId, fetchGroupMessages,
   buildContextText, runFeishuTaskLedger,
   maybeRunFeishuTaskLedger, _resetFeishuLedgerGate,
-  resolveDisposition, dispositionToStatus, parseRunRows,
+  resolveDisposition, dispositionToStatus, parseRunRows, resolveEvidenceFloor,
 } from '../feishu-task-ledger.js';
 import { TASK_CREATION_INVENTORY } from '../task-creation-inventory.js';
 
@@ -259,11 +259,15 @@ describe('runFeishuTaskLedger', () => {
       fetchTokenFn: async () => 'tk',
       fetchBotOpenIdFn: async () => 'ou_bot',
       fetchMessagesFn: async ({ chatId }) => (chatId === 'oc_ee3fe04cf2541c4187f0fc054ae826de' ? msgs : []),
-      loadAgentRunsFn: () => [{ created_at: 1_000_060, task_kind: 'exec', runtime: 'cli' }],
+      // 第一条 run 早于所有消息 → 证据覆盖范围涵盖三条消息；第二条才是 m1 的执行记录
+      loadAgentRunsFn: () => [
+        { created_at: 500_000, task_kind: 'exec', runtime: 'cli' },
+        { created_at: 1_000_060, task_kind: 'exec', runtime: 'cli' },
+      ],
       createRoutedTaskFn: async (_db, req) => { created.push(req); return { task: { id: 'x' } }; },
       sinceSec: 1,
     });
-    expect(out.stats).toEqual({ executed: 1, answered: 1, dropped: 1 });
+    expect(out.stats).toEqual({ executed: 1, answered: 1, dropped: 1, unknown: 0 });
     expect(created.map((r) => r.source_id).sort()).toEqual(['m1', 'm3']);
     expect(created.find((r) => r.source_id === 'm1').task.status).toBe('completed');
     expect(created.find((r) => r.source_id === 'm3').task.status).toBe('blocked');
@@ -445,5 +449,76 @@ describe('parseRunRows — sqlite CLI -json 输出解析', () => {
 
   it('坏输出 → 空数组，不抛错（守卫不能因第三方库异常而崩）', () => {
     expect(parseRunRows('Error: no such table')).toEqual([]);
+  });
+});
+
+// ── 证据覆盖窗口：OpenClaw task_runs 只保 7 天，早于它的消息不能硬判 ──────────
+// 2026-09-16 E2E 实证：回溯 14 天但 run 表最早只到 09-09，09-03~09-08 的消息
+// 全被误判成 dropped → 会往主理人账本灌一堆假的"派了没人管"。
+describe('resolveDisposition — 证据覆盖窗口（回归）', () => {
+  const mk = (ts, type = 'user') => ({
+    message_id: 'm' + ts, create_time: String(ts),
+    sender: { sender_type: type, id: type === 'app' ? 'ou_bot' : 'ou_alex' },
+    body: { content: JSON.stringify({ text: '帮我建三个飞书文档' }) },
+  });
+
+  it('消息早于 run 证据下界 → unknown（不入账，不当成没人管）', () => {
+    const head = mk(1_000_000);
+    const d = resolveDisposition({
+      head, messageIds: [head.message_id], messages: [head], runs: [],
+      evidenceFloorMs: 2_000_000,
+    });
+    expect(d).toBe('unknown');
+  });
+
+  it('消息晚于证据下界 → 正常三态判定', () => {
+    const head = mk(3_000_000);
+    const d = resolveDisposition({
+      head, messageIds: [head.message_id], messages: [head], runs: [],
+      evidenceFloorMs: 2_000_000,
+    });
+    expect(d).toBe('dropped');
+  });
+
+  it('不传 evidenceFloorMs 时行为不变（向后兼容）', () => {
+    const head = mk(4_000_000);
+    expect(resolveDisposition({
+      head, messageIds: [head.message_id], messages: [head], runs: [],
+    })).toBe('dropped');
+  });
+
+  it('unknown 不入账', () => {
+    expect(dispositionToStatus('unknown')).toBe(null);
+  });
+
+  it('resolveEvidenceFloor 取 run 最早时间戳；无 run 时回退到扫描下界', () => {
+    expect(resolveEvidenceFloor([{ created_at: 500 }, { created_at: 900 }], 100)).toBe(500);
+    expect(resolveEvidenceFloor([], 12345)).toBe(12345);
+  });
+});
+
+// ── blocked 必须带 blocked_at，否则撞 DB 约束 chk_blocked_at_not_null ────────
+describe('buildTaskRequest — blocked 必带 blocked_at（回归）', () => {
+  const head = {
+    message_id: 'om_b', create_time: '1789500000000',
+    sender: { sender_type: 'user', id: 'ou_alex' },
+    body: { content: JSON.stringify({ text: '帮我做6个朋友圈AI员工的skill' }) },
+  };
+  const group = { chatId: 'c', name: 'g', requireMention: true, agentId: 'zenithjoy-router' };
+
+  it('dropped → blocked 且 blocked_at 非空', () => {
+    const r = buildTaskRequest({
+      head, messageIds: ['om_b'], group, botReplied: false, contextText: '', disposition: 'dropped',
+    });
+    expect(r.task.status).toBe('blocked');
+    expect(r.task.blocked_at).toBeTruthy();
+  });
+
+  it('executed → completed 时不需要 blocked_at', () => {
+    const r = buildTaskRequest({
+      head, messageIds: ['om_b'], group, botReplied: true, contextText: '', disposition: 'executed',
+    });
+    expect(r.task.status).toBe('completed');
+    expect(r.task.blocked_at ?? null).toBe(null);
   });
 });

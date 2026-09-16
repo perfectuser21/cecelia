@@ -53,7 +53,8 @@ echo "OK: scheduler 已注册"
 echo "[feishu-task-ledger-smoke] 5. 真行为：三态判定 + 绝不产出 queued"
 cd packages/brain
 node --input-type=module -e "
-import { buildTaskRequest, resolveDisposition, dispositionToStatus, mentionOpenId } from './src/feishu-task-ledger.js';
+import { buildTaskRequest, resolveDisposition, dispositionToStatus, mentionOpenId, resolveEvidenceFloor } from './src/feishu-task-ledger.js';
+if (resolveEvidenceFloor([{created_at:7}], 99) !== 7) { console.error('FAIL: resolveEvidenceFloor 未取 run 最早时间'); process.exit(1); }
 
 // 5a 三态各自判对
 const mk = (id, ts, type='user') => ({ message_id: id, create_time: String(ts),
@@ -94,6 +95,21 @@ for (const d of ['executed', 'dropped']) {
 }
 if (dispositionToStatus('answered') !== null) { console.error('FAIL: answered 应不入账'); process.exit(1); }
 console.log('OK: 无 queued，answered 不入账');
+
+// 5e 证据覆盖窗口：早于 run 记录范围的消息不得被判成"派了没人管"
+const early = mk('m0', 100000);
+if (resolveDisposition({ head: early, messageIds: ['m0'], messages: [early], runs: [], evidenceFloorMs: 500000 }) !== 'unknown') {
+  console.error('FAIL: 早于证据覆盖范围的消息未判 unknown —— 会往账本灌假的 dropped'); process.exit(1);
+}
+if (dispositionToStatus('unknown') !== null) { console.error('FAIL: unknown 应不入账'); process.exit(1); }
+console.log('OK: 证据窗口外判 unknown 且不入账');
+
+// 5f blocked 必带 blocked_at（DB 约束 chk_blocked_at_not_null）
+const rb = buildTaskRequest({ head: h, messageIds: ['m1'], group, botReplied: false, contextText: '', disposition: 'dropped' });
+if (rb.task.status !== 'blocked' || !rb.task.blocked_at) {
+  console.error('FAIL: blocked 未带 blocked_at —— 整批入账会撞 chk_blocked_at_not_null'); process.exit(1);
+}
+console.log('OK: blocked 带 blocked_at');
 "
 cd "$ROOT_DIR"
 
