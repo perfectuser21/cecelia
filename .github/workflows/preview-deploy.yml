@@ -100,6 +100,9 @@ jobs:
           BRANCH_NAME: ${{ github.head_ref }}
           EXPECTED_PORT: ${{ steps.start_preview.outputs.port }}
           PREVIEW_INITIAL_BRAIN_UPTIME: ${{ steps.start_preview.outputs.brain_uptime }}
+          # 冷启动（lock 变动导致 node_modules 无法复用时）光 npm ci 就要十几分钟，
+          # 默认 600s 不够，实测会停在 status=starting 超时。给到 20 分钟。
+          PREVIEW_WAIT_MAX_SECONDS: '1200'
         run: |
           bash scripts/wait-preview-active.sh
 
