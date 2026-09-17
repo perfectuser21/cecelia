@@ -36,6 +36,7 @@ import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resol
 import { runSyncCommand } from '../lib/safe-sync-command.js';
 import { isTransientClass } from '../lib/retry-policy.js';
 import { checkAnchor } from '../anchor-check.js';
+import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
 
 const router = Router();
 const execAsync = promisify(exec);
@@ -4027,6 +4028,7 @@ router.get('/work/streams', async (_req, res) => {
 // 用途：/dev 工作流注册 Codex 审查任务后立即触发，不依赖调度器状态
 // 调用 executor.triggerCeceliaRun() 直接执行（完全独立于 tick loop）
 router.post('/dispatch-now', async (req, res) => {
+  let deviceLockTaskId = null; // 已抢设备锁的任务 id（失败路径需释放）
   try {
     const { task_id } = req.body;
     if (!task_id) {
@@ -4060,6 +4062,13 @@ router.post('/dispatch-now', async (req, res) => {
       });
     }
 
+    // G5 设备锁闸（Issue e03fc740）：手动派发与 tick 派发同闸——无锁不点火
+    const deviceGate = await checkDeviceLockForManualDispatch(task, 'dispatch-now');
+    if (!deviceGate.pass) {
+      return res.status(deviceGate.status).json(deviceGate.body);
+    }
+    if (deviceGate.acquired) deviceLockTaskId = task.id;
+
     // 标记为 in_progress
     await pool.query(
       'UPDATE tasks SET status = $1, started_at = NOW() WHERE id = $2',
@@ -4078,11 +4087,12 @@ router.post('/dispatch-now', async (req, res) => {
         executor: execResult.executor || 'local',
       });
     } else {
-      // 执行失败：回退 status
+      // 执行失败：回退 status（任务回 queued 不触发终态释放链，锁必须就地放掉）
       await pool.query(
         'UPDATE tasks SET status = $1 WHERE id = $2',
         ['queued', task_id]
       );
+      if (deviceLockTaskId) await releaseDeviceLockNonFatal(deviceLockTaskId, 'dispatch-now');
       console.error(`[dispatch-now] Task ${task_id} dispatch failed: ${execResult.error}`);
       res.status(500).json({
         success: false,
@@ -4091,6 +4101,8 @@ router.post('/dispatch-now', async (req, res) => {
       });
     }
   } catch (err) {
+    // 异常路径：已抢的锁不能悬挂到 TTL（任务状态未必进终态释放链）
+    if (deviceLockTaskId) await releaseDeviceLockNonFatal(deviceLockTaskId, 'dispatch-now');
     console.error(`[dispatch-now] Error: ${err.message}`);
     res.status(500).json({ error: 'Failed to dispatch', details: err.message });
   }
