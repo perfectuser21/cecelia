@@ -1032,3 +1032,208 @@ describe('pushTasks — 错库孤儿链接解绑（400 schema 不符）', () => 
     expect(unbind.params).toContain('task-1');
   });
 });
+
+// ── 2026-09-17 排单正文作为任务 prompt ────────────────────────────────
+// 主理人需求：任务描述写在 Notion 页面正文（blocks）里，作为执行 prompt 送达执行体。
+//  · fetchNotionPageContent：blocks API 拉正文，多类型拼接、8000 截断、异常返回 ''（绝不阻塞排单）
+//  · 普通排单：description = 正文（有正文时），无正文回落原固定文案
+//  · ssh 派发：正文 base64 写达执行机 ~/brain-runs/<run_id>.prompt，command 的 {PROMPT_FILE} 占位被替换
+//  · webhook 派发：payload 带 prompt 字段（截 4000）
+describe('Notion 排单正文 → 任务 prompt', () => {
+  const PAGE_ID = '3dbc40c2-ba63-8093-92bf-dc952f9a1079';
+  const PAGE_ID32 = PAGE_ID.replace(/-/g, '');
+
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockNotionReq.mockReset();
+    mockCreateRoutedTask.mockReset();
+    vi.unstubAllGlobals();
+  });
+
+  function textBlock(type, text) {
+    return { type, [type]: { rich_text: [{ plain_text: text, text: { content: text } }] } };
+  }
+
+  function plainPage({ id = 'np-c1', name = '排单标题', desc = '' } = {}) {
+    return {
+      id,
+      properties: {
+        Name: { type: 'title', title: [{ plain_text: name, text: { content: name } }] },
+        Description: { type: 'rich_text', rich_text: desc ? [{ plain_text: desc, text: { content: desc } }] : [] },
+        Status: { type: 'status', status: { name: 'Delegated' } },
+      },
+    };
+  }
+
+  function sshRelationPage() {
+    return {
+      id: PAGE_ID,
+      properties: {
+        Name: { type: 'title', title: [{ plain_text: '直驾单', text: { content: '直驾单' } }] },
+        Description: { type: 'rich_text', rich_text: [] },
+        Status: { type: 'status', status: { name: 'Delegated' } },
+        Workflow: { type: 'relation', relation: [{ id: 'aaaa40c2-ba63-8001-9001-000000000001' }] },
+        Agent: { type: 'relation', relation: [] },
+      },
+    };
+  }
+
+  describe('fetchNotionPageContent', () => {
+    it('多类型 blocks 拼接 plain_text，块间换行，忽略不支持类型', async () => {
+      const mod = await import('../notion-push-sync.js');
+      mockNotionReq.mockResolvedValueOnce({ results: [
+        textBlock('heading_1', '目标'),
+        textBlock('heading_2', '范围'),
+        textBlock('heading_3', '细则'),
+        textBlock('paragraph', '修登录页报错'),
+        textBlock('bulleted_list_item', '先复现'),
+        textBlock('numbered_list_item', '再修'),
+        textBlock('to_do', '写回归测试'),
+        textBlock('quote', '引用一句'),
+        textBlock('callout', '注意事项'),
+        textBlock('code', 'npm test'),
+        { type: 'image', image: { file: { url: 'https://x/y.png' } } }, // 不支持类型忽略
+      ] });
+      const text = await mod.fetchNotionPageContent('fake-token', PAGE_ID);
+      expect(text).toBe('目标\n范围\n细则\n修登录页报错\n先复现\n再修\n写回归测试\n引用一句\n注意事项\nnpm test');
+      const call = mockNotionReq.mock.calls[0];
+      expect(String(call[1])).toContain(`/blocks/${PAGE_ID}/children`);
+    });
+
+    it('超长正文截断 8000 字符', async () => {
+      const mod = await import('../notion-push-sync.js');
+      mockNotionReq.mockResolvedValueOnce({ results: [textBlock('paragraph', 'x'.repeat(9000))] });
+      const text = await mod.fetchNotionPageContent('fake-token', PAGE_ID);
+      expect(text.length).toBe(8000);
+    });
+
+    it('blocks API 抛错 → 返回空串不上抛', async () => {
+      const mod = await import('../notion-push-sync.js');
+      mockNotionReq.mockRejectedValueOnce(new Error('Notion GET /blocks → 500: boom'));
+      await expect(mod.fetchNotionPageContent('fake-token', PAGE_ID)).resolves.toBe('');
+    });
+  });
+
+  it('普通排单：页面正文非空 → description=正文', async () => {
+    const mod = await import('../notion-push-sync.js');
+    mockNotionReq.mockImplementation(async (t, path) => {
+      if (String(path).includes('/query')) return { results: [plainPage()] };
+      if (String(path).includes('/children')) {
+        return { results: [textBlock('paragraph', '修登录页报错'), textBlock('bulleted_list_item', '先复现')] };
+      }
+      return {};
+    });
+    mockQuery.mockResolvedValue({ rows: [] });
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'task-content-1' } });
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token');
+    expect(mockCreateRoutedTask).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ description: '修登录页报错\n先复现' }),
+    );
+  });
+
+  it('普通排单：无正文 → description 回落原固定文案', async () => {
+    const mod = await import('../notion-push-sync.js');
+    mockNotionReq.mockImplementation(async (t, path) => {
+      if (String(path).includes('/query')) return { results: [plainPage({ id: 'np-c2' })] };
+      if (String(path).includes('/children')) return { results: [] };
+      return {};
+    });
+    mockQuery.mockResolvedValue({ rows: [] });
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'task-content-2' } });
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token');
+    expect(mockCreateRoutedTask).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ description: '来自 Notion Tasks 编排（主理人排单）' }),
+    );
+  });
+
+  it('ssh 派发：正文 base64 写 prompt 文件 + command 的 {PROMPT_FILE} 被替换为 ~/brain-runs/<run_id>.prompt', async () => {
+    const mod = await import('../notion-push-sync.js');
+    const content = '给金诺跑一轮采收\n关键词表用 words-0917.txt';
+    const b64 = Buffer.from(content).toString('base64');
+    vi.stubGlobal('fetch', vi.fn());
+    mockQuery.mockImplementation(async (sql) => {
+      if (/FROM ops_workflows/.test(sql)) {
+        return { rows: [{ wf_id: 'JinoHarvestDirect', name: '金诺采收·直驾', dispatch: {
+          channel: 'ssh', machine: 'xian-mac-m4',
+          command: 'zsh ~/bin-harvest/run-with-prompt.sh {PROMPT_FILE}',
+        } }] };
+      }
+      return { rows: [] };
+    });
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'wf-task-prompt' } });
+    mockNotionReq.mockImplementation(async (t, path) => {
+      if (String(path).includes('/query')) return { results: [sshRelationPage()] };
+      if (String(path).includes('/children')) return { results: [textBlock('paragraph', content)] };
+      return {};
+    });
+    const execCalls = [];
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({}),
+      execFn: (args) => { execCalls.push(args.join(' ')); return 'DISPATCHED'; },
+    });
+    expect(execCalls.length).toBe(1);
+    const cmd = execCalls[0];
+    // remote 命令先以 base64 写 prompt 文件（零注入面）
+    const promptPathRe = new RegExp(`base64 -d > ~/brain-runs/notion-${PAGE_ID32}-\\d+\\.prompt`);
+    expect(cmd).toMatch(promptPathRe);
+    expect(cmd).toContain(b64);
+    // {PROMPT_FILE} 占位被替换为真实路径
+    expect(cmd).not.toContain('{PROMPT_FILE}');
+    expect(cmd).toMatch(new RegExp(`run-with-prompt\\.sh ~/brain-runs/notion-${PAGE_ID32}-\\d+\\.prompt`));
+    // run 任务 metadata 带 prompt_preview / prompt_file
+    const req = mockCreateRoutedTask.mock.calls[0][1];
+    expect(req.metadata.prompt_preview).toBe(content.slice(0, 500));
+    expect(req.metadata.prompt_file).toMatch(new RegExp(`brain-runs/notion-${PAGE_ID32}-\\d+\\.prompt`));
+  });
+
+  it('webhook 派发：有正文时 payload 带 prompt 字段（截 4000）', async () => {
+    const mod = await import('../notion-push-sync.js');
+    const content = '本轮只跑悦升云，跑完出日报';
+    const fetchCalls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+      fetchCalls.push(JSON.parse(init.body));
+      return { ok: true, status: 200 };
+    }));
+    mockQuery.mockImplementation(async (sql) => {
+      if (/FROM ops_workflows/.test(sql)) {
+        return { rows: [{ wf_id: 'AwrSocialLeadgenV4', name: 'Social Leadgen V4', dispatch: {
+          webhook_url: 'https://x/run', default_template: 'a.json',
+        } }] };
+      }
+      return { rows: [] };
+    });
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'wf-task-hook' } });
+    mockNotionReq.mockImplementation(async (t, path) => {
+      if (String(path).includes('/query')) return { results: [sshRelationPage()] };
+      if (String(path).includes('/children')) return { results: [textBlock('paragraph', content)] };
+      return {};
+    });
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({ tenant_id: 'yueshengyun' }),
+    });
+    expect(fetchCalls.length).toBe(1);
+    expect(fetchCalls[0].prompt).toBe(content);
+  });
+
+  it('正文拉取抛错 → 排单仍正常走完（不阻塞）', async () => {
+    const mod = await import('../notion-push-sync.js');
+    mockNotionReq.mockImplementation(async (t, path) => {
+      if (String(path).includes('/query')) return { results: [plainPage({ id: 'np-c3' })] };
+      if (String(path).includes('/children')) throw new Error('Notion GET /blocks → 502: bad gateway');
+      return {};
+    });
+    mockQuery.mockResolvedValue({ rows: [] });
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'task-content-3' } });
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token');
+    // 排单照常完成：建任务 + 回执 PATCH，description 回落固定文案
+    expect(mockCreateRoutedTask).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ description: '来自 Notion Tasks 编排（主理人排单）' }),
+    );
+    const patch = mockNotionReq.mock.calls.find((c) => c[1] === '/pages/np-c3' && c[2] === 'PATCH');
+    expect(patch).toBeTruthy();
+    expect(JSON.stringify(patch[3])).toContain('brain:task-content-3');
+  });
+});
