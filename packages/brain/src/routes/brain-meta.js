@@ -8,6 +8,8 @@ import { loadActiveProfile as _loadActiveProfile, getActiveProfile, switchProfil
 import { getAccountUsage, selectBestAccount } from '../account-usage.js';
 import websocketService, { WS_EVENTS as _WS_EVENTS } from '../websocket.js';
 import { handleChat, handleChatStream } from '../orchestrator-chat.js';
+import { acquireDeviceLock } from '../device-lock-helpers.js';
+import { rateLimit } from 'express-rate-limit';
 
 const router = Router();
 
@@ -1693,7 +1695,9 @@ router.get('/device-locks', async (_req, res) => {
 
 /**
  * POST /api/brain/device-locks/acquire
- * 申请设备锁
+ * 申请设备锁（单条原子 UPDATE 抢锁，无 check-then-act 竞态；语义见 device-lock-helpers.js）
+ * 契约：locked_by 传 tasks 表 uuid 会参与派发对账（sweeper 按任务活跃度回收）；
+ * 非 uuid 身份（手工占用如 'manual-alex'）只受 TTL 管理，不被对账秒扫。
  * body: { device_name, locked_by, ttl_minutes? }
  * 返回: { acquired: true, lock } 或 { acquired: false, locked_by, expires_at }
  */
@@ -1704,38 +1708,18 @@ router.post('/device-locks/acquire', async (req, res) => {
       return res.status(400).json({ success: false, error: 'device_name and locked_by are required' });
     }
 
-    const expiresAt = new Date(Date.now() + ttl_minutes * 60 * 1000);
-
-    // 先看设备是否存在
-    const { rows: existing } = await pool.query(
-      'SELECT device_name, locked_by, expires_at FROM device_locks WHERE device_name = $1',
-      [device_name]
-    );
-    if (existing.length === 0) {
+    const r = await acquireDeviceLock(locked_by, device_name, ttl_minutes);
+    if (r.result === 'unknown_device') {
       return res.status(404).json({ success: false, error: `Unknown device: ${device_name}` });
     }
-
-    const current = existing[0];
-    const isLocked = current.locked_by && current.expires_at && new Date(current.expires_at) > new Date();
-
-    if (isLocked) {
+    if (r.result === 'locked') {
       return res.json({
         acquired: false,
-        locked_by: current.locked_by,
-        expires_at: current.expires_at,
+        locked_by: r.holder.locked_by,
+        expires_at: r.holder.expires_at,
       });
     }
-
-    // 抢锁（包括已过期的锁）
-    const { rows: updated } = await pool.query(
-      `UPDATE device_locks
-       SET locked_by = $1, locked_at = NOW(), expires_at = $2
-       WHERE device_name = $3
-       RETURNING *`,
-      [locked_by, expiresAt, device_name]
-    );
-
-    res.json({ acquired: true, lock: updated[0] });
+    res.json({ acquired: true, lock: r.lock });
   } catch (err) {
     console.error('[API] device-locks/acquire error:', err.message);
     res.status(500).json({ success: false, error: err.message });
@@ -1772,6 +1756,35 @@ router.post('/device-locks/release', async (req, res) => {
     res.json({ success: true, released: rows[0] });
   } catch (err) {
     console.error('[API] device-locks/release error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 内网限流：宽松额度防误伤，同时满足 DB 访问限流要求（CodeQL js/missing-rate-limiting）
+const deviceRegisterLimiter = rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false });
+
+/**
+ * POST /api/brain/device-locks/register
+ * 幂等注册/更新设备（手机换宿主重注册即可；不碰锁字段）
+ * body: { device_name, host?, device_type? }
+ */
+router.post('/device-locks/register', deviceRegisterLimiter, async (req, res) => {
+  try {
+    const { device_name, host = null, device_type = 'phone' } = req.body;
+    if (!device_name) {
+      return res.status(400).json({ success: false, error: 'device_name is required' });
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO device_locks (device_name, host, device_type)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (device_name) DO UPDATE
+         SET host = EXCLUDED.host, device_type = EXCLUDED.device_type
+       RETURNING device_name, host, device_type, locked_by, expires_at`,
+      [device_name, host, device_type],
+    );
+    res.json({ success: true, device: rows[0] });
+  } catch (err) {
+    console.error('[API] device-locks/register error:', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

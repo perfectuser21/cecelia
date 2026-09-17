@@ -22,6 +22,7 @@
  */
 import { existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
 
 export const WORKER_SLOTS = ['slot7', 'slot8', 'slot9'];
 export const MAX_CONCURRENT = 2;
@@ -159,6 +160,52 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
     );
     if (claim.rowCount === 0) continue; // 别人抢先，换下一个任务
 
+    // 设备锁（G5 横切件，task 104ab89f）：CAS 预占之后、发射 tmux 之前抢锁。
+    // 持有者=task.id（与 dispatcher 同键，sweepStaleDeviceLocks 才认得），不是预占名。
+    // locked → 回滚 claim 留下轮扫描重试；unknown_device → 终态 failed（与 dispatcher
+    // 同款）——parallel_worker 任务被 dispatch-helpers 永久排除在 dispatcher 候选外，
+    // 留队列=永久静默空转+堵扫描窗口。acquire 抛错 fail-closed 按被占处理。
+    const deviceSerial = task.payload?.device_serial;
+    if (deviceSerial) {
+      const lockResult = await acquireDeviceLock(task.id, deviceSerial, task.payload?.device_ttl_minutes)
+        .catch((e) => {
+          console.error(`[worker-pool] device lock acquire error (task=${task.id}): ${e.message}`);
+          return { result: 'locked', holder: { locked_by: 'acquire_error' } }; // fail-closed：报错按被占跳过
+        });
+      if (lockResult.result === 'unknown_device') {
+        console.error(`[worker-pool] task=${task.id} device_serial=${deviceSerial} 未注册 → terminal failed`);
+        try {
+          await pool.query(
+            `UPDATE tasks SET status='failed', completed_at=NOW(), claimed_by=NULL, claimed_at=NULL,
+               error_message=$2,
+               payload = COALESCE(payload,'{}'::jsonb) || jsonb_build_object('failure_class','unknown_device')
+             WHERE id=$1`,
+            [task.id, `device_serial "${deviceSerial}" not registered in device_locks — register via POST /api/brain/device-locks/register`],
+          );
+        } catch (markErr) {
+          // 终态标记失败 → 降级回滚 claim 留下轮（防 claim 泄漏静默卡死）
+          console.error(`[worker-pool] unknown_device terminal mark failed (task=${task.id}): ${markErr.message}`);
+          try {
+            await pool.query(
+              `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = 'interactive-dev-skill'`,
+              [task.id],
+            );
+          } catch (releaseErr) {
+            console.error(`[worker-pool] claim release failed (non-fatal, task=${task.id}): ${releaseErr.message}`);
+          }
+        }
+        continue; // 槽位没动过，不推进 slotIdx，留给下一个任务
+      }
+      if (lockResult.result !== 'acquired') {
+        console.log(`[worker-pool] device ${deviceSerial} locked by ${lockResult.holder?.locked_by}, revert task ${task.id}`);
+        await pool.query(
+          `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = 'interactive-dev-skill'`,
+          [task.id],
+        );
+        continue; // 槽位没动过，不推进 slotIdx，留给下一个任务
+      }
+    }
+
     const prompt = [
       `/dev --task-id ${task.id} —— ${task.title || ''}`,
       `claim 若 409 且 claimed_by=interactive-dev-skill 属预占,继续执行勿停。`,
@@ -207,6 +254,11 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
           `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = 'interactive-dev-skill'`,
           [task.id]
         );
+        // 发射失败 revert 处同步释放设备锁（G5 同 dispatcher 原则）：任务回 queued
+        // 不该继续占设备；下轮重派走同持有者 reacquire，漏放由 sweeper 对账兜底
+        if (deviceSerial) {
+          try { await releaseDeviceLocksHeldBy(task.id); } catch (e) { console.error(`[worker-pool] device lock release failed (non-fatal): ${e.message}`); }
+        }
       } catch (accountErr) {
         console.warn(`[worker-pool] 失败记账/回滚异常（non-fatal）: ${accountErr.message}`);
       }
