@@ -322,6 +322,36 @@ async function pushTaskRows(pool, token, rows) {
   }
 }
 
+// 页面正文可拼接的 block 类型（rich_text 承载体）
+const PAGE_CONTENT_BLOCK_TYPES = Object.freeze([
+  'paragraph', 'heading_1', 'heading_2', 'heading_3',
+  'bulleted_list_item', 'numbered_list_item', 'to_do', 'quote', 'callout', 'code',
+]);
+
+/**
+ * 拉取 Notion 页面正文（blocks API）作为任务 prompt（2026-09-17）。
+ * 主理人把任务描述写在排单页正文里 → 送达执行体。
+ * 只拼接文本类 block 的 rich_text plain_text，块间换行，截断 8000 字符。
+ * 任何异常 console.warn 后返回 ''——正文是增强件，绝不阻塞排单主流程。
+ */
+export async function fetchNotionPageContent(token, pageId) {
+  try {
+    const resp = await notionReq(token, `/blocks/${pageId}/children?page_size=100`, 'GET');
+    const lines = [];
+    for (const block of resp?.results ?? []) {
+      const type = block?.type;
+      if (!PAGE_CONTENT_BLOCK_TYPES.includes(type)) continue;
+      const text = (block[type]?.rich_text ?? [])
+        .map((t) => t.plain_text ?? t.text?.content ?? '').join('');
+      if (text.trim()) lines.push(text);
+    }
+    return lines.join('\n').slice(0, 8000);
+  } catch (err) {
+    console.warn(`[notion-pull] 页面正文拉取失败 ${pageId}（不阻塞排单）: ${err.message}`);
+    return '';
+  }
+}
+
 /**
  * Notion Tasks 库 → Brain 接手（双向·pull 半边，2026-09-14）。
  * 主理人在 Notion 新建行并把 Status 拖到 Delegated 即"排单"：
@@ -365,6 +395,7 @@ async function pullNotionTasks(pool, token, opts = {}) {
         }
         await dispatchOpenClawFromNotion({
           pool, token, page, desc,
+          pageContent: await fetchNotionPageContent(token, page.id),
           workflowNotionId: wfRelation,
           agentNotionId: (props.Agent?.relation ?? [])[0]?.id ?? null,
           env: opts.env ?? process.env,
@@ -378,6 +409,8 @@ async function pullNotionTasks(pool, token, opts = {}) {
       const m = name.match(/^\[(P[0-3])\]\s*(.+)$/);
       const priority = m ? m[1] : 'P2';
       const title = m ? m[2] : name;
+      // 页面正文=主理人写的任务描述/prompt（拉取失败返回 ''，回落固定文案）
+      const pageContent = await fetchNotionPageContent(token, page.id);
 
       // 建任务必须走原子路由账房（task-creation-inventory 守卫），获得 Routing Receipt。
       // source_id=Notion 页 id → 账房自带幂等（同页重放拿回同一 task）。
@@ -388,7 +421,7 @@ async function pullNotionTasks(pool, token, opts = {}) {
         source: 'inbox',
         source_id: page.id,
         title,
-        description: '来自 Notion Tasks 编排（主理人排单）',
+        description: pageContent.slice(0, 2000) || '来自 Notion Tasks 编排（主理人排单）',
         requested_task_type: 'dev',
         declared_change_kind: 'capability_change',
         mutation_intent: 'write',
@@ -472,7 +505,7 @@ function defaultReadTemplate(dir, file) {
  * 一切缺配置都写 ⚠ 回执到页面（不含幂等标记，修好配置下轮自动重派）。
  */
 async function dispatchOpenClawFromNotion({
-  pool, token, page, desc, workflowNotionId, agentNotionId, env, readTemplateFn, fetchFn, execFn: execFnIn,
+  pool, token, page, desc, pageContent = '', workflowNotionId, agentNotionId, env, readTemplateFn, fetchFn, execFn: execFnIn,
 }) {
   const norm = (id) => String(id).replace(/-/g, '');
   const failReceipt = async (why) => {
@@ -522,7 +555,18 @@ async function dispatchOpenClawFromNotion({
     const runIdSsh = `notion-${pageId32ssh}-${Date.now()}`;
     const exitPath = `~/brain-runs/${runIdSsh}.exit`;
     const logPath = `~/brain-runs/${runIdSsh}.log`;
-    const remote = `mkdir -p ~/brain-runs && nohup sh -c '${command.replace(/'/g, `'\\''`)}; echo $? > ${exitPath}' > ${logPath} 2>&1 & echo DISPATCHED`;
+    // 页面正文=执行 prompt：base64 先写达目标机 prompt 文件（base64 经 ssh 传输零注入面），
+    // command 里的 {PROMPT_FILE} 字面量替换为该路径；无占位符则 prompt 文件照写供 command 自取。
+    let promptFile = null;
+    let promptSetup = '';
+    let effectiveCommand = command;
+    if (pageContent) {
+      promptFile = `~/brain-runs/${runIdSsh}.prompt`;
+      const promptB64 = Buffer.from(pageContent).toString('base64');
+      promptSetup = `printf '%s' '${promptB64}' | base64 -d > ${promptFile} && `;
+      effectiveCommand = command.split('{PROMPT_FILE}').join(promptFile);
+    }
+    const remote = `mkdir -p ~/brain-runs && ${promptSetup}nohup sh -c '${effectiveCommand.replace(/'/g, `'\\''`)}; echo $? > ${exitPath}' > ${logPath} 2>&1 & echo DISPATCHED`;
     // execFile 参数数组：remote 作为 ssh 的单个 argv 传递，本地 shell 零解释
     // （dispatch.command 本就是"要执行的命令"数据行，写入权=运维权；这里只堵本地注入面）
     const sshArgs = [...SSH_BASE_ARGS, target, remote];
@@ -544,6 +588,7 @@ async function dispatchOpenClawFromNotion({
         metadata: {
           run_id: runIdSsh, wf_id: wf.wf_id, channel: 'ssh', machine,
           notion_page_id: page.id, exit_path: `brain-runs/${runIdSsh}.exit`,
+          ...(pageContent ? { prompt_preview: pageContent.slice(0, 500), prompt_file: promptFile } : {}),
         },
         task: { status: 'in_progress', priority: 'P2' },
       });
@@ -574,6 +619,7 @@ async function dispatchOpenClawFromNotion({
   const pageId32 = String(page.id).replace(/-/g, '');
   const runId = `notion-${pageId32}-${Date.now()}`;
   payload = { ...payload, run_id: runId, attempt_id: 'a1' };
+  if (pageContent) payload.prompt = pageContent.slice(0, 4000); // 页面正文=执行 prompt 随 webhook 送达
   let ok = false;
   let detail = '';
   try {
