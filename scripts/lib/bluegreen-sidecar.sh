@@ -15,6 +15,14 @@ set -uo pipefail
 BRAIN_VERSION="${BRAIN_VERSION:?BRAIN_VERSION 必填}"
 ENV_REGION="${ENV_REGION:-us}"
 DEPLOY_ROOT="${DEPLOY_ROOT:?DEPLOY_ROOT 必填}"
+
+# compose 文件按 region 选：us-vps 有专用 compose（host 网络 + Linux 路径），
+# 硬编码 docker-compose.yml（macOS 版）会把新 Brain 起进 bridge 网络连不上
+# 宿主 5432 postgres，崩溃循环（2026-09-17 04:5x 实锤，手动正确 compose 止血）。
+COMPOSE_FILE_PATH="$DEPLOY_ROOT/docker-compose.yml"
+if [[ "$ENV_REGION" == "us" && -f "$DEPLOY_ROOT/docker-compose.us-vps.yml" ]]; then
+  COMPOSE_FILE_PATH="$DEPLOY_ROOT/docker-compose.us-vps.yml"
+fi
 CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:?CECELIA_INTERNAL_ENV_FILE 必填}"
 BARK_TOKEN="${BARK_TOKEN:-}"
 # sidecar 本身由 `docker run` 起在独立容器内（见 bluegreen.sh bluegreen_swap），
@@ -89,7 +97,7 @@ done
 echo "[sidecar] compose up node-brain (BRAIN_VERSION=${BRAIN_VERSION})..."
 if BRAIN_VERSION="$BRAIN_VERSION" ENV_REGION="$ENV_REGION" \
     docker compose --env-file "$DEPLOY_ROOT/.env.docker" \
-      -f "$DEPLOY_ROOT/docker-compose.yml" up -d node-brain 2>&1; then
+      -f "$COMPOSE_FILE_PATH" up -d node-brain 2>&1; then
   echo "[sidecar] ✅ compose up 成功 v${BRAIN_VERSION}"
 
   cancel_drain_after_up
@@ -105,7 +113,7 @@ echo "[sidecar] ❌ compose up 失败 exit=${PRIMARY_EXIT}，尝试 blue-fallbac
 # 退出码语义：fallback 成功 → exit 0（5221 已恢复）；fallback 也失败 → exit 1（5221 宕机）
 if BRAIN_VERSION=blue-fallback ENV_REGION="$ENV_REGION" \
     docker compose --env-file "$DEPLOY_ROOT/.env.docker" \
-      -f "$DEPLOY_ROOT/docker-compose.yml" up -d node-brain 2>&1; then
+      -f "$COMPOSE_FILE_PATH" up -d node-brain 2>&1; then
   echo "[sidecar] ✅ blue-fallback 恢复成功，5221 已恢复旧版本"
   _sidecar_bark "⚠️ 蓝绿 sidecar：v${BRAIN_VERSION} 新镜像启动失败，已回退 blue-fallback，5221 已恢复，请检查新镜像问题"
   _sidecar_log "[sidecar-partial-fail] primary_exit=${PRIMARY_EXIT} brain_version=${BRAIN_VERSION} recovered=blue-fallback"
