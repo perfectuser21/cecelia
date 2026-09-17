@@ -32,6 +32,7 @@ capture-triage-scope-smoke.sh
 cascade-list-smoke.sh
 ci-patrol-wiring-smoke.sh
 circuit-breaker-persist-smoke.sh
+credential-freshness-smoke.sh
 crystal-evidence-feed-smoke.sh
 crystal-units-view-smoke.sh
 crystal-judge-smoke.sh
