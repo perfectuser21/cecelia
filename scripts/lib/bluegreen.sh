@@ -162,13 +162,23 @@ bluegreen_swap() {
   # green 必须加入 blue 所在网络：webhook 链路里本脚本在 blue 容器内执行，
   # 容器内 localhost:${port} 是 blue 自己的 loopback 而非宿主端口；green 落默认
   # bridge 则与 blue 跨网络隔离 → health/smoke 全部秒拒（2026-07-15 Gate3 全红根因）。
-  local blue_net="" net_args=""
+  local blue_net="" net_args="" port_args="-p ${port}:5221" green_port_env=""
   blue_net=$(docker inspect "$blue" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null | awk '{print $1}') || true
-  [[ -n "$blue_net" ]] && net_args="--network ${blue_net}"
+  if [[ "$blue_net" == "host" ]]; then
+    # host 网络（us-vps compose）：-p 被 docker 丢弃，容器内直接绑宿主端口 →
+    # green 必须用 BRAIN_PORT 换绑定口，否则与 blue 抢 5221 起不来
+    # （2026-09-17 实锤：green "port 5221 still in use" 循环重试，health 恒败）。
+    # green_port_env 必须排在 GREEN_RUN_ARGS 之后，覆盖从 blue 复制来的 BRAIN_PORT=5221。
+    net_args="--network host"
+    port_args=""
+    green_port_env="-e BRAIN_PORT=${port}"
+  elif [[ -n "$blue_net" ]]; then
+    net_args="--network ${blue_net}"
+  fi
   # BRAIN_DEPLOY_CANARY=1 关 tick，避免 canary 与 blue 连同一 DB double-dispatch
   # shellcheck disable=SC2086
-  if ! docker run -d --name "$green" -p "${port}:5221" ${net_args} \
-        -e BRAIN_DEPLOY_CANARY=1 ${GREEN_RUN_ARGS:-} "cecelia-brain:${version}" >/dev/null 2>&1; then
+  if ! docker run -d --name "$green" ${port_args} ${net_args} \
+        -e BRAIN_DEPLOY_CANARY=1 ${GREEN_RUN_ARGS:-} ${green_port_env} "cecelia-brain:${version}" >/dev/null 2>&1; then
     echo "[bluegreen] green 起容器失败，保留 blue"
     docker rm -f "$green" >/dev/null 2>&1 || true
     send_bark "green 镜像 v${version} 启动失败，已保留旧版(5221不受影响)"
