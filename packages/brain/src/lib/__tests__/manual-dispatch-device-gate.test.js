@@ -22,40 +22,40 @@ import request from 'supertest';
 // ── Mock ──────────────────────────────────────────────────
 
 const mockQuery = vi.hoisted(() => vi.fn());
-vi.mock('../db.js', () => ({
+vi.mock('../../db.js', () => ({
   default: { query: (...args) => mockQuery(...args) },
 }));
 
 const mockTriggerCeceliaRun = vi.hoisted(() => vi.fn());
 const mockCheckAvailable = vi.hoisted(() => vi.fn());
-vi.mock('../executor.js', () => ({
+vi.mock('../../executor.js', () => ({
   triggerCeceliaRun: (...args) => mockTriggerCeceliaRun(...args),
   checkCeceliaRunAvailable: (...args) => mockCheckAvailable(...args),
 }));
 
 const mockAcquireDeviceLock = vi.hoisted(() => vi.fn());
 const mockReleaseDeviceLocksHeldBy = vi.hoisted(() => vi.fn());
-vi.mock('../device-lock-helpers.js', () => ({
+vi.mock('../../device-lock-helpers.js', () => ({
   acquireDeviceLock: (...args) => mockAcquireDeviceLock(...args),
   releaseDeviceLocksHeldBy: (...args) => mockReleaseDeviceLocksHeldBy(...args),
   sweepStaleDeviceLocks: vi.fn().mockResolvedValue(0),
 }));
 
 // 两个路由文件的其余大量 import（形状照抄 dispatch-anchor-gate.test.js / dispatch-now.test.js）
-vi.mock('../actions.js', () => ({
+vi.mock('../../actions.js', () => ({
   createTask: vi.fn(),
   updateTask: vi.fn(),
   batchUpdateTasks: vi.fn(),
 }));
-vi.mock('../tick.js', () => ({
+vi.mock('../../tick.js', () => ({
   runTickSafe: vi.fn(),
   getTickStatus: vi.fn().mockResolvedValue({ enabled: false }),
 }));
-vi.mock('../tick-helpers.js', () => ({
+vi.mock('../../tick-helpers.js', () => ({
   routeTask: vi.fn(),
   TASK_TYPE_AGENT_MAP: {},
 }));
-vi.mock('../task-router.js', () => ({
+vi.mock('../../task-router.js', () => ({
   identifyWorkType: vi.fn(),
   getTaskLocation: vi.fn(),
   routeTaskCreate: vi.fn(),
@@ -63,20 +63,20 @@ vi.mock('../task-router.js', () => ({
   LOCATION_MAP: {},
   diagnoseKR: vi.fn(),
 }));
-vi.mock('../task-weight.js', () => ({ getTaskWeights: vi.fn() }));
-vi.mock('../routes/shared.js', () => ({
+vi.mock('../../task-weight.js', () => ({ getTaskWeights: vi.fn() }));
+vi.mock('../../routes/shared.js', () => ({
   classifyLearningType: vi.fn(),
   resolveRelatedFailureMemories: vi.fn().mockResolvedValue([]),
   getActiveExecutionPaths: vi.fn().mockReturnValue([]),
   INVENTORY_CONFIG: {},
 }));
-vi.mock('../memory-utils.js', () => ({ generateL0Summary: vi.fn() }));
-vi.mock('../events/taskEvents.js', () => ({
+vi.mock('../../memory-utils.js', () => ({ generateL0Summary: vi.fn() }));
+vi.mock('../../events/taskEvents.js', () => ({
   publishTaskCreated: vi.fn(),
   publishTaskCompleted: vi.fn(),
   publishTaskFailed: vi.fn(),
 }));
-vi.mock('../quarantine.js', () => ({
+vi.mock('../../quarantine.js', () => ({
   handleTaskFailure: vi.fn(),
   classifyFailure: vi.fn(),
   getQuarantinedTasks: vi.fn(),
@@ -86,11 +86,11 @@ vi.mock('../quarantine.js', () => ({
   QUARANTINE_REASONS: {},
   REVIEW_ACTIONS: {},
 }));
-vi.mock('../event-bus.js', () => ({ emit: vi.fn() }));
-vi.mock('../capture-inbox.js', () => ({ pushCaptureAtom: vi.fn().mockResolvedValue('atom-1') }));
-vi.mock('../handoff.js', () => ({ pushHandoffAtom: vi.fn() }));
-vi.mock('../task-updater.js', () => ({ blockTask: vi.fn() }));
-vi.mock('../templates.js', () => ({
+vi.mock('../../event-bus.js', () => ({ emit: vi.fn() }));
+vi.mock('../../capture-inbox.js', () => ({ pushCaptureAtom: vi.fn().mockResolvedValue('atom-1') }));
+vi.mock('../../handoff.js', () => ({ pushHandoffAtom: vi.fn() }));
+vi.mock('../../task-updater.js', () => ({ blockTask: vi.fn() }));
+vi.mock('../../templates.js', () => ({
   generatePrdFromTask: vi.fn(),
   generatePrdFromGoalKR: vi.fn(),
   generateTrdFromGoal: vi.fn(),
@@ -101,13 +101,13 @@ vi.mock('../templates.js', () => ({
   trdToJson: vi.fn(),
   PRD_TYPE_MAP: {},
 }));
-vi.mock('../decision.js', () => ({
+vi.mock('../../decision.js', () => ({
   compareGoalProgress: vi.fn(),
   generateDecision: vi.fn(),
   executeDecision: vi.fn(),
   rollbackDecision: vi.fn(),
 }));
-vi.mock('../planner.js', () => ({
+vi.mock('../../planner.js', () => ({
   planNextTask: vi.fn(),
   getPlanStatus: vi.fn(),
   handlePlanInput: vi.fn(),
@@ -116,22 +116,22 @@ vi.mock('../planner.js', () => ({
   selectActiveInitiativeForArea: vi.fn(),
   ACTIVE_AREA_COUNT: 3,
 }));
-vi.mock('../thalamus.js', () => ({ processEvent: vi.fn(), EVENT_TYPES: {} }));
-vi.mock('../decision-executor.js', () => ({ executeDecision: vi.fn() }));
-vi.mock('../embedding-service.js', () => ({ generateTaskEmbeddingAsync: vi.fn() }));
-vi.mock('../circuit-breaker.js', () => ({
+vi.mock('../../thalamus.js', () => ({ processEvent: vi.fn(), EVENT_TYPES: {} }));
+vi.mock('../../decision-executor.js', () => ({ executeDecision: vi.fn() }));
+vi.mock('../../embedding-service.js', () => ({ generateTaskEmbeddingAsync: vi.fn() }));
+vi.mock('../../circuit-breaker.js', () => ({
   recordSuccess: vi.fn(),
   recordFailure: vi.fn(),
   reset: vi.fn(),
 }));
-vi.mock('../notifier.js', () => ({ notifyTaskCompleted: vi.fn() }));
-vi.mock('../platform-utils.js', () => ({
+vi.mock('../../notifier.js', () => ({ notifyTaskCompleted: vi.fn() }));
+vi.mock('../../platform-utils.js', () => ({
   getAvailableMemoryMB: vi.fn().mockReturnValue(8000),
 }));
-vi.mock('../alerting.js', () => ({ raise: vi.fn() }));
-vi.mock('../desire-feedback.js', () => ({ updateDesireFromTask: vi.fn() }));
-vi.mock('../code-review-trigger.js', () => ({ checkAndCreateCodeReviewTrigger: vi.fn() }));
-vi.mock('../zenithjoy-db.js', () => ({ getZenithjoyPool: vi.fn() }));
+vi.mock('../../alerting.js', () => ({ raise: vi.fn() }));
+vi.mock('../../desire-feedback.js', () => ({ updateDesireFromTask: vi.fn() }));
+vi.mock('../../code-review-trigger.js', () => ({ checkAndCreateCodeReviewTrigger: vi.fn() }));
+vi.mock('../../zenithjoy-db.js', () => ({ getZenithjoyPool: vi.fn() }));
 
 // ── Fixtures ──────────────────────────────────────────────
 
@@ -166,7 +166,7 @@ let currentTask;
 let allQueries;
 
 async function makeExecutionApp() {
-  const router = (await import('../routes/execution.js')).default;
+  const router = (await import('../../routes/execution.js')).default;
   const app = express();
   app.use(express.json());
   app.use('/api/brain', router);
@@ -174,7 +174,7 @@ async function makeExecutionApp() {
 }
 
 async function makeTasksApp() {
-  const router = (await import('../routes/tasks.js')).default;
+  const router = (await import('../../routes/tasks.js')).default;
   const app = express();
   app.use(express.json());
   app.use('/api/brain', router);
