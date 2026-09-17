@@ -306,8 +306,11 @@ if [[ "$NEED_DASHBOARD" == true ]]; then
             cd "$MAIN_ROOT"
             NPM_CACHE_DIR="$MAIN_ROOT/.npm-cache"
             NPM_LOGS_DIR="$MAIN_ROOT/.npm-logs"
-            if ! npm install --prefer-offline --cache "$NPM_CACHE_DIR" --logs-dir "$NPM_LOGS_DIR" 2>&1; then
-                if ! npm install --cache "$NPM_CACHE_DIR" --logs-dir "$NPM_LOGS_DIR" 2>&1; then
+            # --include=dev 必带：Brain 容器 NODE_ENV=production 会让 npm install 默认
+            # omit dev，而 vite 是 devDependency → alpine 构建容器 "vite: not found"
+            # exit 127 挡死整条部署（2026-09-17 Gate3 实锤，deploy log 00-43-34）
+            if ! npm install --prefer-offline --include=dev --cache "$NPM_CACHE_DIR" --logs-dir "$NPM_LOGS_DIR" 2>&1; then
+                if ! npm install --include=dev --cache "$NPM_CACHE_DIR" --logs-dir "$NPM_LOGS_DIR" 2>&1; then
                     echo "❌ npm install 失败，中止部署"
                     exit 1
                 fi
