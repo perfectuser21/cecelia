@@ -26,6 +26,11 @@ import {
   shouldRotateAuthKey,
   EXPIRY_WARN_DAYS,
   AUTH_KEY_ROTATE_DAYS,
+  issueAuthKey,
+  buildManualActionNotice,
+  runCredentialFreshness,
+  maybeRunCredentialFreshness,
+  _resetCredentialFreshnessGate,
 } from '../credential-freshness.js';
 
 describe('daysUntil — 到期天数', () => {
@@ -117,5 +122,145 @@ describe('shouldRotateAuthKey — 何时自动续 auth key', () => {
   });
   it('不知道到期日 → 不自动续（避免每轮都重发新 key 把旧 key 冲掉）', () => {
     expect(shouldRotateAuthKey(null)).toBe(false);
+  });
+});
+
+describe('issueAuthKey — 签发新 CI auth key', () => {
+  const okRes = (body) => ({ status: 200, json: async () => body, text: async () => '' });
+
+  it('签发的 key 能力必须与 CI 现用的一致（reusable+ephemeral+preauthorized）', async () => {
+    let sent = null;
+    const fetchFn = async (_u, init) => { sent = JSON.parse(init.body); return okRes({ key: 'tskey-auth-new', id: 'k1' }); };
+    await issueAuthKey({ fetchFn, apiKey: 'tskey-api-x' });
+    const cap = sent.capabilities.devices.create;
+    expect(cap.reusable).toBe(true);
+    expect(cap.ephemeral).toBe(true);      // 不设会在设备列表堆僵尸节点
+    expect(cap.preauthorized).toBe(true);  // 不设 CI 机器要人工批准才能进网
+  });
+
+  it('用默认 tailnet "-"（1Password 里记的 xx@gmail.com 是占位值，实测 404）', async () => {
+    let url = null;
+    const fetchFn = async (u, init) => { url = u; return okRes({ key: 'k', id: 'i' }); };
+    await issueAuthKey({ fetchFn, apiKey: 'x' });
+    expect(url).toContain('/tailnet/-/keys');
+    expect(url).not.toContain('@gmail.com');
+  });
+
+  it('非 200 抛错，不能把失败当成功返回空 key', async () => {
+    const fetchFn = async () => ({ status: 403, json: async () => ({}), text: async () => 'forbidden' });
+    await expect(issueAuthKey({ fetchFn, apiKey: 'x' })).rejects.toThrow(/403/);
+  });
+
+  it('响应缺 key 字段也算失败', async () => {
+    const fetchFn = async () => okRes({ id: 'only-id' });
+    await expect(issueAuthKey({ fetchFn, apiKey: 'x' })).rejects.toThrow(/key/);
+  });
+});
+
+describe('buildManualActionNotice — 讲清楚哪件必须人来', () => {
+  it('还早 → 不打扰', () => {
+    expect(buildManualActionNotice(60)).toBeNull();
+  });
+
+  it('进入预警窗 → 给出可照做的步骤，而不是只说"过期了"', () => {
+    const n = buildManualActionNotice(10);
+    expect(n).toContain('login.tailscale.com/admin/settings/keys');
+    expect(n).toContain('Generate access token');
+    expect(n).toContain('还剩 10 天');
+  });
+
+  it('已过期 → 说清过期多久（今晚就是过期 18 天没人知道）', () => {
+    expect(buildManualActionNotice(-18)).toContain('已过期 18 天');
+  });
+
+  it('必须说明 CI 的 auth key 不用管，避免主理人重复劳动', () => {
+    expect(buildManualActionNotice(5)).toContain('auth key 会自动续');
+  });
+});
+
+describe('runCredentialFreshness — 每日一跑', () => {
+  const okProbeEnv = {
+    TAILSCALE_API_KEY: 'k', GITHUB_TOKEN: 'g',
+    FEISHU_APP_ID: 'a', FEISHU_APP_SECRET: 's',
+  };
+  const allOkFetch = async (url) => (String(url).includes('feishu')
+    ? { status: 200, json: async () => ({ code: 0 }) }
+    : { status: 200, json: async () => ({}), text: async () => '' });
+
+  it('全部健康且到期尚早 → 不告警、不续期、不打扰', async () => {
+    const alerts = [];
+    const r = await runCredentialFreshness({
+      fetchFn: allOkFetch,
+      env: { ...okProbeEnv, TS_AUTHKEY_EXPIRES: '2099-01-01', TAILSCALE_API_KEY_EXPIRES: '2099-01-01' },
+      raiseFn: async (lvl, key, msg) => alerts.push({ lvl, key, msg }),
+    });
+    expect(r.probe.status).toBe('healthy');
+    expect(alerts).toEqual([]);
+    expect(r.rotated_auth_key_id).toBeNull();
+    expect(r.manual_action_required).toBe(false);
+  });
+
+  it('探测失活 → P1 告警（这正是今晚没人发现的那个状态）', async () => {
+    const alerts = [];
+    await runCredentialFreshness({
+      fetchFn: async () => ({ status: 401, json: async () => ({ code: 99 }), text: async () => '' }),
+      env: { ...okProbeEnv, TS_AUTHKEY_EXPIRES: '2099-01-01', TAILSCALE_API_KEY_EXPIRES: '2099-01-01' },
+      raiseFn: async (lvl, key, msg) => alerts.push({ lvl, key, msg }),
+    });
+    const a = alerts.find((x) => x.key === 'credential_probe_failed');
+    expect(a).toBeTruthy();
+    expect(a.lvl).toBe('P1');
+    expect(a.msg).toContain('401');
+  });
+
+  it('auth key 进入续期窗 → 自动签发新的', async () => {
+    const alerts = [];
+    const r = await runCredentialFreshness({
+      fetchFn: async (url, init) => (init?.method === 'POST' && String(url).includes('/keys')
+        ? { status: 200, json: async () => ({ key: 'tskey-auth-new', id: 'knew' }), text: async () => '' }
+        : allOkFetch(url)),
+      env: { ...okProbeEnv, TS_AUTHKEY_EXPIRES: '2026-01-01', TAILSCALE_API_KEY_EXPIRES: '2099-01-01' },
+      raiseFn: async (lvl, key, msg) => alerts.push({ lvl, key, msg }),
+    });
+    expect(r.rotated_auth_key_id).toBe('knew');
+    expect(alerts.some((a) => a.key === 'tailscale_authkey_rotated')).toBe(true);
+  });
+
+  it('续期失败必须 P1 告警，不能静默吞掉', async () => {
+    const alerts = [];
+    await runCredentialFreshness({
+      fetchFn: async (url, init) => (init?.method === 'POST' && String(url).includes('/keys')
+        ? { status: 403, json: async () => ({}), text: async () => 'forbidden' }
+        : allOkFetch(url)),
+      env: { ...okProbeEnv, TS_AUTHKEY_EXPIRES: '2026-01-01', TAILSCALE_API_KEY_EXPIRES: '2099-01-01' },
+      raiseFn: async (lvl, key, msg) => alerts.push({ lvl, key, msg }),
+    });
+    const a = alerts.find((x) => x.key === 'tailscale_authkey_rotate_failed');
+    expect(a).toBeTruthy();
+    expect(a.lvl).toBe('P1');
+  });
+
+  it('API token 快到期 → 提示人工换，且说清 auth key 不用管', async () => {
+    const alerts = [];
+    const r = await runCredentialFreshness({
+      fetchFn: allOkFetch,
+      env: { ...okProbeEnv, TS_AUTHKEY_EXPIRES: '2099-01-01', TAILSCALE_API_KEY_EXPIRES: '2026-09-20' },
+      raiseFn: async (lvl, key, msg) => alerts.push({ lvl, key, msg }),
+    });
+    expect(r.manual_action_required).toBe(true);
+    const a = alerts.find((x) => x.key === 'tailscale_api_token_manual');
+    expect(a.msg).toContain('Generate access token');
+    expect(a.msg).toContain('auth key 会自动续');
+  });
+});
+
+describe('maybeRunCredentialFreshness — 自 gate 每日一跑', () => {
+  it('24 小时内第二次被 gate 挡下', async () => {
+    _resetCredentialFreshnessGate();
+    const env = { TAILSCALE_API_KEY: 'k', GITHUB_TOKEN: 'g', FEISHU_APP_ID: 'a', FEISHU_APP_SECRET: 's' };
+    const f = async () => ({ status: 200, json: async () => ({ code: 0 }), text: async () => '' });
+    await maybeRunCredentialFreshness({}, { fetchFn: f, env, raiseFn: async () => {}, now: () => 1_000_000 });
+    const second = await maybeRunCredentialFreshness({}, { fetchFn: f, env, raiseFn: async () => {}, now: () => 1_000_000 + 60_000 });
+    expect(second.skipped).toBe('cooldown');
   });
 });
