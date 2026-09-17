@@ -213,6 +213,15 @@ done <<< "$CHANGED_FILES"
 # Dashboard 对账结果叠加（webhook changed_paths 降级为并集提示，不再是唯一判据）
 [[ "$DASHBOARD_SHA_MISMATCH" == true ]] && NEED_DASHBOARD=true
 
+# ── us-vps 零执行铁律（invariant 96054a8b）：调度器上禁跑 dashboard build ────
+# Dashboard 生产实例在 mmv(5211) + HK，不在 us-vps；本机拿不到 build-info.json
+# 时对账"保守触发构建"会在 us-vps 上跑 vite build——2026-09-17 01:08 实锤把
+# 整机打爆僵死 40 分钟（tailscaled/sshd 全失联，DO API reboot 才救回）。
+if [[ "${ENV_REGION:-}" == "us" && "$NEED_DASHBOARD" == true ]]; then
+    echo "⏭️  Dashboard 段跳过：us-vps 零执行铁律，dashboard 生产不在本机（mmv/HK 各自部署）"
+    NEED_DASHBOARD=false
+fi
+
 # ── 去重闸：staging 已就绪等放行时不重建（防刀2前保守构建 + Bark 风暴）──────
 if [[ "$NEED_DASHBOARD" == true ]]; then
     DEDUP_PENDING="$MAIN_ROOT/apps/dashboard/.staging-pending"
