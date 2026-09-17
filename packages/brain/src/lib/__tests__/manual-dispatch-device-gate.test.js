@@ -18,6 +18,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { checkDeviceLockForManualDispatch } from '../manual-dispatch-device-gate.js';
 
 // ── Mock ──────────────────────────────────────────────────
 
@@ -417,5 +418,19 @@ describe('POST /api/brain/tasks/:id/dispatch — 设备锁站岗（Issue e03fc74
 
     expect(res.status).toBe(500);
     expect(mockReleaseDeviceLocksHeldBy).toHaveBeenCalledWith(currentTask.id);
+  });
+});
+
+describe('checkDeviceLockForManualDispatch — gate 直测', () => {
+  it('无 device_serial 直接放行且不抢锁', async () => {
+    const r = await checkDeviceLockForManualDispatch({ id: 't1', payload: {} }, 'test');
+    expect(r).toEqual({ pass: true, acquired: false });
+    expect(mockAcquireDeviceLock).not.toHaveBeenCalled();
+  });
+
+  it('acquired 时 pass 且标记已持锁', async () => {
+    mockAcquireDeviceLock.mockResolvedValueOnce({ result: 'acquired', lock: {} });
+    const r = await checkDeviceLockForManualDispatch({ id: 't1', payload: { device_serial: 'S1' } }, 'test');
+    expect(r).toEqual({ pass: true, acquired: true });
   });
 });
