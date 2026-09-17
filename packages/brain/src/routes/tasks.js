@@ -15,6 +15,7 @@ import { pushCaptureAtom } from '../capture-inbox.js';
 import { pushHandoffAtom } from '../handoff.js';
 import { checkAnchor } from '../anchor-check.js';
 import { blockTask } from '../task-updater.js';
+import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
 
 const router = Router();
 
@@ -1254,6 +1255,7 @@ router.post('/tasks/:id/unblock', async (req, res) => {
  * 跳过自动调度的 drain/billing/slot 检查，但保留执行器可用性检查
  */
 router.post('/tasks/:id/dispatch', async (req, res) => {
+  let deviceLockTaskId = null; // 已抢设备锁的任务 id（失败路径需释放）
   try {
     const { id } = req.params;
 
@@ -1283,6 +1285,13 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
       });
     }
 
+    // 2.6 G5 设备锁闸（Issue e03fc740）：手动派发与 tick 派发同闸——无锁不点火
+    const deviceGate = await checkDeviceLockForManualDispatch(task, 'tasks/:id/dispatch');
+    if (!deviceGate.pass) {
+      return res.status(deviceGate.status).json(deviceGate.body);
+    }
+    if (deviceGate.acquired) deviceLockTaskId = task.id;
+
     // 3. 更新为 in_progress
     await pool.query(
       `UPDATE tasks SET status = 'in_progress', updated_at = NOW(),
@@ -1294,7 +1303,9 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
     // 4. 检查执行器可用性
     const ceceliaAvailable = await checkCeceliaRunAvailable();
     if (!ceceliaAvailable.available) {
+      // 回滚 queued 不触发终态释放链，已抢的锁必须就地放掉
       await pool.query(`UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1`, [id]);
+      if (deviceLockTaskId) await releaseDeviceLockNonFatal(deviceLockTaskId, 'tasks/:id/dispatch');
       return res.status(503).json({
         error: 'executor not available',
         detail: ceceliaAvailable.error
@@ -1304,7 +1315,9 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
     // 5. 触发执行
     const execResult = await triggerCeceliaRun(task);
     if (!execResult.success) {
+      // 同上：回滚 queued 时释放已抢的设备锁
       await pool.query(`UPDATE tasks SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1`, [id]);
+      if (deviceLockTaskId) await releaseDeviceLockNonFatal(deviceLockTaskId, 'tasks/:id/dispatch');
       return res.status(500).json({
         error: 'dispatch failed',
         detail: execResult.error || execResult.reason
@@ -1320,6 +1333,8 @@ router.post('/tasks/:id/dispatch', async (req, res) => {
       dispatched_at: new Date().toISOString()
     });
   } catch (err) {
+    // 异常路径：已抢的锁不能悬挂到 TTL（任务状态未必进终态释放链）
+    if (deviceLockTaskId) await releaseDeviceLockNonFatal(deviceLockTaskId, 'tasks/:id/dispatch');
     console.error('[API] tasks/:id/dispatch error:', err.message);
     res.status(500).json({ error: err.message });
   }
