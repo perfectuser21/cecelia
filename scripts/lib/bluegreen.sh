@@ -172,6 +172,12 @@ bluegreen_swap() {
     net_args="--network host"
     port_args=""
     green_port_env="-e BRAIN_PORT=${port}"
+    # host 网络下执行环境（blue 容器）的 loopback 就是宿主 loopback，green:${port} 直达；
+    # host.docker.internal 在 Linux docker 默认不存在，探活会恒败（2026-09-17 03:26 实锤）。
+    # 注意与 bridge 情形相反（那里容器内 localhost 是自己，见 canary-host 回归测试）——
+    # 仅此 host 分支覆写，CANARY_HOST 显式指定时仍以其为准。
+    canary_host="${CANARY_HOST:-localhost}"
+    canary_url="http://${canary_host}:${port}"
   elif [[ -n "$blue_net" ]]; then
     net_args="--network ${blue_net}"
   fi
