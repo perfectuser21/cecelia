@@ -1,5 +1,12 @@
 name: Preview Deploy
 
+# ⚠️ 预览环境在执行机（MMV:5241）起，不在 us-vps，也不走 MMV:5221：
+#    · 起预览 = 起 Brain 实例 + 克隆数据库 = 执行活，违反 us-vps 零执行铁律（决策 96054a8b）
+#    · MMV:5221 是 socat，会把流量整个转发到 us-vps —— 必须错开端口才能留在本机
+#    · preview-env-start.sh 硬编码 Mac 路径、磁盘门槛 38.5G 按 Mac 盘设计，
+#      us-vps 根分区仅 24G，数学上不可能通过
+#    对端 = scripts/preview-agent.mjs（launchd 常驻，复用 routes/preview.js）
+
 # per-PR 完整预览环境部署（预览Brain + 隔离数据 + 前端）
 # WS1 实现：决策 48331b37，接通 preview-env-start.sh
 #
@@ -61,7 +68,7 @@ jobs:
         id: start_preview
         if: steps.check_ts.outputs.configured == 'true'
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5241' }}
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
           BRANCH_NAME: ${{ github.head_ref }}
@@ -87,12 +94,15 @@ jobs:
         id: wait_active
         if: steps.check_ts.outputs.configured == 'true'
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5241' }}
           DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
           PR_NUMBER: ${{ github.event.number }}
           BRANCH_NAME: ${{ github.head_ref }}
           EXPECTED_PORT: ${{ steps.start_preview.outputs.port }}
           PREVIEW_INITIAL_BRAIN_UPTIME: ${{ steps.start_preview.outputs.brain_uptime }}
+          # 冷启动（lock 变动导致 node_modules 无法复用时）光 npm ci 就要十几分钟，
+          # 默认 600s 不够，实测会停在 status=starting 超时。给到 20 分钟。
+          PREVIEW_WAIT_MAX_SECONDS: '1200'
         run: |
           bash scripts/wait-preview-active.sh
 
@@ -100,7 +110,7 @@ jobs:
         id: get_host
         if: steps.check_ts.outputs.configured == 'true'
         env:
-          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.71.151.105:5241' }}
         run: |
           HOST=$(echo "$BRAIN_URL" | sed -E 's#^https?://##; s#:[0-9]+$##')
           echo "host=$HOST" >> $GITHUB_OUTPUT
