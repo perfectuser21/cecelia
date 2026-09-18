@@ -13,7 +13,14 @@
 #   - Brain 告警 description 非空且含磁盘水位
 #   - 水位台账：~/logs/janitor-ledger.csv 每次追加一行
 #   - --dry-run 模式：只检测不清理，退出码 0
-#   - 支持 DISK_PCT / BRAIN_URL 环境变量注入（测试用）
+#   - 支持 DISK_PCT / BRAIN_URL / KALLOC_KB / KALLOC_HOUR 环境变量注入（测试用）
+#
+# v5.1 变更（2026-09-18，kalloc 内核泄漏事故后补，决策 64d38870）：
+#   - 修复 Brain 告警 task_type="alert" 非法枚举（CHECK constraint 拒绝，被
+#     2>/dev/null 吞掉，CPU/孤儿分支/磁盘三处告警从写下起就静默失效），
+#     改为合法值 harness_intervention
+#   - frequent 模式新增 check_kalloc_guard：kalloc.1024 内核内存泄漏三档检测
+#     （WARN/ALERT/CRITICAL），复用同一条 Brain 告警通道，不新建独立监控权威
 # =============================================================================
 
 MODE="daily"
@@ -108,9 +115,56 @@ if [ "$MODE" = "frequent" ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] CPU 高压 ${CPU_PCT}%，上报 Brain 告警..."
     curl -s -X POST "${BRAIN_URL}/api/brain/tasks" \
       -H "Content-Type: application/json" \
-      -d "{\"title\":\"⚠️ CPU 高压告警 ${CPU_PCT}%（Janitor 检测）\",\"priority\":\"P1\",\"task_type\":\"alert\",\"domain\":\"agent_ops\",\"description\":\"CPU ${CPU_PCT}% 超过 ${CPU_ALERT_THRESHOLD}% 阈值，请检查是否有失控进程。\"}" \
+      -d "{\"title\":\"⚠️ CPU 高压告警 ${CPU_PCT}%（Janitor 检测）\",\"priority\":\"P1\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"CPU ${CPU_PCT}% 超过 ${CPU_ALERT_THRESHOLD}% 阈值，请检查是否有失控进程。\"}" \
       2>/dev/null || true
   fi
+
+  # 内核 kalloc.1024 泄漏哨兵（2026-09-18 事故补：mmv 本机 kalloc.1024 从几 MB
+  # 涨到 12.7GB 占满 wired 内存，kernel_task 91% CPU 致机器卡死，zprint -g 触发
+  # zone GC 回收不掉（证实真泄漏非缓存），只能重启回收。Apple Silicon+SIP enabled，
+  # 无法远程开 zlog1 boot-arg 做函数级泄漏追踪定位元凶（需进 Recovery Mode），
+  # 故做不到点名元凶，只能早发现早处理：WARN(4G仅日志)/ALERT(8G Brain告警)/
+  # CRITICAL(11G，凌晨3-5点安全时段内自动重启止损)。用户拍板：复用 janitor 既有
+  # 清扫+告警机制，不新建独立 launchd 哨兵（决策 64d38870）。
+  # KALLOC_KB / KALLOC_HOUR 允许环境变量注入（测试用，同 DISK_PCT 约定）。
+  check_kalloc_guard() {
+    local kb gb hour
+    if [ -n "${KALLOC_KB:-}" ]; then
+      kb="$KALLOC_KB"
+    else
+      kb=$(sudo -n zprint 2>/dev/null | awk '$1=="data.kalloc.1024"{gsub(/K$/,"",$3); print $3}')
+    fi
+    [ -z "${kb:-}" ] && return 0
+
+    gb=$(awk -v k="$kb" 'BEGIN{printf "%.2f", k/1048576}')
+
+    if [ "$kb" -ge $((11*1024*1024)) ] 2>/dev/null; then
+      hour="${KALLOC_HOUR:-$(date +%H)}"
+      # 勿删 10#：前导零会被 bash 按八进制解析，08/09 点会命中同一颗雷（见 etime_to_secs 教训）
+      if [ "$((10#$hour))" -ge 3 ] 2>/dev/null && [ "$((10#$hour))" -lt 5 ] 2>/dev/null; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，安全时段内自动重启止损"
+        curl -s -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
+          -d "{\"title\":\"🚨 kalloc.1024 ${gb}GB 触发自动重启（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存泄漏达危险阈值，凌晨安全时段自动重启止损，历史峰值12.7GB曾致机器卡死。\"}" \
+          2>/dev/null || true
+        sleep 30
+        sudo -n shutdown -r now 2>/dev/null
+      else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，非安全时段仅告警"
+        curl -s -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
+          -d "{\"title\":\"🔴 kalloc.1024 危险 ${gb}GB（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"已超危险阈值11GB，非凌晨3-5点安全时段暂不自动重启，请尽快手动重启。\"}" \
+          2>/dev/null || true
+      fi
+    elif [ "$kb" -ge $((8*1024*1024)) ] 2>/dev/null; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 偏高 ${gb}GB，上报 Brain 告警"
+      curl -s -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
+        -d "{\"title\":\"🟡 kalloc.1024 偏高 ${gb}GB（Janitor检测）\",\"priority\":\"P1\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存缓慢泄漏中，建议本周找空档重启一次。\"}" \
+        2>/dev/null || true
+    elif [ "$kb" -ge $((4*1024*1024)) ] 2>/dev/null; then
+      echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 ${gb}GB（早期预警，仅记日志）"
+    fi
+  }
+
+  check_kalloc_guard
 
   # ── 工具函数 ──────────────────────────────────────
   # etime 格式（[[DD-]HH:]MM:SS）转秒数；非法输入返回 0。
@@ -342,7 +396,7 @@ if [ "$MODE" = "frequent" ]; then
     else
       curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" \
         -H "Content-Type: application/json" \
-        -d "{\"title\":\"[janitor] 孤儿分支 ${branch} 任务需重调度\",\"task_type\":\"alert\",\"priority\":\"p2\",\"description\":\"orphan_killed_by_janitor: pid=${pid} branch=${branch}\"}" \
+        -d "{\"title\":\"[janitor] 孤儿分支 ${branch} 任务需重调度\",\"task_type\":\"harness_intervention\",\"priority\":\"p2\",\"description\":\"orphan_killed_by_janitor: pid=${pid} branch=${branch}\"}" \
         > /dev/null 2>&1 || true
       echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] Brain 已告警：分支=$branch 需重调度 (orphan_killed_by_janitor)"
     fi
@@ -738,7 +792,7 @@ if [ "${USAGE_PCT:-0}" -gt 70 ] 2>/dev/null && ! $DRY_RUN; then
   description="磁盘使用率 ${USAGE_PCT}% 超过 70% 警戒线，可用空间约 ${AVAIL_GB}GB，请人工检查并清理大文件。"
   curl -s -X POST "${BRAIN_URL}/api/brain/tasks" \
     -H "Content-Type: application/json" \
-    -d "{\"title\":\"🚨 磁盘告警 ${USAGE_PCT}%，需人工检查\",\"priority\":\"P0\",\"skill\":\"/janitor\",\"task_type\":\"alert\",\"description\":\"${description}\"}" \
+    -d "{\"title\":\"🚨 磁盘告警 ${USAGE_PCT}%，需人工检查\",\"priority\":\"P0\",\"skill\":\"/janitor\",\"task_type\":\"harness_intervention\",\"description\":\"${description}\"}" \
     2>/dev/null || log "  Brain 不可达，告警已本地记录"
 fi
 
