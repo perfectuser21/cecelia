@@ -13,6 +13,12 @@
  * - GP-5 [BEHAVIOR-5]  configError 失败不计入计数，不触发 autoblock
  * - BEHAVIOR-6         spawn_deduplicated 失败不计入计数，不触发 autoblock
  * - BEHAVIOR-7         阈值非法值（NaN / <1）回退默认 3
+ * - BEHAVIOR-8         local_execution_disabled_on_scheduler 失败不计入计数、不 trip cecelia-run breaker
+ *                      （根因：us-vps 纯调度器化后，非 kernel-v1 的 skill-relay 任务在
+ *                       CECELIA_LOCAL_EXECUTION_ENABLED=false 时必然返回此 reason，是永久性的
+ *                       配置态失败而非任务执行故障，不应像真实执行失败一样累积熔断计数——
+ *                       否则会像 configError 一样"配置漂移 trip breaker 阻断所有 dispatch"，
+ *                       而且是共享的 'cecelia-run' key，会连累其他任务类型也派不出去）
  *
  * 规范：
  * - failing test 先 commit（Phase 1），实现后全绿（Phase 2）
@@ -612,6 +618,62 @@ describe('[BEHAVIOR-6]: spawn_deduplicated 失败不计入计数', () => {
 
     expect(mockBlockTask).not.toHaveBeenCalled();
     expect(mockRaise).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [BEHAVIOR-8]：local_execution_disabled_on_scheduler 不计入连续计数、不 trip cecelia-run breaker
+//
+// 复现场景：us-vps 纯调度器化（决策 96054a8b）后，非 kernel-v1 的 skill-relay 任务
+// （如 golden_path_proposal）在 CECELIA_LOCAL_EXECUTION_ENABLED=false 时，
+// spawnSkillRelaySession 必然返回 { ok:false, error:'local_execution_disabled_on_scheduler' }
+// ——这是永久性的配置态失败，不是任务本身执行故障。修复前 dispatcher 把它当真实执行失败，
+// 每次都调 recordFailure('cecelia-run')，把共享的 'cecelia-run' 熔断器打到 OPEN，
+// 连累其他任务类型（如需要 cecelia-bridge 的任务）也一起派不出去。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('[BEHAVIOR-8]: local_execution_disabled_on_scheduler 失败不计入计数、不 trip breaker', () => {
+  const task = makeTask();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTriggerCeceliaRun.mockResolvedValue({
+      success: false,
+      reason: 'local_execution_disabled_on_scheduler',
+      error: 'local_execution_disabled_on_scheduler',
+    });
+  });
+
+  it('local_execution_disabled_on_scheduler 连续 3 次：不计入 dispatch_fail_consecutive，不 block，不 trip breaker', async () => {
+    mockSelectNextDispatchableTask
+      .mockResolvedValueOnce(task)
+      .mockResolvedValueOnce(task)
+      .mockResolvedValueOnce(task);
+
+    for (let i = 0; i < 3; i++) {
+      mockQuery
+        .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ id: task.id }] })
+        .mockResolvedValueOnce({ rows: [task] })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+        .mockResolvedValue({ rows: [], rowCount: 1 });
+
+      const { dispatchNextTask } = await import('../dispatcher.js');
+      await dispatchNextTask(['goal-1']);
+    }
+
+    expect(mockBlockTask).not.toHaveBeenCalled();
+    expect(mockRaise).not.toHaveBeenCalled();
+
+    // 核心断言：不应 trip 共享的 cecelia-run 熔断器（否则连累其他任务类型）
+    expect(mockRecordFailure).not.toHaveBeenCalledWith('cecelia-run');
+
+    const anyCountWrite = mockQuery.mock.calls.some(
+      (c) => typeof c[0] === 'string' &&
+        c[0].includes('dispatch_fail_consecutive') &&
+        c[0].includes('UPDATE')
+    );
+    expect(anyCountWrite).toBe(false);
   });
 });
 
