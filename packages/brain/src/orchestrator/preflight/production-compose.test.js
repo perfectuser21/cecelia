@@ -54,8 +54,11 @@ describe('production Kernel capability inputs', () => {
     expect(deploy).toMatch(
       /docker compose --env-file "\$ROOT_DIR\/\.env\.docker" \\\s+-f "\$ROOT_DIR\/\$\{COMPOSE_FILE\}" up -d/,
     );
+    // bluegreen-sidecar.sh 同样按 uname -s 自动选 compose 文件（COMPOSE_FILE_PATH 变量，
+    // 已不是硬编码 docker-compose.yml），跟上面 deploy.sh 的适配同一批次改动，
+    // 断言同步改成匹配变量形式，不再匹配已经不存在的硬编码路径字面量。
     const sidecarComposeCalls = sidecar.match(
-      /docker compose --env-file "\$DEPLOY_ROOT\/\.env\.docker" \\\s+-f "\$DEPLOY_ROOT\/docker-compose\.yml" up -d node-brain/g,
+      /docker compose --env-file "\$DEPLOY_ROOT\/\.env\.docker" \\\s+-f "\$COMPOSE_FILE_PATH" up -d node-brain/g,
     );
     expect(sidecarComposeCalls).toHaveLength(2);
     expect(envExample).toContain('KERNEL_FLEET_BRIDGE_TOKEN=replace-with-worker-bearer-token');
