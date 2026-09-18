@@ -34,8 +34,11 @@ describe('dispatcher: configError 不 trip cecelia-run breaker', () => {
     // 找 recordFailure('cecelia-run') 调用
     const recordIdx = dispatcherSrc.indexOf("recordFailure('cecelia-run')");
     expect(recordIdx).toBeGreaterThan(-1);
-    // 取该调用前的 400 字节，必须包含 configError 守卫（if !configError 或类似）
-    const before = dispatcherSrc.slice(Math.max(0, recordIdx - 400), recordIdx);
+    // 取该调用前的窗口，必须包含 configError 守卫（if !configError 或类似）。
+    // 窗口放宽到 800 字节：if-else 链后续追加了其他豁免分支（如
+    // spawn_deduplicated / local_execution_disabled_on_scheduler），
+    // 400 字节量不出前几个分支就先把 configError 挤出窗口。
+    const before = dispatcherSrc.slice(Math.max(0, recordIdx - 800), recordIdx);
     expect(before).toMatch(/configError/);
   });
 
