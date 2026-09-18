@@ -1059,10 +1059,15 @@ export async function dispatchNextTask(goalIds) {
     // 不应累积 cecelia-run breaker（否则配置漂移会 trip breaker 阻断所有 dispatch）。
     // spawn_deduplicated 是 DB 级去重命中（良性防重入，跨进程/跨重启防双 spawn），
     // 不是执行故障，同样不应计入熔断（否则抖动期的正常去重会误停派全系统）。
+    // local_execution_disabled_on_scheduler 是 skill-relay 非 kernel-v1 任务在
+    // CECELIA_LOCAL_EXECUTION_ENABLED=false 时的永久性配置态拒绝（非执行故障），
+    // 同样不应计入熔断（否则连累其他任务类型也一起派不出去，决策 96054a8b）。
     if (execResult.configError) {
       console.warn(`[dispatch] configError detected (reason=${execResult.reason}) — skipping cecelia-run breaker count`);
     } else if (execResult.reason === 'spawn_deduplicated') {
       console.warn(`[dispatch] spawn_deduplicated detected — skipping cecelia-run breaker count`);
+    } else if (execResult.reason === 'local_execution_disabled_on_scheduler') {
+      console.warn(`[dispatch] local_execution_disabled_on_scheduler detected — skipping cecelia-run breaker count`);
     } else {
       await recordFailure('cecelia-run');
 
