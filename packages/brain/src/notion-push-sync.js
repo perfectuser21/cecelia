@@ -7,6 +7,10 @@ import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 import { pushRegisteredRows, resolveDbId } from './lib/notion-projection-engine.js';
+import { OPS_DB_PROPS } from './ops-notion-schema.js';
+import {
+  ensureOpsDbProps, inferProviderFromModelId, pickProviderQuota, buildQuotaProps,
+} from './ops-quota-notion.js';
 
 const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
 const FEATURE_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
@@ -1099,10 +1103,42 @@ export async function runOpsNotionPush(pool) {
   return { ok: true };
 }
 
+/** 四库缺列即补；单库失败只记 sync log 不阻塞（推送本身仍会因缺列 400，下轮再补）。 */
+async function ensureOpsDbsProps(pool, token, dbs) {
+  const pairs = [
+    ['graph', dbs.graph_db], ['workflows', dbs.workflows_db],
+    ['skills', dbs.skills_db], ['runs', dbs.runs_db],
+  ];
+  for (const [lib, dbId] of pairs) {
+    if (!dbId || !OPS_DB_PROPS[lib]) continue;
+    try {
+      const { added } = await ensureOpsDbProps(token, dbId, OPS_DB_PROPS[lib], { notionReq });
+      if (added.length) console.log(`[ops-push] ${lib} 库补列: ${added.join(', ')}`);
+    } catch (err) {
+      await logSyncError(pool, `[ops-push] ${lib} 库补列失败: ${err.message}`);
+    }
+  }
+}
+
 // 合并推送：agent 行（带 role/workflow/合并调度）+ 孤儿排程行，全推同一个 graph_db。
 async function pushOpsGraph(pool, token) {
   const dbs = await getOpsNotionDbs(pool);
   if (!dbs?.graph_db || dbs.disabled) return;
+
+  // 0. 缺列即补（幂等）：ops-notion-schema 的列定义此前只在新建库时生效，既有库加列
+  //    （如刀2 配额三列）推送会 400 被逐行 catch 吞掉 → 静默停更。每轮先补，只发缺的。
+  await ensureOpsDbsProps(pool, token, dbs);
+
+  // 0.5 模型账号配额（刀2）：agent 行按 meta.model 的 provider 取该 provider 最紧张账号。
+  //     表不存在/查询失败 → 空数组，不影响其余推送。
+  let modelAccounts = [];
+  try {
+    modelAccounts = (await pool.query(
+      `SELECT account_id, provider, status, five_hour_pct, seven_day_pct, last_checked_at FROM ops_model_accounts`,
+    )).rows;
+  } catch (err) {
+    await logSyncError(pool, `[ops-push] ops_model_accounts 读取失败（配额列本轮留空）: ${err.message}`);
+  }
 
   // 全局：算 orchestrated_by（child→[parents]）+ active schedule 索引（供 agent 行合并 + 孤儿判定）
   const allAgents = (await pool.query(`SELECT name, meta FROM ops_agents`)).rows;
@@ -1129,13 +1165,17 @@ async function pushOpsGraph(pool, token) {
       const orchestrates = a.meta?.orchestrates || [];
       const parents = orchestratedBy.get(a.name) || [];
       const sched = schedByKey.get(`${a.source}|${a.host_alias}|${a.name}`);
-      return buildOpsUnitNotionProperties({
-        source: a.source, host_alias: a.host_alias, name: a.name, agent_type: a.agent_type,
-        status: a.status, last_seen_at: a.last_seen_at,
-        role: orchestrates.length ? 'orchestrator' : (parents.length ? 'member' : 'solo'),
-        orchestrated_by: parents,
-        kind: sched?.kind ?? null, schedule_desc: sched?.schedule_desc ?? null, next_run_utc: sched?.next_run_utc ?? null,
-      });
+      const quota = pickProviderQuota(modelAccounts, inferProviderFromModelId(a.meta?.model));
+      return {
+        ...buildOpsUnitNotionProperties({
+          source: a.source, host_alias: a.host_alias, name: a.name, agent_type: a.agent_type,
+          status: a.status, last_seen_at: a.last_seen_at,
+          role: orchestrates.length ? 'orchestrator' : (parents.length ? 'member' : 'solo'),
+          orchestrated_by: parents,
+          kind: sched?.kind ?? null, schedule_desc: sched?.schedule_desc ?? null, next_run_utc: sched?.next_run_utc ?? null,
+        }),
+        ...buildQuotaProps(quota),
+      };
     },
   });
 
