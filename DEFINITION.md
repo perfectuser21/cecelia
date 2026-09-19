@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.302.4
+**Brain 版本**: 1.302.5
 
 ## 1.283.0
 
@@ -48,6 +48,10 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.302.5 — fleet runner digest repin 4450aac9（prune 二次误删重建，复刻第 68 批）
+
+2026-09-19 实证：pin 74afa123 的 cecelia/runner 镜像在 us-mac-m4 / xian-mac-m4 / xian-mac-m1 / us-vps 全部不存在（us-mac-m4 09-18 16:47 重启后 OrbStack 镜像表仅剩 pgvector/alpine/node），fleet 探针 docker.available=false → kernel-v1 远程 run（task ae630773）attempt 准入必挂。按 verify-digest-pin 清单从 build head e38e6a47 重建镜像后一次性重钉为 `sha256:4450aac9d8710bd02b37ec1f5e46ef06ab2e1ae108f453c3d25f85318af5be8e`（原 74afa123），worker 版本 pin 不动（准入只校验 runner/postgres digest，不校验 worker 版本）。同批顺带修好的现场：us-vps postgresql 开机抢在 tailscaled 前起绑不上 100.79.41.61（决策 cc11772e，已加 systemd drop-in）、us-mac-m4 `_cecelia` 对 docker.sock 的 ACL 重启后丢失（refresh-fleet-worker-docker-access 在 socket 就绪前被 WatchPaths 触发即退出，需手动 kickstart）。教训：prune 白名单仍未落地，第二次踩同一坑。
 
 ## Brain 1.302.4 — Notion 排单正文作为任务 prompt
 
