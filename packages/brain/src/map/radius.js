@@ -18,7 +18,11 @@ const MAX_PATH_LENGTH = 1024;
 // 毕业机械步（controller SKILL 2.7.0 graduate-sprint-tests.mjs）的目标池：设计内
 // 全局目录，无 per-capability 锚，unclaimed 判定豁免（前缀精确到带斜杠，防
 // tests/regression-fake/ 类相似前缀蹭豁免）。
-const GRADUATION_POOL_PREFIXES = Object.freeze(['tests/regression/', 'scripts/smoke/e2e/']);
+// changes/（2026-09-19，run 0f36a253 hop 78-80 实证）：版本条目碎片目录（仓规：PR 不碰版本
+// 五件套，合并后 auto-version 消费碎片），同属设计内全局目录、由 check-brain-version-bump +
+// auto-version 把守；不豁免会把 generator-fix 按规矩写的碎片判成越权 → impact_anchor_missing
+// 确定性杀 run，kernel 的 CI 自修永远推不出去。
+const GRADUATION_POOL_PREFIXES = Object.freeze(['tests/regression/', 'scripts/smoke/e2e/', 'changes/']);
 const MAX_TOTAL_PATH_BYTES = 128 * 1024;
 const MAX_CAPABILITY_IDS = 256;
 
