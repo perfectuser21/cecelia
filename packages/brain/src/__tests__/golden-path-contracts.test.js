@@ -455,6 +455,47 @@ describe('Golden Path contract signature and Harness launch', () => {
     });
   });
 
+  // 实证 2026-09-19：签字生成的 harness_initiative 任务 payload 从未带 gp_anchor，
+  // executor.js 的 GP 锚定闭环刀4硬校验（base_repo 含 zenithjoy-workspace 时必须有合法
+  // gp_anchor）drive-time 直接把刚签完字的任务标 terminal failed（task ff6a7302，
+  // GP f6f96e17）——签了字也永远开不了工。此处尚无 line 前缀可推导（golden_paths 没有
+  // 落地 product-map.yaml 的步骤锚点字段），先给一个诚实的默认值：none(backlog)，
+  // 表示这条 GP 还没被登记进 product-map.yaml 的步骤追踪体系，符合 GP-Anchor 三种合法
+  // 形态之一，能通过 executor.js 的硬校验，且不假装有一个不存在的 line/gp#stepN 锚点。
+  it('base_repo 含 zenithjoy-workspace 时 payload.gp_anchor 落 none(backlog)（GP锚定闭环刀4通过）', async () => {
+    const db = signingDb({
+      gp: { base_repo: 'https://github.com/perfectuser21/zenithjoy-workspace.git' },
+    });
+
+    await signAndLaunchGoldenPathContract(db, {
+      goldenPathId: 'gp-1',
+      contractId: 'contract-1',
+      version: 1,
+      contentHash: db.contracts[0].content_hash,
+      reviewer: 'owner',
+    });
+
+    expect(db.tasks[0].payload).toMatchObject({
+      gp_anchor: 'none(backlog)',
+    });
+  });
+
+  it('base_repo 不含 zenithjoy-workspace 时同样带 gp_anchor（对其他 repo 无害，字段被忽略）', async () => {
+    const db = signingDb();
+
+    await signAndLaunchGoldenPathContract(db, {
+      goldenPathId: 'gp-1',
+      contractId: 'contract-1',
+      version: 1,
+      contentHash: db.contracts[0].content_hash,
+      reviewer: 'owner',
+    });
+
+    expect(db.tasks[0].payload).toMatchObject({
+      gp_anchor: 'none(backlog)',
+    });
+  });
+
   // DB 的 CHECK 只在写 golden_paths 时把关；GP 行是历史遗留或被旁路写入时，
   // 非法值会一路带进 payload，直到 harness 派发才炸。这里在写任何一行之前先拦掉。
   it('target_environment 非法枚举 → 抛错且不写 decision/task', async () => {
