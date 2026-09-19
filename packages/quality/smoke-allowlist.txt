@@ -300,6 +300,7 @@ workbench-projection-smoke.sh
 worker-pool-dispatch-smoke.sh
 workflow-run-ledger-smoke.sh
 ws3-ire-module-smoke.sh
+model-accounts-smoke.sh
 xian-harness-relay-smoke.sh
 zenithjoy-db-pool-smoke.sh
 zenithjoy-schema-migration-smoke.sh
