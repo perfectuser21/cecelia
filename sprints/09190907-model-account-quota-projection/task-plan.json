@@ -1,0 +1,29 @@
+{
+  "initiative_id": "01c792d9-bfcd-42a4-ad03-f8766a31f0f0",
+  "journey_type": "autonomous",
+  "journey_type_reason": "仅涉及 packages/brain（新 collector + 新只读端点 + 新表 + Notion 推送），纯后端自治，无 UI/远端 agent/engine 改动",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "模型账号配额+机器可达性投影：model-accounts 只读端点 + ops_model_accounts 表 + 三家可单测 parser collector + agents model_role + Notion 配额列",
+      "scope": "新增 GET /api/brain/agent-ops/model-accounts（8 账号配额快照，单账号失败只标 status+last_error 不阻塞、HTTP 200；42P01→503）；ops-model-accounts-collector.js（沿用刀1 ops-collector host-exec ssh 逃逸 mmv 读凭据，三家 provider-specific parser 归一同一 schema，逐账号隔离，upsert ops_model_accounts，Grok 绝不触碰 refresh_token）；ops_model_accounts 迁移；扩 extractOpenclawAgents 捕获 model_fallbacks 并给 agents 端点追加 model_role（原始 model id + 真实 primary/fallback 计数，不造分层标签）；notion-push-sync「Agents&机器」库追加 5h%/7d%/更新时间列。只观测，不做派单/选模型决策。",
+      "dod": [
+        "[BEHAVIOR] model-accounts 返回 8 账号且字段齐全；单账号失败不阻塞；42P01→migration_pending（sprints/09190907-model-account-quota-projection/tests/model-account-quota.test.ts 全绿）",
+        "[BEHAVIOR] Grok key 过期→key_expired 且 collector 源码无 refresh_token/device-auth 调用路径",
+        "[BEHAVIOR] agents 端点每条含 model_role 真实 primary/fallback 计数且键集恰为 {model,primary_count,fallback_count}",
+        "[ARTIFACT] packages/brain/migrations/*ops_model_accounts*.sql + packages/brain/src/ops-model-accounts-collector.js + routes/agent-ops.js 挂载 model-accounts"
+      ],
+      "files": [
+        "packages/brain/src/ops-model-accounts-collector.js",
+        "packages/brain/src/routes/agent-ops.js",
+        "packages/brain/src/ops-collector.js",
+        "packages/brain/src/notion-push-sync.js",
+        "packages/brain/src/scheduler-jobs.js",
+        "packages/brain/migrations/449_ops_model_accounts.sql"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
