@@ -1,0 +1,33 @@
+{
+  "initiative_id": "aaa26ab2-3770-4506-bcbc-799de3db5579",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain/ 后端（新 API + 新表 + 采集 job），无 dashboard/engine/agent bridge，命中 brain→autonomous。",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "模型账号配额+机器可达性投影：model-accounts 端点 + ops_model_accounts 表 + 三家 parser 采集器 + agents.model_role + Notion 配额列",
+      "scope": "新增 GET /api/brain/agent-ops/model-accounts 返回 8 账号配额快照（11 字段，status 四态枚举单份）；新表 ops_model_accounts（migration 449）；ops-model-accounts-collector.js 三家可单测 parser + host-exec ssh 逃逸到 mmv 采集（单账号失败隔离，Grok 过期只标 key_expired 且绝不刷 refresh_token）；buildAgentsPayload 追加 model_role（原始 model id + primary/fallback 真实计数，不造分层标签）；forwardable/forward_targets 静态配置；OPS_DB_PROPS.graph 加配额列随 notion-push-sync 推送。只做可观测数据，不做派单决策。",
+      "dod": [
+        "[BEHAVIOR] GET /agent-ops/model-accounts 返回 8 条、11 字段齐全（对应合同 B-01）",
+        "[BEHAVIOR] 单账号失败 status=unknown+last_error 其余正常 HTTP 200（B-02）",
+        "[BEHAVIOR] Grok key 过期 status=key_expired 且 collector 零 refresh_token 调用路径（B-03，INV-1）",
+        "[BEHAVIOR] agents 每条含 model_role{model_id,primary_count,fallback_count}（B-04）",
+        "[BEHAVIOR] 冻结合同测试全绿（parser 同 schema + collector→表→端点真 PG + model_role 聚合，B-05）",
+        "[BEHAVIOR] collector 真跑写路径：8 静态 account_id 落表 + 连跑两次每 id 行数恒 1（ON CONFLICT 幂等，INV-4）",
+        "[BEHAVIOR] Notion graph 库含 FiveHourPct/SevenDayPct/QuotaUpdatedAt 列（B-06）",
+        "[ARTIFACT] ops-model-accounts-collector.js + migration 449_ops_model_accounts.sql 存在"
+      ],
+      "files": [
+        "packages/brain/src/ops-model-accounts-collector.js",
+        "packages/brain/src/routes/agent-ops.js",
+        "packages/brain/migrations/449_ops_model_accounts.sql",
+        "packages/brain/src/ops-notion-schema.js",
+        "packages/brain/src/notion-push-sync.js",
+        "packages/brain/src/scheduler-jobs.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
