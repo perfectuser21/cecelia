@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.302.8
+**Brain 版本**: 1.302.9
 
 ## 1.283.0
 
@@ -48,6 +48,11 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.302.9 — impact 门豁免 changes/ 版本碎片（kernel CI 自修被误杀根因）
+
+- 2026-09-19 run 0f36a253 实证：generator-fix 按仓规写入 `changes/<分支>.md` 版本碎片，`map/radius.js` unclaimed 判定把它当无能力锚文件 → `impact_anchor_missing` 确定性 run_terminal，修复提交推不出去只能人工搬。
+- 修：`GRADUATION_POOL_PREFIXES` 加 `changes/`（与毕业池同类：设计内全局目录，由 auto-version + check-brain-version-bump 把守）；集成测试锁死「changes/ 不判 unclaimed、changes-fake/ 仍判」。
 
 ## Brain 1.302.8 — 刀2 收口：模型账号配额采集接入调度 + 真实三家 usage 探针
 
