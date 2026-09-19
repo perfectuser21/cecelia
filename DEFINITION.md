@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.306.1
+**Brain 版本**: 1.306.2
 
 ## 1.283.0
 
@@ -48,6 +48,11 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.306.2 — bugfix 快车道修通：直配合同产物根目录改用任务 sprint_dir
+
+- 2026-09-19 run 35c352b3 实证：hotfix-v1 直配合同把四份产物落在 `direct-contracts/<receipt>/`（含 `tests/impact-contract.md`），而 runner `materialize-frozen-contract-artifacts` 只认 `${sprint_dir}/tests/`、`${sprint_dir}/` 前缀 → `invalid frozen test descriptor` → generator 每次启动即 `frozen_contract_artifacts_invalid` 循环烧额度，bugfix 类任务在 kernel 里从未跑通。
+- 修：`direct-profile-contract.js` 产物根目录优先任务 `payload.sprint_dir`（校验绝对路径/`..`/反斜杠/空段，非法回退 `direct-contracts/<receipt>`）；task 查询只多取 `payload->>'sprint_dir'`，description/thin_prd 仍不入合同。
 
 ## Brain 1.306.1 — 刀2 Notion 收尾：Ops Agent 图谱库补配额三列并按 provider 填值
 
