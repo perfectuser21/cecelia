@@ -27,13 +27,14 @@ describe('propsDigest', () => {
 describe('pushRegisteredRows', () => {
   const buildProps = (r) => ({ Name: { title: [{ text: { content: r.name } }] } });
 
-  it('有 notion_id 且指纹相同 → 不调 Notion，不写库（防限流）', async () => {
+  it('有 notion_id 且指纹相同 → 不调 Notion（防限流），只抬 synced 防饿死', async () => {
     const digest = propsDigest(buildProps({ name: 'same' }));
     const pool = mkPool(); const notion = okNotion();
     const res = await pushRegisteredRows(pool, 't', { table: 'issues', dbId: 'db1',
       rows: [{ id: 1, name: 'same', notion_id: 'p1', notion_digest: digest }], buildProps, notionReq: notion });
     expect(notion).not.toHaveBeenCalled();
     expect(res.skipped).toBe(1);
+    expect(pool.query.mock.calls.some(c => /notion_digest/.test(c[0]))).toBe(false);
   });
 
   it('有 notion_id 但指纹变了 → PATCH 该页并回写新指纹（insert-only 缺陷的核心修复）', async () => {

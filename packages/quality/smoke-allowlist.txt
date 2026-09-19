@@ -200,6 +200,7 @@ migration-346-idempotent-smoke.sh
 migration-verify.sh
 nfr-decisions-assertion-ref-smoke.sh
 notion-capture-ingest-smoke.sh
+notion-projection-engine-smoke.sh
 notion-projection-map-smoke.sh
 notion-inbox-ws3-smoke.sh
 notion-openclaw-dispatch-smoke.sh
