@@ -100,3 +100,30 @@ describe('A10 projection_counts', () => {
     expect(a.ok).toBe(true); expect(a.degraded).toBe(true);
   });
 });
+
+describe('一库多表 / 一表多库 的取行纪律（生产 proven-to-fire 抓出的两处）', () => {
+  const REG2 = [
+    { notion_db_id: 'db-notes', title: 'AI Notes', face: 'mirror', brain_table: 'decisions', direction: 'push', status: 'active', vessel: 'notion-push-sync.pushDecisions' },
+    { notion_db_id: 'db-notes', title: 'AI Notes', face: 'mirror', brain_table: 'initiative_contracts', direction: 'push', status: 'active', vessel: 'notion-push-sync.pushInitiativeContracts' },
+    { notion_db_id: 'db-juece', title: '决策', face: 'inlet', brain_table: 'decisions', direction: 'ingest', status: 'active', vessel: 'inlet' },
+  ];
+  function pool2(counts) {
+    return { query: vi.fn(async (sql) => {
+      if (/information_schema\.columns/.test(sql)) return { rows: [{ table_name: 'decisions' }, { table_name: 'initiative_contracts' }] };
+      if (/FROM notion_projection_map/.test(sql) && /DISTINCT/.test(sql)) return { rows: [{ brain_table: 'decisions' }, { brain_table: 'initiative_contracts' }] };
+      if (/FROM notion_projection_map/.test(sql)) return { rows: REG2 };
+      const m = /FROM (\w+) WHERE notion_id IS NOT NULL/.exec(sql); if (m) return { rows: [{ count: String(counts[m[1]] ?? 0) }] };
+      return { rows: [] };
+    }) };
+  }
+  it('A9：decisions 既有镜子行(AI Notes)又有入口行(决策库)——代码常量应对镜子行比，不能撞到入口行', async () => {
+    const notion = vi.fn(async (t, path, m, body) => body?.filter?.timestamp ? { results: [] } : { results: [], has_more: false });
+    const rs = await buildProjectionAssertions(pool2({}), { notionReq: notion, token: 't', botUserId: 'b', constants: { decisions: 'db-notes' } });
+    expect(rs.find(r => r.key === 'constants_match').ok).toBe(true);
+  });
+  it('A10：AI Notes 同时装 decisions+initiative_contracts → Brain 两表合计再与 Notion 页数比', async () => {
+    const notion = vi.fn(async (t, path, m, body) => body?.filter?.timestamp ? { results: [] } : { results: Array.from({ length: 7 }, (_, i) => ({ id: 'p' + i })), has_more: false });
+    const rs = await buildProjectionAssertions(pool2({ decisions: 5, initiative_contracts: 2 }), { notionReq: notion, token: 't', botUserId: 'b', constants: {} });
+    expect(rs.find(r => r.key === 'projection_counts').ok).toBe(true);
+  });
+});

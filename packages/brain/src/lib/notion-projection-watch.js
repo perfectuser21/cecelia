@@ -80,17 +80,20 @@ export async function buildProjectionAssertions(pool, { notionReq, token, botUse
 
   // ── A9 常量 == 注册表 ─────────────────────────────────────
   const mismatch = [];
+  const pushRowsOf = (table) => map.rows.filter(r => r.brain_table === table && ['push', 'both'].includes(r.direction));
   for (const [table, constId] of Object.entries(constants)) {
-    const reg = map.byTable.get(table);
-    if (!reg) { mismatch.push(`${table}: 注册表无此表`); continue; }
-    if (normalizeNotionId(reg.notion_db_id) !== normalizeNotionId(constId)) mismatch.push(`${table}: 代码=${String(constId).slice(0, 8)} 注册表=${reg.notion_db_id.slice(0, 8)}`);
+    const regs = pushRowsOf(table);
+    if (!regs.length) { mismatch.push(`${table}: 注册表无推送行`); continue; }
+    if (!regs.some(r => normalizeNotionId(r.notion_db_id) === normalizeNotionId(constId))) {
+      mismatch.push(`${table}: 代码=${String(constId).slice(0, 8)} 注册表=${regs.map(r => r.notion_db_id.slice(0, 8)).join('/')}`);
+    }
   }
   try {
     const { rows } = await pool.query(`SELECT value_json FROM working_memory WHERE key = 'ops_notion_dbs'`);
     const ops = rows[0]?.value_json || {};
     for (const [k, table] of Object.entries({ graph_db: 'ops_agents', skills_db: 'ops_skills', workflows_db: 'ops_workflows', runs_db: 'ops_runs' })) {
-      const reg = map.byTable.get(table);
-      if (ops[k] && reg && normalizeNotionId(ops[k]) !== normalizeNotionId(reg.notion_db_id)) mismatch.push(`${table}: working_memory=${String(ops[k]).slice(0, 8)} 注册表=${reg.notion_db_id.slice(0, 8)}`);
+      const regs = pushRowsOf(table);
+      if (ops[k] && regs.length && !regs.some(r => normalizeNotionId(ops[k]) === normalizeNotionId(r.notion_db_id))) mismatch.push(`${table}: working_memory=${String(ops[k]).slice(0, 8)} 注册表=${regs.map(r => r.notion_db_id.slice(0, 8)).join('/')}`);
     }
   } catch { /* working_memory 不可读不算漂 */ }
   results.push({
@@ -101,14 +104,20 @@ export async function buildProjectionAssertions(pool, { notionReq, token, botUse
 
   // ── A10 逐库行数对账 ──────────────────────────────────────
   const pushMirrors = mirrors.filter(r => r.direction === 'push' && r.brain_table && /^notion-push-sync/.test(r.vessel || ''));
+  // 一库多表（AI Notes=decisions+initiative_contracts，运行图谱=ops_agents+ops_schedule_entries）：Brain 侧合计再比
+  const byDb = new Map();
+  for (const r of pushMirrors) { const k = normalizeNotionId(r.notion_db_id); if (!byDb.has(k)) byDb.set(k, { title: r.title, dbId: r.notion_db_id, tables: [] }); byDb.get(k).tables.push(r.brain_table); }
   const diffs = []; let a10Degraded = 0, checked = 0;
-  for (const r of pushMirrors) {
+  for (const g of byDb.values()) {
     try {
-      const { rows } = await pool.query(`SELECT count(*)::int AS count FROM ${r.brain_table} WHERE notion_id IS NOT NULL`);
-      const brain = Number(rows[0]?.count ?? 0);
-      const { n, capped } = await countNotionPages(notionReq, token, r.notion_db_id);
+      let brain = 0;
+      for (const t of g.tables) {
+        const { rows } = await pool.query(`SELECT count(*)::int AS count FROM ${t} WHERE notion_id IS NOT NULL`);
+        brain += Number(rows[0]?.count ?? 0);
+      }
+      const { n, capped } = await countNotionPages(notionReq, token, g.dbId);
       checked++;
-      if (!capped && n !== brain) diffs.push(`${r.title}：Brain ${brain} vs Notion ${n}`);
+      if (!capped && n !== brain) diffs.push(`${g.title}：Brain ${brain}${g.tables.length > 1 ? `(${g.tables.join('+')})` : ''} vs Notion ${n}`);
     } catch { a10Degraded++; }
   }
   results.push({

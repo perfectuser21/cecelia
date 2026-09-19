@@ -14,5 +14,9 @@ INSERT INTO notion_projection_map (notion_db_id, title, face, brain_table, direc
 ('3d3c40c2-ba63-815e-be8a-f5048c070d80','Ops 运行图谱','mirror','ops_schedule_entries','push','notion-push-sync.pushOpsGraph(孤儿排程行)','active','system','与 ops_agents 同库'),
 ('31853f41-3ec5-810a-9188-f08bf7e9ab90','记忆·Owner Profile','mirror','user_profile_facts','push','notion-memory-sync','active','private','F7 记忆与知识'),
 ('31853f41-3ec5-81e3-ac71-c09f0e69498d','记忆·Diary','mirror','memory_stream','push','notion-memory-sync','active','private','F7 记忆与知识'),
-('unmapped:ability_groups','（无 Notion 库）ability_groups','mirror','ability_groups','none','(有 notion_id 列无血管——半截)','pending_vessel','system','能力轴 L2 子领域分组；接血管或删列')
+('unmapped:ability_groups','（无 Notion 库）ability_groups','mirror','ability_groups','none','(有 notion_id 列无血管——半截)','pending_vessel','system','能力轴 L2 子领域分组；接血管或删列'),
+('unmapped:acceptance_criteria','（无 Notion 库）acceptance_criteria','mirror','acceptance_criteria','none','(有 notion_id 列无血管)','pending_vessel','system','验收判据表；生产 2026-09-19 守夜 dryRun 揪出'),
+('unmapped:backbone_activities','（无 Notion 库）backbone_activities','mirror','backbone_activities','none','(有 notion_id 列无血管)','pending_vessel','system','骨干活动表；同上'),
+('unmapped:features_registry','（无 Notion 库）features_registry','mirror','features_registry','none','(有 notion_id 列无血管)','pending_vessel','system','migration 249 旧特征注册表；同上'),
+('unmapped:value_streams','（无 Notion 库）value_streams','mirror','value_streams','none','(有 notion_id 列无血管)','pending_vessel','system','价值流表（migration 398 种子）；同上')
 ON CONFLICT DO NOTHING;
