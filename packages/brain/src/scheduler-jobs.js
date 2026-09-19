@@ -50,6 +50,7 @@ import { maybeRunCredentialFreshness } from './credential-freshness.js';
 import { raise as raiseAlert } from './alerting.js';
 import { runOpsNotionPush } from './notion-push-sync.js';
 import { runOpsNotionIngest } from './ops-notion-ingest.js';
+import { runNotionInletIngest } from './notion-inlet-ingest.js';
 import { defaultExec } from './host-exec.js';
 import { maybeRunCrystalJudge } from './crystal-judge.js';
 import { syncCodingEvidence } from './crystal/coding-evidence.js';
@@ -112,6 +113,7 @@ export const JOBS = [
   { name: 'credential-freshness', needsPool: true, timeoutMs: 120_000, handler: (pool) => maybeRunCredentialFreshness(pool), description: '凭据保鲜守卫：每日探活关键凭据(Tailscale/GitHub/飞书)+到期体检+auth key 自动续期。2026-09-16 实证 Tailscale API key 过期 18 天无人知、备用 PAT 元数据没写却已 401 —— 元数据只是声明，活性探测才是真相' },
   // 顺序要紧：先采集再推送，否则推的是上一轮的旧数（尤其 liveness 要用最新 last_run_at 算）
   { name: 'ops-notion-push', needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionPush(pool), description: '运行舱四表推 Notion 驾驶舱（机器列单向覆盖含活性告警）。旧链挂在无人import的legacy-notion-push-scheduler上从不执行，致Notion停更两天，故单独接现代调度层' },
+  { name: 'notion-inlet-ingest', needsPool: true, timeoutMs: 120_000, handler: (pool) => runNotionInletIngest(pool), description: '✍️入口血管（三面模型PR②b，决策297ffee5）：遍历注册表 face=inlet&active 的库，「决策」库→decisions、员工Skill库zip→/api/skill-eval/upload；收据表幂等，人改了再收并留痕，机器不写入口库；自gate 5min' },
   { name: 'ops-notion-ingest', needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionIngest(pool, { execFn: defaultExec }), description: '运行舱人工列回读（Notion→Brain，last_edited_time增量）。含停用意图落实——主理人拍板直接生效真停n8n，故幂等+留痕+失败落enable_error显红' },
   // 顺序要紧：先把编码线格子成败搬进判官口粮，再让判官判——反过来判的是上一轮的旧账
   { name: 'crystal-coding-evidence', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => syncCodingEvidence({ dbPool: pool }), description: '编码线九格证据同步（10min自gate，harness_attempts+sequencer_ledger→crystal_run_evidence，只补账不代判，判官口粮第二铲）' },
