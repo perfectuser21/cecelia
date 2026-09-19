@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import {
   FACES, FACE_ICON, normalizeNotionId, assertFace,
   loadProjectionMap, findUnregisteredNotionTables,
-} from '../lib/notion-projection-registry.js';
+} from '../notion-projection-registry.js';
 
 describe('三面枚举与图标', () => {
   it('只有 mirror / inlet / truth 三种面，各有唯一图标', () => {
