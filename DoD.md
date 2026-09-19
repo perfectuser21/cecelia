@@ -1,70 +1,80 @@
-contract_branch: cp-harness-propose-r1-b6faa20c-rb690296f-a136
-sprint_dir: sprints/09052200-kernel-b6faa20c
+contract_branch: cp-harness-propose-r3-aaa26ab2-r0f36a253-a29
+sprint_dir: sprints/09190907-model-account-quota-projection
 
 ---
 skeleton: false
 journey_type: autonomous
 ---
-# Contract DoD — Sprint: check-handoffs.mjs 契约 schema 化（CHECKS→CONTRACTS 九格+八格）
+# Contract DoD — Sprint: 模型账号配额+机器可达性投影（刀2）
 
-**范围**: 新建 `packages/brain/src/orchestrator/check-handoffs.mjs`（纯 Node ESM 模块 + CLI）：CHECKS 扩为 CONTRACTS（coding 九格 + leadgen 八格），每格 precondition/postcondition/side_effects 三段、六类可参数化断言，输出确定性 PASS/FAIL/UNDECIDABLE + 退出码。复用 home-sequencer STAGE_ORDER 与 handoff-schemas shape 层。
+**范围**: 新增 GET /agent-ops/model-accounts（8 账号配额快照）+ agents 端点追加 model_role + 新表 ops_model_accounts + 采集 job（沿用刀1 host-exec）+ 三家可单测 parser + Notion「Agents&机器」配额列。只做可观测数据，不做派单决策。
 **大小**: M
 
 ## ARTIFACT 条目
 
-- [x] [ARTIFACT] check-handoffs.mjs 落位且导出六个契约符号
-  Test: manual:bash -c 'F=packages/brain/src/orchestrator/check-handoffs.mjs; grep -q CONTRACTS $F && grep -q CODING_CELLS $F && grep -q LEADGEN_CELLS $F && grep -q ASSERTION_CATEGORIES $F && grep -q evaluateAssertion $F && grep -q runCellContracts $F'
-  期望: exit 0
+- [ ] [ARTIFACT] 采集器新文件存在且导出 parser/枚举/collector（含 refresh_token 禁止注释）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/ops-model-accounts-collector.js','utf8');if(!/MODEL_ACCOUNT_STATUS/.test(c)||!/parseAnthropicUsage/.test(c)||!/parseGrokUsage/.test(c))process.exit(1)"
 
-- [x] [ARTIFACT] 复用真实 handoff-schemas（禁 mock 边：import 真实 validateHandoffObject，不另写形状校验）
-  Test: manual:bash -c 'F=packages/brain/src/orchestrator/check-handoffs.mjs; grep -q handoff-schemas $F && grep -q validateHandoffObject $F && grep -q home-sequencer $F && grep -q STAGE_ORDER $F'
-  期望: exit 0
+- [ ] [ARTIFACT] migration 449 新建 ops_model_accounts 表（含 status/last_error/forward_targets 列 + account_id 唯一）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/migrations/449_ops_model_accounts.sql','utf8');if(!/CREATE TABLE IF NOT EXISTS ops_model_accounts/.test(c)||!/account_id/.test(c)||!/forward_targets/.test(c))process.exit(1)"
 
-## BEHAVIOR 条目（五行剧本 — 内嵌可执行 manual: 命令，CLI + 冻结 fixture，断言对象为校验器真实输出）
+- [ ] [ARTIFACT] collector 源码无 refresh_token 调用路径（只允许出现在注释里）
+  Test: node -e "const c=require('fs').readFileSync('packages/brain/src/ops-model-accounts-collector.js','utf8');const bad=c.split('\n').filter(l=>/refresh_token/.test(l)&&!/^\s*(\/\/|\*|#)/.test(l));if(bad.length){console.error('非注释 refresh_token:',bad);process.exit(1)}"
 
-- [x] [BEHAVIOR] [L2] B-01: CONTRACTS 覆盖 coding 九格 + leadgen 八格共 17 格
-  动作: 跑 `check-handoffs.mjs --cells` 子命令
-  预期观察: stdout 出现 `CELLS coding=9 leadgen=8 total=17`
+## BEHAVIOR 条目（内嵌可执行 manual: 命令，journey_type=autonomous）
+
+- [ ] [BEHAVIOR] [L2] B-01: 调 model-accounts 端点返回 8 条账号快照，11 字段齐全
+  动作: E2E 预置 8 行账号快照后 GET /api/brain/agent-ops/model-accounts
+  预期观察: data.accounts 恰好 8 条（e2e- 前缀），每条含 provider/plan/five_hour_pct/seven_day_pct/reset_at/host_alias/forwardable/forward_targets/status/last_checked_at/last_error 共 11 字段
   等待预算: 0s
-  留证: CLI stdout（CELLS 行）
-  Test: manual:bash -c 'node packages/brain/src/orchestrator/check-handoffs.mjs --cells | grep -q "coding=9 leadgen=8 total=17"'
+  留证: /tmp/ma.json + jq 输出
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/agent-ops/model-accounts | jq -e "([.data.accounts[]|select(.account_id|startswith(\"e2e-\"))]|length==8) and ([.data.accounts[]|select(.account_id|startswith(\"e2e-\"))]|all(has(\"provider\") and has(\"plan\") and has(\"five_hour_pct\") and has(\"seven_day_pct\") and has(\"reset_at\") and has(\"host_alias\") and has(\"forwardable\") and has(\"forward_targets\") and has(\"status\") and has(\"last_checked_at\") and has(\"last_error\")))"'
 
-- [x] [BEHAVIOR] [L2] B-02: 缺 source_attempt_id 交接对象 → artifact_compliance FAIL 并点名字段
-  动作: 对 generate 格跑缺 source_attempt_id 的候选交接对象 fixture
-  预期观察: 结果 JSON 出现 FAIL 且 reason 含 `source_attempt_id`（点名到缺失字段，非笼统失败）
+- [ ] [BEHAVIOR] [L2] B-02: 单账号失败只标该条，其余正常，HTTP 200
+  动作: 预置一条 status=unknown+last_error 的账号后 GET model-accounts
+  预期观察: HTTP 200；至少 1 条 status=unknown 且 last_error 为字符串；其余账号 status 非 unknown 正常
   等待预算: 0s
-  留证: CLI stdout（含 source_attempt_id 的 FAIL 判定）
-  Test: manual:bash -c 'node packages/brain/src/orchestrator/check-handoffs.mjs generate sprints/09052200-kernel-b6faa20c/tests/fixtures/candidate-missing-source.json | grep -q source_attempt_id'
+  留证: HTTP code + jq 输出
+  Test: manual:bash -c 'CODE=$(curl -s -o /tmp/ma.json -w "%{http_code}" localhost:5221/api/brain/agent-ops/model-accounts); [ "$CODE" = "200" ] || { echo "FAIL HTTP $CODE"; exit 1; }; jq -e "[.data.accounts[]|select(.status==\"unknown\")]|length>=1 and (.[0].last_error|type==\"string\")" /tmp/ma.json'
 
-- [x] [BEHAVIOR] [L2] B-03: record_persisted 无 db resolver → UNDECIDABLE 不判 PASS（INV-1 fail-closed，忽略 handoff 自报 db_count）
-  动作: 对 generate 格跑合规但自报 `db_count:999`/`persisted:true` 的 fixture，且不提供 context
-  预期观察: 结果 JSON 出现 `UNDECIDABLE`（record_persisted 走权威 resolver 而非 handoff 自报值），且 `SUMMARY ... ok=false`
+- [ ] [BEHAVIOR] [L2] B-03: Grok key 过期只标 key_expired，代码零 refresh_token 调用路径 [接缝×2]
+  动作: 预置 grok status=key_expired 行后 GET model-accounts；并静态扫描 collector 源码
+  预期观察: 至少 1 条 status=key_expired；collector 非注释行 refresh_token 命中数为 0（铁律 INV-1）
   等待预算: 0s
-  留证: CLI stdout（UNDECIDABLE + ok=false）
-  Test: manual:bash -c 'node packages/brain/src/orchestrator/check-handoffs.mjs generate sprints/09052200-kernel-b6faa20c/tests/fixtures/candidate-forged-dbcount.json | grep -q UNDECIDABLE'
+  留证: jq 输出 + grep 结果（应为空）
+  Test: manual:bash -c 'jq -e "[.data.accounts[]|select(.status==\"key_expired\")]|length>=1" /tmp/ma.json && { HITS=$(grep -nE "refresh_token" packages/brain/src/ops-model-accounts-collector.js | grep -vE "^[0-9]+:[[:space:]]*(//|\*|#)" || true); [ -z "$HITS" ] || { echo "FAIL 非注释 refresh_token: $HITS"; exit 1; }; echo OK; }'
 
-- [x] [BEHAVIOR] [L2] B-04: 未知格标识 → 显式报 unknown_cell，绝不静默 PASS
-  动作: 用未定义 CONTRACTS 的格标识 `bogus_cell` 跑合规 fixture
-  预期观察: stdout 出现 `unknown_cell`（显式报错），绝不出现 `ok=true`
+- [ ] [BEHAVIOR] [L2] B-04: agents 端点每条追加真实 model_role（三字段）
+  动作: GET /api/brain/agent-ops/agents
+  预期观察: data.agents 每条含 model_role{model_id, primary_count, fallback_count}，计数为全体分身真实聚合
   等待预算: 0s
-  留证: CLI stdout（unknown_cell）
-  Test: manual:bash -c 'node packages/brain/src/orchestrator/check-handoffs.mjs bogus_cell sprints/09052200-kernel-b6faa20c/tests/fixtures/candidate-compliant.json | grep -q unknown_cell'
+  留证: jq 输出
+  Test: manual:bash -c 'curl -sf localhost:5221/api/brain/agent-ops/agents | jq -e ".data.agents|all(has(\"model_role\") and (.model_role|has(\"model_id\") and has(\"primary_count\") and has(\"fallback_count\")))"'
 
-- [x] [BEHAVIOR] [L2] B-05: 纯类目断言（state_transition + numeric_threshold）合规输入全 PASS → ok=true exit 0
-  动作: 对 evaluate 格跑合规 fixture（prev/next 合法迁移 + score 达标）
-  预期观察: stdout 出现 `SUMMARY cell=evaluate ok=true`（state_transition 合法迁移 + numeric_threshold 达标均 PASS）
+- [ ] [BEHAVIOR] [L2] B-05: 冻结合同测试全绿（parser 同 schema + key_expired 分类 + refresh spy 零调用 + collector→表→端点真 PG + model_role 聚合）
+  动作: 从仓库根跑冻结 sprint 测试（真 PG cecelia_test 注入）
+  预期观察: model-accounts.test.ts 全部用例通过（三家 parser、classifyGrokUsageError=key_expired、refreshToken 零调用、端点 8 条含 last_error、model_role primary_count 聚合）
   等待预算: 0s
-  留证: CLI stdout（SUMMARY ok=true）
-  Test: manual:bash -c 'node packages/brain/src/orchestrator/check-handoffs.mjs evaluate sprints/09052200-kernel-b6faa20c/tests/fixtures/evaluate-compliant.json | grep -q "cell=evaluate ok=true"'
+  留证: vitest verbose 输出末尾 passed 行
+  Test: manual:bash -c 'npx vitest run sprints/09190907-model-account-quota-projection/tests/model-accounts.test.ts --reporter=verbose'
 
-## Invariant 覆盖（历史约束三源 — 铁律逐条映射）
+- [ ] [BEHAVIOR] [L2] B-06: Notion「Agents&机器」库 schema 含配额列（FiveHourPct/SevenDayPct/QuotaUpdatedAt）
+  动作: 加载 ops-notion-schema.js 检查 OPS_DB_PROPS.graph 列定义
+  预期观察: graph 库定义含 FiveHourPct、SevenDayPct、QuotaUpdatedAt 三列（缺列即补幂等，随现有 notion-push-sync 推送）
+  等待预算: 0s
+  留证: node stdout（OK graph 配额列齐）
+  Test: manual:bash -c 'cd packages/brain && node -e "import(\"./src/ops-notion-schema.js\").then(m=>{const g=m.OPS_DB_PROPS.graph;const need=[\"FiveHourPct\",\"SevenDayPct\",\"QuotaUpdatedAt\"];const miss=need.filter(k=>!(k in g));if(miss.length){console.error(\"FAIL 缺列\",miss);process.exit(1)}console.log(\"OK graph 配额列齐\")})"'
 
-- INV-1 机械判定不信 handoff 抄写值（断言值以服务端权威源为准）——由 B-03（自报 db_count 被忽略、无 resolver→UNDECIDABLE 不放行）覆盖；negative_boundary 真拦编造值由冻结测试 `越界输入被真拦判 PASS 漏网判 FAIL` + E2E Part A 覆盖。
-- INV-2 DIRTY→generator-fix 路由 — N/A：本 sprint 不触及 dispatcher/PR 冲突路由。
-- INV-3 judge 证据窗口 8×600 — N/A：本 sprint 不产 .brain-result、不改 judge 消费。
-- INV-4 校验临时脚本会话独享路径 — 本合同 E2E 用 `mktemp -d`，无固定 /tmp 文件名（见 contract-draft ## E2E 验收）。
+- [ ] [BEHAVIOR] INV-3 [枚举单份] status 枚举只一份，collector 与 route builder 同源 import（无手抄副本）
+  动作: grep 全仓 status 枚举字面量集合的定义处
+  预期观察: `MODEL_ACCOUNT_STATUS` 常量仅在 ops-model-accounts-collector.js 定义一次；agent-ops.js 通过 import 使用而非重新声明字面量数组
+  等待预算: 0s
+  留证: grep 输出
+  Test: manual:bash -c 'DEF=$(grep -rlE "MODEL_ACCOUNT_STATUS\s*=" packages/brain/src | wc -l | tr -d " "); [ "$DEF" = "1" ] || { echo "FAIL: 枚举定义处 $DEF 个（应 1）"; exit 1; }; grep -q "MODEL_ACCOUNT_STATUS" packages/brain/src/routes/agent-ops.js && echo OK'
 
-## 未覆盖真实链路清单（引自 contract-draft）
-
-- record_persisted / externally_visible 生产 resolver（真 pg / 真 gh）接线为后续接入件；本 sprint 交付引擎+接口+UNDECIDABLE 兜底，E2E 用真 psql（$DB_URL）+时间窗与真文件产物证明引擎在真实权威值上判定正确（六类全 PASS）。
-- leadgen 八格业务语义待主理人确认（judgment-pending-user）；机械验收只锁「恰 8 格 + 与 coding 无交集 + 三段结构」。
+- [ ] [BEHAVIOR] INV-4 [幂等 upsert] collector 真跑写路径 + 同 account_id 重复采集不产生重复行
+  动作: 真 PG（DB_NAME 注入）下跑冻结 [integration] 段：`runModelAccountsCollector(真 pool, {fetchUsage 注入, refreshToken spy})` 连跑两次，psql 查 ops_model_accounts
+  预期观察: 8 个静态 account_id 全部落表（写路径真验，非 memPool）；连跑两次后每 account_id 行数恒为 1、总行数恒 8（ON CONFLICT DO UPDATE 幂等，非 SELECT-then-INSERT）；refreshToken spy 零调用
+  等待预算: 0s
+  留证: vitest verbose 输出（[integration] 段 passed 行）
+  Test: manual:bash -c 'npx vitest run sprints/09190907-model-account-quota-projection/tests/model-accounts.test.ts -t "integration" --reporter=verbose'
