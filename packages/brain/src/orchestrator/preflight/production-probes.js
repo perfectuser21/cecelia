@@ -116,13 +116,23 @@ export function createProductionCapabilityProbes(deps = {}) {
       if (baseAdmitted && !dispatchReady) {
         admissionReasons.unshift('node_not_dispatch_ready');
       }
+      // A cold-start /health probe on the Worker takes 4–6s (fleet-worker.cjs
+      // self-documents this), which can outrun a single admission round-trip and
+      // surface a transient `worker_timeout` from the admission client. That is a
+      // node that is still warming up, not a genuinely offline one. Keep the two
+      // apart so the dispatcher routes a probe timeout into short infrastructure
+      // backoff (self-heals in 1–2 min) instead of collapsing it into the same
+      // `node_not_base_admitted` verdict as a hard-offline machine.
+      const probeTimedOut = !baseAdmitted
+        && (admission?.signature === 'worker_timeout'
+          || admissionReasons.includes('worker_timeout'));
       return {
         admitted,
         admissionReasons,
         runtimeResources: admission?.runtime_resources ?? null,
         signature: baseAdmitted
           ? 'node_not_dispatch_ready'
-          : 'node_not_base_admitted',
+          : (probeTimedOut ? 'node_probe_timeout' : 'node_not_base_admitted'),
       };
     } catch {
       return {
