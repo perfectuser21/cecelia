@@ -43,6 +43,7 @@ import { applyProjectionCommands } from './projection/commands.js';
 import { runProjectionOutbox } from './projection/outbox.js';
 import { runNotionTaskCommandIngest } from './projection/notion.js';
 import { runOpsCollector } from './ops-collector.js';
+import { runModelAccountsCollector } from './ops-model-accounts-collector.js';
 import { runOpenclawGuards } from './openclaw-guards.js';
 import { maybeRunFeishuTaskLedger } from './feishu-task-ledger.js';
 import { maybeRunCredentialFreshness } from './credential-freshness.js';
@@ -105,6 +106,7 @@ export const JOBS = [
   { name: 'projection-command-apply', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: applyProjectionCommands, description: 'Brain 状态机校验并应用 projection commands；真实 attempt 才能进入 in_progress' },
   { name: 'projection-outbox', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runProjectionOutbox, description: '本地数据库到 Notion/Obsidian 等可拆卸 projection 的通用 outbox' },
   { name: 'ops-collector', needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsCollector(pool), description: '运行舱采集器（5min自gate，宿主launchctl+HK OpenClaw+GHA cron→ops_*投影，per-source心跳，G1 S1 刀1，task 6fcb5356）' },
+  { name: 'ops-model-accounts-collector', needsPool: true, timeoutMs: 120_000, handler: (pool) => runModelAccountsCollector(pool), description: '模型账号配额采集（8 账号：Claude×2/Codex×5/Grok，host-exec 到 mmv 跑 usage 探针只回 usage JSON→ops_model_accounts，G1 刀2；PR #5411 漏接线，task eb2f582f）' },
   { name: 'openclaw-guards', needsPool: true, timeoutMs: 180_000, handler: (pool) => runOpenclawGuards(pool, { raiseFn: raiseAlert }), description: 'us-vps 零执行守卫（决策95477a66收编）：网关内存回收/配置漂移还原/agent教义补种/会话跑场探活路由/触达线活性告警，5min自gate，前身为宿主散装crontab' },
   { name: 'feishu-task-ledger', needsPool: true, timeoutMs: 120_000, handler: (pool) => maybeRunFeishuTaskLedger(pool), description: '飞书群交办入账（决策1c6679cd）：群里派给秋米的活经三道判据（@对象/语义/重发去重）入 tasks 账并投影 Notion，自 gate 60min' },
   { name: 'credential-freshness', needsPool: true, timeoutMs: 120_000, handler: (pool) => maybeRunCredentialFreshness(pool), description: '凭据保鲜守卫：每日探活关键凭据(Tailscale/GitHub/飞书)+到期体检+auth key 自动续期。2026-09-16 实证 Tailscale API key 过期 18 天无人知、备用 PAT 元数据没写却已 401 —— 元数据只是声明，活性探测才是真相' },

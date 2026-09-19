@@ -13,7 +13,39 @@ import {
   parseChatgptWhamUsage,
   parseGrokUsage,
   classifyGrokUsageError,
+  buildProbeCmd,
 } from '../ops-model-accounts-collector.js';
+
+describe('buildProbeCmd（真采集命令：探针走 stdin，凭据不出宿主）', () => {
+  it('base64 投递探针脚本 + node 从 stdin 执行 + --run provider path；命令里不含凭据内容', () => {
+    const acct = MODEL_ACCOUNTS.find((a) => a.account_id === 'codex-team1');
+    const cmd = buildProbeCmd(acct, '/opt/homebrew/bin/node');
+    expect(cmd).toMatch(/^echo [A-Za-z0-9+/=]+ \| base64 -d \| \/opt\/homebrew\/bin\/node --input-type=module - -- --probe-run codex ~\/\.codex-team1\/auth\.json$/);
+    const b64 = cmd.split(' ')[1];
+    const source = Buffer.from(b64, 'base64').toString('utf8');
+    expect(source).toContain('normalizeWhamUsage');
+    expect(source).toContain("process.argv.indexOf('--probe-run')");
+    expect(cmd).not.toMatch(/access_token|accessToken|Bearer /);
+  });
+
+  it('探针失败只把 stderr 一行结论上抛（不带命令/凭据路径），分类才不会全落 no_credential', async () => {
+    const calls = [];
+    const exec = (cmd) => {
+      calls.push(cmd);
+      const err = new Error(`Command failed: ${cmd}`);
+      err.status = 4;
+      err.stderr = 'anthropic usage HTTP 429\n';
+      throw err;
+    };
+    const queries = [];
+    const pool = { query: async (sql, params) => { queries.push(params); return { rows: [] }; } };
+    const { runModelAccountsCollector } = await import('../ops-model-accounts-collector.js');
+    const r = await runModelAccountsCollector(pool, { only: 'claude-account1', exec, inContainer: false });
+    expect(r.results).toEqual([{ account_id: 'claude-account1', status: 'unknown' }]);
+    expect(calls[0]).toContain('--probe-run claude ~/.claude-account1/.credentials.json');
+    expect(queries[0][10]).toBe('anthropic usage HTTP 429');
+  });
+});
 
 const SNAPSHOT_KEYS = ['five_hour_pct', 'seven_day_pct', 'reset_at'];
 

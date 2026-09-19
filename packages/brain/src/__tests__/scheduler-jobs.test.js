@@ -113,6 +113,9 @@ vi.mock('../projection/outbox.js', () => ({
   runProjectionOutbox: vi.fn().mockResolvedValue({ claimed: 0, done: 0, deferred: 0, failed: 0, dead: 0 }),
 }));
 
+vi.mock('../ops-model-accounts-collector.js', () => ({
+  runModelAccountsCollector: vi.fn(async () => ({ collected: 0, results: [] })),
+}));
 vi.mock('../projection/notion.js', () => ({
   runNotionTaskCommandIngest: vi.fn().mockResolvedValue({ skipped: true, reason: 'not_configured' }),
 }));
@@ -153,6 +156,9 @@ describe('scheduler-jobs 注册表', () => {
     expect(names).toContain('triage-officer-15min');
     expect(names).toContain('conversation-ttl-archiver');
     expect(names).toContain('conversation-capture');
+    // G1 刀2：模型账号配额采集必须挂在调度表里（PR #5411 只导出未注册，生产表恒空——2026-09-19 实证）
+    expect(names).toContain('ops-model-accounts-collector');
+    expect(names.indexOf('ops-model-accounts-collector')).toBeGreaterThan(names.indexOf('ops-collector'));
     // conversation-ttl-archiver 排在 conversation-capture 之后
     expect(names.indexOf('conversation-ttl-archiver')).toBeGreaterThan(names.indexOf('conversation-capture'));
   });
