@@ -29,8 +29,9 @@ js="$(q "SELECT direction||'/'||status FROM notion_projection_map WHERE brain_ta
 grep -q "await pushJourneySteps" "$BRAIN_DIR/src/notion-push-sync.js" && fail "推送链仍含 pushJourneySteps（废表）" || true
 pass "废表 journey_steps：注册 archived/none 且已从推送链摘除"
 
-dup="$(q "SELECT count(*) FROM (SELECT lower(replace(notion_db_id,'-','')) k, count(*) c FROM notion_projection_map GROUP BY 1 HAVING count(*)>1) x")"
-[[ "$dup" == "0" ]] || fail "同一 Notion 库重复登记 $dup 组"
-pass "无重复登记（id 归一后唯一）"
+# migration 453 起放开"一库多表"（AI Notes=decisions+initiative_contracts 等），唯一键=(库 id 归一, brain_table)
+dup="$(q "SELECT count(*) FROM (SELECT lower(replace(notion_db_id,'-','')) k, coalesce(brain_table,'') t, count(*) c FROM notion_projection_map GROUP BY 1,2 HAVING count(*)>1) x")"
+[[ "$dup" == "0" ]] || fail "同一 (Notion 库, brain_table) 重复登记 $dup 组"
+pass "无重复登记（(库 id 归一, brain_table) 唯一；一库多表允许）"
 
 echo "ALL PASS: notion-projection-map"
