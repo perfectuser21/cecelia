@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.302.3
+**Brain 版本**: 1.302.4
 
 ## 1.283.0
 
@@ -48,6 +48,10 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.302.4 — Notion 排单正文作为任务 prompt
+
+- pullNotionTasks 读取页面正文（blocks API，异常不阻塞排单）：普通排单入 description；ssh 派发以 base64 写达执行机 ~/brain-runs/<run_id>.prompt 并替换 command 的 {PROMPT_FILE} 占位；webhook 派发 payload 带 prompt 字段
 
 ## Brain 1.302.1 — 手动派发旁路补设备锁
 
