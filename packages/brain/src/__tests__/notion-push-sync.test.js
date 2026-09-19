@@ -126,12 +126,14 @@ describe('runNotionPushSync — new push functions', () => {
     expect(skillQuery).not.toContain('notion_synced_at IS NULL');
   });
 
-  it('calls pushJourneySteps — queries journey_steps WHERE notion_synced_at IS NULL', async () => {
+  it('已废弃的 journey_steps 不再进推送链（三面定稿：停推死数据）', async () => {
+    // journey_steps 自 2026-06-09 废弃只读（db-update skill），但主链仍每 5 分钟往 AI Steps 推。
+    // 三面模型定稿(决策 297ffee5)：注册表里标 archived/none，推送链摘除。
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
     const calls = mockQuery.mock.calls.map(c => c[0]);
-    const stepsQuery = calls.find(q => q && q.includes('journey_steps') && q.includes('notion_synced_at IS NULL'));
-    expect(stepsQuery).toBeTruthy();
+    const stepsQuery = calls.find(q => q && q.includes('FROM journey_steps'));
+    expect(stepsQuery).toBeUndefined();
   });
 
   it('calls pushJourneyStepLinks — queries journey_step_links WHERE notion_synced_at IS NULL', async () => {
