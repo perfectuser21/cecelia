@@ -34,7 +34,6 @@ export const TASK_STATUS_TO_NOTION = Object.freeze({
 });
 
 const SKILL_REGISTRY_DB  = '353c40c2-ba63-81bf-ae3e-f0e6fa3753d7';
-const STEPS_DB           = '369c40c2-ba63-812c-9f35-e7e43db25014';
 const STEP_LINKS_DB      = '369c40c2-ba63-81e2-b95a-e5e3d0592676';
 
 // 2026-09-13 实测修复：旧 6 个 ID 对 Notion API 全 404（页面早已不存在），
@@ -865,41 +864,8 @@ async function pushSkillRegistry(pool, token) {
   }
 }
 
-async function pushJourneySteps(pool, token) {
-  const { rows } = await pool.query(`
-    SELECT s.*, j.notion_id AS journey_notion_id
-    FROM journey_steps s
-    LEFT JOIN journeys j ON j.id = s.journey_id
-    WHERE s.notion_synced_at IS NULL
-      AND j.notion_id IS NOT NULL
-    LIMIT 10
-  `);
-  for (const s of rows) {
-    try {
-      const properties = {
-        Name: { title: [{ text: { content: s.name } }] },
-        // Status 字段在 Notion Steps DB 不存在，已移除推送
-      };
-      if (s.description) {
-        properties['Description'] = { rich_text: buildRichText(s.description) };
-      }
-      if (s.journey_notion_id) {
-        properties['Journey'] = { relation: [{ id: s.journey_notion_id }] };
-      }
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: STEPS_DB },
-        properties,
-      });
-      await pool.query(
-        'UPDATE journey_steps SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, s.id]
-      );
-    } catch (err) {
-      console.warn(`[notion-push-sync] step ${s.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-    }
-  }
-}
+// pushJourneySteps 已摘除（2026-09-19，决策 297ffee5）：journey_steps 自 2026-06-09 废弃只读，
+// 主链却仍每 5 分钟往 AI Steps 推死数据。注册表 notion_projection_map 中该库标 archived/none。
 
 async function pushJourneyStepLinks(pool, token) {
   const { rows } = await pool.query(`
@@ -1543,7 +1509,6 @@ export async function runNotionPushSync(pool) {
   await pushIssues(pool, token);
   await pushTasks(pool, token);
   await pushSkillRegistry(pool, token);
-  await pushJourneySteps(pool, token);
   await pushJourneyStepLinks(pool, token);
   await pushDecisions(pool, token);
   await pushInitiativeContracts(pool, token);
