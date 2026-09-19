@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
+import { pushRegisteredRows, resolveDbId } from './lib/notion-projection-engine.js';
 
 const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
 const FEATURE_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
@@ -121,12 +122,15 @@ async function pushJourneys(pool, token) {
     SELECT j.*, a.notion_id AS area_notion_id
     FROM journeys j
     LEFT JOIN areas a ON a.id = j.area_id
-    WHERE j.notion_synced_at IS NULL
+    WHERE j.notion_synced_at IS NULL OR j.updated_at > j.notion_synced_at
+    ORDER BY j.notion_synced_at NULLS FIRST, j.updated_at
     LIMIT 10
   `);
-
-  for (const j of rows) {
-    try {
+  if (rows.length === 0) return;
+  const dbId = JOURNEY_DB || await resolveDbId(pool, 'journeys');
+  await pushRegisteredRows(pool, token, {
+    table: 'journeys', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'journey',
+    buildProps: (j) => {
       const properties = {
         Name: { title: [{ text: { content: j.name } }] },
         Description: { rich_text: buildRichText(j.description) },
@@ -134,90 +138,53 @@ async function pushJourneys(pool, token) {
         Maturity: { select: { name: j.maturity } },
         Status: { select: { name: j.status || 'active' } },
       };
-      // E2E Test Path 字段在 Notion Journey DB 不存在，已移除推送
-      if (j.area_notion_id) {
-        properties['Area'] = { relation: [{ id: j.area_notion_id }] };
-      }
-
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: JOURNEY_DB },
-        properties,
-      });
-
-      await pool.query(
-        'UPDATE journeys SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, j.id]
-      );
-    } catch (err) {
-      console.warn(`[notion-push-sync] journey ${j.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-      if (isStaleRelationError(err)) {
-        await pool.query('UPDATE journeys SET notion_synced_at=NOW() WHERE id=$1', [j.id]).catch(() => {});
-      }
-    }
-  }
+      // E2E Test Path 字段在 Notion Journey DB 不存在，不推
+      if (j.area_notion_id) properties['Area'] = { relation: [{ id: j.area_notion_id }] };
+      return properties;
+    },
+  });
 }
-
 async function pushJourneyFeatures(pool, token) {
   const { rows } = await pool.query(`
     SELECT f.*, j.notion_id AS journey_notion_id, a.notion_id AS area_notion_id
     FROM journey_features f
     LEFT JOIN journeys j ON j.id = f.journey_id
     LEFT JOIN areas a ON a.id = f.area_id
-    WHERE f.notion_synced_at IS NULL
+    WHERE (f.notion_synced_at IS NULL OR f.updated_at > f.notion_synced_at)
       AND (f.journey_id IS NULL OR j.notion_id IS NOT NULL)
+    ORDER BY f.notion_synced_at NULLS FIRST, f.updated_at
     LIMIT 10
   `);
-
-  for (const f of rows) {
-    try {
+  if (rows.length === 0) return;
+  const dbId = FEATURE_DB || await resolveDbId(pool, 'journey_features');
+  await pushRegisteredRows(pool, token, {
+    table: 'journey_features', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'feature',
+    buildProps: (f) => {
       const properties = {
         Name: { title: [{ text: { content: f.name } }] },
-        // Kind: Notion select 选项为首字母大写 Ability/Feature；DB 存小写 → 映射，避免自动创建重复小写选项
+        // Kind: Notion select 选项首字母大写；DB 小写 → 映射，避免自动创建重复小写选项
         Kind: { select: { name: (f.kind || 'feature') === 'ability' ? 'Ability' : 'Feature' } },
-        // Status: Notion Feature 库该属性是 status 类型（非 select）；发 select 会 400「Status is expected to be status」。
-        // DB 的值(planned/working/building/broken/deprecated/done)与 Notion status 选项一一匹配，仅类型需对齐。
+        // Status: Notion Feature 库该属性是 status 类型（非 select）
         Status: { status: { name: f.status || 'planned' } },
       };
-      if (f.thickness) {
-        properties['Thickness'] = { select: { name: f.thickness } };
-      }
-      if (f.journey_notion_id) {
-        properties['Journey'] = { relation: [{ id: f.journey_notion_id }] };
-      }
-      if (f.area_notion_id) {
-        properties['Area'] = { relation: [{ id: f.area_notion_id }] };
-      }
-      if (f.unit_test_path) {
-        properties['Unit Test Path'] = { rich_text: buildRichText(f.unit_test_path) };
-      }
-
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: FEATURE_DB },
-        properties,
-      });
-
-      await pool.query(
-        'UPDATE journey_features SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, f.id]
-      );
-    } catch (err) {
-      console.warn(`[notion-push-sync] feature ${f.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-      if (isStaleRelationError(err)) {
-        await pool.query('UPDATE journey_features SET notion_synced_at=NOW() WHERE id=$1', [f.id]).catch(() => {});
-      }
-    }
-  }
+      if (f.thickness) properties['Thickness'] = { select: { name: f.thickness } };
+      if (f.journey_notion_id) properties['Journey'] = { relation: [{ id: f.journey_notion_id }] };
+      if (f.area_notion_id) properties['Area'] = { relation: [{ id: f.area_notion_id }] };
+      if (f.unit_test_path) properties['Unit Test Path'] = { rich_text: buildRichText(f.unit_test_path) };
+      return properties;
+    },
+  });
 }
-
 async function pushIssues(pool, token) {
   const { rows } = await pool.query(
-    'SELECT * FROM issues WHERE notion_synced_at IS NULL LIMIT 10'
-  );
-
-  for (const issue of rows) {
-    try {
+    `SELECT * FROM issues
+      WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
+      ORDER BY notion_synced_at NULLS FIRST, updated_at LIMIT 10`);
+  if (rows.length === 0) return;
+  const dbId = ISSUES_DB || await resolveDbId(pool, 'issues');
+  await pushRegisteredRows(pool, token, {
+    table: 'issues', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'issue',
+    buildProps: (issue) => {
       const properties = {
         Issue: { title: [{ text: { content: issue.title } }] },
         Priority: { select: { name: issue.priority || 'P2' } },
@@ -226,31 +193,13 @@ async function pushIssues(pool, token) {
       if (issue.sub_area && SUB_AREA_NOTION_IDS[issue.sub_area]) {
         properties['Sub Area'] = { relation: [{ id: SUB_AREA_NOTION_IDS[issue.sub_area] }] };
       }
-
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: ISSUES_DB },
-        properties,
-        children: issue.body ? [{
-          object: 'block',
-          type: 'paragraph',
-          paragraph: { rich_text: buildRichText(issue.body) },
-        }] : undefined,
-      });
-
-      await pool.query(
-        'UPDATE issues SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, issue.id]
-      );
-    } catch (err) {
-      console.warn(`[notion-push-sync] issue ${issue.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-      if (isStaleRelationError(err)) {
-        await pool.query('UPDATE issues SET notion_synced_at=NOW() WHERE id=$1', [issue.id]).catch(() => {});
-      }
-    }
-  }
+      return properties;
+    },
+    buildChildren: (issue) => issue.body ? [{
+      object: 'block', type: 'paragraph', paragraph: { rich_text: buildRichText(issue.body) },
+    }] : undefined,
+  });
 }
-
 /**
  * Brain tasks → Notion Tasks 库（d5bc40c2）。
  * 三条纪律：
@@ -868,6 +817,7 @@ async function pushSkillRegistry(pool, token) {
 // 主链却仍每 5 分钟往 AI Steps 推死数据。注册表 notion_projection_map 中该库标 archived/none。
 
 async function pushJourneyStepLinks(pool, token) {
+  // journey_step_links 无 updated_at：连接行只增不改，保持 IS NULL 增量
   const { rows } = await pool.query(`
     SELECT l.*, j.notion_id AS journey_notion_id, s.notion_id AS step_notion_id,
            j.name AS journey_name, s.name AS step_name
@@ -881,74 +831,55 @@ async function pushJourneyStepLinks(pool, token) {
     LIMIT 10
   `);
   if (rows.length === 0) return;
-
+  const dbId = STEP_LINKS_DB || await resolveDbId(pool, 'journey_step_links');
   let schemaProps = {};
   try {
-    const schema = await notionReq(token, `/databases/${STEP_LINKS_DB}`, 'GET');
+    const schema = await notionReq(token, `/databases/${dbId}`, 'GET');
     schemaProps = schema?.properties || {};
   } catch {
     schemaProps = {};
   }
-
-  for (const l of rows) {
-    try {
+  await pushRegisteredRows(pool, token, {
+    table: 'journey_step_links', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'step_link',
+    buildProps: (l) => {
       const properties = {
         Name:   { title: [{ text: { content: `${l.journey_name} — ${l.step_name}` } }] },
         Status: { select: { name: l.status || 'planned' } },
         ...('Order' in schemaProps && { Order: { number: l.step_order } }),
       };
-      if (l.journey_notion_id) {
-        properties['Journey'] = { relation: [{ id: l.journey_notion_id }] };
-      }
-      if (l.step_notion_id) {
-        properties['Step'] = { relation: [{ id: l.step_notion_id }] };
-      }
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: STEP_LINKS_DB },
-        properties,
-      });
-      await pool.query(
-        'UPDATE journey_step_links SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, l.id]
-      );
-    } catch (err) {
-      console.warn(`[notion-push-sync] step_link ${l.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-    }
-  }
+      if (l.journey_notion_id) properties['Journey'] = { relation: [{ id: l.journey_notion_id }] };
+      if (l.step_notion_id) properties['Step'] = { relation: [{ id: l.step_notion_id }] };
+      return properties;
+    },
+  });
 }
-
 async function pushDecisions(pool, token) {
-  // 去重：只取未同步行（notion_synced_at IS NULL）；LEFT JOIN journey_features
-  // 取 target ability 的 notion_id，供映射成 Notion relation 链
+  // 三面定稿（决策 297ffee5）：AI Notes 是决策的机器镜子；「决策」库(f93e)是人写入口（PR②b 接 ingest）。
+  // LEFT JOIN journey_features 取 target ability 的 notion_id，供映射成 Notion relation 链
   const { rows } = await pool.query(
     `SELECT d.*, jf.notion_id AS ability_notion_id
        FROM decisions d
        LEFT JOIN journey_features jf
          ON jf.id = d.target_id AND d.target_type = 'journey_feature'
-      WHERE d.notion_synced_at IS NULL
+      WHERE d.notion_synced_at IS NULL OR d.updated_at > d.notion_synced_at
+      ORDER BY d.notion_synced_at NULLS FIRST, d.updated_at
       LIMIT 10`
   );
-  // 无待同步行直接返回，不触碰 Notion API（与其他 push 函数一致的去重边界）
   if (rows.length === 0) return;
-
-  // 取一次 AI Notes 库 schema：决定 Level/Scope 属性类型（status vs select），
-  // 并据此判断 Level/Scope/ability relation 等自定义属性是否真实存在 —— 库里没有的属性
-  // 一旦发出 Notion 会 400「is not a property that exists」，故缺列时跳过该属性。
+  const dbId = DECISIONS_DB || await resolveDbId(pool, 'decisions');
+  // 取一次库 schema：Level/Scope/ability relation 等自定义属性只在库里真实存在时才发，
+  // 否则 Notion 400「is not a property that exists」
   let schemaProps = {};
   try {
-    const schema = await notionReq(token, `/databases/${DECISIONS_DB}`, 'GET');
+    const schema = await notionReq(token, `/databases/${dbId}`, 'GET');
     schemaProps = schema?.properties || {};
   } catch {
     schemaProps = {};
   }
-
-  for (const d of rows) {
-    try {
-      // Type=Decision / Title / Level / Scope / ability relation 由 buildDecisionNotionProperties 统一构造
+  await pushRegisteredRows(pool, token, {
+    table: 'decisions', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'decision',
+    buildProps: (d) => {
       const mapped = buildDecisionNotionProperties(d, d.ability_notion_id, schemaProps);
-      // Title/Type 是 AI Notes 基础属性恒发；其余自定义属性（Level/Scope/Ability）只在库 schema
-      // 真实存在时才发，避免对未建列的库 400（合同 assumption：Level/Scope 字段「已有或可加」）
       const properties = {};
       for (const [k, v] of Object.entries(mapped)) {
         if (k === 'Title' || k === 'Type' || k in schemaProps) properties[k] = v;
@@ -956,65 +887,45 @@ async function pushDecisions(pool, token) {
       if (d.created_at) {
         properties.Date = { date: { start: d.created_at.toISOString?.() || d.created_at } };
       }
+      return properties;
+    },
+    buildChildren: (d) => {
       const bodyLines = [
         d.decision && `**决策**: ${d.decision}`,
         d.reason && `**原因**: ${d.reason}`,
         d.category && `**分类**: ${d.category}`,
       ].filter(Boolean).join('\n\n');
-
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: DECISIONS_DB },
-        properties,
-        children: bodyLines ? [{ object: 'block', type: 'paragraph', paragraph: { rich_text: buildRichText(bodyLines) } }] : [],
-      });
-
-      await pool.query(
-        'UPDATE decisions SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, d.id]
-      );
-    } catch (err) {
-      console.warn(`[notion-push-sync] decision ${d.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-    }
-  }
+      return bodyLines ? [{ object: 'block', type: 'paragraph', paragraph: { rich_text: buildRichText(bodyLines) } }] : [];
+    },
+  });
 }
-
 async function pushInitiativeContracts(pool, token) {
   const { rows } = await pool.query(
-    'SELECT * FROM initiative_contracts WHERE notion_synced_at IS NULL LIMIT 10'
-  );
-
-  for (const ic of rows) {
-    try {
+    `SELECT * FROM initiative_contracts
+      WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
+      ORDER BY notion_synced_at NULLS FIRST, updated_at LIMIT 10`);
+  if (rows.length === 0) return;
+  const dbId = INITIATIVE_CONTRACTS_DB || await resolveDbId(pool, 'initiative_contracts');
+  await pushRegisteredRows(pool, token, {
+    table: 'initiative_contracts', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'initiative_contract',
+    buildProps: (ic) => {
       const title = `Contract ${String(ic.initiative_id).slice(0, 8)} v${ic.version}`;
-      const properties = {
+      return {
         Title: { title: [{ text: { content: title } }] },
         Type: { select: { name: 'Contract' } },
         ...(ic.approved_at ? { Date: { date: { start: ic.approved_at.toISOString?.() || ic.approved_at } } } : {}),
       };
+    },
+    buildChildren: (ic) => {
       const bodyLines = [
         ic.status && `**状态**: ${ic.status}`,
         ic.review_rounds != null && `**GAN 轮次**: ${ic.review_rounds}`,
         ic.prd_content && `**Sprint PRD**:\n${ic.prd_content.slice(0, 1800)}`,
       ].filter(Boolean).join('\n\n');
-
-      const page = await notionReq(token, '/pages', 'POST', {
-        parent: { database_id: INITIATIVE_CONTRACTS_DB },
-        properties,
-        children: bodyLines ? [{ object: 'block', type: 'paragraph', paragraph: { rich_text: buildRichText(bodyLines) } }] : [],
-      });
-
-      await pool.query(
-        'UPDATE initiative_contracts SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2',
-        [page.id, ic.id]
-      );
-    } catch (err) {
-      console.warn(`[notion-push-sync] initiative_contract ${ic.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-    }
-  }
+      return bodyLines ? [{ object: 'block', type: 'paragraph', paragraph: { rich_text: buildRichText(bodyLines) } }] : [];
+    },
+  });
 }
-
 async function pushAdvancementItems(pool, token) {
   // 按 ability 聚合该 ability **全部**推进项的累积进度（非仅未同步子集）——
   // WHERE 子查询只用来判断"这个 ability 这一轮有没有变化值得推"，
@@ -1152,28 +1063,12 @@ async function disableOpsPush(pool, errMsg) {
 }
 
 async function upsertOpsRows(pool, token, { table, dbId, rows, buildProps }) {
-  for (const r of rows) {
-    try {
-      const properties = buildProps(r);
-      if (r.notion_id) {
-        await notionReq(token, `/pages/${r.notion_id}`, 'PATCH', { properties });
-      } else {
-        const page = await notionReq(token, '/pages', 'POST', { parent: { database_id: dbId }, properties });
-        await pool.query(`UPDATE ${table} SET notion_id = $1 WHERE id = $2`, [page.id, r.id]);
-      }
-      await pool.query(`UPDATE ${table} SET notion_synced_at = NOW() WHERE id = $1`, [r.id]);
-    } catch (err) {
-      if (isMissingDatabaseError(err)) { await disableOpsPush(pool, err.message); return; }
-      if (isStaleRelationError(err)) { // 页被人删 → 清 notion_id 下轮重建该页
-        await pool.query(`UPDATE ${table} SET notion_id = NULL WHERE id = $1`, [r.id]);
-        continue;
-      }
-      console.warn(`[notion-push-sync] ${table} ${r.id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-    }
-  }
+  // 委托统一引擎：指纹同不打 Notion；库不可达 → 停推（终止态，禁自动重建）
+  await pushRegisteredRows(pool, token, {
+    table, dbId, rows, buildProps, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError,
+    onFatal: (err) => { if (isMissingDatabaseError(err)) { disableOpsPush(pool, err.message).catch(() => {}); return true; } return false; },
+  });
 }
-
 /**
  * 运行舱专用推送入口（scheduler-jobs 的 ops-notion-push 调这个）。
  *
@@ -1410,25 +1305,14 @@ async function pushOpsWorkflows(pool, token) {
     `SELECT * FROM ops_workflows
      WHERE notion_synced_at IS NULL OR updated_at > notion_synced_at
      ORDER BY updated_at LIMIT 50`);
+  const dbId = dbs.workflows_db || await resolveDbId(pool, 'ops_workflows');
   // 建页时带正文 children（流程图 mermaid + 阶段清单 + 画布构成）；raw 画布存 meta.raw_nodes
-  for (const w of rows) {
-    try {
-      const properties = buildOpsWorkflowNotionProperties(w);
-      if (w.notion_id) {
-        await notionReq(token, `/pages/${w.notion_id}`, 'PATCH', { properties });
-      } else {
-        const children = w.meta?.canvas ? buildWorkflowPageBlocks(w.meta.canvas, w) : undefined;
-        const page = await notionReq(token, '/pages', 'POST',
-          { parent: { database_id: dbs.workflows_db }, properties, ...(children ? { children } : {}) });
-        await pool.query(`UPDATE ops_workflows SET notion_id = $1 WHERE id = $2`, [page.id, w.id]);
-      }
-      await pool.query(`UPDATE ops_workflows SET notion_synced_at = NOW() WHERE id = $1`, [w.id]);
-    } catch (err) {
-      if (isMissingDatabaseError(err)) { await disableOpsPush(pool, err.message); return; }
-      console.warn(`[notion-push-sync] workflow ${w.wf_id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-    }
-  }
+  await pushRegisteredRows(pool, token, {
+    table: 'ops_workflows', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'workflow',
+    buildProps: (w) => buildOpsWorkflowNotionProperties(w),
+    buildChildren: (w) => (w.meta?.canvas ? buildWorkflowPageBlocks(w.meta.canvas, w) : undefined),
+    onFatal: (err) => { if (isMissingDatabaseError(err)) { disableOpsPush(pool, err.message).catch(() => {}); return true; } return false; },
+  });
   // 跨库 relation：workflow → agent（需图谱库页 id）
   const agentIdByName = new Map(
     (await pool.query(`SELECT name, notion_id FROM ops_agents WHERE notion_id IS NOT NULL`)).rows
@@ -1458,25 +1342,19 @@ async function pushOpsWorkflows(pool, token) {
 async function pushOpsRuns(pool, token) {
   const dbs = await getOpsNotionDbs(pool);
   if (!dbs?.runs_db || dbs.disabled) return;
+  // ops_runs 无 updated_at：run 记录只增不改，保持 IS NULL 增量
   const { rows } = await pool.query(
     `SELECT r.*, w.name AS wf_name
      FROM ops_runs r
      JOIN ops_workflows w ON w.source = r.source AND w.wf_id = r.wf_id
      WHERE w.stage_count > 0 AND r.notion_synced_at IS NULL
      ORDER BY r.started_at DESC LIMIT 100`);
-  for (const r of rows) {
-    try {
-      const properties = buildOpsRunNotionProperties(r, r.wf_name);
-      const page = await notionReq(token, '/pages', 'POST', { parent: { database_id: dbs.runs_db }, properties });
-      await pool.query(`UPDATE ops_runs SET notion_id=$1, notion_synced_at=NOW() WHERE id=$2`, [page.id, r.id]);
-    } catch (err) {
-      if (isMissingDatabaseError(err)) { await disableOpsPush(pool, err.message); return; }
-      console.warn(`[notion-push-sync] run ${r.run_id} 推送失败: ${err.message}`);
-      await logSyncError(pool, err.message);
-    }
-  }
+  if (rows.length === 0) return;
+  const dbId = dbs.runs_db || await resolveDbId(pool, 'ops_runs');
+  await upsertOpsRows(pool, token, {
+    table: 'ops_runs', dbId, rows, buildProps: (r) => buildOpsRunNotionProperties(r, r.wf_name),
+  });
 }
-
 /** 给有召唤权限的 agent 补 CanCall relation（同库自关联，反向=CalledBy）。目标页未建则下轮自愈。 */
 async function syncOpsMembersRelation(pool, token) {
   const { rows } = await pool.query(
