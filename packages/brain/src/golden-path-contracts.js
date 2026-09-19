@@ -475,6 +475,13 @@ export async function signAndLaunchGoldenPathContract(db, {
     change_kind: harnessGlue.changeKind,
     map_scope: harnessGlue.mapScope,
     base_sha: mapBaseline.source_revision,
+    // GP锚定闭环刀4（executor.js）drive-time 硬校验：base_repo 含 zenithjoy-workspace 时
+    // payload.gp_anchor 必须是合法三形态之一，否则新建的任务立刻 terminal failed
+    // （实证：task ff6a7302，GP f6f96e17 签字后永远开不了工）。golden_paths 目前没有落地
+    // product-map.yaml 步骤锚点的字段，推不出真实 line/gp#stepN，诚实地给
+    // none(backlog)——代表这条 GP 尚未登记进 product-map.yaml 的步骤追踪体系，
+    // 而不是编造一个不存在的锚点。对非 zenithjoy-workspace 的 base_repo 无害（字段被忽略）。
+    gp_anchor: 'none(backlog)',
   };
   const routed = await createRoutedTask(db, {
     source: 'discovery',
