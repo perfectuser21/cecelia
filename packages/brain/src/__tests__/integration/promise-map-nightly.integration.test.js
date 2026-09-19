@@ -11,7 +11,7 @@ beforeAll(async () => {
 });
 
 describe('S4 保鲜对账 proven-to-fire', () => {
-  it('首跑六断言全绿（seed 后的干净账本）', async () => {
+  it('首跑断言全绿（seed 后的干净账本；A7~A10 守夜遍历在无 token 环境降级不红）', async () => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -25,7 +25,7 @@ describe('S4 保鲜对账 proven-to-fire', () => {
         `INSERT INTO fact_snapshot_headers (kind,repo,source_revision,scanner_version,scanned_at,row_count)
          VALUES ('api','__nightly_probe__','deadbeef','itest', NOW(), 1)`);
       const results = await buildNightlyAssertions(client);
-      expect(results).toHaveLength(6);
+      expect(results.length).toBeGreaterThanOrEqual(6);
       for (const r of results) expect(r.ok, `${r.key}: ${r.detail}`).toBe(true);
     } finally {
       await client.query('ROLLBACK');

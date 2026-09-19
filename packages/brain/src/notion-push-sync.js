@@ -37,6 +37,13 @@ export const TASK_STATUS_TO_NOTION = Object.freeze({
 const SKILL_REGISTRY_DB  = '353c40c2-ba63-81bf-ae3e-f0e6fa3753d7';
 const STEP_LINKS_DB      = '369c40c2-ba63-81e2-b95a-e5e3d0592676';
 
+/** 代码硬编码的库常量（brain_table → id）。守夜 A9 断言它们 == notion_projection_map；全绿后 resolveDbId 才翻转为注册表优先。 */
+export const LEGACY_DB_CONSTANTS = Object.freeze({
+  journeys: JOURNEY_DB, journey_features: FEATURE_DB, issues: ISSUES_DB,
+  decisions: DECISIONS_DB, initiative_contracts: INITIATIVE_CONTRACTS_DB,
+  tasks: NOTION_TASKS_DB, skill_registry: SKILL_REGISTRY_DB, journey_step_links: STEP_LINKS_DB,
+});
+
 // 2026-09-13 实测修复：旧 6 个 ID 对 Notion API 全 404（页面早已不存在），
 // 导致每条 brain/engine issue 推送 404 → isStaleRelationError 静默标已同步
 // （notion_id 为空）= 无声丢弃。真 ID 取自 Sub Area 库

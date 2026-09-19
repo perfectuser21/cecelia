@@ -14,6 +14,9 @@ import pool from './db.js';
 import { sendBark } from './notifier.js';
 // A2 与 S2 锚点闸同口径（豁免/存量 cutoff 单一来源；日历日边界防 naive timestamp 时区偏移）
 import { ANCHOR_EXEMPT_TASK_TYPES, ANCHOR_EXEMPT_ACTIONS, ANCHOR_LEGACY_CUTOFF_DAY } from './anchor-check.js';
+import { buildProjectionAssertions } from './lib/notion-projection-watch.js';
+import { notionReq, getToken } from './recurring-notion-sync.js';
+import { LEGACY_DB_CONSTANTS } from './notion-push-sync.js';
 
 export const SENTINEL_KEY = 'promise-map-nightly';
 export const NIGHTLY_HOUR_UTC = 2;     // 北京时间 10:00
@@ -216,6 +219,26 @@ export async function buildNightlyAssertions(queryPool) {
         + `，ops_skills(openclaw)=${opsCount}，差 ${Math.abs(registryCount - opsCount)} 个；`
         + `已记入 skill_drift_alerts`,
   });
+
+  // ── A7~A10: 守夜遍历注册表（三面模型 PR③，决策 297ffee5）────────
+  // 注册表未落表 / 无 token 的环境（CI 干净库、单测顺序 mock）一律降级为 ok:true+degraded，
+  // 绝不掀翻前六条；生产上四条真断言各自红绿。
+  try {
+    let token = null;
+    try { token = getToken(); } catch { token = null; }
+    let botUserId = process.env.NOTION_BOT_USER_ID || null;
+    if (token && !botUserId) {
+      try { botUserId = (await notionReq(token, '/users/me', 'GET'))?.id ?? null; } catch { botUserId = null; }
+    }
+    const watch = await buildProjectionAssertions(queryPool, {
+      notionReq: token ? notionReq : async () => { throw new Error('no_token'); },
+      token, botUserId, constants: LEGACY_DB_CONSTANTS,
+    });
+    results.push(...watch);
+  } catch (err) {
+    results.push({ key: 'projection_watch', label: '投影守夜遍历', ok: true, degraded: true,
+      detail: `注册表不可用，跳过（${String(err?.message || err).slice(0, 80)}）` });
+  }
 
   return results;
 }

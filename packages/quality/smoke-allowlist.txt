@@ -203,6 +203,7 @@ notion-capture-ingest-smoke.sh
 notion-projection-engine-smoke.sh
 notion-inlet-ingest-smoke.sh
 notion-projection-map-smoke.sh
+notion-projection-watch-smoke.sh
 notion-inbox-ws3-smoke.sh
 notion-openclaw-dispatch-smoke.sh
 notion-page-content-prompt-smoke.sh
