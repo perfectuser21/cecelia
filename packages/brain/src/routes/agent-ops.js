@@ -7,6 +7,10 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { INTERVAL_MS } from '../ops-collector.js';
+import { MODEL_ACCOUNT_STATUS } from '../ops-model-accounts-collector.js';
+
+// MODEL_ACCOUNT_STATUS 单源 import（INV-3 [枚举单份]）——只从 collector 引用，禁在此手抄字面量副本。
+export { MODEL_ACCOUNT_STATUS };
 
 export const STALE_FACTOR = 3;
 
@@ -46,9 +50,68 @@ export async function buildAgentsPayload(dbPool, now = new Date()) {
   }));
   const staleByKey = new Map(sources.map((s) => [`${s.source}|${s.host_alias}`, s.stale]));
   const global_stale = sources.length === 0 || sources.every((s) => s.stale);
+  const { primaryCounts, fallbackCounts } = aggregateModelCounts(agents);
   return {
-    agents: agents.map((a) => ({ ...a, stale: staleByKey.get(`${a.source}|${a.host_alias}`) ?? true })),
+    agents: agents.map((a) => ({
+      ...a,
+      stale: staleByKey.get(`${a.source}|${a.host_alias}`) ?? true,
+      model_role: buildModelRole(a, primaryCounts, fallbackCounts),
+    })),
     sources, global_stale, stale_threshold_ms: staleMs, server_now: now.toISOString(),
+  };
+}
+
+// model_role：全体分身 meta 真实聚合（不造分层标签）。
+// model_id = 该分身原始 primary model id；primary_count/fallback_count = 全体分身里
+// 把该 model 设为 primary / 列入 fallback 的真实计数。
+export function aggregateModelCounts(agents = []) {
+  const primaryCounts = new Map();
+  const fallbackCounts = new Map();
+  for (const a of agents) {
+    const m = a.meta || {};
+    if (m.model) primaryCounts.set(m.model, (primaryCounts.get(m.model) || 0) + 1);
+    const fbs = Array.isArray(m.model_fallbacks) ? m.model_fallbacks : [];
+    for (const fb of fbs) fallbackCounts.set(fb, (fallbackCounts.get(fb) || 0) + 1);
+  }
+  return { primaryCounts, fallbackCounts };
+}
+
+export function buildModelRole(agent, primaryCounts, fallbackCounts) {
+  const modelId = agent?.meta?.model ?? null;
+  return {
+    model_id: modelId,
+    primary_count: modelId ? (primaryCounts.get(modelId) || 0) : 0,
+    fallback_count: modelId ? (fallbackCounts.get(modelId) || 0) : 0,
+  };
+}
+
+// GET /agent-ops/model-accounts — 8 个静态模型账号的配额快照（只读投影，刀2）。
+// 全表读回；每条含 PRD 约定 11 字段（+ account_id 身份键）。单账号失败仍 200（status+last_error 双写）。
+// 表不存在(42P01) → 503 migration_pending（沿用刀1 handle 契约）。
+export async function buildModelAccountsPayload(dbPool, now = new Date()) {
+  let rows;
+  try {
+    rows = (await dbPool.query(`SELECT * FROM ops_model_accounts ORDER BY account_id`)).rows;
+  } catch (err) {
+    if (isMissingTable(err)) throw migrationPendingError(err);
+    throw err;
+  }
+  return {
+    accounts: rows.map((r) => ({
+      account_id: r.account_id,
+      provider: r.provider,
+      plan: r.plan ?? null,
+      five_hour_pct: r.five_hour_pct ?? null,
+      seven_day_pct: r.seven_day_pct ?? null,
+      reset_at: r.reset_at ?? null,
+      host_alias: r.host_alias,
+      forwardable: r.forwardable,
+      forward_targets: r.forward_targets ?? [],
+      status: r.status,
+      last_checked_at: r.last_checked_at ?? null,
+      last_error: r.last_error ?? null,
+    })),
+    server_now: now.toISOString(),
   };
 }
 
@@ -199,5 +262,6 @@ function handle(builder) {
 router.get('/agents', handle(buildAgentsPayload));
 router.get('/calendar', handle(buildCalendarPayload));
 router.get('/graph', handle(buildGraphPayload)); // 合并视图：运行单元行（agent+schedule 去重，role/workflow 现算）
+router.get('/model-accounts', handle(buildModelAccountsPayload)); // 8 模型账号配额快照（刀2）
 
 export default router;
