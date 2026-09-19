@@ -15,9 +15,9 @@ import { listNodeProfiles } from '../../../packages/brain/src/orchestrator/fleet
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const DIGEST_RE = /sha256:[a-f0-9]{64}/;
 
-// 每次 repin 更新此值（钉死当前批次，防 pin 漂移/回退；上一批 eda14cf3 → 本批含
-// publisher headRefOid 读滞后重试修复，build head 2c3341a6e，1.273.113）。
-const CANONICAL_DIGEST = 'sha256:74afa123d31ff6eda7b3dff213ecba0ac28e5d8f1b74bc40ade3e71dd635721a';
+// 每次 repin 更新此值（钉死当前批次，防 pin 漂移/回退；上一批 74afa123 → 本批为
+// 2026-09-19 prune 二次误删后从 build head e38e6a477 重建，1.302.5）。
+const CANONICAL_DIGEST = 'sha256:4450aac9d8710bd02b37ec1f5e46ef06ab2e1ae108f453c3d25f85318af5be8e';
 
 describe('canonical runner digest pin 一致性', () => {
   it('node-profile 全部节点 pin 同一个 canonical digest', () => {
