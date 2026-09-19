@@ -12,7 +12,7 @@
  * 不进 CI，故 runModelAccountsCollector 暴露 fetchUsage/grokProbe 注入接缝，[integration]
  * 测试注入成功 fixture 走真 PG 写路径，缺省则走真实 host-exec（生产）。
  */
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { defaultExec, buildHostCmd } from './host-exec.js';
 
 /** status 四态枚举（唯一一份，route builder 同源 import，禁手抄副本）。 */
@@ -123,17 +123,42 @@ function matchesOnly(acct, only) {
     || new RegExp(needle, 'i').test(acct.provider);
 }
 
+/** 探针脚本本体（自包含 ESM），base64 后经 ssh 投递到 mmv 用 node 从 stdin 执行——凭据不离开宿主。 */
+const PROBE_SOURCE_B64 = Buffer.from(
+  readFileSync(new URL('./model-accounts-usage-probe.js', import.meta.url), 'utf8'),
+  'utf8',
+).toString('base64');
+/** mmv 非交互 ssh 的 PATH 不含 homebrew，node 用绝对路径（可 env 覆盖）。 */
+const PROBE_NODE_BIN = process.env.MODEL_ACCOUNTS_PROBE_NODE || '/opt/homebrew/bin/node';
+const PROBE_TIMEOUT_MS = 30_000;
+
+/** 组装远端探针命令（导出供单测断言：脚本走 stdin、带 --run provider path、不含凭据内容）。 */
+export function buildProbeCmd(acct, nodeBin = PROBE_NODE_BIN) {
+  // `--` 之后才是脚本参数；标记不能叫 --run（node 自身 CLI 选项，会被 node 吞掉）。
+  return `echo ${PROBE_SOURCE_B64} | base64 -d | ${nodeBin} --input-type=module - -- --probe-run ${acct.provider} ${acct.credential_path}`;
+}
+
 /**
- * 缺省真实采集：host-exec ssh 逃逸到 mmv 读账号凭据 + 调三家 usage API。
+ * 缺省真实采集：host-exec ssh 逃逸到 mmv 跑 model-accounts-usage-probe.js，
+ * 探针在宿主读凭据、调三家 usage API，只回传归一后的 usage JSON。
  * 真凭据不进 CI（见合同「未覆盖真实链路清单」）——注入 fetchUsage/grokProbe 后本函数不被触及。
+ * 探针非零退出时 exec 抛错，错误文本（stderr）交给上层分类：no_credential / grpc-status 7 → key_expired / 其余 unknown。
  */
 function defaultFetchUsage(acct, exec = defaultExec, keyExistsFn, inContainer = existsSync('/.dockerenv')) {
-  const cmd = `cat ${acct.credential_path} 2>/dev/null || echo no_credential`;
-  const raw = exec(buildHostCmd(cmd, inContainer, keyExistsFn));
-  if (!raw || /no_credential/.test(String(raw))) {
-    const e = new Error('no_credential'); e.reason = 'no_credential'; throw e;
+  let raw;
+  try {
+    raw = exec(buildHostCmd(buildProbeCmd(acct), inContainer, keyExistsFn), { timeoutMs: PROBE_TIMEOUT_MS });
+  } catch (err) {
+    // execSync 的 message 会带整条命令（含凭据路径与脚本 base64）——既不能进 last_error，
+    // 也会让 classifyUsageError 的 auth.json/credentials.json 正则把任何失败误判成 no_credential。
+    // 只保留探针 stderr 的一行结论（no_credential: … / grpc-status: 7 … / HTTP 429 …）。
+    const stderr = String(err?.stderr || '').trim();
+    const e = new Error(stderr || `probe exec failed (status=${err?.status ?? 'n/a'})`);
+    throw e;
   }
-  // 真实 provider usage API 调用在 mmv host 侧完成，raw 已是 usage JSON 帧。
+  if (!raw || !String(raw).trim()) {
+    throw new Error('probe returned empty output');
+  }
   return JSON.parse(String(raw));
 }
 
