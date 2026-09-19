@@ -26,6 +26,10 @@ export const OPS_DB_PROPS = {
     Schedule: { rich_text: {} },
     Repeat: { checkbox: {} }, NextRun: { date: {} }, LastSeen: { date: {} },
     Status: { select: {} },
+    // 模型账号配额列（刀2，机器列：采集器推 5h%/7d%/更新时间，缺列即补幂等）
+    FiveHourPct: { number: {} },
+    SevenDayPct: { number: {} },
+    QuotaUpdatedAt: { date: {} },
     ...MANUAL_PROPS,
     Org: { rich_text: {} },          // 部门（人工，机器推断值留在 Brain 的 org 列）
     RoleManual: { rich_text: {} },   // 角色（人工，与机器推断的 Role 分开列免打架）
