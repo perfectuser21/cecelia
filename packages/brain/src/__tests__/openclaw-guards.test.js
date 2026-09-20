@@ -26,9 +26,10 @@ describe('openclaw-guards — 内存守卫', () => {
 });
 
 describe('openclaw-guards — 配置漂移', () => {
+  // 0920 起 appServer 必须走 codex-runner（session-runner 留给 claude 包装脚本，钉死 MMV）
   const goodCfg = {
     agents: { defaults: { model: { primary: 'openai/gpt-5.6-terra', fallbacks: ['openai/gpt-5.6-sol'] } } },
-    plugins: { entries: { codex: { config: { appServer: { command: '/usr/bin/ssh', args: ['-F', '/root/.openclaw/ssh-router.conf', 'session-runner', 'app-server'] } } } } },
+    plugins: { entries: { codex: { config: { appServer: { command: '/usr/bin/ssh', args: ['-F', '/root/.openclaw/ssh-router.conf', 'codex-runner', 'app-server'] } } } } },
   };
   it('铁律形状通过；primary 回落/appServer 非池形态判漂移', () => {
     expect(checkConfigDrift(goodCfg)).toBeNull();
@@ -300,7 +301,7 @@ describe('openclaw-guards — agent 级模型漂移（本机 embedded 漏网）'
         dev: { model: 'openai/gpt-5.6-sol' },
       },
     },
-    plugins: { entries: { codex: { config: { appServer: { command: '/usr/bin/ssh', args: ['-F', 'x', 'session-runner'] } } } } },
+    plugins: { entries: { codex: { config: { appServer: { command: '/usr/bin/ssh', args: ['-F', 'x', 'codex-runner'] } } } } },
   };
   it('agent 级 sol 覆盖被判漂移（点名漏网者）', () => {
     const drift = checkConfigDrift(base);

@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.307.0
+**Brain 版本**: 1.307.1
 
 ## 1.283.0
 
@@ -48,6 +48,15 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.307.1 — P0 热修：claude 与 codex 必须走两条独立 ssh 路由
+
+- **事故**：1.306.6 把跑场路由切到 XIAN-M1 后，Claude 在生产上直接不可用。
+- **根因不在跑场池选谁，在两个 CLI 共用了同一个 ssh 别名**：`/usr/local/bin/claude` 是个包装脚本，内容是 `SR='-F /root/.openclaw/ssh-router.conf session-runner'; ssh $SR ...`；codex 的 `appServer` 也是 `ssh ... session-runner ...`。路由一动，**Claude 被 codex 的负载均衡一起带走**，而 XIAN-M1 既没装 claude CLI 也没有 claude 凭据。
+- **判断失误记录**：此前只在 `clawdbot.json` 里 grep 到 1 处 `ssh-router.conf` 引用就断言「Claude 不走跑场」——漏了文件系统里的包装脚本。**配置不是唯一的事实来源**。
+- 主理人 0920 拍板的形态：凭据只在 MMV，**不在 M4/M1 登录 Claude/Grok**；只有 codex 穿透到 M4/M1；Claude CLI 与 Grok 只在 MMV 跑。
+- **修法**：拆成两个别名。`session-runner` 钉死 MMV（claude 包装脚本里写死了这个名字，一行都不用改）；新增 `codex-runner` 跟跑场池走，`checkConfigDrift`/`restoreConfigShape` 同步改判 `codex-runner`。M1 因此不需要任何 Claude 凭证。
+- 守卫 5 条新断言，两条变异验过必红：claude 别名跟跑场走 / 漂移检查改回认 `session-runner`。
 
 ## Brain 1.306.6 — codex 跑场池按负载选机：M4/M1 当主力，MMV 让给 Claude/Grok
 
