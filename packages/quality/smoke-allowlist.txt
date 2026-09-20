@@ -213,6 +213,7 @@ notion-workflow-relation-smoke.sh
 okr-initiative-mirror-smoke.sh
 oom-aware-retry-smoke.sh
 openclaw-guards-smoke.sh
+openclaw-runner-pool-smoke.sh
 ops-cockpit-sync-smoke.sh
 ops-graph-smoke.sh
 ops-notion-schema-smoke.sh
