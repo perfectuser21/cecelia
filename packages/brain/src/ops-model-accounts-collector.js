@@ -69,10 +69,20 @@ export const MODEL_ACCOUNTS = Object.freeze([
 
 const EMPTY_SNAPSHOT = { five_hour_pct: null, seven_day_pct: null, reset_at: null };
 
-/** pct 归一化：数字透传，缺失/非数字 → null（诚实留空，禁编造 0）。 */
+/**
+ * pct 归一化：数字四舍五入成整数，缺失/非数字 → null（诚实留空，禁编造 0）。
+ *
+ * 必须取整：列是 INTEGER（migration 449:9-10），而 node-pg 的参数绑定**不取整**
+ * ——实测传 89.6 直接抛 `invalid input syntax for type integer: "89.6"`。
+ * 而 upsert 的调用在 try 之外，一抛就中断整轮采集，排在后面的账号
+ * 这一轮全部不写（静默陈旧）。取整是让「配额账本可信」的前提。
+ */
 function toPct(v) {
-  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+  return typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : null;
 }
+
+/** 测试接缝：判据的阈值语义依赖「表里只有整数」这条不变量。 */
+export const toPctForTest = toPct;
 
 /**
  * Anthropic OAuth usage JSON → 同一 schema。

@@ -14,7 +14,27 @@ import {
   parseGrokUsage,
   classifyGrokUsageError,
   buildProbeCmd,
+  runModelAccountsCollector,
+  toPctForTest,
 } from '../ops-model-accounts-collector.js';
+
+// 本文件里没有共享的 makePool fixture（各测试文件各自本地定义，见
+// machine-vitals.test.js:25-27 的同款惯例），本文件此前的 query mock 也是就地写的
+// 匿名对象（见上面 buildProbeCmd 的第二个用例）。这里补一个带 upserts() 便于按
+// SQL 特征取出成功 upsert 调用参数——ops_model_accounts 表有两条 INSERT 语句
+// （成功 upsertModelAccount 带 pct 列 / 失败 upsertModelAccountFailure 不带），
+// 用 `five_hour_pct=EXCLUDED` 只挑出前者，避免误把失败分支的 host_alias/forwardable
+// 参数位当成 pct 位检查。
+function makePool() {
+  const calls = [];
+  return {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      return { rows: [] };
+    },
+    upserts: () => calls.filter((c) => /five_hour_pct=EXCLUDED/.test(c.sql)),
+  };
+}
 
 describe('buildProbeCmd（真采集命令：探针走 stdin，凭据不出宿主）', () => {
   it('base64 投递探针脚本 + node 从 stdin 执行 + --run provider path；命令里不含凭据内容', () => {
@@ -100,5 +120,49 @@ describe('ops-model-accounts-collector 纯函数', () => {
     expect(classifyGrokUsageError({ grpcStatus: 7, message: 'PERMISSION_DENIED' })).toBe('key_expired');
     expect(classifyGrokUsageError({ message: 'grpc-status: 7' })).toBe('key_expired');
     expect(classifyGrokUsageError({ message: 'connection timeout' })).toBe('unknown');
+  });
+});
+
+describe('toPct — 列是 INTEGER，浮点必须在进 SQL 前收敛', () => {
+  // 实测（node-pg + 真 PG）：参数绑定传 89.6 会抛
+  // `invalid input syntax for type integer: "89.6"`，而 :365-366 的 upsert
+  // 在 try 之外 —— 一抛就中断整轮采集，后面的账号静默陈旧。
+  it('小数四舍五入成整数', () => {
+    expect(toPctForTest(89.6)).toBe(90);
+    expect(toPctForTest(89.4)).toBe(89);
+    expect(toPctForTest(89.5)).toBe(90);
+    expect(toPctForTest(94.5)).toBe(95);
+  });
+
+  it('整数原样透传', () => {
+    expect(toPctForTest(0)).toBe(0);
+    expect(toPctForTest(100)).toBe(100);
+  });
+
+  it('缺失/非数字仍然诚实留空（禁编造 0）', () => {
+    expect(toPctForTest(undefined)).toBeNull();
+    expect(toPctForTest(null)).toBeNull();
+    expect(toPctForTest('91')).toBeNull();
+    expect(toPctForTest(NaN)).toBeNull();
+    expect(toPctForTest(Infinity)).toBeNull();
+  });
+
+  it('写库参数里不存在非整数（回归：整轮采集不再被一个小数打断）', async () => {
+    const pool = makePool();
+    await runModelAccountsCollector(pool, {
+      force: true,
+      fetchUsage: async () => ({ five_hour: { utilization: 89.6 }, seven_day: { utilization: 12.3 } }),
+      grokProbe: async () => ({ five_hour_pct: 1.5, seven_day_pct: 2.5 }),
+    });
+    // upsertModelAccount 的参数数组（源文件 :274-279）：
+    //   [account_id, provider, plan, five_hour_pct, seven_day_pct, reset_at,
+    //    host_alias, forwardable, forward_targets, status, last_error]
+    // pct 两列在下标 3、4（0-based）——核对过 SQL 的 $4/$5 与数组字面量顺序一致。
+    const pctParams = pool.upserts().flatMap((c) => (c.params ?? []).slice(3, 5));
+    expect(pctParams.length).toBeGreaterThan(0);
+    for (const p of pctParams) {
+      if (p === null || p === undefined) continue;
+      expect(Number.isInteger(p)).toBe(true);
+    }
   });
 });
