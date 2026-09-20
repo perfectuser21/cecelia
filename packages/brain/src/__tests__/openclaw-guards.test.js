@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   parseMemMB, memGuardDecision, checkConfigDrift, restoreConfigShape,
   doctrineSeedPlan, pickRunner, renderRouterConf, DOCTRINE_MARK,
-  parseOutreachHealth, MEMLOG_PS_ARGS,
+  parseOutreachHealth, MEMLOG_PS_ARGS, RUNNERS, parseRunnerLoad,
 } from '../openclaw-guards.js';
 
 // us-vps 零执行守卫收编 Brain（决策 95477a66）：宿主散装 cron → Brain scheduler job。
@@ -74,6 +74,101 @@ describe('openclaw-guards — 跑场路由', () => {
     expect(conf).toContain('HostName 100.71.151.105');
     expect(conf).toContain('User administrator');
     expect(conf).toContain('IdentityFile /root/.openclaw/mmv_key');
+  });
+});
+
+// ── codex 跑场池：M4/M1 是主力，MMV 留给 Claude/Grok（主理人 0920 拍板）──────
+//
+// 为什么 MMV 不能参与 codex 的常规竞争：Claude 与 Grok 的凭据只在 MMV，
+// OpenClaw 用 auth.profiles 的 token 直连它们（clawdbot.json: xai:manual /
+// anthropic:manual），换句话说 **MMV 是这两家唯一的执行机**。而 codex 走的是
+// agentRuntime → ssh 到 session-runner 跑 CLI，哪台机都行。
+//
+// 0920 实测三台召唤链路完全等价：网关 key 都能 ssh、codex 0.151.0 都在、
+// 网关原样命令都能起 app-server、出网 IP 同为 38.23.47.81；且 M4/M1 都有
+// ~/.codex/auth.json，MMV 反而没有。所以让 codex 去 M4/M1，把 MMV 让出来。
+//
+// 旧逻辑是「按 RUNNERS 顺序取第一个探活成功的」——MMV 排第一且从不掉线，
+// 于是 M4/M1 作为备胎一次都没被召唤过，三台机的算力只用了一台。
+describe('openclaw-guards — codex 跑场池按负载选机', () => {
+  const M4 = '100.86.57.69';
+  const M1 = '100.88.166.55';
+  const MMV = '100.71.151.105';
+  const allAlive = () => true;
+
+  it('注册表声明角色：M4/M1 是 codex 主力，MMV 仅兜底', () => {
+    const byName = Object.fromEntries(RUNNERS.map((r) => [r.name, r]));
+    expect(byName['XIAN-M4'].role).toBe('codex-primary');
+    expect(byName['XIAN-M1'].role).toBe('codex-primary');
+    expect(byName.MMV.role).toBe('fallback');
+  });
+
+  it('两台主力都活 → 选 codex 会话数更少的那台', () => {
+    const load = (t) => (t.includes(M4) ? { codexSessions: 5, load1: 3.0 } : { codexSessions: 1, load1: 0.4 });
+    expect(pickRunner(allAlive, { loadFn: load }).name).toBe('XIAN-M1');
+
+    const flipped = (t) => (t.includes(M4) ? { codexSessions: 0, load1: 0.2 } : { codexSessions: 4, load1: 2.5 });
+    expect(pickRunner(allAlive, { loadFn: flipped }).name).toBe('XIAN-M4');
+  });
+
+  it('会话数打平 → 用 load average 分胜负', () => {
+    const load = (t) => (t.includes(M4) ? { codexSessions: 2, load1: 4.0 } : { codexSessions: 2, load1: 0.5 });
+    expect(pickRunner(allAlive, { loadFn: load }).name).toBe('XIAN-M1');
+  });
+
+  it('MMV 再闲也不抢 codex 的活（它要留给 Claude/Grok）', () => {
+    const load = (t) => {
+      if (t.includes(MMV)) return { codexSessions: 0, load1: 0.0 }; // 全场最闲
+      return { codexSessions: 9, load1: 8.0 };                       // 主力都很忙
+    };
+    expect(pickRunner(allAlive, { loadFn: load }).name).not.toBe('MMV');
+  });
+
+  it('只有一台主力活 → 直接选它，不管负载多高', () => {
+    const onlyM1 = (t) => t.includes(M1);
+    const load = () => ({ codexSessions: 99, load1: 30.0 });
+    expect(pickRunner(onlyM1, { loadFn: load }).name).toBe('XIAN-M1');
+  });
+
+  it('两台主力都不可达 → 才回落 MMV（兜底仍要保住 codex 可用）', () => {
+    const onlyMMV = (t) => t.includes(MMV);
+    expect(pickRunner(onlyMMV, { loadFn: () => ({ codexSessions: 0, load1: 0 }) }).name).toBe('MMV');
+  });
+
+  it('三台全灭 → null（保持现状，不写坏路由）', () => {
+    expect(pickRunner(() => false, { loadFn: () => null })).toBeNull();
+  });
+
+  it('负载探测失败的机器按最忙处理，不被误选', () => {
+    const load = (t) => (t.includes(M4) ? null : { codexSessions: 3, load1: 1.5 });
+    expect(pickRunner(allAlive, { loadFn: load }).name).toBe('XIAN-M1');
+  });
+
+  it('滞后：当前跑场仍健康且没明显更优时不切换（避免抖动）', () => {
+    // M1 只比 M4 少 1 个会话，差距没到阈值 → 维持现状 M4
+    const load = (t) => (t.includes(M4) ? { codexSessions: 2, load1: 1.0 } : { codexSessions: 1, load1: 0.9 });
+    expect(pickRunner(allAlive, { loadFn: load, current: 'XIAN-M4' }).name).toBe('XIAN-M4');
+    // 差距拉大到阈值以上 → 该切就切
+    const wide = (t) => (t.includes(M4) ? { codexSessions: 6, load1: 5.0 } : { codexSessions: 1, load1: 0.5 });
+    expect(pickRunner(allAlive, { loadFn: wide, current: 'XIAN-M4' }).name).toBe('XIAN-M1');
+  });
+
+  it('当前跑场已掉线 → 滞后不生效，立刻切到活着的主力', () => {
+    const m4Dead = (t) => !t.includes(M4);
+    const load = () => ({ codexSessions: 1, load1: 0.5 });
+    expect(pickRunner(m4Dead, { loadFn: load, current: 'XIAN-M4' }).name).toBe('XIAN-M1');
+  });
+
+  it('不传 loadFn 时退化为按顺序探活（向后兼容旧调用）', () => {
+    const onlyM4 = (t) => t.includes(M4);
+    expect(pickRunner(onlyM4).name).toBe('XIAN-M4');
+  });
+
+  it('parseRunnerLoad 解析远端探针输出（codex 会话数 + load average）', () => {
+    expect(parseRunnerLoad('3\n1.75 1.20 0.98')).toEqual({ codexSessions: 3, load1: 1.75 });
+    expect(parseRunnerLoad('0\n0.05 0.10 0.20')).toEqual({ codexSessions: 0, load1: 0.05 });
+    expect(parseRunnerLoad('')).toBeNull();
+    expect(parseRunnerLoad('garbage')).toBeNull();
   });
 });
 

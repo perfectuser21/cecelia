@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.306.5
+**Brain 版本**: 1.306.6
 
 ## 1.283.0
 
@@ -48,6 +48,14 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.306.6 — codex 跑场池按负载选机：M4/M1 当主力，MMV 让给 Claude/Grok
+
+- 旧逻辑 `pickRunner` 是「按 `RUNNERS` 顺序取第一个探活成功的」，而 MMV 排第一且从不掉线 —— **XIAN-M4 / XIAN-M1 作为备胎一次都没被召唤过**。2026-09-20 实测佐证：MMV 上 45 个 codex 进程，M4/M1 各只有 1 个。
+- 为什么 MMV 不该干 codex 的活（主理人 0920 拍板）：Claude 与 Grok 的凭据只在 MMV，OpenClaw 用 `auth.profiles` 的 token 直连它们（`clawdbot.json`: `xai:manual` / `anthropic:manual`）——**MMV 是这两家唯一的执行机**；而 codex 走 `agentRuntime` → ssh 到 `session-runner` 跑 CLI，哪台机都行。
+- 三台召唤链路 0920 实测完全等价：网关 key 都能 ssh、codex 0.151.0 都在、用网关原样命令都能起 app-server（M4 实测通过）、出网 IP 同为 `38.23.47.81`（M4/M1 无需额外代理）；且 M4/M1 都有 `~/.codex/auth.json`，MMV 反而没有。
+- 改法：`RUNNERS` 加 `role`（M4/M1=`codex-primary`，MMV=`fallback`）；`pickRunner` 只在主力间竞争，按 codex 会话数选最闲、打平比 load average；负载探不到的机器按最忙处理（不拿编造的 0 误导）；加切换滞后（新候选要少 2 个会话才值得切，否则维持现状不打断在跑的会话）；主力全不可达才回落 MMV，全灭返回 null 保持现状。
+- 守卫落 `src/__tests__/openclaw-guards.test.js`（12 条新断言），三条变异逐一验过必红：MMV 改成主力 / 去掉滞后 / 探测失败当最闲。
 
 ## Brain 1.306.4 — 配额采集器三处止血：自 gate / 异步化 / 失败不擦白
 

@@ -20,11 +20,50 @@ const WORKSPACES = '/opt/openclaw/workspaces-root';
 // 容器 cgroup 硬顶同步抬 2.29G（阈值必须 < 硬顶，否则守卫永远抢不到 OOM 前面）。
 // env 可调免发版；真泄漏判据改由 memlog 观测线甄别（会话归零后不回落=真漏）。
 const MEM_LIMIT_MB = parseInt(process.env.OPENCLAW_MEM_LIMIT_MB || '2000', 10);
-const RUNNERS = Object.freeze([
-  { name: 'MMV', ip: '100.71.151.105', user: 'administrator' },
-  { name: 'XIAN-M4', ip: '100.86.57.69', user: 'jinnuoshengyuan' },
-  { name: 'XIAN-M1', ip: '100.88.166.55', user: 'xx-macmini' },
+/**
+ * codex 跑场池。**顺序即优先级，role 决定谁能参与常规竞争。**
+ *
+ * 为什么 MMV 是 fallback 而不是主力（主理人 0920 拍板）：
+ * Claude 与 Grok 的凭据只在 MMV，OpenClaw 用 auth.profiles 的 token 直连它们
+ * （clawdbot.json: `xai:manual` / `anthropic:manual`）——**MMV 是这两家唯一的
+ * 执行机**。而 codex 走 agentRuntime → ssh 到 session-runner 跑 CLI，哪台机都行。
+ * 让 codex 去 M4/M1，MMV 就能专心伺候 Claude 和 Grok。
+ *
+ * 0920 实测三台的 codex 召唤链路完全等价：网关 key 都能 ssh、codex 0.151.0 都在、
+ * 用网关原样命令都能起 app-server、出网 IP 同为 38.23.47.81（M4/M1 无需额外代理）；
+ * 且 M4/M1 都有 ~/.codex/auth.json，MMV 反而没有。
+ */
+export const RUNNERS = Object.freeze([
+  { name: 'XIAN-M4', ip: '100.86.57.69', user: 'jinnuoshengyuan', role: 'codex-primary' },
+  { name: 'XIAN-M1', ip: '100.88.166.55', user: 'xx-macmini', role: 'codex-primary' },
+  { name: 'MMV', ip: '100.71.151.105', user: 'administrator', role: 'fallback' },
 ]);
+
+/** 远端负载探针命令：第一行 codex 进程数，第二行 uptime 的三个 load average。 */
+export const RUNNER_LOAD_PROBE =
+  "ps axo command | grep -c '[c]odex' ; sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | awk '{print $1, $2, $3}'";
+
+/**
+ * 解析 RUNNER_LOAD_PROBE 的输出。任何解析不出的形态一律返回 null ——
+ * 调用方会把 null 当「最忙」处理，宁可不选它，也不拿编造的 0 去误导选机。
+ */
+export function parseRunnerLoad(raw) {
+  const lines = String(raw || '').trim().split('\n').map((l) => l.trim()).filter(Boolean);
+  if (lines.length < 2) return null;
+  const codexSessions = Number.parseInt(lines[0], 10);
+  const load1 = Number.parseFloat(lines[1].split(/\s+/)[0]);
+  if (!Number.isFinite(codexSessions) || !Number.isFinite(load1)) return null;
+  return { codexSessions, load1 };
+}
+
+/** 负载探测失败时的记分：排到所有真实读数之后。 */
+const BUSIEST = { codexSessions: Number.POSITIVE_INFINITY, load1: Number.POSITIVE_INFINITY };
+
+/**
+ * 切换滞后阈值：新候选要比当前跑场少这么多个 codex 会话才值得切。
+ * 没有它，两台负载在伯仲之间时会每 5 分钟来回抖，正在跑的会话跟着遭殃。
+ */
+const SWITCH_HYSTERESIS_SESSIONS = 2;
 
 export function parseMemMB(s) {
   const t = String(s).trim();
@@ -134,11 +173,42 @@ export function parseOutreachHealth(logTail) {
   return { verdict: 'idle', stalledTicks: 0, reason: null };
 }
 
-export function pickRunner(probeFn) {
-  for (const r of RUNNERS) {
-    if (probeFn(`${r.user}@${r.ip}`)) return r;
+/**
+ * 选 codex 跑场。
+ *
+ * 规则（依次）：
+ *  1. 只在 `codex-primary`（M4/M1）里竞争——MMV 再闲也不抢，它要留给 Claude/Grok
+ *  2. 活着的主力里选最闲的：先比 codex 会话数，打平再比 load average
+ *  3. 负载探不到的机器按最忙处理（宁可不选，也不拿编造的 0 误导）
+ *  4. 滞后：当前跑场仍健康时，新候选要少 SWITCH_HYSTERESIS_SESSIONS 个会话才值得切
+ *  5. 主力全不可达才回落 MMV；全灭返回 null（调用方保持现状，不写坏路由）
+ *
+ * @param {(target:string)=>boolean} probeFn 探活
+ * @param {{loadFn?:(target:string)=>({codexSessions:number,load1:number}|null), current?:string}} [opts]
+ *   不传 loadFn 时退化为「按顺序取第一个探活成功的」（向后兼容旧调用）
+ */
+export function pickRunner(probeFn, opts = {}) {
+  const { loadFn, current } = opts;
+  const alive = RUNNERS.filter((r) => probeFn(`${r.user}@${r.ip}`));
+  if (alive.length === 0) return null;
+
+  const primaries = alive.filter((r) => r.role === 'codex-primary');
+  // 主力全挂才回落 fallback（MMV）——兜底的意义是保住 codex 可用，不是让它常驻
+  if (primaries.length === 0) return alive[0];
+  if (!loadFn || primaries.length === 1) return primaries[0];
+
+  const scored = primaries.map((r) => ({ runner: r, load: loadFn(`${r.user}@${r.ip}`) || BUSIEST }));
+  const busier = (a, b) => (a.load.codexSessions - b.load.codexSessions) || (a.load.load1 - b.load.load1);
+  scored.sort(busier);
+  const best = scored[0];
+
+  // 滞后：当前跑场还活着且没明显更优时，维持现状，别为了一点点差距打断正在跑的会话
+  const incumbent = scored.find((s) => s.runner.name === current);
+  if (incumbent && incumbent !== best) {
+    const saved = incumbent.load.codexSessions - best.load.codexSessions;
+    if (!(saved >= SWITCH_HYSTERESIS_SESSIONS)) return incumbent.runner;
   }
-  return null;
+  return best.runner;
 }
 
 export function renderRouterConf({ name, ip, user }) {
@@ -231,15 +301,26 @@ export async function runOpenclawGuards(_pool, opts = {}) {
         return true;
       } catch { return false; }
     };
-    const runner = pickRunner(opts.probeFn || probe);
+    // 负载探针：codex 会话数 + load average。探不到返回 null，pickRunner 会按最忙处理。
+    const loadFn = opts.loadFn || ((target) => {
+      try {
+        return parseRunnerLoad(io.exec('ssh', ['-i', `${STATE}/mmv_key`, '-o', 'BatchMode=yes',
+          '-o', 'ConnectTimeout=5', '-o', 'StrictHostKeyChecking=accept-new', target,
+          RUNNER_LOAD_PROBE], { timeout: 12_000 }));
+      } catch { return null; }
+    });
+    const confPath = `${STATE}/ssh-router.conf`;
+    const cur = io.read(confPath) || '';
+    // 从现有 conf 反解当前跑场，供滞后判断（别为一点点负载差打断正在跑的会话）
+    const current = RUNNERS.find((r) => cur.includes(`HostName ${r.ip}`))?.name;
+
+    const runner = pickRunner(opts.probeFn || probe, { loadFn, current });
     if (runner) {
-      const confPath = `${STATE}/ssh-router.conf`;
-      const cur = io.read(confPath) || '';
       if (!cur.includes(`HostName ${runner.ip}`)) {
         io.write(confPath, renderRouterConf(runner));
-        io.log(`跑场切换 -> ${runner.name} (${runner.ip})`);
+        io.log(`跑场切换 ${current || '(无)'} -> ${runner.name} (${runner.ip})`);
       }
-      out.router = { runner: runner.name };
+      out.router = { runner: runner.name, previous: current || null };
     } else {
       out.router = { runner: null };
       io.log('全部跑场不可达，保持现状');
