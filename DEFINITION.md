@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.306.3
+**Brain 版本**: 1.306.4
 
 ## 1.283.0
 
@@ -48,6 +48,15 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.306.4 — 配额采集器三处止血：自 gate / 异步化 / 失败不擦白
+
+- 2026-09-20 实证：`ops_model_accounts` 里两个 Claude 号 pct 恒 NULL、`last_error='anthropic usage HTTP 429'`。三条根因叠加，导致配额数据不能当选号权威：
+  - **自造 429**：scheduler 是「60s 轮询 + 模块自 gate」，而 `ops-model-accounts-collector` 是裸调用、没有自己那半边 gate → 每分钟全量打 8 个账号的厂商 usage API（≈480 次/小时）。现加 5min 自 gate（`only`/`force` 可绕过，供选号侧按需刷新单账号），并加单轮总预算 60s。
+  - **同步掐死事件循环**：`defaultExec` 是 `execSync`，8 账号串行 × 30s = 最坏 240s 阻塞；而 job 的 `timeoutMs` 走 `Promise.race`，对同步阻塞完全无效（定时器根本没机会跑）——那道超时闸是纸糊的。新增 `defaultExecAsync` 并改用；`defaultExec` 保留不动。
+  - **失败擦白历史读数**：catch 后仍以 `EMPTY_SNAPSHOT` 走全列 upsert，一次抖动就把上一轮真实读数抹成 NULL，于是 NULL 的语义变成「最近一次采集失败」而非「没查到」。拆出 `upsertModelAccountFailure`，失败只写 status/last_error/计数/时间戳。
+- 主理人判定（decisions category=judgment）：单次失败不算数——可重试类错误轮内重试 2 次（退避 1s→2s），**429 不重试**（重试加剧限流，与第一条根因同源）并新增独立分类 `rate_limited`，`key_expired`/`no_credential` 是确定性否定事实不重试；`consecutive_failures`（migration 455）在 SQL 里 `+1`/归零、status 用 `CASE` 在未达 3 轮前保持上轮值（不做 SELECT-then-UPDATE），连续 3 轮（15min）才告警一次。
+- 守卫 `tests/gp/g5/step1-quota-collector-stabilize.test.js`，三条变异逐一验过必红。
 
 ## Brain 1.306.3 — bugfix 快车道修通：直配合同产物根目录改用任务 sprint_dir
 
