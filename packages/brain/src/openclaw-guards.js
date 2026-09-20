@@ -39,6 +39,24 @@ export const RUNNERS = Object.freeze([
   { name: 'MMV', ip: '100.71.151.105', user: 'administrator', role: 'fallback' },
 ]);
 
+/**
+ * 两个 ssh 别名，**必须分开**（2026-09-20 P0 事故）。
+ *
+ * `session-runner` 是 `/usr/local/bin/claude` 包装脚本里写死的名字：
+ *   SR='-F /root/.openclaw/ssh-router.conf session-runner'; ssh $SR ...
+ * 这个名字不能改（改了要动容器里的脚本），所以让它**钉死 MMV**——
+ * 凭据只在 MMV，不在 M4/M1 登录 Claude/Grok（主理人 0920 拍板）。
+ *
+ * `codex-runner` 是新增的，只给 codex 的 appServer 用，跟着跑场池走。
+ *
+ * 事故经过：此前两者共用 `session-runner`，跑场一切到 XIAN-M1，
+ * Claude 被 codex 的负载均衡一起带走，而 M1 既没装 claude CLI 也没有凭据。
+ * 教训：**配置不是唯一的事实来源**——clawdbot.json 里只有 1 处引用，
+ * 文件系统里还藏着一个包装脚本。
+ */
+export const CLAUDE_RUNNER_HOST = 'session-runner';
+export const CODEX_RUNNER_HOST = 'codex-runner';
+
 /** 远端负载探针命令：第一行 codex 进程数，第二行 uptime 的三个 load average。 */
 export const RUNNER_LOAD_PROBE =
   "ps axo command | grep -c '[c]odex' ; sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | awk '{print $1, $2, $3}'";
@@ -113,7 +131,8 @@ export function checkConfigDrift(cfg) {
   if (local.length > 0) return `agent本机embedded漏网:${local.join(',')}`;
   const a = findAppServer(cfg);
   if (!a || a.command !== '/usr/bin/ssh') return 'appServer非ssh下放形态';
-  if (!(a.args || []).join(' ').includes('session-runner')) return 'appServer未走跑场池别名';
+  // 必须是 codex-runner；还写着 session-runner 就是事故前的老形态（会把 Claude 一起带走）
+  if (!(a.args || []).join(' ').includes(CODEX_RUNNER_HOST)) return `appServer未走跑场池别名(应为 ${CODEX_RUNNER_HOST})`;
   return null;
 }
 
@@ -133,7 +152,7 @@ export function restoreConfigShape(cfg) {
   const a = findAppServer(d);
   if (a) {
     a.command = '/usr/bin/ssh';
-    a.args = ['-F', '/root/.openclaw/ssh-router.conf', 'session-runner',
+    a.args = ['-F', '/root/.openclaw/ssh-router.conf', CODEX_RUNNER_HOST,
       'env', 'CODEX_HOME=$HOME/.codex-gwremote',
       '/opt/homebrew/bin/codex', '-c', 'cli_auth_credentials_store="ephemeral"',
       'app-server', '--listen', 'stdio://'];
@@ -212,16 +231,24 @@ export function pickRunner(probeFn, opts = {}) {
 }
 
 export function renderRouterConf({ name, ip, user }) {
-  return `# 会话跑场路由（Brain openclaw-guards 自动改写; 当前=${name}）
-Host session-runner
-  HostName ${ip}
-  User ${user}
+  // claude 那条钉死 MMV：凭据只在 MMV，M4/M1 不登录 Claude/Grok
+  const claudeHost = RUNNERS.find((r) => r.role === 'fallback');
+  const block = (host, h) => `Host ${host}
+  HostName ${h.ip}
+  User ${h.user}
   IdentityFile /root/.openclaw/mmv_key
   BatchMode yes
   StrictHostKeyChecking accept-new
   ServerAliveInterval 15
   ServerAliveCountMax 4
 `;
+  return `# 会话跑场路由（Brain openclaw-guards 自动改写; 当前=${name}）
+#
+# 两条路由分开走（2026-09-20 P0 事故后）：
+#   ${CLAUDE_RUNNER_HOST}：/usr/local/bin/claude 包装脚本用，钉死 MMV
+#   ${CODEX_RUNNER_HOST}：codex appServer 用，跟跑场池走（当前=${name}）
+${block(CLAUDE_RUNNER_HOST, claudeHost)}
+${block(CODEX_RUNNER_HOST, { ip, user })}`;
 }
 
 // ——— 运行时组装（IO 全注入，默认真实现）———

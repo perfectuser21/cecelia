@@ -3,6 +3,7 @@ import {
   parseMemMB, memGuardDecision, checkConfigDrift, restoreConfigShape,
   doctrineSeedPlan, pickRunner, renderRouterConf, DOCTRINE_MARK,
   parseOutreachHealth, MEMLOG_PS_ARGS, RUNNERS, parseRunnerLoad,
+  CODEX_RUNNER_HOST, CLAUDE_RUNNER_HOST,
 } from '../openclaw-guards.js';
 
 // us-vps 零执行守卫收编 Brain（决策 95477a66）：宿主散装 cron → Brain scheduler job。
@@ -25,9 +26,10 @@ describe('openclaw-guards — 内存守卫', () => {
 });
 
 describe('openclaw-guards — 配置漂移', () => {
+  // 0920 起 appServer 必须走 codex-runner（session-runner 留给 claude 包装脚本，钉死 MMV）
   const goodCfg = {
     agents: { defaults: { model: { primary: 'openai/gpt-5.6-terra', fallbacks: ['openai/gpt-5.6-sol'] } } },
-    plugins: { entries: { codex: { config: { appServer: { command: '/usr/bin/ssh', args: ['-F', '/root/.openclaw/ssh-router.conf', 'session-runner', 'app-server'] } } } } },
+    plugins: { entries: { codex: { config: { appServer: { command: '/usr/bin/ssh', args: ['-F', '/root/.openclaw/ssh-router.conf', 'codex-runner', 'app-server'] } } } } },
   };
   it('铁律形状通过；primary 回落/appServer 非池形态判漂移', () => {
     expect(checkConfigDrift(goodCfg)).toBeNull();
@@ -74,6 +76,79 @@ describe('openclaw-guards — 跑场路由', () => {
     expect(conf).toContain('HostName 100.71.151.105');
     expect(conf).toContain('User administrator');
     expect(conf).toContain('IdentityFile /root/.openclaw/mmv_key');
+  });
+});
+
+// ── P0 事故守卫：claude 和 codex 必须走两条独立路由（2026-09-20 实测）────────
+//
+// 事故：PR #5438 把跑场路由切到 XIAN-M1 后，Claude 在生产上直接不可用。
+//
+// 根因不在跑场池选谁，而在**两个 CLI 共用了同一个 ssh 别名**：
+//   /usr/local/bin/claude 是个包装脚本，内容是
+//     SR='-F /root/.openclaw/ssh-router.conf session-runner'; ssh $SR ...
+//   codex plugin 的 appServer 也是 `ssh -F ssh-router.conf session-runner ...`
+//   于是路由一动，**Claude 被 codex 的负载均衡一起带走了**。
+//   （此前只在 clawdbot.json 里 grep 到 1 处引用就断言"Claude 不走跑场"，
+//     漏了文件系统里的这个包装脚本——配置不是唯一的事实来源。）
+//
+// 主理人 0920 拍板的正确形态：
+//   - 凭据只在 MMV；**不在 M4/M1 登录 Claude 或 Grok**
+//   - 只有 codex 穿透到 M4/M1
+//   - Claude CLI / Grok 一律只在 MMV 跑
+//
+// 落法：拆成两个别名，claude 那个钉死 MMV，codex 那个才跟跑场池走。
+// 这样 M1 不需要任何 Claude 凭证，容器里的包装脚本也一行都不用改。
+describe('openclaw-guards — claude 与 codex 路由分离', () => {
+  const MMV_IP = '100.71.151.105';
+  const M4 = { name: 'XIAN-M4', ip: '100.86.57.69', user: 'jinnuoshengyuan' };
+
+  it('两个别名都导出，供配置与脚本同源引用（禁手抄字面量）', () => {
+    expect(CODEX_RUNNER_HOST).toBe('codex-runner');
+    // claude 包装脚本里写死的是 session-runner，这个名字不能改
+    expect(CLAUDE_RUNNER_HOST).toBe('session-runner');
+  });
+
+  it('跑场切到 M4 时：codex-runner 指向 M4，session-runner 仍钉死 MMV', () => {
+    const conf = renderRouterConf(M4);
+    const codexBlock = conf.slice(conf.indexOf(`Host ${CODEX_RUNNER_HOST}`));
+    const claudeBlock = conf.slice(
+      conf.indexOf(`Host ${CLAUDE_RUNNER_HOST}`),
+      conf.indexOf(`Host ${CODEX_RUNNER_HOST}`),
+    );
+    expect(claudeBlock).toContain(`HostName ${MMV_IP}`);
+    expect(claudeBlock).toContain('User administrator');
+    expect(codexBlock).toContain(`HostName ${M4.ip}`);
+    expect(codexBlock).toContain(`User ${M4.user}`);
+  });
+
+  it('跑场切到 M1 时 session-runner 依然是 MMV —— 事故场景不再复现', () => {
+    const conf = renderRouterConf({ name: 'XIAN-M1', ip: '100.88.166.55', user: 'xx-macmini' });
+    const claudeBlock = conf.slice(
+      conf.indexOf(`Host ${CLAUDE_RUNNER_HOST}`),
+      conf.indexOf(`Host ${CODEX_RUNNER_HOST}`),
+    );
+    expect(claudeBlock).toContain(`HostName ${MMV_IP}`);
+    expect(claudeBlock).not.toContain('100.88.166.55');
+  });
+
+  it('codex appServer 必须走 codex-runner；仍写 session-runner 判为漂移', () => {
+    const mk = (host) => ({
+      agents: { defaults: { model: { primary: 'openai/gpt-5.6-terra', fallbacks: ['openai/gpt-5.6-sol'] } }, entries: {} },
+      plugins: { entries: { codex: { config: { appServer: { command: '/usr/bin/ssh', args: ['-F', '/root/.openclaw/ssh-router.conf', host, 'app-server'] } } } } },
+    });
+    expect(checkConfigDrift(mk('session-runner'))).toMatch(/别名|codex-runner/);
+    expect(checkConfigDrift(mk('codex-runner'))).toBeNull();
+  });
+
+  it('restoreConfigShape 把 appServer 拉回 codex-runner', () => {
+    const broken = {
+      agents: { defaults: { model: { primary: 'openai/gpt-5.6-sol', fallbacks: [] } }, entries: {} },
+      plugins: { entries: { codex: { config: { appServer: { command: '/usr/bin/ssh', args: ['-F', '/root/.openclaw/ssh-router.conf', 'session-runner', 'app-server'] } } } } },
+    };
+    const fixed = restoreConfigShape(broken);
+    const args = fixed.plugins.entries.codex.config.appServer.args.join(' ');
+    expect(args).toContain('codex-runner');
+    expect(args).not.toContain('session-runner');
   });
 });
 
@@ -226,7 +301,7 @@ describe('openclaw-guards — agent 级模型漂移（本机 embedded 漏网）'
         dev: { model: 'openai/gpt-5.6-sol' },
       },
     },
-    plugins: { entries: { codex: { config: { appServer: { command: '/usr/bin/ssh', args: ['-F', 'x', 'session-runner'] } } } } },
+    plugins: { entries: { codex: { config: { appServer: { command: '/usr/bin/ssh', args: ['-F', 'x', 'codex-runner'] } } } } },
   };
   it('agent 级 sol 覆盖被判漂移（点名漏网者）', () => {
     const drift = checkConfigDrift(base);
