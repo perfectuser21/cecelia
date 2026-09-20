@@ -2,8 +2,11 @@
 // —— 边：配额账本 → kernel 派发的账号闸
 //
 // 本文件真 import 被改的流水线模块，不 vi.mock 它们（CI 闸 lint-gp-anchor-artifact）。
-// ⚠️ 禁止出现任何以 `run` 结尾的 mock 路径：本刀会改 run.js，闸的 MOD_BASES 会带上
-//    基名 `run`，其 mock 检测正则会把 vi.mock('.../dry-run.js') 误判成「把边 mock 掉」。
+// ⚠️ 禁止出现任何以 `run` 结尾的 mock 路径（连注释里的示例字面量也不行）：本刀改了
+//    run.js，闸的 MOD_BASES 带上基名 `run` 后，其检测正则会把形如「dry-run.js 的
+//    模块替身声明」误判成「把边 mock 掉」——本文件第一版就是被自己的注释点红的。
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import {
   MODEL_ACCOUNTS,
@@ -12,6 +15,7 @@ import {
 } from '../../../packages/brain/src/ops-model-accounts-collector.js';
 import { listVerifiedExecutionTargets } from '../../../packages/brain/src/orchestrator/preflight/execution-targets.js';
 import { createCapabilityGate } from '../../../packages/brain/src/orchestrator/preflight/capability-gate.js';
+import { createKernelAlertEmitter } from '../../../packages/brain/src/orchestrator/run.js';
 
 describe('账号 id 映射：候选池与配额账本必须一一对上', () => {
   it('每条 MODEL_ACCOUNTS 都带显式 runtime_account_id（禁拼串规则）', () => {
@@ -294,5 +298,79 @@ describe('全灭保底放行', () => {
     expect(second.status).toBe('ok');
     expect(second.to_target.account).toBe('account1');
     expect(second.fallback_reason).not.toBe('account_quota_degraded_admit');
+  });
+});
+
+describe('run.js 生产接线（这些接缝不接上就是死代码）', () => {
+  const src = readFileSync(
+    fileURLToPath(new URL('../../../packages/brain/src/orchestrator/run.js', import.meta.url)),
+    'utf8',
+  );
+
+  it('loadAccountQuota 被注入给 capability gate', () => {
+    expect(src).toMatch(/loadAccountQuota\s*:/);
+    expect(src).toMatch(/createQuotaLedgerLoader/);
+  });
+
+  it('emitAlert 被注入——否则 capability-gate 的 optional chain 永远静默', () => {
+    expect(src).toMatch(/emitAlert\s*:/);
+  });
+
+  it('注入层不再有裸 catch { return true } 的无痕 fail-open', () => {
+    expect(src).not.toMatch(/catch\s*\{\s*\n?\s*return true;\s*\/\/\s*fail-open/);
+  });
+
+  it('全灭告警是 P0 且带 n=1 去抖（首击即响 + 之后静默，防每跳刷屏）', () => {
+    expect(src).toMatch(/kernel_account_quota_all_exhausted/);
+    expect(src).toMatch(/n:\s*1/);
+  });
+
+  it('preflight_blocked 不重复告警（run.js:328-338 的 onPreflightBlocked 已覆盖）', () => {
+    expect(src).toMatch(/kernel_capability_preflight_blocked/);
+  });
+});
+
+describe('emitAlert adapter 的级别映射与去重', () => {
+  const mk = () => {
+    const raised = [];
+    return {
+      raised,
+      emit: createKernelAlertEmitter({ raise: async (...a) => { raised.push(a); } }),
+    };
+  };
+
+  it('全灭 → P0 + n=1 去抖', async () => {
+    const { raised, emit } = mk();
+    await emit({ kind: 'kernel_account_quota_all_exhausted', admitted_account: 'account2', admitted_pct: 92 });
+    expect(raised).toHaveLength(1);
+    const [level, eventType, , opts] = raised[0];
+    expect(level).toBe('P0');
+    expect(eventType).toBe('kernel_account_quota_all_exhausted');
+    expect(opts?.debounce?.n).toBe(1);
+  });
+
+  it('判据降级 → P1 + 去抖', async () => {
+    const { raised, emit } = mk();
+    await emit({ kind: 'kernel_account_quota_gate_degraded', reason: 'ledger_unavailable:ECONNREFUSED' });
+    expect(raised[0][0]).toBe('P1');
+    expect(raised[0][3]?.debounce).toBeTruthy();
+  });
+
+  it('preflight_blocked 不再发一遍（onPreflightBlocked 已覆盖）', async () => {
+    const { raised, emit } = mk();
+    await emit({ kind: 'kernel_capability_preflight_blocked', action: 'wait:human_review' });
+    expect(raised).toHaveLength(0);
+  });
+
+  it('未知 kind 兜底 P2，不静默丢弃', async () => {
+    const { raised, emit } = mk();
+    await emit({ kind: 'something_new' });
+    expect(raised).toHaveLength(1);
+    expect(raised[0][0]).toBe('P2');
+  });
+
+  it('raise 抛错不冒泡（告警不能反过来打断派发）', async () => {
+    const emit = createKernelAlertEmitter({ raise: async () => { throw new Error('alert down'); } });
+    await expect(emit({ kind: 'kernel_account_quota_all_exhausted' })).resolves.toBeUndefined();
   });
 });
