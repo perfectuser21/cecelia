@@ -314,6 +314,47 @@ export function createCapabilityGate(deps = {}) {
       }
     }
 
+    // 全灭保底：8 个号全被配额判死时，放行 pct 最低的那个并标 degraded，
+    // 而不是让 run 落 blocked —— loop.js:1917-1924 把 infrastructure_blocked
+    // 排除在 blocked-streak 外，全灭不是判死而是每 90s 静默转圈到 run deadline。
+    //
+    // 三条不得破坏：① 只读不写 exhaustedAccounts（写了该号下一跳被永久踢出）；
+    // ② 只做一次裸 probeProviderAuth，不复用瞬时重试逻辑（会二次写 retryExhausted
+    //    并把 fallback_reason 改写成 provider_transient_retry_exhausted）；
+    // ③ credential_invalid 不进保底候选 —— 对它跑认证探针必然失败，白耗预算。
+    if (!selectedTarget && quotaUnusable.length > 0) {
+      const eligible = quotaUnusable
+        .filter((entry) => entry.reason !== 'credential_invalid')
+        .sort((a, b) => (a.pct ?? Number.POSITIVE_INFINITY) - (b.pct ?? Number.POSITIVE_INFINITY));
+      const pick = eligible[0];
+      if (pick) {
+        await deps.emitAlert?.({
+          kind: 'kernel_account_quota_all_exhausted',
+          admitted_account: pick.account,
+          admitted_pct: pick.pct,
+          candidates: quotaUnusable.map(({ account, reason, pct }) => ({ account, reason, pct })),
+        });
+        let degradedAuth = null;
+        try {
+          degradedAuth = requirements.provider_auth
+            ? await probe(() => deps.probeProviderAuth({ ...pick.candidate, task_bundle: taskBundle }))
+            : { ok: true, skipped: true };
+        } catch {
+          degradedAuth = { ok: false, signature: 'provider_probe_error' };
+        }
+        if (degradedAuth?.ok) {
+          selectedTarget = { ...pick.candidate };
+          providerAuth = degradedAuth;
+          lastProviderProbe = degradedAuth;
+          // 循环外 let 此刻停在最后一个候选的值上，必须写回保底候选自己的快照
+          machine = pick.candidate.machine;
+          health = pick.health;
+          capacity = pick.capacity;
+          fallbackReason = 'account_quota_degraded_admit';
+        }
+      }
+    }
+
     const quotaEvidence = {
       ...(quotaUnusable.length
         ? { quota_unusable: quotaUnusable.map(({ account, reason, pct }) => ({ account, reason, pct })) }

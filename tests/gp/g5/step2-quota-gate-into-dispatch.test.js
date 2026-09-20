@@ -186,3 +186,113 @@ describe('capability-gate 接入配额判据', () => {
     expect(r.to_target.account).toBe('account2');
   });
 });
+
+// 取两台不同的白名单机器（codex 在所有计算机器上都有候选）
+const MACHINES = [...new Set(listVerifiedExecutionTargets().map((t) => t.machine))];
+
+describe('全灭保底放行', () => {
+  it('全判死 → 放行 pct 最低的那个，并标 degraded + 告警', async () => {
+    const pct = { account1: 97, account2: 92, team1: 99 };
+    const snap = {
+      degraded: false,
+      verdictFor: (a) => ({ verdict: 'unusable', reason: 'seven_day_exhausted', pct: pct[a] }),
+    };
+    const alerts = [];
+    const gate = createCapabilityGate(gateDeps({
+      loadAccountQuota: async () => snap,
+      emitAlert: async (a) => { alerts.push(a); },
+    }));
+    const r = await gate.evaluate({
+      preferred_target: T('claude', 'account1'),
+      candidate_targets: [T('claude', 'account1'), T('claude', 'account2'), T('codex', 'team1')],
+      ...REQ,
+    });
+    expect(r.status).toBe('ok');
+    expect(r.to_target.account).toBe('account2');              // pct 最低
+    expect(r.fallback_reason).toBe('account_quota_degraded_admit');
+    expect(alerts.map((a) => a.kind)).toContain('kernel_account_quota_all_exhausted');
+  });
+
+  it('凭据失效的号不进保底候选（跑 providerAuth 必然失败，白耗探针）', async () => {
+    const snap = {
+      degraded: false,
+      verdictFor: (a) => (a === 'account1'
+        ? { verdict: 'unusable', reason: 'credential_invalid', pct: 1 }
+        : { verdict: 'unusable', reason: 'seven_day_exhausted', pct: 95 }),
+    };
+    const gate = createCapabilityGate(gateDeps({ loadAccountQuota: async () => snap }));
+    const r = await gate.evaluate({
+      preferred_target: T('claude', 'account1'),
+      candidate_targets: [T('claude', 'account1'), T('claude', 'account2')],
+      ...REQ,
+    });
+    expect(r.status).toBe('ok');
+    expect(r.to_target.account).toBe('account2');   // 不是 pct=1 的 account1
+  });
+
+  it('保底候选带回自己的 health/capacity，不串到别的候选上', async () => {
+    const [mA, mB] = MACHINES;
+    const healths = { [mA]: { ok: true, tag: 'A' }, [mB]: { ok: true, tag: 'B' } };
+    const snap = {
+      degraded: false,
+      verdictFor: (a) => ({ verdict: 'unusable', reason: 'five_hour_exhausted', pct: a === 'team1' ? 96 : 99 }),
+    };
+    const gate = createCapabilityGate(gateDeps({
+      loadAccountQuota: async () => snap,
+      getMachineHealth: async ({ machine }) => healths[machine],
+      getMachineCapacity: async ({ machine }) => ({ ok: true, available: 4, tag: healths[machine].tag }),
+    }));
+    const r = await gate.evaluate({
+      preferred_target: T('codex', 'team1', mA),
+      candidate_targets: [T('codex', 'team1', mA), T('codex', 'team2', mB)],
+      ...REQ,
+    });
+    expect(r.status).toBe('ok');
+    expect(r.snapshot.machine).toBe(mA);       // pct 最低的 team1 在 mA 上
+    // snapshot.health/capacity 读的是循环外 let，不写回就会带上最后一个候选（mB）的快照
+    expect(r.snapshot.health.tag).toBe('A');
+    expect(r.snapshot.capacity.tag).toBe('A');
+  });
+
+  it('保底的认证探针失败 → 照旧 blocked，不吞', async () => {
+    const snap = { degraded: false, verdictFor: () => ({ verdict: 'unusable', reason: 'five_hour_exhausted', pct: 99 }) };
+    const gate = createCapabilityGate(gateDeps({
+      loadAccountQuota: async () => snap,
+      probeProviderAuth: async () => ({ ok: false, signature: 'auth_failed' }),
+    }));
+    const r = await gate.evaluate({
+      preferred_target: T('claude', 'account1'),
+      candidate_targets: [T('claude', 'account1')],
+      ...REQ,
+    });
+    expect(r.status).toBe('blocked');
+    expect(r.evidence.quota_unusable).toHaveLength(1);
+  });
+
+  it('保底不写 exhaustedAccounts —— 同一 gate 实例第二次 evaluate 该号仍可被选', async () => {
+    let allDead = true;
+    const gate = createCapabilityGate(gateDeps({
+      loadAccountQuota: async () => ({
+        degraded: false,
+        verdictFor: () => (allDead
+          ? { verdict: 'unusable', reason: 'five_hour_exhausted', pct: 96 }
+          : { verdict: 'usable', reason: 'within_budget', pct: 5 }),
+      }),
+    }));
+    const first = await gate.evaluate({
+      preferred_target: T('claude', 'account1'),
+      candidate_targets: [T('claude', 'account1')],
+      ...REQ,
+    });
+    expect(first.fallback_reason).toBe('account_quota_degraded_admit');
+    allDead = false;
+    const second = await gate.evaluate({
+      preferred_target: T('claude', 'account1'),
+      candidate_targets: [T('claude', 'account1')],
+      ...REQ,
+    });
+    expect(second.status).toBe('ok');
+    expect(second.to_target.account).toBe('account1');
+    expect(second.fallback_reason).not.toBe('account_quota_degraded_admit');
+  });
+});
