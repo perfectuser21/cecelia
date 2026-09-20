@@ -76,6 +76,31 @@
 
 ---
 
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期红证据 |
+|---|---|---|---|
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 导出采集周期常量 | red |
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 距上次采集不足一个周期 | red |
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 超过一个周期 | red |
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 必须能绕过 gate | red |
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 采集器不得使用同步的 defaultExec | red |
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 单轮全部账号的探测有总预算 | red |
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 采集失败时写库不得触碰 pct 列 | red |
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 采集成功时正常写 pct | red |
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 轮内重试 | red |
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 429 一律不重试 | red |
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 确定性否定事实 | red |
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 连续失败计数在 SQL 里自增 | red |
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 连续失败未达 3 次 | red |
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 连续失败刚好达到 3 次 | red |
+| WS1 | `tests/gp/g5/step1-quota-collector-stabilize.test.js` | 成功一轮后连续失败计数归零 | red |
+
+红证据：commit-1（`4209d1ee1f`）只落守卫不落实现，实跑 **13 failed / 2 passed**；
+commit-2（`e07a21b4eb`）落实现后 15/15 全绿。
+
+---
+
 ## 变异验证（守卫 proven-to-fire）
 
 守卫必须亲眼见它报红过一次才算守卫。三条变异逐一验过：
