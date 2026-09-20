@@ -13,10 +13,35 @@
  * 测试注入成功 fixture 走真 PG 写路径，缺省则走真实 host-exec（生产）。
  */
 import { existsSync, readFileSync } from 'fs';
-import { defaultExec, buildHostCmd } from './host-exec.js';
+import { defaultExecAsync, buildHostCmd } from './host-exec.js';
 
-/** status 四态枚举（唯一一份，route builder 同源 import，禁手抄副本）。 */
-export const MODEL_ACCOUNT_STATUS = Object.freeze(['ok', 'unknown', 'key_expired', 'no_credential']);
+/**
+ * status 五态枚举（唯一一份，route builder 同源 import，禁手抄副本）。
+ *
+ * `rate_limited` 是 0920 新增（任务 424d9dd2）：此前 429 被归进 `unknown`，
+ * 与「真没查到」混为一谈，于是读侧既看不出该退避、也看不出账号其实健康。
+ * usage 接口的 429 ≠ 配额耗尽 —— account-usage.js:585-613 已为这条踩过一次坑
+ * （B49 把健康账号判死导致 pipeline 卡死）。
+ */
+export const MODEL_ACCOUNT_STATUS = Object.freeze(['ok', 'unknown', 'rate_limited', 'key_expired', 'no_credential']);
+
+/**
+ * 自 gate 周期。scheduler 的调度模型是「统一 60s 轮询 + 模块自 gate」
+ * （scheduler-jobs.js:5-9）——幂等由模块自己负责，别的 job 都自带窗口。
+ * 本采集器此前是裸调用，等于每分钟全量打 8 个账号的厂商 usage API
+ * （≈480 次/小时），两个 Claude 号因此恒 429 —— 那个 429 是我们自己造的。
+ */
+export const COLLECT_INTERVAL_MS = 5 * 60 * 1000;
+
+/** 单轮全部账号探测的总预算：超了就把剩下的留到下一轮（保留上轮数据），不让一轮无限延长。 */
+export const COLLECT_BUDGET_MS = 60_000;
+
+/** 可重试错误的轮内重试次数与退避（主理人 0920：一次查不到可能只是网络抖动）。 */
+const MAX_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 1000;
+
+/** 连续失败多少轮才算「真的有问题」（3 × 5min = 15min）。 */
+const FAILURE_STREAK_THRESHOLD = 3;
 
 /**
  * 8 个静态模型账号注册表（端点「恰好 8 条」的 ground truth）。
@@ -107,12 +132,31 @@ function parseUsageByProvider(provider, raw) {
   return parseAnthropicUsage(raw);
 }
 
-/** 非 Grok 采集错误分类：凭据文件缺失/损坏 → no_credential，其余 → unknown。 */
+/**
+ * 非 Grok 采集错误分类：限流 → rate_limited，凭据文件缺失/损坏 → no_credential，其余 → unknown。
+ *
+ * rate_limited 必须先判：429 的报文里常同时出现 usage 端点路径，会被下面那条
+ * credentials.json 正则误吞成 no_credential（把限流说成"没凭据"）。
+ */
 function classifyUsageError(err) {
   const msg = String(err?.message || '');
+  if (/\b429\b|rate[_\s-]?limit|too many requests/i.test(msg)) return 'rate_limited';
   if (/no_credential|No such file|not found|ENOENT|auth\.json|credentials\.json/i.test(msg)) return 'no_credential';
   return 'unknown';
 }
+
+/**
+ * 这个失败值不值得立刻再试一次（主理人 0920 拍板的三档）。
+ *
+ * - `unknown`（ssh 不通 / 超时 / 网络 / 解析失败）→ 重试。典型瞬时故障。
+ * - `rate_limited` → **不重试**。重试只会加剧限流，与「采集器自造 429」同源。
+ * - `key_expired` / `no_credential` → 不重试。确定性否定事实，再试一百次也一样。
+ */
+function isRetryableStatus(status) {
+  return status === 'unknown';
+}
+
+const sleep = (ms) => (ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve());
 
 /** only 过滤：按 provider 名或 account_id 命中（如 'grok'）。 */
 function matchesOnly(acct, only) {
@@ -144,12 +188,12 @@ export function buildProbeCmd(acct, nodeBin = PROBE_NODE_BIN) {
  * 真凭据不进 CI（见合同「未覆盖真实链路清单」）——注入 fetchUsage/grokProbe 后本函数不被触及。
  * 探针非零退出时 exec 抛错，错误文本（stderr）交给上层分类：no_credential / grpc-status 7 → key_expired / 其余 unknown。
  */
-function defaultFetchUsage(acct, exec = defaultExec, keyExistsFn, inContainer = existsSync('/.dockerenv')) {
+async function defaultFetchUsage(acct, exec = defaultExecAsync, keyExistsFn, inContainer = existsSync('/.dockerenv')) {
   let raw;
   try {
-    raw = exec(buildHostCmd(buildProbeCmd(acct), inContainer, keyExistsFn), { timeoutMs: PROBE_TIMEOUT_MS });
+    raw = await exec(buildHostCmd(buildProbeCmd(acct), inContainer, keyExistsFn), { timeoutMs: PROBE_TIMEOUT_MS });
   } catch (err) {
-    // execSync 的 message 会带整条命令（含凭据路径与脚本 base64）——既不能进 last_error，
+    // exec 的 message 会带整条命令（含凭据路径与脚本 base64）——既不能进 last_error，
     // 也会让 classifyUsageError 的 auth.json/credentials.json 正则把任何失败误判成 no_credential。
     // 只保留探针 stderr 的一行结论（no_credential: … / grpc-status: 7 … / HTTP 429 …）。
     const stderr = String(err?.stderr || '').trim();
@@ -168,8 +212,50 @@ function truncErr(e) {
 }
 
 /**
+ * 采集失败时的写库：只更新 status/last_error/计数/时间戳，**绝不触碰 pct 列**。
+ *
+ * 为什么（2026-09-20 实证，任务 424d9dd2）：旧实现失败后仍以 EMPTY_SNAPSHOT 走同一条
+ * 全列 upsert，一次抖动就把上一轮真实读数擦成 NULL。于是表里 NULL 的语义变成了
+ * 「最近一次采集失败」而不是「没查到」，读侧无从分辨，配额数据也就不能当选号权威。
+ *
+ * 连续失败计数与 status 的保持，全部在 SQL 里用 `+1` / `CASE` 完成 ——
+ * 不做「SELECT 判态再 UPDATE」（铁律 761f242b），并发下也不会互相覆盖。
+ * 未达阈值前 status 保持上一轮的值：抖动不该改变对账号的判断。
+ *
+ * @returns {{consecutive_failures:number,status:string}|null} RETURNING 行，供告警判定
+ */
+async function upsertModelAccountFailure(pool, acct, status, lastError) {
+  const res = await pool.query(
+    `INSERT INTO ops_model_accounts
+       (account_id, provider, plan, host_alias, forwardable, forward_targets,
+        status, last_error, consecutive_failures, last_checked_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,1,NOW(),NOW())
+     ON CONFLICT (account_id) DO UPDATE SET
+       provider=EXCLUDED.provider, plan=EXCLUDED.plan,
+       host_alias=EXCLUDED.host_alias, forwardable=EXCLUDED.forwardable,
+       forward_targets=EXCLUDED.forward_targets,
+       consecutive_failures = ops_model_accounts.consecutive_failures + 1,
+       status = CASE
+                  WHEN ops_model_accounts.consecutive_failures + 1 >= ${FAILURE_STREAK_THRESHOLD}
+                  THEN EXCLUDED.status
+                  ELSE ops_model_accounts.status
+                END,
+       last_error = EXCLUDED.last_error,
+       last_checked_at = NOW(), updated_at = NOW()
+     RETURNING consecutive_failures, status`,
+    [
+      acct.account_id, acct.provider, acct.plan ?? null,
+      acct.host_alias, acct.forwardable, JSON.stringify(acct.forward_targets || []),
+      status, truncErr(lastError),
+    ],
+  );
+  return res?.rows?.[0] ?? null;
+}
+
+/**
  * 幂等 upsert 单条账号快照（INV-4：INSERT ... ON CONFLICT (account_id) DO UPDATE，非 SELECT-then-INSERT）。
  * forward_targets 以 jsonb 落库；last_checked_at/updated_at 用 DB 时钟。
+ * 成功即把连续失败计数归零。
  */
 async function upsertModelAccount(pool, acct, snapshot, status, lastError) {
   await pool.query(
@@ -183,6 +269,7 @@ async function upsertModelAccount(pool, acct, snapshot, status, lastError) {
        reset_at=EXCLUDED.reset_at, host_alias=EXCLUDED.host_alias,
        forwardable=EXCLUDED.forwardable, forward_targets=EXCLUDED.forward_targets,
        status=EXCLUDED.status, last_error=EXCLUDED.last_error,
+       consecutive_failures = 0,
        last_checked_at=NOW(), updated_at=NOW()`,
     [
       acct.account_id, acct.provider, acct.plan ?? null,
@@ -205,34 +292,96 @@ async function upsertModelAccount(pool, acct, snapshot, status, lastError) {
  *   注意：本采集器任何路径绝不触碰 refresh 类接缝（INV-1）。
  */
 export async function runModelAccountsCollector(pool, opts = {}) {
-  const { fetchUsage, grokProbe, only, exec, keyExistsFn, inContainer } = opts;
+  const {
+    fetchUsage, grokProbe, only, exec, keyExistsFn, inContainer,
+    force = false,
+    now = () => Date.now(),
+    retryDelayMs = RETRY_DELAY_MS,
+    onAlert = null,
+  } = opts;
+
+  // ── 自 gate ───────────────────────────────────────────────────────────
+  // 60s 轮询 + 模块自 gate 是全局约定（scheduler-jobs.js:5-9）。本采集器此前漏了
+  // 自己这半边，于是每分钟全量打 8 个账号的厂商 usage API，把两个 Claude 号打成 429。
+  // only（选号侧按需刷新单账号）与 force 必须能绕过，否则刀1 的按需刷新接缝就没了。
+  if (!force && !only) {
+    const gate = await pool.query(
+      'SELECT MAX(last_checked_at) AS last_collected_at FROM ops_model_accounts',
+    );
+    const lastAt = gate?.rows?.[0]?.last_collected_at;
+    if (lastAt) {
+      const elapsed = now() - new Date(lastAt).getTime();
+      if (elapsed < COLLECT_INTERVAL_MS) {
+        return {
+          collected: 0, results: [], skipped: true, reason: 'self_gate',
+          next_due_in_ms: COLLECT_INTERVAL_MS - elapsed,
+        };
+      }
+    }
+  }
+
   const targets = MODEL_ACCOUNTS.filter((a) => matchesOnly(a, only));
   const results = [];
+  const startedAt = now();
+  let budgetExhausted = false;
 
   for (const acct of targets) {
+    // 单轮总预算：超了就把剩下的账号留到下一轮（它们保留上轮数据，不被擦白），
+    // 而不是让一轮无限延长——事件循环不该被采集拖着走。
+    if (now() - startedAt >= COLLECT_BUDGET_MS) {
+      budgetExhausted = true;
+      break;
+    }
+
+    const isGrok = /grok/i.test(acct.provider);
     let status = 'ok';
     let snapshot = { ...EMPTY_SNAPSHOT };
     let lastError = null;
-    const isGrok = /grok/i.test(acct.provider);
 
-    try {
-      let raw;
-      if (isGrok && typeof grokProbe === 'function') {
-        raw = await grokProbe(acct);
-      } else if (typeof fetchUsage === 'function') {
-        raw = await fetchUsage(acct);
-      } else {
-        raw = defaultFetchUsage(acct, exec, keyExistsFn, inContainer);
+    // 一次查不到可能只是网络抖动（主理人 0920）。可重试类错误轮内再试，
+    // 429 与确定性否定事实（key_expired/no_credential）立即放弃。
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+      try {
+        let raw;
+        if (isGrok && typeof grokProbe === 'function') {
+          raw = await grokProbe(acct);
+        } else if (typeof fetchUsage === 'function') {
+          raw = await fetchUsage(acct);
+        } else {
+          raw = await defaultFetchUsage(acct, exec, keyExistsFn, inContainer);
+        }
+        snapshot = parseUsageByProvider(acct.provider, raw);
+        status = 'ok';
+        lastError = null;
+        break;
+      } catch (err) {
+        status = isGrok ? classifyGrokUsageError(err) : classifyUsageError(err);
+        lastError = truncErr(err?.message || err);
+        if (!isRetryableStatus(status) || attempt === MAX_ATTEMPTS) break;
+        await sleep(retryDelayMs * attempt);
       }
-      snapshot = parseUsageByProvider(acct.provider, raw);
-    } catch (err) {
-      status = isGrok ? classifyGrokUsageError(err) : classifyUsageError(err);
-      lastError = truncErr(err?.message || err);
     }
 
-    await upsertModelAccount(pool, acct, snapshot, status, lastError);
+    if (status === 'ok') {
+      await upsertModelAccount(pool, acct, snapshot, status, lastError);
+    } else {
+      const row = await upsertModelAccountFailure(pool, acct, status, lastError);
+      // 只在「刚好走满阈值」的那一轮响一次：之前是抖动不值得响，之后再响就是刷屏。
+      if (onAlert && Number(row?.consecutive_failures) === FAILURE_STREAK_THRESHOLD) {
+        await onAlert({
+          account_id: acct.account_id,
+          status,
+          last_error: lastError,
+          consecutive_failures: row.consecutive_failures,
+        });
+      }
+    }
     results.push({ account_id: acct.account_id, status });
   }
 
-  return { collected: results.length, results };
+  return {
+    collected: results.length,
+    results,
+    ...(budgetExhausted ? { budget_exhausted: true } : {}),
+  };
 }

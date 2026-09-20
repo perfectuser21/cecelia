@@ -41,18 +41,23 @@ describe('buildProbeCmd（真采集命令：探针走 stdin，凭据不出宿主
     const pool = { query: async (sql, params) => { queries.push(params); return { rows: [] }; } };
     const { runModelAccountsCollector } = await import('../ops-model-accounts-collector.js');
     const r = await runModelAccountsCollector(pool, { only: 'claude-account1', exec, inContainer: false });
-    expect(r.results).toEqual([{ account_id: 'claude-account1', status: 'unknown' }]);
+    // 429 有独立分类（0920，任务 424d9dd2）：此前归 unknown，与「真没查到」混为一谈，
+    // 读侧既看不出该退避、也看不出账号其实健康。
+    expect(r.results).toEqual([{ account_id: 'claude-account1', status: 'rate_limited' }]);
     expect(calls[0]).toContain('--probe-run claude ~/.claude-account1/.credentials.json');
-    expect(queries[0][10]).toBe('anthropic usage HTTP 429');
+    // 失败路径走 upsertModelAccountFailure（不含 pct 列），last_error 在第 8 个参数位
+    expect(queries[0][7]).toBe('anthropic usage HTTP 429');
   });
 });
 
 const SNAPSHOT_KEYS = ['five_hour_pct', 'seven_day_pct', 'reset_at'];
 
 describe('ops-model-accounts-collector 纯函数', () => {
-  it('status 四态枚举齐全（ok|unknown|key_expired|no_credential）', () => {
+  it('status 五态枚举齐全（ok|unknown|rate_limited|key_expired|no_credential）', () => {
+    // rate_limited 于 0920 加入（任务 424d9dd2）：429 ≠ 配额耗尽，也 ≠ 查不到，
+    // 必须单独一态，读侧才分得清「该退避」与「账号有问题」。
     expect([...MODEL_ACCOUNT_STATUS].sort()).toEqual(
-      ['key_expired', 'no_credential', 'ok', 'unknown'].sort(),
+      ['key_expired', 'no_credential', 'ok', 'rate_limited', 'unknown'].sort(),
     );
   });
 
