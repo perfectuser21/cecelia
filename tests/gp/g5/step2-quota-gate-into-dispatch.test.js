@@ -11,6 +11,7 @@ import {
   ledgerToRuntimeAccountId,
 } from '../../../packages/brain/src/ops-model-accounts-collector.js';
 import { listVerifiedExecutionTargets } from '../../../packages/brain/src/orchestrator/preflight/execution-targets.js';
+import { createCapabilityGate } from '../../../packages/brain/src/orchestrator/preflight/capability-gate.js';
 
 describe('账号 id 映射：候选池与配额账本必须一一对上', () => {
   it('每条 MODEL_ACCOUNTS 都带显式 runtime_account_id（禁拼串规则）', () => {
@@ -48,5 +49,140 @@ describe('账号 id 映射：候选池与配额账本必须一一对上', () => 
     expect(runtimeToLedgerAccountId('team99')).toBeNull();
     expect(ledgerToRuntimeAccountId('codex-team99')).toBeNull();
     expect(runtimeToLedgerAccountId(null)).toBeNull();
+  });
+});
+
+// 候选必须落在 execution-targets 白名单里，否则会被零探针跳过（run c06b79af 案卷）。
+// 机器名从白名单现取，不硬编码——白名单换机器时测试跟着走。
+const PRIMARY_MACHINE = listVerifiedExecutionTargets()
+  .find((t) => t.provider === 'claude').machine;
+const T = (provider, account, machine = PRIMARY_MACHINE) => ({ provider, account, machine });
+
+function gateDeps(over = {}) {
+  return {
+    probeTimeoutMs: 25_000,
+    getMachineHealth: async () => ({ ok: true }),
+    getMachineCapacity: async () => ({ ok: true, available: 4 }),
+    probeProviderAuth: async () => ({ ok: true }),
+    recordDecision: async () => {},
+    emitAlert: async () => {},
+    ...over,
+  };
+}
+const REQ = { requirements: { provider_auth: true } };
+
+describe('capability-gate 接入配额判据', () => {
+  it('unusable 的候选被跳过，选中下一个', async () => {
+    const snap = {
+      degraded: false,
+      verdictFor: (a) => (a === 'account1'
+        ? { verdict: 'unusable', reason: 'seven_day_exhausted', pct: 93 }
+        : { verdict: 'usable', reason: 'within_budget', pct: 10 }),
+    };
+    const gate = createCapabilityGate(gateDeps({ loadAccountQuota: async () => snap }));
+    const r = await gate.evaluate({
+      preferred_target: T('claude', 'account1'),
+      candidate_targets: [T('claude', 'account1'), T('claude', 'account2')],
+      ...REQ,
+    });
+    expect(r.status).toBe('ok');
+    expect(r.to_target.account).toBe('account2');
+  });
+
+  it('unknown 的候选放行，但 evidence 记 degraded', async () => {
+    const snap = { degraded: false, verdictFor: () => ({ verdict: 'unknown', reason: 'pct_unknown', pct: null }) };
+    const gate = createCapabilityGate(gateDeps({ loadAccountQuota: async () => snap }));
+    const r = await gate.evaluate({
+      preferred_target: T('codex', 'team1'),
+      candidate_targets: [T('codex', 'team1')],
+      ...REQ,
+    });
+    expect(r.status).toBe('ok');
+    expect(r.evidence.quota_abstained).toEqual(
+      expect.arrayContaining([expect.objectContaining({ account: 'team1', reason: 'pct_unknown' })]),
+    );
+  });
+
+  it('判据抛错 ≠ 静默放行——必须留痕并告警（变异靶点）', async () => {
+    const alerts = [];
+    const gate = createCapabilityGate(gateDeps({
+      loadAccountQuota: async () => { throw new Error('boom'); },
+      emitAlert: async (a) => { alerts.push(a); },
+    }));
+    const r = await gate.evaluate({
+      preferred_target: T('claude', 'account1'),
+      candidate_targets: [T('claude', 'account1')],
+      ...REQ,
+    });
+    expect(r.status).toBe('ok');
+    expect(r.evidence.account_quota_gate_error).toBeTruthy();
+    expect(alerts.map((a) => a.kind)).toContain('kernel_account_quota_gate_degraded');
+  });
+
+  it('未注入 loadAccountQuota 时行为不变（向后兼容）', async () => {
+    const gate = createCapabilityGate(gateDeps());
+    const r = await gate.evaluate({
+      preferred_target: T('claude', 'account1'),
+      candidate_targets: [T('claude', 'account1')],
+      ...REQ,
+    });
+    expect(r.status).toBe('ok');
+  });
+
+  it('每个候选的判死原因都进 evidence（不再被单变量覆盖）', async () => {
+    const reasons = { account1: 'seven_day_exhausted', account2: 'five_hour_exhausted' };
+    const snap = {
+      degraded: false,
+      verdictFor: (a) => ({ verdict: 'unusable', reason: reasons[a], pct: a === 'account1' ? 93 : 97 }),
+    };
+    const gate = createCapabilityGate(gateDeps({
+      loadAccountQuota: async () => snap,
+      probeProviderAuth: async () => ({ ok: false, signature: 'x' }),
+    }));
+    const r = await gate.evaluate({
+      preferred_target: T('claude', 'account1'),
+      candidate_targets: [T('claude', 'account1'), T('claude', 'account2')],
+      ...REQ,
+    });
+    const listed = (r.evidence.quota_unusable ?? []).map((x) => `${x.account}:${x.reason}`);
+    expect(listed).toEqual(expect.arrayContaining(['account1:seven_day_exhausted', 'account2:five_hour_exhausted']));
+  });
+
+  // 拍板依赖这条链：ops_model_accounts 没有 capped/authFailed 列，
+  // isSpendingCapped/isAuthFailed 是真撞 429 后由回调打上的内存标记。
+  // 用表判据「替换」而不是「OR」内存标记 = 把 NULL 情形的兜底摘掉。
+  it('表说可用但内存标记说不可用 → 判死（两判据取 OR）', async () => {
+    const snap = { degraded: false, verdictFor: () => ({ verdict: 'usable', reason: 'within_budget', pct: 5 }) };
+    const gate = createCapabilityGate(gateDeps({
+      loadAccountQuota: async () => snap,
+      isAccountUsable: async (a) => a !== 'account1',
+    }));
+    const r = await gate.evaluate({
+      preferred_target: T('claude', 'account1'),
+      candidate_targets: [T('claude', 'account1'), T('claude', 'account2')],
+      ...REQ,
+    });
+    expect(r.status).toBe('ok');
+    expect(r.to_target.account).toBe('account2');
+    expect((r.evidence.quota_unusable ?? []).map((x) => x.reason)).toContain('runtime_marker');
+  });
+
+  it('表说不可用但内存标记说可用 → 仍判死（OR 的另一半）', async () => {
+    const snap = {
+      degraded: false,
+      verdictFor: (a) => (a === 'account1'
+        ? { verdict: 'unusable', reason: 'seven_day_exhausted', pct: 93 }
+        : { verdict: 'usable', reason: 'within_budget', pct: 5 }),
+    };
+    const gate = createCapabilityGate(gateDeps({
+      loadAccountQuota: async () => snap,
+      isAccountUsable: async () => true,
+    }));
+    const r = await gate.evaluate({
+      preferred_target: T('claude', 'account1'),
+      candidate_targets: [T('claude', 'account1'), T('claude', 'account2')],
+      ...REQ,
+    });
+    expect(r.to_target.account).toBe('account2');
   });
 });
