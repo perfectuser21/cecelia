@@ -7,8 +7,8 @@ import {
   createQuotaLedgerLoader,
   LEDGER_CACHE_TTL_MS,
   LEDGER_UNAVAILABLE_FAIL_CLOSED_MS,
-} from '../orchestrator/preflight/account-quota-ledger.js';
-import { MODEL_ACCOUNT_STATUS } from '../ops-model-accounts-collector.js';
+} from './account-quota-ledger.js';
+import { MODEL_ACCOUNT_STATUS } from '../../ops-model-accounts-collector.js';
 
 // collector 的写库语义（upsertModelAccountFailure 的 CASE）：status 只在
 // consecutive_failures+1 >= 3 时才落终态；成功路径一律 consecutive_failures=0 且 status='ok'。
