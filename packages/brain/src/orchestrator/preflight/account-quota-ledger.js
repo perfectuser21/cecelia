@@ -8,7 +8,7 @@
  * 三态而非布尔：当前布尔把「数据说这个号满了」和「我读不到数据」压成同一个 true，
  * 正是 2026-08-19 三起事故的根因形状（capability-gate.js:190-196 案卷）。
  */
-import { MODEL_ACCOUNT_STATUS } from '../../ops-model-accounts-collector.js';
+import { MODEL_ACCOUNT_STATUS, runtimeToLedgerAccountId } from '../../ops-model-accounts-collector.js';
 
 /** 主理人 0920 拍板：7d ≥ 90 或 5h ≥ 95 排除。 */
 export const DISPATCH_GATE_FIVE_HOUR_PCT = 95;
@@ -80,4 +80,75 @@ export function judgeAccount(row) {
 export function judgedStatuses() {
   return Object.freeze([...CREDENTIAL_DEAD_STATUSES, 'rate_limited', 'ok', 'unknown']
     .filter((s) => MODEL_ACCOUNT_STATUS.includes(s)));
+}
+
+const LEDGER_SQL = `
+  SELECT account_id, provider, five_hour_pct, seven_day_pct,
+         status, consecutive_failures, reset_at, last_checked_at
+    FROM ops_model_accounts
+`;
+
+/**
+ * 创建 ledger 装载器。
+ *
+ * 一次 evaluate 只读一次全表（8 行），结果缓存 LEDGER_CACHE_TTL_MS。
+ * 绝不逐候选查询 —— 候选最坏十几个，而这是派发热路径。
+ *
+ * @param {object} deps
+ * @param {(sql:string)=>Promise<{rows:object[]}>} [deps.query] 查询接缝
+ * @param {{query:Function}} [deps.pool] 或直接给 pool
+ * @param {()=>number} [deps.now]
+ */
+export function createQuotaLedgerLoader({ query, pool, now = Date.now } = {}) {
+  const runQuery = query ?? (pool ? (sql) => pool.query(sql) : null);
+  if (typeof runQuery !== 'function') {
+    throw new Error('createQuotaLedgerLoader requires deps.query or deps.pool');
+  }
+
+  let cache = null;          // { at, byLedgerId }
+  let degraded = null;       // { since }
+
+  function snapshotFrom(byLedgerId, { degradedReason = null, failClosed = false } = {}) {
+    return {
+      degraded: Boolean(degradedReason),
+      degradedReason,
+      verdictFor(runtimeAccountId) {
+        if (degradedReason) {
+          if (failClosed) return verdict('unusable', 'ledger_unavailable_fail_closed');
+          return verdict('unknown', degradedReason === 'ledger_empty' ? 'ledger_empty' : 'ledger_unavailable');
+        }
+        const ledgerId = runtimeToLedgerAccountId(runtimeAccountId);
+        return judgeAccount(ledgerId ? byLedgerId.get(ledgerId) : null);
+      },
+    };
+  }
+
+  return async function loadAccountQuota() {
+    const t = now();
+    if (cache && t - cache.at < LEDGER_CACHE_TTL_MS) {
+      return snapshotFrom(cache.byLedgerId);
+    }
+    try {
+      const res = await runQuery(LEDGER_SQL);
+      const rows = res?.rows ?? [];
+      if (rows.length === 0) {
+        // 表空 = 系统未就绪，不是「所有号都没额度」。仍然降级留痕。
+        degraded = degraded ?? { since: t };
+        cache = null;
+        const failClosed = t - degraded.since >= LEDGER_UNAVAILABLE_FAIL_CLOSED_MS;
+        return snapshotFrom(new Map(), { degradedReason: 'ledger_empty', failClosed });
+      }
+      degraded = null;
+      cache = { at: t, byLedgerId: new Map(rows.map((r) => [r.account_id, r])) };
+      return snapshotFrom(cache.byLedgerId);
+    } catch (err) {
+      degraded = degraded ?? { since: t };
+      cache = null;
+      const failClosed = t - degraded.since >= LEDGER_UNAVAILABLE_FAIL_CLOSED_MS;
+      return snapshotFrom(new Map(), {
+        degradedReason: `ledger_unavailable:${String(err?.code || err?.message || err).slice(0, 120)}`,
+        failClosed,
+      });
+    }
+  };
 }

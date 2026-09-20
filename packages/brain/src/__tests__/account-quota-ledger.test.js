@@ -4,6 +4,9 @@ import {
   DISPATCH_GATE_FIVE_HOUR_PCT,
   DISPATCH_GATE_SEVEN_DAY_PCT,
   QUOTA_VERDICTS,
+  createQuotaLedgerLoader,
+  LEDGER_CACHE_TTL_MS,
+  LEDGER_UNAVAILABLE_FAIL_CLOSED_MS,
 } from '../orchestrator/preflight/account-quota-ledger.js';
 import { MODEL_ACCOUNT_STATUS } from '../ops-model-accounts-collector.js';
 
@@ -117,5 +120,91 @@ describe('judgeAccount — 防假绿的自洽约束', () => {
 
   it('pct 只可能是整数或 null（node-pg 对 int4 列不接受浮点）', () => {
     expect(judgeAccount(row({ five_hour_pct: 95, seven_day_pct: null })).pct).toBe(95);
+  });
+});
+
+const okRows = [
+  { account_id: 'claude-account1', provider: 'claude', five_hour_pct: 11, seven_day_pct: 32, status: 'ok', consecutive_failures: 0 },
+  { account_id: 'codex-team1', provider: 'codex', five_hour_pct: null, seven_day_pct: 18, status: 'ok', consecutive_failures: 0 },
+];
+
+describe('createQuotaLedgerLoader', () => {
+  it('一次 evaluate 只查一次库（禁逐候选查询）', async () => {
+    let calls = 0;
+    const load = createQuotaLedgerLoader({ query: async () => { calls += 1; return { rows: okRows }; } });
+    const snap = await load(['account1', 'team1']);
+    expect(calls).toBe(1);
+    expect(snap.verdictFor('account1')).toMatchObject({ verdict: 'usable' });
+    expect(snap.verdictFor('team1')).toMatchObject({ verdict: 'usable' });
+  });
+
+  it('TTL 内复用缓存，TTL 过后重查', async () => {
+    let calls = 0;
+    let t = 1_000;
+    const load = createQuotaLedgerLoader({
+      query: async () => { calls += 1; return { rows: okRows }; },
+      now: () => t,
+    });
+    await load(['account1']);
+    await load(['account1']);
+    expect(calls).toBe(1);
+    t += LEDGER_CACHE_TTL_MS + 1;
+    await load(['account1']);
+    expect(calls).toBe(2);
+  });
+
+  it('未知运行时 id → unknown/no_ledger_row，不抛', async () => {
+    const load = createQuotaLedgerLoader({ query: async () => ({ rows: okRows }) });
+    const snap = await load(['team5']);
+    expect(snap.verdictFor('team5')).toMatchObject({ verdict: 'unknown', reason: 'no_ledger_row' });
+  });
+
+  it('查库失败 → 全部 unknown/ledger_unavailable + degraded 标记（不静默 fail-open）', async () => {
+    const load = createQuotaLedgerLoader({ query: async () => { throw new Error('ECONNREFUSED'); }, now: () => 1_000 });
+    const snap = await load(['account1']);
+    expect(snap.verdictFor('account1')).toMatchObject({ verdict: 'unknown', reason: 'ledger_unavailable' });
+    expect(snap.degraded).toBe(true);
+    expect(snap.degradedReason).toContain('ECONNREFUSED');
+  });
+
+  it('表不存在（42P01）同样降级，不当成「没有账号」', async () => {
+    const err = Object.assign(new Error('relation "ops_model_accounts" does not exist'), { code: '42P01' });
+    const load = createQuotaLedgerLoader({ query: async () => { throw err; }, now: () => 1_000 });
+    const snap = await load(['account1']);
+    expect(snap.verdictFor('account1')).toMatchObject({ verdict: 'unknown', reason: 'ledger_unavailable' });
+  });
+
+  it('空表 → 全部 unknown/ledger_empty（系统未就绪，不是「都没额度」）', async () => {
+    const load = createQuotaLedgerLoader({ query: async () => ({ rows: [] }) });
+    const snap = await load(['account1']);
+    expect(snap.verdictFor('account1')).toMatchObject({ verdict: 'unknown', reason: 'ledger_empty' });
+    expect(snap.degraded).toBe(true);
+  });
+
+  it('连续读不到超过 15 分钟 → 转 fail-closed（unusable）', async () => {
+    let t = 1_000;
+    const load = createQuotaLedgerLoader({ query: async () => { throw new Error('down'); }, now: () => t });
+    await load(['account1']);
+    t += LEDGER_UNAVAILABLE_FAIL_CLOSED_MS - 1;
+    expect((await load(['account1'])).verdictFor('account1').verdict).toBe('unknown');
+    t += 2;
+    const snap = await load(['account1']);
+    expect(snap.verdictFor('account1')).toMatchObject({ verdict: 'unusable', reason: 'ledger_unavailable_fail_closed' });
+  });
+
+  it('恢复一次即清零 fail-closed 计时', async () => {
+    let t = 1_000;
+    let fail = true;
+    const load = createQuotaLedgerLoader({
+      query: async () => { if (fail) throw new Error('down'); return { rows: okRows }; },
+      now: () => t,
+    });
+    await load(['account1']);
+    t += LEDGER_UNAVAILABLE_FAIL_CLOSED_MS + 1;
+    fail = false;
+    expect((await load(['account1'])).verdictFor('account1').verdict).toBe('usable');
+    fail = true;
+    t += LEDGER_CACHE_TTL_MS + 1;
+    expect((await load(['account1'])).verdictFor('account1').verdict).toBe('unknown');
   });
 });
