@@ -1,0 +1,83 @@
+/**
+ * account-quota-ledger.js — 模型账号配额判据（G5 step1「接单即选到有额度的执行体」）
+ *
+ * 唯一知道「多满算不可用」语义的地方。只读 ops_model_accounts，不做选号决策
+ * （选号在 capability-gate），也不碰 selectBestAccount 的 tier 降级瀑布
+ * （那套吃 account_usage_cache，本表缺 sonnet/omelette/extra_used/7d-reset 列）。
+ *
+ * 三态而非布尔：当前布尔把「数据说这个号满了」和「我读不到数据」压成同一个 true，
+ * 正是 2026-08-19 三起事故的根因形状（capability-gate.js:190-196 案卷）。
+ */
+import { MODEL_ACCOUNT_STATUS } from '../../ops-model-accounts-collector.js';
+
+/** 主理人 0920 拍板：7d ≥ 90 或 5h ≥ 95 排除。 */
+export const DISPATCH_GATE_FIVE_HOUR_PCT = 95;
+export const DISPATCH_GATE_SEVEN_DAY_PCT = 90;
+
+/** ledger 进程内缓存周期。采集器 5min 一轮，30s 足够摊薄热路径查询又不至于太陈。 */
+export const LEDGER_CACHE_TTL_MS = 30_000;
+
+/** 读不到账本连续多久后转 fail-closed（= 采集器自 gate 5min × FAILURE_STREAK_THRESHOLD 3）。 */
+export const LEDGER_UNAVAILABLE_FAIL_CLOSED_MS = 15 * 60 * 1000;
+
+export const QUOTA_VERDICTS = Object.freeze(['usable', 'unusable', 'unknown']);
+
+/** 确定性否定事实：这两个 status 表示号根本登不上，与 pct 无关。 */
+const CREDENTIAL_DEAD_STATUSES = Object.freeze(['key_expired', 'no_credential']);
+
+const verdict = (v, reason, pct = null) => ({ verdict: v, reason, pct });
+
+/**
+ * 一行账本 → 三态裁决。
+ *
+ * 顺序不可调换：status 终态必须排在新鲜度判据之前。
+ * upsertModelAccountFailure 的 CASE 规定 status 只在 consecutive_failures+1 >= 3
+ * 时才落终态，而成功路径一律 consecutive_failures=0 且 status='ok'。因此
+ * status ∈ {key_expired,no_credential,rate_limited} **蕴含** consecutive_failures>=3>0。
+ * 若把「consecutive_failures>0 → unknown」排在前面，第 2、3 条就成了死支：
+ * grok key 过期会被当 unknown 放行，而且用 {status:'key_expired',failures:0} 这种
+ * 生产不可能存在的 fixture 还能把「八条分支全覆盖」测绿。
+ */
+export function judgeAccount(row) {
+  // 1. 无行
+  if (!row) return verdict('unknown', 'no_ledger_row');
+
+  const status = String(row.status ?? 'unknown');
+  const failures = Number(row.consecutive_failures ?? 0);
+  const fiveHour = row.five_hour_pct;
+  const sevenDay = row.seven_day_pct;
+  const pcts = [fiveHour, sevenDay].filter((p) => typeof p === 'number' && Number.isFinite(p));
+  const worstPct = pcts.length > 0 ? Math.max(...pcts) : null;
+
+  // 2. 凭据确定性失效 —— 与 pct 无关（失败不擦白 pct，死号会留着旧的低读数）
+  if (CREDENTIAL_DEAD_STATUSES.includes(status)) {
+    return verdict('unusable', 'credential_invalid', worstPct);
+  }
+
+  // 3. 采集器被限流 —— 弃权，绝不判死。429 ≠ 配额耗尽（account-usage.js 的 B49 案卷）
+  if (status === 'rate_limited') return verdict('unknown', 'collector_rate_limited', worstPct);
+
+  // 4. 新鲜度：本轮没被验证过的读数不作数。
+  //    last_checked_at 不是新鲜度证据 —— 失败路径照刷它。
+  if (failures > 0) return verdict('unknown', 'reading_unverified', worstPct);
+
+  // 5/6. 额度闸（pct 只可能是整数，node-pg 对 int4 列不接受浮点）
+  if (typeof fiveHour === 'number' && fiveHour >= DISPATCH_GATE_FIVE_HOUR_PCT) {
+    return verdict('unusable', 'five_hour_exhausted', worstPct);
+  }
+  if (typeof sevenDay === 'number' && sevenDay >= DISPATCH_GATE_SEVEN_DAY_PCT) {
+    return verdict('unusable', 'seven_day_exhausted', worstPct);
+  }
+
+  // 7. 两窗皆无读数 → 弃权（拍板：不加分不减分，交给认证失败/真 429 回调决定）
+  if (worstPct === null) return verdict('unknown', 'pct_unknown');
+
+  // 8.
+  return verdict('usable', 'within_budget', worstPct);
+}
+
+/** 判据认得的 status 必须都在采集器的枚举里（禁手抄，migration 449 的列注释已陈旧）。 */
+export function judgedStatuses() {
+  return Object.freeze([...CREDENTIAL_DEAD_STATUSES, 'rate_limited', 'ok', 'unknown']
+    .filter((s) => MODEL_ACCOUNT_STATUS.includes(s)));
+}
