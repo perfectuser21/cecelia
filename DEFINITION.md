@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.307.2
+**Brain 版本**: 1.307.3
 
 ## 1.283.0
 
@@ -48,6 +48,16 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.307.3 — 配额真正接进派单选号：三态判据 + 保底放行 + 超时保护
+
+- **此前 8 个号里 6 个在选号层面没有额度判据**：`capability-gate` 的账号闸只认 `account1`/`account2`（`isAccountUsable` 的 `ACCOUNTS` 就这两个），team1-5 与 grok 一律 fail-open —— 凭据能登录就被选中，额度满不满没人问。
+- **判据改三态**（`account-quota-ledger.js`）：读 `ops_model_accounts` 出 `usable`/`unusable`/`unknown`，与内存标记（`isSpendingCapped`/`isAuthFailed`）取 OR —— 表判据看配额，内存标记看真撞过的 429/认证失败（表里没有这两列）。装载器一次读全表 + 30s 缓存；读不到账本连续 15min（= 采集器自 gate 5min × 失败阈值 3）才转 fail-closed。
+- **账号闸包进 `probe()` 超时保护**：它原本是候选循环里唯一的裸 `await`，改读 PG 之后一旦库慢就把整个 dispatch hop 挂死；catch 里也不再静默 fail-open，留痕 `account_marker_error:*` 并发降级告警。
+- **全灭时保底放行 pct 最低的号 + P0 告警**：`loop.js` 把 `infrastructure_blocked` 排除在 blocked-streak 之外，所以全灭原本是 90s 静默转圈直到 run deadline，没人看得见。保底只读不写 `exhaustedAccounts`，且存下选中那一刻的健康快照（health/capacity 是循环外 let，否则保底选中 A 却带着 B 的快照）。
+- **`emitAlert` 此前是无注入方的死接缝**，`run.js` 一并接上 `loadAccountQuota` + `emitAlert`（生产 us-vps 不挂账号凭据，`llm-capacity` 的本机凭据探测在生产恒 ENOENT，`ops_model_accounts` 是唯一真配额来源）。
+- **阈值 5h ≥ 95 / 7d ≥ 90 单独成组**（主理人 0920 拍板），**不动** `account-usage` 的 tier 阈值与 `quota-guard` 的全局刹车；采集器 pct 写库前取整（参数绑定向 INTEGER 列传浮点直接抛 `invalid input syntax`，会中断整轮采集，已用真 PG integration 钉死）。
+- 守卫落 `tests/gp/g5/step2-quota-gate-into-dispatch.test.js` + `src/__tests__/account-quota-ledger.test.js`，各步变异逐一验过必红；`isAccountUsable` 两处 fail-open 此前零守卫（两条变异全绿），本版补上守卫并验红。
 
 ## Brain 1.307.1 — P0 热修：claude 与 codex 必须走两条独立 ssh 路由
 

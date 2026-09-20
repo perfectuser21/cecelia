@@ -41,6 +41,8 @@ import {
   resetAuthFailureCount,
   loadAuthFailuresFromDB,
   _resetAuthFailures,
+  isAccountUsable,
+  __setAccountUsageForTest,
 } from '../account-usage.js';
 
 // ─── 工具函数 ────────────────────────────────────────────────────────────────
@@ -1122,5 +1124,54 @@ describe('ACCOUNTS pool integrity — regression for B53 account removal bug', (
     expect(Object.keys(result)).toContain('account2');
     // fetch 应被调用两次（每个账号一次）
     expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ─── isAccountUsable 的 fail-open 边界 ───────────────────────────────────────
+
+describe('isAccountUsable 的 fail-open 边界（选号闸不承担准入 fail-closed 职责）', () => {
+  // 依据：account-usage.js 函数头注释「缓存缺失时返回 true（fail-open）——本函数只负责
+  // 选号，准入 fail-closed 由派发闸另行把关」。2026-09-20 刀1 把配额闸的 fail-closed
+  // 语义交给了 account-quota-ledger（读不到账本连续 15min 才转判死），本函数这两处
+  // fail-open 必须保持原样：一旦改成判死，DB 抖动或缓存缺失会让**所有**账号在同一瞬间
+  // 全灭，而 capability-gate 的全灭保底只按 ops_model_accounts 的 pct 选号，
+  // 救不回这条路径（此前这两处无任何守卫，两条变异均全绿）。
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPool.query.mockResolvedValue({ rows: [] });
+    clearSpendingCaps();
+    _resetAuthFailures();
+    vi.clearAllMocks();
+    mockPool.query.mockResolvedValue({ rows: [] });
+    __setAccountUsageForTest(null);
+  });
+
+  afterEach(() => {
+    __setAccountUsageForTest(null);
+  });
+
+  it('getAccountUsage 抛错时放行而不是判死——DB 抖动会让所有账号在同一瞬间全灭', async () => {
+    // getCached 直接打 pool.query，让它 reject 就能让 getAccountUsage 整个抛出
+    mockPool.query.mockRejectedValue(new Error('DB down'));
+
+    await expect(isAccountUsable('account1')).resolves.toBe(true);
+  });
+
+  it('缓存里没有这个账号（team*/grok）时放行——选号缓存不认识的号不等于额度耗尽', async () => {
+    // account_usage_cache 只覆盖 Claude 两个号；team1 的配额在 ops_model_accounts 里，
+    // 由 account-quota-ledger 判，不该被本函数按「查不到」判死。
+    __setAccountUsageForTest([
+      { account_id: 'account2', five_hour_pct: 1, seven_day_pct: 1, extra_used: false },
+    ]);
+
+    await expect(isAccountUsable('team1')).resolves.toBe(true);
+  });
+
+  it('对照组：同一套注入下命中且超阈值的账号必须判死——证明上面两条不是空跑', async () => {
+    __setAccountUsageForTest([
+      { account_id: 'account2', five_hour_pct: 99, seven_day_pct: 1, extra_used: false },
+    ]);
+
+    await expect(isAccountUsable('account2')).resolves.toBe(false);
   });
 });
