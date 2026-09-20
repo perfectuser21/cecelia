@@ -44,6 +44,7 @@ import {
 } from './git-artifact-reader.js';
 import { createFrozenContractArtifactResolver } from './frozen-contract-artifacts.js';
 import { createCapabilityGate } from './preflight/capability-gate.js';
+import { createQuotaLedgerLoader } from './preflight/account-quota-ledger.js';
 import { createProductionCapabilityProbes } from './preflight/production-probes.js';
 import {
   createProductionExecutionTransport,
@@ -68,6 +69,57 @@ import {
 import { listCanonicalMachineIds } from './preflight/canonical-machine-id.js';
 
 const CANONICAL_MACHINE_IDS = new Set(listCanonicalMachineIds());
+
+/**
+ * kernel 告警 adapter：把 capability-gate 的 `{ kind, ... }` 事件映射到 alerting.raise。
+ *
+ * 为什么需要它：`deps.emitAlert` 此前是**死接缝**——全仓只有 capability-gate 一处
+ * optional-chain 调用且无人注入，于是「禁止静默」的承诺直接 no-op。
+ *
+ * 三条映射依据：
+ * - 全灭是熔断类事件 → P0。但保底放行按拍板不写 exhaustedAccounts，同一 logical_cycle
+ *   内会每跳（90s）触发一次，故用 `{ n: 1 }` 去抖：shouldFire 在 n=1 时首次即放行并开启
+ *   冷却，既满足 alerting.js:42-43「P0 首击即响」的铁律，又不会在周末刷屏。
+ * - 判据降级是抖动型 → P1 + 累计去抖。
+ * - `kernel_capability_preflight_blocked` **不在此处告警**：run.js 的 onPreflightBlocked
+ *   已对每次 blocked 发 P1 `kernel_capability_preflight_${reason}`（dispatcher 1147/1177/1194
+ *   调用），此处再发就是重复。
+ */
+const KERNEL_ALERT_ROUTES = Object.freeze({
+  kernel_account_quota_all_exhausted: {
+    level: 'P0',
+    debounce: { n: 1, cooldownMs: 30 * 60 * 1000 },
+  },
+  kernel_account_quota_gate_degraded: {
+    level: 'P1',
+    debounce: { n: 3, cooldownMs: 15 * 60 * 1000 },
+  },
+  // 已由 onPreflightBlocked 覆盖，此处显式不重复告警（值为 null 表示「登记过、有意不发」）
+  kernel_capability_preflight_blocked: null,
+});
+
+export function createKernelAlertEmitter({ raise } = {}) {
+  return async function emitKernelAlert(event = {}) {
+    const kind = String(event.kind ?? 'kernel_unknown_alert');
+    if (Object.prototype.hasOwnProperty.call(KERNEL_ALERT_ROUTES, kind)
+        && KERNEL_ALERT_ROUTES[kind] === null) {
+      return; // 有意不重复
+    }
+    const route = KERNEL_ALERT_ROUTES[kind] ?? { level: 'P2' };
+    try {
+      const doRaise = raise ?? (await import('../alerting.js')).raise;
+      await doRaise(
+        route.level,
+        kind,
+        JSON.stringify(event).slice(0, 2_000),
+        route.debounce ? { debounce: route.debounce } : {},
+      );
+    } catch (error) {
+      // 告警链路故障绝不能反过来打断派发
+      console.warn(`[kernel-alert] ${kind} 发送失败:`, error?.message);
+    }
+  };
+}
 
 /** 解析 --task-id / --run-id / --controller-session-id / --resume-token / --dry-run */
 export function parseArgs(argv) {
@@ -268,6 +320,11 @@ export async function buildRealDeps(overrides = {}) {
         ...productionProbes,
         probeTimeoutMs: overrides.preflightProbeTimeoutMs ?? 25_000,
         snapshotTtlMs: overrides.preflightSnapshotTtlMs ?? 1_000,
+        // 配额账本接线：ops_model_accounts 是生产唯一真配额来源（us-vps 不挂账号凭据，
+        // llm-capacity 的本机凭据探测在生产恒 ENOENT）。gate 侧只认 deps.loadAccountQuota，
+        // 不自己 import pool —— 保持单测无 PG 可跑。
+        loadAccountQuota: overrides.loadAccountQuota ?? createQuotaLedgerLoader({ pool }),
+        emitAlert: overrides.emitAlert ?? createKernelAlertEmitter({}),
         // 额度闸接线：认证探针只回答"能不能登录"，回答不了"还有没有额度"。
         // 不接这一根线的话额度闸就是死代码（2026-08-19 连修两处都因为改在不参与
         // kernel 派发的路径上而毫无效果，教训见 capability-gate.js 内注释）。
@@ -276,8 +333,10 @@ export async function buildRealDeps(overrides = {}) {
             try {
               const { isAccountUsable } = await import('../account-usage.js');
               return await isAccountUsable(accountId);
-            } catch {
-              return true; // fail-open：选号闸不承担准入 fail-closed 职责
+            } catch (error) {
+              // 不再静默 fail-open：留痕后再放行，选号闸不承担准入 fail-closed 职责
+              console.warn('[capability-gate] isAccountUsable 判据不可用，本次放行:', error?.message);
+              return true;
             }
           }),
       });

@@ -50,29 +50,71 @@ const FAILURE_STREAK_THRESHOLD = 3;
  */
 export const MODEL_ACCOUNTS = Object.freeze([
   { account_id: 'claude-account1', provider: 'claude', plan: 'max', host_alias: 'mmv',
-    forwardable: false, forward_targets: [], credential_path: '~/.claude-account1/.credentials.json' },
+    forwardable: false, forward_targets: [], credential_path: '~/.claude-account1/.credentials.json',
+    runtime_account_id: 'account1' },
   { account_id: 'claude-account2', provider: 'claude', plan: 'max', host_alias: 'mmv',
-    forwardable: false, forward_targets: [], credential_path: '~/.claude-account2/.credentials.json' },
+    forwardable: false, forward_targets: [], credential_path: '~/.claude-account2/.credentials.json',
+    runtime_account_id: 'account2' },
   { account_id: 'codex-team1', provider: 'codex', plan: 'team', host_alias: 'mmv',
-    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team1/auth.json' },
+    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team1/auth.json',
+    runtime_account_id: 'team1' },
   { account_id: 'codex-team2', provider: 'codex', plan: 'team', host_alias: 'mmv',
-    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team2/auth.json' },
+    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team2/auth.json',
+    runtime_account_id: 'team2' },
   { account_id: 'codex-team3', provider: 'codex', plan: 'team', host_alias: 'mmv',
-    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team3/auth.json' },
+    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team3/auth.json',
+    runtime_account_id: 'team3' },
   { account_id: 'codex-team4', provider: 'codex', plan: 'team', host_alias: 'mmv',
-    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team4/auth.json' },
+    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team4/auth.json',
+    runtime_account_id: 'team4' },
   { account_id: 'codex-team5', provider: 'codex', plan: 'team', host_alias: 'mmv',
-    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team5/auth.json' },
+    forwardable: true, forward_targets: ['xian-m4', 'xian-m1'], credential_path: '~/.codex-team5/auth.json',
+    runtime_account_id: 'team5' },
   { account_id: 'grok', provider: 'grok', plan: null, host_alias: 'mmv',
-    forwardable: false, forward_targets: [], credential_path: '~/.grok/auth.json' },
+    forwardable: false, forward_targets: [], credential_path: '~/.grok/auth.json',
+    runtime_account_id: 'grok' },
 ]);
+
+/**
+ * 账号 id 双向映射（唯一来源，禁各处手写正则/拼串）。
+ * 表侧 `claude-account1` / `codex-team1` / `grok`；运行时侧 `account1` / `team1` / `grok`。
+ * `${provider}-${runtime}` 对 grok 得到 'grok-grok' —— 拼串规则必然要写特例，所以用显式字段。
+ */
+const RUNTIME_TO_LEDGER = Object.freeze(
+  Object.fromEntries(MODEL_ACCOUNTS.map((a) => [a.runtime_account_id, a.account_id])),
+);
+const LEDGER_TO_RUNTIME = Object.freeze(
+  Object.fromEntries(MODEL_ACCOUNTS.map((a) => [a.account_id, a.runtime_account_id])),
+);
+
+/** 运行时账号 id（候选池用）→ 账本 account_id。未知返回 null。 */
+export function runtimeToLedgerAccountId(runtimeId) {
+  if (!runtimeId) return null;
+  return RUNTIME_TO_LEDGER[runtimeId] ?? null;
+}
+
+/** 账本 account_id → 运行时账号 id。未知返回 null。 */
+export function ledgerToRuntimeAccountId(ledgerId) {
+  if (!ledgerId) return null;
+  return LEDGER_TO_RUNTIME[ledgerId] ?? null;
+}
 
 const EMPTY_SNAPSHOT = { five_hour_pct: null, seven_day_pct: null, reset_at: null };
 
-/** pct 归一化：数字透传，缺失/非数字 → null（诚实留空，禁编造 0）。 */
+/**
+ * pct 归一化：数字四舍五入成整数，缺失/非数字 → null（诚实留空，禁编造 0）。
+ *
+ * 必须取整：列是 INTEGER（migration 449:9-10），而 node-pg 的参数绑定**不取整**
+ * ——实测传 89.6 直接抛 `invalid input syntax for type integer: "89.6"`。
+ * 而 upsert 的调用在 try 之外，一抛就中断整轮采集，排在后面的账号
+ * 这一轮全部不写（静默陈旧）。取整是让「配额账本可信」的前提。
+ */
 function toPct(v) {
-  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+  return typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : null;
 }
+
+/** 测试接缝：判据的阈值语义依赖「表里只有整数」这条不变量。 */
+export const toPctForTest = toPct;
 
 /**
  * Anthropic OAuth usage JSON → 同一 schema。

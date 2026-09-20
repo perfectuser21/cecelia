@@ -94,6 +94,7 @@ function blockedResult({
   fallbackReason,
   probeDetail,
   failureClass = 'infrastructure_blocked',
+  quotaEvidence = null,
 }) {
   const evidence = buildCapabilityEvidence({
     capability_snapshot_id: snapshotId,
@@ -102,6 +103,7 @@ function blockedResult({
     fallback_reason: fallbackReason,
     failure_class: failureClass,
     ...(probeDetail ? { probe_detail: probeDetail } : {}),
+    ...(quotaEvidence ?? {}),
   });
   return {
     status: 'blocked',
@@ -147,6 +149,25 @@ export function createCapabilityGate(deps = {}) {
     let lastNodeProbe = null;
     let selectedTarget = null;
     let providerAuth = null;
+    const quotaUnusable = [];   // 因配额/标记判死的候选（含当时的 health/capacity，供保底复用）
+    const quotaAbstained = [];  // 弃权的候选
+    let quotaGateError = null;
+
+    let quotaSnapshot = null;
+    if (typeof deps.loadAccountQuota === 'function') {
+      try {
+        quotaSnapshot = await probe(() => deps.loadAccountQuota());
+      } catch (error) {
+        // 不再静默：吞掉异常等于闸门无痕消失（2026-08-19 事故形状）
+        quotaGateError = error.message === 'preflight_timeout'
+          ? 'account_quota_probe_timeout'
+          : `account_quota_gate_error:${String(error?.message ?? error).slice(0, 120)}`;
+        await deps.emitAlert?.({
+          kind: 'kernel_account_quota_gate_degraded',
+          reason: quotaGateError,
+        });
+      }
+    }
 
     for (const candidate of candidates) {
       if (failedTargetKeys.has(targetKey(candidate))) continue;
@@ -194,16 +215,42 @@ export function createCapabilityGate(deps = {}) {
       // 认证探针只回答"这个号能不能登录"，回答不了"这个号还有没有额度"，必须单独判。
       // 放在认证探针**之前**：额度已满的号连探针都不该浪费。
       // 未注入判据时 fail-open，保持既有行为（本闸只负责选号，准入 fail-closed 另有闸门）。
-      if (typeof deps.isAccountUsable === 'function' && candidate?.account) {
-        let usable = true;
-        try {
-          usable = await deps.isAccountUsable(candidate.account);
-        } catch {
-          usable = true;
+      // 两个判据取 OR：表判据看配额，内存标记看真撞过的 429/认证失败（表里无此列）。
+      if (candidate?.account) {
+        const v = quotaSnapshot ? quotaSnapshot.verdictFor(candidate.account) : null;
+
+        let markerUsable = true;
+        if (typeof deps.isAccountUsable === 'function') {
+          try {
+            // 同样包进 probe()：这里原本也是裸 await
+            markerUsable = await probe(() => deps.isAccountUsable(candidate.account));
+          } catch (error) {
+            markerUsable = true; // 标记读不到时不判死，但必须留痕
+            quotaGateError = quotaGateError
+              ?? `account_marker_error:${String(error?.message ?? error).slice(0, 120)}`;
+            await deps.emitAlert?.({
+              kind: 'kernel_account_quota_gate_degraded',
+              reason: quotaGateError,
+            });
+          }
         }
-        if (!usable) {
+
+        if (v?.verdict === 'unusable' || markerUsable === false) {
           fallbackReason = 'account_quota_exhausted';
+          // health/capacity 是循环外 let（:142-144），后续候选会覆盖 ——
+          // 保底要用就必须此刻存下来，否则保底选中 A 却带着 B 的健康快照
+          quotaUnusable.push({
+            candidate: { ...candidate },
+            account: candidate.account,
+            reason: v?.verdict === 'unusable' ? v.reason : 'runtime_marker',
+            pct: v?.pct ?? null,
+            health,
+            capacity,
+          });
           continue;
+        }
+        if (v?.verdict === 'unknown') {
+          quotaAbstained.push({ account: candidate.account, reason: v.reason });
         }
       }
 
@@ -267,6 +314,58 @@ export function createCapabilityGate(deps = {}) {
       }
     }
 
+    // 全灭保底：8 个号全被配额判死时，放行 pct 最低的那个并标 degraded，
+    // 而不是让 run 落 blocked —— loop.js:1917-1924 把 infrastructure_blocked
+    // 排除在 blocked-streak 外，全灭不是判死而是每 90s 静默转圈到 run deadline。
+    //
+    // 三条不得破坏：① 只读不写 exhaustedAccounts（写了该号下一跳被永久踢出）；
+    // ② 只做一次裸 probeProviderAuth，不复用瞬时重试逻辑（会二次写 retryExhausted
+    //    并把 fallback_reason 改写成 provider_transient_retry_exhausted）；
+    // ③ credential_invalid 不进保底候选 —— 对它跑认证探针必然失败，白耗预算。
+    if (!selectedTarget && quotaUnusable.length > 0) {
+      const eligible = quotaUnusable
+        .filter((entry) => entry.reason !== 'credential_invalid')
+        .sort((a, b) => (a.pct ?? Number.POSITIVE_INFINITY) - (b.pct ?? Number.POSITIVE_INFINITY));
+      const pick = eligible[0];
+      if (pick) {
+        await deps.emitAlert?.({
+          kind: 'kernel_account_quota_all_exhausted',
+          admitted_account: pick.account,
+          admitted_pct: pick.pct,
+          candidates: quotaUnusable.map(({ account, reason, pct }) => ({ account, reason, pct })),
+        });
+        let degradedAuth = null;
+        try {
+          degradedAuth = requirements.provider_auth
+            ? await probe(() => deps.probeProviderAuth({ ...pick.candidate, task_bundle: taskBundle }))
+            : { ok: true, skipped: true };
+        } catch {
+          degradedAuth = { ok: false, signature: 'provider_probe_error' };
+        }
+        if (degradedAuth?.ok) {
+          selectedTarget = { ...pick.candidate };
+          providerAuth = degradedAuth;
+          lastProviderProbe = degradedAuth;
+          // 循环外 let 此刻停在最后一个候选的值上，必须写回保底候选自己的快照
+          machine = pick.candidate.machine;
+          health = pick.health;
+          capacity = pick.capacity;
+          fallbackReason = 'account_quota_degraded_admit';
+        }
+      }
+    }
+
+    const quotaEvidence = {
+      ...(quotaUnusable.length
+        ? { quota_unusable: quotaUnusable.map(({ account, reason, pct }) => ({ account, reason, pct })) }
+        : {}),
+      ...(quotaAbstained.length ? { quota_abstained: quotaAbstained } : {}),
+      ...(quotaGateError ? { account_quota_gate_error: quotaGateError } : {}),
+      ...(quotaSnapshot?.degraded
+        ? { account_quota_gate_degraded: quotaSnapshot.degradedReason }
+        : {}),
+    };
+
     if (!selectedTarget) {
       const reason = failureSignature(lastProviderProbe) === 'credential_missing'
         ? 'credential_probe_mismatch'
@@ -280,6 +379,7 @@ export function createCapabilityGate(deps = {}) {
         fromTarget: preferredTarget,
         fallbackReason: reason,
         probeDetail: lastProviderProbe ?? lastNodeProbe,
+        quotaEvidence,
       });
       await deps.emitAlert?.({
         kind: 'kernel_capability_preflight_blocked',
@@ -393,6 +493,7 @@ export function createCapabilityGate(deps = {}) {
       failure_class: targetKey(selectedTarget) === targetKey(preferredTarget)
         ? 'none'
         : 'infrastructure_blocked',
+      ...quotaEvidence,
     });
     return {
       status: 'ok',
