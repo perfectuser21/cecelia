@@ -66,6 +66,56 @@ else
 fi
 
 # ─────────────────────────────────────────────
+# 常驻服务豁免（唯一判据，两个 kill 函数共用）
+#
+# 2026-09-21 P0（task 0db9167a）：OpenClaw 前一天迁到 MMV 后，网关被当孤儿
+# node 进程每 15 分钟杀一次。实测每轮杀 6 个、每个存活 868-910 秒，杀完重生
+# 形成自维持循环（网关 + service-child-relay + zenithjoy-releases×2 +
+# douyin-proxy + preview-agent），任何超过 15 分钟的 OpenClaw 任务永远完不成：
+# 当天跑过的 6 条业务 cron 全失败，5 条死因都是
+# "cron: job interrupted by gateway restart"。
+#
+# 原豁免只认一条字面量路径，新迁来的服务不在名单里。这是同一形状第三次
+# （2026-08-10 ops 测试零执行、2026-09-07 credentials 子目录漏跑），所以这次
+# 主判据改成**自维护**的：launchd 托管的进程一律豁免，不再依赖人记得改名单。
+# 白名单只留给 launchd 不直接托管（由 keepalive 守护拉起）的那几个。
+# ─────────────────────────────────────────────
+
+# launchd 托管的 PID 集合。每次运行只查一次（frequent 模式要对几十个 pid 判定）。
+# JANITOR_LAUNCHD_PIDS 是测试注入接缝，生产不设。
+_LAUNCHD_PIDS_CACHE=""
+launchd_managed_pids() {
+  if [ -n "${JANITOR_LAUNCHD_PIDS:-}" ]; then
+    printf '%s\n' "$JANITOR_LAUNCHD_PIDS"
+    return 0
+  fi
+  if [ -z "$_LAUNCHD_PIDS_CACHE" ]; then
+    _LAUNCHD_PIDS_CACHE=$(launchctl list 2>/dev/null | awk '$1 ~ /^[0-9]+$/ {print $1}')
+  fi
+  printf '%s\n' "$_LAUNCHD_PIDS_CACHE"
+}
+
+# 返回 0 = 豁免（不许杀）；返回 1 = 可继续走孤儿判定
+is_exempt_resident_service() {
+  local pid="${1:-}" cmd="${2:-}"
+
+  # A. 显式白名单：launchd 不直接托管、但确属常驻件的
+  #    （路径写到 current/ 这一层，避免 *zenithjoy-releases* 裸匹配误豁免备份目录）
+  case "$cmd" in
+    *"/usr/local/libexec/cecelia/"*) return 0 ;;
+    *"/zenithjoy-releases/current/"*) return 0 ;;
+  esac
+
+  # B. launchd 托管一律豁免（自维护：以后新增常驻服务不必再改本名单）
+  #    grep -x 精确整行匹配，防 1203 被 12037 子串命中
+  if [ -n "$pid" ] && launchd_managed_pids | grep -qx -- "$pid"; then
+    return 0
+  fi
+
+  return 1
+}
+
+# ─────────────────────────────────────────────
 # frequent 模式：清理孤儿/僵尸进程 + 资源压力响应
 # ─────────────────────────────────────────────
 if [ "$MODE" = "frequent" ]; then
@@ -350,10 +400,10 @@ if [ "$MODE" = "frequent" ]; then
     [ -z "$secs" ] && { echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] etime_to_secs 解析失败 elapsed=$elapsed pid=${pid}，保守跳过"; secs=0; }
     [ "$secs" -lt "$threshold" ] && return
 
-    # cecelia 常驻服务豁免（fleet-worker/toolchain 等）
+    # 常驻服务豁免（launchd 托管 + 显式白名单，判据见文件上方 is_exempt_resident_service）
     local cmd
     cmd=$(ps -o command= -p "$pid" 2>/dev/null)
-    case "$cmd" in *"/usr/local/libexec/cecelia/"*) return ;; esac
+    is_exempt_resident_service "$pid" "$cmd" && return
 
     if is_orphan "$pid"; then
       kill "$pid" 2>/dev/null
@@ -415,10 +465,10 @@ if [ "$MODE" = "frequent" ]; then
     [ -z "$secs" ] && { echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] etime_to_secs 解析失败 elapsed=$elapsed pid=${pid}，保守跳过"; secs=0; }
     [ "$secs" -lt "$threshold" ] && return
 
-    # cecelia 常驻服务豁免（同 kill_if_orphan）
+    # 常驻服务豁免（同 kill_if_orphan，共用 is_exempt_resident_service）
     local cmd
     cmd=$(ps -o command= -p "$pid" 2>/dev/null)
-    case "$cmd" in *"/usr/local/libexec/cecelia/"*) return ;; esac
+    is_exempt_resident_service "$pid" "$cmd" && return
 
     if is_claude_orphan "$pid" "$tty" "$ppid"; then
       local cwd
