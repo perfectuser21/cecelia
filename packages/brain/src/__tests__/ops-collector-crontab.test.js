@@ -80,6 +80,24 @@ describe('parseCrontab', () => {
     expect(new Set(rows.map((r) => r.label)).size, '三条同脚本不同排期的标签撞了，会互相覆盖只剩一条').toBe(3);
   });
 
+  it('标签必须由排期决定，不许靠出现顺序——换行序后同一条活的标签不能变', () => {
+    // 只断言"唯一"不够：撞名加序号的兜底也能让标签唯一，但那是按出现顺序给的。
+    // crontab 行一换位置，`opc-kr-current.py #2` 就挂到另一条排期上，
+    // (source, host_alias, label) 这个 upsert 键随之漂移，台账每轮反复建行删行。
+    const lines = [
+      '10 22 * * * /usr/bin/python3 /opt/openclaw/opc-kr-current.py',
+      '35 3,9 * * * /usr/bin/python3 /opt/openclaw/opc-kr-current.py',
+      '30 16 * * * /usr/bin/python3 /opt/openclaw/opc-kr-current.py',
+    ];
+    const pair = (src) => Object.fromEntries(
+      parseCrontab(src.join('\n')).map((r) => [r.schedule_desc, r.label]),
+    );
+    expect(
+      pair([...lines].reverse()),
+      '把 crontab 行倒序后，排期↔标签的对应关系变了——标签依赖出现顺序，不是由排期决定',
+    ).toEqual(pair(lines));
+  });
+
   it('next_run_utc 一律 null——不算就不猜（同 parseGhaCron 的口径）', () => {
     for (const r of parseCrontab(REAL_SAMPLE)) {
       expect(r.next_run_utc ?? null).toBe(null);
