@@ -25,6 +25,31 @@ export const QUOTA_VERDICTS = Object.freeze(['usable', 'unusable', 'unknown']);
 /** 确定性否定事实：这两个 status 表示号根本登不上，与 pct 无关。 */
 const CREDENTIAL_DEAD_STATUSES = Object.freeze(['key_expired', 'no_credential']);
 
+/**
+ * 窗口在这么多分钟内重置 → 该窗用量当 0 算（优先把快过期的额度用掉）。
+ * 口径照搬 account-usage.js:646-653 的 RESET_SOON_MINUTES + effectivePct，
+ * 两处必须一致，否则同一个号在中间件和 kernel 闸会得出相反结论。
+ */
+export const RESET_SOON_MINUTES = 30;
+
+/**
+ * 即将重置的窗当 0 算。
+ *
+ * 0920 上产的判据只看水位不看到期：7d=91%、10 分钟后滚窗的号照样判死。
+ * 0921 实证 claude-account2 当时 7d=85%、2 小时后就重置 —— 光看水位会把
+ * 一个马上自愈的号当成需要干预的号。
+ *
+ * 缺重置时刻（null / 非法串）一律**不豁免**：缺数据不能当成"快重置了"，
+ * 那是把未知当有利，和 NULL 弃权的方向相反（这里 pct 是已知的、确凿超阈的）。
+ */
+function effectivePct(pct, resetAt, now) {
+  if (typeof pct !== 'number' || !Number.isFinite(pct)) return pct;
+  if (!resetAt) return pct;
+  const t = new Date(resetAt).getTime();
+  if (!Number.isFinite(t)) return pct;           // 非法时间串 → 不豁免
+  return (t - now) / 60_000 <= RESET_SOON_MINUTES ? 0 : pct;
+}
+
 const verdict = (v, reason, pct = null) => ({ verdict: v, reason, pct });
 
 /**
@@ -38,14 +63,16 @@ const verdict = (v, reason, pct = null) => ({ verdict: v, reason, pct });
  * grok key 过期会被当 unknown 放行，而且用 {status:'key_expired',failures:0} 这种
  * 生产不可能存在的 fixture 还能把「八条分支全覆盖」测绿。
  */
-export function judgeAccount(row) {
+export function judgeAccount(row, { now = Date.now() } = {}) {
   // 1. 无行
   if (!row) return verdict('unknown', 'no_ledger_row');
 
   const status = String(row.status ?? 'unknown');
   const failures = Number(row.consecutive_failures ?? 0);
-  const fiveHour = row.five_hour_pct;
-  const sevenDay = row.seven_day_pct;
+  // 即将滚窗重置的窗当 0 算（见 effectivePct）。两个窗各用各的重置时刻：
+  // reset_at 是 5h 窗的，seven_day_reset_at 是 7d 窗的，混用会豁免错窗口。
+  const fiveHour = effectivePct(row.five_hour_pct, row.reset_at, now);
+  const sevenDay = effectivePct(row.seven_day_pct, row.seven_day_reset_at, now);
   const pcts = [fiveHour, sevenDay].filter((p) => typeof p === 'number' && Number.isFinite(p));
   const worstPct = pcts.length > 0 ? Math.max(...pcts) : null;
 

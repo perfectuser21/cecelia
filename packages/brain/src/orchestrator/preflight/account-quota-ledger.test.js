@@ -100,6 +100,63 @@ describe('judgeAccount — 判据顺序', () => {
   });
 });
 
+// ── soon-reset 豁免（0921，task eb301e5a）────────────────────────────────
+// 0920 上产的判据只看水位不看到期：一个 7d=91%、10 分钟后就滚窗重置的号会被判死。
+// 主理人 0921 当场点破：「他妈的还有两个小时之后就恢复了，你根本就不用担心」——
+// 实查证实 claude-account2 当时 7d=85%、2 小时后重置，所谓"一天内碰线"根本不存在。
+//
+// 老代码本来就有这个口径：account-usage.js:646-653 的 RESET_SOON_MINUTES=30 +
+// effectivePct（30 分钟内重置的窗当 0% 算，优先把快过期的额度用掉）。
+// 设计刀1 时把它划到范围外了，因为台账表没有 7d 重置列——而实查证明
+// Anthropic 接口本就返回 seven_day.resets_at，是采集器只留了 five_hour 那个。
+describe('judgeAccount — 即将重置的窗当 0 算（soon-reset 豁免）', () => {
+  const at = (mins) => new Date(Date.now() + mins * 60_000).toISOString();
+
+  it('7d 超阈值但 30 分钟内重置 → 仍可用（别在滚窗前一刻判死）', () => {
+    expect(judgeAccount(row({ seven_day_pct: 95, seven_day_reset_at: at(10) })))
+      .toMatchObject({ verdict: 'usable' });
+  });
+
+  it('7d 超阈值且重置还早 → 照常判死', () => {
+    expect(judgeAccount(row({ seven_day_pct: 95, seven_day_reset_at: at(120) })))
+      .toMatchObject({ verdict: 'unusable', reason: 'seven_day_exhausted' });
+  });
+
+  it('边界：正好 30 分钟算"即将重置"，31 分钟不算', () => {
+    expect(judgeAccount(row({ seven_day_pct: 95, seven_day_reset_at: at(30) })).verdict).toBe('usable');
+    expect(judgeAccount(row({ seven_day_pct: 95, seven_day_reset_at: at(31) })).verdict).toBe('unusable');
+  });
+
+  it('5h 同样享受豁免（reset_at 是 5h 窗的重置时刻）', () => {
+    expect(judgeAccount(row({ five_hour_pct: 99, reset_at: at(5) })))
+      .toMatchObject({ verdict: 'usable' });
+    expect(judgeAccount(row({ five_hour_pct: 99, reset_at: at(90) })))
+      .toMatchObject({ verdict: 'unusable', reason: 'five_hour_exhausted' });
+  });
+
+  it('没有重置时刻就不豁免——缺数据不当成"快重置了"', () => {
+    expect(judgeAccount(row({ seven_day_pct: 95, seven_day_reset_at: null })))
+      .toMatchObject({ verdict: 'unusable', reason: 'seven_day_exhausted' });
+  });
+
+  it('重置时刻已过（采集器还没刷新）也当 0 算', () => {
+    expect(judgeAccount(row({ seven_day_pct: 95, seven_day_reset_at: at(-10) })))
+      .toMatchObject({ verdict: 'usable' });
+  });
+
+  it('非法时间串不豁免，也不崩', () => {
+    expect(judgeAccount(row({ seven_day_pct: 95, seven_day_reset_at: 'not-a-date' })))
+      .toMatchObject({ verdict: 'unusable', reason: 'seven_day_exhausted' });
+  });
+
+  it('豁免只影响额度闸，不影响凭据终态', () => {
+    expect(judgeAccount(row({
+      status: 'key_expired', consecutive_failures: 3,
+      seven_day_pct: 95, seven_day_reset_at: at(5),
+    }))).toMatchObject({ verdict: 'unusable', reason: 'credential_invalid' });
+  });
+});
+
 describe('judgeAccount — 防假绿的自洽约束', () => {
   it('判据认的 status 集合 ⊆ MODEL_ACCOUNT_STATUS（禁手抄字符串）', () => {
     const judged = ['ok', 'unknown', 'rate_limited', 'key_expired', 'no_credential'];

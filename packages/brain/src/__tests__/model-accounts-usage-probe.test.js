@@ -53,13 +53,27 @@ describe('normalizeWhamUsage（2026-09-19 实测 wham 形状）', () => {
     expect(n.five_hour).toEqual({ usage_percent: 42, reset_time: new Date(1790000000 * 1000).toISOString() });
     // collector parser 直接可吃
     const parsed = parseChatgptWhamUsage(n);
-    expect(parsed).toEqual({ five_hour_pct: 42, seven_day_pct: 1, reset_at: new Date(1790000000 * 1000).toISOString() });
+    // schema 于 0921 扩了三键（task eb301e5a）：判据要靠 seven_day_reset_at 做
+    // soon-reset 豁免。wham 的 primary_window 本来就带 reset_at，所以 codex
+    // 账号也一并拿到了 7d 重置时刻——此前这个值被丢掉了。
+    expect(parsed).toEqual({
+      five_hour_pct: 42,
+      seven_day_pct: 1,
+      reset_at: new Date(1790000000 * 1000).toISOString(),
+      seven_day_reset_at: new Date(1790410481 * 1000).toISOString(),
+      seven_day_sonnet_pct: null,   // wham 无分层，诚实留空
+      seven_day_opus_pct: null,
+    });
   });
 
   it('secondary_window 为 null 时对应窗 null，parser 诚实留空不编造 0', () => {
     const n = normalizeWhamUsage({ rate_limit: { primary_window: { used_percent: 3, limit_window_seconds: 604800, reset_at: 1790410481 }, secondary_window: null } });
     expect(n.five_hour).toBeNull();
-    expect(parseChatgptWhamUsage(n)).toEqual({ five_hour_pct: null, seven_day_pct: 3, reset_at: null });
+    expect(parseChatgptWhamUsage(n)).toEqual({
+      five_hour_pct: null, seven_day_pct: 3, reset_at: null,
+      seven_day_reset_at: new Date(1790410481 * 1000).toISOString(),
+      seven_day_sonnet_pct: null, seven_day_opus_pct: null,
+    });
   });
 
   it('reset_at 缺失时用 reset_after_seconds 推算；结构缺失不抛', () => {
@@ -73,7 +87,11 @@ describe('normalizeWhamUsage（2026-09-19 实测 wham 形状）', () => {
 describe('normalizeAnthropicUsage', () => {
   it('oauth/usage 形状原样透传，collector parser 读 utilization/resets_at', () => {
     const raw = { five_hour: { utilization: 31, resets_at: '2026-09-19T09:40:00Z' }, seven_day: { utilization: 24 } };
-    expect(parseAnthropicUsage(normalizeAnthropicUsage(raw))).toEqual({ five_hour_pct: 31, seven_day_pct: 24, reset_at: '2026-09-19T09:40:00Z' });
+    // 这份 fixture 的 seven_day 没带 resets_at → seven_day_reset_at 为 null（不编造）
+    expect(parseAnthropicUsage(normalizeAnthropicUsage(raw))).toEqual({
+      five_hour_pct: 31, seven_day_pct: 24, reset_at: '2026-09-19T09:40:00Z',
+      seven_day_reset_at: null, seven_day_sonnet_pct: null, seven_day_opus_pct: null,
+    });
     expect(normalizeAnthropicUsage(undefined)).toEqual({});
   });
 });
@@ -105,7 +123,11 @@ describe('gRPC-web / protobuf 解帧', () => {
     const body = Buffer.concat([grpcFrame(0x00, data), grpcFrame(0x80, Buffer.from('grpc-status:0\r\n'))]);
     const n = normalizeGrokUsage(body);
     expect(n).toEqual({ five_hour_pct: null, seven_day_pct: 0, reset_at: new Date(endSec * 1000).toISOString() });
-    expect(parseGrokUsage(n)).toEqual(n);
+    // parser 对 grok 仍是直通（值一个不改），只是 0921 起补齐 schema 的三个新键。
+    // grok 探针不产出这些字段 → null（诚实留空，禁编造）。
+    expect(parseGrokUsage(n)).toEqual({
+      ...n, seven_day_reset_at: null, seven_day_sonnet_pct: null, seven_day_opus_pct: null,
+    });
   });
 
   it('normalizeGrokUsage：trailers 非 grpc-status:0 → 抛错带状态文本（采集器据此归 key_expired）', () => {
