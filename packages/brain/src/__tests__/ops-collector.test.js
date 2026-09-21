@@ -213,3 +213,56 @@ describe('runOpsCollector', () => {
     expect(hb.params).toContain('unreachable');
   });
 });
+
+/**
+ * crontab 两条腿的落点守卫。
+ *
+ * 0921 连栽两次：
+ *  ① 第一次：以为「buildHostCmd 逃出容器 = 到 us-vps 宿主」，实际
+ *     CECELIA_HOST_EXEC_SSH 指向 MMV → 采到 MMV 的表却标 us-vps。
+ *  ② 第二次（修①时）：us-vps 腿写了显式 `ssh root@172.17.0.1`，但仍然走了
+ *     `run()` —— 它会再包一层 buildHostCmd，于是变成 ssh→MMV→ssh 172.17.0.1，
+ *     而 MMV 的 docker 网关不是 us-vps。心跳报 unreachable。
+ *
+ * 两次都是「落点假设没人验」。这条守卫盯的是**实际发出的命令里，
+ * us-vps 那条不许被 host 逃逸二次包装**。
+ */
+describe('crontab 两条腿的落点', () => {
+  it('us-vps 腿不许被 host 逃逸二次包装（否则打到 MMV 的网关去）', async () => {
+    const pool = fakePool();
+    const fn = fakeExec({
+      'hostname; crontab -l': 'ubuntu-s-1vcpu-1gb-sfo3-01\n*/3 * * * * /bin/true # d',
+      'launchctl list': LIST_OK,
+      'plist': PLIST_OK,
+      'clawdbot.json': CLAW_OK,
+    });
+    await runOpsCollector(pool, { exec: fn, inContainer: true, keyExistsFn: () => true });
+
+    const usvps = fn.calls.filter((c) => c.includes('172.17.0.1'));
+    expect(usvps.length, 'us-vps 腿根本没发命令').toBeGreaterThan(0);
+    for (const c of usvps) {
+      // buildHostCmd 的特征：把命令整体套进 `ssh ... <host-exec target> '...'`
+      expect(
+        c.startsWith('ssh -o BatchMode=yes'),
+        `us-vps 腿被 host 逃逸包装了，实际发出：${c.slice(0, 120)}`,
+      ).toBe(true);
+      expect(c).not.toContain('host.docker.internal');
+      expect(c).not.toContain('CECELIA_HOST_EXEC_SSH');
+    }
+  });
+
+  it('mmv 腿必须走 host 逃逸（它的目标就是 MMV）', async () => {
+    const pool = fakePool();
+    const fn = fakeExec({
+      'hostname; crontab -l': 'aad17-2.macminivault.com\n*/3 * * * * /bin/true # d',
+      'launchctl list': LIST_OK,
+      'plist': PLIST_OK,
+      'clawdbot.json': CLAW_OK,
+    });
+    await runOpsCollector(pool, { exec: fn, inContainer: true, keyExistsFn: () => true });
+    const wrapped = fn.calls.filter((c) => c.includes('hostname; crontab -l') && !c.includes('172.17.0.1'));
+    expect(wrapped.length, 'mmv 腿没发命令').toBeGreaterThan(0);
+    expect(wrapped.some((c) => c.includes('-i ') && c.includes('StrictHostKeyChecking=no')),
+      'mmv 腿没走 buildHostCmd 包装').toBe(true);
+  });
+});
