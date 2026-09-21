@@ -95,6 +95,16 @@ launchd_managed_pids() {
   printf '%s\n' "$_LAUNCHD_PIDS_CACHE"
 }
 
+# 取父进程 PID。JANITOR_PPID_MAP（形如 "47168:42594 42594:1"）是测试注入接缝。
+_ppid_of() {
+  if [ -n "${JANITOR_PPID_MAP:-}" ]; then
+    printf '%s\n' "${JANITOR_PPID_MAP}" | tr ' ' '\n' \
+      | awk -F: -v p="$1" '$1==p {print $2; exit}'
+    return 0
+  fi
+  ps -o ppid= -p "$1" 2>/dev/null | tr -d ' '
+}
+
 # 返回 0 = 豁免（不许杀）；返回 1 = 可继续走孤儿判定
 is_exempt_resident_service() {
   local pid="${1:-}" cmd="${2:-}"
@@ -108,9 +118,24 @@ is_exempt_resident_service() {
 
   # B. launchd 托管一律豁免（自维护：以后新增常驻服务不必再改本名单）
   #    grep -x 精确整行匹配，防 1203 被 12037 子串命中
-  if [ -n "$pid" ] && launchd_managed_pids | grep -qx -- "$pid"; then
+  [ -z "$pid" ] && return 1
+  if launchd_managed_pids | grep -qx -- "$pid"; then
     return 0
   fi
+
+  # C. 祖先链上有 launchd 托管的服务 → 它是该服务的一部分，同样豁免。
+  #    首刀漏了这条：openclaw 网关的 service-child-relay 的 PPID 是网关，自己
+  #    既不在 launchctl list 也不在白名单，部署后拿真实 PID 实测仍判「会被杀」，
+  #    而子进程被杀一样会打断长任务。深度上限 8 防环状/异常父链把函数挂死。
+  local cur="$pid" depth=0
+  while [ "$depth" -lt 8 ]; do
+    cur=$(_ppid_of "$cur")
+    { [ -z "$cur" ] || [ "$cur" = "0" ] || [ "$cur" = "1" ]; } && break
+    if launchd_managed_pids | grep -qx -- "$cur"; then
+      return 0
+    fi
+    depth=$((depth + 1))
+  done
 
   return 1
 }
