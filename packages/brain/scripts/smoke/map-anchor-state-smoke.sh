@@ -34,6 +34,9 @@ import { digestMapManifest } from './packages/brain/src/lib/map-manifest-schema.
 import { loadMapImpactRadius } from './packages/brain/src/lib/map-impact-radius.js';
 import { projectMapManifest } from './packages/brain/src/lib/map-projection-store.js';
 import { loadMapNodeStates } from './packages/brain/src/lib/map-state-resolver.js';
+// 陈旧边界从预算常量推导：0921 之前这里钉着 16 分钟，预算一放宽就变 fresh，
+// smoke 会在无人察觉时失去意义（本次抬预算正是被它和 CI 一起抓出来的）。
+import { PHOTO_STALE_THRESHOLD_SECONDS } from './packages/brain/src/lib/registry-freshness.js';
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
 const client = await pool.connect();
@@ -193,7 +196,7 @@ try {
 
   await client.query(
     `UPDATE fact_snapshot_headers SET scanned_at=$2 WHERE kind='test' AND repo=$1`,
-    [repo, new Date(now.getTime() - 16 * 60_000)],
+    [repo, new Date(now.getTime() - (PHOTO_STALE_THRESHOLD_SECONDS + 60) * 1000)],
   );
   requireState(await loadMapNodeStates(client, { scopeKey, now: new Date(now.getTime() + 7000) }), assertionId, 'unknown', 'snapshot_stale');
 

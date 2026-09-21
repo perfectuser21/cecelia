@@ -25,6 +25,14 @@ TARGET_REVISION="$(git -C "$REPO_ROOT_CECELIA" rev-parse HEAD)"
   || fail "目标 repo HEAD 不是完整 Git object id"
 
 SMOKE_REPO="map-fact-snapshot-smoke-$$"
+
+# 构造"刚过保鲜期"的快照年龄。绝不手抄分钟数——0921 之前这里钉着 16 分钟，
+# 预算一放宽 16 分钟就变 fresh，smoke 会在无人察觉时失去意义。直接读 JS 常量。
+STALE_AGE_SECONDS="$("$NODE_EXECUTABLE" --input-type=module -e "
+  import { PHOTO_STALE_THRESHOLD_SECONDS } from '$ROOT_DIR/packages/brain/src/lib/registry-freshness.js';
+  process.stdout.write(String(PHOTO_STALE_THRESHOLD_SECONDS + 60));
+")"
+[[ "$STALE_AGE_SECONDS" =~ ^[0-9]+$ ]] || { echo "❌ 读不到 PHOTO_STALE_THRESHOLD_SECONDS（得到 '$STALE_AGE_SECONDS'）" >&2; exit 1; }
 cleanup() {
   "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
     -c "DELETE FROM api_registry WHERE repo = '$SMOKE_REPO'" \
@@ -214,7 +222,7 @@ NODE
 pass '消失事实原子替换演习'
 
 verify_freshness fresh '' "$SMOKE_REPO" api
-db_scalar "UPDATE fact_snapshot_headers SET scanned_at = NOW() - interval '16 minutes' WHERE kind = 'api' AND repo = '$SMOKE_REPO'" >/dev/null
+db_scalar "UPDATE fact_snapshot_headers SET scanned_at = NOW() - ($STALE_AGE_SECONDS || ' seconds')::interval WHERE kind = 'api' AND repo = '$SMOKE_REPO'" >/dev/null
 verify_freshness unknown snapshot_stale "$SMOKE_REPO" api
 pass '16 分钟快照 fail-closed unknown/snapshot_stale'
 
