@@ -728,6 +728,100 @@ export const N8N_LIST_CMD =
   "ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=no root@100.86.118.99 " +
   "'docker exec n8n sh -c \"n8n export:workflow --all --output=/tmp/ops-all.json >/dev/null 2>&1; cat /tmp/ops-all.json\"'";
 
+/**
+ * us-vps 宿主 crontab -> ops_schedule_entries 行（排程台账第四来源）。
+ *
+ * 为什么要收：台账已有 gha/github、openclaw/mmv、launchd/local 三家，唯独宿主
+ * crontab 的 19 条业务活（Notion 派单轮询、opc-* 五个 Notion 同步、磁盘/网关守卫、
+ * 库备份）完全不在里面，Notion 上零留痕。看不见的活没法被团队调度。
+ *
+ * 真表（2026-09-21）里有三类行，必须分清：
+ *  1. 活的                 -> 收，last_state=null（crontab 不记运行历史）
+ *  2. 被注释掉的活         -> 收，last_state='disabled'
+ *     形如 `#[retired-0921] 45 20 * * * docker restart ...`。沿用 openclaw 腿的原则：
+ *     看不见的禁用等于悄悄少干活。判据是「剥掉 # 和 [标记] 之后仍是合法排期开头」，
+ *     而不是看有没有 # —— 否则纯说明注释会被当成活收进来。
+ *  3. 纯说明注释           -> 跳过
+ *
+ * label 是 (source, host_alias, label) 唯一键的一部分，必须稳定且互不相同：
+ * 优先取行尾的 `# 名字`（人给的名字比推断的好）；没有就用
+ * `<命令里第一个脚本的 basename> @ <排期>` —— 带上排期是因为同一个脚本常配多条
+ * 不同排期（opc-kr-current.py 就有三条），只用 basename 会互相覆盖只剩一条。
+ *
+ * next_run_utc 一律 null：算 cron 下次运行要完整实现 cron 语义（列表/步长/星期与
+ * 日期的或关系/DST），算错比不算更坏。同 parseGhaCron 的口径——禁假精确。
+ */
+const CRON_FIELD = String.raw`[0-9*,\-/]+`;
+const CRON_EXPR_RE = new RegExp(`^(${CRON_FIELD}(?:\\s+${CRON_FIELD}){4})\\s+(.*)$`);
+const CRON_MACRO_RE = /^(@(?:reboot|yearly|annually|monthly|weekly|daily|midnight|hourly))\s+(.*)$/;
+/** 被注释掉的活：`#` + 可选 `[任意标记]` + 空白，剥掉后再按正常行判。 */
+const DISABLED_PREFIX_RE = /^#\s*(?:\[[^\]]*\]\s*)?/;
+
+function splitCronLine(line) {
+  const macro = line.match(CRON_MACRO_RE);
+  if (macro) return { schedule: macro[1], command: macro[2] };
+  const m = line.match(CRON_EXPR_RE);
+  if (!m) return null;
+  return { schedule: m[1], command: m[2] };
+}
+
+/** 从命令里挑一个能当名字的脚本 basename；挑不出就用命令首词。 */
+function inferCronLabelBase(command) {
+  const script = command.match(/([\w.-]+\.(?:sh|py|mjs|js|ts))\b/);
+  if (script) return script[1];
+  const words = command.trim().split(/\s+/);
+  const firstReal = words.find((w) => !/^[A-Z_]+=/.test(w) && w !== 'cd' && w !== 'set') || words[0] || 'job';
+  return firstReal.split('/').pop();
+}
+
+export function parseCrontab(out) {
+  const rows = [];
+  const seen = new Set();
+  for (const raw of String(out).split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+
+    let disabled = false;
+    let body = line;
+    if (line.startsWith('#')) {
+      body = line.replace(DISABLED_PREFIX_RE, '').trim();
+      // 剥掉 # 后仍是合法排期才算"被注释掉的活"；否则就是人写的说明。
+      if (!splitCronLine(body)) continue;
+      disabled = true;
+    }
+    // VAR=value 环境行不是活
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(body)) continue;
+
+    const parsed = splitCronLine(body);
+    if (!parsed) continue;
+
+    // 行尾 `# 名字`：只认注释里没有空白分隔的单个 token，避免把中文说明当名字
+    const tail = parsed.command.match(/#\s*([\w.-]+)\s*$/);
+    let label = tail ? tail[1] : `${inferCronLabelBase(parsed.command)} @ ${parsed.schedule}`;
+    // 极端情况下仍可能撞名（同名 tail 注释），加序号保证唯一——撞名会静默互相覆盖。
+    if (seen.has(label)) {
+      let n = 2;
+      while (seen.has(`${label} #${n}`)) n += 1;
+      label = `${label} #${n}`;
+    }
+    seen.add(label);
+
+    rows.push({
+      label,
+      kind: 'crontab',
+      schedule_desc: `cron(UTC): ${parsed.schedule}`,
+      next_run_utc: null,
+      last_state: disabled ? 'disabled' : null,
+    });
+  }
+  if (rows.length === 0) {
+    throw new Error('parse_error: crontab 解析出 0 条（0=可疑，禁当真空；空表会把整份台账标 inactive）');
+  }
+  return rows;
+}
+
+export const CRONTAB_CMD = 'crontab -l';
+
 export const GHA_CRON_CMD =
   "grep -RnoE \"cron: *'[^']+'\" /Users/administrator/perfect21/cecelia/.github/workflows /Users/administrator/perfect21/zenithjoy-workspace/.github/workflows 2>/dev/null || true";
 
@@ -922,6 +1016,20 @@ export async function runOpsCollector(pool, opts = {}) {
     const [status, code] = classifyError(e);
     await writeHeartbeat(pool, 'gha', 'github', status, code, e.message);
     results.gha = { ok: false };
+  }
+
+  // —— 腿4: crontab@us-vps（宿主 root 表；第四来源，此前 19 条活零留痕）——
+  // 经 buildHostCmd 逃出容器读宿主 root 的表。解析出 0 条即抛错（0=可疑禁当真空），
+  // 与 launchd/openclaw 两腿同口径：一次取数失败不该把整份台账标成 inactive。
+  try {
+    const entries = parseCrontab(run(CRONTAB_CMD));
+    await writeSchedulesSnapshot(pool, 'crontab', 'us-vps', entries, collectedAt);
+    await writeHeartbeat(pool, 'crontab', 'us-vps', 'ok', null, null, collectedAt);
+    results.crontab = { ok: true, schedules: entries.length };
+  } catch (e) {
+    const [status, code] = classifyError(e);
+    await writeHeartbeat(pool, 'crontab', 'us-vps', status, code, e.message);
+    results.crontab = { ok: false };
   }
 
   // —— 腿5: n8n run 执行历史@hk-vps（每次跑的记录 + 流程健康汇总）——
