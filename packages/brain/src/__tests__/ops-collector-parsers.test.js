@@ -2,7 +2,76 @@ import { describe, it, expect } from 'vitest';
 import {
   parseLaunchctlList, parsePlistDump, computeNextRunUTC,
   extractOpenclawAgents, parseGhaCron,
+  parseOpenclawCrons, OPENCLAW_CRON_CMD, OPENCLAW_CONFIG_CMD,
 } from '../ops-collector.js';
+
+// ── OpenClaw cron 台账化（0921，task 8fc40bfb）─────────────────────────
+// 背景：ops_schedule_entries 21 条里 0 条是 OpenClaw —— 41 条 OpenClaw cron
+// （含 18 条业务）从来没进过台账，Notion 上零留痕。主理人要「团队能调用
+// OpenClaw 的全部任务」，前提是先看得见。
+//
+// 同时修一个两度复发的 bug：采集命令写死 `docker exec openclaw-gateway`。
+// 它在 hk-vps→us-vps 迁移时坏过一次（源码注释里记着「迁移后必然
+// No such container，腿常年 unreachable」），0920 us-vps→MMV 迁移后又坏一次。
+// 改走 mmv 别名，迁移只需改别名不必改代码。
+describe('OpenClaw cron → 排程台账', () => {
+  const RAW = JSON.stringify({
+    jobs: [
+      {
+        id: 'a1', name: 'OPC 下钻式晨报', enabled: true,
+        schedule: { kind: 'cron', expr: '25 6 * * 1-5', tz: 'Asia/Shanghai' },
+        lastRunStatus: 'error',
+        state: { nextRunAtMs: 1789999999000, consecutiveErrors: 1 },
+      },
+      {
+        id: 'a2', name: '悦升云端企业资料同步', enabled: true,
+        schedule: { kind: 'every', everyMs: 1800000 },
+        lastRunStatus: 'ok', state: { nextRunAtMs: null },
+      },
+      {
+        id: 'a3', name: '已禁用的活', enabled: false,
+        schedule: { kind: 'cron', expr: '0 0 * * *', tz: 'UTC' }, state: {},
+      },
+    ],
+  });
+
+  it('cron 型解析出表达式与时区', () => {
+    const e = parseOpenclawCrons(RAW).find((x) => x.label === 'OPC 下钻式晨报');
+    expect(e.kind).toBe('openclaw_cron');
+    expect(e.schedule_desc).toContain('25 6 * * 1-5');
+    expect(e.schedule_desc).toContain('Asia/Shanghai');
+    expect(e.last_state).toBe('error');
+    expect(e.next_run_utc).toBe(new Date(1789999999000).toISOString());
+  });
+
+  it('every 型换算成秒，且不伪造 next_run', () => {
+    const e = parseOpenclawCrons(RAW).find((x) => x.label === '悦升云端企业资料同步');
+    expect(e.kind).toBe('openclaw_every');
+    expect(e.schedule_desc).toContain('1800');
+    expect(e.next_run_utc).toBeNull();
+  });
+
+  it('禁用的活也收进台账并标 disabled（看得见才管得住）', () => {
+    const e = parseOpenclawCrons(RAW).find((x) => x.label === '已禁用的活');
+    expect(e).toBeTruthy();
+    expect(e.last_state).toBe('disabled');
+  });
+
+  it('jobs 为 0 条视为可疑，抛错而不是当真空把台账清空', () => {
+    expect(() => parseOpenclawCrons(JSON.stringify({ jobs: [] }))).toThrow(/0 条/);
+  });
+
+  it('非法 JSON 抛 parse_error，交上层归类', () => {
+    expect(() => parseOpenclawCrons('not json')).toThrow(/parse_error/);
+  });
+
+  it('采集命令指向 MMV，不再是本机容器（两度复发的迁移 bug）', () => {
+    expect(OPENCLAW_CRON_CMD).toMatch(/\bmmv\b/);
+    expect(OPENCLAW_CRON_CMD).toContain('cron list --all --json');
+    expect(OPENCLAW_CONFIG_CMD).toMatch(/\bmmv\b/);
+    expect(OPENCLAW_CONFIG_CMD).not.toContain('docker exec openclaw-gateway');
+  });
+});
 
 describe('parseLaunchctlList', () => {
   const OUT = `PID\tStatus\tLabel

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { runOpsCollector, __resetOpsCollectorForTest, LOCAL_OPENCLAW_CMD } from '../ops-collector.js';
+import { runOpsCollector, __resetOpsCollectorForTest, OPENCLAW_CONFIG_CMD, OPENCLAW_CRON_CMD } from '../ops-collector.js';
 
 function fakePool() {
   const queries = [];
@@ -31,26 +31,85 @@ function fakeExec(map) {
 beforeEach(() => __resetOpsCollectorForTest());
 
 describe('runOpsCollector', () => {
-  it('OpenClaw 命令写死容器内路径（禁 find/通配）', () => {
-    expect(LOCAL_OPENCLAW_CMD).toContain('docker exec openclaw-gateway cat /root/.openclaw/clawdbot.json');
-    expect(LOCAL_OPENCLAW_CMD).not.toContain('find');
+  it('OpenClaw 命令写死配置路径（禁 find/通配）', () => {
+    expect(OPENCLAW_CONFIG_CMD).toContain('.openclaw/clawdbot.json');
+    expect(OPENCLAW_CONFIG_CMD).not.toContain('find');
   });
 
-  it('OpenClaw 腿本机直取：不 ssh hk-vps，host_alias 记 us-vps（容器 09-12 已迁 us-vps）', async () => {
-    // 2026-09-14 生产实证：openclaw-gateway 在 us-vps 本机，旧命令 ssh hk-vps 报
-    // "No such container"，腿常年 unreachable。同机容器经挂载的 docker.sock 直取。
-    expect(LOCAL_OPENCLAW_CMD).not.toContain('ssh');
-    expect(LOCAL_OPENCLAW_CMD).not.toContain('100.86.118.99');
+  // ⚠️ 这条断言在 0921 被换过一次，换的理由本身就是教训：
+  // 原断言是「不许含 ssh」——它固化的是**上一次迁移的落点**（hk-vps→us-vps 后
+  // 改成本机 docker exec）。结果 0920 再迁 MMV，同一行又坏一次，而这条测试全绿
+  // 放行了，因为它守的是"用哪种取数方式"，不是"落点会不会写死"。
+  //
+  // 现在守的是耐用的那条：**落点不许写死，必须走 ssh 别名**。迁移时只改
+  // us-vps 的 ~/.ssh/config，代码一行不动。
+  it('OpenClaw 取数走 ssh 别名，不写死主机/IP/容器名', async () => {
+    for (const cmd of [OPENCLAW_CONFIG_CMD, OPENCLAW_CRON_CMD]) {
+      expect(cmd).toMatch(/\bmmv\b/);                       // 走别名
+      expect(cmd).not.toContain('docker exec');             // 不绑某台机的容器
+      expect(cmd).not.toMatch(/\b\d{1,3}(\.\d{1,3}){3}\b/); // 不写死 IP
+      expect(cmd).not.toMatch(/\b(hk-vps|us-vps)\b/);       // 不写死历史落点
+    }
     const pool = fakePool();
     const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'clawdbot.json': CLAW_OK, 'workflows': '', 'readlink': '/var/db/timezone/zoneinfo/America/Los_Angeles' });
     const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
     expect(r.results.openclaw.ok).toBe(true);
     const agentWrites = pool.queries.filter((q) => q.sql.includes('INSERT INTO ops_agents') && q.params?.[0] === 'openclaw');
     expect(agentWrites.length).toBeGreaterThan(0);
-    for (const q of agentWrites) expect(q.params[1]).toBe('us-vps');
+    for (const q of agentWrites) expect(q.params[1]).toBe('mmv');
     const hb = pool.queries.filter((q) => q.sql.includes('ops_source_heartbeats') && q.params?.[0] === 'openclaw');
     expect(hb.length).toBeGreaterThan(0);
-    for (const q of hb) expect(q.params[1]).toBe('us-vps');
+    for (const q of hb) expect(q.params[1]).toBe('mmv');
+  });
+
+  // 端到端：光有 parseOpenclawCrons 的单测不够——把 writeSchedulesSnapshot 那一行
+  // 整个删掉时，纯函数测试照样全绿（0921 变异实测）。这条守的是「采集器真的把
+  // cron 写进了台账」，而不只是「解析器会解析」。
+  it('OpenClaw cron 真的落进 ops_schedule_entries（source=openclaw, host=mmv）', async () => {
+    const CRON_OK = JSON.stringify({
+      jobs: [
+        { id: 'c1', name: 'OPC 下钻式晨报', enabled: true,
+          schedule: { kind: 'cron', expr: '25 6 * * 1-5', tz: 'Asia/Shanghai' },
+          lastRunStatus: 'error', state: { nextRunAtMs: 1789999999000 } },
+        { id: 'c2', name: '悦升云端增长情报日报', enabled: true,
+          schedule: { kind: 'cron', expr: '30 7 * * *', tz: 'Asia/Shanghai' },
+          lastRunStatus: 'ok', state: {} },
+      ],
+    });
+    const pool = fakePool();
+    const exec = fakeExec({
+      'launchctl list': LIST_OK, plutil: PLIST_OK, 'clawdbot.json': CLAW_OK,
+      'cron list --all --json': CRON_OK, workflows: '',
+      readlink: '/var/db/timezone/zoneinfo/America/Los_Angeles',
+    });
+    const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
+
+    const schedWrites = pool.queries.filter(
+      (q) => q.sql.includes('INSERT INTO ops_schedule_entries') && q.params?.[0] === 'openclaw',
+    );
+    expect(schedWrites.length).toBe(2);
+    for (const q of schedWrites) expect(q.params[1]).toBe('mmv');
+    const labels = schedWrites.map((q) => q.params[2]);
+    expect(labels).toContain('OPC 下钻式晨报');
+    expect(labels).toContain('悦升云端增长情报日报');
+    const brief = schedWrites.find((q) => q.params[2] === 'OPC 下钻式晨报');
+    expect(brief.params[3]).toBe('openclaw_cron');          // kind
+    expect(brief.params[4]).toContain('25 6 * * 1-5');      // schedule_desc
+    expect(brief.params[6]).toBe('error');                  // last_state
+    expect(r.results.openclaw_crons).toMatchObject({ ok: true, schedules: 2 });
+  });
+
+  it('cron 取数失败不拖垮同腿的 agents（独立 try）', async () => {
+    const pool = fakePool();
+    const exec = fakeExec({
+      'launchctl list': LIST_OK, plutil: PLIST_OK, 'clawdbot.json': CLAW_OK,
+      'cron list --all --json': 'not json at all', workflows: '',
+      readlink: '/var/db/timezone/zoneinfo/America/Los_Angeles',
+    });
+    const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
+    expect(r.results.openclaw.ok).toBe(true);               // agents 仍成功
+    expect(r.results.openclaw_crons.ok).toBe(false);        // cron 单独失败并留痕
+    expect(r.results.openclaw_crons.error).toContain('parse_error');
   });
 
   it('全部成功：三路各写快照+心跳 ok', async () => {

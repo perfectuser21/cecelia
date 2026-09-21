@@ -507,10 +507,65 @@ export function parseGhaCron(out) {
   return rows;
 }
 
-// OpenClaw 容器 2026-09-12 起与 Brain 同驻 us-vps：经挂载的 docker.sock 本机直取，
-// 不走 buildHostCmd 逃逸（旧 ssh hk-vps 版在迁移后必然 No such container，腿常年 unreachable）。
-export const LOCAL_OPENCLAW_CMD =
-  "docker exec openclaw-gateway cat /root/.openclaw/clawdbot.json"; // 写死真身路径：宿主同名文件5份含旧备份
+// OpenClaw 落点迁移史：hk-vps → us-vps(2026-09-12) → MMV(2026-09-20)。
+// 前两版都把落点写死在命令里（`ssh hk-vps ...` / `docker exec openclaw-gateway ...`），
+// 于是每迁一次这条腿就坏一次：上一版的注释原话是「旧 ssh hk-vps 版在迁移后必然
+// No such container，腿常年 unreachable」—— 0920 迁 MMV 后同一句话又应验了一遍。
+//
+// 这一版改走 **ssh 别名 mmv**：落点变了只需改 us-vps 的 ~/.ssh/config，不必改代码。
+// （2026-09-21 实证：那条别名原先指向过期 IP 100.108.7.63，已修为 100.71.151.105。）
+// 命令仍经 buildHostCmd 逃出容器到 us-vps 宿主，再由宿主 ssh 到 MMV。
+const MMV_SSH = 'ssh -o BatchMode=yes -o ConnectTimeout=20 mmv';
+export const OPENCLAW_CONFIG_CMD = `${MMV_SSH} 'cat ~/.openclaw/clawdbot.json'`;
+export const OPENCLAW_CRON_CMD = `${MMV_SSH} '/opt/homebrew/bin/openclaw cron list --all --json'`;
+
+/**
+ * `openclaw cron list --all --json` → ops_schedule_entries 行。
+ *
+ * 为什么要收：41 条 OpenClaw cron（含 18 条业务）此前从不进台账，Notion 上零留痕
+ * —— 团队要能调用 OpenClaw 的全部任务，前提是先看得见。
+ *
+ * 禁用的活也收（标 last_state=disabled）：看不见的禁用等于悄悄少干活。
+ * 0 条视为可疑直接抛错，不当真空——否则一次取数失败就会把整份台账标成 inactive
+ * （同 launchd 腿「0=可疑，禁当真空」的处置）。
+ */
+export function parseOpenclawCrons(raw) {
+  let doc;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    throw new Error(`parse_error: openclaw cron list 非法 JSON（前100字符: ${String(raw).slice(0, 100)}）`);
+  }
+  const jobs = Array.isArray(doc?.jobs) ? doc.jobs : [];
+  if (jobs.length === 0) {
+    throw new Error('parse_error: openclaw cron list 解析出 0 条（0=可疑，禁当真空把台账清空）');
+  }
+  return jobs.map((j) => {
+    const sch = j?.schedule ?? {};
+    const kind = String(sch.kind ?? 'unknown');
+    let desc;
+    if (kind === 'cron') {
+      desc = `cron(${sch.tz || 'UTC'}): ${sch.expr ?? ''}`.trim();
+    } else if (kind === 'every') {
+      // 锚点是注册时刻，不是整点——写“约每 N 秒”，禁假精确（同 launchd_interval 的处置）
+      desc = `约每 ${Math.round(Number(sch.everyMs ?? 0) / 1000)} 秒`;
+    } else {
+      desc = JSON.stringify(sch);
+    }
+    const next = j?.state?.nextRunAtMs ?? j?.nextRunAtMs ?? null;
+    const lastState = j?.enabled === false
+      ? 'disabled'
+      : (j?.lastRunStatus ?? j?.status ?? null);
+    return {
+      label: String(j?.name || j?.id || '(未命名)'),
+      kind: `openclaw_${kind}`,
+      schedule_desc: desc,
+      next_run_utc: Number.isFinite(Number(next)) && next ? new Date(Number(next)).toISOString() : null,
+      last_state: lastState,
+      last_exit_code: null,
+    };
+  });
+}
 
 export const PLIST_DUMP_CMD =
   'for f in /Library/LaunchDaemons/*.plist; do echo "== $f"; /usr/bin/plutil -convert json -o - "$f" 2>/dev/null; echo ""; done';
@@ -791,13 +846,24 @@ export async function runOpsCollector(pool, opts = {}) {
     results.launchd = { ok: false };
   }
 
-  // —— 腿2: openclaw@us-vps ——（解析失败整份丢弃，沿用上轮+stale；同机容器不走 host 逃逸）
+  // —— 腿2: openclaw@mmv ——（解析失败整份丢弃，沿用上轮+stale）
+  // 0921 起落点是 MMV，经 host 逃逸 + ssh 别名 mmv 取数（见 OPENCLAW_CONFIG_CMD 注释）。
   try {
-    const raw = exec(LOCAL_OPENCLAW_CMD);
+    const raw = run(OPENCLAW_CONFIG_CMD);
     let cfg;
     try { cfg = JSON.parse(raw); } catch { throw new Error(`parse_error: clawdbot.json 非法 JSON（前100字符: ${String(raw).slice(0, 100)}）`); }
     const agents = extractOpenclawAgents(cfg);
-    await writeAgentsSnapshot(pool, 'openclaw', 'us-vps', agents, collectedAt);
+    await writeAgentsSnapshot(pool, 'openclaw', 'mmv', agents, collectedAt);
+
+    // cron 台账（0921 新增）：41 条 OpenClaw cron 此前从不进台账、Notion 零留痕。
+    // 与 agents 同一条腿但独立 try —— cron 取数失败不该把 agents/skills 一起拖废。
+    try {
+      const crons = parseOpenclawCrons(run(OPENCLAW_CRON_CMD));
+      await writeSchedulesSnapshot(pool, 'openclaw', 'mmv', crons, collectedAt);
+      results.openclaw_crons = { ok: true, schedules: crons.length };
+    } catch (ce) {
+      results.openclaw_crons = { ok: false, error: String(ce.message).slice(0, 160) };
+    }
     // skill 投影（最小执行单元，与 agent 多对多）
     // 双写消除（刀7）：真相源是 ops_agents.meta.skills（直接来自 clawdbot.json 的 agent 定义）；
     // ops_skills.used_by 是它的**派生反向索引**，每轮由 extractOpenclawSkills 从同一份 cfg 现算，
@@ -838,11 +904,11 @@ export async function runOpsCollector(pool, opts = {}) {
       // 版本历史：只在**分数或档位真变了**时追加一代，避免每 5 分钟灌一行流水
       if (row) await recordSkillVersionIfChanged(pool, row, sk.name, ev, st);
     }
-    await writeHeartbeat(pool, 'openclaw', 'us-vps', 'ok', null, null, collectedAt);
+    await writeHeartbeat(pool, 'openclaw', 'mmv', 'ok', null, null, collectedAt);
     results.openclaw = { ok: true, agents: agents.length, skills: skills.length };
   } catch (e) {
     const [status, code] = classifyError(e);
-    await writeHeartbeat(pool, 'openclaw', 'us-vps', status, code, e.message);
+    await writeHeartbeat(pool, 'openclaw', 'mmv', status, code, e.message);
     results.openclaw = { ok: false };
   }
 

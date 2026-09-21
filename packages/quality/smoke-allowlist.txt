@@ -307,6 +307,7 @@ workflow-run-ledger-smoke.sh
 ws3-ire-module-smoke.sh
 model-accounts-smoke.sh
 account-quota-gate-smoke.sh
+openclaw-cron-ledger-smoke.sh
 xian-harness-relay-smoke.sh
 zenithjoy-db-pool-smoke.sh
 zenithjoy-schema-migration-smoke.sh
