@@ -6,7 +6,9 @@
  */
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { _parseBaseRepo, _hasEvaluatorGate } from '../harness-relay-watchdog.js';
+import {
+  _parseBaseRepo, _hasEvaluatorGate, _raiseUngatedMergeAlert,
+} from '../harness-relay-watchdog.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -88,8 +90,43 @@ export async function finalizeHarnessTask(taskId, deps = {}) {
   if (prState !== 'MERGED') return demote(prUrl ? `pr_not_merged: state=${prState}` : 'pr_not_found');
 
   // 2. evaluator gate（外部真相第二判据，复用 watchdog 范式）
+  // 2. evaluator gate（外部真相第二判据）
+  //
+  // 0922 修正：evaluator 缺席不再硬挡，改为**照抄 relay-watchdog 已定的策略**。
+  // `_finalizeMergedRun` 的注释原文：「门禁通过 → 原行为；门禁未通过 → 仍标
+  // done/completed（PR 客观已合并无法撤销）但打 failure_reason，跳过 regression
+  // 提升，并发未验收合并告警」。
+  //
+  // 同一个场景（PR 已合并但没跑过 evaluator），watchdog 那条路放行+留疤+告警+不提升，
+  // 这条路却死锁——两条路径相反的策略，是分叉不是设计。
+  //
+  // 硬挡还判错了对象：它假定"流水线跑过、只是验收员偷懒"。实际 0921-0922 那三条
+  // 任务（a70d7743 / 3dc7792a / 7e7d4db5）是 tick 领走后派发撞 map_stale 失败，
+  // **流水线一步都没启动**，evaluator 记录必然不存在。拦着任务不改变"PR 已经合了"
+  // 这个客观事实，只是让账本和现实分叉。
+  //
+  // 惩罚仍在，只是落在正确的地方：留疤 + 告警 + 不自动提升回归。
   const gated = await (deps.hasEvaluatorGateFn || _hasEvaluatorGate)(pool, taskId);
-  if (!gated) return demote('no_evaluator_gate: PR 已 MERGED 但 evaluator 从未 done——需补验收');
+  if (!gated) {
+    const raiseAlert = deps.raiseUngatedMergeAlertFn || _raiseUngatedMergeAlert;
+    try {
+      await raiseAlert(pool, taskId, prUrl);
+    } catch (err) {
+      // best-effort：告警写不进去不该把销账一起拖垮（同 watchdog 的处置）
+      console.warn(`[harness-finalize] 未验收合并告警写入失败 (non-fatal): ${err.message}`);
+    }
+    console.warn(
+      `[harness-finalize] task=${taskId} PR ${prUrl} 已 MERGED 但 evaluator 从未 done —— `
+      + '放行并标 merged_without_evaluator_gate，跳过 regression 提升，已开 P1 待人工复核'
+    );
+    return {
+      applies: true,
+      allow: true,
+      prUrl,
+      ungated: true,
+      failureReason: 'merged_without_evaluator_gate',
+    };
+  }
 
   return { applies: true, allow: true, prUrl };
 }
