@@ -68,33 +68,32 @@ describe('闸1 类型白名单：device_job 能进 tasks 表', () => {
 });
 
 describe('闸2 派发排除：device_job 不进无头派发队列', () => {
-  async function captureDispatchSql() {
-    let captured = '';
-    const mockPool = {
-      query: vi.fn(async (sql) => {
-        captured = sql;
-        return { rows: [] };
-      }),
-    };
-    await selectNextDispatchableTask(null, [], { pool: mockPool });
-    return stripSqlComments(captured);
-  }
+  // 断言打在源码上而不是运行时：selectNextDispatchableTask 的 pool 是模块级 import
+  // （不吃注入），且它连带 alertness/actions/task-weight/quarantine 四条依赖链，
+  // 为一句谓词把整条链 mock 起来，守卫本身就会变成新的脆弱点。
+  // 剥注释后做文本断言，摘掉实现里的 device_job 照样报红（变异清单第 1 条）。
+  const dispatchSrc = stripSqlComments(
+    readFileSync(join(HERE, '..', 'dispatch-helpers.js'), 'utf8')
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join('\n'),
+  );
 
-  it('取数谓词把 device_job 排除在外', async () => {
-    const sql = await captureDispatchSql();
-    expect(sql, 'dispatch 谓词没有排除 device_job——它会被 tick 抢去当编码任务跑').toMatch(/device_job/);
+  it('导出的选单函数仍在（谓词搬家了要让守卫跟着走）', () => {
+    expect(typeof selectNextDispatchableTask).toBe('function');
+    expect(dispatchSrc).toMatch(/export\s+async\s+function\s+selectNextDispatchableTask/);
   });
 
-  it('device_job 的排除写在 NOT IN 黑名单里（不是出现在无关位置）', async () => {
-    const sql = await captureDispatchSql();
-    const notIn = sql.match(/task_type\s+NOT\s+IN\s*\(([^)]*)\)/i);
+  it('device_job 的排除写在 task_type NOT IN 黑名单里', () => {
+    const notIn = dispatchSrc.match(/task_type\s+NOT\s+IN\s*\(([^)]*)\)/i);
     expect(notIn, 'dispatch 谓词里找不到 task_type NOT IN (...) 黑名单').toBeTruthy();
-    expect(notIn[1]).toMatch(/device_job/);
+    expect(notIn[1], 'dispatch 没有排除 device_job——它会被 tick 抢去当编码任务跑').toMatch(
+      /'device_job'/,
+    );
   });
 
-  it('headed_manual 这道既有闸仍在（回归保护：两道闸缺一不可）', async () => {
-    const sql = await captureDispatchSql();
-    expect(sql).toMatch(/headed_manual/);
+  it('headed_manual 这道既有闸仍在（回归保护：两道闸缺一不可）', () => {
+    expect(dispatchSrc).toMatch(/payload->>'headed_manual'/);
   });
 });
 

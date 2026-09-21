@@ -220,18 +220,33 @@ async function pushIssues(pool, token) {
  *  3. 13483 条历史 notion_id 是旧时代遗产指向别处：仅当 notion_props 带本指纹
  *     才 PATCH，否则一律 create 新页并覆盖（防打错对象）。
  */
-async function pushTasks(pool, token) {
-  const { rows } = await pool.query(`
+/**
+ * pushTasks 的取数（导出供守卫测试断言，不要内联回去）。
+ *
+ * device_job 必须排除在外：它是安卓工作机（手机）的活，四台机一天约 90 单，
+ * 每单至少 queued→in_progress→completed 三次状态翻转 ≈ 270 次推送。而本查询
+ * 每轮只推 LIMIT 10，Notion API 又限流 3 req/s——手机单一旦涌进来就会把投影
+ * 窗口整个挤占，连累 harness/决策/任务的 Notion 同步（延迟已实测最长 3090s，
+ * 账本债近三天发作过三次）。
+ *
+ * 手机的活在 Notion 上走**每机每天一条汇总**的独立通道（独立 push 函数 + 独立
+ * 日配额），逐单明细只留在工作机页；这里一条都不推。
+ */
+export const PUSH_TASKS_QUERY = `
     SELECT id, title, status, priority, task_type, notion_id, notion_props
       FROM tasks
      WHERE (notion_props->>'pushed_status') IS DISTINCT FROM status
+       AND task_type <> 'device_job'
        AND (
          status IN ('queued','in_progress','blocked')
          OR (status IN ('completed','failed','canceled','cancelled')
              AND updated_at > NOW() - INTERVAL '7 days')
        )
      ORDER BY updated_at DESC
-     LIMIT 10`);
+     LIMIT 10`;
+
+async function pushTasks(pool, token) {
+  const { rows } = await pool.query(PUSH_TASKS_QUERY);
   await pushTaskRows(pool, token, rows);
 }
 
