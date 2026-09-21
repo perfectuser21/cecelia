@@ -52,6 +52,7 @@ conversation-capture-smoke.sh
 conversation-ttl-archiver-smoke.sh
 conversations-smoke.sh
 credential-freshness-smoke.sh
+crontab-ledger-smoke.sh
 crystal-coding-evidence-smoke.sh
 crystal-evidence-feed-smoke.sh
 crystal-judge-smoke.sh
