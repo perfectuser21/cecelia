@@ -6,6 +6,11 @@ import {
   resolveEvidenceState,
   selectCurrentReceipt,
 } from '../map-state-resolver.js';
+import { PHOTO_STALE_THRESHOLD_SECONDS } from '../registry-freshness.js';
+
+// 陈旧边界从预算常量推导：0921 之前这里钉着 16（分钟），预算一放宽就自动变 fresh，
+// 这条测试会在无人察觉的情况下失去意义。用 +1min 表达「刚过界」，预算怎么调都还在测边界。
+const STALE_MIN = PHOTO_STALE_THRESHOLD_SECONDS / 60 + 1;
 
 const now = new Date('2026-08-11T12:00:00.000Z');
 const revision = 'a'.repeat(40);
@@ -76,7 +81,7 @@ describe('resolveEvidenceState', () => {
   });
 
   it('超过 15 分钟、revision 不可得或无效时 fail closed unknown', () => {
-    expect(resolveEvidenceState(evidence({ snapshot: snapshot(16) }))).toMatchObject({
+    expect(resolveEvidenceState(evidence({ snapshot: snapshot(STALE_MIN) }))).toMatchObject({
       status: 'unknown', reason_code: 'snapshot_stale',
     });
     expect(resolveEvidenceState(evidence({ snapshot: null }))).toMatchObject({
