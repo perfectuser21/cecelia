@@ -1,4 +1,3 @@
-
 # Smoke PASS 基线（allowlist）
 # 列表内脚本失败 → CI 红（棘轮闸）
 # 新增脚本默认须加入此文件或 smoke-denylist.txt（新债不许欠）
@@ -12,6 +11,7 @@ acceptance-d3-backtoback-smoke.sh
 acceptance-endpoints-smoke.sh
 acceptance-staff-hub-internal-smoke.sh
 acceptance-two-column-smoke.sh
+account-quota-gate-smoke.sh
 admission-report-smoke.sh
 advancement-items-smoke.sh
 agent-credit-smoke.sh
@@ -61,6 +61,7 @@ db-slim-smoke.sh
 decision-system-smoke.sh
 decisions-dedup-smoke.sh
 dev-env-db-guard-smoke.sh
+device-job-foundation-smoke.sh
 device-locks-smoke.sh
 direction-proposer-t4-smoke.sh
 disk-guard-smoke.sh
@@ -198,20 +199,22 @@ merge-pr-smoke.sh
 migration-339-drop-abilities-gp-priority-smoke.sh
 migration-346-idempotent-smoke.sh
 migration-verify.sh
+model-accounts-smoke.sh
 nfr-decisions-assertion-ref-smoke.sh
 notion-capture-ingest-smoke.sh
-notion-projection-engine-smoke.sh
-notion-inlet-ingest-smoke.sh
-notion-projection-map-smoke.sh
-notion-projection-watch-smoke.sh
 notion-inbox-ws3-smoke.sh
+notion-inlet-ingest-smoke.sh
 notion-openclaw-dispatch-smoke.sh
 notion-page-content-prompt-smoke.sh
+notion-projection-engine-smoke.sh
+notion-projection-map-smoke.sh
+notion-projection-watch-smoke.sh
 notion-tasks-pull-smoke.sh
 notion-tasks-push-smoke.sh
 notion-workflow-relation-smoke.sh
 okr-initiative-mirror-smoke.sh
 oom-aware-retry-smoke.sh
+openclaw-cron-ledger-smoke.sh
 openclaw-guards-smoke.sh
 openclaw-runner-pool-smoke.sh
 ops-cockpit-sync-smoke.sh
@@ -305,9 +308,6 @@ workbench-projection-smoke.sh
 worker-pool-dispatch-smoke.sh
 workflow-run-ledger-smoke.sh
 ws3-ire-module-smoke.sh
-model-accounts-smoke.sh
-account-quota-gate-smoke.sh
-openclaw-cron-ledger-smoke.sh
 xian-harness-relay-smoke.sh
 zenithjoy-db-pool-smoke.sh
 zenithjoy-schema-migration-smoke.sh
