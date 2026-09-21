@@ -12,6 +12,7 @@ import {
 } from './golden-path-contract-task.js';
 import { createRoutedTask } from './work-routing-store.js';
 import { CHANGE_KINDS, normalizeRepoHint } from './work-router.js';
+import { PHOTO_STALE_THRESHOLD_SECONDS } from './lib/registry-freshness.js';
 
 export {
   DEFAULT_GP_YIELD_ORDER,
@@ -73,8 +74,12 @@ async function resolveFreshMapBaseline(db, baseRepo) {
       GROUP BY repositories.repo
      HAVING count(DISTINCT headers.kind) = 4
         AND count(DISTINCT headers.source_revision) = 1
-        AND bool_and(headers.scanned_at >= now() - interval '15 minutes')`,
-    [repoHint],
+        AND bool_and(headers.scanned_at >= now() - ($2 || ' seconds')::interval)`,
+    // 0921：此处原先硬编码 interval '15 minutes'，是照相层保鲜的第三份独立口径
+    // （另两份：registry-freshness 的 PHOTO_STALE_THRESHOLD、rescan-if-changed.sh 的
+    // RESCAN_MAX_AGE_SECONDS）。三份各走各的，任何一份和刷新周期对不上都会造出
+    // 周期性死窗，而且改了其中一份另外两份不会跟——统一读同一个常量。
+    [repoHint, PHOTO_STALE_THRESHOLD_SECONDS],
   );
   const baseline = rows[0];
   if (rows.length !== 1 || !/^[a-f0-9]{40}$/.test(baseline?.source_revision ?? '')) {

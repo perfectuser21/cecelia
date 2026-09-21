@@ -15,6 +15,10 @@ import {
   readUnclaimed,
 } from '../../lib/map-read-service.js';
 import { loadMapNodeStates } from '../../lib/map-state-resolver.js';
+import { PHOTO_STALE_THRESHOLD_SECONDS } from '../../lib/registry-freshness.js';
+
+// 「刚过保鲜期」从预算常量推导：原先钉死 16 分钟，预算一放宽就变 fresh，
+// 这条断言会在无人察觉时失去意义（0921 抬预算时正是被 CI 抓出来的）。
 
 const testConnectionString = process.env.TEST_DATABASE_URL;
 const databaseName = testConnectionString
@@ -234,7 +238,7 @@ describe('Map State Resolver — 真实 PostgreSQL', () => {
     await client.query(
       `UPDATE fact_snapshot_headers SET scanned_at=$2
         WHERE kind='test' AND repo=$1`,
-      [repo, new Date(now.getTime() - 16 * 60_000)],
+      [repo, new Date(now.getTime() - (PHOTO_STALE_THRESHOLD_SECONDS + 60) * 1000)],
     );
     const unknown = await loadMapNodeStates(client, {
       scopeKey, now: new Date(now.getTime() + 7000),
