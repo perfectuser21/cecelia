@@ -62,6 +62,56 @@ describe('runOpsCollector', () => {
     for (const q of hb) expect(q.params[1]).toBe('mmv');
   });
 
+  // 端到端：光有 parseOpenclawCrons 的单测不够——把 writeSchedulesSnapshot 那一行
+  // 整个删掉时，纯函数测试照样全绿（0921 变异实测）。这条守的是「采集器真的把
+  // cron 写进了台账」，而不只是「解析器会解析」。
+  it('OpenClaw cron 真的落进 ops_schedule_entries（source=openclaw, host=mmv）', async () => {
+    const CRON_OK = JSON.stringify({
+      jobs: [
+        { id: 'c1', name: 'OPC 下钻式晨报', enabled: true,
+          schedule: { kind: 'cron', expr: '25 6 * * 1-5', tz: 'Asia/Shanghai' },
+          lastRunStatus: 'error', state: { nextRunAtMs: 1789999999000 } },
+        { id: 'c2', name: '悦升云端增长情报日报', enabled: true,
+          schedule: { kind: 'cron', expr: '30 7 * * *', tz: 'Asia/Shanghai' },
+          lastRunStatus: 'ok', state: {} },
+      ],
+    });
+    const pool = fakePool();
+    const exec = fakeExec({
+      'launchctl list': LIST_OK, plutil: PLIST_OK, 'clawdbot.json': CLAW_OK,
+      'cron list --all --json': CRON_OK, workflows: '',
+      readlink: '/var/db/timezone/zoneinfo/America/Los_Angeles',
+    });
+    const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
+
+    const schedWrites = pool.queries.filter(
+      (q) => q.sql.includes('INSERT INTO ops_schedule_entries') && q.params?.[0] === 'openclaw',
+    );
+    expect(schedWrites.length).toBe(2);
+    for (const q of schedWrites) expect(q.params[1]).toBe('mmv');
+    const labels = schedWrites.map((q) => q.params[2]);
+    expect(labels).toContain('OPC 下钻式晨报');
+    expect(labels).toContain('悦升云端增长情报日报');
+    const brief = schedWrites.find((q) => q.params[2] === 'OPC 下钻式晨报');
+    expect(brief.params[3]).toBe('openclaw_cron');          // kind
+    expect(brief.params[4]).toContain('25 6 * * 1-5');      // schedule_desc
+    expect(brief.params[6]).toBe('error');                  // last_state
+    expect(r.results.openclaw_crons).toMatchObject({ ok: true, schedules: 2 });
+  });
+
+  it('cron 取数失败不拖垮同腿的 agents（独立 try）', async () => {
+    const pool = fakePool();
+    const exec = fakeExec({
+      'launchctl list': LIST_OK, plutil: PLIST_OK, 'clawdbot.json': CLAW_OK,
+      'cron list --all --json': 'not json at all', workflows: '',
+      readlink: '/var/db/timezone/zoneinfo/America/Los_Angeles',
+    });
+    const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
+    expect(r.results.openclaw.ok).toBe(true);               // agents 仍成功
+    expect(r.results.openclaw_crons.ok).toBe(false);        // cron 单独失败并留痕
+    expect(r.results.openclaw_crons.error).toContain('parse_error');
+  });
+
   it('全部成功：三路各写快照+心跳 ok', async () => {
     const pool = fakePool();
     const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'clawdbot.json': CLAW_OK, 'workflows': '', 'readlink': '/var/db/timezone/zoneinfo/America/Los_Angeles' });
