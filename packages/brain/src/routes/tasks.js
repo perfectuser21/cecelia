@@ -500,7 +500,12 @@ router.patch('/tasks/:task_id', async (req, res) => {
     if (status === 'completed' && !isStatusNoop
         && task.task_type === 'harness_initiative' && task.orchestrator === 'skill-relay') {
       const { finalizeHarnessTask } = await import('../lib/harness-finalize.js');
-      const fin = await finalizeHarnessTask(task_id, { pool });
+      // 把本次请求里带的 pr_url 传下去：engine-pr-watchdog 的终态回写是
+      // PATCH {status:'completed', result:{pr_url}}，闸此前只看库里的字段，
+      // 协议两头对不上导致任务干完也回不去账本（issue a4991491）。
+      // 只是线索——finalize 仍会 gh pr view 核到 MERGED 才认。
+      const requestedPrUrl = req.body?.result?.pr_url ?? req.body?.pr_url ?? null;
+      const fin = await finalizeHarnessTask(task_id, { pool, requestedPrUrl });
       if (fin.applies && !fin.allow) { harnessDemoted = true; harnessDemoteReason = fin.reason; }
     }
 
@@ -642,7 +647,11 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
 
     res.json({
-      success: true,
+      // 被降级时不许再报 success:true —— 请求的状态变更没发生，
+      // 报成功就是"写被丢弃却发成功回执"（issue 9cce296f 那一族）。
+      // HTTP 仍是 200 且保留 accepted:false：既有调用方按这个契约判（见
+      // harness-completion-authority.test.js），改 HTTP 码会连带打翻它们。
+      success: !harnessDemoted,
       ...(harnessDemoted ? { accepted: false, reason: harnessDemoteReason } : {}),
       task_id,
       status: updatedTask.status,

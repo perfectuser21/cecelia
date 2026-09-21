@@ -56,7 +56,15 @@ export async function finalizeHarnessTask(taskId, deps = {}) {
   //    pr_url 是 LLM 自报值——采信条件用完整正则严格锚定（与 _parseBaseRepo 白名单风格对齐）；
   //    不匹配即视同无 pr_url，落到 GitHub 分支名反查路径（真相来自 GitHub 非请求体）。
   const PR_URL_RE = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
-  let prUrl = [task.pr_url, task.payload?.pr_url].find(
+  // 0922 补：也认**本次请求里带的** pr_url。
+  // engine-pr-watchdog 规定的回写是 PATCH {status:'completed', result:{pr_url}}，
+  // 而此处此前只看 task.pr_url / payload.pr_url —— 协议两头对不上，于是必然落到
+  // "按分支名反查"兜底；而分支名里没有 task 短 id（人起的分支名不带），必然查不到。
+  // 三条任务因此卡死在 blocked（0921-0922 实证，issue a4991491）。
+  //
+  // 外部真相原则不放松：请求值只是**线索**，下面仍然要 gh pr view 核到 MERGED 才认。
+  // 顺序 = 库里的 > 请求里的：调用方自报的可信度最低，排最后。
+  let prUrl = [task.pr_url, task.payload?.pr_url, deps.requestedPrUrl].find(
     (u) => typeof u === 'string' && PR_URL_RE.test(u)
   ) || null;
   let prState = null;
@@ -80,7 +88,7 @@ export async function finalizeHarnessTask(taskId, deps = {}) {
   if (prState !== 'MERGED') return demote(prUrl ? `pr_not_merged: state=${prState}` : 'pr_not_found');
 
   // 2. evaluator gate（外部真相第二判据，复用 watchdog 范式）
-  const gated = await _hasEvaluatorGate(pool, taskId);
+  const gated = await (deps.hasEvaluatorGateFn || _hasEvaluatorGate)(pool, taskId);
   if (!gated) return demote('no_evaluator_gate: PR 已 MERGED 但 evaluator 从未 done——需补验收');
 
   return { applies: true, allow: true, prUrl };
