@@ -6,16 +6,29 @@
  * 单测用的是 fakePool，只记 SQL 字符串，证明不了列类型/长度/唯一键吃不吃得下。
  */
 import pg from 'pg';
-import { parseCrontab, CRONTAB_CMD } from '../../src/ops-collector.js';
+import {
+  parseCrontab, parseCrontabWithHost, CRONTAB_CMD_USVPS, CRONTAB_CMD_MMV, CRONTAB_HOST_EXPECT,
+} from '../../src/ops-collector.js';
 
 let bad = 0;
 const fail = (s) => { console.error('  ❌ ' + s); bad += 1; };
 const ok = (s) => console.log('  ✅ ' + s);
 
-// ① 取数命令必须是宿主 crontab，不许写死到某台机的路径/容器
-if (CRONTAB_CMD !== 'crontab -l') fail(`CRONTAB_CMD 变了: ${CRONTAB_CMD}`);
-else if (/ssh|docker|\/opt\/|\d{1,3}(\.\d{1,3}){3}/.test(CRONTAB_CMD)) fail('CRONTAB_CMD 写死了落点');
-else ok('取数命令是宿主 crontab -l，未写死落点');
+// ① 两条腿的取数命令必须自带落点证明，且打的不是同一台机
+for (const [name, cmd] of [['us-vps', CRONTAB_CMD_USVPS], ['mmv', CRONTAB_CMD_MMV]]) {
+  if (!/hostname/.test(cmd)) fail(`${name} 取数命令没带 hostname 自证: ${cmd}`);
+  else if (!/crontab -l/.test(cmd)) fail(`${name} 取数命令没取 crontab: ${cmd}`);
+  else ok(`${name} 取数命令自带 hostname 落点证明`);
+}
+if (CRONTAB_CMD_USVPS === CRONTAB_CMD_MMV) fail('两条腿命令相同，等于采两遍同一张表');
+else ok('两条腿打不同机器');
+
+// ①b 落点不符必须抛错——0921 上产即错：采到 MMV 的表却标成 us-vps
+const MMV_OUT = 'aad17-2.macminivault.com\n*/3 * * * * /bin/true # smoke-x';
+let threw = false;
+try { parseCrontabWithHost(MMV_OUT, CRONTAB_HOST_EXPECT['us-vps']); } catch { threw = true; }
+if (!threw) fail('采到 MMV 的表却被当成 us-vps 收下了（落点自证失效）');
+else ok('落点不符立刻抛错，不入错机器的数据');
 
 // ② 三类行分清：活的 / 被注释掉的活 / 纯说明
 const SAMPLE = [

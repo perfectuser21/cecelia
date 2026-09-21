@@ -14,7 +14,9 @@
  *  ③ 纯说明注释：`# OPC 经营对象 飞书->Notion upsert（每30分）` —— 不是活，跳过。
  */
 import { describe, it, expect } from 'vitest';
-import { parseCrontab } from '../ops-collector.js';
+import {
+  parseCrontab, parseCrontabWithHost, CRONTAB_CMD_USVPS, CRONTAB_CMD_MMV,
+} from '../ops-collector.js';
 
 const REAL_SAMPLE = [
   '# OPC 经营对象 飞书->Notion upsert（每30分）— 2026-09-11 从 hk-vps 迁入',
@@ -107,5 +109,55 @@ describe('parseCrontab', () => {
   it('空表抛错，不当真空——否则一次取数失败会把整份台账标 inactive', () => {
     expect(() => parseCrontab('')).toThrow(/0 条|空/);
     expect(() => parseCrontab('# 全是注释\n\nMAILTO=""')).toThrow(/0 条|空/);
+  });
+});
+
+/**
+ * 落点自证守卫。
+ *
+ * 0921 实事：`buildHostCmd` 的逃逸目标是 `CECELIA_HOST_EXEC_SSH`，生产里它等于
+ * MMV（administrator@100.71.151.105），**不是** Brain 容器所在的 us-vps。
+ * 我按"逃出容器就是到 us-vps 宿主"的假设写了腿4，上产后采到的是 MMV 的 crontab
+ * （janitor.sh / rescan-if-changed.sh / refresh-claude-tokens.sh），却标成 host_alias='us-vps'，
+ * 而真正缺的 us-vps 那 22 条一条没采到。台账"有数据"，但数据是错机器的——
+ * 这比没数据更坏，因为它看起来是好的。
+ *
+ * 所以取数命令必须**自带落点证明**：先 `hostname` 再 `crontab -l`，
+ * 解析时比对 hostname 与声明的 host_alias，不匹配立刻抛错。
+ * 落点假设不能写在注释里靠人记，要让机器每轮自己验。
+ */
+describe('crontab 取数必须自证落点', () => {
+  const body = [
+    '*/3 * * * * /usr/bin/python3 /opt/openclaw/notion-qiumi-delegate.py # d',
+  ].join('\n');
+
+  it('hostname 与期望落点相符 → 正常解析', () => {
+    const rows = parseCrontabWithHost(`ubuntu-s-1vcpu-1gb-sfo3-01\n${body}`, /ubuntu-s-1vcpu/);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].label).toBe('d');
+  });
+
+  it('采到别的机器 → 立刻抛错，绝不静默入账', () => {
+    expect(
+      () => parseCrontabWithHost(`aad17-2.macminivault.com\n${body}`, /ubuntu-s-1vcpu/),
+      '采到 MMV 的表却被当成 us-vps 收下了——这正是 0921 上产后发生的事',
+    ).toThrow(/落点|hostname|host/);
+  });
+
+  it('命令必须真的带 hostname 自证，不是光有参数', () => {
+    expect(CRONTAB_CMD_USVPS).toMatch(/hostname/);
+    expect(CRONTAB_CMD_USVPS).toMatch(/crontab -l/);
+    expect(CRONTAB_CMD_MMV).toMatch(/hostname/);
+    expect(CRONTAB_CMD_MMV).toMatch(/crontab -l/);
+  });
+
+  it('两条腿必须打不同机器（否则等于采两遍同一张表）', () => {
+    expect(CRONTAB_CMD_USVPS).not.toBe(CRONTAB_CMD_MMV);
+    // us-vps 那条不能走 buildHostCmd 的默认逃逸（那是 MMV），必须显式 ssh 回本机宿主
+    expect(CRONTAB_CMD_USVPS).toMatch(/ssh/);
+  });
+
+  it('首行不是 hostname（命令被改坏）→ 抛错而不是把它当成一条 cron', () => {
+    expect(() => parseCrontabWithHost(body, /ubuntu-s-1vcpu/)).toThrow(/落点|hostname|host/);
   });
 });

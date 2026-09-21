@@ -820,7 +820,57 @@ export function parseCrontab(out) {
   return rows;
 }
 
-export const CRONTAB_CMD = 'crontab -l';
+/**
+ * 取数命令自带落点证明：先 `hostname` 再 `crontab -l`。
+ *
+ * 0921 上产即错：我按「buildHostCmd 逃出容器就是到 us-vps 宿主」写了腿4，
+ * 而 `CECELIA_HOST_EXEC_SSH` 生产值是 `administrator@100.71.151.105` —— **MMV**。
+ * 结果采到 MMV 的 crontab（janitor.sh / rescan-if-changed.sh / refresh-claude-tokens.sh）
+ * 却标成 host_alias='us-vps'，真正缺的 us-vps 那 22 条一条没采到。
+ * 台账"有数据"但数据是错机器的，比没数据更坏——它看起来是好的。
+ *
+ * 落点假设不能写在注释里靠人记。每轮自己验：hostname 对不上就抛错。
+ */
+const HOSTNAME_PROBE = 'hostname; crontab -l';
+
+/** MMV：走 buildHostCmd 的默认逃逸（CECELIA_HOST_EXEC_SSH 就指向它）。 */
+export const CRONTAB_CMD_MMV = HOSTNAME_PROBE;
+
+/**
+ * us-vps：Brain 容器跑在 us-vps 上，但 host-exec 的逃逸目标是 MMV，
+ * 所以必须显式 ssh 回本机宿主。172.17.0.1 是 docker 默认网关 = 宿主，
+ * 不依赖 tailscale 也不依赖 host.docker.internal（Linux 上后者不解析，
+ * 生产日志里一直在报 `Could not resolve hostname host.docker.internal`）。
+ */
+export const CRONTAB_CMD_USVPS =
+  'ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=no '
+  + `-o UserKnownHostsFile=/dev/null root@172.17.0.1 '${HOSTNAME_PROBE}'`;
+
+/** 各腿期望的 hostname 特征。对不上即抛——宁可缺数据，不要错机器的数据。 */
+export const CRONTAB_HOST_EXPECT = Object.freeze({
+  'us-vps': /^ubuntu-s-/,
+  mmv: /macminivault|^aad\d/,
+});
+
+/**
+ * 带落点自证的 crontab 解析：首行必须是 hostname 且匹配 expect。
+ *
+ * @param {string} out  `hostname; crontab -l` 的完整输出
+ * @param {RegExp} expect 该腿期望的 hostname 特征
+ */
+export function parseCrontabWithHost(out, expect) {
+  const lines = String(out).split('\n');
+  const host = (lines[0] || '').trim();
+  if (!host || !expect.test(host)) {
+    throw new Error(
+      `parse_error: 落点不符 —— 期望 hostname 匹配 ${expect}，实得 ${JSON.stringify(host)}。`
+      + '（采到了别的机器的 crontab；宁可缺数据也不入错机器的数据）'
+    );
+  }
+  return parseCrontab(lines.slice(1).join('\n'));
+}
+
+
 
 export const GHA_CRON_CMD =
   "grep -RnoE \"cron: *'[^']+'\" /Users/administrator/perfect21/cecelia/.github/workflows /Users/administrator/perfect21/zenithjoy-workspace/.github/workflows 2>/dev/null || true";
@@ -1018,18 +1068,30 @@ export async function runOpsCollector(pool, opts = {}) {
     results.gha = { ok: false };
   }
 
-  // —— 腿4: crontab@us-vps（宿主 root 表；第四来源，此前 19 条活零留痕）——
-  // 经 buildHostCmd 逃出容器读宿主 root 的表。解析出 0 条即抛错（0=可疑禁当真空），
-  // 与 launchd/openclaw 两腿同口径：一次取数失败不该把整份台账标成 inactive。
+  // —— 腿4a: crontab@mmv ——（buildHostCmd 的逃逸目标就是 MMV，见 CRONTAB_CMD_MMV 注释）
   try {
-    const entries = parseCrontab(run(CRONTAB_CMD));
+    const entries = parseCrontabWithHost(run(CRONTAB_CMD_MMV), CRONTAB_HOST_EXPECT.mmv);
+    await writeSchedulesSnapshot(pool, 'crontab', 'mmv', entries, collectedAt);
+    await writeHeartbeat(pool, 'crontab', 'mmv', 'ok', null, null, collectedAt);
+    results.crontab_mmv = { ok: true, schedules: entries.length };
+  } catch (e) {
+    const [status, code] = classifyError(e);
+    await writeHeartbeat(pool, 'crontab', 'mmv', status, code, e.message);
+    results.crontab_mmv = { ok: false };
+  }
+
+  // —— 腿4b: crontab@us-vps ——（显式 ssh 回本机宿主；host-exec 的默认逃逸到不了这里）
+  // 这才是本次要补的缺口：22 条活（Notion 派单轮询、opc-* 五个同步、守卫、备份）零留痕。
+  // 两腿都用 parseCrontabWithHost 自证落点：采到别的机器立刻抛错，不入错机器的数据。
+  try {
+    const entries = parseCrontabWithHost(run(CRONTAB_CMD_USVPS), CRONTAB_HOST_EXPECT['us-vps']);
     await writeSchedulesSnapshot(pool, 'crontab', 'us-vps', entries, collectedAt);
     await writeHeartbeat(pool, 'crontab', 'us-vps', 'ok', null, null, collectedAt);
-    results.crontab = { ok: true, schedules: entries.length };
+    results.crontab_usvps = { ok: true, schedules: entries.length };
   } catch (e) {
     const [status, code] = classifyError(e);
     await writeHeartbeat(pool, 'crontab', 'us-vps', status, code, e.message);
-    results.crontab = { ok: false };
+    results.crontab_usvps = { ok: false };
   }
 
   // —— 腿5: n8n run 执行历史@hk-vps（每次跑的记录 + 流程健康汇总）——
