@@ -62,8 +62,33 @@ exit "\${CODEX_MOCK_EXIT_CODE:-0}"
 SH
   chmod +x "$BIN/codex"
 
+  cat >"$BIN/codex-us-exit-guard" <<SH
+#!/bin/bash
+echo "guard \$*" >> "$LOG"
+case "\$1" in
+  prepare)
+    if [[ "\${MOCK_GUARD_PREPARE_FAIL:-0}" == "1" ]]; then
+      echo "mock 美国出口检查失败" >&2
+      exit 1
+    fi
+    : > "\$2"
+    ;;
+  restore)
+    if [[ "\${MOCK_GUARD_RESTORE_FAIL:-0}" == "1" ]]; then
+      echo "mock 美国出口恢复失败" >&2
+      exit 1
+    fi
+    rm -f "\$2"
+    ;;
+  *) exit 2 ;;
+esac
+SH
+  chmod +x "$BIN/codex-us-exit-guard"
+
   export PATH="$BIN:$PATH"
   export HOME
+  export CODEX_EXIT_GUARD="$BIN/codex-us-exit-guard"
+  unset MOCK_GUARD_PREPARE_FAIL MOCK_GUARD_RESTORE_FAIL
 }
 
 teardown() { rm -rf "$TMP"; }
@@ -126,23 +151,82 @@ test_no_pushback_even_on_nonzero_exit() {
   teardown
 }
 
-test_no_exec_removed_the_old_constraint() {
-  # 旧版本刻意不用 exec，是为了保留 trap EXIT 回传的能力。
-  # 现在没有回传逻辑了，用 exec 交出进程、原样透传退出码是更干净的做法，
-  # 所以这里反过来验证：脚本应该用 exec 启动 codex（不再有 trap 需要保留）。
+test_codex_runs_as_child_so_exit_guard_can_restore() {
   if grep -qE '^\s*exec\s+env\s+CODEX_HOME' "$TARGET"; then
-    pass "已改用 exec 启动 codex（不再需要为 trap 回传保留额外进程）"
+    fail "Codex 应作为子进程运行以便恢复出口" "仍使用 exec 替换脚本进程"
   else
-    fail "预期用 exec 启动 codex" "$(grep -n 'CODEX_HOME=.*CODEX_BIN\|CODEX_BIN"' "$TARGET")"
+    pass "Codex 作为子进程运行，脚本保留恢复机会"
   fi
 }
 
-test_no_trap_registered() {
-  if grep -qE '^\s*trap\s' "$TARGET"; then
-    fail "不应再注册任何 trap（回传逻辑已删除）" "$(grep -nE '^\s*trap\s' "$TARGET")"
+test_exit_trap_only_restores_network_not_token() {
+  if ! grep -qE '^\s*trap\s+.*EXIT' "$TARGET"; then
+    fail "应注册 EXIT trap 恢复网络" "未找到 EXIT trap"
+  elif grep -qE 'push_token_back|scp.*REMOTE_AUTH' "$TARGET"; then
+    fail "EXIT trap 不得恢复 token 回传" "命中回传逻辑"
   else
-    pass "未注册任何 trap（回传逻辑已彻底删除）"
+    pass "EXIT trap 只用于恢复网络，不回传 token"
   fi
+}
+
+test_guard_prepare_happens_before_scp() {
+  setup
+  if ! bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1; then
+    fail "guard prepare 发生在 scp 之前" "$(cat /tmp/out.$$)"
+  else
+    local guard_line scp_line
+    guard_line="$(grep -n '^guard prepare ' "$LOG" | head -n 1 | cut -d: -f1 || true)"
+    scp_line="$(grep -n '^scp ' "$LOG" | head -n 1 | cut -d: -f1 || true)"
+    if [[ -n "$guard_line" && -n "$scp_line" && "$guard_line" -lt "$scp_line" ]]; then
+      pass "guard prepare 发生在 scp 之前"
+    else
+      fail "guard prepare 发生在 scp 之前" "$(cat "$LOG")"
+    fi
+  fi
+  rm -f /tmp/out.$$
+  teardown
+}
+
+test_guard_failure_prevents_scp_and_codex() {
+  setup
+  export MOCK_GUARD_PREPARE_FAIL=1
+  if bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1; then
+    fail "guard 失败时不拉 token、不启动 Codex" "脚本意外成功"
+  elif grep -qE '^(scp |codex ran)' "$LOG"; then
+    fail "guard 失败时不拉 token、不启动 Codex" "$(cat "$LOG")"
+  elif grep -q '美国出口' /tmp/out.$$; then
+    pass "guard 失败时不拉 token、不启动 Codex"
+  else
+    fail "guard 失败时不拉 token、不启动 Codex" "$(cat /tmp/out.$$)"
+  fi
+  rm -f /tmp/out.$$
+  teardown
+}
+
+test_guard_restores_after_codex_success() {
+  setup
+  if bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1 && grep -q '^guard restore ' "$LOG"; then
+    pass "Codex 成功退出后恢复出口"
+  else
+    fail "Codex 成功退出后恢复出口" "$(cat "$LOG") $(cat /tmp/out.$$)"
+  fi
+  rm -f /tmp/out.$$
+  teardown
+}
+
+test_guard_restores_after_codex_nonzero_exit() {
+  setup
+  set +e
+  CODEX_MOCK_EXIT_CODE=7 bash "$TARGET" --team team3 >/tmp/out.$$ 2>&1
+  local rc=$?
+  set -e
+  if [[ "$rc" -eq 7 ]] && grep -q '^guard restore ' "$LOG"; then
+    pass "Codex 非零退出后恢复出口并保留退出码"
+  else
+    fail "Codex 非零退出后恢复出口并保留退出码" "rc=$rc $(cat "$LOG")"
+  fi
+  rm -f /tmp/out.$$
+  teardown
 }
 
 test_no_push_function_defined() {
@@ -251,8 +335,12 @@ test_invalid_team_rejected
 test_missing_team_rejected
 test_pull_then_run_no_pushback_on_success
 test_no_pushback_even_on_nonzero_exit
-test_no_exec_removed_the_old_constraint
-test_no_trap_registered
+test_codex_runs_as_child_so_exit_guard_can_restore
+test_exit_trap_only_restores_network_not_token
+test_guard_prepare_happens_before_scp
+test_guard_failure_prevents_scp_and_codex
+test_guard_restores_after_codex_success
+test_guard_restores_after_codex_nonzero_exit
 test_no_push_function_defined
 test_no_token_content_printed
 test_no_login_command
