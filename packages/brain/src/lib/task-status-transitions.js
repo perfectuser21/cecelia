@@ -89,6 +89,9 @@ export function resolveAllowedTransitions(current) {
   if (!Object.hasOwn(TRANSITIONS, current)) {
     return { known: false, allowed: [], terminal: false };
   }
-  const allowed = TRANSITIONS[current];
+  // `?? []` 不是多余：表被改坏（某状态值写成 undefined）时要落回"没有出边"，
+  // 而不是在展开处抛 TypeError。崩溃会把调用方变成 500，把一个可诊断的
+  // 409 变成一桩糊涂账；也会让守卫以"崩溃红"通过，掩盖断言其实没跑到。
+  const allowed = TRANSITIONS[current] ?? [];
   return { known: true, allowed: [...allowed], terminal: allowed.length === 0 };
 }
