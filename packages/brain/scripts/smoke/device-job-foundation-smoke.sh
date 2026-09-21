@@ -24,7 +24,7 @@ cleanup() {
 trap cleanup EXIT
 
 if ! psql "$DB_URL" -c 'SELECT 1' >/dev/null 2>&1; then
-  echo "SKIP: 连不上数据库（$DB_URL），跳过真环境验证"
+  echo "SKIP: 连不上数据库（${DB_URL}），跳过真环境验证"
   exit 0
 fi
 
@@ -36,19 +36,20 @@ if [ -z "$ROW_VERSION_DEF" ]; then
 fi
 case "$ROW_VERSION_DEF" in
   0*"|NO") echo "OK: row_version 默认 0 且非空" ;;
-  *) echo "FAIL: row_version 定义不对（期望 DEFAULT 0 / NOT NULL，实得 $ROW_VERSION_DEF）"; exit 1 ;;
+  *) echo "FAIL: row_version 定义不对（期望 DEFAULT 0 / NOT NULL，实得 ${ROW_VERSION_DEF}）"; exit 1 ;;
 esac
 
 echo "== 闸1: device_job 能进 tasks 表 =="
 PROBE_ID=$(q "INSERT INTO tasks (title, description, task_type, status, priority, payload)
                VALUES ('${PROBE_TITLE}', 'smoke probe', 'device_job', 'queued', 'P2',
                        '{\"headed_manual\": true, \"serial\": \"SMOKE0000\"}'::jsonb)
-               RETURNING id" 2>/dev/null || true)
+               RETURNING id" 2>/dev/null | head -1 || true)
+# head -1：psql -t -A 对 INSERT...RETURNING 会多吐一行 "INSERT 0 1"，不截断会把它拼进 uuid
 if [ -z "$PROBE_ID" ]; then
   echo "FAIL: device_job INSERT 被拒 — tasks_task_type_check 没有纳入 device_job（23514）"
   exit 1
 fi
-echo "OK: device_job 已插入（$PROBE_ID）"
+echo "OK: device_job 已插入（${PROBE_ID}）"
 
 echo "== 闸2: device_job 不会被无头派发选中 =="
 # 复刻 dispatch-helpers.js selectNextDispatchableTask 的核心谓词。
