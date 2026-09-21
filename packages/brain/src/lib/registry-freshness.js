@@ -1,8 +1,42 @@
 /**
  * 照相层账龄哨兵(刀0,spec: docs/superpowers/specs/2026-07-18-registry-photo-layer-revive-design.md)
- * 默认预算 10 分钟；缺时间或 provenance 时 fail-closed 为 unknown。
+ * 缺时间或 provenance 时 fail-closed 为 unknown。
  */
-export const PHOTO_STALE_THRESHOLD_HOURS = 10 / 60;
+
+/**
+ * 一轮全量扫描的实测耗时。2026-09-21 实测 cecelia：api 写于 08:40:04、graph 写于 08:45:24,
+ * 一轮 5.4 分钟；zenithjoy-workspace 行数多 4 倍、更久。取 600s 留余量。
+ */
+export const FULL_SCAN_DURATION_SECONDS = 600;
+
+/**
+ * 触发重扫的账龄阈值。**必须与 scripts/scan/rescan-if-changed.sh 的
+ * `RESCAN_MAX_AGE_SECONDS` 默认值一致**（由 registry-freshness-budget.test.js 机械比对）。
+ */
+export const RESCAN_TRIGGER_SECONDS = 600;
+
+/** rescan 的 cron 粒度(SSOT 写在 rescan-if-changed.sh 头注释:每 5 分钟一次)。 */
+export const RESCAN_CRON_PERIOD_SECONDS = 300;
+
+/**
+ * 照相层保鲜预算。
+ *
+ * ⚠️ 必须 > RESCAN_TRIGGER + FULL_SCAN_DURATION + CRON_PERIOD,否则「旧快照过期」
+ * 在数学上必然早于「新快照落库」,派发闸每个刷新周期都有一段稳定死窗。
+ *
+ * 0921 事故:原值 10 分钟,与 rescan 的触发阈值同为 600s —— 等于「刚过期才去刷新」,
+ * 而刷新本身要 5.4 分钟、cron 还有 5 分钟粒度、上一轮没跑完时本轮被锁挡掉
+ * (日志实测 age=600/899/1200s)。结果落进死窗的 coding 任务一律抛 map_stale。
+ * 扫描器一直在跑、source_revision 一直等于 main HEAD、24h 账龄哨兵全程报绿,
+ * 所以烂了 11 天无人发现(issue e180b05c 误判成"扫描链全挂")。
+ *
+ * 放宽是安全的:正确性由 assertMapImpactContract 里的
+ * `map.source_revision === base_sha` 精确保证(不匹配直接 map_revision_mismatch),
+ * 账龄只是活性心跳——它防的是「扫描器死了」,而扫描器死了 main 又没动时,
+ * 快照其实仍然准确。真正的停摆由 promise-map-nightly 的 24h 哨兵押尾。
+ */
+export const PHOTO_STALE_THRESHOLD_SECONDS = 1800;
+export const PHOTO_STALE_THRESHOLD_HOURS = PHOTO_STALE_THRESHOLD_SECONDS / 3600;
 export const SNAPSHOT_FUTURE_TOLERANCE_MS = 60_000;
 const GIT_OBJECT_ID_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 const SCANNER_VERSION_RE = /^[a-z][a-z0-9-]*-v[1-9][0-9]*$/;

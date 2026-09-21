@@ -15,6 +15,7 @@ import { sendBark } from './notifier.js';
 // A2 与 S2 锚点闸同口径（豁免/存量 cutoff 单一来源；日历日边界防 naive timestamp 时区偏移）
 import { ANCHOR_EXEMPT_TASK_TYPES, ANCHOR_EXEMPT_ACTIONS, ANCHOR_LEGACY_CUTOFF_DAY } from './anchor-check.js';
 import { buildProjectionAssertions } from './lib/notion-projection-watch.js';
+import { PHOTO_STALE_THRESHOLD_HOURS } from './lib/registry-freshness.js';
 import { notionReq, getToken } from './recurring-notion-sync.js';
 import { LEGACY_DB_CONSTANTS } from './notion-push-sync.js';
 
@@ -155,6 +156,26 @@ export async function buildNightlyAssertions(queryPool) {
      ORDER BY scanned_at ASC`);
   const snapshotRows = snapshotResult?.rows ?? [];
   const staleSnapshots = snapshotRows.filter(r => Number(r.age_hours) > SNAPSHOT_STALE_HOURS);
+  // 0921 补盲区：本断言用 24h 口径，而派发闸用的是 PHOTO_STALE_THRESHOLD_HOURS。
+  // 两个口径差 48 倍，于是「快照按派发口径已陈旧、coding 任务全挂」时，这里照样报绿——
+  // map_stale 烂了 11 天没人发现正是这么来的（issue e180b05c 误判成扫描链全挂）。
+  // 24h 那条继续押"扫描链停摆"的尾；这条单独押"派发闸会不会红"，两条口径都要出声。
+  const gateStale = snapshotRows.filter(r => Number(r.age_hours) > PHOTO_STALE_THRESHOLD_HOURS);
+  const gateBudgetMin = Math.round(PHOTO_STALE_THRESHOLD_HOURS * 60);
+  results.push({
+    key: 'fact_snapshot_dispatch_gate',
+    label: '事实快照（派发闸口径）',
+    ok: snapshotRows.length > 0 && gateStale.length === 0,
+    detail: snapshotRows.length === 0
+      ? 'fact_snapshot_headers 空表——派发闸必抛 map_stale'
+      : gateStale.length === 0
+        ? `${snapshotRows.length} 份快照均在派发闸预算 ${gateBudgetMin}min 内`
+        : `${gateStale.length} 份快照超派发闸预算 ${gateBudgetMin}min，此刻 coding 任务会抛 map_stale：`
+          + gateStale
+            .slice(0, 5)
+            .map(r => `${r.repo}/${r.kind} 已 ${Math.round(Number(r.age_hours) * 60)}min`)
+            .join('，'),
+  });
   if (snapshotRows.length === 0) {
     results.push({
       key: 'fact_snapshot_freshness',

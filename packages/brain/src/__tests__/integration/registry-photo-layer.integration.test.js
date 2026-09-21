@@ -3,6 +3,13 @@ import pg from 'pg';
 import { listPhotoLayer } from '../../lib/registry-photo-layer.js';
 import { replaceFactSnapshot } from '../../lib/fact-snapshot-store.js';
 import { resolveTestDatabaseUrl } from '../../../tests/helpers/test-database-url.js';
+import { PHOTO_STALE_THRESHOLD_SECONDS } from '../../lib/registry-freshness.js';
+
+// 新鲜/陈旧两侧的年龄都从预算常量推导：原先钉死 9min / 16min，
+// 预算一放宽 16min 就变 fresh，断言在无人察觉时失效（0921 抬预算被 CI 抓出）。
+// 这两个值是测试自控常量、不来自外部输入，故直接插进 SQL 文本。
+const FRESH_AGE_SQL = `${Math.floor(PHOTO_STALE_THRESHOLD_SECONDS / 2)} seconds`;
+const STALE_AGE_SQL = `${PHOTO_STALE_THRESHOLD_SECONDS + 60} seconds`;
 
 const connectionString = resolveTestDatabaseUrl();
 const pool = new pg.Pool({ connectionString, max: 3 });
@@ -46,10 +53,10 @@ beforeAll(async () => {
     `INSERT INTO api_registry
        (repo, method, path, file_path, line_number, area, scanned_at, source_revision, scanner_version)
      VALUES
-       ($1, 'GET', '/itest/a-1', $5, 1, 'test', NOW() - interval '9 minutes', $10, 'api-registry-v2'),
-       ($1, 'POST', '/itest/a-2', $6, 2, 'test', NOW() - interval '9 minutes', $10, 'api-registry-v2'),
+       ($1, 'GET', '/itest/a-1', $5, 1, 'test', NOW() - interval '${FRESH_AGE_SQL}', $10, 'api-registry-v2'),
+       ($1, 'POST', '/itest/a-2', $6, 2, 'test', NOW() - interval '${FRESH_AGE_SQL}', $10, 'api-registry-v2'),
        ($2, 'GET', '/itest/b', $7, 3, 'test', NOW(), $11, 'api-registry-v2'),
-       ($3, 'GET', '/itest/stale', $8, 4, 'test', NOW() - interval '16 minutes', $12, 'api-registry-v2'),
+       ($3, 'GET', '/itest/stale', $8, 4, 'test', NOW() - interval '${STALE_AGE_SQL}', $12, 'api-registry-v2'),
        ($4, 'GET', '/itest/legacy', $9, 5, 'test', NOW(), 'legacy-unknown', 'legacy')`,
     [
       REPO_A, REPO_B, STALE_REPO, LEGACY_REPO,
@@ -61,9 +68,9 @@ beforeAll(async () => {
     `INSERT INTO fact_snapshot_headers
        (kind, repo, source_revision, scanner_version, scanned_at, row_count)
      VALUES
-       ('api', $1, $5, 'api-registry-v2', NOW() - interval '9 minutes', 2),
+       ('api', $1, $5, 'api-registry-v2', NOW() - interval '${FRESH_AGE_SQL}', 2),
        ('api', $2, $6, 'api-registry-v2', NOW(), 1),
-       ('api', $3, $7, 'api-registry-v2', NOW() - interval '16 minutes', 1),
+       ('api', $3, $7, 'api-registry-v2', NOW() - interval '${STALE_AGE_SQL}', 1),
        ('api', $4, 'legacy-unknown', 'legacy', NOW(), 1)
      ON CONFLICT (kind, repo) DO UPDATE SET
        source_revision = EXCLUDED.source_revision,

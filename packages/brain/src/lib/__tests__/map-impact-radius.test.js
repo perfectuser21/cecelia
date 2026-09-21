@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { computeMapImpactRadius, loadMapImpactRadius } from '../map-impact-radius.js';
+import { PHOTO_STALE_THRESHOLD_SECONDS } from '../registry-freshness.js';
+
+// 「快照已过保鲜期」的边界从预算常量推导：0921 之前钉着 11 分钟，预算一放宽
+// 就自动变 fresh，这两条测试会在无人察觉时失去意义。
 
 const ASSERTION_LINK_ID = '11111111-1111-4111-8111-111111111111';
 const nodes = [
@@ -192,7 +196,7 @@ describe('loadMapImpactRadius revision authority', () => {
   });
 
   it('uses a recent exact-identity rescan receipt to refresh immutable snapshot freshness', async () => {
-    const oldScan = new Date(now.getTime() - 11 * 60 * 1000);
+    const oldScan = new Date(now.getTime() - (PHOTO_STALE_THRESHOLD_SECONDS + 60) * 1000);
     const client = clientWithSnapshot([{
       snapshot_revision: revisionA,
       scanner_version: 'graph-v1',
@@ -223,7 +227,7 @@ describe('loadMapImpactRadius revision authority', () => {
   });
 
   it('does not refresh freshness when the live rescan identity differs from the immutable snapshot', async () => {
-    const oldScan = new Date(now.getTime() - 11 * 60 * 1000);
+    const oldScan = new Date(now.getTime() - (PHOTO_STALE_THRESHOLD_SECONDS + 60) * 1000);
     const client = clientWithSnapshot([{
       snapshot_revision: revisionA,
       scanner_version: 'graph-v1',

@@ -5,6 +5,7 @@ import {
   findUnclaimedFacts,
   summarizeMapFreshness,
 } from '../map-read-service.js';
+import { PHOTO_STALE_THRESHOLD_SECONDS } from '../registry-freshness.js';
 
 const now = new Date('2026-08-11T09:30:00.000Z');
 const revision = 'a'.repeat(40);
@@ -49,7 +50,7 @@ describe('Unified Map response metadata', () => {
       header('db_schema', { scanner_version: 'db-schema-v2' }),
       header('graph', {
         scanner_version: 'graph-v3',
-        scanned_at: new Date(now.getTime() - 16 * 60_000),
+        scanned_at: new Date(now.getTime() - (PHOTO_STALE_THRESHOLD_SECONDS + 60) * 1000),
       }),
     ], now, ['cecelia']);
 
