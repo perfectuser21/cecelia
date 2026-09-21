@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { runOpsCollector, __resetOpsCollectorForTest, LOCAL_OPENCLAW_CMD } from '../ops-collector.js';
+import { runOpsCollector, __resetOpsCollectorForTest, OPENCLAW_CONFIG_CMD, OPENCLAW_CRON_CMD } from '../ops-collector.js';
 
 function fakePool() {
   const queries = [];
@@ -31,26 +31,35 @@ function fakeExec(map) {
 beforeEach(() => __resetOpsCollectorForTest());
 
 describe('runOpsCollector', () => {
-  it('OpenClaw 命令写死容器内路径（禁 find/通配）', () => {
-    expect(LOCAL_OPENCLAW_CMD).toContain('docker exec openclaw-gateway cat /root/.openclaw/clawdbot.json');
-    expect(LOCAL_OPENCLAW_CMD).not.toContain('find');
+  it('OpenClaw 命令写死配置路径（禁 find/通配）', () => {
+    expect(OPENCLAW_CONFIG_CMD).toContain('.openclaw/clawdbot.json');
+    expect(OPENCLAW_CONFIG_CMD).not.toContain('find');
   });
 
-  it('OpenClaw 腿本机直取：不 ssh hk-vps，host_alias 记 us-vps（容器 09-12 已迁 us-vps）', async () => {
-    // 2026-09-14 生产实证：openclaw-gateway 在 us-vps 本机，旧命令 ssh hk-vps 报
-    // "No such container"，腿常年 unreachable。同机容器经挂载的 docker.sock 直取。
-    expect(LOCAL_OPENCLAW_CMD).not.toContain('ssh');
-    expect(LOCAL_OPENCLAW_CMD).not.toContain('100.86.118.99');
+  // ⚠️ 这条断言在 0921 被换过一次，换的理由本身就是教训：
+  // 原断言是「不许含 ssh」——它固化的是**上一次迁移的落点**（hk-vps→us-vps 后
+  // 改成本机 docker exec）。结果 0920 再迁 MMV，同一行又坏一次，而这条测试全绿
+  // 放行了，因为它守的是"用哪种取数方式"，不是"落点会不会写死"。
+  //
+  // 现在守的是耐用的那条：**落点不许写死，必须走 ssh 别名**。迁移时只改
+  // us-vps 的 ~/.ssh/config，代码一行不动。
+  it('OpenClaw 取数走 ssh 别名，不写死主机/IP/容器名', async () => {
+    for (const cmd of [OPENCLAW_CONFIG_CMD, OPENCLAW_CRON_CMD]) {
+      expect(cmd).toMatch(/\bmmv\b/);                       // 走别名
+      expect(cmd).not.toContain('docker exec');             // 不绑某台机的容器
+      expect(cmd).not.toMatch(/\b\d{1,3}(\.\d{1,3}){3}\b/); // 不写死 IP
+      expect(cmd).not.toMatch(/\b(hk-vps|us-vps)\b/);       // 不写死历史落点
+    }
     const pool = fakePool();
     const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'clawdbot.json': CLAW_OK, 'workflows': '', 'readlink': '/var/db/timezone/zoneinfo/America/Los_Angeles' });
     const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
     expect(r.results.openclaw.ok).toBe(true);
     const agentWrites = pool.queries.filter((q) => q.sql.includes('INSERT INTO ops_agents') && q.params?.[0] === 'openclaw');
     expect(agentWrites.length).toBeGreaterThan(0);
-    for (const q of agentWrites) expect(q.params[1]).toBe('us-vps');
+    for (const q of agentWrites) expect(q.params[1]).toBe('mmv');
     const hb = pool.queries.filter((q) => q.sql.includes('ops_source_heartbeats') && q.params?.[0] === 'openclaw');
     expect(hb.length).toBeGreaterThan(0);
-    for (const q of hb) expect(q.params[1]).toBe('us-vps');
+    for (const q of hb) expect(q.params[1]).toBe('mmv');
   });
 
   it('全部成功：三路各写快照+心跳 ok', async () => {
