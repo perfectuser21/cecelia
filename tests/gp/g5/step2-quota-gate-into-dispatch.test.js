@@ -16,6 +16,51 @@ import {
 import { listVerifiedExecutionTargets } from '../../../packages/brain/src/orchestrator/preflight/execution-targets.js';
 import { createCapabilityGate } from '../../../packages/brain/src/orchestrator/preflight/capability-gate.js';
 import { createKernelAlertEmitter } from '../../../packages/brain/src/orchestrator/run.js';
+import {
+  judgeAccount, RESET_SOON_MINUTES,
+} from '../../../packages/brain/src/orchestrator/preflight/account-quota-ledger.js';
+
+// G5 step1「接单即选到有额度的执行体」——判死的依据必须完整（task eb301e5a）。
+//
+// 0920 上产的判据只看水位不看到期：7d=91%、10 分钟后就滚窗重置的号照样判死。
+// 0921 主理人点破：「还有两个小时之后就恢复了，你根本就不用担心」——实查证实
+// claude-account2 当时 7d=85%、2 小时后重置。光看水位会把一个马上自愈的号
+// 当成需要干预的号，在「选到有额度的执行体」这一步上就是选错。
+describe('判死的依据必须完整：即将重置的窗当 0 算', () => {
+  const ledgerRow = (over) => ({
+    account_id: 'claude-account2', provider: 'claude',
+    five_hour_pct: 3, seven_day_pct: 85, status: 'ok', consecutive_failures: 0,
+    reset_at: null, seven_day_reset_at: null, ...over,
+  });
+  const at = (mins) => new Date(Date.now() + mins * 60_000).toISOString();
+
+  it('与 account-usage 同口径 30 分钟（两处不一致会让同一个号得出相反结论）', () => {
+    expect(RESET_SOON_MINUTES).toBe(30);
+  });
+
+  it('7d 超阈但即将滚窗 → 仍选得中（重现 0921 现场）', () => {
+    expect(judgeAccount(ledgerRow({ seven_day_pct: 95, seven_day_reset_at: at(10) })))
+      .toMatchObject({ verdict: 'usable' });
+  });
+
+  it('7d 超阈且重置还早 → 照常判死', () => {
+    expect(judgeAccount(ledgerRow({ seven_day_pct: 95, seven_day_reset_at: at(180) })))
+      .toMatchObject({ verdict: 'unusable', reason: 'seven_day_exhausted' });
+  });
+
+  it('两个窗各用各的重置时刻，不得混用', () => {
+    // 5h 快重置、7d 还早 → 只豁免 5h，7d 仍判死
+    expect(judgeAccount(ledgerRow({
+      five_hour_pct: 99, reset_at: at(5),
+      seven_day_pct: 95, seven_day_reset_at: at(600),
+    }))).toMatchObject({ verdict: 'unusable', reason: 'seven_day_exhausted' });
+  });
+
+  it('缺重置时刻不豁免——缺数据不当成"快重置了"', () => {
+    expect(judgeAccount(ledgerRow({ seven_day_pct: 95, seven_day_reset_at: null })))
+      .toMatchObject({ verdict: 'unusable', reason: 'seven_day_exhausted' });
+  });
+});
 
 describe('账号 id 映射：候选池与配额账本必须一一对上', () => {
   it('每条 MODEL_ACCOUNTS 都带显式 runtime_account_id（禁拼串规则）', () => {
