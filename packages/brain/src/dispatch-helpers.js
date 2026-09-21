@@ -80,8 +80,14 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
       -- payload.parallel_worker=true 是 worker 池专属(worker-pool-dispatch.js 扫描),
       -- kernel tick 禁抢——09-06 金丝雀实证 tick(2min)必快过 worker-pool(5min gate)
       AND COALESCE(t.payload->>'parallel_worker', 'false') <> 'true'
+      -- device_job = 安卓工作机（手机）的活，执行体是 Mac 上的领单器 + adb，不是 LLM。
+      -- 本谓词是**黑名单制**（没有白名单），device_job 一旦 queued 就会被 2 分钟一轮的
+      -- tick 抢去派给执行体真的"跑一轮采收"：既烧模型配额，又直接撞 invariant 96054a8b
+      -- （us-vps 零执行），且永远不会完成，会堆成僵尸触发 eviction/requeue 循环。
+      -- 这是第二道闸；第一道是建单强制 payload.headed_manual=true（上面那条谓词）。
+      -- 两道闸缺一不可，见 __tests__/device-job-foundation.test.js 的变异清单。
       AND t.task_type NOT IN ('content-pipeline', 'content-export', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review',
-                               'harness_ci_watch', 'harness_deploy_watch')
+                               'harness_ci_watch', 'harness_deploy_watch', 'device_job')
       ${excludeClause}
       AND (
         t.payload->>'next_run_at' IS NULL
