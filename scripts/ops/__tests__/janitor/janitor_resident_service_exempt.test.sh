@@ -39,13 +39,17 @@ fi
 
 # 被测函数在子 shell 里求值；launchd PID 集合与父子关系都走注入接缝，
 # 不依赖本机真实进程状态（CI 上没有这些服务）
+# timeout 5：判据必须**有界返回**。没有深度上限时环状父链会死循环，
+# 那种情况要判成 HUNG（可断言的确定值），不能让整个测试套挂在这儿——
+# 「靠测试挂死来证明有 bug」不是断言。
 run_case() {
-  local pid="$1" cmd="$2" launchd_pids="$3" ppid_map="${4:-}"
-  JANITOR_LAUNCHD_PIDS="$launchd_pids" JANITOR_PPID_MAP="$ppid_map" bash -c "
+  local pid="$1" cmd="$2" launchd_pids="$3" ppid_map="${4:-}" out
+  out=$(JANITOR_LAUNCHD_PIDS="$launchd_pids" JANITOR_PPID_MAP="$ppid_map" timeout 5 bash -c "
     set -uo pipefail
     $EXTRACT
     if is_exempt_resident_service '$pid' '$cmd'; then echo EXEMPT; else echo KILLABLE; fi
-  " 2>/dev/null
+  " 2>/dev/null)
+  if [ -z "$out" ]; then echo HUNG; else echo "$out"; fi
 }
 
 assert() {
@@ -103,9 +107,16 @@ assert EXEMPT "$(run_case 50001 'node /opt/homebrew/lib/node_modules/openclaw/di
 assert KILLABLE "$(run_case 60001 'node /tmp/child-of-nothing.js' '42594' '60001:60002 60002:1')" \
   "父链上没有 launchd 托管服务的照杀"
 
-# 环状/异常父链不得把函数挂死（深度上限）
+# 祖先链的 PID 匹配也必须精确。首版只测了「直接匹配」那处的精确性，
+# 祖先链那处退化成模糊匹配时全绿 —— 变异测试抓出来的测试盲区。
+assert KILLABLE "$(run_case 80001 'node /tmp/x.js' '12037' '80001:1203 1203:1')" \
+  "祖先 PID 1203 不得被 launchd 的 12037 子串匹配误豁免"
+
+# 环状/异常父链必须**有界返回**，不能挂死。
+# 判据里没有深度上限时这里会返回 HUNG（run_case 的 timeout 兜底），
+# 从而变成一条真断言，而不是让整个测试套卡住。
 assert KILLABLE "$(run_case 70001 'node /tmp/loop.js' '42594' '70001:70002 70002:70001')" \
-  "环状父链有深度上限，不死循环"
+  "环状父链有深度上限，判据有界返回（不挂死）"
 
 echo "--- 测试结果：PASS=$PASS FAIL=$FAIL ---"
 [ "$FAIL" -eq 0 ]
