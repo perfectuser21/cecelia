@@ -26,21 +26,22 @@ JANITOR="$(dirname "$0")/../../janitor.sh"
 
 # ── 提取被测函数（顶层定义，闭合 } 在第 0 列）────────────────────────────
 EXTRACT="$(awk '
-  /^(launchd_managed_pids|is_exempt_resident_service)\(\)[[:space:]]*\{/ { on = 1 }
+  /^(launchd_managed_pids|_ppid_of|is_exempt_resident_service)\(\)[[:space:]]*\{/ { on = 1 }
   on { print }
   on && /^\}/ { on = 0 }
 ' "$JANITOR")"
 
 if [ -z "$EXTRACT" ]; then
-  fail "janitor.sh 未定义顶层函数 launchd_managed_pids / is_exempt_resident_service"
+  fail "janitor.sh 未定义顶层函数 launchd_managed_pids / _ppid_of / is_exempt_resident_service"
   echo "--- 测试结果：PASS=$PASS FAIL=$FAIL ---"
   exit 1
 fi
 
-# 被测函数在子 shell 里求值；launchd PID 集合走注入接缝，不依赖本机真实状态
+# 被测函数在子 shell 里求值；launchd PID 集合与父子关系都走注入接缝，
+# 不依赖本机真实进程状态（CI 上没有这些服务）
 run_case() {
-  local pid="$1" cmd="$2" launchd_pids="$3"
-  JANITOR_LAUNCHD_PIDS="$launchd_pids" bash -c "
+  local pid="$1" cmd="$2" launchd_pids="$3" ppid_map="${4:-}"
+  JANITOR_LAUNCHD_PIDS="$launchd_pids" JANITOR_PPID_MAP="$ppid_map" bash -c "
     set -uo pipefail
     $EXTRACT
     if is_exempt_resident_service '$pid' '$cmd'; then echo EXEMPT; else echo KILLABLE; fi
@@ -49,7 +50,10 @@ run_case() {
 
 assert() {
   local want="$1" got="$2" desc="$3"
-  if [ "$want" = "$got" ]; then ok "$desc"; else fail "$desc（期望 $want，实得 $got）"; fi
+  # 必须用 ${desc} 花括号：紧跟其后的全角括号是多字节字符，bash 会把首字节吃进
+  # 变量名，set -u 下报 "desc?: unbound variable"。这条 bug 只在断言失败时才触发，
+  # 首次写完全绿所以一直没暴露 —— 失败分支本身也要被执行过才算数。
+  if [ "$want" = "$got" ]; then ok "${desc}"; else fail "${desc}（期望 ${want}，实得 ${got}）"; fi
 }
 
 # ── A. launchd 托管一律豁免（自维护，事故当天 launchctl list 实测命中这三个）──
@@ -85,6 +89,23 @@ assert KILLABLE "$(run_case 40003 'node /Users/administrator/zenithjoy-releases-
 # ── D. PID 匹配必须精确，不能子串命中 ────────────────────────────────────
 assert KILLABLE "$(run_case 1203 'node /tmp/whatever.js' '12037')" \
   "PID 1203 不得被 12037 的子串匹配误豁免"
+
+# ── E. 常驻服务的子进程也是服务的一部分 ─────────────────────────────────
+# 2026-09-21 首刀漏了这条：openclaw 网关的 service-child-relay（PPID=网关）
+# 既不在 launchctl list、也不在白名单，部署后用真实 PID 实测仍判「会被杀」。
+# 子进程被杀同样会打断长任务，所以祖先链上有 launchd 托管服务即豁免。
+assert EXEMPT "$(run_case 47168 '/opt/homebrew/Cellar/node/26.8.2/bin/node /opt/homebrew/lib/node_modules/openclaw/dist/process/supervisor/service-child-relay.js' '42594' '47168:42594 42594:1')" \
+  "网关的 relay 子进程（父进程是 launchd 托管的网关）豁免"
+
+assert EXEMPT "$(run_case 50001 'node /opt/homebrew/lib/node_modules/openclaw/dist/worker.js' '42594' '50001:47168 47168:42594 42594:1')" \
+  "孙进程（隔两层）同样豁免"
+
+assert KILLABLE "$(run_case 60001 'node /tmp/child-of-nothing.js' '42594' '60001:60002 60002:1')" \
+  "父链上没有 launchd 托管服务的照杀"
+
+# 环状/异常父链不得把函数挂死（深度上限）
+assert KILLABLE "$(run_case 70001 'node /tmp/loop.js' '42594' '70001:70002 70002:70001')" \
+  "环状父链有深度上限，不死循环"
 
 echo "--- 测试结果：PASS=$PASS FAIL=$FAIL ---"
 [ "$FAIL" -eq 0 ]
