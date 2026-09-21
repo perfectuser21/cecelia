@@ -16,6 +16,7 @@ import { pushHandoffAtom } from '../handoff.js';
 import { checkAnchor } from '../anchor-check.js';
 import { blockTask } from '../task-updater.js';
 import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
+import { resolveAllowedTransitions } from '../lib/task-status-transitions.js';
 
 const router = Router();
 
@@ -421,28 +422,34 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
     // Validate status transition if status is being changed
     if (status && !isStatusNoop) {
-      const allowedTransitions = {
-        'pending': ['in_progress'],
-        'queued': ['in_progress'],
-        'in_progress': ['completed', 'failed'],
-        'completed': [],
-        'failed': [],
-        // 补齐 quarantined / paused / canceled 三态出路，消除 allowed:[] 死锁
-        // 场景：PR 已合 main 但 Brain 内部 task 被 quarantine/pause/cancel，无 API 可回写 completed
-        // quarantine release API 只能回 queued，paused 完全无 release API
-        'quarantined': ['queued', 'completed', 'failed', 'cancelled'],
-        'paused': ['queued', 'in_progress', 'completed', 'failed', 'cancelled'],
-        'canceled': ['queued', 'completed', 'failed', 'cancelled']
-      };
+      // 转移表已抽到 lib/task-status-transitions.js。
+      // 0921 事故：这张表原先内联在此处且只枚举 8 个状态，生产实际用到 15 个——
+      // 没枚举到的取 undefined、被判否后以 allowed:[] 返回，和"设计上的终态"
+      // 长得一模一样，于是 2483 条任务（blocked 287 / cancelled 1485 / archived 673 /
+      // completed_no_pr 38 / quota_exhausted）活干完了也写不回账本（issue a4991491）。
+      const { known, allowed } = resolveAllowedTransitions(currentStatus);
 
-      if (!allowedTransitions[currentStatus]?.includes(status)) {
+      if (!known) {
+        // 和"这是终态"必须可分辨：漏枚举是缺陷，不是策略。
+        return res.status(409).json({
+          success: false,
+          error: `Task status '${currentStatus}' has no declared transitions`,
+          code: 'UNKNOWN_TASK_STATUS',
+          current_status: currentStatus,
+          requested_status: status,
+          allowed: [],
+          hint: '该状态未在 lib/task-status-transitions.js 声明；补进 TASK_STATUSES + TRANSITIONS',
+        });
+      }
+
+      if (!allowed.includes(status)) {
         return res.status(409).json({
           success: false,
           error: 'Invalid status transition',
           code: 'INVALID_TRANSITION',
           current_status: currentStatus,
           requested_status: status,
-          allowed: allowedTransitions[currentStatus] || []
+          allowed,
         });
       }
     }
