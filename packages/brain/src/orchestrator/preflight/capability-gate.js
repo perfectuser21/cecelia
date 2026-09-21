@@ -10,6 +10,13 @@ const TRANSIENT_SIGNATURE = /^(?:http_)?(?:500|502|503|504)$|^high_demand$|^bisc
 const NODE_ADMISSION_SIGNATURES = new Set([
   'node_not_base_admitted',
   'node_not_dispatch_ready',
+  // A cold-start Worker /health probe (4–6s) can outrun a single admission
+  // round-trip and surface as `node_probe_timeout` (see production-probes.js
+  // admittedNode). It is a node still warming up, not a hard-offline machine —
+  // recognise it as a distinct node-admission signal so the fallback reason
+  // stays `node_probe_timeout` (self-heals in 1–2 min) instead of being flattened
+  // into a `machine_offline`-equivalent verdict.
+  'node_probe_timeout',
 ]);
 
 function asObject(value) {
