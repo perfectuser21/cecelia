@@ -68,5 +68,31 @@ const off = back.find((x) => x.label === 'smoke 禁用件');
 if (!off || off.last_state !== 'disabled') fail(`禁用件应标 disabled，实得 ${JSON.stringify(off)}`);
 else ok('禁用的活也进台账并标 disabled');
 
+// ③ 判据必须经**真 loader 的真 SELECT** 读到 soon-reset 所需的列。
+// 0921 事故：seven_day_reset_at 建了列、采到了数据，但 LEDGER_SQL 漏了这列，
+// judgeAccount 读到 undefined、豁免上产即死。单测手工构造 row、本 smoke 的 ②
+// 段自插自读，两边都绕开了生产真正用的那条 SELECT——所以必须专门走一次 loader。
+{
+  const { createQuotaLedgerLoader } = await import('../../src/orchestrator/preflight/account-quota-ledger.js');
+  const soon = new Date(Date.now() + 10 * 60_000).toISOString();
+  await pool.query(
+    `INSERT INTO ops_model_accounts
+       (account_id, provider, five_hour_pct, seven_day_pct, seven_day_reset_at,
+        host_alias, forwardable, forward_targets, status, consecutive_failures)
+     VALUES ('claude-account1','claude',1,95,$1,'mmv',false,'[]'::jsonb,'ok',0)
+     ON CONFLICT (account_id) DO UPDATE SET
+       five_hour_pct=1, seven_day_pct=95, seven_day_reset_at=EXCLUDED.seven_day_reset_at,
+       status='ok', consecutive_failures=0`,
+    [soon],
+  );
+  const snap = await (createQuotaLedgerLoader({ pool }))();
+  const v = snap.verdictFor('account1');
+  if (v.verdict !== 'usable') {
+    fail(`7d=95% 但 10 分钟后重置，应豁免为 usable，实得 ${JSON.stringify(v)}`
+       + '（多半是 LEDGER_SQL 又漏了列）');
+  } else ok('经真 loader 的真 SELECT，soon-reset 豁免生效');
+}
+
+await pool.query("DELETE FROM ops_model_accounts WHERE account_id='claude-account1'");
 await pool.end();
 process.exit(bad === 0 ? 0 : 1);

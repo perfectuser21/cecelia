@@ -109,9 +109,15 @@ export function judgedStatuses() {
     .filter((s) => MODEL_ACCOUNT_STATUS.includes(s)));
 }
 
+// ⚠️ 加列时必须同步这里。judgeAccount 读什么、这条 SELECT 就得取什么——
+// 0921 事故：seven_day_reset_at 建了列、采到了数据，唯独漏了这行 SELECT，
+// judgeAccount 读到 undefined，soon-reset 豁免上产即死（单测手工构造 row、
+// smoke 自插自读，两边都绕开了这条 SELECT 所以全绿）。
+// 现由 account-quota-ledger.test.js 的机械守卫比对，漏列会直接红。
 const LEDGER_SQL = `
   SELECT account_id, provider, five_hour_pct, seven_day_pct,
-         status, consecutive_failures, reset_at, last_checked_at
+         status, consecutive_failures, reset_at, seven_day_reset_at,
+         seven_day_sonnet_pct, seven_day_opus_pct, last_checked_at
     FROM ops_model_accounts
 `;
 

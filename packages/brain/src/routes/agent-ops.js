@@ -103,7 +103,12 @@ export async function buildModelAccountsPayload(dbPool, now = new Date()) {
       plan: r.plan ?? null,
       five_hour_pct: r.five_hour_pct ?? null,
       seven_day_pct: r.seven_day_pct ?? null,
-      reset_at: r.reset_at ?? null,
+      reset_at: r.reset_at ?? null,                 // 5h 窗重置时刻
+      // 0921 起一并暴露：光看水位看不出"快满"还是"快重置了"。
+      // 0921 实例：account2 7d=85% 但 2 小时后就滚窗——只显示 85% 会让人误判成要干预。
+      seven_day_reset_at: r.seven_day_reset_at ?? null,
+      seven_day_sonnet_pct: r.seven_day_sonnet_pct ?? null,
+      seven_day_opus_pct: r.seven_day_opus_pct ?? null,
       host_alias: r.host_alias,
       forwardable: r.forwardable,
       forward_targets: r.forward_targets ?? [],

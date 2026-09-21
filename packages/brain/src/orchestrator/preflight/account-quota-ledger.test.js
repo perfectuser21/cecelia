@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import {
   judgeAccount,
@@ -184,6 +186,39 @@ const okRows = [
   { account_id: 'claude-account1', provider: 'claude', five_hour_pct: 11, seven_day_pct: 32, status: 'ok', consecutive_failures: 0 },
   { account_id: 'codex-team1', provider: 'codex', five_hour_pct: null, seven_day_pct: 18, status: 'ok', consecutive_failures: 0 },
 ];
+
+// ── 机械守卫：判据读的每一列，SELECT 都得取（0921，task eedefe3f）────────
+// 事故：PR #5451 给 judgeAccount 加了 row.seven_day_reset_at，migration 建了列、
+// 采集器也真采到了（生产库实查值正确），唯独 LEDGER_SQL 忘了把这列 SELECT 出来。
+// 于是 judgeAccount 读到的永远是 undefined，soon-reset 豁免**上产即死**。
+//
+// 为什么全绿放行：单测手工构造 row 对象、smoke 自己 INSERT 自己 SELECT，
+// 两边都绕开了生产真正用的那条 SELECT。所以这条守卫不写具体列名——它从源码
+// 提取 judgeAccount 实际读的每一个 row.X，再逐个比对 LEDGER_SQL，以后加列
+// 忘了改 SELECT 会直接红。
+describe('LEDGER_SQL 必须覆盖 judgeAccount 读的所有列', () => {
+  const SRC = readFileSync(
+    fileURLToPath(new URL('./account-quota-ledger.js', import.meta.url)), 'utf8',
+  );
+
+  it('judgeAccount 里每个 row.X 都出现在 LEDGER_SQL 的字段列表里', () => {
+    const body = SRC.slice(
+      SRC.indexOf('export function judgeAccount'),
+      SRC.indexOf('export function judgedStatuses'),
+    );
+    const cols = [...new Set([...body.matchAll(/\brow\.([a-z_]+)/g)].map((m) => m[1]))];
+    expect(cols.length).toBeGreaterThan(3);   // 防正则失效导致空集假绿
+
+    const select = SRC.slice(SRC.indexOf('const LEDGER_SQL'), SRC.indexOf('FROM ops_model_accounts'));
+    const missing = cols.filter((c) => !new RegExp(`\\b${c}\\b`).test(select));
+    expect(missing, `这些列判据在读、SELECT 却没取：${missing.join(', ')}`).toEqual([]);
+  });
+
+  it('seven_day_reset_at 明确在 SELECT 里（本次事故的那一列）', () => {
+    const select = SRC.slice(SRC.indexOf('const LEDGER_SQL'), SRC.indexOf('FROM ops_model_accounts'));
+    expect(select).toContain('seven_day_reset_at');
+  });
+});
 
 describe('createQuotaLedgerLoader', () => {
   it('一次 evaluate 只查一次库（禁逐候选查询）', async () => {
