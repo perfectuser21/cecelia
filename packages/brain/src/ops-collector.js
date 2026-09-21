@@ -1084,7 +1084,11 @@ export async function runOpsCollector(pool, opts = {}) {
   // 这才是本次要补的缺口：22 条活（Notion 派单轮询、opc-* 五个同步、守卫、备份）零留痕。
   // 两腿都用 parseCrontabWithHost 自证落点：采到别的机器立刻抛错，不入错机器的数据。
   try {
-    const entries = parseCrontabWithHost(run(CRONTAB_CMD_USVPS), CRONTAB_HOST_EXPECT['us-vps']);
+    // 这里**故意不用 run()**：run 会再包一层 buildHostCmd，把命令套进
+    // ssh→MMV，于是变成 ssh→MMV→ssh 172.17.0.1，而 MMV 的 docker 网关不是
+    // us-vps（0921 实证：心跳 unreachable）。本腿自己就是完整的 ssh 命令，
+    // 容器直接能到 172.17.0.1，不需要也不能再逃一次。
+    const entries = parseCrontabWithHost(exec(CRONTAB_CMD_USVPS), CRONTAB_HOST_EXPECT['us-vps']);
     await writeSchedulesSnapshot(pool, 'crontab', 'us-vps', entries, collectedAt);
     await writeHeartbeat(pool, 'crontab', 'us-vps', 'ok', null, null, collectedAt);
     results.crontab_usvps = { ok: true, schedules: entries.length };
