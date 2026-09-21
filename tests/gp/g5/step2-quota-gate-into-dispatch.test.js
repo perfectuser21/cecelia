@@ -60,6 +60,28 @@ describe('判死的依据必须完整：即将重置的窗当 0 算', () => {
     expect(judgeAccount(ledgerRow({ seven_day_pct: 95, seven_day_reset_at: null })))
       .toMatchObject({ verdict: 'unusable', reason: 'seven_day_exhausted' });
   });
+
+  // 上一版把这个豁免做成了死代码：列建了、数据采到了，唯独取数的 SELECT 漏了
+  // 这一列，judgeAccount 永远读到 undefined。单测构造 row、smoke 自插自读，
+  // 两边都绕开生产真用的那条 SELECT，于是 CI 全绿放行、上产即死。
+  // 这条从源码机械比对，判据读什么 SELECT 就得取什么。
+  it('LEDGER_SQL 覆盖判据读的每一列（判死依据不能取不到）', () => {
+    const src = readFileSync(
+      fileURLToPath(new URL(
+        '../../../packages/brain/src/orchestrator/preflight/account-quota-ledger.js',
+        import.meta.url,
+      )), 'utf8',
+    );
+    const body = src.slice(
+      src.indexOf('export function judgeAccount'),
+      src.indexOf('export function judgedStatuses'),
+    );
+    const cols = [...new Set([...body.matchAll(/\brow\.([a-z_]+)/g)].map((m) => m[1]))];
+    expect(cols.length).toBeGreaterThan(3);          // 防正则失效导致空集假绿
+    const select = src.slice(src.indexOf('const LEDGER_SQL'), src.indexOf('FROM ops_model_accounts'));
+    const missing = cols.filter((c) => !new RegExp(`\\b${c}\\b`).test(select));
+    expect(missing, `这些列判据在读、SELECT 却没取：${missing.join(', ')}`).toEqual([]);
+  });
 });
 
 describe('账号 id 映射：候选池与配额账本必须一一对上', () => {
