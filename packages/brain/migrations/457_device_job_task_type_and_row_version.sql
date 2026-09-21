@@ -1,4 +1,4 @@
--- Migration 456: device_job 任务类型 + tasks.row_version
+-- Migration 457: device_job 任务类型 + tasks.row_version
 --
 -- 排程看板第一刀·Brain 地基（task 4c77ccce，决策 1e76f0b8）。
 --
