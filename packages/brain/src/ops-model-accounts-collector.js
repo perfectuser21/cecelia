@@ -99,7 +99,11 @@ export function ledgerToRuntimeAccountId(ledgerId) {
   return LEDGER_TO_RUNTIME[ledgerId] ?? null;
 }
 
-const EMPTY_SNAPSHOT = { five_hour_pct: null, seven_day_pct: null, reset_at: null };
+// 失败路径用的空快照。键必须与 EMPTY_USAGE 一致，否则 upsert 会往新列写 undefined。
+const EMPTY_SNAPSHOT = {
+  five_hour_pct: null, seven_day_pct: null, reset_at: null,
+  seven_day_reset_at: null, seven_day_sonnet_pct: null, seven_day_opus_pct: null,
+};
 
 /**
  * pct 归一化：数字四舍五入成整数，缺失/非数字 → null（诚实留空，禁编造 0）。
@@ -117,16 +121,39 @@ function toPct(v) {
 export const toPctForTest = toPct;
 
 /**
+ * 三家 provider 共用的快照 schema。
+ *
+ * `reset_at` 是 **5h 窗**的重置时刻，`seven_day_reset_at` 是 **7d 窗**的——两者
+ * 必须分开存：0920 上产的配额闸只有前者，于是 7d 超阈值时拿不到"还有多久滚窗"，
+ * 一个 91%、10 分钟后就重置的号会被判死（task eb301e5a）。
+ *
+ * 所有 provider 都返回全部键（缺的填 null），下游判据不必到处判 undefined。
+ */
+const EMPTY_USAGE = Object.freeze({
+  five_hour_pct: null,
+  seven_day_pct: null,
+  reset_at: null,
+  seven_day_reset_at: null,
+  seven_day_sonnet_pct: null,
+  seven_day_opus_pct: null,
+});
+
+/**
  * Anthropic OAuth usage JSON → 同一 schema。
- * 形如 { five_hour: { utilization, resets_at }, seven_day: { utilization } }。
+ * 形如 { five_hour: {utilization, resets_at}, seven_day: {utilization, resets_at},
+ *        seven_day_sonnet: {utilization}, seven_day_opus: {utilization} }。
  * 结构缺失不抛，缺字段返回 null（INV-5）。
  */
 export function parseAnthropicUsage(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
   return {
+    ...EMPTY_USAGE,
     five_hour_pct: toPct(r.five_hour?.utilization),
     seven_day_pct: toPct(r.seven_day?.utilization),
     reset_at: r.five_hour?.resets_at ?? null,
+    seven_day_reset_at: r.seven_day?.resets_at ?? null,
+    seven_day_sonnet_pct: toPct(r.seven_day_sonnet?.utilization),
+    seven_day_opus_pct: toPct(r.seven_day_opus?.utilization),
   };
 }
 
@@ -137,9 +164,11 @@ export function parseAnthropicUsage(raw) {
 export function parseChatgptWhamUsage(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
   return {
+    ...EMPTY_USAGE,
     five_hour_pct: toPct(r.five_hour?.usage_percent),
     seven_day_pct: toPct(r.seven_day?.usage_percent),
     reset_at: r.five_hour?.reset_time ?? null,
+    seven_day_reset_at: r.seven_day?.reset_time ?? null,
   };
 }
 
@@ -150,9 +179,11 @@ export function parseChatgptWhamUsage(raw) {
 export function parseGrokUsage(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
   return {
+    ...EMPTY_USAGE,
     five_hour_pct: toPct(r.five_hour_pct),
     seven_day_pct: toPct(r.seven_day_pct),
     reset_at: r.reset_at ?? null,
+    seven_day_reset_at: r.seven_day_reset_at ?? null,
   };
 }
 
@@ -303,12 +334,17 @@ async function upsertModelAccount(pool, acct, snapshot, status, lastError) {
   await pool.query(
     `INSERT INTO ops_model_accounts
        (account_id, provider, plan, five_hour_pct, seven_day_pct, reset_at,
+        seven_day_reset_at, seven_day_sonnet_pct, seven_day_opus_pct,
         host_alias, forwardable, forward_targets, status, last_error, last_checked_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,NOW(),NOW())
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,NOW(),NOW())
      ON CONFLICT (account_id) DO UPDATE SET
        provider=EXCLUDED.provider, plan=EXCLUDED.plan,
        five_hour_pct=EXCLUDED.five_hour_pct, seven_day_pct=EXCLUDED.seven_day_pct,
-       reset_at=EXCLUDED.reset_at, host_alias=EXCLUDED.host_alias,
+       reset_at=EXCLUDED.reset_at,
+       seven_day_reset_at=EXCLUDED.seven_day_reset_at,
+       seven_day_sonnet_pct=EXCLUDED.seven_day_sonnet_pct,
+       seven_day_opus_pct=EXCLUDED.seven_day_opus_pct,
+       host_alias=EXCLUDED.host_alias,
        forwardable=EXCLUDED.forwardable, forward_targets=EXCLUDED.forward_targets,
        status=EXCLUDED.status, last_error=EXCLUDED.last_error,
        consecutive_failures = 0,
@@ -316,6 +352,9 @@ async function upsertModelAccount(pool, acct, snapshot, status, lastError) {
     [
       acct.account_id, acct.provider, acct.plan ?? null,
       snapshot.five_hour_pct, snapshot.seven_day_pct, snapshot.reset_at,
+      snapshot.seven_day_reset_at ?? null,
+      snapshot.seven_day_sonnet_pct ?? null,
+      snapshot.seven_day_opus_pct ?? null,
       acct.host_alias, acct.forwardable, JSON.stringify(acct.forward_targets || []),
       status, truncErr(lastError),
     ],

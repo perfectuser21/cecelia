@@ -70,7 +70,13 @@ describe('buildProbeCmd（真采集命令：探针走 stdin，凭据不出宿主
   });
 });
 
-const SNAPSHOT_KEYS = ['five_hour_pct', 'seven_day_pct', 'reset_at'];
+// 三家 parser 必须归一到同一 schema——这条守卫防的是「某个 provider 少给一个键、
+// 下游判据静默读到 undefined」。0921 扩了三个键（task eb301e5a）：
+// seven_day_reset_at 让判据能做 soon-reset 豁免，sonnet/opus 为后续 tier 判据备料。
+const SNAPSHOT_KEYS = [
+  'five_hour_pct', 'seven_day_pct', 'reset_at',
+  'seven_day_reset_at', 'seven_day_sonnet_pct', 'seven_day_opus_pct',
+];
 
 describe('ops-model-accounts-collector 纯函数', () => {
   it('status 五态枚举齐全（ok|unknown|rate_limited|key_expired|no_credential）', () => {
@@ -120,6 +126,49 @@ describe('ops-model-accounts-collector 纯函数', () => {
     expect(classifyGrokUsageError({ grpcStatus: 7, message: 'PERMISSION_DENIED' })).toBe('key_expired');
     expect(classifyGrokUsageError({ message: 'grpc-status: 7' })).toBe('key_expired');
     expect(classifyGrokUsageError({ message: 'connection timeout' })).toBe('unknown');
+  });
+});
+
+// 0921 task eb301e5a：接口本就返回 seven_day.resets_at 与分层用量，
+// 采集器却只留了 five_hour.resets_at，害得判据拿不到 7d 重置时刻、
+// 只能光看水位判死。这里把丢掉的字段接回来。
+describe('parseAnthropicUsage — 7d 重置时刻与分层用量不能丢', () => {
+  const RAW = {
+    five_hour: { utilization: 3, resets_at: '2026-09-21T09:30:00Z' },
+    seven_day: { utilization: 85, resets_at: '2026-09-21T07:00:00Z' },
+    seven_day_sonnet: { utilization: 40 },
+    seven_day_opus: { utilization: 12 },
+  };
+
+  it('保留 7d 的重置时刻（此前整个丢掉）', () => {
+    expect(parseAnthropicUsage(RAW).seven_day_reset_at).toBe('2026-09-21T07:00:00Z');
+  });
+
+  it('reset_at 仍是 5h 窗的重置时刻，两者不混', () => {
+    const p = parseAnthropicUsage(RAW);
+    expect(p.reset_at).toBe('2026-09-21T09:30:00Z');
+    expect(p.seven_day_reset_at).not.toBe(p.reset_at);
+  });
+
+  it('保留 sonnet/opus 分层用量', () => {
+    const p = parseAnthropicUsage(RAW);
+    expect(p.seven_day_sonnet_pct).toBe(40);
+    expect(p.seven_day_opus_pct).toBe(12);
+  });
+
+  it('字段缺失一律 null，不编造', () => {
+    const p = parseAnthropicUsage({ five_hour: { utilization: 1 } });
+    expect(p.seven_day_reset_at).toBeNull();
+    expect(p.seven_day_sonnet_pct).toBeNull();
+    expect(p.seven_day_opus_pct).toBeNull();
+  });
+
+  it('非 Anthropic 的 provider 也要有这些键（schema 一致，下游不必判 undefined）', () => {
+    for (const p of [parseGrokUsage({}), parseChatgptWhamUsage({})]) {
+      expect(p).toHaveProperty('seven_day_reset_at');
+      expect(p).toHaveProperty('seven_day_sonnet_pct');
+      expect(p).toHaveProperty('seven_day_opus_pct');
+    }
   });
 });
 
