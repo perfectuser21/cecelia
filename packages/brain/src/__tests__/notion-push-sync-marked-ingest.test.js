@@ -111,6 +111,39 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
     expect(mockQuery.mock.calls.some((c) => /status='blocked'/.test(c[0]))).toBe(true); // 原分支落 blocked 不变
   });
 
+  it('正文为空（Description 只剩同步标记）→ 兜底描述含标题且 ≥20 字符，不会被 pre-flight 判「太短」连吃三振', async () => {
+    mockNotionReq
+      .mockResolvedValueOnce({ results: [] })  // en 正文为空
+      .mockResolvedValueOnce(zhPage)           // GET zh page
+      .mockResolvedValueOnce({ results: [] })  // zh 正文为空
+      .mockResolvedValue({});
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: '15f42776-8d1b-430d-b27a-38a480b93151' } });
+    mockQuery.mockResolvedValue({ rows: [] });
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    await ingestDelegatedPage({ query: mockQuery }, 'tok', enPage(`[zh:${ZH32}]`), { env: {} });
+    const { description } = mockCreateRoutedTask.mock.calls[0][1];
+    // pre-flight-check.js: 非系统类型 description.trim().length < 20 即 issue → 三振进 blocked
+    expect(description.trim().length).toBeGreaterThanOrEqual(20);
+    expect(description).toContain('用 Claude Code 把首页按钮改蓝');
+    expect(description).not.toContain(`[zh:${ZH32}]`); // 同步标记不是正文
+  });
+
+  it('正文与标题都空（英文 Name 只有 [P1] 前缀、反查不到中文行）→ 兜底描述用页 id 填充，仍 ≥20 字符', async () => {
+    mockNotionReq
+      .mockResolvedValueOnce({ results: [] })  // en 正文为空
+      .mockResolvedValueOnce({ results: [] })  // 中文表 [en:] 反查未命中 → zh=null
+      .mockResolvedValue({});
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'b7efdbff-0ab0-46f3-8009-64c8cb9898d6' } });
+    mockQuery.mockResolvedValue({ rows: [] });
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const page = enPage('[en-native]');
+    page.properties.Name = { title: [{ plain_text: '[P1]' }] };
+    await ingestDelegatedPage({ query: mockQuery }, 'tok', page, { env: {} });
+    const { description } = mockCreateRoutedTask.mock.calls[0][1];
+    expect(description.trim().length).toBeGreaterThanOrEqual(20);
+    expect(description).toContain('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+  });
+
   it('pullMarkedNotionTasks 只查带标记的 Delegated 行', async () => {
     mockNotionReq.mockResolvedValueOnce({ results: [] }).mockResolvedValueOnce({ results: [] });
     const { pullMarkedNotionTasks } = await import('../notion-push-sync.js');
