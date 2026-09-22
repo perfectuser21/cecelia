@@ -130,11 +130,15 @@ paste_one() {
 }
 
 sync_agents() {
-  local token="$1" ok=0 fail=0 agents
+  local token="$1" ok=0 fail=0 agents idx=0 total
   agents="$(list_agents)" || return 1
   [ -n "$agents" ] || { fault "agent 名单为空"; return 1; }
+  total="$(printf '%s\n' "$agents" | grep -c .)"
+  note "开始逐个同步，共 ${total} 个 agent（每个约 30s，整轮约 $((total/2)) 分钟）"
   while read -r agent; do
     [ -n "$agent" ] || continue
+    idx=$((idx+1))
+    note "  [${idx}/${total}] ${agent}"
     if paste_one "$token" "$agent"; then
       ok=$((ok+1))
     else
@@ -163,7 +167,9 @@ ensure_fresh "$EXP"
 RAW="$(read_cli_token)" || { fault "续期后读不出 CLI token"; exit 1; }
 EXP="${RAW%% *}"
 TOKEN="${RAW#* }"
-note "本轮同步的 token 到期于 $(date -r "$EXP" '+%F %H:%M' 2>/dev/null || echo "$EXP")"
+# launchd 环境不带 TZ，date -r 会按 UTC 渲染 —— 首轮日志里 23:01 被打成 08:01，
+# 排查时会以为 token 已经过期。这里显式按本机时区渲染。
+note "本轮同步的 token 到期于 $(TZ="${SYNC_TZ:-Asia/Shanghai}" date -r "$EXP" '+%F %H:%M %Z' 2>/dev/null || echo "$EXP")"
 
 sync_agents "$TOKEN"
 
