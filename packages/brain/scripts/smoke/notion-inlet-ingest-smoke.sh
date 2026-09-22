@@ -13,9 +13,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"; BRAIN_DIR="$(cd "$SCRIPT_DIR/../.."
 [[ "$(q "SELECT count(*) FROM information_schema.tables WHERE table_name='notion_ingest_receipts'")" == "1" ]] || fail "收据表不存在"
 pass "migration 452：notion_ingest_receipts 落表"
 
-n="$(q "SELECT count(*) FROM notion_projection_map WHERE face='inlet' AND direction='ingest' AND status='active' AND vessel LIKE 'notion-inlet-ingest%'")"
+n="$(q "SELECT count(*) FROM notion_projection_map WHERE face='inlet' AND direction IN ('ingest','both') AND status='active' AND vessel LIKE 'notion-inlet-ingest%'")"
 [[ "$n" == "2" ]] || fail "注册表接通的入口血管应为 2，得 $n"
-pass "注册表：「决策」库 + 员工 Skill 库 两条入口血管 active/ingest"
+pass "注册表：「决策」库(both) + 员工 Skill 库(ingest) 两条入口血管 active"
 
 # 类型→category 映射值必须全在 decisions.category 的 CHECK 白名单内（否则收账必 23514）
 "$NODE" --input-type=module -e "
