@@ -127,7 +127,7 @@ export const REMAINING_LEGACY_SITES = {
   'routes/task-tasks.js': ['27:CODING_MUTATION_TASK_TYPES'],
   // kind: map*
   // * GET /api/brain/task-types 的人类可读展示文案（仅 5 个类型有文案），PR1-B 终态保留
-  'routes/tasks.js': ['861:description'],
+  'routes/tasks.js': ['873:description'],
   // kind: enum
   'routes/warroom.js': ['36:FEED_TYPES'],
   // kind: enum

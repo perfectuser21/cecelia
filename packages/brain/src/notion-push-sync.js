@@ -8,6 +8,7 @@ import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 import { pushRegisteredRows, resolveDbId } from './lib/notion-projection-engine.js';
 import { OPS_DB_PROPS } from './ops-notion-schema.js';
+import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import {
   ensureOpsDbProps, inferProviderFromModelId, pickProviderQuota, buildQuotaProps,
 } from './ops-quota-notion.js';
@@ -443,11 +444,7 @@ export async function runNotionTaskPull(pool) {
   await reapSshWorkflowRuns(pool, token);
 }
 
-// ssh 直派公共参数：execFile 数组形式，本地不经 shell（CodeQL js/command-line-injection 面）
-const SSH_BASE_ARGS = Object.freeze([
-  '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'BatchMode=yes',
-  '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=no',
-]);
+// ssh 直派公共参数已抽到中立叶子模块 lib/ssh-args.js（终审 I6），此处只 import 不再重复定义
 function defaultSshExec(args) {
   return nodeExecFileSync('ssh', args, { encoding: 'utf8', timeout: 30_000 });
 }
