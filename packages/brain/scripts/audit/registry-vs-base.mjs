@@ -133,7 +133,10 @@ function site(desc) { SITES.push(desc); }
 // ── Task 3：派发类（task-3-report.md 第1节） ──
 site({ label: 'dispatch-helpers.js:89 (SQL NOT IN)', file: 'dispatch-helpers.js',
   extract: (s) => extractInlineArray(s, /t\.task_type\s+NOT\s+IN\s*\(([^)]*)\)/),
-  current: () => R.TICK_DISPATCH_EXCLUDED, compare: 'set' });
+  // PR2 入口刀给 qiumi_task 打上第二道闸（tick_dispatchable=false，比照 device_job 双闸），
+  // 它是基线里不存在的新类型——比较前剔除，其余 10 项必须逐一等于基线原文。
+  current: () => R.TICK_DISPATCH_EXCLUDED.filter((t) => t !== 'qiumi_task'), compare: 'set',
+  note: 'qiumi_task 是 PR1 新增类型、PR2 打上 tick_dispatchable=false；「qiumi_task 确实在 TICK_DISPATCH_EXCLUDED 里」由 lib/__tests__/task-type-registry.test.js 的专属严格相等断言钉住，本审计只负责证明其余项相对基线零漂移' });
 site({ label: 'dispatcher.js:89 INITIATIVE_LOCK_TASK_TYPES', file: 'dispatcher.js',
   extract: (s) => extractNamedLiteral(s, 'INITIATIVE_LOCK_TASK_TYPES'),
   current: () => R.INITIATIVE_LOCK_TASK_TYPES, compare: 'set' });
@@ -166,8 +169,10 @@ site({ label: 'pre-flight-check.js:35 SYSTEM_TASK_TYPES', file: 'pre-flight-chec
   current: () => R.SYSTEM_TASK_TYPES, compare: 'set' });
 site({ label: 'task-router.js:16 VALID_TASK_TYPES', file: 'task-router.js',
   extract: (s) => extractNamedLiteral(s, 'VALID_TASK_TYPES'),
-  current: () => R.VALID_TASK_TYPES, compare: 'set',
-  note: 'qiumi_task 是 PR1 新增类型，基线里不存在；决策见 task-3-report.md 裁决后 Important#2——qiumi_task 故意不进 VALID_TASK_TYPES（V 标签留给 PR2），两边应精确相等，无需放行任何新增项' });
+  // PR2 入口刀开启了 qiumi_task 的 V（router_valid）标签——notion-gtd-sync 入账要过
+  // task-router 的类型校验。它是基线里不存在的新类型，比较前剔除，其余 69 项必须等于基线。
+  current: () => R.VALID_TASK_TYPES.filter((t) => t !== 'qiumi_task'), compare: 'set',
+  note: 'PR1 决策（task-3-report.md 裁决后 Important#2）把 V 标签留给 PR2；PR2 已开启，「qiumi_task ∈ VALID_TASK_TYPES」由 lib/__tests__/task-type-registry.test.js 的专属严格相等断言钉住，本审计只负责证明其余项相对基线零漂移' });
 site({ label: 'actions.js:27 CONTENT_TASK_TYPES', file: 'actions.js',
   extract: (s) => extractNamedLiteral(s, 'CONTENT_TASK_TYPES'), current: () => R.CONTENT_TASK_TYPES, compare: 'set' });
 site({ label: 'actions.js:31 RESEARCH_TASK_TYPES', file: 'actions.js',
