@@ -13,6 +13,7 @@ import {
 } from './ops-quota-notion.js';
 import { PUSH_EXCLUDED_TASK_TYPES } from './lib/task-type-registry.js';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
+import { parseEnPage, parseZhPage, GTD_DB_ID, EN_NATIVE_MARK } from './notion-gtd-sync.js';
 
 const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
 const FEATURE_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
@@ -22,7 +23,8 @@ const DECISIONS_DB           = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 const INITIATIVE_CONTRACTS_DB = '185c40c2-ba63-828c-973f-81a9c4582cd6';
 
 // Notion 任务编排库（2026-09-13 双向·push 半边接线；库早已存在但 Brain 从未接）
-const NOTION_TASKS_DB = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
+// PR2 起导出：notion-gtd-sync.js 的 EN_TASKS_DB 需与此同值（Task 4 起改为唯一真源）。
+export const NOTION_TASKS_DB = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
 // 排单分流 OpenClaw（2026-09-14 v2 数据驱动）：Tasks 库 relation「Workflow」「Agent」
 // 指向运行舱四表的真实 Notion 行（workflows_db/graph_db，见 working_memory.ops_notion_dbs），
 // pull 反查 ops_workflows/ops_agents.notion_id 拿 dispatch 人工列（migration 444）：
@@ -333,15 +335,230 @@ export async function fetchNotionPageContent(token, pageId) {
   }
 }
 
+const richText = (arr) => (arr ?? []).map((t) => t.plain_text ?? t.text?.content ?? '').join('');
+
+function tenantFor(env, zhDbId) {
+  try {
+    const map = JSON.parse(env.NOTION_TENANT_MAP || '{}');
+    return map[zhDbId] ?? map[String(zhDbId).replace(/-/g, '')] ?? 'default';
+  } catch { return 'default'; }
+}
+
+/** 同步标记不是正文：入账算"有没有描述"时必须先把它们摘掉 */
+const SYNC_MARK_RE = /\[(?:zh|en):[0-9a-f]{32}\]|\[en-native\]/g;
+
 /**
- * Notion Tasks 库 → Brain 接手（双向·pull 半边，2026-09-14）。
+ * 入账描述兜底。dispatcher pre-flight（pre-flight-check.js）对非系统类型要求
+ * description.trim().length >= 20，不够长就是一条 issue → 任务连吃三振进 blocked。
+ * 秋米行的"正文"经常整条都是同步标记（[zh:<id32>] / [en-native]），摘掉标记后往往剩不下
+ * 20 个字，甚至一个字都不剩——那就用标题把描述撑成一句人能读的话，而不是把任务送去撞墙。
+ */
+export function qiumiDescription(rawBody, title, pageId) {
+  const body = String(rawBody ?? '').replace(SYNC_MARK_RE, '').trim().slice(0, 2000);
+  if (body.length >= 20) return body;
+  const label = title || `页 ${pageId}`;
+  const hint = `来自秋米中文任务表「${label}」（${body ? '正文过短' : '页面正文为空'}，按标题执行）`;
+  return [body, hint].filter(Boolean).join(' · ');
+}
+
+/** 英文页 [en:<id32>] 反查中文行（反向回填生成的中文行备注带该标记） */
+async function findZhPageByEnMark(token, enId32) {
+  const resp = await notionReq(token, `/databases/${GTD_DB_ID}/query`, 'POST', {
+    page_size: 1, filter: { property: '备注', rich_text: { contains: `[en:${enId32}]` } },
+  });
+  return resp?.results?.[0] ?? null;
+}
+
+/**
+ * 秋米标记行（[zh:<id32>] 或 [en-native]）→ Brain qiumi_task。
+ * 页 id 只进 payload（notion_page_id=英文页，为 458 去重豁免键；notion_zh_page_id=中文页），
+ * 绝不写 tasks.notion_id（canonical 投影会覆盖）。tenant 由 NOTION_TENANT_MAP 给。
+ */
+async function ingestQiumiPage(pool, token, page, en, { env }) {
+  const enBody = await fetchNotionPageContent(token, page.id);
+  let zhPage = null;
+  if (en.zhId32) {
+    const zhId = en.zhId32.replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5');
+    zhPage = await notionReq(token, `/pages/${zhId}`, 'GET');
+  } else {
+    zhPage = await findZhPageByEnMark(token, en.id32);
+  }
+  const zh = zhPage ? parseZhPage(zhPage) : null;
+  const zhBody = zh ? await fetchNotionPageContent(token, zh.id) : '';
+  const title = (zh?.title || en.name.replace(/^\[P[0-3]\]\s*/, '')).trim();
+  const priority = zh?.priority ?? (en.name.match(/^\[(P[0-2])\]/)?.[1] ?? 'P2');
+  const dueAt = zh?.dueAt ?? en.planDate ?? null;
+  const tenantId = zh ? tenantFor(env, env.NOTION_GTD_DB_ID || GTD_DB_ID) : 'default';
+  const routed = await createRoutedTask(pool, {
+    source: 'inbox',
+    source_id: page.id,
+    title,
+    description: qiumiDescription(zhBody || enBody || en.description, title, page.id),
+    requested_task_type: 'qiumi_task',
+    mutation_intent: 'none',
+    declared_domain: 'operations',
+    map_scope_hint: ['F2', 'execution_pool'],
+    metadata: {
+      source: 'notion_gtd',
+      origin: en.zhId32 ? 'zh' : 'en',
+      notion_page_id: page.id,            // 信息字段，不承担去重语义
+      notion_zh_page_id: zh?.id ?? null,
+      dedup_by_notion_page: 'true',       // 458 idx_tasks_dedup_active 豁免键（同名中文行不撞）
+      tenant_id: tenantId,
+      headed_manual: true,
+      qiumi_source: {
+        title, remark: zh?.remark ?? en.description, body: zhBody || enBody,
+        priority_raw: zh?.priorityRaw ?? null, due_at: dueAt, channel: zh?.channel ?? null,
+        agent_workflow_ids: zh?.agentWorkflowIds ?? [], skill_ids: zh?.skillIds ?? [],
+        business_task_ids: zh?.businessTaskIds ?? [], owner_ids: zh?.ownerIds ?? [],
+      },
+    },
+    task: { priority, status: 'queued', trigger_source: 'manual', executor_kind: 'openclaw-agent' },
+  });
+  const taskId = routed?.task?.id ?? routed?.task_id;
+  if (!taskId) throw new Error('routed_task_id_missing');
+  if (dueAt) await pool.query('UPDATE tasks SET due_at=$2, updated_at=NOW() WHERE id=$1', [taskId, dueAt]);
+  // 458 给 tasks 建了 tenant_id 列，路由账房不认这个字段 → 不补写就恒 NULL，
+  // 按列过滤的看板/查询一条秋米任务都看不见，租户隔离形同虚设。payload 里有不算数。
+  await pool.query('UPDATE tasks SET tenant_id=$2, updated_at=NOW() WHERE id=$1', [taskId, tenantId]);
+  if (zh) {
+    await notionReq(token, `/pages/${zh.id}`, 'PATCH', { properties: {
+      'OpenClaw任务号': { rich_text: [{ type: 'text', text: { content: `brain:${taskId}` } }] },
+      '状态': { status: { name: '进行中' } },
+    } });
+  }
+  await writeStatusReceipt(token, page, en.description, `brain:${taskId} ✓已接管`);
+  console.log(`[notion-gtd] 入账 "${title}" → qiumi_task ${taskId}`);
+  return { taskId, kind: 'qiumi_task' };
+}
+
+/**
+ * 一页 Delegated 的完整接手逻辑（从 pullNotionTasks 抽出；非标记行逐字保持原行为）。
  * 主理人在 Notion 新建行并把 Status 拖到 Delegated 即"排单"：
  *  · 只认 Status=Delegated 且 Description 不含 brain: 标记的页（幂等防重复接手）
- *  · 接手任务落 status='blocked'——map 扫描器未迁 us-vps 前 kernel 准入不通，
+ *  · 带 [zh:<id32>] 或 [en-native] 标记的秋米行 → 直落 qiumi_task（queued，见 ingestQiumiPage）
+ *  · 其余非标记行接手落 status='blocked'——map 扫描器未迁 us-vps 前 kernel 准入不通，
  *    直接 queued 会被 tick 抓去撞墙三连 autoblock；error_message 注明等待路由。
  *    map 刀落地后由 unblock 流程放行。
  *  · notion_props.pushed_status 写入=当前 status，防 pushTasks 反手改用户的 Delegated
  *  · Name 前缀 [P0-3] 解析 priority，缺省 P2；回执 `brain:<id> ✓已接管` PATCH 回页面
+ * @returns {{taskId: string|null, kind: 'qiumi_task'|'dev'|'openclaw'|'skipped'}}
+ */
+export async function ingestDelegatedPage(pool, token, page, opts = {}) {
+  const props = page.properties ?? {};
+  const name = richText(props.Name?.title).trim();
+  const desc = richText(props.Description?.rich_text);
+  if (!name) return { taskId: null, kind: 'skipped' };
+  if (/brain:/.test(desc)) return { taskId: null, kind: 'skipped' }; // 已接手，幂等跳过
+  if (/run:notion-/.test(desc)) return { taskId: null, kind: 'skipped' }; // OpenClaw 已派发，幂等跳过
+
+  const en = parseEnPage(page);
+  if (en.zhId32 || en.enNative) {
+    return ingestQiumiPage(pool, token, page, en, { env: opts.env ?? process.env });
+  }
+
+  // ─── 以下为原 pullNotionTasks 循环体，逐字搬入，非标记行行为不变 ───
+  const wfRelation = (props.Workflow?.relation ?? [])[0]?.id ?? null;
+  if (wfRelation) {
+    // 排班员 v1a·时间窗：Plan Date 在未来 = 意图排期，到点后自然进派发流程
+    const planStart = props['Plan Date']?.date?.start ?? null;
+    if (planStart && new Date(planStart).getTime() > Date.now()) {
+      await writeStatusReceipt(token, page, desc, `🕐 已排期 ${planStart}，到点自动派发`);
+      return { taskId: null, kind: 'skipped' };
+    }
+    await dispatchOpenClawFromNotion({
+      pool, token, page, desc,
+      pageContent: await fetchNotionPageContent(token, page.id),
+      workflowNotionId: wfRelation,
+      agentNotionId: (props.Agent?.relation ?? [])[0]?.id ?? null,
+      env: opts.env ?? process.env,
+      readTemplateFn: opts.readTemplateFn ?? defaultReadTemplate,
+      fetchFn: opts.fetchFn ?? globalThis.fetch,
+      execFn: opts.execFn,
+    });
+    return { taskId: null, kind: 'openclaw' };
+  }
+
+  const m = name.match(/^\[(P[0-3])\]\s*(.+)$/);
+  const priority = m ? m[1] : 'P2';
+  const title = m ? m[2] : name;
+  // 页面正文=主理人写的任务描述/prompt（拉取失败返回 ''，回落固定文案）
+  const pageContent = await fetchNotionPageContent(token, page.id);
+
+  // 建任务必须走原子路由账房（task-creation-inventory 守卫），获得 Routing Receipt。
+  // source_id=Notion 页 id → 账房自带幂等（同页重放拿回同一 task）。
+  // 2026-09-14 实吃第一单踩出的四个路由参数（work-router 硬校验）：
+  // source 枚举无 notion_tasks_db → 归 inbox（主理人收件箱语义）；
+  // mutation_intent 必填（排单默认 write）；repo_hint 必须唯一匹配仓库事实。
+  const routed = await createRoutedTask(pool, {
+    source: 'inbox',
+    source_id: page.id,
+    title,
+    description: pageContent.slice(0, 2000) || '来自 Notion Tasks 编排（主理人排单）',
+    requested_task_type: 'dev',
+    declared_change_kind: 'capability_change',
+    mutation_intent: 'write',
+    repo_hint: 'cecelia',
+    metadata: { source: 'notion_tasks_db', notion_page_id: page.id },
+    map_scope_hint: ['F2', 'execution_pool'],
+    task: { priority, status: 'queued' },
+  });
+  const taskId = routed?.task?.id ?? routed?.task_id;
+  if (!taskId) throw new Error('routed_task_id_missing');
+  // 接手先落 blocked——map 扫描器未迁 us-vps 前 kernel 准入不通，直接 queued
+  // 会被 tick 抓去三连 autoblock；同步写 notion 列与幂等指纹（防 pushTasks
+  // 反手改用户设的 Delegated）。map 刀后由 unblock 放行。
+  await pool.query(
+    `UPDATE tasks SET status='blocked',
+            blocked_at=NOW(),
+            error_message='awaiting_execution_route: map 扫描器迁移后由 unblock 放行',
+            notion_id=$2,
+            notion_props = COALESCE(notion_props,'{}'::jsonb)
+              || jsonb_build_object('pushed_status','blocked','origin','notion'),
+            updated_at=NOW()
+      WHERE id=$1`,
+    [taskId, page.id],
+  );
+  const receipt = `${desc ? desc + ' · ' : ''}brain:${taskId} ✓已接管`;
+  await notionReq(token, `/pages/${page.id}`, 'PATCH', {
+    properties: { Description: { rich_text: [{ type: 'text', text: { content: receipt.slice(0, 1900) } }] } },
+  });
+  console.log(`[notion-pull] 接手排单 "${title}" → task ${taskId}`);
+  return { taskId, kind: 'dev' };
+}
+
+/** 只拉带秋米标记的 Delegated 行（notion-gtd-sync 30s 轮用；与 legacy pullNotionTasks 共用入账函数，幂等） */
+export async function pullMarkedNotionTasks(pool, token, opts = {}) {
+  let ingested = 0; let skipped = 0;
+  for (const mark of ['[zh:', EN_NATIVE_MARK]) {
+    let resp;
+    try {
+      resp = await notionReq(token, `/databases/${NOTION_TASKS_DB}/query`, 'POST', {
+        page_size: 50,
+        filter: { and: [
+          { property: 'Status', status: { equals: 'Delegated' } },
+          { property: 'Description', rich_text: { contains: mark } },
+        ] },
+      });
+    } catch (err) {
+      console.warn(`[notion-gtd] Tasks 库查询失败(${mark}): ${err.message}`);
+      continue;
+    }
+    for (const page of resp?.results ?? []) {
+      try {
+        const r = await ingestDelegatedPage(pool, token, page, opts);
+        if (r.kind === 'qiumi_task') ingested += 1; else skipped += 1;
+      } catch (err) {
+        console.warn(`[notion-gtd] 页面 ${page?.id} 入账失败: ${err.message}`);
+        await logSyncError(pool, err.message);
+      }
+    }
+  }
+  return { ingested, skipped };
+}
+
+/**
+ * Notion Tasks 库 → Brain 接手（双向·pull 半边，2026-09-14；PR2 起收敛为对 ingestDelegatedPage 的循环）。
  */
 async function pullNotionTasks(pool, token, opts = {}) {
   let resp;
@@ -356,84 +573,7 @@ async function pullNotionTasks(pool, token, opts = {}) {
   }
   for (const page of resp?.results ?? []) {
     try {
-      const props = page.properties ?? {};
-      const name = (props.Name?.title ?? [])
-        .map((t) => t.plain_text ?? t.text?.content ?? '').join('').trim();
-      const desc = (props.Description?.rich_text ?? [])
-        .map((t) => t.plain_text ?? t.text?.content ?? '').join('');
-      if (!name) continue;
-      if (/brain:/.test(desc)) continue; // 已接手，幂等跳过
-      if (/run:notion-/.test(desc)) continue; // OpenClaw 已派发，幂等跳过
-
-      // Workflow relation 分流：选了真实业务 workflow 行 → 派 n8n 画布 + 入 workflow_run 账
-      const wfRelation = (props.Workflow?.relation ?? [])[0]?.id ?? null;
-      if (wfRelation) {
-        // 排班员 v1a·时间窗：Plan Date 在未来 = 意图排期，到点后自然进派发流程
-        const planStart = props['Plan Date']?.date?.start ?? null;
-        if (planStart && new Date(planStart).getTime() > Date.now()) {
-          await writeStatusReceipt(token, page, desc, `🕐 已排期 ${planStart}，到点自动派发`);
-          continue;
-        }
-        await dispatchOpenClawFromNotion({
-          pool, token, page, desc,
-          pageContent: await fetchNotionPageContent(token, page.id),
-          workflowNotionId: wfRelation,
-          agentNotionId: (props.Agent?.relation ?? [])[0]?.id ?? null,
-          env: opts.env ?? process.env,
-          readTemplateFn: opts.readTemplateFn ?? defaultReadTemplate,
-          fetchFn: opts.fetchFn ?? globalThis.fetch,
-          execFn: opts.execFn,
-        });
-        continue;
-      }
-
-      const m = name.match(/^\[(P[0-3])\]\s*(.+)$/);
-      const priority = m ? m[1] : 'P2';
-      const title = m ? m[2] : name;
-      // 页面正文=主理人写的任务描述/prompt（拉取失败返回 ''，回落固定文案）
-      const pageContent = await fetchNotionPageContent(token, page.id);
-
-      // 建任务必须走原子路由账房（task-creation-inventory 守卫），获得 Routing Receipt。
-      // source_id=Notion 页 id → 账房自带幂等（同页重放拿回同一 task）。
-      // 2026-09-14 实吃第一单踩出的四个路由参数（work-router 硬校验）：
-      // source 枚举无 notion_tasks_db → 归 inbox（主理人收件箱语义）；
-      // mutation_intent 必填（排单默认 write）；repo_hint 必须唯一匹配仓库事实。
-      const routed = await createRoutedTask(pool, {
-        source: 'inbox',
-        source_id: page.id,
-        title,
-        description: pageContent.slice(0, 2000) || '来自 Notion Tasks 编排（主理人排单）',
-        requested_task_type: 'dev',
-        declared_change_kind: 'capability_change',
-        mutation_intent: 'write',
-        repo_hint: 'cecelia',
-        metadata: { source: 'notion_tasks_db', notion_page_id: page.id },
-        map_scope_hint: ['F2', 'execution_pool'],
-        task: { priority, status: 'queued' },
-      });
-      const taskId = routed?.task?.id ?? routed?.task_id;
-      if (!taskId) throw new Error('routed_task_id_missing');
-      // 接手先落 blocked——map 扫描器未迁 us-vps 前 kernel 准入不通，直接 queued
-      // 会被 tick 抓去三连 autoblock；同步写 notion 列与幂等指纹（防 pushTasks
-      // 反手改用户设的 Delegated）。map 刀后由 unblock 放行。
-      await pool.query(
-        `UPDATE tasks SET status='blocked',
-                blocked_at=NOW(),
-                error_message='awaiting_execution_route: map 扫描器迁移后由 unblock 放行',
-                notion_id=$2,
-                notion_props = COALESCE(notion_props,'{}'::jsonb)
-                  || jsonb_build_object('pushed_status','blocked','origin','notion'),
-                updated_at=NOW()
-          WHERE id=$1`,
-        [taskId, page.id],
-      );
-      const receipt = `${desc ? desc + ' · ' : ''}brain:${taskId} ✓已接管`;
-      await notionReq(token, `/pages/${page.id}`, 'PATCH', {
-        properties: {
-          Description: { rich_text: [{ type: 'text', text: { content: receipt.slice(0, 1900) } }] },
-        },
-      });
-      console.log(`[notion-pull] 接手排单 "${title}" → task ${taskId}`);
+      await ingestDelegatedPage(pool, token, page, opts);
     } catch (err) {
       console.warn(`[notion-pull] 页面 ${page?.id} 接手失败: ${err.message}`);
       await logSyncError(pool, err.message);
@@ -462,12 +602,18 @@ function stripStatusTail(desc) {
   return String(desc || '').replace(STATUS_TAIL_RE, '').trim();
 }
 
+/**
+ * 状态回执 PATCH——截 base 而非整串，保证尾巴（` · <status>`，含 brain:<id> 标记）
+ * 永远完整：长正文时若对 `base + tail` 整串 slice(0,1900)，超长 base 会把尾巴挤出
+ * 截断窗口，下一轮 `/brain:/` 判不出已接手 → 每轮重复入账（PR2 审查 Important #1）。
+ */
 async function writeStatusReceipt(token, page, desc, status) {
   const base = stripStatusTail(desc);
-  const receipt = `${base ? base + ' · ' : ''}${status}`;
+  const tail = base ? ` · ${status}` : status;
+  const content = `${base.slice(0, Math.max(0, 1900 - tail.length))}${tail}`;
   await notionReq(token, `/pages/${page.id}`, 'PATCH', {
     properties: {
-      Description: { rich_text: [{ type: 'text', text: { content: receipt.slice(0, 1900) } }] },
+      Description: { rich_text: [{ type: 'text', text: { content } }] },
     },
   });
 }
