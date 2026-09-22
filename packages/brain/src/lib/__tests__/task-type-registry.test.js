@@ -404,12 +404,12 @@ const FIX_EXECUTOR_KIND = {
 };
 
 // 本刀唯一允许"新增"的类型：它不在任何替换前名单里（VALID_TASK_TYPES 例外，见下方
-// 专属断言——PR1 明确不得混入），比较时剔除，其余必须逐一相等
+// 专属断言——PR2 明确混入），比较时剔除，其余必须逐一相等
 const NEW_TYPE = 'qiumi_task';
 
 // task-router.js:15-62 原文（已用 awk 抽取核对，共 70 个；harness_planner 不在其中——已退役）。
-// 严格相等，不剔除 qiumi_task——qiumi_task 的 V（router_valid）标签留给 PR2 入口刀开启，
-// PR1 混入即回归（决策见团队 Task 3 审查「Important #2」）。
+// PR2 入口刀开启 qiumi_task 的 V（router_valid）标签，VALID_TASK_TYPES 严格相等改为
+// FIX + qiumi_task（决策见团队 Task 3 审查「Important #2」）。
 const VALID_TASK_TYPES_FIX = ['dev', 'review', 'talk', 'data', 'qa', 'audit', 'research', 'explore', 'knowledge', 'codex_qa', 'codex_dev', 'codex_test_gen', 'code_review', 'decomp_review', 'crystallize', 'crystallize_scope', 'crystallize_forge', 'crystallize_verify', 'crystallize_register', 'pr_review', 'dept_heartbeat', 'initiative_plan', 'initiative_verify', 'initiative_execute', 'suggestion_plan', 'architecture_design', 'architecture_scan', 'arch_review', 'strategy_session', 'intent_expand', 'content-pipeline', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review', 'content-export', 'content_publish', 'prd_review', 'spec_review', 'code_review_gate', 'initiative_review', 'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review', 'sprint_generate', 'sprint_fix', 'sprint_report', 'harness_contract_propose', 'harness_contract_review', 'harness_generate', 'harness_ci_watch', 'harness_fix', 'harness_deploy_watch', 'harness_report', 'scope_plan', 'project_plan', 'okr_initiative_plan', 'okr_scope_plan', 'okr_project_plan', 'platform_scraper', 'harness_initiative', 'harness_task', 'harness_final_e2e', 'harness_evaluate', 'harness_intervention', 'staging_e2e', 'ci_patrol', 'golden_path_proposal', 'strategist_decision'];
 
 describe('task-type-registry：零行为变化', () => {
@@ -421,22 +421,22 @@ describe('task-type-registry：零行为变化', () => {
     it(`${name} 派生映射 == 替换前字面量（deep-equal）`, () => expect(R[name]).toEqual(expected));
   }
 
-  it('VALID_TASK_TYPES 派生集合 == 替换前字面量（严格相等，qiumi_task 不得混入，PR1 铁律）', () => {
-    same(R.VALID_TASK_TYPES, VALID_TASK_TYPES_FIX);
-    expect(R.VALID_TASK_TYPES).not.toContain('qiumi_task');
+  it('VALID_TASK_TYPES 派生集合 == 替换前字面量 + qiumi_task（PR2 入口刀开启，其余零变化）', () => {
+    same(R.VALID_TASK_TYPES, [...VALID_TASK_TYPES_FIX, 'qiumi_task']);
+    expect(R.VALID_TASK_TYPES).toContain('qiumi_task');
   });
 
   it('EXECUTOR_KIND_FOR_TASK_TYPE == 替换前 EXECUTOR_KIND_FOR 的 task_type 部分 + qiumi_task', () => {
     expect(R.EXECUTOR_KIND_FOR_TASK_TYPE).toEqual({ ...FIX_EXECUTOR_KIND, qiumi_task: 'openclaw-agent' });
   });
 
-  it('qiumi_task 声明符合 spec 1.1（PR1：V 标签不开，PR2 入口刀开启）', () => {
+  it('qiumi_task 声明符合 spec 1.1（PR2：V 标签已开）', () => {
     const e = R.getTaskType('qiumi_task');
     expect(e).toMatchObject({
       surface: 'openclaw-agent', coding: false, pr: false, executor: 'openclaw-agent',
       watchdog: 'openclaw-agent', push_to_notion: true, tick_dispatchable: true, db: true,
     });
-    expect(R.VALID_TASK_TYPES).not.toContain('qiumi_task');
+    expect(R.VALID_TASK_TYPES).toContain('qiumi_task');
     expect(R.TICK_DISPATCH_EXCLUDED).not.toContain('qiumi_task');
   });
 
