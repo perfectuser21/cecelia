@@ -1,0 +1,40 @@
+/**
+ * 秋米路由 env 集中读取（brain 无 env 登记机制，本文件即清单）：
+ *  JEV_API_KEY            TypeSafe Jev key（1Password「Jev API Key (TypeSafe)」→ 容器 env）
+ *  JEV_ENDPOINT           默认 https://api.typesafe.ai/v1/systemone
+ *  JEV_MODEL               默认 jev-latest
+ *  QIUMI_FALLBACK_MODEL   terra 兜底模型（callLLM provider=openai），默认 gpt-5.6-terra
+ *  QIUMI_MMV_CONCURRENCY  MMV 非设备 openclaw-agent 并发上限（机器闸），默认 2
+ *  QIUMI_DISPATCH_ENABLED 'true' 才允许 tick 派发 qiumi_task（PR2 入账不再写 headed_manual）
+ *  QIUMI_DEPARTMENTS      JSON 数组，Jev department 选项（= openclaw agents 部门清单）
+ *  QIUMI_MODEL_MAP        JSON，engine → `openclaw agent --model` 值
+ *  QIUMI_DEVICE_KEYWORDS  JSON 数组，便宜闸设备关键词
+ * 改 env 必须重建容器（learning cp-0916213853）。
+ */
+const DEFAULT_DEPARTMENTS = ['main', 'infra', 'dev', 'media', 'people', 'fde'];
+const DEFAULT_MODEL_MAP = {
+  claude: 'claude-cli/claude-sonnet-5',
+  codex: 'openai/gpt-5.3-codex',
+  terra: 'openai/gpt-5.6-terra',
+};
+const DEFAULT_DEVICE_KEYWORDS = ['手机', '点赞', '发布', '朋友圈', '抖音', 'adb', '私信', '小红书', '快手', '视频号'];
+
+function parseJson(raw, fallback) {
+  if (!raw) return fallback;
+  try { return JSON.parse(raw); } catch { return fallback; }
+}
+
+export function qiumiEnv(env = process.env) {
+  const conc = Number.parseInt(env.QIUMI_MMV_CONCURRENCY ?? '2', 10);
+  return Object.freeze({
+    jevApiKey: env.JEV_API_KEY || null,
+    jevEndpoint: env.JEV_ENDPOINT || 'https://api.typesafe.ai/v1/systemone',
+    jevModel: env.JEV_MODEL || 'jev-latest',
+    fallbackModel: env.QIUMI_FALLBACK_MODEL || 'gpt-5.6-terra',
+    mmvConcurrency: Number.isFinite(conc) && conc > 0 ? conc : 2,
+    dispatchEnabled: env.QIUMI_DISPATCH_ENABLED === 'true',
+    departments: parseJson(env.QIUMI_DEPARTMENTS, DEFAULT_DEPARTMENTS),
+    modelMap: { ...DEFAULT_MODEL_MAP, ...parseJson(env.QIUMI_MODEL_MAP, {}) },
+    deviceKeywords: parseJson(env.QIUMI_DEVICE_KEYWORDS, DEFAULT_DEVICE_KEYWORDS),
+  });
+}
