@@ -116,6 +116,47 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
     expect(body.filter.and).toEqual(expect.arrayContaining([{ property: 'Status', status: { equals: 'Delegated' } }]));
     expect(JSON.stringify(body.filter)).toMatch(/\[zh:|\[en-native\]/);
   });
+
+  it('writeStatusReceipt：超长正文(8000字)回执必须保留完整 brain: 标记尾巴（不被 1900 截断吃掉），第二轮幂等跳过不再 PATCH', async () => {
+    mockNotionReq
+      .mockResolvedValueOnce({ results: [{ type: 'paragraph', paragraph: { rich_text: [{ plain_text: '正文' }] } }] }) // en 正文
+      .mockResolvedValueOnce(zhPage)   // GET zh page
+      .mockResolvedValueOnce({ results: [{ type: 'paragraph', paragraph: { rich_text: [{ plain_text: '中文正文' }] } }] }) // zh 正文
+      .mockResolvedValue({});          // PATCH zh / PATCH en
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: '15f42776-8d1b-430d-b27a-38a480b93151' } });
+    mockQuery.mockResolvedValue({ rows: [] });
+    const { ingestDelegatedPage, pullMarkedNotionTasks } = await import('../notion-push-sync.js');
+    const longBase = `[zh:${ZH32}] ${'A'.repeat(8000)}`;
+    await ingestDelegatedPage({ query: mockQuery }, 'tok', enPage(longBase), { env: {} });
+    const enPatch = mockNotionReq.mock.calls.find((c) => c[1] === '/pages/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' && c[2] === 'PATCH')[3];
+    const content = enPatch.properties.Description.rich_text[0].text.content;
+    expect(content.length).toBeLessThanOrEqual(1900);
+    expect(content).toMatch(/brain:15f42776-8d1b-430d-b27a-38a480b93151 ✓已接管$/);
+
+    // 第二轮：页面 Description 已是写回后的 content（含完整 brain: 标记）→ 应被幂等跳过，不再 PATCH/建任务
+    mockNotionReq.mockReset();
+    mockCreateRoutedTask.mockReset();
+    mockNotionReq.mockResolvedValueOnce({ results: [enPage(content)] }).mockResolvedValueOnce({ results: [] });
+    const r2 = await pullMarkedNotionTasks({ query: mockQuery }, 'tok', { env: {} });
+    expect(r2).toEqual({ ingested: 0, skipped: 1 });
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+    expect(mockNotionReq.mock.calls.some((c) => c[2] === 'PATCH')).toBe(false);
+  });
+});
+
+describe('EN_TASKS_DB 与 NOTION_TASKS_DB 同值守卫（notion-gtd-sync.js 硬编码常量，避免循环依赖，用测试钉住同值）', () => {
+  it('notion-gtd-sync.EN_TASKS_DB === notion-push-sync.NOTION_TASKS_DB', async () => {
+    const { NOTION_TASKS_DB } = await import('../notion-push-sync.js');
+    const { EN_TASKS_DB } = await import('../notion-gtd-sync.js');
+    expect(EN_TASKS_DB).toBe(NOTION_TASKS_DB);
+  });
+});
+
+describe('注册表：qiumi_task 双闸（V 已开 + TICK_DISPATCH_EXCLUDED，PR2 期临时防 tick 抢跑）', () => {
+  it('TICK_DISPATCH_EXCLUDED 含 qiumi_task', async () => {
+    const R = await import('../lib/task-type-registry.js');
+    expect(R.TICK_DISPATCH_EXCLUDED).toContain('qiumi_task');
+  });
 });
 
 describe('注册表：qiumi_task 此刀进 VALID_TASK_TYPES', () => {
