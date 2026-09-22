@@ -84,6 +84,36 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
     expect(enPatch.properties.Description.rich_text[0].text.content).toMatch(/brain:15f42776-8d1b-430d-b27a-38a480b93151 ✓已接管$/);
   });
 
+  it('QIUMI_DISPATCH_ENABLED 未开 → 入账写 headed_manual=true（第一道闸，任务落地即不被 tick 抢跑）', async () => {
+    mockNotionReq
+      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce(zhPage)
+      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValue({});
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'c1c1c1c1-1111-2222-3333-444444444444' } });
+    mockQuery.mockResolvedValue({ rows: [] });
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    await ingestDelegatedPage({ query: mockQuery }, 'tok', enPage(`[zh:${ZH32}] opc_department=dev`), { env: {} });
+    expect(mockCreateRoutedTask.mock.calls[0][1].metadata.headed_manual).toBe(true);
+  });
+
+  it('QIUMI_DISPATCH_ENABLED=true → 入账不再写 headed_manual=true（门放开，PR3 路由接管派发）', async () => {
+    mockNotionReq
+      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce(zhPage)
+      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValue({});
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'c2c2c2c2-1111-2222-3333-444444444444' } });
+    mockQuery.mockResolvedValue({ rows: [] });
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    await ingestDelegatedPage({ query: mockQuery }, 'tok', enPage(`[zh:${ZH32}] opc_department=dev`), {
+      env: { QIUMI_DISPATCH_ENABLED: 'true' },
+    });
+    // 写 false 与不写等价（dispatch-helpers 谓词是 COALESCE(...,'false') <> 'true'），
+    // 这里钉住"落地的值不是 true"，实现选哪种都不该让任务被第一道闸拦住。
+    expect(mockCreateRoutedTask.mock.calls[0][1].metadata.headed_manual).not.toBe(true);
+  });
+
   it('[en-native] 行 → origin=en，中文页 id 从中文表按 [en:<id32>] 反查', async () => {
     mockNotionReq
       .mockResolvedValueOnce({ results: [] })  // en 正文
@@ -189,10 +219,55 @@ describe('EN_TASKS_DB 与 NOTION_TASKS_DB 同值守卫（notion-gtd-sync.js 硬�
   });
 });
 
-describe('注册表：qiumi_task 双闸（V 已开 + TICK_DISPATCH_EXCLUDED，PR2 期临时防 tick 抢跑）', () => {
-  it('TICK_DISPATCH_EXCLUDED 含 qiumi_task', async () => {
+describe('注册表：qiumi_task 第二道闸 PR3 放开（tick 可选中，改由 dispatchQiumiTask 接管）', () => {
+  it('TICK_DISPATCH_EXCLUDED 不再含 qiumi_task', async () => {
     const R = await import('../lib/task-type-registry.js');
-    expect(R.TICK_DISPATCH_EXCLUDED).toContain('qiumi_task');
+    expect(
+      R.TICK_DISPATCH_EXCLUDED,
+      'qiumi_task 还在 tick 排除名单里——路由接线了也永远选不中这类任务',
+    ).not.toContain('qiumi_task');
+  });
+});
+
+/**
+ * 双闸守卫（plan「补充一」）：第二道闸放开之后，qiumi_task 能不能被 tick 选中，
+ * 只剩 `payload.headed_manual` 这一道门。这个 describe 把「门」和「读门的谓词」钉在一起：
+ * 任何一头被摘掉（入账恒写 false / dispatch-helpers 不再读 headed_manual），
+ * QIUMI_DISPATCH_ENABLED 就成了摆设，未放开的机器上任务会被 tick 抢跑。
+ */
+describe('双闸守卫：QIUMI_DISPATCH_ENABLED 未开时 qiumi_task 不可被 tick 选中', () => {
+  it('门关 → 入账产物 payload.headed_manual === true', async () => {
+    mockQuery.mockReset(); mockNotionReq.mockReset(); mockCreateRoutedTask.mockReset();
+    mockNotionReq
+      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValueOnce(zhPage)
+      .mockResolvedValueOnce({ results: [] })
+      .mockResolvedValue({});
+    mockCreateRoutedTask.mockResolvedValue({ task: { id: 'c3c3c3c3-1111-2222-3333-444444444444' } });
+    mockQuery.mockResolvedValue({ rows: [] });
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    await ingestDelegatedPage({ query: mockQuery }, 'tok', enPage(`[zh:${ZH32}] opc_department=dev`), {
+      env: { QIUMI_DISPATCH_ENABLED: 'false' },
+    });
+    // metadata 即入库 payload（work-routing-store.createRoutedTask：payload = {...metadata, ...task.payload}）
+    expect(
+      mockCreateRoutedTask.mock.calls[0][1].metadata.headed_manual,
+      '门没生效——未放开的机器上任务落地就是可派发的',
+    ).toBe(true);
+  });
+
+  it('候选 SQL 仍带排除 headed_manual 的谓词（门的读方还在）', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join, dirname } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'dispatch-helpers.js'), 'utf8')
+      .split('\n')
+      .filter((line) => !/^\s*(--|\/\/|\*|\/\*)/.test(line))
+      .join('\n');
+    expect(
+      src,
+      'dispatch-helpers 的候选 SQL 不再读 payload.headed_manual——第一道闸整条失效',
+    ).toMatch(/COALESCE\(t\.payload->>'headed_manual', 'false'\)\s*<>\s*'true'/);
   });
 });
 

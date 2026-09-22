@@ -22,8 +22,8 @@ const same = (a, b) => {
 const FIX = {
   // TICK_DISPATCH_EXCLUDED 不在这个通用 FIX 循环里比较（见下方专属测试，PR2 审查修复）——
   // 该循环对每个集合都做 `.filter((t) => t !== NEW_TYPE)`，会把 qiumi_task 从比较里剔除，
-  // 掩盖住 qiumi_task 是否真的进了 TICK_DISPATCH_EXCLUDED 这件事；PR2 给 qiumi_task 打上
-  // tick_dispatchable=false 双闸（比照 device_job），必须用不做剔除的严格相等断言钉住。
+  // 掩盖住 qiumi_task 在不在 TICK_DISPATCH_EXCLUDED 这件事；PR2 曾打上 tick_dispatchable=false
+  // 的第二道闸、PR3 又放开，两次都必须用不做剔除的严格相等断言钉住。
   INITIATIVE_LOCK_TASK_TYPES: ['harness_task', 'harness_planner', 'harness_contract_propose', 'harness_contract_review', 'harness_fix', 'harness_initiative', 'golden_path_proposal'],
   RETIRED_HARNESS_TYPES_DISPATCH: ['harness_task', 'harness_ci_watch', 'harness_fix', 'harness_final_e2e', 'harness_planner'],
   GUIDED_TASK_TYPES: ['dev', 'harness_initiative'],
@@ -414,8 +414,8 @@ const NEW_TYPE = 'qiumi_task';
 // PR2 入口刀开启 qiumi_task 的 V（router_valid）标签，VALID_TASK_TYPES 严格相等改为
 // FIX + qiumi_task（决策见团队 Task 3 审查「Important #2」）。
 // task-router.js:15-62 原 TICK_DISPATCH_EXCLUDED 字面量（PR1 之前抄自 dispatch-helpers.js 内联名单），
-// 严格相等不剔除 qiumi_task——PR2 给 qiumi_task 打上第二道闸（tick_dispatchable=false），比照
-// device_job 双闸模式，见团队审查 Important #3。
+// 严格相等不剔除 qiumi_task——PR2 曾给它打第二道闸（tick_dispatchable=false，比照 device_job），
+// PR3 路由接线后放开，qiumi_task 必须重新退出这个集合（plan「补充一」）。
 const TICK_DISPATCH_EXCLUDED_FIX = ['content-pipeline', 'content-export', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review', 'harness_ci_watch', 'harness_deploy_watch', 'device_job'];
 
 const VALID_TASK_TYPES_FIX = ['dev', 'review', 'talk', 'data', 'qa', 'audit', 'research', 'explore', 'knowledge', 'codex_qa', 'codex_dev', 'codex_test_gen', 'code_review', 'decomp_review', 'crystallize', 'crystallize_scope', 'crystallize_forge', 'crystallize_verify', 'crystallize_register', 'pr_review', 'dept_heartbeat', 'initiative_plan', 'initiative_verify', 'initiative_execute', 'suggestion_plan', 'architecture_design', 'architecture_scan', 'arch_review', 'strategy_session', 'intent_expand', 'content-pipeline', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review', 'content-export', 'content_publish', 'prd_review', 'spec_review', 'code_review_gate', 'initiative_review', 'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review', 'sprint_generate', 'sprint_fix', 'sprint_report', 'harness_contract_propose', 'harness_contract_review', 'harness_generate', 'harness_ci_watch', 'harness_fix', 'harness_deploy_watch', 'harness_report', 'scope_plan', 'project_plan', 'okr_initiative_plan', 'okr_scope_plan', 'okr_project_plan', 'platform_scraper', 'harness_initiative', 'harness_task', 'harness_final_e2e', 'harness_evaluate', 'harness_intervention', 'staging_e2e', 'ci_patrol', 'golden_path_proposal', 'strategist_decision'];
@@ -434,11 +434,15 @@ describe('task-type-registry：零行为变化', () => {
     expect(R.VALID_TASK_TYPES).toContain('qiumi_task');
   });
 
-  it('TICK_DISPATCH_EXCLUDED 派生集合 == 替换前字面量 + qiumi_task + project（PR2 双闸加固，比照 device_job；PR3 随 QIUMI_DISPATCH_ENABLED 放开 qiumi_task）', () => {
-    same(R.TICK_DISPATCH_EXCLUDED, [...TICK_DISPATCH_EXCLUDED_FIX, 'qiumi_task', 'project']);
-    expect(R.TICK_DISPATCH_EXCLUDED).toContain('qiumi_task');
+  it('TICK_DISPATCH_EXCLUDED 派生集合 == 替换前字面量 + project（PR3 放开第二道闸：qiumi_task 移出，project 留下）', () => {
+    same(R.TICK_DISPATCH_EXCLUDED, [...TICK_DISPATCH_EXCLUDED_FIX, 'project']);
+    expect(
+      R.TICK_DISPATCH_EXCLUDED,
+      'qiumi_task 还在 tick 排除名单里——dispatchQiumiTask 接线了也永远选不中',
+    ).not.toContain('qiumi_task');
     // project 是 main #5486 接力棒的项目容器行：它永不落 queued 所以现在够不着 tick，
     // 但那是建行方的巧合不是闸——黑名单制下必须显式进名单，见注册表该行注释。
+    // 它与本刀无关，PR3 放开的只有 qiumi_task 这一条。
     expect(R.TICK_DISPATCH_EXCLUDED).toContain('project');
   });
 
@@ -446,14 +450,24 @@ describe('task-type-registry：零行为变化', () => {
     expect(R.EXECUTOR_KIND_FOR_TASK_TYPE).toEqual({ ...FIX_EXECUTOR_KIND, qiumi_task: 'openclaw-agent' });
   });
 
-  it('qiumi_task 声明符合 spec 1.1（PR2：V 标签已开 + tick_dispatchable=false 双闸）', () => {
+  it('qiumi_task 声明符合 spec 1.1（PR3：V 标签已开 + tick_dispatchable=true，第一道闸改由 QIUMI_DISPATCH_ENABLED 门控 headed_manual）', () => {
     const e = R.getTaskType('qiumi_task');
     expect(e).toMatchObject({
       surface: 'openclaw-agent', coding: false, pr: false, executor: 'openclaw-agent',
-      watchdog: 'openclaw-agent', push_to_notion: true, tick_dispatchable: false, db: true,
+      watchdog: 'openclaw-agent', push_to_notion: true, tick_dispatchable: true, db: true,
     });
     expect(R.VALID_TASK_TYPES).toContain('qiumi_task');
-    expect(R.TICK_DISPATCH_EXCLUDED).toContain('qiumi_task');
+    expect(R.TICK_DISPATCH_EXCLUDED).not.toContain('qiumi_task');
+  });
+
+  // 放开第二道闸的连带项：tick 能选中之后，qiumi_task 要过 dispatcher 的锚点执法闸，
+  // 而入账链（ingestQiumiPage → createRoutedTask）从不写 payload.anchor →
+  // 不免锚的话每条秋米任务都会在路由之前被终态 failed（failure_class=missing_anchor）。
+  it('qiumi_task ∈ ANCHOR_EXEMPT_TASK_TYPES（运营活不走承诺地图锚点）', () => {
+    expect(
+      R.ANCHOR_EXEMPT_TASK_TYPES,
+      'qiumi_task 不免锚——放开 tick 派发后每条秋米任务都会被锚点闸终态 failed',
+    ).toContain('qiumi_task');
   });
 
   it('VALUABLE_LEARNING_TASK_TYPES 严格等于 auto-learning.js:20 原字面量（含非真实类型 feature）', () => {
