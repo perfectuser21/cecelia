@@ -21,6 +21,21 @@ set -euo pipefail
 PR_NUMBER="${1:?PR_NUMBER 必须提供}"
 BRANCH_NAME="${2:?BRANCH_NAME 必须提供}"
 PORT="${3:?PORT 必须提供}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ── 账本库 ≠ 预览库（2026-09-22 假红根因）────────────────────────────────
+# preview_environments 账本所在的库，和「本次要创建的预览库」($4) 是两回事。
+# 调用方用 DB_NAME 环境变量告诉我们它自己连的是哪个库，账本就在那儿：
+#   · us-vps Brain 容器不设此变量 → 回落 cecelia（生产库，行为不变）
+#   · MMV preview-agent 的 launchd plist 注入 DB_NAME=cecelia_staging → 账本在 staging
+# 此前这里硬编码 cecelia，而 MMV 上没有这个库，于是 Step 7 必然 FATAL、被当「非致命」
+# 咽掉，账本永远停在 starting，CI 干等 1200s 假红。
+#
+# ⚠️ 必须在下一行 DB_NAME 被 $4 覆盖**之前**求值 —— 顺序写反就会拿到预览库名，
+#    账本照样永远写不进去，而且日志现象和修之前一模一样。守卫第 ④ 条钉的就是这个顺序。
+LEDGER_DB="${PREVIEW_LEDGER_DB:-${DB_NAME:-cecelia}}"
+
 DB_NAME="${4:?DB_NAME 必须提供}"
 
 # 瘦克隆：历史表名单（只排除数据，DDL 完整导出，不使用 --exclude-table）
@@ -357,13 +372,19 @@ if [ "$STATUS" != "running" ]; then
 fi
 
 # ── 7. 回写 Brain API 状态（仅 Brain 健康时才 active）────────────────────────
-log "Step 7: Brain 健康，回写 preview 状态为 active..."
+log "Step 7: Brain 健康，回写 preview 状态为 active（账本库=${LEDGER_DB}）..."
 
-# 直接用 DB 更新（比 API 更可靠，避免同一机器上不同 Brain 实例的 5221 响应问题）
-PGPASSWORD="${DB_PASSWORD:-cecelia}" psql \
-  -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" cecelia \
-  -c "UPDATE preview_environments SET status='active', updated_at=NOW() WHERE pr_number=${PR_NUMBER} AND status<>'inactive';" \
-  2>>"$LOG_FILE" || log "⚠ DB 状态更新失败（非致命）"
+# 直接用 DB 更新（比 API 更可靠，避免同一机器上不同 Brain 实例的 5221 响应问题）。
+#
+# 这一步失败**不是非致命** —— CI 的 wait-preview-active.sh 只认
+# preview_environments.status='active'，写不进去就等于预览没起来，必然干等 1200s 报红。
+# 2026-09-22 之前这里把失败降级成一句「⚠ 非致命」然后照样打印「✅ 启动完成」退出 0，
+# 结果是预览环境明明好好的、CI 却天天假红，日志里唯一的线索是那句被忽略的警告。
+# 这里**故意裸调**：脚本顶上是 set -euo pipefail，回写失败就地终止整个脚本。
+# 不写 `|| log ...`、也不包 `if !` —— 任何一种包裹都给了「把失败降级掉」的地方，
+# 而这正是 0922 之前的原样（`|| log "⚠ 非致命"` 然后照样打印「✅ 启动完成」退出 0）。
+# 裸调之后，唯一能废掉这道致命性的改法就是重新加 `||` 或包 `if`，守卫第 ⑥ 条钉的就是这个。
+bash "${SCRIPT_DIR}/preview-ledger-activate.sh" "$LEDGER_DB" "$PR_NUMBER" 2>&1 | tee -a "$LOG_FILE"
 
 log "✅ 预览环境启动完成: http://localhost:${PORT}/"
 echo "PREVIEW_URL=http://localhost:${PORT}/"
