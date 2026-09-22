@@ -153,6 +153,11 @@ PS
 OUT=$(OPG_TTL_VALUE="900000" bash "$GUARD" 2>&1); RC=$?
 assert_contains "$OUT" "网关" "网关不在 → 出声说明"
 [ "$RC" -ne 0 ] && ok "网关不在 → 退出码非 0" || bad "网关不在却报一切正常"
+# 光「出声 + 退出码非 0」不够：变异测试证明把提前退出删掉，这两条断言照样全绿，
+# 而行为已经变成「照样收割」。真正的要求是**一个都不收**，必须直接断言这一条。
+KILLED="$(cat "$WORK/killed.txt")"
+[ -z "$KILLED" ] && ok "网关不在 → 一个都不收（网关可能正在重启）" \
+                 || bad "网关不在却收割了：$KILLED —— 会把刚起来的链一起带走"
 
 printf '\n结果: PASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
