@@ -87,6 +87,19 @@ OUT=$(bash "$ACTIVATE" "$GHOST_DB" "$SENTINEL_PR" 2>&1); RC=$?
 [ "$RC" -ne 0 ] && ok "账本库不存在 → 退出码非 0（不再当「非致命」咽掉）" \
   || bad "账本库不存在却退出码 0 —— 正是 0922 假红的原样复发"
 
+# ── ②b postgres 整体不可达 → 跳过并退 0（mock 环境豁免）────────────────
+# 这条和 ② 是**配对**的，必须一起看：
+#   ②  postgres 在、但库不存在  → 报死（MMV 上发生的，真故障）
+#   ②b postgres 整体连不上      → 跳过退 0（自测的 psql 桩环境，不是故障）
+# 只有 ② 没有 ②b，preview-env-start 的自测会被打死；只有 ②b 没有 ②，
+# 「库名写错」又会重新变成静默放过。把豁免收窄到「整个 PG 都没有」是唯一安全的口径。
+OUT=$(DB_HOST=/nonexistent-socket-dir bash "$ACTIVATE" "$LEDGER_DB" "$SENTINEL_PR" 2>&1); RC=$?
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -q '跳过'; then
+  ok "postgres 整体不可达 → 跳过并退 0（mock 环境不被打死）"
+else
+  bad "postgres 整体不可达时应跳过退 0，实得退出码 $RC：$OUT"
+fi
+
 # ── ③ 没命中行必须报死 ───────────────────────────────────────────────────
 # UPDATE 0 和 UPDATE 1 在 psql 默认输出里都是「成功」，不显式数行就会静默放过。
 OUT=$(bash "$ACTIVATE" "$LEDGER_DB" 999999 2>&1); RC=$?
