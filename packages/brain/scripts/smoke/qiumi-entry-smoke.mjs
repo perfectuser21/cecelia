@@ -176,7 +176,7 @@ try {
       fail('闸2 payload 字段（notion_page_id/notion_zh_page_id/tenant_id/headed_manual）');
     }
     if (r.payload.dedup_by_notion_page !== 'true') fail('闸2 去重豁免键 dedup_by_notion_page 必须为字符串 true');
-    // 列断言：payload 里有不算数，tasks.tenant_id 列必须真落值（458 建的列，看板/路由按列过滤）
+    // 列断言：payload 里有不算数，tasks.tenant_id 列必须真落值（459 建的列，看板/路由按列过滤）
     if (r.tenant_id !== 'yueshengyun') fail(`闸2 tasks.tenant_id 列应为 yueshengyun，得到 ${r.tenant_id}`);
   }
   pass('闸2/3 入账字段 + 同名不撞');
