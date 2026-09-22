@@ -113,7 +113,22 @@ describe('gRPC-web / protobuf 解帧', () => {
     expect(frames[0].payload).toEqual(Buffer.from([1, 2, 3]));
   });
 
-  it('normalizeGrokUsage：内层 f1 包一层，f5 周期结束 → reset_at；无用量字段 = 0%，无 5h 窗', () => {
+  // 0922 改判：原用例名写着「无用量字段 = 0%」，但实现从头到尾**没去找任何用量字段**，
+  // 无条件返回 seven_day_pct:0 —— 注释描述的 proto3 默认值语义从来没实现过，
+  // 测试却把这个假事实钉死了（守卫在保护一个不存在的行为）。
+  //
+  // 生产实证：ops_model_accounts 里 grok 行恒为 5h=NULL / 7d=0，于是 PR1 装的三态
+  // 配额闸对 grok 必然判 usable —— 一个可能已经耗尽的号永远不会被排除。
+  //
+  // 拿真实响应解码（2026-09-22，grpc-status:0，111 字节）确有候选字段：
+  //   内层 f1 w5(float32)=1、f7={f1=2, f2(float)=1}、f4/f5 是周期起止 Timestamp
+  // 但**只有一个样本、且恰好取在极值 1.0 上**，无从分辨它是「剩余比例」还是
+  // 「已用比例」——两种解释在这一个点上完全同形。不猜（feedback：别拿一两个样本
+  // 代表一整类）。拿到第二个非极值样本前，唯一诚实的值是 null。
+  //
+  // null → judgeAccount 落到 unknown/pct_unknown「弃权」，正是三态设计给未知留的位置：
+  // 不加分不减分，交给认证失败/真 429 回调去定夺。假的 0 比未知更坏，因为它会被当成事实。
+  it('normalizeGrokUsage：周期结束 → reset_at；用量字段未实现解析 → 诚实留 null 而非假 0', () => {
     const endSec = 1_790_000_000;
     const inner = Buffer.concat([
       lenDelim(4, varintField(1, endSec - 604800)),
@@ -122,7 +137,9 @@ describe('gRPC-web / protobuf 解帧', () => {
     const data = lenDelim(1, inner);
     const body = Buffer.concat([grpcFrame(0x00, data), grpcFrame(0x80, Buffer.from('grpc-status:0\r\n'))]);
     const n = normalizeGrokUsage(body);
-    expect(n).toEqual({ five_hour_pct: null, seven_day_pct: 0, reset_at: new Date(endSec * 1000).toISOString() });
+    expect(n).toEqual({ five_hour_pct: null, seven_day_pct: null, reset_at: new Date(endSec * 1000).toISOString() });
+    // 钉死方向：绝不能再退回假的 0 —— 那会让配额闸把 grok 当成「有额度」
+    expect(n.seven_day_pct, 'grok 7d 用量并未真读，返回 0 就是编造事实').not.toBe(0);
     // parser 对 grok 仍是直通（值一个不改），只是 0921 起补齐 schema 的三个新键。
     // grok 探针不产出这些字段 → null（诚实留空，禁编造）。
     expect(parseGrokUsage(n)).toEqual({
