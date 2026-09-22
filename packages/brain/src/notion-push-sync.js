@@ -344,6 +344,23 @@ function tenantFor(env, zhDbId) {
   } catch { return 'default'; }
 }
 
+/** 同步标记不是正文：入账算"有没有描述"时必须先把它们摘掉 */
+const SYNC_MARK_RE = /\[(?:zh|en):[0-9a-f]{32}\]|\[en-native\]/g;
+
+/**
+ * 入账描述兜底。dispatcher pre-flight（pre-flight-check.js）对非系统类型要求
+ * description.trim().length >= 20，不够长就是一条 issue → 任务连吃三振进 blocked。
+ * 秋米行的"正文"经常整条都是同步标记（[zh:<id32>] / [en-native]），摘掉标记后往往剩不下
+ * 20 个字，甚至一个字都不剩——那就用标题把描述撑成一句人能读的话，而不是把任务送去撞墙。
+ */
+export function qiumiDescription(rawBody, title, pageId) {
+  const body = String(rawBody ?? '').replace(SYNC_MARK_RE, '').trim().slice(0, 2000);
+  if (body.length >= 20) return body;
+  const label = title || `页 ${pageId}`;
+  const hint = `来自秋米中文任务表「${label}」（${body ? '正文过短' : '页面正文为空'}，按标题执行）`;
+  return [body, hint].filter(Boolean).join(' · ');
+}
+
 /** 英文页 [en:<id32>] 反查中文行（反向回填生成的中文行备注带该标记） */
 async function findZhPageByEnMark(token, enId32) {
   const resp = await notionReq(token, `/databases/${GTD_DB_ID}/query`, 'POST', {
@@ -376,7 +393,7 @@ async function ingestQiumiPage(pool, token, page, en, { env }) {
     source: 'inbox',
     source_id: page.id,
     title,
-    description: (zhBody || enBody || en.description || '').slice(0, 2000) || '来自秋米中文任务表',
+    description: qiumiDescription(zhBody || enBody || en.description, title, page.id),
     requested_task_type: 'qiumi_task',
     mutation_intent: 'none',
     declared_domain: 'operations',
