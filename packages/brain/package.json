@@ -10,7 +10,8 @@
     "test:coverage": "NODE_OPTIONS='--max-old-space-size=3072' vitest run --coverage",
     "test:coverage:watch": "vitest --coverage",
     "backfill:l1": "node src/scripts/backfill-l1.js",
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "audit:registry-vs-base": "node scripts/audit/registry-vs-base.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
