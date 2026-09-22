@@ -37,7 +37,7 @@ if (!txt.includes('smoke 接力棒根') || !txt.includes('目标：smoke') || !t
 pass "getChainContext 沿真列找到根，formatChainForPrompt 含根/目标/规矩"
 
 grep -q "buildChainPromptSafe({ pool }, task.id)" "$BRAIN_DIR/src/harness-skill-relay.js" || fail "派发 prompt 未接链上下文"
-[[ "$(grep -c "chainContext," "$BRAIN_DIR/src/harness-skill-relay.js")" == "2" ]] || fail "两处派发 prompt 应各注入一次"
+[[ "$(grep -c "= buildRelayPrompt({" "$BRAIN_DIR/src/harness-skill-relay.js")" == "2" ]] || fail "两处派发 prompt 应各走一次 buildRelayPrompt"
 pass "harness-skill-relay 两处派发 prompt 已注入链上下文"
 
 echo "ALL PASS: relay-spine"
