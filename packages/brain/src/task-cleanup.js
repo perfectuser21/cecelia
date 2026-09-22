@@ -11,6 +11,8 @@
  * - Return stats for monitoring
  */
 
+import { RECURRING_TASK_TYPES, PROTECTED_TASK_TYPES } from './lib/task-type-registry.js';
+
 // Thresholds
 const RECURRING_QUEUE_TIMEOUT_HOURS = 24;    // Cancel recurring tasks queued for >24h
 const PAUSED_ARCHIVE_DAYS = 30;              // Archive paused tasks older than 30 days
@@ -18,23 +20,6 @@ const PAUSED_ARCHIVE_DAYS = 30;              // Archive paused tasks older than 
 // In-memory audit log (最多保留 500 条，防止内存泄漏)
 const MAX_AUDIT_LOG_SIZE = 500;
 const _auditLog = [];
-
-// Recurring task types (these should be re-generated periodically, not queued forever)
-const RECURRING_TASK_TYPES = [
-  'dept_heartbeat',
-  'codex_qa'
-];
-
-// Protected task types (should NEVER be auto-canceled by cleanup)
-// These task types are critical for system operation and must be manually managed
-const PROTECTED_TASK_TYPES = [
-  'initiative_plan',   // Initiative planning tasks - must not be auto-canceled
-  'initiative_verify', // Initiative verification tasks - must not be auto-canceled
-  // Harness pipeline tasks — must never be auto-canceled
-  'harness_planner', 'harness_contract_propose', 'harness_contract_review',
-  'harness_generate', 'harness_fix', 'arch_review',
-  'harness_ci_watch', 'harness_deploy_watch', 'harness_report'
-];
 
 // Recurring task title patterns (fallback detection when task_type not set)
 const RECURRING_TITLE_PATTERNS = [

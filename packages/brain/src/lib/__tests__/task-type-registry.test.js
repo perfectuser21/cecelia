@@ -4,11 +4,13 @@
  * 变了，这里先红——这就是"地基刀不许改行为"的机械保证。
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as R from '../task-type-registry.js';
 
-// 注：「DB_WHITELISTED_TASK_TYPES == 迁移 459 的 CHECK 列表」这条断言依赖
-// migrations/459_qiumi_task_type_tenant_dedup.sql，该迁移落在叠放其上的 PR1-B，
-// 断言随迁移一起在 PR1-B 补回（本 PR 的树里 459 还不存在，留在这里必然假红）。
+const HERE = dirname(fileURLToPath(import.meta.url));
+const MIG = join(HERE, '..', '..', '..', 'migrations', '461_qiumi_task_type_tenant_dedup.sql');
 
 // 合并前 Minor：Set 相等只比对成员，不比对个数——数组里混进一个重复项（顶替掉
 // 别的类型）不会被 new Set(a).toEqual(new Set(b)) 抓到，先钉长度相等再比集合。
@@ -500,6 +502,15 @@ describe('task-type-registry：零行为变化', () => {
 
   it('EXEC_STATUS_HK_TASK_TYPES 严格等于（含顺序）routes/execution.js:3025 原字面量', () => {
     expect(R.EXEC_STATUS_HK_TASK_TYPES).toEqual(['talk', 'research', 'data']);
+  });
+
+  it('DB 白名单派生集合 == 迁移 461 的 CHECK 列表', () => {
+    const sql = readFileSync(MIG, 'utf8').split('\n').filter((l) => !/^\s*--/.test(l)).join('\n');
+    const m = sql.match(/tasks_task_type_check CHECK \(\s*task_type IN \(([\s\S]*?)\)\s*\)/);
+    expect(m, '461 里找不到 tasks_task_type_check 的 IN 列表').toBeTruthy();
+    const dbList = [...m[1].matchAll(/'([a-z0-9_-]+)'/g)].map((x) => x[1]);
+    same(R.DB_WHITELISTED_TASK_TYPES, dbList);
+    expect(dbList).toContain('qiumi_task');
   });
 
   it('派生集合全部冻结', () => {

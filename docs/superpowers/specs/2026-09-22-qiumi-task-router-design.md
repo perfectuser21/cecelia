@@ -11,7 +11,7 @@ Brain task `15f42776`（interactive_dev_path_a）· 决策 `b8abd28c` · Journey
 
 | 刀 | 范围 | 行为变化 |
 |---|---|---|
-| **PR1 地基** | 迁移 459；任务类型注册表 + 22 处替换 + 机械守卫；转移表 `in_progress→completed_no_pr`；终态清认领；`openclaw-agent` executor 合同 | 对现有任务零行为变化（注册表派生集合与现值逐一相等，有测试断言） |
+| **PR1 地基** | 迁移 461；任务类型注册表 + 22 处替换 + 机械守卫；转移表 `in_progress→completed_no_pr`；终态清认领；`openclaw-agent` executor 合同 | 对现有任务零行为变化（注册表派生集合与现值逐一相等，有测试断言） |
 | **PR2 入口** | 中文↔英文双向同步 job；`qiumi_task` 经 pullNotionTasks 直落 queued；租户/优先级/due_at 映射；状态回写独立通道；两条人工急停 | 只对带 `[zh:]`/`[en:]` 标记的行生效；未标记行行为不变 |
 | **PR3 路由执行** | 派发前路由（便宜闸→Jev）；设备任务转 device_job；Brain 经 ssh 在 MMV 起 `openclaw agent`；收割回写；切旧 cron | 切换脚本受守卫保护，在途清零才切 |
 
@@ -25,11 +25,11 @@ Brain task `15f42776`（interactive_dev_path_a）· 决策 `b8abd28c` · Journey
   push_to_notion, tick_dispatchable, cleanup_class }
 ```
 导出派生集合：`TICK_BLACKLIST`、`PUSH_EXCLUDED`、`CODING_MUTATION`、`EXECUTOR_KIND_FOR`、`VALID_TASK_TYPES`…。研究报告列出的 22 处（派发 9 / 推送 3 / 看门狗 4 / 清理 6）改为 import 派生集合；`task-router.js:16`、`routes/task-tasks.js:27`、`executor-contracts.js:36-55` 必在其中。
-守卫：`__tests__/task-type-registry.guard.test.js` — ① grep `packages/brain/src` 中任何 `task_type (NOT )?IN \(` 字面量名单，白名单只有注册表文件本身，命中即红；② 派生集合与迁移 457/459 的 DB 白名单一致；③ 变异：临时删一处 import 必红（测试内用 fixture 复制再删验证）。
+守卫：`__tests__/task-type-registry.guard.test.js` — ① grep `packages/brain/src` 中任何 `task_type (NOT )?IN \(` 字面量名单，白名单只有注册表文件本身，命中即红；② 派生集合与迁移 457/461 的 DB 白名单一致；③ 变异：临时删一处 import 必红（测试内用 fixture 复制再删验证）。
 `qiumi_task` 声明：`openclaw-agent` 面、非编码、不产 PR、executor_kind `openclaw-agent`、push_to_notion=true（走 zh 通道）、tick_dispatchable=true（PR3 前 PR1/PR2 期间由 `payload.headed_manual=true` 谓词挡住，避免 tick 抢跑）。
 
-### 1.2 迁移 459+460（PR1）`migrations/459_qiumi_task_type_tenant_dedup.sql` + `migrations/460_validate_task_type_check.sql`
-- `tasks_task_type_check`：照 457 写法（DROP + 全量重建，列表取生产 `pg_get_constraintdef` + `'qiumi_task'`），459 内用 `NOT VALID`（目录项登记，毫秒级，不扫存量行）；存量行验证拆到独立文件 460 的 `VALIDATE CONSTRAINT`（终审 I1：SHARE UPDATE EXCLUSIVE 锁不阻塞并发 DML，且与 459 的 ACCESS EXCLUSIVE 重活分处两个事务，tasks 高频写表不被长事务挡）。
+### 1.2 迁移 461+462（PR1）`migrations/461_qiumi_task_type_tenant_dedup.sql` + `migrations/462_validate_task_type_check.sql`
+- `tasks_task_type_check`：照 457 写法（DROP + 全量重建，列表取生产 `pg_get_constraintdef` + `'qiumi_task'`），461 内用 `NOT VALID`（目录项登记，毫秒级，不扫存量行）；存量行验证拆到独立文件 462 的 `VALIDATE CONSTRAINT`（终审 I1：SHARE UPDATE EXCLUSIVE 锁不阻塞并发 DML，且与 461 的 ACCESS EXCLUSIVE 重活分处两个事务，tasks 高频写表不被长事务挡）。
 - `ALTER TABLE tasks ADD COLUMN IF NOT EXISTS tenant_id TEXT`；回填 `payload->>'tenant_id'`（分批循环，5000/批，控制单条语句体量）；索引 `(tenant_id, status)`。
 - `idx_tasks_dedup_active` 重建：谓词追加 `AND COALESCE(payload->>'dedup_by_notion_page','false') <> 'true'`。**不能用 `notion_id` 列**：createRoutedTask 的 INSERT 不含 notion_id（`work-routing-store.js:308-318`），页 id 是建单后才 UPDATE 上去的，插入瞬间仍为 NULL 照样撞；且 pushTasks 给所有投影任务都写 notion_id（`notion-push-sync.js:280`），拿它豁免会让全部已投影活跃任务失去去重。**也不能用 `payload.notion_page_id`**：现有 `pullNotionTasks`（`notion-push-sync.js:403` `source='notion_tasks_db'`）建单时已经把 `metadata:{notion_page_id: page.id}` 传给 `createRoutedTask`，`work-routing-store.js` 的 `payload = {...request.metadata, ...task.payload}`（`:213`）在 INSERT（`:308-318`）时把 metadata 整体 spread 进 payload——生产里**现在**就有活跃任务的 payload 带 `notion_page_id`，拿它当豁免键会让全部既有 Notion 排单任务立刻退出 title 去重，属真实行为变化。豁免键改用专用的 `payload.dedup_by_notion_page='true'`，只有 PR2 的 `qiumi_task` 建单路径会显式写它，INSERT 时即带，同名行插入即不撞。PR1 只改谓词，此时无任何任务带该键，行为不变。
 
@@ -80,7 +80,7 @@ Brain task `15f42776`（interactive_dev_path_a）· 决策 `b8abd28c` · Journey
 | 档 | 内容 | 位置 |
 |---|---|---|
 | E2E（真库 smoke，cecelia_test） | 中文行→英文行→Brain 任务→（stub ssh）→`.exit`→completed_no_pr→中文行已完成；同名两行各自入账；急停三态；归档/收集/下一个行动不入账；切换守卫变异 | `scripts/smoke/qiumi-task-router-smoke.sh`（登记 `packages/quality/smoke-allowlist.txt`） |
-| integration（vitest+pg） | 迁移 459 前后 CHECK/索引/tenant 列；转移表入边与 522 清认领；注册表派生集合==现值；pullNotionTasks 分支（fetch stub） | `__tests__/*.test.js` |
+| integration（vitest+pg） | 迁移 461 前后 CHECK/索引/tenant 列；转移表入边与 522 清认领；注册表派生集合==现值；pullNotionTasks 分支（fetch stub） | `__tests__/*.test.js` |
 | unit | 路由决策表（便宜闸优先级、阈值、池外账号拒绝）；jev-client 兜底阶梯（fake timers）；三方映射表完整性；withBackoff | 同上 |
 | trivial | env 常量、模型 id 映射表 | 无需测 |
 守卫全部变异测试（feedback_mutation_test_the_guard）：注册表 grep 守卫删 import 必红；切换守卫伪造在途必红；映射表删一行必红。

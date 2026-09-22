@@ -20,8 +20,6 @@
  * ── 清单 ───────────────────────────────────────────────────────────────
  * REMAINING_LEGACY_SITES：PR1 逐 Task 替换期间的临时豁免，替换一处删一行；
  * 清单里的文件若已经不再命中 → 也判红（防止豁免长期残留，见测试②）。
- * 本 PR（PR1-A）只落地注册表与守卫本体、消费方一处未替换，故清单是 A 树的真实
- * 空跑快照（44 文件 / 82 条命中串），由 PR1-B 逐条清空到 11 条 long-lived: map。
  * kind 标注（只是注释，不参与判定）：enum = 规则 A/B（数组/Set/SQL 字面量
  * 枚举），map = 规则 C（对象映射）。同一文件可能同时命中多条规则。
  *
@@ -44,123 +42,92 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, '..');
 const REGISTRY = join(SRC, 'lib', 'task-type-registry.js');
 
-// 本 PR（PR1-A）只落地 `lib/task-type-registry.js` 与本守卫本体，**消费方一处都还没替换**，
-// 所以这份豁免清单是"A 树上扫描器能看到的全部手抄站点"的**真实空跑快照**（44 个文件、
-// 82 条命中串），不是从 PR #5492 终态清单抄来的。生成方法：把 REMAINING_LEGACY_SITES 置空跑
-// 测试①，把报出的 offenders 逐条按「文件 → 命中串白名单」填回来（命中串形如 `行:标识符`，见
-// scanFile）。
+// PR1 替换期间的临时豁免：Task 3/4/5 每替换一处删一条；全部替换完此对象必须为空。
 //
-// 【PR1-B 逐条清空】叠放在本 PR 之上的 PR1-B（原 #5492）做 44 处消费方替换，每替换一处删一条，
-// 收敛到 11 条 `long-lived: map` 终态（下面带 `*` 的那些），kind: enum 全部清零。
+// 【终审 I2】原结构是纯文件名数组，测试①对清单内文件整个 `continue`——跳过扫描，
+// 不是只放行已登记的那一处命中。以后任何人往这些 long-lived 文件里新加一段完全
+// 不相关的手抄 task_type 名单，守卫永远看不见，是永久盲区（回归覆盖见测试⑩）。
+// 改为 `{ 相对路径: [允许的命中串, ...] }` 的映射——命中串形如 `行:标识符`
+// （见 scanFile），逐条核对：清单内文件的命中，只有不在该文件白名单数组里的才是
+// offender；清单外文件任何命中都是 offender（不变）。测试②同步改为逐条检查白名单
+// 里的每个命中串是否仍然成立（而不是"整个文件还有没有任意命中"）。
 //
-// 【终审 I2】结构是 `{ 相对路径: [允许的命中串, ...] }` 的映射，逐条核对——不是整文件跳过扫描。
-// 早期版本按文件名整体豁免，导致任何人往已登记文件里新加一段无关的手抄名单都不会被抓到（永久
-// 盲区，回归覆盖见测试⑩）。清单内文件的命中，只有不在该文件白名单数组里的才是 offender；清单外
-// 文件任何命中都是 offender。测试②同步逐条检查白名单里每个命中串是否仍然成立。
-//
-// kind 标注（只是注释，不参与判定）：enum = 规则 A/B（数组/Set/SQL 字面量枚举），
-// map = 规则 C（对象映射）；`*` = PR1-B 评估后判定 long-lived、终态保留的站点。
+// 演进历史（实测见 task-2-report.md「修复」各节）：
+// - 19 → 27（Task 2 首版）→ 27 → 34（第一轮，规则 A 语义识别）→ 34 → 40
+//   （第二轮，补规则 C 对象字面量）：见 task-2-report.md 第一/二轮章节。
+// - 40 → 44（第三轮，规则 A/C 去掉声明绑定限定，位置无关扫描）：新增
+//   `recurring.js`（本轮审查给出的原始反例，kind: enum）/ `model-profile.js`
+//   （kind: map）/ `role-registry.js`（kind: map，同一文件 4 处独立
+//   task_types 映射）/ `routes/tasks.js`（kind: map）。`executor.js` /
+//   `routes/execution.js` / `task-router.js` 里新增的内联命中（各自的
+//   `.includes`/`task_types`/`skill` 等站点）落在已在清单里的文件，不新增
+//   清单条目。
+// - Task 3（派发类）实测：9 处原定站点 + task-queue-lanes.js/executor.js（6 处独立常量
+//   + :2346 内联）已替换为 import 注册表派生集合，见 task-3-report.md。
+// - Task 3 裁决后（同一份报告「裁决后」节）：actions.js（systemTypes）、dispatcher.js（SQL
+//   `IN (...)`）、lib/review-task-types.js、recurring.js:221 全部清零退出清单；
+//   task-router.js/executor.js 里能一对一映射到注册表字段的站点（SKILL_WHITELIST/
+//   LOCATION_MAP/TASK_REQUIREMENTS/ASYNC_CALLBACK_TYPES、executor.js 的 skillMap/modeMap）
+//   也已改注册表派生（对象型用 deep-equal fixture 校验零行为变化）。两个文件里各剩 1 处
+//   真正的 long-lived: map（task-router.js:135 的 2 项业务降级链 FALLBACK_STRATEGIES.skill、
+//   executor.js:2329 的 task_type→handler 函数路由表 _TASK_ROUTES，函数值无法进纯数据注册表）
+//   ——kind: enum 在这两个文件里已清零，只剩 kind: map。
+// - Task 6（补充五+补充六收尾）：`executor-contracts.js` 的 `EXECUTOR_KIND_FOR` 改从注册表
+//   `EXECUTOR_KIND_FOR_TASK_TYPE` 派生（+ 两个路径 sentinel），退出清单——清单变量从
+//   kind: map 12 条降到 11 条。补充五点名的 5 处未分配站点（agent-ops.js/content-pipeline.js/
+//   task-weight.js/tick-helpers.js/token-budget-planner.js）逐条评估：全部无法一对一映射到
+//   现有注册表字段（各自持有与"分类标签"正交的独立数据——展示文案/LLM prompt/数值权重/
+//   降级判据/供应商亲和度配置），标 long-lived: map + 理由，未改动这 5 个文件本身的代码
+//   （只改本清单注解）。至此清单里 **kind: enum 已在全部文件清零，只剩 kind: map**，
+//   这 11 条即为 PR1 终态允许保留的清单（`packages/brain/scripts/audit/registry-vs-base.mjs`
+//   另行对全部已替换站点做"注册表派生值 vs 基线源码原文"机械审计，见该脚本头注释）。
 export const REMAINING_LEGACY_SITES = {
-  // kind: enum
-  'actions.js': ['19:systemTypes', '27:CONTENT_TASK_TYPES', '31:RESEARCH_TASK_TYPES', '37:REVIEW_TASK_TYPES', '43:CODING_TASK_TYPES'],
-  // kind: enum
-  'alertness/escalation.js': ['73:CANCEL_EXEMPT_TYPES', '368:SQL'],
-  // kind: enum
-  'anchor-check.js': ['14:ANCHOR_EXEMPT_TASK_TYPES'],
-  // kind: enum
-  'auto-learning.js': ['20:VALUABLE_TASK_TYPES'],
-  // kind: enum
-  'credential-expiry-checker.js': ['203:SKIP_TASK_TYPES'],
-  // kind: enum
-  'cron/daily-real-business-smoke.js': ['42:STAGE_ORDER'],
-  // kind: enum/map
-  'crystallize-orchestrator.js': ['54:CRYSTALLIZE_STAGES', '278:stageLabels'],
-  // kind: enum
-  'dispatch-allocation-guide.js': ['6:GUIDED_TASK_TYPES'],
-  // kind: enum
-  'dispatch-helpers.js': ['89:SQL'],
-  // kind: enum
-  'dispatcher.js': ['89:INITIATIVE_LOCK_TASK_TYPES', '105:_RETIRED_HARNESS_TYPES_DISPATCH', '602:SQL'],
-  // kind: map
-  'executor-contracts.js': ['36:EXECUTOR_KIND_FOR'],
-  // kind: enum/map/map*
-  // * :2378 _TASK_ROUTES 是 task_type→handler 函数路由表，函数值进不了纯数据注册表，PR1-B 终态保留
-  'executor.js': ['1392:skillMap', '1519:modeMap', '2018:isFixMode', '2019:isHarnessV4', '2346:.includes', '2375:_HARNESS_GENERATE_TYPES', '2378:_TASK_ROUTES', '3453:_RETIRED_HARNESS_TYPES', '4198:CONTENT_PIPELINE_TYPES', '4209:HARNESS_LIVENESS_EXEMPT_TYPES'],
-  // kind: enum
-  'learning.js': ['571:SQL', '590:SQL'],
-  // kind: enum
-  'lib/review-task-types.js': ['7:REVIEW_TASK_TYPES'],
-  // kind: map*
-  // * 模型路由调优配置（task_type→{provider,model,cascade}），非分类标签，PR1-B 终态保留
+  // kind: map（long-lived）— 唯一残留 :2329 _TASK_ROUTES（task_type→handler 函数，无法表示为注册表纯数据字段）
+  'executor.js': ['2329:_TASK_ROUTES'],
+  // kind: map（long-lived）— Task 4 评估：:60 model_map 是 task_type→{provider,model,cascade}
+  // 的模型路由调优配置（嵌套对象，非简单字符串），逐 type 独立调参（如 harness_planner 用 opus、
+  // harness_generate 用 sonnet），无匹配注册表单一字段，且属运营调参数据非"哪类"分类标签
   'model-profile.js': ['60:model_map'],
-  // kind: enum
-  'monitor-loop.js': ['37:HARNESS_TASK_TYPES', '200:HARNESS_CHAIN_TYPES'],
-  // kind: enum
-  'nightly-orchestrator.js': ['91:SQL', '125:typeScore'],
-  // kind: enum
-  'orchestrator/kernel-run-store.js': ['23:ELIGIBLE_TASK_TYPES'],
-  // kind: enum
-  'pipeline-watchdog.js': ['26:HARNESS_TASK_TYPES'],
-  // kind: enum
-  'pre-flight-check.js': ['35:SYSTEM_TASK_TYPES'],
-  // kind: enum
-  'recovery-loop.js': ['44:HARNESS_TASK_TYPES'],
-  // kind: enum
-  'recurring.js': ['221:.includes'],
-  // kind: map*
-  // * CTO/CPO/CMO/CFO/COO 五个业务角色的任务归属划分，与注册表现有 9 个字段正交，PR1-B 终态保留
+  // kind: map（long-lived）— Task 4 评估：4 处 task_types 是 CTO/CPO/CMO/CFO/COO
+  // 五个业务角色的任务归属划分（key===value 恒等映射，充当归属集合），是与现有 9 个字段
+  // （surface/coding/pr/executor/watchdog/push_to_notion/tick_dispatchable/cleanup_class/db）
+  // 正交的第 10 个业务归属轴，新增会是主理人裁决范畴（角色边界怎么划），非 PR1 零行为变化范围
   'role-registry.js': ['26:task_types', '49:task_types', '70:task_types', '95:task_types'],
-  // kind: map*
-  // * 运行舱只读展示端点自己的第三份独立降级展示文案，PR1-B 终态保留
+  // kind: map（long-lived）— Task 6 评估：:17 SKILL_BY_TASK_TYPE 只覆盖 10 个
+  // task_type（不是全量），且值与 SKILL_WHITELIST/EXECUTOR_SKILL_MAP 都不同（如
+  // harness_initiative 这里写 'harness(skill-relay)'，两处已有映射表都是别的值）——是运行舱只读
+  // 展示端点自己的第三份独立"推不出=null"降级展示文案，不是"哪类"的分类标签，无匹配注册表字段
   'routes/agent-ops.js': ['17:SKILL_BY_TASK_TYPE'],
-  // kind: map*
-  // * 6 个 content-* 类型各自的 LLM system prompt 长文本，PR1-B 终态保留
+  // kind: map（long-lived）— Task 6 评估：:101 STEP_SYSTEM_PROMPTS 是
+  // 6 个 content-* task_type 各自专属的完整 LLM system prompt 长文本（调 LLM 用），不是分类标签，
+  // 无法也不应该折进注册表的 T() 字段
   'routes/content-pipeline.js': ['101:STEP_SYSTEM_PROMPTS'],
-  // kind: enum
-  'routes/execution.js': ['1658:VERDICT_HARNESS_TYPES', '3006:task_types', '3025:task_types', '3720:SQL'],
-  // kind: enum/map*
-  // * :946/:1034 是第 3 份 task_type→skill 目录名 + 第 5 份 label 映射（值与已有映射都不同，只搬家不合并），PR1-B 终态保留
-  'routes/harness.js': ['702:STAGE_ORDER', '946:TASK_TYPE_TO_SKILL', '1034:BASE_LABELS'],
-  // kind: enum/map
-  'routes/status.js': ['334:HARNESS_STAGE_ORDER', '342:HARNESS_STAGE_LABELS'],
-  // kind: enum
-  'routes/task-tasks.js': ['27:CODING_MUTATION_TASK_TYPES'],
-  // kind: map*
-  // * GET /api/brain/task-types 的人类可读展示文案（仅 5 个类型有文案），PR1-B 终态保留
-  'routes/tasks.js': ['873:description'],
-  // kind: enum
-  'routes/warroom.js': ['36:FEED_TYPES'],
-  // kind: enum
-  'slot-allocator.js': ['81:BACKPRESSURE_BYPASS_TASK_TYPES', '353:SQL', '662:SQL'],
-  // kind: enum
-  'task-cleanup.js': ['23:RECURRING_TASK_TYPES', '30:PROTECTED_TASK_TYPES'],
-  // kind: enum
-  'task-queue-lanes.js': ['1:PIPELINE_TASK_TYPES'],
-  // kind: enum/map/map*
-  // * :179 FALLBACK_STRATEGIES.skill 仅 2 项业务专用降级链，PR1-B 终态保留
-  'task-router.js': ['16:VALID_TASK_TYPES', '68:ASYNC_CALLBACK_TYPES', '74:SKILL_WHITELIST', '179:skill', '226:LOCATION_MAP', '316:TASK_REQUIREMENTS'],
-  // kind: map*
-  // * 派发权重数值调优表（+20/-10），与分类标签正交，PR1-B 终态保留
+  // kind: map（long-lived）— enum 部分（STAGE_ORDER/STAGE_LABELS）已搬进注册表 HARNESS_BUILD_STAGE_ORDER/LABELS；
+  // 剩 TASK_TYPE_TO_SKILL（:933，task_type→skill目录名，与 SKILL_WHITELIST/EXECUTOR_SKILL_MAP
+  // 语义相近但值不同——第3份独立维护，PR1 只搬家不合并）+ BASE_LABELS（:1021，task_type→短展示
+  // 标签，第5份独立维护的 label 映射，无匹配注册表字段）
+  'routes/harness.js': ['933:TASK_TYPE_TO_SKILL', '1021:BASE_LABELS'],
+  // kind: map（long-lived）— Task 4 评估：:879 description 是 GET /api/brain/task-types
+  // 的人类可读展示文案（仅5个类型有文案，不是"哪类"的分类标签），要对应注册表字段需给全部
+  // ~80 个 task_type 逐个写产品文案，属独立的文档撰写工作，非 PR1 零行为变化范围
+  'routes/tasks.js': ['891:description'],
+  // kind: map（long-lived）— 唯一残留 :55 FALLBACK_STRATEGIES.skill（仅2项业务专用降级链 review→code_review→dev，非"哪类"的分类标签，无匹配注册表字段）
+  'task-router.js': ['55:skill'],
+  // kind: map（long-lived）— Task 6 评估：:25 TASK_TYPE_ADJUSTMENTS 是派发权重的数值
+  // 调优表（+20/-10 这类优先级加减分），与现有 9 个字段（分类/流程标签）正交的第三个独立运营
+  // 调参轴（另两个已知独立轴：model-profile.js 的模型路由、role-registry.js 的角色归属）
   'task-weight.js': ['25:TASK_TYPE_ADJUSTMENTS'],
-  // kind: map*
-  // * routeTask() 自己的降级判据表（research/content_publish 故意写 null），PR1-B 终态保留
+  // kind: map（long-lived）— Task 6 评估：:27 TASK_TYPE_AGENT_MAP 只 6 项，且
+  // research/content_publish 故意写 null 触发特殊降级路径（人工处理 / 按 payload.platform 动态路由），
+  // 与 EXECUTOR_SKILL_MAP 同名 key 的值不完全相同（research: null vs ''；content_publish: null vs
+  // '/dev'）——是 routeTask() 自己的降级判据表，不是纯粹的分类标签
   'tick-helpers.js': ['27:TASK_TYPE_AGENT_MAP'],
-  // kind: map*
-  // * LLM 供应商亲和度调优配置，非分类标签，PR1-B 终态保留
+  // kind: map（long-lived）— Task 6 评估：:58 EXECUTOR_AFFINITY 是
+  // task_type→{primary,fallback,no_downgrade} 的 LLM 供应商亲和度调优配置（Claude/Codex 选型 +
+  // 降级策略），与 model-profile.js 的模型路由同属运营调参数据，非分类标签，无匹配注册表字段
   'token-budget-planner.js': ['58:EXECUTOR_AFFINITY'],
-  // kind: enum
-  'topic-heat-scorer.js': ['114:SQL'],
-  // kind: enum
-  'topic-selector.js': ['135:SQL'],
-  // kind: enum
-  'triage-officer-15min.js': ['41:SQL'],
-  // kind: enum
-  'triage-officer-rank.js': ['72:SQL', '130:SQL'],
-  // kind: enum
-  'weekly-report-generator.js': ['142:SQL'],
-  // kind: enum
-  'work-routing-observability.js': ['44:SQL'],
 };
+
 describe('task-type-registry 守卫', () => {
   const files = walk(SRC, REGISTRY);
 

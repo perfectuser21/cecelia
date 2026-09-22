@@ -1,16 +1,6 @@
-export const PIPELINE_TASK_TYPES = [
-  'content-pipeline',
-  'content-export',
-  'content-research',
-  'content-copywriting',
-  'content-copy-review',
-  'content-generate',
-  'content-image-review',
-  'content-review',
-  'content_publish',
-  'harness_ci_watch',
-  'harness_deploy_watch',
-];
+import { PIPELINE_TASK_TYPES } from './lib/task-type-registry.js';
+
+export { PIPELINE_TASK_TYPES };
 
 function sqlString(value) {
   return `'${value.replaceAll("'", "''")}'`;

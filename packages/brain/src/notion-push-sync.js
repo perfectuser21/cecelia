@@ -8,10 +8,11 @@ import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 import { pushRegisteredRows, resolveDbId } from './lib/notion-projection-engine.js';
 import { OPS_DB_PROPS } from './ops-notion-schema.js';
-import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import {
   ensureOpsDbProps, inferProviderFromModelId, pickProviderQuota, buildQuotaProps,
 } from './ops-quota-notion.js';
+import { PUSH_EXCLUDED_TASK_TYPES } from './lib/task-type-registry.js';
+import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 
 const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
 const FEATURE_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
@@ -239,7 +240,7 @@ export const PUSH_TASKS_QUERY = `
       FROM tasks t
       LEFT JOIN tasks proj ON proj.id = t.parent_task_id AND proj.task_type = 'project'
      WHERE (t.notion_props->>'pushed_status') IS DISTINCT FROM t.status
-       AND t.task_type <> 'device_job'
+       AND NOT (t.task_type = ANY(ARRAY[${PUSH_EXCLUDED_TASK_TYPES.map((t) => `'${t}'`).join(',')}]::text[]))
        AND t.task_type <> 'project'
        AND (
          t.status IN ('queued','in_progress','blocked')
@@ -449,7 +450,8 @@ export async function runNotionTaskPull(pool) {
   await reapSshWorkflowRuns(pool, token);
 }
 
-// ssh 直派公共参数已抽到中立叶子模块 lib/ssh-args.js（终审 I6），此处只 import 不再重复定义
+// ssh 直派公共参数：定义已抽到 lib/ssh-args.js（终审 I6，解除 executor-contracts.js
+// 对本文件的分层倒置依赖）；本文件仍是原调用方，import 后行为不变。
 function defaultSshExec(args) {
   return nodeExecFileSync('ssh', args, { encoding: 'utf8', timeout: 30_000 });
 }

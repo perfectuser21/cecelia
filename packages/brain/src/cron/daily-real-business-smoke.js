@@ -24,6 +24,7 @@ import { join } from 'path';
 import { raise } from '../alerting.js';
 import { createTask } from '../actions.js';
 import { buildCeceliaMutationRoute } from '../system-coding-route.js';
+import { DAILY_SMOKE_STAGE_ORDER } from '../lib/task-type-registry.js';
 
 // 触发时间：UTC 20:00 = 北京时间 04:00
 export const SMOKE_HOUR_UTC = 20;
@@ -39,14 +40,7 @@ export const MIN_IMAGES = 9;
 export const ARCHIVE_AFTER_DAYS = 30;
 
 // stage 执行顺序（用于定位失败阶段）
-const STAGE_ORDER = [
-  'content-research',
-  'content-copywriting',
-  'content-copy-review',
-  'content-generate',
-  'content-image-review',
-  'content-export',
-];
+const STAGE_ORDER = DAILY_SMOKE_STAGE_ORDER;
 
 /**
  * 判断当前是否在每日 smoke 触发窗口内（UTC 20:00-20:05）

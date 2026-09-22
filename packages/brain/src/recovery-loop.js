@@ -28,6 +28,7 @@
  *   用**心跳判据**专管 → 这里必须排除 harness_* 任务类型，避免两个看门狗打架误杀。
  */
 import pool from './db.js';
+import { RECOVERY_HARNESS_TASK_TYPES as _RECOVERY_HARNESS_TASK_TYPES } from './lib/task-type-registry.js';
 
 const RECOVERY_INTERVAL_MS = parseInt(
   process.env.CECELIA_RECOVERY_LOOP_INTERVAL_MS || String(5 * 60 * 1000),
@@ -41,11 +42,7 @@ const RECOVERY_INTERVAL_MS = parseInt(
 // 积压 200+ 时按每 5 分钟 5 个的速度疏通，几小时排空，不会冲垮下游。
 const UNBLOCK_BATCH_LIMIT = 5;
 
-const HARNESS_TASK_TYPES = new Set([
-  'harness_initiative', 'harness_task', 'harness_evaluate',
-  'harness_contract_propose', 'harness_contract_review',
-  'harness_planner', 'harness_generator', 'harness_generate', 'harness_fix',
-]);
+const HARNESS_TASK_TYPES = new Set(_RECOVERY_HARNESS_TASK_TYPES);
 
 let _loopTimer = null;
 let _isRunning = false;

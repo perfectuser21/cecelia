@@ -17,6 +17,12 @@ import { callLLM } from './llm-caller.js';
 import { getHighPerformingTopics } from './topic-heat-scorer.js';
 import { queryWeeklyROI } from './content-analytics.js';
 
+// getContentGapContext 的 task_type 历史拼写兼容名单：'content-pipeline' 是当前真实
+// task_type，'content_pipeline'（下划线）/'content_generation' 从未被写入过（grep 全库
+// 无一处 INSERT 用过这两个拼写），是早年改名前的历史兼容写法，与注册表其它派生集合
+// （如 CONTENT_TASK_TYPES）语义不同——不能替换/合并，只能原样保留（PR1 零行为变化）。
+const CONTENT_GAP_LEGACY_TASK_TYPES = Object.freeze(['content-pipeline', 'content_pipeline', 'content_generation']);
+
 // ─── LLM Fallback Helper ─────────────────────────────────────────────────────
 // 当主 LLM（cortex profile，当前指向 Codex）失败时，自动 fallback 到
 // claude-sonnet-4-6（anthropic-api 直连），避免每日选题因配额耗尽而中断。
@@ -132,11 +138,12 @@ export async function getContentGapContext(pool) {
          payload->>'content_type' AS content_type,
          COUNT(*) AS cnt
        FROM tasks
-       WHERE task_type IN ('content-pipeline','content_pipeline','content_generation')
+       WHERE task_type = ANY($1::text[])
          AND created_at >= NOW() - INTERVAL '30 days'
          AND payload->>'content_type' IS NOT NULL
        GROUP BY 1
-       ORDER BY 2 ASC`
+       ORDER BY 2 ASC`,
+      [CONTENT_GAP_LEGACY_TASK_TYPES]
     );
     if (!rows || rows.length === 0) return '';
 

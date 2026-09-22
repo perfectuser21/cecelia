@@ -132,7 +132,10 @@ describe('harness admission 3b\'\' 块 — deny/兜底路径行为（beeba317 �
       if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
         return Promise.resolve({ rows: [{ id: taskId, task_type: 'harness_initiative', title: 'harness sprint' }] });
       }
-      if (/count\(\*\)/i.test(sql) && /harness_initiative/.test(sql)) {
+      // Task 3 裁决后（qiumi-task-router PR1）：这条 SQL 改参数化
+      // task_type = ANY($2::text[])，'harness_initiative' 不再出现在 SQL 文本里，
+      // 改按 count(*) + task_type = ANY 的形状匹配。
+      if (/count\(\*\)/i.test(sql) && /task_type\s*=\s*ANY/i.test(sql)) {
         return Promise.resolve({ rows: [{ n: runningCount }] });
       }
       return Promise.resolve({ rows: [] });

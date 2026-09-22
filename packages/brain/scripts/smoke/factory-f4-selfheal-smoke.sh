@@ -17,8 +17,9 @@ psql_q() { psql -qtAc "$1"; }
 echo "== F4 故障自愈：liveness 合同层 =="
 node -e '
 import("./packages/brain/src/executor-contracts.js").then(m => {
-  if (!Array.isArray(m.VALID_EXECUTOR_KINDS) || m.VALID_EXECUTOR_KINDS.length !== 7)
-    { console.error("VALID_EXECUTOR_KINDS 应为 7 kind，实际 " + m.VALID_EXECUTOR_KINDS.length); process.exit(1); }
+  // PR1-B 由七增八：openclaw-agent = 秋米中文 GTD 任务的执行者（Brain 经 ssh 在 MMV 起 agent）
+  if (!Array.isArray(m.VALID_EXECUTOR_KINDS) || m.VALID_EXECUTOR_KINDS.length !== 8)
+    { console.error("VALID_EXECUTOR_KINDS 应为 8 kind，实际 " + m.VALID_EXECUTOR_KINDS.length); process.exit(1); }
   for (const k of m.VALID_EXECUTOR_KINDS) {
     const c = m.EXECUTOR_CONTRACTS[k];
     if (!c || typeof c.probe !== "function") { console.error("kind 缺 probe: " + k); process.exit(1); }

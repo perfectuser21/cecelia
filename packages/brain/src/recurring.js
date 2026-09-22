@@ -9,6 +9,7 @@
 import pool from './db.js';
 import { createTask } from './actions.js';
 import { buildMutationRoute } from './system-coding-route.js';
+import { RECURRING_CODING_MUTATION_TASK_TYPES } from './lib/task-type-registry.js';
 
 /**
  * Parse a simple cron expression and check if it matches the given date.
@@ -218,10 +219,7 @@ export async function checkRecurringTasks(now = new Date()) {
     const skill = EXECUTOR_SKILL_MAP[executor] ?? null;
     const taskType = skill ? 'skill' : (template.task_type || rt.task_type || 'dev');
 
-    const codingMutation = skill === '/dev' || [
-      'dev', 'codex_dev', 'initiative_execute', 'sprint_generate', 'sprint_fix',
-      'harness_generate', 'harness_fix', 'pipeline_rescue',
-    ].includes(taskType);
+    const codingMutation = skill === '/dev' || RECURRING_CODING_MUTATION_TASK_TYPES.includes(taskType);
     const mutationRoute = codingMutation
       ? buildMutationRoute({
           change_kind: template.change_kind,

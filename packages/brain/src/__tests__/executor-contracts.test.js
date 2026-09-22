@@ -46,7 +46,7 @@ async function runWithProbe(kind, probeResult, taskOverrides = {}) {
 // ─── VALID_EXECUTOR_KINDS ─────────────────────────────────────────────────────
 
 describe('VALID_EXECUTOR_KINDS', () => {
-  it('包含七个合法值（2026-08-05 增 codex-review-local：决策 9befa9c3 codex-review 活性 lock 文件探活）', () => {
+  it('包含八个合法值（2026-09-22 增 openclaw-agent：Task 6 秋米中文 GTD ssh 直派探活合同）', () => {
     expect(VALID_EXECUTOR_KINDS).toEqual(
       expect.arrayContaining([
         'brain-local',
@@ -56,9 +56,10 @@ describe('VALID_EXECUTOR_KINDS', () => {
         'bridge',
         'external-worker',
         'codex-review-local',
+        'openclaw-agent',
       ])
     );
-    expect(VALID_EXECUTOR_KINDS).toHaveLength(7);
+    expect(VALID_EXECUTOR_KINDS).toHaveLength(8);
   });
 });
 

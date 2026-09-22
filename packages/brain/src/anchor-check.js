@@ -10,34 +10,10 @@
  *  3. 存量任务：created_at < ANCHOR_LEGACY_CUTOFF（刀2上线前已存在的任务）
  */
 
+import { ANCHOR_EXEMPT_TASK_TYPES as _ANCHOR_EXEMPT_TASK_TYPES } from './lib/task-type-registry.js';
+
 // 系统例行任务和 harness/pipeline 子任务免锚（不依赖人工拍板的承诺地图）
-export const ANCHOR_EXEMPT_TASK_TYPES = new Set([
-  // 系统例行
-  'dept_heartbeat', 'arch_review', 'ci_patrol',
-  'research', 'explore', 'talk', 'data',
-  'staging_e2e', 'deploy_drill', 'nightly', 'janitor',
-  'strategist_decision',
-  // harness pipeline 子任务（orchestrator 生成，无需手动锚）
-  'harness_initiative', 'harness_task', 'harness_final_e2e',
-  'harness_planner', 'harness_contract_propose', 'harness_contract_review',
-  'harness_generate', 'harness_fix', 'harness_evaluate', 'harness_report',
-  'harness_controller',
-  // codex / QA
-  'codex_qa', 'codex_dev', 'codex_test_gen',
-  // initiative pipeline
-  'initiative_verify', 'initiative_plan',
-  // code review pipeline
-  'code_review', 'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
-  // crystallize pipeline
-  'crystallize', 'crystallize_scope', 'crystallize_forge', 'crystallize_verify', 'crystallize_register',
-  // content pipeline
-  'content-pipeline', 'content-research', 'content-copywriting', 'content-copy-review',
-  'content-generate', 'content-image-review', 'content-export', 'content_publish',
-  // sprint
-  'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'sprint_report',
-  // golden path
-  'golden_path_proposal',
-]);
+export const ANCHOR_EXEMPT_TASK_TYPES = new Set(_ANCHOR_EXEMPT_TASK_TYPES);
 
 // 特殊动作豁免语义（PRD §四）
 export const ANCHOR_EXEMPT_ACTIONS = new Set([
