@@ -16,10 +16,15 @@
  */
 
 import { execSync } from 'child_process';
+import { execFileSync } from 'node:child_process';
 import { assessKernelLiveness } from './lib/kernel-liveness.js';
 import { probeCodexReviewLock } from './lib/codex-review-liveness.js';
+import { EXECUTOR_KIND_FOR_TASK_TYPE } from './lib/task-type-registry.js';
+import { sshTargetFor, resolvePrimaryWorkerId } from './machine-registry.js';
+import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 
 export const KERNEL_EXECUTOR_KIND = 'kernel-process';
+export const OPENCLAW_AGENT_EXECUTOR_KIND = 'openclaw-agent';
 
 export const VALID_EXECUTOR_KINDS = [
   'brain-local',
@@ -29,29 +34,18 @@ export const VALID_EXECUTOR_KINDS = [
   'bridge',
   'external-worker',
   'codex-review-local',
+  OPENCLAW_AGENT_EXECUTOR_KIND,
 ];
 
 // ─── 打标映射（各派发点用的快查表）────────────────────────────────────────────
-// 特殊 key __bridge_path / __local_spawn 代表路由路径（非 task_type）
-export const EXECUTOR_KIND_FOR = {
-  // harness_initiative 由 runHarnessInitiativeRouter → spawnSkillRelaySession 跑 relay-container
-  harness_initiative: 'relay-container',
-  // golden_path_proposal 同走 runHarnessInitiativeRouter → spawnSkillRelaySession（GP2/T2）
-  golden_path_proposal: 'relay-container',
-  // dev 由 dispatcher 暂标 brain-local（迁离 LangGraph 后，走 triggerCeceliaRun 本地 spawn）
-  dev: 'brain-local',
-  // content-pipeline 系列由外部 ZJ pipeline-worker 管，不探活
-  'content-pipeline': 'external-worker',
-  'content-research': 'external-worker',
-  'content-copywriting': 'external-worker',
-  'content-copy-review': 'external-worker',
-  'content-generate': 'external-worker',
-  'content-image-review': 'external-worker',
-  'content-export': 'external-worker',
-  // 路由路径 sentinel（用于测试断言和文档）
+// task_type → kind 来自注册表（铁律 76cb816c，lib/task-type-registry.js 的 `executor` 字段）
+// ——不再在本文件手抄，守卫①对本文件的豁免已撤（Task 6）。特殊 key __bridge_path /
+// __local_spawn 代表路由路径（非 task_type），由注册表覆盖不到，本文件自己补两个 sentinel。
+export const EXECUTOR_KIND_FOR = Object.freeze({
+  ...EXECUTOR_KIND_FOR_TASK_TYPE,
   __bridge_path: 'bridge',
   __local_spawn: 'brain-local',
-};
+});
 
 // EXECUTOR_KIND_FOR 是纯常量、被 executor.js 与多个测试直接 import，形态不能改。
 // 运行时分派（harness_runtime='kernel-v1' → kernel-process）走下面两个解析函数。
@@ -255,6 +249,34 @@ export const EXECUTOR_CONTRACTS = {
     probe: async () => 'alive',
     staleMinutes: null,
     onStale: 'never',
+  },
+
+  /**
+   * openclaw-agent: Brain 经 ssh 在 MMV(us-mac-m4) 起的 `openclaw agent` 进程。
+   * 活性：远端 ~/brain-runs/<run_id>.exit 存在 → 进程已结束（dead，等收割）；
+   * 不存在但 .pid 存活 → alive；ssh 拿不到答案 → unknown（fail-open）。
+   * staleMinutes 45 = AGENT_TIMEOUT 1800s + 余量；onStale 'fail'（守护刀只认 fail/requeue/release-claim-and-alert）。
+   */
+  'openclaw-agent': {
+    probe: async (task, _ctx) => {
+      const runId = task?.payload?.run_id;
+      if (!runId || !/^[A-Za-z0-9._-]+$/.test(runId)) return 'unknown';
+      let target;
+      try { target = sshTargetFor(resolvePrimaryWorkerId()); } catch { return 'unknown'; }
+      const remote = `if [ -f ~/brain-runs/${runId}.exit ]; then cat ~/brain-runs/${runId}.exit; elif [ -f ~/brain-runs/${runId}.pid ] && kill -0 "$(cat ~/brain-runs/${runId}.pid)" 2>/dev/null; then echo RUNNING; else echo NO_EXIT; fi`;
+      try {
+        const out = String(execFileSync('ssh', [
+          ...SSH_BASE_ARGS, target, remote,
+        ], { encoding: 'utf-8', timeout: 15000, stdio: 'pipe' })).trim();
+        if (out === 'RUNNING') return 'alive';
+        if (out === 'NO_EXIT') return 'unknown';
+        return 'dead';
+      } catch {
+        return 'unknown';
+      }
+    },
+    staleMinutes: 45,
+    onStale: 'fail',
   },
 };
 

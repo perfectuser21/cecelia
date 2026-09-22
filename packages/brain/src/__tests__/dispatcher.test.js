@@ -16,13 +16,20 @@ describe('dispatcher.js — module load smoke', () => {
   });
 
   it('Phase 2.5 retired drain 常量正确（防回退）', async () => {
+    // Task 3（qiumi-task-router PR1）之后 retired 名单改从 lib/task-type-registry.js
+    // 的 RETIRED_HARNESS_TYPES_DISPATCH 派生集合读取，dispatcher.js 里不再手抄字面量，
+    // 所以"防回退"改为对真实运行值断言（比原来的源码文本 grep 更硬，不会因为格式化/
+    // 换行改动误报）。
+    const { RETIRED_HARNESS_TYPES_DISPATCH } = await import('../lib/task-type-registry.js');
+    for (const t of ['harness_task', 'harness_ci_watch', 'harness_fix', 'harness_final_e2e', 'harness_planner']) {
+      expect(RETIRED_HARNESS_TYPES_DISPATCH).toContain(t);
+    }
+
     const fs = await import('node:fs');
     const path = await import('node:path');
     const src = fs.readFileSync(path.resolve(__dirname, '../dispatcher.js'), 'utf8');
-    // 验 retired 列表含 PR #2656 退役的 5 个类型
-    for (const t of ['harness_task', 'harness_ci_watch', 'harness_fix', 'harness_final_e2e', 'harness_planner']) {
-      expect(src).toContain(`'${t}'`);
-    }
+    // 验 dispatcher.js 真的接了注册表的派生集合（防止 import 被顺手删掉但测试还是绿的）
+    expect(src).toContain('RETIRED_HARNESS_TYPES_DISPATCH');
     // 验有 retired-type SQL drain（dispatcher.js 注释里写 "2.5 Drain"）
     expect(src).toContain('2.5 Drain');
     expect(src).toContain('pipeline_terminal_failure');

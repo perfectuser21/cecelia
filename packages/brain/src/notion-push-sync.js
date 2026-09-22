@@ -11,6 +11,8 @@ import { OPS_DB_PROPS } from './ops-notion-schema.js';
 import {
   ensureOpsDbProps, inferProviderFromModelId, pickProviderQuota, buildQuotaProps,
 } from './ops-quota-notion.js';
+import { PUSH_EXCLUDED_TASK_TYPES } from './lib/task-type-registry.js';
+import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 
 const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
 const FEATURE_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
@@ -236,7 +238,7 @@ export const PUSH_TASKS_QUERY = `
     SELECT id, title, status, priority, task_type, notion_id, notion_props
       FROM tasks
      WHERE (notion_props->>'pushed_status') IS DISTINCT FROM status
-       AND task_type <> 'device_job'
+       AND NOT (task_type = ANY(ARRAY[${PUSH_EXCLUDED_TASK_TYPES.map((t) => `'${t}'`).join(',')}]::text[]))
        AND (
          status IN ('queued','in_progress','blocked')
          OR (status IN ('completed','failed','canceled','cancelled')
@@ -443,11 +445,8 @@ export async function runNotionTaskPull(pool) {
   await reapSshWorkflowRuns(pool, token);
 }
 
-// ssh 直派公共参数：execFile 数组形式，本地不经 shell（CodeQL js/command-line-injection 面）
-const SSH_BASE_ARGS = Object.freeze([
-  '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'BatchMode=yes',
-  '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=no',
-]);
+// ssh 直派公共参数：定义已抽到 lib/ssh-args.js（终审 I6，解除 executor-contracts.js
+// 对本文件的分层倒置依赖）；本文件仍是原调用方，import 后行为不变。
 function defaultSshExec(args) {
   return nodeExecFileSync('ssh', args, { encoding: 'utf8', timeout: 30_000 });
 }

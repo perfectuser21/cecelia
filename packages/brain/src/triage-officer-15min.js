@@ -9,6 +9,8 @@
  * gate：进程级变量 lastRunAt（照 gp-shelf-life.js 先例）
  */
 
+import { GP_SCOPE_TASK_TYPES } from './lib/task-type-registry.js';
+
 const INTERVAL_MS = parseInt(
   process.env.TRIAGE_OFFICER_15MIN_INTERVAL_MS || String(15 * 60 * 1000),
   10,
@@ -38,7 +40,7 @@ export async function runTriageOfficer15min(pool) {
                 ) AS rn
          FROM tasks
          WHERE status = 'queued'
-           AND task_type IN ('dev', 'harness_initiative')
+           AND task_type = ANY($1::text[])
            AND claimed_by IS NULL
        )
        UPDATE tasks
@@ -47,6 +49,7 @@ export async function runTriageOfficer15min(pool) {
               updated_at    = NOW()
         WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
        RETURNING id, title`,
+      [GP_SCOPE_TASK_TYPES],
     );
     merged = rows.length;
     if (merged > 0) {

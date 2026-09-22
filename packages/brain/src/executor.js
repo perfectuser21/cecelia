@@ -36,6 +36,16 @@ import { writeDockerCallback, resolveResourceTier, isDockerAvailable, resolveBra
 import { loadSkillContent, assertSprintDir } from './harness-shared.js';
 import { spawn as spawnDocker } from './spawn/index.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
+import {
+  RETIRED_HARNESS_TYPES_DISPATCH,
+  RECOVERY_HARNESS_TASK_TYPES,
+  FIX_MODE_TASK_TYPES,
+  HARNESS_V4_TASK_TYPES,
+  SPRINT_HARNESS_DEV_TASK_TYPES,
+  CONTENT_PIPELINE_TYPES as CONTENT_PIPELINE_EXTERNAL_WORKER_TYPES,
+  EXECUTOR_SKILL_MAP,
+  EXECUTOR_MODE_MAP,
+} from './lib/task-type-registry.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { classifyCodexFailure } from './lib/codex-fatal-patterns.js';
 import { raise } from './alerting.js';
@@ -1389,59 +1399,8 @@ function getSkillForTaskType(taskType, payload) {
     return '/dev';
   }
 
-  const skillMap = {
-    'dev': '/dev',           // 写代码：Opus
-    'review': '/code-review', // 审查：已迁移到 /code-review
-    'qa_init': '/review init', // QA 初始化：设置 CI 和分支保护
-    'talk': '/talk',         // 对话：写文档，不改代码
-    'research': '',          // 研究：完全只读，不挂 skill，由 preparePrompt 直接构建 prompt
-    'dept_heartbeat': '/repo-lead heartbeat', // 部门主管心跳：MiniMax
-    'code_review': '/code-review', // 代码审查：Sonnet + /code-review skill
-    'ci_patrol': '/ci-patrol', // CI/CD 巡检：每日按 line 报硬伤（ci-patrol skill）
-    // Initiative 执行循环
-    'initiative_plan': '/decomp',     // Phase 2 规划下一个 PR：/decomp
-    'initiative_verify': '/architect', // Initiative 收尾验收 → /architect Mode 3
-    'decomp_review': '/decomp-check', // 拆解质检：/decomp-check
-    // Suggestion 驱动的自主规划
-    'suggestion_plan': '/plan',       // Suggestion 层级识别 → /plan skill
-    // Architecture 设计
-    'architecture_design': '/architect', // Initiative 级架构设计 → /architect skill
-    // 战略会议：C-Suite 模拟讨论，输出带 domain 的 KR
-    'strategy_session': '/strategy-session',
-    // 内容工厂 Pipeline（Content Factory）
-    'content-pipeline': '/content-creator',      // 编排入口：触发完整内容生成流程
-    'content-research': '/notebooklm',           // 调研阶段：NotebookLM 深度调研
-    'content-copywriting': '/content-creator',   // 文案生成阶段
-    'content-copy-review': '/content-creator',   // 文案审核阶段
-    'content-generate': '/content-creator',      // 生成阶段：图片+文案生成
-    'content-image-review': '/content-creator',  // 图片审核阶段
-    'content-review': '/content-creator',        // 审核阶段：AI 质量评分
-    'content-export': '/content-creator',        // 导出阶段：NAS 存储 + manifest
-    // 旧类型向后兼容 → 统一走 /code-review
-    'qa': '/code-review',
-    'audit': '/code-review',
-    // 前置审查
-    'intent_expand': '/intent-expand',  // 意图扩展：查 OKR/Vision 链路补全 PRD
-    // Initiative 执行
-    'initiative_execute': '/dev',       // Initiative 执行：/dev 全流程
-    // 多平台发布（payload.platform 动态路由，见上方特判逻辑）
-    'content_publish': '/dev',          // fallback：正常由上方平台路由拦截
-    // Codex Gate 审查任务类型（替代旧的多步审查流程）
-    'prd_review': '/prd-review',              // PRD 审查
-    'spec_review': '/spec-review',            // Spec 审查
-    'code_review_gate': '/code-review-gate',  // 代码质量门禁
-    'initiative_review': '/initiative-review', // Initiative 整体审查
-    // Scope 层飞轮（Project→Scope→Initiative）
-    'scope_plan': '/decomp',        // Phase 3: Scope 内规划下一个 Initiative
-    'project_plan': '/decomp',      // Phase 4: Project 内规划下一个 Scope
-    'pipeline_rescue': '/dev',       // 卡住的 pipeline 接管修复 → /dev 全流程
-    'codex_test_gen': '/codex-test-gen',  // Codex 自动生成测试 → 西安 M4
-    'platform_scraper': '/media-scraping', // 平台数据采集 → CN Mac mini (/media-scraping skill)
-    'strategist_decision': '/line-strategist',  // Line 军师决策（PR3674 终态钩子派发，见 line-strategist-dispatch.js）
-    // 注意：harness_generate/harness_fix 等不在此处
-    // 它们由 preparePrompt() 提前路由，不经过 skillMap。
-    // 实际路由见 task-router.js LOCATION_MAP。
-  };
+  // 名单见 lib/task-type-registry.js（EXECUTOR_SKILL_MAP）。
+  const skillMap = EXECUTOR_SKILL_MAP;
   return skillMap[taskType] || '/dev';
 }
 
@@ -1516,16 +1475,8 @@ function getCredentialsForTask(task) {
 function getPermissionModeForTaskType(taskType) {
   // Plan Mode: 只能读文件，不能执行 Bash，不能写文件
   // Bypass Mode: 完全权限，可以执行 Bash、调 API、写文件
-  const modeMap = {
-    'dev': 'bypassPermissions',        // 写代码
-    'review': 'bypassPermissions',     // 已迁移到 /code-review，需写报告
-    'talk': 'bypassPermissions',       // 要调 API 写数据库
-    'research': 'bypassPermissions',   // 要调 API
-    'code_review': 'bypassPermissions', // 需要写报告文件到 docs/reviews/
-    // 旧类型向后兼容 → 统一走 /code-review
-    'qa': 'bypassPermissions',
-    'audit': 'bypassPermissions',
-  };
+  // 名单见 lib/task-type-registry.js（EXECUTOR_MODE_MAP）。
+  const modeMap = EXECUTOR_MODE_MAP;
   return modeMap[taskType] || 'bypassPermissions';
 }
 
@@ -2015,8 +1966,8 @@ function _prepareSprintPrompt(task, taskType) {
   const payload = task.payload || {};
   const sprintDir = assertSprintDir(payload.sprint_dir, '_prepareSprintPrompt');
   const evalRound = payload.eval_round || 0;
-  const isFixMode = ['sprint_fix', 'harness_fix'].includes(taskType);
-  const isHarnessV4 = ['harness_generate', 'harness_fix'].includes(taskType);
+  const isFixMode = FIX_MODE_TASK_TYPES.includes(taskType);
+  const isHarnessV4 = HARNESS_V4_TASK_TYPES.includes(taskType);
   const skillCmd = isHarnessV4 ? '/harness-generator' : '/sprint-generator';
   const mode = isFixMode ? taskType : (isHarnessV4 ? 'harness_generate' : 'sprint_generate');
   const headerText = isHarnessV4
@@ -2343,7 +2294,7 @@ async function _prepareContractReviewPrompt(task, taskType) {
 // ─── preparePrompt 辅助：条件判断 + 路由内联 lambda 拆分 ────────────────────
 
 function _isSprintOrHarnessDevMode(taskType, payload) {
-  return ['sprint_generate', 'sprint_fix'].includes(taskType)
+  return SPRINT_HARNESS_DEV_TASK_TYPES.includes(taskType)
     || (taskType === 'dev' && payload?.harness_mode);
 }
 
@@ -2372,7 +2323,7 @@ function _prepareInitiativeReviewPrompt(t) {
 }
 
 const _DECOMP_TYPES = new Set(['true', 'continue']);
-const _HARNESS_GENERATE_TYPES = new Set(['harness_generate', 'harness_fix']);
+const _HARNESS_GENERATE_TYPES = new Set(HARNESS_V4_TASK_TYPES);
 
 // 路由表：taskType → handler（模块级常量，避免每次调用重建）
 const _TASK_ROUTES = {
@@ -3450,10 +3401,7 @@ export function summarizeNodeState(state) {
 // - Sprint 1 (PR #2640)：harness_task / harness_ci_watch / harness_fix / harness_final_e2e
 // - retire-harness-planner：harness_planner（subsumed by harness_initiative full graph）
 // 模块级常量：override 分支（排除 harness/retired）与下方 retired 短路块共用，引用顺序无忧。
-const _RETIRED_HARNESS_TYPES = new Set([
-  'harness_task', 'harness_ci_watch', 'harness_fix', 'harness_final_e2e',
-  'harness_planner',  // retired in PR retire-harness-planner; subsumed by harness_initiative full graph
-]);
+const _RETIRED_HARNESS_TYPES = new Set(RETIRED_HARNESS_TYPES_DISPATCH);
 
 async function triggerCeceliaRun(task) {
   // 动态路由：优先从 task_type_configs 缓存读取（其余 Codex B类，前台可调）
@@ -4195,10 +4143,7 @@ async function probeTaskLiveness() {
     // by the ZJ pipeline-worker (Python LangGraph, see PR zenithjoy#216). They have no OS
     // process inside Brain, so the liveness probe must skip them — otherwise it would mark
     // legitimate ZJ-managed tasks as zombies.
-    const CONTENT_PIPELINE_TYPES = new Set([
-      'content-pipeline', 'content-research', 'content-copywriting',
-      'content-copy-review', 'content-generate', 'content-image-review', 'content-export',
-    ]);
+    const CONTENT_PIPELINE_TYPES = new Set(CONTENT_PIPELINE_EXTERNAL_WORKER_TYPES);
     if (CONTENT_PIPELINE_TYPES.has(task.task_type) || task.payload?.pipeline_orchestrated === true) {
       continue;
     }
@@ -4206,11 +4151,7 @@ async function probeTaskLiveness() {
     // harness_* 任务由 harness-watchdog-loop（心跳判据）专管，运行在 Docker 容器内无 OS 进程，
     // reAttachActiveExecutors 未能重建其 activeProcesses 条目时会被误判为死进程。
     // 统一排除，避免 wall-clock 孤儿探针与心跳看门狗双重处理同一任务。
-    const HARNESS_LIVENESS_EXEMPT_TYPES = new Set([
-      'harness_initiative', 'harness_task', 'harness_evaluate',
-      'harness_contract_propose', 'harness_contract_review',
-      'harness_planner', 'harness_generator', 'harness_generate', 'harness_fix',
-    ]);
+    const HARNESS_LIVENESS_EXEMPT_TYPES = new Set(RECOVERY_HARNESS_TASK_TYPES);
     if (HARNESS_LIVENESS_EXEMPT_TYPES.has(task.task_type)) {
       continue;
     }

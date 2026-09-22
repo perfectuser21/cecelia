@@ -1,3 +1,5 @@
+import { GP_SCOPE_TASK_TYPES } from './lib/task-type-registry.js';
+
 function ratio(numerator, denominator) {
   return denominator === 0 ? 1 : numerator / denominator;
 }
@@ -41,7 +43,7 @@ export async function loadWorkRoutingObservability(db, { days = 7 } = {}) {
        SELECT * FROM recent_tasks
         WHERE work_kind='coding_mutation'
            OR payload->>'work_kind'='coding_mutation'
-           OR task_type IN ('harness_initiative','dev')
+           OR task_type = ANY($2::text[])
      ), recent_runs AS (
        SELECT run.id,run.current_task_id,run.impact_contract_policy
          FROM initiative_runs run
@@ -66,7 +68,7 @@ export async function loadWorkRoutingObservability(db, { days = 7 } = {}) {
        (SELECT count(*)::int FROM recent_events WHERE event_type='work_route_blocked') AS work_route_blocked,
        (SELECT count(*)::int FROM recent_events WHERE event_type='route_violation') AS route_violation,
        (SELECT count(*)::int FROM recent_events WHERE event_type='map_preflight_failed') AS map_preflight_failed`,
-    [String(days)],
+    [String(days), GP_SCOPE_TASK_TYPES],
   );
   const row = rows[0] ?? {};
   return summarizeWorkRouting({

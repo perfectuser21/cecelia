@@ -1,9 +1,10 @@
 import { shouldDowngrade } from './token-budget-planner.js';
 import { chooseGuidedExecutor, summarizeLlmCapacity } from './llm-capacity.js';
+import { GUIDED_TASK_TYPES as GUIDED } from './lib/task-type-registry.js';
 
 export const DISPATCH_ALLOCATION_GUIDE_VERSION = 'dispatch-allocation-guide/v2';
 
-const GUIDED_TASK_TYPES = new Set(['dev', 'harness_initiative']);
+const GUIDED_TASK_TYPES = new Set(GUIDED);
 
 /**
  * dispatcher 前置引导员：

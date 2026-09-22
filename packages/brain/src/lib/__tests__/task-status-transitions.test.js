@@ -116,3 +116,14 @@ describe('任务状态机不得有隐式死胡同', () => {
     }
   });
 });
+
+describe('completed_no_pr 入边（PR1）', () => {
+  it('in_progress 可以直接到 completed_no_pr（非编码任务不产 PR 的销账路径）', () => {
+    expect(TRANSITIONS.in_progress).toContain('completed_no_pr');
+  });
+  it('等待态也能到 completed_no_pr', () => {
+    for (const s of ['blocked', 'paused', 'quota_exhausted']) {
+      expect(TRANSITIONS[s], `${s} 缺 completed_no_pr 出边`).toContain('completed_no_pr');
+    }
+  });
+});

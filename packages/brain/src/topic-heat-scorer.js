@@ -36,6 +36,15 @@ export const HIGH_HEAT_THRESHOLD = 60;
 /** 查询近 N 周高热话题 */
 const HIGH_HEAT_LOOKBACK_WEEKS = 4;
 
+// fetchTopicEngagementData 的上游 pipeline 任务 task_type 历史拼写兼容名单——三个值都
+// 是改名前的旧拼写（grep 全库无一处 INSERT 用过 'content_pipeline'/'content_generation'/
+// 'copywriting'，当前真实值是 'content-pipeline'/'content-copywriting' 连字符），
+// 与 topic-selector.js 的 CONTENT_GAP_LEGACY_TASK_TYPES 不同集合，不能合并（PR1 零行为变化）。
+// weekly-report-generator.js:fetchWeekContentOutput 原样手抄同一份字面量，改为共用本导出
+// （消灭一份重复手抄，语义仍是"历史拼写兼容"，不进 lib/task-type-registry.js——两个值
+// 不是真实 task_type，硬塞会误导注册表的"唯一真身"语义）。
+export const PIPELINE_LOOKUP_LEGACY_TASK_TYPES = Object.freeze(['content_pipeline', 'content_generation', 'copywriting']);
+
 // ─── 热度计算 ─────────────────────────────────────────────────────────────────
 
 /**
@@ -111,7 +120,7 @@ export async function fetchTopicEngagementData(pool, start, end) {
          (pub.payload->>'pipeline_id')::uuid,
          (pub.payload->>'parent_pipeline_id')::uuid
        )
-       AND cp.task_type IN ('content_pipeline', 'content_generation', 'copywriting')
+       AND cp.task_type = ANY($3::text[])
      WHERE pps.scraped_at >= $1
        AND pps.scraped_at < $2
      GROUP BY 1
@@ -123,7 +132,7 @@ export async function fetchTopicEngagementData(pool, start, end) {
        COALESCE(SUM(pps.shares), 0) * 7
      ) DESC
      LIMIT 20`,
-    [start, end]
+    [start, end, PIPELINE_LOOKUP_LEGACY_TASK_TYPES]
   );
 
   return rows.map(r => ({

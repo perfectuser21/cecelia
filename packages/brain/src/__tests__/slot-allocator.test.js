@@ -1253,8 +1253,16 @@ describe('Backpressure', () => {
 // ============================================================
 describe('shouldBypassBackpressure: P0 harness whitelist', () => {
   it('exports BACKPRESSURE_BYPASS_TASK_TYPES with 10 types (8 harness + dev + content_publish)', async () => {
+    // Task 3（qiumi-task-router PR1）之后名单来自 lib/task-type-registry.js 的
+    // tagged() 派生，顺序follows注册表声明顺序而非这份手写字面量的原顺序——
+    // 消费方只用 .includes()（见 slot-allocator.js:93 shouldBypassBackpressure），
+    // 顺序不是行为的一部分，故改为 Set 比较（集合相等）。
     const { BACKPRESSURE_BYPASS_TASK_TYPES } = await import('../slot-allocator.js');
-    expect(BACKPRESSURE_BYPASS_TASK_TYPES).toEqual([
+    // 合并前 Minor：Set 相等只比对成员，不比对个数——数组里混进一个重复项
+    // （如 'dev' 出现两次顶替掉别的类型）不会被 Set toEqual 抓到，补一条长度
+    // 断言钉住"确实是 10 个不同类型"，不只是"这堆值的去重集合长这样"。
+    expect(BACKPRESSURE_BYPASS_TASK_TYPES).toHaveLength(10);
+    expect(new Set(BACKPRESSURE_BYPASS_TASK_TYPES)).toEqual(new Set([
       'harness_initiative',
       'harness_task',
       'harness_planner',
@@ -1265,7 +1273,7 @@ describe('shouldBypassBackpressure: P0 harness whitelist', () => {
       'harness_deploy_watch',
       'dev',
       'content_publish',
-    ]);
+    ]));
   });
 
   it('P0 harness_task → true', async () => {

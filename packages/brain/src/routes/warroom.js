@@ -23,6 +23,7 @@ import {
   loadWorkRoutingObservability,
   summarizeWorkRouting,
 } from '../work-routing-observability.js';
+import { WARROOM_FEED_TASK_TYPES } from '../lib/task-type-registry.js';
 
 const router = Router();
 
@@ -33,7 +34,7 @@ const NODE_PCT = {
 };
 
 // 纳入 feed 的任务类型（有实质执行的；排除 harness_report 等子任务噪音）
-const FEED_TYPES = ['harness_initiative', 'dev', 'content-pipeline', 'platform_scraper'];
+const FEED_TYPES = WARROOM_FEED_TASK_TYPES;
 
 const AREA_NAMES = { cecelia: 'Cecelia', zenithjoy: 'ZenithJoy', infrastructure: 'Infrastructure' };
 

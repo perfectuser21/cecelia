@@ -133,6 +133,11 @@ describe('routeTaskWithFallback - fallback scenarios', () => {
 
 describe('SKILL_WHITELIST', () => {
   it('contains all VALID_TASK_TYPES', () => {
+    // qiumi_task（lib/task-type-registry.js 本刀新增，surface='openclaw-agent'）不走
+    // SKILL_WHITELIST 这条"LLM skill 调用"通道——它经 SSH 在 MMV 起 openclaw agent，
+    // 路由细节明确排在 PR3。团队 Task 3 审查裁决：qiumi_task 在 PR1 不得进
+    // VALID_TASK_TYPES（V/router_valid 标签留给 PR2 入口刀开启），所以它本就不会出现在
+    // 下面的遍历里，不需要另开白名单豁免。
     for (const taskType of VALID_TASK_TYPES) {
       expect(SKILL_WHITELIST[taskType]).toBeDefined();
     }

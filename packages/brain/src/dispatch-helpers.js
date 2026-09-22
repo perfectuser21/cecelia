@@ -18,6 +18,7 @@ import { updateTask, createTask } from './actions.js';
 import { sortTasksByWeight } from './task-weight.js';
 import { handleTaskFailure } from './quarantine.js';
 import { shouldBypassBackpressure } from './slot-allocator.js';
+import { TICK_DISPATCH_EXCLUDED } from './lib/task-type-registry.js';
 
 // 日志 helper：[tick] 前缀（保持与原 tick.js 输出一致），Asia/Shanghai 时间戳。
 function tickLog(...args) {
@@ -65,6 +66,8 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
     queryParams.push(excludeIds);
     excludeClause = `AND t.id != ALL($${queryParams.length})`;
   }
+  queryParams.push([...TICK_DISPATCH_EXCLUDED]);
+  const excludedTypesIdx = queryParams.length;
   const result = await pool.query(`
     SELECT t.id, t.title, t.description, t.prd_content, t.status, t.priority, t.started_at, t.updated_at, t.payload,
            t.queued_at, t.task_type, t.created_at, t.metadata, t.project_id
@@ -86,8 +89,7 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
       -- （us-vps 零执行），且永远不会完成，会堆成僵尸触发 eviction/requeue 循环。
       -- 这是第二道闸；第一道是建单强制 payload.headed_manual=true（上面那条谓词）。
       -- 两道闸缺一不可，见 __tests__/device-job-foundation.test.js 的变异清单。
-      AND t.task_type NOT IN ('content-pipeline', 'content-export', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review',
-                               'harness_ci_watch', 'harness_deploy_watch', 'device_job')
+      AND NOT (t.task_type = ANY($${excludedTypesIdx}::text[]))
       ${excludeClause}
       AND (
         t.payload->>'next_run_at' IS NULL
