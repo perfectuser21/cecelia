@@ -145,6 +145,30 @@ if [[ -n "${CLAUDE_HOOK_TRANSCRIPT_PATH:-}" && -f "${CLAUDE_HOOK_TRANSCRIPT_PATH
     fi
 fi
 
+# ===== 接力棒闸（2026-09-23 主理人拍板）：有头 /dev 会话绑定的任务，没 handoff 不放行 =====
+# 规则：.dev-mode(.<branch>) 里有 task_id → 查 Brain；任务 in_progress/blocked 且 result.handoff 为空
+#       → exit 2，逼 Claude 先写 handoff（PATCH result.handoff）。completed/其它状态不拦。
+# 逃生：Brain 不可达 / 无 task_id / RELAY_HANDOFF_GATE=off → 放行（闸不能把人锁在 Brain 挂掉的夜里）。
+if [[ "${RELAY_HANDOFF_GATE:-on}" != "off" ]]; then
+    _RELAY_BRAIN="${BRAIN_URL:-http://localhost:5221}"
+    for _dm in "$PROJECT_ROOT"/.dev-mode "$PROJECT_ROOT"/.dev-mode.*; do
+        [[ -f "$_dm" ]] || continue
+        _tid="$(grep -E '^task_id:' "$_dm" 2>/dev/null | head -1 | awk '{print $2}')"
+        [[ -n "$_tid" && "$_tid" != "unknown" ]] || continue
+        _body="$(curl -s --max-time 4 "$_RELAY_BRAIN/api/brain/tasks/$_tid" 2>/dev/null || true)"
+        [[ -n "$_body" ]] || continue
+        _st="$(_parse_json_field status "$_body")"
+        [[ "$_st" == "in_progress" || "$_st" == "blocked" ]] || continue
+        if ! echo "$_body" | grep -qE '"handoff"[[:space:]]*:[[:space:]]*\{'; then
+            echo "⛔ [接力棒] 任务 ${_tid:0:8} 仍 ${_st} 且没有 handoff。收工前必须交棒："
+            echo "   curl -X PATCH $_RELAY_BRAIN/api/brain/tasks/$_tid -H 'Content-Type: application/json' \\"
+            echo "     -d '{\"result\":{\"handoff\":{\"schema_version\":1,\"task_id\":\"$_tid\",\"title\":\"…\",\"verdict\":\"PASS\",\"done\":[\"…\"],\"not_done\":[],\"next_steps\":[{\"kind\":\"task|decision|done\",\"title\":\"…\"}],\"created_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}}'"
+            echo "   （做完了就一并 PATCH status=completed；没做完也要写 not_done + next_steps 再走）"
+            exit 2
+        fi
+    done
+fi
+
 # ===== 没有任何 mode 文件 → 普通对话，允许结束 =====
 exit 0
 # v14.0.0: Unified per-branch format

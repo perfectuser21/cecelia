@@ -585,6 +585,17 @@ router.patch('/tasks/:task_id', async (req, res) => {
       }
     }
 
+    // 接力棒（2026-09-23）：任务收口时确保有 handoff（没有就合成并标 synthesized），
+    // 再把 handoff.next_steps 落成下一棒（task→queued 子任务挂同根；decision→待拍板）。
+    // 两个触发口：① 本次转 completed；② 已 completed 的任务补写 result.handoff（watchdog 顺序）。
+    let relay = null;
+    const becameCompleted = status === 'completed' && !isStatusNoop && !harnessDemoted;
+    const handoffArrivedOnCompleted = Boolean(result?.handoff) && updatedTask?.status === 'completed';
+    if (becameCompleted || handoffArrivedOnCompleted) {
+      const { relayOnComplete } = await import('../lib/relay-baton.js');
+      relay = await relayOnComplete(pool, task_id, { sessionId: req.headers['x-session-id'] || null });
+    }
+
     if (status && !isStatusNoop && !harnessDemoted) {
       await emitEvent('task_status_changed', {
         task_id,
@@ -666,6 +677,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
       // harness-completion-authority.test.js），改 HTTP 码会连带打翻它们。
       success: !harnessDemoted,
       ...(harnessDemoted ? { accepted: false, reason: harnessDemoteReason } : {}),
+      ...(relay ? { relay } : {}),
       ...(harnessUngated ? { ungated_merge: true, failure_reason: harnessUngatedReason } : {}),
       task_id,
       status: updatedTask.status,
