@@ -133,10 +133,11 @@ function site(desc) { SITES.push(desc); }
 // ── Task 3：派发类（task-3-report.md 第1节） ──
 site({ label: 'dispatch-helpers.js:89 (SQL NOT IN)', file: 'dispatch-helpers.js',
   extract: (s) => extractInlineArray(s, /t\.task_type\s+NOT\s+IN\s*\(([^)]*)\)/),
-  // PR2 入口刀给 qiumi_task 打上第二道闸（tick_dispatchable=false，比照 device_job 双闸），
-  // 它是基线里不存在的新类型——比较前剔除，其余 10 项必须逐一等于基线原文。
-  current: () => R.TICK_DISPATCH_EXCLUDED.filter((t) => t !== 'qiumi_task'), compare: 'set',
-  note: 'qiumi_task 是 PR1 新增类型、PR2 打上 tick_dispatchable=false；「qiumi_task 确实在 TICK_DISPATCH_EXCLUDED 里」由 lib/__tests__/task-type-registry.test.js 的专属严格相等断言钉住，本审计只负责证明其余项相对基线零漂移' });
+  // 比较前剔除两个基线里不存在的新类型，其余 10 项必须逐一等于基线原文：
+  //   qiumi_task —— PR2 入口刀打上第二道闸（tick_dispatchable=false，比照 device_job 双闸）
+  //   project    —— main #5486 接力棒新增的项目容器行，永不 queued，本刀按黑名单制防呆一并拨 false
+  current: () => R.TICK_DISPATCH_EXCLUDED.filter((t) => t !== 'qiumi_task' && t !== 'project'), compare: 'set',
+  note: '「qiumi_task / project 确实在 TICK_DISPATCH_EXCLUDED 里」由 lib/__tests__/task-type-registry.test.js 的专属严格相等断言钉住，本审计只负责证明其余项相对基线零漂移' });
 site({ label: 'dispatcher.js:89 INITIATIVE_LOCK_TASK_TYPES', file: 'dispatcher.js',
   extract: (s) => extractNamedLiteral(s, 'INITIATIVE_LOCK_TASK_TYPES'),
   current: () => R.INITIATIVE_LOCK_TASK_TYPES, compare: 'set' });

@@ -169,7 +169,12 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // 「父行自身不推」（它走 Projects 库独立通道），与 push_to_notion 标签不同源，
   // 该排除仍由 PUSH_TASKS_QUERY 单列；两者是否合并待 PR2/PR3 统一。tags 留空：
   // main 的 task-router VALID_TASK_TYPES 本就不含 project，加标签=改行为。
-  project:                  T('brain-internal', false, false, null, 'none', true, true, 'none', true, []),
+  // tick_dispatchable=false（黑名单制防呆）：project 是容器行不是活，main 里都以
+  // in_progress 建（relay-baton/relay-chain 集成测试的 INSERT 写死），够不着 tick 的
+  // status='queued' 谓词。但那是靠建行方碰巧不落 queued 兜着，不是闸拦住的——换条
+  // 路径建出 queued 的 project 根，tick 就会把项目容器当任务派给执行体跑（device_job
+  // 当初就是这么踩的，见 dispatch-helpers.js:87 那段注释「本谓词是黑名单制，没有白名单」）。
+  project:                  T('brain-internal', false, false, null, 'none', true, false, 'none', true, []),
   // ── 本刀新增：秋米中文 GTD 表来的非编码任务，Brain 经 ssh 在 MMV 起 openclaw agent ──
   // PR2 入口刀已开启 V（router_valid）：qiumi_task 由 notion-gtd-sync 入账。双闸防 tick 抢跑
   // （比照 device_job）：payload.headed_manual=true 是第一闸，tick_dispatchable=false（本行

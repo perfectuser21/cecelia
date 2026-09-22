@@ -434,9 +434,12 @@ describe('task-type-registry：零行为变化', () => {
     expect(R.VALID_TASK_TYPES).toContain('qiumi_task');
   });
 
-  it('TICK_DISPATCH_EXCLUDED 派生集合 == 替换前字面量 + qiumi_task（PR2 双闸加固，比照 device_job；PR3 随 QIUMI_DISPATCH_ENABLED 放开）', () => {
-    same(R.TICK_DISPATCH_EXCLUDED, [...TICK_DISPATCH_EXCLUDED_FIX, 'qiumi_task']);
+  it('TICK_DISPATCH_EXCLUDED 派生集合 == 替换前字面量 + qiumi_task + project（PR2 双闸加固，比照 device_job；PR3 随 QIUMI_DISPATCH_ENABLED 放开 qiumi_task）', () => {
+    same(R.TICK_DISPATCH_EXCLUDED, [...TICK_DISPATCH_EXCLUDED_FIX, 'qiumi_task', 'project']);
     expect(R.TICK_DISPATCH_EXCLUDED).toContain('qiumi_task');
+    // project 是 main #5486 接力棒的项目容器行：它永不落 queued 所以现在够不着 tick，
+    // 但那是建行方的巧合不是闸——黑名单制下必须显式进名单，见注册表该行注释。
+    expect(R.TICK_DISPATCH_EXCLUDED).toContain('project');
   });
 
   it('EXECUTOR_KIND_FOR_TASK_TYPE == 替换前 EXECUTOR_KIND_FOR 的 task_type 部分 + qiumi_task', () => {
