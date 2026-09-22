@@ -125,4 +125,20 @@ describe('syncEnToZh（反向回填）', () => {
     const patch = mockNotionReq.mock.calls[2][3];
     expect(patch.properties.Description.rich_text[0].text.content).toMatch(/\[en-native\]$/);
   });
+
+  it('专属守卫（变异型断言）：处理英文原生行后必须 PATCH 追加 [en-native]，stub 记录 PATCH 内容并断言存在', async () => {
+    const { syncEnToZh } = await import('../notion-gtd-sync.js');
+    const calls = [];
+    const stub = async (token, path, method, body) => {
+      calls.push({ path, method, body });
+      if (calls.length === 1) return { results: [enPage()] }; // query en
+      if (calls.length === 2) return { id: '99999999-8888-7777-6666-555555555555' }; // POST zh
+      return {}; // PATCH en
+    };
+    await syncEnToZh({ query: vi.fn() }, 'tok', { notionReq: stub, fetchPageContent: async () => '', now: () => new Date() });
+    const patchCall = calls.find((c) => c.method === 'PATCH');
+    expect(patchCall).toBeDefined();
+    expect(patchCall.path).toBe('/pages/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+    expect(patchCall.body.properties.Description.rich_text[0].text.content).toMatch(/\[en-native\]$/);
+  });
 });
