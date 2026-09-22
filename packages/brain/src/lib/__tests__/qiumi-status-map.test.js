@@ -10,7 +10,7 @@ describe('qiumi-status-map 三方映射表', () => {
     for (const s of TASK_STATUSES) {
       expect(QIUMI_STATUS_MAP, `缺 ${s}`).toHaveProperty(s);
       const row = QIUMI_STATUS_MAP[s];
-      expect(['进行中', '推迟', '已完成', null]).toContain(row.zh);
+      expect(['委派', '进行中', '推迟', '已完成', null]).toContain(row.zh);
       expect(['Delegated', 'In Progress', 'Planned', 'Done', 'Cancelled', null]).toContain(row.en);
     }
     expect(Object.keys(QIUMI_STATUS_MAP).sort()).toEqual([...TASK_STATUSES].sort());
