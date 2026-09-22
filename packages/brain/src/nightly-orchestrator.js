@@ -18,6 +18,7 @@
 import pool from './db.js';
 import { getMaxStreams } from './capacity.js';
 import { emit } from './event-bus.js';
+import { NIGHTLY_EXCLUDED_TASK_TYPES, NIGHTLY_KR_BONUS_TASK_TYPES } from './lib/task-type-registry.js';
 
 // ── 配置 ──────────────────────────────────────────────────
 
@@ -88,11 +89,7 @@ async function getPendingBacklog() {
         t.payload->>'dispatched_by_orchestrator' IS NULL
         OR t.payload->>'dispatched_orchestrator_date' < $1
       )
-      AND t.task_type NOT IN (
-        'harness_planner', 'harness_contract_propose', 'harness_contract_review',
-        'harness_generate', 'harness_evaluate', 'harness_fix', 'harness_report',
-        'sprint_planner', 'sprint_generate', 'sprint_evaluate'
-      )
+      AND NOT (t.task_type = ANY($2::text[]))
     ORDER BY
       CASE t.priority
         WHEN 'P0' THEN 0
@@ -103,7 +100,7 @@ async function getPendingBacklog() {
       END ASC,
       t.created_at ASC
     LIMIT 20
-  `, [today]);
+  `, [today, [...NIGHTLY_EXCLUDED_TASK_TYPES]]);
 
   return result.rows;
 }
@@ -122,7 +119,7 @@ async function getPendingBacklog() {
 export function scoreTask(task) {
   const priorityScore = { P0: 100, P1: 75, P2: 50, P3: 25 }[task.priority] ?? 30;
   const ageScore = Math.min(24, parseFloat(task.age_hours || 0) * 0.5);
-  const typeScore = ['dev', 'review', 'code_review', 'qa'].includes(task.task_type) ? 10 : 0;
+  const typeScore = NIGHTLY_KR_BONUS_TASK_TYPES.includes(task.task_type) ? 10 : 0;
   return priorityScore + ageScore + typeScore;
 }
 

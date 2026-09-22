@@ -24,6 +24,7 @@ import {
   getBillingPause,
 } from './executor.js';
 import { calculateSlotBudget, harnessSlotCheck } from './slot-allocator.js';
+import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HARNESS_INFLIGHT_TASK_TYPES } from './lib/task-type-registry.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordFailure } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
@@ -77,8 +78,9 @@ export const HARNESS_TASK_CAP_BACKSTOP = 12;
  */
 export function shouldApplyHarnessCap(candidate) {
   if (!candidate) return false;
-  if (candidate.task_type !== 'harness_initiative'
-      && candidate.task_type !== 'golden_path_proposal') return false;
+  // 名单见 lib/task-type-registry.js（HARNESS_INFLIGHT_TASK_TYPES，与 slot-allocator.js
+  // inflight 查询同一份，= {harness_initiative, golden_path_proposal}）。
+  if (!HARNESS_INFLIGHT_TASK_TYPES.includes(candidate.task_type)) return false;
   if (candidate.payload?.resume_from_checkpoint === true) return false;
   return true;
 }
@@ -86,26 +88,15 @@ export function shouldApplyHarnessCap(candidate) {
 // Initiative-level lock 仅对 harness pipeline 类型生效。
 // dev / talk / audit / qa 等通用任务不持有 initiative lock，避免单 project 内死锁
 // （bb245cb4 教训：harness Initiative Phase A 跑期间整个 project 通用任务全被拒派）。
-const INITIATIVE_LOCK_TASK_TYPES = [
-  'harness_task',
-  'harness_planner',
-  'harness_contract_propose',
-  'harness_contract_review',
-  'harness_fix',
-  'harness_initiative',
-  'golden_path_proposal',
-];
+// 名单见 lib/task-type-registry.js（INITIATIVE_LOCK_TASK_TYPES）。
 
 // Retired harness task types — 全部归入 harness_initiative full-graph sub-graph。
 // 这些类型不再需要 executor / cecelia-bridge：派发路径上直接标 pipeline_terminal_failure。
 // 必须在 `checkCeceliaRunAvailable` 之前拦截，否则在没有 bridge 的环境（CI clean docker /
 // brain-only deploy）retired task 会被永远 revert 回 queued，无法 terminate。
 // executor.js 内 `triggerCeceliaRun` 也保留同款拦截作 defense-in-depth（老 caller 直
-// 调 executor 时仍然有效）。
-const _RETIRED_HARNESS_TYPES_DISPATCH = new Set([
-  'harness_task', 'harness_ci_watch', 'harness_fix', 'harness_final_e2e',
-  'harness_planner',
-]);
+// 调 executor 时仍然有效）。名单见 lib/task-type-registry.js（RETIRED_HARNESS_TYPES_DISPATCH）。
+const _RETIRED_HARNESS_TYPES_DISPATCH = new Set(RETIRED_HARNESS_TYPES_DISPATCH);
 
 // 私有计时器（旧只写不读，保留 hook 给未来 telemetry）
 let _lastDispatchTime = 0;
@@ -599,10 +590,10 @@ export async function dispatchNextTask(goalIds) {
       // 任务数纯兜底：docker 层全瞎时防无限叠加（正常永不触发）
       const capRes = await pool.query(
         `SELECT count(*)::int AS n FROM tasks
-           WHERE task_type IN ('harness_initiative', 'golden_path_proposal')
+           WHERE task_type = ANY($2::text[])
              AND status = 'in_progress'
              AND id != $1`,
-        [candidate.id]
+        [candidate.id, [...HARNESS_INFLIGHT_TASK_TYPES]]
       );
       const running = capRes.rows[0]?.n ?? 0;
       if (running >= HARNESS_TASK_CAP_BACKSTOP) {
@@ -818,8 +809,8 @@ export async function dispatchNextTask(goalIds) {
   // 5. Check executor availability and trigger
   // harness_initiative 走 Docker spawn 路径，完全不依赖 cecelia-bridge。
   // 跳过 bridge check，否则 bridge 不在时 harness 会被错误 revert 到 queued。
-  const needsBridgeCheck = nextTask.task_type !== 'harness_initiative'
-    && nextTask.task_type !== 'golden_path_proposal';
+  // 名单见 lib/task-type-registry.js（HARNESS_INFLIGHT_TASK_TYPES）。
+  const needsBridgeCheck = !HARNESS_INFLIGHT_TASK_TYPES.includes(nextTask.task_type);
 
   // Circuit breaker — 只对依赖 cecelia-bridge 的任务生效（harness_initiative 豁免）
   // 注意：此检查在 atomic claim 和 mark in_progress 之后，

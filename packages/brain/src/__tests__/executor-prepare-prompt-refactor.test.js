@@ -11,6 +11,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { EXECUTOR_MODE_MAP } from '../lib/task-type-registry.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -120,9 +121,13 @@ describe('preparePrompt 重构：路由表覆盖关键 taskType', () => {
   });
 
   it('routes 对象包含 review / qa / audit', () => {
-    expect(executorSrc).toContain("'review'");
-    expect(executorSrc).toContain("'qa'");
-    expect(executorSrc).toContain("'audit'");
+    // Task 3 裁决后（qiumi-task-router PR1）：这三个键搬进了
+    // lib/task-type-registry.js 的 EXECUTOR_MODE_MAP（executor.js 的 modeMap 改接线到它），
+    // 源码文本里不再字面出现，改断言真实运行值 + 接线仍在。
+    expect(EXECUTOR_MODE_MAP).toHaveProperty('review');
+    expect(EXECUTOR_MODE_MAP).toHaveProperty('qa');
+    expect(EXECUTOR_MODE_MAP).toHaveProperty('audit');
+    expect(executorSrc).toContain('const modeMap = EXECUTOR_MODE_MAP');
   });
 
   it('routes 对象包含 code_review', () => {

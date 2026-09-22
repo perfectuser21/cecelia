@@ -13,6 +13,7 @@
 import os from 'os';
 import { MAX_SEATS, checkServerResources, getActiveProcessCount as _getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY as _PHYSICAL_CAPACITY, getBudgetCap, getTokenPressure } from './executor.js';
 import pool from './db.js';
+import { BACKPRESSURE_BYPASS_TASK_TYPES, CODEX_SLOT_TASK_TYPES, HARNESS_INFLIGHT_TASK_TYPES } from './lib/task-type-registry.js';
 import {
   listProcessesWithElapsed,
   listProcessesWithPpid,
@@ -78,18 +79,7 @@ const DISK_PRESSURE_PCT = 85;
 // 'dev' 在列：Brain 自修复 PR 多为 dev 类型，若被卡住会形成"修 dispatcher 的
 // 任务被 dispatcher 卡住"的死循环（RCA: 2026-04-25-24h-business-failures §6）。
 // 'content_publish' 在列：P0 发布任务在 Pool C 满时被 deny 会永久积压（RCA: backpressure 根因）。
-const BACKPRESSURE_BYPASS_TASK_TYPES = [
-  'harness_initiative',
-  'harness_task',
-  'harness_planner',
-  'harness_contract_propose',
-  'harness_contract_review',
-  'harness_fix',
-  'harness_ci_watch',
-  'harness_deploy_watch',
-  'dev',
-  'content_publish',
-];
+// 名单见 lib/task-type-registry.js（BACKPRESSURE_BYPASS_TASK_TYPES）。
 
 /**
  * 判断 task 是否应该跳过 backpressure。
@@ -347,13 +337,10 @@ function getBackpressureState({
  */
 async function countCodexInProgress() {
   try {
-    const result = await pool.query(`
-      SELECT COUNT(*) FROM tasks
-      WHERE status = 'in_progress'
-      AND task_type IN ('codex_qa', 'codex_dev', 'codex_test_gen',
-                        'crystallize', 'crystallize_scope', 'crystallize_forge',
-                        'crystallize_verify', 'crystallize_register')
-    `);
+    const result = await pool.query(
+      `SELECT COUNT(*) FROM tasks WHERE status = 'in_progress' AND task_type = ANY($1::text[])`,
+      [[...CODEX_SLOT_TASK_TYPES]],
+    );
     return parseInt(result.rows[0].count, 10);
   } catch {
     return 0;
@@ -659,7 +646,7 @@ async function harnessSlotCheck({ candidate, _memHealthOverride } = {}) {
   try {
     const r = await pool.query(
       `SELECT count(*)::int AS n FROM tasks
-         WHERE task_type IN ('harness_initiative', 'golden_path_proposal')
+         WHERE task_type = ANY($3::text[])
            AND status = 'in_progress'
            AND COALESCE(payload->>'harness_runtime', '') <> 'kernel-v1'
            AND started_at > NOW() - make_interval(secs => $1)
@@ -667,7 +654,7 @@ async function harnessSlotCheck({ candidate, _memHealthOverride } = {}) {
              SELECT 1 FROM unnest($2::text[]) AS c(name)
              WHERE c.name LIKE 'cecelia-relay-' || substring(tasks.id::text, 1, 8) || '%'
            )`,
-      [INFLIGHT_GRACE_MS / 1000, v.relay_containers]
+      [INFLIGHT_GRACE_MS / 1000, v.relay_containers, [...HARNESS_INFLIGHT_TASK_TYPES]]
     );
     inflight = r.rows[0]?.n ?? 0;
   } catch {

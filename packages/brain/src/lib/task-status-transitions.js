@@ -50,24 +50,28 @@ export const TASK_STATUSES = Object.freeze([
   ...TERMINAL_STATUSES,
 ]);
 
-/** 等待态的公共出路：回队列、直接销账、判死、或取消。 */
-const WAITING_EXITS = Object.freeze(['queued', 'in_progress', 'completed', 'failed', 'cancelled']);
+/**
+ * 等待态的公共出路：回队列、直接销账（含非产 PR 执行面的 completed_no_pr）、判死、或取消。
+ * completed_no_pr 加入这里的原因见 task-type-registry.js 的 `pr: false`——
+ * openclaw-agent 等执行面完成不产 PR，销账态就是 completed_no_pr，等待态也要能到达。
+ */
+const WAITING_EXITS = Object.freeze(['queued', 'in_progress', 'completed', 'completed_no_pr', 'failed', 'cancelled']);
 
 export const TRANSITIONS = Object.freeze({
   pending: ['in_progress'],
   queued: ['in_progress'],
-  in_progress: ['completed', 'failed'],
+  in_progress: ['completed', 'completed_no_pr', 'failed'],
 
   // 等待态一律给同一组出路。逐个写出来而不是循环生成——这张表是给人看的，
   // 读的人要能一眼看出"blocked 能回 completed"，不该去脑补一个 spread。
   blocked: [...WAITING_EXITS],
   quota_exhausted: [...WAITING_EXITS],
   paused: [...WAITING_EXITS],
-  quarantined: ['queued', 'completed', 'failed', 'cancelled'],
-  canceled: ['queued', 'completed', 'failed', 'cancelled'],
-  cancelled: ['queued', 'completed', 'failed', 'cancelled'],
-  dep_failed: ['queued', 'completed', 'failed', 'cancelled'],
-  pending_postdeploy: ['queued', 'completed', 'failed'],
+  quarantined: ['queued', 'completed', 'completed_no_pr', 'failed', 'cancelled'],
+  canceled: ['queued', 'completed', 'completed_no_pr', 'failed', 'cancelled'],
+  cancelled: ['queued', 'completed', 'completed_no_pr', 'failed', 'cancelled'],
+  dep_failed: ['queued', 'completed', 'completed_no_pr', 'failed', 'cancelled'],
+  pending_postdeploy: ['queued', 'completed', 'completed_no_pr', 'failed'],
 
   completed: [],
   completed_no_pr: [],

@@ -246,6 +246,7 @@ provider-neutral-harness-smoke.sh
 provider-neutral-phase4a-node-smoke.sh
 publish-pr-smoke.sh
 publisher-infra-retry-smoke.sh
+qiumi-foundation-smoke.sh
 quality-test-pyramid-smoke.sh
 radius-rerun-gate-smoke.sh
 ratchet-registry-smoke.sh

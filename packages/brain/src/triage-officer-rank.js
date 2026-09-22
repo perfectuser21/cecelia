@@ -23,6 +23,8 @@
  * 否决窗：90min（默认放行时间 ≈ 08:30 晨报刻）
  */
 
+import { GP_SCOPE_TASK_TYPES } from './lib/task-type-registry.js';
+
 const TRIGGER_UTC_HOUR = 23;
 const TRIGGER_UTC_MINUTE = 0;
 const WINDOW_HALF_MIN = 12;
@@ -69,10 +71,11 @@ export async function computeAvgPrHours(pool) {
       `SELECT AVG(EXTRACT(EPOCH FROM (completed_at - started_at)) / 3600.0) AS avg_hours
        FROM tasks
        WHERE status = 'completed'
-         AND task_type IN ('dev', 'harness_initiative')
+         AND task_type = ANY($1::text[])
          AND started_at IS NOT NULL
          AND completed_at IS NOT NULL
          AND completed_at >= NOW() - INTERVAL '30 days'`,
+      [GP_SCOPE_TASK_TYPES],
     );
     const avg = parseFloat(rows[0]?.avg_hours);
     return Number.isFinite(avg) && avg > 0 ? avg : DEFAULT_AVG_PR_HOURS;
@@ -127,14 +130,14 @@ export async function buildRankedLeaderboard(pool, topN) {
        FROM tasks t
        LEFT JOIN journeys j ON j.id = (t.payload->>'journey_id')::uuid
        WHERE t.status = 'queued'
-         AND t.task_type IN ('dev', 'harness_initiative')
+         AND t.task_type = ANY($2::text[])
          AND t.claimed_by IS NULL
        ORDER BY
          CASE t.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,
          CASE t.task_type WHEN 'dev' THEN 0 ELSE 1 END,
          t.queued_at ASC
        LIMIT $1`,
-      [topN],
+      [topN, GP_SCOPE_TASK_TYPES],
     );
     return rows.map((r, i) => ({
       rank: i + 1,

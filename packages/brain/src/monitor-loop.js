@@ -26,6 +26,7 @@ import {
   getAutoFixStats
 } from './auto-fix.js';
 import { validatePolicyJson } from './policy-validator.js';
+import { MONITOR_LONG_RUNNING_TASK_TYPES as HARNESS_TASK_TYPES, HARNESS_CHAIN_TASK_TYPES } from './lib/task-type-registry.js';
 
 // Configuration
 const MONITOR_INTERVAL_MS = 30000; // 30 seconds
@@ -34,10 +35,6 @@ const STUCK_THRESHOLD_MINUTES = 5;
 // harness_generate/harness_fix (Generator): ~13 min, harness evaluator: ~4 min
 // Use a 30-minute threshold to avoid false "stuck" detection during legitimate runs.
 const HARNESS_STUCK_THRESHOLD_MINUTES = 30;
-const HARNESS_TASK_TYPES = [
-  'harness_planner', 'harness_contract_propose', 'harness_contract_review',
-  'harness_generate', 'harness_fix', 'arch_review'
-];
 const FAILURE_SPIKE_THRESHOLD = 0.3; // 30% failure rate in last hour
 const RESOURCE_PRESSURE_THRESHOLD = 0.85;
 
@@ -197,12 +194,7 @@ async function handleStuckRun(stuck) {
   const retryCount = taskQuery.rows[0].retry_count || 0;
 
   // harness 链式任务感知：检查是否已有下游任务
-  const HARNESS_CHAIN_TYPES = new Set([
-    'harness_planner', 'harness_contract_propose', 'harness_contract_review',
-    'harness_generate', 'harness_fix', 'harness_report',
-    'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
-    'sprint_generate', 'sprint_fix', 'sprint_report'
-  ]);
+  const HARNESS_CHAIN_TYPES = new Set(HARNESS_CHAIN_TASK_TYPES);
 
   // 查询任务类型
   const typeQuery = await pool.query(

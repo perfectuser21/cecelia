@@ -45,18 +45,17 @@
 import pool from './db.js';
 import { createTask } from './actions.js';
 import { buildMutationRoute } from './system-coding-route.js';
+import {
+  CRYSTALLIZE_ORCHESTRATOR_STAGES,
+  CRYSTALLIZE_ORCHESTRATOR_STAGE_LABELS,
+} from './lib/task-type-registry.js';
 
 // ───────────────────────────────────────────────────────
 // 常量
 // ───────────────────────────────────────────────────────
 
 /** 流水线四个阶段（有序）*/
-export const CRYSTALLIZE_STAGES = [
-  'crystallize_scope',
-  'crystallize_forge',
-  'crystallize_verify',
-  'crystallize_register',
-];
+export const CRYSTALLIZE_STAGES = CRYSTALLIZE_ORCHESTRATOR_STAGES;
 
 /** crystallize_verify 最大重试次数（超过则 pipeline 标 failed）*/
 export const MAX_VERIFY_RETRY = 3;
@@ -275,7 +274,7 @@ export async function advanceCrystallizeStage(taskId, status, findings = {}, dbP
   // 创建下一阶段子任务
   const nextStage = CRYSTALLIZE_STAGES[currentIdx + 1];
   const stageNum = currentIdx + 2; // 1-indexed
-  const stageLabels = { crystallize_forge: 'Forge', crystallize_verify: 'Verify', crystallize_register: 'Register' };
+  const stageLabels = CRYSTALLIZE_ORCHESTRATOR_STAGE_LABELS;
   const label = stageLabels[nextStage] || nextStage;
 
   const nextPayload = {

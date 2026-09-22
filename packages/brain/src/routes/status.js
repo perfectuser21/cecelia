@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import pool from '../db.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from '../focus.js';
 import { getTickStatus } from '../tick.js';
+import { HARNESS_PIPELINE_LIST_STAGE_ORDER, HARNESS_PIPELINE_LIST_STAGE_LABELS } from '../lib/task-type-registry.js';
 import { getActivePolicy, getWorkingMemory, getTopTasks, getRecentDecisions, IDEMPOTENCY_TTL, ALLOWED_ACTIONS } from './shared.js';
 import { getNightlyOrchestratorStatus } from '../nightly-orchestrator.js';
 import websocketService, { WS_EVENTS } from '../websocket.js';
@@ -331,21 +332,9 @@ router.get('/tasks', async (req, res) => {
  */
 // harness_planner 已退役（PR retire-harness-planner），从 stage order/labels 移除；
 // LangGraph 节点 planner 仍然存在（mapping 见下方 nodeToStage），映射到 harness_contract_propose 起头
-const HARNESS_STAGE_ORDER = [
-  'harness_contract_propose',
-  'harness_contract_review',
-  'harness_generate',
-  'harness_ci_watch',
-  'harness_report',
-];
+const HARNESS_STAGE_ORDER = HARNESS_PIPELINE_LIST_STAGE_ORDER;
 
-const HARNESS_STAGE_LABELS = {
-  harness_contract_propose: 'Propose',
-  harness_contract_review: 'Review',
-  harness_generate: 'Generate',
-  harness_ci_watch: 'CI Watch',
-  harness_report: 'Report',
-};
+const HARNESS_STAGE_LABELS = HARNESS_PIPELINE_LIST_STAGE_LABELS;
 
 const LANGGRAPH_NODE_LABELS = {
   planner: 'Planner',

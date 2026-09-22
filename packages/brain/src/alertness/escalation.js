@@ -10,6 +10,7 @@
 
 import pool from '../db.js';
 import { emit } from '../event-bus.js';
+import { CANCEL_EXEMPT_TYPES as _CX, ESCALATION_EXEMPT_TASK_TYPES } from '../lib/task-type-registry.js';
 
 // ============================================================
 // 响应级别定义
@@ -70,17 +71,7 @@ const RESPONSE_ACTIONS = {
 // 见 migration 211 根因注释 + fix #1893
 // ============================================================
 
-export const CANCEL_EXEMPT_TYPES = [
-  'research', 'suggestion_plan',
-  'content-pipeline', 'content-research', 'content-copywriting',
-  'content-copy-review', 'content-generate', 'content-image-review',
-  'content-export', 'content_publish',
-  'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
-  'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review',
-  'harness_planner', 'harness_contract_propose', 'harness_contract_review',
-  'harness_generate', 'harness_evaluate', 'harness_fix',
-  'harness_ci_watch', 'harness_deploy_watch', 'harness_report',
-];
+export const CANCEL_EXEMPT_TYPES = [..._CX];
 
 // ============================================================
 // 系统自产 trigger_source 白名单
@@ -365,16 +356,7 @@ export function buildPauseLowPriorityQuery() {
       WHERE status IN ('queued', 'pending')
         AND priority = ANY($1)
         AND trigger_source = ANY($2)
-        AND task_type NOT IN (
-          'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
-          'sprint_generate', 'sprint_evaluate', 'sprint_fix', 'arch_review',
-          'content-pipeline', 'content-research', 'content-copywriting',
-          'content-copy-review', 'content-generate', 'content-image-review', 'content-export',
-          'harness_initiative', 'harness_task', 'harness_planner',
-          'harness_contract_propose', 'harness_contract_review',
-          'harness_generate', 'harness_evaluate', 'harness_fix',
-          'harness_ci_watch', 'harness_deploy_watch', 'harness_report'
-        )
+        AND NOT (task_type = ANY($4::text[]))
       RETURNING id
     `;
 }
@@ -390,7 +372,7 @@ async function pauseLowPriorityTasks(priorities) {
     //
     // trigger_source = ANY($3)：只准碰系统自产任务（见 SYSTEM_AUTO_TRIGGER_SOURCES 注释），
     // 用户/人工注册的任务（manual/user*/owner_input 等）天然不在白名单内，不会被 pause。
-    const result = await client.query(buildPauseLowPriorityQuery(), [priorities, SYSTEM_AUTO_TRIGGER_SOURCES, 'escalation_graceful_degrade']);
+    const result = await client.query(buildPauseLowPriorityQuery(), [priorities, SYSTEM_AUTO_TRIGGER_SOURCES, 'escalation_graceful_degrade', [...ESCALATION_EXEMPT_TASK_TYPES]]);
 
     console.log(`[Escalation] Paused ${result.rowCount} low priority tasks`);
     return result.rowCount;

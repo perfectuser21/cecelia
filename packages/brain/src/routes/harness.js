@@ -19,6 +19,7 @@ import { createHash, randomUUID } from 'crypto';
 import pool from '../db.js';
 import { createTask } from '../actions.js';
 import { runJudgeGate, runMechanicalPreflightChecks, checkJudgmentsWritten } from '../harness-judge.js';
+import { HARNESS_BUILD_STAGE_ORDER, HARNESS_BUILD_STAGE_LABELS } from '../lib/task-type-registry.js';
 import {
   DEFAULT_BASE_REPO,
   harnessTaskWorktreePath,
@@ -699,22 +700,8 @@ function buildGanRounds(tasks) {
  */
 function buildStages(tasks) {
   // 注：harness_planner stage 已退役（PR retire-harness-planner），从 STAGE_ORDER/LABELS 移除
-  const STAGE_ORDER = [
-    'harness_contract_propose', 'harness_contract_review',
-    'harness_generate', 'harness_evaluate', 'harness_report',
-    'harness_auto_merge', 'harness_deploy', 'harness_smoke_test', 'harness_cleanup',
-  ];
-  const STAGE_LABELS = {
-    harness_contract_propose: 'Propose',
-    harness_contract_review: 'Review',
-    harness_generate: 'Generate',
-    harness_evaluate: 'Evaluate',
-    harness_report: 'Report',
-    harness_auto_merge: 'Auto-merge',
-    harness_deploy: 'Deploy',
-    harness_smoke_test: 'Smoke-test',
-    harness_cleanup: 'Cleanup',
-  };
+  const STAGE_ORDER = HARNESS_BUILD_STAGE_ORDER;
+  const STAGE_LABELS = HARNESS_BUILD_STAGE_LABELS;
 
   return STAGE_ORDER.map(type => {
     // 取该类型最新的任务
