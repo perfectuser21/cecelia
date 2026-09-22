@@ -107,7 +107,22 @@ describe('notion-gtd-sync 调度', () => {
         'OpenClaw任务号': { rich_text: [{ plain_text: 'dept-dev-abc' }] }, '归档': { checkbox: false } },
     }] });
     const r = await syncZhToEn({ query: vi.fn() }, 'tok', { notionReq: mockNotionReq });
-    expect(r).toEqual({ created: 0, skipped: 1 });
+    expect(r).toEqual({ created: 0, skipped: 1, repaired: 0 });
     expect(mockNotionReq).toHaveBeenCalledTimes(1);
+  });
+
+  it('并存期窗口对 en→zh 同样生效：runGtdSyncOnce 把 QIUMI_SYNC_SINCE 透传给 syncEnToZh', async () => {
+    const mod = await import('../notion-gtd-sync.js');
+    const deps = {
+      syncZhToEn: vi.fn().mockResolvedValue({ created: 0, skipped: 0, repaired: 0 }),
+      syncEnToZh: vi.fn().mockResolvedValue({ created: 0, skipped: 0, repaired: 0 }),
+      pullMarked: vi.fn().mockResolvedValue({ ingested: 0, skipped: 0 }),
+      applyOwnerStops: vi.fn().mockResolvedValue({ cancelled: 0, held: 0, resumed: 0, ignored: [] }),
+      pushQiumiStatus: vi.fn().mockResolvedValue({ pushed: 0, skippedHuman: 0, skippedNoMap: 0 }),
+    };
+    const env = { QIUMI_SYNC_SINCE: '2026-09-23T00:00:00.000Z' };
+    await mod.runGtdSyncOnce({ query: vi.fn() }, { token: 'tok', env, ...deps });
+    expect(deps.syncZhToEn.mock.calls[0][2].sinceIso).toBe('2026-09-23T00:00:00.000Z');
+    expect(deps.syncEnToZh.mock.calls[0][2].sinceIso).toBe('2026-09-23T00:00:00.000Z');
   });
 });

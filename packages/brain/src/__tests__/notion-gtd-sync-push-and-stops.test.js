@@ -123,7 +123,7 @@ describe('applyOwnerStops（急停只对任务号 brain: 的行生效）', () =>
     mockBlock.mockResolvedValue({ success: true }); mockUnblock.mockResolvedValue({ success: true });
     const r = await applyOwnerStops({ query }, 'tok', { notionReq: mockNotionReq });
     expect(r).toEqual({ cancelled: 1, held: 1, resumed: 1, ignored: [] });
-    expect(mockRecord).toHaveBeenCalledWith({ query }, expect.objectContaining({ target: 'notion', entityId: TID, commandType: 'cancel_requested', externalId: `${ZH}:2026-09-23T01:00:00.000Z` }));
+    expect(mockRecord).toHaveBeenCalledWith({ query }, expect.objectContaining({ target: 'notion', entityId: TID, commandType: 'cancel_requested', externalId: `${ZH}:cancel_requested` }));
     expect(mockBlock).toHaveBeenCalledWith(TID, expect.objectContaining({ reason: 'owner_hold' }));
     expect(mockUnblock).toHaveBeenCalledWith(TID);
     for (const f of OWNER_STOP_FILTERS) {
@@ -138,6 +138,25 @@ describe('applyOwnerStops（急停只对任务号 brain: 的行生效）', () =>
     expect(r.resumed).toBe(0);
     expect(mockUnblock).not.toHaveBeenCalled();
   });
+  it('淘汰行每轮不再生成新命令：同一页两轮（人又编辑过 last_edited_time 变了）externalId 相同', async () => {
+    const { applyOwnerStops } = await import('../notion-gtd-sync.js');
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    for (const edited of ['2026-09-23T01:00:00.000Z', '2026-09-23T02:30:00.000Z']) {
+      mockNotionReq.mockReset();
+      mockNotionReq
+        .mockResolvedValueOnce({ results: [{ ...zhPageWith('淘汰'), last_edited_time: edited }] })
+        .mockResolvedValueOnce({ results: [] })
+        .mockResolvedValueOnce({ results: [] });
+      await applyOwnerStops({ query }, 'tok', { notionReq: mockNotionReq });
+    }
+    expect(mockRecord).toHaveBeenCalledTimes(2);
+    const ids = mockRecord.mock.calls.map((c) => c[1].externalId);
+    expect(ids[0]).toBe(`${ZH}:cancel_requested`);
+    expect(ids[1]).toBe(ids[0]); // 第二轮命中同一 external_id → ON CONFLICT 不再新建 pending 命令
+    // 铁律：淘汰是人工态，消解绝不靠回写页面（清任务号方案已被主理人否掉）
+    expect(mockNotionReq.mock.calls.some((c) => c[2] === 'PATCH')).toBe(false);
+  });
+
   it('blockTask 不成功（任务不在可阻塞态）→ held 不计数，但进 ignored 不再静默', async () => {
     const { applyOwnerStops } = await import('../notion-gtd-sync.js');
     mockNotionReq.mockResolvedValueOnce({ results: [] }).mockResolvedValueOnce({ results: [zhPageWith('阻塞')] }).mockResolvedValueOnce({ results: [] });

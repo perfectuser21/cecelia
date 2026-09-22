@@ -150,7 +150,8 @@ try {
   if ([...pages.values()].some((p) => p.db === 'en' && plain(p.properties.Description.rich_text).includes('收集行'))) {
     fail('闸6 收集行被同步成 en 行');
   }
-  const collected = await pool.query("SELECT count(*)::int AS n FROM tasks WHERE title LIKE '%收集行'");
+  // 前缀钉住本次 pid：不带前缀会把历史归档残留也算进来，一旦留过一条就永久红
+  const collected = await pool.query('SELECT count(*)::int AS n FROM tasks WHERE title LIKE $1', [`${T}%收集行`]);
   if (collected.rows[0].n !== 0) fail(`闸6 收集行入了账：tasks 里有 ${collected.rows[0].n} 条`);
   pass('闸6 收集/人工态不参与（Notion 侧 + DB 侧）');
 
@@ -175,6 +176,8 @@ try {
       fail('闸2 payload 字段（notion_page_id/notion_zh_page_id/tenant_id/headed_manual）');
     }
     if (r.payload.dedup_by_notion_page !== 'true') fail('闸2 去重豁免键 dedup_by_notion_page 必须为字符串 true');
+    // 列断言：payload 里有不算数，tasks.tenant_id 列必须真落值（458 建的列，看板/路由按列过滤）
+    if (r.tenant_id !== 'yueshengyun') fail(`闸2 tasks.tenant_id 列应为 yueshengyun，得到 ${r.tenant_id}`);
   }
   pass('闸2/3 入账字段 + 同名不撞');
 

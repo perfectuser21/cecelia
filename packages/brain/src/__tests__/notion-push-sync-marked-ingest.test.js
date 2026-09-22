@@ -72,6 +72,10 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
     const sqls = mockQuery.mock.calls.map((c) => c[0]);
     expect(sqls.some((s) => /UPDATE tasks SET due_at/.test(s))).toBe(true);
     expect(sqls.some((s) => /notion_id\s*=/.test(s))).toBe(false);
+    // tenant_id 必须落列，不能只躺在 payload：458 建了列，routes/看板按列过滤，恒 NULL = 租户隔离形同虚设
+    const tenantCall = mockQuery.mock.calls.find((c) => /UPDATE tasks SET tenant_id/.test(c[0]));
+    expect(tenantCall).toBeDefined();
+    expect(tenantCall[1]).toEqual(['15f42776-8d1b-430d-b27a-38a480b93151', 'yueshengyun']);
     // 中文页：任务号 brain:<id> + 状态进行中；英文页：Description 追加 brain:
     const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === '/pages/11111111-2222-3333-4444-555555555555' && c[2] === 'PATCH')[3];
     expect(zhPatch.properties['OpenClaw任务号'].rich_text[0].text.content).toBe('brain:15f42776-8d1b-430d-b27a-38a480b93151');
