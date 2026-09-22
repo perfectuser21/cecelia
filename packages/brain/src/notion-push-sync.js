@@ -234,9 +234,9 @@ async function pushIssues(pool, token) {
  */
 export const PUSH_TASKS_QUERY = `
     SELECT t.id, t.title, t.status, t.priority, t.task_type, t.notion_id, t.notion_props,
-           p.notion_id AS project_notion_id
+           proj.notion_id AS project_notion_id
       FROM tasks t
-      LEFT JOIN tasks p ON p.id = t.parent_task_id AND p.task_type = 'project'
+      LEFT JOIN tasks proj ON proj.id = t.parent_task_id AND proj.task_type = 'project'
      WHERE (t.notion_props->>'pushed_status') IS DISTINCT FROM t.status
        AND t.task_type <> 'device_job'
        AND t.task_type <> 'project'
