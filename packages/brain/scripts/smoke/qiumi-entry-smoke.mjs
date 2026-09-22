@@ -3,7 +3,7 @@
 //  1 zh 委派行 → en 行建出（Description 以 [zh: 开头）
 //  2 标记行入账 → tasks 出现 qiumi_task(queued, executor_kind=openclaw-agent,
 //    payload.notion_page_id/notion_zh_page_id/tenant_id/headed_manual)，zh 任务号回写 brain:
-//  3 同名第二条 zh 行也能入账（PR1 迁移（main 侧 459）的 dedup_by_notion_page 豁免，真库唯一索引实证）
+//  3 同名第二条 zh 行也能入账（PR1 迁移（main 侧 461）的 dedup_by_notion_page 豁免，真库唯一索引实证）
 //  4 人工把 zh 拖到「淘汰」→ projection_commands 出现 cancel_requested；applyProjectionCommands 后任务 cancelled
 //  5 回写：zh 处于「阻塞」时不被覆盖；拖回机器态后 completed_no_pr → zh 已完成+勾选
 //  6 对照组：zh 状态「收集」的行永不建 en 行、永不入账
@@ -176,7 +176,7 @@ try {
       fail('闸2 payload 字段（notion_page_id/notion_zh_page_id/tenant_id/headed_manual）');
     }
     if (r.payload.dedup_by_notion_page !== 'true') fail('闸2 去重豁免键 dedup_by_notion_page 必须为字符串 true');
-    // 列断言：payload 里有不算数，tasks.tenant_id 列必须真落值（459 建的列，看板/路由按列过滤）
+    // 列断言：payload 里有不算数，tasks.tenant_id 列必须真落值（461 建的列，看板/路由按列过滤）
     if (r.tenant_id !== 'yueshengyun') fail(`闸2 tasks.tenant_id 列应为 yueshengyun，得到 ${r.tenant_id}`);
   }
   pass('闸2/3 入账字段 + 同名不撞');
