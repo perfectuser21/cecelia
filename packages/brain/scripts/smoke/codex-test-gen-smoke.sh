@@ -27,13 +27,15 @@ if (!src.includes('runCodexTestGen')) { console.error('FAIL: scheduler-jobs.js �
 console.log('OK: scheduler-jobs.js JOBS 含 codex-test-gen');
 "
 
-echo "[codex-test-gen-smoke] 3. task-router.js 三处均含 codex_test_gen"
-node -e "
-const fs = require('fs');
-const src = fs.readFileSync('packages/brain/src/task-router.js', 'utf8');
-if (!src.includes(\"'codex_test_gen'\")) { console.error('FAIL: task-router.js VALID_TASK_TYPES 缺 codex_test_gen'); process.exit(1); }
-if (!src.includes('/codex-test-gen')) { console.error('FAIL: task-router.js SKILL_WHITELIST 缺 /codex-test-gen'); process.exit(1); }
-console.log('OK: task-router.js 三处含 codex_test_gen');
+echo "[codex-test-gen-smoke] 3. 路由注册表三处均含 codex_test_gen"
+# PR1-B 起四张路由表已从 task-router.js 字面量搬进 lib/task-type-registry.js，
+# 这里改成真 import 求值（问运行时的值，不再 grep 源码文本）。
+node --input-type=module -e "
+import { VALID_TASK_TYPES, SKILL_WHITELIST, LOCATION_MAP } from './packages/brain/src/lib/task-type-registry.js';
+if (!VALID_TASK_TYPES.includes('codex_test_gen')) { console.error('FAIL: VALID_TASK_TYPES 缺 codex_test_gen'); process.exit(1); }
+if (SKILL_WHITELIST['codex_test_gen'] !== '/codex-test-gen') { console.error('FAIL: SKILL_WHITELIST 未把 codex_test_gen 路由到 /codex-test-gen'); process.exit(1); }
+if (!LOCATION_MAP['codex_test_gen']) { console.error('FAIL: LOCATION_MAP 缺 codex_test_gen'); process.exit(1); }
+console.log('OK: 注册表三表均含 codex_test_gen');
 "
 
 echo "[codex-test-gen-smoke] 4. battle-report.js 含 codex_test_gen 计数注入"

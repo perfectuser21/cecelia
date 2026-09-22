@@ -81,16 +81,20 @@ function extractTickIntervalMin() {
 }
 
 function extractTaskTypes() {
-  const src = readFile('packages/brain/src/task-router.js');
-  // Extract keys from LOCATION_MAP — only the key before the colon on each line
-  const mapMatch = src.match(/const LOCATION_MAP\s*=\s*\{([^}]+)\}/s);
-  if (!mapMatch) return { name: 'task_types', value: null, source: 'packages/brain/src/task-router.js', line: null };
+  // PR1-B 起 LOCATION_MAP 已从 task-router.js 的字面量搬进 lib/task-type-registry.js，
+  // task-router.js 只 re-export。这里跟着改到新位置抽取，抽取方式（正则取 'key': 前的 key）
+  // 不变——facts-check 是同步脚本，不能 await import，所以仍读源码而不是求值。
+  const SRC_PATH = 'packages/brain/src/lib/task-type-registry.js';
+  const src = readFile(SRC_PATH);
+  const mapMatch = src.match(/export const LOCATION_MAP\s*=\s*Object\.freeze\(\{([\s\S]*?)\n\}\);/)
+    || src.match(/const LOCATION_MAP\s*=\s*\{([^}]+)\}/s);
+  if (!mapMatch) return { name: 'task_types', value: null, source: SRC_PATH, line: null };
   // Match pattern: 'key': 'value' — capture only the key
   const keys = [...mapMatch[1].matchAll(/'(\w+)'\s*:/g)].map(m => m[1]);
   return {
     name: 'task_types',
     value: keys.sort().join(','),
-    source: 'packages/brain/src/task-router.js',
+    source: SRC_PATH,
     line: findLineNumber(src, 'LOCATION_MAP'),
   };
 }
