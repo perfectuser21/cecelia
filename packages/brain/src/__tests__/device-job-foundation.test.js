@@ -147,7 +147,7 @@ describe('闸3 投影隔离：device_job 不进 Notion 投影窗口', () => {
   it('pushTasks 取数排除 device_job（查询按注册表派生名单内联生成 NOT ANY(ARRAY[...])）', () => {
     const q = stripSqlComments(PUSH_TASKS_QUERY);
     expect(q, 'pushTasks 没有排除 device_job——每轮 LIMIT 10 的投影窗口会被手机单挤爆').toMatch(
-      /NOT \(task_type = ANY\(ARRAY\[[^\]]*'device_job'[^\]]*\]::text\[\]\)\)/i,
+      /NOT \((?:\w+\.)?task_type = ANY\(ARRAY\[[^\]]*'device_job'[^\]]*\]::text\[\]\)\)/i,
     );
   });
 

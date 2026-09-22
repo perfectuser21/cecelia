@@ -4,7 +4,7 @@
 
 **Goal:** 给 Brain 打地基——任务类型注册表成为唯一来源、`qiumi_task` 类型入库、`completed_no_pr` 有入边、`openclaw-agent` 执行体有合同——而对现有任务**零行为变化**。
 
-**Architecture:** 新建 `packages/brain/src/lib/task-type-registry.js`：每个 task_type 一行声明 + 行为标签，导出与原常量**同名**的派生集合；22 处硬编码名单改为 import 派生集合；机械守卫（grep 字面量 + 派生集合==旧字面量 fixture + 派生集合==DB 白名单 + 变异）。迁移 459 扩 CHECK / 加 `tenant_id` / 去重索引谓词豁免 Notion 来源。转移表补 `completed_no_pr` 入边。执行体合同新增 `openclaw-agent`。
+**Architecture:** 新建 `packages/brain/src/lib/task-type-registry.js`：每个 task_type 一行声明 + 行为标签，导出与原常量**同名**的派生集合；22 处硬编码名单改为 import 派生集合；机械守卫（grep 字面量 + 派生集合==旧字面量 fixture + 派生集合==DB 白名单 + 变异）。迁移 461 扩 CHECK / 加 `tenant_id` / 去重索引谓词豁免 Notion 来源。转移表补 `completed_no_pr` 入边。执行体合同新增 `openclaw-agent`。
 
 **Tech Stack:** Node ESM，vitest（`packages/brain`），PostgreSQL 迁移（幂等 DDL），bash smoke（psql）。
 
@@ -15,7 +15,7 @@
 - **零行为变化**：每个派生集合与替换前的字面量集合逐一相等（Task 1 fixture 断言）；现有 vitest 全绿。
 - TDD 两段 commit：每个 Task 先 commit failing test，再 commit 实现（NO PRODUCTION CODE WITHOUT FAILING TEST FIRST）。
 - 守卫必须变异测试：亲眼看它报红一次。
-- 迁移编号 **459**；`tasks_task_type_check` 列表 = 457 全量 82 值 + `'qiumi_task'`，注释写明来源；全部 DDL 幂等。
+- 迁移编号 **461**；`tasks_task_type_check` 列表 = 457 全量 82 值 + `'qiumi_task'`，注释写明来源；全部 DDL 幂等。
 - 状态写入今后只写 `cancelled`（本刀不改现有 `canceled` 写点，只是不再新增）。
 - 工作目录：`/Users/administrator/worktrees/cecelia-scan-main/09221827-qiumi-task-router`（分支 `cp-0922182851-09221827-qiumi-task-router`）。所有 `git`/`npx` 命令在此目录执行；vitest 在 `packages/brain` 内运行。
 - commit 信息中文，末尾加 `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`。
@@ -31,8 +31,8 @@
 | `packages/brain/src/lib/__tests__/task-type-registry.test.js`（新） | 零行为变化 fixture 断言 + DB 白名单一致 |
 | `packages/brain/src/__tests__/task-type-registry.guard.test.js`（新） | 机械守卫：grep 字面量名单、剩余站点清单、变异 |
 | 22 个消费文件（改） | 删字面量，import 同名集合 |
-| `packages/brain/migrations/459_qiumi_task_type_tenant_dedup.sql`（新） | CHECK + tenant_id + 去重索引谓词 |
-| `packages/brain/scripts/smoke/qiumi-foundation-smoke.sh`（新） | 真库验 459 |
+| `packages/brain/migrations/461_qiumi_task_type_tenant_dedup.sql`（新） | CHECK + tenant_id + 去重索引谓词 |
+| `packages/brain/scripts/smoke/qiumi-foundation-smoke.sh`（新） | 真库验 461 |
 | `packages/quality/smoke-allowlist.txt`（改） | 登记 smoke |
 | `packages/brain/src/lib/task-status-transitions.js`（改） | `completed_no_pr` 入边 |
 | `packages/brain/src/routes/tasks.js`（改） | 终态清认领补 `completed_no_pr`；openclaw-agent 面 PATCH completed → 409 |
@@ -69,7 +69,7 @@ import { fileURLToPath } from 'node:url';
 import * as R from '../task-type-registry.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const MIG = join(HERE, '..', '..', '..', 'migrations', '459_qiumi_task_type_tenant_dedup.sql');
+const MIG = join(HERE, '..', '..', '..', 'migrations', '461_qiumi_task_type_tenant_dedup.sql');
 
 const same = (a, b) => expect(new Set(a)).toEqual(new Set(b));
 
@@ -140,10 +140,10 @@ describe('task-type-registry：零行为变化', () => {
     expect(R.TICK_DISPATCH_EXCLUDED).not.toContain('qiumi_task');
   });
 
-  it('DB 白名单派生集合 == 迁移 459 的 CHECK 列表', () => {
+  it('DB 白名单派生集合 == 迁移 461 的 CHECK 列表', () => {
     const sql = readFileSync(MIG, 'utf8').split('\n').filter((l) => !/^\s*--/.test(l)).join('\n');
     const m = sql.match(/tasks_task_type_check CHECK \(\s*task_type IN \(([\s\S]*?)\)\s*\)/);
-    expect(m, '459 里找不到 tasks_task_type_check 的 IN 列表').toBeTruthy();
+    expect(m, '461 里找不到 tasks_task_type_check 的 IN 列表').toBeTruthy();
     const dbList = [...m[1].matchAll(/'([a-z0-9_-]+)'/g)].map((x) => x[1]);
     same(R.DB_WHITELISTED_TASK_TYPES, dbList);
     expect(dbList).toContain('qiumi_task');
@@ -383,10 +383,10 @@ export const EXECUTOR_KIND_FOR_TASK_TYPE = Object.freeze(
 > - `CX`（cancel_exempt）给：research、suggestion_plan、8 个 content 类型（含 content_publish）、sprint_planner/sprint_contract_propose/sprint_contract_review/sprint_generate/sprint_evaluate/sprint_fix、arch_review、harness_planner/harness_contract_propose/harness_contract_review/harness_generate/harness_evaluate/harness_fix/harness_ci_watch/harness_deploy_watch/harness_report。
 > 实现时以 Task 1 Step 1 的 fixture 为准，fixture 红就改 tags，不改 fixture。
 
-- [ ] **Step 5: 跑测试（459 还没写，DB 白名单那条仍红——预期）**
+- [ ] **Step 5: 跑测试（461 还没写，DB 白名单那条仍红——预期）**
 
 Run: `cd packages/brain && npx vitest run src/lib/__tests__/task-type-registry.test.js 2>&1 | tail -15`
-Expected: 除 `DB 白名单派生集合 == 迁移 459 的 CHECK 列表` 外全部 PASS（该条因 459 不存在 FAIL，Task 4 补齐）。若其它 fixture 断言红：说明注册表 tags 抄错，按原文修 tags，不改 fixture。
+Expected: 除 `DB 白名单派生集合 == 迁移 461 的 CHECK 列表` 外全部 PASS（该条因 461 不存在 FAIL，Task 4 补齐）。若其它 fixture 断言红：说明注册表 tags 抄错，按原文修 tags，不改 fixture。
 
 - [ ] **Step 6: commit-2（实现）**
 
@@ -687,24 +687,24 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: 替换推送/看门狗/清理类 10 处 + 迁移 459 + smoke
+### Task 4: 替换推送/看门狗/清理类 10 处 + 迁移 461 + smoke
 
 **Files:**
 - Modify: `notion-push-sync.js:246`、`anchor-check.js:14-32`、`monitor-loop.js:37-40`、`pipeline-watchdog.js:26-36`、`recovery-loop.js:44-48`、`task-cleanup.js:23-38`、`alertness/escalation.js:364-379`、`credential-expiry-checker.js:203`、`nightly-orchestrator.js:91-95`
-- Create: `packages/brain/migrations/459_qiumi_task_type_tenant_dedup.sql`、`packages/brain/scripts/smoke/qiumi-foundation-smoke.sh`
+- Create: `packages/brain/migrations/461_qiumi_task_type_tenant_dedup.sql`、`packages/brain/scripts/smoke/qiumi-foundation-smoke.sh`
 - Modify: `packages/quality/smoke-allowlist.txt`
-- Test: 守卫豁免清单；`src/lib/__tests__/task-type-registry.test.js` 的 459 断言
+- Test: 守卫豁免清单；`src/lib/__tests__/task-type-registry.test.js` 的 461 断言
 
 **Interfaces:**
 - Consumes: Task 1 派生集合
-- Produces: 迁移 459（Task 5/6 依赖 `tasks.tenant_id`、`qiumi_task` 可 INSERT）
+- Produces: 迁移 461（Task 5/6 依赖 `tasks.tenant_id`、`qiumi_task` 可 INSERT）
 
 - [ ] **Step 1: failing tests**
 
 从 `REMAINING_LEGACY_SITES` 删除：`'notion-push-sync.js'`、`'anchor-check.js'`、`'monitor-loop.js'`、`'pipeline-watchdog.js'`、`'recovery-loop.js'`、`'task-cleanup.js'`、`'alertness/escalation.js'`、`'credential-expiry-checker.js'`、`'nightly-orchestrator.js'`（清单只剩 `'executor-contracts.js'`）。
 
 Run: `cd packages/brain && npx vitest run src/__tests__/task-type-registry.guard.test.js src/lib/__tests__/task-type-registry.test.js 2>&1 | tail -12`
-Expected: 守卫 ① FAIL 列出 9 文件；`DB 白名单 == 459` FAIL（文件不存在）。
+Expected: 守卫 ① FAIL 列出 9 文件；`DB 白名单 == 461` FAIL（文件不存在）。
 
 ```bash
 git add packages/brain/src/__tests__/task-type-registry.guard.test.js
@@ -767,11 +767,11 @@ import { AUTH_RECOVERY_SKIP_TASK_TYPES as SKIP_TASK_TYPES } from './lib/task-typ
 
 `nightly-orchestrator.js:91-95`：`AND t.task_type NOT IN (...)` 改 `AND NOT (t.task_type = ANY($2::text[]))`；`:106` 的参数 `[today]` 改 `[today, [...NIGHTLY_EXCLUDED_TASK_TYPES]]`；顶部 `import { NIGHTLY_EXCLUDED_TASK_TYPES } from './lib/task-type-registry.js';`。
 
-- [ ] **Step 3: 写迁移 459**
+- [ ] **Step 3: 写迁移 461**
 
 ```sql
--- packages/brain/migrations/459_qiumi_task_type_tenant_dedup.sql
--- Migration 459: qiumi_task 任务类型 + tasks.tenant_id + 去重索引豁免 Notion 来源
+-- packages/brain/migrations/461_qiumi_task_type_tenant_dedup.sql
+-- Migration 461: qiumi_task 任务类型 + tasks.tenant_id + 去重索引豁免 Notion 来源
 --
 -- 秋米中文 GTD 表接入 Brain 统一调度·PR1 地基（task 15f42776，决策 b8abd28c）。
 --
@@ -844,7 +844,7 @@ WHERE status IN ('queued', 'in_progress')
   AND COALESCE(payload->>'dedup_by_notion_page', 'false') <> 'true';
 ```
 
-> 实现者动手前先核对 457 原文列表与上面完全一致（`diff <(sed -n '19,44p' packages/brain/migrations/457_*.sql) <(sed -n 'NN,MMp' 459)`），只允许多出 `'qiumi_task'` 一行。
+> 实现者动手前先核对 457 原文列表与上面完全一致（`diff <(sed -n '19,44p' packages/brain/migrations/457_*.sql) <(sed -n 'NN,MMp' 461)`），只允许多出 `'qiumi_task'` 一行。
 
 - [ ] **Step 4: 写 smoke**
 
@@ -875,7 +875,7 @@ cleanup
 
 # 闸1
 q "INSERT INTO tasks (title, task_type, status, priority, payload) VALUES ('${T} g1', 'qiumi_task', 'queued', 'P2', '{\"headed_manual\":true}'::jsonb)" >/dev/null \
-  || fail "闸1 qiumi_task INSERT 被 CHECK 拒（459 未应用）"
+  || fail "闸1 qiumi_task INSERT 被 CHECK 拒（461 未应用）"
 pass "闸1 qiumi_task 可入库"
 
 # 闸2
@@ -919,15 +919,15 @@ cd packages/brain && npx vitest run src/__tests__/task-type-registry.guard.test.
 Expected: 全绿（守卫 ① 只剩 executor-contracts.js 在豁免清单）。
 ```bash
 # 在 mmv 本机测试库应用迁移后跑 smoke（迁移应用方式照 device-job-foundation-smoke 所在 CI job：psql -f）
-DATABASE_URL=postgresql://cecelia@localhost:5432/cecelia_test psql "$DATABASE_URL" -f packages/brain/migrations/459_qiumi_task_type_tenant_dedup.sql && DATABASE_URL=postgresql://cecelia@localhost:5432/cecelia_test bash packages/brain/scripts/smoke/qiumi-foundation-smoke.sh
+DATABASE_URL=postgresql://cecelia@localhost:5432/cecelia_test psql "$DATABASE_URL" -f packages/brain/migrations/461_qiumi_task_type_tenant_dedup.sql && DATABASE_URL=postgresql://cecelia@localhost:5432/cecelia_test bash packages/brain/scripts/smoke/qiumi-foundation-smoke.sh
 ```
-Expected: `PASS: 闸1..闸5`（含闸4b）+ `ALL PASS`。变异验证（一次性）：把 459 里 `AND COALESCE(payload->>'dedup_by_notion_page','false') <> 'true'` 临时删掉重放 → 闸3 必须 FAIL；还原。
+Expected: `PASS: 闸1..闸5`（含闸4b）+ `ALL PASS`。变异验证（一次性）：把 461 里 `AND COALESCE(payload->>'dedup_by_notion_page','false') <> 'true'` 临时删掉重放 → 闸3 必须 FAIL；还原。
 
 - [ ] **Step 6: commit-2**
 
 ```bash
-git add packages/brain/src/notion-push-sync.js packages/brain/src/anchor-check.js packages/brain/src/monitor-loop.js packages/brain/src/pipeline-watchdog.js packages/brain/src/recovery-loop.js packages/brain/src/task-cleanup.js packages/brain/src/alertness/escalation.js packages/brain/src/credential-expiry-checker.js packages/brain/src/nightly-orchestrator.js packages/brain/migrations/459_qiumi_task_type_tenant_dedup.sql packages/brain/scripts/smoke/qiumi-foundation-smoke.sh packages/quality/smoke-allowlist.txt packages/brain/src/__tests__/device-job-foundation.test.js
-git commit -m "feat(brain): 迁移 459（qiumi_task 白名单 + tenant_id + 去重豁免 Notion 页 id）；推送/看门狗/清理类 9 处改读注册表；地基 smoke
+git add packages/brain/src/notion-push-sync.js packages/brain/src/anchor-check.js packages/brain/src/monitor-loop.js packages/brain/src/pipeline-watchdog.js packages/brain/src/recovery-loop.js packages/brain/src/task-cleanup.js packages/brain/src/alertness/escalation.js packages/brain/src/credential-expiry-checker.js packages/brain/src/nightly-orchestrator.js packages/brain/migrations/461_qiumi_task_type_tenant_dedup.sql packages/brain/scripts/smoke/qiumi-foundation-smoke.sh packages/quality/smoke-allowlist.txt packages/brain/src/__tests__/device-job-foundation.test.js
+git commit -m "feat(brain): 迁移 461（qiumi_task 白名单 + tenant_id + 去重豁免 Notion 页 id）；推送/看门狗/清理类 9 处改读注册表；地基 smoke
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -1215,7 +1215,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ## 自审记录
 
-- Spec 覆盖：1.1 注册表（Task 1–4、6）、1.2 迁移 459（Task 4）、1.3 状态机与清认领与 409 断言（Task 5）、1.4 合同（Task 6）、第 4 节测试四档（unit=Task 1/2/5/6，integration=transitions.integration + 现有 pg 测试，E2E=smoke Task 4，trivial=常量）。
+- Spec 覆盖：1.1 注册表（Task 1–4、6）、1.2 迁移 461（Task 4）、1.3 状态机与清认领与 409 断言（Task 5）、1.4 合同（Task 6）、第 4 节测试四档（unit=Task 1/2/5/6，integration=transitions.integration + 现有 pg 测试，E2E=smoke Task 4，trivial=常量）。
 - 不在本计划：PR2 同步、PR3 路由/执行/切换（spec 1.5/1.6）。
 - 名称一致性：派生集合名在 Task 1 定义、Task 3/4/6 消费同名；`EXECUTOR_KIND_FOR` 形态不变；`TICK_DISPATCH_EXCLUDED` 与 `PUSH_EXCLUDED_TASK_TYPES` 由字段派生而非标签。
 - 已知风险：`VALID_TASK_TYPES` 与 `SYSTEM_TASK_TYPES` 原文很长，fixture 若与原文有出入以原文为准（Task 1 Step 4 注）；`escalation.js`/`nightly-orchestrator.js` 改 SQL 参数位次时须同步真库 PREPARE 守卫测试的参数数。
@@ -1268,7 +1268,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ## 补充四（Task 3 审查裁决）
 - `qiumi_task` 在 PR1 **不进** `VALID_TASK_TYPES`（task-router 白名单）：进了会被 `:405 || '/dev'` 默认按 /dev 路由，属真实行为变化。PR2（入口刀）随 pullNotionTasks 改造一并开启 V tag。
-- 不变式/一致性测试不得用白名单压红；459 未落地前 `integration/task-type-registry-consistency` 允许红，Task 4 转绿。
+- 不变式/一致性测试不得用白名单压红；461 未落地前 `integration/task-type-registry-consistency` 允许红，Task 4 转绿。
 - 闸类断言（device_job 闸 2、golden-path-proposal-wiring）必须钉住 `AND NOT (… = ANY($` 与绑定集合，并做去 `NOT` 变异。
 
 ## 补充五（Task 4 后）：未分配的 5 处 map 站点并入 Task 6 收尾
@@ -1276,16 +1276,16 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 待主理人裁决（不在 PR1 合并）：routes/harness.js `TASK_TYPE_TO_SKILL`（第 3 份 skill 映射）/`BASE_LABELS`（第 5 份 label 映射）要不要合并；role-registry.js 角色归属是否建模进注册表字段。
 
 ## 补充七（整分支终审 C1/I1 修复）
-- **C1**：459 去重豁免键从 `payload.notion_page_id`（生产存量任务已带，会造成真实行为变化）
-  改为专用键 `payload.dedup_by_notion_page='true'`（PR2 才会显式写）。459 头注释、
+- **C1**：461 去重豁免键从 `payload.notion_page_id`（生产存量任务已带，会造成真实行为变化）
+  改为专用键 `payload.dedup_by_notion_page='true'`（PR2 才会显式写）。461 头注释、
   spec 1.2、本文件 Task 4 步骤 3/4/5 原文同步更正；smoke 新增闸4b 钉住回归。
-- **I1**：459 原把 CHECK 重建、tenant_id 回填、去重索引重建三类重活挤在一个事务，
-  拆成：459 内 `ADD CONSTRAINT ... NOT VALID`（毫秒级）+ tenant_id 回填改分批循环
-  （`LIMIT 5000` DO 块）；新增独立文件 `460_validate_task_type_check.sql` 单独跑
+- **I1**：461 原把 CHECK 重建、tenant_id 回填、去重索引重建三类重活挤在一个事务，
+  拆成：461 内 `ADD CONSTRAINT ... NOT VALID`（毫秒级）+ tenant_id 回填改分批循环
+  （`LIMIT 5000` DO 块）；新增独立文件 `462_validate_task_type_check.sql` 单独跑
   `VALIDATE CONSTRAINT`（SHARE UPDATE EXCLUSIVE，不阻塞并发 DML，且是独立事务）；
   去重索引重建仍是 DROP+CREATE（未用 CONCURRENTLY，同 077/457），头注释标注建议
-  维护窗口执行。smoke 补闸6：CHECK 存在且 `convalidated=true`（460 应用后）。
-  在 cecelia_test 实测：459→460 顺序应用 + 各自重放均幂等，`ALL PASS`（含闸6）。
+  维护窗口执行。smoke 补闸6：CHECK 存在且 `convalidated=true`（462 应用后）。
+  在 cecelia_test 实测：461→462 顺序应用 + 各自重放均幂等，`ALL PASS`（含闸6）。
 
 ## 补充六（Task 4 审查）：Task 6 增加"注册表 vs 基线源码"机械审计
 Task 1 的 fixture 抄自简报而非源码（ANCHOR_EXEMPT 简报 38 项 / 源码 51 项，fixture==registry==简报三者同错，Task 4 撞见才修）。Task 6 必须：写 `packages/brain/scripts/audit/registry-vs-base.mjs`，对 PR1 替换过的**每一处**站点，用 `git show 5c232c9da:<file>` 取基线源码、用与守卫相同的扫描器提取原字面量集合/映射，与当前注册表派生值逐一 deep-equal，输出对照表；任何不等即 exit 1。审计输出全文贴进 Task 6 报告与 PR 说明。审计脚本保留在仓库（后续刀复用）。

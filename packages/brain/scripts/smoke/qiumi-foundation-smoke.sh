@@ -6,9 +6,9 @@
 #   闸3 去重索引谓词豁免 payload.dedup_by_notion_page='true'：同名两行都带此键都能 queued
 #   闸4 对照组：同名两行不带该键（含只带 notion_page_id 不带专用键）仍精确撞 23505
 #              unique_violation on idx_tasks_dedup_active（豁免没把去重整个打掉，
-#              且证明 notion_page_id 本身不是豁免键——见 459 头注释 C1 教训）
+#              且证明 notion_page_id 本身不是豁免键——见 461 头注释 C1 教训）
 #   闸5 注册表派生的 tick 黑名单与 device-job 地基一致（qiumi_task 不在黑名单，device_job 在）
-#   闸6 tasks_task_type_check 存在且已验证（459 NOT VALID + 460 VALIDATE 两步都到位，convalidated=true）
+#   闸6 tasks_task_type_check 存在且已验证（461 NOT VALID + 462 VALIDATE 两步都到位，convalidated=true）
 # 只删自己插的行（固定 title 前缀），绝不动别人的行。
 set -euo pipefail
 pass() { printf 'PASS: %s\n' "$1"; }
@@ -57,7 +57,7 @@ cleanup
 
 # 闸1
 q "INSERT INTO tasks (title, task_type, status, priority, payload) VALUES ('${T} g1', 'qiumi_task', 'queued', 'P2', '{\"headed_manual\":true}'::jsonb)" >/dev/null \
-  || fail "闸1 qiumi_task INSERT 被 CHECK 拒（459 未应用）"
+  || fail "闸1 qiumi_task INSERT 被 CHECK 拒（461 未应用）"
 pass "闸1 qiumi_task 可入库"
 
 # 闸2
@@ -97,8 +97,8 @@ esac
 [[ "$(cd "$(dirname "$0")/../.." && node -e "import('./src/lib/task-type-registry.js').then(m=>process.stdout.write(String(m.TICK_DISPATCH_EXCLUDED.includes('device_job') && !m.TICK_DISPATCH_EXCLUDED.includes('qiumi_task'))))")" == "true" ]] || fail "闸5 注册表 tick 黑名单不符预期"
 pass "闸5 注册表 tick 黑名单正确"
 
-# 闸6：CHECK 已存在且已验证（460 的 VALIDATE CONSTRAINT 必须已跑过）
+# 闸6：CHECK 已存在且已验证（462 的 VALIDATE CONSTRAINT 必须已跑过）
 [[ "$(q "SELECT convalidated FROM pg_constraint WHERE conrelid='tasks'::regclass AND conname='tasks_task_type_check'")" == "t" ]] \
-  || fail "闸6 tasks_task_type_check 不存在或未验证（460 未应用，NOT VALID 悬空）"
+  || fail "闸6 tasks_task_type_check 不存在或未验证（462 未应用，NOT VALID 悬空）"
 pass "闸6 tasks_task_type_check 存在且已验证"
 echo "ALL PASS"

@@ -1,4 +1,4 @@
--- Migration 459: qiumi_task 任务类型 + tasks.tenant_id + 去重索引豁免 Notion 来源
+-- Migration 461: qiumi_task 任务类型 + tasks.tenant_id + 去重索引豁免 Notion 来源
 --
 -- 秋米中文 GTD 表接入 Brain 统一调度·PR1 地基（task 15f42776，决策 b8abd28c）。
 --
@@ -6,9 +6,9 @@
 -- 回填、去重索引 DROP+CREATE 四类重活挤进同一个事务（migrate.js 每文件一个 BEGIN/
 -- COMMIT），生产 tasks 是高频写表，长事务持锁会挡住派发/回写。拆法：
 --   ① 这里的 ADD CONSTRAINT 改 NOT VALID——只做目录项登记，不扫存量行，毫秒级；
---   ② 存量行验证挪到独立文件 460_validate_task_type_check.sql 的
+--   ② 存量行验证挪到独立文件 462_validate_task_type_check.sql 的
 --      VALIDATE CONSTRAINT（SHARE UPDATE EXCLUSIVE 锁，不挡并发读写），跟本文件
---      的 ACCESS EXCLUSIVE 操作分处两个事务，460 开始时 459 的锁已经释放；
+--      的 ACCESS EXCLUSIVE 操作分处两个事务，462 开始时 461 的锁已经释放；
 --   ③ tenant_id 回填改分批循环（见下），仍在本事务内但避免单条超大 UPDATE 的
 --      一次性 work_mem/WAL 峰值与长时间不可中断扫描；
 --   ④ 去重索引仍是 DROP+CREATE（未用 CONCURRENTLY，见下方"事务安全"节），保留
@@ -16,9 +16,9 @@
 --
 -- 一、tasks_task_type_check 纳入 qiumi_task
 --     qiumi_task = 中文 GTD 表来的非编码任务，Brain 经 ssh 在 MMV 起 openclaw agent 执行。
---     列表 = 457 的全量 83 值（实测核对，457 自己的注释写"82 个"有误差；本 459 = 457
+--     列表 = 457 的全量 83 值（实测核对，457 自己的注释写"82 个"有误差；本 461 = 457
 --     的 83 值 + 'qiumi_task' 共 84 值）。ADD CONSTRAINT ... NOT VALID：新写入立即受约束
---     （目录项已生效），存量行是否合规留给 460 的 VALIDATE 去扫描确认——两步之间若有
+--     （目录项已生效），存量行是否合规留给 462 的 VALIDATE 去扫描确认——两步之间若有
 --     不合规存量行，新 INSERT/UPDATE 仍被挡，只是"确认全表已合规"这件事延后、且不占
 --     本事务的锁。lib/task-type-registry.js 的 DB_WHITELISTED_TASK_TYPES 与此列表由
 --     测试机械对账。
@@ -64,10 +64,10 @@
 --     内用，本迁移未用 CONCURRENTLY，仍需 ACCESS EXCLUSIVE 锁全表——**建议在维护窗口
 --     执行**，避免与生产高频写入撞车；457/077 的去重索引重建同样未加 CONCURRENTLY，
 --     沿用既有做法不新增风险面）。
---     已实测验证：在 459 的 DROP INDEX 与 CREATE UNIQUE INDEX 之间插入一条必错语句
+--     已实测验证：在 461 的 DROP INDEX 与 CREATE UNIQUE INDEX 之间插入一条必错语句
 --     （引用不存在的列），经 `node src/migrate.js` 跑对 cecelia_test 后整份文件被
---     ROLLBACK——`idx_tasks_dedup_active` 索引仍在、schema_version 未写入 459 行，
---     证明中途失败不会留下"索引已删、未重建"的空窗；随后用未修改的原始 459 文件重新
+--     ROLLBACK——`idx_tasks_dedup_active` 索引仍在、schema_version 未写入 461 行，
+--     证明中途失败不会留下"索引已删、未重建"的空窗；随后用未修改的原始 461 文件重新
 --     跑通过，`ALL PASS`。
 --
 -- 全部 DDL 幂等：CI 会重放全部 migration。
