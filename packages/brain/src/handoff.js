@@ -20,6 +20,25 @@ const DEFAULT_DOCS_DIR = '/Users/administrator/perfect21/cecelia/docs/handoffs';
 const MAX_ITEMS = 20;
 const MAX_ITEM_LEN = 200;
 const PROMPT_MAX_LEN = 2000;
+/** result.handoff_log 上限：同一任务跨 session 的历史条目，超出丢最旧 */
+export const HANDOFF_LOG_MAX = 50;
+/** 链上下文注入时取最近几份 handoff */
+export const CHAIN_RECENT_LIMIT = 3;
+const CHAIN_MAX_DEPTH = 12;
+
+/** 追加进 result.handoff_log 的精简条目（不存全文，避免 result 膨胀） */
+export function buildHandoffLogEntry(h) {
+  return {
+    at: h.created_at || new Date().toISOString(),
+    task_id: h.task_id,
+    title: String(h.title || '').slice(0, MAX_ITEM_LEN),
+    verdict: h.verdict ?? null,
+    session_id: h.session_id ?? null,
+    done: clampList(h.done).slice(0, 5),
+    not_done: clampList(h.not_done).slice(0, 3),
+    next_steps: (Array.isArray(h.next_steps) ? h.next_steps : []).slice(0, 5),
+  };
+}
 
 // data_sources 固定基线：与 harness-planner Step 0.3/0.4 同源（A1）。
 // 下一个大脑照单加载即可拿到本 line 的铁律 + 已验收行为 + 本单全文。
@@ -135,10 +154,26 @@ export async function pushHandoffAtom(pool, taskId, handoff) {
  * DB 失败直接抛（调用方决定是否吞）；镜像失败仅 warn。
  */
 export async function saveHandoff({ pool }, handoff) {
+  // 接力棒（2026-09-23）：result.handoff 仍是"最新一份"（覆盖），
+  // 另在 result.handoff_log 追加一条精简条目——一个任务跨多个 session 时历史不丢。
+  const entry = buildHandoffLogEntry(handoff);
   const res = await pool.query(
-    `UPDATE tasks SET result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('handoff', $2::jsonb), updated_at = NOW()
-     WHERE id = $1::uuid`,
-    [handoff.task_id, JSON.stringify(handoff)]
+    `UPDATE tasks
+        SET result = COALESCE(result, '{}'::jsonb)
+                     || jsonb_build_object('handoff', $2::jsonb)
+                     || jsonb_build_object('handoff_log', (
+                          SELECT COALESCE(jsonb_agg(e ORDER BY ord), '[]'::jsonb)
+                            FROM (
+                              SELECT e, ord
+                                FROM jsonb_array_elements(COALESCE(result->'handoff_log', '[]'::jsonb) || jsonb_build_array($3::jsonb))
+                                     WITH ORDINALITY AS x(e, ord)
+                               ORDER BY ord DESC
+                               LIMIT ${HANDOFF_LOG_MAX}
+                            ) tail
+                        )),
+            updated_at = NOW()
+      WHERE id = $1::uuid`,
+    [handoff.task_id, JSON.stringify(handoff), JSON.stringify(entry)]
   );
   // task 不存在 → UPDATE 影响 0 行：抛错（也就不写镜像），防"DB 没写成却有镜像"的分裂态
   if (res.rowCount === 0) throw new Error(`saveHandoff: task not found: ${handoff.task_id}`);
@@ -178,6 +213,85 @@ export async function getRecentHandoffs({ pool }, { journeyId, limit = 3, exclud
     params
   );
   return rows;
+}
+
+/**
+ * 接力棒·链上下文：沿 parent_task_id 找到根（project 或最上层），
+ * 返回 {root, self, is_chained, position, recent}。recent = 同一根下（含根）最近 N 份 handoff，排除本任务。
+ * 无父无子 → is_chained=false、recent=[]（调用方按空处理，不注入）。
+ */
+export async function getChainContext({ pool }, taskId, { limit = CHAIN_RECENT_LIMIT } = {}) {
+  if (!taskId) return null;
+  const { rows: up } = await pool.query(
+    `WITH RECURSIVE up AS (
+       SELECT id, parent_task_id, title, description, task_type, status, sequence_no, 0 AS depth
+         FROM tasks WHERE id = $1::uuid
+       UNION ALL
+       SELECT t.id, t.parent_task_id, t.title, t.description, t.task_type, t.status, t.sequence_no, up.depth + 1
+         FROM tasks t JOIN up ON t.id = up.parent_task_id
+        WHERE up.depth < $2
+     )
+     SELECT * FROM up ORDER BY depth`,
+    [taskId, CHAIN_MAX_DEPTH]
+  );
+  if (!up.length) return null;
+  const self = up[0];
+  const root = up[up.length - 1];
+  const isChained = up.length > 1;
+  let position = null;
+  if (isChained && self.parent_task_id) {
+    const { rows: sib } = await pool.query(
+      `SELECT count(*)::int AS total FROM tasks WHERE parent_task_id = $1::uuid`,
+      [self.parent_task_id]
+    );
+    position = { sequence_no: self.sequence_no ?? null, total: sib[0]?.total ?? null };
+  }
+  const { rows: recent } = await pool.query(
+    `WITH RECURSIVE down AS (
+       SELECT id, 0 AS depth FROM tasks WHERE id = $1::uuid
+       UNION ALL
+       SELECT t.id, down.depth + 1 FROM tasks t JOIN down ON t.parent_task_id = down.id WHERE down.depth < $3
+     )
+     SELECT t.id, t.title, t.completed_at, t.result->'handoff' AS handoff
+       FROM tasks t JOIN down d ON d.id = t.id
+      WHERE t.result ? 'handoff' AND t.id <> $2::uuid
+      ORDER BY t.completed_at DESC NULLS LAST, t.updated_at DESC
+      LIMIT $4`,
+    [root.id, taskId, CHAIN_MAX_DEPTH, limit]
+  );
+  return {
+    root: { id: root.id, title: root.title, description: root.description, task_type: root.task_type, status: root.status },
+    self: { id: self.id, title: self.title },
+    is_chained: isChained,
+    position,
+    recent,
+  };
+}
+
+/** 链上下文 → prompt 段。不在链上且无 handoff → ''（不注入噪音）。 */
+export function formatChainForPrompt(ctx) {
+  if (!ctx) return '';
+  if (!ctx.is_chained && !ctx.recent?.length) return '';
+  const lines = ['', '## 项目链上下文（接力棒：先读这段，再动手）'];
+  lines.push(`项目根：${ctx.root.title || ctx.root.id}（${ctx.root.task_type || 'task'} · ${ctx.root.status || ''}）`);
+  const goal = String(ctx.root.description || '').trim();
+  if (goal) lines.push(`目标：${goal.length > 600 ? `${goal.slice(0, 600)}…` : goal}`);
+  if (ctx.position?.total) {
+    lines.push(`本任务是第 ${ctx.position.sequence_no ?? '?'} / ${ctx.position.total} 棒`);
+  }
+  lines.push('规矩：做完必须写 handoff（done / not_done / next_steps），next_steps 每条标 kind=task|decision|done。');
+  const text = `${lines.join('\n')}${formatHandoffsForPrompt(ctx.recent)}`;
+  return text.length > PROMPT_MAX_LEN * 2 ? `${text.slice(0, PROMPT_MAX_LEN * 2)}…` : text;
+}
+
+/** 派发用：任何异常都吞成 ''，不能因为上下文拼装失败挡派发。 */
+export async function buildChainPromptSafe({ pool }, taskId) {
+  try {
+    return formatChainForPrompt(await getChainContext({ pool }, taskId));
+  } catch (err) {
+    console.warn(`[handoff] chain context 拼装失败（不阻塞派发）: ${err.message}`);
+    return '';
+  }
 }
 
 /** 压缩为 prompt 注入段：每份 ≤6 行，总长 ≤2000 字；空 → ''。 */

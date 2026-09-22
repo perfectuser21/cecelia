@@ -151,6 +151,22 @@ async function assertMutationMapScopeResolvable(client, decision) {
   }
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 父任务校验：null 直通；非 uuid / 不存在 → 抛 parent_task_not_found（路由层映射 400）。 */
+export async function resolveParentTaskId(client, raw) {
+  if (raw == null || raw === '') return null;
+  const id = String(raw).trim();
+  if (!UUID_RE.test(id)) {
+    const err = new Error('parent_task_not_found'); err.code = 'parent_task_not_found'; err.parent_task_id = id; throw err;
+  }
+  const { rows } = await client.query('SELECT id FROM tasks WHERE id = $1::uuid', [id]);
+  if (!rows.length) {
+    const err = new Error('parent_task_not_found'); err.code = 'parent_task_not_found'; err.parent_task_id = id; throw err;
+  }
+  return rows[0].id;
+}
+
 export async function createRoutedTask(db, request, repositoryFacts = null, options = {}) {
   const ownsTransaction = options.transaction !== 'existing';
   const client = ownsTransaction && typeof db.connect === 'function'
@@ -208,10 +224,22 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       throw error;
     }
     const task = request.task ?? {};
+    // 接力棒脊柱：parent_task_id 走真列（458）。合法 uuid + 父存在 + 不指向自己，否则 400 级错误。
+    const parentTaskId = await resolveParentTaskId(client, task.parent_task_id ?? request.parent_task_id ?? null);
+    // sequence_no 缺省 = 父下 max+1；无父不查（不给无链任务加查询）
+    let sequenceNo = task.sequence_no ?? null;
+    if (parentTaskId && sequenceNo == null) {
+      const seq = await client.query(
+        'SELECT COALESCE(MAX(sequence_no), 0) + 1 AS n FROM tasks WHERE parent_task_id = $1::uuid',
+        [parentTaskId],
+      );
+      sequenceNo = Number(seq.rows[0]?.n ?? 1);
+    }
     const directContractSeed = normalizeDirectContractSeed(routedRequest, decision);
     const payload = {
       ...(request.metadata || {}),
       ...(task.payload || {}),
+      ...(parentTaskId ? { parent_task_id: parentTaskId } : {}),
       work_kind: decision.work_kind,
       change_kind: decision.change_kind,
       requested_task_type: request.requested_task_type ?? task.task_type ?? null,
@@ -311,10 +339,12 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
          project_id, area_id, goal_id, location, payload, trigger_source,
          domain, okr_initiative_id, ability_id, blocked_at,
          tags, prd_content, execution_profile, owner_role, delivery_type,
-         created_by, dept, phase, executor_kind
+         created_by, dept, phase, executor_kind,
+         parent_task_id, sequence_no
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,
-         $16,$17,$18,$19,$20,$21,$22,$23,$24
+         $16,$17,$18,$19,$20,$21,$22,$23,$24,
+         $25::uuid, $26::int
        ) RETURNING *`,
       [
         request.title,
@@ -341,6 +371,8 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         task.dept ?? null,
         task.phase ?? 'dev',
         task.executor_kind ?? null,
+        parentTaskId,
+        sequenceNo,
       ],
     );
     const taskId = taskResult.rows[0].id;

@@ -15,6 +15,7 @@
  */
 import pool from './db.js';
 import { findActiveRunBlockingSpawn } from './lib/harness-run-guard.js';
+import { buildChainPromptSafe } from './handoff.js';
 import { normalizeChangeKind } from './impact-contract/change-kind.js';
 import { execSync, spawn as nodeSpawn } from 'node:child_process';
 import { existsSync, mkdirSync, copyFileSync, openSync } from 'node:fs';
@@ -471,6 +472,35 @@ export function snapshotCodexRelayHome(codexRelayHome, taskId) {
  * deps 全注入（测试 fake）：{pool, spawnFn, sshSpawnFn, loadSkill, ensureWt, resolveAccountFn, tokenFn, now, snapshotCodexHome}
  * @returns {Promise<{ok:boolean, mode:string, containerId?:string, error?:string}>}
  */
+/**
+ * 派发 prompt 组装（接力棒 2026-09-23 抽出为纯函数，好在 Golden Path 边上直接断言）。
+ * kind='controller'（headless harness-controller）/ 'headed'（Kernel Harness 2.0 headed）。
+ * chainContext 来自 handoff.buildChainPromptSafe：任务在链上 → 注入根目标 + 最近 handoff；
+ * 孤立任务 → 空串，prompt 与之前逐字一致（不给无链任务加噪音）。
+ */
+export function buildRelayPrompt({ kind, skillContent, task, sprintDir, brainUrl, reviewRequired, gear, chainContext = '' }) {
+  const head = kind === 'headed'
+    ? '你是 Kernel Harness 2.0 headed session。按下面 SKILL 指令跑完整条 sprint。'
+    : '你是 harness-controller session。按下面 SKILL 指令跑完整条 sprint。';
+  const lines = [
+    head,
+    '',
+    skillContent,
+    '',
+    '---',
+    '## 本次上下文',
+    `HARNESS_TASK_ID=${task.id}`,
+    `SPRINT_DIR=${sprintDir}`,
+    `BRAIN_URL=${brainUrl}`,
+  ];
+  if (kind !== 'headed') {
+    lines.push(`REVIEW_REQUIRED=${reviewRequired}`, `HARNESS_GEAR=${gear}`);
+  }
+  lines.push(`任务标题：${task.title || ''}`);
+  if (chainContext) lines.push(chainContext);
+  return lines.join('\n');
+}
+
 export async function spawnSkillRelaySession(task, deps = {}) {
   // preview Brain 隔离闸（2026-08-05 preview-4643 事故）：预览 Brain 由生产快照
   // 整库克隆而来且作为生产 Brain 子进程启动，继承生产 env（同一 fleet bridge
@@ -775,20 +805,12 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     const githubToken = await tokenFn();
 
     // 6. prompt：skill 全文 inline + 上下文头（与图节点的 loadSkillContent 注入模式一致）
-    const prompt = [
-      `你是 harness-controller session。按下面 SKILL 指令跑完整条 sprint。`,
-      ``,
-      skillContent,
-      ``,
-      `---`,
-      `## 本次上下文`,
-      `HARNESS_TASK_ID=${task.id}`,
-      `SPRINT_DIR=${sprintDir}`,
-      `BRAIN_URL=http://host.docker.internal:5221`,
-      `REVIEW_REQUIRED=${reviewRequired}`,
-      `HARNESS_GEAR=${gear}`,
-      `任务标题：${task.title || ''}`,
-    ].join('\n');
+    // 接力棒：沿 parent_task_id 注入项目根目标 + 最近 3 份 handoff（失败吞成空串不挡派发）
+    const chainContext = await buildChainPromptSafe({ pool }, task.id);
+    const prompt = buildRelayPrompt({
+      kind: 'controller', skillContent, task, sprintDir,
+      brainUrl: 'http://host.docker.internal:5221', reviewRequired, gear, chainContext,
+    });
 
     // 7. spawn detached session
     // B5: codex 路径容器名用 -cx 后缀；grok 路径用 -gk 后缀（对齐命名规约）
@@ -1226,18 +1248,8 @@ async function _spawnHeadedSession(task, {
   // claude headed 进程跑在宿主，直连 localhost；其余路径走 docker DNS
   let brainUrl = 'http://host.docker.internal:5221';
   if (isClaudeHeaded) { brainUrl = 'http://localhost:5221'; }
-  const prompt = [
-    `你是 Kernel Harness 2.0 headed session。按下面 SKILL 指令跑完整条 sprint。`,
-    ``,
-    skillContent,
-    ``,
-    `---`,
-    `## 本次上下文`,
-    `HARNESS_TASK_ID=${task.id}`,
-    `SPRINT_DIR=${sprintDir}`,
-    `BRAIN_URL=${brainUrl}`,
-    `任务标题：${task.title || ''}`,
-  ].join('\n');
+  const chainContext = await buildChainPromptSafe({ pool }, task.id);
+  const prompt = buildRelayPrompt({ kind: 'headed', skillContent, task, sprintDir, brainUrl, chainContext });
 
   // ─── 雷9：codex TUI 首次进新目录会卡"Do you trust the contents of this directory?"
   // 交互确认——trust 记忆按精确项目目录写进 $CODEX_HOME/config.toml 的 [projects."<dir>"]，

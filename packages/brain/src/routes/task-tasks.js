@@ -59,6 +59,8 @@ router.post('/', async (req, res) => {
       branch: branchInput = null,
       base_sha: baseShaInput = null,
       execution_profile_override_request: executionProfileOverride = null,
+      parent_task_id: parentTaskIdInput = null,
+      sequence_no: sequenceNoInput = null,
     } = req.body;
 
     if (!title || title.trim() === '') {
@@ -254,6 +256,8 @@ router.post('/', async (req, res) => {
           okr_initiative_id,
           ability_id,
           blocked_at: initialBlockedAt,
+          parent_task_id: parentTaskIdInput ?? payload.parent_task_id ?? null,
+          sequence_no: sequenceNoInput,
         },
       });
       result = { rows: [routed.task] };
@@ -279,6 +283,9 @@ router.post('/', async (req, res) => {
     if (resolvedChangeKind !== null) responseBody.change_kind = resolvedChangeKind;
     res.status(201).json(responseBody);
   } catch (err) {
+    if (err.code === 'parent_task_not_found') {
+      return res.status(400).json({ error: 'parent_task_not_found', reason_code: 'parent_task_not_found', parent_task_id: err.parent_task_id });
+    }
     if ([
       'repo_unknown',
       'change_kind_required',
@@ -356,6 +363,47 @@ router.get('/:id', async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Failed to get task', details: err.message });
+  }
+});
+
+// GET /tasks/:id/chain — 接力棒：这条任务所在的整条链（根 / 有序子任务 / 交接日志）。
+// 给人看也给下一个大脑看：根目标 + 每棒做到哪 + 最近 handoff。
+router.get('/:id/chain', async (req, res) => {
+  try {
+    const { getChainContext } = await import('../handoff.js');
+    const ctx = await getChainContext({ pool }, req.params.id, { limit: 10 });
+    if (!ctx) return res.status(404).json({ error: 'Task not found', id: req.params.id });
+    const { rows: children } = await pool.query(
+      `SELECT id, title, status, task_type, sequence_no, completed_at,
+              result->'handoff'->'verdict' AS verdict,
+              (result->'handoff'->'done'->>0) AS last_done,
+              result->'handoff'->'next_steps' AS next_steps
+         FROM tasks WHERE parent_task_id = $1::uuid
+        ORDER BY sequence_no NULLS LAST, created_at`,
+      [ctx.root.id]
+    );
+    const { rows: logRows } = await pool.query(
+      `WITH RECURSIVE down AS (
+         SELECT id, 0 AS depth FROM tasks WHERE id = $1::uuid
+         UNION ALL
+         SELECT t.id, down.depth + 1 FROM tasks t JOIN down ON t.parent_task_id = down.id WHERE down.depth < 12
+       )
+       SELECT e AS entry FROM tasks t JOIN down d ON d.id = t.id,
+            jsonb_array_elements(COALESCE(t.result->'handoff_log', '[]'::jsonb)) e
+        ORDER BY e->>'at' DESC LIMIT 50`,
+      [ctx.root.id]
+    );
+    res.json({
+      root: ctx.root,
+      self: ctx.self,
+      is_chained: ctx.is_chained,
+      position: ctx.position,
+      children,
+      log: logRows.map((r) => r.entry),
+      recent_handoffs: ctx.recent,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get chain', details: err.message });
   }
 });
 
