@@ -257,6 +257,7 @@ relay-runs-smoke.sh
 relay-runs-summary-smoke.sh
 relay-runs-verdicts-smoke.sh
 relay-smoke-v220-smoke.sh
+relay-spine-smoke.sh
 relay-verdict-writeback-smoke.sh
 release-gate-smoke.sh
 review-approve-auth-smoke.sh

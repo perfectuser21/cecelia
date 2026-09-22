@@ -15,6 +15,7 @@
  */
 import pool from './db.js';
 import { findActiveRunBlockingSpawn } from './lib/harness-run-guard.js';
+import { buildChainPromptSafe } from './handoff.js';
 import { normalizeChangeKind } from './impact-contract/change-kind.js';
 import { execSync, spawn as nodeSpawn } from 'node:child_process';
 import { existsSync, mkdirSync, copyFileSync, openSync } from 'node:fs';
@@ -775,6 +776,8 @@ export async function spawnSkillRelaySession(task, deps = {}) {
     const githubToken = await tokenFn();
 
     // 6. prompt：skill 全文 inline + 上下文头（与图节点的 loadSkillContent 注入模式一致）
+    // 接力棒：沿 parent_task_id 注入项目根目标 + 最近 3 份 handoff（失败吞成空串不挡派发）
+    const chainContext = await buildChainPromptSafe({ pool }, task.id);
     const prompt = [
       `你是 harness-controller session。按下面 SKILL 指令跑完整条 sprint。`,
       ``,
@@ -788,6 +791,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       `REVIEW_REQUIRED=${reviewRequired}`,
       `HARNESS_GEAR=${gear}`,
       `任务标题：${task.title || ''}`,
+      chainContext,
     ].join('\n');
 
     // 7. spawn detached session
@@ -1226,6 +1230,7 @@ async function _spawnHeadedSession(task, {
   // claude headed 进程跑在宿主，直连 localhost；其余路径走 docker DNS
   let brainUrl = 'http://host.docker.internal:5221';
   if (isClaudeHeaded) { brainUrl = 'http://localhost:5221'; }
+  const chainContext = await buildChainPromptSafe({ pool }, task.id);
   const prompt = [
     `你是 Kernel Harness 2.0 headed session。按下面 SKILL 指令跑完整条 sprint。`,
     ``,
@@ -1237,6 +1242,7 @@ async function _spawnHeadedSession(task, {
     `SPRINT_DIR=${sprintDir}`,
     `BRAIN_URL=${brainUrl}`,
     `任务标题：${task.title || ''}`,
+    chainContext,
   ].join('\n');
 
   // ─── 雷9：codex TUI 首次进新目录会卡"Do you trust the contents of this directory?"
