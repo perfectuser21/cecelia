@@ -371,7 +371,7 @@ async function ingestQiumiPage(pool, token, page, en, { env }) {
   const title = (zh?.title || en.name.replace(/^\[P[0-3]\]\s*/, '')).trim();
   const priority = zh?.priority ?? (en.name.match(/^\[(P[0-2])\]/)?.[1] ?? 'P2');
   const dueAt = zh?.dueAt ?? en.planDate ?? null;
-  const tenantId = zh ? tenantFor(env, GTD_DB_ID) : 'default';
+  const tenantId = zh ? tenantFor(env, env.NOTION_GTD_DB_ID || GTD_DB_ID) : 'default';
   const routed = await createRoutedTask(pool, {
     source: 'inbox',
     source_id: page.id,
@@ -582,12 +582,23 @@ function stripStatusTail(desc) {
   return String(desc || '').replace(STATUS_TAIL_RE, '').trim();
 }
 
+/**
+ * 状态回执 PATCH——截 base 而非整串，保证尾巴（` · <status>`，含 brain:<id> 标记）
+ * 永远完整：长正文时若对 `base + tail` 整串 slice(0,1900)，超长 base 会把尾巴挤出
+ * 截断窗口，下一轮 `/brain:/` 判不出已接手 → 每轮重复入账（PR2 审查 Important #1）。
+ */
+/**
+ * 状态回执 PATCH——截 base 而非整串，保证尾巴（` · <status>`，含 brain:<id> 标记）
+ * 永远完整：长正文时若对 `base + tail` 整串 slice(0,1900)，超长 base 会把尾巴挤出
+ * 截断窗口，下一轮 `/brain:/` 判不出已接手 → 每轮重复入账（PR2 审查 Important #1）。
+ */
 async function writeStatusReceipt(token, page, desc, status) {
   const base = stripStatusTail(desc);
-  const receipt = `${base ? base + ' · ' : ''}${status}`;
+  const tail = base ? ` · ${status}` : status;
+  const content = `${base.slice(0, Math.max(0, 1900 - tail.length))}${tail}`;
   await notionReq(token, `/pages/${page.id}`, 'PATCH', {
     properties: {
-      Description: { rich_text: [{ type: 'text', text: { content: receipt.slice(0, 1900) } }] },
+      Description: { rich_text: [{ type: 'text', text: { content } }] },
     },
   });
 }

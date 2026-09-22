@@ -133,12 +133,13 @@ describe('routeTaskWithFallback - fallback scenarios', () => {
 
 describe('SKILL_WHITELIST', () => {
   it('contains all VALID_TASK_TYPES', () => {
-    // qiumi_task（lib/task-type-registry.js 本刀新增，surface='openclaw-agent'）不走
-    // SKILL_WHITELIST 这条"LLM skill 调用"通道——它经 SSH 在 MMV 起 openclaw agent，
-    // 路由细节明确排在 PR3。团队 Task 3 审查裁决：qiumi_task 在 PR1 不得进
-    // VALID_TASK_TYPES（V/router_valid 标签留给 PR2 入口刀开启），所以它本就不会出现在
-    // 下面的遍历里，不需要另开白名单豁免。
+    // qiumi_task（lib/task-type-registry.js，surface='openclaw-agent'）不走 SKILL_WHITELIST
+    // 这条"LLM skill 调用"通道——它经 SSH 在 MMV 起 openclaw agent，路由细节明确排在 PR3。
+    // PR2 入口刀已开启 qiumi_task 的 V（router_valid）标签（notion-gtd-sync 入账用），它现在
+    // 会出现在 VALID_TASK_TYPES 里，但 SKILL_WHITELIST 接线仍属 PR3——显式豁免，不代表遗漏。
+    const SKILL_WHITELIST_EXEMPT = ['qiumi_task'];
     for (const taskType of VALID_TASK_TYPES) {
+      if (SKILL_WHITELIST_EXEMPT.includes(taskType)) continue;
       expect(SKILL_WHITELIST[taskType]).toBeDefined();
     }
   });

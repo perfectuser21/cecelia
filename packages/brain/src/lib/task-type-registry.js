@@ -171,9 +171,11 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // main 的 task-router VALID_TASK_TYPES 本就不含 project，加标签=改行为。
   project:                  T('brain-internal', false, false, null, 'none', true, true, 'none', true, []),
   // ── 本刀新增：秋米中文 GTD 表来的非编码任务，Brain 经 ssh 在 MMV 起 openclaw agent ──
-  // PR2 入口刀已开启 V（router_valid）：qiumi_task 由 notion-gtd-sync 入账，headed_manual=true 防 tick 抢跑；
-  // PR3 路由刀接管派发（Jev 判 engine/is_device/account）。
-  qiumi_task:               T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', true, true, 'none', true, [V]),
+  // PR2 入口刀已开启 V（router_valid）：qiumi_task 由 notion-gtd-sync 入账。双闸防 tick 抢跑
+  // （比照 device_job）：payload.headed_manual=true 是第一闸，tick_dispatchable=false（本行
+  // 第七参）是第二闸——PR2 期临时关闭，PR3 随 QIUMI_DISPATCH_ENABLED 放开、路由刀接管派发
+  // （Jev 判 engine/is_device/account）。
+  qiumi_task:               T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', true, false, 'none', true, [V]),
   // ── 虚拟类型（不在 DB 白名单，只用于免锚判断）──
   deploy_drill:       T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
   nightly:            T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
