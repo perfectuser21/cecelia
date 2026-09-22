@@ -142,6 +142,35 @@ OUT=$(bash "$SYNC" 2>&1); RC=$?
 [ ! -s "$WORK/pasted.txt" ] && ok "CLI 未登录 → 一个 agent 都不贴" \
   || bad "没有可用 token 却还在贴，会把坏值推给所有 agent"
 
+# ── ④b 进度必须可见 ─────────────────────────────────────────────────────
+# 23 个 agent × 每个约 30s ≈ 11 分钟。首版整轮零输出，"卡住"和"正常跑"在日志上
+# 完全同形，根本没法判断。每个 agent 都要留一行。
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+OUT=$(bash "$SYNC" 2>&1)
+MISSING=""
+for a in main dev infra media verifier; do
+  printf '%s' "$OUT" | grep -q "$a" || MISSING="$MISSING $a"
+done
+[ -z "$MISSING" ] && ok "每个 agent 都在日志里留了进度行" \
+  || bad "这些 agent 没有进度行：${MISSING} —— 卡住时看不出卡在哪"
+printf '%s' "$OUT" | grep -qE '\[[0-9]+/5\]' && ok "进度带 N/总数（能看出还剩多少）" \
+  || bad "进度没带 N/总数"
+
+# ── ④c 到期时刻按本地时区渲染 ───────────────────────────────────────────
+# launchd 环境不带 TZ，date -r 默认按 UTC 渲染 —— 首轮日志把 23:01 打成 08:01，
+# 排查时会以为 token 早就过期了。这条断言比对两个时区下的渲染必须不同，
+# 证明确实按指定时区渲染，而不是碰巧。
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+A=$(SYNC_TZ=UTC bash "$SYNC" 2>&1 | grep '到期于' | head -1)
+B=$(SYNC_TZ=Asia/Shanghai bash "$SYNC" 2>&1 | grep '到期于' | head -1)
+if [ -n "$A" ] && [ -n "$B" ] && [ "$A" != "$B" ]; then
+  ok "到期时刻按指定时区渲染（UTC 与 Asia/Shanghai 输出不同）"
+else
+  bad "两个时区渲染结果相同或为空 —— 时区没生效，日志时刻会误导排查：A='${A}' B='${B}'"
+fi
+
 # ── ⑤ 绝不把 token 打进日志 ──────────────────────────────────────────────
 mk_env
 export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 SECRETBODY

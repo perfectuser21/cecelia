@@ -38,6 +38,18 @@ REFRESH_MARGIN_MIN="${XAI_REFRESH_MARGIN_MIN:-90}"
 PASTE_RETRIES="${XAI_PASTE_RETRIES:-3}"
 PASTE_RETRY_SLEEP="${XAI_PASTE_RETRY_SLEEP:-3}"
 
+# epoch → 可读时刻。两件事都踩过：
+#   ① launchd 环境不带 TZ，默认按 UTC 渲染 —— 首轮日志把 23:01 打成 08:01，
+#      排查时会以为 token 早就过期了。所以显式指定时区。
+#   ② `date -r <epoch>` 是 BSD/macOS 写法；GNU coreutils 的 -r 是「取文件 mtime」，
+#      在 Linux 上必然失败。生产在 MMV（macOS）但 CI 跑 Linux，两边都得能用。
+fmt_epoch() {
+  local e="$1" tz="${SYNC_TZ:-Asia/Shanghai}"
+  TZ="$tz" date -d "@${e}" '+%F %H:%M %Z' 2>/dev/null && return 0   # GNU
+  TZ="$tz" date -r "$e"    '+%F %H:%M %Z' 2>/dev/null && return 0   # BSD/macOS
+  printf '%s' "$e"                                                   # 两家都不认就给原始值
+}
+
 LOG_PREFIX="[xai-token-sync]"
 note()  { printf '%s %s\n' "$LOG_PREFIX" "$*"; }
 fault() { printf '%s [FAULT] %s\n' "$LOG_PREFIX" "$*" >&2; }
@@ -130,11 +142,15 @@ paste_one() {
 }
 
 sync_agents() {
-  local token="$1" ok=0 fail=0 agents
+  local token="$1" ok=0 fail=0 agents idx=0 total
   agents="$(list_agents)" || return 1
   [ -n "$agents" ] || { fault "agent 名单为空"; return 1; }
+  total="$(printf '%s\n' "$agents" | grep -c .)"
+  note "开始逐个同步，共 ${total} 个 agent（每个约 30s，整轮约 $((total/2)) 分钟）"
   while read -r agent; do
     [ -n "$agent" ] || continue
+    idx=$((idx+1))
+    note "  [${idx}/${total}] ${agent}"
     if paste_one "$token" "$agent"; then
       ok=$((ok+1))
     else
@@ -163,7 +179,7 @@ ensure_fresh "$EXP"
 RAW="$(read_cli_token)" || { fault "续期后读不出 CLI token"; exit 1; }
 EXP="${RAW%% *}"
 TOKEN="${RAW#* }"
-note "本轮同步的 token 到期于 $(date -r "$EXP" '+%F %H:%M' 2>/dev/null || echo "$EXP")"
+note "本轮同步的 token 到期于 $(fmt_epoch "$EXP")"
 
 sync_agents "$TOKEN"
 
