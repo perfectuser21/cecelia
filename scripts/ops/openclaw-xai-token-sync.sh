@@ -22,7 +22,12 @@
 #    grok 又 403 而没人知道为什么。
 set -uo pipefail
 
-export PATH="${XAI_SYNC_PATH:-/opt/homebrew/bin:/usr/local/bin}:$PATH"
+# grok 装在 ~/.grok/bin，**不在** /opt/homebrew/bin —— 2026-09-23 生产打脸：
+# 漏了这一段，launchd 下续期那步恒报 `timeout: failed to run command 'grok'`，
+# 而日志只显示「续期调用失败 —— CLI 可能需要重新登录」，把 PATH 问题误导成人工活。
+# 同一天 session-runner-router 也栽在 launchd PATH 上，是同一类问题：
+# **自动化脚本在 launchd 下的 PATH 和人的 shell 不是一回事，必须显式声明。**
+export PATH="${XAI_SYNC_PATH:-$HOME/.grok/bin:/opt/homebrew/bin:/usr/local/bin}:$PATH"
 
 GROK_AUTH="${GROK_AUTH_FILE:-$HOME/.grok/auth.json}"
 # agent 名单以**配置**为准，不扫目录。0922 实测：~/.openclaw/agents 下有 26 个目录，

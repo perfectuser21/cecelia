@@ -134,6 +134,43 @@ else
   bad "贴的仍是续期前的旧 token —— 续期等于白做"
 fi
 
+# ── ③b grok 可执行文件必须在同步器自己的 PATH 里 ──────────────────────────
+# 2026-09-23 生产打脸：同步器把 PATH 设成 /opt/homebrew/bin:/usr/local/bin，
+# 而 grok 实际装在 ~/.grok/bin/grok。于是 launchd 下续期那一步恒报
+# `timeout: failed to run command 'grok': No such file or directory`，
+# 日志里只看见「续期调用失败 —— CLI 可能需要重新登录」，把一个 PATH 问题
+# 误导成"要人工重新登录"。同一天 session-runner-router 也栽在 launchd PATH 上，
+# 是同一类：**自动化脚本在 launchd 下的 PATH 和人的 shell 不是一回事**。
+#
+# 两段断言，因为 CI runner 上没装 grok：
+#   ①（到处都跑）声明的 PATH 必须含 grok 的安装目录 ~/.grok/bin
+#   ②（只在装了 grok 的机器上跑，如 MMV）真拿那个 PATH 去找，必须找得到
+# 第②段跳过时**明说跳过**，不静默 —— 静默跳过的守卫等于没有。
+mk_env
+DEFAULT_PATH_RAW=$(grep -oE 'XAI_SYNC_PATH:-[^}"]+' "$SYNC" | head -1 | sed 's/XAI_SYNC_PATH:-//')
+DEFAULT_PATH=$(eval printf '%s' "\"${DEFAULT_PATH_RAW}\"")
+if [ -z "$DEFAULT_PATH_RAW" ]; then
+  bad "读不出脚本里的默认 PATH（守卫失去锚点）"
+else
+  case "$DEFAULT_PATH_RAW" in
+    *'$HOME/.grok/bin'*|*"${HOME}/.grok/bin"*)
+      ok "声明的 PATH 含 grok 安装目录 ~/.grok/bin" ;;
+    *)
+      bad "声明的 PATH 不含 ~/.grok/bin：${DEFAULT_PATH_RAW} —— launchd 下必然找不到 grok" ;;
+  esac
+  # 底座用 launchd 的默认 PATH，脚本那段前置上去 —— 这才是生产里真实的组合；
+  # 只给脚本那段会连 sh 都找不到，测的就不是要测的东西了。
+  if [ -x "${HOME}/.grok/bin/grok" ] || command -v grok >/dev/null 2>&1; then
+    if env -i PATH="${DEFAULT_PATH}:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$HOME" sh -c 'command -v grok' >/dev/null 2>&1; then
+      ok "拿这个 PATH 真的找得到 grok（本机已装）"
+    else
+      bad "本机装了 grok，却用声明的 PATH 找不到：${DEFAULT_PATH}"
+    fi
+  else
+    printf '  ⏭️  本机未装 grok，跳过「真找一次」那段（CI runner 属此情况）\n'
+  fi
+fi
+
 # ── ④ CLI 未登录要报死 ───────────────────────────────────────────────────
 mk_env
 export GROK_AUTH_FILE="$WORK/nonexistent.json"
