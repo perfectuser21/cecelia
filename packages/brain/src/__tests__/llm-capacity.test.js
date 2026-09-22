@@ -176,6 +176,21 @@ describe('codex/grok 可用性走账本（生产恒 0 可用的根因）', () =>
     expect(t1.used_percent).toBe(93);
   });
 
+  it('账本装载器起不来时，vendor 不许塌成「一个号都没有」', () => {
+    // 修之前 codex 的 poll 出错就 available:false —— 把「读不到配额」和「这家没号」
+    // 压成同一个结果，正是本 PR 要修的塌陷。装载器故障时应退回 unknown 弃权，
+    // 账号列表照常完整，同时把降级原因挂在 poller 上别让它悄悄过去。
+    const led = buildCodexLedgerFromQuota({
+      degraded: true,
+      degradedReason: 'quota_loader_unavailable:boom',
+      verdictFor: () => V('unknown', 'quota_loader_unavailable'),
+    });
+    expect(led.total_count, '装载器故障把账号列表清空了').toBe(5);
+    expect(led.available_count).toBe(5);
+    expect(led.poller, '降级没留痕，出事时看不出是账本挂了').toBe('error');
+    expect(led.error).toContain('quota_loader_unavailable');
+  });
+
   it('llm-capacity 不再为判可用性读本机文件', () => {
     // 这条是根因断言，不是形式检查：只要还 import fs，就说明可用性判据仍有一条
     // 依赖「凭据文件在本机」的路径，而 Brain 容器里永远不在。
