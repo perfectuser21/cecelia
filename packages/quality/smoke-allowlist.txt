@@ -293,6 +293,7 @@ t6-dev-dispatch-migration-smoke.sh
 task-delete-postdeploy-filter-smoke.sh
 task-result-backfill-smoke.sh
 task-tasks-dedup-smoke.sh
+task-type-registry-smoke.sh
 tasks-ability-id-smoke.sh
 theater-mismatch-smoke.sh
 three-tier-smoke.sh
