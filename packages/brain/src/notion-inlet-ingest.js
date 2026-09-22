@@ -65,7 +65,7 @@ async function queryAll(notionReq, token, dbId, body) {
 
 /** 「决策」库 → decisions */
 export async function ingestDecisionsInlet(pool, token, { dbId, notionReq = defaultNotionReq, log = console } = {}) {
-  const stat = { inserted: 0, updated: 0, skipped: 0, failed: 0 };
+  const stat = { inserted: 0, updated: 0, skipped: 0, failed: 0, resolved: 0 };
   const pages = await queryAll(notionReq, token, dbId, {
     filter: { property: '状态', select: { equals: '已决定' } },
     sorts: [{ timestamp: 'last_edited_time', direction: 'descending' }],
@@ -77,6 +77,38 @@ export async function ingestDecisionsInlet(pool, token, { dbId, notionReq = defa
       const edited = new Date(page.last_edited_time);
       const rc = await getReceipt(pool, page.id);
       if (rc && new Date(rc.last_edited_time).getTime() >= edited.getTime()) { stat.skipped++; continue; }
+      // 接力棒：这页是 Brain 推出去的待拍板（decisions.notion_id 命中且仍 pending）
+      // → 更新同一行为 active（人赢），并自动登记「执行拍板」子任务挂链根，链自己往下走
+      const pend = await pool.query(
+        `SELECT id, context, priority FROM decisions WHERE notion_id = $1 AND status = 'pending' AND trigger = 'handoff'`,
+        [page.id]);
+      if (!rc && pend.rows[0]) {
+        const d = pend.rows[0];
+        await pool.query(
+          `UPDATE decisions SET status = 'active', topic = $2, decision = $3, reason = COALESCE($4, reason), category = $5,
+                  made_by = 'user', decided_at = COALESCE($6, NOW()), updated_at = NOW() WHERE id = $1`,
+          [d.id, row.topic, row.decision, row.reason, row.category, row.decided_at]);
+        await putReceipt(pool, { key: page.id, dbId, table: 'decisions', brainId: d.id, lastEdited: edited });
+        const ctx = d.context && typeof d.context === 'object' ? d.context : {};
+        if (ctx.root_task_id) {
+          try {
+            const { createRoutedTask } = await import('./work-routing-store.js');
+            await createRoutedTask(pool, {
+              source: 'child', source_id: `decision:${d.id}`,
+              title: `执行拍板：${row.topic}`.slice(0, 200),
+              description: `主理人结论：${row.decision}\n（决策 ${d.id}，来自任务 ${ctx.task_id || '-'}）`,
+              requested_task_type: 'data', declared_domain: 'operations', mutation_intent: 'none',
+              parent_task_id: ctx.root_task_id,
+              metadata: { lane: 'AI', from_decision: d.id, relay_pending_resolved: true },
+              task: { status: 'queued', priority: d.priority || 'P2', trigger_source: 'child' },
+            });
+          } catch (err) {
+            log.warn(`[notion-inlet] 拍板 ${d.id} 已收，执行子任务登记失败: ${err.message}`);
+          }
+        }
+        stat.resolved = (stat.resolved || 0) + 1;
+        continue;
+      }
       if (!rc) {
         const { rows } = await pool.query(
           `INSERT INTO decisions (category, topic, decision, reason, made_by, author, status, decided_at, source_ref)

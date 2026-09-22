@@ -233,16 +233,19 @@ async function pushIssues(pool, token) {
  * 日配额），逐单明细只留在工作机页；这里一条都不推。
  */
 export const PUSH_TASKS_QUERY = `
-    SELECT id, title, status, priority, task_type, notion_id, notion_props
-      FROM tasks
-     WHERE (notion_props->>'pushed_status') IS DISTINCT FROM status
-       AND task_type <> 'device_job'
+    SELECT t.id, t.title, t.status, t.priority, t.task_type, t.notion_id, t.notion_props,
+           p.notion_id AS project_notion_id
+      FROM tasks t
+      LEFT JOIN tasks p ON p.id = t.parent_task_id AND p.task_type = 'project'
+     WHERE (t.notion_props->>'pushed_status') IS DISTINCT FROM t.status
+       AND t.task_type <> 'device_job'
+       AND t.task_type <> 'project'
        AND (
-         status IN ('queued','in_progress','blocked')
-         OR (status IN ('completed','failed','canceled','cancelled')
-             AND updated_at > NOW() - INTERVAL '7 days')
+         t.status IN ('queued','in_progress','blocked')
+         OR (t.status IN ('completed','failed','canceled','cancelled')
+             AND t.updated_at > NOW() - INTERVAL '7 days')
        )
-     ORDER BY updated_at DESC
+     ORDER BY t.updated_at DESC
      LIMIT 10`;
 
 async function pushTasks(pool, token) {
@@ -263,6 +266,8 @@ async function pushTaskRows(pool, token, rows) {
         Name: { title: [{ text: { content: `[${t.priority || 'P2'}] ${String(t.title || '').slice(0, 180)}` } }] },
         Status: { status: { name: notionStatus } },
         Description: { rich_text: buildRichText(`${t.task_type || 'task'} · brain:${t.id}`) },
+        // 接力棒：子任务挂回 Projects 里的根页（根由 notion-relay-projection 推）
+        ...(t.project_notion_id ? { Project: { relation: [{ id: t.project_notion_id }] } } : {}),
       };
       const managed = t.notion_props && t.notion_props.pushed_status && t.notion_id;
       if (managed) {
@@ -887,7 +892,8 @@ async function pushDecisions(pool, token) {
        FROM decisions d
        LEFT JOIN journey_features jf
          ON jf.id = d.target_id AND d.target_type = 'journey_feature'
-      WHERE d.notion_synced_at IS NULL OR d.updated_at > d.notion_synced_at
+      WHERE (d.notion_synced_at IS NULL OR d.updated_at > d.notion_synced_at)
+        AND d.status <> 'pending'
       ORDER BY d.notion_synced_at NULLS FIRST, d.updated_at
       LIMIT 10`
   );
@@ -1454,4 +1460,11 @@ export async function runNotionPushSync(pool) {
   await pushInitiativeContracts(pool, token);
   await pushAdvancementItems(pool, token);
   await pushOpsGraph(pool, token);
+  // 接力棒投影：project 根 → Projects 库；待拍板 → 「决策」库草案（吞错，不连坐前面的推送）
+  try {
+    const { runRelayProjection } = await import('./notion-relay-projection.js');
+    await runRelayProjection(pool, { token });
+  } catch (err) {
+    console.warn(`[notion-push-sync] relay projection 失败（非阻断）: ${err.message}`);
+  }
 }
