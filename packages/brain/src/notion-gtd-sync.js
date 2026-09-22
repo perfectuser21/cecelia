@@ -147,8 +147,9 @@ export const PUSH_QIUMI_QUERY = `
            payload->>'notion_page_id'    AS en_page_id
       FROM tasks
      WHERE payload->>'notion_zh_page_id' IS NOT NULL
-       AND (notion_props->>'qiumi_pushed_status') IS DISTINCT FROM status
-     ORDER BY updated_at DESC
+       AND ((notion_props->>'qiumi_pushed_status') IS DISTINCT FROM status
+            OR notion_props ? 'qiumi_human_hold')
+     ORDER BY (notion_props ? 'qiumi_human_hold') ASC, updated_at DESC
      LIMIT 50`;
 
 const resultTextOf = (result) => {
@@ -162,15 +163,24 @@ export async function pushQiumiStatus(pool, token, { notionReq = defaultNotionRe
   const { rows } = await pool.query(PUSH_QIUMI_QUERY);
   let pushed = 0; let skippedHuman = 0; let skippedNoMap = 0;
   for (const t of rows) {
+    // hold 非空 = 本轮放弃推送是因为人工占着中文页：留保留标记，下轮无论 Brain 状态变没变都要重扫。
+    // 推送成功则必须把标记减掉，否则这行会永远留在扫描集合里。
+    const stamp = (hold = null) => (hold
+      ? pool.query(
+        `UPDATE tasks SET notion_props = COALESCE(notion_props,'{}'::jsonb)
+           || jsonb_build_object('qiumi_pushed_status', $2::text, 'qiumi_human_hold', $3::text) WHERE id=$1`,
+        [t.id, t.status, hold],
+      )
+      : pool.query(
+        `UPDATE tasks SET notion_props = (COALESCE(notion_props,'{}'::jsonb)
+           || jsonb_build_object('qiumi_pushed_status', $2::text)) - 'qiumi_human_hold' WHERE id=$1`,
+        [t.id, t.status],
+      ));
     const map = QIUMI_STATUS_MAP[t.status];
-    if (!map || !map.zh) { skippedNoMap += 1; continue; }
+    if (!map || !map.zh) { await stamp(); skippedNoMap += 1; continue; }
     const zhPage = await withBackoff(() => notionReq(token, `/pages/${t.zh_page_id}`, 'GET'));
     const zhStatus = zhPage?.properties?.['状态']?.status?.name ?? null;
-    const stamp = () => pool.query(
-      `UPDATE tasks SET notion_props = COALESCE(notion_props,'{}'::jsonb) || jsonb_build_object('qiumi_pushed_status', $2::text) WHERE id=$1`,
-      [t.id, t.status],
-    );
-    if (ZH_HUMAN_ONLY_STATUSES.includes(zhStatus)) { await stamp(); skippedHuman += 1; continue; }
+    if (ZH_HUMAN_ONLY_STATUSES.includes(zhStatus)) { await stamp(zhStatus); skippedHuman += 1; continue; }
     const write = zhWriteFor(t.status, { reason: t.error_message || '', resultText: resultTextOf(t.result), today: today() });
     await withBackoff(() => notionReq(token, `/pages/${t.zh_page_id}`, 'PATCH', write));
     if (t.en_page_id && map.en) {
@@ -193,6 +203,7 @@ export const OWNER_STOP_FILTERS = Object.freeze(['淘汰', '阻塞', '委派'].m
 /** 主理人急停：淘汰→cancel_requested、阻塞→owner_hold、从阻塞拖回委派→unblock。 */
 export async function applyOwnerStops(pool, token, { notionReq = defaultNotionReq } = {}) {
   let cancelled = 0; let held = 0; let resumed = 0;
+  const ignored = []; // 急停没落地的行——不计数也要说出来，别静默
   const [discarded, holds, redelegated] = await Promise.all(
     OWNER_STOP_FILTERS.map((filter) => queryAll(notionReq, token, GTD_DB_ID, filter)),
   );
@@ -210,7 +221,10 @@ export async function applyOwnerStops(pool, token, { notionReq = defaultNotionRe
     const id = taskIdOf(page);
     if (!id) continue;
     const r = await blockTask(id, { reason: 'owner_hold', detail: '主理人在中文表拖到阻塞' });
-    if (r?.success) held += 1;
+    if (r?.success) { held += 1; continue; }
+    const reason = r?.error || 'block_failed';
+    ignored.push({ id, action: 'hold', reason });
+    console.warn(`[notion-gtd-sync] 急停未生效 task=${id} action=hold reason=${reason}`);
   }
   for (const page of redelegated) {
     const id = taskIdOf(page);
@@ -219,10 +233,13 @@ export async function applyOwnerStops(pool, token, { notionReq = defaultNotionRe
     const t = rows[0];
     if (t?.status === 'blocked' && t.blocked_reason === 'owner_hold') {
       const r = await unblockTask(id);
-      if (r?.success) resumed += 1;
+      if (r?.success) { resumed += 1; continue; }
+      const reason = r?.error || 'unblock_failed';
+      ignored.push({ id, action: 'resume', reason });
+      console.warn(`[notion-gtd-sync] 急停未生效 task=${id} action=resume reason=${reason}`);
     }
   }
-  return { cancelled, held, resumed };
+  return { cancelled, held, resumed, ignored };
 }
 
 export async function syncEnToZh(pool, token, {
