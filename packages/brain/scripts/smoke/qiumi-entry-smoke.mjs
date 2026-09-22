@@ -145,6 +145,15 @@ try {
   zhRow(`${T} 收集行`, '收集');
   await run();
 
+  // 闸6 排在最前：它是"人工态绝不被机器碰"的对照组，闸1 红的时候更要看得到它的结论。
+  // DB 侧也断言——只看 Notion 侧建没建行，漏掉"en 行没建但任务照样入账"这种更坏的情况。
+  if ([...pages.values()].some((p) => p.db === 'en' && plain(p.properties.Description.rich_text).includes('收集行'))) {
+    fail('闸6 收集行被同步成 en 行');
+  }
+  const collected = await pool.query("SELECT count(*)::int AS n FROM tasks WHERE title LIKE '%收集行'");
+  if (collected.rows[0].n !== 0) fail(`闸6 收集行入了账：tasks 里有 ${collected.rows[0].n} 条`);
+  pass('闸6 收集/人工态不参与（Notion 侧 + DB 侧）');
+
   // 闸1：zh→en 建行 + [zh: 占位
   const enRows = [...pages.values()].filter((p) => p.db === 'en');
   if (enRows.length !== 2 || !enRows.every((p) => plain(p.properties.Description.rich_text).startsWith('[zh:'))) {
@@ -168,12 +177,6 @@ try {
     if (r.payload.dedup_by_notion_page !== 'true') fail('闸2 去重豁免键 dedup_by_notion_page 必须为字符串 true');
   }
   pass('闸2/3 入账字段 + 同名不撞');
-
-  // 闸6：收集行永不参与
-  if ([...pages.values()].some((p) => p.db === 'en' && plain(p.properties.Description.rich_text).includes('收集行'))) {
-    fail('闸6 收集行被同步');
-  }
-  pass('闸6 收集/人工态不参与');
 
   // 闸4：淘汰 → cancel_requested → cancelled
   const taskA = await taskIdOfZh(a);

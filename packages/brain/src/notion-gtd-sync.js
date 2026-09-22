@@ -285,7 +285,21 @@ export async function runGtdSyncOnce(pool, {
   pullMarked = pullMarkedNotionTasks, applyOwnerStops: stopsFn = applyOwnerStops,
   pushQiumiStatus: pushFn = pushQiumiStatus,
 } = {}) {
-  const tok = token ?? getToken();
+  // 取 token 也算一步：凭据没配/取不到时整轮五步统一报 notion_token_missing 并返回，
+  // 不抛——抛出去会穿过定时回调变成未捕获 rejection，整个循环从此哑掉。
+  let tok = token;
+  if (!tok) {
+    try {
+      tok = getToken();
+    } catch (err) {
+      console.warn(`[notion-gtd] 取 Notion token 失败: ${err.message}`);
+      tok = null;
+    }
+  }
+  if (!tok) {
+    const e = Object.freeze({ error: 'notion_token_missing' });
+    return { zhToEn: e, enToZh: e, ingest: e, stops: e, push: e, at: new Date().toISOString() };
+  }
   const sinceIso = env.QIUMI_SYNC_SINCE || null;
   const common = { notionReq, fetchPageContent: fetchNotionPageContent };
   const zhToEn = await safe('zh→en', () => zhToEnFn(pool, tok, { ...common, sinceIso }));
@@ -302,14 +316,22 @@ let lastRun = null;
 /** 模块级单例重置（测试用；vitest 侧一般靠 vi.resetModules()）。 */
 export function __resetGtdSyncLoopForTest() { loopTimer = null; lastRun = null; }
 
+const ISO_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|[+-]\d{2}:?\d{2})?)?$/;
+const validSince = (v) => typeof v === 'string' && ISO_RE.test(v.trim()) && !Number.isNaN(Date.parse(v.trim()));
+
 /**
  * 30s 自循环（幂等）。默认关闭：QIUMI_SYNC_ENABLED!=='true' 时既不起定时器也不碰 Notion。
- * 与 us-vps 旧脚本并存期：首次启动时把 QIUMI_SYNC_SINCE 钉在当下，只处理打开之后新建的行。
+ * 与 us-vps 旧脚本并存期的起算点 QIUMI_SYNC_SINCE 必须由切换脚本写死进部署 env：
+ * 缺失或非法即 fail-closed 不起循环。进程自己拿"当下"补一个，等于每次重启都换窗口——
+ * 重启前那段时间建的行会被静默漏掉，且两台机器各算各的，账对不上。
  */
 export function ensureGtdSyncLoop(pool, { env = process.env, setIntervalFn = setInterval, intervalMs } = {}) {
   if (env.QIUMI_SYNC_ENABLED !== 'true') return { started: false, running: false };
   if (loopTimer) return { started: false, running: true };
-  if (!env.QIUMI_SYNC_SINCE) env.QIUMI_SYNC_SINCE = new Date().toISOString();
+  if (!validSince(env.QIUMI_SYNC_SINCE)) {
+    console.warn(`[notion-gtd] 未起循环：QIUMI_SYNC_SINCE 缺失或非法 ISO（当前 ${env.QIUMI_SYNC_SINCE ?? '<未设>'}），并存期起算点必须由部署 env 写死`);
+    return { started: false, running: false, reason: 'missing_since' };
+  }
   const ms = intervalMs ?? Number(env.QIUMI_SYNC_INTERVAL_MS || 30_000);
   let inFlight = false;
   loopTimer = setIntervalFn(async () => {
@@ -317,6 +339,11 @@ export function ensureGtdSyncLoop(pool, { env = process.env, setIntervalFn = set
     inFlight = true;
     try {
       lastRun = await runGtdSyncOnce(pool, { env });
+    } catch (err) {
+      // 兜底：runGtdSyncOnce 已逐步吞错，这里防的是它自己意外抛——
+      // 定时回调里的 rejection 没人接，会变成未捕获异常把循环整死。
+      console.warn('[notion-gtd] 本轮失败:', err.message);
+      lastRun = { error: err.message, at: new Date().toISOString() };
     } finally {
       inFlight = false;
     }

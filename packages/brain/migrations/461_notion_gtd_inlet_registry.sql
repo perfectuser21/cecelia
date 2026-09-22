@@ -11,6 +11,11 @@ ON CONFLICT (notion_db_id, COALESCE(brain_table, '')) DO NOTHING;
 -- executor_kind 扩 'openclaw-agent'：秋米入账（ingestQiumiPage）给任务打的执行体标记不在
 -- 387 定下的七值白名单里，真库 smoke 实测 100% 撞 tasks_executor_kind_check（单元测试 mock 了
 -- createRoutedTask 所以照不出来）。与 387 同因同治：只放宽约束，不回填历史行。
+--
+-- 照 PR1 459 的拆法：ADD CONSTRAINT ... NOT VALID 只做目录项登记（毫秒级，不扫存量行），
+-- 新写入立即受约束；"确认全表已合规"挪到 462 的 VALIDATE CONSTRAINT（SHARE UPDATE
+-- EXCLUSIVE 锁，不挡并发读写），与本文件的 ACCESS EXCLUSIVE 分处两个事务。
+-- tasks 是高频写表，DROP+ADD 在同一事务里扫全表会挡住派发/回写。
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_executor_kind_check;
 
 ALTER TABLE tasks
@@ -24,7 +29,7 @@ ALTER TABLE tasks
       'external-worker',
       'codex-review-local',
       'openclaw-agent'
-    ));
+    )) NOT VALID;
 
 INSERT INTO schema_version (version, description)
 VALUES ('461', 'notion_projection_map 登记秋米中文 GTD 表 + 英文 Tasks 库（face=inlet）+ executor_kind 扩 openclaw-agent')
