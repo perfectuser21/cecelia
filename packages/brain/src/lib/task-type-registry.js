@@ -163,9 +163,16 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   strategist_decision:      T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR]),
   workflow_run:             T('external', false, false, null, 'none', true, true, 'none', true, []),
   device_job:               T('device', false, false, null, 'external-worker', false, false, 'none', true, []),
+  // project = 接力棒 PR1/PR2（#5486/#5491）新增的「项目根」容器行，迁移 458 已把它追进
+  // tasks_task_type_check。本刀重建 CHECK 时必须带上它，所以这里 db=true。
+  // push_to_notion 故意留 true：notion-push-sync 的 tasks 投影窗口排除 project 是
+  // 「父行自身不推」（它走 Projects 库独立通道），与 push_to_notion 标签不同源，
+  // 该排除仍由 PUSH_TASKS_QUERY 单列；两者是否合并待 PR2/PR3 统一。tags 留空：
+  // main 的 task-router VALID_TASK_TYPES 本就不含 project，加标签=改行为。
+  project:                  T('brain-internal', false, false, null, 'none', true, true, 'none', true, []),
   // ── 本刀新增：秋米中文 GTD 表来的非编码任务，Brain 经 ssh 在 MMV 起 openclaw agent ──
   // PR1 不进 V（router_valid）：task-router.js 的路由细节（SKILL_WHITELIST/LOCATION_MAP/
-  // TASK_REQUIREMENTS）与 DB CHECK 迁移 459 都还没接线，V 标签留给 PR2 入口刀开启。
+  // TASK_REQUIREMENTS）与 DB CHECK 迁移 461 都还没接线，V 标签留给 PR2 入口刀开启。
   qiumi_task:               T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', true, true, 'none', true, []),
   // ── 虚拟类型（不在 DB 白名单，只用于免锚判断）──
   deploy_drill:       T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),

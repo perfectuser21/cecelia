@@ -16,8 +16,10 @@
 --
 -- 一、tasks_task_type_check 纳入 qiumi_task
 --     qiumi_task = 中文 GTD 表来的非编码任务，Brain 经 ssh 在 MMV 起 openclaw agent 执行。
---     列表 = 457 的全量 83 值（实测核对，457 自己的注释写"82 个"有误差；本 461 = 457
---     的 83 值 + 'qiumi_task' 共 84 值）。ADD CONSTRAINT ... NOT VALID：新写入立即受约束
+--     列表 = 457 的全量 83 值（实测核对，457 自己的注释写"82 个"有误差）
+--     + 458 追加的 'project'（接力棒 PR1/PR2 的项目根容器行；458 是在现有 CHECK 定义上
+--     正则插入，重建时不带上它 = 直接把 project 根写死，已有 relay 集成测试实测报红）
+--     + 'qiumi_task'，共 85 值。ADD CONSTRAINT ... NOT VALID：新写入立即受约束
 --     （目录项已生效），存量行是否合规留给 462 的 VALIDATE 去扫描确认——两步之间若有
 --     不合规存量行，新 INSERT/UPDATE 仍被挡，只是"确认全表已合规"这件事延后、且不占
 --     本事务的锁。lib/task-type-registry.js 的 DB_WHITELISTED_TASK_TYPES 与此列表由
@@ -93,7 +95,7 @@ ALTER TABLE tasks ADD CONSTRAINT tasks_task_type_check CHECK (
     'harness_deploy_watch', 'harness_report', 'platform_scraper', 'harness_initiative',
     'harness_task', 'harness_final_e2e', 'trigger_backup', 'harness_intervention',
     'staging_e2e', 'skill_eval', 'ci_patrol', 'golden_path_proposal',
-    'strategist_decision', 'workflow_run', 'device_job',
+    'strategist_decision', 'workflow_run', 'device_job', 'project',
     'qiumi_task'
   )
 ) NOT VALID;
