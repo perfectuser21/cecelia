@@ -18,6 +18,28 @@ vi.mock('../db.js', () => ({
   default: { query: mockQuery }
 }));
 
+// llm-capacity 自 2026-09-22 起会去读 ops_model_accounts（codex/grok 的可用性
+// 从本机凭据文件改为走配额账本）。本文件的 mockQuery 是**按调用顺序**排队响应的
+// （mockResolvedValueOnce），多出来的那次账本查询会把后面全部错位 —— 而本文件
+// 测的是派发收口，跟容量快照无关。直接把容量模块整个 mock 掉，别让它碰 db。
+vi.mock('../llm-capacity.js', () => ({
+  getLlmCapacitySnapshot: vi.fn().mockResolvedValue({
+    sampled_at: '2026-09-22T00:00:00.000Z',
+    sentinel: 'ok',
+    healthy: true,
+    errors: [],
+    vendors: {
+      claude: { vendor: 'claude', available_count: 2, total_count: 2, poller: 'ok', error: null, accounts: [] },
+      codex: { vendor: 'codex', available_count: 5, total_count: 5, poller: 'ok', error: null, accounts: [] },
+      grok: { vendor: 'grok', available_count: 1, total_count: 1, poller: 'ok', error: null, accounts: [] },
+    },
+  }),
+  summarizeLlmCapacity: vi.fn((s) => s),
+  chooseGuidedExecutor: vi.fn(() => ({ executor: 'claude', level: 'L1_primary_claude', reason: 'primary_vendor_available' })),
+  clearLlmCapacityCache: vi.fn(),
+  CODEX_ACCOUNTS: [],
+}));
+
 vi.mock('../slot-allocator.js', () => ({
   calculateSlotBudget: vi.fn().mockResolvedValue({
     dispatchAllowed: true,

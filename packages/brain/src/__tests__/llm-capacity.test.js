@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { chooseGuidedExecutor, summarizeLlmCapacity } from '../llm-capacity.js';
+import { readFileSync } from 'fs';
+import {
+  chooseGuidedExecutor,
+  summarizeLlmCapacity,
+  buildCodexLedgerFromQuota,
+  buildGrokLedgerFromQuota,
+} from '../llm-capacity.js';
 
 function makeSnapshot(counts, sentinel = 'ok') {
   return {
@@ -60,5 +66,137 @@ describe('llm-capacity', () => {
         codex: { available_count: 0, total_count: 2, poller: 'error' },
       },
     });
+  });
+});
+
+// ── codex / grok 的可用性必须来自账本，不是本机文件 ────────────────────────
+//
+// 2026-09-22 实证：7 天 61 次派单 61 次全落 claude，5 个 codex 号和 grok
+// 一次没被选过。根因不在选号层，在 **vendor 层**：
+//
+//   pollCodexAccount  → readFileSync(~/.codex-teamN/auth.json)
+//   pollGrokLedger    → existsSync(~/.grok/auth.json)
+//
+// 而 Brain 跑在 us-vps 容器里，`/root/.codex*` `/root/.grok*` 根本不存在
+// （ssh 实证）→ available_count 恒 0 → chooseGuidedExecutor 在 vendor 层就把
+// codex/grok 整个排除。刀1 接进 capability-gate 的配额账本对这 6 个号
+// **根本没机会生效** —— 闸门装在了一扇已经焊死的门后面。
+//
+// claude 那条之所以能通，是因为它走 getAccountUsage() 读 account_usage_cache 表，
+// 压根不碰本机文件。三家里两家读文件、一家读表，这个分叉本身就是 bug 的形状。
+//
+// 修法复用已有的 createQuotaLedgerLoader + judgeAccount（ops_model_accounts
+// 是生产唯一真配额来源），**不另发明第二套判据** —— #5472 的教训。
+describe('codex/grok 可用性走账本（生产恒 0 可用的根因）', () => {
+  const V = (verdict, reason, pct = null) => ({ verdict, reason, pct });
+  function quota(verdicts, extra = {}) {
+    return {
+      degraded: false,
+      degradedReason: null,
+      ...extra,
+      verdictFor: (id) => verdicts[id] ?? V('unknown', 'no_ledger_row'),
+    };
+  }
+
+  it('账本说有额度 → codex 可用数按账本走（不再恒 0）', () => {
+    // 生产实况：team2/4/5 七天用量 0%，却因为读不到本机文件被判 0 可用
+    const led = buildCodexLedgerFromQuota(quota({
+      team1: V('usable', 'within_budget', 27),
+      team2: V('usable', 'within_budget', 0),
+      team3: V('usable', 'within_budget', 1),
+      team4: V('usable', 'within_budget', 0),
+      team5: V('usable', 'within_budget', 0),
+    }));
+    expect(led.vendor).toBe('codex');
+    expect(led.total_count).toBe(5);
+    expect(led.available_count).toBe(5);
+  });
+
+  it('只有 unusable 才扣可用数', () => {
+    const led = buildCodexLedgerFromQuota(quota({
+      team1: V('unusable', 'seven_day_over_budget', 93),
+      team2: V('usable', 'within_budget', 0),
+      team3: V('usable', 'within_budget', 1),
+      team4: V('usable', 'within_budget', 0),
+      team5: V('usable', 'within_budget', 0),
+    }));
+    expect(led.available_count).toBe(4);
+  });
+
+  it('unknown 是弃权，不等于不可用', () => {
+    // 三态设计的全部意义就在这：把「读不到数据」压成「没额度」正是 0819 三起事故的形状。
+    // 压成不可用 → 一个只是缺数据的号被判死；grok 全列 NULL 时更会连 L4 兜底都没了。
+    const led = buildCodexLedgerFromQuota(quota({
+      team1: V('unknown', 'pct_unknown'),
+      team2: V('unknown', 'no_ledger_row'),
+      team3: V('usable', 'within_budget', 1),
+      team4: V('unknown', 'pct_unknown'),
+      team5: V('unknown', 'pct_unknown'),
+    }));
+    expect(led.available_count, 'unknown 被当成不可用 → 又把未知压成了否定事实').toBe(5);
+  });
+
+  it('grok 全列 NULL（探针诚实留空）时仍可当 L4 兜底', () => {
+    // #5475 之后 grok 的 5h/7d 都是 NULL（诚实的未知，不再编造 0）。
+    // 若把 unknown 判成不可用，grok 就永远进不了 L4 —— 最后一道兜底直接没了。
+    const led = buildGrokLedgerFromQuota(quota({ grok: V('unknown', 'pct_unknown') }));
+    expect(led.vendor).toBe('grok');
+    expect(led.total_count).toBe(1);
+    expect(led.available_count).toBe(1);
+    expect(chooseGuidedExecutor('dev', 'tight', {
+      sampled_at: 'x', sentinel: 'ok',
+      vendors: {
+        claude: { available_count: 0, total_count: 2, poller: 'ok' },
+        codex: { available_count: 0, total_count: 5, poller: 'ok' },
+        grok: { available_count: led.available_count, total_count: 1, poller: 'ok' },
+      },
+    })).toEqual(expect.objectContaining({ executor: 'grok', level: 'L4_grok_fallback' }));
+  });
+
+  it('账本降级 fail-closed（loader 返回 unusable）→ 可用数归零', () => {
+    // 降级的 fail-open/fail-closed 策略归 loader 管（15 分钟后转 fail-closed），
+    // 这里只要忠实反映它给出的裁决，不自作主张。
+    const led = buildCodexLedgerFromQuota(quota({
+      team1: V('unusable', 'ledger_unavailable_fail_closed'),
+      team2: V('unusable', 'ledger_unavailable_fail_closed'),
+      team3: V('unusable', 'ledger_unavailable_fail_closed'),
+      team4: V('unusable', 'ledger_unavailable_fail_closed'),
+      team5: V('unusable', 'ledger_unavailable_fail_closed'),
+    }, { degraded: true, degradedReason: 'ledger_unavailable' }));
+    expect(led.available_count).toBe(0);
+    expect(led.poller).toBe('error');
+  });
+
+  it('裁决理由要带进 account.source，出事时能看出是哪一条判死的', () => {
+    const led = buildCodexLedgerFromQuota(quota({
+      team1: V('unusable', 'seven_day_over_budget', 93),
+    }));
+    const t1 = led.accounts.find((a) => a.name === 'team1');
+    expect(t1.source).toContain('seven_day_over_budget');
+    expect(t1.used_percent).toBe(93);
+  });
+
+  it('账本装载器起不来时，vendor 不许塌成「一个号都没有」', () => {
+    // 修之前 codex 的 poll 出错就 available:false —— 把「读不到配额」和「这家没号」
+    // 压成同一个结果，正是本 PR 要修的塌陷。装载器故障时应退回 unknown 弃权，
+    // 账号列表照常完整，同时把降级原因挂在 poller 上别让它悄悄过去。
+    const led = buildCodexLedgerFromQuota({
+      degraded: true,
+      degradedReason: 'quota_loader_unavailable:boom',
+      verdictFor: () => V('unknown', 'quota_loader_unavailable'),
+    });
+    expect(led.total_count, '装载器故障把账号列表清空了').toBe(5);
+    expect(led.available_count).toBe(5);
+    expect(led.poller, '降级没留痕，出事时看不出是账本挂了').toBe('error');
+    expect(led.error).toContain('quota_loader_unavailable');
+  });
+
+  it('llm-capacity 不再为判可用性读本机文件', () => {
+    // 这条是根因断言，不是形式检查：只要还 import fs，就说明可用性判据仍有一条
+    // 依赖「凭据文件在本机」的路径，而 Brain 容器里永远不在。
+    const src = readFileSync(new URL('../llm-capacity.js', import.meta.url), 'utf8');
+    expect(src, 'llm-capacity 仍在 import fs —— 可用性又会依赖容器里不存在的文件').not.toMatch(
+      /^import\s+.*\bfrom\s+['"](node:)?fs['"]/m,
+    );
   });
 });
