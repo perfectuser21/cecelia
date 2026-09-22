@@ -26,6 +26,8 @@ export const ZH_MARK_RE = /\[zh:([0-9a-f]{32})\]/;
 export const EN_MARK_RE = /\[en:([0-9a-f]{32})\]/;
 export const EN_NATIVE_MARK = '[en-native]';
 export const BRAIN_MARK_RE = /brain:([0-9a-f-]{36})/;
+/** OpenClaw 排单派发回执（dispatchOpenClawFromNotion 注入的 run id）——这类行是英文库自有工作流，不是待回填的原生行 */
+export const OPC_RUN_MARK_RE = /run:notion-/;
 
 export const id32 = (id) => String(id || '').replace(/-/g, '').toLowerCase();
 const text = (content) => [{ type: 'text', text: { content: String(content ?? '').slice(0, 1900) } }];
@@ -77,6 +79,8 @@ export function parseEnPage(page) {
     zhId32: description.match(ZH_MARK_RE)?.[1] ?? null,
     enNative: description.includes(EN_NATIVE_MARK),
     brainTaskId: description.match(BRAIN_MARK_RE)?.[1] ?? null,
+    opcDispatched: OPC_RUN_MARK_RE.test(description),
+    createdAt: page.created_time ?? null,
     lastEditedTime: page.last_edited_time ?? null,
   };
 }
@@ -119,27 +123,43 @@ async function queryAll(notionReq, token, dbId, filter, sorts) {
   return results;
 }
 
+/**
+ * 按标记反查目标库里已存在的镜像行（page_size=1）。
+ * 建行与"在源页打占位标记"是两次 Notion 请求、不可能原子：占位 PATCH 挂掉（429/网络/进程被杀）
+ * 后源行仍满足 filter，下一轮会再建一行——同一条任务在目标库留两条，且两条都会各自入账。
+ * 所以 POST 之前必须先按标记查一次：命中就只补写源页占位，把"非原子"收敛成幂等。
+ */
+async function findByMark(notionReq, token, dbId, property, mark) {
+  const resp = await withBackoff(() => notionReq(token, `/databases/${dbId}/query`, 'POST', {
+    page_size: 1, filter: { property, rich_text: { contains: mark } },
+  }));
+  return resp?.results?.[0] ?? null;
+}
+
 export async function syncZhToEn(pool, token, {
   notionReq = defaultNotionReq, fetchPageContent, now = () => new Date(), sinceIso = null,
 } = {}) {
   const filter = { and: [...ZH_QUERY_FILTER.and] };
   if (sinceIso) filter.and.push({ timestamp: 'created_time', created_time: { on_or_after: sinceIso } });
   const pages = await queryAll(notionReq, token, GTD_DB_ID, filter);
-  let created = 0; let skipped = 0;
+  let created = 0; let skipped = 0; let repaired = 0;
   for (const page of pages) {
     const zh = parseZhPage(page);
     // 二次校验：filter 与真值不一致时以真值为准（并存期旧脚本可能刚写了任务号）
     if (zh.status !== '委派' || zh.taskNo || zh.archived || !zh.title
       || (sinceIso && zh.createdAt && zh.createdAt < sinceIso)) { skipped += 1; continue; }
+    const mirrored = await findByMark(notionReq, token, EN_TASKS_DB, 'Description', `[zh:${zh.id32}]`);
+    const stamp = (enId) => withBackoff(() => notionReq(token, `/pages/${zh.id}`, 'PATCH', {
+      properties: { 'OpenClaw任务号': { rich_text: text(`en:${id32(enId)}`) } },
+    }));
+    if (mirrored) { await stamp(mirrored.id); repaired += 1; continue; }
     const content = fetchPageContent ? await fetchPageContent(token, zh.id) : '';
     const enPage = await withBackoff(() => notionReq(token, '/pages', 'POST', buildEnPageFromZh(zh, content)));
-    await withBackoff(() => notionReq(token, `/pages/${zh.id}`, 'PATCH', {
-      properties: { 'OpenClaw任务号': { rich_text: text(`en:${id32(enPage.id)}`) } },
-    }));
+    await stamp(enPage.id);
     created += 1;
     void now;
   }
-  return { created, skipped };
+  return { created, skipped, repaired };
 }
 
 export const PUSH_QIUMI_QUERY = `
@@ -212,8 +232,11 @@ export async function applyOwnerStops(pool, token, { notionReq = defaultNotionRe
   for (const page of discarded) {
     const id = taskIdOf(page);
     if (!id) continue;
+    // externalId 必须与"人编辑页面"无关：带 last_edited_time 的话，页面每被碰一次就是一条新命令，
+    // 而任务早已 cancelled → 状态机一路 rejected，projection_commands 每轮涨一条死命令。
+    // 消解不能靠清中文页的任务号（人工态行 AI 永不写，主理人铁律），只能靠固定键 + ON CONFLICT。
     await recordProjectionCommand(pool, {
-      target: 'notion', externalId: `${page.id}:${page.last_edited_time}`, entityType: 'tasks',
+      target: 'notion', externalId: `${page.id}:cancel_requested`, entityType: 'tasks',
       entityId: id, commandType: 'cancel_requested', payload: { source: 'qiumi_owner_stop' },
     });
     cancelled += 1;
@@ -243,25 +266,41 @@ export async function applyOwnerStops(pool, token, { notionReq = defaultNotionRe
   return { cancelled, held, resumed, ignored };
 }
 
+/**
+ * 英文库 Delegated 原生行 → 中文表回填。
+ * 英文 Tasks 库不是秋米专属：主理人自己的排单、排班员 v1a 的排期行、OpenClaw 已派发行都住在里面。
+ * 只按 Status=Delegated 捞，会把这些统统镜像成中文 GTD 行——中文表是主理人每天看的台面，
+ * 污染它比漏同步严重得多。故四道跳过（标记行/原生标记/已入账 + 下面三条）全部 fail-closed。
+ */
 export async function syncEnToZh(pool, token, {
-  notionReq = defaultNotionReq, fetchPageContent, now = () => new Date(),
+  notionReq = defaultNotionReq, fetchPageContent, now = () => new Date(), sinceIso = null,
 } = {}) {
-  const pages = await queryAll(notionReq, token, EN_TASKS_DB, {
-    property: 'Status', status: { equals: 'Delegated' },
-  });
-  let created = 0; let skipped = 0;
+  const filter = { and: [{ property: 'Status', status: { equals: 'Delegated' } }] };
+  // ③ 并存期窗口：与 syncZhToEn 同源，英文库存量 Delegated 行不进本刀
+  if (sinceIso) filter.and.push({ timestamp: 'created_time', created_time: { on_or_after: sinceIso } });
+  const pages = await queryAll(notionReq, token, EN_TASKS_DB, filter);
+  const nowMs = now().getTime();
+  let created = 0; let skipped = 0; let repaired = 0;
   for (const page of pages) {
     const en = parseEnPage(page);
-    if (en.zhId32 || en.enNative || en.brainTaskId || !en.name) { skipped += 1; continue; }
-    const content = fetchPageContent ? await fetchPageContent(token, en.id) : '';
-    await withBackoff(() => notionReq(token, '/pages', 'POST', buildZhPageFromEn(en, content)));
+    // ① OpenClaw 已派发行：英文库自有工作流的中间态，不是人新写的原生任务
+    // ② Plan Date 在未来：排班员的排期意图，到点后再回填（与 ingestDelegatedPage 的时间窗同语义）
+    if (en.zhId32 || en.enNative || en.brainTaskId || !en.name
+      || en.opcDispatched
+      || (en.planDate && new Date(en.planDate).getTime() > nowMs)
+      || (sinceIso && en.createdAt && en.createdAt < sinceIso)) { skipped += 1; continue; }
+    const mirrored = await findByMark(notionReq, token, GTD_DB_ID, '备注', `[en:${en.id32}]`);
+    // 建行与打标记非原子：中文行已在（上一轮 POST 成功、PATCH 挂了）就只补英文页的 [en-native]
+    if (!mirrored) {
+      const content = fetchPageContent ? await fetchPageContent(token, en.id) : '';
+      await withBackoff(() => notionReq(token, '/pages', 'POST', buildZhPageFromEn(en, content)));
+    }
     await withBackoff(() => notionReq(token, `/pages/${en.id}`, 'PATCH', {
       properties: { Description: { rich_text: text(`${en.description} ${EN_NATIVE_MARK}`.trim()) } },
     }));
-    created += 1;
-    void now;
+    if (mirrored) repaired += 1; else created += 1;
   }
-  return { created, skipped };
+  return { created, skipped, repaired };
 }
 
 /** 单步失败只 warn 不抛：一条通道挂掉不能拖垮同一轮里剩下的四条。 */
@@ -303,7 +342,7 @@ export async function runGtdSyncOnce(pool, {
   const sinceIso = env.QIUMI_SYNC_SINCE || null;
   const common = { notionReq, fetchPageContent: fetchNotionPageContent };
   const zhToEn = await safe('zh→en', () => zhToEnFn(pool, tok, { ...common, sinceIso }));
-  const enToZh = await safe('en→zh', () => enToZhFn(pool, tok, common));
+  const enToZh = await safe('en→zh', () => enToZhFn(pool, tok, { ...common, sinceIso }));
   const ingest = await safe('入账', () => pullMarked(pool, tok, { env }));
   const stops = await safe('急停', () => stopsFn(pool, tok, { notionReq }));
   const push = await safe('回写', () => pushFn(pool, tok, { notionReq }));

@@ -401,6 +401,9 @@ async function ingestQiumiPage(pool, token, page, en, { env }) {
   const taskId = routed?.task?.id ?? routed?.task_id;
   if (!taskId) throw new Error('routed_task_id_missing');
   if (dueAt) await pool.query('UPDATE tasks SET due_at=$2, updated_at=NOW() WHERE id=$1', [taskId, dueAt]);
+  // 458 给 tasks 建了 tenant_id 列，路由账房不认这个字段 → 不补写就恒 NULL，
+  // 按列过滤的看板/查询一条秋米任务都看不见，租户隔离形同虚设。payload 里有不算数。
+  await pool.query('UPDATE tasks SET tenant_id=$2, updated_at=NOW() WHERE id=$1', [taskId, tenantId]);
   if (zh) {
     await notionReq(token, `/pages/${zh.id}`, 'PATCH', { properties: {
       'OpenClaw任务号': { rich_text: [{ type: 'text', text: { content: `brain:${taskId}` } }] },
@@ -582,11 +585,6 @@ function stripStatusTail(desc) {
   return String(desc || '').replace(STATUS_TAIL_RE, '').trim();
 }
 
-/**
- * 状态回执 PATCH——截 base 而非整串，保证尾巴（` · <status>`，含 brain:<id> 标记）
- * 永远完整：长正文时若对 `base + tail` 整串 slice(0,1900)，超长 base 会把尾巴挤出
- * 截断窗口，下一轮 `/brain:/` 判不出已接手 → 每轮重复入账（PR2 审查 Important #1）。
- */
 /**
  * 状态回执 PATCH——截 base 而非整串，保证尾巴（` · <status>`，含 brain:<id> 标记）
  * 永远完整：长正文时若对 `base + tail` 整串 slice(0,1900)，超长 base 会把尾巴挤出
