@@ -124,9 +124,26 @@ export function stripGrpcWebFrames(buf) {
 
 /**
  * Grok GetGrokCreditsConfig 响应体 → collector parseGrokUsage 认的形状。
- * 字段映射（llm-quota 09-03 实测）：data 帧内层 f1 包一层；f4=周期开始、f5=周期结束（proto3 Timestamp，
- * 内嵌 f1=秒）；用量字段按 proto3 默认值省略——**没出现即 0%**。Grok 无 5h 窗，five_hour_pct 恒 null。
+ *
+ * 字段映射（llm-quota 09-03 实测）：data 帧内层 f1 包一层；f4=周期开始、f5=周期结束
+ * （proto3 Timestamp，内嵌 f1=秒）。Grok 无 5h 窗，five_hour_pct 恒 null。
  * trailers 非 grpc-status:0 → 抛错（带 grpc-status 文本，采集器据此归类 key_expired/unknown）。
+ *
+ * ⚠️ seven_day_pct 目前返回 null（未知），**不是 0**。
+ *
+ * 原注释写着「用量字段按 proto3 默认值省略——没出现即 0%」，但这段逻辑**从来没实现过**：
+ * 代码从头到尾没有去找任何用量字段，而是无条件返回 0。生产实证（2026-09-22）：
+ * ops_model_accounts 里 grok 行恒为 5h=NULL / 7d=0，于是 G5 的三态配额闸
+ * （account-quota-ledger.judgeAccount）对 grok 必然判 usable —— 一个可能已经耗尽的号
+ * 永远不会被排除。把「没读」写成「0%」，是拿假事实喂闸。
+ *
+ * 真实响应解码（2026-09-22，grpc-status:0，body 111 字节）里的候选字段：
+ *   内层 f1 w5(float32)=1 ／ f7={f1=2, f2 float=1} ／ f4,f5 = 周期起止 Timestamp
+ * 但**只有一个样本、且恰好取在极值 1.0**，无从分辨它是「剩余比例」还是「已用比例」——
+ * 两种解释在这一个点上完全同形。拿到第二个非极值样本（或官方字段说明）之前不猜。
+ *
+ * null 会让 judgeAccount 落到 unknown/pct_unknown「弃权」：不加分不减分，
+ * 交给认证失败 / 真 429 回调去定夺。**未知比假事实安全**——假的 0 会被当成真的。
  */
 export function normalizeGrokUsage(bodyBuf) {
   const frames = stripGrpcWebFrames(bodyBuf);
@@ -150,8 +167,8 @@ export function normalizeGrokUsage(bodyBuf) {
   };
   const endSec = tsSeconds(5);
   return {
-    five_hour_pct: null,
-    seven_day_pct: 0,
+    five_hour_pct: null,   // Grok 无 5h 窗，这个 null 是确定的「不适用」
+    seven_day_pct: null,   // ⚠️ 未读到 ≠ 0%。见上方说明，改回 0 会让配额闸对 grok 永远放行
     reset_at: endSec ? new Date(endSec * 1000).toISOString() : null,
   };
 }
