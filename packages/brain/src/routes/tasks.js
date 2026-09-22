@@ -497,6 +497,8 @@ router.patch('/tasks/:task_id', async (req, res) => {
     // Brain 核验外部真相不过 → 降级中间态（保持原状态 + 写 generator_done），200 accepted:false。
     let harnessDemoted = false;
     let harnessDemoteReason = null;
+    let harnessUngated = false;
+    let harnessUngatedReason = null;
     if (status === 'completed' && !isStatusNoop
         && task.task_type === 'harness_initiative' && task.orchestrator === 'skill-relay') {
       const { finalizeHarnessTask } = await import('../lib/harness-finalize.js');
@@ -507,6 +509,11 @@ router.patch('/tasks/:task_id', async (req, res) => {
       const requestedPrUrl = req.body?.result?.pr_url ?? req.body?.pr_url ?? null;
       const fin = await finalizeHarnessTask(task_id, { pool, requestedPrUrl });
       if (fin.applies && !fin.allow) { harnessDemoted = true; harnessDemoteReason = fin.reason; }
+      // 未验收合并：放行但留疤 + 不自动提升回归（照 relay-watchdog 的策略）
+      if (fin.applies && fin.allow && fin.ungated) {
+        harnessUngated = true;
+        harnessUngatedReason = fin.failureReason;
+      }
     }
 
     // Build dynamic UPDATE query
@@ -590,11 +597,17 @@ router.patch('/tasks/:task_id', async (req, res) => {
       // 任务完成时自动触发 KR 进度重算
       if (status === 'completed') {
         // T2. harness merged 终态 → 累积 FR 冻结（fail-open；harness-report Step 1 走此路径）
-        try {
-          const { promoteRegressionOnHarnessMerged } = await import('../lib/callback-postprocess.js');
-          await promoteRegressionOnHarnessMerged(task_id, result || null, req.body.pr_url || null, pool);
-        } catch (promoteErr) {
-          console.warn(`[tasks-patch] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${promoteErr.message}`);
+        // 未验收合并不享受自动提升 —— 这是 relay-watchdog 已定策略里真正的惩罚所在
+        // （放行是因为 PR 客观已合并拦不住，惩罚落在"不提升"而不是锁死账本）。
+        if (harnessUngated) {
+          console.warn(`[tasks-patch] task=${task_id} ${harnessUngatedReason} → 跳过 regression 自动提升`);
+        } else {
+          try {
+            const { promoteRegressionOnHarnessMerged } = await import('../lib/callback-postprocess.js');
+            await promoteRegressionOnHarnessMerged(task_id, result || null, req.body.pr_url || null, pool);
+          } catch (promoteErr) {
+            console.warn(`[tasks-patch] promoteRegressionOnHarnessMerged 失败 (non-fatal): ${promoteErr.message}`);
+          }
         }
         try {
           const initiativeRow = await pool.query(
@@ -653,6 +666,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
       // harness-completion-authority.test.js），改 HTTP 码会连带打翻它们。
       success: !harnessDemoted,
       ...(harnessDemoted ? { accepted: false, reason: harnessDemoteReason } : {}),
+      ...(harnessUngated ? { ungated_merge: true, failure_reason: harnessUngatedReason } : {}),
       task_id,
       status: updatedTask.status,
       updated_at: updatedTask.updated_at,
