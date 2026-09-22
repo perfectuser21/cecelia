@@ -237,6 +237,7 @@ postdeploy-verifier-smoke.sh
 preview-agent-mmv-smoke.sh
 preview-capacity-gate-and-destroyer-smoke.sh
 preview-env-smoke.sh
+preview-ledger-activate-smoke.sh
 promise-map-ledger-smoke.sh
 promise-map-nightly-smoke.sh
 promise-map-step-impact-smoke.sh
