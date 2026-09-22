@@ -142,21 +142,33 @@ fi
 # 误导成"要人工重新登录"。同一天 session-runner-router 也栽在 launchd PATH 上，
 # 是同一类：**自动化脚本在 launchd 下的 PATH 和人的 shell 不是一回事**。
 #
-# 这条断言不靠桩：直接在**清空 PATH 的子进程**里，只给脚本声明的默认 PATH，
-# 看能不能找到 grok。找不到就红。
+# 两段断言，因为 CI runner 上没装 grok：
+#   ①（到处都跑）声明的 PATH 必须含 grok 的安装目录 ~/.grok/bin
+#   ②（只在装了 grok 的机器上跑，如 MMV）真拿那个 PATH 去找，必须找得到
+# 第②段跳过时**明说跳过**，不静默 —— 静默跳过的守卫等于没有。
 mk_env
-# 脚本里写的是 $HOME/.grok/bin 这种含变量的字面量，取出来要先展开再验，
-# 否则 env -i 里拿到的是没展开的 "$HOME/..."，必然找不到 —— 那是守卫自己的错，不是实现的。
 DEFAULT_PATH_RAW=$(grep -oE 'XAI_SYNC_PATH:-[^}"]+' "$SYNC" | head -1 | sed 's/XAI_SYNC_PATH:-//')
 DEFAULT_PATH=$(eval printf '%s' "\"${DEFAULT_PATH_RAW}\"")
-if [ -z "$DEFAULT_PATH" ]; then
+if [ -z "$DEFAULT_PATH_RAW" ]; then
   bad "读不出脚本里的默认 PATH（守卫失去锚点）"
-# 底座用 launchd 的默认 PATH（/usr/bin:/bin:/usr/sbin:/sbin），脚本那段前置上去 ——
-# 这才是生产里真实的组合；只给脚本那段会连 sh 都找不到，测的就不是要测的东西了。
-elif env -i PATH="${DEFAULT_PATH}:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$HOME" sh -c 'command -v grok' >/dev/null 2>&1; then
-  ok "默认 PATH 里找得到 grok（launchd 下续期不会因为 PATH 失败）"
 else
-  bad "默认 PATH 里找不到 grok：${DEFAULT_PATH} —— launchd 下续期必然失败，且报错会把人误导成「要重新登录」"
+  case "$DEFAULT_PATH_RAW" in
+    *'$HOME/.grok/bin'*|*"${HOME}/.grok/bin"*)
+      ok "声明的 PATH 含 grok 安装目录 ~/.grok/bin" ;;
+    *)
+      bad "声明的 PATH 不含 ~/.grok/bin：${DEFAULT_PATH_RAW} —— launchd 下必然找不到 grok" ;;
+  esac
+  # 底座用 launchd 的默认 PATH，脚本那段前置上去 —— 这才是生产里真实的组合；
+  # 只给脚本那段会连 sh 都找不到，测的就不是要测的东西了。
+  if [ -x "${HOME}/.grok/bin/grok" ] || command -v grok >/dev/null 2>&1; then
+    if env -i PATH="${DEFAULT_PATH}:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$HOME" sh -c 'command -v grok' >/dev/null 2>&1; then
+      ok "拿这个 PATH 真的找得到 grok（本机已装）"
+    else
+      bad "本机装了 grok，却用声明的 PATH 找不到：${DEFAULT_PATH}"
+    fi
+  else
+    printf '  ⏭️  本机未装 grok，跳过「真找一次」那段（CI runner 属此情况）\n'
+  fi
 fi
 
 # ── ④ CLI 未登录要报死 ───────────────────────────────────────────────────
