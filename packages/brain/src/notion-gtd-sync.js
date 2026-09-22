@@ -12,7 +12,11 @@
  */
 import { notionReq as defaultNotionReq } from './recurring-notion-sync.js';
 import { withBackoff } from './lib/notion-backoff.js';
-import { zhPriorityToBrain } from './lib/qiumi-status-map.js';
+import {
+  QIUMI_STATUS_MAP, ZH_HUMAN_ONLY_STATUSES, zhPriorityToBrain, zhWriteFor,
+} from './lib/qiumi-status-map.js';
+import { blockTask, unblockTask } from './task-updater.js';
+import { recordProjectionCommand } from './projection/commands.js';
 
 export const GTD_DB_ID = process.env.NOTION_GTD_DB_ID || 'c69c40c2-ba63-8271-badf-01c5410d8929';
 export const EN_TASKS_DB = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
@@ -135,6 +139,90 @@ export async function syncZhToEn(pool, token, {
     void now;
   }
   return { created, skipped };
+}
+
+export const PUSH_QIUMI_QUERY = `
+    SELECT id, status, error_message, result,
+           payload->>'notion_zh_page_id' AS zh_page_id,
+           payload->>'notion_page_id'    AS en_page_id
+      FROM tasks
+     WHERE payload->>'notion_zh_page_id' IS NOT NULL
+       AND (notion_props->>'qiumi_pushed_status') IS DISTINCT FROM status
+     ORDER BY updated_at DESC
+     LIMIT 50`;
+
+const resultTextOf = (result) => {
+  const r = result?.receipt ?? result ?? {};
+  return String(r.finalAssistantVisibleText ?? r.text ?? r.summary ?? '').slice(0, 1900);
+};
+const bizToday = () => new Date(Date.now() - 4 * 3600 * 1000).toISOString().slice(0, 10); // 业务日早 4 点切
+
+/** Brain → 中文页（zh 通道 ≤50/轮）+ 英文页 Status。人工态行只更指纹不写页。 */
+export async function pushQiumiStatus(pool, token, { notionReq = defaultNotionReq, today = bizToday } = {}) {
+  const { rows } = await pool.query(PUSH_QIUMI_QUERY);
+  let pushed = 0; let skippedHuman = 0; let skippedNoMap = 0;
+  for (const t of rows) {
+    const map = QIUMI_STATUS_MAP[t.status];
+    if (!map || !map.zh) { skippedNoMap += 1; continue; }
+    const zhPage = await withBackoff(() => notionReq(token, `/pages/${t.zh_page_id}`, 'GET'));
+    const zhStatus = zhPage?.properties?.['状态']?.status?.name ?? null;
+    const stamp = () => pool.query(
+      `UPDATE tasks SET notion_props = COALESCE(notion_props,'{}'::jsonb) || jsonb_build_object('qiumi_pushed_status', $2::text) WHERE id=$1`,
+      [t.id, t.status],
+    );
+    if (ZH_HUMAN_ONLY_STATUSES.includes(zhStatus)) { await stamp(); skippedHuman += 1; continue; }
+    const write = zhWriteFor(t.status, { reason: t.error_message || '', resultText: resultTextOf(t.result), today: today() });
+    await withBackoff(() => notionReq(token, `/pages/${t.zh_page_id}`, 'PATCH', write));
+    if (t.en_page_id && map.en) {
+      await withBackoff(() => notionReq(token, `/pages/${t.en_page_id}`, 'PATCH', { properties: { Status: { status: { name: map.en } } } }));
+    }
+    await stamp();
+    pushed += 1;
+  }
+  return { pushed, skippedHuman, skippedNoMap };
+}
+
+/** 急停三个查询：只读三个人工动作态，且必须 OpenClaw任务号 以 brain: 开头（归属铁律） */
+export const OWNER_STOP_FILTERS = Object.freeze(['淘汰', '阻塞', '委派'].map((s) => Object.freeze({
+  and: [
+    { property: '状态', status: { equals: s } },
+    { property: 'OpenClaw任务号', rich_text: { starts_with: 'brain:' } },
+  ],
+})));
+
+/** 主理人急停：淘汰→cancel_requested、阻塞→owner_hold、从阻塞拖回委派→unblock。 */
+export async function applyOwnerStops(pool, token, { notionReq = defaultNotionReq } = {}) {
+  let cancelled = 0; let held = 0; let resumed = 0;
+  const [discarded, holds, redelegated] = await Promise.all(
+    OWNER_STOP_FILTERS.map((filter) => queryAll(notionReq, token, GTD_DB_ID, filter)),
+  );
+  const taskIdOf = (page) => parseZhPage(page).taskNo.match(BRAIN_MARK_RE)?.[1] ?? null;
+  for (const page of discarded) {
+    const id = taskIdOf(page);
+    if (!id) continue;
+    await recordProjectionCommand(pool, {
+      target: 'notion', externalId: `${page.id}:${page.last_edited_time}`, entityType: 'tasks',
+      entityId: id, commandType: 'cancel_requested', payload: { source: 'qiumi_owner_stop' },
+    });
+    cancelled += 1;
+  }
+  for (const page of holds) {
+    const id = taskIdOf(page);
+    if (!id) continue;
+    const r = await blockTask(id, { reason: 'owner_hold', detail: '主理人在中文表拖到阻塞' });
+    if (r?.success) held += 1;
+  }
+  for (const page of redelegated) {
+    const id = taskIdOf(page);
+    if (!id) continue;
+    const { rows } = await pool.query('SELECT id, status, blocked_reason FROM tasks WHERE id=$1', [id]);
+    const t = rows[0];
+    if (t?.status === 'blocked' && t.blocked_reason === 'owner_hold') {
+      const r = await unblockTask(id);
+      if (r?.success) resumed += 1;
+    }
+  }
+  return { cancelled, held, resumed };
 }
 
 export async function syncEnToZh(pool, token, {
