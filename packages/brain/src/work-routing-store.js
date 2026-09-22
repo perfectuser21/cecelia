@@ -226,6 +226,15 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
     const task = request.task ?? {};
     // 接力棒脊柱：parent_task_id 走真列（458）。合法 uuid + 父存在 + 不指向自己，否则 400 级错误。
     const parentTaskId = await resolveParentTaskId(client, task.parent_task_id ?? request.parent_task_id ?? null);
+    // sequence_no 缺省 = 父下 max+1；无父不查（不给无链任务加查询）
+    let sequenceNo = task.sequence_no ?? null;
+    if (parentTaskId && sequenceNo == null) {
+      const seq = await client.query(
+        'SELECT COALESCE(MAX(sequence_no), 0) + 1 AS n FROM tasks WHERE parent_task_id = $1::uuid',
+        [parentTaskId],
+      );
+      sequenceNo = Number(seq.rows[0]?.n ?? 1);
+    }
     const directContractSeed = normalizeDirectContractSeed(routedRequest, decision);
     const payload = {
       ...(request.metadata || {}),
@@ -335,9 +344,7 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,
          $16,$17,$18,$19,$20,$21,$22,$23,$24,
-         $25::uuid,
-         COALESCE($26::int, CASE WHEN $25::uuid IS NULL THEN NULL
-           ELSE (SELECT COALESCE(MAX(sequence_no), 0) + 1 FROM tasks WHERE parent_task_id = $25::uuid) END)
+         $25::uuid, $26::int
        ) RETURNING *`,
       [
         request.title,
@@ -365,7 +372,7 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         task.phase ?? 'dev',
         task.executor_kind ?? null,
         parentTaskId,
-        task.sequence_no ?? null,
+        sequenceNo,
       ],
     );
     const taskId = taskResult.rows[0].id;
