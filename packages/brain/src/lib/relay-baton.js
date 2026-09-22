@@ -77,7 +77,8 @@ function rootOf(task) {
  * 返回 { tasks: [{id,title}], decisions: [{id,topic}], skipped: [...] }。
  */
 export async function materializeNextSteps(pool, task, handoff, deps = {}) {
-  const create = deps.createRoutedTask || createRoutedTask;
+  // 唯一写入者清单（task-creation-inventory）按字面 createRoutedTask( 识别：测试可注入替身，生产走真函数
+  const create = (pool_, req) => (deps.createRoutedTask ? deps.createRoutedTask(pool_, req) : createRoutedTask(pool_, req));
   const steps = normalizeNextSteps(handoff?.next_steps);
   const out = { tasks: [], decisions: [], skipped: [] };
   if (!steps.length) return out;

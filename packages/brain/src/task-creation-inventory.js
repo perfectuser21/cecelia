@@ -46,6 +46,10 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'proposal.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   // 2026-09-14 Notion 排单接手（双向·pull）：主理人 Notion Tasks 库 Delegated → createRoutedTask
   { module: 'notion-push-sync.js', source: 'inbox', creates_executable_task: true, migration_status: 'routed' },
+  // 2026-09-23 接力棒（主理人拍板）：handoff.next_steps kind=task → 自动登记下一棒挂根；
+  // 「决策」库草案改已决定 → 自动登记「执行拍板」子任务。都是 child 来源、source_id 幂等
+  { module: 'lib/relay-baton.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'notion-inlet-ingest.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   // 2026-09-16 飞书群交办入账（决策 1c6679cd）：群里派给秋米的活 → tasks 账本留痕，
   // 状态只写 completed/blocked，不产可执行任务
   { module: 'feishu-task-ledger.js', source: 'inbox', creates_executable_task: false, migration_status: 'routed' },
