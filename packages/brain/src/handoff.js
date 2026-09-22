@@ -49,6 +49,20 @@ export const BASELINE_DATA_SOURCES = [
   'GET /api/brain/tasks/<task_id>（result.handoff 本体）',
 ];
 
+/** next_steps 允许对象 {kind,title,detail}（接力棒 PR2）；字符串照旧；其余丢弃 */
+function clampNextSteps(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((x) => {
+      if (typeof x === 'string') return x.trim() ? (x.length > MAX_ITEM_LEN ? `${x.slice(0, MAX_ITEM_LEN)}…` : x) : null;
+      if (x && typeof x === 'object' && String(x.title ?? '').trim()) {
+        return { ...x, title: String(x.title).slice(0, MAX_ITEM_LEN) };
+      }
+      return null;
+    })
+    .filter(Boolean)
+    .slice(0, MAX_ITEMS);
+}
+
 function clampList(list) {
   return (Array.isArray(list) ? list : [])
     .filter((x) => typeof x === 'string' && x.trim())
@@ -69,7 +83,7 @@ export function buildHandoff(input = {}) {
     verdict: input.verdict ?? null,
     done: clampList(input.done),
     not_done: clampList(input.not_done),
-    next_steps: clampList(input.next_steps),
+    next_steps: clampNextSteps(input.next_steps),
     data_sources: dataSources.length ? dataSources : clampList(BASELINE_DATA_SOURCES),
     decision_refs: clampList(input.decision_refs),
     artifacts: {
@@ -177,6 +191,18 @@ export async function saveHandoff({ pool }, handoff) {
   );
   // task 不存在 → UPDATE 影响 0 行：抛错（也就不写镜像），防"DB 没写成却有镜像"的分裂态
   if (res.rowCount === 0) throw new Error(`saveHandoff: task not found: ${handoff.task_id}`);
+  // 接力棒：已 completed 的任务补写 handoff → 立刻落下一棒（幂等；synthesized 的不再递归）
+  if (!handoff.synthesized) {
+    try {
+      const { rows: st } = await pool.query('SELECT id, title, status, priority, task_type, payload, parent_task_id FROM tasks WHERE id = $1::uuid', [handoff.task_id]);
+      if (st[0]?.status === 'completed') {
+        const { materializeNextSteps } = await import('./lib/relay-baton.js');
+        await materializeNextSteps(pool, st[0], handoff);
+      }
+    } catch (err) {
+      console.warn(`[handoff] 接棒失败（不阻塞 saveHandoff）: ${err.message}`);
+    }
+  }
   // T10 统一收件箱：DB 主写成功后顺手推一条 atom（吞错，不阻塞镜像与返回；
   // 与 relay PATCH 路径共用 pushHandoffAtom 保证同口径）
   await pushHandoffAtom(pool, handoff.task_id, handoff);
@@ -302,7 +328,7 @@ export function formatHandoffsForPrompt(rows) {
     const lines = [`### Handoff ${i + 1}: ${h.title || r.title || r.id}（verdict=${h.verdict ?? 'N/A'}）`];
     for (const d of (h.done || []).slice(0, 3)) lines.push(`- ✅ ${d}`);
     for (const n of (h.not_done || []).slice(0, 2)) lines.push(`- ❌ ${n}`);
-    for (const s of (h.next_steps || []).slice(0, 2)) lines.push(`- ➡️ ${s}`);
+    for (const s of (h.next_steps || []).slice(0, 2)) lines.push(`- ➡️ ${typeof s === 'string' ? s : `[${s.kind || 'note'}] ${s.title || ''}`}`);
     return lines.join('\n');
   });
   let text = `\n\n## 最近 Handoff（本 line 交接，规划时不得与已完成项重复、优先响应 next_steps）\n${blocks.join('\n')}`;

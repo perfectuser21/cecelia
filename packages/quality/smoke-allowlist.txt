@@ -250,6 +250,7 @@ quality-test-pyramid-smoke.sh
 radius-rerun-gate-smoke.sh
 ratchet-registry-smoke.sh
 registry-photo-layer-smoke.sh
+relay-baton-smoke.sh
 relay-runs-filter-smoke.sh
 relay-runs-patch-shortid-smoke.sh
 relay-runs-since-smoke.sh

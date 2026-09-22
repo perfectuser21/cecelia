@@ -81,10 +81,11 @@ describe('saveHandoff', () => {
   });
 
   it('先写 DB（jsonb 合并 UPDATE）再写 markdown 镜像', async () => {
-    const pool = { query: vi.fn(async () => ({ rowCount: 1 })) };
+    const pool = { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) };
     const h = buildHandoff({ task_id: TASK_ID, title: 't' });
     const r = await saveHandoff({ pool }, h);
-    expect(pool.query).toHaveBeenCalledTimes(1);
+    // 接力棒 PR2 起：UPDATE 之后多一次状态探针（已 completed 才接棒）；第一条仍必须是 UPDATE
+    expect(pool.query.mock.calls.length).toBeGreaterThanOrEqual(1);
     const [sql, params] = pool.query.mock.calls[0];
     // 接力棒 458 起：同一条 UPDATE 既覆盖 result.handoff（最新）也追加 result.handoff_log（历史）
     expect(sql).toMatch(/UPDATE tasks\s+SET result = COALESCE\(result, '\{\}'::jsonb\)\s+\|\| jsonb_build_object\('handoff', \$2::jsonb\)/);
