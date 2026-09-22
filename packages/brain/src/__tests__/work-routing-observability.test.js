@@ -4,6 +4,7 @@ import {
   loadWorkRoutingObservability,
   summarizeWorkRouting,
 } from '../work-routing-observability.js';
+import { GP_SCOPE_TASK_TYPES } from '../lib/task-type-registry.js';
 
 describe('work routing observability', () => {
   it('reports receipt coverage, direct dev and legacy exemptions', () => {
@@ -40,7 +41,7 @@ describe('work routing observability', () => {
     });
     expect(query.mock.calls[0][0]).toContain('work_routing_receipts');
     expect(query.mock.calls[0][0]).toContain('cecelia_events');
-    expect(query.mock.calls[0][1]).toEqual(['3']);
+    expect(query.mock.calls[0][1]).toEqual(['3', GP_SCOPE_TASK_TYPES]);
   });
 
   it('loads per-task receipt, Map and Impact Contract audit projection', async () => {

@@ -113,27 +113,39 @@ describe('selectNextDispatchableTask: excludeIds 参数', () => {
     vi.clearAllMocks();
   });
 
-  it('有 excludeIds 时 SQL 包含 AND t.id != ALL 条件', async () => {
+  it('有 excludeIds 时 SQL 包含 AND t.id != ALL 条件，且 $3 绑定注册表派生的 TICK_DISPATCH_EXCLUDED', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
 
+    const { TICK_DISPATCH_EXCLUDED } = await import('../lib/task-type-registry.js');
     const { selectNextDispatchableTask } = await import('../tick.js');
     const result = await selectNextDispatchableTask(['goal-1'], ['exclude-1', 'exclude-2']);
 
     const call = mockQuery.mock.calls[0];
     expect(call[0]).toContain('AND t.id != ALL($2)');
-    expect(call[1]).toEqual([['goal-1'], ['exclude-1', 'exclude-2']]);
+    // dispatch-helpers.js 在 excludeClause 之后固定再绑一个 task_type 黑名单参数
+    // （TICK_DISPATCH_EXCLUDED，铁律 76cb816c 注册表派生，见 dispatch-helpers.js:69）——
+    // 有 excludeIds 时它排在第 3 位，$3::text[]。钉住 SQL 里绑的确实是 $3、且绑定值严格
+    // 等于注册表当前派生的 TICK_DISPATCH_EXCLUDED（不是只验"有个数组"）。
+    expect(call[0]).toContain('AND NOT (t.task_type = ANY($3::text[]))');
+    expect(call[1][0]).toEqual(['goal-1']);
+    expect(call[1][1]).toEqual(['exclude-1', 'exclude-2']);
+    expect(call[1][2]).toEqual(TICK_DISPATCH_EXCLUDED);
     expect(result).toBeNull();
   });
 
-  it('没有 excludeIds 时 SQL 不包含排除条件', async () => {
+  it('没有 excludeIds 时 SQL 不包含排除条件，且 $2 绑定注册表派生的 TICK_DISPATCH_EXCLUDED', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
 
+    const { TICK_DISPATCH_EXCLUDED } = await import('../lib/task-type-registry.js');
     const { selectNextDispatchableTask } = await import('../tick.js');
     const result = await selectNextDispatchableTask(['goal-1']);
 
     const call = mockQuery.mock.calls[0];
     expect(call[0]).not.toContain('AND t.id != ALL');
-    expect(call[1]).toEqual([['goal-1']]);
+    // 没有 excludeIds 时黑名单参数占位前移到第 2 位，$2::text[]。
+    expect(call[0]).toContain('AND NOT (t.task_type = ANY($2::text[]))');
+    expect(call[1][0]).toEqual(['goal-1']);
+    expect(call[1][1]).toEqual(TICK_DISPATCH_EXCLUDED);
     expect(result).toBeNull();
   });
 

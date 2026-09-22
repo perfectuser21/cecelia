@@ -17,6 +17,7 @@ import { generateLearningEmbeddingAsync } from './embedding-service.js';
 import { generateL0Summary } from './memory-utils.js';
 import { callLLM } from './llm-caller.js';
 import { pushCaptureAtom } from './capture-inbox.js';
+import { EXEC_STATUS_US_TASK_TYPES } from './lib/task-type-registry.js';
 
 // Strategy adjustment whitelist (safety measure)
 const ADJUSTABLE_PARAMS = {
@@ -568,8 +569,8 @@ export async function evaluateStrategyEffectiveness(strategyKey, days = 7) {
         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_tasks
       FROM tasks
       WHERE created_at >= $1 AND created_at < $2
-        AND task_type IN ('dev', 'review', 'qa', 'audit')
-    `, [baselineStart, baselineEnd]);
+        AND task_type = ANY($3::text[])
+    `, [baselineStart, baselineEnd, EXEC_STATUS_US_TASK_TYPES]);
 
     const baselineTotal = parseInt(baselineResult.rows[0].total_tasks);
     const baselineCompleted = parseInt(baselineResult.rows[0].completed_tasks);
@@ -587,8 +588,8 @@ export async function evaluateStrategyEffectiveness(strategyKey, days = 7) {
         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_tasks
       FROM tasks
       WHERE created_at >= $1 AND created_at < $2
-        AND task_type IN ('dev', 'review', 'qa', 'audit')
-    `, [postStart, postEnd]);
+        AND task_type = ANY($3::text[])
+    `, [postStart, postEnd, EXEC_STATUS_US_TASK_TYPES]);
 
     const postTotal = parseInt(postResult.rows[0].total_tasks);
     const postCompleted = parseInt(postResult.rows[0].completed_tasks);

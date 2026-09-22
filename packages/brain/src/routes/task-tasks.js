@@ -17,6 +17,7 @@ import { queueLaneSql } from '../task-queue-lanes.js';
 import { normalizeChangeKind, CHANGE_KINDS } from '../impact-contract/change-kind.js';
 import { registerTaskPatchRoute } from './task-task-patch.js';
 import { createRoutedTask } from '../work-routing-store.js';
+import { CODING_MUTATION_TASK_TYPES as _CM } from '../lib/task-type-registry.js';
 
 const router = Router();
 
@@ -24,10 +25,8 @@ const router = Router();
 // 避免两套终态定义产生语义分裂）
 const TERMINAL_STATUSES = ['completed', 'cancelled'];
 const ACTIVE_DEDUP_STATUSES = ['queued', 'in_progress', 'blocked', 'paused'];
-const CODING_MUTATION_TASK_TYPES = new Set([
-  'dev', 'codex_dev', 'initiative_execute', 'sprint_generate', 'sprint_fix',
-  'harness_generate', 'harness_fix', 'pipeline_rescue', 'harness_initiative',
-]);
+// 名单见 lib/task-type-registry.js（CODING_MUTATION_TASK_TYPES）。
+const CODING_MUTATION_TASK_TYPES = new Set(_CM);
 
 // POST /tasks — 创建新任务（供外部 agent 如 /architect 注册任务到 Brain 队列）
 router.post('/', async (req, res) => {

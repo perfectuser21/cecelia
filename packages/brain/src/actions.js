@@ -4,6 +4,10 @@ import { broadcastTaskState } from './task-updater.js';
 import { detectDomain } from './domain-detector.js';
 import { getDomainRole } from './role-registry.js';
 import { createRoutedTask } from './work-routing-store.js';
+import {
+  CONTENT_TASK_TYPES as _C, RESEARCH_TASK_TYPES as _R, REVIEW_TASK_TYPES as _V, CODING_TASK_TYPES as _K,
+  NO_GOAL_TASK_TYPES,
+} from './lib/task-type-registry.js';
 
 const N8N_API_URL = process.env.N8N_API_URL || 'http://localhost:5679';
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
@@ -15,35 +19,19 @@ const N8N_API_KEY = process.env.N8N_API_KEY || '';
  * @returns {boolean} - True if system task
  */
 function isSystemTask(task_type, trigger_source) {
-  // System task types that don't need goal association
-  const systemTypes = ['research', 'intent_expand'];
+  // System task types that don't need goal association — 名单见 lib/task-type-registry.js（NO_GOAL_TASK_TYPES）。
 
   // System trigger sources that don't need goal association
   const systemSources = ['manual', 'test', 'watchdog', 'circuit_breaker', 'cortex', 'self_drive', 'auto_fix', 'execution_callback_harness', 'harness_watcher'];
 
-  return systemTypes.includes(task_type) || systemSources.includes(trigger_source);
+  return NO_GOAL_TASK_TYPES.includes(task_type) || systemSources.includes(trigger_source);
 }
 
-const CONTENT_TASK_TYPES = new Set([
-  'content-pipeline', 'content-research', 'content-copywriting', 'content-copy-review',
-  'content-generate', 'content-image-review', 'content-export', 'content_publish',
-]);
-const RESEARCH_TASK_TYPES = new Set([
-  'research', 'explore', 'knowledge', 'talk', 'strategy_session', 'intent_expand',
-  'suggestion_plan', 'scope_plan', 'project_plan', 'okr_initiative_plan',
-  'okr_scope_plan', 'okr_project_plan', 'initiative_plan', 'dept_heartbeat',
-  'strategist_decision',
-]);
-const REVIEW_TASK_TYPES = new Set([
-  'review', 'qa', 'audit', 'codex_qa', 'codex_test_gen', 'pr_review', 'code_review',
-  'decomp_review', 'initiative_verify', 'architecture_design', 'architecture_scan',
-  'arch_review', 'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
-  'ci_patrol', 'staging_e2e', 'harness_evaluate', 'harness_final_e2e',
-]);
-const CODING_TASK_TYPES = new Set([
-  'dev', 'codex_dev', 'initiative_execute', 'sprint_generate', 'sprint_fix',
-  'harness_generate', 'harness_fix', 'harness_initiative', 'pipeline_rescue',
-]);
+// 名单见 lib/task-type-registry.js（CONTENT_TASK_TYPES / RESEARCH_TASK_TYPES / REVIEW_TASK_TYPES / CODING_TASK_TYPES）。
+const CONTENT_TASK_TYPES = new Set(_C);
+const RESEARCH_TASK_TYPES = new Set(_R);
+const REVIEW_TASK_TYPES = new Set(_V);
+const CODING_TASK_TYPES = new Set(_K);
 
 function routeSource(triggerSource, explicitSource) {
   if (explicitSource) return explicitSource;

@@ -17,6 +17,7 @@ import { checkAnchor } from '../anchor-check.js';
 import { blockTask } from '../task-updater.js';
 import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
 import { resolveAllowedTransitions } from '../lib/task-status-transitions.js';
+import { getTaskType } from '../lib/task-type-registry.js';
 
 const router = Router();
 
@@ -384,7 +385,10 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
     // Validate status value if provided
     if (status) {
-      const allowedStatuses = ['in_progress', 'completed', 'failed'];
+      // completed_no_pr 补进来（任务简报未列此处，PR1 走查发现）：这道闸卡在转移表校验
+      // 之前，target status 不在这个白名单里会先 400 INVALID_STATUS 短路——不补的话
+      // openclaw-agent 面永远到不了 completed_no_pr，转移表和下面的 409 分流都是死代码。
+      const allowedStatuses = ['in_progress', 'completed', 'completed_no_pr', 'failed'];
       if (!allowedStatuses.includes(status)) {
         return res.status(400).json({
           success: false,
@@ -452,6 +456,20 @@ router.patch('/tasks/:task_id', async (req, res) => {
           allowed,
         });
       }
+    }
+
+    // 非产 PR 的执行面（openclaw-agent）不许写 completed：完成闸按 PR 语义设计，
+    // 这类任务的销账态是 completed_no_pr。只限该执行面——talk/research 等存量类型
+    // 今天 PATCH completed 合法，不动。
+    if (status === 'completed' && !isStatusNoop && getTaskType(task.task_type)?.surface === 'openclaw-agent') {
+      return res.status(409).json({
+        success: false,
+        error: `task_type '${task.task_type}' 不产 PR，完成态必须写 completed_no_pr`,
+        code: 'USE_COMPLETED_NO_PR',
+        current_status: currentStatus,
+        requested_status: status,
+        hint: "PATCH {\"status\":\"completed_no_pr\"}",
+      });
     }
 
     // 完成态前置条件硬闸（三案实证漏洞，2026-07-19）
@@ -530,7 +548,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
       params.push(JSON.stringify([historyEntry]));
       // Clear claim on terminal states — prevents zombie locks where claimed_by residue
       // blocks selectNextDispatchableTask (which filters claimed_by IS NULL)
-      if (status === 'failed' || status === 'completed') {
+      if (status === 'failed' || status === 'completed' || status === 'completed_no_pr') {
         setClauses.push('claimed_by = NULL');
         setClauses.push('claimed_at = NULL');
       }
@@ -554,7 +572,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
     if (status === 'in_progress') {
       setClauses.push('started_at = COALESCE(started_at, NOW())');
     }
-    if (status === 'completed') {
+    if (status === 'completed' || status === 'completed_no_pr') {
       setClauses.push('started_at = COALESCE(started_at, completed_at, NOW())');
       setClauses.push('completed_at = COALESCE(completed_at, NOW())');
     }

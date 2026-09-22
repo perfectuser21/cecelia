@@ -3,6 +3,7 @@ import { ensureMapImpactPreflight } from './preflight/map-impact-contract.js';
 import { randomUUID } from 'node:crypto';
 import { assertRouteSnapshotLaunchAuthority } from './route-snapshot-authority.js';
 import { resolvePlannerRecoveryRunAuthority } from './planner-recovery-run-authority.js';
+import { KERNEL_RUN_ELIGIBLE_TASK_TYPES } from '../lib/task-type-registry.js';
 
 const ACTIVE_PHASES = new Set([
   'planning',
@@ -20,10 +21,8 @@ const CREATED_SOURCES = new Set([
   'historical_reconstruction',
 ]);
 
-const ELIGIBLE_TASK_TYPES = new Set([
-  'harness_initiative',
-  'golden_path_proposal',
-]);
+// 名单见 lib/task-type-registry.js（KERNEL_RUN_ELIGIBLE_TASK_TYPES）。
+const ELIGIBLE_TASK_TYPES = new Set(KERNEL_RUN_ELIGIBLE_TASK_TYPES);
 
 const TERMINAL_TASK_STATUSES = new Set([
   'completed',

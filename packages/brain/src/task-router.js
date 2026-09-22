@@ -11,149 +11,25 @@
 
 import { DOMAIN_TO_ROLE, ROLES } from './role-registry.js';
 import { handleIntervention } from './harness-intervention-handler.js';
+import {
+  VALID_TASK_TYPES, ASYNC_CALLBACK_TASK_TYPES,
+  SKILL_WHITELIST as SKILL_WHITELIST_REGISTRY,
+  LOCATION_MAP as LOCATION_MAP_REGISTRY,
+  TASK_REQUIREMENTS as TASK_REQUIREMENTS_REGISTRY,
+} from './lib/task-type-registry.js';
 
-// Valid task types (for failure detection)
-const VALID_TASK_TYPES = [
-  'dev', 'review', 'talk', 'data', 'qa', 'audit',
-  'research', 'explore', 'knowledge',
-  'codex_qa', 'codex_dev', 'codex_test_gen', 'code_review', 'decomp_review',
-  'crystallize', 'crystallize_scope', 'crystallize_forge', 'crystallize_verify', 'crystallize_register',
-  'pr_review',
-  'dept_heartbeat', 'initiative_plan', 'initiative_verify',
-  'initiative_execute',
-  'suggestion_plan', 'architecture_design', 'architecture_scan',
-  'arch_review', 'strategy_session',
-  // 前置审查（Intent Expansion）
-  'intent_expand',
-  // 内容工厂 Pipeline（Content Factory）
-  'content-pipeline', 'content-research', 'content-copywriting', 'content-copy-review', 'content-generate', 'content-image-review', 'content-export',
-  'content_publish',  // 发布阶段（export 完成后逐平台创建，executor.js 按 payload.platform 路由到对应 publisher skill）
-  // Codex Gate 审查任务类型
-  'prd_review', 'spec_review', 'code_review_gate', 'initiative_review',
-  // Harness v3.x 旧类型（向后兼容）
-  'sprint_planner', 'sprint_contract_propose', 'sprint_contract_review',
-  'sprint_generate', 'sprint_fix', 'sprint_report',
-  // Harness v4.0：sprint_* → harness_*，新增 CI/Deploy watch
-  // 注：harness_planner 已退役（PR retire-harness-planner，2026-04-26），
-  // subsumed by harness_initiative full graph；触达即被 _RETIRED_HARNESS_TYPES
-  // 标 terminal_failure（见 executor.js）。
-  'harness_contract_propose', // Layer 2a: Generator 提合同草案
-  'harness_contract_review',  // Layer 2b: Evaluator 挑战合同 → APPROVED/REVISION
-  'harness_generate',         // Layer 3a: Generator 写代码
-  'harness_ci_watch',         // Layer 3b: Brain tick 轮询 CI（内联，不派 agent）
-  'harness_fix',              // Layer 3d: Generator 修复
-  'harness_deploy_watch',     // Layer 3e: Brain tick 轮询 CD（内联，不派 agent）
-  'harness_report',           // Layer 4: 最终报告
-  // Scope 层飞轮（Project→Scope→Initiative 三层拆解）
-  'scope_plan', 'project_plan',
-  // OKR 新表飞轮（okr_projects→okr_scopes→okr_initiatives 三层拆解）
-  'okr_initiative_plan', 'okr_scope_plan', 'okr_project_plan',
-  // 发布后数据回收（Brain 内部处理，不走外部 executor）
-  'platform_scraper',
-  // Harness v2 新类型（M1）
-  'harness_initiative',    // 阶段 A 入口（一个 Initiative 一条）
-  'harness_task',          // 阶段 B 单 Task（内部状态机，不派 agent）
-  'harness_final_e2e',     // 阶段 C 最终 E2E 验收
-  'harness_evaluate',    // Evaluator 对抗性功能验收（已在 SKILL_WHITELIST）
-  'harness_intervention', // 人工干预任务类型（US 本机处理）
-  'staging_e2e',          // Slice9: staging E2E native 执行（executor 短路），补登防未知类型拒
-  'ci_patrol',            // CI/CD 巡检员：每日按 line 报 4 硬伤 + 棘轮 guard（daily-review-scheduler triggerCiPatrol）
-  'golden_path_proposal',  // GP loop：AI 自提 Golden Path 提案（圈选后走 relay 跑 capability-controller）
-  'strategist_decision',  // Line 军师决策：task 落终态后按 line 派发（line-strategist-dispatch-plugin.js）
-];
+// Valid task types (for failure detection) — 名单见 lib/task-type-registry.js（VALID_TASK_TYPES）。
+// 注：harness_planner 已退役（PR retire-harness-planner，2026-04-26），
+// subsumed by harness_initiative full graph；触达即被 _RETIRED_HARNESS_TYPES
+// 标 terminal_failure（见 executor.js）。下方多处"见 VALID_TASK_TYPES 注释"指的就是这段。
 
 // 支持 P2P 异步回调的任务类型
 // 当飞书 P2P 创建这些类型的任务后，自动注册 task_interest 订阅，任务完成时回调用户
-// 扩展新能力：在此 Set 中加一行，无需改 ops.js
-const ASYNC_CALLBACK_TYPES = new Set([
-  'explore',   // 信息探查（如"zenithjoy 现在有什么"）
-  'research',  // 深度调研（如"帮我调研 XXX"）
-]);
+// 扩展新能力：改 lib/task-type-registry.js 的 ASYNC_CALLBACK_TASK_TYPES 派生集合，无需改 ops.js
+const ASYNC_CALLBACK_TYPES = new Set(ASYNC_CALLBACK_TASK_TYPES);
 
-// Skill whitelist based on task type
-const SKILL_WHITELIST = {
-  'dev': '/dev',
-  'review': '/code-review',
-  'talk': '/cecelia',
-  'data': '/sync-hk',
-  'qa': '/code-review',
-  'audit': '/code-review',
-  'research': '/research',
-  'explore': '/explore',
-  'knowledge': '/knowledge',
-  'codex_qa': '/codex',
-  'codex_dev': '/dev',  // Codex Provider 跑 /dev — 与 dev 相同 skill，通过 runner.sh 执行
-  'crystallize': '/playwright',         // crystallize 编排入口 — 西安 M4 CDP 控制 PC
-  'crystallize_scope': '/playwright',   // Scope 阶段：定义目标 + DoD
-  'crystallize_forge': '/playwright',   // Forge 阶段：Codex 探索写脚本
-  'crystallize_verify': '/playwright',  // Verify 阶段：无 LLM 验证3次
-  'crystallize_register': '/playwright', // Register 阶段：注册到 SKILL.md
-  'codex_test_gen': '/codex-test-gen',  // Codex 自动生成测试 — 西安 M4 扫描覆盖率低模块
-  'pr_review': '/review',  // 异步 PR 审查 → 西安 Codex 独立 LLM 审查
-  'code_review': '/code-review',
-  'decomp_review': '/decomp-check',
-  'dept_heartbeat': '/cecelia',
-  'initiative_plan': '/decomp',
-  'initiative_verify': '/arch-review verify',
-  'suggestion_plan': '/plan',
-  'architecture_design': '/architect design',
-  'architecture_scan': '/architect scan',
-  'arch_review': '/arch-review review',
-  'strategy_session': '/strategy-session',
-  // 前置审查（Intent Expansion）
-  'intent_expand': '/intent-expand',  // 意图扩展 → US 本机，查 OKR/Vision 链路补全 PRD
-  // Initiative 执行
-  'initiative_execute': '/dev',       // Initiative 执行 → US 本机，/dev 全流程
-  // 内容工厂 Pipeline（Content Factory）
-  'content-pipeline': '/content-creator',
-  'content-research': '/notebooklm',
-  'content-copywriting': '/content-creator',
-  'content-copy-review': '/content-creator',
-  'content-generate': '/content-creator',
-  'content-image-review': '/content-creator',
-  'content-export': '/content-creator',
-  'content_publish': '/content-creator',  // 发布阶段 → executor 按 payload.platform 路由到对应 publisher skill
-  // Codex Gate 审查任务类型
-  'prd_review': '/prd-review',              // PRD 审查
-  'spec_review': '/spec-review',            // Spec 审查
-  'code_review_gate': '/code-review-gate',  // 代码质量门禁
-  'initiative_review': '/initiative-review', // Initiative 整体审查
-  // Harness v3.x 旧类型（向后兼容）
-  'sprint_planner': '/sprint-planner',
-  'sprint_contract_propose': '/sprint-contract-proposer',
-  'sprint_contract_review': '/sprint-contract-reviewer',
-  'sprint_generate': '/dev',
-  'sprint_fix': '/dev',
-  'sprint_report': '/sprint-report',
-  // Harness v4.0 新类型
-  // 注：harness_planner 已退役（PR retire-harness-planner，2026-04-26），见 VALID_TASK_TYPES 注释
-  'harness_contract_propose': '/harness-contract-proposer',   // Layer 2a: 提合同草案
-  'harness_contract_review': '/harness-contract-reviewer',    // Layer 2b: 挑战合同
-  'harness_generate': '/harness-generator',                   // Layer 3a: Generator 写代码
-  'ci_patrol': '/ci-patrol',
-  'strategist_decision': '/line-strategist',
-  'harness_ci_watch': '/_internal',                           // Brain tick 内联处理（不派 agent）
-  'harness_fix': '/harness-generator',                        // Layer 3d: Generator 修复（同 generator skill）
-  'harness_deploy_watch': '/_internal',                       // Brain tick 内联处理（不派 agent）
-  'harness_evaluate': '/harness-evaluator',                   // FIX (P0) Layer 3e: Evaluator 对抗性功能验收（运行中应用 curl/Playwright）
-  'harness_report': '/harness-report',                        // Layer 4: 最终报告
-  'staging_e2e': '/_internal',                                // Slice9: native 执行（executor 短路），不派 agent
-  'harness_intervention': '/_internal',                       // 人工干预任务类型（Brain 内部处理）
-  // Scope 层飞轮（Project→Scope→Initiative）
-  'scope_plan': '/decomp',        // Scope 内规划下一个 Initiative
-  'project_plan': '/decomp',      // Project 内规划下一个 Scope
-  // OKR 新表飞轮（okr_projects→okr_scopes→okr_initiatives）
-  'okr_initiative_plan': '/decomp',  // OKR Scope 内规划下一个 Initiative
-  'okr_scope_plan': '/decomp',       // OKR Project 内规划下一个 Scope
-  'okr_project_plan': '/decomp',     // OKR Project 层完成后规划
-  // 发布后数据回收（Brain 内部处理，声明 skill 避免路由校验失败）
-  'platform_scraper': '/media-scraping',
-  // Harness v2 新类型（M1 复用现有 skill，M2/M5 会重写）
-  'harness_initiative': '/harness-planner',   // 阶段 A — M1 复用 planner skill
-  'harness_task': '/_internal',               // 阶段 B — Brain tick 内部状态机，不派 agent
-  'harness_final_e2e': '/harness-evaluator',  // 阶段 C — M1 复用 evaluator skill
-  'golden_path_proposal': '/capability-controller', // GP 提案 — relay 实际 spawn skill 由 harness-skill-relay 映射
-};
+// Skill whitelist based on task type — 名单见 lib/task-type-registry.js（SKILL_WHITELIST）。
+const SKILL_WHITELIST = SKILL_WHITELIST_REGISTRY;
 
 // Internal task handlers — Brain tick 内联处理的 task_type（skill='/_internal'），
 // 不派外部 agent，由 Brain 进程内的 handler 函数直接处理。
@@ -221,168 +97,18 @@ const FEATURE_PATTERNS = [
   /架构/i
 ];
 
-// Location mapping based on task_type
+// Location mapping based on task_type — 名单见 lib/task-type-registry.js（LOCATION_MAP）。
 // US = Claude Code (Opus/Sonnet), HK = MiniMax + N8N
-const LOCATION_MAP = {
-  'dev': 'us',        // 写代码 → US (Nobel + Opus + /dev)
-  'review': 'us',     // 代码审查 → US (Sonnet + /review)
-  'qa': 'us',         // QA → US (Sonnet)
-  'audit': 'us',      // 审计 → US (Sonnet)
-  'codex_qa': 'xian',  // Codex 免疫检查 → 西安 Mac mini (Codex CLI via codex-bridge)
-  'codex_dev': 'xian', // Codex /dev → 西安 Mac mini (runner.sh + devloop-check.sh SSOT)
-  // crystallize 能力蒸馏流水线 → 西安 M4 (playwright-runner.sh + CDP → PC)
-  'crystallize': 'xian',
-  'crystallize_scope': 'xian',
-  'crystallize_forge': 'xian',
-  'crystallize_verify': 'xian',
-  'crystallize_register': 'xian',
-  'codex_test_gen': 'xian',   // 自动生成测试 → 西安 M4 (Codex 扫描覆盖率低模块 + 生成测试)
-  'pr_review': 'xian',  // 异步 PR 审查 → 西安 Mac mini (MiniMax via Codex CLI, 独立账号)
-  'code_review': 'us',      // 代码审查 → US 本机 Codex (需读代码上下文，/code-review skill)
-  'decomp_review': 'us',    // 拆解审查 → US 本机 Codex (需读代码结构，Vivian 角色)
-  'dept_heartbeat': 'us',   // 部门心跳 → US (MiniMax-M2.5-highspeed via cecelia-run)
-  'initiative_plan': 'us',        // Initiative 规划 → US 本机 Codex (需读现有代码，/decomp skill)
-  'initiative_verify': 'us',      // Initiative 验收 → US 本机 Codex (需核查代码实现，/arch-review verify)
-  'suggestion_plan': 'xian',      // Suggestion 层级识别 → 西安 Codex (B類纯策略，/plan skill)
-  'architecture_design': 'us',    // Architecture 设计 → US 本机 Codex (需读代码，/architect design)
-  'architecture_scan': 'us',      // 系统扫描 → US 本机 Codex (需读代码，/architect scan)
-  'arch_review': 'us',             // 架构巡检 → US 本机（需读本地代码+DB，/arch-review review）
-  'strategy_session': 'xian',     // 战略会议 → 西安 Codex (B類，/strategy-session)
-  'intent_expand': 'us',          // 意图扩展 → US 本机（需读本地 Brain DB，补全 PRD）
-  'initiative_execute': 'us',     // Initiative 执行 → US 本机（/dev 全流程，A類）
-  'explore': 'xian',  // 快速调研 → 西安 Codex (general，任意可用机器)
-  'knowledge': 'xian',  // 知识记录 → 西安 Codex (B類，/knowledge skill)
-  'talk': 'xian',     // 对话 → 西安 Codex (general，任意可用机器)
-  'research': 'xian', // 深度调研 → 西安 Codex (general，任意可用机器)
-  'data': 'xian',     // 数据处理 → 西安 Codex (general)
-  // 内容工厂 Pipeline（Content Factory）→ 西安 Codex 执行
-  'content-pipeline': 'xian',  // Pipeline 编排入口 → 西安 Codex
-  'content-research': 'xian',  // 调研阶段 → 西安 (/notebooklm)
-  'content-copywriting': 'xian', // 文案生成 → 西安 (/content-creator)
-  'content-copy-review': 'xian', // 文案审核 → 西安（纯规则检查）
-  'content-generate': 'xian',  // 图片生成 → 西安 (/content-creator)
-  'content-image-review': 'xian', // 图片审核 → 西安（规则+视觉检查）
-  'content-export': 'xian',    // 导出阶段 → 西安 (card-renderer.mjs)
-  'content_publish': 'us',     // 发布阶段 → US 本机（publisher skills 需要浏览器 CDP，在 US Mac mini 跑）
-  // Harness v3.x 旧类型（向后兼容）→ US 本机
-  'sprint_planner': 'us',
-  'sprint_contract_propose': 'us',
-  'sprint_contract_review': 'us',
-  'sprint_generate': 'us',
-  'sprint_fix': 'us',
-  'sprint_report': 'us',
-  // Harness v4.0 → US 本机
-  // 注：harness_planner 已退役（PR retire-harness-planner，2026-04-26），见 VALID_TASK_TYPES 注释
-  'harness_contract_propose': 'us',   // Layer 2a: Generator 提合同草案 → US
-  'harness_contract_review': 'us',    // Layer 2b: Evaluator 挑战合同 → US
-  'harness_generate': 'us',           // Layer 3a: Generator 写代码 → US
-  'ci_patrol': 'us',  // CI 巡检 → US 本机（需读本地 repo + gh + Brain DB）
-  'strategist_decision': 'us',  // line-strategist 需读 git 历史 + decisions API → US
-  'harness_ci_watch': 'us',           // Layer 3b: CI 监控（Brain tick 内联处理）→ US
-  'harness_fix': 'us',                // Layer 3d: Generator 修复 → US
-  'harness_deploy_watch': 'us',       // Layer 3e: Deploy 监控（Brain tick 内联处理）→ US
-  'harness_report': 'us',             // Layer 4: 最终报告 → US
-  // Codex Gate 审查任务类型 → US 本机（需读 worktree diff + Brain DB）
-  'prd_review': 'us',            // PRD 审查 → US 本机 Codex
-  'spec_review': 'us',           // Spec 审查 → US 本机 Codex
-  'code_review_gate': 'us',      // 代码质量门禁 → US 本机 Codex
-  'initiative_review': 'us',     // Initiative 整体审查 → US 本机 Codex
-  // Scope 层飞轮
-  'scope_plan': 'xian',            // Scope 规划 → 西安 Codex (B類，/decomp skill)
-  'project_plan': 'xian',          // Project 规划 → 西安 Codex (B類，/decomp skill)
-  // OKR 新表飞轮
-  'okr_initiative_plan': 'xian',   // OKR Initiative 规划 → 西安 Codex (B類，/decomp skill)
-  'okr_scope_plan': 'xian',        // OKR Scope 规划 → 西安 Codex (B類，/decomp skill)
-  'okr_project_plan': 'xian',      // OKR Project 规划 → 西安 Codex (B類，/decomp skill)
-  'pipeline_rescue': 'us',        // Pipeline 救援 → US 本机（需读 .dev-mode + worktree）
-  'platform_scraper': 'us',       // 数据采集任务 → Brain 内部处理（不走外部 executor，见 post-publish-data-collector.js）
-  // Harness v2 → US 本机
-  'harness_initiative': 'us',     // 阶段 A 入口（复用 planner skill 运行 /dev）
-  'golden_path_proposal': 'us',   // GP 提案 → US 本机 relay（同 harness_initiative 路径）
-  'harness_task': 'us',           // 阶段 B 单 Task（tick 内部，US Brain 处理）
-  'harness_final_e2e': 'us',      // 阶段 C 最终 E2E（复用 evaluator skill）
-  'harness_evaluate': 'us',      // Layer 3e: Evaluator 对抗性功能验收 → US
-  'harness_intervention': 'us', // 人工干预任务类型 → US 本机处理
-  'staging_e2e': 'us',          // Slice9: staging E2E native 执行 → US 本机
-};
+const LOCATION_MAP = LOCATION_MAP_REGISTRY;
 
 // Default location
 const DEFAULT_LOCATION = 'us';
 
-// Capability requirements per task type (machine registry routing)
+// Capability requirements per task type (machine registry routing) — 名单见 lib/task-type-registry.js（TASK_REQUIREMENTS）。
 // Tags: 'has_git' = needs code/git access (US M4 only)
 //       'general' = any available machine
 //       'has_browser' = needs browser/CDP access
-const TASK_REQUIREMENTS = {
-  // A类 - 需要 git/代码访问（US M4 独有）
-  'dev':                ['has_git'],
-  'ci_patrol':          ['has_git'],
-  'strategist_decision':['has_git'],
-  'review':             ['has_git'],
-  'qa':                 ['has_git'],
-  'audit':              ['has_git'],
-  'code_review':        ['has_git'],
-  'decomp_review':      ['has_git'],
-  'initiative_plan':    ['has_git'],
-  'initiative_verify':  ['has_git'],
-  'arch_review':        ['has_git'],
-  'architecture_design':['has_git'],
-  'architecture_scan':  ['has_git'],
-  'prd_review':         ['has_git'],
-  'spec_review':        ['has_git'],
-  'code_review_gate':   ['has_git'],
-  'initiative_review':  ['has_git'],
-  'intent_expand':      ['has_git'],
-  'initiative_execute': ['has_git'],
-  'pipeline_rescue':    ['has_git'],
-  'codex_dev':          ['has_git'],
-  // 需要浏览器（crystallize 各阶段均通过 CDP 控制西安 PC 浏览器）
-  'crystallize':          ['has_browser'],
-  'crystallize_scope':    ['has_browser'],
-  'crystallize_forge':    ['has_browser'],
-  'crystallize_verify':   ['has_browser'],
-  'crystallize_register': ['has_browser'],
-  // B类通用 - 任意 general 机器
-  'codex_qa':           ['general'],
-  'codex_test_gen':     ['general'],
-  'pr_review':          ['general'],
-  'suggestion_plan':    ['general'],
-  'strategy_session':   ['general'],
-  'scope_plan':         ['general'],
-  'project_plan':       ['general'],
-  'okr_initiative_plan': ['general'],
-  'okr_scope_plan':     ['general'],
-  'okr_project_plan':   ['general'],
-  'knowledge':          ['general'],
-  'talk':               ['general'],
-  'research':           ['general'],
-  'explore':            ['general'],
-  'data':               ['general'],
-  'dept_heartbeat':     ['general'],
-  'content-pipeline':   ['general'],
-  'content-research':   ['general'],
-  'content-copywriting': ['general'],
-  'content-copy-review': ['general'],
-  'content-generate':   ['general'],
-  'content-image-review': ['general'],
-  'content-export':     ['general'],
-  'platform_scraper':   ['has_browser'],  // 需要 CDP 浏览器接入各平台
-  'content_publish':    ['has_browser'],  // 发布 skill（douyin/kuaishou 等）需要 CDP 浏览器控制
-  // Harness v4.0 — 需要 git 访问（US M4 独有）
-  // 注：harness_planner 已退役（PR retire-harness-planner，2026-04-26），见 VALID_TASK_TYPES 注释
-  'harness_contract_propose': ['has_git'],
-  'harness_contract_review':  ['has_git'],
-  'harness_generate':         ['has_git'],
-  'harness_ci_watch':         ['has_git'],
-  'harness_fix':              ['has_git'],
-  'harness_deploy_watch':     ['has_git'],
-  'harness_report':           ['has_git'],
-  // Harness v2 — 需要 git 访问（US M4）
-  'harness_initiative':       ['has_git'],
-  'golden_path_proposal':     ['has_git'],
-  'harness_task':             ['has_git'],
-  'harness_final_e2e':        ['has_git'],
-};
+const TASK_REQUIREMENTS = TASK_REQUIREMENTS_REGISTRY;
 
 /**
  * Identify work type: single task or feature

@@ -18,6 +18,7 @@ import { raise } from '../alerting.js';
 import { handleTaskFailure } from '../quarantine.js';
 import { triggerCeceliaRun } from '../executor.js';
 import { REVIEW_TASK_TYPES } from '../lib/review-task-types.js';
+import { EXEC_STATUS_US_TASK_TYPES, EXEC_STATUS_HK_TASK_TYPES, DEV_DASHBOARD_TASK_TYPES, VERDICT_HARNESS_TASK_TYPES } from '../lib/task-type-registry.js';
 import { serialUnlockNext, writeReviewResult, promoteRegressionOnHarnessMerged } from '../lib/callback-postprocess.js';
 import { writeCascadeCellStatuses } from '../lib/cascade-writeback.js';
 import { internalServiceHeaders } from '../lib/internal-service-auth.js';
@@ -1655,11 +1656,7 @@ ${resultStr.substring(0, 2000)}
         };
 
         // Fix 1: 对产生 verdict 的 harness 任务类型，将 verdict 持久化到 tasks.result
-        const VERDICT_HARNESS_TYPES = new Set([
-          'harness_contract_propose',
-          'harness_contract_review',
-          'harness_evaluate',
-        ]);
+        const VERDICT_HARNESS_TYPES = new Set(VERDICT_HARNESS_TASK_TYPES);
         if (VERDICT_HARNESS_TYPES.has(harnessType)) {
           const extractedVerdict = extractVerdictFromResult(result, null);
           if (extractedVerdict) {
@@ -3003,7 +3000,7 @@ router.get('/cluster/status', async (req, res) => {
         reserved: 1,
         processes: usProcesses
       },
-      task_types: ['dev', 'review', 'qa', 'audit']
+      task_types: EXEC_STATUS_US_TASK_TYPES
     };
 
     // HK server status (via bridge)
@@ -3022,7 +3019,7 @@ router.get('/cluster/status', async (req, res) => {
         reserved: 0,
         processes: []
       },
-      task_types: ['talk', 'research', 'data']
+      task_types: EXEC_STATUS_HK_TASK_TYPES
     };
 
     // Try to fetch HK status from bridge
@@ -3717,13 +3714,13 @@ router.get('/dev/tasks', async (req, res) => {
         NULL::text as repo_path
       FROM tasks t
       LEFT JOIN key_results g ON t.goal_id = g.id
-      WHERE t.task_type IN ('dev', 'review')
+      WHERE t.task_type = ANY($1::text[])
         AND (t.status IN ('in_progress', 'queued') OR t.completed_at >= CURRENT_DATE - INTERVAL '1 day')
       ORDER BY
         CASE t.status WHEN 'in_progress' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END,
         t.created_at DESC
       LIMIT 20
-    `);
+    `, [DEV_DASHBOARD_TASK_TYPES]);
 
     // Get live process info
     const activeProcs = getActiveProcesses();

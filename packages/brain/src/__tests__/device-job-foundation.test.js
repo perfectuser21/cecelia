@@ -19,13 +19,40 @@
  * 断言一律先剥注释再匹配：0920 踩过 grep -qF 命中注释行、实现改回去也不报红的坑。
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// 闸2 运行时校验（团队 Task 3 审查裁决 Important #1）：静态文本断言只能证明 SQL
+// 长得像 `task_type = ANY($n::text[])`，证明不了那个 $n 绑的到底是哪个数组——万一
+// 参数下标算错、或绑成了别的集合，文本断言照样绿。改真调用 selectNextDispatchableTask，
+// mock 掉它的四条依赖链（同 dispatch-helpers.test.js 的手法），从 mock 的 pool.query
+// 调用里取出真实 SQL + 真实参数数组，逐一核对。
+const mockQuery = vi.fn();
+vi.mock('../db.js', () => ({
+  default: { query: (...args) => mockQuery(...args) },
+}));
+vi.mock('../alertness-actions.js', () => ({
+  getMitigationState: vi.fn(() => ({ p2_paused: false })),
+}));
+vi.mock('../actions.js', () => ({
+  updateTask: vi.fn(),
+  createTask: vi.fn(),
+}));
+vi.mock('../task-weight.js', () => ({
+  sortTasksByWeight: vi.fn((rows) => rows),
+}));
+vi.mock('../quarantine.js', () => ({
+  handleTaskFailure: vi.fn(),
+}));
+vi.mock('../slot-allocator.js', () => ({
+  shouldBypassBackpressure: vi.fn(() => false),
+}));
+
 import { selectNextDispatchableTask } from '../dispatch-helpers.js';
 import { PUSH_TASKS_QUERY } from '../notion-push-sync.js';
+import { TICK_DISPATCH_EXCLUDED, PUSH_EXCLUDED_TASK_TYPES } from '../lib/task-type-registry.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(HERE, '..', '..', 'migrations');
@@ -68,10 +95,8 @@ describe('闸1 类型白名单：device_job 能进 tasks 表', () => {
 });
 
 describe('闸2 派发排除：device_job 不进无头派发队列', () => {
-  // 断言打在源码上而不是运行时：selectNextDispatchableTask 的 pool 是模块级 import
-  // （不吃注入），且它连带 alertness/actions/task-weight/quarantine 四条依赖链，
-  // 为一句谓词把整条链 mock 起来，守卫本身就会变成新的脆弱点。
-  // 剥注释后做文本断言，摘掉实现里的 device_job 照样报红（变异清单第 1 条）。
+  // 静态文本断言仍保留（防"谓词整段被删/改名"这类粗暴回退），但真正卡住行为的是
+  // 下面的运行时断言——文本长得对不代表参数绑对，见上方 mock 说明。
   const dispatchSrc = stripSqlComments(
     readFileSync(join(HERE, '..', 'dispatch-helpers.js'), 'utf8')
       .split('\n')
@@ -79,17 +104,34 @@ describe('闸2 派发排除：device_job 不进无头派发队列', () => {
       .join('\n'),
   );
 
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockQuery.mockResolvedValue({ rows: [] });
+  });
+
   it('导出的选单函数仍在（谓词搬家了要让守卫跟着走）', () => {
     expect(typeof selectNextDispatchableTask).toBe('function');
     expect(dispatchSrc).toMatch(/export\s+async\s+function\s+selectNextDispatchableTask/);
   });
 
-  it('device_job 的排除写在 task_type NOT IN 黑名单里', () => {
-    const notIn = dispatchSrc.match(/task_type\s+NOT\s+IN\s*\(([^)]*)\)/i);
-    expect(notIn, 'dispatch 谓词里找不到 task_type NOT IN (...) 黑名单').toBeTruthy();
-    expect(notIn[1], 'dispatch 没有排除 device_job——它会被 tick 抢去当编码任务跑').toMatch(
-      /'device_job'/,
+  it('device_job 的排除是运行时真参数：SQL 含 AND NOT (t.task_type = ANY($，绑定的数组严格等于 TICK_DISPATCH_EXCLUDED（含 device_job）', async () => {
+    await selectNextDispatchableTask(null, []);
+    expect(mockQuery).toHaveBeenCalled();
+    const [sql, params] = mockQuery.mock.calls[0];
+
+    // NOT 是这道闸的开关：漏了 NOT 就从"排除"变成"只选这些类型"，两种都能让 SQL
+    // 语法合法、都能命中 `= ANY($` 这种宽松正则，必须把 NOT 钉死在同一条断言里。
+    expect(sql, 'SQL 里找不到 AND NOT (t.task_type = ANY($ ——排除闸可能被弱化或删掉').toMatch(
+      /AND NOT \(t\.task_type = ANY\(\$1::text\[\]\)\)/,
     );
+    // goalIds=null、excludeIds=[] 时 TICK_DISPATCH_EXCLUDED 是唯一参数，下标固定为 1
+    // （见 dispatch-helpers.js 的 excludedTypesIdx 计算：goalCondition/excludeClause
+    // 在这两个入参下都不占参数位）。
+    expect(
+      params[0],
+      '绑定到 $1 的数组不是 TICK_DISPATCH_EXCLUDED——排除闸可能绑错了集合',
+    ).toEqual(TICK_DISPATCH_EXCLUDED);
+    expect(params[0]).toContain('device_job');
   });
 
   it('headed_manual 这道既有闸仍在（回归保护：两道闸缺一不可）', () => {
@@ -98,10 +140,14 @@ describe('闸2 派发排除：device_job 不进无头派发队列', () => {
 });
 
 describe('闸3 投影隔离：device_job 不进 Notion 投影窗口', () => {
-  it('pushTasks 取数排除 device_job', () => {
+  it('pushTasks 排除的 task_type 名单来自注册表 PUSH_EXCLUDED_TASK_TYPES，且含 device_job', () => {
+    expect(PUSH_EXCLUDED_TASK_TYPES, '注册表 PUSH_EXCLUDED_TASK_TYPES 必须含 device_job').toContain('device_job');
+  });
+
+  it('pushTasks 取数排除 device_job（查询按注册表派生名单内联生成 NOT ANY(ARRAY[...])）', () => {
     const q = stripSqlComments(PUSH_TASKS_QUERY);
     expect(q, 'pushTasks 没有排除 device_job——每轮 LIMIT 10 的投影窗口会被手机单挤爆').toMatch(
-      /task_type\s*(<>|!=)\s*'device_job'/i,
+      /NOT \(task_type = ANY\(ARRAY\[[^\]]*'device_job'[^\]]*\]::text\[\]\)\)/i,
     );
   });
 
@@ -128,7 +174,7 @@ describe('闸4 乐观锁字段：tasks.row_version', () => {
 /**
  * 变异清单（proven-to-fire，标 done 前必须亲手做一遍）：
  *   1. 删掉 dispatch-helpers.js 谓词里的 device_job → 闸2 两条必须变红
- *   2. 删掉 notion-push-sync.js 的 task_type <> 'device_job' → 闸3 必须变红
+ *   2. 删掉 notion-push-sync.js 里 PUSH_EXCLUDED_TASK_TYPES 内联生成的 NOT ANY(ARRAY[...]) 排除子句 → 闸3 必须变红
  *   3. 删掉 migration 里的 'device_job' → 闸1 必须变红
  *   4. 删掉 migration 里 row_version 那行 → 闸4 必须变红
  * 没亲眼见它报红过的守卫不算守卫。
