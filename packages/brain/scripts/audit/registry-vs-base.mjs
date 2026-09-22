@@ -134,10 +134,13 @@ function site(desc) { SITES.push(desc); }
 site({ label: 'dispatch-helpers.js:89 (SQL NOT IN)', file: 'dispatch-helpers.js',
   extract: (s) => extractInlineArray(s, /t\.task_type\s+NOT\s+IN\s*\(([^)]*)\)/),
   // 比较前剔除两个基线里不存在的新类型，其余 10 项必须逐一等于基线原文：
-  //   qiumi_task —— PR2 入口刀打上第二道闸（tick_dispatchable=false，比照 device_job 双闸）
-  //   project    —— main #5486 接力棒新增的项目容器行，永不 queued，本刀按黑名单制防呆一并拨 false
+  //   project    —— main #5486 接力棒新增的项目容器行，永不 queued，PR2 按黑名单制防呆拨 false，
+  //                 此刻确实在集合里，这条剔除是实打实在起作用的。
+  //   qiumi_task —— PR2 曾打上第二道闸（tick_dispatchable=false），PR3 接线后已放开，
+  //                 它现在不在集合里、这半条剔除是空转的；留着是因为它终归是基线里不存在的
+  //                 新类型，哪天第二道闸又被关上，审计不该跟着变红。
   current: () => R.TICK_DISPATCH_EXCLUDED.filter((t) => t !== 'qiumi_task' && t !== 'project'), compare: 'set',
-  note: '「qiumi_task / project 确实在 TICK_DISPATCH_EXCLUDED 里」由 lib/__tests__/task-type-registry.test.js 的专属严格相等断言钉住，本审计只负责证明其余项相对基线零漂移' });
+  note: '「project 在、qiumi_task 此刻不在 TICK_DISPATCH_EXCLUDED 里」由 lib/__tests__/task-type-registry.test.js 的专属严格相等断言钉住（PR3 起 qiumi_task 那条是 not.toContain），本审计只负责证明其余项相对基线零漂移' });
 site({ label: 'dispatcher.js:89 INITIATIVE_LOCK_TASK_TYPES', file: 'dispatcher.js',
   extract: (s) => extractNamedLiteral(s, 'INITIATIVE_LOCK_TASK_TYPES'),
   current: () => R.INITIATIVE_LOCK_TASK_TYPES, compare: 'set' });
@@ -225,8 +228,12 @@ site({ label: 'task-router.js:316 TASK_REQUIREMENTS', file: 'task-router.js',
 
 // ── Task 4：推送/看门狗/清理类（task-4-report.md 逐站点表） ──
 site({ label: 'anchor-check.js:14 ANCHOR_EXEMPT_TASK_TYPES', file: 'anchor-check.js',
-  extract: (s) => extractNamedLiteral(s, 'ANCHOR_EXEMPT_TASK_TYPES'), current: () => R.ANCHOR_EXEMPT_TASK_TYPES, compare: 'set',
-  note: '本站点是补充六的直接起因——Task 1 fixture 原是抄简报（38项）不是抄本文件（51项），Task 4 才发现改用本文件补全；此处必须用本审计脚本精确核对，不再信任何转述' });
+  extract: (s) => extractNamedLiteral(s, 'ANCHOR_EXEMPT_TASK_TYPES'),
+  // PR3 放开 tick 派发后给 qiumi_task 打了 ANC（免锚）：入账链从不写 payload.anchor，
+  // 不免锚的话每条秋米任务都会在路由之前被锚点闸终态 failed。它是基线里不存在的新类型——
+  // 比较前剔除，其余项必须逐一等于基线原文。
+  current: () => R.ANCHOR_EXEMPT_TASK_TYPES.filter((t) => t !== 'qiumi_task'), compare: 'set',
+  note: '本站点是补充六的直接起因——Task 1 fixture 原是抄简报（38项）不是抄本文件（51项），Task 4 才发现改用本文件补全；此处必须用本审计脚本精确核对，不再信任何转述。「qiumi_task ∈ ANCHOR_EXEMPT_TASK_TYPES」由 lib/__tests__/task-type-registry.test.js 的专属断言钉住，本审计只负责证明其余项相对基线零漂移' });
 site({ label: 'monitor-loop.js:37 HARNESS_TASK_TYPES', file: 'monitor-loop.js',
   extract: (s) => extractNamedLiteral(s, 'HARNESS_TASK_TYPES'), current: () => R.MONITOR_LONG_RUNNING_TASK_TYPES, compare: 'set' });
 site({ label: 'monitor-loop.js:200 HARNESS_CHAIN_TYPES', file: 'monitor-loop.js',

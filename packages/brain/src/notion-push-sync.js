@@ -403,9 +403,11 @@ async function ingestQiumiPage(pool, token, page, en, { env }) {
       origin: en.zhId32 ? 'zh' : 'en',
       notion_page_id: page.id,            // 信息字段，不承担去重语义
       notion_zh_page_id: zh?.id ?? null,
-      dedup_by_notion_page: 'true',       // 458 idx_tasks_dedup_active 豁免键（同名中文行不撞）
+      dedup_by_notion_page: 'true',       // 461 idx_tasks_dedup_active 豁免键（同名中文行不撞）
       tenant_id: tenantId,
-      headed_manual: true,
+      // 第一道闸：门没放开就写 true，任务落地即被 tick 候选 SQL 排除（谓词见 dispatch-helpers.js）。
+      // 放开后写 false（与不写等价），由 dispatcher.dispatchQiumiTask 接管派发。
+      headed_manual: env.QIUMI_DISPATCH_ENABLED !== 'true',
       qiumi_source: {
         title, remark: zh?.remark ?? en.description, body: zhBody || enBody,
         priority_raw: zh?.priorityRaw ?? null, due_at: dueAt, channel: zh?.channel ?? null,

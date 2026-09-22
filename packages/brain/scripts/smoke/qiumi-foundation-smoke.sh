@@ -7,8 +7,8 @@
 #   闸4 对照组：同名两行不带该键（含只带 notion_page_id 不带专用键）仍精确撞 23505
 #              unique_violation on idx_tasks_dedup_active（豁免没把去重整个打掉，
 #              且证明 notion_page_id 本身不是豁免键——见 461 头注释 C1 教训）
-#   闸5 注册表派生的 tick 黑名单与 device-job 地基一致（device_job 在；PR2 起 qiumi_task 也在——
-#              入口刀给它打上 tick_dispatchable=false 第二道闸，派发留给 PR3 放开）
+#   闸5 注册表派生的 tick 黑名单与 device-job 地基一致（device_job 在；qiumi_task 不在——
+#              PR2 期给它打过 tick_dispatchable=false 的第二道闸，PR3 接线后已放开）
 #   闸6 tasks_task_type_check 存在且已验证（461 NOT VALID + 462 VALIDATE 两步都到位，convalidated=true）
 # 只删自己插的行（固定 title 前缀），绝不动别人的行。
 set -euo pipefail
@@ -94,10 +94,11 @@ case $rc in
   *) fail "闸4b 撞到非预期错误（不是 23505 idx_tasks_dedup_active，见上方输出）" ;;
 esac
 
-# 闸5：注册表派生的 tick 黑名单与 device-job 地基一致。PR1 时 qiumi_task 尚未入册，
-# PR2 入口刀给它打上 tick_dispatchable=false（比照 device_job 双闸：headed_manual 之外
-# 再拦一道 tick 主派发），所以这里改成两个都必须在黑名单里；PR3 放开派发时再改回来。
-[[ "$(cd "$(dirname "$0")/../.." && node -e "import('./src/lib/task-type-registry.js').then(m=>process.stdout.write(String(m.TICK_DISPATCH_EXCLUDED.includes('device_job') && m.TICK_DISPATCH_EXCLUDED.includes('qiumi_task'))))")" == "true" ]] || fail "闸5 注册表 tick 黑名单不符预期"
+# 闸5：注册表派生的 tick 黑名单与 device-job 地基一致。PR2 入口刀曾给 qiumi_task 打上
+# tick_dispatchable=false 的第二道闸（比照 device_job 双闸），PR3 接线后放开——它必须重新
+# 退出这个集合，否则 dispatcher.dispatchQiumiTask 接线了也永远选不中秋米任务。
+# 第一道闸（入账期由 QIUMI_DISPATCH_ENABLED 门控的 payload.headed_manual）还在，不受本闸管。
+[[ "$(cd "$(dirname "$0")/../.." && node -e "import('./src/lib/task-type-registry.js').then(m=>process.stdout.write(String(m.TICK_DISPATCH_EXCLUDED.includes('device_job') && !m.TICK_DISPATCH_EXCLUDED.includes('qiumi_task'))))")" == "true" ]] || fail "闸5 注册表 tick 黑名单不符预期"
 pass "闸5 注册表 tick 黑名单正确"
 
 # 闸6：CHECK 已存在且已验证（462 的 VALIDATE CONSTRAINT 必须已跑过）

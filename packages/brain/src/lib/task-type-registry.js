@@ -175,12 +175,14 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // 路径建出 queued 的 project 根，tick 就会把项目容器当任务派给执行体跑（device_job
   // 当初就是这么踩的，见 dispatch-helpers.js:87 那段注释「本谓词是黑名单制，没有白名单」）。
   project:                  T('brain-internal', false, false, null, 'none', true, false, 'none', true, []),
-  // ── 本刀新增：秋米中文 GTD 表来的非编码任务，Brain 经 ssh 在 MMV 起 openclaw agent ──
-  // PR2 入口刀已开启 V（router_valid）：qiumi_task 由 notion-gtd-sync 入账。双闸防 tick 抢跑
-  // （比照 device_job）：payload.headed_manual=true 是第一闸，tick_dispatchable=false（本行
-  // 第七参）是第二闸——PR2 期临时关闭，PR3 随 QIUMI_DISPATCH_ENABLED 放开、路由刀接管派发
-  // （Jev 判 engine/is_device/account）。
-  qiumi_task:               T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', true, false, 'none', true, [V]),
+  // ── 秋米中文 GTD 表来的非编码任务，Brain 经 ssh 在 MMV 起 openclaw agent ──
+  // PR2 入口刀开 V（router_valid）由 notion-gtd-sync 入账，并临时关掉 tick_dispatchable 防抢跑；
+  // PR3 路由刀接管派发（dispatcher.dispatchQiumiTask：并发闸→Jev 判 engine/is_device/account），
+  // 第二闸（本行第七参）就地放开，剩下的一道闸是入账期由 QIUMI_DISPATCH_ENABLED 门控的
+  // payload.headed_manual——门没开时入账仍写 true，tick 的候选 SQL 照样选不中。
+  // ANC（免锚）：主理人从 Notion 排的运营活不走承诺地图，入账链也从不写 payload.anchor，
+  // 不豁免的话放开 tick 派发当天每条秋米任务都会被锚点闸终态 failed。
+  qiumi_task:               T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', true, true, 'none', true, [V, ANC]),
   // ── 虚拟类型（不在 DB 白名单，只用于免锚判断）──
   deploy_drill:       T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
   nightly:            T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
