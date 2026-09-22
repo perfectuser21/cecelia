@@ -86,7 +86,9 @@ describe('saveHandoff', () => {
     const r = await saveHandoff({ pool }, h);
     expect(pool.query).toHaveBeenCalledTimes(1);
     const [sql, params] = pool.query.mock.calls[0];
-    expect(sql).toMatch(/UPDATE tasks SET result = COALESCE\(result, '\{\}'::jsonb\) \|\| jsonb_build_object\('handoff', \$2::jsonb\)/);
+    // 接力棒 458 起：同一条 UPDATE 既覆盖 result.handoff（最新）也追加 result.handoff_log（历史）
+    expect(sql).toMatch(/UPDATE tasks\s+SET result = COALESCE\(result, '\{\}'::jsonb\)\s+\|\| jsonb_build_object\('handoff', \$2::jsonb\)/);
+    expect(sql).toContain("jsonb_build_object('handoff_log'");
     expect(params[0]).toBe(TASK_ID);
     expect(JSON.parse(params[1]).task_id).toBe(TASK_ID);
     expect(r.dbWritten).toBe(true);
