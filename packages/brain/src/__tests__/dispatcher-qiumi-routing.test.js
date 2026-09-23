@@ -331,3 +331,19 @@ describe('接线点静态守卫', () => {
     ).toBe(-1);
   });
 });
+
+describe('熔断豁免：qiumi_task 走 ssh 直派，不受 cecelia-run 熔断与 bridge 健康检查约束', () => {
+  it('cecelia-run 熔断 OPEN 时 qiumi 仍走到 triggerCeceliaRun，且不查 bridge、不回滚 queued', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    mockIsAllowed.mockImplementation((k) => k !== 'cecelia-run');
+
+    const r = await dispatchNextTask(null);
+
+    expect(mockTriggerCeceliaRun, 'qiumi 被 cecelia-run 熔断挡住了——它根本不走 bridge').toHaveBeenCalledTimes(1);
+    expect(checkCeceliaRunAvailable).not.toHaveBeenCalled();
+    expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: 'q1', status: 'queued' });
+    expect(r).toMatchObject({ dispatched: true, task_id: 'q1' });
+  });
+});
