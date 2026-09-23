@@ -284,14 +284,24 @@ async function routeAndPersistQiumi(task, deps = {}) {
   const actions = deps.actions ?? [];
   const holSkipIds = deps.holSkipIds ?? [];
 
-  // 选单 SQL 只取部分列，便宜闸要读 payload.qiumi_source → 先把整行捞回来
-  const fullRow = await pool.query('SELECT * FROM tasks WHERE id = $1', [task.id]);
-  const fullTask = fullRow.rows[0] ?? task;
-
   const releaseClaim = () => pool.query(
     'UPDATE tasks SET claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1',
     [task.id],
   );
+
+  // openclaw-agent 有自己的熔断（MMV 起 agent 连败时才开），与 cecelia-run（bridge）互不牵连。
+  // 放在最前面：熔断开着就别读全行、别打 Jev、别写 run_id——每 tick 白路由一次就是本刀要修的病。
+  if (!isAllowed('openclaw-agent')) {
+    await releaseClaim();
+    await recordDispatchResult(pool, false, 'openclaw_agent_circuit_open', undefined, task.id);
+    tickLog(`[dispatch] HOL skip: openclaw-agent breaker open, skipping qiumi task ${task.id}`);
+    holSkipIds.push(task.id);
+    return { outcome: 'skip' };
+  }
+
+  // 选单 SQL 只取部分列，便宜闸要读 payload.qiumi_source → 先把整行捞回来
+  const fullRow = await pool.query('SELECT * FROM tasks WHERE id = $1', [task.id]);
+  const fullTask = fullRow.rows[0] ?? task;
 
   // 机器闸：MMV 这台机器的 openclaw-agent 上限（默认 2），不是租户配额。
   // 放在路由之前——闸满就退回，省掉一次 Jev/terra 调用。
