@@ -22,9 +22,12 @@ vi.mock('../cheap-gates.js', async (importOriginal) => ({
 import { recordTaskEventSafe } from '../../lib/task-event-log.js';
 import { loadRegistryPool } from '../cheap-gates.js';
 import { routeQiumiTask, persistDecision, pickSerial, NOUL_THRESHOLDS } from '../qiumi-router.js';
-import { qiumiEnv } from '../env.js';
+import { qiumiEnv, phoneNodeName } from '../env.js';
 
-const env = qiumiEnv({ JEV_API_KEY: 'k' });
+// 既有 device/fail 用例断言的是「device 派生」这条旧路，开关封存后必须显式打开才走得到
+const env = qiumiEnv({ JEV_API_KEY: 'k', QIUMI_DEVICE_DELEGATION_ENABLED: 'true' });
+// 默认（开关关）：手机活走 agent，见文件末尾「开关关（默认）」describe
+const envDefault = qiumiEnv({ JEV_API_KEY: 'k' });
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
 
 // 注册表三源真身（补充三）：agents 无 serial，手机在 phones，workflows 无 channel
@@ -482,5 +485,23 @@ describe('persistDecision', () => {
     expect(sql).toMatch(/claimed_by = NULL/);
     expect(sql).toMatch(/AND status = 'queued'/);
     expect(params[1]).toBe('device_uncertain: p=0.5');
+  });
+});
+
+describe('QIUMI_DEVICE_DELEGATION_ENABLED 三态 + phoneNodeName', () => {
+  it('缺失 → 关（默认走 agent）', () => {
+    expect(qiumiEnv({}).deviceDelegationEnabled).toBe(false);
+  });
+  it("'1' → 关（只认字面 'true'，与 QIUMI_DISPATCH_ENABLED 同款）", () => {
+    expect(qiumiEnv({ QIUMI_DEVICE_DELEGATION_ENABLED: '1' }).deviceDelegationEnabled).toBe(false);
+  });
+  it("'true' → 开", () => {
+    expect(qiumiEnv({ QIUMI_DEVICE_DELEGATION_ENABLED: 'true' }).deviceDelegationEnabled).toBe(true);
+  });
+  it('phoneNodeName：host 大写 + -PHONE 派生；QIUMI_PHONE_NODE_MAP 可覆盖；无 host → null', () => {
+    expect(phoneNodeName('xian-m4', qiumiEnv({}))).toBe('XIAN-M4-PHONE');
+    expect(phoneNodeName('xian-m1', qiumiEnv({}))).toBe('XIAN-M1-PHONE');
+    expect(phoneNodeName('xian-m4', qiumiEnv({ QIUMI_PHONE_NODE_MAP: '{"xian-m4":"M4-NODE"}' }))).toBe('M4-NODE');
+    expect(phoneNodeName(null, qiumiEnv({}))).toBeNull();
   });
 });
