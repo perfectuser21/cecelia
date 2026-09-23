@@ -9,6 +9,15 @@ export const MAX_FASTFORWARD = 5;
 // 接班收据只改这四个字段（任务 d9c405e2）；work-routing-store.js 的 stripReanchorEvidence
 // 按这份常量过滤幂等比对用的 evidence，必须与下方 evidence 构造用到的键保持一致。
 export const REANCHOR_EVIDENCE_KEYS = Object.freeze(['base_sha', 'prev_base_sha', 'resigned_at', 'reanchor_reason']);
+// 产出探测的唯一 SQL 真身：$1 = task.id。集成测试的 EXPLAIN 用例直接拼这个常量，
+// 保证「验的计划」与「跑的查询」同一份文本——各抄一份就会出现改了实现索引断言还绿。
+// 拆成两个 EXISTS 用 OR 连接（不写成单表内 OR 条件），让 idx_initiative_runs_current_task
+// （迁移 465）与 idx_initiative_runs_initiative（迁移 238）各自可用。375 的部分唯一索引
+// 带 orchestrator_version/phase 谓词，裸 current_task_id = $1 走不到它，故 465 另建裸列索引。
+export const HAS_ANY_RUN_SQL = `SELECT (
+       EXISTS (SELECT 1 FROM initiative_runs WHERE current_task_id = $1::uuid)
+       OR EXISTS (SELECT 1 FROM initiative_runs WHERE initiative_id = $1::uuid)
+     ) AS has_any_run`;
 
 function reanchorError(code, detail = {}) {
   const error = new Error(code);
@@ -94,16 +103,8 @@ export async function reanchorReceiptIfEmptyBranch(client, {
   if (receipt.has_v2_run === true) throw reanchorError('needs_rebase', rebaseDetail);
   // 保守口径（spec）：建过 run 即视为"分支已有产出"，不再快进。代价是重试型 run
   // 建过一次后该任务永久失去快进能力，只能走 needs_rebase 人工重挂。
-  // 拆成两个 EXISTS 用 OR 连接（不写成单表内 OR 条件），让 idx_initiative_runs_current_task
-  // （迁移 465）与 idx_initiative_runs_initiative（迁移 238）各自可用。375 的部分唯一索引
-  // 带 orchestrator_version/phase 谓词，裸 current_task_id = $1 走不到它，故 465 另建裸列索引。
-  const { rows: runRows } = await client.query(
-    `SELECT (
-       EXISTS (SELECT 1 FROM initiative_runs WHERE current_task_id = $1::uuid)
-       OR EXISTS (SELECT 1 FROM initiative_runs WHERE initiative_id = $1::uuid)
-     ) AS has_any_run`,
-    [task.id],
-  );
+  // 索引口径见 HAS_ANY_RUN_SQL 的注释。
+  const { rows: runRows } = await client.query(HAS_ANY_RUN_SQL, [task.id]);
   if (runRows[0]?.has_any_run === true) throw reanchorError('needs_rebase', rebaseDetail);
 
   const fastforwardCount = finiteInt(task.metadata?.base_sha_fastforward_count ?? 0, {
