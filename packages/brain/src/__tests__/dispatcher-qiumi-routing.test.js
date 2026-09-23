@@ -121,6 +121,7 @@ beforeEach(() => {
   mockUpdateTask.mockResolvedValue({ success: true });
   mockTriggerCeceliaRun.mockResolvedValue({ success: true, runId: 'r' });
   mockIsAllowed.mockImplementation(() => true);
+  checkCeceliaRunAvailable.mockResolvedValue({ available: true });
 });
 
 describe('dispatchQiumiTask：三态出口', () => {
@@ -268,6 +269,21 @@ describe('dispatchQiumiTask：三态出口', () => {
     expect(recordDispatchResult).toHaveBeenCalledWith(expect.anything(), false, 'openclaw_agent_circuit_open', undefined, 'q1');
     expect(holSkipIds).toContain('q1');
     expect(mockIsAllowed).toHaveBeenCalledWith('openclaw-agent');
+  });
+
+  it('payload 已有 qiumi_route + run_id（上轮路由过、spawn 前被打回）→ 不再打 Jev，直接 proceed', async () => {
+    const routedRow = { ...fullRow, payload: { ...fullRow.payload, run_id: 'qiumi-q1-1', model: 'openai/gpt-5.6-terra', qiumi_route: { source: 'jev', decided_at: '2026-09-23T03:48:25.000Z' } } };
+    mockQuery.mockImplementation(async (sql) => {
+      if (/SELECT \* FROM tasks WHERE id = \$1/.test(sql)) return { rows: [routedRow] };
+      if (/count\(\*\)::int AS n FROM tasks/.test(sql) && /openclaw-agent/.test(sql)) return { rows: [{ n: 0 }] };
+      return { rows: [] };
+    });
+
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [] });
+
+    expect(r).toEqual({ outcome: 'proceed' });
+    expect(routeQiumiTask, '已有决策还去打 Jev——每 tick 生成新 run_id 就是这么来的').not.toHaveBeenCalled();
+    expect(persistDecision).not.toHaveBeenCalled();
   });
 });
 
