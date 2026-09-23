@@ -415,4 +415,26 @@ describe('熔断豁免：qiumi_task 走 ssh 直派，不受 cecelia-run 熔断�
     expect(r).toMatchObject({ dispatched: true, task_id: 'q1' });
     expect(mockRecordSuccess).toHaveBeenCalledWith('openclaw-agent');
   });
+
+  // agent 已经 spawn 出去了，recordSuccess 只是「事后记账」。它落在 try 内、
+  // postClaimException 的覆盖范围里 → 熔断器库一抛错，兜底就会放 claim + 标 failed，
+  // 下个 tick 把同一个已经在跑的任务再派一遍（比不记账糟得多）。
+  it('recordSuccess("openclaw-agent") 抛错也不得把已 spawn 的任务标 failed / 放 claim', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    mockTriggerCeceliaRun.mockResolvedValue({ success: true, taskId: 'q1', runId: 'qiumi-q1-1', executor: 'openclaw-agent' });
+    mockRecordSuccess.mockRejectedValueOnce(new Error('cb down'));
+
+    const r = await dispatchNextTask(null);
+
+    expect(r, 'recordSuccess 抛错被当成派发失败——任务已 spawn，这是重复执行的入口').toMatchObject({
+      dispatched: true, task_id: 'q1',
+    });
+    expect(r.reason).not.toBe('dispatch_exception');
+    const sqls = sqlsOf();
+    expect(sqls.filter((s) => /status = 'failed'/.test(s)), '已 spawn 的任务被标 failed').toEqual([]);
+    expect(sqls.filter((s) => /claimed_by = NULL/.test(s)), 'claim 被放掉 → 下个 tick 会重复派发').toEqual([]);
+    expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: 'q1', status: 'queued' });
+  });
 });
