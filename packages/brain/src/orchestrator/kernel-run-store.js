@@ -1042,11 +1042,26 @@ export async function reconcileKernelTaskTerminal(
 /**
  * createKernelRun 返回后立即调用：预检可能已把路由锚快进到新 base_sha（接班收据），
  * DB 已改但调用方手里的 task 仍是派发前快照；三处起跑场（bridge.prepare / headed 身份 env）
- * 都读内存 task.payload.base_sha，不回流就是"改账不改跑场"。原地覆写并返回同一对象。
+ * 都读内存 task.payload.base_sha，不回流就是"改账不改跑场"。覆写 task.payload 为新对象
+ * （持有旧 payload 引用的调用方看不到更新）并返回同一 task。
  */
 export function syncTaskPayloadFromKernelRun(task, created) {
   const baseSha = created?.base_sha;
   if (typeof baseSha !== 'string' || baseSha.length === 0) return task;
+  const oldBaseSha = task.payload?.base_sha;
+  if (
+    oldBaseSha
+    && oldBaseSha !== baseSha
+    && created.routing_receipt_id === task.payload?.routing_receipt_id
+  ) {
+    // 收据 id 没变却换了 base_sha：不是快进重锚定（reanchor 一定同时换收据），
+    // 于是 DB 里的 tasks.payload 不会被更新，内存与账本就此分叉 —— 留痕待查。
+    console.warn(
+      `[kernel-run-store] base_sha 漂移未经重锚定 task=${task.id} `
+      + `old_base_sha=${oldBaseSha} new_base_sha=${baseSha} `
+      + `routing_receipt_id=${created.routing_receipt_id ?? 'null'}`,
+    );
+  }
   task.payload = {
     ...(task.payload ?? {}),
     base_sha: baseSha,
