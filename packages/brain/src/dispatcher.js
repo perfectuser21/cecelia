@@ -26,7 +26,7 @@ import {
 import { calculateSlotBudget, harnessSlotCheck } from './slot-allocator.js';
 import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HARNESS_INFLIGHT_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
 import { emit } from './event-bus.js';
-import { isAllowed, recordFailure } from './circuit-breaker.js';
+import { isAllowed, recordFailure, recordSuccess } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
 import { recordDispatchResult } from './dispatch-stats.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
@@ -1228,7 +1228,7 @@ export async function dispatchNextTask(goalIds) {
     } else if (execResult.reason === 'local_execution_disabled_on_scheduler') {
       console.warn(`[dispatch] local_execution_disabled_on_scheduler detected — skipping cecelia-run breaker count`);
     } else {
-      await recordFailure('cecelia-run');
+      await recordFailure(isOpenclawSurface(nextTask.task_type) ? 'openclaw-agent' : 'cecelia-run');
 
       // dispatch-fail-autoblock：连续失败计数 + 自动隔离
       // configError / spawn_deduplicated 已在上方 early-return，此处只处理真实执行失败。
@@ -1278,6 +1278,11 @@ export async function dispatchNextTask(goalIds) {
     );
     await recordDispatchResult(pool, false, execResult.configError ? 'config_error' : 'executor_failed', undefined, nextTask.id);
     return { dispatched: false, reason: execResult.configError ? 'config_error' : 'executor_failed', task_id: nextTask.id, error: execResult.error || execResult.reason, configError: !!execResult.configError, actions };
+  }
+
+  // openclaw-agent 成功：给它自己的熔断记一笔成功（HALF_OPEN → CLOSED），与 cecelia-run 互不牵连
+  if (isOpenclawSurface(nextTask.task_type)) {
+    await recordSuccess('openclaw-agent');
   }
   } catch (err) {
     return await postClaimException(err);
