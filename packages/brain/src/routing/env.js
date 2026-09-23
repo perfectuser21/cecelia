@@ -40,7 +40,7 @@ export function qiumiEnv(env = process.env) {
     departments: parseJson(env.QIUMI_DEPARTMENTS, DEFAULT_DEPARTMENTS),
     modelMap: { ...DEFAULT_MODEL_MAP, ...parseJson(env.QIUMI_MODEL_MAP, {}) },
     deviceKeywords: parseJson(env.QIUMI_DEVICE_KEYWORDS, DEFAULT_DEVICE_KEYWORDS),
-    modelAllowlist: (() => { const v = parseJson(env.QIUMI_MODEL_ALLOWLIST, []); return Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.includes('/')) : []; })(),
+    modelAllowlist: (() => { const v = parseJson(env.QIUMI_MODEL_ALLOWLIST, []); return Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === 'string' && x.includes('/')))] : []; })(),
     deviceDelegationEnabled: env.QIUMI_DEVICE_DELEGATION_ENABLED === 'true',
     phoneNodeMap: parseJson(env.QIUMI_PHONE_NODE_MAP, {}),
   });
@@ -48,11 +48,12 @@ export function qiumiEnv(env = process.env) {
 
 /** 「用 <token>」→ 允许清单里的完整型号 id；全名 > 短名全等 > 以 -token 结尾（唯一才算），否则 null。 */
 export function resolveModelRef(token, env = qiumiEnv()) {
-  const t = String(token ?? '').trim();
+  const t = String(token ?? '').trim().toLowerCase();
   if (t.length < 3) return null;
   const list = env.modelAllowlist ?? [];
-  if (list.includes(t)) return t;
-  const short = (id) => id.slice(id.indexOf('/') + 1);
+  const full = list.find((id) => id.toLowerCase() === t);
+  if (full) return full;
+  const short = (id) => id.slice(id.indexOf('/') + 1).toLowerCase();
   const exact = list.filter((id) => short(id) === t);
   if (exact.length === 1) return exact[0];
   if (exact.length > 1) return null;

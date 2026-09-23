@@ -78,7 +78,7 @@ export function cheapGates(task, pool, env) {
   }
   if (!out.isDevice && env.deviceKeywords.some((k) => text.includes(k))) { out.isDevice = true; out.matchedBy.push('text:keyword'); }
   // 「用 <型号>」：只认 QIUMI_MODEL_ALLOWLIST 里的（全名或短名），第一个命中即定案。
-  const MODEL_RE = /用\s*([A-Za-z][A-Za-z0-9._/-]{2,})/g;
+  const MODEL_RE = /(?<![不别])用\s*([A-Za-z][A-Za-z0-9._/-]{2,})/g;
   for (const m of text.matchAll(MODEL_RE)) {
     const ref = resolveModelRef(m[1], env);
     if (ref) { out.hardModel = ref; out.matchedBy.push('text:model'); break; }
