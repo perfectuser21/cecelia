@@ -30,7 +30,8 @@ beforeAll(async () => {
   await schemaPool.query(`
     CREATE TABLE tasks (
       id uuid PRIMARY KEY, task_type text NOT NULL, status text NOT NULL,
-      payload jsonb NOT NULL DEFAULT '{}'
+      payload jsonb NOT NULL DEFAULT '{}',
+      metadata jsonb NOT NULL DEFAULT '{}'
     );
     CREATE TABLE initiative_contracts (
       id uuid PRIMARY KEY, status text NOT NULL, approved_sha text
