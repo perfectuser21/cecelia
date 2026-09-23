@@ -6,6 +6,7 @@ import {
 import { canonicalAssertionCommandText } from '../../lib/gp-assertion-command.js';
 import { assertionDigest } from '../../lib/journey-assertion-receipt.js';
 import { persistImpactContract } from '../../impact-contract/contract-store.js';
+import { reanchorReceiptIfEmptyBranch } from './base-sha-reanchor.js';
 
 const RECOVERY_REASONS = new Set(['map_unavailable', 'scanner_unavailable', 'projection_unavailable']);
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
@@ -233,43 +234,61 @@ async function ensureMapRecoveryPreflight(client, { task, receipt, reasonCode },
   return { ...persisted, recovery_contract: recoveryContract };
 }
 
-async function ensureNormalMapImpactPreflight(client, { task, receipt }, deps = {}) {
+async function ensureNormalMapImpactPreflight(
+  client,
+  { task, receipt, createdSource = null },
+  deps = {},
+) {
   if (!task?.id || !receipt || receipt.work_kind === 'coding_review') {
     throw new Error('routing_receipt_missing');
   }
-  const baseSha = receipt.evidence?.base_sha;
-  if (!receipt.repo || !SHA_PATTERN.test(baseSha ?? '')) throw new Error('map_context_missing');
-  if (!Array.isArray(receipt.map_scope) || receipt.map_scope.length === 0) {
+  let activeReceipt = receipt;
+  let baseSha = activeReceipt.evidence?.base_sha;
+  if (!activeReceipt.repo || !SHA_PATTERN.test(baseSha ?? '')) throw new Error('map_context_missing');
+  if (!Array.isArray(activeReceipt.map_scope) || activeReceipt.map_scope.length === 0) {
     throw new Error('map_scope_missing');
   }
   const scopeKey = deps.resolveScopeKey
-    ? await deps.resolveScopeKey(client, receipt.repo)
-    : await resolveScopeKey(client, receipt.repo);
+    ? await deps.resolveScopeKey(client, activeReceipt.repo)
+    : await resolveScopeKey(client, activeReceipt.repo);
   const loadMap = deps.readMap ?? readMap;
   const loadRadius = deps.readRadius ?? readRadius;
   const lockAuthority = deps.lockMapProjectionAuthority ?? lockMapProjectionAuthority;
   const persistContract = deps.persistContract ?? persistImpactContract;
+  const reanchor = deps.reanchorReceipt ?? reanchorReceiptIfEmptyBranch;
   const now = deps.now ?? new Date();
   const authority = await lockAuthority(client, { scopeKey });
   const map = await loadMap(client, { scopeKey, now, authority });
-  const repoFreshness = map?.freshness?.repos?.[receipt.repo];
+  const repoFreshness = map?.freshness?.repos?.[activeReceipt.repo];
   if (map?.freshness?.status !== 'fresh' || repoFreshness?.status !== 'fresh') {
     throw new Error('map_stale');
   }
-  if (repoFreshness.source_revision !== baseSha) throw new Error('map_revision_mismatch');
+  if (repoFreshness.source_revision !== baseSha) {
+    // 派发时重锚定（任务 d9c405e2）：分支无产出则插接班收据把锚快进到地图 revision；
+    // 有产出 → reanchor 抛 needs_rebase；不适用（map_recovery/explicit_recovery/非 fresh）→ null。
+    const successor = await reanchor(client, {
+      task, receipt: activeReceipt, map, now, createdSource,
+    });
+    if (!successor) throw new Error('map_revision_mismatch');
+    activeReceipt = successor;
+    baseSha = successor.evidence?.base_sha;
+    if (!SHA_PATTERN.test(baseSha ?? '') || repoFreshness.source_revision !== baseSha) {
+      throw new Error('map_revision_mismatch');
+    }
+  }
   if (!/^[0-9a-f]{64}$/.test(map.manifest_digest ?? '')
       || !/^[0-9a-f]{64}$/.test(map.projection_digest ?? '')) {
     throw new Error('map_digest_invalid');
   }
   const radius = await loadRadius(client, {
     scopeKey,
-    repo: receipt.repo,
-    startNodeKeys: receipt.map_scope,
+    repo: activeReceipt.repo,
+    startNodeKeys: activeReceipt.map_scope,
     changedFiles: [],
     now,
     authority,
   });
-  const radiusRepoFreshness = radius?.freshness?.repos?.[receipt.repo];
+  const radiusRepoFreshness = radius?.freshness?.repos?.[activeReceipt.repo];
   if (radius?.freshness?.status !== 'fresh'
       || radiusRepoFreshness?.status !== 'fresh'
       || radiusRepoFreshness.source_revision !== baseSha) {
@@ -311,8 +330,8 @@ async function ensureNormalMapImpactPreflight(client, { task, receipt }, deps = 
   const contractBody = {
     schema_version: 1,
     task_id: task.id,
-    change_kind: receipt.change_kind,
-    repo: receipt.repo,
+    change_kind: activeReceipt.change_kind,
+    repo: activeReceipt.repo,
     base_revision: baseSha,
     manifest_digest: map.manifest_digest,
     projection_digest: map.projection_digest,
@@ -326,21 +345,21 @@ async function ensureNormalMapImpactPreflight(client, { task, receipt }, deps = 
     affected_capabilities: capabilities,
     required_assertions: assertions,
     inapplicable_items: [],
-    metadata: { scope_key: scopeKey, map_scope: receipt.map_scope },
+    metadata: { scope_key: scopeKey, map_scope: activeReceipt.map_scope },
   };
   if (task.payload?.map_recovery === true) {
     throw new Error('map_recovery_not_required');
   }
   const persisted = await persistContract(client, {
     task_id: task.id,
-    change_kind: receipt.change_kind,
-    repo: receipt.repo,
+    change_kind: activeReceipt.change_kind,
+    repo: activeReceipt.repo,
     base_revision: baseSha,
     manifest_digest: map.manifest_digest,
     projection_digest: map.projection_digest,
     contract_body: contractBody,
   });
-  return { ...persisted, map, radius, scope_key: scopeKey };
+  return { ...persisted, map, radius, scope_key: scopeKey, receipt: activeReceipt };
 }
 
 export async function ensureMapImpactPreflight(client, context, deps = {}) {
