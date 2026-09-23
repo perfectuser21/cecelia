@@ -10,10 +10,10 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../lib/task-event-log.js', () => ({ recordTaskEventSafe: vi.fn().mockResolvedValue(true) }));
+vi.mock('../../lib/task-event-log.js', () => ({ recordTaskEventSafe: vi.fn().mockResolvedValue(true) }));
 
-import { recordTaskEventSafe } from '../lib/task-event-log.js';
-import { reconcileDelegatedDeviceJobs } from '../routing/device-delegation.js';
+import { recordTaskEventSafe } from '../../lib/task-event-log.js';
+import { reconcileDelegatedDeviceJobs } from '../device-delegation.js';
 
 const PARENT = '11111111-2222-3333-4444-555555555555';
 const CHILD = '99999999-8888-7777-6666-555555555555';

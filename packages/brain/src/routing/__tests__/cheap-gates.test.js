@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { loadRegistryPool, cheapGates } from '../routing/cheap-gates.js';
-import { qiumiEnv } from '../routing/env.js';
+import { loadRegistryPool, cheapGates } from '../cheap-gates.js';
+import { qiumiEnv } from '../env.js';
 
 const env = qiumiEnv({});
 const pool = {

@@ -1,7 +1,13 @@
+/**
+ * routing/jev-client.js —— 六问 schema 与 Jev→terra→fail 阶梯。
+ *
+ * 本文件原名 __tests__/qiumi-jev-client.test.js，按源文件拆出 env/redact 两块后改到此处
+ * （lint-test-pairing 要求 src/routing/ 下每个源文件配一个同目录 __tests__/<name>.test.js）。
+ * 断言一字未改。qiumiEnv 在这里只当夹具用，它自己的断言在 env.test.js。
+ */
 import { describe, it, expect, vi } from 'vitest';
-import { qiumiEnv } from '../routing/env.js';
-import { redactSecrets } from '../routing/redact.js';
-import { buildJevQuestions, decideWithFallback } from '../routing/jev-client.js';
+import { qiumiEnv } from '../env.js';
+import { buildJevQuestions, decideWithFallback } from '../jev-client.js';
 
 // Jev 真实响应格式（2026-09-23 实测 TypeSafe /v1/systemone，两种 type 形状不同）：
 // - noul 型（仅 is_device）：{"type":"noul","noul":0.95}——字段名是 noul（true 的概率），没有 confidence。
@@ -22,31 +28,6 @@ const okJev = (overrides = {}) => ({
     },
     usage: { input_tokens: 400, output_tokens: 40 },
   }),
-});
-
-describe('qiumiEnv', () => {
-  it('缺省值与 JSON 解析', () => {
-    const e = qiumiEnv({ JEV_API_KEY: 'k' });
-    expect(e.jevEndpoint).toBe('https://api.typesafe.ai/v1/systemone');
-    expect(e.jevModel).toBe('jev-latest');
-    expect(e.fallbackModel).toBe('gpt-5.6-terra');
-    expect(e.mmvConcurrency).toBe(2);
-    expect(e.dispatchEnabled).toBe(false);
-    expect(e.departments).toEqual(['main', 'infra', 'dev', 'media', 'people', 'fde']);
-    expect(e.modelMap.claude).toBe('claude-cli/claude-sonnet-5');
-    expect(e.deviceKeywords).toContain('朋友圈');
-    expect(qiumiEnv({ QIUMI_MMV_CONCURRENCY: '3', QIUMI_DISPATCH_ENABLED: 'true', QIUMI_DEPARTMENTS: '["main"]' }))
-      .toMatchObject({ mmvConcurrency: 3, dispatchEnabled: true, departments: ['main'] });
-  });
-});
-
-describe('redactSecrets', () => {
-  it('打码 key/token/密码/bearer/sk-，不动普通文本', () => {
-    const s = redactSecrets('api_key=abc123 token: xyz Bearer eyJhbGci sk-live-999 密码：p@ss 正文照旧');
-    expect(s).not.toMatch(/abc123|xyz|eyJhbGci|sk-live-999|p@ss/);
-    expect(s).toContain('正文照旧');
-    expect(s).toMatch(/\[REDACTED\]/);
-  });
 });
 
 describe('buildJevQuestions', () => {

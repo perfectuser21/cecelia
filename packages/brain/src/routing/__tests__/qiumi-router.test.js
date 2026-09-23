@@ -13,16 +13,16 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../lib/task-event-log.js', () => ({ recordTaskEventSafe: vi.fn().mockResolvedValue(true) }));
-vi.mock('../routing/cheap-gates.js', async (importOriginal) => ({
+vi.mock('../../lib/task-event-log.js', () => ({ recordTaskEventSafe: vi.fn().mockResolvedValue(true) }));
+vi.mock('../cheap-gates.js', async (importOriginal) => ({
   ...(await importOriginal()),
   loadRegistryPool: vi.fn(),
 }));
 
-import { recordTaskEventSafe } from '../lib/task-event-log.js';
-import { loadRegistryPool } from '../routing/cheap-gates.js';
-import { routeQiumiTask, persistDecision, pickSerial, NOUL_THRESHOLDS } from '../routing/qiumi-router.js';
-import { qiumiEnv } from '../routing/env.js';
+import { recordTaskEventSafe } from '../../lib/task-event-log.js';
+import { loadRegistryPool } from '../cheap-gates.js';
+import { routeQiumiTask, persistDecision, pickSerial, NOUL_THRESHOLDS } from '../qiumi-router.js';
+import { qiumiEnv } from '../env.js';
 
 const env = qiumiEnv({ JEV_API_KEY: 'k' });
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
