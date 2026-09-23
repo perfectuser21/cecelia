@@ -326,6 +326,14 @@ async function routeAndPersistQiumi(task, deps = {}) {
     return { outcome: 'skip' };
   }
 
+  // 路由幂等：上一 tick 已判定并写了 run_id/model/qiumi_route，只是 spawn 前被打回 queued
+  // （历史上是 cecelia-run 熔断，见本刀 Task 1）。决策不变就不重打 Jev、不换 run_id——
+  // 执行体的 ALREADY 探针按 run_id 防重起，换了 run_id 它就认不出上一轮可能已起的 agent。
+  if (fullTask.payload?.qiumi_route && fullTask.payload?.run_id) {
+    tickLog(`[dispatch] qiumi task ${task.id} 已有路由决策 run_id=${fullTask.payload.run_id}，跳过 Jev 直接派发`);
+    return { outcome: 'proceed' };
+  }
+
   const decision = await routeQiumiTask(fullTask, {
     pool,
     env,
