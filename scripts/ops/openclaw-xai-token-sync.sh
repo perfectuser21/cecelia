@@ -34,7 +34,17 @@ GROK_AUTH="${GROK_AUTH_FILE:-$HOME/.grok/auth.json}"
 # 而 agents.entries 只有 23 个 —— 多出的 affine-jinnuo/affine-yuesheng/openclaw
 # 是遗留目录，paste-token 对它们必然失败。扫目录会两头错：对废目录报假警，
 # 又会漏掉"已配置但还没建目录"的新 agent。
-OPENCLAW_CONFIG="${OPENCLAW_CONFIG_FILE:-$HOME/.openclaw/clawdbot.json}"
+# ~/.openclaw 下有两份配置，务必读对：
+#   openclaw.json  —— **真身**，`openclaw config set` 写的是它
+#   clawdbot.json  —— 旧名，可能停在很久以前（2026-09-23 实测：它 23 个 agent，
+#                     真身 24 个，多出来的 newmedia 永远同步不到 token）
+# 读错的后果最坏：漏掉的 agent 不在分母里，日志照样显示「23/23 成功」全绿。
+OPENCLAW_CONFIG="${OPENCLAW_CONFIG_FILE:-}"
+if [ -z "$OPENCLAW_CONFIG" ]; then
+  for c in "$HOME/.openclaw/openclaw.json" "$HOME/.openclaw/clawdbot.json"; do
+    [ -f "$c" ] && { OPENCLAW_CONFIG="$c"; break; }
+  done
+fi
 AGENTS_DIR="${OPENCLAW_AGENTS_DIR:-}"
 PROFILE_ID="${XAI_PROFILE_ID:-xai:manual}"
 # JWT 剩余寿命低于这个值就先让 CLI 续一次再同步。
