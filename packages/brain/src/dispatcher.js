@@ -30,6 +30,7 @@ import { isAllowed, recordFailure, recordSuccess } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
 import { recordDispatchResult } from './dispatch-stats.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
+import { classifyDispatchReasonCode } from './lib/dispatch-reason-code.js';
 import { incrementActionsToday } from './tick-stats.js';
 import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
@@ -1203,6 +1204,7 @@ export async function dispatchNextTask(goalIds) {
     // 杜绝零留痕（写失败仅告警不阻断，任务仍回 queued 可重试）。
     await recordTaskEventSafe(pool, nextTask.id, 'failed_dispatch', {
       reason: execResult.reason || 'executor_failed',
+      reason_code: classifyDispatchReasonCode(execResult),
       error: String(execResult.error || '').slice(0, 300) || null,
       config_error: !!execResult.configError,
     });
@@ -1221,7 +1223,27 @@ export async function dispatchNextTask(goalIds) {
     // local_execution_disabled_on_scheduler 是 skill-relay 非 kernel-v1 任务在
     // CECELIA_LOCAL_EXECUTION_ENABLED=false 时的永久性配置态拒绝（非执行故障），
     // 同样不应计入熔断（否则连累其他任务类型也一起派不出去，决策 96054a8b）。
-    if (execResult.configError) {
+    if (execResult.reason === 'needs_rebase') {
+      // 分支已有产出但 base_sha 落后地图：不是执行故障，直接停车等 rebase（任务 d9c405e2），不计熔断/autoblock。
+      console.warn(`[dispatch] needs_rebase for task ${nextTask.id} — blocking without autoblock count`);
+      try {
+        await blockTask(nextTask.id, {
+          reason: 'needs_rebase',
+          detail: {
+            reason_code: 'needs_rebase',
+            ...(execResult.detail && typeof execResult.detail === 'object' ? execResult.detail : {}),
+            blocked_at_tick: new Date().toISOString(),
+          },
+        });
+      } catch (blockErr) {
+        console.error(`[dispatch] blockTask(needs_rebase) failed for task ${nextTask.id}: ${blockErr.message}`);
+      }
+      try {
+        await raise('P3', 'needs_rebase', `task ${nextTask.id} 分支已有产出但 base_sha 落后地图，需 rebase 后解锁`);
+      } catch (raiseErr) {
+        console.error(`[dispatch] raise failed for needs_rebase (task ${nextTask.id}): ${raiseErr.message}`);
+      }
+    } else if (execResult.configError) {
       console.warn(`[dispatch] configError detected (reason=${execResult.reason}) — skipping cecelia-run breaker count`);
     } else if (execResult.reason === 'spawn_deduplicated') {
       console.warn(`[dispatch] spawn_deduplicated detected — skipping cecelia-run breaker count`);
@@ -1252,6 +1274,7 @@ export async function dispatchNextTask(goalIds) {
             await blockTask(nextTask.id, {
               reason: 'dispatch_fail_autoblock',
               detail: {
+                reason_code: classifyDispatchReasonCode(execResult),
                 consecutive_failures: newCount,
                 last_error: String(execResult.error || execResult.reason || 'executor_failed'),
                 blocked_at_tick: new Date().toISOString(),

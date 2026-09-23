@@ -48,6 +48,7 @@ import {
 } from './lib/task-type-registry.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { classifyCodexFailure } from './lib/codex-fatal-patterns.js';
+import { classifyDispatchReasonCode } from './lib/dispatch-reason-code.js';
 import { raise } from './alerting.js';
 import { EXECUTOR_KIND_FOR, resolveExecutorKind } from './executor-contracts.js';
 import { probeCodexReviewLock, CODEX_REVIEW_LOCK_DIR as CODEX_REVIEW_LOCK_DIR_SSOT } from './lib/codex-review-liveness.js';
@@ -3566,6 +3567,7 @@ async function triggerCeceliaRun(task) {
           taskId: task.id,
           initiative: true,
           reason: 'kernel_authority_not_created',
+          reason_code: classifyDispatchReasonCode({ error: result?.error, reason: result?.reason }),
           error: String(result?.error || result?.reason || 'kernel_authority_not_created')
             .slice(0, 500),
         };
@@ -3622,11 +3624,18 @@ async function triggerCeceliaRun(task) {
           );
           return authority;
         }
+        // 重锚定预检抛的 err.code（needs_rebase / 契约违约码）优先于文本猜码；
+        // needs_rebase 是「分支有产出但 base_sha 落后」的停车信号，不是执行故障（任务 d9c405e2）。
+        const reasonCode = typeof err.code === 'string' && err.code
+          ? err.code
+          : classifyDispatchReasonCode({ error: err.message });
         return {
           success: false,
           taskId: task.id,
           initiative: true,
-          reason: 'kernel_authority_not_created',
+          reason: reasonCode === 'needs_rebase' ? 'needs_rebase' : 'kernel_authority_not_created',
+          reason_code: reasonCode,
+          detail: err.detail ?? null,
           error: err.message?.slice(0, 500),
         };
       }
