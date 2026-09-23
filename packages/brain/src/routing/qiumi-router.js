@@ -132,6 +132,7 @@ export async function routeQiumiTask(task, deps) {
       workflowRef: cheap.workflowRef ?? null,
       department: cheap.department ?? null,
       hardEngine: cheap.hardEngine ?? null,
+      hardModel: cheap.hardModel ?? null,
     },
     decided_at: new Date(now()).toISOString(),
   };
@@ -193,7 +194,8 @@ export async function routeQiumiTask(task, deps) {
   const department = cheap.department ?? resolveChoice(a.department, 'department', (c) => env.departments.includes(c), 'main', defaulted);
   const kind = resolveChoice(a.kind, 'kind', (c) => KIND_NAMES.includes(c), 'agent', defaulted);
   const workflowRef = cheap.workflowRef ?? jevWorkflowRef(a, registry, defaulted);
-  const model = env.modelMap[engine];
+  // 正文「用 <型号>」（允许清单内）压过 engine → model 查表，engine 本身仍按 Jev/便宜闸。
+  const model = cheap.hardModel ?? env.modelMap[engine];
   const runId = `qiumi-${String(task.id).slice(0, 8)}-${now()}`;
   // 留痕给 agent：它要自己去 OpenClaw 节点上跑控制器，得知道哪台手机在哪台宿主。
   const hintSerial = pickSerial(cheap, a, registry);
