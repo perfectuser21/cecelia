@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { loadRegistryPool, cheapGates } from '../cheap-gates.js';
 import { qiumiEnv } from '../env.js';
+import { buildQiumiSource } from '../../lib/qiumi-source.js';
 
 const env = qiumiEnv({});
 const pool = {
@@ -8,7 +9,11 @@ const pool = {
   phones: [{ serial: 'ANGYVB4227006983', host: 'xian-m4' }],
   workflows: [{ name: '朋友圈跟圈', notionId: 'w1' }, { name: '周报生成', notionId: 'w2' }],
 };
-const mk = (src) => ({ id: 't1', task_type: 'qiumi_task', payload: { qiumi_source: { title: '', remark: '', body: '', channel: null, relations: { agents: [], workflows: [], skills: [] }, ...src } } });
+const mk = (src) => ({
+  id: 't1',
+  task_type: 'qiumi_task',
+  payload: { qiumi_source: buildQiumiSource({ title: '', remark: '', body: '', channel: null, ...src }) },
+});
 
 describe('loadRegistryPool', () => {
   it('从 ops_agents/device_locks/ops_workflows 读三源，手机序列号来自 device_locks（生产真身，非 meta.serial）', async () => {
@@ -29,12 +34,12 @@ describe('loadRegistryPool', () => {
 
 describe('cheapGates', () => {
   it('relation 命中设备工作流（名字含设备关键词）→ isDevice + workflowRef，matchedBy=relation:workflow（硬约束）', () => {
-    const g = cheapGates(mk({ relations: { agents: [], workflows: ['w1'], skills: [] } }), pool, env);
+    const g = cheapGates(mk({ agentWorkflowIds: ['w1'] }), pool, env);
     expect(g).toMatchObject({ isDevice: true, workflowRef: '朋友圈跟圈', matchedBy: ['relation:workflow'] });
   });
   it('relation 命中非部门 agent → department 为 null，agentRef 记下（不把 agent 名当部门）', () => {
     const poolWithNonDeptAgent = { ...pool, agents: [...pool.agents, { name: 'phone-ANGYVB4227006983', notionId: 'a1' }] };
-    const g = cheapGates(mk({ relations: { agents: ['a1'], workflows: [], skills: [] } }), poolWithNonDeptAgent, env);
+    const g = cheapGates(mk({ agentWorkflowIds: ['a1'] }), poolWithNonDeptAgent, env);
     expect(g).toMatchObject({ department: null, agentRef: 'phone-ANGYVB4227006983', matchedBy: ['relation:agent'] });
   });
   it('执行通道非空 → isDevice，workflowRef=通道名', () => {
@@ -42,7 +47,7 @@ describe('cheapGates', () => {
     expect(g).toMatchObject({ isDevice: true, workflowRef: '朋友圈跟圈', matchedBy: ['channel'] });
   });
   it('relation 命中非设备工作流 + channel 非空 → isDevice=true，workflowRef 保留 relation 的（不被 channel 覆盖）', () => {
-    const g = cheapGates(mk({ channel: '发布', relations: { agents: [], workflows: ['w2'], skills: [] } }), pool, env);
+    const g = cheapGates(mk({ channel: '发布', agentWorkflowIds: ['w2'] }), pool, env);
     expect(g).toMatchObject({ isDevice: true, workflowRef: '周报生成', matchedBy: ['relation:workflow', 'channel'] });
   });
   it('正文含 device_locks 序列号 → isDevice + serial（matchedBy=text:serial）', () => {
@@ -94,6 +99,29 @@ describe('cheapGates', () => {
     const g = cheapGates(mk({ body: '把周报生成发出去' }), poolWithShortWorkflow, env);
     expect(g.workflowRef).toBe('周报生成');
   });
+
+  it('多选 workflow → 取用户在 Notion 的选择顺序首个命中，不是池的字母序', () => {
+    // 池按 name 排序时「周报生成」排在「朋友圈跟圈」之后；用户先选 w2 就该 w2 赢。
+    // 这条是本次 tie-break 行为变更的唯一区分用例——改回遍历池的老写法它必红。
+    const g = cheapGates(mk({ agentWorkflowIds: ['w2', 'w1'] }), pool, env);
+    expect(g.workflowRef).toBe('周报生成');
+  });
+
+  it('同一 id 同时命中 workflow 池与 agent 池 → 两个都设，matchedBy 顺序 workflow 在前', () => {
+    // ops_agents.notion_id 与 ops_workflows.notion_id 都是 TEXT 且无 UNIQUE
+    // （migrations/433:12、436:16），投影重建/人工补录可能让同一 page id 在两表都有行。
+    // 不假装它不会发生。
+    const both = { ...pool, agents: [{ name: 'infra', notionId: 'w2' }] };
+    const g = cheapGates(mk({ agentWorkflowIds: ['w2'] }), both, env);
+    expect(g).toMatchObject({ workflowRef: '周报生成', department: 'infra', matchedBy: ['relation:workflow', 'relation:agent'] });
+  });
+
+  it('指定的 id 不在池里（workflow 已停用 active=FALSE）→ 回落，matchedBy 不出现 relation:*（判定点 0aa5d290）', () => {
+    const g = cheapGates(mk({ agentWorkflowIds: ['w-disabled'] }), pool, env);
+    expect(g.workflowRef).toBeNull();
+    expect(g.matchedBy.some((m) => m.startsWith('relation:'))).toBe(false);
+  });
+
   describe('「用 <型号>」→ hardModel（清单内才认）', () => {
     const envM = qiumiEnv({ QIUMI_MODEL_ALLOWLIST: JSON.stringify(['xai/grok-4.7', 'openai/gpt-5.6-sol', 'anthropic/claude-opus-5']) });
     it('用 grok-4.7 → hardModel xai/grok-4.7，matchedBy 含 text:model', () => {
