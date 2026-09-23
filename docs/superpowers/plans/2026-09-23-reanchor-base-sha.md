@@ -1236,6 +1236,251 @@ git commit -m "feat(brain): 一次性回填脚本解锁 map_revision_mismatch �
 
 ---
 
+### Task 8b: 真 PG 集成测试——接班收据 × 421 触发器 × 465 唯一键 × 索引
+
+> Task 3 复审 I8：模块单测是 mock client，SQL 列名/占位符/jsonb 转换/触发器/唯一键全无覆盖。本 Task 用真 Postgres 把这些钉进 CI（brain-integration job 经 `vitest.integration.config.js` 跑 `POSTGRES_INTEGRATION_TESTS`）。
+
+**Files:**
+- Create: `packages/brain/src/__tests__/integration/base-sha-reanchor.pg.integration.test.js`
+- Modify: `packages/brain/vitest.config.js`（`POSTGRES_INTEGRATION_TESTS` 数组追加该路径）
+
+- [ ] **Step 1: 写测试**
+
+```js
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import { DB_DEFAULTS } from '../../db-config.js';
+import { reanchorReceiptIfEmptyBranch } from '../../orchestrator/preflight/base-sha-reanchor.js';
+
+const { Pool } = pg;
+const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
+const OLD = 'a'.repeat(40);
+const NEW = 'b'.repeat(40);
+let adminPool;
+let pool;
+let databaseName;
+
+function quoteIdentifier(value) {
+  if (!/^reanchor_[a-z0-9_]+$/.test(value)) throw new Error('unsafe database name');
+  return `"${value}"`;
+}
+
+function freshMap(revision = NEW) {
+  return {
+    projection_run_id: null,
+    freshness: { status: 'fresh', repos: { cecelia: { status: 'fresh', source_revision: revision } } },
+  };
+}
+
+async function seedRoutedTask(db) {
+  const taskId = randomUUID();
+  const receiptId = randomUUID();
+  await db.query(
+    `INSERT INTO tasks(id,title,status,task_type,payload,metadata)
+     VALUES($1,$2,'queued','harness_initiative',$3::jsonb,'{}'::jsonb)`,
+    [taskId, `reanchor ${taskId}`, JSON.stringify({ routing_receipt_id: receiptId, base_sha: OLD, repo: 'cecelia', branch: `cp-re-${taskId.slice(0, 8)}` })],
+  );
+  await db.query(
+    `INSERT INTO work_routing_receipts(
+       id,task_id,source,source_id,work_kind,change_kind,pipeline,
+       canonical_task_type,default_execution_profile,execution_profile_override,
+       repo,map_scope,impact_contract_required,orchestrator,router_version,
+       route_reason,evidence,map_scope_validation_version,direct_contract_seed
+     ) VALUES(
+       $1,$2,'integration',$3,'coding_mutation','bugfix','harness',
+       'harness_initiative','hotfix-v1',NULL,
+       'cecelia','["F1"]'::jsonb,true,'kernel-harness-v2','work-router-v1',
+       'reanchor_pg',$4::jsonb,'active-business-node-v1',NULL
+     )`,
+    [receiptId, taskId, `reanchor:${taskId}`, JSON.stringify({ branch: `cp-re-${taskId.slice(0, 8)}`, base_sha: OLD })],
+  );
+  return { taskId, receiptId };
+}
+
+async function loadLocked(client, taskId, receiptId) {
+  const { rows: taskRows } = await client.query(
+    'SELECT id, task_type, status, payload, metadata FROM tasks WHERE id=$1 FOR UPDATE', [taskId],
+  );
+  const { rows: receiptRows } = await client.query(
+    `SELECT receipt.*,
+            EXISTS (SELECT 1 FROM work_routing_receipts s WHERE s.supersedes_receipt_id = receipt.id) AS superseded,
+            false AS has_v2_run
+       FROM work_routing_receipts receipt WHERE receipt.id=$1`, [receiptId],
+  );
+  return { task: taskRows[0], receipt: receiptRows[0] };
+}
+
+beforeAll(async () => {
+  databaseName = `reanchor_${process.pid}_${randomUUID().replaceAll('-', '')}`;
+  adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1 });
+  await adminPool.query(`CREATE DATABASE ${quoteIdentifier(databaseName)}`);
+  execFileSync(process.execPath, ['src/migrate.js'], {
+    cwd: BRAIN_ROOT,
+    env: {
+      ...process.env, NODE_ENV: 'test',
+      DB_HOST: DB_DEFAULTS.host, DB_PORT: String(DB_DEFAULTS.port),
+      DB_USER: DB_DEFAULTS.user, DB_PASSWORD: DB_DEFAULTS.password, DB_NAME: databaseName,
+    },
+    stdio: 'pipe',
+  });
+  pool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 4 });
+}, 60_000);
+
+afterAll(async () => {
+  if (pool) await pool.end();
+  if (adminPool && databaseName) await adminPool.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(databaseName)}`);
+  if (adminPool) await adminPool.end();
+}, 30_000);
+
+describe.sequential('base_sha reanchor against real PostgreSQL（任务 d9c405e2）', () => {
+  it('同事务 INSERT 接班收据 → UPDATE payload：421 触发器放行，gen=2 且 supersedes 指向旧收据', async () => {
+    const { taskId, receiptId } = await seedRoutedTask(pool);
+    const client = await pool.connect();
+    let successor;
+    try {
+      await client.query('BEGIN');
+      const { task, receipt } = await loadLocked(client, taskId, receiptId);
+      successor = await reanchorReceiptIfEmptyBranch(client, { task, receipt, map: freshMap(), now: new Date(), createdSource: 'kernel_dispatch' });
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+    expect(successor).toMatchObject({ anchor_generation: 2, supersedes_receipt_id: receiptId, base_sha: NEW });
+    const persisted = await pool.query(
+      `SELECT r.anchor_generation, r.supersedes_receipt_id, r.evidence, t.payload, t.metadata
+         FROM work_routing_receipts r JOIN tasks t ON t.id=r.task_id
+        WHERE r.id=$1`, [successor.id],
+    );
+    expect(persisted.rows[0]).toMatchObject({
+      anchor_generation: 2, supersedes_receipt_id: receiptId,
+      evidence: expect.objectContaining({ base_sha: NEW, prev_base_sha: OLD, branch: expect.stringMatching(/^cp-re-/) }),
+      payload: expect.objectContaining({ routing_receipt_id: successor.id, base_sha: NEW }),
+      metadata: expect.objectContaining({ base_sha_fastforward_count: 1 }),
+    });
+    const events = await pool.query(
+      "SELECT event_type FROM task_events WHERE task_id=$1 AND event_type='base_sha_reanchored'", [taskId],
+    );
+    expect(events.rowCount).toBe(1);
+  });
+
+  it('只 INSERT 接班收据不 UPDATE payload → 421 触发器拒绝', async () => {
+    const { taskId, receiptId } = await seedRoutedTask(pool);
+    await expect(pool.query(
+      `INSERT INTO work_routing_receipts(
+         id,task_id,source,source_id,work_kind,change_kind,pipeline,
+         canonical_task_type,default_execution_profile,execution_profile_override,
+         repo,map_scope,impact_contract_required,orchestrator,router_version,
+         route_reason,evidence,map_scope_validation_version,direct_contract_seed,
+         supersedes_receipt_id,anchor_generation
+       ) SELECT gen_random_uuid(),task_id,source,source_id,work_kind,change_kind,pipeline,
+         canonical_task_type,default_execution_profile,execution_profile_override,
+         repo,map_scope,impact_contract_required,orchestrator,router_version,
+         route_reason,evidence,map_scope_validation_version,direct_contract_seed,
+         id,2 FROM work_routing_receipts WHERE id=$1`, [receiptId],
+    )).rejects.toMatchObject({ message: expect.stringMatching(/routing_receipt_id|projection/i) });
+    const still = await pool.query('SELECT payload->>\'routing_receipt_id\' AS rid FROM tasks WHERE id=$1', [taskId]);
+    expect(still.rows[0].rid).toBe(receiptId);
+  });
+
+  it('同一旧收据二次接班 → 465 唯一键 23505；模块入口先以 receipt_superseded 拒绝', async () => {
+    const { taskId, receiptId } = await seedRoutedTask(pool);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const first = await loadLocked(client, taskId, receiptId);
+      await reanchorReceiptIfEmptyBranch(client, { task: first.task, receipt: first.receipt, map: freshMap(), now: new Date() });
+      await client.query('COMMIT');
+      await client.query('BEGIN');
+      const again = await loadLocked(client, taskId, receiptId);
+      expect(again.receipt.superseded).toBe(true);
+      await expect(reanchorReceiptIfEmptyBranch(client, { task: again.task, receipt: again.receipt, map: freshMap('c'.repeat(40)), now: new Date() }))
+        .rejects.toMatchObject({ code: 'receipt_superseded' });
+      await client.query('ROLLBACK');
+      await expect(pool.query(
+        `INSERT INTO work_routing_receipts(
+           id,task_id,source,source_id,work_kind,change_kind,pipeline,
+           canonical_task_type,default_execution_profile,execution_profile_override,
+           repo,map_scope,impact_contract_required,orchestrator,router_version,
+           route_reason,evidence,map_scope_validation_version,direct_contract_seed,
+           supersedes_receipt_id,anchor_generation
+         ) SELECT gen_random_uuid(),task_id,source,source_id,work_kind,change_kind,pipeline,
+           canonical_task_type,default_execution_profile,execution_profile_override,
+           repo,map_scope,impact_contract_required,orchestrator,router_version,
+           route_reason,evidence,map_scope_validation_version,direct_contract_seed,
+           id,3 FROM work_routing_receipts WHERE id=$1`, [receiptId],
+      )).rejects.toMatchObject({ code: '23505' });
+    } finally {
+      await client.query('ROLLBACK').catch(() => {});
+      client.release();
+    }
+  });
+
+  it('已有 initiative_runs → needs_rebase 且零写库', async () => {
+    const { taskId, receiptId } = await seedRoutedTask(pool);
+    await pool.query(
+      `INSERT INTO initiative_runs(id,initiative_id,phase,journey_id,host,deadline_at,current_task_id,created_source,orchestrator_version)
+       VALUES(gen_random_uuid(),$1,'planning',NULL,'kernel-v1',NOW()+INTERVAL '1 hour',$1,'kernel_dispatch','v2')`,
+      [taskId],
+    );
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { task, receipt } = await loadLocked(client, taskId, receiptId);
+      await expect(reanchorReceiptIfEmptyBranch(client, { task, receipt, map: freshMap(), now: new Date() }))
+        .rejects.toMatchObject({ code: 'needs_rebase' });
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+    const count = await pool.query('SELECT COUNT(*)::int AS n FROM work_routing_receipts WHERE task_id=$1', [taskId]);
+    expect(count.rows[0].n).toBe(1);
+  });
+
+  it('initiative_runs 产出探测两侧都走索引（465 idx_initiative_runs_current_task / 238 idx_initiative_runs_initiative）', async () => {
+    const plan = await pool.query(
+      `EXPLAIN (FORMAT JSON) SELECT (
+         EXISTS (SELECT 1 FROM initiative_runs r WHERE r.current_task_id = $1::uuid)
+         OR EXISTS (SELECT 1 FROM initiative_runs r WHERE r.initiative_id = $1::uuid)
+       ) AS has_any_run`, [randomUUID()],
+    );
+    const text = JSON.stringify(plan.rows[0]['QUERY PLAN']);
+    expect(text).toContain('idx_initiative_runs_current_task');
+    expect(text).toContain('idx_initiative_runs_initiative');
+    expect(text).not.toContain('"Seq Scan"');
+  });
+});
+```
+
+> `initiative_runs` INSERT 的 NOT NULL 列以 `migrations/238_harness_v2_initiative_runs.sql` 及后续 ALTER 为准；若真库拒绝，按报错补列（不改断言）。EXPLAIN 断言若因表为空规划器选 Seq Scan，先 `INSERT` 200 行占位再 `ANALYZE initiative_runs`（放在该用例内部）。
+
+- [ ] **Step 2: 注册进 POSTGRES_INTEGRATION_TESTS**
+
+`packages/brain/vitest.config.js` 数组末尾追加：
+```js
+  'src/__tests__/integration/base-sha-reanchor.pg.integration.test.js',
+```
+
+- [ ] **Step 3: 本机真库跑**
+
+Run: `cd packages/brain && bash scripts/setup-test-db.sh 2>/dev/null; npx vitest run --config vitest.integration.config.js src/__tests__/integration/base-sha-reanchor.pg.integration.test.js`
+Expected: 5 PASS（本机 Postgres 不可达则在 CI brain-integration job 看结果，PR 描述里写明）
+
+- [ ] **Step 4: 提交**
+
+```bash
+git add packages/brain/src/__tests__/integration/base-sha-reanchor.pg.integration.test.js packages/brain/vitest.config.js
+git commit -m "test(brain): reanchor 接班收据真 PG 集成测试（421 触发器/465 唯一键/索引）"
+```
+
+---
+
 ### Task 9: 全量验证 + DevGate
 
 - [ ] **Step 1: 跑 brain 全量测试**
