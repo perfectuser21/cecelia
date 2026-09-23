@@ -6,6 +6,9 @@
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 export const MAX_FASTFORWARD = 5;
+// 接班收据只改这四个字段（任务 d9c405e2）；work-routing-store.js 的 stripReanchorEvidence
+// 按这份常量过滤幂等比对用的 evidence，必须与下方 evidence 构造用到的键保持一致。
+export const REANCHOR_EVIDENCE_KEYS = Object.freeze(['base_sha', 'prev_base_sha', 'resigned_at', 'reanchor_reason']);
 
 function reanchorError(code, detail = {}) {
   const error = new Error(code);
@@ -116,6 +119,7 @@ export async function reanchorReceiptIfEmptyBranch(client, {
   const nextGeneration = finiteInt(receipt.anchor_generation ?? 1, {
     fallback: 1, floor: 1, field: 'anchor_generation', taskId: task.id,
   }) + 1;
+  // 这四个键必须与 REANCHOR_EVIDENCE_KEYS 一致，否则幂等比对会漏剔除新键或误剔除旧键。
   const evidence = {
     ...(receipt.evidence ?? {}),
     base_sha: targetSha,

@@ -896,9 +896,9 @@ import { describe, expect, it } from 'vitest';
 import { stripReanchorEvidence } from '../work-routing-store.js';
 
 describe('work-routing-store × 接班收据', () => {
-  it('幂等回读按 created_at DESC, anchor_generation DESC 取最新一代', async () => {
+  it('幂等回读按 anchor_generation DESC, created_at DESC 取最新一代', async () => {
     const source = await readFile(new URL('../work-routing-store.js', import.meta.url), 'utf8');
-    expect(source).toMatch(/WHERE r\.source=\$1 AND r\.source_id=\$2 AND r\.router_version=\$3\s+ORDER BY r\.created_at DESC, r\.anchor_generation DESC\s+LIMIT 1/);
+    expect(source).toMatch(/WHERE r\.source=\$1 AND r\.source_id=\$2 AND r\.router_version=\$3\s+ORDER BY r\.anchor_generation DESC, r\.created_at DESC\s+LIMIT 1/);
   });
 
   it('sameRoute 比对 evidence 时剔除 base_sha / prev_base_sha / resigned_at / reanchor_reason', () => {
@@ -934,7 +934,7 @@ export function stripReanchorEvidence(evidence) {
 把 existing 查询（184-197 行）的 WHERE 行改为：
 ```js
         WHERE r.source=$1 AND r.source_id=$2 AND r.router_version=$3
-        ORDER BY r.created_at DESC, r.anchor_generation DESC
+        ORDER BY r.anchor_generation DESC, r.created_at DESC
         LIMIT 1`,
 ```
 把 sameRoute 里的 evidence 比对（273-274 行）改为：

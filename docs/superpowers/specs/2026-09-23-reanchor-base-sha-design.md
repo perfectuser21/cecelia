@@ -43,7 +43,7 @@ dispatcher.tick → claim(claimed_by IS NULL) → enforceDispatchRoutingReceipt(
 - 计数 ≥5 → 抛 `map_thrash`（进 autoblock 计数，detail.reason_code=map_thrash）。
 - 有产出 → 抛 `needs_rebase`，detail=`{old_base_sha,new_base_sha,branch,has_v2_run}`。
 - 并发：task 行 `FOR UPDATE`（kernel-run-store.js:436-442）串行化同任务，接班只在该锁内发生；INSERT 唯一键 `(source,source_id,router_version,anchor_generation)` 仅作数据完整性兜底，不单独处理 23505（撞键即整事务回滚、下 tick 重试）。
-- 顺序：**先 INSERT 接班收据，后 UPDATE tasks.payload**——421 触发器按 `created_at DESC` 取最新收据比对 `routing_receipt_id`；M5 回读排序统一为 `created_at DESC, anchor_generation DESC`。
+- 顺序：**先 INSERT 接班收据，后 UPDATE tasks.payload**——421 触发器按 `created_at DESC` 取最新收据比对 `routing_receipt_id`；M5 回读排序统一为 `anchor_generation DESC, created_at DESC`（接班收据 `created_at` 用 `now()`=事务开始时刻，并发下可能倒置；`anchor_generation` 单调唯一，排在前）。
 - 接线行号（origin/main 745222e）：autoblock 逻辑 `dispatcher.js:1233-1272`，`failed_dispatch` 事件 `:1204-1208`；`harness-skill-relay.js:274` 不 catch，错误落 `executor.js:3606-3631` 的 catch → M6 在此读 `err.code==='needs_rebase'`。
 
 ## 错误处理

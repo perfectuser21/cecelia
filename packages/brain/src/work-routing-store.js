@@ -8,6 +8,7 @@ import {
   assertRouteSnapshotLaunchAuthority,
   MAP_SCOPE_VALIDATION_VERSION,
 } from './orchestrator/route-snapshot-authority.js';
+import { REANCHOR_EVIDENCE_KEYS } from './orchestrator/preflight/base-sha-reanchor.js';
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 
@@ -167,16 +168,13 @@ export async function resolveParentTaskId(client, raw) {
   return rows[0].id;
 }
 
-// 接班收据只改 base_sha 系字段（任务 d9c405e2）；幂等比对时剔除，避免重入撞 idempotency_conflict。
+// 接班收据只改 REANCHOR_EVIDENCE_KEYS 这几个字段（任务 d9c405e2）；幂等比对时剔除，
+// 避免重入撞 idempotency_conflict。过滤键来自 base-sha-reanchor.js 的共享常量，
+// 与接班收据实际写入的字段保持单一来源，不在此处重复硬编码键名。
 export function stripReanchorEvidence(evidence) {
-  const {
-    base_sha: _base_sha,
-    prev_base_sha: _prev_base_sha,
-    resigned_at: _resigned_at,
-    reanchor_reason: _reanchor_reason,
-    ...rest
-  } = evidence ?? {};
-  return rest;
+  return Object.fromEntries(
+    Object.entries(evidence ?? {}).filter(([key]) => !REANCHOR_EVIDENCE_KEYS.includes(key)),
+  );
 }
 
 export async function createRoutedTask(db, request, repositoryFacts = null, options = {}) {
@@ -205,7 +203,7 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
          FROM work_routing_receipts r
          JOIN tasks t ON t.id = r.task_id
         WHERE r.source=$1 AND r.source_id=$2 AND r.router_version=$3
-        ORDER BY r.created_at DESC, r.anchor_generation DESC
+        ORDER BY r.anchor_generation DESC, r.created_at DESC
         LIMIT 1`,
       [request.source, request.source_id, decision.router_version],
     );
