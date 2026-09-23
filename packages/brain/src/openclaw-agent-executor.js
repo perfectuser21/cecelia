@@ -24,6 +24,7 @@ import { execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { resolvePrimaryWorkerId, sshTargetFor } from './machine-registry.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
+import { qiumiEnv, phoneNodeName } from './routing/env.js';
 
 // 两条白名单，宽严不同：
 //  · SAFE_ID —— run_id / department / taskId。它们要当文件名用（~/brain-runs/<run_id>.log），
@@ -139,12 +140,27 @@ function primaryTarget() {
   return sshTargetFor(resolvePrimaryWorkerId());
 }
 
+/** device_hint.is_device 时给 agent 的设备提示段；序列号/宿主来自路由留痕，节点名由宿主派生。 */
+function deviceHintOf(task) {
+  const h = task.payload?.qiumi_route?.device_hint;
+  if (!h || h.is_device !== true) return null;
+  const node = phoneNodeName(h.host, qiumiEnv());
+  return [
+    '设备提示（这是要碰真机的活，按 douyin-phone-runtime skill 执行）：',
+    `- 手机序列号：${h.serial ?? '未定，按正文里的手机描述到节点的 douyin-phone-profiles.tsv 里查'}`,
+    `- 宿主：${h.host ?? '未知'}；OpenClaw 节点：${node ?? '未知，先 openclaw nodes list 找带 PHONE 的节点'}`,
+    '- 在该节点上执行 douyin-phone-adb --profile <profile> <command>（profile 按序列号在节点的 registry 查），禁止裸 adb',
+    '- 先 lock-acquire <run_id>，结束必 lock-release 并回读 lock-status；每次 exec 显式 timeout 300000',
+  ].join('\n');
+}
+
 function promptOf(task) {
   const s = task.payload?.qiumi_source ?? {};
   return [
     s.title,
     s.remark ? `补充说明：${s.remark}` : null,
     s.body ? `页面正文：\n${s.body}` : null,
+    deviceHintOf(task),
   ].filter(Boolean).join('\n\n');
 }
 
