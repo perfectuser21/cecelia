@@ -253,3 +253,111 @@ describe('Map Impact Contract preflight', () => {
     });
   });
 });
+
+describe('派发时重锚定 base_sha（任务 d9c405e2）', () => {
+  const OLD = 'a'.repeat(40);
+  const NEW = 'b'.repeat(40);
+  const TASK_ID = '88888888-8888-4888-8888-888888888888';
+  const authority = {
+    manifest_version_id: '11111111-1111-4111-8111-111111111111',
+    manifest_digest: 'b'.repeat(64),
+    projection_run_id: '22222222-2222-4222-8222-222222222222',
+    projection_digest: 'c'.repeat(64),
+    fact_revisions: { cecelia: NEW },
+  };
+  const freshMap = {
+    ...authority,
+    freshness: {
+      status: 'fresh',
+      repos: { cecelia: { status: 'fresh', source_revision: NEW, reason_code: null } },
+    },
+  };
+  const radius = {
+    ...authority,
+    freshness: { status: 'fresh', repos: { cecelia: { status: 'fresh', source_revision: NEW } } },
+    affected_business_nodes: [{ node_type: 'capability', node_key: 'F1', name: '开发闭环' }],
+    must_run_assertions: [{
+      assertion_ref: 'src/router.test.js',
+      journey_step_link_id: '55555555-5555-4555-8555-555555555555',
+      assertion_revision: 1,
+    }],
+  };
+  const receipt = {
+    id: '66666666-6666-4666-8666-666666666666',
+    repo: 'cecelia',
+    change_kind: 'bugfix',
+    work_kind: 'coding_mutation',
+    map_scope: ['F1'],
+    has_v2_run: false,
+    evidence: { base_sha: OLD, branch: 'cp-route-api-1' },
+    anchor_generation: 1,
+  };
+  const successor = {
+    ...receipt,
+    id: '77777777-7777-4777-8777-777777777777',
+    anchor_generation: 2,
+    evidence: { base_sha: NEW, branch: 'cp-route-api-1', prev_base_sha: OLD },
+    base_sha: NEW,
+  };
+
+  function deps(reanchorReceipt) {
+    return {
+      resolveScopeKey: vi.fn(async () => 'cecelia'),
+      lockMapProjectionAuthority: vi.fn(async () => authority),
+      readMap: vi.fn(async () => freshMap),
+      readRadius: vi.fn(async () => radius),
+      persistContract: vi.fn(async (_c, input) => ({
+        contract: { id: 'impact-1', status: 'active' }, input,
+      })),
+      reanchorReceipt,
+    };
+  }
+
+  it('地图 revision 前进且分支无产出 → 快进后用新收据继续，合同 base_revision 为新 sha', async () => {
+    const reanchorReceipt = vi.fn(async () => successor);
+    const d = deps(reanchorReceipt);
+    const result = await ensureMapImpactPreflight({ query: vi.fn() }, {
+      task: { id: TASK_ID, payload: {}, metadata: {} },
+      receipt,
+      createdSource: 'kernel_dispatch',
+    }, d);
+    expect(reanchorReceipt).toHaveBeenCalledOnce();
+    expect(reanchorReceipt.mock.calls[0][1]).toMatchObject({
+      receipt, createdSource: 'kernel_dispatch',
+    });
+    expect(d.persistContract.mock.calls[0][1]).toMatchObject({ base_revision: NEW });
+    expect(d.persistContract.mock.calls[0][1].contract_body.freshness_evidence.mapper_revision)
+      .toBe(NEW);
+    expect(result.receipt).toMatchObject({ id: successor.id, anchor_generation: 2 });
+    expect(result.contract).toMatchObject({ status: 'active' });
+  });
+
+  it('无法快进（reanchor 返回 null）→ 仍抛 map_revision_mismatch 且不持久化合同', async () => {
+    const d = deps(vi.fn(async () => null));
+    await expect(ensureMapImpactPreflight({ query: vi.fn() }, {
+      task: { id: TASK_ID, payload: {} }, receipt,
+    }, d)).rejects.toThrow('map_revision_mismatch');
+    expect(d.persistContract).not.toHaveBeenCalled();
+  });
+
+  it('reanchor 抛 needs_rebase → 原样上抛（不进 recovery 通道）', async () => {
+    const err = Object.assign(new Error('needs_rebase'), {
+      code: 'needs_rebase', detail: { old_base_sha: OLD },
+    });
+    const d = deps(vi.fn(async () => { throw err; }));
+    await expect(ensureMapImpactPreflight({ query: vi.fn() }, {
+      task: { id: TASK_ID, payload: { map_recovery: true } }, receipt,
+    }, d)).rejects.toMatchObject({ code: 'needs_rebase' });
+    expect(d.persistContract).not.toHaveBeenCalled();
+  });
+
+  it('revision 一致时不调用 reanchor', async () => {
+    const reanchorReceipt = vi.fn();
+    const d = deps(reanchorReceipt);
+    await ensureMapImpactPreflight({ query: vi.fn() }, {
+      task: { id: TASK_ID, payload: {} },
+      receipt: { ...receipt, evidence: { base_sha: NEW, branch: 'cp-route-api-1' } },
+    }, d);
+    expect(reanchorReceipt).not.toHaveBeenCalled();
+  });
+});
