@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.317.0
+**Brain 版本**: 1.317.1
 
 ## 1.283.0
 
@@ -48,6 +48,17 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.317.1 — 便宜闸读不到 Notion 指定的 Agent/Workflow（规格分叉修复）
+
+写入方 `notion-push-sync.js` 存 `qiumi_source.agent_workflow_ids`，读取方 `routing/cheap-gates.js`
+读 `src.relations.workflows`——生产代码零处写过后者，主理人在 Notion 填的「执行 Agent / Workflow」
+被整条丢弃。根因是 pr2/pr3 两份 plan 从一开始就是两份不同合同，8 处测试照 pr3 抄。
+
+- `qiumi_source` 形状抽成唯一真身 `packages/brain/src/lib/qiumi-source.js`（两层导出）
+- `cheap-gates.js` 改读真实键，分两趟匹配 ops_workflows / ops_agents
+- 契约守卫三段串联 `parseZhPage → qiumiSourceFromNotion → cheapGates`
+- 同 PR 改掉 pr2/pr3 文档里的错误合同
 
 ## Brain 1.317.0 — 秋米路由认「用 <型号>」：模型允许清单显式命中，claude 引擎改走 anthropic 原生通道
 
