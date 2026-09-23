@@ -40,6 +40,10 @@ BEGIN
 END
 $$;
 
+-- 重锚定的产出探测走裸 current_task_id = $1；375 的部分唯一索引带
+-- orchestrator_version='v2' AND phase NOT IN(...) 谓词，该谓词外的查询用不上，故另建裸列索引。
+CREATE INDEX IF NOT EXISTS idx_initiative_runs_current_task ON initiative_runs (current_task_id);
+
 INSERT INTO schema_version (version, description, applied_at)
 VALUES ('465', 'work_routing_receipts chained supersession via anchor_generation', NOW())
 ON CONFLICT (version) DO NOTHING;

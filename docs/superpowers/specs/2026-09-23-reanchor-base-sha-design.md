@@ -51,6 +51,8 @@ dispatcher.tick → claim(claimed_by IS NULL) → enforceDispatchRoutingReceipt(
 | 情形 | 行为 |
 |---|---|
 | 地图 unknown | 不快进，原样 `map_stale` |
+| `receipt.evidence` 为 null / 无 `base_sha` | 不快进，原样 `map_context_missing` 由预检报（预检在调用本模块前已校验 base_sha，此处只是模块自身的准入契约，缺旧锚就无从写 `prev_base_sha`） |
+| receipt 已被接班（`superseded=true`） | 抛 `receipt_superseded`，零写库——调用方契约违约（必须传当前生效收据），否则会插出 supersedes 分叉链被 465 唯一键拒 |
 | 快进后 preflight 仍失败（如 impact_assertion_missing） | 事务回滚，接班收据不落库；reason_code 区分 |
 | 收据唯一键冲突 | 事务回滚，任务留 queued，下 tick 重试 |
 | needs_rebase | blocked，不计 autoblock；P3 告警 dedupe `repo|needs_rebase` |

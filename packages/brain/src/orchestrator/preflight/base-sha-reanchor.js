@@ -14,16 +14,16 @@ function reanchorError(code, detail = {}) {
   return error;
 }
 
-// 计数来自 jsonb，可能是脏值（字符串/null/NaN）。脏值按 0 处理并告警一次，
-// 保证写回 metadata 的永远是有限整数，不会把 NaN 灌进 jsonb 卡死后续比较。
-function readFastforwardCount(metadata, taskId) {
-  const raw = metadata?.base_sha_fastforward_count ?? 0;
+// 计数与代际都来自 jsonb / DB，可能是脏值（字符串/NaN）或被手工写成负数。
+// 脏值按兜底值处理并告警，有限值夹到下限：保证写回的永远是有限非负整数，
+// 既不会把 NaN 灌进 jsonb，也不会让负计数永久免疫 map_thrash 闸。
+function finiteInt(raw, { fallback, floor, field, taskId }) {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) {
-    console.warn(`[base-sha-reanchor] 快进计数非法，按 0 处理 task=${taskId} value=${JSON.stringify(raw)}`);
-    return 0;
+    console.warn(`[base-sha-reanchor] ${field} 非法，按 ${fallback} 处理 task=${taskId} value=${JSON.stringify(raw)}`);
+    return fallback;
   }
-  return Math.trunc(parsed);
+  return Math.max(floor, Math.trunc(parsed));
 }
 
 /**
@@ -42,7 +42,8 @@ function readFastforwardCount(metadata, taskId) {
  * @param {Object} args.receipt 当前生效的路由收据
  * @param {Object} args.map 地图快照（freshness + projection_run_id）
  * @returns {Promise<Object|null>} 接班收据（含新 base_sha）；不满足快进条件返回 null
- * @throws {Error} code ∈ receipt_task_mismatch / task_metadata_missing / needs_rebase / map_thrash
+ * @throws {Error} code ∈ receipt_task_mismatch / receipt_superseded / task_metadata_missing /
+ *   needs_rebase / map_thrash
  */
 export async function reanchorReceiptIfEmptyBranch(client, {
   task, receipt, map, now = new Date(), createdSource = null,
@@ -50,6 +51,14 @@ export async function reanchorReceiptIfEmptyBranch(client, {
   if (receipt?.task_id && receipt.task_id !== task?.id) {
     throw reanchorError('receipt_task_mismatch', {
       task_id: task?.id ?? null, receipt_task_id: receipt.task_id, receipt_id: receipt.id ?? null,
+    });
+  }
+  // 传进来的必须是当前生效收据。拿已被接班的旧收据再快进，会插出第二条
+  // supersedes 指向同一张旧收据的分叉链（465 唯一键会拒，整事务回滚），属调用方契约违约。
+  if (receipt?.superseded === true) {
+    throw reanchorError('receipt_superseded', {
+      task_id: task?.id ?? null, receipt_id: receipt.id ?? null,
+      anchor_generation: receipt.anchor_generation ?? null,
     });
   }
 
@@ -74,7 +83,7 @@ export async function reanchorReceiptIfEmptyBranch(client, {
   }
 
   const rebaseDetail = {
-    old_base_sha: oldBaseSha, new_base_sha: targetSha,
+    task_id: task.id, old_base_sha: oldBaseSha, new_base_sha: targetSha,
     branch: receipt.evidence?.branch ?? null, has_v2_run: receipt.has_v2_run === true,
   };
   // 有产出的判定必须排在 map_thrash 之前：分支已经有东西时，正确处置是人工 rebase，
@@ -82,8 +91,9 @@ export async function reanchorReceiptIfEmptyBranch(client, {
   if (receipt.has_v2_run === true) throw reanchorError('needs_rebase', rebaseDetail);
   // 保守口径（spec）：建过 run 即视为"分支已有产出"，不再快进。代价是重试型 run
   // 建过一次后该任务永久失去快进能力，只能走 needs_rebase 人工重挂。
-  // 拆成两个 EXISTS 用 OR 连接（不写成单表内 OR 条件），让 current_task_id 与
-  // initiative_id 两列的索引各自可用。
+  // 拆成两个 EXISTS 用 OR 连接（不写成单表内 OR 条件），让 idx_initiative_runs_current_task
+  // （迁移 465）与 idx_initiative_runs_initiative（迁移 238）各自可用。375 的部分唯一索引
+  // 带 orchestrator_version/phase 谓词，裸 current_task_id = $1 走不到它，故 465 另建裸列索引。
   const { rows: runRows } = await client.query(
     `SELECT (
        EXISTS (SELECT 1 FROM initiative_runs WHERE current_task_id = $1::uuid)
@@ -93,14 +103,19 @@ export async function reanchorReceiptIfEmptyBranch(client, {
   );
   if (runRows[0]?.has_any_run === true) throw reanchorError('needs_rebase', rebaseDetail);
 
-  const fastforwardCount = readFastforwardCount(task.metadata, task.id);
+  const fastforwardCount = finiteInt(task.metadata?.base_sha_fastforward_count ?? 0, {
+    fallback: 0, floor: 0, field: 'base_sha_fastforward_count', taskId: task.id,
+  });
   if (fastforwardCount >= MAX_FASTFORWARD) {
     throw reanchorError('map_thrash', {
-      fastforward_count: fastforwardCount, old_base_sha: oldBaseSha, map_revision: targetSha,
+      task_id: task.id, fastforward_count: fastforwardCount,
+      old_base_sha: oldBaseSha, map_revision: targetSha,
     });
   }
 
-  const nextGeneration = Number(receipt.anchor_generation ?? 1) + 1;
+  const nextGeneration = finiteInt(receipt.anchor_generation ?? 1, {
+    fallback: 1, floor: 1, field: 'anchor_generation', taskId: task.id,
+  }) + 1;
   const evidence = {
     ...(receipt.evidence ?? {}),
     base_sha: targetSha,

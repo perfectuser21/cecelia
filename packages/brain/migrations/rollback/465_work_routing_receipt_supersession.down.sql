@@ -16,5 +16,6 @@ BEGIN
   END IF;
 END
 $$;
+DROP INDEX IF EXISTS idx_initiative_runs_current_task;
 DELETE FROM schema_version WHERE version = '465';
 COMMIT;
