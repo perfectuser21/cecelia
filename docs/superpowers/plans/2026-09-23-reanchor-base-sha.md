@@ -963,6 +963,26 @@ git commit -m "feat(brain): 路由收据回读取最新一代，幂等比对忽�
 - Modify: `packages/brain/src/executor.js:3565-3572, 3625-3631`
 - Modify: `packages/brain/src/dispatcher.js:1204-1208, 1224, 1252-1259`
 - Modify: `packages/brain/src/__tests__/dispatch-fail-autoblock.test.js`
+- Modify: `packages/brain/src/lib/dispatch-reason-code.js` + `src/lib/__tests__/dispatch-reason-code.test.js`（Task 3 复审：reanchor 的调用契约违约码要有自己的 reason_code）
+
+- [ ] **Step 0a: 写失败测试（追加到 dispatch-reason-code.test.js 的 describe 内）**
+
+```js
+  it('reanchor 调用契约违约码保留原码，不归 executor_failed', () => {
+    expect(classifyDispatchReasonCode({ error: 'task_metadata_missing' })).toBe('task_metadata_missing');
+    expect(classifyDispatchReasonCode({ error: 'kernel_process_fatal:receipt_task_mismatch' })).toBe('receipt_task_mismatch');
+  });
+```
+
+Run: `cd packages/brain && npx vitest run src/lib/__tests__/dispatch-reason-code.test.js` → 新用例 FAIL；提交 `git commit -m "test(brain): 契约违约码保留 reason_code failing test"`。
+
+- [ ] **Step 0b: 改 dispatch-reason-code.js 第 4 行**
+
+```js
+const EXACT_CODES = ['needs_rebase', 'map_thrash', 'task_metadata_missing', 'receipt_task_mismatch'];
+```
+
+Run 同上 → PASS；提交 `git commit -m "fix(brain): 契约违约码保留独立 reason_code"`。
 
 - [ ] **Step 1: 写失败测试（追加到 dispatch-fail-autoblock.test.js 末尾）**
 
