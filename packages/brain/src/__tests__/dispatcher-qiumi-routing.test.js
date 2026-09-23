@@ -390,4 +390,29 @@ describe('熔断豁免：qiumi_task 走 ssh 直派，不受 cecelia-run 熔断�
     expect(checkCeceliaRunAvailable).not.toHaveBeenCalled();
     expect(r).toMatchObject({ dispatched: true, task_id: 'q1' });
   });
+
+  it('openclaw 起 agent 失败 → recordFailure("openclaw-agent")，绝不计 cecelia-run', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    mockTriggerCeceliaRun.mockResolvedValue({ success: false, reason: 'openclaw_agent_spawn_failed', error: 'ssh timeout' });
+
+    const r = await dispatchNextTask(null);
+
+    expect(r).toMatchObject({ dispatched: false, reason: 'executor_failed', task_id: 'q1' });
+    expect(mockRecordFailure).toHaveBeenCalledWith('openclaw-agent');
+    expect(mockRecordFailure).not.toHaveBeenCalledWith('cecelia-run');
+  });
+
+  it('openclaw 起 agent 成功 → recordSuccess("openclaw-agent")', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    mockTriggerCeceliaRun.mockResolvedValue({ success: true, taskId: 'q1', runId: 'qiumi-q1-1', executor: 'openclaw-agent' });
+
+    const r = await dispatchNextTask(null);
+
+    expect(r).toMatchObject({ dispatched: true, task_id: 'q1' });
+    expect(mockRecordSuccess).toHaveBeenCalledWith('openclaw-agent');
+  });
 });
