@@ -744,7 +744,11 @@ describe('reason_code 与 needs_rebase（任务 d9c405e2）', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // vi.clearAllMocks 不清 Once 队列：本 describe 下多个用例各自注册 setupQuerySequence，
+    // 不 reset 会让上一条用例的残留 Once 顶掉下一条的 claim 结果（表现为 already_claimed）。
+    mockQuery.mockReset();
     mockSelectNextDispatchableTask.mockReset();
+    mockBlockTask.mockReset().mockResolvedValue({ success: true });
     mockSelectNextDispatchableTask.mockResolvedValueOnce(task);
   });
 
@@ -768,12 +772,49 @@ describe('reason_code 与 needs_rebase（任务 d9c405e2）', () => {
     const { dispatchNextTask } = await import('../dispatcher.js');
     const result = await dispatchNextTask(['goal-1']);
     expect(result.dispatched).toBe(false);
+    // 停车不是执行故障：统计口径与返回体 reason 都用 needs_rebase，不混进 executor_failed
+    expect(result.reason).toBe('needs_rebase');
+    expect(mockRecordDispatchResult).toHaveBeenCalledWith(expect.anything(), false, 'needs_rebase', undefined, task.id);
     expect(mockBlockTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
       reason: 'needs_rebase',
       detail: expect.objectContaining({ reason_code: 'needs_rebase', branch: 'cp-route-api-1' }),
     }));
     const countUpdate = mockQuery.mock.calls.find(([sql]) => /dispatch_fail_consecutive/.test(String(sql)) && /UPDATE tasks/.test(String(sql)));
     expect(countUpdate).toBeUndefined();
+    // 也不能计入共享的 cecelia-run 熔断器（否则停车会连累其他任务类型派不出去）
+    expect(mockRecordFailure).not.toHaveBeenCalled();
     expect(mockRaise).toHaveBeenCalledWith('P3', 'needs_rebase', expect.stringContaining(task.id));
+  });
+
+  it('reason 未标 needs_rebase 但 reason_code 是：同样停车，detail 里的 reason_code 不能覆盖停车码', async () => {
+    mockTriggerCeceliaRun.mockResolvedValue({
+      success: false, reason: 'kernel_authority_not_created', reason_code: 'needs_rebase', error: 'needs_rebase',
+      // detail 自带一个陈旧 reason_code：展开后必须被停车码压掉，不能反向覆盖
+      detail: { branch: 'cp-route-api-2', reason_code: 'stale_value' },
+    });
+    setupQuerySequence(task, 0, false);
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    const result = await dispatchNextTask(['goal-1']);
+    expect(result.reason).toBe('needs_rebase');
+    expect(mockBlockTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      reason: 'needs_rebase',
+      detail: expect.objectContaining({ reason_code: 'needs_rebase', branch: 'cp-route-api-2' }),
+    }));
+    const countUpdate = mockQuery.mock.calls.find(([sql]) => /dispatch_fail_consecutive/.test(String(sql)) && /UPDATE tasks/.test(String(sql)));
+    expect(countUpdate).toBeUndefined();
+  });
+
+  it('blockTask 没停住（返回 success:false）→ P2 needs_rebase_park_failed，不静默', async () => {
+    mockTriggerCeceliaRun.mockResolvedValue({
+      success: false, reason: 'needs_rebase', reason_code: 'needs_rebase', error: 'needs_rebase',
+      detail: { branch: 'cp-route-api-3' },
+    });
+    // blockTask 不抛异常，失败时返回 {success:false}；WHERE status IN(...) 不匹配也走这条路径。
+    // 任务因此仍留在 queued，会每 tick 重撞——必须告警让人看见。
+    mockBlockTask.mockResolvedValueOnce({ success: false, error: 'Task not found or not in blockable state' });
+    setupQuerySequence(task, 0, false);
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    await dispatchNextTask(['goal-1']);
+    expect(mockRaise).toHaveBeenCalledWith('P2', 'needs_rebase_park_failed', expect.stringContaining(task.id));
   });
 });
