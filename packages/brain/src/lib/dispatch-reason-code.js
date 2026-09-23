@@ -1,7 +1,7 @@
 // 派发失败原因结构化：dispatcher autoblock detail / task_events / executor 返回体共用。
-// 精确码（needs_rebase / map_thrash）优先于前缀码；按非单词字符分词后整段取 token，
+// 精确码（needs_rebase / map_thrash / 重锚定调用契约违约码）优先于前缀码；按非单词字符分词后整段取 token，
 // 不做贪婪子串匹配（避免 map_revision_mismatch_needs_rebase 被吞成复合串、map_scope_v2 被截成 map_scope_v）。
-const EXACT_CODES = ['needs_rebase', 'map_thrash'];
+const EXACT_CODES = ['needs_rebase', 'map_thrash', 'task_metadata_missing', 'receipt_task_mismatch', 'receipt_superseded'];
 const PREFIX_TOKEN = /^(map|impact|credential)_[a-z0-9_]+$/;
 
 /**
