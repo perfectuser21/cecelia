@@ -728,3 +728,52 @@ describe('[BEHAVIOR-7]: DISPATCH_FAIL_AUTOBLOCK_THRESHOLD 非法值回退默认 
     expect(DISPATCH_FAIL_AUTOBLOCK_THRESHOLD).toBe(3);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// reason_code 与 needs_rebase 停车（任务 d9c405e2）
+//
+// 预检重锚定在「分支已有产出但 base_sha 落后地图」时抛 code='needs_rebase'，
+// 这不是执行故障——不应累计 dispatch_fail_consecutive、不应走三振 autoblock，
+// 而是直接停车（blocked reason='needs_rebase'）等 rebase 后解锁。
+// 同时所有派发失败的 detail / task_events 都带结构化 reason_code，便于回填与归因。
+// ─────────────────────────────────────────────────────────────────────────────
+describe('reason_code 与 needs_rebase（任务 d9c405e2）', () => {
+  // 与本文件其余用例一致用默认 task_type（research）：harness_initiative 在本文件的
+  // slot-allocator mock 下（codex.available=false）会被 HOL skip，根本走不到派发失败路径。
+  const task = makeTask({ metadata: {} });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSelectNextDispatchableTask.mockReset();
+    mockSelectNextDispatchableTask.mockResolvedValueOnce(task);
+  });
+
+  it('三振时 blockTask detail 带 reason_code=map_revision_mismatch', async () => {
+    mockTriggerCeceliaRun.mockResolvedValue({ success: false, reason: 'kernel_authority_not_created', error: 'map_revision_mismatch' });
+    setupQuerySequence(task, 2, true);
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    await dispatchNextTask(['goal-1']);
+    expect(mockBlockTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      reason: 'dispatch_fail_autoblock',
+      detail: expect.objectContaining({ reason_code: 'map_revision_mismatch', consecutive_failures: 3 }),
+    }));
+  });
+
+  it('needs_rebase：直接 block（reason=needs_rebase）、不累计 dispatch_fail_consecutive、P3 告警', async () => {
+    mockTriggerCeceliaRun.mockResolvedValue({
+      success: false, reason: 'needs_rebase', reason_code: 'needs_rebase', error: 'needs_rebase',
+      detail: { old_base_sha: 'a'.repeat(40), new_base_sha: 'b'.repeat(40), branch: 'cp-route-api-1' },
+    });
+    setupQuerySequence(task, 0, false);
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    const result = await dispatchNextTask(['goal-1']);
+    expect(result.dispatched).toBe(false);
+    expect(mockBlockTask).toHaveBeenCalledWith(task.id, expect.objectContaining({
+      reason: 'needs_rebase',
+      detail: expect.objectContaining({ reason_code: 'needs_rebase', branch: 'cp-route-api-1' }),
+    }));
+    const countUpdate = mockQuery.mock.calls.find(([sql]) => /dispatch_fail_consecutive/.test(String(sql)) && /UPDATE tasks/.test(String(sql)));
+    expect(countUpdate).toBeUndefined();
+    expect(mockRaise).toHaveBeenCalledWith('P3', 'needs_rebase', expect.stringContaining(task.id));
+  });
+});
