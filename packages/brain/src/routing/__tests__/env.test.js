@@ -47,6 +47,11 @@ describe('QIUMI_MODEL_ALLOWLIST + resolveModelRef', () => {
     const env2 = qiumiEnv({ QIUMI_MODEL_ALLOWLIST: JSON.stringify(['a/x-pro', 'b/y-pro']) });
     expect(resolveModelRef('pro', env2)).toBeNull();
   });
+  it('短名全等有多条（a/x 与 b/x）→ 不猜，null', () => {
+    const env3 = qiumiEnv({ QIUMI_MODEL_ALLOWLIST: JSON.stringify(['a/pro-max', 'b/pro-max', 'c/y-pro-max']) });
+    expect(resolveModelRef('pro-max', env3)).toBeNull();   // 全等两条 → null（不落到 suffix 分支去捡 c/y-pro-max）
+    expect(resolveModelRef('y-pro-max', env3)).toBe('c/y-pro-max');
+  });
   it('不在清单 / 太短 / 空 → null', () => {
     expect(resolveModelRef('claude', env)).toBeNull();
     expect(resolveModelRef('so', env)).toBeNull();
