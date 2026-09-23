@@ -1280,9 +1280,16 @@ export async function dispatchNextTask(goalIds) {
     return { dispatched: false, reason: execResult.configError ? 'config_error' : 'executor_failed', task_id: nextTask.id, error: execResult.error || execResult.reason, configError: !!execResult.configError, actions };
   }
 
-  // openclaw-agent 成功：给它自己的熔断记一笔成功（HALF_OPEN → CLOSED），与 cecelia-run 互不牵连
+  // openclaw-agent 成功：给它自己的熔断记一笔成功（HALF_OPEN → CLOSED），与 cecelia-run 互不牵连。
+  // 这里已经在 try 内、postClaimException 的覆盖范围里，而 agent 早就 spawn 出去了——
+  // 所以必须自己吞掉异常：一旦让它冒到兜底，就会放 claim + 标 status='failed'，
+  // 下个 tick 把同一个还在跑的任务再派一遍（比丢一笔事后记账糟得多）。
   if (isOpenclawSurface(nextTask.task_type)) {
-    await recordSuccess('openclaw-agent');
+    try {
+      await recordSuccess('openclaw-agent');
+    } catch (e) {
+      tickLog(`[dispatcher] recordSuccess(openclaw-agent) 失败（不影响已 spawn 的任务）: ${e.message}`);
+    }
   }
   } catch (err) {
     return await postClaimException(err);
