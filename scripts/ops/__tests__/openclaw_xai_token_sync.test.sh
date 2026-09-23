@@ -171,6 +171,36 @@ else
   fi
 fi
 
+# ── ③c agent 名单必须读「活」配置，不是陈旧那份 ──────────────────────────
+# 2026-09-23 打脸：~/.openclaw 下有两份配置。
+#   clawdbot.json —— 旧名，9-21 之后就没再更新（23 个 agent）
+#   openclaw.json —— **真身**，`openclaw config set` 写的是它（24 个 agent）
+# 同步器原来读 clawdbot.json，于是新加的 agent（newmedia）永远同步不到 token，
+# 几小时后它的 grok 就 403，而日志显示「23/23 成功」—— **漏掉的那个不在分母里，
+# 所以看起来永远全绿**。这是最坏的一种假绿：计数正确，样本不全。
+#
+# 这条断言测行为不测字面量：造两份配置，各放一个独有的 agent，看脚本同步了谁。
+mk_env
+FAKE_HOME="$WORK/fakehome"; rm -rf "$FAKE_HOME"; mkdir -p "$FAKE_HOME/.openclaw"
+python3 - "$FAKE_HOME" <<'PYCFG'
+import json, sys, os
+h = sys.argv[1]
+json.dump({"agents": {"entries": {"only-in-live": {}}}}, open(os.path.join(h, ".openclaw/openclaw.json"), "w"))
+json.dump({"agents": {"entries": {"only-in-stale": {}}}}, open(os.path.join(h, ".openclaw/clawdbot.json"), "w"))
+PYCFG
+mk_auth "$WORK/auth.json" 300 FRESH
+# 必须清掉 OPENCLAW_AGENTS_DIR —— 它优先级高于配置文件，留着就测不到配置路径这条分支
+OUT=$(env -u OPENCLAW_AGENTS_DIR HOME="$FAKE_HOME" GROK_AUTH_FILE="$WORK/auth.json" \
+      PASTE_LOG="$WORK/pasted.txt" GROK_LOG="$WORK/grok-calls.txt" \
+      XAI_SYNC_PATH="$BIN" XAI_PASTE_RETRY_SLEEP=0 bash "$SYNC" 2>&1)
+if grep -q '^only-in-live|' "$WORK/pasted.txt" 2>/dev/null; then
+  ok "读的是活配置 openclaw.json（同步了 only-in-live）"
+elif grep -q '^only-in-stale|' "$WORK/pasted.txt" 2>/dev/null; then
+  bad "读了陈旧的 clawdbot.json —— 新加的 agent 会被静默漏掉，日志却显示全绿"
+else
+  bad "两份配置的 agent 都没同步到：$(cut -d'|' -f1 < "$WORK/pasted.txt" | tr '\n' ' ')"
+fi
+
 # ── ④ CLI 未登录要报死 ───────────────────────────────────────────────────
 mk_env
 export GROK_AUTH_FILE="$WORK/nonexistent.json"
