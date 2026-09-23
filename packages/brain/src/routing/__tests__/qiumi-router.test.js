@@ -23,6 +23,7 @@ import { recordTaskEventSafe } from '../../lib/task-event-log.js';
 import { loadRegistryPool } from '../cheap-gates.js';
 import { routeQiumiTask, persistDecision, pickSerial, NOUL_THRESHOLDS } from '../qiumi-router.js';
 import { qiumiEnv, phoneNodeName } from '../env.js';
+import { buildQiumiSource } from '../../lib/qiumi-source.js';
 
 // 既有 device/fail 用例断言的是「device 派生」这条旧路，开关封存后必须显式打开才走得到
 const env = qiumiEnv({ JEV_API_KEY: 'k', QIUMI_DEVICE_DELEGATION_ENABLED: 'true' });
@@ -59,7 +60,7 @@ const task = (body, source = {}) => ({
   task_type: 'qiumi_task',
   status: 'queued',
   payload: {
-    qiumi_source: { title: 'T', remark: '', body, channel: null, relations: { agents: [], workflows: [], skills: [] }, ...source },
+    qiumi_source: buildQiumiSource({ title: 'T', remark: '', body, channel: null, ...source }),
   },
 });
 
@@ -223,7 +224,7 @@ describe('routeQiumiTask 决策表', () => {
   });
 
   it('便宜闸命中非部门 agent → agentRef 带进 task_events 留痕，不当部门用', async () => {
-    const d = await routeQiumiTask(task('随便写点什么', { relations: { agents: ['ag-xiaobai'], workflows: [], skills: [] } }), {
+    const d = await routeQiumiTask(task('随便写点什么', { agentWorkflowIds: ['ag-xiaobai'] }), {
       pool, env, fetchFn: jevOk(), callLLMFn: vi.fn(),
     });
     expect(d.department).toBe('dev');
@@ -235,7 +236,7 @@ describe('routeQiumiTask 决策表', () => {
 
   it('relation 命中的 agent 名裹着序列号 → 子串反查得手机，直接 device 且不问 Jev', async () => {
     const fetchFn = vi.fn();
-    const d = await routeQiumiTask(task('把这条内容整理好交给同事', { relations: { agents: ['ag-phone1'], workflows: [], skills: [] } }), {
+    const d = await routeQiumiTask(task('把这条内容整理好交给同事', { agentWorkflowIds: ['ag-phone1'] }), {
       pool, env, fetchFn, callLLMFn: vi.fn(),
     });
     expect(fetchFn).not.toHaveBeenCalled();
@@ -249,11 +250,15 @@ describe('routeQiumiTask 决策表', () => {
 
   it('agentRef 反查不到序列号（普通 agent 名）→ 不假装命中，照常交 Jev 选号', async () => {
     const fetchFn = jevOk(jevAnswers({ is_device: { type: 'noul', noul: 0.99 }, account: choice('e6c7ef34', 0.9) }));
-    const d = await routeQiumiTask(task('去朋友圈点个赞', { relations: { agents: ['ag-xiaobai'], workflows: [], skills: [] } }), {
+    const d = await routeQiumiTask(task('去朋友圈点个赞', { agentWorkflowIds: ['ag-xiaobai'] }), {
       pool, env, fetchFn, callLLMFn: vi.fn(),
     });
     expect(fetchFn).toHaveBeenCalled();
     expect(d).toMatchObject({ outcome: 'device', serial: 'e6c7ef34' });
+    // 正向钉住「relation 确实命中了 agent」——否则本用例在"压根没传 agentWorkflowIds"
+    // 时也会绿（负向断言 not.toContain 区分不了"查过没中"与"从没查"），
+    // 等于测不出任何东西。2026-09-23 实跑验证过这个假绿。
+    expect(d.payloadPatch.qiumi_route.cheap.agentRef).toBe('小白');
     expect(d.payloadPatch.qiumi_route.cheap.matchedBy).not.toContain('agentRef:serial');
   });
 

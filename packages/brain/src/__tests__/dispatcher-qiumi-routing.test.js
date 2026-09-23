@@ -92,6 +92,7 @@ vi.mock('../pre-flight-check.js', () => ({
 vi.mock('../dispatch-dedup.js', () => ({ findDuplicateSibling: vi.fn(async () => null) }));
 
 import { routeQiumiTask, persistDecision } from '../routing/qiumi-router.js';
+import { buildQiumiSource } from '../lib/qiumi-source.js';
 import { recordDispatchResult } from '../dispatch-stats.js';
 import { checkAnchor } from '../anchor-check.js';
 import { checkCeceliaRunAvailable } from '../executor.js';
@@ -100,7 +101,7 @@ import { dispatchQiumiTask, dispatchNextTask } from '../dispatcher.js';
 // 候选行（选单 SQL 只取部分列，payload 未必带全）
 const candidate = { id: 'q1', task_type: 'qiumi_task', status: 'queued', priority: 'P2', title: '给张三发个私信确认收货地址', created_at: new Date().toISOString() };
 // 库里的整行
-const fullRow = { ...candidate, payload: { qiumi_source: { title: '给张三发个私信确认收货地址' } } };
+const fullRow = { ...candidate, payload: { qiumi_source: buildQiumiSource({ title: '给张三发个私信确认收货地址' }) } };
 
 /** 按 SQL 形状回答，不靠调用次序——dispatchNextTask 前面还有若干条真查询 */
 function wireQueries({ running = 0, claimed = true } = {}) {

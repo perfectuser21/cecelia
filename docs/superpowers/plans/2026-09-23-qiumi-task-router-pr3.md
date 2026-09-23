@@ -18,7 +18,14 @@
 - Jev 输入 = `qiumi_source` 的标题+备注+正文全文（不截断），`redactSecrets()` 打码 `key/token/secret/password/bearer/sk-…` 模式；账号只能取 registry 池内值（池外 → 视为未选）。
 - MMV 非设备 `openclaw-agent` 并发上限 `QIUMI_MMV_CONCURRENCY`（默认 2，机器闸非租户）：`SELECT count(*) FROM tasks WHERE executor_kind='openclaw-agent' AND status='in_progress'` ≥ 上限 → 释放 claim、`dispatched:false reason:'openclaw_agent_pool_full'`（照 `codex_pool_full` 写法）。
 - us-vps 只调度不执行（96054a8b / eb0a03df）：执行只经 ssh 到 `sshTargetFor('us-mac-m4')`（`administrator@100.71.151.105`），`execFile('ssh', [...SSH_BASE_ARGS, target, remote], { input: prompt })`，prompt 走 stdin 不拼命令行。
-- 与 PR2 接口（不得改语义）：入账 payload 含 `qiumi_source`（title/remark/body/priority_raw/due_at/channel/relations{agents,workflows,skills}/owner/zh_page_id/en_page_id/origin）、`dedup_by_notion_page='true'`、`notion_zh_page_id`、`tenant_id`、`headed_manual`；`executor_kind='openclaw-agent'`；急停语义 `owner_hold`/`cancel_requested`；开关 `QIUMI_SYNC_ENABLED`/`QIUMI_SYNC_SINCE`。PR3 新增开关 `QIUMI_DISPATCH_ENABLED`：PR2 的 `ingestQiumiPage` 改为 `headed_manual: env.QIUMI_DISPATCH_ENABLED !== 'true'`；切换脚本对存量 `queued` 的 `qiumi_task` 执行 `payload - 'headed_manual'`。
+- 与 PR2 接口（不得改语义）：入账 payload 含 `qiumi_source`（title/remark/body/priority_raw/due_at/channel/agent_workflow_ids/skill_ids/business_task_ids/owner_ids/zh_page_id/en_page_id/origin）、`dedup_by_notion_page='true'`、`notion_zh_page_id`、`tenant_id`、`headed_manual`；`executor_kind='openclaw-agent'`；急停语义 `owner_hold`/`cancel_requested`；开关 `QIUMI_SYNC_ENABLED`/`QIUMI_SYNC_SINCE`。PR3 新增开关 `QIUMI_DISPATCH_ENABLED`：PR2 的 `ingestQiumiPage` 改为 `headed_manual: env.QIUMI_DISPATCH_ENABLED !== 'true'`；切换脚本对存量 `queued` 的 `qiumi_task` 执行 `payload - 'headed_manual'`。
+
+> **勘误（2026-09-23）**：本节原写 `relations:{agents,workflows,skills}`，与 PR2 的实际实现
+> （`agent_workflow_ids` / `skill_ids` / `business_task_ids` / `owner_ids`，见 pr2.md）不符。
+> 两份 plan 从一开始就是两份不同的合同，照本节抄的 8 处测试因此测的是虚构形状——
+> 两头各自绿、中间断了三个月没人发现，主理人在 Notion 填的「执行 Agent / Workflow」
+> 被整条丢弃。唯一真身现在是 `packages/brain/src/lib/qiumi-source.js`
+> （`buildQiumiSource` / `qiumiSourceFromNotion`），一切消费方从那里 import，勿再手抄形状。
 - 每步留痕 `task_events`（0f8309e8）：`recordTaskEventSafe(pool, taskId, 'qiumi_route_decided'|'qiumi_route_failed'|'qiumi_device_converted'|'openclaw_agent_spawned'|'openclaw_agent_reaped', payload)`。
 - 派发时必须写 `payload.run_id`（`qiumi-<task_id 前 8 位>-<Date.now()>`，正则 `^[A-Za-z0-9._-]+$`），PR1 合同 probe 靠它探 `~/brain-runs/<run_id>.exit|.pid`。
 - env（容器 env，改了必须重建容器，learning cp-0916213853；brain 无 env 登记机制，本刀在 `src/routing/env.js` 集中读取并在文件头列全）：`JEV_API_KEY`（1Password「Jev API Key (TypeSafe)」）、`JEV_ENDPOINT`（默认 `https://api.typesafe.ai/v1/systemone`）、`JEV_MODEL`（默认 `jev-latest`）、`QIUMI_FALLBACK_MODEL`（默认 `gpt-5.6-terra`）、`QIUMI_MMV_CONCURRENCY`（默认 2）、`QIUMI_DISPATCH_ENABLED`（默认 false）、`QIUMI_DEPARTMENTS`（JSON 数组，默认 `["main","infra","dev","media","people","fde"]`）、`QIUMI_MODEL_MAP`（JSON，默认 `{"claude":"claude-cli/claude-sonnet-5","codex":"openai/gpt-5.3-codex","terra":"openai/gpt-5.6-terra"}`）、`QIUMI_DEVICE_KEYWORDS`（JSON 数组，默认 `["手机","点赞","发布","朋友圈","抖音","adb","私信","小红书","快手","视频号"]`）、`QIUMI_JEV_STUB`/`QIUMI_SSH_STUB`（仅测试/smoke）。
@@ -394,11 +401,11 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Test: `packages/brain/src/__tests__/qiumi-cheap-gates.test.js`
 
 **Interfaces:**
-- Consumes: `task.payload.qiumi_source`（PR2）：`{ title, remark, body, channel, relations:{agents:[],workflows:[],skills:[]}, owner, zh_page_id, en_page_id, origin }`；`ops_agents(name, meta jsonb, notion_id)`、`ops_workflows(name, notion_id, meta)`；`qiumiEnv().deviceKeywords`
+- Consumes: `task.payload.qiumi_source`（PR2，唯一真身 `packages/brain/src/lib/qiumi-source.js` 的 `buildQiumiSource`/`qiumiSourceFromNotion`）：`{ title, remark, body, channel, agent_workflow_ids:[], skill_ids:[], business_task_ids:[], owner_ids:[], zh_page_id, en_page_id, origin }`；`ops_agents(name, meta jsonb, notion_id)`、`ops_workflows(name, notion_id, meta)`；`qiumiEnv().deviceKeywords`
 - Produces:
   - `loadRegistryPool(query) → { agents:[{name, serial, notionId}], workflows:[{name, notionId, channel}] }`（`meta.serial`/`meta.phone_serial` 任一为序列号；`meta.channel` 为 'device' 视为设备工作流）
   - `cheapGates(task, pool, env) → { isDevice:boolean, serial:string|null, workflowRef:string|null, department:string|null, hardEngine:'claude'|'codex'|'terra'|null, matchedBy:string[] }`
-  - 优先级：relations.workflows/agents 命中（硬约束）> `channel` 非空 > 正文命中 registry 序列号/agent 名/workflow 名 > 关键词 > 无。`hardEngine`：正文正则 `/claude\s*code|用\s*claude/i`→claude、`/用\s*codex/i`→codex。
+  - 优先级：`agent_workflow_ids` 命中（硬约束，Agent 与 Workflow 混合 id，经 pool 查两张表分辨）> `channel` 非空 > 正文命中 registry 序列号/agent 名/workflow 名 > 关键词 > 无。`hardEngine`：正文正则 `/claude\s*code|用\s*claude/i`→claude、`/用\s*codex/i`→codex。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -413,7 +420,8 @@ const pool = {
   agents: [{ name: 'phone-ANGYVB4227006983', serial: 'ANGYVB4227006983', notionId: 'a1' }, { name: 'infra', serial: null, notionId: 'a2' }],
   workflows: [{ name: '朋友圈跟圈', notionId: 'w1', channel: 'device' }, { name: '周报生成', notionId: 'w2', channel: null }],
 };
-const mk = (src) => ({ id: 't1', task_type: 'qiumi_task', payload: { qiumi_source: { title: '', remark: '', body: '', channel: null, relations: { agents: [], workflows: [], skills: [] }, ...src } } });
+// fixture 形状（唯一真身：packages/brain/src/lib/qiumi-source.js 的 buildQiumiSource / qiumiSourceFromNotion，勿手抄形状）
+const mk = (src) => ({ id: 't1', task_type: 'qiumi_task', payload: { qiumi_source: { title: '', remark: '', body: '', channel: null, agent_workflow_ids: [], skill_ids: [], business_task_ids: [], owner_ids: [], ...src } } });
 
 describe('loadRegistryPool', () => {
   it('从 ops_agents/ops_workflows 读池，序列号来自 meta.serial 或 meta.phone_serial', async () => {
@@ -430,11 +438,11 @@ describe('loadRegistryPool', () => {
 
 describe('cheapGates', () => {
   it('relation 命中设备工作流 → isDevice + workflowRef，matchedBy=relation:workflow（硬约束）', () => {
-    const g = cheapGates(mk({ relations: { agents: [], workflows: ['w1'], skills: [] } }), pool, env);
+    const g = cheapGates(mk({ agent_workflow_ids: ['w1'] }), pool, env);
     expect(g).toMatchObject({ isDevice: true, workflowRef: '朋友圈跟圈', matchedBy: ['relation:workflow'] });
   });
   it('relation 命中手机 agent → isDevice + serial', () => {
-    const g = cheapGates(mk({ relations: { agents: ['a1'], workflows: [], skills: [] } }), pool, env);
+    const g = cheapGates(mk({ agent_workflow_ids: ['a1'] }), pool, env);
     expect(g).toMatchObject({ isDevice: true, serial: 'ANGYVB4227006983', matchedBy: ['relation:agent'] });
   });
   it('执行通道非空 → isDevice，workflowRef=通道名', () => {
@@ -492,12 +500,14 @@ export function cheapGates(task, pool, env) {
   const norm = (s) => String(s ?? '').replace(/-/g, '');
   const out = { isDevice: false, serial: null, workflowRef: null, department: null, hardEngine: null, matchedBy: [] };
 
-  const relWf = (src.relations?.workflows ?? []).map(norm);
-  const wfHit = pool.workflows.find((w) => w.notionId && relWf.includes(norm(w.notionId)));
+  // agent_workflow_ids 是 Agent 与 Workflow 混合的 Notion page id 数组（唯一真身：
+  // packages/brain/src/lib/qiumi-source.js 的 buildQiumiSource / qiumiSourceFromNotion，
+  // 勿手抄形状），需分别查两张 pool 表分辨究竟命中哪一种。
+  const relIds = (src.agent_workflow_ids ?? []).map(norm);
+  const wfHit = pool.workflows.find((w) => w.notionId && relIds.includes(norm(w.notionId)));
   if (wfHit) { out.workflowRef = wfHit.name; if (wfHit.channel === 'device') out.isDevice = true; out.matchedBy.push('relation:workflow'); }
 
-  const relAg = (src.relations?.agents ?? []).map(norm);
-  const agHit = pool.agents.find((a) => a.notionId && relAg.includes(norm(a.notionId)));
+  const agHit = pool.agents.find((a) => a.notionId && relIds.includes(norm(a.notionId)));
   if (agHit) { if (agHit.serial) { out.isDevice = true; out.serial = agHit.serial; } else { out.department = agHit.name; } out.matchedBy.push('relation:agent'); }
 
   if (src.channel) { out.isDevice = true; out.workflowRef = out.workflowRef ?? src.channel; out.matchedBy.push('channel'); }
@@ -556,7 +566,8 @@ const env = qiumiEnv({ JEV_API_KEY: 'k' });
 const registry = { agents: [{ name: 'phone-S1', serial: 'S1', notionId: 'a1' }], workflows: [{ name: '朋友圈跟圈', notionId: 'w1', channel: 'device' }] };
 const answers = (o = {}) => ({ kind: { choice: 'agent', confidence: 0.95 }, is_device: { choice: 'false', confidence: 0.95 }, engine: { choice: 'terra', confidence: 0.9 }, department: { choice: 'dev', confidence: 0.9 }, account: { choice: 'not_applicable', confidence: 0.9 }, workflow_ref: { choice: 'not_applicable', confidence: 0.9 }, ...o });
 const jevOk = (a) => vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ answers: a }) });
-const task = (body, extra = {}) => ({ id: '11111111-2222-3333-4444-555555555555', task_type: 'qiumi_task', status: 'queued', payload: { qiumi_source: { title: 'T', remark: '', body, channel: null, relations: { agents: [], workflows: [], skills: [] } }, ...extra } });
+// fixture 形状（唯一真身：packages/brain/src/lib/qiumi-source.js 的 buildQiumiSource / qiumiSourceFromNotion，勿手抄形状）
+const task = (body, extra = {}) => ({ id: '11111111-2222-3333-4444-555555555555', task_type: 'qiumi_task', status: 'queued', payload: { qiumi_source: { title: 'T', remark: '', body, channel: null, agent_workflow_ids: [], skill_ids: [], business_task_ids: [], owner_ids: [] }, ...extra } });
 
 beforeEach(() => { vi.clearAllMocks(); loadRegistryPool.mockResolvedValue(registry); });
 

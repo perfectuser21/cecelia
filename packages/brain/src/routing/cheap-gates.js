@@ -35,22 +35,49 @@ function isDeviceWorkflow(name, env) {
   return env.deviceKeywords.some((k) => name.includes(k));
 }
 
+/**
+ * 按**用户在 Notion 的选择顺序**取首个命中的注册表行（不是遍历池——池是
+ * ORDER BY name，用户选两个时赢的会是字母序靠前的那个，反直觉）。
+ * 命中即 return，不存在"后续 id 把已命中值覆盖掉"的写法陷阱。
+ */
+function firstHit(normalizedIds, rows, norm) {
+  for (const id of normalizedIds) {
+    const hit = rows.find((r) => r.notionId && norm(r.notionId) === id);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 export function cheapGates(task, pool, env) {
   const src = task?.payload?.qiumi_source ?? {};
   const text = [src.title, src.remark, src.body].filter(Boolean).join('\n');
   const norm = (s) => String(s ?? '').replace(/-/g, '');
   const out = { isDevice: false, serial: null, workflowRef: null, department: null, agentRef: null, hardEngine: null, hardModel: null, matchedBy: [] };
 
-  const relWf = (src.relations?.workflows ?? []).map(norm);
-  const wfHit = pool.workflows.find((w) => w.notionId && relWf.includes(norm(w.notionId)));
+  // Notion 列「执行 Agent / Workflow」是一个**混合**数组：同一列里既可能是 Agent 行
+  // 的 page id，也可能是 Workflow 行的。写入方见 notion-push-sync.js 的
+  // qiumiSourceFromNotion → lib/qiumi-source.js（唯一真身）。
+  //
+  // 必须**分两趟**（先 workflows 后 agents），不可合成一趟按 id 顺序遍历：
+  // matchedBy 的元素顺序是承重的——vitest 的 toMatchObject 对数组是「长度相等 +
+  // 严格按序」（本仓 @vitest/expect 实跑确认，子集与乱序均报错），合成一趟会让
+  // 顺序随 id 顺序变，打破与本改动无关的既有用例。
+  //
+  // 每趟内遍历**用户在 Notion 的选择顺序**取首个命中，而不是遍历池（池是
+  // ORDER BY name，用户选两个时赢的会是字母序靠前的那个，反直觉）。
+  // 对照：text 分支有显式 tie-break「取最长命中」（见下方 + 用例 cheap-gates.test.js）。
+  const relIds = (src.agent_workflow_ids ?? []).map(norm);
+
+  // 两趟的**先后**决定 matchedBy 的元素顺序（承重：vitest 的 toMatchObject 对数组是
+  // 长度相等 + 严格按序，已实跑确认）。顺序在这两行，不在函数内部。
+  const wfHit = firstHit(relIds, pool.workflows, norm);
+  const agHit = firstHit(relIds, pool.agents, norm);
   if (wfHit) {
     out.workflowRef = wfHit.name;
     if (isDeviceWorkflow(wfHit.name, env)) out.isDevice = true;
     out.matchedBy.push('relation:workflow');
   }
 
-  const relAg = (src.relations?.agents ?? []).map(norm);
-  const agHit = pool.agents.find((a) => a.notionId && relAg.includes(norm(a.notionId)));
   if (agHit) {
     if (env.departments.includes(agHit.name)) { out.department = agHit.name; }
     else { out.agentRef = agHit.name; }
