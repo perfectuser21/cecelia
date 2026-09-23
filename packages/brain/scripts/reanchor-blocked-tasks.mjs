@@ -36,7 +36,7 @@ const UNBLOCK_HINT = '可能原因：任务不在 blocked 态 / 存在未解决 
  * 扫描并解锁因 map_revision_mismatch 自动停车的任务。
  * @param {object} opts
  * @param {{query: Function}} opts.db - db pool（或兼容 query() 的 mock）
- * @param {boolean} opts.dryRun - true 时只列候选，不改库
+ * @param {boolean} opts.dryRun - true 时只列候选，不改任务状态（仍写一条 dry_run 批次事件留痕）
  * @param {Function} [opts.log] - 日志函数，默认 console.log
  * @param {Function} [opts.emit] - 事件留痕函数，签名同 event-bus.emit
  * @returns {Promise<{candidates: number, done: number, failed: number, task_ids: string[]}>}
@@ -45,7 +45,7 @@ export async function reanchorBlockedTasks({ db, dryRun, log = console.log, emit
   const { rows } = await db.query(CANDIDATES_SQL);
   const candidates = rows.length;
   const taskIds = rows.map(row => row.id);
-  log(`[reanchor-blocked-tasks] 候选 ${candidates} 条${dryRun ? '（dry-run，不改库）' : ''}`);
+  log(`[reanchor-blocked-tasks] 候选 ${candidates} 条${dryRun ? '（dry-run，不改任务状态）' : ''}`);
 
   let done = 0;
   let failed = 0;
