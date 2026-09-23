@@ -6,6 +6,8 @@ export async function seedRoutedKernelTask(pool, {
   initiativeId = randomUUID(),
   taskId = randomUUID(),
   changeKind = 'bugfix',
+  // 默认 F0 = 既有调用方的原行为；只有需要别的能力节点的用例才显式传。
+  mapScope = ['F0'],
   payload = {},
 }) {
   const receiptId = randomUUID();
@@ -22,7 +24,7 @@ export async function seedRoutedKernelTask(pool, {
     work_kind: 'coding_mutation',
     change_kind: changeKind,
     repo: 'cecelia',
-    map_scope: ['F0'],
+    map_scope: mapScope,
     default_execution_profile: defaultExecutionProfile,
     impact_contract_required: true,
     orchestrator: 'skill-relay',
@@ -41,7 +43,7 @@ export async function seedRoutedKernelTask(pool, {
        direct_contract_seed, map_scope_validation_version
      ) VALUES (
        $1, $2, 'integration', $3, 'coding_mutation', $4, 'harness',
-       'harness_initiative', $5, 'cecelia', '["F0"]'::jsonb,
+       'harness_initiative', $5, 'cecelia', $8::jsonb,
        true, 'kernel-harness-v2', 'work-router-v1', 'integration_fixture', $6::jsonb,
        $7::jsonb, 'active-business-node-v1'
      )`,
@@ -63,6 +65,7 @@ export async function seedRoutedKernelTask(pool, {
           execution_profile: defaultExecutionProfile,
         })
         : null,
+      JSON.stringify(mapScope),
     ],
   );
   return { initiativeId, taskId, receiptId, payload: routedPayload };

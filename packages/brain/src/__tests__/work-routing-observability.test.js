@@ -56,4 +56,27 @@ describe('work routing observability', () => {
     });
     expect(query.mock.calls[0][0]).toContain('harness_impact_contracts');
   });
+
+  // 迁移 465 后收据链式接班：同 task_id 可有多代（anchor_generation 递增）。
+  // 裸 LEFT JOIN 会让每个任务按代数翻倍，coding/receipts/missing 计数全部虚高。
+  it('只 JOIN 最新一代路由收据，不被链式接班的多代收据翻倍', async () => {
+    const metricsQuery = vi.fn(async () => ({ rows: [{
+      coding: 1, receipts: 1, direct_dev: 0, legacy_exempt: 0,
+      map_queries: 1, coding_runs: 1, missing_business_receipts: 0,
+      work_route_blocked: 0, route_violation: 0, map_preflight_failed: 0,
+    }] }));
+    await loadWorkRoutingObservability({ query: metricsQuery }, { days: 7 });
+    const receiptLateral = /LEFT JOIN LATERAL \(\s*SELECT [\s\S]*?FROM work_routing_receipts \w+[\s\S]*?anchor_generation DESC[\s\S]*?LIMIT 1\s*\) receipt ON true/;
+    const nakedReceiptJoin = /LEFT JOIN work_routing_receipts receipt ON receipt\.task_id=task\.id/;
+
+    const metricsSql = metricsQuery.mock.calls[0][0];
+    expect(metricsSql).toMatch(receiptLateral);
+    expect(metricsSql).not.toMatch(nakedReceiptJoin);
+
+    const auditQuery = vi.fn(async () => ({ rows: [] }));
+    await loadTaskRoutingAudit({ query: auditQuery }, ['task-1']);
+    const auditSql = auditQuery.mock.calls[0][0];
+    expect(auditSql).toMatch(receiptLateral);
+    expect(auditSql).not.toMatch(nakedReceiptJoin);
+  });
 });

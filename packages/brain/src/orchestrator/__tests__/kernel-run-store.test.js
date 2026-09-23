@@ -9,6 +9,7 @@ import {
   patchKernelRunById,
   persistKernelRunPhase,
   reconcileKernelTaskTerminal,
+  syncTaskPayloadFromKernelRun,
 } from '../kernel-run-store.js';
 
 const TASK_ID = '11111111-1111-4111-8111-111111111111';
@@ -37,6 +38,8 @@ function transactionPool({
     task_type: 'harness_initiative',
     status: 'in_progress',
     payload: { initiative_id: INITIATIVE_ID, routing_receipt_id: RECEIPT_ID },
+    // 重锚定（任务 d9c405e2）对 metadata===undefined fail-loud，生产 SELECT 必须取该列。
+    metadata: {},
   },
   receipt = {
     id: RECEIPT_ID,
@@ -716,6 +719,114 @@ describe('Kernel run store creation authority', () => {
       'ROLLBACK',
       'release',
     ]);
+  });
+
+  it('把 createdSource 交给 Map/Impact preflight（重锚定需据此跳过 explicit_recovery）', async () => {
+    const harness = transactionPool();
+    const ensurePreflight = vi.fn(async () => ({ contract: { id: 'impact-1', status: 'active' } }));
+    await createRun(harness, VALID_INPUT, { ensureMapImpactPreflight: ensurePreflight });
+    expect(ensurePreflight.mock.calls[0][1]).toMatchObject({ createdSource: 'kernel_dispatch' });
+  });
+
+  it('task 行 SELECT 取 metadata 列（重锚定 thrash 计数据此读写）', async () => {
+    const harness = transactionPool();
+    await createRun(harness);
+    const taskSelect = harness.calls.find(
+      ({ sql }) => /FROM tasks/.test(sql) && /FOR UPDATE/.test(sql),
+    );
+    expect(taskSelect.sql).toMatch(/SELECT id, task_type, status, payload, metadata/);
+  });
+
+  it('返回体带预检最终收据的 base_sha 与 routing_receipt_id（重锚定后调用方据此回流内存 task）', async () => {
+    const harness = transactionPool();
+    const NEW = 'b'.repeat(40);
+    const result = await createRun(harness, VALID_INPUT, {
+      ensureMapImpactPreflight: vi.fn(async () => ({
+        contract: { id: 'impact-1', status: 'active' },
+        receipt: { id: '77777777-7777-4777-8777-777777777777', evidence: { base_sha: NEW } },
+      })),
+    });
+    expect(result).toMatchObject({
+      created: true,
+      base_sha: NEW,
+      routing_receipt_id: '77777777-7777-4777-8777-777777777777',
+    });
+  });
+
+  it('预检未返回 receipt 时返回体 base_sha/routing_receipt_id 为 null（旧行为不变）', async () => {
+    const harness = transactionPool();
+    const result = await createRun(harness);
+    expect(result).toMatchObject({ created: true, base_sha: null, routing_receipt_id: null });
+  });
+});
+
+describe('syncTaskPayloadFromKernelRun', () => {
+  it('created 带新 base_sha 时覆写内存 task.payload 的 base_sha 与 routing_receipt_id', () => {
+    const task = { id: 't', payload: { base_sha: 'a'.repeat(40), routing_receipt_id: 'r1', repo: 'cecelia' } };
+    const out = syncTaskPayloadFromKernelRun(task, { created: true, base_sha: 'b'.repeat(40), routing_receipt_id: 'r2' });
+    expect(out).toBe(task);
+    expect(task.payload).toEqual({ base_sha: 'b'.repeat(40), routing_receipt_id: 'r2', repo: 'cecelia' });
+  });
+
+  it('created 无 base_sha（null/缺省）时 payload 原样不动', () => {
+    const payload = { base_sha: 'a'.repeat(40), routing_receipt_id: 'r1' };
+    const task = { id: 't', payload };
+    syncTaskPayloadFromKernelRun(task, { created: true, run: {} });
+    syncTaskPayloadFromKernelRun(task, { created: true, base_sha: null, routing_receipt_id: null });
+    expect(task.payload).toBe(payload);
+  });
+
+  it('收据 id 没变却换了 base_sha 时告警（非快进漂移，DB payload 不会被 reanchor 更新）', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const task = { id: 'task-drift', payload: { base_sha: 'a'.repeat(40), routing_receipt_id: 'r1' } };
+    syncTaskPayloadFromKernelRun(task, { created: true, base_sha: 'b'.repeat(40), routing_receipt_id: 'r1' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    const message = String(warn.mock.calls[0][0]);
+    expect(message).toContain('task-drift');
+    expect(message).toContain('a'.repeat(40));
+    expect(message).toContain('r1');
+    warn.mockRestore();
+  });
+
+  it('快进场景（收据 id 一并换新）不告警', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const task = { id: 'task-ff', payload: { base_sha: 'a'.repeat(40), routing_receipt_id: 'r1' } };
+    syncTaskPayloadFromKernelRun(task, { created: true, base_sha: 'b'.repeat(40), routing_receipt_id: 'r2' });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+describe('源码哨兵：reanchor 写的 payload 字段集 ↔ 回流函数', () => {
+  // 重锚定改 DB、回流函数改内存，两边字段集必须同进同退：reanchor 以后多写一个 payload
+  // 字段而回流没跟上，就又是一次"改账不改跑场"。这条哨兵让那种漏改直接红。
+  it('reanchor UPDATE tasks SET payload 的每个字段都出现在 syncTaskPayloadFromKernelRun 函数体内', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const reanchorSrc = await readFile(
+      new URL('../preflight/base-sha-reanchor.js', import.meta.url),
+      'utf8',
+    );
+    const updateIdx = reanchorSrc.indexOf('UPDATE tasks');
+    expect(updateIdx).toBeGreaterThan(-1);
+    const blockEnd = reanchorSrc.indexOf('\n  );', updateIdx);
+    const updateBlock = reanchorSrc.slice(
+      updateIdx,
+      blockEnd > -1 ? blockEnd : updateIdx + 2000,
+    );
+    // 第一个 JSON.stringify 即 $2（payload 合并对象）；$3 是 metadata，不在回流职责内。
+    const payloadLiteral = updateBlock.match(/JSON\.stringify\(\{([^}]*)\}\)/);
+    expect(payloadLiteral).not.toBeNull();
+    const fields = [...payloadLiteral[1].matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*:/g)]
+      .map((match) => match[1]);
+    expect(fields).toEqual(expect.arrayContaining(['routing_receipt_id', 'base_sha']));
+
+    const storeSrc = await readFile(new URL('../kernel-run-store.js', import.meta.url), 'utf8');
+    const fnIdx = storeSrc.indexOf('export function syncTaskPayloadFromKernelRun');
+    expect(fnIdx).toBeGreaterThan(-1);
+    const fnBody = storeSrc.slice(fnIdx, storeSrc.indexOf('\n}', fnIdx));
+    for (const field of fields) {
+      expect(fnBody).toContain(field);
+    }
   });
 });
 

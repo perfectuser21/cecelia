@@ -30,6 +30,7 @@ import { isAllowed, recordFailure, recordSuccess } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
 import { recordDispatchResult } from './dispatch-stats.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
+import { classifyDispatchReasonCode } from './lib/dispatch-reason-code.js';
 import { incrementActionsToday } from './tick-stats.js';
 import { proactiveTokenCheck } from './account-usage.js';
 import { checkQuotaGuard } from './quota-guard.js';
@@ -1199,10 +1200,14 @@ export async function dispatchNextTask(goalIds) {
   // 5a. Check if executor actually succeeded — revert to queued if not
   if (!execResult.success) {
     console.warn(`[dispatch] triggerCeceliaRun failed for task ${nextTask.id}: ${execResult.error || execResult.reason}`);
+    // executor 只在 kernel-v1 catch 里把 reason 也改成 needs_rebase；其他返回路径只带 reason_code，
+    // 两个都认，避免停车信号漏判后被当成执行故障计入三振。
+    const needsRebase = execResult.reason === 'needs_rebase' || execResult.reason_code === 'needs_rebase';
     // fail-closed 回执（task 94ee0ec4）：claim 后 spawn 失败必须留 task_events 行，
     // 杜绝零留痕（写失败仅告警不阻断，任务仍回 queued 可重试）。
     await recordTaskEventSafe(pool, nextTask.id, 'failed_dispatch', {
       reason: execResult.reason || 'executor_failed',
+      reason_code: classifyDispatchReasonCode(execResult),
       error: String(execResult.error || '').slice(0, 300) || null,
       config_error: !!execResult.configError,
     });
@@ -1221,7 +1226,38 @@ export async function dispatchNextTask(goalIds) {
     // local_execution_disabled_on_scheduler 是 skill-relay 非 kernel-v1 任务在
     // CECELIA_LOCAL_EXECUTION_ENABLED=false 时的永久性配置态拒绝（非执行故障），
     // 同样不应计入熔断（否则连累其他任务类型也一起派不出去，决策 96054a8b）。
-    if (execResult.configError) {
+    if (needsRebase) {
+      // 分支已有产出但 base_sha 落后地图：不是执行故障，直接停车等 rebase（任务 d9c405e2），不计熔断/autoblock。
+      console.warn(`[dispatch] needs_rebase for task ${nextTask.id} — blocking without autoblock count`);
+      // blockTask 不抛异常，失败（含 WHERE status IN(...) 不匹配）时返回 {success:false}：
+      // 必须看返回值才知道有没有真停住，没停住任务仍在 queued，下个 tick 会原样重撞。
+      let parked = false;
+      try {
+        const blocked = await blockTask(nextTask.id, {
+          reason: 'needs_rebase',
+          detail: {
+            ...(execResult.detail && typeof execResult.detail === 'object' ? execResult.detail : {}),
+            reason_code: 'needs_rebase',
+            blocked_at_tick: new Date().toISOString(),
+          },
+        });
+        parked = blocked?.success === true;
+        if (!parked) {
+          console.error(`[dispatch] blockTask(needs_rebase) did not park task ${nextTask.id}: ${blocked?.error || 'unknown'}`);
+        }
+      } catch (blockErr) {
+        console.error(`[dispatch] blockTask(needs_rebase) failed for task ${nextTask.id}: ${blockErr.message}`);
+      }
+      try {
+        if (parked) {
+          await raise('P3', 'needs_rebase', `task ${nextTask.id} 分支已有产出但 base_sha 落后地图，需 rebase 后解锁`);
+        } else {
+          await raise('P2', 'needs_rebase_park_failed', `task ${nextTask.id} needs_rebase 停车失败，任务仍在队列会每 tick 重撞，需人工介入`);
+        }
+      } catch (raiseErr) {
+        console.error(`[dispatch] raise failed for needs_rebase (task ${nextTask.id}): ${raiseErr.message}`);
+      }
+    } else if (execResult.configError) {
       console.warn(`[dispatch] configError detected (reason=${execResult.reason}) — skipping cecelia-run breaker count`);
     } else if (execResult.reason === 'spawn_deduplicated') {
       console.warn(`[dispatch] spawn_deduplicated detected — skipping cecelia-run breaker count`);
@@ -1252,6 +1288,7 @@ export async function dispatchNextTask(goalIds) {
             await blockTask(nextTask.id, {
               reason: 'dispatch_fail_autoblock',
               detail: {
+                reason_code: classifyDispatchReasonCode(execResult),
                 consecutive_failures: newCount,
                 last_error: String(execResult.error || execResult.reason || 'executor_failed'),
                 blocked_at_tick: new Date().toISOString(),
@@ -1276,8 +1313,13 @@ export async function dispatchNextTask(goalIds) {
       { action: 'executor_failed', task_id: nextTask.id, reason: execResult.reason, error: execResult.error, configError: !!execResult.configError },
       { success: false }
     );
-    await recordDispatchResult(pool, false, execResult.configError ? 'config_error' : 'executor_failed', undefined, nextTask.id);
-    return { dispatched: false, reason: execResult.configError ? 'config_error' : 'executor_failed', task_id: nextTask.id, error: execResult.error || execResult.reason, configError: !!execResult.configError, actions };
+    // 停车与配置错误都不是执行故障，统计口径与返回体 reason 分开记，别混进 executor_failed
+    // （dispatch_stats.failure_reasons 是自由键计数，下游无枚举约束，已确认无硬编码消费方）。
+    const failureReason = needsRebase
+      ? 'needs_rebase'
+      : (execResult.configError ? 'config_error' : 'executor_failed');
+    await recordDispatchResult(pool, false, failureReason, undefined, nextTask.id);
+    return { dispatched: false, reason: failureReason, task_id: nextTask.id, error: execResult.error || execResult.reason, configError: !!execResult.configError, actions };
   }
 
   // openclaw-agent 成功：给它自己的熔断记一笔成功（HALF_OPEN → CLOSED），与 cecelia-run 互不牵连。

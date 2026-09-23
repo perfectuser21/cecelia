@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import {
   createKernelRun,
   finalizeKernelRun,
+  syncTaskPayloadFromKernelRun,
 } from './orchestrator/kernel-run-store.js';
 import { spawnHeadedKernelRuntime } from './orchestrator/headed-kernel-runtime.js';
 import { createOrchestratorBridge } from './orchestrator-remote-bridge.js';
@@ -282,6 +283,8 @@ async function _spawnKernelRuntime(task, { dbPool, now, initiativeId, deps }) {
     createdSource: 'kernel_dispatch',
     gear,
   });
+  // 预检可能已重锚定到新 base_sha（DB 已改）；内存 task 必须同步，否则跑场用旧 sha。
+  syncTaskPayloadFromKernelRun(task, created);
   const runId = created.run?.id;
   if (!runId) throw new Error('kernel-v1 run authority returned no id');
   if (!created.created) {
@@ -352,6 +355,8 @@ async function _spawnKernelRuntimeRemote(task, { dbPool, now, initiativeId, deps
     createdSource: 'kernel_dispatch',
     gear,
   });
+  // 同上：bridge.prepare 读 task.payload.base_sha，重锚定后必须先回流再远程建 worktree。
+  syncTaskPayloadFromKernelRun(task, created);
   const runId = created.run?.id;
   if (!runId) throw new Error('kernel-v1 run authority returned no id');
   if (!created.created) {

@@ -52,6 +52,30 @@ describe('spawnHeadedKernelRuntime', () => {
     expect(result).toMatchObject({ ok: true, controllerGeneration: 4 });
   });
 
+  it('把重锚定后的 base_sha 回流内存 task，headed 身份 env 才不用旧 sha', async () => {
+    const NEW = 'b'.repeat(40);
+    const task = { ...TASK, payload: { ...TASK.payload, base_sha: 'a'.repeat(40), routing_receipt_id: 'r1' } };
+    let seenBaseSha = null;
+    const spawnSession = vi.fn(async () => {
+      seenBaseSha = task.payload.base_sha;
+      return { ok: true };
+    });
+
+    await spawnHeadedKernelRuntime({
+      task,
+      dbPool: {},
+      initiativeId: task.id,
+      deps: {
+        createKernelRun: vi.fn(async () => authorityRun({ base_sha: NEW, routing_receipt_id: 'r2' })),
+      },
+      gear: 'default',
+      spawnSession,
+    });
+
+    expect(seenBaseSha).toBe(NEW);
+    expect(task.payload.routing_receipt_id).toBe('r2');
+  });
+
   it('does not launch a second headed session when the Kernel run already exists', async () => {
     const spawnSession = vi.fn();
     const result = await spawnHeadedKernelRuntime({
