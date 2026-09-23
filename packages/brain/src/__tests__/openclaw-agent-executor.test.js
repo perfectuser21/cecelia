@@ -386,3 +386,54 @@ describe('reapOpenclawAgentRuns', () => {
     expect(execFileFn).not.toHaveBeenCalled();
   });
 });
+
+describe('promptOf 设备提示段（device_hint）', () => {
+  const okPool = () => ({ query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }) });
+  const withHint = (hint) => ({ ...task, payload: { ...task.payload, qiumi_route: { device_hint: hint } } });
+  const sentBody = (spawnFn) => String(spawnFn.child.stdin.end.mock.calls[0][0]);
+
+  it('is_device=true → 正文含序列号、按 host 派生的节点名、控制器名、lock-acquire、timeout 300000', async () => {
+    const spawnFn = spawnMock();
+    await triggerOpenclawAgent(withHint({ is_device: true, serial: 'S1', host: 'xian-m4' }), { spawnFn, pool: okPool() });
+    const body = sentBody(spawnFn);
+    expect(body).toContain('设备提示');
+    expect(body).toContain('S1');
+    expect(body).toContain('XIAN-M4-PHONE');
+    expect(body).toContain('douyin-phone-adb');
+    expect(body).toContain('lock-acquire');
+    expect(body).toContain('300000');
+    // 原有三段仍在
+    expect(body).toContain('token: SECRET 正文');
+  });
+
+  it('is_device=false 或没有 device_hint → 正文不含设备提示', async () => {
+    const a = spawnMock();
+    await triggerOpenclawAgent(withHint({ is_device: false, serial: null, host: null }), { spawnFn: a, pool: okPool() });
+    expect(sentBody(a)).not.toContain('设备提示');
+    const b = spawnMock();
+    await triggerOpenclawAgent(task, { spawnFn: b, pool: okPool() });
+    expect(sentBody(b)).not.toContain('设备提示');
+  });
+
+  it('host 缺失 → 节点名写「未知」并提示 openclaw nodes list，不抛', async () => {
+    const spawnFn = spawnMock();
+    await triggerOpenclawAgent(withHint({ is_device: true, serial: 'S2', host: null }), { spawnFn, pool: okPool() });
+    const body = sentBody(spawnFn);
+    expect(body).toContain('S2');
+    expect(body).toContain('openclaw nodes list');
+    expect(body).not.toContain('-PHONE');
+  });
+
+  it('Jev 含糊（verdict=ambiguous）→ 正文仍含设备提示，首行提示可能要碰真机', async () => {
+    const spawnFn = spawnMock();
+    await triggerOpenclawAgent(
+      withHint({ is_device: false, verdict: 'ambiguous', p: 0.5, serial: null, host: null }),
+      { spawnFn, pool: okPool() },
+    );
+    const body = sentBody(spawnFn);
+    expect(body).toContain('设备提示');
+    expect(body).toContain('可能要碰真机');
+    expect(body).toContain('p=0.5');
+    expect(body).toContain('openclaw nodes list');
+  });
+});

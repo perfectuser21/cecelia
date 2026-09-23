@@ -3,8 +3,10 @@
  *
  * 三条不可谈判的约束：
  *  1. 便宜闸永远在 Jev 前（铁律 6eb0dff5）。便宜闸能定序列号就直接定案，一次网络都不发。
- *  2. is_device 不确定不派（fail-closed）。noul 落在 (low, high) 开区间或无法解析 → verdict='ambiguous'
- *     → 任务落 failed，绝不掉进 agent 通道（把"要碰真机"的活交给无头 agent = 静默空跑）。
+ *  2. is_device 不确定不派（fail-closed）——**仅 QIUMI_DEVICE_DELEGATION_ENABLED=true 时**。开关关（默认，
+ *     主理人 0923 拍板）时三道 device 闸不生效，含糊/命中都走 agent 分支并留痕 qiumi_route.device_hint，由
+ *     agent 按提示自查；开时 noul 落在 (low, high) 开区间或无法解析 → verdict='ambiguous' → 任务落 failed，
+ *     绝不掉进 agent 通道。
  *  3. 账号只认注册表池内序列号。jev-client 已按 questions.criteria 把池外值归 null；pickSerial 再守一道，
  *     两层独立（幻觉/越权账号走到哪一层都过不去）。
  *
@@ -156,8 +158,12 @@ export async function routeQiumiTask(task, deps) {
     return { outcome: 'device', serial, workflowRef, department: cheap.department ?? null, payloadPatch };
   };
 
+  // 开关关（默认）：手机活不改道给西安领单器，和其它活一样派 openclaw agent（主理人 0923 拍板）。
+  // 三道 device 闸只在开关开时生效；关时 is_device/serial 仍算，但只留痕 device_hint 给 agent prompt 用。
+  const delegate = env.deviceDelegationEnabled === true;
+
   // 闸 1：便宜闸已经能定到具体手机 → 直接定案，不问 Jev。
-  if (cheap.isDevice && cheap.serial) return device(cheap.serial, 'cheap', null);
+  if (delegate && cheap.isDevice && cheap.serial) return device(cheap.serial, 'cheap', null);
 
   const questions = buildJevQuestions({
     departments: env.departments,
@@ -169,15 +175,17 @@ export async function routeQiumiTask(task, deps) {
   const a = r.answers;
   const verdict = a.is_device?.verdict;
 
-  // 闸 2：设备判定 fail-closed。便宜闸说是设备 → 直接进设备分支；否则只认 verdict===true。
-  if (cheap.isDevice || verdict === true) {
-    const serial = pickSerial(cheap, a, registry);
-    if (!serial) return fail('device_serial_unresolved', `account=${a.account?.choice ?? 'none'}`, { source: r.source });
-    return device(serial, r.source, a);
+  if (delegate) {
+    // 闸 2：设备判定 fail-closed。便宜闸说是设备 → 直接进设备分支；否则只认 verdict===true。
+    if (cheap.isDevice || verdict === true) {
+      const serial = pickSerial(cheap, a, registry);
+      if (!serial) return fail('device_serial_unresolved', `account=${a.account?.choice ?? 'none'}`, { source: r.source });
+      return device(serial, r.source, a);
+    }
+    // 便宜闸未命中 + verdict 含糊（ambiguous）→ 不派，绝不回落 agent。
+    // 这是 ambiguous 唯一的一道闸：删掉它 agent 分支就会照单全收，变异测试钉在这一行。
+    if (verdict !== false) return fail('device_uncertain', `p=${a.is_device?.p ?? null}`, { source: r.source });
   }
-  // 便宜闸未命中 + verdict 含糊（ambiguous）→ 不派，绝不回落 agent。
-  // 这是 ambiguous 唯一的一道闸：删掉它 agent 分支就会照单全收，变异测试钉在这一行。
-  if (verdict !== false) return fail('device_uncertain', `p=${a.is_device?.p ?? null}`, { source: r.source });
 
   // 闸 3：agent 分支——硬约束（便宜闸）压过模型答案，模型答案未达采纳线则取默认并留痕。
   const defaulted = [];
@@ -187,8 +195,18 @@ export async function routeQiumiTask(task, deps) {
   const workflowRef = cheap.workflowRef ?? jevWorkflowRef(a, registry, defaulted);
   const model = env.modelMap[engine];
   const runId = `qiumi-${String(task.id).slice(0, 8)}-${now()}`;
+  // 留痕给 agent：它要自己去 OpenClaw 节点上跑控制器，得知道哪台手机在哪台宿主。
+  const hintSerial = pickSerial(cheap, a, registry);
+  const device_hint = {
+    is_device: cheap.isDevice || verdict === true,
+    verdict: verdict ?? null,
+    p: a.is_device?.p ?? null,
+    serial: hintSerial,
+    host: registry.phones.find((p) => p.serial === hintSerial)?.host ?? null,
+    matchedBy: cheap.matchedBy,
+  };
   const payloadPatch = {
-    qiumi_route: { source: r.source, answers: a, defaulted, ...base },
+    qiumi_route: { source: r.source, answers: a, defaulted, device_hint, ...base },
     model,
     provider: 'openclaw',
     run_id: runId,
@@ -197,7 +215,7 @@ export async function routeQiumiTask(task, deps) {
     qiumi_workflow_ref: workflowRef,
   };
   await recordTaskEventSafe(pool, task.id, 'qiumi_route_decided', {
-    outcome: 'agent', source: r.source, engine, model, department, kind, workflowRef, runId, defaulted, ...base,
+    outcome: 'agent', source: r.source, engine, model, department, kind, workflowRef, runId, defaulted, device_hint, ...base,
   });
   return { outcome: 'agent', engine, model, department, kind, workflowRef, runId, payloadPatch };
 }

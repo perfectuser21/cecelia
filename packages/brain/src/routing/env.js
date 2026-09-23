@@ -9,6 +9,8 @@
  *  QIUMI_DEPARTMENTS      JSON 数组，Jev department 选项（= openclaw agents 部门清单）
  *  QIUMI_MODEL_MAP        JSON，engine → `openclaw agent --model` 值
  *  QIUMI_DEVICE_KEYWORDS  JSON 数组，便宜闸设备关键词
+ *  QIUMI_DEVICE_DELEGATION_ENABLED 'true' 才把手机活派生成 device_job 交西安领单器；默认关＝手机活也派给 openclaw agent（主理人 0923 拍板）
+ *  QIUMI_PHONE_NODE_MAP  JSON {host: OpenClaw 节点名}，缺省按 host 大写 + '-PHONE' 派生
  * 改 env 必须重建容器（learning cp-0916213853）。
  */
 const DEFAULT_DEPARTMENTS = ['main', 'infra', 'dev', 'media', 'people', 'fde'];
@@ -36,5 +38,13 @@ export function qiumiEnv(env = process.env) {
     departments: parseJson(env.QIUMI_DEPARTMENTS, DEFAULT_DEPARTMENTS),
     modelMap: { ...DEFAULT_MODEL_MAP, ...parseJson(env.QIUMI_MODEL_MAP, {}) },
     deviceKeywords: parseJson(env.QIUMI_DEVICE_KEYWORDS, DEFAULT_DEVICE_KEYWORDS),
+    deviceDelegationEnabled: env.QIUMI_DEVICE_DELEGATION_ENABLED === 'true',
+    phoneNodeMap: parseJson(env.QIUMI_PHONE_NODE_MAP, {}),
   });
+}
+
+/** 手机宿主 → OpenClaw 节点名。映射表优先，否则按 `<HOST>-PHONE` 派生（xian-m4 → XIAN-M4-PHONE）。 */
+export function phoneNodeName(host, env = qiumiEnv()) {
+  if (!host) return null;
+  return env.phoneNodeMap?.[host] ?? `${String(host).toUpperCase()}-PHONE`;
 }

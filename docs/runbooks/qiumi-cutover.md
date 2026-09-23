@@ -67,6 +67,12 @@
 
    影子跑阶段手写这三行（不要跑 `--step=3`，那一步会把 `QIUMI_DISPATCH_ENABLED` 也开成 true）。
 
+   第四个开关 `QIUMI_DEVICE_DELEGATION_ENABLED`（0923 起，默认关，只认字面 `true`）：
+   关＝手机活和其它活一样派给 openclaw agent，路由只在 `payload.qiumi_route.device_hint` 留痕，
+   agent 按提示经 OpenClaw 节点（XIAN-M4-PHONE / XIAN-M1-PHONE）跑 `douyin-phone-adb`；
+   开＝旧路，Jev 判手机活即派生 `device_job` 子任务交西安领单器（第 4 节）。回滚到旧路只需
+   在 `.env.docker` 写 `QIUMI_DEVICE_DELEGATION_ENABLED=true` 并重建容器，`--step=3 --rollback` 不动它。
+
    **SINCE 必须等于旧 cron 停下那一刻**，不是你写 env 的那一刻。两者之间隔着等在途清零
    （最长 30min）和重建容器：这段时间里新建的委派行，旧脚本已经不管了，而 Brain 侧的
    `created_time on_or_after SINCE` 又会把它们挡在外面——两边都不收，永久丢失。
