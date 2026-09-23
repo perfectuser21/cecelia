@@ -505,3 +505,53 @@ describe('QIUMI_DEVICE_DELEGATION_ENABLED 三态 + phoneNodeName', () => {
     expect(phoneNodeName(null, qiumiEnv({}))).toBeNull();
   });
 });
+
+describe('开关关（默认）：手机活不改道，走 agent 并留痕 device_hint', () => {
+  it('便宜闸命中序列号 → agent；Jev 仍问一次（engine/department 要用）；device_hint 带 serial/host/matchedBy；不带 headed_manual', async () => {
+    const fetchFn = jevOk();
+    const d = await routeQiumiTask(task('用 ANGYVB4227006983 去点赞'), { pool, env: envDefault, fetchFn, callLLMFn: vi.fn() });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(d.outcome).toBe('agent');
+    expect(d.payloadPatch.qiumi_route.device_hint).toMatchObject({ is_device: true, serial: 'ANGYVB4227006983', host: 'xian-m4' });
+    expect(d.payloadPatch.qiumi_route.device_hint.matchedBy).toContain('text:serial');
+    expect(d.payloadPatch).not.toHaveProperty('headed_manual');
+    expect(d.payloadPatch).not.toHaveProperty('serial');
+    expect(recordTaskEventSafe).toHaveBeenCalledWith(pool, TASK_ID, 'qiumi_route_decided',
+      expect.objectContaining({ outcome: 'agent', device_hint: expect.objectContaining({ serial: 'ANGYVB4227006983' }) }));
+  });
+
+  it('noul=0.85 + Jev 账号在池 → agent，device_hint.is_device=true、serial 取 Jev 账号、host 来自注册表', async () => {
+    const d = await routeQiumiTask(task('把这条内容整理好交给同事'), {
+      pool, env: envDefault,
+      fetchFn: jevOk(jevAnswers({ is_device: { type: 'noul', noul: 0.85 }, account: choice('e6c7ef34', 0.9) })),
+      callLLMFn: vi.fn(),
+    });
+    expect(d.outcome).toBe('agent');
+    expect(d.payloadPatch.qiumi_route.device_hint).toMatchObject({ is_device: true, verdict: true, p: 0.85, serial: 'e6c7ef34', host: 'xian-m1' });
+  });
+
+  it('noul=0.5（ambiguous）→ agent 不 fail，device_hint.verdict=ambiguous、is_device=false、serial=null', async () => {
+    const d = await routeQiumiTask(task('把这条内容整理好交给同事'), {
+      pool, env: envDefault, fetchFn: jevOk(jevAnswers({ is_device: { type: 'noul', noul: 0.5 } })), callLLMFn: vi.fn(),
+    });
+    expect(d.outcome).toBe('agent');
+    expect(d.payloadPatch.qiumi_route.device_hint).toMatchObject({ is_device: false, verdict: 'ambiguous', p: 0.5, serial: null, host: null });
+    expect(recordTaskEventSafe).not.toHaveBeenCalledWith(pool, TASK_ID, 'qiumi_route_failed', expect.anything());
+  });
+
+  it('noul=0.02 无手机 → agent，device_hint.is_device=false（不碰真机的活留痕也在）', async () => {
+    const d = await routeQiumiTask(task('写一段周报'), { pool, env: envDefault, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    expect(d.outcome).toBe('agent');
+    expect(d.payloadPatch.qiumi_route.device_hint).toMatchObject({ is_device: false, verdict: false, serial: null });
+  });
+
+  it('persistDecision(agent) 不调 createRoutedTaskFn，UPDATE payload 含 device_hint', async () => {
+    const createRoutedTaskFn = vi.fn();
+    const d = await routeQiumiTask(task('用 ANGYVB4227006983 去点赞'), { pool, env: envDefault, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    await persistDecision(pool, task('用 ANGYVB4227006983 去点赞'), d, { createRoutedTaskFn });
+    expect(createRoutedTaskFn).not.toHaveBeenCalled();
+    const upd = pool.query.mock.calls.find(([sql]) => /SET payload = COALESCE/.test(sql));
+    expect(upd).toBeTruthy();
+    expect(JSON.parse(upd[1][1]).qiumi_route.device_hint.serial).toBe('ANGYVB4227006983');
+  });
+});
