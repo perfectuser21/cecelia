@@ -24,9 +24,9 @@ import {
   getBillingPause,
 } from './executor.js';
 import { calculateSlotBudget, harnessSlotCheck } from './slot-allocator.js';
-import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HARNESS_INFLIGHT_TASK_TYPES } from './lib/task-type-registry.js';
+import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HARNESS_INFLIGHT_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
 import { emit } from './event-bus.js';
-import { isAllowed, recordFailure } from './circuit-breaker.js';
+import { isAllowed, recordFailure, recordSuccess } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
 import { recordDispatchResult } from './dispatch-stats.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
@@ -44,6 +44,13 @@ import { getLlmCapacitySnapshot } from './llm-capacity.js';
 import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
 import { routeQiumiTask, persistDecision } from './routing/qiumi-router.js';
 import { qiumiEnv } from './routing/env.js';
+
+/**
+ * openclaw-agent 表面（qiumi_task）由 Brain 经 ssh 直派 MMV，不经 cecelia-bridge：
+ * cecelia-run 熔断与 bridge 健康检查对它都是误伤（2026-09-23 生产实证 task 72b010e9）。
+ * 判据只从注册表 surface 派生，不手抄名单（铁律 76cb816c）。
+ */
+const isOpenclawSurface = (type) => getTaskType(type)?.surface === 'openclaw-agent';
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -277,14 +284,24 @@ async function routeAndPersistQiumi(task, deps = {}) {
   const actions = deps.actions ?? [];
   const holSkipIds = deps.holSkipIds ?? [];
 
-  // 选单 SQL 只取部分列，便宜闸要读 payload.qiumi_source → 先把整行捞回来
-  const fullRow = await pool.query('SELECT * FROM tasks WHERE id = $1', [task.id]);
-  const fullTask = fullRow.rows[0] ?? task;
-
   const releaseClaim = () => pool.query(
     'UPDATE tasks SET claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1',
     [task.id],
   );
+
+  // openclaw-agent 有自己的熔断（MMV 起 agent 连败时才开），与 cecelia-run（bridge）互不牵连。
+  // 放在最前面：熔断开着就别读全行、别打 Jev、别写 run_id——每 tick 白路由一次就是本刀要修的病。
+  if (!isAllowed('openclaw-agent')) {
+    await releaseClaim();
+    await recordDispatchResult(pool, false, 'openclaw_agent_circuit_open', undefined, task.id);
+    tickLog(`[dispatch] HOL skip: openclaw-agent breaker open, skipping qiumi task ${task.id}`);
+    holSkipIds.push(task.id);
+    return { outcome: 'skip' };
+  }
+
+  // 选单 SQL 只取部分列，便宜闸要读 payload.qiumi_source → 先把整行捞回来
+  const fullRow = await pool.query('SELECT * FROM tasks WHERE id = $1', [task.id]);
+  const fullTask = fullRow.rows[0] ?? task;
 
   // 机器闸：MMV 这台机器的 openclaw-agent 上限（默认 2），不是租户配额。
   // 放在路由之前——闸满就退回，省掉一次 Jev/terra 调用。
@@ -307,6 +324,14 @@ async function routeAndPersistQiumi(task, deps = {}) {
     tickLog(`[dispatch] HOL skip: openclaw-agent pool full (${rows[0]?.n ?? 0}/${env.mmvConcurrency}), skipping ${task.priority} qiumi task ${task.id}`);
     holSkipIds.push(task.id);
     return { outcome: 'skip' };
+  }
+
+  // 路由幂等：上一 tick 已判定并写了 run_id/model/qiumi_route，只是 spawn 前被打回 queued
+  // （历史上是 cecelia-run 熔断，见本刀 Task 1）。决策不变就不重打 Jev、不换 run_id——
+  // 执行体的 ALREADY 探针按 run_id 防重起，换了 run_id 它就认不出上一轮可能已起的 agent。
+  if (fullTask.payload?.qiumi_route && fullTask.payload?.run_id) {
+    tickLog(`[dispatch] qiumi task ${task.id} 已有路由决策 run_id=${fullTask.payload.run_id}，跳过 Jev 直接派发`);
+    return { outcome: 'proceed' };
   }
 
   const decision = await routeQiumiTask(fullTask, {
@@ -952,7 +977,8 @@ export async function dispatchNextTask(goalIds) {
   // harness_initiative 走 Docker spawn 路径，完全不依赖 cecelia-bridge。
   // 跳过 bridge check，否则 bridge 不在时 harness 会被错误 revert 到 queued。
   // 名单见 lib/task-type-registry.js（HARNESS_INFLIGHT_TASK_TYPES）。
-  const needsBridgeCheck = !HARNESS_INFLIGHT_TASK_TYPES.includes(nextTask.task_type);
+  const needsBridgeCheck = !HARNESS_INFLIGHT_TASK_TYPES.includes(nextTask.task_type)
+    && !isOpenclawSurface(nextTask.task_type);
 
   // Circuit breaker — 只对依赖 cecelia-bridge 的任务生效（harness_initiative 豁免）
   // 注意：此检查在 atomic claim 和 mark in_progress 之后，
@@ -1202,7 +1228,7 @@ export async function dispatchNextTask(goalIds) {
     } else if (execResult.reason === 'local_execution_disabled_on_scheduler') {
       console.warn(`[dispatch] local_execution_disabled_on_scheduler detected — skipping cecelia-run breaker count`);
     } else {
-      await recordFailure('cecelia-run');
+      await recordFailure(isOpenclawSurface(nextTask.task_type) ? 'openclaw-agent' : 'cecelia-run');
 
       // dispatch-fail-autoblock：连续失败计数 + 自动隔离
       // configError / spawn_deduplicated 已在上方 early-return，此处只处理真实执行失败。
@@ -1252,6 +1278,18 @@ export async function dispatchNextTask(goalIds) {
     );
     await recordDispatchResult(pool, false, execResult.configError ? 'config_error' : 'executor_failed', undefined, nextTask.id);
     return { dispatched: false, reason: execResult.configError ? 'config_error' : 'executor_failed', task_id: nextTask.id, error: execResult.error || execResult.reason, configError: !!execResult.configError, actions };
+  }
+
+  // openclaw-agent 成功：给它自己的熔断记一笔成功（HALF_OPEN → CLOSED），与 cecelia-run 互不牵连。
+  // 这里已经在 try 内、postClaimException 的覆盖范围里，而 agent 早就 spawn 出去了——
+  // 所以必须自己吞掉异常：一旦让它冒到兜底，就会放 claim + 标 status='failed'，
+  // 下个 tick 把同一个还在跑的任务再派一遍（比丢一笔事后记账糟得多）。
+  if (isOpenclawSurface(nextTask.task_type)) {
+    try {
+      await recordSuccess('openclaw-agent');
+    } catch (e) {
+      tickLog(`[dispatcher] recordSuccess(openclaw-agent) 失败（不影响已 spawn 的任务）: ${e.message}`);
+    }
   }
   } catch (err) {
     return await postClaimException(err);

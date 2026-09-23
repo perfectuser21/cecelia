@@ -71,7 +71,14 @@ vi.mock('../slot-allocator.js', () => ({
 }));
 vi.mock('../token-budget-planner.js', () => ({ shouldDowngrade: () => false }));
 vi.mock('../event-bus.js', () => ({ emit: vi.fn(async () => {}) }));
-vi.mock('../circuit-breaker.js', () => ({ isAllowed: () => true, recordFailure: vi.fn(async () => {}) }));
+const mockIsAllowed = vi.fn(() => true);
+const mockRecordFailure = vi.fn(async () => {});
+const mockRecordSuccess = vi.fn(async () => {});
+vi.mock('../circuit-breaker.js', () => ({
+  isAllowed: (k) => mockIsAllowed(k),
+  recordFailure: (...a) => mockRecordFailure(...a),
+  recordSuccess: (...a) => mockRecordSuccess(...a),
+}));
 vi.mock('../events/taskEvents.js', () => ({ publishTaskStarted: vi.fn() }));
 vi.mock('../tick-stats.js', () => ({ incrementActionsToday: vi.fn(async () => {}) }));
 vi.mock('../account-usage.js', () => ({ proactiveTokenCheck: vi.fn(async () => {}) }));
@@ -87,6 +94,7 @@ vi.mock('../dispatch-dedup.js', () => ({ findDuplicateSibling: vi.fn(async () =>
 import { routeQiumiTask, persistDecision } from '../routing/qiumi-router.js';
 import { recordDispatchResult } from '../dispatch-stats.js';
 import { checkAnchor } from '../anchor-check.js';
+import { checkCeceliaRunAvailable } from '../executor.js';
 import { dispatchQiumiTask, dispatchNextTask } from '../dispatcher.js';
 
 // 候选行（选单 SQL 只取部分列，payload 未必带全）
@@ -112,6 +120,8 @@ beforeEach(() => {
   _candidatePool = [];
   mockUpdateTask.mockResolvedValue({ success: true });
   mockTriggerCeceliaRun.mockResolvedValue({ success: true, runId: 'r' });
+  mockIsAllowed.mockImplementation(() => true);
+  checkCeceliaRunAvailable.mockResolvedValue({ available: true });
 });
 
 describe('dispatchQiumiTask：三态出口', () => {
@@ -245,6 +255,36 @@ describe('dispatchQiumiTask：三态出口', () => {
       'agent 分支在函数内 spawn 了——此时任务还没标 in_progress，主流程的回滚也管不到它',
     ).not.toHaveBeenCalled();
   });
+
+  it('openclaw-agent 自己的熔断 OPEN → outcome=skip，释放 claim、记 openclaw_agent_circuit_open，不路由', async () => {
+    wireQueries();
+    mockIsAllowed.mockImplementation((k) => k !== 'openclaw-agent');
+    const holSkipIds = [];
+
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds });
+
+    expect(r).toEqual({ outcome: 'skip' });
+    expect(routeQiumiTask, '熔断开着还去打 Jev').not.toHaveBeenCalled();
+    expect(sqlsOf().some((s) => /claimed_by = NULL/.test(s))).toBe(true);
+    expect(recordDispatchResult).toHaveBeenCalledWith(expect.anything(), false, 'openclaw_agent_circuit_open', undefined, 'q1');
+    expect(holSkipIds).toContain('q1');
+    expect(mockIsAllowed).toHaveBeenCalledWith('openclaw-agent');
+  });
+
+  it('payload 已有 qiumi_route + run_id（上轮路由过、spawn 前被打回）→ 不再打 Jev，直接 proceed', async () => {
+    const routedRow = { ...fullRow, payload: { ...fullRow.payload, run_id: 'qiumi-q1-1', model: 'openai/gpt-5.6-terra', qiumi_route: { source: 'jev', decided_at: '2026-09-23T03:48:25.000Z' } } };
+    mockQuery.mockImplementation(async (sql) => {
+      if (/SELECT \* FROM tasks WHERE id = \$1/.test(sql)) return { rows: [routedRow] };
+      if (/count\(\*\)::int AS n FROM tasks/.test(sql) && /openclaw-agent/.test(sql)) return { rows: [{ n: 0 }] };
+      return { rows: [] };
+    });
+
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds: [] });
+
+    expect(r).toEqual({ outcome: 'proceed' });
+    expect(routeQiumiTask, '已有决策还去打 Jev——每 tick 生成新 run_id 就是这么来的').not.toHaveBeenCalled();
+    expect(persistDecision).not.toHaveBeenCalled();
+  });
 });
 
 describe('dispatchNextTask：接线点在 claim 之后、标 in_progress 之前', () => {
@@ -320,5 +360,81 @@ describe('接线点静态守卫', () => {
       src.indexOf("taskToDispatch.task_type === 'qiumi_task'"),
       '标 in_progress 之后那一段还留着 qiumi 分支',
     ).toBe(-1);
+  });
+});
+
+describe('熔断豁免：qiumi_task 走 ssh 直派，不受 cecelia-run 熔断与 bridge 健康检查约束', () => {
+  it('cecelia-run 熔断 OPEN 时 qiumi 仍走到 triggerCeceliaRun，且不查 bridge、不回滚 queued', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    mockIsAllowed.mockImplementation((k) => k !== 'cecelia-run');
+
+    const r = await dispatchNextTask(null);
+
+    expect(mockTriggerCeceliaRun, 'qiumi 被 cecelia-run 熔断挡住了——它根本不走 bridge').toHaveBeenCalledTimes(1);
+    expect(checkCeceliaRunAvailable).not.toHaveBeenCalled();
+    expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: 'q1', status: 'queued' });
+    expect(r).toMatchObject({ dispatched: true, task_id: 'q1' });
+  });
+
+  it('bridge 健康检查不可用时 qiumi 也不回滚 queued（第二道闸同样豁免）', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    checkCeceliaRunAvailable.mockResolvedValue({ available: false, error: 'bridge down' });
+
+    const r = await dispatchNextTask(null);
+
+    expect(mockTriggerCeceliaRun).toHaveBeenCalledTimes(1);
+    expect(checkCeceliaRunAvailable).not.toHaveBeenCalled();
+    expect(r).toMatchObject({ dispatched: true, task_id: 'q1' });
+  });
+
+  it('openclaw 起 agent 失败 → recordFailure("openclaw-agent")，绝不计 cecelia-run', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    mockTriggerCeceliaRun.mockResolvedValue({ success: false, reason: 'openclaw_agent_spawn_failed', error: 'ssh timeout' });
+
+    const r = await dispatchNextTask(null);
+
+    expect(r).toMatchObject({ dispatched: false, reason: 'executor_failed', task_id: 'q1' });
+    expect(mockRecordFailure).toHaveBeenCalledWith('openclaw-agent');
+    expect(mockRecordFailure).not.toHaveBeenCalledWith('cecelia-run');
+  });
+
+  it('openclaw 起 agent 成功 → recordSuccess("openclaw-agent")', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    mockTriggerCeceliaRun.mockResolvedValue({ success: true, taskId: 'q1', runId: 'qiumi-q1-1', executor: 'openclaw-agent' });
+
+    const r = await dispatchNextTask(null);
+
+    expect(r).toMatchObject({ dispatched: true, task_id: 'q1' });
+    expect(mockRecordSuccess).toHaveBeenCalledWith('openclaw-agent');
+  });
+
+  // agent 已经 spawn 出去了，recordSuccess 只是「事后记账」。它落在 try 内、
+  // postClaimException 的覆盖范围里 → 熔断器库一抛错，兜底就会放 claim + 标 failed，
+  // 下个 tick 把同一个已经在跑的任务再派一遍（比不记账糟得多）。
+  it('recordSuccess("openclaw-agent") 抛错也不得把已 spawn 的任务标 failed / 放 claim', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    mockTriggerCeceliaRun.mockResolvedValue({ success: true, taskId: 'q1', runId: 'qiumi-q1-1', executor: 'openclaw-agent' });
+    mockRecordSuccess.mockRejectedValueOnce(new Error('cb down'));
+
+    const r = await dispatchNextTask(null);
+
+    expect(r, 'recordSuccess 抛错被当成派发失败——任务已 spawn，这是重复执行的入口').toMatchObject({
+      dispatched: true, task_id: 'q1',
+    });
+    expect(r.reason).not.toBe('dispatch_exception');
+    const sqls = sqlsOf();
+    expect(sqls.filter((s) => /status = 'failed'/.test(s)), '已 spawn 的任务被标 failed').toEqual([]);
+    expect(sqls.filter((s) => /claimed_by = NULL/.test(s)), 'claim 被放掉 → 下个 tick 会重复派发').toEqual([]);
+    expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: 'q1', status: 'queued' });
   });
 });
