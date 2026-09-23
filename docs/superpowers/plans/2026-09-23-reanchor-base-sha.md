@@ -1461,6 +1461,10 @@ describe.sequential('base_sha reanchor against real PostgreSQL（任务 d9c405e2
 
 > `initiative_runs` INSERT 的 NOT NULL 列以 `migrations/238_harness_v2_initiative_runs.sql` 及后续 ALTER 为准；若真库拒绝，按报错补列（不改断言）。EXPLAIN 断言若因表为空规划器选 Seq Scan，先 `INSERT` 200 行占位再 `ANALYZE initiative_runs`（放在该用例内部）。
 
+- [ ] **Step 1b: 端到端真快进断言（Task 5 质量审 M3）**
+
+在既有 `packages/brain/src/__tests__/integration/map-preflight-projection-race.pg.integration.test.js`（真 `readMap` + 真 `createKernelRun`）里仿其现有 fixture 追加一条用例：把收据 `evidence.base_sha` 种成与地图 fact revision 不同的旧 sha（任务无 initiative_runs、metadata `{}`），调用 `createKernelRun` → 期望 `created:true`，返回体 `base_sha` 等于地图当前 revision，`routing_receipt_id` 指向 `anchor_generation=2` 的接班收据，且 `tasks.payload.base_sha` 已更新为同值。该文件已在 `POSTGRES_INTEGRATION_TESTS` 内，无需注册。
+
 - [ ] **Step 2: 注册进 POSTGRES_INTEGRATION_TESTS**
 
 `packages/brain/vitest.config.js` 数组末尾追加：
