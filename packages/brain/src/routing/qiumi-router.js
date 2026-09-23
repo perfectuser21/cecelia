@@ -3,8 +3,10 @@
  *
  * 三条不可谈判的约束：
  *  1. 便宜闸永远在 Jev 前（铁律 6eb0dff5）。便宜闸能定序列号就直接定案，一次网络都不发。
- *  2. is_device 不确定不派（fail-closed）。noul 落在 (low, high) 开区间或无法解析 → verdict='ambiguous'
- *     → 任务落 failed，绝不掉进 agent 通道（把"要碰真机"的活交给无头 agent = 静默空跑）。
+ *  2. is_device 不确定不派（fail-closed）——**仅 QIUMI_DEVICE_DELEGATION_ENABLED=true 时**。开关关（默认，
+ *     主理人 0923 拍板）时三道 device 闸不生效，含糊/命中都走 agent 分支并留痕 qiumi_route.device_hint，由
+ *     agent 按提示自查；开时 noul 落在 (low, high) 开区间或无法解析 → verdict='ambiguous' → 任务落 failed，
+ *     绝不掉进 agent 通道。
  *  3. 账号只认注册表池内序列号。jev-client 已按 questions.criteria 把池外值归 null；pickSerial 再守一道，
  *     两层独立（幻觉/越权账号走到哪一层都过不去）。
  *

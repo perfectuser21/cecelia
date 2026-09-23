@@ -140,16 +140,22 @@ function primaryTarget() {
   return sshTargetFor(resolvePrimaryWorkerId());
 }
 
-/** device_hint.is_device 时给 agent 的设备提示段；序列号/宿主来自路由留痕，节点名由宿主派生。 */
+/** device_hint 给 agent 的设备提示段；is_device=true 或 Jev 含糊（verdict='ambiguous'）都要给，
+ *  序列号/宿主来自路由留痕，节点名由宿主派生。 */
 function deviceHintOf(task) {
   const h = task.payload?.qiumi_route?.device_hint;
-  if (!h || h.is_device !== true) return null;
+  if (!h) return null;
+  const ambiguous = h.is_device !== true && h.verdict === 'ambiguous';
+  if (h.is_device !== true && !ambiguous) return null;
   const node = phoneNodeName(h.host, qiumiEnv());
+  const headline = h.is_device === true
+    ? '设备提示（这是要碰真机的活，按 douyin-phone-runtime skill 执行）：'
+    : `设备提示（Jev 判断可能要碰真机 p=${h.p ?? '未知'}，先自查正文；确需碰真机则按 douyin-phone-runtime skill 执行）：`;
   return [
-    '设备提示（这是要碰真机的活，按 douyin-phone-runtime skill 执行）：',
-    `- 手机序列号：${h.serial ?? '未定，按正文里的手机描述到节点的 douyin-phone-profiles.tsv 里查'}`,
+    headline,
+    `- 手机序列号：${h.serial ?? '未定，按正文里的手机描述到 ~/.config/openclaw/douyin-phone-profiles.tsv 里查'}`,
     `- 宿主：${h.host ?? '未知'}；OpenClaw 节点：${node ?? '未知，先 openclaw nodes list 找带 PHONE 的节点'}`,
-    '- 在该节点上执行 douyin-phone-adb --profile <profile> <command>（profile 按序列号在节点的 registry 查），禁止裸 adb',
+    '- 在该节点上执行 douyin-phone-adb --profile <profile> <command>（profile 按序列号在 ~/.config/openclaw/douyin-phone-profiles.tsv 查），禁止裸 adb',
     '- 先 lock-acquire <run_id>，结束必 lock-release 并回读 lock-status；每次 exec 显式 timeout 300000',
   ].join('\n');
 }
