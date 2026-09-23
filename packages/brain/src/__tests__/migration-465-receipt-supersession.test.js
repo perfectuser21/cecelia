@@ -23,12 +23,18 @@ describe('migration 465 — work_routing_receipts 链式接班（anchor_generati
     expect(upSql).toMatch(/INSERT INTO schema_version[\s\S]*'465'/);
   });
 
+  it('补 initiative_runs.current_task_id 裸列索引（375 的部分唯一索引带谓词，重锚定探测走不到）', () => {
+    const upSql = readFileSync(upUrl, 'utf8');
+    expect(upSql).toMatch(/CREATE INDEX IF NOT EXISTS idx_initiative_runs_current_task ON initiative_runs \(current_task_id\)/i);
+  });
+
   it('down 还原三列唯一键并删列', () => {
     const downSql = readFileSync(downUrl, 'utf8');
     expect(downSql).toMatch(/DROP CONSTRAINT IF EXISTS work_routing_receipts_route_generation_unique/);
     expect(downSql).toMatch(/DROP CONSTRAINT IF EXISTS work_routing_receipts_supersedes_unique/);
     expect(downSql).toMatch(/DROP COLUMN IF EXISTS anchor_generation/);
     expect(downSql).toMatch(/UNIQUE \(source, source_id, router_version\)/);
+    expect(downSql).toMatch(/DROP INDEX IF EXISTS idx_initiative_runs_current_task/i);
     expect(downSql).toMatch(/DELETE FROM schema_version WHERE version = '465'/);
   });
 });

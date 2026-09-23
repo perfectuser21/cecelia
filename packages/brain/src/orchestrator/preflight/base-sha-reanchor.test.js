@@ -109,7 +109,7 @@ describe('reanchorReceiptIfEmptyBranch', () => {
   it('已有 initiative_runs → 抛 needs_rebase，不写库，且两列各走一个 EXISTS', async () => {
     const { client, calls } = mockClient({ hasAnyRun: true });
     await expect(reanchorReceiptIfEmptyBranch(client, { task, receipt: baseReceipt(), map: freshMap() }))
-      .rejects.toMatchObject({ code: 'needs_rebase', detail: { old_base_sha: OLD, new_base_sha: NEW, branch: 'cp-route-api-1' } });
+      .rejects.toMatchObject({ code: 'needs_rebase', detail: { task_id: TASK_ID, old_base_sha: OLD, new_base_sha: NEW, branch: 'cp-route-api-1' } });
     expect(writes(calls)).toHaveLength(0);
     const probe = calls.find((c) => /AS has_any_run/.test(c.sql));
     expect(probe.sql).toMatch(/EXISTS[\s\S]*current_task_id[\s\S]*OR[\s\S]*EXISTS[\s\S]*initiative_id/);
@@ -118,7 +118,17 @@ describe('reanchorReceiptIfEmptyBranch', () => {
   it('receipt.has_v2_run=true → 抛 needs_rebase（不查库）', async () => {
     const { client, calls } = mockClient();
     await expect(reanchorReceiptIfEmptyBranch(client, { task, receipt: baseReceipt({ has_v2_run: true }), map: freshMap() }))
-      .rejects.toMatchObject({ code: 'needs_rebase' });
+      .rejects.toMatchObject({ code: 'needs_rebase', detail: { task_id: TASK_ID, has_v2_run: true } });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('收据已被接班（superseded）→ 抛 receipt_superseded 且零写库', async () => {
+    const { client, calls } = mockClient();
+    await expect(reanchorReceiptIfEmptyBranch(client, { task, receipt: baseReceipt({ superseded: true }), map: freshMap() }))
+      .rejects.toMatchObject({
+        code: 'receipt_superseded',
+        detail: { task_id: TASK_ID, receipt_id: RECEIPT_ID, anchor_generation: 1 },
+      });
     expect(calls).toHaveLength(0);
   });
 
@@ -126,7 +136,7 @@ describe('reanchorReceiptIfEmptyBranch', () => {
     const { client, calls } = mockClient();
     const thrashTask = { ...task, metadata: { base_sha_fastforward_count: MAX_FASTFORWARD } };
     await expect(reanchorReceiptIfEmptyBranch(client, { task: thrashTask, receipt: baseReceipt(), map: freshMap() }))
-      .rejects.toMatchObject({ code: 'map_thrash', detail: { fastforward_count: MAX_FASTFORWARD } });
+      .rejects.toMatchObject({ code: 'map_thrash', detail: { task_id: TASK_ID, fastforward_count: MAX_FASTFORWARD } });
     expect(writes(calls)).toHaveLength(0);
   });
 
@@ -164,6 +174,26 @@ describe('reanchorReceiptIfEmptyBranch', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toContain(TASK_ID);
     expect(warn.mock.calls[0][0]).toContain('abc');
+    warn.mockRestore();
+  });
+
+  it('快进计数为负数 → 夹到 0，写回 1（不出现负计数永久免疫 map_thrash）', async () => {
+    const { client, calls } = mockClient();
+    const negativeTask = { ...task, metadata: { base_sha_fastforward_count: -100 } };
+    const result = await reanchorReceiptIfEmptyBranch(client, { task: negativeTask, receipt: baseReceipt(), map: freshMap() });
+    expect(result.base_sha).toBe(NEW);
+    const update = calls.find((c) => /UPDATE tasks/.test(c.sql));
+    expect(JSON.parse(update.params[2]).base_sha_fastforward_count).toBe(1);
+  });
+
+  it('收据 anchor_generation 为脏值 → 视为 1，接班代际写 2', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { client, calls } = mockClient();
+    const result = await reanchorReceiptIfEmptyBranch(client, { task, receipt: baseReceipt({ anchor_generation: 'abc' }), map: freshMap() });
+    expect(result.anchor_generation).toBe(2);
+    const insert = calls.find((c) => /INSERT INTO work_routing_receipts/.test(c.sql));
+    expect(insert.params[19]).toBe(2);
+    expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });
 
