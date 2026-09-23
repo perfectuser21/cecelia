@@ -21,7 +21,7 @@
 | M5 `work-routing-store.js` | 幂等回读取最新 generation；sameRoute 比对忽略 `base_sha` | 现有函数 | — |
 | M6 `harness-skill-relay.js` / `executor.js` | 把 `needs_rebase` 与 `map_*`/`impact_*` 错误以 `reason_code` 结构化返回 | `{success:false, reason, reason_code, detail}` | — |
 | M7 `dispatcher.js` | `needs_rebase` 直接 block（不计数、P3 去重告警）；autoblock detail 带 `reason_code`；task_events 同步 | `blockTask(reason, detail)` | task-updater、alerting |
-| M8 `scripts/reanchor-blocked-tasks.mjs`（一次性回填，不做定时 job——定时解封会与 map_recovery/explicit_recovery/map_thrash 任务形成永久 churn） | 批量解锁 mismatch 停车任务并清零计数 | CLI `--dry-run` / `--resume` | task-updater.unblockTask |
+| M8 `scripts/reanchor-blocked-tasks.mjs`（一次性回填，不做定时 job——定时解封会与 map_recovery/explicit_recovery/map_thrash 任务形成永久 churn） | 批量解锁 mismatch 停车任务并清零计数 | CLI `--dry-run` / `--confirm-database=<name>`（`--resume` 语义由「只选仍 blocked」天然满足）| task-updater.unblockTask |
 
 ## 数据流（一次派发）
 
@@ -56,7 +56,8 @@ dispatcher.tick → claim(claimed_by IS NULL) → enforceDispatchRoutingReceipt(
 | 快进后 preflight 仍失败（如 impact_assertion_missing） | 事务回滚，接班收据不落库；reason_code 区分 |
 | 收据唯一键冲突 | 事务回滚，任务留 queued，下 tick 重试 |
 | needs_rebase | blocked，不计 autoblock；P3 告警 eventType=`needs_rebase`（只落日志不推送；任务一经 blocked 不再被选中，同一任务只响一次，重复上限=同 repo 停车任务数，故不按 repo 去重）；停车失败（blockTask 返回 success:false）→ P2 `needs_rebase_park_failed` |
-| 批量脚本中途失败 | 逐条独立事务，`--resume` 重跑只处理仍 blocked 的 |
+| 批量脚本中途失败 | 逐条独立，重跑只处理仍 blocked 的（候选查询只选 blocked）；已有 initiative_runs 的候选改标 `needs_rebase` 不解锁 |
+| 同 source/source_id 重入且 base_sha 不同 | 幂等比对忽略 `REANCHOR_EVIDENCE_KEYS`（base_sha 归重锚定管），判为同路由复用旧任务，不再报 idempotency_conflict；branch 不同仍 conflict |
 
 ## 测试策略（TDD，先红后绿，永久留 CI）
 

@@ -1,3 +1,5 @@
+> **状态（2026-09-23）**：本 PrepPRD 中 M2 的 advisory 锁、M3「在 kernel-run-store 内调用 reanchor」、M8「scheduler-jobs 每 10 分钟」已被审批后的 spec 推翻；实现以 `docs/superpowers/specs/2026-09-23-reanchor-base-sha-design.md` 为准（预检内快进、任务行 FOR UPDATE 串行化、一次性脚本）。
+
 # Bug PrepPRD：派发时重锚定 base_sha——main 每合并一次，队列里所有已路由任务全部撞 map_revision_mismatch 自动停车
 
 ## 症状
