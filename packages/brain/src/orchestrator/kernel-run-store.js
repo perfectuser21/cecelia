@@ -434,7 +434,9 @@ export async function createKernelRun(pool, input, deps = {}) {
       [`relay-initiative:${input.initiativeId}`],
     );
     const { rows: taskRows } = await client.query(
-      `SELECT id, task_type, status, payload
+      // metadata 必须一起取：重锚定（任务 d9c405e2）按 task.metadata 记 thrash 计数，
+      // 缺列会被 reanchor 当成 task_metadata_missing fail-loud。
+      `SELECT id, task_type, status, payload, metadata
          FROM tasks
         WHERE id = $1
         FOR UPDATE`,
@@ -558,7 +560,7 @@ export async function createKernelRun(pool, input, deps = {}) {
       hasV2Run: receipt.has_v2_run,
     });
     const runPreflight = deps.ensureMapImpactPreflight ?? ensureMapImpactPreflight;
-    const preflight = await runPreflight(client, { task, receipt });
+    const preflight = await runPreflight(client, { task, receipt, createdSource: effectiveCreatedSource });
     if (!preflight?.contract?.id || preflight.contract.status !== 'active') {
       throw new Error('impact_contract_inactive');
     }
@@ -635,7 +637,13 @@ export async function createKernelRun(pool, input, deps = {}) {
     );
     await client.query('COMMIT');
     committed = true;
-    return { created: true, run: rows[0] };
+    return {
+      created: true,
+      run: rows[0],
+      // 重锚定（任务 d9c405e2）后收据/base_sha 已变，调用方须用它覆写内存 task.payload 再起跑场。
+      base_sha: preflight.receipt?.evidence?.base_sha ?? null,
+      routing_receipt_id: preflight.receipt?.id ?? null,
+    };
   } catch (error) {
     if (!committed) {
       await client.query('ROLLBACK');
@@ -1029,6 +1037,22 @@ export async function reconcileKernelTaskTerminal(
     runId: run.id,
     outcome: run.phase,
   };
+}
+
+/**
+ * createKernelRun 返回后立即调用：预检可能已把路由锚快进到新 base_sha（接班收据），
+ * DB 已改但调用方手里的 task 仍是派发前快照；三处起跑场（bridge.prepare / headed 身份 env）
+ * 都读内存 task.payload.base_sha，不回流就是"改账不改跑场"。原地覆写并返回同一对象。
+ */
+export function syncTaskPayloadFromKernelRun(task, created) {
+  const baseSha = created?.base_sha;
+  if (typeof baseSha !== 'string' || baseSha.length === 0) return task;
+  task.payload = {
+    ...(task.payload ?? {}),
+    base_sha: baseSha,
+    ...(created.routing_receipt_id ? { routing_receipt_id: created.routing_receipt_id } : {}),
+  };
+  return task;
 }
 
 export const __test__ = {
