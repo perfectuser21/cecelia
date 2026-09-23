@@ -55,7 +55,7 @@ dispatcher.tick → claim(claimed_by IS NULL) → enforceDispatchRoutingReceipt(
 | receipt 已被接班（`superseded=true`） | 抛 `receipt_superseded`，零写库——调用方契约违约（必须传当前生效收据），否则会插出 supersedes 分叉链被 465 唯一键拒 |
 | 快进后 preflight 仍失败（如 impact_assertion_missing） | 事务回滚，接班收据不落库；reason_code 区分 |
 | 收据唯一键冲突 | 事务回滚，任务留 queued，下 tick 重试 |
-| needs_rebase | blocked，不计 autoblock；P3 告警 dedupe `repo|needs_rebase` |
+| needs_rebase | blocked，不计 autoblock；P3 告警 eventType=`needs_rebase`（只落日志不推送；任务一经 blocked 不再被选中，同一任务只响一次，重复上限=同 repo 停车任务数，故不按 repo 去重）；停车失败（blockTask 返回 success:false）→ P2 `needs_rebase_park_failed` |
 | 批量脚本中途失败 | 逐条独立事务，`--resume` 重跑只处理仍 blocked 的 |
 
 ## 测试策略（TDD，先红后绿，永久留 CI）
