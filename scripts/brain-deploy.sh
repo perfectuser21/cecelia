@@ -427,15 +427,26 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
 
         # blue 是 bridge 网络（docker ps 显示 0.0.0.0:5221->5221），green 用 bridge + -p 5233:5221，
         # 不加 --network host（否则 green 抢占 host 5221 与 blue 冲突）。
-        GREEN_ENV=$(docker inspect cecelia-node-brain --format '{{range .Config.Env}}-e {{.}} {{end}}' 2>/dev/null || echo "")
-        GREEN_VOL=$(docker inspect cecelia-node-brain --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}}{{if not .RW}}:ro{{end}} {{end}}' 2>/dev/null || echo "")
-        # 最后的 `-e CECELIA_INTERNAL_TOKEN` 从当前部署进程复制刚校验的值，
-        # 覆盖旧 blue 中可能存在的旧 token，且不把 secret 本身放进 argv。
-        export GREEN_RUN_ARGS="${GREEN_ENV} ${GREEN_VOL} -e CECELIA_INTERNAL_TOKEN"
+        # blue 的 env 值可能含空格，必须走 env-file（bluegreen_green_run_args），不能拼 -e K=V；
+        # 文件 600 权限、swap 结束即删（docker run 读完就不再需要）。
+        GREEN_ENV_FILE=$(mktemp "${TMPDIR:-/tmp}/cecelia-green-env.XXXXXX")
+        chmod 600 "$GREEN_ENV_FILE"
+        if ! GREEN_RUN_ARGS=$(bluegreen_green_run_args cecelia-node-brain "$GREEN_ENV_FILE"); then
+            rm -f "$GREEN_ENV_FILE"
+            echo "[FAIL] 读取旧 Brain 容器 env/卷失败，终止部署"
+            drain_cancel_with_retry
+            exit 1
+        fi
+        export GREEN_RUN_ARGS
         # sidecar 需要知道部署根和 region（bluegreen.sh 通过 env 读取）
         export DEPLOY_ROOT_DIR="$ROOT_DIR"
+        SWAP_OK=true
         if ! TARGET_VERSION="${VERSION}" BLUE_NAME=cecelia-node-brain \
              GREEN_NAME=cecelia-node-brain-green TEMP_PORT=5233 HEALTH_TIMEOUT=90 bluegreen_swap; then
+            SWAP_OK=false
+        fi
+        rm -f "$GREEN_ENV_FILE"
+        if [[ "$SWAP_OK" == false ]]; then
             echo "[FAIL] green canary 未通过，已保留旧生产容器(5221 不受影响)，终止部署"
             # blue 仍在运行且已进入 drain 模式 → 恢复正常派发
             echo "  [drain] green 未通过，恢复旧 Brain 派发..."

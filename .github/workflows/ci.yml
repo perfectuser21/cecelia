@@ -432,6 +432,23 @@ jobs:
           done
 
   # 改动 C：brain-tests-shell — 执行 fleet-worker shell 回归测试（失明点② 修复）
+  # ─── 部署脚本 shell 测试（scripts/__tests__/bluegreen-*、brain-deploy-*）──────────
+  # 2026-09-23 失明点修复：蓝绿/drain 的 5 个 .test.sh 此前无任何 CI job 执行（green 起容器
+  # env 含空格被打散的回归守卫写了也没人跑）。glob 模式：新加同前缀测试自动接 CI。
+  deploy-shell-tests:
+    name: Deploy Shell Tests (bluegreen/brain-deploy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run deploy shell tests
+        run: |
+          for t in scripts/__tests__/bluegreen-*.test.sh scripts/__tests__/brain-deploy-*.test.sh; do
+            [[ -f "$t" ]] || continue
+            echo "::group::$(basename "$t")"
+            bash "$t" || exit 1
+            echo "::endgroup::"
+          done
   brain-tests-shell:
     name: Brain Shell Tests (fleet-worker 套)
     needs: changes
@@ -2036,7 +2053,7 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-gp-anchor-artifact, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, goldset-eval, mcp-readonly-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell, runner-tests-shell]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-gp-anchor-artifact, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, lint-bypass-not-committed, real-env-smoke, workspace-api-smoke, quality-tests, goldset-eval, mcp-readonly-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell, runner-tests-shell, deploy-shell-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -2055,6 +2072,7 @@ jobs:
           check "branch-naming"     "${{ needs.branch-naming.result }}"
           check "engine-tests"      "${{ needs.engine-tests.result }}"
           check "engine-tests-shell" "${{ needs.engine-tests-shell.result }}"
+          check "deploy-shell-tests" "${{ needs.deploy-shell-tests.result }}"
           check "dashboard-staging-gate-smoke" "${{ needs.dashboard-staging-gate-smoke.result }}"
           check "lint-migration-unique-version" "${{ needs.lint-migration-unique-version.result }}"
           check "lint-auto-merge-decision" "${{ needs.lint-auto-merge-decision.result }}"
