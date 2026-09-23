@@ -76,9 +76,9 @@ describe('routeQiumiTask 决策表', () => {
     const d = await routeQiumiTask(task('用 Claude Code 改一下按钮文案'), {
       pool, env, fetchFn: jevOk(), callLLMFn: vi.fn(), now: () => 1700000000000,
     });
-    expect(d).toMatchObject({ outcome: 'agent', engine: 'claude', model: 'claude-cli/claude-sonnet-5', department: 'dev', kind: 'agent' });
+    expect(d).toMatchObject({ outcome: 'agent', engine: 'claude', model: 'anthropic/claude-sonnet-5', department: 'dev', kind: 'agent' });
     expect(d.runId).toBe('qiumi-11111111-1700000000000');
-    expect(d.payloadPatch).toMatchObject({ model: 'claude-cli/claude-sonnet-5', provider: 'openclaw', run_id: d.runId, qiumi_department: 'dev', qiumi_kind: 'agent' });
+    expect(d.payloadPatch).toMatchObject({ model: 'anthropic/claude-sonnet-5', provider: 'openclaw', run_id: d.runId, qiumi_department: 'dev', qiumi_kind: 'agent' });
     expect(recordTaskEventSafe).toHaveBeenCalledWith(pool, TASK_ID, 'qiumi_route_decided', expect.objectContaining({ outcome: 'agent', source: 'jev' }));
     // 便宜闸的四项命中结论都要留痕，排查时不用回头重跑便宜闸
     expect(d.payloadPatch.qiumi_route.cheap).toMatchObject({ hardEngine: 'claude', department: null, workflowRef: null, agentRef: null });
@@ -553,5 +553,25 @@ describe('开关关（默认）：手机活不改道，走 agent 并留痕 devic
     const upd = pool.query.mock.calls.find(([sql]) => /SET payload = COALESCE/.test(sql));
     expect(upd).toBeTruthy();
     expect(JSON.parse(upd[1][1]).qiumi_route.device_hint.serial).toBe('ANGYVB4227006983');
+  });
+});
+
+describe('「用 <型号>」→ agent 分支 model 取 hardModel', () => {
+  const envModel = qiumiEnv({ JEV_API_KEY: 'k', QIUMI_MODEL_ALLOWLIST: JSON.stringify(['xai/grok-4.7', 'anthropic/claude-opus-5']) });
+  it('用 grok-4.7 → payloadPatch.model=xai/grok-4.7，事件 hardModel 留痕，engine 仍按 Jev', async () => {
+    const d = await routeQiumiTask(task('写周报，用 grok-4.7'), { pool, env: envModel, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    expect(d.outcome).toBe('agent');
+    expect(d.model).toBe('xai/grok-4.7');
+    expect(d.payloadPatch.model).toBe('xai/grok-4.7');
+    expect(d.payloadPatch.qiumi_route.cheap.hardModel).toBe('xai/grok-4.7');
+    expect(recordTaskEventSafe).toHaveBeenCalledWith(pool, TASK_ID, 'qiumi_route_decided', expect.objectContaining({ outcome: 'agent', model: 'xai/grok-4.7' }));
+  });
+  it('没写型号 → 仍走 modelMap[engine]（terra）', async () => {
+    const d = await routeQiumiTask(task('写周报'), { pool, env: envModel, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    expect(d.payloadPatch.model).toBe('openai/gpt-5.6-terra');
+  });
+  it('用 claude（引擎词）→ model = anthropic/claude-sonnet-5（原生通道，不再 claude-cli）', async () => {
+    const d = await routeQiumiTask(task('用 claude 写周报'), { pool, env: envModel, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    expect(d.payloadPatch.model).toBe('anthropic/claude-sonnet-5');
   });
 });

@@ -249,6 +249,7 @@ publisher-infra-retry-smoke.sh
 qiumi-dispatch-smoke.sh
 qiumi-entry-smoke.sh
 qiumi-foundation-smoke.sh
+qiumi-model-allowlist-smoke.sh
 qiumi-phone-agent-smoke.sh
 qiumi-routing-smoke.sh
 quality-test-pyramid-smoke.sh

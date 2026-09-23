@@ -6,6 +6,8 @@
  *  - device_locks（migrations/448）：手机序列号真身，device_name=序列号，device_type='phone'
  *  - ops_workflows：无 channel 列，是否设备工作流用 env.deviceKeywords 对工作流名做启发式判断
  */
+import { resolveModelRef } from './env.js';
+
 export async function loadRegistryPool(query) {
   const a = await query(`SELECT name, notion_id FROM ops_agents WHERE status = 'active' ORDER BY name`);
   const p = await query(`SELECT device_name AS serial, host FROM device_locks WHERE device_type = 'phone' ORDER BY device_name`);
@@ -37,7 +39,7 @@ export function cheapGates(task, pool, env) {
   const src = task?.payload?.qiumi_source ?? {};
   const text = [src.title, src.remark, src.body].filter(Boolean).join('\n');
   const norm = (s) => String(s ?? '').replace(/-/g, '');
-  const out = { isDevice: false, serial: null, workflowRef: null, department: null, agentRef: null, hardEngine: null, matchedBy: [] };
+  const out = { isDevice: false, serial: null, workflowRef: null, department: null, agentRef: null, hardEngine: null, hardModel: null, matchedBy: [] };
 
   const relWf = (src.relations?.workflows ?? []).map(norm);
   const wfHit = pool.workflows.find((w) => w.notionId && relWf.includes(norm(w.notionId)));
@@ -75,6 +77,12 @@ export function cheapGates(task, pool, env) {
     if (d) { out.department = d; out.matchedBy.push('text:department'); }
   }
   if (!out.isDevice && env.deviceKeywords.some((k) => text.includes(k))) { out.isDevice = true; out.matchedBy.push('text:keyword'); }
+  // 「用 <型号>」：只认 QIUMI_MODEL_ALLOWLIST 里的（全名或短名），第一个命中即定案。
+  const MODEL_RE = /(?<![不别])用\s*([A-Za-z][A-Za-z0-9._/-]{2,})/g;
+  for (const m of text.matchAll(MODEL_RE)) {
+    const ref = resolveModelRef(m[1], env);
+    if (ref) { out.hardModel = ref; out.matchedBy.push('text:model'); break; }
+  }
   for (const [re, eng] of ENGINE_RES) if (re.test(text)) { out.hardEngine = eng; out.matchedBy.push('text:engine'); break; }
   return out;
 }
