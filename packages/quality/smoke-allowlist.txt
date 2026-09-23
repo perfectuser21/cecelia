@@ -248,6 +248,7 @@ publish-pr-smoke.sh
 publisher-infra-retry-smoke.sh
 qiumi-entry-smoke.sh
 qiumi-foundation-smoke.sh
+qiumi-routing-smoke.sh
 quality-test-pyramid-smoke.sh
 radius-rerun-gate-smoke.sh
 ratchet-registry-smoke.sh

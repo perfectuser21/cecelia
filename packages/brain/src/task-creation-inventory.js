@@ -65,6 +65,10 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'routes/harness.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/task-tasks.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/tasks.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
+  // 秋米路由（PR3）：判定为设备任务时派生 device_job 子任务。迁移 421 的回执不可变触发器
+  // 挡死带回执行的 task_type 原地转换，只能另建一条子任务（见计划补充五）。
+  // 子任务由手机领单器真领真跑，所以 creates_executable_task=true。
+  { module: 'routing/qiumi-router.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'rumination.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'staging-promote.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'suggestion-dispatcher.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
