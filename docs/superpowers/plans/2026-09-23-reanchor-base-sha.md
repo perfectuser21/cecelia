@@ -1371,7 +1371,9 @@ describe.sequential('base_sha reanchor against real PostgreSQL（任务 d9c405e2
     expect(events.rowCount).toBe(1);
   });
 
-  it('只 INSERT 接班收据不 UPDATE payload → 421 触发器拒绝', async () => {
+  // 421 是 tasks 上的 BEFORE UPDATE 触发器（收据表无 INSERT 触发器）：断言落点=插了接班收据不同步投影时，
+  // 该任务后续 payload 写入被拒；对齐 routing_receipt_id 后放行。实现见 base-sha-reanchor.pg.integration.test.js。
+  it('只 INSERT 接班收据不同步投影 → 后续 payload 写入被 421 拒绝，对齐后放行', async () => {
     const { taskId, receiptId } = await seedRoutedTask(pool);
     await expect(pool.query(
       `INSERT INTO work_routing_receipts(

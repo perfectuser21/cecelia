@@ -63,7 +63,7 @@ dispatcher.tick → claim(claimed_by IS NULL) → enforceDispatchRoutingReceipt(
 - **E2E（integration，本地 vitest 走 mock client）**：`orchestrator/__tests__/kernel-run-store.test.js` 新 describe：createKernelRun 在 receipt.base_sha=A、地图 fresh 且 revision=B、无 run/artifact 时**不抛**并 INSERT 接班收据（supersedes=旧 id，evidence.base_sha=B）、UPDATE payload、写 `work_route_reanchored`；有 artifact → `needs_rebase` 且零 INSERT；`map_recovery=true` → 仍 `map_revision_mismatch`；`fastforward_count=5` → `map_thrash`；`explicit_recovery` → 跳过快进。
 - **unit**：`orchestrator/preflight/base-sha-reanchor.test.js` 条件矩阵；`work-routing-store` 的 sameRoute 忽略 base_sha 与最新 generation 回读。
 - **unit**：`__tests__/dispatch-fail-autoblock.test.js`：detail 含 `reason_code:'map_revision_mismatch'`；`needs_rebase` → `blockTask('needs_rebase')` 且计数不变。
-- **integration（真 PG）**：仿 `src/__tests__/work-routing-validation-route.integration.test.js`：应用 M1 后，同事务 INSERT 接班收据（gen=2, supersedes=旧）→ UPDATE tasks.payload.routing_receipt_id → 421 触发器放行；不 UPDATE payload 时触发器拒绝；二次接班撞唯一键。
+- **integration（真 PG）**：仿 `src/__tests__/work-routing-validation-route.integration.test.js`：应用 M1 后，同事务 INSERT 接班收据（gen=2, supersedes=旧）→ UPDATE tasks.payload.routing_receipt_id → 421 触发器放行；只插接班收据不同步投影时，该任务后续任何 payload 写入被 421（tasks 上的 BEFORE UPDATE 触发器）拒绝、对齐后放行；二次接班先被模块 receipt_superseded 拒，绕过模块直插撞 465 唯一键 23505；EXPLAIN 断言两侧索引可用。
 - **migration（trivial）**：M1 up/down SQL 正则测试（仿 migration-405 测试）。
 - **部署后真验（数据写入类）**：见 PrepPRD 验收标准（接班收据 generation=2、payload 指向新收据、task_events 事件、needs_rebase 可查）。
 - **守卫**：逻辑接缝=上述 CI；无新增环境接缝。
