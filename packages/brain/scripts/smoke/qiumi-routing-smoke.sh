@@ -33,4 +33,9 @@ export DB_HOST="$DB_HOST"
 # 这里只保证 JEV_API_KEY 有值——没有 key 时 decideWithFallback 会跳过 jev 直接去问 terra（真打 LLM）。
 export JEV_API_KEY="${JEV_API_KEY:-smoke-stub}"
 
+# 本 smoke 验的是 device 派生层（闸 2/3 断言父任务 blocked/delegated_device_job + 子任务）。
+# 0923 起该层封存在 QIUMI_DEVICE_DELEGATION_ENABLED 后面（默认关＝手机活走 openclaw agent），
+# 不显式打开这里就是 12 项假红。默认关那条路的真库 smoke 在 qiumi-phone-agent-smoke.sh。
+export QIUMI_DEVICE_DELEGATION_ENABLED=true
+
 cd "$(dirname "$0")/../.." && node scripts/smoke/qiumi-routing-smoke.mjs
