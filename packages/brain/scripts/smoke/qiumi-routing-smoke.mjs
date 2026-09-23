@@ -2,7 +2,7 @@
  * 秋米路由判定真库 smoke（PR3-甲）：真 Postgres（cecelia_test）+ 假 Jev（fetchFn）。
  * 三闸——全部只碰「判定」这一层（routing/*），不碰 dispatcher、不碰 ssh、不碰 Notion：
  *  1 agent 分支：正文写明「用 Claude Code」→ 便宜闸硬约束压过 Jev 给的 codex，
- *    payload.model=claude-cli/claude-sonnet-5、run_id 合规、task_events 有 qiumi_route_decided
+ *    payload.model=anthropic/claude-sonnet-5、run_id 合规、task_events 有 qiumi_route_decided
  *  2 device 分支（走**真实回执路径**：createRoutedTask 建父任务）：正文含注册表内序列号 →
  *    一次 Jev 都不问（便宜闸在 Jev 前，铁律 6eb0dff5）→ 派生 device_job 子任务
  *    （assigned_to=phone-SMOKE1 / payload.serial / parent_task_id）、父任务挂
@@ -143,7 +143,7 @@ async function main() {
     const events = await eventTypes(t.id);
     check(1, decision.outcome === 'agent', `outcome=agent（实得 ${decision.outcome}）`);
     check(1, jevCalls === before + 1, `问过一次 Jev（实得 ${jevCalls - before} 次）`);
-    check(1, row.payload.model === 'claude-cli/claude-sonnet-5',
+    check(1, row.payload.model === 'anthropic/claude-sonnet-5',
       `便宜闸 claude 压过 Jev 的 codex，model=${row.payload.model}`);
     check(1, /^qiumi-[0-9a-f]{8}-\d{10,}$/.test(row.payload.run_id ?? ''), `run_id 合规=${row.payload.run_id}`);
     check(1, row.payload.qiumi_department === 'dev', `department=${row.payload.qiumi_department}`);

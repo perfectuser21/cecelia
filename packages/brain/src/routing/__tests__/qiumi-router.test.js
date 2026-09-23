@@ -76,9 +76,9 @@ describe('routeQiumiTask 决策表', () => {
     const d = await routeQiumiTask(task('用 Claude Code 改一下按钮文案'), {
       pool, env, fetchFn: jevOk(), callLLMFn: vi.fn(), now: () => 1700000000000,
     });
-    expect(d).toMatchObject({ outcome: 'agent', engine: 'claude', model: 'claude-cli/claude-sonnet-5', department: 'dev', kind: 'agent' });
+    expect(d).toMatchObject({ outcome: 'agent', engine: 'claude', model: 'anthropic/claude-sonnet-5', department: 'dev', kind: 'agent' });
     expect(d.runId).toBe('qiumi-11111111-1700000000000');
-    expect(d.payloadPatch).toMatchObject({ model: 'claude-cli/claude-sonnet-5', provider: 'openclaw', run_id: d.runId, qiumi_department: 'dev', qiumi_kind: 'agent' });
+    expect(d.payloadPatch).toMatchObject({ model: 'anthropic/claude-sonnet-5', provider: 'openclaw', run_id: d.runId, qiumi_department: 'dev', qiumi_kind: 'agent' });
     expect(recordTaskEventSafe).toHaveBeenCalledWith(pool, TASK_ID, 'qiumi_route_decided', expect.objectContaining({ outcome: 'agent', source: 'jev' }));
     // 便宜闸的四项命中结论都要留痕，排查时不用回头重跑便宜闸
     expect(d.payloadPatch.qiumi_route.cheap).toMatchObject({ hardEngine: 'claude', department: null, workflowRef: null, agentRef: null });
