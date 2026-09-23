@@ -334,6 +334,20 @@ export const SPRINT_HARNESS_DEV_TASK_TYPES = tagged(SPRINTDEV);
 export const CONTENT_PIPELINE_TYPES = Object.freeze(
   Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.executor === 'external-worker').map(([k]) => k),
 );
+/**
+ * 生死由**外部看门狗**管的任务类型（按 watchdog 字段，不是 executor）。
+ *
+ * 0923 实证：executor.js 的 liveness 探针用 CONTENT_PIPELINE_TYPES（按 executor 筛）
+ * 做豁免，于是 device_job 漏网 —— 它的 executor 是 null、watchdog 才是 'external-worker'。
+ * 后果：device_job 由工作机领单器在**另一台机器**上执行，Brain 本机的三条 spawn 证据
+ * 一条都不会有，每一单都被判死回队（单 e8c1dbce：跑到一半被回队 → 回执 NOT_RUNNING
+ * → 同一个活又被领走，在真手机上重跑）。
+ *
+ * 「谁执行」和「谁管生死」是两件事，liveness 关心的是后者。
+ */
+export const EXTERNAL_WATCHDOG_TASK_TYPES = Object.freeze(
+  Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.watchdog === 'external-worker').map(([k]) => k),
+);
 export const NO_GOAL_TASK_TYPES = tagged(NOGOAL);
 export const ASYNC_CALLBACK_TASK_TYPES = tagged(ASYNCCB);
 /** lib/review-task-types.js 的 REVIEW_TASK_TYPES（与 actions.js REVIEW_TASK_TYPES 语义不同，见上方 REVIEWISO 定义处注释）。 */
