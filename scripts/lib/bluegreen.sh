@@ -137,6 +137,17 @@ bluegreen_wait_for_stable_http() {
   return 1
 }
 
+# bluegreen_green_run_args <blue> <env_file>：把 blue 的 env 写成 env-file、卷拼成 -v，
+# 输出可直接放进 GREEN_RUN_ARGS 的参数串。blue 的 env 值可能含空格（QIUMI_MODEL_MAP 等），
+# 拼成 `-e K=V` 字符串再不加引号展开会把 docker run 参数打散（2026-09-23 Gate3 全红根因），
+# 所以值只经 env-file 传递；`-e CECELIA_INTERNAL_TOKEN` 从当前进程透传刚校验的 token。
+bluegreen_green_run_args() {
+  local blue="$1" env_file="$2" vols=""
+  docker inspect "$blue" --format '{{range .Config.Env}}{{println .}}{{end}}' > "$env_file" || return 1
+  vols=$(docker inspect "$blue" --format '{{range .Mounts}}-v {{.Source}}:{{.Destination}}{{if not .RW}}:ro{{end}} {{end}}' 2>/dev/null || echo "")
+  echo "--env-file ${env_file} ${vols} -e CECELIA_INTERNAL_TOKEN"
+}
+
 # bluegreen_swap：green canary 验证后原子切。入参走 env：
 #   BLUE_NAME(默认 cecelia-node-brain) / GREEN_NAME(默认 cecelia-node-brain-green)
 #   TEMP_PORT(默认 5233，故意避开 dashboard-slot-server.cjs 的默认端口 5223——两者曾撞车导致
@@ -181,11 +192,14 @@ bluegreen_swap() {
   elif [[ -n "$blue_net" ]]; then
     net_args="--network ${blue_net}"
   fi
-  # BRAIN_DEPLOY_CANARY=1 关 tick，避免 canary 与 blue 连同一 DB double-dispatch
+  # BRAIN_DEPLOY_CANARY=1 关 tick，避免 canary 与 blue 连同一 DB double-dispatch。
+  # GREEN_RUN_ARGS 只能含无空格 token（--env-file/-v/-e NAME），blue 的 env 值走 env-file
+  # （见 bluegreen_green_run_args）；docker 的 stderr 必须留在日志里，否则失败原因不可见。
+  local run_err=""
   # shellcheck disable=SC2086
-  if ! docker run -d --name "$green" ${port_args} ${net_args} \
-        -e BRAIN_DEPLOY_CANARY=1 ${GREEN_RUN_ARGS:-} ${green_port_env} "cecelia-brain:${version}" >/dev/null 2>&1; then
-    echo "[bluegreen] green 起容器失败，保留 blue"
+  if ! run_err=$(docker run -d --name "$green" ${port_args} ${net_args} \
+        -e BRAIN_DEPLOY_CANARY=1 ${GREEN_RUN_ARGS:-} ${green_port_env} "cecelia-brain:${version}" 2>&1 >/dev/null); then
+    echo "[bluegreen] green 起容器失败，保留 blue：${run_err}"
     docker rm -f "$green" >/dev/null 2>&1 || true
     send_bark "green 镜像 v${version} 启动失败，已保留旧版(5221不受影响)"
     bluegreen_guard_blue "$blue"
