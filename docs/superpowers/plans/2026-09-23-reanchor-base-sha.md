@@ -702,11 +702,16 @@ git commit -m "feat(brain): 预检 map_revision_mismatch 时先重锚定再校�
 
 ---
 
-### Task 5: kernel-run-store 传 createdSource 给预检
+### Task 5: kernel-run-store 传 createdSource、取 metadata、把新 base_sha 回流内存 task
+
+> Task 3 质量审 C1/C2：`createKernelRun` 的 task SELECT 没取 `metadata`（thrash 计数永远读不到）；重锚定只改 DB，relay 三处仍用内存 `task.payload.base_sha` 起跑场（`harness-skill-relay.js:365` bridge.prepare、`:1225`/`:1320` headed 身份 env）。本 Task 三件事：传 createdSource、SELECT 加 metadata、返回体带 `base_sha`/`routing_receipt_id` 并由三处调用方回流。
 
 **Files:**
-- Modify: `packages/brain/src/orchestrator/kernel-run-store.js:561`
+- Modify: `packages/brain/src/orchestrator/kernel-run-store.js:437,561,638`
+- Modify: `packages/brain/src/harness-skill-relay.js:274-285,339-350`
+- Modify: `packages/brain/src/orchestrator/headed-kernel-runtime.js:84-96`
 - Modify: `packages/brain/src/orchestrator/__tests__/kernel-run-store.test.js`
+- Modify: `packages/brain/src/__tests__/harness-skill-relay.test.js`
 
 - [ ] **Step 1: 写失败测试（追加到 kernel-run-store.test.js 的 createKernelRun describe 内）**
 
@@ -714,40 +719,164 @@ git commit -m "feat(brain): 预检 map_revision_mismatch 时先重锚定再校�
   it('把 createdSource 交给 Map/Impact preflight（重锚定需据此跳过 explicit_recovery）', async () => {
     const harness = transactionPool();
     const ensurePreflight = vi.fn(async () => ({ contract: { id: 'impact-1', status: 'active' } }));
-    await createKernelRun(harness.pool, VALID_INPUT, { ensureMapImpactPreflight: ensurePreflight });
+    await createKernelRun(harness.pool, VALID_INPUT, { ensureMapImpactPreflight: ensurePreflight, controllerSessionIdFactory: () => CONTROLLER_SESSION_ID });
     expect(ensurePreflight.mock.calls[0][1]).toMatchObject({ createdSource: 'kernel_dispatch' });
+  });
+
+  it('task 行 SELECT 取 metadata 列（重锚定 thrash 计数据此读写）', async () => {
+    const harness = transactionPool();
+    await createRun(harness);
+    const taskSelect = harness.calls.find(([sql]) => /FROM tasks/.test(sql) && /FOR UPDATE/.test(sql));
+    expect(taskSelect[0]).toMatch(/SELECT id, task_type, status, payload, metadata/);
+  });
+
+  it('返回体带预检最终收据的 base_sha 与 routing_receipt_id（重锚定后调用方据此回流内存 task）', async () => {
+    const harness = transactionPool();
+    const NEW = 'b'.repeat(40);
+    const result = await createRun(harness, VALID_INPUT, {
+      ensureMapImpactPreflight: vi.fn(async () => ({
+        contract: { id: 'impact-1', status: 'active' },
+        receipt: { id: '77777777-7777-4777-8777-777777777777', evidence: { base_sha: NEW } },
+      })),
+    });
+    expect(result).toMatchObject({ created: true, base_sha: NEW, routing_receipt_id: '77777777-7777-4777-8777-777777777777' });
+  });
+
+  it('预检未返回 receipt 时返回体 base_sha/routing_receipt_id 为 null（旧行为不变）', async () => {
+    const harness = transactionPool();
+    const result = await createRun(harness);
+    expect(result).toMatchObject({ created: true, base_sha: null, routing_receipt_id: null });
   });
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+再在文件末尾追加：
 
-Run: `cd packages/brain && npx vitest run src/orchestrator/__tests__/kernel-run-store.test.js -t createdSource`
-Expected: FAIL（上下文无 createdSource）
-
-- [ ] **Step 3: 提交失败测试**
-
-```bash
-git add packages/brain/src/orchestrator/__tests__/kernel-run-store.test.js
-git commit -m "test(brain): createKernelRun 预检上下文含 createdSource failing test"
+```js
+describe('syncTaskPayloadFromKernelRun', () => {
+  it('created 带新 base_sha 时覆写内存 task.payload 的 base_sha 与 routing_receipt_id', () => {
+    const task = { id: 't', payload: { base_sha: 'a'.repeat(40), routing_receipt_id: 'r1', repo: 'cecelia' } };
+    const out = syncTaskPayloadFromKernelRun(task, { created: true, base_sha: 'b'.repeat(40), routing_receipt_id: 'r2' });
+    expect(out).toBe(task);
+    expect(task.payload).toEqual({ base_sha: 'b'.repeat(40), routing_receipt_id: 'r2', repo: 'cecelia' });
+  });
+  it('created 无 base_sha（null/缺省）时 payload 原样不动', () => {
+    const payload = { base_sha: 'a'.repeat(40), routing_receipt_id: 'r1' };
+    const task = { id: 't', payload };
+    syncTaskPayloadFromKernelRun(task, { created: true, run: {} });
+    syncTaskPayloadFromKernelRun(task, { created: true, base_sha: null, routing_receipt_id: null });
+    expect(task.payload).toBe(payload);
+  });
+});
 ```
 
-- [ ] **Step 4: 改一行**
+并把 import 改为 `import { createKernelRun, syncTaskPayloadFromKernelRun, ... } from '../kernel-run-store.js';`。
 
-`kernel-run-store.js:561`：
+- [ ] **Step 2: 写失败测试（harness-skill-relay.test.js，追加到「本机执行闸 CECELIA_LOCAL_EXECUTION_ENABLED」describe 内）**
+
+```js
+  it('createKernelRun 返回重锚定后的 base_sha 时，bridge.prepare 用新 sha（账实不分叉）', async () => {
+    const NEW = 'b'.repeat(40);
+    const bridgeCalls = [];
+    const deps = makeDeps({
+      env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' },
+      orchestratorBridge: {
+        targetMachineId: 'primary-under-test',
+        prepare: vi.fn(async (input) => { bridgeCalls.push(['prepare', input]); return { worktree_path: '/ws/r', status: 'prepared' }; }),
+        start: vi.fn(async (input) => { bridgeCalls.push(['start', input]); return { pid: 4242, host: 'primary-under-test', status: 'running' }; }),
+      },
+      createKernelRun: vi.fn().mockResolvedValue({
+        created: true,
+        run: { id: KERNEL_RUN_ID, controller_session_id: '11111111-1111-4111-8111-111111111111', controller_generation: 1 },
+        base_sha: NEW,
+        routing_receipt_id: '77777777-7777-4777-8777-777777777777',
+      }),
+    });
+    const kernelTask = {
+      ...TASK,
+      payload: { ...TASK.payload, harness_runtime: 'kernel-v1', base_sha: 'a'.repeat(40), routing_receipt_id: '66666666-6666-4666-8666-666666666666' },
+    };
+    const r = await spawnSkillRelaySession(kernelTask, deps);
+    expect(r.ok).toBe(true);
+    expect(bridgeCalls[0][1]).toMatchObject({ base_sha: NEW });
+    expect(kernelTask.payload.routing_receipt_id).toBe('77777777-7777-4777-8777-777777777777');
+  });
+```
+
+- [ ] **Step 3: 跑测试确认失败**
+
+Run: `cd packages/brain && npx vitest run src/orchestrator/__tests__/kernel-run-store.test.js src/__tests__/harness-skill-relay.test.js`
+Expected: 新增 6 条 FAIL（createdSource 缺失 / SELECT 无 metadata / 返回体无 base_sha / 导出不存在 / prepare 仍旧 sha）；其余 PASS
+
+- [ ] **Step 4: 提交失败测试**
+
+```bash
+git add packages/brain/src/orchestrator/__tests__/kernel-run-store.test.js packages/brain/src/__tests__/harness-skill-relay.test.js
+git commit -m "test(brain): createKernelRun 取 metadata、回流新 base_sha failing test"
+```
+
+- [ ] **Step 5: 改 kernel-run-store.js**
+
+`:437` SELECT 改为：
+```js
+      `SELECT id, task_type, status, payload, metadata
+         FROM tasks
+        WHERE id = $1
+        FOR UPDATE`,
+```
+
+`:561` 改为：
 ```js
     const preflight = await runPreflight(client, { task, receipt, createdSource: effectiveCreatedSource });
 ```
 
-- [ ] **Step 5: 跑整文件确认通过**
+`:638` 返回改为：
+```js
+    return {
+      created: true,
+      run: rows[0],
+      // 重锚定（任务 d9c405e2）后收据/base_sha 已变，调用方须用它覆写内存 task.payload 再起跑场。
+      base_sha: preflight.receipt?.evidence?.base_sha ?? null,
+      routing_receipt_id: preflight.receipt?.id ?? null,
+    };
+```
 
-Run: `cd packages/brain && npx vitest run src/orchestrator/__tests__/kernel-run-store.test.js`
-Expected: PASS（全部）
+文件末尾新增导出：
+```js
+/**
+ * createKernelRun 返回后立即调用：预检可能已把路由锚快进到新 base_sha（接班收据），
+ * DB 已改但调用方手里的 task 仍是派发前快照；三处起跑场（bridge.prepare / headed 身份 env）
+ * 都读内存 task.payload.base_sha，不回流就是"改账不改跑场"。原地覆写并返回同一对象。
+ */
+export function syncTaskPayloadFromKernelRun(task, created) {
+  const baseSha = created?.base_sha;
+  if (typeof baseSha !== 'string' || baseSha.length === 0) return task;
+  task.payload = {
+    ...(task.payload ?? {}),
+    base_sha: baseSha,
+    ...(created.routing_receipt_id ? { routing_receipt_id: created.routing_receipt_id } : {}),
+  };
+  return task;
+}
+```
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 6: 三处调用方回流**
+
+`harness-skill-relay.js` import 行改为 `import { createKernelRun, syncTaskPayloadFromKernelRun, ... }`（保留原有其它导入）。`_spawnKernelRuntime`（:274 之后）与 `_spawnKernelRuntimeRemote`（:339 之后）在 `const created = await createRun(...)` 语句后各加一行：
+```js
+  syncTaskPayloadFromKernelRun(task, created);
+```
+`orchestrator/headed-kernel-runtime.js` 同样：import 加 `syncTaskPayloadFromKernelRun`，`:96` `const runId = created.run?.id;` 之前加 `syncTaskPayloadFromKernelRun(task, created);`。
+
+- [ ] **Step 7: 跑测试确认通过**
+
+Run: `cd packages/brain && npx vitest run src/orchestrator/__tests__/kernel-run-store.test.js src/__tests__/harness-skill-relay.test.js src/orchestrator/__tests__/headed-kernel-runtime.test.js`
+Expected: PASS（全部；headed 测试文件不存在则跳过该路径）
+
+- [ ] **Step 8: 提交**
 
 ```bash
-git add packages/brain/src/orchestrator/kernel-run-store.js
-git commit -m "feat(brain): createKernelRun 向预检传 createdSource"
+git add packages/brain/src/orchestrator/kernel-run-store.js packages/brain/src/harness-skill-relay.js packages/brain/src/orchestrator/headed-kernel-runtime.js
+git commit -m "feat(brain): createKernelRun 取 metadata 并把重锚定后的 base_sha 回流内存 task"
 ```
 
 ---
