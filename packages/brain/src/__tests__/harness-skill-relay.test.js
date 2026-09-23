@@ -895,6 +895,38 @@ describe('本机执行闸 CECELIA_LOCAL_EXECUTION_ENABLED（us-vps 纯调度器�
     expect(deps.spawnFn).toHaveBeenCalled();
   });
 
+  it('createKernelRun 返回重锚定后的 base_sha 时，bridge.prepare 用新 sha（账实不分叉）', async () => {
+    const NEW = 'b'.repeat(40);
+    const bridgeCalls = [];
+    const deps = makeDeps({
+      env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' },
+      orchestratorBridge: {
+        targetMachineId: 'primary-under-test',
+        prepare: vi.fn(async (input) => { bridgeCalls.push(['prepare', input]); return { worktree_path: '/ws/r', status: 'prepared' }; }),
+        start: vi.fn(async (input) => { bridgeCalls.push(['start', input]); return { pid: 4242, host: 'primary-under-test', status: 'running' }; }),
+      },
+      createKernelRun: vi.fn().mockResolvedValue({
+        created: true,
+        run: { id: KERNEL_RUN_ID, controller_session_id: '11111111-1111-4111-8111-111111111111', controller_generation: 1 },
+        base_sha: NEW,
+        routing_receipt_id: '77777777-7777-4777-8777-777777777777',
+      }),
+    });
+    const kernelTask = {
+      ...TASK,
+      payload: {
+        ...TASK.payload,
+        harness_runtime: 'kernel-v1',
+        base_sha: 'a'.repeat(40),
+        routing_receipt_id: '66666666-6666-4666-8666-666666666666',
+      },
+    };
+    const r = await spawnSkillRelaySession(kernelTask, deps);
+    expect(r.ok).toBe(true);
+    expect(bridgeCalls[0][1]).toMatchObject({ base_sha: NEW });
+    expect(kernelTask.payload.routing_receipt_id).toBe('77777777-7777-4777-8777-777777777777');
+  });
+
   it('源码哨兵：闸必须读可注入的 env（防重演「测了一段生产不可达代码」）', async () => {
     const { readFile } = await import('node:fs/promises');
     const src = await readFile(new URL('../harness-skill-relay.js', import.meta.url), 'utf8');
