@@ -971,6 +971,7 @@ git commit -m "feat(brain): 路由收据回读取最新一代，幂等比对忽�
   it('reanchor 调用契约违约码保留原码，不归 executor_failed', () => {
     expect(classifyDispatchReasonCode({ error: 'task_metadata_missing' })).toBe('task_metadata_missing');
     expect(classifyDispatchReasonCode({ error: 'kernel_process_fatal:receipt_task_mismatch' })).toBe('receipt_task_mismatch');
+    expect(classifyDispatchReasonCode({ error: 'receipt_superseded' })).toBe('receipt_superseded');
   });
 ```
 
@@ -979,7 +980,7 @@ Run: `cd packages/brain && npx vitest run src/lib/__tests__/dispatch-reason-code
 - [ ] **Step 0b: 改 dispatch-reason-code.js 第 4 行**
 
 ```js
-const EXACT_CODES = ['needs_rebase', 'map_thrash', 'task_metadata_missing', 'receipt_task_mismatch'];
+const EXACT_CODES = ['needs_rebase', 'map_thrash', 'task_metadata_missing', 'receipt_task_mismatch', 'receipt_superseded'];
 ```
 
 Run 同上 → PASS；提交 `git commit -m "fix(brain): 契约违约码保留独立 reason_code"`。
