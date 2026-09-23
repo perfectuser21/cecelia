@@ -423,4 +423,17 @@ describe('promptOf 设备提示段（device_hint）', () => {
     expect(body).toContain('openclaw nodes list');
     expect(body).not.toContain('-PHONE');
   });
+
+  it('Jev 含糊（verdict=ambiguous）→ 正文仍含设备提示，首行提示可能要碰真机', async () => {
+    const spawnFn = spawnMock();
+    await triggerOpenclawAgent(
+      withHint({ is_device: false, verdict: 'ambiguous', p: 0.5, serial: null, host: null }),
+      { spawnFn, pool: okPool() },
+    );
+    const body = sentBody(spawnFn);
+    expect(body).toContain('设备提示');
+    expect(body).toContain('可能要碰真机');
+    expect(body).toContain('p=0.5');
+    expect(body).toContain('openclaw nodes list');
+  });
 });
