@@ -24,7 +24,7 @@ import {
   getBillingPause,
 } from './executor.js';
 import { calculateSlotBudget, harnessSlotCheck } from './slot-allocator.js';
-import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HARNESS_INFLIGHT_TASK_TYPES } from './lib/task-type-registry.js';
+import { INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HARNESS_INFLIGHT_TASK_TYPES, getTaskType } from './lib/task-type-registry.js';
 import { emit } from './event-bus.js';
 import { isAllowed, recordFailure } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
@@ -44,6 +44,13 @@ import { getLlmCapacitySnapshot } from './llm-capacity.js';
 import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
 import { routeQiumiTask, persistDecision } from './routing/qiumi-router.js';
 import { qiumiEnv } from './routing/env.js';
+
+/**
+ * openclaw-agent 表面（qiumi_task）由 Brain 经 ssh 直派 MMV，不经 cecelia-bridge：
+ * cecelia-run 熔断与 bridge 健康检查对它都是误伤（2026-09-23 生产实证 task 72b010e9）。
+ * 判据只从注册表 surface 派生，不手抄名单（铁律 76cb816c）。
+ */
+const isOpenclawSurface = (type) => getTaskType(type)?.surface === 'openclaw-agent';
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -952,7 +959,8 @@ export async function dispatchNextTask(goalIds) {
   // harness_initiative 走 Docker spawn 路径，完全不依赖 cecelia-bridge。
   // 跳过 bridge check，否则 bridge 不在时 harness 会被错误 revert 到 queued。
   // 名单见 lib/task-type-registry.js（HARNESS_INFLIGHT_TASK_TYPES）。
-  const needsBridgeCheck = !HARNESS_INFLIGHT_TASK_TYPES.includes(nextTask.task_type);
+  const needsBridgeCheck = !HARNESS_INFLIGHT_TASK_TYPES.includes(nextTask.task_type)
+    && !isOpenclawSurface(nextTask.task_type);
 
   // Circuit breaker — 只对依赖 cecelia-bridge 的任务生效（harness_initiative 豁免）
   // 注意：此检查在 atomic claim 和 mark in_progress 之后，
