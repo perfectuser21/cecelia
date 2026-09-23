@@ -117,5 +117,15 @@ describe('cheapGates', () => {
     it('正文里多个「用 X」取第一个命中的', () => {
       expect(cheapGates(mk({ body: '用 nothing 先，再用 sol' }), pool, envM).hardModel).toBe('openai/gpt-5.6-sol');
     });
+    it('"不用 <型号>" / "别用 <型号>" 不应误判为硬约束（负向前瞻）', () => {
+      expect(cheapGates(mk({ body: '不用 grok-4.7，交给人做' }), pool, envM).hardModel).toBeNull();
+      expect(cheapGates(mk({ body: '别用 sol' }), pool, envM).hardModel).toBeNull();
+    });
+    it('"用 X 不用 Y" → 只认正向的 X', () => {
+      expect(cheapGates(mk({ body: '用 grok-4.7 不用 sol' }), pool, envM).hardModel).toBe('xai/grok-4.7');
+    });
+    it('型号名大小写不敏感：用 Grok-4.7 → hardModel xai/grok-4.7', () => {
+      expect(cheapGates(mk({ body: '用 Grok-4.7 跑' }), pool, envM).hardModel).toBe('xai/grok-4.7');
+    });
   });
 });

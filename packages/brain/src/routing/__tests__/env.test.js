@@ -60,4 +60,14 @@ describe('QIUMI_MODEL_ALLOWLIST + resolveModelRef', () => {
   it('claude 引擎默认映射改为 anthropic 原生通道', () => {
     expect(qiumiEnv({}).modelMap.claude).toBe('anthropic/claude-sonnet-5');
   });
+  it('清单去重：重复条目不占全等候选名额', () => {
+    const envDup = qiumiEnv({ QIUMI_MODEL_ALLOWLIST: JSON.stringify(['a/opus-4-7', 'a/opus-4-7', 'b/sonnet-4-6']) });
+    expect(envDup.modelAllowlist.length).toBe(2);
+    expect(resolveModelRef('opus-4-7', envDup)).toBe('a/opus-4-7');
+  });
+  it('型号名大小写不敏感（正文/清单任一大小写都能命中，返回清单原样 id）', () => {
+    expect(resolveModelRef('Grok-4.7', env)).toBe('xai/grok-4.7');
+    expect(resolveModelRef('SOL', env)).toBe('openai/gpt-5.6-sol');
+    expect(resolveModelRef('XAI/GROK-4.7', env)).toBe('xai/grok-4.7');
+  });
 });
