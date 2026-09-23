@@ -16,7 +16,10 @@
 - 三方映射表是显式对象（`src/lib/qiumi-status-map.js`），断言 `TASK_STATUSES` 15 态每个都在表里；未列出即不同步（缺项 = 测试红，不是静默）。
 - 页 id 只放 payload：`payload.notion_page_id`（英文页 id，**仅信息字段**）、`payload.notion_zh_page_id`（中文页 id）。**去重豁免键是专用的 `payload.dedup_by_notion_page='true'`**（字符串 `'true'`，INSERT 时即带；458 谓词 `AND COALESCE(payload->>'dedup_by_notion_page','false') <> 'true'`）——不能拿 `notion_page_id` 当豁免键：基线 `pullNotionTasks` 的 metadata 被 spread 进 payload，生产存量排单任务早已带该键（PR1 终审 C1）。**禁止写 `tasks.notion_id`**——生产现役 canonical 投影（`projection/notion.js` → 「Cecelia Tasks」库 `3b7c40c2-…`）会用 `UPDATE tasks SET notion_id=externalId` 覆盖它。
 - ssh 参数（PR2 本身不起 ssh）若需要一律 `import { SSH_BASE_ARGS } from './lib/ssh-args.js'`（PR1 修复已抽出），禁止从 `notion-push-sync.js` import。
-- 入账固定字段：`requested_task_type='qiumi_task'`、`mutation_intent='none'`、`declared_domain='operations'`、`task.trigger_source='manual'`、`task.executor_kind='openclaw-agent'`、`task.status='queued'`（直落 queued，不落 blocked）、`payload.headed_manual=true`（PR3 前防 tick）、`payload.tenant_id` 由 env `NOTION_TENANT_MAP`（JSON，中文库 id → `yueshengyun`）、`payload.qiumi_source` 完整保留原始信息（标题/备注/正文全文/优先级原值/预期完成日期/执行通道/三个 relation 的 id 列表/负责人/中文页 id/英文页 id/origin zh|en）。
+- 入账固定字段：`requested_task_type='qiumi_task'`、`mutation_intent='none'`、`declared_domain='operations'`、`task.trigger_source='manual'`、`task.executor_kind='openclaw-agent'`、`task.status='queued'`（直落 queued，不落 blocked）、`payload.headed_manual=true`（PR3 前防 tick）、`payload.tenant_id` 由 env `NOTION_TENANT_MAP`（JSON，中文库 id → `yueshengyun`）、`payload.qiumi_source` 完整保留原始信息（标题/备注/正文全文/优先级原值/预期完成日期/执行通道/`agent_workflow_ids`+`skill_ids`+`business_task_ids`+`owner_ids` 四个 relation 的 id 列表/中文页 id/英文页 id/origin zh|en）。
+
+  > **2026-09-23 补**：此合同为准（pr3.md 原写的 `relations{...}` 是错的，已勘误）。
+  > 唯一真身：`packages/brain/src/lib/qiumi-source.js`。
 - `qiumi_task` 此刀开启 `V`（router_valid）标签；`task-type-registry.test.js` 的 VALID 严格相等改为 `[...FIX, 'qiumi_task']`。
 - Notion 请求经 `withBackoff`（429/5xx 指数退避 100ms×2^n，最多 4 次；其它错误不重试）。
 - 中文→英文/英文→中文标记：英文 Description 前缀 `[zh:<中文页id32>]`；反向生成的中文行「备注」前缀 `[en:<英文页id32>]`，英文原生行 Description 追加 ` [en-native]`；已入账两侧都带 `brain:<task_id>`。中文「OpenClaw任务号」占位顺序：`en:<id32>` → `brain:<task_id>`。
