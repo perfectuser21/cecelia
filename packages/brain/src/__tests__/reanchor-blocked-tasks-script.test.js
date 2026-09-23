@@ -160,6 +160,22 @@ describe('scripts/reanchor-blocked-tasks.mjs', () => {
     expect(metadataCalls[0][1]).toEqual(['task-1']);
   });
 
+  it('标 needs_rebase 的 UPDATE 影响 0 行（并发已不在 blocked 态）→ 计入 failed 而非 rebased', async () => {
+    const rows = [candidateRow({ id: 'task-2', has_run: true })];
+    const db = makeDb(rows);
+    db.query.mockImplementation(async (sql) => {
+      if (/SELECT/.test(sql) && /FROM tasks/.test(sql)) return { rows, rowCount: rows.length };
+      if (/blocked_reason\s*=\s*'needs_rebase'/.test(sql)) return { rows: [], rowCount: 0 };
+      return { rows: [], rowCount: 1 };
+    });
+
+    const result = await reanchorBlockedTasks({ db, dryRun: false, log: vi.fn() });
+
+    expect(result.rebased).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.needs_rebase_ids).toEqual([]);
+  });
+
   it('候选 SQL 派生 has_run 列（两个 EXISTS：current_task_id / initiative_id）', async () => {
     const source = await readFile(new URL('../../scripts/reanchor-blocked-tasks.mjs', import.meta.url), 'utf8');
     expect(source).toMatch(/EXISTS \(SELECT 1 FROM initiative_runs WHERE current_task_id = tasks\.id\)/);
