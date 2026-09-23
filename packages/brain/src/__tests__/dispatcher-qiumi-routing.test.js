@@ -71,7 +71,14 @@ vi.mock('../slot-allocator.js', () => ({
 }));
 vi.mock('../token-budget-planner.js', () => ({ shouldDowngrade: () => false }));
 vi.mock('../event-bus.js', () => ({ emit: vi.fn(async () => {}) }));
-vi.mock('../circuit-breaker.js', () => ({ isAllowed: () => true, recordFailure: vi.fn(async () => {}) }));
+const mockIsAllowed = vi.fn(() => true);
+const mockRecordFailure = vi.fn(async () => {});
+const mockRecordSuccess = vi.fn(async () => {});
+vi.mock('../circuit-breaker.js', () => ({
+  isAllowed: (k) => mockIsAllowed(k),
+  recordFailure: (...a) => mockRecordFailure(...a),
+  recordSuccess: (...a) => mockRecordSuccess(...a),
+}));
 vi.mock('../events/taskEvents.js', () => ({ publishTaskStarted: vi.fn() }));
 vi.mock('../tick-stats.js', () => ({ incrementActionsToday: vi.fn(async () => {}) }));
 vi.mock('../account-usage.js', () => ({ proactiveTokenCheck: vi.fn(async () => {}) }));
@@ -87,6 +94,7 @@ vi.mock('../dispatch-dedup.js', () => ({ findDuplicateSibling: vi.fn(async () =>
 import { routeQiumiTask, persistDecision } from '../routing/qiumi-router.js';
 import { recordDispatchResult } from '../dispatch-stats.js';
 import { checkAnchor } from '../anchor-check.js';
+import { checkCeceliaRunAvailable } from '../executor.js';
 import { dispatchQiumiTask, dispatchNextTask } from '../dispatcher.js';
 
 // 候选行（选单 SQL 只取部分列，payload 未必带全）
@@ -112,6 +120,7 @@ beforeEach(() => {
   _candidatePool = [];
   mockUpdateTask.mockResolvedValue({ success: true });
   mockTriggerCeceliaRun.mockResolvedValue({ success: true, runId: 'r' });
+  mockIsAllowed.mockImplementation(() => true);
 });
 
 describe('dispatchQiumiTask：三态出口', () => {
