@@ -20,6 +20,11 @@ describe('classifyDispatchReasonCode', () => {
   it('token 含数字时取整段，不截断', () => {
     expect(classifyDispatchReasonCode({ error: 'map_scope_v2_mismatch' })).toBe('map_scope_v2_mismatch');
   });
+  it('reanchor 调用契约违约码保留原码，不归 executor_failed', () => {
+    expect(classifyDispatchReasonCode({ error: 'task_metadata_missing' })).toBe('task_metadata_missing');
+    expect(classifyDispatchReasonCode({ error: 'kernel_process_fatal:receipt_task_mismatch' })).toBe('receipt_task_mismatch');
+    expect(classifyDispatchReasonCode({ error: 'receipt_superseded' })).toBe('receipt_superseded');
+  });
   it('未知归 executor_failed', () => {
     expect(classifyDispatchReasonCode({ error: 'payload missing callback_url' })).toBe('executor_failed');
     expect(classifyDispatchReasonCode()).toBe('executor_failed');
