@@ -323,7 +323,7 @@ describe('派发时重锚定 base_sha（任务 d9c405e2）', () => {
     }, d);
     expect(reanchorReceipt).toHaveBeenCalledOnce();
     expect(reanchorReceipt.mock.calls[0][1]).toMatchObject({
-      receipt, createdSource: 'kernel_dispatch',
+      receipt, map: freshMap, createdSource: 'kernel_dispatch',
     });
     expect(d.persistContract.mock.calls[0][1]).toMatchObject({ base_revision: NEW });
     expect(d.persistContract.mock.calls[0][1].contract_body.freshness_evidence.mapper_revision)
@@ -348,6 +348,28 @@ describe('派发时重锚定 base_sha（任务 d9c405e2）', () => {
     await expect(ensureMapImpactPreflight({ query: vi.fn() }, {
       task: { id: TASK_ID, payload: { map_recovery: true } }, receipt,
     }, d)).rejects.toMatchObject({ code: 'needs_rebase' });
+    expect(d.persistContract).not.toHaveBeenCalled();
+  });
+
+  it('successor 的 base_sha 仍与地图不符 → 抛 map_revision_mismatch 且不持久化合同', async () => {
+    const staleSuccessor = {
+      ...successor,
+      evidence: { base_sha: OLD, branch: 'cp-route-api-1', prev_base_sha: OLD },
+      base_sha: OLD,
+    };
+    const d = deps(vi.fn(async () => staleSuccessor));
+    await expect(ensureMapImpactPreflight({ query: vi.fn() }, {
+      task: { id: TASK_ID, payload: {}, metadata: {} }, receipt,
+    }, d)).rejects.toThrow('map_revision_mismatch');
+    expect(d.persistContract).not.toHaveBeenCalled();
+  });
+
+  it('successor 换了路由身份（repo 漂移）→ 抛 map_revision_mismatch 且不持久化合同', async () => {
+    const driftedSuccessor = { ...successor, repo: 'zenithjoy-workspace' };
+    const d = deps(vi.fn(async () => driftedSuccessor));
+    await expect(ensureMapImpactPreflight({ query: vi.fn() }, {
+      task: { id: TASK_ID, payload: {}, metadata: {} }, receipt,
+    }, d)).rejects.toThrow('map_revision_mismatch');
     expect(d.persistContract).not.toHaveBeenCalled();
   });
 
