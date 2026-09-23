@@ -94,4 +94,28 @@ describe('cheapGates', () => {
     const g = cheapGates(mk({ body: '把周报生成发出去' }), poolWithShortWorkflow, env);
     expect(g.workflowRef).toBe('周报生成');
   });
+  describe('「用 <型号>」→ hardModel（清单内才认）', () => {
+    const envM = qiumiEnv({ QIUMI_MODEL_ALLOWLIST: JSON.stringify(['xai/grok-4.7', 'openai/gpt-5.6-sol', 'anthropic/claude-opus-5']) });
+    it('用 grok-4.7 → hardModel xai/grok-4.7，matchedBy 含 text:model', () => {
+      const out = cheapGates(mk({ body: '这个活用 grok-4.7 跑' }), pool, envM);
+      expect(out.hardModel).toBe('xai/grok-4.7');
+      expect(out.matchedBy).toContain('text:model');
+    });
+    it('用 sol / 用 opus-5 → 短名命中', () => {
+      expect(cheapGates(mk({ body: '用 sol 做' }), pool, envM).hardModel).toBe('openai/gpt-5.6-sol');
+      expect(cheapGates(mk({ body: '让 dev 用 opus-5 写' }), pool, envM).hardModel).toBe('anthropic/claude-opus-5');
+    });
+    it('用 claude → 仍是 hardEngine claude，hardModel null（引擎词不是型号）', () => {
+      const out = cheapGates(mk({ body: '用 claude 做' }), pool, envM);
+      expect(out.hardEngine).toBe('claude');
+      expect(out.hardModel).toBeNull();
+    });
+    it('清单外 用 foo-bar → hardModel null；清单为空 → 永不命中', () => {
+      expect(cheapGates(mk({ body: '用 foo-bar 做' }), pool, envM).hardModel).toBeNull();
+      expect(cheapGates(mk({ body: '用 grok-4.7 做' }), pool, env).hardModel).toBeNull();
+    });
+    it('正文里多个「用 X」取第一个命中的', () => {
+      expect(cheapGates(mk({ body: '用 nothing 先，再用 sol' }), pool, envM).hardModel).toBe('openai/gpt-5.6-sol');
+    });
+  });
 });
