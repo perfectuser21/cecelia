@@ -41,6 +41,7 @@ vi.mock('../machine-registry.js', () => ({
   sshTargetFor: vi.fn((id) => (id === 'fake-primary' ? 'administrator@10.0.0.9' : `WRONG:${String(id)}`)),
 }));
 import { recordTaskEventSafe } from '../lib/task-event-log.js';
+import { buildQiumiSource } from '../lib/qiumi-source.js';
 import { buildRemoteCommand, triggerOpenclawAgent, reapOpenclawAgentRuns } from '../openclaw-agent-executor.js';
 
 const task = {
@@ -51,7 +52,7 @@ const task = {
     run_id: 'qiumi-aaaaaaaa-1',
     model: 'claude-cli/claude-sonnet-5',
     qiumi_department: 'dev',
-    qiumi_source: { title: '标题', remark: '备', body: 'token: SECRET 正文' },
+    qiumi_source: buildQiumiSource({ title: '标题', remark: '备', body: 'token: SECRET 正文' }),
   },
 };
 
@@ -272,7 +273,7 @@ describe('triggerOpenclawAgent', () => {
 
   it('缺 run_id/model → success:false 不 ssh', async () => {
     const spawnFn = vi.fn();
-    const r = await triggerOpenclawAgent({ ...task, payload: { qiumi_source: {} } }, { spawnFn, pool: { query: vi.fn() } });
+    const r = await triggerOpenclawAgent({ ...task, payload: { qiumi_source: buildQiumiSource() } }, { spawnFn, pool: { query: vi.fn() } });
     expect(r).toMatchObject({ success: false, reason: 'openclaw_agent_spawn_failed' });
     expect(spawnFn).not.toHaveBeenCalled();
   });

@@ -36,6 +36,7 @@ import pg from 'pg';
 import { qiumiEnv } from '../../src/routing/env.js';
 import { routeQiumiTask, persistDecision } from '../../src/routing/qiumi-router.js';
 import { triggerOpenclawAgent } from '../../src/openclaw-agent-executor.js';
+import { buildQiumiSource } from '../../src/lib/qiumi-source.js';
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const T = `[smoke] qiumi-phone-agent ${process.pid}`;
@@ -64,7 +65,7 @@ const choice = (c, probs, confidence = 0.3) => ({ type: 'choice', choice: c, con
 const noul = (p) => ({ type: 'noul', noul: p });
 
 /** 手机活的 qiumi_source：正文里写死本 smoke 自己插的序列号 → 便宜闸 text:serial 命中。 */
-const phoneSource = () => ({
+const phoneSource = () => buildQiumiSource({
   title: '去手机上跑一轮日常',
   remark: '',
   channel: null,

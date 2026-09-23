@@ -32,6 +32,7 @@ import { qiumiEnv } from '../../src/routing/env.js';
 import { routeQiumiTask, persistDecision } from '../../src/routing/qiumi-router.js';
 import { reconcileDelegatedDeviceJobs } from '../../src/routing/device-delegation.js';
 import { createRoutedTask } from '../../src/work-routing-store.js';
+import { buildQiumiSource } from '../../src/lib/qiumi-source.js';
 
 // 闸 3 的变异点：0.5 → 0.95 且 account 改 'SMOKE1'，闸 3 必须由绿转红。
 const GATE3_NOUL = 0.5;
@@ -166,7 +167,7 @@ async function main() {
       metadata: {
         source: 'notion_gtd',
         headed_manual: true,
-        qiumi_source: { title: '给账号跑一轮', remark: '', body, channel: null },
+        qiumi_source: buildQiumiSource({ title: '给账号跑一轮', remark: '', body, channel: null }),
       },
       task: { priority: 'P2', status: 'queued', trigger_source: 'manual', executor_kind: 'openclaw-agent' },
     });
