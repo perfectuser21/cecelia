@@ -167,6 +167,18 @@ export async function resolveParentTaskId(client, raw) {
   return rows[0].id;
 }
 
+// 接班收据只改 base_sha 系字段（任务 d9c405e2）；幂等比对时剔除，避免重入撞 idempotency_conflict。
+export function stripReanchorEvidence(evidence) {
+  const {
+    base_sha: _base_sha,
+    prev_base_sha: _prev_base_sha,
+    resigned_at: _resigned_at,
+    reanchor_reason: _reanchor_reason,
+    ...rest
+  } = evidence ?? {};
+  return rest;
+}
+
 export async function createRoutedTask(db, request, repositoryFacts = null, options = {}) {
   const ownsTransaction = options.transaction !== 'existing';
   const client = ownsTransaction && typeof db.connect === 'function'
@@ -192,7 +204,9 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
               ) AS has_v2_run
          FROM work_routing_receipts r
          JOIN tasks t ON t.id = r.task_id
-        WHERE r.source=$1 AND r.source_id=$2 AND r.router_version=$3`,
+        WHERE r.source=$1 AND r.source_id=$2 AND r.router_version=$3
+        ORDER BY r.created_at DESC, r.anchor_generation DESC
+        LIMIT 1`,
       [request.source, request.source_id, decision.router_version],
     );
     if (
@@ -270,8 +284,8 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         && JSON.stringify(persisted.map_scope) === JSON.stringify(decision.map_scope)
         && persisted.impact_contract_required === decision.impact_contract_required
         && persisted.orchestrator === decision.orchestrator
-        && JSON.stringify(canonicalJson(persisted.evidence))
-          === JSON.stringify(canonicalJson(decision.evidence))
+        && JSON.stringify(canonicalJson(stripReanchorEvidence(persisted.evidence)))
+          === JSON.stringify(canonicalJson(stripReanchorEvidence(decision.evidence)))
         && (
           legacyDirectSeed
           || JSON.stringify(canonicalJson(persistedDirectSeed))
