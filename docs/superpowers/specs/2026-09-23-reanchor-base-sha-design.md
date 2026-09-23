@@ -1,6 +1,6 @@
 # 设计：派发时重锚定 base_sha（接班收据）— 2026-09-23
 
-任务 d9c405e2 · 决策 49035988（bug-fix）· PrepPRD：`sprints/09231717-reanchor-base-sha/prep-prd.md`
+任务 d9c405e2 · 决策 49035988（bug-fix）· PrepPRD：Brain notes（type=PrepPRD，id 3e4c40c2-ba63-8196-8f3d-c9b5d7f26d24）
 
 ## 问题
 
