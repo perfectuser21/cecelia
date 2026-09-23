@@ -206,6 +206,12 @@ describe('classifyDispatchReasonCode', () => {
     expect(classifyDispatchReasonCode({ reason: 'needs_rebase' })).toBe('needs_rebase');
     expect(classifyDispatchReasonCode({ error: 'map_thrash' })).toBe('map_thrash');
   });
+  it('复合文本里精确码优先，不吞成复合串', () => {
+    expect(classifyDispatchReasonCode({ error: 'map_revision_mismatch_needs_rebase' })).toBe('needs_rebase');
+  });
+  it('token 含数字时取整段，不截断', () => {
+    expect(classifyDispatchReasonCode({ error: 'map_scope_v2_mismatch' })).toBe('map_scope_v2_mismatch');
+  });
   it('未知归 executor_failed', () => {
     expect(classifyDispatchReasonCode({ error: 'payload missing callback_url' })).toBe('executor_failed');
     expect(classifyDispatchReasonCode()).toBe('executor_failed');
@@ -230,14 +236,19 @@ git commit -m "test(brain): classifyDispatchReasonCode failing test"
 ```js
 // packages/brain/src/lib/dispatch-reason-code.js
 // 派发失败原因结构化：dispatcher autoblock detail / task_events / executor 返回体共用。
-const KNOWN_PREFIX = /(map_[a-z_]+|impact_[a-z_]+|credential_[a-z_]+|needs_rebase|map_thrash)/;
+// 精确码优先于前缀码；按非单词字符分词后整段取 token（不贪婪子串匹配，字符类含数字）。
+const EXACT_CODES = ['needs_rebase', 'map_thrash'];
+const PREFIX_TOKEN = /^(map|impact|credential)_[a-z0-9_]+$/;
 
 export function classifyDispatchReasonCode(execResult = {}) {
   const explicit = execResult?.reason_code;
   if (typeof explicit === 'string' && explicit.length > 0) return explicit;
   const text = String(execResult?.error || execResult?.reason || '');
-  const matched = text.match(KNOWN_PREFIX);
-  return matched ? matched[1] : 'executor_failed';
+  const exact = EXACT_CODES.find((code) => text.includes(code));
+  if (exact) return exact;
+  const tokens = text.split(/[^a-z0-9_]+/i).filter(Boolean);
+  const prefixed = tokens.find((token) => PREFIX_TOKEN.test(token));
+  return prefixed ?? 'executor_failed';
 }
 ```
 

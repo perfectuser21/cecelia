@@ -14,6 +14,12 @@ describe('classifyDispatchReasonCode', () => {
     expect(classifyDispatchReasonCode({ reason: 'needs_rebase' })).toBe('needs_rebase');
     expect(classifyDispatchReasonCode({ error: 'map_thrash' })).toBe('map_thrash');
   });
+  it('复合文本里精确码优先，不吞成复合串', () => {
+    expect(classifyDispatchReasonCode({ error: 'map_revision_mismatch_needs_rebase' })).toBe('needs_rebase');
+  });
+  it('token 含数字时取整段，不截断', () => {
+    expect(classifyDispatchReasonCode({ error: 'map_scope_v2_mismatch' })).toBe('map_scope_v2_mismatch');
+  });
   it('未知归 executor_failed', () => {
     expect(classifyDispatchReasonCode({ error: 'payload missing callback_url' })).toBe('executor_failed');
     expect(classifyDispatchReasonCode()).toBe('executor_failed');
