@@ -17,8 +17,17 @@ import { unblockTask } from '../src/task-updater.js';
 // 以字符串 detail 写入的历史形态（非结构化 reason_code）。生产 2026-09-23 实测：125 条
 // autoblock 停车任务里，前两个结构化条件之外，正是这条字符串匹配命中了另外 32 条主动
 // 停车任务，另外 90 条历史回滚残骸不命中——不可删，也不可放宽/收紧匹配条件。
+// I2：has_run = 分支上已有产出（initiative_runs 是 harness_attempts 的 FK 父表）。
+// 派发预检的快进只在「分支尚无任何产出」时做，所以这类任务解锁后下一 tick 必被判
+// needs_rebase 并 raise 一条 P3——一次回填就是一场告警风暴。脚本里先分流掉：
+// 口径与 src/orchestrator/preflight/base-sha-reanchor.js 的 HAS_ANY_RUN_SQL 一致
+// （两个 EXISTS 用 OR，让 465/238 两条索引各自可用），那边是真身，这里只复用语义。
 const CANDIDATES_SQL = `
-  SELECT id, title, blocked_detail
+  SELECT id, title, blocked_detail,
+         (
+           EXISTS (SELECT 1 FROM initiative_runs WHERE current_task_id = tasks.id)
+           OR EXISTS (SELECT 1 FROM initiative_runs WHERE initiative_id = tasks.id)
+         ) AS has_run
     FROM tasks
    WHERE status = 'blocked'
      AND blocked_reason = 'dispatch_fail_autoblock'
@@ -32,6 +41,19 @@ const CANDIDATES_SQL = `
 
 const UNBLOCK_HINT = '可能原因：任务不在 blocked 态 / 存在未解决 harness_gaps / pending hard 依赖';
 
+// 已有 run 的候选不解锁，原地换成 needs_rebase：停车理由从「派发失败自动停车」
+// 改写成人可读的待办，rebase 完由人/上层再解锁。WHERE 带 status='blocked' 防并发抢跑。
+const NEEDS_REBASE_SQL = `
+  UPDATE tasks
+     SET blocked_reason = 'needs_rebase',
+         blocked_detail = jsonb_build_object(
+           'reason_code', 'needs_rebase',
+           'migrated_from', 'dispatch_fail_autoblock',
+           'note', '分支已有 run，需 rebase 后解锁'
+         )
+   WHERE id = $1 AND status = 'blocked'
+`;
+
 /**
  * 扫描并解锁因 map_revision_mismatch 自动停车的任务。
  * @param {object} opts
@@ -39,19 +61,34 @@ const UNBLOCK_HINT = '可能原因：任务不在 blocked 态 / 存在未解决 
  * @param {boolean} opts.dryRun - true 时只列候选，不改任务状态（仍写一条 dry_run 批次事件留痕）
  * @param {Function} [opts.log] - 日志函数，默认 console.log
  * @param {Function} [opts.emit] - 事件留痕函数，签名同 event-bus.emit
- * @returns {Promise<{candidates: number, done: number, failed: number, task_ids: string[]}>}
+ * @returns {Promise<{candidates: number, done: number, rebased: number, failed: number,
+ *   task_ids: string[], needs_rebase_ids: string[]}>}
  */
 export async function reanchorBlockedTasks({ db, dryRun, log = console.log, emit: emitFn }) {
   const { rows } = await db.query(CANDIDATES_SQL);
   const candidates = rows.length;
   const taskIds = rows.map(row => row.id);
-  log(`[reanchor-blocked-tasks] 候选 ${candidates} 条${dryRun ? '（dry-run，不改任务状态）' : ''}`);
+  const needsRebaseIds = rows.filter(row => row.has_run).map(row => row.id);
+  log(`[reanchor-blocked-tasks] 候选 ${candidates} 条（其中已有 run 转 needs_rebase ${needsRebaseIds.length} 条）${dryRun ? '（dry-run，不改任务状态）' : ''}`);
 
   let done = 0;
+  let rebased = 0;
   let failed = 0;
   for (const row of rows) {
     if (dryRun) {
-      log(`  - ${row.id} | ${String(row.title).slice(0, 60)}`);
+      log(`  - ${row.id}${row.has_run ? ' [needs_rebase]' : ''} | ${String(row.title).slice(0, 60)}`);
+      if (row.has_run) rebased += 1;
+      continue;
+    }
+    if (row.has_run) {
+      try {
+        await db.query(NEEDS_REBASE_SQL, [row.id]);
+        rebased += 1;
+        log(`  ↻ ${row.id} 已有 run，标 needs_rebase（不解锁）`);
+      } catch (err) {
+        failed += 1;
+        log(`  ✗ ${row.id} 标 needs_rebase 异常: ${err.message}`);
+      }
       continue;
     }
     try {
@@ -74,19 +111,28 @@ export async function reanchorBlockedTasks({ db, dryRun, log = console.log, emit
       log(`  ✗ ${row.id} 异常: ${err.message}（${UNBLOCK_HINT}）`);
     }
   }
-  log(`[reanchor-blocked-tasks] 完成 ${done} 失败 ${failed}`);
+  log(`[reanchor-blocked-tasks] 完成 ${done} 转 needs_rebase ${rebased} 失败 ${failed}`);
 
   if (emitFn) {
     await emitFn('backfill:reanchor_blocked_tasks', 'reanchor-blocked-tasks', {
       candidates,
       unblocked: done,
+      rebased,
       failed,
       dry_run: dryRun,
       task_ids: taskIds,
+      needs_rebase_ids: needsRebaseIds,
     });
   }
 
-  return { candidates, done, failed, task_ids: taskIds };
+  return {
+    candidates,
+    done,
+    rebased,
+    failed,
+    task_ids: taskIds,
+    needs_rebase_ids: needsRebaseIds,
+  };
 }
 
 function parseArgs(argv) {

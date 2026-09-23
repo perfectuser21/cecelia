@@ -466,6 +466,9 @@ async function createRelayRun(req, res, legacyInitiativeId = null) {
       // 启动不变量（sprint 08131104）：foreground handoff 也须先有 Controller ownership，
       // createKernelRun fail-closed 校验后才建 run（不可绕过路由层直接产生无主 run）。
     }, kernelRunStoreDeps);
+    // M4：这条路径只建 run、不起跑场，没有内存态 task 需要回流，故不调
+    // syncTaskPayloadFromKernelRun；日后若在此处起跑场，必须补上回流，
+    // 否则 tasks.payload.routing_receipt_id 会停在旧代收据上。
     return res.status(result.created ? 201 : 200).json(result);
   } catch (err) {
     if (
