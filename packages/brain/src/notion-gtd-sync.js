@@ -168,6 +168,11 @@ export const PUSH_QIUMI_QUERY = `
            payload->>'notion_page_id'    AS en_page_id
       FROM tasks
      WHERE payload->>'notion_zh_page_id' IS NOT NULL
+       -- 只有 qiumi_task 这一层代表中文表那一行。派生出去的 device_job 子任务有自己的生命周期，
+       -- 放进来就会拿子任务状态去改同一行：子 queued 把行推回「委派」（下轮同步当新行二次入账）、
+       -- 子完成抢在父任务前写「已完成」、子失败写「推迟」并清空 OpenClaw任务号（急停与重排的唯一锚）。
+       -- 第一道闸是子任务根本不继承 notion_zh_page_id（routing/qiumi-router.js），这是第二道。
+       AND task_type = 'qiumi_task'
        AND ((notion_props->>'qiumi_pushed_status') IS DISTINCT FROM status
             OR notion_props ? 'qiumi_human_hold')
      ORDER BY (notion_props ? 'qiumi_human_hold') ASC, updated_at DESC

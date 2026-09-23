@@ -120,6 +120,21 @@ vi.mock('../projection/notion.js', () => ({
   runNotionTaskCommandIngest: vi.fn().mockResolvedValue({ skipped: true, reason: 'not_configured' }),
 }));
 
+// openclaw-agent 收割真实 handler 会 ssh 到执行机读 ~/brain-runs/<run_id>.exit——
+// 与 disk-guard 同理：纯路由行为单测绝不碰真机，且假 pool 喂出来的 run_id 会让
+// 每行都卡满 ssh ConnectTimeout，整轮串行 job 被拖垮。
+// 收割逻辑本身由 openclaw-agent-executor.test.js 覆盖。
+vi.mock('../openclaw-agent-executor.js', () => ({
+  reapOpenclawAgentRuns: vi.fn().mockResolvedValue({ reaped: 0, completed: 0, failed: 0 }),
+}));
+
+// 秋米设备对账的真实 handler 会扫库。「哨兵写入失败不影响 job 结果」那条用例的假 pool 对
+// 所有 query 一律 reject，真 handler 会把那个 reject 变成 job 失败——验的是哨兵，却被对账带红。
+// 与 openclaw-agent-reaper 同理：纯注册/路由行为单测不碰库。对账逻辑本体由 device-delegation.test.js 覆盖。
+vi.mock('../routing/device-delegation.js', () => ({
+  reconcileDelegatedDeviceJobs: vi.fn().mockResolvedValue({ checked: 0, completed: 0, failed: 0 }),
+}));
+
 import {
   runSchedulerJobsOnce,
   startSchedulerJobsLoop,
@@ -161,6 +176,16 @@ describe('scheduler-jobs 注册表', () => {
     expect(names.indexOf('ops-model-accounts-collector')).toBeGreaterThan(names.indexOf('ops-collector'));
     // conversation-ttl-archiver 排在 conversation-capture 之后
     expect(names.indexOf('conversation-ttl-archiver')).toBeGreaterThan(names.indexOf('conversation-capture'));
+  });
+
+  // PR3 补充五：秋米设备任务改成派生子任务后，父 qiumi_task 挂在 blocked 且 blocked_until 为 NULL——
+  // 自动解闸器捞不到它，这个 job 是唯一的放行方。没注册 = 每条设备任务的父行永远挂着，
+  // 中文表里永远停在「进行中」。
+  it('JOBS 注册了 qiumi-device-reconcile（设备子任务终态回写父任务）', () => {
+    const j = JOBS.find((x) => x.name === 'qiumi-device-reconcile');
+    expect(j).toBeTruthy();
+    expect(j.needsPool).toBe(true);
+    expect(typeof j.handler).toBe('function');
   });
 
   it('runSchedulerJobsOnce 调用全部 job，needsPool 决定传参', async () => {

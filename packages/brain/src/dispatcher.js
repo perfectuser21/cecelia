@@ -42,6 +42,8 @@ import { checkAnchor } from './anchor-check.js';
 import { applyDispatchAllocationGuide } from './dispatch-allocation-guide.js';
 import { getLlmCapacitySnapshot } from './llm-capacity.js';
 import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
+import { routeQiumiTask, persistDecision } from './routing/qiumi-router.js';
+import { qiumiEnv } from './routing/env.js';
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -229,6 +231,124 @@ export async function _internals_findDuplicateTaskSibling(candidate) {
     }
     return null;
   }
+}
+
+/**
+ * qiumi_task 专用路由出口（PR3，接线点见 plan 补充四）。
+ *
+ * 调用位置是死的：候选循环里原子 claim 成功之后、标 in_progress 之前。任务此刻仍是
+ * `queued`，这是两件事的前提——persistDecision 的 device/fail 分支带 `AND status='queued'`
+ * 的 CAS；并发闸数的是 in_progress 的 openclaw-agent，任务自己不能先被算进去。
+ *
+ * 本函数自己不 spawn、不改 status：agent 决策落库后交回主流程，由主流程标 in_progress、
+ * 读全行、triggerCeceliaRun，spawn 失败也走主流程既有的回滚。
+ *
+ * @param {object} task - 已 claim 的候选行（可能不含 payload，函数内会重读整行）
+ * @param {object} [deps] - { env, actions, holSkipIds, fetchFn, callLLMFn }
+ * @returns {Promise<{outcome:'return', result:object}|{outcome:'skip'}|{outcome:'proceed'}>}
+ */
+export async function dispatchQiumiTask(task, deps = {}) {
+  try {
+    return await routeAndPersistQiumi(task, deps);
+  } catch (err) {
+    // 候选循环不在 postClaimException 的覆盖范围内（同锚点闸分支的处境）：从这里抛出去
+    // = claim 永远挂在这条任务上，它再也起不来，整轮派发也跟着断。所以兜住、放掉 claim、
+    // 记一笔，然后按 skip 交回循环换下一个候选。
+    console.error(`[dispatch] qiumi 路由异常 (task=${task.id}): ${err.message}`);
+    try {
+      await pool.query(
+        'UPDATE tasks SET claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1',
+        [task.id],
+      );
+    } catch (releaseErr) {
+      console.error(`[dispatch] claim 释放失败（非致命，task=${task.id}）: ${releaseErr.message}`);
+    }
+    try {
+      await recordDispatchResult(pool, false, 'qiumi_route_exception', undefined, task.id);
+    } catch (statErr) {
+      console.error(`[dispatch] 派发统计写入失败（非致命，task=${task.id}）: ${statErr.message}`);
+    }
+    return { outcome: 'skip' };
+  }
+}
+
+async function routeAndPersistQiumi(task, deps = {}) {
+  const env = deps.env ?? qiumiEnv();
+  const actions = deps.actions ?? [];
+  const holSkipIds = deps.holSkipIds ?? [];
+
+  // 选单 SQL 只取部分列，便宜闸要读 payload.qiumi_source → 先把整行捞回来
+  const fullRow = await pool.query('SELECT * FROM tasks WHERE id = $1', [task.id]);
+  const fullTask = fullRow.rows[0] ?? task;
+
+  const releaseClaim = () => pool.query(
+    'UPDATE tasks SET claimed_by = NULL, claimed_at = NULL, updated_at = NOW() WHERE id = $1',
+    [task.id],
+  );
+
+  // 机器闸：MMV 这台机器的 openclaw-agent 上限（默认 2），不是租户配额。
+  // 放在路由之前——闸满就退回，省掉一次 Jev/terra 调用。
+  // 只数 qiumi_task：与收割器（reapOpenclawAgentRuns）的候选口径一致。日后别的类型挂上同一个
+  // executor_kind，它会占着闸位却永远不被收割，闸就再也空不出来。
+  const { rows } = await pool.query(
+    `SELECT count(*)::int AS n FROM tasks
+      WHERE executor_kind = 'openclaw-agent' AND status = 'in_progress' AND task_type = 'qiumi_task'`,
+  );
+  if ((rows[0]?.n ?? 0) >= env.mmvConcurrency) {
+    await releaseClaim();
+    // 照 codex pool 的 HOL 语义：P0 停整轮（高优信号不许被绕过），非 P0 让位换下一个候选
+    if (task.priority === 'P0') {
+      await recordDispatchResult(pool, false, 'openclaw_agent_pool_full', undefined, task.id);
+      return {
+        outcome: 'return',
+        result: { dispatched: false, reason: 'openclaw_agent_pool_full', task_id: task.id, actions },
+      };
+    }
+    tickLog(`[dispatch] HOL skip: openclaw-agent pool full (${rows[0]?.n ?? 0}/${env.mmvConcurrency}), skipping ${task.priority} qiumi task ${task.id}`);
+    holSkipIds.push(task.id);
+    return { outcome: 'skip' };
+  }
+
+  const decision = await routeQiumiTask(fullTask, {
+    pool,
+    env,
+    fetchFn: deps.fetchFn,
+    // 懒加载：terra 兜底才真的需要 llm-caller，Jev 正常时不把这条重依赖拉进来
+    callLLMFn: deps.callLLMFn ?? (async (...args) => (await import('./llm-caller.js')).callLLM(...args)),
+  });
+  await persistDecision(pool, fullTask, decision);
+
+  // 已派生 device_job 子任务交给手机领单器、父任务挂 blocked（persistDecision 里连 claim
+  // 一起释放了，见 routing/qiumi-router.js 的 delegateDeviceJob），dispatcher 到此为止
+  if (decision.outcome === 'device') {
+    await recordDispatchResult(pool, false, 'qiumi_routed_device', undefined, task.id);
+    return {
+      outcome: 'return',
+      result: {
+        dispatched: false,
+        reason: 'qiumi_routed_device',
+        task_id: task.id,
+        actions: [...actions, { action: 'qiumi-device-delegated', task_id: task.id, serial: decision.serial }],
+      },
+    };
+  }
+
+  // 判定失败（设备含糊 fail-closed / Jev+terra 均不可用）已落 failed，不 spawn
+  if (decision.outcome === 'fail') {
+    await recordDispatchResult(pool, false, 'qiumi_route_failed', undefined, task.id);
+    return {
+      outcome: 'return',
+      result: {
+        dispatched: false,
+        reason: 'qiumi_route_failed',
+        task_id: task.id,
+        actions: [...actions, { action: 'qiumi-route-failed', task_id: task.id, error: decision.reason }],
+      },
+    };
+  }
+
+  // agent：model/run_id 已由 persistDecision 写进 payload，主流程标 in_progress 后读全行即可拿到
+  return { outcome: 'proceed' };
 }
 
 /**
@@ -667,6 +787,28 @@ export async function dispatchNextTask(goalIds) {
       }
       await recordDispatchResult(pool, false, 'missing_anchor', undefined, candidate.id);
       return { dispatched: false, reason: 'missing_anchor', task_id: candidate.id, actions };
+    }
+
+    // 3c'''. 秋米任务的专用路由出口（PR3，plan 补充四）：必须在这里——claim 已持有、
+    //        任务仍 queued，persistDecision 的 `AND status='queued'` CAS 和并发闸
+    //        count(in_progress) 都指着这个前提。放到标 in_progress 之后两者同时失效。
+    if (candidate.task_type === 'qiumi_task') {
+      const q = await dispatchQiumiTask(candidate, { actions, holSkipIds });
+      if (q.outcome === 'return') return q.result;
+      if (q.outcome === 'skip') {
+        // 闸满让位：claim 已放、已进 holSkipIds，cap 与 codex HOL 分支同一套
+        if (holSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+          tickLog(`[dispatch] HOL skip cap reached (${MAX_SKIP_HEAD_FOR_BLOCKED}), giving up`);
+          await recordDispatchResult(pool, false, 'hol_skip_cap_exceeded');
+          return { dispatched: false, reason: 'hol_skip_cap_exceeded', hol_skipped: holSkipIds.length, actions };
+        }
+        attempt--; // 让位不消耗 pre-flight attempt 预算
+        continue;
+      }
+      // proceed：agent 决策已落库 → 不进分配指南（指南只管 dev/harness 的 codex/grok 降级），
+      // 直接交给主流程标 in_progress → 读全行（拿到刚写进去的 model/run_id）→ triggerCeceliaRun
+      nextTask = candidate;
+      break;
     }
 
     // 3d. Codex Pool D: check concurrent limit for Codex-native task types.

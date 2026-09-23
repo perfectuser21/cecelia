@@ -3443,6 +3443,15 @@ async function triggerCeceliaRun(task) {
     return { success: true, internal: true, taskId: task.id, action: intResult?.action };
   }
 
+  // 0.7 秋米非设备任务（PR3）→ openclaw-agent 执行体：ssh 到主力 worker 起 `openclaw agent`。
+  //     不占 claude/codex 槽位，也绝不在 us-vps 本地跑（铁律 96054a8b）。
+  //     动态 import：executor.js 是热路径，秋米链路只在真有 qiumi_task 时才拉起来。
+  if (task.task_type === 'qiumi_task') {
+    console.log(`[executor] 路由决策: task_type=qiumi_task → openclaw-agent executor (run_id=${task.payload?.run_id})`);
+    const { triggerOpenclawAgent } = await import('./openclaw-agent-executor.js');
+    return triggerOpenclawAgent(task);
+  }
+
   // 1. 显式 override（phase 2 单元1）：payload.{machine,executor} → DB 驱动路由。
   //    REVIEW 短路之后、location-map 路由之前。无显式偏好则整段跳过（零回归）。
   //    [MINOR 3] 排除 harness_initiative / retired harness types：这些任务即使误传
