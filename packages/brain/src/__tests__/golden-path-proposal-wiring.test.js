@@ -53,15 +53,27 @@ describe('dispatcher: golden_path_proposal 防线接线', () => {
     // Task 3（qiumi-task-router PR1）之后名单来自 lib/task-type-registry.js 的
     // INITIATIVE_LOCK_TASK_TYPES 派生集合，dispatcher.js 不再手抄字面量数组。
     expect(INITIATIVE_LOCK_TASK_TYPES).toContain('golden_path_proposal');
-    expect(DISPATCHER_SRC).toMatch(/INITIATIVE_LOCK_TASK_TYPES, RETIRED_HARNESS_TYPES_DISPATCH, HARNESS_INFLIGHT_TASK_TYPES \} from '\.\/lib\/task-type-registry\.js'/);
+    // 0923 秋米熔断豁免刀：同一条 import 又加了 getTaskType（判 openclaw-agent 表面），
+    // 原先钉死"三个名字按此顺序紧邻"的正则会被任何新增具名导入打红。
+    // 放宽为：定位那条 from './lib/task-type-registry.js' 的 import 语句，
+    // 断言它确实具名导入了这几个标识符（顺序无关，但必须在同一条 import 里）。
+    const registryImport = DISPATCHER_SRC.match(/import \{([^}]*)\} from '\.\/lib\/task-type-registry\.js';/);
+    expect(registryImport, "dispatcher.js 必须从 './lib/task-type-registry.js' 具名 import 名单").not.toBeNull();
+    const importedNames = registryImport[1].split(',').map((s) => s.trim());
+    for (const name of ['INITIATIVE_LOCK_TASK_TYPES', 'RETIRED_HARNESS_TYPES_DISPATCH', 'HARNESS_INFLIGHT_TASK_TYPES', 'getTaskType']) {
+      expect(importedNames, `${name} 必须来自 task-type-registry.js（不能手抄字面量）`).toContain(name);
+    }
   });
   it('needsBridgeCheck 豁免 golden_path_proposal（relay 不依赖 bridge）——严格等于 HARNESS_INFLIGHT_TASK_TYPES', () => {
     // 团队审查 Important #4：dispatcher.js:811 原内联 !== 双重否定已改
     // !HARNESS_INFLIGHT_TASK_TYPES.includes(nextTask.task_type)，与上面 cap 计数
     // SQL 用同一个派生集合，钉住这处也绑对了。
+    // 0923 秋米熔断豁免刀：这道闸又加了 openclaw-agent 表面的豁免
+    // （qiumi_task 走 ssh 直派，不经 cecelia-bridge，所以不查 bridge 健康度），
+    // 条件变成两个合取项，正则同步放宽到跨行匹配这两项。
     expect(new Set(HARNESS_INFLIGHT_TASK_TYPES)).toEqual(new Set(['harness_initiative', 'golden_path_proposal']));
     expect(DISPATCHER_SRC).toMatch(
-      /const needsBridgeCheck = !HARNESS_INFLIGHT_TASK_TYPES\.includes\(nextTask\.task_type\);/
+      /const needsBridgeCheck = !HARNESS_INFLIGHT_TASK_TYPES\.includes\(nextTask\.task_type\)\s*&&\s*!isOpenclawSurface\(nextTask\.task_type\);/
     );
   });
   it('绝不在 retired 集合（加了 = 派发即 terminal failed）', () => {

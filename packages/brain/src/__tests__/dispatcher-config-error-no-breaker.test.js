@@ -31,19 +31,32 @@ describe('dispatcher: configError 不 trip cecelia-run breaker', () => {
   });
 
   it('configError:true 时跳过 recordFailure(cecelia-run)', () => {
-    // 找 recordFailure('cecelia-run') 调用
-    const recordIdx = dispatcherSrc.indexOf("recordFailure('cecelia-run')");
+    // 找失败路径上的 recordFailure 调用。
+    // 0923 秋米熔断豁免刀之后这里不再是字面量 recordFailure('cecelia-run')，
+    // 而是按注册表 surface 分键的三元（openclaw-agent / cecelia-run），
+    // 所以定位改用正则；键的默认仍必须是 cecelia-run（下面一条断言钉住）。
+    const recordIdx = dispatcherSrc.search(/await recordFailure\(/);
     expect(recordIdx).toBeGreaterThan(-1);
-    // 取该调用前的窗口，必须包含 configError 守卫（if !configError 或类似）。
+    const recordLine = dispatcherSrc.slice(recordIdx, dispatcherSrc.indexOf('\n', recordIdx));
+    expect(recordLine, '失败路径的 breaker 默认键必须还是 cecelia-run').toContain("'cecelia-run'");
+    // 取该调用前的窗口，必须包含 configError 守卫。
     // 窗口放宽到 800 字节：if-else 链后续追加了其他豁免分支（如
     // spawn_deduplicated / local_execution_disabled_on_scheduler），
     // 400 字节量不出前几个分支就先把 configError 挤出窗口。
+    // 0923 变异实测：只断言窗口里出现「configError」这个词是假绿——把整个
+    // if (execResult.configError) 分支删掉，窗口里剩下的注释仍带这个词，测试照样绿。
+    // 所以钉的是真实代码分支（读 execResult.configError 的那个 if），不是词。
     const before = dispatcherSrc.slice(Math.max(0, recordIdx - 800), recordIdx);
-    expect(before).toMatch(/configError/);
+    expect(before, 'recordFailure 之前必须先有 execResult.configError 分支把它挡掉').toMatch(
+      /if \(\s*execResult\.configError\s*\)/
+    );
   });
 
   it('configError 路径有日志说明 skipping breaker', () => {
-    // 必须有日志解释为什么不 trip
-    expect(dispatcherSrc).toMatch(/configError.*(skip|跳过|不计入|not.*counted)/i);
+    // 必须有日志解释为什么不 trip。同上，窗口限定在 recordFailure 之前的豁免链里，
+    // 否则文件别处任意一句带 configError 的话都能让这条假绿。
+    const recordIdx = dispatcherSrc.search(/await recordFailure\(/);
+    const before = dispatcherSrc.slice(Math.max(0, recordIdx - 800), recordIdx);
+    expect(before).toMatch(/configError[^\n]*(skip|跳过|不计入|not.*counted)[^\n]*breaker/i);
   });
 });
