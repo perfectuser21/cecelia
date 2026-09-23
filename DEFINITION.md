@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.314.0
+**Brain 版本**: 1.314.1
 
 ## 1.283.0
 
@@ -48,6 +48,13 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.314.1 — grok 同步器读错配置文件：漏掉的 agent 不在分母里，日志永远显示全绿
+
+- `~/.openclaw` 下有两份配置：`openclaw.json` 是**真身**（`openclaw config set` 写它），`clawdbot.json` 是旧名、9-21 后就没更新。
+- 同步器读的是 `clawdbot.json`（23 个 agent），而真身有 **24 个**——新加的 `newmedia` 永远同步不到 grok token，几小时后必然 403。
+- **最坏的一种假绿**：漏掉的 agent 不在分母里，日志照样打「同步完成：成功 23 个，失败 0 个」，退出码 0。计数正确，样本不全。
+- 改为优先 `openclaw.json`、回退 `clawdbot.json`。守卫第 ③c 条**测行为不测字面量**：造两份配置各放一个独有 agent，看脚本同步了谁；已变异验证（退回只读旧文件即报红）。
 
 ## Brain 1.311.10 — grok token 同步器在 launchd 下续期恒失败：`grok` 不在它声明的 PATH 里
 
