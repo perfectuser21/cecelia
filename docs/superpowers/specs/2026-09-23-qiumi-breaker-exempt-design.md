@@ -48,7 +48,7 @@ tick → 候选 qiumi_task（claim 成功）
 ## 4. 错误处理
 
 - `openclaw-agent` 熔断 OPEN：任务留 queued、claim 释放、派发统计记 `openclaw_agent_circuit_open`；主理人可 `POST /api/brain/circuit-breaker/openclaw-agent/reset`。
-- `getTaskType(type)` 为 undefined（未知类型）：`?.surface` 取 undefined → `needsBridgeCheck` 维持原语义（true）。
+- `getTaskType(type)` 为 null（未知类型，注册表返回 null）：`?.surface` 取 undefined → `needsBridgeCheck` 维持原语义（true）。
 - 幂等 proceed 后 spawn 失败：既有回滚回 queued，payload 仍带 run_id → 下一 tick 直接 proceed 复用 run_id，探针 `.pid/.exit` 决定是否重起（Task 5 I2 语义）。
 
 ## 5. 测试策略
