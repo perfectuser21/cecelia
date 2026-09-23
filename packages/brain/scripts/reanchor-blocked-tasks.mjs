@@ -82,9 +82,14 @@ export async function reanchorBlockedTasks({ db, dryRun, log = console.log, emit
     }
     if (row.has_run) {
       try {
-        await db.query(NEEDS_REBASE_SQL, [row.id]);
-        rebased += 1;
-        log(`  ↻ ${row.id} 已有 run，标 needs_rebase（不解锁）`);
+        const marked = await db.query(NEEDS_REBASE_SQL, [row.id]);
+        if (marked?.rowCount === 1) {
+          rebased += 1;
+          log(`  ↻ ${row.id} 已有 run，标 needs_rebase（不解锁）`);
+        } else {
+          failed += 1;
+          log(`  ✗ ${row.id} 标 needs_rebase 影响 0 行（已不在 blocked 态）`);
+        }
       } catch (err) {
         failed += 1;
         log(`  ✗ ${row.id} 标 needs_rebase 异常: ${err.message}`);

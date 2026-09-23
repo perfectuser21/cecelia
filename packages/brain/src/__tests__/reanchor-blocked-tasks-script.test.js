@@ -173,7 +173,8 @@ describe('scripts/reanchor-blocked-tasks.mjs', () => {
 
     expect(result.rebased).toBe(0);
     expect(result.failed).toBe(1);
-    expect(result.needs_rebase_ids).toEqual([]);
+    // needs_rebase_ids 是候选口径（dry-run 也要列），与是否改标成功无关
+    expect(result.needs_rebase_ids).toEqual(['task-2']);
   });
 
   it('候选 SQL 派生 has_run 列（两个 EXISTS：current_task_id / initiative_id）', async () => {
