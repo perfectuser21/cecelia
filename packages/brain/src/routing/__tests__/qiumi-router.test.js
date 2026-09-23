@@ -255,6 +255,10 @@ describe('routeQiumiTask 决策表', () => {
     });
     expect(fetchFn).toHaveBeenCalled();
     expect(d).toMatchObject({ outcome: 'device', serial: 'e6c7ef34' });
+    // 正向钉住「relation 确实命中了 agent」——否则本用例在"压根没传 agentWorkflowIds"
+    // 时也会绿（负向断言 not.toContain 区分不了"查过没中"与"从没查"），
+    // 等于测不出任何东西。2026-09-23 实跑验证过这个假绿。
+    expect(d.payloadPatch.qiumi_route.cheap.agentRef).toBe('小白');
     expect(d.payloadPatch.qiumi_route.cheap.matchedBy).not.toContain('agentRef:serial');
   });
 
