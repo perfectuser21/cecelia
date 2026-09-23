@@ -16,8 +16,8 @@
 |---|---|---|---|
 | M1 迁移 `4xx_work_routing_receipt_supersession.sql` | 允许同一任务链式追加收据 | `anchor_generation int NOT NULL DEFAULT 1`；UNIQUE 改为 `(source,source_id,router_version,anchor_generation)`；`supersedes_receipt_id` UNIQUE | 413/421 保持不变（append-only 触发器、payload 投影守卫） |
 | M2 `orchestrator/preflight/base-sha-reanchor.js` | 判定是否可快进并写接班收据 | `reanchorReceiptIfEmptyBranch(client, {task, receipt, map, now}) → receipt \| null`；抛 `needs_rebase` / `map_thrash` | pg 事务 client（task 行已 `FOR UPDATE`，不再另加 advisory 锁）、`cecelia_events`、`task_events` |
-| M3 `orchestrator/kernel-run-store.js` | 在 `createKernelRun` 事务内、authority 锁后、preflight 前调用 M2；把 authority/map 传给 preflight 复用 | 无新公开接口 | M2、`lockMapProjectionAuthority`、`readMap` |
-| M4 `map-impact-contract.js` | 接受 `deps.authority`/`deps.map` 已读值，避免二次读与 TOCTOU | 现有 deps 注入约定 | — |
+| M3 `orchestrator/kernel-run-store.js` | task 行 SELECT 取 `metadata`；向预检透传 `createdSource`；返回体带预检最终收据的 `base_sha`/`routing_receipt_id`；导出 `syncTaskPayloadFromKernelRun(task, created)` 供三处调用方（relay 本地/远程 kernel、headed runtime）在 createRun 后回流内存 task.payload | `createKernelRun → {created, run, base_sha, routing_receipt_id}`；`syncTaskPayloadFromKernelRun` | M4 |
+| M4 `map-impact-contract.js` | 检测到 `map_revision_mismatch` 时先调 M2 快进，成功则用接班收据 `activeReceipt` 继续算半径/合同，返回体加 `receipt: activeReceipt`；M2 抛出的非 recovery 码原样上抛 | 现有 deps 注入约定 + `deps.reanchorReceipt` | M2 |
 | M5 `work-routing-store.js` | 幂等回读取最新 generation；sameRoute 比对忽略 `base_sha` | 现有函数 | — |
 | M6 `harness-skill-relay.js` / `executor.js` | 把 `needs_rebase` 与 `map_*`/`impact_*` 错误以 `reason_code` 结构化返回 | `{success:false, reason, reason_code, detail}` | — |
 | M7 `dispatcher.js` | `needs_rebase` 直接 block（不计数、P3 去重告警）；autoblock detail 带 `reason_code`；task_events 同步 | `blockTask(reason, detail)` | task-updater、alerting |
