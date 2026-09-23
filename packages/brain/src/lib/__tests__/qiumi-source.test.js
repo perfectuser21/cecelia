@@ -102,4 +102,16 @@ describe('buildQiumiSource: 扁平层', () => {
   it('不传任何参数也不崩（消费方只关心部分键的场景）', () => {
     expect(buildQiumiSource()).toMatchObject({ agent_workflow_ids: [], skill_ids: [] });
   });
+
+  it('入参误写成蛇形（照返回值键名抄）当场抛，不静默吞成空数组', () => {
+    expect(() => buildQiumiSource({ title: 'T', agent_workflow_ids: ['wf-1'] }))
+      .toThrow(/驼峰不用蛇形/);
+    expect(() => buildQiumiSource({ title: 'T', skill_ids: [] }))
+      .toThrow(/skill_ids/);
+  });
+
+  it('正确的驼峰入参照常工作（护栏不误伤）', () => {
+    expect(buildQiumiSource({ title: 'T', agentWorkflowIds: ['wf-1'] }).agent_workflow_ids)
+      .toEqual(['wf-1']);
+  });
 });

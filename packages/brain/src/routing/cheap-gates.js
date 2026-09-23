@@ -35,6 +35,19 @@ function isDeviceWorkflow(name, env) {
   return env.deviceKeywords.some((k) => name.includes(k));
 }
 
+/**
+ * 按**用户在 Notion 的选择顺序**取首个命中的注册表行（不是遍历池——池是
+ * ORDER BY name，用户选两个时赢的会是字母序靠前的那个，反直觉）。
+ * 命中即 return，不存在"后续 id 把已命中值覆盖掉"的写法陷阱。
+ */
+function firstHit(normalizedIds, rows, norm) {
+  for (const id of normalizedIds) {
+    const hit = rows.find((r) => r.notionId && norm(r.notionId) === id);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 export function cheapGates(task, pool, env) {
   const src = task?.payload?.qiumi_source ?? {};
   const text = [src.title, src.remark, src.body].filter(Boolean).join('\n');
@@ -55,22 +68,16 @@ export function cheapGates(task, pool, env) {
   // 对照：text 分支有显式 tie-break「取最长命中」（见下方 + 用例 cheap-gates.test.js）。
   const relIds = (src.agent_workflow_ids ?? []).map(norm);
 
-  let wfHit;
-  for (const id of relIds) {
-    wfHit = pool.workflows.find((w) => w.notionId && norm(w.notionId) === id);
-    if (wfHit) break;
-  }
+  // 两趟的**先后**决定 matchedBy 的元素顺序（承重：vitest 的 toMatchObject 对数组是
+  // 长度相等 + 严格按序，已实跑确认）。顺序在这两行，不在函数内部。
+  const wfHit = firstHit(relIds, pool.workflows, norm);
+  const agHit = firstHit(relIds, pool.agents, norm);
   if (wfHit) {
     out.workflowRef = wfHit.name;
     if (isDeviceWorkflow(wfHit.name, env)) out.isDevice = true;
     out.matchedBy.push('relation:workflow');
   }
 
-  let agHit;
-  for (const id of relIds) {
-    agHit = pool.agents.find((a) => a.notionId && norm(a.notionId) === id);
-    if (agHit) break;
-  }
   if (agHit) {
     if (env.departments.includes(agHit.name)) { out.department = agHit.name; }
     else { out.agentRef = agHit.name; }

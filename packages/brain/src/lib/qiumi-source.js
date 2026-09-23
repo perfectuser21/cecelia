@@ -25,18 +25,23 @@
  * title/remark/body 不设默认值——原字面量对这三个键就是"有什么给什么"，
  * 设了默认会把 undefined 变成 ''，落 jsonb 时从"无此键"变成"空串"，非等价。
  */
-export function buildQiumiSource({
-  title,
-  remark,
-  body,
-  priorityRaw = null,
-  dueAt = null,
-  channel = null,
-  agentWorkflowIds = [],
-  skillIds = [],
-  businessTaskIds = [],
-  ownerIds = [],
-} = {}) {
+export function buildQiumiSource(input = {}) {
+  // 入参是驼峰、返回是蛇形。写成蛇形（照着返回值的键名抄）不会报错、会安静返回空数组
+  // ——和本模块要修的那个 bug 同型（键名写错 → 静默吞掉 → 三个月没人发现）。
+  // 与其再赌一次，不如当场炸。
+  const SNAKE_MISUSE = ['agent_workflow_ids', 'skill_ids', 'business_task_ids', 'owner_ids', 'priority_raw', 'due_at'];
+  const misused = SNAKE_MISUSE.filter((k) => k in input);
+  if (misused.length) {
+    throw new TypeError(
+      `buildQiumiSource 入参用驼峰不用蛇形：${misused.join(', ')} → `
+      + 'agentWorkflowIds / skillIds / businessTaskIds / ownerIds / priorityRaw / dueAt',
+    );
+  }
+  const {
+    title, remark, body,
+    priorityRaw = null, dueAt = null, channel = null,
+    agentWorkflowIds = [], skillIds = [], businessTaskIds = [], ownerIds = [],
+  } = input;
   return {
     title,
     remark,
@@ -55,6 +60,9 @@ export function buildQiumiSource({
 export function qiumiSourceFromNotion({ title, zh, en, zhBody, enBody, dueAt }) {
   return buildQiumiSource({
     title,
+    // en 恒来自 parseEnPage（notion-gtd-sync.js），恒返回对象且 description 恒为
+    // 字符串（plain()），故此处不加可选链是调用契约不是疏漏；加 ?? '' 会把
+    // undefined 变空串，破坏与抽取前的等价性。
     // ?? 不是 ||：plain()（notion-gtd-sync.js:34）恒返回字符串，中文「备注」为空
     // 时是 ''，此时**不**回落 en.description。改成 || 就改了语义。
     remark: zh?.remark ?? en.description,
