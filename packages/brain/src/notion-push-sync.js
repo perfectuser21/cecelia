@@ -13,6 +13,7 @@ import {
 } from './ops-quota-notion.js';
 import { PUSH_EXCLUDED_TASK_TYPES } from './lib/task-type-registry.js';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
+import { qiumiSourceFromNotion } from './lib/qiumi-source.js';
 import { parseEnPage, parseZhPage, GTD_DB_ID, EN_NATIVE_MARK } from './notion-gtd-sync.js';
 
 const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
@@ -408,12 +409,7 @@ async function ingestQiumiPage(pool, token, page, en, { env }) {
       // 第一道闸：门没放开就写 true，任务落地即被 tick 候选 SQL 排除（谓词见 dispatch-helpers.js）。
       // 放开后写 false（与不写等价），由 dispatcher.dispatchQiumiTask 接管派发。
       headed_manual: env.QIUMI_DISPATCH_ENABLED !== 'true',
-      qiumi_source: {
-        title, remark: zh?.remark ?? en.description, body: zhBody || enBody,
-        priority_raw: zh?.priorityRaw ?? null, due_at: dueAt, channel: zh?.channel ?? null,
-        agent_workflow_ids: zh?.agentWorkflowIds ?? [], skill_ids: zh?.skillIds ?? [],
-        business_task_ids: zh?.businessTaskIds ?? [], owner_ids: zh?.ownerIds ?? [],
-      },
+      qiumi_source: qiumiSourceFromNotion({ title, zh, en, zhBody, enBody, dueAt }),
     },
     task: { priority, status: 'queued', trigger_source: 'manual', executor_kind: 'openclaw-agent' },
   });
