@@ -254,6 +254,21 @@ describe('dispatchQiumiTask：三态出口', () => {
       'agent 分支在函数内 spawn 了——此时任务还没标 in_progress，主流程的回滚也管不到它',
     ).not.toHaveBeenCalled();
   });
+
+  it('openclaw-agent 自己的熔断 OPEN → outcome=skip，释放 claim、记 openclaw_agent_circuit_open，不路由', async () => {
+    wireQueries();
+    mockIsAllowed.mockImplementation((k) => k !== 'openclaw-agent');
+    const holSkipIds = [];
+
+    const r = await dispatchQiumiTask(candidate, { actions: [], holSkipIds });
+
+    expect(r).toEqual({ outcome: 'skip' });
+    expect(routeQiumiTask, '熔断开着还去打 Jev').not.toHaveBeenCalled();
+    expect(sqlsOf().some((s) => /claimed_by = NULL/.test(s))).toBe(true);
+    expect(recordDispatchResult).toHaveBeenCalledWith(expect.anything(), false, 'openclaw_agent_circuit_open', undefined, 'q1');
+    expect(holSkipIds).toContain('q1');
+    expect(mockIsAllowed).toHaveBeenCalledWith('openclaw-agent');
+  });
 });
 
 describe('dispatchNextTask：接线点在 claim 之后、标 in_progress 之前', () => {
@@ -344,6 +359,19 @@ describe('熔断豁免：qiumi_task 走 ssh 直派，不受 cecelia-run 熔断�
     expect(mockTriggerCeceliaRun, 'qiumi 被 cecelia-run 熔断挡住了——它根本不走 bridge').toHaveBeenCalledTimes(1);
     expect(checkCeceliaRunAvailable).not.toHaveBeenCalled();
     expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: 'q1', status: 'queued' });
+    expect(r).toMatchObject({ dispatched: true, task_id: 'q1' });
+  });
+
+  it('bridge 健康检查不可用时 qiumi 也不回滚 queued（第二道闸同样豁免）', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: 'm', runId: 'r1', payloadPatch: {} });
+    checkCeceliaRunAvailable.mockResolvedValue({ available: false, error: 'bridge down' });
+
+    const r = await dispatchNextTask(null);
+
+    expect(mockTriggerCeceliaRun).toHaveBeenCalledTimes(1);
+    expect(checkCeceliaRunAvailable).not.toHaveBeenCalled();
     expect(r).toMatchObject({ dispatched: true, task_id: 'q1' });
   });
 });
