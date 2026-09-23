@@ -270,6 +270,14 @@ async function ensureNormalMapImpactPreflight(
       task, receipt: activeReceipt, map, now, createdSource,
     });
     if (!successor) throw new Error('map_revision_mismatch');
+    // 接班收据只许换锚，不许换路由身份：repo / map_scope / change_kind 任一漂移，
+    // 后续半径与合同就会算到另一条路由上去（repo 漂移会退化成 map_radius_stale，
+    // 错误码指向半径而非锚，误导排查）。在这里失败闭合，仍用 map_revision_mismatch。
+    if (successor.repo !== activeReceipt.repo
+      || successor.change_kind !== activeReceipt.change_kind
+      || JSON.stringify(successor.map_scope) !== JSON.stringify(activeReceipt.map_scope)) {
+      throw new Error('map_revision_mismatch');
+    }
     activeReceipt = successor;
     baseSha = successor.evidence?.base_sha;
     if (!SHA_PATTERN.test(baseSha ?? '') || repoFreshness.source_revision !== baseSha) {
@@ -372,6 +380,10 @@ export async function ensureMapImpactPreflight(client, context, deps = {}) {
   } catch (error) {
     const reasonCode = recoveryReasonCode(error);
     if (!reasonCode || context.task?.payload?.map_recovery !== true) throw error;
+    // 这里用 context.receipt（原收据）而非快进后的接班收据是安全的：快进只发生在
+    // 非 recovery 路径上——reanchor 对 map_recovery / explicit_recovery 一律返回 null，
+    // 所以能走到这个分支的收据必然从未被快进。若日后放宽那两道闸，允许 recovery 路径
+    // 也快进，本处必须改成取快进后的收据，否则恢复合同会锚在已被接班的旧 base_sha 上。
     return ensureMapRecoveryPreflight(client, {
       ...context,
       reasonCode,
