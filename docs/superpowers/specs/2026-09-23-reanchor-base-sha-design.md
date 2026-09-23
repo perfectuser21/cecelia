@@ -41,8 +41,8 @@ dispatcher.tick → claim(claimed_by IS NULL) → enforceDispatchRoutingReceipt(
 `receipt.work_kind==='coding_mutation'` ∧ `task.payload.map_recovery!==true` ∧ `createdSource!=='explicit_recovery'` ∧ **无任何 `initiative_runs`**（`current_task_id=$task OR initiative_id=$task`；`harness_attempts.run_id` 是其 NOT NULL FK，artifact 只存在 attempt.result.artifacts，故此一条即覆盖 v2 run / attempt / artifact 三事实）∧ `map.freshness.repos[repo].status==='fresh'` ∧ `source_revision!==receipt.evidence.base_sha` ∧ `metadata.base_sha_fastforward_count<5`。
 
 - 计数 ≥5 → 抛 `map_thrash`（进 autoblock 计数，detail.reason_code=map_thrash）。
-- 有产出 → 抛 `needs_rebase`，detail=`{old_base_sha,new_base_sha,branch,evidence:{v2_run,attempt_count}}`。
-- 并发：task 行 `FOR UPDATE`（kernel-run-store.js:436-442）串行化同任务；INSERT 唯一键 `(source,source_id,router_version,anchor_generation)` 兜底，23505 视为同事已完成，重读最新收据继续。
+- 有产出 → 抛 `needs_rebase`，detail=`{old_base_sha,new_base_sha,branch,has_v2_run}`。
+- 并发：task 行 `FOR UPDATE`（kernel-run-store.js:436-442）串行化同任务，接班只在该锁内发生；INSERT 唯一键 `(source,source_id,router_version,anchor_generation)` 仅作数据完整性兜底，不单独处理 23505（撞键即整事务回滚、下 tick 重试）。
 - 顺序：**先 INSERT 接班收据，后 UPDATE tasks.payload**——421 触发器按 `created_at DESC` 取最新收据比对 `routing_receipt_id`；M5 回读排序统一为 `created_at DESC, anchor_generation DESC`。
 - 接线行号（origin/main 745222e）：autoblock 逻辑 `dispatcher.js:1233-1272`，`failed_dispatch` 事件 `:1204-1208`；`harness-skill-relay.js:274` 不 catch，错误落 `executor.js:3606-3631` 的 catch → M6 在此读 `err.code==='needs_rebase'`。
 
@@ -52,14 +52,14 @@ dispatcher.tick → claim(claimed_by IS NULL) → enforceDispatchRoutingReceipt(
 |---|---|
 | 地图 unknown | 不快进，原样 `map_stale` |
 | 快进后 preflight 仍失败（如 impact_assertion_missing） | 事务回滚，接班收据不落库；reason_code 区分 |
-| 收据唯一键冲突 | 重读最新 generation 继续 |
+| 收据唯一键冲突 | 事务回滚，任务留 queued，下 tick 重试 |
 | needs_rebase | blocked，不计 autoblock；P3 告警 dedupe `repo|needs_rebase` |
 | 批量脚本中途失败 | 逐条独立事务，`--resume` 重跑只处理仍 blocked 的 |
 
 ## 测试策略（TDD，先红后绿，永久留 CI）
 
 - **E2E（integration，本地 vitest 走 mock client）**：`orchestrator/__tests__/kernel-run-store.test.js` 新 describe：createKernelRun 在 receipt.base_sha=A、地图 fresh 且 revision=B、无 run/artifact 时**不抛**并 INSERT 接班收据（supersedes=旧 id，evidence.base_sha=B）、UPDATE payload、写 `work_route_reanchored`；有 artifact → `needs_rebase` 且零 INSERT；`map_recovery=true` → 仍 `map_revision_mismatch`；`fastforward_count=5` → `map_thrash`；`explicit_recovery` → 跳过快进。
-- **unit**：`orchestrator/preflight/__tests__/base-sha-reanchor.test.js` 条件矩阵；`work-routing-store` 的 sameRoute 忽略 base_sha 与最新 generation 回读。
+- **unit**：`orchestrator/preflight/base-sha-reanchor.test.js` 条件矩阵；`work-routing-store` 的 sameRoute 忽略 base_sha 与最新 generation 回读。
 - **unit**：`__tests__/dispatch-fail-autoblock.test.js`：detail 含 `reason_code:'map_revision_mismatch'`；`needs_rebase` → `blockTask('needs_rebase')` 且计数不变。
 - **integration（真 PG）**：仿 `src/__tests__/work-routing-validation-route.integration.test.js`：应用 M1 后，同事务 INSERT 接班收据（gen=2, supersedes=旧）→ UPDATE tasks.payload.routing_receipt_id → 421 触发器放行；不 UPDATE payload 时触发器拒绝；二次接班撞唯一键。
 - **migration（trivial）**：M1 up/down SQL 正则测试（仿 migration-405 测试）。
