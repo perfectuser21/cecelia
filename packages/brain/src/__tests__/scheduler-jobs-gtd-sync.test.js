@@ -166,4 +166,29 @@ describe('notion-gtd-sync 调度', () => {
     });
     expect(steps).toEqual(['zh→en', 'en→zh', '入账', '急停', '回写', null]);
   });
+
+  it('被超时放弃的那一轮迟到的 onStep 不得改写下一轮的步名', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ensureGtdSyncLoop, gtdSyncJobHandler } = await import('../notion-gtd-sync.js');
+      let tick;
+      const setIntervalFn = vi.fn((cb) => { tick = cb; return { unref: vi.fn() }; });
+      const env = { QIUMI_SYNC_ENABLED: 'true', QIUMI_SYNC_SINCE: '2026-09-23T00:00:00.000Z', QIUMI_SYNC_ROUND_TIMEOUT_MS: '1000' };
+      const captured = [];
+      const runOnce = vi.fn(async (_pool, opts) => { captured.push(opts); opts.onStep(captured.length === 1 ? '入账' : '急停'); return new Promise(() => {}); });
+      ensureGtdSyncLoop({ query: vi.fn() }, { env, setIntervalFn, runOnce });
+
+      const first = tick();
+      await vi.advanceTimersByTimeAsync(1001);
+      await first;                                   // 第一轮超时，step='入账'
+      const second = tick();                         // 第二轮开始，step='急停'
+      captured[0].onStep('回写');                    // 第一轮迟到的回调
+      await vi.advanceTimersByTimeAsync(1001);
+      await second;                                  // 第二轮超时
+      const out = await gtdSyncJobHandler({ query: vi.fn() }, { env, setIntervalFn });
+      expect(out.lastRun).toMatchObject({ error: 'round_timeout', step: '急停' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
