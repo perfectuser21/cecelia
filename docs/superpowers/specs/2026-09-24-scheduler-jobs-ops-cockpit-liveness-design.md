@@ -36,15 +36,18 @@ JOBS 条目可选声明 `livenessIntervalSec`（notion-gtd-sync = 30）；未声
 
 ### 3.2 新 job `scheduler-liveness`（每 60s，不 gate）
 
-放在 `ops-notion-push` 之前。不 import scheduler-jobs（会成环：scheduler-jobs → ops-collector → … ，仓库已有 `routes/sentinel.js` 明确避坑），改为注入：`handler: (pool) => runSchedulerLiveness(pool, { jobs: JOBS })`。实现放独立模块 `ops-scheduler-liveness.js`（ops-collector.js 已 1196 行，不再加腿）。
+放在 JOBS **末尾**：第一轮串行跑到它时，前面所有 job 的哨兵都已刷新——放在中间会让排在它后面的 job 在 Brain 停机 >15 分钟重启后的首轮被判 dead、次轮又"恢复"，白发两条告警。Notion 推送因此滞后一轮（60s），可忽略。不 import scheduler-jobs（会成环：scheduler-jobs → ops-collector → … ，仓库已有 `routes/sentinel.js` 明确避坑），改为注入：`handler: (pool) => runSchedulerLiveness(pool, { jobs: JOBS })`。实现放独立模块 `ops-scheduler-liveness.js`（ops-collector.js 已 1196 行，不再加腿）。
 
-每轮：
-1. 读全部 `scheduler_job_last_run:*` 哨兵。
-2. 对每个 job：`lastRunAt = record.liveness_at ?? (record.ok ? record.at : null)`；`intervalSec = job.livenessIntervalSec ?? 60`；活性用新函数 `classifyDeclaredLiveness({ lastRunAt, intervalSec, now })`——声明间隔不是统计估计，**不走 `COLD_START_RUNS` 冷启动门槛**，阈值公式与 `classifyLiveness` 一致（warn = max(5×, 300s)，dead = min(max(20×, 900s), 30d)）。30s 间隔 → warn 300s / dead 900s。
+每轮（整轮包 try/catch，任一步抛错写 `scheduler` 来源的错误心跳并返回 `ok:false`，不静默变旧）：
+1. 读全部 `scheduler_job_last_run:*` 哨兵（前缀经 opts 注入，默认同 scheduler-jobs 的 `SENTINEL_KEY_PREFIX`）。
+2. 对每个 job：`lastRunAt = record.liveness_at ?? record.at`——**不看 ok**：job 在报错/超时也是在跑，`last_run_status='error'|'timeout'` 已是诚实信号；若失败哨兵算 null，错误行 `last_run_at` 永远 NULL 会触发每分钟刷新，且 dead→cold 会被当"恢复"。`intervalSec = job.livenessIntervalSec ?? 60`；活性用新函数 `classifyDeclaredLiveness({ lastRunAt, intervalSec, now })`——声明间隔不是统计估计，**不走 `COLD_START_RUNS` 冷启动门槛**，阈值公式与 `classifyLiveness` 一致（warn = max(5×, 300s)，dead = min(max(20×, 900s), 30d)）。30s 间隔 → warn 300s / dead 900s。
 3. upsert `ops_workflows (source='scheduler', wf_id=job.name)`：只写机器列 `name, active=false, machine='us-vps', meta{description,timeoutMs,livenessIntervalSec,kind:'scheduler_job'}, last_run_at, last_run_status('success'|'error'|'timeout'), baseline_interval_sec=intervalSec, liveness, silent_sec, warn_after_sec, dead_after_sec, liveness_at, updated_at`。人工列（owner/note/priority/starred/enable_intent/dispatch）不在 SET 里。
-4. **降噪**：`ON CONFLICT DO UPDATE ... WHERE` 仅当 `liveness` 或 `last_run_status` 变化、或 `last_run_at` 前进 ≥10 分钟时才真的更新（否则 48 行每分钟刷 `updated_at`，会把 `pushOpsWorkflows` 的 `LIMIT 50` 吃光并让 Notion 每轮 PATCH 48 页）。
-5. **告警**：UPDATE 用 `RETURNING` 拿到旧 `liveness`；由非 dead → dead 的行调 `raiseAlert`（现有告警通道，去重靠"只在翻转时发"）。恢复（dead → ok）也发一条，文案不同。
-6. 心跳 `writeHeartbeat('scheduler','us-vps', ...)`（沿用 ops-collector 的 per-source 心跳约定，函数从 ops-collector 导出或搬到 lib）。
+4. **降噪**：`ON CONFLICT DO UPDATE ... WHERE` 仅当 `liveness` 或 `last_run_status` 变化、`last_run_at` 前进 ≥10 分钟、或 `silent_sec` 增长 ≥600 时才真的更新（否则 48 行每分钟刷 `updated_at`，会把 `pushOpsWorkflows` 的 `LIMIT 50` 吃光并让 Notion 每轮 PATCH 48 页）。最后一条是为 dead/warn 行加的：没有它，一个死了 8 小时的 job 在驾驶舱会一直显示"停了 15 分钟"——全绿假象的变体。
+5. **告警**：UPDATE 用 `RETURNING` 拿到旧 `liveness`（RETURNING 里的子查询读语句开始前的快照，实测于 cecelia_scratch）。非 dead → dead 的翻转**按轮合并成一条 Bark**（紧急告警走 Bark 的既定规矩；`raise('P1')` 是每小时批发到飞书、只留 5 条预览、Brain 重启即丢缓冲，8.4h 案的告警走它可能延迟 1 小时或丢失）。恢复（dead → ok/warn）走 `raise('P2')`。去重靠"只在翻转时发"。
+6. 下线的 job（不在本轮 JOBS 里）其 `source='scheduler'` 行置 `liveness='cold'`，不留僵尸红灯。
+7. 心跳 `writeHeartbeat('scheduler','us-vps', ...)`（沿用 ops-collector 的 per-source 心跳约定，函数从 ops-collector 导出）。
+
+测试除单测外加一条 pg 集成测试（`DATABASE_URL` 门控，无库 skip）只覆盖这条 upsert SQL：fakePool 按子串匹配并自造 RETURNING 行，列名拼错、占位错位、子查询语法错都测不出。
 
 `active=false` 的原因：`routing/cheap-gates.js:14` 用 `WHERE active = TRUE` 把 `ops_workflows` 当秋米路由的 registry pool，job 名（`ci-patrol`、`daily-backup`…）会被当 workflowRef 命中。同时在 cheap-gates 的查询加 `AND source = 'n8n'`（双保险，路由 registry 本就只该是 n8n 业务流程），带测试。
 
