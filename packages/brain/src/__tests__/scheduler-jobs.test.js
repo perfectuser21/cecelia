@@ -135,6 +135,10 @@ vi.mock('../routing/device-delegation.js', () => ({
   reconcileDelegatedDeviceJobs: vi.fn().mockResolvedValue({ checked: 0, completed: 0, failed: 0 }),
 }));
 
+vi.mock('../ops-scheduler-liveness.js', () => ({
+  runSchedulerLiveness: vi.fn().mockResolvedValue({ ok: true, jobs: 0, flippedDead: 0, recovered: 0 }),
+}));
+
 import {
   runSchedulerJobsOnce,
   startSchedulerJobsLoop,
@@ -186,6 +190,16 @@ describe('scheduler-jobs 注册表', () => {
     expect(j).toBeTruthy();
     expect(j.needsPool).toBe(true);
     expect(typeof j.handler).toBe('function');
+  });
+
+  it('注册 scheduler-liveness，排在 ops-notion-push 之前，且把 JOBS 自身注入 handler（不 import 成环）', async () => {
+    const { runSchedulerLiveness } = await import('../ops-scheduler-liveness.js');
+    const names = JOBS.map((j) => j.name);
+    expect(names.indexOf('scheduler-liveness')).toBeGreaterThan(-1);
+    expect(names.indexOf('scheduler-liveness')).toBeLessThan(names.indexOf('ops-notion-push'));
+    const pool = makePool();
+    await runSchedulerJobsOnce(pool, JOBS.filter((j) => j.name === 'scheduler-liveness'));
+    expect(runSchedulerLiveness).toHaveBeenCalledWith(pool, expect.objectContaining({ jobs: JOBS }));
   });
 
   it('runSchedulerJobsOnce 调用全部 job，needsPool 决定传参', async () => {
