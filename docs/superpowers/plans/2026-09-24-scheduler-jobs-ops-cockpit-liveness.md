@@ -10,6 +10,12 @@
 
 设计文档：`docs/superpowers/specs/2026-09-24-scheduler-jobs-ops-cockpit-liveness-design.md`。Brain task `50a2c256`。
 
+> **执行中修订（以设计文档为准，本计划不逐段回改）**：
+> - Task 6：`scheduler-liveness` 改放 JOBS **末尾**（不是 ops-notion-push 之前）——放中间会让后排 job 在停机 >15 分钟重启后的首轮被误判 dead 再"恢复"；测试断言改为最后一项。并注入 `self: 'scheduler-liveness'`，自身以当前时刻计活。scheduler-jobs.test.js 部分 mock 掉 ops-collector / openclaw-guards（原用例真跑 ssh/docker 55s，且会碰生产网关）。
+> - Task 5：失联翻转按轮合并一条 Bark（无 token 兜底 P1），恢复 P2；`lastRunAt = liveness_at ?? at`（不看 ok）；WHERE 加 `silent_sec` 增量 ≥600 条件；下线 job 置 cold 并清 silent_sec；整函数 try/catch 写 `classifyError` 心跳；新增 pg 集成测试。
+> - Task 3：`onStep` 按轮次门控；`isAbandoned()` 步边界停下；超时 env 非法回落默认；`liveness_at = lastCompletedAt ?? loopStartedAt`。
+> - 新增 Task 10：`dispatchOpenClawFromNotion` 反查 ops_workflows 只认 `source='n8n'`。
+
 **全局规则**
 - 分支 `cp-09241015-scheduler-jobs-ops-cockpit`，工作树 `/Users/administrator/worktrees/cecelia/session-5d77803f`。
 - 测试命令一律在 `packages/brain` 下：`npx vitest run src/__tests__/<file> --reporter=dot`。
