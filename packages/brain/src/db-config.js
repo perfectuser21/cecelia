@@ -47,4 +47,9 @@ export const DB_DEFAULTS = {
   max: parseInt(process.env.DB_POOL_MAX || '30', 10),
   idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT_MS || '30000', 10),
   connectionTimeoutMillis: parseInt(process.env.DB_CONN_TIMEOUT_MS || '5000', 10),
+  // 客户端级查询超时（node-pg query_timeout，经 pg-pool 透传到 Client）。
+  // 2026-09-24：notion-gtd-sync 一轮里某个 await 永不返回，循环卡死 8.4h——整轮唯一无界的
+  // 就是 pg 查询（statement_timeout=0、keepalive 7200s）。超时后 pool 丢弃该连接，半死连接随之清出。
+  // 取 10 分钟而非更短：主 pool 同时跑启动 runMigrations 与 preview-destroyer 的 pg_advisory_lock 等待。
+  query_timeout: parseInt(process.env.DB_QUERY_TIMEOUT_MS || '600000', 10),
 };
