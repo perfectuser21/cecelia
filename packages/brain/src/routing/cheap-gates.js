@@ -11,7 +11,9 @@ import { resolveModelRef } from './env.js';
 export async function loadRegistryPool(query) {
   const a = await query(`SELECT name, notion_id FROM ops_agents WHERE status = 'active' ORDER BY name`);
   const p = await query(`SELECT device_name AS serial, host FROM device_locks WHERE device_type = 'phone' ORDER BY device_name`);
-  const w = await query(`SELECT name, notion_id FROM ops_workflows WHERE active = TRUE ORDER BY name`);
+  // 只取 n8n 业务流程：ops_workflows 从 09-24 起也装 Brain 调度 job（source='scheduler'，active=FALSE），
+  // 任务正文出现 ci-patrol / daily-backup 之类 job 名不能被当成 workflowRef 命中。
+  const w = await query(`SELECT name, notion_id FROM ops_workflows WHERE active = TRUE AND source = 'n8n' ORDER BY name`);
   return {
     agents: (a.rows ?? []).map((r) => ({ name: r.name, notionId: r.notion_id ?? null })),
     phones: (p.rows ?? []).map((r) => ({ serial: r.serial, host: r.host ?? null })),
