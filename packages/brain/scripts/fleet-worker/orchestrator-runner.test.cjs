@@ -50,6 +50,7 @@ function build(overrides = {}) {
     resolveMainShaFn: vi.fn(async () => 'a'.repeat(40)),
     env: { DB_HOST: '100.79.41.61', CECELIA_ORBSTACK_HOME: '/Users/host-admin' },
     probeCredentialHome: vi.fn(() => ({ root: '/Users/host-admin', uid: 501 })),
+    existsFn: vi.fn(() => true),
     ...overrides,
   });
   return { runner, prepared, spawned, children };
@@ -194,15 +195,52 @@ describe('orchestrator-runner', () => {
     expect(spawned[0].args[0]).toBe('/private/var/lib/cecelia/runner-checkout/packages/brain/src/orchestrator/run.js');
   });
 
-  it('凭据根探测失败 → start 500 orchestrator_credential_home_unavailable，不 spawn，槽位释放', async () => {
+  it('凭据根探测失败 → start 500 orchestrator_credential_home_unavailable，run 置 failed 终态、不 spawn、槽位释放、重放 409', async () => {
     const { runner, spawned } = build({
       probeCredentialHome: vi.fn(() => { throw new Error('nope'); }),
       maxConcurrent: 1,
     });
     await runner.prepare({ run_id: RUN_ID, task_id: RUN_ID, repo: 'perfectuser21/cecelia' });
-    await expect(runner.start(RUN_ID, { controller_session_id: SESSION_ID, controller_generation: 1 }))
-      .rejects.toMatchObject({ message: 'orchestrator_credential_home_unavailable', statusCode: 500 });
+    const startErr = await runner.start(RUN_ID, { controller_session_id: SESSION_ID, controller_generation: 1 })
+      .catch((err) => err);
+    expect(startErr).toMatchObject({ message: 'orchestrator_credential_home_unavailable', statusCode: 500 });
+    expect(startErr.cause).toMatchObject({ message: 'nope' });
     expect(spawned).toHaveLength(0);
+    expect((await runner.inspect(RUN_ID)).status).toBe('failed');
+    await expect(runner.prepare({ run_id: RUN_ID_2, task_id: RUN_ID_2, repo: 'perfectuser21/cecelia' }))
+      .resolves.toMatchObject({ status: 'prepared' });
+    await expect(runner.start(RUN_ID, { controller_session_id: SESSION_ID, controller_generation: 1 }))
+      .rejects.toMatchObject({ message: 'orchestrator_not_startable', statusCode: 409 });
+    await expect(runner.prepare({ run_id: RUN_ID, task_id: RUN_ID, repo: 'perfectuser21/cecelia' }))
+      .rejects.toMatchObject({ message: 'orchestrator_already_exists', statusCode: 409 });
+  });
+
+  it('runner 入口不存在 → start 500 orchestrator_runner_root_unavailable，run 置 failed、不 spawn、槽位释放', async () => {
+    const existsFn = vi.fn(() => false);
+    const { runner, spawned } = build({
+      env: { DB_HOST: 'x', CECELIA_ORBSTACK_HOME: '/Users/host-admin', CECELIA_ORCHESTRATOR_RUNNER_ROOT: '/srv/missing' },
+      existsFn,
+      maxConcurrent: 1,
+    });
+    await runner.prepare({ run_id: RUN_ID, task_id: RUN_ID, repo: 'perfectuser21/cecelia' });
+    await expect(runner.start(RUN_ID, { controller_session_id: SESSION_ID, controller_generation: 1 }))
+      .rejects.toMatchObject({ message: 'orchestrator_runner_root_unavailable', statusCode: 500 });
+    expect(existsFn).toHaveBeenCalledWith('/srv/missing/packages/brain/src/orchestrator/run.js');
+    expect(spawned).toHaveLength(0);
+    expect((await runner.inspect(RUN_ID)).status).toBe('failed');
+    await expect(runner.prepare({ run_id: RUN_ID_2, task_id: RUN_ID_2, repo: 'perfectuser21/cecelia' }))
+      .resolves.toMatchObject({ status: 'prepared' });
+  });
+
+  it('spawn 返回非法 pid → 502 orchestrator_spawn_failed，run 置 failed、槽位释放', async () => {
+    const { runner } = build({
+      spawnFn: vi.fn(() => ({ pid: 0, once: vi.fn(), unref: vi.fn() })),
+      maxConcurrent: 1,
+    });
+    await runner.prepare({ run_id: RUN_ID, task_id: RUN_ID, repo: 'perfectuser21/cecelia' });
+    await expect(runner.start(RUN_ID, { controller_session_id: SESSION_ID, controller_generation: 1 }))
+      .rejects.toMatchObject({ message: 'orchestrator_spawn_failed', statusCode: 502 });
+    expect((await runner.inspect(RUN_ID)).status).toBe('failed');
     await expect(runner.prepare({ run_id: RUN_ID_2, task_id: RUN_ID_2, repo: 'perfectuser21/cecelia' }))
       .resolves.toMatchObject({ status: 'prepared' });
   });

@@ -1443,6 +1443,66 @@ describe('Fleet Worker Orchestrator API', () => {
     server.close();
   });
 
+  it.each([
+    'orchestrator_credential_home_unavailable',
+    'orchestrator_runner_root_unavailable',
+  ])('5xx 白名单稳定码 %s 原样回给调用方，日志带 cause', async (code) => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const orchestratorRunner = orchestratorRunnerDouble();
+    orchestratorRunner.start.mockImplementation(async () => {
+      const error = new Error(code);
+      error.statusCode = 500;
+      error.cause = new Error('credential_home_no_accounts');
+      throw error;
+    });
+    const errors = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args) => { errors.push(args.join(' ')); });
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      orchestratorRunner,
+      attemptToken: token,
+    });
+    try {
+      const response = await request(server, 'POST', `/harness/orchestrators/${runId}/start`, {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: { controller_session_id: taskId, controller_generation: 1 },
+      });
+      expect(response.statusCode).toBe(500);
+      expect(JSON.parse(response.body)).toEqual({ error: code });
+      expect(errors.join('\n')).toContain(`reason=${code}`);
+      expect(errors.join('\n')).toContain('cause=credential_home_no_accounts');
+    } finally {
+      spy.mockRestore();
+      server.close();
+    }
+  });
+
+  it('非白名单 5xx 仍脱敏为 orchestrator_operation_failed，无 cause 时日志写 cause=-', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const orchestratorRunner = orchestratorRunnerDouble();
+    orchestratorRunner.start.mockImplementation(async () => { throw new Error('secret_internal_detail'); });
+    const errors = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args) => { errors.push(args.join(' ')); });
+    const server = createFleetWorkerServer({
+      probeHealth: vi.fn(async () => safeHealth(1)),
+      orchestratorRunner,
+      attemptToken: token,
+    });
+    try {
+      const response = await request(server, 'POST', `/harness/orchestrators/${runId}/start`, {
+        headers: { ...auth, 'content-type': 'application/json' },
+        body: { controller_session_id: taskId, controller_generation: 1 },
+      });
+      expect(response.statusCode).toBe(500);
+      expect(JSON.parse(response.body)).toEqual({ error: 'orchestrator_operation_failed' });
+      expect(errors.join('\n')).toContain('reason=secret_internal_detail');
+      expect(errors.join('\n')).toContain('cause=-');
+    } finally {
+      spy.mockRestore();
+      server.close();
+    }
+  });
+
   it('returns 404 for orchestrator routes when no orchestratorRunner is wired', async () => {
     const { createFleetWorkerServer } = await loadServerContract();
     const server = createFleetWorkerServer({
@@ -1558,6 +1618,36 @@ describe('Fleet Worker production runtime assembly', () => {
       expect(runtime.roots.credentials.startsWith(mountRoot)).toBe(false);
       expect(runtime.roots.state.startsWith(mountRoot)).toBe(false);
     } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('启动时探测一次凭据根：失败只 console.warn credential_home_probe_failed，不 crash', async () => {
+    const { createFleetWorkerRuntime } = await loadServerContract();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-worker-runtime-'));
+    const tokenFile = path.join(root, 'worker-token');
+    fs.writeFileSync(tokenFile, 'fleet-worker-token-at-least-32-bytes\n', { mode: 0o600 });
+    const warnings = [];
+    const spy = vi.spyOn(console, 'warn').mockImplementation((...args) => { warnings.push(args.join(' ')); });
+    const probeCredentialHome = vi.fn(() => { throw new Error('credential_home_no_accounts'); });
+    try {
+      const runtime = createFleetWorkerRuntime({
+        env: {
+          CECELIA_MACHINE_ID: 'us-mac-m4',
+          CECELIA_RUNNER_DIGEST: `sha256:${'a'.repeat(64)}`,
+          CECELIA_FLEET_WORKER_TOKEN_FILE: tokenFile,
+          CECELIA_FLEET_DATA_ROOT: path.join(root, 'data'),
+          CECELIA_ORBSTACK_HOME: '/Users/orbstack-owner',
+        },
+        runCommand: vi.fn(),
+        probeCredentialHome,
+      });
+      expect(runtime.orchestratorRunner).toBeTruthy();
+      expect(probeCredentialHome).toHaveBeenCalledTimes(1);
+      expect(probeCredentialHome).toHaveBeenCalledWith('/Users/orbstack-owner');
+      expect(warnings.join('\n')).toContain('[fleet-worker] credential_home_probe_failed: credential_home_no_accounts');
+    } finally {
+      spy.mockRestore();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
