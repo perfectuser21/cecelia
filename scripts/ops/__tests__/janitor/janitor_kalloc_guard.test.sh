@@ -77,39 +77,48 @@ else
   fail "正常值不应有 kalloc 日志，实际输出: $OUT_NORMAL"
 fi
 
-# WARN 档：5GB，仅记日志，不调用 curl
-KB_WARN=$((5*1024*1024))
+# 边界下侧：3GB 差 1KB → 仍静默（验证 WARN 线的下边界）
+KB_BELOW_WARN=$((3*1024*1024 - 1))
+OUT_BELOW=$(run_guard "$KB_BELOW_WARN")
+if ! echo "$OUT_BELOW" | grep -qE 'kalloc\.1024'; then
+  ok "WARN 线下方(3GB-1KB)不触发任何 kalloc 日志"
+else
+  fail "WARN 线下方不应有 kalloc 日志，实际输出: $OUT_BELOW"
+fi
+
+# WARN 档：正好 3GB（边界等号侧），仅记日志，不调用 curl
+KB_WARN=$((3*1024*1024))
 OUT_WARN=$(run_guard "$KB_WARN")
 if echo "$OUT_WARN" | grep -q '早期预警' && ! echo "$OUT_WARN" | grep -q 'MOCK_CURL'; then
-  ok "WARN 档(5GB)仅记日志，未调用 Brain 告警"
+  ok "WARN 档(3GB，边界等号侧)仅记日志，未调用 Brain 告警"
 else
   fail "WARN 档预期'早期预警'且无 curl 调用，实际输出: $OUT_WARN"
 fi
 
-# ALERT 档：8.11GB，触发'偏高'日志 + 调用 curl
-OUT_ALERT=$(run_guard 8500000)
+# ALERT 档：正好 5GB（边界等号侧），触发'偏高'日志 + 调用 curl
+OUT_ALERT=$(run_guard $((5*1024*1024)))
 if echo "$OUT_ALERT" | grep -q 'kalloc\.1024 偏高' && echo "$OUT_ALERT" | grep -q 'MOCK_CURL'; then
-  ok "ALERT 档(8.11GB)触发'kalloc.1024 偏高'并调用 Brain 告警"
+  ok "ALERT 档(5GB，边界等号侧)触发'kalloc.1024 偏高'并调用 Brain 告警"
 else
   fail "ALERT 档预期'偏高'+curl调用，实际输出: $OUT_ALERT"
 fi
 
 # CRITICAL 档，非安全时段（10点）：仅告警，不 mock 到 sudo shutdown 调用
-OUT_CRIT_UNSAFE=$(run_guard 12000000 10)
+OUT_CRIT_UNSAFE=$(run_guard $((7*1024*1024)) 10)
 if echo "$OUT_CRIT_UNSAFE" | grep -q 'kalloc\.1024 危险.*非安全时段仅告警' \
    && echo "$OUT_CRIT_UNSAFE" | grep -q 'MOCK_CURL' \
    && ! echo "$OUT_CRIT_UNSAFE" | grep -q 'MOCK_SUDO'; then
-  ok "CRITICAL 档(11.44GB)非安全时段(10点)仅告警，未触发重启"
+  ok "CRITICAL 档(7GB，边界等号侧)非安全时段(10点)仅告警，未触发重启"
 else
   fail "CRITICAL 非安全时段预期仅告警不重启，实际输出: $OUT_CRIT_UNSAFE"
 fi
 
 # CRITICAL 档，安全时段（4点）：触发 mock 重启（sudo shutdown 被调用）
-OUT_CRIT_SAFE=$(run_guard 12000000 04)
+OUT_CRIT_SAFE=$(run_guard $((7*1024*1024)) 04)
 if echo "$OUT_CRIT_SAFE" | grep -q 'kalloc\.1024 危险.*安全时段内自动重启止损' \
    && echo "$OUT_CRIT_SAFE" | grep -q 'MOCK_CURL' \
    && echo "$OUT_CRIT_SAFE" | grep -q 'MOCK_SUDO: -n shutdown -r now'; then
-  ok "CRITICAL 档(11.44GB)安全时段(4点)触发自动重启止损"
+  ok "CRITICAL 档(7GB，边界等号侧)安全时段(4点)触发自动重启止损"
 else
   fail "CRITICAL 安全时段预期触发重启，实际输出: $OUT_CRIT_SAFE"
 fi
@@ -117,7 +126,7 @@ fi
 # 八进制炸弹回归：hour="08"/"09" 前导零若未加 10# 前缀，bash 算术解析会报错
 # （同 etime_to_secs 教训，本仓库已实证复现过一次）
 STDERR_08=$(mktemp)
-OUT_CRIT_OCTAL=$(run_guard 12000000 08 2>"$STDERR_08")
+OUT_CRIT_OCTAL=$(run_guard $((7*1024*1024)) 08 2>"$STDERR_08")
 ERR_08=$(cat "$STDERR_08"); rm -f "$STDERR_08"
 if [ -z "$ERR_08" ] && echo "$OUT_CRIT_OCTAL" | grep -q '非安全时段仅告警'; then
   ok "hour=08 无八进制解析错误，正确判定为非安全时段"
