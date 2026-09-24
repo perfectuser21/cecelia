@@ -964,11 +964,15 @@ export async function finalizeKernelRun(pool, {
  * 交下个 tick 重派；payload 记延后计数与原因，达到 maxDefers 返回 exhausted 让调用方回落
  * 终态，防跑场机长期不可用时无限空转。
  */
+// 2026-09-24 22:10 实证：两条 run 各跑 5–6 小时占满 MMV 双槽，第三条任务每 2 分钟 tick 撞一次
+// 429 deferred；上限 10 次 = 20 分钟即判终态，远小于一条 run。按"等一整轮 run"量级设默认（300 次 ≈ 10h）。
+export const DEFAULT_KERNEL_LAUNCH_MAX_DEFERS = 300;
+
 export async function requeueKernelRunLaunchDeferred(pool, {
   runId,
   expectedTaskId,
   reason,
-  maxDefers = 10,
+  maxDefers = DEFAULT_KERNEL_LAUNCH_MAX_DEFERS,
   now = () => new Date(),
 }) {
   const client = await pool.connect();
