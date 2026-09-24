@@ -24,6 +24,9 @@
  *  6. 整函数包 try/catch：任一步抛错复用 ops-collector.js 的 `classifyError` 归类
  *     （unreachable/schema_drift/config_missing/parse_error），写 scheduler 来源的错误心跳
  *     并返回 { ok:false }，不静默变旧、不再统一硬编码 parse_error（与 n8n/launchd 腿口径一致）。
+ *  7. `self`（本 job 自己的名字）以 `collectedAt` 为活性时刻，不查自己的哨兵——自己的哨兵要等
+ *     handler 返回后才写，Brain 停机重启后的首轮它必然是旧值，会把自己误判 dead 再"恢复"，
+ *     白发一条 Bark 一条 P2。此刻正在跑就是最诚实的活性证据。
  *
  * JOBS 经 opts.jobs 注入，不 import scheduler-jobs.js（会成环：scheduler-jobs → 本模块 →
  * scheduler-jobs；仓库先例 routes/sentinel.js 同样"不 import，避免拖入 handler 依赖链"）。
@@ -52,6 +55,7 @@ export async function runSchedulerLiveness(pool, opts = {}) {
     raise = defaultRaise,
     bark = defaultBark,
     sentinelPrefix = DEFAULT_SENTINEL_PREFIX,
+    self = null,
   } = opts;
   const collectedAt = new Date(now).toISOString();
 
@@ -73,8 +77,8 @@ export async function runSchedulerLiveness(pool, opts = {}) {
       const rec = sentinels.get(job.name) ?? null;
       const intervalSec = Number.isFinite(job.livenessIntervalSec) && job.livenessIntervalSec > 0
         ? job.livenessIntervalSec : DEFAULT_INTERVAL_SEC;
-      // 纪律 1：自报优先，退回哨兵 at；不看 ok
-      const lastRunAt = rec?.liveness_at ?? rec?.at ?? null;
+      // 纪律 1：自报优先，退回哨兵 at；不看 ok。纪律 7：本 job 自己以当前时刻计活，不查自己的哨兵
+      const lastRunAt = job.name === self ? collectedAt : (rec?.liveness_at ?? rec?.at ?? null);
       const lv = classifyDeclaredLiveness({ lastRunAt, intervalSec, now });
       const meta = {
         kind: 'scheduler_job', description: job.description ?? '', timeoutMs: job.timeoutMs ?? null,

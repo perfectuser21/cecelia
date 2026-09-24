@@ -139,7 +139,8 @@ export const JOBS = [
   { name: 'qiumi-device-reconcile', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reconcileDelegatedDeviceJobs(pool), description: '秋米设备任务对账（60s，子 device_job 终态回写父 qiumi_task，PR3 补充五）' },
   // 放末尾：第一轮串行跑到这里时前面所有 job 的哨兵都已刷新，重启后不会把后排 job 误判 dead 再"恢复"。JOBS 经闭包注入——
   // 本模块已 import ops-collector/notion-push-sync，反向 import 会成环（routes/sentinel.js 同款避坑）。
-  { name: 'scheduler-liveness', needsPool: true, timeoutMs: 60_000, handler: (pool) => runSchedulerLiveness(pool, { jobs: JOBS }), description: 'Brain 调度 job 入运行舱：working_memory 哨兵→ops_workflows(source=scheduler)，活性按声明间隔算，翻转 dead 即 P1 告警（09-24 notion-gtd-sync 卡死 8.4h 无告警案，决策 69cd802f，task 50a2c256）' },
+  // scheduler 行推 Notion 滞后一轮 60s，设计 §3.2 接受。
+  { name: 'scheduler-liveness', needsPool: true, timeoutMs: 60_000, handler: (pool) => runSchedulerLiveness(pool, { jobs: JOBS, self: 'scheduler-liveness' }), description: 'Brain 调度 job 入运行舱：working_memory 哨兵→ops_workflows(source=scheduler)，活性按声明间隔算，翻转 dead 按轮合并一条 Bark（无 BARK_TOKEN 兜底 P1）、恢复 P2（09-24 notion-gtd-sync 卡死 8.4h 无告警案，决策 69cd802f，task 50a2c256）' },
 ];
 
 const PROJECTION_JOB_NAME_SET = new Set([
