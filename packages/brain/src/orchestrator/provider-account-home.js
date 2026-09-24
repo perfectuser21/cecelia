@@ -27,7 +27,10 @@ export function resolveProviderAccountHome(provider, account) {
 
 export function resolveCredentialHomeRoot(env = process.env) {
   const root = env?.CECELIA_CREDENTIAL_HOME_ROOT;
-  return typeof root === 'string' && root.length > 0 && path.isAbsolute(root) ? root : os.homedir();
+  if (typeof root !== 'string' || root.length === 0) return os.homedir();
+  // 配了却不是绝对路径 = 部署写错，fail-loud，不能悄悄回退 homedir 掩盖问题。
+  if (!path.isAbsolute(root)) throw new Error('credential_home_root_invalid');
+  return root;
 }
 
 export function resolveCredentialAccountHome(provider, account, { env = process.env } = {}) {
@@ -35,12 +38,24 @@ export function resolveCredentialAccountHome(provider, account, { env = process.
   return path.join(resolveCredentialHomeRoot(env), providerAccountDirName(provider, account));
 }
 
+const MAX_UID = 0xFFFFFFFF;
+
+function trustedUidsError(segment) {
+  const error = new Error(
+    `credential_trusted_uids_invalid: CECELIA_CREDENTIAL_TRUSTED_UIDS segment "${segment}"`,
+  );
+  error.code = 'credential_trusted_uids_invalid';
+  return error;
+}
+
 export function parseTrustedUids(env = process.env) {
   const raw = env?.CECELIA_CREDENTIAL_TRUSTED_UIDS;
   if (typeof raw !== 'string' || raw.trim().length === 0) return [];
   return raw.split(',').map((part) => {
     const text = part.trim();
-    if (!/^\d+$/.test(text)) throw new Error('credential_trusted_uids_invalid');
-    return Number(text);
+    if (!/^\d+$/.test(text)) throw trustedUidsError(text);
+    const uid = Number(text);
+    if (uid > MAX_UID) throw trustedUidsError(text);
+    return uid;
   });
 }

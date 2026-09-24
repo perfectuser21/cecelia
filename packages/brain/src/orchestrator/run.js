@@ -349,6 +349,8 @@ export async function buildRealDeps(overrides = {}) {
         ?? createCredentialBroker({
           controllerMachineId: machineId,
           loadCredential: overrides.loadCredential
+            // 凭据目录只经 overrides.env / overrides.loadCredential 注入；
+            // overrides.resolveAccountHome 只影响执行目录（传给 createDispatcher）。
             ?? createFileCredentialLoader({
               accountHomeResolver: (accountId) => (
                 resolveCredentialAccountHome('codex', accountId, { env })
