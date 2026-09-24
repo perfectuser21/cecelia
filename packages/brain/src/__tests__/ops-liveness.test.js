@@ -160,5 +160,7 @@ describe('classifyDeclaredLiveness — 声明间隔的活性（scheduler job 用
 
   it('间隔非法（0/负/NaN）→ 按 60s 兜底', () => {
     expect(classifyDeclaredLiveness({ lastRunAt: ago(1), intervalSec: 0, now }).dead_after_sec).toBe(1200);
+    expect(classifyDeclaredLiveness({ lastRunAt: ago(1), intervalSec: -5, now }).dead_after_sec).toBe(1200);
+    expect(classifyDeclaredLiveness({ lastRunAt: ago(1), intervalSec: NaN, now }).dead_after_sec).toBe(1200);
   });
 });
