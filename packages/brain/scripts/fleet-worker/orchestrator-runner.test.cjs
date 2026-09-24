@@ -48,7 +48,8 @@ function build(overrides = {}) {
     }),
     mkdirFn: vi.fn(), openFn: vi.fn(() => 7),
     resolveMainShaFn: vi.fn(async () => 'a'.repeat(40)),
-    env: { DB_HOST: '100.79.41.61' },
+    env: { DB_HOST: '100.79.41.61', CECELIA_ORBSTACK_HOME: '/Users/host-admin' },
+    probeCredentialHome: vi.fn(() => ({ root: '/Users/host-admin', uid: 501 })),
     ...overrides,
   });
   return { runner, prepared, spawned, children };
@@ -168,5 +169,57 @@ describe('orchestrator-runner', () => {
     const { runner } = build();
     await expect(runner.inspect('not-a-uuid')).rejects.toThrow('orchestrator_run_id_invalid');
     await expect(runner.terminal('not-a-uuid', {})).rejects.toThrow('orchestrator_run_id_invalid');
+  });
+
+  it('start 注入凭据根与可信属主 uid，runner/skills 走 CECELIA_ORCHESTRATOR_RUNNER_ROOT（回填 09-20 热修）', async () => {
+    const { runner, spawned } = build({
+      env: { DB_HOST: 'x', CECELIA_ORBSTACK_HOME: '/Users/host-admin', CECELIA_ORCHESTRATOR_RUNNER_ROOT: '/srv/runner-checkout' },
+    });
+    await runner.prepare({ run_id: RUN_ID, task_id: RUN_ID, repo: 'perfectuser21/cecelia' });
+    await runner.start(RUN_ID, { controller_session_id: SESSION_ID, controller_generation: 1 });
+    const { args, opts } = spawned[0];
+    expect(args[0]).toBe('/srv/runner-checkout/packages/brain/src/orchestrator/run.js');
+    expect(opts.env).toMatchObject({
+      CECELIA_CREDENTIAL_HOME_ROOT: '/Users/host-admin',
+      CECELIA_CREDENTIAL_TRUSTED_UIDS: '501',
+      CECELIA_SKILLS_ROOT: '/srv/runner-checkout/packages/workflows/skills',
+      REPO_ROOT: `/ws/${RUN_ID}`,
+    });
+  });
+
+  it('runner root 缺省为 /private/var/lib/cecelia/runner-checkout（不再指向任务 worktree）', async () => {
+    const { runner, spawned } = build();
+    await runner.prepare({ run_id: RUN_ID, task_id: RUN_ID, repo: 'perfectuser21/cecelia' });
+    await runner.start(RUN_ID, { controller_session_id: SESSION_ID, controller_generation: 1 });
+    expect(spawned[0].args[0]).toBe('/private/var/lib/cecelia/runner-checkout/packages/brain/src/orchestrator/run.js');
+  });
+
+  it('凭据根探测失败 → start 500 orchestrator_credential_home_unavailable，不 spawn，槽位释放', async () => {
+    const { runner, spawned } = build({
+      probeCredentialHome: vi.fn(() => { throw new Error('nope'); }),
+      maxConcurrent: 1,
+    });
+    await runner.prepare({ run_id: RUN_ID, task_id: RUN_ID, repo: 'perfectuser21/cecelia' });
+    await expect(runner.start(RUN_ID, { controller_session_id: SESSION_ID, controller_generation: 1 }))
+      .rejects.toMatchObject({ message: 'orchestrator_credential_home_unavailable', statusCode: 500 });
+    expect(spawned).toHaveLength(0);
+    await expect(runner.prepare({ run_id: RUN_ID_2, task_id: RUN_ID_2, repo: 'perfectuser21/cecelia' }))
+      .resolves.toMatchObject({ status: 'prepared' });
+  });
+
+  it('默认 probeCredentialHome：根下无任何 .codex-team{1..5}/auth.json 可读 → 抛错；有则返回根属主 uid', () => {
+    const { probeCredentialHome } = require('./orchestrator-runner.cjs');
+    const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cred-root-'));
+    try {
+      expect(() => probeCredentialHome(root)).toThrow('credential_home_no_accounts');
+      fs.mkdirSync(path.join(root, '.codex-team2'));
+      fs.writeFileSync(path.join(root, '.codex-team2', 'auth.json'), '{}');
+      expect(probeCredentialHome(root)).toEqual({ root, uid: process.getuid() });
+      expect(() => probeCredentialHome('')).toThrow('credential_home_root_invalid');
+      expect(() => probeCredentialHome(path.join(root, 'missing'))).toThrow();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
