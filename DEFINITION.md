@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.317.10
+**Brain 版本**: 1.317.11
 
 ## 1.283.0
 
@@ -48,6 +48,12 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.317.11 — 编排桥 prepare 超时默认 180s→600s 并支持 KERNEL_FLEET_ORCHESTRATOR_PREPARE_TIMEOUT_MS 覆盖
+
+- 根因（任务 f61fc0c6，2026-09-24 21:50 实证）：MMV 建工作区 = `git clone --bare --no-hardlinks` 整库拷贝 + `npm ci`，两条 run 并发时实测 7 分钟；`orchestrator-remote-bridge.js` prepare 超时 180s 硬编码、无 env 覆盖（attempt 桥有 `KERNEL_FLEET_PREPARE_TIMEOUT_MS`，编排桥没有）→ Brain 先放弃、跑场机继续 prepare → 作业停在 prepared 占槽到 TTL，期间派发全部 429 deferred 空转（run 5ae4b0e2 后连续 6 次）。
+- 修法：默认 600s；`KERNEL_FLEET_ORCHESTRATOR_PREPARE_TIMEOUT_MS` 可覆盖（非法值回落默认）；桥对象暴露 `prepareTimeoutMs` 供断言。后续刀：workspace-manager 用 `--shared/--reference` 代替整库拷贝，把 prepare 压到秒级。
+- 同 PR：`requeueKernelRunLaunchDeferred` 默认延后上限 10 → 300（`DEFAULT_KERNEL_LAUNCH_MAX_DEFERS`）——两条 run 各跑 5–6 小时占满双槽时，第三条任务每 tick 429 deferred，20 分钟就被判终态不合理，须能等完一整轮 run。后续刀：派发前先查跑场机容量，不为必 429 的派发建 run 行。
 
 ## Brain 1.317.10 — 远程点火撞跑场机 429/超时改 deferred 回队 + fleet-worker prepared 作业 TTL 释放槽位
 
