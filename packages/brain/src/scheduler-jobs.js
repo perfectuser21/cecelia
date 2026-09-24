@@ -43,6 +43,7 @@ import { applyProjectionCommands } from './projection/commands.js';
 import { runProjectionOutbox } from './projection/outbox.js';
 import { runNotionTaskCommandIngest } from './projection/notion.js';
 import { runOpsCollector } from './ops-collector.js';
+import { runSchedulerLiveness } from './ops-scheduler-liveness.js';
 import { runModelAccountsCollector } from './ops-model-accounts-collector.js';
 import { runOpenclawGuards } from './openclaw-guards.js';
 import { maybeRunFeishuTaskLedger } from './feishu-task-ledger.js';
@@ -136,6 +137,9 @@ export const JOBS = [
   { name: 'crystal-judge', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => maybeRunCrystalJudge(pool), description: '每日结晶判官（北京05:00窗口+当日去重，OpenClaw 八格六指标聚合→三态判决→每日结晶报告落库，Crystal 第4件）' },
   { name: 'openclaw-agent-reaper', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reapOpenclawAgentRuns(pool), description: '秋米 openclaw-agent 收割（60s，读 MMV ~/brain-runs/<run_id>.exit → completed_no_pr/failed，PR3）' },
   { name: 'qiumi-device-reconcile', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reconcileDelegatedDeviceJobs(pool), description: '秋米设备任务对账（60s，子 device_job 终态回写父 qiumi_task，PR3 补充五）' },
+  // 放末尾：第一轮串行跑到这里时前面所有 job 的哨兵都已刷新，重启后不会把后排 job 误判 dead 再"恢复"。JOBS 经闭包注入——
+  // 本模块已 import ops-collector/notion-push-sync，反向 import 会成环（routes/sentinel.js 同款避坑）。
+  { name: 'scheduler-liveness', needsPool: true, timeoutMs: 60_000, handler: (pool) => runSchedulerLiveness(pool, { jobs: JOBS }), description: 'Brain 调度 job 入运行舱：working_memory 哨兵→ops_workflows(source=scheduler)，活性按声明间隔算，翻转 dead 即 P1 告警（09-24 notion-gtd-sync 卡死 8.4h 无告警案，决策 69cd802f，task 50a2c256）' },
 ];
 
 const PROJECTION_JOB_NAME_SET = new Set([
