@@ -202,4 +202,21 @@ describe('runSchedulerLiveness — 调度 job 入运行舱', () => {
     const sel = pool.queries.find((q) => q.sql.includes('FROM working_memory'));
     expect(sel.params[0]).toBe('custom_prefix:%');
   });
+
+  it('self=自身名字时不查自己的哨兵，以当前时刻计活（哨兵是 5000s 前的旧值也判 ok）', async () => {
+    const selfJobs = [{ name: 'scheduler-liveness' }];
+    const pool = fakePool({ sentinels: { 'scheduler-liveness': { at: iso(5000), ok: true } } });
+    await runSchedulerLiveness(pool, { jobs: selfJobs, now: NOW, raise: vi.fn(), bark: vi.fn(), self: 'scheduler-liveness' });
+    const up = pool.queries.find((q) => q.sql.includes('INSERT INTO ops_workflows'));
+    expect(up.params[6]).toBe('ok');
+    expect(up.params[3]).toBe(new Date(NOW).toISOString()); // last_run_at = collectedAt，不是陈旧哨兵
+  });
+
+  it('不传 self 时同样的陈旧哨兵会判 dead（证明上一条用例是 self 生效，不是巧合）', async () => {
+    const selfJobs = [{ name: 'scheduler-liveness' }];
+    const pool = fakePool({ sentinels: { 'scheduler-liveness': { at: iso(5000), ok: true } } });
+    await runSchedulerLiveness(pool, { jobs: selfJobs, now: NOW, raise: vi.fn(), bark: vi.fn() });
+    const up = pool.queries.find((q) => q.sql.includes('INSERT INTO ops_workflows'));
+    expect(up.params[6]).toBe('dead');
+  });
 });
