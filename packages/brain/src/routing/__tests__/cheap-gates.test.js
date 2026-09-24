@@ -35,7 +35,7 @@ describe('loadRegistryPool', () => {
     const query = vi.fn().mockResolvedValue({ rows: [] });
     await loadRegistryPool(query);
     const wfSql = query.mock.calls.find(([sql]) => /FROM ops_workflows/.test(sql))[0];
-    expect(wfSql).toMatch(/source = 'n8n'/);
+    expect(wfSql).toMatch(/source\s*=\s*'n8n'/);
     expect(wfSql).toMatch(/active = TRUE/);
   });
 });
