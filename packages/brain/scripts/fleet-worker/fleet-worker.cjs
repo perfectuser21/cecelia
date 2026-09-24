@@ -21,7 +21,7 @@ const {
 } = require('./github-credential-envelope.cjs');
 const { probeFleetWorkerHealth } = require('./node-probe.cjs');
 const { createWorkspaceManager } = require('./workspace-manager.cjs');
-const { createOrchestratorRunner } = require('./orchestrator-runner.cjs');
+const { createOrchestratorRunner, probeCredentialHome } = require('./orchestrator-runner.cjs');
 
 const MAX_STRING_LENGTH = 1_024;
 const MAX_RESPONSE_BYTES = 65_536;
@@ -31,6 +31,17 @@ const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 5_231;
 const ATTEMPT_ACTION_PATH = /^\/harness\/attempts\/([a-f0-9-]+)\/(inspect|start|cancel|terminal)$/;
 const ORCHESTRATOR_ACTION_PATH = /^\/harness\/orchestrators\/([a-f0-9-]+)\/(start|inspect|terminal)$/;
+// orchestrator 5xx 默认脱敏为通用码；以下稳定码不含内部细节，原样回给 Brain 以便写进 failure_reason。
+const ORCHESTRATOR_PASSTHROUGH_5XX = new Set([
+  'orchestrator_credential_home_unavailable',
+  'orchestrator_runner_root_unavailable',
+]);
+// safeString 会把含 credential/account 的串整体换成 redacted；这些是不含内部细节的稳定码，日志须原样可见。
+const STABLE_LOG_CODES = new Set([
+  ...ORCHESTRATOR_PASSTHROUGH_5XX,
+  'orbstack_home_invalid',
+  'credential_home_no_accounts',
+]);
 const UNTRUSTED_WORKSPACE_FIELDS = new Set([
   'cwd',
   'worktree_path',
@@ -43,6 +54,10 @@ const CANONICAL_MACHINE_IDS = new Set([
 ]);
 const RUNNER_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const POSTGRES_IMAGE = 'pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62';
+
+function logCode(value, fallback) {
+  return STABLE_LOG_CODES.has(value) ? value : safeString(value, fallback);
+}
 
 function safeString(value, fallback = 'unavailable') {
   if (typeof value !== 'string' || value.length === 0) return fallback;
@@ -342,6 +357,7 @@ function prepareMountRoot(sharedTmp) {
 function createFleetWorkerRuntime({
   env = {},
   runCommand,
+  probeCredentialHome: probeCredentialHomeFn = probeCredentialHome,
 } = {}) {
   const workerId = env.CECELIA_MACHINE_ID;
   if (!CANONICAL_MACHINE_IDS.has(workerId)) {
@@ -427,6 +443,12 @@ function createFleetWorkerRuntime({
     maxConcurrent: Number(env.CECELIA_ORCHESTRATOR_MAX_CONCURRENT ?? 2),
     env,
   });
+  // 启动时探测一次凭据根，只告警不阻断：attempt 面不依赖它，orchestrator start 时还会再探测并 fail-loud。
+  try {
+    probeCredentialHomeFn(env.CECELIA_ORBSTACK_HOME);
+  } catch (error) {
+    console.warn(`[fleet-worker] credential_home_probe_failed: ${logCode(error?.message, 'unknown')}`);
+  }
   return Object.freeze({
     attemptRunner,
     orchestratorRunner,
@@ -641,13 +663,17 @@ function createFleetWorkerServer(options = {}) {
       } catch (error) {
         const statusCode = requestErrorStatus(error);
         // 5xx 真实原因不回给调用方，只留服务端日志（同 attempt 段 run 2a813900 教训）。
-        const errorCode = statusCode >= 500
-          ? 'orchestrator_operation_failed'
-          : safeString(error.message, 'invalid_request');
+        let errorCode = safeString(error.message, 'invalid_request');
+        if (statusCode >= 500) {
+          errorCode = ORCHESTRATOR_PASSTHROUGH_5XX.has(error?.message)
+            ? error.message
+            : 'orchestrator_operation_failed';
+        }
         if (statusCode >= 500) {
           console.error(
             `[fleet-worker] orchestrator_request_failed url=${request.url}`
-            + ` reason=${safeString(error?.message, 'unknown')}`,
+            + ` reason=${logCode(error?.message, 'unknown')}`
+            + ` cause=${logCode(error?.cause?.message, '-')}`,
           );
         }
         writeJson(response, statusCode, { error: errorCode });

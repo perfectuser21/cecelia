@@ -4,6 +4,7 @@ import {
   closeSync,
   constants as fsConstants,
   fstatSync,
+  lstatSync,
   openSync,
   readFileSync,
 } from 'node:fs';
@@ -18,6 +19,10 @@ const MAX_AUTH_JSON_BYTES = 196_608;
 
 function fail(code) {
   throw new Error(code);
+}
+
+function isCredentialErrorCode(message) {
+  return typeof message === 'string' && /^credential_[a-z_]+$/.test(message);
 }
 
 function tokenExpiry(auth) {
@@ -54,10 +59,12 @@ function validTimestamp(value) {
 
 export function createFileCredentialLoader({
   accountHomeResolver,
+  trustedUids = [],
   openFile = openSync,
   fstat = fstatSync,
   readFile = readFileSync,
   closeFile = closeSync,
+  statDirectory = lstatSync,
   maximumBytes = MAX_AUTH_JSON_BYTES,
 } = {}) {
   if (typeof accountHomeResolver !== 'function') {
@@ -66,6 +73,25 @@ export function createFileCredentialLoader({
   if (!Number.isInteger(maximumBytes) || maximumBytes <= 0) {
     fail('credential_source_limit_invalid');
   }
+  if (
+    !Array.isArray(trustedUids)
+    || trustedUids.some((uid) => !Number.isInteger(uid) || uid < 0)
+  ) {
+    fail('credential_trusted_uids_invalid');
+  }
+  const trusted = new Set(trustedUids);
+  // 属主判定 fail-closed：uid 非整数一律不可信；平台无 getuid 时，
+  // 仅在未声明 trustedUids 的情况下跳过属主校验，声明了则无法比对、视为不可信。
+  const ownerTrusted = (uid) => {
+    if (!Number.isInteger(uid)) return false;
+    if (typeof process.getuid !== 'function') return trusted.size === 0;
+    return uid === process.getuid() || trusted.has(uid);
+  };
+  // 保密性由源侧负责，本 loader 只防篡改/伪造：属主须可信，文件与父目录不得被组/他人写，
+  // 不得是符号链接，文件不得带执行位。
+  const fileModeAcceptable = (mode) => (mode & 0o400) !== 0
+    && (mode & 0o022) === 0
+    && (mode & 0o111) === 0;
 
   return async function loadFileCredential(accountId) {
     if (!ACCOUNT_PATTERN.test(accountId ?? '')) {
@@ -82,21 +108,25 @@ export function createFileCredentialLoader({
       ) {
         fail('credential_source_path_invalid');
       }
+      const parent = statDirectory(accountHome);
+      if (
+        !parent.isDirectory()
+        || parent.isSymbolicLink()
+        || !ownerTrusted(parent.uid)
+        || (parent.mode & 0o022) !== 0
+      ) {
+        fail('credential_source_permissions');
+      }
       authFile = path.join(accountHome, 'auth.json');
       descriptor = openFile(
         authFile,
         fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
       );
       const stat = fstat(descriptor);
-      const permissions = stat.mode & 0o777;
       if (
         !stat.isFile()
-        || ![0o400, 0o600].includes(permissions)
-        || (
-          typeof process.getuid === 'function'
-          && Number.isInteger(stat.uid)
-          && stat.uid !== process.getuid()
-        )
+        || !fileModeAcceptable(stat.mode & 0o777)
+        || !ownerTrusted(stat.uid)
       ) {
         fail('credential_source_permissions');
       }
@@ -105,7 +135,7 @@ export function createFileCredentialLoader({
       }
       return readFile(descriptor, 'utf8');
     } catch (error) {
-      if (error?.message?.startsWith('credential_')) throw error;
+      if (isCredentialErrorCode(error?.message)) throw error;
       if (['EACCES', 'ELOOP'].includes(error?.code)) {
         fail('credential_source_permissions');
       }
@@ -163,7 +193,7 @@ export function createCredentialBroker({
         }
         auth = JSON.parse(raw);
       } catch (error) {
-        if (error?.message === 'credential_payload_too_large') throw error;
+        if (isCredentialErrorCode(error?.message)) throw error;
         fail('credential_payload_invalid');
       }
       if (!auth || typeof auth !== 'object' || Array.isArray(auth)) {
