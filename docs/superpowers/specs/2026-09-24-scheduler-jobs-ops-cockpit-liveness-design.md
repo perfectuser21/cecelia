@@ -29,6 +29,7 @@ Brain task `50a2c256` ｜ 决策 `69cd802f`（模型）｜ Bug PrepPRD `sprints/
 
 - `gtdSyncJobHandler` 立即返回，哨兵的 `at` 每分钟都刷新，**内层循环死了也刷新**——所以活性必须用 `liveness_at = 最后一轮完成时刻`，不能用哨兵时间戳。
 - 超时的那一轮不算活：`liveness_at` 只在整轮真正跑完时推进。
+- 一轮都没完成过时用**循环启动时刻**兜底（`lastCompletedAt ?? loopStartedAt`），不返回 null：否则调度器丢掉 null、采集器回退哨兵 `at`（每分钟都新），开机首轮就挂住的循环会永远显示 ok——这正是要杀的病。
 - 其他 job 不返回 `liveness_at`，采集时回退为哨兵 `at`（handler 被调用即视为活）。
 
 JOBS 条目可选声明 `livenessIntervalSec`（notion-gtd-sync = 30）；未声明的按调度轮 60s。
