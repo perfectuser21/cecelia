@@ -878,7 +878,7 @@ export const GHA_CRON_CMD =
 let lastRunAt = 0;
 export function __resetOpsCollectorForTest() { lastRunAt = 0; }
 
-async function writeHeartbeat(pool, source, host, status, reasonCode, lastError, collectedAt) {
+export async function writeHeartbeat(pool, source, host, status, reasonCode, lastError, collectedAt) {
   await pool.query(
     `INSERT INTO ops_source_heartbeats (source, host_alias, last_report_at, last_collected_at, source_status, reason_code, last_error, updated_at)
      VALUES ($1,$2,NOW(),$3,$4,$5,$6,NOW())
@@ -930,7 +930,7 @@ async function writeSchedulesSnapshot(pool, source, host, entries, collectedAt) 
   }
 }
 
-function classifyError(e) {
+export function classifyError(e) {
   const msg = String(e?.message || '');
   if (/timed? ?out|connect|unreachable|Connection refused|ETIMEDOUT/i.test(msg)) return ['unreachable', 'ssh_or_exec_failed'];
   if (/schema_drift/.test(msg)) return ['schema_drift', 'schema_drift'];

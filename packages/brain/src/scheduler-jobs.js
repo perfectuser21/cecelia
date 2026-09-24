@@ -43,6 +43,7 @@ import { applyProjectionCommands } from './projection/commands.js';
 import { runProjectionOutbox } from './projection/outbox.js';
 import { runNotionTaskCommandIngest } from './projection/notion.js';
 import { runOpsCollector } from './ops-collector.js';
+import { runSchedulerLiveness } from './ops-scheduler-liveness.js';
 import { runModelAccountsCollector } from './ops-model-accounts-collector.js';
 import { runOpenclawGuards } from './openclaw-guards.js';
 import { maybeRunFeishuTaskLedger } from './feishu-task-ledger.js';
@@ -129,13 +130,17 @@ export const JOBS = [
   // 顺序要紧：先采集再推送，否则推的是上一轮的旧数（尤其 liveness 要用最新 last_run_at 算）
   { name: 'ops-notion-push', needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionPush(pool), description: '运行舱四表推 Notion 驾驶舱（机器列单向覆盖含活性告警）。旧链挂在无人import的legacy-notion-push-scheduler上从不执行，致Notion停更两天，故单独接现代调度层' },
   { name: 'notion-inlet-ingest', needsPool: true, timeoutMs: 120_000, handler: (pool) => runNotionInletIngest(pool), description: '✍️入口血管（三面模型PR②b，决策297ffee5）：遍历注册表 face=inlet&active 的库，「决策」库→decisions、员工Skill库zip→/api/skill-eval/upload；收据表幂等，人改了再收并留痕，机器不写入口库；自gate 5min' },
-  { name: 'notion-gtd-sync', needsPool: true, timeoutMs: 30_000, handler: (pool) => gtdSyncJobHandler(pool), description: '秋米中文GTD表↔英文Tasks库双向同步+入账+急停+回写（QIUMI_SYNC_ENABLED 门，handler 只确保 30s 自循环在跑并回报上次结果；决策 b8abd28c，task b7efdbff）' },
+  { name: 'notion-gtd-sync', needsPool: true, timeoutMs: 30_000, livenessIntervalSec: 30, handler: (pool) => gtdSyncJobHandler(pool), description: '秋米中文GTD表↔英文Tasks库双向同步+入账+急停+回写（QIUMI_SYNC_ENABLED 门，handler 只确保 30s 自循环在跑并回报上次结果；活性按 handler 自报 liveness_at 算，09-24 卡死案；决策 b8abd28c，task b7efdbff）' },
   { name: 'ops-notion-ingest', needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionIngest(pool, { execFn: defaultExec }), description: '运行舱人工列回读（Notion→Brain，last_edited_time增量）。含停用意图落实——主理人拍板直接生效真停n8n，故幂等+留痕+失败落enable_error显红' },
   // 顺序要紧：先把编码线格子成败搬进判官口粮，再让判官判——反过来判的是上一轮的旧账
   { name: 'crystal-coding-evidence', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => syncCodingEvidence({ dbPool: pool }), description: '编码线九格证据同步（10min自gate，harness_attempts+sequencer_ledger→crystal_run_evidence，只补账不代判，判官口粮第二铲）' },
   { name: 'crystal-judge', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => maybeRunCrystalJudge(pool), description: '每日结晶判官（北京05:00窗口+当日去重，OpenClaw 八格六指标聚合→三态判决→每日结晶报告落库，Crystal 第4件）' },
   { name: 'openclaw-agent-reaper', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reapOpenclawAgentRuns(pool), description: '秋米 openclaw-agent 收割（60s，读 MMV ~/brain-runs/<run_id>.exit → completed_no_pr/failed，PR3）' },
   { name: 'qiumi-device-reconcile', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reconcileDelegatedDeviceJobs(pool), description: '秋米设备任务对账（60s，子 device_job 终态回写父 qiumi_task，PR3 补充五）' },
+  // 放末尾：第一轮串行跑到这里时前面所有 job 的哨兵都已刷新，重启后不会把后排 job 误判 dead 再"恢复"。JOBS 经闭包注入——
+  // 本模块已 import ops-collector/notion-push-sync，反向 import 会成环（routes/sentinel.js 同款避坑）。
+  // scheduler 行推 Notion 滞后一轮 60s，设计 §3.2 接受。
+  { name: 'scheduler-liveness', needsPool: true, timeoutMs: 60_000, handler: (pool) => runSchedulerLiveness(pool, { jobs: JOBS, self: 'scheduler-liveness' }), description: 'Brain 调度 job 入运行舱：working_memory 哨兵→ops_workflows(source=scheduler)，活性按声明间隔算，翻转 dead 按轮合并一条 Bark（无 BARK_TOKEN 兜底 P1）、恢复 P2（09-24 notion-gtd-sync 卡死 8.4h 无告警案，决策 69cd802f，task 50a2c256）' },
 ];
 
 const PROJECTION_JOB_NAME_SET = new Set([
@@ -199,6 +204,9 @@ export async function runSchedulerJobsOnce(pool, jobs = JOBS) {
         record = { at, ok: false, timedOut: true };
       } else {
         record = { at, ok: true, detail: summarize(result) };
+        // handler 自报的完成时刻（如 gtdSyncJobHandler 的内层循环最后一轮）。立即返回型 handler 的
+        // 哨兵 `at` 每分钟都新，内层死了也新；scheduler-liveness 只认这个字段算活性。
+        if (typeof result?.liveness_at === 'string') record.liveness_at = result.liveness_at;
       }
     } catch (e) {
       console.warn(`[scheduler-jobs] ${job.name} failed:`, e.message);

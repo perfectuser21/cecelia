@@ -135,6 +135,21 @@ vi.mock('../routing/device-delegation.js', () => ({
   reconcileDelegatedDeviceJobs: vi.fn().mockResolvedValue({ checked: 0, completed: 0, failed: 0 }),
 }));
 
+vi.mock('../ops-scheduler-liveness.js', () => ({
+  runSchedulerLiveness: vi.fn().mockResolvedValue({ ok: true, jobs: 0, flippedDead: 0, recovered: 0 }),
+}));
+
+// ops-collector / openclaw-guards 真实 handler 会 ssh 逃逸 + execFileSync docker（后者甚至会 docker restart 生产网关）——
+// 单测绝不能碰真机；行为由各自的测试覆盖。部分 mock：只替换 handler，保留其它导出给 notion-push-sync 等模块用。
+vi.mock('../ops-collector.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  runOpsCollector: vi.fn().mockResolvedValue({ skipped: true }),
+}));
+vi.mock('../openclaw-guards.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  runOpenclawGuards: vi.fn().mockResolvedValue({ skipped: true }),
+}));
+
 import {
   runSchedulerJobsOnce,
   startSchedulerJobsLoop,
@@ -188,9 +203,22 @@ describe('scheduler-jobs 注册表', () => {
     expect(typeof j.handler).toBe('function');
   });
 
+  it('注册 scheduler-liveness 且排在 JOBS 末尾，把 JOBS 自身注入 handler（不 import 成环）', async () => {
+    const { runSchedulerLiveness } = await import('../ops-scheduler-liveness.js');
+    const names = JOBS.map((j) => j.name);
+    expect(names[names.length - 1]).toBe('scheduler-liveness');
+    const pool = makePool();
+    await runSchedulerJobsOnce(pool, JOBS.filter((j) => j.name === 'scheduler-liveness'));
+    expect(runSchedulerLiveness).toHaveBeenCalledWith(pool, expect.objectContaining({ jobs: JOBS, self: 'scheduler-liveness' }));
+  });
+
   it('runSchedulerJobsOnce 调用全部 job，needsPool 决定传参', async () => {
+    const { runOpsCollector } = await import('../ops-collector.js');
+    const { runOpenclawGuards } = await import('../openclaw-guards.js');
     const pool = makePool();
     const results = await runSchedulerJobsOnce(pool);
+    expect(runOpsCollector).toHaveBeenCalledWith(pool);
+    expect(runOpenclawGuards).toHaveBeenCalledWith(pool, expect.objectContaining({ raiseFn: expect.any(Function) }));
     expect(triggerArchReview).toHaveBeenCalledWith(pool);
     expect(triggerCiPatrol).toHaveBeenCalledWith(pool);
     expect(maybeTriggerStrategySession).toHaveBeenCalledWith(pool);
@@ -244,6 +272,35 @@ describe('scheduler-jobs 注册表', () => {
     const results = await runSchedulerJobsOnce(pool);
     expect(results).toHaveLength(JOBS.length);
     expect(results.every((r) => r.ok)).toBe(true);
+  });
+
+  it('handler 返回 liveness_at → 哨兵 record 原样带上（活性只认 handler 自报的完成时刻）', async () => {
+    const pool = makePool();
+    const jobs = [
+      { name: 'self-report', needsPool: false, timeoutMs: 1000, handler: vi.fn().mockResolvedValue({ loop: 'running', liveness_at: '2026-09-24T02:00:00.000Z' }) },
+      { name: 'plain', needsPool: false, timeoutMs: 1000, handler: vi.fn().mockResolvedValue({ ok: true }) },
+    ];
+    await runSchedulerJobsOnce(pool, jobs);
+    const rec = (name) => JSON.parse(pool.query.mock.calls.find(([sql, p]) => sql.includes('working_memory') && p[0] === `${SENTINEL_KEY_PREFIX}${name}`)[1][1]);
+    expect(rec('self-report')).toMatchObject({ ok: true, liveness_at: '2026-09-24T02:00:00.000Z' });
+    expect(rec('plain')).not.toHaveProperty('liveness_at');
+  });
+
+  it('notion-gtd-sync 声明 livenessIntervalSec=30（内层 30s 循环的尺子）', () => {
+    const job = JOBS.find((j) => j.name === 'notion-gtd-sync');
+    expect(job.livenessIntervalSec).toBe(30);
+  });
+
+  it('liveness_at 非 string（null / Date / number）不透传进哨兵 record', async () => {
+    const pool = makePool();
+    const jobs = [
+      { name: 'null-at', needsPool: false, timeoutMs: 1000, handler: vi.fn().mockResolvedValue({ liveness_at: null }) },
+      { name: 'date-at', needsPool: false, timeoutMs: 1000, handler: vi.fn().mockResolvedValue({ liveness_at: new Date() }) },
+      { name: 'num-at', needsPool: false, timeoutMs: 1000, handler: vi.fn().mockResolvedValue({ liveness_at: 1758675600000 }) },
+    ];
+    await runSchedulerJobsOnce(pool, jobs);
+    const rec = (name) => JSON.parse(pool.query.mock.calls.find(([sql, p]) => sql.includes('working_memory') && p[0] === `${SENTINEL_KEY_PREFIX}${name}`)[1][1]);
+    for (const name of ['null-at', 'date-at', 'num-at']) expect(rec(name)).not.toHaveProperty('liveness_at');
   });
 });
 

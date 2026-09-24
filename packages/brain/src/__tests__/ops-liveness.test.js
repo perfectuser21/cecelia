@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeIntervalBaseline, classifyLiveness, summarizeLiveness } from '../ops-liveness.js';
+import { computeIntervalBaseline, classifyLiveness, summarizeLiveness, classifyDeclaredLiveness } from '../ops-liveness.js';
 
 // 判据来自决策「失联判定按各流程自己的历史节奏自动算」：
 // 各流程节奏差百倍（通道类 4 秒/次 vs 智能获客 70 分钟/次 vs 编码流水线 2.4 小时/次），
@@ -131,5 +131,36 @@ describe('summarizeLiveness — 从一条流程的 run 列表直接得出活性�
   it('缺 started_at 的脏数据不参与基线计算也不抛', () => {
     const runs = [...mk(['2026-09-08T11:00:00Z', '2026-09-08T11:10:00Z']), { status: 'error' }];
     expect(() => summarizeLiveness(runs, NOW)).not.toThrow();
+  });
+});
+
+describe('classifyDeclaredLiveness — 声明间隔的活性（scheduler job 用）', () => {
+  const now = Date.parse('2026-09-24T01:00:00Z');
+  const ago = (sec) => new Date(now - sec * 1000).toISOString();
+
+  it('30s 间隔：阈值 warn=300s（下限）/ dead=900s（下限）', () => {
+    const r = classifyDeclaredLiveness({ lastRunAt: ago(10), intervalSec: 30, now });
+    expect(r).toEqual({ liveness: 'ok', silent_sec: 10, warn_after_sec: 300, dead_after_sec: 900 });
+  });
+
+  it('静默 ≥ warn 判 warn，≥ dead 判 dead', () => {
+    expect(classifyDeclaredLiveness({ lastRunAt: ago(301), intervalSec: 30, now }).liveness).toBe('warn');
+    expect(classifyDeclaredLiveness({ lastRunAt: ago(900), intervalSec: 30, now }).liveness).toBe('dead');
+  });
+
+  it('不受运行次数影响（声明间隔不是统计估计，没有冷启动门槛）', () => {
+    const r = classifyDeclaredLiveness({ lastRunAt: ago(5), intervalSec: 60, now });
+    expect(r.liveness).toBe('ok');
+  });
+
+  it('没有 lastRunAt → cold，阈值仍透出', () => {
+    const r = classifyDeclaredLiveness({ lastRunAt: null, intervalSec: 60, now });
+    expect(r).toEqual({ liveness: 'cold', silent_sec: null, warn_after_sec: 300, dead_after_sec: 1200 });
+  });
+
+  it('间隔非法（0/负/NaN）→ 按 60s 兜底', () => {
+    expect(classifyDeclaredLiveness({ lastRunAt: ago(1), intervalSec: 0, now }).dead_after_sec).toBe(1200);
+    expect(classifyDeclaredLiveness({ lastRunAt: ago(1), intervalSec: -5, now }).dead_after_sec).toBe(1200);
+    expect(classifyDeclaredLiveness({ lastRunAt: ago(1), intervalSec: NaN, now }).dead_after_sec).toBe(1200);
   });
 });

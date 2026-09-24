@@ -16,11 +16,12 @@ describe('notion-gtd-sync 调度', () => {
   });
 
   it('QIUMI_SYNC_ENABLED 未开 → 不起循环、不调 Notion', async () => {
-    const { ensureGtdSyncLoop } = await import('../notion-gtd-sync.js');
+    const { ensureGtdSyncLoop, gtdSyncJobHandler } = await import('../notion-gtd-sync.js');
     const setIntervalFn = vi.fn();
     expect(ensureGtdSyncLoop({ query: vi.fn() }, { env: {}, setIntervalFn })).toEqual({ started: false, running: false });
     expect(setIntervalFn).not.toHaveBeenCalled();
     expect(mockNotionReq).not.toHaveBeenCalled();
+    expect((await gtdSyncJobHandler({ query: vi.fn() }, { env: {}, setIntervalFn })).liveness_at).toBeNull();
   });
 
   it('开启 → 只起一次 30s 定时器（幂等），handler 立即返回', async () => {
@@ -124,5 +125,133 @@ describe('notion-gtd-sync 调度', () => {
     await mod.runGtdSyncOnce({ query: vi.fn() }, { token: 'tok', env, ...deps });
     expect(deps.syncZhToEn.mock.calls[0][2].sinceIso).toBe('2026-09-23T00:00:00.000Z');
     expect(deps.syncEnToZh.mock.calls[0][2].sinceIso).toBe('2026-09-23T00:00:00.000Z');
+  });
+
+  it('一轮永不返回 → 超过整轮超时后释放 inFlight、下一次 tick 真的再跑、lastRun 记 round_timeout+步名、liveness_at 不前进（09-24 卡死复现）', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-09-24T03:00:00.000Z'));
+      const { ensureGtdSyncLoop, gtdSyncJobHandler } = await import('../notion-gtd-sync.js');
+      let tick;
+      const setIntervalFn = vi.fn((cb) => { tick = cb; return { unref: vi.fn() }; });
+      const env = { QIUMI_SYNC_ENABLED: 'true', QIUMI_SYNC_SINCE: '2026-09-23T00:00:00.000Z', QIUMI_SYNC_ROUND_TIMEOUT_MS: '1000' };
+      const hung = new Promise(() => {}); // 第一轮：某步永不返回
+      const runOnce = vi.fn()
+        .mockImplementationOnce(async (_pool, opts) => { opts.onStep?.('入账'); return hung; })
+        .mockResolvedValueOnce({ zhToEn: {}, enToZh: {}, ingest: {}, stops: {}, push: {}, at: '2026-09-24T02:00:00.000Z' });
+      ensureGtdSyncLoop({ query: vi.fn() }, { env, setIntervalFn, runOnce });
+
+      const first = tick();               // 第一轮开始，挂住
+      await vi.advanceTimersByTimeAsync(1001);
+      await first;                        // 超时兜底让回调返回
+      let out = await gtdSyncJobHandler({ query: vi.fn() }, { env, setIntervalFn });
+      expect(out.lastRun).toMatchObject({ error: 'round_timeout', step: '入账' });
+      expect(out.liveness_at).toBe('2026-09-24T03:00:00.000Z'); // 超时的那一轮不算活，兜底到循环启动时刻
+
+      await tick();                       // inFlight 已释放 → 第二轮真的跑
+      expect(runOnce).toHaveBeenCalledTimes(2);
+      out = await gtdSyncJobHandler({ query: vi.fn() }, { env, setIntervalFn });
+      expect(out.lastRun.at).toBe('2026-09-24T02:00:00.000Z');
+      expect(out.liveness_at).toBe('2026-09-24T02:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('runGtdSyncOnce 每步前回调 onStep（超时时才能说出卡在哪）', async () => {
+    const mod = await import('../notion-gtd-sync.js');
+    const steps = [];
+    const ok = (v) => vi.fn().mockResolvedValue(v);
+    await mod.runGtdSyncOnce({ query: vi.fn() }, {
+      token: 'tok', env: {}, onStep: (s) => steps.push(s),
+      syncZhToEn: ok({}), syncEnToZh: ok({}), pullMarked: ok({}), applyOwnerStops: ok({}), pushQiumiStatus: ok({}),
+    });
+    expect(steps).toEqual(['zh→en', 'en→zh', '入账', '急停', '回写', null]);
+  });
+
+  it('被超时放弃的那一轮迟到的 onStep 不得改写下一轮的步名', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ensureGtdSyncLoop, gtdSyncJobHandler } = await import('../notion-gtd-sync.js');
+      let tick;
+      const setIntervalFn = vi.fn((cb) => { tick = cb; return { unref: vi.fn() }; });
+      const env = { QIUMI_SYNC_ENABLED: 'true', QIUMI_SYNC_SINCE: '2026-09-23T00:00:00.000Z', QIUMI_SYNC_ROUND_TIMEOUT_MS: '1000' };
+      const captured = [];
+      const runOnce = vi.fn(async (_pool, opts) => { captured.push(opts); opts.onStep(captured.length === 1 ? '入账' : '急停'); return new Promise(() => {}); });
+      ensureGtdSyncLoop({ query: vi.fn() }, { env, setIntervalFn, runOnce });
+
+      const first = tick();
+      await vi.advanceTimersByTimeAsync(1001);
+      await first;                                   // 第一轮超时，step='入账'
+      const second = tick();                         // 第二轮开始，step='急停'
+      captured[0].onStep('回写');                    // 第一轮迟到的回调
+      await vi.advanceTimersByTimeAsync(1001);
+      await second;                                  // 第二轮超时
+      const out = await gtdSyncJobHandler({ query: vi.fn() }, { env, setIntervalFn });
+      expect(out.lastRun).toMatchObject({ error: 'round_timeout', step: '急停' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('超时后旧轮在下一步边界停下，不再继续写；迟到结果不覆盖 lastRun / 不推进 liveness_at', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-09-24T03:00:00.000Z'));
+      const mod = await import('../notion-gtd-sync.js');
+      let release;
+      const zhToEn = vi.fn(() => new Promise((r) => { release = r; }));
+      const enToZh = vi.fn().mockResolvedValue({});
+      const rest = { pullMarked: vi.fn().mockResolvedValue({}), applyOwnerStops: vi.fn().mockResolvedValue({}), pushQiumiStatus: vi.fn().mockResolvedValue({}) };
+      let tick;
+      const setIntervalFn = vi.fn((cb) => { tick = cb; return { unref: vi.fn() }; });
+      const env = { QIUMI_SYNC_ENABLED: 'true', QIUMI_SYNC_SINCE: '2026-09-23T00:00:00.000Z', QIUMI_SYNC_ROUND_TIMEOUT_MS: '1000' };
+      const runOnce = (pool, opts) => mod.runGtdSyncOnce(pool, { ...opts, token: 'tok', syncZhToEn: zhToEn, syncEnToZh: enToZh, ...rest });
+      mod.ensureGtdSyncLoop({ query: vi.fn() }, { env, setIntervalFn, runOnce });
+      const first = tick();
+      await vi.advanceTimersByTimeAsync(1001);
+      await first;                                   // 第一轮超时，卡在 zh→en
+      release({ created: 0, skipped: 0, repaired: 0 }); // 旧轮第一步这才返回
+      await vi.advanceTimersByTimeAsync(0);          // 让旧轮跑到下一步边界
+      expect(enToZh).not.toHaveBeenCalled();         // 边界处停下，不再写
+      const out = await mod.gtdSyncJobHandler({ query: vi.fn() }, { env, setIntervalFn });
+      expect(out.lastRun).toMatchObject({ error: 'round_timeout', step: 'zh→en' }); // 迟到结果没覆盖
+      expect(out.liveness_at).toBe('2026-09-24T03:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('QIUMI_SYNC_ROUND_TIMEOUT_MS 非法（非数字/0/负）→ 回落默认值，不会变成 1ms 超时', async () => {
+    for (const bad of ['abc', '0', '-5']) {
+      vi.resetModules();
+      const { ensureGtdSyncLoop, DEFAULT_ROUND_TIMEOUT_MS } = await import('../notion-gtd-sync.js');
+      const delays = [];
+      const setTimeoutFn = vi.fn((cb, ms) => { delays.push(ms); return { unref: vi.fn() }; });
+      const clearTimeoutFn = vi.fn();
+      let tick;
+      const setIntervalFn = vi.fn((cb) => { tick = cb; return { unref: vi.fn() }; });
+      const env = { QIUMI_SYNC_ENABLED: 'true', QIUMI_SYNC_SINCE: '2026-09-23T00:00:00.000Z', QIUMI_SYNC_ROUND_TIMEOUT_MS: bad };
+      const runOnce = vi.fn().mockResolvedValue({ at: '2026-09-24T02:00:00.000Z' });
+      ensureGtdSyncLoop({ query: vi.fn() }, { env, setIntervalFn, setTimeoutFn, clearTimeoutFn, runOnce });
+      await tick();
+      expect(delays[0]).toBe(DEFAULT_ROUND_TIMEOUT_MS);
+      expect(clearTimeoutFn).toHaveBeenCalledTimes(1); // 与 setTimeoutFn 配对清理
+    }
+  });
+
+  it('循环起了但一轮都没完成 → liveness_at = 循环启动时刻（首轮即卡也能在 900s 后翻 dead），而不是 null', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-09-24T03:00:00.000Z'));
+      const { ensureGtdSyncLoop, gtdSyncJobHandler } = await import('../notion-gtd-sync.js');
+      const setIntervalFn = vi.fn(() => ({ unref: vi.fn() }));
+      const env = { QIUMI_SYNC_ENABLED: 'true', QIUMI_SYNC_SINCE: '2026-09-23T00:00:00.000Z' };
+      ensureGtdSyncLoop({ query: vi.fn() }, { env, setIntervalFn });
+      const out = await gtdSyncJobHandler({ query: vi.fn() }, { env, setIntervalFn });
+      expect(out.liveness_at).toBe('2026-09-24T03:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

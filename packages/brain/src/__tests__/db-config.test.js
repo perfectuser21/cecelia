@@ -32,4 +32,11 @@ describe('db-config', () => {
     expect(typeof DB_DEFAULTS.port).toBe('number');
     expect(DB_DEFAULTS.port).toBeGreaterThan(0);
   });
+
+  it('query_timeout 默认 10 分钟：整轮唯一无界的 await 是 pg 查询（09-24 gtd 循环卡死案）', async () => {
+    const { DB_DEFAULTS } = await import('../db-config.js');
+    expect(DB_DEFAULTS.query_timeout).toBe(parseInt(process.env.DB_QUERY_TIMEOUT_MS || '600000', 10));
+    expect(typeof DB_DEFAULTS.query_timeout).toBe('number');
+    expect(DB_DEFAULTS.query_timeout).toBeGreaterThan(0);
+  });
 });

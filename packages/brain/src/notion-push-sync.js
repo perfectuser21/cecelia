@@ -634,12 +634,14 @@ async function dispatchOpenClawFromNotion({
     await writeStatusReceipt(token, page, desc, `⚠ 派发未成(${String(why).slice(0, 80)})`);
     console.warn(`[notion-pull] OpenClaw 派发未成 page=${page.id}: ${why}`);
   };
+  // 只认 n8n 业务流程：09-24 起 ops_workflows 也装 Brain 调度 job（source='scheduler'），人在
+  // relation 里误选 ci-patrol 之类不能回退到默认 webhook 真派出去，查不到即走 workflow 不在 ops 的回执
   const { rows: wfRows } = await pool.query(
-    `SELECT wf_id, name, dispatch FROM ops_workflows WHERE replace(notion_id::text,'-','') = $1 LIMIT 1`,
+    `SELECT wf_id, name, dispatch FROM ops_workflows WHERE replace(notion_id::text,'-','') = $1 AND source = 'n8n' LIMIT 1`,
     [norm(workflowNotionId)],
   );
   const wf = wfRows[0];
-  if (!wf) return failReceipt('workflow_not_in_ops：所选行不在 ops_workflows 账上');
+  if (!wf) return failReceipt('workflow_not_in_ops：所选行不是 n8n 业务流程（Brain 调度 job 不可排单），请改选 source=n8n 的工作流');
   let agent = null;
   if (agentNotionId) {
     const { rows } = await pool.query(

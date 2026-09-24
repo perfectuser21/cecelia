@@ -30,6 +30,14 @@ describe('loadRegistryPool', () => {
     expect(query.mock.calls[1][0]).toMatch(/device_type\s*=\s*'phone'/);
     expect(query.mock.calls[2][0]).toMatch(/FROM ops_workflows/);
   });
+
+  it('ops_workflows 只取 source=n8n（scheduler 行是 Brain 内部 job，job 名不能被当 workflowRef 命中）', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    await loadRegistryPool(query);
+    const wfSql = query.mock.calls.find(([sql]) => /FROM ops_workflows/.test(sql))[0];
+    expect(wfSql).toMatch(/source\s*=\s*'n8n'/);
+    expect(wfSql).toMatch(/active = TRUE/);
+  });
 });
 
 describe('cheapGates', () => {
