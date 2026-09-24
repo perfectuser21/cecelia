@@ -5,15 +5,29 @@
  */
 import { resolvePrimaryWorkerId, workerBridgeUrlFor } from './machine-registry.js';
 
-const DEFAULT_PREPARE_TIMEOUT_MS = 180_000; // 首次要 clone + npm install
+// 2026-09-24 实证（任务 f61fc0c6）：MMV 建工作区 = git clone --bare --no-hardlinks 整库拷贝 + npm ci，
+// 两条 run 并发时实测 7 分钟；原 180s 硬编码让 Brain 先放弃、跑场机继续 prepare → 作业停在
+// prepared 占槽到 TTL，期间所有派发 429 空转。默认提到 600s，并允许 env 覆盖。
+const DEFAULT_PREPARE_TIMEOUT_MS = 600_000;
 const DEFAULT_START_TIMEOUT_MS = 30_000;
+const PREPARE_TIMEOUT_ENV = 'KERNEL_FLEET_ORCHESTRATOR_PREPARE_TIMEOUT_MS';
+
+function resolvePrepareTimeoutMs(env, explicit) {
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const raw = env?.[PREPARE_TIMEOUT_ENV];
+  if (raw == null || String(raw).trim() === '') return DEFAULT_PREPARE_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PREPARE_TIMEOUT_MS;
+  return parsed;
+}
 
 export function createOrchestratorBridge({
   env = process.env,
   fetchFn = globalThis.fetch,
-  prepareTimeoutMs = DEFAULT_PREPARE_TIMEOUT_MS,
+  prepareTimeoutMs: prepareTimeoutOption,
   startTimeoutMs = DEFAULT_START_TIMEOUT_MS,
 } = {}) {
+  const prepareTimeoutMs = resolvePrepareTimeoutMs(env, prepareTimeoutOption);
   const targetMachineId = resolvePrimaryWorkerId();
   const baseUrl = workerBridgeUrlFor(targetMachineId, env);
   const token = env.KERNEL_FLEET_BRIDGE_TOKEN;
@@ -49,6 +63,7 @@ export function createOrchestratorBridge({
 
   return Object.freeze({
     targetMachineId,
+    prepareTimeoutMs,
     prepare: (input) => post('/harness/orchestrators/prepare', input, 'prepare', prepareTimeoutMs),
     start: ({ run_id, ...rest }) => post(`/harness/orchestrators/${run_id}/start`, rest, 'start', startTimeoutMs),
     inspect: ({ run_id }) => post(`/harness/orchestrators/${run_id}/inspect`, {}, 'inspect', startTimeoutMs),
