@@ -254,7 +254,7 @@ describe('orchestrator-runner', () => {
       fs.mkdirSync(path.join(root, '.codex-team2'));
       fs.writeFileSync(path.join(root, '.codex-team2', 'auth.json'), '{}');
       expect(probeCredentialHome(root)).toEqual({ root, uid: process.getuid() });
-      expect(() => probeCredentialHome('')).toThrow('credential_home_root_invalid');
+      expect(() => probeCredentialHome('')).toThrow('orbstack_home_invalid');
       expect(() => probeCredentialHome(path.join(root, 'missing'))).toThrow();
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

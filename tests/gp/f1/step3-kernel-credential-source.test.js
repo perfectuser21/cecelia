@@ -59,7 +59,7 @@ describe('F1 step3 · kernel run 在跑场机取凭据', () => {
     expect(envelope).toMatchObject({ contract_version: 'credential-envelope/v1', account_id: 'team1' });
   });
 
-  it('凭据根未设时错误码是 credential_source_unavailable（不再被抹成 payload_invalid）', async () => {
+  it('凭据根下无该账号目录时错误码是 credential_source_unavailable（不再被抹成 payload_invalid）', async () => {
     const env = { CECELIA_CREDENTIAL_HOME_ROOT: fs.mkdtempSync(path.join(os.tmpdir(), 'empty-home-')) };
     roots.push(env.CECELIA_CREDENTIAL_HOME_ROOT);
     await expect(brokerFor(env).issue({

@@ -47,9 +47,9 @@ function receipt(job, hostname) {
 // 本函数只是存在性/可读性守卫：零账号可读时 fail-loud，免得 run 起来后才死在凭据读取上、白占槽位。
 // 信任校验（属主/权限/父目录）由 run.js 的 loader 负责，这里不做。
 function probeCredentialHome(root) {
-  if (typeof root !== 'string' || !path.isAbsolute(root)) throw new Error('credential_home_root_invalid');
+  if (typeof root !== 'string' || !path.isAbsolute(root)) throw new Error('orbstack_home_invalid');
   const stat = fs.statSync(root);
-  if (!stat.isDirectory()) throw new Error('credential_home_root_invalid');
+  if (!stat.isDirectory()) throw new Error('orbstack_home_invalid');
   const readable = CODEX_ACCOUNT_DIRS.some((dir) => {
     try { fs.accessSync(path.join(root, dir, 'auth.json'), fs.constants.R_OK); return true; } catch { return false; }
   });

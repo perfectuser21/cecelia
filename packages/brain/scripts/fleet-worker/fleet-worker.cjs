@@ -39,7 +39,7 @@ const ORCHESTRATOR_PASSTHROUGH_5XX = new Set([
 // safeString 会把含 credential/account 的串整体换成 redacted；这些是不含内部细节的稳定码，日志须原样可见。
 const STABLE_LOG_CODES = new Set([
   ...ORCHESTRATOR_PASSTHROUGH_5XX,
-  'credential_home_root_invalid',
+  'orbstack_home_invalid',
   'credential_home_no_accounts',
 ]);
 const UNTRUSTED_WORKSPACE_FIELDS = new Set([
