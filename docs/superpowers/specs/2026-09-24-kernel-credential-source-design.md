@@ -33,6 +33,8 @@ run.js: loader(accountHomeResolver=resolveCredentialAccountHome(env), trustedUid
 
 旧规则要求 0600/0400 且属主==进程 uid。现实：凭据由 administrator 的 codex CLI / 刷新脚本产出，权限不受本仓库控制（当前 0644）。本仓库 loader 的职责收敛为「拒绝可被他人篡改/伪造的来源」：属主必须可信（进程 uid 或 fleet-worker 显式声明的宿主属主）、文件与父目录不得被组/其他人写、不得是符号链接、不得带执行位。保密性（改回 0600）由源侧脚本负责（后续刀 6378efbf）。
 
+信任假设（残余风险，明示）：凭据根目录（`CECELIA_CREDENTIAL_HOME_ROOT`，现网 `/Users/administrator`）及其祖先目录由可信方控制、不可被其他用户写。loader 只校验最后一级目录与文件；若祖父目录可被他人写，攻击者可在 lstat 与 open 之间换目录或放硬链接（macOS 无 protected_hardlinks）指向属主相同的其它 0644 文件。属主 uid 非整数或进程无 `getuid` 时 fail-closed（`credential_source_permissions`）。
+
 ## 错误处理
 
 | 情形 | 行为 |
