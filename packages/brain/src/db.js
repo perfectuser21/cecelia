@@ -15,6 +15,7 @@ console.log('PostgreSQL pool configured:', {
   max: DB_DEFAULTS.max,
   idleTimeoutMillis: DB_DEFAULTS.idleTimeoutMillis,
   connectionTimeoutMillis: DB_DEFAULTS.connectionTimeoutMillis,
+  query_timeout: DB_DEFAULTS.query_timeout,
 });
 
 /**
