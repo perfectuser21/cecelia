@@ -16,11 +16,12 @@ describe('notion-gtd-sync 调度', () => {
   });
 
   it('QIUMI_SYNC_ENABLED 未开 → 不起循环、不调 Notion', async () => {
-    const { ensureGtdSyncLoop } = await import('../notion-gtd-sync.js');
+    const { ensureGtdSyncLoop, gtdSyncJobHandler } = await import('../notion-gtd-sync.js');
     const setIntervalFn = vi.fn();
     expect(ensureGtdSyncLoop({ query: vi.fn() }, { env: {}, setIntervalFn })).toEqual({ started: false, running: false });
     expect(setIntervalFn).not.toHaveBeenCalled();
     expect(mockNotionReq).not.toHaveBeenCalled();
+    expect((await gtdSyncJobHandler({ query: vi.fn() }, { env: {}, setIntervalFn })).liveness_at).toBeNull();
   });
 
   it('开启 → 只起一次 30s 定时器（幂等），handler 立即返回', async () => {
