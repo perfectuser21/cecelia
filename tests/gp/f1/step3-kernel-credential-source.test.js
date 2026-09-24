@@ -32,6 +32,9 @@ function hostHome() {
   const exp = Math.floor((Date.now() + 3 * 3600e3) / 1000);
   const token = `h.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.s`;
   fs.writeFileSync(path.join(team, 'auth.json'), JSON.stringify({ tokens: { access_token: token } }), { mode: 0o644 });
+  // 显式固定模式：umask 077 下 mkdir/writeFile 会把 0755/0644 削成 0700/0600，测的就不是现网形态了
+  fs.chmodSync(team, 0o755);
+  fs.chmodSync(path.join(team, 'auth.json'), 0o644);
   return root;
 }
 
