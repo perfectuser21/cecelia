@@ -266,9 +266,11 @@ async function probeDisposableResources({
     worktreePath = path.join(tempRoot, 'worktree');
     containerName = disposableContainerName(tempRoot);
     worktreeAddAttempted = true;
+    // 容器探针只检查 /workspace/.git 存在；--no-checkout 避免 O(仓库) 的全量检出
+    // 撞 DEFAULT_COMMAND_TIMEOUT_MS（MMV 8465 文件实测 4–5.5s，几乎每次被杀）。
     const addResult = await run(
       'git',
-      ['worktree', 'add', '--detach', worktreePath, 'HEAD'],
+      ['worktree', 'add', '--detach', '--no-checkout', worktreePath, 'HEAD'],
       { cwd: repoRoot },
     );
     worktreeAdded = addResult.ok;
