@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import {
   createKernelRun,
   finalizeKernelRun,
+  requeueKernelRunLaunchDeferred,
   syncTaskPayloadFromKernelRun,
 } from './orchestrator/kernel-run-store.js';
 import { spawnHeadedKernelRuntime } from './orchestrator/headed-kernel-runtime.js';
@@ -388,12 +389,41 @@ async function _spawnKernelRuntimeRemote(task, { dbPool, now, initiativeId, deps
     return { ok: true, mode: 'kernel-v1', runId, remote: true, pid: started.pid, host: started.host, sprintDir, worktreePath: prep.worktree_path };
   } catch (error) {
     const finalizeRun = deps.finalizeRun ?? finalizeKernelRun;
+    // 跑场机忙/抖（429 槽位满、5xx、请求超时）是瞬时状态：run 记失败留痕，任务回 queued 等下个
+    // tick 重派，不 terminalized（任务 281aa798，2026-09-24 实证一天 6 条刀被 429 判死）。
+    // 延后次数用尽（requeue 返回 exhausted）或任务已终态 → 回落原终态路径。
+    if (isTransientRemoteLaunchError(error)) {
+      const requeueDeferred = deps.requeueKernelRunDeferred ?? requeueKernelRunLaunchDeferred;
+      const requeued = await requeueDeferred(dbPool, {
+        runId, expectedTaskId: task.id,
+        reason: `kernel_remote_launch_deferred:${error.message}`,
+      });
+      if (requeued?.changed) {
+        console.warn(
+          `[skill-relay][kernel-v1] remote launch deferred run=${runId} task=${task.id} `
+          + `defers=${requeued.deferCount}: ${error.message}`,
+        );
+        return {
+          ok: false, mode: 'kernel-v1', runId, deferred: true, reason: 'orchestrator_busy',
+          error: error.message, deferCount: requeued.deferCount,
+        };
+      }
+    }
     await finalizeRun(dbPool, {
       runId, expectedTaskId: task.id, outcome: 'failed',
       reason: `kernel_remote_launch_failed:${error.message}`,
     });
     return { ok: false, mode: 'kernel-v1', runId, error: error.message, terminalized: true };
   }
+}
+
+/**
+ * 远程点火的瞬时故障判定：bridge 对 prepare/start 抛的 429（槽位满）、502/503/504、
+ * request_failed（含 AbortSignal 超时）。400/401/404/409/500 等视为永久错误走终态。
+ */
+export function isTransientRemoteLaunchError(error) {
+  const message = String(error?.message ?? '');
+  return /^orchestrator_bridge_(prepare|start)_(http_(429|502|503|504)|request_failed)(:|$)/.test(message);
 }
 
 /** base_repo（URL 或 owner/name）→ worker repoAllowlist 键；解析不出回落 cecelia。 */

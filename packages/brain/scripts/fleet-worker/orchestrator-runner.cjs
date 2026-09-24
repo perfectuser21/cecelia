@@ -19,7 +19,9 @@ const execFileAsync = promisify(execFile);
 
 const UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const SHA_RE = /^[a-f0-9]{40}$/;
-const TERMINAL = new Set(['done', 'failed']);
+// expired：prepared 后超过 TTL 未 start（Brain 侧 prepare 超时放弃），视为终态释放槽位（任务 281aa798）。
+const TERMINAL = new Set(['done', 'failed', 'expired']);
+const DEFAULT_PREPARED_TTL_MS = 10 * 60_000;
 const CODEX_ACCOUNT_DIRS = ['.codex-team1', '.codex-team2', '.codex-team3', '.codex-team4', '.codex-team5'];
 // macOS 真实路径（/var 是 /private/var 的符号链接）；Linux 等无此链接的平台须经
 // CECELIA_ORCHESTRATOR_RUNNER_ROOT 覆盖。
@@ -62,6 +64,8 @@ function createOrchestratorRunner({
   dataRoot,
   hostname,
   maxConcurrent = 2,
+  preparedTtlMs = DEFAULT_PREPARED_TTL_MS,
+  nowFn = Date.now,
   spawnFn = spawn,
   mkdirFn = (p) => fs.mkdirSync(p, { recursive: true, mode: 0o700 }),
   openFn = (p) => fs.openSync(p, 'a'),
@@ -75,7 +79,21 @@ function createOrchestratorRunner({
     throw new Error('orchestrator_runner_workspace_manager_required');
   }
   const jobs = new Map(); // run_id → {status, worktreePath, taskId, pid, startedAt}
-  const active = () => [...jobs.values()].filter((j) => !TERMINAL.has(j.status)).length;
+  // 2026-09-24 实证：Brain 侧 prepare 请求超时放弃后，这边作业停在 prepared 永不 start，
+  // active() 一直计入 → maxConcurrent=2 只跑 1 条也持续 429（任务 281aa798）。
+  const expireStalePrepared = () => {
+    const now = nowFn();
+    for (const job of jobs.values()) {
+      if (job.status === 'prepared' && job.preparedAt != null && now - job.preparedAt > preparedTtlMs) {
+        job.status = 'expired';
+        console.warn(`[orchestrator-runner] prepared_expired run=${job.runId} ttl_ms=${preparedTtlMs}`);
+      }
+    }
+  };
+  const active = () => {
+    expireStalePrepared();
+    return [...jobs.values()].filter((j) => !TERMINAL.has(j.status)).length;
+  };
 
   const resolveMainSha = resolveMainShaFn ?? (async (repo) => {
     const { stdout } = await execFileAsync(
@@ -93,8 +111,11 @@ function createOrchestratorRunner({
       if (!UUID_RE.test(runId ?? '')) throw httpError('orchestrator_run_id_invalid', 400);
       if (!UUID_RE.test(body?.task_id ?? '')) throw httpError('orchestrator_task_id_invalid', 400);
       const repo = body?.repo ?? 'perfectuser21/cecelia';
+      expireStalePrepared();
       const existing = jobs.get(runId);
-      if (existing) {
+      if (existing && existing.status === 'expired') {
+        jobs.delete(runId); // 过期占位可被同一 run 重新 prepare
+      } else if (existing) {
         if (existing.status === 'prepared') return receipt(existing, hostname); // 幂等重放
         // 'preparing'（并发重放，不等待）或其它非终态一律视为冲突
         throw httpError('orchestrator_already_exists', 409);
@@ -126,6 +147,7 @@ function createOrchestratorRunner({
         job.worktreePath = workspace.path;
         job.baseSha = baseSha;
         job.status = 'prepared';
+        job.preparedAt = nowFn();
         return receipt(job, hostname);
       } catch (err) {
         jobs.delete(runId); // 预占失败，释放槽位
@@ -137,6 +159,8 @@ function createOrchestratorRunner({
       const job = jobs.get(runId);
       if (!job) throw httpError('orchestrator_not_prepared', 404);
       if (job.status === 'running') return receipt(job, hostname); // 幂等重放
+      expireStalePrepared();
+      if (job.status === 'expired') throw httpError('orchestrator_prepared_expired', 410);
       if (job.status !== 'prepared') throw httpError('orchestrator_not_startable', 409);
       const sessionId = body?.controller_session_id;
       const generation = Number(body?.controller_generation);

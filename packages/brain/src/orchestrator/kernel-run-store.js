@@ -957,6 +957,98 @@ export async function finalizeKernelRun(pool, {
  * run_id 的 advisory lock 再去锁/UPDATE 这一行，否则并发时会反向死锁。
  * 调用方（loop.js）负责把持久化失败降级为告警，不炸 loop。
  */
+/**
+ * requeueKernelRunLaunchDeferred — 远程点火撞跑场机**瞬时**故障（bridge 429 槽位满 / 5xx /
+ * 请求超时）时的回队路径（任务 281aa798，2026-09-24 实证：一天 6 条刀被 429 判死）。
+ * 与 finalizeKernelRun 的区别：run 记 failed 留痕，但父任务**回 queued**（清 claim/started），
+ * 交下个 tick 重派；payload 记延后计数与原因，达到 maxDefers 返回 exhausted 让调用方回落
+ * 终态，防跑场机长期不可用时无限空转。
+ */
+export async function requeueKernelRunLaunchDeferred(pool, {
+  runId,
+  expectedTaskId,
+  reason,
+  maxDefers = 10,
+  now = () => new Date(),
+}) {
+  const client = await pool.connect();
+  let committed = false;
+  try {
+    await client.query('BEGIN');
+    const { rows: taskRows } = await client.query(
+      `SELECT id, status, payload
+         FROM tasks
+        WHERE id = $1
+        FOR UPDATE`,
+      [expectedTaskId],
+    );
+    const task = taskRows[0];
+    if (!task) {
+      throw new Error(`Kernel run parent task missing: ${expectedTaskId}`);
+    }
+    const { rows: runRows } = await client.query(
+      `SELECT id, current_task_id, phase
+         FROM initiative_runs
+        WHERE id = $1
+          AND orchestrator_version = 'v2'
+        FOR UPDATE`,
+      [runId],
+    );
+    const run = runRows[0];
+    if (!run || run.current_task_id !== expectedTaskId) {
+      throw new Error(`Kernel run/task identity mismatch: ${runId}/${expectedTaskId}`);
+    }
+    const deferCount = Number(task.payload?.kernel_launch_defer_count ?? 0) || 0;
+    if (TERMINAL_TASK_STATUSES.has(task.status)) {
+      await client.query('COMMIT');
+      committed = true;
+      return { changed: false, reason: 'task_terminal', deferCount, runId, taskId: expectedTaskId };
+    }
+    if (deferCount >= maxDefers) {
+      await client.query('COMMIT');
+      committed = true;
+      return { changed: false, exhausted: true, deferCount, runId, taskId: expectedTaskId };
+    }
+    const nextCount = deferCount + 1;
+    if (!['done', 'failed'].includes(run.phase)) {
+      await client.query(
+        `UPDATE initiative_runs
+            SET phase = 'failed',
+                failure_reason = $2,
+                completed_at = COALESCE(completed_at, NOW()),
+                updated_at = NOW()
+          WHERE id = $1`,
+        [runId, reason],
+      );
+    }
+    await client.query(
+      `UPDATE tasks
+          SET status = 'queued',
+              claimed_by = NULL,
+              claimed_at = NULL,
+              started_at = NULL,
+              payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb,
+              updated_at = NOW()
+        WHERE id = $1`,
+      [expectedTaskId, JSON.stringify({
+        kernel_launch_defer_count: nextCount,
+        kernel_launch_defer_reason: String(reason ?? '').slice(0, 300),
+        kernel_launch_deferred_at: now().toISOString(),
+      })],
+    );
+    await client.query('COMMIT');
+    committed = true;
+    return { changed: true, deferCount: nextCount, runId, taskId: expectedTaskId };
+  } catch (error) {
+    if (!committed) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function persistKernelRunPhase(pool, runId, phase) {
   const { rows } = await pool.query(
     `UPDATE initiative_runs
