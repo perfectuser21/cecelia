@@ -36,7 +36,7 @@ JOBS 条目可选声明 `livenessIntervalSec`（notion-gtd-sync = 30）；未声
 
 ### 3.2 新 job `scheduler-liveness`（每 60s，不 gate）
 
-放在 JOBS **末尾**：第一轮串行跑到它时，前面所有 job 的哨兵都已刷新——放在中间会让排在它后面的 job 在 Brain 停机 >15 分钟重启后的首轮被判 dead、次轮又"恢复"，白发两条告警。Notion 推送因此滞后一轮（60s），可忽略。不 import scheduler-jobs（会成环：scheduler-jobs → ops-collector → … ，仓库已有 `routes/sentinel.js` 明确避坑），改为注入：`handler: (pool) => runSchedulerLiveness(pool, { jobs: JOBS })`。实现放独立模块 `ops-scheduler-liveness.js`（ops-collector.js 已 1196 行，不再加腿）。
+放在 JOBS **末尾**：第一轮串行跑到它时，前面所有 job 的哨兵都已刷新——放在中间会让排在它后面的 job 在 Brain 停机 >15 分钟重启后的首轮被判 dead、次轮又"恢复"，白发两条告警。Notion 推送因此滞后一轮（60s），可忽略。不 import scheduler-jobs（会成环：scheduler-jobs → ops-collector → … ，仓库已有 `routes/sentinel.js` 明确避坑），改为注入：`handler: (pool) => runSchedulerLiveness(pool, { jobs: JOBS, self: 'scheduler-liveness' })`。实现放独立模块 `ops-scheduler-liveness.js`（ops-collector.js 已 1196 行，不再加腿）。
 
 每轮（整轮包 try/catch，任一步抛错写 `scheduler` 来源的错误心跳并返回 `ok:false`，不静默变旧）：
 1. 读全部 `scheduler_job_last_run:*` 哨兵（前缀经 opts 注入，默认同 scheduler-jobs 的 `SENTINEL_KEY_PREFIX`）。
@@ -73,7 +73,7 @@ JOBS 条目可选声明 `livenessIntervalSec`（notion-gtd-sync = 30）；未声
 | 文件 | 断言 |
 |---|---|
 | `__tests__/scheduler-jobs-gtd-sync.test.js` | 一轮永不返回 → fake timers 推进过总超时 → `inFlight` 释放、下一次 tick 真的再跑、`lastRun.error='round_timeout'` 且 `step` 为当时步名、`liveness_at` 不前进（**复现今日事故，先红**） |
-| `__tests__/scheduler-jobs.test.js` | handler 返回 `liveness_at` → 哨兵 record 带该字段；JOBS 含 `scheduler-liveness` 且在 `ops-notion-push` 之前 |
+| `__tests__/scheduler-jobs.test.js` | handler 返回 `liveness_at` → 哨兵 record 带该字段；JOBS 含 `scheduler-liveness` 且为最后一项，handler 注入 `{ jobs: JOBS, self: 'scheduler-liveness' }`；非 string 的 `liveness_at` 不透传 |
 | `__tests__/ops-scheduler-liveness.test.js`（新） | fakePool 预置哨兵行 → upsert 参数 source='scheduler'；SQL 不含任何人工列；30s 间隔 + 老于 900s → dead；ok→dead 翻转调 raiseAlert、非翻转不调；`WHERE` 降噪子句存在 |
 | `__tests__/ops-liveness.test.js` | `classifyDeclaredLiveness` ok/warn/dead 边界、无 lastRunAt→cold、不受 runCount 影响 |
 | `__tests__/cheap-gates*.test.js` | registry 查询含 `source = 'n8n'` |
