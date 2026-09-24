@@ -102,6 +102,41 @@ describe('orchestrator-runner', () => {
     ).rejects.toThrow('orchestrator_slots_exhausted');
   });
 
+  // 2026-09-24 实证（任务 281aa798）：Brain 侧 prepare 请求超时放弃后，fleet-worker 这边的作业
+  // 停在 prepared 永远不 start，active() 一直计入 → maxConcurrent=2 只跑 1 条也持续 429。
+  // prepared 必须有 TTL：过期视为终态释放槽位，迟到的 start 得 410。
+  it('prepared 作业超过 TTL 未 start → 释放槽位，新 prepare 不再 429', async () => {
+    let now = 1_000_000;
+    const { runner } = build({ maxConcurrent: 1, preparedTtlMs: 10 * 60_000, nowFn: () => now });
+    await runner.prepare({ run_id: RUN_ID, task_id: RUN_ID, repo: 'perfectuser21/cecelia' });
+    await expect(
+      runner.prepare({ run_id: RUN_ID_2, task_id: RUN_ID_2, repo: 'perfectuser21/cecelia' }),
+    ).rejects.toThrow('orchestrator_slots_exhausted');
+    now += 11 * 60_000;
+    await expect(
+      runner.prepare({ run_id: RUN_ID_2, task_id: RUN_ID_2, repo: 'perfectuser21/cecelia' }),
+    ).resolves.toMatchObject({ status: 'prepared' });
+  });
+
+  it('过期的 prepared 作业迟到 start → orchestrator_prepared_expired（410），不占槽', async () => {
+    let now = 1_000_000;
+    const { runner, spawned } = build({ maxConcurrent: 1, preparedTtlMs: 10 * 60_000, nowFn: () => now });
+    await runner.prepare({ run_id: RUN_ID, task_id: RUN_ID, repo: 'perfectuser21/cecelia' });
+    now += 11 * 60_000;
+    await expect(runner.start(RUN_ID, { controller_session_id: SESSION_ID, controller_generation: 1 }))
+      .rejects.toMatchObject({ message: 'orchestrator_prepared_expired', statusCode: 410 });
+    expect(spawned).toHaveLength(0);
+  });
+
+  it('TTL 内 start 照常（默认 TTL 不影响正常 prepare→start 节奏）', async () => {
+    let now = 1_000_000;
+    const { runner } = build({ maxConcurrent: 1, preparedTtlMs: 10 * 60_000, nowFn: () => now });
+    await runner.prepare({ run_id: RUN_ID, task_id: RUN_ID, repo: 'perfectuser21/cecelia' });
+    now += 9 * 60_000;
+    await expect(runner.start(RUN_ID, { controller_session_id: SESSION_ID, controller_generation: 1 }))
+      .resolves.toMatchObject({ status: 'running' });
+  });
+
   it('未 prepare 直接 start → orchestrator_not_prepared', async () => {
     const { runner } = build();
     await expect(runner.start(RUN_ID, { controller_session_id: SESSION_ID, controller_generation: 1 }))

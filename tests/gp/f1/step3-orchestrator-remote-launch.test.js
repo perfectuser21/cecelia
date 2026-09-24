@@ -62,18 +62,36 @@ describe('GP F1 step3 — orchestrator 远程派发', () => {
     );
   });
 
-  it('闸=false + 远程 prepare 失败 → run finalize failed 且错误透传（禁静默）', async () => {
+  it('闸=false + 远程 prepare 永久失败 → run finalize failed 且错误透传（禁静默）', async () => {
     const bridgeCalls = [];
     const deps = fakeDeps(bridgeCalls);
-    deps.orchestratorBridge.prepare = vi.fn(async () => { throw new Error('orchestrator_bridge_prepare_http_429:orchestrator_slots_exhausted'); });
+    deps.orchestratorBridge.prepare = vi.fn(async () => { throw new Error('orchestrator_bridge_prepare_http_400:orchestrator_task_id_invalid'); });
     const result = await spawnSkillRelaySession(kernelTask(), deps);
     expect(result.ok).toBe(false);
-    expect(result.error).toContain('orchestrator_bridge_prepare_http_429');
+    expect(result.error).toContain('orchestrator_bridge_prepare_http_400');
     // terminalized:true 与本机版 _spawnKernelRuntime 失败返回逐字段同构——executor.js:3243
     // 靠这个字段把动作归为 'terminalized' 并走 reconcileTerminalizedKernelAuthority 核验；
     // 缺了会落进 executor.js:3639 的 else 分支打出误导性 error 日志并跳过终态核验。
     expect(result.terminalized).toBe(true);
     expect(deps.finalizeRun).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ outcome: 'failed' }));
+  });
+
+  // 2026-09-24 实证（任务 281aa798）：MMV 2 个槽位其一被泄漏的 prepared 作业恒占，prepare 持续
+  // 429；Brain 把 429 当永久失败 terminalized，一天 6 条刀被判死。跑场机忙 = 瞬时，必须 deferred。
+  it('闸=false + 远程 prepare 429（跑场机忙）→ deferred：任务回 queued 等下个 tick，不 terminalized', async () => {
+    const bridgeCalls = [];
+    const deps = fakeDeps(bridgeCalls);
+    deps.orchestratorBridge.prepare = vi.fn(async () => { throw new Error('orchestrator_bridge_prepare_http_429:orchestrator_slots_exhausted'); });
+    deps.requeueKernelRunDeferred = vi.fn(async () => ({ changed: true, deferCount: 1 }));
+    const result = await spawnSkillRelaySession(kernelTask(), deps);
+    expect(result).toMatchObject({ ok: false, mode: 'kernel-v1', runId: RUN_ID, deferred: true, reason: 'orchestrator_busy' });
+    expect(result.terminalized).toBeUndefined();
+    expect(deps.requeueKernelRunDeferred).toHaveBeenCalledWith(deps.pool, expect.objectContaining({
+      runId: RUN_ID,
+      expectedTaskId: TASK_ID,
+      reason: expect.stringContaining('orchestrator_slots_exhausted'),
+    }));
+    expect(deps.finalizeRun).not.toHaveBeenCalled();
   });
 
   it('闸=false + 非 kernel 路径 → 仍拒绝（错误码不变）', async () => {

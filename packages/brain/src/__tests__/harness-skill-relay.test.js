@@ -191,6 +191,66 @@ describe('spawnSkillRelaySession', () => {
     ))).toBe(false);
   });
 
+  // 2026-09-24 实证（任务 281aa798）：MMV 槽位被占时 bridge.prepare 返回 429，Brain 把它当
+  // 永久失败 terminalized → 任务终态 failed，一天里 6 条刀就这样被判死。跑场机忙是瞬时状态，
+  // 必须 deferred：run 记失败、任务回 queued，下个 tick 再派。
+  function remoteKernelDeps(overrides = {}) {
+    return makeDeps({
+      env: { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' },
+      orchestratorBridge: {
+        targetMachineId: 'us-mac-m4',
+        prepare: vi.fn(async () => { throw new Error('orchestrator_bridge_prepare_http_429:orchestrator_slots_exhausted'); }),
+        start: vi.fn(async () => ({ pid: 1, host: 'us-mac-m4', status: 'running' })),
+      },
+      requeueKernelRunDeferred: vi.fn(async () => ({ changed: true, deferCount: 1 })),
+      ...overrides,
+    });
+  }
+  const remoteKernelTask = { ...TASK, payload: { ...TASK.payload, harness_runtime: 'kernel-v1', executor: 'auto' } };
+
+  it('远程 prepare 429（跑场机槽位满）→ deferred：run 记失败、任务回 queued，不 terminalized', async () => {
+    const deps = remoteKernelDeps();
+    const result = await spawnSkillRelaySession(remoteKernelTask, deps);
+    expect(result).toMatchObject({ ok: false, mode: 'kernel-v1', runId: KERNEL_RUN_ID, deferred: true, reason: 'orchestrator_busy' });
+    expect(result.terminalized).toBeUndefined();
+    expect(deps.requeueKernelRunDeferred).toHaveBeenCalledWith(deps.pool, expect.objectContaining({
+      runId: KERNEL_RUN_ID,
+      expectedTaskId: TASK.id,
+      reason: expect.stringContaining('orchestrator_bridge_prepare_http_429'),
+    }));
+    expect(deps.finalizeRun).not.toHaveBeenCalled();
+  });
+
+  it('远程 start 请求超时（request_failed）同样 deferred', async () => {
+    const deps = remoteKernelDeps();
+    deps.orchestratorBridge.prepare = vi.fn(async () => ({ worktree_path: '/ws/r', status: 'prepared' }));
+    deps.orchestratorBridge.start = vi.fn(async () => { throw new Error('orchestrator_bridge_start_request_failed:The operation was aborted'); });
+    const result = await spawnSkillRelaySession(remoteKernelTask, deps);
+    expect(result).toMatchObject({ ok: false, mode: 'kernel-v1', deferred: true, reason: 'orchestrator_busy' });
+    expect(deps.finalizeRun).not.toHaveBeenCalled();
+  });
+
+  it('延后次数用尽（requeue 返回 exhausted）→ 回落 terminalized + finalize failed', async () => {
+    const deps = remoteKernelDeps({
+      requeueKernelRunDeferred: vi.fn(async () => ({ changed: false, exhausted: true, deferCount: 10 })),
+    });
+    const result = await spawnSkillRelaySession(remoteKernelTask, deps);
+    expect(result).toMatchObject({ ok: false, mode: 'kernel-v1', terminalized: true });
+    expect(deps.finalizeRun).toHaveBeenCalledWith(deps.pool, expect.objectContaining({
+      outcome: 'failed',
+      reason: expect.stringContaining('kernel_remote_launch_failed:'),
+    }));
+  });
+
+  it('远程 prepare 永久错误（http_400）仍 terminalized，不回队', async () => {
+    const deps = remoteKernelDeps();
+    deps.orchestratorBridge.prepare = vi.fn(async () => { throw new Error('orchestrator_bridge_prepare_http_400:orchestrator_task_id_invalid'); });
+    const result = await spawnSkillRelaySession(remoteKernelTask, deps);
+    expect(result).toMatchObject({ ok: false, mode: 'kernel-v1', terminalized: true });
+    expect(deps.requeueKernelRunDeferred).not.toHaveBeenCalled();
+    expect(deps.finalizeRun).toHaveBeenCalled();
+  });
+
   it('harness_runtime 缺省继续走旧 controller，保留一键回滚路径', async () => {
     const deps = makeDeps({ launchKernel: vi.fn() });
 
