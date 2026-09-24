@@ -151,6 +151,28 @@ describe('central Codex Credential Broker', () => {
       deadlineAt: DEADLINE,
     })).rejects.toThrow('credential_payload_too_large');
   });
+
+  it.each([
+    ['credential_source_unavailable'],
+    ['credential_source_permissions'],
+  ])('passes the loader failure %s through instead of masking it as payload_invalid', async (code) => {
+    const loadCredential = vi.fn(async () => { throw new Error(code); });
+    await expect(broker({ loadCredential }).issue({
+      attemptId: ATTEMPT_ID, accountId: 'team4', machineId: 'xian-mac-m4', deadlineAt: DEADLINE,
+    })).rejects.toThrow(code);
+  });
+
+  it('still masks non-credential loader failures as credential_payload_invalid', async () => {
+    const loadCredential = vi.fn(async () => { throw new Error(`ENOENT ${SECRET}`); });
+    let error;
+    try {
+      await broker({ loadCredential }).issue({
+        attemptId: ATTEMPT_ID, accountId: 'team4', machineId: 'xian-mac-m4', deadlineAt: DEADLINE,
+      });
+    } catch (caught) { error = caught; }
+    expect(error?.message).toBe('credential_payload_invalid');
+    expect(error?.message).not.toContain(SECRET);
+  });
 });
 
 describe('权威判据锁定（角色置换前基线）', () => {
@@ -203,7 +225,7 @@ describe('protected US M4 credential source', () => {
   });
 
   it.each([
-    ['group-readable file', 0o640, false],
+    ['group-writable file', 0o660, false],
     ['owner-executable file', 0o700, false],
     ['owner-write-only file', 0o200, false],
     ['symlink file', 0o600, true],
@@ -214,6 +236,7 @@ describe('protected US M4 credential source', () => {
     const target = path.join(team4, 'auth-target.json');
     const authFile = path.join(team4, 'auth.json');
     fs.writeFileSync(target, authJson(), { mode });
+    fs.chmodSync(target, mode); // umask 会削掉组写位，显式固定待测模式
     if (symlink) fs.symlinkSync(target, authFile);
     else fs.renameSync(target, authFile);
     const load = createFileCredentialLoader({
@@ -225,5 +248,59 @@ describe('protected US M4 credential source', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('accepts a world-readable (0644) file owned by the process user', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-loader-'));
+    const team4 = path.join(root, '.codex-team4');
+    fs.mkdirSync(team4, { mode: 0o755 });
+    fs.writeFileSync(path.join(team4, 'auth.json'), authJson(), { mode: 0o644 });
+    const load = createFileCredentialLoader({
+      accountHomeResolver: (accountId) => path.join(root, `.codex-${accountId}`),
+    });
+    try {
+      await expect(load('team4')).resolves.toBe(authJson());
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  function foreignOwnerDeps(uid, { trustedUids, dirMode = 0o40755, fileMode = 0o100644 } = {}) {
+    const body = authJson();
+    return {
+      accountHomeResolver: () => '/srv/foreign/.codex-team4',
+      trustedUids,
+      openFile: vi.fn(() => 7),
+      fstat: vi.fn(() => ({ isFile: () => true, mode: fileMode, uid, size: Buffer.byteLength(body) })),
+      readFile: vi.fn(() => body),
+      closeFile: vi.fn(),
+      statDirectory: vi.fn(() => ({ isDirectory: () => true, isSymbolicLink: () => false, mode: dirMode, uid })),
+    };
+  }
+
+  it('rejects a file owned by another uid that is not trusted', async () => {
+    const load = createFileCredentialLoader(foreignOwnerDeps(9999, { trustedUids: [] }));
+    await expect(load('team4')).rejects.toThrow('credential_source_permissions');
+  });
+
+  it('accepts a file owned by a trusted uid even when the process uid differs', async () => {
+    const load = createFileCredentialLoader(foreignOwnerDeps(9999, { trustedUids: [9999] }));
+    await expect(load('team4')).resolves.toBe(authJson());
+  });
+
+  it('rejects a trusted-owner file whose parent directory is group- or world-writable', async () => {
+    const load = createFileCredentialLoader(foreignOwnerDeps(9999, { trustedUids: [9999], dirMode: 0o40777 }));
+    await expect(load('team4')).rejects.toThrow('credential_source_permissions');
+  });
+
+  it('rejects a trusted-owner file whose parent directory is a symlink', async () => {
+    const deps = foreignOwnerDeps(9999, { trustedUids: [9999] });
+    deps.statDirectory = vi.fn(() => ({ isDirectory: () => true, isSymbolicLink: () => true, mode: 0o40755, uid: 9999 }));
+    await expect(createFileCredentialLoader(deps)('team4')).rejects.toThrow('credential_source_permissions');
+  });
+
+  it.each([[['x']], [[-1]], [[1.5]], ['501']])('rejects invalid trustedUids %j at construction', (trustedUids) => {
+    expect(() => createFileCredentialLoader({ accountHomeResolver: () => '/tmp/x', trustedUids }))
+      .toThrow('credential_trusted_uids_invalid');
   });
 });
