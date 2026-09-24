@@ -1627,6 +1627,8 @@ describe('Fleet Worker production runtime assembly', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-worker-runtime-'));
     const tokenFile = path.join(root, 'worker-token');
     fs.writeFileSync(tokenFile, 'fleet-worker-token-at-least-32-bytes\n', { mode: 0o600 });
+    const sharedTmp = path.join(root, 'shared-tmp');
+    fs.mkdirSync(sharedTmp, { mode: 0o755 });
     const warnings = [];
     const spy = vi.spyOn(console, 'warn').mockImplementation((...args) => { warnings.push(args.join(' ')); });
     const probeCredentialHome = vi.fn(() => { throw new Error('credential_home_no_accounts'); });
@@ -1638,6 +1640,7 @@ describe('Fleet Worker production runtime assembly', () => {
           CECELIA_FLEET_WORKER_TOKEN_FILE: tokenFile,
           CECELIA_FLEET_DATA_ROOT: path.join(root, 'data'),
           CECELIA_ORBSTACK_HOME: '/Users/orbstack-owner',
+          TMPDIR: sharedTmp,
         },
         runCommand: vi.fn(),
         probeCredentialHome,
