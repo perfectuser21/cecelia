@@ -712,6 +712,34 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
     expect(JSON.stringify(patch[3])).toContain('workflow_not_in_ops');
   });
 
+  it('反查 ops_workflows 只认 source=n8n 行：命中 scheduler 行（人工误选 ci-patrol 类）时按 n8n 过滤查不到 → ⚠ 回执不派发，不 POST webhook', async () => {
+    // 09-24 起 ops_workflows 也装 Brain 调度 job（source='scheduler'）。人在 relation 里
+    // 误选 ci-patrol 之类的调度行，旧查询不筛 source 会命中该行并可能回退到默认 webhook 真派出去。
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn());
+    const wfSqls = [];
+    mockQuery.mockImplementation(async (sql) => {
+      if (/FROM ops_workflows/.test(sql)) {
+        wfSqls.push(String(sql));
+        // 只在带 source='n8n' 过滤的查询上返回空；不带过滤的旧写法会误命中 scheduler 行
+        if (/source\s*=\s*'n8n'/.test(sql)) return { rows: [] };
+        return { rows: [{ wf_id: 'ci-patrol', name: 'ci-patrol', dispatch: null }] };
+      }
+      return { rows: [] };
+    });
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [relationPage({ withAgent: false })] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({}),
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+    const patch = mockNotionReq.mock.calls.find((c) => c[2] === 'PATCH');
+    expect(JSON.stringify(patch[3])).toContain('workflow_not_in_ops');
+    expect(wfSqls[0]).toMatch(/source\s*=\s*'n8n'/);
+  });
+
   it('Agent 未选且 workflow 无 default_template → ⚠ 回执提示配置缺口', async () => {
     const mod = await import('../notion-push-sync.js');
     vi.stubGlobal('fetch', vi.fn());
