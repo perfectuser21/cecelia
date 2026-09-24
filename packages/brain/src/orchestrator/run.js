@@ -20,10 +20,11 @@ import { createCommanderCoordinator } from './commander-coordinator.js';
 import { createCommanderDirectiveExecutor } from './commander-directive-executor.js';
 import { createCommanderStore } from './commander-store.js';
 import { appendHop, nextHop } from './decision-log.js';
+import { createDispatcher } from './dispatcher.js';
 import {
-  createDispatcher,
-  resolveProviderAccountHome,
-} from './dispatcher.js';
+  parseTrustedUids,
+  resolveCredentialAccountHome,
+} from './provider-account-home.js';
 import {
   createCredentialBroker,
   createFileCredentialLoader,
@@ -344,16 +345,15 @@ export async function buildRealDeps(overrides = {}) {
     const spawnDetached = overrides.spawnDetached ?? detached.spawnDockerDetached;
     const removeContainer = overrides.removeContainer ?? detached.removeDockerContainer;
     if (!launcher) {
-      const resolveAccountHome = overrides.resolveAccountHome
-        ?? resolveProviderAccountHome;
       const credentialBroker = overrides.credentialBroker
         ?? createCredentialBroker({
           controllerMachineId: machineId,
           loadCredential: overrides.loadCredential
             ?? createFileCredentialLoader({
               accountHomeResolver: (accountId) => (
-                resolveAccountHome('codex', accountId)
+                resolveCredentialAccountHome('codex', accountId, { env })
               ),
+              trustedUids: parseTrustedUids(env),
             }),
         });
       const githubCredentialBroker = overrides.githubCredentialBroker

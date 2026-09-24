@@ -36,6 +36,10 @@ import {
   createCredentialBroker,
   createFileCredentialLoader,
 } from './orchestrator/credential-broker.js';
+import {
+  parseTrustedUids,
+  resolveCredentialAccountHome,
+} from './orchestrator/provider-account-home.js';
 import { createGitHubCredentialBroker } from './orchestrator/github-credential-broker.js';
 import { resolveGitHubToken } from './harness-credentials.js';
 import {
@@ -606,8 +610,9 @@ export async function resumeKernelAttempt(attempt, {
         loadCredential: injectedLoadCredential
           ?? createFileCredentialLoader({
             accountHomeResolver: (accountId) => (
-              resolveProviderAccountHome('codex', accountId)
+              resolveCredentialAccountHome('codex', accountId, { env })
             ),
+            trustedUids: parseTrustedUids(env),
           }),
       })
       : undefined);

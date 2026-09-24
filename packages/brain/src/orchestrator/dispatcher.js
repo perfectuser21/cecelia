@@ -24,6 +24,7 @@ import {
   objectiveWithImplementationBaseline,
   parseImplementationBaseline,
 } from './implementation-baseline.js';
+import { resolveProviderAccountHome } from './provider-account-home.js';
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -314,26 +315,8 @@ function buildJudgeProductFeedback(observed) {
   });
 }
 
-export function resolveProviderAccountHome(provider, account) {
-  if (!account) return null;
-  const value = String(account);
-  if (provider === 'codex') {
-    const number = value.match(/^(?:codex-)?team([1-9]\d*)$/)?.[1]
-      ?? value.match(/^([1-9]\d*)$/)?.[1];
-    if (!number) throw new Error(`invalid codex account: ${value}`);
-    return path.join(os.homedir(), `.codex-team${number}`);
-  }
-  if (provider === 'claude') {
-    const number = value.match(/^(?:claude-)?account([1-9]\d*)$/)?.[1]
-      ?? value.match(/^([1-9]\d*)$/)?.[1];
-    if (!number) throw new Error(`invalid claude account: ${value}`);
-    return path.join(os.homedir(), `.claude-account${number}`);
-  }
-  if (provider === 'grok' && ['grok', 'default'].includes(value)) {
-    return path.join(os.homedir(), '.grok');
-  }
-  throw new Error(`invalid ${provider} account: ${value}`);
-}
+// 账号目录解析的单一真身在 provider-account-home.js；此处 re-export 保持既有 import 路径不变。
+export { resolveProviderAccountHome };
 
 function buildInputs(action, spec, ctx, attemptMetadata) {
   const { observed } = ctx;
