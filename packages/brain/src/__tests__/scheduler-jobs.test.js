@@ -209,7 +209,7 @@ describe('scheduler-jobs 注册表', () => {
     expect(names[names.length - 1]).toBe('scheduler-liveness');
     const pool = makePool();
     await runSchedulerJobsOnce(pool, JOBS.filter((j) => j.name === 'scheduler-liveness'));
-    expect(runSchedulerLiveness).toHaveBeenCalledWith(pool, expect.objectContaining({ jobs: JOBS }));
+    expect(runSchedulerLiveness).toHaveBeenCalledWith(pool, expect.objectContaining({ jobs: JOBS, self: 'scheduler-liveness' }));
   });
 
   it('runSchedulerJobsOnce 调用全部 job，needsPool 决定传参', async () => {
