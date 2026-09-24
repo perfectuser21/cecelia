@@ -93,3 +93,25 @@ export function summarizeLiveness(runs = [], now = Date.now()) {
     ...classifyLiveness({ lastRunAt, baselineSec: baseline, runCount: list.length, now }),
   };
 }
+
+/**
+ * 声明间隔的活性判定（scheduler job 用）。
+ * 与 classifyLiveness 同一套阈值公式，但间隔来自代码声明而非运行历史统计，
+ * 所以**不走 COLD_START_RUNS 冷启动门槛**——一个 30s 的循环刚起就该按 30s 的尺子量。
+ * 起因：2026-09-24 notion-gtd-sync 内层循环卡死 8.4h，该 job 不在 ops_workflows，任何尺子都没量它。
+ * @param {{lastRunAt:*, intervalSec:number, now?:number}} p
+ */
+export function classifyDeclaredLiveness({ lastRunAt, intervalSec, now = Date.now() } = {}) {
+  const interval = Number.isFinite(intervalSec) && intervalSec > 0 ? intervalSec : 60;
+  const warnAfter = Math.round(Math.max(interval * WARN_MULTIPLIER, WARN_FLOOR_SEC));
+  const deadAfter = Math.round(Math.min(Math.max(interval * DEAD_MULTIPLIER, DEAD_FLOOR_SEC), DEAD_CEIL_SEC));
+  const lastMs = lastRunAt == null ? NaN : toMs(lastRunAt);
+  if (!Number.isFinite(lastMs)) {
+    return { liveness: 'cold', silent_sec: null, warn_after_sec: warnAfter, dead_after_sec: deadAfter };
+  }
+  const silentSec = Math.round((now - lastMs) / 1000);
+  let liveness = 'ok';
+  if (silentSec >= deadAfter) liveness = 'dead';
+  else if (silentSec >= warnAfter) liveness = 'warn';
+  return { liveness, silent_sec: silentSec, warn_after_sec: warnAfter, dead_after_sec: deadAfter };
+}
