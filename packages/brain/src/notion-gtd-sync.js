@@ -375,9 +375,11 @@ let loopTimer = null;
 let lastRun = null;
 /** 最后一轮**真正跑完**的时刻；超时的轮不推进。活性只认它，不认哨兵时间戳（handler 立即返回，哨兵每分钟都新）。 */
 let lastCompletedAt = null;
+/** 循环起定时器那一刻的时刻；一轮都没完成过时的兜底（见 gtdSyncJobHandler）。 */
+let loopStartedAt = null;
 
 /** 模块级单例重置（测试用；vitest 侧一般靠 vi.resetModules()）。 */
-export function __resetGtdSyncLoopForTest() { loopTimer = null; lastRun = null; lastCompletedAt = null; }
+export function __resetGtdSyncLoopForTest() { loopTimer = null; lastRun = null; lastCompletedAt = null; loopStartedAt = null; }
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|[+-]\d{2}:?\d{2})?)?$/;
 const validSince = (v) => typeof v === 'string' && ISO_RE.test(v.trim()) && !Number.isNaN(Date.parse(v.trim()));
@@ -412,6 +414,7 @@ export function ensureGtdSyncLoop(pool, {
   let inFlight = false;
   let currentStep = null;
   let round = 0;
+  loopStartedAt = new Date().toISOString();
   loopTimer = setIntervalFn(async () => {
     if (inFlight) return; // 重入守卫：慢轮（Notion 退避）不许叠加
     inFlight = true;
@@ -459,5 +462,6 @@ export function ensureGtdSyncLoop(pool, {
 /** scheduler-jobs handler：只确保循环在跑并回报上次结果，立即返回，不阻塞 60s 串行轮。liveness_at = 最后一轮真正跑完的时刻。 */
 export async function gtdSyncJobHandler(pool, opts = {}) {
   const s = ensureGtdSyncLoop(pool, opts);
-  return { loop: s.running ? 'running' : 'disabled', lastRun, liveness_at: lastCompletedAt };
+  // 没完成过任何一轮时用循环启动时刻兜底：开机首轮就挂住的循环也能按尺子在 900s 后翻 dead，而不是回退哨兵 at 永远 ok
+  return { loop: s.running ? 'running' : 'disabled', lastRun, liveness_at: lastCompletedAt ?? loopStartedAt };
 }
