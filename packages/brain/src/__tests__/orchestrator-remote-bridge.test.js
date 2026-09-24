@@ -37,6 +37,43 @@ describe('orchestrator-remote-bridge', () => {
       .rejects.toThrow('orchestrator_bridge_prepare_invalid_json');
   });
 
+  // 2026-09-24 实证（任务 f61fc0c6）：MMV 建工作区（git clone --bare --no-hardlinks 整库拷贝 + npm ci，
+  // 两条 run 并发）实测 7 分钟，编排桥 prepare 超时 180s 硬编码无 env 覆盖 → Brain 放弃后作业
+  // prepared 占槽 10 分钟，期间所有派发 429 空转。prepare 预算必须可配且默认覆盖真实耗时。
+  describe('prepare 超时预算', () => {
+    it('默认 prepare 超时 600s（覆盖 MMV 实测 7 分钟建工作区）', () => {
+      const bridge = createOrchestratorBridge({ env: ENV, fetchFn: fetchOk({}) });
+      expect(bridge.prepareTimeoutMs).toBe(600_000);
+    });
+
+    it('KERNEL_FLEET_ORCHESTRATOR_PREPARE_TIMEOUT_MS 可覆盖默认值', () => {
+      const bridge = createOrchestratorBridge({
+        env: { ...ENV, KERNEL_FLEET_ORCHESTRATOR_PREPARE_TIMEOUT_MS: '900000' },
+        fetchFn: fetchOk({}),
+      });
+      expect(bridge.prepareTimeoutMs).toBe(900_000);
+    });
+
+    it('显式 prepareTimeoutMs 选项优先于 env', () => {
+      const bridge = createOrchestratorBridge({
+        env: { ...ENV, KERNEL_FLEET_ORCHESTRATOR_PREPARE_TIMEOUT_MS: '900000' },
+        fetchFn: fetchOk({}),
+        prepareTimeoutMs: 42_000,
+      });
+      expect(bridge.prepareTimeoutMs).toBe(42_000);
+    });
+
+    it('env 非法（非数字/≤0）→ 回落默认 600s，不把桥配坏', () => {
+      for (const bad of ['abc', '0', '-5', '']) {
+        const bridge = createOrchestratorBridge({
+          env: { ...ENV, KERNEL_FLEET_ORCHESTRATOR_PREPARE_TIMEOUT_MS: bad },
+          fetchFn: fetchOk({}),
+        });
+        expect(bridge.prepareTimeoutMs, `env=${JSON.stringify(bad)}`).toBe(600_000);
+      }
+    });
+  });
+
   it('token 缺失 fail-closed', () => {
     expect(() => createOrchestratorBridge({ env: { FLEET_WORKER_US_MAC_M4_URL: 'http://w' } }))
       .toThrow('orchestrator_bridge_token_missing');
