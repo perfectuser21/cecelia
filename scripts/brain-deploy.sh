@@ -440,19 +440,17 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         export GREEN_RUN_ARGS
         # sidecar 需要知道部署根和 region（bluegreen.sh 通过 env 读取）
         export DEPLOY_ROOT_DIR="$ROOT_DIR"
-        SWAP_OK=true
+        # 守卫块内必须直接 exit 1（tests/packages/brain/bluegreen-deploy-contract.test.js 结构化匹配 if ! …bluegreen_swap; then … exit 1 … fi）
         if ! TARGET_VERSION="${VERSION}" BLUE_NAME=cecelia-node-brain \
              GREEN_NAME=cecelia-node-brain-green TEMP_PORT=5233 HEALTH_TIMEOUT=90 bluegreen_swap; then
-            SWAP_OK=false
-        fi
-        rm -f "$GREEN_ENV_FILE"
-        if [[ "$SWAP_OK" == false ]]; then
+            rm -f "$GREEN_ENV_FILE"
             echo "[FAIL] green canary 未通过，已保留旧生产容器(5221 不受影响)，终止部署"
             # blue 仍在运行且已进入 drain 模式 → 恢复正常派发
             echo "  [drain] green 未通过，恢复旧 Brain 派发..."
             drain_cancel_with_retry
             exit 1
         fi
+        rm -f "$GREEN_ENV_FILE"
     else
         # 无 blue（首次部署）→ 无 outage 风险，跳过 drain + canary 直接起
         echo "  [首次部署] 无旧生产容器，跳过 drain + canary，直接起新容器"
