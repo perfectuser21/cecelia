@@ -49,8 +49,8 @@ JOBS 条目可选声明 `livenessIntervalSec`（notion-gtd-sync = 30）；未声
 
 ### 3.3 notion-gtd-sync 整轮有界 + 步名
 
-- `runGtdSyncOnce` 每步前更新模块级 `currentStep`（`zh→en` / `en→zh` / `入账` / `急停` / `回写`），结束置 null。
-- `ensureGtdSyncLoop` 的定时回调用 `Promise.race` 包一层总超时 `QIUMI_SYNC_ROUND_TIMEOUT_MS`（默认 300000）。超时 → `lastRun = { error: 'round_timeout', step: currentStep, at }`、`console.warn` 带步名、**释放 `inFlight`**；`lastCompletedAt` 不推进。慢轮迟到的结果被丢弃（不覆盖 lastRun）。
+- `runGtdSyncOnce` 新增两个注入回调：`onStep(name)` 每步前上报步名（`zh→en` / `en→zh` / `入账` / `急停` / `回写`，结束 `null`）；`isAbandoned()` 每步边界检查，为真则停下并返回 `{ ...已完成的步, abandoned: true, abandoned_before }`——超时后旧轮不能与新轮并发写（`syncEnToZh` 查后建非原子，两轮并发会在中文表建重复行），被放弃的轮最多再跑完当前步。
+- `ensureGtdSyncLoop` 的定时回调用 `Promise.race` 包一层总超时 `QIUMI_SYNC_ROUND_TIMEOUT_MS`（默认 300000；非法值 NaN/0/负回落默认，与 `QIUMI_SYNC_SINCE` 同款 fail-closed，否则 `setTimeout(NaN)` 按 1ms 触发）。步名存在回调闭包里并按轮次门控（`myRound === round`），被放弃的旧轮迟到的 `onStep` 不改写当前轮。超时 → `lastRun = { error: 'round_timeout', step, at }`、`console.warn` 带步名、**释放 `inFlight`**、置该轮 `abandoned`；`lastCompletedAt` 不推进；迟到的结果被 race 丢弃。`setTimeoutFn` / `clearTimeoutFn` 成对可注入。
 - `gtdSyncJobHandler` 返回 `{ loop, lastRun, liveness_at: lastCompletedAt }`。
 
 ### 3.4 pg 客户端 `query_timeout`
