@@ -43,10 +43,16 @@ import {
   HARNESS_V4_TASK_TYPES,
   SPRINT_HARNESS_DEV_TASK_TYPES,
   CONTENT_PIPELINE_TYPES as CONTENT_PIPELINE_EXTERNAL_WORKER_TYPES,
+  EXTERNAL_WATCHDOG_TASK_TYPES,
   EXECUTOR_SKILL_MAP,
   EXECUTOR_MODE_MAP,
 } from './lib/task-type-registry.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
+
+// 外部执行体（工作机领单器等）认领后的活性宽限期。
+// 真机实测单个关键词采收 17~25 分钟（逐个点进评论者主页核验身份），45 分钟留足余量；
+// 超过仍无回执 → 落回既有 SUSPECT→DEAD 流程，工作机断电/领单器挂了照样有出路。
+const EXTERNAL_CLAIM_GRACE_MS = Number(process.env.EXTERNAL_CLAIM_GRACE_MS || 45 * 60 * 1000);
 import { classifyCodexFailure } from './lib/codex-fatal-patterns.js';
 import { classifyDispatchReasonCode, dispatchFailureFromError } from './lib/dispatch-reason-code.js';
 import { raise } from './alerting.js';
@@ -4108,7 +4114,7 @@ async function probeTaskLiveness() {
 
   // Get all in_progress tasks from DB
   const result = await pool.query(`
-    SELECT id, title, payload, started_at, task_type, error_message
+    SELECT id, title, payload, started_at, task_type, error_message, claimed_by, claimed_at
     FROM tasks
     WHERE status = 'in_progress'
   `);
@@ -4164,8 +4170,33 @@ async function probeTaskLiveness() {
     // reAttachActiveExecutors 未能重建其 activeProcesses 条目时会被误判为死进程。
     // 统一排除，避免 wall-clock 孤儿探针与心跳看门狗双重处理同一任务。
     const HARNESS_LIVENESS_EXEMPT_TYPES = new Set(RECOVERY_HARNESS_TASK_TYPES);
+    const EXTERNAL_WATCHDOG_TYPES = new Set(EXTERNAL_WATCHDOG_TASK_TYPES);
     if (HARNESS_LIVENESS_EXEMPT_TYPES.has(task.task_type)) {
       continue;
+    }
+
+    // device_job 由**工作机领单器**在另一台机器上执行（西安的 Mac），进程和日志都在那边，
+    // us-vps 本机的三条 spawn 证据（activeProcesses 条目 / /tmp/cecelia-{id}.log /
+    // error_message）一条都不会有 —— 于是每一个 device_job 都必然被判死回队。
+    //
+    // 0923 生产实证（单 e8c1dbce，手机 ANGYVB4311010223）：
+    //   21:17:50 领单器认领 → in_progress，真机开始采收
+    //   21:28    confirmed DEAD → 零 spawn 证据 → 回队（status 改回 queued）
+    //   21:34:09 活真干完了，回执被拒 NOT_RUNNING「这条活已不在执行中」
+    //   21:35:19 同一条活又被领走，手机上重跑一遍
+    // 后果不只丢回执：回 queued 后会被再次认领，同一个活在真手机上反复执行 ——
+    // 机时浪费，且在抖音上重复操作有风控风险。
+    //
+    // 判据用**认领新鲜度**而不是直接豁免类型：认领过久仍无回执（工作机断电/领单器挂了）
+    // 时落回既有 SUSPECT→DEAD 流程，活有出路，不会僵死在 in_progress ——
+    // 那种「页面上看着在跑、实际没人做」比误杀更难发现。
+    // 宽限期取 45 分钟：真机实测单个词采收 17~25 分钟（逐个点进评论者主页核验身份）。
+    if (EXTERNAL_WATCHDOG_TYPES.has(task.task_type) && task.claimed_by && task.claimed_at) {
+      const claimAgeMs = Date.now() - new Date(task.claimed_at).getTime();
+      if (Number.isFinite(claimAgeMs) && claimAgeMs < EXTERNAL_CLAIM_GRACE_MS) {
+        suspectProcesses.delete(task.id);
+        continue;
+      }
     }
 
     // REVIEW 类任务由 triggerCodexReview spawn detached codex，三条进程信号全无
