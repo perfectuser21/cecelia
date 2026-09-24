@@ -20,6 +20,8 @@ const execFileAsync = promisify(execFile);
 const UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const SHA_RE = /^[a-f0-9]{40}$/;
 const TERMINAL = new Set(['done', 'failed']);
+const CODEX_ACCOUNT_DIRS = ['.codex-team1', '.codex-team2', '.codex-team3', '.codex-team4', '.codex-team5'];
+const DEFAULT_RUNNER_ROOT = '/private/var/lib/cecelia/runner-checkout';
 
 function httpError(message, statusCode) {
   const error = new Error(message);
@@ -38,6 +40,20 @@ function receipt(job, hostname) {
   };
 }
 
+// 凭据根 = OrbStack 属主 home（installer 渲染进 plist 的 CECELIA_ORBSTACK_HOME）。fleet-worker 以 _cecelia
+// 运行，run.js 里的 loader 需要知道去哪读、以及该目录属主是谁（作为可信 uid）。零账号可读时 fail-loud，
+// 否则 run 起来数秒就死在 credential_source_unavailable，槽位白占（2026-09-23 实证）。
+function probeCredentialHome(root) {
+  if (typeof root !== 'string' || !path.isAbsolute(root)) throw new Error('credential_home_root_invalid');
+  const stat = fs.statSync(root);
+  if (!stat.isDirectory()) throw new Error('credential_home_root_invalid');
+  const readable = CODEX_ACCOUNT_DIRS.some((dir) => {
+    try { fs.accessSync(path.join(root, dir, 'auth.json'), fs.constants.R_OK); return true; } catch { return false; }
+  });
+  if (!readable) throw new Error('credential_home_no_accounts');
+  return { root, uid: stat.uid };
+}
+
 function createOrchestratorRunner({
   workspaceManager,
   dataRoot,
@@ -49,6 +65,7 @@ function createOrchestratorRunner({
   resolveMainShaFn = null,
   repoSourceFor = (repo) => `https://github.com/${repo}.git`,
   env = process.env,
+  probeCredentialHome: probeCredentialHomeFn = probeCredentialHome,
 } = {}) {
   if (!workspaceManager || typeof workspaceManager.prepare !== 'function') {
     throw new Error('orchestrator_runner_workspace_manager_required');
@@ -122,7 +139,20 @@ function createOrchestratorRunner({
       if (!UUID_RE.test(sessionId ?? '') || !Number.isSafeInteger(generation) || generation < 1) {
         throw httpError('controller_lease_identity_missing', 400);
       }
-      const runner = path.join(job.worktreePath, 'packages/brain/src/orchestrator/run.js');
+      // 探测失败 = 本次 run 作废：释放槽位后同一 run 的 start 重放得 404 orchestrator_not_prepared。
+      let credentialHome;
+      try {
+        credentialHome = probeCredentialHomeFn(env.CECELIA_ORBSTACK_HOME);
+      } catch (err) {
+        jobs.delete(runId);
+        const error = httpError('orchestrator_credential_home_unavailable', 500);
+        error.cause = err;
+        throw error;
+      }
+      const runnerRoot = env.CECELIA_ORCHESTRATOR_RUNNER_ROOT || DEFAULT_RUNNER_ROOT;
+      // 2026-09-20 热修回填 v2：run.js 必须从 runner-checkout 的真实路径（/private/var，非 /var 符号链接）
+      // 启动，否则 run.js 底部 import.meta.url === pathToFileURL(process.argv[1]).href 自检恒 false，main() 不执行。
+      const runner = path.join(runnerRoot, 'packages/brain/src/orchestrator/run.js');
       const logDir = path.join(dataRoot, 'orchestrator-logs');
       let stdio = 'ignore';
       let logPath = null;
@@ -146,6 +176,10 @@ function createOrchestratorRunner({
           ...env,
           CECELIA_HARNESS_RUNTIME: 'kernel-v1',
           REPO_ROOT: job.worktreePath,
+          // 2026-09-20 热修回填 v3：REPO_ROOT 指向任务 worktree 时 loadSkillBundle 找不到 SKILL.md。
+          CECELIA_SKILLS_ROOT: path.join(runnerRoot, 'packages/workflows/skills'),
+          CECELIA_CREDENTIAL_HOME_ROOT: credentialHome.root,
+          CECELIA_CREDENTIAL_TRUSTED_UIDS: String(credentialHome.uid),
           ...(logPath ? { CECELIA_KERNEL_LOG_PATH: logPath } : {}),
         },
       });
@@ -191,4 +225,4 @@ function createOrchestratorRunner({
   });
 }
 
-module.exports = { createOrchestratorRunner };
+module.exports = { createOrchestratorRunner, probeCredentialHome };
