@@ -17,15 +17,19 @@
  *  4. 失联告警按轮合并成一条 Bark（紧急告警走 Bark 的既定规矩；raise('P1') 每小时批发到飞书、
  *     只留 5 条预览、Brain 重启即丢缓冲，本案的告警走它可能延迟 1 小时或丢失）。恢复
  *     （dead → ok/warn，不含 dead → cold）走 raise('P2')。去重靠"只在翻转时发"。
- *  5. 下线的 job（不在本轮 jobs 里）把 source='scheduler' 行置 cold，不留僵尸红灯。
- *  6. 整函数包 try/catch：任一步抛错写 scheduler 来源的错误心跳（status='parse_error'，
- *     reasonCode='collect_failed'）并返回 { ok:false }，不静默变旧。
+ *     Bark 无 BARK_TOKEN 时静默返回 false（不抛）——发送成功与否不能靠 catch 判断，
+ *     所以 `sent === false` 时兜底 `raise('P1', 'scheduler_job_dead', ...)` 一次，不让告警彻底消失。
+ *  5. 下线的 job（不在本轮 jobs 里）把 source='scheduler' 行置 cold，并清空 silent_sec/liveness_at——
+ *     不清会在驾驶舱显示"数据不足 + 停了 15 分钟"这种自相矛盾的旧值。
+ *  6. 整函数包 try/catch：任一步抛错复用 ops-collector.js 的 `classifyError` 归类
+ *     （unreachable/schema_drift/config_missing/parse_error），写 scheduler 来源的错误心跳
+ *     并返回 { ok:false }，不静默变旧、不再统一硬编码 parse_error（与 n8n/launchd 腿口径一致）。
  *
  * JOBS 经 opts.jobs 注入，不 import scheduler-jobs.js（会成环：scheduler-jobs → 本模块 →
  * scheduler-jobs；仓库先例 routes/sentinel.js 同样"不 import，避免拖入 handler 依赖链"）。
  */
 import { classifyDeclaredLiveness } from './ops-liveness.js';
-import { writeHeartbeat } from './ops-collector.js';
+import { writeHeartbeat, classifyError } from './ops-collector.js';
 import { raise as defaultRaise } from './alerting.js';
 import { sendBark as defaultBark } from './notifier.js';
 
@@ -116,23 +120,30 @@ export async function runSchedulerLiveness(pool, opts = {}) {
       }
     }
 
-    // 纪律 4：失联按轮合并成一条 Bark（不逐条 raise('P1')）
+    // 纪律 4：失联按轮合并成一条 Bark（不逐条 raise('P1')）；Bark 无 token 静默返回 false 时兜底 raise
     if (deadFlips.length > 0) {
       const title = `🔴 调度 job 失联 ${deadFlips.length} 个`;
       const body = deadFlips
         .map((d) => `${d.name}：最后一轮 ${d.lastRunAt ?? '从未'}，静默 ${d.silentSec ?? '?'}s ≥ ${d.deadAfterSec}s（尺子 ${d.intervalSec}s）`)
         .join('\n');
       try {
-        await bark(title, body);
+        const sent = await bark(title, body);
+        if (sent === false) {
+          try {
+            await raise('P1', 'scheduler_job_dead', body);
+          } catch (e) {
+            console.warn(`[scheduler-liveness] 告警失败: ${e.message}`);
+          }
+        }
       } catch (e) {
         console.warn(`[scheduler-liveness] Bark 发送失败: ${e.message}`);
       }
     }
 
-    // 纪律 5：下线的 job 不留僵尸红灯
+    // 纪律 5：下线的 job 不留僵尸红灯——连带清空 silent_sec/liveness_at，避免"数据不足+停了 N 分钟"自相矛盾
     const jobNames = jobs.map((j) => j.name);
     await pool.query(
-      `UPDATE ops_workflows SET liveness='cold', updated_at=NOW()
+      `UPDATE ops_workflows SET liveness='cold', silent_sec=NULL, liveness_at=NULL, updated_at=NOW()
        WHERE source='${SCHEDULER_SOURCE}' AND wf_id <> ALL($1::text[]) AND liveness IS DISTINCT FROM 'cold'`,
       [jobNames],
     );
@@ -141,7 +152,8 @@ export async function runSchedulerLiveness(pool, opts = {}) {
     return { ok: true, jobs: jobs.length, flippedDead: deadFlips.length, recovered };
   } catch (err) {
     try {
-      await writeHeartbeat(pool, SCHEDULER_SOURCE, SCHEDULER_MACHINE, 'parse_error', 'collect_failed', err.message, collectedAt);
+      const [status, code] = classifyError(err);
+      await writeHeartbeat(pool, SCHEDULER_SOURCE, SCHEDULER_MACHINE, status, code, err.message, collectedAt);
     } catch (hbErr) {
       console.warn(`[scheduler-liveness] 错误心跳写入失败: ${hbErr.message}`);
     }

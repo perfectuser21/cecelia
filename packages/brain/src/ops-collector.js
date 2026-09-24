@@ -930,7 +930,7 @@ async function writeSchedulesSnapshot(pool, source, host, entries, collectedAt) 
   }
 }
 
-function classifyError(e) {
+export function classifyError(e) {
   const msg = String(e?.message || '');
   if (/timed? ?out|connect|unreachable|Connection refused|ETIMEDOUT/i.test(msg)) return ['unreachable', 'ssh_or_exec_failed'];
   if (/schema_drift/.test(msg)) return ['schema_drift', 'schema_drift'];
