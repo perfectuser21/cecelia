@@ -68,6 +68,20 @@ describe('requeueKernelRunLaunchDeferred（远程点火瞬时失败 → 任务�
     expect(calls.some((c) => /^\s*UPDATE/.test(c.sql))).toBe(false);
   });
 
+  // 2026-09-24 22:10 实证：两条 run 各跑 5–6 小时占满 MMV 双槽，第三条任务每 2 分钟 tick 撞一次
+  // 429 deferred；默认上限 10 次 = 20 分钟就被判终态，远小于一条 run 的时长。上限须按"等一整轮
+  // run"量级（300 次 ≈ 10 小时）设默认。
+  it('默认延后上限覆盖整轮 run 时长：第 299 次仍回队，第 300 次才 exhausted', async () => {
+    const ok = deferPool({ deferCount: 299 });
+    await expect(requeueKernelRunLaunchDeferred(ok.pool, {
+      runId: R, expectedTaskId: T, reason: 'kernel_remote_launch_deferred:orchestrator_bridge_prepare_http_429:orchestrator_slots_exhausted',
+    })).resolves.toMatchObject({ changed: true, deferCount: 300 });
+    const full = deferPool({ deferCount: 300 });
+    await expect(requeueKernelRunLaunchDeferred(full.pool, {
+      runId: R, expectedTaskId: T, reason: 'kernel_remote_launch_deferred:x',
+    })).resolves.toMatchObject({ changed: false, exhausted: true });
+  });
+
   it('任务已终态（failed/completed）→ 不回队，changed=false', async () => {
     const { pool, calls } = deferPool({ taskStatus: 'failed' });
     const result = await requeueKernelRunLaunchDeferred(pool, {
