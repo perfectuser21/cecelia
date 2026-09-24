@@ -99,6 +99,20 @@ describe('runSchedulerLiveness — 调度 job 入运行舱', () => {
     expect(body).toMatch(/ci-patrol/);
   });
 
+  it('Bark 静默失败（无 BARK_TOKEN 时返回 false，不抛）→ 兜底 raise(P1) 一次；返回 true → raise 不调', async () => {
+    const bark = vi.fn().mockResolvedValue(false);
+    const raise = vi.fn().mockResolvedValue(undefined);
+    const pool = fakePool({
+      sentinels: { 'ci-patrol': { at: iso(5), ok: true, liveness_at: iso(2000) } },
+      prev: { 'ci-patrol': { liveness: 'ok', last_run_status: 'success' } },
+    });
+    await runSchedulerLiveness(pool, { jobs: [jobs[1]], now: NOW, raise, bark });
+    expect(bark).toHaveBeenCalledTimes(1);
+    expect(raise).toHaveBeenCalledTimes(1);
+    expect(raise.mock.calls[0][0]).toBe('P1');
+    expect(raise.mock.calls[0][1]).toBe('scheduler_job_dead');
+  });
+
   it('dead → ok/warn 翻转告恢复（P2，走 raise）', async () => {
     const raise = vi.fn().mockResolvedValue(undefined);
     const bark = vi.fn().mockResolvedValue(true);
@@ -131,33 +145,54 @@ describe('runSchedulerLiveness — 调度 job 入运行舱', () => {
     expect(hb.params[3]).toBe('ok');
   });
 
-  it('查询哨兵失败 → 写错误心跳（status=parse_error, reason=collect_failed）并返回 ok:false，不静默吞', async () => {
+  it('查询哨兵失败（非网络类错误）→ 心跳复用 classifyError 归类为 parse_error 并返回 ok:false，不静默吞', async () => {
     const queries = [];
     const pool = {
       queries,
       query: async (sql, params) => {
         const s = sql.replace(/\s+/g, ' ').trim();
         queries.push({ sql: s, params });
-        if (s.includes('FROM working_memory')) throw new Error('pg connection reset');
+        if (s.includes('FROM working_memory')) throw new Error('unexpected end of JSON input');
         return { rows: [] };
       },
     };
     const r = await runSchedulerLiveness(pool, { jobs, now: NOW, raise: vi.fn(), bark: vi.fn() });
-    expect(r).toMatchObject({ ok: false, error: 'pg connection reset' });
+    expect(r).toMatchObject({ ok: false, error: 'unexpected end of JSON input' });
     const hb = pool.queries.find((q) => q.sql.includes('ops_source_heartbeats'));
     expect(hb).toBeDefined();
     expect(hb.params[3]).toBe('parse_error');
-    expect(hb.params[4]).toBe('collect_failed');
-    expect(hb.params[5]).toBe('pg connection reset');
+    expect(hb.params[4]).toBe('parse_error');
+    expect(hb.params[5]).toBe('unexpected end of JSON input');
   });
 
-  it('下线的 job（不在本轮 jobs 里）source=scheduler 行置 cold，不留僵尸红灯', async () => {
+  it('查询哨兵失败（连接类错误）→ 心跳复用 classifyError 归类为 unreachable，与 n8n/launchd 腿口径一致', async () => {
+    const queries = [];
+    const pool = {
+      queries,
+      query: async (sql, params) => {
+        const s = sql.replace(/\s+/g, ' ').trim();
+        queries.push({ sql: s, params });
+        if (s.includes('FROM working_memory')) throw new Error('connect ETIMEDOUT');
+        return { rows: [] };
+      },
+    };
+    const r = await runSchedulerLiveness(pool, { jobs, now: NOW, raise: vi.fn(), bark: vi.fn() });
+    expect(r).toMatchObject({ ok: false, error: 'connect ETIMEDOUT' });
+    const hb = pool.queries.find((q) => q.sql.includes('ops_source_heartbeats'));
+    expect(hb).toBeDefined();
+    expect(hb.params[3]).toBe('unreachable');
+    expect(hb.params[4]).toBe('ssh_or_exec_failed');
+  });
+
+  it('下线的 job（不在本轮 jobs 里）source=scheduler 行置 cold 且清掉 silent_sec/liveness_at，不留"数据不足+停了N分钟"自相矛盾', async () => {
     const pool = fakePool({ sentinels: { 'ci-patrol': { at: iso(5), ok: true } } });
     await runSchedulerLiveness(pool, { jobs: [jobs[1]], now: NOW, raise: vi.fn(), bark: vi.fn() });
     const cleanup = pool.queries.find((q) => q.sql.includes('wf_id <> ALL'));
     expect(cleanup).toBeDefined();
     expect(cleanup.sql).toMatch(/source\s*=\s*'scheduler'/);
     expect(cleanup.sql).toMatch(/liveness\s*=\s*'cold'/);
+    expect(cleanup.sql).toMatch(/silent_sec\s*=\s*NULL/);
+    expect(cleanup.sql).toMatch(/liveness_at\s*=\s*NULL/);
     expect(cleanup.params[0]).toEqual(['ci-patrol']);
   });
 
