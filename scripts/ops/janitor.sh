@@ -198,8 +198,13 @@ if [ "$MODE" = "frequent" ]; then
   # 涨到 12.7GB 占满 wired 内存，kernel_task 91% CPU 致机器卡死，zprint -g 触发
   # zone GC 回收不掉（证实真泄漏非缓存），只能重启回收。Apple Silicon+SIP enabled，
   # 无法远程开 zlog1 boot-arg 做函数级泄漏追踪定位元凶（需进 Recovery Mode），
-  # 故做不到点名元凶，只能早发现早处理：WARN(4G仅日志)/ALERT(8G Brain告警)/
-  # CRITICAL(11G，凌晨3-5点安全时段内自动重启止损)。用户拍板：复用 janitor 既有
+  # 故做不到点名元凶，只能早发现早处理：WARN(3G仅日志)/ALERT(5G Brain告警)/
+  # CRITICAL(7G，凌晨3-5点安全时段内自动重启止损)。用户拍板：复用 janitor 既有
+  # 2026-09-24 重新标定（决策 d71efe6b）：原 4/8/11G 是 9-18 事故时按当时内存余量
+  # 定的；09-24 实测 kalloc 才 5.50G 未达 8G 告警线，机器已空闲 188M / swap 3977M /
+  # load 5.3 / 自记「内存高压 99%」——余量被其余占用吃掉，告警线落在「快死了」而非
+  # 「开始疼」。增长 +0.75G/天（/tmp/janitor-frequent.log 138 样本实测），
+  # 自动重启节奏由约 14 天变约 9 天。
   # 清扫+告警机制，不新建独立 launchd 哨兵（决策 64d38870）。
   # KALLOC_KB / KALLOC_HOUR 允许环境变量注入（测试用，同 DISK_PCT 约定）。
   check_kalloc_guard() {
@@ -213,7 +218,7 @@ if [ "$MODE" = "frequent" ]; then
 
     gb=$(awk -v k="$kb" 'BEGIN{printf "%.2f", k/1048576}')
 
-    if [ "$kb" -ge $((11*1024*1024)) ] 2>/dev/null; then
+    if [ "$kb" -ge $((7*1024*1024)) ] 2>/dev/null; then
       hour="${KALLOC_HOUR:-$(date +%H)}"
       # 勿删 10#：前导零会被 bash 按八进制解析，08/09 点会命中同一颗雷（见 etime_to_secs 教训）
       if [ "$((10#$hour))" -ge 3 ] 2>/dev/null && [ "$((10#$hour))" -lt 5 ] 2>/dev/null; then
@@ -229,12 +234,12 @@ if [ "$MODE" = "frequent" ]; then
           -d "{\"title\":\"🔴 kalloc.1024 危险 ${gb}GB（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"已超危险阈值11GB，非凌晨3-5点安全时段暂不自动重启，请尽快手动重启。\"}" \
           2>/dev/null || true
       fi
-    elif [ "$kb" -ge $((8*1024*1024)) ] 2>/dev/null; then
+    elif [ "$kb" -ge $((5*1024*1024)) ] 2>/dev/null; then
       echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 偏高 ${gb}GB，上报 Brain 告警"
       curl -s -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
         -d "{\"title\":\"🟡 kalloc.1024 偏高 ${gb}GB（Janitor检测）\",\"priority\":\"P1\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存缓慢泄漏中，建议本周找空档重启一次。\"}" \
         2>/dev/null || true
-    elif [ "$kb" -ge $((4*1024*1024)) ] 2>/dev/null; then
+    elif [ "$kb" -ge $((3*1024*1024)) ] 2>/dev/null; then
       echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 ${gb}GB（早期预警，仅记日志）"
     fi
   }
