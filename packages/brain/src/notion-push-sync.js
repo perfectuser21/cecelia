@@ -641,7 +641,7 @@ async function dispatchOpenClawFromNotion({
     [norm(workflowNotionId)],
   );
   const wf = wfRows[0];
-  if (!wf) return failReceipt('workflow_not_in_ops：所选行不在 ops_workflows 账上');
+  if (!wf) return failReceipt('workflow_not_in_ops：所选行不是 n8n 业务流程（Brain 调度 job 不可排单），请改选 source=n8n 的工作流');
   let agent = null;
   if (agentNotionId) {
     const { rows } = await pool.query(
