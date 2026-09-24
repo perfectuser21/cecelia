@@ -518,6 +518,46 @@ describe('Fleet Worker health-only service', () => {
     }
   });
 
+  it('adds the disposable worktree without checking out files so the probe fits the command timeout', async () => {
+    // 回归守卫：MMV 仓库 8465 文件全量检出实测 4–5.5s，撞 DEFAULT_COMMAND_TIMEOUT_MS=5s 被杀，
+    // worktree.root_ready 永远 false → node_not_base_admitted。容器探针只检查 /workspace/.git，
+    // 所以 worktree add 必须 --no-checkout（毫秒级），不允许再做 O(仓库) 的检出。
+    const { probeFleetWorkerHealth } = await loadProbeContract();
+    const worktreeAddCalls = [];
+    const execFileFn = vi.fn(async (file, args) => {
+      if (file === 'docker' && args[0] === 'info') return { stdout: '{}' };
+      if (file === 'docker' && args[0] === 'image') return { stdout: '[]' };
+      if (file === 'git' && args[0] === 'worktree' && args[1] === 'add') {
+        worktreeAddCalls.push(args);
+      }
+      return { stdout: '' };
+    });
+
+    const report = await probeFleetWorkerHealth({
+      machineId: 'us-mac-m4',
+      runnerImageDigest: DIGEST,
+      postgresImageDigest: POSTGRES_IMAGE,
+      repoRoot: '/private/var/lib/cecelia/repository',
+      execFileFn,
+      fetchFn: vi.fn(async () => new Response('{}', { status: 200 })),
+      makeTempDirFn: vi.fn(async () => '/private/tmp/fleet-node-probe-no-checkout'),
+      chmodTempDirFn: vi.fn(async () => undefined),
+      removeTempDirFn: vi.fn(async () => undefined),
+      statFn: vi.fn(async () => undefined),
+    });
+
+    expect(worktreeAddCalls).toEqual([[
+      'worktree',
+      'add',
+      '--detach',
+      '--no-checkout',
+      '/private/tmp/fleet-node-probe-no-checkout/worktree',
+      'HEAD',
+    ]]);
+    expect(report.worktree).toEqual({ root_ready: true });
+    expect(report.container).toEqual({ probe_succeeded: true });
+  });
+
   it('reports PostgreSQL unavailable when the pinned image exists but cannot start and become ready', async () => {
     const { probeFleetWorkerHealth } = await loadProbeContract();
     const execFileFn = vi.fn(async (file, args) => {
