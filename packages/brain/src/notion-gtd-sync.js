@@ -327,7 +327,7 @@ export async function runGtdSyncOnce(pool, {
   token = null, env = process.env, notionReq = defaultNotionReq,
   syncZhToEn: zhToEnFn = syncZhToEn, syncEnToZh: enToZhFn = syncEnToZh,
   pullMarked = pullMarkedNotionTasks, applyOwnerStops: stopsFn = applyOwnerStops,
-  pushQiumiStatus: pushFn = pushQiumiStatus, onStep = () => {},
+  pushQiumiStatus: pushFn = pushQiumiStatus, onStep = () => {}, isAbandoned = () => false,
 } = {}) {
   // 取 token 也算一步：凭据没配/取不到时整轮五步统一报 notion_token_missing 并返回，
   // 不抛——抛出去会穿过定时回调变成未捕获 rejection，整个循环从此哑掉。
@@ -346,19 +346,29 @@ export async function runGtdSyncOnce(pool, {
   }
   const sinceIso = env.QIUMI_SYNC_SINCE || null;
   const common = { notionReq, fetchPageContent: fetchNotionPageContent };
+  // 超时后旧轮不能与新轮并发写（syncEnToZh 查后建非原子，两轮并发会在中文表建重复行）；
+  // 每步边界检查 isAbandoned，被放弃的轮最多再跑完当前步。
   // 每步前上报步名：整轮超时时唯一能说出"卡在哪"的证据（09-24 卡死 8.4h 事后无法复原就是缺这个）
-  onStep('zh→en');
-  const zhToEn = await safe('zh→en', () => zhToEnFn(pool, tok, { ...common, sinceIso }));
-  onStep('en→zh');
-  const enToZh = await safe('en→zh', () => enToZhFn(pool, tok, { ...common, sinceIso }));
-  onStep('入账');
-  const ingest = await safe('入账', () => pullMarked(pool, tok, { env }));
-  onStep('急停');
-  const stops = await safe('急停', () => stopsFn(pool, tok, { notionReq }));
-  onStep('回写');
-  const push = await safe('回写', () => pushFn(pool, tok, { notionReq }));
+  const stepNames = ['zh→en', 'en→zh', '入账', '急停', '回写'];
+  const stepFns = [
+    () => zhToEnFn(pool, tok, { ...common, sinceIso }),
+    () => enToZhFn(pool, tok, { ...common, sinceIso }),
+    () => pullMarked(pool, tok, { env }),
+    () => stopsFn(pool, tok, { notionReq }),
+    () => pushFn(pool, tok, { notionReq }),
+  ];
+  const out = {};
+  const keys = ['zhToEn', 'enToZh', 'ingest', 'stops', 'push'];
+  for (let i = 0; i < stepNames.length; i += 1) {
+    if (isAbandoned()) {
+      onStep(null);
+      return { ...out, abandoned: true, abandoned_before: stepNames[i], at: new Date().toISOString() };
+    }
+    onStep(stepNames[i]);
+    out[keys[i]] = await safe(stepNames[i], stepFns[i]);
+  }
   onStep(null);
-  return { zhToEn, enToZh, ingest, stops, push, at: new Date().toISOString() };
+  return { ...out, at: new Date().toISOString() };
 }
 
 let loopTimer = null;
@@ -382,11 +392,12 @@ export const DEFAULT_ROUND_TIMEOUT_MS = 5 * 60 * 1000;
  *
  * 整轮总超时（QIUMI_SYNC_ROUND_TIMEOUT_MS，默认 5min）：2026-09-24 00:41Z 一轮里某个 await
  * 永不返回，inFlight 永真，之后每 30s 的触发全部跳过、handler 仍回报 running，卡死 8.4h 无人知。
- * 单请求有超时不等于整轮有超时；超时即释放 inFlight、记下卡在哪一步，迟到的结果丢弃。
+ * 单请求有超时不等于整轮有超时；超时即释放 inFlight、记下卡在哪一步，迟到的结果丢弃；
+ * 被放弃的旧轮在下一步边界停下，最多再跑完当前步。
  */
 export function ensureGtdSyncLoop(pool, {
-  env = process.env, setIntervalFn = setInterval, setTimeoutFn = setTimeout, intervalMs,
-  runOnce = runGtdSyncOnce,
+  env = process.env, setIntervalFn = setInterval, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout,
+  intervalMs, runOnce = runGtdSyncOnce,
 } = {}) {
   if (env.QIUMI_SYNC_ENABLED !== 'true') return { started: false, running: false };
   if (loopTimer) return { started: false, running: true };
@@ -395,7 +406,9 @@ export function ensureGtdSyncLoop(pool, {
     return { started: false, running: false, reason: 'missing_since' };
   }
   const ms = intervalMs ?? Number(env.QIUMI_SYNC_INTERVAL_MS || 30_000);
-  const roundTimeoutMs = Number(env.QIUMI_SYNC_ROUND_TIMEOUT_MS || DEFAULT_ROUND_TIMEOUT_MS);
+  const rawTimeout = Number(env.QIUMI_SYNC_ROUND_TIMEOUT_MS);
+  // 与 QIUMI_SYNC_SINCE 同款 fail-closed：非法值（NaN/0/负）回落默认，否则 setTimeout(NaN) 按 1ms 触发，同步永远完不成
+  const roundTimeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : DEFAULT_ROUND_TIMEOUT_MS;
   let inFlight = false;
   let currentStep = null;
   let round = 0;
@@ -404,6 +417,7 @@ export function ensureGtdSyncLoop(pool, {
     inFlight = true;
     round += 1;
     const myRound = round;
+    let abandoned = false;
     let timer = null;
     const timeout = new Promise((resolve) => {
       timer = setTimeoutFn(() => resolve({ __roundTimedOut: true }), roundTimeoutMs);
@@ -412,13 +426,16 @@ export function ensureGtdSyncLoop(pool, {
     try {
       const result = await Promise.race([
         // 按轮次门控：被超时放弃的旧轮若还在后台跑，它迟到的 onStep 不得改写当前轮的步名
-        runOnce(pool, { env, onStep: (s) => { if (myRound === round) currentStep = s; } }),
+        runOnce(pool, {
+          env, onStep: (s) => { if (myRound === round) currentStep = s; }, isAbandoned: () => abandoned,
+        }),
         timeout,
       ]);
       if (result?.__roundTimedOut) {
         const at = new Date().toISOString();
         console.warn(`[notion-gtd] 整轮超时 ${roundTimeoutMs}ms，卡在步骤「${currentStep ?? '未知'}」，释放 inFlight（第 ${myRound} 轮）`);
         lastRun = { error: 'round_timeout', step: currentStep, at };
+        abandoned = true;
       } else {
         lastRun = result;
         lastCompletedAt = result?.at ?? new Date().toISOString();
@@ -429,7 +446,7 @@ export function ensureGtdSyncLoop(pool, {
       console.warn('[notion-gtd] 本轮失败:', err.message);
       lastRun = { error: err.message, at: new Date().toISOString() };
     } finally {
-      clearTimeout(timer);
+      clearTimeoutFn(timer);
       currentStep = null;
       inFlight = false;
     }
