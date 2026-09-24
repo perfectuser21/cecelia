@@ -139,6 +139,17 @@ vi.mock('../ops-scheduler-liveness.js', () => ({
   runSchedulerLiveness: vi.fn().mockResolvedValue({ ok: true, jobs: 0, flippedDead: 0, recovered: 0 }),
 }));
 
+// ops-collector / openclaw-guards 真实 handler 会 ssh 逃逸 + execFileSync docker（后者甚至会 docker restart 生产网关）——
+// 单测绝不能碰真机；行为由各自的测试覆盖。部分 mock：只替换 handler，保留其它导出给 notion-push-sync 等模块用。
+vi.mock('../ops-collector.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  runOpsCollector: vi.fn().mockResolvedValue({ skipped: true }),
+}));
+vi.mock('../openclaw-guards.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  runOpenclawGuards: vi.fn().mockResolvedValue({ skipped: true }),
+}));
+
 import {
   runSchedulerJobsOnce,
   startSchedulerJobsLoop,
@@ -192,19 +203,22 @@ describe('scheduler-jobs 注册表', () => {
     expect(typeof j.handler).toBe('function');
   });
 
-  it('注册 scheduler-liveness，排在 ops-notion-push 之前，且把 JOBS 自身注入 handler（不 import 成环）', async () => {
+  it('注册 scheduler-liveness 且排在 JOBS 末尾，把 JOBS 自身注入 handler（不 import 成环）', async () => {
     const { runSchedulerLiveness } = await import('../ops-scheduler-liveness.js');
     const names = JOBS.map((j) => j.name);
-    expect(names.indexOf('scheduler-liveness')).toBeGreaterThan(-1);
-    expect(names.indexOf('scheduler-liveness')).toBeLessThan(names.indexOf('ops-notion-push'));
+    expect(names[names.length - 1]).toBe('scheduler-liveness');
     const pool = makePool();
     await runSchedulerJobsOnce(pool, JOBS.filter((j) => j.name === 'scheduler-liveness'));
     expect(runSchedulerLiveness).toHaveBeenCalledWith(pool, expect.objectContaining({ jobs: JOBS }));
   });
 
   it('runSchedulerJobsOnce 调用全部 job，needsPool 决定传参', async () => {
+    const { runOpsCollector } = await import('../ops-collector.js');
+    const { runOpenclawGuards } = await import('../openclaw-guards.js');
     const pool = makePool();
     const results = await runSchedulerJobsOnce(pool);
+    expect(runOpsCollector).toHaveBeenCalledWith(pool);
+    expect(runOpenclawGuards).toHaveBeenCalledWith(pool, expect.objectContaining({ raiseFn: expect.any(Function) }));
     expect(triggerArchReview).toHaveBeenCalledWith(pool);
     expect(triggerCiPatrol).toHaveBeenCalledWith(pool);
     expect(maybeTriggerStrategySession).toHaveBeenCalledWith(pool);
