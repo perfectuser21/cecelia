@@ -245,6 +245,23 @@ describe('scheduler-jobs 注册表', () => {
     expect(results).toHaveLength(JOBS.length);
     expect(results.every((r) => r.ok)).toBe(true);
   });
+
+  it('handler 返回 liveness_at → 哨兵 record 原样带上（活性只认 handler 自报的完成时刻）', async () => {
+    const pool = makePool();
+    const jobs = [
+      { name: 'self-report', needsPool: false, timeoutMs: 1000, handler: vi.fn().mockResolvedValue({ loop: 'running', liveness_at: '2026-09-24T02:00:00.000Z' }) },
+      { name: 'plain', needsPool: false, timeoutMs: 1000, handler: vi.fn().mockResolvedValue({ ok: true }) },
+    ];
+    await runSchedulerJobsOnce(pool, jobs);
+    const rec = (name) => JSON.parse(pool.query.mock.calls.find(([sql, p]) => sql.includes('working_memory') && p[0] === `${SENTINEL_KEY_PREFIX}${name}`)[1][1]);
+    expect(rec('self-report')).toMatchObject({ ok: true, liveness_at: '2026-09-24T02:00:00.000Z' });
+    expect(rec('plain')).not.toHaveProperty('liveness_at');
+  });
+
+  it('notion-gtd-sync 声明 livenessIntervalSec=30（内层 30s 循环的尺子）', () => {
+    const job = JOBS.find((j) => j.name === 'notion-gtd-sync');
+    expect(job.livenessIntervalSec).toBe(30);
+  });
 });
 
 describe('scheduler-jobs loop 幂等与重入守卫', () => {
