@@ -162,18 +162,24 @@ cd /Users/administrator/worktrees/cecelia/kalloc-threshold-recalibrate
 bash scripts/ops/__tests__/janitor/janitor_kalloc_guard.test.sh; echo "exit=$?"
 ```
 
-Expected: `exit=1`，输出里有 **3 条 `FAIL`**：
+Expected: `exit=1`，输出里有 **5 条 `FAIL`**：
 
-| 注入值 | 旧阈值(4/8/11)实际行为 | 期望 | 失败信息应含 |
+| 注入值 | 用在哪条断言 | 旧阈值(4/8/11)实际行为 | 期望 |
 |---|---|---|---|
-| 3G | 静默（3G < 4G） | 「早期预警」 | `WARN 档预期'早期预警'` |
-| 5G | 「早期预警」（≥4G, <8G） | 「偏高」 | `ALERT 档预期'偏高'+curl调用` |
-| 7G | 「早期预警」（≥4G, <8G） | 「危险」 | `CRITICAL ... 预期` |
+| 3G | WARN | 静默（3G < 4G） | 「早期预警」 |
+| 5G | ALERT | 「早期预警」（≥4G, <8G） | 「偏高」 |
+| 7G | CRITICAL 非安全时段 | 「早期预警」（≥4G, <8G） | 「危险…非安全时段仅告警」 |
+| 7G | CRITICAL 安全时段 | 同上 | 「危险…自动重启止损」 |
+| 7G | 八进制回归(hour=08) | 同上 | 「非安全时段仅告警」 |
+
+> **为什么是 5 条不是 3 条**：7G 这个注入值被用在**三处**独立断言上（UNSAFE / SAFE /
+> OCTAL），旧阈值下 7G < 8G 全落进 WARN 档，三条一起红。八进制回归那条红的是**档位**
+> 不是前导零解析——它的 `stderr` 应为空，证明 `10#` 前缀仍工作正常；Task 2 改完阈值即转绿。
 
 **必须是 `fail "..."` 打出来的断言失败，不是 bash 语法错/未绑定变量**。若看到
 `unbound variable` / `syntax error`，说明改坏了，停下修到只剩断言红。
 
-`3GB-1KB` 与八进制回归两条应 **PASS**（它们对新旧阈值行为一致）。
+`3GB-1KB` 那条应 **PASS**（对新旧阈值行为一致）。
 
 - [ ] **Step 5: commit-1**
 
