@@ -21,6 +21,10 @@ function fail(code) {
   throw new Error(code);
 }
 
+function isCredentialErrorCode(message) {
+  return typeof message === 'string' && /^credential_[a-z_]+$/.test(message);
+}
+
 function tokenExpiry(auth) {
   const token = auth?.tokens?.access_token;
   if (typeof token !== 'string' || token.length === 0) {
@@ -76,13 +80,15 @@ export function createFileCredentialLoader({
     fail('credential_trusted_uids_invalid');
   }
   const trusted = new Set(trustedUids);
-  const ownerTrusted = (uid) => !Number.isInteger(uid)
-    || typeof process.getuid !== 'function'
-    || uid === process.getuid()
-    || trusted.has(uid);
-  // 凭据由宿主 administrator 的 codex CLI/刷新脚本产出（权限不受本仓库控制，现实为 0644）；
-  // loader 只拒绝「可被他人篡改/伪造」的来源：属主须可信，文件与父目录不得被组/他人写，
-  // 不得是符号链接，不得带执行位。保密性（0600）由源侧脚本负责。
+  // 属主判定 fail-closed：uid 非整数一律不可信；平台无 getuid 时，
+  // 仅在未声明 trustedUids 的情况下跳过属主校验，声明了则无法比对、视为不可信。
+  const ownerTrusted = (uid) => {
+    if (!Number.isInteger(uid)) return false;
+    if (typeof process.getuid !== 'function') return trusted.size === 0;
+    return uid === process.getuid() || trusted.has(uid);
+  };
+  // 保密性由源侧负责，本 loader 只防篡改/伪造：属主须可信，文件与父目录不得被组/他人写，
+  // 不得是符号链接，文件不得带执行位。
   const fileModeAcceptable = (mode) => (mode & 0o400) !== 0
     && (mode & 0o022) === 0
     && (mode & 0o111) === 0;
@@ -129,7 +135,7 @@ export function createFileCredentialLoader({
       }
       return readFile(descriptor, 'utf8');
     } catch (error) {
-      if (error?.message?.startsWith('credential_')) throw error;
+      if (isCredentialErrorCode(error?.message)) throw error;
       if (['EACCES', 'ELOOP'].includes(error?.code)) {
         fail('credential_source_permissions');
       }
@@ -187,7 +193,7 @@ export function createCredentialBroker({
         }
         auth = JSON.parse(raw);
       } catch (error) {
-        if (typeof error?.message === 'string' && error.message.startsWith('credential_')) throw error;
+        if (isCredentialErrorCode(error?.message)) throw error;
         fail('credential_payload_invalid');
       }
       if (!auth || typeof auth !== 'object' || Array.isArray(auth)) {
