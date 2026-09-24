@@ -234,6 +234,8 @@ describe('parseTrustedUids', () => {
   });
 });
 ```
+> 实现修订（Task 2 质量审 I2）：接线断言改为行为测试 `src/orchestrator/__tests__/run-credential-loader-wiring.test.js`（buildRealDeps 进 `!launcher` 分支，mock credential-broker 断言 loader 入参）与 `src/__tests__/harness-relay-watchdog-credential-loader.test.js`（codex resume 分支），不再用下面的源码哨兵；`resolveCredentialHomeRoot` 对非空相对路径 fail-loud `credential_home_root_invalid`；`parseTrustedUids` 上界 uint32、错误带 code 与片段。
+
 并在 `run.js` 的现有测试基础上补一条（若 `run.test.js`/`__tests__` 里已有 credentialBroker 注入点难以触达则放到 provider-account-home.test.js 末尾用源码文本断言）：run.js 与 harness-relay-watchdog.js 的 `createFileCredentialLoader({` 调用含 `resolveCredentialAccountHome(` 与 `trustedUids: parseTrustedUids(`：
 ```js
 describe('kernel/watchdog loader 接线（源码哨兵）', () => {
@@ -436,7 +438,9 @@ spawn env 追加：
           CECELIA_CREDENTIAL_HOME_ROOT: credentialHome.root,
           CECELIA_CREDENTIAL_TRUSTED_UIDS: String(credentialHome.uid),
 ```
-`module.exports = { createOrchestratorRunner, probeCredentialHome }`（保持原有导出）。注意：`jobs.delete(runId)` 释放槽位后，同一 run 的 start 重放会得到 404 `orchestrator_not_prepared`，符合「探测失败 = 本次 run 作废」语义。
+`module.exports = { createOrchestratorRunner, probeCredentialHome }`（保持原有导出）。
+
+> 实现修订（Task 3 质量审 I1/I2/M3/M4/M5）：探测失败与 spawn 失败一律 `job.status = 'failed'`（终态释放槽位，重放得 409），不再 `jobs.delete`；探测后再检查 runner 入口存在（`existsFn`，缺失 → 500 `orchestrator_runner_root_unavailable`）；fleet-worker.cjs 增 `ORCHESTRATOR_PASSTHROUGH_5XX` 白名单让两个稳定码原样回到 Brain、日志带 cause；`createFleetWorkerRuntime` 启动时探测一次只 warn。
 
 - [ ] **Step 5**：`npx vitest run scripts/fleet-worker/` 全绿。
 - [ ] **Step 6**：提交 `fix(fleet): orchestrator start 探测凭据根并注入 CECELIA_CREDENTIAL_HOME_ROOT/TRUSTED_UIDS，回填 09-20 热修`。
