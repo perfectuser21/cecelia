@@ -125,4 +125,45 @@ describe('notion-gtd-sync 调度', () => {
     expect(deps.syncZhToEn.mock.calls[0][2].sinceIso).toBe('2026-09-23T00:00:00.000Z');
     expect(deps.syncEnToZh.mock.calls[0][2].sinceIso).toBe('2026-09-23T00:00:00.000Z');
   });
+
+  it('一轮永不返回 → 超过整轮超时后释放 inFlight、下一次 tick 真的再跑、lastRun 记 round_timeout+步名、liveness_at 不前进（09-24 卡死复现）', async () => {
+    vi.useFakeTimers();
+    try {
+      const { ensureGtdSyncLoop, gtdSyncJobHandler } = await import('../notion-gtd-sync.js');
+      let tick;
+      const setIntervalFn = vi.fn((cb) => { tick = cb; return { unref: vi.fn() }; });
+      const env = { QIUMI_SYNC_ENABLED: 'true', QIUMI_SYNC_SINCE: '2026-09-23T00:00:00.000Z', QIUMI_SYNC_ROUND_TIMEOUT_MS: '1000' };
+      const hung = new Promise(() => {}); // 第一轮：某步永不返回
+      const runOnce = vi.fn()
+        .mockImplementationOnce(async (_pool, opts) => { opts.onStep?.('入账'); return hung; })
+        .mockResolvedValueOnce({ zhToEn: {}, enToZh: {}, ingest: {}, stops: {}, push: {}, at: '2026-09-24T02:00:00.000Z' });
+      ensureGtdSyncLoop({ query: vi.fn() }, { env, setIntervalFn, runOnce });
+
+      const first = tick();               // 第一轮开始，挂住
+      await vi.advanceTimersByTimeAsync(1001);
+      await first;                        // 超时兜底让回调返回
+      let out = await gtdSyncJobHandler({ query: vi.fn() }, { env, setIntervalFn });
+      expect(out.lastRun).toMatchObject({ error: 'round_timeout', step: '入账' });
+      expect(out.liveness_at).toBeNull(); // 超时的那一轮不算活
+
+      await tick();                       // inFlight 已释放 → 第二轮真的跑
+      expect(runOnce).toHaveBeenCalledTimes(2);
+      out = await gtdSyncJobHandler({ query: vi.fn() }, { env, setIntervalFn });
+      expect(out.lastRun.at).toBe('2026-09-24T02:00:00.000Z');
+      expect(out.liveness_at).toBe('2026-09-24T02:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('runGtdSyncOnce 每步前回调 onStep（超时时才能说出卡在哪）', async () => {
+    const mod = await import('../notion-gtd-sync.js');
+    const steps = [];
+    const ok = (v) => vi.fn().mockResolvedValue(v);
+    await mod.runGtdSyncOnce({ query: vi.fn() }, {
+      token: 'tok', env: {}, onStep: (s) => steps.push(s),
+      syncZhToEn: ok({}), syncEnToZh: ok({}), pullMarked: ok({}), applyOwnerStops: ok({}), pushQiumiStatus: ok({}),
+    });
+    expect(steps).toEqual(['zh→en', 'en→zh', '入账', '急停', '回写', null]);
+  });
 });
