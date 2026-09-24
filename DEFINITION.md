@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.317.9
+**Brain 版本**: 1.317.10
 
 ## 1.283.0
 
@@ -48,6 +48,13 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.317.10 — 远程点火撞跑场机 429/超时改 deferred 回队 + fleet-worker prepared 作业 TTL 释放槽位
+
+- 根因（任务 281aa798，2026-09-24 实证）：MMV maxConcurrent=2 只跑 1 条 run 却持续 429——Brain 侧 prepare 请求超时放弃后，fleet-worker 的作业停在 `prepared` 永不 start，`active()` 一直计入；Brain 又把 `orchestrator_bridge_prepare_http_429` 当永久失败 terminalized，一天 6 条刀被判死。
+- 修法①（Brain）：`_spawnKernelRuntimeRemote` 对 bridge 429/502/503/504/request_failed 走新 `requeueKernelRunLaunchDeferred`——run 记 failed 留痕、任务回 queued 清 claim，payload 记 `kernel_launch_defer_count`，达 10 次回落终态；返回 `deferred:true reason=orchestrator_busy`。永久错误（400/404/409/500…）仍 terminalized。
+- 修法②（fleet-worker）：`orchestrator-runner.cjs` prepared 作业带 `preparedAt`，超过 `preparedTtlMs`（默认 10 分钟）置 `expired`（终态释放槽位），迟到 start 得 410 `orchestrator_prepared_expired`，同 run 可重新 prepare。
+- 测试：harness-skill-relay / kernel-run-store / orchestrator-runner 单测 + `tests/gp/f1/step3-orchestrator-remote-launch.test.js`（429 → deferred；永久错误用例改为 http_400）。
 
 ## Brain 1.317.8 — runner 镜像摘要 repin 4450aac9 → aeaf2905（仓库为唯一真身，撤 MMV 本地热修）
 
