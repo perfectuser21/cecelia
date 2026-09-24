@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.317.5
+**Brain 版本**: 1.317.7
 
 ## 1.283.0
 
@@ -48,6 +48,20 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.317.7 — fleet-worker 节点探针 worktree add 改 --no-checkout（修 MMV 永远 node_not_base_admitted）
+
+- 根因：`node-probe.cjs` disposable 探针用 `git worktree add --detach` 对 8465 文件全量检出，MMV 实测 4–5.5s，撞 `DEFAULT_COMMAND_TIMEOUT_MS`=5s 被杀 → `worktree.root_ready`/`container.probe_succeeded` 恒 false → node-admission 拒绝 MMV（run d613b4fd 卡 `node_not_base_admitted`）；副作用是每 30s 一次全量检出与 `fleet-node-probe-*` 残留
+- 修法：容器探针只检查 `/workspace/.git`，worktree add 加 `--no-checkout`（毫秒级）；回归测试 `fleet-worker.test.js` 断言参数含 `--no-checkout`（任务 e27e0bfd）
+
+## Brain 1.317.6 — 调度 job 入运行舱 + notion-gtd-sync 整轮有界（09-24 卡死 8.4h 根治）
+
+- 新 job `scheduler-liveness`（JOBS 末尾）：working_memory 哨兵 → `ops_workflows(source='scheduler')`，活性按声明间隔算（`classifyDeclaredLiveness`，不走冷启动门槛），翻转 dead 按轮合并一条 Bark（无 token 回退 P1）、恢复 P2；只写机器列，10 分钟降噪，dead 行静默秒数持续刷新，下线 job 置 cold，失败写 `scheduler` 来源心跳。
+- `notion-gtd-sync` 整轮总超时（`QIUMI_SYNC_ROUND_TIMEOUT_MS`，默认 5min，非法回落）+ 步名按轮次门控 + 超时后旧轮在步边界停下 + `liveness_at`（无完成轮取循环启动时刻）。
+- 哨兵 record 透传 handler 自报 `liveness_at`；JOBS 条目可声明 `livenessIntervalSec`。
+- pg 客户端 `query_timeout`（`DB_QUERY_TIMEOUT_MS`，默认 10min）。
+- 便宜闸 registry 只取 `source='n8n'`。
+- 决策 69cd802f / task 50a2c256。
 
 ## Brain 1.317.5 — kernel-v1 远程 run 凭据来源修复（credential_payload_invalid 根治）
 
