@@ -411,7 +411,8 @@ export function ensureGtdSyncLoop(pool, {
     });
     try {
       const result = await Promise.race([
-        runOnce(pool, { env, onStep: (s) => { currentStep = s; } }),
+        // 按轮次门控：被超时放弃的旧轮若还在后台跑，它迟到的 onStep 不得改写当前轮的步名
+        runOnce(pool, { env, onStep: (s) => { if (myRound === round) currentStep = s; } }),
         timeout,
       ]);
       if (result?.__roundTimedOut) {
