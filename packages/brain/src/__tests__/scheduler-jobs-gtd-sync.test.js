@@ -129,6 +129,7 @@ describe('notion-gtd-sync 调度', () => {
   it('一轮永不返回 → 超过整轮超时后释放 inFlight、下一次 tick 真的再跑、lastRun 记 round_timeout+步名、liveness_at 不前进（09-24 卡死复现）', async () => {
     vi.useFakeTimers();
     try {
+      vi.setSystemTime(new Date('2026-09-24T03:00:00.000Z'));
       const { ensureGtdSyncLoop, gtdSyncJobHandler } = await import('../notion-gtd-sync.js');
       let tick;
       const setIntervalFn = vi.fn((cb) => { tick = cb; return { unref: vi.fn() }; });
@@ -144,7 +145,7 @@ describe('notion-gtd-sync 调度', () => {
       await first;                        // 超时兜底让回调返回
       let out = await gtdSyncJobHandler({ query: vi.fn() }, { env, setIntervalFn });
       expect(out.lastRun).toMatchObject({ error: 'round_timeout', step: '入账' });
-      expect(out.liveness_at).toBeNull(); // 超时的那一轮不算活
+      expect(out.liveness_at).toBe('2026-09-24T03:00:00.000Z'); // 超时的那一轮不算活，兜底到循环启动时刻
 
       await tick();                       // inFlight 已释放 → 第二轮真的跑
       expect(runOnce).toHaveBeenCalledTimes(2);
@@ -195,6 +196,7 @@ describe('notion-gtd-sync 调度', () => {
   it('超时后旧轮在下一步边界停下，不再继续写；迟到结果不覆盖 lastRun / 不推进 liveness_at', async () => {
     vi.useFakeTimers();
     try {
+      vi.setSystemTime(new Date('2026-09-24T03:00:00.000Z'));
       const mod = await import('../notion-gtd-sync.js');
       let release;
       const zhToEn = vi.fn(() => new Promise((r) => { release = r; }));
@@ -213,7 +215,7 @@ describe('notion-gtd-sync 调度', () => {
       expect(enToZh).not.toHaveBeenCalled();         // 边界处停下，不再写
       const out = await mod.gtdSyncJobHandler({ query: vi.fn() }, { env, setIntervalFn });
       expect(out.lastRun).toMatchObject({ error: 'round_timeout', step: 'zh→en' }); // 迟到结果没覆盖
-      expect(out.liveness_at).toBeNull();
+      expect(out.liveness_at).toBe('2026-09-24T03:00:00.000Z');
     } finally {
       vi.useRealTimers();
     }
@@ -234,6 +236,21 @@ describe('notion-gtd-sync 调度', () => {
       await tick();
       expect(delays[0]).toBe(DEFAULT_ROUND_TIMEOUT_MS);
       expect(clearTimeoutFn).toHaveBeenCalledTimes(1); // 与 setTimeoutFn 配对清理
+    }
+  });
+
+  it('循环起了但一轮都没完成 → liveness_at = 循环启动时刻（首轮即卡也能在 900s 后翻 dead），而不是 null', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-09-24T03:00:00.000Z'));
+      const { ensureGtdSyncLoop, gtdSyncJobHandler } = await import('../notion-gtd-sync.js');
+      const setIntervalFn = vi.fn(() => ({ unref: vi.fn() }));
+      const env = { QIUMI_SYNC_ENABLED: 'true', QIUMI_SYNC_SINCE: '2026-09-23T00:00:00.000Z' };
+      ensureGtdSyncLoop({ query: vi.fn() }, { env, setIntervalFn });
+      const out = await gtdSyncJobHandler({ query: vi.fn() }, { env, setIntervalFn });
+      expect(out.liveness_at).toBe('2026-09-24T03:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
