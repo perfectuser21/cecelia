@@ -17,7 +17,7 @@ const DIGEST_RE = /sha256:[a-f0-9]{64}/;
 
 // 每次 repin 更新此值（钉死当前批次，防 pin 漂移/回退；上一批 74afa123 → 本批为
 // 2026-09-19 prune 二次误删后从 build head e38e6a477 重建，1.302.5）。
-const CANONICAL_DIGEST = 'sha256:4450aac9d8710bd02b37ec1f5e46ef06ab2e1ae108f453c3d25f85318af5be8e';
+const CANONICAL_DIGEST = 'sha256:aeaf290525a623a2182fdce5376ca914e9de2d0b1bab0ba18d7d07b9ea379033';
 
 describe('canonical runner digest pin 一致性', () => {
   it('node-profile 全部节点 pin 同一个 canonical digest', () => {

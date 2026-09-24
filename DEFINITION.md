@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.317.7
+**Brain 版本**: 1.317.8
 
 ## 1.283.0
 
@@ -48,6 +48,11 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.317.8 — runner 镜像摘要 repin 4450aac9 → aeaf2905（仓库为唯一真身，撤 MMV 本地热修）
+
+- 主理人 2026-09-24 拍板（决策 e2551d59，invariant）：跑场机 runner 镜像摘要唯一真身=仓库，机器跟仓库走，禁止本地热修迁就镜像。09-20 MMV 本地重建后热修 runner-checkout/plist 为 aeaf2905 未进仓库，仓库仍钉 4450aac9（#5409），两边分叉、同步代码不敢整体拉。4450 无 registry 不可复现；aeaf2905 的 entrypoint label（12b6b2ef）与 main 一致且已真验通车（run 60c1f156 越过准入）。
+- 按 repin 清单 11 处一次性重钉为 `sha256:aeaf290525a623a2182fdce5376ca914e9de2d0b1bab0ba18d7d07b9ea379033`（历史条目保留旧 digest 原文）；合并后 MMV runner-checkout 整体切 main、删热修与 .bak；xian-m4/xian-m1 经 fleet-rollout 下发同一镜像（任务 db1616d6）。
 
 ## Brain 1.317.7 — fleet-worker 节点探针 worktree add 改 --no-checkout（修 MMV 永远 node_not_base_admitted）
 
