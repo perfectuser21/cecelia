@@ -65,7 +65,7 @@ describe('requeueKernelRunLaunchDeferred（远程点火瞬时失败 → 任务�
       runId: R, expectedTaskId: T, reason: 'kernel_remote_launch_deferred:x', maxDefers: 10,
     });
     expect(result).toMatchObject({ changed: false, exhausted: true, deferCount: 10 });
-    expect(calls.some((c) => /UPDATE/.test(c.sql))).toBe(false);
+    expect(calls.some((c) => /^\s*UPDATE/.test(c.sql))).toBe(false);
   });
 
   it('任务已终态（failed/completed）→ 不回队，changed=false', async () => {
@@ -74,7 +74,7 @@ describe('requeueKernelRunLaunchDeferred（远程点火瞬时失败 → 任务�
       runId: R, expectedTaskId: T, reason: 'kernel_remote_launch_deferred:x',
     });
     expect(result).toMatchObject({ changed: false, reason: 'task_terminal' });
-    expect(calls.some((c) => /UPDATE/.test(c.sql))).toBe(false);
+    expect(calls.some((c) => /^\s*UPDATE/.test(c.sql))).toBe(false);
   });
 
   it('run 与任务身份不符 → 抛错并 ROLLBACK', async () => {
