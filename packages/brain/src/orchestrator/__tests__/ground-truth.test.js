@@ -518,6 +518,38 @@ describe('collectGroundTruth：DB 通道组装', () => {
     );
   });
 
+  it('approved 合同但冻结产物表零行 → derive 派 generator 前直接终局，不进装配热循环（run 60c1f156）', async () => {
+    // 生产里 materializeApprovedContract 的批准与产物插入同事务原子（contract-store.js），
+    // 每个真实调用方都带非空 artifacts；故 approved+零产物必是「冻结产物未落地」的损坏态。
+    // 若照常派 generator，装配层（dispatcher）必抛 FROZEN_CONTRACT_ARTIFACTS_MISSING →
+    // pre-attempt BLOCKED 却不终局，越过节点准入后 19 跳热循环烧到 deadline。
+    const deps = makeDeps({
+      rows: {
+        contracts: [{ id: CONTRACT_ID, status: 'approved' }],
+        contractArtifacts: [],
+      },
+      files: { 'sprint-prd.md': '# frozen PRD' },
+    });
+
+    const observed = await collectGroundTruth(deps, { taskId: TASK_ID, runId: RUN_ID });
+
+    expect(observed.contract.approved).toBe(true);
+    expect(observed.contract.artifacts).toEqual([]);
+    expect(observed.generatorSpawned).toBe(false);
+
+    const decision = derive({
+      ...observed,
+      counters: {
+        hops: 5, fixRound: 0, pollCount: 0, noPushStreak: 0, noVerdictStreak: 0, ganCostUsd: 0,
+      },
+    });
+    expect(decision).toMatchObject({
+      phase: 'failed',
+      action: 'mark_failed',
+      reason: 'frozen_contract_artifacts_missing',
+    });
+  });
+
   it('contract status=draft → approved:false；contract_id 为空 → 不查 contracts、approved:false', async () => {
     const deps1 = makeDeps();
     const o1 = await collectGroundTruth(deps1, { taskId: TASK_ID, runId: RUN_ID });

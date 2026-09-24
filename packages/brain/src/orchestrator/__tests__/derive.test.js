@@ -52,6 +52,55 @@ function baseObserved(overrides = {}) {
   return observed;
 }
 
+describe('approved 合同冻结产物未落地 → 派 generator 前直接终局（run 60c1f156 热循环根治）', () => {
+  const freshGenerate = (overrides = {}) => baseObserved({
+    pr: null,
+    candidate: null,
+    generatorSpawned: false,
+    decisionLog: [],
+    ...overrides,
+  });
+
+  it('approved 但 contract.artifacts 为空数组 → MARK_FAILED，绝不 spawn:generator', () => {
+    // 派 generator 会在装配层抛 FROZEN_CONTRACT_ARTIFACTS_MISSING:approved_contract →
+    // pre-attempt BLOCKED 不置 generatorSpawned，下一跳仍走本分支重派 → 19 跳热循环。
+    const r = derive(freshGenerate({
+      contract: { approved: true, identity: null, artifacts: [] },
+    }));
+    expect(r.phase).toBe('failed');
+    expect(r.action).toBe(constants.ACTION.MARK_FAILED);
+    expect(r.reason).toBe('frozen_contract_artifacts_missing');
+  });
+
+  it('approved 且 contract.artifacts 非空（健康合同）→ 仍正常 spawn:generator', () => {
+    const r = derive(freshGenerate({
+      contract: {
+        approved: true,
+        identity: CURRENT_CONTRACT_IDENTITY,
+        artifacts: [{ path: 'sprints/x/tests/a.test.mjs' }],
+      },
+    }));
+    expect(r.action).toBe('spawn:generator');
+    expect(r.reason).toBe('contract_approved');
+  });
+
+  it('contract.artifacts 缺省(undefined，纯函数测试常态) → 守卫让路，零回归 spawn:generator', () => {
+    const r = derive(freshGenerate({
+      contract: { approved: true, identity: CURRENT_CONTRACT_IDENTITY },
+    }));
+    expect(r.action).toBe('spawn:generator');
+    expect(r.reason).toBe('contract_approved');
+  });
+
+  it('已存在远端 PR 时不落本分支：空 artifacts 不误伤既有 PR 路由', () => {
+    const r = derive(baseObserved({
+      generatorSpawned: false,
+      contract: { approved: true, identity: CURRENT_CONTRACT_IDENTITY, artifacts: [] },
+    }));
+    expect(r.action).not.toBe(constants.ACTION.MARK_FAILED);
+  });
+});
+
 describe('Judge 前本地候选与 Judge 后受信发布', () => {
   const candidate = {
     type: 'git_candidate',
