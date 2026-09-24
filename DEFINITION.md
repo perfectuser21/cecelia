@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.317.2
+**Brain 版本**: 1.317.3
 
 ## 1.283.0
 
@@ -48,6 +48,13 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.317.3 — liveness 别再把「在别的机器上跑着的活」判死回队
+
+- 0923 生产实证（单 e8c1dbce，手机 ANGYVB4311010223）：21:17:50 工作机领单器认领 → in_progress 真机开始采收；21:28 liveness confirmed DEAD → 零 spawn 证据 → 回队（status 改回 queued）；21:34:09 活真干完了，回执被拒 `NOT_RUNNING`；21:35:19 同一条活**又被领走**，在真手机上重跑一遍。后果不只丢回执——回 queued 后会被再次认领，同一个活反复执行，机时浪费且在抖音上重复操作有风控风险。
+- 根因是**用错了字段**：liveness 的三条 spawn 证据全是 Brain 本机（us-vps）的（activeProcesses 条目 / `/tmp/cecelia-<id>.log` / error_message），而 `device_job` 由工作机领单器在西安的 Mac 上执行，本机这三条一条都不会有。本该有豁免（第一道检查就是 `CONTENT_PIPELINE_TYPES`），但它按 `executor` 筛，而 registry 里 `device_job: T('device', false, false, null, 'external-worker', ...)` —— **executor 是 null，watchdog 才是 `'external-worker'`**。「谁执行」和「谁管生死」是两件事，liveness 关心后者却筛了前者。
+- 改法：registry 加派生集合 `EXTERNAL_WATCHDOG_TASK_TYPES`（按 watchdog 筛，8 个：7 个 content-* 加 device_job），liveness 消费它，符合「各消费方只 import 派生集合、禁止手抄」的设计。豁免判据用**认领新鲜度**而非整类跳过：认领过久仍无回执（工作机断电、领单器挂了）落回既有 SUSPECT→DEAD 流程，不会僵死在 in_progress——那种「页面上看着在跑、实际没人做」比误杀更难发现。宽限期 45 分钟（`EXTERNAL_CLAIM_GRACE_MS` 可覆盖），真机实测单个词采收 17~25 分钟。liveness 的 SELECT 补了 `claimed_by, claimed_at`（原来没取）。
+- 守卫：新增 5 条集成测试（真连 Postgres、真 executor.js、真 ps 探测，零 vi.mock），变异四条各验红（去掉豁免 / 永不回收 / 宽限期缩回 10 分钟 / 按 executor 筛）；既有 liveness 10 条与 registry 守卫 11 条复跑全绿。
 
 ## Brain 1.317.2 — 派发时重锚定 base_sha（接班收据），main 合并不再冻全队列
 
