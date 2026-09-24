@@ -290,6 +290,18 @@ describe('scheduler-jobs 注册表', () => {
     const job = JOBS.find((j) => j.name === 'notion-gtd-sync');
     expect(job.livenessIntervalSec).toBe(30);
   });
+
+  it('liveness_at 非 string（null / Date / number）不透传进哨兵 record', async () => {
+    const pool = makePool();
+    const jobs = [
+      { name: 'null-at', needsPool: false, timeoutMs: 1000, handler: vi.fn().mockResolvedValue({ liveness_at: null }) },
+      { name: 'date-at', needsPool: false, timeoutMs: 1000, handler: vi.fn().mockResolvedValue({ liveness_at: new Date() }) },
+      { name: 'num-at', needsPool: false, timeoutMs: 1000, handler: vi.fn().mockResolvedValue({ liveness_at: 1758675600000 }) },
+    ];
+    await runSchedulerJobsOnce(pool, jobs);
+    const rec = (name) => JSON.parse(pool.query.mock.calls.find(([sql, p]) => sql.includes('working_memory') && p[0] === `${SENTINEL_KEY_PREFIX}${name}`)[1][1]);
+    for (const name of ['null-at', 'date-at', 'num-at']) expect(rec(name)).not.toHaveProperty('liveness_at');
+  });
 });
 
 describe('scheduler-jobs loop 幂等与重入守卫', () => {
