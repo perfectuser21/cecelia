@@ -329,3 +329,4 @@ task-kind-column-smoke.sh
 task-run-primitive-smoke.sh
 task-run-outlets-smoke.sh
 task-governance-guards-smoke.sh
+project-root-gate-smoke.sh

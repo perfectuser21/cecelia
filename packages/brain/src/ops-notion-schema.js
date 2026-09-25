@@ -82,6 +82,18 @@ export const OPS_DB_PROPS = {
 };
 
 /**
+ * Tasks 投影库（NOTION_TASKS_DB）的缺列即补清单（链 bf5088a3 棒5·PR B）。
+ * 库既有列（2026-09-25 实测）：Name / Status / Description / Project(dual→Projects) / Blocked by(dual 自关联) ...
+ * 这里只列「pushTasks 会用到、且可能缺」的列：Blocked by 是自关联，database_id 必须是 Tasks 库自己，
+ * 所以是函数不是常量。已存在则 diffMissingProps 不重发（不覆盖人在 Notion 上调过的配置）。
+ */
+export function buildTasksDbProps(tasksDbId) {
+  return {
+    'Blocked by': { relation: { database_id: tasksDbId, dual_property: {} } },
+  };
+}
+
+/**
  * 算出目标库缺哪些列。只返回缺的——已存在的列绝不重发，
  * 免得 PATCH 覆盖掉人在 Notion 上手动调过的列配置（比如 select 的选项颜色）。
  * 列名大小写敏感：Notion 本身就敏感，归一化只会制造重复列。
