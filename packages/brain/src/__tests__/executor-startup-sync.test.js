@@ -209,7 +209,8 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
     expect(failedCall).toBeTruthy();
 
     // 验证 error_details.reason 为 oom 相关（oom_killed 或 oom_likely）
-    const payloadPatch = JSON.parse(failedCall[1][1]);
+    // finalizeTask 参数形状：[id, error_message, payload 合并 JSON]（id 恒为 $1）
+    const payloadPatch = JSON.parse(failedCall[1][2]);
     expect(['oom_killed', 'oom_likely']).toContain(payloadPatch.error_details.reason);
   });
 

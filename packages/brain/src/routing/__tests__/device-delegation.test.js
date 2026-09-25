@@ -79,7 +79,8 @@ describe('reconcileDelegatedDeviceJobs — 子任务终态回写父任务', () =
     expect(w.sql).toMatch(/AND status = 'blocked'/);
     expect(w.sql).toMatch(/completed_at = COALESCE\(completed_at, NOW\(\)\)/);
     expect(w.params[0]).toBe(PARENT);
-    const receipt = JSON.parse(w.params[1]);
+    // finalizeTask 参数形状：[id, result 合并 JSON]，回执在合并 JSON 的 receipt 键下
+    const receipt = JSON.parse(w.params[1]).receipt;
     expect(receipt).toMatchObject({ device_task_id: CHILD, child_status: 'completed' });
     expect(typeof receipt.reaped_at).toBe('string');
   });
@@ -89,7 +90,7 @@ describe('reconcileDelegatedDeviceJobs — 子任务终态回写父任务', () =
       child: childRow('completed', { result: { receipt: { finalAssistantVisibleText: '点赞 12 条' } } }),
     });
     await reconcileDelegatedDeviceJobs(pool);
-    const receipt = JSON.parse(writes.find((x) => /completed_no_pr/.test(x.sql)).params[1]);
+    const receipt = JSON.parse(writes.find((x) => /completed_no_pr/.test(x.sql)).params[1]).receipt;
     expect(resultTextOf({ receipt })).toBe('点赞 12 条');
     expect(receipt.text).toBe('点赞 12 条');
   });
@@ -97,7 +98,7 @@ describe('reconcileDelegatedDeviceJobs — 子任务终态回写父任务', () =
   it('子任务没留可见结论 → 回执给兜底文案，不让中文表的结果列空着', async () => {
     const { pool, writes } = makePool({ child: childRow('completed_no_pr', { result: null }) });
     await reconcileDelegatedDeviceJobs(pool);
-    const receipt = JSON.parse(writes.find((x) => /completed_no_pr/.test(x.sql)).params[1]);
+    const receipt = JSON.parse(writes.find((x) => /completed_no_pr/.test(x.sql)).params[1]).receipt;
     expect(resultTextOf({ receipt })).toBe('设备任务已完成');
   });
 
@@ -117,14 +118,14 @@ describe('reconcileDelegatedDeviceJobs — 子任务终态回写父任务', () =
     expect(w.sql).toMatch(/AND status = 'blocked'/);
     expect(w.params[1]).toBe('device_job_failed');
     // 失败也要留回执：不然主理人只看到「推迟」，不知道是哪台手机哪条子任务栽的
-    expect(JSON.parse(w.params[2])).toMatchObject({ device_task_id: CHILD, child_status: 'failed' });
+    expect(JSON.parse(w.params[2]).receipt).toMatchObject({ device_task_id: CHILD, child_status: 'failed' });
   });
 
   it('失败回执带上子任务的 error_message', async () => {
     const { pool, writes } = makePool({ child: childRow('failed', { error_message: 'adb 离线' }) });
     await reconcileDelegatedDeviceJobs(pool);
     const w = writes.find((x) => /SET status = 'failed'/.test(x.sql));
-    expect(JSON.parse(w.params[2]).error_message).toBe('adb 离线');
+    expect(JSON.parse(w.params[2]).receipt.error_message).toBe('adb 离线');
   });
 
   it('子 cancelled / canceled（生产两种拼写都在用）→ 父 failed，错因带原拼写', async () => {
