@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.325.0
+**Brain 版本**: 1.325.3
 
 ## 1.283.0
 
@@ -48,6 +48,33 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.325.3 — skill-sync-to-runners 慢链路修复：超时可配 + --partial + 失败重试（任务 4950ccf3，棒 8 遗留缺口）
+
+- 病根（09-25 实测）：MMV→西安直连跨洋仅 7~16 KB/s，脚本里写死的 `rsync --timeout=60` 让首次全量同步（约 27MB，慢速下要二三十分钟）在 xian-m4/xian-m1 上都因 60 秒 IO 无进展而失败，每次 MMV 改 skill 都可能再撞
+- 超时可配：`SKILL_SYNC_RSYNC_TIMEOUT`（默认 60，非数字/≤0 回落 60，慢链路建议 600~900），dry-run 打印与 apply 实跑同值；rsync 的 ssh 加保活 `ServerAliveInterval=30 ServerAliveCountMax=20`
+- 续传：rsync 加 `--partial`，中断的大文件下次接着传；仍不带 `--delete`，prune 仍只在 `--prune` 时
+- 重试：第一跳 rsync 因 rc=30/35/255（IO 超时/连接超时/ssh 断线）失败自动重试，最多 `SKILL_SYNC_RETRIES`（默认 3，0=不重试）次，间隔 `SKILL_SYNC_RETRY_BACKOFF`×第几次（默认 5s/10s/15s）；耗尽才判该目标失败，其它失败码（如 23）不重试；退出码语义不变（0/1/2/64），日志记录重试次数
+- 测试：`skill-sync-to-runners.test.js` 新增假 rsync 注入（`SKILL_SYNC_RSYNC`，只记参数与注入退出码，其余转交真 rsync 走假 ssh，不连任何远端）——超时 env 传到命令行、7 种非法值回落 60、rc=30/35/255 一次失败后成功、耗尽退出 1 且不进入镜像、RETRIES 0/1/非法、rc=23 不重试、一个目标耗尽不影响另一个
+
+## Brain 1.325.2 — Skill 分发：清单哈希 + 漂移检测 + 同步脚本入库（链 bf5088a3 棒8，任务 1141f101，决策 105a5868）
+
+- 病根（09-25 只读探测实证）：MMV `~/.claude/skills` 顶层几乎全是指向 zenithjoy-skills 的符号链接，MMV 本机 cron 用 `rsync -az`（无 `-L`）把链接原样拷到跑场机——M1 上 133/133 悬空、M4 126 悬空，「条目数 135=135」的对齐是假的，经跑场池下放的会话实际没有可用 skill；cron 无 `--delete`、无校验、不在仓库，M4 还多 11 个旧残留；真身自己也有 29 个悬空链接
+- 清单：`scripts/skill-manifest.sh`（纯 bash，Dockerfile 新增一行 COPY 进镜像，经 ssh 送到目标机执行，us-vps 零执行）逐 skill 按内容算稳定哈希（跟随符号链接；忽略 `.git`/`.DS_Store`/`node_modules`/`__pycache__`；mtime 不参与），悬空链接单列 `broken` 且不进 `tree_hash`；`lib/skill-manifest.js` 解析并重算 tree_hash（输出被截断即判 invalid）、比对出 missing/extra/changed/broken
+- 漂移检测 job `skill-dist-drift`：30min 自 gate，真身 MMV 直连、跑场机 xian-m4/xian-m1 经 mmv 跳板（`SKILL_DRIFT_RUNNERS` 可配、别名严格校验），各机各两目录（`~/.claude/skills`、`~/.codex-gwremote/skills`）并行取清单，每条 exec 显式 45s timeout + maxBuffer；结果写 `working_memory.skill_manifest_drift`。ssh 失败/超时=`unreachable`、输出无效=`invalid`，都是「未核对」，不产生 missing、不计入漂移（防「探不到=零个=全漂移」假警）；真身取不到整轮不出逐机 diff
+- 晨报/日报：晨报新增 🟡 AMBER「skill 分发漂移」一行、日报新增同名板块（沿棒 7 形状）；检测数据超 6h 未刷新也 AMBER；无数据/读取失败不出、不拖垮
+- 同步脚本 `scripts/skill-sync-to-runners.sh`：默认 `--dry-run`（核对清单 + `rsync -n` 预演），`--apply` 才真同步，`--prune` 才 `--delete`；`rsync -azL` 送真内容并镜像到 `~/.codex-gwremote/skills`；同步后重算两处清单，与真身不一致退 1、目标不可达退 2；只同步有内容的 skill（真身悬空链接点名告警）。**本 PR 不替换本机 cron**
+- 测试：清单脚本 22 项（mtime/改一字节/忽略集/符号链接/悬空/目录缺失）+ 漂移 job 25 项（改/删/多/悬空/dir_missing/unreachable/invalid/真身不可达/gate/命令带 timeout/列表上限）+ 同步脚本 10 项（假 ssh 映射本地目录 + 真 rsync：dry-run 不写、apply 把悬空链接换成真内容、prune 才删、幂等、不可达退 2）+ 接线 7 项；smoke `skill-dist-drift-smoke.sh` 登记 allowlist
+
+## Brain 1.325.1 — executor=script 一等任务类型·契约与安全闸（任务 5cdbd52a，链 bf5088a3 棒 3 PR A，决策 105a5868）
+
+- 背景：确定性脚本步此前没有执行体——`executor_kind` 八值无 script，`device_job` 靠外部领单器，`workflow_run` 只记账不执行，脚本与 AI 步无法进同一条 DAG 被统一派发/重试/留痕。本 PR 落地契约与安全闸，执行接线在 PR B。
+- 迁移 471/472：`tasks_executor_kind_check` 加 `script`（九值）、`tasks_task_type_check` 加 `script_run`（86 值），照 461/462、463/464 拆法 NOT VALID 登记 + 472 单独 VALIDATE；附 rollback。
+- 注册表：`script_run` = kind `agent`（一步交付）、surface/executor/watchdog 均 `script`、免锚、`tick_dispatchable=false`（执行体接线前不许被 tick 当普通任务派给 claude，PR B 翻 true）。
+- payload 契约 `lib/script-task-spec.js`：`{host, cmd, cwd?, env?, timeout_sec, artifact_paths?}`。host 只认 machine-registry 里 primary/secondary 跑场机（id 或别名，新增 `resolveMachineId`/`aliases`），调度器（us-vps，零执行铁律 96054a8b）、回环、裸 IP、未注册一律拒绝；host/cmd/cwd/env/artifact_paths 拒控制字符（换行注入）；env 键白名单（SCRIPT_/TASK_/APP_ 前缀 + TZ/LANG/LC_ALL/CI/NODE_ENV/DEBUG），报错只点名键不回显值；`timeout_sec` 必填整数 1..3600。
+- 建单入口：`createRoutedTask` 对 `script_run` 物化前校验，违规抛 `script_payload_invalid`（事务回滚不留半截任务）；`POST /tasks` 映射 400 `INVALID_SCRIPT_PAYLOAD`。
+- 活性合同 `script`（ssh 探 `.exit/.pid`，非跑场机/缺 run_id 一律 unknown 不发 ssh，staleMinutes 75，onStale fail）；`retry-policy` 新增失败类 `script_exec`（一次重试，退避 1 分钟）。
+- 测试：`lib/__tests__/script-task-spec.test.js`（36 例含全部违规输入）、`migration-471-script-executor.test.js`、`script-executor-registry.test.js`、真 PG 临时库 `script-executor-constraints.pg.integration.test.js`；smoke `script-executor-contract-smoke.sh` 已登记 allowlist。
 
 ## Brain 1.325.0 — getSkillForTaskType 改查 skill_registry：能力账本参与执行时选择（链 bf5088a3 棒7，任务 9917a588，决策 105a5868）
 
