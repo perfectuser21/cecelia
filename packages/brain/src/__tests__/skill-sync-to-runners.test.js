@@ -38,10 +38,10 @@ exit $rc
 
 // 假 rsync 包装：记录每次调用的参数；按 FAKE_RSYNC_RCS（空格分隔，第 n 次调用取第 n 项）注入失败退出码，
 // 该项缺省或为 0 时转交真 rsync（真 rsync 走假 ssh，仍只写本地临时目录）。
-// 只有带 --partial 的调用才计数（=apply 那一跳），dry-run 的 -n 预演与其它调用不受影响。
+// 只有带 --partial 且非 -n 预演的调用才计数（=apply 那一跳），dry-run 的 -n 预演与其它调用不受影响。
 const FAKE_RSYNC = `#!/bin/bash
 printf '%s\\n' "$*" >> "$FAKE_RSYNC_LOG"
-[[ " $* " == *" --partial "* ]] || exec "$REAL_RSYNC" "$@"
+[[ " $* " == *" --partial "* && " $* " != *" -azLn "* ]] || exec "$REAL_RSYNC" "$@"
 n=$(( $(cat "$FAKE_RSYNC_COUNT" 2>/dev/null || echo 0) + 1 ))
 echo "$n" > "$FAKE_RSYNC_COUNT"
 read -r -a rcs <<< "\${FAKE_RSYNC_RCS:-}"
@@ -202,7 +202,7 @@ describe.skipIf(!hasRsync)('skill-sync-to-runners.sh', () => {
   });
   describe('慢链路：超时可配 / --partial / 失败重试', () => {
     const rsyncLog = () => (existsSync(join(root, 'rsync.log')) ? readFileSync(join(root, 'rsync.log'), 'utf8') : '');
-    const applyCalls = () => rsyncLog().split('\n').filter((l) => l.includes('--partial'));
+    const applyCalls = () => rsyncLog().split('\n').filter((l) => l.includes('--partial') && !l.includes('-azLn'));
     const one = { SKILL_SYNC_TARGETS: 'm4' };
 
     it('默认超时仍是 60，并带 --partial 与 ssh 保活选项；不带 --delete', () => {
@@ -264,7 +264,7 @@ describe.skipIf(!hasRsync)('skill-sync-to-runners.sh', () => {
       expect(applyCalls()).toHaveLength(4);
       expect(out).toMatch(/m4[^\n]*rsync 失败[^\n]*rc=30/);
       expect(out).toMatch(/重试 3 次/);
-      expect(existsSync(join(root, 'remote/m4/.codex-gwremote'))).toBe(false);
+      expect(existsSync(join(root, 'remote/m4/.codex-gwremote/skills/alpha'))).toBe(false);
     });
 
     it('SKILL_SYNC_RETRIES=1 只重试 1 次；=0 不重试；非法值回落 3', () => {

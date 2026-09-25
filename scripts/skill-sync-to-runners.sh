@@ -14,6 +14,14 @@
 #   SKILL_SYNC_TARGETS   目标 ssh 别名，空格分隔（默认 "xian-m4 xian-m1"；别名以本机 ~/.ssh/config 为准，不写 IP）
 #   SKILL_SYNC_SRC       真身目录（默认 ~/.claude/skills）
 #   SKILL_SYNC_SSH       ssh 可执行文件（默认 ssh；测试注入假实现）
+#   SKILL_SYNC_RSYNC     rsync 可执行文件（默认 rsync；测试注入假实现）
+#   SKILL_SYNC_RSYNC_TIMEOUT  rsync --timeout 秒数（IO 无进展多久判超时；默认 60；非数字或 ≤0 回落 60）
+#                        跨洋慢链路（实测 MMV→西安仅 7~16 KB/s，首次全量要二三十分钟）建议设 600~900
+#   SKILL_SYNC_RETRIES   单个目标 rsync 因超时/断线（rc=30/35/255）失败后的最大重试次数（默认 3；非数字回落 3；0=不重试）
+#                        每次重试前等待 SKILL_SYNC_RETRY_BACKOFF × 第几次重试 秒（默认 5，即 5s/10s/15s；测试设 0）
+#                        重试耗尽才判该目标失败（退出 1）；其它失败码（如 23 部分传输错误）不重试
+#   rsync 带 --partial（中断的大文件下次续传）和 ssh 保活（ServerAliveInterval=30 ServerAliveCountMax=20）；不带 --delete，
+#   prune 仍只在 --prune 时。
 #
 # 每个目标同步两处（同旧 cron 的两跳）：~/.claude/skills，再镜像到 ~/.codex-gwremote/skills。
 # 排除顶层隐藏项（.git/.gitignore 等）与 .DS_Store / node_modules / __pycache__（与清单忽略集一致；被排除的项
@@ -31,7 +39,7 @@ for arg in "$@"; do
     --dry-run) [ "$MODE" = "apply" ] && { echo "用法错误：--apply 与 --dry-run 互斥" >&2; exit 64; }; MODE="dry-run" ;;
     --apply)   [ "$MODE" = "dry-run" ] && { echo "用法错误：--apply 与 --dry-run 互斥" >&2; exit 64; }; MODE="apply" ;;
     --prune)   PRUNE=1 ;;
-    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,/^set -u/{/^set -u/!p;}' "$0"; exit 0 ;;
     *) echo "用法错误：未知参数 ${arg}（见 --help）" >&2; exit 64 ;;
   esac
 done
@@ -43,6 +51,20 @@ SRC="${SKILL_SYNC_SRC:-$HOME/.claude/skills}"
 TARGETS="${SKILL_SYNC_TARGETS:-xian-m4 xian-m1}"
 SSH_BIN="${SKILL_SYNC_SSH:-ssh}"
 SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=10"
+RSYNC_BIN="${SKILL_SYNC_RSYNC:-rsync}"
+
+# 正整数校验；非法（空/非数字/含小数/≤0）回落默认值。10# 避免 08、09 被当八进制。
+pos_int_or() { # $1=原值 $2=默认
+  case "$1" in ""|*[!0-9]*) echo "$2"; return ;; esac
+  local n=$((10#$1)); [ "$n" -gt 0 ] && echo "$n" || echo "$2"
+}
+nonneg_int_or() { # $1=原值 $2=默认（0 合法）
+  case "$1" in ""|*[!0-9]*) echo "$2"; return ;; esac
+  echo $((10#$1))
+}
+RSYNC_TIMEOUT="$(pos_int_or "${SKILL_SYNC_RSYNC_TIMEOUT:-}" 60)"
+RETRIES="$(nonneg_int_or "${SKILL_SYNC_RETRIES:-}" 3)"
+RETRY_BACKOFF="$(nonneg_int_or "${SKILL_SYNC_RETRY_BACKOFF:-}" 5)"
 
 for t in $TARGETS; do
   case "$t" in
@@ -81,7 +103,26 @@ fi
 EXCLUDES="--exclude=/.* --exclude=.git --exclude=.DS_Store --exclude=node_modules --exclude=__pycache__"
 DELETE=""
 [ "$PRUNE" = 1 ] && DELETE="--delete"
-RSH="$SSH_BIN $SSH_OPTS"
+# 慢链路保活：rsync 走的 ssh 每 30s 发心跳、连丢 20 次（10 分钟）才断，避免中间设备回收空闲连接
+RSH="$SSH_BIN $SSH_OPTS -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
+
+# 带重试地跑第一跳 rsync（暂存视图 → 目标）。仅超时/断线类（30 IO 超时 / 35 连接超时 / 255 ssh 断线）重试。
+# 结果：RSYNC_RC=最终退出码，RSYNC_RETRIED=实际重试次数。
+rsync_with_retry() { # $1=别名
+  local t="$1" attempt=0 wait
+  RSYNC_RETRIED=0
+  while :; do
+    # shellcheck disable=SC2086
+    $RSYNC_BIN -azL --partial --timeout="$RSYNC_TIMEOUT" $DELETE $EXCLUDES -e "$RSH" "$STAGE/" "$t:.claude/skills/"; RSYNC_RC=$?
+    [ "$RSYNC_RC" -eq 0 ] && return 0
+    case "$RSYNC_RC" in 30|35|255) ;; *) return "$RSYNC_RC" ;; esac
+    [ "$attempt" -ge "$RETRIES" ] && return "$RSYNC_RC"
+    attempt=$((attempt + 1)); RSYNC_RETRIED=$attempt
+    wait=$((RETRY_BACKOFF * attempt))
+    echo "  ↻ $t rsync 超时/断线（rc=${RSYNC_RC}），${wait}s 后第 ${attempt}/${RETRIES} 次重试（--partial 续传）"
+    [ "$wait" -gt 0 ] && sleep "$wait"
+  done
+}
 
 remote_manifest() { # $1=别名 $2=目录 token；stdout=JSON，返回 ssh/脚本退出码
   $SSH_BIN $SSH_OPTS "$1" bash -s -- "$2" < "$MANIFEST_SH" 2>/dev/null
@@ -113,13 +154,13 @@ for t in $TARGETS; do
   check_dir "$t" claude "@home/.claude/skills" pre; c1=$?
   if [ $c1 -eq 2 ]; then bump 2; echo "  跳过该目标"; continue; fi
 
-  rsync_cmd="rsync -azL --timeout=60 $DELETE $EXCLUDES -e '$RSH' <stage>/ $t:.claude/skills/"
+  rsync_cmd="rsync -azL --partial --timeout=$RSYNC_TIMEOUT $DELETE $EXCLUDES -e '$RSH' <stage>/ $t:.claude/skills/"
   rsync_cmd="$(printf '%s' "$rsync_cmd" | tr -s ' ')"
 
   if [ "$MODE" = "dry-run" ]; then
     echo "  [dry-run] 将执行：$rsync_cmd"
     echo "  [dry-run] 然后在目标上镜像到 ~/.codex-gwremote/skills 并重算清单比对（本次不执行）"
-    plan="$(rsync -azLn -i --timeout=60 $DELETE $EXCLUDES -e "$RSH" "$STAGE/" "$t:.claude/skills/" 2>&1)"
+    plan="$($RSYNC_BIN -azLn -i --partial --timeout="$RSYNC_TIMEOUT" $DELETE $EXCLUDES -e "$RSH" "$STAGE/" "$t:.claude/skills/" 2>&1)"
     n="$(printf '%s\n' "$plan" | grep -c '^[<>c*.]' || true)"
     echo "  [dry-run] rsync -n 预演：$n 项将变更（前 15 项）"
     printf '%s\n' "$plan" | grep '^[<>c*.]' | head -15 | sed 's/^/    /'
@@ -128,9 +169,12 @@ for t in $TARGETS; do
 
   # --apply
   $SSH_BIN $SSH_OPTS "$t" 'mkdir -p ~/.claude/skills ~/.codex-gwremote/skills' 2>/dev/null
-  # shellcheck disable=SC2086
-  rsync -azL --timeout=60 $DELETE $EXCLUDES -e "$RSH" "$STAGE/" "$t:.claude/skills/"; rrc=$?
-  if [ $rrc -ne 0 ]; then echo "  ❌ $t rsync 失败（rc=${rrc}）"; bump 1; continue; fi
+  rsync_with_retry "$t"; rrc=$RSYNC_RC
+  if [ $rrc -ne 0 ]; then
+    retried_note=""; [ "$RSYNC_RETRIED" -gt 0 ] && retried_note="，已重试 ${RSYNC_RETRIED} 次仍失败"
+    echo "  ❌ $t rsync 失败（rc=${rrc}${retried_note}）"; bump 1; continue
+  fi
+  [ "$RSYNC_RETRIED" -gt 0 ] && echo "  ✓ $t rsync 重试 ${RSYNC_RETRIED} 次后成功"
   # 第二跳：~/.claude/skills → ~/.codex-gwremote/skills（同旧 cron；此时前者已是真内容）
   $SSH_BIN $SSH_OPTS "$t" "rsync -a $DELETE $EXCLUDES ~/.claude/skills/ ~/.codex-gwremote/skills/"; mrc=$?
   if [ $mrc -ne 0 ]; then echo "  ❌ $t 镜像到 codex-gwremote 失败（rc=${mrc}）"; bump 1; continue; fi
