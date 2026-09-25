@@ -24,6 +24,7 @@ import {
   recordRunFromCallback,
   startRunForExecResult,
 } from '../../lib/task-run.js';
+import { findUnregisteredNotionTables } from '../../lib/notion-projection-registry.js';
 
 const created = [];
 
@@ -175,5 +176,15 @@ describe('run 原语 startRun/finishRun/findBareRuns — 真 Postgres 落库', (
     expect(rows[0].status).toBe('success');
     const bare = (await findBareRuns(pool, { windowMinutes: 60 })).map((x) => x.task_id);
     expect(bare).not.toContain(t);
+  });
+
+  it('迁移 468：task_runs 三 Notion 记账列在库，且已在投影注册表登记（不触发「有 notion_id 列未登记」守夜红）', async () => {
+    const { rows } = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_name='task_runs' AND column_name IN ('notion_id','notion_synced_at','notion_digest')`,
+    );
+    expect(rows).toHaveLength(3);
+    const unregistered = await findUnregisteredNotionTables(pool);
+    expect(unregistered).not.toContain('task_runs');
   });
 });
