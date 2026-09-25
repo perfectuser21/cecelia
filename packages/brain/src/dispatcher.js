@@ -57,7 +57,6 @@ import { dispatchScriptTask, SCRIPT_BREAKER_KEY } from './script-executor.js';
 const isOpenclawSurface = (type) => getTaskType(type)?.surface === 'openclaw-agent';
 /** script 表面（script_run，棒 3）同样是 Brain 经 ssh 直派跑场机，不经 cecelia-bridge；熔断 key 独立，互不牵连。 */
 const isScriptSurface = (type) => getTaskType(type)?.surface === 'script';
-const breakerKeyFor = (type) => (isOpenclawSurface(type) ? 'openclaw-agent' : isScriptSurface(type) ? SCRIPT_BREAKER_KEY : 'cecelia-run');
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -1285,7 +1284,7 @@ export async function dispatchNextTask(goalIds) {
     } else if (execResult.reason === 'local_execution_disabled_on_scheduler') {
       console.warn(`[dispatch] local_execution_disabled_on_scheduler detected — skipping cecelia-run breaker count`);
     } else {
-      await recordFailure(breakerKeyFor(nextTask.task_type));
+      await recordFailure(isOpenclawSurface(nextTask.task_type) ? 'openclaw-agent' : isScriptSurface(nextTask.task_type) ? SCRIPT_BREAKER_KEY : 'cecelia-run');
 
       // dispatch-fail-autoblock：连续失败计数 + 自动隔离
       // configError / spawn_deduplicated 已在上方 early-return，此处只处理真实执行失败。
@@ -1348,7 +1347,7 @@ export async function dispatchNextTask(goalIds) {
   // 所以必须自己吞掉异常：一旦让它冒到兜底，就会放 claim + 标 status='failed'，
   // 下个 tick 把同一个还在跑的任务再派一遍（比丢一笔事后记账糟得多）。
   if (isOpenclawSurface(nextTask.task_type) || isScriptSurface(nextTask.task_type)) {
-    const breakerKey = breakerKeyFor(nextTask.task_type);
+    const breakerKey = isOpenclawSurface(nextTask.task_type) ? 'openclaw-agent' : SCRIPT_BREAKER_KEY;
     try {
       await recordSuccess(breakerKey);
     } catch (e) {

@@ -11,7 +11,7 @@
  *   · cmd / cwd / env 值先组成 job 脚本（值一律单引号转义），再整体 base64，远端解码成 0600 文件执行、跑完即删。
  *     引号/美元符/反引号只是命令内容，逃不出传输层。env 值不进 ssh 命令行、不进日志/事件/留痕，
  *     收割回来的 stdout/stderr 还会把 env 值替换成 ***。
- *   · 超时：远端 supervisor 用独立进程组跑 job，到点 TERM 再 KILL 整个进程组，标 .timedout，exit 记 124。
+ *   · 超时：远端 supervisor 到点对 job 的整棵进程树先 TERM 再 KILL，标 .timedout，exit 记 124。
  *
  * 幂等（硬约束 3）：run_id = script-<task.id>-a<第几次尝试>，确定性；远端 .pid/.exit 已在就回 ALREADY，
  * 绝不起第二个进程。ssh 超时 ≠ 远端没起来，所以派发失败重试一次是安全的。
@@ -99,17 +99,20 @@ export function buildJobScript({ cmd, cwd, env }) {
   return `${lines.join('\n')}\n`;
 }
 
-// 远端 supervisor：独立进程组跑 job，超时 TERM→KILL 整个组，exit 最后原子落盘。全部是静态文本，无任何插值。
+// 远端 supervisor：跑 job，超时 TERM→KILL 整棵进程树，exit 最后原子落盘。全部是静态文本，无任何插值。
+// 杀进程树不靠进程组（`set -m` 在无 tty 的 dash 上不生效，CI/Linux 实测杀不掉孙进程）：
+// 先用 pgrep -P 递归收集全部后代 pid，再统一发信号（先收集后杀，避免父进程先死后子进程被 init 收养而漏掉）。
 const SUPERVISOR = [
   'RID="$1"; T="$2"; D="$HOME/brain-runs"',
-  'set -m',
+  'descend() { for c in $(pgrep -P "$1" 2>/dev/null); do echo "$c"; descend "$c"; done; }',
+  'sig() { for p in $(descend "$2") "$2"; do kill -"$1" "$p" 2>/dev/null; done; }',
   'sh "$D/$RID.sh" >"$D/$RID.out" 2>"$D/$RID.err" </dev/null &',
   'CP=$!',
-  '( sleep "$T"; if kill -0 "$CP" 2>/dev/null; then : > "$D/$RID.timedout"; kill -TERM -- "-$CP" 2>/dev/null; sleep 3; kill -KILL -- "-$CP" 2>/dev/null; fi ) >/dev/null 2>&1 </dev/null &',
+  '( sleep "$T"; if kill -0 "$CP" 2>/dev/null; then : > "$D/$RID.timedout"; sig TERM "$CP"; sleep 3; sig KILL "$CP"; fi ) >/dev/null 2>&1 </dev/null &',
   'WP=$!',
   'wait "$CP"',
   'RC=$?',
-  'kill -- "-$WP" 2>/dev/null; kill "$WP" 2>/dev/null',
+  'sig TERM "$WP"',
   'if [ -f "$D/$RID.timedout" ]; then RC=124; fi',
   'rm -f "$D/$RID.sh" "$D/$RID.sup"',
   'echo "$RC" > "$D/$RID.exit.tmp" && mv "$D/$RID.exit.tmp" "$D/$RID.exit"',
