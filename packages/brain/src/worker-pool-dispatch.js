@@ -23,6 +23,7 @@
 import { existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
+import { finalizeTask } from './lib/task-terminal.js';
 
 export const WORKER_SLOTS = ['slot7', 'slot8', 'slot9'];
 export const MAX_CONCURRENT = 2;
@@ -175,13 +176,10 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
       if (lockResult.result === 'unknown_device') {
         console.error(`[worker-pool] task=${task.id} device_serial=${deviceSerial} 未注册 → terminal failed`);
         try {
-          await pool.query(
-            `UPDATE tasks SET status='failed', completed_at=NOW(), claimed_by=NULL, claimed_at=NULL,
-               error_message=$2,
-               payload = COALESCE(payload,'{}'::jsonb) || jsonb_build_object('failure_class','unknown_device')
-             WHERE id=$1`,
-            [task.id, `device_serial "${deviceSerial}" not registered in device_locks — register via POST /api/brain/device-locks/register`],
-          );
+          await finalizeTask(pool, task.id, 'failed', {
+            set: { completed_at: 'now', error_message: `device_serial "${deviceSerial}" not registered in device_locks — register via POST /api/brain/device-locks/register` },
+            mergePayload: { failure_class: 'unknown_device' },
+          });
         } catch (markErr) {
           // 终态标记失败 → 降级回滚 claim 留下轮（防 claim 泄漏静默卡死）
           console.error(`[worker-pool] unknown_device terminal mark failed (task=${task.id}): ${markErr.message}`);

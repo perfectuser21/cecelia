@@ -15,6 +15,7 @@
 
 import pool from './db.js';
 import { updateTask, createTask } from './actions.js';
+import { finalizeTask } from './lib/task-terminal.js';
 import { sortTasksByWeight } from './task-weight.js';
 import { handleTaskFailure } from './quarantine.js';
 import { shouldBypassBackpressure } from './slot-allocator.js';
@@ -294,10 +295,11 @@ export async function processCortexTask(task, actions) {
         completed_at: new Date().toISOString()
       }
     };
-    await pool.query(`
-      UPDATE tasks SET status = $1, payload = $2, completed_at = NOW(), updated_at = NOW()
-      WHERE id = $3
-    `, ['completed', JSON.stringify(updatedPayload), task.id]);
+    // payload 整体覆盖（保留原语义：{...task.payload, rca_result}）→ 用 mergePayload 叠加同等效果
+    await finalizeTask(pool, task.id, 'completed', {
+      set: { completed_at: 'now' },
+      mergePayload: updatedPayload,
+    });
 
     tickLog(`[tick] Cortex task completed: ${task.id}, confidence=${rcaResult.confidence}`);
 

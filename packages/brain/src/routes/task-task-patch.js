@@ -1,3 +1,5 @@
+import { afterTerminalTransition, isTerminalStatus } from '../lib/task-terminal.js';
+
 /** 注册 tasks/:id 的字段更新与状态保护路由。 */
 export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
   router.patch('/:id', async (req, res) => {
@@ -135,6 +137,10 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
       );
       if (!result.rows.length) {
         return res.status(404).json({ error: 'Task not found', id: req.params.id });
+      }
+      // 终态收口（lib/task-terminal.js）：动态 SET 写完终态后必经钩子（completed / completed_no_pr 接棒）
+      if (!harnessDemoted && isTerminalStatus(result.rows[0].status) && isTerminalStatus(status)) {
+        await afterTerminalTransition(pool, req.params.id, result.rows[0].status, { sessionId: req.headers?.['x-session-id'] || null });
       }
       return res.json(harnessDemoted
         ? { ...result.rows[0], accepted: false, reason: harnessDemoteReason }

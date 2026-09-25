@@ -5,6 +5,7 @@ import { assertRouteSnapshotLaunchAuthority } from './route-snapshot-authority.j
 import { resolvePlannerRecoveryRunAuthority } from './planner-recovery-run-authority.js';
 import { KERNEL_RUN_ELIGIBLE_TASK_TYPES } from '../lib/task-type-registry.js';
 import { finishRun } from '../lib/task-run.js';
+import { afterTerminalTransition } from '../lib/task-terminal.js';
 
 const ACTIVE_PHASES = new Set([
   'planning',
@@ -189,6 +190,9 @@ export async function patchKernelRunById(pool, {
   const ownsTransaction = transactionClient === null;
   const client = transactionClient ?? await pool.connect();
   let committed = false;
+  // 任务终态写入（事务内）→ COMMIT 后必经 afterTerminalTransition（lib/task-terminal.js）。
+  // 借用别人事务时（transactionClient）由外层 COMMIT 后按返回的 taskTerminal 调钩子。
+  let taskTerminal = null;
   try {
     if (ownsTransaction) await client.query('BEGIN');
 
@@ -295,6 +299,7 @@ export async function patchKernelRunById(pool, {
             WHERE id = $1`,
           [identity.current_task_id, taskOutcome, failureReason],
         );
+        taskTerminal = { taskId: identity.current_task_id, status: taskOutcome };
       }
       const attemptsTerminalized = await terminalizeLockedKernelAttempts(client, {
         runId,
@@ -335,6 +340,10 @@ export async function patchKernelRunById(pool, {
 
     if (ownsTransaction) await client.query('COMMIT');
     committed = true;
+    if (updatedRows[0] && taskTerminal) updatedRows[0].taskTerminal = taskTerminal;
+    if (ownsTransaction && taskTerminal) {
+      await afterTerminalTransition(pool, taskTerminal.taskId, taskTerminal.status);
+    }
     return updatedRows[0] ?? null;
   } catch (error) {
     if (ownsTransaction && !committed) await client.query('ROLLBACK');
@@ -407,6 +416,9 @@ export async function patchLegacyKernelRunByInitiative(pool, {
     );
     await client.query('COMMIT');
     committed = true;
+    if (run.taskTerminal) {
+      await afterTerminalTransition(pool, run.taskTerminal.taskId, run.taskTerminal.status);
+    }
     return { candidateCount: 1, run };
   } catch (error) {
     if (!committed) await client.query('ROLLBACK');
@@ -848,7 +860,8 @@ export async function finalizeKernelRun(pool, {
       );
     }
 
-    if (task.status !== taskOutcome) {
+    const taskTerminalWritten = task.status !== taskOutcome;
+    if (taskTerminalWritten) {
       await client.query(
         `UPDATE tasks
             SET status = $2::varchar,
@@ -929,6 +942,10 @@ export async function finalizeKernelRun(pool, {
       status: outcome === 'done' ? 'completed' : 'failed',
       error: outcome === 'failed' ? reason : undefined,
     }, { pool });
+    // 任务终态已随 run 一起提交 → 接棒钩子在池上跑（事务内 client 不能 connect()）
+    if (taskTerminalWritten) {
+      await afterTerminalTransition(pool, expectedTaskId, taskOutcome);
+    }
     return {
       changed,
       outcome,

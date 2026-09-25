@@ -14,6 +14,7 @@
  */
 
 import pool from './db.js';
+import { finalizeTask } from './lib/task-terminal.js';
 import { assertDispatchRoutingReceipt } from './orchestrator/dispatcher.js';
 import { isGlobalQuotaCooling, getQuotaCoolingState } from './quota-cooling.js';
 import { isDraining, getDrainStartedAt } from './drain.js';
@@ -549,19 +550,16 @@ export async function dispatchNextTask(goalIds) {
   //     放在所有 skip 检查（drain/quota_cooling/billing/slot/circuit）之后，
   //     这样系统不健康时不写 DB（保持调度路径侧效应一致性）。
   try {
-    const drained = await pool.query(
-      `UPDATE tasks
-         SET status='failed', completed_at=NOW(),
-             error_message='task_type ' || task_type || ' retired (subsumed by harness_initiative full graph)',
-             payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
-       WHERE status='queued'
-         AND task_type = ANY($1::text[])
-       RETURNING id, task_type`,
-      [Array.from(_RETIRED_HARNESS_TYPES_DISPATCH)]
-    );
+    const drained = await finalizeTask(pool, null, 'failed', {
+      set: { completed_at: 'now', error_message: 'task_type retired (subsumed by harness_initiative full graph)' },
+      mergePayload: { failure_class: 'pipeline_terminal_failure' },
+      onlyIfStatus: 'queued',
+      where: { sql: 'task_type = ANY($1::text[])', params: [Array.from(_RETIRED_HARNESS_TYPES_DISPATCH)] },
+      returning: ['task_type'],
+    });
     if (drained.rowCount > 0) {
       tickLog(`[dispatch] drained ${drained.rowCount} queued retired harness task(s)`);
-      for (const row of drained.rows) {
+      for (const row of drained.tasks) {
         actions.push({ action: 'retire-task', task_id: row.id, task_type: row.task_type });
       }
     }
@@ -598,10 +596,9 @@ export async function dispatchNextTask(goalIds) {
           [nextTask.id]
         );
         await releaseDeviceLockIfHeld(nextTask);
-        await pool.query(
-          `UPDATE tasks SET status = 'failed', error_message = $2 WHERE id = $1`,
-          [nextTask.id, String(err.message || 'dispatch_exception').slice(0, 500)]
-        );
+        await finalizeTask(pool, nextTask.id, 'failed', {
+          set: { error_message: String(err.message || 'dispatch_exception').slice(0, 500) },
+        });
       } catch (cleanupErr) {
         console.error(`[dispatch] claim-leak cleanup failed (task=${nextTask.id}): ${cleanupErr.message}`);
       }
@@ -711,13 +708,10 @@ export async function dispatchNextTask(goalIds) {
     if (_RETIRED_HARNESS_TYPES_DISPATCH.has(candidate.task_type)) {
       tickLog(`[dispatch] retired task_type=${candidate.task_type} task=${candidate.id} → marking pipeline_terminal_failure`);
       try {
-        await pool.query(
-          `UPDATE tasks SET status='failed', completed_at=NOW(),
-            error_message=$2,
-            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
-           WHERE id=$1::uuid`,
-          [candidate.id, `task_type ${candidate.task_type} retired (subsumed by harness_initiative full graph)`]
-        );
+        await finalizeTask(pool, candidate.id, 'failed', {
+          set: { completed_at: 'now', error_message: `task_type ${candidate.task_type} retired (subsumed by harness_initiative full graph)` },
+          mergePayload: { failure_class: 'pipeline_terminal_failure' },
+        });
       } catch (err) {
         console.error(`[dispatch] mark retired task failed: ${err.message}`);
       }
@@ -802,13 +796,10 @@ export async function dispatchNextTask(goalIds) {
     if (anchorResult.blocked) {
       tickLog(`[dispatch] task ${candidate.id} missing_anchor → terminal failed`);
       try {
-        await pool.query(
-          `UPDATE tasks SET status='failed', completed_at=NOW(),
-            error_message=$2,
-            payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'missing_anchor')
-           WHERE id=$1::uuid`,
-          [candidate.id, anchorResult.detail]
-        );
+        await finalizeTask(pool, candidate.id, 'failed', {
+          set: { completed_at: 'now', error_message: anchorResult.detail },
+          mergePayload: { failure_class: 'missing_anchor' },
+        });
       } catch (anchorMarkErr) {
         console.error(`[dispatch] anchor mark failed (non-fatal): ${anchorMarkErr.message}`);
       }
@@ -903,13 +894,10 @@ export async function dispatchNextTask(goalIds) {
         // 候选循环不在 postClaimException 覆盖范围：terminal UPDATE 必须自带 try/catch，
         // 抛错=claim 泄漏该任务永远起不来（照 anchor 闸分支形状）。
         try {
-          await pool.query(
-            `UPDATE tasks SET status='failed', completed_at=NOW(), claimed_by=NULL, claimed_at=NULL,
-               error_message=$2,
-               payload = COALESCE(payload,'{}'::jsonb) || jsonb_build_object('failure_class','unknown_device')
-             WHERE id=$1`,
-            [candidate.id, `device_serial "${deviceSerial}" not registered in device_locks — register via POST /api/brain/device-locks/register`]
-          );
+          await finalizeTask(pool, candidate.id, 'failed', {
+            set: { completed_at: 'now', error_message: `device_serial "${deviceSerial}" not registered in device_locks — register via POST /api/brain/device-locks/register` },
+            mergePayload: { failure_class: 'unknown_device' },
+          });
         } catch (markErr) {
           // 终态标记失败 → 降级为释放 claim、按 skip 继续（此分支锁未抢到，无锁可放）
           console.error(`[dispatch] unknown_device terminal mark failed (task=${candidate.id}): ${markErr.message}`);

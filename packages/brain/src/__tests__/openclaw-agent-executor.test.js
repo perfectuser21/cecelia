@@ -327,9 +327,10 @@ describe('reapOpenclawAgentRuns', () => {
     const r = await reapOpenclawAgentRuns({ query }, { execFileFn });
     expect(r).toEqual({ reaped: 1, completed: 1, failed: 0 });
     const upd = query.mock.calls.find(([sql]) => /completed_no_pr/.test(sql));
-    expect(upd[0]).toMatch(/jsonb_build_object\('receipt', \$2::jsonb\)/);
+    // 终态经 lib/task-terminal.js 收口：receipt 作 result jsonb 合并参数（$2），CAS 字面量 in_progress
+    expect(upd[0]).toMatch(/result = COALESCE\(result, '\{\}'::jsonb\) \|\| \$2::jsonb/);
     expect(upd[0]).toMatch(/AND status = 'in_progress'/);
-    expect(JSON.parse(upd[1][1])).toMatchObject({ exit: 0, text: 'done ✓' });
+    expect(JSON.parse(upd[1][1]).receipt).toMatchObject({ exit: 0, text: 'done ✓' });
     expect(recordTaskEventSafe).toHaveBeenCalledWith(
       expect.anything(), task.id, 'openclaw_agent_reaped', expect.objectContaining({ run_id: row.run_id, exit: 0 }),
     );
@@ -345,7 +346,7 @@ describe('reapOpenclawAgentRuns', () => {
     const execFileFn = vi.fn((c, a, o, cb) => cb(null, `EXIT=0\n${log}\n`, ''));
     await reapOpenclawAgentRuns({ query }, { execFileFn });
     const upd = query.mock.calls.find(([sql]) => /completed_no_pr/.test(sql));
-    expect(JSON.parse(upd[1][1]).text).toBe('最终结论');
+    expect(JSON.parse(upd[1][1]).receipt.text).toBe('最终结论');
   });
 
   it('EXIT=1 → failed + error_message=openclaw_agent_exit_1', async () => {

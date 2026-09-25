@@ -39,6 +39,7 @@ import { recordRunFromCallback } from '../lib/task-run.js';
 import { isTransientClass } from '../lib/retry-policy.js';
 import { checkAnchor } from '../anchor-check.js';
 import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
+import { afterTerminalTransition } from '../lib/task-terminal.js';
 
 const router = Router();
 const execAsync = promisify(exec);
@@ -515,6 +516,10 @@ router.post('/execution-callback', async (req, res) => {
         console.error(`[execution-callback] reschedule error (non-fatal): ${rescheduleErr.message}`);
       }
     }
+
+    // 终态收口（lib/task-terminal.js）：completed / completed_no_pr 落库后接棒；放在重排块之后，
+    // 被重排回 queued 的 completed_no_pr 重读状态非终态自然不接棒。非终态钩子直接返回。
+    await afterTerminalTransition(pool, task_id, newStatus);
 
     // Record to EventBus, Circuit Breaker, and Notifier
     if (newStatus === 'completed') {

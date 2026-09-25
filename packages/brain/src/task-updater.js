@@ -11,15 +11,39 @@ import {
   assertOwnerDecisionProtocol, OwnerDecisionProtocolError, OWNER_DECISION_REASON,
   openOwnerDecisionPendingAction, closeOwnerDecisionPendingAction,
 } from './lib/owner-decision.js';
+import { finalizeTask, isTerminalStatus } from './lib/task-terminal.js';
 
 // Security: Whitelist of allowed columns for dynamic updates
 const ALLOWED_COLUMNS = ['assigned_to', 'priority', 'payload', 'error', 'artifacts', 'run_id', 'error_message'];
-const VALID_STATUSES = ['queued', 'in_progress', 'completed', 'failed', 'pending_postdeploy'];
+const VALID_STATUSES = ['queued', 'in_progress', 'completed', 'completed_no_pr', 'failed', 'pending_postdeploy'];
+// 终态分支委托 lib/task-terminal.js：这些附加字段能映射成 finalizeTask 白名单列
+const TERMINAL_SET_COLUMNS = ['assigned_to', 'priority', 'error_message'];
+
+/**
+ * 终态 → 唯一收口 finalizeTask（写完自动接棒）。返回 RETURNING * 行。
+ * completed_at 用 'now' 覆盖：与本函数历史行为一致（executor 回写以本次为准）。
+ */
+async function finalizeViaHub(taskId, status, additionalFields) {
+  const set = { completed_at: status === 'completed' || status === 'completed_no_pr' ? 'now' : undefined };
+  if (set.completed_at === undefined) delete set.completed_at;
+  let mergePayload = null;
+  for (const [key, value] of Object.entries(additionalFields)) {
+    if (key === 'payload') {
+      mergePayload = value;
+    } else if (TERMINAL_SET_COLUMNS.includes(key)) {
+      set[key] = value;
+    } else {
+      console.warn(`[task-updater] Ignoring non-whitelisted column: ${key}`);
+    }
+  }
+  const out = await finalizeTask(pool, taskId, status, { set, mergePayload, returning: ['*'] });
+  return out.task;
+}
 
 /**
  * Update task status and broadcast to WebSocket clients
  * @param {string} taskId - Task ID
- * @param {string} status - New status (queued, in_progress, completed, failed)
+ * @param {string} status - New status (queued, in_progress, completed, completed_no_pr, failed)
  * @param {Object} additionalFields - Additional fields to update
  * @returns {Promise<Object>} - Update result
  */
@@ -30,63 +54,60 @@ export async function updateTaskStatus(taskId, status, additionalFields = {}) {
       throw new Error(`Invalid status: ${status}`);
     }
 
-    // Build UPDATE query dynamically
-    const updates = ['status = $2'];
-    const params = [taskId, status];
-    let paramIndex = 3;
+    let updatedTask;
+    if (isTerminalStatus(status)) {
+      updatedTask = await finalizeViaHub(taskId, status, additionalFields);
+    } else {
+      // Build UPDATE query dynamically（非终态：queued / in_progress / pending_postdeploy）
+      const updates = ['status = $2'];
+      const params = [taskId, status];
+      let paramIndex = 3;
 
-    // Add timestamp updates based on status
-    if (status === 'in_progress') {
-      updates.push('started_at = NOW()');
-    } else if (status === 'completed') {
-      updates.push('completed_at = NOW()');
-      updates.push('claimed_by = NULL');
-      updates.push('claimed_at = NULL');
-    } else if (status === 'failed') {
-      updates.push('claimed_by = NULL');
-      updates.push('claimed_at = NULL');
-    } else if (status === 'queued') {
-      // Clear claim so the task can be re-selected by selectNextDispatchableTask
-      updates.push('claimed_by = NULL');
-      updates.push('claimed_at = NULL');
-    }
-
-    // Add additional fields with whitelist validation
-    for (const [key, value] of Object.entries(additionalFields)) {
-      if (key === 'payload') {
-        // Merge JSON payload safely
-        try {
-          updates.push(`payload = COALESCE(payload, '{}'::jsonb) || $${paramIndex}::jsonb`);
-          params.push(JSON.stringify(value));
-          paramIndex++;
-        } catch (err) {
-          throw new Error(`Invalid JSON payload: ${err.message}`);
-        }
-      } else if (ALLOWED_COLUMNS.includes(key)) {
-        // Only allow whitelisted columns to prevent SQL injection
-        updates.push(`${key} = $${paramIndex}`);
-        params.push(value);
-        paramIndex++;
-      } else {
-        console.warn(`[task-updater] Ignoring non-whitelisted column: ${key}`);
+      // Add timestamp updates based on status
+      if (status === 'in_progress') {
+        updates.push('started_at = NOW()');
+      } else if (status === 'queued') {
+        // Clear claim so the task can be re-selected by selectNextDispatchableTask
+        updates.push('claimed_by = NULL');
+        updates.push('claimed_at = NULL');
       }
+
+      // Add additional fields with whitelist validation
+      for (const [key, value] of Object.entries(additionalFields)) {
+        if (key === 'payload') {
+          // Merge JSON payload safely
+          try {
+            updates.push(`payload = COALESCE(payload, '{}'::jsonb) || $${paramIndex}::jsonb`);
+            params.push(JSON.stringify(value));
+            paramIndex++;
+          } catch (err) {
+            throw new Error(`Invalid JSON payload: ${err.message}`);
+          }
+        } else if (ALLOWED_COLUMNS.includes(key)) {
+          // Only allow whitelisted columns to prevent SQL injection
+          updates.push(`${key} = $${paramIndex}`);
+          params.push(value);
+          paramIndex++;
+        } else {
+          console.warn(`[task-updater] Ignoring non-whitelisted column: ${key}`);
+        }
+      }
+
+      // Execute update
+      const updateQuery = `
+        UPDATE tasks
+        SET ${updates.join(', ')}, updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+      `;
+
+      const result = await pool.query(updateQuery, params);
+      updatedTask = result.rows[0];
     }
 
-    // Execute update
-    const updateQuery = `
-      UPDATE tasks
-      SET ${updates.join(', ')}, updated_at = NOW()
-      WHERE id = $1
-      RETURNING *
-    `;
-
-    const result = await pool.query(updateQuery, params);
-
-    if (result.rows.length === 0) {
+    if (!updatedTask) {
       throw new Error(`Task ${taskId} not found`);
     }
-
-    const updatedTask = result.rows[0];
 
     // 终态/非活跃态 → 即时释放设备锁（低延迟优化；正确性由 recovery-loop sweeper 兜底）
     if (!['queued', 'in_progress'].includes(status)) {
