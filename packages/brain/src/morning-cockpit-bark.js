@@ -16,6 +16,7 @@ import { sendBark } from './notifier.js';
 import { findBareRuns } from './lib/task-run.js';
 import { detectSkillBindingDrift, renderSkillBindingLine } from './lib/skill-binding-registry.js';
 import { EXECUTOR_SKILL_MAP } from './lib/task-type-registry.js';
+import { readSkillDistState, renderSkillDistLine } from './lib/skill-dist-report.js';
 import { LEADERBOARD_KEY } from './triage-officer-rank.js';
 
 /** 触发小时（UTC）= 北京时间 08:30 */
@@ -156,6 +157,21 @@ async function fetchSkillBindingLine(pool) {
 }
 
 /**
+ * skill 分发漂移行（链 bf5088a3 棒8）：真身 vs 跑场机清单哈希不一致 / 未核对 / 检测过期 → 🟡 AMBER。
+ * best-effort：无数据（job 从未跑）、读取失败、无漂移都返回 null（不出这一行，不拖垮晨报）。
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<string|null>}
+ */
+async function fetchSkillDistLine(pool) {
+  try {
+    return renderSkillDistLine(await readSkillDistState(pool));
+  } catch (e) {
+    console.warn('[morning-cockpit-bark] skill-dist line failed:', e.message);
+    return null;
+  }
+}
+
+/**
  * 采集简报数据：完成率 + 在途任务数。
  * @param {import('pg').Pool} pool
  * @returns {Promise<{completionRate: string, inProgressCount: number}>}
@@ -216,11 +232,12 @@ export async function runMorningCockpitBark(pool) {
   }
 
   // 3. 采集简报数据 + 榜单（并行，榜单 best-effort）
-  const [{ completionRate, inProgressCount }, triageBoard, bareRunLine, skillBindingLine] = await Promise.all([
+  const [{ completionRate, inProgressCount }, triageBoard, bareRunLine, skillBindingLine, skillDistLine] = await Promise.all([
     buildBriefData(pool),
     fetchTriageLeaderboard(pool),
     fetchBareRunLine(pool),
     fetchSkillBindingLine(pool),
+    fetchSkillDistLine(pool),
   ]);
 
   // 4. 构造推送内容
@@ -245,6 +262,7 @@ export async function runMorningCockpitBark(pool) {
 
   if (bareRunLine) lines.push(bareRunLine);
   if (skillBindingLine) lines.push(skillBindingLine);
+  if (skillDistLine) lines.push(skillDistLine);
 
   lines.push(`点击进入指挥舱 → ${DASHBOARD_URL}`);
   const body = lines.join('\n');

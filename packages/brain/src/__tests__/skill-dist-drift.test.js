@@ -24,7 +24,7 @@ const TRUTH = () => ({ a: H('1'), b: H('2'), c: H('3') });
 function manifestJson(skills, broken = []) {
   return JSON.stringify({
     version: 1, dir: '/x', host: 'h', count: Object.keys(skills).length, skills, broken,
-    tree_hash: treeHashOf(skills, broken),
+    tree_hash: treeHashOf(skills),
   });
 }
 
@@ -211,13 +211,16 @@ describe('unreachable ≠ 零个 skill（防「探不到=零个=全漂移」的�
     expect(renderSkillDistLine(st)).toMatch(/AMBER[^\n]*真身/);
   });
 
-  it('真身自己有悬空链接 → AMBER（真身本身坏了）', async () => {
+  it('真身自己有悬空链接（MMV 实测 29 个）→ 记入 truth.broken 并在日报点名，但不制造逐机漂移、晨报不因此常亮', async () => {
     const pool = fakePool();
     const machines = allGood();
     machines.mmv['claude:broken'] = ['zzz'];
+    machines['xian-m1']['claude:broken'] = ['zzz']; // cron 无 -L 也把这个悬空链接拷过去了：同样悬空，不算漂移
     await run(pool, machines);
     expect(state(pool).truth.broken).toEqual(['zzz']);
-    expect(renderSkillDistLine(state(pool))).toMatch(/AMBER[^\n]*真身[^\n]*zzz/);
+    expect(state(pool).summary.drifted).toEqual([]);
+    expect(renderSkillDistLine(state(pool))).toBeNull();
+    expect(renderSkillDistSection(state(pool))).toMatch(/悬空[^\n]*zzz/);
   });
 });
 

@@ -21,9 +21,9 @@ MMV `~/.claude/skills` 是 skill 真身（非 git 仓库内容，见 §1）。�
 
 输出一行 JSON：`{"version":1,"dir":…,"host":…,"count":N,"skills":{name:sha256},"broken":[name…],"tree_hash":sha256}`。
 
-- 单个 skill 哈希 = sha256( 按相对路径字节序排序的 `相对路径<TAB>文件sha256\n` )；跟随符号链接（`find -L`）；忽略路径分量为 `.git` / `.DS_Store` / `node_modules` 的项；mtime、权限位不参与。
+- 单个 skill 哈希 = sha256( 按相对路径字节序排序的 `相对路径<TAB>文件sha256\n` )；跟随符号链接（`find -L`）；忽略路径分量为 `.git` / `.DS_Store` / `node_modules` / `__pycache__` 的项（最后一个是 09-25 真机 dry-run 在 M4 skill-creator 上实测到的：python skill 运行时自生成字节码，不排除会永久假漂移）；mtime、权限位不参与。
 - 顶层条目：非隐藏的目录或指向目录的符号链接才算 skill；悬空符号链接进 `broken`；隐藏项与普通文件忽略。
-- `tree_hash` = sha256( 全部 `name<TAB>skill哈希或BROKEN\n` 行整体排序 )。JS 侧 `verifyTreeHash` 重算，输出被截断/篡改即判 invalid，不当真。
+- `tree_hash` = sha256( 全部有内容 skill 的 `name<TAB>skill哈希\n` 行整体排序 )，悬空项不进 tree_hash（真身自己有 29 个悬空链接，进了会让任何目标永远对不齐）。JS 侧 `verifyTreeHash` 重算，输出被截断/篡改即判 invalid，不当真。
 - 目录不存在：输出 `{"version":1,"error":"dir_missing",…}` 退出码 3。
 
 ## 2. 漂移检测 job（PR 内新增 `skill-dist-drift`）
@@ -38,14 +38,14 @@ MMV `~/.claude/skills` 是 skill 真身（非 git 仓库内容，见 §1）。�
 
 ## 3. 晨报 / 日报
 
-沿棒 7 的形状：`lib/skill-manifest.js` 导出 `renderSkillDistLine`（晨报一行）与 `renderSkillDistSection`（日报板块「skill 分发漂移」）。有漂移、有未核对、真身自身有悬空链接、或数据超过 6h 未刷新 → 🟡 AMBER；无数据（job 从未跑）→ 不出。读取 best-effort，失败不拖垮晨报/日报。
+沿棒 7 的形状：`lib/skill-dist-report.js` 导出 `readSkillDistState` / `renderSkillDistLine`（晨报一行）与 `renderSkillDistSection`（日报板块「skill 分发漂移」）。有漂移、有未核对（unreachable/invalid）、真身取不到、或数据超过 6h 未刷新 → 🟡 AMBER；无数据（job 从未跑）→ 不出。真身自己的悬空链接（MMV 实测 29 个）只在日报板块点名，不让晨报常亮（它是真身自己的清理待办，不是分发漂移）。读取 best-effort，失败不拖垮晨报/日报。
 
 ## 4. 同步脚本 `scripts/skill-sync-to-runners.sh`
 
 替代那行 cron 的逻辑，但**本棒不替换 cron**。默认 `--dry-run`：算真身与各目标 manifest，打印漂移，并 `rsync -n` 列出将改的文件；`--apply` 才真 rsync；`--prune` 才带 `--delete`。
 
-- `rsync -azL`（送真内容而不是悬空链接），排除 `.git` `.DS_Store` `node_modules`（与 manifest 忽略集一致，也保护目标上的 `~/.claude/skills/.git` 不被 `--delete` 删）。
-- 真身里的悬空链接按名排除（否则 rsync 报 23），并在输出里点名。
+- `rsync -azL`（送真内容而不是悬空链接），排除 `.git` `.DS_Store` `node_modules` `__pycache__`（与 manifest 忽略集一致，也保护目标上的 `~/.claude/skills/.git` 不被 `--delete` 删）。
+- 真身里的悬空链接不参与同步：脚本先在临时目录里建一份只含「有内容 skill」的符号链接视图再 rsync（不用 `--exclude` 排悬空名，否则目标上同名残留被排除规则保护、`--prune` 删不掉），并在输出里点名。
 - 同步后：目标 `~/.claude/skills` → 镜像到 `~/.codex-gwremote/skills`（同 cron 第二跳）→ 两处重算 manifest，与真身 `tree_hash` 不一致退出 1；目标 ssh 不通退出 2（不当零个）。
 - 目标用 ssh 别名（默认 `xian-m4 xian-m1`，`SKILL_SYNC_TARGETS` 覆盖）；`SKILL_SYNC_SSH` 可换 ssh 可执行文件（测试注入）。
 

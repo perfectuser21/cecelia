@@ -91,12 +91,13 @@ describe('skill-manifest.sh 确定性', () => {
     expect(run(dir).json.skills.beta).not.toBe(a.skills.beta);
   });
 
-  it('忽略 .DS_Store / node_modules / .git 与顶层隐藏项、顶层普通文件', () => {
+  it('忽略 .DS_Store / node_modules / .git / __pycache__ 与顶层隐藏项、顶层普通文件', () => {
     const dir = fixture();
     const a = run(dir).json;
     put('skills/alpha/.DS_Store', 'junk');
     put('skills/alpha/node_modules/x/index.js', 'junk');
     put('skills/alpha/.git/HEAD', 'ref');
+    put('skills/alpha/scripts/__pycache__/run.cpython-310.pyc', 'bytecode');
     put('skills/.git/HEAD', 'ref');
     put('skills/.gitignore', 'x');
     put('skills/README.md', 'top file');
@@ -128,7 +129,7 @@ describe('skill-manifest.sh 符号链接（09-25 实测病根：MMV 的 skill �
     expect(viaLink.tree_hash).toBe(viaReal.tree_hash);
   });
 
-  it('悬空符号链接进 broken、不进 skills，且影响 tree_hash（不能被静默当作没有）', () => {
+  it('悬空符号链接进 broken 单列、不进 skills、不计 count；tree_hash 只代表有内容的 skill（不被悬空项污染）', () => {
     const dir = fixture();
     const before = run(dir).json;
     symlinkSync('/nonexistent/path/zzz', join(dir, 'zzz'));
@@ -136,7 +137,7 @@ describe('skill-manifest.sh 符号链接（09-25 实测病根：MMV 的 skill �
     expect(after.broken).toEqual(['zzz']);
     expect(after.skills.zzz).toBeUndefined();
     expect(after.count).toBe(2);
-    expect(after.tree_hash).not.toBe(before.tree_hash);
+    expect(after.tree_hash).toBe(before.tree_hash);
     expect(verifyTreeHash(after)).toBe(true);
   });
 });
@@ -175,7 +176,7 @@ describe('skill-manifest.sh 目录与参数', () => {
 describe('parseManifestOutput', () => {
   const good = () => {
     const skills = { a: 'a'.repeat(64), b: 'b'.repeat(64) };
-    return { version: 1, dir: '/x', host: 'h', count: 2, skills, broken: [], tree_hash: treeHashOf(skills, []) };
+    return { version: 1, dir: '/x', host: 'h', count: 2, skills, broken: [], tree_hash: treeHashOf(skills) };
   };
 
   it('合法输出通过，且容忍 ssh banner/噪声行（取最后一个 JSON 行）', () => {
@@ -207,14 +208,14 @@ describe('parseManifestOutput', () => {
   it('skill 哈希不是 64 位十六进制 → invalid', () => {
     const m = good();
     m.skills.a = 'nothex';
-    m.tree_hash = treeHashOf(m.skills, []);
+    m.tree_hash = treeHashOf(m.skills);
     expect(parseManifestOutput(JSON.stringify(m)).ok).toBe(false);
   });
 });
 
 describe('compareManifests', () => {
   const H = (c) => c.repeat(64);
-  const mk = (skills, broken = []) => ({ skills, broken, tree_hash: treeHashOf(skills, broken), count: Object.keys(skills).length });
+  const mk = (skills, broken = []) => ({ skills, broken, tree_hash: treeHashOf(skills), count: Object.keys(skills).length });
 
   it('完全一致 → in_sync', () => {
     const t = mk({ a: H('1'), b: H('2') });

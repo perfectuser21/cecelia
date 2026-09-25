@@ -59,6 +59,7 @@ import { reapOpenclawAgentRuns } from './openclaw-agent-executor.js';
 import { reconcileDelegatedDeviceJobs } from './routing/device-delegation.js';
 import { syncCodingEvidence } from './crystal/coding-evidence.js';
 import { runOwnerDecisionDeadline } from './owner-decision-deadline.js';
+import { runSkillDistDrift } from './skill-dist-drift.js';
 
 const LOOP_INTERVAL_MS = 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -139,6 +140,7 @@ export const JOBS = [
   { name: 'openclaw-agent-reaper', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reapOpenclawAgentRuns(pool), description: '秋米 openclaw-agent 收割（60s，读 MMV ~/brain-runs/<run_id>.exit → completed_no_pr/failed，PR3）' },
   { name: 'qiumi-device-reconcile', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reconcileDelegatedDeviceJobs(pool), description: '秋米设备任务对账（60s，子 device_job 终态回写父 qiumi_task，PR3 补充五）' },
   { name: 'owner-decision-deadline', needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runOwnerDecisionDeadline(pool), description: '主理人决策到期兑现（决策105a5868三档协议，任务8aa79219）：blocked owner_decision(waiting_on=human)到期未应答→可逆按default走(同批准同一内部函数，via=default_on_deadline，decisions made_by=system，Bark P2「可推翻」)；不可逆不自动执行→blocked_until顺延24h+留痕次数+Bark P1再催。进程内10min自gate，调度轮60s都会调用故活性尺子=60s；整轮有界（query_timeout/statement_timeout/取连接超时/90s预算），不重演09-24 notion-gtd-sync卡死案' },
+  { name: 'skill-dist-drift', needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runSkillDistDrift(pool), description: 'skill 分发漂移检测（链 bf5088a3 棒8，任务 1141f101）：真身 MMV ~/.claude/skills 与跑场机 xian-m4/xian-m1 的 skill 清单哈希（跟随符号链接按内容算，悬空链接单列）30min 自 gate 比对，结果写 working_memory.skill_manifest_drift，晨报/日报出 🟡 AMBER。us-vps 零执行：只经 ssh(mmv 跳板) 送脚本到目标机执行、读回 JSON；ssh 失败/超时=unreachable（未核对），绝不当零个 skill' },
   // 放末尾：第一轮串行跑到这里时前面所有 job 的哨兵都已刷新，重启后不会把后排 job 误判 dead 再"恢复"。JOBS 经闭包注入——
   // 本模块已 import ops-collector/notion-push-sync，反向 import 会成环（routes/sentinel.js 同款避坑）。
   // scheduler 行推 Notion 滞后一轮 60s，设计 §3.2 接受。

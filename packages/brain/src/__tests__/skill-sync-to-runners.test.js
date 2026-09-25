@@ -72,6 +72,7 @@ beforeEach(() => {
     symlinkSync('/nonexistent/perfect21/zenithjoy-skills/alpha', join(s, 'alpha'));
     put(`remote/${h}/.claude/skills/old/SKILL.md`, '# stale\n');
     put(`remote/${h}/.claude/skills/.git/HEAD`, 'ref: refs/heads/main\n');
+    put(`remote/${h}/.claude/skills/.gitignore`, '*.log\n');
   }
   mkdirSync(join(root, 'remote/down'), { recursive: true });
   const fake = join(root, 'fake-ssh');
@@ -122,7 +123,7 @@ describe.skipIf(!hasRsync)('skill-sync-to-runners.sh', () => {
     expect(out).toContain('--prune');
   });
 
-  it('--apply --prune：收敛到真身（多余项被删、目标 .git 保留），两个目录 manifest 与真身一致，退出 0', () => {
+  it('--apply --prune：收敛到真身（多余项被删、目标 .git/.gitignore 保留），两个目录 manifest 与真身一致，退出 0', () => {
     const { code, out } = sync(['--apply', '--prune']);
     expect(out).not.toMatch(/❌/);
     expect(code).toBe(0);
@@ -130,6 +131,7 @@ describe.skipIf(!hasRsync)('skill-sync-to-runners.sh', () => {
     for (const h of ['m4', 'm1']) {
       expect(existsSync(join(root, `remote/${h}/.claude/skills/old`))).toBe(false);
       expect(existsSync(join(root, `remote/${h}/.claude/skills/.git/HEAD`))).toBe(true);
+      expect(existsSync(join(root, `remote/${h}/.claude/skills/.gitignore`))).toBe(true); // 顶层隐藏项不受 --delete 影响
       expect(manifestOf(join(root, `remote/${h}/.claude/skills`)).tree_hash).toBe(truth.tree_hash);
       expect(manifestOf(join(root, `remote/${h}/.codex-gwremote/skills`)).tree_hash).toBe(truth.tree_hash);
     }
@@ -155,12 +157,13 @@ describe.skipIf(!hasRsync)('skill-sync-to-runners.sh', () => {
     expect(existsSync(join(root, 'remote/m1/.claude/skills/alpha/SKILL.md'))).toBe(true);
   });
 
-  it('真身里的悬空链接不会让 rsync 炸：按名排除、点名告警、并以非零退出（真身本身有病）', () => {
+  it('真身里的悬空链接（MMV 实测 29 个）不会让 rsync 炸：按名排除并点名告警，其余照常收敛，退出 0', () => {
     symlinkSync('/nonexistent/zzz', join(root, 'src/zzz'));
     const { code, out } = sync(['--apply', '--prune']);
     expect(out).toContain('zzz');
     expect(existsSync(join(root, 'remote/m4/.claude/skills/alpha/SKILL.md'))).toBe(true);
-    expect(code).not.toBe(0);
+    expect(existsSync(join(root, 'remote/m4/.claude/skills/zzz'))).toBe(false);
+    expect(code).toBe(0);
   });
 
   it('参数校验：--apply 与 --dry-run 互斥、未知参数报用法错（退出 64）', () => {
