@@ -227,10 +227,12 @@ if echo "${CURL_LINE}" | grep -q '5G 档'; then
 else
   fail "ALERT title 缺少粗桶标识（5G 档），实际: ${CURL_LINE}"
 fi
-if echo "${CURL_LINE}" | grep -q '5\.50GB'; then
-  ok "精确 GB 值仍保留在 description 里（运维看得到真实数值）"
+# 必须锚在 description 字段内再找数值：只 grep 整行会被 title 里的数值满足，
+# 导致"把 description 里的数值删掉"这种变异照样全绿（本次变异测试实测到的过耦合）。
+if echo "${CURL_LINE}" | grep -qE 'description[^}]*5\.50GB'; then
+  ok "精确 GB 值仍保留在 description 字段里（运维看得到真实数值）"
 else
-  fail "description 丢了精确 GB 值，实际: ${CURL_LINE}"
+  fail "description 字段丢了精确 GB 值，实际: ${CURL_LINE}"
 fi
 
 # ④ CRITICAL 文案必须取自常量，不得残留硬编码旧阈值 11GB
@@ -292,10 +294,11 @@ else
   else
     ok "CPU 告警 title 未嵌百分比"
   fi
-  if echo "${CPU_CURL}" | grep -q '97%'; then
-    ok "CPU 精确百分比仍保留在 description 里"
+  # 同上：必须锚在 description 字段内，否则 title 里的百分比会让这条断言假绿
+  if echo "${CPU_CURL}" | grep -qE 'description[^}]*97%'; then
+    ok "CPU 精确百分比仍保留在 description 字段里"
   else
-    fail "CPU description 丢了精确百分比，实际: ${CPU_CURL}"
+    fail "CPU description 字段丢了精确百分比，实际: ${CPU_CURL}"
   fi
 fi
 

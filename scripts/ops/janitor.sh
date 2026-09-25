@@ -186,13 +186,20 @@ if [ "$MODE" = "frequent" ]; then
   fi
 
   # CPU 高压：上报 Brain 告警
-  if [ "$CPU_PCT" -ge "$CPU_ALERT_THRESHOLD" ] 2>/dev/null; then
+  # ⚠️ title 里不得嵌 ${CPU_PCT}%：Brain 建单 API 本身按 title 去重（命中时返回
+  # deduplicated:true 并累加 payload.recurrence_requests），把每格都在变的数值写进
+  # title 等于每个百分点造一条新单——实测已积出 ~15 条 CPU 垃圾单（88%~100%）。
+  # 精确百分比放 description。抽成函数是为了能被 __tests__ 提取做行为级断言。
+  check_cpu_pressure_alert() {
+    [ "$CPU_PCT" -ge "$CPU_ALERT_THRESHOLD" ] 2>/dev/null || return 0
     echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] CPU 高压 ${CPU_PCT}%，上报 Brain 告警..."
-    curl -s -X POST "${BRAIN_URL}/api/brain/tasks" \
+    curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" \
       -H "Content-Type: application/json" \
-      -d "{\"title\":\"⚠️ CPU 高压告警 ${CPU_PCT}%（Janitor 检测）\",\"priority\":\"P1\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"CPU ${CPU_PCT}% 超过 ${CPU_ALERT_THRESHOLD}% 阈值，请检查是否有失控进程。\"}" \
+      -d "{\"title\":\"⚠️ CPU 高压告警（Janitor 检测）\",\"priority\":\"P1\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"CPU ${CPU_PCT}% 超过 ${CPU_ALERT_THRESHOLD}% 阈值，请检查是否有失控进程。\"}" \
       2>/dev/null || true
-  fi
+  }
+
+  check_cpu_pressure_alert
 
   # 内核 kalloc.1024 泄漏哨兵（2026-09-18 事故补：mmv 本机 kalloc.1024 从几 MB
   # 涨到 12.7GB 占满 wired 内存，kernel_task 91% CPU 致机器卡死，zprint -g 触发
@@ -207,8 +214,33 @@ if [ "$MODE" = "frequent" ]; then
   # 自动重启节奏由约 14 天变约 9 天。
   # 清扫+告警机制，不新建独立 launchd 哨兵（决策 64d38870）。
   # KALLOC_KB / KALLOC_HOUR 允许环境变量注入（测试用，同 DISK_PCT 约定）。
+  # 阈值与安全时段亦可用 KALLOC_*_GB / KALLOC_SAFE_* 覆盖（搬机器/换时区改 env 不改码）。
   check_kalloc_guard() {
-    local kb gb hour
+    # ⚠️ 阈值与时段常量必须定义在【函数体内】，勿挪到函数外。本脚本全文无 set -u：
+    # 一旦此处引用不到（漏改/打错名/函数被挪走），$((KALLOC_CRITICAL_GB*1024*1024))
+    # 会静默取 0，[ "$kb" -ge 0 ] 恒真 → 任何微小 kalloc 都判 CRITICAL，配合 cron
+    # 每 15 分钟一跑即无限重启生产机。2026-09-25 已实测复现该行为。
+    local KALLOC_WARN_GB="${KALLOC_WARN_GB:-3}"
+    local KALLOC_ALERT_GB="${KALLOC_ALERT_GB:-5}"
+    local KALLOC_CRITICAL_GB="${KALLOC_CRITICAL_GB:-7}"
+    # 安全时段按【人所在时区】判，不按机器环境时区。本机 /etc/localtime 指向
+    # America/Los_Angeles（systemsetup 显示的 Asia/Shanghai 是未生效的偏好），cron 无 TZ
+    # 即回落它——原来的裸 date +%H 使「凌晨 3-5 点」实际落在北京 18:00-20:00，
+    # 会在傍晚重启生产机。2026-09-25 实测确认，决策 c70beb74。
+    local KALLOC_SAFE_TZ="${KALLOC_SAFE_TZ:-Asia/Shanghai}"
+    local KALLOC_SAFE_HOUR_START="${KALLOC_SAFE_HOUR_START:-3}"
+    local KALLOC_SAFE_HOUR_END="${KALLOC_SAFE_HOUR_END:-5}"
+    local kb gb hour tzname t
+
+    # fail-closed：阈值必须是纯数字，否则什么都不判（挡住上面那颗"静默取 0"的雷）
+    for t in "${KALLOC_WARN_GB}" "${KALLOC_ALERT_GB}" "${KALLOC_CRITICAL_GB}"; do
+      case "${t}" in
+        ''|*[!0-9]*)
+          echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc 哨兵阈值常量非法（WARN=${KALLOC_WARN_GB} ALERT=${KALLOC_ALERT_GB} CRITICAL=${KALLOC_CRITICAL_GB}），不做任何判断"
+          return 0 ;;
+      esac
+    done
+
     if [ -n "${KALLOC_KB:-}" ]; then
       kb="$KALLOC_KB"
     else
@@ -218,28 +250,57 @@ if [ "$MODE" = "frequent" ]; then
 
     gb=$(awk -v k="$kb" 'BEGIN{printf "%.2f", k/1048576}')
 
-    if [ "$kb" -ge $((7*1024*1024)) ] 2>/dev/null; then
-      hour="${KALLOC_HOUR:-$(date +%H)}"
+    # ⚠️ 以下四处 title 一律不嵌 ${gb} 这类每格都在变的数值，只放"${N}G 档"粗桶：
+    # Brain 建单 API 按 title 去重（命中返回 deduplicated:true + 累加
+    # payload.recurrence_requests），数值进 title 即每 0.01G 造一条新单——实测已积出
+    # ~81 条 kalloc 垃圾单（5.56GB→6.36GB）。精确值放 description。
+    if [ "$kb" -ge $((KALLOC_CRITICAL_GB*1024*1024)) ] 2>/dev/null; then
+      hour="${KALLOC_HOUR:-$(TZ="${KALLOC_SAFE_TZ}" date +%H)}"
+      # 时区名拼错 / zoneinfo 缺失时 date 会静默回落 UTC 并 exit 0（实测
+      # TZ=Bogus/NoSuchZone date +%H 无报错）——不校验则安全时段悄悄变成
+      # UTC 3-5 = 北京 11:00-13:00，正好工作时间。fail-closed：只告警不重启。
+      tzname=$(TZ="${KALLOC_SAFE_TZ}" date +%Z 2>/dev/null)
+      if [ -z "${KALLOC_HOUR:-}" ] && [ "${tzname}" = "UTC" ] && [ "${KALLOC_SAFE_TZ}" != "UTC" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，但时区 ${KALLOC_SAFE_TZ} 不可用（date 回落 UTC），fail-closed 不自动重启"
+        curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
+          -d "{\"title\":\"🔴 kalloc.1024 危险（${KALLOC_CRITICAL_GB}G 档，安全时段时区不可用）（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存 ${gb}GB 已超危险阈值 ${KALLOC_CRITICAL_GB}GB，但安全时段时区 ${KALLOC_SAFE_TZ} 解析失败（date 静默回落 UTC），已 fail-closed 不自动重启，请人工重启并修 KALLOC_SAFE_TZ。\"}" \
+          2>/dev/null || true
+        return 0
+      fi
       # 勿删 10#：前导零会被 bash 按八进制解析，08/09 点会命中同一颗雷（见 etime_to_secs 教训）
-      if [ "$((10#$hour))" -ge 3 ] 2>/dev/null && [ "$((10#$hour))" -lt 5 ] 2>/dev/null; then
+      if [ "$((10#$hour))" -ge "${KALLOC_SAFE_HOUR_START}" ] 2>/dev/null \
+         && [ "$((10#$hour))" -lt "${KALLOC_SAFE_HOUR_END}" ] 2>/dev/null; then
+        # 重启不可逆，两道闸都在【代码里】而不在测试文件里：
+        # ① --dry-run：原来 DRY_RUN 只在 daily 分支生效，跑 `--mode frequent --dry-run`
+        #    会真重启，而文件头注释写着"只检测不清理"。
+        # ② JANITOR_NO_REBOOT：给测试/排障用；即使将来重启改成 command sudo /
+        #    绝对路径 / osascript 等绕过测试 mock 的写法，这道闸仍拦得住。
+        if ${DRY_RUN:-false}; then
+          echo "${DRY_TAG:-[DRY-RUN] }$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，本应在安全时段自动重启，DRY-RUN 已跳过"
+          return 0
+        fi
+        if [ "${JANITOR_NO_REBOOT:-0}" = "1" ]; then
+          echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，安全时段内但 JANITOR_NO_REBOOT=1 已拦住自动重启"
+          return 0
+        fi
         echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，安全时段内自动重启止损"
-        curl -s -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
-          -d "{\"title\":\"🚨 kalloc.1024 ${gb}GB 触发自动重启（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存泄漏达危险阈值，凌晨安全时段自动重启止损，历史峰值12.7GB曾致机器卡死。\"}" \
+        curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
+          -d "{\"title\":\"🚨 kalloc.1024 触发自动重启（${KALLOC_CRITICAL_GB}G 档）（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存 ${gb}GB 达危险阈值 ${KALLOC_CRITICAL_GB}GB，${KALLOC_SAFE_TZ} ${KALLOC_SAFE_HOUR_START}-${KALLOC_SAFE_HOUR_END} 点安全时段内自动重启止损，历史峰值12.7GB曾致机器卡死。\"}" \
           2>/dev/null || true
         sleep 30
         sudo -n shutdown -r now 2>/dev/null
       else
         echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，非安全时段仅告警"
-        curl -s -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
-          -d "{\"title\":\"🔴 kalloc.1024 危险 ${gb}GB（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"已超危险阈值11GB，非凌晨3-5点安全时段暂不自动重启，请尽快手动重启。\"}" \
+        curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
+          -d "{\"title\":\"🔴 kalloc.1024 危险（${KALLOC_CRITICAL_GB}G 档）（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存 ${gb}GB 已超危险阈值 ${KALLOC_CRITICAL_GB}GB，当前不在 ${KALLOC_SAFE_TZ} ${KALLOC_SAFE_HOUR_START}-${KALLOC_SAFE_HOUR_END} 点安全时段，暂不自动重启，请尽快手动重启。\"}" \
           2>/dev/null || true
       fi
-    elif [ "$kb" -ge $((5*1024*1024)) ] 2>/dev/null; then
+    elif [ "$kb" -ge $((KALLOC_ALERT_GB*1024*1024)) ] 2>/dev/null; then
       echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 偏高 ${gb}GB，上报 Brain 告警"
-      curl -s -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
-        -d "{\"title\":\"🟡 kalloc.1024 偏高 ${gb}GB（Janitor检测）\",\"priority\":\"P1\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存缓慢泄漏中，建议本周找空档重启一次。\"}" \
+      curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
+        -d "{\"title\":\"🟡 kalloc.1024 偏高（${KALLOC_ALERT_GB}G 档）（Janitor检测）\",\"priority\":\"P1\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存 ${gb}GB 超过 ${KALLOC_ALERT_GB}GB 告警线，缓慢泄漏中，建议本周找空档重启一次。危险线 ${KALLOC_CRITICAL_GB}GB。\"}" \
         2>/dev/null || true
-    elif [ "$kb" -ge $((3*1024*1024)) ] 2>/dev/null; then
+    elif [ "$kb" -ge $((KALLOC_WARN_GB*1024*1024)) ] 2>/dev/null; then
       echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 ${gb}GB（早期预警，仅记日志）"
     fi
   }
