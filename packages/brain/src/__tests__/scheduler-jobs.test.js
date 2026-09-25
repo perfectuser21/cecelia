@@ -135,6 +135,12 @@ vi.mock('../routing/device-delegation.js', () => ({
   reconcileDelegatedDeviceJobs: vi.fn().mockResolvedValue({ checked: 0, completed: 0, failed: 0 }),
 }));
 
+// owner-decision-deadline 真实 handler 会查 tasks/开事务；行为由 integration/owner-decision-approval.pg.integration.test.js 覆盖，
+// 这里只验注册（顺序/声明的活性尺子/needsPool）。
+vi.mock('../owner-decision-deadline.js', () => ({
+  runOwnerDecisionDeadline: vi.fn().mockResolvedValue({ skipped: true }),
+}));
+
 vi.mock('../ops-scheduler-liveness.js', () => ({
   runSchedulerLiveness: vi.fn().mockResolvedValue({ ok: true, jobs: 0, flippedDead: 0, recovered: 0 }),
 }));
@@ -201,6 +207,22 @@ describe('scheduler-jobs 注册表', () => {
     expect(j).toBeTruthy();
     expect(j.needsPool).toBe(true);
     expect(typeof j.handler).toBe('function');
+  });
+
+  // 任务 8aa79219：owner_decision「到期按默认走」的执行者。没注册 = 协议承诺无人兑现，不可逆决策永卡、可逆决策不走默认。
+  it('JOBS 注册了 owner-decision-deadline（needsPool、声明活性尺子、在 scheduler-liveness 之前、handler 真接线）', async () => {
+    const { runOwnerDecisionDeadline } = await import('../owner-decision-deadline.js');
+    const names = JOBS.map((j) => j.name);
+    const j = JOBS.find((x) => x.name === 'owner-decision-deadline');
+    expect(j).toBeTruthy();
+    expect(j.needsPool).toBe(true);
+    expect(j.livenessIntervalSec).toBe(60);
+    expect(j.timeoutMs).toBeLessThanOrEqual(5 * 60 * 1000);
+    expect(String(j.description)).toContain('owner_decision');
+    expect(names.indexOf('owner-decision-deadline')).toBeLessThan(names.indexOf('scheduler-liveness'));
+    const pool = makePool();
+    await runSchedulerJobsOnce(pool, [j]);
+    expect(runOwnerDecisionDeadline).toHaveBeenCalledWith(pool);
   });
 
   it('注册 scheduler-liveness 且排在 JOBS 末尾，把 JOBS 自身注入 handler（不 import 成环）', async () => {
