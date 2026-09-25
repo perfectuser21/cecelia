@@ -270,6 +270,7 @@ describe.sequential('executor Kernel authority reconciliation on PostgreSQL', ()
       'SELECT status,claimed_by FROM tasks WHERE id=$1',
       [taskId],
     );
-    expect(persisted.rows[0]).toEqual({ status: 'failed', claimed_by: 'brain-tick-7' });
+    // 终态统一经 lib/task-terminal.js 的 finalizeTask 写入，一并清 claimed_by（终态任务不应残留占用者）
+    expect(persisted.rows[0]).toEqual({ status: 'failed', claimed_by: null });
   });
 });
