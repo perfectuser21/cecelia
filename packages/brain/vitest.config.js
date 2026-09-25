@@ -70,6 +70,8 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/capture-destination-link.integration.test.js',
   'src/__tests__/integration/okr-decomposition-flow.integration.test.js',
   'src/__tests__/integration/base-sha-reanchor.pg.integration.test.js',
+  // run 原语 task_runs 落库 + 裸跑检测（禁 mock db.js 边，真 Postgres）— sprint 09251224-kernel-66db3dfb
+  'src/__tests__/integration/task-run-primitive.pg.integration.test.js',
 ];
 
 export default defineConfig({
