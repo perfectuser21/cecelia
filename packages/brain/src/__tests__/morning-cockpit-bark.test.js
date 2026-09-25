@@ -153,4 +153,41 @@ describe('runMorningCockpitBark', () => {
     const body = sendBark.mock.calls[0][1];
     expect(body).not.toMatch(/排序官 Top/);
   });
+
+  // ─── run 原语（链 bf5088a3 棒1）：晨报裸跑检测 AMBER ─────────────────────────
+  it('[裸跑检测] 有 dispatched 无 task_runs 的执行 → Bark 正文出现 🟡 AMBER 行与裸跑数', async () => {
+    const pool = {
+      query: vi.fn(async (sql) => {
+        if (/FROM dispatch_events/.test(String(sql))) {
+          return { rows: [
+            { task_id: 'aaaaaaaa-1111', dispatched_at: '2026-09-25T00:00:00Z' },
+            { task_id: 'bbbbbbbb-2222', dispatched_at: '2026-09-25T00:01:00Z' },
+          ] };
+        }
+        return { rows: [] };
+      }),
+    };
+    await runMorningCockpitBark(pool);
+    const body = sendBark.mock.calls[0][1];
+    expect(body).toMatch(/🟡\s*AMBER/);
+    expect(body).toContain('2 个');
+    expect(body).toContain('aaaaaaaa');
+  });
+
+  it('[裸跑检测] 无裸跑不误报；检测查询失败也不拖垮晨报', async () => {
+    const clean = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    await runMorningCockpitBark(clean);
+    expect(sendBark.mock.calls[0][1]).not.toMatch(/AMBER/);
+
+    sendBark.mockClear();
+    const broken = {
+      query: vi.fn(async (sql) => {
+        if (/FROM dispatch_events/.test(String(sql))) throw new Error('bare down');
+        return { rows: [] };
+      }),
+    };
+    const result = await runMorningCockpitBark(broken);
+    expect(result).toMatchObject({ sent: true });
+    expect(sendBark.mock.calls[0][1]).not.toMatch(/AMBER/);
+  });
 });

@@ -13,6 +13,7 @@
  */
 
 import { sendBark } from './notifier.js';
+import { findBareRuns } from './lib/task-run.js';
 import { LEADERBOARD_KEY } from './triage-officer-rank.js';
 
 /** 触发小时（UTC）= 北京时间 08:30 */
@@ -120,6 +121,24 @@ function fmtVetoDeadline(isoStr) {
 }
 
 /**
+ * 裸跑检测行（run 原语留痕缺口）：过去 24h 有 dispatched 事件却无 task_runs 行的执行 → 🟡 AMBER。
+ * best-effort：查询失败/无裸跑返回 null（不出这一行，不拖垮晨报）。
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<string|null>}
+ */
+async function fetchBareRunLine(pool) {
+  try {
+    const rows = await findBareRuns(pool, { windowMinutes: 24 * 60 });
+    if (!rows.length) return null;
+    const ids = rows.slice(0, 3).map((r) => String(r.task_id).slice(0, 8)).join('、');
+    return `🟡 AMBER 裸跑执行 ${rows.length} 个（有派发无 run 记录）：${ids}${rows.length > 3 ? ' …' : ''}`;
+  } catch (e) {
+    console.warn('[morning-cockpit-bark] bare-run detect failed:', e.message);
+    return null;
+  }
+}
+
+/**
  * 采集简报数据：完成率 + 在途任务数。
  * @param {import('pg').Pool} pool
  * @returns {Promise<{completionRate: string, inProgressCount: number}>}
@@ -180,9 +199,10 @@ export async function runMorningCockpitBark(pool) {
   }
 
   // 3. 采集简报数据 + 榜单（并行，榜单 best-effort）
-  const [{ completionRate, inProgressCount }, triageBoard] = await Promise.all([
+  const [{ completionRate, inProgressCount }, triageBoard, bareRunLine] = await Promise.all([
     buildBriefData(pool),
     fetchTriageLeaderboard(pool),
+    fetchBareRunLine(pool),
   ]);
 
   // 4. 构造推送内容
@@ -204,6 +224,8 @@ export async function runMorningCockpitBark(pool) {
     const vetoTime = fmtVetoDeadline(triageBoard.veto_deadline);
     if (vetoTime) lines.push(`否决窗至 ${vetoTime}，逾时自动放行`);
   }
+
+  if (bareRunLine) lines.push(bareRunLine);
 
   lines.push(`点击进入指挥舱 → ${DASHBOARD_URL}`);
   const body = lines.join('\n');

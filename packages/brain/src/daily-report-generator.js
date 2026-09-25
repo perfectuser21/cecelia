@@ -13,6 +13,7 @@
 
 import pool from './db.js';
 import { sendFeishu } from './notifier.js';
+import { findBareRuns } from './lib/task-run.js';
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -209,6 +210,30 @@ function fmt(val) {
 }
 
 /**
+ * 裸跑检测板块（链 bf5088a3 棒1，需求④ 出口）：窗口内有 dispatch_events(dispatched)、
+ * 却没有对应 task_runs 行的执行——run 原语漏接或写入失败，留痕缺口，标 🟡 AMBER。
+ * 无裸跑返回不含 AMBER 标记的一行说明（不误报）。
+ *
+ * @param {Array<{task_id: string, dispatched_at?: string|Date}>} bareRuns findBareRuns 的返回
+ * @returns {string}
+ */
+export function renderBareRunSection(bareRuns) {
+  const list = Array.isArray(bareRuns) ? bareRuns : [];
+  const lines = ['== 裸跑检测 =='];
+  if (list.length === 0) {
+    lines.push('无裸跑执行（每次派发都有对应 run 记录）。');
+    return lines.join('\n');
+  }
+  lines.push(`🟡 AMBER 裸跑执行 ${list.length} 个（有 dispatch_events 无 task_runs，留痕缺口）：`);
+  for (const r of list.slice(0, 20)) {
+    const at = r.dispatched_at ? new Date(r.dispatched_at).toISOString() : '未知时间';
+    lines.push(`  - 🟡 AMBER 裸跑 task_id=${r.task_id} 派发于 ${at}`);
+  }
+  if (list.length > 20) lines.push(`  …另有 ${list.length - 20} 个未列出`);
+  return lines.join('\n');
+}
+
+/**
  * 生成日报文本（包含四个板块：内容产出、发布情况、数据回收、异常告警）。
  *
  * @param {string} reportDate - 日报日期（今天 YYYY-MM-DD）
@@ -217,9 +242,10 @@ function fmt(val) {
  * @param {Array<{platform: string, success: number, failed: number}>} publishStats
  * @param {Array<{platform: string, views: number|null, likes: number|null, comments: number|null}>} engagementData
  * @param {number} failureCount
+ * @param {Array|null} [bareRuns] findBareRuns 返回；null = 检测不可用，不出该板块
  * @returns {string}
  */
-export function buildReportText(reportDate, yesterday, contentOutput, publishStats, engagementData, failureCount) {
+export function buildReportText(reportDate, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns = null) {
   const lines = [];
 
   lines.push(`ZenithJoy 内容日报 ${reportDate}`);
@@ -268,6 +294,12 @@ export function buildReportText(reportDate, yesterday, contentOutput, publishSta
     lines.push(`昨日 content_publish_jobs 失败 ${failureCount} 次，请及时排查。`);
   }
   lines.push('');
+
+  // ── 板块五：裸跑检测（run 原语留痕缺口，AMBER）─────────────────────────────
+  if (Array.isArray(bareRuns)) {
+    lines.push(renderBareRunSection(bareRuns));
+    lines.push('');
+  }
 
   lines.push(`---`);
   lines.push(`由 Cecelia Brain 自动生成 · ${new Date().toISOString()}`);
@@ -329,8 +361,14 @@ export async function generateDailyReport(dbPool = pool, now = new Date()) {
       fetchYesterdayFailureCount(dbPool, yesterday),
     ]);
 
-    // 4. 生成日报文本（包含四个板块：内容产出、发布情况、数据回收、异常告警）
-    const reportText = buildReportText(today, yesterday, contentOutput, publishStats, engagementData, failureCount);
+    // 3.5 裸跑检测（run 原语）：查询失败降级为 null（不出该板块，不拖垮日报）
+    const bareRuns = await findBareRuns(dbPool, { windowMinutes: 24 * 60 }).catch((err) => {
+      console.warn(`[daily-report-generator] 裸跑检测失败（非阻断）: ${err.message}`);
+      return null;
+    });
+
+    // 4. 生成日报文本（内容产出、发布情况、数据回收、异常告警、裸跑检测）
+    const reportText = buildReportText(today, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns);
 
     // 5. 写入 working_memory，key=daily_report_{YYYY-MM-DD}
     await saveReportToWorkingMemory(dbPool, today, reportText);

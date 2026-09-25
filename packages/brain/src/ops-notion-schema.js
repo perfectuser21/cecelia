@@ -63,6 +63,16 @@ export const OPS_DB_PROPS = {
     Stage: { select: {} },            // 档位人工覆盖，生效值取人工优先
   },
 
+  // task_runs 投影库「Runs」（链 bf5088a3 棒1）：一次执行 = 一行 task_runs = 一页；库在
+  // notion_projection_map 登记为 push+active 后由 notion-push-sync.pushTaskRuns 推送并补缺列
+  task_runs: {
+    Name: { title: {} }, Status: { select: {} }, Source: { select: {} },
+    TaskId: { rich_text: {} }, RunId: { rich_text: {} },
+    StartedAt: { date: {} }, EndedAt: { date: {} },
+    ExitCode: { number: {} }, Artifacts: { rich_text: {} },
+    Minutes: { number: {} }, Error: { rich_text: {} },
+  },
+
   // run 记录库：只存业务流程的每次执行
   runs: {
     Name: { title: {} }, Status: { select: {} }, Machine: { select: {} },

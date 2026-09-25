@@ -25,6 +25,7 @@ import {
   startRunForExecResult,
 } from '../../lib/task-run.js';
 import { findUnregisteredNotionTables } from '../../lib/notion-projection-registry.js';
+import { renderBareRunSection } from '../../daily-report-generator.js';
 
 const created = [];
 
@@ -186,5 +187,20 @@ describe('run 原语 startRun/finishRun/findBareRuns — 真 Postgres 落库', (
     expect(rows).toHaveLength(3);
     const unregistered = await findUnregisteredNotionTables(pool);
     expect(unregistered).not.toContain('task_runs');
+  });
+
+  it('晨报出口（真 PG）：findBareRuns 真实数据 → renderBareRunSection 出 🟡 AMBER + 裸跑 id，不含有 run 的 id，空则不误报', async () => {
+    const bare = await seedTask();
+    const ok = await seedTask();
+    await pool.query(
+      `INSERT INTO dispatch_events (task_id,event_type,reason) VALUES ($1,'dispatched','pg-b06-bare'),($2,'dispatched','pg-b06-ok')`,
+      [bare, ok],
+    );
+    await startRun({ taskId: ok, runId: `pg-b06-${randomUUID()}`, source: 'dispatcher' });
+    const text = renderBareRunSection(await findBareRuns(pool, { windowMinutes: 60 }));
+    expect(text).toMatch(/🟡\s*AMBER/);
+    expect(text).toContain(bare);
+    expect(text).not.toContain(ok);
+    expect(renderBareRunSection([])).not.toMatch(/AMBER/);
   });
 });
