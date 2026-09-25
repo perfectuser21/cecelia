@@ -35,6 +35,21 @@ if [ "$host" = flaky ] && [[ "$*" == *"rsync --server"* ]]; then echo junk > "$H
 exit $rc
 `;
 
+
+// 假 rsync 包装：记录每次调用的参数；按 FAKE_RSYNC_RCS（空格分隔，第 n 次调用取第 n 项）注入失败退出码，
+// 该项缺省或为 0 时转交真 rsync（真 rsync 走假 ssh，仍只写本地临时目录）。
+// 只有带 --partial 的调用才计数（=apply 那一跳），dry-run 的 -n 预演与其它调用不受影响。
+const FAKE_RSYNC = `#!/bin/bash
+printf '%s\\n' "$*" >> "$FAKE_RSYNC_LOG"
+[[ " $* " == *" --partial "* ]] || exec "$REAL_RSYNC" "$@"
+n=$(( $(cat "$FAKE_RSYNC_COUNT" 2>/dev/null || echo 0) + 1 ))
+echo "$n" > "$FAKE_RSYNC_COUNT"
+read -r -a rcs <<< "\${FAKE_RSYNC_RCS:-}"
+rc="\${rcs[$((n-1))]:-0}"
+if [ "$rc" != 0 ]; then echo "fake rsync: injected rc=$rc (call $n)" >&2; exit "$rc"; fi
+exec "$REAL_RSYNC" "$@"
+`;
+
 let root;
 let env;
 
@@ -78,8 +93,17 @@ beforeEach(() => {
   const fake = join(root, 'fake-ssh');
   writeFileSync(fake, FAKE_SSH);
   chmodSync(fake, 0o755);
+  const fakeRsync = join(root, 'fake-rsync');
+  writeFileSync(fakeRsync, FAKE_RSYNC);
+  chmodSync(fakeRsync, 0o755);
+  const realRsync = spawnSync('bash', ['-c', 'command -v rsync'], { encoding: 'utf8' }).stdout.trim();
   env = {
     ...process.env,
+    SKILL_SYNC_RSYNC: fakeRsync,
+    REAL_RSYNC: realRsync,
+    FAKE_RSYNC_LOG: join(root, 'rsync.log'),
+    FAKE_RSYNC_COUNT: join(root, 'rsync.count'),
+    SKILL_SYNC_RETRY_BACKOFF: '0',
     SKILL_SYNC_SSH: fake,
     FAKE_REMOTE_ROOT: join(root, 'remote'),
     SKILL_SYNC_SRC: join(root, 'src'),
@@ -175,5 +199,99 @@ describe.skipIf(!hasRsync)('skill-sync-to-runners.sh', () => {
     const { code } = sync(['--apply', '--prune'], { SKILL_SYNC_SRC: join(root, 'nope') });
     expect(code).toBe(2);
     expect(isSymlink(join(root, 'remote/m4/.claude/skills/alpha'))).toBe(true);
+  });
+  describe('慢链路：超时可配 / --partial / 失败重试', () => {
+    const rsyncLog = () => (existsSync(join(root, 'rsync.log')) ? readFileSync(join(root, 'rsync.log'), 'utf8') : '');
+    const applyCalls = () => rsyncLog().split('\n').filter((l) => l.includes('--partial'));
+    const one = { SKILL_SYNC_TARGETS: 'm4' };
+
+    it('默认超时仍是 60，并带 --partial 与 ssh 保活选项；不带 --delete', () => {
+      const { code, out } = sync(['--apply'], one);
+      expect(code).toBe(1); // 没 --prune 时多余项在，仍是既有语义
+      expect(out).not.toMatch(/rsync[^\n]*失败/);
+      const calls = applyCalls();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toContain('--timeout=60');
+      expect(calls[0]).toContain('--partial');
+      expect(calls[0]).not.toContain('--delete');
+      expect(calls[0]).toContain('ServerAliveInterval=30');
+      expect(calls[0]).toContain('ServerAliveCountMax=20');
+    });
+
+    it('SKILL_SYNC_RSYNC_TIMEOUT=600 生效：真传到 rsync 命令行，dry-run 打印的命令也是 600', () => {
+      const dry = sync([], { ...one, SKILL_SYNC_RSYNC_TIMEOUT: '600' });
+      expect(dry.code).toBe(0);
+      expect(dry.out).toContain('--timeout=600');
+      expect(dry.out).not.toContain('--timeout=60 ');
+      const ap = sync(['--apply', '--prune'], { ...one, SKILL_SYNC_RSYNC_TIMEOUT: '900' });
+      expect(ap.code).toBe(0);
+      expect(applyCalls()[0]).toContain('--timeout=900');
+    });
+
+    it.each(['abc', '0', '-5', '', '12s', '1.5', ' '])('非法超时值 %j 回落 60', (bad) => {
+      const { code, out } = sync([], { ...one, SKILL_SYNC_RSYNC_TIMEOUT: bad });
+      expect(code).toBe(0);
+      expect(out).toContain('--timeout=60');
+      expect(out).not.toMatch(/--timeout=(?!60\b)/);
+    });
+
+    it('--help 写明两个环境变量', () => {
+      const { code, out } = sync(['--help']);
+      expect(code).toBe(0);
+      expect(out).toContain('SKILL_SYNC_RSYNC_TIMEOUT');
+      expect(out).toContain('SKILL_SYNC_RETRIES');
+    });
+
+    it('第一次 rc=30（IO 超时）第二次成功 → 整体成功退出 0，日志记录重试 1 次，且 rsync 共调用 2 次', () => {
+      const { code, out } = sync(['--apply', '--prune'], { ...one, FAKE_RSYNC_RCS: '30' });
+      expect(code).toBe(0);
+      expect(out).toMatch(/rc=30/);
+      expect(out).toMatch(/重试 1 次/);
+      expect(applyCalls()).toHaveLength(2);
+      expect(existsSync(join(root, 'remote/m4/.claude/skills/alpha/SKILL.md'))).toBe(true);
+    });
+
+    it.each([['35'], ['255']])('rc=%s（断线类）同样重试', (rc) => {
+      const { code, out } = sync(['--apply', '--prune'], { ...one, FAKE_RSYNC_RCS: rc });
+      expect(code).toBe(0);
+      expect(out).toMatch(/重试 1 次/);
+      expect(applyCalls()).toHaveLength(2);
+    });
+
+    it('重试耗尽（默认 3 次重试=共 4 次调用）→ 该目标判失败，退出 1，不进入镜像与校验', () => {
+      const { code, out } = sync(['--apply', '--prune'], { ...one, FAKE_RSYNC_RCS: '30 30 30 30 30' });
+      expect(code).toBe(1);
+      expect(applyCalls()).toHaveLength(4);
+      expect(out).toMatch(/m4[^\n]*rsync 失败[^\n]*rc=30/);
+      expect(out).toMatch(/重试 3 次/);
+      expect(existsSync(join(root, 'remote/m4/.codex-gwremote'))).toBe(false);
+    });
+
+    it('SKILL_SYNC_RETRIES=1 只重试 1 次；=0 不重试；非法值回落 3', () => {
+      sync(['--apply'], { ...one, FAKE_RSYNC_RCS: '30 30 30 30 30', SKILL_SYNC_RETRIES: '1' });
+      expect(applyCalls()).toHaveLength(2);
+      rmSync(join(root, 'rsync.log')); rmSync(join(root, 'rsync.count'));
+      const r0 = sync(['--apply'], { ...one, FAKE_RSYNC_RCS: '30', SKILL_SYNC_RETRIES: '0' });
+      expect(r0.code).toBe(1);
+      expect(applyCalls()).toHaveLength(1);
+      rmSync(join(root, 'rsync.log')); rmSync(join(root, 'rsync.count'));
+      sync(['--apply'], { ...one, FAKE_RSYNC_RCS: '30 30 30 30 30', SKILL_SYNC_RETRIES: 'abc' });
+      expect(applyCalls()).toHaveLength(4);
+    });
+
+    it('非超时/断线类失败（如 rc=23 部分传输错误）不重试，直接判失败', () => {
+      const { code, out } = sync(['--apply', '--prune'], { ...one, FAKE_RSYNC_RCS: '23 0' });
+      expect(code).toBe(1);
+      expect(applyCalls()).toHaveLength(1);
+      expect(out).not.toMatch(/重试 \d+ 次/);
+    });
+
+    it('一个目标重试耗尽不影响另一个目标：m1 照常同步；退出 1 语义不变', () => {
+      // m4 先跑，吃掉前 4 次失败；m1 的第 5 次调用转交真 rsync
+      const { code, out } = sync(['--apply', '--prune'], { FAKE_RSYNC_RCS: '30 30 30 30' });
+      expect(code).toBe(1);
+      expect(out).toMatch(/m4[^\n]*rsync 失败/);
+      expect(existsSync(join(root, 'remote/m1/.claude/skills/alpha/SKILL.md'))).toBe(true);
+    });
   });
 });
