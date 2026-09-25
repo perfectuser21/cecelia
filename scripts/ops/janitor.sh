@@ -230,7 +230,7 @@ if [ "$MODE" = "frequent" ]; then
     local KALLOC_SAFE_TZ="${KALLOC_SAFE_TZ:-Asia/Shanghai}"
     local KALLOC_SAFE_HOUR_START="${KALLOC_SAFE_HOUR_START:-3}"
     local KALLOC_SAFE_HOUR_END="${KALLOC_SAFE_HOUR_END:-5}"
-    local kb gb hour tzname t
+    local kb gb hour t
 
     # fail-closed：阈值必须是纯数字，否则什么都不判（挡住上面那颗"静默取 0"的雷）
     for t in "${KALLOC_WARN_GB}" "${KALLOC_ALERT_GB}" "${KALLOC_CRITICAL_GB}"; do
@@ -256,14 +256,17 @@ if [ "$MODE" = "frequent" ]; then
     # ~81 条 kalloc 垃圾单（5.56GB→6.36GB）。精确值放 description。
     if [ "$kb" -ge $((KALLOC_CRITICAL_GB*1024*1024)) ] 2>/dev/null; then
       hour="${KALLOC_HOUR:-$(TZ="${KALLOC_SAFE_TZ}" date +%H)}"
-      # 时区名拼错 / zoneinfo 缺失时 date 会静默回落 UTC 并 exit 0（实测
-      # TZ=Bogus/NoSuchZone date +%H 无报错）——不校验则安全时段悄悄变成
+      # 时区名拼错 / zoneinfo 缺失时 date 不会报错：macOS 静默回落 UTC，glibc 则把
+      # 非法串当 POSIX TZ 规格解析（两者 exit 都是 0）——不校验则安全时段悄悄变成
       # UTC 3-5 = 北京 11:00-13:00，正好工作时间。fail-closed：只告警不重启。
-      tzname=$(TZ="${KALLOC_SAFE_TZ}" date +%Z 2>/dev/null)
-      if [ -z "${KALLOC_HOUR:-}" ] && [ "${tzname}" = "UTC" ] && [ "${KALLOC_SAFE_TZ}" != "UTC" ]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，但时区 ${KALLOC_SAFE_TZ} 不可用（date 回落 UTC），fail-closed 不自动重启"
+      # 判据必须跨平台：不能拿 `date +%Z` 是否等于 UTC 来判（那只在 macOS 成立，
+      # 2026-09-25 CI 实测 glibc 下回显原串，该判据整条失效），直接查 zoneinfo 条目。
+      local tzdir="${TZDIR:-/usr/share/zoneinfo}"
+      if [ -z "${KALLOC_HOUR:-}" ] && [ "${KALLOC_SAFE_TZ}" != "UTC" ] \
+         && [ ! -f "${tzdir}/${KALLOC_SAFE_TZ}" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，但时区 ${KALLOC_SAFE_TZ} 不可用（${tzdir} 下查无此条目），fail-closed 不自动重启"
         curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
-          -d "{\"title\":\"🔴 kalloc.1024 危险（${KALLOC_CRITICAL_GB}G 档，安全时段时区不可用）（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存 ${gb}GB 已超危险阈值 ${KALLOC_CRITICAL_GB}GB，但安全时段时区 ${KALLOC_SAFE_TZ} 解析失败（date 静默回落 UTC），已 fail-closed 不自动重启，请人工重启并修 KALLOC_SAFE_TZ。\"}" \
+          -d "{\"title\":\"🔴 kalloc.1024 危险（${KALLOC_CRITICAL_GB}G 档，安全时段时区不可用）（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存 ${gb}GB 已超危险阈值 ${KALLOC_CRITICAL_GB}GB，但安全时段时区 ${KALLOC_SAFE_TZ} 在 ${tzdir} 下查无条目，已 fail-closed 不自动重启，请人工重启并修 KALLOC_SAFE_TZ。\"}" \
           2>/dev/null || true
         return 0
       fi
