@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.317.11
+**Brain 版本**: 1.318.0
 
 ## 1.283.0
 
@@ -48,6 +48,16 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.318.0 — tasks.kind 真列（agent | workflow）+ 属性约定（任务类型模型收敛第一刀）
+
+- 迁移 466/467：`tasks.kind TEXT` + `tasks_kind_check`（agent | workflow，NULL=未分类）NOT VALID 登记 → 按注册表分批回填 → 467 VALIDATE；决策 df67a9d6 / e073bdc2，链 bf5088a3 棒4（任务 94465721）
+- `lib/task-type-registry.js`：每个 task_type 显式声明 `kind`（编排 ≥2 阶段 = workflow：workflow_run / content-pipeline / harness_initiative / golden_path_proposal / harness_task / crystallize / project；其余 agent）；导出 `TASK_KINDS` / `KIND_FOR_TASK_TYPE` / `WORKFLOW_KIND_TASK_TYPES`
+- `lib/task-kind.js`：`deriveTaskKind` / `assertTaskKind`（`invalid_task_kind`）/ `resolveTaskAttributes`（department→dept 真列，skill / workflow_ref / engine / device 走 payload 规范键，兼容旧 qiumi_* 键）
+- 建单：`createRoutedTask` INSERT 写 kind（调用方给则校验、否则按类型派生）；`POST /api/brain/tasks` 接 `kind`，非法 400 `INVALID_KIND`
+- 秋米路由：Jev kind 枚举改 import 注册表；agent 分支落库同一条 UPDATE 写 `kind` / `dept` 真列，payload 双写 `engine` / `workflow_ref`
+- 消费方：Notion 任务投影取 `t.kind`，Description = `<task_type> · <kind> · brain:<id>`
+- 84 个 task_type 本刀不退役（零行为变化）；smoke `task-kind-column-smoke.sh`
 
 ## Brain 1.317.11 — 编排桥 prepare 超时默认 180s→600s 并支持 KERNEL_FLEET_ORCHESTRATOR_PREPARE_TIMEOUT_MS 覆盖
 
