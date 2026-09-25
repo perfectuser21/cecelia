@@ -5,6 +5,10 @@
  * 任何执行路径绕过 startRun/finishRun 直插直改 = 「同一次执行不止一行 / 留痕口径分叉」，
  * 本测试机械扫 packages/brain/src 与 packages/brain/scripts，违规即红。
  *
+ * 范围说明：守卫管的是「执行留痕」（status/ended_at/result 等执行事实）。Notion 投影记账列
+ * （notion_id/notion_synced_at/notion_digest）由通用投影引擎 lib/notion-projection-engine.js 按表名
+ * 模板回写（UPDATE ${table} …），不含字面 task_runs，不在本守卫扫描口径内——它只碰三个记账列。
+ *
  * proven-to-fire：扫描函数本身用内存里造出来的违规文本断言「会报红」，
  * 并断言真实仓库扫描确实扫到了写口文件（防扫描根目录写错导致永远绿）。
  */

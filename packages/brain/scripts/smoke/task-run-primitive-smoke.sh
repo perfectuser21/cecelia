@@ -4,7 +4,8 @@
 #   1. lib/task-run.js 导出全部入口，纯逻辑行为正确（状态归一 / source 必填 / 裸跑集合差）
 #   2. 单一写口：src 与 scripts 里除 lib/task-run.js 外零 INSERT/UPDATE/DELETE task_runs
 #   3. 五条执行路径接线：executor 漏斗 / dispatcher 兜底 / openclaw-agent / execution-callback / kernel 终态
-#   4. 迁移 468 additive（Notion 记账列）
+#   3b. 出口接线：脚本步 run 起止 / pushTaskRuns 投影 / 日报+晨报裸跑 AMBER
+#   4. 迁移 468 additive（Notion 记账列 + 投影注册表占位行）
 #   5. （可选）TASK_RUN_SMOKE_DB_URL 指向已跑完迁移的库：startRun 幂等 / finishRun 补终态 / 已终态不覆盖 / 记账列存在
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -46,6 +47,24 @@ for (const [file, needles] of checks) {
 }
 if (fail) process.exit(1);
 console.log('五条执行路径接线 ✓');
+"
+
+echo "[task-run-primitive-smoke] 3b. 出口接线：脚本步 run / Notion 投影 / 日报与晨报裸跑 AMBER"
+node -e "
+const fs = require('fs');
+const checks = [
+  ['src/notion-push-sync.js', [\"source: 'ssh-workflow'\", \"source: 'openclaw-webhook'\", 'async function pushTaskRuns(pool, token)', 'await pushTaskRunsSafe(pool, token)', 'export function buildTaskRunNotionProperties']],
+  ['src/daily-report-generator.js', ['export function renderBareRunSection', 'findBareRuns(dbPool', \"from './lib/task-run.js'\"]],
+  ['src/morning-cockpit-bark.js', ['findBareRuns(pool', '🟡 AMBER 裸跑执行']],
+  ['src/ops-notion-schema.js', ['task_runs: {']],
+];
+let fail = false;
+for (const [file, needles] of checks) {
+  const src = fs.readFileSync(file, 'utf8');
+  for (const n of needles) if (!src.includes(n)) { console.error('FAIL ' + file + ' 缺少: ' + n); fail = true; }
+}
+if (fail) process.exit(1);
+console.log('出口接线 ✓');
 "
 
 echo "[task-run-primitive-smoke] 4. 迁移 468 additive"

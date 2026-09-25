@@ -140,7 +140,9 @@ describe('接线钉子', () => {
   const src = readFileSync(path.join(BRAIN_ROOT, 'src/notion-push-sync.js'), 'utf8');
   it('runNotionPushSync 与运行舱专用入口 runOpsNotionPush 都调用 pushTaskRuns（吞错，不连坐）', () => {
     expect(src).toMatch(/async function pushTaskRuns\(pool, token\)/);
-    expect((src.match(/await pushTaskRuns\(pool, token\)/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(src).toMatch(/await pushTaskRuns\(pool, token\)/);
+    const wired = src.match(/await pushTaskRunsSafe\(pool, token\)/g) || [];
+    expect(wired.length).toBeGreaterThanOrEqual(2); // runNotionPushSync + runOpsNotionPush
   });
   it('投影读 task_runs 只 SELECT（写口唯一在 lib/task-run.js）', () => {
     expect(src).not.toMatch(/INSERT\s+INTO\s+task_runs/i);

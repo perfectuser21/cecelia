@@ -12,6 +12,7 @@ import {
   ensureOpsDbProps, inferProviderFromModelId, pickProviderQuota, buildQuotaProps,
 } from './ops-quota-notion.js';
 import { PUSH_EXCLUDED_TASK_TYPES } from './lib/task-type-registry.js';
+import { startRun, finishRun } from './lib/task-run.js';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { qiumiSourceFromNotion } from './lib/qiumi-source.js';
 import { parseEnPage, parseZhPage, GTD_DB_ID, EN_NATIVE_MARK } from './notion-gtd-sync.js';
@@ -703,7 +704,7 @@ async function dispatchOpenClawFromNotion({
       return failReceipt(`ssh_dispatch_failed(${machine}): ${String(err.message).slice(0, 60)}`);
     }
     try {
-      await createRoutedTask(pool, {
+      const created = await createRoutedTask(pool, {
         source: 'inbox',
         source_id: runIdSsh,
         title: `[run] ${wf.name}@${machine}`,
@@ -718,6 +719,13 @@ async function dispatchOpenClawFromNotion({
         },
         task: { status: 'in_progress', priority: 'P2' },
       });
+      // 脚本步 run 原语：一次执行 = 一行 task_runs（fail-open）。终态由 reapSshWorkflowRuns 读 .exit 补齐。
+      await startRun({
+        taskId: created?.task_id ?? created?.task?.id,
+        runId: runIdSsh,
+        source: 'ssh-workflow',
+        context: { wf_id: wf.wf_id, machine },
+      }, { pool });
     } catch (err) {
       console.warn(`[notion-pull] ssh 直派入账失败（不阻塞）: ${err.message}`);
     }
@@ -764,7 +772,7 @@ async function dispatchOpenClawFromNotion({
     // 一切执行进 tasks 账（决策 2dbabb48）：run 入账 workflow_run（operations 路线，
     // 不解析 repo/branch），source_id=run_id 天然幂等；终态由 syncOpenClawRuns 回写。
     try {
-      await createRoutedTask(pool, {
+      const created = await createRoutedTask(pool, {
         source: 'inbox',
         source_id: runId,
         title: `[run] ${executorLabel}`,
@@ -778,6 +786,13 @@ async function dispatchOpenClawFromNotion({
         },
         task: { status: 'in_progress', priority: 'P2' },
       });
+      // 脚本步 run 原语（fail-open）：终态由 syncOpenClawRuns 依 ops_runs 回写时补齐。
+      await startRun({
+        taskId: created?.task_id ?? created?.task?.id,
+        runId,
+        source: 'openclaw-webhook',
+        context: { wf_id: wf.wf_id, agent: agent?.name ?? null },
+      }, { pool });
     } catch (err) {
       console.warn(`[notion-pull] workflow_run 入账失败（不阻塞派发）: ${err.message}`);
     }
@@ -845,6 +860,14 @@ async function reapSshWorkflowRuns(pool, token, opts = {}) {
           WHERE id=$1 AND status='in_progress'`,
         [r.id, status, note],
       );
+      // 脚本步 run 补终态：只认真实 exit（0→success，非 0→failed）；无 exit 仅在 SQL 判定超 6h 时记 timeout，
+      // 未超时探不到 exit 的 run 保持 running（上面 continue），绝不伪造终态。
+      await finishRun({
+        runId: r.run_id,
+        status: exitCode !== null ? (exitCode === 0 ? 'completed' : 'failed') : 'timeout',
+        exitCode: exitCode !== null ? exitCode : undefined,
+        error: exitCode === 0 ? undefined : note,
+      }, { pool });
       if (r.notion_page_id) {
         await notionReq(token, `/pages/${r.notion_page_id}`, 'PATCH', {
           properties: { Status: { status: { name: status === 'completed' ? 'Done' : 'Cancelled' } } },
@@ -893,6 +916,12 @@ async function syncOpenClawRuns(pool, token) {
     } catch (err) {
       console.warn(`[notion-pull] workflow_run task 收账失败 ${r.run_id}: ${err.message}`);
     }
+    // 脚本步 run 补终态（run 原语，fail-open；已终态不覆盖）
+    await finishRun({
+      runId: r.run_id,
+      status: done ? 'completed' : 'failed',
+      error: done ? undefined : `ops_runs:${r.status}`,
+    }, { pool });
     try {
       await notionReq(token, `/pages/${pageId}`, 'PATCH', {
         properties: { Status: { status: { name: done ? 'Done' : 'Cancelled' } } },
@@ -1264,6 +1293,8 @@ export async function runOpsNotionPush(pool) {
   } catch {
     return { ok: false, reason: 'no_token' };
   }
+  // run 投影独立于运行舱四库配置：库未登记时 pushTaskRuns 自己 flag-off 跳过
+  await pushTaskRunsSafe(pool, token);
   const dbs = await getOpsNotionDbs(pool);
   if (!dbs?.graph_db) return { ok: false, reason: 'not_configured' };
   if (dbs.disabled) return { ok: false, reason: 'disabled' };
@@ -1589,6 +1620,76 @@ async function syncOpsMembersRelation(pool, token) {
   }
 }
 
+/**
+ * task_runs 行 → Notion 「Runs」库 properties：一次执行一行，开始/结束/exit/产物人可见。
+ * 没发生的事不编造：running 行无 EndedAt/ExitCode/Minutes。
+ */
+export function buildTaskRunNotionProperties(r) {
+  const started = r.started_at ? new Date(r.started_at) : null;
+  const ended = r.ended_at ? new Date(r.ended_at) : null;
+  const source = r.context?.source || null;
+  const label = `${r.task_title || r.task_id} · ${started ? started.toISOString().slice(5, 16).replace('T', ' ') : r.run_id}`;
+  const p = {
+    Name: { title: [{ text: { content: label.slice(0, 200) } }] },
+    Status: { select: { name: r.status || 'unknown' } },
+    TaskId: { rich_text: buildRichText(String(r.task_id)) },
+    RunId: { rich_text: buildRichText(String(r.run_id)) },
+  };
+  if (source) p.Source = { select: { name: String(source).slice(0, 100) } };
+  if (started) p.StartedAt = { date: { start: started.toISOString() } };
+  if (ended) p.EndedAt = { date: { start: ended.toISOString() } };
+  const exit = r.result?.exit_code;
+  if (exit !== undefined && exit !== null && Number.isFinite(Number(exit))) p.ExitCode = { number: Number(exit) };
+  const artifacts = Array.isArray(r.result?.artifacts) ? r.result.artifacts : [];
+  if (artifacts.length) p.Artifacts = { rich_text: buildRichText(artifacts.join(', ').slice(0, 1900)) };
+  if (started && ended) p.Minutes = { number: Math.round((ended.getTime() - started.getTime()) / 60000) };
+  if (r.error_message) p.Error = { rich_text: buildRichText(String(r.error_message).slice(0, 500)) };
+  return p;
+}
+
+/**
+ * task_runs 投影面（链 bf5088a3 棒1）：库在 notion_projection_map 登记为 push+active 才推，
+ * 未登记（Notion「Runs」库尚未建，占位行为 pending_vessel）→ 整个跳过（flag-off 安全）。
+ * 推前缺列即补（Notion 缺列 400 的血训）；失败只记日志，DB（task_runs）才是真相源。
+ */
+async function pushTaskRuns(pool, token) {
+  const dbId = await resolveDbId(pool, 'task_runs');
+  if (!dbId) return;
+  try {
+    const { added } = await ensureOpsDbProps(token, dbId, OPS_DB_PROPS.task_runs, { notionReq });
+    if (added.length) console.log(`[task-runs-push] Runs 库补列: ${added.join(', ')}`);
+  } catch (err) {
+    await logSyncError(pool, `[task-runs-push] Runs 库补列失败: ${err.message}`);
+  }
+  const { rows } = await pool.query(
+    `SELECT r.*, t.title AS task_title
+       FROM task_runs r
+       JOIN tasks t ON t.id = r.task_id
+      WHERE r.notion_id IS NULL OR r.notion_synced_at IS NULL OR r.updated_at > r.notion_synced_at
+      ORDER BY r.started_at DESC
+      LIMIT 100`);
+  if (rows.length === 0) return;
+  // 直接走统一引擎、不经 upsertOpsRows：后者的 onFatal 会把「库不可达」写成 ops_notion_dbs.disabled，
+  // 那是运行舱四库的终止开关，Runs 库出问题不许连坐运行舱推送。
+  await pushRegisteredRows(pool, token, {
+    table: 'task_runs', dbId, rows, buildProps: buildTaskRunNotionProperties,
+    notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'task_run',
+  });
+}
+
+/** 吞错壳：投影失败绝不连坐同轮其它推送。 */
+async function pushTaskRunsSafe(pool, token) {
+  try {
+    await pushTaskRuns(pool, token);
+  } catch (err) {
+    console.warn(`[notion-push-sync] task_runs 投影失败（非阻断）: ${err.message}`);
+  }
+}
+
+export async function pushTaskRunsForTest(pool, token) {
+  return pushTaskRuns(pool, token);
+}
+
 export async function runNotionPushSync(pool) {
   let token;
   try {
@@ -1607,6 +1708,7 @@ export async function runNotionPushSync(pool) {
   await pushInitiativeContracts(pool, token);
   await pushAdvancementItems(pool, token);
   await pushOpsGraph(pool, token);
+  await pushTaskRunsSafe(pool, token);
   // 接力棒投影：project 根 → Projects 库；待拍板 → 「决策」库草案（吞错，不连坐前面的推送）
   try {
     const { runRelayProjection } = await import('./notion-relay-projection.js');
