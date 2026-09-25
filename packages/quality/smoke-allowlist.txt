@@ -327,3 +327,4 @@ reanchor-base-sha-smoke.sh
 scheduler-liveness-smoke.sh
 task-kind-column-smoke.sh
 task-run-primitive-smoke.sh
+task-run-outlets-smoke.sh
