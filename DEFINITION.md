@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.318.0
+**Brain 版本**: 1.319.0
 
 ## 1.283.0
 
@@ -48,6 +48,16 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.319.0 — runner 原语：一次执行 = 一行 task_runs（链 bf5088a3 棒1·地基，任务 66db3dfb）
+
+- 新增 `lib/task-run.js`：全仓唯一写 `task_runs` 的入口——`startRun`（`ON CONFLICT (run_id) DO NOTHING`，一次执行恒一行）/ `finishRun`（`WHERE ended_at IS NULL`，已终态不覆盖，无终态回执保持 running 不伪造）/ `recordRunFromCallback` / `startRunForExecResult` / `findBareRuns` + 纯逻辑 `normalizeRunStatus` / `buildRunContext` / `buildRunResult` / `detectBareRuns`；全部 fail-open（留痕失败只 warn，不拖垮执行主链）
+- 五条执行路径接线：executor 漏斗（`triggerCeceliaRun` 包装，覆盖 dispatcher / tasks 路由 / execution 路由三处调用方，internal handler 合成 run 立即成功）/ dispatcher 兜底 / openclaw-agent-executor（起时 start、收割 `.exit` 时 finish）/ `POST /execution-callback` 回执（cecelia-run、cecelia-bridge、脚本步统一出口）/ kernel `finalizeKernelRun` 终态
+- dispatcher 写 `dispatch_events(dispatched)` 补传 `task_id`（此前恒为 NULL，裸跑检测无 join 键）
+- 迁移 468：`task_runs` 加 `notion_id` / `notion_synced_at` / `notion_digest`（Notion 投影记账，纯 additive）
+- 机械守卫 `task-run-single-writer-guard.test.js`：扫 src + scripts，除 lib/task-run.js 外任何 INSERT/UPDATE/DELETE task_runs 即红（内置违规样本 proven-to-fire）
+- 二阶效应：`alertness/healing.js` 的 `quarantineProblematicTasks` 读 `task_runs.status='failed'` 三次以上隔离 queued/pending 任务，此前表为空休眠，写口上线后激活
+- smoke `task-run-primitive-smoke.sh`
 
 ## Brain 1.318.0 — tasks.kind 真列（agent | workflow）+ 属性约定（任务类型模型收敛第一刀）
 
