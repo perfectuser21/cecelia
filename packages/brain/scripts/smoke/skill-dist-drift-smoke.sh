@@ -15,18 +15,18 @@ echo "[skill-dist-drift-smoke] 1. 清单脚本确定性"
 mkdir -p "$TMP/skills/alpha" "$TMP/skills/beta"
 echo "# alpha" > "$TMP/skills/alpha/SKILL.md"
 echo "# beta" > "$TMP/skills/beta/SKILL.md"
-a="$(bash src/lib/skill-manifest.sh "$TMP/skills")"
+a="$(bash ../../scripts/skill-manifest.sh "$TMP/skills")"
 touch -t 200101010000 "$TMP/skills/alpha/SKILL.md"
-b="$(bash src/lib/skill-manifest.sh "$TMP/skills")"
+b="$(bash ../../scripts/skill-manifest.sh "$TMP/skills")"
 ha="$(printf '%s' "$a" | sed -n 's/.*"tree_hash":"\([0-9a-f]*\)".*/\1/p')"
 hb="$(printf '%s' "$b" | sed -n 's/.*"tree_hash":"\([0-9a-f]*\)".*/\1/p')"
 [ -n "$ha" ] && [ "$ha" = "$hb" ] || { echo "FAIL 同内容不同 mtime 哈希应相同: $ha vs $hb"; exit 1; }
 echo "# alpha!" > "$TMP/skills/alpha/SKILL.md"
-c="$(bash src/lib/skill-manifest.sh "$TMP/skills")"
+c="$(bash ../../scripts/skill-manifest.sh "$TMP/skills")"
 hc="$(printf '%s' "$c" | sed -n 's/.*"tree_hash":"\([0-9a-f]*\)".*/\1/p')"
 [ "$hc" != "$ha" ] || { echo "FAIL 改一个字节 tree_hash 应变化"; exit 1; }
 ln -s /nonexistent/zzz "$TMP/skills/zzz"
-d="$(bash src/lib/skill-manifest.sh "$TMP/skills")"
+d="$(bash ../../scripts/skill-manifest.sh "$TMP/skills")"
 printf '%s' "$d" | grep -q '"broken":\["zzz"\]' || { echo "FAIL 悬空链接应进 broken: $d"; exit 1; }
 hd="$(printf '%s' "$d" | sed -n 's/.*"tree_hash":"\([0-9a-f]*\)".*/\1/p')"
 [ "$hd" = "$hc" ] || { echo "FAIL 悬空链接不应污染 tree_hash"; exit 1; }

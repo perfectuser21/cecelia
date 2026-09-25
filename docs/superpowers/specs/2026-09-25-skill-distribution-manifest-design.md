@@ -17,7 +17,7 @@ MMV `~/.claude/skills` 是 skill 真身（非 git 仓库内容，见 §1）。�
 
 ## 1. 清单（manifest）
 
-一份实现：`packages/brain/src/lib/skill-manifest.sh`（纯 bash + find + sha256，macOS bash 3.2 / Linux 通用，无 node/jq 依赖）。放在 `src/lib` 是因为 Brain 镜像只拷 `packages/brain/src/`，job 要在运行时读到它并经 ssh 送到跑场机执行；`scripts/skill-manifest.sh` 是薄包装。
+一份实现：`scripts/skill-manifest.sh`（纯 bash + find + sha256，macOS bash 3.2 / Linux 通用，无 node/jq 依赖）。Brain 镜像只拷 `packages/brain/src/`，job 要在运行时读到它并经 ssh 送到跑场机执行，所以 `packages/brain/Dockerfile` 加一行 `COPY scripts/skill-manifest.sh ./scripts/`（同 `extract-contract-e2e.cjs` 先例），job 按「容器 /app/scripts → 仓库根 scripts」两处找。不放进 `src/`：island-gate 会把 src 下无 import 出/入边的新文件判孤岛。
 
 输出一行 JSON：`{"version":1,"dir":…,"host":…,"count":N,"skills":{name:sha256},"broken":[name…],"tree_hash":sha256}`。
 

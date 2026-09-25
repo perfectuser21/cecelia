@@ -33,7 +33,18 @@ const QUERY_TIMEOUT_MS = 10_000;
 const SSH = 'ssh -o BatchMode=yes -o ConnectTimeout=10';
 const ALIAS_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const TOKEN_RE = /^@home\/[A-Za-z0-9._/-]+$/;
-const SCRIPT_PATH = fileURLToPath(new URL('./lib/skill-manifest.sh', import.meta.url));
+/**
+ * 清单脚本 SSOT 在 repo 根 scripts/skill-manifest.sh。容器内镜像到 /app/scripts/（Dockerfile COPY，
+ * 同 extract-contract-e2e.cjs 先例），src 在 /app/src；仓库内 src 在 packages/brain/src。两处都找。
+ */
+const SCRIPT_CANDIDATES = ['../scripts/skill-manifest.sh', '../../../scripts/skill-manifest.sh']
+  .map((rel) => fileURLToPath(new URL(rel, import.meta.url)));
+
+export function resolveScriptPath(exists = existsSync) {
+  const hit = SCRIPT_CANDIDATES.find((p) => exists(p));
+  if (!hit) throw new Error(`skill-manifest.sh 缺失（找过: ${SCRIPT_CANDIDATES.join(', ')}）`);
+  return hit;
+}
 
 /** SKILL_DRIFT_RUNNERS（逗号/空格分隔）→ 别名列表；非法别名直接抛错（别名会拼进 shell 命令）。 */
 export function resolveRunners(envValue = process.env.SKILL_DRIFT_RUNNERS) {
@@ -148,7 +159,7 @@ export async function runSkillDistDrift(pool, opts = {}) {
   }
 
   const runners = opts.runners ?? resolveRunners();
-  const scriptText = opts.scriptText ?? readFileSync(SCRIPT_PATH, 'utf8');
+  const scriptText = opts.scriptText ?? readFileSync(resolveScriptPath(), 'utf8');
   const common = { scriptText, inContainer, keyExistsFn };
 
   // 全部并行；fetchManifest 永不抛错

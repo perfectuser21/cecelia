@@ -38,7 +38,7 @@ done
 [ -z "$MODE" ] && MODE="dry-run"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MANIFEST_SH="$SCRIPT_DIR/../packages/brain/src/lib/skill-manifest.sh"
+MANIFEST_SH="$SCRIPT_DIR/skill-manifest.sh"
 SRC="${SKILL_SYNC_SRC:-$HOME/.claude/skills}"
 TARGETS="${SKILL_SYNC_TARGETS:-xian-m4 xian-m1}"
 SSH_BIN="${SKILL_SYNC_SSH:-ssh}"

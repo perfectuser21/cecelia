@@ -8,6 +8,7 @@ task 1141f101 ｜ 链 bf5088a3 棒8 ｜ 决策 105a5868
 - **同步动作没有回读校验**：cron 没有 `--delete`、没有同步后重算比对、行也不在仓库，本机私有无 review 无测试，坏了没人知道。
 - **真身自己也有病**：MMV 上 29 个悬空链接（目标目录不存在）。若把它们算进清单哈希，任何目标都永远对不齐；必须单列，不进 tree_hash。
 - **真机 dry-run 才暴露的两处**：跑场机上 python skill 运行时自己生成 `__pycache__`，不排除会永久假漂移；`rsync --exclude` 排除悬空名会让目标上同名残留被排除规则保护、`--delete` 删不掉，改成临时目录里只放有内容 skill 的符号链接视图。
+- **CI 门禁按文件类型有盲区**：`src/` 下的 `.sh` 没有 import 边被 island-gate 判孤岛，`src/lib/*.js` 必须有同目录 `__tests__` 配对测试（lint-test-pairing）；被 Brain 运行时读的脚本应放 repo 根 `scripts/` 并在 Dockerfile 显式 COPY。
 - **测试里的调度全量跑会真发 ssh**：`scheduler-jobs.test.js` 逐个执行 JOBS 里所有 handler，新 job 若不 mock 会在单测里真连 ssh（该文件从 42ms 变成 19s 才发现）。
 
 ### 下次预防

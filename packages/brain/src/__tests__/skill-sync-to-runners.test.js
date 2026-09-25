@@ -13,7 +13,7 @@ import { fileURLToPath } from 'url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SYNC = resolve(here, '../../../../scripts/skill-sync-to-runners.sh');
-const MANIFEST = resolve(here, '../lib/skill-manifest.sh');
+const MANIFEST = resolve(here, '../../../../scripts/skill-manifest.sh');
 const hasRsync = spawnSync('rsync', ['--version']).status === 0;
 
 const FAKE_SSH = `#!/bin/bash

@@ -3,9 +3,13 @@
  * 全程注入假执行器：绝不真发 ssh。
  */
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { treeHashOf } from '../lib/skill-manifest.js';
 import {
   runSkillDistDrift,
+  resolveScriptPath,
   buildManifestCmd,
   resolveRunners,
   CHECK_INTERVAL_MS,
@@ -269,6 +273,16 @@ describe('调度：自 gate / 命令安全 / 落库', () => {
     const cmd = buildManifestCmd({ hostAlias: 'xian-m4', dirToken: '@home/.claude/skills', scriptText: "printf '%s' \"it's\"", inContainer: false });
     expect(cmd).toContain('base64');
     expect(cmd).not.toContain("it's");
+  });
+
+  it('清单脚本路径：仓库内能找到 scripts/skill-manifest.sh；两处都缺时抛明确错误', () => {
+    expect(resolveScriptPath()).toMatch(/scripts\/skill-manifest\.sh$/);
+    expect(() => resolveScriptPath(() => false)).toThrow(/skill-manifest\.sh 缺失/);
+  });
+
+  it('镜像里带上了脚本：Dockerfile 有 COPY scripts/skill-manifest.sh', () => {
+    const df = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../../Dockerfile'), 'utf8');
+    expect(df).toContain('COPY scripts/skill-manifest.sh ./scripts/');
   });
 
   it('SKILL_DRIFT_RUNNERS 只接受安全别名，注入串被拒绝', () => {

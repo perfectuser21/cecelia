@@ -16,8 +16,7 @@ import {
 } from '../skill-manifest.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SCRIPT = resolve(here, '../skill-manifest.sh');
-const WRAPPER = resolve(here, '../../../../../scripts/skill-manifest.sh');
+const SCRIPT = resolve(here, '../../../../../scripts/skill-manifest.sh');
 
 let root;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'skill-manifest-')); });
@@ -163,13 +162,6 @@ describe('skill-manifest.sh 目录与参数', () => {
     const { code, json } = run('@home/skills', { env: { HOME: root } });
     expect(code).toBe(0);
     expect(json.count).toBe(2);
-  });
-
-  it('scripts/skill-manifest.sh 薄包装与本体输出一致', () => {
-    const dir = fixture();
-    const a = run(dir).json;
-    const b = run(dir, { script: WRAPPER }).json;
-    expect(b.tree_hash).toBe(a.tree_hash);
   });
 });
 

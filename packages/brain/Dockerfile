@@ -71,6 +71,8 @@ COPY packages/brain/src/ ./src/
 # /app/scripts/ 供 src 内相对 require（缺失时 Brain 启动即死 fail-closed，smoke 把关）。
 COPY scripts/lib/test-contract-paths.cjs ./scripts/lib/
 COPY scripts/extract-contract-e2e.cjs ./scripts/
+# skill 分发漂移 job（skill-dist-drift.js）经 ssh 把这份清单脚本送到目标机执行；SSOT 在 repo 根 scripts/。
+COPY scripts/skill-manifest.sh ./scripts/
 COPY packages/brain/config/ ./config/
 COPY packages/brain/migrations/ ./migrations/
 COPY packages/brain/package.json ./
