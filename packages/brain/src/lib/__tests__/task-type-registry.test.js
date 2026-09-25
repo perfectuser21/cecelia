@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import * as R from '../task-type-registry.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const MIG = join(HERE, '..', '..', '..', 'migrations', '461_qiumi_task_type_tenant_dedup.sql');
+const MIG = join(HERE, '..', '..', '..', 'migrations', '471_script_executor_kind_and_task_type.sql');
 
 // 合并前 Minor：Set 相等只比对成员，不比对个数——数组里混进一个重复项（顶替掉
 // 别的类型）不会被 new Set(a).toEqual(new Set(b)) 抓到，先钉长度相等再比集合。
@@ -409,6 +409,9 @@ const FIX_EXECUTOR_KIND = {
 // 本刀唯一允许"新增"的类型：它不在任何替换前名单里（VALID_TASK_TYPES 例外，见下方
 // 专属断言——PR2 明确混入），比较时剔除，其余必须逐一相等
 const NEW_TYPE = 'qiumi_task';
+// 棒 3（executor=script）新增的类型，同样不在任何替换前名单里；比较通用 FIX 时一并剔除，
+// 它自己的名单归属由下面的专属断言严格钉死。
+const NEW_TYPE_SCRIPT = 'script_run';
 
 // task-router.js:15-62 原文（已用 awk 抽取核对，共 70 个；harness_planner 不在其中——已退役）。
 // PR2 入口刀开启 qiumi_task 的 V（router_valid）标签，VALID_TASK_TYPES 严格相等改为
@@ -422,7 +425,7 @@ const VALID_TASK_TYPES_FIX = ['dev', 'review', 'talk', 'data', 'qa', 'audit', 'r
 
 describe('task-type-registry：零行为变化', () => {
   for (const [name, expected] of Object.entries(FIX)) {
-    it(`${name} 派生集合 == 替换前字面量`, () => same(R[name].filter((t) => t !== NEW_TYPE), expected));
+    it(`${name} 派生集合 == 替换前字面量`, () => same(R[name].filter((t) => t !== NEW_TYPE && t !== NEW_TYPE_SCRIPT), expected));
   }
 
   for (const [name, expected] of Object.entries(MAP_FIX)) {
@@ -430,12 +433,14 @@ describe('task-type-registry：零行为变化', () => {
   }
 
   it('VALID_TASK_TYPES 派生集合 == 替换前字面量 + qiumi_task（PR2 入口刀开启，其余零变化）', () => {
-    same(R.VALID_TASK_TYPES, [...VALID_TASK_TYPES_FIX, 'qiumi_task']);
+    same(R.VALID_TASK_TYPES, [...VALID_TASK_TYPES_FIX, 'qiumi_task', 'script_run']);
     expect(R.VALID_TASK_TYPES).toContain('qiumi_task');
+    expect(R.VALID_TASK_TYPES).toContain('script_run');
   });
 
   it('TICK_DISPATCH_EXCLUDED 派生集合 == 替换前字面量 + project（PR3 放开第二道闸：qiumi_task 移出，project 留下）', () => {
-    same(R.TICK_DISPATCH_EXCLUDED, [...TICK_DISPATCH_EXCLUDED_FIX, 'project']);
+    // script_run（棒 3 PR A）：执行体接线前 tick 不许把它当普通任务派给 claude，PR B 接线后移出。
+    same(R.TICK_DISPATCH_EXCLUDED, [...TICK_DISPATCH_EXCLUDED_FIX, 'project', 'script_run']);
     expect(
       R.TICK_DISPATCH_EXCLUDED,
       'qiumi_task 还在 tick 排除名单里——dispatchQiumiTask 接线了也永远选不中',
@@ -447,7 +452,7 @@ describe('task-type-registry：零行为变化', () => {
   });
 
   it('EXECUTOR_KIND_FOR_TASK_TYPE == 替换前 EXECUTOR_KIND_FOR 的 task_type 部分 + qiumi_task', () => {
-    expect(R.EXECUTOR_KIND_FOR_TASK_TYPE).toEqual({ ...FIX_EXECUTOR_KIND, qiumi_task: 'openclaw-agent' });
+    expect(R.EXECUTOR_KIND_FOR_TASK_TYPE).toEqual({ ...FIX_EXECUTOR_KIND, qiumi_task: 'openclaw-agent', script_run: 'script' });
   });
 
   it('qiumi_task 声明符合 spec 1.1（PR3：V 标签已开 + tick_dispatchable=true，第一道闸改由 QIUMI_DISPATCH_ENABLED 门控 headed_manual）', () => {
@@ -534,13 +539,14 @@ describe('task-type-registry：零行为变化', () => {
     expect(R.EXEC_STATUS_HK_TASK_TYPES).toEqual(['talk', 'research', 'data']);
   });
 
-  it('DB 白名单派生集合 == 迁移 461 的 CHECK 列表', () => {
+  it('DB 白名单派生集合 == 迁移 471 的 CHECK 列表（最近一次重建该约束的迁移）', () => {
     const sql = readFileSync(MIG, 'utf8').split('\n').filter((l) => !/^\s*--/.test(l)).join('\n');
     const m = sql.match(/tasks_task_type_check CHECK \(\s*task_type IN \(([\s\S]*?)\)\s*\)/);
-    expect(m, '461 里找不到 tasks_task_type_check 的 IN 列表').toBeTruthy();
+    expect(m, '471 里找不到 tasks_task_type_check 的 IN 列表').toBeTruthy();
     const dbList = [...m[1].matchAll(/'([a-z0-9_-]+)'/g)].map((x) => x[1]);
     same(R.DB_WHITELISTED_TASK_TYPES, dbList);
     expect(dbList).toContain('qiumi_task');
+    expect(dbList).toContain('script_run');
   });
 
   it('派生集合全部冻结', () => {

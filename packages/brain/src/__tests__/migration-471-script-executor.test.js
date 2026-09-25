@@ -12,7 +12,7 @@ import { DB_WHITELISTED_TASK_TYPES } from '../lib/task-type-registry.js';
 const MIG = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'migrations');
 const strip = (sql) => sql.split('\n').filter((l) => !/^\s*--/.test(l)).join('\n');
 const listOf = (sql, name) => {
-  const m = sql.match(new RegExp(`${name} CHECK \\(([\\s\\S]*?)\\) NOT VALID`));
+  const m = sql.match(new RegExp(`${name}\\s+CHECK\\s*\\(([\\s\\S]*?)\\)\\s*NOT VALID`));
   expect(m, `471 里找不到 ${name}`).toBeTruthy();
   return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
 };
