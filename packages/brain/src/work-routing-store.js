@@ -10,6 +10,7 @@ import {
 } from './orchestrator/route-snapshot-authority.js';
 import { REANCHOR_EVIDENCE_KEYS } from './orchestrator/preflight/base-sha-reanchor.js';
 import { assertTaskKind, deriveTaskKind } from './lib/task-kind.js';
+import { assertScriptPayloadForType } from './lib/script-task-spec.js';
 import { assertGoalIsKeyResult } from './lib/goal-guard.js';
 import {
   assertOwnerDecisionProtocol, openOwnerDecisionPendingAction, OWNER_DECISION_REASON,
@@ -342,6 +343,9 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
     // ② blocked_reason=owner_decision 必须带协议（缺项抛，事务 ROLLBACK，不留半截任务）
     await assertGoalIsKeyResult(client, task.goal_id ?? null);
     assertOwnerDecisionProtocol({ reason: task.blocked_reason ?? null, detail: task.blocked_detail ?? null });
+    // executor=script 一等类型（棒 3）：script_run 的 payload 契约（host 只认跑场机 / cmd 无控制字符 / env 白名单 / timeout 必填）
+    // 在物化 task 前必过，违规抛 script_payload_invalid，事务 ROLLBACK，不留半截任务。
+    assertScriptPayloadForType(decision.canonical_task_type, payload);
     // 三镜头能力级前置门禁：new_capability 在选 pipeline 后、物化 task 前必经三镜头对抗，
     // 判决 + postcondition + NFR 三数落 decisions（同事务，reject/落库失败 → ROLLBACK 不建 task）。
     // adjudicate 由生产接线（harness-skill-relay 的 capability-controller relay）注入；

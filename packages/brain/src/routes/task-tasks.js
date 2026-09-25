@@ -341,6 +341,9 @@ router.post('/', async (req, res) => {
     if (err.code === 'parent_task_not_found') {
       return res.status(400).json({ error: 'parent_task_not_found', reason_code: 'parent_task_not_found', parent_task_id: err.parent_task_id });
     }
+    if (err.code === 'script_payload_invalid') {
+      return res.status(400).json({ error: err.message, code: 'INVALID_SCRIPT_PAYLOAD', reason_code: err.reason, field: err.field });
+    }
     if ([
       'repo_unknown',
       'change_kind_required',

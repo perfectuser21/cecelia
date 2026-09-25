@@ -40,6 +40,7 @@ export const MACHINES = Object.freeze([
     isLocal: true,
     sshUser: 'administrator',
     machineRole: MACHINE_ROLES.PRIMARY,
+    aliases: ['mmv'],
   },
   {
     id: 'us-vps',
@@ -69,6 +70,7 @@ export const MACHINES = Object.freeze([
     role: 'L4 E2E CI 测试',
     sshUser: 'xx-macmini',
     machineRole: MACHINE_ROLES.SECONDARY,
+    aliases: ['xian-m1'],
   },
   {
     id: 'xian-mac-m4',
@@ -78,6 +80,7 @@ export const MACHINES = Object.freeze([
     role: 'Codex 主力机',
     sshUser: 'jinnuoshengyuan',
     machineRole: MACHINE_ROLES.SECONDARY,
+    aliases: ['xian-m4'],
   },
   {
     id: 'xian-pc',
@@ -112,6 +115,23 @@ export function resolvePrimaryWorkerId() {
 
 export function isPrimaryWorker(machineId) {
   return machineId != null && machineId === primaries[0].id;
+}
+
+/**
+ * 机器名 → 注册表 id：id 与 aliases 均按小写精确匹配（口头/运维别名如 mmv、xian-m4）。
+ * 未知/空/非字符串返回 null——调用方自行决定拒绝口径（script 执行体据此做 host 白名单）。
+ */
+export function resolveMachineId(name) {
+  if (typeof name !== 'string') return null;
+  const key = name.trim().toLowerCase();
+  if (!key) return null;
+  const hit = MACHINES.find((m) => m.id === key || (m.aliases ?? []).includes(key));
+  return hit ? hit.id : null;
+}
+
+/** 机器 id → 角色（scheduler/primary/secondary/null）；未知机器返回 undefined。 */
+export function machineRoleOf(machineId) {
+  return MACHINES.find((m) => m.id === machineId)?.machineRole;
 }
 
 export function listComputeWorkerIds() {

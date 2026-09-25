@@ -20,11 +20,12 @@ import { execFileSync } from 'node:child_process';
 import { assessKernelLiveness } from './lib/kernel-liveness.js';
 import { probeCodexReviewLock } from './lib/codex-review-liveness.js';
 import { EXECUTOR_KIND_FOR_TASK_TYPE } from './lib/task-type-registry.js';
-import { sshTargetFor, resolvePrimaryWorkerId } from './machine-registry.js';
+import { sshTargetFor, resolvePrimaryWorkerId, resolveMachineId, listComputeWorkerIds } from './machine-registry.js';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 
 export const KERNEL_EXECUTOR_KIND = 'kernel-process';
 export const OPENCLAW_AGENT_EXECUTOR_KIND = 'openclaw-agent';
+export const SCRIPT_EXECUTOR_KIND = 'script';
 
 export const VALID_EXECUTOR_KINDS = [
   'brain-local',
@@ -35,6 +36,7 @@ export const VALID_EXECUTOR_KINDS = [
   'external-worker',
   'codex-review-local',
   OPENCLAW_AGENT_EXECUTOR_KIND,
+  SCRIPT_EXECUTOR_KIND,
 ];
 
 // ─── 打标映射（各派发点用的快查表）────────────────────────────────────────────
@@ -276,6 +278,36 @@ export const EXECUTOR_CONTRACTS = {
       }
     },
     staleMinutes: 45,
+    onStale: 'fail',
+  },
+
+  /**
+   * script: Brain 经 ssh 在跑场机（payload.host）上起的确定性脚本（script_run，棒 3）。
+   * 活性：远端 ~/brain-runs/<script_run_id>.exit 存在 → 已结束（dead，等收割）；.pid 存活 → alive；
+   * 拿不到答案（host 缺失/非跑场机/run_id 非法/ssh 失败）一律 unknown（fail-open，绝不误杀，
+   * 也绝不向非跑场机发 ssh）。staleMinutes 75 = 最长 timeout 3600s + 15 分钟余量；onStale 'fail'。
+   */
+  [SCRIPT_EXECUTOR_KIND]: {
+    probe: async (task, _ctx) => {
+      const runId = task?.payload?.script_run_id;
+      if (!runId || !/^[A-Za-z0-9._-]+$/.test(runId) || runId.includes('..')) return 'unknown';
+      const hostId = resolveMachineId(task?.payload?.host);
+      if (!hostId || !listComputeWorkerIds().includes(hostId)) return 'unknown';
+      let target;
+      try { target = sshTargetFor(hostId); } catch { return 'unknown'; }
+      const remote = `if [ -f ~/brain-runs/${runId}.exit ]; then cat ~/brain-runs/${runId}.exit; elif [ -f ~/brain-runs/${runId}.pid ] && kill -0 "$(cat ~/brain-runs/${runId}.pid)" 2>/dev/null; then echo RUNNING; else echo NO_EXIT; fi`;
+      try {
+        const out = String(execFileSync('ssh', [
+          ...SSH_BASE_ARGS, target, remote,
+        ], { encoding: 'utf-8', timeout: 15000, stdio: 'pipe' })).trim();
+        if (out === 'RUNNING') return 'alive';
+        if (out === 'NO_EXIT') return 'unknown';
+        return 'dead';
+      } catch {
+        return 'unknown';
+      }
+    },
+    staleMinutes: 75,
     onStale: 'fail',
   },
 };

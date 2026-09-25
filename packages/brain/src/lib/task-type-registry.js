@@ -191,8 +191,16 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // ANC（免锚）：主理人从 Notion 排的运营活不走承诺地图，入账链也从不写 payload.anchor，
   // 不豁免的话放开 tick 派发当天每条秋米任务都会被锚点闸终态 failed。
   qiumi_task:               T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', true, true, 'none', true, [V, ANC]),
+  // ── executor=script 一等任务类型（链 bf5088a3 棒 3，任务 5cdbd52a）──
+  // 确定性脚本步：Brain 经 ssh 在跑场机执行 payload.cmd（{host,cmd,cwd,env,timeout_sec}），与 AI 步同一条 DAG。
+  // kind=agent：脚本也是「一步交付」（df67a9d6 判据）。pr=false 但成功终态写 completed 而非 completed_no_pr——
+  // hard 依赖门禁只放行 completed，脚本步后面挂 agent 步时必须能放行（设计稿 §2）。
+  // ANC 免锚：链上的确定性基建步不走承诺地图，与 qiumi_task 同理。
+  // tick_dispatchable=false 是 PR A 的临时闸：执行体（script-executor）接线前，tick 若把它当普通任务
+  // 派给 claude 会「跑」一个根本不是 LLM 的活；PR B 接线后翻 true。
+  script_run:               T('script', false, false, 'script', 'script', true, false, 'none', true, [V, ANC]),
   // ── 虚拟类型（不在 DB 白名单，只用于免锚判断）──
-  deploy_drill:       T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
+  deploy_drill:      T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
   nightly:            T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
   janitor:            T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
   harness_controller: workflow(T('none', false, false, null, 'none', false, false, 'none', false, [ANC])),
