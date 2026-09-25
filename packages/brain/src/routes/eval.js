@@ -22,6 +22,7 @@ import path from 'path';
 import fs from 'fs';
 import pool from '../db.js';
 import { createTask } from '../actions.js';
+import { finalizeTask } from '../lib/task-terminal.js';
 import {
   validateZipBuffer,
   computeZipHash,
@@ -353,15 +354,8 @@ router.post('/complete', requireEvalProxyToken, async (req, res) => {
       [report_url, report_data ? JSON.stringify(report_data) : null, task_id]
     );
 
-    // 回写 tasks
-    await pool.query(
-      `UPDATE tasks
-       SET status = 'completed',
-           result = jsonb_build_object('report_url', $1::text),
-           updated_at = now()
-       WHERE id = $2`,
-      [report_url, task_id]
-    );
+    // 回写 tasks（终态经 task-terminal 收口 → 接棒）
+    await finalizeTask(pool, task_id, 'completed', { set: { result: { report_url } } });
 
     return res.json({ ok: true, task_id, report_url });
   } catch (err) {

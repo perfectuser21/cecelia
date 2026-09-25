@@ -22,6 +22,7 @@
 import pool from './db.js';
 import { execSync } from 'child_process';
 import { patchKernelRunById } from './orchestrator/kernel-run-store.js';
+import { finalizeTask } from './lib/task-terminal.js';
 
 // 有头 /dev 会话（claimed_by 含 interactive-dev-skill）的 never-started 豁免窗（分钟）。
 // 宽于通用 staleMinutesA=20：有头 PrepPRD/探索/TDD 阶段正常就要 20-40min 才产生 run 活动。
@@ -402,21 +403,14 @@ export async function resumeStalledHarnessDrivers({
              RETURNING id`,
             [row.id]
           )
-          : await client.query(
-            `UPDATE tasks SET
-               status = 'failed',
-               claimed_by = NULL,
-               claimed_at = NULL,
-               error_message = 'harness_initiative never started graph (no initiative_runs row, claimed_at stale)',
-               updated_at = NOW()
-             WHERE id = $1 AND status = 'in_progress'
-             RETURNING id`,
-            [row.id]
-          );
+          : await finalizeTask(client, row.id, 'failed', {
+            set: { error_message: 'harness_initiative never started graph (no initiative_runs row, claimed_at stale)' },
+            onlyIfStatus: 'in_progress',
+          });
         await client.query('COMMIT');
         transactionOpen = false;
 
-        if (upd.rows.length > 0) {
+        if ((upd.rows ?? upd.tasks).length > 0) {
           resumed.push(row.id);
           console.warn(
             `[harness-watchdog] marked never-started harness task failed: task=${row.id} ` +

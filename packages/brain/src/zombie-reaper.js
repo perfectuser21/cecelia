@@ -25,6 +25,7 @@
 
 import defaultPool from './db.js';
 import { assessTaskLiveness } from './executor-contracts.js';
+import { finalizeTask } from './lib/task-terminal.js';
 
 // ───── 配置 ─────
 export const ZOMBIE_REAPER_INTERVAL_MS = 5 * 60 * 1000; // 每 5 分钟扫一次
@@ -116,16 +117,10 @@ export async function reapZombies({ pool = defaultPool, idleMinutes = DEFAULT_ID
 
       // dead — 按 onStale 分支处置
       if (liveness.onStale === 'fail') {
-        await pool.query(
-          `UPDATE tasks
-           SET status = 'failed',
-               error_message = $1,
-               completed_at = NOW(),
-               updated_at = NOW()
-           WHERE id = $2
-             AND status = 'in_progress'`,
-          [`[reaper] zombie: in_progress idle >${idleMinutes}min`, task.id]
-        );
+        await finalizeTask(pool, task.id, 'failed', {
+          set: { error_message: `[reaper] zombie: in_progress idle >${idleMinutes}min`, completed_at: 'now' },
+          onlyIfStatus: 'in_progress',
+        });
         result.reaped++;
         console.warn(
           `[zombie-reaper] Reaped (failed) zombie task id=${task.id} title=${JSON.stringify(task.title || '')}`

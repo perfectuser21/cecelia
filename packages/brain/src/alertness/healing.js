@@ -16,6 +16,7 @@ import { promisify } from 'util';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import pool from '../db.js';
 import { emit } from '../event-bus.js';
+import { finalizeTask } from '../lib/task-terminal.js';
 import { assessTaskLiveness } from '../executor-contracts.js';
 
 const execAsync = promisify(exec);
@@ -581,15 +582,11 @@ async function cancelDuplicateTasks() {
 async function archiveOldTasks() {
   const client = await pool.connect();
   try {
-    // 归档超过 7 天的已完成任务
-    const result = await client.query(`
-      UPDATE tasks
-      SET status = 'archived',
-          updated_at = NOW()
-      WHERE status IN ('completed', 'failed', 'canceled')
-        AND updated_at < NOW() - INTERVAL '7 days'
-      RETURNING id
-    `);
+    // 归档超过 7 天的已完成任务（终态经 lib/task-terminal.js 收口；archived 不接棒）
+    const result = await finalizeTask(client, null, 'archived', {
+      onlyIfStatus: ['completed', 'failed', 'canceled'],
+      where: { sql: "updated_at < NOW() - INTERVAL '7 days'" },
+    });
 
     return result.rowCount;
   } finally {

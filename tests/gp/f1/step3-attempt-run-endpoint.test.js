@@ -740,7 +740,7 @@ describe('第54批：桥接 run 生命周期', () => {
     expect(sqls.some(([sql]) => /kernel_controller_sessions SET status='closed'/.test(sql))).toBe(true);
     // 第 55 批：tasks 表没有 source_id 列（54 批 SQL 真库必炸）——锚 task 必须经
     // initiative_runs.current_task_id 定位。
-    const taskClose = sqls.find(([sql]) => /tasks SET status='completed'/.test(sql));
+    const taskClose = sqls.find(([sql]) => /tasks SET status = 'completed'/.test(sql));
     expect(taskClose).toBeTruthy();
     expect(taskClose[0]).toMatch(/trigger_source = 'v4_bridge'/);
     expect(taskClose[0]).toMatch(/current_task_id FROM initiative_runs/);
@@ -751,7 +751,7 @@ describe('第54批：桥接 run 生命周期', () => {
     const row = { id: 'aaaaaaaa-0000-0000-0000-000000000001', run_id: 'r', role: 'canary', status: 'completed', result: {} };
     const { app, sqls } = makeApp({ getById: async () => row });
     await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
-    const taskClose = sqls.find(([sql]) => /tasks SET status='completed'/.test(sql));
+    const taskClose = sqls.find(([sql]) => /tasks SET status = 'completed'/.test(sql));
     expect(taskClose).toBeTruthy();
     expect(taskClose[0]).toMatch(/trigger_source = 'v4_bridge'/);
     expect(taskClose[0]).toMatch(/current_task_id FROM initiative_runs/);
@@ -788,7 +788,7 @@ describe('第59批：共享 run 的 GET 收尾守卫', () => {
     const res = await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
     expect(res.status).toBe(200);
     expect(sqls.some(([sql]) => /kernel_controller_sessions SET status='closed'/.test(sql))).toBe(false);
-    expect(sqls.some(([sql]) => /tasks SET status='completed'/.test(sql))).toBe(false);
+    expect(sqls.some(([sql]) => /tasks SET status = 'completed'/.test(sql))).toBe(false);
     expect(sqls.some(([sql]) => /initiative_runs SET phase='done'/.test(sql))).toBe(false);
   });
 
@@ -814,7 +814,7 @@ describe('第59批：共享 run 的 GET 收尾守卫', () => {
     await request(app).get('/api/brain/harness/attempt-run/aaaaaaaa-0000-0000-0000-000000000001');
     expect(sqls.some(([sql]) => /initiative_runs SET phase='done'/.test(sql))).toBe(true);
     expect(sqls.some(([sql]) => /kernel_controller_sessions SET status='closed'/.test(sql))).toBe(true);
-    expect(sqls.some(([sql]) => /tasks SET status='completed'/.test(sql))).toBe(true);
+    expect(sqls.some(([sql]) => /tasks SET status = 'completed'/.test(sql))).toBe(true);
   });
 });
 
