@@ -14,7 +14,7 @@ import {
   buildRunContext,
   buildRunResult,
   detectBareRuns,
-} from '../lib/task-run.js';
+} from '../task-run.js';
 
 describe('normalizeRunStatus — 回调状态映射到 task_runs 状态枚举', () => {
   it('running 保持 running', () => {
