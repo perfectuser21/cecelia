@@ -13,11 +13,11 @@ import {
   verifyTreeHash,
   treeHashOf,
   compareManifests,
-} from '../lib/skill-manifest.js';
+} from '../skill-manifest.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SCRIPT = resolve(here, '../lib/skill-manifest.sh');
-const WRAPPER = resolve(here, '../../../../scripts/skill-manifest.sh');
+const SCRIPT = resolve(here, '../skill-manifest.sh');
+const WRAPPER = resolve(here, '../../../../../scripts/skill-manifest.sh');
 
 let root;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'skill-manifest-')); });
