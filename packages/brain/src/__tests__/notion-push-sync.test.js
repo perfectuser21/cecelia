@@ -1264,3 +1264,31 @@ describe('Notion 排单正文 → 任务 prompt', () => {
     expect(JSON.stringify(patch[3])).toContain('brain:task-content-3');
   });
 });
+
+// 任务类型模型收敛·第一刀（决策 df67a9d6 / e073bdc2）：任务投影是 tasks.kind 的第一个消费方。
+// 不给 Notion 加列（缺列即整条推送红），只进 Description 文本；`brain:<id>` 标记仍在末尾，
+// 各 ingest 用 includes('brain:') 判定不受影响。
+describe('任务投影读 kind', () => {
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockNotionReq.mockReset();
+    mockQuery.mockResolvedValue({ rows: [] });
+    mockNotionReq.mockResolvedValue({ id: 'kind-page' });
+  });
+
+  it('PUSH_TASKS_QUERY 取 t.kind', async () => {
+    const mod = await import('../notion-push-sync.js');
+    expect(mod.PUSH_TASKS_QUERY).toMatch(/\bt\.kind\b/);
+  });
+
+  it('Description = <task_type> · <kind> · brain:<id>；kind 缺失（历史行）退化为旧格式', async () => {
+    const mod = await import('../notion-push-sync.js');
+    await mod.pushTasksForTest({ query: mockQuery }, 'tok', [
+      { id: 't-k1', title: 'wf', status: 'queued', priority: 'P2', task_type: 'workflow_run', kind: 'workflow', notion_id: null, notion_props: null },
+      { id: 't-k2', title: 'legacy', status: 'queued', priority: 'P2', task_type: 'dev', kind: null, notion_id: null, notion_props: null },
+    ]);
+    const creates = mockNotionReq.mock.calls.filter((c) => c[1] === '/pages' && c[2] === 'POST');
+    const desc = creates.map((c) => c[3].properties.Description.rich_text[0].text.content);
+    expect(desc).toEqual(['workflow_run · workflow · brain:t-k1', 'dev · brain:t-k2']);
+  });
+});

@@ -20,6 +20,7 @@ import { recordTaskEventSafe } from '../lib/task-event-log.js';
 import { qiumiEnv } from './env.js';
 import { loadRegistryPool, cheapGates } from './cheap-gates.js';
 import { buildJevQuestions, decideWithFallback } from './jev-client.js';
+import { TASK_KINDS } from '../lib/task-type-registry.js';
 
 // is_device 阈值的唯一真身在 jev-client（verdict 也在那里算好），本模块只再导出给下游，不另立标准。
 export { NOUL_THRESHOLDS } from './jev-client.js';
@@ -29,7 +30,8 @@ export const ADOPT_PROB_MIN = 0.6;
 export const ADOPT_MARGIN_MIN = 0.2;
 
 const ENGINE_NAMES = ['claude', 'codex', 'terra'];
-const KIND_NAMES = ['agent', 'workflow'];
+// kind 枚举真身在注册表（tasks.kind 真列的 CHECK 与之对齐，铁律 76cb816c 不另抄一份）
+const KIND_NAMES = TASK_KINDS;
 const NOT_APPLICABLE = 'not_applicable';
 
 /** 把 qiumi_source 拼成给判定模型看的 state（打码由 jev-client 负责）。 */
@@ -215,6 +217,10 @@ export async function routeQiumiTask(task, deps) {
     qiumi_department: department,
     qiumi_kind: kind,
     qiumi_workflow_ref: workflowRef,
+    // 属性约定的规范键（决策 df67a9d6）：engine / workflow_ref；旧 qiumi_* 键保留给既有消费方，
+    // kind / department 不进 payload 规范键——它们落真列（persistDecision 写 tasks.kind / tasks.dept）。
+    engine,
+    workflow_ref: workflowRef,
   };
   await recordTaskEventSafe(pool, task.id, 'qiumi_route_decided', {
     outcome: 'agent', source: r.source, engine, model, department, kind, workflowRef, runId, defaulted, device_hint, ...base,
@@ -380,9 +386,11 @@ export async function persistDecision(pool, task, decision, deps = {}) {
     return delegateDeviceJob(pool, task, decision, createRoutedTaskFn);
   }
   if (decision.outcome === 'agent') {
+    // kind / department 落真列（迁移 466 / 066，决策 df67a9d6）：与 payload 同一条 UPDATE，
+    // 不另起一条——421 触发器只盯 task_type/payload，加两个普通列不会换个理由抛。
     await pool.query(
-      `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb, updated_at = NOW() WHERE id = $1`,
-      [task.id, JSON.stringify(decision.payloadPatch)],
+      `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb, kind = $3, dept = $4, updated_at = NOW() WHERE id = $1`,
+      [task.id, JSON.stringify(decision.payloadPatch), decision.kind ?? null, decision.department ?? null],
     );
     return;
   }

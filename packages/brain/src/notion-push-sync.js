@@ -238,7 +238,7 @@ async function pushIssues(pool, token) {
  * 日配额），逐单明细只留在工作机页；这里一条都不推。
  */
 export const PUSH_TASKS_QUERY = `
-    SELECT t.id, t.title, t.status, t.priority, t.task_type, t.notion_id, t.notion_props,
+    SELECT t.id, t.title, t.status, t.priority, t.task_type, t.kind, t.notion_id, t.notion_props,
            proj.notion_id AS project_notion_id
       FROM tasks t
       LEFT JOIN tasks proj ON proj.id = t.parent_task_id AND proj.task_type = 'project'
@@ -270,7 +270,9 @@ async function pushTaskRows(pool, token, rows) {
       const properties = {
         Name: { title: [{ text: { content: `[${t.priority || 'P2'}] ${String(t.title || '').slice(0, 180)}` } }] },
         Status: { status: { name: notionStatus } },
-        Description: { rich_text: buildRichText(`${t.task_type || 'task'} · brain:${t.id}`) },
+        // kind 真列（决策 df67a9d6）进 Description 文本，不给 Notion 加列（缺列即整条推送红）；
+        // `brain:<id>` 标记位置不变，各 ingest 用 includes('brain:') 判定不受影响。
+        Description: { rich_text: buildRichText(`${t.task_type || 'task'}${t.kind ? ` · ${t.kind}` : ''} · brain:${t.id}`) },
         // 接力棒：子任务挂回 Projects 里的根页（根由 notion-relay-projection 推）
         ...(t.project_notion_id ? { Project: { relation: [{ id: t.project_notion_id }] } } : {}),
       };

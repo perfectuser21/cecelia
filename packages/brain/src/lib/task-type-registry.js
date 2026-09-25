@@ -19,10 +19,18 @@
  *   cleanup_class  none | recurring | protected
  *   db        是否在 tasks_task_type_check 白名单（false = 仅用于免锚等逻辑的虚拟类型）
  *   tags      行为标签，派生集合按标签过滤（名字与替换前常量语义一一对应）
+ *   kind      任务的第一维度（决策 df67a9d6，落 tasks.kind 真列，迁移 466）：
+ *             agent    = 一个执行方一步交付（agent 会话 / 脚本 / 设备领单器 / Brain 内联都算「一步」）
+ *             workflow = 类型本身不产结果，只编排 ≥2 个阶段/子任务（有 orchestrator、stages、子任务链）
+ *             T() 缺省 agent，编排型用 workflow() 包一层显式标出。「谁执行」仍由 surface/executor 表达，不混。
  */
 
+/** 任务 kind 枚举——唯一真身（迁移 466 的 CHECK 与秋米路由的 Jev 选项都对齐这里）。 */
+export const TASK_KINDS = Object.freeze(['agent', 'workflow']);
+
 const T = (surface, coding, pr, executor, watchdog, push, tick, cleanup, db, tags = []) =>
-  Object.freeze({ surface, coding, pr, executor, watchdog, push_to_notion: push, tick_dispatchable: tick, cleanup_class: cleanup, db, tags: Object.freeze([...tags]) });
+  Object.freeze({ surface, coding, pr, executor, watchdog, push_to_notion: push, tick_dispatchable: tick, cleanup_class: cleanup, db, tags: Object.freeze([...tags]), kind: 'agent' });
+const workflow = (entry) => Object.freeze({ ...entry, kind: 'workflow' });
 
 // 常用标签缩写
 const V = 'router_valid';            // task-router VALID_TASK_TYPES
@@ -114,7 +122,7 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   okr_scope_plan:      T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, FR]),
   okr_project_plan:    T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, FR]),
   // ── 内容工厂（外部 pipeline-worker 执行，不进 tick 派发）──
-  'content-pipeline':     T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC, WARROOM]),
+  'content-pipeline':     workflow(T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC, WARROOM])),
   'content-research':     T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
   'content-generate':     T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
   'content-review':       T('external', false, false, null, 'none', true, true, 'none', true, [PIPELN]),
@@ -125,7 +133,7 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   'content-image-review': T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, SYS, ESC, FC, CX, PIPELN, ANC]),
   pipeline_rescue:        T('kernel', true, true, null, 'kernel', true, true, 'none', true, [CM, FK, AUTHSKIP, RECMUT]),
   // ── crystallize ──
-  crystallize:          T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
+  crystallize:          workflow(T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX])),
   crystallize_scope:    T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
   crystallize_forge:    T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
   crystallize_verify:   T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, CODEX]),
@@ -151,17 +159,17 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   harness_deploy_watch:     T('brain-internal', false, false, null, 'none', true, false, 'protected', true, [V, ESC, PW, BP, PROT, CX, PIPELN]),
   harness_report:           T('kernel', false, false, null, 'kernel', true, true, 'protected', true, [V, SYS, ANC, ESC, NIT, PW, PROT, CX, HC]),
   platform_scraper:         T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, WARROOM]),
-  harness_initiative:       T('kernel', true,  true,  'relay-container', 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, REC, LOCK, INF, BP, GUIDE, KR, CM, FK, GPSCOPE, WARROOM]),
-  harness_task:             T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, REC, LOCK, RET, BP]),
+  harness_initiative:       workflow(T('kernel', true,  true,  'relay-container', 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, REC, LOCK, INF, BP, GUIDE, KR, CM, FK, GPSCOPE, WARROOM])),
+  harness_task:             workflow(T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, ESC, REC, LOCK, RET, BP])),
   harness_final_e2e:        T('kernel', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, RET, FV]),
   trigger_backup:           T('brain-internal', false, false, null, 'none', true, true, 'none', true, []),
   harness_intervention:     T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V]),
   staging_e2e:              T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, ANC, FV]),
   skill_eval:               T('brain-internal', false, false, null, 'none', true, true, 'none', true, []),
   ci_patrol:                T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, ANC, FV]),
-  golden_path_proposal:     T('kernel', false, false, 'relay-container', 'kernel', true, true, 'none', true, [V, LOCK, INF, KR, ANC]),
+  golden_path_proposal:     workflow(T('kernel', false, false, 'relay-container', 'kernel', true, true, 'none', true, [V, LOCK, INF, KR, ANC])),
   strategist_decision:      T('brain-internal', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR]),
-  workflow_run:             T('external', false, false, null, 'none', true, true, 'none', true, []),
+  workflow_run:             workflow(T('external', false, false, null, 'none', true, true, 'none', true, [])),
   device_job:               T('device', false, false, null, 'external-worker', false, false, 'none', true, []),
   // project = 接力棒 PR1/PR2（#5486/#5491）新增的「项目根」容器行，迁移 458 已把它追进
   // tasks_task_type_check。本刀重建 CHECK 时必须带上它，所以这里 db=true。
@@ -174,7 +182,7 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // status='queued' 谓词。但那是靠建行方碰巧不落 queued 兜着，不是闸拦住的——换条
   // 路径建出 queued 的 project 根，tick 就会把项目容器当任务派给执行体跑（device_job
   // 当初就是这么踩的，见 dispatch-helpers.js:87 那段注释「本谓词是黑名单制，没有白名单」）。
-  project:                  T('brain-internal', false, false, null, 'none', true, false, 'none', true, []),
+  project:                  workflow(T('brain-internal', false, false, null, 'none', true, false, 'none', true, [])),
   // ── 秋米中文 GTD 表来的非编码任务，Brain 经 ssh 在 MMV 起 openclaw agent ──
   // PR2 入口刀开 V（router_valid）由 notion-gtd-sync 入账，并临时关掉 tick_dispatchable 防抢跑；
   // PR3 路由刀接管派发（dispatcher.dispatchQiumiTask：并发闸→Jev 判 engine/is_device/account），
@@ -187,8 +195,17 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   deploy_drill:       T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
   nightly:            T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
   janitor:            T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
-  harness_controller: T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
+  harness_controller: workflow(T('none', false, false, null, 'none', false, false, 'none', false, [ANC])),
 });
+
+/** task_type → kind（全部类型含虚拟类型；建单缺省与 Notion/派发读取都从这里取）。 */
+export const KIND_FOR_TASK_TYPE = Object.freeze(
+  Object.fromEntries(Object.entries(TASK_TYPE_REGISTRY).map(([k, e]) => [k, e.kind])),
+);
+/** DB 白名单内 kind=workflow 的类型——迁移 466 回填 CASE 名单的真身（测试钉逐字一致）。 */
+export const WORKFLOW_KIND_TASK_TYPES = Object.freeze(
+  Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.db && e.kind === 'workflow').map(([k]) => k),
+);
 
 export function getTaskType(type) {
   return TASK_TYPE_REGISTRY[type] ?? null;

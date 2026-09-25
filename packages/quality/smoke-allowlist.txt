@@ -325,3 +325,4 @@ zenithjoy-db-pool-smoke.sh
 zenithjoy-schema-migration-smoke.sh
 reanchor-base-sha-smoke.sh
 scheduler-liveness-smoke.sh
+task-kind-column-smoke.sh

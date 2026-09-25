@@ -393,3 +393,40 @@ describe('task-tasks routes — C3 服务端去重护栏（issue 655691d2）', (
     expect(dedupParams[2]).toBe('p-1');
   });
 });
+
+// 任务类型模型收敛·第一刀（决策 df67a9d6 / e073bdc2）：body.kind 入口校验，合法透传给存储层。
+describe('POST /tasks — kind 入口校验', () => {
+  let app;
+  beforeEach(() => {
+    resetRouteMocks();
+    mockPool.query.mockResolvedValue({ rows: [] });
+    app = createApp();
+  });
+
+  it('kind 非法 → 400 INVALID_KIND，带 allowed，不建单', async () => {
+    const res = await request(app)
+      .post('/tasks')
+      .send({ title: 'kind 非法', task_type: 'research', kind: 'script' });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_KIND');
+    expect(res.body.allowed).toEqual(['agent', 'workflow']);
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+  });
+
+  it('kind=workflow → 透传到 createRoutedTask 的 task.kind', async () => {
+    const res = await request(app)
+      .post('/tasks')
+      .send({ title: 'kind 合法', task_type: 'workflow_run', kind: 'workflow' });
+    expect(res.status).toBe(201);
+    expect(mockCreateRoutedTask).toHaveBeenCalledTimes(1);
+    expect(mockCreateRoutedTask.mock.calls[0][1].task.kind).toBe('workflow');
+  });
+
+  it('不传 kind → task.kind 不出现（由存储层按 task_type 派生，入口不猜）', async () => {
+    const res = await request(app)
+      .post('/tasks')
+      .send({ title: '不传 kind', task_type: 'research' });
+    expect(res.status).toBe(201);
+    expect(mockCreateRoutedTask.mock.calls[0][1].task.kind).toBeUndefined();
+  });
+});

@@ -580,3 +580,37 @@ describe('「用 <型号>」→ agent 分支 model 取 hardModel', () => {
     expect(d.payloadPatch.model).toBe('anthropic/claude-sonnet-5');
   });
 });
+
+// 任务类型模型收敛·第一刀（决策 df67a9d6 / e073bdc2）：Jev 判出的 kind 落 tasks.kind 真列，
+// department 落 tasks.dept 真列；engine / workflow_ref 按属性约定双写规范键（旧 qiumi_* 键保留）。
+describe('kind 真列与属性约定', () => {
+  it('agent 分支 payloadPatch 双写 engine / workflow_ref（旧 qiumi_workflow_ref 仍在）', async () => {
+    const d = await routeQiumiTask(task('写周报'), {
+      pool, env, fetchFn: jevOk(jevAnswers({ workflow_ref: choice('周报生成', 0.9) })), callLLMFn: vi.fn(),
+    });
+    expect(d.outcome).toBe('agent');
+    expect(d.payloadPatch).toMatchObject({
+      engine: 'terra', workflow_ref: '周报生成', qiumi_workflow_ref: '周报生成', qiumi_kind: 'agent',
+    });
+  });
+
+  it('persistDecision(agent) 同一条 UPDATE 写 kind=$3、dept=$4（payload 仍是 $2，旧断言不动）', async () => {
+    const d = await routeQiumiTask(task('写周报'), { pool, env, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    await persistDecision(pool, task('写周报'), d, { createRoutedTaskFn: vi.fn() });
+    const upd = pool.query.mock.calls.find(([sql]) => /SET payload = COALESCE/.test(sql));
+    expect(upd).toBeTruthy();
+    expect(upd[0]).toMatch(/kind = \$3/);
+    expect(upd[0]).toMatch(/dept = \$4/);
+    expect(upd[1].slice(2)).toEqual(['agent', 'dev']);
+  });
+
+  it('Jev 答 kind=workflow → 决策与真列都是 workflow', async () => {
+    const d = await routeQiumiTask(task('写周报'), {
+      pool, env, fetchFn: jevOk(jevAnswers({ kind: choice('workflow', 0.95) })), callLLMFn: vi.fn(),
+    });
+    expect(d.kind).toBe('workflow');
+    await persistDecision(pool, task('写周报'), d, { createRoutedTaskFn: vi.fn() });
+    const upd = pool.query.mock.calls.find(([sql]) => /SET payload = COALESCE/.test(sql));
+    expect(upd[1][2]).toBe('workflow');
+  });
+});
