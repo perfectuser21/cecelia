@@ -14,6 +14,7 @@
  */
 import { createRoutedTask } from '../work-routing-store.js';
 import { buildHandoff, saveHandoff } from '../handoff.js';
+import { RELAY_TERMINAL_STATUSES } from './task-status-transitions.js';
 
 export const NEXT_STEP_KINDS = Object.freeze(['task', 'decision', 'done', 'note']);
 const MAX_TITLE = 200;
@@ -142,7 +143,11 @@ export async function materializeNextSteps(pool, task, handoff, deps = {}) {
   return out;
 }
 
-/** completed 收口：确保 handoff → 落下一棒。任何异常吞成 warn，不挡 PATCH 响应。 */
+/**
+ * 可接棒终态收口（completed / completed_no_pr，见 RELAY_TERMINAL_STATUSES）：确保 handoff → 落下一棒。
+ * 任何异常吞成 warn，不挡调用方。唯一入口是 lib/task-terminal.js 的 afterTerminalTransition——
+ * 业务代码不要直接调本函数，否则又回到"接棒只挂一条路径"的老病。
+ */
 export async function relayOnComplete(pool, taskId, { sessionId = null } = {}) {
   try {
     const { rows } = await pool.query(
@@ -150,7 +155,7 @@ export async function relayOnComplete(pool, taskId, { sessionId = null } = {}) {
       [taskId]
     );
     const task = rows[0];
-    if (!task || task.status !== 'completed') return null;
+    if (!task || !RELAY_TERMINAL_STATUSES.includes(task.status)) return null;
     const { handoff, synthesized } = await ensureHandoffOnComplete(pool, task, { sessionId });
     const spawned = await materializeNextSteps(pool, task, handoff);
     if (spawned.tasks.length || spawned.decisions.length) {

@@ -39,29 +39,33 @@ describe('buildTerminalUpdate', () => {
       where: { sql: 'pr_merged_at IS NULL AND trigger_source = $1', params: ['v4_bridge'] },
       returning: ['goal_id', 'pr_url'],
     });
-    expect(sql).toContain('error_message = $1');
-    expect(sql).toContain('pr_status = $2');
-    expect(sql).toContain('result = $3::jsonb');
-    expect(sql).toContain('pr_url = COALESCE(pr_url, $4)');
-    expect(sql).toContain("payload = (COALESCE(payload, '{}'::jsonb) || $5::jsonb) - 'current_run_id'");
+    // taskId 恒为 $1（与历史站点 [id, ...] 参数形状一致）
+    expect(sql).toContain('error_message = $2');
+    expect(sql).toContain('pr_status = $3');
+    expect(sql).toContain('result = $4::jsonb');
+    expect(sql).toContain('pr_url = COALESCE(pr_url, $5)');
     expect(sql).toContain("result = COALESCE(result, '{}'::jsonb) || $6::jsonb");
-    expect(sql).toContain('WHERE id = $7 AND status IN ($8, $9) AND (pr_merged_at IS NULL AND trigger_source = $10)');
+    expect(sql).toContain("payload = (COALESCE(payload, '{}'::jsonb) || $7::jsonb) - 'current_run_id'");
+    // CAS 状态名走字面量（不占位）；额外 where 的 $1 重编号到 SET 参数之后
+    expect(sql).toContain("WHERE id = $1 AND status IN ('in_progress', 'queued') AND (pr_merged_at IS NULL AND trigger_source = $8)");
     expect(sql).toMatch(/RETURNING id, status, goal_id, pr_url$/);
-    expect(params).toEqual(['boom', 'merged', JSON.stringify({ a: 1 }), 'https://x/pr/1', JSON.stringify({ run_status: 'merged' }), JSON.stringify({ receipt: { ok: true } }), ID, 'in_progress', 'queued', 'v4_bridge']);
+    expect(params).toEqual([ID, 'boom', 'merged', JSON.stringify({ a: 1 }), 'https://x/pr/1', JSON.stringify({ receipt: { ok: true } }), JSON.stringify({ run_status: 'merged' }), 'v4_bridge']);
   });
 
-  it('set.result=null → result = NULL；idCast text → id::text；onlyIfStatusNot → NOT IN', () => {
+  it('set.result=null → result = NULL；idCast text → id::text；单个 onlyIfStatus/Not 走等号字面量', () => {
     const { sql, params } = buildTerminalUpdate('init-123', 'completed', { set: { result: null }, idCast: 'text', onlyIfStatusNot: 'completed' });
     expect(sql).toContain('result = NULL');
-    expect(sql).toContain('WHERE id::text = $1 AND status NOT IN ($2)');
-    expect(params).toEqual(['init-123', 'completed']);
+    expect(sql).toContain("WHERE id::text = $1 AND status <> 'completed'");
+    expect(params).toEqual(['init-123']);
+    expect(buildTerminalUpdate(ID, 'failed', { onlyIfStatus: 'in_progress' }).sql).toContain("WHERE id = $1 AND status = 'in_progress'");
   });
 
-  it('无 taskId 时必须给 where；非终态 / 非白名单列 / 非法 drop 键 → throw', () => {
+  it('无 taskId 时必须给 where；非终态 / 非白名单列 / 非法 drop 键 / 非法状态名 → throw', () => {
     expect(() => buildTerminalUpdate(null, 'completed')).toThrow(/taskId|where/);
     expect(() => buildTerminalUpdate(ID, 'queued')).toThrow(/终态|terminal/);
     expect(() => buildTerminalUpdate(ID, 'failed', { set: { title: 'x' } })).toThrow(/白名单|column/);
     expect(() => buildTerminalUpdate(ID, 'failed', { dropPayloadKeys: ["x' OR 1=1"] })).toThrow(/dropPayloadKeys/);
+    expect(() => buildTerminalUpdate(ID, 'failed', { onlyIfStatus: "x' OR 1=1" })).toThrow(/状态名/);
     const { sql } = buildTerminalUpdate(null, 'completed', { where: { sql: 'id = (SELECT current_task_id FROM initiative_runs WHERE id = $1::uuid)', params: ['r1'] } });
     expect(sql).toContain('WHERE (id = (SELECT current_task_id FROM initiative_runs WHERE id = $1::uuid))');
   });

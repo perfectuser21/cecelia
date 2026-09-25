@@ -39,7 +39,8 @@ const TERMINAL_ALT = TERMINAL_STATUSES.join('|');
 const LITERAL_IN_SET = new RegExp(`\\bstatus\\s*=\\s*'(?:${TERMINAL_ALT})'`);
 const PARAM_IN_SET = /\bstatus\s*=\s*\$/;
 const LITERAL_PUSH = new RegExp(`\\b(?:set\\w*|updates?)\\.push\\(\\s*[\`'"]\\s*status\\s*=\\s*'(?:${TERMINAL_ALT})'`, 'i');
-const PARAM_PUSH = /\b(?:set\w*|updates?)\.push\(\s*[`'"]\s*status\s*=\s*\$/i;
+// 覆盖两种动态拼装：`updates.push(\`status = $${i}\`)` 与 `const updates = ['status = $2']`
+const PARAM_PUSH = /\b(?:set\w*|updates?)(?:\.push\(|\s*=\s*\[)\s*[`'"]\s*status\s*=\s*\$/i;
 const UPDATE_TASKS = /UPDATE\s+(?:public\.)?tasks\b/g;
 
 /** 取每条 UPDATE tasks 语句的 SET 段（到第一个 WHERE 或 1500 字符为止）。 */
@@ -116,6 +117,8 @@ describe('任务终态写入守卫（所有终态路径必经 task-terminal）',
     expect(scanTerminalWrites(`UPDATE tasks SET status = $2, payload = $3 WHERE id = $1`))
       .toEqual({ literal: false, parametric: true });
     expect(scanTerminalWrites(`setClauses.push(\`status = $\${paramIdx++}\`);\nawait pool.query(\`UPDATE tasks SET \${setClauses.join(', ')} WHERE id = $1\`);`))
+      .toEqual({ literal: false, parametric: true });
+    expect(scanTerminalWrites(`const updates = ['status = $2'];\nawait pool.query(\`UPDATE tasks SET \${updates.join(', ')} WHERE id = $1\`);`))
       .toEqual({ literal: false, parametric: true });
     expect(scanTerminalWrites(`UPDATE tasks SET claimed_by = NULL WHERE id = $1 AND status = 'completed'`))
       .toEqual({ literal: false, parametric: false });
