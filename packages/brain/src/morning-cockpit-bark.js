@@ -17,6 +17,7 @@ import { findBareRuns } from './lib/task-run.js';
 import { detectSkillBindingDrift, renderSkillBindingLine } from './lib/skill-binding-registry.js';
 import { EXECUTOR_SKILL_MAP } from './lib/task-type-registry.js';
 import { readSkillDistState, renderSkillDistLine } from './lib/skill-dist-report.js';
+import { readRescanStalenessState, renderRescanStalenessLine } from './lib/rescan-staleness-report.js';
 import { LEADERBOARD_KEY } from './triage-officer-rank.js';
 
 /** 触发小时（UTC）= 北京时间 08:30 */
@@ -172,6 +173,22 @@ async function fetchSkillDistLine(pool) {
 }
 
 /**
+ * 地图照相层 rescan 停滞行（P0 9dfd873a 案）：fact_snapshot_headers 账龄超派发闸
+ * 预算(30min) / 缺失快照类型 / 检测过期 → 🟡 AMBER。
+ * best-effort：无数据（job 从未跑）、读取失败、不停滞都返回 null（不拖垮晨报）。
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<string|null>}
+ */
+async function fetchRescanStalenessLine(pool) {
+  try {
+    return renderRescanStalenessLine(await readRescanStalenessState(pool));
+  } catch (e) {
+    console.warn('[morning-cockpit-bark] rescan-staleness line failed:', e.message);
+    return null;
+  }
+}
+
+/**
  * 采集简报数据：完成率 + 在途任务数。
  * @param {import('pg').Pool} pool
  * @returns {Promise<{completionRate: string, inProgressCount: number}>}
@@ -232,12 +249,13 @@ export async function runMorningCockpitBark(pool) {
   }
 
   // 3. 采集简报数据 + 榜单（并行，榜单 best-effort）
-  const [{ completionRate, inProgressCount }, triageBoard, bareRunLine, skillBindingLine, skillDistLine] = await Promise.all([
+  const [{ completionRate, inProgressCount }, triageBoard, bareRunLine, skillBindingLine, skillDistLine, rescanStalenessLine] = await Promise.all([
     buildBriefData(pool),
     fetchTriageLeaderboard(pool),
     fetchBareRunLine(pool),
     fetchSkillBindingLine(pool),
     fetchSkillDistLine(pool),
+    fetchRescanStalenessLine(pool),
   ]);
 
   // 4. 构造推送内容
@@ -263,6 +281,7 @@ export async function runMorningCockpitBark(pool) {
   if (bareRunLine) lines.push(bareRunLine);
   if (skillBindingLine) lines.push(skillBindingLine);
   if (skillDistLine) lines.push(skillDistLine);
+  if (rescanStalenessLine) lines.push(rescanStalenessLine);
 
   lines.push(`点击进入指挥舱 → ${DASHBOARD_URL}`);
   const body = lines.join('\n');

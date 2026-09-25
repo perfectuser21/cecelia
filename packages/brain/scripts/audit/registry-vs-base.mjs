@@ -170,12 +170,15 @@ site({ label: 'dispatcher.js:811 needsBridgeCheck 双重 !== 链（de Morgan，�
   current: () => R.HARNESS_INFLIGHT_TASK_TYPES, compare: 'set' });
 site({ label: 'pre-flight-check.js:35 SYSTEM_TASK_TYPES', file: 'pre-flight-check.js',
   extract: (s) => extractNamedLiteral(s, 'SYSTEM_TASK_TYPES'),
-  current: () => R.SYSTEM_TASK_TYPES, compare: 'set' });
+  // script_run 是链 bf5088a3 棒3 新增（executor=script 一等任务类型，PR #5574/#5577），
+  // 基线里不存在，比较前剔除，其余项必须等于基线。
+  current: () => R.SYSTEM_TASK_TYPES.filter((t) => t !== 'script_run'), compare: 'set' });
 site({ label: 'task-router.js:16 VALID_TASK_TYPES', file: 'task-router.js',
   extract: (s) => extractNamedLiteral(s, 'VALID_TASK_TYPES'),
   // PR2 入口刀开启了 qiumi_task 的 V（router_valid）标签——notion-gtd-sync 入账要过
-  // task-router 的类型校验。它是基线里不存在的新类型，比较前剔除，其余 69 项必须等于基线。
-  current: () => R.VALID_TASK_TYPES.filter((t) => t !== 'qiumi_task'), compare: 'set',
+  // task-router 的类型校验；script_run 是链 bf5088a3 棒3 新增（executor=script 一等任务
+  // 类型，PR #5574/#5577）。两者基线里都不存在，比较前剔除，其余项必须等于基线。
+  current: () => R.VALID_TASK_TYPES.filter((t) => t !== 'qiumi_task' && t !== 'script_run'), compare: 'set',
   note: 'PR1 决策（task-3-report.md 裁决后 Important#2）把 V 标签留给 PR2；PR2 已开启，「qiumi_task ∈ VALID_TASK_TYPES」由 lib/__tests__/task-type-registry.test.js 的专属严格相等断言钉住，本审计只负责证明其余项相对基线零漂移' });
 site({ label: 'actions.js:27 CONTENT_TASK_TYPES', file: 'actions.js',
   extract: (s) => extractNamedLiteral(s, 'CONTENT_TASK_TYPES'), current: () => R.CONTENT_TASK_TYPES, compare: 'set' });
@@ -230,10 +233,11 @@ site({ label: 'task-router.js:316 TASK_REQUIREMENTS', file: 'task-router.js',
 site({ label: 'anchor-check.js:14 ANCHOR_EXEMPT_TASK_TYPES', file: 'anchor-check.js',
   extract: (s) => extractNamedLiteral(s, 'ANCHOR_EXEMPT_TASK_TYPES'),
   // PR3 放开 tick 派发后给 qiumi_task 打了 ANC（免锚）：入账链从不写 payload.anchor，
-  // 不免锚的话每条秋米任务都会在路由之前被锚点闸终态 failed。它是基线里不存在的新类型——
-  // 比较前剔除，其余项必须逐一等于基线原文。
-  current: () => R.ANCHOR_EXEMPT_TASK_TYPES.filter((t) => t !== 'qiumi_task'), compare: 'set',
-  note: '本站点是补充六的直接起因——Task 1 fixture 原是抄简报（38项）不是抄本文件（51项），Task 4 才发现改用本文件补全；此处必须用本审计脚本精确核对，不再信任何转述。「qiumi_task ∈ ANCHOR_EXEMPT_TASK_TYPES」由 lib/__tests__/task-type-registry.test.js 的专属断言钉住，本审计只负责证明其余项相对基线零漂移' });
+  // 不免锚的话每条秋米任务都会在路由之前被锚点闸终态 failed。script_run 是链 bf5088a3
+  // 棒3 新增（executor=script 一等任务类型，PR #5574/#5577）。两者都是基线里不存在的
+  // 新类型——比较前剔除，其余项必须逐一等于基线原文。
+  current: () => R.ANCHOR_EXEMPT_TASK_TYPES.filter((t) => t !== 'qiumi_task' && t !== 'script_run'), compare: 'set',
+  note: '本站点是补充六的直接起因——Task 1 fixture 原是抄简报（38项）不是抄本文件（51项），Task 4 才发现改用本文件补全；此处必须用本审计脚本精确核对，不再信任何转述。「qiumi_task/script_run ∈ ANCHOR_EXEMPT_TASK_TYPES」由 lib/__tests__/task-type-registry.test.js 的专属断言钉住，本审计只负责证明其余项相对基线零漂移' });
 site({ label: 'monitor-loop.js:37 HARNESS_TASK_TYPES', file: 'monitor-loop.js',
   extract: (s) => extractNamedLiteral(s, 'HARNESS_TASK_TYPES'), current: () => R.MONITOR_LONG_RUNNING_TASK_TYPES, compare: 'set' });
 site({ label: 'monitor-loop.js:200 HARNESS_CHAIN_TYPES', file: 'monitor-loop.js',
@@ -312,14 +316,16 @@ site({
   file: 'executor-contracts.js',
   extract: (s) => extractNamedLiteral(s, 'EXECUTOR_KIND_FOR'),
   current: () => {
-    // qiumi_task 是本刀新增（注册表新声明 executor:'openclaw-agent'），基线里不存在——
-    // 唯一允许的已知新增项，其余 key/value 必须与基线原文精确相等。
+    // qiumi_task 是先前一刀新增（注册表新声明 executor:'openclaw-agent'）；
+    // script_run 是链 bf5088a3 棒3 新增（executor=script 一等任务类型，PR #5574/#5577）——
+    // 两者基线里都不存在，是已知允许的新增项，比较前剔除，其余 key/value 必须与基线原文精确相等。
     const rest = { ...EXECUTOR_KIND_FOR };
     delete rest.qiumi_task;
+    delete rest.script_run;
     return rest;
   },
   compare: 'object',
-  note: 'EXECUTOR_KIND_FOR 现由 {...EXECUTOR_KIND_FOR_TASK_TYPE, __bridge_path, __local_spawn} 组装；qiumi_task 是本刀新增合法项，比较前剔除，其余 9 类型 + 2 sentinel 必须逐字等于基线',
+  note: 'EXECUTOR_KIND_FOR 现由 {...EXECUTOR_KIND_FOR_TASK_TYPE, __bridge_path, __local_spawn} 组装；qiumi_task/script_run 是已知新增合法项，比较前剔除，其余 9 类型 + 2 sentinel 必须逐字等于基线',
 });
 
 // ── 执行 ──────────────────────────────────────────────────────────────────
