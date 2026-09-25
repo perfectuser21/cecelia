@@ -1,0 +1,40 @@
+{
+  "initiative_id": "b2145bd9-e676-4efe-a8b5-0b665961235c",
+  "journey_type": "autonomous",
+  "journey_type_reason": "改动全在 packages/brain 后端（run 原语 + 执行路径/脚本步留痕 + Notion 投影 + 晨报），无 UI、无 agent 协议、无 engine hooks",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "runner 原语 task_runs：唯一写口 startRun/finishRun + 全执行路径/脚本步接入 + Notion 投影 + 晨报裸跑检测",
+      "scope": "新建 lib/task-run.js（唯一写 task_runs 入口：startRun/finishRun/findBareRuns + normalizeRunStatus/buildRunContext/buildRunResult/detectBareRuns 纯逻辑）；migration 466 加 task_runs 三 Notion 记账列（additive）；dispatcher/executor/openclaw-agent-executor/cecelia-run/bridge 五执行路径与脚本步（execution-callback 回执）经原语留痕；notion-push-sync 增 pushTaskRuns 投影面；daily-report-generator 新增导出 renderBareRunSection 并由 generateDailyReport import/调用 findBareRuns 喂它，使日报正文出现 🟡 AMBER 裸跑行（需求④ 人可见出口）。fail-open 非阻塞，一次执行=恰好一行。",
+      "dod": [
+        "[BEHAVIOR] startRun 落一行 running、幂等仅一行、finishRun 补齐终态/exit/产物、已终态不覆盖（真 PG：checks/dod-checks.mjs b01/b02/b03/inv3 + pg.integration 测试）",
+        "[BEHAVIOR] 裸跑检测命中且无误报（findBareRuns，checks/dod-checks.mjs b04）",
+        "[BEHAVIOR] 晨报出口：daily-report-generator 接线 findBareRuns 且 renderBareRunSection 渲染 🟡 AMBER 裸跑行、无裸跑不误报（checks/dod-checks.mjs b06 + 冻结测试 bare-run-report-render.test.js）",
+        "[BEHAVIOR] 单一写口：除 lib/task-run.js 外全仓零 INSERT INTO task_runs（INV-1 grep）",
+        "[BEHAVIOR] Notion 投影记账列存在且 runNotionPushSync 接 pushTaskRuns（checks/dod-checks.mjs b05）",
+        "[ARTIFACT] packages/brain/src/lib/task-run.js 存在并导出全部入口",
+        "[ARTIFACT] packages/brain/src/daily-report-generator.js 导出 renderBareRunSection（晨报 AMBER 渲染器）",
+        "[ARTIFACT] packages/brain/migrations/466_task_runs_notion_projection.sql（ADD COLUMN IF NOT EXISTS notion_id/notion_synced_at/notion_digest）"
+      ],
+      "files": [
+        "packages/brain/src/lib/task-run.js",
+        "packages/brain/migrations/466_task_runs_notion_projection.sql",
+        "packages/brain/src/dispatcher.js",
+        "packages/brain/src/executor.js",
+        "packages/brain/src/openclaw-agent-executor.js",
+        "packages/brain/src/routes/execution.js",
+        "packages/brain/scripts/cecelia-run.sh",
+        "packages/brain/src/orchestrator-remote-bridge.js",
+        "packages/brain/src/harness-session-bridge.js",
+        "packages/brain/scripts/cecelia-bridge.cjs",
+        "packages/brain/src/notion-push-sync.js",
+        "packages/brain/src/morning-cockpit-bark.js",
+        "packages/brain/src/daily-report-generator.js"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 110
+    }
+  ]
+}
