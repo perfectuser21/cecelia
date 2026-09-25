@@ -18,6 +18,7 @@ import { homedir, tmpdir } from 'os';
 import { createHash, randomUUID } from 'crypto';
 import pool from '../db.js';
 import { createTask } from '../actions.js';
+import { finalizeTask } from '../lib/task-terminal.js';
 import { runJudgeGate, runMechanicalPreflightChecks, checkJudgmentsWritten } from '../harness-judge.js';
 import { HARNESS_BUILD_STAGE_ORDER, HARNESS_BUILD_STAGE_LABELS } from '../lib/task-type-registry.js';
 import {
@@ -1689,12 +1690,12 @@ router.post('/complete', async (req, res) => {
       console.warn(`[POST /harness/complete] initiative ${initiative_id} completed 申请被拒 → 降级（${fin.reason}）`);
       return res.json({ ok: true, accepted: false, reason: fin.reason, initiative_id });
     }
-    const updateResult = await pool.query(
-      `UPDATE tasks SET status='completed', completed_at=NOW(),
-       result = COALESCE(result, '{}'::jsonb) || $1::jsonb
-       WHERE id::text = $2 AND status != 'completed'`,
-      [JSON.stringify(result), initiative_id]
-    );
+    const updateResult = await finalizeTask(pool, initiative_id, 'completed', {
+      set: { completed_at: 'now' },
+      mergeResult: result,
+      idCast: 'text',
+      onlyIfStatusNot: 'completed',
+    });
     if (updateResult.rowCount === 0) {
       console.warn(`[POST /harness/complete] initiative ${initiative_id} UPDATE affected 0 rows — not found or already completed`);
     }

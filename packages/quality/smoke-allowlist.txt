@@ -324,6 +324,7 @@ xian-harness-relay-smoke.sh
 zenithjoy-db-pool-smoke.sh
 zenithjoy-schema-migration-smoke.sh
 reanchor-base-sha-smoke.sh
+task-terminal-relay-hub-smoke.sh
 scheduler-liveness-smoke.sh
 task-kind-column-smoke.sh
 task-run-primitive-smoke.sh

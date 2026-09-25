@@ -15,6 +15,7 @@
 
 import pool from './db.js';
 import { updateTask } from './actions.js';
+import { finalizeTask } from './lib/task-terminal.js';
 import {
   shouldAnalyzeFailure,
   cacheRcaResult,
@@ -223,10 +224,7 @@ async function handleStuckRun(stuck) {
         `marking as completed instead of restarting to avoid duplicates`
       );
       // 标记当前任务为 completed（下游已存在说明它已成功完成过，只是回调没更新状态）
-      await pool.query(
-        `UPDATE tasks SET status = 'completed' WHERE id = $1`,
-        [stuck.task_id]
-      );
+      await finalizeTask(pool, stuck.task_id, 'completed');
       await pool.query(
         `UPDATE run_events
          SET status = 'completed',
@@ -249,10 +247,7 @@ async function handleStuckRun(stuck) {
         `[Monitor] Harness reconciliation: task ${stuck.task_id} (${taskType}) run already ended ` +
         `(status=${runStatus.status}), simulating callback with result=null to trigger retry chain`
       );
-      await pool.query(
-        `UPDATE tasks SET status = 'completed', result = NULL WHERE id = $1`,
-        [stuck.task_id]
-      );
+      await finalizeTask(pool, stuck.task_id, 'completed', { set: { result: null } });
       await pool.query(
         `UPDATE run_events
          SET status = 'completed',

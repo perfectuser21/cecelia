@@ -70,7 +70,7 @@ const REGISTRY = join(SRC, 'lib', 'task-type-registry.js');
 //   LOCATION_MAP/TASK_REQUIREMENTS/ASYNC_CALLBACK_TYPES、executor.js 的 skillMap/modeMap）
 //   也已改注册表派生（对象型用 deep-equal fixture 校验零行为变化）。两个文件里各剩 1 处
 //   真正的 long-lived: map（task-router.js:135 的 2 项业务降级链 FALLBACK_STRATEGIES.skill、
-//   executor.js:2337 的 task_type→handler 函数路由表 _TASK_ROUTES，函数值无法进纯数据注册表）
+//   executor.js:2338 的 task_type→handler 函数路由表 _TASK_ROUTES，函数值无法进纯数据注册表）
 //   ——kind: enum 在这两个文件里已清零，只剩 kind: map。
 // - Task 6（补充五+补充六收尾）：`executor-contracts.js` 的 `EXECUTOR_KIND_FOR` 改从注册表
 //   `EXECUTOR_KIND_FOR_TASK_TYPE` 派生（+ 两个路径 sentinel），退出清单——清单变量从
@@ -82,8 +82,8 @@ const REGISTRY = join(SRC, 'lib', 'task-type-registry.js');
 //   这 11 条即为 PR1 终态允许保留的清单（`packages/brain/scripts/audit/registry-vs-base.mjs`
 //   另行对全部已替换站点做"注册表派生值 vs 基线源码原文"机械审计，见该脚本头注释）。
 export const REMAINING_LEGACY_SITES = {
-  // kind: map（long-lived）— 唯一残留 :2337 _TASK_ROUTES（task_type→handler 函数，无法表示为注册表纯数据字段）
-  'executor.js': ['2337:_TASK_ROUTES'],
+  // kind: map（long-lived）— 唯一残留 :2338 _TASK_ROUTES（task_type→handler 函数，无法表示为注册表纯数据字段）
+  'executor.js': ['2338:_TASK_ROUTES'],
   // kind: map（long-lived）— Task 4 评估：:60 model_map 是 task_type→{provider,model,cascade}
   // 的模型路由调优配置（嵌套对象，非简单字符串），逐 type 独立调参（如 harness_planner 用 opus、
   // harness_generate 用 sonnet），无匹配注册表单一字段，且属运营调参数据非"哪类"分类标签
@@ -106,11 +106,11 @@ export const REMAINING_LEGACY_SITES = {
   // 剩 TASK_TYPE_TO_SKILL（:933，task_type→skill目录名，与 SKILL_WHITELIST/EXECUTOR_SKILL_MAP
   // 语义相近但值不同——第3份独立维护，PR1 只搬家不合并）+ BASE_LABELS（:1021，task_type→短展示
   // 标签，第5份独立维护的 label 映射，无匹配注册表字段）
-  'routes/harness.js': ['933:TASK_TYPE_TO_SKILL', '1021:BASE_LABELS'],
+  'routes/harness.js': ['934:TASK_TYPE_TO_SKILL', '1022:BASE_LABELS'],
   // kind: map（long-lived）— Task 4 评估：:879 description 是 GET /api/brain/task-types
   // 的人类可读展示文案（仅5个类型有文案，不是"哪类"的分类标签），要对应注册表字段需给全部
   // ~80 个 task_type 逐个写产品文案，属独立的文档撰写工作，非 PR1 零行为变化范围
-  'routes/tasks.js': ['891:description'],
+  'routes/tasks.js': ['893:description'],
   // kind: map（long-lived）— 唯一残留 :55 FALLBACK_STRATEGIES.skill（仅2项业务专用降级链 review→code_review→dev，非"哪类"的分类标签，无匹配注册表字段）
   'task-router.js': ['55:skill'],
   // kind: map（long-lived）— Task 6 评估：:25 TASK_TYPE_ADJUSTMENTS 是派发权重的数值

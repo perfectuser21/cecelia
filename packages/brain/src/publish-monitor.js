@@ -14,6 +14,7 @@
  */
 
 import { raise } from './alerting.js';
+import { finalizeTask } from './lib/task-terminal.js';
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -360,11 +361,7 @@ export async function monitorPublishQueue(pool) {
         // 幂等保护：若同 pipeline_id+platform 已有 completed 记录，跳过重试直接标记完成
         const alreadyDone = await isAlreadyPublished(pool, task);
         if (alreadyDone) {
-          await pool.query(
-            `UPDATE tasks SET status = 'completed', updated_at = NOW()
-             WHERE id = $1 AND status = 'failed'`,
-            [task.id]
-          );
+          await finalizeTask(pool, task.id, 'completed', { onlyIfStatus: 'failed' });
           console.log(`[publish-monitor] 跳过重试 ${platform}：pipeline_id=${task.payload?.pipeline_id} 已在该平台成功发布，直接标记 completed`);
           continue;
         }

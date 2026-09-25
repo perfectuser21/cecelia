@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import pool from './db.js';
 import { broadcastTaskState } from './task-updater.js';
+import { afterTerminalTransition, isTerminalStatus } from './lib/task-terminal.js';
 import { detectDomain } from './domain-detector.js';
 import { getDomainRole } from './role-registry.js';
 import { createRoutedTask } from './work-routing-store.js';
@@ -399,6 +400,11 @@ async function updateTask({ task_id, status, priority }) {
   const task = result.rows[0];
   console.log(`[Action] Updated task: ${task_id}`);
 
+  // 终态收口（lib/task-terminal.js）：update_task 动作写成终态后必经钩子（completed / completed_no_pr 接棒）
+  if (status && isTerminalStatus(status)) {
+    await afterTerminalTransition(pool, task_id, status);
+  }
+
   // Broadcast task update to WebSocket clients
   await broadcastTaskState(task_id);
 
@@ -654,6 +660,13 @@ async function batchUpdateTasks({ filter, update }) {
     WHERE ${whereClause}
     RETURNING id
   `, values);
+
+  // 终态收口（lib/task-terminal.js）：批量写成终态的每一行都必经钩子
+  if (update.status && isTerminalStatus(update.status)) {
+    for (const row of result.rows ?? []) {
+      await afterTerminalTransition(pool, row.id, update.status);
+    }
+  }
 
   console.log(`[Action] Batch updated ${result.rowCount} tasks`);
   return { success: true, count: result.rowCount };

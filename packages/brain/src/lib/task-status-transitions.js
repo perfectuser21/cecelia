@@ -41,6 +41,13 @@ export const TERMINAL_STATUSES = Object.freeze([
   'archived',
 ]);
 
+/**
+ * 可接棒的终态：任务到这里算"干完了"，handoff.next_steps 要落成下一棒（lib/relay-baton.js）。
+ * completed_no_pr 也在内——openclaw-agent / 设备任务等不产 PR 的执行面收割态就是它，
+ * 09-22 审计前只认 completed → 秋米任务 100% 不接棒。failed / archived 是结论但不是"干完"，不接棒。
+ */
+export const RELAY_TERMINAL_STATUSES = Object.freeze(['completed', 'completed_no_pr']);
+
 /** 全部已知状态。新增状态必须同时进这里和 TRANSITIONS，否则守卫报红。 */
 export const TASK_STATUSES = Object.freeze([
   'pending',

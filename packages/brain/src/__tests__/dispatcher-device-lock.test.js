@@ -201,9 +201,9 @@ describe('dispatchNextTask — 设备锁接线（G5 横切件 task 104ab89f）',
       && params.some((p) => typeof p === 'string' && p.includes(SERIAL))
     );
     expect(failUpdate).toBeTruthy();
-    // payload 打上 failure_class='unknown_device'
-    expect(failUpdate.sql).toMatch(/failure_class/);
-    expect(failUpdate.sql).toMatch(/unknown_device/);
+    // payload 打上 failure_class='unknown_device'（终态经 lib/task-terminal.js 收口：payload 合并走 jsonb 参数）
+    expect(failUpdate.sql).toMatch(/payload = COALESCE\(payload, '\{\}'::jsonb\) \|\| \$\d+::jsonb/);
+    expect(failUpdate.params.some((p) => typeof p === 'string' && p.includes('"failure_class":"unknown_device"'))).toBe(true);
     expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
     expect(result.dispatched).toBe(false);
   });

@@ -113,8 +113,9 @@ describe('runWorkerPoolDispatch — 设备锁旁路接线（G5 横切件 task 10
       && params.some((p) => typeof p === 'string' && p.includes(SERIAL) && p.includes('register'))
     );
     expect(failUpdate).toBeTruthy();
-    expect(failUpdate[0]).toMatch(/failure_class/);
-    expect(failUpdate[0]).toMatch(/unknown_device/);
+    // 终态经 lib/task-terminal.js 收口：failure_class 走 payload jsonb 合并参数
+    expect(failUpdate[0]).toMatch(/payload = COALESCE\(payload, '\{\}'::jsonb\) \|\| \$\d+::jsonb/);
+    expect(failUpdate[1].some((p) => typeof p === 'string' && p.includes('"failure_class":"unknown_device"'))).toBe(true);
     // 终态 UPDATE 自带 claimed_by=NULL 清理，不能再走 locked 分支的回滚语句
     expect(failUpdate[0]).toMatch(/claimed_by\s*=\s*NULL/i);
   });

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { blockTask } from '../task-updater.js';
+import { finalizeTask } from '../lib/task-terminal.js';
 import { classifyFailure as importedClassifyFailure } from '../quarantine.js';
 
 const router = Router();
@@ -46,11 +47,9 @@ router.post('/:id/error-report', async (req, res) => {
     }
 
     if (classification.class === FAILURE_CLASS.TASK_ERROR) {
-      await pool.query(
-        `UPDATE tasks SET status='failed', updated_at=NOW(),
-           payload=COALESCE(payload, '{}'::jsonb) || $2::jsonb WHERE id=$1`,
-        [id, JSON.stringify({ error_details: error_message, failure_classification: classification, last_error_at: new Date().toISOString() })]
-      );
+      await finalizeTask(pool, id, 'failed', {
+        mergePayload: { error_details: error_message, failure_classification: classification, last_error_at: new Date().toISOString() },
+      });
       return res.json({ action: 'failed', task_id: id, failure_class: classification.class, reason: classification.retry_strategy?.reason || 'Task error - retryable' });
     }
 

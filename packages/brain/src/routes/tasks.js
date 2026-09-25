@@ -17,6 +17,7 @@ import { checkAnchor } from '../anchor-check.js';
 import { blockTask } from '../task-updater.js';
 import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
 import { resolveAllowedTransitions } from '../lib/task-status-transitions.js';
+import { afterTerminalTransition, isRelayTerminalStatus } from '../lib/task-terminal.js';
 import { getTaskType } from '../lib/task-type-registry.js';
 
 const router = Router();
@@ -605,13 +606,14 @@ router.patch('/tasks/:task_id', async (req, res) => {
 
     // 接力棒（2026-09-23）：任务收口时确保有 handoff（没有就合成并标 synthesized），
     // 再把 handoff.next_steps 落成下一棒（task→queued 子任务挂同根；decision→待拍板）。
-    // 两个触发口：① 本次转 completed；② 已 completed 的任务补写 result.handoff（watchdog 顺序）。
+    // 统一走 lib/task-terminal.js 的终态钩子（09-25 收口：completed_no_pr 也接棒）。
+    // 两个触发口：① 本次转可接棒终态；② 已终态的任务补写 result.handoff（watchdog 顺序）。
     let relay = null;
-    const becameCompleted = status === 'completed' && !isStatusNoop && !harnessDemoted;
-    const handoffArrivedOnCompleted = Boolean(result?.handoff) && updatedTask?.status === 'completed';
-    if (becameCompleted || handoffArrivedOnCompleted) {
-      const { relayOnComplete } = await import('../lib/relay-baton.js');
-      relay = await relayOnComplete(pool, task_id, { sessionId: req.headers['x-session-id'] || null });
+    const becameRelayTerminal = isRelayTerminalStatus(status) && !isStatusNoop && !harnessDemoted;
+    const handoffArrivedOnTerminal = Boolean(result?.handoff) && isRelayTerminalStatus(updatedTask?.status);
+    if (becameRelayTerminal || handoffArrivedOnTerminal) {
+      const hook = await afterTerminalTransition(pool, task_id, updatedTask?.status || status, { sessionId: req.headers['x-session-id'] || null });
+      relay = hook.relay ?? null;
     }
 
     if (status && !isStatusNoop && !harnessDemoted) {

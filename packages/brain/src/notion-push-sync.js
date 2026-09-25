@@ -1,5 +1,6 @@
 import { notionReq, getToken } from './recurring-notion-sync.js';
 import { createRoutedTask } from './work-routing-store.js';
+import { finalizeTask } from './lib/task-terminal.js';
 import { execFileSync as nodeExecFileSync } from 'child_process';
 import { sshTargetFor } from './machine-registry.js';
 import { readFileSync } from 'node:fs';
@@ -936,13 +937,7 @@ async function reapSshWorkflowRuns(pool, token, opts = {}) {
         note = 'timeout>6h';
       }
       if (!status) continue;
-      await pool.query(
-        `UPDATE tasks SET status=$2,
-                result = COALESCE(result,'{}'::jsonb) || jsonb_build_object('run_status', $3::text),
-                updated_at=NOW()
-          WHERE id=$1 AND status='in_progress'`,
-        [r.id, status, note],
-      );
+      await finalizeTask(pool, r.id, status, { mergeResult: { run_status: note }, onlyIfStatus: 'in_progress' });
       // 脚本步 run 补终态：只认真实 exit（0→success，非 0→failed）；无 exit 仅在 SQL 判定超 6h 时记 timeout，
       // 未超时探不到 exit 的 run 保持 running（上面 continue），绝不伪造终态。
       await finishRun({
@@ -988,14 +983,11 @@ async function syncOpenClawRuns(pool, token) {
     const done = ['success', 'completed'].includes(r.status);
     // 事件账闭环：workflow_run task 随 run 终态收账（幂等：仅 in_progress 行）
     try {
-      await pool.query(
-        `UPDATE tasks SET status=$2,
-                result = COALESCE(result,'{}'::jsonb) || jsonb_build_object('run_status', $3::text),
-                updated_at=NOW()
-          WHERE task_type='workflow_run' AND status='in_progress'
-            AND payload->>'run_id' = $1`,
-        [r.run_id, done ? 'completed' : 'failed', r.status],
-      );
+      await finalizeTask(pool, null, done ? 'completed' : 'failed', {
+        mergeResult: { run_status: r.status },
+        onlyIfStatus: 'in_progress',
+        where: { sql: `task_type = 'workflow_run' AND payload->>'run_id' = $1`, params: [r.run_id] },
+      });
     } catch (err) {
       console.warn(`[notion-pull] workflow_run task 收账失败 ${r.run_id}: ${err.message}`);
     }

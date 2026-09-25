@@ -13,6 +13,7 @@
 
 import pool from './db.js';
 import { createTask, updateTask } from './actions.js';
+import { finalizeTask } from './lib/task-terminal.js';
 import { validateDecision, hasDangerousActions, ACTION_WHITELIST } from './thalamus.js';
 import { CORTEX_ACTION_WHITELIST } from './cortex.js';
 import { signAndLaunchGoldenPathContract } from './golden-path-contracts.js';
@@ -474,10 +475,7 @@ const actionHandlers = {
     if (!task_id) {
       return { success: false, error: 'task_id is required' };
     }
-    await pool.query(
-      `UPDATE tasks SET status = 'archived', updated_at = NOW() WHERE id = $1`,
-      [task_id]
-    );
+    await finalizeTask(pool, task_id, 'archived');
     console.log(`[executor] Archived task: ${task_id}, reason: ${reason || 'not specified'}`);
     return { success: true, task_id, reason: reason || null };
   },

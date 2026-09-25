@@ -25,6 +25,7 @@ import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { resolvePrimaryWorkerId, sshTargetFor } from './machine-registry.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { startRun, finishRun } from './lib/task-run.js';
+import { finalizeTask } from './lib/task-terminal.js';
 import { qiumiEnv, phoneNodeName } from './routing/env.js';
 
 // 两条白名单，宽严不同：
@@ -313,21 +314,15 @@ export async function reapOpenclawAgentRuns(pool, deps = {}) {
     const tail = stdout.replace(/^EXIT=\d+\n?/m, '');
     const receipt = parseReceipt(exit, tail);
     if (exit === 0) {
-      await pool.query(
-        `UPDATE tasks SET status = 'completed_no_pr', completed_at = COALESCE(completed_at, NOW()),
-                claimed_by = NULL, claimed_at = NULL,
-                result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('receipt', $2::jsonb), updated_at = NOW()
-          WHERE id = $1 AND status = 'in_progress'`,
-        [r.id, JSON.stringify(receipt)],
-      );
+      // completed_no_pr 是可接棒终态（RELAY_TERMINAL_STATUSES）：finalizeTask 写完自动接棒
+      await finalizeTask(pool, r.id, 'completed_no_pr', { mergeResult: { receipt }, onlyIfStatus: 'in_progress' });
       out.completed++;
     } else {
-      await pool.query(
-        `UPDATE tasks SET status = 'failed', error_message = $2, claimed_by = NULL, claimed_at = NULL,
-                result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('receipt', $3::jsonb), updated_at = NOW()
-          WHERE id = $1 AND status = 'in_progress'`,
-        [r.id, `openclaw_agent_exit_${exit}`, JSON.stringify(receipt)],
-      );
+      await finalizeTask(pool, r.id, 'failed', {
+        set: { error_message: `openclaw_agent_exit_${exit}` },
+        mergeResult: { receipt },
+        onlyIfStatus: 'in_progress',
+      });
       out.failed++;
     }
     out.reaped++;

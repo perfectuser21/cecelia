@@ -19,6 +19,7 @@ import { resolveRelatedFailureMemories } from './routes/shared.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resolveCanonicalPrUrl, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from './lib/callback-utils.js';
 import { REVIEW_TASK_TYPES } from './lib/review-task-types.js';
 import { serialUnlockNext, writeReviewResult, promoteRegressionOnHarnessMerged } from './lib/callback-postprocess.js';
+import { afterTerminalTransition } from './lib/task-terminal.js';
 
 const TERMINAL_CALLBACK_STATUSES = new Set(['completed', 'completed_no_pr', 'failed', 'cancelled']);
 
@@ -241,6 +242,12 @@ export async function processExecutionCallback(data, pool) {
     } catch (rescheduleErr) {
       console.error(`[callback-processor] reschedule error (non-fatal): ${rescheduleErr.message}`);
     }
+  }
+
+  // 终态收口（lib/task-terminal.js）：completed / completed_no_pr 落库后接棒。放在重排块之后——
+  // completed_no_pr 被重排回 queued 时 relayOnComplete 重读状态非终态，自然不接棒。
+  if (TERMINAL_CALLBACK_STATUSES.has(newStatus)) {
+    await afterTerminalTransition(pool, task_id, newStatus);
   }
 
   // Post-commit downstream triggers

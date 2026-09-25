@@ -18,6 +18,7 @@
 
 import { execFileSync } from 'child_process';
 import defaultPool from '../db.js';
+import { finalizeTask } from './task-terminal.js';
 import {
   assessKernelLiveness,
   isKernelRuntimeTask,
@@ -214,15 +215,10 @@ export async function requeueOrphanTask(pool, task, reason, extraPayloadJson = '
 
   const count = Number(task.payload?.orphan_requeue_count || 0);
   if (count >= MAX_ORPHAN_REQUEUES) {
-    await pool.query(
-      `UPDATE tasks
-       SET status = 'failed',
-           error_message = $1,
-           completed_at = NOW(),
-           updated_at = NOW()
-       WHERE id = $2 AND status = 'in_progress'`,
-      [`[orphan-guard] requeue 超限(${count}次),终态 failed: ${reason}`, task.id]
-    );
+    await finalizeTask(pool, task.id, 'failed', {
+      set: { error_message: `[orphan-guard] requeue 超限(${count}次),终态 failed: ${reason}`, completed_at: 'now' },
+      onlyIfStatus: 'in_progress',
+    });
     console.warn(`[orphan-guard] task=${task.id} requeue 超限 → failed (${reason})`);
     return { action: 'failed' };
   }

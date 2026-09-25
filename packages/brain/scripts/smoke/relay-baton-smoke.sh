@@ -35,7 +35,9 @@ await pool.end();
 " || fail "接棒链路失败"
 pass "completed 无 handoff → 合成；next_steps task→queued 子任务挂根(seq=2, lane=AI)，decision→pending；重复触发幂等"
 
-grep -q "relayOnComplete(pool, task_id" "$BRAIN_DIR/src/routes/tasks.js" || fail "PATCH 路由未接 relayOnComplete"
+# 终态接棒统一经 lib/task-terminal.js 的 afterTerminalTransition（内部转 relayOnComplete），PATCH 路由调它
+grep -q "afterTerminalTransition(pool, task_id" "$BRAIN_DIR/src/routes/tasks.js" || fail "PATCH 路由未接终态接棒钩子 afterTerminalTransition"
+grep -q "relayOnComplete" "$BRAIN_DIR/src/lib/task-terminal.js" || fail "task-terminal 钩子未接 relayOnComplete"
 pass "PATCH /tasks/:id 收口已接接棒"
 
 grep -q "接力棒闸" "$REPO_DIR/hooks/stop.sh" && bash -n "$REPO_DIR/hooks/stop.sh" || fail "stop.sh 缺接力棒闸或语法错"

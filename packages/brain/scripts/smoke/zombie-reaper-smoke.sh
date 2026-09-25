@@ -16,7 +16,7 @@ const checks = [
   ['export const ZOMBIE_REAPER_INTERVAL_MS', 'ZOMBIE_REAPER_INTERVAL_MS 导出'],
   [\"status = 'in_progress'\", 'SELECT 查 in_progress 状态'],
   ['updated_at', 'SELECT 检查 updated_at'],
-  [\"status = 'failed'\", 'UPDATE 标 failed'],
+  [\"finalizeTask(pool, task.id, 'failed'\", '经终态收口 finalizeTask 标 failed'],
   ['[reaper] zombie', 'error_message 含 reaper 前缀'],
 ];
 const missing = checks.filter(([p]) => !src.includes(p));

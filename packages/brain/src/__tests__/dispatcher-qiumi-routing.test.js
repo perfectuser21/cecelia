@@ -433,7 +433,8 @@ describe('熔断豁免：qiumi_task 走 ssh 直派，不受 cecelia-run 熔断�
       dispatched: true, task_id: 'q1',
     });
     expect(r.reason).not.toBe('dispatch_exception');
-    const sqls = sqlsOf();
+    // tick 开头的 retired 批量 drain（task_type = ANY）也是 failed 写入且清 claim，不是针对本任务的，排除
+    const sqls = sqlsOf().filter((s) => !/task_type = ANY/.test(s));
     expect(sqls.filter((s) => /status = 'failed'/.test(s)), '已 spawn 的任务被标 failed').toEqual([]);
     expect(sqls.filter((s) => /claimed_by = NULL/.test(s)), 'claim 被放掉 → 下个 tick 会重复派发').toEqual([]);
     expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: 'q1', status: 'queued' });

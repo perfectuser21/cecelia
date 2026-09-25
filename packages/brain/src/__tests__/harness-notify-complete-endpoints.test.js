@@ -63,8 +63,9 @@ describe('POST /harness/complete', () => {
     expect(updateCall).toBeDefined();
     const [sql, params] = updateCall;
     expect(sql).toMatch(/UPDATE tasks/);
-    expect(params[1]).toBe('test-init-001');
-    const result = JSON.parse(params[0]);
+    // finalizeTask 约定 id 恒为 $1，result 合并 JSON 在其后
+    expect(params[0]).toBe('test-init-001');
+    const result = JSON.parse(params[1]);
     expect(result.pr_url).toBe('https://github.com/org/repo/pull/100');
   });
 

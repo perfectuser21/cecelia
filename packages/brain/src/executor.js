@@ -30,6 +30,7 @@ import { getTaskLocation, getInternalTaskHandler } from './task-router.js';
 import { resolveExecutor } from './routing/resolve-executor.js';
 import { loadCache as _loadCache, getCachedLocation, getCachedConfig, refreshCache as _refreshCache } from './task-type-config-cache.js';
 import { updateTaskStatus, updateTaskProgress as _updateTaskProgress } from './task-updater.js';
+import { finalizeTask } from './lib/task-terminal.js';
 import { traceStep, LAYER, STATUS, EXECUTOR_HOSTS } from './trace.js';
 import { getAccountUsage } from './account-usage.js';
 import { writeDockerCallback, resolveResourceTier, isDockerAvailable, resolveBrainBaseUrl } from './docker-executor.js';
@@ -2982,12 +2983,10 @@ export const MAX_INITIATIVE_FRESH_STARTS = 3;
  */
 async function markInitiativeTerminalFailed(dbPool, taskId, failureClass, errorMessage) {
   try {
-    await dbPool.query(
-      `UPDATE tasks SET status='failed', error_message=$1,
-         custom_props = jsonb_set(COALESCE(custom_props,'{}'::jsonb), '{failure_class}', $2::jsonb)
-       WHERE id=$3`,
-      [String(errorMessage).slice(0, 500), JSON.stringify(failureClass), taskId]
-    );
+    await finalizeTask(dbPool, taskId, 'failed', {
+      set: { error_message: String(errorMessage).slice(0, 500) },
+      mergeCustomProps: { failure_class: failureClass },
+    });
     // 2b-2b: 镜像同步对应 okr_initiative → failed（non-fatal，best-effort）
     try {
       const { syncOkrInitiativeStatus } = await import('./okr-initiative-sync.js');
@@ -3457,10 +3456,7 @@ async function _triggerCeceliaRunInner(task) {
     const intResult = await internalHandler(task, {
       pool,
       updateTaskResult: async (id, result) => {
-        await pool.query(
-          `UPDATE tasks SET result = $2, status = 'completed', updated_at = NOW() WHERE id = $1`,
-          [id, JSON.stringify(result)],
-        );
+        await finalizeTask(pool, id, 'completed', { set: { result } });
       },
     });
     return { success: true, internal: true, taskId: task.id, action: intResult?.action };
@@ -3664,13 +3660,10 @@ async function _triggerCeceliaRunInner(task) {
   if (_RETIRED_HARNESS_TYPES.has(task.task_type)) {
     console.warn(`[executor] retired task_type=${task.task_type} task=${task.id} → marking pipeline_terminal_failure`);
     try {
-      await pool.query(
-        `UPDATE tasks SET status='failed', completed_at=NOW(),
-          error_message=$2,
-          payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('failure_class', 'pipeline_terminal_failure')
-         WHERE id=$1::uuid`,
-        [task.id, `task_type ${task.task_type} retired (subsumed by harness_initiative full graph)`]
-      );
+      await finalizeTask(pool, task.id, 'failed', {
+        set: { completed_at: 'now', error_message: `task_type ${task.task_type} retired (subsumed by harness_initiative full graph)` },
+        mergePayload: { failure_class: 'pipeline_terminal_failure' },
+      });
     } catch (err) {
       console.error(`[executor] mark retired task failed: ${err.message}`);
     }
@@ -4677,18 +4670,10 @@ async function syncOrphanTasksOnStartup() {
           diagnostic_info: diagnostic_info,
         };
 
-        await pool.query(
-          `UPDATE tasks SET
-            status = 'failed',
-            error_message = $3,
-            payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-          WHERE id = $1`,
-          [
-            task.id,
-            JSON.stringify({ error_details: errorDetails }),
-            `[orphan_detected] reason=${reason} at ${new Date().toISOString()}`,
-          ]
-        );
+        await finalizeTask(pool, task.id, 'failed', {
+          set: { error_message: `[orphan_detected] reason=${reason} at ${new Date().toISOString()}` },
+          mergePayload: { error_details: errorDetails },
+        });
 
         // Fire-and-forget auto-learning（orphan 路径无 execution-callback，需在此补充）
         import('./auto-learning.js').then(({ processExecutionAutoLearning }) =>

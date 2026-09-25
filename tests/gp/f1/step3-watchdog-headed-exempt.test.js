@@ -103,7 +103,8 @@ describe('F1 step3 — 有头会话超窗只降级不判死（终端态不可恢
 
   it('自动流水线路径保持判 failed —— 那条是对的，它本就该在阈值内建起 run', () => {
     expect(source).toMatch(/harness_initiative never started graph/);
-    expect(source).toMatch(/status = 'failed'/);
+    // 终态经 lib/task-terminal.js 收口（09-25）：自动流水线分支调 finalizeTask(..., 'failed')
+    expect(source).toMatch(/finalizeTask\(client, row\.id, 'failed'/);
   });
 
   it('blocked 优于 failed 的理由写进代码注释，防后人"优化"掉', () => {

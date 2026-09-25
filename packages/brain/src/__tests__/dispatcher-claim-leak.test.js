@@ -130,7 +130,8 @@ describe('dispatchNextTask — claim leak on mid-flight exception (fabf6bd6)', (
         releasedClaim = true;
         return Promise.resolve({ rows: [] });
       }
-      if (/UPDATE tasks SET status\s*=\s*'failed'/.test(sql)) {
+      // 只认针对本任务的终态标记（lib/task-terminal.js：id 恒为 $1）；tick 开头的 retired 批量 drain 也是 failed 写入，不算
+      if (/UPDATE tasks SET status\s*=\s*'failed'/.test(sql) && params?.[0] === TASK_ID) {
         markedFailed = true;
         expect(params.join(' ')).toContain(TASK_ID);
         return Promise.resolve({ rows: [] });
@@ -173,7 +174,8 @@ describe('dispatchNextTask — claim leak on mid-flight exception (fabf6bd6)', (
         releasedClaim = true;
         return Promise.resolve({ rows: [] });
       }
-      if (/UPDATE tasks SET status\s*=\s*'failed'/.test(sql)) {
+      // 只认针对本任务的终态标记（lib/task-terminal.js：id 恒为 $1）；tick 开头的 retired 批量 drain 也是 failed 写入，不算
+      if (/UPDATE tasks SET status\s*=\s*'failed'/.test(sql) && params?.[0] === TASK_ID) {
         markedFailed = true;
         return Promise.resolve({ rows: [] });
       }

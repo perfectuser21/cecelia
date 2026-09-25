@@ -12,6 +12,7 @@
  */
 
 import { RECURRING_TASK_TYPES, PROTECTED_TASK_TYPES } from './lib/task-type-registry.js';
+import { finalizeTask } from './lib/task-terminal.js';
 
 // Thresholds
 const RECURRING_QUEUE_TIMEOUT_HOURS = 24;    // Cancel recurring tasks queued for >24h
@@ -202,20 +203,10 @@ async function runTaskCleanup(db, options = {}) {
 
       if (!dryRun) {
         const idsToArchive = pausedTasks.map(t => t.id);
-        await db.query(`
-          UPDATE tasks
-          SET
-            status = 'archived',
-            updated_at = NOW(),
-            metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
-          WHERE id = ANY($1::uuid[])
-        `, [
-          idsToArchive,
-          JSON.stringify({
-            cleanup_reason: 'stale_paused',
-            cleanup_at: new Date().toISOString()
-          })
-        ]);
+        await finalizeTask(db, null, 'archived', {
+          where: { sql: 'id = ANY($1::uuid[])', params: [idsToArchive] },
+          mergeMetadata: { cleanup_reason: 'stale_paused', cleanup_at: new Date().toISOString() },
+        });
 
         stats.archived = idsToArchive.length;
         stats.archived_task_ids = idsToArchive;

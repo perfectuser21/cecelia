@@ -19,6 +19,7 @@
 import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
+import { finalizeTask } from '../lib/task-terminal.js';
 
 export const ALLOWED_ROLES = Object.freeze([
   'canary',
@@ -729,12 +730,10 @@ export function createHarnessAttemptRunRouter({
           WHERE run_id = $1::uuid AND source = 'v4-bridge' AND status = 'active'`,
         [runId],
       );
-      await pool.query(
-        `UPDATE tasks SET status='completed', updated_at=NOW()
-          WHERE id = (SELECT current_task_id FROM initiative_runs WHERE id = $1::uuid)
-            AND trigger_source = 'v4_bridge' AND status = 'in_progress'`,
-        [runId],
-      );
+      await finalizeTask(pool, null, 'completed', {
+        where: { sql: `id = (SELECT current_task_id FROM initiative_runs WHERE id = $1::uuid) AND trigger_source = 'v4_bridge'`, params: [runId] },
+        onlyIfStatus: 'in_progress',
+      });
       return res.json({ ok: true, run_id: runId, run_closed: runClosed > 0 });
     } catch (error) {
       return res.status(500).json({ error: 'attempt_run_close_failed', detail: String(error?.message ?? error) });
@@ -774,12 +773,10 @@ export function createHarnessAttemptRunRouter({
         );
         // 锚 task 一并闭合（52 批漏了这步，data 型 in_progress 锚会永久堆积）。
         // 第 55 批：tasks 表没有 source_id 列，必须经 run.current_task_id 定位。
-        await pool.query(
-          `UPDATE tasks SET status='completed', updated_at=NOW()
-            WHERE id = (SELECT current_task_id FROM initiative_runs WHERE id = $1::uuid)
-              AND trigger_source = 'v4_bridge' AND status = 'in_progress'`,
-          [row.run_id],
-        );
+        await finalizeTask(pool, null, 'completed', {
+          where: { sql: `id = (SELECT current_task_id FROM initiative_runs WHERE id = $1::uuid) AND trigger_source = 'v4_bridge'`, params: [row.run_id] },
+          onlyIfStatus: 'in_progress',
+        });
       }
       const out = {};
       for (const key of ATTEMPT_PROJECTION) out[key] = row[key] ?? null;

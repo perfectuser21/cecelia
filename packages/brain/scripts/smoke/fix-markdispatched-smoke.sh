@@ -36,15 +36,26 @@ fi
 echo "PASS: $COALESCE_MARK"
 
 echo ""
-echo "=== [BEHAVIOR-4] 验证 post-publish-data-collector.js 两处 COALESCE ==="
+echo "=== [BEHAVIOR-4] 验证 post-publish-data-collector.js 两处 payload 写入都有 NULL 防御 ==="
 
+# writeBackToPublishTask：本文件内 COALESCE(payload
 PPDC_COUNT=$(grep -c 'COALESCE(payload' \
   packages/brain/src/post-publish-data-collector.js 2>/dev/null || echo 0)
-if [ "$PPDC_COUNT" -lt 2 ]; then
-  echo "FAIL: post-publish-data-collector.js 期望至少 2 处 COALESCE，实际 $PPDC_COUNT"
+if [ "$PPDC_COUNT" -lt 1 ]; then
+  echo "FAIL: post-publish-data-collector.js writeBackToPublishTask 期望至少 1 处 COALESCE(payload，实际 $PPDC_COUNT"
   exit 1
 fi
-echo "PASS: post-publish-data-collector.js 有 $PPDC_COUNT 处 COALESCE 防御写法"
+# completeScraperTask：终态写入已收口到 lib/task-terminal.js（09-25），payload 合并的 COALESCE 防御在 hub 里
+if ! grep -q "finalizeTask(pool, scraperTaskId, 'completed'" packages/brain/src/post-publish-data-collector.js \
+  || ! grep -q 'mergePayload' packages/brain/src/post-publish-data-collector.js; then
+  echo "FAIL: post-publish-data-collector.js completeScraperTask 未经 finalizeTask + mergePayload 写终态"
+  exit 1
+fi
+if ! grep -qF 'COALESCE(${col}, '"'"'{}'"'"'::jsonb)' packages/brain/src/lib/task-terminal.js; then
+  echo "FAIL: lib/task-terminal.js 的 jsonb 合并丢了 COALESCE(col, '{}') NULL 防御"
+  exit 1
+fi
+echo "PASS: post-publish-data-collector.js writeBack 有 $PPDC_COUNT 处 COALESCE；completeScraperTask 经 hub（hub 内 COALESCE 防御在）"
 
 echo ""
 echo "=== [BEHAVIOR-4] 验证 routes/content-library.js 已使用 COALESCE ==="
