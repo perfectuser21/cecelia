@@ -14,6 +14,8 @@
 import pool from './db.js';
 import { sendFeishu } from './notifier.js';
 import { findBareRuns } from './lib/task-run.js';
+import { detectSkillBindingDrift, renderSkillBindingSection } from './lib/skill-binding-registry.js';
+import { EXECUTOR_SKILL_MAP } from './lib/task-type-registry.js';
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -243,9 +245,10 @@ export function renderBareRunSection(bareRuns) {
  * @param {Array<{platform: string, views: number|null, likes: number|null, comments: number|null}>} engagementData
  * @param {number} failureCount
  * @param {Array|null} [bareRuns] findBareRuns 返回；null = 检测不可用，不出该板块
+ * @param {{missing:Array,mismatched:Array,conflicts:Array}|null} [skillDrift] detectSkillBindingDrift 返回；null = 检测不可用，不出该板块
  * @returns {string}
  */
-export function buildReportText(reportDate, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns = null) {
+export function buildReportText(reportDate, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns = null, skillDrift = null) {
   const lines = [];
 
   lines.push(`ZenithJoy 内容日报 ${reportDate}`);
@@ -298,6 +301,12 @@ export function buildReportText(reportDate, yesterday, contentOutput, publishSta
   // ── 板块五：裸跑检测（run 原语留痕缺口，AMBER）─────────────────────────────
   if (Array.isArray(bareRuns)) {
     lines.push(renderBareRunSection(bareRuns));
+    lines.push('');
+  }
+
+  // ── 板块六：skill 绑定漂移（skill_registry 账本 vs 硬编码兜底，AMBER；链 bf5088a3 棒7）──
+  if (skillDrift) {
+    lines.push(renderSkillBindingSection(skillDrift));
     lines.push('');
   }
 
@@ -367,8 +376,11 @@ export async function generateDailyReport(dbPool = pool, now = new Date()) {
       return null;
     });
 
-    // 4. 生成日报文本（内容产出、发布情况、数据回收、异常告警、裸跑检测）
-    const reportText = buildReportText(today, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns);
+    // 3.6 skill 绑定漂移检测：检测不可用（查询失败/列未迁移）返回 null，不出该板块
+    const skillDrift = await detectSkillBindingDrift(dbPool, EXECUTOR_SKILL_MAP);
+
+    // 4. 生成日报文本（内容产出、发布情况、数据回收、异常告警、裸跑检测、skill 绑定漂移）
+    const reportText = buildReportText(today, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns, skillDrift);
 
     // 5. 写入 working_memory，key=daily_report_{YYYY-MM-DD}
     await saveReportToWorkingMemory(dbPool, today, reportText);

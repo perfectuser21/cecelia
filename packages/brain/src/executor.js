@@ -50,6 +50,7 @@ import {
 } from './lib/task-type-registry.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { startRunForExecResult } from './lib/task-run.js';
+import { resolveTaskTypeSkill, resolveSkillWithLedger } from './lib/skill-binding-registry.js';
 
 // 外部执行体（工作机领单器等）认领后的活性宽限期。
 // 真机实测单个关键词采收 17~25 分钟（逐个点进评论者主页核验身份），45 分钟留足余量；
@@ -1408,9 +1409,10 @@ function getSkillForTaskType(taskType, payload) {
     return '/dev';
   }
 
-  // 名单见 lib/task-type-registry.js（EXECUTOR_SKILL_MAP）。
-  const skillMap = EXECUTOR_SKILL_MAP;
-  return skillMap[taskType] || '/dev';
+  // 任务→技能解析：skill_registry（能力账本，进程内快照，由 preparePrompt 经 resolveSkillWithLedger
+  // 刷新）优先；硬编码 EXECUTOR_SKILL_MAP（lib/task-type-registry.js）降为兜底，漂移/缺映射会告警。
+  // 账本读取失败或尚未加载时等价于旧行为（纯硬编码）。链 bf5088a3 棒7。
+  return resolveTaskTypeSkill(taskType, EXECUTOR_SKILL_MAP) || '/dev';
 }
 
 // ============================================================
@@ -2369,7 +2371,8 @@ const _TASK_ROUTES = {
 
 async function preparePrompt(task) {
   const taskType = task.task_type || 'dev';
-  const skill = task.payload?.skill_override ?? getSkillForTaskType(taskType, task.payload);
+  // skill_override 最优先（不碰库）；否则先刷新 skill_registry 快照（TTL 内零查库、失败开放）再解析。
+  const skill = await resolveSkillWithLedger(pool, { ...task, task_type: taskType }, getSkillForTaskType);
 
   if (_DECOMP_TYPES.has(task.payload?.decomposition)) return _prepareDecompositionPrompt(task);
   if (_HARNESS_GENERATE_TYPES.has(taskType)) return _prepareHarnessGeneratePrompt(task);

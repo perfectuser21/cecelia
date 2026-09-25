@@ -12,6 +12,12 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('../db.js', () => ({ default: {} }));
 vi.mock('../notifier.js', () => ({ sendFeishu: vi.fn().mockResolvedValue(true) }));
 import { renderBareRunSection } from '../daily-report-generator.js';
+import { EXECUTOR_SKILL_MAP } from '../lib/task-type-registry.js';
+
+// skill_registry 与硬编码一致的账本行（棒7 起日报也查账本漂移；这里保持无漂移，不让 AMBER 串味）
+const consistentSkillRows = () => Object.entries(EXECUTOR_SKILL_MAP)
+  .filter(([, cmd]) => cmd)
+  .map(([taskType, cmd]) => ({ name: `n-${taskType}`, status: 'active', task_types: [taskType], dispatch_command: cmd }));
 
 describe('renderBareRunSection — 晨报裸跑 AMBER 渲染（有 dispatch_events 无 task_runs）', () => {
   it('非空裸跑列表渲染出 🟡 AMBER 标记与每个裸跑 task_id', () => {
@@ -70,6 +76,7 @@ describe('generateDailyReport — 裸跑检测接线：AMBER 行进入日报正�
             if (failBare) throw new Error('bare query down');
             return { rows: [] };
           }
+          if (/FROM skill_registry/.test(text)) return { rows: consistentSkillRows() };
           if (/INSERT INTO working_memory/.test(text)) saved.push(params);
           return { rows: [] };
         }),

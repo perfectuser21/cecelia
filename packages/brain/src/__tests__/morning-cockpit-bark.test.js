@@ -15,10 +15,21 @@ vi.mock('../triage-officer-rank.js', () => ({
 
 import { isInMorningCockpitWindow, runMorningCockpitBark } from '../morning-cockpit-bark.js';
 import { sendBark } from '../notifier.js';
+import { EXECUTOR_SKILL_MAP } from '../lib/task-type-registry.js';
 
 function makePool(rows = []) {
   return { query: vi.fn().mockResolvedValue({ rows }) };
 }
+
+// 与硬编码 EXECUTOR_SKILL_MAP 完全一致的 skill_registry 行（账本无漂移）：每个非空映射一行
+function consistentSkillRows() {
+  return Object.entries(EXECUTOR_SKILL_MAP)
+    .filter(([, cmd]) => cmd)
+    .map(([taskType, cmd]) => ({
+      name: `n-${taskType}`, status: 'active', task_types: [taskType], dispatch_command: cmd,
+    }));
+}
+const isSkillRegistrySql = (sql) => /FROM skill_registry/.test(String(sql));
 
 // 北京 08:30 = UTC 00:30
 const UTC_TRIGGER_H = 0;
@@ -175,7 +186,9 @@ describe('runMorningCockpitBark', () => {
   });
 
   it('[裸跑检测] 无裸跑不误报；检测查询失败也不拖垮晨报', async () => {
-    const clean = { query: vi.fn().mockResolvedValue({ rows: [] }) };
+    const clean = {
+      query: vi.fn(async (sql) => (isSkillRegistrySql(sql) ? { rows: consistentSkillRows() } : { rows: [] })),
+    };
     await runMorningCockpitBark(clean);
     expect(sendBark.mock.calls[0][1]).not.toMatch(/AMBER/);
 
@@ -183,11 +196,40 @@ describe('runMorningCockpitBark', () => {
     const broken = {
       query: vi.fn(async (sql) => {
         if (/FROM dispatch_events/.test(String(sql))) throw new Error('bare down');
+        if (isSkillRegistrySql(sql)) return { rows: consistentSkillRows() };
         return { rows: [] };
       }),
     };
     const result = await runMorningCockpitBark(broken);
     expect(result).toMatchObject({ sent: true });
     expect(sendBark.mock.calls[0][1]).not.toMatch(/AMBER/);
+  });
+  // ─── 能力账本（链 bf5088a3 棒7）：skill_registry 缺映射 → 晨报 AMBER ─────────
+  it('[skill 绑定] registry 缺映射 → Bark 正文出现 🟡 AMBER 行并点名缺失的 task_type', async () => {
+    const rows = consistentSkillRows().filter((r) => r.task_types[0] !== 'ci_patrol');
+    const pool = {
+      query: vi.fn(async (sql) => (isSkillRegistrySql(sql) ? { rows } : { rows: [] })),
+    };
+    await runMorningCockpitBark(pool);
+    const body = sendBark.mock.calls[0][1];
+    expect(body).toMatch(/🟡\s*AMBER skill 绑定漂移/);
+    expect(body).toContain('ci_patrol');
+  });
+
+  it('[skill 绑定] 账本与硬编码一致不误报；账本查询失败（如列未迁移）不出该行也不拖垮晨报', async () => {
+    const ok = { query: vi.fn(async (sql) => (isSkillRegistrySql(sql) ? { rows: consistentSkillRows() } : { rows: [] })) };
+    await runMorningCockpitBark(ok);
+    expect(sendBark.mock.calls[0][1]).not.toMatch(/skill 绑定/);
+
+    sendBark.mockClear();
+    const broken = {
+      query: vi.fn(async (sql) => {
+        if (isSkillRegistrySql(sql)) throw new Error('column "task_types" does not exist');
+        return { rows: [] };
+      }),
+    };
+    const result = await runMorningCockpitBark(broken);
+    expect(result).toMatchObject({ sent: true });
+    expect(sendBark.mock.calls[0][1]).not.toMatch(/skill 绑定/);
   });
 });
