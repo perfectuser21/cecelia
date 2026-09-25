@@ -439,8 +439,10 @@ describe('task-type-registry：零行为变化', () => {
   });
 
   it('TICK_DISPATCH_EXCLUDED 派生集合 == 替换前字面量 + project（PR3 放开第二道闸：qiumi_task 移出，project 留下）', () => {
-    // script_run（棒 3 PR A）：执行体接线前 tick 不许把它当普通任务派给 claude，PR B 接线后移出。
-    same(R.TICK_DISPATCH_EXCLUDED, [...TICK_DISPATCH_EXCLUDED_FIX, 'project', 'script_run']);
+    // script_run（棒 3）：PR A 期间在此名单里（执行体接线前不许被 tick 当普通任务派给 claude），
+    // PR B 接线 script-executor 后移出——必须用不做剔除的严格相等钉住。
+    same(R.TICK_DISPATCH_EXCLUDED, [...TICK_DISPATCH_EXCLUDED_FIX, 'project']);
+    expect(R.TICK_DISPATCH_EXCLUDED).not.toContain('script_run');
     expect(
       R.TICK_DISPATCH_EXCLUDED,
       'qiumi_task 还在 tick 排除名单里——dispatchQiumiTask 接线了也永远选不中',
