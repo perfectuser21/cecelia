@@ -84,3 +84,32 @@ describe('unblockTask 关闭待办', () => {
     expect(upd[1]).toContain('owner-decision:t-1');
   });
 });
+
+describe('unblockTask({db})：owner_decision 应答与写 payload/decisions 同事务', () => {
+  it('传入事务 client 时，解阻塞与关待办都走该 client，不碰全局 pool', async () => {
+    const client = {
+      query: vi.fn(async (sql) => {
+        if (/UPDATE tasks/.test(sql) && /status = 'queued'/.test(sql)) return { rows: [{ id: 't-1', title: '任务' }] };
+        return { rows: [], rowCount: 0 };
+      }),
+    };
+    mockPool.query.mockClear();
+    const r = await unblockTask('t-1', { db: client });
+    expect(r.success).toBe(true);
+    expect(client.query.mock.calls.some(([s]) => /UPDATE tasks/.test(s))).toBe(true);
+    expect(client.query.mock.calls.some(([s]) => /UPDATE pending_actions/.test(s))).toBe(true);
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+});
+
+describe('unblockExpiredTasks：等主理人的 owner_decision 不自动放行', () => {
+  it('候选 SQL 排除 blocked_reason=owner_decision 且 waiting_on=human', async () => {
+    const { unblockExpiredTasks } = await import('../task-updater.js');
+    mockPool.query.mockClear();
+    mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
+    await unblockExpiredTasks();
+    const sql = String(mockPool.query.mock.calls[0][0]);
+    expect(sql).toMatch(/blocked_until < NOW\(\)/);
+    expect(sql).toMatch(/NOT \(blocked_reason = 'owner_decision' AND blocked_detail->>'waiting_on' = 'human'\)/);
+  });
+});
