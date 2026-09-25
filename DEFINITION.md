@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.320.0
+**Brain 版本**: 1.322.0
 
 ## 1.283.0
 
@@ -48,6 +48,20 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.322.0 — 决策分档机械守卫 + 依赖单一写口（链 bf5088a3 棒5·PR A，任务 3fad28e0，决策 105a5868）
+
+- 守卫 1（goal_id 必须是 KR 级）：`POST /tasks` 与 `createRoutedTask` 给了 `goal_id` 就必须存在于 `key_results.id`，给 Objective id 返 400 `goal_id_not_key_result` 并列出其名下 KR（原先挂 Objective 的任务被 tick 派发白名单静默过滤、永远 queued 无日志）；不给 goal_id 行为不变；KR 状态不在派发白名单只提示 warning
+- 守卫 2（owner_decision 协议）：`blocked_reason=owner_decision` 必带 `blocked_detail{question,options[2+],default,deadline,reversible,waiting_on:human|machine}`，缺项 400 并列全缺项；入口四道——`blockTask`（`/tasks/:id/block` 原先一律 404，现协议违规回 400）、`POST /tasks` 建单（新增 `blocked_reason/blocked_detail` 入参）、`createRoutedTask`、迁移 469 触发器（psql 直写也拦，只拦新写入，存量 blocked 行不回填不报错）；`waiting_on=human` 生成 pending_action（signature 去重、expires_at=deadline），`machine` 不进主理人待办；`unblockTask` 关闭对应待办
+- 依赖单一写口 `lib/task-dependencies.js`：`task_dependencies` 边与 `payload.depends_on` 同步写（自环/不存在/成环拒绝）；建单带 `depends_on` 同事务写 hard 边；`harness-dag`、`proposal.js` 改走写口；新增 `GET/POST/DELETE /api/brain/tasks/:id/dependencies`；`task-dependencies-single-writer` 守卫（含变异）扫 src 内任何绕过写口的直写
+- 迁移 469 + 回滚脚本；smoke `task-governance-guards-smoke.sh` 登记 allowlist；PG 集成测试建库跑全量 migrate 验证触发器 proven-to-fire
+
+## Brain 1.321.0 — 登记闸：多刀必挂 project 根 + pushTasks 投影 Project / Blocked by（链 bf5088a3 棒5·PR B，任务 3fad28e0，决策 105a5868）
+
+- 登记闸 `lib/project-root-gate.js`：登记时 `depends_on` 非空或 `payload.multi_task===true` 即「多刀」，`parent_task_id` 祖先链（含自身，≤12 层）上必须有 `task_type='project'` 根，否则 400 `project_root_required`（带建根提示）；声明 `multi_task` 且父下已有兄弟却没写 `depends_on` 键 → 400 `depends_on_required`（显式 `depends_on: []` = 刻意并行）；project 根自身豁免。接入 `POST /tasks` 与 `POST /tasks/:id/dependencies`；闸在 Brain 建单入口，/dev Phase 0 走 POST /tasks 天然被闸，不改 engine
+- pushTasks 投影：`Blocked by` 自关联 relation（task_dependencies hard 边，前置必须已投影且带本系统指纹）+ `Project` relation 指纹（`pushed_project` / `pushed_blockers`，根后建页、依赖后加都会重推）；`ops-notion-schema.buildTasksDbProps` + `ensureOpsDbProps` 缺列即补，补不上 / 推送因 Blocked by 报错 → 该列 flag-off 冷却 10 分钟，且不清 notion_id（400 会被误判错库而重建重复页）
+- 一致性：单测断言推送用到的每个 Notion 列都在库既有列或补列清单内；smoke `project-root-gate-smoke.sh` 登记 allowlist，带 NOTION_API_KEY 时只读核对 Notion Tasks 库五列
+- 真 PG 集成测试：递归祖先链找根、`PUSH_TASKS_QUERY` 的 LATERAL 与指纹条件语义（遗产 notion_id 前置不进 relation、flag-off 不 livelock、指纹一致不再选）
 
 ## Brain 1.320.0 — runner 原语出口：脚本步留痕 + task_runs Notion 投影 + 晨报/日报裸跑 AMBER（链 bf5088a3 棒1·出口 B，任务 66db3dfb）
 
