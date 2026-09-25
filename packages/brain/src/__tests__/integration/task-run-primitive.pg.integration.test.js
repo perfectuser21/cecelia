@@ -13,20 +13,25 @@
  * 登记进 packages/brain/vitest.config.js 的 POSTGRES_INTEGRATION_TESTS，由 brain-integration
  * job 起真 PG 跑（Generator 实现阶段补登记）。
  *
- * 现状（TDD Red）：packages/brain/src/lib/task-run.js 尚未存在 → 顶层 import 失败 → 全红（预期 Red）。
  */
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import pool from '../../db.js';
-import { startRun, finishRun, findBareRuns } from '../../lib/task-run.js';
+import {
+  startRun,
+  finishRun,
+  findBareRuns,
+  recordRunFromCallback,
+  startRunForExecResult,
+} from '../../lib/task-run.js';
 
 const created = [];
 
 async function seedTask(status = 'in_progress') {
   const id = randomUUID();
   await pool.query(
-    `INSERT INTO tasks (id, task_type, status, payload) VALUES ($1,'harness_initiative',$2,'{}'::jsonb)`,
-    [id, status],
+    `INSERT INTO tasks (id, title, task_type, status, payload) VALUES ($1,$3,'harness_initiative',$2,'{}'::jsonb)`,
+    [id, status, `task-run primitive pg test ${id}`],
   );
   created.push(id);
   return id;
@@ -122,5 +127,53 @@ describe('run 原语 startRun/finishRun/findBareRuns — 真 Postgres 落库', (
     const ids = rows.map((x) => x.task_id);
     expect(ids).toContain(bare);
     expect(ids).not.toContain(ok);
+  });
+
+  it('回执通道 recordRunFromCallback：running → completed 全程恒一行，终态补 exit/产物（真 PG，脚本步样板）', async () => {
+    const t = await seedTask();
+    const r = `pg-cb-${randomUUID()}`;
+    await recordRunFromCallback({ taskId: t, runId: r, status: 'running' });
+    await recordRunFromCallback({ taskId: t, runId: r, status: 'running' });
+    await recordRunFromCallback({
+      taskId: t, runId: r, status: 'completed', exitCode: 0, result: { artifacts: ['pr:1'] },
+    });
+    const { rows } = await pool.query(
+      `SELECT status, ended_at, result, context->>'source' AS source FROM task_runs WHERE run_id=$1`,
+      [r],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('success');
+    expect(rows[0].ended_at).not.toBeNull();
+    expect(rows[0].result).toMatchObject({ exit_code: 0, artifacts: ['pr:1'] });
+    expect(rows[0].source).toBe('execution-callback');
+  });
+
+  it('回执迟到/重复：已终态的 run 不被后到的失败回执改写', async () => {
+    const t = await seedTask();
+    const r = `pg-cb-late-${randomUUID()}`;
+    await recordRunFromCallback({ taskId: t, runId: r, status: 'completed', exitCode: 0 });
+    await recordRunFromCallback({ taskId: t, runId: r, status: 'failed', exitCode: 1 });
+    const { rows } = await pool.query(`SELECT status, result FROM task_runs WHERE run_id=$1`, [r]);
+    expect(rows[0].status).toBe('success');
+    expect(String(rows[0].result.exit_code)).toBe('0');
+  });
+
+  it('startRunForExecResult：internal handler 合成 run 立即成功；派发后 findBareRuns 不再报它', async () => {
+    const t = await seedTask();
+    await pool.query(
+      `INSERT INTO dispatch_events (task_id,event_type,reason) VALUES ($1,'dispatched','pg-internal')`,
+      [t],
+    );
+    const runId = await startRunForExecResult({
+      task: { id: t, task_type: 'harness_intervention' },
+      execResult: { success: true, internal: true, action: 'diagnose' },
+      source: 'executor',
+    });
+    expect(runId).toMatch(/^internal-/);
+    const { rows } = await pool.query(`SELECT status, ended_at FROM task_runs WHERE run_id=$1`, [runId]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('success');
+    const bare = (await findBareRuns(pool, { windowMinutes: 60 })).map((x) => x.task_id);
+    expect(bare).not.toContain(t);
   });
 });

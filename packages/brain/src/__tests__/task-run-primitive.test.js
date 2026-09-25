@@ -1,4 +1,4 @@
-// 冻结合同测试（TDD Red）— run 原语纯逻辑层
+// run 原语纯逻辑层（Harness 合同 sprints/09251224-kernel-66db3dfb 冻结测试移植）
 // 覆盖父路: 独立小路（无父路）—— 链 bf5088a3 第 1 棒 F1 执行基座，无已验收前序 ability
 //
 // 本文件只测「环境无关的纯逻辑断言」（normalizeRunStatus / buildRunContext /
@@ -7,7 +7,6 @@
 // packages/brain/src/__tests__/integration/task-run-primitive.pg.integration.test.js
 // （真 Postgres，禁 mock db.js 边），由 brain-integration 跑。
 //
-// 现状：packages/brain/src/lib/task-run.js 尚未存在 → import 失败 → 全红（预期 Red）。
 
 import { describe, it, expect } from 'vitest';
 import {

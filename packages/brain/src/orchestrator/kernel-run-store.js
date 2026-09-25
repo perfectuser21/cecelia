@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { assertRouteSnapshotLaunchAuthority } from './route-snapshot-authority.js';
 import { resolvePlannerRecoveryRunAuthority } from './planner-recovery-run-authority.js';
 import { KERNEL_RUN_ELIGIBLE_TASK_TYPES } from '../lib/task-type-registry.js';
+import { finishRun } from '../lib/task-run.js';
 
 const ACTIVE_PHASES = new Set([
   'planning',
@@ -922,6 +923,12 @@ export async function finalizeKernelRun(pool, {
 
     await client.query('COMMIT');
     committed = true;
+    // run 原语补终态（fail-open，已终态不覆盖）：kernel run 不走 execution-callback，终态只在这里落。
+    await finishRun({
+      runId,
+      status: outcome === 'done' ? 'completed' : 'failed',
+      error: outcome === 'failed' ? reason : undefined,
+    }, { pool });
     return {
       changed,
       outcome,
