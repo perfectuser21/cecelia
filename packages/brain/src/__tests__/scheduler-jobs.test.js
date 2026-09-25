@@ -141,6 +141,11 @@ vi.mock('../owner-decision-deadline.js', () => ({
   runOwnerDecisionDeadline: vi.fn().mockResolvedValue({ skipped: true }),
 }));
 
+// skill-dist-drift 真实 handler 会 ssh 到 MMV/跑场机取清单——单测绝不真发 ssh；行为由 skill-dist-drift.test.js（注入假执行器）覆盖。
+vi.mock('../skill-dist-drift.js', () => ({
+  runSkillDistDrift: vi.fn().mockResolvedValue({ skipped: true, reason: 'interval_gate' }),
+}));
+
 vi.mock('../ops-scheduler-liveness.js', () => ({
   runSchedulerLiveness: vi.fn().mockResolvedValue({ ok: true, jobs: 0, flippedDead: 0, recovered: 0 }),
 }));
