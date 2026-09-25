@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.322.0
+**Brain 版本**: 1.324.0
 
 ## 1.283.0
 
@@ -48,6 +48,24 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.324.0 — owner_decision 应答通路：待办批准/驳回处理器 + 到期按默认执行 sweeper（任务 8aa79219，链 bf5088a3 棒 9，决策 105a5868）
+
+- 根因：棒 5 让 `blocked_reason='owner_decision'` 必带协议并为 `waiting_on=human` 生成待办，但应答通路缺失——`actionHandlers` 没有 `owner_decision`（主理人点批准得到 No handler），协议承诺的「到期不答按默认走」没有任何代码执行；另有两处既有行为会让承诺落空：`unblockExpiredTasks` 在 `blocked_until` 到期时无决议地放行 owner_decision 任务，`expireStaleProposals` 在 deadline 到期把待办标 expired（不可逆决策顺延再催时主理人已无待办可点）。
+- 批准：新增 `lib/owner-decision-resolve.js`，`applyOwnerDecisionResolution` 一个内部函数（同一事务：行锁复核 → 选项解析 → 写 `payload.owner_decision.resolution={choice,chosen_option,by,at,via}` 与协议快照 → 关待办 → `unblockTask(taskId,{db})` 回 queued → 写 `decisions`）。`POST /pending-actions/:id/approve {reviewer, choice}`：choice 为选项标签/全文或 `default`，缺省取协议 default；未知 choice 400 不改任何状态；二次批准 409；`waiting_on=machine` 400。
+- 驳回：`rejectPendingAction` 事务化，owner_decision 同事务写 `resolution={choice:null,via:'reject'}`，任务保持 blocked；已处理 409。
+- 到期默认：新 scheduler job `owner-decision-deadline`（进程内 10min 自 gate，声明 `livenessIntervalSec:60`）。可逆且有 default → 与批准同一函数应用默认（`via=default_on_deadline, by=system`，decisions made_by=system，Bark P2 带 dedupeKey `owner_decision_default_<task_id>`）；不可逆 → 不自动执行，`blocked_until` 顺延 24h、`payload.owner_decision.deadline_deferrals` 计数留痕、待办 expires_at 同步顺延、Bark P1。到期时刻取 `max(deadline, blocked_until)`；已驳回的不被默认覆盖。整轮有界：SQL `query_timeout`、每任务事务 `SET LOCAL statement_timeout/lock_timeout`、取连接超时、90s 预算、单任务失败隔离。
+- 旁路堵死：`unblockExpiredTasks` 排除 `owner_decision + waiting_on=human`；`expireStaleProposals` 与 `approvePendingAction` 的过期检查对 owner_decision 待办不按时间过期。
+- `decisions.category` 用 `decision`（`execution` 不在 `decisions_category_chk` 白名单）。
+- 测试：`__tests__/integration/owner-decision-approval.pg.integration.test.js`（真库临时库，20 用例覆盖批准选 A/选 default/未知 choice/二次批准/machine 被拒/驳回/可逆走默认/不可逆顺延/幂等及旁路排除）；`lib/__tests__/owner-decision-resolve.test.js`；`routes/__tests__/actions-owner-decision.test.js`；scheduler-jobs 与 task-updater 单测补断言；smoke `owner-decision-approval-smoke.sh`。
+
+## Brain 1.323.0 — 任务终态写入收口到状态机层 lib/task-terminal.js：所有终态路径必经，completed_no_pr 也接棒
+
+- 根因（任务 384de1e7，链 bf5088a3 棒 2，决策 105a5868 / ec7bf540；09-22 七层审计）：接棒（completed → handoff.next_steps 自动登记下一棒）只挂在 `PATCH /tasks` 一条路径；executor / monitor-loop / crystallize-orchestrator / harness-attempt-run / shepherd / publish-monitor / postdeploy-verifier / pr-callback-handler / routes/harness / routes/eval 等直接 `UPDATE tasks SET status='completed'` 全部绕过；openclaw-agent 收割写 completed_no_pr 而 relay-baton 只认 completed → 秋米任务 100% 不接棒。
+- 修法：新增 `lib/task-terminal.js` 两个入口——`finalizeTask(db, taskId, status, opts)`（列白名单 SQL 构造 + CAS + jsonb 合并 + 额外 WHERE，写完自动跑钩子）与 `afterTerminalTransition(pool, taskId, status)`（动态 SET 写入者 / 事务路径 COMMIT 后调）；`RELAY_TERMINAL_STATUSES = [completed, completed_no_pr]`，relay-baton 改认它；failed / archived 走同一出口不接棒。仓库内 30+ 处字面量直写终态站点全部改经 finalizeTask；PATCH 两条路由、执行回调（队列 + HTTP）、Kernel run 终态化、actions.update_task/bulk、task-updater 终态分支接钩子（放在 completed_no_pr 重排块之后：被重排回 queued 的自然不接棒）。
+- 机械守卫 `__tests__/task-terminal-write-guard.test.js`（proven-to-fire 实证：植入直写文件即红）：① hub 之外任何 `UPDATE tasks … SET status='<终态>'` 红；② 参数化 `status = $N` 写入者必须登记 `TASK_STATUS_WRITER_REGISTRY`；③ 登记为可能写终态的模块源码必须出现 afterTerminalTransition( / finalizeTask(；④ 登记表无幽灵条目。
+- 终态写入统一副作用：清 claimed_by / claimed_at；completed 类 `completed_at = COALESCE(completed_at, NOW())`（task-updater 沿用历史 NOW() 覆盖）；接棒异常吞成 warn 不阻塞调用方。
+- 本棒不含任务描述 ③skill relay 落 step 行 / ④work-commander 派发 step 行 / ⑤task_dependencies 硬边统一 / ⑥断链晨报 AMBER——进 handoff.next_steps。
 
 ## Brain 1.322.0 — 决策分档机械守卫 + 依赖单一写口（链 bf5088a3 棒5·PR A，任务 3fad28e0，决策 105a5868）
 
