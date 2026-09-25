@@ -7,7 +7,7 @@ import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 import { pushRegisteredRows, resolveDbId } from './lib/notion-projection-engine.js';
-import { OPS_DB_PROPS } from './ops-notion-schema.js';
+import { OPS_DB_PROPS, buildTasksDbProps } from './ops-notion-schema.js';
 import {
   ensureOpsDbProps, inferProviderFromModelId, pickProviderQuota, buildQuotaProps,
 } from './ops-quota-notion.js';
@@ -240,10 +240,27 @@ async function pushIssues(pool, token) {
  */
 export const PUSH_TASKS_QUERY = `
     SELECT t.id, t.title, t.status, t.priority, t.task_type, t.kind, t.notion_id, t.notion_props,
-           proj.notion_id AS project_notion_id
+           proj.notion_id AS project_notion_id,
+           blk.ids AS blocker_notion_ids
       FROM tasks t
       LEFT JOIN tasks proj ON proj.id = t.parent_task_id AND proj.task_type = 'project'
-     WHERE (t.notion_props->>'pushed_status') IS DISTINCT FROM t.status
+      -- Blocked by：hard 依赖里「已投影且带本系统指纹」的前置任务（旧时代遗产 notion_id 指向别处，不能当 relation 目标）
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(array_agg(b.notion_id ORDER BY b.notion_id), ARRAY[]::text[]) AS ids
+          FROM task_dependencies d
+          JOIN tasks b ON b.id = d.to_task_id
+         WHERE d.from_task_id = t.id
+           AND d.edge_type = 'hard'
+           AND d.gap_id IS NULL
+           AND b.notion_id IS NOT NULL
+           AND (b.notion_props->>'pushed_status') IS NOT NULL
+      ) blk ON true
+     WHERE (
+             (t.notion_props->>'pushed_status') IS DISTINCT FROM t.status
+             -- 根后建页 / 依赖后加：status 没变也要重推（$1=Blocked by 投影未被 flag-off 时才看依赖指纹）
+             OR (proj.notion_id IS NOT NULL AND (t.notion_props->>'pushed_project') IS DISTINCT FROM proj.notion_id)
+             OR ($1::boolean AND COALESCE(t.notion_props->>'pushed_blockers', '') IS DISTINCT FROM array_to_string(blk.ids, ','))
+           )
        AND NOT (t.task_type = ANY(ARRAY[${PUSH_EXCLUDED_TASK_TYPES.map((t) => `'${t}'`).join(',')}]::text[]))
        AND t.task_type <> 'project'
        AND (
@@ -254,49 +271,115 @@ export const PUSH_TASKS_QUERY = `
      ORDER BY t.updated_at DESC
      LIMIT 10`;
 
+// ── Tasks 库 Blocked by 投影的 flag-off 状态（链 bf5088a3 棒5·PR B）──────────────────────────
+// 缺列先补；补不上 / 推送含 Blocked by 报错 → 本进程停投影该列一个 TTL（默认 active，条件 SQL 里 $1）。
+// Project 列是库既有列，不在此开关内。
+const TASKS_PROJECTION_TTL_MS = 10 * 60 * 1000;
+const tasksProjectionState = { ensuredAt: 0, disabledUntil: 0 };
+
+export function isTasksBlockedByActive(now = Date.now()) {
+  return now >= tasksProjectionState.disabledUntil;
+}
+
+export function resetTasksProjectionStateForTest() {
+  tasksProjectionState.ensuredAt = 0;
+  tasksProjectionState.disabledUntil = 0;
+}
+
+/**
+ * 缺列即补（幂等）。库的 id 用推送用的同一常量（守夜 A9 断言它 == notion_projection_map 的 tasks 行）。
+ * @returns {Promise<boolean>} Blocked by 是否可投影；失败只记日志、进入 TTL 冷却，绝不抛。
+ */
+export async function ensureTasksProjection(pool, token, now = Date.now()) {
+  if (now < tasksProjectionState.disabledUntil) return false;
+  if (now - tasksProjectionState.ensuredAt < TASKS_PROJECTION_TTL_MS && tasksProjectionState.ensuredAt > 0) return true;
+  try {
+    const { added } = await ensureOpsDbProps(token, NOTION_TASKS_DB, buildTasksDbProps(NOTION_TASKS_DB), { notionReq });
+    if (added.length) console.log(`[tasks-push] Tasks 库补列: ${added.join(', ')}`);
+    tasksProjectionState.ensuredAt = now;
+    return true;
+  } catch (err) {
+    tasksProjectionState.disabledUntil = now + TASKS_PROJECTION_TTL_MS;
+    await logSyncError(pool, `[tasks-push] Tasks 库补列失败，Blocked by 投影暂停 10 分钟: ${err.message}`);
+    return false;
+  }
+}
+
 async function pushTasks(pool, token) {
-  const { rows } = await pool.query(PUSH_TASKS_QUERY);
-  await pushTaskRows(pool, token, rows);
+  const { rows } = await pool.query(PUSH_TASKS_QUERY, [isTasksBlockedByActive()]);
+  if (rows.length === 0) return;
+  const blockedBy = await ensureTasksProjection(pool, token);
+  await pushTaskRows(pool, token, rows, { blockedBy });
 }
 
 /** 可测内核：对给定行执行推送（导出仅供测试注入行数据） */
-export async function pushTasksForTest(pool, token, rows) {
-  return pushTaskRows(pool, token, rows);
+export async function pushTasksForTest(pool, token, rows, opts = {}) {
+  return pushTaskRows(pool, token, rows, opts);
 }
 
-async function pushTaskRows(pool, token, rows) {
+/**
+ * 一个任务 → Notion Tasks 库 properties（纯函数，可独立验证）。
+ * Blocked by 只在 blockedBy 开启时发：有前置 → relation；前置被清空（指纹里曾有）→ 发空 relation 清掉；从没有过 → 不发。
+ */
+export function buildTaskNotionProperties(t, { blockedBy = false } = {}) {
+  const notionStatus = TASK_STATUS_TO_NOTION[t.status] || 'Planned';
+  const blockers = Array.isArray(t.blocker_notion_ids) ? t.blocker_notion_ids : [];
+  const hadBlockers = Boolean(t.notion_props?.pushed_blockers);
+  return {
+    Name: { title: [{ text: { content: `[${t.priority || 'P2'}] ${String(t.title || '').slice(0, 180)}` } }] },
+    Status: { status: { name: notionStatus } },
+    // kind 真列（决策 df67a9d6）进 Description 文本，不给 Notion 加列（缺列即整条推送红）；
+    // `brain:<id>` 标记位置不变，各 ingest 用 includes('brain:') 判定不受影响。
+    Description: { rich_text: buildRichText(`${t.task_type || 'task'}${t.kind ? ` · ${t.kind}` : ''} · brain:${t.id}`) },
+    // 接力棒：子任务挂回 Projects 里的根页（根由 notion-relay-projection 推）
+    ...(t.project_notion_id ? { Project: { relation: [{ id: t.project_notion_id }] } } : {}),
+    // 依赖：Blocked by 自关联（task_dependencies hard 边，前置必须已投影）
+    ...(blockedBy && (blockers.length > 0 || hadBlockers)
+      ? { 'Blocked by': { relation: blockers.map((id) => ({ id })) } }
+      : {}),
+  };
+}
+
+async function pushTaskRows(pool, token, rows, { blockedBy = false } = {}) {
   for (const t of rows) {
     try {
-      const notionStatus = TASK_STATUS_TO_NOTION[t.status] || 'Planned';
-      const properties = {
-        Name: { title: [{ text: { content: `[${t.priority || 'P2'}] ${String(t.title || '').slice(0, 180)}` } }] },
-        Status: { status: { name: notionStatus } },
-        // kind 真列（决策 df67a9d6）进 Description 文本，不给 Notion 加列（缺列即整条推送红）；
-        // `brain:<id>` 标记位置不变，各 ingest 用 includes('brain:') 判定不受影响。
-        Description: { rich_text: buildRichText(`${t.task_type || 'task'}${t.kind ? ` · ${t.kind}` : ''} · brain:${t.id}`) },
-        // 接力棒：子任务挂回 Projects 里的根页（根由 notion-relay-projection 推）
-        ...(t.project_notion_id ? { Project: { relation: [{ id: t.project_notion_id }] } } : {}),
-      };
+      const properties = buildTaskNotionProperties(t, { blockedBy });
+      // 指纹：status 之外再记 Project 根 / 前置任务集合，根后建页、依赖后加才会重推。
+      // blockedBy 关闭时不碰 pushed_blockers，等列恢复后条件 SQL 会自然把它们重新选出来。
+      const fpProject = t.project_notion_id || '';
+      const fpBlockers = (Array.isArray(t.blocker_notion_ids) ? t.blocker_notion_ids : []).join(',');
+      const fpSql = blockedBy
+        ? `jsonb_build_object('pushed_status', $2::text, 'pushed_project', $3::text, 'pushed_blockers', $4::text)`
+        : `jsonb_build_object('pushed_status', $2::text, 'pushed_project', $3::text)`;
+      const fpParams = blockedBy ? [t.status, fpProject, fpBlockers] : [t.status, fpProject];
       const managed = t.notion_props && t.notion_props.pushed_status && t.notion_id;
       if (managed) {
         await notionReq(token, `/pages/${t.notion_id}`, 'PATCH', { properties });
         await pool.query(
-          `UPDATE tasks SET notion_props = COALESCE(notion_props,'{}'::jsonb) || jsonb_build_object('pushed_status', $2::text), notion_synced_at=NOW() WHERE id=$1`,
-          [t.id, t.status],
+          `UPDATE tasks SET notion_props = COALESCE(notion_props,'{}'::jsonb) || ${fpSql}, notion_synced_at=NOW() WHERE id=$1`,
+          [t.id, ...fpParams],
         );
       } else {
         const page = await notionReq(token, '/pages', 'POST', {
           parent: { database_id: NOTION_TASKS_DB },
           properties,
         });
+        // 页 id 是 $2，指纹参数顺延一位
+        const createFpSql = fpSql.replace(/\$([234])::text/g, (_m, n) => `$${Number(n) + 1}::text`);
         await pool.query(
-          `UPDATE tasks SET notion_id=$2, notion_props = COALESCE(notion_props,'{}'::jsonb) || jsonb_build_object('pushed_status', $3::text), notion_synced_at=NOW() WHERE id=$1`,
-          [t.id, page.id, t.status],
+          `UPDATE tasks SET notion_id=$2, notion_props = COALESCE(notion_props,'{}'::jsonb) || ${createFpSql}, notion_synced_at=NOW() WHERE id=$1`,
+          [t.id, page.id, ...fpParams],
         );
       }
     } catch (err) {
       console.warn(`[notion-push-sync] task ${t.id} 推送失败: ${err.message}`);
       await logSyncError(pool, err.message);
+      // 推送因 Blocked by 列报错：只暂停该列投影，绝不走下面的「清 notion_id 重建」——
+      // 400 会被 isWrongDatabaseError 误判成错库，重建 = 每个有依赖的任务多出一页重复页
+      if (blockedBy && /Blocked by/i.test(err.message)) {
+        tasksProjectionState.disabledUntil = Date.now() + TASKS_PROJECTION_TTL_MS;
+        continue;
+      }
       // 我方页面被人在 Notion 删除(404)，或 legacy id 绑到错库(400 schema 不符)
       // → 清指纹与 id，下轮 create 重建到正确的库
       if ((/404/.test(err.message) && t.notion_props?.pushed_status) || isWrongDatabaseError(err)) {

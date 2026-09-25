@@ -22,6 +22,7 @@ import { CODING_MUTATION_TASK_TYPES as _CM } from '../lib/task-type-registry.js'
 import { assertGoalIsKeyResult } from '../lib/goal-guard.js';
 import { assertOwnerDecisionProtocol } from '../lib/owner-decision.js';
 import { normalizeDependsOn, assertDependsOnExist } from '../lib/task-dependencies.js';
+import { assertProjectRootForMultiTask } from '../lib/project-root-gate.js';
 import { governanceErrorResponse } from '../lib/governance-errors.js';
 import { registerTaskDependencyRoutes } from './task-dependencies.js';
 
@@ -222,6 +223,13 @@ router.post('/', async (req, res) => {
       // 依赖单一写口的入口校验：depends_on 必须是存在的任务 uuid 数组
       const dependsOnIds = normalizeDependsOn(payload?.depends_on);
       await assertDependsOnExist(pool, dependsOnIds);
+      // 登记闸（PR B）：多刀工作（带依赖 / 声明 multi_task）必须挂 project 根，否则 400
+      await assertProjectRootForMultiTask(pool, {
+        taskType: task_type,
+        parentTaskId: parentTaskIdInput ?? payload?.parent_task_id ?? null,
+        dependsOn: dependsOnIds,
+        payload,
+      });
     } catch (guardErr) {
       const mapped = governanceErrorResponse(guardErr);
       if (!mapped) throw guardErr;

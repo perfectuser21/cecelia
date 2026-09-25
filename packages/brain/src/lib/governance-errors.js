@@ -5,6 +5,7 @@
 import { GoalGuardError } from './goal-guard.js';
 import { OwnerDecisionProtocolError } from './owner-decision.js';
 import { TaskDependencyError } from './task-dependencies.js';
+import { ProjectRootGateError } from './project-root-gate.js';
 
 /**
  * @param {unknown} err
@@ -16,6 +17,9 @@ export function governanceErrorResponse(err) {
   }
   if (err instanceof OwnerDecisionProtocolError) {
     return { status: 400, body: { error: err.code, reason_code: err.code, message: err.message, violations: err.violations } };
+  }
+  if (err instanceof ProjectRootGateError) {
+    return { status: 400, body: { error: err.code, reason_code: err.code, message: err.message, hint: err.hint, ...err.details } };
   }
   if (err instanceof TaskDependencyError) {
     const status = err.code === 'dependency_cycle' ? 409 : 400;

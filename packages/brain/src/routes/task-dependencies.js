@@ -12,6 +12,7 @@ import {
   addTaskDependencies, removeTaskDependency, listTaskDependencies, EDGE_TYPES, TaskDependencyError,
 } from '../lib/task-dependencies.js';
 import { governanceErrorResponse } from '../lib/governance-errors.js';
+import { assertProjectRootForMultiTask } from '../lib/project-root-gate.js';
 
 async function taskExists(pool, id) {
   const { rows } = await pool.query('SELECT id, task_type FROM tasks WHERE id = $1::uuid', [id]);
@@ -44,7 +45,12 @@ export function registerTaskDependencyRoutes(router, { pool }) {
       if (!Array.isArray(wanted) || wanted.length === 0) {
         return res.status(400).json({ error: 'depends_on_required', reason_code: 'depends_on_required', message: '需要 depends_on: [任务 uuid...] 或 depends_on_id' });
       }
-      if (!(await taskExists(pool, id))) return res.status(404).json({ error: 'Task not found', id });
+      const task = await taskExists(pool, id);
+      if (!task) return res.status(404).json({ error: 'Task not found', id });
+      // 登记闸（PR B）：给任务连依赖 = 多刀，本任务必须已挂 project 根（自身是 project 根豁免）
+      await assertProjectRootForMultiTask(pool, {
+        taskType: task.task_type, parentTaskId: id, dependsOn: wanted, payload: {},
+      });
 
       const result = await addTaskDependencies(pool, id, wanted, { edgeType, strict: true });
       res.status(201).json({ task_id: id, ...result, ...(await listTaskDependencies(pool, id)) });
