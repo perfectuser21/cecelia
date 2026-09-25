@@ -891,6 +891,122 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
     expect(stale.params).toContain('failed');
   });
 
+  // ── 脚本步 run 原语（链 bf5088a3 棒1 PR B）：ssh 直派 / webhook 派发落 task_runs，收割补终态 ──
+  const runWrites = (kind) => mockQuery.mock.calls
+    .filter(([sql]) => new RegExp(`${kind} (INTO )?task_runs`, 'i').test(String(sql)))
+    .map(([sql, params]) => ({ sql: String(sql), params }));
+
+  it('脚本步 run：ssh 直派入账后 startRun 落一行 running（source=ssh-workflow，run_id 与入账一致）', async () => {
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn());
+    stubOpsLookup({
+      wfRow: { wf_id: 'JinoHarvestDirect', name: '金诺采收·直驾', dispatch: {
+        channel: 'ssh', machine: 'xian-mac-m4', command: 'zsh ~/bin-harvest/batch-harvest.sh a b c',
+      } },
+    });
+    mockCreateRoutedTask.mockResolvedValue({ task_id: 'wf-task-ssh', task: { id: 'wf-task-ssh' } });
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [relationPage({ withAgent: false })] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({}), execFn: () => 'DISPATCHED',
+    });
+    const req = mockCreateRoutedTask.mock.calls[0][1];
+    const ins = runWrites('INSERT');
+    expect(ins).toHaveLength(1);
+    expect(ins[0].params[0]).toBe('wf-task-ssh');
+    expect(ins[0].params[1]).toBe(req.metadata.run_id);
+    const ctx = JSON.parse(ins[0].params[2]);
+    expect(ctx).toMatchObject({ source: 'ssh-workflow', wf_id: 'JinoHarvestDirect', machine: 'xian-mac-m4' });
+  });
+
+  it('脚本步 run：webhook 派发成功同样落 run（source=openclaw-webhook）；入账失败则不落（无 task 可挂）', async () => {
+    const mod = await import('../notion-push-sync.js');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200 })));
+    stubOpsLookup({
+      wfRow: { wf_id: 'AwrSocialLeadgenV4', name: 'Social Leadgen V4', dispatch: { webhook_url: 'https://x/run' } },
+      agentRow: { name: 'affine-yuesheng', dispatch: { template: 'yueshengyun-daily.json' } },
+    });
+    mockCreateRoutedTask.mockResolvedValue({ task_id: 'wf-task-1', task: { id: 'wf-task-1' } });
+    mockNotionReq.mockImplementation(async (t, path) => (
+      String(path).includes('/query') ? { results: [relationPage()] } : {}
+    ));
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({ tenant_id: 'yueshengyun' }),
+    });
+    const ins = runWrites('INSERT');
+    expect(ins).toHaveLength(1);
+    expect(JSON.parse(ins[0].params[2]).source).toBe('openclaw-webhook');
+
+    mockQuery.mockClear();
+    mockCreateRoutedTask.mockRejectedValue(new Error('route down'));
+    stubOpsLookup({
+      wfRow: { wf_id: 'AwrSocialLeadgenV4', name: 'Social Leadgen V4', dispatch: { webhook_url: 'https://x/run' } },
+      agentRow: { name: 'affine-yuesheng', dispatch: { template: 'yueshengyun-daily.json' } },
+    });
+    await mod.pullNotionTasksForTest({ query: mockQuery }, 'fake-token', {
+      env: {}, readTemplateFn: () => ({ tenant_id: 'yueshengyun' }),
+    });
+    expect(runWrites('INSERT')).toHaveLength(0);
+  });
+
+  it('脚本步 run：ssh 收割 exit=0 → success(exit_code=0)；exit=1 → failed(exit_code=1)；只认真实 exit', async () => {
+    const mod = await import('../notion-push-sync.js');
+    mockQuery.mockImplementation(async (sql) => {
+      if (/payload->>'channel' = 'ssh'/.test(sql) && /SELECT/.test(sql)) {
+        return { rows: [
+          { id: 't-ok', run_id: 'notion-aa-1', machine: 'xian-mac-m4', notion_page_id: null, is_stale: false },
+          { id: 't-bad', run_id: 'notion-bb-1', machine: 'xian-mac-m4', notion_page_id: null, is_stale: false },
+        ] };
+      }
+      return { rows: [] };
+    });
+    const execFn = (args) => (args.join(' ').includes('notion-aa-1') ? '0\n' : '1\n');
+    await mod.reapSshWorkflowRunsForTest({ query: mockQuery }, 'fake-token', { execFn });
+    const upd = runWrites('UPDATE');
+    const ok = upd.find((u) => u.params[0] === 'notion-aa-1');
+    const bad = upd.find((u) => u.params[0] === 'notion-bb-1');
+    expect(ok.params[1]).toBe('success');
+    expect(JSON.parse(ok.params[2]).exit_code).toBe(0);
+    expect(bad.params[1]).toBe('failed');
+    expect(JSON.parse(bad.params[2]).exit_code).toBe(1);
+  });
+
+  it('脚本步 run：ssh 收割探不到 exit 且未超时 → 不 finishRun（保持 running，绝不伪造终态）；超 6h → timeout', async () => {
+    const mod = await import('../notion-push-sync.js');
+    mockQuery.mockImplementation(async (sql) => {
+      if (/payload->>'channel' = 'ssh'/.test(sql) && /SELECT/.test(sql)) {
+        return { rows: [
+          { id: 't-young', run_id: 'notion-young-1', machine: 'xian-mac-m4', notion_page_id: null, is_stale: false },
+          { id: 't-stale', run_id: 'notion-stale-1', machine: 'xian-mac-m4', notion_page_id: null, is_stale: true },
+        ] };
+      }
+      return { rows: [] };
+    });
+    await mod.reapSshWorkflowRunsForTest({ query: mockQuery }, 'fake-token', { execFn: () => 'NO_EXIT' });
+    const upd = runWrites('UPDATE');
+    expect(upd.find((u) => u.params[0] === 'notion-young-1')).toBeUndefined();
+    expect(upd.find((u) => u.params[0] === 'notion-stale-1').params[1]).toBe('timeout');
+  });
+
+  it('脚本步 run：OpenClaw run 终态回写 workflow_run 时同步 finishRun（success→success，其余→failed）', async () => {
+    const mod = await import('../notion-push-sync.js');
+    mockQuery.mockImplementation(async (sql) => {
+      if (/FROM ops_runs/.test(sql)) {
+        return { rows: [
+          { run_id: 'notion-3dbc40c2ba63809392bfdc952f9a1079-1', status: 'success' },
+          { run_id: 'notion-3dbc40c2ba63809392bfdc952f9a1080-1', status: 'failed' },
+        ] };
+      }
+      return { rows: [] };
+    });
+    mockNotionReq.mockResolvedValue({});
+    await mod.syncOpenClawRunsForTest({ query: mockQuery }, 'fake-token');
+    const upd = runWrites('UPDATE');
+    expect(upd.find((u) => u.params[0].endsWith('1079-1')).params[1]).toBe('success');
+    expect(upd.find((u) => u.params[0].endsWith('1080-1')).params[1]).toBe('failed');
+  });
+
   it('派发成功即入 tasks 账：workflow_run task（operations 路线，payload 含 run_id/wf_id）', async () => {
     // 一切执行进 tasks 账（决策 2dbabb48）：OpenClaw run 不再绕账
     const mod = await import('../notion-push-sync.js');
