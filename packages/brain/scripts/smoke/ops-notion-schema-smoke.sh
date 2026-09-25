@@ -19,7 +19,9 @@ const wfCols = new Set(Object.keys(OPS_DB_PROPS.workflows));
 const unitCols = new Set(Object.keys(OPS_DB_PROPS.graph));
 const runCols = new Set(Object.keys(OPS_DB_PROPS.runs));
 const skillCols = new Set(Object.keys(OPS_DB_PROPS.skills));
-const known = new Set([...wfCols, ...unitCols, ...runCols, ...skillCols]);
+// task_runs 投影库「Runs」（链 bf5088a3 棒1）：pushTaskRuns 的列同样必须先进库定义再推
+const taskRunCols = new Set(Object.keys(OPS_DB_PROPS.task_runs));
+const known = new Set([...wfCols, ...unitCols, ...runCols, ...skillCols, ...taskRunCols]);
 const missing = [...new Set(emitted)].filter((c) => !known.has(c));
 if (missing.length) fail('推送发了库定义里没有的列: ' + missing.join(', ') + ' —— 上线即 400 静默停更');
 pass('推送用到的 ' + new Set(emitted).size + ' 个列全在库定义里');
