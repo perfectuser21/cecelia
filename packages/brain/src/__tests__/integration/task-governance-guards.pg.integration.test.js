@@ -223,7 +223,7 @@ describe.sequential('守卫 2：createRoutedTask 真库 owner_decision', () => {
 
   it('human：落 blocked_reason/blocked_detail 且生成 pending_action（signature 带任务 id，expires_at=deadline）', async () => {
     const r = await mk({
-      task: { priority: 'P2', status: 'blocked', blocked_reason: 'owner_decision', blocked_detail: goodDetail() },
+      task: { priority: 'P2', status: 'blocked', blocked_at: new Date().toISOString(), blocked_reason: 'owner_decision', blocked_detail: goodDetail() },
     });
     const t = await pool.query('SELECT status, blocked_reason, blocked_detail FROM tasks WHERE id=$1', [r.task_id]);
     expect(t.rows[0].status).toBe('blocked');
@@ -240,7 +240,7 @@ describe.sequential('守卫 2：createRoutedTask 真库 owner_decision', () => {
 
   it('machine：落库但不生成 pending_action（不进主理人待办）', async () => {
     const r = await mk({
-      task: { priority: 'P2', status: 'blocked', blocked_reason: 'owner_decision', blocked_detail: goodDetail({ waiting_on: 'machine' }) },
+      task: { priority: 'P2', status: 'blocked', blocked_at: new Date().toISOString(), blocked_reason: 'owner_decision', blocked_detail: goodDetail({ waiting_on: 'machine' }) },
     });
     const pa = await pool.query(`SELECT 1 FROM pending_actions WHERE signature = $1`, [`owner-decision:${r.task_id}`]);
     expect(pa.rows).toHaveLength(0);

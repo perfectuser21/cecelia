@@ -810,10 +810,13 @@ describe('unblockExpiredTasks', () => {
       ],
     });
     // 后续每次 unblockTask 调用一次 pool.query
+    // unblockTask 成功后还会补一次 pending_actions 关闭查询（守卫 2，链 bf5088a3 棒5）
     const unblocked = { status: 'queued' };
     mockPool.query
       .mockResolvedValueOnce({ rows: [{ id: 'task-001', title: '任务A', ...unblocked }] })
-      .mockResolvedValueOnce({ rows: [{ id: 'task-002', title: '任务B', ...unblocked }] });
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'task-002', title: '任务B', ...unblocked }] })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });
 
     const result = await unblockExpiredTasks();
 

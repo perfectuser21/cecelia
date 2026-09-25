@@ -7,6 +7,10 @@
 import pool from './db.js';
 import { publishTaskStarted, publishTaskCompleted, publishTaskFailed, publishTaskProgress } from './events/taskEvents.js';
 import { emit } from './event-bus.js';
+import {
+  assertOwnerDecisionProtocol, OwnerDecisionProtocolError, OWNER_DECISION_REASON,
+  openOwnerDecisionPendingAction, closeOwnerDecisionPendingAction,
+} from './lib/owner-decision.js';
 
 // Security: Whitelist of allowed columns for dynamic updates
 const ALLOWED_COLUMNS = ['assigned_to', 'priority', 'payload', 'error', 'artifacts', 'run_id', 'error_message'];
@@ -196,6 +200,8 @@ function broadcastTaskUpdate(task) {
  */
 export async function blockTask(taskId, { reason, detail = null, until = null } = {}) {
   try {
+    // 守卫 2（决策 105a5868）：owner_decision 必须带协议，缺项直接拒，不写库
+    assertOwnerDecisionProtocol({ reason, detail });
     const blockedUntil = until ? (until instanceof Date ? until.toISOString() : until) : null;
     // blocked_detail is JSONB — serialize string details as { message: "..." }
     const blockedDetail = detail != null
@@ -220,6 +226,15 @@ export async function blockTask(taskId, { reason, detail = null, until = null } 
 
     const task = result.rows[0];
 
+    // waiting_on=human 才进主理人待办；待办生成失败不回滚已成功的 block（记日志，触发器/校验已保证协议完整）
+    if (reason === OWNER_DECISION_REASON) {
+      try {
+        await openOwnerDecisionPendingAction(pool, { taskId, title: task.title, detail });
+      } catch (paErr) {
+        console.error('[task-updater] owner_decision pending_action 生成失败', { task_id: taskId, error: paErr.message });
+      }
+    }
+
     await emit('task:blocked', 'task-updater', {
       task_id: taskId,
       task_title: task.title,
@@ -235,6 +250,13 @@ export async function blockTask(taskId, { reason, detail = null, until = null } 
       task_id: taskId,
       error: err.message,
     });
+    if (err instanceof OwnerDecisionProtocolError) {
+      return { success: false, error: err.message, code: err.code, violations: err.violations };
+    }
+    // 触发器兜底（迁移 469）抛的 23514：同样按协议违规回 400
+    if (err.code === '23514' && /owner_decision_protocol_violation/.test(err.message)) {
+      return { success: false, error: err.message, code: 'owner_decision_protocol_violation', violations: [] };
+    }
     return { success: false, error: err.message };
   }
 }
@@ -283,6 +305,11 @@ export async function unblockTask(taskId) {
     }
 
     const task = result.rows[0];
+
+    // 解除阻塞后关闭该任务未决的「等你拍板」待办（不留过期待办；失败只记日志）
+    await closeOwnerDecisionPendingAction(pool, taskId).catch((paErr) => {
+      console.error('[task-updater] 关闭 owner_decision pending_action 失败', { task_id: taskId, error: paErr.message });
+    });
 
     await emit('task:unblocked', 'task-updater', {
       task_id: taskId,

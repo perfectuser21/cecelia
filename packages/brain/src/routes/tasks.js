@@ -1267,6 +1267,12 @@ router.post('/tasks/:id/block', async (req, res) => {
     const result = await blockTask(id, { reason, detail, until: until ? new Date(until) : null });
 
     if (!result.success) {
+      // owner_decision 缺协议是调用方错误（400 + 缺项清单），不是「任务不存在」
+      if (result.code === 'owner_decision_protocol_violation') {
+        return res.status(400).json({
+          error: result.code, reason_code: result.code, message: result.error, violations: result.violations ?? [],
+        });
+      }
       return res.status(404).json({ error: result.error });
     }
 

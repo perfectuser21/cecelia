@@ -10,6 +10,7 @@
 
 import pool from './db.js';
 import { createTask } from './actions.js';
+import { addTaskDependency, removeTaskDependency } from './lib/task-dependencies.js';
 
 // ============================================================
 // Constants
@@ -425,14 +426,8 @@ async function applyProposal(proposalId) {
             snapshot.tasks[change.task_id] = snapshot.tasks[change.task_id] || taskBefore.rows[0];
           }
 
-          const currentDeps = taskBefore.rows[0]?.payload?.depends_on || [];
-          if (!currentDeps.includes(change.depends_on_id)) {
-            const newDeps = [...currentDeps, change.depends_on_id];
-            await pool.query(`
-              UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb, updated_at = NOW()
-              WHERE id = $1
-            `, [change.task_id, JSON.stringify({ depends_on: newDeps })]);
-          }
+          // 依赖单一写口：边 + payload.depends_on 同步写（原先只写 payload，边表看不见）
+          await addTaskDependency(pool, { fromTaskId: change.task_id, toTaskId: change.depends_on_id });
 
           result = { success: true, action: 'dependency_added', task_id: change.task_id, depends_on: change.depends_on_id };
           break;
@@ -444,12 +439,7 @@ async function applyProposal(proposalId) {
             snapshot.tasks[change.task_id] = snapshot.tasks[change.task_id] || taskBefore2.rows[0];
           }
 
-          const deps = taskBefore2.rows[0]?.payload?.depends_on || [];
-          const filtered = deps.filter(d => d !== change.depends_on_id);
-          await pool.query(`
-            UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb, updated_at = NOW()
-            WHERE id = $1
-          `, [change.task_id, JSON.stringify({ depends_on: filtered })]);
+          await removeTaskDependency(pool, { fromTaskId: change.task_id, toTaskId: change.depends_on_id });
 
           result = { success: true, action: 'dependency_removed', task_id: change.task_id };
           break;

@@ -14,6 +14,9 @@
  * 不直接 import pool — 调用者决定用 pool 还是 txn client。
  */
 
+import { insertEdgeRow } from './lib/task-dependencies.js';
+
+
 // ─── Schema 校验 ────────────────────────────────────────────────────────────
 
 const VALID_COMPLEXITY = new Set(['S', 'M', 'L']);
@@ -281,12 +284,8 @@ export async function upsertTaskPlan({
     for (const depLogical of (t.depends_on || [])) {
       const to = idMap[depLogical];
       if (!to) continue;
-      await client.query(
-        `INSERT INTO task_dependencies (from_task_id, to_task_id, edge_type)
-         VALUES ($1::uuid, $2::uuid, 'hard')
-         ON CONFLICT DO NOTHING`,
-        [from, to]
-      );
+      // 依赖单一写口（链 bf5088a3 棒5）：虚拟 uuid 审计边，不校验任务存在、不同步 payload
+      await insertEdgeRow(client, from, to, 'hard');
     }
   }
 
