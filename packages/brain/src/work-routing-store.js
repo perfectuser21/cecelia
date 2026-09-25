@@ -9,6 +9,7 @@ import {
   MAP_SCOPE_VALIDATION_VERSION,
 } from './orchestrator/route-snapshot-authority.js';
 import { REANCHOR_EVIDENCE_KEYS } from './orchestrator/preflight/base-sha-reanchor.js';
+import { assertTaskKind, deriveTaskKind } from './lib/task-kind.js';
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 
@@ -236,6 +237,9 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       throw error;
     }
     const task = request.task ?? {};
+    // kind 真列（迁移 466，决策 df67a9d6）：调用方给了就校验后照写（Jev/人工判定优先），
+    // 没给按 canonical_task_type 从注册表派生。非法值在这里抛 → 走下面的 ROLLBACK，不 INSERT。
+    const taskKind = task.kind != null ? assertTaskKind(task.kind) : deriveTaskKind(decision.canonical_task_type);
     // 接力棒脊柱：parent_task_id 走真列（458）。合法 uuid + 父存在 + 不指向自己，否则 400 级错误。
     const parentTaskId = await resolveParentTaskId(client, task.parent_task_id ?? request.parent_task_id ?? null);
     // sequence_no 缺省 = 父下 max+1；无父不查（不给无链任务加查询）
@@ -352,11 +356,11 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
          domain, okr_initiative_id, ability_id, blocked_at,
          tags, prd_content, execution_profile, owner_role, delivery_type,
          created_by, dept, phase, executor_kind,
-         parent_task_id, sequence_no
+         parent_task_id, sequence_no, kind
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,
          $16,$17,$18,$19,$20,$21,$22,$23,$24,
-         $25::uuid, $26::int
+         $25::uuid, $26::int, $27
        ) RETURNING *`,
       [
         request.title,
@@ -385,6 +389,7 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         task.executor_kind ?? null,
         parentTaskId,
         sequenceNo,
+        taskKind,
       ],
     );
     const taskId = taskResult.rows[0].id;

@@ -17,6 +17,7 @@ import { queueLaneSql } from '../task-queue-lanes.js';
 import { normalizeChangeKind, CHANGE_KINDS } from '../impact-contract/change-kind.js';
 import { registerTaskPatchRoute } from './task-task-patch.js';
 import { createRoutedTask } from '../work-routing-store.js';
+import { TASK_KINDS, isTaskKind } from '../lib/task-kind.js';
 import { CODING_MUTATION_TASK_TYPES as _CM } from '../lib/task-type-registry.js';
 
 const router = Router();
@@ -60,10 +61,21 @@ router.post('/', async (req, res) => {
       execution_profile_override_request: executionProfileOverride = null,
       parent_task_id: parentTaskIdInput = null,
       sequence_no: sequenceNoInput = null,
+      kind: kindInput = null,
     } = req.body;
 
     if (!title || title.trim() === '') {
       return res.status(400).json({ error: 'title is required' });
+    }
+
+    // kind 真列入口校验（决策 df67a9d6）：给了就必须是 agent|workflow；不给由存储层按
+    // task_type 派生，入口不猜（Jev 路由判出来的值也是从这条路进真列）。
+    if (kindInput != null && !isTaskKind(kindInput)) {
+      return res.status(400).json({
+        error: `Invalid kind: ${String(kindInput)}`,
+        code: 'INVALID_KIND',
+        allowed: [...TASK_KINDS],
+      });
     }
 
     // Tenant scope is assigned at the server ingress. Body payload cannot
@@ -257,6 +269,7 @@ router.post('/', async (req, res) => {
           blocked_at: initialBlockedAt,
           parent_task_id: parentTaskIdInput ?? payload.parent_task_id ?? null,
           sequence_no: sequenceNoInput,
+          ...(kindInput != null ? { kind: kindInput } : {}),
         },
       });
       result = { rows: [routed.task] };
