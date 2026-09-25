@@ -103,6 +103,20 @@ describe('relayOnComplete', () => {
     expect(await relayOnComplete(pool, SELF)).toBeNull();
     expect(pool.query).toHaveBeenCalledTimes(1);
   });
+  it('completed_no_pr（openclaw / 设备任务收割态）也接棒：合成 handoff 并落 next_steps', async () => {
+    const pool = { query: vi.fn(async (sql) => {
+      if (/SELECT id, title, status/.test(sql)) return { rows: [{ id: SELF, title: '秋米任务', status: 'completed_no_pr', priority: 'P2', task_type: 'qiumi_task', payload: {}, parent_task_id: ROOT, result: { summary: '发完了' }, summary: null }] };
+      return { rowCount: 1, rows: [] };
+    }) };
+    const out = await relayOnComplete(pool, SELF, { sessionId: 'oc' });
+    expect(out).toMatchObject({ synthesized: true, tasks: [], decisions: [], skipped: [] });
+    expect(pool.query.mock.calls.some(([sql]) => /UPDATE tasks/.test(sql) && /handoff_log/.test(sql))).toBe(true);
+  });
+  it('failed 不接棒', async () => {
+    const pool = { query: vi.fn(async () => ({ rows: [{ id: SELF, status: 'failed', result: null }] })) };
+    expect(await relayOnComplete(pool, SELF)).toBeNull();
+    expect(pool.query).toHaveBeenCalledTimes(1);
+  });
   it('查库抛错 → null（不阻塞 PATCH）', async () => {
     const pool = { query: vi.fn(async () => { throw new Error('boom'); }) };
     expect(await relayOnComplete(pool, SELF)).toBeNull();
