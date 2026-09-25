@@ -79,10 +79,11 @@ describe('ci_passed + MERGEABLE 分支：merge 后推进 status=completed', () =
 
     expect(result.merged).toBeGreaterThanOrEqual(1);
     // 应当出现一条 UPDATE 同时含 status='completed' + pr_status='merged'
+    // 终态经 lib/task-terminal.js 收口：pr_status 走参数
     const completedUpdate = updates.find(u =>
       /UPDATE\s+tasks/i.test(u.sql) &&
       /status\s*=\s*'completed'/i.test(u.sql) &&
-      /pr_status\s*=\s*'merged'/i.test(u.sql)
+      /pr_status\s*=\s*\$\d+/i.test(u.sql) && u.params?.includes('merged')
     );
     expect(completedUpdate).toBeDefined();
   });

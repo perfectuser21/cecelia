@@ -860,10 +860,11 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
       return '';
     };
     await mod.reapSshWorkflowRunsForTest({ query: mockQuery }, 'fake-token', { execFn });
+    // 终态经 lib/task-terminal.js 收口：status 是 SQL 字面量，不再是参数
     const updOk = sqls.find((q) => /UPDATE tasks/.test(q.sql) && q.params?.includes('t-ok'));
-    expect(updOk.params).toContain('completed');
+    expect(updOk.sql).toContain("status = 'completed'");
     const updBad = sqls.find((q) => /UPDATE tasks/.test(q.sql) && q.params?.includes('t-bad'));
-    expect(updBad.params).toContain('failed');
+    expect(updBad.sql).toContain("status = 'failed'");
     const patches = mockNotionReq.mock.calls.filter((c) => c[2] === 'PATCH');
     expect(JSON.stringify(patches.find((c) => c[1].includes('1079'))[3])).toContain('Done');
     expect(JSON.stringify(patches.find((c) => c[1].includes('1080'))[3])).toContain('Cancelled');
@@ -888,7 +889,7 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
     await mod.reapSshWorkflowRunsForTest({ query: mockQuery }, 'fake-token', { execFn: () => 'NO_EXIT' });
     expect(sqls.some((q) => /UPDATE tasks/.test(q.sql) && q.params?.includes('t-young'))).toBe(false);
     const stale = sqls.find((q) => /UPDATE tasks/.test(q.sql) && q.params?.includes('t-stale'));
-    expect(stale.params).toContain('failed');
+    expect(stale.sql).toContain("status = 'failed'");
   });
 
   // ── 脚本步 run 原语（链 bf5088a3 棒1 PR B）：ssh 直派 / webhook 派发落 task_runs，收割补终态 ──
@@ -1127,7 +1128,7 @@ describe('pullNotionTasks — Workflow relation 分流 OpenClaw', () => {
     await mod.syncOpenClawRunsForTest({ query: mockQuery }, 'fake-token');
     const upd = sqls.find((q) => /UPDATE tasks/.test(q.sql) && /workflow_run/.test(q.sql));
     expect(upd).toBeTruthy();
-    expect(upd.params).toContain('completed');
+    expect(upd.sql).toContain("status = 'completed'");
     expect(upd.params).toContain('notion-3dbc40c2ba63809392bfdc952f9a1079-1757800000000');
   });
 

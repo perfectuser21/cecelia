@@ -17,6 +17,7 @@
  *    payload.qiumi_route.defaulted 留痕（默认：engine=terra / kind=agent / department=main / 其余 null）。
  */
 import { recordTaskEventSafe } from '../lib/task-event-log.js';
+import { finalizeTask } from '../lib/task-terminal.js';
 import { qiumiEnv } from './env.js';
 import { loadRegistryPool, cheapGates } from './cheap-gates.js';
 import { buildJevQuestions, decideWithFallback } from './jev-client.js';
@@ -353,14 +354,11 @@ async function delegateDeviceJob(pool, task, decision, createRoutedTaskFn) {
     // 排除表不止四个终态：CAS 落空最现实的成因就是主理人在 claim 与挂起之间从中文表急停了
     // 这一行——「淘汰」落 cancelled/canceled、「阻塞」落 blocked + owner_hold（applyOwnerStops）。
     // 把那种行改写成 failed = 机器覆盖人刚做的决定，正好把「冲突人赢」反过来。
-    await pool.query(
-      `UPDATE tasks
-          SET status = 'failed', error_message = $2, claimed_by = NULL, claimed_at = NULL, updated_at = NOW()
-        WHERE id = $1
-          AND status NOT IN ('completed', 'completed_no_pr', 'failed', 'archived', 'cancelled', 'canceled')
-          AND NOT (status = 'blocked' AND blocked_reason = 'owner_hold')`,
-      [task.id, `device_parent_hold_failed: 子任务 ${childId} 已建，父任务挂起失败（${reason}）`],
-    );
+    await finalizeTask(pool, task.id, 'failed', {
+      set: { error_message: `device_parent_hold_failed: 子任务 ${childId} 已建，父任务挂起失败（${reason}）` },
+      onlyIfStatusNot: ['completed', 'completed_no_pr', 'failed', 'archived', 'cancelled', 'canceled'],
+      where: { sql: `NOT (status = 'blocked' AND blocked_reason = 'owner_hold')` },
+    });
     return childId;
   }
 
@@ -394,10 +392,8 @@ export async function persistDecision(pool, task, decision, deps = {}) {
     );
     return;
   }
-  await pool.query(
-    `UPDATE tasks
-        SET status = 'failed', error_message = $2, claimed_by = NULL, claimed_at = NULL, updated_at = NOW()
-      WHERE id = $1 AND status = 'queued'`,
-    [task.id, decision.detail ? `${decision.reason}: ${decision.detail}` : decision.reason],
-  );
+  await finalizeTask(pool, task.id, 'failed', {
+    set: { error_message: decision.detail ? `${decision.reason}: ${decision.detail}` : decision.reason },
+    onlyIfStatus: 'queued',
+  });
 }

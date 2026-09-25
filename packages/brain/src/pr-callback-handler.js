@@ -14,6 +14,7 @@
 
 import crypto from 'crypto';
 import { updateKrProgress } from './kr-progress.js';
+import { finalizeTask, afterTerminalTransition } from './lib/task-terminal.js';
 
 /**
  * 验证 GitHub Webhook 签名（HMAC SHA-256）。
@@ -189,21 +190,16 @@ export async function handlePrMerged(pool, prInfo) {
     try {
       await client.query('BEGIN');
 
-      const updateResult = await client.query(`
-        UPDATE tasks
-        SET
-          status = 'completed',
-          pr_url = COALESCE(pr_url, $2),
-          pr_merged_at = $3,
-          pr_status = 'merged',
-          payload = (COALESCE(payload, '{}'::jsonb)
-            || jsonb_build_object('run_status', 'merged')) - 'current_run_id',
-          updated_at = NOW()
-        WHERE id = $1
-          AND status IN ('completed', 'completed_no_pr')
-          AND pr_merged_at IS NULL
-        RETURNING id
-      `, [taskId, prUrl, mergedAt]);
+      // 终态经 lib/task-terminal.js 收口：事务内写（relay:false），COMMIT 后再接棒
+      const updateResult = await finalizeTask(client, taskId, 'completed', {
+        set: { pr_merged_at: mergedAt, pr_status: 'merged' },
+        setIfNull: { pr_url: prUrl },
+        mergePayload: { run_status: 'merged' },
+        dropPayloadKeys: ['current_run_id'],
+        onlyIfStatus: ['completed', 'completed_no_pr'],
+        where: { sql: 'pr_merged_at IS NULL' },
+        relay: false,
+      });
 
       if (updateResult.rowCount === 0) {
         // 幂等：pr_merged_at 已有值，不重复更新
@@ -234,6 +230,8 @@ export async function handlePrMerged(pool, prInfo) {
       console.warn(`[pr-callback] task_run_metrics pr_merged 回填失败 (non-fatal): ${metricsErr.message}`);
     }
 
+    // 终态钩子（lib/task-terminal.js）：completed_no_pr → completed 提升 / 已 completed 补 PR 真相后接棒
+    await afterTerminalTransition(pool, taskId, 'completed');
     return { matched: true, taskId, taskTitle, krProgressUpdated: false };
   }
 
@@ -266,28 +264,16 @@ export async function handlePrMerged(pool, prInfo) {
       }
     };
 
-    const updateResult = await client.query(`
-      UPDATE tasks
-      SET
-        status = 'completed',
-        completed_at = $2,
-        updated_at = NOW(),
-        pr_url = $5,
-        pr_merged_at = COALESCE($6::timestamp, NOW()),
-        pr_status = 'merged',
-        metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb,
-        payload = (COALESCE(payload, '{}'::jsonb) || $4::jsonb) - 'current_run_id'
-      WHERE id = $1
-        AND status = 'in_progress'
-      RETURNING id, goal_id, project_id, pr_url, pr_merged_at
-    `, [
-      taskId,
-      mergedAt,
-      JSON.stringify(prMeta),
-      JSON.stringify(payloadUpdate),
-      prUrl,
-      mergedAt
-    ]);
+    // 终态经 lib/task-terminal.js 收口：事务内写（relay:false），COMMIT 后再接棒
+    const updateResult = await finalizeTask(client, taskId, 'completed', {
+      set: { completed_at: mergedAt, pr_url: prUrl, pr_merged_at: mergedAt || new Date(), pr_status: 'merged' },
+      mergeMetadata: prMeta,
+      mergePayload: payloadUpdate,
+      dropPayloadKeys: ['current_run_id'],
+      onlyIfStatus: 'in_progress',
+      returning: ['goal_id', 'project_id', 'pr_url', 'pr_merged_at'],
+      relay: false,
+    });
 
     if (updateResult.rowCount === 0) {
       // 幂等：任务不再是 in_progress（可能已 completed 或被其他事件更新）
@@ -338,7 +324,7 @@ export async function handlePrMerged(pool, prInfo) {
     }
 
     // 4. 触发 KR 进度更新（事务外，失败不影响任务更新）
-    const updatedRow = updateResult.rows[0];
+    const updatedRow = updateResult.task;
     const goalId = updatedRow.goal_id;
 
     if (goalId) {
@@ -384,6 +370,8 @@ export async function handlePrMerged(pool, prInfo) {
     client.release();
   }
 
+  // 终态钩子（lib/task-terminal.js）：所有事务外账目记完后接棒（完成 → handoff.next_steps 落下一棒）
+  await afterTerminalTransition(pool, taskId, 'completed');
   return { matched: true, taskId, taskTitle, krProgressUpdated };
 }
 

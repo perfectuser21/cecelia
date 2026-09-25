@@ -19,6 +19,7 @@
  * `lib/task-status-transitions.js` 的 WAITING_EXITS 里（0921 那刀补的），不需要动状态机。
  */
 import { recordTaskEventSafe } from '../lib/task-event-log.js';
+import { finalizeTask } from '../lib/task-terminal.js';
 
 /** 一轮最多对账多少条父任务。60s 一轮，50 条足够消化四台手机一天约 90 单。 */
 const BATCH = 50;
@@ -44,21 +45,8 @@ const SCAN_SQL = `
 
 const CHILD_SQL = 'SELECT id, status, result, error_message FROM tasks WHERE id = $1';
 
-// 两条写回都带 `AND status = 'blocked'` 的 CAS：别人（人工/巡检）已经把父任务挪走了就不覆盖。
-const DONE_SQL = `
-  UPDATE tasks
-     SET status = 'completed_no_pr',
-         completed_at = COALESCE(completed_at, NOW()),
-         result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('receipt', $2::jsonb),
-         updated_at = NOW()
-   WHERE id = $1 AND status = 'blocked'`;
-
-const DEAD_SQL = `
-  UPDATE tasks
-     SET status = 'failed', error_message = $2,
-         result = COALESCE(result, '{}'::jsonb) || jsonb_build_object('receipt', $3::jsonb),
-         updated_at = NOW()
-   WHERE id = $1 AND status = 'blocked'`;
+// 两条写回都带 `status = 'blocked'` 的 CAS（finalizeTask onlyIfStatus）：别人（人工/巡检）已经把
+// 父任务挪走了就不覆盖。终态经 lib/task-terminal.js 收口，completed_no_pr 落库后自动接棒。
 
 // 子任务行不见了，只标记一次。payload 里只加这一个键，回执七键原样带过去 —— 不可变触发器
 // （BEFORE UPDATE OF task_type, payload）会对比那七个键，`||` 合并不动它们就放行。
@@ -118,7 +106,7 @@ export async function reconcileDelegatedDeviceJobs(pool) {
           child_status: child.status,
           reaped_at: new Date().toISOString(),
         };
-        await pool.query(DONE_SQL, [parent.id, JSON.stringify(receipt)]);
+        await finalizeTask(pool, parent.id, 'completed_no_pr', { mergeResult: { receipt }, onlyIfStatus: 'blocked' });
         completed += 1;
         await recordTaskEventSafe(pool, parent.id, 'qiumi_device_reconciled', {
           device_task_id: child.id, child_status: child.status, outcome: 'completed_no_pr',
@@ -127,11 +115,11 @@ export async function reconcileDelegatedDeviceJobs(pool) {
       }
 
       if (DEAD.has(child.status)) {
-        await pool.query(DEAD_SQL, [parent.id, `device_job_${child.status}`, JSON.stringify({
-          device_task_id: child.id,
-          child_status: child.status,
-          error_message: child.error_message ?? null,
-        })]);
+        await finalizeTask(pool, parent.id, 'failed', {
+          set: { error_message: `device_job_${child.status}` },
+          mergeResult: { receipt: { device_task_id: child.id, child_status: child.status, error_message: child.error_message ?? null } },
+          onlyIfStatus: 'blocked',
+        });
         failed += 1;
         await recordTaskEventSafe(pool, parent.id, 'qiumi_device_reconciled', {
           device_task_id: child.id, child_status: child.status, outcome: 'failed',
