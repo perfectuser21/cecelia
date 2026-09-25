@@ -47,6 +47,7 @@ import { getLlmCapacitySnapshot } from './llm-capacity.js';
 import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
 import { routeQiumiTask, persistDecision } from './routing/qiumi-router.js';
 import { qiumiEnv } from './routing/env.js';
+import { dispatchScriptTask, SCRIPT_BREAKER_KEY } from './script-executor.js';
 
 /**
  * openclaw-agent 表面（qiumi_task）由 Brain 经 ssh 直派 MMV，不经 cecelia-bridge：
@@ -54,6 +55,9 @@ import { qiumiEnv } from './routing/env.js';
  * 判据只从注册表 surface 派生，不手抄名单（铁律 76cb816c）。
  */
 const isOpenclawSurface = (type) => getTaskType(type)?.surface === 'openclaw-agent';
+/** script 表面（script_run，棒 3）同样是 Brain 经 ssh 直派跑场机，不经 cecelia-bridge；熔断 key 独立，互不牵连。 */
+const isScriptSurface = (type) => getTaskType(type)?.surface === 'script';
+const breakerKeyFor = (type) => (isOpenclawSurface(type) ? 'openclaw-agent' : isScriptSurface(type) ? SCRIPT_BREAKER_KEY : 'cecelia-run');
 
 const MINIMAL_MODE = process.env.BRAIN_MINIMAL_MODE === 'true';
 const TICK_LAST_DISPATCH_KEY = 'tick_last_dispatch';
@@ -829,6 +833,27 @@ export async function dispatchNextTask(goalIds) {
       break;
     }
 
+    // 3c''''. executor=script 的专用出口（棒 3）：同样必须在 claim 之后、标 in_progress 之前——
+    //         违规 payload 直接终态 failed（不重试）、并发槽 count(in_progress) 都指着任务仍 queued 这个前提。
+    if (isScriptSurface(candidate.task_type)) {
+      const sr = await dispatchScriptTask(candidate, { pool, actions, holSkipIds });
+      if (sr.outcome === 'return') {
+        await recordDispatchResult(pool, false, sr.result?.reason ?? 'script_return', undefined, candidate.id);
+        return sr.result;
+      }
+      if (sr.outcome === 'skip') {
+        if (holSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+          tickLog(`[dispatch] HOL skip cap reached (${MAX_SKIP_HEAD_FOR_BLOCKED}), giving up`);
+          await recordDispatchResult(pool, false, 'hol_skip_cap_exceeded');
+          return { dispatched: false, reason: 'hol_skip_cap_exceeded', hol_skipped: holSkipIds.length, actions };
+        }
+        attempt--; // 让位不消耗 pre-flight attempt 预算
+        continue;
+      }
+      nextTask = candidate;
+      break;
+    }
+
     // 3d. Codex Pool D: check concurrent limit for Codex-native task types.
     //     HOL fix: non-P0 codex tasks blocked by full pool → release claim, skip, try next.
     //     P0 tasks stop the loop immediately (high-priority signal must not be bypassed).
@@ -968,7 +993,8 @@ export async function dispatchNextTask(goalIds) {
   // 跳过 bridge check，否则 bridge 不在时 harness 会被错误 revert 到 queued。
   // 名单见 lib/task-type-registry.js（HARNESS_INFLIGHT_TASK_TYPES）。
   const needsBridgeCheck = !HARNESS_INFLIGHT_TASK_TYPES.includes(nextTask.task_type)
-    && !isOpenclawSurface(nextTask.task_type);
+    && !isOpenclawSurface(nextTask.task_type)
+    && !isScriptSurface(nextTask.task_type);
 
   // Circuit breaker — 只对依赖 cecelia-bridge 的任务生效（harness_initiative 豁免）
   // 注意：此检查在 atomic claim 和 mark in_progress 之后，
@@ -1187,6 +1213,12 @@ export async function dispatchNextTask(goalIds) {
   }
 
   // 5a. Check if executor actually succeeded — revert to queued if not
+  if (!execResult.success && execResult.reason === 'script_payload_invalid' && execResult.taskTerminal === true) {
+    // 执行体已把违规 payload 的任务终态 failed（不重试）：不许再被打回 queued，也不计熔断/autoblock。
+    await recordDispatchResult(pool, false, 'script_payload_invalid', undefined, nextTask.id);
+    return { dispatched: false, reason: 'script_payload_invalid', task_id: nextTask.id, terminal: true, actions };
+  }
+
   if (!execResult.success) {
     console.warn(`[dispatch] triggerCeceliaRun failed for task ${nextTask.id}: ${execResult.error || execResult.reason}`);
     // executor 只在 kernel-v1 catch 里把 reason 也改成 needs_rebase；其他返回路径只带 reason_code，
@@ -1253,7 +1285,7 @@ export async function dispatchNextTask(goalIds) {
     } else if (execResult.reason === 'local_execution_disabled_on_scheduler') {
       console.warn(`[dispatch] local_execution_disabled_on_scheduler detected — skipping cecelia-run breaker count`);
     } else {
-      await recordFailure(isOpenclawSurface(nextTask.task_type) ? 'openclaw-agent' : 'cecelia-run');
+      await recordFailure(breakerKeyFor(nextTask.task_type));
 
       // dispatch-fail-autoblock：连续失败计数 + 自动隔离
       // configError / spawn_deduplicated 已在上方 early-return，此处只处理真实执行失败。
@@ -1315,11 +1347,12 @@ export async function dispatchNextTask(goalIds) {
   // 这里已经在 try 内、postClaimException 的覆盖范围里，而 agent 早就 spawn 出去了——
   // 所以必须自己吞掉异常：一旦让它冒到兜底，就会放 claim + 标 status='failed'，
   // 下个 tick 把同一个还在跑的任务再派一遍（比丢一笔事后记账糟得多）。
-  if (isOpenclawSurface(nextTask.task_type)) {
+  if (isOpenclawSurface(nextTask.task_type) || isScriptSurface(nextTask.task_type)) {
+    const breakerKey = breakerKeyFor(nextTask.task_type);
     try {
-      await recordSuccess('openclaw-agent');
+      await recordSuccess(breakerKey);
     } catch (e) {
-      tickLog(`[dispatcher] recordSuccess(openclaw-agent) 失败（不影响已 spawn 的任务）: ${e.message}`);
+      tickLog(`[dispatcher] recordSuccess(${breakerKey}) 失败（不影响已 spawn 的任务）: ${e.message}`);
     }
   }
   } catch (err) {

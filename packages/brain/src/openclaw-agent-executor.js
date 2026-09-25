@@ -23,6 +23,7 @@
 import { execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { resolvePrimaryWorkerId, sshTargetFor } from './machine-registry.js';
+import { sshWithStdin, sshRun } from './lib/ssh-exec.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { startRun, finishRun } from './lib/task-run.js';
 import { finalizeTask } from './lib/task-terminal.js';
@@ -38,7 +39,6 @@ const SAFE_ID = /^[A-Za-z0-9._-]+$/;
 const SAFE_MODEL = /^[A-Za-z0-9._/:-]+$/;
 const OPENCLAW_BIN = '/opt/homebrew/bin/openclaw';
 export const AGENT_TIMEOUT_SEC = 1800;
-const SPAWN_TIMEOUT_MS = 30_000;
 const REAP_SSH_TIMEOUT_MS = 15_000;
 const REAP_BATCH = 10;
 
@@ -86,55 +86,6 @@ export function buildRemoteCommand({ runId, department, model, taskId, timeoutSe
   // 探针放在 `M=$(cat)` 之后：先把 stdin 读干净再决定走不走，远端提前退出会让本地写 stdin 撞 EPIPE。
   const probe = `if [ -f ${pid} ] || [ -f ${exit} ]; then echo ALREADY; exit 0; fi`;
   return `mkdir -p ~/brain-runs; M=$(cat); export M; ${probe}; { nohup sh -c '${inner}' >/dev/null 2>&1 & echo $! > ${pid}; }; echo DISPATCHED`;
-}
-
-/**
- * 起一个 ssh 子进程，把 prompt 从 stdin 灌进去并关闭，收齐 stdout 后返回。
- * 超时自己管：kill 子进程并 reject，绝不让一条卡住的 ssh 挂死整轮派发。
- */
-function sshWithStdin(spawnFn, args, input, timeoutMs = SPAWN_TIMEOUT_MS) {
-  return new Promise((resolve, reject) => {
-    let child;
-    try {
-      child = spawnFn('ssh', args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    } catch (err) {
-      reject(err);
-      return;
-    }
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const finish = (fn, arg) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      fn(arg);
-    };
-    const timer = setTimeout(() => {
-      try { child.kill(); } catch { /* 已经退了就算了 */ }
-      finish(reject, new Error(`ssh timeout after ${timeoutMs}ms`));
-    }, timeoutMs);
-    timer.unref?.();
-
-    child.stdout?.on('data', (d) => { stdout += String(d); });
-    child.stderr?.on('data', (d) => { stderr += String(d); });
-    child.on('error', (err) => finish(reject, err));
-    child.on('close', (code) => {
-      if (code === 0) finish(resolve, stdout);
-      else finish(reject, Object.assign(new Error(`ssh exit ${code}: ${stderr.slice(0, 200)}`), { stderr }));
-    });
-    // 必须 end 而不是 write：远端 `M=$(cat)` 要等 EOF 才往下走。
-    child.stdin?.end(input ?? '');
-  });
-}
-
-/** 收割侧的 ssh：不需要 stdin，用 execFile 就够。 */
-function sshRun(execFileFn, args, opts) {
-  return new Promise((resolve, reject) => {
-    execFileFn('ssh', args, opts, (err, stdout, stderr) => (
-      err ? reject(Object.assign(err, { stderr })) : resolve(String(stdout))
-    ));
-  });
 }
 
 /** 执行机 ssh 地址：机器名不写死，按注册表解析出的 primary worker 走（CI machine-registry-role-guard）。 */

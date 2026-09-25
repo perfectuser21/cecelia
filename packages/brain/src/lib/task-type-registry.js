@@ -9,7 +9,7 @@
  * 守卫：__tests__/task-type-registry.guard.test.js（grep 字面量名单必红）。
  *
  * 字段：
- *   surface   执行面：kernel | openclaw-agent | device | brain-internal | external | none
+ *   surface   执行面：kernel | openclaw-agent | script | device | brain-internal | external | none
  *   coding    是否编码变更（走 change_kind/map_scope 校验）
  *   pr        完成是否要求 PR（false → 完成态写 completed_no_pr）
  *   executor  派发时写进 tasks.executor_kind 的值（null = 由派发路径自决）
@@ -196,9 +196,12 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // kind=agent：脚本也是「一步交付」（df67a9d6 判据）。pr=false 但成功终态写 completed 而非 completed_no_pr——
   // hard 依赖门禁只放行 completed，脚本步后面挂 agent 步时必须能放行（设计稿 §2）。
   // ANC 免锚：链上的确定性基建步不走承诺地图，与 qiumi_task 同理。
-  // tick_dispatchable=false 是 PR A 的临时闸：执行体（script-executor）接线前，tick 若把它当普通任务
-  // 派给 claude 会「跑」一个根本不是 LLM 的活；PR B 接线后翻 true。
-  script_run:               T('script', false, false, 'script', 'script', true, false, 'none', true, [V, ANC]),
+  // SYS（pre-flight 免 PRD）：payload.cmd 就是规格，描述为空不该挡住派发（实测：不打这个标签，
+  // 链构建方不写 description 的脚本步会被 pre-flight 三振拒绝）。
+  // tick_dispatchable=true：PR A 期间曾临时置 false（执行体接线前 tick 会把它当普通任务派给 claude），
+  // PR B 接线后放开——dispatcher.dispatchScriptTask 专用出口（校验/并发槽/熔断）+ executor 的 script_run 分支
+  // + scheduler job script-reaper 收割。
+  script_run:               T('script', false, false, 'script', 'script', true, true, 'none', true, [V, SYS, ANC]),
   // ── 虚拟类型（不在 DB 白名单，只用于免锚判断）──
   deploy_drill:      T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
   nightly:            T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),

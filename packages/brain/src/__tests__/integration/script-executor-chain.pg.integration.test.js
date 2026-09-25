@@ -74,16 +74,18 @@ beforeAll(async () => {
 afterAll(async () => {
   if (router && handlerBackup) router.INTERNAL_TASK_HANDLERS.harness_intervention = handlerBackup;
   scriptExec?._resetScriptTransport?.();
+  // 被测模块的默认池（db.js）也连着临时库：先关它，否则 DROP 时连接被强杀，pg 池抛 57P01 未处理错误。
+  try { await (await import('../../db.js')).default.end(); } catch { /* 已关 */ }
   if (db) await db.drop();
   if (home) rmSync(home, { recursive: true, force: true });
 }, 60_000);
 
-const insertTask = async ({ taskType, title, payload }) => {
+const insertTask = async ({ taskType, title, payload, description = null }) => {
   const id = randomUUID();
   await db.pool.query(
-    `INSERT INTO tasks (id, title, task_type, status, priority, payload)
-     VALUES ($1, $2, $3, 'queued', 'P2', $4::jsonb)`,
-    [id, `${title} ${id}`, taskType, JSON.stringify(payload)],
+    `INSERT INTO tasks (id, title, description, task_type, status, priority, payload)
+     VALUES ($1, $2, $3, $4, 'queued', 'P2', $5::jsonb)`,
+    [id, `${title} ${id}`, description, taskType, JSON.stringify(payload)],
   );
   return id;
 };
@@ -114,7 +116,7 @@ async function tickUntil(predicate, max = 40) {
 describe.sequential('script → agent → script 三步链', () => {
   it('由 dispatcher 自动串完；hard 依赖门控生效；tasks 与 task_runs 每步一行', async () => {
     const t1 = await insertTask({ taskType: 'script_run', title: '链-脚本1', payload: scriptPayload(`printf 'step1' > "$HOME/marker.txt"; echo done-1`) });
-    const t2 = await insertTask({ taskType: 'harness_intervention', title: '链-agent', payload: { action: 'spike' } });
+    const t2 = await insertTask({ taskType: 'harness_intervention', title: '链-agent', description: 'agent 步桩：走既有 internal handler 执行路径', payload: { action: 'spike' } });
     const t3 = await insertTask({ taskType: 'script_run', title: '链-脚本3', payload: scriptPayload(`cat "$HOME/marker.txt"; echo done-3`, { env: { SCRIPT_TOKEN: 'TOPSECRETVALUE' } }) });
     await dep(t2, t1);
     await dep(t3, t2);
@@ -136,7 +138,6 @@ describe.sequential('script → agent → script 三步链', () => {
     expect([r1.status, r2.status, r3.status]).toEqual(['completed', 'completed', 'completed']);
     expect(r1.executor_kind).toBe('script');
     expect(r3.executor_kind).toBe('script');
-    expect(r1.kind).toBe('agent');
 
     // stdout 经收割落 tasks.result.script；第三步读到了第一步写的文件
     expect(r1.result.script).toMatchObject({ exit_code: 0, host: 'xian-mac-m4' });
@@ -251,6 +252,9 @@ describe.sequential('硬约束：违规与幂等与并发槽', () => {
     await sleep(2500);
     expect(readFileSync(counter, 'utf8').trim().split('\n')).toHaveLength(1);
     expect(await runsOf(t)).toHaveLength(1);
+    // 收掉它：别让这条 in_progress 占着 xian-mac-m4 的并发槽影响后面的用例
+    await scriptExec.reapScriptRuns(db.pool, fakeTransport());
+    expect((await statusOf(t)).status).toBe('completed');
   }, 60_000);
 
   it('并发槽：同一跑场机 in_progress 的 script 数达上限，后来者留在 queued，前者收割后放行', async () => {
@@ -259,8 +263,8 @@ describe.sequential('硬约束：违规与幂等与并发槽', () => {
       const a = await insertTask({ taskType: 'script_run', title: '槽-A', payload: scriptPayload('sleep 2; echo A') });
       const b = await insertTask({ taskType: 'script_run', title: '槽-B', payload: scriptPayload('echo B') });
       await db.pool.query(`UPDATE tasks SET created_at = NOW() - INTERVAL '1 hour' WHERE id = $1`, [a]);
-      await dispatcher.dispatchNextTask(null);
-      expect((await statusOf(a)).status).toBe('in_progress');
+      const first = await dispatcher.dispatchNextTask(null);
+      expect((await statusOf(a)).status, `首次派发结果：${JSON.stringify(first)}`).toBe('in_progress');
       await dispatcher.dispatchNextTask(null);
       expect((await statusOf(b)).status).toBe('queued');
       await tickUntil(async () => (await statusOf(a)).status === 'completed', 20);

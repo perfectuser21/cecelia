@@ -21,6 +21,7 @@ describe('注册表：script_run', () => {
     expect(e.pr).toBe(false);
     expect(e.coding).toBe(false);
     expect(e.tags).toContain('anchor_exempt');
+    expect(e.tags).toContain('system_no_prd'); // payload.cmd 就是规格，pre-flight 不要求 PRD 描述
     expect(KIND_FOR_TASK_TYPE.script_run).toBe('agent');
     expect(deriveTaskKind('script_run')).toBe('agent');
     expect(EXECUTOR_KIND_FOR_TASK_TYPE.script_run).toBe('script');

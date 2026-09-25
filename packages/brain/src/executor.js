@@ -3474,6 +3474,15 @@ async function _triggerCeceliaRunInner(task) {
     return triggerOpenclawAgent(task);
   }
 
+  // 0.8 executor=script（链 bf5088a3 棒3）：确定性脚本步 → Brain 经 ssh 在跑场机执行 payload.cmd，
+  //     不占 claude/codex 槽位，也绝不在 us-vps 本地跑（铁律 96054a8b，host 由 script-task-spec 校验只认跑场机）。
+  //     动态 import：executor.js 是热路径，脚本链路只在真有 script_run 时才拉起来。
+  if (task.task_type === 'script_run') {
+    console.log(`[executor] 路由决策: task_type=script_run → script executor (host=${task.payload?.host_id ?? task.payload?.host})`);
+    const { triggerScriptRun } = await import('./script-executor.js');
+    return triggerScriptRun(task);
+  }
+
   // 1. 显式 override（phase 2 单元1）：payload.{machine,executor} → DB 驱动路由。
   //    REVIEW 短路之后、location-map 路由之前。无显式偏好则整段跳过（零回归）。
   //    [MINOR 3] 排除 harness_initiative / retired harness types：这些任务即使误传

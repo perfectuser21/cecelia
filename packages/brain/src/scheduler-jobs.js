@@ -56,6 +56,7 @@ import { gtdSyncJobHandler } from './notion-gtd-sync.js';
 import { defaultExec } from './host-exec.js';
 import { maybeRunCrystalJudge } from './crystal-judge.js';
 import { reapOpenclawAgentRuns } from './openclaw-agent-executor.js';
+import { reapScriptRuns } from './script-executor.js';
 import { reconcileDelegatedDeviceJobs } from './routing/device-delegation.js';
 import { syncCodingEvidence } from './crystal/coding-evidence.js';
 import { runOwnerDecisionDeadline } from './owner-decision-deadline.js';
@@ -137,6 +138,7 @@ export const JOBS = [
   { name: 'crystal-coding-evidence', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => syncCodingEvidence({ dbPool: pool }), description: '编码线九格证据同步（10min自gate，harness_attempts+sequencer_ledger→crystal_run_evidence，只补账不代判，判官口粮第二铲）' },
   { name: 'crystal-judge', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => maybeRunCrystalJudge(pool), description: '每日结晶判官（北京05:00窗口+当日去重，OpenClaw 八格六指标聚合→三态判决→每日结晶报告落库，Crystal 第4件）' },
   { name: 'openclaw-agent-reaper', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reapOpenclawAgentRuns(pool), description: '秋米 openclaw-agent 收割（60s，读 MMV ~/brain-runs/<run_id>.exit → completed_no_pr/failed，PR3）' },
+  { name: 'script-reaper', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reapScriptRuns(pool), description: 'executor=script 收割（60s，读跑场机 ~/brain-runs/<run_id>.exit → completed / 按 retry-policy 重排一次 / failed 带 exit code 与截断 stderr，链 bf5088a3 棒3）' },
   { name: 'qiumi-device-reconcile', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reconcileDelegatedDeviceJobs(pool), description: '秋米设备任务对账（60s，子 device_job 终态回写父 qiumi_task，PR3 补充五）' },
   { name: 'owner-decision-deadline', needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runOwnerDecisionDeadline(pool), description: '主理人决策到期兑现（决策105a5868三档协议，任务8aa79219）：blocked owner_decision(waiting_on=human)到期未应答→可逆按default走(同批准同一内部函数，via=default_on_deadline，decisions made_by=system，Bark P2「可推翻」)；不可逆不自动执行→blocked_until顺延24h+留痕次数+Bark P1再催。进程内10min自gate，调度轮60s都会调用故活性尺子=60s；整轮有界（query_timeout/statement_timeout/取连接超时/90s预算），不重演09-24 notion-gtd-sync卡死案' },
   // 放末尾：第一轮串行跑到这里时前面所有 job 的哨兵都已刷新，重启后不会把后排 job 误判 dead 再"恢复"。JOBS 经闭包注入——
