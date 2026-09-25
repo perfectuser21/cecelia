@@ -15,6 +15,9 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
+// 守卫 1 用的 KR 级 goal_id（必须是 uuid，且排在去重查询之前被校验）
+const KR_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const KR_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 const mockCreateRoutedTask = vi.hoisted(() => vi.fn());
 vi.mock('../../db.js', () => ({ default: mockPool }));
@@ -330,19 +333,21 @@ describe('task-tasks routes — C3 服务端去重护栏（issue 655691d2）', (
   });
 
   it('goal_id 不同（两者都非 null 但值不同）→ 不去重，正常走 INSERT', async () => {
+    // 守卫 1（链 bf5088a3 棒5）：goal_id 给了先校验是 KR 级——这一次查询排在去重查询之前
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: KR_B, status: 'active' }] });
     mockPool.query.mockResolvedValueOnce({ rows: [] }); // dedup: goal_id 不匹配查不到
     mockPool.query.mockResolvedValueOnce({
-      rows: [{ id: 'new-3', title: 'Same title different goal', status: 'queued', task_type: 'dev', goal_id: 'goal-b' }],
+      rows: [{ id: 'new-3', title: 'Same title different goal', status: 'queued', task_type: 'dev', goal_id: KR_B }],
     });
     const res = await request(app).post('/tasks').send(coding({
       title: 'Same title different goal',
-      goal_id: 'goal-b',
+      goal_id: KR_B,
     }));
     expect(res.status).toBe(201);
-    expect(mockPool.query).toHaveBeenCalledTimes(1);
+    expect(mockPool.query).toHaveBeenCalledTimes(2);
     // 去重查询的第二个参数应该是本次请求的 goal_id
-    const dedupParams = mockPool.query.mock.calls[0][1];
-    expect(dedupParams).toContain('goal-b');
+    const dedupParams = mockPool.query.mock.calls[1][1];
+    expect(dedupParams).toContain(KR_B);
   });
 
   it('title 命中 in_progress 任务 → 200 + deduplicated:true', async () => {
@@ -383,13 +388,14 @@ describe('task-tasks routes — C3 服务端去重护栏（issue 655691d2）', (
 
   it('去重查询使用正确的参数（title + goal_id + project_id）', async () => {
     mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: KR_A, status: 'active' }] }) // 守卫 1：goal_id 是 KR 级
       .mockResolvedValueOnce({ rows: [] }) // dedup check
       .mockResolvedValueOnce({ rows: [{ id: 'new-4', title: 'Task', status: 'queued', task_type: 'dev' }] });
-    await request(app).post('/tasks').send(coding({ title: 'Task', goal_id: 'g-1', project_id: 'p-1' }));
-    const [dedupSql, dedupParams] = mockPool.query.mock.calls[0];
+    await request(app).post('/tasks').send(coding({ title: 'Task', goal_id: KR_A, project_id: 'p-1' }));
+    const [dedupSql, dedupParams] = mockPool.query.mock.calls[1];
     expect(dedupSql).toMatch(/status IN[\s\S]*queued[\s\S]*in_progress/);
     expect(dedupParams[0]).toBe('Task');
-    expect(dedupParams[1]).toBe('g-1');
+    expect(dedupParams[1]).toBe(KR_A);
     expect(dedupParams[2]).toBe('p-1');
   });
 });

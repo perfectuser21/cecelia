@@ -19,6 +19,11 @@ import { registerTaskPatchRoute } from './task-task-patch.js';
 import { createRoutedTask } from '../work-routing-store.js';
 import { TASK_KINDS, isTaskKind } from '../lib/task-kind.js';
 import { CODING_MUTATION_TASK_TYPES as _CM } from '../lib/task-type-registry.js';
+import { assertGoalIsKeyResult } from '../lib/goal-guard.js';
+import { assertOwnerDecisionProtocol } from '../lib/owner-decision.js';
+import { normalizeDependsOn, assertDependsOnExist } from '../lib/task-dependencies.js';
+import { governanceErrorResponse } from '../lib/governance-errors.js';
+import { registerTaskDependencyRoutes } from './task-dependencies.js';
 
 const router = Router();
 
@@ -62,6 +67,8 @@ router.post('/', async (req, res) => {
       parent_task_id: parentTaskIdInput = null,
       sequence_no: sequenceNoInput = null,
       kind: kindInput = null,
+      blocked_reason: blockedReasonInput = null,
+      blocked_detail: blockedDetailInput = null,
     } = req.body;
 
     if (!title || title.trim() === '') {
@@ -197,6 +204,31 @@ router.post('/', async (req, res) => {
       warnings.push('journey_id missing in payload — initiative_run.journey_id will be null, Notion Project will be orphaned');
     }
 
+    // ─── 决策分档机械守卫（决策 105a5868，链 bf5088a3 棒5，任务 3fad28e0）─────────
+    // 均为「给了才校验」：不给 goal_id / blocked_reason / depends_on 的调用方行为与查询次序不变。
+    if (blockedReasonInput != null && initialStatus !== 'blocked') {
+      return res.status(400).json({
+        error: 'blocked_reason_requires_blocked_status',
+        reason_code: 'blocked_reason_requires_blocked_status',
+        message: 'blocked_reason 只能配 status=blocked 建单',
+      });
+    }
+    try {
+      // 守卫 2：owner_decision 必须带协议（缺项 400，不落库）
+      assertOwnerDecisionProtocol({ reason: blockedReasonInput, detail: blockedDetailInput });
+      // 守卫 1：goal_id 给了必须是 KR 级（Objective id 会被派发白名单静默过滤）
+      const goalCheck = await assertGoalIsKeyResult(pool, goal_id);
+      if (goalCheck.warning) warnings.push(goalCheck.warning);
+      // 依赖单一写口的入口校验：depends_on 必须是存在的任务 uuid 数组
+      const dependsOnIds = normalizeDependsOn(payload?.depends_on);
+      await assertDependsOnExist(pool, dependsOnIds);
+    } catch (guardErr) {
+      const mapped = governanceErrorResponse(guardErr);
+      if (!mapped) throw guardErr;
+      return res.status(mapped.status).json(mapped.body);
+    }
+    // ─── end 治理守卫 ────────────────────────────────────────────────
+
     // C3: 服务端去重护栏（issue 655691d2）——title 精确匹配 + goal_id/project_id 一致
     // + 仍是活跃状态，命中则直接返回已有任务，不重新 INSERT。
     // 防止外部 agent/人工反复对同一意图重新注册 task（2026-07-09 实测 5 个重复 PR 的根因）。
@@ -267,6 +299,7 @@ router.post('/', async (req, res) => {
           okr_initiative_id,
           ability_id,
           blocked_at: initialBlockedAt,
+          ...(blockedReasonInput != null ? { blocked_reason: blockedReasonInput, blocked_detail: blockedDetailInput } : {}),
           parent_task_id: parentTaskIdInput ?? payload.parent_task_id ?? null,
           sequence_no: sequenceNoInput,
           ...(kindInput != null ? { kind: kindInput } : {}),
@@ -295,6 +328,8 @@ router.post('/', async (req, res) => {
     if (resolvedChangeKind !== null) responseBody.change_kind = resolvedChangeKind;
     res.status(201).json(responseBody);
   } catch (err) {
+    const governance = governanceErrorResponse(err);
+    if (governance) return res.status(governance.status).json(governance.body);
     if (err.code === 'parent_task_not_found') {
       return res.status(400).json({ error: 'parent_task_not_found', reason_code: 'parent_task_not_found', parent_task_id: err.parent_task_id });
     }
@@ -420,6 +455,7 @@ router.get('/:id/chain', async (req, res) => {
 });
 
 registerTaskPatchRoute(router, { pool, terminalStatuses: TERMINAL_STATUSES });
+registerTaskDependencyRoutes(router, { pool });
 
 // DELETE /tasks/:id — 软删除（status='cancelled'）。复用 PATCH 同一套 TERMINAL_STATUSES
 // 状态机保护：不存在 → 404；已终态（completed/cancelled）→ 409（防误删历史记录，幂等）；

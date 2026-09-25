@@ -10,6 +10,11 @@ import {
 } from './orchestrator/route-snapshot-authority.js';
 import { REANCHOR_EVIDENCE_KEYS } from './orchestrator/preflight/base-sha-reanchor.js';
 import { assertTaskKind, deriveTaskKind } from './lib/task-kind.js';
+import { assertGoalIsKeyResult } from './lib/goal-guard.js';
+import {
+  assertOwnerDecisionProtocol, openOwnerDecisionPendingAction, OWNER_DECISION_REASON,
+} from './lib/owner-decision.js';
+import { addTaskDependencies } from './lib/task-dependencies.js';
 
 const GIT_SHA_PATTERN = /^[a-f0-9]{40}$/;
 
@@ -332,6 +337,11 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
       };
     }
     await assertMutationMapScopeResolvable(client, decision);
+    // 决策分档机械守卫（决策 105a5868，链 bf5088a3 棒5）：幂等命中之后、物化 task 之前。
+    // ① goal_id 给了必须是 KR 级（Objective id 会被 tick 派发白名单静默过滤）
+    // ② blocked_reason=owner_decision 必须带协议（缺项抛，事务 ROLLBACK，不留半截任务）
+    await assertGoalIsKeyResult(client, task.goal_id ?? null);
+    assertOwnerDecisionProtocol({ reason: task.blocked_reason ?? null, detail: task.blocked_detail ?? null });
     // 三镜头能力级前置门禁：new_capability 在选 pipeline 后、物化 task 前必经三镜头对抗，
     // 判决 + postcondition + NFR 三数落 decisions（同事务，reject/落库失败 → ROLLBACK 不建 task）。
     // adjudicate 由生产接线（harness-skill-relay 的 capability-controller relay）注入；
@@ -356,11 +366,11 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
          domain, okr_initiative_id, ability_id, blocked_at,
          tags, prd_content, execution_profile, owner_role, delivery_type,
          created_by, dept, phase, executor_kind,
-         parent_task_id, sequence_no, kind
+         parent_task_id, sequence_no, kind, blocked_reason, blocked_detail
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,
          $16,$17,$18,$19,$20,$21,$22,$23,$24,
-         $25::uuid, $26::int, $27
+         $25::uuid, $26::int, $27, $28, $29::jsonb
        ) RETURNING *`,
       [
         request.title,
@@ -390,6 +400,8 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         parentTaskId,
         sequenceNo,
         taskKind,
+        task.blocked_reason ?? null,
+        task.blocked_detail == null ? null : JSON.stringify(task.blocked_detail),
       ],
     );
     const taskId = taskResult.rows[0].id;
@@ -414,6 +426,14 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
         route_reason: decision.route_reason,
       })],
     );
+    // owner_decision：waiting_on=human 才进主理人待办（同事务，任务与待办同生共死）
+    if (task.blocked_reason === OWNER_DECISION_REASON) {
+      await openOwnerDecisionPendingAction(client, { taskId, title: request.title, detail: task.blocked_detail });
+    }
+    // 依赖单一写口：建单带 payload.depends_on → 同事务写 hard 边（宽松：脏 id 跳过，不因历史调用方让建单失败）
+    if (Array.isArray(payload.depends_on) && payload.depends_on.length > 0) {
+      await addTaskDependencies(client, taskId, payload.depends_on, { strict: false });
+    }
     if (ownsTransaction) await client.query('COMMIT');
     return {
       task_id: taskId,

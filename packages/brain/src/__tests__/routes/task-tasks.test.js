@@ -225,6 +225,10 @@ describe('task-tasks routes', () => {
     // ── 回归测试：Bug1/Bug2/Bug3 修复验证 ──
 
     it('[Bug1] 传 payload 字段 → INSERT params 包含 payload JSON', async () => {
+      const DEP_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      const DEP_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+      // 依赖单一写口的入口校验（链 bf5088a3 棒5）：depends_on 必须是存在的任务 uuid，这次查询排在去重查询之前
+      mockPool.query.mockResolvedValueOnce({ rows: [{ id: DEP_A }, { id: DEP_B }] });
       mockPool.query.mockResolvedValueOnce({ rows: [] }); // dedup: 无命中
       mockPool.query.mockResolvedValueOnce({
         rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }],
@@ -232,11 +236,11 @@ describe('task-tasks routes', () => {
 
       await request(app).post('/tasks').send(coding({
         title: 'T',
-        payload: { depends_on: ['task-a', 'task-b'], architecture_ref: 'arch.md' },
+        payload: { depends_on: [DEP_A, DEP_B], architecture_ref: 'arch.md' },
       }));
 
       expect(mockCreateRoutedTask.mock.calls[0][1].metadata).toEqual({
-        depends_on: ['task-a', 'task-b'],
+        depends_on: [DEP_A, DEP_B],
         architecture_ref: 'arch.md',
         tenant_id: 'default',
         change_kind: 'capability_change',
