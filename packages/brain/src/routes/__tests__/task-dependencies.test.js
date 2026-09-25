@@ -20,13 +20,14 @@ const app = () => {
   return a;
 };
 
-function db({ existing = [A, B], cycle = false } = {}) {
+function db({ existing = [A, B], cycle = false, root = true } = {}) {
   query.mockReset();
   query.mockImplementation(async (sql) => {
     const s = String(sql);
     if (/SELECT id, task_type FROM tasks WHERE id = \$1/.test(s)) return { rows: existing.includes(A) ? [{ id: A, task_type: 'dev' }] : [] };
     if (/SELECT id FROM tasks WHERE id = ANY/.test(s)) return { rows: existing.map((id) => ({ id })) };
-    if (/WITH RECURSIVE/.test(s)) return { rows: cycle ? [{ hit: 1 }] : [] };
+    if (/WITH RECURSIVE up/.test(s)) return { rows: root ? [{ id: '99999999-9999-4999-8999-999999999999' }] : [] }; // 登记闸：找 project 根
+    if (/WITH RECURSIVE reach/.test(s)) return { rows: cycle ? [{ hit: 1 }] : [] };
     if (/INSERT INTO task_dependencies/.test(s)) return { rowCount: 1, rows: [] };
     if (/DELETE FROM task_dependencies/.test(s)) return { rowCount: 1, rows: [] };
     return { rows: [], rowCount: 1 };
@@ -61,6 +62,14 @@ describe('POST /:id/dependencies', () => {
     const res = await request(app()).post(`/api/brain/tasks/${A}/dependencies`).send({ depends_on: [B] });
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('dependency_cycle');
+  });
+
+  it('违规输入被拒：本任务没挂 project 根就连依赖 → 400 project_root_required，不写边（登记闸）', async () => {
+    db({ root: false });
+    const res = await request(app()).post(`/api/brain/tasks/${A}/dependencies`).send({ depends_on: [B] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('project_root_required');
+    expect(query.mock.calls.some(([s]) => /INSERT INTO task_dependencies/.test(String(s)))).toBe(false);
   });
 
   it('违规输入被拒：edge_type 非法 → 400；:id 不是 uuid → 400；任务不存在 → 404', async () => {

@@ -141,10 +141,69 @@ describe('守卫 2：blocked=owner_decision 必须带协议', () => {
   });
 });
 
+describe('登记闸：多刀必挂 project 根（PR B）', () => {
+  const ROOT = '55555555-5555-4555-8555-555555555555';
+  const PARENT = '66666666-6666-4666-8666-666666666666';
+  const withRoot = (root = ROOT, siblings = false) => {
+    const prev = queryMock.getMockImplementation();
+    queryMock.mockImplementation(async (sql, params) => {
+      if (/WITH RECURSIVE up/.test(sql)) return { rows: root ? [{ id: root }] : [] };
+      if (/FROM tasks WHERE parent_task_id/.test(sql)) return { rows: siblings ? [{ one: 1 }] : [] };
+      if (/SELECT id FROM tasks WHERE id = ANY/.test(sql)) return { rows: [{ id: DEP }] };
+      if (/SELECT id FROM tasks WHERE id = \$1::uuid/.test(sql)) return { rows: [{ id: PARENT }] }; // resolveParentTaskId
+      return prev(sql, params);
+    });
+  };
+
+  it('违规输入被拒：有 depends_on 却没挂 parent（无根）→ 400 project_root_required，且不 INSERT', async () => {
+    const res = await request(app()).post('/api/brain/tasks').send({ ...base, payload: { depends_on: [DEP] } });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('project_root_required');
+    expect(res.body.hint).toMatch(/project/);
+    expect(sqlLog().some((s) => /INSERT INTO tasks/.test(s))).toBe(false);
+  });
+
+  it('违规输入被拒：parent 祖先链上没有 project 根 → 400', async () => {
+    withRoot(null);
+    const res = await request(app()).post('/api/brain/tasks').send({ ...base, parent_task_id: PARENT, payload: { depends_on: [DEP] } });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('project_root_required');
+  });
+
+  it('违规输入被拒：multi_task + 父下已有兄弟 + 没写 depends_on → 400 depends_on_required', async () => {
+    withRoot(ROOT, true);
+    const res = await request(app()).post('/api/brain/tasks').send({ ...base, parent_task_id: PARENT, payload: { multi_task: true } });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('depends_on_required');
+  });
+
+  it('挂了 project 根 + depends_on → 201', async () => {
+    withRoot();
+    const res = await request(app()).post('/api/brain/tasks').send({ ...base, parent_task_id: PARENT, payload: { depends_on: [DEP] } });
+    expect(res.status).toBe(201);
+  });
+
+  it('multi_task + 显式 depends_on:[]（刻意并行）→ 201；单刀（无声明）行为不变', async () => {
+    withRoot(ROOT, true);
+    expect((await request(app()).post('/api/brain/tasks').send({ ...base, parent_task_id: PARENT, payload: { multi_task: true, depends_on: [] } })).status).toBe(201);
+    expect((await request(app()).post('/api/brain/tasks').send(base)).status).toBe(201);
+  });
+});
+
 describe('依赖单一写口：depends_on 建单后进 task_dependencies', () => {
+  beforeEach(() => {
+    // 本组关注写边，不关注登记闸：给 project 根让闸放行
+    const prev = queryMock.getMockImplementation();
+    queryMock.mockImplementation(async (sql, params) => {
+      if (/WITH RECURSIVE up/.test(sql)) return { rows: [{ id: '55555555-5555-4555-8555-555555555555' }] };
+      if (/SELECT id FROM tasks WHERE id = \$1::uuid/.test(sql)) return { rows: [{ id: '66666666-6666-4666-8666-666666666666' }] };
+      return prev(sql, params);
+    });
+  });
+
   it('depends_on=[存在的任务] → 201 且写一条 hard 边', async () => {
     const res = await request(app()).post('/api/brain/tasks')
-      .send({ ...base, payload: { depends_on: [DEP] } });
+      .send({ ...base, parent_task_id: '66666666-6666-4666-8666-666666666666', payload: { depends_on: [DEP] } });
     expect(res.status).toBe(201);
     const ins = queryMock.mock.calls.find(([sql]) => /INSERT INTO task_dependencies/.test(sql));
     expect(ins).toBeTruthy();

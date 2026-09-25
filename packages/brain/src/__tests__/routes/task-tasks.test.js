@@ -229,6 +229,8 @@ describe('task-tasks routes', () => {
       const DEP_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
       // 依赖单一写口的入口校验（链 bf5088a3 棒5）：depends_on 必须是存在的任务 uuid，这次查询排在去重查询之前
       mockPool.query.mockResolvedValueOnce({ rows: [{ id: DEP_A }, { id: DEP_B }] });
+      // 登记闸（PR B）：带依赖 = 多刀，parent 祖先链上必须有 project 根
+      mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' }] });
       mockPool.query.mockResolvedValueOnce({ rows: [] }); // dedup: 无命中
       mockPool.query.mockResolvedValueOnce({
         rows: [{ id: 'x', title: 'T', status: 'queued', task_type: 'dev', priority: 'P2', project_id: null, created_at: '' }],
@@ -236,6 +238,7 @@ describe('task-tasks routes', () => {
 
       await request(app).post('/tasks').send(coding({
         title: 'T',
+        parent_task_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
         payload: { depends_on: [DEP_A, DEP_B], architecture_ref: 'arch.md' },
       }));
 
