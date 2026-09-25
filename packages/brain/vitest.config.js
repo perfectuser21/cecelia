@@ -12,6 +12,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/migration-routing-authority-roundtrip.pg.integration.test.js',
   'src/__tests__/integration/impact-contract-loop.integration.test.js',
   'src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js',
+  'src/__tests__/integration/task-run-primitive.pg.integration.test.js',
   'src/__tests__/integration/kernel-controller-ownership.pg.integration.test.js',
   'src/__tests__/integration/kernel-controller-lifecycle.pg.integration.test.js',
   'src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js',
