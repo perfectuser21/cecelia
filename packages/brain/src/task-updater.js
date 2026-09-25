@@ -288,11 +288,13 @@ export async function blockTask(taskId, { reason, detail = null, until = null } 
  * Emits 'task:unblocked' event.
  *
  * @param {string} taskId - Task ID
+ * @param {Object} [opts]
+ * @param {{query: Function}} [opts.db] - 事务内 client（owner_decision 应答与写 payload/decisions 同事务；默认走全局 pool）
  * @returns {Promise<Object>} - { success, task? }
  */
-export async function unblockTask(taskId) {
+export async function unblockTask(taskId, { db = pool } = {}) {
   try {
-    const result = await pool.query(`
+    const result = await db.query(`
       UPDATE tasks
       SET status = 'queued',
           claimed_by = NULL,
@@ -328,7 +330,7 @@ export async function unblockTask(taskId) {
     const task = result.rows[0];
 
     // 解除阻塞后关闭该任务未决的「等你拍板」待办（不留过期待办；失败只记日志）
-    await closeOwnerDecisionPendingAction(pool, taskId).catch((paErr) => {
+    await closeOwnerDecisionPendingAction(db, taskId).catch((paErr) => {
       console.error('[task-updater] 关闭 owner_decision pending_action 失败', { task_id: taskId, error: paErr.message });
     });
 
@@ -359,6 +361,9 @@ export async function unblockExpiredTasks({ limit = Infinity } = {}) {
       WHERE status = 'blocked'
         AND blocked_until IS NOT NULL
         AND blocked_until < NOW()
+        -- 等主理人的决策不在此自动放行：到期后由 owner-decision-deadline sweeper 按协议处理
+        -- （可逆走默认并留痕；不可逆顺延再催）。放行它 = 无决议、无留痕地吞掉一个待拍板。
+        AND NOT (blocked_reason = 'owner_decision' AND blocked_detail->>'waiting_on' = 'human')
     `);
 
     if (result.rows.length === 0) return [];
