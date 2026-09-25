@@ -148,6 +148,13 @@ features:
 # Changelog（细粒度改动历史）
 # ============================================================================
 changelog:
+  - version: "19.7.2"
+    date: "2026-09-25"
+    change: '[CONFIG] worktree-manage.sh 守卫：*-scan-main 目录禁止起 /dev 会话'
+    description: "P0 事故 9dfd873a（2026-09-23）：只读镜像仓库 cecelia-scan-main 被某 /dev 会话当成普通 cwd 跑 cmd_create，导致该仓库被注册了 git worktree、且 .cecelia/hb.sh + .cecelia/lights/*.live 心跳灯写进了 scan-main 自身，让地图照相层扫描器（MMV crontab rescan-if-changed.sh）连续 21.5h 判定'不干净工作区'拒绝扫描，四类快照陈旧触发 dispatch_fail_autoblock。新增 assert_cwd_not_scan_main：在 cmd_create 建任何 worktree/写任何文件之前，按当前 cwd 的 git toplevel basename 是否以 -scan-main 结尾拒绝并给出清晰错误信息。"
+    files:
+      - packages/engine/skills/dev/scripts/worktree-manage.sh
+      - scripts/__tests__/worktree-manage-scan-main-guard.test.sh
   - version: "19.4.4"
     date: "2026-07-09"
     change: '[CONFIG] pre-commit hook zenithjoy-skills 豁免收紧 + 测试接入CI'

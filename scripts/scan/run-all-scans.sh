@@ -40,6 +40,49 @@ fi
 
 echo "=== registry photo-layer scan $(date '+%F %T %Z') ==="
 
+# 运行期噪音过滤（2026-09-23 P0 事故 9dfd873a：cecelia-scan-main/.cecelia/hb.sh +
+# .cecelia/lights/*.live 心跳文件把只读扫描镜像仓库标记为不干净，rescan 连续拒绝
+# 21.5h，四类快照陈旧，派发闸连撞 map_stale 触发 dispatch_fail_autoblock）。
+#
+# 两种候选修法二选一，此处选「过滤法」：
+#   A) 过滤法（本实现）——git status --porcelain 结果里剔除已知运行期路径模式后再判定 clean。
+#      优点：扫描器全程只读，绝不改动/删除 checkout 里的任何文件；被扫描的仓库可能同时
+#      被其它会话使用（如 scan-main 本不该被开发但若已被污染，这里也不该越权清理它），
+#      过滤判定不承担"我猜这些文件可以删"的责任，行为可预测、易审计。
+#   B) 自动清理法（未采用）——扫描前 stash/rm 掉运行期文件。
+#      缺点：这是只读扫描器，赋予它写权限（哪怕只删自己不认识的文件）本身就是风险面；
+#      且两种做法混用会让"谁负责清理"边界不清，故只选一种。
+# 已知运行期路径模式（非代码产物，不该参与 clean 判定）：
+#   .cecelia/          — dev-heartbeat-guardian 心跳灯（hb.sh + lights/*.live）
+#   .dev-lock* / .dev-mode* — /dev 会话锁与模式标记（已在 .gitignore，双重保险）
+#   node_modules/      — 依赖树（已在 .gitignore，双重保险）
+RUNTIME_NOISE_PATTERN='^\.cecelia/|^\.dev-lock|^\.dev-mode|^node_modules/'
+
+# 读取 `git status --porcelain` 的原始输出（经 stdin），剔除已知运行期噪音路径后
+# 打印剩余的"真脏"行；不改动、不删除任何文件。
+filter_runtime_noise() {
+  local line path
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    path="${line:3}"
+    path="${path#* -> }"  # rename 条目 "R  old -> new"：按目标路径判断
+    if [[ "$path" =~ $RUNTIME_NOISE_PATTERN ]]; then
+      continue
+    fi
+    printf '%s\n' "$line"
+  done
+}
+
+# 过滤后的 dirty 判定：$1 = 目标 repo root（省略 = 当前目录）。
+dirty_status() {
+  local root="${1:-}"
+  if [[ -n "$root" ]]; then
+    git -C "$root" status --porcelain 2>/dev/null | filter_runtime_noise
+  else
+    git status --porcelain 2>/dev/null | filter_runtime_noise
+  fi
+}
+
 # 2. 确定 node 可执行路径（不依赖 ${HOME}）
 if [[ -z "${NODE_BIN:-}" ]]; then
   NODE_BIN=""
@@ -75,7 +118,7 @@ if [[ "${FACT_SNAPSHOT_TEST_MODE:-}" != "1" ]]; then
     echo "ERROR: 事实扫描必须运行在 main 分支" >&2
     exit 3
   fi
-  if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+  if [[ -n "$(dirty_status)" ]]; then
     echo "ERROR: 事实扫描拒绝不干净工作区" >&2
     exit 3
   fi
@@ -128,7 +171,7 @@ prepare_repo() {
   PREPARED_HEAD="$SCAN_HEAD"
   [[ "${FACT_SNAPSHOT_TEST_MODE:-}" == "1" ]] && return 0
   if [[ "$(git -C "$repo_root" branch --show-current 2>/dev/null)" != "main" ]] \
-    || [[ -n "$(git -C "$repo_root" status --porcelain 2>/dev/null)" ]]; then
+    || [[ -n "$(dirty_status "$repo_root")" ]]; then
     echo "ERROR: 目标事实仓必须是 clean main: $repo_root" >&2
     return 3
   fi
@@ -199,7 +242,7 @@ fi
 
 FINAL_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
 if [[ "$FINAL_HEAD" != "$EXPECTED_HEAD" ]] \
-  || { [[ "${FACT_SNAPSHOT_TEST_MODE:-}" != "1" ]] && [[ -n "$(git status --porcelain 2>/dev/null)" ]]; }; then
+  || { [[ "${FACT_SNAPSHOT_TEST_MODE:-}" != "1" ]] && [[ -n "$(dirty_status)" ]]; }; then
   echo "ERROR: 扫描期间 checkout revision 或工作区状态发生变化，拒绝发布" >&2
   exit 3
 fi
@@ -209,7 +252,7 @@ for _target_index in "${!TARGET_NAMES[@]}"; do
     && [[ "${TARGET_ROOTS[$_target_index]}" != "$REPO_ROOT" ]]; then
     _final_target_head="$(git -C "${TARGET_ROOTS[$_target_index]}" rev-parse HEAD 2>/dev/null || true)"
     if [[ "$_final_target_head" != "${TARGET_HEADS[$_target_index]}" ]] \
-      || [[ -n "$(git -C "${TARGET_ROOTS[$_target_index]}" status --porcelain 2>/dev/null)" ]]; then
+      || [[ -n "$(dirty_status "${TARGET_ROOTS[$_target_index]}")" ]]; then
       echo "ERROR: repo=${TARGET_NAMES[$_target_index]} 扫描期间 revision 或工作区漂移" >&2
       exit 3
     fi

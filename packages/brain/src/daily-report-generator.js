@@ -17,6 +17,7 @@ import { findBareRuns } from './lib/task-run.js';
 import { detectSkillBindingDrift, renderSkillBindingSection } from './lib/skill-binding-registry.js';
 import { EXECUTOR_SKILL_MAP } from './lib/task-type-registry.js';
 import { readSkillDistState, renderSkillDistSection } from './lib/skill-dist-report.js';
+import { readRescanStalenessState, renderRescanStalenessSection } from './lib/rescan-staleness-report.js';
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -248,9 +249,10 @@ export function renderBareRunSection(bareRuns) {
  * @param {Array|null} [bareRuns] findBareRuns 返回；null = 检测不可用，不出该板块
  * @param {{missing:Array,mismatched:Array,conflicts:Array}|null} [skillDrift] detectSkillBindingDrift 返回；null = 检测不可用，不出该板块
  * @param {object|null} [skillDist] readSkillDistState 返回（skill 分发漂移，链 bf5088a3 棒8）；null = 无数据，不出该板块
+ * @param {object|null} [rescanStaleness] readRescanStalenessState 返回（地图照相层 rescan 停滞哨兵，P0 9dfd873a 案）；null = 无数据，不出该板块
  * @returns {string}
  */
-export function buildReportText(reportDate, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns = null, skillDrift = null, skillDist = null) {
+export function buildReportText(reportDate, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns = null, skillDrift = null, skillDist = null, rescanStaleness = null) {
   const lines = [];
 
   lines.push(`ZenithJoy 内容日报 ${reportDate}`);
@@ -315,6 +317,12 @@ export function buildReportText(reportDate, yesterday, contentOutput, publishSta
   // ── 板块七：skill 分发漂移（真身 vs 跑场机清单哈希，AMBER；链 bf5088a3 棒8）──
   if (skillDist) {
     lines.push(renderSkillDistSection(skillDist));
+    lines.push('');
+  }
+
+  // ── 板块八：地图照相层 rescan 停滞哨兵（fact_snapshot_headers 账龄，AMBER；P0 9dfd873a 案）──
+  if (rescanStaleness) {
+    lines.push(renderRescanStalenessSection(rescanStaleness));
     lines.push('');
   }
 
@@ -390,8 +398,11 @@ export async function generateDailyReport(dbPool = pool, now = new Date()) {
     // 3.7 skill 分发漂移（读 skill-dist-drift job 落在 working_memory 的结果）：无数据/读取失败返回 null，不出该板块
     const skillDist = await readSkillDistState(dbPool);
 
-    // 4. 生成日报文本（内容产出、发布情况、数据回收、异常告警、裸跑检测、skill 绑定漂移、skill 分发漂移）
-    const reportText = buildReportText(today, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns, skillDrift, skillDist);
+    // 3.8 地图照相层 rescan 停滞哨兵（读 rescan-staleness-patrol job 落在 working_memory 的结果）：无数据/读取失败返回 null，不出该板块
+    const rescanStaleness = await readRescanStalenessState(dbPool);
+
+    // 4. 生成日报文本（内容产出、发布情况、数据回收、异常告警、裸跑检测、skill 绑定漂移、skill 分发漂移、rescan 停滞哨兵）
+    const reportText = buildReportText(today, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns, skillDrift, skillDist, rescanStaleness);
 
     // 5. 写入 working_memory，key=daily_report_{YYYY-MM-DD}
     await saveReportToWorkingMemory(dbPool, today, reportText);

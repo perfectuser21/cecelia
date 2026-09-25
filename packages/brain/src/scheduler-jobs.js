@@ -28,6 +28,7 @@ import { runMorningCockpitBark } from './morning-cockpit-bark.js';
 import { runDriftSentinel } from './cron/drift-sentinel.js';
 import { runDiskGuard } from './cron/disk-guard.js';
 import { runPromiseMapNightly } from './promise-map-nightly.js';
+import { runRescanStalenessPatrol } from './cron/rescan-staleness-patrol.js';
 import { sampleMachineVitals } from './machine-vitals.js';
 import { runCodexTestGen } from './codex-test-gen.js';
 import { runCaptureAging } from './capture-aging.js';
@@ -91,6 +92,7 @@ export const JOBS = [
   { name: 'drift-sentinel', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runDriftSentinel, description: 'G2 部署漂移哨兵（自带30min自gate，SHA对账+自动补部署，G2 S0）' },
   { name: 'disk-guard', needsPool: false, timeoutMs: 120_000, handler: runDiskGuard, description: '磁盘哨兵（15min自gate，宿主SSH逃逸df检测，80/85/90%三级响应，[disk_check]日志）' },
   { name: 'promise-map-nightly', needsPool: false, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runPromiseMapNightly, description: 'MJ5 S4 承诺地图保鲜对账（每日 UTC 02:00，4 条断言，失败 Bark，刀4）' },
+  { name: 'rescan-staleness-patrol', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => runRescanStalenessPatrol(pool), description: '地图照相层 rescan 停滞哨兵（自带5min gate，fact_snapshot_headers 账龄>30min即 P1+晨报AMBER，与派发闸账龄预算同源，P0 9dfd873a 案）' },
   { name: 'codex-test-gen', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => runCodexTestGen(pool), description: 'Codex 每日测试补齐生成器（扫 brain/src 缺测试文件 → 去重 7 天 → 入队 1-3 个 codex_test_gen 任务，07172225）' },
   { name: 'capture-aging', needsPool: true, timeoutMs: 30_000, handler: runCaptureAging, description: '账龄哨兵：超7天告警+llm_failed重试(≤3次)+超限转parked' },
   { name: 'acceptance-aging', needsPool: true, timeoutMs: 30_000, handler: runAcceptanceAging, description: '验收超时哨兵：pending/in_review超48h红灯Bark验收人+其中pending转expired(A10②)+历史failed无驳回任务补偿扫描（1h自gate，主理人条件一，决策18174291）' },
