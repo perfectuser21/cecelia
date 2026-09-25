@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.322.0
+**Brain 版本**: 1.323.0
 
 ## 1.283.0
 
@@ -48,6 +48,14 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.323.0 — 任务终态写入收口到状态机层 lib/task-terminal.js：所有终态路径必经，completed_no_pr 也接棒
+
+- 根因（任务 384de1e7，链 bf5088a3 棒 2，决策 105a5868 / ec7bf540；09-22 七层审计）：接棒（completed → handoff.next_steps 自动登记下一棒）只挂在 `PATCH /tasks` 一条路径；executor / monitor-loop / crystallize-orchestrator / harness-attempt-run / shepherd / publish-monitor / postdeploy-verifier / pr-callback-handler / routes/harness / routes/eval 等直接 `UPDATE tasks SET status='completed'` 全部绕过；openclaw-agent 收割写 completed_no_pr 而 relay-baton 只认 completed → 秋米任务 100% 不接棒。
+- 修法：新增 `lib/task-terminal.js` 两个入口——`finalizeTask(db, taskId, status, opts)`（列白名单 SQL 构造 + CAS + jsonb 合并 + 额外 WHERE，写完自动跑钩子）与 `afterTerminalTransition(pool, taskId, status)`（动态 SET 写入者 / 事务路径 COMMIT 后调）；`RELAY_TERMINAL_STATUSES = [completed, completed_no_pr]`，relay-baton 改认它；failed / archived 走同一出口不接棒。仓库内 30+ 处字面量直写终态站点全部改经 finalizeTask；PATCH 两条路由、执行回调（队列 + HTTP）、Kernel run 终态化、actions.update_task/bulk、task-updater 终态分支接钩子（放在 completed_no_pr 重排块之后：被重排回 queued 的自然不接棒）。
+- 机械守卫 `__tests__/task-terminal-write-guard.test.js`（proven-to-fire 实证：植入直写文件即红）：① hub 之外任何 `UPDATE tasks … SET status='<终态>'` 红；② 参数化 `status = $N` 写入者必须登记 `TASK_STATUS_WRITER_REGISTRY`；③ 登记为可能写终态的模块源码必须出现 afterTerminalTransition( / finalizeTask(；④ 登记表无幽灵条目。
+- 终态写入统一副作用：清 claimed_by / claimed_at；completed 类 `completed_at = COALESCE(completed_at, NOW())`（task-updater 沿用历史 NOW() 覆盖）；接棒异常吞成 warn 不阻塞调用方。
+- 本棒不含任务描述 ③skill relay 落 step 行 / ④work-commander 派发 step 行 / ⑤task_dependencies 硬边统一 / ⑥断链晨报 AMBER——进 handoff.next_steps。
 
 ## Brain 1.322.0 — 决策分档机械守卫 + 依赖单一写口（链 bf5088a3 棒5·PR A，任务 3fad28e0，决策 105a5868）
 
