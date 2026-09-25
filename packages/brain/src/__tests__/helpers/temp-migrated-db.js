@@ -50,9 +50,19 @@ export async function createTempMigratedDb(prefix = 'tmpdb') {
   return {
     name,
     pool,
+    // 不用 WITH (FORCE)：强杀连接时，刚 end() 但套接字还没关净的池客户端会收到 57P01 并作为未处理错误
+    // 弄红整个 vitest 进程（CI 慢机实证）。改为等连接自然关闭后普通 DROP，被占用就重试；
+    // 最终仍失败只是泄漏一个随机名临时库（CI 的 postgres 随 job 销毁），不影响结果。
     async drop() {
       await pool.end().catch(() => {});
-      await adminPool.query(`DROP DATABASE IF EXISTS ${quoted} WITH (FORCE)`).catch(() => {});
+      for (let i = 0; i < 20; i++) {
+        try {
+          await adminPool.query(`DROP DATABASE IF EXISTS ${quoted}`);
+          break;
+        } catch {
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      }
       await adminPool.end().catch(() => {});
     },
   };

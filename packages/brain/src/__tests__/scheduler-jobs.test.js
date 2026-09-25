@@ -128,6 +128,12 @@ vi.mock('../openclaw-agent-executor.js', () => ({
   reapOpenclawAgentRuns: vi.fn().mockResolvedValue({ reaped: 0, completed: 0, failed: 0 }),
 }));
 
+// script 收割（棒 3）同理：真实 handler 会 ssh 到跑场机读 .exit，纯路由单测绝不碰真机；
+// 收割逻辑由 script-executor.test.js / integration/script-executor-chain.pg.integration.test.js 覆盖。
+vi.mock('../script-executor.js', () => ({
+  reapScriptRuns: vi.fn().mockResolvedValue({ reaped: 0, completed: 0, failed: 0, retried: 0 }),
+}));
+
 // 秋米设备对账的真实 handler 会扫库。「哨兵写入失败不影响 job 结果」那条用例的假 pool 对
 // 所有 query 一律 reject，真 handler 会把那个 reject 变成 job 失败——验的是哨兵，却被对账带红。
 // 与 openclaw-agent-reaper 同理：纯注册/路由行为单测不碰库。对账逻辑本体由 device-delegation.test.js 覆盖。
@@ -212,6 +218,20 @@ describe('scheduler-jobs 注册表', () => {
     expect(j).toBeTruthy();
     expect(j.needsPool).toBe(true);
     expect(typeof j.handler).toBe('function');
+  });
+
+  // 任务 5cdbd52a：script_run 的收割者。没注册 = 脚本步派出去永远没人读 .exit，任务永远 in_progress。
+  it('JOBS 注册了 script-reaper（needsPool、在 scheduler-liveness 之前、handler 真接线 reapScriptRuns）', async () => {
+    const { reapScriptRuns } = await import('../script-executor.js');
+    const names = JOBS.map((j) => j.name);
+    const j = JOBS.find((x) => x.name === 'script-reaper');
+    expect(j).toBeTruthy();
+    expect(j.needsPool).toBe(true);
+    expect(j.timeoutMs).toBeLessThanOrEqual(5 * 60 * 1000);
+    expect(names.indexOf('script-reaper')).toBeLessThan(names.indexOf('scheduler-liveness'));
+    const pool = makePool();
+    await runSchedulerJobsOnce(pool, [j]);
+    expect(reapScriptRuns).toHaveBeenCalledWith(pool);
   });
 
   // 任务 8aa79219：owner_decision「到期按默认走」的执行者。没注册 = 协议承诺无人兑现，不可逆决策永卡、可逆决策不走默认。

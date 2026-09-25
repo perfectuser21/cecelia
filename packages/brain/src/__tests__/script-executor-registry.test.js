@@ -21,6 +21,7 @@ describe('注册表：script_run', () => {
     expect(e.pr).toBe(false);
     expect(e.coding).toBe(false);
     expect(e.tags).toContain('anchor_exempt');
+    expect(e.tags).toContain('system_no_prd'); // payload.cmd 就是规格，pre-flight 不要求 PRD 描述
     expect(KIND_FOR_TASK_TYPE.script_run).toBe('agent');
     expect(deriveTaskKind('script_run')).toBe('agent');
     expect(EXECUTOR_KIND_FOR_TASK_TYPE.script_run).toBe('script');
@@ -33,9 +34,9 @@ describe('注册表：script_run', () => {
     }
   });
 
-  it('PR A 期间 script_run 不进 tick 派发（没有执行体接线前不许被当普通任务派给 claude）', () => {
-    expect(getTaskType('script_run').tick_dispatchable).toBe(false);
-    expect(TICK_DISPATCH_EXCLUDED).toContain('script_run');
+  it('PR B 起 script_run 进 tick 派发（执行体 script-executor 已接线：dispatcher 专用出口 + executor 分支 + 收割 job）', () => {
+    expect(getTaskType('script_run').tick_dispatchable).toBe(true);
+    expect(TICK_DISPATCH_EXCLUDED).not.toContain('script_run');
   });
 
   it('resolveTaskAttributes 读得到 script_run 的 kind', () => {
