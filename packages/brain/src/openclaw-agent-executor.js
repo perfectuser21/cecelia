@@ -24,6 +24,7 @@ import { execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { resolvePrimaryWorkerId, sshTargetFor } from './machine-registry.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
+import { startRun, finishRun } from './lib/task-run.js';
 import { qiumiEnv, phoneNodeName } from './routing/env.js';
 
 // 两条白名单，宽严不同：
@@ -237,6 +238,13 @@ export async function triggerOpenclawAgent(task, deps = {}) {
   await recordTaskEventSafe(pool, task.id, 'openclaw_agent_spawned', {
     run_id: runId, department, model, machine, already_running: spawnOutcome === 'already',
   });
+  // 一次执行 = 一行 task_runs（run 原语，fail-open）：ssh 已把 agent 起到执行机，此刻起算开始。
+  await startRun({
+    taskId: task.id,
+    runId,
+    source: 'openclaw-agent',
+    context: { department, model, machine, already_running: spawnOutcome === 'already' },
+  }, { pool });
   return { success: true, taskId: task.id, runId, executor: 'openclaw-agent' };
 }
 
@@ -323,6 +331,13 @@ export async function reapOpenclawAgentRuns(pool, deps = {}) {
       out.failed++;
     }
     out.reaped++;
+    // run 原语补终态：只认远端真实 .exit（exit=0 → success，其余 → failed），已终态不覆盖。
+    await finishRun({
+      runId: r.run_id,
+      status: exit === 0 ? 'completed' : 'failed',
+      exitCode: exit,
+      error: exit === 0 ? undefined : `openclaw_agent_exit_${exit}`,
+    }, { pool });
     await recordTaskEventSafe(pool, r.id, 'openclaw_agent_reaped', { run_id: r.run_id, exit });
   }
   return out;

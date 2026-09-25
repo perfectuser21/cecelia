@@ -70,7 +70,7 @@ const REGISTRY = join(SRC, 'lib', 'task-type-registry.js');
 //   LOCATION_MAP/TASK_REQUIREMENTS/ASYNC_CALLBACK_TYPES、executor.js 的 skillMap/modeMap）
 //   也已改注册表派生（对象型用 deep-equal fixture 校验零行为变化）。两个文件里各剩 1 处
 //   真正的 long-lived: map（task-router.js:135 的 2 项业务降级链 FALLBACK_STRATEGIES.skill、
-//   executor.js:2336 的 task_type→handler 函数路由表 _TASK_ROUTES，函数值无法进纯数据注册表）
+//   executor.js:2337 的 task_type→handler 函数路由表 _TASK_ROUTES，函数值无法进纯数据注册表）
 //   ——kind: enum 在这两个文件里已清零，只剩 kind: map。
 // - Task 6（补充五+补充六收尾）：`executor-contracts.js` 的 `EXECUTOR_KIND_FOR` 改从注册表
 //   `EXECUTOR_KIND_FOR_TASK_TYPE` 派生（+ 两个路径 sentinel），退出清单——清单变量从
@@ -82,8 +82,8 @@ const REGISTRY = join(SRC, 'lib', 'task-type-registry.js');
 //   这 11 条即为 PR1 终态允许保留的清单（`packages/brain/scripts/audit/registry-vs-base.mjs`
 //   另行对全部已替换站点做"注册表派生值 vs 基线源码原文"机械审计，见该脚本头注释）。
 export const REMAINING_LEGACY_SITES = {
-  // kind: map（long-lived）— 唯一残留 :2336 _TASK_ROUTES（task_type→handler 函数，无法表示为注册表纯数据字段）
-  'executor.js': ['2336:_TASK_ROUTES'],
+  // kind: map（long-lived）— 唯一残留 :2337 _TASK_ROUTES（task_type→handler 函数，无法表示为注册表纯数据字段）
+  'executor.js': ['2337:_TASK_ROUTES'],
   // kind: map（long-lived）— Task 4 评估：:60 model_map 是 task_type→{provider,model,cascade}
   // 的模型路由调优配置（嵌套对象，非简单字符串），逐 type 独立调参（如 harness_planner 用 opus、
   // harness_generate 用 sonnet），无匹配注册表单一字段，且属运营调参数据非"哪类"分类标签

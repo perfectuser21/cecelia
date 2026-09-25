@@ -48,6 +48,7 @@ import {
   EXECUTOR_MODE_MAP,
 } from './lib/task-type-registry.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
+import { startRunForExecResult } from './lib/task-run.js';
 
 // 外部执行体（工作机领单器等）认领后的活性宽限期。
 // 真机实测单个关键词采收 17~25 分钟（逐个点进评论者主页核验身份），45 分钟留足余量；
@@ -3410,7 +3411,22 @@ export function summarizeNodeState(state) {
 // 模块级常量：override 分支（排除 harness/retired）与下方 retired 短路块共用，引用顺序无忧。
 const _RETIRED_HARNESS_TYPES = new Set(RETIRED_HARNESS_TYPES_DISPATCH);
 
+/**
+ * 所有执行的漏斗（dispatcher / routes/tasks / routes/execution 三处调用）：
+ * 内层分派完成后统一经 run 原语落一行 task_runs（一次执行 = 一行，幂等；fail-open 不拖垮执行）。
+ * openclaw-agent 等自己已 startRun 的分支先落（source 更精确），这里只是幂等兜底。
+ */
 async function triggerCeceliaRun(task) {
+  const execResult = await _triggerCeceliaRunInner(task);
+  const source = task?.payload?.harness_runtime === 'kernel-v1' ? 'kernel' : 'executor';
+  const runId = await startRunForExecResult({ task, execResult, source });
+  if (runId && execResult && execResult.success === true && !execResult.runId) {
+    return { ...execResult, runId };
+  }
+  return execResult;
+}
+
+async function _triggerCeceliaRunInner(task) {
   // 动态路由：优先从 task_type_configs 缓存读取（其余 Codex B类，前台可调）
   // A类和 Coding pathway B类不在缓存中，getCachedLocation 返回 null，走 hardcoded 逻辑
   const dynamicLocation = getCachedLocation(task.task_type);

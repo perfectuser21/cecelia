@@ -30,6 +30,7 @@ import { isAllowed, recordFailure, recordSuccess } from './circuit-breaker.js';
 import { publishTaskStarted } from './events/taskEvents.js';
 import { recordDispatchResult } from './dispatch-stats.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
+import { startRunForExecResult } from './lib/task-run.js';
 import { classifyDispatchReasonCode } from './lib/dispatch-reason-code.js';
 import { incrementActionsToday } from './tick-stats.js';
 import { proactiveTokenCheck } from './account-usage.js';
@@ -1428,8 +1429,12 @@ export async function dispatchNextTask(goalIds) {
       console.error(`[dispatch] Failed to record pre-flight stats: ${statsErr.message}`);
     }
 
+    // run 原语兜底：executor 漏斗已按 runId 落过行则幂等 no-op；这里保证「有 dispatched 事件必有 run」
+    // （dispatched 事件带 task_id 是裸跑检测的 join 键——此前恒为 NULL，检测无从谈起）。
+    await startRunForExecResult({ task: nextTask, execResult, source: 'dispatcher' });
+
     // Record dispatch success to rolling window stats
-    await recordDispatchResult(pool, true);
+    await recordDispatchResult(pool, true, null, undefined, nextTask.id);
   } catch (bookkeepingErr) {
     // 事后记账失败：task 已经真实派发成功，绝不能释放 claim / 标 failed，只记日志。
     console.error(`[dispatch] post-success bookkeeping failed for task=${nextTask.id} (dispatch itself succeeded, claim NOT released): ${bookkeepingErr.message}`);

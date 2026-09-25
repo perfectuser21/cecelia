@@ -35,6 +35,7 @@ import {
 } from '../execution.js';
 import { normalizeCallbackStatus, extractPrNumber, maybeMarkCompletedNoPr, resolveCanonicalPrUrl, firstValidGithubPrUrl, buildExecMetaJson, buildFailureFields, extractFindingsValue, buildLastRunResult } from '../lib/callback-utils.js';
 import { runSyncCommand } from '../lib/safe-sync-command.js';
+import { recordRunFromCallback } from '../lib/task-run.js';
 import { isTransientClass } from '../lib/retry-policy.js';
 import { checkAnchor } from '../anchor-check.js';
 import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
@@ -129,6 +130,19 @@ router.post('/execution-callback', async (req, res) => {
         return res.status(503).json({ success: false, error: 'callback_queue unavailable, retry later' });
       }
     }
+
+    // ── run 原语留痕：一次执行 = 一行 task_runs ──
+    // 回执是脚本步 / 设备 / cecelia-run 的统一出口：补齐 run 行（幂等 upsert）并在终态回执时 finishRun
+    // （exit code / 产物 / 终态）。fail-open——留痕失败绝不影响下面的回执主链；DB 才是真相源。
+    await recordRunFromCallback({
+      taskId: task_id,
+      runId: run_id,
+      status,
+      exitCode: exit_code,
+      result,
+      prUrl: pr_url,
+      error: stderr ? String(stderr).slice(-300) : undefined,
+    });
 
     // ── 幂等性保护：run_id + status 组合去重 ──
     // 网络重试或外部系统重复调用时，同一 run_id + status 不应重复处理
