@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.333.5
+**Brain 版本**: 1.333.6
 
 ## 1.283.0
 
@@ -48,6 +48,13 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.333.6 — 棒3a-2：business-probe-judge 无 anchor 时按 run_id 解析 workflow 兜底判定（任务 1be07583）
+
+- 09-27 06:00 获客链生产首跑：zenithjoy device_job 镜像建的 Brain 任务 `payload.anchor` 为空，判定器只按 journey_id 查 step_probes → run.finished 到了也 `skipped no_anchor`，格子永不翻色
+- `lib/business-probe-judge.js`：无锚时取 `result.workflow`，否则从 run_id `<workflow>-crontab-<TAG>__aN.<stage>` 解析 workflow，改查 `step_probes.workflow + stage`（保留 active 过滤与 journey_step_links JOIN）；两者皆无 → `skipped: no_anchor_no_workflow`；有锚仍走原路径
+- 判定成功且探针指向唯一 journey → 一次性回填 `tasks.payload.anchor.journey_id`（仅为空时写），便于地图/晨报按锚聚合；跨多 journey 不回填
+- 单测 6 条 + pg 集成 2 条（无锚镜像任务全链翻色/回填、无 workflow 不写回执）
 
 ## Brain 1.333.5 — codex-bridge 回调 Brain 补内部鉴权 Bearer 头（任务 446aa294，决策 6ac4563e，链 bf5088a3 棒1 补棒）
 
