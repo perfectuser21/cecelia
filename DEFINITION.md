@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.333.3
+**Brain 版本**: 1.333.4
 
 ## 1.283.0
 
@@ -48,6 +48,11 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.333.4 — 棒3a 补丁：business-probe-judge 只判 active=true 的探针（任务 32d0109a）
+
+- 棒2（#5589）漂移语义：仓库 YAML 删探针后 step_probes 库行置 `active=false`；棒3a（#5590）判定查询未过滤该列，停用探针会一直以 probe_missing 把格子打红
+- `lib/business-probe-judge.js` 查 step_probes 加 `sp.active = true`；单测断言 SQL 含该过滤，pg 集成加一条停用探针断言不出回执、不拖红同格
 
 ## Brain 1.333.3 — step_probes 对齐 workspace 探针最终形状：http filter/reduce/minus 保留 + source_sha256 文件级哈希（链 bf5088a3 棒2 后续，任务 14cd9e76，决策 702949b6）
 
