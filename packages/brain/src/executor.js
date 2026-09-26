@@ -50,6 +50,7 @@ import {
 } from './lib/task-type-registry.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { startRunForExecResult } from './lib/task-run.js';
+import { internalServiceHeaders } from './lib/internal-service-auth.js';
 import { resolveTaskTypeSkill, resolveSkillWithLedger } from './lib/skill-binding-registry.js';
 
 // 外部执行体（工作机领单器等）认领后的活性宽限期。
@@ -2490,7 +2491,7 @@ async function triggerCodexReview(task) {
         const brainUrl = process.env.BRAIN_URL || 'http://localhost:5221';
         await fetch(`${brainUrl}/api/brain/execution-callback`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: internalServiceHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             task_id: task.id,
             run_id: runId,
@@ -2566,7 +2567,7 @@ async function triggerCodexReview(task) {
         };
         await fetch(`${brainUrl}/api/brain/execution-callback`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: internalServiceHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify(payload),
         });
         console.log(`[executor] codex review callback sent verdict=${payload.result?.verdict} task=${task.id}`);
@@ -2943,7 +2944,7 @@ async function triggerLocalCodexExec(task) {
       `CODEX_HOME="${CODEX_HOME}" "${CODEX_BIN}" exec --model "${CODEX_MODEL}" --sandbox danger-full-access "$(cat '${tmpPromptFile}')" 2>&1`,
       'EXIT=$?',
       `rm -f "${tmpPromptFile}" 2>/dev/null; rm -rf "${slotPath}" 2>/dev/null; rm -f "${tmpScriptFile}" 2>/dev/null`,
-      `curl -s -X POST "${WEBHOOK_URL}" -H "Content-Type: application/json" \\`,
+      `curl -s -X POST "${WEBHOOK_URL}" -H "Content-Type: application/json" \${CECELIA_INTERNAL_TOKEN:+-H "Authorization: Bearer $CECELIA_INTERNAL_TOKEN"} \\`,
       `  -d "{\\"task_id\\":\\"${task.id}\\",\\"run_id\\":\\"${runId}\\",\\"status\\":\\"AI Done\\",\\"exit_code\\":$EXIT}" \\`,
       '  --max-time 10 2>/dev/null || true',
     ].join('\n');
@@ -3862,6 +3863,8 @@ async function _triggerCeceliaRunInner(task) {
       const dockerEnv = {
         ...extraEnv,
         WEBHOOK_URL: `${brainBase}/api/brain/execution-callback`,
+        // 回执入口验 Bearer（棒1）：容器内 cecelia-run.sh 从 env 读 token 回投
+        CECELIA_INTERNAL_TOKEN: process.env.CECELIA_INTERNAL_TOKEN,
         CECELIA_CORE_API: brainBase,
         BRAIN_URL: brainBase,
         CECELIA_PERMISSION_MODE: permissionMode,

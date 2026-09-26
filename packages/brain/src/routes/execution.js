@@ -40,12 +40,26 @@ import { isTransientClass } from '../lib/retry-policy.js';
 import { checkAnchor } from '../anchor-check.js';
 import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
 import { afterTerminalTransition } from '../lib/task-terminal.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
+import { rateLimit } from 'express-rate-limit';
 
 const router = Router();
+
+// 回执入口按 task_id 限流：同一任务一分钟内超 60 次回执视为失控（正常一次执行只有 1~3 次）
+const executionCallbackRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  keyGenerator: (req) => String(req.body?.task_id ?? 'no-task'),
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  identifier: 'execution-callback',
+  message: { success: false, error: 'execution-callback rate limit exceeded' },
+});
 const execAsync = promisify(exec);
 const HEARTBEAT_PATH = new URL('../../../HEARTBEAT.md', import.meta.url);
 
-router.post('/execution-callback', async (req, res) => {
+// 内部回执入口：CECELIA_INTERNAL_TOKEN 配置后严格验 Bearer / x-internal-token；未配置只放行非生产本机回环
+router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoopback, async (req, res) => {
   let callbackQueueId = null;
   let callbackQueueFinalized = false;
   const finalizeCallbackQueue = async (processed) => {

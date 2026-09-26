@@ -33,6 +33,8 @@ const server = http.createServer((req, res) => {
         const type = task_type || 'dev';
 
         let envVars = `WEBHOOK_URL="${webhookUrl}" CECELIA_CORE_API="${BRAIN_URL}" CECELIA_WEBHOOK_TOKEN="" CECELIA_PERMISSION_MODE="${mode}" CECELIA_TASK_TYPE="${type}"`;
+        // 回执入口验 Bearer（棒1）：宿主 env 里的 CECELIA_INTERNAL_TOKEN 透传给 cecelia-run，值不进日志
+        if (process.env.CECELIA_INTERNAL_TOKEN) envVars += ` CECELIA_INTERNAL_TOKEN="${process.env.CECELIA_INTERNAL_TOKEN.replace(/["$`\\]/g, '')}"`;
         if (repo_path) envVars += ` CECELIA_WORK_DIR="${repo_path}"`;
         if (model) envVars += ` CECELIA_MODEL="${model}"`;
         if (provider) envVars += ` CECELIA_PROVIDER="${provider}"`;
