@@ -180,11 +180,86 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
     expect(noStage.pool.query).not.toHaveBeenCalled();
 
     const noAnchor = poolWith({ journeyId: null });
-    expect(await handleRunFinished({ runId: 'r', taskId: 't', result: result([]) }, { pool: noAnchor.pool, persist })).toEqual({ skipped: 'no_anchor' });
+    expect(await handleRunFinished({ runId: 'r', taskId: 't', result: result([]) }, { pool: noAnchor.pool, persist })).toEqual({ skipped: 'no_anchor_no_workflow' });
 
     const noProbes = poolWith({ probes: [] });
     expect(await handleRunFinished({ runId: 'r', taskId: 't', result: result([]) }, { pool: noProbes.pool, persist })).toEqual({ skipped: 'no_probes' });
     expect(persist).not.toHaveBeenCalled();
+  });
+
+  describe('无 anchor 兜底：按 run_id / result.workflow 解析 workflow 查 step_probes（任务 1be07583，09-27 获客链首跑 skipped no_anchor）', () => {
+    const RUN_ID = 'social-keyword-leadgen-crontab-auto09270600__a1.delivery';
+    const JOURNEY = 'j-leadgen';
+    function deliveryProbes() {
+      return [
+        spec('delivery.sent', { op: '>=', value: 1 }, { stage: 'delivery', journey_id: JOURNEY }),
+        spec('delivery.failed', { op: '<=', value: 0 }, { stage: 'delivery', journey_id: JOURNEY }),
+        spec('delivery.ids', { op: 'not_null_all' }, { stage: 'delivery', journey_id: JOURNEY, journey_step_link_id: LINK_B }),
+      ];
+    }
+    const observed = () => result(
+      { 'delivery.sent': { observed: 3 }, 'delivery.failed': { observed: 0 }, 'delivery.ids': { observed: ['a', 'b'] } },
+      {}, 'delivery',
+    );
+
+    it('task 无 anchor + run_id 形如 <workflow>-crontab-<TAG>__aN.<stage> → 按 workflow+stage 判定、写回执、翻 cell', async () => {
+      const { pool, calls } = poolWith({ journeyId: null, probes: deliveryProbes() });
+      const persist = vi.fn().mockResolvedValue({ id: 'rcpt' });
+      const out = await handleRunFinished({ runId: RUN_ID, taskId: 't-mirror', status: 'success', result: observed() }, { pool, persist });
+      expect(out).toMatchObject({ judged: 3, workflow: 'social-keyword-leadgen', cells: { [LINK_A]: 'green', [LINK_B]: 'green' } });
+      expect(persist).toHaveBeenCalledTimes(3);
+      const probeQuery = calls.find((c) => /FROM step_probes/.test(c.sql));
+      expect(probeQuery.sql).toMatch(/sp\.workflow = \$1/);
+      expect(probeQuery.sql).toMatch(/sp\.active = true/);
+      expect(probeQuery.sql).toMatch(/JOIN journey_step_links/);
+      expect(probeQuery.params).toEqual(['social-keyword-leadgen', 'delivery']);
+    });
+
+    it('result.workflow 优先于 run_id 解析', async () => {
+      const { pool, calls } = poolWith({ journeyId: null, probes: deliveryProbes() });
+      await handleRunFinished(
+        { runId: RUN_ID, taskId: 't-mirror', result: { ...observed(), workflow: 'explicit-wf' } },
+        { pool, persist: vi.fn().mockResolvedValue({ id: 'rcpt' }) },
+      );
+      expect(calls.find((c) => /FROM step_probes/.test(c.sql)).params).toEqual(['explicit-wf', 'delivery']);
+    });
+
+    it('有 anchor 仍走 journey_id 原路径，不看 run_id', async () => {
+      const { pool, calls } = poolWith({ journeyId: 'j-1', probes: deliveryProbes() });
+      await handleRunFinished({ runId: RUN_ID, taskId: 't-1', result: observed() }, { pool, persist: vi.fn().mockResolvedValue({ id: 'rcpt' }) });
+      const probeQuery = calls.find((c) => /FROM step_probes/.test(c.sql));
+      expect(probeQuery.sql).toMatch(/jsl\.journey_id = \$1/);
+      expect(probeQuery.params).toEqual(['j-1', 'delivery']);
+      expect(calls.some((c) => /UPDATE tasks/.test(c.sql))).toBe(false);
+    });
+
+    it('判定成功后把唯一 journey_id 回填进 task.payload.anchor（只在为空时写一次）', async () => {
+      const { pool, calls } = poolWith({ journeyId: null, probes: deliveryProbes() });
+      await handleRunFinished({ runId: RUN_ID, taskId: 't-mirror', result: observed() }, { pool, persist: vi.fn().mockResolvedValue({ id: 'rcpt' }) });
+      const backfill = calls.find((c) => /UPDATE tasks/.test(c.sql));
+      expect(backfill).toBeDefined();
+      expect(backfill.sql).toMatch(/payload->'anchor'->>'journey_id' IS NULL/);
+      expect(backfill.params).toEqual([JOURNEY, 't-mirror']);
+      const idx = calls.indexOf(backfill);
+      expect(calls.slice(0, idx).some((c) => /UPDATE journey_step_links/.test(c.sql))).toBe(true);
+    });
+
+    it('探针横跨多个 journey → 不回填锚（歧义），判定照常', async () => {
+      const probes = deliveryProbes();
+      probes[2].journey_id = 'j-other';
+      const { pool, calls } = poolWith({ journeyId: null, probes });
+      const out = await handleRunFinished({ runId: RUN_ID, taskId: 't-mirror', result: observed() }, { pool, persist: vi.fn().mockResolvedValue({ id: 'rcpt' }) });
+      expect(out.judged).toBe(3);
+      expect(calls.some((c) => /UPDATE tasks/.test(c.sql))).toBe(false);
+    });
+
+    it('run_id 不含 -crontab- 且 result 无 workflow → skipped no_anchor_no_workflow', async () => {
+      const { pool } = poolWith({ journeyId: null, probes: deliveryProbes() });
+      const persist = vi.fn();
+      expect(await handleRunFinished({ runId: 'run-plain-1', taskId: 't-mirror', result: observed() }, { pool, persist }))
+        .toEqual({ skipped: 'no_anchor_no_workflow' });
+      expect(persist).not.toHaveBeenCalled();
+    });
   });
 
   it('pool 抛错 → fail-open 返回 {error}，不向上抛', async () => {
