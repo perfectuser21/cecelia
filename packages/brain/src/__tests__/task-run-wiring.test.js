@@ -81,6 +81,126 @@ describe('recordRunFromCallback — 回执通道 → run 原语', () => {
   });
 });
 
+/**
+ * [BEHAVIOR] stage 回执 = 一次已结束的 stage run（棒1-brain-2，任务 8e5521ae）。
+ * 09-27 06:00 生产批实证：执行机每个 stage 结束 POST {status:'in_progress', run_id:'<run>__aN.<stage>',
+ * result:{stage, stage_status, metrics, evidence, probes}}，只有 finalize 才发终态。
+ * 旧行为：非终态只 startRun → 四行 status=running、result 空、永不结束、run.finished 从不 emit。
+ * 语义修正：回执 status 非终态 且 result.stage 为字符串 ⇒ 该 stage run 已结束、任务继续。
+ */
+describe('recordRunFromCallback — stage 回执（in_progress + result.stage）作为已结束的 stage run', () => {
+  const stageReceipt = (stage_status, extra = {}) => ({
+    stage: 'delivery',
+    stage_status,
+    metrics: { sent: 3, replied: 1 },
+    evidence: ['s3://bucket/delivery.log'],
+    probes: [{ key: 'delivery.sent', observed: 3, probed_at: '2026-09-27T06:00:00Z' }],
+    ...extra,
+  });
+  const runId = 'social-keyword-leadgen-crontab-auto09270600__a1.delivery';
+
+  it('stage_status=completed → startRun 后立即 finishRun(success)，result 带 stage/stage_status/metrics/evidence/probes，run.finished 恰好一次', async () => {
+    const pool = fakePool();
+    const emit = vi.fn().mockResolvedValue(undefined);
+    const out = await recordRunFromCallback(
+      { taskId: 't1', runId, status: 'in_progress', result: stageReceipt('completed') },
+      { pool, emit },
+    );
+    expect(kinds(pool)).toEqual(['insert', 'update']);
+    const upd = pool.calls[1];
+    expect(upd.sql).toMatch(/ended_at = NOW\(\)/);
+    expect(upd.params[1]).toBe('success');
+    expect(JSON.parse(upd.params[2])).toMatchObject({
+      stage: 'delivery',
+      stage_status: 'completed',
+      metrics: { sent: 3, replied: 1 },
+      evidence: ['s3://bucket/delivery.log'],
+      probes: [{ key: 'delivery.sent', observed: '3', probed_at: '2026-09-27T06:00:00Z' }],
+    });
+    expect(JSON.parse(upd.params[2]).blocked).toBeUndefined();
+    expect(out.finished).toEqual({ updated: true });
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit.mock.calls[0][0]).toBe('run.finished');
+    // 任务本身不置终态：本函数只写 task_runs，绝不碰 tasks 表
+    expect(pool.calls.every((c) => /task_runs/i.test(c.sql) && !/UPDATE tasks\b/i.test(c.sql))).toBe(true);
+  });
+
+  it('stage_status=failed → finishRun(failed)，error 带上', async () => {
+    const pool = fakePool();
+    const emit = vi.fn();
+    await recordRunFromCallback(
+      { taskId: 't1', runId, status: 'in_progress', result: stageReceipt('failed'), error: 'ssh hop timeout' },
+      { pool, emit },
+    );
+    expect(kinds(pool)).toEqual(['insert', 'update']);
+    expect(pool.calls[1].params[1]).toBe('failed');
+    expect(pool.calls[1].params[3]).toBe('ssh hop timeout');
+    expect(emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('stage_status=blocked → 正常退让非故障：finishRun(success) 且 result.blocked=true，不算 failed', async () => {
+    const pool = fakePool();
+    const emit = vi.fn();
+    await recordRunFromCallback(
+      { taskId: 't1', runId, status: 'in_progress', result: stageReceipt('blocked') },
+      { pool, emit },
+    );
+    expect(kinds(pool)).toEqual(['insert', 'update']);
+    expect(pool.calls[1].params[1]).toBe('success');
+    const res = JSON.parse(pool.calls[1].params[2]);
+    expect(res.blocked).toBe(true);
+    expect(res.stage_status).toBe('blocked');
+    expect(pool.calls[1].params[3]).toBeNull();
+    expect(emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('有 stage 但 stage_status 缺失/未知 → 不猜终态：只补行不结束、不 emit', async () => {
+    const pool = fakePool();
+    const emit = vi.fn();
+    await recordRunFromCallback(
+      { taskId: 't1', runId, status: 'in_progress', result: { stage: 'delivery', metrics: {} } },
+      { pool, emit },
+    );
+    expect(kinds(pool)).toEqual(['insert']);
+    await recordRunFromCallback(
+      { taskId: 't1', runId, status: 'in_progress', result: { stage: 'delivery', stage_status: 'weird' } },
+      { pool, emit },
+    );
+    expect(kinds(pool)).toEqual(['insert', 'insert']);
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('无 result.stage 的 in_progress 回执保持原行为：只补行、不结束、不 emit', async () => {
+    const pool = fakePool();
+    const emit = vi.fn();
+    await recordRunFromCallback(
+      { taskId: 't1', runId: 'plain-run', status: 'in_progress', result: { note: 'heartbeat' } },
+      { pool, emit },
+    );
+    expect(kinds(pool)).toEqual(['insert']);
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('finalize 终态回执（cleanup 段）走原终态路径：status=completed 与 stage 并存时按 status 定终态', async () => {
+    const pool = fakePool();
+    const emit = vi.fn();
+    await recordRunFromCallback(
+      {
+        taskId: 't1',
+        runId: 'social-keyword-leadgen-crontab-auto09270600__cleanup',
+        status: 'completed',
+        exitCode: 0,
+        result: stageReceipt('completed', { stage: 'cleanup' }),
+      },
+      { pool, emit },
+    );
+    expect(kinds(pool)).toEqual(['insert', 'update']);
+    expect(pool.calls[1].params[1]).toBe('success');
+    expect(JSON.parse(pool.calls[1].params[2])).toMatchObject({ exit_code: 0, stage: 'cleanup' });
+    expect(emit).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('startRunForExecResult — 触发返回值 → run 行', () => {
   const task = { id: 'task-1', task_type: 'dev' };
 

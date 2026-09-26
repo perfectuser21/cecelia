@@ -270,9 +270,29 @@ export async function startRunForExecResult({ task, execResult, source }, deps =
 }
 
 /**
+ * stage 回执的 stage_status → run 终态（任务 8e5521ae）。
+ *   completed → success；failed → failed；
+ *   blocked → success + result.blocked=true：blocked 是执行机的正常退让（无素材 / 频控 / 前置未满足），
+ *   不是故障，日报裸跑与失败统计不应把它当 failed；也不用 cancelled——run 确实跑完了，只是选择不动。
+ * 未知 / 缺失 → null（不猜终态，只补行）。
+ */
+const STAGE_STATUS_MAP = Object.freeze({
+  completed: { status: 'completed' },
+  failed: { status: 'failed' },
+  blocked: { status: 'completed', blocked: true },
+});
+
+/**
  * 回执通道（execution-callback 等脚本步/设备回调）→ run 原语：
  * 保证该 run_id 的行存在（startRun 幂等 upsert），终态回执再 finishRun 补齐。
  * 同一次执行始终一行。无 run_id 的回执无从关联，直接跳过。
+ *
+ * stage 回执语义（任务 8e5521ae，09-27 06:00 生产批实证）：执行机每个 stage 结束发
+ * `{status:'in_progress', run_id:'<run>__aN.<stage>', result:{stage, stage_status, …}}`，只有 finalize
+ * 才发终态。任务级 status 非终态 **且 result.stage 为字符串** ⇒ 该 stage 的 run 已结束、任务继续：
+ * startRun 后立即按 stage_status 映射 finishRun（否则四行 status=running 永不结束，run.finished
+ * 从不 emit，判定器从不运行）。无 result.stage 的中间态回执保持只补行。任务本身的状态由
+ * normalizeCallbackStatus 决定（in_progress 不置终态），本函数只写 task_runs。
  *
  * @param {{taskId: string, runId?: string, status?: string, exitCode?: number, result?: any,
  *          prUrl?: string, error?: string, source?: string}} input
@@ -285,11 +305,19 @@ export async function recordRunFromCallback(
   const raw = typeof status === 'string' ? status.trim() : '';
   const alias = CALLBACK_STATUS_ALIASES[raw] ?? raw;
   let runStatus;
+  let stageBlocked = false;
   try {
     runStatus = normalizeRunStatus(alias);
   } catch {
-    // in_progress / pending_postdeploy 等中间态回执：只保证行存在，不结束。
+    // in_progress / pending_postdeploy 等中间态回执：默认只保证行存在，不结束。
     runStatus = 'running';
+  }
+  if (runStatus === 'running' && result && typeof result === 'object' && typeof result.stage === 'string') {
+    const mapped = STAGE_STATUS_MAP[String(result.stage_status ?? '').trim()];
+    if (mapped) {
+      runStatus = normalizeRunStatus(mapped.status);
+      stageBlocked = Boolean(mapped.blocked);
+    }
   }
   const started = await startRun({ taskId, runId, source }, deps);
   if (runStatus === 'running') return { started, finished: { updated: false } };
@@ -300,8 +328,10 @@ export async function recordRunFromCallback(
   const pr = prUrl || (result && typeof result === 'object' ? result.pr_url : null);
   if (pr) artifacts.push(pr);
   // 账本 stage/metrics/evidence/probes 随终态回执进 task_runs.result（棒1 回执线）
+  const receipt = extractStageReceipt(result);
+  if (stageBlocked) receipt.blocked = true;
   const finished = await finishRun(
-    { runId, status: runStatus, exitCode, artifacts, error: runStatus === 'success' ? undefined : error, result: extractStageReceipt(result) },
+    { runId, status: runStatus, exitCode, artifacts, error: runStatus === 'success' ? undefined : error, result: receipt },
     deps,
   );
   return { started, finished };
