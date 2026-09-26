@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.331.0
+**Brain 版本**: 1.333.0
 
 ## 1.283.0
 
@@ -48,6 +48,23 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.333.0 — 晨报/日报「业务断言红灯」行（链 bf5088a3 棒4 消费）
+
+- 新增 `lib/assertion-red-report.js`：直查 `journey_assertion_receipts` 过去 24h `executor_kind='business_probe_runner'` 且 `verdict='FAIL'` 的回执，经 `journey_step_links → journey_steps / journeys` 取步名/路名，按 路径/步骤/探针 key（`assertion_ref_snapshot` 去 `probe:` 前缀）分组计数；任一 `scenario_evidence.severity=error` → 🔴 RED，只有 warn（或缺失）→ 🟡 AMBER；空集/查询失败/超时 → null（决策 702949b6 / ebcbc038）
+- 晨报 `morning-cockpit-bark.js`：`fetchAssertionRedLine` 并列裸跑行，文案「🔴 RED 断言红灯：<路径>/<步骤> <key>×<n>, …（24h）」，最多 3 组步骤；日报 `daily-report-generator.js`：板块九「== 业务断言红灯（24h）==」汇总 + 每组一行带严重级；均 best-effort 不拖垮
+- 只依赖回执表形状，不依赖棒3a 合并；smoke `assertion-red-report-smoke.sh` 已登记 allowlist
+
+## Brain 1.332.0 — 步级断言认第四种形状「探针」：step_probes 注册表 + probe:<key> + 仓库 YAML 哈希漂移（链 bf5088a3 棒2，任务 ddf3fe8d，决策 702949b6）
+
+- 病根：步级断言链 `journey_step_links.assertion_ref → runner → journey_assertion_receipts → cell 翻色` 只认 vitest/pytest/smoke 三种 shell 形状；业务侧「SQL 数一下 / HTTP 探一下 + 期望值」这类探针没有落脚点，获客 journey（afa6abca）7 个 stage 格子 assertion_ref 全空
+- 迁移 474 `step_probes`：`id / probe_key UNIQUE / workflow / stage / journey_step_link_id（FK journey_step_links，格子删了 SET NULL 留痕）/ spec jsonb / spec_hash（CHECK hex64）/ source_path / severity（CHECK warn|error）/ active / created_at / updated_at`；仓库 YAML（`services/<svc>/checks/<workflow>.yaml`）是 SSOT，Brain 只存归一化 spec + `sha256(canonical JSON)`——同 skill_registry 清单哈希做法，YAML 现算 ≠ 库即漂移
+- `lib/step-probe-spec.js`：spec 归一化（type sql|http、expect op `>=|==|<=|not_null_all` + `value|ref:metrics.<k>` 二选一、severity 不默认、journey_cell 必须等于 `stage:<stage>`）、canonical JSON 哈希（键序无关、数组保序）、`probe:<k1>[,<k2>]` 引用往返、库 vs YAML 漂移分类（missing/extra/changed）
+- 路由：`GET /api/brain/step-probes?workflow=&stage=&active=all`、`POST /api/brain/step-probes`（按 probe_key upsert，哈希一致回 `unchanged`，任一条非法整批 400 带 code，`internalAuthOrLoopback`）、`POST /api/brain/step-probes/drift-check`（YAML 现算哈希 vs 库）
+- `scripts/sync-step-probes.mjs <checks.yaml> --journey-id <uuid> [--check]`：读 YAML → upsert → 按 journey_cell 找该 journey 的格子把 `assertion_ref` 写成 `probe:<keys>`（流水线副作用写，决策 df1ccf5a；一格多探针逗号连接；已一致不重 PATCH 免 bump assertion_revision）；找不到格子报错退出不静默；`--check` 只比对有漂移退 1
+- `classify()` 新增 `probe:<key>` → `{kind:'probe', keys, executor_kind:'business_probe_runner'}`；canonical 命令/argv/执行命令对 probe 显式抛 `ASSERTION_PROBE_NOT_RUNNABLE`（探针没有 shell 形态，合同/回执/闸门不会把它当命令跑）；`classifyJourneyCellAssertion` 认 `probe` 态（runnable，key 非法不放行）；map/radius `requiredAssertions` 按前缀排除 probe 格子，不计 unsafe
+- 测试：spec 43 项 + classify/命令 8 项 + cell 分类 2 项 + radius 排除 1 项 + 迁移 6 项 + 路由 14 项 + sync 脚本 7 项（真 js-yaml + 假 fetch）；smoke `step-probes-smoke.sh` 登记 allowlist
+- 未做（handoff 在任务 result）：漂移 AMBER 进晨报——YAML 在 workspace 仓，Brain（us-vps 零执行）读不到，需由 workspace CI / 跑场机 cron 跑 `--check` 把结果回报 Brain 再出行；探针执行体 business_probe_runner 归棒3a
 
 ## Brain 1.331.0 — org_units 组织真身骨架：company→department→leader→members 自动升格模型（链 bf5088a3 棒6，任务 80e9f816，决策 de1e9ba9）
 
