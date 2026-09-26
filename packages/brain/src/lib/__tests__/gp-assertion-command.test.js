@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   assertionCommand, canonicalAssertionArgv, canonicalAssertionCommandText,
-  canonicalRepoIdentity, defaultTrackedPath,
+  canonicalRepoIdentity, classifyAssertionRef, defaultTrackedPath,
 } from '../gp-assertion-command.js';
 
 const ROOT = '/repo';
@@ -185,6 +185,40 @@ describe('trusted GP assertion command policy', () => {
     await expect(assertionCommand('packages/brain/suite.test.js', ROOT, {
       ...deps, fileStatFn: vi.fn(async () => ({ isFile: () => false })),
     })).rejects.toMatchObject({ code: 'ASSERTION_PATH_NOT_FILE' });
+  });
+
+  describe('probe:<key> 探针形状（决策 702949b6：注册表在 step_probes，执行体不是 shell）', () => {
+    it('classify 认出 probe 形状并标 executor_kind=business_probe_runner', () => {
+      expect(classifyAssertionRef('probe:delivery.leads_count')).toEqual({
+        kind: 'probe', key: 'delivery.leads_count', keys: ['delivery.leads_count'],
+        executor_kind: 'business_probe_runner',
+      });
+      expect(classifyAssertionRef('probe:delivery.leads_count,delivery.no_dup')).toEqual({
+        kind: 'probe', key: 'delivery.leads_count,delivery.no_dup',
+        keys: ['delivery.leads_count', 'delivery.no_dup'],
+        executor_kind: 'business_probe_runner',
+      });
+      expect(classifyAssertionRef('packages/brain/src/example.test.js')).toEqual({
+        kind: 'vitest', path: 'packages/brain/src/example.test.js',
+      });
+    });
+
+    it.each(['probe:', 'probe:$(id)', 'probe:a b', 'probe:a,,b', 'probe:../x'])(
+      'probe: 后接非法 key 拒收 %s', ref => {
+        expect(() => classifyAssertionRef(ref))
+          .toThrow(expect.objectContaining({ code: 'ASSERTION_PROBE_KEY_INVALID' }));
+      },
+    );
+
+    it('canonical ledger 命令 / argv / 执行命令 对 probe 都显式拒绝：探针没有 shell 形态', async () => {
+      const ref = 'probe:delivery.leads_count';
+      expect(() => canonicalAssertionCommandText(ref))
+        .toThrow(expect.objectContaining({ code: 'ASSERTION_PROBE_NOT_RUNNABLE' }));
+      expect(() => canonicalAssertionArgv(ref))
+        .toThrow(expect.objectContaining({ code: 'ASSERTION_PROBE_NOT_RUNNABLE' }));
+      await expect(assertionCommand(ref, ROOT, deps))
+        .rejects.toMatchObject({ code: 'ASSERTION_PROBE_NOT_RUNNABLE' });
+    });
   });
 
   it.each([
