@@ -4,11 +4,11 @@
  * 的流水线副作用写（决策 df1ccf5a），以及找不到格子时报错不静默。
  */
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadProbesYaml, parseCliArgs, syncStepProbes } from '../../../../scripts/sync-step-probes.mjs';
-import { specHash } from '../lib/step-probe-spec.js';
+import { sourceSha256, specHash } from '../lib/step-probe-spec.js';
 
 const JOURNEY = 'afa6abca-53c0-4815-8594-b7fb81ca547f';
 const BRAIN = 'http://127.0.0.1:5221';
@@ -45,10 +45,14 @@ probes:
     journey_cell: "stage:scoring"
     probe:
       type: http
-      target: scorer
-      url: https://scorer.internal/health
-    expect: { op: not_null_all }
-    severity: error
+      target: feishu_jinuo
+      url: https://open.feishu.cn/open-apis/bitable/v1/apps/GNuwbzY0da8GP0sv6MGcOTu9ntd/tables/tblmrJTyVgzTj89P/records
+      filter:
+        运行批次: "$RUN_TAG"
+        处理状态: "待分拣"
+      reduce: count
+    expect: { op: "<=", value: 0 }
+    severity: warn
 `;
 
 function writeYaml(text = YAML_TEXT) {
@@ -93,11 +97,14 @@ describe('parseCliArgs', () => {
 });
 
 describe('loadProbesYaml', () => {
-  it('真 YAML 解析 → 归一化探针 + spec_hash', () => {
-    const doc = loadProbesYaml(writeYaml());
+  it('真 YAML 解析 → 归一化探针 + spec_hash + 文件级 source_sha256（原文 sha256，同 probes-lib）', () => {
+    const file = writeYaml();
+    const doc = loadProbesYaml(file);
     expect(doc.workflow).toBe('social-keyword-leadgen');
     expect(doc.probes.map(p => p.spec.key)).toEqual(['delivery.leads_count', 'delivery.no_dup', 'scoring.scored_all']);
     expect(doc.probes[0].spec_hash).toBe(specHash(doc.probes[0].spec));
+    expect(doc.source_sha256).toBe(sourceSha256(readFileSync(file, 'utf8')));
+    expect(doc.probes[2].spec.probe).toMatchObject({ type: 'http', filter: { 运行批次: '$RUN_TAG', 处理状态: '待分拣' }, reduce: 'count' });
   });
 
   it('YAML 里 spec 非法 → 抛 STEP_PROBE_* 错误，不吞', () => {
@@ -119,6 +126,7 @@ describe('syncStepProbes', () => {
     expect(upsert.headers['X-Internal-Token']).toBe('tok');
     expect(upsert.body.workflow).toBe('social-keyword-leadgen');
     expect(upsert.body.source_path).toBe('services/phone-adb-controller/checks/social-keyword-leadgen.yaml');
+    expect(upsert.body.source_sha256).toBe(doc.source_sha256);
     expect(upsert.body.probes.map(p => [p.key, p.journey_step_link_id])).toEqual([
       ['delivery.leads_count', CELL.delivery.id],
       ['delivery.no_dup', CELL.delivery.id],
@@ -162,6 +170,7 @@ describe('syncStepProbes', () => {
     const check = calls.find(c => c.url.endsWith('/drift-check'));
     expect(check.body).toEqual({
       workflow: 'social-keyword-leadgen',
+      source_sha256: doc.source_sha256,
       probes: doc.probes.map(p => ({ key: p.spec.key, spec_hash: p.spec_hash })),
     });
     expect(calls.filter(c => c.method === 'PATCH' || c.url.endsWith('/step-probes'))).toEqual([]);

@@ -6,7 +6,8 @@
  * 用法：
  *   node scripts/sync-step-probes.mjs <checks.yaml> --journey-id <uuid> [--brain-url http://localhost:5221] [--check] [--token <t>]
  *
- * 流程：读 YAML → 归一化 + spec_hash=sha256(canonical JSON) → GET 该 journey 的格子（cells=1）
+ * 流程：读 YAML → 归一化 + 逐条 spec_hash=sha256(canonical JSON) + 整文件 source_sha256（同 probes-lib）
+ *   → GET 该 journey 的格子（cells=1）
  *   → 每条探针按 journey_cell（stage:<name>）找 cell，找不到就报错退出（不静默）
  *   → POST /api/brain/step-probes 按 probe_key upsert（带 journey_step_link_id）
  *   → 每个格子 PATCH assertion_ref = probe:<k1>[,<k2>…]（已一致则不 PATCH，避免无谓 bump assertion_revision）
@@ -18,7 +19,7 @@ import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import yaml from 'js-yaml';
 import {
-  groupProbesByCell, parseProbesDocument, probeRef, stepProbeError,
+  groupProbesByCell, parseProbesDocument, probeRef, sourceSha256, stepProbeError,
 } from '../packages/brain/src/lib/step-probe-spec.js';
 
 const USAGE = '用法: node scripts/sync-step-probes.mjs <checks.yaml> --journey-id <uuid> [--brain-url URL] [--check] [--token T]';
@@ -41,9 +42,10 @@ export function parseCliArgs(argv) {
   return args;
 }
 
-/** 读 YAML → parseProbesDocument（非法 spec 抛 STEP_PROBE_*，不吞）。 */
+/** 读 YAML → parseProbesDocument + source_sha256（原文 sha256，同 probes-lib）；非法 spec 抛 STEP_PROBE_*，不吞。 */
 export function loadProbesYaml(yamlPath, { readFileFn = readFileSync } = {}) {
-  return parseProbesDocument(yaml.load(readFileFn(yamlPath, 'utf8')));
+  const text = readFileFn(yamlPath, 'utf8');
+  return { ...parseProbesDocument(yaml.load(text)), source_sha256: sourceSha256(text) };
 }
 
 async function call(fetchFn, url, { method = 'GET', body, token } = {}) {
@@ -77,7 +79,7 @@ export async function syncStepProbes({
   if (check) {
     const result = await call(fetchFn, `${base}/api/brain/step-probes/drift-check`, {
       method: 'POST', token,
-      body: { workflow: doc.workflow, probes: doc.probes.map((p) => ({ key: p.spec.key, spec_hash: p.spec_hash })) },
+      body: { workflow: doc.workflow, source_sha256: doc.source_sha256 ?? null, probes: doc.probes.map((p) => ({ key: p.spec.key, spec_hash: p.spec_hash })) },
     });
     return { check: true, workflow: doc.workflow, ...result };
   }
@@ -93,6 +95,7 @@ export async function syncStepProbes({
   const payload = {
     workflow: doc.workflow,
     source_path: sourcePath,
+    source_sha256: doc.source_sha256 ?? null,
     probes: doc.probes.map((p) => ({ ...p.spec, journey_step_link_id: byKey.get(p.spec.journey_cell).id })),
   };
   const { upserted = [] } = await call(fetchFn, `${base}/api/brain/step-probes`, { method: 'POST', body: payload, token });

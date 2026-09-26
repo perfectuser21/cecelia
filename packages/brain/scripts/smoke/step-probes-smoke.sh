@@ -63,7 +63,13 @@ probes:
   - key: delivery.no_dup
     stage: delivery
     journey_cell: "stage:delivery"
-    probe: { type: sql, target: leadgen_db, query: "SELECT count(*) - count(DISTINCT phone) FROM leads" }
+    probe:
+      type: http
+      target: feishu_jinuo
+      url: "https://open.feishu.cn/open-apis/bitable/v1/apps/GNuwbzY0da8GP0sv6MGcOTu9ntd/tables/tblmrJTyVgzTj89P/records"
+      filter: { 运行批次: "$RUN_TAG" }
+      reduce: count
+      minus: { url: "https://open.feishu.cn/open-apis/bitable/v1/apps/GNuwbzY0da8GP0sv6MGcOTu9ntd/tables/tblmrJTyVgzTj89P/records", filter: { 进入最终线索: true }, reduce: count }
     expect: { op: "==", value: 0 }
     severity: warn
 YAML
@@ -83,12 +89,15 @@ const fetchFn = async (url, init = {}) => {
 const r = await syncStepProbes({ doc, journeyId: 'afa6abca-53c0-4815-8594-b7fb81ca547f', brainUrl: 'http://brain', fetchFn });
 const up = calls.find(c => c.url.endsWith('/step-probes'));
 if (!up || up.body.probes.some(p => p.journey_step_link_id !== cell.id)) { console.error('FAIL upsert 应带 journey_step_link_id'); process.exit(1); }
+if (!/^[0-9a-f]{64}$/.test(up.body.source_sha256 || '')) { console.error('FAIL upsert 应带整文件 source_sha256'); process.exit(1); }
+const http = up.body.probes.find(p => p.key === 'delivery.no_dup');
+if (!http || http.probe.reduce !== 'count' || !http.probe.filter || !http.probe.minus || http.probe.minus.filter['进入最终线索'] !== true) { console.error('FAIL http 探针 filter/reduce/minus 应原样进 spec: ' + JSON.stringify(http && http.probe)); process.exit(1); }
 const patch = calls.find(c => c.method === 'PATCH');
 if (!patch || patch.body.assertion_ref !== 'probe:delivery.leads_count,delivery.no_dup') { console.error('FAIL 格子 assertion_ref: ' + JSON.stringify(patch)); process.exit(1); }
 if (r.bound.length !== 1 || r.upserted.length !== 2) { console.error('FAIL 结果形状'); process.exit(1); }
 try { await syncStepProbes({ doc, journeyId: 'afa6abca-53c0-4815-8594-b7fb81ca547f', brainUrl: 'http://brain', fetchFn: async () => ({ ok: true, status: 200, json: async () => [] }) }); console.error('FAIL 缺格子应报错'); process.exit(1); }
 catch (e) { if (e.code !== 'STEP_PROBE_CELL_NOT_FOUND') { console.error('FAIL 错误码 ' + e.code); process.exit(1); } }
-console.log('upsert 带 link_id / 格子 PATCH probe:k1,k2 / 缺格子报错 ✓');
+console.log('upsert 带 link_id + source_sha256 / http filter,reduce,minus 保留 / 格子 PATCH probe:k1,k2 / 缺格子报错 ✓');
 "
 
 echo "[step-probes-smoke] 4. 接线"
@@ -98,6 +107,7 @@ const checks = [
   ['server.js', [\"import stepProbesRouter from './src/routes/step-probes.js'\", \"app.use('/api/brain', stepProbesRouter)\"]],
   ['migrations/474_step_probes.sql', ['CREATE TABLE IF NOT EXISTS step_probes', 'probe_key text NOT NULL UNIQUE', \"'474'\"]],
   ['migrations/rollback/474_step_probes.down.sql', ['DROP TABLE IF EXISTS step_probes']],
+  ['migrations/476_step_probes_source_sha256.sql', ['ADD COLUMN IF NOT EXISTS source_sha256 text', \"'476'\"]],
   ['src/map/radius.js', ['PROBE_REF_PREFIX']],
   ['src/routes/step-probes.js', ['internalAuthOrLoopback', 'ON CONFLICT (probe_key) DO UPDATE', '/step-probes/drift-check']],
   ['../quality/smoke-allowlist.txt', ['step-probes-smoke.sh']],
