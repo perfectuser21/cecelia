@@ -18,6 +18,7 @@ import { detectSkillBindingDrift, renderSkillBindingLine } from './lib/skill-bin
 import { EXECUTOR_SKILL_MAP } from './lib/task-type-registry.js';
 import { readSkillDistState, renderSkillDistLine } from './lib/skill-dist-report.js';
 import { readRescanStalenessState, renderRescanStalenessLine } from './lib/rescan-staleness-report.js';
+import { readAssertionRedState, renderAssertionRedLine } from './lib/assertion-red-report.js';
 import { LEADERBOARD_KEY } from './triage-officer-rank.js';
 
 /** 触发小时（UTC）= 北京时间 08:30 */
@@ -143,6 +144,22 @@ async function fetchBareRunLine(pool) {
 }
 
 /**
+ * 业务断言红灯行（链 bf5088a3 棒4 消费，决策 702949b6）：过去 24h 探针执行体
+ * （business_probe_runner）的 FAIL 回执按 路径/步骤/探针 分组计数；任一 severity=error → 🔴 RED，
+ * 只有 warn → 🟡 AMBER。best-effort：无 FAIL/查询失败返回 null（不出这一行，不拖垮晨报）。
+ * @param {import('pg').Pool} pool
+ * @returns {Promise<string|null>}
+ */
+async function fetchAssertionRedLine(pool) {
+  try {
+    return renderAssertionRedLine(await readAssertionRedState(pool));
+  } catch (e) {
+    console.warn('[morning-cockpit-bark] assertion-red line failed:', e.message);
+    return null;
+  }
+}
+
+/**
  * skill 绑定漂移行（链 bf5088a3 棒7）：skill_registry 缺 task_type 映射 / 与硬编码分歧 / 多 skill 冲突 → 🟡 AMBER。
  * best-effort：检测不可用（查询失败/列未迁移）或无漂移返回 null（不出这一行，不拖垮晨报）。
  * @param {import('pg').Pool} pool
@@ -249,10 +266,11 @@ export async function runMorningCockpitBark(pool) {
   }
 
   // 3. 采集简报数据 + 榜单（并行，榜单 best-effort）
-  const [{ completionRate, inProgressCount }, triageBoard, bareRunLine, skillBindingLine, skillDistLine, rescanStalenessLine] = await Promise.all([
+  const [{ completionRate, inProgressCount }, triageBoard, bareRunLine, assertionRedLine, skillBindingLine, skillDistLine, rescanStalenessLine] = await Promise.all([
     buildBriefData(pool),
     fetchTriageLeaderboard(pool),
     fetchBareRunLine(pool),
+    fetchAssertionRedLine(pool),
     fetchSkillBindingLine(pool),
     fetchSkillDistLine(pool),
     fetchRescanStalenessLine(pool),
@@ -279,6 +297,7 @@ export async function runMorningCockpitBark(pool) {
   }
 
   if (bareRunLine) lines.push(bareRunLine);
+  if (assertionRedLine) lines.push(assertionRedLine);
   if (skillBindingLine) lines.push(skillBindingLine);
   if (skillDistLine) lines.push(skillDistLine);
   if (rescanStalenessLine) lines.push(rescanStalenessLine);
