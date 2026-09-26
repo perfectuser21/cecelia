@@ -60,6 +60,12 @@ export function resolveEvidenceState({
     return state('green', 'anchor_target_present', provenance);
   }
   if (!receipt) return state('unknown', 'receipt_missing', provenance);
+  // 业务探针回执（棒3a）：证据是 observed/expected 值，不绑代码 sha / 仓库——只看最近一条 verdict。
+  if (receipt.executor_kind === 'business_probe_runner') {
+    if (receipt.verdict === 'PASS') return state('green', 'probe_receipt_pass', { ...provenance, receipt });
+    if (receipt.verdict === 'FAIL') return state('red', 'probe_receipt_fail', { ...provenance, receipt });
+    return state('unknown', 'receipt_verdict_invalid', { ...provenance, receipt });
+  }
   if (Number(receipt.assertion_revision) !== Number(assertionRevision)) {
     return state('unknown', 'assertion_revision_mismatch', {
       ...provenance,
@@ -258,7 +264,7 @@ export async function loadMapNodeStates(client, {
     const receiptResult = await client.query(
       `SELECT journey_step_link_id, run_id, assertion_revision, assertion_ref_snapshot,
               source_repo, source_sha, verdict, exit_code, started_at, completed_at,
-              scenario_count, scenario_evidence, output_digest, output_tail
+              scenario_count, scenario_evidence, output_digest, output_tail, executor_kind
          FROM journey_assertion_receipts
         WHERE journey_step_link_id = ANY($1::uuid[])
         ORDER BY journey_step_link_id, completed_at DESC, created_at DESC`,

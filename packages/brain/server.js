@@ -831,6 +831,16 @@ async function onBrainListening() {
     console.error('[Server] Callback Worker init failed (non-fatal):', cbWorkerErr.message);
   }
 
+  // 棒3a 判定：订阅 run.finished（finishRun 单点发）→ 比对 step_probes → 写回执 → cell 翻色
+  try {
+    const { registerBusinessProbeJudge } = await import('./src/lib/business-probe-judge.js');
+    const { on: onEvent } = await import('./src/event-bus.js');
+    registerBusinessProbeJudge({ pool, on: onEvent });
+    console.log('[Server] Business probe judge subscribed to run.finished');
+  } catch (judgeErr) {
+    console.error('[Server] Business probe judge init failed (non-fatal):', judgeErr.message);
+  }
+
   // 预热 consciousness graph 单例（pg pool ready 后、tick loop 前）
   try {
     const { initializeWorkflows } = await import('./src/workflows/index.js');

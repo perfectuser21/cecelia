@@ -112,7 +112,7 @@ async function getLatestReceipt(nodeKey, currentRevision) {
   // 通过 journey_features 关联到 journey_step_links 再到 receipts
   const { rows } = await pool.query(
     `SELECT jar.verdict, jar.source_sha, jar.started_at, jar.completed_at,
-            jar.assertion_ref_snapshot, jar.machine_id
+            jar.assertion_ref_snapshot, jar.machine_id, jar.executor_kind
      FROM journey_assertion_receipts jar
      JOIN journey_step_links jsl ON jsl.id = jar.journey_step_link_id
      JOIN journey_features jf ON jf.id = jsl.feature_id
@@ -131,12 +131,47 @@ async function getLatestReceipt(nodeKey, currentRevision) {
   return {
     verdict: receipt.verdict,
     revision_match: revisionMatch,
+    executor_kind: receipt.executor_kind,
     receipt: {
       source_sha: receipt.source_sha,
       started_at: receipt.started_at,
       completed_at: receipt.completed_at,
       assertion_ref: receipt.assertion_ref_snapshot,
       machine_id: receipt.machine_id,
+    },
+  };
+}
+
+/**
+ * 回执 → 节点状态（纯函数，按 executor_kind 分支）。
+ *   business_probe_runner（棒3a 业务探针）：只看 verdict，PASS→green / FAIL→red，不比 revision。
+ *   brain_assertion_runner：PASS 且 revision 匹配→green；FAIL→red；PASS 但 revision 不匹配→unknown。
+ * @param {{verdict: string|null, revision_match: boolean, executor_kind?: string, receipt: object|null}} receiptInfo
+ * @param {string|null} currentRevision
+ */
+export function resolveReceiptState(receiptInfo, currentRevision) {
+  if (!receiptInfo?.verdict) {
+    return { state: 'gray', reason_code: 'no_receipt', details: { current_revision: currentRevision } };
+  }
+  const details = { receipt: receiptInfo.receipt, current_revision: currentRevision };
+  if (receiptInfo.executor_kind === 'business_probe_runner') {
+    return receiptInfo.verdict === 'PASS'
+      ? { state: 'green', reason_code: 'probe_pass', details }
+      : { state: 'red', reason_code: 'probe_fail', details };
+  }
+  if (receiptInfo.verdict === 'PASS' && receiptInfo.revision_match) {
+    return { state: 'green', reason_code: 'pass_current_revision', details };
+  }
+  if (receiptInfo.verdict === 'FAIL') {
+    return { state: 'red', reason_code: 'fail_current_revision', details };
+  }
+  return {
+    state: 'unknown',
+    reason_code: 'revision_mismatch',
+    details: {
+      receipt_sha: receiptInfo.receipt?.source_sha,
+      current_revision: currentRevision,
+      verdict: receiptInfo.verdict,
     },
   };
 }
@@ -196,43 +231,11 @@ export async function resolveNodeState(nodeKey, { repo, notApplicable = false } 
     };
   }
 
-  // 获取 receipt
+  // 获取 receipt → 按 executor_kind 分支现算
   const receiptInfo = await getLatestReceipt(nodeKey, currentRevision);
-
-  if (!receiptInfo.verdict) {
-    return {
-      state: 'gray',
-      reason_code: 'no_receipt',
-      details: { anchors: anchorInfo.anchors, current_revision: currentRevision },
-    };
-  }
-
-  if (receiptInfo.verdict === 'PASS' && receiptInfo.revision_match) {
-    return {
-      state: 'green',
-      reason_code: 'pass_current_revision',
-      details: { receipt: receiptInfo.receipt, current_revision: currentRevision },
-    };
-  }
-
-  if (receiptInfo.verdict === 'FAIL') {
-    return {
-      state: 'red',
-      reason_code: 'fail_current_revision',
-      details: { receipt: receiptInfo.receipt, current_revision: currentRevision },
-    };
-  }
-
-  // PASS 但 revision 不匹配 → unknown
-  return {
-    state: 'unknown',
-    reason_code: 'revision_mismatch',
-    details: {
-      receipt_sha: receiptInfo.receipt?.source_sha,
-      current_revision: currentRevision,
-      verdict: receiptInfo.verdict,
-    },
-  };
+  const resolved = resolveReceiptState(receiptInfo, currentRevision);
+  if (resolved.state === 'gray') resolved.details.anchors = anchorInfo.anchors;
+  return resolved;
 }
 
 /**

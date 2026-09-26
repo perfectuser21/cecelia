@@ -13,6 +13,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/impact-contract-loop.integration.test.js',
   'src/__tests__/integration/kernel-gear-dispatch.pg.integration.test.js',
   'src/__tests__/integration/task-run-primitive.pg.integration.test.js',
+  'src/__tests__/integration/business-probe-judge.pg.integration.test.js',
   'src/__tests__/integration/task-governance-guards.pg.integration.test.js',
   'src/__tests__/integration/project-root-gate.pg.integration.test.js',
   'src/__tests__/integration/kernel-controller-ownership.pg.integration.test.js',

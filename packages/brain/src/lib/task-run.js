@@ -99,6 +99,30 @@ async function resolvePool(deps) {
   return (await import('../db.js')).default;
 }
 
+async function resolveEmit(deps) {
+  if (deps?.emit) return deps.emit;
+  return (await import('../event-bus.js')).emit;
+}
+
+/**
+ * run 终态单点广播（棒3a 判定入口）：五条执行路径都经 finishRun，这里一处 emit 覆盖全部。
+ * 订阅方（business-probe-judge 等）拿 RETURNING 回来的合并 result（含棒1 写入的 stage/probes）。
+ * fail-open：事件失败只 warn，finishRun 返回值不受影响。
+ */
+async function emitRunFinished(row, runId, deps) {
+  try {
+    const emit = await resolveEmit(deps);
+    await emit('run.finished', 'task-run', {
+      runId: String(runId),
+      taskId: row.task_id,
+      status: row.status,
+      result: row.result,
+    });
+  } catch (err) {
+    console.warn(`[task-run] run.finished emit failed (non-fatal) run=${runId}: ${err.message}`);
+  }
+}
+
 /**
  * 一次执行开始：落一行 running（幂等）。
  * fail-open：DB 错误 / 参数缺失都只 warn 并返回 null，绝不抛。
@@ -133,8 +157,10 @@ export async function startRun({ taskId, runId, source, context } = {}, deps = {
  * 一次执行结束：补 ended_at / 终态 / exit code / 产物引用。已终态的 run 不覆盖。
  * status 为 running 或未知 → 不动（只认真实终态，绝不据不明状态伪造终态）。
  *
+ * 成功补终态（updated=true）后单点发 run.finished 事件（deps.emit 可注入；默认 event-bus）。
+ *
  * @param {{runId: string, status: string, exitCode?: number, artifacts?: any, error?: string}} input
- * @param {{pool?: {query: Function}}} [deps]
+ * @param {{pool?: {query: Function}, emit?: Function}} [deps]
  * @returns {Promise<{updated: boolean}>}
  */
 export async function finishRun({ runId, status, exitCode, artifacts, error } = {}, deps = {}) {
@@ -152,10 +178,12 @@ export async function finishRun({ runId, status, exitCode, artifacts, error } = 
               error_message = COALESCE($4, error_message),
               updated_at = NOW()
         WHERE run_id = $1 AND ended_at IS NULL
-        RETURNING id`,
+        RETURNING id, task_id, status, result`,
       [String(runId), finalStatus, JSON.stringify(result), error ? String(error).slice(0, 500) : null],
     );
-    return { updated: (upd?.rows?.length ?? 0) > 0 };
+    const row = upd?.rows?.[0];
+    if (row) await emitRunFinished(row, runId, deps);
+    return { updated: Boolean(row) };
   } catch (err) {
     console.warn(`[task-run] finishRun failed (non-fatal) run=${runId}: ${err.message}`);
     return { updated: false };
