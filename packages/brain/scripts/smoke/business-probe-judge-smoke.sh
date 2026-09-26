@@ -4,7 +4,7 @@
 #   1. 事件线：finishRun UPDATE 命中 → emit run.finished；event-bus on() 订阅者收到同一 payload
 #   2. 判定线：handleRunFinished 三种结局——PASS→green / FAIL(error)→red / 缺 observed→FAIL probe_missing 且 warn 档→pending
 #   3. 回执约定：executor_kind=business_probe_runner、argv ["probe",key]、source_sha NULL、assertion_ref probe:<key>
-#   4. 接线：server.js 注册 judge；迁移 474 放行两值 executor_kind；合并闸 SQL 仍只认 brain_assertion_runner
+#   4. 接线：server.js 注册 judge；迁移 475 放行两值 executor_kind；合并闸 SQL 仍只认 brain_assertion_runner
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -66,7 +66,7 @@ const checks = [
   ['server.js', ['registerBusinessProbeJudge', \"import('./src/event-bus.js')\"]],
   ['src/event-bus.js', ['function on(eventType, handler)', 'await dispatch(eventType, source, payload)']],
   ['src/lib/task-run.js', [\"emit('run.finished', 'task-run'\", 'RETURNING id, task_id, status, result']],
-  ['migrations/474_business_probe_receipts.sql', [\"CHECK (executor_kind IN ('brain_assertion_runner', 'business_probe_runner'))\", \"executor_kind = 'business_probe_runner'\"]],
+  ['migrations/475_business_probe_receipts.sql', [\"CHECK (executor_kind IN ('brain_assertion_runner', 'business_probe_runner'))\", \"executor_kind = 'business_probe_runner'\"]],
   ['src/impact-contract/harness-gates.js', [\"receipt.executor_kind = 'brain_assertion_runner'\"]],
   ['src/lib/map-state-resolver.js', [\"executor_kind === 'business_probe_runner'\", 'probe_receipt_pass']],
   ['src/map/state-resolver.js', ['export function resolveReceiptState', 'probe_fail']],
@@ -78,7 +78,7 @@ for (const [file, needles] of checks) {
 }
 if (fs.readFileSync('src/impact-contract/harness-gates.js', 'utf8').includes('business_probe_runner')) { console.error('FAIL 合并闸不得认 business_probe_runner'); fail = true; }
 if (fail) process.exit(1);
-console.log('server / event-bus / task-run / 迁移 474 / 合并闸 / 两处 resolver 全部接线 ✓');
+console.log('server / event-bus / task-run / 迁移 475 / 合并闸 / 两处 resolver 全部接线 ✓');
 "
 
 echo "[business-probe-judge-smoke] PASS"

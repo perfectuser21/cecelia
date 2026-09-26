@@ -2,7 +2,7 @@
 //
 // 棒3a 判定（任务 33aa2bc4，决策 702949b6 / 95e29afd）：task_runs 只记"活动发生了"，
 // 本棒把 step_probes 的 expect 与 task_runs.result.probes 的 observed 对起来，判定结果写进
-// 回执账本（executor_kind=business_probe_runner，迁移 474 放行）并翻 cell_status。
+// 回执账本（executor_kind=business_probe_runner，迁移 475 放行）并翻 cell_status。
 //
 // 这条边的矛盾只能在真零件上撞出来：judge 组装的 evidence/verdict 必须被
 // persistBusinessProbeReceipt 原样接住（字段顺序、exit_code、probe:<key>、占位 source_repo），

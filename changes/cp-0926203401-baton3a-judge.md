@@ -7,4 +7,4 @@
 - `impact-contract/assertion-receipts.js` 新增 `persistBusinessProbeReceipt`（占位约定：executor_kind=business_probe_runner、source_repo=zenithjoy-workspace、command_argv=["probe",key]、source_sha/machine_id NULL、assertion_ref_snapshot=probe:<key>、assertion_digest=spec_hash）；`persistTrustedEvaluatorReceipts` 不动
 - 迁移 475（474 号已被棒2 step_probes 占用）：`journey_assertion_receipts.executor_kind` CHECK 放宽为两值；verdict_chk 按 executor_kind 分支（brain 原式不动；probe 只要求 PASS↔exit 0+证据非空 / FAIL↔exit≠0）；合并闸 SQL 仍只认 brain_assertion_runner（断言测试钉住）
 - 两处 resolver（`lib/map-state-resolver.js` / `map/state-resolver.js`）对 business_probe_runner 回执只看最近一条 verdict（PASS→green / FAIL→red），不比 sha/repo；`map/state-resolver.js` 抽纯函数 `resolveReceiptState`
-- pg 集成测试待棒2 的 step_probes 迁移合入 main 后补（handoff 记录）
+- pg 集成 `business-probe-judge.pg.integration.test.js`（真库端到端：finishRun → 真 event-bus → 回执行 → cell_status；重复判定幂等；已终态不重判；brain_assertion_runner 原式未放宽）+ F1 step4 步骤断言 `tests/gp/f1/step4-business-probe-receipt.test.js`

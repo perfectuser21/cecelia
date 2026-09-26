@@ -220,7 +220,7 @@ function probeEvidenceError(message) {
 }
 
 /**
- * 写一条业务探针判定回执（executor_kind=business_probe_runner，迁移 474 放行）。
+ * 写一条业务探针判定回执（executor_kind=business_probe_runner，迁移 475 放行）。
  * 不经 persistTrustedEvaluatorReceipts（那是 CI 断言的信任链，要求 sha/machine/output_digest）。
  *
  * 字段约定：assertion_ref_snapshot=probe:<key> / assertion_digest=step_probes.spec_hash /
