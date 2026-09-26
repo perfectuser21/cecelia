@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.333.0
+**Brain 版本**: 1.333.3
 
 ## 1.283.0
 
@@ -48,6 +48,34 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.333.3 — step_probes 对齐 workspace 探针最终形状：http filter/reduce/minus 保留 + source_sha256 文件级哈希（链 bf5088a3 棒2 后续，任务 14cd9e76，决策 702949b6）
+
+- 病根：workspace PR #1982 定档的 `checks/social-keyword-leadgen.yaml`（schema.json）里 http 探针形状是 `{url, filter:{列:值}, reduce:count|field:<列>, minus?:{同形}}`，#5589 的 `normalizeProbe` 只认 `url`，会把 `filter/reduce/minus` 静默丢掉——落库的 spec 缺取数条件，棒3a 执行体拿不到
+- `lib/step-probe-spec.js`：http 探针按 schema.json 归一化（url/filter 非空标量映射/reduce 正则/minus 同形可选），sql 与 http 都拒未知键（同 schema `additionalProperties:false`）；新增 `sourceSha256(text)`
+- 哈希定档为两级并存：`spec_hash` 逐条 canonical JSON（哪条探针变了）+ 新列 `source_sha256` 整文件原文 sha256（与 probes-lib `loadChecks().sha256` 同口径，仓库那份是不是库里这版）；迁移 476 幂等加可空列 + hex64 CHECK，回滚脚本齐（475 已被棒3a #5590 占用）
+- 路由：`POST /step-probes` 收 `source_sha256`（非 hex64 → 400 `STEP_PROBE_SOURCE_SHA_INVALID`，COALESCE 保留旧值）；`drift-check` 收 `source_sha256` → 回 `source_match`（同 workflow 多版本并存 = 半同步 = false）与 `registered_source_sha256`；GET 返回该列
+- `scripts/sync-step-probes.mjs`：`loadProbesYaml` 附带 `source_sha256`，upsert 与 `--check` 都带上
+- 用 workspace main 真 YAML 过归一化器：5 条探针（delivery×3 / scoring×2，全 warn）全部通过，文件 sha256 前缀 `c1356bdf9782` 与 workspace 侧一致；格子 ref = `probe:videos_readback,comments_readback,line_key_not_null` / `probe:pool_advanced,effective_count`
+
+## Brain 1.333.2 — 棒3a 判定：run.finished → 比对探针 → 写回执 → cell 翻色（任务 33aa2bc4）
+
+- 决策 702949b6 / 95e29afd / b56e37b4：task_runs 记"活动发生了"，本棒接"活动做对了"的判定线
+- `lib/task-run.js` finishRun 补终态成功后单点 `emit('run.finished','task-run',{runId,taskId,status,result})`（五条执行路径共用，fail-open，只加事件不加写）
+- `event-bus.js` 加进程内 `on/off`，`emit` 落库后同步派发给订阅者（订阅者抛错只 warn）
+- 新 `lib/business-probe-judge.js`：按 task payload.anchor.journey_id + result.stage 查 `step_probes ⋈ journey_step_links`，op 集合 `>= == <= not_null_all`，expect.value / expect.ref→metrics.<k>；observed 缺失/带 error → FAIL（probe_missing / probe_error）；判定写回执并 UPDATE cell_status（PASS→green / FAIL&error→red / FAIL&warn→pending，同 cell 取最坏）；server.js 启动订阅
+- `impact-contract/assertion-receipts.js` 新增 `persistBusinessProbeReceipt`（占位约定：executor_kind=business_probe_runner、source_repo=zenithjoy-workspace、command_argv=["probe",key]、source_sha/machine_id NULL、assertion_ref_snapshot=probe:<key>、assertion_digest=spec_hash）；`persistTrustedEvaluatorReceipts` 不动
+- 迁移 475（474 号已被棒2 step_probes 占用）：`journey_assertion_receipts.executor_kind` CHECK 放宽为两值；verdict_chk 按 executor_kind 分支（brain 原式不动；probe 只要求 PASS↔exit 0+证据非空 / FAIL↔exit≠0）；合并闸 SQL 仍只认 brain_assertion_runner（断言测试钉住）
+- 两处 resolver（`lib/map-state-resolver.js` / `map/state-resolver.js`）对 business_probe_runner 回执只看最近一条 verdict（PASS→green / FAIL→red），不比 sha/repo；`map/state-resolver.js` 抽纯函数 `resolveReceiptState`
+- pg 集成 `business-probe-judge.pg.integration.test.js`（真库端到端：finishRun → 真 event-bus → 回执行 → cell_status；重复判定幂等；已终态不重判；brain_assertion_runner 原式未放宽）+ F1 step4 步骤断言 `tests/gp/f1/step4-business-probe-receipt.test.js`
+
+## Brain 1.333.1 — 棒1 回执线：execution-callback 回执保 stage/metrics + internal token 鉴权（链 bf5088a3，决策 702949b6/280bd091）
+
+- `POST /api/brain/execution-callback` 挂 `internalAuthOrLoopback`：`CECELIA_INTERNAL_TOKEN` 配置后严格验 `Authorization: Bearer <token>` / `x-internal-token`（缺/错 → 401 `UNAUTHORIZED`）；未配置只放行非 production 本机回环（否则 503 `INTERNAL_AUTH_NOT_CONFIGURED`）
+- `recordRunFromCallback` 终态回执从 `result` 提炼 `{stage, stage_status, metrics, evidence, probes}`（只取存在的键；evidence/probes 只留引用形态：字符串或 `{ref|url|path|name|key|observed|probed_at|error}`，不落大 blob）经 `finishRun` 新增的 `result` 入参合进 `task_runs.result`；`exit_code`/`artifacts`/`pr_url` 逻辑原样
+- 内部调用方补 Bearer（token 只从 env 读）：`cecelia-run.sh` / `flush-callback-queue.sh` 回执 curl、`executor.js` codex review fetch×2 + 本地 codex 回执 curl + docker 容器 env 透传 `CECELIA_INTERNAL_TOKEN`、`cecelia-bridge.js` 宿主 env 透传、`verify-billing-pause-e2e.js`
+- 新增 smoke `callback-stage-receipt-smoke.sh`（假 pool 跑真逻辑 + 真 HTTP 打真中间件 + 接线查验）
+- 未修（棒后续）：zenithjoy `brain-device-job-mirror.ts` psql 直写 tasks 绕过 task_runs 的漏
 
 ## Brain 1.333.0 — 晨报/日报「业务断言红灯」行（链 bf5088a3 棒4 消费）
 
