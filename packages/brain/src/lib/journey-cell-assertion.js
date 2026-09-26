@@ -1,3 +1,5 @@
+import { EXECUTOR_KIND, PROBE_REF_PREFIX, parseProbeRef } from './step-probe-spec.js';
+
 const TEST_PATH_PATTERNS = [
   /^tests\//,
   /\/tests\//,
@@ -33,6 +35,11 @@ export function classifyJourneyCellAssertion({ assertion_ref: assertionRef, na_r
 
   if (ref.startsWith('manual:')) {
     return { assertion_state: 'manual', runnable: true, needs_assertion: false };
+  }
+  if (ref.startsWith(PROBE_REF_PREFIX)) {
+    // 探针（决策 702949b6）：可执行，但执行体是 business_probe_runner 不是 shell；key 非法不放行
+    if (!parseProbeRef(ref)) return { assertion_state: 'unknown', runnable: false, needs_assertion: true };
+    return { assertion_state: 'probe', runnable: true, needs_assertion: false, executor_kind: EXECUTOR_KIND };
   }
   if (ref.startsWith('eval:')) {
     return { assertion_state: 'evaluation', runnable: false, needs_assertion: false };

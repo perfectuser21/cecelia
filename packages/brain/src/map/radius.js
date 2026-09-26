@@ -11,6 +11,7 @@ import {
 import { classifyJourneyCellAssertion } from '../lib/journey-cell-assertion.js';
 import { assertionDigest } from '../lib/journey-assertion-receipt.js';
 import { canonicalAssertionCommandText } from '../lib/gp-assertion-command.js';
+import { PROBE_REF_PREFIX } from '../lib/step-probe-spec.js';
 
 const GIT_SHA = /^[0-9a-f]{40}$/i;
 const MAX_CHANGED_FILES = 1000;
@@ -123,6 +124,8 @@ function requiredAssertions(rows, capabilityIds) {
   for (const row of rows) {
     if (!capabilityIds.has(row.capability_code)) continue;
     const assertionId = String(row.assertion_ref ?? '').trim();
+    // 探针格子（probe:<key>，决策 702949b6）由 business_probe_runner 跑，不进 shell 必跑清单，也不算 unsafe
+    if (assertionId.startsWith(PROBE_REF_PREFIX)) continue;
     const classification = classifyJourneyCellAssertion({ assertion_ref: assertionId });
     if (!classification.runnable) continue;
     let command;

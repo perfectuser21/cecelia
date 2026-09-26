@@ -1,6 +1,7 @@
 import { promisify } from 'node:util';
 import { access, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { EXECUTOR_KIND, PROBE_REF_PREFIX, parseProbeRef } from './step-probe-spec.js';
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SHELL_META = /[;&|`$<>()"'\\]/;
 const VITEST = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
@@ -46,6 +47,12 @@ async function packageRoot(target, root, pathExistsFn) {
 }
 function classify(ref) {
   if (typeof ref !== 'string') fail('ASSERTION_NOT_RUNNABLE');
+  if (ref.startsWith(PROBE_REF_PREFIX)) {
+    // 探针（决策 702949b6）：注册表在 step_probes，执行体是 business_probe_runner，没有 shell 形态
+    const parsed = parseProbeRef(ref);
+    if (!parsed) fail('ASSERTION_PROBE_KEY_INVALID', `Probe assertion key invalid: ${ref}`);
+    return { kind: 'probe', key: parsed.keys.join(','), keys: parsed.keys, executor_kind: EXECUTOR_KIND };
+  }
   if (ref.startsWith('manual:')) {
     const command = ref.slice(7).trim();
     if (!command || SHELL_META.test(command)) fail('UNSAFE_ASSERTION_COMMAND');
@@ -74,8 +81,13 @@ function assertCanonicalLedgerPath(pathRef) {
     || segment.startsWith('-'))) fail('UNSAFE_ASSERTION_PATH');
   return pathRef;
 }
+export const classifyAssertionRef = ref => classify(ref);
+function assertShellShape(shape) {
+  if (shape.kind === 'probe') fail('ASSERTION_PROBE_NOT_RUNNABLE', 'Probe assertions run via business_probe_runner, not shell');
+  return shape;
+}
 export function canonicalAssertionCommandText(assertionRef) {
-  const shape = classify(assertionRef);
+  const shape = assertShellShape(classify(assertionRef));
   const pathRef = assertCanonicalLedgerPath(shape.path);
   if (shape.kind === 'vitest') return `npx vitest run ${pathRef}`;
   if (shape.kind === 'pytest') return `python3 -m pytest ${pathRef}`;
@@ -83,7 +95,7 @@ export function canonicalAssertionCommandText(assertionRef) {
   fail('ASSERTION_NOT_RUNNABLE');
 }
 export function canonicalAssertionArgv(assertionRef) {
-  const shape = classify(assertionRef);
+  const shape = assertShellShape(classify(assertionRef));
   const pathRef = assertCanonicalLedgerPath(shape.path);
   if (shape.kind === 'vitest') return ['npx', 'vitest', 'run', pathRef];
   if (shape.kind === 'pytest') return ['python3', '-m', 'pytest', pathRef];
@@ -158,7 +170,7 @@ export async function assertionCommand(assertionRef, repoRoot, {
   realpathFn = realpath, fileStatFn = stat, pathExistsFn = exists,
   isTrackedPathFn = defaultTrackedPath, toolchains,
 } = {}) {
-  const shape = classify(assertionRef);
+  const shape = assertShellShape(classify(assertionRef));
   const { root, target } = await ownedPath(repoRoot, shape.path, realpathFn);
   if (!matchesKind(shape.kind, target)) fail('ASSERTION_PATH_TYPE_MISMATCH');
   if (!(await fileStatFn(target)).isFile()) fail('ASSERTION_PATH_NOT_FILE');

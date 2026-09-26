@@ -84,8 +84,9 @@ describe('GET /api/brain/step-probes', () => {
 
 describe('POST /api/brain/step-probes（按 probe_key upsert）', () => {
   it('挂 internalAuthOrLoopback 中间件', () => {
-    expect(route('post', '/step-probes').stack[0].handle).toBe(internalAuthOrLoopback);
-    expect(route('post', '/step-probes/drift-check').stack[0].handle).toBe(internalAuthOrLoopback);
+    // vi.resetModules 后中间件是另一份模块实例，按名字比对
+    expect(route('post', '/step-probes').stack[0].handle.name).toBe(internalAuthOrLoopback.name);
+    expect(route('post', '/step-probes/drift-check').stack[0].handle.name).toBe(internalAuthOrLoopback.name);
   });
 
   it('新探针 → INSERT ... ON CONFLICT (probe_key) DO UPDATE，回 action=inserted 且 spec_hash=sha256(canonical spec)', async () => {
