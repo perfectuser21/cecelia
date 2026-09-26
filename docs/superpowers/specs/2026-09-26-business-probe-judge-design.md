@@ -27,8 +27,8 @@ resolver（两处）：receipt.executor_kind=business_probe_runner → 只看最
 | `event-bus.js` | 加 `on/off`；`emit` 落库后同步派发给订阅者，每个 handler 单独 try/catch | 无 |
 | `lib/task-run.js` | finishRun RETURNING 补 task_id/status/result；updated=true 时 emit（`deps.emit` 可注入，默认动态 import event-bus） | 单写守卫不受影响（只加事件不加写） |
 | `lib/business-probe-judge.js` | `judgeProbes`（纯）/ `cellStatusFor`（纯）/ `handleRunFinished({pool})` / `registerBusinessProbeJudge()` | step_probes（棒2 合同）、journey_step_links |
-| `impact-contract/assertion-receipts.js` | 新增 `persistBusinessProbeReceipt(db, input)`；`persistTrustedEvaluatorReceipts` 不动 | 迁移 474 |
-| 迁移 474 | executor_kind CHECK 放宽为两值；verdict_chk 增 business_probe_runner 分支（PASS: exit_code=0 ∧ scenario_evidence≠{}；FAIL: exit_code≠0） | 374/409 |
+| `impact-contract/assertion-receipts.js` | 新增 `persistBusinessProbeReceipt(db, input)`；`persistTrustedEvaluatorReceipts` 不动 | 迁移 475 |
+| 迁移 475 | executor_kind CHECK 放宽为两值；verdict_chk 增 business_probe_runner 分支（PASS: exit_code=0 ∧ scenario_evidence≠{}；FAIL: exit_code≠0） | 374/409 |
 | `lib/map-state-resolver.js` | SELECT 补 executor_kind；`resolveEvidenceState` 在 receipt 存在后先走 probe 分支 | 无 |
 | `map/state-resolver.js` | 抽纯函数 `resolveReceiptState(receiptInfo)`；getLatestReceipt 补 executor_kind | 无 |
 | `server.js` | 启动 `registerBusinessProbeJudge()`（BRAIN_EVALUATOR_MODE 之后） | 无 |
@@ -56,7 +56,7 @@ executor_kind=business_probe_runner · verdict PASS|FAIL · exit_code 0|1 · sou
 
 ## 测试策略
 
-- unit（本 PR）：event-bus on/emit 派发与隔离；finishRun 事件（pool+emit 注入，updated=false 不发）；judgeProbes 比对矩阵/缺失/error/ref；cellStatusFor；persistBusinessProbeReceipt SQL 参数；两处 resolver 分支；harness-gates SQL 含 executor_kind 过滤；迁移 474 结构断言。
+- unit（本 PR）：event-bus on/emit 派发与隔离；finishRun 事件（pool+emit 注入，updated=false 不发）；judgeProbes 比对矩阵/缺失/error/ref；cellStatusFor；persistBusinessProbeReceipt SQL 参数；两处 resolver 分支；harness-gates SQL 含 executor_kind 过滤；迁移 475 结构断言。
 - pg integration：待棒2 的 step_probes 迁移合入 main 后补 `business-probe-judge.pg.integration.test.js`（真库端到端：finishRun → 回执行 → cell_status）。
 - smoke：`packages/brain/scripts/smoke/business-probe-judge-smoke.sh`（node 注入 mock pool 跑 judge 全链 + 接线 grep）。
 

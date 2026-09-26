@@ -4,7 +4,7 @@
 
 **Goal:** finishRun 终态 → `run.finished` 事件 → business-probe-judge 比对 step_probes 与 task_runs.result.probes → 写 journey_assertion_receipts(business_probe_runner) → journey_step_links.cell_status 翻色。
 
-**Architecture:** event-bus 加进程内订阅；task-run.js 单点发事件；判定纯逻辑与 DB 副作用分层（judgeProbes/cellStatusFor 纯函数，handleRunFinished 走注入 pool）；回执写入新函数；两处 resolver 按 executor_kind 分支；迁移 474 放宽回执表 CHECK。
+**Architecture:** event-bus 加进程内订阅；task-run.js 单点发事件；判定纯逻辑与 DB 副作用分层（judgeProbes/cellStatusFor 纯函数，handleRunFinished 走注入 pool）；回执写入新函数；两处 resolver 按 executor_kind 分支；迁移 475 放宽回执表 CHECK。
 
 **Tech Stack:** Node ESM, vitest, pg, PostgreSQL 迁移 SQL。
 
@@ -32,9 +32,9 @@
 - [ ] 实现（deps.emit ?? 动态 import event-bus）
 - [ ] 通过
 
-### Task 3: 迁移 474
-**Files:** Create `packages/brain/migrations/474_business_probe_receipts.sql` + `rollback/474_business_probe_receipts.down.sql`；Test `packages/brain/src/__tests__/migration-474-business-probe-receipts.test.js`
-- [ ] 失败测试：结构断言（DROP 旧 executor_kind CHECK/新 CHECK 两值/verdict_chk 含 business_probe_runner 分支/schema_version 474/回滚恢复）
+### Task 3: 迁移 475
+**Files:** Create `packages/brain/migrations/475_business_probe_receipts.sql` + `rollback/475_business_probe_receipts.down.sql`；Test `packages/brain/src/__tests__/migration-475-business-probe-receipts.test.js`
+- [ ] 失败测试：结构断言（DROP 旧 executor_kind CHECK/新 CHECK 两值/verdict_chk 含 business_probe_runner 分支/schema_version 475/回滚恢复）
 - [ ] 写 SQL：`ALTER TABLE journey_assertion_receipts DROP CONSTRAINT IF EXISTS journey_assertion_receipts_executor_kind_check; ADD CONSTRAINT ... CHECK (executor_kind IN ('brain_assertion_runner','business_probe_runner'))`；verdict_chk 重建为 `(executor_kind='brain_assertion_runner' AND <原式>) OR (executor_kind='business_probe_runner' AND ((verdict='PASS' AND exit_code=0 AND scenario_evidence<>'{}') OR (verdict='FAIL' AND exit_code<>0)))`
 - [ ] 通过
 
