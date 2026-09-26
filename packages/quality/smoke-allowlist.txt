@@ -229,6 +229,7 @@ ops-skill-stats-smoke.sh
 ops-skill-versions-smoke.sh
 ops-workflows-smoke.sh
 orchestrator-remote-launch-smoke.sh
+org-units-smoke.sh
 orphan-guard-smoke.sh
 orphan-run-revival-smoke.sh
 outreach-liveness-smoke.sh
