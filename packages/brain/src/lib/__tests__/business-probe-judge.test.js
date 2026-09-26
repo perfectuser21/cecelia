@@ -163,6 +163,16 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
     updates.forEach((u) => expect(u.sql).toMatch(/SET cell_status = \$1/));
   });
 
+  it('只判 active=true 的探针：YAML 删探针后库行 active=false（棒2 漂移语义），停用探针不得再以 probe_missing 把格子打红', async () => {
+    const { pool, calls } = poolWith({ probes: [spec('p.ok', { op: '>=', value: 1 })] });
+    await handleRunFinished(
+      { runId: 'run-1', taskId: 't-1', status: 'success', result: result({ 'p.ok': { observed: 2 } }) },
+      { pool, persist: vi.fn().mockResolvedValue({ id: 'rcpt' }) },
+    );
+    const probeQuery = calls.find((c) => /FROM step_probes/.test(c.sql));
+    expect(probeQuery.sql).toMatch(/sp\.active = true/);
+  });
+
   it('result 无 stage / task 无 anchor.journey_id / 无匹配 step_probes → 跳过，不写不翻色', async () => {
     const persist = vi.fn();
     const noStage = poolWith();

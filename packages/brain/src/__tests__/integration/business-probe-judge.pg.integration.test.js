@@ -19,6 +19,7 @@ import { handleRunFinished, registerBusinessProbeJudge } from '../../lib/busines
 const STAGE = 'preflight';
 const KEY_OK = `pgtest.${randomUUID().slice(0, 8)}.slots_ready`;
 const KEY_WARN = `pgtest.${randomUUID().slice(0, 8)}.ids_all`;
+const KEY_OFF = `pgtest.${randomUUID().slice(0, 8)}.retired`;
 
 function specOf(key, expect_, severity) {
   return { key, workflow: 'pgtest', stage: STAGE, journey_cell: `stage:${STAGE}`, probe: { type: 'sql', target: 'x', query: 'select 1' }, expect: expect_, severity };
@@ -54,6 +55,13 @@ beforeAll(async () => {
     `INSERT INTO step_probes (probe_key, workflow, stage, journey_step_link_id, spec, spec_hash, severity)
      VALUES ($1,'pgtest',$2,$3,$4::jsonb,$5,'error'), ($6,'pgtest',$2,$7,$8::jsonb,$9,'warn')`,
     [KEY_OK, STAGE, ids.linkOk.id, JSON.stringify(specOk), ids.hashOk, KEY_WARN, ids.linkWarn.id, JSON.stringify(specWarn), ids.hashWarn],
+  );
+  // 停用探针（YAML 已删、库行 active=false）：挂在 linkOk 上，若被判定会以 probe_missing 把 linkOk 打红
+  const specOff = specOf(KEY_OFF, { op: '==', value: 1 }, 'error');
+  await client.query(
+    `INSERT INTO step_probes (probe_key, workflow, stage, journey_step_link_id, spec, spec_hash, severity, active)
+     VALUES ($1,'pgtest',$2,$3,$4::jsonb,$5,'error',false)`,
+    [KEY_OFF, STAGE, ids.linkOk.id, JSON.stringify(specOff), sha256(specOff)],
   );
   const task = await client.query(
     `INSERT INTO tasks (title, task_type, status, payload) VALUES ($1, 'harness_initiative', 'in_progress', $2::jsonb) RETURNING id`,
@@ -127,6 +135,13 @@ describe('business-probe-judge [PostgreSQL] run.finished → 回执 → cell 翻
 
     expect(await cellStatus(ids.linkOk.id)).toBe('green');
     expect(await cellStatus(ids.linkWarn.id)).toBe('pending');
+  });
+
+  it('停用探针（active=false）不判：无回执，且没把同格 linkOk 拖成 red', async () => {
+    const receipts = await receiptsFor(runId);
+    expect(receipts.some((r) => r.assertion_ref_snapshot === `probe:${KEY_OFF}`)).toBe(false);
+    expect(receipts.filter((r) => r.journey_step_link_id === ids.linkOk.id)).toHaveLength(1);
+    expect(await cellStatus(ids.linkOk.id)).toBe('green');
   });
 
   it('同一 run 重复判定幂等：409 唯一键（NULLS NOT DISTINCT）挡住重复回执，cell 不抖', async () => {
