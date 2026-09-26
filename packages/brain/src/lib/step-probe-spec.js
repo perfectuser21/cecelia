@@ -9,6 +9,11 @@
  * 只存归一化 spec + spec_hash（sha256(canonical JSON)），同 skill_registry 清单哈希做法：漂移即报。
  *
  * assertion_ref 形状：`probe:<key>`；一个格子挂多条探针时 `probe:<k1>,<k2>`（逗号连接，YAML 顺序）。
+ *
+ * 哈希两级并存（棒2 后续定档）：
+ *   * spec_hash     逐条 sha256(canonical JSON(spec))——漂移粒度到探针（哪条变了）
+ *   * source_sha256 整文件原文 sha256——与 workspace probes-lib loadChecks().sha256 同口径（仓库那份是不是库里登记的这版）
+ * probe 形状对齐 workspace checks/schema.json：sql {type,target,query}；http {type,target,url,filter,reduce,minus?}。
  */
 import { createHash } from 'crypto';
 
@@ -41,24 +46,54 @@ export function canonicalJson(value) {
 }
 
 export const specHash = (spec) => createHash('sha256').update(canonicalJson(spec)).digest('hex');
+/** 文件级哈希：原文 utf8 sha256，与 workspace checks/probes-lib.js loadChecks().sha256 同口径。 */
+export const sourceSha256 = (text) => createHash('sha256').update(String(text), 'utf8').digest('hex');
+
+const REDUCE_RE = /^(count|field:.+)$/;
+const isScalar = (v) => ['number', 'string', 'boolean'].includes(typeof v);
+const onlyKeys = (obj, allowed) => Object.keys(obj).every((k) => allowed.includes(k));
+
+/**
+ * http 取数源（workspace checks/schema.json httpSource）：{ url, filter:{列:值}, reduce:count|field:<列> }。
+ * 主查询与 minus 子查询同形；字段原样保留进 spec（棒3a 执行体照此取数）。
+ */
+function normalizeHttpSource(raw, key, label) {
+  if (!isPlainObject(raw) || !onlyKeys(raw, ['url', 'filter', 'reduce'])) {
+    fail('STEP_PROBE_TARGET_INVALID', `探针 ${key}: ${label} 只允许 url/filter/reduce`, { probe_key: key });
+  }
+  const { url, filter, reduce } = raw;
+  if (!nonEmptyString(url) || !/^https?:\/\/\S+$/i.test(url.trim())) {
+    fail('STEP_PROBE_TARGET_INVALID', `探针 ${key}: ${label}.url 必须是 http(s) 地址`, { probe_key: key });
+  }
+  if (!isPlainObject(filter) || Object.keys(filter).length === 0 || !Object.values(filter).every(isScalar)) {
+    fail('STEP_PROBE_TARGET_INVALID', `探针 ${key}: ${label}.filter 必须是非空 {列: 标量值}`, { probe_key: key });
+  }
+  if (typeof reduce !== 'string' || !REDUCE_RE.test(reduce)) {
+    fail('STEP_PROBE_TARGET_INVALID', `探针 ${key}: ${label}.reduce 只支持 count | field:<列>`, { probe_key: key });
+  }
+  return { url: url.trim(), filter: { ...filter }, reduce };
+}
 
 function normalizeProbeTarget(raw, key) {
   if (!isPlainObject(raw)) fail('STEP_PROBE_TYPE_INVALID', `探针 ${key}: probe 必须是对象`, { probe_key: key });
-  const { type, target, query, url } = raw;
+  const { type, target } = raw;
   if (!PROBE_TYPES.includes(type)) {
     fail('STEP_PROBE_TYPE_INVALID', `探针 ${key}: probe.type 只支持 ${PROBE_TYPES.join('|')}`, { probe_key: key });
   }
   if (!nonEmptyString(target)) fail('STEP_PROBE_TARGET_INVALID', `探针 ${key}: probe.target 必填`, { probe_key: key });
   if (type === 'sql') {
-    if (!nonEmptyString(query) || url !== undefined) {
-      fail('STEP_PROBE_TARGET_INVALID', `探针 ${key}: sql 探针必须有 query 且不能带 url`, { probe_key: key });
+    if (!onlyKeys(raw, ['type', 'target', 'query']) || !nonEmptyString(raw.query)) {
+      fail('STEP_PROBE_TARGET_INVALID', `探针 ${key}: sql 探针只允许 type/target/query 且 query 必填`, { probe_key: key });
     }
-    return { type, target: target.trim(), query: query.trim() };
+    return { type, target: target.trim(), query: raw.query.trim() };
   }
-  if (!nonEmptyString(url) || !/^https?:\/\/\S+$/i.test(url.trim()) || query !== undefined) {
-    fail('STEP_PROBE_TARGET_INVALID', `探针 ${key}: http 探针必须有 http(s) url 且不能带 query`, { probe_key: key });
+  if (!onlyKeys(raw, ['type', 'target', 'url', 'filter', 'reduce', 'minus'])) {
+    fail('STEP_PROBE_TARGET_INVALID', `探针 ${key}: http 探针只允许 type/target/url/filter/reduce/minus`, { probe_key: key });
   }
-  return { type, target: target.trim(), url: url.trim() };
+  const main = normalizeHttpSource({ url: raw.url, filter: raw.filter, reduce: raw.reduce }, key, 'probe');
+  const out = { type, target: target.trim(), ...main };
+  if (raw.minus !== undefined) out.minus = normalizeHttpSource(raw.minus, key, 'probe.minus');
+  return out;
 }
 
 function normalizeExpect(raw, key) {
