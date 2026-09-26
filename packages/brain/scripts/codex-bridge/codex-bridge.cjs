@@ -17,6 +17,8 @@ const { selectBestCodexAccount, getAllAccountUsage, ACCOUNTS } = require('./code
 const {
   createKernelAttemptHandler,
 } = require('./kernel-attempt-handler.cjs');
+// 回调 Brain 的内部鉴权头（PR #5592 起 execution-callback 挂 internalAuthOrLoopback）
+const { brainAuthHeaders } = require('../../../../scripts/lib/brain-auth-headers.cjs');
 
 const PORT = process.env.CODEX_BRIDGE_PORT || 3458;
 // macOS + Tailscale bug: 绑定 0.0.0.0 时，Tailscale utun 进来的连接会被 RST
@@ -290,7 +292,7 @@ async function callbackBrain(taskId, checkpointId, status, output, durationMs, r
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...brainAuthHeaders() },
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10000),
       });
@@ -798,6 +800,7 @@ const server = createBridgeServer();
 module.exports = {
   buildCallbackPayload,
   buildCodexExecArgs,
+  callbackBrain,
   cleanupTmpDir,
   createBridgeServer,
   createKernelHandlerFromEnvironment,
