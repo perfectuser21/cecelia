@@ -79,6 +79,42 @@ export function buildRunResult({ exitCode, artifacts } = {}) {
   return { exit_code: Number.isFinite(code) ? code : null, artifacts: refs };
 }
 
+const RECEIPT_SCALAR_KEYS = Object.freeze(['stage', 'stage_status']);
+const RECEIPT_REF_KEYS = Object.freeze(['ref', 'url', 'path', 'name', 'key', 'observed', 'probed_at', 'error']);
+
+/** 引用形态：字符串（路径/URL/名字）原样；对象只留引用键；其余（数字/大 blob）丢弃。 */
+function toReference(item) {
+  if (typeof item === 'string') return item;
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+  const ref = {};
+  for (const k of RECEIPT_REF_KEYS) {
+    if (item[k] === undefined || item[k] === null) continue;
+    ref[k] = typeof item[k] === 'string' ? item[k] : String(item[k]);
+  }
+  return Object.keys(ref).length ? ref : null;
+}
+
+/**
+ * 回执 result → 账本字段（纯函数）：只取存在的 stage / stage_status / metrics / evidence / probes；
+ * evidence / probes 只留引用形态，不落大 blob。无命中返回 {}。
+ * @param {any} result
+ * @returns {{stage?: string, stage_status?: string, metrics?: object, evidence?: any[], probes?: any[]}}
+ */
+export function extractStageReceipt(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return {};
+  const out = {};
+  for (const k of RECEIPT_SCALAR_KEYS) {
+    if (result[k] !== undefined && result[k] !== null) out[k] = String(result[k]);
+  }
+  if (result.metrics && typeof result.metrics === 'object' && !Array.isArray(result.metrics)) out.metrics = result.metrics;
+  for (const k of ['evidence', 'probes']) {
+    if (result[k] === undefined || result[k] === null) continue;
+    const refs = [].concat(result[k]).map(toReference).filter((r) => r !== null);
+    if (refs.length) out[k] = refs;
+  }
+  return out;
+}
+
 /**
  * 裸跑检测（纯集合差）：被派发但没有任何 run 记录的 task_id，去重。
  * @param {string[]} dispatchedTaskIds
@@ -159,16 +195,20 @@ export async function startRun({ taskId, runId, source, context } = {}, deps = {
  *
  * 成功补终态（updated=true）后单点发 run.finished 事件（deps.emit 可注入；默认 event-bus）。
  *
- * @param {{runId: string, status: string, exitCode?: number, artifacts?: any, error?: string}} input
+ * result 入参（可选）是调用方提炼好的附加字段（如回执的 stage/metrics），与 exit_code/artifacts 合并，
+ * 后者优先；SQL 侧 `COALESCE(result,'{}') || $3` 再与已有 result 合并。
+ *
+ * @param {{runId: string, status: string, exitCode?: number, artifacts?: any, error?: string, result?: object}} input
  * @param {{pool?: {query: Function}, emit?: Function}} [deps]
  * @returns {Promise<{updated: boolean}>}
  */
-export async function finishRun({ runId, status, exitCode, artifacts, error } = {}, deps = {}) {
+export async function finishRun({ runId, status, exitCode, artifacts, error, result: extra = {} } = {}, deps = {}) {
   try {
     if (!runId) throw new Error('finishRun requires runId');
     const finalStatus = normalizeRunStatus(status);
     if (finalStatus === 'running') return { updated: false };
-    const result = buildRunResult({ exitCode, artifacts });
+    const base = extra && typeof extra === 'object' && !Array.isArray(extra) ? extra : {};
+    const result = { ...base, ...buildRunResult({ exitCode, artifacts }) };
     const pool = await resolvePool(deps);
     const upd = await pool.query(
       `UPDATE task_runs
@@ -259,8 +299,9 @@ export async function recordRunFromCallback(
   }
   const pr = prUrl || (result && typeof result === 'object' ? result.pr_url : null);
   if (pr) artifacts.push(pr);
+  // 账本 stage/metrics/evidence/probes 随终态回执进 task_runs.result（棒1 回执线）
   const finished = await finishRun(
-    { runId, status: runStatus, exitCode, artifacts, error: runStatus === 'success' ? undefined : error },
+    { runId, status: runStatus, exitCode, artifacts, error: runStatus === 'success' ? undefined : error, result: extractStageReceipt(result) },
     deps,
   );
   return { started, finished };
