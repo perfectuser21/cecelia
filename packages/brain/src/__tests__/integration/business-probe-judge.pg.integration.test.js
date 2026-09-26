@@ -164,6 +164,53 @@ describe('business-probe-judge [PostgreSQL] run.finished → 回执 → cell 翻
     expect((await receiptsFor(runId)).length).toBe(before);
   });
 
+  it('无 anchor 任务（zenithjoy device_job 镜像）：按 run_id <workflow>-crontab-… 解析 workflow 判定，回执落库、cell 真翻、锚回填（任务 1be07583）', async () => {
+    const mirror = await client.query(
+      `INSERT INTO tasks (title, task_type, status, payload) VALUES ($1, 'harness_initiative', 'in_progress', '{}'::jsonb) RETURNING id`,
+      [`pgtest mirror task no anchor ${KEY_OK}`],
+    );
+    const mirrorTaskId = mirror.rows[0].id;
+    const mirrorRunId = `pgtest-crontab-auto09270600__a1.${STAGE}`;
+    await startRun({ taskId: mirrorTaskId, runId: mirrorRunId, source: 'pg-integration' }, { pool: client });
+    // 反向取值：KEY_OK 故意不达标（green→red）、KEY_WARN 全非空（pending→green），证明 cell 真被本 run 翻过
+    await client.query(
+      `UPDATE task_runs SET result = $2::jsonb WHERE run_id = $1`,
+      [mirrorRunId, JSON.stringify({
+        stage: STAGE, stage_status: 'ok', metrics: { want: 10 }, evidence: {},
+        probes: [{ key: KEY_OK, observed: 3 }, { key: KEY_WARN, observed: ['a', 'b'] }],
+      })],
+    );
+    expect(await cellStatus(ids.linkOk.id)).toBe('green');
+    expect(await cellStatus(ids.linkWarn.id)).toBe('pending');
+
+    expect(await finishRun({ runId: mirrorRunId, status: 'completed', exitCode: 0 }, { pool: client })).toEqual({ updated: true });
+
+    const receipts = await receiptsFor(mirrorRunId);
+    expect(receipts).toHaveLength(2);
+    const byKey = Object.fromEntries(receipts.map((r) => [r.assertion_ref_snapshot, r]));
+    expect(byKey[`probe:${KEY_OK}`]).toMatchObject({ verdict: 'FAIL', executor_kind: 'business_probe_runner', scenario_evidence: { observed: 3, expected: 10, reason: 'value_mismatch' } });
+    expect(byKey[`probe:${KEY_WARN}`]).toMatchObject({ verdict: 'PASS', scenario_evidence: { observed: ['a', 'b'] } });
+    expect(await cellStatus(ids.linkOk.id)).toBe('red');
+    expect(await cellStatus(ids.linkWarn.id)).toBe('green');
+
+    const { rows } = await client.query(`SELECT payload->'anchor'->>'journey_id' AS journey_id FROM tasks WHERE id = $1`, [mirrorTaskId]);
+    expect(rows[0].journey_id).toBe(ids.journeyId);
+  });
+
+  it('无 anchor 且 run_id 不含 -crontab- → skipped no_anchor_no_workflow，不写回执', async () => {
+    const plain = await client.query(
+      `INSERT INTO tasks (title, task_type, status, payload) VALUES ($1, 'harness_initiative', 'in_progress', '{}'::jsonb) RETURNING id`,
+      [`pgtest plain task no anchor ${KEY_OK}`],
+    );
+    const plainRunId = `pgtest-plain-${randomUUID()}`;
+    const out = await handleRunFinished(
+      { runId: plainRunId, taskId: plain.rows[0].id, status: 'completed', result: { stage: STAGE, probes: [{ key: KEY_OK, observed: 99 }] } },
+      { pool: client },
+    );
+    expect(out).toEqual({ skipped: 'no_anchor_no_workflow' });
+    expect(await receiptsFor(plainRunId)).toHaveLength(0);
+  });
+
   it('迁移 475 约束：brain_assertion_runner PASS 仍必须带 sha/machine（原式未被放宽）', async () => {
     await client.query('SAVEPOINT brain_pass');
     await expect(client.query(

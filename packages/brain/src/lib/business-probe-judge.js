@@ -2,7 +2,8 @@
  * business-probe-judge：业务探针判定（棒3a，任务 33aa2bc4，决策 702949b6 / 95e29afd）。
  *
  * 一条线：run.finished（lib/task-run.js finishRun 单点发）→ 按 task 的 payload.anchor.journey_id
- * + result.stage 查 step_probes ⋈ journey_step_links → 逐条比对 observed（task_runs.result.probes）
+ * + result.stage 查 step_probes ⋈ journey_step_links（无锚 → 按 result.workflow / run_id 解析的 workflow
+ * 查 step_probes.workflow，任务 1be07583）→ 逐条比对 observed（task_runs.result.probes）
  * 与 expected（spec.expect.value 或 expect.ref → result.metrics.<k>）→ 写 journey_assertion_receipts
  * （executor_kind=business_probe_runner）→ UPDATE journey_step_links.cell_status 翻色。
  *
@@ -151,6 +152,58 @@ async function resolvePool(deps) {
   return (await import('../db.js')).default;
 }
 
+const PROBE_SELECT = `SELECT sp.probe_key, sp.stage, sp.severity, sp.spec, sp.spec_hash,
+              jsl.id AS journey_step_link_id, jsl.assertion_revision, jsl.journey_id
+         FROM step_probes sp
+         JOIN journey_step_links jsl ON jsl.id = sp.journey_step_link_id`;
+const PROBE_TAIL = `AND sp.active = true
+        ORDER BY sp.probe_key`;
+
+/**
+ * 无锚兜底的 workflow 来源：result.workflow 优先；否则从 run_id 解析。
+ * zenithjoy workflow-result.sh 生成的 run_id 形如 `<workflow>-crontab-<TAG>__a<N>.<stage>`
+ * （如 social-keyword-leadgen-crontab-auto09270600__a1.delivery）。
+ */
+export function resolveWorkflow(runId, result) {
+  if (typeof result?.workflow === 'string' && result.workflow.trim()) return result.workflow.trim();
+  const id = String(runId ?? '');
+  const idx = id.indexOf('-crontab-');
+  if (idx <= 0) return null;
+  return id.slice(0, idx);
+}
+
+/**
+ * 查探针：有锚按 journey_id；无锚按 step_probes.workflow（zenithjoy device_job 镜像建的任务 payload.anchor
+ * 为空，09-27 获客链首跑判定被 no_anchor 拦死）。两者皆无 → 不查。
+ */
+async function loadSpecs(pool, { journeyId, workflow, stage }) {
+  if (journeyId) {
+    const r = await pool.query(`${PROBE_SELECT}
+        WHERE jsl.journey_id = $1 AND sp.stage = $2
+          ${PROBE_TAIL}`, [journeyId, stage]);
+    return r?.rows ?? [];
+  }
+  const r = await pool.query(`${PROBE_SELECT}
+        WHERE sp.workflow = $1 AND sp.stage = $2
+          ${PROBE_TAIL}`, [workflow, stage]);
+  return r?.rows ?? [];
+}
+
+/** 无锚任务判定成功后：探针指向唯一 journey → 一次性回填 payload.anchor.journey_id（仅为空时写）。 */
+async function backfillAnchor(pool, taskId, specs) {
+  const journeys = new Set(specs.map((s) => s.journey_id).filter(Boolean));
+  if (journeys.size !== 1) return null;
+  const [journeyId] = journeys;
+  await pool.query(
+    `UPDATE tasks
+        SET payload = jsonb_set(COALESCE(payload, '{}'::jsonb), '{anchor}',
+              COALESCE(payload->'anchor', '{}'::jsonb) || jsonb_build_object('journey_id', $1::text), true)
+      WHERE id = $2 AND payload->'anchor'->>'journey_id' IS NULL`,
+    [journeyId, taskId],
+  );
+  return journeyId;
+}
+
 /**
  * run.finished 处理器：查锚 → 查探针 → 判定 → 写回执 → 翻色。fail-open，返回摘要供日志/测试。
  * @param {{runId: string, taskId: string, status?: string, result?: object}} payload
@@ -168,20 +221,11 @@ export async function handleRunFinished(payload = {}, deps = {}) {
       `SELECT payload->'anchor'->>'journey_id' AS journey_id FROM tasks WHERE id = $1`,
       [taskId],
     );
-    const journeyId = anchor?.rows?.[0]?.journey_id;
-    if (!journeyId) return { skipped: 'no_anchor' };
+    const journeyId = anchor?.rows?.[0]?.journey_id || null;
+    const workflow = journeyId ? null : resolveWorkflow(runId, result);
+    if (!journeyId && !workflow) return { skipped: 'no_anchor_no_workflow' };
 
-    const probes = await pool.query(
-      `SELECT sp.probe_key, sp.stage, sp.severity, sp.spec, sp.spec_hash,
-              jsl.id AS journey_step_link_id, jsl.assertion_revision
-         FROM step_probes sp
-         JOIN journey_step_links jsl ON jsl.id = sp.journey_step_link_id
-        WHERE jsl.journey_id = $1 AND sp.stage = $2
-          AND sp.active = true
-        ORDER BY sp.probe_key`,
-      [journeyId, stage],
-    );
-    const specs = probes?.rows ?? [];
+    const specs = await loadSpecs(pool, { journeyId, workflow, stage });
     if (specs.length === 0) return { skipped: 'no_probes' };
 
     const verdicts = judgeProbes(specs, result);
@@ -217,8 +261,9 @@ export async function handleRunFinished(payload = {}, deps = {}) {
       );
       cells[linkId] = status;
     }
-    console.log(`[business-probe-judge] run=${runId} stage=${stage} judged=${verdicts.length} cells=${JSON.stringify(cells)}`);
-    return { judged: verdicts.length, receipts, cells };
+    const backfilled = workflow ? await backfillAnchor(pool, taskId, specs) : null;
+    console.log(`[business-probe-judge] run=${runId} stage=${stage} via=${journeyId ? 'anchor' : `workflow:${workflow}`} judged=${verdicts.length} cells=${JSON.stringify(cells)}${backfilled ? ` anchor_backfilled=${backfilled}` : ''}`);
+    return { judged: verdicts.length, receipts, cells, ...(workflow ? { workflow, anchor_backfilled: backfilled } : {}) };
   } catch (err) {
     console.warn(`[business-probe-judge] run=${runId} judge failed (non-fatal): ${err.message}`);
     return { error: err.message };
