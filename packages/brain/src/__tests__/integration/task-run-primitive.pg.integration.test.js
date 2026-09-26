@@ -150,6 +150,42 @@ describe('run 原语 startRun/finishRun/findBareRuns — 真 Postgres 落库', (
     expect(rows[0].source).toBe('execution-callback');
   });
 
+  it('stage 回执（status=in_progress + result.stage，棒1-brain-2 任务 8e5521ae）：该 stage run 立即结束、result 落账、任务状态不变（真 PG）', async () => {
+    const t = await seedTask('in_progress');
+    const base = `social-keyword-leadgen-crontab-auto09270600-${randomUUID()}`;
+    const receipt = (stage, stage_status) => ({
+      stage,
+      stage_status,
+      metrics: { sent: 3 },
+      evidence: [`s3://x/${stage}.log`],
+      probes: [{ key: `${stage}.sent`, observed: 3, probed_at: '2026-09-27T06:00:00Z' }],
+    });
+    await recordRunFromCallback({ taskId: t, runId: `${base}__a1.discovery`, status: 'in_progress', result: receipt('discovery', 'completed') });
+    await recordRunFromCallback({ taskId: t, runId: `${base}__a1.delivery`, status: 'in_progress', result: receipt('delivery', 'blocked') });
+    await recordRunFromCallback({ taskId: t, runId: `${base}__a1.followup`, status: 'in_progress', result: receipt('followup', 'failed'), error: 'hop timeout' });
+    // 同一 stage 回执重放：幂等，不重复结束
+    await recordRunFromCallback({ taskId: t, runId: `${base}__a1.discovery`, status: 'in_progress', result: receipt('discovery', 'completed') });
+    const { rows } = await pool.query(
+      `SELECT run_id, status, ended_at, result, error_message FROM task_runs WHERE task_id=$1 ORDER BY run_id`,
+      [t],
+    );
+    expect(rows).toHaveLength(3);
+    const byStage = Object.fromEntries(rows.map((r) => [r.result.stage, r]));
+    for (const r of rows) {
+      expect(r.ended_at).not.toBeNull();
+      expect(r.result).toMatchObject({ stage_status: expect.any(String), metrics: { sent: 3 } });
+      expect(r.result.probes[0].key).toBe(`${r.result.stage}.sent`);
+    }
+    expect(byStage.discovery.status).toBe('success');
+    expect(byStage.discovery.result.blocked).toBeUndefined();
+    expect(byStage.delivery.status).toBe('success');
+    expect(byStage.delivery.result.blocked).toBe(true);
+    expect(byStage.followup.status).toBe('failed');
+    expect(byStage.followup.error_message).toBe('hop timeout');
+    const task = await pool.query(`SELECT status FROM tasks WHERE id=$1`, [t]);
+    expect(task.rows[0].status).toBe('in_progress');
+  });
+
   it('回执迟到/重复：已终态的 run 不被后到的失败回执改写', async () => {
     const t = await seedTask();
     const r = `pg-cb-late-${randomUUID()}`;
