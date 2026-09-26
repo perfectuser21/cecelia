@@ -162,3 +162,28 @@ describe('aggregateFeatureEvidence', () => {
     })).toMatchObject({ status: 'green', reason_code: 'children_green' });
   });
 });
+
+describe('business_probe_runner 回执分支（棒3a：只看最近一条 verdict，不比 sha/repo）', () => {
+  const probeReceipt = (verdict, overrides = {}) => receipt(verdict, {
+    executor_kind: 'business_probe_runner',
+    source_repo: 'zenithjoy-workspace',
+    source_sha: null,
+    ...overrides,
+  });
+
+  it('PASS → green(probe_receipt_pass)，即使 source_sha 为空且 repo 不同', () => {
+    expect(resolveEvidenceState(evidence({ receipt: probeReceipt('PASS'), repo: 'repo-a' })))
+      .toMatchObject({ status: 'green', reason_code: 'probe_receipt_pass' });
+  });
+
+  it('FAIL → red(probe_receipt_fail)', () => {
+    expect(resolveEvidenceState(evidence({ receipt: probeReceipt('FAIL'), repo: 'repo-a' })))
+      .toMatchObject({ status: 'red', reason_code: 'probe_receipt_fail' });
+  });
+
+  it('brain_assertion_runner 行为不变：sha 不匹配仍 unknown', () => {
+    expect(resolveEvidenceState(evidence({
+      receipt: receipt('PASS', { executor_kind: 'brain_assertion_runner', source_sha: 'b'.repeat(40) }),
+    }))).toMatchObject({ status: 'unknown', reason_code: 'receipt_revision_mismatch' });
+  });
+});

@@ -59,3 +59,23 @@ describe('computeSnapshotFreshness', () => {
     vi.restoreAllMocks();
   });
 });
+
+describe('resolveReceiptState — 按 executor_kind 分支（棒3a）', () => {
+  it('business_probe_runner：PASS→green / FAIL→red，忽略 revision_match', async () => {
+    const { resolveReceiptState } = await import('../state-resolver.js');
+    expect(resolveReceiptState({ verdict: 'PASS', revision_match: false, executor_kind: 'business_probe_runner', receipt: {} }, null))
+      .toMatchObject({ state: 'green', reason_code: 'probe_pass' });
+    expect(resolveReceiptState({ verdict: 'FAIL', revision_match: false, executor_kind: 'business_probe_runner', receipt: {} }, null))
+      .toMatchObject({ state: 'red', reason_code: 'probe_fail' });
+  });
+
+  it('brain_assertion_runner：PASS 但 revision 不匹配仍 unknown；无回执 gray', async () => {
+    const { resolveReceiptState } = await import('../state-resolver.js');
+    expect(resolveReceiptState({ verdict: 'PASS', revision_match: false, executor_kind: 'brain_assertion_runner', receipt: { source_sha: 'x' } }, 'y'))
+      .toMatchObject({ state: 'unknown', reason_code: 'revision_mismatch' });
+    expect(resolveReceiptState({ verdict: 'PASS', revision_match: true, executor_kind: 'brain_assertion_runner', receipt: {} }, 'y'))
+      .toMatchObject({ state: 'green', reason_code: 'pass_current_revision' });
+    expect(resolveReceiptState({ verdict: null, revision_match: false, receipt: null }, 'y'))
+      .toMatchObject({ state: 'gray', reason_code: 'no_receipt' });
+  });
+});

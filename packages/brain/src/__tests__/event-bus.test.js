@@ -103,3 +103,44 @@ describe('EventBus', () => {
     });
   });
 });
+
+describe('on/off — 进程内订阅（棒3a 判定：run.finished 的接线口）', () => {
+  it('on 后 emit 同步派发 payload 给订阅者；off 后不再收', async () => {
+    const { on, off } = await import('../event-bus.js');
+    pool.query.mockResolvedValue({ rows: [] });
+    const seen = [];
+    const handler = (payload, meta) => { seen.push({ payload, meta }); };
+    on('run.finished', handler);
+    await emit('run.finished', 'task-run', { runId: 'r1' });
+    expect(seen).toHaveLength(1);
+    expect(seen[0].payload).toEqual({ runId: 'r1' });
+    expect(seen[0].meta).toMatchObject({ eventType: 'run.finished', source: 'task-run' });
+    off('run.finished', handler);
+    await emit('run.finished', 'task-run', { runId: 'r2' });
+    expect(seen).toHaveLength(1);
+  });
+
+  it('一个订阅者抛错不影响其他订阅者，emit 也不抛（fail-open）', async () => {
+    const { on } = await import('../event-bus.js');
+    pool.query.mockResolvedValue({ rows: [] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const calls = [];
+    const unsubBad = on('x.evt', () => { throw new Error('boom'); });
+    const unsubGood = on('x.evt', async () => { calls.push('good'); });
+    await expect(emit('x.evt', 'test', {})).resolves.toBeUndefined();
+    expect(calls).toEqual(['good']);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[event-bus] subscriber'), expect.any(String));
+    unsubBad(); unsubGood(); warn.mockRestore();
+  });
+
+  it('落库失败也照样派发给订阅者（订阅与审计落库解耦）', async () => {
+    const { on } = await import('../event-bus.js');
+    pool.query.mockRejectedValue(new Error('DB down'));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let got = null;
+    const unsub = on('y.evt', (p) => { got = p; });
+    await emit('y.evt', 'test', { a: 1 });
+    expect(got).toEqual({ a: 1 });
+    unsub(); err.mockRestore();
+  });
+});
