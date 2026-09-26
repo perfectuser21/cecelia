@@ -40,12 +40,14 @@ import { isTransientClass } from '../lib/retry-policy.js';
 import { checkAnchor } from '../anchor-check.js';
 import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../lib/manual-dispatch-device-gate.js';
 import { afterTerminalTransition } from '../lib/task-terminal.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 
 const router = Router();
 const execAsync = promisify(exec);
 const HEARTBEAT_PATH = new URL('../../../HEARTBEAT.md', import.meta.url);
 
-router.post('/execution-callback', async (req, res) => {
+// 内部回执入口：CECELIA_INTERNAL_TOKEN 配置后严格验 Bearer / x-internal-token；未配置只放行非生产本机回环
+router.post('/execution-callback', internalAuthOrLoopback, async (req, res) => {
   let callbackQueueId = null;
   let callbackQueueFinalized = false;
   const finalizeCallbackQueue = async (processed) => {

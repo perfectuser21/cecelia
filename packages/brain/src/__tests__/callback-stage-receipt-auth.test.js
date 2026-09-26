@@ -5,7 +5,7 @@
  *  - execution-callback 挂 internalAuthOrLoopback：CECELIA_INTERNAL_TOKEN 配置后缺头 401，带 Bearer 放行
  *  - 内部调用方（cecelia-run.sh / flush-callback-queue.sh / executor / bridge）接线：Bearer 头 / 容器 env 透传
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -140,7 +140,7 @@ describe('execution-callback supertest：token 配置后缺头 401 / Bearer 200'
   let app;
   let mockPool;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     vi.resetModules();
     process.env.CECELIA_INTERNAL_TOKEN = TOKEN;
     mockPool = {
@@ -155,16 +155,6 @@ describe('execution-callback supertest：token 配置后缺头 401 / Bearer 200'
       connect: vi.fn(async () => ({ query: vi.fn(async () => ({ rows: [] })), release: vi.fn() })),
     };
     vi.doMock('../db.js', () => ({ default: mockPool }));
-    vi.doMock('../executor.js', () => ({
-      triggerCeceliaRun: vi.fn(), removeActiveProcess: vi.fn(), getActiveProcesses: vi.fn(() => []),
-      getActiveProcessCount: vi.fn(() => 0), checkCeceliaRunAvailable: vi.fn(async () => ({ available: true })),
-      probeTaskLiveness: vi.fn(async () => []), recordHeartbeat: vi.fn(async () => ({ success: true })),
-    }));
-    vi.doMock('../tick.js', () => ({ runTickSafe: vi.fn(async () => ({})), getTickStatus: vi.fn(() => ({})) }));
-    vi.doMock('../thalamus.js', () => ({ processEvent: vi.fn(async () => ({})), EVENT_TYPES: {} }));
-    vi.doMock('../notifier.js', () => ({ notifyTaskCompleted: vi.fn(async () => {}) }));
-    vi.doMock('../event-bus.js', () => ({ emit: vi.fn(async () => {}) }));
-    vi.doMock('../embedding-service.js', () => ({ generateTaskEmbeddingAsync: vi.fn() }));
     const express = (await import('express')).default;
     const { default: router } = await import('../routes/execution.js');
     app = express();
@@ -172,7 +162,9 @@ describe('execution-callback supertest：token 配置后缺头 401 / Bearer 200'
     app.use('/api/brain', router);
   });
 
-  afterEach(() => {
+  beforeEach(() => { mockPool.query.mockClear(); });
+
+  afterAll(() => {
     delete process.env.CECELIA_INTERNAL_TOKEN;
     vi.doUnmock('../db.js');
   });

@@ -157,7 +157,7 @@ function mockReqRes(method, path, body = {}) {
       return;
     }
 
-    const handler = layers[0].route.stack[0].handle;
+    const handler = layers[0].route.stack.at(-1).handle; // 末位 = 业务 handler（前置鉴权中间件另测）
     handler(req, res).catch(err => {
       resData.statusCode = 500;
       resData.body = { error: err.message };
