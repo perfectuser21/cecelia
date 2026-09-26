@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canonicalJson, compareProbeHashes, groupProbesByCell, normalizeProbe,
-  parseProbeRef, parseProbesDocument, probeRef, specHash,
+  parseProbeRef, parseProbesDocument, probeRef, sourceSha256, specHash,
 } from '../step-probe-spec.js';
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -55,14 +55,39 @@ describe('normalizeProbe', () => {
     });
   });
 
-  it('合法 http 探针：url 必填、query 不允许', () => {
+  it('合法 http 探针（workspace checks/schema.json 形状）：url+filter+reduce 必填，minus 可选且原样保留', () => {
+    const url = 'https://open.feishu.cn/open-apis/bitable/v1/apps/GNuwbzY0da8GP0sv6MGcOTu9ntd/tables/tbleP4LgzkcwAhiZ/records';
+    const minusUrl = 'https://open.feishu.cn/open-apis/bitable/v1/apps/GNuwbzY0da8GP0sv6MGcOTu9ntd/tables/tblmrJTyVgzTj89P/records';
     const spec = normalizeProbe(rawProbe({
-      key: 'delivery.webhook_alive',
-      probe: { type: 'http', target: 'crm', url: 'https://crm.example.com/health' },
-      expect: { op: '==', value: 200 },
+      key: 'effective_count',
+      stage: 'scoring',
+      journey_cell: 'stage:scoring',
+      probe: {
+        type: 'http', target: 'feishu_jinuo', url,
+        filter: { '抖音获客-关键词配置': '$WORD' },
+        reduce: 'field:有效线索数',
+        minus: { url: minusUrl, filter: { 命中关键词: '$WORD', 进入最终线索: true }, reduce: 'count' },
+      },
+      expect: { op: '==', value: 0 },
+      severity: 'warn',
     }), { workflow: WORKFLOW });
-    expect(spec.probe).toEqual({ type: 'http', target: 'crm', url: 'https://crm.example.com/health' });
-    expect(spec.expect).toEqual({ op: '==', value: 200 });
+    expect(spec.probe).toEqual({
+      type: 'http', target: 'feishu_jinuo', url,
+      filter: { '抖音获客-关键词配置': '$WORD' },
+      reduce: 'field:有效线索数',
+      minus: { url: minusUrl, filter: { 命中关键词: '$WORD', 进入最终线索: true }, reduce: 'count' },
+    });
+    expect(spec.expect).toEqual({ op: '==', value: 0 });
+  });
+
+  it('http 探针无 minus 时 spec.probe 不带 minus 键（哈希稳定）', () => {
+    const spec = normalizeProbe(rawProbe({
+      key: 'comments_readback',
+      probe: { type: 'http', target: 'feishu_jinuo', url: 'https://open.feishu.cn/x/records', filter: { 运行批次: '$RUN_TAG' }, reduce: 'count' },
+      expect: { op: '>=', ref: 'metrics.leads_written' },
+    }), { workflow: WORKFLOW });
+    expect(spec.probe).toEqual({ type: 'http', target: 'feishu_jinuo', url: 'https://open.feishu.cn/x/records', filter: { 运行批次: '$RUN_TAG' }, reduce: 'count' });
+    expect(Object.keys(spec.probe)).not.toContain('minus');
   });
 
   it('not_null_all 不带 value/ref', () => {
@@ -91,8 +116,15 @@ describe('normalizeProbe', () => {
     ['probe.type 未知', rawProbe({ probe: { type: 'shell', target: 'x', query: 'rm -rf /' } }), 'STEP_PROBE_TYPE_INVALID'],
     ['sql 缺 query', rawProbe({ probe: { type: 'sql', target: 'db' } }), 'STEP_PROBE_TARGET_INVALID'],
     ['sql 带 url', rawProbe({ probe: { type: 'sql', target: 'db', query: 'select 1', url: 'http://x' } }), 'STEP_PROBE_TARGET_INVALID'],
-    ['http 缺 url', rawProbe({ probe: { type: 'http', target: 'crm' } }), 'STEP_PROBE_TARGET_INVALID'],
-    ['http url 非 http(s)', rawProbe({ probe: { type: 'http', target: 'crm', url: 'file:///etc/passwd' } }), 'STEP_PROBE_TARGET_INVALID'],
+    ['http 缺 url', rawProbe({ probe: { type: 'http', target: 'crm', filter: { a: 1 }, reduce: 'count' } }), 'STEP_PROBE_TARGET_INVALID'],
+    ['http url 非 http(s)', rawProbe({ probe: { type: 'http', target: 'crm', url: 'file:///etc/passwd', filter: { a: 1 }, reduce: 'count' } }), 'STEP_PROBE_TARGET_INVALID'],
+    ['http 缺 filter', rawProbe({ probe: { type: 'http', target: 'crm', url: 'https://x/records', reduce: 'count' } }), 'STEP_PROBE_TARGET_INVALID'],
+    ['http filter 为空对象', rawProbe({ probe: { type: 'http', target: 'crm', url: 'https://x/records', filter: {}, reduce: 'count' } }), 'STEP_PROBE_TARGET_INVALID'],
+    ['http filter 值非标量', rawProbe({ probe: { type: 'http', target: 'crm', url: 'https://x/records', filter: { a: { b: 1 } }, reduce: 'count' } }), 'STEP_PROBE_TARGET_INVALID'],
+    ['http reduce 不是 count|field:<列>', rawProbe({ probe: { type: 'http', target: 'crm', url: 'https://x/records', filter: { a: 1 }, reduce: 'sum' } }), 'STEP_PROBE_TARGET_INVALID'],
+    ['http minus 缺 reduce', rawProbe({ probe: { type: 'http', target: 'crm', url: 'https://x/records', filter: { a: 1 }, reduce: 'count', minus: { url: 'https://y/records', filter: { b: 2 } } } }), 'STEP_PROBE_TARGET_INVALID'],
+    ['http 带未知键', rawProbe({ probe: { type: 'http', target: 'crm', url: 'https://x/records', filter: { a: 1 }, reduce: 'count', headers: {} } }), 'STEP_PROBE_TARGET_INVALID'],
+    ['sql 带 filter（未知键）', rawProbe({ probe: { type: 'sql', target: 'db', query: 'select 1', filter: { a: 1 } } }), 'STEP_PROBE_TARGET_INVALID'],
     ['expect.op 未知', rawProbe({ expect: { op: '!=', value: 1 } }), 'STEP_PROBE_EXPECT_INVALID'],
     ['比较 op 同时带 value 和 ref', rawProbe({ expect: { op: '>=', value: 1, ref: 'metrics.x' } }), 'STEP_PROBE_EXPECT_INVALID'],
     ['比较 op 既无 value 也无 ref', rawProbe({ expect: { op: '>=' } }), 'STEP_PROBE_EXPECT_INVALID'],
@@ -147,6 +179,15 @@ describe('parseProbesDocument', () => {
     const groups = groupProbesByCell(probes);
     expect([...groups.keys()]).toEqual(['stage:delivery', 'stage:scoring']);
     expect(groups.get('stage:delivery').map(p => p.spec.key)).toEqual(['delivery.leads_count', 'delivery.no_dup']);
+  });
+});
+
+describe('sourceSha256（文件级哈希，与 workspace probes-lib loadChecks().sha256 同口径：原文 utf8 sha256）', () => {
+  it('同文本同哈希；改一个字节即变；与逐条 spec_hash 无关', () => {
+    const text = 'version: 1\nworkflow: w\nprobes: []\n';
+    expect(sourceSha256(text)).toMatch(HEX64);
+    expect(sourceSha256(text)).toBe(sourceSha256(text));
+    expect(sourceSha256(`${text}# c\n`)).not.toBe(sourceSha256(text));
   });
 });
 

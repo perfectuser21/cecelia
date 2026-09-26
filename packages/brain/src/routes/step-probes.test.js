@@ -93,14 +93,15 @@ describe('POST /api/brain/step-probes（按 probe_key upsert）', () => {
     mockPool.query
       .mockResolvedValueOnce({ rows: [] }) // 现有哈希
       .mockResolvedValueOnce({ rows: [{ id: 'p1', probe_key: 'delivery.leads_count', spec_hash: 'x', journey_step_link_id: LINK }] });
-    const { req, res } = mockReqRes({ workflow: WORKFLOW, source_path: 'services/x/checks/y.yaml', probes: [{ ...rawProbe(), journey_step_link_id: LINK }] });
+    const { req, res } = mockReqRes({ workflow: WORKFLOW, source_path: 'services/x/checks/y.yaml', source_sha256: 'c'.repeat(64), probes: [{ ...rawProbe(), journey_step_link_id: LINK }] });
     await lastHandler('post', '/step-probes')(req, res);
     expect(res._status).toBe(200);
     const [sql, params] = mockPool.query.mock.calls[1];
     expect(sql).toMatch(/INSERT INTO step_probes/);
     expect(sql).toMatch(/ON CONFLICT \(probe_key\) DO UPDATE/);
     expect(sql).toMatch(/updated_at = now\(\)/);
-    // 参数顺序：probe_key, workflow, stage, journey_step_link_id, spec(json), spec_hash, source_path, severity
+    expect(sql).toMatch(/source_sha256 = COALESCE\(EXCLUDED\.source_sha256, step_probes\.source_sha256\)/);
+    // 参数顺序：probe_key, workflow, stage, journey_step_link_id, spec(json), spec_hash, source_path, severity, source_sha256
     expect(params[0]).toBe('delivery.leads_count');
     expect(params[1]).toBe(WORKFLOW);
     expect(params[2]).toBe('delivery');
@@ -110,6 +111,7 @@ describe('POST /api/brain/step-probes（按 probe_key upsert）', () => {
     expect(params[5]).toBe(specHash(spec));
     expect(params[6]).toBe('services/x/checks/y.yaml');
     expect(params[7]).toBe('error');
+    expect(params[8]).toBe('c'.repeat(64));
     expect(res._data.upserted).toEqual([expect.objectContaining({ probe_key: 'delivery.leads_count', action: 'inserted' })]);
   });
 
@@ -157,6 +159,19 @@ describe('POST /api/brain/step-probes（按 probe_key upsert）', () => {
     expect(mockPool.query).not.toHaveBeenCalled();
   });
 
+  it('source_sha256 不是 hex64 → 400，不写库；缺省 → 传 null（COALESCE 保留库里的）', async () => {
+    const bad = mockReqRes({ workflow: WORKFLOW, source_sha256: 'abc', probes: [rawProbe()] });
+    await lastHandler('post', '/step-probes')(bad.req, bad.res);
+    expect(bad.res._status).toBe(400);
+    expect(bad.res._data.error.code).toBe('STEP_PROBE_SOURCE_SHA_INVALID');
+    expect(mockPool.query).not.toHaveBeenCalled();
+
+    mockPool.query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ id: 'p1', probe_key: 'delivery.leads_count' }] });
+    const ok = mockReqRes({ workflow: WORKFLOW, probes: [rawProbe()] });
+    await lastHandler('post', '/step-probes')(ok.req, ok.res);
+    expect(mockPool.query.mock.calls[1][1][8]).toBeNull();
+  });
+
   it('journey_step_link_id 不是 uuid → 400', async () => {
     const { req, res } = mockReqRes({ workflow: WORKFLOW, probes: [{ ...rawProbe(), journey_step_link_id: 'nope' }] });
     await lastHandler('post', '/step-probes')(req, res);
@@ -189,8 +204,23 @@ describe('POST /api/brain/step-probes/drift-check', () => {
     ] });
     await lastHandler('post', '/step-probes/drift-check')(req, res);
     expect(res._status).toBe(200);
-    expect(res._data).toEqual({ workflow: WORKFLOW, drift: true, missing: ['c'], extra: ['z'], changed: ['b'], same: ['a'] });
+    expect(res._data).toEqual({ workflow: WORKFLOW, drift: true, missing: ['c'], extra: ['z'], changed: ['b'], same: ['a'], source_match: null, registered_source_sha256: [] });
     expect(mockPool.query.mock.calls[0][1]).toEqual([WORKFLOW]);
+  });
+
+  it('带 source_sha256 → source_match 按库里登记的文件哈希判定（多版本并存视为不匹配）', async () => {
+    const rows = (shas) => shas.map((s, i) => ({ probe_key: `k${i}`, spec_hash: '1'.repeat(64), active: true, source_sha256: s }));
+    const yaml = [{ key: 'k0', spec_hash: '1'.repeat(64) }];
+    mockPool.query.mockResolvedValueOnce({ rows: rows(['a'.repeat(64)]) });
+    const a = mockReqRes({ workflow: WORKFLOW, source_sha256: 'a'.repeat(64), probes: yaml });
+    await lastHandler('post', '/step-probes/drift-check')(a.req, a.res);
+    expect(a.res._data).toMatchObject({ source_match: true, registered_source_sha256: ['a'.repeat(64)] });
+
+    mockPool.query.mockResolvedValueOnce({ rows: rows(['a'.repeat(64), 'b'.repeat(64)]) });
+    const b = mockReqRes({ workflow: WORKFLOW, source_sha256: 'a'.repeat(64), probes: yaml });
+    await lastHandler('post', '/step-probes/drift-check')(b.req, b.res);
+    expect(b.res._data.source_match).toBe(false);
+    expect(b.res._data.drift).toBe(true);
   });
 
   it('缺 workflow 或 probes 形状不对 → 400', async () => {
