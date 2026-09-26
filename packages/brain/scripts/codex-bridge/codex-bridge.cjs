@@ -798,6 +798,7 @@ const server = createBridgeServer();
 module.exports = {
   buildCallbackPayload,
   buildCodexExecArgs,
+  callbackBrain,
   cleanupTmpDir,
   createBridgeServer,
   createKernelHandlerFromEnvironment,
