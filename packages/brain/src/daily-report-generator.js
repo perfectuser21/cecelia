@@ -18,6 +18,10 @@ import { detectSkillBindingDrift, renderSkillBindingSection } from './lib/skill-
 import { EXECUTOR_SKILL_MAP } from './lib/task-type-registry.js';
 import { readSkillDistState, renderSkillDistSection } from './lib/skill-dist-report.js';
 import { readRescanStalenessState, renderRescanStalenessSection } from './lib/rescan-staleness-report.js';
+import { readAssertionRedState, renderAssertionRedSection } from './lib/assertion-red-report.js';
+
+// 业务断言红灯板块（链 bf5088a3 棒4 消费）：与 renderBareRunSection 并列对外导出，渲染实现在 lib
+export { renderAssertionRedSection };
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
@@ -250,9 +254,10 @@ export function renderBareRunSection(bareRuns) {
  * @param {{missing:Array,mismatched:Array,conflicts:Array}|null} [skillDrift] detectSkillBindingDrift 返回；null = 检测不可用，不出该板块
  * @param {object|null} [skillDist] readSkillDistState 返回（skill 分发漂移，链 bf5088a3 棒8）；null = 无数据，不出该板块
  * @param {object|null} [rescanStaleness] readRescanStalenessState 返回（地图照相层 rescan 停滞哨兵，P0 9dfd873a 案）；null = 无数据，不出该板块
+ * @param {object|null} [assertionRed] readAssertionRedState 返回（业务断言红灯，链 bf5088a3 棒4 消费）；null = 24h 无探针 FAIL，不出该板块
  * @returns {string}
  */
-export function buildReportText(reportDate, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns = null, skillDrift = null, skillDist = null, rescanStaleness = null) {
+export function buildReportText(reportDate, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns = null, skillDrift = null, skillDist = null, rescanStaleness = null, assertionRed = null) {
   const lines = [];
 
   lines.push(`ZenithJoy 内容日报 ${reportDate}`);
@@ -323,6 +328,12 @@ export function buildReportText(reportDate, yesterday, contentOutput, publishSta
   // ── 板块八：地图照相层 rescan 停滞哨兵（fact_snapshot_headers 账龄，AMBER；P0 9dfd873a 案）──
   if (rescanStaleness) {
     lines.push(renderRescanStalenessSection(rescanStaleness));
+    lines.push('');
+  }
+
+  // ── 板块九：业务断言红灯（探针 24h FAIL 回执，RED/AMBER；链 bf5088a3 棒4 消费）──
+  if (assertionRed) {
+    lines.push(renderAssertionRedSection(assertionRed));
     lines.push('');
   }
 
@@ -401,8 +412,11 @@ export async function generateDailyReport(dbPool = pool, now = new Date()) {
     // 3.8 地图照相层 rescan 停滞哨兵（读 rescan-staleness-patrol job 落在 working_memory 的结果）：无数据/读取失败返回 null，不出该板块
     const rescanStaleness = await readRescanStalenessState(dbPool);
 
-    // 4. 生成日报文本（内容产出、发布情况、数据回收、异常告警、裸跑检测、skill 绑定漂移、skill 分发漂移、rescan 停滞哨兵）
-    const reportText = buildReportText(today, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns, skillDrift, skillDist, rescanStaleness);
+    // 3.9 业务断言红灯（直查 journey_assertion_receipts 24h 探针 FAIL）：无 FAIL/查询失败返回 null，不出该板块
+    const assertionRed = await readAssertionRedState(dbPool);
+
+    // 4. 生成日报文本（内容产出、发布情况、数据回收、异常告警、裸跑检测、skill 绑定漂移、skill 分发漂移、rescan 停滞哨兵、业务断言红灯）
+    const reportText = buildReportText(today, yesterday, contentOutput, publishStats, engagementData, failureCount, bareRuns, skillDrift, skillDist, rescanStaleness, assertionRed);
 
     // 5. 写入 working_memory，key=daily_report_{YYYY-MM-DD}
     await saveReportToWorkingMemory(dbPool, today, reportText);

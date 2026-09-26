@@ -337,3 +337,4 @@ project-root-gate-smoke.sh
 owner-decision-approval-smoke.sh
 skill-registry-binding-smoke.sh
 skill-dist-drift-smoke.sh
+assertion-red-report-smoke.sh

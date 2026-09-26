@@ -232,4 +232,50 @@ describe('runMorningCockpitBark', () => {
     expect(result).toMatchObject({ sent: true });
     expect(sendBark.mock.calls[0][1]).not.toMatch(/skill 绑定/);
   });
+
+  // ─── 业务断言红灯（链 bf5088a3 棒4 消费，决策 702949b6）：探针 24h FAIL 回执 → RED/AMBER ──
+  const isReceiptsSql = (sql) => /FROM journey_assertion_receipts/.test(String(sql));
+
+  it('[断言红灯] 24h 内探针 FAIL 回执含 error 级 → Bark 正文出现 🔴 RED 行并点名路径/步骤/探针×次数', async () => {
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        if (isReceiptsSql(sql)) {
+          expect(params).toEqual(['business_probe_runner', 24]);
+          return { rows: [
+            { journey: '客户智能获客路径', step: 'Lead 表进人', assertion_ref: 'probe:videos_readback', fail_count: 3, has_error: true },
+            { journey: '客户智能获客路径', step: 'Lead 表进人', assertion_ref: 'probe:line_key_not_null', fail_count: 1, has_error: false },
+          ] };
+        }
+        return { rows: [] };
+      }),
+    };
+    await runMorningCockpitBark(pool);
+    const body = sendBark.mock.calls[0][1];
+    expect(body).toContain('🔴 RED 断言红灯：客户智能获客路径/Lead 表进人 videos_readback×3, line_key_not_null×1（24h）');
+  });
+
+  it('[断言红灯] 只有 warn 级 → 🟡 AMBER 行；无 FAIL 不出行；回执查询失败不拖垮晨报', async () => {
+    const warnOnly = {
+      query: vi.fn(async (sql) => (isReceiptsSql(sql)
+        ? { rows: [{ journey: 'J', step: 'S', assertion_ref: 'probe:k', fail_count: 2, has_error: false }] }
+        : { rows: [] })),
+    };
+    await runMorningCockpitBark(warnOnly);
+    expect(sendBark.mock.calls[0][1]).toMatch(/🟡 AMBER 断言红灯：J\/S k×2/);
+
+    sendBark.mockClear();
+    await runMorningCockpitBark(makePool());
+    expect(sendBark.mock.calls[0][1]).not.toContain('断言红灯');
+
+    sendBark.mockClear();
+    const broken = {
+      query: vi.fn(async (sql) => {
+        if (isReceiptsSql(sql)) throw new Error('relation "journey_assertion_receipts" does not exist');
+        return { rows: [] };
+      }),
+    };
+    const result = await runMorningCockpitBark(broken);
+    expect(result).toMatchObject({ sent: true });
+    expect(sendBark.mock.calls[0][1]).not.toContain('断言红灯');
+  });
 });
