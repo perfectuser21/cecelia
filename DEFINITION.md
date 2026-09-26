@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.333.4
+**Brain 版本**: 1.333.5
 
 ## 1.283.0
 
@@ -48,6 +48,13 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.333.5 — codex-bridge 回调 Brain 补内部鉴权 Bearer 头（任务 446aa294，决策 6ac4563e，链 bf5088a3 棒1 补棒）
+
+- `packages/brain/scripts/codex-bridge/codex-bridge.cjs` `callbackBrain()` 打 `POST /api/brain/execution-callback` 的 fetch headers 合入 `scripts/lib/brain-auth-headers.cjs` 的 `brainAuthHeaders()`（token 只从 env `CECELIA_INTERNAL_TOKEN` 或 `~/.credentials/cecelia-internal.env` 读）；#5592 上产后 xian-m4 / xian-m1 桥回调不再 401
+- `callbackBrain` 加入 module.exports，供回归测试 `src/__tests__/codex-bridge-callback-auth.test.js`（配 token 必带 `Authorization: Bearer`；未配不带）
+- `kernel-attempt-handler.cjs` 走 kernel 签发的 callback_token，未动
+- 桥机器生效需同步更新 `packages/brain/scripts/codex-bridge/codex-bridge.cjs` + `scripts/lib/brain-auth-headers.cjs`（LaunchAgent 跑的是完整仓库 clone，`git pull` 即可）并在桥机 `~/.credentials/cecelia-internal.env` 放 `CECELIA_INTERNAL_TOKEN=`
 
 ## Brain 1.333.4 — 棒3a 补丁：business-probe-judge 只判 active=true 的探针（任务 32d0109a）
 
