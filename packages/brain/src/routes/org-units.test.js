@@ -68,3 +68,29 @@ describe('GET /api/brain/org-units', () => {
     expect(res._data.error).toBe('db down');
   });
 });
+
+describe('POST /api/brain/org-units/promotion-check', () => {
+  beforeAll(async () => {
+    vi.resetModules();
+    routes = (await import('./org-units.js')).default;
+  });
+  beforeEach(() => mockPool.query.mockReset());
+
+  it('不查库，纯转发 evaluateAreaForPromotion 的判定结果', async () => {
+    const recentDays = Array.from({ length: 7 }, (_, i) => ({ date: `2026-09-${i + 1}`, hasEvidence: true }));
+    const handler = getHandler('post', '/org-units/promotion-check');
+    const { req, res } = mockReqRes({ area_id: 'area-1', recentDays });
+    await handler(req, res);
+    expect(res._status).toBe(200);
+    expect(res._data.eligible).toBe(true);
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('area_id 缺失 → eligible=false（同 evaluateAreaForPromotion 的判定）', async () => {
+    const handler = getHandler('post', '/org-units/promotion-check');
+    const { req, res } = mockReqRes({});
+    await handler(req, res);
+    expect(res._status).toBe(200);
+    expect(res._data.eligible).toBe(false);
+  });
+});

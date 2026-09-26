@@ -3,10 +3,15 @@
  *
  * GET /api/brain/org-units — 返回 org_units 树（company→department）+ 每个 unit 的成员计数，
  * 供以后"AI 掌握公司信息"用。只读，不接调度、不做升格执行。
+ *
+ * POST /api/brain/org-units/promotion-check — 暴露 evaluateAreaForPromotion 纯判定，
+ * 供人工/未来定时评估 job 预览"这个 Area 现在够不够升格资格"，本端点本身不查库、不写库、
+ * 不自动建 department 行（升格执行留给下一棒）。
  */
 
 import { Router } from 'express';
 import pool from '../db.js';
+import { evaluateAreaForPromotion } from '../lib/org-unit-promotion.js';
 
 const router = Router();
 
@@ -55,6 +60,12 @@ router.get('/org-units', async (req, res) => {
     console.error('[org-units] GET /org-units error:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+router.post('/org-units/promotion-check', (req, res) => {
+  const { area_id, recentDays } = req.body || {};
+  const result = evaluateAreaForPromotion(area_id, { recentDays });
+  res.json(result);
 });
 
 export default router;

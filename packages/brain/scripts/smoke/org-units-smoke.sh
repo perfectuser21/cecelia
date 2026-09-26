@@ -44,7 +44,7 @@ if (!fs.existsSync('migrations/rollback/473_org_units.down.sql')) { console.erro
 console.log('迁移 473 两表 + CHECK 约束 + 幂等种子 + 回滚脚本 ✓');
 "
 
-echo "[org-units-smoke] 3. 接线：server.js 挂载 + 路由文件"
+echo "[org-units-smoke] 3. 接线：server.js 挂载 + 路由文件 + promotion-check 端点消费 evaluateAreaForPromotion"
 node -e "
 const fs = require('fs');
 const server = fs.readFileSync('server.js', 'utf8');
@@ -52,7 +52,8 @@ if (!server.includes(\"import orgUnitsRouter from './src/routes/org-units.js'\")
 if (!server.includes(\"app.use('/api/brain', orgUnitsRouter)\")) { console.error('FAIL server.js 未挂载 org-units 路由'); process.exit(1); }
 const route = fs.readFileSync('src/routes/org-units.js', 'utf8');
 if (!route.includes(\"router.get('/org-units'\")) { console.error('FAIL 路由文件缺 GET /org-units'); process.exit(1); }
-console.log('server.js 挂载 + 路由定义 ✓');
+if (!route.includes(\"router.post('/org-units/promotion-check'\") || !route.includes('evaluateAreaForPromotion')) { console.error('FAIL 路由文件未接入 evaluateAreaForPromotion'); process.exit(1); }
+console.log('server.js 挂载 + 路由定义 + promotion-check 消费判定函数 ✓');
 "
 
 echo "[org-units-smoke] ALL PASS"
