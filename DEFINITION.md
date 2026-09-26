@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.333.0
+**Brain 版本**: 1.335.0
 
 ## 1.283.0
 
@@ -48,6 +48,25 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.335.0 — 棒3a 判定：run.finished → 比对探针 → 写回执 → cell 翻色（任务 33aa2bc4）
+
+- 决策 702949b6 / 95e29afd / b56e37b4：task_runs 记"活动发生了"，本棒接"活动做对了"的判定线
+- `lib/task-run.js` finishRun 补终态成功后单点 `emit('run.finished','task-run',{runId,taskId,status,result})`（五条执行路径共用，fail-open，只加事件不加写）
+- `event-bus.js` 加进程内 `on/off`，`emit` 落库后同步派发给订阅者（订阅者抛错只 warn）
+- 新 `lib/business-probe-judge.js`：按 task payload.anchor.journey_id + result.stage 查 `step_probes ⋈ journey_step_links`，op 集合 `>= == <= not_null_all`，expect.value / expect.ref→metrics.<k>；observed 缺失/带 error → FAIL（probe_missing / probe_error）；判定写回执并 UPDATE cell_status（PASS→green / FAIL&error→red / FAIL&warn→pending，同 cell 取最坏）；server.js 启动订阅
+- `impact-contract/assertion-receipts.js` 新增 `persistBusinessProbeReceipt`（占位约定：executor_kind=business_probe_runner、source_repo=zenithjoy-workspace、command_argv=["probe",key]、source_sha/machine_id NULL、assertion_ref_snapshot=probe:<key>、assertion_digest=spec_hash）；`persistTrustedEvaluatorReceipts` 不动
+- 迁移 475（474 号已被棒2 step_probes 占用）：`journey_assertion_receipts.executor_kind` CHECK 放宽为两值；verdict_chk 按 executor_kind 分支（brain 原式不动；probe 只要求 PASS↔exit 0+证据非空 / FAIL↔exit≠0）；合并闸 SQL 仍只认 brain_assertion_runner（断言测试钉住）
+- 两处 resolver（`lib/map-state-resolver.js` / `map/state-resolver.js`）对 business_probe_runner 回执只看最近一条 verdict（PASS→green / FAIL→red），不比 sha/repo；`map/state-resolver.js` 抽纯函数 `resolveReceiptState`
+- pg 集成 `business-probe-judge.pg.integration.test.js`（真库端到端：finishRun → 真 event-bus → 回执行 → cell_status；重复判定幂等；已终态不重判；brain_assertion_runner 原式未放宽）+ F1 step4 步骤断言 `tests/gp/f1/step4-business-probe-receipt.test.js`
+
+## Brain 1.334.0 — 棒1 回执线：execution-callback 回执保 stage/metrics + internal token 鉴权（链 bf5088a3，决策 702949b6/280bd091）
+
+- `POST /api/brain/execution-callback` 挂 `internalAuthOrLoopback`：`CECELIA_INTERNAL_TOKEN` 配置后严格验 `Authorization: Bearer <token>` / `x-internal-token`（缺/错 → 401 `UNAUTHORIZED`）；未配置只放行非 production 本机回环（否则 503 `INTERNAL_AUTH_NOT_CONFIGURED`）
+- `recordRunFromCallback` 终态回执从 `result` 提炼 `{stage, stage_status, metrics, evidence, probes}`（只取存在的键；evidence/probes 只留引用形态：字符串或 `{ref|url|path|name|key|observed|probed_at|error}`，不落大 blob）经 `finishRun` 新增的 `result` 入参合进 `task_runs.result`；`exit_code`/`artifacts`/`pr_url` 逻辑原样
+- 内部调用方补 Bearer（token 只从 env 读）：`cecelia-run.sh` / `flush-callback-queue.sh` 回执 curl、`executor.js` codex review fetch×2 + 本地 codex 回执 curl + docker 容器 env 透传 `CECELIA_INTERNAL_TOKEN`、`cecelia-bridge.js` 宿主 env 透传、`verify-billing-pause-e2e.js`
+- 新增 smoke `callback-stage-receipt-smoke.sh`（假 pool 跑真逻辑 + 真 HTTP 打真中间件 + 接线查验）
+- 未修（棒后续）：zenithjoy `brain-device-job-mirror.ts` psql 直写 tasks 绕过 task_runs 的漏
 
 ## Brain 1.333.0 — 晨报/日报「业务断言红灯」行（链 bf5088a3 棒4 消费）
 
