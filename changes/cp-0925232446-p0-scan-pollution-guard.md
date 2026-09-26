@@ -1,8 +1,0 @@
-## Brain {VERSION} — 地图照相层防污染：扫描器噪音过滤 + scan-main 会话守卫 + rescan 停滞哨兵（任务 7d7e2314）
-
-- 病根（2026-09-23 P0 9dfd873a）：只读镜像仓库 cecelia-scan-main 被某 /dev 会话当工作目录跑 `worktree-manage.sh create`，写入 `.cecelia/hb.sh` + `.cecelia/lights/*.live` 心跳灯，MMV crontab `rescan-if-changed.sh` 连续 21.5h 判定"不干净工作区"拒绝扫描，四类快照陈旧，12h 内 5 把任务（含 P0）撞 `map_stale` 触发 `dispatch_fail_autoblock`。
-- `scripts/scan/run-all-scans.sh`：clean 判定改为过滤法——`git status --porcelain` 结果剔除已知运行期噪音路径（`.cecelia/`、`.dev-lock*`、`.dev-mode*`、`node_modules/`）后再判定；扫描器全程只读，不清理/不 stash，真脏文件仍 fail-closed。四处 clean 判定（根仓预检/多仓 prepare_repo/根仓终检/多仓目标终检）统一收口到 `dirty_status()`。
-- `packages/engine/skills/dev/scripts/worktree-manage.sh`：`cmd_create` 建任何 worktree/写任何文件前先 `assert_cwd_not_scan_main`，命中 `*-scan-main` 结尾目录直接拒绝并报清晰错误（Engine 版本随附 bump 19.7.1→19.7.2，见 feature-registry.yml changelog）。
-- 新增 scheduler job `rescan-staleness-patrol`（5min 自 gate）：直接复用 `fact_snapshot_headers.scanned_at` 账龄作为"rescan 是否在失败"的信号（成功扫描必刷新该字段），账龄阈值复用 `PHOTO_STALE_THRESHOLD_SECONDS`（30min，与派发闸口径同源）；停滞时经 `alerting.js` `raise('P1', 'rescan_stale', ...)`，并写 `working_memory.rescan_staleness` 供晨报（🟡 AMBER 一行）/日报（板块）读取渲染（形状沿棒8 skill 分发漂移）。
-- `scripts/lib/internal-auth-token.sh`：`load_cecelia_internal_token` 此前任何失败路径完全静默（`|| true` 吞掉返回码且函数本身零日志），导致"token 文件存在扫描仍 FAIL"查不出原因；新增诊断输出（文件不存在/找不到 KEY=行/多行重复/格式校验未通过，从不打印 token 值），本地沙盒复现验证 CRLF 行尾/引号包裹/`export` 前缀/行尾注释/重复键 5 种常见格式坑均会静默失败，现在都能定位到具体原因。
-- 测试：`run-all-scans.test.sh` 新增 3 例（噪音不挡扫描/噪音+真脏仍拒绝/多仓目标噪音不挡）；新增 `worktree-manage-scan-main-guard.test.sh`（9 例，单元+端到端，验证拒绝发生在任何 worktree 注册/心跳写入之前）；新增 `internal-auth-token-format.test.sh`（19 例，5 种格式坑 + 正常格式）；新增 `cron/__tests__/rescan-staleness-patrol.test.js`（13 例，含晨报/日报渲染）；既有 71+55+17 个 Brain 单测与 6 个 Engine 版本同步测试全绿回归验证。
