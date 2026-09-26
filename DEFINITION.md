@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.329.0
+**Brain 版本**: 1.331.0
 
 ## 1.283.0
 
@@ -48,6 +48,25 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.331.0 — org_units 组织真身骨架：company→department→leader→members 自动升格模型（链 bf5088a3 棒6，任务 80e9f816，决策 de1e9ba9）
+
+- 病根：组织架构无真相源（部门信息散在 3 处文件，agent 24 个平级，OKR 部门列/部门卡/agent 清单三套口径互相矛盾），Brain 无 `org_units`/`departments`/`companies`，只有 `dept_configs` 4 列 1 行。
+- 主理人 2026-09-26 拍板（否定填清单/否定自动反推）：建一个从 0 到大的自动升格模型，起点只种一行代表当前真实状态，department 不手工建，靠"存活法则"（复用决策 ca3c6755：7 天试用期，连续 3 天无交卷证据自动降级，反过来达标则升格）从 Area 自动升格。
+- 迁移 473：新增 `org_units`（`unit_type` company/department + CHECK、`parent_id` 自引用、`area_id` 关联 `areas`、`status` active/incubating/demoted + CHECK）+ 轻表 `org_unit_members`（`member_type` agent/human + CHECK，human 只在真人加入时手工插行，不预建空位）；幂等种一行 company（name='Cecelia/ZenithJoy'，leader='Alex'，不编造部门/人员清单）。
+- `packages/brain/src/lib/org-unit-promotion.js` 导出纯函数 `evaluateAreaForPromotion(areaId, opsStats)`：按 `{recentDays:[{date,hasEvidence}]}` 判定最近 7 天试用窗口内是否触发连续 3 天无证据的降级阈值，只判定不查库、不接调度、不自动建 department 行。
+- 新增只读端点 `GET /api/brain/org-units`：返回 company→department 树 + 每个 unit 的成员计数（agent/human），供以后"AI 掌握公司信息"用；`POST /api/brain/org-units/promotion-check` 暴露 `evaluateAreaForPromotion` 供预览判定（不查库不写库）；挂载于 `server.js`（`app.use('/api/brain', orgUnitsRouter)`）。
+- 测试：`org-unit-promotion.test.js`（9 例，纯函数判定含数据不足/连续降级/滑动窗口边界）+ `routes/org-units.test.js`（5 例，mock pool，树形聚合/父子挂载/500 兜底/promotion-check 转发）+ `migration-473-org-units.test.js`（6 例，结构断言）；新增 `org-units-smoke.sh` 登记入 `smoke-allowlist.txt`。
+- 未做（留给下一棒，已写入任务 handoff）：升格执行（读 Area 活跃数据接线 + 定时评估 job + 自动建 department 行）、org_units 树接进 `/api/brain/context` 主提示词、飞书/Notion/ORGANIZATION.md 三投影（原始任务 ca2d0b58 范围，本棒范围收窄自决策 2e756506）。
+
+## Brain 1.330.0 — 地图照相层防污染：扫描器噪音过滤 + scan-main 会话守卫 + rescan 停滞哨兵（任务 7d7e2314）
+
+- 病根（2026-09-23 P0 9dfd873a）：只读镜像仓库 cecelia-scan-main 被某 /dev 会话当工作目录跑 `worktree-manage.sh create`，写入 `.cecelia/hb.sh` + `.cecelia/lights/*.live` 心跳灯，MMV crontab `rescan-if-changed.sh` 连续 21.5h 判定"不干净工作区"拒绝扫描，四类快照陈旧，12h 内 5 把任务（含 P0）撞 `map_stale` 触发 `dispatch_fail_autoblock`。
+- `scripts/scan/run-all-scans.sh`：clean 判定改为过滤法——`git status --porcelain` 结果剔除已知运行期噪音路径（`.cecelia/`、`.dev-lock*`、`.dev-mode*`、`node_modules/`）后再判定；扫描器全程只读，不清理/不 stash，真脏文件仍 fail-closed。四处 clean 判定（根仓预检/多仓 prepare_repo/根仓终检/多仓目标终检）统一收口到 `dirty_status()`。
+- `packages/engine/skills/dev/scripts/worktree-manage.sh`：`cmd_create` 建任何 worktree/写任何文件前先 `assert_cwd_not_scan_main`，命中 `*-scan-main` 结尾目录直接拒绝并报清晰错误（Engine 版本随附 bump 19.7.1→19.7.2，见 feature-registry.yml changelog）。
+- 新增 scheduler job `rescan-staleness-patrol`（5min 自 gate）：直接复用 `fact_snapshot_headers.scanned_at` 账龄作为"rescan 是否在失败"的信号（成功扫描必刷新该字段），账龄阈值复用 `PHOTO_STALE_THRESHOLD_SECONDS`（30min，与派发闸口径同源）；停滞时经 `alerting.js` `raise('P1', 'rescan_stale', ...)`，并写 `working_memory.rescan_staleness` 供晨报（🟡 AMBER 一行）/日报（板块）读取渲染（形状沿棒8 skill 分发漂移）。
+- `scripts/lib/internal-auth-token.sh`：`load_cecelia_internal_token` 此前任何失败路径完全静默（`|| true` 吞掉返回码且函数本身零日志），导致"token 文件存在扫描仍 FAIL"查不出原因；新增诊断输出（文件不存在/找不到 KEY=行/多行重复/格式校验未通过，从不打印 token 值），本地沙盒复现验证 CRLF 行尾/引号包裹/`export` 前缀/行尾注释/重复键 5 种常见格式坑均会静默失败，现在都能定位到具体原因。
+- 测试：`run-all-scans.test.sh` 新增 3 例（噪音不挡扫描/噪音+真脏仍拒绝/多仓目标噪音不挡）；新增 `worktree-manage-scan-main-guard.test.sh`（9 例，单元+端到端，验证拒绝发生在任何 worktree 注册/心跳写入之前）；新增 `internal-auth-token-format.test.sh`（19 例，5 种格式坑 + 正常格式）；新增 `cron/__tests__/rescan-staleness-patrol.test.js`（13 例，含晨报/日报渲染）；既有 71+55+17 个 Brain 单测与 6 个 Engine 版本同步测试全绿回归验证。
 
 ## Brain 1.329.0 — skill-sync-to-runners 慢链路修复：超时可配 + --partial + 失败重试（任务 4950ccf3，棒 8 遗留缺口）
 
