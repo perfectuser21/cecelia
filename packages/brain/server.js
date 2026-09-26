@@ -88,6 +88,7 @@ import journeysRouter from './src/routes/journeys.js';
 import vocabAlias from './src/vocab-alias.js'; // 行业词汇别名（决策 a340f100）
 import abilitiesRouter from './src/routes/abilities.js';
 import orgUnitsRouter from './src/routes/org-units.js';
+import stepProbesRouter from './src/routes/step-probes.js';
 import goldenPathsRouter from './src/routes/golden-paths.js';
 import skillEvalRoutes from './src/routes/eval.js';
 import rpaDevVerifyRouter from './src/routes/rpa-dev-verify.js';
@@ -442,6 +443,7 @@ app.get('/api/brain/issues', async (req, res) => {
 });
 app.use('/api/brain', abilitiesRouter);
 app.use('/api/brain', orgUnitsRouter);
+app.use('/api/brain', stepProbesRouter); // 步级探针注册表（链 bf5088a3 棒2，决策 702949b6）
 app.use('/api/brain', goldenPathsRouter);
 app.use('/api/brain/harness', harnessCommanderRouter);
 // 第 51 批（决策 bc242b62）：V4 画布 Worker 的单角色 attempt 接线（派发+轮询结果）。

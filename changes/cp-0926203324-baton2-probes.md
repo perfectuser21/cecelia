@@ -1,0 +1,10 @@
+## Brain {VERSION} — 步级断言认第四种形状「探针」：step_probes 注册表 + probe:<key> + 仓库 YAML 哈希漂移（链 bf5088a3 棒2，任务 ddf3fe8d，决策 702949b6）
+
+- 病根：步级断言链 `journey_step_links.assertion_ref → runner → journey_assertion_receipts → cell 翻色` 只认 vitest/pytest/smoke 三种 shell 形状；业务侧「SQL 数一下 / HTTP 探一下 + 期望值」这类探针没有落脚点，获客 journey（afa6abca）7 个 stage 格子 assertion_ref 全空
+- 迁移 474 `step_probes`：`id / probe_key UNIQUE / workflow / stage / journey_step_link_id（FK journey_step_links，格子删了 SET NULL 留痕）/ spec jsonb / spec_hash（CHECK hex64）/ source_path / severity（CHECK warn|error）/ active / created_at / updated_at`；仓库 YAML（`services/<svc>/checks/<workflow>.yaml`）是 SSOT，Brain 只存归一化 spec + `sha256(canonical JSON)`——同 skill_registry 清单哈希做法，YAML 现算 ≠ 库即漂移
+- `lib/step-probe-spec.js`：spec 归一化（type sql|http、expect op `>=|==|<=|not_null_all` + `value|ref:metrics.<k>` 二选一、severity 不默认、journey_cell 必须等于 `stage:<stage>`）、canonical JSON 哈希（键序无关、数组保序）、`probe:<k1>[,<k2>]` 引用往返、库 vs YAML 漂移分类（missing/extra/changed）
+- 路由：`GET /api/brain/step-probes?workflow=&stage=&active=all`、`POST /api/brain/step-probes`（按 probe_key upsert，哈希一致回 `unchanged`，任一条非法整批 400 带 code，`internalAuthOrLoopback`）、`POST /api/brain/step-probes/drift-check`（YAML 现算哈希 vs 库）
+- `scripts/sync-step-probes.mjs <checks.yaml> --journey-id <uuid> [--check]`：读 YAML → upsert → 按 journey_cell 找该 journey 的格子把 `assertion_ref` 写成 `probe:<keys>`（流水线副作用写，决策 df1ccf5a；一格多探针逗号连接；已一致不重 PATCH 免 bump assertion_revision）；找不到格子报错退出不静默；`--check` 只比对有漂移退 1
+- `classify()` 新增 `probe:<key>` → `{kind:'probe', keys, executor_kind:'business_probe_runner'}`；canonical 命令/argv/执行命令对 probe 显式抛 `ASSERTION_PROBE_NOT_RUNNABLE`（探针没有 shell 形态，合同/回执/闸门不会把它当命令跑）；`classifyJourneyCellAssertion` 认 `probe` 态（runnable，key 非法不放行）；map/radius `requiredAssertions` 按前缀排除 probe 格子，不计 unsafe
+- 测试：spec 43 项 + classify/命令 8 项 + cell 分类 2 项 + radius 排除 1 项 + 迁移 6 项 + 路由 14 项 + sync 脚本 7 项（真 js-yaml + 假 fetch）；smoke `step-probes-smoke.sh` 登记 allowlist
+- 未做（handoff 在任务 result）：漂移 AMBER 进晨报——YAML 在 workspace 仓，Brain（us-vps 零执行）读不到，需由 workspace CI / 跑场机 cron 跑 `--check` 把结果回报 Brain 再出行；探针执行体 business_probe_runner 归棒3a
