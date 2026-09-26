@@ -59,7 +59,7 @@ const execAsync = promisify(exec);
 const HEARTBEAT_PATH = new URL('../../../HEARTBEAT.md', import.meta.url);
 
 // 内部回执入口：CECELIA_INTERNAL_TOKEN 配置后严格验 Bearer / x-internal-token；未配置只放行非生产本机回环
-router.post('/execution-callback', internalAuthOrLoopback, executionCallbackRateLimit, async (req, res) => {
+router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoopback, async (req, res) => {
   let callbackQueueId = null;
   let callbackQueueFinalized = false;
   const finalizeCallbackQueue = async (processed) => {

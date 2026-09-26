@@ -64,7 +64,7 @@ echo "[callback-stage-receipt-smoke] 3. 接线"
 node -e "
 const fs = require('fs');
 const ex = fs.readFileSync('src/routes/execution.js', 'utf8');
-if (!/router\.post\('\/execution-callback',\s*internalAuthOrLoopback,/.test(ex)) { console.error('FAIL execution.js 路由未挂 internalAuthOrLoopback'); process.exit(1); }
+if (!/router\.post\('\/execution-callback',\s*executionCallbackRateLimit,\s*internalAuthOrLoopback,/.test(ex)) { console.error('FAIL execution.js 路由未挂 限流+internalAuthOrLoopback'); process.exit(1); }
 for (const f of ['scripts/cecelia-run.sh', 'scripts/flush-callback-queue.sh']) {
   if (!/Authorization: Bearer \\\$\{?CECELIA_INTERNAL_TOKEN\}?/.test(fs.readFileSync(f, 'utf8'))) { console.error('FAIL ' + f + ' 回执 curl 缺 Bearer 头'); process.exit(1); }
 }

@@ -100,7 +100,8 @@ describe('execution-callback 路由鉴权（internalAuthOrLoopback）', () => {
 
   it('路由挂 internalAuthOrLoopback 中间件', () => {
     expect(src).toMatch(/import \{[^}]*internalAuthOrLoopback[^}]*\} from '\.\.\/middleware\/internal-auth\.js'/);
-    expect(src).toMatch(/router\.post\('\/execution-callback',\s*internalAuthOrLoopback,/);
+    // 限流在前（CodeQL js/missing-rate-limiting 要求鉴权步骤本身也受限流），鉴权紧随其后
+    expect(src).toMatch(/router\.post\('\/execution-callback',\s*executionCallbackRateLimit,\s*internalAuthOrLoopback,/);
   });
 });
 
