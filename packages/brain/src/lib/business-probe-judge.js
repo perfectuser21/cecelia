@@ -10,8 +10,10 @@
  * handleRunFinished 走注入 pool（默认 db.js）。全程 fail-open：任何异常只 warn，永不拖垮 finishRun。
  *
  * 合同（棒1/棒2）：result = {stage, stage_status, metrics, evidence, probes:[{key, observed, probed_at, error?}]}；
- * step_probes(probe_key UNIQUE, stage, journey_step_link_id, spec jsonb, spec_hash, severity)，
+ * step_probes(probe_key UNIQUE, stage, journey_step_link_id, spec jsonb, spec_hash, severity, active)，
  * spec = {key, stage, journey_cell, probe:{...}, expect:{op, value?|ref?}, severity}。
+ * 只判 active=true：仓库 YAML 删探针后库行置 active=false（棒2 漂移语义），停用探针不得再以
+ * probe_missing 把格子打红。
  */
 
 import { persistBusinessProbeReceipt } from '../impact-contract/assertion-receipts.js';
@@ -175,6 +177,7 @@ export async function handleRunFinished(payload = {}, deps = {}) {
          FROM step_probes sp
          JOIN journey_step_links jsl ON jsl.id = sp.journey_step_link_id
         WHERE jsl.journey_id = $1 AND sp.stage = $2
+          AND sp.active = true
         ORDER BY sp.probe_key`,
       [journeyId, stage],
     );
