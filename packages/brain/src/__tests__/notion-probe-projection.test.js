@@ -191,7 +191,11 @@ describe('pushStepProbes / pushProbeReceipts — 注册表门 + 业务行过滤 
   it('runProbeProjection：一根血管炸了不连坐另一根', async () => {
     const { runProbeProjection } = await import('../notion-probe-projection.js');
     const pool = makePool({ registered: ['step_probes', 'journey_assertion_receipts'], probes: [PROBE], receipts: [RECEIPT] });
-    pool.query.mockImplementationOnce(async () => { throw new Error('pg down'); });
+    const inner = pool.query.getMockImplementation();
+    pool.query.mockImplementation(async (sql, params) => {
+      if (/FROM step_probes sp/.test(String(sql))) throw new Error('pg down');
+      return inner(sql, params);
+    });
     const out = await runProbeProjection(pool, { token: 'fake-token' });
     expect(out.step_probes.error).toContain('pg down');
     expect(out.probe_receipts.created).toBe(1);
