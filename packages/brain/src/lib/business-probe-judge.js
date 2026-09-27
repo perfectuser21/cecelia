@@ -231,12 +231,13 @@ export async function handleRunFinished(payload = {}, deps = {}) {
     const verdicts = judgeProbes(specs, result);
     const byLink = new Map();
     const receipts = [];
+    const skipped = [];
     for (let i = 0; i < specs.length; i += 1) {
       const row = specs[i];
       const v = verdicts[i];
       const evidence = { observed: v.observed, expected: v.expected, op: v.op, severity: v.severity };
       if (v.reason) evidence.reason = v.reason;
-      const receipt = await persist(pool, {
+      const out = await persist(pool, {
         journeyStepLinkId: row.journey_step_link_id,
         assertionRevision: row.assertion_revision,
         probeKey: v.key,
@@ -246,11 +247,19 @@ export async function handleRunFinished(payload = {}, deps = {}) {
         evidence,
         probedAt: v.probed_at,
       });
-      receipts.push({ key: v.key, verdict: v.verdict, reason: v.reason ?? null, receipt_id: receipt?.id ?? null });
+      // 回执落库结果不静默（09-27 生产 judged=3 只落 1 行）：没落库的一律进 skipped 汇总告警
+      const persisted = out?.persisted === true;
+      const skippedReason = persisted ? null : (out?.skipped?.reason ?? 'unknown');
+      if (!persisted) skipped.push({ probe_key: v.key, reason: skippedReason });
+      receipts.push({
+        key: v.key, verdict: v.verdict, reason: v.reason ?? null,
+        receipt_id: out?.receipt?.id ?? null, persisted, skipped_reason: skippedReason,
+      });
       const list = byLink.get(row.journey_step_link_id) ?? [];
       list.push(cellStatusFor(v.verdict, v.severity));
       byLink.set(row.journey_step_link_id, list);
     }
+    const persistedCount = receipts.length - skipped.length;
 
     const cells = {};
     for (const [linkId, statuses] of byLink) {
@@ -262,8 +271,15 @@ export async function handleRunFinished(payload = {}, deps = {}) {
       cells[linkId] = status;
     }
     const backfilled = workflow ? await backfillAnchor(pool, taskId, specs) : null;
-    console.log(`[business-probe-judge] run=${runId} stage=${stage} via=${journeyId ? 'anchor' : `workflow:${workflow}`} judged=${verdicts.length} cells=${JSON.stringify(cells)}${backfilled ? ` anchor_backfilled=${backfilled}` : ''}`);
-    return { judged: verdicts.length, receipts, cells, ...(workflow ? { workflow, anchor_backfilled: backfilled } : {}) };
+    const via = journeyId ? 'anchor' : `workflow:${workflow}`;
+    console.log(`[business-probe-judge] run=${runId} stage=${stage} via=${via} judged=${verdicts.length} persisted=${persistedCount} skipped=${skipped.length} cells=${JSON.stringify(cells)}${backfilled ? ` anchor_backfilled=${backfilled}` : ''}`);
+    if (skipped.length > 0) {
+      console.warn(`[business-probe-judge] run=${runId} stage=${stage} receipts skipped=${skipped.length}: ${skipped.map((s) => `${s.probe_key}=${s.reason}`).join(', ')}`);
+    }
+    return {
+      judged: verdicts.length, persisted: persistedCount, skipped, receipts, cells,
+      ...(workflow ? { workflow, anchor_backfilled: backfilled } : {}),
+    };
   } catch (err) {
     console.warn(`[business-probe-judge] run=${runId} judge failed (non-fatal): ${err.message}`);
     return { error: err.message };

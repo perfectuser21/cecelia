@@ -169,7 +169,7 @@ export async function persistTrustedEvaluatorReceipts(db, { attempt, result }) {
            $16, $17, $18, $19, $20, 'brain_assertion_runner', false
          )
          ON CONFLICT (
-           run_id, journey_step_link_id, source_sha, impact_contract_hash
+           run_id, journey_step_link_id, source_sha, impact_contract_hash, assertion_ref_snapshot
          ) DO NOTHING
          RETURNING *
        )
@@ -178,6 +178,7 @@ export async function persistTrustedEvaluatorReceipts(db, { attempt, result }) {
        SELECT * FROM journey_assertion_receipts
        WHERE run_id = $2 AND journey_step_link_id = $1
          AND source_sha = $7 AND impact_contract_hash = $11
+         AND assertion_ref_snapshot = $4
          AND NOT EXISTS (SELECT 1 FROM inserted)
        LIMIT 1`,
       [
@@ -226,9 +227,13 @@ function probeEvidenceError(message) {
  * 字段约定：assertion_ref_snapshot=probe:<key> / assertion_digest=step_probes.spec_hash /
  * command_argv=["probe", key] / source_sha、machine_id NULL / exit_code PASS→0 FAIL→1 /
  * scenario_count=1 / scenario_evidence={observed, expected, op, severity, reason?} / synthetic=false。
- * 同一 (run_id, link, source_sha, impact_contract_hash) 重复判定 ON CONFLICT DO NOTHING → 返回 null。
  *
- * @returns {Promise<object|null>} 新插入的回执行；冲突（已判过）返回 null
+ * 唯一键（迁移 477）= (run_id, link, source_sha, impact_contract_hash, assertion_ref_snapshot) NULLS NOT DISTINCT：
+ * 同 run 同格多条探针靠 assertion_ref_snapshot 区分；同一探针重复判定 ON CONFLICT DO NOTHING。
+ * 冲突/库异常不静默（09-27 生产 judged=3 只落 1 行的病）：一律进 skipped，让调用方汇总告警。
+ *
+ * @returns {Promise<{receipt: object|null, persisted: boolean, skipped: {probe_key: string, reason: string}|null}>}
+ *   persisted=true 时 receipt 为新插入行；否则 skipped.reason ∈ 'duplicate' | 'db_error:<code>:<message>'
  */
 export async function persistBusinessProbeReceipt(db, {
   journeyStepLinkId,
@@ -250,38 +255,46 @@ export async function persistBusinessProbeReceipt(db, {
   const scenarioEvidence = evidence && typeof evidence === 'object' && !Array.isArray(evidence) ? evidence : {};
   const at = Number.isFinite(Date.parse(probedAt)) ? new Date(probedAt).toISOString() : new Date().toISOString();
 
-  const { rows } = await db.query(
-    `INSERT INTO journey_assertion_receipts (
-       journey_step_link_id, run_id, assertion_revision,
-       assertion_ref_snapshot, assertion_digest, source_repo, source_sha,
-       command_argv, scenario_count, scenario_evidence, verdict, exit_code,
-       started_at, completed_at, machine_id, output_digest, output_tail,
-       executor_kind, synthetic
-     ) VALUES (
-       $1, $2, $3, $4, $5, $6, $7,
-       $8::jsonb, 1, $9::jsonb, $10, $11,
-       $12, $13, $14, NULL, '',
-       '${BUSINESS_PROBE_EXECUTOR_KIND}', false
-     )
-     ON CONFLICT (run_id, journey_step_link_id, source_sha, impact_contract_hash) DO NOTHING
-     RETURNING *`,
-    [
-      journeyStepLinkId,
-      runId,
-      revision,
-      `probe:${probeKey}`,
-      specHash,
-      BUSINESS_PROBE_SOURCE_REPO,
-      null,
-      JSON.stringify(['probe', probeKey]),
-      JSON.stringify(scenarioEvidence),
-      verdict,
-      verdict === 'PASS' ? 0 : 1,
-      at,
-      at,
-      null,
-    ],
-  );
-  return rows?.[0] ?? null;
+  const skipped = (reason) => ({ receipt: null, persisted: false, skipped: { probe_key: probeKey, reason } });
+  let rows;
+  try {
+    ({ rows } = await db.query(
+      `INSERT INTO journey_assertion_receipts (
+         journey_step_link_id, run_id, assertion_revision,
+         assertion_ref_snapshot, assertion_digest, source_repo, source_sha,
+         command_argv, scenario_count, scenario_evidence, verdict, exit_code,
+         started_at, completed_at, machine_id, output_digest, output_tail,
+         executor_kind, synthetic
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7,
+         $8::jsonb, 1, $9::jsonb, $10, $11,
+         $12, $13, $14, NULL, '',
+         '${BUSINESS_PROBE_EXECUTOR_KIND}', false
+       )
+       ON CONFLICT (run_id, journey_step_link_id, source_sha, impact_contract_hash, assertion_ref_snapshot) DO NOTHING
+       RETURNING *`,
+      [
+        journeyStepLinkId,
+        runId,
+        revision,
+        `probe:${probeKey}`,
+        specHash,
+        BUSINESS_PROBE_SOURCE_REPO,
+        null,
+        JSON.stringify(['probe', probeKey]),
+        JSON.stringify(scenarioEvidence),
+        verdict,
+        verdict === 'PASS' ? 0 : 1,
+        at,
+        at,
+        null,
+      ],
+    ));
+  } catch (err) {
+    return skipped(`db_error:${err?.code ?? 'unknown'}:${err?.message ?? String(err)}`);
+  }
+  const receipt = rows?.[0] ?? null;
+  if (!receipt) return skipped('duplicate');
+  return { receipt, persisted: true, skipped: null };
 }
 import { canonicalAssertionArgv } from '../lib/gp-assertion-command.js';

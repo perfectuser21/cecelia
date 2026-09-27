@@ -144,7 +144,7 @@ describe('business-probe-judge [PostgreSQL] run.finished → 回执 → cell 翻
     expect(await cellStatus(ids.linkOk.id)).toBe('green');
   });
 
-  it('同一 run 重复判定幂等：409 唯一键（NULLS NOT DISTINCT）挡住重复回执，cell 不抖', async () => {
+  it('同一 run 重复判定幂等：五列唯一键（NULLS NOT DISTINCT，迁移 477）挡住重复回执，skipped 点名 duplicate，cell 不抖', async () => {
     const before = (await receiptsFor(runId)).length;
     const { rows } = await client.query('SELECT task_id, status, result FROM task_runs WHERE run_id = $1', [runId]);
     const again = await handleRunFinished(
@@ -152,7 +152,12 @@ describe('business-probe-judge [PostgreSQL] run.finished → 回执 → cell 翻
       { pool: client },
     );
     expect(again.judged).toBe(2);
-    expect(again.receipts.every((r) => r.receipt_id === null)).toBe(true);
+    expect(again.persisted).toBe(0);
+    expect(again.receipts.every((r) => r.receipt_id === null && r.persisted === false && r.skipped_reason === 'duplicate')).toBe(true);
+    expect(again.skipped).toEqual([
+      { probe_key: KEY_OK, reason: 'duplicate' },
+      { probe_key: KEY_WARN, reason: 'duplicate' },
+    ]);
     expect((await receiptsFor(runId)).length).toBe(before);
     expect(await cellStatus(ids.linkOk.id)).toBe('green');
   });
@@ -209,6 +214,102 @@ describe('business-probe-judge [PostgreSQL] run.finished → 回执 → cell 翻
     );
     expect(out).toEqual({ skipped: 'no_anchor_no_workflow' });
     expect(await receiptsFor(plainRunId)).toHaveLength(0);
+  });
+
+  describe('迁移 477：同一 cell 多条探针回执不再互吞（09-27 生产 judged=3 只落 1 行，FAIL 行丢失）', () => {
+    const MULTI_STAGE = 'delivery';
+    const K1 = `pgtest.${randomUUID().slice(0, 8)}.comments_readback`;
+    const K2 = `pgtest.${randomUUID().slice(0, 8)}.videos_readback`;
+    const K3 = `pgtest.${randomUUID().slice(0, 8)}.line_key_not_null`;
+    const multiRunId = `pgtest-multi-${randomUUID()}`;
+    let multiLink;
+
+    beforeAll(async () => {
+      multiLink = (await client.query(
+        `INSERT INTO journey_step_links (journey_id, step_id, step_order, cell_kind, cell_key, cell_status, assertion_ref)
+         VALUES ($1, $2, 2, 'scenario', $3, 'gray', $4) RETURNING id, assertion_revision`,
+        [ids.journeyId, ids.stepId, `stage:${MULTI_STAGE}`, `probe:${K1}`],
+      )).rows[0];
+      const s1 = specOf(K1, { op: '>=', ref: 'metrics.comments_expected' }, 'error');
+      const s2 = specOf(K2, { op: '>=', ref: 'metrics.videos_expected' }, 'warn');
+      const s3 = specOf(K3, { op: 'not_null_all' }, 'error');
+      await client.query(
+        `INSERT INTO step_probes (probe_key, workflow, stage, journey_step_link_id, spec, spec_hash, severity)
+         VALUES ($1,'pgtest',$2,$3,$4::jsonb,$5,'error'), ($6,'pgtest',$2,$3,$7::jsonb,$8,'warn'), ($9,'pgtest',$2,$3,$10::jsonb,$11,'error')`,
+        [K1, MULTI_STAGE, multiLink.id, JSON.stringify(s1), sha256(s1), K2, JSON.stringify(s2), sha256(s2), K3, JSON.stringify(s3), sha256(s3)],
+      );
+    });
+
+    it('同一 run 同一格三条探针（source_sha / impact_contract_hash 皆 NULL）→ 三行全落库，FAIL 行可查，cell=pending', async () => {
+      await startRun({ taskId: ids.taskId, runId: multiRunId, source: 'pg-integration' }, { pool: client });
+      await client.query(
+        `UPDATE task_runs SET result = $2::jsonb WHERE run_id = $1`,
+        [multiRunId, JSON.stringify({
+          stage: MULTI_STAGE, stage_status: 'ok',
+          metrics: { comments_expected: 7, videos_expected: 7 }, evidence: {},
+          probes: [
+            { key: K1, observed: 7 },
+            { key: K2, observed: 6 },
+            { key: K3, observed: ['a', 'b'] },
+          ],
+        })],
+      );
+      expect(await finishRun({ runId: multiRunId, status: 'completed', exitCode: 0 }, { pool: client })).toEqual({ updated: true });
+
+      const receipts = await receiptsFor(multiRunId);
+      expect(receipts).toHaveLength(3);
+      expect(receipts.every((r) => r.journey_step_link_id === multiLink.id && r.source_sha === null)).toBe(true);
+      const byKey = Object.fromEntries(receipts.map((r) => [r.assertion_ref_snapshot, r]));
+      expect(byKey[`probe:${K1}`]).toMatchObject({ verdict: 'PASS', exit_code: 0 });
+      expect(byKey[`probe:${K2}`]).toMatchObject({ verdict: 'FAIL', exit_code: 1, scenario_evidence: { observed: 6, expected: 7, op: '>=', severity: 'warn', reason: 'value_mismatch' } });
+      expect(byKey[`probe:${K3}`]).toMatchObject({ verdict: 'PASS', exit_code: 0 });
+
+      // 晨报/日报「断言红灯」读法：按 run 查 FAIL 行必须能查到
+      const fails = await client.query(
+        `SELECT assertion_ref_snapshot FROM journey_assertion_receipts WHERE run_id = $1 AND verdict = 'FAIL'`,
+        [multiRunId],
+      );
+      expect(fails.rows.map((r) => r.assertion_ref_snapshot)).toEqual([`probe:${K2}`]);
+      expect(await cellStatus(multiLink.id)).toBe('pending');
+    });
+
+    it('重放同一 run：三条全 skipped=duplicate，persisted=0，行数不变', async () => {
+      const { rows } = await client.query('SELECT task_id, status, result FROM task_runs WHERE run_id = $1', [multiRunId]);
+      const again = await handleRunFinished(
+        { runId: multiRunId, taskId: rows[0].task_id, status: rows[0].status, result: rows[0].result },
+        { pool: client },
+      );
+      expect(again).toMatchObject({ judged: 3, persisted: 0 });
+      expect(again.skipped.map((s) => s.reason)).toEqual(['duplicate', 'duplicate', 'duplicate']);
+      expect(await receiptsFor(multiRunId)).toHaveLength(3);
+    });
+
+    it('harness 行（brain_assertion_runner）同 run 同格重复插入仍去重：assertion_ref_snapshot 固定，五列键与四列键语义一致', async () => {
+      const harnessRunId = `pgtest-harness-${randomUUID()}`;
+      const insertHarness = () => client.query(
+        `INSERT INTO journey_assertion_receipts (journey_step_link_id, run_id, assertion_revision, assertion_ref_snapshot,
+           assertion_digest, source_repo, source_sha, impact_contract_hash, command_argv, scenario_count, scenario_evidence,
+           verdict, exit_code, started_at, completed_at, machine_id, output_digest, output_tail, executor_kind)
+         VALUES ($1, $2, 1, 'tests/x.test.js', $3, 'cecelia', $4, $5, '["npx"]', 1, '{"cases":["a"]}',
+           'PASS', 0, now(), now(), 'mac-1', $6, '', 'brain_assertion_runner')
+         ON CONFLICT (run_id, journey_step_link_id, source_sha, impact_contract_hash, assertion_ref_snapshot) DO NOTHING
+         RETURNING id`,
+        // impact_contract_hash NULL = legacy_exempt 形态（409 检查约束要求 hash 与 contract_id/attempt_id 同在）
+        [multiLink.id, harnessRunId, 'c'.repeat(64), 'a'.repeat(40), null, 'e'.repeat(64)],
+      );
+      await client.query('SAVEPOINT harness_dedup');
+      try {
+        expect((await insertHarness()).rows).toHaveLength(1);
+        expect((await insertHarness()).rows).toHaveLength(0);
+        const count = await client.query(
+          `SELECT COUNT(*)::int AS n FROM journey_assertion_receipts WHERE run_id = $1 AND journey_step_link_id = $2`,
+          [harnessRunId, multiLink.id],
+        );
+        expect(count.rows[0].n).toBe(1);
+      } finally {
+        await client.query('ROLLBACK TO SAVEPOINT harness_dedup');
+      }
+    });
   });
 
   it('迁移 475 约束：brain_assertion_runner PASS 仍必须带 sha/machine（原式未被放宽）', async () => {

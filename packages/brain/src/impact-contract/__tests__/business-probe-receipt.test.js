@@ -25,15 +25,16 @@ function input(overrides = {}) {
 }
 
 describe('persistBusinessProbeReceipt', () => {
-  it('PASS 回执：exit_code 0、argv ["probe",key]、executor_kind business_probe_runner、sha/machine 为 NULL', async () => {
+  it('PASS 回执：exit_code 0、argv ["probe",key]、executor_kind business_probe_runner、sha/machine 为 NULL；返回 {receipt, persisted:true, skipped:null}', async () => {
     const row = { id: 'r1', verdict: 'PASS' };
     const db = { query: vi.fn().mockResolvedValue({ rows: [row] }) };
     const out = await persistBusinessProbeReceipt(db, input());
-    expect(out).toEqual(row);
+    expect(out).toEqual({ receipt: row, persisted: true, skipped: null });
     const [sql, params] = db.query.mock.calls[0];
     expect(sql).toMatch(/INSERT INTO journey_assertion_receipts/);
     expect(sql).toMatch(/'business_probe_runner'/);
-    expect(sql).toMatch(/ON CONFLICT[\s\S]*DO NOTHING/);
+    // 迁移 477：唯一键补 assertion_ref_snapshot——同 run 同格多条探针（sha/hash 皆 NULL）不再互相吞
+    expect(sql).toMatch(/ON CONFLICT \(run_id, journey_step_link_id, source_sha, impact_contract_hash, assertion_ref_snapshot\) DO NOTHING/);
     expect(params).toEqual([
       LINK_ID, 'run-abc', 3, 'probe:preflight.slots_ready', SPEC_HASH,
       'zenithjoy-workspace', null,
@@ -45,16 +46,25 @@ describe('persistBusinessProbeReceipt', () => {
     ]);
   });
 
-  it('FAIL 回执：exit_code 1，evidence 带 reason', async () => {
+  it('FAIL 回执：exit_code 1，evidence 带 reason；ON CONFLICT 未插入 → 不静默，skipped.reason=duplicate', async () => {
     const db = { query: vi.fn().mockResolvedValue({ rows: [] }) };
     const out = await persistBusinessProbeReceipt(db, input({
       verdict: 'FAIL', evidence: { observed: null, expected: 2, op: '>=', severity: 'warn', reason: 'probe_missing' },
     }));
-    expect(out).toBeNull();
+    expect(out).toEqual({ receipt: null, persisted: false, skipped: { probe_key: 'preflight.slots_ready', reason: 'duplicate' } });
     const params = db.query.mock.calls[0][1];
     expect(params[9]).toBe('FAIL');
     expect(params[10]).toBe(1);
     expect(JSON.parse(params[8]).reason).toBe('probe_missing');
+  });
+
+  it('库写入异常（约束/连接）→ 不抛不吞，skipped.reason 带错误码与信息，让同批其余探针照常落库', async () => {
+    const err = Object.assign(new Error('new row violates check constraint "journey_assertion_receipt_verdict_chk"'), { code: '23514' });
+    const db = { query: vi.fn().mockRejectedValue(err) };
+    const out = await persistBusinessProbeReceipt(db, input());
+    expect(out.persisted).toBe(false);
+    expect(out.receipt).toBeNull();
+    expect(out.skipped).toEqual({ probe_key: 'preflight.slots_ready', reason: expect.stringMatching(/^db_error:23514:.*verdict_chk/) });
   });
 
   it('probedAt 缺失 → started/completed 取同一个 now（ISO）', async () => {

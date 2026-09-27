@@ -94,7 +94,8 @@ describe('trusted evaluator assertion receipt writer', () => {
     const [sql, params] = db.query.mock.calls[1];
     expect(sql).toContain('INSERT INTO journey_assertion_receipts');
     expect(sql).toContain('gp_contract_id, gp_contract_hash');
-    expect(sql).toMatch(/ON CONFLICT \(\s*run_id, journey_step_link_id, source_sha, impact_contract_hash\s*\)/);
+    // 迁移 477：唯一键补 assertion_ref_snapshot（harness 一格一断言、ref 固定 → 去重语义不变）
+    expect(sql).toMatch(/ON CONFLICT \(\s*run_id, journey_step_link_id, source_sha, impact_contract_hash, assertion_ref_snapshot\s*\)/);
     expect(params).toEqual(expect.arrayContaining([
       RUN_ID, ATTEMPT_ID, LINK_ID, HEAD_SHA, CONTRACT_ID, 'c'.repeat(64),
       GP_CONTRACT_ID, GP_CONTRACT_HASH,
