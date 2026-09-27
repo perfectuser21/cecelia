@@ -62,14 +62,17 @@ describe('migration 350: 承诺地图两域 seed', () => {
     expect(rows.every(r => r.promise)).toBe(true);
   });
 
-  it('全部 cell 行 notion_synced_at 非空（不推 Notion）', async () => {
+  it('全部 cell 行可进 Notion 推送（棒4-2 起格子进「承诺地图格子」库；350 种子的假 synced 被迁移 479 清零）', async () => {
+    // 原合同「cell 行 notion_synced_at 非空 = 不推 Notion」已被决策 10a68212 取代：格子颜色要进驾驶舱。
+    // 479 后种子行 notion_synced_at 为 NULL；被推过的行 notion_id 非空。两者之外（synced 非空却无 notion_id）= 假同步，不允许。
     const { rows } = await pool.query(
       `SELECT COUNT(*)::int AS c
          FROM journey_step_links link
          JOIN journeys journey ON journey.id = link.journey_id
         WHERE journey.domain IN ('智能客服', '公司级')
           AND link.cell_kind IS NOT NULL
-          AND link.notion_synced_at IS NULL`);
+          AND link.notion_synced_at IS NOT NULL
+          AND link.notion_id IS NULL`);
     expect(rows[0].c).toBe(0);
   });
 
