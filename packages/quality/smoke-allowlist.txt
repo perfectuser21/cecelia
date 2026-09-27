@@ -341,3 +341,4 @@ assertion-red-report-smoke.sh
 step-probes-smoke.sh
 business-probe-judge-smoke.sh
 callback-stage-receipt-smoke.sh
+notion-probe-projection-smoke.sh

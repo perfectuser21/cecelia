@@ -8,7 +8,7 @@ import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 import { pushRegisteredRows, resolveDbId } from './lib/notion-projection-engine.js';
-import { OPS_DB_PROPS, buildTasksDbProps, buildStepLinkDbProps } from './ops-notion-schema.js';
+import { OPS_DB_PROPS, buildTasksDbProps, buildStepLinkDbProps, diffMissingProps } from './ops-notion-schema.js';
 import { buildStepLinkNotionProperties } from './notion-probe-projection.js';
 import {
   ensureOpsDbProps, inferProviderFromModelId, pickProviderQuota, buildQuotaProps,
@@ -1120,10 +1120,16 @@ async function pushJourneyStepLinks(pool, token) {
   const dbId = STEP_LINKS_DB || await resolveDbId(pool, 'journey_step_links');
   let schemaProps = {};
   try {
-    const { added } = await ensureOpsDbProps(token, dbId, buildStepLinkDbProps(JOURNEY_DB), { notionReq });
-    if (added.length) console.log(`[step_link] Backbone-Step Map 补列: ${added.join(', ')}`);
+    // 只读一次 schema：既判 Order 列有无，也算缺列（有缺才 PATCH，不重发已有列）
     const schema = await notionReq(token, `/databases/${dbId}`, 'GET');
-    schemaProps = schema?.properties || {};
+    schemaProps = { ...(schema?.properties || {}) };
+    const missing = diffMissingProps(schemaProps, buildStepLinkDbProps(JOURNEY_DB));
+    const added = Object.keys(missing);
+    if (added.length) {
+      await notionReq(token, `/databases/${dbId}`, 'PATCH', { properties: missing });
+      Object.assign(schemaProps, missing);
+      console.log(`[step_link] Backbone-Step Map 补列: ${added.join(', ')}`);
+    }
   } catch (err) {
     await logSyncError(pool, `[step_link] 补列/读 schema 失败: ${err.message}`);
   }
