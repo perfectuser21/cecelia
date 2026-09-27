@@ -143,7 +143,7 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
       spec('p.bad2', { op: '>=', value: 1 }, { journey_step_link_id: LINK_B, severity: 'warn' }),
     ];
     const { pool, calls } = poolWith({ probes });
-    const persist = vi.fn().mockResolvedValue({ id: 'rcpt' });
+    const persist = vi.fn().mockResolvedValue({ receipt: { id: 'rcpt' }, persisted: true, skipped: null });
     const out = await handleRunFinished(
       { runId: 'run-1', taskId: 't-1', status: 'success', result: result({ 'p.ok': { observed: 2 }, 'p.bad': { observed: 'nope' }, 'p.bad2': { observed: 0 } }) },
       { pool, persist },
@@ -167,7 +167,7 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
     const { pool, calls } = poolWith({ probes: [spec('p.ok', { op: '>=', value: 1 })] });
     await handleRunFinished(
       { runId: 'run-1', taskId: 't-1', status: 'success', result: result({ 'p.ok': { observed: 2 } }) },
-      { pool, persist: vi.fn().mockResolvedValue({ id: 'rcpt' }) },
+      { pool, persist: vi.fn().mockResolvedValue({ receipt: { id: 'rcpt' }, persisted: true, skipped: null }) },
     );
     const probeQuery = calls.find((c) => /FROM step_probes/.test(c.sql));
     expect(probeQuery.sql).toMatch(/sp\.active = true/);
@@ -204,7 +204,7 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
 
     it('task 无 anchor + run_id 形如 <workflow>-crontab-<TAG>__aN.<stage> → 按 workflow+stage 判定、写回执、翻 cell', async () => {
       const { pool, calls } = poolWith({ journeyId: null, probes: deliveryProbes() });
-      const persist = vi.fn().mockResolvedValue({ id: 'rcpt' });
+      const persist = vi.fn().mockResolvedValue({ receipt: { id: 'rcpt' }, persisted: true, skipped: null });
       const out = await handleRunFinished({ runId: RUN_ID, taskId: 't-mirror', status: 'success', result: observed() }, { pool, persist });
       expect(out).toMatchObject({ judged: 3, workflow: 'social-keyword-leadgen', cells: { [LINK_A]: 'green', [LINK_B]: 'green' } });
       expect(persist).toHaveBeenCalledTimes(3);
@@ -219,14 +219,14 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
       const { pool, calls } = poolWith({ journeyId: null, probes: deliveryProbes() });
       await handleRunFinished(
         { runId: RUN_ID, taskId: 't-mirror', result: { ...observed(), workflow: 'explicit-wf' } },
-        { pool, persist: vi.fn().mockResolvedValue({ id: 'rcpt' }) },
+        { pool, persist: vi.fn().mockResolvedValue({ receipt: { id: 'rcpt' }, persisted: true, skipped: null }) },
       );
       expect(calls.find((c) => /FROM step_probes/.test(c.sql)).params).toEqual(['explicit-wf', 'delivery']);
     });
 
     it('有 anchor 仍走 journey_id 原路径，不看 run_id', async () => {
       const { pool, calls } = poolWith({ journeyId: 'j-1', probes: deliveryProbes() });
-      await handleRunFinished({ runId: RUN_ID, taskId: 't-1', result: observed() }, { pool, persist: vi.fn().mockResolvedValue({ id: 'rcpt' }) });
+      await handleRunFinished({ runId: RUN_ID, taskId: 't-1', result: observed() }, { pool, persist: vi.fn().mockResolvedValue({ receipt: { id: 'rcpt' }, persisted: true, skipped: null }) });
       const probeQuery = calls.find((c) => /FROM step_probes/.test(c.sql));
       expect(probeQuery.sql).toMatch(/jsl\.journey_id = \$1/);
       expect(probeQuery.params).toEqual(['j-1', 'delivery']);
@@ -235,7 +235,7 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
 
     it('判定成功后把唯一 journey_id 回填进 task.payload.anchor（只在为空时写一次）', async () => {
       const { pool, calls } = poolWith({ journeyId: null, probes: deliveryProbes() });
-      await handleRunFinished({ runId: RUN_ID, taskId: 't-mirror', result: observed() }, { pool, persist: vi.fn().mockResolvedValue({ id: 'rcpt' }) });
+      await handleRunFinished({ runId: RUN_ID, taskId: 't-mirror', result: observed() }, { pool, persist: vi.fn().mockResolvedValue({ receipt: { id: 'rcpt' }, persisted: true, skipped: null }) });
       const backfill = calls.find((c) => /UPDATE tasks/.test(c.sql));
       expect(backfill).toBeDefined();
       expect(backfill.sql).toMatch(/payload->'anchor'->>'journey_id' IS NULL/);
@@ -248,7 +248,7 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
       const probes = deliveryProbes();
       probes[2].journey_id = 'j-other';
       const { pool, calls } = poolWith({ journeyId: null, probes });
-      const out = await handleRunFinished({ runId: RUN_ID, taskId: 't-mirror', result: observed() }, { pool, persist: vi.fn().mockResolvedValue({ id: 'rcpt' }) });
+      const out = await handleRunFinished({ runId: RUN_ID, taskId: 't-mirror', result: observed() }, { pool, persist: vi.fn().mockResolvedValue({ receipt: { id: 'rcpt' }, persisted: true, skipped: null }) });
       expect(out.judged).toBe(3);
       expect(calls.some((c) => /UPDATE tasks/.test(c.sql))).toBe(false);
     });
@@ -260,6 +260,54 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
         .toEqual({ skipped: 'no_anchor_no_workflow' });
       expect(persist).not.toHaveBeenCalled();
     });
+  });
+
+  it('回执落库汇总：persisted=N skipped=M 进日志与返回值；有 skipped 必 console.warn 点名 probe_key+reason（09-27 生产 judged=3 只落 1 行的静默病）', async () => {
+    const probes = [
+      spec('p.ok', { op: '>=', value: 1 }),
+      spec('p.dup', { op: '>=', value: 1 }, { spec_hash: 'b'.repeat(64) }),
+      spec('p.err', { op: '>=', value: 1 }, { spec_hash: 'c'.repeat(64) }),
+    ];
+    const { pool } = poolWith({ probes });
+    const persist = vi.fn()
+      .mockResolvedValueOnce({ receipt: { id: 'rcpt-1' }, persisted: true, skipped: null })
+      .mockResolvedValueOnce({ receipt: null, persisted: false, skipped: { probe_key: 'p.dup', reason: 'duplicate' } })
+      .mockResolvedValueOnce({ receipt: null, persisted: false, skipped: { probe_key: 'p.err', reason: 'db_error:23514:verdict_chk' } });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = await handleRunFinished(
+      { runId: 'run-1', taskId: 't-1', status: 'success', result: result({ 'p.ok': { observed: 2 }, 'p.dup': { observed: 2 }, 'p.err': { observed: 2 } }) },
+      { pool, persist },
+    );
+    expect(out).toMatchObject({
+      judged: 3,
+      persisted: 1,
+      skipped: [{ probe_key: 'p.dup', reason: 'duplicate' }, { probe_key: 'p.err', reason: 'db_error:23514:verdict_chk' }],
+    });
+    expect(out.receipts).toEqual([
+      { key: 'p.ok', verdict: 'PASS', reason: null, receipt_id: 'rcpt-1', persisted: true, skipped_reason: null },
+      { key: 'p.dup', verdict: 'PASS', reason: null, receipt_id: null, persisted: false, skipped_reason: 'duplicate' },
+      { key: 'p.err', verdict: 'PASS', reason: null, receipt_id: null, persisted: false, skipped_reason: 'db_error:23514:verdict_chk' },
+    ]);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/\[business-probe-judge\] run=run-1 .*judged=3 persisted=1 skipped=2/));
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/\[business-probe-judge\] run=run-1 .*receipts skipped=2.*p\.dup=duplicate.*p\.err=db_error:23514:verdict_chk/));
+    log.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('全部落库时不 warn，日志 persisted=N skipped=0', async () => {
+    const { pool } = poolWith({ probes: [spec('p.ok', { op: '>=', value: 1 })] });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = await handleRunFinished(
+      { runId: 'run-1', taskId: 't-1', status: 'success', result: result({ 'p.ok': { observed: 2 } }) },
+      { pool, persist: vi.fn().mockResolvedValue({ receipt: { id: 'rcpt' }, persisted: true, skipped: null }) },
+    );
+    expect(out).toMatchObject({ judged: 1, persisted: 1, skipped: [] });
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/judged=1 persisted=1 skipped=0/));
+    expect(warn).not.toHaveBeenCalled();
+    log.mockRestore();
+    warn.mockRestore();
   });
 
   it('pool 抛错 → fail-open 返回 {error}，不向上抛', async () => {

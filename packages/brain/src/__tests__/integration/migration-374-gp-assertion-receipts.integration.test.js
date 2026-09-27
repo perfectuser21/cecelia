@@ -104,12 +104,12 @@ describe('migration 374 Golden Path assertion receipts [PostgreSQL]', () => {
     ]);
   });
   it('rejects PASS without a machine identity', async () => rejectReceipts([{ machineId: null }]));
-  it('makes repeated run delivery idempotent by run, cell, source, and contract', async () => {
+  it('makes repeated run delivery idempotent by run, cell, source, contract, and assertion ref (迁移 477 五列键)', async () => {
     const runId = `${fixture}-idempotent`;
     await insertReceipt({ runId });
     const repeated = await insertReceipt(
       { runId }, `ON CONFLICT (
-        run_id, journey_step_link_id, source_sha, impact_contract_hash
+        run_id, journey_step_link_id, source_sha, impact_contract_hash, assertion_ref_snapshot
       ) DO NOTHING`,
     );
     const count = await client.query(
