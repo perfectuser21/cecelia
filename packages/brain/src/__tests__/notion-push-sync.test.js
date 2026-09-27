@@ -163,7 +163,18 @@ describe('runNotionPushSync — new push functions', () => {
     expect(src).toMatch(/import\('\.\/notion-probe-projection\.js'\)/);
     expect(src).toMatch(/await runProbeProjection\(pool, \{ token, logSyncError \}\)/);
     expect(src).toMatch(/buildStepLinkNotionProperties\(l, schemaProps\)/);
-    expect(src).toMatch(/buildStepLinkDbProps\(JOURNEY_DB\)/);
+    expect(src).toMatch(/buildStepLinkDbProps\(\)/);
+    // 镜子换库（迁移 479）：旧 Backbone-Step Map 369c… 在回收站，常量必须指向「承诺地图格子」并与注册表一致（守夜 A9）
+    expect(src).toMatch(/STEP_LINKS_DB\s*=\s*'3e8c40c2-ba63-8194-a47c-dcf5f4b508bb'/);
+    expect(src).not.toMatch(/369c40c2-ba63-81e2-b95a-e5e3d0592676/);
+  });
+
+  it('pushJourneyStepLinks 不再要求 journeys.notion_id（AI Journey 库在回收站，全部指向死页）', async () => {
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+    const calls = mockQuery.mock.calls.map(c => c[0]);
+    const linksQuery = calls.find(q => q && q.includes('journey_step_links') && q.includes('notion_synced_at IS NULL'));
+    expect(linksQuery).not.toMatch(/j\.notion_id IS NOT NULL/);
   });
 
   it('pushSkillRegistry 对已同步但内容变更的 skill 执行 PATCH 而非跳过 — insert-only 缺陷回归', async () => {
