@@ -294,7 +294,8 @@ describe('business-probe-judge [PostgreSQL] run.finished → 回执 → cell 翻
            'PASS', 0, now(), now(), 'mac-1', $6, '', 'brain_assertion_runner')
          ON CONFLICT (run_id, journey_step_link_id, source_sha, impact_contract_hash, assertion_ref_snapshot) DO NOTHING
          RETURNING id`,
-        [multiLink.id, harnessRunId, 'c'.repeat(64), 'a'.repeat(40), 'd'.repeat(64), 'e'.repeat(64)],
+        // impact_contract_hash NULL = legacy_exempt 形态（409 检查约束要求 hash 与 contract_id/attempt_id 同在）
+        [multiLink.id, harnessRunId, 'c'.repeat(64), 'a'.repeat(40), null, 'e'.repeat(64)],
       );
       await client.query('SAVEPOINT harness_dedup');
       try {
