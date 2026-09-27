@@ -335,7 +335,8 @@ describe('runNotionPushSync — feature Status 属性类型回归', () => {
       thickness: null, journey_notion_id: null, area_notion_id: null, unit_test_path: null,
     };
     mockQuery
-      .mockResolvedValueOnce({ rows: [] })        // journeys
+      .mockResolvedValueOnce({ rows: [] })        // resolveDbId(journeys) → 无 active 行，停推
+      .mockResolvedValueOnce({ rows: [{ notion_db_id: FEATURE_DB }] }) // resolveDbId(journey_features) → 有 active 行
       .mockResolvedValueOnce({ rows: [feature] }) // features → 1 行
       .mockResolvedValue({ rows: [] });           // 其余 + UPDATE
 
@@ -361,7 +362,8 @@ describe('runNotionPushSync — feature Status 属性类型回归', () => {
       thickness: null, journey_notion_id: null, area_notion_id: null, unit_test_path: null,
     };
     mockQuery
-      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })                              // resolveDbId(journeys) → 停推
+      .mockResolvedValueOnce({ rows: [{ notion_db_id: FEATURE_DB }] }) // resolveDbId(journey_features)
       .mockResolvedValueOnce({ rows: [feature] })
       .mockResolvedValue({ rows: [] });
     mockNotionReq.mockResolvedValue({ id: 'f-notion-2' });

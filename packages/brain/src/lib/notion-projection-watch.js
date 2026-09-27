@@ -128,5 +128,45 @@ export async function buildProjectionAssertions(pool, { notionReq, token, botUse
       : `${diffs.length} 个库对不上：${diffs.join('；')}`,
   });
 
+  // ── A11 镜子库探活 ────────────────────────────────────────
+  results.push(await probeMirrorDbs(active, { notionReq, token }));
+
   return results;
+}
+
+/**
+ * A11 mirror_db_reachable（决策 24a37029）：对 status=active 且 direction∈{push,both} 的每个库 GET /databases/{id}。
+ * Notion 对回收站里的库 GET 仍 200 但 in_trash:true（或 archived:true），写入才 404——09-19 起三个库进回收站
+ * 都是上产后手工才发现，A10 只比行数看不出"库死了"。in_trash/archived/404 → 红；其它错误（503/超时）→ degraded 不红。
+ * 结果带 lost 清单，晨报/日报直接消费（lib/mirror-db-report.js）。
+ */
+export async function probeMirrorDbs(activeRows, { notionReq, token }) {
+  const targets = [];
+  const seen = new Set();
+  for (const r of activeRows) {
+    if (!['push', 'both'].includes(r.direction)) continue;
+    const k = normalizeNotionId(r.notion_db_id);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    targets.push(r);
+  }
+  const lost = []; let degraded = 0;
+  for (const r of targets) {
+    try {
+      const db = await notionReq(token, `/databases/${r.notion_db_id}`, 'GET');
+      const reason = db?.in_trash === true ? 'in_trash' : db?.archived === true ? 'archived' : null;
+      if (reason) lost.push({ title: r.title, table: r.brain_table, dbId: r.notion_db_id, reason });
+    } catch (err) {
+      if (/404/.test(err?.message || '')) lost.push({ title: r.title, table: r.brain_table, dbId: r.notion_db_id, reason: '404' });
+      else degraded++;
+    }
+  }
+  const REASON_TEXT = { in_trash: '回收站', archived: '已归档', 404: '404' };
+  return {
+    key: 'mirror_db_reachable', label: '镜子库探活',
+    ok: lost.length === 0, degraded: degraded > 0, lost,
+    detail: lost.length === 0
+      ? `${targets.length} 个推送库均在线${degraded ? `（${degraded} 库查询失败按 degraded 不计红）` : ''}`
+      : `${lost.length} 个库失联（写入必 404，推送应停）：` + lost.map(l => `${l.title}·${REASON_TEXT[l.reason] || l.reason}`).join('；'),
+  };
 }
