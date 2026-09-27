@@ -127,3 +127,82 @@ describe('一库多表 / 一表多库 的取行纪律（生产 proven-to-fire �
     expect(rs.find(r => r.key === 'projection_counts').ok).toBe(true);
   });
 });
+
+describe('A11 mirror_db_reachable（镜子库探活，决策 24a37029）', () => {
+  // 09-19 起三个库进回收站都是上产后手工才发现：Notion 对回收站里的库 GET 200 但 in_trash:true / archived:true，写入 404。
+  // 对 status=active 且 direction∈{push,both} 的每个库 GET /databases/{id}：in_trash/archived=true 或 404 → 红；其它错误 → degraded 不红。
+  const REG3 = [
+    { notion_db_id: 'db-issues', title: 'Issues', face: 'mirror', brain_table: 'issues', direction: 'push', status: 'active', vessel: 'notion-push-sync.pushIssues' },
+    { notion_db_id: 'db-tasks', title: 'Tasks', face: 'inlet', brain_table: 'tasks', direction: 'both', status: 'active', vessel: 'x' },
+    { notion_db_id: 'db-old', title: 'AI Journey', face: 'mirror', brain_table: 'journeys', direction: 'none', status: 'archived', vessel: '(停推)' },
+    { notion_db_id: 'db-know', title: 'Knowledge', face: 'truth', brain_table: 'knowledge', direction: 'none', status: 'active', vessel: null },
+  ];
+  function pool3() {
+    return { query: vi.fn(async (sql) => {
+      if (/information_schema\.columns/.test(sql)) return { rows: REG3.filter(r => r.brain_table).map(r => ({ table_name: r.brain_table })) };
+      if (/FROM notion_projection_map/.test(sql) && /DISTINCT/.test(sql)) return { rows: REG3.map(r => ({ brain_table: r.brain_table })) };
+      if (/FROM notion_projection_map/.test(sql)) return { rows: REG3 };
+      if (/count\(\*\)/.test(sql)) return { rows: [{ count: '0' }] };
+      return { rows: [] };
+    }) };
+  }
+  /** GET /databases/{id} 按表给响应；query 端点照旧返回空 */
+  function notionGet(byDb) {
+    return vi.fn(async (token, path, method) => {
+      const m = /^\/databases\/([^/]+)$/.exec(path);
+      if (m && method === 'GET') {
+        const v = byDb[m[1]];
+        if (v instanceof Error) throw v;
+        return v ?? { object: 'database', id: m[1], in_trash: false, archived: false };
+      }
+      return { results: [], has_more: false };
+    });
+  }
+
+  it('全部 active 推送库 GET 200 且未进回收站 → 绿，并说明探了几个库', async () => {
+    const notion = notionGet({});
+    const rs = await buildProjectionAssertions(pool3(), { notionReq: notion, token: 't', botUserId: BOT, constants: {} });
+    const a = rs.find(r => r.key === 'mirror_db_reachable');
+    expect(a).toBeTruthy();
+    expect(a.ok).toBe(true);
+    expect(a.detail).toMatch(/2 个/);
+    // 只探 active 且 push/both：issues + tasks；archived 的 db-old 与 truth/none 的 db-know 不探
+    const probed = notion.mock.calls.filter(c => /^\/databases\/[^/]+$/.test(c[1]) && c[2] === 'GET').map(c => c[1]);
+    expect(probed.sort()).toEqual(['/databases/db-issues', '/databases/db-tasks']);
+  });
+
+  it('GET 200 但 in_trash:true → 红并点名库；结果带 lost 清单供晨报/日报', async () => {
+    const notion = notionGet({ 'db-issues': { object: 'database', id: 'db-issues', in_trash: true, archived: false } });
+    const rs = await buildProjectionAssertions(pool3(), { notionReq: notion, token: 't', botUserId: BOT, constants: {} });
+    const a = rs.find(r => r.key === 'mirror_db_reachable');
+    expect(a.ok).toBe(false);
+    expect(a.detail).toContain('Issues');
+    expect(a.detail).toMatch(/回收站/);
+    expect(a.lost).toEqual([expect.objectContaining({ title: 'Issues', table: 'issues', reason: 'in_trash' })]);
+  });
+
+  it('archived:true 同样算失联', async () => {
+    const notion = notionGet({ 'db-tasks': { object: 'database', id: 'db-tasks', in_trash: false, archived: true } });
+    const rs = await buildProjectionAssertions(pool3(), { notionReq: notion, token: 't', botUserId: BOT, constants: {} });
+    const a = rs.find(r => r.key === 'mirror_db_reachable');
+    expect(a.ok).toBe(false);
+    expect(a.lost).toEqual([expect.objectContaining({ title: 'Tasks', reason: 'archived' })]);
+  });
+
+  it('GET 404 → 红（库被删/未共享）', async () => {
+    const notion = notionGet({ 'db-issues': new Error('Notion GET /databases/db-issues → 404: Could not find database with ID: db-issues.') });
+    const rs = await buildProjectionAssertions(pool3(), { notionReq: notion, token: 't', botUserId: BOT, constants: {} });
+    const a = rs.find(r => r.key === 'mirror_db_reachable');
+    expect(a.ok).toBe(false);
+    expect(a.lost).toEqual([expect.objectContaining({ title: 'Issues', reason: '404' })]);
+  });
+
+  it('其它错误（503/超时）→ degraded 不红，不拖垮整轮', async () => {
+    const notion = notionGet({ 'db-issues': new Error('Notion 503'), 'db-tasks': new Error('fetch timeout') });
+    const rs = await buildProjectionAssertions(pool3(), { notionReq: notion, token: 't', botUserId: BOT, constants: {} });
+    const a = rs.find(r => r.key === 'mirror_db_reachable');
+    expect(a.ok).toBe(true);
+    expect(a.degraded).toBe(true);
+    expect(a.lost).toEqual([]);
+  });
+});

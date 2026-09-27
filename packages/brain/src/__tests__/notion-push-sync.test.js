@@ -36,7 +36,39 @@ describe('runNotionPushSync', () => {
     expect(mockNotionReq).not.toHaveBeenCalled();
   });
 
-  it('有待同步 journey 时调 Notion API 创建页面并更新 notion_synced_at', async () => {
+  it('journeys / journey_features 登记 archived（注册表无 active 推送行）→ 不捞待推行、不调 Notion（决策 24a37029：两库在回收站，停推）', async () => {
+    // 迁移 480 之后注册表对这两张表没有 active 推送行；resolveDbId 返回 null 即停推——不再每 5 分钟推失败刷日志
+    mockQuery.mockResolvedValue({ rows: [] });
+
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+
+    expect(mockNotionReq).not.toHaveBeenCalled();
+    const sqls = mockQuery.mock.calls.map(c => String(c[0]));
+    expect(sqls.find(q => /FROM journeys j/.test(q))).toBeUndefined();
+    expect(sqls.find(q => /FROM journey_features f/.test(q))).toBeUndefined();
+    // 是按注册表查的（brain_table=journeys / journey_features 的 active 推送行），不是源码硬编码常量
+    expect(mockQuery.mock.calls.some(c => /FROM notion_projection_map/.test(String(c[0])) && c[1]?.[0] === 'journeys')).toBe(true);
+    expect(mockQuery.mock.calls.some(c => /FROM notion_projection_map/.test(String(c[0])) && c[1]?.[0] === 'journey_features')).toBe(true);
+  });
+
+  it('archived 停推只在进程内 info 一次（两轮只出一条 journeys、一条 journey_features），不每轮刷', async () => {
+    vi.resetModules();
+    mockQuery.mockResolvedValue({ rows: [] });
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    try {
+      const { runNotionPushSync } = await import('../notion-push-sync.js');
+      await runNotionPushSync({ query: mockQuery });
+      await runNotionPushSync({ query: mockQuery });
+      const msgs = info.mock.calls.map(c => c.join(' ')).filter(m => /notion-push-sync/.test(m) && /停推/.test(m));
+      expect(msgs.filter(m => /\bjourneys\b/.test(m))).toHaveLength(1);
+      expect(msgs.filter(m => /\bjourney_features\b/.test(m))).toHaveLength(1);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  it('journeys 注册表有 active 推送行 → 推到注册表登记的库（不是源码常量）并更新 notion_synced_at', async () => {
     const journey = {
       id: 'j-uuid',
       name: 'Test Journey',
@@ -48,14 +80,11 @@ describe('runNotionPushSync', () => {
       area_notion_id: null,
     };
 
-    mockQuery.mockResolvedValueOnce({ rows: [journey] }); // journeys NULL
-    mockQuery.mockResolvedValueOnce({ rows: [] });         // features NULL
-    mockQuery.mockResolvedValueOnce({ rows: [] });         // issues NULL
-    mockQuery.mockResolvedValueOnce({ rows: [] });         // tasks NULL (2026-09-13 pushTasks 挂链新增档位)
-    mockQuery.mockResolvedValue({ rows: [] });             // skill_registry / journey_step_links (new)
+    mockQuery.mockResolvedValueOnce({ rows: [{ notion_db_id: 'db-journeys-registered' }] }); // resolveDbId(journeys)
+    mockQuery.mockResolvedValueOnce({ rows: [journey] }); // journeys 待推行
+    mockQuery.mockResolvedValue({ rows: [] });             // features resolve → 跳过 / 其余链路无行
 
     mockNotionReq.mockResolvedValueOnce({ id: 'notion-page-id-1' });
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE journeys
 
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
@@ -63,15 +92,26 @@ describe('runNotionPushSync', () => {
     expect(mockNotionReq).toHaveBeenCalledTimes(1);
     expect(mockNotionReq.mock.calls[0][1]).toBe('/pages');
     expect(mockNotionReq.mock.calls[0][2]).toBe('POST');
-    expect(mockNotionReq.mock.calls[0][3].parent.database_id).toBe(JOURNEY_DB);
+    expect(mockNotionReq.mock.calls[0][3].parent.database_id).toBe('db-journeys-registered');
 
     const updateCall = mockQuery.mock.calls.find(c => typeof c[0] === 'string' && c[0].includes('UPDATE journeys'));
     expect(updateCall).toBeTruthy();
     expect(updateCall[1]).toContain('notion-page-id-1');
   });
 
+  it('源码不再硬编码回收站里的 AI Journey / AI Feature 库 id（守夜 A9 常量表也不再含这两张表）', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../notion-push-sync.js', import.meta.url), 'utf8');
+    expect(src).not.toContain(JOURNEY_DB);
+    expect(src).not.toContain(FEATURE_DB);
+    const { LEGACY_DB_CONSTANTS } = await import('../notion-push-sync.js');
+    expect(LEGACY_DB_CONSTANTS).not.toHaveProperty('journeys');
+    expect(LEGACY_DB_CONSTANTS).not.toHaveProperty('journey_features');
+  });
+
   it('Notion API 失败时跳过该行（notion_synced_at 保持 NULL）', async () => {
     const journey = { id: 'j-uuid', name: 'X', journey_type: 'dev_pipeline', description: null, maturity: 'not_started', status: 'active', e2e_test_path: null, area_notion_id: null };
+    mockQuery.mockResolvedValueOnce({ rows: [{ notion_db_id: 'db-journeys-registered' }] }); // resolveDbId(journeys)
     mockQuery.mockResolvedValueOnce({ rows: [journey] });
     mockQuery.mockResolvedValue({ rows: [] }); // features / issues / skill_registry / journey_step_links + log INSERT
 
@@ -90,6 +130,7 @@ describe('runNotionPushSync', () => {
     // 2026-09-16 实证：JOURNEY_DB 父页面未共享给 integration → 4 条 journey 每 5min 重试×永续=日志洪水。
     // features/issues 的 catch 都有 isStaleRelationError 退避，journeys 漏配——本用例锁住补配。
     const journey = { id: 'j-stale', name: 'X', journey_type: 'dev_pipeline', description: null, maturity: 'not_started', status: 'active', e2e_test_path: null, area_notion_id: null };
+    mockQuery.mockResolvedValueOnce({ rows: [{ notion_db_id: 'db-journeys-registered' }] }); // resolveDbId(journeys)
     mockQuery.mockResolvedValueOnce({ rows: [journey] });
     mockQuery.mockResolvedValue({ rows: [] });
 
@@ -348,6 +389,7 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] }); // journey_step_links
     mockQuery.mockResolvedValueOnce({ rows: [] }); // decisions
     mockQuery.mockResolvedValueOnce({ rows: [] }); // initiative_contracts
+    mockQuery.mockResolvedValueOnce({ rows: [{ notion_db_id: FEATURE_DB }] }); // pushAdvancementItems: resolveDbId(journey_features) 有 active 行才推
     // pushAdvancementItems 内部第一条 query：按 ability 聚合未同步推进项
     mockQuery.mockResolvedValueOnce({
       rows: [{ ability_id: 'ab-1', ability_notion_id: 'notion-ab-1', done: '2', doing: '1', todo: '1' }],
@@ -391,6 +433,7 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ notion_db_id: FEATURE_DB }] }); // resolveDbId(journey_features)
     mockQuery.mockResolvedValueOnce({
       rows: [{ ability_id: 'ab-2', ability_notion_id: 'notion-ab-2', done: '0', doing: '0', todo: '1' }],
     });
@@ -408,6 +451,14 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
       c => typeof c[0] === 'string' && c[0].includes('UPDATE advancement_items')
     );
     expect(updateCall).toBeTruthy();
+  });
+
+  it('journey_features 登记 archived → pushAdvancementItems 不查聚合、不 GET 库 schema、不 PATCH（ability 页全在回收站）', async () => {
+    mockQuery.mockResolvedValue({ rows: [] });
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+    expect(mockNotionReq).not.toHaveBeenCalled();
+    expect(mockQuery.mock.calls.find(c => typeof c[0] === 'string' && c[0].includes('FROM advancement_items ai'))).toBeUndefined();
   });
 });
 

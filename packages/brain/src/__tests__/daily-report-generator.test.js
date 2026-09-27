@@ -108,4 +108,52 @@ describe('daily-report-generator', () => {
       expect(saved[1]).not.toContain('业务断言红灯');
     });
   });
+
+  // ─── 镜子库失联板块（决策 24a37029）：读 promise-map-nightly 哨兵 mirror_db_reachable 断言 ───
+  describe('镜子库失联板块', () => {
+    const empty = [ '2026-09-27', '2026-09-26', { count: 0, keywords: [] }, [], [], 0, null, null, null, null, null ];
+    const state = { checked_at: '2026-09-27T02:00:00.000Z', lost: [
+      { title: 'AI Journey', table: 'journeys', dbId: 'a', reason: 'in_trash' },
+      { title: 'AI Feature', table: 'journey_features', dbId: 'b', reason: '404' },
+    ] };
+
+    it('buildReportText 尾参传 state → 出板块，含 RED 汇总与每库一行', () => {
+      const text = dailyReport.buildReportText(...empty, state);
+      expect(text).toContain('== 镜子库失联 ==');
+      expect(text).toContain('🔴 RED 镜子库失联：AI Journey、AI Feature ×2');
+      expect(text).toContain('  - AI Feature（journey_features）：404');
+    });
+
+    it('空（null）→ 不出板块', () => {
+      expect(dailyReport.buildReportText(...empty)).not.toContain('镜子库失联');
+      expect(dailyReport.buildReportText(...empty, null)).not.toContain('镜子库失联');
+    });
+
+    it('generateDailyReport 主流程：哨兵有失联 → 落库日报含板块；哨兵读取失败 → 仍生成不含板块', async () => {
+      const saved = [];
+      const mkPool = (sentinel) => ({
+        query: vi.fn(async (sql, params) => {
+          if (/FROM working_memory/.test(String(sql)) && params?.[0] === 'promise-map-nightly') {
+            if (sentinel instanceof Error) throw sentinel;
+            return { rows: sentinel ? [{ value_json: sentinel }] : [] };
+          }
+          if (/INSERT INTO working_memory/.test(String(sql)) && String(params?.[0]).startsWith('daily_report_2')) {
+            saved.push(JSON.parse(params[1]).report);
+          }
+          return { rows: [] };
+        }),
+      });
+      const now = new Date('2026-09-27T01:00:00Z');
+      const ok = await dailyReport.generateDailyReport(mkPool({ last_run_at: '2026-09-27T02:00:00.000Z', results: [
+        { key: 'mirror_db_reachable', ok: false, lost: state.lost },
+      ] }), now);
+      expect(ok.generated).toBe(true);
+      expect(saved[0]).toContain('== 镜子库失联 ==');
+      expect(saved[0]).toContain('AI Journey、AI Feature ×2');
+
+      const degraded = await dailyReport.generateDailyReport(mkPool(new Error('working_memory down')), now);
+      expect(degraded.generated).toBe(true);
+      expect(saved[1]).not.toContain('镜子库失联');
+    });
+  });
 });

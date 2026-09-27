@@ -278,4 +278,42 @@ describe('runMorningCockpitBark', () => {
     expect(result).toMatchObject({ sent: true });
     expect(sendBark.mock.calls[0][1]).not.toContain('断言红灯');
   });
+
+  // 镜子库失联行（决策 24a37029）：读 promise-map-nightly 哨兵里 mirror_db_reachable 断言；有失联 → 🔴 RED 行，无则不出行
+  const isNightlySentinelSql = (sql, params) => /FROM working_memory/.test(String(sql)) && params?.[0] === 'promise-map-nightly';
+  const nightlyWith = (results) => ({ value_json: { last_run_at: '2026-09-27T02:00:00.000Z', results } });
+
+  it('[镜子库失联] 守夜探活报红 → Bark 正文出现 🔴 RED 行并点名库名×N', async () => {
+    const pool = {
+      query: vi.fn(async (sql, params) => (isNightlySentinelSql(sql, params)
+        ? { rows: [nightlyWith([{ key: 'mirror_db_reachable', ok: false, lost: [
+          { title: 'AI Journey', table: 'journeys', dbId: 'a', reason: 'in_trash' },
+          { title: 'AI Feature', table: 'journey_features', dbId: 'b', reason: 'in_trash' },
+        ] }])] }
+        : { rows: [] })),
+    };
+    await runMorningCockpitBark(pool);
+    expect(sendBark.mock.calls[0][1]).toContain('🔴 RED 镜子库失联：AI Journey、AI Feature ×2');
+  });
+
+  it('[镜子库失联] 探活全绿不出行；哨兵读取失败不拖垮晨报', async () => {
+    const green = {
+      query: vi.fn(async (sql, params) => (isNightlySentinelSql(sql, params)
+        ? { rows: [nightlyWith([{ key: 'mirror_db_reachable', ok: true, lost: [] }])] }
+        : { rows: [] })),
+    };
+    await runMorningCockpitBark(green);
+    expect(sendBark.mock.calls[0][1]).not.toContain('镜子库失联');
+
+    sendBark.mockClear();
+    const broken = {
+      query: vi.fn(async (sql, params) => {
+        if (isNightlySentinelSql(sql, params)) throw new Error('working_memory down');
+        return { rows: [] };
+      }),
+    };
+    const result = await runMorningCockpitBark(broken);
+    expect(result).toMatchObject({ sent: true });
+    expect(sendBark.mock.calls[0][1]).not.toContain('镜子库失联');
+  });
 });
