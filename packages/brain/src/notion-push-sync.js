@@ -8,7 +8,8 @@ import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 import { pushRegisteredRows, resolveDbId } from './lib/notion-projection-engine.js';
-import { OPS_DB_PROPS, buildTasksDbProps } from './ops-notion-schema.js';
+import { OPS_DB_PROPS, buildTasksDbProps, buildStepLinkDbProps } from './ops-notion-schema.js';
+import { buildStepLinkNotionProperties } from './notion-probe-projection.js';
 import {
   ensureOpsDbProps, inferProviderFromModelId, pickProviderQuota, buildQuotaProps,
 } from './ops-quota-notion.js';
@@ -1098,41 +1099,37 @@ async function pushSkillRegistry(pool, token) {
 // pushJourneySteps 已摘除（2026-09-19，决策 297ffee5）：journey_steps 自 2026-06-09 废弃只读，
 // 主链却仍每 5 分钟往 AI Steps 推死数据。注册表 notion_projection_map 中该库标 archived/none。
 
+/**
+ * journey_step_links → Backbone-Step Map（棒4-2，决策 10a68212）：格子行（cell_kind 非空，承诺地图）与旧连接行一起推，
+ * 增量 = 新行 或 updated_at > notion_synced_at（迁移 478 触发器：cell_status 等非记账列变化才抬）。
+ * 每轮最多 50 行：283 个格子首推约 30 分钟排空，之后每轮只有翻色的行；指纹不变的行引擎只抬 synced 不打 Notion。
+ * 格子列 CellKind/CellKey/CellStatus/AssertionRef + Journey relation 缺列即补；不再要求 step notion_id（AI Steps 已废弃）。
+ */
 async function pushJourneyStepLinks(pool, token) {
-  // journey_step_links 无 updated_at：连接行只增不改，保持 IS NULL 增量
   const { rows } = await pool.query(`
-    SELECT l.*, j.notion_id AS journey_notion_id, s.notion_id AS step_notion_id,
-           j.name AS journey_name, s.name AS step_name
+    SELECT l.*, j.notion_id AS journey_notion_id, j.name AS journey_name, s.name AS step_name
     FROM journey_step_links l
-    LEFT JOIN journeys j ON j.id = l.journey_id
+    JOIN journeys j ON j.id = l.journey_id
     LEFT JOIN journey_steps s ON s.id = l.step_id
-    WHERE l.notion_synced_at IS NULL
-      AND l.cell_kind IS NULL
+    WHERE (l.notion_synced_at IS NULL OR l.updated_at > l.notion_synced_at)
       AND j.notion_id IS NOT NULL
-      AND s.notion_id IS NOT NULL
-    LIMIT 10
+    ORDER BY l.updated_at
+    LIMIT 50
   `);
   if (rows.length === 0) return;
   const dbId = STEP_LINKS_DB || await resolveDbId(pool, 'journey_step_links');
   let schemaProps = {};
   try {
+    const { added } = await ensureOpsDbProps(token, dbId, buildStepLinkDbProps(JOURNEY_DB), { notionReq });
+    if (added.length) console.log(`[step_link] Backbone-Step Map 补列: ${added.join(', ')}`);
     const schema = await notionReq(token, `/databases/${dbId}`, 'GET');
     schemaProps = schema?.properties || {};
-  } catch {
-    schemaProps = {};
+  } catch (err) {
+    await logSyncError(pool, `[step_link] 补列/读 schema 失败: ${err.message}`);
   }
   await pushRegisteredRows(pool, token, {
     table: 'journey_step_links', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'step_link',
-    buildProps: (l) => {
-      const properties = {
-        Name:   { title: [{ text: { content: `${l.journey_name} — ${l.step_name}` } }] },
-        Status: { select: { name: l.status || 'planned' } },
-        ...('Order' in schemaProps && { Order: { number: l.step_order } }),
-      };
-      if (l.journey_notion_id) properties['Journey'] = { relation: [{ id: l.journey_notion_id }] };
-      if (l.step_notion_id) properties['Step'] = { relation: [{ id: l.step_notion_id }] };
-      return properties;
-    },
+    buildProps: (l) => buildStepLinkNotionProperties(l, schemaProps),
   });
 }
 async function pushDecisions(pool, token) {
@@ -1790,5 +1787,12 @@ export async function runNotionPushSync(pool) {
     await runRelayProjection(pool, { token });
   } catch (err) {
     console.warn(`[notion-push-sync] relay projection 失败（非阻断）: ${err.message}`);
+  }
+  // 验证层投影（棒4-2）：探针库 + 判定回执库；库未登记自跳过，吞错不连坐
+  try {
+    const { runProbeProjection } = await import('./notion-probe-projection.js');
+    await runProbeProjection(pool, { token, logSyncError });
+  } catch (err) {
+    console.warn(`[notion-push-sync] probe projection 失败（非阻断）: ${err.message}`);
   }
 }
