@@ -69,7 +69,8 @@ describe('F1 step4 交付有回执 — run.finished 判定线真零件走通', (
 
     const pass = receipts[0];
     expect(pass.sql).toMatch(new RegExp(`'${BUSINESS_PROBE_EXECUTOR_KIND}'`));
-    expect(pass.sql).toMatch(/ON CONFLICT \(run_id, journey_step_link_id, source_sha, impact_contract_hash\) DO NOTHING/);
+    // 迁移 477：唯一键补 assertion_ref_snapshot（同 run 同格多条探针 sha/hash 皆 NULL 不再互吞）
+    expect(pass.sql).toMatch(/ON CONFLICT \(run_id, journey_step_link_id, source_sha, impact_contract_hash, assertion_ref_snapshot\) DO NOTHING/);
     expect(pass.params).toEqual([
       LINK_A, 'run-delivery-1', 2, 'probe:delivery.posts_visible', HASH_A,
       BUSINESS_PROBE_SOURCE_REPO, null,
@@ -105,6 +106,63 @@ describe('F1 step4 交付有回执 — run.finished 判定线真零件走通', (
     expect(receipts[0].params[9]).toBe('FAIL');
     expect(JSON.parse(receipts[0].params[8]).reason).toBe('probe_missing');
     expect(cellUpdates).toEqual([['pending', LINK_A]]);
+  });
+
+  it('同一格三条探针（sha/hash 皆 NULL）：三条 INSERT 冲突目标含 assertion_ref_snapshot 且各不相同；没落库的进 skipped 并 warn 点名，格子照翻（09-27 生产 judged=3 只落 1 行）', async () => {
+    const specs = [
+      probeSpec('delivery.comments_readback', { op: '>=', ref: 'metrics.comments_expected' }),
+      probeSpec('delivery.videos_readback', { op: '>=', ref: 'metrics.videos_expected' }, { hash: HASH_B, severity: 'warn' }),
+      probeSpec('delivery.line_key_not_null', { op: 'not_null_all' }, { hash: 'c'.repeat(64) }),
+    ];
+    const { pool, receipts, cellUpdates } = makePool(specs);
+    // 第二条模拟旧四列键下的 DO NOTHING（rows 空）、第三条模拟库异常——两者都不许静默
+    let n = 0;
+    const base = pool.query.getMockImplementation();
+    pool.query.mockImplementation(async (sql, params) => {
+      if (/INSERT INTO journey_assertion_receipts/.test(sql)) {
+        n += 1;
+        if (n === 2) { receipts.push({ sql, params }); return { rows: [] }; }
+        if (n === 3) { receipts.push({ sql, params }); throw Object.assign(new Error('boom'), { code: '23514' }); }
+      }
+      return base(sql, params);
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = await handleRunFinished({
+      runId: 'social-keyword-leadgen-crontab-auto09262230__a1.delivery', taskId: 't-1', status: 'success',
+      result: {
+        stage: 'delivery', metrics: { comments_expected: 7, videos_expected: 7 },
+        probes: [
+          { key: 'delivery.comments_readback', observed: 7 },
+          { key: 'delivery.videos_readback', observed: 6 },
+          { key: 'delivery.line_key_not_null', observed: ['a'] },
+        ],
+      },
+    }, { pool, persist: persistBusinessProbeReceipt });
+
+    expect(receipts).toHaveLength(3);
+    receipts.forEach((r) => expect(r.sql).toMatch(/ON CONFLICT \(run_id, journey_step_link_id, source_sha, impact_contract_hash, assertion_ref_snapshot\)/));
+    expect(receipts.map((r) => r.params[3])).toEqual([
+      'probe:delivery.comments_readback', 'probe:delivery.videos_readback', 'probe:delivery.line_key_not_null',
+    ]);
+    expect(receipts.every((r) => r.params[0] === LINK_A && r.params[6] === null)).toBe(true);
+
+    expect(out).toMatchObject({
+      judged: 3, persisted: 1,
+      skipped: [
+        { probe_key: 'delivery.videos_readback', reason: 'duplicate' },
+        { probe_key: 'delivery.line_key_not_null', reason: 'db_error:23514:boom' },
+      ],
+      cells: { [LINK_A]: 'pending' },
+    });
+    expect(out.receipts.map((r) => [r.receipt_id, r.persisted, r.skipped_reason])).toEqual([
+      ['rcpt-1', true, null], [null, false, 'duplicate'], [null, false, 'db_error:23514:boom'],
+    ]);
+    expect(cellUpdates).toEqual([['pending', LINK_A]]);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/judged=3 persisted=1 skipped=2/));
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/receipts skipped=2: delivery\.videos_readback=duplicate, delivery\.line_key_not_null=db_error:23514:boom/));
+    log.mockRestore();
+    warn.mockRestore();
   });
 
   it('回执写入抛错（约束拒绝等）不外溢到 finishRun 调用方：返回 {error} 且不翻色', async () => {
