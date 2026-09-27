@@ -154,10 +154,12 @@ describe('business-probe-judge [PostgreSQL] run.finished → 回执 → cell 翻
     expect(again.judged).toBe(2);
     expect(again.persisted).toBe(0);
     expect(again.receipts.every((r) => r.receipt_id === null && r.persisted === false && r.skipped_reason === 'duplicate')).toBe(true);
-    expect(again.skipped).toEqual([
+    // 判定按 probe_key 排序，而 KEY_OK/KEY_WARN 带随机 hex 前缀 → 顺序随机（#5612 CI 实证半数红），比对不认顺序
+    const byKey = (a, b) => a.probe_key.localeCompare(b.probe_key);
+    expect([...again.skipped].sort(byKey)).toEqual([
       { probe_key: KEY_OK, reason: 'duplicate' },
       { probe_key: KEY_WARN, reason: 'duplicate' },
-    ]);
+    ].sort(byKey));
     expect((await receiptsFor(runId)).length).toBe(before);
     expect(await cellStatus(ids.linkOk.id)).toBe('green');
   });

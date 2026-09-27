@@ -94,6 +94,38 @@ export function buildTasksDbProps(tasksDbId) {
 }
 
 /**
+ * 验证层两库（链 bf5088a3 棒4-2，决策 10a68212）：step_probes 全行 →「探针」库；
+ * journey_assertion_receipts 业务探针行 →「判定回执」库。列名按主理人口径中文；
+ * 建库脚本 scripts/ops/create-probe-notion-dbs.js 与推送方 notion-probe-projection.js 共用，缺列即补。
+ */
+export const PROBE_DB_PROPS = {
+  step_probes: {
+    '探针键': { title: {} }, '工作流': { select: {} }, '步骤': { select: {} },
+    '查什么': { rich_text: {} }, '期望': { rich_text: {} }, '严重级': { select: {} },
+    '启用': { checkbox: {} }, '哈希前缀': { rich_text: {} }, '关联格子': { rich_text: {} },
+    '说明': { rich_text: {} },
+  },
+  probe_receipts: {
+    '名称': { title: {} }, '时间': { date: {} }, '批次': { rich_text: {} },
+    '路径名': { rich_text: {} }, '步骤名': { rich_text: {} }, '探针': { rich_text: {} },
+    '读回': { rich_text: {} }, '期望': { rich_text: {} }, '判定': { select: {} },
+    '严重级': { select: {} }, '原因': { rich_text: {} },
+  },
+};
+
+/**
+ * Backbone-Step Map 库（journey_step_links 的镜子）格子列 + Journey relation。
+ * 既有列（Name/Status/Order/Phase/Notes/…）不动；Journey 指向 AI Journey 库，故是函数不是常量。
+ */
+export function buildStepLinkDbProps(journeyDbId) {
+  return {
+    CellKind: { select: {} }, CellKey: { rich_text: {} }, CellStatus: { select: {} },
+    AssertionRef: { rich_text: {} },
+    Journey: { relation: { database_id: journeyDbId, single_property: {} } },
+  };
+}
+
+/**
  * 算出目标库缺哪些列。只返回缺的——已存在的列绝不重发，
  * 免得 PATCH 覆盖掉人在 Notion 上手动调过的列配置（比如 select 的选项颜色）。
  * 列名大小写敏感：Notion 本身就敏感，归一化只会制造重复列。
