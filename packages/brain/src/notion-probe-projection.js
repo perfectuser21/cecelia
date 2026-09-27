@@ -95,8 +95,8 @@ export function buildProbeReceiptProps(r) {
 /**
  * journey_step_links 一行 → Backbone-Step Map 库 properties。
  * 格子行（cell_kind 非空）带 CellKind/CellKey/CellStatus/AssertionRef；旧连接行只有 Name/Status。
- * 库里没有 Journey/Step 列（2026-09-27 实查：Name/Status/Order/Phase/Notes/Step 1/Legacy Step/…），
- * Journey relation 由 buildStepLinkDbProps 缺列即补，Step 不发。
+ * Journey 是文本列（路径名）：AI Journey 库 358c… 与旧 Backbone-Step Map 369c… 2026-09-19 一起进了回收站，
+ * relation 建不了、journeys.notion_id 全指向死页；Step 列不发（AI Steps 已废弃）。
  */
 export function buildStepLinkNotionProperties(l, schemaProps = {}) {
   const label = l.cell_key || l.step_name || l.step_id || '';
@@ -111,7 +111,7 @@ export function buildStepLinkNotionProperties(l, schemaProps = {}) {
     properties.CellStatus = sel(l.cell_status || 'gray');
     properties.AssertionRef = rich(l.assertion_ref || '');
   }
-  if (l.journey_notion_id) properties.Journey = { relation: [{ id: l.journey_notion_id }] };
+  if (l.journey_name) properties.Journey = rich(l.journey_name);
   return properties;
 }
 

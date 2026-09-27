@@ -8,13 +8,16 @@
  * 用法（宿主）：
  *   source ~/.credentials/notion.env && node scripts/ops/create-probe-notion-dbs.js
  */
-import { PROBE_DB_PROPS, diffMissingProps } from '../../packages/brain/src/ops-notion-schema.js';
+import { PROBE_DB_PROPS, buildStepLinkDbProps, diffMissingProps } from '../../packages/brain/src/ops-notion-schema.js';
 
 const NOTION = 'https://api.notion.com/v1';
 const TOKEN = process.env.NOTION_API_KEY;
 // 数据落脚总台账（~/AI-CHARTER.md 总索引页）
 const PARENT_PAGE = process.env.PROBE_DBS_PARENT_PAGE || '3dbc40c2-ba63-810e-b96f-f7523838b411';
-const TITLES = { probes_db: '探针', receipts_db: '判定回执' };
+const TITLES = { probes_db: '探针', receipts_db: '判定回执', step_links_db: '承诺地图格子' };
+// 承诺地图格子（journey_step_links 镜子）：旧 Backbone-Step Map 库 369c… 与 AI Journey 库 358c… 2026-09-19 已进回收站
+// （GET 200 但 POST/PATCH/建 relation 404），09-27 上产实证 188 行写不进去，改在总台账下重建、Journey 只投文本
+const STEP_LINK_DB_PROPS = { Name: { title: {} }, Status: { select: {} }, Order: { number: {} }, ...buildStepLinkDbProps() };
 
 if (!TOKEN) { console.error('NOTION_API_KEY 未设置'); process.exit(1); }
 
@@ -61,8 +64,10 @@ const main = async () => {
   await ensureProps(probes_db, PROBE_DB_PROPS.step_probes, TITLES.probes_db);
   const receipts_db = await ensureDb(TITLES.receipts_db, PROBE_DB_PROPS.probe_receipts);
   await ensureProps(receipts_db, PROBE_DB_PROPS.probe_receipts, TITLES.receipts_db);
-  console.log(JSON.stringify({ probes_db, receipts_db }));
-  console.log('登记：notion_projection_map(step_probes → probes_db, journey_assertion_receipts → receipts_db)，见迁移 478');
+  const step_links_db = await ensureDb(TITLES.step_links_db, STEP_LINK_DB_PROPS);
+  await ensureProps(step_links_db, STEP_LINK_DB_PROPS, TITLES.step_links_db);
+  console.log(JSON.stringify({ probes_db, receipts_db, step_links_db }));
+  console.log('登记：notion_projection_map(step_probes → probes_db, journey_assertion_receipts → receipts_db，见迁移 478；journey_step_links → step_links_db，见迁移 479)');
 };
 
 main().catch((e) => { console.error('❌', e.message); process.exit(1); });

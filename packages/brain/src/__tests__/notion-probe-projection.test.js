@@ -203,7 +203,7 @@ describe('pushStepProbes / pushProbeReceipts — 注册表门 + 业务行过滤 
 });
 
 describe('buildStepLinkNotionProperties — 格子行 props（承诺地图翻色进 Notion）', () => {
-  it('格子行：Name=journey — cell_key，CellKind/CellKey/CellStatus/AssertionRef + Journey relation', async () => {
+  it('格子行：Name=journey — cell_key，CellKind/CellKey/CellStatus/AssertionRef + Journey 文本（AI Journey 库在回收站，不做 relation）', async () => {
     const { buildStepLinkNotionProperties } = await import('../notion-probe-projection.js');
     const p = buildStepLinkNotionProperties({
       journey_name: '客户智能获客路径', step_name: 'delivery', step_order: 4, status: 'planned',
@@ -217,16 +217,19 @@ describe('buildStepLinkNotionProperties — 格子行 props（承诺地图翻色
     expect(p.CellKey.rich_text[0].text.content).toBe('stage:delivery');
     expect(p.CellStatus.select.name).toBe('pending');
     expect(p.AssertionRef.rich_text[0].text.content).toBe('probe:videos_readback,comments_readback');
-    expect(p.Journey.relation).toEqual([{ id: 'jn-1' }]);
+    expect(p.Journey.rich_text[0].text.content).toBe('客户智能获客路径');
+    expect('relation' in p.Journey).toBe(false); // AI Journey 358c… 在回收站，relation 建不了（09-27 实证 404）
     expect('Step' in p).toBe(false); // 库里没有 Step 列（09-27 实查），不能再发
   });
 
-  it('旧连接行（无 cell_kind）：不带 Cell* 键；无 Order 列不发 Order', async () => {
+  it('旧连接行（无 cell_kind）：不带 Cell* 键；无 Order 列不发 Order；无 journey_name 不发 Journey', async () => {
     const { buildStepLinkNotionProperties } = await import('../notion-probe-projection.js');
-    const p = buildStepLinkNotionProperties({ journey_name: 'J', step_name: 'S', step_order: 1, status: 'done', journey_notion_id: null }, {});
+    const p = buildStepLinkNotionProperties({ journey_name: 'J', step_name: 'S', step_order: 1, status: 'done' }, {});
     expect(p.Name.title[0].text.content).toBe('J — S');
     expect('CellStatus' in p).toBe(false);
     expect('Order' in p).toBe(false);
-    expect('Journey' in p).toBe(false);
+    expect(p.Journey.rich_text[0].text.content).toBe('J');
+    const q = buildStepLinkNotionProperties({ journey_name: null, step_name: 'S', step_order: 1, status: 'done' }, {});
+    expect('Journey' in q).toBe(false);
   });
 });
