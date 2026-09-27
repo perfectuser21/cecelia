@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.333.7
+**Brain 版本**: 1.335.0
 
 ## 1.283.0
 
@@ -48,6 +48,19 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.335.0 — 验证层探针/判定回执/格子颜色投影到 Notion 驾驶舱（链 bf5088a3 棒4-2）
+
+- 迁移 478：`step_probes` / `journey_assertion_receipts` 加 notion_id/notion_synced_at/notion_digest 记账列；回执表 append-only 触发器改为只放行「仅记账列变化」的 UPDATE（业务列 UPDATE/DELETE 仍拒，cecelia_test 实测）；`journey_step_links` 加 `updated_at` + 触发器（非记账列变化才抬，引擎回写 synced 不自激）；`notion_projection_map` 登记「探针」`3e8c40c2-ba63-8182-954e-f9eda21d137e`、「判定回执」`3e8c40c2-ba63-81d7-8c48-c70142b3f0bc`（push/active，在「数据落脚总台账」页下由 `scripts/ops/create-probe-notion-dbs.js` 幂等建成）。
+- 新血管 `notion-probe-projection.js`：探针库列=探针键/工作流/步骤/查什么/期望/严重级/启用/哈希前缀/关联格子/说明；判定回执库只投 `executor_kind='business_probe_runner'`（harness 代码断言不投），列=时间/批次(run_id 去 `<workflow>-crontab-`)/路径名/步骤名/探针/读回/期望/判定/严重级/原因；走 `pushRegisteredRows` 指纹去重、resolveDbId 注册表门、缺列即补，挂在 `runNotionPushSync` 末尾吞错不连坐。
+- `pushJourneyStepLinks` 改为推格子行且增量可更新：`notion_synced_at IS NULL OR updated_at > notion_synced_at`、LIMIT 50（283 格子首推约 30 分钟排空，之后只推翻色行）；Backbone-Step Map 补 CellKind/CellKey/CellStatus/AssertionRef/Journey(relation) 列，去掉库里不存在的 Journey/Step 旧写法（09-27 实查该库 0 行、旧推送必 400）。
+- smoke `notion-probe-projection-smoke.sh` 登记 allowlist。
+
+## Brain 1.334.0 — 回执唯一键补 assertion_ref_snapshot：同格多条业务探针回执不再互吞（链 bf5088a3 棒3a-3）
+
+- 迁移 477：`journey_assertion_receipts` 唯一键从 409 的四列 `(run_id, journey_step_link_id, source_sha, impact_contract_hash)` 改为五列补 `assertion_ref_snapshot`（NULLS NOT DISTINCT，幂等 DROP/CREATE IF EXISTS）。09-27 生产实证 run `social-keyword-leadgen-crontab-auto09262230__a1.delivery` judged=3 只落 1 行——业务探针 sha/hash 皆 NULL，后两条被当重复 DO NOTHING 吞掉，FAIL 行丢失致晨报「断言红灯」失明。harness 行一格一断言且 ref 固定，去重语义不变（pg 集成有断言）。
+- `persistTrustedEvaluatorReceipts` / `persistBusinessProbeReceipt` 的 ON CONFLICT 列集同步五列；后者不再静默：返回 `{receipt, persisted, skipped:{probe_key, reason}}`（duplicate / db_error:<code>:<msg>）。
+- `business-probe-judge` 汇总日志 `judged=N persisted=N skipped=M`，skipped 非零 `console.warn` 点名 probe_key=reason；返回值带 `persisted` / `skipped`。
 
 ## Brain 1.333.7 — stage 回执作为已结束的 stage run 落账并触发 run.finished（链 bf5088a3 棒1-brain-2，任务 8e5521ae）
 
