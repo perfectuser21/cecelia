@@ -47,8 +47,8 @@ describe('migration 478', () => {
 
   it('注册表登记两库为 push/active，真库 id 由建库脚本产出', () => {
     expect(sql).toMatch(/INSERT INTO notion_projection_map/);
-    expect(sql).toMatch(/'3e8c40c2-ba63-8182-954e-f9eda21d137e', *'探针', *'mirror', *'step_probes', *'push', *'notion-probe-projection\.pushStepProbes', *'active'/);
-    expect(sql).toMatch(/'3e8c40c2-ba63-81d7-8c48-c70142b3f0bc', *'判定回执', *'mirror', *'journey_assertion_receipts', *'push', *'notion-probe-projection\.pushProbeReceipts', *'active'/);
+    expect(sql).toMatch(/'3e8c40c2-ba63-8182-954e-f9eda21d137e',\s*'探针',\s*'mirror',\s*'step_probes',\s*'push',\s*'notion-probe-projection\.pushStepProbes',\s*'active'/);
+    expect(sql).toMatch(/'3e8c40c2-ba63-81d7-8c48-c70142b3f0bc',\s*'判定回执',\s*'mirror',\s*'journey_assertion_receipts',\s*'push',\s*'notion-probe-projection\.pushProbeReceipts',\s*'active'/);
     expect(sql).toMatch(/ON CONFLICT DO NOTHING/);
   });
 
