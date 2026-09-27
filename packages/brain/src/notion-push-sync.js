@@ -47,7 +47,8 @@ export const TASK_STATUS_TO_NOTION = Object.freeze({
 });
 
 const SKILL_REGISTRY_DB  = '353c40c2-ba63-81bf-ae3e-f0e6fa3753d7';
-const STEP_LINKS_DB      = '369c40c2-ba63-81e2-b95a-e5e3d0592676';
+// 「承诺地图格子」（迁移 479）：旧 Backbone-Step Map 369c… 2026-09-19 进回收站（GET 200 写入 404），09-27 换库
+const STEP_LINKS_DB      = '3e8c40c2-ba63-8194-a47c-dcf5f4b508bb';
 
 /** 代码硬编码的库常量（brain_table → id）。守夜 A9 断言它们 == notion_projection_map；全绿后 resolveDbId 才翻转为注册表优先。 */
 export const LEGACY_DB_CONSTANTS = Object.freeze({
@@ -1103,16 +1104,16 @@ async function pushSkillRegistry(pool, token) {
  * journey_step_links → Backbone-Step Map（棒4-2，决策 10a68212）：格子行（cell_kind 非空，承诺地图）与旧连接行一起推，
  * 增量 = 新行 或 updated_at > notion_synced_at（迁移 478 触发器：cell_status 等非记账列变化才抬）。
  * 每轮最多 50 行：283 个格子首推约 30 分钟排空，之后每轮只有翻色的行；指纹不变的行引擎只抬 synced 不打 Notion。
- * 格子列 CellKind/CellKey/CellStatus/AssertionRef + Journey relation 缺列即补；不再要求 step notion_id（AI Steps 已废弃）。
+ * 格子列 CellKind/CellKey/CellStatus/AssertionRef + Journey（文本）缺列即补；不要求 step/journey notion_id
+ * （AI Steps 已废弃；AI Journey 库 358c… 在回收站，journeys.notion_id 全指向死页，不能做 relation）。
  */
 async function pushJourneyStepLinks(pool, token) {
   const { rows } = await pool.query(`
-    SELECT l.*, j.notion_id AS journey_notion_id, j.name AS journey_name, s.name AS step_name
+    SELECT l.*, j.name AS journey_name, s.name AS step_name
     FROM journey_step_links l
     JOIN journeys j ON j.id = l.journey_id
     LEFT JOIN journey_steps s ON s.id = l.step_id
-    WHERE (l.notion_synced_at IS NULL OR l.updated_at > l.notion_synced_at)
-      AND j.notion_id IS NOT NULL
+    WHERE l.notion_synced_at IS NULL OR l.updated_at > l.notion_synced_at
     ORDER BY l.updated_at
     LIMIT 50
   `);
@@ -1123,7 +1124,7 @@ async function pushJourneyStepLinks(pool, token) {
     // 只读一次 schema：既判 Order 列有无，也算缺列（有缺才 PATCH，不重发已有列）
     const schema = await notionReq(token, `/databases/${dbId}`, 'GET');
     schemaProps = { ...(schema?.properties || {}) };
-    const missing = diffMissingProps(schemaProps, buildStepLinkDbProps(JOURNEY_DB));
+    const missing = diffMissingProps(schemaProps, buildStepLinkDbProps());
     const added = Object.keys(missing);
     if (added.length) {
       await notionReq(token, `/databases/${dbId}`, 'PATCH', { properties: missing });

@@ -114,14 +114,14 @@ export const PROBE_DB_PROPS = {
 };
 
 /**
- * Backbone-Step Map 库（journey_step_links 的镜子）格子列 + Journey relation。
- * 既有列（Name/Status/Order/Phase/Notes/…）不动；Journey 指向 AI Journey 库，故是函数不是常量。
+ * 「承诺地图格子」库（journey_step_links 的镜子，迁移 479 起）：格子列 + Journey 文本列。
+ * Journey 不做 relation：AI Journey 库 358c… 与旧 Backbone-Step Map 369c… 2026-09-19 一起进了回收站
+ * （GET 200 但写入/建 relation 404，09-27 上产实证），journeys.notion_id 全指向死页，只能投路径名文本。
  */
-export function buildStepLinkDbProps(journeyDbId) {
+export function buildStepLinkDbProps() {
   return {
     CellKind: { select: {} }, CellKey: { rich_text: {} }, CellStatus: { select: {} },
-    AssertionRef: { rich_text: {} },
-    Journey: { relation: { database_id: journeyDbId, single_property: {} } },
+    AssertionRef: { rich_text: {} }, Journey: { rich_text: {} },
   };
 }
 
