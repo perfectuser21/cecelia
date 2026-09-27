@@ -144,13 +144,26 @@ describe('runNotionPushSync — new push functions', () => {
     expect(linksQuery).toBeTruthy();
   });
 
-  it('pushJourneyStepLinks SELECT 排除格子行（cell_kind IS NULL）— migration 347/348 后 seed 的 ~120 个格子行不能被当作待推送连接行', async () => {
+  it('pushJourneyStepLinks 推格子行且增量可更新（棒4-2，决策 10a68212）：不再排除 cell_kind、按 updated_at > notion_synced_at 重推、每轮 LIMIT 50', async () => {
+    // 原合同（348 时代）排除格子行防洪水；现在格子颜色要进 Notion 承诺地图（283 行首推每轮 50 行约 30 分钟排空），
+    // 之后每轮只有 cell_status 翻色（迁移 478 触发器抬 updated_at）的行会重推。
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
     const calls = mockQuery.mock.calls.map(c => c[0]);
     const linksQuery = calls.find(q => q && q.includes('journey_step_links') && q.includes('notion_synced_at IS NULL'));
     expect(linksQuery).toBeTruthy();
-    expect(linksQuery).toContain('cell_kind IS NULL');
+    expect(linksQuery).not.toContain('cell_kind IS NULL');
+    expect(linksQuery).toMatch(/l\.updated_at > l\.notion_synced_at/);
+    expect(linksQuery).toMatch(/LIMIT 50/);
+  });
+
+  it('runNotionPushSync 末尾挂接验证层投影 runProbeProjection（吞错不连坐）', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../notion-push-sync.js', import.meta.url), 'utf8');
+    expect(src).toMatch(/import\('\.\/notion-probe-projection\.js'\)/);
+    expect(src).toMatch(/await runProbeProjection\(pool, \{ token, logSyncError \}\)/);
+    expect(src).toMatch(/buildStepLinkNotionProperties\(l, schemaProps\)/);
+    expect(src).toMatch(/buildStepLinkDbProps\(JOURNEY_DB\)/);
   });
 
   it('pushSkillRegistry 对已同步但内容变更的 skill 执行 PATCH 而非跳过 — insert-only 缺陷回归', async () => {
