@@ -33,7 +33,7 @@ assert_not_contains() {
 }
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+trap 'chmod -R u+w "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
 
 # ── 测试替身 ─────────────────────────────────────────────────────────────
 # 进程清单注入：每行 "pid ppid 命令"，模拟 ps 输出
@@ -45,6 +45,9 @@ mk_env() {
   export OPG_KILL_LOG="$WORK/killed.txt"
   export OPG_STATE_DIR="$WORK"
   export OPG_DRY_RUN=0
+  # ⑤ 默认隔离：不许碰真实 ~/.openclaw/tmp、不许让真实磁盘水位左右别的用例
+  mkdir -p "$WORK/nocap"
+  export OPG_CAPTURE_ROOT="$WORK/nocap" OPG_INUSE_PATHS=/dev/null OPG_DISK_AVAIL_GB=50
 }
 
 echo "▶️  openclaw-process-guard 守卫测试"
@@ -158,6 +161,59 @@ assert_contains "$OUT" "网关" "网关不在 → 出声说明"
 KILLED="$(cat "$WORK/killed.txt")"
 [ -z "$KILLED" ] && ok "网关不在 → 一个都不收（网关可能正在重启）" \
                  || bad "网关不在却收割了：$KILLED —— 会把刚起来的链一起带走"
+
+# ── ⑤ 孤儿插件捕获目录回收 + 磁盘水位闸 ─────────────────────────────
+# 2026-09-28 22:59 事故：网关每代模型目录都把 codex 插件（~294MB，含 codex 二进制）
+# 拷进 ~/.openclaw/tmp/openclaw-model-catalog-* / openclaw-plugin-build-*。
+# 旧网关实例被杀后这些 legacy 根目录无人认领（新版运行时不回收，doctor --fix 还要求先停网关），
+# 5 天攒到 14GB 把盘写满 → codex 插件加载 ENOSPC → 网关运行时异常退出。
+mk_env
+CAP="$WORK/octmp"; mkdir -p "$CAP"
+mkdir -p "$CAP/openclaw-model-catalog-OLD1/openclaw-plugin-build-x" "$CAP/openclaw-plugin-build-OLD2" \
+         "$CAP/openclaw-plugin-build-BUSY" "$CAP/openclaw-model-catalog-FRESH" "$CAP/plugin-captures/uuid-1" \
+         "$CAP/agent-cli"
+chmod 555 "$CAP/openclaw-model-catalog-OLD1/openclaw-plugin-build-x"   # 模拟包里的只读目录
+touch -t 202609230000 "$CAP/openclaw-model-catalog-OLD1" "$CAP/openclaw-plugin-build-OLD2" \
+      "$CAP/openclaw-plugin-build-BUSY" "$CAP/plugin-captures" "$CAP/agent-cli"
+echo "$CAP/openclaw-plugin-build-BUSY/package-2/node_modules/x.node" > "$WORK/inuse.txt"
+cat > "$WORK/ps.txt" <<'PS'
+27020 1 /opt/homebrew/opt/node/bin/node openclaw/dist/index.js gateway --port 18789
+PS
+OUT=$(OPG_TTL_VALUE="900000" OPG_CAPTURE_ROOT="$CAP" OPG_INUSE_PATHS="$WORK/inuse.txt" \
+      OPG_DISK_AVAIL_GB=50 bash "$GUARD" 2>&1); RC=$?
+[ ! -e "$CAP/openclaw-model-catalog-OLD1" ] && ok "超龄无主的 model-catalog 根目录被回收（含只读子目录）" \
+                                            || bad "超龄无主的 model-catalog 根目录没被回收 —— 盘会再被写满"
+[ ! -e "$CAP/openclaw-plugin-build-OLD2" ] && ok "超龄无主的 plugin-build 根目录被回收" \
+                                           || bad "超龄无主的 plugin-build 根目录没被回收"
+[ -e "$CAP/openclaw-plugin-build-BUSY" ] && ok "仍有进程打开其中文件的目录不许删" \
+                                         || bad "删了进程正在用的捕获目录 —— 会把在跑的插件拉崩"
+[ -e "$CAP/openclaw-model-catalog-FRESH" ] && ok "未超龄的目录不许删（可能是刚起的网关正在写）" \
+                                           || bad "删了刚创建的捕获目录"
+[ -e "$CAP/plugin-captures/uuid-1" ] && ok "新版带令牌的 plugin-captures 归网关自己管，不碰" \
+                                     || bad "越权删了新版 plugin-captures"
+[ -e "$CAP/agent-cli" ] && ok "非捕获目录不碰" || bad "误删了非捕获目录 agent-cli"
+assert_contains "$OUT" "回收孤儿捕获目录 2 个" "回收数量写进日志"
+[ "$RC" -eq 0 ] && ok "回收成功 + 水位正常 → 通过" || bad "回收成功却退出码非 0"
+
+# 磁盘水位闸：可用 < 10GB 必须出声（22:59 那次 ENOSPC 前毫无告警）
+mk_env
+cat > "$WORK/ps.txt" <<'PS'
+27020 1 /opt/homebrew/opt/node/bin/node openclaw/dist/index.js gateway --port 18789
+PS
+mkdir -p "$WORK/emptycap"
+OUT=$(OPG_TTL_VALUE="900000" OPG_CAPTURE_ROOT="$WORK/emptycap" OPG_INUSE_PATHS=/dev/null \
+      OPG_DISK_AVAIL_GB=6 bash "$GUARD" 2>&1); RC=$?
+assert_contains "$OUT" "磁盘可用 6GB" "磁盘低水位 → 报出真实可用量"
+[ "$RC" -ne 0 ] && ok "磁盘低水位 → 退出码非 0" || bad "磁盘只剩 6GB 却判通过（22:59 就是这么死的）"
+
+# 网关不在（多半正是被写满的盘拖死）时也要回收 —— 否则它永远起不来
+mk_env
+: > "$WORK/ps.txt"
+mkdir -p "$WORK/cap2/openclaw-plugin-build-DEAD"; touch -t 202609230000 "$WORK/cap2/openclaw-plugin-build-DEAD"
+OUT=$(OPG_TTL_VALUE="900000" OPG_CAPTURE_ROOT="$WORK/cap2" OPG_INUSE_PATHS=/dev/null \
+      OPG_DISK_AVAIL_GB=50 bash "$GUARD" 2>&1)
+[ ! -e "$WORK/cap2/openclaw-plugin-build-DEAD" ] && ok "网关不在时照样回收无主捕获目录（腾盘让它能起来）" \
+                                                 || bad "网关被写满的盘拖死后守卫不腾盘 —— 死循环"
 
 printf '\n结果: PASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
