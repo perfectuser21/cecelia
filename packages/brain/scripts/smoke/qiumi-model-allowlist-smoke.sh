@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # packages/brain/scripts/smoke/qiumi-model-allowlist-smoke.sh
-# Smoke: 秋米路由认正文「用 <型号>」（只认 QIUMI_MODEL_ALLOWLIST）真库闸——
-#   假 Jev（注入 fetchFn）+ 真 Postgres（cecelia_test），不打真 LLM、不碰真机。
-# 闸 0 清单到位 / 闸 1 全名命中压过 engine 查表并落两张真表 / 闸 2 短名歧义（opus-5 不撞 opus-5-5、纯后缀 sol）
-#   / 闸 3 不写型号回落 modelMap[engine] + 「用 claude」走 anthropic 原生。
-# 判定层旧三闸在 qiumi-routing-smoke.sh，手机活开关在 qiumi-phone-agent-smoke.sh，本刀都不重复。
+# Smoke: 秋米模型选择真库闸（任务 0d4215f2 起）——假 Jev（注入 fetchFn）+ 真 Postgres（cecelia_test），
+#   不打真 LLM、不碰真机。模型只认正文【执行参数】块的「模型」字段，正文自由文字不产生模型，不写即为空。
+# 闸 0 清单到位 / 闸 1 参数块全名落两张真表 / 闸 2 精确匹配 + 非精确词判参数错误
+#   / 闸 3 回归：模板「调用Agent：」不产生模型、不写模型库里为空 / 闸 4 写明执行者直派不问 Jev。
 # 闸的内容见 .mjs 头注释。只删自己插的行（固定 title 前缀带 pid），绝不动别人的行。
 set -euo pipefail
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }

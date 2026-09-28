@@ -144,8 +144,9 @@ async function main() {
     const events = await eventTypes(t.id);
     check(1, decision.outcome === 'agent', `outcome=agent（实得 ${decision.outcome}）`);
     check(1, jevCalls === before + 1, `问过一次 Jev（实得 ${jevCalls - before} 次）`);
-    check(1, row.payload.model === 'anthropic/claude-sonnet-5',
-      `便宜闸 claude 压过 Jev 的 codex，model=${row.payload.model}`);
+    // 0d4215f2：便宜闸 claude 仍压过 Jev 的 codex（engine），但模型只认执行参数，不写即为空
+    check(1, row.payload.engine === 'claude', `便宜闸 claude 压过 Jev 的 codex，engine=${row.payload.engine}`);
+    check(1, row.payload.model === null, `没写执行参数模型 → model 为空（实得 ${row.payload.model}）`);
     check(1, /^qiumi-[0-9a-f]{8}-\d{10,}$/.test(row.payload.run_id ?? ''), `run_id 合规=${row.payload.run_id}`);
     check(1, row.payload.qiumi_department === 'dev', `department=${row.payload.qiumi_department}`);
     check(1, events.includes('qiumi_route_decided'), `task_events 留痕=${events.join(',')}`);
