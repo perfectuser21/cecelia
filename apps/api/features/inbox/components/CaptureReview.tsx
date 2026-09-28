@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   CheckCircle2, X, RefreshCw, FileText, BookOpen,
-  Rss, CheckSquare, Scale, Calendar, ChevronDown, ChevronUp,
+  CheckSquare, Scale, ChevronDown, ChevronUp,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -26,10 +26,8 @@ interface CaptureAtom {
 const TARGET_TYPE_CONFIG: Record<string, { icon: React.ElementType; color: string; label: string }> = {
   notes:        { icon: FileText,    color: 'text-blue-500 bg-blue-50 dark:bg-blue-900/30',      label: '笔记' },
   knowledge:    { icon: BookOpen,    color: 'text-purple-500 bg-purple-50 dark:bg-purple-900/30', label: '知识' },
-  content_seed: { icon: Rss,         color: 'text-orange-500 bg-orange-50 dark:bg-orange-900/30', label: '内容种子' },
   task:         { icon: CheckSquare, color: 'text-green-500 bg-green-50 dark:bg-green-900/30',   label: '任务' },
   decision:     { icon: Scale,       color: 'text-red-500 bg-red-50 dark:bg-red-900/30',         label: '决策' },
-  event:        { icon: Calendar,    color: 'text-cyan-500 bg-cyan-50 dark:bg-cyan-900/30',      label: '事件' },
 };
 
 const SUBTYPES: Record<string, string[]> = {

@@ -11,7 +11,6 @@ import opsRouter from './routes/ops.js';
 import publishResultsRouter from './routes/publish-results.js';
 import publishJobsRouter from './routes/publish-jobs.js';
 import capacityBudgetRouter from './routes/capacity-budget.js';
-import devReviewsRouter from './routes/dev-reviews.js';
 import registryRouter from './routes/registry.js';
 import machinesRouter from './routes/machines.js';
 import skillsRouter from './routes/skills.js';
@@ -42,7 +41,7 @@ export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
 
 const router = Router();
-for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, publishResultsRouter, publishJobsRouter, capacityBudgetRouter, devReviewsRouter, harnessSelftestRouter]) {
+for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, publishResultsRouter, publishJobsRouter, capacityBudgetRouter, harnessSelftestRouter]) {
   router.stack.push(...subRouter.stack);
 }
 

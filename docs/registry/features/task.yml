@@ -509,7 +509,6 @@ features:
         - packages/brain/src/__tests__/cto-review-callback.test.js
         - packages/brain/src/__tests__/deploy-status.test.js
         - packages/brain/src/__tests__/dev-failure-classifier.test.js
-        - packages/brain/src/__tests__/dev-logs.test.js
         - packages/brain/src/__tests__/dev-pipeline-health.test.js
         - packages/brain/src/__tests__/executor-billing-pause-persist.test.js
         - packages/brain/src/__tests__/executor-code-review-env.test.js
@@ -554,7 +553,6 @@ features:
         - packages/brain/src/__tests__/prompt-time-context.test.js
         - packages/brain/src/__tests__/resolve-repo-path.test.js
         - packages/brain/src/__tests__/review-gate.test.js
-        - packages/brain/src/__tests__/routes/dev-logs.test.js
         - packages/brain/src/__tests__/session-tracking.test.js
         - packages/brain/src/__tests__/staff-skills-api.test.js
         - packages/brain/src/__tests__/templates.test.js
@@ -590,7 +588,6 @@ features:
             - packages/brain/src/__tests__/cto-review-callback.test.js
             - packages/brain/src/__tests__/deploy-status.test.js
             - packages/brain/src/__tests__/dev-failure-classifier.test.js
-            - packages/brain/src/__tests__/dev-logs.test.js
             - packages/brain/src/__tests__/dev-pipeline-health.test.js
             - packages/brain/src/__tests__/executor-billing-pause-persist.test.js
             - packages/brain/src/__tests__/executor-code-review-env.test.js
@@ -635,7 +632,6 @@ features:
             - packages/brain/src/__tests__/prompt-time-context.test.js
             - packages/brain/src/__tests__/resolve-repo-path.test.js
             - packages/brain/src/__tests__/review-gate.test.js
-            - packages/brain/src/__tests__/routes/dev-logs.test.js
             - packages/brain/src/__tests__/session-tracking.test.js
             - packages/brain/src/__tests__/staff-skills-api.test.js
             - packages/brain/src/__tests__/templates.test.js
