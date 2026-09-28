@@ -32,7 +32,9 @@ beforeEach(() => __resetOpsCollectorForTest());
 
 describe('runOpsCollector', () => {
   it('OpenClaw 命令写死配置路径（禁 find/通配）', () => {
-    expect(OPENCLAW_CONFIG_CMD).toContain('.openclaw/clawdbot.json');
+    // 0928：clawdbot.json 自 09-21 起不再更新（23 个 agent），OpenClaw 真在用的是 openclaw.json（30 个）
+    expect(OPENCLAW_CONFIG_CMD).toContain('.openclaw/openclaw.json');
+    expect(OPENCLAW_CONFIG_CMD).not.toContain('clawdbot.json');
     expect(OPENCLAW_CONFIG_CMD).not.toContain('find');
   });
 
