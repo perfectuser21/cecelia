@@ -51,8 +51,8 @@ services:
       # 2026-09-12 生产实证：导致 os.homedir() 拼错路径，harness-credentials.js
       # 读不到这份凭据文件 → github_token_unavailable）。
       - /root/.credentials:/root/.credentials:ro
-      # Workflows: staff + skills + agents (read-only for staff/skills-registry API)
-      - /root/cecelia/packages/workflows:/root/cecelia/packages/workflows:ro
+      # packages/workflows 不再单独叠只读挂载（09-28 事故，任务 ddee8737）：部署根守卫在本容器内对部署根
+      # git checkout -f / reset --hard，只读子挂载让任何改到该目录的提交都部署失败。该目录随部署根整体可写。
       # Config: OKR validation spec (read-only, mounted at /config for validate-okr-structure.js)
       - /root/cecelia/packages/config:/config:ro
       # HEARTBEAT.md (read-write for GET/PUT API)
