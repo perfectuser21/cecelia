@@ -343,3 +343,4 @@ business-probe-judge-smoke.sh
 callback-stage-receipt-smoke.sh
 notion-probe-projection-smoke.sh
 mirror-trash-guard-smoke.sh
+backbone-contract-sync-smoke.sh
