@@ -20,49 +20,6 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: typeof
   expired:  { label: '已过期', color: 'text-gray-500 bg-gray-50 border-gray-200', icon: Archive },
 };
 
-function AnnotationBox({ entityId }: { entityId: string }) {
-  const { data, refresh } = useApi<{ success: boolean; data: Array<{ id: string; content: string; created_at: string }> }>(
-    `/api/brain/user-annotations?entity_type=decision&entity_id=${entityId}`,
-    { staleTime: 15_000 }
-  );
-  const [text, setText] = useState('');
-
-  async function add() {
-    if (!text.trim()) return;
-    await fetch('/api/brain/user-annotations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entity_type: 'decision', entity_id: entityId, content: text }),
-    });
-    setText('');
-    refresh();
-  }
-
-  const list = data?.data || [];
-  return (
-    <div className="mt-2 pt-2 border-t border-gray-100">
-      {list.map(a => (
-        <p key={a.id} className="text-xs text-gray-600 bg-yellow-50 rounded px-2 py-1 mb-1">
-          {a.content}
-        </p>
-      ))}
-      <div className="flex gap-1 mt-1">
-        <input
-          className="flex-1 text-xs border border-gray-200 rounded px-2 py-0.5 focus:outline-none focus:border-blue-300"
-          placeholder="添加备注..."
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && add()}
-        />
-        <button onClick={add} disabled={!text.trim()}
-          className="text-xs px-2 py-0.5 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-40">
-          <Plus size={10} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function DecisionCard({ d, onStatusChange }: { d: Decision; onStatusChange: () => void }) {
   const cfg = STATUS_CONFIG[d.status] || STATUS_CONFIG.active;
   const Icon = cfg.icon;
@@ -92,7 +49,6 @@ function DecisionCard({ d, onStatusChange }: { d: Decision; onStatusChange: () =
           {d.decision && <p className="text-sm text-gray-700">{d.decision}</p>}
           {d.reason && <p className="text-xs text-gray-500 mt-1">原因：{d.reason}</p>}
           <p className="text-xs text-gray-400 mt-1">{new Date(d.created_at).toLocaleDateString('zh-CN')}</p>
-          <AnnotationBox entityId={d.id} />
         </div>
         <select
           value={d.status}
