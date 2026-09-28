@@ -33,7 +33,7 @@ assert_not_contains() {
 }
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+trap 'chmod -R u+w "$WORK" 2>/dev/null; rm -rf "$WORK"' EXIT
 
 # ── 测试替身 ─────────────────────────────────────────────────────────────
 # 进程清单注入：每行 "pid ppid 命令"，模拟 ps 输出
@@ -45,6 +45,9 @@ mk_env() {
   export OPG_KILL_LOG="$WORK/killed.txt"
   export OPG_STATE_DIR="$WORK"
   export OPG_DRY_RUN=0
+  # ⑤ 默认隔离：不许碰真实 ~/.openclaw/tmp、不许让真实磁盘水位左右别的用例
+  mkdir -p "$WORK/nocap"
+  export OPG_CAPTURE_ROOT="$WORK/nocap" OPG_INUSE_PATHS=/dev/null OPG_DISK_AVAIL_GB=50
 }
 
 echo "▶️  openclaw-process-guard 守卫测试"

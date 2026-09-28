@@ -19,6 +19,7 @@
 #      收割会把刚起来的链一起带走
 #   ③ 只收孤儿：顺 ppid 往上走，走不到任何活网关的才算孤儿
 #   ④ 阈值告警：链上进程数越线出声，但**越线不等于授权杀活进程**
+#   ⑤ 孤儿插件捕获目录回收 + 磁盘水位闸（0928 磁盘写满崩溃后补；代码里排在②之前）
 #
 # ⚠️ 铁律：绝不碰活网关的子孙进程，更不碰网关本体。
 #    janitor 就是把活着的网关当孤儿杀，导致迁移后 18 条业务 cron 成功率 0
@@ -26,6 +27,7 @@
 #
 # 测试注入：OPG_PS_SNAPSHOT / OPG_TTL_VALUE / OPG_KILL_LOG / OPG_STATE_DIR
 #           OPG_CHAIN_WARN_THRESHOLD
+#           OPG_CAPTURE_ROOT / OPG_INUSE_PATHS / OPG_DISK_AVAIL_GB / OPG_DISK_MIN_GB
 set -uo pipefail
 
 export PATH="${OPG_PATH:-/opt/homebrew/bin:/usr/local/bin}:$PATH"
@@ -87,6 +89,55 @@ if [[ ! "$TTL" =~ ^[0-9]+$ ]] || [[ "$TTL" -eq 0 ]]; then
   send_alert "[MMV 守卫] mcp.sessionIdleTtlMs 漂移为 '${TTL:-未设}'，MCP 运行时将不再回收"
 else
   note "配置闸通过：mcp.sessionIdleTtlMs=${TTL}ms"
+fi
+
+# ── ⑤ 孤儿插件捕获目录回收 + 磁盘水位闸 ────────────────────────────────
+# 2026-09-28 22:59 事故：网关每代模型目录把 codex 插件（~294MB，含 codex 二进制）拷进
+# ~/.openclaw/tmp/openclaw-model-catalog-* / openclaw-plugin-build-*。旧网关实例被杀后
+# 这些 legacy 根目录无人认领（新版运行时不回收；doctor --fix 还要求先停网关），
+# 5 天攒到 14GB 写满磁盘 → codex 插件加载 ENOSPC → 网关运行时异常退出。
+#
+# 排在「网关在不在」之前：网关多半正是被写满的盘拖死的，这时不腾盘它永远起不来。
+# 删除只认三条同时成立：legacy 根目录名 + 超龄（默认 6h）+ 没有任何进程打开其中文件。
+# 新版 plugin-captures/<uuid> 带所有权令牌，归网关自己回收，不碰。
+CAPTURE_ROOT="${OPG_CAPTURE_ROOT:-$HOME/.openclaw/tmp}"
+CAPTURE_MIN_AGE_MIN="${OPG_CAPTURE_MIN_AGE_MIN:-360}"
+DISK_MIN_GB="${OPG_DISK_MIN_GB:-10}"
+
+read_inuse_paths() {
+  if [[ -n "${OPG_INUSE_PATHS:-}" ]]; then cat "$OPG_INUSE_PATHS" 2>/dev/null; return; fi
+  lsof -nP -Fn -c node -c codex -c openclaw 2>/dev/null | sed -n 's/^n//p'
+}
+
+if [[ -d "$CAPTURE_ROOT" ]]; then
+  INUSE="$(read_inuse_paths)"
+  reaped=0
+  while IFS= read -r dir; do
+    [[ -z "$dir" ]] && continue
+    if printf '%s\n' "$INUSE" | grep -qF -- "$dir/"; then
+      note "捕获目录仍被进程占用，保留：$dir"
+      continue
+    fi
+    chmod -R u+w "$dir" 2>/dev/null
+    if rm -rf "$dir" 2>/dev/null && [[ ! -e "$dir" ]]; then
+      reaped=$((reaped+1))
+    else
+      fault "孤儿捕获目录删除失败：$dir"
+    fi
+  done < <(find "$CAPTURE_ROOT" -mindepth 1 -maxdepth 1 -type d \
+             \( -name 'openclaw-model-catalog-*' -o -name 'openclaw-plugin-build-*' -o -name 'openclaw-cli-mcp-*' \) \
+             -mmin +"$CAPTURE_MIN_AGE_MIN" 2>/dev/null)
+  note "回收孤儿捕获目录 ${reaped} 个"
+fi
+
+DISK_AVAIL_GB="${OPG_DISK_AVAIL_GB:-$(df -g "$HOME" 2>/dev/null | awk 'NR==2 {print $4}')}"
+if [[ "$DISK_AVAIL_GB" =~ ^[0-9]+$ ]] && [[ "$DISK_AVAIL_GB" -lt "$DISK_MIN_GB" ]]; then
+  fault "磁盘可用 ${DISK_AVAIL_GB}GB，低于 ${DISK_MIN_GB}GB 水位。" \
+        "网关每代模型目录要拷 ~300MB 插件，写满即 ENOSPC 崩溃（0928 22:59 实测）。" \
+        "先 du -sh ~/.openclaw/tmp ~/.openclaw/agents ~/worktrees 找大头。"
+  send_alert "[MMV 守卫] 磁盘可用仅 ${DISK_AVAIL_GB}GB（<${DISK_MIN_GB}GB），OpenClaw 网关有 ENOSPC 崩溃风险"
+else
+  note "磁盘可用 ${DISK_AVAIL_GB:-?}GB"
 fi
 
 # ── 找网关与进程链 ──────────────────────────────────────────────────────
