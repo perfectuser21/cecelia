@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.336.0
+**Brain 版本**: 1.336.2
 
 ## 1.283.0
 
@@ -48,6 +48,16 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.336.2 — 探针判定：阶段没跑（blocked）不判（任务 4ca3b584）
+
+- `business-probe-judge.handleRunFinished`：`result.stage_status === 'blocked'`（not_in_profile / no_cards / lock_busy / push=0 skipped，阶段根本没跑）直接 `skipped: stage_not_run`，不写回执、不翻格子色。此前账本 init 开跑即写 scoring blocked 占位工件，探针读到「本批 0 条待分拣」判 PASS，评分格子整天假绿
+- `failed`（跑了但失败）照判，不受影响
+
+## Brain 1.336.1 — Backbone Activities 契约写入 Notion 页面正文（任务 d852c852）
+
+- `backbone-contract-sync` 每轮在推属性后重写页面正文：只读提示（链回 git 正本）→ 对外承诺 → 输入输出 → 开工前提 → 做完怎么判定 → 步骤 → 出错怎么办 → 预算与限额 → 副作用与模型 → 已知缺口 → 负责人/执行/版本/指纹
+- 正文完全由 `journey_steps.contract` 生成、单向只读；迁移 483 加 `notion_body_digest`，指纹不变不打 Notion，变了整段替换（每轮最多 3 页）；属性列本次不动
 
 ## Brain 1.336.0 — 主干活动契约 git→Brain→Notion 自动同步（决策 0834e2fb / 92f6226b）
 
