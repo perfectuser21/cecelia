@@ -11,50 +11,6 @@ interface DiaryEntry {
   created_at: string;
 }
 
-function AnnotationBox({ entityId }: { entityId: string }) {
-  const { data, refresh } = useApi<{ success: boolean; data: Array<{ id: string; content: string; created_at: string }> }>(
-    `/api/brain/user-annotations?entity_type=design_doc&entity_id=${entityId}`,
-    { staleTime: 15_000 }
-  );
-  const [text, setText] = useState('');
-
-  async function add() {
-    if (!text.trim()) return;
-    await fetch('/api/brain/user-annotations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entity_type: 'design_doc', entity_id: entityId, content: text }),
-    });
-    setText('');
-    refresh();
-  }
-
-  return (
-    <div className="mt-4 pt-4 border-t border-gray-100">
-      <p className="text-xs text-gray-400 mb-2">追加备注</p>
-      {(data?.data || []).map(a => (
-        <div key={a.id} className="bg-yellow-50 border border-yellow-200 rounded px-3 py-2 mb-2 text-sm text-gray-700">
-          {a.content}
-          <span className="text-xs text-gray-400 ml-2">{new Date(a.created_at).toLocaleDateString('zh-CN')}</span>
-        </div>
-      ))}
-      <div className="flex gap-2">
-        <input
-          className="flex-1 text-sm border border-gray-200 rounded px-3 py-1.5 focus:outline-none focus:border-blue-400"
-          placeholder="追加备注..."
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && add()}
-        />
-        <button onClick={add} disabled={!text.trim()}
-          className="text-sm px-3 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-40 flex items-center gap-1">
-          <Plus size={12} /> 添加
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export default function DailyDiary() {
   const { data, loading } = useApi<{ success: boolean; data: DiaryEntry[] }>(
     '/api/brain/design-docs?type=diary&limit=30',
@@ -121,7 +77,6 @@ export default function DailyDiary() {
             <pre className="text-sm text-gray-700 whitespace-pre-wrap font-sans leading-relaxed">
               {displaySelected.content}
             </pre>
-            <AnnotationBox entityId={displaySelected.id} />
           </div>
         )}
       </div>
