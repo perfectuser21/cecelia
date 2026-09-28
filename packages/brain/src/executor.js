@@ -459,24 +459,13 @@ function sampleCpuUsage() {
 function _resetCpuSampler() { platformResetCpuSampler(); }
 
 /**
- * Resolve repo_path from a project, checking project_repos first, then parent chain.
+ * Resolve repo_path from a project via okr_* metadata, then parent chain（project_repos 空表已删，迁移 482）.
  * Initiatives (sub-projects) have parent_id but no repo_path — walk up to find it.
  * Max 5 levels to prevent infinite loops.
  */
 async function resolveRepoPath(projectId) {
   let currentId = projectId;
   for (let depth = 0; depth < 5 && currentId; depth++) {
-    // Check project_repos table first (multi-repo support)
-    try {
-      const repoResult = await pool.query(
-        'SELECT repo_path FROM project_repos WHERE project_id = $1 LIMIT 1',
-        [currentId]
-      );
-      if (repoResult.rows.length > 0) return repoResult.rows[0].repo_path;
-    } catch {
-      // project_repos table may not exist yet (pre-migration 029)
-    }
-
     // Fallback to okr_initiatives/okr_scopes/okr_projects metadata.repo_path（迁移：projects → new tables）
     const result = await pool.query(
       `SELECT metadata->>'repo_path' AS repo_path, NULL::uuid AS parent_id

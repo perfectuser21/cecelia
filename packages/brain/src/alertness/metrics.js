@@ -197,15 +197,7 @@ function collectCPUMetric() {
  * 收集响应时间指标
  */
 async function collectResponseTimeMetric() {
-  // 获取最近 Tick 执行时间
-  const recentTickTime = await getRecentTickTime();
-
-  if (recentTickTime !== null) {
-    responseTimeHistory.push(recentTickTime);
-    if (responseTimeHistory.length > MAX_RESPONSE_HISTORY) {
-      responseTimeHistory.shift();
-    }
-  }
+  // tick_history 从未有写入方（空表，迁移 482 删除）；响应时间历史目前无数据源，保持原行为（空历史 → 0）。
 
   // 计算平均响应时间
   const avgResponseTime = responseTimeHistory.length > 0
@@ -310,29 +302,6 @@ function getThresholdStatus(value, thresholds) {
   if (value >= thresholds.danger) return 'danger';
   if (value >= thresholds.warning) return 'warning';
   return 'normal';
-}
-
-/**
- * 获取最近 Tick 执行时间
- */
-async function getRecentTickTime() {
-  const client = await pool.connect();
-  try {
-    const result = await client.query(`
-      SELECT execution_time_ms
-      FROM tick_history
-      WHERE completed_at IS NOT NULL
-      ORDER BY started_at DESC
-      LIMIT 1
-    `);
-
-    return result.rows.length > 0 ? result.rows[0].execution_time_ms : null;
-  } catch (error) {
-    console.error('[Metrics] Failed to get tick time:', error);
-    return null;
-  } finally {
-    client.release();
-  }
 }
 
 /**

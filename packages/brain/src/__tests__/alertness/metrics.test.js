@@ -122,7 +122,6 @@ describe('alertness/metrics', () => {
 
     it('队列深度来自 DB 查询', async () => {
       mockClientQuery
-        .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // getRecentTickTime
         .mockResolvedValueOnce({ rows: [{ count: '25' }], rowCount: 1 }); // getQueueDepth
       const metrics = await collectMetrics();
       expect(metrics.queueDepth.value).toBe(25);
@@ -136,25 +135,6 @@ describe('alertness/metrics', () => {
       });
       const metrics = await collectMetrics();
       expect(metrics.queueDepth.value).toBe(0);
-    });
-
-    it('tick 历史中有执行时间时更新响应时间', async () => {
-      // 第1次 connect：getRecentTickTime 返回 3000ms
-      // 第2次 connect：getQueueDepth 返回 0
-      const clientWithTick = {
-        query: vi.fn().mockResolvedValue({ rows: [{ execution_time_ms: 3000 }], rowCount: 1 }),
-        release: mockRelease
-      };
-      const clientWithQueue = {
-        query: vi.fn().mockResolvedValue({ rows: [{ count: '0' }], rowCount: 1 }),
-        release: mockRelease
-      };
-      mockConnect
-        .mockResolvedValueOnce(clientWithTick)
-        .mockResolvedValueOnce(clientWithQueue);
-      const metrics = await collectMetrics();
-      expect(metrics.responseTime.value).toBeGreaterThan(0);
-      expect(metrics.responseTime.unit).toBe('ms');
     });
 
     it('错误率基于 operationHistory', async () => {

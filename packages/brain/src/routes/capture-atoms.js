@@ -210,16 +210,6 @@ async function routeAtomToTarget(client, atom, targetType, targetSubtype, areaId
       return { routedTable: 'knowledge', routedId: r.rows[0].id };
     }
 
-    case 'content_seed': {
-      const r = await client.query(
-        `INSERT INTO content_topics (title, body_draft, status)
-         VALUES ($1, $2, 'pending')
-         RETURNING id`,
-        [atom.content.slice(0, 120), atom.content]
-      );
-      return { routedTable: 'content_topics', routedId: r.rows[0].id };
-    }
-
     case 'task': {
       const routed = await createRoutedTask(client, {
         source: 'inbox', source_id: String(atom.id), title: atom.content.slice(0, 200),
