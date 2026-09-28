@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # 手工验证 stop_hook_remove_merged_worktree：locked worktree 必须真正被删除，
 # 且"已清理"日志只在真实删除成功时打印（回归修复：此前无条件打印导致假成功）
-# 用法：bash packages/engine/hooks/tests/stop-worktree-removal.manual-test.sh
+# 用法：bash packages/engine/tests/unit/stop-worktree-removal.test.sh
 set -euo pipefail
 
-LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../hooks" && pwd)"
 
 TMPDIR_TEST="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_TEST"' EXIT
