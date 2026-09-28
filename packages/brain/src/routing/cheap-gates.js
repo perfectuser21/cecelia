@@ -6,7 +6,6 @@
  *  - device_locks（migrations/448）：手机序列号真身，device_name=序列号，device_type='phone'
  *  - ops_workflows：无 channel 列，是否设备工作流用 env.deviceKeywords 对工作流名做启发式判断
  */
-import { resolveModelRef } from './env.js';
 
 export async function loadRegistryPool(query) {
   const a = await query(`SELECT name, notion_id FROM ops_agents WHERE status = 'active' ORDER BY name`);
@@ -106,12 +105,8 @@ export function cheapGates(task, pool, env) {
     if (d) { out.department = d; out.matchedBy.push('text:department'); }
   }
   if (!out.isDevice && env.deviceKeywords.some((k) => text.includes(k))) { out.isDevice = true; out.matchedBy.push('text:keyword'); }
-  // 「用 <型号>」：只认 QIUMI_MODEL_ALLOWLIST 里的（全名或短名），第一个命中即定案。
-  const MODEL_RE = /(?<![不别])用\s*([A-Za-z][A-Za-z0-9._/-]{2,})/g;
-  for (const m of text.matchAll(MODEL_RE)) {
-    const ref = resolveModelRef(m[1], env);
-    if (ref) { out.hardModel = ref; out.matchedBy.push('text:model'); break; }
-  }
+  // 模型不再从正文文字里猜（任务 0d4215f2）：「调用Agent：」曾被当成「用 agent」命中 grok-4.20-multi-agent。
+  // 模型只认正文【执行参数】块，见 routing/exec-params.js；hardModel 恒为 null，字段保留给既有读方。
   for (const [re, eng] of ENGINE_RES) if (re.test(text)) { out.hardEngine = eng; out.matchedBy.push('text:engine'); break; }
   return out;
 }
