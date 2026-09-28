@@ -65,6 +65,8 @@ SH
   rm -rf "$WORK/agents"; mkdir -p "$WORK/agents"/{main,dev,infra,media,verifier}
   unset FAIL_AGENT REFRESH_TO_FILE FLAKY_AGENT FLAKY_TIMES
   export XAI_PASTE_RETRY_SLEEP=0
+  # 每个用例一份干净的指纹目录，免得上一例的「已同步」让本例跳过
+  rm -rf "$WORK/state"; export XAI_SYNC_STATE_DIR="$WORK/state"
 }
 
 # 造一个 exp 在 now+minutes 的假 JWT（只有 payload 需要合法）
@@ -245,6 +247,42 @@ OUT=$(bash "$SYNC" 2>&1)
 printf '%s' "$OUT" | grep -q 'SECRETBODY' \
   && bad "token 被打进了日志（日志会进 launchd 输出文件）" \
   || ok "token 不出现在日志里"
+
+# ── ⑥ token 没变就不重贴 ────────────────────────────────────────────────
+# 2026-09-28 实测：每小时对 30 个 agent 重贴同一个 token（每个约 30s），
+# 每贴一次网关就重发布一代模型目录，整点后 15 分钟网关在白忙，还刷
+# 「Model auth changes were saved, but the running Gateway could not refresh them」。
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 SAME
+bash "$SYNC" >/dev/null 2>&1
+: > "$WORK/pasted.txt"
+OUT=$(bash "$SYNC" 2>&1); RC=$?
+[ ! -s "$WORK/pasted.txt" ] && ok "token 未变 → 第二轮一个都不重贴" \
+  || bad "token 未变却重贴了：$(cut -d'|' -f1 < "$WORK/pasted.txt" | tr '\n' ' ')"
+[ "$RC" -eq 0 ] && ok "全部跳过 → 退出码 0" || bad "全部跳过却退出码非 0"
+printf '%s' "$OUT" | grep -q "跳过" && ok "跳过写进日志（看得出不是卡住）" || bad "跳过没留日志"
+
+# token 换了 → 全部重贴
+mk_auth "$GROK_AUTH_FILE" 300 ROTATED
+: > "$WORK/pasted.txt"
+bash "$SYNC" >/dev/null 2>&1
+[ "$(grep -c . "$WORK/pasted.txt")" -eq 5 ] && ok "token 换了 → 5 个 agent 全部重贴" \
+  || bad "token 换了却没全贴：$(cut -d'|' -f1 < "$WORK/pasted.txt" | tr '\n' ' ')"
+
+# 失败的 agent 不记指纹 → 下一轮必须重试，不能被当成已同步跳过
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 SAME
+FAIL_AGENT=dev bash "$SYNC" >/dev/null 2>&1
+: > "$WORK/pasted.txt"
+bash "$SYNC" >/dev/null 2>&1
+if [ "$(cut -d'|' -f1 < "$WORK/pasted.txt" | sort -u | tr '\n' ' ')" = "dev " ]; then
+  ok "上一轮失败的 agent 下一轮重贴，成功过的不重贴"
+else
+  bad "失败重试不对，本轮贴了：$(cut -d'|' -f1 < "$WORK/pasted.txt" | sort -u | tr '\n' ' ')"
+fi
+
+# 指纹文件里不许出现 token 明文
+grep -rq 'SAME' "$WORK/state" 2>/dev/null && bad "指纹目录里有 token 明文" || ok "指纹目录只存哈希，不存 token"
 
 printf '\n结果: PASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
