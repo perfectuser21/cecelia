@@ -39,6 +39,11 @@ const SAFE_ID = /^[A-Za-z0-9._-]+$/;
 const SAFE_MODEL = /^[A-Za-z0-9._/:-]+$/;
 const OPENCLAW_BIN = '/opt/homebrew/bin/openclaw';
 export const AGENT_TIMEOUT_SEC = 1800;
+// 执行参数「超时」的可接受范围（1 分钟到 3 小时）；越界回落默认，不信任上游数值。
+const TIMEOUT_MIN_SEC = 60;
+const TIMEOUT_MAX_SEC = 10800;
+// openclaw agent --thinking 的取值白名单；它要拼进远端 shell，白名单外一律拒绝。
+const THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'adaptive', 'max']);
 const REAP_SSH_TIMEOUT_MS = 15_000;
 const REAP_BATCH = 10;
 
@@ -70,16 +75,22 @@ export function isSafeRunId(runId) {
  * `$!` 拿到的是 `sh -c` 包装进程的 pid，不是 openclaw 自己的：包装进程要等 openclaw 退出、
  * 写完 .exit 才结束，所以它在整个 agent 运行期间都活着，PR1 probe 的 `kill -0 <pid>` 判活成立。
  */
-export function buildRemoteCommand({ runId, department, model, taskId, timeoutSec = AGENT_TIMEOUT_SEC, binPath = OPENCLAW_BIN }) {
+export function buildRemoteCommand({ runId, department, model = null, taskId, timeoutSec = AGENT_TIMEOUT_SEC, thinking = null, binPath = OPENCLAW_BIN }) {
   assertSafe('runId', runId, SAFE_ID);
   assertSafe('department', department, SAFE_ID);
   assertSafe('taskId', taskId, SAFE_ID);
-  assertSafe('model', model, SAFE_MODEL);
+  // 模型可选（任务 0d4215f2）：不传就不带 --model，由 OpenClaw 用该 agent 自身的默认模型。
+  if (model) assertSafe('model', model, SAFE_MODEL);
+  if (thinking && !THINKING_LEVELS.has(String(thinking))) throw new Error('invalid thinking');
   assertSafe('binPath', binPath, SAFE_MODEL);
+  const t = Math.round(Number(timeoutSec));
+  const timeout = t >= TIMEOUT_MIN_SEC && t <= TIMEOUT_MAX_SEC ? t : AGENT_TIMEOUT_SEC;
+  const modelArg = model ? ` --model ${model}` : '';
+  const thinkingArg = thinking ? ` --thinking ${thinking}` : '';
   const log = `~/brain-runs/${runId}.log`;
   const exit = `~/brain-runs/${runId}.exit`;
   const pid = `~/brain-runs/${runId}.pid`;
-  const inner = `${binPath} agent --agent ${department} --model ${model} --session-key agent:${department}:qiumi-${taskId} --message "$M" --timeout ${timeoutSec} --json > ${log} 2>&1; echo $? > ${exit}`;
+  const inner = `${binPath} agent --agent ${department}${modelArg} --session-key agent:${department}:qiumi-${taskId} --message "$M" --timeout ${timeout}${thinkingArg} --json > ${log} 2>&1; echo $? > ${exit}`;
   // 幂等探针：.pid（已起）或 .exit（已跑完）在就回 ALREADY，绝不再起第二个 agent。
   // 派发侧失败会重试一次，而「ssh 超时」不等于「远端没起来」——没有这道探针，重试就会让
   // 同一个 session-key 的 agent 把同一件活跑第二遍。
@@ -137,15 +148,19 @@ export async function triggerOpenclawAgent(task, deps = {}) {
   const runId = task.payload?.run_id;
   const model = task.payload?.model;
   const department = task.payload?.qiumi_department;
-  if (!runId || !model || !department) {
-    return { success: false, taskId: task.id, reason: 'openclaw_agent_spawn_failed', error: 'missing run_id/model/department' };
+  if (!runId || !department) {
+    return { success: false, taskId: task.id, reason: 'openclaw_agent_spawn_failed', error: 'missing run_id/department' };
   }
 
   let remote;
   let target;
   let machine;
   try {
-    remote = buildRemoteCommand({ runId, department, model, taskId: task.id });
+    remote = buildRemoteCommand({
+      runId, department, model, taskId: task.id,
+      timeoutSec: task.payload?.timeout_sec ?? AGENT_TIMEOUT_SEC,
+      thinking: task.payload?.thinking ?? null,
+    });
     machine = resolvePrimaryWorkerId();
     target = primaryTarget();
   } catch (err) {

@@ -202,7 +202,8 @@ async function main() {
     check(1, row.status === 'queued', `父任务仍 queued（实得 ${row.status}）`);
     check(1, row.blocked_reason === null, `父任务没被挂起，blocked_reason=${row.blocked_reason}`);
     check(1, row.task_type === 'qiumi_task', `父任务类型没被改（实得 ${row.task_type}）`);
-    check(1, dbHint[0]?.model === 'openai/gpt-5.3-codex', `agent 分支落了模型=${dbHint[0]?.model}`);
+    // 0d4215f2：没写【执行参数】的模型 → 不再由 engine 推导，留空交给 agent 自身默认模型
+    check(1, dbHint[0]?.model === null, `agent 分支没写模型则 model 为空（实得 ${dbHint[0]?.model}）`);
     check(1, dbHint[0]?.dept === 'dev', `agent 分支落了部门=${dbHint[0]?.dept}`);
     check(1, /^qiumi-[0-9a-f]{8}-\d{10,}$/.test(dbHint[0]?.run_id ?? ''), `run_id 合规=${dbHint[0]?.run_id}`);
     const { rows: kids } = await pool.query(

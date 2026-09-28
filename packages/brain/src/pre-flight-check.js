@@ -37,12 +37,14 @@ export async function preFlightCheck(task, opts = {}) {
   const isSystemTask = SYSTEM_TASK_TYPES.includes(task.task_type);
 
   // Check 1: Title validation
+  // 秋米任务来自 Notion 中文排单，2 个汉字已能表意（「抖音养号」曾被 5 字下限三振，任务 0d4215f2）。
+  const minTitle = task.task_type === 'qiumi_task' ? 2 : 5;
   if (!task.title || task.title.trim().length === 0) {
     issues.push('Task title is empty');
     suggestions.push('Provide a descriptive title');
-  } else if (task.title.trim().length < 5) {
-    issues.push('Task title too short (< 5 characters)');
-    suggestions.push('Use a more descriptive title (minimum 5 characters)');
+  } else if (task.title.trim().length < minTitle) {
+    issues.push(`Task title too short (< ${minTitle} characters)`);
+    suggestions.push(`Use a more descriptive title (minimum ${minTitle} characters)`);
   }
 
   // Check 2: Description validation (PRD content)

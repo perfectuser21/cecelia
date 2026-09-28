@@ -16,6 +16,7 @@ import {
 import { PUSH_EXCLUDED_TASK_TYPES } from './lib/task-type-registry.js';
 import { startRun, finishRun } from './lib/task-run.js';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
+import { readPageContent } from './lib/notion-page-content.js';
 import { qiumiSourceFromNotion } from './lib/qiumi-source.js';
 import { parseEnPage, parseZhPage, GTD_DB_ID, EN_NATIVE_MARK } from './notion-gtd-sync.js';
 
@@ -412,30 +413,13 @@ async function pushTaskRows(pool, token, rows, { blockedBy = false } = {}) {
   }
 }
 
-// 页面正文可拼接的 block 类型（rich_text 承载体）
-const PAGE_CONTENT_BLOCK_TYPES = Object.freeze([
-  'paragraph', 'heading_1', 'heading_2', 'heading_3',
-  'bulleted_list_item', 'numbered_list_item', 'to_do', 'quote', 'callout', 'code',
-]);
-
 /**
- * 拉取 Notion 页面正文（blocks API）作为任务 prompt（2026-09-17）。
- * 主理人把任务描述写在排单页正文里 → 送达执行体。
- * 只拼接文本类 block 的 rich_text plain_text，块间换行，截断 8000 字符。
- * 任何异常 console.warn 后返回 ''——正文是增强件，绝不阻塞排单主流程。
+ * 拉取 Notion 页面正文（blocks API）作为任务 prompt（2026-09-17；0928 改为全读，见 lib/notion-page-content.js）。
+ * 主理人把任务描述写在排单页正文里 → 送达执行体。任何异常都不阻塞排单主流程。
  */
 export async function fetchNotionPageContent(token, pageId) {
   try {
-    const resp = await notionReq(token, `/blocks/${pageId}/children?page_size=100`, 'GET');
-    const lines = [];
-    for (const block of resp?.results ?? []) {
-      const type = block?.type;
-      if (!PAGE_CONTENT_BLOCK_TYPES.includes(type)) continue;
-      const text = (block[type]?.rich_text ?? [])
-        .map((t) => t.plain_text ?? t.text?.content ?? '').join('');
-      if (text.trim()) lines.push(text);
-    }
-    return lines.join('\n').slice(0, 8000);
+    return await readPageContent(pageId, { request: (path) => notionReq(token, path, 'GET') });
   } catch (err) {
     console.warn(`[notion-pull] 页面正文拉取失败 ${pageId}（不阻塞排单）: ${err.message}`);
     return '';

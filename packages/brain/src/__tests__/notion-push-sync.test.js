@@ -1321,11 +1321,13 @@ describe('Notion 排单正文 → 任务 prompt', () => {
       expect(String(call[1])).toContain(`/blocks/${PAGE_ID}/children`);
     });
 
-    it('超长正文截断 8000 字符', async () => {
+    it('超长正文截断 20000 字符并标注（任务 0d4215f2，原 8000）', async () => {
       const mod = await import('../notion-push-sync.js');
-      mockNotionReq.mockResolvedValueOnce({ results: [textBlock('paragraph', 'x'.repeat(9000))] });
+      mockNotionReq.mockResolvedValueOnce({ results: [textBlock('paragraph', 'x'.repeat(25000))] });
       const text = await mod.fetchNotionPageContent('fake-token', PAGE_ID);
-      expect(text.length).toBe(8000);
+      expect(text.startsWith('x'.repeat(20000))).toBe(true);
+      expect(text).toMatch(/正文过长已截断/);
+      expect(text.length).toBeLessThan(20100);
     });
 
     it('blocks API 抛错 → 返回空串不上抛', async () => {

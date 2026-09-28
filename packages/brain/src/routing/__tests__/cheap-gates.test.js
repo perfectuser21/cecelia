@@ -130,38 +130,18 @@ describe('cheapGates', () => {
     expect(g.matchedBy.some((m) => m.startsWith('relation:'))).toBe(false);
   });
 
-  describe('「用 <型号>」→ hardModel（清单内才认）', () => {
-    const envM = qiumiEnv({ QIUMI_MODEL_ALLOWLIST: JSON.stringify(['xai/grok-4.7', 'openai/gpt-5.6-sol', 'anthropic/claude-opus-5']) });
-    it('用 grok-4.7 → hardModel xai/grok-4.7，matchedBy 含 text:model', () => {
-      const out = cheapGates(mk({ body: '这个活用 grok-4.7 跑' }), pool, envM);
-      expect(out.hardModel).toBe('xai/grok-4.7');
-      expect(out.matchedBy).toContain('text:model');
-    });
-    it('用 sol / 用 opus-5 → 短名命中', () => {
-      expect(cheapGates(mk({ body: '用 sol 做' }), pool, envM).hardModel).toBe('openai/gpt-5.6-sol');
-      expect(cheapGates(mk({ body: '让 dev 用 opus-5 写' }), pool, envM).hardModel).toBe('anthropic/claude-opus-5');
-    });
-    it('用 claude → 仍是 hardEngine claude，hardModel null（引擎词不是型号）', () => {
-      const out = cheapGates(mk({ body: '用 claude 做' }), pool, envM);
-      expect(out.hardEngine).toBe('claude');
+  describe('回归：正文文字永不产生模型（任务 0d4215f2，模型只认【执行参数】块）', () => {
+    const envM = qiumiEnv({ QIUMI_MODEL_ALLOWLIST: JSON.stringify(['xai/grok-4.7', 'openai/gpt-5.6-sol', 'xai/grok-4.20-multi-agent']) });
+    it('模板里的「调用Agent：…」不再被当成「用 agent」命中 grok-4.20-multi-agent', () => {
+      const out = cheapGates(mk({ body: '任务目标\n调用Agent： 调用抖音平台数据采集 Agent \n执行要求' }), pool, envM);
       expect(out.hardModel).toBeNull();
+      expect(out.matchedBy).not.toContain('text:model');
     });
-    it('清单外 用 foo-bar → hardModel null；清单为空 → 永不命中', () => {
-      expect(cheapGates(mk({ body: '用 foo-bar 做' }), pool, envM).hardModel).toBeNull();
-      expect(cheapGates(mk({ body: '用 grok-4.7 做' }), pool, env).hardModel).toBeNull();
-    });
-    it('正文里多个「用 X」取第一个命中的', () => {
-      expect(cheapGates(mk({ body: '用 nothing 先，再用 sol' }), pool, envM).hardModel).toBe('openai/gpt-5.6-sol');
-    });
-    it('"不用 <型号>" / "别用 <型号>" 不应误判为硬约束（负向前瞻）', () => {
-      expect(cheapGates(mk({ body: '不用 grok-4.7，交给人做' }), pool, envM).hardModel).toBeNull();
-      expect(cheapGates(mk({ body: '别用 sol' }), pool, envM).hardModel).toBeNull();
-    });
-    it('"用 X 不用 Y" → 只认正向的 X', () => {
-      expect(cheapGates(mk({ body: '用 grok-4.7 不用 sol' }), pool, envM).hardModel).toBe('xai/grok-4.7');
-    });
-    it('型号名大小写不敏感：用 Grok-4.7 → hardModel xai/grok-4.7', () => {
-      expect(cheapGates(mk({ body: '用 Grok-4.7 跑' }), pool, envM).hardModel).toBe('xai/grok-4.7');
+    it('即便正文写「用 grok-4.7 跑」也不再产生 hardModel', () => {
+      const out = cheapGates(mk({ body: '这个活用 grok-4.7 跑' }), pool, envM);
+      expect(out.hardModel).toBeNull();
+      expect(out.matchedBy).not.toContain('text:model');
     });
   });
+
 });

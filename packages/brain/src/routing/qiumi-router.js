@@ -21,6 +21,7 @@ import { finalizeTask } from '../lib/task-terminal.js';
 import { qiumiEnv } from './env.js';
 import { loadRegistryPool, cheapGates } from './cheap-gates.js';
 import { buildJevQuestions, decideWithFallback } from './jev-client.js';
+import { parseExecParams } from './exec-params.js';
 import { TASK_KINDS } from '../lib/task-type-registry.js';
 
 // is_device 阈值的唯一真身在 jev-client（verdict 也在那里算好），本模块只再导出给下游，不另立标准。
@@ -34,6 +35,8 @@ const ENGINE_NAMES = ['claude', 'codex', 'terra'];
 // kind 枚举真身在注册表（tasks.kind 真列的 CHECK 与之对齐，铁律 76cb816c 不另抄一份）
 const KIND_NAMES = TASK_KINDS;
 const NOT_APPLICABLE = 'not_applicable';
+// OpenClaw agent id 的合法字符（与执行器 SAFE_ID 一致）；关联列命中的中文名等不当执行者直派。
+const SAFE_AGENT_ID = /^[A-Za-z0-9._-]+$/;
 
 /** 把 qiumi_source 拼成给判定模型看的 state（打码由 jev-client 负责）。 */
 function stateOf(task) {
@@ -106,7 +109,7 @@ export function pickSerial(cheap, answers, registry) {
  *
  * @returns {Promise<
  *   {outcome:'device', serial:string, workflowRef:string|null, department:string|null, payloadPatch:object} |
- *   {outcome:'agent', engine:string, model:string, department:string, kind:string, workflowRef:string|null, runId:string, payloadPatch:object} |
+ *   {outcome:'agent', engine:string, model:string|null, department:string, kind:string, workflowRef:string|null, runId:string, payloadPatch:object} |
  *   {outcome:'fail', reason:string, detail:string}
  * >}
  */
@@ -114,6 +117,8 @@ export async function routeQiumiTask(task, deps) {
   const { pool, env = qiumiEnv(), fetchFn, callLLMFn, now = Date.now } = deps;
   const registry = await loadRegistryPool((sql, params) => pool.query(sql, params));
   const cheap = cheapGates(task, registry, env);
+  // 正文【执行参数】块（任务 0d4215f2）：写了就照办，写错就报错，不回落到猜测。
+  const params = parseExecParams(task?.payload?.qiumi_source?.body ?? '', env);
 
   // 便宜闸的延伸：relation 指到的非部门 agent 名里裹着池内序列号 → 当作命中，连 Jev 都不用问。
   // 这里传 answers=null，走的正是 pickSerial 的 agentRef 反查那一档，反查实现不另开一份。
@@ -162,12 +167,59 @@ export async function routeQiumiTask(task, deps) {
     return { outcome: 'device', serial, workflowRef, department: cheap.department ?? null, payloadPatch };
   };
 
+  if (params.errors.length) return fail('exec_params_invalid', params.errors.join(','));
+
+  // agent 决策的公共拼装：直派与 Jev 两条路共用，payload 形状只此一份。
+  // 模型只取执行参数（不写 → null → OpenClaw 用该 agent 自身默认模型）。
+  const agentDecision = async ({ source, answers, defaulted, engine, department, kind, workflowRef, deviceHint }) => {
+    const model = params.model ?? null;
+    const runId = `qiumi-${String(task.id).slice(0, 8)}-${now()}`;
+    const device_hint = { ...deviceHint, requested: params.device ?? null };
+    const payloadPatch = {
+      qiumi_route: { source, answers, defaulted, device_hint, ...base },
+      model,
+      provider: 'openclaw',
+      run_id: runId,
+      qiumi_department: department,
+      qiumi_kind: kind,
+      qiumi_workflow_ref: workflowRef,
+      // 属性约定的规范键（决策 df67a9d6）：engine / workflow_ref；旧 qiumi_* 键保留给既有消费方，
+      // kind / department 不进 payload 规范键——它们落真列（persistDecision 写 tasks.kind / tasks.dept）。
+      engine,
+      workflow_ref: workflowRef,
+      timeout_sec: params.timeoutSec ?? null,
+      thinking: params.thinking ?? null,
+      acceptance: params.acceptance ?? null,
+    };
+    await recordTaskEventSafe(pool, task.id, 'qiumi_route_decided', {
+      outcome: 'agent', source, engine, model, department, kind, workflowRef, runId, defaulted, device_hint, ...base,
+    });
+    return { outcome: 'agent', engine, model, department, kind, workflowRef, runId, payloadPatch };
+  };
+
   // 开关关（默认）：手机活不改道给西安领单器，和其它活一样派 openclaw agent（主理人 0923 拍板）。
   // 三道 device 闸只在开关开时生效；关时 is_device/serial 仍算，但只留痕 device_hint 给 agent prompt 用。
   const delegate = env.deviceDelegationEnabled === true;
 
   // 闸 1：便宜闸已经能定到具体手机 → 直接定案，不问 Jev。
   if (delegate && cheap.isDevice && cheap.serial) return device(cheap.serial, 'cheap', null);
+
+  // 写明了执行者就直派，不问 Jev（主理人 09-28：写清楚了就不需要判定）。
+  // 来源：执行参数 > Notion「执行 Agent / Workflow」关联列命中的 agent（仅 OpenClaw 合法 id）。
+  const explicitAgent = params.agent ?? cheap.department ?? (SAFE_AGENT_ID.test(cheap.agentRef ?? '') ? cheap.agentRef : null);
+  if (explicitAgent) {
+    const known = env.departments.includes(explicitAgent) || registry.agents.some((ag) => ag.name === explicitAgent);
+    if (!known) return fail('exec_agent_unknown', explicitAgent);
+    const hintSerial = pickSerial(cheap, null, registry);
+    return agentDecision({
+      source: 'explicit', answers: null, defaulted: [], engine: 'explicit', department: explicitAgent, kind: 'agent',
+      workflowRef: cheap.workflowRef ?? null,
+      deviceHint: {
+        is_device: cheap.isDevice, verdict: null, p: null, serial: hintSerial,
+        host: registry.phones.find((ph) => ph.serial === hintSerial)?.host ?? null, matchedBy: cheap.matchedBy,
+      },
+    });
+  }
 
   const questions = buildJevQuestions({
     departments: env.departments,
@@ -197,36 +249,19 @@ export async function routeQiumiTask(task, deps) {
   const department = cheap.department ?? resolveChoice(a.department, 'department', (c) => env.departments.includes(c), 'main', defaulted);
   const kind = resolveChoice(a.kind, 'kind', (c) => KIND_NAMES.includes(c), 'agent', defaulted);
   const workflowRef = cheap.workflowRef ?? jevWorkflowRef(a, registry, defaulted);
-  // 正文「用 <型号>」（允许清单内）压过 engine → model 查表，engine 本身仍按 Jev/便宜闸。
-  const model = cheap.hardModel ?? env.modelMap[engine];
-  const runId = `qiumi-${String(task.id).slice(0, 8)}-${now()}`;
   // 留痕给 agent：它要自己去 OpenClaw 节点上跑控制器，得知道哪台手机在哪台宿主。
   const hintSerial = pickSerial(cheap, a, registry);
-  const device_hint = {
-    is_device: cheap.isDevice || verdict === true,
-    verdict: verdict ?? null,
-    p: a.is_device?.p ?? null,
-    serial: hintSerial,
-    host: registry.phones.find((p) => p.serial === hintSerial)?.host ?? null,
-    matchedBy: cheap.matchedBy,
-  };
-  const payloadPatch = {
-    qiumi_route: { source: r.source, answers: a, defaulted, device_hint, ...base },
-    model,
-    provider: 'openclaw',
-    run_id: runId,
-    qiumi_department: department,
-    qiumi_kind: kind,
-    qiumi_workflow_ref: workflowRef,
-    // 属性约定的规范键（决策 df67a9d6）：engine / workflow_ref；旧 qiumi_* 键保留给既有消费方，
-    // kind / department 不进 payload 规范键——它们落真列（persistDecision 写 tasks.kind / tasks.dept）。
-    engine,
-    workflow_ref: workflowRef,
-  };
-  await recordTaskEventSafe(pool, task.id, 'qiumi_route_decided', {
-    outcome: 'agent', source: r.source, engine, model, department, kind, workflowRef, runId, defaulted, device_hint, ...base,
+  return agentDecision({
+    source: r.source, answers: a, defaulted, engine, department, kind, workflowRef,
+    deviceHint: {
+      is_device: cheap.isDevice || verdict === true,
+      verdict: verdict ?? null,
+      p: a.is_device?.p ?? null,
+      serial: hintSerial,
+      host: registry.phones.find((ph) => ph.serial === hintSerial)?.host ?? null,
+      matchedBy: cheap.matchedBy,
+    },
   });
-  return { outcome: 'agent', engine, model, department, kind, workflowRef, runId, payloadPatch };
 }
 
 /**

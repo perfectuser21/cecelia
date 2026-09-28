@@ -439,3 +439,42 @@ describe('promptOf 设备提示段（device_hint）', () => {
     expect(body).toContain('openclaw nodes list');
   });
 });
+
+describe('模型可选 + 超时 / 思考强度（任务 0d4215f2）', () => {
+  it('model 为空 → 命令里不带 --model（交给 agent 自身默认模型）', () => {
+    const c = buildRemoteCommand({ runId: 'r1', department: 'skill-factory', model: null, taskId: 't1' });
+    expect(c).toContain('/opt/homebrew/bin/openclaw agent --agent skill-factory --session-key agent:skill-factory:qiumi-t1 --message "$M" --timeout 1800 --json');
+    expect(c).not.toContain('--model');
+  });
+
+  it('timeoutSec 进 --timeout；越界（<60 或 >10800）回落 1800', () => {
+    expect(buildRemoteCommand({ runId: 'r1', department: 'dev', model: null, taskId: 't1', timeoutSec: 1200 })).toContain('--timeout 1200 ');
+    expect(buildRemoteCommand({ runId: 'r1', department: 'dev', model: null, taskId: 't1', timeoutSec: 5 })).toContain('--timeout 1800 ');
+    expect(buildRemoteCommand({ runId: 'r1', department: 'dev', model: null, taskId: 't1', timeoutSec: 99999 })).toContain('--timeout 1800 ');
+  });
+
+  it('thinking 白名单内 → --thinking；白名单外 → 抛 invalid（注入面）', () => {
+    expect(buildRemoteCommand({ runId: 'r1', department: 'dev', model: null, taskId: 't1', thinking: 'high' })).toContain('--thinking high ');
+    expect(() => buildRemoteCommand({ runId: 'r1', department: 'dev', model: null, taskId: 't1', thinking: 'x;rm' })).toThrow(/invalid/);
+  });
+
+  it('triggerOpenclawAgent：payload 没有 model 也能派发，并把 timeout_sec / thinking 带进命令', async () => {
+    const spawnFn = spawnMock();
+    const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 });
+    const t = { ...task, payload: { ...task.payload, model: null, timeout_sec: 1200, thinking: 'medium' } };
+    const r = await triggerOpenclawAgent(t, { spawnFn, pool: { query } });
+    expect(r).toMatchObject({ success: true });
+    const remote = spawnFn.mock.calls[0][1].join(' ');
+    expect(remote).not.toContain('--model');
+    expect(remote).toContain('--timeout 1200');
+    expect(remote).toContain('--thinking medium');
+  });
+
+  it('triggerOpenclawAgent：缺执行者（qiumi_department）仍然拒绝', async () => {
+    const spawnFn = spawnMock();
+    const t = { ...task, payload: { ...task.payload, qiumi_department: null } };
+    const r = await triggerOpenclawAgent(t, { spawnFn, pool: { query: vi.fn() } });
+    expect(r).toMatchObject({ success: false, reason: 'openclaw_agent_spawn_failed' });
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
+});
