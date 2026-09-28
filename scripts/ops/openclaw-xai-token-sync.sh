@@ -156,24 +156,41 @@ paste_one() {
   return 1
 }
 
+# ── token 未变就不重贴 ───────────────────────────────────────────────────
+# 2026-09-28 实测：每小时对 30 个 agent 重贴同一个 token（每个约 30s），每贴一次
+# 网关就重发布一代模型目录 —— 整点后 15 分钟网关在白忙，还刷 "could not refresh"。
+# 每个 agent 成功贴过后记下 token 的 sha256；下一轮指纹相同就跳过。
+# 失败的不记，下一轮照样重试。只存哈希，绝不存 token。
+STATE_DIR="${XAI_SYNC_STATE_DIR:-$HOME/.openclaw/xai-token-sync-state}"
+token_fp() { printf '%s' "$1" | shasum -a 256 | awk '{print $1}'; }
+
 sync_agents() {
-  local token="$1" ok=0 fail=0 agents idx=0 total
+  local token="$1" ok=0 fail=0 skipped=0 agents idx=0 total fp
   agents="$(list_agents)" || return 1
   [ -n "$agents" ] || { fault "agent 名单为空"; return 1; }
   total="$(printf '%s\n' "$agents" | grep -c .)"
-  note "开始逐个同步，共 ${total} 个 agent（每个约 30s，整轮约 $((total/2)) 分钟）"
+  fp="$(token_fp "$token")"
+  mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"
+  note "开始逐个同步，共 ${total} 个 agent（token 未变的跳过；需贴的每个约 30s）"
   while read -r agent; do
     [ -n "$agent" ] || continue
     idx=$((idx+1))
+    if [ "$(cat "$STATE_DIR/$agent" 2>/dev/null)" = "$fp" ]; then
+      note "  [${idx}/${total}] ${agent} 跳过（token 未变）"
+      skipped=$((skipped+1))
+      continue
+    fi
     note "  [${idx}/${total}] ${agent}"
     if paste_one "$token" "$agent"; then
+      printf '%s\n' "$fp" > "$STATE_DIR/$agent"
       ok=$((ok+1))
     else
+      rm -f "$STATE_DIR/$agent"
       fault "agent ${agent} 同步失败（已重试 ${PASTE_RETRIES} 次）"
       fail=$((fail+1))
     fi
   done <<< "$agents"
-  note "同步完成：成功 ${ok} 个，失败 ${fail} 个"
+  note "同步完成：贴入 ${ok} 个，跳过 ${skipped} 个，失败 ${fail} 个"
   [ "$fail" -eq 0 ] || problems=$((problems+1))
 }
 
