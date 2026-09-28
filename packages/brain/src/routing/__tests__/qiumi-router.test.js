@@ -202,7 +202,7 @@ describe('routeQiumiTask 决策表', () => {
     const d = await routeQiumiTask(task('随便写点什么'), {
       pool, env, fetchFn: jevOk(jevAnswers({ engine: choice('codex', 0.4, 0.1) })), callLLMFn: vi.fn(),
     });
-    expect(d).toMatchObject({ outcome: 'agent', engine: 'terra', model: 'openai/gpt-5.6-terra' });
+    expect(d).toMatchObject({ outcome: 'agent', engine: 'terra', model: null }); // 0d4215f2：模型不再由 engine 推导
     expect(d.payloadPatch.qiumi_route.defaulted).toContain('engine');
   });
 
