@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.335.3
+**Brain 版本**: 1.336.0
 
 ## 1.283.0
 
@@ -48,6 +48,12 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.336.0 — 主干活动契约 git→Brain→Notion 自动同步（决策 0834e2fb / 92f6226b）
+
+- 新 scheduler job `backbone-contract-sync`（`activity-contract-sync.js`）：契约真身在 zenithjoy-workspace `product-map/contracts/*.yaml`；30min 自 gate 只读 GitHub API 比 `contracts.json` 活动哈希，变了才拉 YAML 写 `journey_steps` 只读副本（contract / contract_sha256 / 钉 commit 的 contract_source），仓库删掉的活动标 deprecated；同步连续失败超 2h 告 P1 一次
+- 每轮把变更行推 Notion「Backbone Activities」镜子（c213e387），缺列自动补，每行带「正本（只读·改请走 git）」链接与契约哈希
+- 迁移 482：journey_steps 契约副本列 + notion_digest；获客 journey 主干活动 v2.0 四承诺 → v3.0 八活动（承诺并入 promise，stage 格子改挂同名活动，补 stage:outreach）；映射表登记 Backbone Activities 镜子
 
 ## Brain 1.335.3 — 删除 A 类 37 张空表 + 5 个依赖视图；capture-atoms 删写错表的 event 分支
 
