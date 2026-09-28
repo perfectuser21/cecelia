@@ -111,10 +111,9 @@ source "$SCRIPT_DIR/lib/worktree-guard.sh"
             # 检查该 worktree 对应的 PR 是否已 merged
             _orphan_pr_state=$(gh pr view "$_orphan_wt_branch" --json state --jq '.state' 2>/dev/null || echo "")
             if [[ "$_orphan_pr_state" == "MERGED" ]]; then
-                # git worktree remove 失败不阻塞 hook（|| true）
-                git worktree remove --force "$_orphan_wt_path" 2>/dev/null || \
-                    echo "[Stop Hook] worktree remove 失败（已忽略）: $_orphan_wt_path" >&2 || true
-                echo "[Stop Hook] 已清理已合并 PR 孤儿 worktree: $_orphan_wt_branch" >&2
+                # 真正删除见 lib/worktree-guard.sh::stop_hook_remove_merged_worktree
+                # （2026-09-28 修复：旧实现删除失败仍无条件打印成功日志）
+                stop_hook_remove_merged_worktree "$_orphan_wt_path" "$_orphan_wt_branch" || true
             fi
         fi
     done < <(git -C "$PROJECT_ROOT" worktree list --porcelain 2>/dev/null)
