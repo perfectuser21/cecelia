@@ -173,6 +173,30 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
     expect(probeQuery.sql).toMatch(/sp\.active = true/);
   });
 
+  // 任务 4ca3b584（项目 4dd12ae1 第 3 棒）：账本 init 开跑时就为 scoring/qualification 写一个 blocked/not_in_profile 占位工件，
+  // 阶段根本没跑，探针却照判——scoring 探针读到「本批评论 0 条待分拣」=PASS，格子 09-28 全天假绿。
+  // blocked = 阶段没跑（not_in_profile / no_cards / lock_busy / push=0 skipped），没有结果可判，不得写回执、不得翻色。
+  it('stage_status=blocked（阶段没跑）→ 不判、不写回执、不翻色，哪怕探针已登记且回执里没有探针读数', async () => {
+    const probes = [spec('p.ok', { op: '>=', value: 1 })];
+    const { pool, calls } = poolWith({ probes });
+    const persist = vi.fn();
+    const blocked = { ...result([], {}, 'preflight'), stage_status: 'blocked' };
+    const out = await handleRunFinished({ runId: 'run-1', taskId: 't-1', status: 'in_progress', result: blocked }, { pool, persist });
+    expect(out).toEqual({ skipped: 'stage_not_run' });
+    expect(persist).not.toHaveBeenCalled();
+    expect(calls.filter((c) => /UPDATE journey_step_links/.test(c.sql))).toEqual([]);
+  });
+
+  it('stage_status=failed（阶段跑了但失败）仍要判——失败态的读回正是要暴露问题的', async () => {
+    const probes = [spec('p.ok', { op: '>=', value: 1 })];
+    const { pool } = poolWith({ probes });
+    const persist = vi.fn().mockResolvedValue({ receipt: { id: 'r' }, persisted: true, skipped: null });
+    const failed = { ...result({ 'p.ok': { observed: 0 } }, {}, 'preflight'), stage_status: 'failed' };
+    const out = await handleRunFinished({ runId: 'run-1', taskId: 't-1', status: 'in_progress', result: failed }, { pool, persist });
+    expect(out).toMatchObject({ judged: 1 });
+    expect(persist).toHaveBeenCalledTimes(1);
+  });
+
   it('result 无 stage / task 无 anchor.journey_id / 无匹配 step_probes → 跳过，不写不翻色', async () => {
     const persist = vi.fn();
     const noStage = poolWith();

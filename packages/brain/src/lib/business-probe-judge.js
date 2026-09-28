@@ -214,6 +214,10 @@ export async function handleRunFinished(payload = {}, deps = {}) {
   try {
     const stage = typeof result?.stage === 'string' ? result.stage : null;
     if (!runId || !taskId || !stage) return { skipped: 'no_stage' };
+    // blocked = 阶段没跑（not_in_profile / no_cards / lock_busy / push=0 skipped）：没有结果可判。
+    // 此前照判——账本 init 开跑即写 scoring blocked 占位，探针读到「0 条待分拣」判 PASS，格子整天假绿（任务 4ca3b584）。
+    // failed（跑了但失败）不在此列：失败态的读回正是要暴露问题的。
+    if (result?.stage_status === 'blocked') return { skipped: 'stage_not_run' };
     const pool = await resolvePool(deps);
     const persist = deps.persist ?? persistBusinessProbeReceipt;
 
