@@ -90,7 +90,7 @@ export function buildRemoteCommand({ runId, department, model = null, taskId, ti
   const log = `~/brain-runs/${runId}.log`;
   const exit = `~/brain-runs/${runId}.exit`;
   const pid = `~/brain-runs/${runId}.pid`;
-  const inner = `${binPath} agent --agent ${department}${modelArg} --session-key agent:${department}:qiumi-${taskId} --message "$M" --timeout ${timeout}${thinkingArg} --json > ${log} 2>&1; echo $? > ${exit}`;
+  const inner = `${binPath} agent --agent ${department}${modelArg} --session-key agent:${department}:${runId} --message "$M" --timeout ${timeout}${thinkingArg} --json > ${log} 2>&1; echo $? > ${exit}`;
   // 幂等探针：.pid（已起）或 .exit（已跑完）在就回 ALREADY，绝不再起第二个 agent。
   // 派发侧失败会重试一次，而「ssh 超时」不等于「远端没起来」——没有这道探针，重试就会让
   // 同一个 session-key 的 agent 把同一件活跑第二遍。
@@ -236,6 +236,14 @@ function parseReceipt(exit, tail) {
     text = parsed.finalAssistantVisibleText ?? parsed?.result?.payloads?.[0]?.text ?? null;
     break;
   }
+  // 真实 --json 输出是多行缩进 JSON，且尾巴常从对象中间截断，上面逐行解析取不到：
+  // 直接按字段名取最后一个 finalAssistantVisibleText 的字符串值（JSON 字符串转义照常解码）。
+  if (text == null) {
+    const all = [...tail.matchAll(/"finalAssistantVisibleText":\s*"((?:[^"\\]|\\.)*)"/g)];
+    if (all.length) {
+      try { text = JSON.parse(`"${all[all.length - 1][1]}"`); } catch { text = null; }
+    }
+  }
   return { exit, text, log_tail: tail.slice(-2000), reaped_at: new Date().toISOString() };
 }
 
@@ -268,7 +276,7 @@ export async function reapOpenclawAgentRuns(pool, deps = {}) {
     try {
       stdout = await sshRun(execFileFn, [
         ...SSH_BASE_ARGS, primaryTarget(),
-        `if [ -f ~/brain-runs/${r.run_id}.exit ]; then echo EXIT=$(cat ~/brain-runs/${r.run_id}.exit); tail -c 4000 ~/brain-runs/${r.run_id}.log 2>/dev/null; else echo NO_EXIT; fi`,
+        `if [ -f ~/brain-runs/${r.run_id}.exit ]; then echo EXIT=$(cat ~/brain-runs/${r.run_id}.exit); tail -c 20000 ~/brain-runs/${r.run_id}.log 2>/dev/null; else echo NO_EXIT; fi`,
       ], { timeout: REAP_SSH_TIMEOUT_MS, encoding: 'utf8' });
     } catch (err) {
       console.warn(`[openclaw-agent] 收割 ${r.run_id} 探测失败: ${err.message}`);

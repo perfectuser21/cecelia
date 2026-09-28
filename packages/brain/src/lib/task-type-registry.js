@@ -190,7 +190,9 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // payload.headed_manual——门没开时入账仍写 true，tick 的候选 SQL 照样选不中。
   // ANC（免锚）：主理人从 Notion 排的运营活不走承诺地图，入账链也从不写 payload.anchor，
   // 不豁免的话放开 tick 派发当天每条秋米任务都会被锚点闸终态 failed。
-  qiumi_task:               T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', true, true, 'none', true, [V, ANC]),
+  // push_to_notion=false：秋米状态走 pushQiumiStatus 专线回写原中英文行；进旧 pushTasks 会与
+  // projection/notion.js 抢同一个 notion_id，推错库 400 后清 id 再重建，来回乒乓（任务 7951bd36）。
+  qiumi_task:               T('openclaw-agent', false, false, 'openclaw-agent', 'openclaw-agent', false, true, 'none', true, [V, ANC]),
   // ── executor=script 一等任务类型（链 bf5088a3 棒 3，任务 5cdbd52a）──
   // 确定性脚本步：Brain 经 ssh 在跑场机执行 payload.cmd（{host,cmd,cwd,env,timeout_sec}），与 AI 步同一条 DAG。
   // kind=agent：脚本也是「一步交付」（df67a9d6 判据）。pr=false 但成功终态写 completed 而非 completed_no_pr——

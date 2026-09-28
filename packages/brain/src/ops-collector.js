@@ -516,7 +516,8 @@ export function parseGhaCron(out) {
 // （2026-09-21 实证：那条别名原先指向过期 IP 100.108.7.63，已修为 100.71.151.105。）
 // 命令仍经 buildHostCmd 逃出容器到 us-vps 宿主，再由宿主 ssh 到 MMV。
 const MMV_SSH = 'ssh -o BatchMode=yes -o ConnectTimeout=20 mmv';
-export const OPENCLAW_CONFIG_CMD = `${MMV_SSH} 'cat ~/.openclaw/clawdbot.json'`;
+// 读 OpenClaw 真在用的 openclaw.json；clawdbot.json 自 09-21 起不再更新，新建的 agent 全不在里面（任务 7951bd36）
+export const OPENCLAW_CONFIG_CMD = `${MMV_SSH} 'cat ~/.openclaw/openclaw.json'`;
 export const OPENCLAW_CRON_CMD = `${MMV_SSH} '/opt/homebrew/bin/openclaw cron list --all --json'`;
 
 /**

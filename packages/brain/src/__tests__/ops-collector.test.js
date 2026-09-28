@@ -53,7 +53,7 @@ describe('runOpsCollector', () => {
       expect(cmd).not.toMatch(/\b(hk-vps|us-vps)\b/);       // 不写死历史落点
     }
     const pool = fakePool();
-    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'clawdbot.json': CLAW_OK, 'workflows': '', 'readlink': '/var/db/timezone/zoneinfo/America/Los_Angeles' });
+    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'openclaw.json': CLAW_OK, 'workflows': '', 'readlink': '/var/db/timezone/zoneinfo/America/Los_Angeles' });
     const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
     expect(r.results.openclaw.ok).toBe(true);
     const agentWrites = pool.queries.filter((q) => q.sql.includes('INSERT INTO ops_agents') && q.params?.[0] === 'openclaw');
@@ -80,7 +80,7 @@ describe('runOpsCollector', () => {
     });
     const pool = fakePool();
     const exec = fakeExec({
-      'launchctl list': LIST_OK, plutil: PLIST_OK, 'clawdbot.json': CLAW_OK,
+      'launchctl list': LIST_OK, plutil: PLIST_OK, 'openclaw.json': CLAW_OK,
       'cron list --all --json': CRON_OK, workflows: '',
       readlink: '/var/db/timezone/zoneinfo/America/Los_Angeles',
     });
@@ -104,7 +104,7 @@ describe('runOpsCollector', () => {
   it('cron 取数失败不拖垮同腿的 agents（独立 try）', async () => {
     const pool = fakePool();
     const exec = fakeExec({
-      'launchctl list': LIST_OK, plutil: PLIST_OK, 'clawdbot.json': CLAW_OK,
+      'launchctl list': LIST_OK, plutil: PLIST_OK, 'openclaw.json': CLAW_OK,
       'cron list --all --json': 'not json at all', workflows: '',
       readlink: '/var/db/timezone/zoneinfo/America/Los_Angeles',
     });
@@ -116,7 +116,7 @@ describe('runOpsCollector', () => {
 
   it('全部成功：三路各写快照+心跳 ok', async () => {
     const pool = fakePool();
-    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'clawdbot.json': CLAW_OK, 'workflows': '', 'readlink': '/var/db/timezone/zoneinfo/America/Los_Angeles' });
+    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'openclaw.json': CLAW_OK, 'workflows': '', 'readlink': '/var/db/timezone/zoneinfo/America/Los_Angeles' });
     const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
     expect(r.results.launchd.ok).toBe(true);
     expect(r.results.openclaw.ok).toBe(true);
@@ -127,7 +127,7 @@ describe('runOpsCollector', () => {
 
   it('ssh hk 腿断：openclaw 心跳 unreachable+last_error 双写，launchd 照常 ok（per-source 隔离）', async () => {
     const pool = fakePool();
-    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'clawdbot.json': new Error('ssh: connect timeout'), 'readlink': 'zoneinfo/America/Los_Angeles' });
+    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'openclaw.json': new Error('ssh: connect timeout'), 'readlink': 'zoneinfo/America/Los_Angeles' });
     const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
     expect(r.results.launchd.ok).toBe(true);
     expect(r.results.openclaw.ok).toBe(false);
@@ -138,7 +138,7 @@ describe('runOpsCollector', () => {
 
   it('launchctl 解析出 0 行 = parse_error 不是空快照', async () => {
     const pool = fakePool();
-    const exec = fakeExec({ 'launchctl list': 'PID\tStatus\tLabel\n', 'clawdbot.json': CLAW_OK });
+    const exec = fakeExec({ 'launchctl list': 'PID\tStatus\tLabel\n', 'openclaw.json': CLAW_OK });
     const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
     expect(r.results.launchd.ok).toBe(false);
     expect(pool.queries.some((q) => q.params?.includes('parse_error'))).toBe(true);
@@ -147,7 +147,7 @@ describe('runOpsCollector', () => {
 
   it('clawdbot JSON 半写入：整份丢弃走 parse_error', async () => {
     const pool = fakePool();
-    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'clawdbot.json': '{"agents": {"entr', 'readlink': 'zoneinfo/America/Los_Angeles' });
+    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'openclaw.json': '{"agents": {"entr', 'readlink': 'zoneinfo/America/Los_Angeles' });
     const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
     expect(r.results.openclaw.ok).toBe(false);
     expect(pool.queries.some((q) => q.sql.includes('INSERT INTO ops_agents') && q.params?.includes('openclaw'))).toBe(false);
@@ -155,7 +155,7 @@ describe('runOpsCollector', () => {
 
   it('模块自 gate：间隔内二次调用 skipped', async () => {
     const pool = fakePool();
-    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'clawdbot.json': CLAW_OK, 'readlink': 'zoneinfo/America/Los_Angeles' });
+    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'openclaw.json': CLAW_OK, 'readlink': 'zoneinfo/America/Los_Angeles' });
     await runOpsCollector(pool, { exec, inContainer: false, now: 1000000000000 });
     const r2 = await runOpsCollector(pool, { exec, inContainer: false, now: 1000000000000 + 1000 });
     expect(r2.skipped).toBe(true);
@@ -163,7 +163,7 @@ describe('runOpsCollector', () => {
 
   it('快照缺席的 agent 标 offline 不删行', async () => {
     const pool = fakePool();
-    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'clawdbot.json': CLAW_OK, 'readlink': 'zoneinfo/America/Los_Angeles' });
+    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'openclaw.json': CLAW_OK, 'readlink': 'zoneinfo/America/Los_Angeles' });
     await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
     const off = pool.queries.find((q) => q.sql.includes("SET status='offline'"));
     expect(off).toBeTruthy();
@@ -181,7 +181,7 @@ describe('runOpsCollector', () => {
 
   it('n8n 腿：写 ops_workflows + agent 归属经传递闭包', async () => {
     const pool = fakePool();
-    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'clawdbot.json': CLAW_OK,
+    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'openclaw.json': CLAW_OK,
       'readlink': 'zoneinfo/America/Los_Angeles', 'n8n export': N8N_OK });
     const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
     expect(r.results.n8n.ok).toBe(true);
@@ -195,7 +195,7 @@ describe('runOpsCollector', () => {
 
   it('n8n 解析出 0 条 = parse_error，不写空快照', async () => {
     const pool = fakePool();
-    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'clawdbot.json': CLAW_OK,
+    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'openclaw.json': CLAW_OK,
       'readlink': 'zoneinfo/America/Los_Angeles', 'n8n export': '[]' });
     const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
     expect(r.results.n8n.ok).toBe(false);
@@ -205,7 +205,7 @@ describe('runOpsCollector', () => {
 
   it('n8n ssh 断腿：只灰 n8n 分区，launchd/openclaw 照常', async () => {
     const pool = fakePool();
-    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'clawdbot.json': CLAW_OK,
+    const exec = fakeExec({ 'launchctl list': LIST_OK, 'plutil': PLIST_OK, 'openclaw.json': CLAW_OK,
       'readlink': 'zoneinfo/America/Los_Angeles', 'n8n export': new Error('ssh: connect timeout') });
     const r = await runOpsCollector(pool, { exec, inContainer: false, now: Date.now() });
     expect(r.results.n8n.ok).toBe(false);
@@ -236,7 +236,7 @@ describe('crontab 两条腿的落点', () => {
       'hostname; crontab -l': 'ubuntu-s-1vcpu-1gb-sfo3-01\n*/3 * * * * /bin/true # d',
       'launchctl list': LIST_OK,
       'plist': PLIST_OK,
-      'clawdbot.json': CLAW_OK,
+      'openclaw.json': CLAW_OK,
     });
     await runOpsCollector(pool, { exec: fn, inContainer: true, keyExistsFn: () => true });
 
@@ -259,7 +259,7 @@ describe('crontab 两条腿的落点', () => {
       'hostname; crontab -l': 'aad17-2.macminivault.com\n*/3 * * * * /bin/true # d',
       'launchctl list': LIST_OK,
       'plist': PLIST_OK,
-      'clawdbot.json': CLAW_OK,
+      'openclaw.json': CLAW_OK,
     });
     await runOpsCollector(pool, { exec: fn, inContainer: true, keyExistsFn: () => true });
     const wrapped = fn.calls.filter((c) => c.includes('hostname; crontab -l') && !c.includes('172.17.0.1'));

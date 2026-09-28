@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { execSync, spawn } = require('child_process');
+const { terminateChild } = require('./lib/child-kill.cjs');
 
 // MIME → 文件扩展名（/llm-call 图片临时文件使用）
 const MIME_TO_EXT = {
@@ -192,7 +193,10 @@ const server = http.createServer((req, res) => {
 
         const timer = setTimeout(() => {
           timedOut = true;
-          child.kill('SIGTERM');
+          // 立即回话：claude -p 无视 SIGTERM 时 'close' 永远不来，调用方会一直等下去
+          console.warn(`[bridge] /llm-call timeout after ${Date.now() - startTime}ms model=${modelArg}`);
+          safeRespond(res, 200, { ok: false, status: 'timeout', degraded: true, message: 'LLM call timed out', elapsed_ms: Date.now() - startTime });
+          terminateChild(child, { graceMs: 5000 });
         }, timeoutMs);
 
         child.on('close', (code) => {
@@ -200,11 +204,7 @@ const server = http.createServer((req, res) => {
           cleanupImage();
           const elapsed = Date.now() - startTime;
 
-          if (timedOut) {
-            console.warn(`[bridge] /llm-call timeout after ${elapsed}ms model=${modelArg}`);
-            safeRespond(res, 200, { ok: false, status: 'timeout', degraded: true, message: 'LLM call timed out', elapsed_ms: elapsed });
-            return;
-          }
+          if (timedOut) return; // 超时那一刻已回话并收尸
 
           if (code !== 0) {
             console.error(`[bridge] /llm-call error (${elapsed}ms) code=${code}: ${stderr.slice(0, 200)}`);
