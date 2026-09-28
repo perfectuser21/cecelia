@@ -19,8 +19,9 @@ import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { qiumiSourceFromNotion } from './lib/qiumi-source.js';
 import { parseEnPage, parseZhPage, GTD_DB_ID, EN_NATIVE_MARK } from './notion-gtd-sync.js';
 
-const JOURNEY_DB = '358c40c2-ba63-8148-bde7-e313d789931a';
-const FEATURE_DB = '358c40c2-ba63-81e3-96c5-d762b3d34dff';
+// journeys / journey_features 不再硬编码库常量：AI Journey / AI Feature 两库 2026-09-19 进回收站，
+// 迁移 480 把注册表两行归档（决策 24a37029：停推，不恢复不重建）。这两张表只认 notion_projection_map
+// 的 active 推送行（resolveDbId），没有就停推——不再每 5 分钟推失败刷 notion_sync_log。
 const ISSUES_DB  = 'a17c40c2-ba63-82fb-9888-8152cefe29ec';
 // AI Notes DB — decisions 用 Type=Decision，initiative_contracts 用 Type=Contract
 const DECISIONS_DB           = '185c40c2-ba63-828c-973f-81a9c4582cd6';
@@ -52,10 +53,24 @@ const STEP_LINKS_DB      = '3e8c40c2-ba63-8194-a47c-dcf5f4b508bb';
 
 /** 代码硬编码的库常量（brain_table → id）。守夜 A9 断言它们 == notion_projection_map；全绿后 resolveDbId 才翻转为注册表优先。 */
 export const LEGACY_DB_CONSTANTS = Object.freeze({
-  journeys: JOURNEY_DB, journey_features: FEATURE_DB, issues: ISSUES_DB,
+  issues: ISSUES_DB,
   decisions: DECISIONS_DB, initiative_contracts: INITIATIVE_CONTRACTS_DB,
   tasks: NOTION_TASKS_DB, skill_registry: SKILL_REGISTRY_DB, journey_step_links: STEP_LINKS_DB,
 });
+
+/**
+ * 注册表停推提示只在进程内出一次（每表一条）：archived/none 的登记是运维终态，不是瞬时错误，
+ * 每 5 分钟刷一遍日志正是 09-19~09-27 那周"推失败一周无人知"的噪音来源。
+ */
+const stopNoticed = new Set();
+async function activePushDbId(pool, table) {
+  const dbId = await resolveDbId(pool, table);
+  if (!dbId && !stopNoticed.has(table)) {
+    stopNoticed.add(table);
+    console.info(`[notion-push-sync] ${table} 停推：注册表无 active 推送行（archived/none，见迁移 480 / 决策 24a37029），本进程不再推`);
+  }
+  return dbId;
+}
 
 // 2026-09-13 实测修复：旧 6 个 ID 对 Notion API 全 404（页面早已不存在），
 // 导致每条 brain/engine issue 推送 404 → isStaleRelationError 静默标已同步
@@ -138,6 +153,8 @@ async function logSyncError(pool, errMsg) {
 }
 
 async function pushJourneys(pool, token) {
+  const dbId = await activePushDbId(pool, 'journeys');
+  if (!dbId) return;
   const { rows } = await pool.query(`
     SELECT j.*, a.notion_id AS area_notion_id
     FROM journeys j
@@ -147,7 +164,6 @@ async function pushJourneys(pool, token) {
     LIMIT 10
   `);
   if (rows.length === 0) return;
-  const dbId = JOURNEY_DB || await resolveDbId(pool, 'journeys');
   await pushRegisteredRows(pool, token, {
     table: 'journeys', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'journey',
     buildProps: (j) => {
@@ -165,6 +181,8 @@ async function pushJourneys(pool, token) {
   });
 }
 async function pushJourneyFeatures(pool, token) {
+  const dbId = await activePushDbId(pool, 'journey_features');
+  if (!dbId) return;
   const { rows } = await pool.query(`
     SELECT f.*, j.notion_id AS journey_notion_id, a.notion_id AS area_notion_id
     FROM journey_features f
@@ -176,7 +194,6 @@ async function pushJourneyFeatures(pool, token) {
     LIMIT 10
   `);
   if (rows.length === 0) return;
-  const dbId = FEATURE_DB || await resolveDbId(pool, 'journey_features');
   await pushRegisteredRows(pool, token, {
     table: 'journey_features', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'feature',
     buildProps: (f) => {
@@ -1214,6 +1231,9 @@ async function pushInitiativeContracts(pool, token) {
   });
 }
 async function pushAdvancementItems(pool, token) {
+  // ability 页住在 AI Feature 库：该库登记 archived（迁移 480）时 PATCH 只会 404，一并停推
+  const featureDbId = await activePushDbId(pool, 'journey_features');
+  if (!featureDbId) return;
   // 按 ability 聚合该 ability **全部**推进项的累积进度（非仅未同步子集）——
   // WHERE 子查询只用来判断"这个 ability 这一轮有没有变化值得推"，
   // 但 COUNT 必须覆盖全量行，否则 done/total 只反映本轮新增/变化的子集，
@@ -1238,7 +1258,7 @@ async function pushAdvancementItems(pool, token) {
   // （同 pushDecisions 的 schema-check 安全模式）
   let schemaProps = {};
   try {
-    const schema = await notionReq(token, `/databases/${FEATURE_DB}`, 'GET');
+    const schema = await notionReq(token, `/databases/${featureDbId}`, 'GET');
     schemaProps = schema?.properties || {};
   } catch {
     schemaProps = {};
