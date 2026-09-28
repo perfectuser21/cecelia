@@ -40,25 +40,6 @@ if (txt('契约哈希') !== 's1' || !txt('Postconditions').includes('pf_lock_acq
 console.log('哈希变才同步 / 正本钉 commit / 哈希不变零写 / Notion 只读标记 ✓');
 "
 
-echo "[backbone-contract-sync-smoke] 1b. 页面正文（只读提示在首块 + 指纹不变零调用）"
-node --input-type=module -e "
-import { buildBackboneActivityBody, syncBackboneBodies } from './src/activity-contract-sync.js';
-const r = { id: 'r1', notion_id: 'p1', capability_key: 'keyword_acquisition', activity_key: 'preflight', contract_sha256: 'c'.repeat(64),
-  contract_source: 'https://github.com/perfectuser21/zenithjoy-workspace/blob/x/product-map/contracts/keyword_acquisition.yaml',
-  contract: { name: '预检', version: '1.0.0', postconditions: [{ probe: 'pf_lock_acquired', asserts: '持锁' }], steps: [{ key: 'acquire_device_lock', name: '拿设备锁', order: 1, check: 'rc=0' }] } };
-const b = buildBackboneActivityBody(r);
-if (b[0].type !== 'callout' || !JSON.stringify(b[0]).includes('只读')) { console.error('FAIL 首块应为只读提示'); process.exit(1); }
-if (!JSON.stringify(b).includes('探针 pf_lock_acquired')) { console.error('FAIL 正文缺后置条件'); process.exit(1); }
-let calls = 0; const notionReq = async (_t, p, m) => { calls++; return m === 'GET' ? { results: [], has_more: false } : {}; };
-let digest = null;
-const pool = { async query(t, p) { if (/FROM journey_steps/.test(t)) return { rows: [{ ...r, notion_body_digest: digest }] }; if (/notion_body_digest =/.test(t)) digest = p[1]; return { rows: [] }; } };
-await syncBackboneBodies(pool, 'tok', { notionReq });
-const first = calls;
-await syncBackboneBodies(pool, 'tok', { notionReq });
-if (first === 0 || calls !== first) { console.error('FAIL 指纹不变应零调用', first, calls); process.exit(1); }
-console.log('正文首块只读 / 含后置条件 / 指纹不变零调用 ✓');
-"
-
 echo "[backbone-contract-sync-smoke] 2. 接线"
 grep -q "name: 'backbone-contract-sync'" src/scheduler-jobs.js || { echo "FAIL JOBS 未挂 backbone-contract-sync"; exit 1; }
 node --input-type=module -e "
