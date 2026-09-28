@@ -24,10 +24,14 @@ for f in mirror inlet truth; do
 done
 pass "三面各有登记（镜子/入口/真身）"
 
-js="$(q "SELECT direction||'/'||status FROM notion_projection_map WHERE brain_table='journey_steps'")"
-[[ "$js" == "none/archived" ]] || fail "journey_steps 应为 none/archived，得 $js"
-grep -q "await pushJourneySteps" "$BRAIN_DIR/src/notion-push-sync.js" && fail "推送链仍含 pushJourneySteps（废表）" || true
-pass "废表 journey_steps：注册 archived/none 且已从推送链摘除"
+# 旧 AI Steps 推送链（2026-06-09 退役）不得复活；迁移 482（决策 0834e2fb / 92f6226b）起 journey_steps=backbone_activities
+# 唯一推送血管 = Backbone Activities 契约只读镜子，走 activity-contract-sync，不走旧 notion-push-sync 链
+ais="$(q "SELECT direction||'/'||status FROM notion_projection_map WHERE brain_table='journey_steps' AND notion_db_id='369c40c2-ba63-812c-9f35-e7e43db25014'")"
+[[ "$ais" == "none/archived" ]] || fail "旧 AI Steps 登记应为 none/archived，得 $ais"
+jsp="$(q "SELECT string_agg(notion_db_id||'@'||vessel, ',') FROM notion_projection_map WHERE brain_table='journey_steps' AND direction IN ('push','both') AND status='active'")"
+[[ "$jsp" == "c213e387-b2ae-45a4-98c0-4a66fe3408be@activity-contract-sync.pushBackboneActivities" ]] || fail "journey_steps 唯一推送血管应为 Backbone Activities 契约镜子，得 $jsp"
+grep -q "await pushJourneySteps" "$BRAIN_DIR/src/notion-push-sync.js" && fail "推送链仍含 pushJourneySteps（旧 AI Steps 链）" || true
+pass "journey_steps：旧 AI Steps 链不复活，唯一推送血管 = Backbone Activities 契约镜子"
 
 # migration 453 起放开"一库多表"（AI Notes=decisions+initiative_contracts 等），唯一键=(库 id 归一, brain_table)
 dup="$(q "SELECT count(*) FROM (SELECT lower(replace(notion_db_id,'-','')) k, coalesce(brain_table,'') t, count(*) c FROM notion_projection_map GROUP BY 1,2 HAVING count(*)>1) x")"

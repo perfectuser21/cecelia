@@ -241,7 +241,9 @@ export async function runBackboneContractJob(pool, opts = {}) {
   }
   let push;
   try {
-    const pushFn = opts.push ?? ((p) => pushBackboneActivities(p, opts.notionToken ?? getToken()));
+    // 无 Notion 凭据（CI/测试环境）→ pushBackboneActivities 收到空 token 安静跳过，不每分钟刷失败日志
+    const safeToken = () => { try { return getToken(); } catch { return null; } };
+    const pushFn = opts.push ?? ((p) => pushBackboneActivities(p, opts.notionToken ?? safeToken()));
     push = await pushFn(pool);
   } catch (err) {
     console.warn(`[backbone-contract-sync] 推 Notion 失败（非阻断）: ${err.message}`);
