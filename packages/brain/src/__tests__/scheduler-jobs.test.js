@@ -147,6 +147,11 @@ vi.mock('../owner-decision-deadline.js', () => ({
   runOwnerDecisionDeadline: vi.fn().mockResolvedValue({ skipped: true }),
 }));
 
+// backbone-contract-sync 真实 handler 会打 GitHub/Notion——单测绝不真发网络；行为由 activity-contract-sync.test.js 覆盖。
+vi.mock('../activity-contract-sync.js', () => ({
+  runBackboneContractJob: vi.fn().mockResolvedValue({ sync: { skipped: true }, push: null }),
+}));
+
 // skill-dist-drift 真实 handler 会 ssh 到 MMV/跑场机取清单——单测绝不真发 ssh；行为由 skill-dist-drift.test.js（注入假执行器）覆盖。
 vi.mock('../skill-dist-drift.js', () => ({
   runSkillDistDrift: vi.fn().mockResolvedValue({ skipped: true, reason: 'interval_gate' }),
@@ -205,6 +210,7 @@ describe('scheduler-jobs 注册表', () => {
     expect(names).toContain('conversation-capture');
     // G1 刀2：模型账号配额采集必须挂在调度表里（PR #5411 只导出未注册，生产表恒空——2026-09-19 实证）
     expect(names).toContain('ops-model-accounts-collector');
+    expect(names).toContain('backbone-contract-sync');
     expect(names.indexOf('ops-model-accounts-collector')).toBeGreaterThan(names.indexOf('ops-collector'));
     // conversation-ttl-archiver 排在 conversation-capture 之后
     expect(names.indexOf('conversation-ttl-archiver')).toBeGreaterThan(names.indexOf('conversation-capture'));
