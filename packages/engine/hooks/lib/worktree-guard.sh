@@ -40,3 +40,35 @@ stop_hook_should_skip_worktree() {
     # 两层都没命中 → 可以继续检查该 worktree 对应的 PR 是否已 merged
     return 1
 }
+
+# ============================================================================
+# stop_hook_remove_merged_worktree — 真正删除已合并 PR 的孤儿 worktree
+# ============================================================================
+# 用法：
+#   if stop_hook_remove_merged_worktree "$wt_path" "$wt_branch"; then
+#       # 删除成功，已打印"已清理"日志
+#   else
+#       # 删除失败，已打印"remove 失败（已忽略）"日志，调用方按需 || true 吞掉
+#   fi
+#
+# 背景（2026-09-28 修复）：git worktree remove --force（单个 --force）对
+# git-level locked 的 worktree 必然失败（git 要求 --force --force 或先
+# unlock，见 git-worktree(1)）。旧实现删除失败后仍无条件打印"已清理"成功
+# 日志，导致 locked 的孤儿 worktree（如 impact-contract-fix）永远清不掉，
+# 且每次 Stop 事件都误报清理成功。
+# ============================================================================
+stop_hook_remove_merged_worktree() {
+    local _wt_path="$1"
+    local _wt_branch="$2"
+
+    # unlock 对非 locked 的 worktree 本就会失败，属正常路径，忽略即可
+    git worktree unlock "$_wt_path" >/dev/null 2>&1 || true
+
+    if git worktree remove --force --force "$_wt_path" 2>/dev/null; then
+        echo "[Stop Hook] 已清理已合并 PR 孤儿 worktree: $_wt_branch" >&2
+        return 0
+    else
+        echo "[Stop Hook] worktree remove 失败（已忽略）: $_wt_path" >&2
+        return 1
+    fi
+}
