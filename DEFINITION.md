@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.336.6
+**Brain 版本**: 1.336.7
 
 ## 1.283.0
 
@@ -48,6 +48,12 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.336.7 — 删除 D 类最后 2 张空表：user_annotations（知识页批注框）/ life_events（看板人生事件路由）
+
+- 迁移 485：删 user_annotations、life_events（非空闸、无 CASCADE、回滚=生产 pg_dump -s）；生产结构副本实测闸拦截/up/down/重放。
+- 同 PR 删引用：`routes/user-annotations.js` 与 server 挂载；日记/决策登记/设计库/开发日志 4 个知识页的批注框（从未被用过）；看板服务端 `task-system/life-events.js` 与挂载（无前端调用）及其接口测试段。
+- 至此 D 类 16 张处置完毕：删 9 张（484 七张 + 485 两张）；topic_decision_feedback（活回路）待主理人定；org_unit_members 保留；ZenithJoy 授权 4 张空副本待删。
 
 ## Brain 1.336.6 — 删除 D 类 7 张空表连引用代码（个人页面/开发日志/开发评审/模型额度快照/内容选题/心跳历史/项目仓库）
 
