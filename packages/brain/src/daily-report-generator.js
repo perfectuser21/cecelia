@@ -21,8 +21,11 @@ import { readRescanStalenessState, renderRescanStalenessSection } from './lib/re
 import { readAssertionRedState, renderAssertionRedSection } from './lib/assertion-red-report.js';
 import { readMirrorDbState, renderMirrorDbSection } from './lib/mirror-db-report.js';
 
-// 业务断言红灯板块（链 bf5088a3 棒4 消费）/ 镜子库失联板块（决策 24a37029）：与 renderBareRunSection 并列对外导出，渲染实现在 lib
-export { renderAssertionRedSection, renderMirrorDbSection };
+// 业务断言红灯板块（链 bf5088a3 棒4 消费）：与 renderBareRunSection 并列对外导出，渲染实现在 lib
+// 单独一条 export（而非合并成一条）是因为 smoke/assertion-red-report-smoke.sh 对本行做精确字符串匹配
+export { renderAssertionRedSection };
+// 镜子库失联板块（决策 24a37029）
+export { renderMirrorDbSection };
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
 
