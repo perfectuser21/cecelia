@@ -84,7 +84,7 @@ describe('buildRemoteCommand', () => {
   it('nohup + .log/.exit/.pid 三件套，prompt 走 $M=$(cat)，不出现在命令行', () => {
     const c = buildRemoteCommand({ runId: 'r1', department: 'dev', model: 'claude-cli/claude-sonnet-5', taskId: 't1' });
     expect(c).toContain('M=$(cat)');
-    expect(c).toContain('/opt/homebrew/bin/openclaw agent --agent dev --model claude-cli/claude-sonnet-5 --session-key agent:dev:qiumi-t1 --message "$M" --timeout 1800 --json');
+    expect(c).toContain('/opt/homebrew/bin/openclaw agent --agent dev --model claude-cli/claude-sonnet-5 --session-key agent:dev:r1 --message "$M" --timeout 1800 --json');
     expect(c).toContain('> ~/brain-runs/r1.log 2>&1; echo $? > ~/brain-runs/r1.exit');
     expect(c).toContain('echo $! > ~/brain-runs/r1.pid');
     expect(c).toContain('echo DISPATCHED');
@@ -443,7 +443,7 @@ describe('promptOf 设备提示段（device_hint）', () => {
 describe('模型可选 + 超时 / 思考强度（任务 0d4215f2）', () => {
   it('model 为空 → 命令里不带 --model（交给 agent 自身默认模型）', () => {
     const c = buildRemoteCommand({ runId: 'r1', department: 'skill-factory', model: null, taskId: 't1' });
-    expect(c).toContain('/opt/homebrew/bin/openclaw agent --agent skill-factory --session-key agent:skill-factory:qiumi-t1 --message "$M" --timeout 1800 --json');
+    expect(c).toContain('/opt/homebrew/bin/openclaw agent --agent skill-factory --session-key agent:skill-factory:r1 --message "$M" --timeout 1800 --json');
     expect(c).not.toContain('--model');
   });
 
@@ -476,5 +476,41 @@ describe('模型可选 + 超时 / 思考强度（任务 0d4215f2）', () => {
     const r = await triggerOpenclawAgent(t, { spawnFn, pool: { query: vi.fn() } });
     expect(r).toMatchObject({ success: false, reason: 'openclaw_agent_spawn_failed' });
     expect(spawnFn).not.toHaveBeenCalled();
+  });
+});
+
+describe('每次运行一个新会话 + 回执解析（任务 7951bd36）', () => {
+  it('会话键按 run_id 而不是 task_id：同一任务重排后换新会话，agent 无法凭旧会话记忆复述', () => {
+    const a = buildRemoteCommand({ runId: 'qiumi-aaaaaaaa-1', department: 'foundry', model: null, taskId: 't1' });
+    const b = buildRemoteCommand({ runId: 'qiumi-aaaaaaaa-2', department: 'foundry', model: null, taskId: 't1' });
+    expect(a).toContain('--session-key agent:foundry:qiumi-aaaaaaaa-1 ');
+    expect(b).toContain('--session-key agent:foundry:qiumi-aaaaaaaa-2 ');
+  });
+
+  it('回执：真实 --json 是多行缩进 JSON，且尾巴从对象中间截断 → 仍能取出 finalAssistantVisibleText', async () => {
+    const tail = [
+      '          "schemaChars": 360',
+      '        }',
+      '      },',
+      '      "finalAssistantVisibleText": "{\\"phone\\":\\"小龙虾\\",\\"ok\\":true}",',
+      '      "stopReason": "stop"',
+      '    }',
+      '  }',
+      '}',
+    ].join('\n');
+    const row = { id: task.id, run_id: 'qiumi-aaaaaaaa-1' };
+    const query = vi.fn().mockResolvedValueOnce({ rows: [row] }).mockResolvedValue({ rows: [], rowCount: 1 });
+    const execFileFn = vi.fn((c, a, o, cb) => cb(null, `EXIT=0\n${tail}\n`, ''));
+    await reapOpenclawAgentRuns({ query }, { execFileFn });
+    const upd = query.mock.calls.find(([sql]) => /completed_no_pr/.test(sql));
+    expect(JSON.parse(upd[1][1]).receipt.text).toBe('{"phone":"小龙虾","ok":true}');
+  });
+
+  it('收割读日志尾巴放大到 20000 字节（4000 常截在最终回答之前）', async () => {
+    const row = { id: task.id, run_id: 'qiumi-aaaaaaaa-1' };
+    const query = vi.fn().mockResolvedValueOnce({ rows: [row] }).mockResolvedValue({ rows: [], rowCount: 1 });
+    const execFileFn = vi.fn((c, a, o, cb) => cb(null, 'EXIT=0\n{"finalAssistantVisibleText":"x"}\n', ''));
+    await reapOpenclawAgentRuns({ query }, { execFileFn });
+    expect(execFileFn.mock.calls[0][1].join(' ')).toContain('tail -c 20000');
   });
 });

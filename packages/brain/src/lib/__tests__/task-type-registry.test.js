@@ -461,7 +461,7 @@ describe('task-type-registry：零行为变化', () => {
     const e = R.getTaskType('qiumi_task');
     expect(e).toMatchObject({
       surface: 'openclaw-agent', coding: false, pr: false, executor: 'openclaw-agent',
-      watchdog: 'openclaw-agent', push_to_notion: true, tick_dispatchable: true, db: true,
+      watchdog: 'openclaw-agent', push_to_notion: false /* 7951bd36：秋米走 pushQiumiStatus 专线 */, tick_dispatchable: true, db: true,
     });
     expect(R.VALID_TASK_TYPES).toContain('qiumi_task');
     expect(R.TICK_DISPATCH_EXCLUDED).not.toContain('qiumi_task');

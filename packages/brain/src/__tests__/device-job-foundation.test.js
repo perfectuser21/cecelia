@@ -140,6 +140,10 @@ describe('闸2 派发排除：device_job 不进无头派发队列', () => {
 });
 
 describe('闸3 投影隔离：device_job 不进 Notion 投影窗口', () => {
+  it('qiumi_task 不进旧 pushTasks（它有 pushQiumiStatus 专线回写；与 projection/notion.js 抢 notion_id 致 400 乒乓，任务 7951bd36）', () => {
+    expect(PUSH_EXCLUDED_TASK_TYPES).toContain('qiumi_task');
+  });
+
   it('pushTasks 排除的 task_type 名单来自注册表 PUSH_EXCLUDED_TASK_TYPES，且含 device_job', () => {
     expect(PUSH_EXCLUDED_TASK_TYPES, '注册表 PUSH_EXCLUDED_TASK_TYPES 必须含 device_job').toContain('device_job');
   });
