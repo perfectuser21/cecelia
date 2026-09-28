@@ -77,9 +77,10 @@ describe('routeQiumiTask 决策表', () => {
     const d = await routeQiumiTask(task('用 Claude Code 改一下按钮文案'), {
       pool, env, fetchFn: jevOk(), callLLMFn: vi.fn(), now: () => 1700000000000,
     });
-    expect(d).toMatchObject({ outcome: 'agent', engine: 'claude', model: 'anthropic/claude-sonnet-5', department: 'dev', kind: 'agent' });
+    // 任务 0d4215f2：模型只认【执行参数】块，不再由 engine 推导（留 null → agent 用自身默认模型）
+    expect(d).toMatchObject({ outcome: 'agent', engine: 'claude', model: null, department: 'dev', kind: 'agent' });
     expect(d.runId).toBe('qiumi-11111111-1700000000000');
-    expect(d.payloadPatch).toMatchObject({ model: 'anthropic/claude-sonnet-5', provider: 'openclaw', run_id: d.runId, qiumi_department: 'dev', qiumi_kind: 'agent' });
+    expect(d.payloadPatch).toMatchObject({ model: null, provider: 'openclaw', run_id: d.runId, qiumi_department: 'dev', qiumi_kind: 'agent' });
     expect(recordTaskEventSafe).toHaveBeenCalledWith(pool, TASK_ID, 'qiumi_route_decided', expect.objectContaining({ outcome: 'agent', source: 'jev' }));
     // 便宜闸的四项命中结论都要留痕，排查时不用回头重跑便宜闸
     expect(d.payloadPatch.qiumi_route.cheap).toMatchObject({ hardEngine: 'claude', department: null, workflowRef: null, agentRef: null });
@@ -89,7 +90,7 @@ describe('routeQiumiTask 决策表', () => {
     const d = await routeQiumiTask(task('帮我起草一份季度汇报'), {
       pool, env, fetchFn: jevOk(jevAnswers({ engine: choice('codex', 0.88) })), callLLMFn: vi.fn(),
     });
-    expect(d).toMatchObject({ outcome: 'agent', engine: 'codex', model: 'openai/gpt-5.3-codex' });
+    expect(d).toMatchObject({ outcome: 'agent', engine: 'codex', model: null });
   });
 
   it('便宜闸命中序列号 → device，一次 Jev 都不问，patch 含 serial/source=oneoff/headed_manual', async () => {
@@ -561,23 +562,71 @@ describe('开关关（默认）：手机活不改道，走 agent 并留痕 devic
   });
 });
 
-describe('「用 <型号>」→ agent 分支 model 取 hardModel', () => {
-  const envModel = qiumiEnv({ JEV_API_KEY: 'k', QIUMI_MODEL_ALLOWLIST: JSON.stringify(['xai/grok-4.7', 'anthropic/claude-opus-5']) });
-  it('用 grok-4.7 → payloadPatch.model=xai/grok-4.7，事件 hardModel 留痕，engine 仍按 Jev', async () => {
-    const d = await routeQiumiTask(task('写周报，用 grok-4.7'), { pool, env: envModel, fetchFn: jevOk(), callLLMFn: vi.fn() });
-    expect(d.outcome).toBe('agent');
-    expect(d.model).toBe('xai/grok-4.7');
-    expect(d.payloadPatch.model).toBe('xai/grok-4.7');
-    expect(d.payloadPatch.qiumi_route.cheap.hardModel).toBe('xai/grok-4.7');
-    expect(recordTaskEventSafe).toHaveBeenCalledWith(pool, TASK_ID, 'qiumi_route_decided', expect.objectContaining({ outcome: 'agent', model: 'xai/grok-4.7' }));
+describe('执行参数与直派（任务 0d4215f2，决策 56328560）', () => {
+  const envP = qiumiEnv({ JEV_API_KEY: 'k', QIUMI_MODEL_ALLOWLIST: JSON.stringify(['openai/gpt-6-sol', 'xai/grok-4.7']) });
+  const reg2 = { ...registry, agents: [...registry.agents, { name: 'skill-factory', notionId: 'ag-sf' }] };
+  const P = (lines) => `【执行参数】\n${lines.join('\n')}\n【执行参数结束】\n在朋友圈给一条他人动态点赞`;
+  beforeEach(() => loadRegistryPool.mockResolvedValue(reg2));
+
+  it('写明执行Agent（非部门）→ 直派，不调 Jev，source=explicit，model 为空', async () => {
+    const fetchFn = jevOk(); const callLLMFn = vi.fn();
+    const d = await routeQiumiTask(task(P(['执行Agent：skill-factory'])), { pool, env: envP, fetchFn, callLLMFn });
+    expect(d).toMatchObject({ outcome: 'agent', department: 'skill-factory', engine: 'explicit', model: null, kind: 'agent' });
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(callLLMFn).not.toHaveBeenCalled();
+    expect(d.payloadPatch).toMatchObject({ model: null, qiumi_department: 'skill-factory', provider: 'openclaw', engine: 'explicit' });
+    expect(d.payloadPatch.qiumi_route.source).toBe('explicit');
   });
-  it('没写型号 → 仍走 modelMap[engine]（terra）', async () => {
-    const d = await routeQiumiTask(task('写周报'), { pool, env: envModel, fetchFn: jevOk(), callLLMFn: vi.fn() });
-    expect(d.payloadPatch.model).toBe('openai/gpt-5.6-terra');
+
+  it('执行Agent 写部门名 → 同样直派', async () => {
+    const fetchFn = jevOk();
+    const d = await routeQiumiTask(task(P(['执行Agent：dev'])), { pool, env: envP, fetchFn, callLLMFn: vi.fn() });
+    expect(d).toMatchObject({ outcome: 'agent', department: 'dev', engine: 'explicit' });
+    expect(fetchFn).not.toHaveBeenCalled();
   });
-  it('用 claude（引擎词）→ model = anthropic/claude-sonnet-5（原生通道，不再 claude-cli）', async () => {
-    const d = await routeQiumiTask(task('用 claude 写周报'), { pool, env: envModel, fetchFn: jevOk(), callLLMFn: vi.fn() });
-    expect(d.payloadPatch.model).toBe('anthropic/claude-sonnet-5');
+
+  it('没写参数块，但 Notion「执行 Agent / Workflow」关联列命中 agent → 直派，不调 Jev', async () => {
+    const fetchFn = jevOk();
+    const d = await routeQiumiTask(task('写周报', { agentWorkflowIds: ['ag-sf'] }), { pool, env: envP, fetchFn, callLLMFn: vi.fn() });
+    expect(d).toMatchObject({ outcome: 'agent', department: 'skill-factory', engine: 'explicit' });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('执行Agent 不在 agent 池也不是部门 → fail exec_agent_unknown，不调 Jev', async () => {
+    const fetchFn = jevOk();
+    const d = await routeQiumiTask(task(P(['执行Agent：nobody'])), { pool, env: envP, fetchFn, callLLMFn: vi.fn() });
+    expect(d).toMatchObject({ outcome: 'fail', reason: 'exec_agent_unknown' });
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it('参数块里模型写不出来 → fail exec_params_invalid，detail 带错误码', async () => {
+    const d = await routeQiumiTask(task(P(['执行Agent：dev', '模型：agent'])), { pool, env: envP, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    expect(d).toMatchObject({ outcome: 'fail', reason: 'exec_params_invalid' });
+    expect(d.detail).toContain('unknown_model');
+  });
+
+  it('模型 / 超时 / 思考强度 / 验收 / 设备 原样落进 payload', async () => {
+    const d = await routeQiumiTask(task(P([
+      '执行Agent：skill-factory', '模型：sol', '超时：20分钟', '思考强度：high', '验收：动态下出现本机昵称', '设备：小龙虾',
+    ])), { pool, env: envP, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    expect(d.model).toBe('openai/gpt-6-sol');
+    expect(d.payloadPatch).toMatchObject({
+      model: 'openai/gpt-6-sol', timeout_sec: 1200, thinking: 'high', acceptance: '动态下出现本机昵称',
+    });
+    expect(d.payloadPatch.qiumi_route.device_hint.requested).toBe('小龙虾');
+  });
+
+  it('没写执行者 → 照常问 Jev 定部门，但 model 为空（不再由 engine 推导）', async () => {
+    const fetchFn = jevOk();
+    const d = await routeQiumiTask(task('帮我起草一份季度汇报'), { pool, env: envP, fetchFn, callLLMFn: vi.fn() });
+    expect(fetchFn).toHaveBeenCalled();
+    expect(d).toMatchObject({ outcome: 'agent', department: 'dev', model: null });
+    expect(d.payloadPatch.model).toBeNull();
+  });
+
+  it('没写执行者但写了模型 → Jev 定部门，模型用参数', async () => {
+    const d = await routeQiumiTask(task(P(['模型：grok'])), { pool, env: envP, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    expect(d).toMatchObject({ outcome: 'agent', department: 'dev', model: 'xai/grok-4.7' });
   });
 });
 
