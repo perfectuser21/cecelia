@@ -220,6 +220,15 @@ describe('runBackboneContractJob', () => {
     expect(r.sync.ok).toBe(true);
     expect(r.push).toMatchObject({ error: 'notion 429' });
   });
+
+  it('正文写失败不影响属性推送与同步（各自吞错）', async () => {
+    const gh = fakeGithub({ digest: digestOf({}) });
+    const pool = fakePool([]);
+    const r = await runBackboneContractJob(pool, { ...deps(gh), now: Date.now(), force: true, push: async () => ({ created: 8 }), body: async () => { throw new Error('notion 503'); } });
+    expect(r.sync.ok).toBe(true);
+    expect(r.push).toEqual({ created: 8 });
+    expect(r.body).toMatchObject({ error: 'notion 503' });
+  });
 });
 
 describe('buildBackboneActivityProps', () => {

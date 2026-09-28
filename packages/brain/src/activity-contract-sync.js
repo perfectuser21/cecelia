@@ -13,7 +13,7 @@ import yaml from 'js-yaml';
 import { raise } from './alerting.js';
 import { resolveGitHubToken } from './harness-credentials.js';
 import { notionReq as defaultNotionReq, getToken } from './recurring-notion-sync.js';
-import { pushRegisteredRows, resolveDbId } from './lib/notion-projection-engine.js';
+import { pushRegisteredRows, resolveDbId, propsDigest } from './lib/notion-projection-engine.js';
 import { ensureOpsDbProps } from './ops-quota-notion.js';
 
 export const CONTRACT_REPO = 'perfectuser21/zenithjoy-workspace';
@@ -195,6 +195,115 @@ export async function pushBackboneActivities(pool, token, { notionReq = defaultN
   });
 }
 
+// ─── Notion 页面正文：契约给人读（任务 d852c852）──────────────────────────────
+// 正文完全由 contract 生成、单向只读；指纹（notion_body_digest）没变不打 Notion，变了整段替换。
+
+export const BODY_PAGES_PER_RUN = 3;
+const NOTION_APPEND_MAX = 100;
+
+const span = (s, link) => ({ type: 'text', text: { content: String(s ?? '').slice(0, RT_MAX), ...(link ? { link: { url: link } } : {}) } });
+const block = (type, content) => ({ object: 'block', type, [type]: { rich_text: [span(content)] } });
+const h2 = (s) => block('heading_2', s);
+const para = (s) => block('paragraph', s);
+const bullets = (items, empty = '无') => ((items || []).length ? items : [empty]).map((s) => block('bulleted_list_item', s));
+const listOr = (arr) => ((arr || []).length ? arr.join('；') : '无');
+
+/** journey_steps 一行 → 页面正文 blocks（顺序按人读：先看承诺和输入输出，再看怎么判、怎么错、花多少）。 */
+export function buildBackboneActivityBody(r) {
+  const c = r.contract || {};
+  const nh = c.failure?.needs_human || {};
+  const res = c.resources || {};
+  const steps = [...(c.steps || [])].sort((x, y) => x.order - y.order);
+  return [
+    { object: 'block', type: 'callout', callout: {
+      icon: { type: 'emoji', emoji: '🔒' },
+      rich_text: [span('只读镜子：本页由契约自动生成，手改会被覆盖。改契约请改 '), span('git 正本', r.contract_source || null), span('，合并后约 30 分钟自动同步。')],
+    } },
+    h2('对外承诺'),
+    para(r.promise || '（内部活动，无直接客户承诺）'),
+    h2('输入 → 输出'),
+    ...bullets([...(c.inputs || []).map((x) => `输入：${io(x)}`), ...(c.outputs || []).map((x) => `输出：${io(x)}`)]),
+    h2('开工前提'),
+    ...bullets(c.preconditions),
+    h2('做完怎么判定'),
+    ...bullets((c.postconditions || []).map((p) => `探针 ${p.probe}：${p.asserts}`)),
+    h2('步骤'),
+    ...steps.map((s) => block('numbered_list_item',
+      `${s.name} — 判定：${s.check}${s.implementation?.status === 'missing' ? ' ⚠ 未实现' : ''}${s.uses_llm ? ' 🤖' : ''}（${s.key}）`)),
+    h2('出错怎么办'),
+    ...bullets([
+      `正常为空：${listOr(c.failure?.empty_ok)}`,
+      `可重试：${listOr(c.failure?.retryable)}`,
+      `需人处理：${listOr(nh.cases)} → ${nh.alert?.channel ?? '?'}（${nh.alert?.object ?? '无告警对象'}）`,
+      `致命：${listOr(c.failure?.fatal)}`,
+    ]),
+    h2('预算与限额'),
+    ...bullets([
+      c.budget ? `时长上限 ${c.budget.max_duration_s}s，心跳 ${c.budget.heartbeat_s}s` : '时长：未声明',
+      `锁：${listOr(res.locks)}`,
+      `限额：${listOr((res.limits || []).map((l) => `${l.name}=${l.value}`))}`,
+      c.idempotency ? `防重复：${c.idempotency.dedupe_key}（重复时 ${c.idempotency.on_duplicate}）` : '防重复：未声明',
+    ]),
+    h2('副作用与模型'),
+    ...bullets([
+      ...(c.side_effects || []).map((s) => `${s.kind === 'external_visible' ? '对外可见' : '内部写入'} · ${s.target}：${s.description}`),
+      ...((c.model || []).length ? c.model.map((m) => `模型 ${m.provider}/${m.model}：${m.purpose}`) : ['不调大模型']),
+    ]),
+    h2('已知缺口'),
+    ...bullets((c.known_gaps || []).map((g) => `${g.gap}（任务 ${g.task}）`)),
+    { object: 'block', type: 'divider', divider: {} },
+    para([
+      `负责人 ${[c.owner?.department, c.owner?.agent].filter(Boolean).join(' / ') || '未声明'}`,
+      `执行 ${c.execution?.location ?? '?'}（${c.execution?.via ?? '?'}）`,
+      `调用方式 ${runsAs(c.invokers)}`,
+      `版本 ${c.version ?? '?'}（${c.compatibility === 'breaking' ? '破坏性' : '兼容'}）`,
+      `指纹 ${String(r.contract_sha256 || '').slice(0, 12)}`,
+    ].join(' · ')),
+  ];
+}
+
+/** 整段替换：先列旧块→逐块删→分批追加。任一步抛错由调用方兜，不记指纹即下轮重来。 */
+async function replacePageBody(token, pageId, blocks, notionReq) {
+  const old = [];
+  let cursor = null;
+  do {
+    const q = `?page_size=100${cursor ? `&start_cursor=${cursor}` : ''}`;
+    const res = await notionReq(token, `/blocks/${pageId}/children${q}`, 'GET');
+    old.push(...(res?.results || []).map((b) => b.id));
+    cursor = res?.has_more ? res.next_cursor : null;
+  } while (cursor);
+  for (const id of old) await notionReq(token, `/blocks/${id}`, 'DELETE');
+  for (let i = 0; i < blocks.length; i += NOTION_APPEND_MAX) {
+    await notionReq(token, `/blocks/${pageId}/children`, 'PATCH', { children: blocks.slice(i, i + NOTION_APPEND_MAX) });
+  }
+}
+
+export async function syncBackboneBodies(pool, token, { notionReq = defaultNotionReq, logSyncError = async () => {} } = {}) {
+  if (!token) return null;
+  const { rows } = await pool.query(
+    `SELECT id, notion_id, capability_key, activity_key, contract, contract_sha256, contract_source, promise, status, notion_body_digest
+       FROM journey_steps
+      WHERE contract IS NOT NULL AND notion_id IS NOT NULL
+      ORDER BY capability_key, step_number`);
+  const stat = { rewritten: 0, unchanged: 0, failed: 0 };
+  for (const r of rows) {
+    const blocks = buildBackboneActivityBody(r);
+    const digest = propsDigest({}, blocks);
+    if (r.notion_body_digest === digest) { stat.unchanged++; continue; }
+    if (stat.rewritten + stat.failed >= BODY_PAGES_PER_RUN) break;
+    try {
+      await replacePageBody(token, r.notion_id, blocks, notionReq);
+      await pool.query(`UPDATE journey_steps SET notion_body_digest = $2 WHERE id = $1`, [r.id, digest]);
+      stat.rewritten++;
+    } catch (err) {
+      stat.failed++;
+      console.warn(`[backbone-contract-sync] 正文重写失败 ${r.capability_key}.${r.activity_key}: ${err.message}`);
+      await logSyncError(pool, err.message);
+    }
+  }
+  return stat;
+}
+
 // ─── scheduler job ─────────────────────────────────────────────────────────
 
 async function readState(pool) {
@@ -239,15 +348,25 @@ export async function runBackboneContractJob(pool, opts = {}) {
       await writeState(pool, { checked_at: at, ok: false, error: err.message, head_sha: prev?.head_sha ?? null, lag_since: lagSince, alerted });
     }
   }
+  // 无 Notion 凭据（CI/测试环境）→ 两段都收到空 token 安静跳过，不每分钟刷失败日志
+  const safeToken = () => { try { return getToken(); } catch { return null; } };
+  const token = () => opts.notionToken ?? safeToken();
+  // 属性先推（新页面在这一步建出 notion_id），正文再写；两段各自吞错
   let push;
   try {
-    // 无 Notion 凭据（CI/测试环境）→ pushBackboneActivities 收到空 token 安静跳过，不每分钟刷失败日志
-    const safeToken = () => { try { return getToken(); } catch { return null; } };
-    const pushFn = opts.push ?? ((p) => pushBackboneActivities(p, opts.notionToken ?? safeToken()));
+    const pushFn = opts.push ?? ((p) => pushBackboneActivities(p, token()));
     push = await pushFn(pool);
   } catch (err) {
     console.warn(`[backbone-contract-sync] 推 Notion 失败（非阻断）: ${err.message}`);
     push = { error: err.message };
   }
-  return { sync, push };
+  let body;
+  try {
+    const bodyFn = opts.body ?? ((p) => syncBackboneBodies(p, token()));
+    body = await bodyFn(pool);
+  } catch (err) {
+    console.warn(`[backbone-contract-sync] 写 Notion 正文失败（非阻断）: ${err.message}`);
+    body = { error: err.message };
+  }
+  return { sync, push, body };
 }
