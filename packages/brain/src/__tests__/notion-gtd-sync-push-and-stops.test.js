@@ -103,6 +103,19 @@ describe('pushQiumiStatus', () => {
     // 无映射行不读页：只有 blocked 那行发了 GET
     expect(mockNotionReq.mock.calls.filter((c) => c[2] === 'GET')).toHaveLength(1);
   });
+  it('blocked + blocked_reason=device_unresolved → 中文 OpenClaw结果 显示「⚠️ 手机未确定…」（任务 b923b1f7）', async () => {
+    const { pushQiumiStatus, PUSH_QIUMI_QUERY } = await import('../notion-gtd-sync.js');
+    expect(PUSH_QIUMI_QUERY).toMatch(/blocked_reason/);
+    const note = '⚠️ 手机未确定：请在正文写明手机昵称（小彩/小白/小黄/小蓝）或抖音账号';
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [taskRow({ status: 'blocked', blocked_reason: 'device_unresolved', error_message: note })] })
+      .mockResolvedValue({ rows: [] });
+    mockNotionReq.mockResolvedValueOnce(zhPageWith('进行中')).mockResolvedValue({});
+    await pushQiumiStatus({ query }, 'tok', deps);
+    const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH}` && c[2] === 'PATCH')[3];
+    expect(zhPatch.properties['状态'].status.name).toBe('进行中');
+    expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content).toBe(note);
+  });
   it('中文行已被主理人归档/删除 → 不 PATCH、记指纹不再重扫，且不挡住同轮后面的行（09-28 实测 48h 重试 586 次）', async () => {
     const { pushQiumiStatus } = await import('../notion-gtd-sync.js');
     const ZH2 = '99999999-2222-3333-4444-555555555555';
