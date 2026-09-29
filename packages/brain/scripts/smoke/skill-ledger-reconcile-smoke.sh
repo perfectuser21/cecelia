@@ -24,6 +24,7 @@ cleanup() {
   q "DELETE FROM skill_registry   WHERE name LIKE '${TAG}%'"        >/dev/null 2>&1 || true
   q "DELETE FROM skill_drift_alerts WHERE skill_name = '__skill_ledger_count__'" >/dev/null 2>&1 || true
   q "DELETE FROM fact_snapshot_headers WHERE repo LIKE '${TAG}%'"   >/dev/null 2>&1 || true
+  q "DELETE FROM working_memory WHERE key = 'skill_inventory_state'" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 cleanup
@@ -53,21 +54,24 @@ pass "A5 事实快照新鲜度：停更 200h 真报红且点名 repo（proven-to
 
 q "DELETE FROM fact_snapshot_headers WHERE repo LIKE '${TAG}%'" >/dev/null
 
-# ── 2. A6：账本与运行舱投影分叉必须报红 + 落 skill_drift_alerts ──
-q "INSERT INTO skill_registry (name,description,location,status)
-   VALUES ('${TAG}-a','smoke','openclaw','active'),
-          ('${TAG}-b','smoke','openclaw','active')" >/dev/null
+# ── 2. A6：ops_skills 引用未入账 skill → 必须报红 + 落 skill_drift_alerts ──
+q "INSERT INTO working_memory (key, value_json, updated_at)
+   VALUES ('skill_inventory_state', jsonb_build_object('last_ok_at', NOW()::text), NOW())
+   ON CONFLICT (key) DO UPDATE SET value_json = EXCLUDED.value_json" >/dev/null
+q "INSERT INTO skill_registry (name,description,location,status,presence)
+   VALUES ('${TAG}-a','smoke','openclaw','active','present'),
+          ('${TAG}-b','smoke','openclaw','active','gone')" >/dev/null
 q "INSERT INTO ops_skills (source,name,used_by)
-   VALUES ('openclaw','${TAG}-a','[]'::jsonb)" >/dev/null
+   VALUES ('openclaw','${TAG}-a','[]'::jsonb), ('openclaw','${TAG}-b','[]'::jsonb)" >/dev/null
 A6="$(run_assertion skill_ledger_consistency)"
-echo "$A6" | grep -q '"ok":false' || fail "A6 未对 registry/ops_skills 分叉报红: $A6"
-pass "A6 skill 账本一致性：账实分叉真报红（proven-to-fire）"
+echo "$A6" | grep -q '"ok":false' || fail "A6 未对 ops_skills 引用已下线 skill 报红: $A6"
+echo "$A6" | grep -q "${TAG}-b"   || fail "A6 报红但未点名: $A6"
+pass "A6 skill 账本一致性：引用已下线 skill 真报红并点名（proven-to-fire）"
 
 DRIFT="$(q "SELECT count(*) FROM skill_drift_alerts WHERE skill_name='__skill_ledger_count__' AND drift_date=CURRENT_DATE")"
 [[ "$DRIFT" == "1" ]] || fail "A6 报红但未落账 skill_drift_alerts，got=$DRIFT"
-pass "A6 分叉落账 skill_drift_alerts（复用 2026-07-17 后停更的表，未新建）"
+pass "A6 分叉落账 skill_drift_alerts（汇总行）"
 
-# 重跑幂等：UNIQUE(skill_name,drift_date) 保证每天仍只有一条
 run_assertion skill_ledger_consistency >/dev/null
 DRIFT2="$(q "SELECT count(*) FROM skill_drift_alerts WHERE skill_name='__skill_ledger_count__' AND drift_date=CURRENT_DATE")"
 [[ "$DRIFT2" == "1" ]] || fail "重跑后 drift_alerts 重复写入，got=$DRIFT2"

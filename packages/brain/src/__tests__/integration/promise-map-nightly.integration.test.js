@@ -20,6 +20,8 @@ describe('S4 保鲜对账 proven-to-fire', () => {
       await client.query('DELETE FROM fact_snapshot_headers');
       await client.query(`DELETE FROM skill_registry WHERE location='openclaw' OR name LIKE 'openclaw/%'`);
       await client.query(`DELETE FROM ops_skills WHERE source='openclaw'`);
+      // A6 新口径：扫描（skill-inventory-sync）从未成功过时走降级绿，不依赖具体名单。
+      await client.query(`DELETE FROM working_memory WHERE key='skill_inventory_state'`);
       // A5 需要至少一份新鲜快照——空表按设计判 fail（"扫描链从未成功跑过"），故 seed。
       await client.query(
         `INSERT INTO fact_snapshot_headers (kind,repo,source_revision,scanner_version,scanned_at,row_count)
@@ -51,20 +53,22 @@ describe('S4 保鲜对账 proven-to-fire', () => {
     }
   });
 
-  it('proven-to-fire ⑥：账本与运行舱投影分叉 → A6 报红且落 skill_drift_alerts', async () => {
+  it('proven-to-fire ⑥：ops_skills 引用未入账 skill、派发绑定行已下线 → A6 报红且落 skill_drift_alerts', async () => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(`DELETE FROM skill_registry WHERE location='openclaw' OR name LIKE 'openclaw/%'`);
       await client.query(`DELETE FROM ops_skills WHERE source='openclaw'`);
-      // 账本有 1 条 openclaw，运行舱投影 0 条 → 必分叉
-      await client.query(
-        `INSERT INTO skill_registry (name,description,location,status)
-         VALUES ('__drift_probe__','itest','openclaw','active')`);
+      await client.query(`INSERT INTO working_memory (key, value_json, updated_at) VALUES ('skill_inventory_state', $1, NOW())
+        ON CONFLICT (key) DO UPDATE SET value_json = $1`, [JSON.stringify({ last_ok_at: new Date().toISOString() })]);
+      await client.query(`INSERT INTO ops_skills (source, name, used_by) VALUES ('openclaw','__drift_probe__','[]'::jsonb)`);
+      await client.query(`INSERT INTO skill_registry (name, status, presence, task_types)
+        VALUES ('__dead_bound_probe__','active','gone',ARRAY['__probe_type__'])`);
       const results = await buildNightlyAssertions(client);
       const a6 = results.find(r => r.key === 'skill_ledger_consistency');
       expect(a6.ok).toBe(false);
       expect(a6.detail).toMatch(/账实分叉/);
+      expect(a6.detail).toContain('__drift_probe__');
+      expect(a6.detail).toContain('__dead_bound_probe__(gone)');
       const { rows } = await client.query(
         `SELECT count(*)::int AS n FROM skill_drift_alerts
           WHERE skill_name='__skill_ledger_count__' AND drift_date=CURRENT_DATE`);

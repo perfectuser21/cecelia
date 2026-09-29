@@ -76,6 +76,8 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/capture-destination-link.integration.test.js',
   'src/__tests__/integration/okr-decomposition-flow.integration.test.js',
   'src/__tests__/integration/base-sha-reanchor.pg.integration.test.js',
+  'src/__tests__/integration/migration-491-skill-registry-ledger.integration.test.js',
+  'src/__tests__/integration/skill-inventory-sync.integration.test.js',
 ];
 
 export default defineConfig({
