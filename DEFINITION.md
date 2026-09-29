@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.342.1
+**Brain 版本**: 1.343.0
 
 ## 1.283.0
 
@@ -48,6 +48,12 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.343.0 — 秋米模型写系列名自动取最新版本
+
+- 【执行参数】模型字段支持系列名：Sol / Terra / Luna / Astra / Opus / Sonnet / Fable / Haiku / Grok，取允许清单内该系列最新纯版本号型号；新版本进清单即自动成为默认（决策 49d17c60，任务 c271d6a8）。
+- 具体型号支持显示名写法（「GPT-6 Sol」「Opus 4.8」「Grok 4.6」），claude/codex 简称兼容为 Sonnet/Terra 系列最新。
+- 生产允许清单（us-vps .env.docker）按 MMV 实测收敛为 21 个：补 openai/gpt-6-sol；剔除实测失败的 claude-opus-5-5、grok-4.5、grok-4.20-non-reasoning、grok-4.20-multi-agent。
 
 ## Brain 1.342.1 — relay project 推送错库 400 自愈
 
