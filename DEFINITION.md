@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.341.0
+**Brain 版本**: 1.341.1
 
 ## 1.283.0
 
@@ -48,6 +48,11 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.341.1 — Notion 推送回收站页自愈 + Issues Status 映射
+
+- notion 推送：PATCH 返回 400「Can't edit page on block with an archived ancestor」（页或所在库进回收站）视同 404，清 notion_id 与指纹下轮重建。覆盖 tasks、skill_registry、统一推送引擎（issues 等）与 relay project 投影；新增 isPageGoneError。
+- issues 推送：Status 映射到 Notion Issues 库合法选项（Backlog→Open、Done→Closed、open→Open、closed→Closed，大小写不敏感，未知→Open），修「Invalid status option」每轮失败。
 
 ## Brain 1.341.0 — 排空（drain）运行期超龄自愈
 
