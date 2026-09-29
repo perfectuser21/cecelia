@@ -28,7 +28,7 @@ describe('pushQiumiStatus', () => {
       .mockResolvedValue({ rows: [] });
     mockNotionReq.mockResolvedValueOnce(zhPageWith('进行中')).mockResolvedValue({});
     const r = await pushQiumiStatus({ query }, 'tok', deps);
-    expect(r).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 0 });
+    expect(r).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 0, skippedArchived: 0 });
     expect(query.mock.calls[0][0]).toBe(PUSH_QIUMI_QUERY);
     expect(PUSH_QIUMI_QUERY).toMatch(/LIMIT 50/);
     // device_job 子任务绝不能进推送集合：它若带着中文页 id，会把同一行中文表按子任务的
@@ -71,14 +71,14 @@ describe('pushQiumiStatus', () => {
     const q1 = vi.fn().mockResolvedValueOnce({ rows: [taskRow()] }).mockResolvedValue({ rows: [] });
     mockNotionReq.mockResolvedValueOnce(zhPageWith('阻塞')).mockResolvedValue({});
     const r1 = await pushQiumiStatus({ query: q1 }, 'tok', deps);
-    expect(r1).toEqual({ pushed: 0, skippedHuman: 1, skippedNoMap: 0 });
+    expect(r1).toEqual({ pushed: 0, skippedHuman: 1, skippedNoMap: 0, skippedArchived: 0 });
     expect(q1.mock.calls.at(-1)[0]).toMatch(/qiumi_human_hold/);
 
     mockNotionReq.mockReset();
     const q2 = vi.fn().mockResolvedValueOnce({ rows: [taskRow()] }).mockResolvedValue({ rows: [] });
     mockNotionReq.mockResolvedValueOnce(zhPageWith('委派')).mockResolvedValue({});
     const r2 = await pushQiumiStatus({ query: q2 }, 'tok', deps);
-    expect(r2).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 0 });
+    expect(r2).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 0, skippedArchived: 0 });
     const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH}` && c[2] === 'PATCH')[3];
     expect(zhPatch.properties['状态'].status.name).toBe('进行中');
     const [sql2, params2] = q2.mock.calls.at(-1);
@@ -94,7 +94,7 @@ describe('pushQiumiStatus', () => {
       ] }).mockResolvedValue({ rows: [] });
     mockNotionReq.mockResolvedValueOnce(zhPageWith('进行中')).mockResolvedValue({});
     const r = await pushQiumiStatus({ query }, 'tok', deps);
-    expect(r).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 1 });
+    expect(r).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 1, skippedArchived: 0 });
     const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH}` && c[2] === 'PATCH')[3];
     expect(zhPatch.properties['状态'].status.name).toBe('进行中');
     expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content).toBe('[等待中: quota_exhausted]');
@@ -102,6 +102,30 @@ describe('pushQiumiStatus', () => {
     expect(query.mock.calls.at(-1)[1]).toEqual(['p-1', 'pending']);
     // 无映射行不读页：只有 blocked 那行发了 GET
     expect(mockNotionReq.mock.calls.filter((c) => c[2] === 'GET')).toHaveLength(1);
+  });
+  it('中文行已被主理人归档/删除 → 不 PATCH、记指纹不再重扫，且不挡住同轮后面的行（09-28 实测 48h 重试 586 次）', async () => {
+    const { pushQiumiStatus } = await import('../notion-gtd-sync.js');
+    const ZH2 = '99999999-2222-3333-4444-555555555555';
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [
+        taskRow({ status: 'completed_no_pr' }),
+        taskRow({ id: 'next-1', status: 'completed_no_pr', zh_page_id: ZH2, en_page_id: null }),
+      ] }).mockResolvedValue({ rows: [] });
+    mockNotionReq.mockImplementation(async (_t, path, method) => {
+      if (path === `/pages/${ZH}` && method === 'GET') return { ...zhPageWith('进行中'), archived: true, in_trash: true };
+      if (path === `/pages/${ZH}` && method === 'PATCH') throw new Error("Notion PATCH → 400: Can't edit block that is archived.");
+      if (path === `/pages/${ZH2}` && method === 'GET') return { ...zhPageWith('进行中'), id: ZH2 };
+      return {};
+    });
+    const r = await pushQiumiStatus({ query }, 'tok', deps);
+    expect(r).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 0, skippedArchived: 1 });
+    expect(mockNotionReq.mock.calls.some((c) => c[1] === `/pages/${ZH}` && c[2] === 'PATCH'), '对归档页发了 PATCH').toBe(false);
+    expect(mockNotionReq.mock.calls.some((c) => c[1] === `/pages/${EN}` && c[2] === 'PATCH'), '归档行的英文页也不该动').toBe(false);
+    expect(mockNotionReq.mock.calls.some((c) => c[1] === `/pages/${ZH2}` && c[2] === 'PATCH'), '后面的行被挡住没推').toBe(true);
+    // 归档行也要 stamp，否则每 30s 捞回来重试
+    const stamps = query.mock.calls.slice(1).map((c) => c[1]);
+    expect(stamps).toContainEqual([TID, 'completed_no_pr']);
+    mockNotionReq.mockReset();
   });
   it('英文页 id 为空 → 只写中文页，不 PATCH 英文页', async () => {
     const { pushQiumiStatus } = await import('../notion-gtd-sync.js');

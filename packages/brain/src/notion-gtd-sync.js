@@ -187,7 +187,7 @@ const bizToday = () => new Date(Date.now() - 4 * 3600 * 1000).toISOString().slic
 /** Brain → 中文页（zh 通道 ≤50/轮）+ 英文页 Status。人工态行只更指纹不写页。 */
 export async function pushQiumiStatus(pool, token, { notionReq = defaultNotionReq, today = bizToday } = {}) {
   const { rows } = await pool.query(PUSH_QIUMI_QUERY);
-  let pushed = 0; let skippedHuman = 0; let skippedNoMap = 0;
+  let pushed = 0; let skippedHuman = 0; let skippedNoMap = 0; let skippedArchived = 0;
   for (const t of rows) {
     // hold 非空 = 本轮放弃推送是因为人工占着中文页：留保留标记，下轮无论 Brain 状态变没变都要重扫。
     // 推送成功则必须把标记减掉，否则这行会永远留在扫描集合里。
@@ -205,6 +205,9 @@ export async function pushQiumiStatus(pool, token, { notionReq = defaultNotionRe
     const map = QIUMI_STATUS_MAP[t.status];
     if (!map || !map.zh) { await stamp(); skippedNoMap += 1; continue; }
     const zhPage = await withBackoff(() => notionReq(token, `/pages/${t.zh_page_id}`, 'GET'));
+    // 主理人删掉（归档）的中文行永远写不进去（400 Can't edit archived）。不跳过的话，
+    // 这一行每 30s 重试、而且单行抛错会中止整步，同轮排在它后面的行全都推不上去（09-28 实测 48h 586 次）。
+    if (zhPage?.archived || zhPage?.in_trash) { await stamp(); skippedArchived += 1; continue; }
     const zhStatus = zhPage?.properties?.['状态']?.status?.name ?? null;
     if (ZH_HUMAN_ONLY_STATUSES.includes(zhStatus)) { await stamp(zhStatus); skippedHuman += 1; continue; }
     const write = zhWriteFor(t.status, { reason: t.error_message || '', resultText: resultTextOf(t.result), today: today() });
@@ -215,7 +218,7 @@ export async function pushQiumiStatus(pool, token, { notionReq = defaultNotionRe
     await stamp();
     pushed += 1;
   }
-  return { pushed, skippedHuman, skippedNoMap };
+  return { pushed, skippedHuman, skippedNoMap, skippedArchived };
 }
 
 /** 急停三个查询：只读三个人工动作态，且必须 OpenClaw任务号 以 brain: 开头（归属铁律） */
