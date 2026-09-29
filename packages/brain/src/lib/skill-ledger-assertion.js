@@ -36,15 +36,21 @@ export async function buildSkillLedgerAssertion(q) {
   if (ok) {
     return { key: SKILL_LEDGER_KEY, label: LABEL, ok: true, detail: 'ops_skills 引用的 skill 全部在账且在用；派发绑定行无下线/断链' };
   }
+  let alertLogged = false;
   await q.query(
     `INSERT INTO skill_drift_alerts (skill_name, ssot_version, snapshot_version, drift_date)
      VALUES ($1, $2, $3, CURRENT_DATE)
      ON CONFLICT (skill_name, drift_date)
      DO UPDATE SET ssot_version = EXCLUDED.ssot_version, snapshot_version = EXCLUDED.snapshot_version, detected_at = NOW()`,
     ['__skill_ledger_count__', `ops引用未入账=${unregistered.length}`, `派发绑定失效=${deadBound.length}`],
-  ).catch(() => {});
+  ).then(() => {
+    alertLogged = true;
+  }).catch((err) => {
+    console.error('[skill-ledger] skill_drift_alerts 落账失败：' + err.message);
+  });
   const parts = [];
   if (unregistered.length) parts.push(`ops_skills 引用但账本不在/非在用 ${unregistered.length} 个：${unregistered.slice(0, SHOW).join('、')}${unregistered.length > SHOW ? '…' : ''}`);
   if (deadBound.length) parts.push(`派发绑定指向已下线/断链 ${deadBound.length} 个：${deadBound.slice(0, SHOW).map((r) => `${r.name}(${r.presence})`).join('、')}`);
-  return { key: SKILL_LEDGER_KEY, label: LABEL, ok: false, detail: `账实分叉：${parts.join('；')}；已记入 skill_drift_alerts` };
+  const alertDetail = alertLogged ? '；已记入 skill_drift_alerts' : '；skill_drift_alerts 落账失败（见日志）';
+  return { key: SKILL_LEDGER_KEY, label: LABEL, ok: false, detail: `账实分叉：${parts.join('；')}${alertDetail}` };
 }

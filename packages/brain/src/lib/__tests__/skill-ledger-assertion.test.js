@@ -51,4 +51,20 @@ describe('buildSkillLedgerAssertion', () => {
     expect(a.ok).toBe(false);
     expect(a.detail).toContain('prd-review(broken)');
   });
+
+  it('skill_drift_alerts 落账失败 → 仍 ok:false，detail 改为「落账失败」且不向外抛错', async () => {
+    const p = pool({ unregistered: ['ghost-skill'] });
+    // mock INSERT 抛错
+    p.query = vi.fn(async (sql, params) => {
+      if (sql.includes("key = 'skill_inventory_state'")) return { rows: [{ value_json: { last_ok_at: '2026-09-30T00:00:00Z' } }] };
+      if (sql.includes('FROM ops_skills')) return { rows: [{ name: 'ghost-skill' }] };
+      if (sql.includes('task_types')) return { rows: [] };
+      if (sql.includes('INSERT INTO skill_drift_alerts')) throw new Error('db down');
+      return { rows: [] };
+    });
+    const a = await buildSkillLedgerAssertion(p);
+    expect(a.ok).toBe(false);
+    expect(a.detail).not.toContain('已记入');
+    expect(a.detail).toContain('落账失败');
+  });
 });
