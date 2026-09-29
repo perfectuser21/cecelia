@@ -138,7 +138,8 @@ jobs:
     name: Deploy Brain (Gate 3)
     if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 45min：等待步最多 25min（含至多 2 次重触发）+ 效果断言 10min
+    timeout-minutes: 45
     env:
       BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
       DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
@@ -149,7 +150,8 @@ jobs:
           authkey: ${{ secrets.TS_AUTHKEY }}
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          # 全量历史：等待步用 git merge-base --is-ancestor 判定部署 sha 是否包含本次提交
+          fetch-depth: 0
 
       - name: SHA 对账（PROD_SHA vs HEAD_SHA）
         # FR-03: 替换旧 gate3-changed-paths.sh 判变逻辑，改用 SHA 对账决定是否部署。
@@ -201,21 +203,15 @@ jobs:
           echo "  URL: ${BRAIN_URL}/api/brain/deploy"
           echo ""
 
-          HTTP_CODE=$(curl -s -o /tmp/deploy_resp.txt -w "%{http_code}" \
-            -X POST "${BRAIN_URL}/api/brain/deploy" \
-            -H "Authorization: Bearer ${DEPLOY_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{}' \
-            --connect-timeout 30 --max-time 60 2>/dev/null || echo "000")
-
+          # 与等待步的重触发共用同一脚本（scripts/ci/gate3-trigger-deploy.sh）
+          HTTP_CODE=$(bash scripts/ci/gate3-trigger-deploy.sh "${BRAIN_URL}")
           echo "HTTP 状态: $HTTP_CODE"
-          if [ -f /tmp/deploy_resp.txt ]; then cat /tmp/deploy_resp.txt; fi
-          echo ""
 
-          # 409 = deploy 正在进行（deploy.yml 或另一个 Gate 3 实例）→ 跳过，非失败
+          # 409 = 前一次 deploy 仍在进行 → 不再直接跳过（2026-09-29 实证：前一次部署不含本次提交，
+          # 跳过即漏部署）。交给等待步：等前一次结束，按 git_sha 判定，不含本次则重触发。
           if [ "$HTTP_CODE" = "409" ]; then
-            echo "::warning::Brain deploy 已在进行中（409），跳过本次（变更已包含在进行中的 deploy 里）"
-            echo "skipped=true" >> $GITHUB_OUTPUT
+            echo "::warning::Brain deploy 已在进行中（409），交由等待步按 git_sha 判定，必要时重触发"
+            echo "skipped=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
@@ -229,38 +225,13 @@ jobs:
 
       - name: 等待 Deploy 完成
         if: steps.sha_check.outputs.deploy_needed == 'true' && steps.trigger.outputs.skipped != 'true'
-        run: |
-          echo "轮询 /api/brain/deploy/status（最多 300s）..."
-          MAX_WAIT=300
-          INTERVAL=10
-          ELAPSED=0
-
-          while [ $ELAPSED -lt $MAX_WAIT ]; do
-            STATUS_JSON=$(curl -s --connect-timeout 10 --max-time 15 \
-              "${BRAIN_URL}/api/brain/deploy/status" 2>/dev/null \
-              || echo '{"status":"unknown"}')
-            STATUS=$(echo "$STATUS_JSON" | jq -r '.status // "unknown"' 2>/dev/null || echo "unknown")
-
-            echo "  [${ELAPSED}s] status=$STATUS"
-
-            if [ "$STATUS" = "success" ]; then
-              ELAPSED_MS=$(echo "$STATUS_JSON" | jq -r '.elapsed_ms // "?"' 2>/dev/null || echo "?")
-              echo "✅ Deploy 成功（${ELAPSED_MS}ms）"
-              exit 0
-            elif [ "$STATUS" = "failed" ]; then
-              ERR=$(echo "$STATUS_JSON" | jq -r '.error // "未知错误"' 2>/dev/null || echo "未知错误")
-              echo "::error::Deploy 失败: $ERR"
-              exit 1
-            elif [ "$STATUS" = "idle" ] && [ $ELAPSED -gt 30 ]; then
-              echo "::warning::Deploy status idle（${ELAPSED}s 后）— 可能无变更，视为成功"
-              exit 0
-            fi
-
-            sleep $INTERVAL
-            ELAPSED=$((ELAPSED + INTERVAL))
-          done
-
-          echo "::warning::Deploy status 轮询超时（${MAX_WAIT}s）— webhook 已接受，结果未知；assert 步将继续等待最多 600s"
+        # 2026-09-28/29 实证（#5635/#5654）：旧逻辑 idle>30s 即「视为成功」，而本次请求因前一次
+        # 部署在跑没有真正执行，生产 git_sha 仍是旧提交。现改为按 deploy/status.git_sha 判定：
+        # 终态时部署 sha == 本次或为其后代才算成功；running 旧 sha 只等待；不含本次则重触发（≤2 次），
+        # 耗尽 exit 1。判定逻辑见 scripts/ci/gate3-wait-deploy.sh（测试：scripts/ci/__tests__/gate3-wait-deploy.test.sh）。
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/gate3-wait-deploy.sh "${BRAIN_URL}" "${{ github.sha }}"
 
       - name: Smoke — Brain 部署效果确认（版本 + 真重启）
         if: steps.sha_check.outputs.deploy_needed == 'true' && steps.trigger.outputs.skipped != 'true'
