@@ -164,10 +164,38 @@ paste_one() {
 STATE_DIR="${XAI_SYNC_STATE_DIR:-$HOME/.openclaw/xai-token-sync-state}"
 token_fp() { printf '%s' "$1" | shasum -a 256 | awk '{print $1}'; }
 
+# ── 白名单：只同步真正用 grok 的 agent ──────────────────────────────────
+# 2026-09-29（Brain 任务 7902b997，决策 ae189458）：每次 paste-token 都让网关重建一代
+# prepared-model-catalog（插件源码复制 + 重新作为 ES 模块加载、不卸载），30 个 agent
+# 逐个贴 = 一轮 30 次重建，网关单线程涨到约 8GB，重建期间新 agent 报
+# "prepared model runtime publication was superseded" 直接失败。
+# XAI_SYNC_AGENTS（逗号或空格分隔）设了就只同步名单内的；未设 = 全量，行为不变。
+# 名单里写了配置中不存在的名字要出声 —— 拼错一个字母，那个 agent 就永远 403。
+# 结果写进全局 WL_KEPT（不走 $(...)：子 shell 里的 problems 累加带不出来）。
+WL_KEPT=""
+filter_whitelist() {
+  local agents="$1" name
+  WL_KEPT=""
+  for name in $(printf '%s' "$XAI_SYNC_AGENTS" | tr ',' ' '); do
+    if printf '%s\n' "$agents" | grep -qxF -- "$name"; then
+      printf '%s\n' "$WL_KEPT" | grep -qxF -- "$name" || WL_KEPT="${WL_KEPT}${name}"$'\n'
+    else
+      fault "白名单里的 agent ${name} 不在 OpenClaw 配置中（拼错了，或该 agent 已下线）"
+      problems=$((problems+1))
+    fi
+  done
+}
+
 sync_agents() {
   local token="$1" ok=0 fail=0 skipped=0 agents idx=0 total fp
   agents="$(list_agents)" || return 1
   [ -n "$agents" ] || { fault "agent 名单为空"; return 1; }
+  if [ -n "$(printf '%s' "${XAI_SYNC_AGENTS:-}" | tr -d ', \t')" ]; then
+    filter_whitelist "$agents"
+    agents="$WL_KEPT"
+    [ -n "$agents" ] || { fault "白名单与配置无交集，本轮一个 agent 都不同步"; problems=$((problems+1)); return 1; }
+    note "白名单模式 $(printf '%s' "$agents" | grep -c .) 个（XAI_SYNC_AGENTS）：$(printf '%s' "$agents" | tr '\n' ' ')"
+  fi
   total="$(printf '%s\n' "$agents" | grep -c .)"
   fp="$(token_fp "$token")"
   mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"

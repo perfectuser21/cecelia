@@ -13,21 +13,25 @@
 # 于是本守卫的第一职责不是杀进程，而是**盯住那条配置别被改回去** ——
 # 配置一旦被重写/回退，泄漏会静默复发，而现象（内存慢慢吃满）要几小时才看得出来。
 #
-# 四条职责，顺序即优先级：
+# 六条职责，顺序即优先级：
 #   ① 配置漂移闸：TTL 未设或为 0 → 报错退出（根治项）
 #   ② 网关在不在：不在就出声，且**这时绝不收割** —— 网关可能正在重启，
 #      收割会把刚起来的链一起带走
 #   ③ 只收孤儿：顺 ppid 往上走，走不到任何活网关的才算孤儿
 #   ④ 阈值告警：链上进程数越线出声，但**越线不等于授权杀活进程**
 #   ⑤ 孤儿插件捕获目录回收 + 磁盘水位闸（0928 磁盘写满崩溃后补；代码里排在②之前）
+#   ⑥ 网关内存兜底重启：RSS 超阈 + 无 agent 在跑 + 冷却期外 → launchctl kickstart
 #
 # ⚠️ 铁律：绝不碰活网关的子孙进程，更不碰网关本体。
 #    janitor 就是把活着的网关当孤儿杀，导致迁移后 18 条业务 cron 成功率 0
 #    （PR #5447/#5448 案卷）。同样的错不能在这里再犯一次。
+#    唯一例外 = 职责⑥（决策 ae189458）：prepared-model-catalog worker 泄漏让网关涨到约 8GB，
+#    上游修好前只有重启能还内存；且只在无 agent 在跑、冷却期外时经 launchd 正规重启，不 kill。
 #
 # 测试注入：OPG_PS_SNAPSHOT / OPG_TTL_VALUE / OPG_KILL_LOG / OPG_STATE_DIR
 #           OPG_CHAIN_WARN_THRESHOLD
 #           OPG_CAPTURE_ROOT / OPG_INUSE_PATHS / OPG_DISK_AVAIL_GB / OPG_DISK_MIN_GB
+#           OPG_GATEWAY_RSS_KB / OPG_AGENT_RUNNING / OPG_RESTART_CMD / OPG_BRAIN_RUNS_DIR
 set -uo pipefail
 
 export PATH="${OPG_PATH:-/opt/homebrew/bin:/usr/local/bin}:$PATH"
@@ -197,6 +201,75 @@ if [[ "$CHAIN_COUNT" -gt "$CHAIN_WARN_THRESHOLD" ]]; then
   send_alert "[MMV 守卫] OpenClaw 链上进程 ${CHAIN_COUNT} 个，超阈值 ${CHAIN_WARN_THRESHOLD}"
 else
   note "链上进程 ${CHAIN_COUNT} 个，在阈值 ${CHAIN_WARN_THRESHOLD} 内"
+fi
+
+# ── ⑥ 网关内存兜底重启（决策 ae189458，Brain 任务 7902b997）──────────────
+# 2026-09-29：网关的 prepared-model-catalog worker 每代模型目录都复制插件源码并重新
+# 作为 ES 模块加载、不卸载；每次 `openclaw models auth paste-token` 触发一代，单线程涨到
+# 约 8GB。上游修好前只有重启能把内存还回来。但重启会打断在跑的 agent，所以三条同时成立才做：
+#   RSS 超阈（默认 5GB）+ 没有 agent 在跑 + 距上次自动重启超过冷却期（默认 60min）
+# 走 launchd 正规重启（kickstart -k），不直接 kill。
+GATEWAY_LABEL="ai.openclaw.gateway"
+RSS_RESTART_GB="${OPG_GATEWAY_RSS_RESTART_GB:-5}"
+RESTART_COOLDOWN_MIN="${OPG_GATEWAY_RESTART_COOLDOWN_MIN:-60}"
+BRAIN_RUNS_DIR="${OPG_BRAIN_RUNS_DIR:-$HOME/brain-runs}"
+RESTART_STATE="$STATE_DIR/openclaw-gateway-last-restart"
+RESTART_TARGET="gui/$(id -u)/${GATEWAY_LABEL}"
+
+read_gateway_rss_kb() {
+  if [[ -n "${OPG_GATEWAY_RSS_KB:-}" ]]; then printf '%s' "$OPG_GATEWAY_RSS_KB"; return; fi
+  local pid
+  pid="$(launchctl list "$GATEWAY_LABEL" 2>/dev/null | awk -F'= ' '/"PID"/ {gsub(/[; ]/, "", $2); print $2}')"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  ps -o rss= -p "$pid" 2>/dev/null | tr -d '[:space:]'
+}
+
+# 在跑的判据（任一成立即在跑）：
+#   - 进程表里有 `openclaw agent` 进程
+#   - ~/brain-runs 下有「有 .pid 无 .exit」的运行，且该 pid 还活着
+#     （进程被杀的运行不会写 .exit，只认 .pid 的话一条残留就让兜底永久失效）
+agent_running() {
+  if [[ -n "${OPG_AGENT_RUNNING:-}" ]]; then [[ "$OPG_AGENT_RUNNING" == "1" ]]; return; fi
+  printf '%s\n' "$SNAPSHOT" | grep -qE 'openclaw[^[:space:]]*[[:space:]]+agent([[:space:]]|$)' && return 0
+  local f pid
+  for f in "$BRAIN_RUNS_DIR"/*.pid; do
+    [[ -f "$f" && ! -f "${f%.pid}.exit" ]] || continue
+    pid="$(tr -d '[:space:]' < "$f" 2>/dev/null)"
+    [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && return 0
+  done
+  return 1
+}
+
+do_restart() {
+  if [[ -n "${OPG_RESTART_CMD:-}" ]]; then "$OPG_RESTART_CMD" "$RESTART_TARGET"; return; fi
+  launchctl kickstart -k "$RESTART_TARGET"
+}
+
+RSS_KB="$(read_gateway_rss_kb)"
+if [[ ! "$RSS_KB" =~ ^[0-9]+$ ]]; then
+  note "[WARN] 读不到网关（${GATEWAY_LABEL}）RSS，本轮跳过内存兜底"
+else
+  RSS_GB="$(awk -v k="$RSS_KB" 'BEGIN {printf "%.1f", k/1048576}')"
+  LIMIT_KB="$(awk -v g="$RSS_RESTART_GB" 'BEGIN {printf "%d", g*1048576}')"
+  if [[ "$RSS_KB" -le "$LIMIT_KB" ]]; then
+    note "网关 RSS ${RSS_GB}GB，在重启阈值 ${RSS_RESTART_GB}GB 内"
+  elif agent_running; then
+    note "网关 RSS ${RSS_GB}GB 超阈 ${RSS_RESTART_GB}GB，但有任务在跑，暂缓重启"
+  else
+    NOW="$(date +%s)"
+    LAST="$(cat "$RESTART_STATE" 2>/dev/null | tr -d '[:space:]')"
+    [[ "$LAST" =~ ^[0-9]+$ ]] || LAST=0
+    if (( NOW - LAST < RESTART_COOLDOWN_MIN * 60 )); then
+      note "[WARN] 网关 RSS ${RSS_GB}GB 超阈，但距上次自动重启不足 ${RESTART_COOLDOWN_MIN} 分钟，冷却期内不重启"
+    elif do_restart; then
+      printf '%s\n' "$NOW" > "$RESTART_STATE"
+      note "网关 RSS ${RSS_GB}GB 超阈 ${RSS_RESTART_GB}GB 且无任务在跑 → 已 kickstart ${RESTART_TARGET}"
+      send_alert "[MMV 守卫] OpenClaw 网关 RSS ${RSS_GB}GB 超阈 ${RSS_RESTART_GB}GB 且空闲，已自动重启（冷却 ${RESTART_COOLDOWN_MIN}min）"
+    else
+      fault "网关 RSS ${RSS_GB}GB 超阈且空闲，但 kickstart ${RESTART_TARGET} 失败"
+      send_alert "[MMV 守卫] OpenClaw 网关 RSS ${RSS_GB}GB 超阈，自动重启失败"
+    fi
+  fi
 fi
 
 printf '结果: 问题 %d 项\n' "$problems"
