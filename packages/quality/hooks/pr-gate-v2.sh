@@ -444,7 +444,7 @@ fi
 # ============================================================================
 if [[ "$MODE" == "pr" ]]; then
     # ===== Phase 1: DoD <-> Test 映射检查 =====
-    DEVGATE_DIR="$PROJECT_ROOT/scripts/devgate"
+    DEVGATE_DIR="$PROJECT_ROOT/packages/quality/scripts/devgate"
     DOD_MAPPING_SCRIPT="$DEVGATE_DIR/check-dod-mapping.cjs"
     RCI_CHECK_SCRIPT="$DEVGATE_DIR/require-rci-update-if-p0p1.sh"
 
