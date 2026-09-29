@@ -60,7 +60,7 @@ const EXTERNAL_CLAIM_GRACE_MS = Number(process.env.EXTERNAL_CLAIM_GRACE_MS || 45
 import { classifyCodexFailure } from './lib/codex-fatal-patterns.js';
 import { classifyDispatchReasonCode, dispatchFailureFromError } from './lib/dispatch-reason-code.js';
 import { raise } from './alerting.js';
-import { EXECUTOR_KIND_FOR, resolveExecutorKind } from './executor-contracts.js';
+import { EXECUTOR_KIND_FOR, resolveExecutorKind, isExternallyExecuted } from './executor-contracts.js';
 import { probeCodexReviewLock, CODEX_REVIEW_LOCK_DIR as CODEX_REVIEW_LOCK_DIR_SSOT } from './lib/codex-review-liveness.js';
 import { pushCaptureAtom } from './capture-inbox.js';
 import {
@@ -4127,7 +4127,7 @@ async function probeTaskLiveness() {
 
   // Get all in_progress tasks from DB
   const result = await pool.query(`
-    SELECT id, title, payload, started_at, task_type, error_message, claimed_by, claimed_at
+    SELECT id, title, payload, started_at, task_type, executor_kind, error_message, claimed_by, claimed_at
     FROM tasks
     WHERE status = 'in_progress'
   `);
@@ -4210,6 +4210,16 @@ async function probeTaskLiveness() {
         suspectProcesses.delete(task.id);
         continue;
       }
+    }
+
+    // 外部执行体（openclaw-agent / script）：进程在 MMV / 跑场机上，本机三条 spawn 证据恒为空，
+    // 走下方 SUSPECT→DEAD 必然「零证据回队」——0929 秋米 87c9a08b 起 4 分钟即被回队，而 MMV 上
+    // agent 实际在跑。生死交给专属收割器（reapOpenclawAgentRuns / script-reaper 读远端 .exit）
+    // 与合同层超时（executor-contracts staleMinutes → zombie-reaper）。
+    // device_job 虽也是外部执行体，但它没有远端 .exit 可读，保留上方认领新鲜度 + 超时兜底（0923）。
+    if (isExternallyExecuted(task) && !EXTERNAL_WATCHDOG_TYPES.has(task.task_type)) {
+      suspectProcesses.delete(task.id);
+      continue;
     }
 
     // REVIEW 类任务由 triggerCodexReview spawn detached codex，三条进程信号全无
@@ -4538,12 +4548,13 @@ async function reAttachActiveExecutors(dbPool) {
  */
 async function syncOrphanTasksOnStartup() {
   const result = await pool.query(`
-    SELECT id, title, payload, started_at, error_message, task_type
+    SELECT id, title, payload, started_at, error_message, task_type, executor_kind
     FROM tasks
     WHERE status = 'in_progress'
   `);
 
   let orphansFound = 0;
+  let externalSkipped = 0;
   let orphansFixed = 0;
   let requeued = 0;
   let rebuilt = 0;
@@ -4564,6 +4575,16 @@ async function syncOrphanTasksOnStartup() {
     // → 整个跳过，交给 harness-relay-watchdog 处理，不 requeue、不清 claim、不计数。
     if (task.payload?.orchestrator === 'skill-relay') {
       console.log(`[startup-sync] skip skill-relay task=${task.id} title="${task.title}"（归 harness-relay-watchdog 管）`);
+      continue;
+    }
+    // 外部执行体（device_job 在西安 Mac、openclaw-agent 秋米在 MMV、script 在跑场机）：
+    // 本机永远查不到进程，下方孤儿路径会在每次部署重启时把它回 queued 且不清 claimed_by
+    // → device_job 被中台 /api/schedule/claim 再领一次，同一活在真手机上重跑（0929 实证）。
+    // 不回队、不动 claim、不计孤儿，交给各自收割/对账（reaper 读远端 .exit；device_job 走运行期
+    // 认领新鲜度 + 超时兜底）。
+    if (isExternallyExecuted(task)) {
+      externalSkipped++;
+      console.log(`[startup-sync] skip external executor task=${task.id} type=${task.task_type} kind=${task.executor_kind || '-'}（进程不在本机，归专属收割/对账）`);
       continue;
     }
     if (LANGGRAPH_TYPES.has(task.task_type)) {
@@ -4693,8 +4714,8 @@ async function syncOrphanTasksOnStartup() {
     }
   }
 
-  console.log(`[startup-sync] Complete: orphans_found=${orphansFound} orphans_fixed=${orphansFixed} requeued=${requeued} rebuilt=${rebuilt}`);
-  return { orphans_found: orphansFound, orphans_fixed: orphansFixed, requeued, rebuilt };
+  console.log(`[startup-sync] Complete: orphans_found=${orphansFound} orphans_fixed=${orphansFixed} requeued=${requeued} rebuilt=${rebuilt} external_skipped=${externalSkipped}`);
+  return { orphans_found: orphansFound, orphans_fixed: orphansFixed, requeued, rebuilt, external_skipped: externalSkipped };
 }
 
 /**
