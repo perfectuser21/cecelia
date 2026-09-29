@@ -7,9 +7,9 @@
  *
  * 用 vi.resetModules() + 重新 import 模拟 Brain 重启（模块级内存状态清零，DB 状态保留）。
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { store, queryMock, sendMock } = vi.hoisted(() => {
+const { store, queryMock, sendMock, digestMock } = vi.hoisted(() => {
   const store = new Map();
   const queryMock = vi.fn(async (sql, params = []) => {
     if (/^\s*SELECT/i.test(sql)) {
@@ -24,7 +24,9 @@ const { store, queryMock, sendMock } = vi.hoisted(() => {
     return { rows: [] };
   });
   const sendMock = vi.fn().mockResolvedValue(true);
-  return { store, queryMock, sendMock };
+  // P1/P2 汇总只走专用系统通道 ALERT_DIGEST_WEBHOOK（决策 d3e7746c），用 fetch mock 观察汇总投递
+  const digestMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+  return { store, queryMock, sendMock, digestMock };
 });
 
 vi.mock('../db.js', () => ({ default: { query: queryMock } }));
@@ -36,27 +38,38 @@ async function bootAlerting() {
 }
 
 function sentTexts() {
-  return sendMock.mock.calls.map(c => c[0]);
+  return digestMock.mock.calls.map(c => JSON.parse(c[1].body).content.text);
 }
 
 describe('alerting 缓冲持久化（重启不丢 P1/P2）', () => {
+  const origFetch = global.fetch;
+
   beforeEach(() => {
     store.clear();
     queryMock.mockClear();
     sendMock.mockClear();
     sendMock.mockResolvedValue(true);
+    digestMock.mockClear();
+    digestMock.mockResolvedValue({ ok: true, status: 200 });
+    global.fetch = digestMock;
+    process.env.ALERT_DIGEST_WEBHOOK = 'https://example.invalid/digest-hook';
+  });
+
+  afterEach(() => {
+    global.fetch = origFetch;
+    delete process.env.ALERT_DIGEST_WEBHOOK;
   });
 
   it('重启后未 flush 的 P2 仍会在下次 flush 发出', async () => {
     const a1 = await bootAlerting();
     await a1.raise('P2', 'recurring_skip', 'recurring_foo 连续跳过');
-    expect(sendMock).not.toHaveBeenCalled();
+    expect(digestMock).not.toHaveBeenCalled();
 
     // 模拟部署重启
     const a2 = await bootAlerting();
     await a2.flushP2();
 
-    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(digestMock).toHaveBeenCalledTimes(1);
     expect(sentTexts()[0]).toContain('[P2 每日记录] 1 条');
     expect(sentTexts()[0]).toContain('recurring_foo 连续跳过');
   });
@@ -68,7 +81,7 @@ describe('alerting 缓冲持久化（重启不丢 P1/P2）', () => {
     const a2 = await bootAlerting();
     await a2.flushP1();
 
-    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(digestMock).toHaveBeenCalledTimes(1);
     expect(sentTexts()[0]).toContain('P1 隔离告警');
   });
 
@@ -81,7 +94,7 @@ describe('alerting 缓冲持久化（重启不丢 P1/P2）', () => {
     expect(a2.getStatus().p2_pending).toBe(2);
     await a2.flushP2();
 
-    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(digestMock).toHaveBeenCalledTimes(1);
     expect(sentTexts()[0]).toContain('[P2 每日记录] 2 条');
     expect(sentTexts()[0]).toContain('旧告警');
     expect(sentTexts()[0]).toContain('新告警');
@@ -91,11 +104,11 @@ describe('alerting 缓冲持久化（重启不丢 P1/P2）', () => {
     const a1 = await bootAlerting();
     await a1.raise('P2', 'e1', '只发一次');
     await a1.flushP2();
-    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(digestMock).toHaveBeenCalledTimes(1);
 
     const a2 = await bootAlerting();
     await a2.flushP2();
-    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(digestMock).toHaveBeenCalledTimes(1);
     expect(a2.getStatus().p2_pending).toBe(0);
   });
 
@@ -165,7 +178,8 @@ describe('alerting 缓冲持久化（重启不丢 P1/P2）', () => {
     await a1.raise('P0', 'circuit_open', '熔断 2');
 
     expect(sendMock).toHaveBeenCalledTimes(1);
-    expect(sentTexts()[0]).toContain('[P0] 熔断 1');
+    expect(sendMock.mock.calls[0][0]).toContain('[P0] 熔断 1');
+    expect(digestMock).not.toHaveBeenCalled();
     expect(queryMock.mock.calls.some(c => /^\s*INSERT/i.test(c[0]))).toBe(false);
   });
 });

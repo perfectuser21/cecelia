@@ -70,7 +70,7 @@ describe('alerting.js — P0/P1 通知链路', () => {
     expect(sendFeishu).toHaveBeenCalledTimes(2);
   });
 
-  it('P1 不立即推送，加入缓冲区；flushP1 后 sendFeishu 被调用', async () => {
+  it('P1 不立即推送，加入缓冲区；flushP1 汇总不私信（不调 sendFeishu）', async () => {
     const beforePending = getStatus().p1_pending;
     await raise('P1', `p1_chain_${Date.now()}`, 'P1 告警积压');
     expect(sendFeishu).not.toHaveBeenCalled();
@@ -79,10 +79,11 @@ describe('alerting.js — P0/P1 通知链路', () => {
     expect(afterPending).toBeGreaterThan(beforePending);
 
     await flushP1();
-    expect(sendFeishu).toHaveBeenCalledTimes(1);
+    expect(sendFeishu).not.toHaveBeenCalled();
+    expect(getStatus().p1_pending).toBe(0);
   });
 
-  it('P2 不立即推送，加入缓冲区；flushP2 后 sendFeishu 被调用', async () => {
+  it('P2 不立即推送，加入缓冲区；flushP2 汇总不私信（不调 sendFeishu）', async () => {
     const beforePending = getStatus().p2_pending;
     await raise('P2', `p2_chain_${Date.now()}`, 'P2 低优先级告警');
     expect(sendFeishu).not.toHaveBeenCalled();
@@ -91,7 +92,8 @@ describe('alerting.js — P0/P1 通知链路', () => {
     expect(afterPending).toBeGreaterThan(beforePending);
 
     await flushP2();
-    expect(sendFeishu).toHaveBeenCalledTimes(1);
+    expect(sendFeishu).not.toHaveBeenCalled();
+    expect(getStatus().p2_pending).toBe(0);
   });
 });
 
