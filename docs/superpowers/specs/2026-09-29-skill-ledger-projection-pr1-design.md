@@ -3,7 +3,10 @@
 - Brain task：47def5bb；F5 指挥舱 feature：f20ec1cb
 - 决策：19391396（与 Tasks 同构）/ 4b1f4230（正文投影）/ 4b1da4ca（三 PR 分期）
 - 判定点：11af333b 同名即同一 skill / e22aab26 下线判定 / 24736022 人改识别（三方基线）/ bc98dda7 原件取哪份 / 84972cc1 Codex 口径
-- 本 PR 只做 PR1。PR2（页面正文）和 PR3（Notion→Brain 回拉）另起 PR。
+- 本文件覆盖 PR1，因 CI 限制单个 PR 新增 ≤3000 行，PR1 再拆成两个：
+  - **PR1a（本分支）：扫描入账**，含 §4.1 迁移、§4.2–4.4 采集/归并/扫描任务、§4.6 A6、§4.7 路由修补
+  - **PR1b：推送**，含 §4.5 推送任务、摘掉旧的 pushSkillRegistry（其回归用例迁到新模块）、孤儿页清理
+- PR2（页面正文）和 PR3（Notion→Brain 回拉）另起 PR。
 
 ## 1. 目标
 
@@ -82,7 +85,8 @@
 ### 4.2 采集程序 `src/lib/skill-inventory-remote.js`
 
 - 导出一个**自包含**的 `async function collectSkillInventory(opts)`：
-  - 函数体内部用 `await import('node:fs')` 等方式取依赖，不引用模块作用域的任何东西。
+  - 函数体内部用 `process.getBuiltinModule('node:fs')` 等方式取依赖（Node ≥20.16；容器 20.20、CI 22、mmv 26 都满足），**不写 import()**：vitest 会把 import() 改写成 `__vite_ssr_dynamic_import__`，toString() 送到远端后会报错。另加一条单测断言 toString() 里不含 `__vite_ssr`、`__vi_`。
+  - 不引用模块作用域的任何东西。
   - 这样既能被 `toString()` 送到远端执行，也能在单测里直接调用。
 - 导出 `buildRemoteProgram(opts)`，拼成 `(<fn>)(opts).then(输出 JSON)`。
 - 远端执行命令：`export PATH=/opt/homebrew/bin:/usr/local/bin:$PATH; echo <b64> | (base64 -d || base64 -D) | node -`。
@@ -98,11 +102,14 @@
 
 每个 skill 的原件路径、sha256、行数、全文、同目录文件清单都由采集程序在远端算好。全文每份上限 512KB，超出截断并标 `truncated`。
 
+预算：远端总预算 150s，单个 agent 45s，超出预算后剩下的 agent 记为 fail，openclaw 来源整体判 fail；Brain 侧 exec 显式传 `timeoutMs: 170_000`（默认只有 20s）；job 超时设 200s。base64 后的程序不超过 90KB（Linux 单个参数上限 128KB），用单测断言。
+
 ### 4.3 归并与判定 `src/lib/skill-inventory-reconcile.js`（纯函数）
 
 - `normalizeName`：去掉 `openclaw/` 前缀。
 - `buildRecords(inventory, codexRunnerState)`：按名字归并各来源，产出 {name, platforms_installed, presence, source_path, source_kind, content, digest, copies, drift_copies, files, assigned_agents, description（取 frontmatter）, tier_suggested}。
   - **原件优先级**：repo 根目录 > OpenClaw 实际加载的那份（标「未进仓库」）> `~/.agents/skills` > `~/.claude/skills` 自带目录。
+  - **跑场机补充「在」**：`skill_manifest_drift` 里跑场机 `claude` 目录的 extra 清单中出现的名字（例如只在 xian-m4 上有的 review、repo-lead），视为「在」，平台记为 claude-code，原件记为「仅跑场机」。只有 mmv 和所有跑场机都没有，才进入缺席判定。
   - **Codex 平台**：若任一跑场机的 `codex-gwremote` 目录状态为 ok 或 drift，且该 skill 不在它的 missing 清单里，或来源是 `agents`，就标 codex。`missing_total > 30` 时清单被截断，这台机器按「未知」处理，不标。
   - **tier_suggested**：已装 openclaw 的不给建议；名字属于研发链（`dev`、`engine-*`、`harness-*`、`capability*`、`decomp*`、`plan`、`code-review-gate`），或正文里有 Skill 工具链式调用、`claude -p` 的，给 C；有 `.claude/` 路径、Agent 或 Task 子代理、`mcp__` 的，给 B；其余给 A。
 - `decidePresence(row, seen, sourceOk, now, breaker)`：
@@ -125,7 +132,7 @@
 
 ### 4.5 推送任务 `src/skill-registry-projection.js`
 
-- 新建 scheduler job `skill-registry-projection`，每 5 分钟一轮，超时 120s。同时从 `runNotionPushSync` 里摘掉 `pushSkillRegistry`（连同旧函数一起删），不再挂在 legacy setInterval 上。
+- 【PR1b】新建 scheduler job `skill-registry-projection`，每 5 分钟一轮，超时 120s。同时从 `runNotionPushSync` 里摘掉 `pushSkillRegistry`（连同旧函数一起删），不再挂在 legacy setInterval 上。
 - **每轮第 1 步：拿库结构。** GET `/databases/{id}` 取 properties（列 id、名称、类型）。
 - **列账（逐列引导）：** 用 working_memory `skill_registry_notion_columns` 记录 {字段键: {id, name, type, created_at, deleted_at?}}。
   - 字段键在账里从没出现过 → PATCH 建这一列并记账。
@@ -161,7 +168,13 @@ A6 由以下三项组成，全部满足才算 ok：
 - ② task_types 非空的行，presence 不能是 gone 或 broken（否则派发会指向不存在的 skill）。
 - ③ Notion 库未归档页数 == skill_registry 里 notion_id 非空的行数。这一项接住 A10 让出的行数对账。
 
-落账沿用 skill_drift_alerts：①② 的缺口按名单写入，③ 写计数。
+落账沿用 skill_drift_alerts：**只要 A6 红，就始终 upsert 一条 `__skill_ledger_count__` 汇总行**（ssot_version=缺口摘要，snapshot_version=计数），名单明细只写进 detail 文本，不额外落行，避免 cleanup 漏删。
+
+降级：③ 在无 token 或 Notion 不可达时，与 A7~A10 同一惯例，记 ok:true + degraded。PR1a 阶段推送还没切过来，③ 先按 degraded 处理，PR1b 再接上。
+
+回归守卫只能迁，不能删：集成测试⑥和 `skill-ledger-reconcile-smoke.sh` 第 2 段，改成用 ①（ops_skills 有、registry 不是 present）和 ②（带 task_types 的行 presence=gone）各造一次报红。
+
+预期：A6 上线后仍会红，这是真问题暴露，不是误报。例如 zenithjoy-ai-office 的白名单指向一个不存在的 skill；另有 5 个派发绑定行在 mmv 上是悬空软链。
 
 ### 4.7 `routes/skills.js` 修补
 
@@ -204,7 +217,13 @@ A6 由以下三项组成，全部满足才算 ok：
   - 迁移 491：列存在；改名；dispatch_command 被固定；注册表那一行改了 face；幂等重跑。
   - 扫描 upsert：没变化时不写 `updated_at`；人管列不受影响。
 - **远端程序实跑：** 在临时 HOME 下造 fixture 目录，放一个假的 `openclaw` 可执行文件，用 `node -` 实际跑 `buildRemoteProgram`，验证函数确实自包含。
-- **smoke：** `packages/brain/scripts/smoke/skill-registry-projection-smoke.sh`。对部署后的 Brain 检查：`skill_registry` 有新列；working_memory 里有 `skill_inventory_state`；最近一次扫描 ok；present 行数大于 0。
+- **smoke：** `packages/brain/scripts/smoke/skill-inventory-smoke.sh`，只放 CI（real-env-smoke，全新 cecelia_test 库、无 ssh）能跑通的检查：
+  - 491 的列、CHECK、注册表那一行的 face 和 direction；
+  - 在临时 HOME 造 fixture 并放一个假的 openclaw，用 `node -` 实跑 buildRemoteProgram；
+  - reconcile 加 upsert 在测试库上跑一轮，断言人管列和 updated_at 不动。
+  - 拒绝在非 _test / _scratch 库上运行。
+  - 「扫描 ok、present>0」属于部署后验收，放在 §8，不进 smoke。
+- scheduler：新 job 插在 `scheduler-liveness` 之前；`runSchedulerJobsOnce` 那个用例要 vi.mock 新模块。
 
 ## 8. 验收（部署后，真 Notion）
 
