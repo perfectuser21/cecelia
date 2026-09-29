@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.336.7
+**Brain 版本**: 1.336.8
 
 ## 1.283.0
 
@@ -48,6 +48,10 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.336.8 — 秋米回写跳过已归档中文行
+
+- notion-gtd-sync pushQiumiStatus：中文行已被主理人归档/删除（GET 见 archived/in_trash）→ 记指纹跳过，不再 PATCH；返回值新增 skippedArchived。修 09-28 起对同一归档页每 30s 重试（48h 586 次）且单行抛错中止整步、挡住同轮其余行的回写（任务 1613c0b5）。
 
 ## Brain 1.336.7 — 删除 D 类最后 2 张空表：user_annotations（知识页批注框）/ life_events（看板人生事件路由）
 
