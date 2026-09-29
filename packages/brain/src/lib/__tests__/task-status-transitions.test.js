@@ -127,3 +127,11 @@ describe('completed_no_pr 入边（PR1）', () => {
     }
   });
 });
+
+describe('queued → cancelled（定时引擎复活，任务 3d0db274）', () => {
+  it('无人认领过期的定时实例从 queued 直接取消（unclaimed_expired），状态机必须放行', () => {
+    expect(TRANSITIONS.queued).toContain('cancelled');
+    expect(TRANSITIONS.queued).toContain('in_progress');
+    expect(resolveAllowedTransitions('queued').allowed).toContain('cancelled');
+  });
+});
