@@ -12,7 +12,7 @@
  * 推前缺列即补（Notion 缺列 400 的血训）；失败只记日志，Postgres 才是真相源。
  */
 import { notionReq as defaultNotionReq, getToken } from './recurring-notion-sync.js';
-import { pushRegisteredRows, resolveDbId } from './lib/notion-projection-engine.js';
+import { pushRegisteredRows, resolveDbId, isWrongDatabaseError } from './lib/notion-projection-engine.js';
 import { ensureOpsDbProps } from './ops-quota-notion.js';
 import { PROBE_DB_PROPS } from './ops-notion-schema.js';
 
@@ -117,10 +117,6 @@ export function buildStepLinkNotionProperties(l, schemaProps = {}) {
 
 function isStaleRelationError(err) {
   return Boolean(err?.message && err.message.includes('Could not find page'));
-}
-function isWrongDatabaseError(err) {
-  const m = err?.message || '';
-  return /400/.test(m) && /is not a property that exists|is expected to be/.test(m);
 }
 
 async function ensureCols(pool, token, dbId, props, label, { notionReq, logSyncError }) {

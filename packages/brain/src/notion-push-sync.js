@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
-import { pushRegisteredRows, resolveDbId, isPageGoneError } from './lib/notion-projection-engine.js';
+import { pushRegisteredRows, resolveDbId, isPageGoneError, isWrongDatabaseError } from './lib/notion-projection-engine.js';
 import { OPS_DB_PROPS, buildTasksDbProps, buildStepLinkDbProps, diffMissingProps } from './ops-notion-schema.js';
 import { buildStepLinkNotionProperties } from './notion-probe-projection.js';
 import {
@@ -134,16 +134,6 @@ export function buildDecisionNotionProperties(decision = {}, abilityNotionId = n
 // 404 "Could not find page" = stale relation ID，永久标记为已同步阻止无限重试
 function isStaleRelationError(err) {
   return err.message && err.message.includes('Could not find page');
-}
-
-/**
- * 400 schema 不符 = notion_id 指向「错库」页面（legacy 遗留绑错库），
- * 属性名/类型对不上 → 解绑重建才是出路，重试一万次也不会成功。
- * 2026-09-16 实证：249 条 legacy 行每轮重试刷屏（269 次/2h 日志噪音）。
- */
-function isWrongDatabaseError(err) {
-  const m = err?.message || '';
-  return /400/.test(m) && /is not a property that exists|is expected to be/.test(m);
 }
 
 async function logSyncError(pool, errMsg) {
