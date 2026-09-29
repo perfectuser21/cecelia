@@ -157,6 +157,11 @@ vi.mock('../skill-dist-drift.js', () => ({
   runSkillDistDrift: vi.fn().mockResolvedValue({ skipped: true, reason: 'interval_gate' }),
 }));
 
+// skill-inventory-sync 真实 handler 会 ssh 到 MMV 跑采集程序——单测绝不真发 ssh；行为由 skill-inventory-sync.test.js 与 integration 覆盖。
+vi.mock('../skill-inventory-sync.js', () => ({
+  runSkillInventorySync: vi.fn().mockResolvedValue({ skipped: true, reason: 'interval_gate' }),
+}));
+
 // recurring-tasks 真实 handler 会扫 recurring_tasks 并建单；行为由 recurring-engine.test.js（假库）
 // 与 integration/recurring-engine.pg.integration.test.js（真库）覆盖，这里只验注册与接线。
 vi.mock('../recurring.js', () => ({
@@ -297,6 +302,20 @@ describe('scheduler-jobs 注册表', () => {
     const [r] = await runSchedulerJobsOnce(pool, [j]);
     expect(flushAlertsIfNeeded).toHaveBeenCalledTimes(1);
     expect(r.ok).toBe(true);
+  });
+
+  it('JOBS 注册了 skill-inventory-sync（needsPool、200s 超时、在 skill-dist-drift 之后且在 scheduler-liveness 之前、handler 真接线）', async () => {
+    const names = JOBS.map((j) => j.name);
+    const j = JOBS.find((x) => x.name === 'skill-inventory-sync');
+    expect(j).toBeTruthy();
+    expect(j.needsPool).toBe(true);
+    expect(j.timeoutMs).toBe(200_000);
+    expect(names.indexOf('skill-inventory-sync')).toBeGreaterThan(names.indexOf('skill-dist-drift'));
+    expect(names.indexOf('skill-inventory-sync')).toBeLessThan(names.indexOf('scheduler-liveness'));
+    const { runSkillInventorySync } = await import('../skill-inventory-sync.js');
+    const pool = makePool();
+    await runSchedulerJobsOnce(pool, [j]);
+    expect(runSkillInventorySync).toHaveBeenCalled();
   });
 
   it('注册 scheduler-liveness 且排在 JOBS 末尾，把 JOBS 自身注入 handler（不 import 成环）', async () => {
