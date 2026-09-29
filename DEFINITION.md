@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.342.0
+**Brain 版本**: 1.342.1
 
 ## 1.283.0
 
@@ -48,6 +48,10 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.342.1 — relay project 推送错库 400 自愈
+
+- relay 投影：project 根的 legacy notion_id 指向错库（旧 Cecelia Tasks 库页）时 PATCH 返回 400「Status is expected to be select / AI Project is not a property」，现与 notion-push-sync 同款判据放弃旧页，在 Projects 库重建并回存新 id 与指纹。isWrongDatabaseError 收进统一推送引擎导出，push-sync / probe-projection / relay 三处共用。
 
 ## Brain 1.342.0 — 价值流镜子：结构地图 → Notion「价值流 Value Streams」
 
