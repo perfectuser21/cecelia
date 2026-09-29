@@ -114,6 +114,24 @@ export const PROBE_DB_PROPS = {
 };
 
 /**
+ * 「价值流 Value Streams」库（map_projection_nodes value_stream 节点的只读镜子，决策 e00d9cc3 / 9d5fce74）：
+ * 一行 = 一条价值流（scope + node_key），能力列 = contains 边指向的 capability 名逐行列出。
+ * 建库脚本 scripts/ops/create-value-stream-notion-db.js 与推送方 notion-map-value-streams.js 共用，缺列即补。
+ * 「状态」列：active run 里节点消失 → 已归档（不删页面）。
+ */
+export const VALUE_STREAM_DB_PROPS = {
+  Name: { title: {} },
+  Key: { rich_text: {} },
+  Scope: { select: { options: [{ name: 'cecelia' }, { name: 'zenithjoy-workspace' }] } },
+  Persona: { rich_text: {} },
+  '能力': { rich_text: {} },
+  '能力数': { number: {} },
+  '地图版本': { rich_text: {} },
+  '同步时间': { date: {} },
+  '状态': { select: { options: [{ name: '在册' }, { name: '已归档' }] } },
+};
+
+/**
  * 「承诺地图格子」库（journey_step_links 的镜子，迁移 479 起）：格子列 + Journey 文本列。
  * Journey 不做 relation：AI Journey 库 358c… 与旧 Backbone-Step Map 369c… 2026-09-19 一起进了回收站
  * （GET 200 但写入/建 relation 404，09-27 上产实证），journeys.notion_id 全指向死页，只能投路径名文本。
