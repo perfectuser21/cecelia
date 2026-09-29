@@ -14,7 +14,6 @@ acceptance-two-column-smoke.sh
 account-quota-gate-smoke.sh
 admission-report-smoke.sh
 advancement-items-smoke.sh
-agent-credit-smoke.sh
 anchor-backfill-smoke.sh
 anchor-check-smoke.sh
 autoblock-sql-param-fix-smoke.sh
@@ -173,7 +172,6 @@ kernel-runtime-resource-smoke.sh
 kernel-shared-validation-clock-smoke.sh
 kernel-stdio-capture-smoke.sh
 kernel-two-phase-launch-smoke.sh
-kr1-kr2-updater-smoke.sh
 kv-route-smoke.sh
 launchd-patrol-smoke.sh
 ledger-hygiene-m2-noise-smoke.sh

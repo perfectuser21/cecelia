@@ -36,8 +36,6 @@ const WECHAT_TOKEN_ERROR_CODES = new Set(['40001', '40014', '42001']);
 /** 连续 auth_fail 触发飞书告警的阈值 */
 const WECHAT_AUTH_FAIL_ALERT_THRESHOLD = 2;
 
-/** publish_success_daily 保证写入的平台（即使当日无任务） */
-const GUARANTEED_STAT_PLATFORMS = ['wechat'];
 
 // ─── failure_type 分类 ────────────────────────────────────────────────────────
 
@@ -275,7 +273,7 @@ async function fetchTodayStats(pool) {
 }
 
 /**
- * 将统计写入 working_memory，同时 upsert publish_success_daily（每平台每天一行）。
+ * 将统计写入 working_memory（publish_success_daily 空表已删，迁移 486）。
  *
  * @param {import('pg').Pool} pool
  * @param {object} stats
@@ -287,34 +285,6 @@ async function writeStats(pool, stats) {
      ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()`,
     [STATS_KEY, JSON.stringify(stats)]
   );
-
-  // 按平台写每日快照
-  const date = stats.date || new Date().toISOString().slice(0, 10);
-  const platformMap = stats.platforms || {};
-
-  // 确保 GUARANTEED_STAT_PLATFORMS 中的平台始终有统计行（即使当日无任务）
-  for (const p of GUARANTEED_STAT_PLATFORMS) {
-    if (!platformMap[p]) platformMap[p] = { queued: 0, in_progress: 0, completed: 0, failed: 0 };
-  }
-
-  for (const [platform, ps] of Object.entries(platformMap)) {
-    const total = (ps.queued || 0) + (ps.in_progress || 0) + (ps.completed || 0) + (ps.failed || 0);
-    const completed = ps.completed || 0;
-    const failed = ps.failed || 0;
-    const totalDone = completed + failed;
-    const successRate = totalDone > 0 ? Number(((completed / totalDone) * 100).toFixed(2)) : null;
-
-    await pool.query(
-      `INSERT INTO publish_success_daily (platform, date, total, completed, failed, success_rate)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (platform, date) DO UPDATE
-         SET total        = EXCLUDED.total,
-             completed    = EXCLUDED.completed,
-             failed       = EXCLUDED.failed,
-             success_rate = EXCLUDED.success_rate`,
-      [platform, date, total, completed, failed, successRate]
-    );
-  }
 }
 
 // ─── 主入口 ──────────────────────────────────────────────────────────────────

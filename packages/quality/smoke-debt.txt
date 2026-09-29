@@ -120,8 +120,6 @@ okr-initiatives-project-id-smoke.sh
 orchestrator-smoke.sh
 p1pr2-deadman-trigger-backup-smoke.sh
 propose-branch-protocol-smoke.sh
-publish-success-daily-smoke.sh
-publish-success-rate-smoke.sh
 relay-codex-executor-smoke.sh
 report-postpromote-smoke.sh
 reportnode-fields-smoke.sh
