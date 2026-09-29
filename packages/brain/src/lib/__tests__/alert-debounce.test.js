@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// alerting 缓冲会持久化到 working_memory：隔离共享测试库，防其他用例写入的 alerting_buffers 被恢复进缓冲
+vi.mock('../../db.js', () => ({
+  default: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+}));
+
 vi.mock('../../notifier.js', () => ({
   sendFeishu: vi.fn().mockResolvedValue(true),
 }));

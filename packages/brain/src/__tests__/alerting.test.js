@@ -9,6 +9,11 @@ vi.mock('../notifier.js', () => ({
   sendFeishu: vi.fn().mockResolvedValue(true),
 }));
 
+// 缓冲持久化走 working_memory：此处隔离真实 DB（持久化行为见 alerting-persist.test.js）
+vi.mock('../db.js', () => ({
+  default: { query: vi.fn().mockResolvedValue({ rows: [] }) },
+}));
+
 import { sendFeishu } from '../notifier.js';
 import { raise, flushP1, flushP2, flushAlertsIfNeeded, getStatus } from '../alerting.js';
 

@@ -22,16 +22,83 @@ const VALID_LEVELS = ['P0', 'P1', 'P2', 'P3'];
 const _p0RateLimit = new Map();
 const P0_RATE_LIMIT_MS = 5 * 60 * 1000;
 
-// P1/P2 缓冲区
+// P1/P2 缓冲区（内存为主，镜像到 working_memory，重启后恢复）
 const _p1Buffer = [];
 const _p2Buffer = [];
 
-// 刷新时间追踪（in-memory，Brain 重启后清零）
+// 刷新时间追踪（随缓冲一起持久化，重启后恢复，保证 P2 每日节奏不被部署打断）
 let _lastP1FlushAt = 0;
 let _lastP2FlushAt = 0;
 
 const P1_FLUSH_INTERVAL_MS = 60 * 60 * 1000;       // 1 小时
 const P2_FLUSH_INTERVAL_MS = 24 * 60 * 60 * 1000;  // 24 小时
+
+// ── 持久化（working_memory key=alerting_buffers）──────────────────────────
+// 背景：Brain 一天多次部署重启，纯内存缓冲会让 P2 每日汇总永远发不出去。
+// 语义：至少一次——flush 发送后才写回清空态；持久化失败只 console.warn，不影响 raise。
+// 顺序：所有读写串行在 _persistChain 上；未成功恢复前绝不写库（防空态覆盖库里未发项）。
+const PERSIST_KEY = 'alerting_buffers';
+const PERSIST_MAX_ITEMS = 500; // 每级最多落库最近 500 条（汇总只展示条数+最近 5 条，防单 key 无限膨胀）
+let _restored = false;
+let _persistChain = Promise.resolve();
+
+async function _getPool() {
+  // 动态 import：避免 alerting ↔ db 在模块加载期形成依赖（dedupe/notifier 等都 import alerting）
+  const mod = await import('./db.js');
+  return mod.default;
+}
+
+function _validItems(arr) {
+  return Array.isArray(arr)
+    ? arr.filter(e => e && typeof e.message === 'string')
+    : [];
+}
+
+async function _restoreFromDb(pool) {
+  const res = await pool.query('SELECT value_json FROM working_memory WHERE key = $1', [PERSIST_KEY]);
+  const saved = res?.rows?.[0]?.value_json;
+  if (saved && typeof saved === 'object') {
+    // 库里的是重启前的旧项，排在重启后新 raise 的项之前
+    _p1Buffer.unshift(..._validItems(saved.p1));
+    _p2Buffer.unshift(..._validItems(saved.p2));
+    _lastP1FlushAt = Math.max(_lastP1FlushAt, Number(saved.last_p1_flush_at) || 0);
+    _lastP2FlushAt = Math.max(_lastP2FlushAt, Number(saved.last_p2_flush_at) || 0);
+  }
+  _restored = true;
+}
+
+async function _writeToDb(pool) {
+  const state = {
+    p1: _p1Buffer.slice(-PERSIST_MAX_ITEMS),
+    p2: _p2Buffer.slice(-PERSIST_MAX_ITEMS),
+    last_p1_flush_at: _lastP1FlushAt,
+    last_p2_flush_at: _lastP2FlushAt,
+  };
+  await pool.query(
+    `INSERT INTO working_memory (key, value_json, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (key) DO UPDATE SET value_json = $2, updated_at = NOW()`,
+    [PERSIST_KEY, JSON.stringify(state)]
+  );
+}
+
+/**
+ * 串行执行一次持久化步骤：未恢复则先恢复；write=true 时再写回当前快照。
+ * 永不抛错——失败降级为仅内存。
+ */
+function _persist({ write }) {
+  const step = _persistChain.then(async () => {
+    try {
+      const pool = await _getPool();
+      if (!_restored) await _restoreFromDb(pool);
+      if (write) await _writeToDb(pool);
+    } catch (e) {
+      console.warn(`[alerting] 缓冲持久化失败（降级为仅内存）: ${e.message}`);
+    }
+  });
+  _persistChain = step;
+  return step;
+}
 
 /**
  * 触发一条报警
@@ -70,52 +137,62 @@ async function raise(level, eventType, message, opts = {}) {
     }
   } else if (level === 'P1') {
     _p1Buffer.push({ eventType, message, ts: Date.now() });
+    await _persist({ write: true });
   } else if (level === 'P2') {
     _p2Buffer.push({ eventType, message, ts: Date.now() });
+    await _persist({ write: true });
   }
   // P3：只有上面的 console.log，不推送
+}
+
+/**
+ * 发送一个缓冲区的汇总（发送后才把清空态写回库，崩在中途则重启后重发）
+ */
+async function _flushBuffer(level, buffer, header, label) {
+  await _persist({ write: false }); // 先确保已恢复重启前的未发项
+  if (buffer.length === 0) return;
+  const items = buffer.splice(0);
+  const preview = items.slice(-5).map(e => `• ${e.message}`).join('\n');
+  await sendFeishu(`${header} ${items.length} ${label}\n${preview}`).catch(e =>
+    console.error(`[alerting] ${level} 刷新推送失败:`, e.message)
+  );
+  await _persist({ write: true });
 }
 
 /**
  * 立即发送 P1 缓冲区（每小时由 flushAlertsIfNeeded 调用）
  */
 async function flushP1() {
-  if (_p1Buffer.length === 0) return;
-  const items = _p1Buffer.splice(0);
-  const preview = items.slice(-5).map(e => `• ${e.message}`).join('\n');
-  const text = `⚠️ [P1 每小时汇总] ${items.length} 条警告\n${preview}`;
-  await sendFeishu(text).catch(e =>
-    console.error('[alerting] P1 刷新推送失败:', e.message)
-  );
+  await _flushBuffer('P1', _p1Buffer, '⚠️ [P1 每小时汇总]', '条警告');
 }
 
 /**
  * 立即发送 P2 缓冲区（每日由 flushAlertsIfNeeded 调用）
  */
 async function flushP2() {
-  if (_p2Buffer.length === 0) return;
-  const items = _p2Buffer.splice(0);
-  const preview = items.slice(-5).map(e => `• ${e.message}`).join('\n');
-  const text = `📋 [P2 每日记录] ${items.length} 条\n${preview}`;
-  await sendFeishu(text).catch(e =>
-    console.error('[alerting] P2 刷新推送失败:', e.message)
-  );
+  await _flushBuffer('P2', _p2Buffer, '📋 [P2 每日记录]', '条');
 }
 
 /**
- * 时间门控刷新（在 tick 中调用，自动判断是否到时间）
- * P1 每小时一次，P2 每日一次
+ * 时间门控刷新（scheduler-jobs 的 alerting-flush 每 60s 调用，自动判断是否到时间）
+ * P1 每小时一次，P2 每日一次；上次刷新时间随缓冲持久化，跨重启保持节奏
  */
 async function flushAlertsIfNeeded() {
+  await _persist({ write: false });
   const now = Date.now();
-  if (now - _lastP1FlushAt >= P1_FLUSH_INTERVAL_MS) {
+  const p1Due = now - _lastP1FlushAt >= P1_FLUSH_INTERVAL_MS;
+  const p2Due = now - _lastP2FlushAt >= P2_FLUSH_INTERVAL_MS;
+  if (p1Due) {
     _lastP1FlushAt = now;
     await flushP1();
   }
-  if (now - _lastP2FlushAt >= P2_FLUSH_INTERVAL_MS) {
+  if (p2Due) {
     _lastP2FlushAt = now;
     await flushP2();
   }
+  // 缓冲为空时 flush 不写库，这里补写刷新时间，保证节奏跨重启
+  if (p1Due || p2Due) await _persist({ write: true });
+  return { p1: p1Due, p2: p2Due };
 }
 
 /**

@@ -49,7 +49,7 @@ import { runModelAccountsCollector } from './ops-model-accounts-collector.js';
 import { runOpenclawGuards } from './openclaw-guards.js';
 import { maybeRunFeishuTaskLedger } from './feishu-task-ledger.js';
 import { maybeRunCredentialFreshness } from './credential-freshness.js';
-import { raise as raiseAlert } from './alerting.js';
+import { raise as raiseAlert, flushAlertsIfNeeded } from './alerting.js';
 import { runOpsNotionPush } from './notion-push-sync.js';
 import { runOpsNotionIngest } from './ops-notion-ingest.js';
 import { runNotionInletIngest } from './notion-inlet-ingest.js';
@@ -149,6 +149,7 @@ export const JOBS = [
   { name: 'owner-decision-deadline', needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runOwnerDecisionDeadline(pool), description: '主理人决策到期兑现（决策105a5868三档协议，任务8aa79219）：blocked owner_decision(waiting_on=human)到期未应答→可逆按default走(同批准同一内部函数，via=default_on_deadline，decisions made_by=system，Bark P2「可推翻」)；不可逆不自动执行→blocked_until顺延24h+留痕次数+Bark P1再催。进程内10min自gate，调度轮60s都会调用故活性尺子=60s；整轮有界（query_timeout/statement_timeout/取连接超时/90s预算），不重演09-24 notion-gtd-sync卡死案' },
   { name: 'skill-dist-drift', needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runSkillDistDrift(pool), description: 'skill 分发漂移检测（链 bf5088a3 棒8，任务 1141f101）：真身 MMV ~/.claude/skills 与跑场机 xian-m4/xian-m1 的 skill 清单哈希（跟随符号链接按内容算，悬空链接单列）30min 自 gate 比对，结果写 working_memory.skill_manifest_drift，晨报/日报出 🟡 AMBER。us-vps 零执行：只经 ssh(mmv 跳板) 送脚本到目标机执行、读回 JSON；ssh 失败/超时=unreachable（未核对），绝不当零个 skill' },
   { name: 'recurring-tasks', needsPool: true, timeoutMs: 120_000, handler: (pool) => runRecurringTasksJob(pool), description: 'recurring_tasks 定时引擎（任务 3d0db274，5 月起停摆复活：原只挂在废弃 executeTick）：每轮扫活模板，北京时区（template.timezone 可覆盖）、next_run_at 到点即建单；首次启用只写基线不补跑；迟到超 catchup_minutes(默认30) 记 missed+P2；CAS 占位防重、source_id=recurring:<id>:<时间点>；同模板有未完结实例跳过、连续3次告警；透传 assigned_to/due_at/过期，过期未认领取消；落后>10min 告警' },
+  { name: 'alerting-flush', needsPool: false, timeoutMs: 120_000, handler: () => flushAlertsIfNeeded(), description: 'P1 每小时/P2 每日告警汇总推飞书（任务 309d864c：原只挂在废弃 executeTick，5 月起从未 flush；缓冲与上次刷新时间落 working_memory.alerting_buffers，部署重启不丢）' },
   // 放末尾：第一轮串行跑到这里时前面所有 job 的哨兵都已刷新，重启后不会把后排 job 误判 dead 再"恢复"。JOBS 经闭包注入——
   // 本模块已 import ops-collector/notion-push-sync，反向 import 会成环（routes/sentinel.js 同款避坑）。
   // scheduler 行推 Notion 滞后一轮 60s，设计 §3.2 接受。
