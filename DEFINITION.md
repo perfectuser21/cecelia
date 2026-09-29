@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.344.0
+**Brain 版本**: 1.344.2
 
 ## 1.283.0
 
@@ -48,6 +48,16 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.344.2 — 执行参数块头兼容 Notion 中文模板「执行参数：」
+
+- routing/exec-params.js：块头除「【执行参数】」外，也接受独占一行的「执行参数：」「执行参数:」（全/半角冒号、前后空白）；块尾规则不变。修 09-29 Notion 中文模板任务（319d933d）写了 模型：sol 实际跑默认 terra、超时/执行Agent/验收全被忽略。
+
+## Brain 1.344.1 — 外部执行体不再被启动同步/活性探针误回队
+
+- 新增统一谓词 `executor-contracts.isExternallyExecuted(task)`（集合从注册表 `surface ∈ {device, openclaw-agent, script}` 派生：device_job / qiumi_task / script_run，或 executor_kind ∈ {openclaw-agent, script}）。
+- `syncOrphanTasksOnStartup`：外部执行体跳过，不回队、不动 claimed_by（修每次部署重启把西安 Mac 上的 device_job、MMV 上的秋米 agent 回队导致重复执行）。
+- `probeTaskLiveness`：openclaw-agent / script 任务不再走本机 spawn 证据 SUSPECT→DEAD→零证据回队，生死归各自 reaper 读远端 .exit（修 0929 秋米 87c9a08b 起 4 分钟即被回队）；device_job 保留认领新鲜度 + 45 分钟兜底不变。任务 57bcc267。
 
 ## Brain 1.344.0 — 手机台账 phone_registry：秋米手机活按台账唯一定案，定不下不派
 
