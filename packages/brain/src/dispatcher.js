@@ -581,6 +581,7 @@ export async function dispatchNextTask(goalIds) {
   const preFlightFailedIds = [];
   const holSkipIds = [];        // IDs skipped due to HOL blocking (codex pool full, non-P0)
   const noExecutorSkipIds = []; // IDs skipped due to executor/bridge unavailable (0014cd42)
+  const breakerSkipIds = [];    // IDs skipped because cecelia-run circuit is OPEN (bridge-dependent only)
   const duplicateSkipIds = []; // IDs skipped due to duplicate-title sibling already queued/in_progress
   let nextTask = null;
 
@@ -616,9 +617,13 @@ export async function dispatchNextTask(goalIds) {
   dispatchLoop: for (;;) {
   nextTask = null;
   for (let attempt = 0; attempt <= MAX_PRE_FLIGHT_RETRIES; attempt++) {
-    const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds, ...duplicateSkipIds];
+    const skipIds = [...preFlightFailedIds, ...holSkipIds, ...noExecutorSkipIds, ...breakerSkipIds, ...duplicateSkipIds];
     const candidate = await selectNextDispatchableTask(goalIds, skipIds, { priorityFilter: _quotaPriorityFilter });
     if (!candidate) {
+      if (breakerSkipIds.length > 0 && noExecutorSkipIds.length === 0) {
+        tickLog(`[tick] circuit_breaker_open: 已跳过 ${breakerSkipIds.length} 个依赖 bridge 的候选后队列耗尽，本 tick 放弃派发`);
+        return { dispatched: false, reason: 'circuit_breaker_open', circuit_skipped: breakerSkipIds.length, actions };
+      }
       if (noExecutorSkipIds.length > 0) {
         // 全部剩余候选都因 executor 不可用被跳过 → 最终结论仍是 no_executor（与修复前一致）
         tickLog(`[tick] no_executor: 已跳过 ${noExecutorSkipIds.length} 个候选后队列耗尽，本 tick 放弃派发`);
@@ -1003,7 +1008,16 @@ export async function dispatchNextTask(goalIds) {
     await pool.query('UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1', [nextTask.id]);
     await releaseDeviceLockIfHeld(nextTask);
     await recordDispatchResult(pool, false, 'circuit_breaker_open', undefined, nextTask.id);
-    return { dispatched: false, reason: 'circuit_breaker_open', actions };
+    // 与下面 no_executor 同一条 HOL 规矩：熔断只拦依赖 bridge 的这一条，跳过它继续选下一候选。
+    // 原来直接 return：P1 的 bridge 任务每轮占着队头被弹回，排在后面不依赖 bridge 的
+    // qiumi/harness/script 任务永远轮不到（09-29 实测 11 条秋米任务堵了一上午）。
+    breakerSkipIds.push(nextTask.id);
+    if (breakerSkipIds.length >= MAX_SKIP_HEAD_FOR_BLOCKED) {
+      tickLog(`[tick] circuit_breaker_open: 跳过数达上限 (${MAX_SKIP_HEAD_FOR_BLOCKED})，本 tick 放弃派发`);
+      return { dispatched: false, reason: 'circuit_breaker_open', circuit_skipped: breakerSkipIds.length, actions };
+    }
+    tickLog(`[tick] circuit_breaker_open: task=${String(nextTask.id).slice(0, 8)} 依赖 bridge，跳过，试下一候选`);
+    continue dispatchLoop;
   }
 
   const ceceliaAvailable = needsBridgeCheck
