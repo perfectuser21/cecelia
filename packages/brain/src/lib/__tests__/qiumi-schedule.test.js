@@ -8,11 +8,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockQuery = vi.fn();
 const mockNotionReq = vi.fn();
 const mockCreateRoutedTask = vi.fn();
-vi.mock('../db.js', () => ({ default: { query: mockQuery } }));
-vi.mock('../recurring-notion-sync.js', () => ({ notionReq: mockNotionReq, getToken: () => 'tok' }));
-vi.mock('../work-routing-store.js', () => ({ createRoutedTask: mockCreateRoutedTask }));
-vi.mock('../task-updater.js', () => ({ blockTask: vi.fn(), unblockTask: vi.fn() }));
-vi.mock('../projection/commands.js', () => ({ recordProjectionCommand: vi.fn() }));
+vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../../recurring-notion-sync.js', () => ({ notionReq: mockNotionReq, getToken: () => 'tok' }));
+vi.mock('../../work-routing-store.js', () => ({ createRoutedTask: mockCreateRoutedTask }));
+vi.mock('../../task-updater.js', () => ({ blockTask: vi.fn(), unblockTask: vi.fn() }));
+vi.mock('../../projection/commands.js', () => ({ recordProjectionCommand: vi.fn() }));
 
 const NOW = new Date('2026-09-29T02:00:00.000Z'); // 上海 10:00
 const ZH_ID = '11111111-2222-3333-4444-555555555555';
@@ -49,7 +49,7 @@ const enPage = () => ({
 
 describe('lib/qiumi-schedule 时间归一', () => {
   it('只写日期：开始=当天 00:00 上海，结束=当天 23:59:59 上海；带钟点原样；空返回 null', async () => {
-    const { toStartIso, toEndIso } = await import('../lib/qiumi-schedule.js');
+    const { toStartIso, toEndIso } = await import('../../lib/qiumi-schedule.js');
     expect(toStartIso('2026-10-03')).toBe('2026-10-03T00:00:00+08:00');
     expect(toEndIso('2026-10-03')).toBe('2026-10-03T23:59:59+08:00');
     expect(toStartIso('2026-10-03T17:00:00.000+08:00')).toBe('2026-10-03T17:00:00.000+08:00');
@@ -57,7 +57,7 @@ describe('lib/qiumi-schedule 时间归一', () => {
     expect(toEndIso('')).toBeNull();
   });
   it('isFuture / sameInstant / scheduledNote（按上海时间显示）', async () => {
-    const { isFuture, sameInstant, scheduledNote } = await import('../lib/qiumi-schedule.js');
+    const { isFuture, sameInstant, scheduledNote } = await import('../../lib/qiumi-schedule.js');
     expect(isFuture('2026-10-03T17:00:00+08:00', NOW)).toBe(true);
     expect(isFuture('2026-09-29T09:00:00+08:00', NOW)).toBe(false);
     expect(isFuture(null, NOW)).toBe(false);
@@ -70,7 +70,7 @@ describe('lib/qiumi-schedule 时间归一', () => {
 
 describe('中文行解析与中英镜像', () => {
   it('parseZhPage：读预期开始/结束时间与委派人；旧列「预期完成日期」兜底当开始时间', async () => {
-    const { parseZhPage } = await import('../notion-gtd-sync.js');
+    const { parseZhPage } = await import('../../notion-gtd-sync.js');
     const zh = parseZhPage(zhPage());
     expect(zh.startAt).toBe('2026-10-03T17:00:00.000+08:00');
     expect(zh.endAt).toBe('2026-10-03T18:00:00.000+08:00');
@@ -80,13 +80,13 @@ describe('中文行解析与中英镜像', () => {
     expect(legacy.startAt).toBe('2026-10-05');
   });
   it('buildEnPageFromZh：Plan Date 写开始~结束区间 + Delegated By', async () => {
-    const { parseZhPage, buildEnPageFromZh } = await import('../notion-gtd-sync.js');
+    const { parseZhPage, buildEnPageFromZh } = await import('../../notion-gtd-sync.js');
     const body = buildEnPageFromZh(parseZhPage(zhPage()));
     expect(body.properties['Plan Date'].date).toEqual({ start: '2026-10-03T17:00:00.000+08:00', end: '2026-10-03T18:00:00.000+08:00' });
     expect(body.properties['Delegated By'].select.name).toBe('media');
   });
   it('buildZhPageFromEn：英文 Plan Date 区间 → 中文预期开始/结束时间，Delegated By → 委派人', async () => {
-    const { parseEnPage, buildZhPageFromEn } = await import('../notion-gtd-sync.js');
+    const { parseEnPage, buildZhPageFromEn } = await import('../../notion-gtd-sync.js');
     const en = parseEnPage({
       id: EN_ID,
       properties: {
@@ -116,7 +116,7 @@ describe('入账：开始时间未到 → 进库但不派', () => {
     });
     mockCreateRoutedTask.mockResolvedValue({ task: { id: TID } });
     mockQuery.mockResolvedValue({ rows: [] });
-    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const { ingestDelegatedPage } = await import('../../notion-push-sync.js');
     await ingestDelegatedPage({ query: mockQuery }, 'tok', enPage(), { env: { QIUMI_DISPATCH_ENABLED: 'true' }, now: () => NOW });
     return {
       meta: mockCreateRoutedTask.mock.calls[0][1].metadata,
@@ -159,14 +159,14 @@ describe('回写与改期', () => {
   beforeEach(() => { mockNotionReq.mockReset(); });
 
   it('queued 且开始时间未到 → 中文保持委派+已排期提示，英文 Planned', async () => {
-    const { pushQiumiStatus } = await import('../notion-gtd-sync.js');
+    const { pushQiumiStatus } = await import('../../notion-gtd-sync.js');
     const query = vi.fn()
       .mockResolvedValueOnce({ rows: [{
         id: TID, status: 'queued', error_message: null, result: null,
         zh_page_id: ZH_ID, en_page_id: EN_ID, next_run_at: '2026-10-03T17:00:00.000+08:00',
       }] }).mockResolvedValue({ rows: [] });
     mockNotionReq.mockImplementation(async (_t, path, method) => (method === 'GET' ? zhPage() : {}));
-    const { PUSH_QIUMI_QUERY } = await import('../notion-gtd-sync.js');
+    const { PUSH_QIUMI_QUERY } = await import('../../notion-gtd-sync.js');
     expect(PUSH_QIUMI_QUERY).toMatch(/next_run_at/);
     await pushQiumiStatus({ query }, 'tok', { notionReq: mockNotionReq, today: () => '2026-09-29', now: () => NOW });
     const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH_ID}` && c[2] === 'PATCH')[3];
@@ -177,7 +177,7 @@ describe('回写与改期', () => {
   });
 
   it('已排期的行在中文表改了开始时间 → 任务 next_run_at 跟着改，并清回写指纹让提示刷新', async () => {
-    const { applyOwnerStops } = await import('../notion-gtd-sync.js');
+    const { applyOwnerStops } = await import('../../notion-gtd-sync.js');
     const moved = zhPage({
       'OpenClaw任务号': { rich_text: [{ plain_text: `brain:${TID}` }] },
       '预期开始时间': { date: { start: '2026-10-04T08:00:00.000+08:00' } },
@@ -198,7 +198,7 @@ describe('回写与改期', () => {
   });
 
   it('开始时间没变 / 任务已不在排队 / 存量任务（无 scheduled_start）且开始时间已过 → 不动（不冲掉失败重试的退避）', async () => {
-    const { applyOwnerStops } = await import('../notion-gtd-sync.js');
+    const { applyOwnerStops } = await import('../../notion-gtd-sync.js');
     const same = zhPage({ 'OpenClaw任务号': { rich_text: [{ plain_text: `brain:${TID}` }] } });
     const pastLegacy = zhPage({
       'OpenClaw任务号': { rich_text: [{ plain_text: `brain:${TID}` }] },
