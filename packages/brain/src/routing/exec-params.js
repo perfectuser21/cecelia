@@ -14,6 +14,8 @@
  *   设备：小龙虾
  *   思考强度：high
  *   【执行参数结束】
+ *
+ * 块头也可写成独占一行的「执行参数：」（Notion 中文任务模板写法，09-29 任务 319d933d 实证）。
  */
 
 /**
@@ -38,7 +40,10 @@ export const MODEL_ALIASES = Object.freeze({ claude: 'sonnet', codex: 'terra' })
 
 export const THINKING_LEVELS = Object.freeze(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'adaptive', 'max']);
 
-const BLOCK_RE = /【执行参数】([\s\S]*?)(?:【执行参数结束】|\n[ \t]*\n|$)/;
+// 块头两种写法：「【执行参数】」，或 Notion 中文模板的独占一行「执行参数：」（全/半角冒号，前后可有空白）。
+// 后者必须行首且整行只有它，正文里「请参考下面的执行参数：」「执行参数：见附件」都不算块头。
+// 不用 m 标志：块尾的 $ 必须仍表示文末。
+const BLOCK_RE = /(?:【执行参数】|(?:^|\n)[ \t]*执行参数[ \t]*[：:][ \t]*(?=\n|$))([\s\S]*?)(?:【执行参数结束】|\n[ \t]*\n|$)/;
 const SAFE_AGENT = /^[A-Za-z0-9._-]+$/;
 const TIMEOUT_MIN_SEC = 60;
 const TIMEOUT_MAX_SEC = 180 * 60;

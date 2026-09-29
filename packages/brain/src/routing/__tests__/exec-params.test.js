@@ -147,3 +147,68 @@ describe('parseExecParams', () => {
     expect(r.errors).toContain('bad_agent');
   });
 });
+
+// 0929 生产实证（任务 319d933d）：Notion 中文模板块头写成行首「执行参数：」，
+// 旧正则只认「【执行参数】」→ present=false，模型/超时/执行Agent/验收全被忽略（写 sol 实跑 terra）。
+describe('parseExecParams — 行首「执行参数：」块头', () => {
+  const notionBody = [
+    '执行参数：',
+    '执行Agent：media',
+    '模型：sol',
+    '超时：60分钟',
+    '设备：小黄手机',
+    '验收：成功截图并写入对应数据库',
+    '',
+    '具体任务：在小黄手机上发一条朋友圈并截图',
+  ].join('\n');
+  const famEnv = { modelAllowlist: ['openai/gpt-5.6-sol', 'openai/gpt-6-sol', 'openai/gpt-5.6-terra'] };
+
+  it('Notion 模板原样正文 → 全部字段解析出来', () => {
+    const r = parseExecParams(notionBody, famEnv);
+    expect(r).toMatchObject({
+      present: true, agent: 'media', model: 'openai/gpt-6-sol', modelRaw: 'sol',
+      timeoutSec: 3600, device: '小黄手机', acceptance: '成功截图并写入对应数据库', errors: [],
+    });
+  });
+
+  it('半角冒号、前后空白、块头前有其他正文行都认', () => {
+    for (const head of ['执行参数:', '  执行参数 ： ', '\t执行参数:\t']) {
+      const r = parseExecParams(`任务标题\n${head}\n执行Agent：media\n模型：sol\n\n正文`, famEnv);
+      expect(r.present).toBe(true);
+      expect(r.agent).toBe('media');
+      expect(r.model).toBe('openai/gpt-6-sol');
+    }
+  });
+
+  it('空行截断仍生效：空行之后的字段不算参数', () => {
+    const r = parseExecParams('执行参数：\n执行Agent：media\n\n模型：sol\n超时：60分钟', famEnv);
+    expect(r.present).toBe(true);
+    expect(r.agent).toBe('media');
+    expect(r.model).toBeNull();
+    expect(r.timeoutSec).toBeNull();
+  });
+
+  it('【执行参数结束】也能作为这种块头的结束标记', () => {
+    const r = parseExecParams('执行参数：\n执行Agent：media\n【执行参数结束】\n模型：sol', famEnv);
+    expect(r.agent).toBe('media');
+    expect(r.model).toBeNull();
+  });
+
+  it('行中出现「执行参数：」不误判为块头', () => {
+    const r = parseExecParams('请参考下面的执行参数：\n执行Agent：media\n模型：sol', famEnv);
+    expect(r.present).toBe(false);
+    expect(r.agent).toBeNull();
+    expect(r.model).toBeNull();
+  });
+
+  it('行首「执行参数：」后面还跟着其他文字 → 不当块头', () => {
+    const r = parseExecParams('执行参数：见附件说明\n执行Agent：media', famEnv);
+    expect(r.present).toBe(false);
+    expect(r.agent).toBeNull();
+  });
+
+  it('回归：方括号写法行为不变', () => {
+    const r = parseExecParams('【执行参数】\n执行Agent：media\n模型：sol\n超时：60分钟\n【执行参数结束】\n正文', famEnv);
+    expect(r).toMatchObject({ present: true, agent: 'media', model: 'openai/gpt-6-sol', timeoutSec: 3600 });
+  });
+});
