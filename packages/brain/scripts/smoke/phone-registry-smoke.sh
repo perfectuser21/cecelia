@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # packages/brain/scripts/smoke/phone-registry-smoke.sh
 # Smoke: 手机台账 phone_registry + 秋米路由按台账定手机（任务 b923b1f7，决策 432172f7 方案 C）
-#   1. 迁移 489 种子（四台）喂给 resolvePhone：0929 事故原文「小黄手机」「小彩手机（型号 MAA-AN00）」唯一定案；
+#   1. 迁移 490 种子（四台）喂给 resolvePhone：0929 事故原文「小黄手机」「小彩手机（型号 MAA-AN00）」唯一定案；
 #      只写型号不定案；disabled 不命中；定不下提示里的昵称来自台账
 #   2. 有库（DATABASE_URL/PG*）时：phone_registry 真表有 4 台种子，按真表行再解析一次
 #   3. 有 Brain（BRAIN_URL）时：GET /api/brain/phone-registry 返回 ≥4 行且含小黄；PUT 空 body 不得 200（不写库）
@@ -29,8 +29,8 @@ import { readFileSync } from 'node:fs';
 import { resolvePhone, unresolvedNote } from './src/routing/phone-resolver.js';
 let rows = process.env.ROWS_JSON ? JSON.parse(process.env.ROWS_JSON) : null;
 if (!rows || !rows.length) {
-  // 没有库：从迁移 489 的种子里抽四台（与生产种子同源，不另抄一份）
-  const sql = readFileSync('./migrations/489_phone_registry.sql', 'utf8');
+  // 没有库：从迁移 490 的种子里抽四台（与生产种子同源，不另抄一份）
+  const sql = readFileSync('./migrations/490_phone_registry.sql', 'utf8');
   const re = /\('([^']+)', '([^']+)', ARRAY\[([^\]]*)\], '([^']+)', '([^']+)', '([^']+)', '[^']+', '[^']+',\s*'(\[[^']*\])'::jsonb/g;
   rows = [...sql.matchAll(re)].map((m) => ({
     serial: m[1], nickname: m[2], aliases: [...m[3].matchAll(/'([^']+)'/g)].map((x) => x[1]),

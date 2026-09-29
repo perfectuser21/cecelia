@@ -4,7 +4,7 @@
  *   GET /api/brain/phone-registry          全量行（含 disabled），按 serial 排序
  *   PUT /api/brain/phone-registry/:serial  upsert（internalAuthOrLoopback，不裸奔）
  *
- * phone_registry（迁移 489）是 昵称/别名/技术名/抖音号 → 手机 的唯一真身，秋米路由按它定手机
+ * phone_registry（迁移 490）是 昵称/别名/技术名/抖音号 → 手机 的唯一真身，秋米路由按它定手机
  * （routing/phone-resolver.js）。PUT 只改请求里出现的字段：没传的列在冲突更新时保留台账原值，
  * 停用一台只需 {"enabled": false}（走 UPDATE，台账里没有这台回 404）；新增必须带 nickname。
  */

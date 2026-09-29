@@ -110,7 +110,7 @@ async function cleanup() {
   if (await hasPhoneRegistry()) await pool.query('DELETE FROM phone_registry WHERE serial = $1', [SERIAL]);
 }
 
-/** 手机池真身已迁到 phone_registry（迁移 489，任务 b923b1f7）；device_locks 只在台账缺失/为空时兜底，两边都登记。 */
+/** 手机池真身已迁到 phone_registry（迁移 490，任务 b923b1f7）；device_locks 只在台账缺失/为空时兜底，两边都登记。 */
 async function hasPhoneRegistry() {
   const { rows } = await pool.query("SELECT to_regclass('phone_registry') AS t");
   return rows[0]?.t != null;

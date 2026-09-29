@@ -1,6 +1,6 @@
 /**
  * 测试夹具：phone_registry 行（DB 形状，snake_case）。只给单测用——生产映射是台账数据
- * （迁移 489 种子 + PUT /api/brain/phone-registry），代码里不写任何一台手机（决策 432172f7）。
+ * （迁移 490 种子 + PUT /api/brain/phone-registry），代码里不写任何一台手机（决策 432172f7）。
  */
 export const REGISTRY_ROWS = Object.freeze([
   {

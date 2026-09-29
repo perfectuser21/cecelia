@@ -6,7 +6,7 @@
  *  - device_locks（migrations/448）：手机序列号真身，device_name=序列号，device_type='phone'
  *  - ops_workflows：无 channel 列，是否设备工作流用 env.deviceKeywords 对工作流名做启发式判断
  *
- * 手机池（任务 b923b1f7，决策 432172f7 方案 C）：优先读手机台账 phone_registry（迁移 489，昵称/别名/抖音号
+ * 手机池（任务 b923b1f7，决策 432172f7 方案 C）：优先读手机台账 phone_registry（迁移 490，昵称/别名/抖音号
  * → 手机的唯一真身），只有台账表不存在或为空时才回退 device_locks 旧口径。台账模式下正文里的手机描述交给
  * routing/phone-resolver.js 定案，代码里不写任何一台手机。
  */

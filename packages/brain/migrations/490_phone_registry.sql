@@ -1,4 +1,4 @@
--- Migration 489: phone_registry 手机台账（任务 b923b1f7，决策 432172f7 方案 C）
+-- Migration 490: phone_registry 手机台账（任务 b923b1f7，决策 432172f7 方案 C）
 --
 -- 0929 事故：秋米任务写「小黄手机」「小彩手机（型号 MAA-AN00）」，agent 在执行机 tsv 里查不到昵称，
 -- 卡住或用错手机、写错数据。昵称/别名/技术名/抖音号 → 手机 的映射是台账数据，落这张表；
@@ -31,18 +31,18 @@ COMMENT ON COLUMN phone_registry.wechat IS '{id: 微信号, nickname: 微信昵�
 INSERT INTO phone_registry (serial, nickname, aliases, host, profile, model, owner, role, douyin_accounts, wechat, updated_by) VALUES
 ('ANGYVB4311010223', '小彩', ARRAY['三号机', '小龙虾'], 'xian-m1', 'xiaolongxia', 'MAA-AN00', '悦升云端', '研发',
   '[{"id": "90915521618", "nickname": "Ai办公室", "current": true}, {"id": null, "nickname": "秦军餐饮", "current": false}]'::jsonb,
-  '{"id": "AI-MrXu", "nickname": "徐老师企业Ai方案落地师"}'::jsonb, 'migration-489'),
+  '{"id": "AI-MrXu", "nickname": "徐老师企业Ai方案落地师"}'::jsonb, 'migration-490'),
 ('e6c7ef34', '小白', ARRAY['二号机'], 'xian-m1', 'yueshengyun-work', 'RMX3478', '悦升云端', '生产',
   '[{"id": "37358506855", "nickname": "Ai效率笔记", "current": true}, {"id": null, "nickname": "大湖成长之路（Ai+）", "current": false}]'::jsonb,
-  '{"id": "zenithjoyai", "nickname": "大湖-企业AI方案"}'::jsonb, 'migration-489'),
+  '{"id": "zenithjoyai", "nickname": "大湖-企业AI方案"}'::jsonb, 'migration-490'),
 ('ANGYVB4402004137', '小黄', ARRAY['一号机'], 'xian-m4', 'legacy', 'MAA-AN00', '金诺盛源', '研发',
   '[{"id": "44997267357", "nickname": "人工智能小诺考评", "current": true}]'::jsonb,
-  '{"id": "wxid_fts6libbfcje22", "nickname": "5026"}'::jsonb, 'migration-489'),
+  '{"id": "wxid_fts6libbfcje22", "nickname": "5026"}'::jsonb, 'migration-490'),
 ('ANGYVB4227006983', '小蓝', ARRAY['四号机', '金诺机'], 'xian-m4', 'jinoshengyuan-work', 'MAA-AN00', '金诺盛源', '生产',
   '[{"id": "langzi63485", "nickname": "躺赢AI学姐", "current": true}]'::jsonb,
-  NULL, 'migration-489')
+  NULL, 'migration-490')
 ON CONFLICT (serial) DO NOTHING;
 
 INSERT INTO schema_version (version, description)
-VALUES ('489', 'phone_registry 手机台账：昵称/别名/profile/抖音号 → 手机，秋米路由唯一命中才派；种子 0929 实测四台')
+VALUES ('490', 'phone_registry 手机台账：昵称/别名/profile/抖音号 → 手机，秋米路由唯一命中才派；种子 0929 实测四台')
 ON CONFLICT (version) DO NOTHING;

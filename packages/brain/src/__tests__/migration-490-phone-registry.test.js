@@ -1,5 +1,5 @@
 /**
- * 迁移 489 结构断言（任务 b923b1f7，决策 432172f7 方案 C）：phone_registry 手机台账。
+ * 迁移 490 结构断言（任务 b923b1f7，决策 432172f7 方案 C）：phone_registry 手机台账。
  * 映射是台账数据——昵称/别名/抖音号/微信都落这张表，代码里不写任何一台手机。
  * 种子 = 2026-09-29 实测的四台；真库行为见 ../routes/phone-registry.test.js 与 routing/__tests__/phone-resolver.test.js。
  */
@@ -7,10 +7,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const up = fileURLToPath(new URL('../../migrations/489_phone_registry.sql', import.meta.url));
-const down = fileURLToPath(new URL('../../migrations/rollback/489_phone_registry.down.sql', import.meta.url));
+const up = fileURLToPath(new URL('../../migrations/490_phone_registry.sql', import.meta.url));
+const down = fileURLToPath(new URL('../../migrations/rollback/490_phone_registry.down.sql', import.meta.url));
 
-describe('migration 489 phone_registry', () => {
+describe('migration 490 phone_registry', () => {
   it('文件存在（含回滚脚本）', () => {
     expect(existsSync(up)).toBe(true);
     expect(existsSync(down)).toBe(true);
@@ -40,13 +40,13 @@ describe('migration 489 phone_registry', () => {
     expect(sql).toContain('RMX3478');
   });
 
-  it('登记 schema_version 489', () => {
-    expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'489'/);
+  it('登记 schema_version 490', () => {
+    expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'490'/);
   });
 
   it('回滚脚本删表并摘掉 schema_version 记录', () => {
     const downSql = existsSync(down) ? readFileSync(down, 'utf8') : '';
     expect(downSql).toMatch(/DROP TABLE IF EXISTS phone_registry/);
-    expect(downSql).toMatch(/DELETE FROM schema_version WHERE version = '489'/);
+    expect(downSql).toMatch(/DELETE FROM schema_version WHERE version = '490'/);
   });
 });

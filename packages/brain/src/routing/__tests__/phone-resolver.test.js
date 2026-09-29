@@ -1,7 +1,7 @@
 /**
  * phone-resolver：按手机台账（phone_registry）把任务正文里的手机描述解析成唯一一台手机。
  * 决策 432172f7（方案 C）：映射是台账数据，代码只查表 + 核验 + 查不到退回；本文件的行只是测试夹具，
- * 生产数据以迁移 489 种子 + PUT /api/brain/phone-registry 为准。
+ * 生产数据以迁移 490 种子 + PUT /api/brain/phone-registry 为准。
  *
  * 0929 事故：任务写「小黄手机」「小彩手机（型号 MAA-AN00）」，agent 查不到昵称，卡住或用错手机。
  */
