@@ -16,13 +16,25 @@
  *   【执行参数结束】
  */
 
-export const MODEL_ALIASES = Object.freeze({
-  claude: 'anthropic/claude-sonnet-5',
-  codex: 'openai/gpt-5.6-terra',
-  terra: 'openai/gpt-5.6-terra',
-  sol: 'openai/gpt-6-sol',
-  grok: 'xai/grok-4.7',
+/**
+ * 模型系列（决策 49d17c60）：任务里只写系列名，取允许清单里该系列的最新「纯版本号」型号。
+ * 新版本进了允许清单就自动成为默认，任务写法不用改；允许清单只放实测能跑通的型号。
+ * 带后缀/日期的变体（grok-4.20-reasoning、haiku-4-5-20251001）不参与「最新」比较，要用就写全名。
+ */
+const MODEL_FAMILIES = Object.freeze({
+  sol: /^openai\/gpt-(\d+(?:\.\d+)?)-sol$/,
+  terra: /^openai\/gpt-(\d+(?:\.\d+)?)-terra$/,
+  luna: /^openai\/gpt-(\d+(?:\.\d+)?)-luna$/,
+  astra: /^openai\/gpt-(\d+(?:\.\d+)?)-astra$/,
+  opus: /^anthropic\/claude-opus-(\d+(?:-\d+)?)$/,
+  sonnet: /^anthropic\/claude-sonnet-(\d+(?:-\d+)?)$/,
+  fable: /^anthropic\/claude-fable-(\d+(?:-\d+)?)$/,
+  haiku: /^anthropic\/claude-haiku-(\d+(?:-\d+)?)$/,
+  grok: /^xai\/grok-(\d+(?:\.\d+)?)$/,
 });
+
+/** 旧简称 → 系列（兼容已写好的任务） */
+export const MODEL_ALIASES = Object.freeze({ claude: 'sonnet', codex: 'terra' });
 
 export const THINKING_LEVELS = Object.freeze(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'adaptive', 'max']);
 
@@ -42,14 +54,42 @@ const FIELD_KEYS = Object.freeze({
 
 const normKey = (k) => k.replace(/\s+/g, '').toLowerCase();
 
-/** 模型：别名 → 清单全名 → 清单短名，全部精确匹配；不做后缀猜测。 */
+const versionParts = (v) => v.split(/[.-]/).map(Number);
+const newerThan = (a, b) => {
+  const [x, y] = [versionParts(a), versionParts(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i += 1) {
+    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) > (y[i] ?? 0);
+  }
+  return false;
+};
+
+function latestInFamily(family, allowlist) {
+  let best = null;
+  for (const id of allowlist) {
+    const v = id.match(MODEL_FAMILIES[family])?.[1];
+    if (v && (!best || newerThan(v, best.v))) best = { id, v };
+  }
+  return best?.id ?? null;
+}
+
+/**
+ * 模型：系列名（取最新）→ 清单全名 → 清单短名 → Claude 省略前缀/点号写法，全部精确匹配；不做后缀猜测。
+ * 显示名里的空格按连字符处理：「GPT-6 Sol」=gpt-6-sol，「Opus 4.8」=claude-opus-4-8。
+ */
 function resolveModel(raw, allowlist) {
-  const t = raw.trim().toLowerCase();
-  if (MODEL_ALIASES[t]) return MODEL_ALIASES[t];
-  const full = allowlist.find((id) => id.toLowerCase() === t);
-  if (full) return full;
-  const short = allowlist.filter((id) => id.slice(id.indexOf('/') + 1).toLowerCase() === t);
-  return short.length === 1 ? short[0] : null;
+  const t = raw.trim().toLowerCase().replace(/\s+/g, '-');
+  const family = MODEL_ALIASES[t] ?? (MODEL_FAMILIES[t] ? t : null);
+  if (family) return latestInFamily(family, allowlist);
+  const candidates = [t, t.startsWith('claude-') ? null : `claude-${t}`]
+    .filter(Boolean)
+    .flatMap((c) => (c.startsWith('claude-') ? [c, c.replace(/\./g, '-')] : [c]));
+  for (const c of candidates) {
+    const full = allowlist.find((id) => id.toLowerCase() === c);
+    if (full) return full;
+    const short = allowlist.filter((id) => id.slice(id.indexOf('/') + 1).toLowerCase() === c);
+    if (short.length === 1) return short[0];
+  }
+  return null;
 }
 
 /** 超时：N分钟 / N秒 / Nm / Ns / N（默认分钟）；越界返回 null。 */

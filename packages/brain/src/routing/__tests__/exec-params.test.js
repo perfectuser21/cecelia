@@ -49,11 +49,61 @@ describe('parseExecParams', () => {
     expect(r.model).toBe('openai/gpt-6-sol');
   });
 
-  it('别名表覆盖 claude / codex / terra / sol / grok', () => {
-    expect(MODEL_ALIASES).toMatchObject({
-      claude: 'anthropic/claude-sonnet-5', codex: 'openai/gpt-5.6-terra', terra: 'openai/gpt-5.6-terra',
-      sol: 'openai/gpt-6-sol', grok: 'xai/grok-4.7',
-    });
+  it('旧简称仍兼容：claude→Sonnet 系列、codex→Terra 系列（都取清单内最新）', () => {
+    expect(MODEL_ALIASES).toMatchObject({ claude: 'sonnet', codex: 'terra' });
+    expect(parseExecParams(block(['模型：claude']), env).model).toBe('anthropic/claude-sonnet-5');
+    expect(parseExecParams(block(['模型：codex']), env).model).toBe('openai/gpt-5.6-terra');
+  });
+
+  // 主理人 09-29（决策 49d17c60）：只写系列名，系统自动取清单里该系列的最新版本；
+  // 新版本进了允许清单就自动成为默认，不用改任务写法。
+  const fam = {
+    modelAllowlist: [
+      'openai/gpt-5.6-sol', 'openai/gpt-6-sol', 'openai/gpt-5.6-terra', 'openai/gpt-5.6-luna', 'openai/gpt-6-astra', 'openai/gpt-5.5',
+      'anthropic/claude-opus-4-8', 'anthropic/claude-opus-5', 'anthropic/claude-sonnet-4-6', 'anthropic/claude-sonnet-5',
+      'anthropic/claude-fable-5', 'anthropic/claude-fable-5-1', 'anthropic/claude-haiku-4-5', 'anthropic/claude-haiku-4-5-20251001',
+      'xai/grok-4.3', 'xai/grok-4.7', 'xai/grok-4.6', 'xai/grok-4.20-reasoning', 'xai/grok-build-0.1',
+    ],
+  };
+  const m = (v, e = fam) => parseExecParams(block([`模型：${v}`]), e);
+
+  it('系列名 → 清单内该系列最新版本（大小写不敏感）', () => {
+    expect(m('Sol').model).toBe('openai/gpt-6-sol');
+    expect(m('terra').model).toBe('openai/gpt-5.6-terra');
+    expect(m('Luna').model).toBe('openai/gpt-5.6-luna');
+    expect(m('astra').model).toBe('openai/gpt-6-astra');
+    expect(m('Opus').model).toBe('anthropic/claude-opus-5');
+    expect(m('sonnet').model).toBe('anthropic/claude-sonnet-5');
+    expect(m('Fable').model).toBe('anthropic/claude-fable-5-1');
+    expect(m('haiku').model).toBe('anthropic/claude-haiku-4-5');
+    expect(m('Grok').model).toBe('xai/grok-4.7');
+  });
+
+  it('新版本进了清单 → 系列名自动跟到新版本（Opus 5 → 5.1，Sol 6 → 6.1）', () => {
+    const next = { modelAllowlist: [...fam.modelAllowlist, 'anthropic/claude-opus-5-1', 'openai/gpt-6.1-sol'] };
+    expect(m('opus', next).model).toBe('anthropic/claude-opus-5-1');
+    expect(m('sol', next).model).toBe('openai/gpt-6.1-sol');
+  });
+
+  it('带后缀/日期的变体不算系列最新（grok-4.20-reasoning、haiku 日期快照不会被系列名选中）', () => {
+    expect(m('grok').model).toBe('xai/grok-4.7');
+    expect(m('haiku').model).toBe('anthropic/claude-haiku-4-5');
+  });
+
+  it('具体型号：全名、显示名（带空格/点号）都认', () => {
+    expect(m('GPT-6 Sol').model).toBe('openai/gpt-6-sol');
+    expect(m('gpt-6-sol').model).toBe('openai/gpt-6-sol');
+    expect(m('openai/gpt-6-sol').model).toBe('openai/gpt-6-sol');
+    expect(m('Claude Opus 4.8').model).toBe('anthropic/claude-opus-4-8');
+    expect(m('Opus 4.8').model).toBe('anthropic/claude-opus-4-8');
+    expect(m('Grok 4.6').model).toBe('xai/grok-4.6');
+    expect(m('GPT-5.5').model).toBe('openai/gpt-5.5');
+  });
+
+  it('系列在清单里一个都没有 → unknown_model（不猜）', () => {
+    const r = m('opus', { modelAllowlist: ['openai/gpt-6-sol'] });
+    expect(r.model).toBeNull();
+    expect(r.errors).toContain('unknown_model');
   });
 
   it('允许清单里的全名与短名精确命中', () => {
