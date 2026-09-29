@@ -1845,4 +1845,11 @@ export async function runNotionPushSync(pool) {
   } catch (err) {
     console.warn(`[notion-push-sync] probe projection 失败（非阻断）: ${err.message}`);
   }
+  // 价值流镜子（决策 e00d9cc3）：结构地图 active run → 「价值流 Value Streams」库；未登记自跳过，吞错不连坐
+  try {
+    const { runValueStreamMirror } = await import('./notion-map-value-streams.js');
+    await runValueStreamMirror(pool, { token, logSyncError });
+  } catch (err) {
+    console.warn(`[notion-push-sync] value stream mirror 失败（非阻断）: ${err.message}`);
+  }
 }

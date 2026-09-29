@@ -345,3 +345,4 @@ backbone-contract-sync-smoke.sh
 backbone-page-body-smoke.sh
 qiumi-schedule-smoke.sh
 notion-mirror-labels-smoke.sh
+notion-map-value-streams-smoke.sh
