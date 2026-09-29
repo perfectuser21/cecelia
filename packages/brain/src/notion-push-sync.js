@@ -18,6 +18,7 @@ import { startRun, finishRun } from './lib/task-run.js';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { readPageContent } from './lib/notion-page-content.js';
 import { qiumiSourceFromNotion } from './lib/qiumi-source.js';
+import { toStartIso, toEndIso, isFuture, scheduledNote } from './lib/qiumi-schedule.js';
 import { parseEnPage, parseZhPage, GTD_DB_ID, EN_NATIVE_MARK } from './notion-gtd-sync.js';
 
 // journeys / journey_features 不再硬编码库常量：AI Journey / AI Feature 两库 2026-09-19 进回收站，
@@ -465,7 +466,19 @@ async function findZhPageByEnMark(token, enId32) {
  * 页 id 只进 payload（notion_page_id=英文页，为 458 去重豁免键；notion_zh_page_id=中文页），
  * 绝不写 tasks.notion_id（canonical 投影会覆盖）。tenant 由 NOTION_TENANT_MAP 给。
  */
-async function ingestQiumiPage(pool, token, page, en, { env }) {
+/**
+ * 委派人：中文「委派人」/英文 Delegated By 写了就用；空着按页面创建者补——人用 Notion 名字，
+ * 集成机器人（Agent 经 API 建的行）记「Agent（未标注）」。Agent 委派 Agent 时应自己写上名字。
+ */
+async function resolveDelegator(token, zh, en) {
+  if (zh?.delegatedBy || en.delegatedBy) return { name: zh?.delegatedBy || en.delegatedBy, inferred: false };
+  if (!zh?.createdById) return { name: null, inferred: false };
+  const user = await notionReq(token, `/users/${zh.createdById}`, 'GET').catch(() => null);
+  if (user?.type === 'person' && user.name) return { name: user.name, inferred: true };
+  return { name: user?.type === 'bot' ? 'Agent（未标注）' : null, inferred: true };
+}
+
+async function ingestQiumiPage(pool, token, page, en, { env, now = () => new Date() }) {
   const enBody = await fetchNotionPageContent(token, page.id);
   let zhPage = null;
   if (en.zhId32) {
@@ -479,6 +492,11 @@ async function ingestQiumiPage(pool, token, page, en, { env }) {
   const title = (zh?.title || en.name.replace(/^\[P[0-3]\]\s*/, '')).trim();
   const priority = zh?.priority ?? (en.name.match(/^\[(P[0-2])\]/)?.[1] ?? 'P2');
   const dueAt = zh?.dueAt ?? en.planDate ?? null;
+  // 预期开始时间 → next_run_at（派发器没到点不派），预期结束时间 → due_at（决策 51c09285）
+  const startIso = toStartIso(zh?.startAt ?? en.planDate ?? null);
+  const endIso = toEndIso(zh?.endAt ?? en.planEnd ?? null);
+  const scheduled = isFuture(startIso, now());
+  const delegator = await resolveDelegator(token, zh, en);
   const tenantId = zh ? tenantFor(env, env.NOTION_GTD_DB_ID || GTD_DB_ID) : 'default';
   const routed = await createRoutedTask(pool, {
     source: 'inbox',
@@ -500,19 +518,25 @@ async function ingestQiumiPage(pool, token, page, en, { env }) {
       // 放开后写 false（与不写等价），由 dispatcher.dispatchQiumiTask 接管派发。
       headed_manual: env.QIUMI_DISPATCH_ENABLED !== 'true',
       qiumi_source: qiumiSourceFromNotion({ title, zh, en, zhBody, enBody, dueAt }),
+      ...(startIso ? { next_run_at: startIso, scheduled_start: startIso } : {}),
+      ...(delegator.name ? { delegated_by: delegator.name } : {}),
     },
     task: { priority, status: 'queued', trigger_source: 'manual', executor_kind: 'openclaw-agent' },
   });
   const taskId = routed?.task?.id ?? routed?.task_id;
   if (!taskId) throw new Error('routed_task_id_missing');
-  if (dueAt) await pool.query('UPDATE tasks SET due_at=$2, updated_at=NOW() WHERE id=$1', [taskId, dueAt]);
+  const dueIso = endIso ?? dueAt;
+  if (dueIso) await pool.query('UPDATE tasks SET due_at=$2, updated_at=NOW() WHERE id=$1', [taskId, dueIso]);
   // 458 给 tasks 建了 tenant_id 列，路由账房不认这个字段 → 不补写就恒 NULL，
   // 按列过滤的看板/查询一条秋米任务都看不见，租户隔离形同虚设。payload 里有不算数。
   await pool.query('UPDATE tasks SET tenant_id=$2, updated_at=NOW() WHERE id=$1', [taskId, tenantId]);
   if (zh) {
+    // 没到预期开始时间：进库但保持委派，结果栏写已排期提示；到点派发后由回写翻成进行中
     await notionReq(token, `/pages/${zh.id}`, 'PATCH', { properties: {
       'OpenClaw任务号': { rich_text: [{ type: 'text', text: { content: `brain:${taskId}` } }] },
-      '状态': { status: { name: '进行中' } },
+      '状态': { status: { name: scheduled ? '委派' : '进行中' } },
+      ...(scheduled ? { 'OpenClaw结果': { rich_text: [{ type: 'text', text: { content: scheduledNote(startIso) } }] } } : {}),
+      ...(delegator.inferred && delegator.name ? { '委派人': { select: { name: delegator.name } } } : {}),
     } });
   }
   await writeStatusReceipt(token, page, en.description, `brain:${taskId} ✓已接管`);
@@ -542,7 +566,7 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
 
   const en = parseEnPage(page);
   if (en.zhId32 || en.enNative) {
-    return ingestQiumiPage(pool, token, page, en, { env: opts.env ?? process.env });
+    return ingestQiumiPage(pool, token, page, en, { env: opts.env ?? process.env, ...(opts.now ? { now: opts.now } : {}) });
   }
 
   // ─── 以下为原 pullNotionTasks 循环体，逐字搬入，非标记行行为不变 ───
