@@ -7,7 +7,6 @@
  *   1. 从 pipeline_publish_stats 聚合互动数据（views/likes/comments/shares）
  *   2. 通过 publish_task_id → tasks → payload 反向追溯所属话题关键词
  *   3. 按话题汇总，用加权公式计算热度分（归一化到 0-100）
- *   4. 将结果写入 topic_decision_feedback 表（下周选题参考）
  *
  * 热度公式：raw = views*0.1 + likes*3 + comments*5 + shares*7
  * 归一化：score = min(raw / MAX_RAW * 100, 100)
@@ -175,80 +174,3 @@ export async function computeTopicHeatScores(pool, start, end) {
 
 // ─── 写入反馈表 ───────────────────────────────────────────────────────────────
 
-/**
- * 将本周话题热度结果写入 topic_decision_feedback 表。
- * 热度 TOP 3 自动标记 recommended_next_week = true。
- *
- * @param {import('pg').Pool} pool
- * @param {string} weekKey - YYYY-WNN
- * @param {Array<{ topic_keyword, heat_score, total_views, total_likes, total_comments, total_shares, publish_count }>} scoredTopics
- * @returns {Promise<number>} 写入行数
- */
-export async function saveTopicFeedback(pool, weekKey, scoredTopics) {
-  if (!scoredTopics || scoredTopics.length === 0) return 0;
-
-  let saved = 0;
-  const topKeywords = new Set(scoredTopics.slice(0, 3).map(t => t.topic_keyword));
-
-  for (const t of scoredTopics) {
-    try {
-      await pool.query(
-        `INSERT INTO topic_decision_feedback
-           (week_key, topic_keyword, heat_score,
-            total_views, total_likes, total_comments, total_shares,
-            publish_count, recommended_next_week, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-         ON CONFLICT (week_key, topic_keyword) DO UPDATE SET
-           heat_score            = EXCLUDED.heat_score,
-           total_views           = EXCLUDED.total_views,
-           total_likes           = EXCLUDED.total_likes,
-           total_comments        = EXCLUDED.total_comments,
-           total_shares          = EXCLUDED.total_shares,
-           publish_count         = EXCLUDED.publish_count,
-           recommended_next_week = EXCLUDED.recommended_next_week,
-           updated_at            = NOW()`,
-        [
-          weekKey,
-          t.topic_keyword,
-          t.heat_score,
-          t.total_views,
-          t.total_likes,
-          t.total_comments,
-          t.total_shares,
-          t.publish_count,
-          topKeywords.has(t.topic_keyword),
-        ]
-      );
-      saved++;
-    } catch (err) {
-      console.error(`[topic-heat-scorer] 写入反馈失败 (${t.topic_keyword}): ${err.message}`);
-    }
-  }
-
-  return saved;
-}
-
-// ─── 历史高热话题查询（供 topic-selector 注入 Prompt）─────────────────────────
-
-/**
- * 查询近 N 周内热度 ≥ HIGH_HEAT_THRESHOLD 的历史话题，用于下次选题参考。
- *
- * @param {import('pg').Pool} pool
- * @returns {Promise<Array<{ topic_keyword: string, heat_score: number, week_key: string }>>}
- */
-export async function getHighPerformingTopics(pool) {
-  const { rows } = await pool.query(
-    `SELECT topic_keyword, heat_score, week_key
-     FROM topic_decision_feedback
-     WHERE heat_score >= $1
-       AND created_at >= NOW() - INTERVAL '${HIGH_HEAT_LOOKBACK_WEEKS} weeks'
-     ORDER BY heat_score DESC, created_at DESC
-     LIMIT 10`,
-    [HIGH_HEAT_THRESHOLD]
-  );
-  return rows.map(r => ({
-    topic_keyword: r.topic_keyword,
-    heat_score: Number(r.heat_score),
-    week_key: r.week_key,
-  }));
-}

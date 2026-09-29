@@ -4,7 +4,6 @@
 #   1. fetchWechatAuthFailsToday SQL 查询构造正确（参数化，不含字符串拼接）
 #   2. error_code=40001 被识别为 auth_fail，不重试
 #   3. ≥2 次 auth_fail 触发 raise('P0', 'wechat_access_token_expired', ...)
-#   4. publish_success_daily 始终有 wechat 行写入（GUARANTEED_STAT_PLATFORMS）
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
@@ -72,23 +71,6 @@ if (classifyPublishFailure('invalid access_token') !== 'auth_fail') {
   process.exit(1);
 }
 console.log('OK: classifyPublishFailure auth_fail pattern works');
-
-// ── 3. publish_success_daily 保障行：wechat 即使无任务也写入 ────────────────
-const wechatStatCalls = [];
-const poolB = {
-  query: async (sql, params) => {
-    if (sql && sql.includes('publish_success_daily') && params && params[0] === 'wechat') {
-      wechatStatCalls.push({ sql, params });
-    }
-    return { rows: [], rowCount: 0 };
-  }
-};
-await monitorPublishQueue(poolB);
-if (wechatStatCalls.length < 1) {
-  console.error('FAIL: publish_success_daily wechat row not written when no tasks');
-  process.exit(1);
-}
-console.log('OK: publish_success_daily wechat guaranteed row written');
 
 console.log('✅ wechat-token-alert smoke passed');
 "

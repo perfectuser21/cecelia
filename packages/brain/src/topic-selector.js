@@ -14,7 +14,6 @@
  */
 
 import { callLLM } from './llm-caller.js';
-import { getHighPerformingTopics } from './topic-heat-scorer.js';
 import { queryWeeklyROI } from './content-analytics.js';
 
 // getContentGapContext 的 task_type 历史拼写兼容名单：'content-pipeline' 是当前真实
@@ -233,14 +232,13 @@ ${highHeatSection}${seedSection}${contentGapContext}${roiContext}${hotspotContex
  * @returns {Promise<Array<{keyword, content_type, title_candidates, hook, why_hot, priority_score}>>}
  */
 export async function generateTopics(pool, seedKeywords = []) {
-  const [recentKeywords, highPerformingTopics, hotspotContext, roiContext, contentGapContext] = await Promise.all([
+  const [recentKeywords, hotspotContext, roiContext, contentGapContext] = await Promise.all([
     getRecentKeywords(pool),
-    getHighPerformingTopics(pool).catch(() => []),
     buildHotspotContext(),
     get7DayROIContext(pool).catch(() => ''),
     getContentGapContext(pool).catch(() => ''),
   ]);
-  const prompt = buildTopicPrompt(recentKeywords, highPerformingTopics, hotspotContext, roiContext, seedKeywords, contentGapContext);
+  const prompt = buildTopicPrompt(recentKeywords, [], hotspotContext, roiContext, seedKeywords, contentGapContext);
 
   const { text } = await _callLLMWithFallback('cortex', prompt, {
     maxTokens: 2048,

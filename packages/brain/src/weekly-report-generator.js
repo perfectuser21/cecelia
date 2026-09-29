@@ -17,7 +17,7 @@
 
 import pool from './db.js';
 import { sendFeishu } from './notifier.js';
-import { computeTopicHeatScores, saveTopicFeedback, PIPELINE_LOOKUP_LEGACY_TASK_TYPES } from './topic-heat-scorer.js';
+import { computeTopicHeatScores, PIPELINE_LOOKUP_LEGACY_TASK_TYPES } from './topic-heat-scorer.js';
 import { queryWeeklyROI } from './content-analytics.js';
 
 // ─── 常量 ─────────────────────────────────────────────────────────────────────
@@ -479,11 +479,6 @@ export async function generateWeeklyReport(dbPool = pool, now = new Date(), opts
         return [];
       }),
     ]);
-
-    // 4. 保存话题反馈（用于下周选题参考），不阻塞主流程
-    saveTopicFeedback(dbPool, weekKey, topicHeatData).catch(err => {
-      console.error(`[weekly-report-generator] 保存话题反馈失败: ${err.message}`);
-    });
 
     // 5. 生成周报文本
     const reportText = buildWeeklyReportText(weekKey, startStr, endStr, contentOutput, publishStats, engagementData, failureCount, topicHeatData, roiData);

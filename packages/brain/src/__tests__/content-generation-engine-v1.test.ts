@@ -171,7 +171,6 @@ vi.mock('../llm-caller.js', () => ({
 }));
 
 vi.mock('../topic-heat-scorer.js', () => ({
-  getHighPerformingTopics: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('../content-analytics.js', () => ({

@@ -235,8 +235,6 @@ describe('monitorPublishQueue - 微信 token 失效检测', () => {
     queryMock.mockResolvedValueOnce({ rows: [] });
     // writeStats: working_memory upsert
     queryMock.mockResolvedValueOnce({ rowCount: 1 });
-    // writeStats: publish_success_daily upsert（wechat 保障行）
-    queryMock.mockResolvedValueOnce({ rowCount: 1 });
     // fetchWechatAuthFailsToday → 2 条失败
     queryMock.mockResolvedValueOnce({
       rows: [
@@ -259,7 +257,6 @@ describe('monitorPublishQueue - 微信 token 失效检测', () => {
     queryMock.mockResolvedValueOnce({ rows: [] }); // fetchRetryableTasks
     queryMock.mockResolvedValueOnce({ rows: [] }); // fetchTodayStats
     queryMock.mockResolvedValueOnce({ rowCount: 1 }); // working_memory upsert
-    queryMock.mockResolvedValueOnce({ rowCount: 1 }); // publish_success_daily wechat
     // fetchWechatAuthFailsToday → 只有 1 条
     queryMock.mockResolvedValueOnce({
       rows: [
@@ -272,23 +269,4 @@ describe('monitorPublishQueue - 微信 token 失效检测', () => {
     expect(raiseMock).not.toHaveBeenCalled();
   });
 
-  it('wechat 保障行：无任务时也写入 publish_success_daily', async () => {
-    queryMock.mockResolvedValueOnce({ rows: [] }); // fetchRetryableTasks
-    queryMock.mockResolvedValueOnce({ rows: [] }); // fetchTodayStats（无任何任务）
-    queryMock.mockResolvedValueOnce({ rowCount: 1 }); // working_memory upsert
-    // publish_success_daily 应有 wechat 写入
-    queryMock.mockResolvedValueOnce({ rowCount: 1 });
-    queryMock.mockResolvedValueOnce({ rows: [] }); // fetchWechatAuthFailsToday
-
-    await monitorPublishQueue(mockPool);
-
-    const wechatStatCalls = queryMock.mock.calls.filter(
-      ([sql, params]) =>
-        typeof sql === 'string' &&
-        sql.includes('publish_success_daily') &&
-        Array.isArray(params) &&
-        params[0] === 'wechat'
-    );
-    expect(wechatStatCalls.length).toBeGreaterThanOrEqual(1);
-  });
 });
