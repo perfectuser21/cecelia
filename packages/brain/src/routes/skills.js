@@ -46,24 +46,31 @@ router.get('/', async (req, res) => {
 // POST /api/brain/skills
 router.post('/', async (req, res) => {
   try {
-    const { name, description, location, status = 'active', metadata = {}, area_id, notion_id } = req.body;
+    const { name, description, location, status, metadata = {}, area_id, notion_id } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
-    if (!VALID_STATUSES.includes(status)) {
+    if (status !== undefined && !VALID_STATUSES.includes(status)) {
       return res.status(400).json({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` });
+    }
+    // 冲突不再整行覆盖（Skill 台账投影 PR1a）：没传的保留原值，status 只在显式传入时覆盖，
+    // metadata 合并且剔除推送指纹——整块覆盖曾冲掉 pushed_digest/eval_score、清空 notion_id 致重复建页。
+    const meta = {};
+    if (metadata && typeof metadata === 'object') {
+      Object.assign(meta, metadata);
+      delete meta.pushed_digest;
     }
     const { rows } = await pool.query(
       `INSERT INTO skill_registry (name, description, location, status, metadata, area_id, notion_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (name) DO UPDATE SET
-         description = EXCLUDED.description,
-         location = EXCLUDED.location,
-         status = EXCLUDED.status,
-         metadata = EXCLUDED.metadata,
-         area_id = EXCLUDED.area_id,
-         notion_id = EXCLUDED.notion_id,
+         description = COALESCE(EXCLUDED.description, skill_registry.description),
+         location = COALESCE(EXCLUDED.location, skill_registry.location),
+         status = CASE WHEN $8::boolean THEN EXCLUDED.status ELSE skill_registry.status END,
+         metadata = COALESCE(skill_registry.metadata, '{}'::jsonb) || EXCLUDED.metadata,
+         area_id = COALESCE(EXCLUDED.area_id, skill_registry.area_id),
+         notion_id = COALESCE(EXCLUDED.notion_id, skill_registry.notion_id),
          updated_at = NOW()
        RETURNING *`,
-      [name, description || null, location || null, status, JSON.stringify(metadata), area_id || null, notion_id || null]
+      [name, description || null, location || null, status || 'active', JSON.stringify(meta), area_id || null, notion_id || null, status !== undefined]
     );
     return res.status(201).json(rows[0]);
   } catch (err) {
@@ -84,7 +91,15 @@ router.patch('/:id', async (req, res) => {
     if (description       !== undefined) { vals.push(description);              sets.push(`description = $${vals.length}`); }
     if (location          !== undefined) { vals.push(location);                 sets.push(`location = $${vals.length}`); }
     if (status            !== undefined) { vals.push(status);                   sets.push(`status = $${vals.length}`); }
-    if (metadata          !== undefined) { vals.push(JSON.stringify(metadata)); sets.push(`metadata = $${vals.length}`); }
+    if (metadata          !== undefined) {
+      const meta = {};
+      if (metadata && typeof metadata === 'object') {
+        Object.assign(meta, metadata);
+        delete meta.pushed_digest;
+      }
+      vals.push(JSON.stringify(meta));
+      sets.push(`metadata = COALESCE(metadata, '{}'::jsonb) || $${vals.length}::jsonb`);
+    }
     if (notion_id         !== undefined) { vals.push(notion_id);                sets.push(`notion_id = $${vals.length}`); }
     if (area_id           !== undefined) { vals.push(area_id);                  sets.push(`area_id = $${vals.length}`); }
     if (notion_synced_at  !== undefined) { vals.push(notion_synced_at);         sets.push(`notion_synced_at = $${vals.length}`); }
