@@ -35,7 +35,7 @@ function makePool({ registered = true, nodes = [], ledger = [] } = {}) {
     query: vi.fn(async (sql, params) => {
       const text = String(sql);
       if (/FROM notion_projection_map/.test(text)) {
-        return { rows: registered && params?.[0] === 'map_projection_nodes' ? [{ notion_db_id: DB }] : [] };
+        return { rows: registered && params?.[0] === 'notion_map_node_pages' ? [{ notion_db_id: DB }] : [] };
       }
       if (/FROM map_projection_runs/.test(text)) return { rows: nodes };
       if (/^\s*SELECT[\s\S]*FROM notion_map_node_pages/.test(text)) return { rows: ledger };

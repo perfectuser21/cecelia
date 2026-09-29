@@ -7,7 +7,8 @@
  * 主键 (scope, node_key)——跨 run 稳定的身份。
  *  - 指纹 = 将发送 properties（不含「同步时间」）的稳定哈希；不变不打 Notion
  *  - active run 里已不存在的节点 → 页面「状态」标「已归档」（PATCH，不删页面）；地图整体读空时不归档（防空投影抹镜子）
- *  - 库 id 只认 notion_projection_map（brain_table=map_projection_nodes，push+active），未登记整段跳过
+ *  - 库 id 只认 notion_projection_map（brain_table=记账表 notion_map_node_pages，push+active），未登记整段跳过；
+ *    登记记账表而非真身表：守夜 A7 查带 notion_id 列的表、A8 按 brain_table.notion_id 置空指纹触发覆盖回
  * 失败只记日志，Postgres 才是真相源。
  */
 import { notionReq as defaultNotionReq, getToken } from './recurring-notion-sync.js';
@@ -16,6 +17,7 @@ import { ensureOpsDbProps } from './ops-quota-notion.js';
 import { VALUE_STREAM_DB_PROPS } from './ops-notion-schema.js';
 
 const RT_MAX = 1900;
+export const LEDGER_TABLE = 'notion_map_node_pages';
 const ARCHIVED_PROPS = { '状态': { select: { name: '已归档' } } };
 
 const rich = (text) => {
@@ -119,7 +121,7 @@ async function archiveOne(pool, token, row, notionReq, stat) {
 export async function pushMapValueStreams(pool, token, deps = {}) {
   const notionReq = deps.notionReq ?? defaultNotionReq;
   const logSyncError = deps.logSyncError ?? (async () => {});
-  const dbId = await resolveDbId(pool, 'map_projection_nodes');
+  const dbId = await resolveDbId(pool, LEDGER_TABLE);
   if (!dbId) return null;
   try {
     const { added } = await ensureOpsDbProps(token, dbId, VALUE_STREAM_DB_PROPS, { notionReq });

@@ -27,7 +27,7 @@ let nodes = [
 ];
 const ledger = new Map();
 const pool = { query: async (sql, p = []) => {
-  if (/FROM notion_projection_map/.test(sql)) return { rows: p[0] === 'map_projection_nodes' ? [{ notion_db_id: 'db-vs' }] : [] };
+  if (/FROM notion_projection_map/.test(sql)) return { rows: p[0] === 'notion_map_node_pages' ? [{ notion_db_id: 'db-vs' }] : [] };
   if (/FROM map_projection_runs/.test(sql)) return { rows: nodes };
   if (/INSERT INTO notion_map_node_pages/.test(sql)) { ledger.set(p[0] + '/' + p[1], { scope: p[0], node_key: p[1], notion_id: p[2], notion_digest: p[3], archived_at: null }); return { rows: [] }; }
   if (/UPDATE notion_map_node_pages/.test(sql)) { const r = ledger.get(p[0] + '/' + p[1]); r.archived_at = 'now'; r.notion_digest = p[2]; return { rows: [] }; }
@@ -62,6 +62,6 @@ echo "[notion-map-value-streams-smoke] 4. 接线与迁移"
 grep -q "runValueStreamMirror" src/notion-push-sync.js || { echo "FAIL runNotionPushSync 未挂价值流镜子"; exit 1; }
 test -f migrations/487_notion_map_value_streams.sql || { echo "FAIL 缺迁移 487"; exit 1; }
 test -f migrations/rollback/487_notion_map_value_streams.down.sql || { echo "FAIL 缺回滚 487"; exit 1; }
-grep -q "'map_projection_nodes', 'push', 'notion-map-value-streams.pushMapValueStreams', 'active'" migrations/487_notion_map_value_streams.sql \
+grep -q "'notion_map_node_pages', 'push', 'notion-map-value-streams.pushMapValueStreams', 'active'" migrations/487_notion_map_value_streams.sql \
   || { echo "FAIL 新库未登记 push/active"; exit 1; }
 echo "✅ notion-map-value-streams smoke PASS"

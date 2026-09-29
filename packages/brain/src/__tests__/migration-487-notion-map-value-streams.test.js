@@ -28,8 +28,12 @@ describe('migration 487', () => {
     expect(sql).toMatch(/PRIMARY KEY \(scope, node_key\)/);
   });
 
-  it('登记新镜子库 mirror/push/active，血管 pushMapValueStreams，真身表 map_projection_nodes', () => {
-    expect(sql).toMatch(/'3eac40c2-ba63-817f-a964-f071c78cb711',\s*'价值流 Value Streams',\s*'mirror',\s*'map_projection_nodes',\s*'push',\s*'notion-map-value-streams\.pushMapValueStreams',\s*'active'/);
+  it('登记新镜子库 mirror/push/active，血管 pushMapValueStreams，brain_table 登记记账表（守夜 A7/A8 按它查）', () => {
+    expect(sql).toMatch(/'3eac40c2-ba63-817f-a964-f071c78cb711',\s*'价值流 Value Streams',\s*'mirror',\s*'notion_map_node_pages',\s*'push',\s*'notion-map-value-streams\.pushMapValueStreams',\s*'active'/);
+  });
+
+  it('登记行 notes 注明真身是 map_projection_nodes', () => {
+    expect(sql).toMatch(/真身=map_projection_nodes/);
   });
 
   it('902b 登记为 truth / none（产品方向，人工维护），notes 写来历与决策 e00d9cc3', () => {
