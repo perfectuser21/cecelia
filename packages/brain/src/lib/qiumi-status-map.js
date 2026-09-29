@@ -51,15 +51,23 @@ for (const s of TASK_STATUSES) {
 const text = (content) => [{ type: 'text', text: { content: String(content ?? '').slice(0, 1900) } }];
 
 /**
+ * 这些阻塞原因的 error_message 本身就是写给主理人看的提示，原样进「OpenClaw结果」，不套 [等待中: …]。
+ * device_unresolved：手机定不下（routing/qiumi-router.js holdUnresolved），提示由台账昵称生成。
+ */
+const ZH_VERBATIM_BLOCK_REASONS = Object.freeze(['device_unresolved']);
+
+/**
  * 一条 Brain 状态 → 中文页 PATCH properties；zh 为 null 返回 null（不写）。
  * @param {string} brainStatus
- * @param {{reason?:string, resultText?:string, today:string}} ctx today = YYYY-MM-DD（业务日）
+ * @param {{reason?:string, resultText?:string, today:string, blockedReason?:string|null}} ctx today = YYYY-MM-DD（业务日）
  */
-export function zhWriteFor(brainStatus, { reason = '', resultText = '', today } = {}) {
+export function zhWriteFor(brainStatus, { reason = '', resultText = '', today, blockedReason = null } = {}) {
   const m = QIUMI_STATUS_MAP[brainStatus];
   if (!m || !m.zh) return null;
   const properties = { '状态': { status: { name: m.zh } } };
-  if (m.zhWaiting) {
+  if (m.zhWaiting && reason && ZH_VERBATIM_BLOCK_REASONS.includes(blockedReason)) {
+    properties['OpenClaw结果'] = { rich_text: text(reason) };
+  } else if (m.zhWaiting) {
     properties['OpenClaw结果'] = { rich_text: text(`[等待中: ${reason || brainStatus}]`) };
   } else if (m.clearTaskNo) {
     properties['OpenClaw结果'] = { rich_text: text(`[执行失败: ${reason || brainStatus}] ${resultText}`.trim()) };

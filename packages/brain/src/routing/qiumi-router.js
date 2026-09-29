@@ -23,6 +23,7 @@ import { loadRegistryPool, cheapGates } from './cheap-gates.js';
 import { buildJevQuestions, decideWithFallback } from './jev-client.js';
 import { parseExecParams } from './exec-params.js';
 import { TASK_KINDS } from '../lib/task-type-registry.js';
+import { currentAccountOf, unresolvedNote } from './phone-resolver.js';
 
 // is_device 阈值的唯一真身在 jev-client（verdict 也在那里算好），本模块只再导出给下游，不另立标准。
 export { NOUL_THRESHOLDS } from './jev-client.js';
@@ -105,12 +106,33 @@ export function pickSerial(cheap, answers, registry) {
 }
 
 /**
+ * 台账模式下已定案的手机 → device_hint 的台账字段（任务 b923b1f7）。
+ * serial 来自便宜闸（resolvePhone 唯一命中）或 agentRef 反查；两条路都必须能在台账里找到这一行。
+ */
+function registryPhoneOf(cheap, registry) {
+  if (!cheap.serial) return null;
+  const res = cheap.phoneResolution;
+  if (res?.status === 'unique' && res.phone?.serial === cheap.serial) {
+    return { row: res.phone, resolvedBy: res.matchedBy, account: res.account ?? currentAccountOf(res.phone) };
+  }
+  const row = (registry.phoneRows ?? []).find((r) => r.serial === cheap.serial && r.enabled !== false);
+  return row ? { row, resolvedBy: 'agentRef', account: currentAccountOf(row) } : null;
+}
+
+/** 定不下的原因：只对上型号 / 多台 / 一台都没对上。 */
+function unresolvedReason(res) {
+  if (res?.status === 'ambiguous') return res.matchedBy === 'model' ? 'model_only' : 'ambiguous';
+  return 'no_match';
+}
+
+/**
  * 合成一条路由决策。不写库——落库是 persistDecision 的事（便于 Task 4 在 claim 语义里选时机）。
  *
  * @returns {Promise<
  *   {outcome:'device', serial:string, workflowRef:string|null, department:string|null, payloadPatch:object} |
  *   {outcome:'agent', engine:string, model:string|null, department:string, kind:string, workflowRef:string|null, runId:string, payloadPatch:object} |
- *   {outcome:'fail', reason:string, detail:string}
+ *   {outcome:'fail', reason:string, detail:string} |
+ *   {outcome:'unresolved', reason:'device_unresolved', detail:object, note:string}
  * >}
  */
 export async function routeQiumiTask(task, deps) {
@@ -169,12 +191,33 @@ export async function routeQiumiTask(task, deps) {
 
   if (params.errors.length) return fail('exec_params_invalid', params.errors.join(','));
 
+  // 手机台账（决策 432172f7 方案 C）：设备类任务必须唯一定到一台手机才派；定不下就退回（不问 Jev 猜，
+  // 0929 事故就是猜错手机）。台账缺失（回退 device_locks）时保持旧行为。
+  const registryMode = registry.phoneSource === 'phone_registry';
+  const regPhone = registryMode ? registryPhoneOf(cheap, registry) : null;
+  const unresolved = async (extra = {}) => {
+    const res = cheap.phoneResolution ?? { status: 'none', matchedBy: null, candidates: [] };
+    const detail = { reason: unresolvedReason(res), matched_by: res.matchedBy ?? null, candidates: res.candidates ?? [], ...extra };
+    await recordTaskEventSafe(pool, task.id, 'qiumi_route_device_unresolved', { ...detail, ...base });
+    return { outcome: 'unresolved', reason: 'device_unresolved', detail, note: unresolvedNote(registry.phoneRows) };
+  };
+  if (registryMode && cheap.isDevice && !regPhone) return unresolved();
+  // 台账定案的字段并进 device_hint，agent 拿到的就是具体节点/profile/手机/目标号，不再自己去查
+  const registryHint = regPhone ? {
+    serial: regPhone.row.serial,
+    host: regPhone.row.host ?? null,
+    profile: regPhone.row.profile ?? null,
+    nickname: regPhone.row.nickname ?? null,
+    account: regPhone.account ?? null,
+    resolvedBy: regPhone.resolvedBy,
+  } : {};
+
   // agent 决策的公共拼装：直派与 Jev 两条路共用，payload 形状只此一份。
   // 模型只取执行参数（不写 → null → OpenClaw 用该 agent 自身默认模型）。
   const agentDecision = async ({ source, answers, defaulted, engine, department, kind, workflowRef, deviceHint }) => {
     const model = params.model ?? null;
     const runId = `qiumi-${String(task.id).slice(0, 8)}-${now()}`;
-    const device_hint = { ...deviceHint, requested: params.device ?? null };
+    const device_hint = { ...deviceHint, ...registryHint, requested: params.device ?? null };
     const payloadPatch = {
       qiumi_route: { source, answers, defaulted, device_hint, ...base },
       model,
@@ -234,7 +277,9 @@ export async function routeQiumiTask(task, deps) {
   if (delegate) {
     // 闸 2：设备判定 fail-closed。便宜闸说是设备 → 直接进设备分支；否则只认 verdict===true。
     if (cheap.isDevice || verdict === true) {
-      const serial = pickSerial(cheap, a, registry);
+      // 台账模式不采纳 Jev 猜的账号：只认台账唯一定案（走到这里说明便宜闸没定案 → 退回）
+      if (registryMode && !regPhone) return unresolved({ jev_verdict: verdict ?? null });
+      const serial = registryMode ? regPhone.row.serial : pickSerial(cheap, a, registry);
       if (!serial) return fail('device_serial_unresolved', `account=${a.account?.choice ?? 'none'}`, { source: r.source });
       return device(serial, r.source, a);
     }
@@ -249,8 +294,10 @@ export async function routeQiumiTask(task, deps) {
   const department = cheap.department ?? resolveChoice(a.department, 'department', (c) => env.departments.includes(c), 'main', defaulted);
   const kind = resolveChoice(a.kind, 'kind', (c) => KIND_NAMES.includes(c), 'agent', defaulted);
   const workflowRef = cheap.workflowRef ?? jevWorkflowRef(a, registry, defaulted);
+  // 台账模式：Jev 判成设备但台账定不下 → 同样退回，不拿 Jev 猜的账号去碰真机
+  if (registryMode && verdict === true && !regPhone) return unresolved({ jev_verdict: true });
   // 留痕给 agent：它要自己去 OpenClaw 节点上跑控制器，得知道哪台手机在哪台宿主。
-  const hintSerial = pickSerial(cheap, a, registry);
+  const hintSerial = registryMode ? (regPhone?.row.serial ?? null) : pickSerial(cheap, a, registry);
   return agentDecision({
     source: r.source, answers: a, defaulted, engine, department, kind, workflowRef,
     deviceHint: {
@@ -427,8 +474,29 @@ export async function persistDecision(pool, task, decision, deps = {}) {
     );
     return;
   }
+  if (decision.outcome === 'unresolved') {
+    await holdUnresolved(pool, task, decision);
+    return;
+  }
   await finalizeTask(pool, task.id, 'failed', {
     set: { error_message: decision.detail ? `${decision.reason}: ${decision.detail}` : decision.reason },
     onlyIfStatus: 'queued',
   });
+}
+
+/**
+ * 手机定不下：不派，任务转 blocked 等人把手机写清楚（任务 b923b1f7）。
+ * blocked_until 必须是 NULL——自动解闸器只捞到期行，写了时间就会被放回队列再撞一次。
+ * error_message 放给中文表看的提示（notion-gtd-sync 按 blocked_reason 原样写进「OpenClaw结果」），
+ * blocked_detail 放候选与原因。CAS queued：领单/急停抢先改过状态就不覆盖。
+ */
+function holdUnresolved(pool, task, decision) {
+  return pool.query(
+    `UPDATE tasks
+        SET status = 'blocked', blocked_at = NOW(), blocked_reason = 'device_unresolved', blocked_until = NULL,
+            blocked_detail = $2::jsonb, error_message = $3,
+            claimed_by = NULL, claimed_at = NULL, updated_at = NOW()
+      WHERE id = $1 AND status = 'queued'`,
+    [task.id, JSON.stringify(decision.detail ?? {}), decision.note ?? null],
+  );
 }

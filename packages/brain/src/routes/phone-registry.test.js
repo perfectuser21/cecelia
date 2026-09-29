@@ -85,12 +85,21 @@ describe('PUT /api/brain/phone-registry/:serial', () => {
     expect(updateSet).toMatch(/updated_at\s*=\s*NOW\(\)/);
   });
 
-  it('只改 enabled（停用一台）也行：新行插入时 nickname 仍必填由库兜底', async () => {
+  it('只改 enabled（停用一台）→ 走 UPDATE 改已有行', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ ...row, enabled: false }] });
     const res = await request(app).put('/api/brain/phone-registry/ANGYVB4402004137')
       .set('Authorization', `Bearer ${TOKEN}`).send({ enabled: false });
     expect(res.status).toBe(200);
     expect(res.body.phone.enabled).toBe(false);
+  });
+
+  it('不带 nickname → 走 UPDATE（不走 INSERT，免得先撞 NOT NULL）；台账里没有这台 → 404', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    const res = await request(app).put('/api/brain/phone-registry/NOPE1234').set('X-Internal-Token', TOKEN).send({ enabled: false });
+    expect(res.status).toBe(404);
+    const [sql, params] = mockPool.query.mock.calls[0];
+    expect(sql).toMatch(/^UPDATE phone_registry SET enabled = \$2, updated_at = NOW\(\) WHERE serial = \$1/);
+    expect(params).toEqual(['NOPE1234', false]);
   });
 
   it('非法入参 → 400：serial 含非法字符 / nickname 空串 / aliases 非字符串数组 / douyin_accounts 形状错 / 多个 current', async () => {

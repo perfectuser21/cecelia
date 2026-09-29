@@ -728,6 +728,16 @@ describe('手机台账模式：resolvePhone 定案 / 定不下退回', () => {
     expect(d.detail.reason).toBe('ambiguous');
   });
 
+  it('便宜闸没判设备、Jev 判设备（noul=0.85）→ 台账模式不采纳 Jev 猜的账号，退回 unresolved', async () => {
+    const d = await routeQiumiTask(task('把这条内容整理好交给同事'), {
+      pool, env: envDefault,
+      fetchFn: jevOk(jevAnswers({ is_device: { type: 'noul', noul: 0.85 }, account: choice('e6c7ef34', 0.9) })),
+      callLLMFn: vi.fn(),
+    });
+    expect(d).toMatchObject({ outcome: 'unresolved', reason: 'device_unresolved' });
+    expect(d.detail.jev_verdict).toBe(true);
+  });
+
   it('非设备任务不受影响 → agent，device_hint.is_device=false', async () => {
     const d = await routeQiumiTask(task('写一段周报'), { pool, env: envDefault, fetchFn: jevOk(), callLLMFn: vi.fn() });
     expect(d.outcome).toBe('agent');

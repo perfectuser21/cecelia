@@ -155,6 +155,22 @@ async function cleanup() {
     );
   }
   await pool.query('DELETE FROM device_locks WHERE device_name = $1', [SERIAL]);
+  if (await hasPhoneRegistry()) await pool.query('DELETE FROM phone_registry WHERE serial = $1', [SERIAL]);
+}
+
+/** 手机池真身已迁到 phone_registry（迁移 489，任务 b923b1f7）；device_locks 只在台账缺失/为空时兜底，两边都登记。 */
+async function hasPhoneRegistry() {
+  const { rows } = await pool.query("SELECT to_regclass('phone_registry') AS t");
+  return rows[0]?.t != null;
+}
+
+async function registerSmokePhone(host) {
+  if (!(await hasPhoneRegistry())) return;
+  await pool.query(
+    `INSERT INTO phone_registry (serial, nickname, host, profile, updated_by) VALUES ($1, $2, $3, 'smoke', 'smoke')
+     ON CONFLICT (serial) DO UPDATE SET nickname = EXCLUDED.nickname, host = EXCLUDED.host, enabled = true`,
+    [SERIAL, `烟测${process.pid}`, host],
+  );
 }
 
 async function main() {
@@ -165,6 +181,7 @@ async function main() {
      ON CONFLICT (device_name) DO UPDATE SET host = EXCLUDED.host, device_type = 'phone'`,
     [SERIAL, HOST],
   );
+  await registerSmokePhone(HOST);
 
   let gate1TaskId = null;
 

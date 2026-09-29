@@ -174,7 +174,7 @@ export async function syncZhToEn(pool, token, {
 }
 
 export const PUSH_QIUMI_QUERY = `
-    SELECT id, status, error_message, result,
+    SELECT id, status, error_message, blocked_reason, result,
            payload->>'notion_zh_page_id' AS zh_page_id,
            payload->>'notion_page_id'    AS en_page_id,
            payload->>'next_run_at'       AS next_run_at
@@ -251,7 +251,9 @@ async function pushOneQiumiRow(pool, token, t, { notionReq, today, now }) {
     const scheduled = t.status === 'queued' && isFuture(t.next_run_at, now());
     const write = scheduled
       ? { properties: { '状态': { status: { name: '委派' } }, 'OpenClaw结果': { rich_text: text(scheduledNote(t.next_run_at)) } } }
-      : zhWriteFor(t.status, { reason: t.error_message || '', resultText: resultTextOf(t.result), today: today() });
+      : zhWriteFor(t.status, {
+        reason: t.error_message || '', resultText: resultTextOf(t.result), today: today(), blockedReason: t.blocked_reason ?? null,
+      });
     await withBackoff(() => notionReq(token, `/pages/${t.zh_page_id}`, 'PATCH', write));
     const enStatus = scheduled ? 'Planned' : map.en;
     if (t.en_page_id && enStatus) {

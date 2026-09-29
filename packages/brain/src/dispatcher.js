@@ -364,6 +364,20 @@ async function routeAndPersistQiumi(task, deps = {}) {
     };
   }
 
+  // 手机定不下（台账没有唯一命中）：persistDecision 已转 blocked(device_unresolved) 并放了 claim，不 spawn
+  if (decision.outcome === 'unresolved') {
+    await recordDispatchResult(pool, false, 'qiumi_device_unresolved', undefined, task.id);
+    return {
+      outcome: 'return',
+      result: {
+        dispatched: false,
+        reason: 'qiumi_device_unresolved',
+        task_id: task.id,
+        actions: [...actions, { action: 'qiumi-device-unresolved', task_id: task.id, detail: decision.detail ?? null }],
+      },
+    };
+  }
+
   // 判定失败（设备含糊 fail-closed / Jev+terra 均不可用）已落 failed，不 spawn
   if (decision.outcome === 'fail') {
     await recordDispatchResult(pool, false, 'qiumi_route_failed', undefined, task.id);
