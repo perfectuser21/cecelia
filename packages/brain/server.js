@@ -772,7 +772,7 @@ async function onBrainListening() {
   try {
     const syncResult = await syncOrphanTasksOnStartup();
     const failed = (syncResult.orphans_fixed || 0) - (syncResult.requeued || 0) - (syncResult.rebuilt || 0);
-    console.log(`[Server] Startup sync: orphans_found=${syncResult.orphans_found} requeued=${syncResult.requeued} rebuilt=${syncResult.rebuilt} failed=${failed}`);
+    console.log(`[Server] Startup sync: orphans_found=${syncResult.orphans_found} requeued=${syncResult.requeued} rebuilt=${syncResult.rebuilt} failed=${failed} external_skipped=${syncResult.external_skipped || 0}`);
   } catch (syncErr) {
     console.error('[Server] Startup sync failed:', syncErr.message);
   }

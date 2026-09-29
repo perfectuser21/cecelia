@@ -19,7 +19,7 @@ import { execSync } from 'child_process';
 import { execFileSync } from 'node:child_process';
 import { assessKernelLiveness } from './lib/kernel-liveness.js';
 import { probeCodexReviewLock } from './lib/codex-review-liveness.js';
-import { EXECUTOR_KIND_FOR_TASK_TYPE } from './lib/task-type-registry.js';
+import { EXECUTOR_KIND_FOR_TASK_TYPE, EXTERNALLY_EXECUTED_TASK_TYPES } from './lib/task-type-registry.js';
 import { sshTargetFor, resolvePrimaryWorkerId, resolveMachineId, listComputeWorkerIds } from './machine-registry.js';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 
@@ -84,6 +84,27 @@ export function resolveLivenessKind(task) {
     }
   }
   return persisted;
+}
+
+// ─── 外部执行体统一谓词 ──────────────────────────────────────────────────────
+// 外部执行体 = 进程不在 Brain 本机的活：本机查进程/日志/派发回执恒为空，
+// 启动同步与运行期探针不得据此判死回队——生死交给各自专属收割/对账
+// （openclaw-agent-reaper / script-reaper 读远端 .exit；device_job 走认领新鲜度 + 超时兜底）。
+// 集合全部从注册表派生（铁律 76cb816c）。
+
+/** 外部执行体类型在注册表里声明的 executor_kind（当前 = openclaw-agent / script）。 */
+export const EXTERNALLY_EXECUTED_KINDS = Object.freeze([
+  ...new Set(EXTERNALLY_EXECUTED_TASK_TYPES.map((t) => EXECUTOR_KIND_FOR_TASK_TYPE[t]).filter(Boolean)),
+]);
+
+/**
+ * task_type 属外部执行体类型，或库里持久化的 executor_kind 属外部执行体 kind。
+ * 按 task_type 判是为了覆盖「ssh 派发在途、executor_kind 尚未落库」的窗口（0929 87c9a08b 网关慢 4 分钟）。
+ */
+export function isExternallyExecuted(task) {
+  if (!task) return false;
+  if (EXTERNALLY_EXECUTED_TASK_TYPES.includes(task.task_type)) return true;
+  return Boolean(task.executor_kind) && EXTERNALLY_EXECUTED_KINDS.includes(task.executor_kind);
 }
 
 // kernel-process probe 的默认 pool：懒加载，只在调用方没给 ctx.pool 时才 import，

@@ -378,6 +378,22 @@ export const CONTENT_PIPELINE_TYPES = Object.freeze(
 export const EXTERNAL_WATCHDOG_TASK_TYPES = Object.freeze(
   Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.watchdog === 'external-worker').map(([k]) => k),
 );
+/**
+ * 执行面在**另一台机器**上的 surface（按 surface 字段，不是 executor/watchdog）：
+ *   device         = 西安 Mac 领单器 + adb 真机（device_job）
+ *   openclaw-agent = Brain 经 ssh 在 MMV 起的 openclaw agent（qiumi_task）
+ *   script         = Brain 经 ssh 在跑场机起的确定性脚本（script_run）
+ * content-* 的 surface 是 'external'（ZJ pipeline-worker 编排），启动同步对它的回队语义另有来历，不纳入。
+ */
+const REMOTE_EXECUTION_SURFACES = new Set(['device', 'openclaw-agent', 'script']);
+/**
+ * 进程不在 Brain 本机的任务类型（0929 实证：启动同步/活性探针靠本机进程证据判活，
+ * 对这些类型恒判死 → 每次部署/每轮探针都被回队，同一活重复执行）。
+ * 消费方经 executor-contracts.isExternallyExecuted 使用，禁止手抄。
+ */
+export const EXTERNALLY_EXECUTED_TASK_TYPES = Object.freeze(
+  Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.db && REMOTE_EXECUTION_SURFACES.has(e.surface)).map(([k]) => k),
+);
 export const NO_GOAL_TASK_TYPES = tagged(NOGOAL);
 export const ASYNC_CALLBACK_TASK_TYPES = tagged(ASYNCCB);
 /** lib/review-task-types.js 的 REVIEW_TASK_TYPES（与 actions.js REVIEW_TASK_TYPES 语义不同，见上方 REVIEWISO 定义处注释）。 */
