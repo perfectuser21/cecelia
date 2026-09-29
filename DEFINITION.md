@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.339.1
+**Brain 版本**: 1.341.0
 
 ## 1.283.0
 
@@ -48,6 +48,15 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.341.0 — 排空（drain）运行期超龄自愈
+
+- drain.js isDraining()：排空超过 DRAIN_RESTORE_MAX_AGE_MS（15 分钟）即按部署残留自动解除并清持久化行。修 09-29 部署后 drain-cancel 静默失败、新容器恢复 drain、运行期再无解除路径导致派发停摆（两次部署后秋米 11 条积压，任务 d78898ff）。
+
+## Brain 1.340.0 — Notion 投影注册表与现实对账 + 镜子库只读说明由注册表生成
+
+- 迁移 488：notion_projection_map 补登记 OPC 经营对象 / OPC 日报 / Key Results（us-vps cron 在写）与旧 Cecelia Tasks / Cecelia Projects（projection/outbox.js 曾写，决策 71e0087b 已停用 → archived）；「部门日报」推送方核实为 opc-daily-page.py；acceptance_criteria / features_registry 两个视图别名行归档（任务 a7a6b8b4）。
+- 新 scheduler job notion-mirror-labels（每天一次）：active 推送镜子库的描述开头写「🔒 只读镜子：由 Brain <表> 经 <血管> 推送…」，已是同样说明零写，两面库与无 Brain 表的库跳过；手动入口 scripts/ops/notion-mirror-labels.mjs。
 
 ## Brain 1.339.1 — 熔断打开时派发不再整轮放弃
 
