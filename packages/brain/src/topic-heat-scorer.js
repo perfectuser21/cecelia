@@ -32,8 +32,6 @@ const MAX_RAW_SCORE = 1000;
 /** 高热阈值（heat_score ≥ 此值视为高热话题） */
 export const HIGH_HEAT_THRESHOLD = 60;
 
-/** 查询近 N 周高热话题 */
-const HIGH_HEAT_LOOKBACK_WEEKS = 4;
 
 // fetchTopicEngagementData 的上游 pipeline 任务 task_type 历史拼写兼容名单——三个值都
 // 是改名前的旧拼写（grep 全库无一处 INSERT 用过 'content_pipeline'/'content_generation'/
