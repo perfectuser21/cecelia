@@ -157,6 +157,12 @@ vi.mock('../skill-dist-drift.js', () => ({
   runSkillDistDrift: vi.fn().mockResolvedValue({ skipped: true, reason: 'interval_gate' }),
 }));
 
+// recurring-tasks 真实 handler 会扫 recurring_tasks 并建单；行为由 recurring-engine.test.js（假库）
+// 与 integration/recurring-engine.pg.integration.test.js（真库）覆盖，这里只验注册与接线。
+vi.mock('../recurring.js', () => ({
+  runRecurringTasksJob: vi.fn().mockResolvedValue({ checked: 0, created: [], baseline: 0, missed: 0 }),
+}));
+
 vi.mock('../ops-scheduler-liveness.js', () => ({
   runSchedulerLiveness: vi.fn().mockResolvedValue({ ok: true, jobs: 0, flippedDead: 0, recovered: 0 }),
 }));
@@ -254,6 +260,21 @@ describe('scheduler-jobs 注册表', () => {
     const pool = makePool();
     await runSchedulerJobsOnce(pool, [j]);
     expect(runOwnerDecisionDeadline).toHaveBeenCalledWith(pool);
+  });
+
+  // 任务 3d0db274：recurring_tasks 定时引擎自 2026-05 停摆，根因之一是 checkRecurringTasks 只挂在
+  // 废弃的 tick-runner.executeTick，现役调度表里没有它。没注册 = 主理人排的定时单永远不出实例。
+  it('JOBS 注册了 recurring-tasks（needsPool、在 scheduler-liveness 之前、handler 真接线 runRecurringTasksJob）', async () => {
+    const { runRecurringTasksJob } = await import('../recurring.js');
+    const names = JOBS.map((j) => j.name);
+    const j = JOBS.find((x) => x.name === 'recurring-tasks');
+    expect(j).toBeTruthy();
+    expect(j.needsPool).toBe(true);
+    expect(j.timeoutMs).toBeLessThanOrEqual(5 * 60 * 1000);
+    expect(names.indexOf('recurring-tasks')).toBeLessThan(names.indexOf('scheduler-liveness'));
+    const pool = makePool();
+    await runSchedulerJobsOnce(pool, [j]);
+    expect(runRecurringTasksJob).toHaveBeenCalledWith(pool);
   });
 
   it('注册 scheduler-liveness 且排在 JOBS 末尾，把 JOBS 自身注入 handler（不 import 成环）', async () => {
