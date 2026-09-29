@@ -426,6 +426,34 @@ describe('promptOf 设备提示段（device_hint）', () => {
     expect(body).not.toContain('-PHONE');
   });
 
+  it('台账定案（nickname/profile/account 齐）→ 明确写节点/profile/序列号/手机/目标抖音号 + account-current 核对，不再让 agent 去 tsv 猜', async () => {
+    const spawnFn = spawnMock();
+    await triggerOpenclawAgent(withHint({
+      is_device: true, serial: 'ANGYVB4402004137', host: 'xian-m4', profile: 'legacy', nickname: '小黄',
+      account: { id: '44997267357', nickname: '人工智能小诺考评', current: true }, resolvedBy: 'nickname',
+    }), { spawnFn, pool: okPool() });
+    const body = sentBody(spawnFn);
+    expect(body).toContain('节点 XIAN-M4-PHONE');
+    expect(body).toContain('profile legacy');
+    expect(body).toContain('序列号 ANGYVB4402004137');
+    expect(body).toContain('手机 小黄');
+    expect(body).toContain('目标抖音号 44997267357（人工智能小诺考评）');
+    expect(body).toContain('account-current');
+    expect(body).toContain('不得换手机');
+    expect(body).toContain('--profile legacy');
+    expect(body).toContain('lock-acquire');
+    expect(body).not.toContain('douyin-phone-profiles.tsv');
+  });
+
+  it('台账定案但该号没有 id（只有昵称）→ 目标抖音号只写昵称', async () => {
+    const spawnFn = spawnMock();
+    await triggerOpenclawAgent(withHint({
+      is_device: true, serial: 'S9', host: 'xian-m1', profile: 'p9', nickname: '小彩',
+      account: { id: null, nickname: '秦军餐饮', current: false },
+    }), { spawnFn, pool: okPool() });
+    expect(sentBody(spawnFn)).toContain('目标抖音号 秦军餐饮');
+  });
+
   it('Jev 含糊（verdict=ambiguous）→ 正文仍含设备提示，首行提示可能要碰真机', async () => {
     const spawnFn = spawnMock();
     await triggerOpenclawAgent(

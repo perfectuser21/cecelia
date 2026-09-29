@@ -240,6 +240,19 @@ describe('dispatchQiumiTask：三态出口', () => {
     expect(recordDispatchResult).toHaveBeenCalledWith(expect.anything(), false, 'qiumi_route_failed', undefined, 'q1');
   });
 
+  it('unresolved 决策（手机定不下）→ outcome=return，reason=qiumi_device_unresolved，persistDecision 落 blocked，不 spawn', async () => {
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'unresolved', reason: 'device_unresolved', detail: { reason: 'no_match', candidates: [] }, note: 'n' });
+
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+
+    expect(r.outcome).toBe('return');
+    expect(r.result).toMatchObject({ dispatched: false, reason: 'qiumi_device_unresolved', task_id: 'q1' });
+    expect(persistDecision).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'q1' }), expect.objectContaining({ outcome: 'unresolved' }));
+    expect(mockTriggerCeceliaRun).not.toHaveBeenCalled();
+    expect(recordDispatchResult).toHaveBeenCalledWith(expect.anything(), false, 'qiumi_device_unresolved', undefined, 'q1');
+  });
+
   it('agent 决策 → outcome=proceed：决策已落库，spawn 交回主流程（函数内不 spawn）', async () => {
     wireQueries();
     routeQiumiTask.mockResolvedValue({

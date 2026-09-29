@@ -264,8 +264,8 @@ site({ label: 'nightly-orchestrator.js:122 scoreTask typeScore（内联数组，
   current: () => R.NIGHTLY_KR_BONUS_TASK_TYPES, compare: 'set' });
 site({ label: "notion-push-sync.js:240 PUSH_TASKS_QUERY task_type<>'device_job'（原单值排除，终审 I5 补漏）", file: 'notion-push-sync.js',
   extract: (s) => extractNeqLiteral(s, /task_type\s*<>\s*'([^']+)'/),
-  current: () => R.PUSH_EXCLUDED_TASK_TYPES, compare: 'set',
-  note: '基线只排除单值 device_job（不是数组），当前 PUSH_EXCLUDED_TASK_TYPES 由注册表 db && !push_to_notion 派生，实测两边集合当前都恰好等于 ["device_job"]——若未来注册表标记更多类型 db&&!push_to_notion，这条会精确报 FAIL，逼着显式过一遍是否该推送' });
+  current: () => R.PUSH_EXCLUDED_TASK_TYPES.filter((t) => t !== 'qiumi_task'), compare: 'set',
+  note: '基线只排除单值 device_job（不是数组），当前 PUSH_EXCLUDED_TASK_TYPES 由注册表 db && !push_to_notion 派生——若未来注册表标记更多类型 db&&!push_to_notion，这条会精确报 FAIL，逼着显式过一遍是否该推送。已显式过审的有意排除：qiumi_task（#5636 任务 7951bd36：它走 pushQiumiStatus 专线回写，进旧 pushTasks 会与 projection/notion.js 抢 notion_id 致 400 乒乓），由 __tests__/device-job-foundation.test.js 的专属断言（toContain qiumi_task）钉住，本审计只负责证明其余项相对基线零漂移' });
 site({ label: 'routes/execution.js:1659 VERDICT_HARNESS_TYPES', file: 'routes/execution.js',
   extract: (s) => extractNamedLiteral(s, 'VERDICT_HARNESS_TYPES'), current: () => R.VERDICT_HARNESS_TASK_TYPES, compare: 'set' });
 site({ label: "routes/execution.js:3006 US server task_types（顺序敏感）", file: 'routes/execution.js',

@@ -25,6 +25,30 @@ import { routeQiumiTask, persistDecision, pickSerial, NOUL_THRESHOLDS } from '..
 import { qiumiEnv, phoneNodeName } from '../env.js';
 import { buildQiumiSource } from '../../lib/qiumi-source.js';
 
+// 测试夹具：phone_registry 行（DB 形状）。生产映射是台账数据（迁移 490 种子 + PUT /api/brain/phone-registry），代码里不写任何一台手机（决策 432172f7）。
+const REGISTRY_ROWS = Object.freeze([
+  {
+    serial: 'ANGYVB4311010223', nickname: '小彩', aliases: ['三号机', '小龙虾'], host: 'xian-m1', profile: 'xiaolongxia', model: 'MAA-AN00',
+    douyin_accounts: [{ id: '90915521618', nickname: 'Ai办公室', current: true }, { id: null, nickname: '秦军餐饮', current: false }], enabled: true,
+  },
+  {
+    serial: 'e6c7ef34', nickname: '小白', aliases: ['二号机'], host: 'xian-m1', profile: 'yueshengyun-work', model: 'RMX3478',
+    douyin_accounts: [{ id: '37358506855', nickname: 'Ai效率笔记', current: true }], enabled: true,
+  },
+  {
+    serial: 'ANGYVB4402004137', nickname: '小黄', aliases: ['一号机'], host: 'xian-m4', profile: 'legacy', model: 'MAA-AN00',
+    douyin_accounts: [{ id: '44997267357', nickname: '人工智能小诺考评', current: true }], enabled: true,
+  },
+  {
+    serial: 'ANGYVB4227006983', nickname: '小蓝', aliases: ['四号机', '金诺机'], host: 'xian-m4', profile: 'jinoshengyuan-work', model: 'MAA-AN00',
+    douyin_accounts: [{ id: 'langzi63485', nickname: '躺赢AI学姐', current: true }], enabled: true,
+  },
+  {
+    serial: 'DISABLED0001', nickname: '小紫', aliases: ['五号机'], host: 'xian-m4', profile: 'retired', model: 'OLD-1',
+    douyin_accounts: [], enabled: false,
+  },
+]);
+
 // 既有 device/fail 用例断言的是「device 派生」这条旧路，开关封存后必须显式打开才走得到
 const env = qiumiEnv({ JEV_API_KEY: 'k', QIUMI_DEVICE_DELEGATION_ENABLED: 'true' });
 // 默认（开关关）：手机活走 agent，见文件末尾「开关关（默认）」describe
@@ -661,5 +685,108 @@ describe('kind 真列与属性约定', () => {
     await persistDecision(pool, task('写周报'), d, { createRoutedTaskFn: vi.fn() });
     const upd = pool.query.mock.calls.find(([sql]) => /SET payload = COALESCE/.test(sql));
     expect(upd[1][2]).toBe('workflow');
+  });
+});
+
+// ─── 手机台账（phone_registry，任务 b923b1f7，决策 432172f7 方案 C）────────────────
+// 0929 事故：「小黄手机」「小彩手机（型号 MAA-AN00）」查不到昵称 → agent 卡住或用错手机。
+// 台账模式下：唯一命中才定案并把 serial/host/profile/nickname/account 交给 agent；定不下就不派，转 blocked。
+describe('手机台账模式：resolvePhone 定案 / 定不下退回', () => {
+  const regRegistry = {
+    ...registry,
+    phoneSource: 'phone_registry',
+    phoneRows: REGISTRY_ROWS,
+    phones: REGISTRY_ROWS.filter((r) => r.enabled).map((r) => ({ serial: r.serial, host: r.host })),
+  };
+  beforeEach(() => { loadRegistryPool.mockResolvedValue(regRegistry); });
+
+  it('「设备：小黄手机」→ agent，device_hint 带 serial/host/profile/nickname/account/resolvedBy', async () => {
+    const d = await routeQiumiTask(task('设备：小黄手机\n给最新视频点赞'), { pool, env: envDefault, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    expect(d.outcome).toBe('agent');
+    const h = d.payloadPatch.qiumi_route.device_hint;
+    expect(h).toMatchObject({
+      is_device: true, serial: 'ANGYVB4402004137', host: 'xian-m4', profile: 'legacy', nickname: '小黄',
+      account: { id: '44997267357', nickname: '人工智能小诺考评' }, resolvedBy: 'nickname',
+    });
+    expect(h.matchedBy).toContain('registry:nickname');
+  });
+
+  it('抖音号定位 → account 是命中的那个号，不是 current 号', async () => {
+    const d = await routeQiumiTask(task('用「秦军餐饮」发一条探店视频'), { pool, env: envDefault, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    expect(d.outcome).toBe('agent');
+    expect(d.payloadPatch.qiumi_route.device_hint).toMatchObject({
+      serial: 'ANGYVB4311010223', nickname: '小彩', account: { id: null, nickname: '秦军餐饮' }, resolvedBy: 'douyin_nickname',
+    });
+  });
+
+  it('开关开 + 台账定案 → device 分支用台账序列号', async () => {
+    const d = await routeQiumiTask(task('用一号机发作品'), { pool, env, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    expect(d).toMatchObject({ outcome: 'device', serial: 'ANGYVB4402004137' });
+  });
+
+  it('只写型号（同型号多台）→ unresolved，不问 Jev、不派；留痕候选', async () => {
+    const fetchFn = jevOk();
+    const d = await routeQiumiTask(task('用型号 MAA-AN00 的手机点赞'), { pool, env: envDefault, fetchFn, callLLMFn: vi.fn() });
+    expect(d.outcome).toBe('unresolved');
+    expect(d.reason).toBe('device_unresolved');
+    expect(d.detail.reason).toBe('model_only');
+    expect(d.detail.candidates.map((c) => c.serial).sort()).toEqual(['ANGYVB4227006983', 'ANGYVB4311010223', 'ANGYVB4402004137']);
+    expect(d.note).toMatch(/^⚠️ 手机未确定：请在正文写明手机昵称（.*小黄.*）或抖音账号$/);
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(recordTaskEventSafe).toHaveBeenCalledWith(pool, TASK_ID, 'qiumi_route_device_unresolved',
+      expect.objectContaining({ reason: 'model_only' }));
+  });
+
+  it('设备类（关键词）但一台都对不上 → unresolved（no_match）', async () => {
+    const d = await routeQiumiTask(task('去抖音给客户最新视频点赞'), { pool, env: envDefault, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    expect(d).toMatchObject({ outcome: 'unresolved', reason: 'device_unresolved' });
+    expect(d.detail.reason).toBe('no_match');
+  });
+
+  it('两台都点名 → unresolved（ambiguous），写明执行者也不例外', async () => {
+    const d = await routeQiumiTask(task('【执行参数】\n执行Agent：media\n【执行参数结束】\n小黄手机和小白手机各发一条'), {
+      pool, env: envDefault, fetchFn: jevOk(), callLLMFn: vi.fn(),
+    });
+    expect(d.outcome).toBe('unresolved');
+    expect(d.detail.reason).toBe('ambiguous');
+  });
+
+  it('便宜闸没判设备、Jev 判设备（noul=0.85）→ 台账模式不采纳 Jev 猜的账号，退回 unresolved', async () => {
+    const d = await routeQiumiTask(task('把这条内容整理好交给同事'), {
+      pool, env: envDefault,
+      fetchFn: jevOk(jevAnswers({ is_device: { type: 'noul', noul: 0.85 }, account: choice('e6c7ef34', 0.9) })),
+      callLLMFn: vi.fn(),
+    });
+    expect(d).toMatchObject({ outcome: 'unresolved', reason: 'device_unresolved' });
+    expect(d.detail.jev_verdict).toBe(true);
+  });
+
+  it('非设备任务不受影响 → agent，device_hint.is_device=false', async () => {
+    const d = await routeQiumiTask(task('写一段周报'), { pool, env: envDefault, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    expect(d.outcome).toBe('agent');
+    expect(d.payloadPatch.qiumi_route.device_hint.is_device).toBe(false);
+  });
+
+  it('台账缺失（回退 device_locks）→ 旧行为：设备类定不下仍走 agent，不 unresolved', async () => {
+    loadRegistryPool.mockResolvedValue({ ...registry, phoneSource: 'device_locks', phoneRows: [] });
+    const d = await routeQiumiTask(task('去抖音给客户最新视频点赞'), { pool, env: envDefault, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    expect(d.outcome).toBe('agent');
+  });
+
+  it('persistDecision(unresolved) → blocked + blocked_reason=device_unresolved + blocked_until 为 NULL + 放 claim + CAS queued，detail 写候选', async () => {
+    const d = await routeQiumiTask(task('用型号 MAA-AN00 的手机点赞'), { pool, env: envDefault, fetchFn: jevOk(), callLLMFn: vi.fn() });
+    pool.query.mockClear();
+    await persistDecision(pool, task('用型号 MAA-AN00 的手机点赞'), d);
+    const [sql, params] = pool.query.mock.calls.find(([q]) => /UPDATE tasks/.test(q));
+    expect(sql).toMatch(/status = 'blocked'/);
+    expect(sql).toMatch(/blocked_reason = 'device_unresolved'/);
+    expect(sql).toMatch(/blocked_until = NULL/);
+    expect(sql).toMatch(/claimed_by = NULL/);
+    expect(sql).toMatch(/WHERE id = \$1 AND status = 'queued'/);
+    expect(params[0]).toBe(TASK_ID);
+    const detail = JSON.parse(params[1]);
+    expect(detail.reason).toBe('model_only');
+    expect(detail.candidates).toHaveLength(3);
+    expect(params[2]).toBe(d.note);
   });
 });

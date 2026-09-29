@@ -64,4 +64,14 @@ describe('qiumi-status-map 三方映射表', () => {
     expect(c.properties['完成日期'].date.start).toBe('2026-09-23');
     expect(zhWriteFor('pending', { today: '2026-09-23' })).toBeNull();
   });
+
+  it('zhWriteFor：blocked + blockedReason=device_unresolved → OpenClaw结果原样写提示（不套 [等待中:]），状态仍进行中', () => {
+    const note = '⚠️ 手机未确定：请在正文写明手机昵称（小彩/小白/小黄/小蓝）或抖音账号';
+    const w = zhWriteFor('blocked', { reason: note, blockedReason: 'device_unresolved', today: '2026-09-29' });
+    expect(w.properties['状态'].status.name).toBe('进行中');
+    expect(w.properties['OpenClaw结果'].rich_text[0].text.content).toBe(note);
+    // 别的阻塞原因不受影响
+    const o = zhWriteFor('blocked', { reason: 'quota', blockedReason: 'dispatch_fail_autoblock', today: '2026-09-29' });
+    expect(o.properties['OpenClaw结果'].rich_text[0].text.content).toBe('[等待中: quota]');
+  });
 });

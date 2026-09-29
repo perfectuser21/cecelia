@@ -104,6 +104,29 @@ function primaryTarget() {
   return sshTargetFor(resolvePrimaryWorkerId());
 }
 
+/** 目标抖音号：有 id 写「id（昵称）」，没 id 只写昵称。 */
+function accountLabel(account) {
+  if (!account) return null;
+  const { id, nickname } = account;
+  if (id && nickname) return `${id}（${nickname}）`;
+  return id || nickname || null;
+}
+
+/**
+ * 手机台账已定案（路由按 phone_registry 唯一命中，任务 b923b1f7）：把节点/profile/序列号/手机/目标号
+ * 写死给 agent，并要求开工前核对当前登录号——0929 事故就是 agent 自己查 tsv 猜错手机。
+ */
+function resolvedDeviceHint(h, node) {
+  const target = accountLabel(h.account);
+  return [
+    '设备提示（这是要碰真机的活，手机已按台账定案，按 douyin-phone-runtime skill 执行）：',
+    `- 节点 ${node ?? '未知（先 openclaw nodes list 找带 PHONE 的节点）'}、profile ${h.profile}、序列号 ${h.serial}、手机 ${h.nickname}、目标抖音号 ${target ?? '未登记（以正文为准）'}`,
+    '- 开工前先 account-current 核对当前登录号；与目标不符就停止并报告，不得换手机、不得切号除非正文要求',
+    `- 在该节点上执行 douyin-phone-adb --profile ${h.profile} <command>，禁止裸 adb`,
+    '- 先 lock-acquire <run_id>，结束必 lock-release 并回读 lock-status；每次 exec 显式 timeout 300000',
+  ].join('\n');
+}
+
 /** device_hint 给 agent 的设备提示段；is_device=true 或 Jev 含糊（verdict='ambiguous'）都要给，
  *  序列号/宿主来自路由留痕，节点名由宿主派生。 */
 function deviceHintOf(task) {
@@ -112,6 +135,7 @@ function deviceHintOf(task) {
   const ambiguous = h.is_device !== true && h.verdict === 'ambiguous';
   if (h.is_device !== true && !ambiguous) return null;
   const node = phoneNodeName(h.host, qiumiEnv());
+  if (h.is_device === true && h.serial && h.nickname && h.profile) return resolvedDeviceHint(h, node);
   const headline = h.is_device === true
     ? '设备提示（这是要碰真机的活，按 douyin-phone-runtime skill 执行）：'
     : `设备提示（Jev 判断可能要碰真机 p=${h.p ?? '未知'}，先自查正文；确需碰真机则按 douyin-phone-runtime skill 执行）：`;

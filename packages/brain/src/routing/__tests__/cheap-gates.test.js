@@ -3,6 +3,30 @@ import { loadRegistryPool, cheapGates } from '../cheap-gates.js';
 import { qiumiEnv } from '../env.js';
 import { buildQiumiSource } from '../../lib/qiumi-source.js';
 
+// 测试夹具：phone_registry 行（DB 形状）。生产映射是台账数据（迁移 490 种子 + PUT /api/brain/phone-registry），代码里不写任何一台手机（决策 432172f7）。
+const REGISTRY_ROWS = Object.freeze([
+  {
+    serial: 'ANGYVB4311010223', nickname: '小彩', aliases: ['三号机', '小龙虾'], host: 'xian-m1', profile: 'xiaolongxia', model: 'MAA-AN00',
+    douyin_accounts: [{ id: '90915521618', nickname: 'Ai办公室', current: true }, { id: null, nickname: '秦军餐饮', current: false }], enabled: true,
+  },
+  {
+    serial: 'e6c7ef34', nickname: '小白', aliases: ['二号机'], host: 'xian-m1', profile: 'yueshengyun-work', model: 'RMX3478',
+    douyin_accounts: [{ id: '37358506855', nickname: 'Ai效率笔记', current: true }], enabled: true,
+  },
+  {
+    serial: 'ANGYVB4402004137', nickname: '小黄', aliases: ['一号机'], host: 'xian-m4', profile: 'legacy', model: 'MAA-AN00',
+    douyin_accounts: [{ id: '44997267357', nickname: '人工智能小诺考评', current: true }], enabled: true,
+  },
+  {
+    serial: 'ANGYVB4227006983', nickname: '小蓝', aliases: ['四号机', '金诺机'], host: 'xian-m4', profile: 'jinoshengyuan-work', model: 'MAA-AN00',
+    douyin_accounts: [{ id: 'langzi63485', nickname: '躺赢AI学姐', current: true }], enabled: true,
+  },
+  {
+    serial: 'DISABLED0001', nickname: '小紫', aliases: ['五号机'], host: 'xian-m4', profile: 'retired', model: 'OLD-1',
+    douyin_accounts: [], enabled: false,
+  },
+]);
+
 const env = qiumiEnv({});
 const pool = {
   agents: [{ name: 'infra', notionId: 'a2' }],
@@ -144,4 +168,97 @@ describe('cheapGates', () => {
     });
   });
 
+});
+
+// ─── 手机台账（phone_registry，任务 b923b1f7，决策 432172f7 方案 C）────────────────
+/** 按 SQL 形状回答，不靠调用次序 */
+function sqlRouter({ registry, registryError, locks = [{ serial: 'LOCK1', host: 'xian-m4' }] } = {}) {
+  return vi.fn(async (sql) => {
+    if (/FROM phone_registry/.test(sql)) {
+      if (registryError) throw registryError;
+      return { rows: registry ?? [] };
+    }
+    if (/FROM device_locks/.test(sql)) return { rows: locks };
+    return { rows: [] };
+  });
+}
+
+describe('loadRegistryPool：手机池改读 phone_registry，device_locks 兜底', () => {
+  it('台账有行 → phones 只取 enabled 行（serial/host），phoneSource=phone_registry，phoneRows 带全量（含 disabled）', async () => {
+    const query = sqlRouter({ registry: REGISTRY_ROWS });
+    const p = await loadRegistryPool(query);
+    expect(p.phoneSource).toBe('phone_registry');
+    expect(p.phones.map((x) => x.serial)).toEqual(REGISTRY_ROWS.filter((r) => r.enabled).map((r) => r.serial));
+    expect(p.phones.find((x) => x.serial === 'ANGYVB4402004137')).toEqual({ serial: 'ANGYVB4402004137', host: 'xian-m4' });
+    expect(p.phones.some((x) => x.serial === 'DISABLED0001')).toBe(false);
+    expect(p.phoneRows).toHaveLength(REGISTRY_ROWS.length);
+  });
+
+  it('台账表不存在（42P01，迁移未跑）→ 回退 device_locks 旧行为，phoneSource=device_locks', async () => {
+    const err = Object.assign(new Error('relation "phone_registry" does not exist'), { code: '42P01' });
+    const p = await loadRegistryPool(sqlRouter({ registryError: err }));
+    expect(p.phoneSource).toBe('device_locks');
+    expect(p.phones).toEqual([{ serial: 'LOCK1', host: 'xian-m4' }]);
+    expect(p.phoneRows).toEqual([]);
+  });
+
+  it('台账为空 → 回退 device_locks', async () => {
+    const p = await loadRegistryPool(sqlRouter({ registry: [] }));
+    expect(p.phoneSource).toBe('device_locks');
+    expect(p.phones).toEqual([{ serial: 'LOCK1', host: 'xian-m4' }]);
+  });
+
+  it('台账查询别的错（非 42P01）→ 抛出，不静默回退', async () => {
+    const err = Object.assign(new Error('connection reset'), { code: '08006' });
+    await expect(loadRegistryPool(sqlRouter({ registryError: err }))).rejects.toThrow('connection reset');
+  });
+});
+
+describe('cheapGates 台账模式（phoneSource=phone_registry）', () => {
+  const regPool = {
+    ...pool,
+    phoneSource: 'phone_registry',
+    phoneRows: REGISTRY_ROWS,
+    phones: REGISTRY_ROWS.filter((r) => r.enabled).map((r) => ({ serial: r.serial, host: r.host })),
+  };
+
+  it('昵称「小黄手机」→ isDevice + serial 定案，matchedBy 含 registry:nickname，phoneResolution=unique', () => {
+    const g = cheapGates(mk({ body: '用小黄手机给最新视频点赞' }), regPool, env);
+    expect(g.isDevice).toBe(true);
+    expect(g.serial).toBe('ANGYVB4402004137');
+    expect(g.matchedBy).toContain('registry:nickname');
+    expect(g.phoneResolution).toMatchObject({ status: 'unique', matchedBy: 'nickname' });
+  });
+
+  it('序列号命中仍记 text:serial（与旧口径一致）', () => {
+    const g = cheapGates(mk({ body: '用 ANGYVB4227006983 这台去发' }), regPool, env);
+    expect(g).toMatchObject({ isDevice: true, serial: 'ANGYVB4227006983' });
+    expect(g.matchedBy).toContain('text:serial');
+  });
+
+  it('只写型号 → isDevice=true 但 serial=null，phoneResolution=ambiguous（留给路由退回）', () => {
+    const g = cheapGates(mk({ body: '用型号 MAA-AN00 那台点赞' }), regPool, env);
+    expect(g.isDevice).toBe(true);
+    expect(g.serial).toBeNull();
+    expect(g.phoneResolution).toMatchObject({ status: 'ambiguous', matchedBy: 'model' });
+  });
+
+  it('「设备：」行写了查不到的手机 → isDevice=true（matchedBy text:device_line），serial=null', () => {
+    const g = cheapGates(mk({ body: '设备：小绿\n写一段文案' }), regPool, env);
+    expect(g.isDevice).toBe(true);
+    expect(g.serial).toBeNull();
+    expect(g.matchedBy).toContain('text:device_line');
+    expect(g.phoneResolution.status).toBe('none');
+  });
+
+  it('disabled 行的序列号不命中', () => {
+    const g = cheapGates(mk({ body: '用 DISABLED0001 发' }), regPool, env);
+    expect(g.serial).toBeNull();
+  });
+
+  it('非设备任务 → phoneResolution=none，isDevice 仍 false', () => {
+    const g = cheapGates(mk({ body: '写一段周报' }), regPool, env);
+    expect(g.isDevice).toBe(false);
+    expect(g.phoneResolution.status).toBe('none');
+  });
 });
