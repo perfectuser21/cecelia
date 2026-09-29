@@ -163,6 +163,13 @@ vi.mock('../recurring.js', () => ({
   runRecurringTasksJob: vi.fn().mockResolvedValue({ checked: 0, created: [], baseline: 0, missed: 0 }),
 }));
 
+// alerting-flush 真实 handler 会读写 working_memory 并发飞书；持久化行为由 alerting-persist.test.js 覆盖，
+// 这里只验注册与接线。部分 mock：保留 raise 等导出。
+vi.mock('../alerting.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  flushAlertsIfNeeded: vi.fn().mockResolvedValue({ p1: false, p2: false }),
+}));
+
 vi.mock('../ops-scheduler-liveness.js', () => ({
   runSchedulerLiveness: vi.fn().mockResolvedValue({ ok: true, jobs: 0, flippedDead: 0, recovered: 0 }),
 }));
@@ -275,6 +282,21 @@ describe('scheduler-jobs 注册表', () => {
     const pool = makePool();
     await runSchedulerJobsOnce(pool, [j]);
     expect(runRecurringTasksJob).toHaveBeenCalledWith(pool);
+  });
+
+  // 任务 309d864c：P1/P2 汇总自 2026-05 从未发出（生产 last_p1_flush/last_p2_flush 均为 null），根因之一
+  // 是 flushAlertsIfNeeded 只挂在废弃的 tick-runner.executeTick，现役调度表里没有它。
+  it('JOBS 注册了 alerting-flush（在 scheduler-liveness 之前、handler 真接线 flushAlertsIfNeeded）', async () => {
+    const { flushAlertsIfNeeded } = await import('../alerting.js');
+    const names = JOBS.map((j) => j.name);
+    const j = JOBS.find((x) => x.name === 'alerting-flush');
+    expect(j).toBeTruthy();
+    expect(j.timeoutMs).toBeLessThanOrEqual(5 * 60 * 1000);
+    expect(names.indexOf('alerting-flush')).toBeLessThan(names.indexOf('scheduler-liveness'));
+    const pool = makePool();
+    const [r] = await runSchedulerJobsOnce(pool, [j]);
+    expect(flushAlertsIfNeeded).toHaveBeenCalledTimes(1);
+    expect(r.ok).toBe(true);
   });
 
   it('注册 scheduler-liveness 且排在 JOBS 末尾，把 JOBS 自身注入 handler（不 import 成环）', async () => {
