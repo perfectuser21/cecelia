@@ -85,3 +85,38 @@ describe('drain.js — working_memory 持久化', () => {
     expect(_getDrainState().draining).toBe(false);
   });
 });
+
+describe('drain.js — 运行期超龄自愈（09-29 部署后 drain-cancel 失败，派发停摆）', () => {
+  beforeEach(() => { vi.useRealTimers(); });
+
+  it('isDraining()：排空超过 DRAIN_RESTORE_MAX_AGE_MS → 自动解除并清持久化行，派发恢复', async () => {
+    vi.resetModules();
+    mockQuery.mockReset();
+    mockQuery.mockResolvedValue({ rows: [] });
+    const mod = await import('../drain.js');
+    vi.useFakeTimers({ now: new Date('2026-09-29T03:13:19.000Z') });
+    await mod.drainTick();
+    expect(mod.isDraining()).toBe(true);
+    mockQuery.mockClear();
+
+    vi.setSystemTime(new Date(Date.parse('2026-09-29T03:13:19.000Z') + mod.DRAIN_RESTORE_MAX_AGE_MS + 1000));
+    expect(mod.isDraining(), '超龄排空仍在拦派发——一次部署就能让产线永久停摆').toBe(false);
+    await Promise.resolve();
+    const del = mockQuery.mock.calls.find(([sql]) => sql.includes('DELETE FROM working_memory'));
+    expect(del, '超龄解除必须同步清库，否则下次重启又被恢复').toBeTruthy();
+    expect(mod._getDrainState().draining).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it('isDraining()：未超龄的正常排空（部署 pre-swap 等待期）保持生效', async () => {
+    vi.resetModules();
+    mockQuery.mockReset();
+    mockQuery.mockResolvedValue({ rows: [] });
+    const mod = await import('../drain.js');
+    vi.useFakeTimers({ now: new Date('2026-09-29T03:13:19.000Z') });
+    await mod.drainTick();
+    vi.setSystemTime(new Date(Date.parse('2026-09-29T03:13:19.000Z') + 5 * 60 * 1000));
+    expect(mod.isDraining()).toBe(true);
+    vi.useRealTimers();
+  });
+});
