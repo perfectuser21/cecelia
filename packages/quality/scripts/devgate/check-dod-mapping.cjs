@@ -7,7 +7,9 @@
  * 支持三种 Test 类型：
  *   - Test: tests/...           → 自动化测试文件
  *   - Test: contract:<RCI_ID>   → 引用 regression-contract.yaml
- *   - Test: manual:<EVIDENCE_ID> → 手动证据链
+ *   - Test: manual:<真实执行命令> → 手动证据链（必须是真实可执行命令，
+ *     如 node/npm/npx/psql/curl/bash/python/pytest/jest/mocha/vitest；
+ *     禁止 echo / grep|wc -l / test -f / TODO 占位符假测试）
  *
  * 用法：
  *   node scripts/devgate/check-dod-mapping.cjs [dod-file]
@@ -79,6 +81,37 @@ function parseDodItems(content) {
 }
 
 /**
+ * 检测 manual: 命令是否为假测试（禁止 echo / grep|wc -l / test -f / TODO 占位，
+ * 必须包含真实执行命令）
+ * @param {string} testCommand - manual: 后面的命令字符串
+ * @returns {{valid: boolean, reason?: string}}
+ */
+function detectFakeTest(testCommand) {
+  if (/\becho\b/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 echo 假测试（应使用真实执行命令）" };
+  }
+  if (/grep.*\|.*wc\s+-l/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 grep | wc -l 假测试（应使用真实执行命令）" };
+  }
+  if (/test\s+-f\b/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 test -f 假测试（应使用真实执行命令）" };
+  }
+  if (/TODO/.test(testCommand)) {
+    return { valid: false, reason: "禁止使用 TODO 占位符（应使用真实执行命令）" };
+  }
+  const hasRealExecution = /\b(node|npm|npx|psql|curl|bash|python|pytest|jest|mocha|vitest)\b/.test(
+    testCommand
+  );
+  if (!hasRealExecution) {
+    return {
+      valid: false,
+      reason: "manual: 命令必须包含真实执行命令（如 node, npm, psql, curl 等）",
+    };
+  }
+  return { valid: true };
+}
+
+/**
  * 验证 Test 引用是否存在
  * @param {string} testRef - Test 引用
  * @param {string} projectRoot - 项目根目录
@@ -137,12 +170,8 @@ function validateTestRef(testRef, projectRoot) {
   }
 
   if (testRef.startsWith("manual:")) {
-    // L2 fix: 移除未使用的 possiblePaths 死代码
-    // manual 证据可以是目录或文件（带扩展名）
-    // 允许：manual:template-review, manual:rci-review
-    // 这些是标识符，不要求实际文件存在（因为可能是人工审核项）
-    // manual 类型不强制要求文件存在，只要格式正确即可
-    return { valid: true };
+    const command = testRef.substring("manual:".length).trim();
+    return detectFakeTest(command);
   }
 
   return { valid: false, reason: `无效的 Test 格式: ${testRef}` };
@@ -219,7 +248,7 @@ function main() {
     console.log("  支持的格式：");
     console.log("    - Test: tests/...           (自动化测试文件)");
     console.log("    - Test: contract:<RCI_ID>   (引用回归契约)");
-    console.log("    - Test: manual:<EVIDENCE_ID> (手动证据)");
+    console.log("    - Test: manual:<真实执行命令> (手动证据，禁止 echo/test -f 等假测试)");
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     process.exit(1);
   }

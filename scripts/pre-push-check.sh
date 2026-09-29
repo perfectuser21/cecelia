@@ -119,12 +119,12 @@ if [ -n "$DOD_FILES" ]; then
     fi
   fi
 
-  # 运行 check-dod-mapping（如果 engine 依赖已安装）
-  if [ -f "packages/engine/scripts/devgate/check-dod-mapping.cjs" ] && \
-     [ -d "packages/engine/node_modules" ]; then
+  # 运行 check-dod-mapping（如果 quality 依赖已安装）
+  if [ -f "packages/quality/scripts/devgate/check-dod-mapping.cjs" ] && \
+     [ -d "packages/quality/node_modules" ]; then
     echo ""
     echo "  运行 DoD 映射检查..."
-    if node packages/engine/scripts/devgate/check-dod-mapping.cjs 2>/dev/null; then
+    if node packages/quality/scripts/devgate/check-dod-mapping.cjs 2>/dev/null; then
       echo "  ✅ DoD 映射检查通过"
     else
       echo "  ❌ DoD 映射检查失败"

@@ -8,7 +8,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-CHECK_DOD="$REPO_ROOT/packages/engine/scripts/devgate/check-dod-mapping.cjs"
+CHECK_DOD="$REPO_ROOT/packages/quality/scripts/devgate/check-dod-mapping.cjs"
 
 if [[ ! -f "$CHECK_DOD" ]]; then
   echo "❌ check-dod-mapping.cjs 不存在: $CHECK_DOD"
@@ -16,8 +16,8 @@ if [[ ! -f "$CHECK_DOD" ]]; then
 fi
 
 # 检查 js-yaml 是否安装
-if ! (cd "$REPO_ROOT/packages/engine" && node -e "require('js-yaml')" 2>/dev/null); then
-  echo "❌ js-yaml 未安装，请先运行 cd packages/engine && npm ci"
+if ! (cd "$REPO_ROOT/packages/quality" && node -e "require('js-yaml')" 2>/dev/null); then
+  echo "❌ js-yaml 未安装，请先运行 cd packages/quality && npm ci"
   exit 1
 fi
 
