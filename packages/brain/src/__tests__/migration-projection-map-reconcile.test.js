@@ -28,7 +28,7 @@ const DEPT_DAILY = '3dbc40c2-ba63-8168-8ec5-ea3aba0f25b9';
 /** 取 VALUES 里含某 id 的那一行元组文本 */
 const tupleOf = (id) => (sql.match(new RegExp(`\\('${id}'[^\\n]*`)) || [''])[0];
 
-describe('注册表对账迁移', () => {
+describe('migration-projection-map-reconcile 注册表对账迁移', () => {
   it('迁移文件存在且版本号为三位数', () => {
     expect(upName).toMatch(/^\d{3}_projection_map_reconcile\.sql$/);
     expect(sql).toMatch(new RegExp(`INSERT INTO schema_version[\\s\\S]*'${version}'[\\s\\S]*ON CONFLICT \\(version\\) DO NOTHING`));
