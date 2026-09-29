@@ -5,12 +5,16 @@
 import { describe, it, expect, vi } from 'vitest';
 import { runSkillInventorySync, buildInventoryCmd, INVENTORY_STATE_KEY } from '../skill-inventory-sync.js';
 
-function fakePool({ locked = true, state = null } = {}) {
+function fakePool({ locked = true, state = null, unlockFails = false } = {}) {
   const calls = [];
   const client = {
     query: vi.fn(async (sql, params) => {
       calls.push({ sql, params });
       if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ locked }] };
+      if (/pg_advisory_unlock/.test(sql)) {
+        if (unlockFails) throw new Error('unlock failed: session gone');
+        return { rows: [{}] };
+      }
       if (/SELECT value_json FROM working_memory/.test(sql)) {
         if (params?.[0] === INVENTORY_STATE_KEY) return { rows: state ? [{ value_json: state }] : [] };
         return { rows: [] };
@@ -51,6 +55,23 @@ describe('runSkillInventorySync', () => {
     expect(calls.some((c) => /skill_registry/.test(c.sql))).toBe(false);
     expect(calls.some((c) => /pg_advisory_unlock/.test(c.sql))).toBe(true);
     expect(client.release).toHaveBeenCalled();
+  });
+
+  it('解锁失败（pg_advisory_unlock 抛错）→ 销毁连接 client.release(true)，不把带会话锁的连接放回池', async () => {
+    const { pool, client } = fakePool({ unlockFails: true });
+    const exec = vi.fn(async () => { throw Object.assign(new Error('ssh: timeout'), { killed: true }); });
+    const r = await runSkillInventorySync(pool, { exec, now: Date.now(), inContainer: false });
+    expect(r.ok).toBe(false);
+    expect(client.release).toHaveBeenCalledWith(true);
+  });
+
+  it('正常路径（无解锁失败）→ client.release 以无参/非 true 调用，连接正常回池', async () => {
+    const { pool, client } = fakePool();
+    const exec = vi.fn(async () => { throw Object.assign(new Error('ssh: timeout'), { killed: true }); });
+    await runSkillInventorySync(pool, { exec, now: Date.now(), inContainer: false });
+    expect(client.release).toHaveBeenCalled();
+    const arg = client.release.mock.calls[0][0];
+    expect(arg).not.toBe(true);
   });
 
   it('exec 显式传 170s 超时', async () => {

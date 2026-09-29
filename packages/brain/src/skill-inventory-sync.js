@@ -107,6 +107,7 @@ export async function runSkillInventorySync(pool, opts = {}) {
   const inContainer = opts.inContainer ?? existsSync('/.dockerenv');
   const client = await pool.connect();
   let locked = false;
+  let destroyConn = false;
   try {
     locked = Boolean((await client.query('SELECT pg_try_advisory_lock($1) AS locked', [LOCK_ID])).rows?.[0]?.locked);
     if (!locked) return { skipped: true, reason: 'locked' };
@@ -143,7 +144,10 @@ export async function runSkillInventorySync(pool, opts = {}) {
       marked = await markAbsent(client, { brokenNames, canJudge, now, seen });
       await client.query('COMMIT');
     } catch (err) {
-      await client.query('ROLLBACK');
+      await client.query('ROLLBACK').catch((rollbackErr) => {
+        destroyConn = true;
+        console.warn(`[skill-inventory-sync] ROLLBACK 失败，连接将被销毁：${rollbackErr.message}`);
+      });
       throw err;
     }
 
@@ -156,7 +160,13 @@ export async function runSkillInventorySync(pool, opts = {}) {
     if (!canJudge) console.warn(`[skill-inventory-sync] 本轮不判缺席：来源齐=${sourcesOk} 熔断=${tripped.join(',') || '-'}`);
     return { ok: true, upserted, marked, sourcesOk, tripped };
   } finally {
-    if (locked) await client.query('SELECT pg_advisory_unlock($1)', [LOCK_ID]).catch(() => {});
-    client.release();
+    if (locked) {
+      await client.query('SELECT pg_advisory_unlock($1)', [LOCK_ID]).catch((err) => {
+        destroyConn = true;
+        console.warn(`[skill-inventory-sync] 解锁失败，连接将被销毁而非回池：${err.message}`);
+      });
+    }
+    // 解锁/回滚失败时连接可能仍带会话锁/处于事务残留态，销毁而非放回池（会话锁随连接关闭自动释放）。
+    client.release(destroyConn);
   }
 }
