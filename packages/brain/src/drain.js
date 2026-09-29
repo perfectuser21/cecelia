@@ -72,7 +72,22 @@ export async function restoreDrainState() {
 
 // ─── Getter API（供 tick.js 等 caller 读取状态）────────────────────────
 export function isDraining() {
+  // 运行期超龄自愈（09-29 实证，两次部署后派发停摆一上午）：restoreDrainState 的 15 分钟上限只在启动时生效，
+  // 部署 swap 后 drain-cancel 一旦静默失败，新容器会把刚设不久的 drain 恢复，之后再无任何解除路径
+  // （auto-complete 要求 in_progress=0，被有头任务/人审卡死的任务钉住，且只挂在 HTTP 路由）。
+  // drain 的合法生命周期 = pre-swap 等待 + swap 数分钟，超过上限的一律按残留解除。
+  if (_draining && isDrainExpired()) {
+    log(`[tick] Drain expired at runtime (started_at=${_drainStartedAt}, >${Math.round(DRAIN_RESTORE_MAX_AGE_MS / 60000)}min) — auto-cancelled, resuming dispatch`);
+    _draining = false;
+    _drainStartedAt = null;
+    clearPersistedDrainState().catch((err) => log(`[tick] clear stale drain state failed: ${err.message}`));
+  }
   return _draining;
+}
+
+function isDrainExpired() {
+  const startedMs = Date.parse(_drainStartedAt ?? '');
+  return Number.isNaN(startedMs) || Date.now() - startedMs > DRAIN_RESTORE_MAX_AGE_MS;
 }
 export function getDrainStartedAt() {
   return _drainStartedAt;
