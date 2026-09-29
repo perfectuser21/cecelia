@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.344.3
+**Brain 版本**: 1.344.4
 
 ## 1.283.0
 
@@ -48,6 +48,12 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.344.4 — P1/P2 告警汇总不再私信主理人（决策 d3e7746c）
+
+- 背景：#5687 复活了 P1 每小时 / P2 每日汇总，但 flush 走 `sendFeishu`；生产 FEISHU_BOT_WEBHOOK 为空时降级为 Open API 私信主理人，积压的系统类 P1（launchd_patrol_anomaly、guard_drill_no_fire 等）会私信轰炸。
+- 修法：flushP1/flushP2 不再调用 `sendFeishu`。配置专用系统通道 env `ALERT_DIGEST_WEBHOOK`（群机器人 webhook）则只发该 webhook；未配置则仅 console.log。两种情况都视为 flush 成功：清空缓冲、更新 last_flush，并把最近一次汇总（时间/条数/通道/最近 50 条）落 `working_memory.alerting_buffers` 的 `last_p1_digest` / `last_p2_digest`，经 `GET /api/brain/alerting/status` 可查。
+- P0 立即推送（sendFeishu + 5 分钟限流）不变；#5687 缓冲持久化 / 至少一次语义不变。
 
 ## Brain 1.344.3 — P1/P2 告警汇总复活（缓冲落库 + 登记现役调度）
 
