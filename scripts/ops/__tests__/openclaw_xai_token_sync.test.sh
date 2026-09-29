@@ -63,7 +63,7 @@ SH
   export XAI_SYNC_PATH="$BIN"
   export OPENCLAW_AGENTS_DIR="$WORK/agents"
   rm -rf "$WORK/agents"; mkdir -p "$WORK/agents"/{main,dev,infra,media,verifier}
-  unset FAIL_AGENT REFRESH_TO_FILE FLAKY_AGENT FLAKY_TIMES
+  unset FAIL_AGENT REFRESH_TO_FILE FLAKY_AGENT FLAKY_TIMES XAI_SYNC_AGENTS
   export XAI_PASTE_RETRY_SLEEP=0
   # 每个用例一份干净的指纹目录，免得上一例的「已同步」让本例跳过
   rm -rf "$WORK/state"; export XAI_SYNC_STATE_DIR="$WORK/state"
@@ -283,6 +283,50 @@ fi
 
 # 指纹文件里不许出现 token 明文
 grep -rq 'SAME' "$WORK/state" 2>/dev/null && bad "指纹目录里有 token 明文" || ok "指纹目录只存哈希，不存 token"
+
+# ── ⑦ XAI_SYNC_AGENTS 白名单（Brain 任务 7902b997，决策 ae189458）────────
+# 每次 paste-token 都让网关重建一代 prepared-model-catalog（插件源码复制 + 重新作为
+# ES 模块加载、不卸载），30 个 agent 逐个贴 = 一轮 30 次重建，网关单线程涨到 ~8GB，
+# 重建期间新 agent 报 "prepared model runtime publication was superseded"。
+# 真正用 grok 的只有少数几个 agent —— 白名单把重建次数从 30 压到个位数。
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+OUT=$(XAI_SYNC_AGENTS="main,infra" bash "$SYNC" 2>&1); RC=$?
+GOT=$(cut -d'|' -f1 < "$WORK/pasted.txt" | sort -u | tr '\n' ' ')
+[ "$GOT" = "infra main " ] && ok "白名单（逗号分隔）→ 只贴名单内的 agent" \
+  || bad "白名单没生效，贴到了：'${GOT}'（期望 'infra main '）"
+[ "$RC" -eq 0 ] && ok "白名单全成功 → 退出码 0" || bad "白名单全成功却退出码 ${RC}：$OUT"
+printf '%s' "$OUT" | grep -q '白名单模式 2 个' && ok "日志写明「白名单模式 2 个」" \
+  || bad "日志没写明白名单模式与数量：$OUT"
+
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+XAI_SYNC_AGENTS="dev  verifier" bash "$SYNC" >/dev/null 2>&1
+GOT=$(cut -d'|' -f1 < "$WORK/pasted.txt" | sort -u | tr '\n' ' ')
+[ "$GOT" = "dev verifier " ] && ok "白名单（空格分隔）同样生效" \
+  || bad "空格分隔的白名单没生效，贴到了：'${GOT}'"
+
+# 名单里写了配置里不存在的 agent → 必须出声（拼错名字 = 那个 agent 永远 403，却没人知道）
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+OUT=$(XAI_SYNC_AGENTS="main,ghost" bash "$SYNC" 2>&1); RC=$?
+printf '%s' "$OUT" | grep -q 'FAULT.*ghost' && ok "白名单里的未知 agent → 报 FAULT 且点名" \
+  || bad "未知 agent 被静默吞掉：$OUT"
+[ "$RC" -ne 0 ] && ok "白名单含未知 agent → 退出码非 0" || bad "白名单含未知 agent 却退出码 0"
+GOT=$(cut -d'|' -f1 < "$WORK/pasted.txt" | sort -u | tr '\n' ' ')
+[ "$GOT" = "main " ] && ok "未知 agent 不影响名单内合法 agent 照常同步" \
+  || bad "有未知 agent 时合法 agent 没被同步，贴到了：'${GOT}'"
+
+# 未设置 → 行为完全不变：全量同步、日志不出现白名单字样
+mk_env
+export GROK_AUTH_FILE="$WORK/auth.json"; mk_auth "$GROK_AUTH_FILE" 300 FRESH
+OUT=$(env -u XAI_SYNC_AGENTS bash "$SYNC" 2>&1); RC=$?
+GOT=$(cut -d'|' -f1 < "$WORK/pasted.txt" | sort -u | tr '\n' ' ')
+[ "$GOT" = "dev infra main media verifier " ] && [ "$RC" -eq 0 ] \
+  && ok "未设 XAI_SYNC_AGENTS → 全量同步 5 个（行为不变）" \
+  || bad "未设白名单时行为变了：贴到 '${GOT}'，退出码 ${RC}"
+printf '%s' "$OUT" | grep -q '白名单' && bad "未设白名单却在日志里出现白名单字样" \
+  || ok "未设白名单 → 日志不出现白名单模式"
 
 printf '\n结果: PASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

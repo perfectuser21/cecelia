@@ -13,6 +13,8 @@
 #   ③ 阈值告警：链上进程数越线出声（健康工作集实测 ~68，泄漏态 474）
 #   ④ **绝不碰活网关的子进程** —— janitor 的教训：它把活着的网关当孤儿杀，
 #      导致迁移后 18 条业务 cron 成功率 0（PR #5447/#5448 案卷）
+#   ⑥ 网关内存兜底重启：RSS 超阈 + 无 agent 在跑 + 冷却期外 → kickstart 网关
+#      （唯一允许碰网关本体的例外，决策 ae189458）
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -48,7 +50,28 @@ mk_env() {
   # ⑤ 默认隔离：不许碰真实 ~/.openclaw/tmp、不许让真实磁盘水位左右别的用例
   mkdir -p "$WORK/nocap"
   export OPG_CAPTURE_ROOT="$WORK/nocap" OPG_INUSE_PATHS=/dev/null OPG_DISK_AVAIL_GB=50
+  # ⑥ 默认隔离：绝不许读真网关 RSS、绝不许真 kickstart 网关、不读真 ~/brain-runs
+  #    （本测试会在 MMV 本机跑，漏一个注入就是把生产网关重启了）
+  : > "$WORK/restarts.txt"; : > "$WORK/alerts.txt"
+  rm -f "$WORK/openclaw-gateway-last-restart"
+  mkdir -p "$WORK/fakebin" "$WORK/runs-empty"
+  cat > "$WORK/fakebin/fake-restart" <<'SH'
+#!/bin/bash
+echo "$*" >> "${OPG_TEST_RESTART_LOG:?}"
+exit "${OPG_TEST_RESTART_RC:-0}"
+SH
+  cat > "$WORK/fakebin/curl" <<'SH'
+#!/bin/bash
+echo "$*" >> "${OPG_TEST_ALERT_LOG:?}"
+exit 0
+SH
+  chmod +x "$WORK/fakebin/fake-restart" "$WORK/fakebin/curl"
+  export OPG_TEST_RESTART_LOG="$WORK/restarts.txt" OPG_TEST_ALERT_LOG="$WORK/alerts.txt"
+  export OPG_RESTART_CMD="$WORK/fakebin/fake-restart" OPG_PATH="$WORK/fakebin"
+  export OPG_GATEWAY_RSS_KB=1048576 OPG_AGENT_RUNNING=0 OPG_BRAIN_RUNS_DIR="$WORK/runs-empty"
+  unset OPG_TEST_RESTART_RC OPG_GATEWAY_RSS_RESTART_GB OPG_GATEWAY_RESTART_COOLDOWN_MIN FEISHU_BOT_WEBHOOK
 }
+restart_count() { grep -c . "$WORK/restarts.txt" 2>/dev/null || true; }
 
 echo "▶️  openclaw-process-guard 守卫测试"
 
@@ -85,6 +108,8 @@ assert_contains "$KILLED" "40001" "孤儿链（爹已不在）被回收"
 assert_not_contains "$KILLED" "30001" "活网关的子进程不许碰（janitor 教训）"
 assert_not_contains "$KILLED" "30002" "活网关的孙进程同样不许碰"
 assert_not_contains "$KILLED" "27020" "**绝不能杀网关本体**"
+[ "$(restart_count)" -eq 0 ] && ok "原有收孤儿场景（RSS 正常）不触发网关重启" \
+  || bad "RSS 正常却重启了网关：$(cat "$WORK/restarts.txt")"
 
 # ── ②b 爹是活的非网关进程（codex 会话）→ 绝不能当孤儿收 ────────────────
 # 2026-09-22 真实数据打脸：守卫第一版把 24 个 MCP 判成孤儿要杀，
@@ -214,6 +239,110 @@ OUT=$(OPG_TTL_VALUE="900000" OPG_CAPTURE_ROOT="$WORK/cap2" OPG_INUSE_PATHS=/dev/
       OPG_DISK_AVAIL_GB=50 bash "$GUARD" 2>&1)
 [ ! -e "$WORK/cap2/openclaw-plugin-build-DEAD" ] && ok "网关不在时照样回收无主捕获目录（腾盘让它能起来）" \
                                                  || bad "网关被写满的盘拖死后守卫不腾盘 —— 死循环"
+
+# ── ⑥ 网关内存兜底重启（Brain 任务 7902b997，决策 ae189458）──────────────
+# 网关的 prepared-model-catalog worker 每代模型目录都复制插件源码并重新作为 ES 模块加载、
+# 不卸载 —— 每次 paste-token 触发一代，单线程涨到约 8GB。上游不修之前，唯一能把内存
+# 还回来的是重启网关；但重启会打断在跑的 agent，所以只在「超阈 + 空闲 + 冷却期外」时做。
+GW_PS="27020 1 /opt/homebrew/opt/node/bin/node openclaw/dist/index.js gateway --port 18789"
+RSS_6G=6291456   # 6GB（KB）
+RSS_2G=2097152
+
+# 超阈 + 空闲 → 重启一次，写日志、告警里带重启前 RSS
+mk_env
+echo "$GW_PS" > "$WORK/ps.txt"
+OUT=$(OPG_TTL_VALUE="900000" OPG_GATEWAY_RSS_KB=$RSS_6G OPG_AGENT_RUNNING=0 \
+      FEISHU_BOT_WEBHOOK="http://127.0.0.1:9/hook" bash "$GUARD" 2>&1); RC=$?
+[ "$(restart_count)" -eq 1 ] && ok "RSS 6GB > 5GB 且空闲 → 重启网关一次" \
+  || bad "超阈且空闲却没重启（重启 $(restart_count) 次）：$OUT"
+grep -q 'ai.openclaw.gateway' "$WORK/restarts.txt" && ok "重启目标是 launchd 的 ai.openclaw.gateway" \
+  || bad "重启目标不对：$(cat "$WORK/restarts.txt")"
+grep -q "gui/$(id -u)/ai.openclaw.gateway" "$WORK/restarts.txt" && ok "重启目标带 gui/<uid> 域" \
+  || bad "重启目标缺 gui/<uid> 域：$(cat "$WORK/restarts.txt")"
+assert_contains "$OUT" "6.0GB" "日志写明重启前 RSS"
+grep -q '6.0GB' "$WORK/alerts.txt" && ok "send_alert 推送一条且带重启前 RSS" \
+  || bad "没推告警或告警里没 RSS：$(cat "$WORK/alerts.txt")"
+[ "$RC" -eq 0 ] && ok "兜底重启成功 → 退出码 0" || bad "兜底重启成功却退出码 ${RC}"
+
+# 紧接着再跑一轮 → 冷却期内（默认 60min），不许再重启
+OUT=$(OPG_TTL_VALUE="900000" OPG_GATEWAY_RSS_KB=$RSS_6G OPG_AGENT_RUNNING=0 bash "$GUARD" 2>&1)
+[ "$(restart_count)" -eq 1 ] && ok "冷却期内 → 不重复重启" \
+  || bad "冷却期内又重启了（累计 $(restart_count) 次）—— 会把网关重启成抖动"
+assert_contains "$OUT" "冷却" "冷却期内跳过写进日志"
+
+# 冷却期过了 → 可以再重启
+OUT=$(OPG_TTL_VALUE="900000" OPG_GATEWAY_RSS_KB=$RSS_6G OPG_AGENT_RUNNING=0 \
+      OPG_GATEWAY_RESTART_COOLDOWN_MIN=0 bash "$GUARD" 2>&1)
+[ "$(restart_count)" -eq 2 ] && ok "冷却期外（COOLDOWN_MIN=0）→ 允许再次重启" \
+  || bad "冷却期已过却不重启（累计 $(restart_count) 次）"
+
+# 超阈 + 有 agent 在跑 → 暂缓，只记日志
+mk_env
+echo "$GW_PS" > "$WORK/ps.txt"
+OUT=$(OPG_TTL_VALUE="900000" OPG_GATEWAY_RSS_KB=$RSS_6G OPG_AGENT_RUNNING=1 bash "$GUARD" 2>&1)
+[ "$(restart_count)" -eq 0 ] && ok "超阈但有 agent 在跑 → 不重启（不打断在跑任务）" \
+  || bad "有 agent 在跑却重启了网关 —— 在跑任务直接断掉"
+assert_contains "$OUT" "暂缓" "有任务在跑 → 日志写「暂缓」"
+[ ! -f "$WORK/openclaw-gateway-last-restart" ] && ok "暂缓不写冷却状态（空闲后能立即兜底）" \
+  || bad "没重启却写了冷却状态"
+
+# 未超阈 → 不动
+mk_env
+echo "$GW_PS" > "$WORK/ps.txt"
+OUT=$(OPG_TTL_VALUE="900000" OPG_GATEWAY_RSS_KB=$RSS_2G OPG_AGENT_RUNNING=0 bash "$GUARD" 2>&1); RC=$?
+[ "$(restart_count)" -eq 0 ] && ok "RSS 2GB < 5GB → 不重启" || bad "未超阈却重启了网关"
+[ "$RC" -eq 0 ] && ok "未超阈 → 退出码 0" || bad "未超阈却退出码 ${RC}"
+
+# 阈值可调
+mk_env
+echo "$GW_PS" > "$WORK/ps.txt"
+OPG_TTL_VALUE="900000" OPG_GATEWAY_RSS_KB=$RSS_2G OPG_AGENT_RUNNING=0 \
+  OPG_GATEWAY_RSS_RESTART_GB=1 bash "$GUARD" >/dev/null 2>&1
+[ "$(restart_count)" -eq 1 ] && ok "OPG_GATEWAY_RSS_RESTART_GB=1 时 2GB 即超阈 → 重启" \
+  || bad "阈值环境变量没生效"
+
+# 重启命令失败 → 出声、退出码非 0、不写冷却状态（下一轮还能再试）
+mk_env
+echo "$GW_PS" > "$WORK/ps.txt"
+OUT=$(OPG_TTL_VALUE="900000" OPG_GATEWAY_RSS_KB=$RSS_6G OPG_AGENT_RUNNING=0 \
+      OPG_TEST_RESTART_RC=1 bash "$GUARD" 2>&1); RC=$?
+[ "$RC" -ne 0 ] && ok "重启命令失败 → 退出码非 0" || bad "重启失败却判成功"
+[ ! -f "$WORK/openclaw-gateway-last-restart" ] && ok "重启失败不写冷却状态" \
+  || bad "重启失败却写了冷却状态 —— 下一轮会被冷却期挡住"
+
+# 真实判据（不走 OPG_AGENT_RUNNING 注入）：进程表里有 `openclaw agent` → 在跑
+mk_env
+unset OPG_AGENT_RUNNING
+{ echo "$GW_PS"
+  echo "61234 61200 node /opt/homebrew/lib/node_modules/openclaw/openclaw.mjs agent --agent main -m hi"
+} > "$WORK/ps.txt"
+OUT=$(OPG_TTL_VALUE="900000" OPG_GATEWAY_RSS_KB=$RSS_6G bash "$GUARD" 2>&1)
+[ "$(restart_count)" -eq 0 ] && ok "进程表有 openclaw agent → 判为在跑，不重启" \
+  || bad "有 openclaw agent 进程却重启了网关"
+
+# 真实判据：~/brain-runs 下有「有 .pid 无 .exit」且进程活着的运行 → 在跑
+mk_env
+unset OPG_AGENT_RUNNING
+echo "$GW_PS" > "$WORK/ps.txt"
+RUNS="$WORK/runs"; rm -rf "$RUNS"; mkdir -p "$RUNS"
+echo "$$" > "$RUNS/qiumi-live-1.pid"; : > "$RUNS/qiumi-live-1.log"
+echo "1" > "$RUNS/qiumi-done-2.pid"; echo 0 > "$RUNS/qiumi-done-2.exit"
+OUT=$(OPG_TTL_VALUE="900000" OPG_GATEWAY_RSS_KB=$RSS_6G OPG_BRAIN_RUNS_DIR="$RUNS" bash "$GUARD" 2>&1)
+[ "$(restart_count)" -eq 0 ] && ok "brain-runs 有 .pid 无 .exit（进程活着）→ 判为在跑，不重启" \
+  || bad "brain-runs 有在跑的运行却重启了网关"
+
+# 只有已结束的运行（.pid + .exit）或进程早已死掉的残留 .pid → 视为空闲
+sleep 0 & DEAD_PID=$!; wait "$DEAD_PID" 2>/dev/null
+rm -f "$RUNS/qiumi-live-1.pid"; echo "$DEAD_PID" > "$RUNS/qiumi-stale-3.pid"
+OUT=$(OPG_TTL_VALUE="900000" OPG_GATEWAY_RSS_KB=$RSS_6G OPG_BRAIN_RUNS_DIR="$RUNS" bash "$GUARD" 2>&1)
+[ "$(restart_count)" -eq 1 ] && ok "只有已结束/残留死 pid 的运行 → 判空闲，重启" \
+  || bad "没有在跑的运行却不重启（残留 .pid 会让兜底永久失效）：$OUT"
+
+# 网关不在 → 本轮提前退出，更不会去重启
+mk_env
+: > "$WORK/ps.txt"
+OPG_TTL_VALUE="900000" OPG_GATEWAY_RSS_KB=$RSS_6G OPG_AGENT_RUNNING=0 bash "$GUARD" >/dev/null 2>&1
+[ "$(restart_count)" -eq 0 ] && ok "网关不在 → 不做内存兜底重启" || bad "网关不在却执行了重启"
 
 printf '\n结果: PASS=%d FAIL=%d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
