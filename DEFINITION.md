@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.344.2
+**Brain 版本**: 1.344.3
 
 ## 1.283.0
 
@@ -48,6 +48,12 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.344.3 — P1/P2 告警汇总复活（缓冲落库 + 登记现役调度）
+
+- 根因：① flushAlertsIfNeeded 只挂在废弃的 tick-runner.executeTick（2026-05 Wave 2 起不再调用），生产 `/api/brain/alerting/status` 的 last_p1_flush/last_p2_flush 均为 null——P1 每小时 / P2 每日汇总自 5 月从未发出；② P1/P2 缓冲纯内存，Brain 一天多次部署重启即清空，0929 recurring_* 等 P2 告警静默丢失。
+- scheduler-jobs 新 job `alerting-flush`（60s 轮，自带 P1 1h / P2 24h 门控）。
+- alerting 缓冲与上次刷新时间镜像到 working_memory key `alerting_buffers`（每级最多落最近 500 条）：raise 追加后写库；flush 发送后才写回清空态（至少一次）；首次使用时恢复重启前未发项；读写串行、未恢复成功前不写库（防空态覆盖）；持久化失败只 console.warn 降级仅内存。P0 立即推送 / 5 分钟限流 / debounce 语义不变。
 
 ## Brain 1.344.2 — 执行参数块头兼容 Notion 中文模板「执行参数：」
 
