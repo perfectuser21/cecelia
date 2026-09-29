@@ -100,3 +100,48 @@ describe('PATCH /api/brain/skills/:id', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('POST /api/brain/skills 冲突合并（不再整行覆盖，PR1a 任务 47def5bb）', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('冲突时 notion_id/location/area_id/description COALESCE 保留，metadata 合并', async () => {
+    pool.query.mockResolvedValue({ rows: [{ id: 'x', name: 'n' }] });
+    const { default: request } = await import('supertest');
+    await request(makeApp()).post('/api/brain/skills').send({ name: 'n' });
+    const [sql] = pool.query.mock.calls[0];
+    for (const col of ['notion_id', 'location', 'area_id', 'description']) {
+      expect(sql).toContain(`${col} = COALESCE(EXCLUDED.${col}, skill_registry.${col})`);
+    }
+    expect(sql).toMatch(/metadata = COALESCE\(skill_registry\.metadata, '\{\}'::jsonb\) \|\| EXCLUDED\.metadata/);
+  });
+
+  it('没传 status → 不覆盖原 status；显式传才覆盖', async () => {
+    pool.query.mockResolvedValue({ rows: [{ id: 'x', name: 'n' }] });
+    const { default: request } = await import('supertest');
+    await request(makeApp()).post('/api/brain/skills').send({ name: 'n' });
+    expect(pool.query.mock.calls[0][1][7]).toBe(false);
+    await request(makeApp()).post('/api/brain/skills').send({ name: 'n', status: 'deprecated' });
+    expect(pool.query.mock.calls[1][1][7]).toBe(true);
+    expect(pool.query.mock.calls[1][1][3]).toBe('deprecated');
+  });
+
+  it('metadata 里的 pushed_digest 被剔除（推送指纹只归推送任务管）', async () => {
+    pool.query.mockResolvedValue({ rows: [{ id: 'x', name: 'n' }] });
+    const { default: request } = await import('supertest');
+    await request(makeApp()).post('/api/brain/skills').send({ name: 'n', metadata: { pushed_digest: 'evil', eval_score: '9' } });
+    expect(JSON.parse(pool.query.mock.calls[0][1][4])).toEqual({ eval_score: '9' });
+  });
+});
+
+describe('PATCH /api/brain/skills/:id metadata 合并', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('metadata 用 || 合并而非整块替换，并剔除 pushed_digest', async () => {
+    pool.query.mockResolvedValue({ rows: [{ id: 'x' }] });
+    const { default: request } = await import('supertest');
+    await request(makeApp()).patch('/api/brain/skills/x').send({ metadata: { a: 1, pushed_digest: 'p' } });
+    const [sql, vals] = pool.query.mock.calls[0];
+    expect(sql).toMatch(/metadata = COALESCE\(metadata, '\{\}'::jsonb\) \|\| \$1::jsonb/);
+    expect(JSON.parse(vals[0])).toEqual({ a: 1 });
+  });
+});
