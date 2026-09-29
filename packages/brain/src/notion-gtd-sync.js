@@ -187,38 +187,64 @@ const bizToday = () => new Date(Date.now() - 4 * 3600 * 1000).toISOString().slic
 /** Brain → 中文页（zh 通道 ≤50/轮）+ 英文页 Status。人工态行只更指纹不写页。 */
 export async function pushQiumiStatus(pool, token, { notionReq = defaultNotionReq, today = bizToday } = {}) {
   const { rows } = await pool.query(PUSH_QIUMI_QUERY);
-  let pushed = 0; let skippedHuman = 0; let skippedNoMap = 0; let skippedArchived = 0;
+  let pushed = 0; let skippedHuman = 0; let skippedNoMap = 0; let skippedGone = 0;
+  const failures = [];
+  // 行与行互相隔离：单行抛错曾中止整步，同轮排在它后面的行全都推不上去（09-28/29 两次实测，十余行卡在「排队」）。
+  // 页面已不在（404 / 已归档）是永久失败 → 记指纹不再重扫；其余错误不记指纹，下轮重试，本轮末尾整体报错。
   for (const t of rows) {
-    // hold 非空 = 本轮放弃推送是因为人工占着中文页：留保留标记，下轮无论 Brain 状态变没变都要重扫。
-    // 推送成功则必须把标记减掉，否则这行会永远留在扫描集合里。
-    const stamp = (hold = null) => (hold
-      ? pool.query(
-        `UPDATE tasks SET notion_props = COALESCE(notion_props,'{}'::jsonb)
-           || jsonb_build_object('qiumi_pushed_status', $2::text, 'qiumi_human_hold', $3::text) WHERE id=$1`,
-        [t.id, t.status, hold],
-      )
-      : pool.query(
-        `UPDATE tasks SET notion_props = (COALESCE(notion_props,'{}'::jsonb)
-           || jsonb_build_object('qiumi_pushed_status', $2::text)) - 'qiumi_human_hold' WHERE id=$1`,
-        [t.id, t.status],
-      ));
-    const map = QIUMI_STATUS_MAP[t.status];
-    if (!map || !map.zh) { await stamp(); skippedNoMap += 1; continue; }
+    try {
+      const outcome = await pushOneQiumiRow(pool, token, t, { notionReq, today });
+      if (outcome === 'pushed') pushed += 1;
+      else if (outcome === 'human') skippedHuman += 1;
+      else if (outcome === 'nomap') skippedNoMap += 1;
+      else if (outcome === 'gone') skippedGone += 1;
+    } catch (err) {
+      failures.push(`${t.id}: ${err?.message ?? err}`);
+    }
+  }
+  if (failures.length) {
+    throw new Error(`${failures.length} 行回写失败（其余行已照常处理）：${failures.slice(0, 3).join(' | ')}`);
+  }
+  return { pushed, skippedHuman, skippedNoMap, skippedGone };
+}
+
+const isPageGone = (err) => Number(err?.status) === 404 || /archived/i.test(String(err?.message ?? ''));
+
+/** 单行回写，返回 pushed / human / nomap / gone；非永久错误原样抛出。 */
+async function pushOneQiumiRow(pool, token, t, { notionReq, today }) {
+  // hold 非空 = 本轮放弃推送是因为人工占着中文页：留保留标记，下轮无论 Brain 状态变没变都要重扫。
+  // 推送成功则必须把标记减掉，否则这行会永远留在扫描集合里。
+  const stamp = (hold = null) => (hold
+    ? pool.query(
+      `UPDATE tasks SET notion_props = COALESCE(notion_props,'{}'::jsonb)
+         || jsonb_build_object('qiumi_pushed_status', $2::text, 'qiumi_human_hold', $3::text) WHERE id=$1`,
+      [t.id, t.status, hold],
+    )
+    : pool.query(
+      `UPDATE tasks SET notion_props = (COALESCE(notion_props,'{}'::jsonb)
+         || jsonb_build_object('qiumi_pushed_status', $2::text)) - 'qiumi_human_hold' WHERE id=$1`,
+      [t.id, t.status],
+    ));
+  const map = QIUMI_STATUS_MAP[t.status];
+  if (!map || !map.zh) { await stamp(); return 'nomap'; }
+  try {
     const zhPage = await withBackoff(() => notionReq(token, `/pages/${t.zh_page_id}`, 'GET'));
-    // 主理人删掉（归档）的中文行永远写不进去（400 Can't edit archived）。不跳过的话，
-    // 这一行每 30s 重试、而且单行抛错会中止整步，同轮排在它后面的行全都推不上去（09-28 实测 48h 586 次）。
-    if (zhPage?.archived || zhPage?.in_trash) { await stamp(); skippedArchived += 1; continue; }
+    // 主理人删掉（归档）的中文行永远写不进去（400 Can't edit archived），09-28 实测 48h 重试 586 次。
+    if (zhPage?.archived || zhPage?.in_trash) { await stamp(); return 'gone'; }
     const zhStatus = zhPage?.properties?.['状态']?.status?.name ?? null;
-    if (ZH_HUMAN_ONLY_STATUSES.includes(zhStatus)) { await stamp(zhStatus); skippedHuman += 1; continue; }
+    if (ZH_HUMAN_ONLY_STATUSES.includes(zhStatus)) { await stamp(zhStatus); return 'human'; }
     const write = zhWriteFor(t.status, { reason: t.error_message || '', resultText: resultTextOf(t.result), today: today() });
     await withBackoff(() => notionReq(token, `/pages/${t.zh_page_id}`, 'PATCH', write));
     if (t.en_page_id && map.en) {
       await withBackoff(() => notionReq(token, `/pages/${t.en_page_id}`, 'PATCH', { properties: { Status: { status: { name: map.en } } } }));
     }
+  } catch (err) {
+    if (!isPageGone(err)) throw err;
     await stamp();
-    pushed += 1;
+    return 'gone';
   }
-  return { pushed, skippedHuman, skippedNoMap, skippedArchived };
+  await stamp();
+  return 'pushed';
 }
 
 /** 急停三个查询：只读三个人工动作态，且必须 OpenClaw任务号 以 brain: 开头（归属铁律） */

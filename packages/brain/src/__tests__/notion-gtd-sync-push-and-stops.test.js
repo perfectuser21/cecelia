@@ -28,7 +28,7 @@ describe('pushQiumiStatus', () => {
       .mockResolvedValue({ rows: [] });
     mockNotionReq.mockResolvedValueOnce(zhPageWith('进行中')).mockResolvedValue({});
     const r = await pushQiumiStatus({ query }, 'tok', deps);
-    expect(r).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 0, skippedArchived: 0 });
+    expect(r).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 0, skippedGone: 0 });
     expect(query.mock.calls[0][0]).toBe(PUSH_QIUMI_QUERY);
     expect(PUSH_QIUMI_QUERY).toMatch(/LIMIT 50/);
     // device_job 子任务绝不能进推送集合：它若带着中文页 id，会把同一行中文表按子任务的
@@ -71,14 +71,14 @@ describe('pushQiumiStatus', () => {
     const q1 = vi.fn().mockResolvedValueOnce({ rows: [taskRow()] }).mockResolvedValue({ rows: [] });
     mockNotionReq.mockResolvedValueOnce(zhPageWith('阻塞')).mockResolvedValue({});
     const r1 = await pushQiumiStatus({ query: q1 }, 'tok', deps);
-    expect(r1).toEqual({ pushed: 0, skippedHuman: 1, skippedNoMap: 0, skippedArchived: 0 });
+    expect(r1).toEqual({ pushed: 0, skippedHuman: 1, skippedNoMap: 0, skippedGone: 0 });
     expect(q1.mock.calls.at(-1)[0]).toMatch(/qiumi_human_hold/);
 
     mockNotionReq.mockReset();
     const q2 = vi.fn().mockResolvedValueOnce({ rows: [taskRow()] }).mockResolvedValue({ rows: [] });
     mockNotionReq.mockResolvedValueOnce(zhPageWith('委派')).mockResolvedValue({});
     const r2 = await pushQiumiStatus({ query: q2 }, 'tok', deps);
-    expect(r2).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 0, skippedArchived: 0 });
+    expect(r2).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 0, skippedGone: 0 });
     const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH}` && c[2] === 'PATCH')[3];
     expect(zhPatch.properties['状态'].status.name).toBe('进行中');
     const [sql2, params2] = q2.mock.calls.at(-1);
@@ -94,7 +94,7 @@ describe('pushQiumiStatus', () => {
       ] }).mockResolvedValue({ rows: [] });
     mockNotionReq.mockResolvedValueOnce(zhPageWith('进行中')).mockResolvedValue({});
     const r = await pushQiumiStatus({ query }, 'tok', deps);
-    expect(r).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 1, skippedArchived: 0 });
+    expect(r).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 1, skippedGone: 0 });
     const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH}` && c[2] === 'PATCH')[3];
     expect(zhPatch.properties['状态'].status.name).toBe('进行中');
     expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content).toBe('[等待中: quota_exhausted]');
@@ -118,13 +118,50 @@ describe('pushQiumiStatus', () => {
       return {};
     });
     const r = await pushQiumiStatus({ query }, 'tok', deps);
-    expect(r).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 0, skippedArchived: 1 });
+    expect(r).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 0, skippedGone: 1 });
     expect(mockNotionReq.mock.calls.some((c) => c[1] === `/pages/${ZH}` && c[2] === 'PATCH'), '对归档页发了 PATCH').toBe(false);
     expect(mockNotionReq.mock.calls.some((c) => c[1] === `/pages/${EN}` && c[2] === 'PATCH'), '归档行的英文页也不该动').toBe(false);
     expect(mockNotionReq.mock.calls.some((c) => c[1] === `/pages/${ZH2}` && c[2] === 'PATCH'), '后面的行被挡住没推').toBe(true);
     // 归档行也要 stamp，否则每 30s 捞回来重试
     const stamps = query.mock.calls.slice(1).map((c) => c[1]);
     expect(stamps).toContainEqual([TID, 'completed_no_pr']);
+    mockNotionReq.mockReset();
+  });
+  it('中文页已被彻底删除（GET 404）→ 同样记指纹跳过，不挡后面的行（09-29 实测 4c75a4ef 404 卡住整步）', async () => {
+    const { pushQiumiStatus } = await import('../notion-gtd-sync.js');
+    const ZH2 = '99999999-2222-3333-4444-555555555555';
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [
+        taskRow({ status: 'completed_no_pr' }),
+        taskRow({ id: 'next-1', status: 'completed_no_pr', zh_page_id: ZH2, en_page_id: null }),
+      ] }).mockResolvedValue({ rows: [] });
+    mockNotionReq.mockImplementation(async (_t, path, method) => {
+      if (path === `/pages/${ZH}`) throw Object.assign(new Error('Notion GET → 404: Could not find page'), { status: 404 });
+      if (path === `/pages/${ZH2}` && method === 'GET') return { ...zhPageWith('进行中'), id: ZH2 };
+      return {};
+    });
+    const r = await pushQiumiStatus({ query }, 'tok', deps);
+    expect(r).toEqual({ pushed: 1, skippedHuman: 0, skippedNoMap: 0, skippedGone: 1 });
+    expect(query.mock.calls.slice(1).map((c) => c[1])).toContainEqual([TID, 'completed_no_pr']);
+    expect(mockNotionReq.mock.calls.some((c) => c[1] === `/pages/${ZH2}` && c[2] === 'PATCH')).toBe(true);
+    mockNotionReq.mockReset();
+  });
+  it('非永久错误（如 400 校验错、重试后仍 5xx）→ 不记指纹（下轮重试），但不挡后面的行，最后整步报错', async () => {
+    const { pushQiumiStatus } = await import('../notion-gtd-sync.js');
+    const ZH2 = '99999999-2222-3333-4444-555555555555';
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [
+        taskRow({ status: 'completed_no_pr' }),
+        taskRow({ id: 'next-1', status: 'completed_no_pr', zh_page_id: ZH2, en_page_id: null }),
+      ] }).mockResolvedValue({ rows: [] });
+    mockNotionReq.mockImplementation(async (_t, path, method) => {
+      if (path === `/pages/${ZH}`) throw Object.assign(new Error('Notion GET → 400: validation_error'), { status: 400 });
+      if (path === `/pages/${ZH2}` && method === 'GET') return { ...zhPageWith('进行中'), id: ZH2 };
+      return {};
+    });
+    await expect(pushQiumiStatus({ query }, 'tok', deps)).rejects.toThrow(/1 行回写失败/);
+    expect(mockNotionReq.mock.calls.some((c) => c[1] === `/pages/${ZH2}` && c[2] === 'PATCH'), '后面的行被挡住').toBe(true);
+    expect(query.mock.calls.slice(1).map((c) => c[1]), '临时失败的行不该记指纹').not.toContainEqual([TID, 'completed_no_pr']);
     mockNotionReq.mockReset();
   });
   it('英文页 id 为空 → 只写中文页，不 PATCH 英文页', async () => {
