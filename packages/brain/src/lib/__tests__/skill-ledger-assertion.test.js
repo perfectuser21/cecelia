@@ -5,7 +5,7 @@
  *  扫描从未成功 → ok+degraded；红时始终 upsert 一条 __skill_ledger_count__ 汇总行
  */
 import { describe, it, expect, vi } from 'vitest';
-import { buildSkillLedgerAssertion } from '../skill-ledger-assertion.js';
+import { buildSkillLedgerAssertion, SCAN_STALE_HOURS } from '../skill-ledger-assertion.js';
 
 function pool({ state = { last_ok_at: '2026-09-30T00:00:00Z' }, unregistered = [], deadBound = [] } = {}) {
   const writes = [];
@@ -66,5 +66,30 @@ describe('buildSkillLedgerAssertion', () => {
     expect(a.ok).toBe(false);
     expect(a.detail).not.toContain('已记入');
     expect(a.detail).toContain('落账失败');
+  });
+
+  it('扫描停更超 SCAN_STALE_HOURS（27h 前成功）→ 红，detail 含「扫描停更」与小时数', async () => {
+    const now = Date.parse('2026-09-30T03:00:00Z');
+    const p = pool({ state: { last_ok_at: '2026-09-29T00:00:00Z', last_error: 'ssh timeout' } });
+    const a = await buildSkillLedgerAssertion(p, { now });
+    expect(a.ok).toBe(false);
+    expect(a.detail).toContain('扫描停更');
+    expect(a.detail).toContain('27');
+    expect(p.writes).toHaveLength(1);
+    expect(p.writes[0][0]).toBe('__skill_ledger_count__');
+    expect(p.writes[0][1]).toContain('扫描停更=27h');
+    expect(p.writes[0][2]).toContain('last_error=ssh timeout');
+  });
+
+  it('扫描 25h 前成功（未超阈值）→ 不因停更而红', async () => {
+    const now = Date.parse('2026-09-30T01:00:00Z');
+    const p = pool({ state: { last_ok_at: '2026-09-29T00:00:00Z' } });
+    const a = await buildSkillLedgerAssertion(p, { now });
+    expect(a.ok).toBe(true);
+    expect(a.detail).not.toContain('扫描停更');
+  });
+
+  it('SCAN_STALE_HOURS 导出为 26', () => {
+    expect(SCAN_STALE_HOURS).toBe(26);
   });
 });
