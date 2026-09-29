@@ -343,3 +343,4 @@ notion-probe-projection-smoke.sh
 mirror-trash-guard-smoke.sh
 backbone-contract-sync-smoke.sh
 backbone-page-body-smoke.sh
+qiumi-schedule-smoke.sh
