@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
-import { pushRegisteredRows, resolveDbId } from './lib/notion-projection-engine.js';
+import { pushRegisteredRows, resolveDbId, isPageGoneError } from './lib/notion-projection-engine.js';
 import { OPS_DB_PROPS, buildTasksDbProps, buildStepLinkDbProps, diffMissingProps } from './ops-notion-schema.js';
 import { buildStepLinkNotionProperties } from './notion-probe-projection.js';
 import {
@@ -214,6 +214,31 @@ async function pushJourneyFeatures(pool, token) {
     },
   });
 }
+/**
+ * Notion Issues 库 Status（status 类型）只有 Open / Triage / In progress / Closed。
+ * issues 表历史值有 Backlog / Done / open / closed 等 → 映射到合法选项，未知值归 Open；
+ * 否则 400「Invalid status option」每轮重推失败。
+ */
+const ISSUE_NOTION_STATUSES = ['Open', 'Triage', 'In progress', 'Closed'];
+const ISSUE_STATUS_ALIASES = { backlog: 'Open', done: 'Closed' };
+export function issueStatusToNotion(status) {
+  const key = String(status || '').trim().toLowerCase();
+  const legal = ISSUE_NOTION_STATUSES.find((s) => s.toLowerCase() === key);
+  return legal || ISSUE_STATUS_ALIASES[key] || 'Open';
+}
+
+export function buildIssueNotionProperties(issue) {
+  const properties = {
+    Issue: { title: [{ text: { content: issue.title } }] },
+    Priority: { select: { name: issue.priority || 'P2' } },
+    Status: { status: { name: issueStatusToNotion(issue.status) } },
+  };
+  if (issue.sub_area && SUB_AREA_NOTION_IDS[issue.sub_area]) {
+    properties['Sub Area'] = { relation: [{ id: SUB_AREA_NOTION_IDS[issue.sub_area] }] };
+  }
+  return properties;
+}
+
 async function pushIssues(pool, token) {
   const { rows } = await pool.query(
     `SELECT * FROM issues
@@ -223,17 +248,7 @@ async function pushIssues(pool, token) {
   const dbId = ISSUES_DB || await resolveDbId(pool, 'issues');
   await pushRegisteredRows(pool, token, {
     table: 'issues', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'issue',
-    buildProps: (issue) => {
-      const properties = {
-        Issue: { title: [{ text: { content: issue.title } }] },
-        Priority: { select: { name: issue.priority || 'P2' } },
-        Status: { status: { name: issue.status || 'In progress' } },
-      };
-      if (issue.sub_area && SUB_AREA_NOTION_IDS[issue.sub_area]) {
-        properties['Sub Area'] = { relation: [{ id: SUB_AREA_NOTION_IDS[issue.sub_area] }] };
-      }
-      return properties;
-    },
+    buildProps: buildIssueNotionProperties,
     buildChildren: (issue) => issue.body ? [{
       object: 'block', type: 'paragraph', paragraph: { rich_text: buildRichText(issue.body) },
     }] : undefined,
@@ -402,9 +417,9 @@ async function pushTaskRows(pool, token, rows, { blockedBy = false } = {}) {
         tasksProjectionState.disabledUntil = Date.now() + TASKS_PROJECTION_TTL_MS;
         continue;
       }
-      // 我方页面被人在 Notion 删除(404)，或 legacy id 绑到错库(400 schema 不符)
-      // → 清指纹与 id，下轮 create 重建到正确的库
-      if ((/404/.test(err.message) && t.notion_props?.pushed_status) || isWrongDatabaseError(err)) {
+      // 我方页面被人在 Notion 删除(404)、页/库进回收站(400 archived ancestor)，
+      // 或 legacy id 绑到错库(400 schema 不符) → 清指纹与 id，下轮 create 重建到正确的库
+      if ((isPageGoneError(err) && t.notion_props?.pushed_status) || isWrongDatabaseError(err)) {
         await pool.query(
           `UPDATE tasks SET notion_id=NULL, notion_props = notion_props - 'pushed_status' WHERE id=$1`,
           [t.id],
@@ -1112,7 +1127,7 @@ async function pushSkillRegistry(pool, token) {
     } catch (err) {
       console.warn(`[notion-push-sync] skill ${s.id} 推送失败: ${err.message}`);
       await logSyncError(pool, err.message);
-      if ((/404/.test(err.message) && s.metadata?.pushed_digest) || isWrongDatabaseError(err)) {
+      if ((isPageGoneError(err) && s.metadata?.pushed_digest) || isWrongDatabaseError(err)) {
         await pool.query(
           `UPDATE skill_registry SET notion_id = NULL, metadata = metadata - 'pushed_digest' WHERE id = $1`,
           [s.id]

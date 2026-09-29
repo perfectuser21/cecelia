@@ -121,7 +121,8 @@ export async function replacePageBody(notionReq, token, pageId, blocks) {
   if (blocks.length) await notionReq(token, `/blocks/${pageId}/children`, 'PATCH', { children: blocks });
 }
 
-function isGone(err) { return /404|Could not find/i.test(String(err?.message || '')); }
+// 页被删(404) 或 页/库进回收站(400 archived ancestor，PATCH 永远失败) → 都按「页没了」重建
+function isGone(err) { return /404|Could not find|archived ancestor/i.test(String(err?.message || '')); }
 
 /** project 根 → Projects 库。返回 {pushed, skipped, failed} */
 export async function pushProjectRoots(pool, token, { notionReq = defaultNotionReq, dbId = PROJECTS_DB, log = console } = {}) {

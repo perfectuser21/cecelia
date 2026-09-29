@@ -2,7 +2,7 @@
  * notion-projection-engine.js — 统一推送引擎（三面模型 PR②a，决策 297ffee5）
  *
  * 一根主动脉替代九份复制粘贴：调用方只负责「选哪些行」与「行→Notion properties」，
- * 引擎负责 指纹比对 / PATCH 或 POST / 回写 id·指纹·synced / 404·错库自愈 / stale relation 止损。
+ * 引擎负责 指纹比对 / PATCH 或 POST / 回写 id·指纹·synced / 404·回收站·错库自愈 / stale relation 止损。
  * 指纹按将要发送的 properties 计算（键序无关），存 <table>.notion_digest；
  * 指纹相同不打 Notion——这是防限流、也是"改了就同步、没改不重推"的判据。
  */
@@ -33,7 +33,14 @@ export async function resolveDbId(pool, table, fallbackDbId = null) {
   return fallbackDbId;
 }
 
-const default404 = (err) => /404/.test(err?.message || '');
+/**
+ * 页不可用 = 404（被删）或 400「archived ancestor」（页或所在库进了回收站）。
+ * 后者 PATCH 永远失败，只能视同 404：清 id + 指纹，下轮 POST 重建。
+ */
+export function isPageGoneError(err) {
+  const m = err?.message || '';
+  return /404/.test(m) || /archived ancestor/i.test(m);
+}
 
 /**
  * 推送一批行。
@@ -86,7 +93,7 @@ export async function pushRegisteredRows(pool, token, o) {
       }
     } catch (err) {
       if (onFatal(err)) { stat.failed++; return stat; }
-      if ((default404(err) && r.notion_id) || isWrongDatabaseError(err)) {
+      if ((isPageGoneError(err) && r.notion_id) || isWrongDatabaseError(err)) {
         await pool.query(`UPDATE ${table} SET notion_id = NULL, notion_digest = NULL WHERE id = $1`, [r.id]).catch(() => {});
         stat.cleared++;
         continue;
