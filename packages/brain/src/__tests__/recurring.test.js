@@ -93,159 +93,46 @@ describe('recurring tasks', () => {
     });
   });
 
-  describe('calculateNextRunAt', () => {
-    it('should calculate next run for daily recurrence', () => {
-      const now = new Date(2026, 1, 15, 10, 0);
-      const result = calculateNextRunAt({
-        recurrence_type: 'daily',
-        cron_expression: '0 9 * * *'
-      }, now);
-
-      expect(result).toBeInstanceOf(Date);
-      expect(result.getDate()).toBe(16);
-      expect(result.getHours()).toBe(9);
-      expect(result.getMinutes()).toBe(0);
+  // 2026-09 定时引擎复活（任务 3d0db274）：下一次运行时间一律按模板时区（默认 Asia/Shanghai）算，
+  // 不再按服务器本地时区；daily/weekly 都按 cron_expression 解释。用 UTC ISO 断言，与机器时区无关。
+  describe('calculateNextRunAt（北京时区）', () => {
+    it('daily：北京 18:00 之后的 09:00 是次日北京 09:00（UTC 01:00）', () => {
+      const result = calculateNextRunAt({ recurrence_type: 'daily', cron_expression: '0 9 * * *' }, new Date('2026-02-15T10:00:00Z'));
+      expect(result.toISOString()).toBe('2026-02-16T01:00:00.000Z');
     });
 
-    it('should calculate next run for weekly recurrence', () => {
-      const now = new Date(2026, 1, 15, 10, 0);
-      const result = calculateNextRunAt({
-        recurrence_type: 'weekly',
-        cron_expression: '0 9 * * *'
-      }, now);
-
-      expect(result).toBeInstanceOf(Date);
-      expect(result.getDate()).toBe(22); // 7 days later
+    it('weekly：按 cron 的星期字段走（北京周一 09:00）', () => {
+      // 2026-02-15 是周日
+      const result = calculateNextRunAt({ recurrence_type: 'weekly', cron_expression: '0 9 * * 1' }, new Date('2026-02-15T10:00:00Z'));
+      expect(result.toISOString()).toBe('2026-02-16T01:00:00.000Z');
     });
 
-    it('should calculate next run for interval recurrence', () => {
-      const now = new Date(2026, 1, 15, 10, 0);
-      const result = calculateNextRunAt({
-        recurrence_type: 'interval',
-        cron_expression: '60'  // 60 minutes
-      }, now);
-
-      expect(result).toBeInstanceOf(Date);
+    it('interval：cron_expression 存分钟数', () => {
+      const now = new Date('2026-02-15T10:00:00Z');
+      const result = calculateNextRunAt({ recurrence_type: 'interval', cron_expression: '60' }, now);
       expect(result.getTime() - now.getTime()).toBe(60 * 60 * 1000);
     });
 
-    it('should calculate next run for cron recurrence', () => {
-      const now = new Date(2026, 1, 15, 9, 0);
-      const result = calculateNextRunAt({
-        recurrence_type: 'cron',
-        cron_expression: '0 10 * * *'
-      }, now);
-
-      expect(result).toBeInstanceOf(Date);
-      expect(result.getHours()).toBe(10);
-      expect(result.getMinutes()).toBe(0);
+    it('cron：北京 10:00 = UTC 02:00', () => {
+      const result = calculateNextRunAt({ recurrence_type: 'cron', cron_expression: '0 10 * * *' }, new Date('2026-02-15T01:00:00Z'));
+      expect(result.toISOString()).toBe('2026-02-15T02:00:00.000Z');
     });
 
-    it('should return null for invalid interval', () => {
-      const result = calculateNextRunAt({
-        recurrence_type: 'interval',
-        cron_expression: 'invalid'
-      });
-      expect(result).toBeNull();
+    it('非法 interval 返回 null', () => {
+      expect(calculateNextRunAt({ recurrence_type: 'interval', cron_expression: 'invalid' })).toBeNull();
     });
   });
 
+  // 引擎行为（到点 / 基线 / 迟到 / CAS / 叠单 / 透传 / 过期）见 recurring-engine.test.js；
+  // 这里只保留旧入口 checkRecurringTasks 的最小回归：空表不出单、不抛错。
   describe('checkRecurringTasks', () => {
-    let pool;
-
-    beforeEach(async () => {
-      const dbModule = await import('../db.js');
-      pool = dbModule.default;
-      pool.query.mockReset();
-      mockCreateTask.mockReset();
-      mockCreateTask.mockResolvedValue({ task: { id: 'task-new-1', title: 'Daily QA Check' } });
-    });
-
-    it('should create task instance when recurring task is due', async () => {
-      const now = new Date(2026, 1, 15, 9, 0);
-
-      // Mock: get active recurring tasks
-      pool.query
-        .mockResolvedValueOnce({
-          rows: [{
-            id: 'rt-1',
-            title: 'Daily QA Check',
-            description: 'Run daily QA',
-            task_type: 'review',
-            recurrence_type: 'daily',
-            cron_expression: '0 9 * * *',
-            is_active: true,
-            goal_id: 'goal-1',
-            project_id: 'proj-1',
-            priority: 'P1',
-            template: { task_type: 'review' },
-            next_run_at: null,
-            last_run_at: null
-          }]
-        })
-        // Mock: check existing tasks (dedup)
-        .mockResolvedValueOnce({ rows: [] })
-        // Mock: update recurring task
-        .mockResolvedValueOnce({ rows: [] });
-
-      const result = await checkRecurringTasks(now);
-
-      expect(result).toHaveLength(1);
-      expect(result[0].task_title).toBe('Daily QA Check');
-      expect(result[0].recurring_task_id).toBe('rt-1');
-    });
-
-    it('should skip if task already exists (dedup)', async () => {
-      const now = new Date(2026, 1, 15, 9, 0);
-
-      pool.query
-        .mockResolvedValueOnce({
-          rows: [{
-            id: 'rt-1',
-            title: 'Daily QA Check',
-            recurrence_type: 'daily',
-            cron_expression: '0 9 * * *',
-            is_active: true,
-            template: {},
-            next_run_at: null
-          }]
-        })
-        // Mock: existing task found (dedup)
-        .mockResolvedValueOnce({ rows: [{ id: 'existing-task' }] })
-        // Mock: update next_run_at
-        .mockResolvedValueOnce({ rows: [] });
-
-      const result = await checkRecurringTasks(now);
-
-      expect(result).toHaveLength(0);
-    });
-
     it('should handle empty recurring tasks', async () => {
-      pool.query.mockResolvedValueOnce({ rows: [] });
-
+      const pool = (await import('../db.js')).default;
+      pool.query.mockReset();
+      pool.query.mockResolvedValue({ rows: [] });
       const result = await checkRecurringTasks(new Date());
-
       expect(result).toHaveLength(0);
-    });
-
-    it('should skip cron tasks that do not match current time', async () => {
-      const now = new Date(2026, 1, 15, 10, 30); // 10:30, not 9:00
-
-      pool.query.mockResolvedValueOnce({
-        rows: [{
-          id: 'rt-1',
-          title: 'Morning Task',
-          recurrence_type: 'cron',
-          cron_expression: '0 9 * * *', // 9:00 AM
-          is_active: true,
-          template: {},
-          next_run_at: null
-        }]
-      });
-
-      const result = await checkRecurringTasks(now);
-
-      expect(result).toHaveLength(0);
+      expect(mockCreateTask).not.toHaveBeenCalled();
     });
   });
 });

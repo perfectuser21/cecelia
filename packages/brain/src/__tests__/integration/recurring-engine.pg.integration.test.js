@@ -8,7 +8,9 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import express from 'express';
 import pg from 'pg';
+import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { DB_DEFAULTS } from '../../db-config.js';
@@ -29,6 +31,7 @@ let adminPool;
 let pool;
 let databaseName;
 let runRecurringTasksJob;
+let recurringRouter;
 
 const quoteIdentifier = (v) => {
   if (!/^recurring_it_[a-z0-9_]+$/.test(v)) throw new Error('unsafe database name');
@@ -72,6 +75,7 @@ beforeAll(async () => {
   pool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 6 });
   holder.pool = pool;
   ({ runRecurringTasksJob } = await import('../../recurring.js'));
+  recurringRouter = (await import('../../routes/recurring.js')).default;
 }, 180_000);
 
 afterAll(async () => {
@@ -132,6 +136,18 @@ describe.sequential('recurring 引擎（真库）', () => {
     expect(raiseFn).toHaveBeenCalledWith('P2', 'recurring_instance_expired', expect.any(String));
   });
 
+  it('同模板每天的实例先后过期都能取消（tasks 有 title+cancelled 唯一索引，实例标题必须带时间点）', async () => {
+    const raiseFn = vi.fn().mockResolvedValue(undefined);
+    const id = await mkTemplate({ nextRunAt: '2026-11-01T14:00:00Z', template: { expires_after_minutes: 30 } });
+    for (const day of ['01', '02', '03', '04']) {
+      await runRecurringTasksJob(pool, { now: new Date(`2026-11-${day}T14:00:05Z`), raiseFn });
+    }
+    const inst = await instancesOf(id);
+    expect(inst).toHaveLength(2);
+    expect(inst.map((x) => x.status)).toEqual(['cancelled', 'cancelled']);
+    expect(inst.every((x) => x.blocked_reason === 'unclaimed_expired')).toBe(true);
+  });
+
   it('迟到超窗：missed，不建单，推进 next_run_at', async () => {
     const raiseFn = vi.fn().mockResolvedValue(undefined);
     const id = await mkTemplate({ nextRunAt: '2026-10-03T14:00:00Z' });
@@ -140,6 +156,37 @@ describe.sequential('recurring 引擎（真库）', () => {
     const tpl = await getTpl(id);
     expect(tpl.last_run_status).toBe('missed');
     expect(new Date(tpl.next_run_at).toISOString()).toBe('2026-10-04T14:00:00.000Z');
+  });
+
+  it('路由 PATCH 重新启用（真 SQL）：next_run_at 重建为现在之后的下一个时间点，不补跑；POST/GET 收发 template', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use('/r', recurringRouter);
+
+    const created = await request(app).post('/r').send({
+      title: `recurring-it-route-${randomUUID().slice(0, 8)}`, cron_expression: '0 22 * * *', is_active: false,
+      template: { task_type: 'research', assigned_to: 'alex' },
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.task_type).toBe('research');
+    const id = created.body.id;
+    // 模拟停用前的陈旧 next_run_at（5 月停摆时留下的）
+    await pool.query(`UPDATE recurring_tasks SET next_run_at = '2026-04-27T16:00:00Z' WHERE id = $1`, [id]);
+
+    const before = Date.now();
+    const patched = await request(app).patch(`/r/${id}`).send({ is_active: true });
+    expect(patched.status).toBe(200);
+    expect(patched.body).not.toHaveProperty('_old_is_active');
+    const next = new Date((await getTpl(id)).next_run_at).getTime();
+    expect(next).toBeGreaterThan(before);
+    expect(next - before).toBeLessThanOrEqual(24 * 3600 * 1000);
+    expect(await instancesOf(id)).toHaveLength(0);
+
+    const list = await request(app).get('/r');
+    const row = list.body.find((r) => r.id === id);
+    expect(row.template).toMatchObject({ assigned_to: 'alex' });
+    expect(row.skip_streak).toBe(0);
+    await pool.query('UPDATE recurring_tasks SET is_active = false WHERE id = $1', [id]);
   });
 
   it('next_run_at 带微秒（旧数据 NOW() 写入）也能 CAS 抢到，不会永远卡住', async () => {

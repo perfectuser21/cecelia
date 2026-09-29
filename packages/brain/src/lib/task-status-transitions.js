@@ -66,7 +66,8 @@ const WAITING_EXITS = Object.freeze(['queued', 'in_progress', 'completed', 'comp
 
 export const TRANSITIONS = Object.freeze({
   pending: ['in_progress'],
-  queued: ['in_progress'],
+  // queued → cancelled：定时实例过期无人认领直接取消（unclaimed_expired，recurring.js，任务 3d0db274）
+  queued: ['in_progress', 'cancelled'],
   in_progress: ['completed', 'completed_no_pr', 'failed'],
 
   // 等待态一律给同一组出路。逐个写出来而不是循环生成——这张表是给人看的，

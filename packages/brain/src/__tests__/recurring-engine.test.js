@@ -35,9 +35,11 @@ const at = (iso) => new Date(iso);
 /** 有状态假库：recurring_tasks 模板 + tasks 实例，按 SQL 特征分派 */
 function makeFakeDb({ templates = [], tasks = [] } = {}) {
   const state = {
+    // 模板默认非编码类型（research）：编码类（dev）必须带 map_scope，否则 buildMutationRoute 按设计拒建
     templates: templates.map((t) => ({
       is_active: true, skip_streak: 0, last_run_status: null, last_run_at: null,
-      created_at: '2026-01-01T00:00:00.000Z', template: {}, recurrence_type: 'cron', ...t,
+      created_at: '2026-01-01T00:00:00.000Z', recurrence_type: 'cron', ...t,
+      template: { task_type: 'research', ...(t.template || {}) },
     })),
     tasks: tasks.map((t) => ({ ...t })),
     taskFieldUpdates: [],
@@ -304,7 +306,8 @@ describe('字段透传', () => {
     });
     await runRecurringTasksJob(db, { now: at('2026-09-29T14:00:30Z'), raiseFn });
     const args = mockCreateTask.mock.calls[0][0];
-    expect(args.title).toBe('晚间复盘（模板标题）');
+    // 标题带北京时间点：tasks 的 (title) WHERE cancelled 唯一索引要求同模板各实例标题不同
+    expect(args.title).toBe('晚间复盘（模板标题） · 2026-09-29 22:00');
     expect(args.task_type).toBe('research');
     expect(args.priority).toBe('P0');
     expect(args.dept).toBe('ops');
