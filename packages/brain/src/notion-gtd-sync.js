@@ -17,6 +17,7 @@ import {
   QIUMI_STATUS_MAP, ZH_HUMAN_ONLY_STATUSES, zhPriorityToBrain, zhWriteFor,
 } from './lib/qiumi-status-map.js';
 import { blockTask, unblockTask } from './task-updater.js';
+import { toStartIso, isFuture, sameInstant, scheduledNote } from './lib/qiumi-schedule.js';
 import { recordProjectionCommand } from './projection/commands.js';
 
 export const GTD_DB_ID = process.env.NOTION_GTD_DB_ID || 'c69c40c2-ba63-8271-badf-01c5410d8929';
@@ -55,6 +56,11 @@ export function parseZhPage(page) {
     priorityRaw: p['优先级']?.select?.name ?? null,
     priority: zhPriorityToBrain(p['优先级']?.select?.name),
     dueAt: p['预期完成日期']?.date?.start ?? null,
+    // 预期开始时间 = 开始执行时间（旧列名「预期完成日期」改名前兜底）；预期结束时间 = 截止（决策 51c09285）
+    startAt: p['预期开始时间']?.date?.start ?? p['预期完成日期']?.date?.start ?? null,
+    endAt: p['预期结束时间']?.date?.start ?? null,
+    delegatedBy: p['委派人']?.select?.name ?? null,
+    createdById: page?.created_by?.id ?? null,
     channel: p['执行通道']?.select?.name ?? null,
     agentWorkflowIds: rel(p['执行 Agent / Workflow']),
     skillIds: rel(p['使用 Skill']),
@@ -76,6 +82,8 @@ export function parseEnPage(page) {
     description,
     status: p.Status?.status?.name ?? null,
     planDate: p['Plan Date']?.date?.start ?? null,
+    planEnd: p['Plan Date']?.date?.end ?? null,
+    delegatedBy: p['Delegated By']?.select?.name ?? null,
     zhId32: description.match(ZH_MARK_RE)?.[1] ?? null,
     enNative: description.includes(EN_NATIVE_MARK),
     brainTaskId: description.match(BRAIN_MARK_RE)?.[1] ?? null,
@@ -92,7 +100,8 @@ export function buildEnPageFromZh(zh, pageContent = '') {
     Description: { rich_text: text(desc) },
     Status: { status: { name: 'Delegated' } },
   };
-  if (zh.dueAt) properties['Plan Date'] = { date: { start: zh.dueAt } };
+  if (zh.startAt) properties['Plan Date'] = { date: { start: zh.startAt, ...(zh.endAt ? { end: zh.endAt } : {}) } };
+  if (zh.delegatedBy) properties['Delegated By'] = { select: { name: zh.delegatedBy } };
   return { parent: { database_id: EN_TASKS_DB }, properties };
 }
 
@@ -105,7 +114,9 @@ export function buildZhPageFromEn(en, pageContent = '') {
     '状态': { status: { name: '委派' } },
     'OpenClaw任务号': { rich_text: text(`en:${en.id32}`) },
   };
-  if (en.planDate) properties['预期完成日期'] = { date: { start: en.planDate } };
+  if (en.planDate) properties['预期开始时间'] = { date: { start: en.planDate } };
+  if (en.planEnd) properties['预期结束时间'] = { date: { start: en.planEnd } };
+  if (en.delegatedBy) properties['委派人'] = { select: { name: en.delegatedBy } };
   return { parent: { database_id: GTD_DB_ID }, properties };
 }
 
@@ -165,7 +176,8 @@ export async function syncZhToEn(pool, token, {
 export const PUSH_QIUMI_QUERY = `
     SELECT id, status, error_message, result,
            payload->>'notion_zh_page_id' AS zh_page_id,
-           payload->>'notion_page_id'    AS en_page_id
+           payload->>'notion_page_id'    AS en_page_id,
+           payload->>'next_run_at'       AS next_run_at
       FROM tasks
      WHERE payload->>'notion_zh_page_id' IS NOT NULL
        -- 只有 qiumi_task 这一层代表中文表那一行。派生出去的 device_job 子任务有自己的生命周期，
@@ -185,7 +197,9 @@ const resultTextOf = (result) => {
 const bizToday = () => new Date(Date.now() - 4 * 3600 * 1000).toISOString().slice(0, 10); // 业务日早 4 点切
 
 /** Brain → 中文页（zh 通道 ≤50/轮）+ 英文页 Status。人工态行只更指纹不写页。 */
-export async function pushQiumiStatus(pool, token, { notionReq = defaultNotionReq, today = bizToday } = {}) {
+export async function pushQiumiStatus(pool, token, {
+  notionReq = defaultNotionReq, today = bizToday, now = () => new Date(),
+} = {}) {
   const { rows } = await pool.query(PUSH_QIUMI_QUERY);
   let pushed = 0; let skippedHuman = 0; let skippedNoMap = 0; let skippedGone = 0;
   const failures = [];
@@ -193,7 +207,7 @@ export async function pushQiumiStatus(pool, token, { notionReq = defaultNotionRe
   // 页面已不在（404 / 已归档）是永久失败 → 记指纹不再重扫；其余错误不记指纹，下轮重试，本轮末尾整体报错。
   for (const t of rows) {
     try {
-      const outcome = await pushOneQiumiRow(pool, token, t, { notionReq, today });
+      const outcome = await pushOneQiumiRow(pool, token, t, { notionReq, today, now });
       if (outcome === 'pushed') pushed += 1;
       else if (outcome === 'human') skippedHuman += 1;
       else if (outcome === 'nomap') skippedNoMap += 1;
@@ -211,7 +225,7 @@ export async function pushQiumiStatus(pool, token, { notionReq = defaultNotionRe
 const isPageGone = (err) => Number(err?.status) === 404 || /archived/i.test(String(err?.message ?? ''));
 
 /** 单行回写，返回 pushed / human / nomap / gone；非永久错误原样抛出。 */
-async function pushOneQiumiRow(pool, token, t, { notionReq, today }) {
+async function pushOneQiumiRow(pool, token, t, { notionReq, today, now }) {
   // hold 非空 = 本轮放弃推送是因为人工占着中文页：留保留标记，下轮无论 Brain 状态变没变都要重扫。
   // 推送成功则必须把标记减掉，否则这行会永远留在扫描集合里。
   const stamp = (hold = null) => (hold
@@ -233,10 +247,15 @@ async function pushOneQiumiRow(pool, token, t, { notionReq, today }) {
     if (zhPage?.archived || zhPage?.in_trash) { await stamp(); return 'gone'; }
     const zhStatus = zhPage?.properties?.['状态']?.status?.name ?? null;
     if (ZH_HUMAN_ONLY_STATUSES.includes(zhStatus)) { await stamp(zhStatus); return 'human'; }
-    const write = zhWriteFor(t.status, { reason: t.error_message || '', resultText: resultTextOf(t.result), today: today() });
+    // 排队中但没到预期开始时间：中文保持委派并写已排期提示，英文 Planned（决策 51c09285）
+    const scheduled = t.status === 'queued' && isFuture(t.next_run_at, now());
+    const write = scheduled
+      ? { properties: { '状态': { status: { name: '委派' } }, 'OpenClaw结果': { rich_text: text(scheduledNote(t.next_run_at)) } } }
+      : zhWriteFor(t.status, { reason: t.error_message || '', resultText: resultTextOf(t.result), today: today() });
     await withBackoff(() => notionReq(token, `/pages/${t.zh_page_id}`, 'PATCH', write));
-    if (t.en_page_id && map.en) {
-      await withBackoff(() => notionReq(token, `/pages/${t.en_page_id}`, 'PATCH', { properties: { Status: { status: { name: map.en } } } }));
+    const enStatus = scheduled ? 'Planned' : map.en;
+    if (t.en_page_id && enStatus) {
+      await withBackoff(() => notionReq(token, `/pages/${t.en_page_id}`, 'PATCH', { properties: { Status: { status: { name: enStatus } } } }));
     }
   } catch (err) {
     if (!isPageGone(err)) throw err;
@@ -256,8 +275,8 @@ export const OWNER_STOP_FILTERS = Object.freeze(['淘汰', '阻塞', '委派'].m
 })));
 
 /** 主理人急停：淘汰→cancel_requested、阻塞→owner_hold、从阻塞拖回委派→unblock。 */
-export async function applyOwnerStops(pool, token, { notionReq = defaultNotionReq } = {}) {
-  let cancelled = 0; let held = 0; let resumed = 0;
+export async function applyOwnerStops(pool, token, { notionReq = defaultNotionReq, now = () => new Date() } = {}) {
+  let cancelled = 0; let held = 0; let resumed = 0; let rescheduled = 0;
   const ignored = []; // 急停没落地的行——不计数也要说出来，别静默
   const [discarded, holds, redelegated] = await Promise.all(
     OWNER_STOP_FILTERS.map((filter) => queryAll(notionReq, token, GTD_DB_ID, filter)),
@@ -287,8 +306,30 @@ export async function applyOwnerStops(pool, token, { notionReq = defaultNotionRe
   for (const page of redelegated) {
     const id = taskIdOf(page);
     if (!id) continue;
-    const { rows } = await pool.query('SELECT id, status, blocked_reason FROM tasks WHERE id=$1', [id]);
+    const { rows } = await pool.query(
+      "SELECT id, status, blocked_reason, payload->>'scheduled_start' AS scheduled_start FROM tasks WHERE id=$1", [id],
+    );
     const t = rows[0];
+    // 已排期（委派 + brain: 任务号 + 仍在排队）的行，主理人改了预期开始时间 → 跟着改期；
+    // 清回写指纹，让中文「已排期」提示按新时间刷新。清空开始时间 = 立即可派。
+    // 只和 scheduled_start（上次从 Notion 排进来的时间）比，不和 next_run_at 比：
+    // 失败重排的退避也写 next_run_at，直接比会把退避冲掉。本功能上线前入账的任务没有 scheduled_start，
+    // 只在开始时间落在未来时接管，免得把存量任务的退避改没。
+    if (t?.status === 'queued') {
+      const start = toStartIso(parseZhPage(page).startAt);
+      const changed = !sameInstant(start, t.scheduled_start);
+      if (changed && (t.scheduled_start || isFuture(start, now()))) {
+        await pool.query(
+          `UPDATE tasks SET payload = COALESCE(payload,'{}'::jsonb)
+                    || jsonb_build_object('next_run_at', $2::text, 'scheduled_start', $2::text),
+                  notion_props = COALESCE(notion_props,'{}'::jsonb) - 'qiumi_pushed_status', updated_at = NOW()
+            WHERE id = $1 AND status = 'queued'`,
+          [id, start ?? ''],
+        );
+        rescheduled += 1;
+      }
+      continue;
+    }
     if (t?.status === 'blocked' && t.blocked_reason === 'owner_hold') {
       const r = await unblockTask(id);
       if (r?.success) { resumed += 1; continue; }
@@ -297,7 +338,7 @@ export async function applyOwnerStops(pool, token, { notionReq = defaultNotionRe
       console.warn(`[notion-gtd-sync] 急停未生效 task=${id} action=resume reason=${reason}`);
     }
   }
-  return { cancelled, held, resumed, ignored };
+  return { cancelled, held, resumed, rescheduled, ignored };
 }
 
 /**

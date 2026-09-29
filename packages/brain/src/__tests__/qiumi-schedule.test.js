@@ -187,25 +187,31 @@ describe('回写与改期', () => {
       return { results: status === '委派' ? [moved] : [] };
     });
     const query = vi.fn(async (sql) => (/SELECT id, status/.test(sql)
-      ? { rows: [{ id: TID, status: 'queued', blocked_reason: null, next_run_at: '2026-10-03T17:00:00.000+08:00' }] }
+      ? { rows: [{ id: TID, status: 'queued', blocked_reason: null, scheduled_start: '2026-10-03T17:00:00.000+08:00' }] }
       : { rows: [] }));
-    const r = await applyOwnerStops({ query }, 'tok', { notionReq: mockNotionReq });
+    const r = await applyOwnerStops({ query }, 'tok', { notionReq: mockNotionReq, now: () => NOW });
     expect(r.rescheduled).toBe(1);
     const upd = query.mock.calls.find((c) => /next_run_at/.test(c[0]) && /UPDATE tasks/.test(c[0]));
     expect(upd[1]).toEqual([TID, '2026-10-04T08:00:00.000+08:00']);
+    expect(upd[0]).toMatch(/scheduled_start/);
     expect(upd[0]).toMatch(/- 'qiumi_pushed_status'/);
   });
 
-  it('开始时间没变 / 任务已不在排队 → 不动', async () => {
+  it('开始时间没变 / 任务已不在排队 / 存量任务（无 scheduled_start）且开始时间已过 → 不动（不冲掉失败重试的退避）', async () => {
     const { applyOwnerStops } = await import('../notion-gtd-sync.js');
     const same = zhPage({ 'OpenClaw任务号': { rich_text: [{ plain_text: `brain:${TID}` }] } });
-    mockNotionReq.mockImplementation(async (_t, _p, _m, body) => ({ results: body?.filter?.and?.[0]?.status?.equals === '委派' ? [same] : [] }));
-    for (const row of [
-      { id: TID, status: 'queued', blocked_reason: null, next_run_at: '2026-10-03T09:00:00.000Z' },
-      { id: TID, status: 'in_progress', blocked_reason: null, next_run_at: null },
+    const pastLegacy = zhPage({
+      'OpenClaw任务号': { rich_text: [{ plain_text: `brain:${TID}` }] },
+      '预期开始时间': { date: { start: '2026-09-01' } },
+    });
+    for (const [page, row] of [
+      [same, { id: TID, status: 'queued', blocked_reason: null, scheduled_start: '2026-10-03T09:00:00.000Z' }],
+      [same, { id: TID, status: 'in_progress', blocked_reason: null, scheduled_start: null }],
+      [pastLegacy, { id: TID, status: 'queued', blocked_reason: null, scheduled_start: null }],
     ]) {
+      mockNotionReq.mockImplementation(async (_t, _p, _m, body) => ({ results: body?.filter?.and?.[0]?.status?.equals === '委派' ? [page] : [] }));
       const query = vi.fn(async (sql) => (/SELECT id, status/.test(sql) ? { rows: [row] } : { rows: [] }));
-      const r = await applyOwnerStops({ query }, 'tok', { notionReq: mockNotionReq });
+      const r = await applyOwnerStops({ query }, 'tok', { notionReq: mockNotionReq, now: () => NOW });
       expect(r.rescheduled).toBe(0);
       expect(query.mock.calls.some((c) => /UPDATE tasks/.test(c[0]))).toBe(false);
     }
