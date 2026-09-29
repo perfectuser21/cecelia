@@ -696,6 +696,8 @@ jobs:
         run: bash scripts/ci/__tests__/assert-deploy-effect.test.sh
       - name: gate3-changed-paths 回归测试
         run: bash scripts/ci/__tests__/gate3-changed-paths.test.sh
+      - name: gate3-wait-deploy 按部署 git_sha 判定（idle 不再视为成功，2026-09-29）
+        run: bash scripts/ci/__tests__/gate3-wait-deploy.test.sh
       - name: smoke-core 依赖守卫（禁 jq）
         run: bash scripts/ci/__tests__/smoke-core-no-jq.test.sh
       - name: lint-gp-anchor-artifact 六场景自测（决策 109dd8eb）
