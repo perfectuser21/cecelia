@@ -45,6 +45,9 @@ describe('planMirrorLabels', () => {
     expect(targets.map((t) => t.title).sort()).toEqual(['AI Notes', 'Issues']);
     const notes = targets.find((t) => t.title === 'AI Notes');
     expect(notes.label).toBe('🔒 只读镜子：由 Brain decisions、initiative_contracts 经 notion-push-sync.pushDecisions、notion-push-sync.pushInitiativeContracts 推送，改数据请改 Brain，不要在 Notion 手改。');
+    // 同库多行顺序颠倒 → 说明不变（排序稳定，否则每天重写）
+    const reversed = planMirrorLabels([...REGISTRY].reverse()).targets.find((t) => t.title === 'AI Notes');
+    expect(reversed.label).toBe(notes.label);
     expect(skipped).toEqual(expect.arrayContaining([
       expect.objectContaining({ title: 'Projects', reason: 'dual_face' }),
       expect.objectContaining({ title: 'OPC 经营对象', reason: 'no_brain_table' }),
@@ -133,6 +136,7 @@ describe('runMirrorLabelJob', () => {
     expect(r1.updated).toHaveLength(2);
     expect(await runMirrorLabelJob(pool, { token: 't', notionReq, now: t0 + 3600e3 })).toMatchObject({ skipped: true, reason: 'interval_gate' });
     const r3 = await runMirrorLabelJob(pool, { token: 't', notionReq, now: t0 + 21 * 3600e3 });
-    expect(r3.skipped).toBeUndefined();
+    expect(r3.reason).toBeUndefined();
+    expect(Array.isArray(r3.unchanged)).toBe(true);
   });
 });
