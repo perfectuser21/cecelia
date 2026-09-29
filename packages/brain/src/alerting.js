@@ -5,6 +5,8 @@
  *   P0 - 立即发飞书（系统宕机、熔断、连续失败）
  *   P1 - 每小时汇总（核心功能降级、任务隔离）
  *   P2 - 每日汇总（单次任务失败、非关键报错）
+ *   P1/P2 汇总属系统类，不私信主理人（决策 d3e7746c）：只发专用系统通道 ALERT_DIGEST_WEBHOOK，
+ *   未配置则仅 console.log + 落库记录（/api/brain/alerting/status 可查）
  *   P3 - 只写日志，不推送
  *
  * 使用方式：
@@ -29,6 +31,11 @@ const _p2Buffer = [];
 // 刷新时间追踪（随缓冲一起持久化，重启后恢复，保证 P2 每日节奏不被部署打断）
 let _lastP1FlushAt = 0;
 let _lastP2FlushAt = 0;
+
+// 最近一次汇总记录（落库，供 /api/brain/alerting/status 查询）
+let _lastP1Digest = null;
+let _lastP2Digest = null;
+const DIGEST_RECORD_MAX_ITEMS = 50;
 
 const P1_FLUSH_INTERVAL_MS = 60 * 60 * 1000;       // 1 小时
 const P2_FLUSH_INTERVAL_MS = 24 * 60 * 60 * 1000;  // 24 小时
@@ -63,6 +70,8 @@ async function _restoreFromDb(pool) {
     _p2Buffer.unshift(..._validItems(saved.p2));
     _lastP1FlushAt = Math.max(_lastP1FlushAt, Number(saved.last_p1_flush_at) || 0);
     _lastP2FlushAt = Math.max(_lastP2FlushAt, Number(saved.last_p2_flush_at) || 0);
+    if (!_lastP1Digest && saved.last_p1_digest) _lastP1Digest = saved.last_p1_digest;
+    if (!_lastP2Digest && saved.last_p2_digest) _lastP2Digest = saved.last_p2_digest;
   }
   _restored = true;
 }
@@ -73,6 +82,8 @@ async function _writeToDb(pool) {
     p2: _p2Buffer.slice(-PERSIST_MAX_ITEMS),
     last_p1_flush_at: _lastP1FlushAt,
     last_p2_flush_at: _lastP2FlushAt,
+    last_p1_digest: _lastP1Digest,
+    last_p2_digest: _lastP2Digest,
   };
   await pool.query(
     `INSERT INTO working_memory (key, value_json, updated_at)
@@ -146,16 +157,57 @@ async function raise(level, eventType, message, opts = {}) {
 }
 
 /**
- * 发送一个缓冲区的汇总（发送后才把清空态写回库，崩在中途则重启后重发）
+ * 汇总投递：只发专用系统通道 ALERT_DIGEST_WEBHOOK（群机器人），绝不走 sendFeishu
+ * （FEISHU_BOT_WEBHOOK 为空时 sendFeishu 会降级私信主理人，违反决策 d3e7746c）。
+ * 未配置 → 仅 console.log。永不抛错，返回实际通道。
+ */
+async function _deliverDigest(level, text) {
+  const url = process.env.ALERT_DIGEST_WEBHOOK || '';
+  if (!url) {
+    console.log(`[alerting] ${level} 汇总（未配置 ALERT_DIGEST_WEBHOOK，仅记录不推送）: ${text}`);
+    return 'log';
+  }
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ msg_type: 'text', content: { text } }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!resp.ok) {
+      console.error(`[alerting] ${level} 汇总 webhook 返回 ${resp.status}`);
+      return 'webhook_failed';
+    }
+    return 'webhook';
+  } catch (e) {
+    console.error(`[alerting] ${level} 汇总 webhook 发送失败:`, e.message);
+    return 'webhook_failed';
+  }
+}
+
+/**
+ * 汇总一个缓冲区（投递后才把清空态写回库，崩在中途则重启后重发）
+ * 投递失败/未配置通道均视为已汇总：清空缓冲、落库记录，避免无限积压。
  */
 async function _flushBuffer(level, buffer, header, label) {
   await _persist({ write: false }); // 先确保已恢复重启前的未发项
   if (buffer.length === 0) return;
   const items = buffer.splice(0);
   const preview = items.slice(-5).map(e => `• ${e.message}`).join('\n');
-  await sendFeishu(`${header} ${items.length} ${label}\n${preview}`).catch(e =>
-    console.error(`[alerting] ${level} 刷新推送失败:`, e.message)
-  );
+  const channel = await _deliverDigest(level, `${header} ${items.length} ${label}\n${preview}`);
+  const record = {
+    at: new Date().toISOString(),
+    count: items.length,
+    channel,
+    items: items.slice(-DIGEST_RECORD_MAX_ITEMS),
+  };
+  if (level === 'P1') {
+    _lastP1Digest = record;
+    _lastP1FlushAt = Math.max(_lastP1FlushAt, Date.now());
+  } else {
+    _lastP2Digest = record;
+    _lastP2FlushAt = Math.max(_lastP2FlushAt, Date.now());
+  }
   await _persist({ write: true });
 }
 
@@ -209,6 +261,8 @@ function getStatus() {
     p0_rate_limited: p0Entries,
     last_p1_flush: _lastP1FlushAt ? new Date(_lastP1FlushAt).toISOString() : null,
     last_p2_flush: _lastP2FlushAt ? new Date(_lastP2FlushAt).toISOString() : null,
+    last_p1_digest: _lastP1Digest,
+    last_p2_digest: _lastP2Digest,
   };
 }
 
