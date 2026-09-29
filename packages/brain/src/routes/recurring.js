@@ -8,10 +8,12 @@
  */
 
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { nextSlotAfter, validateSchedule, isValidScheduleExpression } from '../lib/recurring-schedule.js';
 
 const router = express.Router();
+router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
 
 // GET / — 列出所有定时任务
 router.get('/', async (_req, res) => {
