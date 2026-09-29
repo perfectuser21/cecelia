@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.336.8
+**Brain 版本**: 1.336.10
 
 ## 1.283.0
 
@@ -48,6 +48,17 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.336.10 — 空表清理收尾：6 张连代码删；AI Journey / AI Feature 恢复推送
+
+- 迁移 486：删 topic_decision_feedback、publish_success_daily（D 类「接口都在从没人调用」剩余两张，主理人「全删」）；删 licenses、license_machines、license_credit_transactions、keyword_tasks（ZenithJoy 授权大脑侧空副本，真账在 hk zenithjoy）。非空闸、无 CASCADE、回滚=生产 pg_dump -s。
+- 同迁移：AI Journey / AI Feature 两镜子登记恢复 push/active（库 09-27 已从回收站恢复；决策 7a4a41a9 覆盖 24a37029）。
+- 同 PR 删代码：topic-heat-scorer 的 saveTopicFeedback / getHighPerformingTopics 及周报、选题调用；发布监控每日快照写入、kr1-kr2-updater 与 tick 调用、/publish/success-rate；license / agent-credit / acquisition 三个无调用方路由及测试、4 个冒烟脚本与名单条目。
+- 生产结构副本实测：闸拦截、6 表删除、两登记恢复、回滚复原、重放幂等；相关 69 个测试文件全绿。
+
+## Brain 1.336.9 — 秋米回写行隔离：删除页跳过、单行失败不再挡住整步
+
+- notion-gtd-sync pushQiumiStatus：每行独立 try/catch；中文/英文页 404 或已归档 = 永久失败 → 记指纹跳过（返回值 skippedArchived 改名 skippedGone）；其余错误不记指纹、下轮重试，本轮其余行照常处理，末尾汇总报错。修 09-29 上一版只处理「已归档」后又被彻底删除页（GET 404）卡住整步、十余条已完成任务在中文表停在「排队」（任务 1613c0b5）。
 
 ## Brain 1.336.8 — 秋米回写跳过已归档中文行
 
