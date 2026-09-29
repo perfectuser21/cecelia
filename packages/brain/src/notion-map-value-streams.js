@@ -12,7 +12,7 @@
  * 失败只记日志，Postgres 才是真相源。
  */
 import { notionReq as defaultNotionReq, getToken } from './recurring-notion-sync.js';
-import { propsDigest, resolveDbId } from './lib/notion-projection-engine.js';
+import { propsDigest, resolveDbId, isPageGoneError } from './lib/notion-projection-engine.js';
 import { ensureOpsDbProps } from './ops-quota-notion.js';
 import { VALUE_STREAM_DB_PROPS } from './ops-notion-schema.js';
 
@@ -68,7 +68,6 @@ export function valueStreamDigest(vs) {
 }
 
 const withSyncTime = (props) => ({ ...props, '同步时间': { date: { start: new Date().toISOString() } } });
-const is404 = (err) => /404|Could not find/.test(err?.message || '');
 
 async function upsertLedger(pool, vs, notionId, digest) {
   await pool.query(
@@ -94,8 +93,8 @@ async function pushOne(pool, token, dbId, vs, ledgerRow, notionReq, stat) {
       stat.patched++;
       return;
     } catch (err) {
-      if (!is404(err)) throw err;
-      // 页面被人删了 → 落到下面重建
+      if (!isPageGoneError(err)) throw err;
+      // 页面被删或进了回收站 → 落到下面重建
     }
   }
   const page = await notionReq(token, '/pages', 'POST',

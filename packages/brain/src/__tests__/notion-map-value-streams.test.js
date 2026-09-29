@@ -138,6 +138,19 @@ describe('pushMapValueStreams', () => {
     expect(up.params[2]).toBe('page-new');
   });
 
+  it('页面进了回收站（400 archived ancestor）→ 视同 404 重新 POST', async () => {
+    const ledger = [{ scope: 'cecelia', node_key: 'factory', notion_id: 'page-trash', notion_digest: 'stale' }];
+    notionReq.mockImplementation(async (t, p, m) => {
+      if (m === 'GET') return { properties: {} };
+      if (p === '/pages/page-trash') throw new Error("Notion 400: Can't edit block that is archived. You must unarchive the block before editing. archived ancestor");
+      if (p === '/pages' && m === 'POST') return { id: 'page-new2' };
+      return {};
+    });
+    const pool = makePool({ nodes: [FACTORY], ledger });
+    const out = await pushMapValueStreams(pool, 'tok', { notionReq });
+    expect(out).toMatchObject({ created: 1, failed: 0 });
+  });
+
   it('active run 里消失的节点 → 页面状态标已归档（PATCH，不删页面），记账表记 archived_at', async () => {
     const ledger = [
       { scope: 'cecelia', node_key: 'factory', notion_id: 'page-f', notion_digest: valueStreamDigest(FACTORY) },
