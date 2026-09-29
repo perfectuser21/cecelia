@@ -11,6 +11,7 @@
  */
 import { createHash } from 'node:crypto';
 import { notionReq as defaultNotionReq, getToken } from './recurring-notion-sync.js';
+import { isWrongDatabaseError } from './lib/notion-projection-engine.js';
 
 export const PROJECTS_DB = 'd83c40c2-ba63-8323-8dc7-01cc291c4d9b';
 export const DECISIONS_INLET_DB = 'f93e1918-56c1-4f31-9a41-36aa76a1c9c2';
@@ -121,8 +122,11 @@ export async function replacePageBody(notionReq, token, pageId, blocks) {
   if (blocks.length) await notionReq(token, `/blocks/${pageId}/children`, 'PATCH', { children: blocks });
 }
 
-// 页被删(404) 或 页/库进回收站(400 archived ancestor，PATCH 永远失败) → 都按「页没了」重建
-function isGone(err) { return /404|Could not find|archived ancestor/i.test(String(err?.message || '')); }
+// 页被删(404)、页/库进回收站(400 archived ancestor)，或 legacy notion_id 指向错库(400 schema 不符，
+// 如旧 Cecelia Tasks 库页) → PATCH 永远失败，都放弃旧页、在 Projects 库重建
+function isGone(err) {
+  return /404|Could not find|archived ancestor/i.test(String(err?.message || '')) || isWrongDatabaseError(err);
+}
 
 /** project 根 → Projects 库。返回 {pushed, skipped, failed} */
 export async function pushProjectRoots(pool, token, { notionReq = defaultNotionReq, dbId = PROJECTS_DB, log = console } = {}) {

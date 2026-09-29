@@ -34,6 +34,16 @@ export async function resolveDbId(pool, table, fallbackDbId = null) {
 }
 
 /**
+ * 400 schema 不符 = notion_id 指向「错库」页面（legacy 遗留绑错库），
+ * 属性名/类型对不上 → 解绑重建才是出路，重试一万次也不会成功。
+ * 2026-09-16 实证：249 条 legacy 行每轮重试刷屏（269 次/2h 日志噪音）。
+ */
+export function isWrongDatabaseError(err) {
+  const m = err?.message || '';
+  return /400/.test(m) && /is not a property that exists|is expected to be/.test(m);
+}
+
+/**
  * 页不可用 = 404（被删）或 400「archived ancestor」（页或所在库进了回收站）。
  * 后者 PATCH 永远失败，只能视同 404：清 id + 指纹，下轮 POST 重建。
  */
