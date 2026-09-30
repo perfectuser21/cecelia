@@ -106,6 +106,17 @@ function parseTimeout(raw) {
   return sec >= TIMEOUT_MIN_SEC && sec <= TIMEOUT_MAX_SEC ? Math.round(sec) : null;
 }
 
+/**
+ * 把正文拆成「有没有执行参数块」+「去掉块之后的其余正文」（任务 e3c81cce）。
+ * 与 parseExecParams 用同一条 BLOCK_RE：路由认成参数块的那段，才是 prompt 里要摘掉的那段，
+ * 两处判据只此一份。块所在位置补一个换行，前后正文不粘连。
+ */
+export function splitExecParamsBlock(body) {
+  const text = String(body ?? '');
+  if (!BLOCK_RE.test(text)) return { present: false, rest: text };
+  return { present: true, rest: text.replace(BLOCK_RE, '\n').replace(/\n{3,}/g, '\n\n').trim() };
+}
+
 export function parseExecParams(body, env = {}) {
   const out = {
     present: false, agent: null, model: null, modelRaw: null, timeoutSec: null,

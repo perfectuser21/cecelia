@@ -542,3 +542,142 @@ describe('每次运行一个新会话 + 回执解析（任务 7951bd36）', () =
     expect(execFileFn.mock.calls[0][1].join(' ')).toContain('tail -c 20000');
   });
 });
+
+// 0929 23:52 生产实证（任务 55c2e84b）：Brain 已按执行参数起 `--agent media --model openai/gpt-6-sol`，
+// 但 prompt 原样带着「执行参数：/执行Agent：media/模型：sol」块，agent 当成"要再派 media/sol 去做"，
+// sessions_spawn 开子会话后 sessions_yield；Brain 收到 exit 0 + result.payloads=[] 判成完成，
+// 真机操作在追踪外跑完。两刀：prompt 顶部声明参数已应用并去掉参数块；收割器不把 yield 判完成。
+describe('执行参数已应用：prompt 不再诱导 agent 自派子会话（任务 e3c81cce）', () => {
+  const okPool = () => ({ query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }) });
+  const sentBody = (spawnFn) => String(spawnFn.child.stdin.end.mock.calls[0][0]);
+  const body55c = [
+    '执行参数：',
+    '执行Agent：media',
+    '模型：sol',
+    '超时：30分钟',
+    '设备：小彩手机',
+    '验收：截图回传成功',
+    '',
+    '具体任务：只读验证，不做任何点赞/评论/私信/发布/切号。',
+    '1. 加锁，打开抖音进入「我」页，执行 account-current 读取当前账号。',
+  ].join('\n');
+  const withParams = (payloadExtra = {}, body = body55c) => ({
+    ...task,
+    payload: {
+      ...task.payload,
+      model: 'openai/gpt-6-sol',
+      qiumi_department: 'media',
+      timeout_sec: 1800,
+      acceptance: '截图回传成功',
+      qiumi_route: { device_hint: { requested: '小彩手机' } },
+      qiumi_source: buildQiumiSource({ title: '【修复验收T1】小彩sol截图', remark: '', body }),
+      ...payloadExtra,
+    },
+  });
+
+  it('prompt 顶部声明「你就是 media / 模型 / 超时」并禁止 sessions_spawn / sessions_yield', async () => {
+    const spawnFn = spawnMock();
+    await triggerOpenclawAgent(withParams(), { spawnFn, pool: okPool() });
+    const body = sentBody(spawnFn);
+    expect(body.startsWith('执行参数已由 Brain 应用：你就是 media，本次模型 openai/gpt-6-sol，超时 30 分钟。')).toBe(true);
+    expect(body).toContain('直接在本会话完成任务，不要 sessions_spawn 子会话，不要 sessions_yield 等待。');
+  });
+
+  it('正文里已应用的执行参数块被去掉，其余正文保留；验收/设备要求不丢', async () => {
+    const spawnFn = spawnMock();
+    await triggerOpenclawAgent(withParams(), { spawnFn, pool: okPool() });
+    const body = sentBody(spawnFn);
+    expect(body, '参数块原样留在正文 → agent 会当成"要再派 media/sol"').not.toContain('执行Agent：media');
+    expect(body).not.toContain('模型：sol');
+    expect(body).not.toMatch(/(^|\n)执行参数：\n/);
+    expect(body).toContain('具体任务：只读验证');
+    expect(body).toContain('account-current');
+    expect(body).toContain('【修复验收T1】小彩sol截图');
+    expect(body).toContain('验收：截图回传成功');
+    expect(body).toContain('设备：小彩手机');
+  });
+
+  it('【执行参数】…【执行参数结束】写法同样去块；未写模型 → 写明用该 agent 默认模型', async () => {
+    const spawnFn = spawnMock();
+    const b = '前言一句\n【执行参数】\n执行Agent：foundry\n【执行参数结束】\n后文保留';
+    await triggerOpenclawAgent(withParams({ model: null, qiumi_department: 'foundry', timeout_sec: null, acceptance: null, qiumi_route: null }, b), { spawnFn, pool: okPool() });
+    const body = sentBody(spawnFn);
+    expect(body).toContain('你就是 foundry，本次模型 foundry 默认模型，超时 30 分钟。');
+    expect(body).not.toContain('【执行参数】');
+    expect(body).not.toContain('执行Agent：foundry');
+    expect(body).toContain('前言一句');
+    expect(body).toContain('后文保留');
+  });
+
+  it('超时按实际下发值写（与 --timeout 同一口径，越界回落 30 分钟）', async () => {
+    const a = spawnMock();
+    await triggerOpenclawAgent(withParams({ timeout_sec: 1200 }), { spawnFn: a, pool: okPool() });
+    expect(sentBody(a)).toContain('超时 20 分钟。');
+    const b = spawnMock();
+    await triggerOpenclawAgent(withParams({ timeout_sec: 5 }), { spawnFn: b, pool: okPool() });
+    expect(sentBody(b)).toContain('超时 30 分钟。');
+  });
+
+  it('正文没有执行参数块 → prompt 与改动前逐字一致（不加说明）', async () => {
+    const spawnFn = spawnMock();
+    await triggerOpenclawAgent(task, { spawnFn, pool: okPool() });
+    expect(sentBody(spawnFn)).toBe('标题\n\n补充说明：备\n\n页面正文：\ntoken: SECRET 正文');
+  });
+});
+
+describe('收割器：agent 以 yield 收尾、没有最终结果 → 不判完成（任务 e3c81cce）', () => {
+  const row = { id: task.id, run_id: 'qiumi-55c2e84b-1' };
+  // 55c2e84b 真实 .log 的形状：开头 result.payloads=[]；尾部 meta.yielded=true + acceptedSessionSpawns。
+  // tail -c 20000 读不到开头，所以两类信号都要能单独认出来。
+  const yieldTail = [
+    '      "livenessState": "paused",',
+    '      "yielded": true,',
+    '      "stopReason": "end_turn",',
+    '      "toolSummary": { "calls": 8, "tools": ["agents_list", "bash", "sessions_spawn", "sessions_yield"], "failures": 1 }',
+    '    },',
+    '    "acceptedSessionSpawns": [',
+    '      { "runId": "b73bfb6a", "childSessionKey": "agent:media:subagent:94d3d839", "expectsCompletionMessage": true }',
+    '    ],',
+    '    "requesterContinuationSettled": true',
+    '  }',
+    '}',
+  ].join('\n');
+  const reap = async (stdout) => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [row] }).mockResolvedValue({ rows: [], rowCount: 1 });
+    const execFileFn = vi.fn((c, a, o, cb) => cb(null, stdout, ''));
+    const r = await reapOpenclawAgentRuns({ query }, { execFileFn });
+    return { r, query };
+  };
+
+  it('EXIT=0 + yielded=true + 无最终文本 → failed(agent_yielded_without_result)，不写 completed_no_pr', async () => {
+    const { r, query } = await reap(`EXIT=0\n${yieldTail}\n`);
+    expect(r).toEqual({ reaped: 1, completed: 0, failed: 1 });
+    expect(query.mock.calls.some(([sql]) => /completed_no_pr/.test(sql)), 'yield 收尾被判完成').toBe(false);
+    const upd = query.mock.calls.find(([sql]) => /SET status = 'failed'/.test(sql));
+    expect(upd[0]).toMatch(/AND status = 'in_progress'/);
+    expect(upd[1]).toContain('agent_yielded_without_result');
+    const merged = JSON.parse(upd[1].find((v) => typeof v === 'string' && v.includes('receipt')));
+    expect(merged.receipt.exit).toBe(0);
+    expect(merged.receipt.log_tail).toContain('"yielded": true');
+    expect(merged.yield_summary).toMatchObject({ yielded: true, child_sessions: ['agent:media:subagent:94d3d839'] });
+    expect(recordTaskEventSafe).toHaveBeenCalledWith(
+      expect.anything(), task.id, 'openclaw_agent_reaped',
+      expect.objectContaining({ run_id: row.run_id, exit: 0, reason: 'agent_yielded_without_result' }),
+    );
+  });
+
+  it('EXIT=0 + result.payloads 为空且无最终文本（未见 yielded 字段）→ 同样 failed', async () => {
+    const head = '{\n  "runId": "x",\n  "status": "ok",\n  "result": {\n    "payloads": [],\n    "meta": { "durationMs": 1 }\n  }\n}';
+    const { r, query } = await reap(`EXIT=0\n${head}\n`);
+    expect(r.failed).toBe(1);
+    expect(r.completed).toBe(0);
+    const upd = query.mock.calls.find(([sql]) => /SET status = 'failed'/.test(sql));
+    expect(upd[1]).toContain('agent_yielded_without_result');
+  });
+
+  it('EXIT=0 + 有最终文本（无 yield 信号）→ 仍判 completed_no_pr', async () => {
+    const { r, query } = await reap('EXIT=0\n{"finalAssistantVisibleText":"已完成：截图 a.jpg 12KB","result":{"payloads":[{"text":"已完成"}]}}\n');
+    expect(r).toEqual({ reaped: 1, completed: 1, failed: 0 });
+    expect(query.mock.calls.some(([sql]) => /completed_no_pr/.test(sql))).toBe(true);
+  });
+});

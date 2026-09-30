@@ -494,10 +494,7 @@ echo "$r" | jq -e 'type == "object"' >/dev/null 2>&1 \
   && ok "learning-eval: /learnings 返回 object" \
   || fail "learning-eval: /learnings 格式错误"
 
-r=$(curl -sf "$BRAIN/api/brain/license") || { fail "license-management: /license 不可达"; r="{}"; }
-echo "$r" | jq -e '.status != null' >/dev/null 2>&1 \
-  && ok "license-management: /license 含 status 字段" \
-  || fail "license-management: /license 缺少 status"
+# license-management：Brain /api/brain/license 路由已随迁移 486 收尾删除（#5654，决策 28674999），不再探测。
 
 r=$(curl -sf "$BRAIN/api/brain/pipelines") || { fail "media-scraping: /pipelines 不可达"; r="[]"; }
 echo "$r" | jq -e 'type == "array"' >/dev/null 2>&1 \

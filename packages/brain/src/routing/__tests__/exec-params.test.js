@@ -3,7 +3,7 @@
  * 只认固定字段名，解析不出就报错——不回落到任何正则猜测。
  */
 import { describe, it, expect } from 'vitest';
-import { parseExecParams, MODEL_ALIASES } from '../exec-params.js';
+import { parseExecParams, MODEL_ALIASES, splitExecParamsBlock } from '../exec-params.js';
 
 const env = {
   modelAllowlist: [
@@ -210,5 +210,25 @@ describe('parseExecParams — 行首「执行参数：」块头', () => {
   it('回归：方括号写法行为不变', () => {
     const r = parseExecParams('【执行参数】\n执行Agent：media\n模型：sol\n超时：60分钟\n【执行参数结束】\n正文', famEnv);
     expect(r).toMatchObject({ present: true, agent: 'media', model: 'openai/gpt-6-sol', timeoutSec: 3600 });
+  });
+});
+
+// 任务 e3c81cce：prompt 要摘掉已被 Brain 应用的参数块（agent 见块会自派 media/sol 子会话）。
+// 摘的那段必须与 parseExecParams 认的是同一段——同一条 BLOCK_RE。
+describe('splitExecParamsBlock', () => {
+  it('行首「执行参数：」块 → present=true，块去掉，其余正文原样保留', () => {
+    const body = '执行参数：\n执行Agent：media\n模型：sol\n\n具体任务：只读截图\n验收：写明模型';
+    expect(splitExecParamsBlock(body)).toEqual({ present: true, rest: '具体任务：只读截图\n验收：写明模型' });
+  });
+
+  it('【执行参数】…【执行参数结束】夹在正文中间 → 前后正文不粘连', () => {
+    const body = '前言\n【执行参数】\n执行Agent：foundry\n【执行参数结束】\n后文';
+    expect(splitExecParamsBlock(body)).toEqual({ present: true, rest: '前言\n\n后文' });
+  });
+
+  it('没有参数块 / 行中字样 → present=false，正文一字不改', () => {
+    const body = '请参考下面的执行参数：见附件\n\n\n第二段';
+    expect(splitExecParamsBlock(body)).toEqual({ present: false, rest: body });
+    expect(splitExecParamsBlock(null)).toEqual({ present: false, rest: '' });
   });
 });
