@@ -46,6 +46,7 @@ import { runNotionTaskCommandIngest } from './projection/notion.js';
 import { runOpsCollector } from './ops-collector.js';
 import { runSchedulerLiveness } from './ops-scheduler-liveness.js';
 import { runWorkflowRunLostDeadline } from './workflow-run-lost-deadline.js';
+import { runCommanderWatchdog, runWorkflowTrendBark } from './commander-watchdog.js';
 import { runModelAccountsCollector } from './ops-model-accounts-collector.js';
 import { runOpenclawGuards } from './openclaw-guards.js';
 import { maybeRunFeishuTaskLedger } from './feishu-task-ledger.js';
@@ -161,6 +162,8 @@ export const JOBS = [
   { name: 'backbone-contract-sync', needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runBackboneContractJob(pool), description: '主干活动契约 git→Brain→Notion（决策 0834e2fb / 92f6226b，任务 2fdd5f12）：真身 zenithjoy-workspace product-map/contracts/*.yaml，30min 自 gate 只读 GitHub API 比 contracts.json 活动哈希，变了才拉 YAML 写 journey_steps 只读副本（钉 commit 的正本链接），仓库删掉的活动标 deprecated；每轮把变更行推 Notion「Backbone Activities」镜子；同步连续失败超 2h 告 P1 一次' },
   { name: 'notion-mirror-labels', needsPool: true, timeoutMs: 120_000, handler: (pool) => runMirrorLabelJob(pool), description: '镜子库只读说明由注册表生成（任务 a7a6b8b4，交接单第5步）：notion_projection_map 里 active 推送镜子的库描述开头写「🔒 只读镜子：由 Brain <表> 经 <血管> 推送…」，已是同样说明零写，两面库/无 Brain 表的跳过；进程内 20h 自 gate' },
   { name: 'workflow-run-lost-deadline', needsPool: true, timeoutMs: 120_000, handler: (pool) => runWorkflowRunLostDeadline(pool), description: '整批总时限到期判 lost（任务 c2d73868，决策 3c98fb36；09-30 三部手机各卡 6h 无人判死案）：in_progress 的 workflow_run / device_job 镜像(source=cron) 起跑超 4h+30min（env 可配）仍无 finalize → failed(lost_deadline) + task_events；善后 fail-open：ssh 执行机 douyin-phone-adb lock-release <TAG> / return-safe-desktop、MMV openclaw cron rm <escort>，只做一次；能力名只认 payload.wf_id 不认账本 run_id 前缀。5min 自 gate，单批 ≤20' },
+  { name: 'commander-watchdog', needsPool: true, timeoutMs: 120_000, handler: (pool) => runCommanderWatchdog(pool), description: 'Commander 看门狗（任务 17ea4536，决策 3c98fb36；09-30 escort 02:52 被移除后 5h 无人陪跑案）：在途 workflow_run / device_job 镜像起跑 ≥15min 且 escort 心跳缺失/超 15min（心跳经 POST /commander-heartbeat 按 TAG 写 payload.commander_heartbeat_at）→ ssh 网关 openclaw cron rm 旧 escort + add 同名 escort-<host>-<TAG>（接班：只读账本与日志接上，不重发起），新 id 回写 payload，task_events commander_relaunched；同一 run 接班 ≥3 次 → Bark 一次并停拉。5min 自 gate，单批 ≤20' },
+  { name: 'workflow-trend-bark', needsPool: true, timeoutMs: 60_000, handler: (pool) => runWorkflowTrendBark(pool), description: 'workflow 趋势 Bark（任务 17ea4536，PRD 叫人边界）：北京 08:30–10:00 窗口、working_memory 当日去重；同一 wf（payload.wf_id/capability/cap，不认账本 run_id 前缀）连续 2 个自然日有批但零线索 → Bark；一台 serial 近 72h 有批但 24h 无 completed → Bark。单批 0 线索/单次接班/单批 lost 不叫' },
   { name: 'scheduler-liveness', needsPool: true, timeoutMs: 60_000, handler: (pool) => runSchedulerLiveness(pool, { jobs: JOBS, self: 'scheduler-liveness' }), description: 'Brain 调度 job 入运行舱：working_memory 哨兵→ops_workflows(source=scheduler)，活性按声明间隔算，翻转 dead 按轮合并一条 Bark（无 BARK_TOKEN 兜底 P1）、恢复 P2（09-24 notion-gtd-sync 卡死 8.4h 无告警案，决策 69cd802f，task 50a2c256）' },
 ];
 
