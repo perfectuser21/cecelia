@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import yaml from 'js-yaml';
 import {
   canonicalJson, compareProbeHashes, groupProbesByCell, normalizeProbe,
   parseProbeRef, parseProbesDocument, probeRef, sourceSha256, specHash,
 } from '../step-probe-spec.js';
+
+const FIXTURE_YAML = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../__tests__/fixtures/social-keyword-leadgen.checks.yaml'
+);
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const WORKFLOW = 'social-keyword-leadgen';
@@ -19,6 +28,74 @@ function rawProbe(overrides = {}) {
     ...overrides,
   };
 }
+
+describe('metric 探针（决策 f425e3fd：过程指标，observed = 账本 metrics[键]，无 target）', () => {
+  const metricProbe = (probe) => rawProbe({
+    key: 'coll_rescan_rate', stage: 'collection', journey_cell: 'stage:collection',
+    probe, expect: { op: '<=', value: 0.3 }, note: undefined,
+  });
+
+  it('合法 metric 探针 → probe 归一化为 {type, ref}，不带 target', () => {
+    const spec = normalizeProbe(metricProbe({ type: 'metric', ref: 'metrics.rescan_rate' }), { workflow: WORKFLOW });
+    expect(spec.probe).toEqual({ type: 'metric', ref: 'metrics.rescan_rate' });
+    expect(spec.expect).toEqual({ op: '<=', value: 0.3 });
+    expect(spec).not.toHaveProperty('note');
+  });
+
+  it('metric 探针 ref 也可以配 expect.ref（指标对指标）', () => {
+    const spec = normalizeProbe(
+      rawProbe({ probe: { type: 'metric', ref: 'metrics.videos_processed' }, expect: { op: '>=', ref: 'metrics.candidates' } }),
+      { workflow: WORKFLOW }
+    );
+    expect(spec.probe).toEqual({ type: 'metric', ref: 'metrics.videos_processed' });
+    expect(spec.expect).toEqual({ op: '>=', ref: 'metrics.candidates' });
+  });
+
+  it('缺 ref 拒收', () => {
+    expect(() => normalizeProbe(metricProbe({ type: 'metric' }), { workflow: WORKFLOW }))
+      .toThrow(expect.objectContaining({ code: 'STEP_PROBE_TARGET_INVALID', probe_key: 'coll_rescan_rate' }));
+  });
+
+  it('带 target 拒收（metric 没有外部取数源）', () => {
+    expect(() => normalizeProbe(metricProbe({ type: 'metric', ref: 'metrics.rescan_rate', target: 'ledger' }), { workflow: WORKFLOW }))
+      .toThrow(expect.objectContaining({ code: 'STEP_PROBE_TARGET_INVALID' }));
+  });
+
+  it('ref 不是 metrics.<k> 拒收', () => {
+    for (const ref of ['rescan_rate', 'metrics.', 'metrics.a.b', 'metrics.rescan-rate', 42]) {
+      expect(() => normalizeProbe(metricProbe({ type: 'metric', ref }), { workflow: WORKFLOW }))
+        .toThrow(expect.objectContaining({ code: 'STEP_PROBE_TARGET_INVALID' }));
+    }
+  });
+
+  it('未知 type 仍报 STEP_PROBE_TYPE_INVALID，sql/http 不退化', () => {
+    expect(() => normalizeProbe(metricProbe({ type: 'ledger', ref: 'metrics.x' }), { workflow: WORKFLOW }))
+      .toThrow(expect.objectContaining({ code: 'STEP_PROBE_TYPE_INVALID' }));
+    expect(() => normalizeProbe(rawProbe({ probe: { type: 'sql', query: 'SELECT 1' } }), { workflow: WORKFLOW }))
+      .toThrow(expect.objectContaining({ code: 'STEP_PROBE_TARGET_INVALID' }));
+  });
+
+  it('回归：workspace 现网 social-keyword-leadgen.yaml 18 条全过，其中 8 条 metric', () => {
+    const doc = yaml.load(readFileSync(FIXTURE_YAML, 'utf8'));
+    const parsed = parseProbesDocument(doc);
+    expect(parsed.workflow).toBe(WORKFLOW);
+    expect(parsed.probes).toHaveLength(18);
+    const metric = parsed.probes.filter((p) => p.spec.probe.type === 'metric');
+    expect(metric).toHaveLength(8);
+    expect(metric.map((p) => p.spec.key)).toEqual([
+      'pf_device_verified', 'pf_account_verified', 'pf_call_idle', 'pf_lock_acquired',
+      'coll_rescan_rate', 'cl_app_closed', 'cl_lock_released', 'cl_safe_desktop_visible',
+    ]);
+    for (const p of metric) {
+      expect(Object.keys(p.spec.probe).sort()).toEqual(['ref', 'type']);
+      expect(p.spec.probe.ref).toMatch(/^metrics\.[A-Za-z0-9_]+$/);
+      expect(p.spec_hash).toMatch(HEX64);
+    }
+    const rescan = parsed.probes.find((p) => p.spec.key === 'coll_rescan_rate');
+    expect(rescan.spec).toMatchObject({ stage: 'collection', probe: { type: 'metric', ref: 'metrics.rescan_rate' }, expect: { op: '<=', value: 0.3 }, severity: 'error' });
+    expect(new Set(parsed.probes.map((p) => p.spec.probe.type))).toEqual(new Set(['sql', 'http', 'metric']));
+  });
+});
 
 describe('canonicalJson / specHash', () => {
   it('键序无关：同内容不同键序哈希相同', () => {
