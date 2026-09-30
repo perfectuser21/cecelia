@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.348.6
+**Brain 版本**: 1.350.0
 
 ## 1.283.0
 
@@ -48,6 +48,27 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.350.0 — scope/initiative 层退役（接力棒链 2afa6d69 棒4，决策 ee4842a6/3feeae3e）
+
+- `okr_scopes` / `okr_initiatives` / `okr_projects` 冻结写入（migration 499：BEFORE INSERT OR UPDATE trigger 统一抛 `layer_retired`，DELETE 不受影响，表与历史数据原样保留只读）；重放一次 `okr_projects → projects` 搬家接住迁移 497 上线后到本迁移之间的新增行
+- `/api/brain/okr/scopes`、`/api/brain/okr/initiatives` 写操作一律 410 `layer_retired`；`/api/brain/okr/projects` 改为直接复用 `routes/task-projects.js` 的 router，与 `/api/brain/projects` 同源同表读写
+- `actions.js` 的 `createInitiative`/`createScope` 恒返回 `layer_retired`（不再查库）；`createProject` 改写入真身表 `projects`（顺手修了 `custom_props` 传 `null` 撞 `projects` 表 `NOT NULL DEFAULT '{}'` 约束的真 bug）；`routes/actions.js` 的 `/action/create-scope`、`/action/create-initiative` 同步改 410
+- `lib/task-type-registry.js` 新增 `LAYER_RETIRED_TASK_TYPES`（`scope_plan`/`initiative_plan`/`project_plan`/`okr_scope_plan`/`okr_initiative_plan`/`okr_project_plan`，registry 行本身保留不删）；`actions.js createTask` 与 `routes/task-tasks.js POST /tasks` 两个建单入口统一拦截，返回 `layer_retired`
+- `thalamus.js` `ACTION_WHITELIST` 移除 `okr_initiative_plan`/`okr_scope_plan`/`okr_project_plan`（48 → 45）
+- tick 热路径清空为 no-op（验收标准：一轮 tick 不产生任何对 `okr_scopes`/`okr_initiatives` 的查询）：`initiative-closer.js`、`okr-closer.js`、`decomposition-checker.js` 的 Check B（KR 状态流转）、`okr-initiative-sync.js`、`kr-progress.js`
+- `executor.js` 的 `resolveRepoPath`、`intent.js` 的 `parseAndCreate`、`daily-review-scheduler.js` 的 `getActiveRepoPaths` 改读写真身表 `projects`，不再碰 `okr_scopes`/`okr_initiatives`
+
+## Brain 1.349.0 — Project brief 动态文档（接力棒链 2afa6d69 棒2，决策 ee4842a6/3feeae3e）
+
+- `projects.brief` jsonb（棒1 已建列）升级为随每棒交棒改写的活文档：`{goal, status, facts, open_questions, changelog}`，纯函数变换在新模块 `lib/project-brief.js`（`normalizeBrief` / `applyBriefDelta` / `renderBriefMarkdown` / `formatBriefForPrompt`）
+- 新协议 `handoff.brief_delta`（`buildHandoff` 保留并清洗）：`goal`/`status`/`add_facts`/`open_questions`/`close_questions`/`add_steps`/`cancel_steps`/`reorder`，任务终态时（`relay-baton.js relayOnComplete`，以及 `handoff.js saveHandoff` 对已 completed 任务补写 handoff 的同款分支）自动应用到所属 `projects.brief`（新模块 `lib/project-brief-apply.js`）
+- 权限分档（决策 105a5868）：改 `goal` 或一次 `cancel_steps` ≥3 条 → 不直接生效，写 `pending_actions`（`action_type='project_brief_decision'`，新 `actionHandlers` 处理器）+ Bark，其余字段照常直接生效并留痕 changelog
+- `add_steps` 复用 `relay-baton.js` 落棒逻辑（继承 `project_id`，`sequence_no=max+1`）；`cancel_steps` 只砍同项目下 `status='queued'` 的任务（与 `DELETE /tasks/:id` 同一套软删状态机）；`reorder` 只改同项目下非终态任务的 `sequence_no`
+- 派发链上下文（`handoff.js formatChainForPrompt`）在 `root.kind='project'` 时用 `formatBriefForPrompt` 替代原来仅 600 字 description 摘要，brief 为空壳时退回旧逻辑
+- Notion Projects 页正文（`notion-relay-projection.js`）开头新增目标/现状/已知事实/未决问题/变更日志（最近10条）渲染，指纹随 brief 变化
+- 新增 `PATCH /api/brain/projects/:id/brief`（`task-projects.js`）：主会话直接改 brief，走同一套 `applyProjectBriefDelta` 与 A 档规则
+- `packages/engine/hooks/stop.sh` 接力棒闸提示文案追加可选 `brief_delta` 示例（纯文案，不改判定逻辑，不涉及 engine 版本五件套）
 
 ## Brain 1.348.6 — Projects 真身表升格（接力棒链 2afa6d69 棒1，决策 ee4842a6/3feeae3e）
 
