@@ -185,6 +185,12 @@ vi.mock('../workflow-run-lost-deadline.js', () => ({
   runWorkflowRunLostDeadline: vi.fn().mockResolvedValue({ scanned: 0, lost: 0 }),
 }));
 
+// commander-watchdog / workflow-trend-bark 真实 handler 会 ssh MMV 登记 escort 与发 Bark——单测绝不真发；行为由 commander-watchdog.test.js 覆盖。
+vi.mock('../commander-watchdog.js', () => ({
+  runCommanderWatchdog: vi.fn().mockResolvedValue({ scanned: 0, relaunched: 0, barked: 0 }),
+  runWorkflowTrendBark: vi.fn().mockResolvedValue({ skipped: 'outside_window' }),
+}));
+
 vi.mock('../ops-scheduler-liveness.js', () => ({
   runSchedulerLiveness: vi.fn().mockResolvedValue({ ok: true, jobs: 0, flippedDead: 0, recovered: 0 }),
 }));
@@ -352,6 +358,22 @@ describe('scheduler-jobs 注册表', () => {
     const pool = makePool();
     await runSchedulerJobsOnce(pool, [j]);
     expect(runWorkflowRunLostDeadline).toHaveBeenCalledWith(pool);
+  });
+
+  it('JOBS 注册了 commander-watchdog 与 workflow-trend-bark（needsPool、在 scheduler-liveness 之前、handler 真接线）', async () => {
+    const { runCommanderWatchdog, runWorkflowTrendBark } = await import('../commander-watchdog.js');
+    const names = JOBS.map((j) => j.name);
+    for (const [name, fn] of [['commander-watchdog', runCommanderWatchdog], ['workflow-trend-bark', runWorkflowTrendBark]]) {
+      const j = JOBS.find((x) => x.name === name);
+      expect(j, name).toBeDefined();
+      expect(j.needsPool).toBe(true);
+      expect(names.indexOf(name)).toBeLessThan(names.indexOf('scheduler-liveness'));
+      const pool = makePool();
+      await runSchedulerJobsOnce(pool, [j]);
+      expect(fn).toHaveBeenCalledWith(pool);
+    }
+    expect(JOBS.find((x) => x.name === 'commander-watchdog').description).toMatch(/心跳/);
+    expect(JOBS.find((x) => x.name === 'workflow-trend-bark').description).toMatch(/Bark/);
   });
 
   it('注册 scheduler-liveness 且排在 JOBS 末尾，把 JOBS 自身注入 handler（不 import 成环）', async () => {
