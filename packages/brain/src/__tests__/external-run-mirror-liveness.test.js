@@ -13,7 +13,7 @@
  * commander-watchdog（起跑 ≥15min）判据被重置；wall-report 阶段回执又把它设回 in_progress → 振荡。
  *
  * 契约：
- *   1. 镜像心跳新鲜（task_runs 阶段回执 / commander 心跳 / updated_at 任一 ≤ 阈值）→ 保持 in_progress，
+ *   1. 镜像心跳新鲜（SQL 内算龄：task_runs 阶段回执 / commander 心跳 / updated_at 任一 ≤ 阈值）→ 保持 in_progress，
  *      不回队、不清 started_at、不写 watchdog_*_requeue。
  *   2. 心跳陈旧（> 阈值）也不回队，只记一条 task_events external_liveness_stale（同一陈旧窗口只记一次），
  *      交给 lost-deadline / commander-watchdog 处理。
@@ -59,8 +59,7 @@ function makeMirrorTask(overrides = {}, payloadOverrides = {}) {
     claimed_by: null,
     claimed_at: null,
     started_at: agoIso(20 * MIN),
-    updated_at: agoIso(20 * MIN),
-    last_run_activity_at: null,
+    external_activity_age_sec: '1200',
     error_message: null,
     payload: {
       source: 'cron',
@@ -106,8 +105,8 @@ describe('外部 run 镜像（device_job source=cron / workflow_run）不得零�
     externalStaleNoted?.clear?.();
   });
 
-  it('device_job 镜像：wall-report 阶段回执新鲜（3 分钟前）→ 保持 in_progress，不回队、不清 started_at', async () => {
-    const task = makeMirrorTask({ last_run_activity_at: agoIso(3 * MIN) });
+  it('device_job 镜像：镜像心跳新鲜（SQL 判龄 3 分钟）→ 保持 in_progress，不回队、不清 started_at', async () => {
+    const task = makeMirrorTask({ external_activity_age_sec: '180' });
     markSuspect(task.id);
 
     const actions = await probeWith([task]);
@@ -119,21 +118,22 @@ describe('外部 run 镜像（device_job source=cron / workflow_run）不得零�
     expect(suspectProcesses.has(task.id)).toBe(false);
   });
 
-  it('device_job 镜像：仅 commander 心跳新鲜（payload.commander_heartbeat_at）也算活', async () => {
-    const task = makeMirrorTask({}, { commander_heartbeat_at: agoIso(4 * MIN) });
+  it('device_job 镜像：判龄列缺失（年龄未知）→ 不回队，按陈旧留痕一次（stale_minutes=null）', async () => {
+    const task = makeMirrorTask({ external_activity_age_sec: null });
     markSuspect(task.id);
 
     await probeWith([task]);
 
     expect(requeueCalls(task.id)).toHaveLength(0);
-    expect(eventCalls(task.id, 'external_liveness_stale')).toHaveLength(0);
+    const stale = eventCalls(task.id, 'external_liveness_stale');
+    expect(stale).toHaveLength(1);
+    expect(JSON.parse(stale[0][1][2]).stale_minutes).toBeNull();
   });
 
   it('device_job 镜像：心跳陈旧（40 分钟无回执）→ 仍不回队，只记 external_liveness_stale 一次', async () => {
     const task = makeMirrorTask({
       started_at: agoIso(60 * MIN),
-      updated_at: agoIso(40 * MIN),
-      last_run_activity_at: agoIso(40 * MIN),
+      external_activity_age_sec: '2400',
     }, { executed_at: agoIso(60 * MIN) });
     markSuspect(task.id);
 
@@ -158,7 +158,7 @@ describe('外部 run 镜像（device_job source=cron / workflow_run）不得零�
     const task = makeMirrorTask({
       id: 'da9a9886-e969-4e9b-ab11-b9109ebd2662',
       task_type: 'workflow_run',
-      last_run_activity_at: agoIso(2 * MIN),
+      external_activity_age_sec: '120',
     }, { source: undefined, headed_manual: undefined });
     markSuspect(task.id);
 
@@ -182,7 +182,7 @@ describe('既有行为不受影响', () => {
       claimed_by: 'worker-xian-m4',
       claimed_at: agoIso(60 * MIN),
       started_at: agoIso(60 * MIN),
-      updated_at: agoIso(60 * MIN),
+      external_activity_age_sec: '3600',
     }, { source: 'worker-claim', headed_manual: undefined });
     markSuspect(task.id);
 
@@ -202,8 +202,7 @@ describe('既有行为不受影响', () => {
       claimed_by: 'interactive-dev-skill',
       claimed_at: agoIso(30 * MIN),
       started_at: agoIso(30 * MIN),
-      updated_at: agoIso(30 * MIN),
-      last_run_activity_at: null,
+      external_activity_age_sec: null,
       error_message: null,
       payload: { headed_manual: 'true' },
     };
