@@ -14,7 +14,20 @@ import {
   PROJECT_STATUS_TO_NOTION,
 } from '../notion-relay-projection.js';
 
-const ROOT = { id: '11111111-1111-4111-8111-111111111111', title: '接力棒：任务留痕与长链', description: '主理人不说也有人动', status: 'in_progress', notion_props: null };
+const ROOT = {
+  id: '11111111-1111-4111-8111-111111111111',
+  title: '接力棒：任务留痕与长链',
+  description: '主理人不说也有人动',
+  status: 'in_progress',
+  notion_props: null,
+  brief: {
+    goal: '主理人不说也有人动',
+    status: '第一棒已完成，第二棒进行中',
+    facts: ['458 真列已落地'],
+    open_questions: [{ id: 'q1', text: '要不要拆两条链？', opened_by_task: 't0' }],
+    changelog: [{ at: '2026-09-23T01:00:00Z', task_id: 't0', kind: 'status', summary: '现状更新：第二棒进行中' }],
+  },
+};
 const SNAP = {
   children: [
     { id: 'c1', title: '第一棒：脊柱', status: 'completed', sequence_no: 1, last_done: '458 真列落地' },
@@ -35,11 +48,17 @@ describe('buildProjectProps / Body', () => {
     expect(PROJECT_STATUS_TO_NOTION.blocked).toBe('On Hold');
     expect(PROJECT_STATUS_TO_NOTION.completed).toBe('Completed');
   });
-  it('正文：四段齐全、子任务按序带状态、待拍板带指引、≤60 块，真身链接指向 /api/brain/projects/:id', () => {
+  it('正文：brief（目标/现状/已知事实/未决问题/变更日志）+ 链/待拍板/最近交接、≤60 块，真身链接指向 /api/brain/projects/:id', () => {
     const b = buildProjectBody(ROOT, SNAP);
     const txt = JSON.stringify(b);
     expect(txt).toContain('目标');
     expect(txt).toContain('主理人不说也有人动');
+    expect(txt).toContain('现状');
+    expect(txt).toContain('第一棒已完成，第二棒进行中');
+    expect(txt).toContain('458 真列已落地');
+    expect(txt).toContain('要不要拆两条链？');
+    expect(txt).toContain('变更日志');
+    expect(txt).toContain('现状更新：第二棒进行中');
     expect(txt).toContain('1. ✅ 第一棒：脊柱 — 458 真列落地');
     expect(txt).toContain('2. 🔄 第二棒：接棒');
     expect(txt).toContain('4 张无血管表删列？');
@@ -49,10 +68,26 @@ describe('buildProjectProps / Body', () => {
     expect(txt).not.toContain('/api/brain/tasks/' + ROOT.id + '/chain');
     expect(b.length).toBeLessThanOrEqual(60);
   });
-  it('digestOf 对同内容稳定、对改动敏感', () => {
+  it('digestOf 对同内容稳定、对改动敏感（含 brief 变化，棒2）', () => {
     const a = digestOf(buildProjectProps(ROOT, SNAP), buildProjectBody(ROOT, SNAP));
     expect(a).toBe(digestOf(buildProjectProps(ROOT, SNAP), buildProjectBody(ROOT, SNAP)));
     expect(a).not.toBe(digestOf(buildProjectProps({ ...ROOT, status: 'completed' }, SNAP), buildProjectBody(ROOT, SNAP)));
+    const briefChanged = { ...ROOT, brief: { ...ROOT.brief, status: '现状变了' } };
+    expect(a).not.toBe(digestOf(buildProjectProps(briefChanged, SNAP), buildProjectBody(briefChanged, SNAP)));
+  });
+  it('brief 为空壳且无 description（全新项目）→ 渲染占位文案，不报错', () => {
+    const b = buildProjectBody({ ...ROOT, brief: {}, description: null }, SNAP);
+    const txt = JSON.stringify(b);
+    expect(txt).toContain('未写目标');
+    expect(txt).toContain('未写现状');
+  });
+
+  it('brief.goal 为空但 projects.description 有内容（存量项目未走过 brief_delta）→ 目标退回 description', () => {
+    const b = buildProjectBody({ ...ROOT, brief: {} }, SNAP);
+    const txt = JSON.stringify(b);
+    expect(txt).toContain(ROOT.description);
+    expect(txt).not.toContain('未写目标');
+    expect(txt).toContain('未写现状'); // 现状没有退回字段，仍是占位
   });
 });
 

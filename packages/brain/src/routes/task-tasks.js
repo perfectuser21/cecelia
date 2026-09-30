@@ -18,7 +18,7 @@ import { normalizeChangeKind, CHANGE_KINDS } from '../impact-contract/change-kin
 import { registerTaskPatchRoute } from './task-task-patch.js';
 import { createRoutedTask } from '../work-routing-store.js';
 import { TASK_KINDS, isTaskKind } from '../lib/task-kind.js';
-import { CODING_MUTATION_TASK_TYPES as _CM } from '../lib/task-type-registry.js';
+import { CODING_MUTATION_TASK_TYPES as _CM, LAYER_RETIRED_TASK_TYPES } from '../lib/task-type-registry.js';
 import { assertGoalIsKeyResult } from '../lib/goal-guard.js';
 import { assertOwnerDecisionProtocol } from '../lib/owner-decision.js';
 import { normalizeDependsOn, assertDependsOnExist } from '../lib/task-dependencies.js';
@@ -74,6 +74,17 @@ router.post('/', async (req, res) => {
 
     if (!title || title.trim() === '') {
       return res.status(400).json({ error: 'title is required' });
+    }
+
+    // scope/initiative 层退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：这几个
+    // headless 拆解 task_type 的目标层已冻结，建单在入口统一拒绝（registry 行本身保留，
+    // 见 lib/task-type-registry.js LAYER_RETIRED_TASK_TYPES）。
+    if (LAYER_RETIRED_TASK_TYPES.includes(task_type)) {
+      return res.status(410).json({
+        error: 'layer_retired',
+        decision: 'ee4842a6',
+        message: `task_type="${task_type}" 所属层已退役，不再接受建单`,
+      });
     }
 
     // kind 真列入口校验（决策 df67a9d6）：给了就必须是 agent|workflow；不给由存储层按

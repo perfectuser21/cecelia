@@ -243,6 +243,17 @@ export const CODEX_SLOT_TASK_TYPES = tagged(CODEX);
 export const HARNESS_INFLIGHT_TASK_TYPES = tagged(INF);
 export const SYSTEM_TASK_TYPES = tagged(SYS);
 export const VALID_TASK_TYPES = tagged(V);
+
+/**
+ * scope/initiative 层退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：这 6 个
+ * headless 拆解类型的目标层（scope/initiative）已冻结（migration 499 写保护），建单
+ * 会打到一个必然报废的目标——直接在建单入口拒绝（actions.js createTask），错误码
+ * layer_retired。registry 行本身不删（保留历史任务可读、避免 registry-vs-base 审计红）。
+ */
+export const LAYER_RETIRED_TASK_TYPES = Object.freeze([
+  'scope_plan', 'initiative_plan', 'project_plan',
+  'okr_scope_plan', 'okr_initiative_plan', 'okr_project_plan',
+]);
 export const CONTENT_TASK_TYPES = tagged(FC);
 export const RESEARCH_TASK_TYPES = tagged(FR);
 export const REVIEW_TASK_TYPES = tagged(FV);

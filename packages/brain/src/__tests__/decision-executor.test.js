@@ -33,6 +33,13 @@ vi.mock('../tick.js', () => ({
   dispatchNextTask: vi.fn().mockResolvedValue({ dispatched: true, task_id: 'dispatched-task' })
 }));
 
+// project_brief_decision handler 动态 import 这个模块；业务逻辑单测见
+// lib/__tests__/project-brief-apply.test.js，这里只验证 handler 接线正确。
+const applyApprovedBriefEscalationMock = vi.fn().mockResolvedValue({ applied: true, brief: { goal: '新目标' } });
+vi.mock('../lib/project-brief-apply.js', () => ({
+  applyApprovedBriefEscalation: (...args) => applyApprovedBriefEscalationMock(...args),
+}));
+
 describe('decision-executor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -326,6 +333,20 @@ describe('decision-executor', () => {
 
         expect(result.success).toBe(true);
         expect(result.task_id).toBeDefined();
+      });
+    });
+
+    describe('project_brief_decision', () => {
+      it('批准 → 调用 applyApprovedBriefEscalation(pool, {projectId, escalated, taskId})，透传结果', async () => {
+        applyApprovedBriefEscalationMock.mockClear();
+        const result = await actionHandlers.project_brief_decision(
+          { project_id: 'proj-1', escalated: { goal: '新目标' }, task_id: 'task-1' },
+          { approved_by: 'alex' },
+        );
+        expect(applyApprovedBriefEscalationMock).toHaveBeenCalledTimes(1);
+        const [, args] = applyApprovedBriefEscalationMock.mock.calls[0];
+        expect(args).toEqual({ projectId: 'proj-1', escalated: { goal: '新目标' }, taskId: 'task-1' });
+        expect(result).toEqual({ success: true, applied: true, brief: { goal: '新目标' } });
       });
     });
 

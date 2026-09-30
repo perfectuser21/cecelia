@@ -466,31 +466,21 @@ function sampleCpuUsage() {
 function _resetCpuSampler() { platformResetCpuSampler(); }
 
 /**
- * Resolve repo_path from a project via okr_* metadata, then parent chain（project_repos 空表已删，迁移 482）.
- * Initiatives (sub-projects) have parent_id but no repo_path — walk up to find it.
- * Max 5 levels to prevent infinite loops.
+ * Resolve repo_path from a project（project_repos 空表已删，迁移 482）.
+ * 棒4（决策 ee4842a6/3feeae3e）：scope/initiative 层退役，task.project_id 现在
+ * 直接指向真身表 projects(id)，不再需要 okr_initiatives/okr_scopes/okr_projects
+ * 三表 UNION（旧实现每个分支都硬编码 NULL::uuid AS parent_id，"向上走父链"从未
+ * 真正执行过，等价于单层查询——这里按等价行为简化）。
+ * repo_path 优先取真身表自己的列，旧数据（迁移 497 搬家时未回填该列）回退读 metadata。
  */
 async function resolveRepoPath(projectId) {
-  let currentId = projectId;
-  for (let depth = 0; depth < 5 && currentId; depth++) {
-    // Fallback to okr_initiatives/okr_scopes/okr_projects metadata.repo_path（迁移：projects → new tables）
-    const result = await pool.query(
-      `SELECT metadata->>'repo_path' AS repo_path, NULL::uuid AS parent_id
-       FROM okr_initiatives WHERE id = $1
-       UNION ALL
-       SELECT metadata->>'repo_path' AS repo_path, NULL::uuid AS parent_id
-       FROM okr_scopes WHERE id = $1
-       UNION ALL
-       SELECT metadata->>'repo_path' AS repo_path, NULL::uuid AS parent_id
-       FROM okr_projects WHERE id = $1
-       LIMIT 1`,
-      [currentId]
-    );
-    if (result.rows.length === 0) return null;
-    if (result.rows[0].repo_path) return result.rows[0].repo_path;
-    currentId = result.rows[0].parent_id;
-  }
-  return null;
+  if (!projectId) return null;
+  const result = await pool.query(
+    `SELECT COALESCE(repo_path, metadata->>'repo_path') AS repo_path
+     FROM projects WHERE id = $1`,
+    [projectId]
+  );
+  return result.rows[0]?.repo_path || null;
 }
 
 // ============================================================

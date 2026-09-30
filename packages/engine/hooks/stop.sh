@@ -163,6 +163,9 @@ if [[ "${RELAY_HANDOFF_GATE:-on}" != "off" ]]; then
             echo "   curl -X PATCH $_RELAY_BRAIN/api/brain/tasks/$_tid -H 'Content-Type: application/json' \\"
             echo "     -d '{\"result\":{\"handoff\":{\"schema_version\":1,\"task_id\":\"$_tid\",\"title\":\"…\",\"verdict\":\"PASS\",\"done\":[\"…\"],\"not_done\":[],\"next_steps\":[{\"kind\":\"task|decision|done\",\"title\":\"…\"}],\"created_at\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}}'"
             echo "   （做完了就一并 PATCH status=completed；没做完也要写 not_done + next_steps 再走）"
+            echo "   任务挂了 project_id（接力棒链）、且项目现状/目标/事实/未决问题有变化 → handoff 里顺手带可选 brief_delta（棒2，决策 ee4842a6/3feeae3e），例："
+            echo '     "brief_delta":{"status":"…现状一句话…","add_facts":["…"],"open_questions":["…"],"close_questions":[{"id":"…","resolution":"…"}],"add_steps":[{"title":"…"}],"cancel_steps":["task-id"],"reorder":["task-id",...]}'
+            echo "   （改 goal 或一次 cancel_steps≥3 条会升级为待拍板，不直接生效，其余字段照常生效）"
             exit 2
         fi
     done

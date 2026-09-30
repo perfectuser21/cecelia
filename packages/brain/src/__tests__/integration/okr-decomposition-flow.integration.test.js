@@ -1,12 +1,16 @@
 /**
  * Integration Test: OKR 拆解端到端流程
  *
- * 测试新 OKR 表（objectives / key_results / okr_projects / okr_scopes / okr_initiatives）
- * 通过 Brain API 验证：
- *   1. 完整的层级创建链（Vision → Objective → KR → Project → Scope → Initiative）
- *   2. FK 级联删除（DELETE Objective → 子表全部删除）
- *   3. 树状层级查询 /api/brain/okr/tree
- *   4. KR 进度重算 recalculate-progress
+ * 棒4（决策 ee4842a6/3feeae3e）：okr_scopes / okr_initiatives 层退役——写操作一律 410
+ * layer_retired，只留只读历史。/api/brain/okr/projects 改指真身表 projects（与
+ * /api/brain/projects 复用同一套 routes/task-projects.js handler，读同一行）。
+ *
+ * 测试新链路：
+ *   1. Objective → KeyResult → Project（真身表 projects）创建链
+ *   2. POST /scopes、POST /initiatives 一律 410 layer_retired
+ *   3. 树状层级查询 /api/brain/okr/tree（project 层来自 projects 表）
+ *   4. KR 进度重算 recalculate-progress（无 task 时 current_value=0；project 聚合改写留给棒5，本测试不覆盖）
+ *   5. FK 级联行为：objective/KR 级联删除；projects.kr_id 是 ON DELETE SET NULL（非级联删除整行）
  *
  * 依赖：PostgreSQL cecelia_test 数据库可访问；路由通过进程内 Express 挂载，禁止误打生产 Brain。
  */
@@ -35,10 +39,9 @@ async function get(path) {
 }
 
 describe('OKR 拆解端到端集成测试', () => {
-  let visionId, objId, krId, projectId, scopeId, initiativeId;
+  let visionId, objId, krId, projectId;
 
   beforeAll(async () => {
-
     // Vision 通过 DB 直接创建（隔离测试数据）
     const visionRes = await testPool.query(
       `INSERT INTO visions (title, status) VALUES ($1, 'active') RETURNING id`,
@@ -48,21 +51,18 @@ describe('OKR 拆解端到端集成测试', () => {
   });
 
   afterAll(async () => {
-    // 清理 tasks 的 okr_initiative_id 引用（避免 FK 违约）
-    if (initiativeId) {
-      await testPool.query(
-        `UPDATE tasks SET okr_initiative_id = NULL WHERE okr_initiative_id = $1`,
-        [initiativeId]
-      );
+    // projects.kr_id 是 ON DELETE SET NULL，不会随 KR 删除而消失，需显式清理
+    if (projectId) {
+      await testPool.query(`DELETE FROM projects WHERE id = $1`, [projectId]);
     }
-    // 删除 Vision（ON DELETE CASCADE 自动清理 Objective/KR/Project/Scope/Initiative）
+    // 删除 Vision（ON DELETE CASCADE 自动清理 Objective/KR）
     if (visionId) {
       await testPool.query(`DELETE FROM visions WHERE id = $1`, [visionId]);
     }
     await testPool.end();
   });
 
-  // ─── 1. 层级创建链 ──────────────────────────────────────────────────────────
+  // ─── 1. 层级创建链（Project 层已改指真身表） ────────────────────────────────
 
   describe('okr-decomposition: 层级创建链', () => {
     it('创建 Objective（绑定 Vision）', async () => {
@@ -96,49 +96,43 @@ describe('OKR 拆解端到端集成测试', () => {
       krId = body.item.id;
     });
 
-    it('创建 okr_project（绑定 KR）', async () => {
+    it('创建 Project（绑定 KR）——写入真身表 projects，与 /api/brain/projects 同源', async () => {
       if (!krId) return;
       const { status, body } = await post('/projects', {
-        title: '[TEST] Project: 补充 P0 集成测试',
+        name: '[TEST] Project: 补充 P0 集成测试',
         kr_id: krId,
         status: 'planning',
       });
 
       expect(status).toBe(201);
-      expect(body.success).toBe(true);
-      expect(body.item.kr_id).toBe(krId);
-      projectId = body.item.id;
+      expect(body.kr_id).toBe(krId);
+      expect(body.name).toBe('[TEST] Project: 补充 P0 集成测试');
+      projectId = body.id;
     });
 
-    it('创建 okr_scope（绑定 okr_project）', async () => {
-      if (!projectId) return;
+    it('POST /scopes 一律 410 layer_retired（决策 ee4842a6，scope 层已退役）', async () => {
       const { status, body } = await post('/scopes', {
         title: '[TEST] Scope: Brain 测试',
         project_id: projectId,
-        status: 'planning',
       });
 
-      expect(status).toBe(201);
-      expect(body.success).toBe(true);
-      expect(body.item.project_id).toBe(projectId);
-      scopeId = body.item.id;
+      expect(status).toBe(410);
+      expect(body.error).toBe('layer_retired');
+      expect(body.decision).toBe('ee4842a6');
     });
 
-    it('创建 okr_initiative（绑定 Scope）', async () => {
-      if (!scopeId) return;
+    it('POST /initiatives 一律 410 layer_retired（决策 ee4842a6，initiative 层已退役）', async () => {
       const { status, body } = await post('/initiatives', {
         title: '[TEST] Initiative: 写 tick-full-loop 测试',
-        scope_id: scopeId,
-        status: 'planned',
+        scope_id: '00000000-0000-4000-8000-000000000000',
       });
 
-      expect(status).toBe(201);
-      expect(body.success).toBe(true);
-      expect(body.item.scope_id).toBe(scopeId);
-      initiativeId = body.item.id;
+      expect(status).toBe(410);
+      expect(body.error).toBe('layer_retired');
+      expect(body.decision).toBe('ee4842a6');
     });
 
-    it('GET 各层级单条记录', async () => {
+    it('GET 各层级单条记录（/projects/:id 与 /api/brain/projects/:id 读到同一行）', async () => {
       if (!objId || !krId || !projectId) return;
       const { status: s1, body: b1 } = await get(`/objectives/${objId}`);
       expect(s1).toBe(200);
@@ -150,7 +144,8 @@ describe('OKR 拆解端到端集成测试', () => {
 
       const { status: s3, body: b3 } = await get(`/projects/${projectId}`);
       expect(s3).toBe(200);
-      expect(b3.item.id).toBe(projectId);
+      expect(b3.id).toBe(projectId);
+      expect(b3.name).toBe('[TEST] Project: 补充 P0 集成测试');
     });
   });
 
@@ -176,7 +171,7 @@ describe('OKR 拆解端到端集成测试', () => {
       expect(obj.key_results.some(kr => kr.id === krId)).toBe(true);
     });
 
-    it('/okr/tree KR 层包含 projects 数组（全树扩展）', async () => {
+    it('/okr/tree KR 层包含 projects 数组（project 层来自真身表 projects，scopes 恒为空数组）', async () => {
       if (!objId || !krId) return;
       const { status, body } = await get(`/tree?vision_id=${visionId}`);
 
@@ -191,17 +186,18 @@ describe('OKR 拆解端到端集成测试', () => {
       expect(kr).toBeDefined();
       // 全树扩展：KR 必须包含 projects 数组（即使为空也应是数组）
       expect(Array.isArray(kr.projects)).toBe(true);
-      // 已创建的 project 应出现在 KR.projects 中
+      // 已创建的 project（真身表 projects）应出现在 KR.projects 中
       if (projectId) {
         expect(kr.projects.some(p => p.id === projectId)).toBe(true);
         const proj = kr.projects.find(p => p.id === projectId);
-        // project 必须包含 scopes 数组
+        // project 必须包含 scopes 数组（scope 层已退役，新建链路下恒为空）
         expect(Array.isArray(proj.scopes)).toBe(true);
+        expect(proj.scopes).toEqual([]);
       }
     });
   });
 
-  // ─── 3. KR 进度重算 ─────────────────────────────────────────────────────────
+  // ─── 3. KR 进度重算（project 聚合改写留给棒5，本测试只保底"无 task 时为 0"） ──────
 
   describe('okr-decomposition: recalculate-progress', () => {
     it('无 task 时 current_value = 0', async () => {
@@ -213,73 +209,30 @@ describe('OKR 拆解端到端集成测试', () => {
       expect(body.total_tasks).toBe(0);
       expect(body.current_value).toBe(0);
     });
-
-    it('1/2 task 完成时 current_value = 50（target=100）', async () => {
-      if (!krId || !initiativeId) return;
-      // 直接 DB 插入 2 个 task，1 个 completed
-      const t1Res = await testPool.query(
-        `INSERT INTO tasks (title, status, priority, task_type, okr_initiative_id)
-         VALUES ($1, 'completed', 'P1', 'dev', $2) RETURNING id`,
-        ['[TEST] completed task', initiativeId]
-      );
-      const t2Res = await testPool.query(
-        `INSERT INTO tasks (title, status, priority, task_type, okr_initiative_id)
-         VALUES ($1, 'queued', 'P1', 'dev', $2) RETURNING id`,
-        ['[TEST] queued task', initiativeId]
-      );
-      const t1Id = t1Res.rows[0].id;
-      const t2Id = t2Res.rows[0].id;
-
-      try {
-        const { status, body } = await post(`/key-results/${krId}/recalculate-progress`, {});
-
-        expect(status).toBe(200);
-        expect(body.success).toBe(true);
-        expect(body.completed_tasks).toBe(1);
-        expect(body.total_tasks).toBe(2);
-        expect(body.current_value).toBe(50);
-
-        // 验证 DB 中 current_value 确实更新
-        const dbRes = await testPool.query(
-          'SELECT current_value FROM key_results WHERE id = $1',
-          [krId]
-        );
-        expect(parseFloat(dbRes.rows[0].current_value)).toBe(50);
-      } finally {
-        await testPool.query('DELETE FROM tasks WHERE id = ANY($1)', [[t1Id, t2Id]]);
-      }
-    });
   });
 
-  // ─── 4. FK 级联删除 ─────────────────────────────────────────────────────────
+  // ─── 4. FK 级联行为（objective/KR 级联；projects.kr_id 是 SET NULL） ─────────────
 
-  describe('okr-decomposition: cascade DELETE', () => {
-    it('硬删除 Objective 后 KR/Project/Scope/Initiative 全部级联删除', async () => {
-      // 确认所有子对象存在
+  describe('okr-decomposition: objective/KR 级联删除，project 独立存续', () => {
+    it('硬删除 Objective 后 KR 级联删除；project 不删，kr_id 被置空', async () => {
+      // 确认 KR 存在
       const krBefore = await testPool.query('SELECT id FROM key_results WHERE id = $1', [krId]);
       expect(krBefore.rows.length).toBe(1);
 
-      // 硬删除 Objective 触发 ON DELETE CASCADE
+      // 硬删除 Objective 触发 ON DELETE CASCADE（objectives → key_results）
       await testPool.query('DELETE FROM objectives WHERE id = $1', [objId]);
 
       // 验证级联：KR 应不存在
       const krAfter = await testPool.query('SELECT id FROM key_results WHERE id = $1', [krId]);
       expect(krAfter.rows.length).toBe(0);
 
-      // 验证级联：okr_projects 应不存在
-      const projAfter = await testPool.query('SELECT id FROM okr_projects WHERE id = $1', [projectId]);
-      expect(projAfter.rows.length).toBe(0);
-
-      // 验证级联：okr_scopes 应不存在
-      const scopeAfter = await testPool.query('SELECT id FROM okr_scopes WHERE id = $1', [scopeId]);
-      expect(scopeAfter.rows.length).toBe(0);
-
-      // 验证级联：okr_initiatives 应不存在
-      const initAfter = await testPool.query('SELECT id FROM okr_initiatives WHERE id = $1', [initiativeId]);
-      expect(initAfter.rows.length).toBe(0);
+      // projects.kr_id 是 ON DELETE SET NULL：project 行本身不消失，只是 kr_id 变 NULL
+      const projAfter = await testPool.query('SELECT id, kr_id FROM projects WHERE id = $1', [projectId]);
+      expect(projAfter.rows.length).toBe(1);
+      expect(projAfter.rows[0].kr_id).toBeNull();
 
       // 标记已删除，防止 afterAll 重复删除
-      objId = null; krId = null; projectId = null; scopeId = null; initiativeId = null;
+      objId = null; krId = null;
     });
   });
 });

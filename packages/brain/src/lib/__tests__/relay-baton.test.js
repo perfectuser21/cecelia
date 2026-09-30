@@ -3,11 +3,14 @@
  *  1. normalizeNextSteps：字符串→note；对象保留 kind/title/detail；非法丢弃；未知 kind→note
  *  2. materializeNextSteps：task→createRoutedTask（source child、source_id 幂等、挂根）；decision→decisions pending（去重）；note→skipped
  *  3. ensureHandoffOnComplete：有 handoff 原样返回；没有→合成 synthesized 并 saveHandoff
- *  4. relayOnComplete：非 completed 不动；异常吞成 null
+ *  4. relayOnComplete：非 completed 不动；异常吞成 null；handoff.brief_delta → applyHandoffBriefDelta（棒2）
  */
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../../capture-inbox.js', () => ({ pushCaptureAtom: vi.fn(async () => null) }));
+
+const applyHandoffBriefDeltaMock = vi.fn(async () => null);
+vi.mock('../project-brief-apply.js', () => ({ applyHandoffBriefDelta: (...args) => applyHandoffBriefDeltaMock(...args) }));
 
 import { normalizeNextSteps, materializeNextSteps, ensureHandoffOnComplete, relayOnComplete } from '../relay-baton.js';
 
@@ -156,5 +159,38 @@ describe('relayOnComplete', () => {
   it('查库抛错 → null（不阻塞 PATCH）', async () => {
     const pool = { query: vi.fn(async () => { throw new Error('boom'); }) };
     expect(await relayOnComplete(pool, SELF)).toBeNull();
+  });
+
+  it('task 挂 project_id 且 handoff 带 brief_delta → 调用 applyHandoffBriefDelta(pool, task, handoff)，结果挂进返回值.brief（棒2，决策 ee4842a6/3feeae3e）', async () => {
+    applyHandoffBriefDeltaMock.mockClear();
+    applyHandoffBriefDeltaMock.mockResolvedValueOnce({ applied: true, brief: { goal: 'new goal' } });
+    const handoff = { schema_version: 1, done: ['a'], brief_delta: { status: '新现状' } };
+    const pool = { query: vi.fn(async (sql) => {
+      if (/SELECT id, title, status/.test(sql)) {
+        return { rows: [{ id: SELF, title: '第二棒', status: 'completed', priority: 'P1', task_type: 'dev', payload: {}, parent_task_id: ROOT, project_id: PROJECT_ID, result: { handoff }, summary: null }] };
+      }
+      return { rowCount: 1, rows: [] };
+    }) };
+    const out = await relayOnComplete(pool, SELF);
+    expect(applyHandoffBriefDeltaMock).toHaveBeenCalledTimes(1);
+    const [calledPool, calledTask, calledHandoff] = applyHandoffBriefDeltaMock.mock.calls[0];
+    expect(calledPool).toBe(pool);
+    expect(calledTask).toMatchObject({ id: SELF, project_id: PROJECT_ID });
+    expect(calledHandoff).toMatchObject({ brief_delta: { status: '新现状' } });
+    expect(out.brief).toEqual({ applied: true, brief: { goal: 'new goal' } });
+  });
+
+  it('applyHandoffBriefDelta 抛错 → 吞掉，接棒主流程不受影响', async () => {
+    applyHandoffBriefDeltaMock.mockClear();
+    applyHandoffBriefDeltaMock.mockRejectedValueOnce(new Error('brief boom'));
+    const pool = { query: vi.fn(async (sql) => {
+      if (/SELECT id, title, status/.test(sql)) {
+        return { rows: [{ id: SELF, title: '第二棒', status: 'completed', priority: 'P1', task_type: 'dev', payload: {}, parent_task_id: ROOT, project_id: PROJECT_ID, result: { handoff: { schema_version: 1, done: ['a'], brief_delta: { status: 'x' } } }, summary: null }] };
+      }
+      return { rowCount: 1, rows: [] };
+    }) };
+    const out = await relayOnComplete(pool, SELF);
+    expect(out).not.toBeNull();
+    expect(out.brief).toBeNull();
   });
 });

@@ -44,6 +44,8 @@ const PROPOSAL_DEFAULTS = {
   'quarantine_task':          { category: 'approval', priority: 'urgent', expiresHours: 24 },
   'request_human_review':     { category: 'approval', priority: 'normal', expiresHours: 24 },
   'adjust_strategy':          { category: 'approval', priority: 'normal', expiresHours: 24 },
+  // 项目简报 A 档升级（决策 105a5868，链 2afa6d69 棒2）：改 goal / 一次砍≥3 棒 待拍板，72h 默认。
+  'project_brief_decision':   { category: 'approval', priority: 'urgent', expiresHours: 72 },
 };
 
 // ============================================================
@@ -723,6 +725,24 @@ const actionHandlers = {
       via: RESOLUTION_VIA.APPROVE,
       pendingActionId: context?.pending_action_id ?? null,
     });
+  },
+
+  /**
+   * 项目简报 A 档升级批准（决策 105a5868，链 2afa6d69 棒2）：主理人在这个待办上点批准 = 接受变更，
+   * 把被扣下的 goal / cancel_steps 强制应用（force:true，不再二次升档）。点拒绝走通用
+   * rejectPendingAction（不触发本 handler），brief 保持不变——对称设计，不需要在这里分支处理 choice。
+   */
+  async project_brief_decision(params, _context, _db) {
+    // 注意：这里故意不复用 approvePendingAction 的事务 client（applyProjectBriefDelta 自己
+    // 管一段独立事务，client.connect() 不能嵌套在已开的事务里）——与 owner_decision 走事务内
+    // 复用不同，这里接受「批准已落但 brief 写入失败」的极小窗口，换来实现简单、失败不拖垮批准本身。
+    const { applyApprovedBriefEscalation } = await import('./lib/project-brief-apply.js');
+    const result = await applyApprovedBriefEscalation(pool, {
+      projectId: params.project_id,
+      escalated: params.escalated,
+      taskId: params.task_id ?? null,
+    });
+    return { success: true, applied: Boolean(result?.applied), brief: result?.brief ?? null };
   },
 };
 

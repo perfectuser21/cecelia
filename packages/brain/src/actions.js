@@ -7,7 +7,7 @@ import { getDomainRole } from './role-registry.js';
 import { createRoutedTask } from './work-routing-store.js';
 import {
   CONTENT_TASK_TYPES as _C, RESEARCH_TASK_TYPES as _R, REVIEW_TASK_TYPES as _V, CODING_TASK_TYPES as _K,
-  NO_GOAL_TASK_TYPES,
+  NO_GOAL_TASK_TYPES, LAYER_RETIRED_TASK_TYPES,
 } from './lib/task-type-registry.js';
 
 const N8N_API_URL = process.env.N8N_API_URL || 'http://localhost:5679';
@@ -72,6 +72,16 @@ function legacyWorkContract({ taskType, mutationIntent, workDomain }) {
  */
 async function createTask({ title, description, priority, project_id, area_id, goal_id, okr_initiative_id, ability_id, blocked_at, tags, task_type, status, location, context, prd_content, execution_profile, payload, trigger_source, domain: domainInput, owner_role: ownerRoleInput, delivery_type, created_by, dept, phase, executor_kind, journey_id, dedupe_key, dedupe_ttl_sec, source, source_id, mutation_intent, declared_domain, declared_change_kind, execution_profile_override_request, repo_hint, map_scope_hint, branch, base_sha, parent_task_id, sequence_no = null, allow_unscoped = false, db = pool }) {
   const requestedTaskType = task_type || 'dev';
+
+  // scope/initiative 层退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：这几个
+  // headless 拆解 task_type 的目标层已冻结，建单在这里统一拒绝，不让请求打到
+  // 一个必然失败的下游（registry 行本身保留，见 lib/task-type-registry.js）。
+  if (LAYER_RETIRED_TASK_TYPES.includes(requestedTaskType)) {
+    const error = `layer_retired: task_type="${requestedTaskType}" 所属层已退役（决策 ee4842a6），不再接受建单`;
+    console.error(`[Action] ${error}`);
+    return { success: false, error: 'layer_retired', decision: 'ee4842a6', message: error };
+  }
+
   // Validate goal_id (required for most tasks except system tasks)
   if (!goal_id && !allow_unscoped && !isSystemTask(requestedTaskType, trigger_source)) {
     const error = `goal_id is required for task_type="${requestedTaskType}" trigger_source="${trigger_source}"`;
@@ -188,103 +198,48 @@ async function createTask({ title, description, priority, project_id, area_id, g
 }
 
 /**
- * Create a new Initiative (写入 projects 表, type='initiative')
- * Initiative = 1-2 小时的功能模块，挂在 Project 下面
+ * 已退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：Initiative 层随
+ * okr_initiatives 一起冻结，不再写入任何表。GTD 模型下"1-2 小时功能模块"直接
+ * 建 tasks 行挂 project_id，不再经过 Initiative 这层。
+ * 保留函数签名与调用方（routes/actions.js /action/create-initiative）兼容，
+ * 恒返回 layer_retired，不查询数据库。
  * @param {Object} params
- * @param {string} params.name - Initiative name
- * @param {string} params.parent_id - Project ID (type='project' 的那个)
- * @param {string} params.kr_id - 关联的 KR ID
- * @param {string} params.decomposition_mode - 'known'
- * @param {string} params.description - Initiative description
- * @param {string} params.plan_content - Plan document content
- * @param {string} params.domain - Business domain (coding/quality/agent_ops/...)
- * @param {string} params.owner_role - Role owning this initiative (auto-inferred from domain if omitted)
+ * @param {string} params.name
+ * @param {string} params.parent_id
+ * @returns {Promise<{ success: false, error: string, decision: string, message: string }>}
  */
-async function createInitiative({ name, parent_id, kr_id, decomposition_mode, description, plan_content, execution_mode, dod_content, domain, owner_role }) {
+async function createInitiative({ name, parent_id } = {}) {
   if (!name || !parent_id) {
     return { success: false, error: 'name and parent_id are required' };
   }
-
-  const isOrchestrated = execution_mode === 'orchestrated';
-
-  const resolvedOwnerRole = domain
-    ? (owner_role || getDomainRole(domain))
-    : (owner_role || null);
-
-  const result = await pool.query(`
-    INSERT INTO okr_initiatives (title, scope_id, description, status, owner_role, metadata)
-    VALUES ($1, $2, $3, 'running', $4, $5)
-    RETURNING *, title AS name
-  `, [
-    name,
-    parent_id,
-    description || '',
-    resolvedOwnerRole,
-    JSON.stringify({
-      kr_id: kr_id || null,
-      decomposition_mode: decomposition_mode || 'known',
-      plan_content: plan_content || null,
-      execution_mode: execution_mode || 'cecelia',
-      current_phase: isOrchestrated ? 'plan' : null,
-      dod_content: dod_content ? JSON.stringify(dod_content) : null,
-      domain: domain || null,
-    }),
-  ]);
-
-  const initiativeRow = result.rows[0];
-  const meta = typeof initiativeRow.metadata === 'string'
-    ? JSON.parse(initiativeRow.metadata)
-    : (initiativeRow.metadata || {});
-  const initiative = { ...initiativeRow, ...meta };
-  // dod_content stored as JSON string in metadata; parse back to object
-  if (typeof initiative.dod_content === 'string') {
-    try { initiative.dod_content = JSON.parse(initiative.dod_content); } catch { /* leave as string */ }
-  }
-  const modeLabel = isOrchestrated ? 'orchestrated' : (decomposition_mode || 'known');
-  console.log(`[Action] Created initiative: ${initiative.id} - ${name} (mode: ${modeLabel})`);
-
-  return { success: true, initiative };
+  return {
+    success: false,
+    error: 'layer_retired',
+    decision: 'ee4842a6',
+    message: 'Initiative 层已退役，GTD 模型下请直接创建 task 并挂 project_id',
+  };
 }
 
 /**
- * Create a new Scope (写入 projects 表, type='scope')
- * Scope = 2-3 天的功能边界分组，挂在 Project 下面
- * 行业术语来自 Shape Up 方法论，作为 Project→Initiative 之间的中间层
+ * 已退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：Scope 层随
+ * okr_scopes 一起冻结，不再写入任何表。
+ * 保留函数签名与调用方（routes/actions.js /action/create-scope）兼容，
+ * 恒返回 layer_retired，不查询数据库。
  * @param {Object} params
- * @param {string} params.name - Scope name
- * @param {string} params.parent_id - Project ID (type='project' 的那个)
- * @param {string} params.description - Scope description
- * @param {string} params.domain - Business domain
- * @param {string} params.owner_role - Role owning this scope
+ * @param {string} params.name
+ * @param {string} params.parent_id
+ * @returns {Promise<{ success: false, error: string, decision: string, message: string }>}
  */
-async function createScope({ name, parent_id, description, domain: domainInput, owner_role: ownerRoleInput }) {
+async function createScope({ name, parent_id } = {}) {
   if (!name || !parent_id) {
     return { success: false, error: 'name and parent_id are required' };
   }
-
-  const detected = detectDomain(`${name} ${description || ''}`);
-  const domain = domainInput ?? detected.domain;
-  const owner_role = ownerRoleInput ?? detected.owner_role;
-
-  const result = await pool.query(`
-    INSERT INTO okr_scopes (title, project_id, description, status, owner_role, metadata)
-    VALUES ($1, $2, $3, 'active', $4, $5)
-    RETURNING *, title AS name
-  `, [
-    name,
-    parent_id,
-    description || '',
-    owner_role,
-    JSON.stringify({ decomposition_depth: 1, domain }),
-  ]);
-
-  const scopeRow = result.rows[0];
-  const scopeMeta = typeof scopeRow.metadata === 'string'
-    ? JSON.parse(scopeRow.metadata)
-    : (scopeRow.metadata || {});
-  const scope = { ...scopeRow, ...scopeMeta };
-  console.log(`[Action] Created scope: ${scope.id} - ${name} (parent: ${parent_id})`);
-  return { success: true, scope };
+  return {
+    success: false,
+    error: 'layer_retired',
+    decision: 'ee4842a6',
+    message: 'Scope 层已退役，GTD 模型下请直接创建 task 并挂 project_id',
+  };
 }
 
 /**
@@ -307,28 +262,29 @@ async function createProject({ name, description, repo_path, repo_paths, kr_ids,
   const domain = domainInput ?? detected.domain;
   const owner_role = ownerRoleInput ?? detected.owner_role;
 
+  // 棒4（决策 ee4842a6/3feeae3e）：Project 创建真身表已改指 projects（与棒1
+  // /api/brain/projects、/api/brain/okr/projects 同一张表）；okr_projects 停写
+  // （migration 499 写保护），repo_path 落真身表自己的列，不再塞进 metadata。
   const primaryRepo = repo_path || (repo_paths?.[0]) || null;
   const result = await pool.query(`
-    INSERT INTO okr_projects (title, description, status, owner_role, metadata)
-    VALUES ($1, $2, 'active', $3, $4)
-    RETURNING *, title AS name
+    INSERT INTO projects (name, description, status, owner_role, repo_path, metadata)
+    VALUES ($1, $2, 'active', $3, $4, $5)
+    RETURNING *
   `, [
     name,
     description || '',
     owner_role,
-    JSON.stringify({ repo_path: primaryRepo, domain }),
+    primaryRepo,
+    JSON.stringify({ domain }),
   ]);
 
   const projectRow = result.rows[0];
-  const projMeta = typeof projectRow.metadata === 'string'
-    ? JSON.parse(projectRow.metadata)
-    : (projectRow.metadata || {});
-  const project = { ...projectRow, repo_path: projMeta.repo_path || null };
+  const project = { ...projectRow, repo_path: projectRow.repo_path || null };
 
-  // Link to first KR if provided (okr_projects has kr_id column)
+  // Link to first KR if provided
   if (Array.isArray(kr_ids) && kr_ids.length > 0) {
     await pool.query(
-      'UPDATE okr_projects SET kr_id = $1 WHERE id = $2',
+      'UPDATE projects SET kr_id = $1 WHERE id = $2',
       [kr_ids[0], project.id]
     );
     project.kr_id = kr_ids[0];

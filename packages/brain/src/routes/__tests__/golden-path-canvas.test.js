@@ -6,6 +6,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockQuery = vi.fn();
 vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
 
+// golden_path 旧表已退役（任务 7d312fd8）：画布/回写路由只在应急放行窗口下可达，
+// 默认 410 见 abilities.test.js「golden_path 退役」用例。
+process.env.GOLDEN_PATH_LEGACY_READ = '1';
+
 async function makeApp() {
   const { default: router } = await import('../abilities.js');
   const express = (await import('express')).default;

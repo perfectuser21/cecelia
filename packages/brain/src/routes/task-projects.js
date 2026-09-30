@@ -6,8 +6,10 @@
  * POST /       — 新建 project（name 必填；kr_id 若给必须存在于 key_results，否则 400 kr_id_not_key_result）
  * PATCH /:id   — 更新 project 字段（name/title(兼容)/description/status/kr_id/owner_role/start_date/end_date/metadata/area_id）
  *
- * 与 /api/brain/okr/projects（routes/okr-hierarchy.js mountCrud）读写同一张 projects 表。
- * 原 okr_projects 表保留不动（28 个直接读它的文件的退役是接力棒后续棒的工作，本棒不碰）。
+ * 棒4（决策 ee4842a6/3feeae3e）起：/api/brain/okr/projects（routes/okr-hierarchy.js）
+ * 直接 `router.use('/projects', taskProjectsRoutes)` 复用本文件的 router，与
+ * /api/brain/projects 是同一份代码、同一张 projects 表，不会读到不同的行。
+ * 原 okr_projects 表保留不动，只读历史（migration 499 加了写保护 trigger）。
  */
 
 import { Router } from 'express';
@@ -35,9 +37,12 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // custom_props 是 NOT NULL DEFAULT '{}'（迁移 497）：显式传 null 会撞 not-null 违例，
+    // 未传时必须落回 DB 默认值，COALESCE 兜底（棒4 起 /api/brain/okr/projects 复用本路由，
+    // 真库集成测试才把这条撞出来——之前只有 mock 测试覆盖不到 NOT NULL 约束）。
     const result = await pool.query(
       `INSERT INTO projects (name, description, status, area_id, kr_id, owner_role, start_date, end_date, metadata, custom_props)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, '{}'::jsonb)) RETURNING *`,
       [name, description, status, area_id, kr_id, owner_role, start_date, end_date, metadata, custom_props]
     );
     res.status(201).json(result.rows[0]);
@@ -241,6 +246,28 @@ router.get('/:id', async (req, res) => {
     children_count: counts.rows[0]?.total ?? 0,
     completed_count: counts.rows[0]?.completed ?? 0,
   });
+});
+
+// PATCH /projects/:id/brief — 主会话直接改项目简报（棒2，决策 ee4842a6/3feeae3e）
+// Body: { brief_delta: {...}, task_id?: string }。同走 applyBriefDelta + A 档权限分档
+// （改 goal / 一次砍 ≥3 棒 → 升 pending_actions，不直接生效；其余字段照常生效）。
+router.patch('/:id/brief', async (req, res) => {
+  try {
+    const { brief_delta, task_id = null } = req.body || {};
+    if (!brief_delta || typeof brief_delta !== 'object' || Array.isArray(brief_delta)) {
+      return res.status(400).json({ error: 'brief_delta is required and must be an object' });
+    }
+    const { applyProjectBriefDelta } = await import('../lib/project-brief-apply.js');
+    const result = await applyProjectBriefDelta(pool, { projectId: req.params.id, rawDelta: brief_delta, taskId: task_id });
+    if (!result) {
+      const exists = await pool.query('SELECT id FROM projects WHERE id = $1', [req.params.id]);
+      if (!exists.rows.length) return res.status(404).json({ error: 'Project not found', id: req.params.id });
+      return res.status(400).json({ error: 'brief_delta 清洗后为空（全部字段非法），未生效' });
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update project brief', details: err.message });
+  }
 });
 
 // PATCH /projects/:id — 更新 project 字段

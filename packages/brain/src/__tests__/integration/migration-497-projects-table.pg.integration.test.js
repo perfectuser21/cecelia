@@ -72,7 +72,12 @@ beforeAll(async () => {
   await pool.query(`INSERT INTO visions (id, title) VALUES ('a0000000-0000-4000-8000-00000000000a', 'v')`);
   await pool.query(`INSERT INTO objectives (id, vision_id, title) VALUES ('a0000000-0000-4000-8000-00000000000b', 'a0000000-0000-4000-8000-00000000000a', 'o')`);
   await pool.query(`INSERT INTO key_results (id, objective_id, title) VALUES ($1, 'a0000000-0000-4000-8000-00000000000b', 'kr')`, [KR_ID]);
+  // migrate.js 跑的是全量迁移链，499 也会一并生效（okr_projects 写保护 trigger）。
+  // 这里是在模拟"497 之前就存在的历史 okr_projects 数据"，绕过该 trigger 只为播种，
+  // 不代表退役后还允许正常写路径写 okr_projects（决策 ee4842a6，棒4）。
+  await pool.query(`SET session_replication_role = replica`);
   await pool.query(`INSERT INTO okr_projects (id, kr_id, title, status) VALUES ($1, $2, 'seed 项目', 'active')`, [SEED_PROJECT_ID, KR_ID]);
+  await pool.query(`SET session_replication_role = DEFAULT`);
 
   rootId = randomUUID();
   child1Id = randomUUID();

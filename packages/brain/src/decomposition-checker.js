@@ -17,7 +17,6 @@
 
 import pool from './db.js';
 import { computeCapacity as _computeCapacity, isAtCapacity as _isAtCapacity } from './capacity.js';
-import { validateTaskDescription } from './task-quality-gate.js';
 import { createTask } from './actions.js';
 // [已清理] getDomainRole, ROLES — 不再需要（initiative_plan 路径已删除）
 
@@ -106,33 +105,20 @@ async function canCreateDecompositionTask() {
 }
 
 /**
- * Create a decomposition task for 秋米.
+ * Create a decomposition task for 秋米。
+ *
+ * 已退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：本函数固定建
+ * task_type='initiative_plan'，而 initiative_plan 是 scope/initiative 拆解机器
+ * 的一部分，已在 lib/task-type-registry.js 的 LAYER_RETIRED_TASK_TYPES 标记退役——
+ * actions.js createTask 会直接拒绝这个 task_type。这里在调用前就短路返回
+ * rejected（省一次必然失败的 createTask 往返），调用方（Check A/C）已有
+ * `if (task && !task.rejected)` 分支优雅处理，无需改调用方。
  */
-async function createDecompositionTask({ title, description, goalId, projectId, payload }) {
+async function createDecompositionTask({ title, goalId }) {
   if (!goalId) {
     throw new Error(`[decomp-checker] Refusing to create task without goalId: "${title}"`);
   }
-
-  // Quality gate
-  const validation = validateTaskDescription(description);
-  if (!validation.valid) {
-    console.warn(`[decomp-checker] Quality gate REJECTED "${title}": ${validation.reasons.join('; ')}`);
-    return { id: null, title, rejected: true, reasons: validation.reasons };
-  }
-
-  const created = await createTask({
-    source: 'discovery',
-    source_id: `decomposition:${goalId}:${projectId || 'root'}`,
-    title,
-    description,
-    goal_id: goalId,
-    project_id: projectId || null,
-    task_type: 'initiative_plan',
-    priority: 'P0',
-    trigger_source: 'brain_auto',
-    payload: { decomposition: 'true', ...payload },
-  });
-  return created.task;
+  return { id: null, title, rejected: true, reasons: ['layer_retired: initiative_plan 层已退役（决策 ee4842a6）'] };
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -206,66 +192,16 @@ async function checkPendingKRs() {
 // ───────────────────────────────────────────────────────────────────
 
 /**
- * 检测 ready KR 下的 Initiative，如果没有活跃 Task 则标记 needs_task。
- * planner 会在下一轮 tick 中看到这些 Initiative 并创建 Task。
- *
- * 同时处理 KR 状态流转：
- *   - ready KR 下有 in_progress 的 Task → KR 状态改 in_progress
- *   - ready/in_progress KR 下所有 Initiative 完成 → KR 状态改 completed
+ * 已退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：原逻辑经
+ * okr_initiatives → okr_scopes → okr_projects 查询该 KR 下的 Initiative，驱动
+ * ready→in_progress / →completed 两个 KR 状态流转。scope/initiative 层退役后
+ * （migration 499 写保护）这条链不再产生数据，查询已清空为 no-op——这两个 KR
+ * 状态流转的新公式（基于 project/task 而非 initiative）是接力棒棒5的工作范围，
+ * 本棒不做。runDecompositionChecks 仍在每次 tick 调用本函数（call site 不改，
+ * 影响面最小），现在恒返回空数组、不再查询 okr_initiatives/okr_scopes/okr_projects。
  */
 async function checkReadyKRInitiatives() {
-  const actions = [];
-
-  // 找 ready 或 in_progress 状态的 KR（新 OKR 表：key_results）
-  const readyKRs = await pool.query(`
-    SELECT g.id, g.title, g.status
-    FROM key_results g
-    WHERE g.status IN ('ready', 'in_progress')
-  `);
-
-  for (const kr of readyKRs.rows) {
-    // 找这个 KR 下的所有 active Initiative
-    // 两种链接方式：
-    //   1. Initiative → 父 Project → project_kr_links → KR（标准层级）
-    //   2. Initiative.kr_id 直接指向 KR（无父 project 的扁平结构）
-    const initiatives = await pool.query(`
-      SELECT i.id, i.title AS name, i.status, i.metadata->>'domain' AS domain,
-        (SELECT COUNT(*) FROM tasks t WHERE t.okr_initiative_id = i.id AND t.status IN ('queued', 'in_progress')) as active_tasks,
-        (SELECT COUNT(*) FROM tasks t WHERE t.okr_initiative_id = i.id AND t.status = 'in_progress') as running_tasks
-      FROM okr_initiatives i
-      JOIN okr_scopes os ON i.scope_id = os.id
-      JOIN okr_projects op ON os.project_id = op.id
-      WHERE op.kr_id = $1
-        AND i.status IN ('running')
-    `, [kr.id]);
-
-    // KR 状态流转：ready → in_progress（有任务在跑时）
-    if (kr.status === 'ready') {
-      const hasRunning = initiatives.rows.some(i => parseInt(i.running_tasks) > 0);
-      if (hasRunning) {
-        await pool.query(`UPDATE key_results SET status = 'in_progress', updated_at = NOW() WHERE id = $1`, [kr.id]);
-        console.log(`[decomp-checker] KR ${kr.id} → in_progress (tasks running)`);
-        actions.push({ action: 'status_change', check: 'kr_status', goal_id: kr.id, from: 'ready', to: 'in_progress' });
-      }
-    }
-
-    // KR 完成检查：所有 Initiative 都 done → KR completed
-    if (initiatives.rows.length > 0 && initiatives.rows.every(i => i.status === 'done' || i.status === 'archived')) {
-      // 确认确实没有 running initiative
-      const activeCount = initiatives.rows.filter(i => i.status === 'running').length;
-      if (activeCount === 0) {
-        await pool.query(`UPDATE key_results SET status = 'completed', updated_at = NOW() WHERE id = $1`, [kr.id]);
-        console.log(`[decomp-checker] KR ${kr.id} → completed (all initiatives done)`);
-        actions.push({ action: 'status_change', check: 'kr_status', goal_id: kr.id, from: kr.status, to: 'completed' });
-        continue;
-      }
-    }
-
-    // [已删除] initiative_plan 自动创建逻辑 — 改用 pr_plans 路径驱动 Initiative 执行
-    // Initiative 无活跃 Task 时，由 planner.js 的 pr_plans 路径负责创建下一个 Task
-  }
-
-  return actions;
+  return [];
 }
 
 // ───────────────────────────────────────────────────────────────────

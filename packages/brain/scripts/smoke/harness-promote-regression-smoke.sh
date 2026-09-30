@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # harness-promote-regression-smoke.sh
-# 真环境 smoke：A3 promoteToRegression 的 DB 冻结层 + 解析/幂等纯函数全链路。
+# 真环境 smoke：A3 promoteToRegression —— golden_path 旧表已退役（任务 7d312fd8），不再写库；
+# yaml 冻结层照常；dbOnly（callback T2 形态）零副作用返回 golden_path_retired。
 # git/gh 外部调用注入 no-op mock（smoke 不真开 PR），yaml 写到临时目录。
 set -euo pipefail
 
@@ -40,20 +41,17 @@ const r1 = await promoteToRegression(
   { pool, execFile: execFileMock },
   { task: { id: taskId, payload: {} }, sprintDir, subTasks: [], worktreePath: wt },
 );
-if (!r1.dbWritten) { console.error("FAIL: dbWritten=false", r1); process.exit(1); }
-
+if (r1.dbWritten !== false) { console.error("FAIL: 退役后 dbWritten 应恒为 false", r1); process.exit(1); }
 const c1 = await pool.query("SELECT count(*)::int AS n FROM golden_path WHERE owner_task_id=$1", [taskId]);
-if (c1.rows[0].n !== 2) { console.error("FAIL: golden_path 行数=" + c1.rows[0].n + " 期望 2"); process.exit(1); }
-console.log("✓ golden_path 表覆盖写 2 行");
+if (c1.rows[0].n !== 0) { console.error("FAIL: 旧表被写入 " + c1.rows[0].n + " 行"); process.exit(1); }
+console.log("✓ 不再写 golden_path 旧表");
 
-// 幂等：再跑一次不翻倍
 const r2 = await promoteToRegression(
   { pool, execFile: execFileMock },
-  { task: { id: taskId, payload: {} }, sprintDir, subTasks: [], worktreePath: wt },
+  { task: { id: taskId, payload: {} }, sprintDir, subTasks: [], worktreePath: wt, dbOnly: true },
 );
-const c2 = await pool.query("SELECT count(*)::int AS n FROM golden_path WHERE owner_task_id=$1", [taskId]);
-if (c2.rows[0].n !== 2) { console.error("FAIL: 二次跑后行数=" + c2.rows[0].n + " 期望 2（覆盖非叠加）"); process.exit(1); }
-console.log("✓ 幂等：二次 PASS 覆盖不叠加");
+if (r2.reason !== "golden_path_retired" || r2.ok !== true) { console.error("FAIL: dbOnly 应返回 golden_path_retired", r2); process.exit(1); }
+console.log("✓ dbOnly 零副作用返回 golden_path_retired");
 
 // yaml 冻结形态（本地文件层断言）
 const yaml = fs.readFileSync(path.join(wt, "regression-contract.yaml"), "utf8");
@@ -63,7 +61,6 @@ if (!yaml.includes("GP-" + String(taskId).slice(0,8) + "-001") || !yaml.includes
 console.log("✓ regression-contract.yaml 冻结条目含 id + test_command");
 
 // 清理
-await pool.query("DELETE FROM golden_path WHERE owner_task_id=$1", [taskId]);
 await pool.query("DELETE FROM tasks WHERE id=$1", [taskId]);
 fs.rmSync(wt, { recursive: true, force: true });
 await pool.end();

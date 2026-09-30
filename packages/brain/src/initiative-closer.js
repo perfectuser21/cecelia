@@ -1,277 +1,63 @@
 /**
- * Initiative 闭环检查器
+ * Initiative 闭环检查器（已退役，决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）
  *
- * 每次 tick 触发，纯 SQL 逻辑，无 LLM。
+ * scope/initiative 两层拆解机器随 GTD O→KR→Project→Task 四级模型退役而冻结：
+ * okr_initiatives / okr_scopes / okr_projects 停写停读（migration 499 加了写保护
+ * trigger，本文件是"停读"那一半——原逻辑整段查 okr_initiatives/okr_scopes/okr_projects，
+ * 业务意义已不存在，不再改读 projects，直接清空为 no-op）。
  *
- * 逻辑：
- *   1. 查所有 status='running' 的 okr_initiatives
- *   2. 对每个 initiative，查 tasks 状态分布
- *   3. 如果 total > 0 AND queued = 0 AND in_progress = 0 → 标记完成
- *   4. 更新 okr_initiatives status='done', completed_at=NOW()
- *   5. INSERT INTO cecelia_events (event_type='initiative_completed', ...)
- *   6. 返回关闭数量
+ * 保留原函数签名/导出名不变，只是函数体不再碰数据库：
+ *   - tick-runner.js 仍在每轮调用这几个函数（改调用点是不必要的连带改动），
+ *     它们现在什么都不做，直接返回"零变化"结果，tick 一轮因此不再产生任何
+ *     对 okr_initiatives/okr_scopes/okr_projects 的查询。
+ *   - getMaxActiveInitiatives / MAX_ACTIVE_INITIATIVES 与 scope/initiative 拆解
+ *     无关（纯 worker slot 容量公式），不受影响，原样保留。
  *
- * 触发位置：tick.js Section 0.8（每次 tick 都跑，SQL 轻量）
+ * 触发位置：tick.js Section 0.8-0.10（原逻辑，函数本身已 no-op）。
  */
 
 import { computeCapacity } from './capacity.js';
-import { updateKrProgress } from './kr-progress.js';
-import { reviewProjectCompletion as _reviewProjectCompletion, shouldAdjustPlan, createPlanAdjustmentTask } from './progress-reviewer.js';
-import { createTask } from './actions.js';
 
-/**
- * 检查并关闭已完成的 Initiatives。
- *
- * @param {import('pg').Pool} pool - PostgreSQL 连接池
- * @returns {Promise<{ closedCount: number, closed: Array<{id: string, name: string}>, activatedCount: number }>}
- */
-async function checkInitiativeCompletion(pool) {
-  // 查所有 running 的 initiatives（生命周期：planned→queued→running→done/failed）
-  const initiativesResult = await pool.query(`
-    SELECT id, title AS name
-    FROM okr_initiatives
-    WHERE status IN ('running')
-  `);
-
-  const initiatives = initiativesResult.rows;
-  if (initiatives.length === 0) {
-    return { closedCount: 0, closed: [], activatedCount: 0 };
-  }
-
-  const closed = [];
-
-  for (const initiative of initiatives) {
-    // 查该 initiative 下的 tasks 状态分布（排除 dep_failed：它们被阻塞，不算活跃）
-    const statsResult = await pool.query(`
-      SELECT
-        COUNT(*) FILTER (WHERE status != 'dep_failed')    AS total,
-        COUNT(*) FILTER (WHERE status = 'queued')          AS queued,
-        COUNT(*) FILTER (WHERE status = 'in_progress')     AS in_progress,
-        COUNT(*) FILTER (WHERE status = 'dep_failed')      AS dep_failed,
-        COUNT(*) FILTER (WHERE status = 'quarantined')     AS quarantine
-      FROM tasks
-      WHERE project_id = $1
-    `, [initiative.id]);
-
-    const stats = statsResult.rows[0];
-    const total = parseInt(stats.total, 10);
-    const queued = parseInt(stats.queued, 10);
-    const inProgress = parseInt(stats.in_progress, 10);
-    const quarantine = parseInt(stats.quarantine, 10);
-
-    // 关闭条件：有任务 + 没有飞行中的任务 + 没有隔离中的任务
-    // quarantine > 0 表示有任务被隔离，需要人工介入，不自动关闭
-    if (total === 0 || queued > 0 || inProgress > 0 || quarantine > 0) {
-      continue;
-    }
-
-    // 标记为完成
-    await pool.query(`
-      UPDATE okr_initiatives
-      SET status = 'done',
-          completed_at = NOW(),
-          updated_at = NOW()
-      WHERE id = $1
-    `, [initiative.id]);
-
-    // 记录事件
-    await pool.query(`
-      INSERT INTO cecelia_events (event_type, source, payload)
-      VALUES ('initiative_completed', 'initiative_closer', $1)
-    `, [JSON.stringify({
-      initiative_id: initiative.id,
-      initiative_name: initiative.name,
-      total_tasks: total,
-      closed_at: new Date().toISOString(),
-    })]);
-
-    // 触发 scope_plan 飞轮：Initiative 完成后，查找 parent scope（迁移：projects → okr_scopes via scope_id）
-    const parentResult = await pool.query(
-      `SELECT id, 'scope' AS type, title AS name FROM okr_scopes WHERE id = (SELECT scope_id FROM okr_initiatives WHERE id = $1) LIMIT 1`,
-      [initiative.id]
-    );
-    const parent = parentResult.rows[0];
-    if (parent && parent.type === 'scope') {
-      // 检查该 Scope 下是否还有未完成的 Initiative（迁移：projects WHERE parent_id → okr_initiatives WHERE scope_id）
-      const remainingResult = await pool.query(
-        `SELECT COUNT(*) as cnt FROM okr_initiatives WHERE scope_id = $1 AND status != 'done'`,
-        [parent.id]
-      );
-      const remaining = parseInt(remainingResult.rows[0].cnt, 10);
-      if (remaining === 0) {
-        // 所有 Initiative 完成，checkScopeCompletion 会处理
-      } else {
-        // 还有未完成的 Initiative，或需要创建新的 → 触发 scope_plan
-        const existingPlan = await pool.query(
-          `SELECT id FROM tasks WHERE task_type = 'scope_plan' AND project_id = $1 AND status IN ('queued', 'in_progress') LIMIT 1`,
-          [parent.id]
-        );
-        if (existingPlan.rows.length === 0) {
-          await createTask({
-            title: `规划 ${parent.name} 下一个 Initiative`,
-            task_type: 'scope_plan',
-            project_id: parent.id,
-            description: JSON.stringify({ scope_id: parent.id, reason: 'initiative_completed', completed_initiative_id: initiative.id }),
-            priority: 'P1',
-            status: 'queued',
-            trigger_source: 'brain_auto',
-            source: 'child',
-            source_id: `initiative-closer:${initiative.id}:scope-plan`,
-            allow_unscoped: true,
-            db: pool,
-          });
-          console.log(`[initiative-closer] Created scope_plan task for scope ${parent.id} (initiative ${initiative.name} completed)`);
-        }
-      }
-    }
-
-    closed.push({ id: initiative.id, name: initiative.name });
-  }
-
-  // KR 进度更新：initiative 关闭后自动重算关联 KR 的 progress
-  if (closed.length > 0) {
-    try {
-      // 获取关闭的 initiatives 关联的 KR IDs（通过 okr_scopes → okr_projects.kr_id）
-      const closedIds = closed.map(c => c.id);
-      const krResult = await pool.query(`
-        SELECT DISTINCT op.kr_id
-        FROM okr_initiatives oi
-        JOIN okr_scopes os ON oi.scope_id = os.id
-        JOIN okr_projects op ON op.id = os.project_id
-        WHERE oi.id = ANY($1)
-          AND op.kr_id IS NOT NULL
-      `, [closedIds]);
-
-      for (const row of krResult.rows) {
-        const result = await updateKrProgress(pool, row.kr_id);
-        if (result.total > 0) {
-          console.log(`[initiative-closer] KR ${row.kr_id} progress → ${result.progress}% (${result.completed}/${result.total})`);
-        }
-      }
-    } catch (krErr) {
-      console.error('[initiative-closer] KR progress update failed (non-fatal):', krErr.message);
-    }
-  }
-
-  // 注意：activateNextInitiatives 由 tick.js Section 0.10 统一调用，此处不重复调用（避免 race condition）
-  return { closedCount: closed.length, closed, activatedCount: 0 };
+let loggedOnce = false;
+function logRetiredOnce() {
+  if (loggedOnce) return;
+  loggedOnce = true;
+  console.info('[initiative-closer] scope/initiative 层已退役（决策 ee4842a6），闭环检查已 no-op');
 }
 
 /**
- * Project 闭环检查器
- *
- * 每次 tick 触发，纯 SQL 逻辑，无 LLM。
- *
- * 逻辑：
- *   1. 查所有 status='active' 的 okr_projects
- *   2. 对每个 project，检查其下是否有 initiative，且全部 completed
- *   3. 如果 total_initiatives > 0 AND 没有 non-completed 的 initiative
- *      → 更新 okr_projects 状态 status='completed', completed_at=NOW()
- *      → INSERT INTO cecelia_events (event_type='project_completed', ...)
- *   4. 返回关闭的 project 数量
- *
- * 触发位置：tick.js Section 0.9（每次 tick 都跑，SQL 轻量）
+ * 已退役：不再查询 okr_initiatives，恒返回零变化。
+ * @param {import('pg').Pool} _pool - 未使用，保留签名兼容旧调用方
+ * @returns {Promise<{ closedCount: number, closed: Array, activatedCount: number }>}
  */
-
-/**
- * 检查并关闭已完成的 Projects。
- *
- * @param {import('pg').Pool} pool - PostgreSQL 连接池
- * @returns {Promise<{ closedCount: number, closed: Array<{id: string, name: string, kr_id: string}> }>}
- */
-async function checkProjectCompletion(pool) {
-  // 查所有满足条件的 active Project：
-  //   - 存在至少一个子项（scope 或 initiative，避免误关空 project）
-  //   - 没有 non-completed 的子项（scope 或 initiative）
-  // 支持两种结构：Project→Scope→Initiative（新）和 Project→Initiative（旧）
-  // 迁移：projects WHERE type='project' → okr_projects；子项通过 okr_scopes 关联
-  const projectsResult = await pool.query(`
-    SELECT op.id, op.title AS name, op.kr_id
-    FROM okr_projects op
-    WHERE op.status = 'active'
-      AND NOT EXISTS (
-        SELECT 1 FROM okr_scopes os
-        WHERE os.project_id = op.id AND os.status != 'completed'
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM okr_initiatives oi
-        JOIN okr_scopes os ON oi.scope_id = os.id
-        WHERE os.project_id = op.id AND oi.status != 'done'
-      )
-      AND (
-        EXISTS (SELECT 1 FROM okr_scopes os WHERE os.project_id = op.id)
-        OR EXISTS (SELECT 1 FROM okr_initiatives oi JOIN okr_scopes os ON oi.scope_id = os.id WHERE os.project_id = op.id)
-      )
-  `);
-
-  const projects = projectsResult.rows;
-  if (projects.length === 0) {
-    return { closedCount: 0, closed: [] };
-  }
-
-  const closed = [];
-
-  for (const project of projects) {
-    // 标记为完成
-    await pool.query(`
-      UPDATE okr_projects
-      SET status = 'completed',
-          completed_at = NOW(),
-          updated_at = NOW()
-      WHERE id = $1
-    `, [project.id]);
-
-    // 记录事件
-    await pool.query(`
-      INSERT INTO cecelia_events (event_type, source, payload)
-      VALUES ('project_completed', 'project_closer', $1)
-    `, [JSON.stringify({
-      project_id: project.id,
-      project_name: project.name,
-      kr_id: project.kr_id,
-      closed_at: new Date().toISOString(),
-    })]);
-
-    closed.push({ id: project.id, name: project.name, kr_id: project.kr_id });
-  }
-
-  // 渐进验证：Project 完成后触发审查 + 计划调整
-  for (const project of closed) {
-    try {
-      const adjustment = await shouldAdjustPlan(pool, project.kr_id, project.id);
-      if (adjustment) {
-        await createPlanAdjustmentTask(pool, {
-          krId: project.kr_id,
-          completedProjectId: project.id,
-          suggestion: adjustment,
-        });
-        console.log(`[project-closer] Triggered plan adjustment review for "${project.name}"`);
-      }
-    } catch (reviewErr) {
-      console.error(`[project-closer] Plan adjustment review failed for "${project.name}": ${reviewErr.message}`);
-    }
-  }
-
-  return { closedCount: closed.length, closed };
+async function checkInitiativeCompletion(_pool) {
+  logRetiredOnce();
+  return { closedCount: 0, closed: [], activatedCount: 0 };
 }
 
 /**
- * Initiative 队列管理器
- *
- * 从 planned initiative 中激活为 running，确保 running 总数不超过 MAX。
- *
- * 激活逻辑：
- *   1. 查当前 running initiative 数量
- *   2. 如果 < MAX_ACTIVE_INITIATIVES，计算空位数
- *   3. 从 planned 中按创建时间激活为 running
- *   4. 返回激活数量
- *
- * 触发位置：
- *   - tick.js Section 0.10（每次 tick，统一管理激活逻辑）
+ * 已退役：不再查询 okr_projects/okr_scopes/okr_initiatives，恒返回零变化。
+ * @param {import('pg').Pool} _pool - 未使用，保留签名兼容旧调用方
+ * @returns {Promise<{ closedCount: number, closed: Array }>}
  */
+async function checkProjectCompletion(_pool) {
+  logRetiredOnce();
+  return { closedCount: 0, closed: [] };
+}
 
 /**
- * 获取 initiative 层最大 active 数量（从 capacity 公式计算）。
+ * 已退役：不再查询 okr_scopes/okr_initiatives，恒返回零变化。
+ * @param {import('pg').Pool} _pool - 未使用，保留签名兼容旧调用方
+ * @returns {Promise<{ closedCount: number, closed: Array }>}
+ */
+async function checkScopeCompletion(_pool) {
+  logRetiredOnce();
+  return { closedCount: 0, closed: [] };
+}
+
+/**
+ * 获取 initiative 层最大 active 数量（从 capacity 公式计算）。与 scope/initiative
+ * 拆解退役无关，纯 worker slot 容量公式，原样保留。
  *
  * @param {number} slots - Pool C 可用 slot 数量
  * @returns {number} 最大 active initiative 数量
@@ -284,141 +70,14 @@ export function getMaxActiveInitiatives(slots) {
 export const MAX_ACTIVE_INITIATIVES = 9;
 
 /**
- * 从 pending initiative 中按优先级激活，使 active 总数不超过容量上限。
- *
- * @param {import('pg').Pool} pool - PostgreSQL 连接池
- * @param {number} [slotsOverride] - 可选，手动指定 SLOTS（用于测试）
- * @returns {Promise<number>} 本次激活的 initiative 数量
+ * 已退役：不再查询/更新 okr_initiatives，恒返回 0（激活数量）。
+ * @param {import('pg').Pool} _pool - 未使用，保留签名兼容旧调用方
+ * @param {number} [_slotsOverride] - 未使用
+ * @returns {Promise<number>} 恒为 0
  */
-async function activateNextInitiatives(pool, slotsOverride) {
-  // 从 capacity 公式获取上限
-  const maxActive = typeof slotsOverride === 'number'
-    ? computeCapacity(slotsOverride).initiative.max
-    : MAX_ACTIVE_INITIATIVES; // 运行时 fallback 到常量（避免 async import 复杂度）
-
-  // 1. 查当前 running initiative 数量（生命周期：running = 进行中）
-  const activeCountResult = await pool.query(`
-    SELECT COUNT(*) AS cnt
-    FROM okr_initiatives
-    WHERE status IN ('running')
-  `);
-  const currentActive = parseInt(activeCountResult.rows[0].cnt, 10);
-
-  // 2. 计算空位
-  const availableSlots = maxActive - currentActive;
-  if (availableSlots <= 0) {
-    return 0;
-  }
-
-  // 3. 从 planned 中按创建时间激活（okr_initiatives → okr_scopes → okr_projects.kr_id）
-  const activateResult = await pool.query(`
-    UPDATE okr_initiatives
-    SET status = 'running',
-        updated_at = NOW()
-    WHERE id IN (
-      SELECT oi.id
-      FROM okr_initiatives oi
-      LEFT JOIN okr_scopes os ON oi.scope_id = os.id
-      LEFT JOIN okr_projects op ON op.id = os.project_id
-      WHERE oi.status = 'planned'
-      ORDER BY oi.created_at ASC
-      LIMIT $1
-    )
-    RETURNING id, title AS name
-  `, [availableSlots]);
-
-  const activated = activateResult.rowCount ?? 0;
-
-  if (activated > 0) {
-    // 记录激活事件
-    await pool.query(`
-      INSERT INTO cecelia_events (event_type, source, payload)
-      VALUES ('initiatives_activated', 'initiative_queue', $1)
-    `, [JSON.stringify({
-      activated_count: activated,
-      activated_names: activateResult.rows.map(r => r.name),
-      previous_active: currentActive,
-      new_active: currentActive + activated,
-      max_allowed: maxActive,
-      timestamp: new Date().toISOString(),
-    })]);
-  }
-
-  return activated;
-}
-
-/**
- * Scope 闭环检查器
- *
- * 逻辑：
- *   1. 查所有 status='active' 的 okr_scopes
- *   2. 对每个 scope，检查其下所有 initiative 是否全部 completed
- *   3. 如果 total > 0 AND 没有 non-completed 的 initiative
- *      → 更新 okr_scopes 状态 status='completed', completed_at=NOW()
- *      → INSERT INTO cecelia_events (event_type='scope_completed', ...)
- *   4. 返回关闭的 scope 数量
- */
-async function checkScopeCompletion(pool) {
-  // 迁移：projects WHERE type='scope' → okr_scopes；子 initiatives via okr_initiatives.scope_id
-  const scopesResult = await pool.query(`
-    SELECT os.id, os.title AS name, os.project_id AS parent_id
-    FROM okr_scopes os
-    WHERE os.status IN ('active', 'in_progress')
-      AND NOT EXISTS (
-        SELECT 1 FROM okr_initiatives oi
-        WHERE oi.scope_id = os.id AND oi.status != 'done'
-      )
-      AND EXISTS (
-        SELECT 1 FROM okr_initiatives oi WHERE oi.scope_id = os.id
-      )
-  `);
-
-  const scopes = scopesResult.rows;
-  if (scopes.length === 0) {
-    return { closedCount: 0, closed: [] };
-  }
-
-  const closed = [];
-
-  for (const scope of scopes) {
-    await pool.query(
-      `UPDATE okr_scopes SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = $1`,
-      [scope.id]
-    );
-
-    await pool.query(`
-      INSERT INTO cecelia_events (event_type, source, payload)
-      VALUES ('scope_completed', 'initiative_closer', $1)
-    `, [JSON.stringify({
-      scope_id: scope.id,
-      scope_name: scope.name,
-      parent_project_id: scope.parent_id,
-      timestamp: new Date().toISOString(),
-    })]);
-
-    // 触发 project_plan 飞轮：Scope 完成后创建 project_plan 任务规划下一个 Scope
-    if (scope.parent_id) {
-      await createTask({
-        title: `规划下一个 Scope (${scope.name} 已完成)`,
-        task_type: 'project_plan',
-        project_id: scope.parent_id,
-        description: JSON.stringify({ project_id: scope.parent_id, reason: 'scope_completed', completed_scope_id: scope.id, completed_scope_name: scope.name }),
-        priority: 'P1',
-        status: 'queued',
-        trigger_source: 'brain_auto',
-        source: 'child',
-        source_id: `initiative-closer:${scope.id}:project-plan`,
-        allow_unscoped: true,
-        db: pool,
-      });
-      console.log(`[initiative-closer] Created project_plan task for project ${scope.parent_id} (scope ${scope.name} completed)`);
-    }
-
-    console.log(`[initiative-closer] Scope completed: ${scope.name} (${scope.id})`);
-    closed.push({ id: scope.id, name: scope.name, parent_id: scope.parent_id });
-  }
-
-  return { closedCount: closed.length, closed };
+async function activateNextInitiatives(_pool, _slotsOverride) {
+  logRetiredOnce();
+  return 0;
 }
 
 export { checkInitiativeCompletion, checkScopeCompletion, checkProjectCompletion, activateNextInitiatives };

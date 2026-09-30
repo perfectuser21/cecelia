@@ -304,5 +304,18 @@ describe('tick-runner executeTick — full tick wire-up', () => {
 
     // ── tickState 感知层时间戳被推进（lastZombieSweepTime 是首个无条件推进字段）
     expect(tickState.lastZombieSweepTime).toBeGreaterThan(before);
+
+    // ── 棒4验收（决策 ee4842a6）：tick 一轮不产生任何对 okr_scopes/okr_initiatives 的
+    // 查询。复用本测试已经跑过的这一轮 executeTick（不再多跑一轮，zombie-cleaner 真扫
+    // 文件系统很慢，多跑一轮容易顶到本测试的 30s 超时）。planner.js/
+    // kr-progress-sync-plugin.js/daily-review-scheduler.js 本文件顶部整体 mock 掉，
+    // 下面覆盖的是没被 mock、真实参与每轮 tick 的模块：initiative-closer.js /
+    // okr-closer.js / decomposition-checker.js / kr-completion.js /
+    // project-activator.js——这些才是真正可能触达 okr_scopes/okr_initiatives 的查询源，
+    // 已在棒4逐一清空为 no-op 或改读 projects。
+    const offendingCalls = mockPool.query.mock.calls
+      .map(call => String(call[0] || ''))
+      .filter(sql => /okr_scopes|okr_initiatives/i.test(sql));
+    expect(offendingCalls).toEqual([]);
   }, 30000);
 });

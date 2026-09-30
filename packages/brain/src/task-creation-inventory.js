@@ -31,11 +31,13 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'harness-initiative-patrol.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'intent.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'impact-contract/gap-dependencies.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'initiative-closer.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  // 棒4（决策 ee4842a6/3feeae3e）：scope/initiative 层退役，闭环检测清空为 no-op，不再建任务
+  { module: 'initiative-closer.js', source: 'child', creates_executable_task: false, migration_status: 'routed' },
   { module: 'learning.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'line-strategist-dispatch.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'nightly-tick.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'okr-closer.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  // 棒4（决策 ee4842a6/3feeae3e）：scope/initiative/project 完成检测清空为 no-op，不再建任务
+  { module: 'okr-closer.js', source: 'child', creates_executable_task: false, migration_status: 'routed' },
   { module: 'okr-tick.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'orchestrator-chat.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'orchestrator/run.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
@@ -49,6 +51,9 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   // 2026-09-23 接力棒（主理人拍板）：handoff.next_steps kind=task → 自动登记下一棒挂根；
   // 「决策」库草案改已决定 → 自动登记「执行拍板」子任务。都是 child 来源、source_id 幂等
   { module: 'lib/relay-baton.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  // 棒2（决策 ee4842a6/3feeae3e）：brief_delta.add_steps → 同 project 下新增 queued 子任务，
+  // 复用 relay-baton 同款落棒逻辑（同样 child 来源、source_id 幂等）
+  { module: 'lib/project-brief-apply.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'notion-inlet-ingest.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   // 2026-09-16 飞书群交办入账（决策 1c6679cd）：群里派给秋米的活 → tasks 账本留痕，
   // 状态只写 completed/blocked，不产可执行任务

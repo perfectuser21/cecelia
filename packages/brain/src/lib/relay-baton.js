@@ -15,6 +15,7 @@
 import { createRoutedTask } from '../work-routing-store.js';
 import { buildHandoff, saveHandoff } from '../handoff.js';
 import { RELAY_TERMINAL_STATUSES } from './task-status-transitions.js';
+import { applyHandoffBriefDelta } from './project-brief-apply.js';
 
 export const NEXT_STEP_KINDS = Object.freeze(['task', 'decision', 'done', 'note']);
 const MAX_TITLE = 200;
@@ -167,7 +168,7 @@ export async function materializeNextSteps(pool, task, handoff, deps = {}) {
 export async function relayOnComplete(pool, taskId, { sessionId = null } = {}) {
   try {
     const { rows } = await pool.query(
-      `SELECT id, title, status, priority, task_type, payload, parent_task_id, result, summary FROM tasks WHERE id = $1::uuid`,
+      `SELECT id, title, status, priority, task_type, payload, parent_task_id, project_id, result, summary FROM tasks WHERE id = $1::uuid`,
       [taskId]
     );
     const task = rows[0];
@@ -177,7 +178,15 @@ export async function relayOnComplete(pool, taskId, { sessionId = null } = {}) {
     if (spawned.tasks.length || spawned.decisions.length) {
       console.log(`[relay-baton] task=${taskId} 接棒：子任务 ${spawned.tasks.length}，待拍板 ${spawned.decisions.length}`);
     }
-    return { synthesized, ...spawned };
+    // 棒2（决策 ee4842a6/3feeae3e）：handoff.brief_delta → projects.brief（任务挂了 project_id 才有效果）。
+    // 任何异常已在 applyHandoffBriefDelta 内部吞掉，这里只是留痕，不影响接棒主流程。
+    let brief = null;
+    try {
+      brief = await applyHandoffBriefDelta(pool, task, handoff);
+    } catch (err) {
+      console.warn(`[relay-baton] task=${taskId} brief_delta 应用失败（不阻塞接棒）: ${err.message}`);
+    }
+    return { synthesized, brief, ...spawned };
   } catch (err) {
     console.warn(`[relay-baton] task=${taskId} 接棒失败（不阻塞）: ${err.message}`);
     return null;

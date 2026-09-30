@@ -21,6 +21,13 @@ vi.mock('../../project-compare.js', () => ({
 // /locate 与 /:id/tasks（棒3，任务 8a40825a）的路由测试单独放在
 // routes/__tests__/project-locate-routes.test.js（配对新文件 routes/project-locate-routes.js）。
 
+// PATCH /:id/brief 动态 import 这个模块；DB 侧真实逻辑单测见
+// lib/__tests__/project-brief-apply.test.js，这里只验证路由接线。
+const mockApplyProjectBriefDelta = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/project-brief-apply.js', () => ({
+  applyProjectBriefDelta: (...args) => mockApplyProjectBriefDelta(...args),
+}));
+
 // isolate:false 修复：不在顶层 await import，改为 beforeAll + vi.resetModules()
 let router;
 
@@ -253,4 +260,43 @@ describe('task-projects routes', () => {
     });
   });
 
+  describe('PATCH /projects/:id/brief', () => {
+    it('returns 400 when brief_delta missing or not an object', async () => {
+      let res = await request(app).patch('/projects/p1/brief').send({});
+      expect(res.status).toBe(400);
+      res = await request(app).patch('/projects/p1/brief').send({ brief_delta: 'not-an-object' });
+      expect(res.status).toBe(400);
+      res = await request(app).patch('/projects/p1/brief').send({ brief_delta: ['x'] });
+      expect(res.status).toBe(400);
+      expect(mockApplyProjectBriefDelta).not.toHaveBeenCalled();
+    });
+
+    it('应用成功 → 透传 applyProjectBriefDelta 结果，task_id 可选透传', async () => {
+      mockApplyProjectBriefDelta.mockResolvedValueOnce({ applied: true, brief: { status: '新现状' }, escalated: false, pending_action_id: null, add_steps: [], cancel_steps: [], reorder: [] });
+      const res = await request(app).patch('/projects/p1/brief').send({ brief_delta: { status: '新现状' }, task_id: 'task-9' });
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ applied: true, brief: { status: '新现状' } });
+      expect(mockApplyProjectBriefDelta).toHaveBeenCalledWith(mockPool, { projectId: 'p1', rawDelta: { status: '新现状' }, taskId: 'task-9' });
+    });
+
+    it('task_id 缺省 → taskId 传 null', async () => {
+      mockApplyProjectBriefDelta.mockResolvedValueOnce({ applied: true, brief: {} });
+      await request(app).patch('/projects/p1/brief').send({ brief_delta: { status: 'x' } });
+      expect(mockApplyProjectBriefDelta).toHaveBeenCalledWith(mockPool, { projectId: 'p1', rawDelta: { status: 'x' }, taskId: null });
+    });
+
+    it('apply 返回 null 且项目确实存在 → 400（delta 清洗后全非法）', async () => {
+      mockApplyProjectBriefDelta.mockResolvedValueOnce(null);
+      mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'p1' }] });
+      const res = await request(app).patch('/projects/p1/brief').send({ brief_delta: { unknown_field: 1 } });
+      expect(res.status).toBe(400);
+    });
+
+    it('apply 返回 null 且项目不存在 → 404', async () => {
+      mockApplyProjectBriefDelta.mockResolvedValueOnce(null);
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+      const res = await request(app).patch('/projects/missing/brief').send({ brief_delta: { status: 'x' } });
+      expect(res.status).toBe(404);
+    });
+  });
 });
