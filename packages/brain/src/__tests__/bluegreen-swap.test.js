@@ -165,6 +165,25 @@ describe('bluegreen_swap', () => {
     }
   });
 
+  it('sidecar 的 docker run 必须带 --add-host=host.docker.internal:host-gateway（任务40f798ac：Linux Docker 默认不解析该域名，sidecar 里 cancel_drain_after_up() 用它连 Brain，缺这个 flag 会让 healthz 探活和 drain-cancel 全部 DNS 解析失败）', () => {
+    const log = makeMockDocker(tmp, { greenHealthy: true, sidecarFails: false });
+    const deployRoot = mkdtempSync(join(tmpdir(), 'deploy-root-'));
+    writeFileSync(join(deployRoot, 'docker-compose.yml'), 'name: cecelia\nservices: {}\n');
+    try {
+      const { calls } = runSwap(tmp, log, { DEPLOY_ROOT_DIR: deployRoot });
+      // 日志里还有一行 "rm -f cecelia-bluegreen-sidecar"（清理上次残留），必须只挑 run 那一行
+      const sidecarRunLine = calls.split('\n').find((l) => l.startsWith('run ') && l.includes('cecelia-bluegreen-sidecar'));
+      expect(sidecarRunLine, 'sidecar 的 docker run 调用应该出现在 mock docker 日志里').toBeTruthy();
+      expect(
+        sidecarRunLine,
+        'sidecar 容器跑在默认 bridge 网络（未加 --network host），Linux Docker 不会像 Mac/Windows' +
+          ' Docker Desktop 那样自动解析 host.docker.internal，必须显式 --add-host 才能连上宿主发布的 5221',
+      ).toMatch(/--add-host[= ]host\.docker\.internal:host-gateway/);
+    } finally {
+      rmSync(deployRoot, { recursive: true, force: true });
+    }
+  });
+
   it('sidecar 启动失败时，blue 不被删除（fail-safe）', () => {
     const log = makeMockDocker(tmp, { greenHealthy: true, sidecarFails: true });
     const deployRoot = mkdtempSync(join(tmpdir(), 'deploy-root-'));

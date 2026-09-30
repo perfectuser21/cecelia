@@ -311,8 +311,15 @@ bluegreen_swap() {
     # 挂载 docker.sock 和部署根目录，等 blue 消失后执行 compose up。
     # sidecar 脚本（bluegreen-sidecar.sh）通过 root_dir 挂载可访问，
     # 失败时自动用 blue-fallback tag 恢复（见 bluegreen-sidecar.sh）。
+    # sidecar 跑在默认 bridge 网络（未加 --network host），Linux Docker 不会像
+    # Mac/Windows Docker Desktop 那样自动解析 host.docker.internal——sidecar 里
+    # cancel_drain_after_up() 靠这个域名连 Brain 做 healthz 探活和 drain-cancel，
+    # 缺这个 flag 会让两者全部 DNS 解析失败，全靠 15 分钟运行期自愈兜底掩盖
+    # （任务 40f798ac，us-vps 生产实测：手动 POST drain-cancel 立即生效，证明
+    # app 层逻辑本身没问题，纯粹是 sidecar 连不上）。
     if docker run -d --rm \
         --name "$sidecar_name" \
+        --add-host=host.docker.internal:host-gateway \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v "${root_dir}:${root_dir}:rw" \
         -v "${CECELIA_INTERNAL_ENV_FILE}:${CECELIA_INTERNAL_ENV_FILE}:ro" \

@@ -72,7 +72,12 @@ cancel_drain_after_up() {
     fi
     sleep 2
   done
-  [ "$HEALTHZ_OK" = "1" ] || echo "[sidecar] ❌ healthz 轮询 90 次未就绪，仍继续尝试 drain-cancel"
+  if [ "$HEALTHZ_OK" != "1" ]; then
+    echo "[sidecar] ❌ healthz 轮询 90 次未就绪，仍继续尝试 drain-cancel"
+    # 失败前只 echo 到 stdout，sidecar 是 --rm 容器，退出即清空，完全没有可观测性
+    # （任务 40f798ac：这类静默失败正是排查这次事故时发现"查不到任何失败记录"的原因）。
+    _sidecar_log "[cancel-drain-fail] healthz_poll_timeout brain_version=${BRAIN_VERSION} brain_url=${BRAIN_URL}"
+  fi
 
   DRAIN_CANCEL_OK=0
   for i in 1 2 3 4 5; do
@@ -83,7 +88,10 @@ cancel_drain_after_up() {
     echo "[sidecar] drain-cancel 第 ${i} 次失败，5s 后重试"
     sleep 5
   done
-  [ "$DRAIN_CANCEL_OK" = "1" ] || echo "[sidecar] ❌ drain-cancel 5 次全失败——依赖 15min 过期闸兜底，请检查（issue 53e7ee4b）"
+  if [ "$DRAIN_CANCEL_OK" != "1" ]; then
+    echo "[sidecar] ❌ drain-cancel 5 次全失败——依赖 15min 过期闸兜底，请检查（issue 53e7ee4b）"
+    _sidecar_log "[cancel-drain-fail] drain_cancel_retries_exhausted brain_version=${BRAIN_VERSION} brain_url=${BRAIN_URL}"
+  fi
 }
 
 # ── 等待 blue 容器消失（brain-deploy.sh 将 docker rm -f blue）───────────────
