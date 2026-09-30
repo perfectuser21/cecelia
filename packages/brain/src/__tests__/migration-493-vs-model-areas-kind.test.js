@@ -40,9 +40,15 @@ describe('migration 493 价值流建模②：areas 树 + journeys.kind + 视图 
     expect(sql).toMatch(/CREATE VIEW capabilities AS SELECT \* FROM journeys WHERE kind = 'capability'/);
   });
 
-  it('登记 schema_version 493；回滚还原视图、还原旧表名、删列', () => {
+  it('新视图透出 notion_id → 照 453/487 形状在 notion_projection_map 登记占位行（守夜对账不报红）', () => {
+    expect(sql).toMatch(/INSERT INTO notion_projection_map[\s\S]*'unmapped:capabilities'[\s\S]*'capabilities'[\s\S]*'archived'/);
+    expect(sql).toMatch(/ON CONFLICT DO NOTHING/);
+  });
+
+  it('登记 schema_version 493；回滚还原视图、还原旧表名、删列、删注册表占位行', () => {
     expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'493'/);
     const d = existsSync(down) ? readFileSync(down, 'utf8') : '';
+    expect(d).toMatch(/DELETE FROM notion_projection_map WHERE notion_db_id = 'unmapped:capabilities'/);
     expect(d).toMatch(/DROP VIEW IF EXISTS capabilities;/);
     expect(d).toMatch(/ALTER TABLE capabilities_legacy RENAME TO capabilities/);
     expect(d).toMatch(/DROP COLUMN IF EXISTS kind/);

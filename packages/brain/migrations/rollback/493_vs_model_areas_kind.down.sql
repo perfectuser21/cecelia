@@ -1,5 +1,6 @@
 -- Rollback 493：视图还原 → 旧表名还原 → 删列（顺序不能反：kind 被视图引用，删列前先删视图）
 BEGIN;
+DELETE FROM notion_projection_map WHERE notion_db_id = 'unmapped:capabilities' AND brain_table = 'capabilities';
 DROP VIEW IF EXISTS capabilities;
 DROP VIEW IF EXISTS value_streams;
 DO $$

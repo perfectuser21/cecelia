@@ -57,6 +57,13 @@ CREATE VIEW value_streams AS SELECT * FROM journeys WHERE kind = 'value_stream';
 COMMENT ON VIEW value_streams IS '价值流 Value Stream = 无父的 journey（客户买的产品线）；决策 3e867cad 覆盖 a340f100 的全表别名';
 CREATE VIEW capabilities AS SELECT * FROM journeys WHERE kind = 'capability';
 COMMENT ON VIEW capabilities IS '能力 Capability（SAFe 义：客户能指着配置的功能）= 有父的 journey；决策 3e867cad / f425e3fd';
+-- 守夜对账口径（notion-projection-registry.findUnregisteredNotionTables）：public 里任何带 notion_id 列的关系
+-- 都必须在 notion_projection_map 有 brain_table 登记，视图也算（453 给 value_streams 等视图登过占位行，487 归档）。
+-- 新视图透出 journeys.notion_id，照 453/487 的形状登一行并直接归档：投影随 journeys 走，本行只为对账不报红。
+INSERT INTO notion_projection_map (notion_db_id, title, face, brain_table, direction, vessel, status, space, notes)
+VALUES ('unmapped:capabilities', '（无 Notion 库）capabilities', 'mirror', 'capabilities', 'none', '(视图，有 notion_id 列无血管)', 'archived', 'system',
+        '迁移 493：能力视图 = 有父的 journey（kind=capability），Notion 投影随 journeys 走；本行只为守夜对账登记，不是血管')
+ON CONFLICT DO NOTHING;
 COMMENT ON TABLE journeys IS '价值流与能力共用表：kind=value_stream 无父 / kind=capability 有父（parent_journey_id）；视图 value_streams / capabilities；决策 3e867cad';
 
 INSERT INTO schema_version (version, description)

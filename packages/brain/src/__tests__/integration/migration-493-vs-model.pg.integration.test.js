@@ -35,6 +35,10 @@ async function createParentTables() {
     CREATE TABLE pr_plans (id SERIAL PRIMARY KEY, capability_id VARCHAR(60) REFERENCES capabilities(id) ON DELETE SET NULL);
     INSERT INTO capabilities (id, name, current_stage) VALUES ('a','A',1),('b','B',2),('c','C',3);
     INSERT INTO pr_plans (capability_id) VALUES ('a'),('c');
+    CREATE TABLE notion_projection_map (
+      notion_db_id TEXT PRIMARY KEY, title TEXT, face TEXT, brain_table TEXT, direction TEXT, vessel TEXT,
+      status TEXT, space TEXT, notes TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
   `);
 }
 
@@ -83,6 +87,12 @@ describe('migration 493 — 价值流建模②', () => {
     expect(await relkind('capabilities_legacy')).toBe('r');
     expect(await relkind('capabilities')).toBe('v');
     expect(await relkind('value_streams')).toBe('v');
+    // 守夜对账：视图透出 notion_id，必须像 453/487 那样在注册表有 brain_table 登记，重放只登一行
+    const reg = await client.query(
+      `SELECT status FROM notion_projection_map WHERE notion_db_id = 'unmapped:capabilities' AND brain_table = 'capabilities'`
+    );
+    expect(reg.rowCount).toBe(1);
+    expect(reg.rows[0].status).toBe('archived');
   });
 
   it('journeys.kind 由 parent_journey_id 派生：无父 value_stream、有父 capability；不能手写', async () => {
@@ -174,5 +184,7 @@ describe('migration 493 — 价值流建模②', () => {
     expect(vs.rows[0].n).toBe(1);
     const ver = await client.query(`SELECT version FROM schema_version WHERE version = '493'`);
     expect(ver.rowCount).toBe(0);
+    const reg = await client.query(`SELECT 1 FROM notion_projection_map WHERE notion_db_id = 'unmapped:capabilities'`);
+    expect(reg.rowCount).toBe(0);
   });
 });
