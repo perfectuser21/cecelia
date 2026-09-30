@@ -198,17 +198,24 @@ export async function getDrainStatus() {
 
 /**
  * Cancel drain mode — resume normal dispatching.
+ *
+ * 无条件清持久化状态（不只在 _draining===true 时才清）：部署脚本的健康检查可能在
+ * restoreDrainState() 把旧容器持久化的排空状态读回内存之前就先发来 drain-cancel，
+ * 此时若只在 _draining===true 时才清库，会让这次 cancel 变成 no-op——旧持久化行
+ * 留在 DB 里，随后 restoreDrainState() 一执行就把它误当"刚发生的排空"恢复进内存，
+ * 派单卡到 15 分钟运行期超龄自愈（任务 30861749；见 restoreDrainState() 迁移到
+ * listenWithRetry() 之前那处改动，这里是纵深防御第二层）。
  */
 export async function cancelDrain() {
-  if (!_draining) {
-    return { success: true, was_draining: false };
-  }
-
-  log('[tick] Drain mode cancelled, resuming normal dispatch');
+  const wasDraining = _draining;
   _draining = false;
   _drainStartedAt = null;
   await clearPersistedDrainState();
-  return { success: true, was_draining: true };
+
+  if (wasDraining) {
+    log('[tick] Drain mode cancelled, resuming normal dispatch');
+  }
+  return { success: true, was_draining: wasDraining };
 }
 
 // ─── 测试 hook ───────────────────────────────────────────────────────────
