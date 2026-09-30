@@ -140,3 +140,45 @@ describe('resolveProjectLocateThreshold', () => {
     expect(resolveProjectLocateThreshold({ PROJECT_LOCATE_THRESHOLD: 'abc' })).toBe(DEFAULT_PROJECT_LOCATE_THRESHOLD);
   });
 });
+
+// 任务 912c1143：棒3 上产后实测归位器永远判 create（2026-10-01 生产 be95ec9c）
+describe('生产回归：短句对长项目文本必须能 attach', () => {
+  const REAL = {
+    id: 'f0124631',
+    name: 'GTD 两表模型：projects + tasks 接力棒（KR→Project→Task，动态 brief，有头无头同链）',
+    description: '决策 ee4842a6/3feeae3e。有头说一句能定位到 project 并拆成第 N 棒；每棒交棒时改 project.brief；无头派发 prompt 自动带最新 brief；Notion Projects 页正文=渲染后的 brief',
+    brief: { status: '棒1 projects 表、棒2 brief 协议、棒4 scope/initiative 退役已合并' },
+  };
+  const NOISE = Array.from({ length: 30 }, (_, i) => ({ id: `t${i}`, name: 'Test Project', description: null, brief: {} }));
+  const topOf = (scored) => [...scored].sort((a, b) => b.score - a.score)[0];
+
+  it('关键词打分用 query 覆盖率：项目原名关键词查询得分 ≥ 关键词阈值', async () => {
+    const { method, scored } = await scoreProjectCandidates('GTD 两表模型 projects tasks 接力棒 brief', [REAL, ...NOISE], { embedFn: null });
+    expect(method).toBe('keyword');
+    expect(topOf(scored).id).toBe('f0124631');
+    expect(topOf(scored).score).toBeGreaterThanOrEqual(resolveProjectLocateThreshold({}, 'keyword'));
+  });
+
+  it('口语化一句话也能把真项目排第一，且不被一堆 Test Project 噪音压过', async () => {
+    const { scored } = await scoreProjectCandidates('给 project 的 brief 动态文档加一个 Notion 渲染的小改进', [...NOISE, REAL], { embedFn: null });
+    expect(topOf(scored).id).toBe('f0124631');
+    expect(topOf(scored).score).toBeGreaterThanOrEqual(resolveProjectLocateThreshold({}, 'keyword'));
+  });
+
+  it('关键词与语义阈值分开：keyword 默认 0.5，embedding 仍 0.55，env 各自可调', () => {
+    expect(resolveProjectLocateThreshold({}, 'keyword')).toBe(0.5);
+    expect(resolveProjectLocateThreshold({}, 'embedding')).toBe(DEFAULT_PROJECT_LOCATE_THRESHOLD);
+    expect(resolveProjectLocateThreshold({ PROJECT_LOCATE_KEYWORD_THRESHOLD: '0.3' }, 'keyword')).toBe(0.3);
+  });
+
+  it('embedding 只对关键词预筛后的前 20 名调用，不对全部候选逐个调用', async () => {
+    const embedFn = vi.fn(async () => [1, 0, 0]);
+    await scoreProjectCandidates('GTD 两表模型', [REAL, ...NOISE], { embedFn });
+    expect(embedFn.mock.calls.length).toBeLessThanOrEqual(21);
+  });
+
+  it('无关句子仍判低分（不能为了 attach 把阈值做成全放行）', async () => {
+    const { scored } = await scoreProjectCandidates('抖音评论区关键词采集手机真机', [REAL], { embedFn: null });
+    expect(scored[0].score).toBeLessThan(resolveProjectLocateThreshold({}, 'keyword'));
+  });
+});
