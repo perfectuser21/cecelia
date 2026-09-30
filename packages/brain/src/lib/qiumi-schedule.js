@@ -29,10 +29,21 @@ export function sameInstant(a, b) {
   return new Date(a).getTime() === new Date(b).getTime();
 }
 
-/** 等待期写进中文「OpenClaw结果」的提示，按上海时间显示。 */
-export function scheduledNote(iso) {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+/** 上海时间的月/日/时/分。 */
+function shanghaiParts(iso) {
+  return Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
     timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
   }).formatToParts(new Date(iso)).map((p) => [p.type, p.value]));
+}
+
+/** 等待期写进中文「OpenClaw结果」的提示，按上海时间显示。 */
+export function scheduledNote(iso) {
+  const parts = shanghaiParts(iso);
   return `🕐 已排期 ${parts.month}-${parts.day} ${parts.hour}:${parts.minute}，到点派发`;
+}
+
+/** 手机忙排队等待（任务 5ad81457，lib/qiumi-device-busy.js）写进「OpenClaw结果」的提示，上海时间。 */
+export function deviceBusyNote({ owner, nextRunAt, attempts }) {
+  const parts = shanghaiParts(nextRunAt);
+  return `⏳ 手机忙（被 ${owner || '其他运行'} 占用），已排队，${parts.hour}:${parts.minute} 后重试（第 ${attempts} 次）`;
 }

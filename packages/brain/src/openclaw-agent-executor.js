@@ -29,6 +29,7 @@ import { startRun, finishRun } from './lib/task-run.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { qiumiEnv, phoneNodeName } from './routing/env.js';
 import { splitExecParamsBlock } from './routing/exec-params.js';
+import { parseDeviceBusyMarker, planDeviceBusy, requeueForDeviceBusy, DEVICE_BUSY_TIMEOUT_REASON } from './lib/qiumi-device-busy.js';
 
 // 两条白名单，宽严不同：
 //  · SAFE_ID —— run_id / department / taskId。它们要当文件名用（~/brain-runs/<run_id>.log），
@@ -118,6 +119,9 @@ function accountLabel(account) {
   return id || nickname || null;
 }
 
+/** 手机锁被占时的约定（任务 5ad81457）：与 douyin-phone-runtime skill 同一口径，收割器按标记行回队重试。 */
+const DEVICE_BUSY_RULE = '- 如手机锁被其他运行占用：不要抢锁、不要做任何操作，最后一行只输出 DEVICE_BUSY owner=<持有者> serial=<序列号> 然后结束；Brain 会自动排队重试。';
+
 /**
  * 手机台账已定案（路由按 phone_registry 唯一命中，任务 b923b1f7）：把节点/profile/序列号/手机/目标号
  * 写死给 agent，并要求开工前核对当前登录号——0929 事故就是 agent 自己查 tsv 猜错手机。
@@ -130,6 +134,7 @@ function resolvedDeviceHint(h, node) {
     '- 开工前先 account-current 核对当前登录号；与目标不符就停止并报告，不得换手机、不得切号除非正文要求',
     `- 在该节点上执行 douyin-phone-adb --profile ${h.profile} <command>，禁止裸 adb`,
     '- 先 lock-acquire <run_id>，结束必 lock-release 并回读 lock-status；每次 exec 显式 timeout 300000',
+    DEVICE_BUSY_RULE,
   ].join('\n');
 }
 
@@ -151,6 +156,7 @@ function deviceHintOf(task) {
     `- 宿主：${h.host ?? '未知'}；OpenClaw 节点：${node ?? '未知，先 openclaw nodes list 找带 PHONE 的节点'}`,
     '- 在该节点上执行 douyin-phone-adb --profile <profile> <command>（profile 按序列号在 ~/.config/openclaw/douyin-phone-profiles.tsv 查），禁止裸 adb',
     '- 先 lock-acquire <run_id>，结束必 lock-release 并回读 lock-status；每次 exec 显式 timeout 300000',
+    DEVICE_BUSY_RULE,
   ].join('\n');
 }
 
@@ -327,11 +333,44 @@ function reapOutcome(receipt, tail) {
 }
 
 /**
+ * agent 回报手机忙（最终文本含 DEVICE_BUSY 标记行，任务 5ad81457）→ 不判终态，回队等 5 分钟再派；
+ * 等够 min(任务超时, 120 分钟) 或过了 payload.expires_at → failed(device_busy_timeout)。
+ * @returns {Promise<'requeued'|'failed'|null>} null = 不是手机忙，走常规收割
+ */
+async function settleDeviceBusy(pool, row, receipt, now) {
+  const marker = parseDeviceBusyMarker(receipt.text);
+  if (!marker) return null;
+  const payload = row.payload ?? {};
+  const plan = planDeviceBusy({ payload, marker, timeoutSec: effectiveTimeoutSec(payload.timeout_sec ?? AGENT_TIMEOUT_SEC), now });
+  if (plan.action === 'requeue') {
+    const requeued = await requeueForDeviceBusy(pool, row.id, plan, row.run_id);
+    await finishRun({ runId: row.run_id, status: 'cancelled', exitCode: receipt.exit, error: 'device_busy' }, { pool });
+    await recordTaskEventSafe(pool, row.id, 'qiumi_device_busy_requeued', {
+      run_id: row.run_id, owner: plan.deviceBusy.owner, serial: plan.deviceBusy.serial,
+      attempt: plan.attempts, next_run_at: plan.nextRunAt, waited_ms: plan.waitedMs, budget_ms: plan.budgetMs, applied: requeued,
+    });
+    return 'requeued';
+  }
+  await finalizeTask(pool, row.id, 'failed', {
+    set: { error_message: DEVICE_BUSY_TIMEOUT_REASON },
+    mergeResult: { receipt, device_busy: plan.deviceBusy },
+    onlyIfStatus: 'in_progress',
+  });
+  await finishRun({ runId: row.run_id, status: 'failed', exitCode: receipt.exit, error: DEVICE_BUSY_TIMEOUT_REASON }, { pool });
+  await recordTaskEventSafe(pool, row.id, 'openclaw_agent_reaped', {
+    run_id: row.run_id, exit: receipt.exit, reason: DEVICE_BUSY_TIMEOUT_REASON,
+    owner: plan.deviceBusy.owner, attempt: plan.attempts, waited_ms: plan.waitedMs, expired: plan.expired,
+  });
+  return 'failed';
+}
+
+/**
  * 收割在跑的 openclaw-agent 任务：远端 .exit 落地即结算。
  *
  * 三态：EXIT=0 → completed_no_pr + receipt（以 yield 收尾的除外 → failed + agent_yielded_without_result，
  * 不自动重排：子会话可能已在真机上动手，重跑会把真机操作做两遍）；EXIT≠0 → failed + openclaw_agent_exit_<n>；
  * NO_EXIT → 一律不动（还在跑），超时交给合同 staleMinutes=45 + 守护刀 onStale='fail'。
+ * 例外：最终文本含 DEVICE_BUSY 标记行（手机锁被占）→ 先于三态处理，回队等待（settleDeviceBusy）。
  * 两条 UPDATE 都带 `AND status = 'in_progress'` 的 CAS：不覆盖别的通道已经结过的账。
  *
  * 取数 LIMIT 10 且单条 ssh 15s：最坏 10×15s=150s，压在 scheduler job 的 300s 超时里。
@@ -339,14 +378,15 @@ function reapOutcome(receipt, tail) {
  */
 export async function reapOpenclawAgentRuns(pool, deps = {}) {
   const execFileFn = deps.execFileFn ?? nodeExecFile;
+  const now = deps.now ?? Date.now;
   const { rows } = await pool.query(
-    `SELECT id, payload->>'run_id' AS run_id FROM tasks
+    `SELECT id, payload->>'run_id' AS run_id, payload FROM tasks
       WHERE task_type = 'qiumi_task' AND status = 'in_progress' AND executor_kind = 'openclaw-agent'
         AND payload->>'run_id' IS NOT NULL
       ORDER BY started_at ASC NULLS FIRST
       LIMIT ${REAP_BATCH}`,
   );
-  const out = { reaped: 0, completed: 0, failed: 0 };
+  const out = { reaped: 0, completed: 0, failed: 0, requeued: 0 };
   for (const r of rows ?? []) {
     if (!isSafeRunId(r.run_id)) {
       console.warn(`[openclaw-agent] 收割跳过非法 run_id: ${String(r.run_id).slice(0, 60)}`);
@@ -367,6 +407,9 @@ export async function reapOpenclawAgentRuns(pool, deps = {}) {
     const exit = parseInt(m[1], 10);
     const tail = stdout.replace(/^EXIT=\d+\n?/m, '');
     const receipt = parseReceipt(exit, tail);
+    const busy = await settleDeviceBusy(pool, r, receipt, now());
+    if (busy === 'requeued') { out.requeued++; continue; }
+    if (busy === 'failed') { out.failed++; out.reaped++; continue; }
     const outcome = reapOutcome(receipt, tail);
     if (outcome.status === 'completed_no_pr') {
       // completed_no_pr 是可接棒终态（RELAY_TERMINAL_STATUSES）：finalizeTask 写完自动接棒

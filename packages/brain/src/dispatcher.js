@@ -47,6 +47,7 @@ import { getLlmCapacitySnapshot } from './llm-capacity.js';
 import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
 import { routeQiumiTask, persistDecision } from './routing/qiumi-router.js';
 import { qiumiEnv } from './routing/env.js';
+import { routeSerialOf, findSameSerialBusy } from './routing/qiumi-serial-gate.js';
 import { dispatchScriptTask, SCRIPT_BREAKER_KEY } from './script-executor.js';
 
 /**
@@ -332,11 +333,41 @@ async function routeAndPersistQiumi(task, deps = {}) {
     return { outcome: 'skip' };
   }
 
+  // 同机串行闸（任务 5ad81457）：同一台手机已有秋米任务在跑 → 本轮不派，保持 queued、放 claim，
+  // 按 HOL skip 语义换下一个候选（P0 也只让位不停整轮：挡它的是一台手机，不是整个池子）。
+  const serialBusy = async (payload) => {
+    const serial = routeSerialOf(payload);
+    const busy = await findSameSerialBusy(pool, task.id, serial);
+    if (!busy) return null;
+    await releaseClaim();
+    await recordDispatchResult(pool, false, 'qiumi_device_busy', undefined, task.id);
+    tickLog(`[dispatch] HOL skip: 手机 ${serial} 正被秋米任务 ${busy.id} 占用，qiumi task ${task.id} 本轮不派`);
+    holSkipIds.push(task.id);
+    return { outcome: 'skip' };
+  };
+
   // 路由幂等：上一 tick 已判定并写了 run_id/model/qiumi_route，只是 spawn 前被打回 queued
   // （历史上是 cecelia-run 熔断，见本刀 Task 1）。决策不变就不重打 Jev、不换 run_id——
   // 执行体的 ALREADY 探针按 run_id 防重起，换了 run_id 它就认不出上一轮可能已起的 agent。
   if (fullTask.payload?.qiumi_route && fullTask.payload?.run_id) {
+    const held = await serialBusy(fullTask.payload);
+    if (held) return held;
     tickLog(`[dispatch] qiumi task ${task.id} 已有路由决策 run_id=${fullTask.payload.run_id}，跳过 Jev 直接派发`);
+    return { outcome: 'proceed' };
+  }
+
+  // 手机忙回队（收割器见 DEVICE_BUSY，lib/qiumi-device-busy.js）：路由保留、run_id 已清。
+  // 不重打 Jev，只换一个新 run_id——上一轮的 .exit 已落地，沿用旧 run_id 会被 ALREADY 探针当成跑完。
+  if (fullTask.payload?.qiumi_route && !fullTask.payload?.run_id && Number(fullTask.payload?.device_busy_attempts) > 0) {
+    const held = await serialBusy(fullTask.payload);
+    if (held) return held;
+    const runId = `qiumi-${String(task.id).slice(0, 8)}-${Date.now()}`;
+    await pool.query(
+      `UPDATE tasks SET payload = COALESCE(payload, '{}'::jsonb) || jsonb_build_object('run_id', $2::text), updated_at = NOW()
+        WHERE id = $1 AND status = 'queued'`,
+      [task.id, runId],
+    );
+    tickLog(`[dispatch] qiumi task ${task.id} 手机忙回队第 ${fullTask.payload.device_busy_attempts} 次重试，保留路由、新 run_id=${runId}`);
     return { outcome: 'proceed' };
   }
 
@@ -392,7 +423,10 @@ async function routeAndPersistQiumi(task, deps = {}) {
     };
   }
 
-  // agent：model/run_id 已由 persistDecision 写进 payload，主流程标 in_progress 后读全行即可拿到
+  // agent：model/run_id 已由 persistDecision 写进 payload，主流程标 in_progress 后读全行即可拿到。
+  // 新定到的手机正忙 → 决策已落库，本轮让位；下一轮走上面的路由幂等分支再过一次同机闸。
+  const held = await serialBusy(decision.payloadPatch);
+  if (held) return held;
   return { outcome: 'proceed' };
 }
 

@@ -325,7 +325,7 @@ describe('reapOpenclawAgentRuns', () => {
     const query = vi.fn().mockResolvedValueOnce({ rows: [row] }).mockResolvedValue({ rows: [], rowCount: 1 });
     const execFileFn = vi.fn((c, a, o, cb) => cb(null, 'EXIT=0\n{"finalAssistantVisibleText":"done ✓"}\n', ''));
     const r = await reapOpenclawAgentRuns({ query }, { execFileFn });
-    expect(r).toEqual({ reaped: 1, completed: 1, failed: 0 });
+    expect(r).toEqual({ reaped: 1, completed: 1, failed: 0, requeued: 0 });
     const upd = query.mock.calls.find(([sql]) => /completed_no_pr/.test(sql));
     // 终态经 lib/task-terminal.js 收口：receipt 作 result jsonb 合并参数（$2），CAS 字面量 in_progress
     expect(upd[0]).toMatch(/result = COALESCE\(result, '\{\}'::jsonb\) \|\| \$2::jsonb/);
@@ -363,7 +363,7 @@ describe('reapOpenclawAgentRuns', () => {
     const query = vi.fn().mockResolvedValueOnce({ rows: [row] });
     const execFileFn = vi.fn((c, a, o, cb) => cb(null, 'NO_EXIT\n', ''));
     const r = await reapOpenclawAgentRuns({ query }, { execFileFn });
-    expect(r).toEqual({ reaped: 0, completed: 0, failed: 0 });
+    expect(r).toEqual({ reaped: 0, completed: 0, failed: 0, requeued: 0 });
     expect(query).toHaveBeenCalledTimes(1);
   });
 
@@ -384,7 +384,7 @@ describe('reapOpenclawAgentRuns', () => {
     const query = vi.fn().mockResolvedValueOnce({ rows: [{ id: task.id, run_id: 'r;rm -rf ~' }, { id: task.id, run_id: '../../.ssh/x' }] });
     const execFileFn = vi.fn();
     const r = await reapOpenclawAgentRuns({ query }, { execFileFn });
-    expect(r).toEqual({ reaped: 0, completed: 0, failed: 0 });
+    expect(r).toEqual({ reaped: 0, completed: 0, failed: 0, requeued: 0 });
     expect(execFileFn).not.toHaveBeenCalled();
   });
 });
@@ -651,7 +651,7 @@ describe('收割器：agent 以 yield 收尾、没有最终结果 → 不判完�
 
   it('EXIT=0 + yielded=true + 无最终文本 → failed(agent_yielded_without_result)，不写 completed_no_pr', async () => {
     const { r, query } = await reap(`EXIT=0\n${yieldTail}\n`);
-    expect(r).toEqual({ reaped: 1, completed: 0, failed: 1 });
+    expect(r).toEqual({ reaped: 1, completed: 0, failed: 1, requeued: 0 });
     expect(query.mock.calls.some(([sql]) => /completed_no_pr/.test(sql)), 'yield 收尾被判完成').toBe(false);
     const upd = query.mock.calls.find(([sql]) => /SET status = 'failed'/.test(sql));
     expect(upd[0]).toMatch(/AND status = 'in_progress'/);
@@ -677,7 +677,7 @@ describe('收割器：agent 以 yield 收尾、没有最终结果 → 不判完�
 
   it('EXIT=0 + 有最终文本（无 yield 信号）→ 仍判 completed_no_pr', async () => {
     const { r, query } = await reap('EXIT=0\n{"finalAssistantVisibleText":"已完成：截图 a.jpg 12KB","result":{"payloads":[{"text":"已完成"}]}}\n');
-    expect(r).toEqual({ reaped: 1, completed: 1, failed: 0 });
+    expect(r).toEqual({ reaped: 1, completed: 1, failed: 0, requeued: 0 });
     expect(query.mock.calls.some(([sql]) => /completed_no_pr/.test(sql))).toBe(true);
   });
 });

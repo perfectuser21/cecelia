@@ -17,7 +17,7 @@ import {
   QIUMI_STATUS_MAP, ZH_HUMAN_ONLY_STATUSES, zhPriorityToBrain, zhWriteFor,
 } from './lib/qiumi-status-map.js';
 import { blockTask, unblockTask } from './task-updater.js';
-import { toStartIso, isFuture, sameInstant, scheduledNote } from './lib/qiumi-schedule.js';
+import { toStartIso, isFuture, sameInstant, scheduledNote, deviceBusyNote } from './lib/qiumi-schedule.js';
 import { recordProjectionCommand } from './projection/commands.js';
 
 export const GTD_DB_ID = process.env.NOTION_GTD_DB_ID || 'c69c40c2-ba63-8271-badf-01c5410d8929';
@@ -177,7 +177,8 @@ export const PUSH_QIUMI_QUERY = `
     SELECT id, status, error_message, blocked_reason, result,
            payload->>'notion_zh_page_id' AS zh_page_id,
            payload->>'notion_page_id'    AS en_page_id,
-           payload->>'next_run_at'       AS next_run_at
+           payload->>'next_run_at'       AS next_run_at,
+           payload->'device_busy'        AS device_busy
       FROM tasks
      WHERE payload->>'notion_zh_page_id' IS NOT NULL
        -- 只有 qiumi_task 这一层代表中文表那一行。派生出去的 device_job 子任务有自己的生命周期，
@@ -224,6 +225,15 @@ export async function pushQiumiStatus(pool, token, {
 
 const isPageGone = (err) => Number(err?.status) === 404 || /archived/i.test(String(err?.message ?? ''));
 
+/** 排队等待期的「OpenClaw结果」：手机忙回队（lib/qiumi-device-busy.js）写忙提示，否则写已排期。 */
+function waitingNoteOf(t) {
+  const busy = t.device_busy;
+  if (busy && busy.next_run_at && sameInstant(busy.next_run_at, t.next_run_at)) {
+    return deviceBusyNote({ owner: busy.owner, nextRunAt: t.next_run_at, attempts: busy.attempts ?? 1 });
+  }
+  return scheduledNote(t.next_run_at);
+}
+
 /** 单行回写，返回 pushed / human / nomap / gone；非永久错误原样抛出。 */
 async function pushOneQiumiRow(pool, token, t, { notionReq, today, now }) {
   // hold 非空 = 本轮放弃推送是因为人工占着中文页：留保留标记，下轮无论 Brain 状态变没变都要重扫。
@@ -250,7 +260,7 @@ async function pushOneQiumiRow(pool, token, t, { notionReq, today, now }) {
     // 排队中但没到预期开始时间：中文保持委派并写已排期提示，英文 Planned（决策 51c09285）
     const scheduled = t.status === 'queued' && isFuture(t.next_run_at, now());
     const write = scheduled
-      ? { properties: { '状态': { status: { name: '委派' } }, 'OpenClaw结果': { rich_text: text(scheduledNote(t.next_run_at)) } } }
+      ? { properties: { '状态': { status: { name: '委派' } }, 'OpenClaw结果': { rich_text: text(waitingNoteOf(t)) } } }
       : zhWriteFor(t.status, {
         reason: t.error_message || '', resultText: resultTextOf(t.result), today: today(), blockedReason: t.blocked_reason ?? null,
       });
