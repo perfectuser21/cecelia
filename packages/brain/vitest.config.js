@@ -17,6 +17,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/business-probe-judge.pg.integration.test.js',
   'src/__tests__/integration/task-governance-guards.pg.integration.test.js',
   'src/__tests__/integration/project-root-gate.pg.integration.test.js',
+  'src/__tests__/integration/project-locate-tasks.pg.integration.test.js',
   'src/__tests__/integration/kernel-controller-ownership.pg.integration.test.js',
   'src/__tests__/integration/kernel-controller-lifecycle.pg.integration.test.js',
   'src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js',
