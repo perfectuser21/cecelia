@@ -16,7 +16,7 @@ describe('Migration 030: Capability-Driven Development', () => {
       const result = await pool.query(`
         SELECT table_name
         FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_name = 'capabilities'
+        WHERE table_schema = 'public' AND table_name = 'capabilities_legacy'
       `);
 
       expect(result.rows.length).toBe(1);
@@ -26,7 +26,7 @@ describe('Migration 030: Capability-Driven Development', () => {
       const result = await pool.query(`
         SELECT column_name, data_type, column_default
         FROM information_schema.columns
-        WHERE table_name = 'capabilities'
+        WHERE table_name = 'capabilities_legacy'
         ORDER BY ordinal_position
       `);
 
@@ -49,7 +49,7 @@ describe('Migration 030: Capability-Driven Development', () => {
       const result = await pool.query(`
         SELECT column_name, data_type, character_maximum_length
         FROM information_schema.columns
-        WHERE table_name = 'capabilities' AND column_name = 'id'
+        WHERE table_name = 'capabilities_legacy' AND column_name = 'id'
       `);
 
       expect(result.rows.length).toBe(1);
@@ -61,7 +61,7 @@ describe('Migration 030: Capability-Driven Development', () => {
       const result = await pool.query(`
         SELECT constraint_name
         FROM information_schema.table_constraints
-        WHERE table_name = 'capabilities'
+        WHERE table_name = 'capabilities_legacy'
           AND constraint_type = 'CHECK'
           AND constraint_name LIKE '%current_stage%'
       `);
@@ -70,14 +70,14 @@ describe('Migration 030: Capability-Driven Development', () => {
     });
 
     it('should have seed capabilities', async () => {
-      const result = await pool.query('SELECT count(*) FROM capabilities');
+      const result = await pool.query('SELECT count(*) FROM capabilities_legacy');
       expect(parseInt(result.rows[0].count, 10)).toBeGreaterThanOrEqual(23);
     });
 
     it('should have valid seed data structure', async () => {
       const result = await pool.query(`
         SELECT id, name, current_stage, related_repos
-        FROM capabilities
+        FROM capabilities_legacy
         ORDER BY id
         LIMIT 5
       `);
@@ -95,7 +95,7 @@ describe('Migration 030: Capability-Driven Development', () => {
 
     it('should have autonomous-task-scheduling capability', async () => {
       const result = await pool.query(`
-        SELECT * FROM capabilities WHERE id = 'autonomous-task-scheduling'
+        SELECT * FROM capabilities_legacy WHERE id = 'autonomous-task-scheduling'
       `);
 
       expect(result.rows.length).toBe(1);

@@ -47,7 +47,7 @@ async function main() {
 
     // Fetch all capabilities
     const result = await client.query(
-      'SELECT id, name, description FROM capabilities ORDER BY id'
+      'SELECT id, name, description FROM capabilities_legacy ORDER BY id'
     );
 
     const capabilities = result.rows;
@@ -89,7 +89,7 @@ async function main() {
         // Update database
         // pgvector accepts embedding as array or string
         await client.query(
-          'UPDATE capabilities SET embedding = $1::vector WHERE id = $2',
+          'UPDATE capabilities_legacy SET embedding = $1::vector WHERE id = $2',
           [JSON.stringify(embedding), capability.id]
         );
 
@@ -132,7 +132,7 @@ async function main() {
 
     // Verify results
     const verifyResult = await client.query(
-      'SELECT COUNT(*) FROM capabilities WHERE embedding IS NOT NULL'
+      'SELECT COUNT(*) FROM capabilities_legacy WHERE embedding IS NOT NULL'
     );
     console.log(`📊 Total capabilities with embeddings: ${verifyResult.rows[0].count}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

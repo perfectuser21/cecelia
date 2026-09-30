@@ -443,7 +443,7 @@ router.get('/capabilities', async (req, res) => {
   try {
     const { current_stage, owner, scope } = req.query;
 
-    let query = 'SELECT * FROM capabilities WHERE 1=1';
+    let query = 'SELECT * FROM capabilities_legacy WHERE 1=1';
     const params = [];
 
     if (current_stage) {
@@ -489,7 +489,7 @@ router.get('/capabilities/:id', async (req, res) => {
     const { id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM capabilities WHERE id = $1',
+      'SELECT * FROM capabilities_legacy WHERE id = $1',
       [id]
     );
 
@@ -584,7 +584,7 @@ router.post('/capabilities', async (req, res) => {
 
     // Check for duplicate ID
     const existingCheck = await pool.query(
-      'SELECT id FROM capabilities WHERE id = $1',
+      'SELECT id FROM capabilities_legacy WHERE id = $1',
       [id]
     );
     if (existingCheck.rows.length > 0) {
@@ -597,7 +597,7 @@ router.post('/capabilities', async (req, res) => {
 
     // Insert capability
     const result = await pool.query(
-      `INSERT INTO capabilities (
+      `INSERT INTO capabilities_legacy (
         id, name, description, current_stage, stage_definitions,
         related_repos, related_skills, key_tables, evidence, owner
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -659,7 +659,7 @@ router.patch('/capabilities/:id', async (req, res) => {
 
     // Check capability exists
     const existingCheck = await pool.query(
-      'SELECT * FROM capabilities WHERE id = $1',
+      'SELECT * FROM capabilities_legacy WHERE id = $1',
       [id]
     );
     if (existingCheck.rows.length === 0) {
@@ -730,7 +730,7 @@ router.patch('/capabilities/:id', async (req, res) => {
     updates.push('updated_at = NOW()');
 
     const query = `
-      UPDATE capabilities
+      UPDATE capabilities_legacy
       SET ${updates.join(', ')}
       WHERE id = $1
       RETURNING *
