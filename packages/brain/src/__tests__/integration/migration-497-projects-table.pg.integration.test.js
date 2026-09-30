@@ -1,5 +1,5 @@
 /**
- * 迁移 496 真库集成测试（棒1，任务 9e785997，决策 ee4842a6/3feeae3e）——mock 测不到的四件事：
+ * 迁移 497 真库集成测试（棒1，任务 9e785997，决策 ee4842a6/3feeae3e）——mock 测不到的四件事：
  *   1. okr_projects → projects 原样搬家（同 id）
  *   2. 历史 task_type='project' 根：子任务 payload.project_ref 命中已存在 projects 行则复用，
  *      否则以根任务自身 id 新建一行；tasks.project_id 全部回填
@@ -7,10 +7,11 @@
  *   4. tasks_project_id_fkey 的 VALIDATE 结果写进 schema_version.description（不静默吞——
  *      主理人 09-30 追加要求：外键校验失败要留痕，不能只 RAISE WARNING 进服务端日志）
  *
- * 编号勘误：本迁移原编号 495，PR 开出后 495_vs_model_spans.sql 先合并占用了该号，改号为 496。
+ * 编号勘误：本迁移先改过 495→496（撞 495_vs_model_spans.sql），又撞 496_probe_targets_cells_levels.sql，
+ * 最终定号 497。
  *
- * 建库→跑全量 migrate.js 建表（此时无种子数据，496 的搬家分支是空跑）→插种子数据→
- * 直接重放 496 的 SQL 文本两遍，验证"496 真正碰到数据时"的行为与幂等性。
+ * 建库→跑全量 migrate.js 建表（此时无种子数据，497 的搬家分支是空跑）→插种子数据→
+ * 直接重放 497 的 SQL 文本两遍，验证"497 真正碰到数据时"的行为与幂等性。
  * 照 project-root-gate.pg.integration.test.js 的建库/删库手法。
  */
 import { execFileSync } from 'node:child_process';
@@ -24,8 +25,8 @@ import { DB_DEFAULTS } from '../../db-config.js';
 
 const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
-const MIGRATION_496_SQL = readFileSync(
-  new URL('../../../migrations/496_projects_table_upgrade.sql', import.meta.url),
+const MIGRATION_497_SQL = readFileSync(
+  new URL('../../../migrations/497_projects_table_upgrade.sql', import.meta.url),
   'utf8'
 );
 
@@ -48,7 +49,7 @@ beforeAll(async () => {
   adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1 });
   await adminPool.query(`CREATE DATABASE ${quoteIdentifier(databaseName)}`);
 
-  // 全量迁移建表（此时 496 也会跑一次，但库里没有任何 okr_projects / task_type=project 数据，
+  // 全量迁移建表（此时 497 也会跑一次，但库里没有任何 okr_projects / task_type=project 数据，
   // 搬家分支是空跑——ADD COLUMN 生效，INSERT...SELECT 与 DO 循环都是 0 行）。
   execFileSync(process.execPath, ['src/migrate.js'], {
     cwd: BRAIN_ROOT,
@@ -92,8 +93,8 @@ beforeAll(async () => {
     [child2Id, rootId]
   );
 
-  // 直接重放 496 的 SQL 文本（此时数据已就位，模拟"496 真正碰到历史数据"的场景）。
-  await pool.query(MIGRATION_496_SQL);
+  // 直接重放 497 的 SQL 文本（此时数据已就位，模拟"497 真正碰到历史数据"的场景）。
+  await pool.query(MIGRATION_497_SQL);
 }, 180_000);
 
 afterAll(async () => {
@@ -104,7 +105,7 @@ afterAll(async () => {
   if (adminPool) await adminPool.end();
 }, 30_000);
 
-describe.sequential('迁移 496：projects 真身表升格', () => {
+describe.sequential('迁移 497：projects 真身表升格', () => {
   it('projects 新列都已建好', async () => {
     const { rows } = await pool.query(
       `SELECT column_name FROM information_schema.columns WHERE table_name = 'projects'`
@@ -144,7 +145,7 @@ describe.sequential('迁移 496：projects 真身表升格', () => {
   });
 
   it('幂等重放：第二次跑同一份 SQL 不报错、不产生重复行、回填结果不变', async () => {
-    await expect(pool.query(MIGRATION_496_SQL)).resolves.toBeDefined();
+    await expect(pool.query(MIGRATION_497_SQL)).resolves.toBeDefined();
     const { rows: countRows } = await pool.query(`SELECT count(*)::int AS n FROM projects WHERE id = $1`, [SEED_PROJECT_ID]);
     expect(countRows[0].n).toBe(1);
     const { rows: childRows } = await pool.query(
@@ -167,7 +168,7 @@ describe.sequential('迁移 496：projects 真身表升格', () => {
        VALUES ($1, 'legacy-child-bare', 'dev', 'completed', 'P2', $2)`,
       [bareChildId, bareRootId]
     );
-    await pool.query(MIGRATION_496_SQL);
+    await pool.query(MIGRATION_497_SQL);
     const { rows: projRows } = await pool.query(`SELECT id, name, status FROM projects WHERE id = $1`, [bareRootId]);
     expect(projRows).toHaveLength(1);
     expect(projRows[0].name).toBe('legacy-root-bare');
@@ -177,7 +178,7 @@ describe.sequential('迁移 496：projects 真身表升格', () => {
   });
 
   it('tasks_project_id_fkey 校验结果写进 schema_version.description（不静默吞）', async () => {
-    const { rows } = await pool.query(`SELECT description FROM schema_version WHERE version = '496'`);
+    const { rows } = await pool.query(`SELECT description FROM schema_version WHERE version = '497'`);
     expect(rows).toHaveLength(1);
     expect(rows[0].description).toContain('FK 校验:');
     // 本测试库数据干净（没有指向不存在 projects 行的脏 project_id），校验应当成功

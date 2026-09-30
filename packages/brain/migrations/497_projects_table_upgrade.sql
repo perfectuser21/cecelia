@@ -1,5 +1,6 @@
--- Migration 496: Projects 真身表升格（接力棒链 2afa6d69 棒1，决策 ee4842a6 / 3feeae3e，任务 9e785997）
--- 编号勘误：本迁移原编号 495，PR 开出后 495_vs_model_spans.sql 先合并占用了该号，改号为 496。
+-- Migration 497: Projects 真身表升格（接力棒链 2afa6d69 棒1，决策 ee4842a6 / 3feeae3e，任务 9e785997）
+-- 编号勘误：本迁移先改过 495→496（撞 495_vs_model_spans.sql），又撞 496_probe_targets_cells_levels.sql，
+-- 最终定号 497。
 --
 -- 主理人拍板：GTD 轴只保留四级 Objective → Key Result → Project → Task。Project 是独立表，
 -- 不是 tasks.task_type='project' 的虚拟根。
@@ -45,7 +46,7 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE INDEX IF NOT EXISTS idx_projects_kr_id ON projects(kr_id);
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 CREATE INDEX IF NOT EXISTS idx_projects_area_id ON projects(area_id);
-COMMENT ON TABLE projects IS 'GTD Project 真身（决策 ee4842a6/3feeae3e）：tasks.project_id 挂在它下面，接力棒链根 = projects 行。186 曾整表 DROP，496 重建。';
+COMMENT ON TABLE projects IS 'GTD Project 真身（决策 ee4842a6/3feeae3e）：tasks.project_id 挂在它下面，接力棒链根 = projects 行。186 曾整表 DROP，497 重建。';
 COMMENT ON COLUMN projects.brief IS '项目简报（棒2 填充协议，本迁移只建列）。';
 COMMENT ON COLUMN projects.notion_props IS '含 notion_id / project_digest / project_db（接力棒 Notion 投影指纹，挪自旧 tasks.notion_props.project_digest）。';
 
@@ -64,9 +65,9 @@ BEGIN
   END IF;
   BEGIN
     ALTER TABLE tasks VALIDATE CONSTRAINT tasks_project_id_fkey;
-    PERFORM set_config('cecelia.mig496_fk_note', 'tasks_project_id_fkey validated OK', false);
+    PERFORM set_config('cecelia.mig497_fk_note', 'tasks_project_id_fkey validated OK', false);
   EXCEPTION WHEN OTHERS THEN
-    PERFORM set_config('cecelia.mig496_fk_note', 'tasks_project_id_fkey VALIDATE FAILED（历史脏数据未清，FK 仍是 NOT VALID）: ' || SQLERRM, false);
+    PERFORM set_config('cecelia.mig497_fk_note', 'tasks_project_id_fkey VALIDATE FAILED（历史脏数据未清，FK 仍是 NOT VALID）: ' || SQLERRM, false);
     RAISE WARNING 'tasks_project_id_fkey 验证部分失败（历史脏数据，不阻断迁移）：%', SQLERRM;
   END;
 END $$;
@@ -127,8 +128,8 @@ BEGIN
 END $$;
 
 INSERT INTO schema_version (version, description)
-VALUES ('496', 'Projects 真身表重建（186 曾 DROP）：projects 表 + tasks.project_id FK 重接 + okr_projects 搬家 + 历史 task_type=project 根回填（棒1，决策 ee4842a6/3feeae3e）｜FK 校验: '
-  || COALESCE(current_setting('cecelia.mig496_fk_note', true), 'tasks_project_id_fkey validated OK'))
+VALUES ('497', 'Projects 真身表重建（186 曾 DROP）：projects 表 + tasks.project_id FK 重接 + okr_projects 搬家 + 历史 task_type=project 根回填（棒1，决策 ee4842a6/3feeae3e）｜FK 校验: '
+  || COALESCE(current_setting('cecelia.mig497_fk_note', true), 'tasks_project_id_fkey validated OK'))
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
