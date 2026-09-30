@@ -76,6 +76,9 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/handoff-atom-relay.integration.test.ts',
   'src/__tests__/integration/capture-destination-link.integration.test.js',
   'src/__tests__/integration/okr-decomposition-flow.integration.test.js',
+  // 棒4（决策 ee4842a6）改写时发现未被排除——直连真实 pg.Pool，brain-unit 无 DB 会挂死，
+  // 补进来才是"真的没漏"（同类 DB 集成测试统一走 brain-integration）
+  'src/__tests__/integration/okr-task-progress-loop.integration.test.js',
   'src/__tests__/integration/base-sha-reanchor.pg.integration.test.js',
   'src/__tests__/integration/migration-491-skill-registry-ledger.integration.test.js',
   'src/__tests__/integration/skill-inventory-sync.integration.test.js',
