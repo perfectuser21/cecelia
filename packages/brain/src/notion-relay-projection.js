@@ -12,6 +12,7 @@
 import { createHash } from 'node:crypto';
 import { notionReq as defaultNotionReq, getToken } from './recurring-notion-sync.js';
 import { isWrongDatabaseError } from './lib/notion-projection-engine.js';
+import { normalizeBrief } from './lib/project-brief.js';
 
 export const PROJECTS_DB = 'd83c40c2-ba63-8323-8dc7-01cc291c4d9b';
 export const DECISIONS_INLET_DB = 'f93e1918-56c1-4f31-9a41-36aa76a1c9c2';
@@ -92,10 +93,33 @@ export function buildProjectProps(root, snap) {
   };
 }
 
-export function buildProjectBody(root, snap) {
+/** brief → Notion blocks（棒2）：目标/现状/已知事实/未决问题/变更日志最近 10 条。 */
+function buildBriefBlocks(brief) {
+  const b = normalizeBrief(brief);
   const blocks = [];
   blocks.push(heading('目标'));
-  blocks.push(para(String(root.description || '（未写目标）')));
+  blocks.push(para(b.goal || '（未写目标）'));
+  blocks.push(heading('现状'));
+  blocks.push(para(b.status || '（未写现状）'));
+  blocks.push(heading('已知事实'));
+  if (!b.facts.length) blocks.push(para('（无）'));
+  for (const f of b.facts.slice(-8)) blocks.push(bullet(f));
+  blocks.push(heading('未决问题'));
+  const openQs = b.open_questions.filter((q) => !q.closed_by_task);
+  if (!openQs.length) blocks.push(para('（无）'));
+  for (const q of openQs.slice(0, 8)) blocks.push(bullet(q.text));
+  blocks.push(heading('变更日志（最近 10 条）'));
+  const recent = b.changelog.slice(-10).reverse();
+  if (!recent.length) blocks.push(para('（无）'));
+  for (const e of recent) {
+    const when = String(e.at || '').slice(0, 16).replace('T', ' ');
+    blocks.push(bullet(`${when} · ${e.kind} · ${e.summary}`));
+  }
+  return blocks;
+}
+
+export function buildProjectBody(root, snap) {
+  const blocks = [...buildBriefBlocks(root.brief)];
   blocks.push(heading(`链（${snap.children.length} 棒）`));
   if (!snap.children.length) blocks.push(para('还没有子任务。下一棒会由上一棒的 handoff.next_steps 自动登记。'));
   for (const c of snap.children.slice(0, 25)) {
@@ -140,7 +164,7 @@ function isGone(err) {
 export async function pushProjectRoots(pool, token, { notionReq = defaultNotionReq, dbId = PROJECTS_DB, log = console } = {}) {
   const stat = { pushed: 0, skipped: 0, failed: 0 };
   const { rows: rawRoots } = await pool.query(
-    `SELECT id, name AS title, description, status, notion_props
+    `SELECT id, name AS title, description, status, brief, notion_props
        FROM projects
       WHERE status NOT IN ('cancelled','canceled','archived')
          OR updated_at > NOW() - INTERVAL '7 days'
