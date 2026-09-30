@@ -566,7 +566,7 @@ features:
         - packages/brain/src/__tests__/project-compare.test.js
         - packages/brain/src/__tests__/promotion-job.test.js
         - packages/brain/src/__tests__/routes/task-goals.test.js
-        - packages/brain/src/__tests__/routes/task-projects.test.js
+        - packages/brain/src/routes/__tests__/task-projects.test.js
         - packages/brain/src/__tests__/validate-okr-cycle.test.js
         - packages/brain/src/__tests__/validate-okr-spec-load.test.js
         - packages/brain/src/__tests__/validate-okr-structure.test.js
@@ -606,7 +606,7 @@ features:
             - packages/brain/src/__tests__/project-compare.test.js
             - packages/brain/src/__tests__/promotion-job.test.js
             - packages/brain/src/__tests__/routes/task-goals.test.js
-            - packages/brain/src/__tests__/routes/task-projects.test.js
+            - packages/brain/src/routes/__tests__/task-projects.test.js
             - packages/brain/src/__tests__/validate-okr-cycle.test.js
             - packages/brain/src/__tests__/validate-okr-spec-load.test.js
             - packages/brain/src/__tests__/validate-okr-structure.test.js

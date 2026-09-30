@@ -15,7 +15,7 @@ import { governanceErrorResponse } from '../lib/governance-errors.js';
 import { assertProjectRootForMultiTask } from '../lib/project-root-gate.js';
 
 async function taskExists(pool, id) {
-  const { rows } = await pool.query('SELECT id, task_type FROM tasks WHERE id = $1::uuid', [id]);
+  const { rows } = await pool.query('SELECT id, task_type, project_id FROM tasks WHERE id = $1::uuid', [id]);
   return rows[0] ?? null;
 }
 
@@ -49,7 +49,7 @@ export function registerTaskDependencyRoutes(router, { pool }) {
       if (!task) return res.status(404).json({ error: 'Task not found', id });
       // 登记闸（PR B）：给任务连依赖 = 多刀，本任务必须已挂 project 根（自身是 project 根豁免）
       await assertProjectRootForMultiTask(pool, {
-        taskType: task.task_type, parentTaskId: id, dependsOn: wanted, payload: {},
+        taskType: task.task_type, parentTaskId: id, dependsOn: wanted, payload: {}, projectId: task.project_id ?? null,
       });
 
       const result = await addTaskDependencies(pool, id, wanted, { edgeType, strict: true });

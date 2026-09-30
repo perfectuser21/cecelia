@@ -229,6 +229,7 @@ router.post('/', async (req, res) => {
         parentTaskId: parentTaskIdInput ?? payload?.parent_task_id ?? null,
         dependsOn: dependsOnIds,
         payload,
+        projectId: project_id ?? null,
       });
     } catch (guardErr) {
       const mapped = governanceErrorResponse(guardErr);
@@ -431,26 +432,49 @@ router.get('/:id/chain', async (req, res) => {
     const { getChainContext } = await import('../handoff.js');
     const ctx = await getChainContext({ pool }, req.params.id, { limit: 10 });
     if (!ctx) return res.status(404).json({ error: 'Task not found', id: req.params.id });
-    const { rows: children } = await pool.query(
-      `SELECT id, title, status, task_type, sequence_no, completed_at,
-              result->'handoff'->'verdict' AS verdict,
-              (result->'handoff'->'done'->>0) AS last_done,
-              result->'handoff'->'next_steps' AS next_steps
-         FROM tasks WHERE parent_task_id = $1::uuid
-        ORDER BY sequence_no NULLS LAST, created_at`,
-      [ctx.root.id]
-    );
-    const { rows: logRows } = await pool.query(
-      `WITH RECURSIVE down AS (
-         SELECT id, 0 AS depth FROM tasks WHERE id = $1::uuid
-         UNION ALL
-         SELECT t.id, down.depth + 1 FROM tasks t JOIN down ON t.parent_task_id = down.id WHERE down.depth < 12
-       )
-       SELECT e AS entry FROM tasks t JOIN down d ON d.id = t.id,
-            jsonb_array_elements(COALESCE(t.result->'handoff_log', '[]'::jsonb)) e
-        ORDER BY e->>'at' DESC LIMIT 50`,
-      [ctx.root.id]
-    );
+    let children;
+    let logRows;
+    if (ctx.root.kind === 'project') {
+      // 新路径：根 = projects 行（棒1，决策 ee4842a6/3feeae3e）。children/log 按 project_id 取，
+      // 不走旧的 parent_task_id 递归（root.id 是 projects.id，不是 task id）。
+      ({ rows: children } = await pool.query(
+        `SELECT id, title, status, task_type, sequence_no, completed_at,
+                result->'handoff'->'verdict' AS verdict,
+                (result->'handoff'->'done'->>0) AS last_done,
+                result->'handoff'->'next_steps' AS next_steps
+           FROM tasks WHERE project_id = $1::uuid AND task_type <> 'project'
+          ORDER BY sequence_no NULLS LAST, created_at`,
+        [ctx.root.id]
+      ));
+      ({ rows: logRows } = await pool.query(
+        `SELECT e AS entry FROM tasks t,
+              jsonb_array_elements(COALESCE(t.result->'handoff_log', '[]'::jsonb)) e
+         WHERE t.project_id = $1::uuid AND t.task_type <> 'project'
+         ORDER BY e->>'at' DESC LIMIT 50`,
+        [ctx.root.id]
+      ));
+    } else {
+      ({ rows: children } = await pool.query(
+        `SELECT id, title, status, task_type, sequence_no, completed_at,
+                result->'handoff'->'verdict' AS verdict,
+                (result->'handoff'->'done'->>0) AS last_done,
+                result->'handoff'->'next_steps' AS next_steps
+           FROM tasks WHERE parent_task_id = $1::uuid
+          ORDER BY sequence_no NULLS LAST, created_at`,
+        [ctx.root.id]
+      ));
+      ({ rows: logRows } = await pool.query(
+        `WITH RECURSIVE down AS (
+           SELECT id, 0 AS depth FROM tasks WHERE id = $1::uuid
+           UNION ALL
+           SELECT t.id, down.depth + 1 FROM tasks t JOIN down ON t.parent_task_id = down.id WHERE down.depth < 12
+         )
+         SELECT e AS entry FROM tasks t JOIN down d ON d.id = t.id,
+              jsonb_array_elements(COALESCE(t.result->'handoff_log', '[]'::jsonb)) e
+          ORDER BY e->>'at' DESC LIMIT 50`,
+        [ctx.root.id]
+      ));
+    }
     res.json({
       root: ctx.root,
       self: ctx.self,

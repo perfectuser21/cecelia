@@ -16,8 +16,8 @@ const WRONG_DB_MSG = 'Notion PATCH /pages/legacy → 400: Status is expected to 
 
 function poolFor(root, updates) {
   return { query: vi.fn(async (sql, params) => {
-    if (/FROM tasks\s+WHERE task_type = 'project'/.test(sql)) return { rows: [root] };
-    if (/UPDATE tasks SET notion_id/.test(sql)) { updates.push(params); return { rows: [] }; }
+    if (/FROM projects\s+WHERE status NOT IN/.test(sql)) return { rows: [root] };
+    if (/UPDATE projects SET/.test(sql)) { updates.push(params); return { rows: [] }; }
     return { rows: [] };
   }) };
 }
@@ -32,7 +32,7 @@ describe('relay project 错库 400 自愈', () => {
   it('legacy notion_id 指向错库 → 在 Projects 库 POST 重建，回存新 id + 指纹 + project_db', async () => {
     const updates = [];
     const root = { id: 'cf1bae42-0a0d-42e6-aff1-7c848de71620', title: '接力棒：验证层', description: 'd', status: 'queued',
-      notion_id: 'legacy', notion_props: null };
+      notion_props: { notion_id: 'legacy' } };
     const req = vi.fn(async (t, path, method, body) => {
       if (method === 'PATCH' && path === '/pages/legacy') throw new Error(WRONG_DB_MSG);
       if (method === 'POST' && path === '/pages') { expect(body.parent.database_id).toBe(PROJECTS_DB); return { id: 'new-proj-page' }; }
@@ -48,7 +48,7 @@ describe('relay project 错库 400 自愈', () => {
   it('其他 400（非错库、非回收站）仍按失败计，不重建', async () => {
     const updates = [];
     const root = { id: '11111111-1111-4111-8111-111111111111', title: 'p', description: 'd', status: 'queued',
-      notion_id: 'p1', notion_props: null };
+      notion_props: { notion_id: 'p1' } };
     const req = vi.fn(async (t, path, method) => {
       if (method === 'PATCH') throw new Error('Notion PATCH → 400: body failed validation: rich_text too long');
       if (method === 'POST') return { id: 'should-not-create' };

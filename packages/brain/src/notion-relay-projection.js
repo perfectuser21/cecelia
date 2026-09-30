@@ -44,26 +44,30 @@ export function digestOf(props, blocks) {
   return createHash('sha1').update(JSON.stringify({ p: props, b: blocks })).digest('hex');
 }
 
-/** 一条链的快照：有序子任务 / 待拍板 / 最近交接（根 + 子任务的 handoff_log 合并，最新在前） */
+/**
+ * 一条链的快照：有序子任务 / 待拍板 / 最近交接。
+ * 棒1（决策 ee4842a6/3feeae3e）：root 现在是 projects 行，全部按 project_id 取
+ * （不再是 tasks.parent_task_id 递归——root.id 是 projects.id，不是 task id）。
+ */
 export async function buildProjectSnapshot(pool, root) {
   const { rows: children } = await pool.query(
     `SELECT id, title, status, task_type, sequence_no, completed_at,
             result->'handoff'->>'verdict' AS verdict,
             result->'handoff'->'done'->>0 AS last_done
-       FROM tasks WHERE parent_task_id = $1::uuid
+       FROM tasks WHERE project_id = $1::uuid AND task_type <> 'project'
       ORDER BY sequence_no NULLS LAST, created_at`,
     [root.id]
   );
   const { rows: pending } = await pool.query(
     `SELECT id, topic, decision, priority, created_at FROM decisions
-      WHERE status = 'pending' AND trigger = 'handoff' AND context->>'root_task_id' = $1
+      WHERE status = 'pending' AND trigger = 'handoff' AND context->>'project_id' = $1
       ORDER BY created_at DESC LIMIT 20`,
     [String(root.id)]
   );
   const { rows: logRows } = await pool.query(
     `SELECT e AS entry FROM tasks t,
             jsonb_array_elements(COALESCE(t.result->'handoff_log', '[]'::jsonb)) e
-      WHERE t.id = $1::uuid OR t.parent_task_id = $1::uuid
+      WHERE t.project_id = $1::uuid AND t.task_type <> 'project'
       ORDER BY e->>'at' DESC LIMIT 10`,
     [root.id]
   );
@@ -109,7 +113,7 @@ export function buildProjectBody(root, snap) {
     const first = e.done?.[0] ? `：${String(e.done[0]).slice(0, 100)}` : '';
     blocks.push(bullet(`${when} · ${e.title || e.task_id} · ${e.verdict || '-'}${first}`));
   }
-  blocks.push(para(`镜子 🔒 由 Brain 每 5 分钟刷新；改这页不会改真身。真身：${BRAIN_PUBLIC_URL}/api/brain/tasks/${root.id}/chain`));
+  blocks.push(para(`镜子 🔒 由 Brain 每 5 分钟刷新；改这页不会改真身。真身：${BRAIN_PUBLIC_URL}/api/brain/projects/${root.id}`));
   return blocks.slice(0, MAX_BLOCKS);
 }
 
@@ -128,17 +132,22 @@ function isGone(err) {
   return /404|Could not find|archived ancestor/i.test(String(err?.message || '')) || isWrongDatabaseError(err);
 }
 
-/** project 根 → Projects 库。返回 {pushed, skipped, failed} */
+/**
+ * projects 行 → Projects 库。返回 {pushed, skipped, failed}。
+ * 棒1（决策 ee4842a6/3feeae3e）：数据源从 tasks(task_type='project') 改为 projects 表；
+ * Notion 页 id / 指纹不再是 tasks 顶层列，挪进 projects.notion_props（该表没有独立 notion_id 列）。
+ */
 export async function pushProjectRoots(pool, token, { notionReq = defaultNotionReq, dbId = PROJECTS_DB, log = console } = {}) {
   const stat = { pushed: 0, skipped: 0, failed: 0 };
-  const { rows: roots } = await pool.query(
-    `SELECT id, title, description, status, notion_id, notion_props
-       FROM tasks
-      WHERE task_type = 'project'
-        AND (status NOT IN ('cancelled','canceled') OR updated_at > NOW() - INTERVAL '7 days')
+  const { rows: rawRoots } = await pool.query(
+    `SELECT id, name AS title, description, status, notion_props
+       FROM projects
+      WHERE status NOT IN ('cancelled','canceled','archived')
+         OR updated_at > NOW() - INTERVAL '7 days'
       ORDER BY updated_at DESC LIMIT 30`
   );
-  for (const root of roots) {
+  for (const raw of rawRoots) {
+    const root = { ...raw, notion_id: raw.notion_props?.notion_id ?? null };
     try {
       const snap = await buildProjectSnapshot(pool, root);
       const props = buildProjectProps(root, snap);
@@ -160,9 +169,8 @@ export async function pushProjectRoots(pool, token, { notionReq = defaultNotionR
         pageId = page.id;
       }
       await pool.query(
-        `UPDATE tasks SET notion_id = $2,
-                notion_props = COALESCE(notion_props,'{}'::jsonb) || jsonb_build_object('project_digest', $3::text, 'project_db', $4::text),
-                notion_synced_at = NOW()
+        `UPDATE projects SET
+                notion_props = COALESCE(notion_props,'{}'::jsonb) || jsonb_build_object('notion_id', $2::text, 'project_digest', $3::text, 'project_db', $4::text)
           WHERE id = $1::uuid`,
         [root.id, pageId, digest, dbId]
       );
@@ -189,13 +197,19 @@ export function buildPendingDecisionProps(d, { rootNotionId = null } = {}) {
   };
 }
 
-/** 待拍板决策 → 「决策」库草案（只推一次；主理人改状态后由入口回灌接手） */
+/**
+ * 待拍板决策 → 「决策」库草案（只推一次；主理人改状态后由入口回灌接手）。
+ * 棒1（决策 ee4842a6/3feeae3e）：项目页现在是 projects 行，Notion 页 id 存在
+ * projects.notion_props.notion_id 里（不是 tasks.notion_id）。context.project_id 是新写法；
+ * 老决策只有 root_task_id（指向历史 task_type=project 根）时，通过该根 task 的 project_id 兼容找到同一行。
+ */
 export async function pushPendingDecisions(pool, token, { notionReq = defaultNotionReq, dbId = DECISIONS_INLET_DB, log = console } = {}) {
   const stat = { pushed: 0, failed: 0 };
   const { rows } = await pool.query(
-    `SELECT d.id, d.topic, d.decision, d.reason, d.context, d.priority, r.notion_id AS root_notion_id
+    `SELECT d.id, d.topic, d.decision, d.reason, d.context, d.priority, r.notion_props->>'notion_id' AS root_notion_id
        FROM decisions d
-       LEFT JOIN tasks r ON r.id::text = d.context->>'root_task_id' AND r.task_type = 'project'
+       LEFT JOIN tasks t ON t.id::text = d.context->>'root_task_id'
+       LEFT JOIN projects r ON r.id::text = COALESCE(d.context->>'project_id', t.project_id::text)
       WHERE d.status = 'pending' AND d.trigger = 'handoff' AND d.notion_id IS NULL
       ORDER BY d.created_at LIMIT 20`
   );

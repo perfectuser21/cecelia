@@ -1,8 +1,8 @@
 /**
- * 接力棒 PR3 投影 — 失败复现
- *  1. buildProjectProps：Status 映射、Remark 含 n/m 棒 + 待拍板数
- *  2. buildProjectBody：目标/链/待拍板/最近交接四段，≤60 块
- *  3. pushProjectRoots：无 notion_id → POST 建页存指纹；指纹相同 → 跳过；页 404 → 重建
+ * 接力棒 PR3 投影 —— 棒1（任务 9e785997，决策 ee4842a6/3feeae3e）迁到 projects 真身表：
+ *  1. buildProjectProps：Status 映射、Remark 含 n/m 棒 + 待拍板数（root 形状不变，仍是 title/description/status）
+ *  2. buildProjectBody：目标/链/待拍板/最近交接四段，≤60 块；真身链接改指向 /api/brain/projects/:id
+ *  3. pushProjectRoots：数据源 = projects 表；Notion 页 id / 指纹存 projects.notion_props（不再是 tasks 顶层列）
  *  4. pushPendingDecisions：草案属性 + 项目关系；回存 notion_id
  */
 import { describe, it, expect, vi } from 'vitest';
@@ -14,7 +14,7 @@ import {
   PROJECT_STATUS_TO_NOTION,
 } from '../notion-relay-projection.js';
 
-const ROOT = { id: '11111111-1111-4111-8111-111111111111', title: '接力棒：任务留痕与长链', description: '主理人不说也有人动', status: 'in_progress', notion_id: null, notion_props: null };
+const ROOT = { id: '11111111-1111-4111-8111-111111111111', title: '接力棒：任务留痕与长链', description: '主理人不说也有人动', status: 'in_progress', notion_props: null };
 const SNAP = {
   children: [
     { id: 'c1', title: '第一棒：脊柱', status: 'completed', sequence_no: 1, last_done: '458 真列落地' },
@@ -35,7 +35,7 @@ describe('buildProjectProps / Body', () => {
     expect(PROJECT_STATUS_TO_NOTION.blocked).toBe('On Hold');
     expect(PROJECT_STATUS_TO_NOTION.completed).toBe('Completed');
   });
-  it('正文：四段齐全、子任务按序带状态、待拍板带指引、≤60 块', () => {
+  it('正文：四段齐全、子任务按序带状态、待拍板带指引、≤60 块，真身链接指向 /api/brain/projects/:id', () => {
     const b = buildProjectBody(ROOT, SNAP);
     const txt = JSON.stringify(b);
     expect(txt).toContain('目标');
@@ -45,7 +45,8 @@ describe('buildProjectProps / Body', () => {
     expect(txt).toContain('4 张无血管表删列？');
     expect(txt).toContain('已决定');
     expect(txt).toContain('最近交接');
-    expect(txt).toContain('/api/brain/tasks/' + ROOT.id + '/chain');
+    expect(txt).toContain('/api/brain/projects/' + ROOT.id);
+    expect(txt).not.toContain('/api/brain/tasks/' + ROOT.id + '/chain');
     expect(b.length).toBeLessThanOrEqual(60);
   });
   it('digestOf 对同内容稳定、对改动敏感', () => {
@@ -57,17 +58,17 @@ describe('buildProjectProps / Body', () => {
 
 function poolWith({ roots, snap = SNAP, updates = [] }) {
   return { query: vi.fn(async (sql, params) => {
-    if (/FROM tasks\s+WHERE task_type = 'project'/.test(sql)) return { rows: roots };
-    if (/WHERE parent_task_id = \$1::uuid/.test(sql)) return { rows: snap.children };
+    if (/FROM projects\s+WHERE status NOT IN/.test(sql)) return { rows: roots };
+    if (/FROM tasks WHERE project_id = \$1::uuid AND task_type <> 'project'/.test(sql)) return { rows: snap.children };
     if (/FROM decisions\s+WHERE status = 'pending'/.test(sql)) return { rows: snap.pending };
     if (/handoff_log/.test(sql)) return { rows: snap.log.map((e) => ({ entry: e })) };
-    if (/UPDATE tasks SET notion_id/.test(sql)) { updates.push(params); return { rows: [] }; }
+    if (/UPDATE projects SET/.test(sql)) { updates.push(params); return { rows: [] }; }
     return { rows: [] };
   }) };
 }
 
 describe('pushProjectRoots', () => {
-  it('无 notion_id → POST 建页（带正文）→ 存 notion_id + 指纹', async () => {
+  it('无 notion_id → POST 建页（带正文）→ 存 notion_id + 指纹进 projects.notion_props', async () => {
     const updates = [];
     const pool = poolWith({ roots: [ROOT], updates });
     const req = vi.fn(async (t, path, method, body) => {
@@ -76,19 +77,20 @@ describe('pushProjectRoots', () => {
     });
     const s = await pushProjectRoots(pool, 'tok', { notionReq: req });
     expect(s).toEqual({ pushed: 1, skipped: 0, failed: 0 });
+    expect(updates[0][0]).toBe(ROOT.id);
     expect(updates[0][1]).toBe('page-1');
     expect(updates[0][2]).toHaveLength(40);
   });
   it('指纹相同 → 跳过，不碰 Notion', async () => {
     const digest = digestOf(buildProjectProps(ROOT, SNAP), buildProjectBody(ROOT, SNAP));
-    const pool = poolWith({ roots: [{ ...ROOT, notion_id: 'page-1', notion_props: { project_digest: digest } }] });
+    const pool = poolWith({ roots: [{ ...ROOT, notion_props: { notion_id: 'page-1', project_digest: digest } }] });
     const req = vi.fn();
     const s = await pushProjectRoots(pool, 'tok', { notionReq: req });
     expect(s.skipped).toBe(1);
     expect(req).not.toHaveBeenCalled();
   });
   it('指纹变了 → PATCH 属性 + 删旧块 + 追加新正文', async () => {
-    const pool = poolWith({ roots: [{ ...ROOT, notion_id: 'page-1', notion_props: { project_digest: 'stale' } }] });
+    const pool = poolWith({ roots: [{ ...ROOT, notion_props: { notion_id: 'page-1', project_digest: 'stale' } }] });
     const calls = [];
     const req = vi.fn(async (t, path, method) => { calls.push(`${method} ${path}`); if (method === 'GET') return { results: [{ id: 'b1' }, { id: 'b2' }] }; return {}; });
     await pushProjectRoots(pool, 'tok', { notionReq: req });
@@ -96,7 +98,7 @@ describe('pushProjectRoots', () => {
   });
   it('页被删（404）→ 重建新页', async () => {
     const updates = [];
-    const pool = poolWith({ roots: [{ ...ROOT, notion_id: 'gone', notion_props: { project_digest: 'stale' } }], updates });
+    const pool = poolWith({ roots: [{ ...ROOT, notion_props: { notion_id: 'gone', project_digest: 'stale' } }], updates });
     const req = vi.fn(async (t, path, method) => {
       if (method === 'PATCH' && path === '/pages/gone') throw new Error('Notion 404: Could not find page');
       if (method === 'POST') return { id: 'page-new' };
@@ -110,7 +112,7 @@ describe('pushProjectRoots', () => {
 
 describe('pushPendingDecisions', () => {
   it('草案属性：状态=草案、类型=项目、结论/背景/来源、项目关系；回存 notion_id', async () => {
-    const d = { id: 'd1', topic: '删不删列', decision: '（待主理人拍板）', reason: '接力棒提出', context: { task_id: 't1', root_task_id: ROOT.id, task_title: '第二棒' }, priority: 'P2', root_notion_id: 'proj-page' };
+    const d = { id: 'd1', topic: '删不删列', decision: '（待主理人拍板）', reason: '接力棒提出', context: { task_id: 't1', root_task_id: ROOT.id, project_id: 'proj-1', task_title: '第二棒' }, priority: 'P2', root_notion_id: 'proj-page' };
     const props = buildPendingDecisionProps(d, { rootNotionId: 'proj-page' });
     expect(props['状态'].select.name).toBe('草案');
     expect(props['类型'].select.name).toBe('项目');

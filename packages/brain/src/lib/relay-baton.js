@@ -85,6 +85,16 @@ export async function materializeNextSteps(pool, task, handoff, deps = {}) {
   if (!steps.length) return out;
   const rootId = rootOf(task);
   const parentPayload = task.payload || {};
+  // 棒1（决策 ee4842a6/3feeae3e）：task 挂了 project_id → 新子任务继承它，sequence_no 在该 project
+  // 下从 max+1 起本地递增（每个 task 步骤各占一个号，不逐个重查库）。
+  let nextProjectSeq = null;
+  if (task.project_id) {
+    const { rows } = await pool.query(
+      `SELECT COALESCE(MAX(sequence_no), 0) + 1 AS n FROM tasks WHERE project_id = $1::uuid`,
+      [task.project_id]
+    );
+    nextProjectSeq = Number(rows[0]?.n ?? 1);
+  }
   for (let i = 0; i < steps.length; i += 1) {
     const step = steps[i];
     if (step.kind === 'task') {
@@ -103,8 +113,14 @@ export async function materializeNextSteps(pool, task, handoff, deps = {}) {
           map_scope_hint: coding ? (Array.isArray(parentPayload.map_scope) ? parentPayload.map_scope : []) : [],
           parent_task_id: rootId,
           metadata: { lane: 'AI', from_handoff: task.id, relay_step_index: i },
-          task: { status: 'queued', priority: step.priority || task.priority || 'P2', trigger_source: 'child' },
+          task: {
+            status: 'queued',
+            priority: step.priority || task.priority || 'P2',
+            trigger_source: 'child',
+            ...(task.project_id ? { project_id: task.project_id, sequence_no: nextProjectSeq } : {}),
+          },
         });
+        if (task.project_id) nextProjectSeq += 1;
         out.tasks.push({ id: routed.task.id, title: routed.task.title, reused: Boolean(routed.reused) });
       } catch (err) {
         out.skipped.push({ index: i, kind: 'task', title: step.title, error: err.code || err.message });
@@ -127,7 +143,7 @@ export async function materializeNextSteps(pool, task, handoff, deps = {}) {
             step.title,
             step.detail || '（待主理人拍板）',
             `接力棒：任务「${task.title || task.id}」的 handoff 提出，链停在此等拍板`,
-            JSON.stringify({ kind: 'relay_pending', task_id: task.id, root_task_id: rootId, task_title: task.title || null }),
+            JSON.stringify({ kind: 'relay_pending', task_id: task.id, root_task_id: rootId, project_id: task.project_id ?? null, task_title: task.title || null }),
             step.priority || task.priority || 'P2',
             task.id,
           ]

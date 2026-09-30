@@ -158,6 +158,14 @@ function mountCrud(r, prefix, table, parentField) {
 mountCrud(router, '/visions', 'visions', null);
 mountCrud(router, '/objectives', 'objectives', 'vision_id');
 mountCrud(router, '/key-results', 'key_results', 'objective_id');
+// 棒1（决策 ee4842a6/3feeae3e）：原计划把这个 mount 也指向 projects 真身表，与
+// /api/brain/projects（routes/task-projects.js）"同源"；brain-integration CI 实测（真库）
+// 发现行不通——okr_scopes.project_id / okr_initiatives.project_id 的外键仍指向
+// okr_projects(id)，指向 projects 表会导致后续 POST /scopes、/initiatives 全部
+// FK 违反（23503）。okr_scopes/okr_initiatives 退役是棒4 的工作，在那之前
+// /api/brain/okr/projects 必须继续写 okr_projects，才能保住这条链完整。
+// projects 表这边由 migration 497 做过一次性同 id 搬家，/api/brain/projects
+// （routes/task-projects.js）独立读写 projects，两边不再"同源"，靠 id 相同对齐。
 mountCrud(router, '/projects', 'okr_projects', 'kr_id');
 mountCrud(router, '/scopes', 'okr_scopes', 'project_id');
 mountCrud(router, '/initiatives', 'okr_initiatives', 'scope_id');

@@ -105,3 +105,7 @@ describe('GET /kr/:id/ability-progress (T6 两轴对账)', () => {
     expect(res._data.success).toBe(false);
   });
 });
+
+// mountCrud(/projects) 曾计划改指向 projects 表（titleField=name），brain-integration 真库实测
+// 发现 okr_scopes/okr_initiatives 仍 FK 指向 okr_projects，改指向会导致 POST /scopes 全部
+// 23503；已改回 okr_projects（不变），故不再需要 name 列相关用例——见 okr-hierarchy.js 顶部注释。

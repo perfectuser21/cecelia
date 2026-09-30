@@ -82,6 +82,41 @@ describe('getChainContext', () => {
   });
 });
 
+const PROJECT_ID = '55555555-5555-4555-8555-555555555555';
+
+describe('getChainContext — project_id 快路径（棒1，决策 ee4842a6/3feeae3e）', () => {
+  function projectChainPool({ self, project, siblingsTotal = 1, recent = [] }) {
+    return {
+      query: vi.fn(async (sql, params) => {
+        if (/WITH RECURSIVE up/.test(sql)) return { rows: [self] };
+        if (/FROM projects WHERE id/.test(sql)) return { rows: project ? [project] : [] };
+        if (/count\(\*\)::int AS total FROM tasks WHERE project_id/.test(sql)) return { rows: [{ total: siblingsTotal }] };
+        if (/FROM tasks t\s+WHERE t\.project_id/.test(sql)) return { rows: recent };
+        return { rows: [] };
+      }),
+    };
+  }
+
+  it('任务挂了 project_id → root 来自 projects 行，kind=project，children/recent 按 project_id 取', async () => {
+    const self = { id: LEAF, parent_task_id: null, title: 'leaf', description: null, task_type: 'dev', status: 'queued', sequence_no: 3, project_id: PROJECT_ID, depth: 0 };
+    const project = { id: PROJECT_ID, name: '接力棒项目二', description: '真身表', status: 'active', kr_id: 'kr-1', brief: { goal: '打通' } };
+    const pool = projectChainPool({ self, project, siblingsTotal: 5, recent: [{ id: MID, title: 'mid', completed_at: null, handoff: { verdict: 'PASS', done: ['x'] } }] });
+    const ctx = await getChainContext({ pool }, LEAF);
+    expect(ctx.root).toMatchObject({ id: PROJECT_ID, title: '接力棒项目二', kind: 'project', status: 'active', kr_id: 'kr-1' });
+    expect(ctx.is_chained).toBe(true);
+    expect(ctx.position).toEqual({ sequence_no: 3, total: 5 });
+    expect(ctx.recent).toHaveLength(1);
+  });
+
+  it('projects 表查无该 project_id（脏数据）→ 回退旧的祖先链逻辑', async () => {
+    const self = { id: LEAF, parent_task_id: null, title: 'solo', description: null, task_type: 'dev', status: 'queued', sequence_no: null, project_id: PROJECT_ID, depth: 0 };
+    const pool = projectChainPool({ self, project: null });
+    const ctx = await getChainContext({ pool }, LEAF);
+    expect(ctx.root.id).toBe(LEAF);
+    expect(ctx.is_chained).toBe(false);
+  });
+});
+
 describe('formatChainForPrompt / buildChainPromptSafe', () => {
   it('孤立且无 handoff → 空串（不注入噪音）', () => {
     expect(formatChainForPrompt({ root: { id: LEAF }, is_chained: false, recent: [] })).toBe('');

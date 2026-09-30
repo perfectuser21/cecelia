@@ -24,7 +24,7 @@ function db({ existing = [A, B], cycle = false, root = true } = {}) {
   query.mockReset();
   query.mockImplementation(async (sql) => {
     const s = String(sql);
-    if (/SELECT id, task_type FROM tasks WHERE id = \$1/.test(s)) return { rows: existing.includes(A) ? [{ id: A, task_type: 'dev' }] : [] };
+    if (/SELECT id, task_type, project_id FROM tasks WHERE id = \$1/.test(s)) return { rows: existing.includes(A) ? [{ id: A, task_type: 'dev', project_id: null }] : [] };
     if (/SELECT id FROM tasks WHERE id = ANY/.test(s)) return { rows: existing.map((id) => ({ id })) };
     if (/WITH RECURSIVE up/.test(s)) return { rows: root ? [{ id: '99999999-9999-4999-8999-999999999999' }] : [] }; // 登记闸：找 project 根
     if (/WITH RECURSIVE reach/.test(s)) return { rows: cycle ? [{ hit: 1 }] : [] };
