@@ -1,6 +1,8 @@
 /**
  * Route tests: /api/brain/projects (task-projects.js)
- * 已迁移到新 OKR 表：okr_projects
+ * 棒1（任务 9e785997，决策 ee4842a6/3feeae3e）：数据源从 okr_projects 迁到 projects 真身表，
+ * 与 /api/brain/okr/projects（okr-hierarchy.js mountCrud）读写同一张表。新增 POST /、
+ * GET /:id 附 children_count/completed_count。
  */
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import express from 'express';
@@ -41,16 +43,16 @@ describe('task-projects routes', () => {
   });
 
   describe('GET /projects', () => {
-    it('lists all projects without filters (from okr_projects)', async () => {
+    it('lists all projects without filters (from projects)', async () => {
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'p1', title: 'Project 1' }],
+        rows: [{ id: 'p1', name: 'Project 1', title: 'Project 1' }],
       });
 
       const res = await request(app).get('/projects');
       expect(res.status).toBe(200);
       expect(res.body).toHaveLength(1);
       const [sql] = mockPool.query.mock.calls[0];
-      expect(sql).toContain('FROM okr_projects');
+      expect(sql).toContain('FROM projects');
     });
 
     it('filters by status', async () => {
@@ -58,7 +60,7 @@ describe('task-projects routes', () => {
 
       await request(app).get('/projects?status=active');
       const [sql, params] = mockPool.query.mock.calls[0];
-      expect(sql).toContain('FROM okr_projects');
+      expect(sql).toContain('FROM projects');
       expect(sql).toContain('status = $1');
       expect(params).toEqual(['active']);
     });
@@ -93,18 +95,55 @@ describe('task-projects routes', () => {
       expect(res.body.id).toBeUndefined();
     });
 
-    it('returns project by id from okr_projects with compat fields', async () => {
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'p1', title: 'Project 1', description: null, kr_id: 'kr-1', goal_id: null }],
-      });
+    it('returns project by id from projects，附 children_count/completed_count', async () => {
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{ id: 'p1', name: 'Project 1', title: 'Project 1', description: 'd', kr_id: 'kr-1' }],
+        })
+        .mockResolvedValueOnce({ rows: [{ total: 3, completed: 1 }] });
       const res = await request(app).get('/projects/p1');
       expect(res.status).toBe(200);
       expect(res.body.id).toBe('p1');
-      // 验证 SQL 查询 okr_projects 并返回兼容字段
+      expect(res.body.children_count).toBe(3);
+      expect(res.body.completed_count).toBe(1);
       const [sql] = mockPool.query.mock.calls[0];
-      expect(sql).toContain('FROM okr_projects');
-      expect(sql).toContain('kr_id');
-      expect(sql).toContain('NULL::uuid AS goal_id');
+      expect(sql).toContain('FROM projects');
+      const [countSql, countParams] = mockPool.query.mock.calls[1];
+      expect(countSql).toContain('project_id');
+      expect(countParams).toEqual(['p1']);
+    });
+  });
+
+  describe('POST /projects', () => {
+    it('name 缺失 → 400', async () => {
+      const res = await request(app).post('/projects').send({});
+      expect(res.status).toBe(400);
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    it('kr_id 给了但不是真实 key_results → 400 kr_id_not_key_result', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] }); // key_results 校验查无
+      const res = await request(app).post('/projects').send({ name: 'p', kr_id: 'ghost-kr' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('kr_id_not_key_result');
+    });
+
+    it('创建成功 → 201 且返回新行', async () => {
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [{ id: 'kr-1' }] }) // key_results 校验命中
+        .mockResolvedValueOnce({ rows: [{ id: 'p-new', name: '新项目' }] }); // INSERT
+      const res = await request(app).post('/projects').send({ name: '新项目', kr_id: 'kr-1' });
+      expect(res.status).toBe(201);
+      expect(res.body.id).toBe('p-new');
+      const [sql] = mockPool.query.mock.calls[1];
+      expect(sql).toContain('INSERT INTO projects');
+    });
+
+    it('无 kr_id → 直接建，不查 key_results', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'p-new2', name: '无 KR 项目' }] });
+      const res = await request(app).post('/projects').send({ name: '无 KR 项目' });
+      expect(res.status).toBe(201);
+      expect(mockPool.query).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -160,20 +199,40 @@ describe('task-projects routes', () => {
       const res = await request(app).patch('/projects/p1').send({ status: 'completed' });
       expect(res.status).toBe(200);
       const [sql] = mockPool.query.mock.calls[0];
-      expect(sql).toContain('UPDATE okr_projects');
+      expect(sql).toContain('UPDATE projects');
       expect(sql).toContain('status = $1');
     });
 
-    it('updates name (mapped to title in okr_projects)', async () => {
+    it('updates name (mapped to name column in projects)', async () => {
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'p1', title: 'Updated' }],
+        rows: [{ id: 'p1', name: 'Updated' }],
       });
 
       const res = await request(app).patch('/projects/p1').send({ name: 'Updated' });
       expect(res.status).toBe(200);
       const [sql] = mockPool.query.mock.calls[0];
-      expect(sql).toContain('UPDATE okr_projects');
-      expect(sql).toContain('title = $1');
+      expect(sql).toContain('UPDATE projects');
+      expect(sql).toContain('name = $1');
+    });
+
+    it('title 字段向后兼容也映射到 name 列', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'p1', name: 'Updated2' }] });
+      const res = await request(app).patch('/projects/p1').send({ title: 'Updated2' });
+      expect(res.status).toBe(200);
+      const [sql] = mockPool.query.mock.calls[0];
+      expect(sql).toContain('name = $1');
+    });
+
+    it('kr_id/description/owner_role/start_date/end_date/metadata 均可更新', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'p1' }] });
+      const res = await request(app).patch('/projects/p1').send({
+        kr_id: 'kr-2', description: 'd2', owner_role: 'line02', start_date: '2026-01-01', end_date: '2026-02-01', metadata: { a: 1 },
+      });
+      expect(res.status).toBe(200);
+      const [sql] = mockPool.query.mock.calls[0];
+      for (const col of ['kr_id', 'description', 'owner_role', 'start_date', 'end_date', 'metadata']) {
+        expect(sql).toContain(`${col} = $`);
+      }
     });
 
     it('returns 404 when project not found', async () => {

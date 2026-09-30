@@ -95,3 +95,46 @@ describe('assertProjectRootForMultiTask', () => {
     expect(db.query).not.toHaveBeenCalled();
   });
 });
+
+const PROJECT_ID = '44444444-4444-4444-8444-444444444444';
+
+function makeDbWithProject({ projectExists = false } = {}) {
+  const calls = [];
+  return {
+    calls,
+    query: vi.fn(async (sql, params) => {
+      calls.push(sql);
+      if (/FROM projects WHERE id/.test(sql)) return { rows: projectExists ? [{ id: params[0] }] : [] };
+      if (/WITH RECURSIVE up/.test(sql)) return { rows: [] };
+      if (/FROM tasks WHERE parent_task_id/.test(sql)) return { rows: [] };
+      return { rows: [] };
+    }),
+  };
+}
+
+describe('assertProjectRootForMultiTask — projectId 快路径（棒1，决策 ee4842a6/3feeae3e）', () => {
+  it('projectId 存在于 projects 表 → 直接放行，不查祖先链', async () => {
+    const db = makeDbWithProject({ projectExists: true });
+    await expect(assertProjectRootForMultiTask(db, {
+      taskType: 'dev', parentTaskId: null, dependsOn: [DEP], payload: {}, projectId: PROJECT_ID,
+    })).resolves.toBeUndefined();
+    expect(db.calls.some((s) => /WITH RECURSIVE up/.test(s))).toBe(false);
+  });
+
+  it('projectId 给了但 projects 表查无此行 → 回退祖先链判定（无祖先根 → project_root_required）', async () => {
+    const db = makeDbWithProject({ projectExists: false });
+    const err = await assertProjectRootForMultiTask(db, {
+      taskType: 'dev', parentTaskId: null, dependsOn: [DEP], payload: {}, projectId: PROJECT_ID,
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ProjectRootGateError);
+    expect(err.code).toBe('project_root_required');
+  });
+
+  it('两者都无（无 projectId、无祖先根）→ 原错误码不变', async () => {
+    const db = makeDb();
+    const err = await assertProjectRootForMultiTask(db, {
+      taskType: 'dev', parentTaskId: null, dependsOn: [DEP], payload: {},
+    }).catch((e) => e);
+    expect(err.code).toBe('project_root_required');
+  });
+});

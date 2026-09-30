@@ -13,6 +13,7 @@ import { normalizeNextSteps, materializeNextSteps, ensureHandoffOnComplete, rela
 
 const ROOT = '11111111-1111-4111-8111-111111111111';
 const SELF = '33333333-3333-4333-8333-333333333333';
+const PROJECT_ID = '66666666-6666-4666-8666-666666666666';
 
 describe('normalizeNextSteps', () => {
   it('字符串→note，对象保留字段，非法丢弃，未知 kind→note', () => {
@@ -71,6 +72,41 @@ describe('materializeNextSteps', () => {
     await materializeNextSteps({ query: vi.fn() }, { ...task, parent_task_id: null }, { next_steps: [{ kind: 'task', title: 'x' }] }, { createRoutedTask: create });
     expect(create.mock.calls[0][1].parent_task_id).toBe(SELF);
   });
+  it('task.project_id 存在 → 子任务继承 project_id，sequence_no=project 下 max+1 递增（棒1，决策 ee4842a6/3feeae3e）', async () => {
+    const created = [];
+    const create = vi.fn(async (_pool, req) => { created.push(req); return { task: { id: `t-${created.length}`, title: req.title } }; });
+    const pool = { query: vi.fn(async (sql) => {
+      if (/COALESCE\(MAX\(sequence_no\), 0\) \+ 1/.test(sql)) return { rows: [{ n: 5 }] };
+      return { rows: [] };
+    }) };
+    const projTask = { ...task, project_id: PROJECT_ID };
+    await materializeNextSteps(pool, projTask, { next_steps: [
+      { kind: 'task', title: '做 B' },
+      { kind: 'task', title: '做 C' },
+    ] }, { createRoutedTask: create });
+    expect(created[0].task).toMatchObject({ project_id: PROJECT_ID, sequence_no: 5 });
+    expect(created[1].task).toMatchObject({ project_id: PROJECT_ID, sequence_no: 6 });
+  });
+
+  it('task.project_id 不存在（旧链）→ createRoutedTask 请求里不带 project_id/sequence_no（行为不变）', async () => {
+    const created = [];
+    const create = vi.fn(async (_pool, req) => { created.push(req); return { task: { id: 't', title: req.title } }; });
+    await materializeNextSteps({ query: vi.fn() }, task, { next_steps: [{ kind: 'task', title: 'x' }] }, { createRoutedTask: create });
+    expect(created[0].task.project_id).toBeUndefined();
+    expect(created[0].task.sequence_no).toBeUndefined();
+  });
+
+  it('decision 分支：context 带 project_id（有 project_id 时非空，否则 null）', async () => {
+    const inserted = [];
+    const pool = { query: vi.fn(async (sql, params) => {
+      if (/SELECT id FROM decisions/.test(sql)) return { rows: [] };
+      if (/INSERT INTO decisions/.test(sql)) { inserted.push(params); return { rows: [{ id: 'd-1', topic: params[0] }] }; }
+      return { rows: [] };
+    }) };
+    await materializeNextSteps(pool, { ...task, project_id: PROJECT_ID }, { next_steps: [{ kind: 'decision', title: '要不要' }] });
+    expect(JSON.parse(inserted[0][3])).toMatchObject({ project_id: PROJECT_ID });
+  });
+
   it('createRoutedTask 抛错 → 进 skipped，不中断其余步骤', async () => {
     const create = vi.fn(async (_p, req) => { if (req.title === 'bad') { const e = new Error('x'); e.code = 'routing_map_scope_unresolved'; throw e; } return { task: { id: 'ok', title: req.title } }; });
     const out = await materializeNextSteps({ query: vi.fn() }, task, { next_steps: [{ kind: 'task', title: 'bad' }, { kind: 'task', title: 'good' }] }, { createRoutedTask: create });
