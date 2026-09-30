@@ -2,17 +2,27 @@
  * OKR 层级 CRUD API
  * 路由: /api/brain/okr/*
  *
- * 7层结构：Vision → Objective → KeyResult → Project → Scope → Initiative → Task
- * 本文件覆盖前6层，Task 层由现有 tasks 表/路由处理
+ * 棒4（决策 ee4842a6/3feeae3e）起：scope/initiative 层退役，GTD 轴只剩
+ * Vision → Objective → KeyResult → Project → Task。/scopes、/initiatives 写操作
+ * 一律 410 layer_retired（只读历史）；/projects 复用 routes/task-projects.js，
+ * 读写真身表 projects（与 /api/brain/projects 同源）。Task 层由现有 tasks 表/路由处理。
  *
- * 表: visions / objectives / key_results / okr_projects / okr_scopes / okr_initiatives
+ * 表: visions / objectives / key_results / projects（真身）/ okr_scopes（冻结只读）/
+ *     okr_initiatives（冻结只读）/ okr_projects（冻结只读，migration 499 写保护）
  */
 
 import { Router } from 'express';
 import pool from '../db.js';
 import { computeProgress } from '../advancement-progress.js';
+import taskProjectsRoutes from './task-projects.js';
 
 const router = Router();
+
+// scope/initiative 层退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：
+// 写操作统一 410，body 格式与 migration 499 的 DB trigger 报错口径对齐。
+function retiredLayerWrite(req, res) {
+  res.status(410).json({ error: 'layer_retired', decision: 'ee4842a6' });
+}
 
 // ─── 通用 CRUD 工厂函数 ─────────────────────────────────────────────────────
 
@@ -22,8 +32,11 @@ const router = Router();
  * @param {string} prefix - 路由前缀（如 '/visions'）
  * @param {string} table - 表名（如 'visions'）
  * @param {string|null} parentField - 父级外键字段名（如 'vision_id'），可为 null
+ * @param {{ writesRetired?: boolean }} [opts] - writesRetired=true 时只挂 GET（只读历史），
+ *   POST/PATCH/DELETE 一律 410 layer_retired（决策 ee4842a6）
  */
-function mountCrud(r, prefix, table, parentField) {
+function mountCrud(r, prefix, table, parentField, opts = {}) {
+  const { writesRetired = false } = opts;
   // GET /prefix - 列表
   r.get(prefix, async (req, res) => {
     try {
@@ -74,7 +87,14 @@ function mountCrud(r, prefix, table, parentField) {
     }
   });
 
-  // POST /prefix - 创建
+  // POST /prefix - 创建（写退役层直接 410，不查库）
+  if (writesRetired) {
+    r.post(prefix, retiredLayerWrite);
+    r.patch(`${prefix}/:id`, retiredLayerWrite);
+    r.delete(`${prefix}/:id`, retiredLayerWrite);
+    return;
+  }
+
   r.post(prefix, async (req, res) => {
     try {
       const { title } = req.body;
@@ -158,17 +178,17 @@ function mountCrud(r, prefix, table, parentField) {
 mountCrud(router, '/visions', 'visions', null);
 mountCrud(router, '/objectives', 'objectives', 'vision_id');
 mountCrud(router, '/key-results', 'key_results', 'objective_id');
-// 棒1（决策 ee4842a6/3feeae3e）：原计划把这个 mount 也指向 projects 真身表，与
-// /api/brain/projects（routes/task-projects.js）"同源"；brain-integration CI 实测（真库）
-// 发现行不通——okr_scopes.project_id / okr_initiatives.project_id 的外键仍指向
-// okr_projects(id)，指向 projects 表会导致后续 POST /scopes、/initiatives 全部
-// FK 违反（23503）。okr_scopes/okr_initiatives 退役是棒4 的工作，在那之前
-// /api/brain/okr/projects 必须继续写 okr_projects，才能保住这条链完整。
-// projects 表这边由 migration 497 做过一次性同 id 搬家，/api/brain/projects
-// （routes/task-projects.js）独立读写 projects，两边不再"同源"，靠 id 相同对齐。
-mountCrud(router, '/projects', 'okr_projects', 'kr_id');
-mountCrud(router, '/scopes', 'okr_scopes', 'project_id');
-mountCrud(router, '/initiatives', 'okr_initiatives', 'scope_id');
+// 棒4（决策 ee4842a6/3feeae3e）：scope/initiative 层退役，okr_scopes.project_id /
+// okr_initiatives.scope_id 原本挡着 /projects 改指真身表（指向 projects 会导致
+// POST /scopes、/initiatives 的 FK 违反 23503）——现在 /scopes、/initiatives 的
+// 写操作直接 410，不会再触发那条 FK 校验，改指真身表安全。/projects 复用
+// routes/task-projects.js 同一套 handler（与 /api/brain/projects 完全同源，
+// 读到同一行）；migration 499 已给 okr_projects 加写保护 trigger，新 Project
+// 一律进 projects 表。okr_projects.title/okr_scopes/okr_initiatives 表和历史
+// 数据原样保留，只读（mountCrud 的 GET 依旧指向旧表，见下方两行）。
+router.use('/projects', taskProjectsRoutes);
+mountCrud(router, '/scopes', 'okr_scopes', 'project_id', { writesRetired: true });
+mountCrud(router, '/initiatives', 'okr_initiatives', 'scope_id', { writesRetired: true });
 
 // ─── 层级树状查询 ─────────────────────────────────────────────────────────────
 
@@ -196,12 +216,14 @@ router.get('/tree', async (req, res) => {
           [obj.id]
         )).rows;
 
-        // 批量查询所有 KR 下的 projects
+        // 批量查询所有 KR 下的 projects（棒4起真身表 projects；name AS title 兼容旧读方，
+        // scope/initiative 历史行的 project_id 仍是 okr_projects.id——与 projects.id 因
+        // migration 497/499 的同 id 搬家而对齐，下面按 id 关联不受影响）
         const krIds = krs.map(kr => kr.id);
         const projectsByKr = {};
         if (krIds.length > 0) {
           const projectRows = (await pool.query(
-            `SELECT * FROM okr_projects WHERE kr_id = ANY($1) AND status != 'archived' ORDER BY created_at`,
+            `SELECT *, name AS title FROM projects WHERE kr_id = ANY($1) AND status != 'archived' ORDER BY created_at`,
             [krIds]
           )).rows;
 
@@ -291,7 +313,12 @@ router.get('/tree', async (req, res) => {
  * 重算指定 KR 的进度：
  *   current_value = completed tasks / total tasks × target_value
  *
- * 链路：key_result → okr_projects → okr_scopes → okr_initiatives → tasks
+ * 链路（历史）：key_result → okr_projects → okr_scopes → okr_initiatives → tasks
+ *
+ * ⚠️ 棒4（决策 ee4842a6/3feeae3e）留痕：scope/initiative 层退役后，新建 Project
+ * 一律进真身表 projects，不再产生 okr_projects/okr_scopes/okr_initiatives 行，下面
+ * 这条链路只对历史数据有效——新模型下"按 project 聚合 KR 进度"的改写是接力棒棒5
+ * 的工作范围，本棒不做，这里先保留旧链路只读（不产生新数据，也不报错）。
  */
 router.post('/key-results/:id/recalculate-progress', async (req, res) => {
   try {

@@ -292,10 +292,10 @@ const ACTION_WHITELIST = {
   // 规划操作
   'create_proposal': { dangerous: false, description: '创建计划提案' },
 
-  // OKR 新表飞轮操作（okr_initiatives / okr_scopes / okr_projects）
-  'okr_initiative_plan': { dangerous: false, description: '规划 OKR Scope 下的下一个 Initiative' },
-  'okr_scope_plan': { dangerous: false, description: '规划 OKR Project 下的下一个 Scope' },
-  'okr_project_plan': { dangerous: false, description: '规划 OKR Project 层完成后的下一步' },
+  // okr_initiative_plan / okr_scope_plan / okr_project_plan 已移除（决策 ee4842a6/
+  // 3feeae3e，接力棒链 2afa6d69 棒4）：scope/initiative 层退役，这三个 action 对应的
+  // task_type 在 lib/task-type-registry.js 已标记 retired，建单会被拒绝，留在白名单
+  // 里只会让 LLM 决策层提出一个必然失败的 action。
 
   // 知识/学习操作
   'create_learning': { dangerous: false, description: '保存经验教训到 learnings 表' },

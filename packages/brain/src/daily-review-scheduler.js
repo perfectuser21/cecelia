@@ -31,21 +31,19 @@ const FALLBACK_REPOS = [
  * @returns {Promise<string[]>} repo_path 列表
  */
 export async function getActiveRepoPaths(pool) {
-  // 新 OKR 表：repo_path 存于 metadata 字段，UNION ALL 三张 okr_* 表（UUID 与旧 projects 相同）
+  // 棒4（决策 ee4842a6/3feeae3e）：scope/initiative 层退役，真身表 projects 既有
+  // 自己的 repo_path 列（棒1 迁移 497 新建），也可能还留着 metadata.repo_path
+  // （迁移 497 搬家时只原样复制字段，没有把 metadata 值提到新列）——两处都读，
+  // 不再查 okr_scopes/okr_initiatives（已冻结）。
   const { rows } = await pool.query(
-    `SELECT DISTINCT metadata->>'repo_path' AS repo_path
+    `SELECT DISTINCT repo_path
      FROM (
-       SELECT metadata FROM okr_projects WHERE metadata->>'repo_path' IS NOT NULL
-         AND metadata->>'repo_path' != ''
+       SELECT repo_path FROM projects WHERE repo_path IS NOT NULL AND repo_path != ''
        UNION ALL
-       SELECT metadata FROM okr_scopes WHERE metadata->>'repo_path' IS NOT NULL
-         AND metadata->>'repo_path' != ''
-       UNION ALL
-       SELECT metadata FROM okr_initiatives WHERE metadata->>'repo_path' IS NOT NULL
-         AND metadata->>'repo_path' != ''
+       SELECT metadata->>'repo_path' AS repo_path FROM projects
+       WHERE metadata->>'repo_path' IS NOT NULL AND metadata->>'repo_path' != ''
      ) sub
-     WHERE metadata->>'repo_path' IS NOT NULL
-       AND metadata->>'repo_path' != ''
+     WHERE repo_path IS NOT NULL AND repo_path != ''
      ORDER BY repo_path`
   );
   return rows.map(r => r.repo_path);

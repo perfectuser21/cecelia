@@ -4113,7 +4113,7 @@ executeTick() 流程：
                └─ level=2 → 升级到皮层
 ```
 
-**48 个白名单 action**：
+**45 个白名单 action**（棒4起 okr_initiative_plan/okr_scope_plan/okr_project_plan 随 scope/initiative 层退役移除，决策 ee4842a6）：
 - 任务：dispatch_task, create_task, cancel_task, retry_task, reprioritize_task, pause_task, resume_task, mark_task_blocked, quarantine_task
 - OKR：create_okr, update_okr_progress, assign_to_autumnrice
 - 系统：notify_user, log_event, escalate_to_brain, request_human_review
@@ -4363,10 +4363,10 @@ queued → in_progress → completed
 | crystallize_register | 西安 | crystallize 子任务：注册到 SKILL.md + 部署 | Codex | 固定 openai |
 | codex_test_gen | 西安 | 自动生成测试（扫描覆盖率低模块 + 生成测试） | Codex | 固定 openai |
 | decomp_review | HK | Vivian (拆解审查) | - / M2.5-highspeed | 固定 minimax |
-| initiative_plan | US | Initiative 规划 | Opus / - | 默认 anthropic |
+| initiative_plan | US | ⛔ 已退役（决策 ee4842a6，棒4）：Initiative 层随 scope/initiative 退役，建单拒绝 | Opus / - | 默认 anthropic |
 | initiative_verify | US | Initiative 验收 (/arch-review verify) | Sonnet / - | 默认 anthropic |
-| scope_plan | US | Scope 内规划下一个 Initiative (/decomp Phase 3) | Opus / - | 默认 anthropic |
-| project_plan | US | Project 内规划下一个 Scope (/decomp Phase 4) | Opus / - | 默认 anthropic |
+| scope_plan | US | ⛔ 已退役（决策 ee4842a6，棒4）：Scope 层退役，建单拒绝 | Opus / - | 默认 anthropic |
+| project_plan | US | ⛔ 已退役（决策 ee4842a6，棒4）：原"Project 内规划下一个 Scope"，Scope 层退役后建单拒绝 | Opus / - | 默认 anthropic |
 | pipeline_rescue | US | Pipeline 救援 — 卡住的 pipeline 接管修复 (/dev) | Opus / - | 默认 anthropic |
 | platform_scraper | CN | 平台数据采集（CDP 浏览器 + 各平台登录态） | - | - |
 | suggestion_plan | US | Suggestion 层级识别 | Sonnet / - | 默认 anthropic |
@@ -4386,9 +4386,9 @@ queued → in_progress → completed
 | spec_review | US | Spec 审查 (/spec-review) | 本机 Codex | 固定 openai |
 | code_review_gate | US | 代码质量门禁 (/code-review-gate) | 本机 Codex | 固定 openai |
 | initiative_review | US | Initiative 整体审查 (/initiative-review) | 本机 Codex | 固定 openai |
-| okr_initiative_plan | 西安 | OKR Scope 下规划下一个 Initiative (/decomp) | - | general |
-| okr_scope_plan | 西安 | OKR Project 下规划下一个 Scope (/decomp) | - | general |
-| okr_project_plan | 西安 | OKR Project 层完成后规划下一步 (/decomp) | - | general |
+| okr_initiative_plan | 西安 | ⛔ 已退役（决策 ee4842a6，棒4）：原"OKR Scope 下规划下一个 Initiative"，建单拒绝 | - | general |
+| okr_scope_plan | 西安 | ⛔ 已退役（决策 ee4842a6，棒4）：原"OKR Project 下规划下一个 Scope"，建单拒绝 | - | general |
+| okr_project_plan | 西安 | ⛔ 已退役（决策 ee4842a6，棒4）：原"OKR Project 层完成后规划下一步"，建单拒绝 | - | general |
 | sprint_generate | US | Harness Generator — 写 sprint contract + 代码 (/dev) | Sonnet / - | 默认 anthropic |
 | sprint_evaluate | US | Harness Evaluator — 测运行中的代码 (/sprint-evaluator) | Sonnet / - | 默认 anthropic |
 | sprint_fix | US | Harness Generator 修复轮次 (/dev) | Sonnet / - | 默认 anthropic |
