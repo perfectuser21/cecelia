@@ -230,3 +230,50 @@ describe('POST /api/brain/step-probes/drift-check', () => {
     expect(mockPool.query).not.toHaveBeenCalled();
   });
 });
+
+describe('POST /api/brain/step-probes 挂点（价值流建模⑤：target_type/target_id 持久化）', () => {
+  const STEP = '0d4a3c6e-1b2f-4c8d-9e0f-1a2b3c4d5e6f';
+
+  it('带 target_type=step + target_id → 参数 $10/$11 落库，ON CONFLICT 用 COALESCE 保留旧挂点', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ id: 'p1', probe_key: 'coll_rescan_rate', target_type: 'step', target_id: STEP }] });
+    const raw = rawProbe({ key: 'coll_rescan_rate', stage: 'collection', journey_cell: 'stage:collection', target: { type: 'step', key: 'keyword_acquisition.collection.return_to_results' } });
+    const { req, res } = mockReqRes({ workflow: WORKFLOW, probes: [{ ...raw, journey_step_link_id: LINK, target_type: 'step', target_id: STEP }] });
+    await lastHandler('post', '/step-probes')(req, res);
+    expect(res._status).toBe(200);
+    const [sql, params] = mockPool.query.mock.calls[1];
+    expect(sql).toMatch(/target_type = COALESCE\(EXCLUDED\.target_type, step_probes\.target_type\)/);
+    expect(sql).toMatch(/target_id = COALESCE\(EXCLUDED\.target_id, step_probes\.target_id\)/);
+    expect(params[9]).toBe('step');
+    expect(params[10]).toBe(STEP);
+    const spec = JSON.parse(params[4]);
+    expect(spec.target).toEqual({ type: 'step', key: 'keyword_acquisition.collection.return_to_results' });
+    expect(spec).not.toHaveProperty('target_type');
+    expect(spec).not.toHaveProperty('target_id');
+    expect(res._data.upserted[0]).toMatchObject({ target_type: 'step', target_id: STEP });
+  });
+
+  it('不带 target_* → 库侧缺省：有 journey_step_link_id 时 target_type=activity、target_id=格子的 step_id', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ id: 'p1', probe_key: 'delivery.leads_count' }] });
+    const { req, res } = mockReqRes({ workflow: WORKFLOW, probes: [{ ...rawProbe(), journey_step_link_id: LINK }] });
+    await lastHandler('post', '/step-probes')(req, res);
+    const [sql, params] = mockPool.query.mock.calls[1];
+    expect(sql).toMatch(/SELECT step_id FROM journey_step_links WHERE id = \$4/);
+    expect(params[9]).toBeNull();
+    expect(params[10]).toBeNull();
+  });
+
+  it('target_type 不在 activity|step|enabler / target_id 非 uuid / 只给其一 → 400，不写库', async () => {
+    for (const bad of [
+      { target_type: 'workflow', target_id: STEP },
+      { target_type: 'step', target_id: 'nope' },
+      { target_type: 'step' },
+      { target_id: STEP },
+    ]) {
+      const { req, res } = mockReqRes({ workflow: WORKFLOW, probes: [{ ...rawProbe(), ...bad }] });
+      await lastHandler('post', '/step-probes')(req, res);
+      expect(res._status).toBe(400);
+      expect(res._data.error.code).toBe('STEP_PROBE_TARGET_REF_INVALID');
+    }
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+});

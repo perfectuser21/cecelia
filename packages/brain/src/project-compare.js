@@ -137,7 +137,7 @@ export async function getCompareMetrics({ project_ids, format = 'json', trend_we
     // 查询C：历史趋势（按周统计已完成任务数）
     pool.query(
       `SELECT project_id,
-              to_char(completed_at AT TIME ZONE 'Asia/Shanghai', 'IYYY-"W"IW') AS week,
+              to_char(completed_at::timestamptz AT TIME ZONE 'Asia/Shanghai', 'IYYY-"W"IW') AS week,
               COUNT(*) AS completed
        FROM tasks
        WHERE project_id = ANY($1::uuid[])

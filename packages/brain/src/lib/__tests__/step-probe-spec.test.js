@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 import {
   canonicalJson, compareProbeHashes, groupProbesByCell, normalizeProbe,
-  parseProbeRef, parseProbesDocument, probeRef, sourceSha256, specHash,
+  parseProbeRef, parseProbesDocument, probeRef, sourceSha256, specHash, TARGET_TYPES,
 } from '../step-probe-spec.js';
 
 const FIXTURE_YAML = path.resolve(
@@ -320,5 +320,39 @@ describe('compareProbeHashes（漂移比对：仓库 YAML 是真身，库是投�
       { probe_key: 'c', spec_hash: '3'.repeat(64), active: true },
     ];
     expect(compareProbeHashes(rows, yamlSide)).toMatchObject({ drift: true, missing: ['b'], extra: [] });
+  });
+});
+
+describe('target（价值流建模⑤：探针挂点 activity|step|enabler，缺省 activity 由 journey_cell 决定）', () => {
+  it('TARGET_TYPES 导出 = activity/step/enabler', () => {
+    expect(TARGET_TYPES).toEqual(['activity', 'step', 'enabler']);
+  });
+
+  it('无 target → spec 不带 target 键（既有 18 条哈希不变）', () => {
+    const spec = normalizeProbe(rawProbe(), { workflow: WORKFLOW });
+    expect(spec).not.toHaveProperty('target');
+  });
+
+  it('target: {type: step, key} → spec.target 归一化保留，journey_cell 仍必填（活动格照绑）', () => {
+    const spec = normalizeProbe(rawProbe({ target: { type: 'step', key: 'keyword_acquisition.collection.return_to_results' } }), { workflow: WORKFLOW });
+    expect(spec.target).toEqual({ type: 'step', key: 'keyword_acquisition.collection.return_to_results' });
+    expect(spec.journey_cell).toBe('stage:delivery');
+    expect(specHash(spec)).not.toBe(specHash(normalizeProbe(rawProbe(), { workflow: WORKFLOW })));
+  });
+
+  it('target: {type: enabler, key} 也认', () => {
+    const spec = normalizeProbe(rawProbe({ target: { type: 'enabler', key: 'return_to_results' } }), { workflow: WORKFLOW });
+    expect(spec.target).toEqual({ type: 'enabler', key: 'return_to_results' });
+  });
+
+  it.each([
+    ['type 非法', { type: 'workflow', key: 'x' }],
+    ['key 缺失', { type: 'step' }],
+    ['key 空白', { type: 'step', key: '  ' }],
+    ['未知键', { type: 'step', key: 'x', id: 'y' }],
+    ['不是对象', 'step:x'],
+  ])('target 拒收：%s → STEP_PROBE_TARGET_REF_INVALID', (_label, target) => {
+    expect(() => normalizeProbe(rawProbe({ target }), { workflow: WORKFLOW }))
+      .toThrow(expect.objectContaining({ code: 'STEP_PROBE_TARGET_REF_INVALID' }));
   });
 });
