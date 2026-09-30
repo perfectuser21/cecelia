@@ -10,7 +10,23 @@ import {
   createStaleLedger,
   EXTERNAL_ACTIVITY_AGE_SQL,
   EXTERNAL_HEARTBEAT_STALE_MS,
+  EXTERNAL_RUN_MIRROR_TASK_TYPES,
+  EXTERNAL_RUN_MIRROR_UNCONDITIONAL_TASK_TYPES,
+  EXTERNAL_RUN_MIRROR_DEVICE_TASK_TYPES,
 } from '../external-mirror-liveness.js';
+
+describe('EXTERNAL_RUN_MIRROR_*_TASK_TYPES —— 从注册表派生（铁律 76cb816c），与 lost-deadline / commander-watchdog 的 RUN_TYPES_SQL 同义', () => {
+  it('无条件镜像 = workflow_run；真机镜像 = device_job；合集恰好两者（注册表漂移立刻可见）', () => {
+    expect([...EXTERNAL_RUN_MIRROR_UNCONDITIONAL_TASK_TYPES]).toEqual(['workflow_run']);
+    expect([...EXTERNAL_RUN_MIRROR_DEVICE_TASK_TYPES]).toEqual(['device_job']);
+    expect([...EXTERNAL_RUN_MIRROR_TASK_TYPES].sort()).toEqual(['device_job', 'workflow_run']);
+    expect(Object.isFrozen(EXTERNAL_RUN_MIRROR_TASK_TYPES)).toBe(true);
+  });
+
+  it('content-pipeline（workflow+external 但 watchdog=external-worker，ZJ pipeline-worker 管）不纳入', () => {
+    expect(EXTERNAL_RUN_MIRROR_TASK_TYPES).not.toContain('content-pipeline');
+  });
+});
 
 describe('isExternalRunMirror —— 与 lost-deadline / commander-watchdog 的 RUN_TYPES_SQL 同义', () => {
   it('workflow_run → true（不看 payload）', () => {
