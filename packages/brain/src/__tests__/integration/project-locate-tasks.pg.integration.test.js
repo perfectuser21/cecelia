@@ -107,21 +107,29 @@ afterEach(() => {
 });
 
 describe.sequential('POST /projects/locate（真库，关键词回退）', () => {
-  it('语义相关的 project 排在前面（关键词打分），reason=keyword_bigram_jaccard', async () => {
-    await mkProject({ name: '智能获客链路优化', description: '抖音快手小红书获客第三期' });
+  it('语义相关的 project 排在前面（关键词打分），reason=keyword_bigram_coverage，且长描述也判 attach', async () => {
+    // 任务 912c1143：旧 Jaccard 打分被长描述稀释，真项目排第一却判 create；改覆盖率后必须 attach
+    await mkProject({ name: '智能获客链路优化', description: '抖音快手小红书获客第三期，评论区线索分级、私信触达与每日复盘，采收批次对账' });
     await mkProject({ name: '微信客服RPA排障', description: '个微客服消息路由' });
 
     const res = await request(app).post('/projects/locate').send({ text: '给智能获客链路加一步优化' });
     expect(res.status).toBe(200);
     expect(res.body.candidates.length).toBeGreaterThan(0);
     expect(res.body.candidates[0].name).toBe('智能获客链路优化');
-    expect(res.body.candidates[0].reason).toBe('keyword_bigram_jaccard');
+    expect(res.body.candidates[0].reason).toBe('keyword_bigram_coverage');
+    expect(res.body.suggestion).toBe('attach');
+    expect(res.body.threshold).toBe(0.5);
   });
 
-  it('文本与候选名称完全一致（bigram Jaccard=1）→ suggestion=attach', async () => {
-    // 关键词 Jaccard 打分对长描述会被稀释（description 越长、并集越大、分母越大），
-    // 这里只测名称精确命中，确认分数能越过默认阈值 0.55——long-description 稀释场景
-    // 是上一条用例覆盖的"排序正确"，不在这条断言 suggestion。
+  it('inactive 历史项目不参与归位（生产 176 条 okr_projects 搬家残留）', async () => {
+    await mkProject({ name: '智能获客链路优化', status: 'inactive' });
+
+    const res = await request(app).post('/projects/locate').send({ text: '智能获客链路优化' });
+    expect(res.status).toBe(200);
+    expect(res.body.candidates.find((c) => c.status === 'inactive')).toBeUndefined();
+  });
+
+  it('文本与候选名称完全一致（覆盖率=1）→ suggestion=attach', async () => {
     await mkProject({ name: '智能获客链路优化' });
 
     const res = await request(app).post('/projects/locate').send({ text: '智能获客链路优化' });

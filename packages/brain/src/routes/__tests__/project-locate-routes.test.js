@@ -114,7 +114,7 @@ describe('project-locate-routes', () => {
       const res = await request(app).post('/projects/locate').send({ text: '全新方向' });
       expect(res.status).toBe(200);
       expect(res.body.suggestion).toBe('create');
-      expect(res.body.candidates[0].reason).toBe('keyword_bigram_jaccard');
+      expect(res.body.candidates[0].reason).toBe('keyword_bigram_coverage');
     });
 
     it('kr_id 过滤透传进 SQL；limit 截断候选数量', async () => {

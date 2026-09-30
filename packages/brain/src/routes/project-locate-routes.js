@@ -33,9 +33,8 @@ router.post('/locate', async (req, res) => {
       return res.status(400).json({ error: 'text is required' });
     }
     const topK = Math.min(Math.max(parseInt(limit, 10) || 3, 1), 20);
-    const threshold = resolveProjectLocateThreshold();
-
-    const conditions = [`status NOT IN ('completed', 'cancelled', 'archived')`];
+    // inactive = okr_projects 迁移带来的历史休眠项目（生产 176 条），不是归位目标（任务 912c1143）
+    const conditions = [`status NOT IN ('completed', 'cancelled', 'archived', 'inactive')`];
     const params = [];
     if (kr_id) {
       params.push(kr_id);
@@ -59,11 +58,13 @@ router.post('/locate', async (req, res) => {
     );
 
     if (projects.length === 0) {
-      return res.json({ candidates: [], suggestion: 'create', threshold });
+      return res.json({ candidates: [], suggestion: 'create', threshold: resolveProjectLocateThreshold() });
     }
 
     const { method, scored } = await scoreProjectCandidates(text, projects);
-    const reason = method === 'embedding' ? 'embedding_cosine' : 'keyword_bigram_jaccard';
+    // 语义与关键词量纲不同，阈值随打分方式取（任务 912c1143）
+    const threshold = resolveProjectLocateThreshold(process.env, method);
+    const reason = method === 'embedding' ? 'embedding_cosine' : 'keyword_bigram_coverage';
     const candidates = scored
       .map((p) => ({
         project_id: p.id,
