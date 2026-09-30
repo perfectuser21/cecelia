@@ -1,0 +1,6 @@
+## Brain {VERSION} — Commander 看门狗 + escort 心跳 + Bark 阈值（任务 17ea4536，决策 3c98fb36）
+
+- 新入口 `POST /api/brain/commander-heartbeat` {kind?, tag, host?, serial?, profile?, cap?, escort_name?, escort_id?}（不挂内部令牌：escort 在网关经 socat 非回环；只写 payload 心跳字段、只对 in_progress 行、按 tag 限流）与 `POST /api/brain/tasks/:id/commander-heartbeat`。按 payload.tag → 账本 run_id（task_runs `%-<TAG>__%`）→ serial 唯一在途镜像单定位，写 `payload.commander_heartbeat_at`（顺手补 tag/host/serial/escort_id 供 lost 善后）；kind=launch（wf-launch 起跑瞬间单还没建）落 working_memory `commander_launch:<TAG>`，后续心跳/看门狗合并。
+- 新 scheduler job `commander-watchdog`（5min 自 gate，单批 ≤20）：在途 workflow_run / device_job 镜像起跑 ≥15min 且 GREATEST(心跳, 上次接班) 超 15min（`COMMANDER_HEARTBEAT_STALE_MS`）→ ssh 网关（注册表 primary worker）`openclaw cron rm <旧 escort>` + `cron add` 同名 `escort-<host>-<TAG>`（接班消息：只读账本与日志接上，不重新发起，带 Brain 单号与心跳 curl），新 id 回写 payload，task_events `commander_relaunched`；同一 run 接班 ≥3 次 → Bark 一次（payload.commander_bark_at）并停拉；ssh 失败/无 id → `commander_relaunch_failed` 留痕并推后；缺 tag/host → `commander_relaunch_skipped`。
+- 新 scheduler job `workflow-trend-bark`（北京 08:30–10:00 窗口，working_memory 当日去重）：同一 wf（payload.wf_id/capability/cap/标题前段，不认账本 run_id 前缀）连续 2 个自然日有批但零线索 → Bark；phone_registry 里一台 serial 近 72h 有批但 24h 无 completed → Bark。单批 0 线索 / 单次接班 / 单批 lost 不叫（PRD 叫人边界）。
+- 两个 job 经 scheduler-liveness 自动入 ops_workflows(source=scheduler)。
