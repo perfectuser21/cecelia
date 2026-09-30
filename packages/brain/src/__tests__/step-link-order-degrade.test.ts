@@ -45,7 +45,6 @@ describe('pushJourneyStepLinks — Order 属性降级 [BEHAVIOR]', () => {
       .mockResolvedValueOnce({ rows: [] })   // features (empty)
       .mockResolvedValueOnce({ rows: [] })   // issues (empty)
       .mockResolvedValueOnce({ rows: [] })   // tasks (empty, pushTasks 档位)
-      .mockResolvedValueOnce({ rows: [] })   // skill_registry (empty)
       .mockResolvedValueOnce({ rows: [stepLink] }) // journey_step_links → 1 row
       .mockResolvedValueOnce({ rows: [] })   // decisions (empty)
       .mockResolvedValueOnce({ rows: [] })   // initiative_contracts (empty)
@@ -101,7 +100,6 @@ describe('pushJourneyStepLinks — Order 属性降级 [BEHAVIOR]', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] }) // tasks (pushTasks 档位)
       .mockResolvedValueOnce({ rows: [stepLink] })
       .mockResolvedValueOnce({ rows: [] })
@@ -151,7 +149,6 @@ describe('pushJourneyStepLinks — Order 属性降级 [BEHAVIOR]', () => {
     };
 
     mockQuery
-      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })

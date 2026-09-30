@@ -281,6 +281,7 @@ skill-eval-formb-smoke.sh
 skill-eval-report-smoke.sh
 skill-eval-smoke.sh
 skill-inventory-smoke.sh
+skill-registry-projection-smoke.sh
 skill-ledger-reconcile-smoke.sh
 skill-relay-smoke.sh
 slot-accounting-smoke.sh
