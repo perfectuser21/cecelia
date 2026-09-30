@@ -19,7 +19,7 @@ import { createHash } from 'crypto';
 
 export const PROBE_REF_PREFIX = 'probe:';
 export const PROBE_KEY_RE = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
-export const PROBE_TYPES = Object.freeze(['sql', 'http']);
+export const PROBE_TYPES = Object.freeze(['sql', 'http', 'metric']);
 export const EXPECT_OPS = Object.freeze(['>=', '==', '<=', 'not_null_all']);
 export const COMPARE_OPS = Object.freeze(['>=', '==', '<=']);
 export const SEVERITIES = Object.freeze(['warn', 'error']);
@@ -79,6 +79,13 @@ function normalizeProbeTarget(raw, key) {
   const { type, target } = raw;
   if (!PROBE_TYPES.includes(type)) {
     fail('STEP_PROBE_TYPE_INVALID', `探针 ${key}: probe.type 只支持 ${PROBE_TYPES.join('|')}`, { probe_key: key });
+  }
+  if (type === 'metric') {
+    // metric：observed = 本 stage 工件的 metrics[键]（执行机 verify-step 判并回传 observed），没有外部取数源，不带 target。
+    if (!onlyKeys(raw, ['type', 'ref']) || typeof raw.ref !== 'string' || !METRIC_REF_RE.test(raw.ref)) {
+      fail('STEP_PROBE_TARGET_INVALID', `探针 ${key}: metric 探针只允许 type/ref 且 ref 必须是 metrics.<k>`, { probe_key: key });
+    }
+    return { type, ref: raw.ref };
   }
   if (!nonEmptyString(target)) fail('STEP_PROBE_TARGET_INVALID', `探针 ${key}: probe.target 必填`, { probe_key: key });
   if (type === 'sql') {
