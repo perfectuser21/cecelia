@@ -1,0 +1,24 @@
+{
+  "initiative_id": "112bb10f-f468-4a97-87b8-b265a04356f5",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain 后端 DB schema 迁移与数据建模，无 UI、无远端 agent、无 engine 管道",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "迁移 493：workflows 表 + workflow_activities 桥 + journey_steps 三列 + ops_workflows.workflow_id + 两 workflow 种子与 8/7 改挂",
+      "scope": "新建 workflows(capability_id/channel/version/status,+name) 与 workflow_activities 桥表；journey_steps 加 workflow_id/executor_kind(CHECK code|agent|human)/可空 enabler_id；ops_workflows 加可空 workflow_id；灌 wf1 抖音·关键词获客(channel=douyin) + wf2 对标获客(channel=douyin_benchmark)，8 个 keyword_acquisition 活动 workflow_id 回填 wf1 + executor_kind，桥表为 wf2 挂 7 个共用活动(排除 discovery)；迁移幂等(IF NOT EXISTS/ON CONFLICT/UPDATE WHERE workflow_id IS NULL)；schema_version 记 493",
+      "dod": [
+        "[BEHAVIOR] workflows 四列 + journey_steps 三列 + ops_workflows.workflow_id 可空 + schema_version 493（psql 断言，见 contract-dod.md B-01/B-02/B-06）",
+        "[BEHAVIOR] executor_kind CHECK 拒非法值、8 活动改挂 wf1、wf2 共用 7 活动零副本、幂等重跑（B-03/B-04/B-05/B-07）",
+        "[ARTIFACT] packages/brain/migrations/493_*.sql 存在且幂等；sprints/09301633-kernel-29aa531a/tests/workflows-modeling.test.ts 冻结测试通过（真 PG）"
+      ],
+      "files": [
+        "packages/brain/migrations/493_workflows_backbone_rehang_ops_workflow_id.sql",
+        "packages/brain/migrations/rollback/493_workflows_backbone_rehang_ops_workflow_id.down.sql"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 75
+    }
+  ]
+}
