@@ -113,7 +113,7 @@ describe('runNotionPushSync', () => {
     const journey = { id: 'j-uuid', name: 'X', journey_type: 'dev_pipeline', description: null, maturity: 'not_started', status: 'active', e2e_test_path: null, area_notion_id: null };
     mockQuery.mockResolvedValueOnce({ rows: [{ notion_db_id: 'db-journeys-registered' }] }); // resolveDbId(journeys)
     mockQuery.mockResolvedValueOnce({ rows: [journey] });
-    mockQuery.mockResolvedValue({ rows: [] }); // features / issues / skill_registry / journey_step_links + log INSERT
+    mockQuery.mockResolvedValue({ rows: [] }); // features / issues / journey_step_links + log INSERT
 
     mockNotionReq.mockRejectedValueOnce(new Error('Notion timeout'));
 
@@ -155,16 +155,12 @@ describe('runNotionPushSync — new push functions', () => {
     mockQuery.mockResolvedValue({ rows: [] });
   });
 
-  it('calls pushSkillRegistry — 查 skill_registry 待推送行（指纹不匹配即待推，含新行与内容变更行）', async () => {
-    // 原断言为 `notion_synced_at IS NULL`（insert-only 时代契约）。
-    // 2026-09-16 改 upsert 后判据换成 metadata.pushed_digest 比对，
-    // 已同步但内容变更的行也必须被捞出重推，否则 Brain 改了 Notion 永不更新。
+  it('skill_registry 已移出旧推送链（改由独立 job skill-registry-projection 推，PR1b 任务 47def5bb）', async () => {
+    // 原 pushSkillRegistry 的回归守卫（内容变更必重推 / 新行建页）迁到 __tests__/skill-registry-projection.test.js。
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
-    const calls = mockQuery.mock.calls.map(c => c[0]);
-    const skillQuery = calls.find(q => q && q.includes('skill_registry') && q.includes('pushed_digest'));
-    expect(skillQuery).toBeTruthy();
-    expect(skillQuery).not.toContain('notion_synced_at IS NULL');
+    const calls = mockQuery.mock.calls.map(c => String(c[0]));
+    expect(calls.find(q => q.includes('FROM skill_registry'))).toBeUndefined();
   });
 
   it('已废弃的 journey_steps 不再进推送链（三面定稿：停推死数据）', async () => {
@@ -218,69 +214,6 @@ describe('runNotionPushSync — new push functions', () => {
     expect(linksQuery).not.toMatch(/j\.notion_id IS NOT NULL/);
   });
 
-  it('pushSkillRegistry 对已同步但内容变更的 skill 执行 PATCH 而非跳过 — insert-only 缺陷回归', async () => {
-    // 症状：SELECT 只捞 notion_synced_at IS NULL，已同步的行改了 description
-    // 永远不会再推，Notion 停在首次写入那一刻（Notion 341 行 vs Brain 180 行分叉的机制原因之一）
-    const changedSkill = {
-      id: 'skill-changed', name: 'openclaw/coding-judge',
-      description: '改过的描述', status: 'active', location: 'openclaw',
-      notion_id: 'notion-page-existing',
-      metadata: { pushed_digest: 'stale-digest-from-last-push' },
-    };
-    mockNotionReq.mockResolvedValue({ id: 'notion-page-existing' });
-    mockQuery
-      .mockResolvedValueOnce({ rows: [] })               // journeys
-      .mockResolvedValueOnce({ rows: [] })               // features
-      .mockResolvedValueOnce({ rows: [] })               // issues
-      .mockResolvedValueOnce({ rows: [] })               // tasks
-      .mockResolvedValueOnce({ rows: [changedSkill] })   // skill_registry
-      .mockResolvedValue({ rows: [] });
-
-    const { runNotionPushSync } = await import('../notion-push-sync.js');
-    await runNotionPushSync({ query: mockQuery });
-
-    expect(mockNotionReq).toHaveBeenCalledWith(
-      'fake-token', '/pages/notion-page-existing', 'PATCH',
-      expect.objectContaining({ properties: expect.any(Object) })
-    );
-  });
-
-  it('pushSkillRegistry SELECT 用指纹比对而非 notion_synced_at IS NULL — 否则改动永不重推', async () => {
-    const { runNotionPushSync } = await import('../notion-push-sync.js');
-    await runNotionPushSync({ query: mockQuery });
-    const calls = mockQuery.mock.calls.map(c => c[0]);
-    const skillQuery = calls.find(q => q && q.includes('skill_registry') && q.includes('SELECT'));
-    expect(skillQuery).toBeTruthy();
-    expect(skillQuery).toContain('pushed_digest');
-  });
-
-  it('pushes skill to Notion skill_registry DB when notion_synced_at is null', async () => {
-    const mockSkill = {
-      id: 'skill-1', name: '/dev', description: 'dev skill',
-      status: 'active', location: null, notion_id: null,
-    };
-    mockNotionReq.mockResolvedValue({ id: 'notion-page-1' });
-    mockQuery
-      .mockResolvedValueOnce({ rows: [] })            // journeys select
-      .mockResolvedValueOnce({ rows: [] })            // features select
-      .mockResolvedValueOnce({ rows: [] })            // issues select
-      .mockResolvedValueOnce({ rows: [] })            // tasks select (pushTasks 档位)
-      .mockResolvedValueOnce({ rows: [mockSkill] })   // skill_registry select
-      .mockResolvedValue({ rows: [] });               // journey_step_links + UPDATE（journey_steps 已摘除）
-
-    const { runNotionPushSync } = await import('../notion-push-sync.js');
-    await runNotionPushSync({ query: mockQuery });
-
-    expect(mockNotionReq).toHaveBeenCalledWith(
-      'fake-token', '/pages', 'POST',
-      expect.objectContaining({
-        parent: { database_id: '353c40c2-ba63-81bf-ae3e-f0e6fa3753d7' },
-        properties: expect.objectContaining({
-          Name: expect.any(Object),
-        }),
-      })
-    );
-  });
 });
 
 describe('runNotionPushSync — step_link Order 属性降级回归 [ARTIFACT R4]', () => {
@@ -302,7 +235,6 @@ describe('runNotionPushSync — step_link Order 属性降级回归 [ARTIFACT R4]
       .mockResolvedValueOnce({ rows: [] })          // features
       .mockResolvedValueOnce({ rows: [] })          // issues
       .mockResolvedValueOnce({ rows: [] })          // tasks (pushTasks 档位)
-      .mockResolvedValueOnce({ rows: [] })          // skill_registry
       .mockResolvedValueOnce({ rows: [stepLink] }) // journey_step_links → 1 行
       .mockResolvedValue({ rows: [] });             // decisions / initiative_contracts / UPDATE
 
@@ -387,7 +319,6 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] }); // features
     mockQuery.mockResolvedValueOnce({ rows: [] }); // issues
     mockQuery.mockResolvedValueOnce({ rows: [] }); // tasks (pushTasks 档位)
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // skill_registry
     mockQuery.mockResolvedValueOnce({ rows: [] }); // journey_step_links
     mockQuery.mockResolvedValueOnce({ rows: [] }); // decisions
     mockQuery.mockResolvedValueOnce({ rows: [] }); // initiative_contracts
