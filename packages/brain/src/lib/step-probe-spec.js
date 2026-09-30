@@ -23,6 +23,8 @@ export const PROBE_TYPES = Object.freeze(['sql', 'http', 'metric']);
 export const EXPECT_OPS = Object.freeze(['>=', '==', '<=', 'not_null_all']);
 export const COMPARE_OPS = Object.freeze(['>=', '==', '<=']);
 export const SEVERITIES = Object.freeze(['warn', 'error']);
+/** 探针挂点类型（价值流建模⑤，迁移 496）：缺省 activity（由 journey_cell 决定）；step/enabler 用 target:{type,key} 显式指。 */
+export const TARGET_TYPES = Object.freeze(['activity', 'step', 'enabler']);
 export const EXECUTOR_KIND = 'business_probe_runner';
 const STAGE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 const METRIC_REF_RE = /^metrics\.[A-Za-z0-9_]+$/;
@@ -163,11 +165,24 @@ export function normalizeProbe(raw, { workflow } = {}) {
     expect: normalizeExpect(raw.expect, key),
     severity: raw.severity,
   };
+  if (raw.target !== undefined) spec.target = normalizeTargetRef(raw.target, key);
   if (raw.note !== undefined) {
     if (typeof raw.note !== 'string') fail('STEP_PROBE_DOC_INVALID', `探针 ${key}: note 必须是字符串`, { probe_key: key });
     spec.note = raw.note;
   }
   return spec;
+}
+
+/** YAML `target: {type, key}` → {type, key}；type ∈ TARGET_TYPES，key 非空，无未知键。缺省不进 spec（既有哈希不变）。 */
+function normalizeTargetRef(raw, key) {
+  if (!isPlainObject(raw) || !onlyKeys(raw, ['type', 'key'])) {
+    fail('STEP_PROBE_TARGET_REF_INVALID', `探针 ${key}: target 只允许 {type, key}`, { probe_key: key });
+  }
+  if (!TARGET_TYPES.includes(raw.type)) {
+    fail('STEP_PROBE_TARGET_REF_INVALID', `探针 ${key}: target.type 只支持 ${TARGET_TYPES.join('|')}`, { probe_key: key });
+  }
+  if (!nonEmptyString(raw.key)) fail('STEP_PROBE_TARGET_REF_INVALID', `探针 ${key}: target.key 必填`, { probe_key: key });
+  return { type: raw.type, key: raw.key.trim() };
 }
 
 /**

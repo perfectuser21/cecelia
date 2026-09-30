@@ -94,7 +94,7 @@ async function createParentTables() {
   for (let i = 0; i < ACTIVITIES.length; i++) {
     const r = await client.query(
       `INSERT INTO journey_steps (journey_id, name, step_number, status, backbone_version, capability_key, activity_key)
-       VALUES ($1, $2, $3, 'active', '3.0', 'keyword_acquisition', $2) RETURNING id`, [VS, ACTIVITIES[i], i + 1]);
+       VALUES ($1, $2, $3, 'active', '3.0', 'keyword_acquisition', $4) RETURNING id`, [VS, ACTIVITIES[i], i + 1, ACTIVITIES[i]]);
     actId[ACTIVITIES[i]] = r.rows[0].id;
     await client.query(
       `INSERT INTO journey_step_links (journey_id, step_id, step_order, cell_kind, cell_key, cell_status, status, notion_synced_at)
@@ -107,14 +107,11 @@ async function createParentTables() {
   const other = await client.query(
     `INSERT INTO journey_steps (journey_id, name, step_number, status, activity_key) VALUES ($1, 'x', 1, 'active', 'x') RETURNING id`, [OTHER_JOURNEY]);
   await client.query(`INSERT INTO steps (activity_id, step_order, key, activity_key) VALUES ($1, 1, 'other.x.step', 'x')`, [other.rows[0].id]);
-  await client.query(`
-    INSERT INTO enabler_calls (caller_type, caller_id, enabler_id)
-    SELECT 'activity', $1, id FROM enablers WHERE key = 'return_to_results';
-    INSERT INTO enabler_calls (caller_type, caller_id, enabler_id)
-    SELECT 'activity', $2, id FROM enablers WHERE key = 'device_lock';
-    INSERT INTO enabler_calls (caller_type, caller_id, enabler_id)
-    SELECT 'activity', $3, id FROM enablers WHERE key = 'device_lock';
-  `, [actId.collection, actId.cleanup, actId.preflight]);
+  for (const [act, enabler] of [['collection', 'return_to_results'], ['cleanup', 'device_lock'], ['preflight', 'device_lock']]) {
+    await client.query(
+      `INSERT INTO enabler_calls (caller_type, caller_id, enabler_id) SELECT 'activity', $1::uuid, id FROM enablers WHERE key = $2`,
+      [actId[act], enabler]);
+  }
   const cell = async (k) => (await client.query(`SELECT id FROM journey_step_links WHERE cell_key = $1`, [`stage:${k}`])).rows[0].id;
   const probe = (key, stage, link) => client.query(
     `INSERT INTO step_probes (probe_key, workflow, stage, journey_step_link_id, spec, spec_hash, severity)

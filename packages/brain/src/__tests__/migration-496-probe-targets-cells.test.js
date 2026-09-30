@@ -48,7 +48,9 @@ describe('migration 496 价值流建模⑤：探针挂点 target + 格子扩到 
   it('golden_path* 不 DROP（74 处活引用），只标注退役计划', () => {
     expect(sql).not.toMatch(/DROP TABLE[^;]*golden_path/);
     expect(sql).not.toMatch(/RENAME TO golden_path\w*_legacy/);
-    expect(sql).toMatch(/COMMENT ON TABLE golden_path IS/);
+    expect(sql).toMatch(/'golden_path', 'golden_paths', 'golden_path_contract_versions'/);
+    expect(sql).toMatch(/COMMENT ON TABLE %I IS %L/);
+    expect(sql).toMatch(/退役/);
   });
 
   it('登记 schema_version 496；回滚删生成的格子、删列、删注册', () => {

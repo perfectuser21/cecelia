@@ -9,8 +9,11 @@
  * 流程：读 YAML → 归一化 + 逐条 spec_hash=sha256(canonical JSON) + 整文件 source_sha256（同 probes-lib）
  *   → GET 该 journey 的格子（cells=1）
  *   → 每条探针按 journey_cell（stage:<name>）找 cell，找不到就报错退出（不静默）
- *   → POST /api/brain/step-probes 按 probe_key upsert（带 journey_step_link_id）
- *   → 每个格子 PATCH assertion_ref = probe:<k1>[,<k2>…]（已一致则不 PATCH，避免无谓 bump assertion_revision）
+ *   → 挂点（迁移 496）：探针带 target:{type:step|enabler, key} 时 GET /steps?key= 或 /enablers?key= 解析 target_id，
+ *     查不到报错退出；不带 target → target_type=activity、target_id=活动格的 step_id
+ *   → POST /api/brain/step-probes 按 probe_key upsert（带 journey_step_link_id + target_type/target_id）
+ *   → 每个格子 PATCH assertion_ref = probe:<k1>[,<k2>…]（已一致则不 PATCH，避免无谓 bump assertion_revision）；
+ *     带 target 的探针若 journey 下已有 step:<key> / enabler:<key> 格子（迁移 496 生成）则额外绑到该格（没有则只绑活动格）
  * --check：只 POST /step-probes/drift-check 比对哈希，不写库；有漂移退 1。
  * token：--token 或 env CECELIA_INTERNAL_TOKEN（Brain 配了 token 时必带）。
  * stdout 最后一行 = JSON 结果；exit 0 成功 / 1 漂移或校验失败 / 2 用法错误。
@@ -92,16 +95,32 @@ export async function syncStepProbes({
       `journey ${journeyId} 下找不到格子: ${missingCells.join(', ')}（先建 cell，再同步探针）`, { cells: missingCells });
   }
 
+  const targets = await resolveTargets(doc.probes, { base, fetchFn, token });
+
   const payload = {
     workflow: doc.workflow,
     source_path: sourcePath,
     source_sha256: doc.source_sha256 ?? null,
-    probes: doc.probes.map((p) => ({ ...p.spec, journey_step_link_id: byKey.get(p.spec.journey_cell).id })),
+    probes: doc.probes.map((p) => {
+      const cell = byKey.get(p.spec.journey_cell);
+      const target = targets.get(p.spec.key) ?? (cell.step_id ? { target_type: 'activity', target_id: cell.step_id } : {});
+      return { ...p.spec, journey_step_link_id: cell.id, ...target };
+    }),
   };
   const { upserted = [] } = await call(fetchFn, `${base}/api/brain/step-probes`, { method: 'POST', body: payload, token });
 
+  // 活动格照绑（翻色单位）；带 target 的探针另绑 step:<key> / enabler:<key> 格（格子存在才绑）
+  const bindings = new Map(groups);
+  for (const p of doc.probes) {
+    if (!p.spec.target) continue;
+    const cellKey = `${p.spec.target.type}:${p.spec.target.key}`;
+    if (!byKey.has(cellKey)) continue;
+    if (!bindings.has(cellKey)) bindings.set(cellKey, []);
+    bindings.get(cellKey).push(p);
+  }
+
   const bound = [];
-  for (const [cellKey, probes] of groups) {
+  for (const [cellKey, probes] of bindings) {
     const cell = byKey.get(cellKey);
     const ref = probeRef(probes.map((p) => p.spec.key));
     const changed = cell.assertion_ref !== ref;
@@ -111,6 +130,30 @@ export async function syncStepProbes({
     bound.push({ cell_key: cellKey, journey_step_link_id: cell.id, assertion_ref: ref, changed });
   }
   return { check: false, workflow: doc.workflow, journey_id: journeyId, upserted, bound };
+}
+
+/** 带 target 的探针 → Map<probe_key, {target_type, target_id}>；step 查 /steps?key=，enabler 查 /enablers?key=，查不到抛错。 */
+async function resolveTargets(probes, { base, fetchFn, token }) {
+  const out = new Map();
+  const cache = new Map();
+  for (const p of probes) {
+    const target = p.spec.target;
+    if (!target || target.type === 'activity') continue; // activity = 缺省路径（活动格的 step_id）
+    const cacheKey = `${target.type}:${target.key}`;
+    if (!cache.has(cacheKey)) {
+      const path = target.type === 'step' ? 'steps' : 'enablers';
+      const json = await call(fetchFn, `${base}/api/brain/${path}?key=${encodeURIComponent(target.key)}`, { token });
+      const rows = Array.isArray(json?.[path]) ? json[path] : [];
+      cache.set(cacheKey, rows.find((r) => r.key === target.key)?.id ?? null);
+    }
+    const id = cache.get(cacheKey);
+    if (!id) {
+      throw stepProbeError('STEP_PROBE_TARGET_NOT_FOUND',
+        `探针 ${p.spec.key}: Brain 里找不到 ${target.type} ${target.key}（先 sync-steps / 登记 enabler，再同步探针）`, { probe_key: p.spec.key });
+    }
+    out.set(p.spec.key, { target_type: target.type, target_id: id });
+  }
+  return out;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
