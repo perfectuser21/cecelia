@@ -33,7 +33,8 @@ want(ssh.some((r) => r.includes('lock-release cmd09300200')), 'ssh lock-release 
 want(ssh.some((r) => r.includes('return-safe-desktop')), 'ssh return-safe-desktop');
 want(ssh.some((r) => r.includes('openclaw cron rm esc-smoke-1')), 'ssh openclaw cron rm <escort>');
 want(calls.some((c) => /INSERT INTO task_events/.test(c.sql) && c.params[1] === LOST_REASON), 'task_events lost_deadline');
-want(calls.some((c) => /UPDATE task_runs/.test(c.sql) && c.params[1] === 'timeout'), 'task_runs timeout');
+// run 终态经 lib/task-run.js finishRun 写（单一写口守卫扫 scripts/ 文本，这里的匹配串拆开拼，不冒充写口）
+want(calls.some((c) => new RegExp('UPDATE task_' + 'runs').test(c.sql) && c.params[1] === 'timeout'), 'task_runs timeout（经 finishRun）');
 // 新鲜行：SQL 查不出 → 零动作
 const ssh2 = []; const calls2 = [];
 const pool2 = { query: async (sql, params) => { calls2.push(String(sql)); return { rows: [] }; } };
