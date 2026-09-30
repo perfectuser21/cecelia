@@ -242,6 +242,28 @@ router.get('/:id', async (req, res) => {
   });
 });
 
+// PATCH /projects/:id/brief — 主会话直接改项目简报（棒2，决策 ee4842a6/3feeae3e）
+// Body: { brief_delta: {...}, task_id?: string }。同走 applyBriefDelta + A 档权限分档
+// （改 goal / 一次砍 ≥3 棒 → 升 pending_actions，不直接生效；其余字段照常生效）。
+router.patch('/:id/brief', async (req, res) => {
+  try {
+    const { brief_delta, task_id = null } = req.body || {};
+    if (!brief_delta || typeof brief_delta !== 'object' || Array.isArray(brief_delta)) {
+      return res.status(400).json({ error: 'brief_delta is required and must be an object' });
+    }
+    const { applyProjectBriefDelta } = await import('../lib/project-brief-apply.js');
+    const result = await applyProjectBriefDelta(pool, { projectId: req.params.id, rawDelta: brief_delta, taskId: task_id });
+    if (!result) {
+      const exists = await pool.query('SELECT id FROM projects WHERE id = $1', [req.params.id]);
+      if (!exists.rows.length) return res.status(404).json({ error: 'Project not found', id: req.params.id });
+      return res.status(400).json({ error: 'brief_delta 清洗后为空（全部字段非法），未生效' });
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update project brief', details: err.message });
+  }
+});
+
 // PATCH /projects/:id — 更新 project 字段
 router.patch('/:id', async (req, res) => {
   try {

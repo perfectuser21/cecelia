@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { pushCaptureAtom } from './capture-inbox.js';
+import { sanitizeBriefDelta, formatBriefForPrompt } from './lib/project-brief.js';
 
 export const HANDOFF_SCHEMA_VERSION = 1;
 
@@ -92,6 +93,8 @@ export function buildHandoff(input = {}) {
       branch: input.artifacts?.branch ?? null,
       docs: clampList(input.artifacts?.docs),
     },
+    // Project brief 动态文档协议（棒2，决策 ee4842a6/3feeae3e）：可选，非法项在 sanitize 阶段丢弃并 warn。
+    brief_delta: sanitizeBriefDelta(input.brief_delta),
     created_at: new Date().toISOString(),
   };
 }
@@ -194,10 +197,15 @@ export async function saveHandoff({ pool }, handoff) {
   // 接力棒：已 completed 的任务补写 handoff → 立刻落下一棒（幂等；synthesized 的不再递归）
   if (!handoff.synthesized) {
     try {
-      const { rows: st } = await pool.query('SELECT id, title, status, priority, task_type, payload, parent_task_id FROM tasks WHERE id = $1::uuid', [handoff.task_id]);
+      const { rows: st } = await pool.query('SELECT id, title, status, priority, task_type, payload, parent_task_id, project_id FROM tasks WHERE id = $1::uuid', [handoff.task_id]);
       if (st[0]?.status === 'completed') {
         const { materializeNextSteps } = await import('./lib/relay-baton.js');
         await materializeNextSteps(pool, st[0], handoff);
+        // 棒2（决策 ee4842a6/3feeae3e）：task 挂了 project_id 且 handoff 带 brief_delta → 应用到 projects.brief。
+        if (handoff.brief_delta) {
+          const { applyHandoffBriefDelta } = await import('./lib/project-brief-apply.js');
+          await applyHandoffBriefDelta(pool, st[0], handoff);
+        }
       }
     } catch (err) {
       console.warn(`[handoff] 接棒失败（不阻塞 saveHandoff）: ${err.message}`);
@@ -341,12 +349,19 @@ export function formatChainForPrompt(ctx) {
   if (!ctx.is_chained && !ctx.recent?.length) return '';
   const lines = ['', '## 项目链上下文（接力棒：先读这段，再动手）'];
   lines.push(`项目根：${ctx.root.title || ctx.root.id}（${ctx.root.task_type || 'task'} · ${ctx.root.status || ''}）`);
-  const goal = String(ctx.root.description || '').trim();
-  if (goal) lines.push(`目标：${goal.length > 600 ? `${goal.slice(0, 600)}…` : goal}`);
+  // 棒2（决策 ee4842a6/3feeae3e）：根是 project 且有 brief 内容 → 用活文档替代静态 description，
+  // 上一棒改过的现状这里能看到；brief 是空壳（新建项目还没人写过 handoff）才退回旧的 description 摘要。
+  const briefText = ctx.root.kind === 'project' ? formatBriefForPrompt(ctx.root.brief) : '';
+  if (briefText) {
+    lines.push(briefText);
+  } else {
+    const goal = String(ctx.root.description || '').trim();
+    if (goal) lines.push(`目标：${goal.length > 600 ? `${goal.slice(0, 600)}…` : goal}`);
+  }
   if (ctx.position?.total) {
     lines.push(`本任务是第 ${ctx.position.sequence_no ?? '?'} / ${ctx.position.total} 棒`);
   }
-  lines.push('规矩：做完必须写 handoff（done / not_done / next_steps），next_steps 每条标 kind=task|decision|done。');
+  lines.push('规矩：做完必须写 handoff（done / not_done / next_steps），next_steps 每条标 kind=task|decision|done；项目有变化（目标/现状/新事实/未决问题/增删棒）顺手带 brief_delta。');
   const text = `${lines.join('\n')}${formatHandoffsForPrompt(ctx.recent)}`;
   return text.length > PROMPT_MAX_LEN * 2 ? `${text.slice(0, PROMPT_MAX_LEN * 2)}…` : text;
 }
