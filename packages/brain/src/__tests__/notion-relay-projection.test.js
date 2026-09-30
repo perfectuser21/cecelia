@@ -75,11 +75,19 @@ describe('buildProjectProps / Body', () => {
     const briefChanged = { ...ROOT, brief: { ...ROOT.brief, status: '现状变了' } };
     expect(a).not.toBe(digestOf(buildProjectProps(briefChanged, SNAP), buildProjectBody(briefChanged, SNAP)));
   });
-  it('brief 为空壳（新建项目还没人写过 handoff）→ 渲染占位文案，不报错', () => {
-    const b = buildProjectBody({ ...ROOT, brief: {} }, SNAP);
+  it('brief 为空壳且无 description（全新项目）→ 渲染占位文案，不报错', () => {
+    const b = buildProjectBody({ ...ROOT, brief: {}, description: null }, SNAP);
     const txt = JSON.stringify(b);
     expect(txt).toContain('未写目标');
     expect(txt).toContain('未写现状');
+  });
+
+  it('brief.goal 为空但 projects.description 有内容（存量项目未走过 brief_delta）→ 目标退回 description', () => {
+    const b = buildProjectBody({ ...ROOT, brief: {} }, SNAP);
+    const txt = JSON.stringify(b);
+    expect(txt).toContain(ROOT.description);
+    expect(txt).not.toContain('未写目标');
+    expect(txt).toContain('未写现状'); // 现状没有退回字段，仍是占位
   });
 });
 

@@ -93,12 +93,16 @@ export function buildProjectProps(root, snap) {
   };
 }
 
-/** brief → Notion blocks（棒2）：目标/现状/已知事实/未决问题/变更日志最近 10 条。 */
-function buildBriefBlocks(brief) {
+/**
+ * brief → Notion blocks（棒2）：目标/现状/已知事实/未决问题/变更日志最近 10 条。
+ * fallbackGoal：brief.goal 还没人写过（新建项目/老项目未走过 brief_delta）时，退回 projects.description
+ * ——不能因为上了 brief 就让存量项目页突然"目标"变空。
+ */
+function buildBriefBlocks(brief, fallbackGoal) {
   const b = normalizeBrief(brief);
   const blocks = [];
   blocks.push(heading('目标'));
-  blocks.push(para(b.goal || '（未写目标）'));
+  blocks.push(para(b.goal || fallbackGoal || '（未写目标）'));
   blocks.push(heading('现状'));
   blocks.push(para(b.status || '（未写现状）'));
   blocks.push(heading('已知事实'));
@@ -119,7 +123,7 @@ function buildBriefBlocks(brief) {
 }
 
 export function buildProjectBody(root, snap) {
-  const blocks = [...buildBriefBlocks(root.brief)];
+  const blocks = [...buildBriefBlocks(root.brief, root.description)];
   blocks.push(heading(`链（${snap.children.length} 棒）`));
   if (!snap.children.length) blocks.push(para('还没有子任务。下一棒会由上一棒的 handoff.next_steps 自动登记。'));
   for (const c of snap.children.slice(0, 25)) {
