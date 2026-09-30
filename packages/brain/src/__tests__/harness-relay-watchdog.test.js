@@ -54,11 +54,12 @@ function makeDeps({
   harnessRuntime = null,
   latestAttempt = null,
   orchestratorHeartbeatAt = null,
+  startedAt = null,
 } = {}) {
   const pool = { query: vi.fn() };
   pool.query.mockImplementation(async (sql, params = []) => {
     if (/FROM initiative_runs r(?:\s|$)/.test(sql)) {
-      return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt, controller_session_id: CONTROLLER_SESSION_ID, controller_generation: '1' }] };
+      return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt, started_at: startedAt, controller_session_id: CONTROLLER_SESSION_ID, controller_generation: '1' }] };
     }
     if (/FROM tasks/.test(sql)) {
       return { rows: [{ id: TASK_ID, status: taskStatus, title: 't', payload: { orchestrator, ...(harnessRuntime ? { harness_runtime: harnessRuntime } : {}) } }] };
@@ -471,6 +472,88 @@ describe('resumeStalledRelayRuns', () => {
     }));
     expect(deps.spawnFn).not.toHaveBeenCalled();
     expect(result.resumed).toBe(1);
+  });
+
+  // 任务 1fe53ce4（2026-09-30 实证 run 2ba6193a/17f96547）：us-vps 零执行闸开着时，
+  // watchdog 的 reconcile 分支绕过闸在 Brain 容器本地 spawn kernel（cwd 非 git 仓 →
+  // ground-truth ls-remote origin 必死），随后远端正常起来又因 singleton 让位。
+  it('远端模式（CECELIA_LOCAL_EXECUTION_ENABLED=false）下 reconcile 不得本地 spawn，改 requeue 交 executor 远端重派', async () => {
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      startedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+      latestAttempt: {
+        id: '22222222-2222-4222-8222-222222222222',
+        run_id: RUN_ID,
+        role: 'planner',
+        provider: 'claude',
+        provider_session_id: null,
+        status: 'failed',
+        lease_expires_at: null,
+      },
+    });
+    deps.env = { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' };
+    deps.resumeAttempt = vi.fn();
+    deps.launchKernel = vi.fn(async () => ({ pid: 5252 }));
+    deps.requeueKernelRunDeferred = vi.fn(async () => ({ changed: true, deferCount: 1 }));
+
+    await resumeStalledRelayRuns(deps);
+
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+    expect(deps.requeueKernelRunDeferred).toHaveBeenCalledOnce();
+    expect(deps.requeueKernelRunDeferred).toHaveBeenCalledWith(
+      deps.pool,
+      expect.objectContaining({ runId: RUN_ID, expectedTaskId: TASK_ID }),
+    );
+  });
+
+  it('远端模式下 requeue 延后次数用尽时收死 run 并告警，仍不本地 spawn', async () => {
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      startedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+      latestAttempt: {
+        id: '22222222-2222-4222-8222-222222222222',
+        run_id: RUN_ID,
+        role: 'planner',
+        provider: 'claude',
+        provider_session_id: null,
+        status: 'failed',
+        lease_expires_at: null,
+      },
+    });
+    deps.env = { CECELIA_LOCAL_EXECUTION_ENABLED: 'false' };
+    deps.resumeAttempt = vi.fn();
+    deps.launchKernel = vi.fn(async () => ({ pid: 5252 }));
+    deps.requeueKernelRunDeferred = vi.fn(async () => ({ changed: false, exhausted: true, deferCount: 3 }));
+    deps.finalizeRun = vi.fn(async () => ({ ok: true }));
+
+    await resumeStalledRelayRuns(deps);
+
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+    expect(deps.finalizeRun).toHaveBeenCalledWith(
+      deps.pool,
+      expect.objectContaining({ runId: RUN_ID, expectedTaskId: TASK_ID, outcome: 'failed' }),
+    );
+    expect(mockRaise).toHaveBeenCalledWith('P1', 'kernel_reconcile_remote_exhausted', expect.stringContaining(RUN_ID));
+  });
+
+  it('kernel-v1 新 run 无心跳无 attempt 且在启动宽限内（远端 prepare 在途）不重启', async () => {
+    const deps = makeDeps({
+      harnessRuntime: 'kernel-v1',
+      orchestratorHost: 'kernel-v1',
+      startedAt: new Date(Date.now() - 2 * 60_000).toISOString(),
+      latestAttempt: null,
+    });
+    deps.resumeAttempt = vi.fn();
+    deps.launchKernel = vi.fn(async () => ({ pid: 7373 }));
+    deps.requeueKernelRunDeferred = vi.fn();
+
+    const result = await resumeStalledRelayRuns(deps);
+
+    expect(deps.launchKernel).not.toHaveBeenCalled();
+    expect(deps.requeueKernelRunDeferred).not.toHaveBeenCalled();
+    expect(result.resumed).toBe(0);
   });
 
   it('expired Fleet attempt without a provider session restarts the controller without DB-only failure', async () => {
