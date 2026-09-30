@@ -373,3 +373,138 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
     expect(handlers['run.finished']).toBeUndefined();
   });
 });
+
+describe('handleRunFinished — step/enabler 级格子翻色 + 活动格向上汇总（任务 45e5db42，决策 3e867cad）', () => {
+  const JOURNEY = 'j-1';
+  const ACT_STEP = 'aaaaaaaa-0000-4000-8000-00000000000a';
+  const STEP_ID = 'bbbbbbbb-0000-4000-8000-00000000000b';
+  const STEP_ID_2 = 'bbbbbbbb-0000-4000-8000-00000000000c';
+  const ENABLER_ID = 'cccccccc-0000-4000-8000-00000000000c';
+  const STEP_LINK = '33333333-3333-4333-8333-333333333333';
+  const STEP_LINK_2 = '44444444-4444-4444-8444-444444444444';
+  const ENABLER_LINK = '55555555-5555-4555-8555-555555555555';
+
+  /**
+   * mock pool 带一张内存 journey_step_links：UPDATE 会改内存行，
+   * 子格解析查询（step_id_ref/enabler_id = ANY）与汇总查询（SELECT cell_status … step_id）都从内存行取。
+   */
+  function poolWithCells({ probes = [], cells = [] } = {}) {
+    const rows = cells.map((c) => ({ ...c }));
+    const calls = [];
+    const pool = {
+      query: vi.fn(async (sql, params) => {
+        calls.push({ sql, params });
+        if (/UPDATE journey_step_links/.test(sql)) {
+          const row = rows.find((r) => r.id === params[1]);
+          if (row) row.cell_status = params[0];
+          return { rows: [{ id: params[1] }] };
+        }
+        if (/step_id_ref = ANY/.test(sql)) {
+          const [journeys, stepIds, enablerIds] = params;
+          return {
+            rows: rows.filter((r) => journeys.includes(r.journey_id)
+              && ['step', 'enabler'].includes(r.cell_level)
+              && (stepIds.includes(r.step_id_ref) || enablerIds.includes(r.enabler_id))),
+          };
+        }
+        if (/SELECT cell_status FROM journey_step_links/.test(sql)) {
+          const [journeyId, stepId] = params;
+          return {
+            rows: rows.filter((r) => r.journey_id === journeyId && r.step_id === stepId
+              && ['step', 'enabler'].includes(r.cell_level)).map((r) => ({ cell_status: r.cell_status })),
+          };
+        }
+        if (/FROM tasks/.test(sql)) return { rows: [{ journey_id: JOURNEY }] };
+        if (/FROM step_probes/.test(sql)) return { rows: probes };
+        return { rows: [] };
+      }),
+    };
+    return { pool, calls, rows };
+  }
+
+  const activityCell = { id: LINK_A, journey_id: JOURNEY, step_id: ACT_STEP, cell_level: 'activity', step_id_ref: null, enabler_id: null, assertion_revision: 2, cell_status: 'gray' };
+  const stepCell = { id: STEP_LINK, journey_id: JOURNEY, step_id: ACT_STEP, cell_level: 'step', step_id_ref: STEP_ID, enabler_id: null, assertion_revision: 1, cell_status: 'gray' };
+  const stepCell2 = { id: STEP_LINK_2, journey_id: JOURNEY, step_id: ACT_STEP, cell_level: 'step', step_id_ref: STEP_ID_2, enabler_id: null, assertion_revision: 1, cell_status: 'gray' };
+  const enablerCell = { id: ENABLER_LINK, journey_id: JOURNEY, step_id: ACT_STEP, cell_level: 'enabler', step_id_ref: null, enabler_id: ENABLER_ID, assertion_revision: 1, cell_status: 'gray' };
+
+  const stepProbe = (key, expect_, overrides = {}) => spec(key, expect_, {
+    stage: 'collection', target_type: 'step', target_id: STEP_ID, activity_step_id: ACT_STEP, assertion_revision: 2,
+    spec: { key, stage: 'collection', probe: { kind: 'metric' }, expect: expect_, severity: 'error' },
+    ...overrides,
+  });
+  const activityProbe = (key, expect_, overrides = {}) => spec(key, expect_, {
+    stage: 'collection', target_type: 'activity', target_id: ACT_STEP, activity_step_id: ACT_STEP, assertion_revision: 2,
+    spec: { key, stage: 'collection', probe: { kind: 'sql' }, expect: expect_, severity: 'error' },
+    ...overrides,
+  });
+  const run = (probes) => ({ runId: 'run-s', taskId: 't-1', status: 'success', result: result(probes, {}, 'collection') });
+  const okPersist = () => vi.fn().mockResolvedValue({ receipt: { id: 'rcpt' }, persisted: true, skipped: null });
+
+  it('① 探针 target_type=step 的回执落到 step 格（journeyStepLinkId/assertionRevision 都是 step 格的）并翻 step 格；FAIL → step 红、所属活动红', async () => {
+    const { pool, calls, rows } = poolWithCells({
+      probes: [stepProbe('coll_rescan_rate', { op: '<=', value: 0.3 })],
+      cells: [activityCell, stepCell, stepCell2],
+    });
+    const persist = okPersist();
+    const out = await handleRunFinished(run({ coll_rescan_rate: { observed: 1 } }), { pool, persist });
+    expect(out.cells).toEqual({ [STEP_LINK]: 'red', [LINK_A]: 'red' });
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(persist.mock.calls[0][1]).toMatchObject({ journeyStepLinkId: STEP_LINK, assertionRevision: 1, probeKey: 'coll_rescan_rate', verdict: 'FAIL' });
+    const updates = calls.filter((c) => /UPDATE journey_step_links/.test(c.sql)).map((c) => c.params);
+    expect(updates).toEqual([['red', STEP_LINK], ['red', LINK_A]]);
+    expect(rows.find((r) => r.id === STEP_LINK_2).cell_status).toBe('gray');
+  });
+
+  it('① step PASS 且活动自身探针 PASS → step 绿、活动绿；活动格颜色 = 自身探针 ∪ 子格最坏值', async () => {
+    const { pool } = poolWithCells({
+      probes: [activityProbe('coll_count', { op: '>=', value: 1 }), stepProbe('coll_rescan_rate', { op: '<=', value: 0.3 })],
+      cells: [activityCell, stepCell, stepCell2],
+    });
+    const persist = okPersist();
+    const out = await handleRunFinished(run({ coll_count: { observed: 4 }, coll_rescan_rate: { observed: 0 } }), { pool, persist });
+    expect(out.cells).toEqual({ [STEP_LINK]: 'green', [LINK_A]: 'green' });
+    expect(persist.mock.calls[0][1]).toMatchObject({ journeyStepLinkId: LINK_A, assertionRevision: 2 });
+    expect(persist.mock.calls[1][1]).toMatchObject({ journeyStepLinkId: STEP_LINK, assertionRevision: 1 });
+  });
+
+  it('② 活动自身探针 PASS 但 step 探针 FAIL(warn) → step pending；子格上一轮留下的红也拖红活动（red>pending>green>gray）', async () => {
+    const { pool } = poolWithCells({
+      probes: [activityProbe('coll_count', { op: '>=', value: 1 }), stepProbe('coll_rescan_rate', { op: '<=', value: 0.3 }, { severity: 'warn' })],
+      cells: [activityCell, stepCell, { ...stepCell2, cell_status: 'red' }],
+    });
+    const out = await handleRunFinished(run({ coll_count: { observed: 4 }, coll_rescan_rate: { observed: 1 } }), { pool, persist: okPersist() });
+    expect(out.cells).toEqual({ [STEP_LINK]: 'pending', [LINK_A]: 'red' });
+  });
+
+  it('① target_type=enabler → 翻 enabler 格（enabler_id 匹配），活动跟着汇总', async () => {
+    const { pool } = poolWithCells({
+      probes: [stepProbe('lock_ok', { op: '==', value: 1 }, { target_type: 'enabler', target_id: ENABLER_ID })],
+      cells: [activityCell, enablerCell],
+    });
+    const persist = okPersist();
+    const out = await handleRunFinished(run({ lock_ok: { observed: 1 } }), { pool, persist });
+    expect(out.cells).toEqual({ [ENABLER_LINK]: 'green', [LINK_A]: 'green' });
+    expect(persist.mock.calls[0][1]).toMatchObject({ journeyStepLinkId: ENABLER_LINK, assertionRevision: 1 });
+  });
+
+  it('target_type=step 但 journey 下没有对应 step 格 → 退回活动格（回执与翻色都落活动格），不丢判定', async () => {
+    const { pool } = poolWithCells({
+      probes: [stepProbe('coll_rescan_rate', { op: '<=', value: 0.3 })],
+      cells: [activityCell],
+    });
+    const persist = okPersist();
+    const out = await handleRunFinished(run({ coll_rescan_rate: { observed: 1 } }), { pool, persist });
+    expect(out.cells).toEqual({ [LINK_A]: 'red' });
+    expect(persist.mock.calls[0][1]).toMatchObject({ journeyStepLinkId: LINK_A, assertionRevision: 2 });
+  });
+
+  it('只有活动级探针（target_type=activity / 老行无 target）→ 不发子格解析查询，行为与从前一致', async () => {
+    const { pool, calls } = poolWithCells({
+      probes: [activityProbe('coll_count', { op: '>=', value: 1 }), spec('legacy', { op: '>=', value: 1 }, { stage: 'collection', activity_step_id: ACT_STEP })],
+      cells: [activityCell],
+    });
+    const out = await handleRunFinished(run({ coll_count: { observed: 4 }, legacy: { observed: 1 } }), { pool, persist: okPersist() });
+    expect(out.cells).toEqual({ [LINK_A]: 'green' });
+    expect(calls.some((c) => /step_id_ref = ANY/.test(c.sql))).toBe(false);
+  });
+});
