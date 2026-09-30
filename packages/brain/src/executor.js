@@ -61,6 +61,13 @@ import { classifyCodexFailure } from './lib/codex-fatal-patterns.js';
 import { classifyDispatchReasonCode, dispatchFailureFromError } from './lib/dispatch-reason-code.js';
 import { raise } from './alerting.js';
 import { EXECUTOR_KIND_FOR, resolveExecutorKind, isExternallyExecuted } from './executor-contracts.js';
+import {
+  isExternalRunMirror,
+  externalActivityAgeMs,
+  createStaleLedger,
+  EXTERNAL_ACTIVITY_AGE_SQL,
+  EXTERNAL_HEARTBEAT_STALE_MS,
+} from './lib/external-mirror-liveness.js';
 import { probeCodexReviewLock, CODEX_REVIEW_LOCK_DIR as CODEX_REVIEW_LOCK_DIR_SSOT } from './lib/codex-review-liveness.js';
 import { pushCaptureAtom } from './capture-inbox.js';
 import {
@@ -867,6 +874,8 @@ const activeProcesses = new Map();
  * auto-fail only if still suspect on next tick.
  */
 const suspectProcesses = new Map();
+/** 外部 run 镜像心跳陈旧留痕账本（每陈旧窗口一次；见 lib/external-mirror-liveness.js） */
+const externalStaleNoted = createStaleLedger();
 
 /**
  * Get the number of actively tracked processes (with liveness check)
@@ -4127,7 +4136,8 @@ async function probeTaskLiveness() {
 
   // Get all in_progress tasks from DB
   const result = await pool.query(`
-    SELECT id, title, payload, started_at, task_type, executor_kind, error_message, claimed_by, claimed_at
+    SELECT id, title, payload, started_at, task_type, executor_kind, error_message, claimed_by, claimed_at,
+           ${EXTERNAL_ACTIVITY_AGE_SQL} AS external_activity_age_sec
     FROM tasks
     WHERE status = 'in_progress'
   `);
@@ -4185,6 +4195,35 @@ async function probeTaskLiveness() {
     const HARNESS_LIVENESS_EXEMPT_TYPES = new Set(RECOVERY_HARNESS_TASK_TYPES);
     const EXTERNAL_WATCHDOG_TYPES = new Set(EXTERNAL_WATCHDOG_TASK_TYPES);
     if (HARNESS_LIVENESS_EXEMPT_TYPES.has(task.task_type)) {
+      continue;
+    }
+
+    // 外部 run 镜像（workflow_run / device_job source=cron，任务 0004aceb，决策 3c98fb36 阶段1）：
+    // wall-report / Notion ssh 直派在执行机上起跑，Brain 行只是账本镜像——从不 claim（下方认领新鲜度分支
+    // 接不住）、Brain 从不 spawn（三条 spawn 证据恒空）。09-30 实证 1e84cbad 五次被 no_spawn_evidence 回队
+    // 并清 started_at → workflow-run-lost-deadline 永远算不到 4.5h、commander-watchdog 起跑判据被重置，
+    // wall-report 阶段回执又设回 in_progress 形成振荡。
+    // 活性看镜像心跳（SQL 内算龄：task_runs 阶段回执 / commander 心跳 / 行更新 / 起跑的最新者）；
+    // 陈旧也**不回队、不清 started_at**，只留痕 external_liveness_stale（每陈旧窗口一次），
+    // 出路归 workflow-run-lost-deadline（总时限判 lost）与 commander-watchdog（接班）。
+    if (isExternalRunMirror(task)) {
+      suspectProcesses.delete(task.id);
+      const ageMs = externalActivityAgeMs(task);
+      if (externalStaleNoted.shouldNote(task.id, ageMs)) {
+        const staleMinutes = ageMs === null ? null : Math.round(ageMs / 60000);
+        await recordTaskEventSafe(pool, task.id, 'external_liveness_stale', {
+          reason: 'heartbeat_stale',
+          stale_minutes: staleMinutes,
+          threshold_minutes: Math.round(EXTERNAL_HEARTBEAT_STALE_MS / 60000),
+          task_type: task.task_type,
+          source: task.payload?.source || null,
+          serial: task.payload?.serial || null,
+          tag: task.payload?.tag || null,
+        });
+        console.log(
+          `[liveness] 外部 run 镜像 ${task.id} 心跳陈旧 ${staleMinutes ?? '?'}min（阈值 ${Math.round(EXTERNAL_HEARTBEAT_STALE_MS / 60000)}min）→ 只留痕不回队（归 lost-deadline / commander-watchdog）`
+        );
+      }
       continue;
     }
 
@@ -4359,6 +4398,7 @@ async function probeTaskLiveness() {
     });
   }
 
+  externalStaleNoted.prune(new Set(result.rows.map((row) => row.id)));
   return actions;
 }
 
@@ -4776,6 +4816,7 @@ export {
   isRunIdProcessAlive,
   isTaskProcessAlive,
   suspectProcesses,
+  externalStaleNoted,
   MAX_SEATS,
   INTERACTIVE_RESERVE,
   // v5: Watchdog integration
