@@ -31,6 +31,7 @@ const show = (v) => (v === null || v === undefined ? '' : typeof v === 'string' 
 /** 「查什么」：type@target [→ reduce]: sql 原文 / http url，一句话。 */
 export function describeProbe(probe) {
   if (!probe || typeof probe !== 'object') return '';
+  if (probe.type === 'metric') return `metric: ${oneLine(probe.ref)}`;
   const head = `${probe.type || '?'}@${probe.target || '?'}${probe.reduce ? ` → ${probe.reduce}` : ''}`;
   const body = probe.type === 'sql' ? probe.query : probe.type === 'http' ? probe.url : JSON.stringify(probe);
   return `${head}: ${oneLine(body)}`;
