@@ -16,6 +16,12 @@ import {
 vi.mock('../capture-inbox.js', () => ({ pushCaptureAtom: vi.fn().mockResolvedValue('atom-1') }));
 import { pushCaptureAtom } from '../capture-inbox.js';
 
+// 棒2（决策 ee4842a6/3feeae3e）：saveHandoff 对"已 completed 补写 handoff"分支会动态 import 这个模块。
+const applyHandoffBriefDeltaMock = vi.hoisted(() => vi.fn(async () => null));
+vi.mock('../lib/project-brief-apply.js', () => ({
+  applyHandoffBriefDelta: (...args) => applyHandoffBriefDeltaMock(...args),
+}));
+
 const TASK_ID = '11111111-2222-3333-4444-555555555555';
 
 describe('buildHandoff', () => {
@@ -121,6 +127,48 @@ describe('saveHandoff', () => {
     const r = await saveHandoff({ pool }, buildHandoff({ task_id: TASK_ID }));
     expect(r.dbWritten).toBe(true);
     expect(r.mirrorPath).toBeNull();
+  });
+
+  describe('brief_delta（棒2，决策 ee4842a6/3feeae3e）', () => {
+    beforeEach(() => applyHandoffBriefDeltaMock.mockClear());
+
+    it('任务已 completed 且 handoff 带 brief_delta → 调 applyHandoffBriefDelta(pool, task, handoff)', async () => {
+      const pool = { query: vi.fn(async (sql) => {
+        if (/SELECT id, title, status/.test(sql)) {
+          return { rows: [{ id: TASK_ID, title: 't', status: 'completed', priority: 'P2', task_type: 'dev', payload: {}, parent_task_id: null, project_id: 'proj-1' }] };
+        }
+        return { rowCount: 1, rows: [] };
+      }) };
+      const h = buildHandoff({ task_id: TASK_ID, title: 't', brief_delta: { status: '新现状' } });
+      await saveHandoff({ pool }, h);
+      expect(applyHandoffBriefDeltaMock).toHaveBeenCalledTimes(1);
+      const [calledPool, calledTask, calledHandoff] = applyHandoffBriefDeltaMock.mock.calls[0];
+      expect(calledPool).toBe(pool);
+      expect(calledTask).toMatchObject({ id: TASK_ID, project_id: 'proj-1' });
+      expect(calledHandoff.brief_delta).toEqual({ status: '新现状' });
+    });
+
+    it('没有 brief_delta → 不调用', async () => {
+      const pool = { query: vi.fn(async (sql) => {
+        if (/SELECT id, title, status/.test(sql)) {
+          return { rows: [{ id: TASK_ID, title: 't', status: 'completed', priority: 'P2', task_type: 'dev', payload: {}, parent_task_id: null, project_id: 'proj-1' }] };
+        }
+        return { rowCount: 1, rows: [] };
+      }) };
+      await saveHandoff({ pool }, buildHandoff({ task_id: TASK_ID, title: 't' }));
+      expect(applyHandoffBriefDeltaMock).not.toHaveBeenCalled();
+    });
+
+    it('任务还没到 completed（in_progress）→ 不调用（终态时机未到）', async () => {
+      const pool = { query: vi.fn(async (sql) => {
+        if (/SELECT id, title, status/.test(sql)) {
+          return { rows: [{ id: TASK_ID, title: 't', status: 'in_progress', priority: 'P2', task_type: 'dev', payload: {}, parent_task_id: null, project_id: 'proj-1' }] };
+        }
+        return { rowCount: 1, rows: [] };
+      }) };
+      await saveHandoff({ pool }, buildHandoff({ task_id: TASK_ID, title: 't', brief_delta: { status: 'x' } }));
+      expect(applyHandoffBriefDeltaMock).not.toHaveBeenCalled();
+    });
   });
 });
 
