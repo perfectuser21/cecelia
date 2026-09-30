@@ -50,14 +50,14 @@ describe('archived ancestor 400 → 视同 404 自愈', () => {
     expect(pool.query.mock.calls.some((c) => /SET notion_id = NULL, notion_digest = NULL/.test(c[0]))).toBe(true);
   });
 
-  it('relay project：PATCH 报 archived ancestor → 重建新页并回存新 notion_id', async () => {
+  it('relay project：PATCH 报 archived ancestor → 重建新页并回存新 notion_id（棒1：数据源=projects 表）', async () => {
     const { pushProjectRoots } = await import('../notion-relay-projection.js');
     const updates = [];
     const root = { id: '11111111-1111-4111-8111-111111111111', title: 'p', description: 'd', status: 'in_progress',
-      notion_id: 'p1', notion_props: { project_digest: 'stale' } };
+      notion_props: { notion_id: 'p1', project_digest: 'stale' } };
     const pool = { query: vi.fn(async (sql, params) => {
-      if (/FROM tasks\s+WHERE task_type = 'project'/.test(sql)) return { rows: [root] };
-      if (/UPDATE tasks SET notion_id/.test(sql)) { updates.push(params); return { rows: [] }; }
+      if (/FROM projects\s+WHERE status NOT IN/.test(sql)) return { rows: [root] };
+      if (/UPDATE projects SET/.test(sql)) { updates.push(params); return { rows: [] }; }
       return { rows: [] };
     }) };
     const req = vi.fn(async (t, path, method) => {
