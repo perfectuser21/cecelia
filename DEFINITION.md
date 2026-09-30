@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.346.0
+**Brain 版本**: 1.346.1
 
 ## 1.283.0
 
@@ -48,6 +48,11 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.346.1 — 镜像补拷 sync-steps-from-workspace.mjs（任务 b2bba893）
+
+- `packages/brain/Dockerfile` 按白名单风格增加 `COPY packages/brain/scripts/sync-steps-from-workspace.mjs ./scripts/`：09-30 上产 sync 44 步靠手工 `docker cp` 进容器，下次部署即丢（#5705 遗留）
+- 新增 smoke `brain-image-scripts-smoke.sh`（源码层断言该 COPY 存在、两条既有 scripts/lib COPY 未丢、源文件存在；改 Dockerfile 前先报红）并登记 allowlist
 
 ## Brain 1.346.0 — Commander 看门狗 + escort 心跳 + Bark 阈值（任务 17ea4536，决策 3c98fb36）
 
