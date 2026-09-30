@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.347.1
+**Brain 版本**: 1.348.0
 
 ## 1.283.0
 
@@ -48,6 +48,14 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.348.0 — 价值流建模④：spans 表 + task_runs.workflow_id + activity_flow_metrics 视图 + POST/GET /api/brain/spans（迁移 495，任务 ec643d60，决策 3e867cad 第 9-10 张表）
+
+- 新表 `spans`：一次 run 里一个 Activity / Step / Enabler 的一次执行；三个目标至少挂一个（CHECK）；`executor_kind` code|agent|human、`outcome` pass|fail|skipped|unknown；`duration_ms` 生成列；幂等唯一键 `(run_id, COALESCE(step_id, activity_id, enabler_id), started_at)` 让执行机重发不产生重复行
+- `task_runs.workflow_id`（可空，不回填）与 `spans.workflow_id` 同一根轴
+- 视图 `activity_flow_metrics`：近 7 天按 Backbone Activity 汇总 runs / span_count / p50 / p95 / avg_wait_ms / fallback_rate / first_pass_yield(=1−fallback_rate) / pass_rate / tokens_total / cost_usd_total
+- `POST /api/brain/spans`（内网/回环鉴权，单条或数组，逐条 ON CONFLICT DO NOTHING，回报 inserted/skipped/count/ids）、`GET /api/brain/spans?run_id=&activity_id=`
+- 测试：结构断言 + 真库集成（幂等 / CHECK / 幂等键 / 视图 4 条 span 2 fallback→0.5 / 回滚）+ 路由 mock + smoke `vs-model-spans-smoke.sh`
 
 ## Brain 1.347.0 — 价值流建模③：workflows 真表 + 骨干活动挂 workflow/executor/enabler + ops_workflows.workflow_id（决策 3e867cad 第 4-5 张表 / 752b7166）
 
