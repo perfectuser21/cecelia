@@ -182,7 +182,7 @@ describe('actions.js - domain 自动填充', () => {
       const params = insertCall[1];
 
       // domain 存入 metadata JSON，owner_role 仍是直接列
-      // okr_projects: params = [title, desc, owner_role, metaJson]
+      // 棒4起 projects 真身表: params = [name, desc, owner_role, repo_path, metaJson]
       expect(sql).toContain('owner_role');
       expect(sql).toContain('metadata');
       expect(params).toContain('cmo');
@@ -198,10 +198,10 @@ describe('actions.js - domain 自动填充', () => {
       await createProject({ name: 'QA quality regression coverage 项目' });
 
       const params = mockQuery.mock.calls[0][1];
-      // okr_projects: params = [title, desc, owner_role, metaJson]
-      // $3 = owner_role, $4 = metaJson (domain in JSON)
+      // 棒4起 projects 真身表: params = [name, desc, owner_role, repo_path, metaJson]
+      // $3 = owner_role, $5 = metaJson (domain in JSON)
       expect(params[2]).toBe('vp_qa'); // owner_role
-      expect(JSON.parse(params[3]).domain).toBe('quality');
+      expect(JSON.parse(params[4]).domain).toBe('quality');
     });
   });
 });
