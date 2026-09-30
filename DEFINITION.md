@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.348.6
+**Brain 版本**: 1.348.7
 
 ## 1.283.0
 
@@ -48,6 +48,16 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.348.7 — scope/initiative 层退役（接力棒链 2afa6d69 棒4，决策 ee4842a6/3feeae3e）
+
+- `okr_scopes` / `okr_initiatives` / `okr_projects` 冻结写入（migration 499：BEFORE INSERT OR UPDATE trigger 统一抛 `layer_retired`，DELETE 不受影响，表与历史数据原样保留只读）；重放一次 `okr_projects → projects` 搬家接住迁移 497 上线后到本迁移之间的新增行
+- `/api/brain/okr/scopes`、`/api/brain/okr/initiatives` 写操作一律 410 `layer_retired`；`/api/brain/okr/projects` 改为直接复用 `routes/task-projects.js` 的 router，与 `/api/brain/projects` 同源同表读写
+- `actions.js` 的 `createInitiative`/`createScope` 恒返回 `layer_retired`（不再查库）；`createProject` 改写入真身表 `projects`（顺手修了 `custom_props` 传 `null` 撞 `projects` 表 `NOT NULL DEFAULT '{}'` 约束的真 bug）；`routes/actions.js` 的 `/action/create-scope`、`/action/create-initiative` 同步改 410
+- `lib/task-type-registry.js` 新增 `LAYER_RETIRED_TASK_TYPES`（`scope_plan`/`initiative_plan`/`project_plan`/`okr_scope_plan`/`okr_initiative_plan`/`okr_project_plan`，registry 行本身保留不删）；`actions.js createTask` 与 `routes/task-tasks.js POST /tasks` 两个建单入口统一拦截，返回 `layer_retired`
+- `thalamus.js` `ACTION_WHITELIST` 移除 `okr_initiative_plan`/`okr_scope_plan`/`okr_project_plan`（48 → 45）
+- tick 热路径清空为 no-op（验收标准：一轮 tick 不产生任何对 `okr_scopes`/`okr_initiatives` 的查询）：`initiative-closer.js`、`okr-closer.js`、`decomposition-checker.js` 的 Check B（KR 状态流转）、`okr-initiative-sync.js`、`kr-progress.js`
+- `executor.js` 的 `resolveRepoPath`、`intent.js` 的 `parseAndCreate`、`daily-review-scheduler.js` 的 `getActiveRepoPaths` 改读写真身表 `projects`，不再碰 `okr_scopes`/`okr_initiatives`
 
 ## Brain 1.348.6 — Projects 真身表升格（接力棒链 2afa6d69 棒1，决策 ee4842a6/3feeae3e）
 
