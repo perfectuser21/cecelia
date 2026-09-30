@@ -1,7 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockQuery = vi.fn();
 vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
+
+// golden_path 旧表已退役（任务 7d312fd8）：既有读路由用例在应急放行窗口下跑，
+// 退役 410 用例在下方 describe 里显式关 flag。
+process.env.GOLDEN_PATH_LEGACY_READ = '1';
 
 async function makeApp() {
   const { default: router } = await import('../abilities.js');
@@ -51,10 +55,73 @@ describe('abilities routes', () => {
     expect(Array.isArray(res.body)).toBe(true);
   });
 
-  it('POST /golden_path 缺字段返回 400', async () => {
-    // 新模型：缺 owner_task_id → 400
+  it('POST /golden_path 写路径退役：即使放行读 flag 开着也 410，不碰库', async () => {
     const res = await (await req())(await makeApp()).post('/api/brain/golden_path').send({ order_no: 1 });
+    expect(res.status).toBe(410);
+    expect(res.body.path_kind).toBe('write');
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('PATCH /golden_path/:id 写路径退役：410，不碰库', async () => {
+    const res = await (await req())(await makeApp()).patch('/api/brain/golden_path/g1').send({ note: 'x' });
+    expect(res.status).toBe(410);
+    expect(res.body.path_kind).toBe('write');
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it('POST /decisions target_type=golden_path：flag 开时仍校验 target 存在（应急窗口）', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // SELECT id FROM golden_path → 不存在
+    const res = await (await req())(await makeApp()).post('/api/brain/decisions')
+      .send({ level: 'step', target_type: 'golden_path', target_id: 'g-none' });
     expect(res.status).toBe(400);
+    expect(mockQuery.mock.calls[0][0]).toMatch(/FROM golden_path/);
+  });
+
+  describe('golden_path 退役（GOLDEN_PATH_LEGACY_READ 未开，任务 7d312fd8）', () => {
+    beforeEach(() => { delete process.env.GOLDEN_PATH_LEGACY_READ; });
+    afterEach(() => { process.env.GOLDEN_PATH_LEGACY_READ = '1'; });
+
+    const READ_ROUTES = [
+      ['GET', '/api/brain/golden_path?owner_task_id=t1'],
+      ['GET', '/api/brain/golden_path/canvas?owner_task_id=11111111-1111-1111-1111-111111111111'],
+      ['GET', '/api/brain/golden_path/g1/decisions'],
+      ['GET', '/api/brain/tasks/t1/golden-path-decisions'],
+      ['GET', '/api/brain/journeys/bb8cc561-b3ee-4fec-b74d-2255694bd963/golden-paths'],
+      ['POST', '/api/brain/golden_path/g1/run-result'],
+    ];
+
+    it.each(READ_ROUTES)('%s %s → 410 + hint 指向 /api/brain/steps，不查库', async (method, url) => {
+      const app = await makeApp();
+      const agent = (await req())(app);
+      const res = method === 'POST'
+        ? await agent.post(url).send({ run_id: 'r1', verdict: 'completed' })
+        : await agent.get(url);
+      expect(res.status).toBe(410);
+      expect(res.body.error).toBe('golden_path retired');
+      expect(res.body.hint).toContain('/api/brain/steps');
+      expect(res.body.legacy_read_env).toBe('GOLDEN_PATH_LEGACY_READ=1');
+      expect(mockQuery).not.toHaveBeenCalled();
+    });
+
+    it('POST /decisions target_type=golden_path → 410（退役表上不再挂新决策），其他 target_type 不受影响', async () => {
+      const gone = await (await req())(await makeApp()).post('/api/brain/decisions')
+        .send({ level: 'step', target_type: 'golden_path', target_id: 'g1' });
+      expect(gone.status).toBe(410);
+      expect(mockQuery).not.toHaveBeenCalled();
+
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'd1', level: 'area' }] }); // INSERT decisions
+      const ok = await (await req())(await makeApp()).post('/api/brain/decisions')
+        .send({ level: 'area', topic: 't', decision: 'd' });
+      expect(ok.status).toBe(201);
+    });
+
+    it('写路径 flag 关时同样 410（写永远不放行）', async () => {
+      const res = await (await req())(await makeApp()).post('/api/brain/golden_path')
+        .send({ owner_task_id: 't1', order_no: 1 });
+      expect(res.status).toBe(410);
+      expect(res.body).not.toHaveProperty('legacy_read_env');
+      expect(mockQuery).not.toHaveBeenCalled();
+    });
   });
 
 

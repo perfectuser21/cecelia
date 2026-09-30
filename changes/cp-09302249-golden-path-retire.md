@@ -1,0 +1,10 @@
+## Brain {VERSION} — golden_path 旧表退役第一刀：写路径 410、读路径默认 410（GOLDEN_PATH_LEGACY_READ=1 应急放行）、promote/line-context/ledger 停读停写（任务 7d312fd8，决策 3e867cad / f425e3fd）
+
+- 新 `lib/golden-path-legacy.js`：`legacyReadEnabled()`（只认字面 `1`）/ `sendGoldenPathRetired()` / `guardLegacyRead()`；410 体带 `hint` 指向 `GET /api/brain/steps`（步骤真身）与 `journey_step_links` + `step_probes`（格子/探针），读路径附 `legacy_read_env`，写路径不给放行口
+- `routes/abilities.js`：`POST /golden_path`、`PATCH /golden_path/:id` 写路径永久 410（路由体删除）；`GET /golden_path`、`GET /golden_path/canvas`、`POST /golden_path/:id/run-result`、`GET /golden_path/:id/decisions`、`GET /tasks/:id/golden-path-decisions`、`GET /journeys/:journey_id/golden-paths` 六条读路由默认 410，`GOLDEN_PATH_LEGACY_READ=1` 放行；`POST /decisions` 的 `target_type=golden_path` 默认 410（退役表上不再挂新决策），其他 target_type 不受影响
+- `harness-promote-regression.js`：① golden_path 覆盖写（DELETE+INSERT 事务）整段删除，不再 import db 池；`dbOnly:true`（callback T2 形态）直接返回 `reason=golden_path_retired` 零副作用；② yaml 冻结 + auto-PR 路径原样保留，返回值 `dbWritten` 恒 false
+- `harness-line-context.js`：step 级 invariant 路与累积 FR 路只在应急放行窗口下 JOIN 旧表，默认三参齐全只发 3 路（journey_feature / global+area / ledger），`cumulativeFR=[]`
+- `ledger-hygiene.js`：m1「FR沉淀率」默认 `enabled=false, retired='golden_path'`、不查旧表、不进棘轮（生产实证：旧表最后一次写入 2026-08-14，近 7 天 6 个 merged run 全被记成欠账，指标早已失真）；应急窗口下沿用旧口径
+- 未动：`golden_paths`（GP 提案流水线：`routes/golden-paths.js` / `golden-path-contracts.js` / `direction-proposer.js` / `gp-shelf-life.js` / `capture-triage.js` / `battle-report.js`）与 `golden_path_contract_versions`（合同签版）是另一条活链，`impact-contract/assertion-receipts.js` 的 JOIN 属禁区，等产品拍板再收；不 RENAME 不 DROP 不建迁移，`map/state-resolver.js`、`lib/map-state-resolver.js` 不碰
+- 生产快照（收刀前）：golden_path 134 行 / 29 个 owner_task，最后写入 2026-08-14；golden_path_run_receipts 0 行（run-result 回写从未在生产触发）；decisions target_type=golden_path 1 条（2026-07-11）
+- 回归：`lib/__tests__/golden-path-legacy.test.js`（8 例）+ abilities/canvas 路由 410 用例 + promote/line-context/ledger 停读停写用例 + `promote-regression.integration.test.js` 改钉「merged 终态零写入、line-context 默认不读旧表」
