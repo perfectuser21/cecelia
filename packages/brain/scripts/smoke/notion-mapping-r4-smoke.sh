@@ -5,7 +5,8 @@ set -euo pipefail
 
 BRAIN="${BRAIN:-http://localhost:5221}"
 NOTES_JS="packages/brain/src/routes/notes.js"
-SYNC_JS="packages/brain/src/notion-push-sync.js"
+# Order 降级写入已随承诺地图格子镜子迁到 notion-probe-projection.js（#5612/#5614）
+SYNC_JS="packages/brain/src/notion-probe-projection.js"
 
 # 静态检查：notes.js 含 getDbSchemaProperties 函数 + Initiative ID 降级判断
 node -e "
@@ -23,14 +24,14 @@ if (!src.includes('warnings')) {
 console.log('✓ notes.js schema 动态查询 + 属性降级逻辑存在');
 "
 
-# 静态检查：notion-push-sync.js 含 Order 条件写入（降级）
+# 静态检查：notion-probe-projection.js 含 Order 条件写入（降级）
 node -e "
 const fs = require('fs');
 const src = fs.readFileSync('${SYNC_JS}', 'utf8');
 if (!src.includes(\"'Order' in schemaProps\")) {
-  console.error('FAIL: notion-push-sync.js 缺少 Order 属性降级判断'); process.exit(1);
+  console.error('FAIL: notion-probe-projection.js 缺少 Order 属性降级判断'); process.exit(1);
 }
-console.log('✓ notion-push-sync.js Order 条件写入逻辑存在');
+console.log('✓ notion-probe-projection.js Order 条件写入逻辑存在');
 "
 
 # 可选：如果 Brain 正在运行且 Notion API key 已配置，验证 POST /notes 返回 warnings 数组
