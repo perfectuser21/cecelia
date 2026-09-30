@@ -250,10 +250,10 @@ export async function getChainContext({ pool }, taskId, { limit = CHAIN_RECENT_L
   if (!taskId) return null;
   const { rows: up } = await pool.query(
     `WITH RECURSIVE up AS (
-       SELECT id, parent_task_id, title, description, task_type, status, sequence_no, 0 AS depth
+       SELECT id, parent_task_id, title, description, task_type, status, sequence_no, project_id, 0 AS depth
          FROM tasks WHERE id = $1::uuid
        UNION ALL
-       SELECT t.id, t.parent_task_id, t.title, t.description, t.task_type, t.status, t.sequence_no, up.depth + 1
+       SELECT t.id, t.parent_task_id, t.title, t.description, t.task_type, t.status, t.sequence_no, t.project_id, up.depth + 1
          FROM tasks t JOIN up ON t.id = up.parent_task_id
         WHERE up.depth < $2
      )
@@ -262,6 +262,47 @@ export async function getChainContext({ pool }, taskId, { limit = CHAIN_RECENT_L
   );
   if (!up.length) return null;
   const self = up[0];
+
+  // 新路径：self 挂了 project_id → 根 = projects 行（棒1，决策 ee4842a6/3feeae3e）。
+  // projects 表查无该行（脏数据）→ 落到下面的旧祖先链逻辑，不中断。
+  if (self.project_id) {
+    const { rows: projRows } = await pool.query(
+      `SELECT id, name, description, status, kr_id, brief FROM projects WHERE id = $1::uuid`,
+      [self.project_id]
+    );
+    if (projRows.length) {
+      const proj = projRows[0];
+      const { rows: sib } = await pool.query(
+        `SELECT count(*)::int AS total FROM tasks WHERE project_id = $1::uuid AND task_type <> 'project'`,
+        [proj.id]
+      );
+      const { rows: recent } = await pool.query(
+        `SELECT t.id, t.title, t.completed_at, t.result->'handoff' AS handoff
+           FROM tasks t
+          WHERE t.project_id = $1::uuid AND t.task_type <> 'project' AND t.result ? 'handoff' AND t.id <> $2::uuid
+          ORDER BY t.completed_at DESC NULLS LAST, t.updated_at DESC
+          LIMIT $3`,
+        [proj.id, taskId, limit]
+      );
+      return {
+        root: {
+          id: proj.id,
+          title: proj.name,
+          description: proj.description,
+          status: proj.status,
+          kr_id: proj.kr_id ?? null,
+          brief: proj.brief ?? {},
+          kind: 'project',
+          task_type: 'project',
+        },
+        self: { id: self.id, title: self.title },
+        is_chained: true,
+        position: { sequence_no: self.sequence_no ?? null, total: sib[0]?.total ?? null },
+        recent,
+      };
+    }
+  }
+
   const root = up[up.length - 1];
   const isChained = up.length > 1;
   let position = null;

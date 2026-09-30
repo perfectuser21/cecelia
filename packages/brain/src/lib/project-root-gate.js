@@ -53,19 +53,34 @@ export async function findProjectRoot(db, taskId) {
 }
 
 /**
+ * 顶层 project_id 是否指向一张真实存在的 projects 行（棒1，决策 ee4842a6/3feeae3e）。
+ * @returns {Promise<{id: string}|null>}
+ */
+async function findProjectById(db, projectId) {
+  if (typeof projectId !== 'string' || !UUID_RE.test(projectId)) return null;
+  const { rows } = await db.query('SELECT id FROM projects WHERE id = $1::uuid', [projectId]);
+  return rows[0] ? { id: rows[0].id } : null;
+}
+
+/**
  * 建单入口调用。dependsOn 为 normalizeDependsOn 的结果（null = 没声明该键，[] = 显式空）。
+ * projectId 非空且 projects 表存在该行 → 直接放行，不查祖先链（棒1）；否则沿用旧的祖先
+ * task_type=project 判定；两者都无 → 原错误码。
  * @throws {ProjectRootGateError}
  */
-export async function assertProjectRootForMultiTask(db, { taskType, parentTaskId, dependsOn, payload }) {
+export async function assertProjectRootForMultiTask(db, { taskType, parentTaskId, dependsOn, payload, projectId = null }) {
   if (taskType === PROJECT_TASK_TYPE) return;
   if (!isMultiTaskRegistration({ dependsOn, payload })) return;
 
-  const root = parentTaskId ? await findProjectRoot(db, parentTaskId) : null;
+  let root = projectId ? await findProjectById(db, projectId) : null;
+  if (!root) {
+    root = parentTaskId ? await findProjectRoot(db, parentTaskId) : null;
+  }
   if (!root) {
     throw new ProjectRootGateError(
       'project_root_required',
-      '多刀工作（带 depends_on 或 multi_task）必须挂 project 根：parent_task_id 的祖先链上没有 task_type=project 的任务',
-      { hint: ROOT_HINT, details: { parent_task_id: parentTaskId ?? null } },
+      '多刀工作（带 depends_on 或 multi_task）必须挂 project 根：parent_task_id 的祖先链上没有 task_type=project 的任务，或带一个 projects 表里存在的 project_id',
+      { hint: ROOT_HINT, details: { parent_task_id: parentTaskId ?? null, project_id: projectId ?? null } },
     );
   }
 
