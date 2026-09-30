@@ -453,3 +453,74 @@ describe('熔断豁免：qiumi_task 走 ssh 直派，不受 cecelia-run 熔断�
     expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: 'q1', status: 'queued' });
   });
 });
+
+describe('同机串行（任务 5ad81457）：同一台手机已有秋米任务在跑 → 本轮不派，保持 queued 换下一个', () => {
+  const hint = (serial) => ({ source: 'jev', device_hint: { is_device: true, serial, host: 'xian-m1' } });
+  const routedRow = (serial, extra = {}) => ({
+    ...fullRow, payload: { ...fullRow.payload, run_id: 'qiumi-q1-1', qiumi_route: hint(serial), ...extra },
+  });
+  /** busySerial：库里另一张 in_progress 秋米任务占着的序列号 */
+  function wire(row, busySerial) {
+    mockQuery.mockImplementation(async (sql, params) => {
+      if (/SELECT \* FROM tasks WHERE id = \$1/.test(sql)) return { rows: [row] };
+      if (/count\(\*\)::int AS n FROM tasks/.test(sql) && /openclaw-agent/.test(sql)) return { rows: [{ n: 1 }] };
+      if (/device_hint/.test(sql) && /in_progress/.test(sql)) {
+        return { rows: params?.[1] === busySerial ? [{ id: 'q0-busy', started_at: null }] : [] };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+  }
+
+  it('已路由的任务：同 serial 已有 in_progress → skip、放 claim、进 holSkipIds、记 task_events', async () => {
+    wire(routedRow('S1'), 'S1');
+    const holSkipIds = [];
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds });
+    expect(r).toEqual({ outcome: 'skip' });
+    expect(holSkipIds).toContain('q1');
+    expect(sqlsOf().some((s) => /claimed_by = NULL/.test(s)), 'claim 泄漏').toBe(true);
+    const ev = mockQuery.mock.calls.find(([s, p]) => /INSERT INTO task_events/.test(s) && p?.[1] === 'qiumi_dispatch_device_busy');
+    expect(ev, '没记 task_events').toBeTruthy();
+    expect(JSON.parse(ev[1][2])).toMatchObject({ serial: 'S1', busy_task_id: 'q0-busy' });
+    const gate = sqlsOf().find((s) => /device_hint/.test(s) && /in_progress/.test(s));
+    expect(gate).toMatch(/task_type = 'qiumi_task'/);
+    expect(gate).toMatch(/id <> \$1/);
+  });
+
+  it('不同 serial → 照派（proceed）', async () => {
+    wire(routedRow('S2'), 'S1');
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+    expect(r).toEqual({ outcome: 'proceed' });
+  });
+
+  it('没有 serial（非设备活）→ 不查同机闸，照派', async () => {
+    wire({ ...fullRow, payload: { ...fullRow.payload, run_id: 'qiumi-q1-1', qiumi_route: { source: 'jev' } } }, 'S1');
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+    expect(r).toEqual({ outcome: 'proceed' });
+    expect(sqlsOf().some((s) => /device_hint/.test(s) && /in_progress/.test(s))).toBe(false);
+  });
+
+  it('新路由（本轮刚打 Jev 定到 S1）且 S1 忙 → 决策照落库，但本轮 skip', async () => {
+    wire(fullRow, 'S1');
+    routeQiumiTask.mockResolvedValue({
+      outcome: 'agent', model: 'm', runId: 'qiumi-q1-2',
+      payloadPatch: { run_id: 'qiumi-q1-2', qiumi_route: hint('S1') },
+    });
+    const holSkipIds = [];
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds });
+    expect(persistDecision).toHaveBeenCalled();
+    expect(r).toEqual({ outcome: 'skip' });
+    expect(holSkipIds).toContain('q1');
+  });
+
+  it('DEVICE_BUSY 回队的任务（有路由、run_id 已清）→ 不重打 Jev，换新 run_id 后 proceed', async () => {
+    const row = { ...fullRow, payload: { ...fullRow.payload, qiumi_route: hint('S3'), device_busy_attempts: 1 } };
+    wire(row, 'S1');
+    const r = await dispatchQiumiTask(candidate, { env: { mmvConcurrency: 2 }, actions: [], holSkipIds: [] });
+    expect(r).toEqual({ outcome: 'proceed' });
+    expect(routeQiumiTask, '回队重试还去打 Jev——路由应保留').not.toHaveBeenCalled();
+    const upd = mockQuery.mock.calls.find(([s]) => /UPDATE tasks/.test(s) && /run_id/.test(s));
+    expect(upd, '没写新 run_id').toBeTruthy();
+    const newRunId = upd[1].find((v) => typeof v === 'string' && v.startsWith('qiumi-'));
+    expect(newRunId).toMatch(/^qiumi-q1-\d+$/);
+  });
+});

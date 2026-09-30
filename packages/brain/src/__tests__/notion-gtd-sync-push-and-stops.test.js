@@ -246,3 +246,21 @@ describe('applyOwnerStops（急停只对任务号 brain: 的行生效）', () =>
     expect(r.ignored).toEqual([{ id: TID, action: 'hold', reason: 'invalid_status' }]);
   });
 });
+
+describe('pushQiumiStatus：手机忙排队等待（任务 5ad81457）', () => {
+  beforeEach(() => { mockNotionReq.mockReset(); });
+  it('queued + next_run_at 在未来 + device_busy → 「OpenClaw结果」写手机忙提示而非「已排期」', async () => {
+    const { pushQiumiStatus, PUSH_QIUMI_QUERY } = await import('../notion-gtd-sync.js');
+    expect(PUSH_QIUMI_QUERY).toMatch(/device_busy/);
+    const nextRunAt = '2026-09-30T01:20:00.000Z';
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [taskRow({ status: 'queued', next_run_at: nextRunAt, device_busy: { owner: 't3-readonly-20260930-01', attempts: 2, next_run_at: nextRunAt } })] })
+      .mockResolvedValue({ rows: [] });
+    mockNotionReq.mockResolvedValueOnce(zhPageWith('进行中')).mockResolvedValue({});
+    await pushQiumiStatus({ query }, 'tok', { ...deps, now: () => new Date('2026-09-30T01:15:00.000Z') });
+    const zhPatch = mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH}` && c[2] === 'PATCH')[3];
+    expect(zhPatch.properties['状态'].status.name).toBe('委派');
+    expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content)
+      .toBe('⏳ 手机忙（被 t3-readonly-20260930-01 占用），已排队，09:20 后重试（第 2 次）');
+  });
+});
