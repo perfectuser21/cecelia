@@ -84,6 +84,7 @@ import vocabAlias from './src/vocab-alias.js'; // 行业词汇别名（决策 a3
 import abilitiesRouter from './src/routes/abilities.js';
 import orgUnitsRouter from './src/routes/org-units.js';
 import stepProbesRouter from './src/routes/step-probes.js';
+import workflowsRouter from './src/routes/workflows.js';
 import phoneRegistryRouter from './src/routes/phone-registry.js';
 import commanderHeartbeatRouter from './src/routes/commander-heartbeat.js';
 import goldenPathsRouter from './src/routes/golden-paths.js';
@@ -439,6 +440,7 @@ app.get('/api/brain/issues', async (req, res) => {
 app.use('/api/brain', abilitiesRouter);
 app.use('/api/brain', orgUnitsRouter);
 app.use('/api/brain', stepProbesRouter); // 步级探针注册表（链 bf5088a3 棒2，决策 702949b6）
+app.use('/api/brain', workflowsRouter); // Workflow 只读清单 GET /workflows（价值流建模③，决策 3e867cad，任务 ce41cd59）
 app.use('/api/brain', phoneRegistryRouter); // 手机台账 GET/PUT /phone-registry（任务 b923b1f7，决策 432172f7）
 app.use('/api/brain', commanderHeartbeatRouter); // Commander escort 心跳 POST /commander-heartbeat（任务 17ea4536，决策 3c98fb36）
 app.use('/api/brain', goldenPathsRouter);
