@@ -1,0 +1,32 @@
+{
+  "initiative_id": "475e6754-4ea7-4532-b2d6-af14a30cb227",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain 后端改动（migrations + src 消费方切换 + 投影 wiring），无 UI/agent/engine",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "价值流建模⑤（收窄版）：probes 重挂点(target_type/target_id)+step_probes 消费方切换 + cells 扩 step/enabler 级 + steps/enablers Notion 投影",
+      "scope": "新增迁移 493+ 把 step_probes RENAME 为 probes 并加 target_type(activity|step|enabler)+target_id 回填 activity；把所有活跃消费方 SQL 表名 step_probes->probes 切换（routes/step-probes.js / notion-probe-projection.js / lib/business-probe-judge.js / ops-notion-schema.js）并 UPDATE notion_projection_map 中 step_probes 登记行为 probes、随动 notion-probe smoke；journey_step_links 加 target_type/target_id 扩 step/enabler 级；notion_projection_map 注册 steps/enablers 两投影目标并让投影脚本随动；保 DevGate 三闸 + selfcheck 绿。golden_path* 三表退役已收窄出本 sprint（Brain task 3e60816d-81d9-439f-8820-a764c7f953f3），不在本 ws。",
+      "dod": [
+        "[BEHAVIOR] probes/step_probes 消费方/journey_step_links/notion_projection_map 迁移 psql+grep 断言（对应 contract-dod.md B-01..B-06 + INV-1/INV-4）",
+        "[ARTIFACT] 迁移 493+ RENAME(非 DROP)+回滚脚本+schema_version 登记；notion-probe-projection.js 随 probes 改名"
+      ],
+      "files": [
+        "packages/brain/migrations/493_probes_target_type.sql",
+        "packages/brain/migrations/rollback/493_probes_target_type.down.sql",
+        "packages/brain/migrations/494_journey_step_links_step_enabler.sql",
+        "packages/brain/migrations/495_notion_projection_steps_enablers.sql",
+        "packages/brain/src/notion-probe-projection.js",
+        "packages/brain/src/routes/step-probes.js",
+        "packages/brain/src/lib/business-probe-judge.js",
+        "packages/brain/src/ops-notion-schema.js",
+        "packages/brain/scripts/sync-steps-from-workspace.mjs",
+        "packages/brain/scripts/smoke/notion-probe-projection-smoke.sh",
+        "packages/brain/vitest.config.js"
+      ],
+      "depends_on": [],
+      "complexity": "M",
+      "estimated_minutes": 90
+    }
+  ]
+}
