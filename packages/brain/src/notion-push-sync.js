@@ -532,10 +532,13 @@ async function ingestQiumiPage(pool, token, page, en, { env, now = () => new Dat
   if (!taskId) throw new Error('routed_task_id_missing');
   // due_at 只来自「预期结束时间」：它是截止（手机忙排队的等待上限读它，lib/qiumi-device-busy.js）。
   // 旧列「预期完成日期」/ 英文 Plan Date 起点现在都是开始时间，落进 due_at 会让任务一忙就判过期。
-  // due_at 是 timestamp without time zone：按上海墙钟落（与 DUE_AT_SELECT_SQL 读法同口径），带 Z 的时间也不错位。
+  // due_at 是 timestamp without time zone，直接存真实 UTC 时刻（任务 19684870：db.js 全局
+  // setTypeParser 已经把这一类列的读取修正为按 UTC 解析，这里不再需要"故意存上海墙钟数字、
+  // 靠读取 bug 纠正回来"的补偿写法——与 recurring.js:111 / decision-executor.js:507 两处
+  // 本来就写真实 UTC 的路径统一语义）。
   if (endIso) {
     await pool.query(
-      "UPDATE tasks SET due_at=($2::timestamptz AT TIME ZONE 'Asia/Shanghai'), updated_at=NOW() WHERE id=$1", [taskId, endIso],
+      'UPDATE tasks SET due_at=$2::timestamptz, updated_at=NOW() WHERE id=$1', [taskId, endIso],
     );
   }
   // 458 给 tasks 建了 tenant_id 列，路由账房不认这个字段 → 不补写就恒 NULL，

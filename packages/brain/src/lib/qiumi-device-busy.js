@@ -22,11 +22,12 @@ export const DEVICE_BUSY_DEFAULT_WAIT_MS = 24 * 60 * 60 * 1000;
 export const DEVICE_BUSY_EXPIRED_REASON = 'device_busy_expired';
 
 /**
- * 收割器取 due_at 的 SQL 表达式。tasks.due_at 是 timestamp without time zone，秋米入账写的是上海墙钟
- * （notion-push-sync.js ingestQiumiPage，Notion 日期带 +08:00）；生产 PG 会话时区是 UTC，
- * 裸读交给 node-pg 按进程时区猜，换台机器就差 8 小时。这里显式按上海时间转成 timestamptz。
+ * 收割器取 due_at 的 SQL 表达式。任务 19684870：db.js 全局 setTypeParser 已经把
+ * timestamp without time zone 列的读取修正为按 UTC 解析（tasks.due_at 现在也统一存
+ * 真实 UTC 时刻，见 notion-push-sync.js ingestQiumiPage），不再需要这层 SQL 补偿，
+ * 直接读原列即可。保留这个符号名只是为了不用改所有调用点的写法。
  */
-export const DUE_AT_SELECT_SQL = "(due_at AT TIME ZONE 'Asia/Shanghai')";
+export const DUE_AT_SELECT_SQL = 'due_at';
 
 // 行首（允许反引号/星号/空白包裹）才算标记；正文里顺嘴提到 DEVICE_BUSY 不算。
 const MARKER_LINE = /^[\s`*>]*DEVICE_BUSY\b([^\n]*)$/gm;

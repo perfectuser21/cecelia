@@ -63,14 +63,15 @@ describe('requeueForDeviceBusy — 真 PG', () => {
   });
 });
 
-describe('截止时间读真列 due_at（上海墙钟 timestamp → 按 DUE_AT_SELECT_SQL 转 timestamptz）', () => {
+describe('截止时间读真列 due_at（真实 UTC timestamp，任务 19684870 统一语义后）', () => {
   it('due_at 已过 → expired(due_at)；未过 → requeue；排期开始时间误落 due_at → 走 24 小时默认', async () => {
     const id = await seed();
     const now = Date.now();
-    // 与收割器同一读法；写法模拟入账（带 +08:00 的字符串按上海墙钟落），与会话时区无关
+    // db.js 全局 setTypeParser 已把 timestamp without time zone 列统一按 UTC 解析，
+    // due_at 直接存/读真实 UTC 时刻，不再需要上海墙钟补偿写法
     const read = async () => (await pool.query(`SELECT payload, ${DUE_AT_SELECT_SQL} AS due_at FROM tasks WHERE id = $1`, [id])).rows[0];
     const setDue = (offsetMs) => pool.query(
-      "UPDATE tasks SET due_at = ($2::timestamptz AT TIME ZONE 'Asia/Shanghai') WHERE id = $1", [id, new Date(now + offsetMs).toISOString()],
+      'UPDATE tasks SET due_at = $2::timestamptz WHERE id = $1', [id, new Date(now + offsetMs).toISOString()],
     );
     await setDue(-60_000);
     let t = await read();
