@@ -1,0 +1,37 @@
+{
+  "initiative_id": "475e6754-4ea7-4532-b2d6-af14a30cb227",
+  "journey_type": "autonomous",
+  "journey_type_reason": "纯 packages/brain 后端改动（migrations + src 投影/清理），无 UI/agent/engine",
+  "tasks": [
+    {
+      "task_id": "ws1",
+      "title": "价值流建模⑤：probes 重挂点(target_type/target_id) + cells 扩 step/enabler 级 + steps/enablers Notion 投影 + golden_path* 三表退役",
+      "scope": "新增迁移 493+ 把 step_probes RENAME 为 probes 并加 target_type(activity|step|enabler)+target_id 回填 activity；journey_step_links 加 target_type/target_id 扩 step/enabler 级；notion_projection_map 注册 steps/enablers 两投影目标并让投影脚本随动；DROP golden_path/golden_paths/golden_path_contract_versions 三表并清理 packages/brain/src 活跃 SQL 残留；notion-probe-projection 随 probes 改名随动；保 DevGate 三闸 + selfcheck 绿",
+      "dod": [
+        "[BEHAVIOR] probes/step_probes/journey_step_links/golden_path* 迁移 psql 断言（对应 contract-dod.md B-01..B-07 + INV-1/INV-4）",
+        "[ARTIFACT] 迁移 493+ RENAME(非 DROP)+回滚脚本+schema_version 登记；notion-probe-projection.js 随动"
+      ],
+      "files": [
+        "packages/brain/migrations/493_probes_target_type.sql",
+        "packages/brain/migrations/rollback/493_probes_target_type.down.sql",
+        "packages/brain/migrations/*_journey_step_links_step_enabler.sql",
+        "packages/brain/migrations/*_drop_golden_path_legacy.sql",
+        "packages/brain/migrations/*_notion_projection_steps_enablers.sql",
+        "packages/brain/src/notion-probe-projection.js",
+        "packages/brain/src/battle-report.js",
+        "packages/brain/src/direction-proposer.js",
+        "packages/brain/src/capture-triage.js",
+        "packages/brain/src/gp-shelf-life.js",
+        "packages/brain/src/golden-path-contracts.js",
+        "packages/brain/src/harness-line-context.js",
+        "packages/brain/src/ledger-hygiene.js",
+        "packages/brain/src/harness-promote-regression.js",
+        "packages/brain/scripts/sync-steps-from-workspace.mjs",
+        "packages/brain/vitest.config.js"
+      ],
+      "depends_on": [],
+      "complexity": "L",
+      "estimated_minutes": 120
+    }
+  ]
+}
