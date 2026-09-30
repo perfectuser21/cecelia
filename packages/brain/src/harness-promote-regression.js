@@ -2,7 +2,7 @@
  * harness-promote-regression.js — A3 冻结登记（harness 验证模型重构）。
  *
  * evaluator PASS 后把判官的一次性判断固化成常驻卡片：
- *   ① golden_path 表覆盖写（结构化事实：这条路径已被验收）
+ *   ① （已退役，任务 7d312fd8）golden_path 旧表覆盖写——步骤真身改走 steps 表，本模块不再碰库
  *   ② regression-contract.yaml 追加 golden_paths 条目（读卡机卡片，B1 无条件复跑）
  *   ③ commit 校验拒假卡（引用物必须已被 git 跟踪）
  *
@@ -18,7 +18,6 @@ import path from 'node:path';
 import { execFile as nodeExecFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import yaml from 'js-yaml';
-import pool from './db.js';
 
 const defaultExecFile = promisify(nodeExecFile);
 
@@ -113,29 +112,36 @@ export function mergeGoldenPaths(existing, fresh, taskPrefix) {
  * promoteToRegression — PASS 后冻结登记主函数（best-effort，绝不 throw）。
  *
  * @param {{pool?: object, execFile?: Function, fsImpl?: object, now?: string}} deps
+ *   pool 已不再使用（① 退役），保留形参兼容 callback-postprocess 的调用形态
  * @param {{task: object, sprintDir: string, subTasks: Array, worktreePath: string, dbOnly?: boolean}} params
- *   dbOnly=true 时只执行 ① golden_path DB 写入，跳过 commit 校验与 yaml PR（九要素 T2 首版）
+ *   dbOnly=true（callback T2 调用形态）原本只执行 ①；① 退役后直接返回 golden_path_retired，不读文件不跑 git
  * @returns {Promise<{ok: boolean, dbWritten: boolean, yamlPrUrl?: string|null, skipped?: boolean, reason?: string}>}
+ *   dbWritten 恒为 false（保留字段给调用方日志）
  */
 export async function promoteToRegression(deps = {}, params = {}) {
-  const dbPool = deps.pool || pool;
   const execFile = deps.execFile || defaultExecFile;
   const fsImpl = deps.fsImpl || fs;
   const now = deps.now || new Date().toISOString();
   const { task, sprintDir, subTasks, worktreePath, dbOnly = false } = params;
+  const dbWritten = false;
 
   const taskId = task?.id;
 
   // canary 任务禁入回归池（INV-16）
   if (task?.payload?.canary === 'true' || task?.payload?.canary === true) {
     console.log(`[promote-regression] skipped: canary 任务不入回归池 (task=${taskId})`);
-    return { ok: true, dbWritten: false, skipped: true, reason: 'canary task excluded from regression pool' };
+    return { ok: true, dbWritten, skipped: true, reason: 'canary task excluded from regression pool' };
   }
 
   if (!taskId || !sprintDir || !worktreePath) {
     console.warn(`[promote-regression] skipped: 缺 taskId/sprintDir/worktreePath (task=${taskId} sprintDir=${sprintDir} wt=${worktreePath})`);
     await _alert(`A3 冻结跳过：task=${taskId} 缺 sprintDir/worktreePath`);
-    return { ok: false, dbWritten: false, skipped: true, reason: 'missing_inputs' };
+    return { ok: false, dbWritten, skipped: true, reason: 'missing_inputs' };
+  }
+
+  if (dbOnly) {
+    console.log(`[promote-regression] dbOnly 跳过 task=${taskId}：golden_path 旧表已退役（任务 7d312fd8），步骤真身走 steps 表`);
+    return { ok: true, dbWritten, yamlPrUrl: null, skipped: true, reason: 'golden_path_retired' };
   }
 
   // ── 解析原料 ──
@@ -143,63 +149,16 @@ export async function promoteToRegression(deps = {}, params = {}) {
   const prdText = readOrNull(path.join(worktreePath, sprintDir, 'sprint-prd.md'));
   const dodText = readOrNull(path.join(worktreePath, sprintDir, 'contract-dod.md'));
   const behaviors = parseBehaviorEntries(dodText || '');
-  let steps = parseGoldenPathSteps(prdText || '');
-  if (steps.length === 0 && behaviors.length > 0) {
-    // 降级：BEHAVIOR 条目序号当步骤（note=描述），不依赖 sprint-prd 解析
-    steps = behaviors.map((b, i) => ({ order_no: i + 1, note: b.desc }));
-  }
+  const steps = parseGoldenPathSteps(prdText || '');
   if (steps.length === 0 && behaviors.length === 0) {
     console.warn(`[promote-regression] skipped: ${sprintDir} 无 Golden Path 也无 [BEHAVIOR] 可冻结`);
     await _alert(`A3 冻结跳过：task=${taskId} 无可冻结内容（${sprintDir}）`);
-    return { ok: false, dbWritten: false, skipped: true, reason: 'nothing_to_freeze' };
-  }
-
-  // ── ① golden_path 表覆盖写（事务）──
-  let dbWritten = false;
-  try {
-    const client = await dbPool.connect();
-    try {
-      await client.query('BEGIN');
-      // feature_id 验证存在，失败留 NULL（schema ON DELETE SET NULL 语义一致）。
-      // payload.feature_id 缺失时回退 tasks.ability_id——读端 join gp.feature_id 直连，
-      // NULL 行会被滤掉，写端必须尽力落真 FK（九要素 T2）。
-      let featureId = null;
-      for (const cand of [task?.payload?.feature_id, task?.ability_id]) {
-        if (!cand) continue;
-        try {
-          const fe = await client.query('SELECT id FROM journey_features WHERE id=$1', [cand]);
-          if (fe.rows[0]?.id) { featureId = fe.rows[0].id; break; }
-        } catch { /* try next candidate */ }
-      }
-      await client.query('DELETE FROM golden_path WHERE owner_task_id=$1', [taskId]);
-      for (const s of steps) {
-        await client.query(
-          'INSERT INTO golden_path (owner_task_id, order_no, feature_id, note) VALUES ($1,$2,$3,$4)',
-          [taskId, s.order_no, featureId, s.note],
-        );
-      }
-      await client.query('COMMIT');
-      dbWritten = true;
-    } catch (err) {
-      try { await client.query('ROLLBACK'); } catch { /* noop */ }
-      throw err;
-    } finally {
-      client.release();
-    }
-  } catch (err) {
-    console.error(`[promote-regression] golden_path DB 写失败 task=${taskId}: ${err.message}`);
-    await _alert(`A3 冻结 DB 写失败：task=${taskId} ${err.message}`);
-    return { ok: false, dbWritten: false, reason: 'db_write_failed' };
-  }
-
-  if (dbOnly) {
-    console.log(`[promote-regression] dbOnly 完成 task=${taskId}（yaml PR 跳过）`);
-    return { ok: true, dbWritten, yamlPrUrl: null, reason: 'db_only' };
+    return { ok: false, dbWritten, skipped: true, reason: 'nothing_to_freeze' };
   }
 
   // ── ② commit 校验（防假卡）── behaviors 为空则没有 yaml 可冻，直接返回
   if (behaviors.length === 0) {
-    console.warn(`[promote-regression] DB 已写但无 [BEHAVIOR] 命令，yaml 冻结跳过 task=${taskId}`);
+    console.warn(`[promote-regression] 无 [BEHAVIOR] 命令，yaml 冻结跳过 task=${taskId}`);
     return { ok: true, dbWritten, yamlPrUrl: null, reason: 'no_behavior_commands' };
   }
   try {
@@ -249,8 +208,8 @@ export async function promoteToRegression(deps = {}, params = {}) {
     console.log(`[promote-regression] 冻结完成 task=${taskId} → ${yamlPrUrl}`);
     return { ok: true, dbWritten, yamlPrUrl };
   } catch (err) {
-    console.error(`[promote-regression] yaml 冻结/auto-PR 失败（DB 已写）task=${taskId}: ${err.message}`);
-    await _alert(`A3 yaml 冻结失败（DB 已登记）：task=${taskId} ${err.message}`);
+    console.error(`[promote-regression] yaml 冻结/auto-PR 失败 task=${taskId}: ${err.message}`);
+    await _alert(`A3 yaml 冻结失败：task=${taskId} ${err.message}`);
     return { ok: true, dbWritten, yamlPrUrl: null, reason: 'yaml_freeze_failed' };
   }
 }

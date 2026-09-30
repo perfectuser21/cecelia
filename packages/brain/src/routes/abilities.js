@@ -1,6 +1,7 @@
 import express from 'express';
 import pool from '../db.js';
 import { computeProgress } from '../advancement-progress.js';
+import { legacyReadEnabled, sendGoldenPathRetired, guardLegacyRead } from '../lib/golden-path-legacy.js';
 
 const router = express.Router();
 
@@ -114,8 +115,9 @@ router.post('/decisions', async (req, res) => {
       if (!exists.rows.length)
         return res.status(400).json({ error: `target_id not found in journey_features: ${target_id}` });
     }
-    // target_type=golden_path 时 target_id 必须真实存在于 golden_path（step 级 NFR 决策不可悬空）
+    // target_type=golden_path：旧表已退役（任务 7d312fd8），默认拒挂新决策；应急放行窗口下沿用存在性校验
     if (target_type === 'golden_path') {
+      if (!legacyReadEnabled()) return sendGoldenPathRetired(res, { write: true });
       if (!target_id)
         return res.status(400).json({ error: 'target_id is required when target_type=golden_path' });
       let exists;
@@ -157,11 +159,14 @@ router.get('/abilities/:id/decisions', async (req, res) => {
   }
 });
 
-// ---------- golden_path（唯一正模型：每个 Task 一条 Golden Path，owner_task_id + order_no + feature_id）----------
+// ---------- golden_path（L4 step 旧表，已退役——任务 7d312fd8）----------
+// 真身：steps / journey_step_links / step_probes（GET /api/brain/steps）。
+// 写路由一律 410；读路由默认 410，GOLDEN_PATH_LEGACY_READ=1 放行（lib/golden-path-legacy.js）。
 
 // GET /api/brain/golden_path?owner_task_id=...  — 列某 task 整条 golden path 的步骤（按 order_no）
 router.get('/golden_path', async (req, res) => {
   try {
+    if (guardLegacyRead(res)) return;
     const { owner_task_id, limit = 200 } = req.query;
     const params = [];
     const clauses = [];
@@ -178,32 +183,8 @@ router.get('/golden_path', async (req, res) => {
   }
 });
 
-// POST /api/brain/golden_path — 建一条 golden path 步（带 owner_task 存在性校验，不可悬空）
-router.post('/golden_path', async (req, res) => {
-  try {
-    const { owner_task_id, order_no, feature_id, note } = req.body;
-    if (!owner_task_id || order_no == null)
-      return res.status(400).json({ error: 'owner_task_id, order_no are required' });
-    // owner_task_id 必须真实存在于 tasks（非法 uuid → 400 而非 500）
-    let taskExists;
-    try {
-      taskExists = await pool.query('SELECT id FROM tasks WHERE id=$1', [owner_task_id]);
-    } catch {
-      return res.status(400).json({ error: `invalid owner_task_id: ${owner_task_id}` });
-    }
-    if (!taskExists.rows.length)
-      return res.status(400).json({ error: `owner_task_id not found in tasks: ${owner_task_id}` });
-    const { rows } = await pool.query(
-      `INSERT INTO golden_path (owner_task_id, order_no, feature_id, note)
-       VALUES ($1,$2,$3,$4) RETURNING *`,
-      [owner_task_id, order_no, feature_id || null, note || null]
-    );
-    res.status(201).json(rows[0]);
-  } catch (err) {
-    console.error('[abilities] POST /golden_path error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
+// POST /api/brain/golden_path — 写路径已退役：一律 410（步骤真身走 steps 表 + sync-steps-from-workspace）
+router.post('/golden_path', (_req, res) => sendGoldenPathRetired(res, { write: true }));
 
 // ---------- 件7：map↔画布对齐（map=SSOT，决策 e66cf847）----------
 
@@ -218,6 +199,7 @@ const RUN_RESULT_VERDICTS = ['completed', 'failed'];
 //   不写 n8n：画布热更由调用方走 n8n 公共 REST（deactivate/activate），禁 import:workflow（掉 webhook）。
 router.get('/golden_path/canvas', async (req, res) => {
   try {
+    if (guardLegacyRead(res)) return;
     const { owner_task_id } = req.query;
     if (!owner_task_id)
       return res.status(400).json({ error: 'owner_task_id is required' });
@@ -290,6 +272,7 @@ router.get('/golden_path/canvas', async (req, res) => {
 //   UPDATE 带 status='planned' 谓词：并发重放/人工改状态时绝不回退或跳级。
 router.post('/golden_path/:id/run-result', async (req, res) => {
   try {
+    if (guardLegacyRead(res)) return;
     const { run_id, verdict, evidence } = req.body || {};
     if (!run_id) return res.status(400).json({ error: 'run_id is required' });
     if (!RUN_RESULT_VERDICTS.includes(verdict))
@@ -344,26 +327,8 @@ router.post('/golden_path/:id/run-result', async (req, res) => {
   }
 });
 
-// PATCH /api/brain/golden_path/:id
-router.patch('/golden_path/:id', async (req, res) => {
-  try {
-    const { order_no, feature_id, note } = req.body;
-    const sets = [], vals = []; let idx = 1;
-    if (order_no != null) { sets.push(`order_no=$${idx++}`);   vals.push(order_no); }
-    if (feature_id)       { sets.push(`feature_id=$${idx++}`); vals.push(feature_id); }
-    if (note != null)     { sets.push(`note=$${idx++}`);       vals.push(note); }
-    if (!sets.length) return res.status(400).json({ error: 'no fields to update' });
-    vals.push(req.params.id);
-    const { rows } = await pool.query(
-      `UPDATE golden_path SET ${sets.join(',')} WHERE id=$${idx} RETURNING *`, vals
-    );
-    if (!rows.length) return res.status(404).json({ error: 'not found' });
-    res.json(rows[0]);
-  } catch (err) {
-    console.error('[abilities] PATCH /golden_path/:id error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
+// PATCH /api/brain/golden_path/:id — 写路径已退役：一律 410
+router.patch('/golden_path/:id', (_req, res) => sendGoldenPathRetired(res, { write: true }));
 
 // ---------- golden_path 决策读回视图（step 级 NFR 验收单）----------
 
@@ -371,6 +336,7 @@ router.patch('/golden_path/:id', async (req, res) => {
 //   无匹配返回空数组（200，不报错）
 router.get('/golden_path/:id/decisions', async (req, res) => {
   try {
+    if (guardLegacyRead(res)) return;
     const { scope, category } = req.query;
     const params = [req.params.id];
     let sql = `SELECT * FROM decisions WHERE target_type='golden_path' AND target_id=$1`;
@@ -390,6 +356,7 @@ router.get('/golden_path/:id/decisions', async (req, res) => {
 //   每行附 order_no 便于按步骤顺序读；无匹配返回空数组（200，不报错）
 router.get('/tasks/:id/golden-path-decisions', async (req, res) => {
   try {
+    if (guardLegacyRead(res)) return;
     const { category, scope } = req.query;
     const params = [req.params.id];
     let sql = `
@@ -417,6 +384,7 @@ router.get('/tasks/:id/golden-path-decisions', async (req, res) => {
 //   无匹配返回空数组（200，不报错）。
 router.get('/journeys/:journey_id/golden-paths', async (req, res) => {
   try {
+    if (guardLegacyRead(res)) return;
     const { status } = req.query;
     if (status && !ABILITY_STATUS.includes(status))
       return res.status(400).json({ error: `status must be one of: ${ABILITY_STATUS.join(',')}` });

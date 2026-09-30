@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # golden-path-step-nfr-smoke.sh
-# 真环境 smoke：验证 golden_path owner_task_id 正模型 + step 级 NFR 决策读写全链路。
+# 真环境 smoke：golden_path（L4 step 旧表）已退役（任务 7d312fd8）——表结构保留，
+# 写路由一律 410、读路由默认 410（GOLDEN_PATH_LEGACY_READ=1 放行），step 级 NFR 不再能挂 golden_path。
 # 跑法：BRAIN=http://localhost:5221 DB_URL=postgresql://localhost/cecelia bash $0
 # 前置：Brain 在 $BRAIN 跑、migration 303 已应用。
 #
@@ -38,10 +39,10 @@ echo "[smoke] BRAIN=$BRAIN  DB_URL=${DB_URL%%\?*}"
 
 echo "[smoke] schema: golden_path 新列在、旧列移除"
 NEWCOLS=$(psql "$DB_URL" -tAc "SELECT count(*) FROM information_schema.columns WHERE table_name='golden_path' AND column_name IN ('owner_task_id','feature_id')")
-echo "  新列(owner_task_id,feature_id) count=$NEWCOLS（期望 2）"
+echo "  新列(owner_task_id,feature_id) count=${NEWCOLS}（期望 2）"
 [ "$NEWCOLS" = "2" ] || { echo "FAIL: 新列缺失 NEWCOLS=$NEWCOLS"; exit 1; }
 OLDCOLS=$(psql "$DB_URL" -tAc "SELECT count(*) FROM information_schema.columns WHERE table_name='golden_path' AND column_name IN ('scope_type','scope_id','ability_id')")
-echo "  旧列(scope_type,scope_id,ability_id) count=$OLDCOLS（期望 0）"
+echo "  旧列(scope_type,scope_id,ability_id) count=${OLDCOLS}（期望 0）"
 [ "$OLDCOLS" = "0" ] || { echo "FAIL: 旧列残留 OLDCOLS=$OLDCOLS"; exit 1; }
 
 echo "[smoke] 夹具：真实 task + feature"
@@ -49,57 +50,34 @@ TASK_ID=$(uuid "INSERT INTO tasks (title) VALUES ('gp-smoke-task-' || gen_random
 FEATURE_ID=$(uuid "INSERT INTO journey_features (name) VALUES ('gp-smoke-feature-' || gen_random_uuid()) RETURNING id")
 echo "  TASK_ID=$TASK_ID  FEATURE_ID=$FEATURE_ID"
 
-echo "[smoke] === Golden Path Step 1: POST /golden_path 建步（owner_task 校验）==="
+expect410() { # $1=期望 path_kind
+  [ "$CODE" = "410" ] || { echo "FAIL: 期望 410 got $CODE"; exit 1; }
+  echo "$BODY" | jq -e --arg k "$1" '.retired==true and .path_kind==$k' >/dev/null || { echo "FAIL: 410 体不符（path_kind=$1）"; exit 1; }
+}
+
+echo "[smoke] === 写路径：POST/PATCH /golden_path → 410 write（永不放行）==="
 req POST "$BRAIN/api/brain/golden_path" "{\"owner_task_id\":\"$TASK_ID\",\"order_no\":1,\"feature_id\":\"$FEATURE_ID\"}"
-[ "$CODE" = "201" ] || { echo "FAIL: POST /golden_path 期望 201 got $CODE"; exit 1; }
-echo "$BODY" | jq -e '.owner_task_id and .feature_id and (.order_no==1) and (has("scope_type")|not) and (has("ability_id")|not)' >/dev/null \
-  || { echo "FAIL: POST /golden_path 返回非新模型"; exit 1; }
-STEP_ID=$(echo "$BODY" | jq -r '.id')
-echo "  ✓ 201 + 新模型字段（owner_task_id/feature_id/order_no，无 scope_type/ability_id），STEP_ID=$STEP_ID"
+expect410 write
+echo "$BODY" | jq -e 'has("legacy_read_env")|not' >/dev/null || { echo "FAIL: 写路径不应给放行 env"; exit 1; }
+req PATCH "$BRAIN/api/brain/golden_path/00000000-0000-0000-0000-000000000000" '{"note":"x"}'
+expect410 write
+N=$(psql "$DB_URL" -tAc "SELECT count(*) FROM golden_path WHERE owner_task_id='$TASK_ID'")
+[ "$N" = "0" ] || { echo "FAIL: 写路径被拒后旧表仍多出 $N 行"; exit 1; }
+echo "  ✓ 写路径 410 且旧表零新增"
 
-echo "[smoke] === Step 1 边界：悬空/非法 owner_task_id → 400 ==="
-req POST "$BRAIN/api/brain/golden_path" '{"owner_task_id":"00000000-0000-0000-0000-000000000000","order_no":1}'
-[ "$CODE" = "400" ] || { echo "FAIL: 悬空应 400 got $CODE"; exit 1; }
-req POST "$BRAIN/api/brain/golden_path" '{"owner_task_id":"not-a-uuid","order_no":1}'
-[ "$CODE" = "400" ] || { echo "FAIL: 非法 uuid 应 400 got $CODE"; exit 1; }
-echo "  ✓ 悬空 + 非法 uuid 均 400（非 500）"
+echo "[smoke] === step 级 NFR 挂 golden_path → 410 write ==="
+req POST "$BRAIN/api/brain/decisions" '{"category":"nfr","topic":"t","decision":"d","level":"step","target_type":"golden_path","target_id":"00000000-0000-0000-0000-000000000000","scope":"v1"}'
+expect410 write
+echo "  ✓ 新决策不再能挂旧表"
 
-echo "[smoke] === Golden Path Step 2: POST /decisions 挂 step 级 NFR（golden_path 存在性校验）==="
-req POST "$BRAIN/api/brain/decisions" "{\"category\":\"nfr\",\"topic\":\"前后台\",\"decision\":\"后台静默\",\"level\":\"step\",\"target_type\":\"golden_path\",\"target_id\":\"$STEP_ID\",\"scope\":\"v1\"}"
-[ "$CODE" = "201" ] || { echo "FAIL: POST /decisions 期望 201 got $CODE"; exit 1; }
-echo "$BODY" | jq -e '.level=="step" and .target_type=="golden_path"' >/dev/null || { echo "FAIL: 决策 schema"; exit 1; }
-DEC_ID=$(echo "$BODY" | jq -r '.id')
-echo "  ✓ 201 + level=step/target_type=golden_path，DEC_ID=$DEC_ID"
+echo "[smoke] === 读路径：默认 410 read（带放行 env 提示）==="
+for u in "golden_path?limit=5" "golden_path/00000000-0000-0000-0000-000000000000/decisions?scope=v1" "tasks/$TASK_ID/golden-path-decisions?category=nfr" "golden_path/canvas?owner_task_id=$TASK_ID"; do
+  req GET "$BRAIN/api/brain/$u"
+  expect410 read
+  echo "$BODY" | jq -e '.legacy_read_env=="GOLDEN_PATH_LEGACY_READ=1"' >/dev/null || { echo "FAIL: 读路径缺放行 env 提示"; exit 1; }
+done
+echo "  ✓ 4 条读路由默认 410"
 
-echo "[smoke] === Step 2 边界：悬空/非法 golden_path target → 400 ==="
-req POST "$BRAIN/api/brain/decisions" '{"category":"nfr","level":"step","target_type":"golden_path","target_id":"00000000-0000-0000-0000-000000000000","scope":"v1"}'
-[ "$CODE" = "400" ] || { echo "FAIL: 悬空决策应 400 got $CODE"; exit 1; }
-req POST "$BRAIN/api/brain/decisions" '{"category":"nfr","level":"step","target_type":"golden_path","target_id":"not-a-uuid","scope":"v1"}'
-[ "$CODE" = "400" ] || { echo "FAIL: 非法 uuid 决策应 400 got $CODE"; exit 1; }
-echo "  ✓ 悬空 + 非法 uuid 均 400（非 500）"
-
-echo "[smoke] === Golden Path Step 3: GET /golden_path/:id/decisions 按步读回 ==="
-req GET "$BRAIN/api/brain/golden_path/$STEP_ID/decisions?scope=v1"
-[ "$CODE" = "200" ] || { echo "FAIL: 按步读回期望 200 got $CODE"; exit 1; }
-echo "$BODY" | jq -e --arg s "$STEP_ID" 'any(.[]; .target_id==$s and .scope=="v1")' >/dev/null || { echo "FAIL: 按步读回缺决策"; exit 1; }
-echo "  ✓ 200 + 含刚写决策（target_id=$STEP_ID, scope=v1）"
-
-echo "[smoke] === Step 3 边界：不存在的步 → 200 + [] ==="
-req GET "$BRAIN/api/brain/golden_path/00000000-0000-0000-0000-000000000000/decisions?scope=v1"
-[ "$CODE" = "200" ] || { echo "FAIL: 空清单期望 200 got $CODE"; exit 1; }
-echo "$BODY" | jq -e 'type=="array" and length==0' >/dev/null || { echo "FAIL: 空清单边界"; exit 1; }
-echo "  ✓ 200 + 空数组"
-
-echo "[smoke] === Golden Path Step 4: GET /tasks/:id/golden-path-decisions 按 task 整条读回 NFR 验收单 ==="
-req GET "$BRAIN/api/brain/tasks/$TASK_ID/golden-path-decisions?category=nfr&scope=v1"
-[ "$CODE" = "200" ] || { echo "FAIL: 验收单期望 200 got $CODE"; exit 1; }
-echo "$BODY" | jq -e --arg s "$STEP_ID" 'any(.[]; .target_id==$s and .category=="nfr")' >/dev/null || { echo "FAIL: 验收单缺决策"; exit 1; }
-echo "  ✓ 200 + 按 owner_task_id join 出整条 golden path NFR 验收单含刚写决策"
-
-echo "[smoke] === Step 4 边界：不存在 task → 200 + [] ==="
-req GET "$BRAIN/api/brain/tasks/00000000-0000-0000-0000-000000000000/golden-path-decisions?category=nfr&scope=v1"
-[ "$CODE" = "200" ] || { echo "FAIL: 空清单期望 200 got $CODE"; exit 1; }
-echo "$BODY" | jq -e 'type=="array" and length==0' >/dev/null || { echo "FAIL: 空清单边界"; exit 1; }
-echo "  ✓ 200 + 空数组"
-
-echo "✅ golden-path-step-nfr-smoke 全链路通过（4 步 happy-path + 6 边界，每步含具体响应证据）"
+psql "$DB_URL" -c "DELETE FROM tasks WHERE id='$TASK_ID'" >/dev/null 2>&1 || true
+psql "$DB_URL" -c "DELETE FROM journey_features WHERE id='$FEATURE_ID'" >/dev/null 2>&1 || true
+echo "✅ golden-path-step-nfr-smoke：旧表退役闸全链路通过（写 3 条 410、读 4 条 410、旧表零新增）"
