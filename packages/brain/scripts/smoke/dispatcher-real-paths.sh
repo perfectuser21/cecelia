@@ -152,12 +152,18 @@ echo ""
 
 # ─── Case C: initiative-lock 同 project 并发互拒 ────────
 echo "[Case C] initiative-lock — 同 project 并发 harness_initiative，只 1 个能 dispatch"
-# 每次 smoke 用唯一 project_id 避免跨 run dedup 冲突；UUID 格式必须严格
-PROJ_HEX=$(printf '%012x' $((RANDOM * 32768 + RANDOM)))
-PROJ_ID="00000000-0000-0000-0000-${PROJ_HEX}"
+# project_id 必须指向真实存在的 projects 行（棒1 migration 497 起 tasks_project_id_fkey
+# 外键生效，棒4留痕：合成 UUID 会被 FK 拒绝，改走 POST /api/brain/projects 建一行真的）。
+PROJ_RESP=$(curl -sS -m 10 -X POST "${BRAIN_URL}/api/brain/projects" \
+  -H "Content-Type: application/json" \
+  -d "{\"name\":\"[smoke-${SMOKE_RUN_ID}] dispatcher-real-paths Case C\"}")
+PROJ_ID=$(echo "$PROJ_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
 DATABASE_URL="$DB_URL" node "$(dirname "$0")/ensure-cecelia-route-authority.mjs"
 # Work Router 由 repo_hint+map_scope_hint 产生 server-owned Kernel authority；调用方不得再
 # 自报已退役的 payload.orchestrator=skill-relay。
+if [ -z "$PROJ_ID" ]; then
+  fail "Case C: 建 project 失败（POST /api/brain/projects 未返回 id），response: $(echo "$PROJ_RESP" | head -c 200)"
+else
 B1_TASK=$(register_task "[smoke-C1-${SMOKE_RUN_ID}] init B1 lock test" "Initiative B1 with sufficiently long description for pre-flight check passing" "harness_initiative" "P2" "$PROJ_ID" '{}')
 B2_TASK=$(register_task "[smoke-C2-${SMOKE_RUN_ID}] init B2 lock test" "Initiative B2 with sufficiently long description for pre-flight check passing" "harness_initiative" "P2" "$PROJ_ID" '{}')
 
@@ -183,6 +189,7 @@ else
   else
     fail "Case C: 同 project 2 个 harness_initiative 同时 in_progress（lock 失效）"
   fi
+fi
 fi
 
 echo ""
