@@ -249,7 +249,7 @@ export async function scanCapabilities() {
 
   const capResult = await pool.query(`
     SELECT id, name, description, current_stage, related_skills, key_tables, scope, owner
-    FROM capabilities ORDER BY id
+    FROM capabilities_legacy ORDER BY id
   `);
   const taskStats = await pool.query(`
     SELECT task_type,

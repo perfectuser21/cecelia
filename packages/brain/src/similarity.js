@@ -394,7 +394,7 @@ class SimilarityService {
       SELECT
         id, name, description, current_stage,
         1 - (embedding <=> $1::vector) AS vector_score
-      FROM capabilities
+      FROM capabilities_legacy
       WHERE embedding IS NOT NULL
       ORDER BY embedding <=> $1::vector
       LIMIT $2
