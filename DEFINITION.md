@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.346.1
+**Brain 版本**: 1.346.3
 
 ## 1.283.0
 
@@ -48,6 +48,19 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.346.3 — relay-watchdog reconcile 不再在 Brain 本地起 kernel（任务 1fe53ce4，决策 d605d3df）
+
+- 病根（2026-09-30 run 2ba6193a / 17f96547 实证，09-23 起同 error_message 8 例）：kernel-v1 远端派发时 MMV `bridge.prepare` 建工作区要 3-4 分钟，run 无心跳无 attempt；`harness-relay-watchdog` `_recoverKernelRun` 的 stale 判定 `if (heartbeatAt && …)` 在心跳为空时被跳过 → 判「无可恢复 session」→ `launchKernelProcess` 在 us-vps Brain 容器本地 spawn（cwd=/app 非 git 仓）→ `ground-truth` `git ls-remote --heads origin` 报 `'origin' does not appear to be a git repository` → `kernel_process_fatal` 任务 failed；1 分钟后远端正常 `remote-launched` 却 `singleton_conflict(hops=0)` 让位。违反铁律 96054a8b。
+- 修法①启动宽限：run 无心跳且无 attempt 时按 `started_at` 给 `KERNEL_LAUNCH_GRACE_MS`=12 分钟（严格大于远端 prepare 10 分钟 + start 30s 超时），宽限内视为 launch 在途，直接 return 不重启。
+- 修法②零执行闸：`CECELIA_LOCAL_EXECUTION_ENABLED=false` 时 reconcile 分支禁止 `launchKernelProcess`，改调既有 `requeueKernelRunLaunchDeferred`（run 置 failed 留痕、任务回 queued、defer_count+1）交 executor 下个 tick 走正规远端路径重派（fleet-worker 对同 run_id 重放 prepare 是 409，故不在 watchdog 里重起旧 run）；defer 用尽 → `finalizeKernelRun` outcome=failed 收死 + `raise('P1','kernel_reconcile_remote_exhausted')`。本地模式（闸未开）行为零变化。
+- 回归测试 3 条（先红后绿）：远端模式不本地 spawn 改 requeue / requeue 用尽收死并告警 / 启动宽限内不重启。
+
+## Brain 1.346.2 — 价值流建模②：Sub-Area 树 + journeys.kind + value_streams/capabilities 视图（决策 3e867cad 第 1-3 张表）
+
+- 迁移 493：`areas.parent_area_id`（自引用，Sub-Area = 有父的 area，如 新媒体部门 → ZenithJoy；自父 CHECK；父删子置空）；`journeys.kind` 生成列——无父 = `value_stream`（客户买的产品线）、有父 = `capability`（SAFe 义：客户能指着配置的功能），由 `parent_journey_id` 派生、不可手写、不会漂移；视图 `value_streams` 改为只出价值流，新建视图 `capabilities` = 有父的 journey。词表 f425e3fd，任务 ef3aeffa。
+- 旧表 `capabilities`（迁移 030 系统能力清单，capability-scanner / similarity 向量检索 / analytics `/capabilities` 路由 / pr_plans 外键）腾名 → `capabilities_legacy`，一行不动、外键随名走；四处代码引用同步改名。`system_capabilities`（037）语义不同不并入；391 的 `capabilities_registry`（→ golden_paths）保留过渡。
+- 新 smoke `vs-model-areas-kind-smoke.sh`（迁移/回滚结构 + 接线守卫 + 可选真库），回滚 `rollback/493_vs_model_areas_kind.down.sql`。
 
 ## Brain 1.346.1 — 镜像补拷 sync-steps-from-workspace.mjs（任务 b2bba893）
 

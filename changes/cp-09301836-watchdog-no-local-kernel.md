@@ -1,6 +1,0 @@
-## Brain {VERSION} — relay-watchdog reconcile 不再在 Brain 本地起 kernel（任务 1fe53ce4，决策 d605d3df）
-
-- 病根（2026-09-30 run 2ba6193a / 17f96547 实证，09-23 起同 error_message 8 例）：kernel-v1 远端派发时 MMV `bridge.prepare` 建工作区要 3-4 分钟，run 无心跳无 attempt；`harness-relay-watchdog` `_recoverKernelRun` 的 stale 判定 `if (heartbeatAt && …)` 在心跳为空时被跳过 → 判「无可恢复 session」→ `launchKernelProcess` 在 us-vps Brain 容器本地 spawn（cwd=/app 非 git 仓）→ `ground-truth` `git ls-remote --heads origin` 报 `'origin' does not appear to be a git repository` → `kernel_process_fatal` 任务 failed；1 分钟后远端正常 `remote-launched` 却 `singleton_conflict(hops=0)` 让位。违反铁律 96054a8b。
-- 修法①启动宽限：run 无心跳且无 attempt 时按 `started_at` 给 `KERNEL_LAUNCH_GRACE_MS`=12 分钟（严格大于远端 prepare 10 分钟 + start 30s 超时），宽限内视为 launch 在途，直接 return 不重启。
-- 修法②零执行闸：`CECELIA_LOCAL_EXECUTION_ENABLED=false` 时 reconcile 分支禁止 `launchKernelProcess`，改调既有 `requeueKernelRunLaunchDeferred`（run 置 failed 留痕、任务回 queued、defer_count+1）交 executor 下个 tick 走正规远端路径重派（fleet-worker 对同 run_id 重放 prepare 是 409，故不在 watchdog 里重起旧 run）；defer 用尽 → `finalizeKernelRun` outcome=failed 收死 + `raise('P1','kernel_reconcile_remote_exhausted')`。本地模式（闸未开）行为零变化。
-- 回归测试 3 条（先红后绿）：远端模式不本地 spawn 改 requeue / requeue 用尽收死并告警 / 启动宽限内不重启。
