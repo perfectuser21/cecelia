@@ -277,6 +277,24 @@ describe('handleRunFinished — DB 编排（pool/persist 注入）', () => {
       expect(calls.some((c) => /UPDATE tasks/.test(c.sql))).toBe(false);
     });
 
+    it('无锚时 task.payload.wf_id/capability/cap 优先于 run_id 前缀：对标 run 账本前缀写死 social-keyword-leadgen-crontab- 不得错归（任务 c2d73868）', async () => {
+      const calls = [];
+      const pool = {
+        query: vi.fn(async (sql, params) => {
+          calls.push({ sql, params });
+          if (/FROM tasks/.test(sql)) return { rows: [{ journey_id: null, wf_id: 'benchmark-leadgen', capability: null, cap: null }] };
+          if (/FROM step_probes/.test(sql)) return { rows: [] };
+          return { rows: [] };
+        }),
+      };
+      const out = await handleRunFinished({ runId: RUN_ID, taskId: 't-bench', result: observed() }, { pool, persist: vi.fn() });
+      expect(out).toEqual({ skipped: 'no_probes' });
+      const probeQuery = calls.find((c) => /FROM step_probes/.test(c.sql));
+      expect(probeQuery.params).toEqual(['benchmark-leadgen', 'delivery']);
+      const taskQuery = calls.find((c) => /FROM tasks/.test(c.sql));
+      expect(taskQuery.sql).toMatch(/payload->>'wf_id'/);
+    });
+
     it('run_id 不含 -crontab- 且 result 无 workflow → skipped no_anchor_no_workflow', async () => {
       const { pool } = poolWith({ journeyId: null, probes: deliveryProbes() });
       const persist = vi.fn();

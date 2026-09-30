@@ -1,0 +1,5 @@
+## Brain {VERSION} — 整批总时限到期判 lost + 收割器放锁回桌面（任务 c2d73868，决策 3c98fb36）
+
+- 新 scheduler job `workflow-run-lost-deadline`（`src/workflow-run-lost-deadline.js`，5min 自 gate，单批 ≤20，经 scheduler-liveness 自动入 ops_workflows）：in_progress 的 `workflow_run` 与 device_job 镜像（payload.source=cron）起跑（COALESCE(started_at, due_at, created_at)，SQL 内比较）超 `WORKFLOW_RUN_DEADLINE_MS`(默认 4h)+`WORKFLOW_RUN_DEADLINE_GRACE_MS`(默认 30min) 仍无 finalize → `failed`，result.reason=`lost_deadline`，task_events 留痕，未收尾 task_runs 补 timeout。09-30 三部手机各卡 6h 无人判死案。
+- 善后 fail-open 只做一次（payload.lost_cleanup_at）：现场由 payload（machine/host/profile/tag/escort_id）→ phone_registry(serial→host/profile) → 最新账本 run_id 取 TAG；ssh 执行机 `douyin-phone-adb --profile <p> lock-release <TAG>`（按 owner=TAG 释放，子命令无 --force）与 `return-safe-desktop`，ssh MMV `openclaw cron rm <escort_id>`；参数白名单、远端串作 ssh 单 argv。ZenithJoy 对账把行翻回 in_progress 时下一轮只重写终态不重复放锁。
+- 读侧能力名不认账本 run_id 前缀：`resolveWorkflow` 无锚时 task payload.wf_id/capability/cap 优先于 `-crontab-` 前缀解析（对标 run 账本前缀写死 social-keyword-leadgen-crontab-）；job 事件/日志用 `workflowRunLabel`。

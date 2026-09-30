@@ -180,6 +180,11 @@ vi.mock('../alerting.js', async (importOriginal) => ({
   flushAlertsIfNeeded: vi.fn().mockResolvedValue({ p1: false, p2: false }),
 }));
 
+// workflow-run-lost-deadline 真实 handler 会 ssh 执行机放锁/回桌面——单测绝不真发；行为由 workflow-run-lost-deadline.test.js 覆盖。
+vi.mock('../workflow-run-lost-deadline.js', () => ({
+  runWorkflowRunLostDeadline: vi.fn().mockResolvedValue({ scanned: 0, lost: 0 }),
+}));
+
 vi.mock('../ops-scheduler-liveness.js', () => ({
   runSchedulerLiveness: vi.fn().mockResolvedValue({ ok: true, jobs: 0, flippedDead: 0, recovered: 0 }),
 }));
@@ -334,6 +339,19 @@ describe('scheduler-jobs 注册表', () => {
     const pool = makePool();
     await runSchedulerJobsOnce(pool, [j]);
     expect(runSkillRegistryProjection).toHaveBeenCalled();
+  });
+
+  it('JOBS 注册了 workflow-run-lost-deadline（needsPool、在 scheduler-liveness 之前、handler 真接线 runWorkflowRunLostDeadline）', async () => {
+    const { runWorkflowRunLostDeadline } = await import('../workflow-run-lost-deadline.js');
+    const names = JOBS.map((j) => j.name);
+    const j = JOBS.find((x) => x.name === 'workflow-run-lost-deadline');
+    expect(j).toBeDefined();
+    expect(j.needsPool).toBe(true);
+    expect(j.description).toMatch(/lost_deadline/);
+    expect(names.indexOf('workflow-run-lost-deadline')).toBeLessThan(names.indexOf('scheduler-liveness'));
+    const pool = makePool();
+    await runSchedulerJobsOnce(pool, [j]);
+    expect(runWorkflowRunLostDeadline).toHaveBeenCalledWith(pool);
   });
 
   it('注册 scheduler-liveness 且排在 JOBS 末尾，把 JOBS 自身注入 handler（不 import 成环）', async () => {
