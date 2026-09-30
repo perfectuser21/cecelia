@@ -1,29 +1,17 @@
 /**
- * Initiative Closer - Project 完成触发审查测试
+ * Initiative Closer - Project 完成触发审查测试（已退役，决策 ee4842a6/3feeae3e，
+ * 接力棒链 2afa6d69 棒4）
  *
- * DoD 覆盖: D6, D7
+ * 原逻辑：Project 下所有 Scope/Initiative 完成 → checkProjectCompletion 关闭 Project →
+ * 触发 shouldAdjustPlan 渐进验证。scope/initiative 层退役（migration 499 写保护）后，
+ * 这条链的判定依据（okr_scopes/okr_initiatives 是否全部完成）永远拿不到数据，
+ * checkProjectCompletion 已清空为 no-op——回归守卫改为：恒返回零变化，且从不查询
+ * 数据库、从不触发 shouldAdjustPlan/createPlanAdjustmentTask。
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock db.js
-vi.mock('../db.js', () => ({
-  default: { query: vi.fn() },
-}));
-
-// Mock capacity.js
-vi.mock('../capacity.js', () => ({
-  computeCapacity: vi.fn(() => ({
-    initiative: { max: 9 },
-  })),
-}));
-
-// Mock kr-progress.js
-vi.mock('../kr-progress.js', () => ({
-  updateKrProgress: vi.fn(async () => ({ total: 0, completed: 0, progress: 0 })),
-}));
-
-// Mock progress-reviewer.js
+// Mock progress-reviewer.js（验证 no-op 后这两个函数确实不再被调）
 vi.mock('../progress-reviewer.js', () => ({
   reviewProjectCompletion: vi.fn(async () => ({ found: true })),
   shouldAdjustPlan: vi.fn(async () => null),
@@ -33,97 +21,25 @@ vi.mock('../progress-reviewer.js', () => ({
 import { checkProjectCompletion } from '../initiative-closer.js';
 import { shouldAdjustPlan, createPlanAdjustmentTask } from '../progress-reviewer.js';
 
-function makeMockPool() {
-  return {
-    query: vi.fn(async () => ({ rows: [] })),
-  };
+function makeSpyPool() {
+  return { query: vi.fn().mockResolvedValue({ rows: [] }) };
 }
 
-describe('checkProjectCompletion - 渐进验证触发', () => {
+describe('checkProjectCompletion（已退役，no-op）', () => {
   let pool;
 
   beforeEach(() => {
-    pool = makeMockPool();
+    pool = makeSpyPool();
     vi.clearAllMocks();
   });
 
-  it('D6: Project 全部 Initiative 完成 → 触发 shouldAdjustPlan', async () => {
-    pool.query = vi.fn(async (sql) => {
-      // 查询可关闭的 Projects
-      if (sql.includes('FROM okr_projects') && sql.includes("status = 'active'")) {
-        return {
-          rows: [{ id: 'proj-1', name: 'Test Project', kr_id: 'kr-1' }],
-        };
-      }
-      // UPDATE okr_projects (关闭)
-      if (sql.includes('UPDATE okr_projects')) {
-        return { rows: [] };
-      }
-      // INSERT event
-      if (sql.includes('INSERT INTO cecelia_events')) {
-        return { rows: [] };
-      }
-      return { rows: [] };
-    });
-
-    const result = await checkProjectCompletion(pool);
-
-    expect(result.closedCount).toBe(1);
-    expect(result.closed[0].id).toBe('proj-1');
-    // 验证 shouldAdjustPlan 被调用
-    expect(shouldAdjustPlan).toHaveBeenCalledWith(pool, 'kr-1', 'proj-1');
-  });
-
-  it('D7: Project 未全部完成 → 不触发审查', async () => {
-    // 没有可关闭的 Projects（查询返回空）
-    pool.query = vi.fn(async () => ({ rows: [] }));
-
+  it('恒返回零变化，且从不查询数据库、从不触发渐进验证', async () => {
     const result = await checkProjectCompletion(pool);
 
     expect(result.closedCount).toBe(0);
+    expect(result.closed).toEqual([]);
+    expect(pool.query).not.toHaveBeenCalled();
     expect(shouldAdjustPlan).not.toHaveBeenCalled();
-    expect(createPlanAdjustmentTask).not.toHaveBeenCalled();
-  });
-
-  it('shouldAdjustPlan 返回 adjustment → 创建审查任务', async () => {
-    const mockAdjustment = {
-      krId: 'kr-1',
-      completedProjectId: 'proj-1',
-      completedProjectName: 'Test',
-      pendingCount: 1,
-      adjustmentType: 'over_budget',
-    };
-
-    shouldAdjustPlan.mockResolvedValueOnce(mockAdjustment);
-
-    pool.query = vi.fn(async (sql) => {
-      if (sql.includes('FROM okr_projects') && sql.includes("status = 'active'")) {
-        return { rows: [{ id: 'proj-1', name: 'Test Project', kr_id: 'kr-1' }] };
-      }
-      return { rows: [] };
-    });
-
-    await checkProjectCompletion(pool);
-
-    expect(createPlanAdjustmentTask).toHaveBeenCalledWith(pool, {
-      krId: 'kr-1',
-      completedProjectId: 'proj-1',
-      suggestion: mockAdjustment,
-    });
-  });
-
-  it('shouldAdjustPlan 返回 null → 不创建审查任务', async () => {
-    shouldAdjustPlan.mockResolvedValueOnce(null);
-
-    pool.query = vi.fn(async (sql) => {
-      if (sql.includes('FROM okr_projects') && sql.includes("status = 'active'")) {
-        return { rows: [{ id: 'proj-1', name: 'Test', kr_id: 'kr-1' }] };
-      }
-      return { rows: [] };
-    });
-
-    await checkProjectCompletion(pool);
-
     expect(createPlanAdjustmentTask).not.toHaveBeenCalled();
   });
 });

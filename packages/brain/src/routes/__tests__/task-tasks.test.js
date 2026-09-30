@@ -436,3 +436,26 @@ describe('POST /tasks — kind 入口校验', () => {
     expect(mockCreateRoutedTask.mock.calls[0][1].task.kind).toBeUndefined();
   });
 });
+
+describe('POST /tasks — scope/initiative 层退役（决策 ee4842a6，棒4）', () => {
+  let app;
+  beforeEach(() => {
+    resetRouteMocks();
+    mockPool.query.mockResolvedValue({ rows: [] });
+    app = createApp();
+  });
+
+  it.each([
+    'scope_plan', 'initiative_plan', 'project_plan',
+    'okr_scope_plan', 'okr_initiative_plan', 'okr_project_plan',
+  ])('task_type=%s → 410 layer_retired，不建单、不查库', async (task_type) => {
+    const res = await request(app)
+      .post('/tasks')
+      .send({ title: `退役类型 ${task_type}`, task_type });
+    expect(res.status).toBe(410);
+    expect(res.body.error).toBe('layer_retired');
+    expect(res.body.decision).toBe('ee4842a6');
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+});
