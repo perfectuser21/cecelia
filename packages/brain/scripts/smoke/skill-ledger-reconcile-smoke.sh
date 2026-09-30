@@ -77,22 +77,16 @@ DRIFT2="$(q "SELECT count(*) FROM skill_drift_alerts WHERE skill_name='__skill_l
 [[ "$DRIFT2" == "1" ]] || fail "重跑后 drift_alerts 重复写入，got=$DRIFT2"
 pass "A6 重跑幂等：当日仍只一条告警"
 
-# ── 3. pushSkillRegistry 指纹：内容变更后指纹必须失配（触发重推）──
-q "UPDATE skill_registry
-      SET metadata = COALESCE(metadata,'{}'::jsonb) || jsonb_build_object('pushed_digest',
-          md5(coalesce(name,'')||'|'||coalesce(description,'')||'|'||coalesce(status,'')||'|'||coalesce(location,'')))
-    WHERE name='${TAG}-a'" >/dev/null
-STALE_BEFORE="$(q "SELECT count(*) FROM skill_registry WHERE name='${TAG}-a'
-  AND (metadata->>'pushed_digest') IS DISTINCT FROM
-      md5(coalesce(name,'')||'|'||coalesce(description,'')||'|'||coalesce(status,'')||'|'||coalesce(location,''))")"
-[[ "$STALE_BEFORE" == "0" ]] || fail "指纹刚写入就失配，判据有误"
-pass "pushSkillRegistry 指纹：内容未变则不重推（防 Notion 限流）"
-
-q "UPDATE skill_registry SET description='改过了' WHERE name='${TAG}-a'" >/dev/null
-STALE_AFTER="$(q "SELECT count(*) FROM skill_registry WHERE name='${TAG}-a'
-  AND (metadata->>'pushed_digest') IS DISTINCT FROM
-      md5(coalesce(name,'')||'|'||coalesce(description,'')||'|'||coalesce(status,'')||'|'||coalesce(location,''))")"
-[[ "$STALE_AFTER" == "1" ]] || fail "description 改了指纹却仍匹配——insert-only 缺陷会复发"
-pass "pushSkillRegistry 指纹：description 变更后失配，下轮必重推（回归守卫）"
+# ── 3. Skill Registry 推送指纹（PR1b 起由 skill-registry-projection 推）：内容变更后指纹必须变（触发重推）──
+DIG="$(cd "$BRAIN_DIR" && "$NODE" --input-type=module -e "
+  import { machineValues, machineDigest } from './src/lib/skill-registry-notion-props.js';
+  const row = { name: '${TAG}-a', description: 'smoke', status: 'active', presence: 'present', platforms_installed: ['claude-code'] };
+  const a = machineDigest(machineValues(row));
+  const same = machineDigest(machineValues({ ...row, note: '人写的' }));
+  const changed = machineDigest(machineValues({ ...row, description: '改过了' }));
+  console.log([a === same, a !== changed].join(','));
+")"
+[[ "$DIG" == "true,true" ]] || fail "推送指纹判据有误（人管列变动不该触发、描述变动必须触发）：$DIG"
+pass "Skill Registry 推送指纹：内容未变不重推、description 变更必重推（insert-only 缺陷回归守卫，迁到新推送）"
 
 echo "ALL PASS: skill-ledger-reconcile"

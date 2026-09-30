@@ -63,6 +63,7 @@ import { syncCodingEvidence } from './crystal/coding-evidence.js';
 import { runOwnerDecisionDeadline } from './owner-decision-deadline.js';
 import { runSkillDistDrift } from './skill-dist-drift.js';
 import { runSkillInventorySync } from './skill-inventory-sync.js';
+import { runSkillRegistryProjection } from './skill-registry-projection.js';
 import { runBackboneContractJob } from './activity-contract-sync.js';
 import { runMirrorLabelJob } from './notion-mirror-labels.js';
 import { runRecurringTasksJob } from './recurring.js';
@@ -150,6 +151,7 @@ export const JOBS = [
   { name: 'owner-decision-deadline', needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runOwnerDecisionDeadline(pool), description: '主理人决策到期兑现（决策105a5868三档协议，任务8aa79219）：blocked owner_decision(waiting_on=human)到期未应答→可逆按default走(同批准同一内部函数，via=default_on_deadline，decisions made_by=system，Bark P2「可推翻」)；不可逆不自动执行→blocked_until顺延24h+留痕次数+Bark P1再催。进程内10min自gate，调度轮60s都会调用故活性尺子=60s；整轮有界（query_timeout/statement_timeout/取连接超时/90s预算），不重演09-24 notion-gtd-sync卡死案' },
   { name: 'skill-dist-drift', needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runSkillDistDrift(pool), description: 'skill 分发漂移检测（链 bf5088a3 棒8，任务 1141f101）：真身 MMV ~/.claude/skills 与跑场机 xian-m4/xian-m1 的 skill 清单哈希（跟随符号链接按内容算，悬空链接单列）30min 自 gate 比对，结果写 working_memory.skill_manifest_drift，晨报/日报出 🟡 AMBER。us-vps 零执行：只经 ssh(mmv 跳板) 送脚本到目标机执行、读回 JSON；ssh 失败/超时=unreachable（未核对），绝不当零个 skill' },
   { name: 'skill-inventory-sync', needsPool: true, timeoutMs: 200_000, livenessIntervalSec: 60, handler: (pool) => runSkillInventorySync(pool), description: 'skill 三平台扫描入账（Skill 台账投影 PR1a，任务 47def5bb，决策 19391396）：2h 自 gate + advisory lock，经 ssh mmv 送自包含 node 采集程序扫 ~/.claude/skills、OpenClaw 各 agent 实际加载、~/.agents/skills、zenithjoy-skills 仓库，归并写 skill_registry 机器列与 presence（人管列/status 不碰）；探不到≠零个：来源 fail/跑场机清单过期/骤降>10% 熔断时不判缺席，缺席满 24h 才 gone，断链即 broken' },
+  { name: 'skill-registry-projection', needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runSkillRegistryProjection(pool), description: 'skill_registry → Notion Skill Registry 投影（Skill 台账投影 PR1b，任务 47def5bb，决策 19391396）：2min 自 gate + advisory lock，每轮最多 25 行；列账按列 id 认列（人改名照写、人删列不补建、改类型跳过），机器列单向覆盖，人管列三方基线合并（人改过的不覆盖，判定点 24736022）；建页前按标题查重认领，失败指数退避不解绑，每日归档机器人建的孤儿页。取代 notion-push-sync.pushSkillRegistry' },
   { name: 'recurring-tasks', needsPool: true, timeoutMs: 120_000, handler: (pool) => runRecurringTasksJob(pool), description: 'recurring_tasks 定时引擎（任务 3d0db274，5 月起停摆复活：原只挂在废弃 executeTick）：每轮扫活模板，北京时区（template.timezone 可覆盖）、next_run_at 到点即建单；首次启用只写基线不补跑；迟到超 catchup_minutes(默认30) 记 missed+P2；CAS 占位防重、source_id=recurring:<id>:<时间点>；同模板有未完结实例跳过、连续3次告警；透传 assigned_to/due_at/过期，过期未认领取消；落后>10min 告警' },
   { name: 'alerting-flush', needsPool: false, timeoutMs: 120_000, handler: () => flushAlertsIfNeeded(), description: 'P1 每小时/P2 每日告警汇总推飞书（任务 309d864c：原只挂在废弃 executeTick，5 月起从未 flush；缓冲与上次刷新时间落 working_memory.alerting_buffers，部署重启不丢）' },
   // 放末尾：第一轮串行跑到这里时前面所有 job 的哨兵都已刷新，重启后不会把后排 job 误判 dead 再"恢复"。JOBS 经闭包注入——

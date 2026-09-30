@@ -365,7 +365,6 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] }); // tasks (pushTasks 档位)
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
-    mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [{ notion_db_id: FEATURE_DB }] }); // resolveDbId(journey_features)
     mockQuery.mockResolvedValueOnce({
       rows: [{ ability_id: 'ab-2', ability_notion_id: 'notion-ab-2', done: '0', doing: '0', todo: '1' }],

@@ -158,6 +158,11 @@ vi.mock('../skill-dist-drift.js', () => ({
 }));
 
 // skill-inventory-sync 真实 handler 会 ssh 到 MMV 跑采集程序——单测绝不真发 ssh；行为由 skill-inventory-sync.test.js 与 integration 覆盖。
+// skill-registry-projection 真实 handler 会打 Notion——单测绝不真发网络；行为由 skill-registry-projection.test.js（假 Notion）覆盖。
+vi.mock('../skill-registry-projection.js', () => ({
+  runSkillRegistryProjection: vi.fn().mockResolvedValue({ skipped: true, reason: 'interval_gate' }),
+}));
+
 vi.mock('../skill-inventory-sync.js', () => ({
   runSkillInventorySync: vi.fn().mockResolvedValue({ skipped: true, reason: 'interval_gate' }),
 }));
@@ -316,6 +321,19 @@ describe('scheduler-jobs 注册表', () => {
     const pool = makePool();
     await runSchedulerJobsOnce(pool, [j]);
     expect(runSkillInventorySync).toHaveBeenCalled();
+  });
+
+  it('JOBS 注册了 skill-registry-projection（needsPool、在 skill-inventory-sync 之后且在 scheduler-liveness 之前、handler 真接线）', async () => {
+    const names = JOBS.map((j) => j.name);
+    const j = JOBS.find((x) => x.name === 'skill-registry-projection');
+    expect(j).toBeTruthy();
+    expect(j.needsPool).toBe(true);
+    expect(names.indexOf('skill-registry-projection')).toBeGreaterThan(names.indexOf('skill-inventory-sync'));
+    expect(names.indexOf('skill-registry-projection')).toBeLessThan(names.indexOf('scheduler-liveness'));
+    const { runSkillRegistryProjection } = await import('../skill-registry-projection.js');
+    const pool = makePool();
+    await runSchedulerJobsOnce(pool, [j]);
+    expect(runSkillRegistryProjection).toHaveBeenCalled();
   });
 
   it('注册 scheduler-liveness 且排在 JOBS 末尾，把 JOBS 自身注入 handler（不 import 成环）', async () => {
