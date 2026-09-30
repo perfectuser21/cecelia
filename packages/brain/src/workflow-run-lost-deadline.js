@@ -24,7 +24,7 @@
 import { execFile as nodeExecFile } from 'node:child_process';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { sshRun } from './lib/ssh-exec.js';
-import { resolveMachineId, sshTargetFor } from './machine-registry.js';
+import { resolveMachineId, resolvePrimaryWorkerId, sshTargetFor } from './machine-registry.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { finishRun } from './lib/task-run.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
@@ -35,7 +35,6 @@ export const LOST_REASON = 'lost_deadline';
 const DEFAULT_GATE_MS = 5 * 60 * 1000;
 const BATCH_LIMIT = 20;
 const SSH_TIMEOUT_MS = 30_000;
-const MMV_MACHINE_ID = 'us-mac-m4';
 const PHONE_ADB = '~/.local/bin/douyin-phone-adb';
 const SAFE_ARG = /^[A-Za-z0-9._-]{1,64}$/;
 
@@ -140,9 +139,11 @@ export function buildCleanupPlan(ctx) {
     steps.push({ step: 'return_safe_desktop', target: execTarget, remote: `${PHONE_ADB} --profile ${ctx.profile} return-safe-desktop` });
   }
   if (ctx.escortId && SAFE_ARG.test(ctx.escortId)) {
-    const mmv = targetOf(MMV_MACHINE_ID);
+    // OpenClaw 网关（escort cron 所在）= 注册表 primary worker，机器名不写死（CI machine-registry-role-guard）
+    let mmv = null;
+    try { mmv = sshTargetFor(resolvePrimaryWorkerId()); } catch { mmv = null; }
     if (mmv) steps.push({ step: 'escort_rm', target: mmv, remote: `openclaw cron rm ${ctx.escortId}` });
-    else skipped.escort_rm = 'mmv_not_dispatchable';
+    else skipped.escort_rm = 'gateway_not_dispatchable';
   } else {
     skipped.escort_rm = ctx.escortId ? 'bad_escort_id' : 'no_escort_id';
   }
