@@ -210,14 +210,11 @@ async function initTickLoop() {
     const { ensureEventsTable } = await import('./event-bus.js');
     await ensureEventsTable();
 
-    // Restore drain state persisted before a possible restart (07-19 bug fix —
-    // draining was purely in-memory, Gate3 deploy restarts silently cleared it).
-    try {
-      const { restoreDrainState } = await import('./drain.js');
-      await restoreDrainState();
-    } catch (drainErr) {
-      console.error('[tick-loop] restoreDrainState failed (non-fatal):', drainErr.message);
-    }
+    // 07-19 bug fix 的 restoreDrainState() 调用已迁移到 server.js 的
+    // listenWithRetry() 之前（任务 30861749）：必须在 listener 接受任何请求前
+    // 完成恢复，留在这里（onBrainListening 异步链尾部）会与部署脚本的健康检查/
+    // drain-cancel 请求形成竞态。此处不再重复调用，避免出现"启动链里 restore
+    // 两次"的新时序假设。
 
     const envEnabled = process.env.CECELIA_TICK_ENABLED;
     const status = await getTickStatus();
