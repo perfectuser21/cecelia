@@ -46,7 +46,11 @@ import {
   createProductionExecutionTransport,
   DEFAULT_LOCAL_MACHINE_ID,
 } from './orchestrator/production-transport.js';
-import { patchKernelRunById } from './orchestrator/kernel-run-store.js';
+import {
+  patchKernelRunById,
+  requeueKernelRunLaunchDeferred,
+  finalizeKernelRun,
+} from './orchestrator/kernel-run-store.js';
 import { writeHeartbeat } from './orchestrator/heartbeat.js';
 
 export { _parseBaseRepo, _discoverPrFromGithub };
@@ -90,6 +94,10 @@ export const MAX_CODEX_RELAY_ATTEMPTS = 2;
 // generator 完成后 6h 无 MERGED → failed（防 e90c0fbb pr_url 空永挂）
 export const GENERATOR_DONE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 const KERNEL_RECONCILE_STALE_MS = 3 * 60 * 1000;
+// 任务 1fe53ce4：远端 prepare（MMV 建工作区）实测 3-4 分钟，桥 prepare 超时默认 10 分钟 + start 30s。
+// 新 run 无心跳、无 attempt 的窗口是「launch 在途」，不是失联；宽限（取 12 分钟，严格大于
+// prepare+start 超时）内 reconcile 不得重启，否则在 Brain 本地起 kernel 抢占远端 singleton。
+const KERNEL_LAUNCH_GRACE_MS = 12 * 60 * 1000;
 
 function sameMachineResumeBundle(rawBundle, { attemptId, hop }) {
   const bundle = tryParseJson(rawBundle);
@@ -893,6 +901,13 @@ async function _recoverKernelRun(run, task, deps, out) {
     [run.id],
   );
   const attempt = latestQ.rows?.[0] ?? null;
+  if (!attempt && !heartbeatAt) {
+    const startedAt = run.started_at ? new Date(run.started_at).getTime() : 0;
+    if (startedAt && Date.now() - startedAt <= KERNEL_LAUNCH_GRACE_MS) {
+      console.log(`[relay-watchdog][kernel-v1] launch in flight run=${run.id} age=${Math.round((Date.now() - startedAt) / 1000)}s, skip reconcile`);
+      return;
+    }
+  }
   const activeStatus = attempt && ['queued', 'starting', 'running'].includes(attempt.status);
   const leaseLive = activeStatus && attempt.lease_expires_at
     && new Date(attempt.lease_expires_at).getTime() > Date.now();
@@ -949,6 +964,34 @@ async function _recoverKernelRun(run, task, deps, out) {
       leaseGeneration: attempt.lease_generation,
       requireExpired: true,
     });
+  }
+
+  // 任务 1fe53ce4 / 铁律 96054a8b：us-vps 零执行闸开着时禁止在 Brain 本地 spawn kernel
+  // （cwd 非 git 仓 → ground-truth `git ls-remote origin` 必死，且抢占远端 singleton）。
+  // fleet-worker 对同 run_id 重放 prepare 是 409 orchestrator_already_exists，所以不在这里
+  // 重起旧 run：run 置 failed 留痕、任务回 queued，交 executor 下个 tick 走正规远端路径重派；
+  // 延后次数用尽则收死并告警，绝不回落本地。
+  const localExecutionDisabled = (deps.env ?? process.env).CECELIA_LOCAL_EXECUTION_ENABLED === 'false';
+  if (localExecutionDisabled) {
+    const requeueDeferred = deps.requeueKernelRunDeferred ?? requeueKernelRunLaunchDeferred;
+    const reason = 'kernel_reconcile_remote_requeue:no_resumable_session';
+    const requeued = await requeueDeferred(dbPool, { runId: run.id, expectedTaskId: task.id, reason });
+    if (requeued?.exhausted) {
+      const finalizeRun = deps.finalizeRun ?? finalizeKernelRun;
+      await finalizeRun(dbPool, {
+        runId: run.id,
+        expectedTaskId: task.id,
+        outcome: 'failed',
+        reason: `${reason}:defers_exhausted`,
+      });
+      const { raise } = await import('./alerting.js');
+      await raise('P1', 'kernel_reconcile_remote_exhausted',
+        `run ${run.id} task ${task.id}: reconcile requeue defers exhausted (${requeued.deferCount ?? '?'})`);
+      console.warn(`[relay-watchdog][kernel-v1] reconcile remote requeue exhausted run=${run.id} task=${task.id}`);
+      return;
+    }
+    console.log(`[relay-watchdog][kernel-v1] reconcile requeued for remote redispatch run=${run.id} task=${task.id} defers=${requeued?.deferCount ?? '?'} changed=${requeued?.changed ?? '?'}`);
+    return;
   }
 
   // No resumable session: restart only the deterministic reconcile process. It re-reads
