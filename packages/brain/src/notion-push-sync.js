@@ -530,8 +530,14 @@ async function ingestQiumiPage(pool, token, page, en, { env, now = () => new Dat
   });
   const taskId = routed?.task?.id ?? routed?.task_id;
   if (!taskId) throw new Error('routed_task_id_missing');
-  const dueIso = endIso ?? dueAt;
-  if (dueIso) await pool.query('UPDATE tasks SET due_at=$2, updated_at=NOW() WHERE id=$1', [taskId, dueIso]);
+  // due_at 只来自「预期结束时间」：它是截止（手机忙排队的等待上限读它，lib/qiumi-device-busy.js）。
+  // 旧列「预期完成日期」/ 英文 Plan Date 起点现在都是开始时间，落进 due_at 会让任务一忙就判过期。
+  // due_at 是 timestamp without time zone：按上海墙钟落（与 DUE_AT_SELECT_SQL 读法同口径），带 Z 的时间也不错位。
+  if (endIso) {
+    await pool.query(
+      "UPDATE tasks SET due_at=($2::timestamptz AT TIME ZONE 'Asia/Shanghai'), updated_at=NOW() WHERE id=$1", [taskId, endIso],
+    );
+  }
   // 458 给 tasks 建了 tenant_id 列，路由账房不认这个字段 → 不补写就恒 NULL，
   // 按列过滤的看板/查询一条秋米任务都看不见，租户隔离形同虚设。payload 里有不算数。
   await pool.query('UPDATE tasks SET tenant_id=$2, updated_at=NOW() WHERE id=$1', [taskId, tenantId]);

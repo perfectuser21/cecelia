@@ -47,3 +47,8 @@ export function deviceBusyNote({ owner, nextRunAt, attempts }) {
   const parts = shanghaiParts(nextRunAt);
   return `⏳ 手机忙（被 ${owner || '其他运行'} 占用），已排队，${parts.hour}:${parts.minute} 后重试（第 ${attempts} 次）`;
 }
+
+/** 手机忙等到截止仍未执行（failed(device_busy_expired)，lib/qiumi-device-busy.js）写进「OpenClaw结果」的提示。 */
+export function deviceBusyExpiredNote({ owner }) {
+  return `⌛ 到截止时间仍未轮到手机（一直被 ${owner || '其他运行'} 占用），未执行`;
+}

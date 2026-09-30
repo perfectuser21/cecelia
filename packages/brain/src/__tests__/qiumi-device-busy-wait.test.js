@@ -121,7 +121,8 @@ describe('收割器：DEVICE_BUSY 标记 → 回队等待，不判终态', () =>
 
   it('候选查询带出 due_at（截止时间来源）', async () => {
     const { query } = await reapOnce(BUSY_TEXT);
-    expect(query.mock.calls[0][0]).toMatch(/\bdue_at\b/);
+    // due_at 是 timestamp without time zone、入账按上海墙钟写；生产 PG 会话 UTC → 必须显式按上海时间转
+    expect(query.mock.calls[0][0]).toMatch(/\(due_at AT TIME ZONE 'Asia\/Shanghai'\) AS due_at/);
   });
 
   it('没有标记行的正常完成不受影响；正文里顺嘴提到 DEVICE_BUSY 也不算标记', async () => {
