@@ -23,7 +23,7 @@ function makeMockPool(responses) {
       if (sql.includes('FROM key_results')) {
         return { rows: responses.krs || [] };
       }
-      if (sql.includes('FROM okr_projects') && !sql.includes('tasks')) {
+      if (/FROM\s+projects\b/.test(sql) && !sql.includes('tasks')) {
         return { rows: responses.projectCounts || [] };
       }
       if (sql.includes('tasks')) {

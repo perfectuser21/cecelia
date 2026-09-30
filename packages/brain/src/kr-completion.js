@@ -5,6 +5,8 @@
  *
  * checkKRCompletion：
  *   查所有 in_progress 的 KR，若其下所有 Project 均已 completed → 标记 KR completed
+ *   （棒5，决策 ee4842a6/3feeae3e：Project 改读真身表 projects，不再参考已退役的
+ *   scope/initiative 链路——归档/取消的 Project 不计入分母）
  *
  * activateNextKRs：
  *   从 pending KR 中按优先级激活下一批（容量控制：同时 in_progress KR ≤ MAX_ACTIVE_KRS）
@@ -27,13 +29,13 @@ async function checkKRCompletion(pool) {
   const closed = [];
 
   for (const kr of krsResult.rows) {
-    // 查该 KR 下的 Project 完成情况
+    // 查该 KR 下的 Project 完成情况（真身表 projects；归档/取消的 Project 不计入分母）
     const projectsResult = await pool.query(`
       SELECT
         COUNT(*) AS total,
-        COUNT(*) FILTER (WHERE op.status = 'completed') AS completed_count
-      FROM okr_projects op
-      WHERE op.kr_id = $1
+        COUNT(*) FILTER (WHERE status = 'completed') AS completed_count
+      FROM projects
+      WHERE kr_id = $1 AND status NOT IN ('cancelled', 'archived')
     `, [kr.id]);
 
     const { total, completed_count: completedCount } = projectsResult.rows[0];

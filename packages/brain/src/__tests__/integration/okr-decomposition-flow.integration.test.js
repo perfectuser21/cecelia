@@ -9,7 +9,8 @@
  *   1. Objective → KeyResult → Project（真身表 projects）创建链
  *   2. POST /scopes、POST /initiatives 一律 410 layer_retired
  *   3. 树状层级查询 /api/brain/okr/tree（project 层来自 projects 表）
- *   4. KR 进度重算 recalculate-progress（无 task 时 current_value=0；project 聚合改写留给棒5，本测试不覆盖）
+ *   4. KR 进度重算 recalculate-progress（无 task 时 current_value=0；棒5起改读真身表 projects，
+ *      真正的"任务完成→current_value/progress"聚合场景见 kr-progress-project-aggregation.integration.test.js）
  *   5. FK 级联行为：objective/KR 级联删除；projects.kr_id 是 ON DELETE SET NULL（非级联删除整行）
  *
  * 依赖：PostgreSQL cecelia_test 数据库可访问；路由通过进程内 Express 挂载，禁止误打生产 Brain。

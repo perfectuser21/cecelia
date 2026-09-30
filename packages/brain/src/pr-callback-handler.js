@@ -338,18 +338,12 @@ export async function handlePrMerged(pool, prInfo) {
     } else {
       // 尝试通过 project_id 查找关联的 KR
       try {
-        // 通过 okr_projects.kr_id 或 okr_initiatives → okr_scopes → okr_projects.kr_id 查找关联 KR
+        // 棒5（决策 ee4842a6/3feeae3e）：tasks.project_id 指向真身表 projects（棒1 PR #5731），
+        // 不再需要经 okr_initiatives → okr_scopes → okr_projects 的已退役链路查找。
         const krResult = await pool.query(`
-          SELECT op.kr_id
-          FROM okr_projects op
-          WHERE op.id = $1 AND op.kr_id IS NOT NULL
-          UNION ALL
-          SELECT op.kr_id
-          FROM okr_initiatives oi
-          JOIN okr_scopes os ON oi.scope_id = os.id
-          JOIN okr_projects op ON op.id = os.project_id
-          WHERE oi.id = $1 AND op.kr_id IS NOT NULL
-          LIMIT 1
+          SELECT kr_id
+          FROM projects
+          WHERE id = $1 AND kr_id IS NOT NULL
         `, [updatedRow.project_id]);
 
         if (krResult.rows.length > 0) {

@@ -15,6 +15,7 @@ import { Router } from 'express';
 import pool from '../db.js';
 import { computeProgress } from '../advancement-progress.js';
 import taskProjectsRoutes from './task-projects.js';
+import { getProjectsForKrBatch } from '../project-progress.js';
 
 const router = Router();
 
@@ -313,12 +314,14 @@ router.get('/tree', async (req, res) => {
  * 重算指定 KR 的进度：
  *   current_value = completed tasks / total tasks × target_value
  *
- * 链路（历史）：key_result → okr_projects → okr_scopes → okr_initiatives → tasks
+ * 链路（棒5起，决策 ee4842a6/3feeae3e）：key_result → projects（真身表）→ tasks。
+ * scope/initiative 层已退役（棒4，migration 499），不再经 okr_projects/okr_scopes/
+ * okr_initiatives 查询。统计口径与 project-progress.js 的 project 级口径一致：
+ * 排除已取消/归档的 Project、排除 task_type='project' 的子项目根任务、排除已取消任务。
  *
- * ⚠️ 棒4（决策 ee4842a6/3feeae3e）留痕：scope/initiative 层退役后，新建 Project
- * 一律进真身表 projects，不再产生 okr_projects/okr_scopes/okr_initiatives 行，下面
- * 这条链路只对历史数据有效——新模型下"按 project 聚合 KR 进度"的改写是接力棒棒5
- * 的工作范围，本棒不做，这里先保留旧链路只读（不产生新数据，也不报错）。
+ * 注：这里是"该 KR 下所有 Project 的 task 扁平合计"写 current_value，与
+ * kr-progress.js updateKrProgress()"按 project 分别算完成率再平均"写 progress 是
+ * 两个不同字段、两种不同口径，历史上就是分开的（保持不变，不在本棒合并）。
  */
 router.post('/key-results/:id/recalculate-progress', async (req, res) => {
   try {
@@ -331,16 +334,14 @@ router.post('/key-results/:id/recalculate-progress', async (req, res) => {
     }
     const { target_value } = krResult.rows[0];
 
-    // 统计该 KR 下所有 initiatives 关联的 tasks
+    // 统计该 KR 下所有 Project 关联的 tasks
     const statsResult = await pool.query(`
       SELECT
-        COUNT(t.id) FILTER (WHERE t.status = 'completed') AS completed_count,
+        COUNT(t.id) FILTER (WHERE t.status IN ('completed', 'completed_no_pr')) AS completed_count,
         COUNT(t.id) AS total_count
-      FROM okr_projects p
-      JOIN okr_scopes s ON s.project_id = p.id
-      JOIN okr_initiatives i ON i.scope_id = s.id
-      LEFT JOIN tasks t ON t.okr_initiative_id = i.id
-      WHERE p.kr_id = $1
+      FROM projects p
+      LEFT JOIN tasks t ON t.project_id = p.id AND t.task_type <> 'project' AND t.status <> 'cancelled'
+      WHERE p.kr_id = $1 AND p.status NOT IN ('cancelled', 'archived')
     `, [id]);
 
     const { completed_count, total_count } = statsResult.rows[0];
@@ -377,6 +378,10 @@ router.post('/key-results/:id/recalculate-progress', async (req, res) => {
 /**
  * GET /api/brain/okr/current
  * 返回当前活跃 OKR 树形结构 + 每层完成度
+ *
+ * 棒5（决策 ee4842a6/3feeae3e）：每个 KR 下附 projects: [{id,name,status,progress,
+ * task_total,task_done}]，数据来自真身表 projects/tasks（project-progress.js），
+ * 替代此前经已退役 okr_projects 链路才能看到的 Project 信息。
  */
 router.get('/current', async (req, res) => {
   try {
@@ -388,7 +393,9 @@ router.get('/current', async (req, res) => {
       LIMIT 5
     `)).rows;
 
-    const result = await Promise.all(objectives.map(async (obj) => {
+    const allKrs = [];
+    const krsByObjective = {};
+    for (const obj of objectives) {
       const krs = (await pool.query(`
         SELECT id, title, current_value, target_value, unit, status,
           COALESCE(
@@ -402,13 +409,24 @@ router.get('/current', async (req, res) => {
         WHERE objective_id = $1 AND status != 'archived'
         ORDER BY created_at
       `, [obj.id])).rows;
+      krsByObjective[obj.id] = krs;
+      allKrs.push(...krs);
+    }
 
+    const projectsByKr = await getProjectsForKrBatch(pool, allKrs.map((kr) => kr.id));
+
+    const result = objectives.map((obj) => {
+      const krs = krsByObjective[obj.id];
       const avgProgress = krs.length > 0
         ? Math.round(krs.reduce((sum, kr) => sum + parseFloat(kr.progress_pct || 0), 0) / krs.length)
         : 0;
 
-      return { ...obj, progress_pct: avgProgress, key_results: krs };
-    }));
+      return {
+        ...obj,
+        progress_pct: avgProgress,
+        key_results: krs.map((kr) => ({ ...kr, projects: projectsByKr[kr.id] || [] })),
+      };
+    });
 
     res.json({ success: true, objectives: result, generated_at: new Date().toISOString() });
   } catch (err) {
