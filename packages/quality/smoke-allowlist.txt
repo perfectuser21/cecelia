@@ -353,3 +353,4 @@ qiumi-model-family-smoke.sh
 phone-registry-smoke.sh
 workflow-run-lost-deadline-smoke.sh
 commander-watchdog-smoke.sh
+brain-image-scripts-smoke.sh
