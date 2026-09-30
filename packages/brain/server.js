@@ -692,6 +692,20 @@ if (!process.env.VITEST) {
     console.log(`[Server] startup ownerless Kernel runs recovered=${startupRecovered.length}`);
   }
 
+  // 排空状态必须在 listener 接受任何请求前恢复完毕（任务 30861749）：原先
+  // restoreDrainState() 在 onBrainListening() 异步链尾部（initTickLoop 里）才跑，
+  // 而 Express 路由在 listenWithRetry() 之后立即可用——部署脚本的健康检查和
+  // drain-cancel 请求几乎必然抢在 restore 之前到达，新容器 _draining 还是初始
+  // false，cancel 被当 no-op，随后 restore 又把旧容器的持久化排空状态误恢复。
+  // 挪到这里与 reconcileOwnerlessKernelRuns 同一处 "listener 前收敛"，从根本上
+  // 消除这个时间窗口。
+  try {
+    const { restoreDrainState } = await import('./src/drain.js');
+    await restoreDrainState();
+  } catch (drainErr) {
+    console.error('[Server] restoreDrainState failed (non-fatal):', drainErr.message);
+  }
+
   await listenWithRetry(server, Number(PORT), { maxAttempts: 3, retryDelayMs: 2_000 });
 
   // Acceptance 公网 listener（刀 1，决策 c08c2173）：token 未配置时静默不启动
