@@ -29,7 +29,9 @@ import { startRun, finishRun } from './lib/task-run.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { qiumiEnv, phoneNodeName } from './routing/env.js';
 import { splitExecParamsBlock } from './routing/exec-params.js';
-import { parseDeviceBusyMarker, planDeviceBusy, requeueForDeviceBusy, DEVICE_BUSY_TIMEOUT_REASON } from './lib/qiumi-device-busy.js';
+import {
+  parseDeviceBusyMarker, planDeviceBusy, requeueForDeviceBusy, DEVICE_BUSY_EXPIRED_REASON, DUE_AT_SELECT_SQL,
+} from './lib/qiumi-device-busy.js';
 
 // 两条白名单，宽严不同：
 //  · SAFE_ID —— run_id / department / taskId。它们要当文件名用（~/brain-runs/<run_id>.log），
@@ -334,32 +336,35 @@ function reapOutcome(receipt, tail) {
 
 /**
  * agent 回报手机忙（最终文本含 DEVICE_BUSY 标记行，任务 5ad81457）→ 不判终态，回队等 5 分钟再派；
- * 等够 min(任务超时, 120 分钟) 或过了 payload.expires_at → failed(device_busy_timeout)。
+ * 到截止时间（expires_at → due_at → 首次忙起 24 小时）仍忙 → failed(device_busy_expired)。
+ * 排队不占执行超时：timeout_sec 只作用于真正运行的那次 run（triggerOpenclawAgent 的 --timeout）。
  * @returns {Promise<'requeued'|'failed'|null>} null = 不是手机忙，走常规收割
  */
 async function settleDeviceBusy(pool, row, receipt, now) {
   const marker = parseDeviceBusyMarker(receipt.text);
   if (!marker) return null;
   const payload = row.payload ?? {};
-  const plan = planDeviceBusy({ payload, marker, timeoutSec: effectiveTimeoutSec(payload.timeout_sec ?? AGENT_TIMEOUT_SEC), now });
+  const plan = planDeviceBusy({ payload, marker, dueAt: row.due_at ?? null, now });
   if (plan.action === 'requeue') {
     const requeued = await requeueForDeviceBusy(pool, row.id, plan, row.run_id);
     await finishRun({ runId: row.run_id, status: 'cancelled', exitCode: receipt.exit, error: 'device_busy' }, { pool });
     await recordTaskEventSafe(pool, row.id, 'qiumi_device_busy_requeued', {
       run_id: row.run_id, owner: plan.deviceBusy.owner, serial: plan.deviceBusy.serial,
-      attempt: plan.attempts, next_run_at: plan.nextRunAt, waited_ms: plan.waitedMs, budget_ms: plan.budgetMs, applied: requeued,
+      attempt: plan.attempts, next_run_at: plan.nextRunAt, waited_ms: plan.waitedMs,
+      deadline_at: plan.deadlineAt, deadline_source: plan.deadlineSource, applied: requeued,
     });
     return 'requeued';
   }
   await finalizeTask(pool, row.id, 'failed', {
-    set: { error_message: DEVICE_BUSY_TIMEOUT_REASON },
+    set: { error_message: DEVICE_BUSY_EXPIRED_REASON },
     mergeResult: { receipt, device_busy: plan.deviceBusy },
     onlyIfStatus: 'in_progress',
   });
-  await finishRun({ runId: row.run_id, status: 'failed', exitCode: receipt.exit, error: DEVICE_BUSY_TIMEOUT_REASON }, { pool });
+  await finishRun({ runId: row.run_id, status: 'failed', exitCode: receipt.exit, error: DEVICE_BUSY_EXPIRED_REASON }, { pool });
   await recordTaskEventSafe(pool, row.id, 'openclaw_agent_reaped', {
-    run_id: row.run_id, exit: receipt.exit, reason: DEVICE_BUSY_TIMEOUT_REASON,
-    owner: plan.deviceBusy.owner, attempt: plan.attempts, waited_ms: plan.waitedMs, expired: plan.expired,
+    run_id: row.run_id, exit: receipt.exit, reason: DEVICE_BUSY_EXPIRED_REASON,
+    owner: plan.deviceBusy.owner, attempt: plan.attempts, waited_ms: plan.waitedMs,
+    deadline_at: plan.deadlineAt, deadline_source: plan.deadlineSource,
   });
   return 'failed';
 }
@@ -380,7 +385,7 @@ export async function reapOpenclawAgentRuns(pool, deps = {}) {
   const execFileFn = deps.execFileFn ?? nodeExecFile;
   const now = deps.now ?? Date.now;
   const { rows } = await pool.query(
-    `SELECT id, payload->>'run_id' AS run_id, payload FROM tasks
+    `SELECT id, payload->>'run_id' AS run_id, payload, ${DUE_AT_SELECT_SQL} AS due_at FROM tasks
       WHERE task_type = 'qiumi_task' AND status = 'in_progress' AND executor_kind = 'openclaw-agent'
         AND payload->>'run_id' IS NOT NULL
       ORDER BY started_at ASC NULLS FIRST

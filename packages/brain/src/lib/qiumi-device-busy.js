@@ -9,12 +9,24 @@
  * 约定（douyin-phone-runtime skill + executor prompt 两头同一口径）：拿不到锁时最后一行只输出
  *   DEVICE_BUSY owner=<锁持有者> serial=<序列号>
  * 收割器见到它：不判终态 → 回 queued、清 run_id（保留路由）、next_run_at=now+5min、attempts+1；
- * 累计等待超过 min(任务超时, 120 分钟) 或已过 payload.expires_at → failed(device_busy_timeout)。
+ * 到截止时间仍忙 → failed(device_busy_expired，过期未执行)。
+ *
+ * 截止时间（等待上限）：payload.expires_at → tasks.due_at（中文表「预期结束时间」入账落这里，
+ * notion-push-sync.js ingestQiumiPage）→ 都没有则首次忙起 24 小时。
+ * 不参考执行超时（timeout_sec）：排队时任务还没开始执行，执行超时只管真正跑起来的那次 run
+ * （executor 每次派发都把完整 timeout_sec 传给 openclaw agent --timeout，与排队多久无关）。
  */
 
 export const DEVICE_BUSY_RETRY_MS = 5 * 60 * 1000;
-export const DEVICE_BUSY_MAX_WAIT_MS = 120 * 60 * 1000;
-export const DEVICE_BUSY_TIMEOUT_REASON = 'device_busy_timeout';
+export const DEVICE_BUSY_DEFAULT_WAIT_MS = 24 * 60 * 60 * 1000;
+export const DEVICE_BUSY_EXPIRED_REASON = 'device_busy_expired';
+
+/**
+ * 收割器取 due_at 的 SQL 表达式。tasks.due_at 是 timestamp without time zone，秋米入账写的是上海墙钟
+ * （notion-push-sync.js ingestQiumiPage，Notion 日期带 +08:00）；生产 PG 会话时区是 UTC，
+ * 裸读交给 node-pg 按进程时区猜，换台机器就差 8 小时。这里显式按上海时间转成 timestamptz。
+ */
+export const DUE_AT_SELECT_SQL = "(due_at AT TIME ZONE 'Asia/Shanghai')";
 
 // 行首（允许反引号/星号/空白包裹）才算标记；正文里顺嘴提到 DEVICE_BUSY 不算。
 const MARKER_LINE = /^[\s`*>]*DEVICE_BUSY\b([^\n]*)$/gm;
@@ -38,25 +50,39 @@ export function parseDeviceBusyMarker(text) {
 
 function parseTime(v) {
   if (!v) return null;
-  const t = Date.parse(v);
+  const t = v instanceof Date ? v.getTime() : Date.parse(v);
   return Number.isFinite(t) ? t : null;
 }
 
 /**
- * 回队还是判超时（纯函数）。
- * @param {{payload?: object, marker: {owner, serial}, timeoutSec: number, now: number}} input
- * @returns {{action: 'requeue'|'timeout', attempts: number, nextRunAt: string|null, deviceBusy: object, waitedMs: number, budgetMs: number}}
+ * 截止时间：expires_at → due_at → 首次忙起 24 小时。
+ * due_at 不晚于排期开始时间（payload.scheduled_start）不算截止：存量行入账时曾把开始时间误落 due_at，
+ * 拿它当截止会让任务一忙就判过期。
  */
-export function planDeviceBusy({ payload = {}, marker, timeoutSec, now }) {
+function deadlineOf(payload, dueAt, firstMs) {
+  const expiresMs = parseTime(payload.expires_at);
+  if (expiresMs != null) return { ms: expiresMs, source: 'expires_at' };
+  const dueMs = parseTime(dueAt);
+  const startMs = parseTime(payload.scheduled_start);
+  if (dueMs != null && (startMs == null || dueMs > startMs)) return { ms: dueMs, source: 'due_at' };
+  return { ms: firstMs + DEVICE_BUSY_DEFAULT_WAIT_MS, source: 'default_24h' };
+}
+
+/**
+ * 回队还是判过期（纯函数）。不收执行超时参数——排队等待与执行超时无关。
+ * @param {{payload?: object, marker: {owner, serial}, dueAt?: string|Date|null, now: number}} input  dueAt = tasks.due_at
+ * @returns {{action: 'requeue'|'expired', attempts: number, nextRunAt: string|null, deviceBusy: object,
+ *   waitedMs: number, deadlineAt: string, deadlineSource: 'expires_at'|'due_at'|'default_24h'}}
+ */
+export function planDeviceBusy({ payload = {}, marker, dueAt = null, now }) {
   const prev = payload.device_busy ?? {};
   const attempts = (Number(payload.device_busy_attempts) || 0) + 1;
   const firstMs = parseTime(prev.first_at) ?? now;
   const waitedMs = Math.max(0, now - firstMs);
-  const budgetMs = Math.min(Math.max(0, Number(timeoutSec) || 0) * 1000, DEVICE_BUSY_MAX_WAIT_MS);
-  const expiresMs = parseTime(payload.expires_at);
-  const expired = expiresMs != null && now >= expiresMs;
-  const timeout = expired || waitedMs >= budgetMs;
-  const nextRunAt = timeout ? null : new Date(now + DEVICE_BUSY_RETRY_MS).toISOString();
+  const deadline = deadlineOf(payload, dueAt, firstMs);
+  const expired = now >= deadline.ms;
+  const nextRunAt = expired ? null : new Date(now + DEVICE_BUSY_RETRY_MS).toISOString();
+  const deadlineAt = new Date(deadline.ms).toISOString();
   const deviceBusy = {
     owner: marker?.owner ?? null,
     serial: marker?.serial ?? null,
@@ -64,8 +90,13 @@ export function planDeviceBusy({ payload = {}, marker, timeoutSec, now }) {
     last_at: new Date(now).toISOString(),
     attempts,
     next_run_at: nextRunAt,
+    deadline_at: deadlineAt,
+    deadline_source: deadline.source,
   };
-  return { action: timeout ? 'timeout' : 'requeue', attempts, nextRunAt, deviceBusy, waitedMs, budgetMs, expired };
+  return {
+    action: expired ? 'expired' : 'requeue', attempts, nextRunAt, deviceBusy, waitedMs,
+    deadlineAt, deadlineSource: deadline.source,
+  };
 }
 
 /**

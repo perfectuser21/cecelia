@@ -38,12 +38,13 @@ const zhPage = (over = {}) => ({
     ...over,
   },
 });
-const enPage = () => ({
+const enPage = (planDate = null) => ({
   id: EN_ID, last_edited_time: '2026-09-29T01:01:00.000Z',
   properties: {
     Name: { title: [{ plain_text: '[P2] 10月3日 发朋友圈' }] },
     Description: { rich_text: [{ plain_text: `[zh:${ZH32}]` }] },
     Status: { status: { name: 'Delegated' } },
+    ...(planDate ? { 'Plan Date': { date: planDate } } : {}),
   },
 });
 
@@ -107,7 +108,7 @@ describe('中文行解析与中英镜像', () => {
 describe('入账：开始时间未到 → 进库但不派', () => {
   beforeEach(() => { mockQuery.mockReset(); mockNotionReq.mockReset(); mockCreateRoutedTask.mockReset(); });
 
-  const run = async (zh, { users = {} } = {}) => {
+  const run = async (zh, { users = {}, planDate = null } = {}) => {
     mockNotionReq.mockImplementation(async (_t, path, method) => {
       if (path === `/pages/${ZH_ID}` && method === 'GET') return zh;
       if (path.startsWith('/users/')) return users[path.slice(7)] ?? {};
@@ -117,7 +118,7 @@ describe('入账：开始时间未到 → 进库但不派', () => {
     mockCreateRoutedTask.mockResolvedValue({ task: { id: TID } });
     mockQuery.mockResolvedValue({ rows: [] });
     const { ingestDelegatedPage } = await import('../../notion-push-sync.js');
-    await ingestDelegatedPage({ query: mockQuery }, 'tok', enPage(), { env: { QIUMI_DISPATCH_ENABLED: 'true' }, now: () => NOW });
+    await ingestDelegatedPage({ query: mockQuery }, 'tok', enPage(planDate), { env: { QIUMI_DISPATCH_ENABLED: 'true' }, now: () => NOW });
     return {
       meta: mockCreateRoutedTask.mock.calls[0][1].metadata,
       zhPatch: mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH_ID}` && c[2] === 'PATCH')?.[3],
@@ -133,6 +134,20 @@ describe('入账：开始时间未到 → 进库但不派', () => {
     expect(zhPatch.properties['OpenClaw任务号'].rich_text[0].text.content).toBe(`brain:${TID}`);
     expect(zhPatch.properties['状态'].status.name).toBe('委派');
     expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content).toBe('🕐 已排期 10-03 17:00，到点派发');
+  });
+
+  it('只填开始时间、没填结束时间 → 不写 due_at（due_at 只来自「预期结束时间」，是手机忙排队的截止）', async () => {
+    // 英文页 Plan Date 由中文镜像而来（buildEnPageFromZh），只有 start；旧列「预期完成日期」现在也是开始时间
+    const a = await run(zhPage({ '预期结束时间': { date: null } }), { planDate: { start: '2026-10-03T17:00:00.000+08:00' } });
+    expect(a.dueCall, '英文 Plan Date 开始时间被当成截止写进 due_at').toBeUndefined();
+    mockQuery.mockReset(); mockNotionReq.mockReset(); mockCreateRoutedTask.mockReset();
+    const b = await run(zhPage({ '预期开始时间': undefined, '预期结束时间': { date: null }, '预期完成日期': { date: { start: '2026-10-03' } } }));
+    expect(b.dueCall, '旧列「预期完成日期」（=开始时间）被当成截止写进 due_at').toBeUndefined();
+  });
+
+  it('结束时间只填日期 → due_at = 当天 23:59:59 上海时间', async () => {
+    const { dueCall } = await run(zhPage({ '预期结束时间': { date: { start: '2026-10-03' } } }));
+    expect(dueCall[1]).toEqual([TID, '2026-10-03T23:59:59+08:00']);
   });
 
   it('开始时间已过或没写：照旧立即派（中文进行中），next_run_at 不设', async () => {

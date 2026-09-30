@@ -17,7 +17,8 @@ import {
   QIUMI_STATUS_MAP, ZH_HUMAN_ONLY_STATUSES, zhPriorityToBrain, zhWriteFor,
 } from './lib/qiumi-status-map.js';
 import { blockTask, unblockTask } from './task-updater.js';
-import { toStartIso, isFuture, sameInstant, scheduledNote, deviceBusyNote } from './lib/qiumi-schedule.js';
+import { toStartIso, isFuture, sameInstant, scheduledNote, deviceBusyNote, deviceBusyExpiredNote } from './lib/qiumi-schedule.js';
+import { DEVICE_BUSY_EXPIRED_REASON } from './lib/qiumi-device-busy.js';
 import { recordProjectionCommand } from './projection/commands.js';
 
 export const GTD_DB_ID = process.env.NOTION_GTD_DB_ID || 'c69c40c2-ba63-8271-badf-01c5410d8929';
@@ -234,6 +235,13 @@ function waitingNoteOf(t) {
   return scheduledNote(t.next_run_at);
 }
 
+/** 手机忙到截止仍未执行：失败态照常写（状态/清任务号），「OpenClaw结果」换成过期提示。owner 取最后一次回报。 */
+function withDeviceBusyExpiredNote(write, t) {
+  if (t.status !== 'failed' || t.error_message !== DEVICE_BUSY_EXPIRED_REASON || !write) return write;
+  const owner = t.result?.device_busy?.owner ?? t.device_busy?.owner ?? null;
+  return { properties: { ...write.properties, 'OpenClaw结果': { rich_text: text(deviceBusyExpiredNote({ owner })) } } };
+}
+
 /** 单行回写，返回 pushed / human / nomap / gone；非永久错误原样抛出。 */
 async function pushOneQiumiRow(pool, token, t, { notionReq, today, now }) {
   // hold 非空 = 本轮放弃推送是因为人工占着中文页：留保留标记，下轮无论 Brain 状态变没变都要重扫。
@@ -261,9 +269,9 @@ async function pushOneQiumiRow(pool, token, t, { notionReq, today, now }) {
     const scheduled = t.status === 'queued' && isFuture(t.next_run_at, now());
     const write = scheduled
       ? { properties: { '状态': { status: { name: '委派' } }, 'OpenClaw结果': { rich_text: text(waitingNoteOf(t)) } } }
-      : zhWriteFor(t.status, {
+      : withDeviceBusyExpiredNote(zhWriteFor(t.status, {
         reason: t.error_message || '', resultText: resultTextOf(t.result), today: today(), blockedReason: t.blocked_reason ?? null,
-      });
+      }), t);
     await withBackoff(() => notionReq(token, `/pages/${t.zh_page_id}`, 'PATCH', write));
     const enStatus = scheduled ? 'Planned' : map.en;
     if (t.en_page_id && enStatus) {

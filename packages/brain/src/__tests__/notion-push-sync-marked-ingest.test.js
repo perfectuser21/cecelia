@@ -68,9 +68,10 @@ describe('ingestDelegatedPage：[zh:] 标记行 → qiumi_task', () => {
     });
     expect(req).not.toHaveProperty('repo_hint');
     expect(req).not.toHaveProperty('declared_change_kind');
-    // due_at 落库；绝不 UPDATE notion_id
+    // 只有旧列「预期完成日期」（决策 51c09285 起 = 开始时间）、没填「预期结束时间」→ 不写 due_at：
+    // due_at 是截止（手机忙排队的等待上限读它），拿开始时间当截止会让任务一忙就判过期。绝不 UPDATE notion_id
     const sqls = mockQuery.mock.calls.map((c) => c[0]);
-    expect(sqls.some((s) => /UPDATE tasks SET due_at/.test(s))).toBe(true);
+    expect(sqls.some((s) => /UPDATE tasks SET due_at/.test(s)), '开始时间被当成截止写进 due_at').toBe(false);
     expect(sqls.some((s) => /notion_id\s*=/.test(s))).toBe(false);
     // tenant_id 必须落列，不能只躺在 payload：458 建了列，routes/看板按列过滤，恒 NULL = 租户隔离形同虚设
     const tenantCall = mockQuery.mock.calls.find((c) => /UPDATE tasks SET tenant_id/.test(c[0]));

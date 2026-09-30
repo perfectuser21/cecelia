@@ -264,3 +264,34 @@ describe('pushQiumiStatus：手机忙排队等待（任务 5ad81457）', () => {
       .toBe('⏳ 手机忙（被 t3-readonly-20260930-01 占用），已排队，09:20 后重试（第 2 次）');
   });
 });
+
+describe('pushQiumiStatus：手机忙到截止仍未执行（device_busy_expired）', () => {
+  beforeEach(() => { mockNotionReq.mockReset(); });
+  const push = async (row) => {
+    const { pushQiumiStatus } = await import('../notion-gtd-sync.js');
+    const query = vi.fn().mockResolvedValueOnce({ rows: [taskRow(row)] }).mockResolvedValue({ rows: [] });
+    mockNotionReq.mockResolvedValueOnce(zhPageWith('委派')).mockResolvedValue({});
+    await pushQiumiStatus({ query }, 'tok', deps);
+    return mockNotionReq.mock.calls.find((c) => c[1] === `/pages/${ZH}` && c[2] === 'PATCH')[3];
+  };
+  it('failed + device_busy_expired →「OpenClaw结果」写 ⌛ 到截止时间仍未轮到手机（一直被 <owner> 占用），未执行', async () => {
+    const zhPatch = await push({
+      status: 'failed', error_message: 'device_busy_expired',
+      result: { receipt: { finalAssistantVisibleText: 'DEVICE_BUSY owner=harvest-cron serial=S9' }, device_busy: { owner: 'harvest-cron', attempts: 12 } },
+      device_busy: { owner: 'older-owner', attempts: 11 },
+    });
+    expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content)
+      .toBe('⌛ 到截止时间仍未轮到手机（一直被 harvest-cron 占用），未执行');
+    // 其余失败态写法（状态、清任务号）不变
+    expect(zhPatch.properties['OpenClaw任务号'].rich_text).toEqual([]);
+  });
+  it('result 里没有 owner → 回落 payload.device_busy.owner', async () => {
+    const zhPatch = await push({ status: 'failed', error_message: 'device_busy_expired', result: null, device_busy: { owner: 't3-readonly' } });
+    expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content)
+      .toBe('⌛ 到截止时间仍未轮到手机（一直被 t3-readonly 占用），未执行');
+  });
+  it('其他失败原因照旧 [执行失败: …]', async () => {
+    const zhPatch = await push({ status: 'failed', error_message: 'openclaw_agent_exit_1', result: null });
+    expect(zhPatch.properties['OpenClaw结果'].rich_text[0].text.content).toMatch(/^\[执行失败: openclaw_agent_exit_1\]/);
+  });
+});

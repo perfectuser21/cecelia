@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   parseDeviceBusyMarker, planDeviceBusy, requeueForDeviceBusy,
-  DEVICE_BUSY_RETRY_MS, DEVICE_BUSY_MAX_WAIT_MS,
+  DEVICE_BUSY_RETRY_MS, DEVICE_BUSY_DEFAULT_WAIT_MS,
 } from '../qiumi-device-busy.js';
 
 const NOW = Date.parse('2026-09-30T01:15:00.000Z');
@@ -23,32 +23,56 @@ describe('parseDeviceBusyMarker', () => {
   });
 });
 
-describe('planDeviceBusy', () => {
+describe('planDeviceBusy：等待上限 = 截止时间，与执行超时无关', () => {
   const marker = { owner: 'o', serial: 's' };
+  const iso = (ms) => new Date(ms).toISOString();
   it('首次忙：requeue、attempts=1、first_at=now、next_run_at=+5min', () => {
-    const p = planDeviceBusy({ payload: {}, marker, timeoutSec: 1800, now: NOW });
-    expect(p).toMatchObject({ action: 'requeue', attempts: 1, waitedMs: 0, budgetMs: 30 * MIN });
-    expect(p.deviceBusy.first_at).toBe(new Date(NOW).toISOString());
+    const p = planDeviceBusy({ payload: {}, marker, now: NOW });
+    expect(p).toMatchObject({ action: 'requeue', attempts: 1, waitedMs: 0 });
+    expect(p.deviceBusy.first_at).toBe(iso(NOW));
     expect(Date.parse(p.nextRunAt) - NOW).toBe(DEVICE_BUSY_RETRY_MS);
   });
-  it('等待预算 = min(任务超时, 120 分钟)', () => {
-    expect(planDeviceBusy({ payload: {}, marker, timeoutSec: 10800, now: NOW }).budgetMs).toBe(DEVICE_BUSY_MAX_WAIT_MS);
+  it('无 expires_at / 无 due_at → 默认首次等待起 24 小时', () => {
+    expect(DEVICE_BUSY_DEFAULT_WAIT_MS).toBe(24 * 60 * MIN);
+    const p = planDeviceBusy({ payload: {}, marker, now: NOW });
+    expect(p).toMatchObject({ deadlineSource: 'default_24h', deadlineAt: iso(NOW + DEVICE_BUSY_DEFAULT_WAIT_MS) });
+    const first = { device_busy: { first_at: iso(NOW - 23 * 60 * MIN) } };
+    expect(planDeviceBusy({ payload: first, marker, now: NOW }).action).toBe('requeue');
+    const over = { device_busy: { first_at: iso(NOW - 24 * 60 * MIN) } };
+    expect(planDeviceBusy({ payload: over, marker, now: NOW })).toMatchObject({ action: 'expired', nextRunAt: null });
   });
-  it('刚好等满预算 → timeout，nextRunAt=null', () => {
-    const payload = { device_busy_attempts: 3, device_busy: { first_at: new Date(NOW - 30 * MIN).toISOString() } };
-    const p = planDeviceBusy({ payload, marker, timeoutSec: 1800, now: NOW });
-    expect(p).toMatchObject({ action: 'timeout', attempts: 4, nextRunAt: null });
+  it('执行超时不参与：timeout_sec=1800 的任务排队 40 分钟仍回队', () => {
+    const payload = { timeout_sec: 1800, device_busy_attempts: 8, device_busy: { first_at: iso(NOW - 40 * MIN) } };
+    expect(planDeviceBusy({ payload, marker, timeoutSec: 1800, now: NOW }).action).toBe('requeue');
   });
-  it('expires_at 已过 → timeout；未过 → requeue；非法时间忽略', () => {
-    expect(planDeviceBusy({ payload: { expires_at: new Date(NOW - 1).toISOString() }, marker, timeoutSec: 1800, now: NOW }).action).toBe('timeout');
-    expect(planDeviceBusy({ payload: { expires_at: new Date(NOW + MIN).toISOString() }, marker, timeoutSec: 1800, now: NOW }).action).toBe('requeue');
-    expect(planDeviceBusy({ payload: { expires_at: 'garbage' }, marker, timeoutSec: 1800, now: NOW }).action).toBe('requeue');
+  it('有 payload.expires_at → 按它（优先于 due_at）：未过 requeue，已过 expired', () => {
+    const due = iso(NOW + 10 * 60 * MIN);
+    const a = planDeviceBusy({ payload: { expires_at: iso(NOW + MIN) }, dueAt: due, marker, now: NOW });
+    expect(a).toMatchObject({ action: 'requeue', deadlineSource: 'expires_at', deadlineAt: iso(NOW + MIN) });
+    const b = planDeviceBusy({ payload: { expires_at: iso(NOW - 1) }, dueAt: due, marker, now: NOW });
+    expect(b).toMatchObject({ action: 'expired', deadlineSource: 'expires_at' });
+  });
+  it('无 expires_at、有 due_at（中文「预期结束时间」）→ 按它，哪怕超过 24 小时', () => {
+    const payload = { device_busy: { first_at: iso(NOW - 30 * 60 * MIN) } };
+    const a = planDeviceBusy({ payload, dueAt: new Date(NOW + MIN), marker, now: NOW });
+    expect(a).toMatchObject({ action: 'requeue', deadlineSource: 'due_at', deadlineAt: iso(NOW + MIN) });
+    const b = planDeviceBusy({ payload: {}, dueAt: iso(NOW - MIN), marker, now: NOW });
+    expect(b).toMatchObject({ action: 'expired', deadlineSource: 'due_at' });
+  });
+  it('due_at 不晚于排期开始时间（存量行把「预期开始时间」误落 due_at）→ 不当截止，走 24 小时默认', () => {
+    const start = iso(NOW - 60 * MIN);
+    const p = planDeviceBusy({ payload: { scheduled_start: start }, dueAt: start, marker, now: NOW });
+    expect(p).toMatchObject({ action: 'requeue', deadlineSource: 'default_24h' });
+  });
+  it('非法时间忽略', () => {
+    const p = planDeviceBusy({ payload: { expires_at: 'garbage' }, dueAt: 'nope', marker, now: NOW });
+    expect(p).toMatchObject({ action: 'requeue', deadlineSource: 'default_24h' });
   });
 });
 
 describe('requeueForDeviceBusy', () => {
   it('CAS in_progress、payload 删 run_id 后合并、返回是否命中', async () => {
-    const plan = planDeviceBusy({ payload: {}, marker: { owner: 'o', serial: 's' }, timeoutSec: 1800, now: NOW });
+    const plan = planDeviceBusy({ payload: {}, marker: { owner: 'o', serial: 's' }, now: NOW });
     const pool = { query: vi.fn().mockResolvedValue({ rowCount: 1 }) };
     await expect(requeueForDeviceBusy(pool, 't1', plan, 'run-1')).resolves.toBe(true);
     const [sql, params] = pool.query.mock.calls[0];
