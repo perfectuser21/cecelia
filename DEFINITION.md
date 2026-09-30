@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.348.0
+**Brain 版本**: 1.348.4
 
 ## 1.283.0
 
@@ -48,6 +48,35 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.348.4 — 地图翻色扩到 step/enabler 级格子：探针 target 回执落子格 + 活动格向上汇总（任务 45e5db42，决策 3e867cad）
+
+- `lib/business-probe-judge.js`：查探针时带出 `step_probes.target_type/target_id` 与活动格 `step_id`；`target_type=step|enabler` 的探针经一次批量查询解析到 journey 下对应的 `step:<key>` / `enabler:<key>` 格（`cell_level` + `step_id_ref`/`enabler_id` 匹配），回执 `journeyStepLinkId/assertionRevision` 与 `cell_status` 翻色都落子格；journey 没生成对应子格 → 退回活动格，判定不丢。
+- 活动格颜色 = 自身探针本轮状态 ∪ 其下全部 step/enabler 格当前颜色的最坏值（red > pending > green，gray 不参与）；先翻子格再汇总活动格，子格上一轮留下的红会拖红活动直到该子格被重判。生产 `coll_rescan_rate`（归位兜底重搜率，迁移 496 已挂 step `keyword_acquisition.collection.return_to_results`）从此翻 `step:…return_to_results` 格并把「采集」活动一起翻色。
+- 纯活动级探针（target_type=activity / 老行）不发子格解析查询，行为与从前一致；`state-resolver` 不改（总图页读 `journey_step_links.cell_status`）。
+- 新 smoke `cell-color-step-level-smoke.sh`（mock pool 不连库：step 翻色 / 活动汇总 / 退回活动格 / 纯活动级不查子格）登记 allowlist；单测 6 条新用例（红→绿）。
+
+## Brain 1.348.3 — 外部 run 镜像类型改从注册表派生（修 #5729 触发的 task-type-registry 守卫红）
+
+- `lib/external-mirror-liveness.js`：`EXTERNAL_RUN_MIRROR_*_TASK_TYPES` 从 TASK_TYPE_REGISTRY 派生（workflow+external+watchdog=none → workflow_run；surface=device → device_job），判龄 SQL IN 列表由派生集合拼出，不再手抄类型名（铁律 76cb816c）；单测钉合集恰为两者，注册表漂移即红
+- `task-type-registry.guard.test.js` 豁免清单 executor.js `_TASK_ROUTES` 行号 2330→2339（#5729 在其上方加了 import 与账本声明）
+- 补 #5729 的 handoff 镜像 `docs/handoffs/202609302240-0004aceb.md`
+
+## Brain 1.348.2 — 外部 run 镜像不再被 liveness 探针零证据回队（任务 0004aceb，决策 3c98fb36 阶段1）
+
+- `executor.probeTaskLiveness`：workflow_run / device_job（payload.source=cron）镜像单豁免 `no_spawn_evidence` 安全回队（09-30 实证 1e84cbad 五次被 watchdog_headed_requeue 回队并清 started_at，与 wall-report 阶段回执振荡；lost-deadline 4.5h 永远算不到、commander-watchdog 起跑判据被重置）
+- 活性改看镜像心跳，年龄在 SQL 内算（`lib/external-mirror-liveness.js` EXTERNAL_ACTIVITY_AGE_SQL：task_runs 阶段回执 / payload.commander_heartbeat_at / executed_at / updated_at / started_at 最新者；tasks.*_at 是无时区列，JS 解析会漂 8 小时）；超 30 分钟（env EXTERNAL_HEARTBEAT_STALE_MS）只记 task_events `external_liveness_stale`（每陈旧窗口一次），不回队、不清 started_at，出路归 workflow-run-lost-deadline / commander-watchdog
+- 既有行为不动：领单器 device_job（非 cron）认领超龄仍走 0923 回队；headed_manual dev 任务零证据仍安全回队（铁律 9f14c074）
+- 回归：`external-run-mirror-liveness.test.js`（6 例）+ `external-mirror-liveness.pg.integration.test.js`（真库钉判龄 SQL 5 例）
+
+## Brain 1.348.1 — 价值流建模⑤：探针挂点 target + 格子扩到 step/enabler 级 + GET /steps、/enablers + golden_path* 退役标注（决策 3e867cad 第 11/13 张表 / f425e3fd）
+
+- 迁移 496：`step_probes` 加 `target_type`(activity|step|enabler) / `target_id`，`journey_step_link_id` 保留（活动格照绑，翻色仍活动级）；既有 18 条探针回填 target_type=activity、target_id=活动格的 step_id，`coll_rescan_rate`（兜底重搜触发率）改挂 step `keyword_acquisition.collection.return_to_results`。任务 741cdf5a。
+- `journey_step_links` 三级格子：`cell_level`(默认 activity) / `step_id_ref`→steps / `enabler_id`→enablers；按 `steps` 给智能获客价值流 44 个 step 各生成一格 `step:<key>`（gray，挂所属活动），按 `enabler_calls` 给每个被调用的 enabler 生成一格 `enabler:<key>`（挂最早调用它的活动）；ON CONFLICT DO NOTHING 重放不覆盖颜色。state-resolver 翻色逻辑不变（step 级翻色留后续）。
+- 探针规范 `step-probe-spec.js` 认可选 `target: {type, key}`（缺省不进 spec、既有哈希不变）；`POST /api/brain/step-probes` 持久化 `target_type`/`target_id`（成对校验；不给则库侧缺省 activity + 格子 step_id）；`scripts/sync-step-probes.mjs` 经 `GET /steps?key=` / `GET /enablers?key=` 解析 target_id，查不到报错退出，journey 下已有 `step:<key>` / `enabler:<key>` 格子时额外绑 assertion_ref。
+- 新只读 API `GET /api/brain/steps`（key / activity_id / active=all）与 `GET /api/brain/enablers`（key / active=all）。
+- golden_path / golden_paths / golden_path_contract_versions：仓库仍有 74 处活引用（harness-judge / handoff / acceptance / abilities / golden-paths 路由等），本迁移不 RENAME 不 DROP 一行不动，只挂退役注释；Notion 投影无新表/视图不登记。
+- 新 smoke `probe-targets-cells-smoke.sh`（迁移/回滚结构 + 接线 + 可选真库），回滚 `rollback/496_probe_targets_cells_levels.down.sql`。
 
 ## Brain 1.348.0 — 价值流建模④：spans 表 + task_runs.workflow_id + activity_flow_metrics 视图 + POST/GET /api/brain/spans（迁移 495，任务 ec643d60，决策 3e867cad 第 9-10 张表）
 
