@@ -73,6 +73,9 @@ COPY scripts/lib/test-contract-paths.cjs ./scripts/lib/
 COPY scripts/extract-contract-e2e.cjs ./scripts/
 # skill 分发漂移 job（skill-dist-drift.js）经 ssh 把这份清单脚本送到目标机执行；SSOT 在 repo 根 scripts/。
 COPY scripts/skill-manifest.sh ./scripts/
+# steps 投影 sync（#5705）：仓库 step-dod.json → Brain steps 表，走 DB_DEFAULTS 直连，只能在容器内跑；
+# 09-30 上产靠手工 docker cp 进容器（任务 b2bba893），进镜像后 docker exec 直接可用。
+COPY packages/brain/scripts/sync-steps-from-workspace.mjs ./scripts/
 COPY packages/brain/config/ ./config/
 COPY packages/brain/migrations/ ./migrations/
 COPY packages/brain/package.json ./
