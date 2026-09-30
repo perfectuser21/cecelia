@@ -428,12 +428,12 @@ describe('handleRunFinished — step/enabler 级格子翻色 + 活动格向上�
   const enablerCell = { id: ENABLER_LINK, journey_id: JOURNEY, step_id: ACT_STEP, cell_level: 'enabler', step_id_ref: null, enabler_id: ENABLER_ID, assertion_revision: 1, cell_status: 'gray' };
 
   const stepProbe = (key, expect_, overrides = {}) => spec(key, expect_, {
-    stage: 'collection', target_type: 'step', target_id: STEP_ID, activity_step_id: ACT_STEP, assertion_revision: 2,
+    stage: 'collection', journey_id: JOURNEY, target_type: 'step', target_id: STEP_ID, activity_step_id: ACT_STEP, assertion_revision: 2,
     spec: { key, stage: 'collection', probe: { kind: 'metric' }, expect: expect_, severity: 'error' },
     ...overrides,
   });
   const activityProbe = (key, expect_, overrides = {}) => spec(key, expect_, {
-    stage: 'collection', target_type: 'activity', target_id: ACT_STEP, activity_step_id: ACT_STEP, assertion_revision: 2,
+    stage: 'collection', journey_id: JOURNEY, target_type: 'activity', target_id: ACT_STEP, activity_step_id: ACT_STEP, assertion_revision: 2,
     spec: { key, stage: 'collection', probe: { kind: 'sql' }, expect: expect_, severity: 'error' },
     ...overrides,
   });
@@ -500,7 +500,7 @@ describe('handleRunFinished — step/enabler 级格子翻色 + 活动格向上�
 
   it('只有活动级探针（target_type=activity / 老行无 target）→ 不发子格解析查询，行为与从前一致', async () => {
     const { pool, calls } = poolWithCells({
-      probes: [activityProbe('coll_count', { op: '>=', value: 1 }), spec('legacy', { op: '>=', value: 1 }, { stage: 'collection', activity_step_id: ACT_STEP })],
+      probes: [activityProbe('coll_count', { op: '>=', value: 1 }), spec('legacy', { op: '>=', value: 1 }, { stage: 'collection', journey_id: JOURNEY, activity_step_id: ACT_STEP })],
       cells: [activityCell],
     });
     const out = await handleRunFinished(run({ coll_count: { observed: 4 }, legacy: { observed: 1 } }), { pool, persist: okPersist() });
