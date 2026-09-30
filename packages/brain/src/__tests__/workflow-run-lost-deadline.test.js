@@ -163,6 +163,7 @@ describe('runWorkflowRunLostDeadline', () => {
         { ...STALE_MIRROR, id: 'task-ssh-err', payload: { serial: 'ANGYVB4402004137', source: 'cron' } },
         { ...STALE_MIRROR, id: 'task-unknown-host', payload: { serial: 'S-NOWHERE', source: 'cron', host: 'mars-pc', profile: 'p' } },
       ],
+      runs: [{ task_id: 'task-ssh-err', run_id: 'social-keyword-leadgen-crontab-cmd09300201__a1.discovery' }],
       phones: { ANGYVB4402004137: { host: 'xian-m4', profile: 'legacy' } },
     });
     const execFileFn = vi.fn((cmd, args, opts, cb) => cb(Object.assign(new Error('ssh: connect timed out'), { stderr: 'timeout' })));
@@ -175,7 +176,7 @@ describe('runWorkflowRunLostDeadline', () => {
     // 第二条：机器不在注册表 → 善后整体跳过仍判 lost
     const upd2 = pool.calls.find((c) => /UPDATE tasks/.test(c.sql) && c.params?.[0] === 'task-unknown-host');
     expect(upd2.sql).toContain("status = 'failed'");
-    expect(upd2.params.join('\n')).toContain('"skipped"');
+    expect(upd2.params.join('\n')).toContain('unknown_machine:mars-pc');
   });
 
   it('workflow_run（Notion ssh 直派）到期同样判 lost：machine 取 payload，缺 serial/profile 时跳过放锁只记录', async () => {
@@ -196,8 +197,10 @@ describe('runWorkflowRunLostDeadline', () => {
 
   it('进程内 5min 自 gate：连续两次只跑一次', async () => {
     const pool = makePool({ stale: [] });
-    const a = await runWorkflowRunLostDeadline(pool, { execFileFn: vi.fn(), now: 1_000_000, gateMs: 300_000 });
-    const b = await runWorkflowRunLostDeadline(pool, { execFileFn: vi.fn(), now: 1_060_000, gateMs: 300_000 });
+    // 模块级 lastRunAt 跨用例保留：取远大于此前用例的时刻，才是"本用例第一次跑"
+    const t0 = Date.now() + 24 * 3600 * 1000;
+    const a = await runWorkflowRunLostDeadline(pool, { execFileFn: vi.fn(), now: t0, gateMs: 300_000 });
+    const b = await runWorkflowRunLostDeadline(pool, { execFileFn: vi.fn(), now: t0 + 60_000, gateMs: 300_000 });
     expect(a.skipped).toBeUndefined();
     expect(b.skipped).toBe('interval_gate');
   });

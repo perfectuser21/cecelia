@@ -160,12 +160,17 @@ const PROBE_TAIL = `AND sp.active = true
         ORDER BY sp.probe_key`;
 
 /**
- * 无锚兜底的 workflow 来源：result.workflow 优先；否则从 run_id 解析。
+ * 无锚兜底的 workflow 来源：result.workflow → task payload 能力名（hints.wf_id/capability/cap）→ 从 run_id 解析。
  * zenithjoy workflow-result.sh 生成的 run_id 形如 `<workflow>-crontab-<TAG>__a<N>.<stage>`
  * （如 social-keyword-leadgen-crontab-auto09270600__a1.delivery）。
  */
-export function resolveWorkflow(runId, result) {
+export function resolveWorkflow(runId, result, hints = {}) {
   if (typeof result?.workflow === 'string' && result.workflow.trim()) return result.workflow.trim();
+  // 任务 payload 能力名优先（任务 c2d73868）：对标 run 的账本 run_id 前缀写死 social-keyword-leadgen-crontab-，
+  // 只认前缀会把对标 run 错归到关键词获客；wf_id / capability / cap 任一有值即以它为准。
+  for (const k of ['wf_id', 'capability', 'cap']) {
+    if (typeof hints?.[k] === 'string' && hints[k].trim()) return hints[k].trim();
+  }
   const id = String(runId ?? '');
   const idx = id.indexOf('-crontab-');
   if (idx <= 0) return null;
@@ -222,11 +227,14 @@ export async function handleRunFinished(payload = {}, deps = {}) {
     const persist = deps.persist ?? persistBusinessProbeReceipt;
 
     const anchor = await pool.query(
-      `SELECT payload->'anchor'->>'journey_id' AS journey_id FROM tasks WHERE id = $1`,
+      `SELECT payload->'anchor'->>'journey_id' AS journey_id,
+              payload->>'wf_id' AS wf_id, payload->>'capability' AS capability, payload->>'cap' AS cap
+         FROM tasks WHERE id = $1`,
       [taskId],
     );
-    const journeyId = anchor?.rows?.[0]?.journey_id || null;
-    const workflow = journeyId ? null : resolveWorkflow(runId, result);
+    const taskRow = anchor?.rows?.[0] ?? {};
+    const journeyId = taskRow.journey_id || null;
+    const workflow = journeyId ? null : resolveWorkflow(runId, result, taskRow);
     if (!journeyId && !workflow) return { skipped: 'no_anchor_no_workflow' };
 
     const specs = await loadSpecs(pool, { journeyId, workflow, stage });
