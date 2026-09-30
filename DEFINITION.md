@@ -8,7 +8,7 @@
 
 
 
-**Brain 版本**: 1.344.4
+**Brain 版本**: 1.344.7
 
 ## 1.283.0
 
@@ -48,6 +48,24 @@
 - 人工列（`Stage`/`Owner`/`Note`/`Priority`/`Starred`）一律不推——`Stage` 正是推翻自动判定的地方
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
+
+## Brain 1.344.7 — Skill 台账投影 PR1b：skill_registry 新列推到 Notion（列级分权）
+
+- 新 job skill-registry-projection（取代 notion-push-sync.pushSkillRegistry）：2min 自 gate + advisory lock，每轮最多 25 行；Notion Skill Registry 补建 13 列（已装平台/存在性/最后扫描/原件路径/分配Agent/评测分/不一致副本数 + 人管的目标平台/转OpenClaw难度/业务线/负责人/分类/备注），改掉「🔒只读镜子」库描述。任务 47def5bb，决策 19391396 / 9088e075（快路）。
+- 列账按列 id 认列：人改列名照写、人删列永不补建、人改列类型跳过该列；机器列单向覆盖，人管列三方基线合并（人在 Notion 改过的不覆盖，判定点 24736022）。
+- 建页前按标题查重认领（修 09-28 重复建页），普通 400 指数退避不再清 notion_id，404 才解绑重建；每日归档机器人建的孤儿页。
+
+## Brain 1.344.6 — 秋米 agent 不再见执行参数块自派子会话；yield 收尾不判完成
+
+- openclaw-agent-executor.js promptOf：正文带已应用的执行参数块时，prompt 顶部声明「执行参数已由 Brain 应用：你就是 <agent>，本次模型 <model>，超时 <N> 分钟。直接在本会话完成任务，不要 sessions_spawn 子会话，不要 sessions_yield 等待。」并摘掉参数块（验收/设备要求转述保留）；无参数块时 prompt 逐字不变。
+- reapOpenclawAgentRuns：exit 0 但日志显示 `yielded: true`，或无最终文本且 `result.payloads` 为空 → failed(agent_yielded_without_result)，result 留 receipt + yield_summary（子会话键），不自动重排。修 09-29 任务 55c2e84b 空报告被收割为完成、真机活在追踪外跑完。
+
+## Brain 1.344.5 — Skill 台账投影 PR1a：三平台 skill 扫描入账 + A6 改比名单
+
+- 迁移 491：skill_registry 加机器列（已装平台/在不在/原件/副本/分配 agent/正文/tier 建议）、人管列（目标平台/转 OpenClaw 难度/业务线/负责人/分类/备注）、推送基线列；去 `openclaw/` 前缀（先固定派发命令）；投影注册表 Skill Registry 改入口面 both（列级分权，同 Tasks）。决策 19391396 / 4b1da4ca，任务 47def5bb，F5 指挥舱 f20ec1cb。
+- 新 job skill-inventory-sync（2h）：经 ssh mmv 送自包含 node 采集程序，扫 ~/.claude/skills、OpenClaw 各 agent 实际加载、~/.agents/skills、zenithjoy-skills 仓库；探不到≠零个，来源不全/熔断不判缺席，缺席满 24h 才 gone，断链即 broken；人管列与 status 不碰。
+- A6 skill 账本一致性改比名单：ops_skills 引用的 skill 必须在账且在用、派发绑定行不得下线/断链；扫描未成功降级。
+- /api/brain/skills POST/PATCH 冲突改合并，不再冲掉 notion_id/status/推送指纹。
 
 ## Brain 1.344.4 — P1/P2 告警汇总不再私信主理人（决策 d3e7746c）
 
