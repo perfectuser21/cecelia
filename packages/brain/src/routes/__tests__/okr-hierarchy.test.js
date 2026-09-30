@@ -106,38 +106,6 @@ describe('GET /kr/:id/ability-progress (T6 两轴对账)', () => {
   });
 });
 
-describe('mountCrud(/projects) — 迁到 projects 真身表，titleField=name（棒1，决策 ee4842a6/3feeae3e）', () => {
-  beforeEach(() => mockPool.query.mockReset());
-
-  it('POST /projects：缺 name（而非 title）→ 400', async () => {
-    const handler = getHandler('post', '/projects');
-    const { req, res } = mockReqRes({ title: '不该认这个字段' }, {});
-    await handler(req, res);
-    expect(res._status).toBe(400);
-    expect(res._data.error).toContain('name');
-    expect(mockPool.query).not.toHaveBeenCalled();
-  });
-
-  it('POST /projects：带 name → INSERT INTO projects (name...)', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'p1', name: '新项目' }] });
-    const handler = getHandler('post', '/projects');
-    const { req, res } = mockReqRes({ name: '新项目', kr_id: 'kr-1' }, {});
-    await handler(req, res);
-    expect(res._status).toBe(201);
-    const [sql, values] = mockPool.query.mock.calls[0];
-    expect(sql).toContain('INSERT INTO projects');
-    expect(sql).toContain('name');
-    expect(values).toContain('新项目');
-  });
-
-  it('PATCH /projects/:id：name 字段（titleField）写进 name 列', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'p1', name: 'Updated' }] });
-    const handler = getHandler('patch', '/projects/:id');
-    const { req, res } = mockReqRes({ name: 'Updated' }, { id: 'p1' });
-    await handler(req, res);
-    expect(res._status).toBe(200);
-    const [sql] = mockPool.query.mock.calls[0];
-    expect(sql).toContain('UPDATE projects');
-    expect(sql).toContain('name = $1');
-  });
-});
+// mountCrud(/projects) 曾计划改指向 projects 表（titleField=name），brain-integration 真库实测
+// 发现 okr_scopes/okr_initiatives 仍 FK 指向 okr_projects，改指向会导致 POST /scopes 全部
+// 23503；已改回 okr_projects（不变），故不再需要 name 列相关用例——见 okr-hierarchy.js 顶部注释。

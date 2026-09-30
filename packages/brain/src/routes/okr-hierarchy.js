@@ -22,12 +22,8 @@ const router = Router();
  * @param {string} prefix - 路由前缀（如 '/visions'）
  * @param {string} table - 表名（如 'visions'）
  * @param {string|null} parentField - 父级外键字段名（如 'vision_id'），可为 null
- * @param {{titleField?: string}} [opts] - titleField：请求体里的"标题"字段映射到哪个 DB 列，
- *   默认 'title'。/projects 挂 'projects' 表时该表真实列名是 'name'（棒1，决策 ee4842a6/3feeae3e），
- *   传 titleField:'name' 让 POST/PATCH 请求体字段名也用 'name'，直接写进同名列。
  */
-function mountCrud(r, prefix, table, parentField, opts = {}) {
-  const titleField = opts.titleField || 'title';
+function mountCrud(r, prefix, table, parentField) {
   // GET /prefix - 列表
   r.get(prefix, async (req, res) => {
     try {
@@ -81,11 +77,11 @@ function mountCrud(r, prefix, table, parentField, opts = {}) {
   // POST /prefix - 创建
   r.post(prefix, async (req, res) => {
     try {
-      const titleValue = req.body[titleField];
-      if (!titleValue) return res.status(400).json({ success: false, error: `${titleField} is required` });
+      const { title } = req.body;
+      if (!title) return res.status(400).json({ success: false, error: 'title is required' });
 
       const allowed = [
-        titleField, 'status', 'area_id', 'owner_role', 'start_date', 'end_date',
+        'title', 'status', 'area_id', 'owner_role', 'start_date', 'end_date',
         'metadata', 'custom_props', 'target_value', 'current_value', 'unit',
       ];
       if (parentField) allowed.push(parentField);
@@ -115,7 +111,7 @@ function mountCrud(r, prefix, table, parentField, opts = {}) {
     try {
       const { id } = req.params;
       const allowed = [
-        titleField, 'status', 'area_id', 'owner_role', 'start_date', 'end_date',
+        'title', 'status', 'area_id', 'owner_role', 'start_date', 'end_date',
         'metadata', 'custom_props', 'target_value', 'current_value', 'unit',
       ];
       if (parentField) allowed.push(parentField);
@@ -162,10 +158,15 @@ function mountCrud(r, prefix, table, parentField, opts = {}) {
 mountCrud(router, '/visions', 'visions', null);
 mountCrud(router, '/objectives', 'objectives', 'vision_id');
 mountCrud(router, '/key-results', 'key_results', 'objective_id');
-// 棒1（决策 ee4842a6/3feeae3e）：/api/brain/okr/projects 迁到 projects 真身表（titleField='name'，
-// 该表真实列名不是 title），与 /api/brain/projects（routes/task-projects.js）读写同一张表。
-// okr_projects 表本身保留不动，28 个直接读它的文件的退役是后续棒的工作。
-mountCrud(router, '/projects', 'projects', 'kr_id', { titleField: 'name' });
+// 棒1（决策 ee4842a6/3feeae3e）：原计划把这个 mount 也指向 projects 真身表，与
+// /api/brain/projects（routes/task-projects.js）"同源"；brain-integration CI 实测（真库）
+// 发现行不通——okr_scopes.project_id / okr_initiatives.project_id 的外键仍指向
+// okr_projects(id)，指向 projects 表会导致后续 POST /scopes、/initiatives 全部
+// FK 违反（23503）。okr_scopes/okr_initiatives 退役是棒4 的工作，在那之前
+// /api/brain/okr/projects 必须继续写 okr_projects，才能保住这条链完整。
+// projects 表这边由 migration 497 做过一次性同 id 搬家，/api/brain/projects
+// （routes/task-projects.js）独立读写 projects，两边不再"同源"，靠 id 相同对齐。
+mountCrud(router, '/projects', 'okr_projects', 'kr_id');
 mountCrud(router, '/scopes', 'okr_scopes', 'project_id');
 mountCrud(router, '/initiatives', 'okr_initiatives', 'scope_id');
 

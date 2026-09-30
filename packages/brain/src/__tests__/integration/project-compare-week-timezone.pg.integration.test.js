@@ -15,10 +15,14 @@ import { afterAll, describe, expect, it } from 'vitest';
 import pool from '../../db.js';
 
 const created = [];
+const createdProjects = [];
 
 afterAll(async () => {
   if (created.length) {
     await pool.query('DELETE FROM tasks WHERE id = ANY($1::uuid[])', [created]);
+  }
+  if (createdProjects.length) {
+    await pool.query('DELETE FROM projects WHERE id = ANY($1::uuid[])', [createdProjects]);
   }
   await pool.end().catch(() => {});
 });
@@ -27,6 +31,9 @@ describe('project-compare.js 按周趋势统计 — completed_at 必须先::time
   it('UTC 6-14 20:00（=北京 6-15 04:00）必须分进北京 6-15 所在的那一周，不是 UTC 6-14 那一周', async () => {
     const id = randomUUID();
     const projectId = randomUUID();
+    // tasks.project_id 外键指向 projects（棒1，迁移 497 重接），先建一行占位项目
+    await pool.query(`INSERT INTO projects (id, name) VALUES ($1, $2)`, [projectId, `week-timezone test project ${projectId}`]);
+    createdProjects.push(projectId);
     // UTC 周日 20:00 = 北京周一 04:00 —— ISO 周边界值，方向反了会分错周
     const completedAtUtc = new Date('2026-06-14T20:00:00.000Z');
 

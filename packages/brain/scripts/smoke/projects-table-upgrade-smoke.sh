@@ -47,13 +47,10 @@ if (!/app\.use\('\/api\/brain\/okr', okrHierarchyRoutes\)/.test(s)) {
   console.error('FAIL server.js 未挂载 okrHierarchyRoutes 到 /api/brain/okr'); process.exit(1);
 }
 const routes = readFileSync('src/routes/task-projects.js', 'utf8');
+if (!/FROM projects/.test(routes)) { console.error('FAIL task-projects.js 未读 projects 表'); process.exit(1); }
 if (!/router\.post\('\/', async/.test(routes)) { console.error('FAIL task-projects.js 缺 POST /'); process.exit(1); }
 if (!/kr_id_not_key_result/.test(routes)) { console.error('FAIL task-projects.js 缺 kr_id_not_key_result 校验'); process.exit(1); }
-const hierarchy = readFileSync('src/routes/okr-hierarchy.js', 'utf8');
-if (!/mountCrud\(router, '\/projects', 'projects', 'kr_id', \{ titleField: 'name' \}\)/.test(hierarchy)) {
-  console.error('FAIL okr-hierarchy.js /projects 未指向 projects 表（titleField=name）'); process.exit(1);
-}
-console.log('路由已挂载且指向 projects 表 ✓');
+console.log('路由已挂载且 /api/brain/projects 指向 projects 表 ✓（/api/brain/okr/projects 仍是 okr_projects，见 okr-hierarchy.js 注释）');
 "
 
 echo "[projects-table-upgrade-smoke] 3. 真库集成（可选）"
