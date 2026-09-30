@@ -12,6 +12,7 @@
 
 import { Router } from 'express';
 import pool from '../db.js';
+import projectLocateRoutes from './project-locate-routes.js';
 
 const router = Router();
 
@@ -215,6 +216,11 @@ router.post('/compare/report/push-notion', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// POST /locate + POST /:id/tasks（棒3，任务 8a40825a）：独立文件，见 project-locate-routes.js
+// 顶部注释——本文件（task-projects.js）快撞 500 行拆分线，新增路由不再堆这里。
+// 挂载在 /:id 之前，否则 "locate" 会被 GET/PATCH /:id 当作 UUID 拦截。
+router.use('/', projectLocateRoutes);
 
 // GET /projects/:id — 获取单个 project（title 兼容旧读方；附 children_count/completed_count）
 router.get('/:id', async (req, res) => {

@@ -360,3 +360,4 @@ vs-model-spans-smoke.sh
 probe-targets-cells-smoke.sh
 projects-table-upgrade-smoke.sh
 cell-color-step-level-smoke.sh
+project-locate-smoke.sh
