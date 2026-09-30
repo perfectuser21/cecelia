@@ -7,6 +7,10 @@
  * 与 expected（spec.expect.value 或 expect.ref → result.metrics.<k>）→ 写 journey_assertion_receipts
  * （executor_kind=business_probe_runner）→ UPDATE journey_step_links.cell_status 翻色。
  *
+ * 三级格子（迁移 496，任务 45e5db42，决策 3e867cad）：探针 target_type=step|enabler 时回执与翻色落到
+ * journey 下对应的 step:<key> / enabler:<key> 格（没有子格则退回活动格）；活动格颜色 = 自身探针 ∪
+ * 其下 step/enabler 格的最坏值（red > pending > green，gray 不参与）。
+ *
  * 分层：judgeProbes / cellStatusFor / normalizeProbes / aggregateCellStatus 纯逻辑不碰 DB；
  * handleRunFinished 走注入 pool（默认 db.js）。全程 fail-open：任何异常只 warn，永不拖垮 finishRun。
  *
@@ -153,9 +157,74 @@ async function resolvePool(deps) {
 }
 
 const PROBE_SELECT = `SELECT sp.probe_key, sp.stage, sp.severity, sp.spec, sp.spec_hash,
-              jsl.id AS journey_step_link_id, jsl.assertion_revision, jsl.journey_id
+              sp.target_type, sp.target_id,
+              jsl.id AS journey_step_link_id, jsl.assertion_revision, jsl.journey_id,
+              jsl.step_id AS activity_step_id
          FROM step_probes sp
          JOIN journey_step_links jsl ON jsl.id = sp.journey_step_link_id`;
+
+const CHILD_LEVELS = Object.freeze(['step', 'enabler']);
+
+/**
+ * 子格解析（迁移 496 三级格子，任务 45e5db42）：探针 target_type=step|enabler 时，回执与翻色落到
+ * journey 下对应的 step:<key> / enabler:<key> 格（step_id_ref / enabler_id 匹配），而不是活动格。
+ * 没有对应子格（journey 没生成 / 老探针）→ 退回活动格，判定不丢。
+ * @returns {Map<string, {id, assertion_revision, journey_id, step_id}>} key = `${journey_id}:${level}:${target_id}`
+ */
+async function resolveChildCells(pool, specs) {
+  const journeys = new Set();
+  const stepIds = new Set();
+  const enablerIds = new Set();
+  for (const s of specs) {
+    if (!CHILD_LEVELS.includes(s.target_type) || !s.target_id || !s.journey_id) continue;
+    journeys.add(s.journey_id);
+    (s.target_type === 'step' ? stepIds : enablerIds).add(s.target_id);
+  }
+  const map = new Map();
+  if (journeys.size === 0) return map;
+  const r = await pool.query(
+    `SELECT id, journey_id, step_id, cell_level, step_id_ref, enabler_id, assertion_revision
+       FROM journey_step_links
+      WHERE journey_id = ANY($1::uuid[])
+        AND cell_level IN ('step', 'enabler')
+        AND (step_id_ref = ANY($2::uuid[]) OR enabler_id = ANY($3::uuid[]))`,
+    [[...journeys], [...stepIds], [...enablerIds]],
+  );
+  for (const row of r?.rows ?? []) {
+    const targetId = row.cell_level === 'step' ? row.step_id_ref : row.enabler_id;
+    map.set(`${row.journey_id}:${row.cell_level}:${targetId}`, row);
+  }
+  return map;
+}
+
+/** 探针落哪格：子格命中 → 子格（并记所属活动格做汇总）；否则活动格。 */
+function cellFor(row, childCells) {
+  const activity = {
+    linkId: row.journey_step_link_id, assertionRevision: row.assertion_revision,
+    journeyId: row.journey_id, activityStepId: row.activity_step_id ?? null, activityLinkId: row.journey_step_link_id,
+  };
+  if (!CHILD_LEVELS.includes(row.target_type) || !row.target_id) return activity;
+  const child = childCells.get(`${row.journey_id}:${row.target_type}:${row.target_id}`);
+  if (!child) return activity;
+  return { ...activity, linkId: child.id, assertionRevision: child.assertion_revision, isChild: true };
+}
+
+/**
+ * 活动格汇总（决策 3e867cad）：活动格颜色 = 自身探针本轮状态 ∪ 其下全部 step/enabler 格当前颜色的最坏值
+ * （red > pending > green；gray 不参与）。子格上一轮留下的红也会拖红活动，直到该子格被重判。
+ */
+async function rollupActivity(pool, { journeyId, activityStepId, ownStatuses }) {
+  const statuses = [...ownStatuses];
+  if (journeyId && activityStepId) {
+    const r = await pool.query(
+      `SELECT cell_status FROM journey_step_links
+        WHERE journey_id = $1 AND step_id = $2 AND cell_level IN ('step', 'enabler')`,
+      [journeyId, activityStepId],
+    );
+    for (const row of r?.rows ?? []) if (CELL_RANK[row.cell_status]) statuses.push(row.cell_status);
+  }
+  return statuses.length > 0 ? aggregateCellStatus(statuses) : null;
+}
 const PROBE_TAIL = `AND sp.active = true
         ORDER BY sp.probe_key`;
 
@@ -241,17 +310,20 @@ export async function handleRunFinished(payload = {}, deps = {}) {
     if (specs.length === 0) return { skipped: 'no_probes' };
 
     const verdicts = judgeProbes(specs, result);
+    const childCells = await resolveChildCells(pool, specs);
     const byLink = new Map();
+    const activities = new Map();
     const receipts = [];
     const skipped = [];
     for (let i = 0; i < specs.length; i += 1) {
       const row = specs[i];
       const v = verdicts[i];
+      const cell = cellFor(row, childCells);
       const evidence = { observed: v.observed, expected: v.expected, op: v.op, severity: v.severity };
       if (v.reason) evidence.reason = v.reason;
       const out = await persist(pool, {
-        journeyStepLinkId: row.journey_step_link_id,
-        assertionRevision: row.assertion_revision,
+        journeyStepLinkId: cell.linkId,
+        assertionRevision: cell.assertionRevision,
         probeKey: v.key,
         specHash: row.spec_hash,
         runId: String(runId),
@@ -267,20 +339,30 @@ export async function handleRunFinished(payload = {}, deps = {}) {
         key: v.key, verdict: v.verdict, reason: v.reason ?? null,
         receipt_id: out?.receipt?.id ?? null, persisted, skipped_reason: skippedReason,
       });
-      const list = byLink.get(row.journey_step_link_id) ?? [];
-      list.push(cellStatusFor(v.verdict, v.severity));
-      byLink.set(row.journey_step_link_id, list);
+      const status = cellStatusFor(v.verdict, v.severity);
+      const act = activities.get(cell.activityLinkId)
+        ?? { journeyId: cell.journeyId, activityStepId: cell.activityStepId, ownStatuses: [] };
+      if (cell.isChild) {
+        const list = byLink.get(cell.linkId) ?? [];
+        list.push(status);
+        byLink.set(cell.linkId, list);
+      } else {
+        act.ownStatuses.push(status);
+      }
+      activities.set(cell.activityLinkId, act);
     }
     const persistedCount = receipts.length - skipped.length;
 
     const cells = {};
-    for (const [linkId, statuses] of byLink) {
-      const status = aggregateCellStatus(statuses);
-      await pool.query(
-        `UPDATE journey_step_links SET cell_status = $1 WHERE id = $2`,
-        [status, linkId],
-      );
+    const paint = async (linkId, status) => {
+      await pool.query(`UPDATE journey_step_links SET cell_status = $1 WHERE id = $2`, [status, linkId]);
       cells[linkId] = status;
+    };
+    // 先翻子格（step/enabler），再汇总活动格：汇总读的是子格已更新后的颜色
+    for (const [linkId, statuses] of byLink) await paint(linkId, aggregateCellStatus(statuses));
+    for (const [activityLinkId, act] of activities) {
+      const status = await rollupActivity(pool, act);
+      if (status) await paint(activityLinkId, status);
     }
     const backfilled = workflow ? await backfillAnchor(pool, taskId, specs) : null;
     const via = journeyId ? 'anchor' : `workflow:${workflow}`;
