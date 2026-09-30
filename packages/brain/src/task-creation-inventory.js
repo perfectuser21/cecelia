@@ -31,11 +31,13 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'harness-initiative-patrol.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'intent.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'impact-contract/gap-dependencies.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'initiative-closer.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  // 棒4（决策 ee4842a6/3feeae3e）：scope/initiative 层退役，闭环检测清空为 no-op，不再建任务
+  { module: 'initiative-closer.js', source: 'child', creates_executable_task: false, migration_status: 'routed' },
   { module: 'learning.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'line-strategist-dispatch.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'nightly-tick.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
-  { module: 'okr-closer.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  // 棒4（决策 ee4842a6/3feeae3e）：scope/initiative/project 完成检测清空为 no-op，不再建任务
+  { module: 'okr-closer.js', source: 'child', creates_executable_task: false, migration_status: 'routed' },
   { module: 'okr-tick.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'orchestrator-chat.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'orchestrator/run.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
