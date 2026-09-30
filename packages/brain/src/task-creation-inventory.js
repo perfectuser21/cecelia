@@ -68,6 +68,8 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'routes/execution.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/golden-paths.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/harness.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
+  // 链 2afa6d69 棒3（任务 8a40825a）：POST /projects/:id/tasks 一步建单，与 task-tasks.js 同走 createRoutedTask。
+  { module: 'routes/project-locate-routes.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/task-tasks.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'routes/tasks.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   // 秋米路由（PR3）：判定为设备任务时派生 device_job 子任务。迁移 421 的回执不可变触发器

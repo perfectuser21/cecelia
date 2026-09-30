@@ -18,6 +18,9 @@ vi.mock('../../project-compare.js', () => ({
   generateCompareReport: mockGenerateCompareReport,
 }));
 
+// /locate 与 /:id/tasks（棒3，任务 8a40825a）的路由测试单独放在
+// routes/__tests__/project-locate-routes.test.js（配对新文件 routes/project-locate-routes.js）。
+
 // PATCH /:id/brief 动态 import 这个模块；DB 侧真实逻辑单测见
 // lib/__tests__/project-brief-apply.test.js，这里只验证路由接线。
 const mockApplyProjectBriefDelta = vi.hoisted(() => vi.fn());
@@ -47,6 +50,14 @@ describe('task-projects routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     app = createApp();
+  });
+
+  // 棒3（任务 8a40825a）：只验证 task-projects.js 把 project-locate-routes.js 正确挂到
+  // /:id 之前（不被 GET/PATCH /:id 的 :id 段吞掉）；打分/建单细节在 project-locate-routes.test.js。
+  it('POST /projects/locate 已挂载（未被 /:id 拦截）', async () => {
+    const res = await request(app).post('/projects/locate').send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('text is required');
   });
 
   describe('GET /projects', () => {
