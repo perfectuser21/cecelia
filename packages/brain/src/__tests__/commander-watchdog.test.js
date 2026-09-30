@@ -102,9 +102,15 @@ describe('buildEscortRelaunchRemote', () => {
 describe('runCommanderWatchdog', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  function sshStub(reply = '{"id": "esc-relaunched-1111"}') {
+  // 桩按远端命令分流：cron list --json 回 listJobs（默认空表），其余回 reply
+  function sshStub(reply = '{"id": "esc-relaunched-1111"}', listJobs = []) {
     const seen = [];
-    const fn = vi.fn((cmd, args, opts, cb) => { seen.push({ target: args[args.length - 2], remote: args[args.length - 1] }); cb(null, reply, ''); });
+    const fn = vi.fn((cmd, args, opts, cb) => {
+      const remote = args[args.length - 1];
+      seen.push({ target: args[args.length - 2], remote });
+      if (/cron list --json/.test(remote)) return cb(null, JSON.stringify({ jobs: listJobs }), '');
+      cb(null, reply, '');
+    });
     return { fn, seen };
   }
 
@@ -124,10 +130,11 @@ describe('runCommanderWatchdog', () => {
     const bark = vi.fn().mockResolvedValue(true);
     const out = await runCommanderWatchdog(pool, { execFileFn: ssh.fn, bark, gateMs: 0, now: Date.parse('2026-09-30T03:10:00Z') });
     expect(out.relaunched).toBe(1);
-    expect(ssh.seen).toHaveLength(2);
+    expect(ssh.seen).toHaveLength(3);
     expect(ssh.seen[0].target).toBe(GATEWAY);
-    expect(ssh.seen[0].remote).toContain('cron rm old-escort-id-0000');
-    expect(ssh.seen[1].remote).toContain("cron add --timeout 90000 --name 'escort-xian-m4-cmd09300200'");
+    expect(ssh.seen[0].remote).toBe('openclaw cron list --json');
+    expect(ssh.seen[1].remote).toContain('cron rm old-escort-id-0000');
+    expect(ssh.seen[2].remote).toContain("cron add --timeout 90000 --name 'escort-xian-m4-cmd09300200'");
     const upd = pool.calls.find((c) => /UPDATE tasks/.test(c.sql) && c.params[0] === 'task-run-1');
     const merged = JSON.parse(upd.params[1]);
     expect(merged).toMatchObject({ escort_id: 'esc-relaunched-1111', commander_relaunch_count: 1, commander_relaunched_at: '2026-09-30T03:10:00.000Z' });
@@ -168,8 +175,8 @@ describe('runCommanderWatchdog', () => {
     const ssh = sshStub();
     const out = await runCommanderWatchdog(pool, { execFileFn: ssh.fn, bark: vi.fn(), gateMs: 0 });
     expect(out.relaunched).toBe(1);
-    expect(ssh.seen[0].remote).toContain('cron rm esc-from-launch');
-    expect(ssh.seen[1].remote).toContain("--name 'escort-xian-m4-cmd09300222'");
+    expect(ssh.seen[1].remote).toContain('cron rm esc-from-launch');
+    expect(ssh.seen[2].remote).toContain("--name 'escort-xian-m4-cmd09300222'");
 
     const pool2 = makePool([
       [/FROM tasks[\s\S]*commander_heartbeat_at/, { rows: [{ ...bare, id: 'task-nohost', payload: { source: 'cron' } }] }],
@@ -182,6 +189,32 @@ describe('runCommanderWatchdog', () => {
     expect(ssh2.fn).not.toHaveBeenCalled();
     const ev = pool2.calls.find((c) => /INSERT INTO task_events/.test(c.sql));
     expect(ev.params[1]).toBe('commander_relaunch_skipped');
+  });
+
+  it('同名 escort 仍在 cron 表（wf-run 自带看门狗刚重拉过）→ 收养其 id 不再 add；连续收养 2 次心跳仍缺 → 转 rm+add', async () => {
+    const pool = makePool([
+      [/FROM tasks[\s\S]*commander_heartbeat_at/, { rows: [RUN] }],
+      [/UPDATE tasks/, (sql, params) => ({ rows: [{ id: params[0] }], rowCount: 1 })],
+    ]);
+    const ssh = sshStub(undefined, [{ id: 'esc-by-wfrun-77', name: 'escort-xian-m4-cmd09300200' }, { id: 'other', name: 'escort-xian-m1-cmd09300200' }]);
+    const out = await runCommanderWatchdog(pool, { execFileFn: ssh.fn, bark: vi.fn(), gateMs: 0 });
+    expect(out.adopted).toBe(1);
+    expect(out.relaunched).toBe(0);
+    expect(ssh.seen).toHaveLength(1);
+    const merged = JSON.parse(pool.calls.find((c) => /UPDATE tasks/.test(c.sql)).params[1]);
+    expect(merged).toMatchObject({ escort_id: 'esc-by-wfrun-77', commander_adopt_count: 1 });
+    expect(merged.commander_relaunch_count).toBeUndefined();
+    expect(pool.calls.find((c) => /INSERT INTO task_events/.test(c.sql)).params[1]).toBe('commander_adopted');
+
+    const pool2 = makePool([
+      [/FROM tasks[\s\S]*commander_heartbeat_at/, { rows: [{ ...RUN, payload: { ...RUN.payload, commander_adopt_count: 2, escort_id: 'esc-by-wfrun-77' } }] }],
+      [/UPDATE tasks/, (sql, params) => ({ rows: [{ id: params[0] }], rowCount: 1 })],
+    ]);
+    const ssh2 = sshStub(undefined, [{ id: 'esc-by-wfrun-77', name: 'escort-xian-m4-cmd09300200' }]);
+    const out2 = await runCommanderWatchdog(pool2, { execFileFn: ssh2.fn, bark: vi.fn(), gateMs: 0 });
+    expect(out2.relaunched).toBe(1);
+    expect(ssh2.seen.map((s) => s.remote.split(' ').slice(0, 3).join(' '))).toEqual(['openclaw cron rm', 'openclaw cron add']);
+    expect(ssh2.seen[0].remote).toContain('cron rm esc-by-wfrun-77');
   });
 
   it('ssh add 失败 / 回包无 id → 不改计数，不 Bark，留痕 commander_relaunch_failed', async () => {

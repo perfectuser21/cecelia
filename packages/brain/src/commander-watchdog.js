@@ -10,7 +10,8 @@
  *     命中写 payload.commander_heartbeat_at（+tag/host/serial/escort_name/escort_id，顺手补齐 lost 善后要的现场）。
  *     kind=launch（wf-launch 起跑瞬间）存 working_memory `commander_launch:<TAG>`，看门狗/心跳后续合并。
  *  2. 看门狗（runCommanderWatchdog，每轮调度，5min 自 gate）：在途 run 起跑 ≥15min 且心跳缺失/超 15min →
- *     ssh 网关（注册表 primary worker，openclaw CLI 在那）`openclaw cron rm <旧 escort>` + `cron add` 同名 escort，
+ *     ssh 网关（注册表 primary worker，openclaw CLI 在那）先 `cron list --json` 同名仍在表就收养其 id（与 wf-run.sh #2035
+ *     自带看门狗共存，连续收养 2 次仍无心跳才判死），否则 `openclaw cron rm <旧 escort>` + `cron add` 同名 escort，
  *     消息注明「接班：只读账本与日志接上，不重新发起」；新 id 回写 payload，计数 +1，task_events commander_relaunched。
  *     同一 run 接班计数 ≥3 → Bark 一次（payload.commander_bark_at）并停止再拉。失败只留痕并推后下次尝试。
  *  3. 趋势（runWorkflowTrendBark，北京 08:30–10:00 窗口、当日去重）：同一 wf 连续 2 个自然日零线索 → Bark；
@@ -28,6 +29,7 @@ import { deriveRunTag, workflowRunLabel } from './workflow-run-lost-deadline.js'
 
 export const DEFAULT_HEARTBEAT_STALE_MS = 15 * 60 * 1000;
 export const MAX_RELAUNCH = 3;
+export const MAX_ADOPT = 2;
 const DEFAULT_GATE_MS = 5 * 60 * 1000;
 const BATCH_LIMIT = 20;
 const SSH_TIMEOUT_MS = 45_000;
@@ -113,7 +115,7 @@ export async function recordCommanderHeartbeat(pool, body = {}, deps = {}) {
     tag, host: safeArg(body.host), serial, profile: safeArg(body.profile),
     escort_name: safeArg(body.escort_name), escort_id: safeArg(body.escort_id), cap: safeArg(body.cap),
   };
-  const patch = { commander_heartbeat_at: now };
+  const patch = { commander_heartbeat_at: now, commander_adopt_count: 0 };
   for (const [k, v] of Object.entries(fields)) if (v) patch[k] = v;
 
   let hit = tag ? await findRunByTag(pool, tag) : null;
@@ -189,10 +191,43 @@ async function resolveRelaunchContext(pool, task) {
   };
 }
 
+/** `openclaw cron list --json`（{jobs:[{id,name}]}）里按名整串全等找在表的 escort；读不到/格式不对 → null（不当"不存在"）。 */
+export function findEscortByName(listJson, name) {
+  try {
+    const parsed = typeof listJson === 'string' ? JSON.parse(listJson) : listJson;
+    const jobs = Array.isArray(parsed?.jobs) ? parsed.jobs : (Array.isArray(parsed) ? parsed : null);
+    if (!jobs) return null;
+    const hit = jobs.find((j) => j && j.name === name && typeof j.id === 'string');
+    return { found: Boolean(hit), id: hit?.id ?? null };
+  } catch { return null; }
+}
+
 async function relaunchEscort(pool, task, ctx, { execFileFn, now, bark }) {
   const gateway = gatewayTarget();
   if (!gateway) return { ok: false, error: 'gateway_not_dispatchable' };
-  const sshOpts = { timeout: SSH_TIMEOUT_MS, encoding: 'utf8', maxBuffer: 256 * 1024 };
+  const sshOpts = { timeout: SSH_TIMEOUT_MS, encoding: 'utf8', maxBuffer: 1024 * 1024 };
+  const name = `escort-${ctx.host}-${ctx.tag}`;
+  // 与 wf-run.sh 自己的看门狗（#2035，按 id 判 absent 才重拉）共存：同名 escort 仍在表就收养其 id、不再加一个
+  // （两个陪跑互相串线）；连续收养 2 次心跳仍不来 = 那个 escort 是死的，转入 rm+add。
+  const adoptCount = positiveInt(task.payload?.commander_adopt_count, 0);
+  if (adoptCount < MAX_ADOPT) {
+    let listed = null;
+    try {
+      listed = findEscortByName(await sshRun(execFileFn, [...SSH_BASE_ARGS, gateway, 'openclaw cron list --json'], sshOpts), name);
+    } catch (err) {
+      console.warn(`[cmdr-watchdog] cron list 读取失败（按不存在处理）: ${err.message}`);
+    }
+    if (listed?.found) {
+      const nowIso = new Date(now).toISOString();
+      await mergeTaskPayload(pool, task.id, {
+        escort_id: listed.id, escort_name: name, tag: ctx.tag, host: ctx.host,
+        commander_relaunched_at: nowIso, commander_adopt_count: adoptCount + 1,
+      });
+      await recordTaskEventSafe(pool, task.id, 'commander_adopted', { escort_id: listed.id, prev_escort_id: ctx.escortId ?? null, adopt_count: adoptCount + 1, tag: ctx.tag, host: ctx.host });
+      console.warn(`[cmdr-watchdog] ${task.id} 同名 escort 仍在表，收养 ${listed.id}（第 ${adoptCount + 1} 次，心跳仍缺）`);
+      return { ok: true, adopted: true, id: listed.id };
+    }
+  }
   if (ctx.escortId) {
     try {
       await sshRun(execFileFn, [...SSH_BASE_ARGS, gateway, `openclaw cron rm ${ctx.escortId}`], sshOpts);
@@ -265,7 +300,7 @@ export async function runCommanderWatchdog(pool, deps = {}) {
     console.warn(`[cmdr-watchdog] 扫描失败: ${err.message}`);
     return { scanned: 0, relaunched: 0, barked: 0, failed: 0, skipped: 0, error: err.message };
   }
-  const out = { scanned: rows?.length ?? 0, relaunched: 0, barked: 0, failed: 0, skipped: 0 };
+  const out = { scanned: rows?.length ?? 0, relaunched: 0, adopted: 0, barked: 0, failed: 0, skipped: 0 };
   for (const task of rows ?? []) {
     try {
       const ctx = await resolveRelaunchContext(pool, task);
@@ -276,6 +311,7 @@ export async function runCommanderWatchdog(pool, deps = {}) {
         continue;
       }
       const r = await relaunchEscort(pool, task, ctx, { execFileFn, now, bark });
+      if (r.ok && r.adopted) { out.adopted += 1; continue; }
       if (r.ok) { out.relaunched += 1; if (r.barked) out.barked += 1; continue; }
       out.failed += 1;
       await mergeTaskPayload(pool, task.id, { commander_relaunched_at: new Date(now).toISOString() });
