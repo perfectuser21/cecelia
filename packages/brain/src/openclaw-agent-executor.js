@@ -28,6 +28,7 @@ import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { startRun, finishRun } from './lib/task-run.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { qiumiEnv, phoneNodeName } from './routing/env.js';
+import { splitExecParamsBlock } from './routing/exec-params.js';
 
 // 两条白名单，宽严不同：
 //  · SAFE_ID —— run_id / department / taskId。它们要当文件名用（~/brain-runs/<run_id>.log），
@@ -46,6 +47,12 @@ const TIMEOUT_MAX_SEC = 10800;
 const THINKING_LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'adaptive', 'max']);
 const REAP_SSH_TIMEOUT_MS = 15_000;
 const REAP_BATCH = 10;
+
+/** 实际下发给 --timeout 的秒数：越界回落默认。prompt 里写的超时与命令行同一口径。 */
+function effectiveTimeoutSec(timeoutSec) {
+  const t = Math.round(Number(timeoutSec));
+  return t >= TIMEOUT_MIN_SEC && t <= TIMEOUT_MAX_SEC ? t : AGENT_TIMEOUT_SEC;
+}
 
 function assertSafe(name, value, re) {
   const v = String(value);
@@ -83,8 +90,7 @@ export function buildRemoteCommand({ runId, department, model = null, taskId, ti
   if (model) assertSafe('model', model, SAFE_MODEL);
   if (thinking && !THINKING_LEVELS.has(String(thinking))) throw new Error('invalid thinking');
   assertSafe('binPath', binPath, SAFE_MODEL);
-  const t = Math.round(Number(timeoutSec));
-  const timeout = t >= TIMEOUT_MIN_SEC && t <= TIMEOUT_MAX_SEC ? t : AGENT_TIMEOUT_SEC;
+  const timeout = effectiveTimeoutSec(timeoutSec);
   const modelArg = model ? ` --model ${model}` : '';
   const thinkingArg = thinking ? ` --thinking ${thinking}` : '';
   const log = `~/brain-runs/${runId}.log`;
@@ -148,12 +154,37 @@ function deviceHintOf(task) {
   ].join('\n');
 }
 
-function promptOf(task) {
-  const s = task.payload?.qiumi_source ?? {};
+/**
+ * 执行参数已应用声明（任务 e3c81cce）。0929 23:52 生产实证（任务 55c2e84b）：Brain 已按参数起了
+ * `--agent media --model openai/gpt-6-sol`，prompt 里却原样留着「执行Agent：media/模型：sol」块，
+ * agent 读成"要再派 media/sol 去做"→ sessions_spawn 子会话 + sessions_yield，Brain 侧 run 空报告退出，
+ * 真机活在追踪外跑完。所以：参数块摘掉，改由这段说明告诉 agent「你就是它」；
+ * 验收/设备不是 Brain 能"应用"的东西，原样转述给 agent，不能跟着块一起丢。
+ */
+function appliedParamsNotice(p) {
+  const agent = p.qiumi_department;
+  const model = p.model || `${agent} 默认模型`;
+  const minutes = Math.round(effectiveTimeoutSec(p.timeout_sec ?? AGENT_TIMEOUT_SEC) / 60);
+  const requestedDevice = p.qiumi_route?.device_hint?.requested ?? null;
   return [
+    `执行参数已由 Brain 应用：你就是 ${agent}，本次模型 ${model}，超时 ${minutes} 分钟。直接在本会话完成任务，不要 sessions_spawn 子会话，不要 sessions_yield 等待。`,
+    p.acceptance ? `验收：${p.acceptance}` : null,
+    requestedDevice ? `设备：${requestedDevice}` : null,
+  ].filter(Boolean).join('\n');
+}
+
+function promptOf(task) {
+  const p = task.payload ?? {};
+  const s = p.qiumi_source ?? {};
+  // 能走到派发，就说明路由已按参数块定案（块解析出错会在路由层直接 fail，到不了这里）
+  const block = s.body ? splitExecParamsBlock(s.body) : { present: false, rest: s.body };
+  const applied = block.present && Boolean(p.qiumi_department);
+  const body = applied ? block.rest : s.body;
+  return [
+    applied ? appliedParamsNotice(p) : null,
     s.title,
     s.remark ? `补充说明：${s.remark}` : null,
-    s.body ? `页面正文：\n${s.body}` : null,
+    body ? `页面正文：\n${body}` : null,
     deviceHintOf(task),
   ].filter(Boolean).join('\n\n');
 }
@@ -272,9 +303,34 @@ function parseReceipt(exit, tail) {
 }
 
 /**
+ * agent 以 sessions_yield 收尾、没有交最终结果（任务 e3c81cce）。55c2e84b 真实 .log：开头
+ * `result.payloads: []`，尾部 `meta.yielded: true` + `acceptedSessionSpawns[]`；收割只读 tail -c 20000，
+ * 30KB 的日志开头读不到，所以两类信号任一命中即算：
+ *  · `"yielded": true` —— 本会话暂停等子会话，活在追踪外，有没有过渡文本都不算完成；
+ *  · 没有最终文本且 `"payloads": []` —— 什么都没交。
+ * 仅「无最终文本」不单独判失败：旧格式纯文本日志也取不到 text，那不是 yield。
+ */
+function yieldSummaryOf(tail, text) {
+  const yielded = /"yielded"\s*:\s*true/.test(tail);
+  const emptyPayloads = text == null && /"payloads"\s*:\s*\[\s*\]/.test(tail);
+  if (!yielded && !emptyPayloads) return null;
+  const childSessions = [...tail.matchAll(/"childSessionKey"\s*:\s*"([^"]+)"/g)].map((m) => m[1]);
+  return { yielded, empty_payloads: emptyPayloads, has_text: text != null, child_sessions: childSessions };
+}
+
+/** 回执 → 终态：退出码非 0 → exit_<n>；exit 0 但以 yield 收尾 → agent_yielded_without_result；否则完成。 */
+function reapOutcome(receipt, tail) {
+  if (receipt.exit !== 0) return { status: 'failed', reason: `openclaw_agent_exit_${receipt.exit}`, yieldSummary: null };
+  const yieldSummary = yieldSummaryOf(tail, receipt.text);
+  if (yieldSummary) return { status: 'failed', reason: 'agent_yielded_without_result', yieldSummary };
+  return { status: 'completed_no_pr', reason: null, yieldSummary: null };
+}
+
+/**
  * 收割在跑的 openclaw-agent 任务：远端 .exit 落地即结算。
  *
- * 三态：EXIT=0 → completed_no_pr + receipt；EXIT≠0 → failed + openclaw_agent_exit_<n>；
+ * 三态：EXIT=0 → completed_no_pr + receipt（以 yield 收尾的除外 → failed + agent_yielded_without_result，
+ * 不自动重排：子会话可能已在真机上动手，重跑会把真机操作做两遍）；EXIT≠0 → failed + openclaw_agent_exit_<n>；
  * NO_EXIT → 一律不动（还在跑），超时交给合同 staleMinutes=45 + 守护刀 onStale='fail'。
  * 两条 UPDATE 都带 `AND status = 'in_progress'` 的 CAS：不覆盖别的通道已经结过的账。
  *
@@ -311,27 +367,31 @@ export async function reapOpenclawAgentRuns(pool, deps = {}) {
     const exit = parseInt(m[1], 10);
     const tail = stdout.replace(/^EXIT=\d+\n?/m, '');
     const receipt = parseReceipt(exit, tail);
-    if (exit === 0) {
+    const outcome = reapOutcome(receipt, tail);
+    if (outcome.status === 'completed_no_pr') {
       // completed_no_pr 是可接棒终态（RELAY_TERMINAL_STATUSES）：finalizeTask 写完自动接棒
       await finalizeTask(pool, r.id, 'completed_no_pr', { mergeResult: { receipt }, onlyIfStatus: 'in_progress' });
       out.completed++;
     } else {
+      const mergeResult = outcome.yieldSummary ? { receipt, yield_summary: outcome.yieldSummary } : { receipt };
       await finalizeTask(pool, r.id, 'failed', {
-        set: { error_message: `openclaw_agent_exit_${exit}` },
-        mergeResult: { receipt },
+        set: { error_message: outcome.reason },
+        mergeResult,
         onlyIfStatus: 'in_progress',
       });
       out.failed++;
     }
     out.reaped++;
-    // run 原语补终态：只认远端真实 .exit（exit=0 → success，其余 → failed），已终态不覆盖。
+    // run 原语补终态：exit≠0 或以 yield 收尾 → failed，其余 → completed，已终态不覆盖。
     await finishRun({
       runId: r.run_id,
-      status: exit === 0 ? 'completed' : 'failed',
+      status: outcome.status === 'completed_no_pr' ? 'completed' : 'failed',
       exitCode: exit,
-      error: exit === 0 ? undefined : `openclaw_agent_exit_${exit}`,
+      error: outcome.reason ?? undefined,
     }, { pool });
-    await recordTaskEventSafe(pool, r.id, 'openclaw_agent_reaped', { run_id: r.run_id, exit });
+    await recordTaskEventSafe(pool, r.id, 'openclaw_agent_reaped', {
+      run_id: r.run_id, exit, ...(outcome.reason ? { reason: outcome.reason } : {}),
+    });
   }
   return out;
 }
