@@ -356,3 +356,4 @@ commander-watchdog-smoke.sh
 brain-image-scripts-smoke.sh
 vs-model-areas-kind-smoke.sh
 vs-model-workflows-smoke.sh
+vs-model-spans-smoke.sh
