@@ -1,5 +1,5 @@
 // packages/brain/src/__tests__/ledger-hygiene.test.js
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../notifier.js', () => ({
   sendBark: vi.fn().mockResolvedValue(true),
@@ -47,23 +47,47 @@ describe('isInLedgerHygieneWindow — UTC 21:10-21:15（北京 05:10）', () => 
 });
 
 describe('computeMetrics — 6 项指标', () => {
-  it('m1 FR沉淀率：3 个 merged run，1 个无 golden_path 行 → value=2/3, debt=1', async () => {
+  // m1 读 golden_path 旧表（已退役，任务 7d312fd8）：默认停计、不查旧表、不参与棘轮；应急放行窗口下沿用旧口径
+  it('m1 FR沉淀率：flag 未开 → enabled=false、retired=golden_path、不发 golden_path 查询、debt=0 不进棘轮', async () => {
+    delete process.env.GOLDEN_PATH_LEGACY_READ;
     const pool = makePool([
-      { match: 'FROM tasks t', rows: [{ total: '3', debt: '1' }] },
+      { match: 'FROM tasks t', rows: [{ total: '3', debt: '3' }] },
     ]);
     const m = await computeMetrics(pool);
-    expect(m.m1.debt).toBe(1);
-    expect(m.m1.value).toBeCloseTo(2 / 3);
-    expect(m.m1.enabled).toBe(true);
+    expect(m.m1).toMatchObject({ key: 'm1', name: 'FR沉淀率', value: null, debt: 0, enabled: false, retired: 'golden_path' });
+    expect(pool.calls.some((c) => /golden_path/.test(c.sql))).toBe(false);
+    const prev = { baseline: { m1: 0 }, last: { m1: 0 }, streaks: { m1: 0 }, baseline_date: '2026-09-29' };
+    const { breaches } = evaluateRatchet({ m1: m.m1 }, prev, '2026-09-30');
+    expect(breaches.find((b) => b.key === 'm1')).toBeUndefined();
   });
 
-  it('m1 近7天无 merged run → value=1, debt=0（真空真值）', async () => {
-    const pool = makePool([
-      { match: 'FROM tasks t', rows: [{ total: '0', debt: '0' }] },
-    ]);
-    const m = await computeMetrics(pool);
-    expect(m.m1.value).toBe(1);
-    expect(m.m1.debt).toBe(0);
+  it('m1 FR沉淀率（GOLDEN_PATH_LEGACY_READ=1 应急窗口）：3 个 merged run，1 个无 golden_path 行 → value=2/3, debt=1', async () => {
+    process.env.GOLDEN_PATH_LEGACY_READ = '1';
+    try {
+      const pool = makePool([
+        { match: 'FROM tasks t', rows: [{ total: '3', debt: '1' }] },
+      ]);
+      const m = await computeMetrics(pool);
+      expect(m.m1.debt).toBe(1);
+      expect(m.m1.value).toBeCloseTo(2 / 3);
+      expect(m.m1.enabled).toBe(true);
+    } finally {
+      delete process.env.GOLDEN_PATH_LEGACY_READ;
+    }
+  });
+
+  it('m1 应急窗口下近7天无 merged run → value=1, debt=0（真空真值）', async () => {
+    process.env.GOLDEN_PATH_LEGACY_READ = '1';
+    try {
+      const pool = makePool([
+        { match: 'FROM tasks t', rows: [{ total: '0', debt: '0' }] },
+      ]);
+      const m = await computeMetrics(pool);
+      expect(m.m1.value).toBe(1);
+      expect(m.m1.debt).toBe(0);
+    } finally {
+      delete process.env.GOLDEN_PATH_LEGACY_READ;
+    }
   });
 
   it('m2 归属完整率：tasks缺2 + issues缺1 → debt=3（attribution_harness 停计，接线前不入和）', async () => {
@@ -117,17 +141,23 @@ describe('computeMetrics — 6 项指标', () => {
   });
 
   it('单指标 SQL 失败 → 该指标 enabled=false，其他指标不受影响', async () => {
-    const pool = makePool([
-      { match: 'review_after < NOW()', rows: [{ debt: '5' }] },
-    ]);
-    const orig = pool.query.getMockImplementation();
-    pool.query.mockImplementation(async (sql, params) => {
-      if (sql.includes('FROM tasks t')) throw new Error('boom');
-      return orig(sql, params);
-    });
-    const m = await computeMetrics(pool);
-    expect(m.m1.enabled).toBe(false);
-    expect(m.m4.debt).toBe(5);
+    process.env.GOLDEN_PATH_LEGACY_READ = '1'; // 让 m1 真走 SQL，验证的是失败容错而非退役停计
+    try {
+      const pool = makePool([
+        { match: 'review_after < NOW()', rows: [{ debt: '5' }] },
+      ]);
+      const orig = pool.query.getMockImplementation();
+      pool.query.mockImplementation(async (sql, params) => {
+        if (sql.includes('FROM tasks t')) throw new Error('boom');
+        return orig(sql, params);
+      });
+      const m = await computeMetrics(pool);
+      expect(m.m1.enabled).toBe(false);
+      expect(m.m1.error).toBe('boom');
+      expect(m.m4.debt).toBe(5);
+    } finally {
+      delete process.env.GOLDEN_PATH_LEGACY_READ;
+    }
   });
 
   it('m6 evaluator 门禁覆盖率：4 个 done run，1 个无 evaluator 事件 → value=3/4, debt=1', async () => {
@@ -257,6 +287,12 @@ describe('maybeRunLedgerHygiene — 主入口', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // 主入口用例用 m1 当击穿驱动（proven-to-fire）；m1 默认已随 golden_path 退役停计，
+    // 这里开应急窗口让旧口径仍可驱动棘轮。
+    process.env.GOLDEN_PATH_LEGACY_READ = '1';
+  });
+  afterEach(() => {
+    delete process.env.GOLDEN_PATH_LEGACY_READ;
   });
 
   it('非窗口期不执行', async () => {
