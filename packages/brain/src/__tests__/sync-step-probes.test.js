@@ -176,3 +176,86 @@ describe('syncStepProbes', () => {
     expect(calls.filter(c => c.method === 'PATCH' || c.url.endsWith('/step-probes'))).toEqual([]);
   });
 });
+
+describe('syncStepProbes 挂点 target（价值流建模⑤）', () => {
+  const ACT_COLL = '9b8988e9-a22d-483c-a101-8091728b9e04';
+  const STEP_ID = '0d4a3c6e-1b2f-4c8d-9e0f-1a2b3c4d5e6f';
+  const STEP_KEY = 'keyword_acquisition.collection.return_to_results';
+  const CELL_COLL = { id: '9b469abf-2700-4b76-938c-6ef8b845d648', step_id: ACT_COLL, cell_key: 'stage:collection', cell_kind: 'element', assertion_ref: null };
+  const CELL_STEP = { id: '4c1b1a0e-5d6f-4a7b-8c9d-0e1f2a3b4c5d', step_id: ACT_COLL, cell_key: `step:${STEP_KEY}`, cell_kind: 'element', cell_level: 'step', step_id_ref: STEP_ID, assertion_ref: null };
+  const YAML_TARGET = `
+version: 1
+workflow: social-keyword-leadgen
+probes:
+  - key: coll_only_matched
+    stage: collection
+    journey_cell: "stage:collection"
+    probe: { type: metric, ref: metrics.only_matched }
+    expect: { op: "==", value: 1 }
+    severity: error
+  - key: coll_rescan_rate
+    stage: collection
+    journey_cell: "stage:collection"
+    target: { type: step, key: ${STEP_KEY} }
+    probe: { type: metric, ref: metrics.rescan_rate }
+    expect: { op: "<=", value: 0.2 }
+    severity: warn
+`;
+
+  function fakeBrainWithTargets({ cells, steps = [], enablers = [] }) {
+    const base = fakeBrain({ cells });
+    const inner = base.fetchFn.getMockImplementation();
+    base.fetchFn.mockImplementation(async (url, init = {}) => {
+      const u = new URL(String(url));
+      const ok = (json, status = 200) => ({ ok: status < 400, status, json: async () => json, text: async () => JSON.stringify(json) });
+      if ((init.method || 'GET') === 'GET' && u.pathname === '/api/brain/steps') {
+        base.calls.push({ method: 'GET', url: String(url), body: null, headers: init.headers || {} });
+        return ok({ steps: steps.filter(s => s.key === u.searchParams.get('key')) });
+      }
+      if ((init.method || 'GET') === 'GET' && u.pathname === '/api/brain/enablers') {
+        base.calls.push({ method: 'GET', url: String(url), body: null, headers: init.headers || {} });
+        return ok({ enablers: enablers.filter(e => e.key === u.searchParams.get('key')) });
+      }
+      return inner(url, init);
+    });
+    return base;
+  }
+
+  it('无 target 的探针 → target_type=activity、target_id=活动格的 step_id；有 target step → 查 /steps?key= 得 target_id，并额外绑 step:<key> 格子', async () => {
+    const doc = loadProbesYaml(writeYaml(YAML_TARGET));
+    const { fetchFn, calls } = fakeBrainWithTargets({ cells: [CELL_COLL, CELL_STEP], steps: [{ id: STEP_ID, key: STEP_KEY, activity_id: ACT_COLL }] });
+    const result = await syncStepProbes({ doc, journeyId: JOURNEY, brainUrl: BRAIN, fetchFn });
+
+    const stepLookup = calls.find(c => c.url.includes('/api/brain/steps?'));
+    expect(stepLookup.url).toBe(`${BRAIN}/api/brain/steps?key=${encodeURIComponent(STEP_KEY)}`);
+
+    const upsert = calls.find(c => c.method === 'POST' && c.url.endsWith('/step-probes'));
+    expect(upsert.body.probes.map(p => [p.key, p.journey_step_link_id, p.target_type, p.target_id])).toEqual([
+      ['coll_only_matched', CELL_COLL.id, 'activity', ACT_COLL],
+      ['coll_rescan_rate', CELL_COLL.id, 'step', STEP_ID],
+    ]);
+
+    const patches = calls.filter(c => c.method === 'PATCH');
+    expect(patches.map(p => [p.url.split('/').pop(), p.body.assertion_ref])).toEqual([
+      [CELL_COLL.id, 'probe:coll_only_matched,coll_rescan_rate'],
+      [CELL_STEP.id, 'probe:coll_rescan_rate'],
+    ]);
+    expect(result.bound).toContainEqual({ cell_key: `step:${STEP_KEY}`, journey_step_link_id: CELL_STEP.id, assertion_ref: 'probe:coll_rescan_rate', changed: true });
+  });
+
+  it('target step 在 Brain 里不存在 → 抛 STEP_PROBE_TARGET_NOT_FOUND，不 upsert 不 PATCH', async () => {
+    const doc = loadProbesYaml(writeYaml(YAML_TARGET));
+    const { fetchFn, calls } = fakeBrainWithTargets({ cells: [CELL_COLL, CELL_STEP], steps: [] });
+    await expect(syncStepProbes({ doc, journeyId: JOURNEY, brainUrl: BRAIN, fetchFn }))
+      .rejects.toMatchObject({ code: 'STEP_PROBE_TARGET_NOT_FOUND', message: expect.stringContaining(STEP_KEY) });
+    expect(calls.filter(c => c.method !== 'GET')).toEqual([]);
+  });
+
+  it('step:<key> 格子还没生成（迁移 496 未跑）→ 只绑活动格，不报错', async () => {
+    const doc = loadProbesYaml(writeYaml(YAML_TARGET));
+    const { fetchFn, calls } = fakeBrainWithTargets({ cells: [CELL_COLL], steps: [{ id: STEP_ID, key: STEP_KEY, activity_id: ACT_COLL }] });
+    const result = await syncStepProbes({ doc, journeyId: JOURNEY, brainUrl: BRAIN, fetchFn });
+    expect(calls.filter(c => c.method === 'PATCH')).toHaveLength(1);
+    expect(result.bound.map(b => b.cell_key)).toEqual(['stage:collection']);
+  });
+});
