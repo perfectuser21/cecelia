@@ -1,4 +1,4 @@
-import { seedLifecycleAttempt } from './helpers/lifecycle-attempt-fixture.js';
+import { seedLifecycleAttempt } from '../../../tests/helpers/lifecycle-attempt-fixture.js';
 /**
  * gan-case-file.pg.integration.test.js —— 案卷式 GAN 写读全链，真库实证。
  *

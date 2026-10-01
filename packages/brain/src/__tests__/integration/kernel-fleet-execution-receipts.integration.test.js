@@ -1,4 +1,4 @@
-import { seedLifecycleAttempt } from './helpers/lifecycle-attempt-fixture.js';
+import { seedLifecycleAttempt } from '../../../tests/helpers/lifecycle-attempt-fixture.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';

@@ -1,4 +1,4 @@
-import { seedLifecycleAttempt } from './helpers/lifecycle-attempt-fixture.js';
+import { seedLifecycleAttempt } from '../../../tests/helpers/lifecycle-attempt-fixture.js';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
