@@ -262,3 +262,40 @@ tests:
     ci: L3
     status: active
     note: "GET /api/brain/topics 路由契约：文件存在、路由注册、实现结构、topic-selector/llm-caller 契约"
+
+  - id: brain-runtime-isolation
+    path: packages/brain/src/__tests__/runtime-isolation.test.js
+    type: unit
+    ci: L4
+    status: active
+    note: "测试实例的模型/派发入口与真实服务器启动顺序隔离"
+  - id: brain-bridge-process-lifecycle
+    path: packages/brain/src/__tests__/bridge-process-lifecycle.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "两个真实Bridge入口、部署产物及受控Node进程组回收，不调用模型"
+  - id: brain-test-process-owner
+    path: packages/brain/src/__tests__/test-brain-runner.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "测试服务启动、成功、失败、超时按实际PID收尾"
+  - id: brain-runtime-transport-isolation
+    path: packages/brain/src/__tests__/runtime-transport-isolation.test.js
+    type: unit
+    ci: L4
+    status: active
+    note: "新版Fleet传输隔离，宿主及注入配置均不得解锁真实执行"
+  - id: brain-runtime-realtime-isolation
+    path: packages/brain/src/__tests__/runtime-realtime-isolation.test.js
+    type: unit
+    ci: L4
+    status: active
+    note: "Realtime配置和WebSocket在凭据和模型连接前拒绝隔离实例"
+  - id: brain-runtime-direct-io-isolation
+    path: packages/brain/src/__tests__/runtime-direct-io-isolation.test.js
+    type: unit
+    ci: L4
+    status: active
+    note: "MiniMax、embedding和导出执行函数不能绕过运行隔离"

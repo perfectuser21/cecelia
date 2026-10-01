@@ -14,6 +14,7 @@
  */
 
 import crypto from 'crypto';
+import { assertExternalExecutionAllowed } from './runtime-safety.js';
 import { spawn, execSync, exec } from 'child_process';
 import { writeFile, mkdir, access } from 'fs/promises';
 import { readFileSync, readdirSync, unlinkSync, existsSync } from 'fs';
@@ -2404,6 +2405,7 @@ async function updateTaskRunInfo(taskId, runId, status = 'triggered') {
  * @returns {Object} - { success, taskId, runId, error? }
  */
 async function triggerCodexReview(task) {
+  assertExternalExecutionAllowed();
   const runId = generateRunId(task.id);
 
   try {
@@ -2721,6 +2723,7 @@ async function selectCodexAccounts() {
  * @returns {Object} - { success, taskId, runId, error? }
  */
 async function triggerCodexBridge(task, forceBridgeUrl = null) {
+  assertExternalExecutionAllowed();
   const runId = generateRunId(task.id);
   try {
     const isCodexDev = task.task_type === 'codex_dev';
@@ -2767,6 +2770,7 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
  * @returns {Object} - { success, taskId, result?, error? }
  */
 async function triggerMiniMaxExecutor(task) {
+  assertExternalExecutionAllowed();
   const runId = generateRunId(task.id);
 
   try {
@@ -3408,6 +3412,7 @@ const _RETIRED_HARNESS_TYPES = new Set(RETIRED_HARNESS_TYPES_DISPATCH);
  * openclaw-agent 等自己已 startRun 的分支先落（source 更精确），这里只是幂等兜底。
  */
 async function triggerCeceliaRun(task) {
+  assertExternalExecutionAllowed();
   const execResult = await _triggerCeceliaRunInner(task);
   const source = task?.payload?.harness_runtime === 'kernel-v1' ? 'kernel' : 'executor';
   const runId = await startRunForExecResult({ task, execResult, source });

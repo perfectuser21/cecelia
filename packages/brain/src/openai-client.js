@@ -6,6 +6,7 @@
  */
 
 import OpenAI from 'openai';
+import { assertLiveLLMAllowed } from './runtime-safety.js';
 
 // Singleton OpenAI client
 let openaiClient = null;
@@ -35,6 +36,7 @@ function getOpenAIClient() {
  * @throws {Error} If API call fails after retries
  */
 export async function generateEmbedding(text, options = {}) {
+  assertLiveLLMAllowed();
   const {
     maxLength = 8000,
     retries = 2

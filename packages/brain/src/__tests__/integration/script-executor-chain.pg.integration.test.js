@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * executor=script 端到端 —— 真 PostgreSQL + 真 dispatcher/executor + 真远端 runner
  * （链 bf5088a3 棒3 PR B，任务 5cdbd52a）。

@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * GP2/T2 executor 派发接线（DoD F2）。
  * dispatch 分支/override 排除用源码断言（同 all-features-smoke.test.js 读源模式）——
