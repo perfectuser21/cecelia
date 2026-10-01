@@ -16,7 +16,7 @@ class SimilarityService {
   }
 
   /**
-   * Search for similar entities (Tasks/Initiatives/KRs)
+   * Search for similar entities (Tasks/Projects/KRs)
    * @param {string} query - User input query
    * @param {number} topK - Number of top matches to return
    * @param {Object} filters - Optional filters for search
@@ -60,7 +60,7 @@ class SimilarityService {
     const { repo, project_id, date_from, date_to, limit = 1000 } = filters;
 
     // Build WHERE clause dynamically
-    const taskWhereClauses = ["t.status IN ('pending', 'in_progress', 'completed')"];
+    const taskWhereClauses = ["t.task_type <> 'project'", "t.status IN ('pending', 'in_progress', 'completed')"];
     const taskQueryParams = [];
     let paramIndex = 1;
 
@@ -123,35 +123,23 @@ class SimilarityService {
       });
     });
 
-    // Query Initiatives (okr_initiatives, most recent 50)
-    // 迁移：projects JOIN goals → okr_initiatives JOIN okr_scopes → okr_projects (kr_id)
-    const initiativesResult = await this.db.query(`
-      SELECT
-        oi.id, oi.title, oi.description, oi.status,
-        op.kr_id, kr.title AS kr_title
-      FROM okr_initiatives oi
-      INNER JOIN okr_scopes os ON os.id = oi.scope_id
-      INNER JOIN okr_projects op ON op.id = os.project_id
-      LEFT JOIN key_results kr ON kr.id = op.kr_id
-      WHERE oi.status IN ('running', 'planned')
-      ORDER BY oi.updated_at DESC
-      LIMIT 50
+    const projectsResult = await this.db.query(`
+      SELECT p.id, p.name AS title, p.description, p.status, p.created_at,
+             p.kr_id, kr.title AS kr_title
+      FROM projects p
+      LEFT JOIN key_results kr ON kr.id = p.kr_id
+      WHERE p.status IN ('active', 'planning', 'pending_review')
+      ORDER BY p.updated_at DESC LIMIT 50
     `);
-
-    initiativesResult.rows.forEach(initiative => {
+    for (const project of projectsResult.rows) {
       entities.push({
-        level: 'initiative',
-        id: initiative.id,
-        title: initiative.title,  // from p.name
-        description: initiative.description || '',
-        status: initiative.status,
-        text: `${initiative.title} ${initiative.description || ''}`,
-        metadata: {
-          kr_id: initiative.kr_id,
-          kr_title: initiative.kr_title
-        }
+        level: 'project', id: project.id, title: project.title,
+        description: project.description || '', status: project.status,
+        created_at: project.created_at || null,
+        text: `${project.title} ${project.description || ''}`,
+        metadata: { kr_id: project.kr_id, kr_title: project.kr_title }
       });
-    });
+    }
 
     return entities;
   }
@@ -317,7 +305,7 @@ class SimilarityService {
     const embeddingStr = `[${queryEmbedding.join(',')}]`;
 
     // Build WHERE clauses
-    const whereClauses = ['t.embedding IS NOT NULL'];
+    const whereClauses = ['t.embedding IS NOT NULL', "t.task_type <> 'project'"];
     const queryParams = [embeddingStr];
     let paramIndex = 2;
 

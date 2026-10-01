@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { executeDecision, actionHandlers, isActionDangerous } from '../decision-executor.js';
+import pool from '../db.js';
 
 // Mock client for transactions
 const mockClient = {
@@ -544,5 +545,17 @@ describe('decision-executor', () => {
       // Dangerous actions should be queued, not executed directly
       expect(report.actions_pending_approval.length).toBeGreaterThanOrEqual(0);
     });
+  });
+});
+
+
+describe('项目拆解确认门放行 KR 真身', () => {
+  it('仅更新 key_results 并放行 reviewing 状态', async () => {
+    pool.query.mockImplementationOnce(async sql => {
+      return { rows: sql.includes('UPDATE key_results') ? [{ id: 'kr-new', title: '真实 KR', status: 'ready' }] : [] };
+    });
+    expect(await actionHandlers.okr_decomp_review({ kr_id: 'kr-new' }, {}))
+      .toMatchObject({ success: true, kr_id: 'kr-new' });
+    expect(pool.query.mock.lastCall[0]).toContain('UPDATE key_results');
   });
 });

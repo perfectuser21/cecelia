@@ -37,13 +37,13 @@ describe('reviewProjectCompletion', () => {
     pool = makeMockPool();
   });
 
-  it('D1: 收集 initiative 数、task 数、actual_days', async () => {
+  it('D1: 收集直接 task 数、actual_days', async () => {
     const now = new Date();
     const tenDaysAgo = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
 
     pool.query = vi.fn(async (sql) => {
       // Project 信息
-      if (sql.includes('FROM okr_projects op')) {
+      if (/FROM projects (?:p|op)/.test(sql)) {
         return {
           rows: [{
             id: 'proj-1', name: 'Test Project', status: 'completed',
@@ -53,11 +53,8 @@ describe('reviewProjectCompletion', () => {
         };
       }
       // Initiative 统计
-      if (sql.includes('FROM okr_initiatives oi') && sql.includes('JOIN okr_scopes os')) {
-        return { rows: [{ total: '3', completed: '3' }] };
-      }
       // Task 统计
-      if (sql.includes('FROM tasks t') && sql.includes('JOIN okr_initiatives oi')) {
+      if (sql.includes('FROM tasks WHERE project_id')) {
         return { rows: [{ total: '12', completed: '10' }] };
       }
       return { rows: [] };
@@ -65,8 +62,6 @@ describe('reviewProjectCompletion', () => {
 
     const result = await reviewProjectCompletion(pool, 'proj-1');
     expect(result.found).toBe(true);
-    expect(result.initiativeCount).toBe(3);
-    expect(result.initiativeCompleted).toBe(3);
     expect(result.taskCount).toBe(12);
     expect(result.taskCompleted).toBe(10);
     expect(result.actualDays).toBe(10);
@@ -77,7 +72,7 @@ describe('reviewProjectCompletion', () => {
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('FROM okr_projects op')) {
+      if (/FROM projects (?:p|op)/.test(sql)) {
         return {
           rows: [{
             id: 'proj-1', name: 'Test', status: 'completed',
@@ -86,10 +81,7 @@ describe('reviewProjectCompletion', () => {
           }],
         };
       }
-      if (sql.includes('FROM okr_initiatives oi') && sql.includes('JOIN okr_scopes os')) {
-        return { rows: [{ total: '2', completed: '2' }] };
-      }
-      if (sql.includes('FROM tasks t') && sql.includes('JOIN okr_initiatives oi')) {
+      if (sql.includes('FROM tasks WHERE project_id')) {
         return { rows: [{ total: '5', completed: '5' }] };
       }
       return { rows: [] };
@@ -108,7 +100,7 @@ describe('reviewProjectCompletion', () => {
     const twentyDaysAgo = new Date(now.getTime() - 20 * 24 * 60 * 60 * 1000);
 
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('FROM okr_projects op')) {
+      if (/FROM projects (?:p|op)/.test(sql)) {
         return {
           rows: [{
             id: 'proj-1', name: 'Test', status: 'completed',
@@ -117,10 +109,7 @@ describe('reviewProjectCompletion', () => {
           }],
         };
       }
-      if (sql.includes('FROM okr_initiatives oi') && sql.includes('JOIN okr_scopes os')) {
-        return { rows: [{ total: '2', completed: '2' }] };
-      }
-      if (sql.includes('FROM tasks t') && sql.includes('JOIN okr_initiatives oi')) {
+      if (sql.includes('FROM tasks WHERE project_id')) {
         return { rows: [{ total: '5', completed: '5' }] };
       }
       return { rows: [] };
@@ -142,7 +131,7 @@ describe('reviewProjectCompletion', () => {
     const fiveDaysAgo = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
 
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('FROM okr_projects op')) {
+      if (/FROM projects (?:p|op)/.test(sql)) {
         return {
           rows: [{
             id: 'proj-1', name: 'Test', status: 'completed',
@@ -151,10 +140,7 @@ describe('reviewProjectCompletion', () => {
           }],
         };
       }
-      if (sql.includes('FROM okr_initiatives oi') && sql.includes('JOIN okr_scopes os')) {
-        return { rows: [{ total: '1', completed: '1' }] };
-      }
-      if (sql.includes('FROM tasks t') && sql.includes('JOIN okr_initiatives oi')) {
+      if (sql.includes('FROM tasks WHERE project_id')) {
         return { rows: [{ total: '3', completed: '3' }] };
       }
       return { rows: [] };
@@ -179,7 +165,7 @@ describe('shouldAdjustPlan', () => {
 
     pool.query = vi.fn(async (sql) => {
       // KR 下所有 Projects
-      if (sql.includes('FROM okr_projects op') && sql.includes('WHERE op.kr_id') && sql.includes('ORDER BY')) {
+      if (/FROM projects (?:p|op)/.test(sql) && sql.includes('WHERE op.kr_id') && sql.includes('ORDER BY')) {
         return {
           rows: [
             { id: 'proj-1', name: 'Project 1', status: 'completed', sequence_order: 1, time_budget_days: 14 },
@@ -188,7 +174,7 @@ describe('shouldAdjustPlan', () => {
         };
       }
       // reviewProjectCompletion 内部查询
-      if (sql.includes('FROM okr_projects op')) {
+      if (/FROM projects (?:p|op)/.test(sql)) {
         return {
           rows: [{
             id: 'proj-1', name: 'Project 1', status: 'completed',
@@ -197,10 +183,7 @@ describe('shouldAdjustPlan', () => {
           }],
         };
       }
-      if (sql.includes('FROM okr_initiatives oi') && sql.includes('JOIN okr_scopes os')) {
-        return { rows: [{ total: '2', completed: '2' }] };
-      }
-      if (sql.includes('FROM tasks t') && sql.includes('JOIN okr_initiatives oi')) {
+      if (sql.includes('FROM tasks WHERE project_id')) {
         return { rows: [{ total: '5', completed: '5' }] };
       }
       return { rows: [] };
@@ -215,7 +198,7 @@ describe('shouldAdjustPlan', () => {
 
   it('D4: 无后续 Project → 返回 null', async () => {
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('FROM okr_projects op') && sql.includes('WHERE op.kr_id') && sql.includes('ORDER BY')) {
+      if (/FROM projects (?:p|op)/.test(sql) && sql.includes('WHERE op.kr_id') && sql.includes('ORDER BY')) {
         return {
           rows: [
             { id: 'proj-1', name: 'Project 1', status: 'completed', sequence_order: 1 },
@@ -295,7 +278,7 @@ describe('executePlanAdjustment', () => {
     let updateCalled = false;
 
     pool.query = vi.fn(async (sql, params) => {
-      if (sql.includes('UPDATE okr_projects') || sql.includes('UPDATE projects')) {
+      if (sql.includes('UPDATE projects')) {
         updateCalled = true;
         // 验证传入了正确的 project_id
         expect(params[0]).toBe('proj-2');
