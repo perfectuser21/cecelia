@@ -55,8 +55,7 @@ describe('canonical task repository identity', () => {
       .rejects.toThrow('workspace_repo_not_supported');
   });
 
-  it.each([null, undefined, '', ' ', 1, false, [], {}, 'other/unknown'])
-    ('rejects an invalid explicit legacy identity %j', async (base_repo) => {
+  it.each([null, undefined, '', ' ', 1, false, [], {}, 'other/unknown'])('rejects an invalid explicit legacy identity %j', async (base_repo) => {
       await expect(resolve({ repo: 'cecelia', base_repo }))
         .rejects.toThrow('workspace_repo_not_supported');
     });
