@@ -10,11 +10,11 @@
 
 
 
-**Brain 版本**: 1.351.4
+**Brain 版本**: 1.352.4
 
 受管脚本准入仅写 blocked/queued，终态写入者守卫已登记。
 
-## Brain 1.351.4 — 现有执行目录统一（阶段4a）
+## Brain 1.352.4 — 现有执行目录统一（阶段4a）
 
 - system_registry设备真身按UUID绑定execution_nodes；不可变execution_node_versions保留历史endpoint/profile；execution_grants按surface/provider/account/repo/profile精确授权。
 - 初次部署只导入旧三Mac的18个Harness账号组合与2个普通执行器组合，标legacy-v1/legacy_policy，不伪造boot或canary。重启不复活已撤销授权，不开放新增节点激活接口。
