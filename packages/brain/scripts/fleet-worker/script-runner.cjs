@@ -70,7 +70,7 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
     try {fs.mkdirSync(lock,{mode:0o700});}catch(error){if(error.code==='EEXIST')throw new Error('script_operation_locked');throw error;}
     try {
       const state=read(input.reservation_id);
-      if(state && BINDINGS.some((key)=>state[key]!==input[key])) throw new Error('script_identity_mismatch');
+      if(state && [...BINDINGS,'worker_id','worker_boot_id'].some((key)=>state[key]!==input[key])) throw new Error('script_identity_mismatch');
       return await fn(state);
     } finally {fs.rmdirSync(lock);}
   }
@@ -79,18 +79,30 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
       container_id:null,container_name:`cecelia-script-${input.reservation_id}-g${input.launch_generation}`,
       status:'launching',created_at:Date.now(),tombstoned:false};
   }
-  async function observe(state) {
+  function boundedText(value,maxBytes) {
+    const text=String(value??'');if(Buffer.byteLength(JSON.stringify(text))<=maxBytes)return text;
+    let low=0,high=text.length;
+    while(low<high){const mid=Math.ceil((low+high)/2);if(Buffer.byteLength(JSON.stringify(text.slice(-mid)))<=maxBytes)low=mid;else high=mid-1;}
+    return text.slice(-low);
+  }
+  async function observe(state,includeLogs=true) {
     const container=await docker.inspect(state.container_id ?? state.container_name);
     if(!container) return {...state,status:state.tombstoned?'cleaned':state.status==='waiting_resources'?'waiting_resources':'unknown'};
     if(state.container_id && container.id!==state.container_id) throw new Error('script_identity_mismatch');
     if(container.labels && ['reservation_id','intent_id','launch_generation'].some((key)=>
       container.labels[`cecelia.script.${key}`]!==String(state[key]))) throw new Error('script_identity_mismatch');
     if(!state.container_id){state.container_id=container.id;save(state);}
-    if(container.status==='exited') {
-      state.terminal={exit_code:container.exit_code,stdout:container.stdout??'',stderr:container.stderr??'',timed_out:state.timed_out===true};save(state);
+    if(container.status==='exited' && includeLogs) {
+      let logs=container;
+      try {if(docker.logs)logs=await docker.logs(container.id);}
+      catch {logs={stdout:'',stderr:'script_logs_unavailable',logs_unavailable:true};}
+      const stdout=boundedText(logs.stdout,48000),stderr=boundedText(logs.stderr,4000);
+      state.terminal={exit_code:container.exit_code,stdout,stderr,timed_out:state.timed_out===true,
+        logs_truncated:logs.logs_truncated===true||stdout!==String(logs.stdout??'')||stderr!==String(logs.stderr??''),
+        logs_unavailable:logs.logs_unavailable===true};save(state);
     }
-    return {...state,status:state.status==='waiting_resources'&&container.status==='created'?'waiting_resources':container.status,exit_code:container.exit_code,
-      stdout:container.stdout??'',stderr:container.stderr??'',timed_out:state.timed_out===true};
+    return {...state,status:state.status==='waiting_resources'&&container.status==='created'?'waiting_resources':container.status,
+      exit_code:container.exit_code,timed_out:state.timed_out===true};
   }
   function schedule(state) {
     if(state.tombstoned || state.terminal || timers.has(state.reservation_id))return;
@@ -162,10 +174,11 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
     async cancel(input) {
       if(!UUID.test(input.challenge))throw new Error('script_cleanup_challenge_required');
       return locked(input,async(state)=>{
-        state ??= {...initial(input),worker_boot_id:input.worker_boot_id ?? bootId};
+        if(input.worker_id!==workerId || typeof input.worker_boot_id!=='string')throw new Error('script_identity_mismatch');
+        state ??= {...initial(input),worker_boot_id:input.worker_boot_id};
         if(input.container_id!==state.container_id) throw new Error('script_identity_mismatch');
         state.tombstoned=true;state.status='cleanup_pending';save(state);
-        const current=await observe(state);
+        const current=await observe(state,false);
         if(current.container_id!==input.container_id) throw new Error('script_identity_mismatch');
         if(current.status!=='cleaned') await docker.remove(state.container_id);
         const after=await docker.inspect(state.container_id ?? state.container_name);

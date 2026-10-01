@@ -24,12 +24,17 @@ function createScriptDockerAdapter({ run = execute } = {}) {
       catch(error) { if (/^Error(?: response from daemon)?: No such (?:object|container):/m.test(error.stderr ?? '')) return null; throw error; }
       const value=JSON.parse(result.stdout)?.[0];
       if(!value || !/^[a-f0-9]{64}$/.test(value.Id)) throw new Error('script_container_inspect_invalid');
-      let stdout='',stderr='';
-      if(value.State.Status==='exited') {
-        const logs=await command(['logs','--tail=1000',id]);stdout=String(logs.stdout??'').slice(-65536);stderr=String(logs.stderr??'').slice(-4096);
-      }
       return {id:value.Id,name:value.Name?.replace(/^\//,''),status:value.State.Status,
-        exit_code:value.State.ExitCode,stdout,stderr,labels:value.Config?.Labels ?? {}};
+        exit_code:value.State.ExitCode,labels:value.Config?.Labels ?? {}};
+    },
+    async logs(id) {
+      try {
+        const result=await run('docker',['logs','--tail=1000',id],{encoding:'utf8',timeout:10_000,maxBuffer:65536});
+        return {stdout:result.stdout??'',stderr:result.stderr??''};
+      } catch(error) {
+        if(error.code==='ERR_CHILD_PROCESS_STDIO_MAXBUFFER')return {stdout:String(error.stdout??'').slice(-65536),stderr:'script_logs_truncated',logs_truncated:true};
+        return {stdout:'',stderr:'script_logs_unavailable',logs_unavailable:true};
+      }
     },
     async start(id) { await command(['start',id]); },
     async remove(id) { await command(['rm','--force',id]); },

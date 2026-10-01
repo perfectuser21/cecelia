@@ -54,7 +54,7 @@ describe('受管脚本 worker 协议', () => {
     const response=await fetch(url,{ method:'POST',headers:{authorization:`Bearer ${token}`},body:JSON.stringify(x.input) });
     expect(response.status).toBe(200);
     const result=await response.json();
-    expect(result.receipt.stdout).toBe('managed-script-ok');
+    expect(result.receipt.terminal.stdout).toBe('managed-script-ok');
     expect(result.signature).toBe(createHmac('sha256',token).update(JSON.stringify(result.receipt)).digest('hex'));
     await x.runner.start(x.input);
     await x.api.createScriptRunner(x.options).start(x.input);

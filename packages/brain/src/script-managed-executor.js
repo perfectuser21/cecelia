@@ -102,7 +102,8 @@ export async function reapManagedScripts(pool,deps,settle) {
         await startRun({taskId:task.id,runId:row.owner_key,source:'script',context:{transport:'managed-container',reservation_id:row.id}},{pool});
         const verdict=await settle(pool,task,{exit:terminal.exit_code,timedOut:terminal.timed_out===true,
           stdout:terminal.stdout??'',stderr:terminal.stderr??'',artifacts:[`managed://${row.machine_id}/${row.container_id}`]},
-        {hostId:row.machine_id,runId:row.owner_key});
+        {hostId:row.machine_id,runId:row.owner_key,reservationId:row.id});
+        if(verdict==='skipped')continue;
         out.reaped++;if(verdict==='completed')out.completed++;else if(verdict==='retried')out.retried++;else out.failed++;
       } else if(task && !['queued','in_progress'].includes(task.status)) {
         await finishRun({runId:row.owner_key,status:'cancelled',error:'task_terminal_cleanup'},{pool});

@@ -392,7 +392,8 @@ export async function triggerScriptRun(task, deps = {}) {
 }
 
 // ── 收割 ───────────────────────────────────────────────────────────────────────
-async function settleScriptRun(pool, row, parsed, { hostId, runId }) {
+async function settleScriptRun(pool, row, parsed, { hostId, runId, reservationId = null }) {
+  const authority = reservationId ? {where:{sql:"payload->>'script_run_id'=$1 AND payload->>'script_reservation_id'=$2",params:[runId,reservationId]}} : {};
   const payload = row.payload ?? {};
   const env = payload.env ?? {};
   const stdout = redactEnvValues(parsed.stdout, env);
@@ -411,7 +412,8 @@ async function settleScriptRun(pool, row, parsed, { hostId, runId }) {
 
   if (parsed.exit === 0 && !parsed.timedOut) {
     // 成功终态写 completed：hard 依赖门禁只放行 completed。
-    await finalizeTask(pool, row.id, 'completed', { mergeResult: { script }, onlyIfStatus: 'in_progress' });
+    const settled=await finalizeTask(pool, row.id, 'completed', { ...authority,mergeResult: { script }, onlyIfStatus: 'in_progress' });
+    if(!settled.rowCount)return 'skipped';
     await finishRun({ runId, status: 'completed', exitCode: 0, artifacts }, { pool });
     await recordTaskEventSafe(pool, row.id, 'script_reaped', { run_id: runId, exit: 0 });
     return 'completed';
@@ -438,8 +440,9 @@ async function settleScriptRun(pool, row, parsed, { hostId, runId }) {
           SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW(),
               payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
         WHERE id = $1 AND status = 'in_progress'
+          AND ($3::text IS NULL OR (payload->>'script_run_id'=$4 AND payload->>'script_reservation_id'=$3))
         RETURNING id`,
-      [row.id, JSON.stringify({ script_attempts: attempts, next_run_at: nextRunAt, script_run_id: null })],
+      [row.id, JSON.stringify({ script_attempts: attempts, next_run_at: nextRunAt, script_run_id: null }),reservationId,runId],
     );
     await recordTaskEventSafe(pool, row.id, 'script_attempt_failed', {
       run_id: runId, exit: parsed.exit, timed_out: parsed.timedOut, will_retry: true, next_run_at: nextRunAt,
@@ -448,7 +451,8 @@ async function settleScriptRun(pool, row, parsed, { hostId, runId }) {
   }
 
   const firstErrLine = stderr.split('\n').map((l) => l.trim()).find(Boolean);
-  await finalizeTask(pool, row.id, 'failed', {
+  const settled=await finalizeTask(pool, row.id, 'failed', {
+    ...authority,
     set: {
       completed_at: 'now',
       error_message: `${code}${firstErrLine ? `: ${firstErrLine}` : ''}`.slice(0, 500),
@@ -457,6 +461,7 @@ async function settleScriptRun(pool, row, parsed, { hostId, runId }) {
     mergePayload: { script_attempts: attempts, failure_class: 'script_failed' },
     onlyIfStatus: 'in_progress',
   });
+  if(!settled.rowCount)return 'skipped';
   await recordTaskEventSafe(pool, row.id, 'script_attempt_failed', {
     run_id: runId, exit: parsed.exit, timed_out: parsed.timedOut, will_retry: false,
   });
