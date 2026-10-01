@@ -5,6 +5,9 @@ Code、Codex 等 CLI 只是执行 TaskBundle 的 worker，不拥有流程状态�
 
 ## 通用业务活动执行（显式调用，阶段3）
 
+GP-Anchor: f1/step4（程序产物与执行回执的真实边界）；守卫见
+`tests/gp/f1/step4-activity-contract-receipt.test.js`。业务能力本身仍由业务仓库分类。
+
 `activity-contract.js` / `activity-runtime.js` / `activity-process.js` 消费业务仓库
 已经组装、解析 ref 的活动 JSON；它们不替代角色 `TaskBundle/HarnessResult`，也未接入
 生产 task 路由。业务能力与设备操作仍由活动入口实现。CLI 接收 stdin
