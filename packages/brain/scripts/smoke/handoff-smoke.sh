@@ -13,7 +13,7 @@ if [ -n "${DATABASE_URL:-}" ]; then
   PSQL="psql -X ${DATABASE_URL} -tA"
 else
   export PGPASSWORD="${PGPASSWORD:-postgres}"
-  PSQL="${PSQL:-psql -h localhost -p 5432 -U postgres -d cecelia -tA}"
+  PSQL="${PSQL:-psql -X -h localhost -p 5432 -U postgres -d cecelia -tA}"
 fi
 SMOKE_ID="eeeeeeee-0000-4000-8000-$(date +%H%M%S)000000"
 SMOKE_JOURNEY="eeeeeeee-0000-4000-8000-000000000001"
