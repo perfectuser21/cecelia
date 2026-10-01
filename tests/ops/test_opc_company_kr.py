@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_DOD = "3dbc40c2-ba63-8158-808a-e81bd769eb6b"
@@ -50,7 +51,7 @@ class Pipeline(unittest.TestCase):
         def call(url, body=None, method=None):
             method = method or ("POST" if body is not None else "GET")
             calls.append((url, method, body))
-            if "api.notion.com" in url:
+            if urlsplit(url).hostname == "api.notion.com":
                 return {"results": [{"id": SOURCE_DOD, "properties": {"Name": {"title": [{"plain_text": "KR3.1 原名"}]}}},
                                     {"id": SOURCE_COST, "properties": {"Name": {"title": [{"plain_text": "KR3.3 原名"}]}}}]}
             if url.endswith("/company-key-results"):
@@ -83,7 +84,7 @@ class Pipeline(unittest.TestCase):
 
     def test_collector_writes_brain_and_explicit_source_ids(self):
         calls = self.collector()
-        self.assertTrue(all("api.notion.com" not in url for url, _, _ in calls), calls)
+        self.assertTrue(all(urlsplit(url).hostname != "api.notion.com" for url, _, _ in calls), calls)
         observations = [(url, body) for url, _, body in calls if url.endswith("/observations")]
         self.assertEqual(len(observations), 2)
         self.assertEqual({body["source_page_id"] for _, body in observations}, {SOURCE_DOD, SOURCE_COST})
@@ -140,7 +141,7 @@ class Pipeline(unittest.TestCase):
 
         def call(url, body=None, method=None):
             calls.append(url)
-            if "api.notion.com" in url:
+            if urlsplit(url).hostname == "api.notion.com":
                 return {"results": []}
             return {"success": True, "items": rows}
 
@@ -152,7 +153,7 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(renamed["cur"], "1.234")
         self.assertEqual(renamed["ratio"], 0.125)
         self.assertEqual(renamed["areas"], [])
-        self.assertTrue(all("api.notion.com" not in url for url in calls))
+        self.assertTrue(all(urlsplit(url).hostname != "api.notion.com" for url in calls))
 
     def test_empty_brain_snapshot_preserves_existing_site_files(self):
         module = load("opc-okr-sync")
