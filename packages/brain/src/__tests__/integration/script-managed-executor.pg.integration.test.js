@@ -269,3 +269,17 @@ it('同代旧429迟到时，已经成功启动的预约不能被回队',async()=
   expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('completed');
   expect(starts).toBe(1);
 });
+it('后发429先回队而先发请求后在真实worker启动，权威运行回执恢复同代in_progress',async()=>{
+  const first=await task();rejectStart=true;
+  await triggerScriptRun(first,deps);
+  let resume,arrive;const paused=new Promise(r=>{arrive=r;}),gate=new Promise(r=>{resume=r;});
+  const delayed={...deps.managed.client,start:async(...args)=>{arrive();await gate;return deps.managed.client.start(...args);}};
+  const pending=triggerScriptRun(first,{...deps,managed:{...deps.managed,client:delayed}});await paused;
+  expect(await triggerScriptRun(first,deps)).toMatchObject({success:false,wait:true});
+  expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('queued');
+  rejectStart=false;resume();expect(await pending).toMatchObject({success:true});
+  expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('in_progress');
+  expect((await pool.query('SELECT status FROM capacity_reservations')).rows[0].status).toBe('running');
+  await reapScriptRuns(pool,deps);
+  expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('completed');expect(starts).toBe(1);
+});
