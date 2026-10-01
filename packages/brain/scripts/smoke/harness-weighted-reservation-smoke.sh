@@ -8,7 +8,7 @@ if ! DB_NAME="${DB_NAME:-cecelia_test}" node "$(dirname "${BASH_SOURCE[0]}")/../
 fi
 
 export NODE_ENV=test
-export DB_NAME="${DB_NAME:-cecelia_test}"
+export DB_NAME="${DB_NAME:-cecelia_test}" TEST_DATABASE_URL="${TEST_DATABASE_URL:-}"
 export DB_HOST="${DB_HOST:-localhost}" DB_PORT="${DB_PORT:-5432}"
 case "$DB_NAME" in
   *_scratch|*_test) ;;

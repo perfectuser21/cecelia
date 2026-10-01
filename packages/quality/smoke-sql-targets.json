@@ -15,30 +15,10 @@
     "source_commit": "d664db65c9"
   },
   "alertness-schema-smoke.sh": {"kind":"write","connection":"DATABASE_URL；未指定则拒绝，无凭据读取","evidence":"实际SQL文件17/19/21行INSERT，psql -f执行CREATE SCHEMA/迁移；BEGIN/ROLLBACK事务保留。","source_commit":"d664db65c9"},
-  "autoblock-sql-param-fix-smoke.sh": {
-    "kind": "write",
-    "connection": "BRAIN_DB_URL优先DATABASE_URL；默认本机cecelia拒绝",
-    "evidence": "实际SQL/写调用源码行 12,19；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
-  "b13-dbupsert-idempotent-smoke.sh": {
-    "kind": "write",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "实际SQL/写调用源码行 21,26,38,56；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
-  "c8a-harness-checkpoint-resume.sh": {
-    "kind": "write",
-    "connection": "host DATABASE_URL；container额外CONTAINER_DATABASE_URL必须核对同一安全服务，缺省使用已验容器Env",
-    "evidence": "实际SQL/写调用源码行 69,70,71,97,207；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
-  "conversation-capture-multitool-smoke.sh": {
-    "kind": "write",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "实际SQL/写调用源码行 98,102；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
-    "source_commit": "d664db65c9"
-  },
+  "autoblock-sql-param-fix-smoke.sh": {"kind":"write","connection":"BRAIN_DB_URL优先DATABASE_URL；默认本机cecelia拒绝","evidence":"实际SQL/写调用源码行 12,19；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。","source_commit":"d664db65c9"},
+  "b13-dbupsert-idempotent-smoke.sh": {"kind":"write","connection":"DATABASE_URL；未指定则拒绝，无凭据读取","evidence":"实际SQL/写调用源码行 21,26,38,56；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。","source_commit":"d664db65c9"},
+  "c8a-harness-checkpoint-resume.sh": {"kind":"write","connection":"host DATABASE_URL；container额外CONTAINER_DATABASE_URL必须核对同一安全服务，缺省使用已验容器Env","evidence":"实际SQL/写调用源码行 69,70,71,97,207；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。","source_commit":"d664db65c9"},
+  "conversation-capture-multitool-smoke.sh": {"kind":"write","connection":"DATABASE_URL；未指定则拒绝，无凭据读取","evidence":"实际SQL/写调用源码行 98,102；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。","source_commit":"d664db65c9"},
   "conversation-capture-smoke.sh": {
     "kind": "write",
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
