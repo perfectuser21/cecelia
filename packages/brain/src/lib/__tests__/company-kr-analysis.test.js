@@ -40,6 +40,7 @@ describe('只接受绑定快照的完整AI建议', () => {
     { ...result, items: [{ ...result.items[0], current_value: 5 }] },
     { ...result, items: [{ ...result.items[0], suggested_current: 'garbage' }] },
     { ...result, items: [{ ...result.items[0], evidence: [{ source: 'invented', fact: '臆测' }] }] },
+    { ...result, items: [{ ...result.items[0], suggested_current: 999 }] },
   ])('拒绝错版本、缺项、重复、正式字段、非法数字和捏造来源 %j', value => {
     expect(() => parseCompanyAnalysis(JSON.stringify(value), input)).toThrow();
   });

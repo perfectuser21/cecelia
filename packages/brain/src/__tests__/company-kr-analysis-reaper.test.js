@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('../machine-registry.js', () => ({ resolvePrimaryWorkerId: () => 'primary', sshTargetFor: () => 'worker' }));
 vi.mock('../lib/task-event-log.js', () => ({ recordTaskEventSafe: vi.fn() }));
 vi.mock('../lib/task-run.js', () => ({ startRun: vi.fn(), finishRun: vi.fn() }));
-import { reapOpenclawAgentRuns } from '../openclaw-agent-executor.js';
+import { reapOpenclawAgentRuns, triggerOpenclawAgent } from '../openclaw-agent-executor.js';
 import { runCompanyKrWorkflow } from '../projection/company-kr-workflow.js';
 
 const row = { id: 'task1', run_id: 'run1', payload: { company_kr_analysis: { version: 1, items: [] } } };
@@ -15,6 +15,15 @@ async function reap(consumeCompanyAnalysis) {
   return { pool, summary, answer, markCompanyAnalysis };
 }
 describe('OpenClaw公司KR可信收割', () => {
+  it('排队后停用或正式版本变更，派发前重新校验且零SSH', async () => {
+    const spawnFn = vi.fn();
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ value_json: { enabled: false } }] }) };
+    const task = { ...row, payload: { ...row.payload, run_id: 'run1', qiumi_department: 'company-kr-analyst' } };
+    const result = await triggerOpenclawAgent(task, { pool, spawnFn });
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('company_kr_analysis_superseded');
+    expect(spawnFn).not.toHaveBeenCalled();
+  });
   it('解析真实多行CLI包装，落建议成功才完成；保留已有任务结果', async () => {
     const consume = vi.fn().mockResolvedValue({ saved: ['kr1'], stale: [] });
     const { summary, pool, answer } = await reap(consume);
