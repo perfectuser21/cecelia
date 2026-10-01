@@ -19,7 +19,7 @@ function deepReverseObjectKeys(value) {
 }
 
 describe('Map Manifest JSON Schema', () => {
-  it('冻结的 Cecelia v1 输入精确表达 2×11×2×7，且 F5/F6/F7/F8 仅为 alias', () => {
+  it('现行 Cecelia v9 输入精确表达 2×11×2×7，且 F5/F6/F7/F8 仅为 alias', () => {
     const manifest = loadManifest();
     const result = validateMapManifest(manifest);
 
@@ -29,7 +29,7 @@ describe('Map Manifest JSON Schema', () => {
     expect(manifest.boundaries).toHaveLength(2);
     expect(manifest.crosscut_pool).toHaveLength(7);
     expect(manifest.shared_prerequisites).toMatchObject({ applicable: false, items: [] });
-    expect(manifest.source_decision_id).toBe('4bc109e9-3b70-4b17-a1b4-bcd01bfae776');
+    expect(manifest.source_decision_id).toBe('ab4daf73-b933-4c13-92ad-451c87c3a008');
     expect(manifest.capabilities.map(({ key }) => key)).not.toEqual(
       expect.arrayContaining(['F5', 'F6', 'F7', 'F8']),
     );

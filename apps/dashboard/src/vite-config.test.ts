@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { runInNewContext } from 'node:vm';
@@ -71,7 +71,7 @@ describe('Vitest 在真实 npm 安装布局下解析 Dashboard 依赖', () => {
   }
 
   it.each(['根目录提升', 'workspace独立安装', 'Router位于DOM包内'] as const)('%s仍使用同一套Dashboard依赖', layout => {
-    const root = mkdtempSync(join(tmpdir(), 'dashboard-vitest-layout-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'dashboard-vitest-layout-')));
     fixtures.push(root);
     const dashboard = join(root, 'apps/dashboard');
     const dashboardModules = join(dashboard, 'node_modules');
