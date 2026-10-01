@@ -3,7 +3,7 @@
 - [x] [BEHAVIOR] 活动多工作流独立且非活动格不继承，当前地图归属隔离不补拓扑且不平均分位数，Notion零值保留窗口过期清空多工作流不任选。
   Test: manual:npx vitest run sprints/tests/activity-flow-metrics.test.js
 - [x] [BEHAVIOR] 既有API与公平增量永久回归通过。
-  Test: manual:bash -c "cd packages/brain && npx vitest run src/routes/__tests__/journeys.test.js src/__tests__/notion-probe-projection.test.js src/__tests__/notion-push-sync.test.js src/lib/__tests__/activity-flow-metrics.test.js"
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/routes/__tests__/journeys.test.js src/__tests__/notion-probe-projection.test.js src/__tests__/notion-push-sync.test.js src/lib/__tests__/activity-flow-metrics.test.js src/lib/__tests__/notion-activity-flow.test.js"
 - [x] [BEHAVIOR] 前端主地图指标不依赖radius成功，零值/空值正确，完整suite与build通过。
   Test: manual:bash -c "cd apps/dashboard && npx vitest run && npm run build"
 

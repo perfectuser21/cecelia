@@ -19,7 +19,7 @@
 | --- | --- | --- | --- |
 | 冻结指标事实 | sprints/tests/activity-flow-metrics.test.js | 活动多工作流独立且非活动格不继承、当前地图归属隔离不补拓扑且不平均分位数、Notion零值保留窗口过期清空多工作流不任选 | 先行永久红commit4a8a5a260b等 |
 | 既有 API | packages/brain/src/routes/__tests__/journeys.test.js | journey_steps 保留同一活动的两个工作流，未观测活动为空 | flow_metrics原为undefined |
-| 持续更新 | packages/brain/src/lib/__tests__/activity-flow-metrics.test.js | 61 活动持续 dirty 与推送失败，保留 25 sweep、游标推进回绕且不伪造 synced | span-only原不推 |
+| 持续更新 | packages/brain/src/lib/__tests__/notion-activity-flow.test.js | 61 活动持续 dirty 与推送失败，保留 25 sweep、游标推进回绕且不伪造 synced | span-only原不推 |
 
 ## 机械验证
 
