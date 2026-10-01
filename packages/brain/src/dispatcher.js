@@ -1278,6 +1278,14 @@ export async function dispatchNextTask(goalIds) {
     };
   }
 
+  if (!execResult.success && execResult.wait === true) {
+    await pool.query(`UPDATE tasks SET status='queued',claimed_by=NULL,claimed_at=NULL,updated_at=NOW()
+      WHERE id=$1 AND status='in_progress'`, [nextTask.id]);
+    await releaseDeviceLockIfHeld(nextTask);
+    await recordDispatchResult(pool,false,'wait:capacity',undefined,nextTask.id);
+    return {dispatched:false,reason:'wait:capacity',task_id:nextTask.id,actions};
+  }
+
   // 5a. Check if executor actually succeeded — revert to queued if not
   if (!execResult.success && execResult.reason === 'script_payload_invalid' && execResult.taskTerminal === true) {
     // 执行体已把违规 payload 的任务终态 failed（不重试）：不许再被打回 queued，也不计熔断/autoblock。
