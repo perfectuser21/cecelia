@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { attachActivityFlowMetrics, attachMapFlowMetrics } from '../../packages/brain/src/lib/activity-flow-metrics.js';
-import { buildNotionFlowProperties } from '../../packages/brain/src/lib/notion-activity-flow.js';
+import { attachActivityFlowMetrics, attachMapFlowMetrics } from '../../../packages/brain/src/lib/activity-flow-metrics.js';
+import { buildNotionFlowProperties } from '../../../packages/brain/src/lib/notion-activity-flow.js';
 
 describe('903e9956冻结指标合同', () => {
   const metrics = [

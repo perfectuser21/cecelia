@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { buildStepLinkDbProps } from '../ops-notion-schema.js';
 
 const mockQuery = vi.fn();
 const mockNotionReq = vi.fn();
@@ -51,7 +52,7 @@ describe('pushJourneyStepLinks — Order 属性降级 [BEHAVIOR]', () => {
       .mockResolvedValue({ rows: [] });      // UPDATE fallback
 
     // notionReq mock 按 method 分派（棒4-2 起推送前会 PATCH 补格子列，不能再靠调用顺序）：
-    // GET schema → 无 Order；PATCH 补列 → ok；POST create page → success
+    // GET schema → 无 Order；PATCH 补列 → 真实完整schema；POST create page → success
     mockNotionReq.mockImplementation(async (_t: string, _p: string, method: string) => {
       if (method === 'GET') {
         return {
@@ -64,6 +65,7 @@ describe('pushJourneyStepLinks — Order 属性降级 [BEHAVIOR]', () => {
           },
         };
       }
+      if (method === 'PATCH') return { properties: { ...buildStepLinkDbProps(), Name: { type: 'title' }, Status: { type: 'select' } } };
       if (method === 'POST') return { id: 'sl-notion-1' };
       return {};
     });
@@ -119,6 +121,7 @@ describe('pushJourneyStepLinks — Order 属性降级 [BEHAVIOR]', () => {
           },
         };
       }
+      if (method === 'PATCH') return { properties: { ...buildStepLinkDbProps(), Name: { type: 'title' }, Status: { type: 'select' }, Order: { type: 'number' } } };
       if (method === 'POST') return { id: 'sl-notion-2' };
       return {};
     });
@@ -163,6 +166,7 @@ describe('pushJourneyStepLinks — Order 属性降级 [BEHAVIOR]', () => {
     (notionError as any).status = 400;
     mockNotionReq.mockImplementation(async (_t: string, _p: string, method: string) => {
       if (method === 'GET') return { properties: { Name: { type: 'title' } } }; // schema
+      if (method === 'PATCH') return { properties: { ...buildStepLinkDbProps(), Name: { type: 'title' } } };
       if (method === 'POST') throw notionError; // create page 400
       return {};
     });
