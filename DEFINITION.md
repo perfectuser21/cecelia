@@ -74,7 +74,7 @@
 - 永久回归覆盖实际入口、部署复制产物、被忽略TERM的Node孙进程、测试成功/失败/启动超时清理；不调用真实模型。
 - 被动实例的健康状态明确区别后台停用与故障；Observer 冒烟验证持续停用，Alertness 遗留表改由显式迁移预备。
 
-## 经营 KR 纳入 Brain 与列级工作面（任务 02148cef，版本 1.348.20）
+## 经营 KR 纳入 Brain 与列级工作面（任务 02148cef，版本 1.348.22）
 
 - 用户决定 d5cb2fb1：原公司 8 页及 3 Goal 以显式 source page ID 幂等入 Brain；38 系统 KR 与 8 公司 KR 共 46，既有独立库镜全量。Area/未知 Vision 无来源关系保持空。
 - 原 Start/Current/Target decimal、原三位 fraction 公式与非 clamp 比值存 metadata；兼容 numeric/int 列不作为公司公式输入。历史值与人类 Current 主张标未验证，KR3.1 既有四项快照不能声称连续七天。
