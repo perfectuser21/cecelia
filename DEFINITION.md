@@ -10,7 +10,9 @@
 
 
 
-**Brain 版本**: 1.353.23
+**Brain 版本**: 1.353.24
+
+接入控制面保守预算最多2核且不超过半机，内存保留至少2GiB/半机且池最多4GiB，独占槽1；首个受信shell profile无网、非root，观测过期或预算不足拒绝配置。独立256bit Worker/root凭据按机器UUID的CS标签查找，创建意图必须先提交，结果未知只找回不重复创建；先1Password读回再双写私有600文件，secret不进入参数或回执。控制面模块尚未接机器页编排、镜像op安装和生产部署。
 
 Linux脚本预约在授权事务中固定同版本worker/boot，启动转换按既有身份CAS；能力与fresh快照的版本、boot、policy、profile摘要混代时零预约。升级前空身份只从预约对应历史版本补齐，reaper不取新boot污染旧许可。真PG永久回归核旧boot拒绝与崩溃清理，维护拒绝使用真实worker_draining码并仅凭精确墓碑释放。
 
