@@ -147,6 +147,24 @@ describe('approved contract task context PostgreSQL', () => {
     await materializeApprovedContract(transactionalPool, input);
     expect((await task()).payload).toEqual(originalPayload);
   });
+  it('rolls back the approved contract if task context persistence fails', async () => {
+    await client.query("ALTER TABLE tasks ADD CONSTRAINT reject_context CHECK (NOT (payload ? 'sprint_dir'))");
+    try {
+      await expect(materializeApprovedContract(transactionalPool, options())).rejects.toThrow();
+      expect((await task()).payload).toEqual(originalPayload);
+      expect(await state()).toEqual({ contract_id: null, contracts: 0, seals: 0 });
+    } finally {
+      await client.query('ALTER TABLE tasks DROP CONSTRAINT reject_context');
+    }
+  });
+  it('repairs SQL null and an empty sprint_dir without changing other payload fields', async () => {
+    await client.query('UPDATE tasks SET payload=NULL WHERE id=$1', [taskId]);
+    await materializeApprovedContract(transactionalPool, options());
+    expect((await task()).payload).toEqual({ sprint_dir: 'sprints/context' });
+    await setPayload({ ...originalPayload, sprint_dir: '' });
+    await materializeApprovedContract(transactionalPool, options());
+    expect((await task()).payload).toEqual({ ...originalPayload, sprint_dir: 'sprints/context' });
+  });
   it('repairs a null payload with only the verified sprint root', async () => {
     await setPayload(null);
     await materializeApprovedContract(transactionalPool, options());
