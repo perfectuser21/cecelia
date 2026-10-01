@@ -74,7 +74,7 @@ done
 SCAN_REPO_NAME="$SMOKE_REPO" SCAN_REPO_ROOT="$TMP_REPO" GRAPH_REPOS="$SMOKE_REPO" \
   "$NODE_EXECUTABLE" scripts/scan/scan-graph.mjs >/dev/null
 
-HEADER_CHECK="$($PSQL_EXECUTABLE "$DATABASE_URL" -Atc "
+HEADER_CHECK="$($PSQL_EXECUTABLE -X "$DATABASE_URL" -Atc "
   SELECT count(*) || '|' || count(DISTINCT source_revision) || '|' || min(source_revision)
     FROM fact_snapshot_headers WHERE repo='$SMOKE_REPO' AND row_count > 0")"
 [[ "$HEADER_CHECK" == "4|1|$REVISION" ]] || fail "四类事实头不一致: $HEADER_CHECK"
@@ -108,7 +108,7 @@ try {
 }
 NODE
 
-SUMMARY="$($PSQL_EXECUTABLE "$DATABASE_URL" -Atc "
+SUMMARY="$($PSQL_EXECUTABLE -X "$DATABASE_URL" -Atc "
   SELECT count(*) FILTER (WHERE node_type='value_stream') || '|' ||
          count(*) FILTER (WHERE node_type='capability')
     FROM map_projection_nodes n JOIN map_projection_runs r ON r.id=n.run_id

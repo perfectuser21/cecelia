@@ -17,7 +17,7 @@ PSQL_EXECUTABLE="$(command -v psql)"
 DATABASE_NAME="$($NODE_EXECUTABLE -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DATABASE_NAME" =~ (_test|_scratch)$ ]] || fail "拒绝连接非测试库: ${DATABASE_NAME:-<empty>}"
 
-ACTIVE_DATABASE="$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')"
+ACTIVE_DATABASE="$($PSQL_EXECUTABLE -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')"
 [[ "$ACTIVE_DATABASE" == "$DATABASE_NAME" ]] \
   || fail "连接目标不一致: expected=$DATABASE_NAME actual=$ACTIVE_DATABASE"
 

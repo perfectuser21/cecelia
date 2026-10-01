@@ -22,9 +22,9 @@ if [[ -z "${CECELIA_INTERNAL_TOKEN:-}" && -f "$INTERNAL_AUTH_HELPER" ]]; then
 fi
 brain_curl() {
   if [[ -n "${CECELIA_INTERNAL_TOKEN:-}" ]]; then
-    "$CURL_EXECUTABLE" -H "Authorization: Bearer ${CECELIA_INTERNAL_TOKEN}" "$@"
+    "$CURL_EXECUTABLE" -q -H "Authorization: Bearer ${CECELIA_INTERNAL_TOKEN}" "$@"
   else
-    "$CURL_EXECUTABLE" "$@"
+    "$CURL_EXECUTABLE" -q "$@"
   fi
 }
 SMOKE_SCOPE="map-engine-smoke-$$"
