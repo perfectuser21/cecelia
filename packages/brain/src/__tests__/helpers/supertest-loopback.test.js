@@ -5,13 +5,32 @@ import { describe, expect, it } from 'vitest';
 function listen(server, options) {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(options, resolve);
+    try {
+      server.listen(options, () => { server.removeListener('error', reject); resolve(); });
+    } catch (error) {
+      server.removeListener('error', reject);
+      reject(error);
+    }
   });
 }
 
 async function close(server) {
   if (server.listening) {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
+
+async function listenPair(desired, foreign, { portForAttempt = () => 0, maxAttempts = 8 } = {}) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      await listen(desired, { host: '::1', port: portForAttempt(attempt), ipv6Only: true });
+      await listen(foreign, { host: '127.0.0.1', port: desired.address().port });
+      return;
+    } catch (error) {
+      await close(foreign);
+      await close(desired);
+      if (error.code !== 'EADDRINUSE' || attempt === maxAttempts - 1) throw error;
+    }
   }
 }
 
@@ -30,8 +49,7 @@ describe('Supertest loopback matches the real listener family', () => {
       res.end(JSON.stringify({ error: 'controlled_other_service' }));
     });
     try {
-      await listen(desired, { host: '::1', port: 0, ipv6Only: true });
-      await listen(foreign, { host: '127.0.0.1', port: desired.address().port });
+      await listenPair(desired, foreign);
       const probe = request(desired).get('/fixture');
       const res = await probe;
       expect(res.status).toBe(500);
@@ -39,6 +57,71 @@ describe('Supertest loopback matches the real listener family', () => {
       expect(queryCalls).toBe(1);
       expect(foreignCalls).toBe(0);
       expect(probe.url).toContain('://[::1]:');
+    } finally {
+      await close(foreign);
+      await close(desired);
+    }
+  });
+
+  it('reserves both address families after a real IPv4-only port collision', async () => {
+    let blockerCalls = 0;
+    const blocker = http.createServer((_req, res) => { blockerCalls += 1; res.end('existing-listener'); });
+    const desired = http.createServer((_req, res) => res.end('desired'));
+    const foreign = http.createServer((_req, res) => res.end('foreign'));
+    try {
+      await listen(blocker, { host: '127.0.0.1', port: 0 });
+      const occupied = blocker.address().port;
+      await listenPair(desired, foreign, { portForAttempt: (attempt) => attempt === 0 ? occupied : 0 });
+      expect(desired.address().port).not.toBe(occupied);
+      expect(foreign.address().port).toBe(desired.address().port);
+      expect((await request(desired).get('/')).text).toBe('desired');
+      expect((await request(foreign).get('/')).text).toBe('foreign');
+      expect(blocker.listening).toBe(true);
+      expect(blocker.address().port).toBe(occupied);
+      expect(blockerCalls).toBe(0);
+    } finally {
+      await close(foreign);
+      await close(desired);
+      await close(blocker);
+    }
+  });
+
+  it('bounds real occupied-port retries and releases its own listeners', async () => {
+    const blocker = http.createServer();
+    const desired = http.createServer();
+    const foreign = http.createServer();
+    let attempts = 0;
+    try {
+      await listen(blocker, { host: '127.0.0.1', port: 0 });
+      const occupied = blocker.address().port;
+      await expect(listenPair(desired, foreign, {
+        maxAttempts: 3,
+        portForAttempt: () => { attempts += 1; return occupied; },
+      })).rejects.toMatchObject({ code: 'EADDRINUSE' });
+      expect(attempts).toBe(3);
+      expect(desired.listening).toBe(false);
+      expect(foreign.listening).toBe(false);
+      expect(blocker.listening).toBe(true);
+      expect(blocker.address().port).toBe(occupied);
+    } finally {
+      await close(foreign);
+      await close(desired);
+      await close(blocker);
+    }
+  });
+
+  it('does not retry native errors other than address collision', async () => {
+    const desired = http.createServer();
+    const foreign = http.createServer();
+    let attempts = 0;
+    try {
+      await listen(desired, { host: '::1', port: 0, ipv6Only: true });
+      await expect(listenPair(desired, foreign, {
+        portForAttempt: () => { attempts += 1; return 0; },
+      })).rejects.toMatchObject({ code: 'ERR_SERVER_ALREADY_LISTEN' });
+      expect(attempts).toBe(1);
+      expect(desired.listening).toBe(false);
+      expect(foreign.listening).toBe(false);
     } finally {
       await close(foreign);
       await close(desired);

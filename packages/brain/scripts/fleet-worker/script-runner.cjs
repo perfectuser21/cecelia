@@ -43,7 +43,7 @@ function loadProtectedScriptProfiles(filename) {
   for(const profile of Object.values(config.profiles)) validateProfile(profile);
   return config.profiles;
 }
-function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),profiles={},docker,assertLocalResources}) {
+function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),profiles={},docker,assertLocalResources,assertCanLaunch=()=>{}}) {
   fs.mkdirSync(stateRoot,{recursive:true,mode:0o700});
   const root=fs.realpathSync(stateRoot);
   fs.chmodSync(root,0o700);
@@ -147,8 +147,8 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
         if(typeof assertLocalResources!=='function')throw new Error('script_local_resources_unavailable');
         state??={...initial(input),job_digest:digest(input.job),timeout_sec:input.job.timeout_sec};save(state);
         const admit=async()=>{
-          try {await assertLocalResources();return true;}
-          catch(error){if(!/^(attempt|script)_local_resources_unavailable$/.test(error.message))throw error;
+          try {assertCanLaunch();await assertLocalResources();assertCanLaunch();return true;}
+          catch(error){if(error.message!=='worker_draining'&&!/^(attempt|script)_local_resources_unavailable$/.test(error.message))throw error;
             state.status='waiting_resources';save(state);return false;}
         };
         if(!await admit())return state;
@@ -157,10 +157,15 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
         save(state); // exact ID 持久化后才可 start；重复请求只 inspect。
         if(!await admit())return state;
         state.status='starting';state.started_at=Date.now();save(state);
+        try{assertCanLaunch();}catch(error){if(error.message!=='worker_draining')throw error;state.status='waiting_resources';state.started_at=null;save(state);return state;}
         await docker.start(state.container_id);
         state.status='running';save(state);schedule(state);
         return observe(state);
       });
+    },
+    maintenance(){
+      const files=fs.readdirSync(root).filter(name=>name.endsWith('.json')&&UUID.test(name.slice(0,-5)));
+      return {pending:files.map(name=>read(name.slice(0,-5))).filter(state=>state&&state.status!=='cleaned').length};
     },
     async inspect(input) {
       return locked(input,async(state)=>{
