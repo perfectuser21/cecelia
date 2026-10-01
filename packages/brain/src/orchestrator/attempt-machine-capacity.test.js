@@ -1,7 +1,7 @@
+import { MACHINE_CAPACITY_CONTENDED } from './attempt-resource-budget.js';
 import { describe, expect, it } from 'vitest';
 
 import {
-  AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED,
   prepareAttemptMachineCapacity,
   readAttemptCreationOutcome,
 } from './attempt-machine-capacity.js';
@@ -48,6 +48,6 @@ describe('attempt machine capacity authority', () => {
   it('把持久化容量争用标记提升为专属错误', () => {
     expect(() => readAttemptCreationOutcome({
       rows: [{ machine_capacity_contended: true }],
-    })).toThrow(AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED);
+    })).toThrow(MACHINE_CAPACITY_CONTENDED);
   });
 });
