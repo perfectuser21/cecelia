@@ -1667,6 +1667,7 @@ describe('Fleet Worker Attempt runner', () => {
     const rawImageId = `sha256:${'b'.repeat(64)}`;
     const { createAttemptRunner } = loadAttemptRunner();
     const runner = createAttemptRunner({
+      assertLocalResources: async () => {},
       workspaceManager: deps.workspaceManager,
       docker: deps.docker,
       stateStore: deps.stateStore,
@@ -3182,6 +3183,7 @@ describe('Fleet claude 单链挂载（attempt d80312c0 Not logged in 案卷回�
     const deps = dependencies();
     const { createAttemptRunner } = loadAttemptRunner();
     const runner = createAttemptRunner({
+      assertLocalResources: async () => {},
       workspaceManager: deps.workspaceManager,
       docker: deps.docker,
       stateStore: deps.stateStore,
@@ -3210,6 +3212,7 @@ describe('Fleet claude 单链挂载（attempt d80312c0 Not logged in 案卷回�
     const deps = dependencies();
     const { createAttemptRunner } = loadAttemptRunner();
     const runner = createAttemptRunner({
+      assertLocalResources: async () => {},
       workspaceManager: deps.workspaceManager,
       docker: deps.docker,
       stateStore: deps.stateStore,
@@ -3369,6 +3372,36 @@ describe('新增执行前本机资源复验', () => {
     await runner.start(ATTEMPT_ID, lease);
     expect(deps.docker.start).toHaveBeenCalledOnce();
     expect(deps.docker.start.mock.calls[0][0].credential).toEqual(CREDENTIAL);
+  });
+  it.each(['probe', 'save'])('%s期间取消，不得在返回后启动Docker', async (phase) => {
+    let enterPause; let releasePause;
+    const entered = new Promise((resolve) => { enterPause = resolve; });
+    const blocked = new Promise((resolve) => { releasePause = resolve; });
+    const guard = vi.fn(async () => {});
+    const deps = dependencies({ assertLocalResources: guard });
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+    const pause = async () => { enterPause(); await blocked; };
+    if (phase === 'probe') guard.mockImplementationOnce(pause);
+    else {
+      const originalSave = deps.stateStore.save.getMockImplementation();
+      deps.stateStore.save.mockImplementationOnce(async (state) => { await pause(); return originalSave(state); });
+    }
+    const starting = runner.start(ATTEMPT_ID, lease);
+    await entered;
+    const cancelling = runner.cancel(ATTEMPT_ID, lease);
+    await new Promise((resolve) => setImmediate(resolve));
+    releasePause();
+    await Promise.all([starting, cancelling]);
+    expect(deps.docker.start).not.toHaveBeenCalled();
+  });
+  it('错误lease在探针前拒绝', async () => {
+    const guard = vi.fn(async () => {});
+    const deps = dependencies({ assertLocalResources: guard });
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+    await expect(runner.start(ATTEMPT_ID, { owner: 'other', generation: 99 })).rejects.toThrow('attempt_lease_conflict');
+    expect(guard).toHaveBeenCalledOnce();
   });
   it('精确重复prepare与running start不重复复验', async () => {
     const guard = vi.fn(async () => {});

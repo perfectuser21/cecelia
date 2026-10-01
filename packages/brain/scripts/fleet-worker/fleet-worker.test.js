@@ -924,6 +924,17 @@ describe('Fleet Worker Attempt API', () => {
     };
   }
 
+  it('资源复验拒绝返回429固定码', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const runner = runnerDouble();
+    runner.prepare.mockRejectedValue(Object.assign(new Error('attempt_local_resources_unavailable'), { statusCode: 429 }));
+    const server = createFleetWorkerServer({ attemptRunner: runner, attemptToken: token });
+    const response = await request(server, 'POST', '/harness/attempts/prepare', { headers: auth, body: launchBody() });
+    expect(response.statusCode).toBe(429);
+    expect(JSON.parse(response.body)).toEqual({ error: 'attempt_local_resources_unavailable' });
+    server.close();
+  });
+
   function runnerDouble() {
     return {
       prepare: vi.fn(async () => ({

@@ -60,6 +60,20 @@ describe('本机即时资源准入', () => {
       await expect(guard()).rejects.toMatchObject({ statusCode: 429 });
     }
   });
+  it('采样挂起有界超时，旧采样完成也不能放行', async () => {
+    vi.useFakeTimers();
+    try {
+      const guard = createLocalResourceAdmission({ workerId: 'us-mac-m4', diskPaths: ['/controlled'],
+        platform: 'darwin', loadProfile: () => profile, runCommand: () => new Promise(() => {}) });
+      const result = guard().catch((error) => error);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(await result).toMatchObject({ statusCode: 429 });
+      const old = createLocalResourceAdmission({ workerId: 'us-mac-m4', diskPaths: ['/controlled'],
+        platform: 'darwin', loadProfile: () => profile, runCommand: fixture().runCommand,
+        now: vi.fn().mockReturnValueOnce(0).mockReturnValue(5000) });
+      await expect(old()).rejects.toMatchObject({ statusCode: 429 });
+    } finally { vi.useRealTimers(); }
+  });
   it('缺失策略、机器身份不符或未知平台均拒绝', async () => {
     for (const options of [{ loadProfile: () => null }, { workerId: 'unknown' }, { platform: 'linux' }]) {
       const guard = createLocalResourceAdmission({ workerId: 'us-mac-m4', diskPaths: ['/controlled'],
