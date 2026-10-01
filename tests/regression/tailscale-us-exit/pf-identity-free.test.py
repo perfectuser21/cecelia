@@ -178,7 +178,7 @@ class ActivationFailureTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest.mock import patch
         import tailscale_us_exit_activation as activation
-        with patch.object(activation.subprocess, "run", return_value=SimpleNamespace(returncode=0)), \
+        with patch.object(activation, "job_status", return_value=SimpleNamespace(returncode=0, stdout="pid = 777")), \
              patch.object(activation, "command", side_effect=RuntimeError("bootout failed")):
             with self.assertRaises(RuntimeError):
                 activation.stop_job(activation.GUARD_LABEL)
@@ -236,6 +236,7 @@ class ActivationFailureTests(unittest.TestCase):
                 return ""
             with patch.object(activation, "read_transaction", return_value=(path, state)), \
                  patch.object(activation, "command", side_effect=run), \
+                 patch.object(activation, "stop_job"), \
                  patch.object(activation.subprocess, "run"), \
                  patch.object(activation, "PLIST", path / "absent.plist"):
                 activation.rollback(path)
@@ -307,6 +308,7 @@ class ActivationFailureTests(unittest.TestCase):
                  patch.object(activation, "preflight", return_value=audit), \
                  patch.object(activation, "read_transaction", side_effect=read_transaction), \
                  patch.object(activation, "command", side_effect=command), \
+                 patch.object(activation, "stop_job"), \
                  patch.object(activation.time, "time", side_effect=lambda: clock[0]), \
                  patch.object(activation.os, "geteuid", return_value=0), \
                  patch.object(activation.os, "kill"), \

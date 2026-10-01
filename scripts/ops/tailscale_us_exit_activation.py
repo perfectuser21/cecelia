@@ -28,6 +28,7 @@ FILES = (INSTALL / "tailscale-us-exit-enforcer.py", INSTALL / "tailscale_us_exit
          INSTALL / "tailscale_us_exit_activation.py", INSTALL / "tailscale_us_exit_legacy.py", PLIST, GUARD_PLIST, INSTALL / "tailscale_us_exit_lease.py", CACHE,
          CACHE.with_name("bootstrap-peers.json"), CACHE.with_name("bootstrap-context.json"),
          CACHE.with_name("business-lease.json"), CACHE.with_name("guard-health.json"))
+ADB_SERIALS = {"ANGYVB4227006983", "ANGYVB4402004137"}
 
 
 def command(args, input=None):
@@ -120,14 +121,45 @@ def locked(path):
     return stream
 
 
+def job_status(label):
+    result = subprocess.run(["/bin/launchctl", "print", "system/" + label],
+                            text=True, capture_output=True, timeout=10)
+    if result.returncode and "Could not find service" not in result.stderr:
+        raise RuntimeError("无法确认进程状态: " + label)
+    return result
+
+
+def stop_job(label):
+    result = job_status(label)
+    if result.returncode:
+        return
+    match = re.search(r"\bpid\s*=\s*(\d+)", result.stdout)
+    pid = int(match.group(1)) if match else None
+    command(["/bin/launchctl", "bootout", "system/" + label])
+    deadline = time.time() + 5
+    while True:
+        gone = bool(job_status(label).returncode)
+        if pid:
+            try:
+                os.kill(pid, 0)
+                gone = False
+            except ProcessLookupError:
+                pass
+        if gone:
+            return
+        if time.time() >= deadline:
+            raise RuntimeError("进程仍存活，拒绝恢复文件及 anchor: " + label)
+        time.sleep(0.05)
+
+
 def rollback(path):
     path, state = read_transaction(path)
     with locked(path):
         state = json.loads((path / "transaction.json").read_text())
         if state["status"] in ("confirmed", "rolled_back"):
             return
-        subprocess.run(["/bin/launchctl", "bootout", "system/" + GUARD_LABEL], capture_output=True, timeout=20)
-        subprocess.run(["/bin/launchctl", "bootout", "system/" + LABEL], capture_output=True, timeout=20)
+        stop_job(GUARD_LABEL)
+        stop_job(LABEL)
         for entry in state["files"]:
             target = Path(entry["target"])
             if entry["existed"]:
@@ -218,12 +250,14 @@ def activate(args):
     state = {"anchor": ANCHOR, "approval_actor": args.actor,
              "approval_scope": args.approve_scope, "status": "armed",
              "deadline": time.time() + args.timeout, "files": entries,
+             "target_home": args.home,
              "rollback_label": LABEL + ".rollback." + path.name,
              "candidate_sha256": hashlib.sha256(candidate.encode()).hexdigest()}
     save_transaction(path, state)
     rollback_plist = path / "rollback.plist"
     with rollback_plist.open("wb") as stream:
         plistlib.dump({"Label": state["rollback_label"], "RunAtLoad": True,
+            "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 2,
             "ProgramArguments": ["/usr/bin/python3", str(path / "rollback.py"), "watchdog", "--transaction", str(path)],
             "StandardOutPath": str(path / "rollback.log"), "StandardErrorPath": str(path / "rollback.log")}, stream)
     command(["/bin/launchctl", "bootstrap", "system", str(rollback_plist)])
@@ -240,7 +274,10 @@ def activate(args):
         with locked(path):
             verify_transaction(path)
             preflight()
-            guarded_command(path, ["/bin/launchctl", "bootout", "system/" + LABEL])
+            stop_job(GUARD_LABEL)
+            verify_transaction(path)
+            stop_job(LABEL)
+            verify_transaction(path)
             environment = dict(os.environ, CECELIA_US_EXIT_ACTIVATION_TRANSACTION=str(path))
             verify_transaction(path)
             subprocess.run(["/bin/bash", str(source / "install-tailscale-us-exit-enforcer.sh"),
@@ -267,6 +304,28 @@ def activate(args):
         raise
 
 
+def adb_binary(home):
+    for path in (Path("/opt/homebrew/bin/adb"), Path("/usr/local/bin/adb"),
+                 Path(home) / "Library/Android/sdk/platform-tools/adb"):
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    raise RuntimeError("未找到目标机器 ADB；拒绝取消回滚")
+
+
+def verify_adb(home):
+    user = pwd.getpwuid(Path(home).stat().st_uid).pw_name
+    binary = adb_binary(home)
+    prefix = ["/usr/bin/sudo", "-n", "-u", user, "/usr/bin/env", "HOME=" + home, binary]
+    verified = []
+    for serial in sorted(ADB_SERIALS):
+        if command(prefix + ["-s", serial, "shell", "getprop", "sys.boot_completed"]).strip() != "1":
+            raise RuntimeError("目标手机尚未完成启动: " + serial)
+        if command(prefix + ["-s", serial, "shell", "echo", "cecelia-pf-confirm"]).strip() != "cecelia-pf-confirm":
+            raise RuntimeError("目标手机独立 ADB shell 验收失败: " + serial)
+        verified.append(serial)
+    return verified
+
+
 def confirm(args):
     path, _ = read_transaction(args.transaction)
     with locked(path):
@@ -279,9 +338,11 @@ def confirm(args):
                 or evidence.get("candidate_sha256") != state["candidate_sha256"]
                 or not 0 <= time.time() - evidence.get("observed_at", 0) <= 120
                 or evidence.get("us_exit_verified") is not True
-                or len(set(evidence.get("adb_serials_verified", []))) != 2
+                or set(evidence.get("adb_serials_verified", [])) != ADB_SERIALS
                 or not evidence.get("actor")):
             raise RuntimeError("缺 fresh 的同候选远程 SSH、美国出口和双 ADB 验收事实")
+        evidence["adb_serials_verified"] = verify_adb(state["target_home"])
+        verify_transaction(path)
         from tailscale_us_exit_lease import guard_alive, valid_lease
         from tailscale_us_exit_policy import read_map_cache
         if not guard_alive(CACHE) or not valid_lease(read_map_cache(CACHE.with_name("business-lease.json"), max_age=15), time.time()):
