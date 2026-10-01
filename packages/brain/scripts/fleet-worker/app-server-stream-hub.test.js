@@ -8,6 +8,16 @@ function fixture(){const child=Object.assign(new EventEmitter(),{stdin:new PassT
  const runner={async attach(){attaches++;return child;},async markRpcStarted(){marks++;}};
  const identity={reservation_id:randomUUID(),stream_id:randomUUID()};return {child,runner,identity,get attaches(){return attaches;},get marks(){return marks;}};
 }
+it('验收流按持久身份选择窄策略，并把拒绝审计写回Worker',async()=>{
+ const f=fixture();f.child.rpcCanary=true;f.child.rpcCanaryExpiresAt=Date.now()+60000;
+ const audits=[];f.runner.recordCanaryEvidence=async(identity,evidence)=>{expect(identity).toEqual(f.identity);audits.push(evidence);};
+ const hub=api.createStreamHub({runner:f.runner}),ticket=await hub.prepare(f.identity),input=new PassThrough(),output=new PassThrough();
+ let seen='';output.on('data',chunk=>seen+=chunk);let forwarded=0;f.child.stdin.on('data',()=>forwarded++);
+ hub.claim(ticket.stream_id,ticket.token,input,output);
+ input.write(JSON.stringify({id:1,method:'thread/start',params:{}})+'\n');await new Promise(r=>setTimeout(r,20));
+ expect(forwarded).toBe(0);expect(JSON.parse(seen).error.message).toBe('appserver_canary_method_denied');
+ expect(audits.at(-1)).toMatchObject({complete:false,rejected:1});hub.close();
+});
 it('真实双向流单次领取，错误凭证不消耗，首次写入先持久化；结束只断流不取消预约',async()=>{
  expect(api.createStreamHub).toBeTypeOf('function');const f=fixture(),hub=api.createStreamHub({runner:f.runner});
  const prepared=await hub.prepare(f.identity);expect(f.attaches).toBe(1);
