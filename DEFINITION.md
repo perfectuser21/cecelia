@@ -10,11 +10,13 @@
 
 
 
-**Brain 版本**: 1.353.13
+**Brain 版本**: 1.353.14
 
-Linux 执行池部署合同使用独立 systemd slice 的 CPU/内存/PID 限额；仅可信私有配置指定固定 Docker socket、固定池名和镜像 digest。零预算保持不可执行，US 调度节点按稳定设备 UUID 禁止执行。此合同与单元生成器尚未接入服务安装或目录授权，不能将生成配置当作通过验收。
+Linux 池 migration505 将 nonce 挑战、验收签名及 CAS 授权准备写入独立真表。内部 machines/linux-pool 路由只接受记录 ID 与 expected_version_id；完整期望及凭据绑定来自 CECELIA_LINUX_POOL_DEPLOYMENTS_FILE 指向的受保护部署登记文件和 1Password 同步凭据文件，默认未配置拒绝。验收绑定设备 UUID、固定 revision/config、host/worker boot、daemon、完整 slice 资源证明和精确清理；nonce 限时一次消费，历史不可改，同机器锁与预约共享。ready 仅建立 pending 版本与 managed_script/script 显式 profile 许可，容量为0，API execution=false；503 的 attested active 硬拒保留。US 稳定 UUID、scheduler 和零预算均拒绝。撤销即使部署配置或凭据不可用仍按持久身份执行；过期不得续期复活，历史清理定位保留。本片未部署或执行生产DDL，仍需可信bootstrap、Linux脚本adapter/真实执行清理、机器页调用及真实systemd池验收。
 
-Linux 池证明采集器限定可信 SSH/root 验收入口和完整 systemd 宿主/VM，容器内 systemd 保守拒绝；核对固定 Docker socket 的完整容器身份、镜像、非 root 隔离参数、宿主 PID 的真实父 slice，再读取该池及可见祖先的 CPU/内存/PID 限额和可用量。宿主 boot、进程出生时间、namespace、挂载与池配置在采集前后复验；输出仍 execution=false，尚不代表签名回执、清理确认或目录授权完成。
+Linux 执行池部署合同使用独立 systemd slice 的 CPU/内存/PID 限额；仅可信私有配置指定固定 Docker socket、固定池名和镜像 digest。零预算保持不可执行，US 调度节点按稳定设备 UUID 禁止执行。受信root安装器与持久canary已实现，Brain仅准备pending目录记录；尚未现网部署，不能将生成配置当作通过验收。
+
+Linux 池证明采集器限定可信 SSH/root 验收入口和完整 systemd 宿主/VM，容器内 systemd 保守拒绝；核对固定 Docker socket 的完整容器身份、镜像、非 root 隔离参数、宿主 PID 的真实父 slice，再读取该池及可见祖先的 CPU/内存/PID 限额和可用量。宿主 boot、进程出生时间、namespace、挂载与池配置在采集前后复验；采集输出仍 execution=false，只有后续canary完成精确清理才签名；Brain验收仅允许准备pending授权，仍不开放执行。
 
 Linux pending 服务提供只读健康采样与认证 nonce 身份回执，绑定设备 UUID、固定修订、配置摘要和进程 boot；核心资源及所有执行入口保持拒绝，采样器自报状态不能授予执行。采样合并并发、请求有界，令牌只读私有安装文件；systemd 采集服务自身另限0.25核/256MiB/64进程，与任务池分离。尚未安装到现网。
 

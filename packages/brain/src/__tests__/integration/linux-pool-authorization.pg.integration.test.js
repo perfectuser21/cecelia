@@ -145,3 +145,9 @@ it('只有完整宿主slice资源证明能验收，缺失或越过注册池预�
  const c=await service.challenge(machine,{expected_version_id:null});
  for(const mutate of [r=>delete r.proof.cgroup_parent,r=>r.proof.cgroup_parent_path='/foreign.slice',r=>r.proof.cpu_cores=9999,r=>r.proof.memory_limit_bytes=2**40,r=>r.proof.pids_limit=99999])await expect(service.attest(machine,{challenge_id:c.id,envelope:envelope(c,mutate)})).rejects.toThrow('linux_pool_receipt_invalid');
 });
+it('读取状态把部署boot换代和配置不可读呈现失效，不继续显示ready',async()=>{
+ const {a}=await accepted();await service.activate(machine,{attestation_id:a.id,expected_version_id:null});
+ config.host_boot_id=randomUUID();expect((await service.get(machine)).attestations[0].state).toBe('invalidated');
+ const offline=createLinuxPoolAuthorization({pool,readDeployment:async()=>{throw Error('secret-read-failed');}});
+ expect((await offline.get(machine)).attestations[0].state).toBe('unavailable');
+});
