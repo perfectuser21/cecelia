@@ -33,12 +33,17 @@ for (const [constraint,column,value] of [['tasks_executor_kind_check','executor_
   const tuple = '(' + [constraint,column,value].map(x => String.fromCharCode(39) + x + String.fromCharCode(39)).join(',') + ')';
   if (!extension.includes(tuple)) { console.error('FAIL 502 缺精确合同增量'); process.exit(1); }
 }
-ek.push('preview-janitor'); ek.sort(); tt.push('janitor'); tt.sort();
+const appServer = readFileSync('migrations/504_app_server_generations.sql', 'utf8');
+for (const [constraint,column,value] of [['tasks_executor_kind_check','executor_kind','app-server-controller'],['tasks_task_type_check','task_type','app_server_run']]) {
+  const tuple = '(' + [constraint,column,value].map(x => String.fromCharCode(39) + x + String.fromCharCode(39)).join(',') + ')';
+  if (!appServer.includes(tuple)) { console.error('FAIL 504 缺精确合同增量'); process.exit(1); }
+}
+ek.push('preview-janitor','app-server-controller'); ek.sort(); tt.push('janitor','app_server_run'); tt.sort();
 if (JSON.stringify(ek) !== JSON.stringify([...VALID_EXECUTOR_KINDS].sort())) { console.error('FAIL executor_kind 名单 != VALID_EXECUTOR_KINDS'); process.exit(1); }
 if (JSON.stringify(tt) !== JSON.stringify([...R.DB_WHITELISTED_TASK_TYPES].sort())) { console.error('FAIL task_type 名单 != 注册表 DB 白名单'); process.exit(1); }
 const v = readFileSync('migrations/472_validate_script_executor_constraints.sql', 'utf8');
 for (const c of ['tasks_executor_kind_check', 'tasks_task_type_check']) if (!v.includes('VALIDATE CONSTRAINT ' + c)) { console.error('FAIL 472 缺 VALIDATE ' + c); process.exit(1); }
-console.log('471/472 结构正确，叠加502增量后与 lib 真身一致 ✓');
+console.log('471/472 结构正确，叠加502/504精确增量后与 lib 真身一致 ✓');
 "
 
 echo "[script-executor-contract-smoke] 3. payload 契约：合法通过 / 违规被拒"
