@@ -216,6 +216,15 @@ describe('POST /key-results/:id/recalculate-progress（任务 7aeb81a6）', () =
     expect(mockPool.query.mock.calls.some(([sql]) => sql.includes('UPDATE key_results'))).toBe(false);
   });
 
+  it('持续并发冲突返回409，最多三次尝试且不强行覆盖', async () => {
+    seed({ target: '100' });
+    const seeded = mockPool.query.getMockImplementation();
+    mockPool.query.mockImplementation(async (sql, params) => sql.includes('UPDATE key_results')
+      ? { rows: [], rowCount: 0 } : seeded(sql, params));
+    expect((await run())._status).toBe(409);
+    expect(mockPool.query.mock.calls.filter(([sql]) => sql.includes('UPDATE key_results'))).toHaveLength(3);
+  });
+
   it('不存在的 KR 返回404、不写库', async () => {
     mockPool.query.mockResolvedValue({ rows: [] });
     expect((await run())._status).toBe(404);
