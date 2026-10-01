@@ -69,7 +69,7 @@ class InstallerRecoveryTests(unittest.TestCase):
 
 
 class NetworkRecoveryTests(unittest.TestCase):
-    def invoke_confirm(self, root, state, evidence, verify=None, command=None, adb=None, baseline_read=None):
+    def invoke_confirm(self, root, state, evidence, verify=None, command=None, adb=None, baseline_read=None, lease_check=None):
         import tailscale_us_exit_activation as activation
         evidence_file = root / "evidence.json"
         evidence_file.write_text(json.dumps(evidence))
@@ -80,7 +80,7 @@ class NetworkRecoveryTests(unittest.TestCase):
             stack.enter_context(patch.object(activation, "command", side_effect=command or (lambda _: 'label "cecelia-us-exit-v2"\nblock drop out quick proto { tcp udp } all')))
             stack.enter_context(patch.dict(os.environ, SSH_CONNECTION="100.71.151.105 123 100.86.57.69 22"))
             stack.enter_context(patch("tailscale_us_exit_lease.guard_alive", return_value=True))
-            stack.enter_context(patch("tailscale_us_exit_lease.valid_lease", return_value=True))
+            stack.enter_context(patch("tailscale_us_exit_lease.valid_lease", side_effect=lease_check or (lambda *args: True)))
             stack.enter_context(patch("tailscale_us_exit_policy.read_map_cache", return_value={}))
             stack.enter_context(patch("tailscale_us_exit_recovery.read_root_file", side_effect=baseline_read or (lambda p: p.read_bytes())))
             output = io.StringIO()
@@ -275,6 +275,31 @@ class NetworkRecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "deadline"):
                 self.invoke_confirm(root, state, evidence, verify=verify, baseline_read=baseline_read)
             self.assertEqual(len(reads), 2)
+            self.assertEqual(state["status"], "armed")
+
+    def test_confirmation_pf_read_crossing_business_lease_ttl_rejects_even_before_rollback_deadline(self):
+        import tailscale_us_exit_activation as activation
+        import tailscale_us_exit_lease as lease
+        validate = lease.valid_lease
+        payload = {"signature": "cecelia-us-exit-v2", "generation": "current", "observed_at":1000, "expires_at":1015}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, evidence = self.fixture(root, activation.ADB_SERIALS)
+            state["confirmation_scope"] = "all-phones"
+            clock = [1002]
+            state["deadline"] = 1100
+            def verify(_):
+                if clock[0] >= state["deadline"]:
+                    raise RuntimeError("deadline expired")
+                return root, state
+            def command(args):
+                if args[0] == "/sbin/pfctl":
+                    clock[0] = 1020
+                return "block drop out quick proto { tcp udp } all"
+            def current_lease(*_):
+                return validate(payload, clock[0])
+            with self.assertRaises(RuntimeError):
+                self.invoke_confirm(root, state, evidence, verify=verify, command=command, lease_check=current_lease)
             self.assertEqual(state["status"], "armed")
 
 
