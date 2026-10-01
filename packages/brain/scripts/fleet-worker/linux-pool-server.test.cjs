@@ -13,6 +13,13 @@ async function fixture(probe=async()=>({status:'observed',cpu_cores:4,execution:
   return {url:'http://127.0.0.1:'+server.address().port,server,close:()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections();})};
 }
 describe('Linux pending观察服务',()=>{
+  it('接root桥时身份随root执行进程boot换代，拒绝无效boot文件',async()=>{
+    let boot=randomUUID();const server=createLinuxPoolServer({profile:input,token,revision,readWorkerBootId:()=>boot});
+    await new Promise(r=>server.listen(0,'127.0.0.1',r));const url='http://127.0.0.1:'+server.address().port;
+    const request=()=>fetch(url+'/v1/pool/identity',{method:'POST',headers:{Authorization:'Bearer '+token},body:JSON.stringify({nonce})});
+    try{expect((await (await request()).json()).receipt.worker_boot_id).toBe(boot);boot=randomUUID();expect((await (await request()).json()).receipt.worker_boot_id).toBe(boot);boot='invalid';expect((await request()).status).toBe(400);}
+    finally{await new Promise(r=>{server.close(r);server.closeAllConnections();});}
+  });
   it('显式Unix桥接线只允许认证三动作，转发root签名原文；未配置保持拒绝',async()=>{
     const calls=[],envelope={receipt:{status:'running'},signature:'root-signature'};
     const bridge=Object.fromEntries(['start','inspect','cancel'].map(action=>[action,async body=>{calls.push([action,body]);return {status:200,envelope};}]));
