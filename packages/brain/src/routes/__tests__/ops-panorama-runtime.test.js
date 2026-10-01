@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { performance } from 'node:perf_hooks';
+import express from 'express';
 const state = vi.hoisted(() => ({ sleep: true, neverLlm: false, error: false, children: [], syncCalls: 0 }));
 vi.mock('child_process', async (importOriginal) => {
   const cp = await importOriginal();
@@ -44,6 +45,20 @@ describe('ops-panorama 真实router同步阻塞回归', () => {
     expect(returnedAt).toBeLessThan(90);
     expect(heartbeatAt).toBeLessThan(90);
     expect(state.syncCalls).toBe(0);
+  });
+  it('真实HTTP全景探测运行时其它健康请求立即响应', async () => {
+    const app = express(); app.locals.pool = { query: async () => ({ rows: [] }) };
+    app.use('/ops-panorama', router); app.get('/health', (_req, res) => res.json({ ok: true }));
+    const server = await new Promise((resolve) => { const listener = app.listen(0, '127.0.0.1', () => resolve(listener)); });
+    try {
+      const base = `http://127.0.0.1:${server.address().port}`;
+      let panoramaDone = false;
+      const panorama = fetch(`${base}/ops-panorama`).then(async (res) => { const body = await res.json(); panoramaDone = true; return body; });
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      expect(await (await fetch(`${base}/health`)).json()).toEqual({ ok: true });
+      expect(panoramaDone).toBe(false);
+      expect((await panorama).processes).toEqual({ claude_total: 1, codex_total: 1 });
+    } finally { await new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); }); }
   });
   it('保留字段shape、精确进程计数、账号去凭据和原缓存读取入口', async () => {
     state.sleep = false;
