@@ -92,6 +92,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
 
 export default defineConfig({
   test: {
+    setupFiles: ['./src/__tests__/helpers/setup-http-loopback.js'],
     globals: true,
     env: {
       CECELIA_MAP_REPO_SCOPES: 'perfectuser21/cecelia=cecelia,cecelia=cecelia',
