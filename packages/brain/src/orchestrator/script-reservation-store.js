@@ -81,7 +81,7 @@ export function createScriptReservationStore(pool) {
     },
     async listOutstanding(limit = 100) {
       return (await pool.query(`SELECT r.*,t.status AS task_status FROM capacity_reservations r
-        LEFT JOIN tasks t ON t.id=r.task_id WHERE r.status <> 'released'
+        LEFT JOIN tasks t ON t.id=r.task_id WHERE r.status <> 'released' OR (t.status='in_progress' AND t.payload->>'script_reservation_id'=r.id::text)
         ORDER BY r.updated_at LIMIT $1`, [limit])).rows;
     },
     async claimCleanup(id, owner, leaseMs) {

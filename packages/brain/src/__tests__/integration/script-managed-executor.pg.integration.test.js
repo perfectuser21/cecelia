@@ -27,11 +27,11 @@ beforeAll(async()=>{
   await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
   await pool.query(`CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);
     CREATE TABLE tasks(id UUID PRIMARY KEY,title TEXT DEFAULT 'fixture',task_type TEXT DEFAULT 'script_run',status TEXT,
-      priority TEXT DEFAULT 'P2',executor_kind TEXT DEFAULT 'script',payload JSONB DEFAULT '{}',result JSONB DEFAULT '{}',
+      priority TEXT DEFAULT 'P2',executor_kind TEXT DEFAULT 'script',payload JSONB DEFAULT '{}',result JSONB DEFAULT '{"handoff":{"schema_version":"v1","next_steps":[]}}',
       claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,completed_at TIMESTAMPTZ,
-      updated_at TIMESTAMPTZ DEFAULT NOW(),error_message TEXT,parent_task_id UUID);
+      updated_at TIMESTAMPTZ DEFAULT NOW(),error_message TEXT,parent_task_id UUID,project_id UUID,summary TEXT);
     CREATE TABLE task_runs(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),task_id UUID,run_id TEXT UNIQUE,status TEXT,
-      context JSONB,result JSONB,started_at TIMESTAMPTZ DEFAULT NOW(),ended_at TIMESTAMPTZ,error TEXT);
+      context JSONB,result JSONB,started_at TIMESTAMPTZ DEFAULT NOW(),ended_at TIMESTAMPTZ,error_message TEXT,updated_at TIMESTAMPTZ DEFAULT NOW());
     CREATE TABLE task_events(task_id UUID,event_type TEXT,payload JSONB,created_at TIMESTAMPTZ);
     CREATE TABLE initiative_runs(id UUID PRIMARY KEY,phase TEXT DEFAULT 'planning',orchestrator_version TEXT DEFAULT 'v2');`);
   for(const file of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile',

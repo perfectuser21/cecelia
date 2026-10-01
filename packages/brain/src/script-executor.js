@@ -22,6 +22,7 @@
  *
  * run 留痕经棒 1 的 startRun/finishRun，终态经棒 2 的 finalizeTask，本文件不直写 task_runs / 终态。
  */
+import { usesManagedScript,prepareManagedScript,triggerManagedScript,reapManagedScripts } from './script-managed-executor.js';
 import { execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process';
 import { assertExternalExecutionAllowed } from './runtime-safety.js';
 import { randomBytes } from 'node:crypto';
@@ -235,6 +236,15 @@ export async function prepareScriptDispatch(task, deps = {}) {
     };
   }
 
+  if (usesManagedScript(full,spec,deps)) {
+    const prepared=await prepareManagedScript(full,spec,pool,deps);
+    if(prepared.outcome==='reserved')return {outcome:'proceed'};
+    await releaseClaim();
+    if(prepared.outcome==='wait'){holSkipIds.push(task.id);return {outcome:'skip'};}
+    await pool.query(`UPDATE tasks SET status='blocked',error_message=$2,updated_at=NOW() WHERE id=$1 AND status='queued'`,[task.id,prepared.reason]);
+    return {outcome:'return',result:{dispatched:false,reason:prepared.reason,task_id:task.id,actions}};
+  }
+
   // 熔断：ssh 派发连续失败才会开（与 cecelia-run / openclaw-agent 互不牵连）
   if (!isAllowed(SCRIPT_BREAKER_KEY)) {
     await releaseClaim();
@@ -319,6 +329,8 @@ export async function triggerScriptRun(task, deps = {}) {
     return { success: false, taskId: task.id, reason: 'script_payload_invalid', error: err.message, taskTerminal: true, configError: true };
   }
 
+  if(usesManagedScript(task,spec,deps))return triggerManagedScript(task,spec,pool,deps);
+
   const attempt = attemptNumberOf(payload);
   let runId;
   let runner;
@@ -387,7 +399,7 @@ async function settleScriptRun(pool, row, parsed, { hostId, runId }) {
   const stderr = redactEnvValues(parsed.stderr, env);
   const prior = Array.isArray(payload.script_attempts) ? payload.script_attempts : [];
   const attemptNo = prior.length + 1;
-  const artifacts = [
+  const artifacts = parsed.artifacts ?? [
     `${hostId}:~/brain-runs/${runId}.out`,
     `${hostId}:~/brain-runs/${runId}.err`,
     ...(Array.isArray(payload.artifact_paths) ? payload.artifact_paths.map((p) => `${hostId}:${p}`) : []),
@@ -457,15 +469,16 @@ async function settleScriptRun(pool, row, parsed, { hostId, runId }) {
  * 卡死交给活性合同 script（staleMinutes 75 + onStale fail）。取数 LIMIT 10、单条 ssh 20s，老任务先收。
  */
 export async function reapScriptRuns(pool, deps = {}) {
+  const managed = await reapManagedScripts(pool,deps,settleScriptRun);
   const execFileFn = deps.execFileFn ?? transport.execFileFn ?? nodeExecFile;
   const { rows } = await pool.query(
     `SELECT id, payload FROM tasks
       WHERE task_type = 'script_run' AND status = 'in_progress' AND executor_kind = 'script'
-        AND payload->>'script_run_id' IS NOT NULL
+        AND payload->>'script_run_id' IS NOT NULL AND payload->>'script_reservation_id' IS NULL
       ORDER BY started_at ASC NULLS FIRST
       LIMIT ${REAP_BATCH}`,
   );
-  const out = { reaped: 0, completed: 0, failed: 0, retried: 0 };
+  const out = managed;
   const computeWorkers = listComputeWorkerIds();
   for (const row of rows ?? []) {
     const runId = row.payload?.script_run_id;
