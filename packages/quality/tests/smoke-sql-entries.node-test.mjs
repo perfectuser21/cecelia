@@ -34,6 +34,8 @@ for (const [name, overrides, accepted] of [
   ['explicit safe URI ignores ineffective PG host/port', { SMOKE_ALLOW_WRITE: '1', PGHOST: 'remote.invalid', PGPORT: '6543' }, true],
   ['safe explicit DB_* fallback ignores ineffective PG host/port', { SMOKE_ALLOW_WRITE: '1', TEST_DATABASE_URL: '', PGHOST: 'remote.invalid', PGPORT: '6543' }, true],
   ['safe URI default port agrees with PGPORT', { SMOKE_ALLOW_WRITE: '1', TEST_DATABASE_URL: 'postgresql://localhost/cecelia_test', PGPORT: '5432' }, true],
+  ['actual wrapper default DB_* overrides ineffective PG host/port', { SMOKE_ALLOW_WRITE: '1',
+    TEST_DATABASE_URL: '', DB_NAME: '', DB_HOST: '', DB_PORT: '', PGHOST: 'remote.invalid', PGPORT: '6543' }, true],
 ]) {
   test(`actual weighted Node PG smoke target before Vitest execution: ${name}`, async () => {
     const temp = await mkdtemp(resolve(tmpdir(), 'weighted-smoke-boundary-'));
