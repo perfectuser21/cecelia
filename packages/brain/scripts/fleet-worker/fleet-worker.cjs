@@ -2,7 +2,7 @@
 'use strict';
 
 const { Buffer } = require('node:buffer');
-const { createHmac, timingSafeEqual, randomUUID } = require('node:crypto');
+const { createHmac, createHash, timingSafeEqual, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -24,6 +24,7 @@ const { probeFleetWorkerHealth } = require('./node-probe.cjs');
 const { createWorkspaceManager,createFleetRepoAllowlist } = require('./workspace-manager.cjs');
 const { createOrchestratorRunner, probeCredentialHome } = require('./orchestrator-runner.cjs');
 
+const {createStreamHub}=require('./app-server-stream-hub.cjs');
 const {createAppServerRunner}=require('./app-server-runner.cjs');
 const {createAppServerDocker}=require('./app-server-docker.cjs');
 const {loadAppServerProfiles}=require('./app-server-profile.cjs');
@@ -472,13 +473,9 @@ function createFleetWorkerRuntime({
     console.warn(`[fleet-worker] credential_home_probe_failed: ${logCode(error?.message, 'unknown')}`);
   }
   return Object.freeze({
-    appServerRunner: createAppServerRunner({stateRoot:path.join(dataRoot,'app-servers'),machineId:workerId,workerId,bootId:randomUUID(),
-      profiles:loadAppServerProfiles(env.CECELIA_APP_SERVER_PROFILES_FILE),docker:createAppServerDocker(),
-      assertLocalResources:async()=>{
-        try{fs.lstatSync(env.CECELIA_DRAIN_MARKER??'/var/run/cecelia/fleet-worker.drain');throw Error('appserver_local_resources_unavailable');}
-        catch(error){if(error.code!=='ENOENT')throw Error('appserver_local_resources_unavailable');}
-        await createLocalResourceAdmission({workerId,diskPaths:healthDiskPaths,...(runCommand?{runCommand}:{})})();
-      }}),
+    appServerRunner: wrapLaunchRunner(createAppServerRunner({stateRoot:path.join(dataRoot,'app-servers'),machineId:workerId,workerId,bootId:launchAdmission.snapshot().boot_id,
+      assertCanLaunch,profiles:loadAppServerProfiles(env.CECELIA_APP_SERVER_PROFILES_FILE),docker:createAppServerDocker({assertCanLaunch}),
+      assertLocalResources:createLocalResourceAdmission({workerId,diskPaths:healthDiskPaths,...(runCommand?{runCommand}:{})})}),launchAdmission),
     launchAdmission,
     scriptRunner: wrapLaunchRunner(createScriptRunner({ assertCanLaunch,stateRoot: path.join(dataRoot, 'scripts'),
       machineId: workerId, workerId, profiles: loadProtectedScriptProfiles(env.CECELIA_SCRIPT_PROFILES_FILE),
@@ -607,25 +604,40 @@ function createFleetWorkerServer(options = {}) {
       });
   }
 
-  return http.createServer(async (request, response) => {
+  const streamHub=options.appServerRunner?createStreamHub({runner:options.appServerRunner}):null;
+  const server=http.createServer(async (request, response) => {
+    if(request.url?.startsWith('/app-server-streams/')) {
+      try {
+        const match=request.url.match(/^\/app-server-streams\/([a-f0-9-]{36})$/);
+        if(request.method!=='POST'||!match||!streamHub)throw Error('appserver_stream_ticket_invalid');
+        const token=request.headers.authorization?.replace(/^Bearer /,'');
+        streamHub.claim(match[1],token,request,response);
+        response.writeHead(200,{'content-type':'application/x-ndjson','cache-control':'no-store'});response.flushHeaders();
+      } catch {writeJson(response,401,{error:'appserver_stream_ticket_invalid'});}
+      return;
+    }
     if(request.url?.startsWith('/app-servers/')) {
       if(!validBearer(request,attemptToken)){writeJson(response,401,{error:'unauthorized'});return;}
       if(!options.appServerRunner){writeJson(response,503,{error:'appserver_runner_unconfigured'});return;}
       try{
         if(request.method!=='POST'){writeJson(response,405,{error:'method_not_allowed'});return;}
-        const body=await readJson(request,maximumRequestBytes),{request_nonce,...identity}=body;
+        const body=await readJson(request,maximumRequestBytes),{request_nonce,prepare_deadline,...identity}=body;
         let result;
         if(request.url==='/app-servers/capabilities'){
           if(Object.keys(identity).length)throw Error('appserver_identity_invalid');
           result=options.appServerRunner.capabilities();
         }else{
-          const match=request.url.match(/^\/app-servers\/([a-f0-9-]+)\/(start|inspect|cancel)$/);
+          const match=request.url.match(/^\/app-servers\/([a-f0-9-]+)\/(start|inspect|cancel|prepare-stream)$/);
           if(!match||match[1]!==identity.reservation_id)throw Error('appserver_identity_invalid');
-          result=await options.appServerRunner[match[2]](identity);
+          if(match[2]==='prepare-stream'){
+            const prepared=await streamHub.prepare(identity,{deadline:prepare_deadline});
+            response.setHeader('x-appserver-stream-token',prepared.token);response.setHeader('cache-control','no-store');
+            result={...identity,stream_id:prepared.stream_id,expires_at:prepared.expires_at,token_digest:createHash('sha256').update(prepared.token).digest('hex')};
+          }else{if(prepare_deadline!==undefined)throw Error('appserver_identity_invalid');result=await options.appServerRunner[match[2]](identity);}
         }
         const receipt={...result,request_nonce:request_nonce??null};
         writeJson(response,receipt.status==='waiting_resources'?429:200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
-      }catch(error){writeJson(response,409,{error:/^appserver_[a-z_]+$/.test(error.message)?error.message:'appserver_operation_unconfirmed'});}
+      }catch(error){writeJson(response,error.message==='worker_draining'?429:409,{error:/^(appserver_[a-z_]+|worker_draining)$/.test(error.message)?error.message:'appserver_operation_unconfirmed'});}
       return;
     }
     if(request.url==='/maintenance/status'){
@@ -636,13 +648,13 @@ function createFleetWorkerServer(options = {}) {
         if(!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(body.request_nonce??'')||Object.keys(body).some(k=>k!=='request_nonce'))throw Error('invalid_nonce');
         if(!attemptReady||reconciliationFailed)throw Error('maintenance_reconciliation_unconfirmed');
         const gate=options.launchAdmission;
-        if(!gate||[attemptRunner,options.scriptRunner,options.orchestratorRunner].some(r=>typeof r?.maintenance!=='function'))throw Error('maintenance_unconfigured');
-        const before=gate.snapshot(),attempts=await attemptRunner.maintenance(),scripts=await options.scriptRunner.maintenance(),orchestrators=await options.orchestratorRunner.maintenance(),after=gate.snapshot();
+        if(!gate||[attemptRunner,options.scriptRunner,options.orchestratorRunner,...(options.appServerRunner?[options.appServerRunner]:[])].some(r=>typeof r?.maintenance!=='function'))throw Error('maintenance_unconfigured');
+        const before=gate.snapshot(),attempts=await attemptRunner.maintenance(),scripts=await options.scriptRunner.maintenance(),orchestrators=await options.orchestratorRunner.maintenance(),appServers=options.appServerRunner?await options.appServerRunner.maintenance():{pending:0},after=gate.snapshot();
         const stable=before.activity_revision===after.activity_revision;
-        const counts=[attempts.pending,scripts.pending,orchestrators.preparing,orchestrators.prepared,orchestrators.running_processes];
+        const counts=[attempts.pending,scripts.pending,orchestrators.preparing,orchestrators.prepared,orchestrators.running_processes,appServers.pending];
         if(!counts.every(n=>Number.isSafeInteger(n)&&n>=0))throw Error('maintenance_unknown');
         const receipt={schema_version:'fleet-maintenance/v1',machine_id:machineId,...after,observed_at:new Date().toISOString(),request_nonce:body.request_nonce,
-          in_flight_launches:Math.max(before.in_flight_launches,after.in_flight_launches),observation_stable:stable,attempts,scripts,orchestrators,
+          in_flight_launches:Math.max(before.in_flight_launches,after.in_flight_launches),observation_stable:stable,attempts,scripts,orchestrators,app_servers:appServers,
           quiescent:stable&&before.draining&&after.draining&&before.in_flight_launches===0&&after.in_flight_launches===0&&counts.every(n=>n===0)};
         writeJson(response,200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
       }catch{writeJson(response,503,{error:'worker_maintenance_unconfirmed'});}
@@ -657,7 +669,7 @@ function createFleetWorkerServer(options = {}) {
         let result;
         if(request.url==='/scripts/capabilities') result=options.scriptRunner.capabilities();
         else {
-          const match=request.url.match(/^\/scripts\/([a-f0-9-]+)\/(start|inspect|cancel)$/);
+          const match=request.url.match(/^\/scripts\/([a-f0-9-]+)\/(start|inspect|cancel|prepare-stream)$/);
           if(!match || match[1]!==body.reservation_id) {writeJson(response,400,{error:'script_identity_invalid'});return;}
           result=await options.scriptRunner[match[2]](body);
         }
@@ -845,6 +857,8 @@ function createFleetWorkerServer(options = {}) {
       writeJson(response, statusCode, { error: errorCode });
     }
   });
+  server.once('close',()=>streamHub?.close());
+  return server;
 }
 
 function parsePort(value) {

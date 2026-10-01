@@ -11,6 +11,12 @@ export function createAppServerRouter({pool,env=process.env,controller=createApp
  });
  const run=fn=>async(req,res)=>{try{res.json(await fn(req));}catch(error){res.status(409).json({error:/^(appserver|execution)_[a-z_0-9]+$/.test(error.message)?error.message:'appserver_operation_unconfirmed'});}};
  router.post('/generations',run(req=>controller.ensure(req.body)));
+ router.post('/generations/:id/stream',async(req,res)=>{
+  try{if(Object.keys(req.body??{}).length)throw Error('appserver_request_invalid');
+   const {token,...metadata}=await controller.prepareStream(req.params.id);
+   res.set('x-appserver-stream-token',token).set('cache-control','no-store').json(metadata);
+  }catch(error){res.status(409).json({error:/^(appserver|execution)_[a-z_0-9]+$/.test(error.message)?error.message:'appserver_operation_unconfirmed'});}
+ });
  router.post('/generations/:id/inspect',run(req=>{if(Object.keys(req.body??{}).length)throw Error('appserver_request_invalid');return controller.inspect(req.params.id);}));
  router.post('/generations/:id/cancel',run(req=>{if(Object.keys(req.body??{}).length)throw Error('appserver_request_invalid');return controller.cancel(req.params.id);}));
  return router;

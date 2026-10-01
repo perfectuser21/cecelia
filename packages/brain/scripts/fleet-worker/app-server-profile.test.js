@@ -8,6 +8,16 @@ let api={};try{api=require('./app-server-profile.cjs');}catch(e){if(e.code!=='MO
 const sample=()=>({image:'sha256:'+'a'.repeat(64),cpus:2,memoryBytes:1073741824,pidsLimit:128,
  user:'1000:1000',tmpBytes:67108864,network:'none',homeKey:'b'.repeat(64),workspaceKey:'c'.repeat(64)});
 describe('OpenClaw 受保护固定执行配置',()=>{
+ it('业务工具精确名单进入不可变profile和digest，宿主执行与派生入口不能登记',()=>{
+  const names=['message','memory_get','read'];
+  const profile=api.validateAppServerProfile({...sample(),hostTools:names});
+  names.push('exec');expect(profile.hostTools).toEqual(['memory_get','message','read']);
+  expect(Object.isFrozen(profile.hostTools)).toBe(true);
+  expect(api.profileDigest(profile)).not.toBe(api.profileDigest(sample()));
+  for(const hostTools of [['exec'],['gateway_exec'],['sessions_spawn'],['nodes'],['process'],['read','read'],['unregistered_executor']]){
+   expect(()=>api.validateAppServerProfile({...sample(),hostTools})).toThrow('appserver_profile_invalid');
+  }
+ });
  it('固定 profile 能导出稳定 digest，原对象改变不改变已确认快照',()=>{
   expect(api).toHaveProperty('validateAppServerProfile');
   const p=sample(),v=api.validateAppServerProfile(p);p.cpus=99;

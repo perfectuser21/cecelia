@@ -12,7 +12,7 @@ let api = {}; try { api = require('./app-server-runner.cjs'); } catch (e) { if (
 const profile = { image: `sha256:${'a'.repeat(64)}`, cpus: 2, memoryBytes: 1073741824,
   pidsLimit: 128, user: '1000:1000', tmpBytes: 67108864, network: 'none', homeKey: 'b'.repeat(64), workspaceKey: 'c'.repeat(64) };
 
-function fixture() {
+function fixture(selectedProfile = profile) {
   expect(api).toHaveProperty('createAppServerRunner');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'appserver-runner-'));
   const machineId = 'test-machine', workerId = 'worker-one', bootId = randomUUID();
@@ -31,17 +31,27 @@ function fixture() {
       return Object.assign(child, { stdin: new PassThrough(), stdout: new PassThrough(), kill: () => child.emit('close', 0) });
     },
   };
-  const config = { stateRoot: root, machineId, workerId, bootId, profiles: { chat: profile }, docker,
+  const config = { stateRoot: root, machineId, workerId, bootId, profiles: { chat: selectedProfile }, docker,
     assertLocalResources: async () => { if (rejectAdmission) throw Error('attempt_local_resources_unavailable'); } };
   const input = (overrides = {}) => { const value = ({ reservation_id: randomUUID(), intent_id: randomUUID(), launch_generation: 1,
     machine_id: machineId, worker_id: workerId, worker_boot_id: bootId, home_key: profile.homeKey,
-    config_digest: profileDigest(profile), profile: 'chat', ...overrides }); return {...value,owner_key:generationOwner(value)}; };
+    config_digest: profileDigest(selectedProfile), profile: 'chat', ...overrides }); return {...value,owner_key:generationOwner(value)}; };
   return { root, docker, config, input, containers, runner: api.createAppServerRunner(config),
     stats: () => ({ creates, removes }), offline: value => { offline = value; }, pressure: value => { rejectAdmission = value; },
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 
 describe('app-server generation 与 HOME 单写生命周期', () => {
+  it('attach仅传递持久化profile工具权限，客户端身份字段不能添加执行工具', async () => {
+    const f = fixture({...profile, hostTools:['read','message']});
+    try {
+      const input=f.input();await f.runner.start(input);
+      await expect(f.runner.attach({...input,stream_id:randomUUID(),hostTools:['exec']})).rejects.toThrow('appserver_identity_invalid');
+      const child=await f.runner.attach({...input,stream_id:randomUUID()});
+      expect(child.rpcHostTools).toEqual(['message','read']);
+      child.kill();
+    } finally { f.cleanup(); }
+  });
   it('一代只允许一个stdio连接；断开只释放流租约，HOME和预算继续占位', async () => {
     const f = fixture(); try {
       const input = f.input(); await f.runner.start(input);
@@ -248,5 +258,70 @@ it('升级前HOME即owner且缺home_key的既有journal仍可原身份探活和�
   const restarted=api.createAppServerRunner({...f.config,bootId:randomUUID(),profiles:{}});
   expect((await restarted.inspect(legacy)).status).toBe('running');
   expect((await restarted.cancel({...legacy,container_id:started.container_id,challenge:randomUUID()})).absent).toBe(true);
+ }finally{f.cleanup();}
+});
+it('RPC首次写前持久同流意图，断线跨重启禁止二次initialize/replay，原容器仍占位且可精确清理',async()=>{
+ const f=fixture();try{const input=f.input(),state=await f.runner.start(input),identity={...input,stream_id:randomUUID()};
+ const channel=await f.runner.attach(identity);expect(f.runner.markRpcStarted).toBeTypeOf('function');
+ await f.runner.markRpcStarted(identity);channel.kill();await new Promise(r=>setTimeout(r,10));
+ const restarted=api.createAppServerRunner({...f.config,bootId:randomUUID()});
+ await expect(restarted.attach({...input,stream_id:randomUUID()})).rejects.toThrow('appserver_stream_recovery_required');
+ expect((await restarted.inspect(input)).status).toBe('running');
+ expect((await restarted.cancel({...input,container_id:state.container_id,challenge:randomUUID()})).absent).toBe(true);
+ }finally{f.cleanup();}
+});
+it('目录授权的attach截止期过去后即使Docker探活迟到也不启动attach',async()=>{
+ const f=fixture();try{const input=f.input();await f.runner.start(input);let attached=0;const original=f.docker.inspect;
+ f.docker.inspect=async id=>{await new Promise(r=>setTimeout(r,20));return original(id);};f.docker.attach=()=>{attached++;throw Error('must not attach');};
+ await expect(f.runner.attach({...input,stream_id:randomUUID()},{deadline:Date.now()+5})).rejects.toThrow('appserver_stream_ticket_expired');expect(attached).toBe(0);
+ }finally{f.cleanup();}
+});
+it('本机drain/资源准入拒绝新attach，已运行实例仍可inspect和精确cancel',async()=>{
+ const f=fixture();try{const input=f.input(),state=await f.runner.start(input);let attaches=0;f.docker.attach=()=>{attaches++;throw Error('must not attach');};f.pressure(true);
+ await expect(f.runner.attach({...input,stream_id:randomUUID()})).rejects.toThrow('attempt_local_resources_unavailable');expect(attaches).toBe(0);
+ expect((await f.runner.inspect(input)).status).toBe('running');expect((await f.runner.cancel({...input,container_id:state.container_id,challenge:randomUUID()})).absent).toBe(true);
+ }finally{f.cleanup();}
+});
+
+it('真实attach握手未完成时不落attached也不解锁，失败后不发出可重试连接',async()=>{
+ const f=fixture();let rejectAttach;
+ try{
+  const input=f.input();await f.runner.start(input);
+  f.docker.attach=()=>{const pending=new Promise((_resolve,reject)=>{rejectAttach=reject;});pending.catch(()=>{});return pending;};
+  const connection=f.runner.attach({...input,stream_id:randomUUID()});connection.catch(()=>{});
+  for(let i=0;i<30&&!rejectAttach;i++)await new Promise(r=>setTimeout(r,1));
+  expect(JSON.parse(fs.readFileSync(path.join(f.root,`${input.reservation_id}.json`))).stream_status).toBe('attaching');
+  await expect(f.runner.inspect(input)).rejects.toThrow('appserver_operation_locked');
+  rejectAttach(Error('appserver_attach_unconfirmed'));
+  await expect(connection).rejects.toThrow('appserver_attach_unconfirmed');
+  expect((await f.runner.inspect(input)).status).toBe('running');
+  await expect(f.runner.attach({...input,stream_id:randomUUID()})).rejects.toThrow('appserver_stream_busy');
+ }finally{rejectAttach?.(Error('fixture cleanup'));f.cleanup();}
+});
+
+it('聊天启动在资源采样后重新核维护闸，零create且预约持续占位',async()=>{
+ const f=fixture();let drain=false;
+ try{
+  const runner=api.createAppServerRunner({...f.config,assertCanLaunch:()=>{if(drain)throw Error('worker_draining');},assertLocalResources:async()=>{drain=true;}});
+  await expect(runner.start(f.input())).rejects.toThrow('worker_draining');
+  expect(f.stats().creates).toBe(0);expect(await runner.maintenance()).toEqual({pending:1});
+ }finally{f.cleanup();}
+});
+it('聊天maintenance包含存活、未知journal与已清理状态，重启仍保守',async()=>{
+ const f=fixture();try{
+  expect(await f.runner.maintenance()).toEqual({pending:0});const input=f.input(),started=await f.runner.start(input);
+  expect(await f.runner.maintenance()).toEqual({pending:1});
+  expect(await api.createAppServerRunner({...f.config,bootId:randomUUID()}).maintenance()).toEqual({pending:1});
+  await f.runner.cancel({...input,container_id:started.container_id,challenge:randomUUID()});expect(await f.runner.maintenance()).toEqual({pending:0});
+  fs.writeFileSync(path.join(f.root,'unknown.lock'),'uncertain');await expect(f.runner.maintenance()).rejects.toThrow('worker_maintenance_unconfirmed');
+ }finally{f.cleanup();}
+});
+it('维护期间聊天attach拒绝，既有实例inspect和cancel仍可用',async()=>{
+ const f=fixture();let drain=false;try{
+  const runner=api.createAppServerRunner({...f.config,assertCanLaunch:()=>{if(drain)throw Error('worker_draining');}});
+  const input=f.input(),started=await runner.start(input);drain=true;
+  await expect(runner.attach({...input,stream_id:randomUUID()})).rejects.toThrow('worker_draining');
+  expect((await runner.inspect(input)).status).toBe('running');
+  expect((await runner.cancel({...input,container_id:started.container_id,challenge:randomUUID()})).absent).toBe(true);
  }finally{f.cleanup();}
 });

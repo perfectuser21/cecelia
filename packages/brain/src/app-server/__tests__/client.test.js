@@ -50,3 +50,15 @@ it('真实无长度HTTP流超过上限后对端连接关闭，不等待服务端
   await stopped;
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
+it('流许可只暴露签名绑定的header票；prepare使用持久流ID和最终目录operation',async()=>{
+ const token='a'.repeat(32),ticket='b'.repeat(64),id=randomUUID(),streamId=randomUUID();
+ const row={id,intent_id:randomUUID(),launch_generation:1,machine_id:'xian-mac-m1',worker_id:'worker',worker_boot_id:randomUUID(),owner_key:'openclaw-'+ 'c'.repeat(64),home_key:'d'.repeat(64),config_digest:'e'.repeat(64),config:{profile:'chat'},stream:{id:streamId,prepare_deadline:new Date(Date.now()+5000)}};
+ const store={reserveStream:async()=>row.stream,withOperation:async(_id,action,fn)=>{expect(action).toBe('prepare-stream');return fn(row,'http://m1:5231');}};
+ const {createHash}=await import('node:crypto');
+ const client=createAppServerClient({pool:{},store,env:{KERNEL_FLEET_BRIDGE_TOKEN:token},fetchFn:async(url,options)=>{
+  expect(url).toBe(`http://m1:5231/app-servers/${id}/prepare-stream`);const body=JSON.parse(options.body);expect(body.stream_id).toBe(streamId);
+  const receipt={...workerIdentity(row),stream_id:streamId,expires_at:Date.now()+3000,request_nonce:body.request_nonce,token_digest:createHash('sha256').update(ticket).digest('hex')};
+  return new Response(JSON.stringify({receipt,signature:createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex')}),{headers:{'x-appserver-stream-token':ticket}});
+ }});
+ expect(client.prepareStream).toBeTypeOf('function');expect(await client.prepareStream(id)).toMatchObject({token:ticket,stream_id:streamId,stream_url:`http://m1:5231/app-server-streams/${streamId}`});
+});
