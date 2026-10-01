@@ -40,7 +40,7 @@ beforeEach(() => {
     return json({ items: [], total: 0, counts_by_stage: {} });
   });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('真实 Workbench 交办入口', () => {
   it('默认一个交办输入面，成功只显示真实任务编号并读取详情', async () => {
@@ -49,6 +49,8 @@ describe('真实 Workbench 交办入口', () => {
     await screen.findByText(`任务编号：${taskId}`);
     expect(posted[0]).toEqual({ text: '调研测试策略', source_id: expect.any(String) });
     expect(screen.getAllByRole('textbox')).toHaveLength(1);
+    expect(screen.getByRole('textbox', { name: '交办内容' })).toHaveAttribute('maxLength', '6000');
+    expect(screen.getByRole('region', { name: '任务回执' }).compareDocumentPosition(screen.getByRole('heading', { name: '最近交办' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await screen.findByRole('heading', { name: '调研测试策略' });
     expect(fetch).toHaveBeenCalledWith(`/api/brain/tasks/tasks/${taskId}`, expect.anything());
   });
@@ -120,6 +122,44 @@ describe('真实 Workbench 交办入口', () => {
     expect(screen.getByText(`记录编号：${secondId}`)).toBeInTheDocument();
     expect(screen.queryByText(`任务编号：${secondId}`)).not.toBeInTheDocument();
   });
+  it('已取消和完成状态继续轮询，能收到迟到证据', async () => {
+    const polls: (() => void)[] = [];
+    vi.spyOn(window, 'setInterval').mockImplementation(callback => { polls.push(callback as () => void); return polls.length; });
+    detail = { ...detail, status: 'canceled' };
+    renderDesk(); typeTask(); submit(); await screen.findByText('已取消');
+    detail = { ...detail, status: 'completed_no_pr' };
+    await act(async () => { polls.forEach(poll => poll()); });
+    await screen.findByText('状态已完成，尚无结果证据');
+    detail = { ...detail, result: { receipt: { text: '迟到的真实结果' } } };
+    await act(async () => { polls.forEach(poll => poll()); });
+    await screen.findByText('迟到的真实结果');
+    expect(screen.queryByText('状态已完成，尚无结果证据')).not.toBeInTheDocument();
+  });
+  it('新选择不被旧详情慢响应覆盖', async () => {
+    let resolveOld!: (value: Response) => void;
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input);
+      if (url.startsWith('/api/brain/task-intake?')) return json({ tasks: [{ id: taskId, title: '第一件' }, { id: secondId, title: '第二件' }] });
+      if (url.endsWith(taskId)) return new Promise(resolve => { resolveOld = resolve; });
+      if (url.endsWith(secondId)) return json({ id: secondId, title: '第二件的详情', status: 'blocked', blocked_reason: '缺少验收条件' });
+      return json({ items: [] });
+    });
+    renderDesk(); await screen.findByRole('button', { name: /第二件/ });
+    fireEvent.click(screen.getByRole('button', { name: /第二件/ }));
+    await screen.findByRole('heading', { name: '第二件的详情' });
+    await act(async () => resolveOld(json({ id: taskId, title: '旧响应覆盖', status: 'completed' })));
+    expect(screen.queryByText('旧响应覆盖')).not.toBeInTheDocument();
+    expect(screen.getByText('缺少验收条件')).toBeInTheDocument();
+  });
+  it('成功刷新只读真身，明确新交办才换source_id', async () => {
+    const first = renderDesk(); typeTask(); submit(); await screen.findByText(`任务编号：${taskId}`);
+    const source = posted[0].source_id;
+    first.unmount(); detail = { ...detail, status: 'in_progress' }; renderDesk();
+    await screen.findByText('执行中'); expect(posted).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '新交办' })); typeTask('另一件调研'); submit();
+    await waitFor(() => expect(posted).toHaveLength(2));
+    expect(posted[1].source_id).not.toBe(source);
+  });
   it('完成无证据明确标识，历史记录可进入并返回', async () => {
     detail = { ...detail, status: 'completed_no_pr' };
     renderDesk(); typeTask(); submit();
@@ -141,6 +181,14 @@ describe('记录真实回执', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(callback).toHaveBeenCalledWith(expect.objectContaining({ id: secondId })));
     expect(input).toHaveValue('');
+  });
+  it('记录网络失败给中文说明并保留输入', async () => {
+    vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'));
+    render(<QuickCapture />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '断线的草稿' } });
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+    expect(await screen.findByRole('alert')).toHaveTextContent('记录保存失败');
+    expect(screen.getByRole('textbox')).toHaveValue('断线的草稿');
   });
   it('200没有真实captureid也保留文字且不通知成功', async () => {
     captureReply = json({ status: 'ok' });
