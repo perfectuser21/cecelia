@@ -81,7 +81,7 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
   }
   async function observe(state) {
     const container=await docker.inspect(state.container_id ?? state.container_name);
-    if(!container) return {...state,status:state.tombstoned?'cleaned':'unknown'};
+    if(!container) return {...state,status:state.tombstoned?'cleaned':state.status==='waiting_resources'?'waiting_resources':'unknown'};
     if(state.container_id && container.id!==state.container_id) throw new Error('script_identity_mismatch');
     if(container.labels && ['reservation_id','intent_id','launch_generation'].some((key)=>
       container.labels[`cecelia.script.${key}`]!==String(state[key]))) throw new Error('script_identity_mismatch');
@@ -89,7 +89,7 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
     if(container.status==='exited') {
       state.terminal={exit_code:container.exit_code,stdout:container.stdout??'',stderr:container.stderr??'',timed_out:state.timed_out===true};save(state);
     }
-    return {...state,status:container.status,exit_code:container.exit_code,
+    return {...state,status:state.status==='waiting_resources'&&container.status==='created'?'waiting_resources':container.status,exit_code:container.exit_code,
       stdout:container.stdout??'',stderr:container.stderr??'',timed_out:state.timed_out===true};
   }
   function schedule(state) {
@@ -126,18 +126,23 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
         if(state?.tombstoned) throw new Error('script_launch_tombstoned');
         if(state) {
           if(state.job_digest!==digest(input.job))throw new Error('script_identity_mismatch');
-          return observe(state);
+          if(state.status!=='waiting_resources')return observe(state);
         }
         if(input.config_digest!==digest({job:input.job,profile_digest:digest(profile)}))throw new Error('script_config_digest_mismatch');
-        if(input.worker_id && (input.worker_id!==workerId || input.worker_boot_id!==bootId))throw new Error('script_worker_changed');
+        if(!state && input.worker_id && (input.worker_id!==workerId || input.worker_boot_id!==bootId))throw new Error('script_worker_changed');
         if(typeof assertLocalResources!=='function')throw new Error('script_local_resources_unavailable');
-        await assertLocalResources();
-        state={...initial(input),job_digest:digest(input.job),timeout_sec:input.job.timeout_sec};save(state);
-        state.container_id=await docker.create({name:state.container_name,profile,command:input.job.cmd,
+        state??={...initial(input),job_digest:digest(input.job),timeout_sec:input.job.timeout_sec};save(state);
+        const admit=async()=>{
+          try {await assertLocalResources();return true;}
+          catch(error){if(!/^(attempt|script)_local_resources_unavailable$/.test(error.message))throw error;
+            state.status='waiting_resources';save(state);return false;}
+        };
+        if(!await admit())return state;
+        if(!state.container_id)state.container_id=await docker.create({name:state.container_name,profile,command:input.job.cmd,
           env:input.job.env,identity:{reservation_id:state.reservation_id,intent_id:state.intent_id,launch_generation:state.launch_generation}});
         save(state); // exact ID 持久化后才可 start；重复请求只 inspect。
+        if(!await admit())return state;
         state.status='starting';save(state);
-        await assertLocalResources();
         await docker.start(state.container_id);
         state.status='running';save(state);schedule(state);
         return observe(state);

@@ -125,6 +125,6 @@ it('每个新启动即时复验；缺本机probe和容量预留后压力升高�
   const pressured=x.api.createScriptRunner({...x.options,assertLocalResources:async()=>{
     if(++count===2)throw new Error('attempt_local_resources_unavailable');
   }});runners.push(pressured);
-  await expect(pressured.start(x.input)).rejects.toThrow('attempt_local_resources_unavailable');
+  await expect(pressured.start(x.input)).resolves.toMatchObject({status:'waiting_resources'});
   expect(x.counts()).toEqual({creates:1,starts:0});
 });

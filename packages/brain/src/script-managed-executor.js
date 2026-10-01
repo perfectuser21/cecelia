@@ -53,8 +53,13 @@ export async function triggerManagedScript(task,spec,pool,deps={}) {
   const fresh=row.status==='reserved';
   if(fresh)row=await prepared.store.markLaunching(row.id,prepared.capabilities);
   try {
-    const verified=await prepared.client[fresh?'start':'inspect'](spec.host,{...body(row),...(fresh?{job:prepared.job}:{})});
+    let verified=await prepared.client[fresh?'start':'inspect'](spec.host,{...body(row),...(fresh?{job:prepared.job}:{})});
+    if(!fresh&&verified.receipt.status==='waiting_resources')verified=await prepared.client.start(spec.host,{...body(row),job:prepared.job});
     const result=verified.receipt;
+    if(result.status==='waiting_resources'){
+      await pool.query(`UPDATE tasks SET status='queued',claimed_by=NULL,claimed_at=NULL,updated_at=NOW() WHERE id=$1 AND status='in_progress'`,[task.id]);
+      return {success:false,reason:'script_local_resources_wait',wait:true,configError:true};
+    }
     if(result.container_id && ['launching','running'].includes(row.status))row=await prepared.store.markRunning(row.id,result);
     await startRun({taskId:task.id,runId:row.owner_key,source:'script',context:{transport:'managed-container',reservation_id:row.id}},{pool});
     await recordTaskEventSafe(pool,task.id,'script_spawned',{run_id:row.owner_key,reservation_id:row.id,transport:'managed-container'});
