@@ -1,6 +1,7 @@
 """运行采集器和现场渲染器，验证指标的 Brain 单一写口。"""
 import importlib.util
 import json
+import re
 import tempfile
 import threading
 import unittest
@@ -213,6 +214,14 @@ class Pipeline(unittest.TestCase):
         rows[-1] = item("unknown-but-unique-page", "同名公司指标")
         self.assert_invalid_snapshot_preserves_six_files(rows)
 
+    def test_standalone_source_catalog_matches_brain_catalog(self):
+        module = load("opc-okr-sync")
+        brain = (ROOT / "packages/brain/src/lib/company-kr-metrics.js").read_text()
+        catalog = brain.split("export const COMPANY_KR_CATALOG = [", 1)[1].split("].map(", 1)[0]
+        expected = set(re.findall(r"\['([a-f0-9-]{36})',", catalog))
+        self.assertEqual(len(expected), 8)
+        self.assertEqual(module.SOURCE_PAGE_IDS, expected)
+
     def test_historical_values_are_labelled_unverified(self):
         module = load("opc-okr-sync")
         row = {"kr": "公司 KR", "o": "O1", "areas": [], "start": "0", "cur": "0",
@@ -298,19 +307,21 @@ class Pipeline(unittest.TestCase):
     def test_renderer_writes_six_actual_site_files_after_registration(self):
         module = load("opc-okr-sync")
         calls = []
+        rows = company_rows()
+        rows[5] = item(SOURCE_DOD, "KR3.1", "2", 0.25)
 
         def call(url, body=None, method=None):
             calls.append((url, method, body))
             if url.endswith("/tasks"):
                 return {"id": "sync-task"}
+            if url.endswith("/company-key-results"):
+                return {"success": True, "items": rows}
             return {"success": True, "status": body.get("status") if body else None}
 
-        row = {"kr": "KR3.1", "o": "O3", "areas": [], "start": "0", "cur": "2", "target": "8", "ratio": 0.25, "st": "Open"}
         with tempfile.TemporaryDirectory() as directory:
             for name in ["clawd", "clawd-media", "clawd-fde", "clawd-dev", "clawd-people", "clawd-infra"]:
                 (Path(directory) / name).mkdir()
-            with patch.object(module, "ROOT", directory), patch.object(module, "fetch", return_value=[row]), \
-                    patch.object(module, "call", side_effect=call):
+            with patch.object(module, "ROOT", directory), patch.object(module, "call", side_effect=call):
                 module.main()
             director = (Path(directory) / "clawd/OKR-CURRENT.md").read_text()
             self.assertIn("25%", director)
@@ -319,6 +330,7 @@ class Pipeline(unittest.TestCase):
                 self.assertIn("暂无直接挂钩", (Path(directory) / ("clawd-" + name) / "OKR.md").read_text())
             complete = [body for _, method, body in calls if method == "PATCH" and body.get("status") == "completed"]
             self.assertEqual(len(complete[0]["result"]["facts"]["site_files"]), 6)
+            self.assertEqual(complete[0]["result"]["facts"]["company_krs"], 8)
             self.assertEqual(complete[0]["result"]["handoff"].get("schema_version"), 1)
             self.assertEqual(complete[0]["result"]["handoff"].get("task_id"), "sync-task")
             self.assertTrue(complete[0]["result"]["handoff"].get("done"))

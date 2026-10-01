@@ -12,6 +12,13 @@ from uuid import uuid4
 BRAIN = os.environ.get("CECELIA_BRAIN_API", "http://localhost:5221/api/brain").rstrip("/")
 ROOT = "/opt/openclaw/workspaces-root"
 ACTOR = "opc-okr-sync"
+# 独立部署脚本的来源合同；对应 Brain COMPANY_KR_CATALOG，不按标题编号认领。
+SOURCE_PAGE_IDS = frozenset({
+    "3dbc40c2-ba63-811d-89cc-c17863d7ba80", "3dbc40c2-ba63-81d0-a417-c8e2919f77f1",
+    "3dbc40c2-ba63-8116-bace-debc4c74d6e5", "3dbc40c2-ba63-81fd-a7da-d7c8e57fbc5f",
+    "3dbc40c2-ba63-81b4-b5ab-e27542cba851", "3dbc40c2-ba63-8158-808a-e81bd769eb6b",
+    "3dbc40c2-ba63-811c-bbb7-f4e0e040098e", "3dbc40c2-ba63-812c-a185-e8eab139502a",
+})
 AREA2AGENT = {"智能获客": ["media"], "新媒体": ["media"], "AI交付FDE": ["fde"],
               "研发部": ["dev"], "人事运营": ["people"], "基础设施": ["infra"],
               "ZenithJoy": ["clawd"]}
@@ -28,10 +35,13 @@ def fetch():
     snapshot = call(BRAIN + "/okr/company-key-results")
     if snapshot.get("success") is not True:
         raise RuntimeError("Brain 公司 KR 快照读取失败")
+    items = snapshot.get("items")
+    if not isinstance(items, list) or len(items) != len(SOURCE_PAGE_IDS):
+        raise RuntimeError("公司 KR 快照须包含完整8条来源，保留既有现场")
     rows, seen = [], set()
-    for item in snapshot["items"]:
+    for item in items:
         source = item["source_page_id"]
-        if not source or source in seen or item.get("metric_mode") != "company_formula_v1":
+        if source not in SOURCE_PAGE_IDS or source in seen or item.get("metric_mode") != "company_formula_v1":
             raise RuntimeError("公司 KR 来源映射不合法，拒绝重写现场")
         seen.add(source)
         area_ids = item.get("source_area_ids", [])
