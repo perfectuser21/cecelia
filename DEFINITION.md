@@ -10,7 +10,9 @@
 
 
 
-**Brain 版本**: 1.353.19
+**Brain 版本**: 1.353.20
+
+507新增脚本runtime验收真表：prepare用受信部署根自动登记子任务并创建pending版本/grants；root签名canary逐profile验真后，同事务finalizeTask写事实/证据/actor并CAS激活同一代，仅开放managed_script。nonce十分钟、授权最长24小时，过期不续期、撤销不复活；历史清理保留，US与scheduler硬拒。JSONB不得重排下发profile摘要。此片仅scratch真表验收，生产未迁移/激活，Linux物理准入与机器页自动编排仍待接线。
 
 Linux运行时受信部署独立绑定完整脚本profile、镜像ID、父任务与双凭据；root canary回执验签严格核对所有profile、version/grant、随机输出、宿主资源证明及完整取消墓碑。此验证零件尚未接数据库激活，生产仍pending。
 
