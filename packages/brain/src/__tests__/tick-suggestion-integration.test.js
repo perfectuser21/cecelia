@@ -110,6 +110,22 @@ describe('Tick Suggestion Integration (v2 — L1 架构)', () => {
     vi.clearAllMocks();
   });
 
+  test('fixture 外部边界阻止真实清理、凭据读取和网络调用', async () => {
+    for (const [path, names] of [
+      ['../heartbeat-inspector.js', ['runHeartbeatInspection']],
+      ['../zombie-sweep.js', ['zombieSweep']],
+      ['../zombie-cleaner.js', ['runZombieCleanup']],
+      ['../harness-worktree.js', ['cleanupStaleHarnessWorktrees']],
+      ['../active-goals-zero-trigger.js', ['maybeTriggerStrategySession']],
+      ['../orphan-pr-worker.js', ['scanOrphanPrs']],
+      ['../credential-expiry-checker.js', ['checkAndAlertExpiringCredentials']],
+      ['../shepherd.js', ['shepherdOpenPRs', 'reconcileTerminalOpenPRs']],
+    ]) {
+      const module = await import(path);
+      for (const name of names) expect(vi.isMockFunction(module[name]), `${path}:${name}`).toBe(true);
+    }
+  });
+
   describe('suggestion triage 已从 tick 移除', () => {
     test('tick 不调用 executeTriage（信号源已直接接 L1）', async () => {
       const result = await executeTick();
