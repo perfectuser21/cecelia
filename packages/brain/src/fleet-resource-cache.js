@@ -44,17 +44,16 @@ let _refreshTimer = null;
  * @param {object} server
  * @param {number|null} prevLastPingAt — 上次成功 ping 的时间戳（来自缓存）
  */
-const WORKER_HEALTH_TIMEOUT_MS = 5_000;
+// fleet-worker :5231 /health 冷探测（git worktree + docker）单发 6.6s：命中 worker 侧
+// 30s 缓存到期后的首发慢路径。旧 5s 超时 < 6.6s → 该轮采集被 AbortSignal 掐断 → 误判
+// offline → [fleet-cache] 1/3↔2/3 抖动 → fleetRow.online=false → capability preflight
+// machine_health.signature=machine_offline / machine_capacity.available=0 →
+// all_execution_targets_exhausted。修法（合同 option ②「先做便宜的」）：采集客户端超时
+// 5s→15s 覆盖冷探测慢路径，并对首发失败立即重试一次兜住瞬时抖动。
+const WORKER_HEALTH_TIMEOUT_MS = 15_000;
+const WORKER_HEALTH_MAX_ATTEMPTS = 2;
 
-/** 经 fleet-worker /health 采集一台 worker 的资源（映射为旧 stats 形状，公式零变化） */
-async function collectWorkerHttpStats(server) {
-  const baseUrl = workerBridgeUrlFor(server.id, process.env);
-  if (!baseUrl) throw new Error(`worker_url_unresolvable:${server.id}`);
-  const response = await fetch(`${baseUrl}/health`, {
-    signal: AbortSignal.timeout(WORKER_HEALTH_TIMEOUT_MS),
-  });
-  if (!response?.ok) throw new Error(`worker_health_http_${response?.status}`);
-  const health = await response.json();
+function mapWorkerHealthResources(health) {
   const r = health?.resources;
   if (!r || !Number.isFinite(r.cpu_cores)) {
     throw new Error('worker_health_resources_missing');
@@ -70,6 +69,31 @@ async function collectWorkerHttpStats(server) {
       usagePercent: Number(r.memory_pressure_percent) || 0,
     },
   };
+}
+
+/** 单次 /health 采集（超时由 WORKER_HEALTH_TIMEOUT_MS 控制） */
+async function fetchWorkerHealthOnce(baseUrl) {
+  const response = await fetch(`${baseUrl}/health`, {
+    signal: AbortSignal.timeout(WORKER_HEALTH_TIMEOUT_MS),
+  });
+  if (!response?.ok) throw new Error(`worker_health_http_${response?.status}`);
+  return mapWorkerHealthResources(await response.json());
+}
+
+/** 经 fleet-worker /health 采集一台 worker 的资源（映射为旧 stats 形状，公式零变化） */
+async function collectWorkerHttpStats(server) {
+  const baseUrl = workerBridgeUrlFor(server.id, process.env);
+  if (!baseUrl) throw new Error(`worker_url_unresolvable:${server.id}`);
+  // 首发失败立即重试一次：冷探测慢路径偶发超时 / 瞬时网络抖动不再一次就翻 offline。
+  let lastError;
+  for (let attempt = 1; attempt <= WORKER_HEALTH_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await fetchWorkerHealthOnce(baseUrl);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 async function collectServerStats(server, prevLastPingAt) {
