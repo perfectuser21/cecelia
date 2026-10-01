@@ -23,6 +23,7 @@ import { StateGraph, Annotation, START, END, interrupt } from '@langchain/langgr
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import pool from '../db.js';
+import { walkingWorkerOptions } from '../lib/walking-callback-worker.js';
 
 export const WalkingSkeletonState = Annotation.Root({
   triggerId:    Annotation({ reducer: (_o, n) => n, default: () => null }),
@@ -30,12 +31,13 @@ export const WalkingSkeletonState = Annotation.Root({
   result:       Annotation({ reducer: (_o, n) => n, default: () => null }),
   finalized:    Annotation({ reducer: (_o, n) => n, default: () => false }),
   error:        Annotation({ reducer: (_o, n) => n, default: () => null }),
+  restartInstanceId: Annotation({ reducer: (_o, n) => n, default: () => null }),
 });
 
 /**
  * spawn_node — 真 spawn 一个 alpine sibling container（共享 Brain 容器的 docker.sock）。
  *
- * 容器内做的事：sleep 2 → wget POST 到 callback router（host.docker.internal:5221）→ exit。
+ * 容器保留启动延迟，再有界重试 callback；严格 CI 先等真实 PG interrupt 和重启实例。
  * 我们这里 spawn 后立即 return，不等 container 跑完（spawn -d 后台跑）。
  *
  * 幂等：state.containerId 已设置则跳过 spawn（防止 graph resume 时重跑此节点导致重 spawn）。
@@ -46,20 +48,16 @@ export async function spawnNode(state) {
   }
 
   const containerId = `walking-skeleton-${randomUUID().slice(0, 8)}`;
-  // 容器内 wget POST callback。
-  // host.docker.internal: OrbStack/Docker Desktop 让 sibling container 访问宿主端口
-  // busybox wget 支持 --post-data 但不支持 --header 多值，单 Content-Type 够用。
-  const callbackUrl = `http://host.docker.internal:5221/api/brain/harness/callback/${containerId}`;
-  const payload = JSON.stringify({ result: `hello-from-${containerId}`, exit_code: 0 });
+  // 普通执行保留 host.docker.internal；专用 Linux CI 使用已核对的 host network。
+  const worker = walkingWorkerOptions(containerId, state.restartInstanceId, state.triggerId);
 
   // 用 execFileSync + 数组 args 避免 shell escape 噩梦（payload 含 JSON 双引号）。
-  // sh 脚本内部用单引号包 JSON（busybox sh 单引号字面量，不解释 $/"），sleep + wget。
-  const shScript = `sleep 2 && wget -q -O- --post-data='${payload}' --header='Content-Type: application/json' '${callbackUrl}' 2>&1 || echo callback-failed`;
+  // 保留启动延迟；CI 等真实 PG interrupt，HTTP 回调有界重试且耗尽失败。
 
   try {
     execFileSync(
       'docker',
-      ['run', '-d', '--rm', '--name', containerId, 'alpine', 'sh', '-c', shScript],
+      ['run', '-d', '--rm', '--name', containerId, ...worker.args],
       { encoding: 'utf8', timeout: 10000 }
     );
   } catch (err) {

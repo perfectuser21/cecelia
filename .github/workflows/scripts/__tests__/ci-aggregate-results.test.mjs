@@ -55,12 +55,14 @@ function assertGateExit(gate, overrides, expectedExit) {
 const ci = loadGate('ci.yml', 'ci-passed');
 const smoke = loadGate('ci-smoke-glob-runner.yml', 'smoke-glob-runner-passed');
 const rejectedResults = ['failure', 'cancelled', '', 'unknown'];
+const strictRequired = new Set(['core-regression', 'walking-ci-e2e']);
+for (const name of strictRequired) assert.ok(ci.needs.includes(name), `${name} 必须接入聚合依赖`);
 
 test('ci-passed：全部依赖成功时放行', () => {
   assertGateExit(ci, {}, 0);
 });
 
-for (const dependency of ci.needs.filter((name) => name !== 'core-regression')) {
+for (const dependency of ci.needs.filter((name) => !strictRequired.has(name))) {
   test(`ci-passed：${dependency} 因条件未运行时放行`, () => {
     assertGateExit(ci, { [dependency]: 'skipped' }, 0);
   });
@@ -71,10 +73,13 @@ for (const dependency of ci.needs.filter((name) => name !== 'core-regression')) 
   }
 }
 
-for (const result of [...rejectedResults, 'skipped']) {
-  test(`ci-passed：core-regression 为 ${JSON.stringify(result)} 时拒绝`, () => {
-    assertGateExit(ci, { 'core-regression': result }, 1);
-  });
+for (const dependency of strictRequired) {
+  test(`ci-passed：${dependency} 实际成功时放行`, () => assertGateExit(ci, { [dependency]: 'success' }, 0));
+  for (const result of [...rejectedResults, 'skipped', 'timed_out']) {
+    test(`ci-passed：${dependency} 为 ${JSON.stringify(result)} 时拒绝`, () => {
+      assertGateExit(ci, { [dependency]: result }, 1);
+    });
+  }
 }
 
 test('Smoke Glob Runner Passed：底层成功时放行', () => {
