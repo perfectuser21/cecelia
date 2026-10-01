@@ -21,7 +21,7 @@ const schema=`managed_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const pool=new pg.Pool({...options,options:`-c search_path=${schema},public`});
 const admin=new pg.Client(options);
 const root=mkdtempSync(path.join(tmpdir(),'managed-protocol-'));
-const containers=new Map();let starts=0,server,runner,deps;
+const containers=new Map();let starts=0,server,runner,deps,rejectStart=false;
 const token='test-worker-secret-'.repeat(4),machine='us-mac-m4';
 beforeAll(async()=>{
   await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
@@ -38,7 +38,7 @@ beforeAll(async()=>{
     '363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations']) {
     await pool.query(readFileSync(new URL(`../../../migrations/${file}.sql`,import.meta.url),'utf8'));
   }
-  runner=createScriptRunner({assertLocalResources:async()=>{},stateRoot:root,machineId:machine,workerId:machine,bootId:'boot-fixture',
+  runner=createScriptRunner({assertLocalResources:async()=>{if(rejectStart)throw Object.assign(new Error('attempt_local_resources_unavailable'),{statusCode:429});},stateRoot:root,machineId:machine,workerId:machine,bootId:'boot-fixture',
     profiles:{harmless:{image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,user:'1000:1000',cwd:'/job'}},
     docker:{async create({name,command,identity}){const id=randomUUID().replaceAll('-','').repeat(2);
       containers.set(id,{id,name,command,status:'created',labels:Object.fromEntries(Object.entries(identity).map(([k,v])=>[`cecelia.script.${k}`,String(v)]))});return id;},
@@ -54,7 +54,7 @@ beforeAll(async()=>{
     collectSnapshot:async()=>({verified:true,machine,captured_at:Date.now(),expires_at:Date.now()+60_000,
       capacity:{ok:true,physical_base_slots:6,effective_base_slots:6}})}};
 });
-beforeEach(async()=>{await pool.query('TRUNCATE capacity_reservations,tasks,task_runs,task_events CASCADE');starts=0;containers.clear();});
+beforeEach(async()=>{await pool.query('TRUNCATE capacity_reservations,tasks,task_runs,task_events CASCADE');starts=0;rejectStart=false;containers.clear();});
 afterAll(async()=>{runner?.close();if(server)await new Promise(r=>server.close(r));await pool.end();await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();rmSync(root,{recursive:true,force:true});});
 async function task(extra={}) {
   const id=randomUUID();const payload={host:machine,cmd:'printf actual-managed-output',timeout_sec:30,managed_script:{profile:'harmless'},...extra};
@@ -113,4 +113,15 @@ it('cleanup_pending时发现丢失的exact容器ID仍可补绑并最终清理',a
   await reapScriptRuns(pool,deps);
   expect((await pool.query('SELECT status,container_id FROM capacity_reservations')).rows[0]).toMatchObject({status:'released',container_id:expect.any(String)});
   expect(containers.size).toBe(0);
+});
+
+it('预约后本机压力升高返回wait并放队列claim，恢复后同一意图只启动一次',async()=>{
+  const first=await task();rejectStart=true;
+  expect(await triggerScriptRun(first,deps)).toMatchObject({success:false,wait:true});
+  const waiting=(await pool.query('SELECT status,claimed_by,payload FROM tasks WHERE id=$1',[first.id])).rows[0];
+  expect(waiting).toMatchObject({status:'queued',claimed_by:null});expect(waiting.payload.script_attempts).toBeUndefined();
+  rejectStart=false;
+  expect(await triggerScriptRun(first,deps)).toMatchObject({success:true});expect(starts).toBe(1);
+  await reapScriptRuns(pool,deps);
+  expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('completed');
 });
