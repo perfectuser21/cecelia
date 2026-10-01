@@ -16,7 +16,7 @@ export function createExecutionDirectory({now=Date.now,ttlMs=30_000}={}) {
  function targets(){return (current()?.nodes??[]).flatMap(n=>n.grants.filter(g=>eligible(n,g)&&g.surface==='harness').map(g=>({provider:g.provider,account:g.account_id,machine:n.canonical_id}))).sort((a,b)=>['codex','claude','grok'].indexOf(a.provider)-['codex','claude','grok'].indexOf(b.provider)||a.account.localeCompare(b.account)||a.machine.localeCompare(b.machine));}
  function eligible(n,g){return n.state==='active'&&n.machine_status==='active'&&endpointValid(n.endpoints?.worker)&&g.state==='active'&&(!g.expires_at||Date.parse(g.expires_at)>now());}
  function matches({machineId,surface,provider,account='',repo,profileId=''}){
-  if(surface==='harness'&&!repo)return null;
+  if(['harness','app_server'].includes(surface)&&!repo)return null;
   const n=current()?.nodes.find(n=>n.canonical_id===machineId);
   const g=n?.grants.find(g=>eligible(n,g)&&g.surface===surface&&g.provider===provider&&g.account_id===account&&g.profile_id===profileId&&(!repo||g.repo_scope.includes(repo)));
   return g?{node:n,grant:g}:null;

@@ -9,7 +9,11 @@ const queryMock = vi.hoisted(() => vi.fn());
 vi.mock('../db.js', () => ({ default: { query: queryMock } }));
 vi.mock('child_process', () => ({ spawn: vi.fn(), execSync: vi.fn(() => '') }));
 vi.mock('fs/promises', () => ({ writeFile: vi.fn(), mkdir: vi.fn() }));
-vi.mock('fs', () => ({ readFileSync: vi.fn(() => 'SwapTotal: 0\nSwapFree: 0') }));
+vi.mock('fs', async () => {
+  const actual = await vi.importActual('fs');
+  const { preserveFleetConfigFs } = await import('./helpers/fleet-config-fs-fixture.js');
+  return preserveFleetConfigFs(actual, { readFileSync: vi.fn(() => 'SwapTotal: 0\nSwapFree: 0') });
+});
 vi.mock('../task-router.js', () => ({
   getInternalTaskHandler: vi.fn(() => null),
   getTaskLocation: vi.fn(() => 'us'),

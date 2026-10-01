@@ -6,7 +6,7 @@ export function createScriptAuthority({pool}) {
    const node=currentNode(machine);if(!node)throw Error('execution_node_unavailable');return operation(node.endpoints.worker);
   }
   if(!pool)throw Error('execution_directory_database_required');
-  const row=(await pool.query('SELECT * FROM capacity_reservations WHERE id=$1',[body.reservation_id])).rows[0];
+  const row=(await pool.query("SELECT * FROM capacity_reservations WHERE owner_kind='script' AND id=$1",[body.reservation_id])).rows[0];
   if(!row||row.machine_id!==machine||['owner_key','intent_id','launch_generation','config_digest'].some(k=>row[k]!==body[k]))throw Error('execution_reservation_identity_mismatch');
   if(action==='start'){
    if(!row.execution_version_id||!row.execution_grant_id)throw Error('execution_reservation_authority_missing');

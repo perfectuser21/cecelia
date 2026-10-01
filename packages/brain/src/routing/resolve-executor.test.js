@@ -13,7 +13,7 @@
  * Spec: docs/superpowers/specs/2026-06-03-machine-executor-routing-design.md §单元2 + 错误处理 + 测试策略
  */
 import { describe, it, expect, vi } from 'vitest';
-import { resolveExecutor, ExecutorRouteError, FALLBACK_ROUTE } from './resolve-executor.js';
+import { resolveExecutor, ExecutorRouteError } from './resolve-executor.js';
 
 // 假 machines（system_registry type=machine status=active 形态）
 const FAKE_MACHINES = [

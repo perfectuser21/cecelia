@@ -166,3 +166,22 @@ it('撤销后真实恢复事务不能创建child或释放父预约',async()=>{
  await expect(reserveExpiredAttemptReplacement({pool,parentAttempt:old,childInput:{...input,id:randomUUID(),hop:2},collectSnapshot:async()=>capacity,confirmCleanup:async row=>({status:'cleaned',attempt_id:row.id})})).rejects.toThrow('execution_grant_denied');
  expect((await pool.query('SELECT status FROM harness_attempts WHERE run_id=$1',[runId])).rows).toEqual([{status:'running'}]);
 });
+
+it('脚本所有回收读写拒绝独立 app_server owner，包括终态与过期清理租约',async()=>{
+ await pool.query("ALTER TABLE tasks ADD COLUMN payload JSONB DEFAULT '{}'; ALTER TABLE capacity_reservations DROP CONSTRAINT capacity_reservations_owner_kind_check; ALTER TABLE capacity_reservations ADD CHECK(owner_kind IN ('script','app_server'))");
+ const taskId=randomUUID(),id=randomUUID();await pool.query("INSERT INTO tasks(id,status) VALUES($1,'completed')",[taskId]);
+ const row=(await pool.query(`INSERT INTO capacity_reservations(id,machine_id,owner_kind,owner_key,task_id,config_digest,allocation_mode,policy_version,snapshot_time,snapshot_digest)
+ VALUES($1,'xian-mac-m1','app_server',$2,$3,$4,'exclusive_unclassified','app-server-exclusive-v1',now(),$4) RETURNING *`,[id,`openclaw-${'d'.repeat(64)}`,taskId,'a'.repeat(64)])).rows[0];
+ const store=createScriptReservationStore(pool),identity={worker_id:'worker',worker_boot_id:randomUUID(),container_id:'f'.repeat(64),status:'running'};
+ expect((await store.listOutstanding()).some(r=>r.id===id)).toBe(false);
+ await expect(store.markLaunching(id,identity)).rejects.toThrow('reservation_transition_rejected');
+ await expect(store.markRunning(id,identity)).rejects.toThrow('reservation_transition_rejected');
+ expect(await store.requeueWaiting(id,randomUUID())).toBe(false);
+ await expect(store.recordUnknown(id,'timeout')).rejects.toThrow('reservation_transition_rejected');
+ expect(await store.claimCleanup(id,'script-reaper',1000)).toBeNull();
+ await expect(store.confirmCleanup(row,{authenticated:true,receipt:{}})).rejects.toThrow('reservation_missing');
+ let calls=0;const client=createScriptWorkerClient({pool,token:'x'.repeat(32),fetchFn:()=>{calls++;throw Error('unexpected');}});
+ await expect(client.cancel(row.machine_id,{reservation_id:id,...row})).rejects.toThrow('execution_reservation_identity_mismatch');
+ expect(calls).toBe(0);
+ expect((await pool.query('SELECT status FROM capacity_reservations WHERE id=$1',[id])).rows[0].status).toBe('reserved');
+});

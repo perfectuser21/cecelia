@@ -37,8 +37,9 @@ _load_list() { grep -v '^#' "$1" | grep -v '^[[:space:]]*$' | sort; }
 ALLOWLIST_ENTRIES=$(_load_list "$ALLOWLIST")
 DENYLIST_ENTRIES=$(_load_list "$DENYLIST")
 DEBT_ENTRIES=$(_load_list "$DEBT_LIST")
+WRITE_TARGETS=$(_load_list "$QUALITY_DIR/smoke-write-targets.txt")
 
-_in_list() { echo "$2" | grep -qxF "$1"; }
+_in_list() { grep -qxF "$1" <<< "$2"; }
 
 echo "══════════════════════════════════════════════"
 echo "🔬 Smoke Ratchet Gate"
@@ -50,7 +51,7 @@ echo "════════════════════════�
 echo ""
 
 # ── 执行循环 ────────────────────────────────────────────────────
-PASS=0; FAIL_BASELINE=0; FAIL_DEBT=0; SKIP=0; UNREGISTERED=0; TOTAL=0
+PASS=0; FAIL_BASELINE=0; FAIL_DEBT=0; SKIP=0; DELEGATED=0; UNREGISTERED=0; TOTAL=0
 BASELINE_FAIL_NAMES=()
 DEBT_FAIL_NAMES=()
 UNREGISTERED_NAMES=()
@@ -79,6 +80,21 @@ for script in "$SMOKE_DIR"/*.sh; do
     continue
   fi
 
+  if [ "$fname" = 'walking-skeleton-1node-smoke.sh' ]; then
+    DELEGATED=$((DELEGATED + 1))
+    echo "── DELEGATED: $fname → required walking-ci-e2e"
+    continue
+  fi
+
+  # 真 Brain 写入入口必须通过身份校验；默认本地执行只运行安全脚本。
+  if _in_list "$fname" "$WRITE_TARGETS"; then
+    if ! node "$REPO_ROOT/packages/brain/scripts/lib/smoke-production-guard.mjs" "$BRAIN_URL"; then
+      SKIP=$((SKIP + 1))
+      echo "⏭  SKIP  [write-guard] $fname"
+      continue
+    fi
+  fi
+
   # 3. 运行脚本
   echo "── ▶  $fname"
   if bash "$script" 2>&1; then
@@ -104,6 +120,7 @@ echo "════════════════════════�
 echo "📊 Smoke Ratchet 结果（$(date -u +%Y-%m-%dT%H:%MZ)）"
 printf "   %-20s %d\n" "TOTAL:"       "$TOTAL"
 printf "   %-20s %d\n" "PASS:"        "$PASS"
+printf "   %-20s %d\n" "DELEGATED:"   "$DELEGATED"
 printf "   %-20s %d\n" "SKIP(deny):"  "$SKIP"
 printf "   %-20s %d\n" "FAIL(基线):"  "$FAIL_BASELINE"
 printf "   %-20s %d\n" "FAIL(债务):"  "$FAIL_DEBT"

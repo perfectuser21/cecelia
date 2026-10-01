@@ -5,6 +5,7 @@ import { defineConfig } from 'vitest/config';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
+  'src/app-server/__tests__/integration/store.test.js',
   'src/__tests__/integration/execution-directory.pg.integration.test.js',
   'src/__tests__/integration/preview-cache.pg.integration.test.js',
   'src/__tests__/integration/task-intake.pg.integration.test.js',
@@ -150,6 +151,7 @@ export default defineConfig({
     exclude: [
       // 与 CI unit 一致：真实 PG 与建库迁移 fixture 只交集成层。
       'src/__tests__/integration/**',
+      'src/__tests__/real-env/**',
       // DB 集成测试（pool.query 直连，beforeAll import pool）
       'src/__tests__/actions-dedup.test.js',
       'src/__tests__/actions-goal-validation.test.js',

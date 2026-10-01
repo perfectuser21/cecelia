@@ -45,6 +45,7 @@ describe('machine launch provenance command contract', () => {
         return 'TMUX_DEAD';
       },
       inDockerFn: () => false,
+      authorizeLegacyRelay: async (_identity, operation) => operation(),
       sshKeyFn: () => null,
       loadSkill: () => 'contract prompt',
       ensureWt: async () => '/tmp/contract-worktree',

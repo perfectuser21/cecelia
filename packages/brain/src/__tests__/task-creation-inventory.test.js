@@ -63,7 +63,17 @@ describe('task creation inventory', () => {
       if ((callsWriterDirectly || callsInjectedWriter) && row.module !== 'actions.js') {
         const importsActionsBoundary = /(?:from\s+|import\()['"].*actions\.js['"]/.test(source);
         const importsAtomicStore = /(?:from\s+|import\()['"].*work-routing-store\.js['"]/.test(source);
-        expect(importsActionsBoundary || importsAtomicStore, row.module).toBe(true);
+        // 专用controller通过已登记的私有authority写账：同时核验真实import边与其直接actions边。
+        let delegatesToWriter=false;
+        if(row.delegates_to){
+          const target=TASK_CREATION_INVENTORY.find(entry=>entry.module===row.delegates_to);
+          const relative='./'+path.relative(path.dirname(row.module),row.delegates_to);
+          const imported=source.includes(`from '${relative}'`)||source.includes(`from "${relative}"`);
+          const delegated=await readFile(new URL(`../${row.delegates_to}`,import.meta.url),'utf8');
+          delegatesToWriter=target?.creates_executable_task===true&&target.migration_status==='routed'&&imported
+            &&/(?:from\s+|import\()['"].*actions\.js['"]/.test(delegated)&&/createTask\s*\(/.test(delegated);
+        }
+        expect(importsActionsBoundary || importsAtomicStore || delegatesToWriter, row.module).toBe(true);
       }
       expect(source, row.module).not.toMatch(/INSERT\s+INTO\s+tasks/i);
     }

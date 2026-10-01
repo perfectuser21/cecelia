@@ -62,7 +62,7 @@ fi
 
 # 4. migration：initiative_runs 续租载体列（真 PG）
 echo "── initiative_runs.controller_lease_expires_at 续租载体列（真 PG）──"
-COLS=$(psql "$DB_URL" -tAc "SELECT string_agg(column_name, ',') FROM information_schema.columns WHERE table_name='initiative_runs' AND column_name IN ('controller_session_id','controller_lease_expires_at')" 2>/dev/null || echo "")
+COLS=$(psql -X "$DB_URL" -tAc "SELECT string_agg(column_name, ',') FROM information_schema.columns WHERE table_name='initiative_runs' AND column_name IN ('controller_session_id','controller_lease_expires_at')" 2>/dev/null || echo "")
 if echo "$COLS" | grep -q "controller_lease_expires_at" && echo "$COLS" | grep -q "controller_session_id"; then
   ok "initiative_runs 有 controller_session_id + controller_lease_expires_at（续租 UPDATE 载体）"
 else
@@ -71,7 +71,7 @@ fi
 
 # 5. Brain liveness（真 curl 现网 Brain）
 echo "── Brain liveness ──"
-code=$(curl -s -o /dev/null -w "%{http_code}" "$API/tick/status")
+code=$(curl -q -s -o /dev/null -w "%{http_code}" "$API/tick/status")
 if [[ "$code" == "200" ]]; then
   ok "GET /tick/status → 200（Brain 存活）"
 else

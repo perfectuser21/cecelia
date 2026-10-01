@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # test/scratch-only：证明第二个 repo 用同一四类扫描器、Manifest adapter 与 Projector。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT_DIR"
@@ -22,7 +25,7 @@ MANIFEST_FILE="$TMP_REPO/manifest.json"
 export DATABASE_URL SMOKE_SCOPE SMOKE_REPO SMOKE_DECISION_ID MANIFEST_FILE
 
 cleanup() {
-  "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
+  "$PSQL_EXECUTABLE" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
     -c "DELETE FROM map_projection_runs WHERE scope_key='$SMOKE_SCOPE'" \
     -c "DELETE FROM map_manifest_versions WHERE scope_key='$SMOKE_SCOPE'" \
     -c "DELETE FROM map_scope_repositories WHERE scope_key='$SMOKE_SCOPE'" \
@@ -71,7 +74,7 @@ done
 SCAN_REPO_NAME="$SMOKE_REPO" SCAN_REPO_ROOT="$TMP_REPO" GRAPH_REPOS="$SMOKE_REPO" \
   "$NODE_EXECUTABLE" scripts/scan/scan-graph.mjs >/dev/null
 
-HEADER_CHECK="$($PSQL_EXECUTABLE "$DATABASE_URL" -Atc "
+HEADER_CHECK="$($PSQL_EXECUTABLE -X "$DATABASE_URL" -Atc "
   SELECT count(*) || '|' || count(DISTINCT source_revision) || '|' || min(source_revision)
     FROM fact_snapshot_headers WHERE repo='$SMOKE_REPO' AND row_count > 0")"
 [[ "$HEADER_CHECK" == "4|1|$REVISION" ]] || fail "四类事实头不一致: $HEADER_CHECK"
@@ -105,7 +108,7 @@ try {
 }
 NODE
 
-SUMMARY="$($PSQL_EXECUTABLE "$DATABASE_URL" -Atc "
+SUMMARY="$($PSQL_EXECUTABLE -X "$DATABASE_URL" -Atc "
   SELECT count(*) FILTER (WHERE node_type='value_stream') || '|' ||
          count(*) FILTER (WHERE node_type='capability')
     FROM map_projection_nodes n JOIN map_projection_runs r ON r.id=n.run_id

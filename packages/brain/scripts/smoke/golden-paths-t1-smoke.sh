@@ -4,6 +4,11 @@
 # L3 真库：psql 探表 + CHECK 约束。API 全链：POST 建 candidate → GET 过滤 → PATCH 合法/非法流转 → 清理。
 set -uo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
+
 API="${BRAIN_URL:-http://localhost:5221}/api/brain"
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
 PASS=0; FAIL=0
@@ -14,13 +19,13 @@ fail() { echo "❌ $1"; FAIL=$((FAIL+1)); }
 echo "── 1. golden_paths 表 + CHECK 约束（psql）──"
 if ! command -v psql >/dev/null 2>&1; then
   echo "[smoke] SKIP: psql 不可用"
-elif ! psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
+elif ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] SKIP: DB 不可达"
 else
-  psql "$DB" -tAc "SELECT 1 FROM golden_paths LIMIT 0" >/dev/null 2>&1 \
+  psql -X "$DB" -tAc "SELECT 1 FROM golden_paths LIMIT 0" >/dev/null 2>&1 \
     && ok "golden_paths 表存在" || fail "golden_paths 表不存在"
 
-  psql "$DB" -tAc "BEGIN; INSERT INTO golden_paths(title, one_liner, status) VALUES('smoke bogus','smoke','bogus'); ROLLBACK;" >/dev/null 2>&1 \
+  psql -X "$DB" -tAc "BEGIN; INSERT INTO golden_paths(title, one_liner, status) VALUES('smoke bogus','smoke','bogus'); ROLLBACK;" >/dev/null 2>&1 \
     && fail "status CHECK 未生效（非法值 bogus 竟被接受）" \
     || ok "status CHECK 生效（拒绝非法值 bogus）"
 fi
@@ -28,7 +33,7 @@ fi
 # ── 2. POST 建 candidate 取回 id ──
 echo "── 2. POST /golden-paths 建 candidate ──"
 GP_ID=""
-post_resp=$(curl -s -X POST "$API/golden-paths" \
+post_resp=$(curl -q -s -X POST "$API/golden-paths" \
   -H "Content-Type: application/json" \
   -d '{"title":"smoke GP","one_liner":"smoke 用例"}')
 GP_ID=$(echo "$post_resp" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{console.log(JSON.parse(d).golden_path.id||'')}catch(e){console.log('')}})" 2>/dev/null)
@@ -42,7 +47,7 @@ fi
 # ── 3. GET ?status=candidate 能看到该 id ──
 if [[ -n "$GP_ID" ]]; then
   echo "── 3. GET /golden-paths?status=candidate ──"
-  get_resp=$(curl -s "$API/golden-paths?status=candidate")
+  get_resp=$(curl -q -s "$API/golden-paths?status=candidate")
   echo "$get_resp" | grep -q "$GP_ID" \
     && ok "GET ?status=candidate 含该 id" \
     || fail "GET ?status=candidate 未见该 id: $get_resp"
@@ -53,14 +58,14 @@ fi
 # ── 4. PATCH 合法流转成功；非法流转 409 ──
 if [[ -n "$GP_ID" ]]; then
   echo "── 4. PATCH 合法/非法流转 ──"
-  patch_ok_code=$(curl -s -o /tmp/gp-patch-ok.json -w "%{http_code}" -X PATCH "$API/golden-paths/$GP_ID" \
+  patch_ok_code=$(curl -q -s -o /tmp/gp-patch-ok.json -w "%{http_code}" -X PATCH "$API/golden-paths/$GP_ID" \
     -H "Content-Type: application/json" \
     -d '{"status":"proposed"}')
   [[ "$patch_ok_code" == "200" ]] \
     && ok "PATCH candidate→proposed 成功 (200)" \
     || fail "PATCH candidate→proposed 期望 200，得 $patch_ok_code: $(cat /tmp/gp-patch-ok.json 2>/dev/null)"
 
-  patch_bad_code=$(curl -s -o /tmp/gp-patch-bad.json -w "%{http_code}" -X PATCH "$API/golden-paths/$GP_ID" \
+  patch_bad_code=$(curl -q -s -o /tmp/gp-patch-bad.json -w "%{http_code}" -X PATCH "$API/golden-paths/$GP_ID" \
     -H "Content-Type: application/json" \
     -d '{"status":"delivered"}')
   [[ "$patch_bad_code" == "409" ]] \
@@ -72,9 +77,9 @@ else
 fi
 
 # ── 5. 清理该测试行 ──
-if [[ -n "$GP_ID" ]] && command -v psql >/dev/null 2>&1 && psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
+if [[ -n "$GP_ID" ]] && command -v psql >/dev/null 2>&1 && psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "── 5. 清理测试行 ──"
-  psql "$DB" -tAc "DELETE FROM golden_paths WHERE id = '$GP_ID'" >/dev/null 2>&1 \
+  psql -X "$DB" -tAc "DELETE FROM golden_paths WHERE id = '$GP_ID'" >/dev/null 2>&1 \
     && ok "清理测试行 $GP_ID" || fail "清理测试行失败"
 fi
 
