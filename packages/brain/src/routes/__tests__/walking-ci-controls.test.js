@@ -54,6 +54,11 @@ describe('Walking restart control permission before checkpointer or Docker', () 
     await request(app()).get('/api/brain/walking-skeleton-1node/ready/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa').expect(403);
     expect(pointers).not.toHaveBeenCalled();
   });
+  it.each(['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'])('proxy override %s rejects before PG', async key => {
+    ci(); vi.stubEnv(key, 'http://remote:9999');
+    await request(app()).get('/api/brain/walking-skeleton-1node/instance').expect(403);
+    expect(pointers).not.toHaveBeenCalled();
+  });
   it('CI readiness requires decoded actual interrupt, not just mapping', async () => {
     ci();
     const res = await request(app()).get('/api/brain/walking-skeleton-1node/ready/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa').expect(200);

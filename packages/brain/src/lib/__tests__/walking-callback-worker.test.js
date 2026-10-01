@@ -12,17 +12,18 @@ const { spawn } = await vi.importActual('node:child_process');
 const oldInstance = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const newInstance = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
-async function runWorker(failures, restart = false, badInstance = false) {
+async function runWorker(failures, restart = false, badInstance = false, readiness = true) {
   await spawnNode({ triggerId: oldInstance, restartInstanceId: restart ? oldInstance : null });
   const args = docker.mock.calls.at(-1)[1];
   const worker = args.at(-1);
   const calls = []; let instances = 0;
   const server = createServer((req, res) => {
     calls.push([req.method, req.url]);
-    if (req.method === 'GET' && req.url.includes('/ready/')) { res.end('{"ready":true}'); }
+    if (req.method === 'GET' && req.url.includes('/ready/')) { if (readiness === '503') res.writeHead(503);
+      res.end(readiness === 'malformed' ? '{bad' : JSON.stringify({ ready: readiness === true })); }
     else if (req.method === 'GET') { instances++;
-      if (badInstance) { res.writeHead(503); res.end('{"instance_id":"not-a-uuid"}'); }
-      else res.end(JSON.stringify({ instance_id: instances < 3 ? oldInstance : newInstance })); }
+      if (badInstance === true) { res.writeHead(503); res.end('{"instance_id":"not-a-uuid"}'); }
+      else res.end(JSON.stringify({ instance_id: badInstance === 'old' || instances < 3 ? oldInstance : newInstance })); }
     else { const count = calls.filter(([method]) => method === 'POST').length;
       res.writeHead(count <= failures ? 503 : 200); res.end(JSON.stringify({ ok: count > failures })); }
   });
@@ -70,6 +71,14 @@ describe('actual Walking callback worker', () => {
     expect(result.calls.slice(0, 3).map(([method]) => method)).toEqual(['GET', 'GET', 'GET']);
     expect(result.calls.some(([method, url]) => method === 'GET' && url.includes('/ready/'))).toBe(true);
     expect(result.calls.filter(([method]) => method === 'POST')).toHaveLength(1);
+  });
+  it.each([false, '503', 'malformed'])('CI checkpoint readiness %j never permits POST', async readiness => {
+    for (const [key, value] of Object.entries({ CI: 'true', WALKING_CI_OWNER: '1', NODE_ENV: 'test',
+      DB_NAME: 'cecelia_test', DB_HOST: 'localhost', DB_PORT: '5432', BRAIN_PORT: '5221',
+      DATABASE_URL: 'postgresql://localhost:5432/cecelia_test' })) vi.stubEnv(key, value);
+    const result = await runWorker(0, false, false, readiness);
+    expect(result.code).not.toBe(0); expect(result.calls).toHaveLength(40);
+    expect(result.calls.every(([method, url]) => method === 'GET' && url.includes('/ready/'))).toBe(true);
   });
   it('restart control cannot be used in production', async () => {
     vi.stubEnv('NODE_ENV', 'production');
