@@ -32,6 +32,13 @@ function fixture(){
 }
 const run=(f,value=nonce)=>require('./linux-pool-canary.cjs').runLinuxPoolCanary({nonce:value},f.deps);
 describe('root同池canary生命周期',()=>{
+ it('失败原nonce的cleanup-only回执只报告已确认精确清理，不生成池验收成功',async()=>{const f=fixture();try{
+  f.deps.collectProof=async()=>{throw Error('proof failed');};await expect(run(f)).rejects.toThrow();
+  const e=await require('./linux-pool-canary.cjs').runLinuxPoolCanary({nonce,cleanupReceipt:true},f.deps);
+  expect(e.receipt).toMatchObject({schema_version:'linux-pool-canary-cleanup/v1',execution:false,nonce,container_id:id,cleanup_confirmed:true});
+  expect(e.receipt.pool_verified).toBeUndefined();expect(e.signature).toBe(createHmac('sha256',f.token).update(JSON.stringify(e.receipt)).digest('hex'));
+  expect(f.calls.filter(([,a])=>a[0]==='create')).toHaveLength(1);
+ }finally{f.cleanup();}});
  it('先持久ID再启动，证明+精确清理+absence后才保存绑定身份的HMAC回执',async()=>{const f=fixture();const command=f.deps.runCommand;try{
   f.deps.runCommand=async(c,a)=>{if(c==='/usr/bin/docker'&&a[0]==='start')expect(f.state().container_id).toBe(id);return command(c,a);};
   const result=await run(f);expect(result.receipt).toMatchObject({nonce,execution:false,pool_verified:true,cleanup_confirmed:true,machine_registry_id:f.profile.machine_registry_id,config_digest:f.profile.config_digest,host_boot_id:hostBoot,worker_boot_id:workerBoot,revision:f.revision,container_id:id});

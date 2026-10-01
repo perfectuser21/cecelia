@@ -4,6 +4,7 @@ import pg from 'pg';
 import { beforeAll, beforeEach, afterAll, it, expect } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createLinuxPoolAuthorization } from '../../linux-pool/service.js';
+import {createOnboardingRecovery} from '../../linux-pool/onboarding-recovery.js';
 import { normalizeDeployment } from '../../linux-pool/deployment.js';
 import { directory } from '../../execution-directory/directory.js';
 import { authorize, resolveCleanup } from '../../execution-directory/store.js';
@@ -172,4 +173,13 @@ it('内部retire已提交但回执丢失后，真实flow错误保存不能抹掉
  const flow=createLinuxOnboardingFlow({pool,step:async()=>{await service.retire(machine,{challenge_id:c.id,expected_version_id:null});throw Error('lost reply after commit');}});
  expect(await flow.advance(flowId)).toMatchObject({advanced:false,phase:'pool_attest'});
  await expect(service.retire(machine,{challenge_id:c.id,expected_version_id:null})).resolves.toMatchObject({authorization_state:'revoked'});
+});
+it('池失败cleanup-only签名仅允许内部淘汰和重读安装身份，不能消费成验收成功',async()=>{
+ const c=await service.challenge(machine,{expected_version_id:null}),r=envelope(c).receipt,flow=randomUUID();r.schema_version='linux-pool-canary-cleanup/v1';delete r.pool_verified;delete r.proof;r.not_started=false;
+ const e={receipt:r,signature:createHmac('sha256',token).update(JSON.stringify(r)).digest('hex')};
+ await expect(service.attest(machine,{challenge_id:c.id,envelope:e})).rejects.toThrow('linux_pool_receipt_invalid');
+ await pool.query("INSERT INTO tasks(id,status,claimed_by,payload) VALUES($1,'in_progress','linux-pool-onboarding',$2)",[flow,{linux_onboarding:{machine_registry_id:machine,challenge:c,phase:'pool_attest'}}]);
+ const recover=createOnboardingRecovery({pool,poolAuthorization:service,readPool:async()=>normalizeDeployment(config,token)});
+ expect(await recover('pool',machine,{challenge:c,expected_version_id:null},e)).toEqual({phase:'renew_wait',expected_version_id:null});
+ expect((await pool.query('SELECT state FROM linux_pool_challenges WHERE id=$1',[c.id])).rows[0].state).toBe('revoked');
 });
