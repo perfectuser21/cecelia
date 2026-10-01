@@ -8,16 +8,19 @@ const {sampleLinuxResources,projectLinuxObservation}=require('./linux-resource-p
 const fail=()=>{throw Error('linux_pool_server_configuration_invalid');};
 const hash=value=>createHash('sha256').update(value).digest();
 function json(response,status,value){response.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});response.end(JSON.stringify(value));}
-async function readNonce(request) {
+async function readNonce(request,timeoutMs) {
   const chunks=[];let bytes=0;
-  for await(const chunk of request){bytes+=chunk.length;if(bytes>2048)throw Object.assign(Error(),{status:413});chunks.push(chunk);}
+  const deadline=setTimeout(()=>request.destroy(),timeoutMs);
+  try{for await(const chunk of request){bytes+=chunk.length;if(bytes>2048)throw Object.assign(Error(),{status:413});chunks.push(chunk);}}
+  finally{clearTimeout(deadline);}
   let input;try{input=JSON.parse(Buffer.concat(chunks).toString());}catch{throw Object.assign(Error(),{status:400});}
   if(!input||Array.isArray(input)||Object.keys(input).length!==1||typeof input.nonce!=='string'||!/^[a-f0-9]{64}$/.test(input.nonce))throw Object.assign(Error(),{status:400});
   return input.nonce;
 }
-function createLinuxPoolServer({profile:input,token,revision,probe}) {
+function createLinuxPoolServer({profile:input,token,revision,probe,bodyTimeoutMs=5000,headersTimeoutMs=5000}) {
   const profile=validateLinuxPoolProfile(input),bootId=randomUUID();
-  if(profile.scheduler_only||typeof token!=='string'||!/^[a-f0-9]{64}$/.test(token)||typeof revision!=='string'||!/^[a-f0-9]{40}$/.test(revision))fail();
+  if(profile.scheduler_only||typeof token!=='string'||!/^[a-f0-9]{64}$/.test(token)||typeof revision!=='string'||!/^[a-f0-9]{40}$/.test(revision)
+    ||![bodyTimeoutMs,headersTimeoutMs].every(v=>Number.isInteger(v)&&v>=50&&v<=5000)||headersTimeoutMs>bodyTimeoutMs)fail();
   const tokenHash=hash('Bearer '+token);
   const sample=probe??(()=>sampleLinuxResources({diskPaths:[profile.data_root,'/var/lib/docker']}));
   let inFlight=null,cached=null,expires=0;
@@ -27,7 +30,8 @@ function createLinuxPoolServer({profile:input,token,revision,probe}) {
       .then(observation=>{cached=observation;expires=Date.now()+10000;return observation;}).finally(()=>{inFlight=null;});
     return inFlight;
   };
-  const server=http.createServer({maxHeaderSize:4096},async(request,response)=>{
+  const server=http.createServer({maxHeaderSize:4096,requestTimeout:bodyTimeoutMs,headersTimeout:headersTimeoutMs,
+    connectionsCheckingInterval:Math.min(250,headersTimeoutMs)},async(request,response)=>{
     try {
       if(request.url==='/health'&&request.method==='GET') {
         const observation=await health();
@@ -41,7 +45,7 @@ function createLinuxPoolServer({profile:input,token,revision,probe}) {
         const auth=request.headers.authorization;
         if(typeof auth!=='string'||!timingSafeEqual(hash(auth),tokenHash)){request.resume();json(response,401,{error:'unauthorized'});return;}
         if(request.method!=='POST'){request.resume();json(response,405,{error:'method_not_allowed'});return;}
-        const nonce=await readNonce(request);
+        const nonce=await readNonce(request,bodyTimeoutMs);
         const receipt={schema_version:'linux-pool-identity/v1',nonce,machine_registry_id:profile.machine_registry_id,
           machine_id:profile.machine_id,worker_boot_id:bootId,revision,config_digest:profile.config_digest,execution:false,observed_at:new Date().toISOString()};
         json(response,200,{receipt,signature:createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex')});return;
@@ -49,7 +53,7 @@ function createLinuxPoolServer({profile:input,token,revision,probe}) {
       request.resume();json(response,403,{error:'linux_execution_not_authorized'});
     } catch(error){if(!response.destroyed)json(response,error.status===413?413:400,{error:'linux_pool_request_invalid'});}
   });
-  server.headersTimeout=5000;server.requestTimeout=5000;server.keepAliveTimeout=1000;server.maxRequestsPerSocket=32;
+  server.keepAliveTimeout=1000;server.maxRequestsPerSocket=32;
   server.setTimeout(6000,socket=>socket.destroy());
   return server;
 }

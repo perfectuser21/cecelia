@@ -1,5 +1,6 @@
 'use strict';
 const {createHmac}=require('node:crypto');
+const net=require('node:net');
 const {createLinuxPoolServer}=require('./linux-pool-server.cjs');
 const input={schema_version:1,machine_registry_id:'71d632df-252a-4991-ad6b-3647fbbea9f7',machine_id:'vps-hk',role:'worker',
   endpoint_host:'100.90.1.2',docker_host:'unix:///var/run/docker.sock',pool:{cpu_cores:0.5,memory_bytes:536870912,pids_limit:256},
@@ -11,6 +12,19 @@ async function fixture(probe=async()=>({status:'observed',cpu_cores:4,execution:
   return {url:'http://127.0.0.1:'+server.address().port,server,close:()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections();})};
 }
 describe('Linux pending观察服务',()=>{
+  it.each(['headers','body'])('持续滴流的%s不能刷新绝对接收期限',async kind=>{
+    const server=createLinuxPoolServer({profile:input,token,revision,bodyTimeoutMs:100,headersTimeoutMs:100});
+    await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+    const socket=net.connect(server.address().port,'127.0.0.1');let timer;
+    try {
+      await new Promise(resolve=>socket.once('connect',resolve));socket.on('error',()=>{});socket.on('data',()=>{});
+      const closed=new Promise(resolve=>socket.once('close',()=>resolve(true)));
+      socket.write(kind==='body'?`POST /v1/pool/identity HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer ${token}\r\nTransfer-Encoding: chunked\r\n\r\n`:'GET /health HTTP/1.1\r\nHost: localhost\r\nX-Slow: ');
+      timer=setInterval(()=>{if(!socket.destroyed)socket.write(kind==='body'?'1\r\nx\r\n':'x');},20);
+      let deadline;const result=await Promise.race([closed,new Promise(resolve=>{deadline=setTimeout(()=>resolve(false),700);})]);
+      clearTimeout(deadline);expect(result).toBe(true);
+    } finally {clearInterval(timer);socket.destroy();await new Promise(resolve=>{server.close(resolve);server.closeAllConnections();});}
+  });
   it('真实HTTP健康状态不因采样器自报4核或verified而授予执行',async()=>{
     const f=await fixture();
     try{
