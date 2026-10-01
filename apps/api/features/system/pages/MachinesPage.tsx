@@ -5,6 +5,7 @@ import {
   XCircle, Wifi, WifiOff, ChevronRight, RefreshCw,
 } from 'lucide-react';
 import { machinesApi, Machine } from '../api/machines.api';
+import NodeOnboarding from './NodeOnboarding';
 
 const COUNTRY_FLAG: Record<string, string> = { US: '🇺🇸', CN: '🇨🇳', HK: '🇭🇰' };
 const LOCATION_LABEL: Record<string, string> = { US: '美国', Xian: '西安', HK: '香港', CN: '西安' };
@@ -92,16 +93,20 @@ export default function MachinesPage() {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
 
-  const fetchMachines = async () => {
-    setLoading(true);
+  const fetchMachines = async (background = false) => {
+    if (!background) setLoading(true);
     try {
       const data = await machinesApi.list();
       setMachines(data);
       setError(null);
+      setRefreshError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载失败');
+      if (background) setRefreshError('设备列表刷新失败，请点击刷新重试');
+      else setError(err instanceof Error ? err.message : '加载失败');
     } finally {
       setLoading(false);
     }
@@ -155,14 +160,20 @@ export default function MachinesPage() {
             )}
           </div>
         </div>
+        <div className="flex items-center gap-2">
+        <button onClick={() => setOnboardingOpen(true)} className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white">接入新机器</button>
         <button
-          onClick={fetchMachines}
+          onClick={() => fetchMachines()}
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
         >
           <RefreshCw className="w-4 h-4" />
           刷新
         </button>
+        </div>
       </div>
+
+      {refreshError && <p role="alert" className="mb-4 text-sm text-red-600">{refreshError}</p>}
+      <NodeOnboarding open={onboardingOpen} onOpen={() => setOnboardingOpen(true)} onClose={() => setOnboardingOpen(false)} onCompleted={() => fetchMachines(true)} />
 
       {locationOrder.filter(loc => groups[loc]).map(loc => (
         <div key={loc} className="mb-8">
