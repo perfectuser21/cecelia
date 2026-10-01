@@ -25,6 +25,35 @@ cat > "$FIX/scripts/test-pyramid-baseline.json" <<'EOF'
 EOF
 check 0 "干净 fixture → 绿"
 
+# 正式 seal 支持根 sprints 合同；同一合同的 tests 必须被金字塔认账。
+mkdir -p "$FIX/sprints/tests"
+touch "$FIX/sprints/tests/root.test.mjs"
+cat > "$FIX/sprints/contract-draft.md" <<'EOF'
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR | Red |
+|---|---|---|---|
+| root | `sprints/tests/root.test.mjs` | root | FAIL |
+EOF
+check 0 "根 Sprint 合同登记真实测试 → 绿"
+
+# 根合同不能占用另一子 Sprint 的测试来消除孤儿。
+mkdir -p "$FIX/sprints/child/tests"
+touch "$FIX/sprints/child/tests/child.test.mjs"
+cat >> "$FIX/sprints/contract-draft.md" <<'EOF'
+| child | `sprints/child/tests/child.test.mjs` | child | FAIL |
+EOF
+check 1 "根合同不吸收子 Sprint 孤儿 → 红"
+cat > "$FIX/sprints/child/contract-draft.md" <<'EOF'
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR | Red |
+|---|---|---|---|
+| child | `sprints/child/tests/child.test.mjs` | child | FAIL |
+EOF
+check 0 "根与子 Sprint 各自登记 → 绿"
+rm -rf "$FIX/sprints"
+
 # ── A1: 制造孤儿超基线 ──
 mkdir -p "$FIX/sprints/s1"; touch "$FIX/sprints/s1/x.test.ts"
 check 1 "A1 孤儿超基线 → 红"
