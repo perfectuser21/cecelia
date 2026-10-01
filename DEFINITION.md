@@ -1,6 +1,7 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.355.11
+**Brain 版本**: 1.355.12
+
 
 
 
@@ -18,6 +19,10 @@
 
 
 
+
+接入内部淘汰与显式撤销分开持久：外部撤销在同接入锁内停止已生成自动阶段，不能由过期恢复复活；已提交active丢回执跨24小时按同代原签名和实际current version转内部续验。执行角色上限和后续采样SSH均来自原登记任务，设备metadata仅可缩权。
+
+执行就绪投影与自动续验同时核实际execution_node_versions及逐项grant身份、状态和到期；单独撤销version/grant立即撤下就绪，禁止后台续验重新授权。
 
 现有机器接入入口对Linux worker自动登记执行子任务，固定SSH核root实际资源后生成保守单shell profile，复用CS独立凭据，bootstrap签名身份→505池证明→507真实adapter验收→同代active。凭据绑定可由root私有credential-bindings.json指定既有item，浏览器不能提供授权身份。Brain独占会话锁覆盖外部步骤，原始签名/profile保持序列化，未知保留intent与nonce。到期前一小时或boot改变自动撤销旧许可、等所有旧预约精确清理、重读安装身份并新代验收；过期挑战仅凭完整验签清理归档重建，显式撤销不自动复活。机器卡片只投影当前未过期授权及服务内部fresh身份，元数据不可伪造；US永久scheduler_only。缺Docker/systemd/cgroup前置如实报出，受信控制目录最窄RW挂载，生产HK现场验收仍由部署阶段执行。
 

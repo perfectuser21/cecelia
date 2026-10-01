@@ -1,4 +1,5 @@
 import {US_SCHEDULER_ID} from './deployment.js';
+import {LIVE_RUNTIME_GRANTS_SQL} from './active-grants.js';
 /** 可编辑metadata不构成执行授权。所有已纳管卡片从同代许可与服务内部任务投影。 */
 export async function projectLinuxExecution(pool,machines){
  const ids=machines.filter(m=>m.metadata?.onboarding).map(m=>m.id);if(!ids.length)return machines;
@@ -9,7 +10,11 @@ export async function projectLinuxExecution(pool,machines){
   JOIN system_registry r ON r.id=a.machine_registry_id
   JOIN tasks t ON t.payload->'linux_onboarding'->>'machine_registry_id'=a.machine_registry_id::text
    AND ((t.payload->'linux_onboarding'->>'runtime_json')::jsonb->>'id')=a.id::text
+  JOIN tasks source ON source.id::text=t.payload->'linux_onboarding'->>'parent_task_id'
   WHERE a.machine_registry_id=ANY($1::uuid[]) AND a.machine_registry_id<>$2 AND a.state='active'
+   AND ${LIVE_RUNTIME_GRANTS_SQL}
+   AND source.payload->'node_onboarding'->'request'->>'role'='worker' AND COALESCE(source.payload->'node_onboarding'->>'execution_revoked','false')<>'true'
+   AND COALESCE(t.payload->'linux_onboarding'->>'revoked','false')<>'true'
    AND a.authorization_expires_at>clock_timestamp() AND r.status='active' AND r.metadata->>'role'='worker'
    AND COALESCE(r.metadata->>'scheduler_only','false')<>'true' AND t.status='completed' AND t.result->>'actor'='linux-pool-onboarding'
    AND t.payload->'linux_onboarding'->>'phase'='active' AND t.payload->'linux_onboarding'->>'identity_ok'='true'

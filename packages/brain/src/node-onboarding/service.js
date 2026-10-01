@@ -198,13 +198,18 @@ export function createOnboardingService({ pool, createTask = taskCreator, config
       await transaction(async db => {
         await lock(db, `probe:${row.id}`);
         const { rows: machines } = await db.query('SELECT * FROM system_registry WHERE id=$1 FOR UPDATE', [row.id]);
-        const meta = machines[0]?.metadata?.onboarding;
+        const machine=machines[0],meta = machine?.metadata?.onboarding;
         if (!meta || new Date(meta.next_probe_at) > now()) return;
+        const source=(await db.query(`SELECT * FROM tasks WHERE ${META}->>'id'=$1 AND ${META}->>'mode'='enroll'
+          AND status IN ('completed','completed_no_pr') AND ${META}->>'reconciled'='true' ORDER BY created_at DESC,id DESC LIMIT 1`,[machine.id])).rows[0];
+        const trusted=source?.payload?.node_onboarding;
+        if(!trusted||trusted.request.name!==machine.name||requestHash(trusted.request)!==trusted.request_hash)return;
+        try{validateReceipt(source,source.completed_at);}catch{return;}
         const { rows: active } = await db.query(
           `SELECT id FROM tasks WHERE ${META}->>'id'=$1 AND ${META}->>'mode'='sample'
-           AND status IN ('queued','in_progress','blocked') LIMIT 1`, [meta.id]);
+           AND status IN ('queued','in_progress','blocked') LIMIT 1`, [machine.id]);
         if (active.length) return;
-        await enqueue(db, { id: meta.id, request: meta.request, mode: 'sample' }, now().getTime());
+        await enqueue(db, { id: machine.id, request: trusted.request, mode: 'sample' }, now().getTime());
         await db.query(
           `UPDATE system_registry SET metadata=jsonb_set(metadata,'{onboarding,next_probe_at}',$2::jsonb) WHERE id=$1`,
           [row.id, JSON.stringify(new Date(now().getTime() + PROBE_INTERVAL_MS).toISOString())]);

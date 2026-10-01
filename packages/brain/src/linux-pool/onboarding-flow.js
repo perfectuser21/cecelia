@@ -7,6 +7,7 @@ import {createRuntimeDeploymentReader} from './runtime-deployment.js';
 import canaryModule from '../../scripts/fleet-worker/linux-pool-canary.cjs';
 import poolModule from '../../scripts/fleet-worker/linux-pool-profile.cjs';
 import {US_SCHEDULER_ID,error} from './deployment.js';
+import {LIVE_RUNTIME_GRANTS_SQL,UNREVOKED_RUNTIME_GRANTS_SQL} from './active-grants.js';
 const creator=async args=>(await import('../actions.js')).createTask(args);
 const identityCheck=async state=>{const d=await createRuntimeDeploymentReader()(state.machine_registry_id);return canaryModule.readLinuxPoolIdentity({profile:poolModule.validateLinuxPoolProfile(d.pool),token:d.workerToken,revision:d.expected.revision,nonce:randomBytes(32).toString('hex')});};
 const actor='linux-pool-onboarding',key=id=>'linux-onboarding:'+id;
@@ -14,6 +15,8 @@ const safeErrors=new Set(['linux_pool_control_unavailable','linux_pool_prerequis
  'linux_pool_ssh_unavailable','linux_pool_installation_unconfirmed','linux_pool_runtime_unavailable','linux_pool_configuration_unconfirmed']);
 export function createLinuxOnboardingFlow({pool,createTask=creator,revision=process.env.GIT_SHA,step=createLinuxOnboardingStep({pool}),afterTerminal=afterTerminalTransition,checkIdentity=identityCheck}={}){
  const eligible=m=>m.id!==US_SCHEDULER_ID&&m.metadata?.role==='worker'&&m.metadata?.node_health?.os==='linux'&&!m.metadata?.scheduler_only;
+ const sourceTask=async(c,id)=>(await c.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0]?.payload?.node_onboarding;
+ const permitted=(source,machine)=>source?.id===machine.id&&source.request?.name===machine.name&&source.request.role==='worker'&&source.execution_revoked!==true;
  async function record(c,machine,state,parentId){
    const made=await createTask({db:c,title:'自动接入Linux执行池 '+machine.name,description:'可信SSH安装、池验收与受限脚本真实canary；只有同代授权激活才完成。',
     task_type:'audit',status:'in_progress',source:'scheduler',source_id:'linux-pool-onboarding:'+state.nonce,trigger_source:'node_onboarding',allow_unscoped:true,
@@ -28,11 +31,12 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
   if(!eligible(machine))return null;
   const work=async c=>{
    await c.query('SELECT pg_advisory_xact_lock(hashtext($1))',[key(machine.id)]);
+   const source=await sourceTask(c,parentId);if(!permitted(source,machine))return null;
    const found=(await c.query("SELECT id FROM tasks WHERE payload->'linux_onboarding'->>'machine_registry_id'=$1 ORDER BY created_at DESC LIMIT 1",[machine.id])).rows[0];
    if(found)return found.id;
    const version=(await c.query('SELECT current_version_id FROM execution_nodes WHERE machine_registry_id=$1',[machine.id])).rows[0]?.current_version_id??null;
    const state={machine_registry_id:machine.id,onboarding_id:machine.metadata.onboarding.id,parent_task_id:parentId,
-    phase:'probe',request_hash:requestHash(machine.metadata.onboarding.request),nonce:randomBytes(32).toString('hex'),intent_id:randomUUID(),revision,expected_version_id:version};
+    phase:'probe',request_hash:requestHash(source.request),nonce:randomBytes(32).toString('hex'),intent_id:randomUUID(),revision,expected_version_id:version};
    return record(c,machine,state,parentId);
   };
   return db?work(db):transaction(pool,work);
@@ -42,15 +46,20 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
   return (await c.query(`SELECT a.id,a.execution_version_id,a.authorization_expires_at,r.metadata FROM linux_script_authorizations a
    JOIN execution_nodes n ON n.machine_registry_id=a.machine_registry_id AND n.current_version_id=a.execution_version_id
    JOIN system_registry r ON r.id=a.machine_registry_id WHERE a.id=$1 AND a.machine_registry_id=$2 AND a.state='active'
+   AND ${LIVE_RUNTIME_GRANTS_SQL}
    AND a.authorization_expires_at>clock_timestamp() AND r.status='active' AND r.metadata->>'role'='worker'
    AND COALESCE(r.metadata->>'scheduler_only','false')<>'true' AND r.id<>$3`,[runtimeId,machineId,US_SCHEDULER_ID])).rows[0]??null;
  }
  async function view(id){
   if(!id)return {phase:'probe',execution:false};
   const row=(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0],s=row?.payload?.linux_onboarding;if(!s)return {phase:'probe',execution:false};
+  if(s.revoked===true)return {task_id:id,phase:'revoked',execution:false};
+  const source=await sourceTask(pool,s.parent_task_id);
+  if(source?.request?.role!=='worker'||source.execution_revoked===true)return {task_id:id,phase:'revoked',execution:false};
   const runtime=s.runtime_json?JSON.parse(s.runtime_json).id:null;
   const active=s.phase==='active'?await live(pool,s.machine_registry_id,runtime):null;
-  const revoked=s.phase==='active'&&!active&&(await pool.query('SELECT state FROM linux_script_authorizations WHERE id=$1',[runtime])).rows[0]?.state==='revoked';
+  const authority=s.phase==='active'&&!active?(await pool.query(`SELECT a.state,(${UNREVOKED_RUNTIME_GRANTS_SQL}) AS intact FROM linux_script_authorizations a WHERE a.id=$1`,[runtime])).rows[0]:null;
+  const revoked=authority&&(authority.state==='revoked'||authority.intact===false);
   const identityOk=s.identity_ok===true&&Date.now()-Date.parse(s.identity_checked_at)<180000;
   return {task_id:id,phase:s.phase==='active'?(revoked?'revoked':!active?'renewal':!identityOk?'identity':'active'):s.phase,execution:!!active&&identityOk,error:s.error??null,
    expires_at:active?.authorization_expires_at??null};
@@ -61,11 +70,11 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
    let task=(await db.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];let state=task?.payload?.linux_onboarding;
    if(!state||task.status!=='in_progress')return {advanced:false};machineId=state.machine_registry_id;
    locked=(await db.query('SELECT pg_try_advisory_lock(hashtext($1)) AS locked',[key(machineId)])).rows[0].locked;if(!locked)return {busy:true};
-   task=(await db.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];state=task.payload.linux_onboarding;if(task.status!=='in_progress')return {advanced:false};
+   task=(await db.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];state=task.payload.linux_onboarding;if(task.status!=='in_progress'||state.revoked===true)return {advanced:false};
    let machine=(await db.query("SELECT * FROM system_registry WHERE id=$1 AND type='machine' AND status='active'",[machineId])).rows[0];
    if(!machine||!eligible(machine))throw error('linux_pool_prerequisites_unavailable');
-   const source=(await db.query('SELECT payload FROM tasks WHERE id=$1',[state.parent_task_id])).rows[0]?.payload?.node_onboarding;
-   if(!source||source.id!==machineId||source.request.name!==machine.name||requestHash(source.request)!==state.request_hash)throw error('linux_pool_control_unavailable');
+   const source=await sourceTask(db,state.parent_task_id);
+   if(!permitted(source,machine)||requestHash(source.request)!==state.request_hash)throw error('linux_pool_control_unavailable');
    machine={...machine,metadata:{...machine.metadata,onboarding:{...machine.metadata.onboarding,request:source.request}}};
    const save=async value=>{
     const result=await db.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding}',$2::jsonb),updated_at=now() WHERE id=$1 AND status='in_progress' AND claimed_by=$3 RETURNING id",[id,JSON.stringify(value),actor]);
@@ -108,11 +117,11 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
   return transaction(pool,async c=>{
    await c.query('SELECT pg_advisory_xact_lock(hashtext($1))',[key(s.machine_registry_id)]);
    const machine=(await c.query('SELECT * FROM system_registry WHERE id=$1 FOR UPDATE',[s.machine_registry_id])).rows[0];
-   if(!machine||!eligible(machine))return null;
+   if(!machine||!eligible(machine)||!permitted(await sourceTask(c,s.parent_task_id),machine))return null;
    const latest=(await c.query("SELECT id FROM tasks WHERE payload->'linux_onboarding'->>'machine_registry_id'=$1 ORDER BY created_at DESC,id DESC LIMIT 1",[machine.id])).rows[0];
    if(latest?.id!==previous.id)return null;
    const authority=(await c.query(`SELECT a.state FROM linux_script_authorizations a JOIN execution_nodes n ON n.machine_registry_id=a.machine_registry_id
-    WHERE a.id=$1 AND n.current_version_id=a.execution_version_id`,[JSON.parse(s.runtime_json).id])).rows[0];
+    WHERE a.id=$1 AND n.current_version_id=a.execution_version_id AND ${UNREVOKED_RUNTIME_GRANTS_SQL}`,[JSON.parse(s.runtime_json).id])).rows[0];
    if(authority?.state!=='active')return null; // 显式撤销/外部换代不得被自动续验覆盖。
    const current=await live(c,machine.id,JSON.parse(s.runtime_json).id);
    if(!changed&&current&&new Date(current.authorization_expires_at).getTime()-Date.now()>3600000)return null;
@@ -126,7 +135,7 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
   const waiting=(await pool.query("SELECT * FROM system_registry WHERE type='machine' AND status='active' AND metadata->>'role'='worker' AND metadata->'node_health'->>'os'='linux' AND metadata->'onboarding'->>'state'='managed' AND metadata->'onboarding'->>'execution_task_id' IS NULL LIMIT 1")).rows[0];
   if(waiting)await ensure(waiting,waiting.metadata.onboarding.task_id);
   await renew();
-  const rows=(await pool.query("SELECT id FROM tasks WHERE status='in_progress' AND claimed_by=$1 AND payload ? 'linux_onboarding' AND COALESCE(payload->'linux_onboarding'->>'next_retry_at','')<$2 ORDER BY updated_at LIMIT 1",[actor,new Date().toISOString()])).rows;
+  const rows=(await pool.query("SELECT id FROM tasks WHERE status='in_progress' AND claimed_by=$1 AND payload ? 'linux_onboarding' AND COALESCE(payload->'linux_onboarding'->>'revoked','false')<>'true' AND COALESCE(payload->'linux_onboarding'->>'next_retry_at','')<$2 ORDER BY updated_at LIMIT 1",[actor,new Date().toISOString()])).rows;
   return rows[0]?advance(rows[0].id):{advanced:false};
  }
  return {ensure,advance,view,retry,run,renew};

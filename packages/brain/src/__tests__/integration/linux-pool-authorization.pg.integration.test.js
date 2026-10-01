@@ -26,7 +26,7 @@ function envelope(challenge,mutate=()=>{}){
  mutate(receipt);return {receipt,signature:createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex')};
 }
 async function accepted(){const c=await service.challenge(machine,{expected_version_id:null});const a=await service.attest(machine,{challenge_id:c.id,envelope:envelope(c)});return {c,a};}
-beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);await pool.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT);CREATE TABLE capacity_reservations(id UUID PRIMARY KEY);CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);`);
+beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);await pool.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT,payload jsonb,claimed_by text,updated_at timestamptz DEFAULT now());CREATE TABLE capacity_reservations(id UUID PRIMARY KEY);CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);`);
  for(const filename of ['503_execution_directory.sql','505_linux_pool_authorization.sql'])await pool.query(readFileSync(new URL('../../../migrations/'+filename,import.meta.url),'utf8'));
 });
 beforeEach(async()=>{setup();await pool.query("INSERT INTO system_registry(id,type,name,status,metadata) VALUES($1,'machine',$2,'active','{\"role\":\"worker\"}')",[machine,config.profile.machine_id]);});
@@ -150,4 +150,14 @@ it('读取状态把部署boot换代和配置不可读呈现失效，不继续显
  config.host_boot_id=randomUUID();expect((await service.get(machine)).attestations[0].state).toBe('invalidated');
  const offline=createLinuxPoolAuthorization({pool,readDeployment:async()=>{throw Error('secret-read-failed');}});
  expect((await offline.get(machine)).attestations[0].state).toBe('unavailable');
+});
+
+it('池挑战的内部淘汰与外部撤销持久区分，外部撤销停止已生成下一阶段',async()=>{
+ const c=await service.challenge(machine,{expected_version_id:null}),flow=randomUUID();
+ await pool.query("INSERT INTO tasks(id,status,claimed_by,payload) VALUES($1,'in_progress','linux-pool-onboarding',$2)",[flow,{linux_onboarding:{machine_registry_id:machine,challenge:c,phase:'pool_attest'}}]);
+ await service.retire(machine,{challenge_id:c.id,expected_version_id:null});await service.retire(machine,{challenge_id:c.id,expected_version_id:null});
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[flow])).rows[0].payload.linux_onboarding.pool_retired).toBe(c.id);
+ await service.revoke(machine,{challenge_id:c.id,expected_version_id:null});
+ await expect(service.retire(machine,{challenge_id:c.id,expected_version_id:null})).rejects.toThrow('linux_pool_explicitly_revoked');
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[flow])).rows[0].payload.linux_onboarding.revoked).toBe(true);
 });
