@@ -107,7 +107,7 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
   it.each(['actual-clock', 'beijing-midnight'])('趋势 SQL（%s）：按北京自然日分组，连续两天零线索的 wf 叫、有线索的不叫；phone_registry 24h 无 completed 叫', async (scenario) => {
     // 当日去重状态在事务内隔离；ROLLBACK 恢复已有测试库记录。
     await client.query(`DELETE FROM working_memory WHERE key = 'workflow_trend_bark:last_day'`);
-    await client.query(`INSERT INTO phone_registry (serial, nickname, host, profile, enabled) VALUES ('S-STALE', '小测', 'xian-m4', 'p', true), ('S-IDLE', '小闲', 'xian-m4', 'p', true)`);
+    await client.query(`INSERT INTO phone_registry (serial, nickname, host, profile, enabled) VALUES ('S-STALE', '小测', 'xian-m4', 'p', true), ('S-FRESH', '小新', 'xian-m4', 'p', true), ('S-IDLE', '小闲', 'xian-m4', 'p', true)`);
     // 真 PG 事务时间保持不变；明确的午夜场景也使用实际存储的时间戳。
     const { rows: [clock] } = await client.query('SELECT EXTRACT(EPOCH FROM NOW()) * 1000 AS now_ms');
     const pgNow = Number(clock.now_ms);
@@ -117,11 +117,26 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
     const minsToday = bj.getUTCHours() * 60 + bj.getUTCMinutes();
     const d1 = `${pgNow - now + (minsToday + 24 * 60 - 12 * 60) * 60e3} milliseconds`;
     const d2 = `${pgNow - now + (minsToday + 48 * 60 - 12 * 60) * 60e3} milliseconds`;
-    const mk = (wf, ago, leads, serial = 'S-STALE') => insertRun({ payload: { serial, source: 'cron', wf_id: wf, leads }, status: 'completed', dueAgo: ago, completedAgo: ago });
+    const mk = (wf, ago, leads, serial = 'S-TREND') => insertRun({ payload: { serial, source: 'cron', wf_id: wf, leads }, status: 'completed', dueAgo: ago, completedAgo: ago });
     await mk('zero-wf', d1, 0); await mk('zero-wf', d2, 0);
     await mk('ok-wf', d1, 0); await mk('ok-wf', d2, 3);
+    // 设备陈旧程度与自然日趋势分开；真实 NOW 的相对 shift 落在同一场景时钟上。
+    const serialRun = async (serial, hours) => {
+      const ago = `${pgNow - now + hours * 3600e3} milliseconds`;
+      return insertRun({ payload: { serial, source: 'cron' }, status: 'completed', dueAgo: ago, completedAgo: ago });
+    };
+    const stale = await serialRun('S-STALE', 25);
+    const fresh = await serialRun('S-FRESH', 1);
+    const { rows: actualRows } = await client.query('SELECT id, created_at, completed_at FROM tasks WHERE id = ANY($1::uuid[])', [[stale, fresh]]);
+    const actual = Object.fromEntries(actualRows.map((row) => [row.id, row]));
+    expect((now - actual[stale].completed_at.getTime()) / 3600e3).toBeCloseTo(25, 5);
+    expect((now - actual[fresh].completed_at.getTime()) / 3600e3).toBeCloseTo(1, 5);
+    for (const row of actualRows) {
+      expect(pgNow - row.created_at.getTime()).toBeGreaterThan(0);
+      expect(pgNow - row.created_at.getTime()).toBeLessThan(72 * 3600e3);
+    }
     const bark = vi.fn().mockResolvedValue(true);
-    // 用当前时刻（北京日期由 SQL 与 JS 同算）但强制窗口
+    // 仅既有 deps.now 控制判定场景；实际 PG 时钟与查询过滤不变。
     const out = await runWorkflowTrendBark(client, { now, bark, windowOverride: true, staleSerialMs: 24 * 3600e3 });
     expect(out.zeroLeads).toEqual(['zero-wf']);
     expect(out.staleSerials).toEqual(['S-STALE']);
