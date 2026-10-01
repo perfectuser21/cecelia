@@ -25,7 +25,8 @@ async function scenario(fn) {
       '名称': { title: text(source.title) }, '备注': { rich_text: [] },
       'OpenClaw任务号': { rich_text: text(`brain:${id}`) }, '状态': { status: { name: '进行中' } },
     } };
-    const sync = async ({ beforeUpdate, status, content = `手机：${nickname}` } = {}) => {
+    let transactionNo = 0;
+    const sync = async ({ beforeUpdate, failEvent, status, content = `手机：${nickname}` } = {}) => {
       page.properties['状态'].status.name = status ?? '进行中';
       const notionReq = async (_token, path, method) => {
         if (method === 'POST') return { results: [] };
@@ -34,7 +35,20 @@ async function scenario(fn) {
       };
       const db = { query: async (sql, args) => {
         if (/UPDATE tasks/.test(sql) && beforeUpdate) await beforeUpdate(client);
+        if (/INSERT INTO task_events/.test(sql) && failEvent) return client.query(sql, [null, ...args.slice(1)]);
         return client.query(sql, args);
+      }, connect: async () => {
+        const savepoint = `reroute_fixture_${++transactionNo}`;
+        return { release() {}, query: async (sql, args) => {
+          // 测试外层BEGIN负责隔离数据；将生产独立client事务映射到真PG子事务，保持故障回滚可读。
+          if (sql === 'BEGIN') return client.query(`SAVEPOINT ${savepoint}`);
+          if (sql === 'COMMIT') return client.query(`RELEASE SAVEPOINT ${savepoint}`);
+          if (sql === 'ROLLBACK') {
+            await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+            return client.query(`RELEASE SAVEPOINT ${savepoint}`);
+          }
+          return db.query(sql, args);
+        } };
       } };
       return applyOwnerStops(db, 'tok', { notionReq });
     };
@@ -65,6 +79,13 @@ describe('Notion设备补写重路由 — 真PG原task验收', () => {
       expect((await sync({ status: '阻塞' })).rerouted).toBe(0);
       expect((await sync({ content: '型号：红米Note12' })).rerouted).toBe(0);
       expect((await read()).status).toBe('blocked'); expect(await events()).toHaveLength(0);
+    });
+  });
+  it('真实PG事件INSERT非空约束失败，原blocked/source/cache及非路由payload全部保持', async () => {
+    await scenario(async ({ sync, read, events }) => {
+      const original = await read();
+      expect((await sync({ failEvent: true })).rerouted).toBe(0);
+      expect(await read()).toEqual(original); expect(await events()).toHaveLength(0);
     });
   });
   it.each(['status', 'source'])('读取后并发变更%s CAS不能覆盖', async (kind) => {

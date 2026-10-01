@@ -32,23 +32,27 @@ function setup(o = {}) {
   });
   const phones = o.phones ?? [{ serial: 'test-serial', nickname: '验收小黄', aliases: [], enabled: true,
     douyin_accounts: [{ nickname: '验收小彩', account_id: 'test-account' }] }];
-  const query = vi.fn(async (sql) => {
+  const execute = async (sql) => {
     if (/SELECT.*FROM tasks/s.test(sql)) return { rows: [candidate] };
     if (/FROM phone_registry/.test(sql)) return { rows: phones };
     if (/SELECT/.test(sql)) return { rows: [] };
     if (/UPDATE tasks/.test(sql)) return { rows: o.casLost ? [] : [{ id: ID }] };
+    if (/INSERT INTO task_events/.test(sql) && o.eventError) throw new Error('event insertion failed');
     return { rows: [] };
-  });
-  return { candidate, page, notionReq, query };
+  };
+  const query = vi.fn(execute);
+  const client = { query: vi.fn(execute), release: vi.fn() };
+  const connect = vi.fn(async () => client);
+  return { candidate, page, notionReq, query, client, connect };
 }
 async function run(o) {
   const { applyOwnerStops, parseZhPage } = await import('../../notion-gtd-sync.js');
   const f = setup(o);
   const result = o?.direct
-    ? await rerouteUnresolvedDevices({ query: f.query }, 'tok', { notionReq: f.notionReq, parsePage: parseZhPage })
-    : await applyOwnerStops({ query: f.query }, 'tok', { notionReq: f.notionReq });
-  return { ...f, result, updates: f.query.mock.calls.filter(([sql]) => /UPDATE tasks/.test(sql)),
-    events: f.query.mock.calls.filter(([sql]) => /INSERT INTO task_events/.test(sql)) };
+    ? await rerouteUnresolvedDevices({ query: f.query, connect: f.connect }, 'tok', { notionReq: f.notionReq, parsePage: parseZhPage })
+    : await applyOwnerStops({ query: f.query, connect: f.connect }, 'tok', { notionReq: f.notionReq });
+  return { ...f, result, updates: [...f.query.mock.calls, ...f.client.query.mock.calls].filter(([sql]) => /UPDATE tasks/.test(sql)),
+    events: [...f.query.mock.calls, ...f.client.query.mock.calls].filter(([sql]) => /INSERT INTO task_events/.test(sql)) };
 }
 describe('qiumi-device-reroute 原Notion页设备补写自动恢复原task', () => {
   it('独立helper与同步入口共享同一台账解析', async () => { expect((await run({ direct: true })).result.rerouted).toBe(1); });
@@ -99,6 +103,14 @@ describe('qiumi-device-reroute 原Notion页设备补写自动恢复原task', () 
     const o = { body: '文字'.repeat(12000) + '\n手机：验收小黄' };
     const { result, updates } = await run(o);
     expect(result.rerouted).toBe(1); expect(JSON.parse(updates[0][1][2]).body).toContain('手机：验收小黄');
+  });
+  it('事件失败不能计已恢复，必须独立client回滚且释放', async () => {
+    const { result, query, client, connect } = await run({ eventError: true });
+    expect(result.rerouted).toBe(0); expect(connect).toHaveBeenCalledOnce();
+    expect(client.query.mock.calls.map(([sql]) => sql)).toContain('ROLLBACK');
+    expect(client.query.mock.calls.map(([sql]) => sql)).not.toContain('COMMIT');
+    expect(query.mock.calls.map(([sql]) => sql)).not.toContain('BEGIN');
+    expect(client.release).toHaveBeenCalledOnce();
   });
   it('CAS零行不能记事件或成功', async () => {
     const { result, updates, events } = await run({ casLost: true });
