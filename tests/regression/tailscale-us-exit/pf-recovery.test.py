@@ -94,6 +94,7 @@ class NetworkRecoveryTests(unittest.TestCase):
         now = time.time()
         baseline = {"target_serials": sorted(activation.ADB_SERIALS), "online_verified": sorted(online),
             "offline": sorted(activation.ADB_SERIALS-set(online)), "candidate_sha256": "a"*64,
+            "device_states": {serial: "device" if serial in online else "absent" for serial in activation.ADB_SERIALS},
             "target_home": str(root), "actor": "approved-root", "observed_at": now}
         raw = json.dumps(baseline).encode()
         (root / "phone-baseline.json").write_bytes(raw)
@@ -243,7 +244,17 @@ class NetworkRecoveryTests(unittest.TestCase):
             "target_home": "/target", "approval_actor": "root", "armed_at": 1130}
         with patch.object(recovery, "read_root_file", return_value=raw):
             with self.assertRaisesRegex(RuntimeError, "baseline"):
-                recovery.load_baseline(Path("/tmp"), state, activation.ADB_SERIALS)
+                    recovery.load_baseline(Path("/tmp"), state, activation.ADB_SERIALS)
+
+    def test_preserved_baseline_distinguishes_absent_offline_unauthorized_and_verified_device(self):
+        import tailscale_us_exit_recovery as recovery
+        import tailscale_us_exit_activation as activation
+        api = SimpleNamespace(ADB_SERIALS=activation.ADB_SERIALS, adb_prefix=lambda _: ["adb"],
+            verify_adb=lambda home, serials: list(serials))
+        for status in ("offline", "unauthorized", "device"):
+            api.command = lambda _, value=status: "List of devices attached\nANGYVB4227006983 " + value + "\n"
+            baseline = recovery.capture_baseline(api, "/target", "a"*64, "root")
+            self.assertEqual(baseline["device_states"], {"ANGYVB4227006983": status, "ANGYVB4402004137": "absent"})
 
 
 if __name__ == "__main__":
