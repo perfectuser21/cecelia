@@ -10,7 +10,9 @@
 
 
 
-**Brain 版本**: 1.353.16
+**Brain 版本**: 1.353.17
+
+脚本Worker客户端按流累计认证封套，超过128KiB立即取消读取；正文读取继续受原请求deadline约束，不再先整包缓存再判大小。
 
 Linux可信root bootstrap 使用Python3启动，内置官方Node24.21.0双架构归档digest并只取Node二进制，不依赖或替换宿主Node20；自动准备无补充组的nologin专用账号，随后交既有事务安装器落盘pending服务。固定本地Docker/systemd完整宿主、受保护profile/token/source及空slice先验，US/scheduler/零预算拒绝；stdin非阻塞读写共用deadline、异常路径保留未回收leader身份后清理专属进程组的有界命令/下载、持久flock与0600恢复回执，账号创建结果未知也不伪称回滚。失败保留安全账号，既有配置/units由安装器恢复，不改网络/daemon/旧业务cgroup。永久回归覆盖21项；官方arm64归档已在独立无网非root受限容器真执行Node版本并清理，尚非HK systemd现场验收。
 

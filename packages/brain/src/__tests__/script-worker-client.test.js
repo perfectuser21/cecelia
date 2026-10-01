@@ -13,6 +13,13 @@ function client(change) {
   }});
 }
 describe('认证脚本worker客户端',()=>{
+  it('响应流达到上限立即取消，不先将整个远端输出读入内存',async()=>{
+    let produced=0,cancelled=false;
+    const invalid=createScriptWorkerClient({authorizeRequest:async(_m,_a,_b,run)=>run('http://127.0.0.1:1'),token,
+      fetchFn:async()=>new Response(new ReadableStream({pull(controller){produced++;controller.enqueue(new Uint8Array(65536));if(produced===16)controller.close();},cancel(){cancelled=true;}},{highWaterMark:0}))});
+    await expect(invalid.inspect(machine,body)).rejects.toThrow('script_worker_response_oversized');
+    expect(cancelled).toBe(true);expect(produced).toBeLessThanOrEqual(3);
+  });
   it('只有匹配新nonce和完整签名才产生认证封套',async()=>{
     await expect(client().cancel(machine,body)).resolves.toMatchObject({authenticated:true,receipt:{status:'cleaned'}});
   });

@@ -1,5 +1,11 @@
 import { createHmac,randomUUID,timingSafeEqual } from 'node:crypto';
 import { createScriptAuthority } from './execution-directory/script-authority.js';
+async function readBoundedResponse(response) {
+  if(!response.body)throw new Error('script_worker_response_missing');
+  const chunks=[];let bytes=0;
+  for await(const chunk of response.body){bytes+=chunk.length;if(bytes>131072)throw new Error('script_worker_response_oversized');chunks.push(chunk);}
+  return Buffer.concat(chunks).toString('utf8');
+}
 
 /** 只有认证响应能产生 authenticated 封套；HTTP缺失/超时/404从不算清理成功。 */
 export function createScriptWorkerClient({env=process.env,pool,authorizeRequest=createScriptAuthority({pool}),token=env.KERNEL_FLEET_BRIDGE_TOKEN,
@@ -14,7 +20,7 @@ export function createScriptWorkerClient({env=process.env,pool,authorizeRequest=
     const response=await fetchFn(`${url.origin}${endpoint}`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
       body:JSON.stringify({...body,request_nonce:requestNonce}),signal:AbortSignal.timeout(timeoutMs)});
     if(!response.ok && response.status!==429)throw new Error(`script_worker_http_${response.status}`);
-    const raw=await response.text();if(Buffer.byteLength(raw)>131072)throw new Error('script_worker_response_oversized');
+    const raw=await readBoundedResponse(response);
     const envelope=JSON.parse(raw);
     const signature=createHmac('sha256',token).update(JSON.stringify(envelope.receipt)).digest('hex');
     if(typeof envelope.signature!=='string'||!/^[a-f0-9]{64}$/.test(envelope.signature)
