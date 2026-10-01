@@ -31,12 +31,15 @@ describe('fleet-resource-cache', () => {
     vi.useFakeTimers();
     // 2026-09-13 采集传输换为 worker HTTP：本块断言意图不变（3台/online/slots），
     // 铺垫从 collect* mock 换成 fetch stub（三台全通）。
-    vi.stubGlobal('fetch', vi.fn(async () => ({
+    vi.stubGlobal('fetch', vi.fn(async (url) => ({
       ok: true,
       status: 200,
       json: async () => ({
         schema_version: 'fleet-node-health/v1',
+        machine_id: String(url).includes('100.71.151.105') ? 'us-mac-m4' : String(url).includes('100.86.57.69') ? 'xian-mac-m4' : 'xian-mac-m1',
+        observed_at: new Date().toISOString(),
         resources: {
+          disk_free_bytes: 40 * 1024 ** 3, disk_used_percent: 60,
           cpu_cores: 10, memory_bytes: 16 * 1024 ** 3,
           cpu_pressure_percent: 20, memory_pressure_percent: 40,
         },
@@ -110,14 +113,16 @@ describe('容量采集走 worker HTTP（弃 ssh/isLocal）', () => {
     'us-mac-m4': {
       schema_version: 'fleet-node-health/v1', machine_id: 'us-mac-m4',
       resources: {
-        cpu_cores: 10, memory_bytes: 16 * 1024 ** 3,
+        disk_free_bytes: 40 * 1024 ** 3, disk_used_percent: 60,
+          cpu_cores: 10, memory_bytes: 16 * 1024 ** 3,
         cpu_pressure_percent: 16.3, memory_pressure_percent: 54,
       },
     },
     'xian-mac-m4': {
       schema_version: 'fleet-node-health/v1', machine_id: 'xian-mac-m4',
       resources: {
-        cpu_cores: 10, memory_bytes: 16 * 1024 ** 3,
+        disk_free_bytes: 40 * 1024 ** 3, disk_used_percent: 60,
+          cpu_cores: 10, memory_bytes: 16 * 1024 ** 3,
         cpu_pressure_percent: 20, memory_pressure_percent: 30,
       },
     },
@@ -128,7 +133,7 @@ describe('容量采集走 worker HTTP（弃 ssh/isLocal）', () => {
     vi.stubGlobal('fetch', vi.fn(async (url) => {
       const hit = Object.keys(HEALTH).find((id) => String(url).includes(id === 'us-mac-m4' ? '100.71.151.105' : '100.86.57.69'));
       if (!hit) throw new Error('ECONNREFUSED');
-      return { ok: true, status: 200, json: async () => HEALTH[hit] };
+      return { ok: true, status: 200, json: async () => ({ ...HEALTH[hit], observed_at: new Date().toISOString() }) };
     }));
     infra = await import('../routes/infra-status.js');
     fleetCache = await import('../fleet-resource-cache.js');
