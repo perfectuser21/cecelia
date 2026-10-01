@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { companyMetric, companyKrView, companyPatchIsReserved, COMPANY_KR_CATALOG } from '../company-kr-metrics.js';
 
 describe('公司KR原口径', () => {
+  it('观察版本保留PG微秒，不能将同毫秒两次更新混为同版本', () => {
+    const kr = { updated_at: new Date('2026-10-01T00:00:00.123Z'), observation_version: '2026-10-01 00:00:00.123456+00' };
+    expect(companyKrView(kr).updated_at).toBe('2026-10-01T00:00:00.123456+00:00');
+  });
   it('保留原三位fraction与原值，不把current百分比化', () => {
     expect(companyMetric('0', '1.234', '5')).toEqual({ start: '0', current: '1.234', target: '5', ratio: 0.247, ratio_state: 'defined' });
   });
