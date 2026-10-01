@@ -7,6 +7,14 @@ function deny(reason) {
   console.log(`[smoke] 写入未启用：${reason}`);
   process.exit(1);
 }
+function databaseTarget(value) {
+  const uri = new URL(value);
+  if (!['postgres:', 'postgresql:'].includes(uri.protocol) || uri.search || uri.hash) {
+    deny('数据库 URI 协议或覆盖参数不安全');
+  }
+  const host = ['localhost', '127.0.0.1', '[::1]'].includes(uri.hostname) ? 'loopback' : uri.hostname;
+  return { database: decodeURIComponent(uri.pathname.slice(1)), host, port: uri.port || '5432' };
+}
 if (process.env.SMOKE_ALLOW_WRITE !== '1') deny('需 SMOKE_ALLOW_WRITE=1');
 try {
   const target = new URL(process.argv[2]);
@@ -27,13 +35,20 @@ try {
   }));
   if (!info.State?.Running || !['test', 'development'].includes(env.NODE_ENV)
       || !safeDatabases.has(env.DB_NAME)) deny('容器必须运行在已知测试环境和安全库');
-  // DATABASE_URL 能覆盖 DB_NAME，不能把生产连接包装成 test 容器。
-  if (env.DATABASE_URL && decodeURIComponent(new URL(env.DATABASE_URL).pathname.slice(1)) !== env.DB_NAME) {
-    deny('容器连接与声明库名不一致');
-  }
-  // 带 DB 清理的 smoke 还必须核对 psql 的连接库名，先核对再连接。
-  if (process.argv[3] && decodeURIComponent(new URL(process.argv[3]).pathname.slice(1)) !== env.DB_NAME) {
-    deny('清理连接必须指向容器的同一安全库');
+  // libpq 的 URI query 可覆盖 dbname/host/port，故拒绝所有 query/hash。
+  const containerDb = env.DATABASE_URL ? databaseTarget(env.DATABASE_URL) : {
+    database: env.DB_NAME,
+    host: ['localhost', '127.0.0.1', '::1'].includes(env.DB_HOST || 'localhost') ? 'loopback' : env.DB_HOST,
+    port: env.DB_PORT || '5432',
+  };
+  if (containerDb.database !== env.DB_NAME) deny('容器连接与声明库名不一致');
+  // psql 清理仅能碰同一已核对的本机数据库服务，远程同名库不能冒充。
+  if (process.argv[3]) {
+    const cleanupDb = databaseTarget(process.argv[3]);
+    if (cleanupDb.database !== containerDb.database || cleanupDb.host !== 'loopback'
+        || containerDb.host !== 'loopback' || cleanupDb.port !== containerDb.port) {
+      deny('清理连接必须指向容器的同一本机安全数据库服务');
+    }
   }
   const containerPort = env.BRAIN_PORT || '5221';
   const targetPort = target.port || '80';
