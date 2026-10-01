@@ -4,7 +4,7 @@ BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 BRAIN_URL="${BRAIN_URL%/}"
 BRAIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$BRAIN_ROOT"
-RESPONSE="$(curl -fsS --max-time 15 "$BRAIN_URL/api/brain/okr/company-key-results")"
+RESPONSE="$(curl -q -fsS --max-time 15 "$BRAIN_URL/api/brain/okr/company-key-results")"
 node --input-type=module - "$RESPONSE" <<'JS'
 import assert from 'node:assert/strict';
 import { COMPANY_KR_CATALOG, COMPANY_METRIC_MODE, companyMetric } from './src/lib/company-kr-metrics.js';
