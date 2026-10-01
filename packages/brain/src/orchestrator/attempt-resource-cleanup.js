@@ -5,13 +5,13 @@ import { createProductionExecutionTransport } from './production-transport.js';
 
 const execFileAsync = promisify(execFile);
 
-async function inspectLocalContainer(containerId) {
+export async function inspectLocalContainer(containerId, { execFileFn = execFileAsync } = {}) {
   try {
-    await execFileAsync('docker', ['inspect', '--format', '{{.Name}}', containerId], { timeout: 5000 });
+    await execFileFn('docker', ['inspect', '--format', '{{.Name}}', containerId], { timeout: 5000 });
     return true;
   } catch (error) {
     // An unreachable daemon or generic inspect failure proves nothing.
-    if (error.code === 1 && String(error.stderr).trim() === `Error: No such object: ${containerId}`) return false;
+    if (error.code === 1 && String(error.stderr).trim().toLowerCase() === `error: no such object: ${containerId}`.toLowerCase()) return false;
     throw error;
   }
 }
@@ -36,10 +36,13 @@ export async function confirmExpiredParentCleanup(parent, {
     }
     if (!containerId) return { status: 'unsupported', reason: 'legacy_cleanup_identity_invalid' };
     const remove = removeContainer ?? (await import('../spawn/detached.js')).removeDockerContainer;
-    if (await remove(containerId) !== true || await inspectContainer(containerId) !== false) {
+    const removed = await remove(containerId);
+    // A prior confirmed removal may have been followed by a database rollback.
+    // Re-read exact identity even when rm reports missing; daemon errors remain unknown.
+    if (await inspectContainer(containerId) !== false) {
       return { status: 'unavailable', reason: 'legacy_cleanup_unconfirmed' };
     }
-    return { status: 'cleaned', attempt_id: parent.id };
+    return { status: removed === true ? 'cleaned' : 'already_clean', attempt_id: parent.id };
   }
   const transport = launcher ?? transportFactory({ env, fetchFn, remoteBridgeTimeoutMs: 20_000 });
   return transport.cancel({ attempt: parent, target: { machine } });

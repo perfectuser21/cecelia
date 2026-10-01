@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { confirmExpiredParentCleanup } from './attempt-resource-cleanup.js';
+import { confirmExpiredParentCleanup, inspectLocalContainer } from './attempt-resource-cleanup.js';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const parent = { id, run_id: '22222222-2222-4222-8222-222222222222', actual_machine_id: 'us-mac-m4',
@@ -41,6 +41,17 @@ describe('恢复前精确旧进程清理', () => {
     await expect(confirmExpiredParentCleanup(parent, { env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
       removeContainer: async () => false, inspectContainer: async () => { throw new Error('docker_daemon_unavailable'); } }))
       .rejects.toThrow('docker_daemon_unavailable');
+  });
+  it.each(['Error: No such object:', 'error: no such object:'])('识别本机实际not-found输出%s', async (prefix) => {
+    const containerId = 'cecelia-harness-11111111';
+    expect(await inspectLocalContainer(containerId, { execFileFn: async () => {
+      throw Object.assign(new Error('inspect failed'), { code: 1, stderr: `${prefix} ${containerId}\n` });
+    } })).toBe(false);
+  });
+  it.each(['Cannot connect to Docker daemon', 'error: no such object: another-container'])('拒绝非精确不存在证明%s', async (stderr) => {
+    await expect(inspectLocalContainer('cecelia-harness-11111111', { execFileFn: async () => {
+      throw Object.assign(new Error('inspect failed'), { code: 1, stderr });
+    } })).rejects.toThrow('inspect failed');
   });
   it('非目标host不调用本机docker也不退回worker假确认', async () => {
     const removeContainer = vi.fn(); const launcher = { cancel: vi.fn() };
