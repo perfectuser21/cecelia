@@ -21,6 +21,7 @@ import { randomUUID } from 'node:crypto';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { updateKrProgress } from '../../kr-progress.js';
 import { getProjectsForKrBatch } from '../../project-progress.js';
+import { recalculateKrProgress } from '../../lib/kr-recalculate-progress.js';
 
 const pool = new pg.Pool({ ...DB_DEFAULTS, max: 3 });
 
@@ -133,5 +134,24 @@ describe('updateKrProgress: 真写入 key_results', () => {
 
     const { rows } = await pool.query('SELECT progress FROM key_results WHERE id = $1', [krNoProjectId]);
     expect(rows[0].progress).toBe(42);
+  });
+});
+
+
+describe('KR 重算写库回归（任务7aeb81a6）', () => {
+  it('NULL target 清除 NaN，项目等权 progress=83 与来源实际入库', async () => {
+    await pool.query("UPDATE key_results SET target_value=NULL,current_value='NaN' WHERE id=$1",[krWithProjectsId]);
+    const result = await recalculateKrProgress(pool,krWithProjectsId);
+    expect(result).toMatchObject({progress:83,current_value:null,completed_tasks:4,total_tasks:5});
+    const { rows } = await pool.query('SELECT current_value,progress,metadata FROM key_results WHERE id=$1',[krWithProjectsId]);
+    expect(rows[0]).toMatchObject({current_value:null,progress:83,metadata:{progress_source:'projects_v1'}});
+  });
+  it('target=200 时按同一进度写166，并保持幂等', async () => {
+    await pool.query('UPDATE key_results SET target_value=200 WHERE id=$1',[krWithProjectsId]);
+    const first = await recalculateKrProgress(pool,krWithProjectsId);
+    expect(await recalculateKrProgress(pool,krWithProjectsId)).toEqual(first);
+    const { rows } = await pool.query('SELECT current_value::text,progress FROM key_results WHERE id=$1',[krWithProjectsId]);
+    expect(Number(rows[0].current_value)).toBe(166);
+    expect(rows[0].progress).toBe(83);
   });
 });
