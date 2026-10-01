@@ -107,7 +107,7 @@ export async function runPhoneRegistrySync(pool, opts = {}) {
     let accountFailures = 0;
     for (const result of results) {
       await record(q, 'phone_registry_runner_sync', { ...result, evidence: { host: result.host } });
-      for (const receipt of result.receipts ?? []) if (['mismatch', 'unreadable', 'unreachable', 'unknown_account'].includes(receipt.status)) {
+      for (const receipt of result.receipts ?? []) if (['mismatch', 'unreadable', 'unreachable', 'unknown_account', 'cleanup_failed'].includes(receipt.status)) {
         accountFailures += 1;
         const mismatch = receipt.status === 'mismatch';
         await bark(mismatch ? '手机账号与台账不一致' : '手机账号核验未确认',

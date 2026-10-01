@@ -45,6 +45,12 @@ def parse_profiles(text):
         if serial in out:
             raise ValueError('duplicate profile serial')
         out[serial] = {k: row[n] for k, n in cols.items() if n < len(row)}
+        if columns is None:
+            # 控制器v1无表头的4/5列是最大坐标；v2表头才是真实像素宽高。
+            for key in ('width', 'height'):
+                if not out[serial][key].isdigit():
+                    raise ValueError('legacy profile dimensions invalid')
+                out[serial][key] = str(int(out[serial][key]) + 1)
     return out
 
 
@@ -189,8 +195,8 @@ def task_busy(phone, tasks, phones):
 def command(argv, timeout_s=20):
     process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
     try:
-        stdout, _ = process.communicate(timeout=timeout_s)
-        return process.returncode, stdout
+        stdout, stderr = process.communicate(timeout=timeout_s)
+        return process.returncode, stdout + '\n' + stderr
     except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGTERM)
         try:
@@ -232,7 +238,8 @@ def reconcile(config, bundle):
                               ctl, '--profile', phone['profile'], 'account-current', expected])
         ids = re.findall(r'^douyin_id=([A-Za-z0-9_-]+)\s*$', output, re.M)
         actual = ids[0] if len(ids) == 1 else None
-        status = 'unreadable' if rc != 0 else 'verified' if actual == expected else 'mismatch' if actual else 'unreadable'
+        cleanup_failed = 'warning: close-app cleanup failed' in output
+        status = 'cleanup_failed' if cleanup_failed else 'unreadable' if rc != 0 else 'verified' if actual == expected else 'mismatch' if actual else 'unreadable'
         receipt = {**base, 'actual_id': actual, 'status': status}
         receipts.append(receipt)
         state[phone['serial']] = receipt
