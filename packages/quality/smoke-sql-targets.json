@@ -110,6 +110,12 @@
     "evidence": "实际SQL/写调用源码行 65,69,76；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
     "source_commit": "d664db65c9"
   },
+  "harness-weighted-reservation-smoke.sh": {
+    "kind": "write",
+    "connection": "TEST_DATABASE_URL最高优先；未指定时真实DB_HOST/DB_PORT/DB_NAME（DB_DEFAULTS）。URI省略port时有效PGPORT须与默认5432一致；显式host/port优先于PGHOST/PGPORT。",
+    "evidence": "实际Node PG callee attempt-weighted-reservation.pg.integration.test.js:35-49 Clientconnect/CREATE_SCHEMA/TABLE/migrations/ALTER；53TRUNCATE；57DROP_SCHEMA。默认及有效连接拒绝用真实wrapper+受控Vitest执行边界验证，未运行数据库。",
+    "source_commit": "df8cc371ccf200a4b0ca903a0e5ba8500dcae72f"
+  },
   "journeys-bizarea-smoke.sh": {
     "kind": "write",
     "connection": "DB_HOST/DB_PORT/DB_NAME（实际psql -h/-p/-d）；默认localhost/5432/cecelia拒绝",
