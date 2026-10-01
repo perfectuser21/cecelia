@@ -125,3 +125,22 @@ test('v2扩展技术列按serial保留，enabled严格从Brain真身导出', t =
   assert.equal(values.density, '440'); assert.equal(values.sdk, '34'); assert.equal(values.locale, 'zh-CN');
   assert.equal(values.app_version, '31.0'); assert.equal(values.enabled, 'true');
 });
+
+test('原始TSV引号昵称不得吞掉下一手机行，账号角色两代仍保留', t => {
+  const f = fixture(t); const path = join(f.conf, 'douyin-phone-profiles.tsv');
+  writeFileSync(path, readFileSync(path, 'utf8') + 'p2\tSER2\tMODEL\t1080\t2412\t小号\txian-m1\t归属\t研发\t\n');
+  writeFileSync(join(f.conf, 'douyin-account-routes.tsv'), 'p1\t123\t"账号\tcustom-role\n');
+  const rows = [{ ...phones[0], nickname: '"小号', douyin_accounts: [{ id: '123', nickname: '"账号', current: true }] },
+    { ...phones[0], serial: 'SER2', profile: 'p2', nickname: '第二手机', douyin_accounts: [] }];
+  assert.equal(f.run({ phones: rows }).ok, true); assert.equal(f.run({ phones: rows }).ok, true);
+  assert.match(readFileSync(path, 'utf8'), /p2\tSER2/);
+  assert.match(readFileSync(join(f.conf, 'douyin-account-routes.tsv'), 'utf8'), /123\t"账号\tcustom-role/);
+});
+test('整轮核验给TERM收尾留预算，不让SSH外层期限先杀在途控制器', t => {
+  const f = fixture(t); const code = `import importlib.util,json,pathlib,os\ns=importlib.util.spec_from_file_location('agent',${JSON.stringify(script)});m=importlib.util.module_from_spec(s);s.loader.exec_module(m)\nclock=[0.0];calls=[]\nm.time.monotonic=lambda:clock[0]\ndef bounded(argv,timeout_s=20):\n calls.append(timeout_s);clock[0]+=timeout_s+7;return 124,''\nm.command=bounded\nbundle={'phones':[{'serial':'SER1','profile':'p1','host':'xian-m1','douyin_accounts':[{'id':'123','current':True}]},{'serial':'SER2','profile':'p2','host':'xian-m1','douyin_accounts':[{'id':'456','current':True}]}],'host':'xian-m1','tasks':[],'now':1893500000000}\nr=m.reconcile(pathlib.Path(os.environ['PHONE_AGENT_CONFIG']),bundle,budget_s=8);print(json.dumps({'calls':calls,'elapsed':clock[0],'receipts':r}))`;
+  const r = spawnSync('python3', ['-c', code], { env: f.env, encoding: 'utf8', timeout: 5000 });
+  assert.equal(r.status, 0, r.stderr); const out = JSON.parse(r.stdout);
+  assert.ok(out.calls.every(timeout => timeout <= 1)); assert.ok(out.elapsed <= 8);
+  assert.equal(out.receipts[1].status, 'budget_exhausted');
+  assert.ok(out.receipts.every(receipt => receipt.status !== 'verified'));
+});
