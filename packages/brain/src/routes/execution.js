@@ -1073,106 +1073,10 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
         console.error(`[execution-callback] Decomp review handling error: ${decompReviewErr.message}`);
       }
 
-      // 5c2. 秋米拆解完成 → 触发 Vivian 审查 + KR 状态更新
+      // 5c2. 拆解完成：只读取 Project 真身及直接 Tasks。
       try {
-        const decompCheckResult = await pool.query('SELECT task_type, payload, goal_id FROM tasks WHERE id = $1', [task_id]);
-        const decompCheckRow = decompCheckResult.rows[0];
-
-        // 只处理秋米的拆解任务（不是 Vivian 的 decomp_review）
-        if (decompCheckRow?.payload?.decomposition === 'true'
-            && decompCheckRow?.task_type !== 'decomp_review'
-            && decompCheckRow?.goal_id) {
-          const krId = decompCheckRow.goal_id;
-
-          // 检查 KR 是否处于 decomposing 状态（key_results 表）
-          const krCheckResult = await pool.query(
-            'SELECT id, title, status FROM key_results WHERE id = $1 AND status = $2',
-            [krId, 'decomposing']
-          );
-
-          if (krCheckResult.rows.length > 0) {
-            // 找到秋米创建的 Project（通过 okr_projects.kr_id）
-            const projectCheckResult = await pool.query(`
-              SELECT id, title AS name FROM okr_projects
-              WHERE kr_id = $1
-              ORDER BY created_at DESC LIMIT 1
-            `, [krId]);
-
-            if (projectCheckResult.rows.length > 0) {
-              const project = projectCheckResult.rows[0];
-
-              // 触发 Vivian 审查
-              const { shouldTriggerReview, createReviewTask } = await import('../review-gate.js');
-              const needsReview = await shouldTriggerReview(pool, 'project', project.id);
-
-              if (needsReview) {
-                await createReviewTask(pool, {
-                  entityType: 'project',
-                  entityId: project.id,
-                  entityName: project.name,
-                  parentKrId: krId,
-                });
-                console.log(`[execution-callback] Vivian review triggered for KR ${krId} project ${project.id}`);
-              }
-
-              // 创建用户确认门：okr_decomp_review pending_action
-              try {
-                const krTitle = krCheckResult.rows[0].title;
-                const projectName = project.name;
-
-                // 查询拆解产出的 Initiatives（通过 okr_scopes → okr_initiatives）
-                const initiativesResult = await pool.query(`
-                  SELECT oi.title AS name
-                  FROM okr_scopes os
-                  JOIN okr_initiatives oi ON oi.scope_id = os.id
-                  WHERE os.project_id = $1
-                  ORDER BY oi.created_at ASC
-                `, [project.id]);
-                const initiatives = initiativesResult.rows.map(r => r.name);
-
-                // 签名去重：同一 KR 24h 内不重复创建
-                const existingApproval = await pool.query(`
-                  SELECT id FROM pending_actions
-                  WHERE action_type = 'okr_decomp_review'
-                    AND status = 'pending_approval'
-                    AND (params->>'kr_id') = $1
-                    AND created_at > NOW() - INTERVAL '24 hours'
-                  LIMIT 1
-                `, [krId]);
-
-                if (existingApproval.rows.length === 0) {
-                  await pool.query(`
-                    INSERT INTO pending_actions
-                      (action_type, category, params, context, priority, source, expires_at, status)
-                    VALUES
-                      ('okr_decomp_review', 'approval', $1, $2, 'urgent', 'okr_decomposer',
-                       NOW() + INTERVAL '72 hours', 'pending_approval')
-                  `, [
-                    JSON.stringify({ kr_id: krId, project_id: project.id }),
-                    JSON.stringify({
-                      kr_title: krTitle,
-                      project_name: projectName,
-                      initiatives,
-                      decomposed_at: new Date().toISOString()
-                    })
-                  ]);
-                  console.log(`[execution-callback] OKR 确认门已创建：KR ${krId}「${krTitle}」，${initiatives.length} 个 Initiative`);
-                } else {
-                  console.log(`[execution-callback] OKR 确认门已存在（去重跳过）：KR ${krId}`);
-                }
-              } catch (approvalErr) {
-                console.error(`[execution-callback] 创建 OKR 确认门失败（非阻塞）: ${approvalErr.message}`);
-              }
-            }
-
-            // 更新 KR 状态: decomposing → reviewing（key_results 表）
-            await pool.query(
-              `UPDATE key_results SET status = 'reviewing', updated_at = NOW() WHERE id = $1`,
-              [krId]
-            );
-            console.log(`[execution-callback] KR ${krId} → reviewing (秋米拆解完成)`);
-          }
-        }
+        const { triggerCompletedDecompositionReview } = await import('../decomposition-review-trigger.js');
+        await triggerCompletedDecompositionReview(pool, task_id);
       } catch (decompTriggerErr) {
         console.error(`[execution-callback] Decomp → review trigger error: ${decompTriggerErr.message}`);
       }

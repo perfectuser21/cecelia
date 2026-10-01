@@ -6,7 +6,7 @@ export default defineConfig({
   test: {
     ...brainConfig.test,
     exclude: brainConfig.test.exclude.filter(
-      (testPath) => !POSTGRES_INTEGRATION_TESTS.includes(testPath),
+      (testPath) => testPath !== 'src/__tests__/integration/**' && !POSTGRES_INTEGRATION_TESTS.includes(testPath),
     ),
   },
 });
