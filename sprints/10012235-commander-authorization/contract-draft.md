@@ -16,7 +16,7 @@ cd packages/brain
 DB_NAME=cecelia_scratch npx vitest run src/orchestrator/__tests__/commander-profile.test.js src/orchestrator/__tests__/commander-contract.test.js src/orchestrator/__tests__/commander-bundle.test.js src/orchestrator/__tests__/commander-store.test.js --maxWorkers=1 --minWorkers=1
 ```
 
-通过标准：四个永久套件全通过、36条行为断言、进程 exit 0；真实 task.payload 形状与秘密拒绝分别验证，无 mock profile 或 secret 判定。native evaluator/Judge 必须正式运行，不能用本地 PASS 替代。
+通过标准：四个永久套件全通过、42条行为断言、进程 exit 0；真实 task.payload 形状与秘密拒绝分别验证，无 mock profile 或 secret 判定。native evaluator/Judge 必须正式运行，不能用本地 PASS 替代。
 
 ## Test Contract
 

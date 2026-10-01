@@ -8,6 +8,7 @@ import { resolvePrimaryWorkerId } from '../machine-registry.js';
 import { redactSecrets } from './failure-persistence.js';
 
 const PRIMARY = resolvePrimaryWorkerId();
+const CREDENTIAL_NARRATIVE = /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|token|secret|password|authorization|authentication|auth)\b\s*(?:[:=]|\s+\S|is\s+\S)/i;
 
 const targetSchema = z.object({
   provider: z.string().min(1).max(128),
@@ -63,6 +64,7 @@ export function parseCommanderProfile({ commanderMode, payload }) {
   if (authorizationNarrative !== undefined) {
     if (typeof authorizationNarrative !== 'string'
       || authorizationNarrative.length > 4_000
+      || CREDENTIAL_NARRATIVE.test(authorizationNarrative)
       || redactSecrets(authorizationNarrative) !== authorizationNarrative) {
       throw new Error('secret_material_forbidden');
     }
