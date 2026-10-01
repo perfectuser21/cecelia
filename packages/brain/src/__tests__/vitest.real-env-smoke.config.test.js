@@ -31,7 +31,8 @@ describe('真实 Map Manifest smoke 的 CI 执行归属', () => {
     expect(real).toMatch(/Map Manifest real PG positive[\s\S]*SMOKE_ALLOW_WRITE: '1'[\s\S]*BRAIN_CONTAINER: cecelia-brain-smoke[\s\S]*--config vitest\.real-env-smoke\.config\.js/);
     expect(real).toContain('POSTGRES_DB: cecelia_test');
     expect(real).toContain('-e DB_NAME=cecelia_test');
-    const pg = workflow.slice(workflow.indexOf('\n  brain-integration:'), workflow.indexOf('\n  brain-e2e:'));
+    const pg = workflow.match(/\n  brain-integration:[\s\S]*?(?=\n  [\w-]+:|$)/)[0];
+    expect(pg).toContain('- name: Integration Tests');
     expect(pg).not.toContain('SMOKE_ALLOW_WRITE');
     expect(workflow.match(/--config vitest\.real-env-smoke\.config\.js/g)).toHaveLength(1);
   });
