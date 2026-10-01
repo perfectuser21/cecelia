@@ -5,6 +5,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import json
+import hashlib
+import io
+from contextlib import ExitStack, redirect_stdout
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 OPS = Path(__file__).resolve().parents[3] / "scripts" / "ops"
@@ -48,6 +54,75 @@ class InstallerRecoveryTests(unittest.TestCase):
             self.assertEqual(guard.read_bytes(), staged.read_bytes())
             self.assertTrue(plistlib.loads(guard.read_bytes())["KeepAlive"])
             self.assertFalse((home / ".config").exists())
+
+
+class NetworkRecoveryTests(unittest.TestCase):
+    def invoke_confirm(self, root, state, evidence, verify=None, command=None):
+        import tailscale_us_exit_activation as activation
+        evidence_file = root / "evidence.json"
+        evidence_file.write_text(json.dumps(evidence))
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(activation, "read_transaction", return_value=(root, state)))
+            stack.enter_context(patch.object(activation, "verify_transaction", side_effect=verify or (lambda _: (root, state))))
+            stack.enter_context(patch.object(activation, "verify_adb", side_effect=lambda home, serials=None: sorted(serials if serials is not None else activation.ADB_SERIALS)))
+            stack.enter_context(patch.object(activation, "command", side_effect=command or (lambda _: 'label "cecelia-us-exit-v2"\nblock drop out quick proto { tcp udp } all')))
+            stack.enter_context(patch.dict(os.environ, SSH_CONNECTION="100.71.151.105 123 100.86.57.69 22"))
+            stack.enter_context(patch("tailscale_us_exit_lease.guard_alive", return_value=True))
+            stack.enter_context(patch("tailscale_us_exit_lease.valid_lease", return_value=True))
+            stack.enter_context(patch("tailscale_us_exit_policy.read_map_cache", return_value={}))
+            stack.enter_context(patch("tailscale_us_exit_recovery.read_root_file", side_effect=lambda p: p.read_bytes(), create=True)) if "tailscale_us_exit_recovery" in sys.modules else None
+            output = io.StringIO()
+            with redirect_stdout(output):
+                activation.confirm(SimpleNamespace(transaction=str(root), evidence=str(evidence_file)))
+            return json.loads(output.getvalue()), json.loads((root / "transaction.json").read_text())
+
+    def fixture(self, root, online=()):
+        import tailscale_us_exit_activation as activation
+        import time
+        now = time.time()
+        baseline = {"target_serials": sorted(activation.ADB_SERIALS), "online_verified": sorted(online),
+            "offline": sorted(activation.ADB_SERIALS-set(online)), "candidate_sha256": "a"*64,
+            "target_home": str(root), "actor": "approved-root", "observed_at": now}
+        raw = json.dumps(baseline).encode()
+        (root / "phone-baseline.json").write_bytes(raw)
+        state = {"status": "armed", "deadline": now+180, "armed_at": now,
+            "confirmation_scope": "network-recovery", "baseline_sha256": hashlib.sha256(raw).hexdigest(),
+            "candidate_sha256": "a"*64, "target_home": str(root), "approval_actor": "approved-root",
+            "rollback_label": "watchdog"}
+        evidence = {"observer_ssh_ip": "100.71.151.105", "candidate_sha256": "a"*64,
+            "observed_at": now, "us_exit_verified": True, "actor": "observer",
+            "adb_serials_verified": sorted(online)}
+        return state, evidence
+
+    def test_offline_baseline_allows_network_only_confirmation_and_reports_outstanding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, evidence = self.fixture(root)
+            output, saved = self.invoke_confirm(root, state, evidence)
+            self.assertEqual(saved["status"], "confirmed")
+            self.assertEqual(saved["confirmation_mode"], "network-only")
+            self.assertEqual(set(output["phones_outstanding"]), {"ANGYVB4227006983", "ANGYVB4402004137"})
+            self.assertFalse(output["task_completed"])
+
+    def test_confirmation_final_pf_read_crossing_deadline_cannot_cancel_rollback(self):
+        import tailscale_us_exit_activation as activation
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, evidence = self.fixture(root, activation.ADB_SERIALS)
+            state["confirmation_scope"] = "all-phones"
+            clock = [1000]
+            state["deadline"] = 1005
+            def verify(_):
+                if clock[0] >= state["deadline"]:
+                    raise RuntimeError("deadline expired")
+                return root, state
+            def command(args):
+                if args[0] == "/sbin/pfctl":
+                    clock[0] = 1010
+                return "block drop out quick proto { tcp udp } all"
+            with self.assertRaisesRegex(RuntimeError, "deadline"):
+                self.invoke_confirm(root, state, evidence, verify, command)
+            self.assertEqual(state["status"], "armed")
 
 
 if __name__ == "__main__":
