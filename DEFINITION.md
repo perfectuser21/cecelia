@@ -91,6 +91,8 @@
 - 旧接口命中通过现有 event-bus 写 `cecelia_events`，事件 `golden_path_legacy_access`；记录接口模板、方法、读写类型和拒绝/应急读放行。正文、查询参数、实体 ID 和凭据不入事件；事件失败沿用 event-bus 告警语义，退役闸仍生效。
 - 一周观察以本补丁生产上线时刻为起点，验收流量单独留证；原第一刀未记录命中，不能据此前日志无命中判定观察通过。旧表保留，第二刀及两条活链承接仍依原交接。
 
+经营 KR 只读 smoke 通过真实 GET 复核未导入空集或完整8条显式来源、raw值、fraction与观察版本；永久 HTTP 脚本回归拒绝漏条和指标失真。
+
 ## Brain 1.348.13 — KR 重算统一项目口径（任务 7aeb81a6）
 
 - 重算复用 project 等权聚合，写 progress 与 projects_v1 来源；目标值 NULL 或非有限时 current_value 保持 NULL。

@@ -8,7 +8,7 @@ import { writeProgressToKR } from '../../kr3-progress-calculator.js';
 import { updateGoal } from '../../actions.js';
 import { answerQuestionForGoal } from '../../okr-tick.js';
 
-describe('公司经营KR不接受项目任务比例覆盖', () => {
+describe('company-kr-writers 公司经营KR不接受项目任务比例覆盖', () => {
   it('重算与callback helper直接返回经营指标，不查询或写项目比例', async () => {
     const row = { id: 'company', progress: 0, current_value: '2.00', target_value: '8.00', metadata: { metric_mode: 'company_formula_v1', company_metric: { current: '2', target: '8', ratio: 0.25 } }, custom_props: { company_notion: { page_id: 'source' } } };
     for (const handler of [recalculateKrProgress, updateKrProgress]) {
