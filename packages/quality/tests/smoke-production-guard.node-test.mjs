@@ -33,9 +33,16 @@ async function fixture(run) {
   await writeFile(resolve(temp, 'docker'), '#!/usr/bin/env node\nprocess.stdout.write(process.env.GUARD_DOCKER_FIXTURE);\n', { mode: 0o755 });
   await writeFile(resolve(temp, 'psql'), '#!/usr/bin/env bash\ncase "$*" in *COUNT*) echo 1;; *) echo 1;; esac\n', { mode: 0o755 });
   const info = { State: { Running: true }, Config: { Env: ['NODE_ENV=test', 'DB_NAME=cecelia_test', `BRAIN_PORT=${port}`] }, HostConfig: { NetworkMode: 'host' }, NetworkSettings: { Ports: {} } };
-  async function smoke(script, overrides = {}, dockerInfo = info) {
+  async function smoke(script, overrides = {}, dockerInfo = info, guardOnly = false) {
+    let args = [`packages/brain/scripts/smoke/${script}-smoke.sh`];
+    if (guardOnly) {
+      const source = await readFile(resolve(root, args[0]), 'utf8');
+      const prefix = source.slice(0, source.indexOf('\nfi') + 3)
+        .replace(/\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)\/\.\.\/lib/g, resolve(root, 'packages/brain/scripts/lib'));
+      args = ['-c', prefix + '\nprintf "GUARD_ACCEPTED"\n'];
+    }
     return new Promise((resolve, reject) => {
-      const proc = spawn('bash', [`packages/brain/scripts/smoke/${script}-smoke.sh`], {
+      const proc = spawn('bash', args, {
         cwd: root,
         env: { ...process.env, PATH: `${temp}:${process.env.PATH}`, BRAIN: `http://127.0.0.1:${port}`, BRAIN_URL: `http://127.0.0.1:${port}`, BRAIN_CONTAINER: 'cecelia-brain-smoke', DATABASE_URL: 'postgresql://cecelia@localhost:5432/cecelia_test', SMOKE_ALLOW_WRITE: '', GUARD_DOCKER_FIXTURE: JSON.stringify(dockerInfo), ...overrides },
       });
@@ -208,4 +215,38 @@ test('ratchet runner does not execute a registered write script without authoriz
     assert.match(result.output, /SKIP.*write-guard/);
     await assert.rejects(readFile(marker), { code: 'ENOENT' });
   } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+
+for (const script of ['blade-bc-harness-gates', 'claimed-by-cleared', 'claude-headed-dispatch',
+  'codex-headed-dispatch', 'golden-paths-t1', 'golden-path-step-nfr', 'journey-goldenpaths-invariants', 'unified-map-api']) {
+  test(`${script}: ignored DB_URL cannot mask the actual production DATABASE_URL`, async () => {
+    await fixture(async ({ smoke }) => {
+      const result = await smoke(script, { SMOKE_ALLOW_WRITE: '1', DB_URL: 'postgresql://localhost/cecelia_test',
+        DATABASE_URL: 'postgresql://localhost/cecelia' }, undefined, true);
+      assert.doesNotMatch(result.output, /GUARD_ACCEPTED/, 'guard and operation resolve different DBs');
+    });
+  });
+}
+for (const script of ['impact-contract']) {
+  test(`${script}: fixture helper DB connection is checked before it can write`, async () => {
+    await fixture(async ({ smoke }) => {
+      const result = await smoke(script, { SMOKE_ALLOW_WRITE: '1', DATABASE_URL: 'postgresql://localhost/cecelia' }, undefined, true);
+      assert.doesNotMatch(result.output, /GUARD_ACCEPTED/);
+    });
+  });
+}
+test('task-delete discrete DB_* target must be checked instead of an unrelated URI', async () => {
+  await fixture(async ({ smoke }) => {
+    const result = await smoke('task-delete-postdeploy-filter', { SMOKE_ALLOW_WRITE: '1', DB_NAME: 'cecelia',
+      DB_HOST: 'localhost', DB_PORT: '5432' }, undefined, true);
+    assert.doesNotMatch(result.output, /GUARD_ACCEPTED/);
+  });
+});
+test('Brain DB_HOST cannot be hidden behind an unused loopback DATABASE_URL', async () => {
+  await fixture(async ({ requests, smoke, info }) => {
+    info.Config.Env.push('DB_HOST=remote-production', 'DATABASE_URL=postgresql://localhost/cecelia_test');
+    const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1' }, info);
+    assert.deepEqual(requests, [], result.output);
+  });
 });
