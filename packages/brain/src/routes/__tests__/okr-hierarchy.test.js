@@ -26,7 +26,7 @@ describe('GET /kr/:id/ability-progress (T6 两轴对账)', () => {
     vi.resetModules();
     routes = (await import('../okr-hierarchy.js')).default;
   });
-  beforeEach(() => mockPool.query.mockReset());
+  beforeEach(() => { mockPool.query.mockReset(); });
 
   it('正常 join：abilities 带 thickness + advancement 聚合', async () => {
     mockPool.query
@@ -112,7 +112,7 @@ describe('GET /kr/:id/ability-progress (T6 两轴对账)', () => {
 
 // ─── GET /current：KR 下附 projects 数组（棒5，决策 ee4842a6/3feeae3e） ──────────────
 describe('GET /current（KR 下附 projects: [{id,name,status,progress,task_total,task_done}]）', () => {
-  beforeEach(() => mockPool.query.mockReset());
+  beforeEach(() => { mockPool.query.mockReset(); });
 
   it('有 project 的 KR 附带 projects 数组，无 project 的 KR 为空数组', async () => {
     const objRow = { id: 'obj-1', title: 'Objective 1', status: 'active', description: null };

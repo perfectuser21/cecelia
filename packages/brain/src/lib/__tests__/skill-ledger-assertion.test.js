@@ -30,7 +30,8 @@ describe('buildSkillLedgerAssertion', () => {
   });
 
   it('两项都干净 → ok', async () => {
-    const a = await buildSkillLedgerAssertion(pool());
+    // 固定时钟与扫描样本同日，避免该正常样本随着真实日期过期。
+    const a = await buildSkillLedgerAssertion(pool({ state: { last_ok_at: '2026-09-30T00:00:00Z' } }), { now: Date.parse('2026-09-30T03:00:00Z') });
     expect(a.ok).toBe(true);
     expect(a.degraded).toBeFalsy();
   });

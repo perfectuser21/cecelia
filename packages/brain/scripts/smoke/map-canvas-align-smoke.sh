@@ -2,7 +2,7 @@
 # Smoke: map↔画布对齐（Crystal 件7）
 # 验证：
 #   1. abilities.js 含画布生成器端点（golden_path/canvas）且 stage 显式携带 step_id
-#   2. abilities.js 含 run 终态回写端点（run-result）：封闭词表 + 幂等 ON CONFLICT + 单级推进谓词
+#   2. 旧 run-result 永久 410，旧回执写入/成熟度推进逻辑已删除（行为回归见 golden-path-observation.test.js）
 #   3. migration 434 golden_path_run_receipts 存在且含幂等唯一键
 set -euo pipefail
 
@@ -22,20 +22,18 @@ if (missing.length) { missing.forEach(([,d]) => console.error('FAIL: ' + d)); pr
 console.log('生成器端点结构正确 ✓');
 "
 
-echo "[map-canvas-smoke] 2. run 终态回写端点结构"
-node -e "
-const fs = require('fs');
-const src = fs.readFileSync('packages/brain/src/routes/abilities.js', 'utf8');
-const checks = [
-  [\"'/golden_path/:id/run-result'\", '回写路由 POST /golden_path/:id/run-result'],
-  [\"['completed', 'failed']\", 'verdict 封闭词表'],
-  ['ON CONFLICT (golden_path_id, run_id) DO NOTHING', '幂等回执'],
-  [\"WHERE id=\$1 AND status='planned'\", '成熟度单级推进谓词（禁跳级/防并发覆盖）'],
-];
-const missing = checks.filter(([p]) => !src.includes(p));
-if (missing.length) { missing.forEach(([,d]) => console.error('FAIL: ' + d)); process.exit(1); }
-console.log('回写端点结构正确 ✓');
-"
+echo "[map-canvas-smoke] 2. 旧回执写口退役结构"
+node --input-type=module <<'JS'
+import { readFileSync } from 'node:fs';
+const src = readFileSync('packages/brain/src/routes/abilities.js', 'utf8');
+const retired = /router\.post\('\/golden_path\/:id\/run-result',[^\n]*sendGoldenPathRetired\(res, \{ write: true \}\)/.test(src);
+if (!retired || src.includes('INSERT INTO golden_path_run_receipts')
+    || src.includes("UPDATE journey_features SET status='working'")) {
+  console.error('FAIL: 旧回执路由须永久 410 且删除旧写入/成熟度推进代码');
+  process.exit(1);
+}
+console.log('旧回执写口永久退役结构正确 ✓');
+JS
 
 echo "[map-canvas-smoke] 3. migration 434 幂等唯一键"
 node -e "

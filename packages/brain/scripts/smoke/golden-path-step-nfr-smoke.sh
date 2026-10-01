@@ -40,7 +40,7 @@ req() {
   echo "  ← $BODY"
 }
 
-echo "[smoke] BRAIN=$BRAIN  DB_URL=${DB_URL%%\?*}"
+echo "[smoke] BRAIN=$BRAIN（数据库连接串不输出）"
 
 echo "[smoke] schema: golden_path 新列在、旧列移除"
 NEWCOLS=$(psql -X "$DB_URL" -tAc "SELECT count(*) FROM information_schema.columns WHERE table_name='golden_path' AND column_name IN ('owner_task_id','feature_id')")
@@ -60,6 +60,7 @@ expect410() { # $1=期望 path_kind
   echo "$BODY" | jq -e --arg k "$1" '.retired==true and .path_kind==$k' >/dev/null || { echo "FAIL: 410 体不符（path_kind=$1）"; exit 1; }
 }
 
+EVENT_BASE=$(psql -X "$DB_URL" -tAc "SELECT COALESCE(max(id),0) FROM cecelia_events WHERE event_type='golden_path_legacy_access'")
 echo "[smoke] === 写路径：POST/PATCH /golden_path → 410 write（永不放行）==="
 req POST "$BRAIN/api/brain/golden_path" "{\"owner_task_id\":\"$TASK_ID\",\"order_no\":1,\"feature_id\":\"$FEATURE_ID\"}"
 expect410 write
@@ -69,6 +70,17 @@ expect410 write
 N=$(psql -X "$DB_URL" -tAc "SELECT count(*) FROM golden_path WHERE owner_task_id='$TASK_ID'")
 [ "$N" = "0" ] || { echo "FAIL: 写路径被拒后旧表仍多出 $N 行"; exit 1; }
 echo "  ✓ 写路径 410 且旧表零新增"
+
+echo "[smoke] === 旧 run-result 永久 410 write，拒绝也留真实事件 ==="
+req POST "$BRAIN/api/brain/golden_path/00000000-0000-0000-0000-000000000000/run-result" "{\"run_id\":\"retired-$TASK_ID\",\"verdict\":\"completed\"}"
+expect410 write
+echo "$BODY" | jq -e 'has("legacy_read_env")|not' >/dev/null || { echo "FAIL: 写路径不应给放行 env"; exit 1; }
+N=$(psql -X "$DB_URL" -tAc "SELECT count(*) FROM golden_path_run_receipts WHERE run_id='retired-$TASK_ID'")
+[ "$N" = "0" ] || { echo "FAIL: 旧回执被拒后仍多出 $N 行"; exit 1; }
+N=$(psql -X "$DB_URL" -tAc "SELECT count(*) FROM cecelia_events WHERE id>$EVENT_BASE AND event_type='golden_path_legacy_access' AND payload->>'route'='/golden_path/:id/run-result' AND payload->>'path_kind'='write' AND payload->>'outcome'='rejected'")
+[ "$N" -ge 1 ] || { echo "FAIL: 旧回执拒绝未留下真实事件"; exit 1; }
+echo "  ✓ 写回执被拒、旧回执零新增、命中事件已落库"
+
 
 echo "[smoke] === step 级 NFR 挂 golden_path → 410 write ==="
 req POST "$BRAIN/api/brain/decisions" '{"category":"nfr","topic":"t","decision":"d","level":"step","target_type":"golden_path","target_id":"00000000-0000-0000-0000-000000000000","scope":"v1"}'
@@ -85,4 +97,4 @@ echo "  ✓ 4 条读路由默认 410"
 
 psql -X "$DB_URL" -c "DELETE FROM tasks WHERE id='$TASK_ID'" >/dev/null 2>&1 || true
 psql -X "$DB_URL" -c "DELETE FROM journey_features WHERE id='$FEATURE_ID'" >/dev/null 2>&1 || true
-echo "✅ golden-path-step-nfr-smoke：旧表退役闸全链路通过（写 3 条 410、读 4 条 410、旧表零新增）"
+echo "✅ golden-path-step-nfr-smoke：旧表退役闸全链路通过（写 4 条 410、读 4 条 410、旧表/旧回执零新增、命中事件落库）"
