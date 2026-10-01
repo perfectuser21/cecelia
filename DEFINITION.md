@@ -10,7 +10,9 @@
 
 
 
-**Brain 版本**: 1.352.6
+**Brain 版本**: 1.353.5
+
+CI趋势集成测试将北京自然日与滚动24小时设备窗口独立布置，覆盖陈旧、近期成功和无任务设备；生产巡检阈值不变。
 
 专用 app-server runner 首批提供受限 generation 容器、HOME 单写 journal、精确 ID 取消墓碑及双向有界 JSONL；只有 attach 进程确认退出才释放流占位；关闭事件在同一预约锁内重放，不能因锁争用丢失。Worker 重启后旧等待资源意图不可重新启动，旧身份仍可清理。标准安装器事务打包四模块，默认 profiles 为空，尚未接生产 start、Brain 预算或 OpenClaw RPC adapter，现网 OpenClaw 尚未由此治理。
 
