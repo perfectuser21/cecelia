@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { mkdtemp, copyFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, copyFile, readFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +16,8 @@ const grouped = (key, order, when) => activity(key, order, { phase: 'per_item',
 async function run(activities, extraInput = {}, cancel = false) {
   const cwd = await mkdtemp(join(tmpdir(), 'cecelia-activity-'));
   await copyFile(fixture, join(cwd, 'activity.mjs'));
+  await mkdir(join(cwd, 'nested'));
+  await copyFile(fixture, join(cwd, 'nested', 'activity.mjs'));
   const trace = join(cwd, 'trace.jsonl');
   const receipt = join(cwd, 'receipt.json');
   const childPid = join(cwd, 'child.pid');
@@ -63,6 +65,10 @@ describe('opt-in契约CLI真实子进程闭环', () => {
     const r = await run([grouped('inspect', 1), grouped('collect', 2, { path: '$item.state', equals: 'approved' }), activity('deliver', 3)]);
     expect(r.code, r.stderr).toBe(0);
     expect(r.result.outputs.delivered).toEqual([{ id: 'a:fragment', owner: 'a' }]);
+  });
+  test('支持cwd下面的安全相对路径入口', async () => {
+    const r = await run([activity('deliver', 1, { entry: 'nested/activity.mjs' })]);
+    expect(r.code, r.stderr).toBe(0);
   });
   test('各活动预算独立传入，不把组预算相加', async () => {
     const first = grouped('inspect', 1), second = grouped('collect', 2);
@@ -140,7 +146,7 @@ describe('opt-in契约CLI真实子进程闭环', () => {
     expect(r.result.activities[0].reason_code).toBe('undeclared_failure_class');
   });
   test('取消仅通知活动根，子动作在安全边界自行退出并保留JSON，然后finalize', async () => {
-    const r = await run([activity('safe-stop', 1, { cleanup_grace_s: 1 }), activity('deliver', 2),
+    const r = await run([activity('safe_stop', 1, { argv: ['safe-stop'], cleanup_grace_s: 1 }), activity('deliver', 2),
       activity('finalize', 3, { phase: 'finalize' })], {}, true);
     expect(r.code, r.stderr).toBe(2);
     expect(r.events.some(x => x.action === 'child_term')).toBe(false);
@@ -149,12 +155,34 @@ describe('opt-in契约CLI真实子进程闭环', () => {
     expect(r.result.activities[0].attempts[0].reason_code).toBe('run_cancelled');
     expect(r.durable).toEqual(r.result);
   }, 10000);
+  test.each([false, true])('事件写入失败%s次后产物保留且所有finalize仍执行', async always => {
+    const cwd = await mkdtemp(join(tmpdir(), 'activity-sink-failure-'));
+    try {
+      await copyFile(fixture, join(cwd, 'activity.mjs'));
+      const { runActivityContract } = await import('../activity-runtime.js');
+      let rejected = false;
+      const r = await runActivityContract({ workflow: 'offline-example', activities: [activity('partial', 1),
+        activity('deliver', 2), activity('finalize', 3, { phase: 'finalize' })] },
+      { run_tag: 'offline-example', trace: join(cwd, 'trace'), fragments: [] }, { cwd, onEvent: async event => {
+        if ((event.event_type === 'ACTIVITY_FINISHED' && !rejected) || (always && rejected)) {
+          rejected = true; throw new Error('receipt-store-unavailable');
+        }
+      } });
+      expect(r.status).toBe('partial');
+      expect(r.reason_code).toBe('event_sink_failed');
+      expect(r.outputs.fragments).toEqual([{ id: 'retained', owner: 'partial' }]);
+      expect(r.outputs.cleanup).toBe(true);
+      expect(r.activities.map(x => x.key)).toEqual(['partial', 'finalize']);
+    } finally { await rm(cwd, { recursive: true, force: true }); }
+  });
   test.each([
     ['legacy shell说明不是JSON协议', a => { delete a.runtime.protocol; }],
     ['重复order', a => { a.order = 2; }],
     ['未知失败策略', a => { a.runtime.on_failure = 'guess'; }],
     ['不支持无限retry', a => { a.runtime.max_attempts = 99; }],
     ['缺预算', a => { delete a.budget; }],
+    ['绝对入口', a => { a.runtime.entry = '/tmp/activity.mjs'; }],
+    ['越界入口', a => { a.runtime.entry = '../activity.mjs'; }],
   ])('拒绝%s且不启动活动', async (_, mutate) => {
     const a = activity('inspect', 1); mutate(a);
     const r = await run([a, activity('deliver', 2)]);
