@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import re
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -43,6 +44,105 @@ def company_rows():
 
 
 class Pipeline(unittest.TestCase):
+    def test_objects_reads_existing_host_helper(self):
+        module = load("opc-kr-current")
+        records = [{"状态": "进行中", "标题": "维修", "下次检查时间": 10_000_000}]
+        output = subprocess.CompletedProcess([], 0, json.dumps(
+            {"ok": True, "records": records, "now_ms": 10_000_000}), "")
+        with patch.object(module.subprocess, "run", return_value=output) as run:
+            self.assertEqual(module.objects(), (records, 10_000_000))
+        self.assertEqual(run.call_args.args[0],
+                         ["/usr/bin/node", "/opt/openclaw/state/opc-objects.mjs", "list"])
+        self.assertEqual(run.call_args.kwargs["timeout"], 90)
+
+    def test_objects_reports_reader_failure_before_decoding(self):
+        module = load("opc-kr-current")
+        output = subprocess.CompletedProcess([], 1, "", "原 helper 读取失败")
+        with patch.object(module.subprocess, "run", return_value=output):
+            try:
+                module.objects()
+            except Exception as error:
+                self.assertIsInstance(error, RuntimeError)
+                self.assertIn("原 helper 读取失败", str(error))
+                self.assertIn("退出码 1", str(error))
+            else:
+                self.fail("失败的读取不能解码或返回经营对象")
+
+    def test_real_objects_failure_records_task_without_observations(self):
+        module = load("opc-kr-current")
+        calls = []
+
+        def call(url, body=None, method=None):
+            calls.append((url, method, body))
+            if url.endswith("/tasks"):
+                return {"id": "reader-failed-task", "status": "queued"}
+            return {"success": True, "status": body.get("status") if body else None}
+
+        output = subprocess.CompletedProcess([], 1, "", "原 helper 读取失败")
+        with patch.object(module, "call", side_effect=call), \
+                patch.object(module.subprocess, "run", return_value=output):
+            try:
+                module.main()
+            except Exception as error:
+                self.assertIsInstance(error, RuntimeError)
+            else:
+                self.fail("真实读取失败不能声称采集成功")
+        self.assertTrue(any(method == "PATCH" and body.get("status") == "failed"
+                            for _, method, body in calls))
+        self.assertFalse(any(url.endswith("/observations") for url, _, _ in calls))
+        self.assertFalse(any(method == "PATCH" and body.get("status") == "completed"
+                             for _, method, body in calls))
+
+    def test_real_objects_snapshot_reaches_both_brain_observations(self):
+        module = load("opc-kr-current")
+        calls, commands = [], []
+        records = [{"状态": "进行中", "标题": "维修1", "下次检查时间": 10_000_000},
+                   {"状态": "已完成", "标题": "维修2", "下次检查时间": None}]
+
+        def run(command, **_):
+            commands.append(command)
+            if command == ["/usr/bin/node", "/opt/openclaw/state/opc-objects.mjs", "list"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps(
+                    {"ok": True, "records": records, "now_ms": 10_000_000}), "")
+            if command == ["df", "--output=pcent", "/"]:
+                return subprocess.CompletedProcess(command, 0, "Use%\n84%\n", "")
+            return subprocess.CompletedProcess(command, 1, "", "No such container: openclaw-gateway")
+
+        class Database:
+            def execute(self, *_):
+                return self
+
+            def fetchone(self):
+                return (json.dumps({"lastRunStatus": "ok"}),)
+
+        def call(url, body=None, method=None):
+            calls.append((url, method, body))
+            if url.endswith("/tasks"):
+                return {"id": "reader-success-task", "status": "queued"}
+            if url.endswith("/company-key-results"):
+                return {"success": True, "items": [item(SOURCE_DOD, "经营指标"),
+                                                   item(SOURCE_COST, "成本指标")]}
+            return {"success": True, "status": body.get("status") if body else None}
+
+        with patch.object(module, "call", side_effect=call), \
+                patch.object(module.subprocess, "run", side_effect=run), \
+                patch.object(module.sqlite3, "connect", return_value=Database()) as connect, \
+                patch.object(module.os.path, "exists", return_value=True), \
+                patch("builtins.open", return_value=StringIO("成本 GREEN\n")):
+            try:
+                module.main()
+            except Exception as error:
+                self.fail("宿主原 helper 可读时采集应完成：" + str(error))
+        self.assertEqual(commands[0], ["/usr/bin/node", "/opt/openclaw/state/opc-objects.mjs", "list"])
+        self.assertTrue(connect.call_args.args[0].endswith("openclaw.sqlite?mode=ro"))
+        self.assertTrue(connect.call_args.kwargs["uri"])
+        observations = [body for url, _, body in calls if url.endswith("/observations")]
+        self.assertEqual([body["current_value"] for body in observations], [4, 1])
+        self.assertEqual(observations[0]["evidence"][0]["passed_checks"], ["F1", "F3", "F4", "N1"])
+        self.assertFalse(observations[0]["evidence"][0]["continuous_seven_days_verified"])
+        self.assertTrue(any(method == "PATCH" and body.get("status") == "completed"
+                            for _, method, body in calls))
+
     def collector(self, fail=False, completion_state="completed", brain_api=None):
         module = load("opc-kr-current")
         calls = []
