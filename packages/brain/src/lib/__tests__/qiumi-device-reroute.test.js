@@ -169,6 +169,17 @@ describe('Notion partial user 作者身份必须确认后才恢复', () => {
     const f = await run({ page: { last_edited_by: partial }, secondUser: { ...partial, type: 'bot' } });
     expect(f.result.rerouted).toBe(0); expect(f.updates).toHaveLength(0); expect(f.events).toHaveLength(0);
   });
+  it('时间和属性未变但人类作者变化，不能把首次作者记作本次编辑者', async () => {
+    const page = setup().page;
+    const f = await run({ secondPage: { ...page, last_edited_by: { ...page.last_edited_by, id: PAGE } } });
+    expect(f.result.rerouted).toBe(0); expect(f.updates).toHaveLength(0); expect(f.events).toHaveLength(0);
+  });
+  it('二读作者UUID只变化连字符格式时仍是同一人', async () => {
+    const page = setup().page;
+    const f = await run({ secondPage: { ...page,
+      last_edited_by: { ...page.last_edited_by, id: AUTHOR.replace(/-/g, '') } } });
+    expect(f.result.rerouted).toBe(1); expect(f.events).toHaveLength(1);
+  });
   it('UUID无连字符与响应规范UUID属于同一作者', async () => {
     const id = AUTHOR.replace(/-/g, '');
     const f = await run({ page: { last_edited_by: { ...partial, id } } });
