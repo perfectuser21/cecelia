@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
-import { closePgPool } from './close-pg-pool.js';
+import { closePgPool, trackPgPool } from './close-pg-pool.js';
 
 describe('关闭 PG 测试连接池', () => {
   it('end 已返回但 socket 尚在退出时，等待全部 remove 后才允许清库', async () => {
@@ -25,4 +25,17 @@ describe('关闭 PG 测试连接池', () => {
     expect(ended).toBe(true);
     expect(pool.listenerCount('remove')).toBe(0);
   });
+});
+
+it('错误查询释放已移出池的连接，仍等待其 socket remove', async () => {
+  const pool = trackPgPool(new EventEmitter());
+  pool.totalCount = 0;
+  const client = {};
+  pool.emit('connect', client);
+  let removed = false;
+  pool.end = async () => {
+    setTimeout(() => { removed = true; pool.emit('remove', client); }, 15);
+  };
+  await closePgPool(pool);
+  expect(removed).toBe(true);
 });

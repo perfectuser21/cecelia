@@ -1,3 +1,14 @@
+const tracked = new WeakMap();
+export function trackPgPool(pool) {
+  const clients = new Set();
+  const connect = (client) => clients.add(client);
+  const remove = (client) => clients.delete(client);
+  pool.on('connect', connect);
+  pool.on('remove', remove);
+  tracked.set(pool, { clients, connect, remove });
+  return pool;
+}
+
 /** pg-pool 的 end 先移除 clients 再回调；remove 事件才确认 socket 已退出。 */
 export async function closePgPool(pool) {
   const count = pool.totalCount;
