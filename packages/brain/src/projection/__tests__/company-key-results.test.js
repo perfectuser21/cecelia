@@ -6,8 +6,10 @@ function recoveryFixture(failure) {
   const task = { id: 'registered-import', result: {} };
   const rows = COMPANY_KR_CATALOG.map((source, i) => ({ id: `kr-${i}`, unit: source.unit, updated_at: new Date('2026-10-01T00:00:00Z'), metadata: { metric_mode: 'company_formula_v1', company_metric: companyMetric(0, i ? 0 : 1, 5), company_current_baseline: '0', imported_snapshot: { task_id: task.id }, validation_state: 'verified_observation' }, custom_props: { company_notion: { page_id: source.page_id, database_id: COMPANY_KR_DATABASE } } }));
   const pages = COMPANY_KR_CATALOG.map(source => ({ id: source.page_id, parent: { database_id: COMPANY_KR_DATABASE }, last_edited_time: '2026-10-01T00:00:00Z', last_edited_by: { id: 'projection-bot' }, properties: { Name: { title: [{ plain_text: source.title }] }, Goal: { relation: [{ id: source.goal_id }] }, Area: { relation: [] }, Current: { number: 0 }, Target: { number: 5 }, Start: { number: 0 }, Status: { status: { name: 'Open' } } } }));
-  let failOnce = true;
+  let failOnce = true, lockHeld = false;
   const query = vi.fn(async (sql, args = []) => {
+    if (sql.includes('pg_try_advisory_lock')) { const acquired = !lockHeld; if (acquired) lockHeld = true; return { rows: [{ acquired }] }; }
+    if (sql.includes('pg_advisory_unlock')) { lockHeld = false; return { rows: [{ released: true }] }; }
     if (sql.includes('FROM notion_projection_map')) return { rows: [{ notion_db_id: COMPANY_KR_DATABASE }] };
     if (sql.includes('FROM tasks')) return { rows: [structuredClone(task)] };
     if (sql.includes('FROM key_results')) return { rows: structuredClone(sql.includes('WHERE id=$1') ? rows.filter(r => r.id === args[0]) : rows) };
@@ -117,5 +119,24 @@ describe('公司库列级投影门', () => {
     expect(fixture.rows[0].metadata).toMatchObject({ company_metric: { current: '2' }, validation_state: 'verified_observation', company_projection_pending: { value: '1' } });
     expect(fixture.task.result.metric_observations.some(e => e.kind === 'machine_projection_ambiguous')).toBe(true);
     expect(fixture.task.result.metric_observations.some(e => e.kind === 'human_current_claim')).toBe(false);
+  });
+  it('独立pool整轮须先拿PG会话锁再读snapshot，旧快照不能回滚另一轮Current/Target', async () => {
+    const fixture = recoveryFixture();
+    let interleaved = false, peer;
+    const peerNotionReq = vi.fn((...args) => fixture.notionReq(...args));
+    const notionReq = async (...args) => {
+      const snapshot = await fixture.notionReq(...args);
+      if (!interleaved && args[1].endsWith('/query')) {
+        interleaved = true;
+        fixture.rows[0].metadata.company_metric = companyMetric(0, 2, 5);
+        peer = await runCompanyKrProjection({ ...fixture.pool }, { token: 'fake', notionReq: peerNotionReq, now: 1000000 });
+      }
+      return snapshot;
+    };
+    const result = await runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq, now: 1000000 });
+    expect(peer).toMatchObject({ skipped: true, reason: 'projection_locked' });
+    expect(peerNotionReq).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ claims: 0, patched: 1 });
+    expect(fixture.rows[0].metadata).toMatchObject({ company_metric: { current: '2' }, company_current_baseline: '2', validation_state: 'verified_observation' });
   });
 });
