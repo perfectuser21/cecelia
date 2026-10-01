@@ -6,6 +6,7 @@ import { createServer as createTcpServer } from 'node:net';
 import { mkdtemp, writeFile, rm, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { root, fixture } from './fixtures/smoke-production-guard-fixture.mjs';
 
@@ -132,14 +133,21 @@ test('all explicit live Brain shell write entries remain registered and guarded'
   const listed = new Set((await readFile(resolve(root, 'packages/quality/smoke-write-targets.txt'), 'utf8'))
     .split('\n').filter(line => line && !line.startsWith('#')));
   const smokeDir = resolve(root, 'packages/brain/scripts/smoke');
+  const sqlClassification = JSON.parse(await readFile(resolve(root, 'packages/quality/smoke-sql-targets.json'), 'utf8'));
   const optional = new Set(['notion-mapping-r4-smoke.sh', 'notion-endpoints-smoke.sh', 'notion-brain-first-smoke.sh']);
   for (const name of await readdir(smokeDir)) {
     if (!name.endsWith('.sh')) continue;
     const source = await readFile(resolve(smokeDir, name), 'utf8');
     const httpWrite = /-X\s+(POST|PATCH|DELETE|PUT|["']?\$)/.test(source);
-    const sqlWrite = /\bpsql[^\n]*\s-f\s/.test(source)
+    const sqlWrite = /\bpsql\b/.test(source)
       && /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\s/i.test(source);
     if (!httpWrite && !sqlWrite) continue;
+    if (!httpWrite && sqlClassification[name]?.kind === 'readonly') {
+      assert.equal(createHash('sha256').update(source).digest('hex'), sqlClassification[name].sha256,
+        `${name}: changed SQL classification requires review before readonly exemption`);
+      assert.ok(sqlClassification[name].evidence);
+      continue;
+    }
     if (name === 'callback-stage-receipt-smoke.sh') {
       assert.match(source, /127\.0\.0\.1:\$PORT/, 'fixture exception must remain tied to its private server');
       continue;
