@@ -89,6 +89,9 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(complete[0]["result"]["actor"], "opc-kr-current")
         self.assertTrue(complete[0]["result"]["evidence"])
         self.assertEqual(complete[0]["result"]["handoff"]["next_steps"], [])
+        self.assertEqual(complete[0]["result"]["handoff"].get("schema_version"), 1)
+        self.assertEqual(complete[0]["result"]["handoff"].get("task_id"), "run-task-id")
+        self.assertTrue(complete[0]["result"]["handoff"].get("done"))
 
     def test_rejected_observation_does_not_claim_completion(self):
         calls = self.collector(fail=True)
@@ -266,6 +269,9 @@ class Pipeline(unittest.TestCase):
                 self.assertIn("暂无直接挂钩", (Path(directory) / ("clawd-" + name) / "OKR.md").read_text())
             complete = [body for _, method, body in calls if method == "PATCH" and body.get("status") == "completed"]
             self.assertEqual(len(complete[0]["result"]["facts"]["site_files"]), 6)
+            self.assertEqual(complete[0]["result"]["handoff"].get("schema_version"), 1)
+            self.assertEqual(complete[0]["result"]["handoff"].get("task_id"), "sync-task")
+            self.assertTrue(complete[0]["result"]["handoff"].get("done"))
             self.assertFalse(list(Path(directory).rglob("*.tmp")))
 
 
