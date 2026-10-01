@@ -156,3 +156,20 @@ for (const [script, args] of [...delegates, ['-c', ['DB="$DATABASE_URL"; ' + gol
     }
   });
 }
+
+for (const [name, uri, accepted] of [['missing', undefined, false],
+  ['test', 'postgresql://localhost:5432/cecelia_test', true],
+  ['production', 'postgresql://localhost:5432/cecelia', false]]) {
+  test(`walking checkpointer actual container URI ${name}`, async () => {
+    await fixture(async ({ smoke, info, requests, port }) => {
+      if (uri) info.Config.Env.push(`DATABASE_URL=${uri}`);
+      const source = await readFile(resolve(root, 'packages/brain/scripts/smoke/walking-skeleton-1node-smoke.sh'), 'utf8');
+      const prefix = source.slice(0, source.indexOf('\nfi') + 3)
+        .replace(/\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)\/\.\.\/lib/g, resolve(root, 'packages/brain/scripts/lib'))
+        .replaceAll('http://localhost:5221', `http://127.0.0.1:${port}`);
+      const result = await smoke('-c', { SMOKE_ALLOW_WRITE: '1' }, info, false, [prefix + '\nprintf GUARD_ACCEPTED']);
+      assert.equal(result.output.includes('GUARD_ACCEPTED'), accepted, result.output);
+      assert.equal(requests.length, accepted ? 1 : 0, 'checkpointer identity checked before HTTP');
+    });
+  });
+}
