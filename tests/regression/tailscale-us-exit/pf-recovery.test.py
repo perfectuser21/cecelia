@@ -226,6 +226,25 @@ class NetworkRecoveryTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         recovery.read_root_file(file)
 
+    def test_slow_baseline_collection_cannot_retimestamp_old_phone_evidence_as_fresh(self):
+        import tailscale_us_exit_recovery as recovery
+        import tailscale_us_exit_activation as activation
+        clock = [1000]
+        def devices(_):
+            clock[0] = 1130
+            return "List of devices attached\n"
+        api = SimpleNamespace(ADB_SERIALS=activation.ADB_SERIALS, adb_prefix=lambda _: ["adb"],
+            command=devices, verify_adb=lambda home, serials: [])
+        with patch.object(recovery.time, "time", side_effect=lambda: clock[0]):
+            baseline = recovery.capture_baseline(api, "/target", "a"*64, "root")
+        self.assertEqual(baseline["observed_at"], 1000)
+        raw = json.dumps(baseline).encode()
+        state = {"baseline_sha256": hashlib.sha256(raw).hexdigest(), "candidate_sha256": "a"*64,
+            "target_home": "/target", "approval_actor": "root", "armed_at": 1130}
+        with patch.object(recovery, "read_root_file", return_value=raw):
+            with self.assertRaisesRegex(RuntimeError, "baseline"):
+                recovery.load_baseline(Path("/tmp"), state, activation.ADB_SERIALS)
+
 
 if __name__ == "__main__":
     unittest.main()
