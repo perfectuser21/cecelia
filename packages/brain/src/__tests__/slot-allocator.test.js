@@ -1047,7 +1047,7 @@ describe('calculateSlotBudget 三池模型完整性', () => {
     expect(poolSum).toBeLessThanOrEqual(budget.total);
   });
 
-  it('codex 字段包含 running/max/available', async () => {
+  it('codex 字段包含 running/max/available，未知机器不提供容量', async () => {
     // New DB order: cecelia → autoDispatch → queueDepth → codex
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
@@ -1056,9 +1056,9 @@ describe('calculateSlotBudget 三池模型完整性', () => {
       .mockResolvedValueOnce({ rows: [{ count: '2' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
     expect(budget.codex).toBeDefined();
-    expect(budget.codex.max).toBe(3);
+    expect(budget.codex.max).toBe(0);
     expect(budget.codex.running).toBe(2);
-    expect(budget.codex.available).toBe(true); // 2 < 3
+    expect(budget.codex.available).toBe(false); // 未知容量不能派单
   });
 
   it('codex.available=false when running >= MAX_CODEX_CONCURRENT', async () => {
