@@ -450,7 +450,7 @@ describe('Fleet Worker health-only service', () => {
       ['sysctl', (args) => args.includes('hw.memsize')],
       ['sysctl', (args) => args.includes('vm.loadavg')],
       ['memory_pressure', (args) => args.includes('-Q')],
-      ['df', (args) => args.includes('-k')],
+      ['df', (args) => args.includes('-kP')],
       ['launchctl', (args) => args[0] === 'print'
         && args.includes('system/com.perfect21.fleet-worker')],
       ['sntp', (args) => args.length === 2
@@ -923,6 +923,17 @@ describe('Fleet Worker Attempt API', () => {
       ...overrides,
     };
   }
+
+  it('资源复验拒绝返回429固定码', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const runner = runnerDouble();
+    runner.prepare.mockRejectedValue(Object.assign(new Error('attempt_local_resources_unavailable'), { statusCode: 429 }));
+    const server = createFleetWorkerServer({ attemptRunner: runner, attemptToken: token });
+    const response = await request(server, 'POST', '/harness/attempts/prepare', { headers: auth, body: launchBody() });
+    expect(response.statusCode).toBe(429);
+    expect(JSON.parse(response.body)).toEqual({ error: 'attempt_local_resources_unavailable' });
+    server.close();
+  });
 
   function runnerDouble() {
     return {
@@ -1600,6 +1611,7 @@ describe('Fleet Worker production runtime assembly', () => {
         reconcile: expect.any(Function),
       });
       expect(runtime.runnerImageDigest).toBe(`sha256:${'a'.repeat(64)}`);
+      expect(runtime.healthDiskPaths).toEqual([dataRoot, dataRoot, dataRoot]);
       expect(runtime.roots).toEqual({
         mirrors: path.join(dataRoot, 'mirrors'),
         worktrees: path.join(dataRoot, 'worktrees'),
@@ -1651,6 +1663,7 @@ describe('Fleet Worker production runtime assembly', () => {
       });
       expect(fs.statSync(mountRoot).mode & 0o777).toBe(0o755);
       expect(fs.statSync(runtime.roots.worktrees).mode & 0o777).toBe(0o755);
+      expect(runtime.healthDiskPaths).toEqual([dataRoot, mountRoot, mountRoot]);
       expect(fs.statSync(runtime.roots.runtime).mode & 0o777).toBe(0o755);
       expect(
         fs.statSync(path.join(runtime.roots.worktrees, '.admin')).mode & 0o777,
