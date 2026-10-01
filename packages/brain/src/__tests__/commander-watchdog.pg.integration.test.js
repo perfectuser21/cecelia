@@ -29,11 +29,20 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
   let client;
   let seq = 0;
 
-  beforeAll(async () => { pool = new pg.Pool({ ...DB_DEFAULTS, max: 1 }); });
+  beforeAll(async () => {
+    pool = new pg.Pool({ ...DB_DEFAULTS, max: 1, types: {
+      getTypeParser(oid, format) {
+        // 此真实 PG fixture 与 CI 使用相同 UTC 解释，不受运行机器的 JS 时区影响。
+        if (oid === 1114 && format !== 'binary') return (value) => new Date(`${value}Z`);
+        return pg.types.getTypeParser(oid, format);
+      },
+    } });
+  });
   afterAll(async () => { await pool.end(); });
   beforeEach(async () => {
     client = await pool.connect();
     await client.query('BEGIN');
+    await client.query("SET LOCAL TIME ZONE 'UTC'");
     await client.query("DELETE FROM working_memory WHERE key = 'workflow_trend_bark:last_day'");
   });
   afterEach(async () => { await client.query('ROLLBACK'); client.release(); });
@@ -95,26 +104,30 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
     expect(again.relaunched).toBe(0);
   });
 
-  it('趋势 SQL：按北京自然日分组，连续两天零线索的 wf 叫、有线索的不叫；phone_registry 24h 无 completed 叫', async () => {
+  it.each(['actual-clock', 'beijing-midnight'])('趋势 SQL（%s）：按北京自然日分组，连续两天零线索的 wf 叫、有线索的不叫；phone_registry 24h 无 completed 叫', async (scenario) => {
     // 当日去重状态在事务内隔离；ROLLBACK 恢复已有测试库记录。
     await client.query(`DELETE FROM working_memory WHERE key = 'workflow_trend_bark:last_day'`);
     await client.query(`INSERT INTO phone_registry (serial, nickname, host, profile, enabled) VALUES ('S-STALE', '小测', 'xian-m4', 'p', true), ('S-IDLE', '小闲', 'xian-m4', 'p', true)`);
-    // 落点钉在北京 D-1 / D-2 的中午 12:00（按当前北京时刻反算小时数），不受用例运行时刻影响
-    const bj = new Date(Date.now() + 8 * 3600e3);
+    // 真 PG 事务时间保持不变；明确的午夜场景也使用实际存储的时间戳。
+    const { rows: [clock] } = await client.query('SELECT EXTRACT(EPOCH FROM NOW()) * 1000 AS now_ms');
+    const pgNow = Number(clock.now_ms);
+    const day = new Date(pgNow + 8 * 3600e3).toISOString().slice(0, 10);
+    const now = scenario === 'beijing-midnight' ? Date.parse(`${day}T00:15:00+08:00`) : pgNow;
+    const bj = new Date(now + 8 * 3600e3);
     const minsToday = bj.getUTCHours() * 60 + bj.getUTCMinutes();
-    const d1 = `${((minsToday + 24 * 60 - 12 * 60) / 60).toFixed(2)} hours`;
-    const d2 = `${((minsToday + 48 * 60 - 12 * 60) / 60).toFixed(2)} hours`;
+    const d1 = `${pgNow - now + (minsToday + 24 * 60 - 12 * 60) * 60e3} milliseconds`;
+    const d2 = `${pgNow - now + (minsToday + 48 * 60 - 12 * 60) * 60e3} milliseconds`;
     const mk = (wf, ago, leads, serial = 'S-STALE') => insertRun({ payload: { serial, source: 'cron', wf_id: wf, leads }, status: 'completed', dueAgo: ago, completedAgo: ago });
     await mk('zero-wf', d1, 0); await mk('zero-wf', d2, 0);
     await mk('ok-wf', d1, 0); await mk('ok-wf', d2, 3);
     const bark = vi.fn().mockResolvedValue(true);
     // 用当前时刻（北京日期由 SQL 与 JS 同算）但强制窗口
-    const out = await runWorkflowTrendBark(client, { bark, windowOverride: true, staleSerialMs: 24 * 3600e3 });
+    const out = await runWorkflowTrendBark(client, { now, bark, windowOverride: true, staleSerialMs: 24 * 3600e3 });
     expect(out.zeroLeads).toEqual(['zero-wf']);
     expect(out.staleSerials).toEqual(['S-STALE']);
     expect(bark).toHaveBeenCalledTimes(2);
     const wm = await client.query(`SELECT value_json FROM working_memory WHERE key = 'workflow_trend_bark:last_day'`);
     expect(wm.rows[0].value_json.day).toBe(out.day);
-    expect(await runWorkflowTrendBark(client, { bark, windowOverride: true })).toMatchObject({ skipped: 'already_today' });
+    expect(await runWorkflowTrendBark(client, { now, bark, windowOverride: true })).toMatchObject({ skipped: 'already_today' });
   });
 });
