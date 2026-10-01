@@ -12,6 +12,7 @@ export function redactEnvValues(text, env) {
 }
 
 export async function settleScriptRun(pool, row, parsed, { hostId, runId, reservationId = null }) {
+  const onlyIfStatus = reservationId ? ['queued','in_progress'] : 'in_progress';
   const authority = reservationId ? {where:{sql:"payload->>'script_run_id'=$1 AND payload->>'script_reservation_id'=$2",params:[runId,reservationId]}} : {};
   const payload = row.payload ?? {};
   const env = payload.env ?? {};
@@ -32,7 +33,7 @@ export async function settleScriptRun(pool, row, parsed, { hostId, runId, reserv
 
   if (parsed.exit === 0 && !parsed.timedOut) {
     // 成功终态写 completed：hard 依赖门禁只放行 completed。
-    const settled=await finalizeTask(pool, row.id, 'completed', { ...authority,mergeResult: { script }, onlyIfStatus: 'in_progress' });
+    const settled=await finalizeTask(pool, row.id, 'completed', { ...authority,mergeResult: { script }, onlyIfStatus });
     if(!settled.rowCount)return 'skipped';
     await finishRun({ runId, status: 'completed', exitCode: 0, artifacts }, { pool });
     await recordTaskEventSafe(pool, row.id, 'script_reaped', { run_id: runId, exit: 0 });
@@ -59,7 +60,7 @@ export async function settleScriptRun(pool, row, parsed, { hostId, runId, reserv
       `UPDATE tasks
           SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW(),
               payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-        WHERE id = $1 AND status = 'in_progress'
+        WHERE id = $1 AND (status = 'in_progress' OR ($3::text IS NOT NULL AND status = 'queued'))
           AND ($3::text IS NULL OR (payload->>'script_run_id'=$4 AND payload->>'script_reservation_id'=$3))
         RETURNING id`,
       [row.id, JSON.stringify({ script_attempts: attempts, next_run_at: nextRunAt, script_run_id: null }),reservationId,runId],
@@ -80,7 +81,7 @@ export async function settleScriptRun(pool, row, parsed, { hostId, runId, reserv
     },
     mergeResult: { script },
     mergePayload: { script_attempts: attempts, failure_class: 'script_failed' },
-    onlyIfStatus: 'in_progress',
+    onlyIfStatus,
   });
   if(!settled.rowCount)return 'skipped';
   await recordTaskEventSafe(pool, row.id, 'script_attempt_failed', {

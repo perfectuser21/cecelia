@@ -17,6 +17,20 @@
 - Worker 服务须显式设置 CECELIA_SCRIPT_PROFILES_FILE，指向服务账号或 root 所有、权限 0600 的配置；仅接受 legacy_host_scripts_reconciled=true 与 profile 内镜像 digest、非 root 用户、完整资源限额及显式 logMaxSizeBytes/logMaxFiles。日志轮转使用固定 local 驱动，限额纳入 profile digest，缺失拒绝启动。默认不启用，安装器不自动迁移旧宿主脚本或注入业务 profile。
 - journal 遗留操作锁不按年龄回收，script_operation_locked 保留预约并暴露运维阻断。
 
+受管脚本恢复按以下矩阵处理；所有任务状态写入均核对当前 run/reservation，取消或跨代任务只清理旧预约。
+
+| 任务 | 预约 | 认证 Worker 观测 | 处理 |
+| --- | --- | --- | --- |
+| queued / in_progress | reserved | 未送达 | 保留预约，交派发启动 |
+| queued / in_progress | launching | waiting_resources（含尚未 start 的容器） | 预约行锁下归队，不消耗执行重试 |
+| queued / in_progress | 非 released | running / restarting | 预约行锁下恢复 in_progress；等待终态 |
+| queued / in_progress | 非 released | created / unknown（启动中断） | 墓碑与精确清理确认后，按失败结算 |
+| queued / in_progress | 非 released | exited / cleaned + terminal | 认证清理释放后，原子 CAS 结算或重试 |
+| queued / in_progress | released | 已确认 terminal，结算未完成 | 继续扫描同 run/reservation，恢复结算；重试清除 run 后停止扫描 |
+| 任务终态或身份已换代 | 任意 | 任意 | 清理旧预约，不改当前任务 |
+
+cleanup_pending / blocked 预约继续清理；通信未知保留占位。预算释放与任务结算分别持久化，结算失败不得重新占回预算或漏扫。
+
 ## Brain 1.349.3 — Harness 加权资源预约
 
 - 同机事务锁内按角色权重预约；未确认清理持续占位，恢复需先确认旧执行停止。

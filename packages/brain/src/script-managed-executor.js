@@ -115,7 +115,14 @@ export async function reapManagedScripts(pool,deps,settle) {
         terminal=observed?.terminal ?? (observed?.status==='exited'?observed:null);
         const task=(await pool.query('SELECT * FROM tasks WHERE id=$1',[row.task_id])).rows[0];
         if(!terminal && ['queued','in_progress'].includes(task?.status) && !observed?.timed_out
-          && (observed || row.status!=='launching'))continue;
+          && !['cleanup_pending','blocked'].includes(row.status)) {
+          if(observed?.status==='waiting_resources') {
+            await store.requeueWaiting(row.id,task.payload?.script_dispatch_id);
+            continue;
+          }
+          if(['running','restarting'].includes(observed?.status) || (!observed && row.status==='reserved'))continue;
+          // created/unknown 表明启动未完成；先持久墓碑并确认消失，再记失败重试。
+        }
         if(!row.worker_id) {
           const identity=await client.capabilities(row.machine_id);
           row=await store.markLaunching(row.id,identity);
@@ -127,7 +134,7 @@ export async function reapManagedScripts(pool,deps,settle) {
         row=await store.confirmCleanup(claim,{...verified,receipt:{...verified.receipt,terminal}});
       }
       const task=(await pool.query('SELECT * FROM tasks WHERE id=$1',[row.task_id])).rows[0];
-      if(task?.status==='in_progress' && terminal) {
+      if(['queued','in_progress'].includes(task?.status) && terminal) {
         await startRun({taskId:task.id,runId:row.owner_key,source:'script',context:{transport:'managed-container',reservation_id:row.id}},{pool});
         const verdict=await settle(pool,task,{exit:terminal.exit_code,timedOut:terminal.timed_out===true,
           stdout:terminal.stdout??'',stderr:terminal.stderr??'',failureCode:terminal.failure_code,logs_truncated:terminal.logs_truncated,logs_unavailable:terminal.logs_unavailable,artifacts:[`managed://${row.machine_id}/${row.container_id}`]},

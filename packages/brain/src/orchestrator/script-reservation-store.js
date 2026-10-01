@@ -75,7 +75,7 @@ export function createScriptReservationStore(pool) {
         // reservation 行锁串行化确认执行与回队；运行事实优先于同代迟到的资源等待。
         const row=required((await client.query(`UPDATE capacity_reservations SET status=CASE WHEN status IN ('cleanup_pending','blocked') OR $5 THEN status ELSE 'running' END,container_id=$2,updated_at=NOW()
           WHERE id=$1 AND status IN ('launching','running','cleanup_pending','blocked') AND worker_id=$3 AND worker_boot_id=$4 RETURNING *`,
-        [id,identity.container_id,identity.worker_id,identity.worker_boot_id,['created','waiting_resources'].includes(identity.status)])).rows[0],'reservation_transition_rejected');
+        [id,identity.container_id,identity.worker_id,identity.worker_boot_id,!['running','exited','restarting'].includes(identity.status)])).rows[0],'reservation_transition_rejected');
         if(['running','exited','restarting'].includes(identity.status)) {
           await client.query(`UPDATE tasks SET status='in_progress',updated_at=NOW()
             WHERE id=$1 AND status IN ('queued','in_progress') AND payload->>'script_run_id'=$2
@@ -101,7 +101,8 @@ export function createScriptReservationStore(pool) {
     },
     async listOutstanding(limit = 100) {
       return (await pool.query(`SELECT r.*,t.status AS task_status FROM capacity_reservations r
-        LEFT JOIN tasks t ON t.id=r.task_id WHERE r.status <> 'released' OR (t.status='in_progress' AND t.payload->>'script_reservation_id'=r.id::text)
+        LEFT JOIN tasks t ON t.id=r.task_id WHERE r.status <> 'released' OR (t.status IN ('queued','in_progress')
+          AND t.payload->>'script_run_id'=r.owner_key AND t.payload->>'script_reservation_id'=r.id::text)
         ORDER BY r.updated_at LIMIT $1`, [limit])).rows;
     },
     async claimCleanup(id, owner, leaseMs) {
