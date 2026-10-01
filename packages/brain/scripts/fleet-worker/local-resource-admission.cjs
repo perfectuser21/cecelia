@@ -1,7 +1,8 @@
 'use strict';
 
 const { execFile } = require('node:child_process');
-const { readFileSync } = require('node:fs');
+const { readFileSync, lstatSync } = require('node:fs');
+const { randomUUID } = require('node:crypto');
 const { lstat, stat } = require('node:fs/promises');
 const path = require('node:path');
 const { promisify } = require('node:util');
@@ -136,4 +137,26 @@ function createLocalResourceAdmission({
   };
 }
 
-module.exports = { createLocalResourceAdmission, probeDiskResources };
+function guardLaunchCommand(runCommand,assertCanLaunch) {
+  return async(...callArgs)=>{
+    const [command,args]=callArgs;
+    if(path.basename(command)==='docker'&&(['create','start','run'].includes(args?.[0])||(args?.[0]==='network'&&args?.[1]==='create')))assertCanLaunch();
+    return runCommand(...callArgs);
+  };
+}
+function createLocalLaunchAdmission({markerPath='/var/run/cecelia/fleet-worker.drain',lstat=lstatSync}={}) {
+  if(typeof markerPath!=='string'||!path.isAbsolute(markerPath))throw Error('worker_drain_marker_invalid');
+  const bootId=randomUUID();let active=0,revision=0;
+  const draining=()=>{try{lstat(markerPath);return true;}catch(error){return error.code!=='ENOENT';}};
+  const assertCanLaunch=()=>{if(draining())throw Object.assign(Error('worker_draining'),{statusCode:429});};
+  return Object.freeze({assertCanLaunch,
+    snapshot:()=>({boot_id:bootId,draining:draining(),in_flight_launches:active,activity_revision:revision}),
+    track:async operation=>{active++;revision++;try{return await operation();}finally{active--;revision++; }},
+    guardCommand:runCommand=>guardLaunchCommand(runCommand,assertCanLaunch),
+  });
+}
+function wrapLaunchRunner(runner,admission) {
+  return Object.freeze(Object.fromEntries(Object.entries(runner).map(([key,value])=>[key,
+    ['prepare','start'].includes(key)&&typeof value==='function'?(...args)=>admission.track(()=>value.apply(runner,args)):value])));
+}
+module.exports = { createLocalResourceAdmission, probeDiskResources, createLocalLaunchAdmission, wrapLaunchRunner, guardLaunchCommand };
