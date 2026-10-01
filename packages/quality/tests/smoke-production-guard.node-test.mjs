@@ -175,7 +175,7 @@ test('all explicit live Brain shell write entries remain registered and guarded'
   for (const name of await readdir(smokeDir)) {
     if (!name.endsWith('.sh')) continue;
     const source = await readFile(resolve(smokeDir, name), 'utf8');
-    if (!/-X\s+(POST|PATCH|DELETE|PUT)/.test(source)) continue;
+    if (!/-X\s+(POST|PATCH|DELETE|PUT|["']?\$)/.test(source)) continue;
     if (name === 'callback-stage-receipt-smoke.sh') {
       assert.match(source, /127\.0\.0\.1:\$PORT/, 'fixture exception must remain tied to its private server');
       continue;
