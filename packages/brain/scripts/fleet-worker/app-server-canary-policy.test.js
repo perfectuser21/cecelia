@@ -19,7 +19,7 @@ it('真实请求响应关联后仅保留摘要；错误响应或重复方法不�
   {id:2,method:'model/list'},{id:3,method:'config/read',params:{includeLayers:false}},{id:4,method:'configRequirements/read'}];
  for(const frame of requests){
   expect(policy.client(frame).forward).toEqual(frame);
-  const result={testMetadata:'private metadata must not enter evidence'};
+  const result=frame.method==='initialize'?{userAgent:'codex_cli_rs/0.158.0'}:frame.method==='model/list'?{data:[],nextCursor:null}:frame.method==='config/read'?{config:{privateMetadata:'private metadata must not enter evidence'}}:{requirements:null};
   expect(policy.server({id:frame.id,result}).forward.result).toEqual(result);
  }
  expect(policy.client({method:'initialized'}).forward).toEqual({method:'initialized'});
@@ -29,4 +29,12 @@ it('真实请求响应关联后仅保留摘要；错误响应或重复方法不�
  expect(policy.canaryEvidence().complete).toBe(false);
  const failed=createRpcPolicy({canary:true});failed.client(requests[0]);failed.server({id:1,error:{code:-1,message:'failed'}});
  expect(failed.canaryEvidence()).toMatchObject({complete:false,failed:1});
+});
+it('空壳result不能冒充固定Codex版本与协议响应',()=>{
+ const policy=createRpcPolicy({canary:true});
+ for(const [id,method]of ['initialize','model/list','config/read','configRequirements/read'].entries()){
+  const frame={id,method,...(method==='initialize'?{params:{clientInfo:{name:'canary',version:'1'}}}:{})};
+  policy.client(frame);policy.server({id,result:{testMetadata:true}});
+ }
+ policy.client({method:'initialized'});expect(policy.canaryEvidence()).toMatchObject({complete:false,failed:4});
 });

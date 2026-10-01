@@ -83,3 +83,10 @@ it('不能只撤销验收记录却留下活grant；同事务一致撤销才提�
  await transaction(async db=>{await db.query("UPDATE app_server_authorizations SET state='revoked' WHERE id=$1",[row.id]);await db.query("UPDATE execution_grants SET state='revoked' WHERE id=$1",[row.grant]);});
  expect((await pool.query('SELECT state FROM execution_grants WHERE id=$1',[row.grant])).rows[0].state).toBe('revoked');
 });
+it('不能提前单独激活记录来跨过grant首次激活时限',async()=>{
+ const row=await prepared(undefined,'200 milliseconds');
+ await expect(transaction(async db=>{await accept(db,row);await db.query("UPDATE app_server_authorizations SET state='active',activated_at=clock_timestamp() WHERE id=$1",[row.id]);})).rejects.toThrow('appserver_authorization_state_mismatch');
+ await transaction(async db=>{await accept(db,row);await db.query("UPDATE tasks SET status='completed' WHERE id=$1",[row.task]);});
+ await new Promise(r=>setTimeout(r,250));
+ await expect(pool.query("UPDATE execution_grants SET state='active' WHERE id=$1",[row.grant])).rejects.toThrow('appserver_canary_expired');
+});
