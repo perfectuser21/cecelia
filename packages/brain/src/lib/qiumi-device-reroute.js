@@ -125,6 +125,7 @@ export async function rerouteUnresolvedDevices(pool, token, { notionReq, parsePa
       const latest = await notionReq(token, `/pages/${pageId}`, 'GET');
       if (!editable(latest, row, parsePage) || latest.last_edited_time !== page.last_edited_time
         || JSON.stringify(latest.properties) !== JSON.stringify(page.properties)
+        || normId(latest.last_edited_by?.id) !== normId(page.last_edited_by.id)
         || !await confirmedHuman(latest, token, notionReq)) continue;
       if (await queueWithReceipt(pool, row, source, resolution, page)) stats.rerouted += 1;
     } catch (err) {
