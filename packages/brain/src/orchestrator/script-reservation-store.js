@@ -6,10 +6,12 @@ import { getNodeProfile } from './fleet-node/node-profile.js';
 
 const WAIT = Object.freeze({ outcome: 'wait', reason: 'capacity' });
 const digest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-function validSnapshot(input) {
+function validSnapshot(input,auth) {
   const s = input.capacitySnapshot;
   if (s?.verified !== true || s.machine !== input.machineId || s.expires_at <= Date.now()
     || !Number.isFinite(s.expires_at) || s.capacity?.ok !== true) return false;
+  if(auth?.node.platform==='linux'&&(s.execution_version_id!==auth.executionVersionId||s.execution_grant_id!==auth.grantId
+    ||s.worker_boot_id!==auth.node.worker_boot_id||s.policy_digest!==auth.node.config_hash))return false;
   try {
     return [s.capacity.physical_base_slots, s.capacity.effective_base_slots,
       getNodeProfile(input.machineId).capacity].every((n) => Number.isInteger(n) && n > 0);
@@ -47,7 +49,7 @@ export function createScriptReservationStore(pool,{executionDirectory=false}={})
             || existing.task_id !== input.taskId) throw new Error('configuration_conflict');
           return { outcome: existing.status === 'released' ? 'released' : 'reserved', reservation: existing };
         }
-        if (!validSnapshot(input)) return WAIT;
+        if (!validSnapshot(input,auth)) return WAIT;
         const task = (await client.query('SELECT status FROM tasks WHERE id=$1 FOR NO KEY UPDATE', [input.taskId])).rows[0];
         if (!['queued','in_progress'].includes(task?.status)) throw new Error('script_task_not_dispatchable');
         const occupied = (await client.query(`SELECT EXISTS (
@@ -58,7 +60,7 @@ export function createScriptReservationStore(pool,{executionDirectory=false}={})
               WHERE c.attempt_id=active.id AND c.status <> 'confirmed' AND c.target_machine_id=$1)
           UNION ALL SELECT 1 FROM capacity_reservations WHERE machine_id=$1 AND status <> 'released'
         ) AS occupied`, [input.machineId])).rows[0].occupied;
-        if (occupied || !validSnapshot(input)) return WAIT;
+        if (occupied || !validSnapshot(input,auth)) return WAIT;
         const reservation = (await client.query(`INSERT INTO capacity_reservations
           (id,machine_id,owner_kind,owner_key,task_id,config_digest,allocation_mode,policy_version,snapshot_time,snapshot_digest${auth?',execution_version_id,execution_grant_id':''})
           SELECT $1,$2,'script',$3,$4,$5,'exclusive_unclassified','script-exclusive-v1',to_timestamp($8/1000.0),$6${auth?',$9,$10':''}

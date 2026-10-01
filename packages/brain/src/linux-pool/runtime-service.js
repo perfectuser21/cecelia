@@ -44,7 +44,7 @@ export function createLinuxRuntimeAuthorization({pool,readDeployment=createRunti
    if(!node)await db.query('INSERT INTO execution_nodes(machine_registry_id,canonical_id) VALUES($1,$2)',[machineId,d.machine_id]);
    await db.query(`INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,worker_boot_id,platform,endpoints,profile,config_hash)
     SELECT $1,$2,COALESCE(MAX(revision),0)+1,'attested-v1',$3,$4,'linux',$5,$6,$7 FROM execution_node_versions WHERE machine_registry_id=$2`,
-    [version,machineId,d.machine_id,d.expected.worker_boot_id,{worker:d.endpoint},{machine_id:d.machine_id,execution:true,capacity:0,pool:d.pool.pool,linux_script:d.authority},d.policyDigest]);
+    [version,machineId,d.machine_id,d.expected.worker_boot_id,{worker:d.endpoint},{machine_id:d.machine_id,execution:true,capacity:1,pool:d.pool.pool,linux_script:d.authority},d.policyDigest]);
    const grantIds={};for(const profileId of Object.keys(d.profiles)){const grant=randomUUID();grantIds[profileId]=grant;
     await db.query(`INSERT INTO execution_grants(id,node_version_id,surface,provider,profile_id,provenance,evidence_task_id,expires_at)
      VALUES($1,$2,'managed_script','script',$3,'linux_script_canary',$4,statement_timestamp()+interval '24 hours')`,[grant,version,profileId,evidence]);}

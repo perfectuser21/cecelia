@@ -4,13 +4,18 @@ import {createProductionCapabilityProbes} from './orchestrator/preflight/product
 import {createScriptWorkerClient} from './script-worker-client.js';
 import {startRun,finishRun} from './lib/task-run.js';
 import {recordTaskEventSafe} from './lib/task-event-log.js';
+import {currentNode} from './execution-directory/directory.js';
+import {createLinuxRuntimeAdmission} from './linux-pool/runtime-admission.js';
 const digest=(value)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const machines=(deps)=>String((deps.env??process.env).SCRIPT_MANAGED_MACHINES??'').split(',').map(x=>x.trim());
-export const usesManagedScript=(task,spec,deps={})=>Boolean(task.payload?.managed_script)||machines(deps).includes(spec.host);
+const managedMachine=(machine,deps)=>machines(deps).includes(machine)||currentNode(machine)?.platform==='linux';
+export const usesManagedScript=(task,spec,deps={})=>Boolean(task.payload?.managed_script)||managedMachine(spec.host,deps);
 function dependencies(pool,deps) {
   const env=deps.env??process.env;
   const client=deps.managed?.client??createScriptWorkerClient({env,pool});
-  const collectSnapshot=deps.managed?.collectSnapshot??(async(machine)=>{
+  const linuxAdmission=createLinuxRuntimeAdmission({pool});
+  const collectSnapshot=deps.managed?.collectSnapshot??(async(machine,profileId)=>{
+    if(currentNode(machine)?.platform==='linux')return linuxAdmission(machine,profileId);
     const probes=createProductionCapabilityProbes({env,cacheTtlMs:0});
     const capacity=await probes.getMachineBaseCapacity({machine});
     const captured_at=Date.now();
@@ -23,7 +28,7 @@ function body(row) {
     launch_generation:row.launch_generation,config_digest:row.config_digest,worker_id:row.worker_id,worker_boot_id:row.worker_boot_id};
 }
 export async function prepareManagedScript(task,spec,pool,deps={}) {
-  if(!machines(deps).includes(spec.host))return {outcome:'blocked',reason:'script_managed_not_enabled'};
+  if(!managedMachine(spec.host,deps))return {outcome:'blocked',reason:'script_managed_not_enabled'};
   const managed=task.payload?.managed_script;
   if(!managed || typeof managed.profile!=='string' || Object.keys(managed).some(k=>k!=='profile') || spec.cwd || spec.artifact_paths.length) {
     return {outcome:'blocked',reason:'script_managed_spec_required'};
@@ -32,7 +37,7 @@ export async function prepareManagedScript(task,spec,pool,deps={}) {
   let capabilities,capacitySnapshot;
   try {
     capabilities=await client.capabilities(spec.host);
-    capacitySnapshot=await collectSnapshot(spec.host);
+    capacitySnapshot=await collectSnapshot(spec.host,managed.profile);
   } catch {return {outcome:'wait',reason:'script_admission_unavailable'};}
   if(!capabilities.profiles?.[managed.profile])return {outcome:'blocked',reason:'script_profile_unavailable'};
   const job={profile:managed.profile,cmd:spec.cmd,timeout_sec:spec.timeout_sec,env:spec.env};

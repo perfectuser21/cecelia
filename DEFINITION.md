@@ -10,7 +10,9 @@
 
 
 
-**Brain 版本**: 1.353.20
+**Brain 版本**: 1.353.21
+
+Linux脚本准入使用验收过的受信池预算与独占逻辑槽1；fresh认证身份绑定boot/revision/config，预约在DB总额锁内再核version/grant/摘要。动态资源与维护仍由root每create/start复核。新Linux目录canonical ID直接进入managed，缺profile不可退回宿主SSH，不需手填机器环境白名单。真实PG→HTTP→Unix→持久adapter回归产生实际shell输出，资源/维护拒绝只凭精确墓碑释放，create未知持续占位；尚未HK现场部署。
 
 507新增脚本runtime验收真表：prepare用受信部署根自动登记子任务并创建pending版本/grants；root签名canary逐profile验真后，同事务finalizeTask写事实/证据/actor并CAS激活同一代，仅开放managed_script。nonce十分钟、授权最长24小时，过期不续期、撤销不复活；历史清理保留，US与scheduler硬拒。JSONB不得重排下发profile摘要。此片仅scratch真表验收，生产未迁移/激活，Linux物理准入与机器页自动编排仍待接线。
 
