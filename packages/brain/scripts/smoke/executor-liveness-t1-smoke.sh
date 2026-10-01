@@ -50,13 +50,15 @@ if [[ ! -f "$CONTRACTS_JS" ]]; then
   fail "executor-contracts.js 不存在: $CONTRACTS_JS"
 else
   node --input-type=module <<EOF 2>/dev/null \
-    && ok "EXECUTOR_CONTRACTS 九合同结构正确" \
+    && ok "EXECUTOR_CONTRACTS 十合同结构正确" \
     || fail "executor-contracts.js 导入/结构检查失败"
 import { EXECUTOR_CONTRACTS, VALID_EXECUTOR_KINDS, assessTaskLiveness } from '${CONTRACTS_JS}';
 // PR1-B 由七增八：openclaw-agent = 秋米中文 GTD 任务的执行者（Brain 经 ssh 在 MMV 起 agent）
 // 棒3 由八增九：script = executor=script 一等任务类型（Brain 经 ssh 在跑场机执行确定性脚本）
-const EXPECTED = ['brain-local','relay-container','kernel-process','headed-session','bridge','external-worker','codex-review-local','openclaw-agent','script'];
-if (VALID_EXECUTOR_KINDS.length !== 9) throw new Error('VALID_EXECUTOR_KINDS 长度不对');
+const EXPECTED = ['brain-local','relay-container','kernel-process','headed-session','bridge','external-worker','codex-review-local','openclaw-agent','script','preview-janitor'];
+if (JSON.stringify([...VALID_EXECUTOR_KINDS].sort()) !== JSON.stringify(EXPECTED.sort())) throw new Error('VALID_EXECUTOR_KINDS 名单不对');
+const janitor = EXECUTOR_CONTRACTS['preview-janitor'];
+if (await janitor.probe(null, null) !== 'unknown' || janitor.staleMinutes !== null || janitor.onStale !== 'none') throw new Error('Janitor 合同不允许通用看门狗终止');
 for (const k of EXPECTED) {
   const c = EXECUTOR_CONTRACTS[k];
   if (!c) throw new Error('missing contract: ' + k);

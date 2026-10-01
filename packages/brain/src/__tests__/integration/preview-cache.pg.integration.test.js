@@ -6,6 +6,8 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import express from 'express';
+import { fileURLToPath } from 'node:url';
+import janitorRouter from '../../routes/janitor.js';
 import { createIntakeTestDatabase } from '../fixtures/task-intake-db.js';
 import { createJanitor } from '../../janitor.js';
 import { createCacheService, POLICY } from '../../../../../scripts/preview-cache/service.mjs';
@@ -49,6 +51,22 @@ async function setup() {
     lose: () => { loseResponse = true; }, close: async () => { await new Promise(r => server.close(r)); await rm(root, { recursive: true, force: true }); } };
 }
 describe('专属cache真实writer→HTTP→PG闭环', () => {
+  it('生产jobs冒烟精确验证固定白名单，不触发任何清理动作', async () => {
+    const app = express(); app.locals.pool = pool;
+    const methods = []; app.use((req, res, next) => { methods.push(req.method); next(); });
+    app.use('/api/brain/janitor', janitorRouter);
+    const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
+    try {
+      const result = await exec('bash', [fileURLToPath(new URL('../../../scripts/smoke/janitor-smoke.sh', import.meta.url))], {
+        env: { ...process.env, BRAIN_URL: `http://127.0.0.1:${server.address().port}` },
+      });
+      expect(result.stdout).toContain('[janitor-smoke] PASS');
+      expect(methods).toEqual(['GET']);
+      const { rows } = await pool.query('SELECT enabled FROM janitor_config WHERE job_id=$1', [POLICY]);
+      expect(rows[0].enabled).toBe(false);
+    } finally { await new Promise(r => server.close(r)); }
+  });
+
   it('真实npm目录删除与df证据进原生tasks/路由收据，不写staging账', async () => {
     const f = await setup(); try {
       const result = await f.api.runJob(pool, POLICY); expect(result.status).toBe('success');
