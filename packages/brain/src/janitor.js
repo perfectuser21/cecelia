@@ -56,6 +56,7 @@ export function createJanitor(registry) {
     const client = await pool.connect();
     const controller = new AbortController();
     let acquired = false;
+    let lockResponseKnown = false;
     let broken = false;
     let result;
     let operationError;
@@ -69,6 +70,7 @@ export function createJanitor(registry) {
       const { rows: [lock] } = await client.query(
         'SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS locked', [`janitor:${id}`],
       );
+      lockResponseKnown = typeof lock?.locked === 'boolean';
       ensureConnected();
       if (!lock?.locked) throw failure('JANITOR_BUSY', 423);
       acquired = true;
@@ -85,7 +87,7 @@ export function createJanitor(registry) {
         } catch { unlockFailed = true; }
       }
       client.removeListener?.('error', onError);
-      client.release(broken || unlockFailed);
+      client.release(broken || unlockFailed || !lockResponseKnown);
     }
     if (operationError) throw operationError;
     if (unlockFailed) throw failure('JANITOR_LOCK_RELEASE_FAILED', 503);
