@@ -42,7 +42,7 @@ def company_rows():
 
 
 class Pipeline(unittest.TestCase):
-    def collector(self, fail=False, completion_state="completed"):
+    def collector(self, fail=False, completion_state="completed", brain_api=None):
         module = load("opc-kr-current")
         calls = []
         rows = [item(SOURCE_DOD, "重命名后的经营指标"), item(SOURCE_COST, "不同标题")]
@@ -65,7 +65,8 @@ class Pipeline(unittest.TestCase):
                 return {"success": True, "status": completion_state}
             return {"success": True, "status": body.get("status") if body else None}
 
-        with patch.object(module, "call", side_effect=call), \
+        with patch.object(module, "BRAIN", brain_api or module.BRAIN), \
+                patch.object(module, "call", side_effect=call), \
                 patch.object(module, "dod_count", return_value=["F1", "N1"]), \
                 patch.object(module, "cost_line_up", return_value=1):
             if fail or completion_state != "completed":
@@ -74,6 +75,11 @@ class Pipeline(unittest.TestCase):
             else:
                 module.main()
         return calls
+
+    def test_brain_path_containing_notion_domain_uses_brain_responses(self):
+        calls = self.collector(brain_api="http://127.0.0.1/api.notion.com/api/brain")
+        self.assertEqual(len([url for url, _, _ in calls if url.endswith("/observations")]), 2)
+        self.assertTrue(any(method == "PATCH" and body.get("status") == "completed" for _, method, body in calls))
 
     def test_collector_writes_brain_and_explicit_source_ids(self):
         calls = self.collector()
@@ -138,7 +144,8 @@ class Pipeline(unittest.TestCase):
                 return {"results": []}
             return {"success": True, "items": rows}
 
-        with patch.object(module, "call", side_effect=call):
+        with patch.object(module, "BRAIN", "http://127.0.0.1/api.notion.com/api/brain"), \
+                patch.object(module, "call", side_effect=call):
             result = module.fetch()
         self.assertEqual(len(result), 8)
         renamed = next(row for row in result if row["kr"] == "名称无需KR编号")
