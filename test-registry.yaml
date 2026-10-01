@@ -281,14 +281,14 @@ tests:
     ci: L4
     status: active
     note: "测试服务启动、成功、失败、超时按实际PID收尾"
-  - id: brain-runtime-transport-isolation
-    path: packages/brain/src/__tests__/runtime-transport-isolation.test.js
+  - id: brain-production-transport-isolation
+    path: packages/brain/src/__tests__/production-transport-isolation.test.js
     type: unit
     ci: L4
     status: active
     note: "新版Fleet传输隔离，宿主及注入配置均不得解锁真实执行"
-  - id: brain-runtime-realtime-isolation
-    path: packages/brain/src/__tests__/runtime-realtime-isolation.test.js
+  - id: brain-orchestrator-realtime-isolation
+    path: packages/brain/src/__tests__/orchestrator-realtime-isolation.test.js
     type: unit
     ci: L4
     status: active

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-// 本文件只验证模拟 worker 传输；真实隔离由 runtime-transport-isolation 覆盖。
+// 本文件只验证模拟 worker 传输；真实隔离由 production-transport-isolation 覆盖。
 vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 
 import { resolvePrimaryWorkerId } from '../machine-registry.js';
