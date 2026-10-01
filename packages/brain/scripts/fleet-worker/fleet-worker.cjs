@@ -13,7 +13,7 @@ const {
   createFileAttemptStateStore,
 } = require('./attempt-runner.cjs');
 const { createAttemptResourceManager } = require('./attempt-resources.cjs');
-const { createLocalResourceAdmission } = require('./local-resource-admission.cjs');
+const { createLocalResourceAdmission,createLocalLaunchAdmission,wrapLaunchRunner } = require('./local-resource-admission.cjs');
 const {
   createCredentialEnvelopeConsumer,
 } = require('./credential-envelope.cjs');
@@ -23,6 +23,9 @@ const {
 const { probeFleetWorkerHealth } = require('./node-probe.cjs');
 const { createWorkspaceManager } = require('./workspace-manager.cjs');
 const { createOrchestratorRunner, probeCredentialHome } = require('./orchestrator-runner.cjs');
+
+const { createScriptRunner, loadProtectedScriptProfiles } = require('./script-runner.cjs');
+const { createScriptDockerAdapter } = require('./script-docker.cjs');
 
 const MAX_STRING_LENGTH = 1_024;
 const MAX_RESPONSE_BYTES = 65_536;
@@ -360,6 +363,8 @@ function createFleetWorkerRuntime({
   runCommand,
   probeCredentialHome: probeCredentialHomeFn = probeCredentialHome,
 } = {}) {
+  const launchAdmission=createLocalLaunchAdmission({markerPath:env.CECELIA_DRAIN_MARKER??'/var/run/cecelia/fleet-worker.drain'});
+  const assertCanLaunch=launchAdmission.assertCanLaunch;
   const workerId = env.CECELIA_MACHINE_ID;
   if (!CANONICAL_MACHINE_IDS.has(workerId)) {
     throw new Error('fleet_worker_machine_id_invalid');
@@ -403,6 +408,7 @@ function createFleetWorkerRuntime({
     ...(runCommand ? { runCommand } : {}),
   });
   const docker = createDockerAdapter({
+    assertCanLaunch,
     runtimeRoot: roots.runtime,
     ...(accessPrincipal === undefined
       ? {}
@@ -423,10 +429,12 @@ function createFleetWorkerRuntime({
     ?? digest;
   const postgresImageDigest = env.CECELIA_POSTGRES_IMAGE ?? POSTGRES_IMAGE;
   const resourceManager = createAttemptResourceManager({
+    assertCanLaunch,
     postgresImageDigest,
     ...(runCommand ? { runCommand } : {}),
   });
-  const attemptRunner = createAttemptRunner({
+  const attemptRunner = wrapLaunchRunner(createAttemptRunner({
+    assertCanLaunch,
     workspaceManager,
     docker,
     stateStore,
@@ -443,14 +451,15 @@ function createFleetWorkerRuntime({
     // home（installer 渲染进 plist）。仅 us-mac-m4 有 claude 账号目录；其余机器
     // claude attempt 会在 prepare 时 loud-fail attempt_claude_home_unavailable。
     claudeAccountsRoot: env.CECELIA_ORBSTACK_HOME ?? null,
-  });
-  const orchestratorRunner = createOrchestratorRunner({
+  }),launchAdmission);
+  const orchestratorRunner = wrapLaunchRunner(createOrchestratorRunner({
+    assertCanLaunch,
     workspaceManager,
     dataRoot: roots.state,
     hostname: workerId,
     maxConcurrent: Number(env.CECELIA_ORCHESTRATOR_MAX_CONCURRENT ?? 2),
     env,
-  });
+  }),launchAdmission);
   // 启动时探测一次凭据根，只告警不阻断：attempt 面不依赖它，orchestrator start 时还会再探测并 fail-loud。
   try {
     probeCredentialHomeFn(env.CECELIA_ORBSTACK_HOME);
@@ -458,6 +467,11 @@ function createFleetWorkerRuntime({
     console.warn(`[fleet-worker] credential_home_probe_failed: ${logCode(error?.message, 'unknown')}`);
   }
   return Object.freeze({
+    launchAdmission,
+    scriptRunner: wrapLaunchRunner(createScriptRunner({ assertCanLaunch,stateRoot: path.join(dataRoot, 'scripts'),
+      machineId: workerId, workerId, profiles: loadProtectedScriptProfiles(env.CECELIA_SCRIPT_PROFILES_FILE),
+      assertLocalResources: createLocalResourceAdmission({workerId,diskPaths:healthDiskPaths,...(runCommand?{runCommand}:{})}),
+      docker: createScriptDockerAdapter({assertCanLaunch}) }),launchAdmission),
     attemptRunner,
     orchestratorRunner,
     attemptToken,
@@ -591,6 +605,44 @@ function createFleetWorkerServer(options = {}) {
   }
 
   return http.createServer(async (request, response) => {
+    if(request.url==='/maintenance/status'){
+      if(!validBearer(request,attemptToken)){writeJson(response,401,{error:'unauthorized'});return;}
+      try{
+        if(request.method!=='POST'){writeJson(response,405,{error:'method_not_allowed'});return;}
+        const body=await readJson(request,4096);
+        if(!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(body.request_nonce??'')||Object.keys(body).some(k=>k!=='request_nonce'))throw Error('invalid_nonce');
+        if(!attemptReady||reconciliationFailed)throw Error('maintenance_reconciliation_unconfirmed');
+        const gate=options.launchAdmission;
+        if(!gate||[attemptRunner,options.scriptRunner,options.orchestratorRunner].some(r=>typeof r?.maintenance!=='function'))throw Error('maintenance_unconfigured');
+        const before=gate.snapshot(),attempts=await attemptRunner.maintenance(),scripts=await options.scriptRunner.maintenance(),orchestrators=await options.orchestratorRunner.maintenance(),after=gate.snapshot();
+        const stable=before.activity_revision===after.activity_revision;
+        const counts=[attempts.pending,scripts.pending,orchestrators.preparing,orchestrators.prepared,orchestrators.running_processes];
+        if(!counts.every(n=>Number.isSafeInteger(n)&&n>=0))throw Error('maintenance_unknown');
+        const receipt={schema_version:'fleet-maintenance/v1',machine_id:machineId,...after,observed_at:new Date().toISOString(),request_nonce:body.request_nonce,
+          in_flight_launches:Math.max(before.in_flight_launches,after.in_flight_launches),observation_stable:stable,attempts,scripts,orchestrators,
+          quiescent:stable&&before.draining&&after.draining&&before.in_flight_launches===0&&after.in_flight_launches===0&&counts.every(n=>n===0)};
+        writeJson(response,200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
+      }catch{writeJson(response,503,{error:'worker_maintenance_unconfirmed'});}
+      return;
+    }
+    if (request.url?.startsWith('/scripts/')) {
+      if (!validBearer(request, attemptToken)) { writeJson(response,401,{error:'unauthorized'});return; }
+      if (!options.scriptRunner) { writeJson(response,503,{error:'script_runner_unconfigured'});return; }
+      try {
+        if (request.method !== 'POST') { writeJson(response,405,{error:'method_not_allowed'});return; }
+        const body=await readJson(request,maximumRequestBytes);
+        let result;
+        if(request.url==='/scripts/capabilities') result=options.scriptRunner.capabilities();
+        else {
+          const match=request.url.match(/^\/scripts\/([a-f0-9-]+)\/(start|inspect|cancel)$/);
+          if(!match || match[1]!==body.reservation_id) {writeJson(response,400,{error:'script_identity_invalid'});return;}
+          result=await options.scriptRunner[match[2]](body);
+        }
+        const receipt={...result,request_nonce:body.request_nonce??null};
+        writeJson(response,receipt.status==='waiting_resources'?429:200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
+      } catch(error) {writeJson(response,error.statusCode===429?429:409,{error:/^script_[a-z_]+$/.test(error.message)?error.message:'script_operation_failed'});}
+      return;
+    }
     if (request.url === '/health') {
       if (request.method !== 'GET') {
         writeJson(response, 405, { error: 'method_not_allowed' });
@@ -785,6 +837,8 @@ function main(env = process.env) {
   const runtime = createFleetWorkerRuntime({ env });
   const server = createFleetWorkerServer({
     env,
+    launchAdmission: runtime.launchAdmission,
+    scriptRunner: runtime.scriptRunner,
     attemptRunner: runtime.attemptRunner,
     orchestratorRunner: runtime.orchestratorRunner,
     attemptToken: runtime.attemptToken,

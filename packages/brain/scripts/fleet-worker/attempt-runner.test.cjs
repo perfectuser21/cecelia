@@ -289,6 +289,7 @@ function createRunner(deps) {
     githubCredentialConsumer: deps.githubCredentialConsumer,
     resourceManager: deps.resourceManager,
     assertLocalResources: deps.assertLocalResources ?? (async () => {}),
+    assertCanLaunch: deps.assertCanLaunch,
   });
 }
 
@@ -3416,4 +3417,45 @@ describe('新增执行前本机资源复验', () => {
     expect(guard).toHaveBeenCalledTimes(2);
     expect(deps.docker.start).toHaveBeenCalledOnce();
   });
+});
+
+describe('Worker维护暂停的Attempt最终边界',()=>{
+ it('异步prepare资源采样后暂停，未消费凭据或准备工作区',async()=>{
+  let drain=false;const deps=dependencies({assertLocalResources:async()=>{drain=true;},assertCanLaunch:()=>{if(drain)throw Error('worker_draining');}});
+  await expect(createRunner(deps).prepare(request())).rejects.toThrow('worker_draining');
+  expect(deps.credentialConsumer.consume).not.toHaveBeenCalled();expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
+ });
+ it('prepared状态写盘后暂停，零start并保留凭据与原容器；解除后正常重试',async()=>{
+  let drain=false;const deps=dependencies({assertCanLaunch:()=>{if(drain)throw Error('worker_draining');}}),runner=createRunner(deps);await runner.prepare(request());
+  const save=deps.stateStore.save;deps.stateStore.save=async state=>{const result=await save(state);if(state.status==='starting')drain=true;return result;};
+  await expect(runner.start(ATTEMPT_ID,{owner:'dispatcher-1',generation:0})).rejects.toThrow('worker_draining');
+  expect(deps.docker.start).not.toHaveBeenCalled();expect(deps.docker.remove).not.toHaveBeenCalled();
+  drain=false;deps.stateStore.save=save;deps.docker.inspect.mockResolvedValue({status:'created'});
+  await expect(runner.start(ATTEMPT_ID,{owner:'dispatcher-1',generation:0})).resolves.toMatchObject({status:'running'});expect(deps.docker.start).toHaveBeenCalledTimes(1);
+ });
+ it('docker adapter最终暂停拒绝start，不删除尚未投递的FIFO',async()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'drain-fifo-'));try{const own=path.join(dir,ATTEMPT_ID);fs.mkdirSync(own);const fifo=path.join(own,'credential.fifo');fs.writeFileSync(fifo,'fixture');const runCommand=vi.fn();
+   const adapter=loadAttemptRunner().createDockerAdapter({runtimeRoot:dir,runCommand,assertCanLaunch:()=>{throw Error('worker_draining');}});
+   await expect(adapter.start({attemptId:ATTEMPT_ID,containerId:'existing',credentialFifo:fifo,credential:CREDENTIAL})).rejects.toThrow('worker_draining');expect(fs.existsSync(fifo)).toBe(true);expect(runCommand).not.toHaveBeenCalled();
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+ });
+});
+it.each(['state-and-remove','postgres-unknown','workspace-unknown'])('prepare副作用后%s失败且无journal时maintenance保守未决',async(mode)=>{
+ const deps=dependencies();
+ if(mode==='state-and-remove'){
+  deps.stateStore.save.mockRejectedValue(Error('disk_full'));
+  deps.docker.remove.mockRejectedValue(Error('docker_unavailable'));
+ }else if(mode==='postgres-unknown'){
+  deps.resourceManager.provision.mockRejectedValue(Error('command_result_lost'));
+ }else deps.workspaceManager.prepare.mockRejectedValue(Error('workspace_result_lost'));
+ const runner=createRunner(deps),input=mode==='postgres-unknown'?request({runtime_resources:{postgres:true},provider_spec:{...request().provider_spec,stdin:providerPrompt('evaluator',{runtime_resources:{postgres:true}})},target:{...request().target,role:'evaluator'}}):request();
+ await expect(runner.prepare(input)).rejects.toThrow();expect(await deps.stateStore.list()).toEqual([]);
+ await expect(runner.maintenance()).rejects.toThrow('worker_maintenance_unconfirmed');
+ await runner.reconcile();await expect(runner.maintenance()).rejects.toThrow('worker_maintenance_unconfirmed');
+});
+
+it('副作用前drain拒绝不会将干净Worker永久标记未决',async()=>{
+ const deps=dependencies();deps.assertCanLaunch=()=>{throw Error('worker_draining');};const runner=createRunner(deps);
+ await expect(runner.prepare(request())).rejects.toThrow('worker_draining');expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
+ expect(await runner.maintenance()).toEqual({pending:0});
 });

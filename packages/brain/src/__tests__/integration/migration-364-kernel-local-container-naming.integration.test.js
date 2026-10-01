@@ -129,6 +129,8 @@ describe('migration 364 through the real migration runner', () => {
       );
       await migrationPool.query(readFileSync(new URL('../../../migrations/363_kernel_fleet_execution_receipts.sql', import.meta.url), 'utf8'));
       await migrationPool.query(readFileSync(new URL('../../../migrations/425_harness_attempt_cleanup_outbox.sql', import.meta.url), 'utf8'));
+  await migrationPool.query('CREATE TABLE IF NOT EXISTS tasks(id UUID PRIMARY KEY,status TEXT)');
+  await migrationPool.query(readFileSync(new URL('../../../migrations/501_capacity_reservations.sql', import.meta.url), 'utf8'));
       const attempt = await createAttemptStore(migrationPool).createAttempt({
         capacitySnapshot: { verified: true, machine: 'us-mac-m4', expires_at: Date.now() + 60_000,
           capacity: { ok: true, physical_base_slots: 7, effective_base_slots: 7 } },
