@@ -233,9 +233,16 @@ export async function prepareScriptDispatch(task, deps = {}) {
   if (usesManagedScript(full,spec,deps)) {
     const prepared=await prepareManagedScript(full,spec,pool,deps);
     if(prepared.outcome==='reserved')return {outcome:'proceed'};
-    await releaseClaim();
+    if(prepared.outcome==='stale')return {outcome:'skip'};
+    const changed=await pool.query(`UPDATE tasks SET claimed_by = NULL, claimed_at = NULL, updated_at = NOW(),
+      status=CASE WHEN $2 THEN 'blocked' ELSE status END,error_message=CASE WHEN $2 THEN $3 ELSE error_message END
+      WHERE id=$1 AND status='queued' AND payload->>'script_run_id' IS NOT DISTINCT FROM $4
+        AND jsonb_array_length(COALESCE(payload->'script_attempts','[]'::jsonb))=$5
+        AND claimed_by IS NOT DISTINCT FROM $6 AND claimed_at IS NOT DISTINCT FROM $7::timestamptz RETURNING id`,
+      [task.id,prepared.outcome==='blocked',prepared.reason,full.payload?.script_run_id??null,
+        full.payload?.script_attempts?.length??0,full.claimed_by??null,full.claimed_at??null]);
+    if(!changed.rowCount)return {outcome:'skip'};
     if(prepared.outcome==='wait'){holSkipIds.push(task.id);return {outcome:'skip'};}
-    await pool.query(`UPDATE tasks SET status='blocked',error_message=$2,updated_at=NOW() WHERE id=$1 AND status='queued'`,[task.id,prepared.reason]);
     return {outcome:'return',result:{dispatched:false,reason:prepared.reason,task_id:task.id,actions}};
   }
 

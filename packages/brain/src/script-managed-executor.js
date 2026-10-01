@@ -42,34 +42,49 @@ export async function prepareManagedScript(task,spec,pool,deps={}) {
   const result=await store.reserve({taskId:task.id,machineId:spec.host,ownerKey,configDigest,capacitySnapshot});
   if(result.outcome==='wait')return result;
   if(result.outcome==='released')return {outcome:'blocked',reason:'script_attempt_already_released'};
-  await pool.query(`UPDATE tasks SET payload=payload||$2::jsonb,updated_at=NOW() WHERE id=$1 AND status IN ('queued','in_progress')`,
-    [task.id,JSON.stringify({script_reservation_id:result.reservation.id,host_id:spec.host})]);
+  const bound=await pool.query(`UPDATE tasks SET payload=payload||$2::jsonb,updated_at=NOW()
+    WHERE id=$1 AND status IN ('queued','in_progress')
+      AND jsonb_array_length(COALESCE(payload->'script_attempts','[]'::jsonb))=$3
+      AND (payload->>'script_run_id' IS NULL OR payload->>'script_run_id'=$4)
+      AND EXISTS (SELECT 1 FROM capacity_reservations WHERE id=$5 AND status IN ('reserved','launching','running'))
+    RETURNING id`,[task.id,JSON.stringify({script_reservation_id:result.reservation.id,host_id:spec.host}),attempt-1,ownerKey,result.reservation.id]);
+  if(!bound.rowCount)return {outcome:'stale',reason:'script_attempt_superseded'};
   return {...result,job,capabilities,store,client};
 }
 export async function triggerManagedScript(task,spec,pool,deps={}) {
   const prepared=await prepareManagedScript(task,spec,pool,deps);
+  if(prepared.outcome==='stale')return {success:true,taskId:task.id,executor:'script',pending:true};
   if(prepared.outcome!=='reserved'){
     const blocked=prepared.outcome==='blocked';
     const changed=await pool.query(`UPDATE tasks SET status=$2,claimed_by=NULL,claimed_at=NULL,error_message=$3,updated_at=NOW()
-      WHERE id=$1 AND status IN ('queued','in_progress') AND payload->>'script_run_id' IS NULL RETURNING id`,
-      [task.id,blocked?'blocked':'queued',blocked?prepared.reason:null]);
+      WHERE id=$1 AND status IN ('queued','in_progress') AND payload->>'script_run_id' IS NULL
+      AND jsonb_array_length(COALESCE(payload->'script_attempts','[]'::jsonb))=$4
+      AND claimed_by IS NOT DISTINCT FROM $5 AND claimed_at IS NOT DISTINCT FROM $6::timestamptz RETURNING id`,
+      [task.id,blocked?'blocked':'queued',blocked?prepared.reason:null,task.payload?.script_attempts?.length??0,task.claimed_by??null,task.claimed_at??null]);
     // 已有执行身份由预约收割器恢复；重复请求的探测失败不能回退运行任务。
     if(!changed.rowCount)return {success:true,taskId:task.id,executor:'script',pending:true};
     return {success:false,reason:prepared.reason??'script_capacity_wait',wait:true,configError:true};
   }
   let row=prepared.reservation;
   const current=await pool.query(`UPDATE tasks SET status='in_progress',executor_kind='script',started_at=COALESCE(started_at,NOW()),
-    payload=payload||$2::jsonb,updated_at=NOW() WHERE id=$1 AND status IN ('queued','in_progress') RETURNING id`,
-  [task.id,JSON.stringify({script_run_id:row.owner_key,script_reservation_id:row.id,script_managed:true})]);
-  if(!current.rowCount)return {success:false,reason:'script_task_not_dispatchable',configError:true};
+    payload=payload||$2::jsonb,updated_at=NOW() WHERE id=$1 AND status IN ('queued','in_progress')
+      AND payload->>'script_reservation_id'=$3
+      AND (payload->>'script_run_id' IS NULL OR payload->>'script_run_id'=$4)
+      AND jsonb_array_length(COALESCE(payload->'script_attempts','[]'::jsonb))=$5
+      AND EXISTS (SELECT 1 FROM capacity_reservations WHERE id=$3::uuid AND status IN ('reserved','launching','running')) RETURNING id`,
+  [task.id,JSON.stringify({script_run_id:row.owner_key,script_reservation_id:row.id,script_managed:true}),row.id,row.owner_key,task.payload?.script_attempts?.length??0]);
+  if(!current.rowCount)return {success:true,taskId:task.id,executor:'script',pending:true};
   const fresh=row.status==='reserved';
-  if(fresh)row=await prepared.store.markLaunching(row.id,prepared.capabilities);
   try {
+    if(fresh)row=await prepared.store.markLaunching(row.id,prepared.capabilities);
     let verified=await prepared.client[fresh?'start':'inspect'](spec.host,{...body(row),...(fresh?{job:prepared.job}:{})});
     if(!fresh&&verified.receipt.status==='waiting_resources')verified=await prepared.client.start(spec.host,{...body(row),job:prepared.job});
     const result=verified.receipt;
     if(result.status==='waiting_resources'){
-      await pool.query(`UPDATE tasks SET status='queued',claimed_by=NULL,claimed_at=NULL,updated_at=NOW() WHERE id=$1 AND status='in_progress'`,[task.id]);
+      const waiting=await pool.query(`UPDATE tasks SET status='queued',claimed_by=NULL,claimed_at=NULL,updated_at=NOW()
+        WHERE id=$1 AND status='in_progress' AND payload->>'script_reservation_id'=$2 AND payload->>'script_run_id'=$3
+        RETURNING id`,[task.id,row.id,row.owner_key]);
+      if(!waiting.rowCount)return {success:true,taskId:task.id,executor:'script',pending:true};
       return {success:false,reason:'script_local_resources_wait',wait:true,configError:true};
     }
     if(result.container_id && ['launching','running'].includes(row.status))row=await prepared.store.markRunning(row.id,result);
@@ -77,7 +92,7 @@ export async function triggerManagedScript(task,spec,pool,deps={}) {
     await recordTaskEventSafe(pool,task.id,'script_spawned',{run_id:row.owner_key,reservation_id:row.id,transport:'managed-container'});
     return {success:true,taskId:task.id,runId:row.owner_key,executor:'script',alreadyRunning:!fresh};
   } catch(error) {
-    await prepared.store.recordUnknown(row.id,error.message);
+    await prepared.store.recordUnknown(row.id,error.message).catch(()=>{});
     // 远端可能已启动。留在 in_progress，由预约扫描 inspect；不返回派发失败触发重试。
     return {success:true,taskId:task.id,runId:row.owner_key,executor:'script',pending:true};
   }
