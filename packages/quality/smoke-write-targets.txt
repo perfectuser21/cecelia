@@ -70,3 +70,4 @@ unified-map-api-smoke.sh
 unified-work-router-role-chain-smoke.sh
 walking-skeleton-1node-smoke.sh
 warroom-line-command-smoke.sh
+alertness-schema-smoke.sh

@@ -104,7 +104,12 @@ try {
   });
   if (!response.ok) deny('目标健康检查失败');
   const health = await response.json();
-  if (health.local_execution?.role !== 'executor') deny('生产调度器或未知角色拒绝写入');
+  const passiveTest = health.runtime?.isolated === true
+    && health.runtime.background_automation === false
+    && health.local_execution?.enabled === false
+    && health.local_execution.role === 'disabled'
+    && health.local_execution.reason === 'runtime_isolated';
+  if (health.local_execution?.role !== 'executor' && !passiveTest) deny('生产调度器或未知角色拒绝写入');
 } catch {
   deny('无法核对环境身份，拒绝写入');
 }
