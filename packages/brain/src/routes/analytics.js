@@ -809,11 +809,9 @@ router.post('/pr-plans', async (req, res) => {
       });
     }
 
-    // Validate project exists（迁移：projects → okr_projects UNION okr_scopes UNION okr_initiatives）
+    // Validate project exists（projects 真身）
     const projectCheck = await pool.query(
-      `SELECT id FROM okr_projects WHERE id = $1
-       UNION ALL SELECT id FROM okr_scopes WHERE id = $1
-       UNION ALL SELECT id FROM okr_initiatives WHERE id = $1
+      `SELECT id FROM projects WHERE id = $1
        LIMIT 1`,
       [project_id]
     );
@@ -1431,32 +1429,32 @@ router.post('/attach-decision', async (req, res) => {
     }
 
     // Short-circuit B: Check for related initiatives (score >= 0.65)
-    const relatedInitiatives = (matches || []).filter(m => m.level === 'initiative' && m.score >= 0.65);
-    if (relatedInitiatives.length > 0) {
-      const target = relatedInitiatives[0];
+    const relatedProjects = (matches || []).filter(m => m.level === 'project' && m.score >= 0.65);
+    if (relatedProjects.length > 0) {
+      const target = relatedProjects[0];
       return res.json({
         success: true,
         input,
         attach: {
-          action: 'extend_initiative',
+          action: 'extend_project',
           target: {
             level: target.level,
             id: target.id,
             title: target.title
           },
           confidence: target.score,
-          reason: `属于现有 Initiative 的合理扩展（相似度 ${Math.round(target.score * 100)}%）`,
-          top_matches: relatedInitiatives.slice(0, 3)
+          reason: `属于现有 Project 的合理扩展（相似度 ${Math.round(target.score * 100)}%）`,
+          top_matches: relatedProjects.slice(0, 3)
         },
         route: {
-          path: 'extend_initiative_then_dev',
-          why: ['在现有 Initiative 下扩展功能', '直接创建 dev 任务'],
+          path: 'extend_project_then_dev',
+          why: ['在现有 Project 下扩展功能', '直接创建 dev 任务'],
           confidence: 0.75
         },
         next_call: {
           skill: '/dev',
           args: {
-            initiative_id: target.id,
+            project_id: target.id,
             task_description: input
           }
         }
@@ -1471,19 +1469,19 @@ router.post('/attach-decision', async (req, res) => {
         success: true,
         input,
         attach: {
-          action: 'create_initiative_under_kr',
+          action: 'create_project_under_kr',
           target: {
             level: target.level,
             id: target.id,
             title: target.title
           },
           confidence: target.score,
-          reason: `在现有 KR 下创建新 Initiative（相似度 ${Math.round(target.score * 100)}%）`,
+          reason: `在现有 KR 下创建新 Project（相似度 ${Math.round(target.score * 100)}%）`,
           top_matches: relatedKRs.slice(0, 3)
         },
         route: {
           path: 'okr_then_dev',
-          why: ['需要先创建 Initiative', '然后进行技术验证'],
+          why: ['需要先创建 Project', '然后进行技术验证'],
           confidence: 0.7
         },
         next_call: {
@@ -1508,12 +1506,12 @@ router.post('/attach-decision', async (req, res) => {
           title: null
         },
         confidence: 0.5,
-        reason: '没有找到相关的 OKR/KR/Initiative，需要创建新的',
+        reason: '没有找到相关的 Objective/KR/Project，需要创建新的',
         top_matches: []
       },
       route: {
         path: 'okr_then_dev',
-        why: ['需要完整规划（OKR → Initiative → PR Plans）', '然后进行开发'],
+        why: ['需要完整规划（Objective → KR → Project → Task）', '然后进行开发'],
         confidence: 0.6
       },
       next_call: {

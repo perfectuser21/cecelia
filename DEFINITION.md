@@ -8,7 +8,16 @@
 
 
 
-**Brain 版本**: 1.348.17
+**Brain 版本**: 1.348.19
+
+## 1.348.18
+
+- 中文 Notion 截止编辑独立同步 `due_at`，只改结束时间保留设备忙与失败重试退避；任务派走后的改期不覆盖运行中任务。
+- 补写设备信息仅恢复原退回任务，重新解析真身台账；状态与事件同事务落账，失败保持原状态。
+- 全景接口异步并行探测进程与容器，超时降级并终止子进程，健康请求不被同步命令堵塞。
+- CI 收口拒绝 cancelled，串行真实 smoke 带单脚本硬期限；超时仍判失败。
+- 手机台账入口按序列号回灌 Notion 人管名称、归属及账号；逐字段内容基线保护 Brain 后续修改，覆盖前值留事件，技术映射与在线镜子不变。
+- 新调度任务 `phone-registry-sync`：30 分钟经 MMV 向 M1/M4 同代下发台账对照表，保留实测尺寸；每日仅在设备任务空闲且获得锁后核验当前账号，错号提醒，不切号或发消息。
 
 ## 1.283.0
 
@@ -5116,10 +5125,22 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 - **部署**：`bash scripts/dev-deploy.sh`（含 pg_dump 备份 + migrate 幂等）
 - **验证**：`bash scripts/dev-verify.sh`
 - **健康监控**：`scripts/dev-healthcheck.sh`（每 5 分钟轮询 5220，宕机 10 分钟后向 5221 创建 alert 任务）
-- **CI 自动部署**：develop 分支 push 触发 `.github/workflows/auto-dev-deploy.yml`
+- **CI 自动部署**：旧 develop 分支部署工作流已退役；Dev 环境配置、部署脚本和隔离检查保留。
 
 ### ZenithJoy 联动占位
 
 - Cecelia develop 环境与 ZenithJoy develop 环境（`ZJ_DEV_PORT=5230`，待 ZJ 侧确认）配合
 - `staging-e2e-runner.js` 导出 `ZJ_DEV_PORT` 常量（默认 5230，可通过环境变量覆盖）
 - 本 Sprint 不修改任何 ZenithJoy 仓库文件，联动在后续 Sprint 实施
+
+
+## 1.348.17
+
+### Project 按需读取与拆解审查闭环（任务 d8ca5e1e）
+
+- 七处按需读方统一读取 projects 真身，子任务直接按 Task.project_id 关联，排除迁移保留的 project 根任务。
+- 实际拆解提示使用 Objective → Key Result → Project → Task；首次复用或新建项目通过本棒 result.decomposition_project_id 显式保存归属。
+- 拆解回调、修正再审与确认门刷新使用同一 Project；主理人确认放行更新 key_results。多项目未显式选择时拒绝猜选。
+- 真 PostgreSQL 事务回归覆盖真实 HTTP 选择项目、首次送审、修正再审、审批激活与 KR 放行；测试结束回滚。
+
+- KR 诊断的数据库入口挂 express-rate-limit，每来源每分钟30次，超额请求在SQL执行前返回429；无KR参数的健康入口独立可读。

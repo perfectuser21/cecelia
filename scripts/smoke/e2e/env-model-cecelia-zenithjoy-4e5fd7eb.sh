@@ -97,16 +97,6 @@ else
   log_fail "BEHAVIOR-05-T03: deploy-dev 单元测试缺失"
 fi
 
-if [[ -f "$ROOT_DIR/.github/workflows/auto-dev-deploy.yml" ]]; then
-  log_pass "BEHAVIOR-05-T04: auto-dev-deploy.yml CI workflow 存在"
-  grep -q "develop" "$ROOT_DIR/.github/workflows/auto-dev-deploy.yml" && log_pass "BEHAVIOR-05-T05: workflow 监听 develop 分支" || log_fail "BEHAVIOR-05-T05: workflow 缺少 develop 触发"
-  grep -q "deploy-environment" "$ROOT_DIR/.github/workflows/auto-dev-deploy.yml" && log_pass "BEHAVIOR-05-T06: concurrency group=deploy-environment" || log_fail "BEHAVIOR-05-T06: 缺少 concurrency group"
-  grep -q "cancel-in-progress: false" "$ROOT_DIR/.github/workflows/auto-dev-deploy.yml" && log_pass "BEHAVIOR-05-T07: cancel-in-progress=false" || log_fail "BEHAVIOR-05-T07: 缺少 cancel-in-progress=false"
-  grep -q "timeout-minutes" "$ROOT_DIR/.github/workflows/auto-dev-deploy.yml" && log_pass "BEHAVIOR-05-T08: 含 timeout-minutes" || log_fail "BEHAVIOR-05-T08: 缺少 timeout-minutes"
-else
-  log_fail "BEHAVIOR-05-T04: .github/workflows/auto-dev-deploy.yml 不存在"
-fi
-
 # ---- BEHAVIOR-07: ZJ_DEV_PORT + DEFINITION.md ----
 echo ""
 echo "=== BEHAVIOR-07: ZenithJoy 联动占位 ==="

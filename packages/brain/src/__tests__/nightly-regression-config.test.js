@@ -3,8 +3,8 @@
  * 守住 cecelia CI/CD 三把刀三件套，防被静默删改：
  *   刀A nightly-regression.yml（每晚全量回归闸，#3717）
  *   刀B integration-nightly.yml（跨组件 integration nightly，#3713）
- *   刀C promote-dashboard-prod.yml 的 nightly_gate + scripts/ci/check-nightly-green.sh（#3717）
- * 背景：PR CI 按路径过滤 + vitest --changed，回归靠 nightly 兜底；promote 靠 nightly 绿证据。
+ *   刀C deploy.yml 的 nightly_gate + scripts/ci/check-nightly-green.sh
+ * 背景：PR CI 按路径过滤 + vitest --changed，回归靠 nightly 兜底；定时/按需发布依赖 nightly 绿证据。
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
@@ -33,11 +33,13 @@ describe('刀B integration-nightly workflow', () => {
 });
 
 describe('刀C Release Gate', () => {
-  it('promote-dashboard-prod 有 nightly_gate 前置且 promote 依赖它', () => {
-    const WF = read('.github/workflows/promote-dashboard-prod.yml');
-    expect(WF).toMatch(/nightly_gate/);
-    expect(WF).toMatch(/needs:\s*nightly_gate/);
-    expect(WF).toMatch(/check-nightly-green\.sh/);
+  it('现役 deploy 的两条发布路径都依赖 nightly_gate', async () => {
+    const { load } = await import('js-yaml');
+    const { jobs } = load(read('.github/workflows/deploy.yml'));
+    expect(jobs.nightly_gate.steps.some((step) => step.run?.includes('bash scripts/ci/check-nightly-green.sh'))).toBe(true);
+    expect(jobs.risk_gate.needs).toContain('nightly_gate');
+    expect(jobs.staging_deploy.needs).toContain('nightly_gate');
+    expect(jobs.deploy.needs).toEqual(expect.arrayContaining(['nightly_gate', 'risk_gate', 'staging_deploy']));
   });
   it('check-nightly-green.sh 指向存活的刀A workflow 文件', () => {
     const SH = read('scripts/ci/check-nightly-green.sh');
@@ -52,7 +54,7 @@ describe('三把刀 workflow YAML 必须可解析（07-10 实锤：顶格 **mark
   it.each([
     '.github/workflows/nightly-regression.yml',
     '.github/workflows/integration-nightly.yml',
-    '.github/workflows/promote-dashboard-prod.yml',
+    '.github/workflows/deploy.yml',
   ])('%s 可被 YAML 解析', async (p) => {
     const { load } = await import('js-yaml');
     expect(() => load(read(p))).not.toThrow();
