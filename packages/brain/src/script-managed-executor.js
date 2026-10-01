@@ -29,13 +29,17 @@ export async function prepareManagedScript(task,spec,pool,deps={}) {
     return {outcome:'blocked',reason:'script_managed_spec_required'};
   }
   const {client,collectSnapshot,store}=dependencies(pool,deps);
-  const capabilities=await client.capabilities(spec.host);
+  let capabilities,capacitySnapshot;
+  try {
+    capabilities=await client.capabilities(spec.host);
+    capacitySnapshot=await collectSnapshot(spec.host);
+  } catch {return {outcome:'wait',reason:'script_admission_unavailable'};}
   if(!capabilities.profiles?.[managed.profile])return {outcome:'blocked',reason:'script_profile_unavailable'};
   const job={profile:managed.profile,cmd:spec.cmd,timeout_sec:spec.timeout_sec,env:spec.env};
   const attempt=(task.payload?.script_attempts?.length??0)+1;
   const ownerKey=`script-${task.id}-a${attempt}`;
   const configDigest=digest({job,profile_digest:capabilities.profiles[managed.profile]});
-  const result=await store.reserve({taskId:task.id,machineId:spec.host,ownerKey,configDigest,capacitySnapshot:await collectSnapshot(spec.host)});
+  const result=await store.reserve({taskId:task.id,machineId:spec.host,ownerKey,configDigest,capacitySnapshot});
   if(result.outcome==='wait')return result;
   if(result.outcome==='released')return {outcome:'blocked',reason:'script_attempt_already_released'};
   await pool.query(`UPDATE tasks SET payload=payload||$2::jsonb,updated_at=NOW() WHERE id=$1 AND status IN ('queued','in_progress')`,
@@ -44,7 +48,12 @@ export async function prepareManagedScript(task,spec,pool,deps={}) {
 }
 export async function triggerManagedScript(task,spec,pool,deps={}) {
   const prepared=await prepareManagedScript(task,spec,pool,deps);
-  if(prepared.outcome!=='reserved')return {success:false,reason:prepared.reason??'script_capacity_wait',wait:true,configError:true};
+  if(prepared.outcome!=='reserved'){
+    const blocked=prepared.outcome==='blocked';
+    await pool.query(`UPDATE tasks SET status=$2,claimed_by=NULL,claimed_at=NULL,error_message=$3,updated_at=NOW()
+      WHERE id=$1 AND status IN ('queued','in_progress')`,[task.id,blocked?'blocked':'queued',blocked?prepared.reason:null]);
+    return {success:false,reason:prepared.reason??'script_capacity_wait',wait:true,configError:true};
+  }
   let row=prepared.reservation;
   const current=await pool.query(`UPDATE tasks SET status='in_progress',executor_kind='script',started_at=COALESCE(started_at,NOW()),
     payload=payload||$2::jsonb,updated_at=NOW() WHERE id=$1 AND status IN ('queued','in_progress') RETURNING id`,
@@ -80,7 +89,7 @@ export async function reapManagedScripts(pool,deps,settle) {
         let observed;
         try {observed=(await client.inspect(row.machine_id,body(row))).receipt;}
         catch(error) {
-          // 404 或 unknown 不是清理证明。只有已终态任务可主动发送 cancel 形成持久墓碑。
+          // 404 或 unknown 不是清理证明。未知 launching 可主动 cancel 形成持久墓碑，再凭认证确认释放。
           if(['queued','in_progress'].includes(row.task_status) && row.status!=='launching')throw error;
         }
         if(observed?.container_id && !row.container_id)row=await store.markRunning(row.id,observed);
