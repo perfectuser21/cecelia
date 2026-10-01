@@ -28,8 +28,8 @@ function unknown(observedAt) {
     ancestry_visible: false, psi: {}, memory_events: {}, gpu: { status: 'unknown' } };
 }
 async function optionalPsi(readText, filename) {
-  try { return { status: 'observed', ...parsePsi(await readText(filename)) }; }
-  catch (error) { return { status: error.code === 'ENOENT' || error.code === 'ENOTSUP' ? 'unsupported' : 'unknown' }; }
+  try { return { status: 'observed', scope: 'system', ...parsePsi(await readText(filename)) }; }
+  catch (error) { return { scope: 'system', status: error.code === 'ENOENT' || error.code === 'ENOTSUP' ? 'unsupported' : 'unknown' }; }
 }
 function parseEvents(raw) {
   const out = {};
@@ -143,14 +143,14 @@ function projectLinuxObservation(source) {
   base.memory_high_bytes = Number.isSafeInteger(source.memory_high_bytes) && source.memory_high_bytes >= 0 ? source.memory_high_bytes : null;
   for (const kind of ['cpu', 'memory', 'io']) {
     const pressure = source.psi?.[kind];
-    base.psi[kind] = { status: pressure?.status === 'unsupported' ? 'unsupported' : 'unknown' };
+    base.psi[kind] = { scope: 'system', status: pressure?.status === 'unsupported' ? 'unsupported' : 'unknown' };
     if (pressure?.status !== 'observed') continue;
     try {
       const lines = ['some', 'full'].filter(key => pressure[key] != null).map(key => {
         const v = pressure[key];
         return `${key} avg10=${v.avg10} avg60=${v.avg60} avg300=${v.avg300} total=${v.total_us}`;
       });
-      base.psi[kind] = { status: 'observed', ...parsePsi(lines.join('\n')) };
+      base.psi[kind] = { status: 'observed', scope: 'system', ...parsePsi(lines.join('\n')) };
     } catch { /* 无法验证的压力观测保留unknown。 */ }
   }
   for (const key of ['low', 'high', 'max', 'oom', 'oom_kill', 'oom_group_kill', 'sock_throttled']) {

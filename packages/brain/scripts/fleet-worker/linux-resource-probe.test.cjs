@@ -32,6 +32,7 @@ describe('Linux资源观测不授予执行权限', () => {
       cpu_cores: 0.5, memory_limit_bytes: Number(4n * GIB), memory_available_bytes: Number(GIB),
       disk_free_bytes: 4096000, disk_used_percent: 86 });
     expect(out.psi.memory.some.avg10).toBe(1);
+    for (const kind of ['cpu', 'memory', 'io']) expect(out.psi[kind].scope).toBe('system');
     expect(out.memory_events.high).toBe('2');
     expect(out.gpu.status).toBe('unknown');
     expect(out.ancestry_visible).toBe(false); // namespace根不能证明宿主祖先全部可见。
@@ -61,7 +62,7 @@ describe('Linux资源观测不授予执行权限', () => {
       return read(p);
     };
     const out = await sampleLinuxResources(options);
-    expect(out.psi.cpu).toEqual({ status: 'unsupported' }); expect(out.psi.io).toEqual({ status: 'unknown' });
+    expect(out.psi.cpu).toEqual({ status: 'unsupported', scope: 'system' }); expect(out.psi.io).toEqual({ status: 'unknown', scope: 'system' });
     expect(out.execution).toBe(false);
   });
   it('v1分离controller和cpuset继承，非层级内存保守未知', async () => {

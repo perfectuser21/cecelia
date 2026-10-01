@@ -20,12 +20,13 @@ it('真实HTTP投影保留Linux有界观测但不能透传授权字段或任意�
     status: 'observed', cpu_cores: 0.5, memory_limit_bytes: 1024, memory_available_bytes: 256,
     disk_free_bytes: 1000, disk_used_percent: 50, ancestry_visible: true,
     scope: 'verified_pool', execution: true, pool_verified: true, secret: 'must-not-leak',
-    psi: { memory: { status: 'observed', some: { avg10: 2, avg60: 1, avg300: 0, total_us: '123' }, full: null } } };
+    psi: { memory: { status: 'observed', scope: 'verified_pool', some: { avg10: 2, avg60: 1, avg300: 0, total_us: '123' }, full: null } } };
   const server = createFleetWorkerServer({ probeHealth: async () => ({ linux_observation: linux, os: { version: 'Linux' } }) });
   const response = await request(server).get('/health');
   expect(response.status).toBe(200);
   expect(response.body.linux_observation).toMatchObject({ cpu_cores: 0.5, scope: 'observer_cgroup', execution: false, pool_verified: false });
   expect(response.body.linux_observation.psi.memory.some.avg10).toBe(2);
+  expect(response.body.linux_observation.psi.memory.scope).toBe('system');
   expect(response.text).not.toContain('must-not-leak');
   expect(response.body.resources.cpu_cores).toBe(0);
 });
