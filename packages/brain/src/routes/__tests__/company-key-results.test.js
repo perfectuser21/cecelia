@@ -26,7 +26,7 @@ describe('公司KR真实HTTP入口', () => {
     defaultPool.query.mockResolvedValue({ rows: [{ metadata: { metric_mode: 'company_formula_v1' }, custom_props: { company_notion: { page_id: 'source' } } }] });
     const app = express(); app.use(express.json()); app.use('/api/brain/okr', hierarchy); app.use('/api/brain/goals', taskGoals);
     for (const path of ['/api/brain/okr/key-results/kr', '/api/brain/goals/kr']) {
-      for (const body of [{ metadata: null }, { metadata: { metric_mode: null } }, { current_value: 999 }, ...['company_current_baseline', 'company_formula', 'imported_snapshot', 'metric_window', 'last_target_inlet', 'last_current_inlet'].map(key => ({ metadata: { [key]: null } }))]) {
+      for (const body of [{ metadata: null }, { metadata: { metric_mode: null } }, { current_value: 999 }, ...['company_current_baseline', 'company_projection_pending', 'company_formula', 'imported_snapshot', 'metric_window', 'last_target_inlet', 'last_current_inlet'].map(key => ({ metadata: { [key]: null } }))]) {
         defaultPool.query.mockClear();
         expect((await request(app).patch(path).send(body)).status).toBe(409);
         expect(defaultPool.query.mock.calls.every(([sql]) => !sql.includes('UPDATE'))).toBe(true);

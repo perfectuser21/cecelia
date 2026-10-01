@@ -1,6 +1,7 @@
 /** 公司经营 KR 的来源、原值与公式；不从项目/任务比例推导经营指标。 */
 export const COMPANY_METRIC_MODE = 'company_formula_v1';
 export const COMPANY_KR_DATABASE = '684c40c2-ba63-83a7-b6ba-8161f110a18c';
+export const COMPANY_GOAL_DATABASE = '29ec40c2-ba63-8301-99c1-8110bfd84d9b';
 export const COMPANY_GOALS = [
   { page_id: '3dbc40c2-ba63-8102-8d02-dcc5181489d3', title: 'O1 获客到交付的钱路打通' },
   { page_id: '3dbc40c2-ba63-81fb-9622-fdfc4e8199f3', title: 'O2 发布引擎产能化' },
@@ -94,7 +95,7 @@ export function companyKrView(kr) {
 export function companyPatchIsReserved(body) {
   return ['metadata', 'custom_props'].some(key => key in body && (body[key] === null || typeof body[key] !== 'object' || Array.isArray(body[key])))
     || ['current_value', 'target_value', 'unit', 'objective_id'].some(key => key in body)
-    || ['metric_mode', 'company_metric', 'company_status', 'validation_state', 'progress_source', 'unit_source', 'last_observation', 'source_system', 'company_current_baseline', 'company_formula', 'imported_snapshot', 'metric_window', 'last_target_inlet', 'last_current_inlet'].some(key => key in (body.metadata || {}))
+    || ['metric_mode', 'company_metric', 'company_status', 'validation_state', 'progress_source', 'unit_source', 'last_observation', 'source_system', 'company_current_baseline', 'company_projection_pending', 'company_formula', 'imported_snapshot', 'metric_window', 'last_target_inlet', 'last_current_inlet'].some(key => key in (body.metadata || {}))
     || 'company_notion' in (body.custom_props || {});
 }
 

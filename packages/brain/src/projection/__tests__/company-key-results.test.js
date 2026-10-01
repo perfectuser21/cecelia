@@ -92,7 +92,7 @@ describe('公司库列级投影门', () => {
     fixture.pages[0].properties.Current.number = 3; fixture.pages[0].last_edited_by.id = 'human';
     expect(await runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq: fixture.notionReq, now: 1300001 })).toMatchObject({ claims: 1, patched: 0 });
     expect(fixture.rows[0].metadata).toMatchObject({ company_metric: { current: '3' }, company_projection_pending: { value: '1', superseded_by_human: true }, validation_state: 'unverified' });
-    fixture.pages[0].properties.Current.number = 1;
+    fixture.pages[0].properties.Current.number = 1; fixture.pages[0].last_edited_by.id = 'projection-bot';
     expect(await runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq: fixture.notionReq, now: 1600002 })).toMatchObject({ claims: 0, patched: 1 });
     expect(fixture.rows[0].metadata).toMatchObject({ company_metric: { current: '3' }, validation_state: 'unverified' });
     expect(fixture.pages[0].properties.Current.number).toBe(3);
@@ -101,7 +101,7 @@ describe('公司库列级投影门', () => {
     const fixture = recoveryFixture();
     const notionReq = async (...args) => {
       const page = await fixture.notionReq(...args);
-      if (args[2] === 'PATCH') await ingestCompanyCurrent(fixture.pool, 'kr-0', { page_id: page.id, current: page.properties.Current.number, updated_at: page.last_edited_time });
+      if (args[2] === 'PATCH') await ingestCompanyCurrent(fixture.pool, 'kr-0', { page_id: page.id, current: page.properties.Current.number, editor: page.last_edited_by.id, updated_at: page.last_edited_time });
       return page;
     };
     await expect(runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq, now: 1000000 })).resolves.toMatchObject({ patched: 1, claims: 0 });

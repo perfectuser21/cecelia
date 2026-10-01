@@ -5,7 +5,7 @@ import { runNotionKrProjection, KR_DB_PROPERTIES, configureKrProjection, KR_PROJ
 import express from 'express';
 import request from 'supertest';
 import { createCompanyKrRouter } from '../../routes/company-key-results.js';
-import { COMPANY_GOALS, COMPANY_KR_CATALOG, COMPANY_KR_DATABASE, COMPANY_FORMULA, COMPANY_KR_SQL_GUARD, assertCompanyPatch } from '../../lib/company-kr-metrics.js';
+import { COMPANY_GOALS, COMPANY_GOAL_DATABASE, COMPANY_KR_CATALOG, COMPANY_KR_DATABASE, COMPANY_FORMULA, COMPANY_KR_SQL_GUARD, assertCompanyPatch } from '../../lib/company-kr-metrics.js';
 import { runCompanyKrProjection, COMPANY_KR_VESSEL } from '../../projection/company-key-results.js';
 import { recalculateKrProgress } from '../../lib/kr-recalculate-progress.js';
 import { buildNotionKrProperties } from '../../projection/key-results.js';
@@ -71,28 +71,38 @@ describe('公司KR真实SQL与HTTP', () => {
     const pool = new pg.Pool({ host: process.env.DB_HOST || 'localhost', port: Number(process.env.DB_PORT || 5432), database: process.env.DB_NAME || 'cecelia_test', user: process.env.DB_USER || 'cecelia', password: process.env.DB_PASSWORD });
     const client = await pool.connect(); let taskId;
     const requests = [], remote = new Map();
-    let serial = 0;
+    let serial = 0, fault, failConfirmation = false, wrongGoalParent = false, projectionTime = Date.now();
     // 模块自己的事务映射为savepoint，使真实事务产出可查且完全回滚。
     const scoped = { query: (...args) => client.query(...args), connect: async () => {
       const savepoint = `company_${++serial}`;
-      return { query: (sql, args) => client.query(sql === 'BEGIN' ? `SAVEPOINT ${savepoint}` : sql === 'COMMIT' ? `RELEASE SAVEPOINT ${savepoint}` : sql === 'ROLLBACK' ? `ROLLBACK TO SAVEPOINT ${savepoint}` : sql, args), release() {} };
+      return { query: (sql, args) => {
+        if (failConfirmation && sql.includes("metadata-'company_projection_pending'")) { failConfirmation = false; throw new Error('baseline SQL failed'); }
+        return client.query(sql === 'BEGIN' ? `SAVEPOINT ${savepoint}` : sql === 'COMMIT' ? `RELEASE SAVEPOINT ${savepoint}` : sql === 'ROLLBACK' ? `ROLLBACK TO SAVEPOINT ${savepoint}` : sql, args);
+      }, release() {} };
     } };
     const name = title => ({ type: 'title', title: [{ plain_text: title }] });
     for (const [i, kr] of COMPANY_KR_CATALOG.entries()) remote.set(kr.page_id, { id: kr.page_id, parent: { database_id: COMPANY_KR_DATABASE }, last_edited_time: '2026-09-14T15:05:00Z', last_edited_by: { id: 'source-user' }, properties: { Name: name(kr.title), Goal: { relation: [{ id: kr.goal_id }] }, Area: { relation: [] }, Current: { number: i === 0 ? 1.234 : 0 }, Start: { number: 0 }, Target: { number: 5 }, Status: { status: { name: 'Open' } } } });
     const notionReq = async (_token, path, method, body) => {
       requests.push({ path, method, body });
+      if (path === '/users/me') return { id: 'projection-bot', type: 'bot' };
       if (path === `/databases/${COMPANY_KR_DATABASE}`) return { properties: Object.fromEntries(Object.entries({ Name: 'title', Current: 'number', Target: 'number', Start: 'number', Progress: 'formula', Goal: 'relation', Area: 'relation', Status: 'status' }).map(([k, type]) => [k, { type, ...(k === 'Progress' ? { formula: { expression: COMPANY_FORMULA } } : {}) }])) };
       if (path.endsWith('/query')) return { results: [...remote.values()], has_more: false };
       const id = path.split('/').pop();
       if (remote.has(id) && method === 'GET') return remote.get(id);
-      if (remote.has(id) && method === 'PATCH') { Object.assign(remote.get(id).properties, body.properties); return remote.get(id); }
+      if (remote.has(id) && method === 'PATCH') {
+        Object.assign(remote.get(id).properties, body.properties);
+        remote.get(id).last_edited_by.id = 'projection-bot';
+        if (fault === id) { fault = null; throw new Error('response timeout after apply'); }
+        return remote.get(id);
+      }
       const goal = COMPANY_GOALS.find(g => g.page_id === id);
-      if (goal) return { id, properties: { Name: name(goal.title), Area: { relation: [] }, Status: { status: { name: 'Not Started' } } } };
+      if (goal) return { id, parent: { database_id: wrongGoalParent ? 'wrong-goal-db' : COMPANY_GOAL_DATABASE }, properties: { Name: name(goal.title), Area: { relation: [] }, Status: { status: { name: 'Not Started' } } } };
       throw new Error(`未知Notion测试请求:${path}`);
     };
     const querySpy = vi.spyOn(defaultPool, 'query').mockImplementation((...args) => scoped.query(...args));
     const connectSpy = vi.spyOn(defaultPool, 'connect').mockImplementation(() => scoped.connect());
     const app = express(); app.use(express.json()); app.use('/api/brain', tasksRouter); app.use('/api/brain/tasks', taskTasksRouter); app.use('/api/brain/okr', createCompanyKrRouter({ pool: scoped, token: 'fake', notionReq }));
+    const project = () => runCompanyKrProjection(scoped, { token: 'fake', notionReq, now: projectionTime += 300001 });
     try {
       await client.query('BEGIN');
       await client.query("DELETE FROM key_results WHERE metadata->>'metric_mode'='company_formula_v1'");
@@ -103,6 +113,11 @@ describe('公司KR真实SQL与HTTP', () => {
       taskId = registered.body.id;
       expect((await request(app).post(`/api/brain/tasks/${taskId}/claim`).send({ claimer: 'opc-kr-current', executor_kind: 'external-worker' })).status).toBe(200);
       expect((await request(app).patch(`/api/brain/tasks/${taskId}`).send({ status: 'in_progress' })).body).toMatchObject({ success: true, status: 'in_progress' });
+      wrongGoalParent = true;
+      expect((await request(app).post('/api/brain/okr/company-key-results/import').send({ actor: 'integration-test', task_id: taskId })).status).toBe(400);
+      expect((await client.query("SELECT count(*)::int AS count FROM key_results WHERE metadata->>'metric_mode'='company_formula_v1'")).rows[0].count).toBe(0);
+      expect((await client.query("SELECT count(*)::int AS count FROM objectives WHERE metadata->>'source_system'='notion-company-okr'")).rows[0].count).toBe(0);
+      wrongGoalParent = false;
       const imported = await request(app).post('/api/brain/okr/company-key-results/import').send({ actor: 'integration-test', task_id: taskId });
       expect(imported.status).toBe(200); expect(imported.body).toMatchObject({ created: 8, company_kr_count: 8 });
       const repeated = await request(app).post('/api/brain/okr/company-key-results/import').send({ actor: 'integration-test', task_id: taskId });
@@ -130,7 +145,7 @@ describe('公司KR真实SQL与HTTP', () => {
       expect((await client.query(`UPDATE key_results SET current_value=99 WHERE id=$1 AND ${COMPANY_KR_SQL_GUARD}`, [kr.id])).rowCount).toBe(0);
       const source = remote.get(kr.source_page_id); source.properties.Target.number = 1.234; source.last_edited_by.id = 'bot-after-human-target'; source.last_edited_time = '2026-10-01T01:00:00Z';
       requests.length = 0;
-      expect(await runCompanyKrProjection(scoped, { token: 'fake', notionReq })).toMatchObject({ expected: 8, remote: 8, matched: 8, patched: 1 });
+      expect(await project()).toMatchObject({ expected: 8, remote: 8, matched: 8, patched: 1 });
       const writes = requests.filter(r => r.method === 'PATCH');
       expect(writes).toHaveLength(1); expect(Object.keys(writes[0].body.properties)).toEqual(['Current']);
       expect(source.properties.Target.number).toBe(1.234);
@@ -160,15 +175,69 @@ describe('公司KR真实SQL与HTTP', () => {
       expect(links.rows[0].count).toBe(46);
       const mirror = [...mirrors.values()].find(p => p.properties['Brain ID'].rich_text[0].text.content === kr.id);
       expect(mirror.properties).toMatchObject({ Current: { number: 2.345 }, Target: { number: 1.234 }, Progress: { number: 190 } });
+      // 持久化机器待推值：远端已应用但RPC回执/SQL确认失败，后续新观察不能丢失。
+      const recoveryKr = list.find(r => r.source_page_id === COMPANY_KR_CATALOG[1].page_id);
+      const observeRecovery = async (value, key) => {
+        const fresh = (await request(app).get('/api/brain/okr/company-key-results')).body.items.find(r => r.id === recoveryKr.id);
+        const response = await request(app).post(`/api/brain/okr/key-results/${recoveryKr.id}/observations`).send({ ...body, source_page_id: fresh.source_page_id, unit: fresh.unit, current_value: String(value), expected_updated_at: fresh.updated_at, idempotency_key: key });
+        expect(response.status).toBe(200);
+      };
+      for (const [i, mode] of ['response', 'baseline'].entries()) {
+        const oldValue = i * 2 + 1, newerValue = oldValue + 1;
+        await observeRecovery(oldValue, `pending-${mode}-old`);
+        if (mode === 'response') fault = recoveryKr.source_page_id; else failConfirmation = true;
+        await expect(project()).rejects.toThrow();
+        const pendingRow = (await client.query('SELECT metadata FROM key_results WHERE id=$1', [recoveryKr.id])).rows[0];
+        expect(pendingRow.metadata.company_projection_pending).toMatchObject({ value: String(oldValue), actor: 'brain-notion-projection' });
+        expect(remote.get(recoveryKr.source_page_id).properties.Current.number).toBe(oldValue);
+        await observeRecovery(newerValue, `pending-${mode}-new`);
+        expect(await project()).toMatchObject({ claims: 0, matched: 8 });
+        const recovered = (await client.query('SELECT metadata FROM key_results WHERE id=$1', [recoveryKr.id])).rows[0].metadata;
+        expect(recovered).toMatchObject({ company_metric: { current: String(newerValue) }, company_current_baseline: String(newerValue), validation_state: 'verified_observation' });
+        expect(recovered.company_projection_pending).toBeUndefined();
+      }
+      const recoveredReceipts = (await client.query('SELECT result FROM tasks WHERE id=$1', [taskId])).rows[0].result.metric_observations;
+      expect(recoveredReceipts.filter(e => e.kind === 'machine_projection_confirmed' && e.recovered && e.source_page_id === recoveryKr.source_page_id)).toHaveLength(2);
+      expect(recoveredReceipts.some(e => e.kind === 'human_current_claim' && e.source_page_id === recoveryKr.source_page_id)).toBe(false);
+      await observeRecovery(5, 'pending-human-old'); fault = recoveryKr.source_page_id;
+      await expect(project()).rejects.toThrow();
+      const recoveryPage = remote.get(recoveryKr.source_page_id);
+      recoveryPage.properties.Current.number = 6; recoveryPage.last_edited_by.id = 'human-current-pending';
+      expect(await project()).toMatchObject({ claims: 1, patched: 0 });
+      expect((await client.query('SELECT metadata FROM key_results WHERE id=$1', [recoveryKr.id])).rows[0].metadata).toMatchObject({ company_metric: { current: '6' }, validation_state: 'unverified', company_projection_pending: { value: '5', superseded_by_human: true } });
+      recoveryPage.properties.Current.number = 5; recoveryPage.last_edited_by.id = 'projection-bot'; // 旧机器尝试迟到，仍保留真人主张6。
+      expect(await project()).toMatchObject({ claims: 0, patched: 1 });
+      expect((await client.query('SELECT metadata FROM key_results WHERE id=$1', [recoveryKr.id])).rows[0].metadata).toMatchObject({ company_metric: { current: '6' }, validation_state: 'unverified' });
+      await observeRecovery(7, 'pending-uncertain-old'); fault = recoveryKr.source_page_id;
+      await expect(project()).rejects.toThrow();
+      recoveryPage.properties.Current.number = 6; await observeRecovery(8, 'pending-uncertain-new');
+      requests.length = 0;
+      await expect(project()).rejects.toThrow('未决');
+      await expect(runCompanyKrProjection({ ...scoped }, { token: 'fake', notionReq })).rejects.toThrow('未决'); // 新进程内门状态仍以PG pending为真身。
+      expect(requests.some(r => r.method === 'PATCH')).toBe(false);
+      expect((await client.query('SELECT metadata FROM key_results WHERE id=$1', [recoveryKr.id])).rows[0].metadata).toMatchObject({ company_metric: { current: '8' }, validation_state: 'verified_observation', company_projection_pending: { value: '7' } });
+      recoveryPage.properties.Current.number = 7;
+      expect(await project()).toMatchObject({ claims: 0, patched: 1 });
+      await observeRecovery(9, 'pending-author-old'); fault = recoveryKr.source_page_id;
+      await expect(project()).rejects.toThrow();
+      recoveryPage.last_edited_by.id = 'human-unknown-field-edit'; recoveryPage.properties.Target.number = 7; await observeRecovery(10, 'pending-author-new');
+      requests.length = 0;
+      await expect(project()).rejects.toThrow('作者');
+      expect(requests.some(r => r.method === 'PATCH')).toBe(false);
+      const ambiguous = (await client.query('SELECT metadata FROM key_results WHERE id=$1', [recoveryKr.id])).rows[0].metadata;
+      expect(ambiguous).toMatchObject({ company_metric: { current: '10', target: '7', ratio: 1.429 }, validation_state: 'verified_observation', company_projection_pending: { value: '9', writer_id: 'projection-bot' } });
+      expect((await client.query('SELECT result FROM tasks WHERE id=$1', [taskId])).rows[0].result.metric_observations.some(e => e.kind === 'machine_projection_ambiguous' && e.attempt_id === ambiguous.company_projection_pending.attempt_id)).toBe(true);
+      recoveryPage.last_edited_by.id = 'projection-bot';
+      expect(await project()).toMatchObject({ claims: 0, patched: 1 });
       // 真人Current相对已投影基线变化：保留其值及证据状态，不盲覆写为机器值。
       source.properties.Current.number = 3.456;
       source.last_edited_by.id = 'human-current'; source.last_edited_time = '2026-10-01T02:00:00Z';
       requests.length = 0;
-      expect(await runCompanyKrProjection(scoped, { token: 'fake', notionReq, now: Date.now() + 300001 })).toMatchObject({ patched: 0, matched: 8, claims: 1 });
+      expect(await project()).toMatchObject({ patched: 0, matched: 8, claims: 1 });
       expect(requests.filter(r => r.method === 'PATCH')).toHaveLength(0);
       saved = (await client.query('SELECT * FROM key_results WHERE id=$1', [kr.id])).rows[0];
       expect(saved.metadata).toMatchObject({ company_metric: { current: '3.456' }, validation_state: 'unverified', company_current_baseline: '3.456' });
-      const claim = (await client.query('SELECT result FROM tasks WHERE id=$1', [taskId])).rows[0].result.metric_observations.find(e => e.kind === 'human_current_claim');
+      const claim = (await client.query('SELECT result FROM tasks WHERE id=$1', [taskId])).rows[0].result.metric_observations.find(e => e.kind === 'human_current_claim' && e.source_page_id === kr.source_page_id);
       expect(claim).toMatchObject({ editor: 'human-current', before: { current: '2.345' }, after: { current: '3.456' } });
       const companyBefore = (await client.query("SELECT id,progress FROM key_results WHERE metadata->>'metric_mode'='company_formula_v1' ORDER BY id")).rows;
       await writeProgressToKR(scoped, 99);
@@ -194,7 +263,7 @@ describe('公司KR真实SQL与HTTP', () => {
       // 基线缺失时无法判别来源，留账停该页，双方值都保留。
       await client.query("UPDATE key_results SET metadata=metadata-'company_current_baseline' WHERE id=$1", [kr.id]);
       requests.length = 0;
-      await expect(runCompanyKrProjection(scoped, { token: 'fake', notionReq, now: Date.now() + 600002 })).rejects.toThrow('无基线冲突');
+      await expect(project()).rejects.toThrow('无基线冲突');
       expect(requests.filter(r => r.method === 'PATCH')).toHaveLength(0);
       expect((await client.query('SELECT metadata FROM key_results WHERE id=$1', [kr.id])).rows[0].metadata.company_metric.current).toBe('4.567');
       expect((await client.query('SELECT result FROM tasks WHERE id=$1', [taskId])).rows[0].result.metric_observations.some(e => e.kind === 'current_conflict')).toBe(true);

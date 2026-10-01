@@ -1,4 +1,4 @@
-import { COMPANY_GOALS, COMPANY_KR_CATALOG, COMPANY_FORMULA, COMPANY_KR_DATABASE, COMPANY_METRIC_MODE, companyMetric, compatibleValue, compatibleProgress } from './company-kr-metrics.js';
+import { COMPANY_GOALS, COMPANY_GOAL_DATABASE, COMPANY_KR_CATALOG, COMPANY_FORMULA, COMPANY_KR_DATABASE, COMPANY_METRIC_MODE, companyMetric, compatibleValue, compatibleProgress } from './company-kr-metrics.js';
 import { lockCompanyReceipt, appendCompanyReceipt } from './company-kr-observations.js';
 
 function validate(data) {
@@ -30,12 +30,12 @@ export async function importCompanyKrs(pool, data, { actor, task_id } = {}) {
       const goal = data.goals.find(g => g.page_id === source.page_id);
       const existing = await client.query("SELECT id,metadata,custom_props FROM objectives WHERE custom_props->'company_notion'->>'page_id'=$1 FOR UPDATE", [source.page_id]);
       if (existing.rows.length > 1) throw new Error('Goal来源存在重复映射');
-      if (existing.rows[0] && (existing.rows[0].metadata?.source_system !== 'notion-company-okr' || existing.rows[0].custom_props?.company_notion?.database_id !== '29ec40c2-ba63-8301-99c1-8110bfd84d9b')) throw new Error('Goal来源已有其它归属');
+      if (existing.rows[0] && (existing.rows[0].metadata?.source_system !== 'notion-company-okr' || existing.rows[0].custom_props?.company_notion?.database_id !== COMPANY_GOAL_DATABASE)) throw new Error('Goal来源已有其它归属');
       let id = existing.rows[0]?.id;
       if (!id) {
         const inserted = await client.query(
           `INSERT INTO objectives(title,status,metadata,custom_props) VALUES($1,'active',$2::jsonb,$3::jsonb) RETURNING id`,
-          [goal.title, JSON.stringify({ company_status: goal.status, source_system: 'notion-company-okr' }), JSON.stringify({ company_notion: { database_id: '29ec40c2-ba63-8301-99c1-8110bfd84d9b', page_id: source.page_id, area_ids: [] } })]);
+          [goal.title, JSON.stringify({ company_status: goal.status, source_system: 'notion-company-okr' }), JSON.stringify({ company_notion: { database_id: COMPANY_GOAL_DATABASE, page_id: source.page_id, area_ids: [] } })]);
         id = inserted.rows[0].id;
       }
       objectives[source.page_id] = id;
