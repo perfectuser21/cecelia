@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * v1.0.1 接线三件（N4 三跑实证修订，与 harness-controller skill v1.1.0 配套）：
  * 1. spawn env 补 HARNESS_NODE + HARNESS_CALLBACK_URL —— entrypoint tee stdout 观测
