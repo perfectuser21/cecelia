@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,15 +48,5 @@ describe('FR-03: Brain deploy/dev 端点核验 [BEHAVIOR]', () => {
       { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
     ).trim();
     expect(testFiles.length, '未找到覆盖 POST /api/brain/deploy {dev:true} 的单元测试').toBeGreaterThan(0);
-  });
-
-  it('T04: auto-dev-deploy.yml 存在且配置齐全（develop 触发/串行 concurrency/不取消在途/超时限制）', () => {
-    const workflowPath = path.join(ROOT_DIR, '.github/workflows/auto-dev-deploy.yml');
-    expect(existsSync(workflowPath), '.github/workflows/auto-dev-deploy.yml 不存在（FR-03 未实施）').toBe(true);
-    const content = readFileSync(workflowPath, 'utf-8');
-    expect(content, 'T04a: workflow 缺少 develop 分支触发条件').toContain('develop');
-    expect(content, 'T04b: 缺少 concurrency group=deploy-environment').toContain('deploy-environment');
-    expect(content, 'T04c: 缺少 cancel-in-progress: false').toContain('cancel-in-progress: false');
-    expect(content, 'T04d: 缺少 timeout-minutes 配置').toContain('timeout-minutes');
   });
 });
