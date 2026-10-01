@@ -16,6 +16,15 @@ it('shim配置必须受保护，参数只有HOME幂等键，URL内不能携带�
 
 import http from 'node:http';
 import {PassThrough} from 'node:stream';
+it('每次shim启动生成独立请求键，同一静态配置不永久命中旧代',async()=>{
+ const keys=[];const server=http.createServer((req,res)=>{let body='';req.on('data',x=>body+=x);req.on('end',()=>{
+  keys.push(JSON.parse(body).request_key);res.end(JSON.stringify({status:'waiting_resources'}));
+ });});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const config={brainUrl:`http://127.0.0.1:${server.address().port}`,internalToken:'x'.repeat(32),homeId:'chat-test'};
+ try{for(let i=0;i<2;i++)await expect(api.runShim(config)).rejects.toThrow('appserver_waiting_resources');
+  expect(keys).toHaveLength(2);for(const key of keys)expect(key).toMatch(/^[a-f0-9-]{36}$/);expect(keys[0]).not.toBe(keys[1]);
+ }finally{await new Promise(r=>server.close(r));}
+});
 it.each(['clean-eof','stdio-error'])('真实HTTP请求送出后%s不能成功退出或自动重试',async(mode)=>{
  const reservation=randomUUID(),streamId=randomUUID();let received=0,controls=0;const sockets=new Set();
  const server=http.createServer((req,res)=>{

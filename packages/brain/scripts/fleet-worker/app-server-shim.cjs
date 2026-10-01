@@ -2,13 +2,14 @@
 'use strict';
 const fs=require('node:fs'),http=require('node:http'),https=require('node:https'),os=require('node:os'),path=require('node:path');
 const {pipeline}=require('node:stream');
+const {randomUUID}=require('node:crypto');
 const {createJsonlBoundary}=require('./app-server-stream.cjs');
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 function endpoint(raw){const u=new URL(raw);if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.search||u.hash)throw Error('appserver_shim_config_invalid');return u;}
 function loadShimConfig(filename){
  let fd;try{fd=fs.openSync(filename,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);}catch{throw Error('appserver_shim_config_untrusted');}
  try{const st=fs.fstatSync(fd);if(!st.isFile()||(st.mode&0o077)!==0||(st.uid!==0&&st.uid!==process.getuid?.())||st.size>65536)throw Error('appserver_shim_config_untrusted');
-  const c=JSON.parse(fs.readFileSync(fd,'utf8'));if(!c||Object.keys(c).some(k=>!['brainUrl','internalToken','homeId','requestKey'].includes(k))||typeof c.internalToken!=='string'||c.internalToken.length<32||!/^chat-[a-z0-9-]{1,80}$/.test(c.homeId)||!UUID.test(c.requestKey))throw Error('appserver_shim_config_invalid');
+  const c=JSON.parse(fs.readFileSync(fd,'utf8'));if(!c||Object.keys(c).some(k=>!['brainUrl','internalToken','homeId','requestKey'].includes(k))||typeof c.internalToken!=='string'||c.internalToken.length<32||!/^chat-[a-z0-9-]{1,80}$/.test(c.homeId)||(c.requestKey!==undefined&&!UUID.test(c.requestKey)))throw Error('appserver_shim_config_invalid');
   if(endpoint(c.brainUrl).pathname!=='/')throw Error('appserver_shim_config_invalid');return Object.freeze(c);
  }finally{fs.closeSync(fd);}
 }
@@ -31,7 +32,9 @@ function control(config,route,body){
  });
 }
 async function runShim(config,input=process.stdin,output=process.stdout){
- const {value:g}=await control(config,'/generations',{home_id:config.homeId,request_key:config.requestKey});
+ // 旧静态配置字段仅兼容读取；每个物理连接生命周期使用一个新幂等键。
+ const requestKey=randomUUID();
+ const {value:g}=await control(config,'/generations',{home_id:config.homeId,request_key:requestKey});
  if(g.status!=='running'||!UUID.test(g.reservation_id))throw Error(g.status==='waiting_resources'?'appserver_waiting_resources':'appserver_generation_unavailable');
  const {value:stream,token}=await control(config,`/generations/${g.reservation_id}/stream`,{}),url=endpoint(stream.stream_url);
  if(!UUID.test(stream.stream_id)||url.pathname!==`/app-server-streams/${stream.stream_id}`||!/^[a-f0-9]{64}$/.test(token??'')||stream.expires_at<=Date.now())throw Error('appserver_stream_ticket_invalid');

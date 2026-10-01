@@ -3,6 +3,23 @@ import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 let api;try{api=require('./app-server-rpc.cjs');}catch{api={};}
 const client=(policy,id,method,params={})=>policy.client({id,method,params});
+it('现网searchable namespace保留已授权业务工具，声明不能增加profile权限',()=>{
+ const p=api.createRpcPolicy({hostTools:['read','message','memory_get']});
+ const tools=[{type:'namespace',name:'openclaw',description:'OpenClaw tools',tools:
+  ['read','message','memory_get','exec','sessions_spawn','web_fetch'].map(name=>({type:'function',name,description:name,inputSchema:{}}))}];
+ expect(client(p,1,'thread/start',{dynamicTools:tools}).forward.params.dynamicTools[0].tools.map(t=>t.name)).toEqual(['read','message','memory_get']);
+ for(const name of ['read','message','memory_get']){
+  expect(p.server({id:name,method:'item/tool/call',params:{tool:name,namespace:'openclaw',arguments:{},threadId:'t',turnId:'u',callId:'c'}}).forward).toBeTruthy();
+ }
+ for(const name of ['exec','sessions_spawn','web_fetch']){
+  expect(p.server({id:name,method:'item/tool/call',params:{tool:name,namespace:'openclaw',arguments:{},threadId:'t',turnId:'u',callId:'c'}}).reply?.error.message).toBe('appserver_host_tool_denied');
+ }
+});
+it('缺profile授权的默认工具集仍不开放业务写入，合法openclaw命名空间不误删read',()=>{
+ const p=api.createRpcPolicy();
+ const tools=[{type:'namespace',name:'openclaw',description:'tools',tools:['read','message'].map(name=>({type:'function',name,description:name,inputSchema:{}}))}];
+ expect(client(p,1,'thread/start',{dynamicTools:tools}).forward.params.dynamicTools[0].tools.map(t=>t.name)).toEqual(['read']);
+});
 it('真实插件无参请求保留null合同，显式null不能冒充对象参数',()=>{
  for(const method of ['configRequirements/read','account/logout']){
   for(const params of [undefined,null]){
