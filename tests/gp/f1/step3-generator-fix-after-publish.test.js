@@ -18,6 +18,8 @@ import { promisify } from 'node:util';
 
 import attemptRunnerModule from '../../../packages/brain/scripts/fleet-worker/attempt-runner.cjs';
 import workspaceManagerModule from '../../../packages/brain/scripts/fleet-worker/workspace-manager.cjs';
+import resourceAdmissionModule from '../../../packages/brain/scripts/fleet-worker/local-resource-admission.cjs';
+const resourceProfile = JSON.parse(fs.readFileSync(new URL('../../../packages/brain/config/fleet-node-profiles.json', import.meta.url), 'utf8')).profiles.find((profile) => profile.machine_id === 'us-mac-m4');
 
 const { createAttemptRunner } = attemptRunnerModule;
 const { createWorkspaceManager } = workspaceManagerModule;
@@ -160,10 +162,11 @@ function request(fixture, { attemptId, role, sourceAttemptId = null, provider = 
 }
 
 describe('F1 step3 造完真验 — publisher 发布后 generator-fix 仍能基于原候选续改', () => {
-  let fixture; let docker; let stateStore; let runner; let workspaceManager;
+  let fixture; let docker; let stateStore; let runner; let workspaceManager; let memoryFreePercent;
 
   beforeEach(() => {
     fixture = createGitFixture();
+    memoryFreePercent = 60;
     workspaceManager = createWorkspaceManager({
       mirrorRoot: fixture.mirrorRoot,
       worktreeRoot: fixture.worktreeRoot,
@@ -174,6 +177,19 @@ describe('F1 step3 造完真验 — publisher 发布后 generator-fix 仍能基�
     docker = fakeDocker();
     stateStore = inMemoryStateStore();
     runner = createAttemptRunner({
+      assertLocalResources: resourceAdmissionModule.createLocalResourceAdmission({
+        workerId: WORKER_ID, diskPaths: [fixture.root], platform: 'darwin', loadProfile: () => resourceProfile,
+        runCommand: async (command, args) => {
+          const key = [command, ...args].join(' ');
+          const output = {
+            'sysctl -n hw.ncpu': '8', 'sysctl -n hw.memsize': String(16 * 1024 ** 3),
+            'sysctl -n vm.loadavg': '{ 1.0 1.0 1.0 }',
+            'memory_pressure -Q': `System-wide memory free percentage: ${memoryFreePercent}%`,
+            'docker info --format {{json .}}': JSON.stringify({ NCPU: 8, MemTotal: 12 * 1024 ** 3 }),
+          };
+          return { stdout: command === 'df' ? 'Filesystem Blocks Used Available Capacity Mount\n/dev/test 100000000 10000000 90000000 10% /test' : output[key] };
+        },
+      }),
       workspaceManager,
       docker,
       stateStore,
@@ -199,6 +215,22 @@ describe('F1 step3 造完真验 — publisher 发布后 generator-fix 仍能基�
     await runner.start(req.attempt_id, { owner: req.lease_owner, generation: req.lease_generation });
     docker.exit(req.attempt_id, statusCode);
   }
+
+  it('真实工作区prepare后内存恶化阻止start；恢复后同lease启动一次', async () => {
+    const req = request(fixture, { attemptId: GEN_A, role: 'generator' });
+    await runner.prepare(req);
+    const prepared = await stateStore.get(GEN_A);
+    expect(fs.existsSync(prepared.workspace.path)).toBe(true);
+    memoryFreePercent = 5;
+    const lease = { owner: req.lease_owner, generation: req.lease_generation };
+    await expect(runner.start(GEN_A, lease)).rejects.toMatchObject({ statusCode: 429 });
+    expect((await stateStore.get(GEN_A)).status).toBe('prepared');
+    expect(docker.start).not.toHaveBeenCalled();
+    memoryFreePercent = 60;
+    await runner.start(GEN_A, lease);
+    await runner.start(GEN_A, lease);
+    expect(docker.start).toHaveBeenCalledOnce();
+  });
 
   it('generator 候选 → publisher exit=0 → 候选仍在，generator-fix 可 prepare', async () => {
     // 1) generator A 产出候选（真 workspace，exit 0 → retained candidate）
