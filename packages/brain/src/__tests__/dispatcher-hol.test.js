@@ -95,6 +95,10 @@ vi.mock('../slot-allocator.js', () => ({
   shouldBypassBackpressure: vi.fn(() => false),
 }));
 
+vi.mock('../eviction.js', () => ({
+  findEvictionCandidate: vi.fn(), requeueEvictedTask: vi.fn(),
+}));
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function makeSlotBudget({ codexAvailable = true } = {}) {
   return {
@@ -222,5 +226,30 @@ describe('dispatcher HOL blocking fix', () => {
 
     expect(result.dispatched).toBe(false);
     expect(result.reason).toBe('hol_skip_cap_exceeded');
+  });
+});
+
+
+describe('机群硬资源关闭不驱逐既有任务', () => {
+  it('高优排队且所有机器不可用时既不kill也不回队', async () => {
+    vi.clearAllMocks();
+    const { calculateSlotBudget } = await import('../slot-allocator.js');
+    const { findEvictionCandidate, requeueEvictedTask } = await import('../eviction.js');
+    const { killProcessTwoStage, triggerCeceliaRun } = await import('../executor.js');
+    calculateSlotBudget.mockResolvedValue({
+      ...makeSlotBudget({ codexAvailable: false }),
+      dispatchAllowed: false, resourceAdmissionBlocked: true,
+      resources: { effectiveSlots: 0 }, taskPool: { budget: 0, available: 0 },
+    });
+    mockQuery.mockImplementation(async () => ({ rows: [{ priority: 'P0' }] }));
+    findEvictionCandidate.mockResolvedValue({ taskId: 'running-low', priority: 'P2', pgid: 123, score: 1 });
+    killProcessTwoStage.mockResolvedValue({ killed: false });
+    const { dispatchNextTask } = await import('../dispatcher.js');
+    const result = await dispatchNextTask([]);
+    expect(killProcessTwoStage).not.toHaveBeenCalled();
+    expect(findEvictionCandidate).not.toHaveBeenCalled();
+    expect(requeueEvictedTask).not.toHaveBeenCalled();
+    expect(triggerCeceliaRun).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ dispatched: false, reason: 'resource_unavailable', actions: [] });
   });
 });
