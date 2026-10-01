@@ -109,4 +109,10 @@ describe('新 projects 真身对按需入口可见（d8ca5e1e 永久回归）', 
     expect(prompt).toContain('根据审查意见修正拆解');
     expect(prompt).not.toContain('状态为 completed');
   });
+  it('首次拆解将选定 Project 写入本棒结果，回调无需猜最新项目', async () => {
+    const prompt = await preparePrompt({ id: 'decomp-task', title: '拆解项目', goal_id: 'kr-new', payload: { decomposition: 'true' } });
+    expect(prompt).toContain('PATCH /api/brain/tasks/decomp-task');
+    expect(prompt).toContain('"decomposition_project_id": "<选定 Project ID>"');
+  });
+
 });

@@ -81,4 +81,34 @@ describe('拆解完成回调只消费 projects 和直接子任务', () => {
     expect(update[1][2]).toBe('old-confirmation');
   });
 
+  it('首次复用项目优先本棒 result 中选定 Project，避免误审同 KR 最新项目', async () => {
+    const pool = makePool({ task_type: 'dev', goal_id: 'kr', payload: { decomposition: 'true' },
+      result: { decomposition_project_id: 'chosen-old-project' } });
+    const delegate = pool.query.getMockImplementation();
+    pool.query.mockImplementation(async (sql, args) => {
+      if (sql.includes('FROM projects')) {
+        expect(args[1]).toBe('chosen-old-project');
+        return { rows: [{ id: args[1], name: '已选择项目' }] };
+      }
+      return delegate(sql, args);
+    });
+    expect(await triggerCompletedDecompositionReview(pool, 'first-decomp', {
+      shouldReview: vi.fn(async () => true), createReview: vi.fn(async () => ({})),
+    })).toMatchObject({ project_id: 'chosen-old-project' });
+  });
+
+  it('无显式项目且同 KR 多项目时拒绝猜选最新项目', async () => {
+    const pool = makePool({ task_type: 'dev', goal_id: 'kr', payload: { decomposition: 'true' } });
+    const delegate = pool.query.getMockImplementation();
+    pool.query.mockImplementation(async (sql, args) => {
+      if (sql.includes('FROM projects')) return { rows: [{ id: 'first' }, { id: 'second' }] };
+      return delegate(sql, args);
+    });
+    const createReview = vi.fn();
+    expect(await triggerCompletedDecompositionReview(pool, 'unbound-decomp', {
+      shouldReview: vi.fn(async () => true), createReview,
+    })).toMatchObject({ skipped: true, reason: 'ambiguous_project' });
+    expect(createReview).not.toHaveBeenCalled();
+  });
+
 });
