@@ -21,7 +21,7 @@ fi
 echo "[rumination-smoke] Brain 健康 ✓"
 
 echo "[rumination-smoke] 2. 检查 rumination provider 配置（必须为 anthropic-api 或 anthropic，不能是 codex）"
-PROVIDER=$(psql "${DATABASE_URL:-postgresql://localhost/cecelia}" -t -c "SELECT config->'rumination'->>'provider' FROM model_profiles WHERE is_active = true LIMIT 1;" 2>/dev/null | tr -d ' \n' || true)
+PROVIDER=$(psql -X "${DATABASE_URL:-postgresql://localhost/cecelia}" -t -c "SELECT config->'rumination'->>'provider' FROM model_profiles WHERE is_active = true LIMIT 1;" 2>/dev/null | tr -d ' \n' || true)
 if [[ "$PROVIDER" == "codex" || "$PROVIDER" == "openai" ]]; then
   echo "[rumination-smoke] FAIL: rumination provider=${PROVIDER}（错误配置）"
   exit 1
@@ -50,7 +50,7 @@ if [[ "$PROCESSED" == "0" ]]; then
 fi
 
 echo "[rumination-smoke] 4. 验证最近 60s 有 rumination_run 心跳"
-COUNT=$(psql "${DATABASE_URL:-postgresql://localhost/cecelia}" -t -c "
+COUNT=$(psql -X "${DATABASE_URL:-postgresql://localhost/cecelia}" -t -c "
   SELECT COUNT(*) FROM cecelia_events
   WHERE event_type = 'rumination_run'
     AND created_at > NOW() - INTERVAL '60 seconds';

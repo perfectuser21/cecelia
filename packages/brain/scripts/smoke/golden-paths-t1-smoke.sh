@@ -18,14 +18,14 @@ fail() { echo "❌ $1"; FAIL=$((FAIL+1)); }
 # ── 1. 表存在 + 非法状态 INSERT 被 CHECK 拒（psql）──
 echo "── 1. golden_paths 表 + CHECK 约束（psql）──"
 if ! command -v psql >/dev/null 2>&1; then
-  echo "[smoke] SKIP: psql 不可用"
-elif ! psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
+  echo "[smoke] SKIP: psql -X 不可用"
+elif ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] SKIP: DB 不可达"
 else
-  psql "$DB" -tAc "SELECT 1 FROM golden_paths LIMIT 0" >/dev/null 2>&1 \
+  psql -X "$DB" -tAc "SELECT 1 FROM golden_paths LIMIT 0" >/dev/null 2>&1 \
     && ok "golden_paths 表存在" || fail "golden_paths 表不存在"
 
-  psql "$DB" -tAc "BEGIN; INSERT INTO golden_paths(title, one_liner, status) VALUES('smoke bogus','smoke','bogus'); ROLLBACK;" >/dev/null 2>&1 \
+  psql -X "$DB" -tAc "BEGIN; INSERT INTO golden_paths(title, one_liner, status) VALUES('smoke bogus','smoke','bogus'); ROLLBACK;" >/dev/null 2>&1 \
     && fail "status CHECK 未生效（非法值 bogus 竟被接受）" \
     || ok "status CHECK 生效（拒绝非法值 bogus）"
 fi
@@ -79,7 +79,7 @@ fi
 # ── 5. 清理该测试行 ──
 if [[ -n "$GP_ID" ]] && command -v psql >/dev/null 2>&1 && psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "── 5. 清理测试行 ──"
-  psql "$DB" -tAc "DELETE FROM golden_paths WHERE id = '$GP_ID'" >/dev/null 2>&1 \
+  psql -X "$DB" -tAc "DELETE FROM golden_paths WHERE id = '$GP_ID'" >/dev/null 2>&1 \
     && ok "清理测试行 $GP_ID" || fail "清理测试行失败"
 fi
 

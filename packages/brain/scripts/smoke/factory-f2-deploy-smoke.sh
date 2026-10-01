@@ -21,7 +21,7 @@ BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 PASS=0; FAIL=0
 ok()   { echo "✅ $1"; PASS=$((PASS+1)); }
 fail() { echo "❌ $1"; FAIL=$((FAIL+1)); }
-psql_q() { psql -qtAc "$1"; }
+psql_q() { psql -X -qtAc "$1"; }
 
 echo "== F2 部署：蓝绿 sidecar drain 回路 =="
 

@@ -14,14 +14,14 @@ TASK=$(curl -q -sf -X POST "$BRAIN/api/brain/tasks" \
 ID=$(echo "$TASK" | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
 echo "Created task $ID"
 
-psql "${DATABASE_URL:-postgresql://localhost/cecelia}" -c \
+psql -X "${DATABASE_URL:-postgresql://localhost/cecelia}" -c \
   "UPDATE tasks SET status='in_progress', claimed_by='smoke-test-tick' WHERE id='$ID'" > /dev/null
 
 curl -q -sf -X PATCH "$BRAIN/api/brain/tasks/$ID" \
   -H "Content-Type: application/json" \
   -d '{"status":"failed"}' > /dev/null
 
-CLAIMED=$(psql "${DATABASE_URL:-postgresql://localhost/cecelia}" -tAc \
+CLAIMED=$(psql -X "${DATABASE_URL:-postgresql://localhost/cecelia}" -tAc \
   "SELECT COALESCE(claimed_by,'') FROM tasks WHERE id='$ID'")
 if [ -n "$CLAIMED" ]; then
   echo "FAIL: claimed_by=$CLAIMED not cleared after failed"

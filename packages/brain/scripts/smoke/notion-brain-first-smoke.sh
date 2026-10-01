@@ -10,7 +10,7 @@ if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "$B
   exit 0
 fi
 
-if ! psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
+if ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] SKIP — 无 DB 连接"
   exit 0
 fi
@@ -28,11 +28,11 @@ fi
 JOURNEY_ID=$(echo "$RESP" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.id||'')" 2>/dev/null || true)
 [ -n "$JOURNEY_ID" ] || { echo "FAIL: 响应无 id 字段"; exit 1; }
 
-DB_COUNT=$(psql "$DB" -tAc "SELECT COUNT(*) FROM journeys WHERE id='$JOURNEY_ID' AND notion_synced_at IS NULL")
+DB_COUNT=$(psql -X "$DB" -tAc "SELECT COUNT(*) FROM journeys WHERE id='$JOURNEY_ID' AND notion_synced_at IS NULL")
 [ "$DB_COUNT" = "1" ] || { echo "FAIL: journeys 行不存在或 notion_synced_at 不为 NULL"; exit 1; }
 
 # 清理
-psql "$DB" -tAc "DELETE FROM journeys WHERE id='$JOURNEY_ID'" >/dev/null
+psql -X "$DB" -tAc "DELETE FROM journeys WHERE id='$JOURNEY_ID'" >/dev/null
 
 echo "[smoke] 测试 POST /api/brain/issues..."
 IRESP=$(curl -q -sf -X POST "$BRAIN/api/brain/issues" \
@@ -47,9 +47,9 @@ fi
 ISSUE_ID=$(echo "$IRESP" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));process.stdout.write(d.id||'')" 2>/dev/null || true)
 [ -n "$ISSUE_ID" ] || { echo "FAIL: issues 响应无 id 字段"; exit 1; }
 
-IDB_COUNT=$(psql "$DB" -tAc "SELECT COUNT(*) FROM issues WHERE id='$ISSUE_ID' AND notion_synced_at IS NULL")
+IDB_COUNT=$(psql -X "$DB" -tAc "SELECT COUNT(*) FROM issues WHERE id='$ISSUE_ID' AND notion_synced_at IS NULL")
 [ "$IDB_COUNT" = "1" ] || { echo "FAIL: issues 行不存在或 notion_synced_at 不为 NULL"; exit 1; }
 
-psql "$DB" -tAc "DELETE FROM issues WHERE id='$ISSUE_ID'" >/dev/null
+psql -X "$DB" -tAc "DELETE FROM issues WHERE id='$ISSUE_ID'" >/dev/null
 
 echo "✅ notion-brain-first smoke 全部通过"

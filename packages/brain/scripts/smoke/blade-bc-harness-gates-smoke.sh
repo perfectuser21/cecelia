@@ -25,7 +25,7 @@ fi
 
 cleanup() {
   if command -v psql >/dev/null 2>&1; then
-    psql "$DB" -X -v ON_ERROR_STOP=1 -c \
+    psql -X "$DB" -X -v ON_ERROR_STOP=1 -c \
       "DELETE FROM initiative_runs WHERE current_task_id IN (
          SELECT id FROM tasks WHERE payload->>'smoke_tag' = '$SMOKE_TAG'
        );
@@ -45,7 +45,7 @@ echo "[blade-bc smoke] 检查 harness judge 机械闸 + complete 收账权守卫
 
 # 1. Judge 必须绑定 exact run authority，脱离 run 的客户端请求 fail-closed。
 if ! command -v psql >/dev/null 2>&1 || ! psql "$DB" -X -tAc 'SELECT 1' >/dev/null 2>&1; then
-  echo "[blade-bc smoke] SKIP — DB/psql 不可达，无法建立 Judge exact-run authority"
+  echo "[blade-bc smoke] SKIP — DB/psql -X 不可达，无法建立 Judge exact-run authority"
   exit 0
 fi
 

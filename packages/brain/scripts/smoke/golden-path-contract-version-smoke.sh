@@ -25,7 +25,7 @@ DATABASE_URL="$DB_URL" node \
 
 cleanup() {
   [ -n "$GP_ID" ] || return 0
-  psql "$DB_URL" -v ON_ERROR_STOP=1 -q <<SQL
+  psql -X "$DB_URL" -v ON_ERROR_STOP=1 -q <<SQL
 DELETE FROM golden_path_contract_versions WHERE golden_path_id = '$GP_ID';
 DELETE FROM decisions WHERE context->>'golden_path_id' = '$GP_ID';
 DELETE FROM golden_paths WHERE id = '$GP_ID';
@@ -69,7 +69,7 @@ expect_code() {
   }
 }
 
-JOURNEY_ID=$(psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc \
+JOURNEY_ID=$(psql -X "$DB_URL" -v ON_ERROR_STOP=1 -tAc \
   "INSERT INTO journeys (name, description)
    VALUES ('$RUN_KEY', 'versioned GP contract smoke')
    RETURNING id" | head -1)
@@ -141,12 +141,12 @@ expect_code 201
 CONTRACT_V2_ID=$(jq -er '.contract_version.id' <<<"$HTTP_BODY")
 ACTION_V2=$(jq -er '.pending_action_id' <<<"$HTTP_BODY")
 
-LIFECYCLE=$(psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc \
+LIFECYCLE=$(psql -X "$DB_URL" -v ON_ERROR_STOP=1 -tAc \
   "SELECT string_agg(version || ':' || status, ',' ORDER BY version)
      FROM golden_path_contract_versions
     WHERE golden_path_id = '$GP_ID'")
 [ "$LIFECYCLE" = "1:invalidated,2:pending_signature" ]
-[ "$(psql "$DB_URL" -tAc "SELECT status FROM tasks WHERE id = '$TASK_V1'")" = "cancelled" ]
+[ "$(psql -X "$DB_URL" -tAc "SELECT status FROM tasks WHERE id = '$TASK_V1'")" = "cancelled" ]
 
 request PATCH "/golden-paths/$GP_ID" '{"status":"converged"}'
 expect_code 200
@@ -159,7 +159,7 @@ jq -e --arg id "$CONTRACT_V2_ID" \
    | .gp_contract_id == $id and .gp_contract_version == 2' \
   <<<"$HTTP_BODY" >/dev/null
 
-FINAL=$(psql "$DB_URL" -v ON_ERROR_STOP=1 -tAc \
+FINAL=$(psql -X "$DB_URL" -v ON_ERROR_STOP=1 -tAc \
   "SELECT string_agg(version || ':' || status, ',' ORDER BY version)
      FROM golden_path_contract_versions
     WHERE golden_path_id = '$GP_ID'")

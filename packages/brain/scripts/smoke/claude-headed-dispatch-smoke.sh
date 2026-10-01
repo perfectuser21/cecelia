@@ -16,7 +16,7 @@ PASS=0; FAIL=0
 ok()   { echo "  ✅ $1"; ((PASS++)) || true; }
 fail() { echo "  ❌ $1"; ((FAIL++)) || true; }
 cleanup() {
-  psql "$DB" \
+  psql -X "$DB" \
     -c "UPDATE tasks SET status='cancelled', updated_at=NOW() WHERE payload->>'smoke_tag' = '$SMOKE_TAG' AND status NOT IN ('completed','cancelled')" \
     >/dev/null 2>&1 || true
 }
@@ -57,7 +57,7 @@ CODE3=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/task
   || fail "POST tasks(mode=invalid) 应返 400，实际 $CODE3"
 
 # 5. initiative_runs 表含 tmux_killed_at 字段（migration 316）
-COL=$(psql "$DB" -t -c "SELECT column_name FROM information_schema.columns WHERE table_name='initiative_runs' AND column_name='tmux_killed_at'" 2>/dev/null | tr -d ' ' || echo "")
+COL=$(psql -X "$DB" -t -c "SELECT column_name FROM information_schema.columns WHERE table_name='initiative_runs' AND column_name='tmux_killed_at'" 2>/dev/null | tr -d ' ' || echo "")
 [ "$COL" = "tmux_killed_at" ] \
   && ok "initiative_runs.tmux_killed_at 字段存在（migration 316）" \
   || fail "initiative_runs.tmux_killed_at 字段不存在（migration 316 未跑？）"

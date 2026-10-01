@@ -14,7 +14,7 @@ fi
 BRAIN="${BRAIN_URL:-${BRAIN:-http://localhost:5221}}"
 DB_URL="${DATABASE_URL:-${DB_URL:-postgresql://localhost/cecelia}}"
 
-uuid() { psql "$DB_URL" -t -c "$1" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1; }
+uuid() { psql -X "$DB_URL" -t -c "$1" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1; }
 
 BODY=""; CODE=""
 req() {

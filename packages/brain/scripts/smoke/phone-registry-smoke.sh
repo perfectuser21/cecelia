@@ -17,7 +17,7 @@ cd "$(dirname "$0")/../.."
 ROWS_JSON=""
 if command -v psql >/dev/null 2>&1 && { [ -n "${DATABASE_URL:-}" ] || [ -n "${PGDATABASE:-}" ]; }; then
   echo "[phone-registry-smoke] 2. 真库 phone_registry 种子"
-  ROWS_JSON=$(psql ${DATABASE_URL:+"$DATABASE_URL"} -v ON_ERROR_STOP=1 -Atc \
+  ROWS_JSON=$(psql -X ${DATABASE_URL:+"$DATABASE_URL"} -v ON_ERROR_STOP=1 -Atc \
     "SELECT COALESCE(json_agg(row_to_json(p) ORDER BY serial), '[]') FROM phone_registry p" 2>/dev/null || echo "")
   if [ -n "$ROWS_JSON" ]; then
     N=$(node -e "console.log(JSON.parse(process.argv[1]).length)" "$ROWS_JSON")

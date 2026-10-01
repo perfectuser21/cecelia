@@ -45,7 +45,7 @@ fi
 RUN_ID=''
 DEADLINE=$((SECONDS + ${HARNESS_ROLE_CHAIN_TIMEOUT_SECONDS:-900}))
 while ((SECONDS < DEADLINE)); do
-  RUN_ID=$(psql "$DB_URL" -v ON_ERROR_STOP=1 -At \
+  RUN_ID=$(psql -X "$DB_URL" -v ON_ERROR_STOP=1 -At \
     -v task_id="$TASK_ID" -c \
     "SELECT id FROM initiative_runs WHERE current_task_id=:'task_id'::uuid ORDER BY created_at DESC LIMIT 1" \
     | tr -d '[:space:]')
@@ -68,15 +68,15 @@ json_get "$RUN_JSON" '.evaluate_verdict == "PASS"' >/dev/null \
 json_get "$RUN_JSON" '.judge_verdict == "PASS"' >/dev/null \
   || fail 'judge_verdict is not literal PASS'
 
-psql "$DB_URL" -v ON_ERROR_STOP=1 -At -v run_id="$RUN_ID" -c \
+psql -X "$DB_URL" -v ON_ERROR_STOP=1 -At -v run_id="$RUN_ID" -c \
   "SELECT count(DISTINCT role)=3 FROM harness_attempts WHERE run_id=:'run_id'::uuid AND role IN ('generator','evaluator','judge') AND status='completed'" \
   | grep -qx t || fail 'generator/evaluator/judge attempts are incomplete'
-psql "$DB_URL" -v ON_ERROR_STOP=1 -At -v run_id="$RUN_ID" -c \
+psql -X "$DB_URL" -v ON_ERROR_STOP=1 -At -v run_id="$RUN_ID" -c \
   "SELECT EXISTS (SELECT 1 FROM orchestrator_decision_log WHERE run_id=:'run_id'::uuid AND action='merge_pr' AND detail->>'reason'='all_gates_passed')" \
   | grep -qx t || fail 'all_gates_passed merge decision is absent'
 
 printf '%s\n' "$RUN_JSON" > "$EVIDENCE_DIR/controller.json"
-psql "$DB_URL" -v ON_ERROR_STOP=1 -At -v run_id="$RUN_ID" -F $'\t' -c \
+psql -X "$DB_URL" -v ON_ERROR_STOP=1 -At -v run_id="$RUN_ID" -F $'\t' -c \
   "SELECT role,provider,COALESCE(account_id,''),COALESCE(actual_machine_id,machine_id,''),COALESCE(remote_job_id,''),id,COALESCE(task_bundle#>>'{inputs,capability_snapshot_id}','') FROM harness_attempts WHERE run_id=:'run_id'::uuid AND role IN ('generator','evaluator','judge') ORDER BY created_at" \
   | while IFS=$'\t' read -r role provider account machine container attempt snapshot; do
       jq -nc --arg role "$role" --arg provider "$provider" --arg account "$account" \

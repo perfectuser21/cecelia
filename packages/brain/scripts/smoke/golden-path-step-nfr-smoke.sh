@@ -20,7 +20,7 @@ BRAIN="${BRAIN_URL:-${BRAIN:-http://localhost:5221}}"
 DB_URL="${DATABASE_URL:-${DB_URL:-postgresql://localhost/cecelia}}"
 
 # id 提取避开 psql 命令标签（INSERT 0 1 会污染 -t 输出）
-uuid() { psql "$DB_URL" -t -c "$1" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1; }
+uuid() { psql -X "$DB_URL" -t -c "$1" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1; }
 
 # req METHOD URL [JSON_BODY] —— 打印命令 + 响应体 + HTTP 码，返回时 BODY/CODE 全局可读
 BODY=""; CODE=""
@@ -43,10 +43,10 @@ req() {
 echo "[smoke] BRAIN=$BRAIN  DB_URL=${DB_URL%%\?*}"
 
 echo "[smoke] schema: golden_path 新列在、旧列移除"
-NEWCOLS=$(psql "$DB_URL" -tAc "SELECT count(*) FROM information_schema.columns WHERE table_name='golden_path' AND column_name IN ('owner_task_id','feature_id')")
+NEWCOLS=$(psql -X "$DB_URL" -tAc "SELECT count(*) FROM information_schema.columns WHERE table_name='golden_path' AND column_name IN ('owner_task_id','feature_id')")
 echo "  新列(owner_task_id,feature_id) count=${NEWCOLS}（期望 2）"
 [ "$NEWCOLS" = "2" ] || { echo "FAIL: 新列缺失 NEWCOLS=$NEWCOLS"; exit 1; }
-OLDCOLS=$(psql "$DB_URL" -tAc "SELECT count(*) FROM information_schema.columns WHERE table_name='golden_path' AND column_name IN ('scope_type','scope_id','ability_id')")
+OLDCOLS=$(psql -X "$DB_URL" -tAc "SELECT count(*) FROM information_schema.columns WHERE table_name='golden_path' AND column_name IN ('scope_type','scope_id','ability_id')")
 echo "  旧列(scope_type,scope_id,ability_id) count=${OLDCOLS}（期望 0）"
 [ "$OLDCOLS" = "0" ] || { echo "FAIL: 旧列残留 OLDCOLS=$OLDCOLS"; exit 1; }
 
@@ -66,7 +66,7 @@ expect410 write
 echo "$BODY" | jq -e 'has("legacy_read_env")|not' >/dev/null || { echo "FAIL: 写路径不应给放行 env"; exit 1; }
 req PATCH "$BRAIN/api/brain/golden_path/00000000-0000-0000-0000-000000000000" '{"note":"x"}'
 expect410 write
-N=$(psql "$DB_URL" -tAc "SELECT count(*) FROM golden_path WHERE owner_task_id='$TASK_ID'")
+N=$(psql -X "$DB_URL" -tAc "SELECT count(*) FROM golden_path WHERE owner_task_id='$TASK_ID'")
 [ "$N" = "0" ] || { echo "FAIL: 写路径被拒后旧表仍多出 $N 行"; exit 1; }
 echo "  ✓ 写路径 410 且旧表零新增"
 
@@ -83,6 +83,6 @@ for u in "golden_path?limit=5" "golden_path/00000000-0000-0000-0000-000000000000
 done
 echo "  ✓ 4 条读路由默认 410"
 
-psql "$DB_URL" -c "DELETE FROM tasks WHERE id='$TASK_ID'" >/dev/null 2>&1 || true
-psql "$DB_URL" -c "DELETE FROM journey_features WHERE id='$FEATURE_ID'" >/dev/null 2>&1 || true
+psql -X "$DB_URL" -c "DELETE FROM tasks WHERE id='$TASK_ID'" >/dev/null 2>&1 || true
+psql -X "$DB_URL" -c "DELETE FROM journey_features WHERE id='$FEATURE_ID'" >/dev/null 2>&1 || true
 echo "✅ golden-path-step-nfr-smoke：旧表退役闸全链路通过（写 3 条 410、读 4 条 410、旧表零新增）"
