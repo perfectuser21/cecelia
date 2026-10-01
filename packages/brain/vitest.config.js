@@ -6,6 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/execution-directory.pg.integration.test.js',
+  'src/__tests__/integration/preview-cache.pg.integration.test.js',
   'src/__tests__/integration/task-intake.pg.integration.test.js',
   'src/__tests__/integration/account-quota-ledger.pg.integration.test.js',
   'src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js',

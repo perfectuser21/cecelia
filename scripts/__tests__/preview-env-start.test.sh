@@ -79,6 +79,12 @@ SH
   # mock node：起一个假的新 Brain 常驻进程（真实 sleep，验证 BRAIN_PID 被正确捕获即可）
   cat >"$BIN/node" <<'SH'
 #!/bin/bash
+if [[ "$1" == */preview-cache/writer.mjs ]]; then
+  if [[ "$3" == brain ]]; then
+    exec npm ci --workspace=packages/brain --omit=dev --omit=optional --ignore-scripts
+  fi
+  exec npm ci --cache "${PREVIEW_BASE_DIR}/.npm-cache-preview-$2"
+fi
 exec sleep 300
 SH
   chmod +x "$BIN/node"
@@ -300,6 +306,7 @@ chmod +x "$TC_BIN/npm"
 
 cat >"$TC_BIN/node" <<'SH'
 #!/bin/bash
+if [[ "$1" == */preview-cache/writer.mjs ]]; then exit 0; fi
 exec sleep 300
 SH
 chmod +x "$TC_BIN/node"

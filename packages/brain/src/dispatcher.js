@@ -1287,6 +1287,10 @@ export async function dispatchNextTask(goalIds) {
   }
 
   // 5a. Check if executor actually succeeded — revert to queued if not
+  if (!execResult.success && execResult.reason === 'company_kr_analysis_superseded' && execResult.taskTerminal === true) {
+    await recordDispatchResult(pool, false, 'company_kr_analysis_superseded', undefined, nextTask.id);
+    return { dispatched: false, reason: 'company_kr_analysis_superseded', task_id: nextTask.id, terminal: true, actions };
+  }
   if (!execResult.success && execResult.reason === 'script_payload_invalid' && execResult.taskTerminal === true) {
     // 执行体已把违规 payload 的任务终态 failed（不重试）：不许再被打回 queued，也不计熔断/autoblock。
     await recordDispatchResult(pool, false, 'script_payload_invalid', undefined, nextTask.id);
