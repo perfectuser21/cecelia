@@ -14,6 +14,7 @@
 
 - 容器脚本经共享机器预约、受认证 Worker 协议及精确清理回执执行；非 released 预约持续占位。
 - SCRIPT_MANAGED_MACHINES 仅在旧宿主脚本完成对账后启用；显式 profile 使用无宿主挂载容器，宿主运维脚本需另行兼容，未覆盖全部执行入口。
+- Worker 服务须显式设置 CECELIA_SCRIPT_PROFILES_FILE，指向服务账号或 root 所有、权限 0600 的配置；仅接受 legacy_host_scripts_reconciled=true 与 profile 内镜像 digest、非 root 用户和完整资源限额。默认不启用，安装器不自动迁移旧宿主脚本或注入业务 profile。
 - journal 遗留操作锁不按年龄回收，script_operation_locked 保留预约并暴露运维阻断。
 
 ## Brain 1.349.3 — Harness 加权资源预约
