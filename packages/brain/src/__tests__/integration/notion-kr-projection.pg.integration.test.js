@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { runNotionKrProjection, KR_DB_PROPERTIES, configureKrProjection, KR_PROJECTION_VESSEL } from '../../projection/key-results.js';
@@ -12,6 +12,9 @@ import { buildNotionKrProperties } from '../../projection/key-results.js';
 import { writeProgressToKR } from '../../kr3-progress-calculator.js';
 import { answerQuestionForGoal } from '../../okr-tick.js';
 import { observeCompanyKr } from '../../lib/company-kr-observations.js';
+import defaultPool from '../../db.js';
+import taskTasksRouter from '../../routes/task-tasks.js';
+import tasksRouter from '../../routes/tasks.js';
 
 describe('独立 KR 投影真实 PostgreSQL', () => {
   it('原始指标独立投影、链接真实入库且第二轮零远程写，事务最终回滚', async () => {
@@ -66,7 +69,7 @@ describe('独立 KR 投影真实 PostgreSQL', () => {
 describe('公司KR真实SQL与HTTP', () => {
   it('8+3幂等导入、精度观察证据账、人Target与Current列投影真实产出，最后回滚', async () => {
     const pool = new pg.Pool({ host: process.env.DB_HOST || 'localhost', port: Number(process.env.DB_PORT || 5432), database: process.env.DB_NAME || 'cecelia_test', user: process.env.DB_USER || 'cecelia', password: process.env.DB_PASSWORD });
-    const client = await pool.connect(), taskId = randomUUID();
+    const client = await pool.connect(); let taskId;
     const requests = [], remote = new Map();
     let serial = 0;
     // 模块自己的事务映射为savepoint，使真实事务产出可查且完全回滚。
@@ -87,13 +90,19 @@ describe('公司KR真实SQL与HTTP', () => {
       if (goal) return { id, properties: { Name: name(goal.title), Area: { relation: [] }, Status: { status: { name: 'Not Started' } } } };
       throw new Error(`未知Notion测试请求:${path}`);
     };
-    const app = express(); app.use(express.json()); app.use('/api/brain/okr', createCompanyKrRouter({ pool: scoped, token: 'fake', notionReq }));
+    const querySpy = vi.spyOn(defaultPool, 'query').mockImplementation((...args) => scoped.query(...args));
+    const connectSpy = vi.spyOn(defaultPool, 'connect').mockImplementation(() => scoped.connect());
+    const app = express(); app.use(express.json()); app.use('/api/brain', tasksRouter); app.use('/api/brain/tasks', taskTasksRouter); app.use('/api/brain/okr', createCompanyKrRouter({ pool: scoped, token: 'fake', notionReq }));
     try {
       await client.query('BEGIN');
       await client.query("DELETE FROM key_results WHERE metadata->>'metric_mode'='company_formula_v1'");
       await client.query("DELETE FROM objectives WHERE metadata->>'source_system'='notion-company-okr'");
       await client.query("DELETE FROM notion_projection_map WHERE notion_db_id=$1 AND brain_table='key_results'", [COMPANY_KR_DATABASE]);
-      await client.query("INSERT INTO tasks(id,title,status,task_type,result) VALUES($1,'经营KR真库测试','in_progress','data','{}')", [taskId]);
+      const registered = await request(app).post('/api/brain/tasks').send({ title: `经营KR真实workflow run ${randomUUID()}`, description: '两条原口径观察及证据入账', task_type: 'workflow_run', kind: 'workflow', trigger_source: 'opc-cron', payload: { workflow: 'opc-kr-current' } });
+      expect(registered.status).toBe(201); expect(registered.body).toMatchObject({ status: 'queued', task_type: 'workflow_run', kind: 'workflow' });
+      taskId = registered.body.id;
+      expect((await request(app).post(`/api/brain/tasks/${taskId}/claim`).send({ claimer: 'opc-kr-current', executor_kind: 'external-worker' })).status).toBe(200);
+      expect((await request(app).patch(`/api/brain/tasks/${taskId}`).send({ status: 'in_progress' })).body).toMatchObject({ success: true, status: 'in_progress' });
       const imported = await request(app).post('/api/brain/okr/company-key-results/import').send({ actor: 'integration-test', task_id: taskId });
       expect(imported.status).toBe(200); expect(imported.body).toMatchObject({ created: 8, company_kr_count: 8 });
       const repeated = await request(app).post('/api/brain/okr/company-key-results/import').send({ actor: 'integration-test', task_id: taskId });
@@ -189,7 +198,12 @@ describe('公司KR真实SQL与HTTP', () => {
       expect(requests.filter(r => r.method === 'PATCH')).toHaveLength(0);
       expect((await client.query('SELECT metadata FROM key_results WHERE id=$1', [kr.id])).rows[0].metadata.company_metric.current).toBe('4.567');
       expect((await client.query('SELECT result FROM tasks WHERE id=$1', [taskId])).rows[0].result.metric_observations.some(e => e.kind === 'current_conflict')).toBe(true);
-    } finally { await client.query('ROLLBACK'); client.release(); await pool.end(); }
+      const finished = await request(app).patch(`/api/brain/tasks/${taskId}`).send({ status: 'completed', result: { actor: 'opc-kr-current', fact: '原口径观察入账验收', evidence: [{ source: 'fixture:real-pg', fact: 'raw值与metric_observations实际存在' }], handoff: { schema_version: 1, task_id: taskId, title: '原口径观察验收', verdict: 'PASS', done: ['原口径已入账'], not_done: [], next_steps: [], data_sources: ['fixture:real-pg'] } } });
+      expect(finished.body).toMatchObject({ success: true, status: 'completed' });
+      const finishedRow = (await client.query('SELECT status,result FROM tasks WHERE id=$1', [taskId])).rows[0];
+      expect(finishedRow.status).toBe('completed'); expect(finishedRow.result.metric_observations.length).toBeGreaterThan(3); expect(finishedRow.result.actor).toBe('opc-kr-current');
+      expect(finishedRow.result.handoff).toMatchObject({ schema_version: 1, task_id: taskId }); expect(finishedRow.result.handoff.synthesized).not.toBe(true);
+    } finally { querySpy.mockRestore(); connectSpy.mockRestore(); await client.query('ROLLBACK'); client.release(); await pool.end(); }
   }, 30000);
 });
 

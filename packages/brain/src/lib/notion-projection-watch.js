@@ -9,6 +9,7 @@
  *  A10 projection_counts  🔒 push 库：Brain 有 notion_id 的行数 == Notion 页数（人往镜子里加行会被抓）；Notion 不可达 → degraded 不红
  */
 import { loadProjectionMap, findUnregisteredNotionTables, normalizeNotionId } from './notion-projection-registry.js';
+import { COMPANY_KR_CATALOG, COMPANY_METRIC_MODE, COMPANY_KR_DATABASE } from './company-kr-metrics.js';
 
 const SINCE_HOURS = 24;
 const PAGE_CAP = 20; // 单库最多翻 20 页（2000 行），超出按 ≥ 记
@@ -151,6 +152,25 @@ export async function buildProjectionAssertions(pool, { notionReq, token, botUse
 
   // ── A11 镜子库探活 ────────────────────────────────────────
   results.push(await probeMirrorDbs(active, { notionReq, token }));
+  if (active.some(r => r.vessel === 'notion-company-key-results' && r.brain_table === 'key_results')) {
+    try {
+      const { rows } = await pool.query("SELECT custom_props,metadata FROM key_results WHERE metadata->>'metric_mode'=$1", [COMPANY_METRIC_MODE]);
+      const { pageRows, n, capped } = await countNotionPages(notionReq, token, COMPANY_KR_DATABASE);
+      const number = value => value == null ? null : Number(value);
+      const matched = rows.filter(kr => {
+        const source = kr.custom_props?.company_notion;
+        const metric = kr.metadata?.company_metric;
+        const page = pageRows.find(p => p.id === source?.page_id);
+        return source?.database_id === COMPANY_KR_DATABASE && COMPANY_KR_CATALOG.some(c => c.page_id === source.page_id && c.goal_id === source.goal_id)
+          && page && !page.archived && !page.in_trash && normalizeNotionId(page.parent?.database_id) === normalizeNotionId(COMPANY_KR_DATABASE)
+          && ['Current', 'Target', 'Start'].every((column, i) => page.properties?.[column]?.number === number([metric?.current, metric?.target, metric?.start][i]));
+      }).length;
+      const ok = rows.length === 8 && new Set(rows.map(r => r.custom_props?.company_notion?.page_id)).size === 8 && n === 8 && matched === 8 && !capped;
+      results.push({ key: 'company_kr_counts', label: '公司8KR列级面完整性', ok, detail: `应投影=8 真身=${rows.length} 远端=${n} 显式映射且指标一致=${matched}` });
+    } catch (error) {
+      results.push({ key: 'company_kr_counts', label: '公司8KR列级面完整性', ok: false, degraded: true, detail: `公司8KR对账未完成:${error.message}` });
+    }
+  }
 
   return results;
 }

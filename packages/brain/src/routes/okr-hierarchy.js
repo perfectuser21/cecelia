@@ -1,3 +1,5 @@
+import companyKeyResultsRoutes from './company-key-results.js';
+import { assertCompanyPatch, COMPANY_METRIC_MODE } from '../lib/company-kr-metrics.js';
 /**
  * OKR 层级 CRUD API
  * 路由: /api/brain/okr/*
@@ -19,6 +21,7 @@ import { getProjectsForKrBatch } from '../project-progress.js';
 import { recalculateKrProgress } from '../lib/kr-recalculate-progress.js';
 
 const router = Router();
+router.use(companyKeyResultsRoutes);
 
 // scope/initiative 层退役（决策 ee4842a6/3feeae3e，接力棒链 2afa6d69 棒4）：
 // 写操作统一 410，body 格式与 migration 499 的 DB trigger 报错口径对齐。
@@ -74,7 +77,7 @@ function mountCrud(r, prefix, table, parentField, opts = {}) {
       );
       res.json({ success: true, items: result.rows, total: parseInt(countResult.rows[0].count) });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(err.status || 500).json({ success: false, error: err.message });
     }
   });
 
@@ -85,7 +88,7 @@ function mountCrud(r, prefix, table, parentField, opts = {}) {
       if (!result.rows.length) return res.status(404).json({ success: false, error: 'Not found' });
       res.json({ success: true, item: result.rows[0] });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(err.status || 500).json({ success: false, error: err.message });
     }
   });
 
@@ -99,6 +102,7 @@ function mountCrud(r, prefix, table, parentField, opts = {}) {
 
   r.post(prefix, async (req, res) => {
     try {
+      if (['key_results', 'objectives'].includes(table) && (req.body.metadata?.metric_mode === COMPANY_METRIC_MODE || req.body.custom_props?.company_notion || req.body.metadata?.source_system === 'notion-company-okr')) return res.status(409).json({ error: '公司来源身份须走幂等导入入口' });
       const { title } = req.body;
       if (!title) return res.status(400).json({ success: false, error: 'title is required' });
 
@@ -124,7 +128,7 @@ function mountCrud(r, prefix, table, parentField, opts = {}) {
       );
       res.status(201).json({ success: true, item: result.rows[0] });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(err.status || 500).json({ success: false, error: err.message });
     }
   });
 
@@ -132,6 +136,7 @@ function mountCrud(r, prefix, table, parentField, opts = {}) {
   r.patch(`${prefix}/:id`, async (req, res) => {
     try {
       const { id } = req.params;
+      if (['key_results', 'objectives'].includes(table)) await assertCompanyPatch(pool, id, req.body, table);
       const allowed = [
         'title', 'status', 'area_id', 'owner_role', 'start_date', 'end_date',
         'metadata', 'custom_props', 'target_value', 'current_value', 'unit',
@@ -143,7 +148,7 @@ function mountCrud(r, prefix, table, parentField, opts = {}) {
       for (const key of allowed) {
         if (key in req.body) {
           values.push(req.body[key]);
-          updates.push(`${key} = $${values.length}`);
+          updates.push(['metadata','custom_props'].includes(key) ? `${key} = COALESCE(${key}, '{}'::jsonb) || $${values.length}::jsonb` : `${key} = $${values.length}`);
         }
       }
       if (!updates.length) return res.status(400).json({ success: false, error: 'No fields to update' });
@@ -156,7 +161,7 @@ function mountCrud(r, prefix, table, parentField, opts = {}) {
       if (!result.rows.length) return res.status(404).json({ success: false, error: 'Not found' });
       res.json({ success: true, item: result.rows[0] });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(err.status || 500).json({ success: false, error: err.message });
     }
   });
 
@@ -170,7 +175,7 @@ function mountCrud(r, prefix, table, parentField, opts = {}) {
       if (!result.rows.length) return res.status(404).json({ success: false, error: 'Not found' });
       res.json({ success: true, id: result.rows[0].id });
     } catch (err) {
-      res.status(500).json({ success: false, error: err.message });
+      res.status(err.status || 500).json({ success: false, error: err.message });
     }
   });
 }
@@ -304,7 +309,7 @@ router.get('/tree', async (req, res) => {
 
     res.json({ success: true, tree: result });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -378,7 +383,7 @@ router.get('/current', async (req, res) => {
 
     res.json({ success: true, objectives: result, generated_at: new Date().toISOString() });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -395,7 +400,7 @@ router.post('/sync-verifiers', async (req, res) => {
     const result = await runAllVerifiers();
     res.json({ success: true, ...result });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -412,7 +417,7 @@ router.post('/backfill-current-values', async (req, res) => {
     const result = await resetAllKrProgress();
     res.json({ success: true, ...result });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 
@@ -474,7 +479,7 @@ router.get('/kr/:id/ability-progress', async (req, res) => {
 
     res.json({ success: true, kr_id: kr.id, kr_title: kr.title, abilities, missing_ability_ids });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 

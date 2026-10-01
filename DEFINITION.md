@@ -74,6 +74,15 @@
 - 永久回归覆盖实际入口、部署复制产物、被忽略TERM的Node孙进程、测试成功/失败/启动超时清理；不调用真实模型。
 - 被动实例的健康状态明确区别后台停用与故障；Observer 冒烟验证持续停用，Alertness 遗留表改由显式迁移预备。
 
+## 经营 KR 纳入 Brain 与列级工作面（任务 02148cef，版本待主线协调）
+
+- 用户决定 d5cb2fb1：原公司 8 页及 3 Goal 以显式 source page ID 幂等入 Brain；38 系统 KR 与 8 公司 KR 共 46，既有独立库镜全量。Area/未知 Vision 无来源关系保持空。
+- 原 Start/Current/Target decimal、原三位 fraction 公式与非 clamp 比值存 metadata；兼容 numeric/int 列不作为公司公式输入。历史值与人类 Current 主张标未验证，KR3.1 既有四项快照不能声称连续七天。
+- 公司 GET、窄 import/observations 接入现有 OKR router 并限流。观察必须关联任务、actor、事实、来源与幂等键，PG 微秒版本 CAS；指标与任务证据同事务。
+- 原公司库 Target/Start 值级入口，Current 以导入/已投影基线区分人类改动和待推机算；人类改动先入 Brain 留前后值事件，缺基线冲突留账停推。出站只写 Current，不写 Target/Start、公式及关系；独立镜保存 Brain ID/Source/更新时间，8/46 分别对账。
+- callback/execution/tasks 三 writer、projects 重算、verifier、旧 KR3 批写、通用 action/PATCH 保护公司指标和来源身份；问题回答仅写 pending_questions，避免吞掉并发观察。OPC 两脚本纳入 scripts/ops 真身，保留原算法/六路径/七份 schedule，改为 Brain 观察及 Brain 读取。
+- 真实测试库事务验收 8+3 幂等、46 链接、原值精度、任务生命周期/非合成交接、人类 Current/Target、微秒 CAS 及并发元数据保留；测试结束回滚，无 schema 变更。
+
 ## Brain 1.348.14 — golden_path 退役应急只读与调用观测（任务 6c2e8c71）
 
 - 旧运行回执与旧步骤决策写入口永久 410；`GOLDEN_PATH_LEGACY_READ=1` 仅允许五条旧读接口，不能写回执或推进 feature。

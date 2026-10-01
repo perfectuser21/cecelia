@@ -1,3 +1,4 @@
+import { COMPANY_KR_SQL_GUARD } from '../lib/company-kr-metrics.js';
 import { Router } from 'express';
 import pool from '../db.js';
 import { createTask, updateTask as _updateTask } from '../actions.js';
@@ -677,7 +678,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
                 ? Math.round((completedNum / totalNum) * target_value * 100) / 100
                 : 0;
               await pool.query(
-                'UPDATE key_results SET current_value = $1, updated_at = now() WHERE id = $2',
+                `UPDATE key_results SET current_value = $1, updated_at = now() WHERE id = $2 AND ${COMPANY_KR_SQL_GUARD}`,
                 [newValue, kr_id]
               );
             }

@@ -2,6 +2,7 @@
 import { notionReq as defaultNotionReq } from '../recurring-notion-sync.js';
 import { propsDigest } from '../lib/notion-projection-engine.js';
 import { normalizeNotionId } from '../lib/notion-projection-registry.js';
+import { isCompanyKr, companyKrView } from '../lib/company-kr-metrics.js';
 
 export const KR_PROJECTION_VESSEL = 'notion-kr-projection';
 export const KR_PROJECTION_TITLE = 'Brain Key Results';
@@ -20,12 +21,13 @@ const finite = (value) => value == null || value === '' || !Number.isFinite(Numb
 
 export function buildNotionKrProperties(kr) {
   const updated = kr.updated_at ? new Date(kr.updated_at) : null;
+  const metric = isCompanyKr(kr) ? companyKrView(kr) : kr;
   return {
     Name: { title: [{ text: { content: String(kr.title || '未命名 KR').slice(0, 1900) } }] },
     'Brain ID': rich(kr.id), Status: { select: kr.status ? { name: String(kr.status).slice(0, 100) } : null },
-    Progress: { number: finite(kr.progress) }, Current: { number: finite(kr.current_value) },
-    Target: { number: finite(kr.target_value) }, Unit: rich(kr.unit),
-    Source: rich(kr.metadata?.progress_source || 'unknown'),
+    Progress: { number: finite(isCompanyKr(kr) ? metric.progress_pct : kr.progress) }, Current: { number: finite(metric.current_value) },
+    Target: { number: finite(metric.target_value) }, Unit: rich(kr.unit),
+    Source: rich(isCompanyKr(kr) ? `company_formula_v1;${metric.validation_state};notion:${metric.source_page_id}` : kr.metadata?.progress_source || 'unknown'),
     'Brain Updated At': { date: updated && Number.isFinite(updated.getTime()) ? { start: updated.toISOString() } : null },
   };
 }
