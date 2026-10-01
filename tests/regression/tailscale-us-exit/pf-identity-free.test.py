@@ -400,6 +400,22 @@ class ActivationFailureTests(unittest.TestCase):
 
 
 class LeaseGuardTests(unittest.TestCase):
+    def test_closed_peer_bootstrap_does_not_survive_expired_cache_lease(self):
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import tailscale_us_exit_lease as lease
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+            root = Path(directory)
+            firewall = SimpleNamespace(cache=root/"cache", pf_lock=root/"lock", lease=root/"lease",
+                current_rules=lambda: 'pass out quick proto udp to 38.23.47.81 port 54192 no state\nblock drop out quick',
+                rules=lambda _: 'pass out quick on lo0 all no state label "cecelia-us-exit-v2"\nblock drop out quick',
+                _apply=lambda allow: calls.append(allow))
+            with patch.object(lease, "read_map_cache", return_value={}):
+                lease.reconcile_once(firewall, now=2000)
+            self.assertEqual(calls, [False])
+
     def test_business_lease_is_bounded_and_requires_live_guard(self):
         from tailscale_us_exit_lease import valid_lease
         lease = {"generation": "one", "observed_at": 1000, "expires_at": 1015,
