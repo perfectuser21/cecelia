@@ -41,9 +41,8 @@ skip() { log "SKIP $*"; exit 0; }
 BRAIN_CONTAINER="${BRAIN_CONTAINER:-cecelia-node-brain}"
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 DB_URL="${DATABASE_URL:-postgresql://cecelia@localhost:5432/cecelia}"
-# CONTAINER_DATABASE_URL 可显式注入；不注入则用容器自身 DATABASE_URL/DB_*（最稳妥，
-# 因为容器内的网络与宿主可能不同 — 本机 docker 走 host.docker.internal，CI host network 才同 localhost）
-CONTAINER_DB_URL="${CONTAINER_DATABASE_URL:-}"
+# 始终覆盖容器内连接变量，实际 PostgresSaver 只使用前置已校验的连接。
+CONTAINER_DB_URL="${CONTAINER_DATABASE_URL:-$DB_URL}"
 
 # ── 环境检测 ─────────────────────────────────────────────────────────────────
 log "start (BRAIN_CONTAINER=$BRAIN_CONTAINER BRAIN_URL=$BRAIN_URL)"
@@ -149,13 +148,8 @@ NODE_PUT
 )
 
 PUT_OUT=$(
-  if [ -n "$CONTAINER_DB_URL" ]; then
-    docker exec -e "SMOKE_THREAD_ID=$THREAD_ID" -e "SMOKE_DATABASE_URL=$CONTAINER_DB_URL" \
-      "$BRAIN_CONTAINER" node -e "$PUT_SCRIPT" 2>&1
-  else
-    docker exec -e "SMOKE_THREAD_ID=$THREAD_ID" \
-      "$BRAIN_CONTAINER" node -e "$PUT_SCRIPT" 2>&1
-  fi
+  docker exec -e "SMOKE_THREAD_ID=$THREAD_ID" -e "SMOKE_DATABASE_URL=$CONTAINER_DB_URL" \
+    "$BRAIN_CONTAINER" node -e "$PUT_SCRIPT" 2>&1
 )
 echo "$PUT_OUT" | sed 's/^/  /'
 echo "$PUT_OUT" | grep -q "PUT_OK 5_checkpoints_written" || fail "step1 PostgresSaver put 失败"
@@ -232,13 +226,8 @@ NODE_GET
 )
 
 run_get() {
-  if [ -n "$CONTAINER_DB_URL" ]; then
-    docker exec -e "SMOKE_THREAD_ID=$THREAD_ID" -e "SMOKE_DATABASE_URL=$CONTAINER_DB_URL" \
-      "$BRAIN_CONTAINER" node -e "$GET_SCRIPT" 2>&1
-  else
-    docker exec -e "SMOKE_THREAD_ID=$THREAD_ID" \
-      "$BRAIN_CONTAINER" node -e "$GET_SCRIPT" 2>&1
-  fi
+  docker exec -e "SMOKE_THREAD_ID=$THREAD_ID" -e "SMOKE_DATABASE_URL=$CONTAINER_DB_URL" \
+    "$BRAIN_CONTAINER" node -e "$GET_SCRIPT" 2>&1
 }
 
 GET_OUT=$(run_get)
