@@ -280,3 +280,10 @@ describe('Fleet Worker Attempt runtime resources', () => {
     ]);
   });
 });
+
+describe('Postgres实际启动维护暂停',()=>{
+ it('创建network期间进入drain，禁止docker run且只清理本次准备资源',async()=>{
+  let drain=false;const calls=[];const manager=loadResourceManager()({postgresImageDigest:POSTGRES_IMAGE,healthAttempts:1,healthIntervalMs:0,assertCanLaunch:()=>{if(drain)throw Error('worker_draining');},runCommand:async(_command,args)=>{calls.push(args);if(args[0]==='network'&&args[1]==='create')drain=true;return {stdout:''};}});
+  await expect(manager.provision({attemptId:ATTEMPT_ID,requirements:{postgres:true}})).rejects.toThrow('worker_draining');expect(calls.some(a=>a[0]==='run')).toBe(false);expect(calls.some(a=>a[0]==='network'&&a[1]==='rm')).toBe(true);
+ });
+});

@@ -37,6 +37,21 @@ async function setup() {
   return { api,root,containers,docker,options,runner,input,counts:()=>({creates,starts}) };
 }
 describe('受管脚本 worker 协议', () => {
+  it('资源异步检查后出现drain时拒绝create，已建容器后暂停仍不得start',async()=>{
+    for(const phase of ['probe','create']){
+      const x=await setup();let draining=false;
+      const create=x.docker.create;
+      if(phase==='create')x.docker.create=async value=>{const id=await create(value);draining=true;return id;};
+      const runner=x.api.createScriptRunner({...x.options,
+        assertLocalResources:async()=>{if(phase==='probe')draining=true;},
+        assertCanLaunch:()=>{if(draining)throw Object.assign(Error('worker_draining'),{statusCode:429});}});
+      runners.push(runner);
+      const result=await runner.start(x.input);
+      expect(result.status).toBe('waiting_resources');expect(x.counts().starts).toBe(0);
+      expect(x.counts().creates).toBe(phase==='create'?1:0);
+      const cancel=await runner.cancel({...x.input,container_id:result.container_id,challenge:randomUUID()});expect(cancel.tombstoned).toBe(true);
+    }
+  });
   it('真实 HTTP 认证后启动无害脚本，持久意图先于 create，重复/重启请求不重跑', async () => {
     const x=await setup();
     const original=x.docker.create;
