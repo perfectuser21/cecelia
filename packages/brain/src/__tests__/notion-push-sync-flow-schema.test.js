@@ -21,16 +21,20 @@ describe('新增活动指标列未就绪时保留正确页面绑定', () => {
       return { rows: [] };
     });
   });
-  it.each(['read', 'add', 'type'])('%s失败不向页面发未就绪属性，不解绑或标同步', async failure => {
+  it.each(['read', 'add', 'type', 'malformed', 'unconfirmed', 'changed_type'])('%s失败不向页面发未就绪属性，不解绑或标同步', async failure => {
     const schema = buildStepLinkDbProps();
-    if (failure === 'add') delete schema.FlowP50Ms;
+    if (['add', 'unconfirmed', 'changed_type'].includes(failure)) delete schema.FlowP50Ms;
     if (failure === 'type') schema.FlowP50Ms = { rich_text: {} };
     request.mockImplementation(async (_token, path, method, body) => {
       if (path.startsWith('/databases/') && method === 'GET') {
         if (failure === 'read') throw new Error('Notion 503 schema unavailable');
-        return { properties: schema };
+        return failure === 'malformed' ? {} : { properties: schema };
       }
-      if (path.startsWith('/databases/') && method === 'PATCH') throw new Error('Notion 503 schema patch failed');
+      if (path.startsWith('/databases/') && method === 'PATCH') {
+        if (failure === 'unconfirmed' || failure === 'malformed') return {};
+        if (failure === 'changed_type') return { properties: { ...schema, FlowP50Ms: { type: 'rich_text' } } };
+        throw new Error('Notion 503 schema patch failed');
+      }
       if (path.startsWith('/pages/') && method === 'PATCH' && 'FlowP50Ms' in body.properties) {
         throw new Error('Notion 400: FlowP50Ms is not a property that exists');
       }
