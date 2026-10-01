@@ -96,3 +96,9 @@ it('首次启用后启动失败必须在unit仍存在时disable，再删除新�
  x.deps.runCommand=async(c,a)=>{if(a[0]==='start')throw Error('start_failed');if(a[0]==='disable'&&!fs.existsSync(path.join(x.root,'etc/systemd/system/cecelia-linux-pool.service')))throw Error('unit_not_found');return run(c,a);};
  await expect(install(x)).rejects.toThrow('linux_pool_install_failed');expect(fs.existsSync(path.join(x.root,'etc/systemd/system/cecelia-linux-pool.service'))).toBe(false);
 }finally{x.cleanup();}});
+it('首次发布中途失败且尚无unit，不stop不存在服务，清除已发布模块',async()=>{const x=fixture();const run=x.deps.runCommand;let writes=0;try{
+ x.deps.fs={...fs,renameSync:(a,b)=>{if(++writes===2)throw Error('publish_failed');return fs.renameSync(a,b);}};
+ x.deps.runCommand=async(c,a)=>{if(a[0]==='stop'&&!fs.existsSync(path.join(x.root,'etc/systemd/system/cecelia-linux-pool.service')))throw Object.assign(Error('unit_not_loaded'),{code:5});return run(c,a);};
+ await expect(install(x)).rejects.toThrow('linux_pool_install_failed');
+ expect(fs.existsSync(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/linux-pool-profile.cjs'))).toBe(false);expect(x.calls.some(([,a])=>a[0]==='stop')).toBe(false);
+}finally{x.cleanup();}});

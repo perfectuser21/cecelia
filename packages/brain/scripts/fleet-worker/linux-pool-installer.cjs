@@ -78,7 +78,7 @@ async function installLinuxPool(options,deps={}) {
   {name:'/etc/systemd/system/'+SLICE,data:Buffer.from(units.slice),mode:0o644,uid:rootUid,gid:rootGid},
   {name:'/etc/systemd/system/'+SERVICE,data:Buffer.from(units.service),mode:0o644,uid:rootUid,gid:rootGid},
  ];
- const createdDirs=[];let lockFd,lockStat,stage,mutated=false,enableAttempted=false;
+ const createdDirs=[];let lockFd,lockStat,stage,mutated=false,enableAttempted=false,startAttempted=false;
  const lock='/run/cecelia/linux-pool.install.lock',originals=new Map();
  function mkdir(name){
   const target=real(name);if(fs.existsSync(target)){const s=fs.lstatSync(target);if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==rootUid||(s.mode&0o022))fail('linux_pool_install_untrusted_path');return;}
@@ -104,13 +104,13 @@ async function installLinuxPool(options,deps={}) {
   const manifestFd=fs.openSync(path.join(stage,'manifest.json'),'wx',0o600);try{fs.writeFileSync(manifestFd,JSON.stringify(manifest));fs.fsyncSync(manifestFd);}finally{fs.closeSync(manifestFd);}syncDir(stage);
   mutated=true;if(prior.active)await systemctl(['stop',SERVICE]);
   for(const entry of entries)publish(entry);
-  await systemctl(['daemon-reload']);enableAttempted=true;await systemctl(['enable',SERVICE]);await systemctl(['start',SERVICE]);
+  await systemctl(['daemon-reload']);enableAttempted=true;await systemctl(['enable',SERVICE]);startAttempted=true;await systemctl(['start',SERVICE]);
   if(String((await systemctl(['is-active',SERVICE])).stdout).trim()!=='active')fail('linux_pool_install_service_unavailable');
   return {installed:true,execution:false,revision:options.revision,config_digest:profile.config_digest,service:SERVICE};
  }catch(error){
   if(mutated){
    try{
-    await systemctl(['stop',SERVICE]);
+    if(prior.active||startAttempted)await systemctl(['stop',SERVICE]);
     // 新启用产生的链接先撤销，unit文件仍存在时systemd才能解析它。
     if(enableAttempted&&!prior.enabled)await systemctl(['disable',SERVICE]);
     for(const[name,snapshot]of originals){if(snapshot)publish({name,...snapshot});else {try{fs.unlinkSync(real(name));syncDir(path.dirname(real(name)));}catch(e){if(e.code!=='ENOENT')throw e;}}}
