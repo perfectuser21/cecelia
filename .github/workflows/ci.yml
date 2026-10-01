@@ -1736,6 +1736,26 @@ jobs:
           node src/migrate.js
       - name: Build cecelia-brain image
         run: docker build -f packages/brain/Dockerfile -t cecelia-brain:ci .
+      - name: Seed isolated execution identities without Worker admission
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_NAME: cecelia_test
+          DB_USER: cecelia
+          DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+        run: |
+          if (echo > /dev/tcp/127.0.0.1/5231) 2>/dev/null; then
+            echo "::error::CI Worker denial fixture requires unused loopback port 5231"
+            exit 1
+          fi
+          node --input-type=module <<'NODE'
+          import pg from 'pg';
+          import { seedExecutionDirectoryPgFixture } from './packages/brain/src/__tests__/helpers/execution-directory-pg-fixture.js';
+          const pool = new pg.Pool({host:process.env.DB_HOST,port:Number(process.env.DB_PORT),database:process.env.DB_NAME,user:process.env.DB_USER,password:process.env.DB_PASSWORD});
+          try { await seedExecutionDirectoryPgFixture(pool, {ciSmoke:true}); }
+          finally { await pool.end(); }
+          NODE
       - name: Start Brain container (network=host → 直连 postgres service)
         run: |
           # network=host：runner 上 postgres service 暴露在 localhost:5432，
@@ -1765,6 +1785,16 @@ jobs:
           echo "::error::Brain not healthy in 90s"
           docker logs cecelia-brain-smoke
           exit 1
+      - name: Map Manifest real PG positive
+        env:
+          SMOKE_ALLOW_WRITE: '1'
+          BRAIN_URL: http://localhost:5221
+          BRAIN_CONTAINER: cecelia-brain-smoke
+          DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
+          NODE_ENV: test
+        run: |
+          cd packages/brain
+          npx vitest run --config vitest.real-env-smoke.config.js
       - name: Run all packages/brain/scripts/smoke/*.sh
         env:
           SMOKE_ALLOW_WRITE: '1'

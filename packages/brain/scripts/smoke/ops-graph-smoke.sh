@@ -3,6 +3,9 @@
 # 编排关系(meta.orchestrates)存取、role 双向判定所需的父子反查、agent 与 schedule 按
 # name==label 合并去重、孤儿排程独立成行。纯 psql 确定性，CI real-env-smoke 在 cecelia_test 跑。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
@@ -13,7 +16,7 @@ NODE="$(command -v node)"
 DB_NAME="$("$NODE" -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DB_NAME" =~ (_test|_scratch)$ ]] || fail "拒绝连接非测试库: ${DB_NAME:-<empty>}"
 
-q() { "$PSQL" "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"; }
+q() { "$PSQL" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"; }
 
 TAG="ops-graph-smoke-$$"
 cleanup() {

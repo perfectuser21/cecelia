@@ -5,6 +5,9 @@
 #   闸 2 真库派发闸：payload.next_run_at 在未来的 queued 任务不进派发候选，已过的进（派发器谓词原样）。
 # 只删自己插的行（title 前缀带 pid），绝不动别人的行。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
 : "${DATABASE_URL:?DATABASE_URL is required and must target a test or scratch database}"
@@ -36,13 +39,13 @@ console.log('✅ 闸 1 时间归一与镜像');
 
 # ── 闸 2：真库里派发器的 next_run_at 谓词 ────────────────────────────────
 TAG="qiumi-schedule-smoke-$$"
-cleanup() { psql "$DATABASE_URL" -qtAc "DELETE FROM tasks WHERE title LIKE '${TAG}%'" >/dev/null 2>&1 || true; }
+cleanup() { psql -X "$DATABASE_URL" -qtAc "DELETE FROM tasks WHERE title LIKE '${TAG}%'" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
-psql "$DATABASE_URL" -qtAc "
+psql -X "$DATABASE_URL" -qtAc "
   INSERT INTO tasks (title, task_type, status, priority, payload) VALUES
    ('${TAG}-future', 'qiumi_task', 'queued', 'P2', jsonb_build_object('next_run_at', (NOW() + interval '3 days')::text)),
    ('${TAG}-past',   'qiumi_task', 'queued', 'P2', jsonb_build_object('next_run_at', (NOW() - interval '1 hour')::text))" >/dev/null
-PICKED="$(psql "$DATABASE_URL" -qtAc "
+PICKED="$(psql -X "$DATABASE_URL" -qtAc "
   SELECT string_agg(title, ',' ORDER BY title) FROM tasks t
    WHERE t.title LIKE '${TAG}%' AND t.status = 'queued'
      AND (t.payload->>'next_run_at' IS NULL OR t.payload->>'next_run_at' = ''

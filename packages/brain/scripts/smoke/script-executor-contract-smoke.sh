@@ -43,6 +43,7 @@ console.log('471/472 结构正确，叠加502增量后与 lib 真身一致 ✓')
 
 echo "[script-executor-contract-smoke] 3. payload 契约：合法通过 / 违规被拒"
 node --input-type=module -e "
+import './src/__tests__/helpers/execution-directory-fixture.js';
 import { validateScriptPayload, isScriptPayloadError } from './src/lib/script-task-spec.js';
 const ok = { host: 'xian-m4', cmd: 'echo hi', timeout_sec: 30 };
 validateScriptPayload(ok);

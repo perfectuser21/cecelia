@@ -37,6 +37,7 @@ function makeGrokTask(overrides = {}) {
 
 function makeDeps(overrides = {}) {
   return {
+    authorizeLegacyRelay: async (_identity, operation) => operation(),
     pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
     spawnFn: vi.fn().mockResolvedValue({ containerId: 'cid-gk', dockerStdout: 'ok' }),
     loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT harness-controller'),
@@ -334,6 +335,7 @@ describe('[BEHAVIOR-7] headed grok 入口白名单', () => {
     });
 
     const deps = {
+      authorizeLegacyRelay:async(_identity,operation)=>operation(),
       pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
       execFn,
       loadSkill: vi.fn().mockReturnValue('SKILL_CONTENT'),
@@ -373,6 +375,7 @@ describe('[BEHAVIOR-7] headed grok 入口白名单', () => {
     });
 
     const deps = {
+      authorizeLegacyRelay:async(_identity,operation)=>operation(),
       pool: { query: vi.fn().mockResolvedValue({ rows: [] }) },
       execFn,
       loadSkill: vi.fn().mockReturnValue('SKILL'),

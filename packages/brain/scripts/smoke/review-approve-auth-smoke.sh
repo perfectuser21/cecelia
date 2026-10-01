@@ -5,6 +5,11 @@
 # 期望：env 未配置 → 503；已配置但无 token → 401。任何 2xx = 洞复发 = FAIL。
 set -uo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
+
 API="${BRAIN_URL:-http://localhost:5221}/api/brain"
 PASS=0; FAIL=0
 
@@ -14,7 +19,7 @@ fail() { echo "❌ $1"; ((FAIL++)) || true; }
 FAKE_TASK="00000000-0000-0000-0000-000000000000"
 
 echo "── approve 无认证必须被拒 ──"
-code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+code=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST \
   "$API/harness/pending-reviews/$FAKE_TASK/approve" \
   -H "Content-Type: application/json" -d '{"approved_by":"smoke"}')
 if [[ "$code" == "401" || "$code" == "503" ]]; then
@@ -24,7 +29,7 @@ else
 fi
 
 echo "── reject 无认证必须被拒 ──"
-code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+code=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST \
   "$API/harness/pending-reviews/$FAKE_TASK/reject" \
   -H "Content-Type: application/json" -d '{"approved_by":"smoke"}')
 if [[ "$code" == "401" || "$code" == "503" ]]; then
@@ -34,7 +39,7 @@ else
 fi
 
 echo "── 错 token 必须被拒 ──"
-code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+code=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST \
   "$API/harness/pending-reviews/$FAKE_TASK/approve" \
   -H "x-approver-token: definitely-wrong-token" \
   -H "Content-Type: application/json" -d '{"approved_by":"smoke"}')

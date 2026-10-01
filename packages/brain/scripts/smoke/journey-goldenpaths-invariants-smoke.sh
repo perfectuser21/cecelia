@@ -6,21 +6,26 @@
 # 跑法：BRAIN=http://localhost:5221 DB_URL=postgresql://localhost/cecelia bash $0
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-${DB_URL:-postgresql://localhost/cecelia}}"; then
+  exit 0
+fi
+
 BRAIN="${BRAIN_URL:-${BRAIN:-http://localhost:5221}}"
 DB_URL="${DATABASE_URL:-${DB_URL:-postgresql://localhost/cecelia}}"
 
-uuid() { psql "$DB_URL" -t -c "$1" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1; }
+uuid() { psql -X "$DB_URL" -t -c "$1" | grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1; }
 
 BODY=""; CODE=""
 req() {
   local method="$1" url="$2" data="${3:-}"
   local out
   if [ -n "$data" ]; then
-    echo "  \$ curl -X $method '$url' -d '$data'"
-    out=$(curl -s -w $'\n%{http_code}' -X "$method" "$url" -H 'Content-Type: application/json' -d "$data")
+    echo "  \$ curl -q -X $method '$url' -d '$data'"
+    out=$(curl -q -s -w $'\n%{http_code}' -X "$method" "$url" -H 'Content-Type: application/json' -d "$data")
   else
-    echo "  \$ curl -X $method '$url'"
-    out=$(curl -s -w $'\n%{http_code}' -X "$method" "$url")
+    echo "  \$ curl -q -X $method '$url'"
+    out=$(curl -q -s -w $'\n%{http_code}' -X "$method" "$url")
   fi
   CODE="${out##*$'\n'}"
   BODY="${out%$'\n'*}"

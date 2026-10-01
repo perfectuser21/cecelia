@@ -16,6 +16,8 @@
 
 Brain 镜像完整打包 Fleet Worker 共用运行模块；构建期及独立产物回归实际导入执行目录并读取部署策略。
 
+执行目录的既有回归显式登记测试设备与授权；文件系统替身保留真实节点策略读取，数据库权限及恢复断言继续使用真实 PostgreSQL。
+
 Worker维护暂停在本机三类runner与Docker最终副作用前执行；认证静默回执绑定nonce、同boot和活动版本，客户端断开不减在途计数，orchestrator真实子进程退出才归零。启动对账未确认或prepare潜在副作用后失败均拒签；候选工作区只保守占位，不自动清理。
 
 Mac Worker 版本探针只读固定 OrbStack bundle 的 CFBundleShortVersionString；不运行会初始化管理员目录的 orbctl version。Docker、镜像、自检容器与资源准入仍分别真实检查，版本不可读继续报 unavailable。
@@ -32,6 +34,12 @@ Janitor 新动作的CI冒烟使用十类执行者精确名单、471叠加502合�
 
 
 Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增量；healthz 只隔离真实依赖，不污染机群配置读取。
+
+## Brain 1.354.2 — 本地smoke生产写入护栏（原任务617259ae）
+
+- 默认拒绝真实写入；显式授权仍须验证本地Docker daemon、隔离容器、实际连接及健康身份，生产代理与未知目标保守拒绝。
+- 63个SQL候选逐项登记55写与8只读，Node PG和下游连接按实际优先级核验；curl与psql禁读启动配置，保留真实本机边界回归。
+- Map Manifest真实PG正例归专属测试Brain；Walking棘轮明确委托已合入的required owner，不执行且不冒充通过；保留全部主线业务与验收。
 
 ## Brain 1.352.2 — preview 专属缓存受控回收
 
