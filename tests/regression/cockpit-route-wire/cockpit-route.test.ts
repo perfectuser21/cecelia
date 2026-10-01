@@ -38,6 +38,7 @@ describe('OwnerCockpit 路由接线 — 防孤儿断言', () => {
     expect(overviewRoute?.component).toBe('WorkbenchOverview')
 
     const workbenchManifest = await readSourceFile('apps/api/features/workbench/index.ts')
+    expect(workbenchManifest).toContain("WorkbenchInbox: () => import('../gtd/pages/GTDInbox')")
     expect(workbenchManifest).toContain("WorkbenchOverview: () => import('../../../dashboard/src/pages/owner-cockpit/OwnerCockpitPage')")
   })
 })

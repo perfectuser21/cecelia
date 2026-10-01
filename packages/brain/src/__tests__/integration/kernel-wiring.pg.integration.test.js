@@ -348,6 +348,13 @@ beforeAll(createIsolatedDatabase, 30_000);
 afterAll(dropIsolatedDatabase, 30_000);
 
 describe('Kernel restart recovery on real PostgreSQL decision log', () => {
+  const confirmedRecovery = () => ({
+    env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
+    collectCapacitySnapshot: async () => ({ verified: true, machine: 'us-mac-m4', expires_at: Date.now() + 30_000,
+      capacity: { ok: true, physical_base_slots: 7, effective_base_slots: 7 } }),
+    removeContainer: vi.fn(async () => true),
+    inspectContainer: vi.fn(async () => false),
+  });
   async function seedExpiredKernelAttempt(run, hop = 1) {
     const attemptId = randomUUID();
     await testPool.query(
@@ -355,11 +362,11 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
          id, run_id, hop, phase, role, provider, task_bundle,
        callback_secret_hash, status, lease_owner, lease_expires_at,
          provider_session_id, logical_cycle_id, attempt_kind, workstream_key,
-         execution_transport
+         execution_transport, machine_id, requested_machine_id, local_container_naming
        ) VALUES (
          $1,$2,$3,'generate','generator','codex','{}'::jsonb,
          'old-hash','running','old-owner',NOW()-INTERVAL '1 minute',
-         'provider-thread','task-cycle','initial','ws1','local-docker'
+         'provider-thread','task-cycle','initial','ws1','local-docker','us-mac-m4','us-mac-m4','legacy-unsuffixed'
        )`,
       [attemptId, run.runId, hop],
     );
@@ -395,20 +402,24 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
       expect(context.originalParentAttempt.id).toBe(parentId);
       expect(context.reclaimedParentAttempt).toMatchObject({
         id: parentId,
-        lease_owner: expect.stringMatching(/^watchdog:/),
+        lease_owner: 'old-owner',
       });
       expect(context.reclaimedParentAttempt.lease_generation)
-        .toBeGreaterThan(context.originalParentAttempt.lease_generation);
+        .toBe(context.originalParentAttempt.lease_generation);
+      expect(context.parentCleanupConfirmed).toBe(true);
       expect(context.callbackSecret).toEqual(expect.any(String));
       return { ok: true, provider_session_id: 'provider-thread-resumed' };
     });
 
+    const cleanup = confirmedRecovery();
     const result = await resumeStalledRelayRuns({
-      pool: testPool,
+      ...cleanup, pool: testPool,
       resumeAttempt,
       launchKernel: vi.fn(),
     });
 
+    expect(cleanup.removeContainer).toHaveBeenCalledWith(`cecelia-harness-${parentId.replaceAll('-', '').slice(0, 8)}`);
+    expect(cleanup.inspectContainer).toHaveBeenCalledWith(`cecelia-harness-${parentId.replaceAll('-', '').slice(0, 8)}`);
     expect(result).toMatchObject({ scanned: 1, resumed: 1 });
     expect(resumeAttempt).toHaveBeenCalledOnce();
     const lineage = await testPool.query(
@@ -432,6 +443,11 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
     });
     expect(lineage.rows[0].child_id).not.toBe(parentId);
     expect(lineage.rows[0].callback_secret_hash).not.toBe('old-hash');
+    // 模拟恢复成功后的正常完成，避免任务终态制造下一用例的未确认清理占位。
+    const completed = await createAttemptStore(testPool).complete(
+      lineage.rows[0].child_id, { status: 'completed' }, { leaseOwner: `watchdog:${process.pid}` },
+    );
+    expect(completed.attempt?.status).toBe('completed');
     await setTaskStatus(run.taskId, 'completed');
   });
 
@@ -555,7 +571,7 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
     const parentId = await seedExpiredKernelAttempt(run);
 
     await resumeStalledRelayRuns({
-      pool: testPool,
+      ...confirmedRecovery(), pool: testPool,
       resumeAttempt: vi.fn(async () => false),
       launchKernel: vi.fn(),
     });
@@ -566,9 +582,13 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
     );
     expect(terminal.rows[0]).toMatchObject({
       status: 'failed',
-      error_code: 'resume_returned_false',
+      error_code: 'resumed_as_child',
     });
     expect(terminal.rows[0].completed_at).not.toBeNull();
+    const child = (await testPool.query('SELECT id,status,error_code FROM harness_attempts WHERE retry_of_attempt_id=$1', [parentId])).rows;
+    expect(child).toEqual([expect.objectContaining({ status: 'failed', error_code: 'resume_returned_false' })]);
+    expect((await testPool.query('SELECT target_machine_id,status FROM harness_attempt_cleanup_outbox WHERE attempt_id=$1', [child[0].id])).rows)
+      .toEqual([{ target_machine_id: 'us-mac-m4', status: 'pending' }]);
     await setTaskStatus(run.taskId, 'completed');
   });
 

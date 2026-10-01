@@ -105,7 +105,7 @@ export async function resolveCanonicalRoutingEvidence(request, repositoryFacts) 
   return Object.freeze({ branch, base_sha: baseSha });
 }
 
-async function loadRepositoryFacts(client) {
+export async function loadRepositoryFacts(client) {
   const result = await client.query(
     `SELECT scope_key, repo, adapter_config
        FROM map_scope_repositories

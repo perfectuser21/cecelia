@@ -1,5 +1,6 @@
 import { confirmExpiredParentCleanup } from '../../orchestrator/attempt-resource-cleanup.js';
 import { reserveExpiredAttemptReplacement } from '../../orchestrator/attempt-resource-replacement.js';
+import { reconcileExpiredKernelAttempt } from '../../harness-relay-watchdog.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
@@ -224,6 +225,84 @@ describe('真实 PG 加权预约与未确认取消', () => {
     expect(receipts).toEqual(['cleaned', 'already_clean']);
     expect(replacement.child).toMatchObject({ id: childInput.id, status: 'queued' });
     expect((await pool.query('SELECT status FROM harness_attempts WHERE id=$1', [parent.id])).rows[0].status).toBe('failed');
+  });
+
+  it.each([true, false])('真实恢复编排保留父清理身份，子启动结果=%s', async (ok) => {
+    const first = await store.createAttempt(await input('generator', 4));
+    await pool.query(`UPDATE harness_attempts SET status='running',lease_owner='old-owner',lease_generation=3,
+      lease_expires_at=NOW()-interval '1 minute',provider_session_id='thread-old',execution_transport='local-docker',
+      local_container_naming='legacy-unsuffixed' WHERE id=$1`, [first.id]);
+    const childId = randomUUID();
+    const removed = [];
+    let resumed = 0;
+    const result = await reconcileExpiredKernelAttempt({
+      db: pool, attemptId: first.id, leaseOwner: 'watchdog:fixture', reservedChildHop: 2,
+      randomUUIDFn: () => childId, collectSnapshot: async () => snapshot(4),
+      confirmCleanup: (parent) => confirmExpiredParentCleanup(parent, {
+        env: { CECELIA_MACHINE_ID: machine },
+        removeContainer: async (id) => { removed.push(id); return true; }, inspectContainer: async () => false,
+      }),
+      resumeAttempt: async (child, context) => {
+        resumed++;
+        expect(child).toMatchObject({ id: childId, retry_of_attempt_id: first.id, lease_owner: 'watchdog:fixture' });
+        expect(context.parentAttempt).toMatchObject({ id: first.id, lease_owner: 'old-owner', lease_generation: 3 });
+        expect(context.parentCleanupConfirmed).toBe(true);
+        expect(removed).toEqual([`cecelia-harness-${first.id.replaceAll('-', '').slice(0, 8)}`]);
+        return ok ? { ok: true } : false;
+      },
+    });
+    expect(resumed).toBe(1);
+    expect(result.ok).toBe(ok);
+    expect((await pool.query('SELECT status,error_code,lease_generation FROM harness_attempts WHERE id=$1', [first.id])).rows)
+      .toEqual([{ status: 'failed', error_code: 'resumed_as_child', lease_generation: 3 }]);
+    expect((await pool.query('SELECT status,error_code FROM harness_attempts WHERE id=$1', [childId])).rows)
+      .toEqual([{ status: ok ? 'starting' : 'failed', error_code: ok ? null : 'resume_returned_false' }]);
+    const pending = (await pool.query('SELECT target_machine_id,status FROM harness_attempt_cleanup_outbox WHERE attempt_id=$1', [childId])).rows;
+    expect(pending).toEqual(ok ? [] : [{ target_machine_id: machine, status: 'pending' }]);
+    await expect(store.createAttempt(await input('reporter', 4))).rejects.toThrow('capacity_contended');
+  });
+
+  it('terminal-first并发保持真实425 trigger的23514拒绝，不被无效容量fixture提前截断', async () => {
+    const first = await store.createAttempt(await input());
+    const next = { ...await input(), runId: first.run_id, hop: 2, machineId: 'xian-mac-m4',
+      capacitySnapshot: { ...snapshot(), machine: 'xian-mac-m4' } };
+    const terminal = await pool.connect(); const creator = await pool.connect();
+    const terminalPid = (await terminal.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    const creatorPid = (await creator.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    const waitsFor = async (pid, kind, event) => {
+      for (let count = 0; count < 200; count++) {
+        const row = (await pool.query('SELECT wait_event_type,wait_event FROM pg_stat_activity WHERE pid=$1', [pid])).rows[0];
+        if (row?.wait_event_type === kind && (!event || row.wait_event === event)) return true;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      return false;
+    };
+    let committed;
+    try {
+      await pool.query(`CREATE FUNCTION pause_weighted_cleanup() RETURNS TRIGGER AS $$
+        BEGIN PERFORM pg_sleep(1); RETURN NEW; END; $$ LANGUAGE plpgsql;
+        CREATE TRIGGER pause_weighted_cleanup BEFORE INSERT ON harness_attempt_cleanup_outbox
+        FOR EACH ROW EXECUTE FUNCTION pause_weighted_cleanup()`);
+      await terminal.query('BEGIN');
+      await terminal.query("UPDATE initiative_runs SET phase='failed' WHERE id=$1", [first.run_id]);
+      committed = terminal.query('COMMIT');
+      const reachedCleanup = await waitsFor(terminalPid, 'Timeout', 'PgSleep');
+      await creator.query('BEGIN');
+      const creation = createAttemptStore(creator, { transactionClient: true }).createAttempt(next)
+        .then(() => null, (error) => error);
+      const waited = await waitsFor(creatorPid, 'Lock');
+      await committed;
+      const error = await creation;
+      await creator.query('ROLLBACK');
+      expect(reachedCleanup).toBe(true); expect(waited).toBe(true);
+      expect(error).toMatchObject({ code: '23514', message: `attempt_parent_run_terminal:${first.run_id}` });
+      expect((await pool.query("SELECT id FROM harness_attempts WHERE run_id=$1 AND status IN ('queued','starting','running')", [first.run_id])).rows).toHaveLength(0);
+    } finally {
+      if (committed) await committed;
+      await terminal.query('ROLLBACK'); await creator.query('ROLLBACK');
+      terminal.release(); creator.release();
+      await pool.query('DROP TRIGGER IF EXISTS pause_weighted_cleanup ON harness_attempt_cleanup_outbox; DROP FUNCTION IF EXISTS pause_weighted_cleanup()');
+    }
   });
 
 });

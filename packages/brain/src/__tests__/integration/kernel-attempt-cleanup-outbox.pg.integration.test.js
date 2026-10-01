@@ -327,7 +327,9 @@ describe('Kernel attempt cleanup outbox on real PostgreSQL', () => {
           phase: 'generate',
           role: 'generator',
           provider: 'codex',
-          machineId: `terminal-first-worker-${randomUUID()}`,
+          machineId: 'xian-mac-m4',
+          capacitySnapshot: { verified: true, machine: 'xian-mac-m4', expires_at: Date.now() + 60_000,
+            capacity: { ok: true, physical_base_slots: 8, effective_base_slots: 8 } },
           callbackSecretHash: 'c'.repeat(64),
           bundle: {},
         })

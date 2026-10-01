@@ -147,6 +147,7 @@ for (const viewport of [
     await page.setViewportSize(viewport);
     await page.route('**/api/**', route => {
       const pathname = new URL(route.request().url()).pathname;
+      if (pathname === '/api/brain/task-intake') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"tasks":[]}' });
       if (pathname === '/api/brain/captures' || pathname === '/api/brain/initiatives') {
         return route.fulfill({ status: 200, contentType: 'application/json', body: '{"items":[]}' });
       }
@@ -155,8 +156,8 @@ for (const viewport of [
 
     await page.goto(origin);
     await expect(page).toHaveURL(/\/workbench\/inbox$/);
-    const input = page.getByPlaceholder(/快速捕获想法/);
-    const submit = page.getByTitle('提交 (Enter)');
+    const input = page.getByRole('textbox', { name: '交办内容' });
+    const submit = page.getByRole('button', { name: '提交交办' });
     await expect(input).toBeVisible();
     await input.fill('检查首页输入区在不同设备上的布局');
     await expect(submit).toBeEnabled();
@@ -169,7 +170,8 @@ for (const viewport of [
     const inputBox = (await input.boundingBox())!;
     const submitBox = (await submit.boundingBox())!;
     const mainBox = (await page.locator('main').boundingBox())!;
-    expect(inputBox.width, '输入框应使用主要可用宽度').toBeGreaterThanOrEqual(Math.max(160, mainBox.width * 0.6));
+    const inputAreaBox = (await input.locator('..').boundingBox())!;
+    expect(inputBox.width, '输入框应使用交办输入面的主要可用宽度').toBeGreaterThanOrEqual(Math.max(160, inputAreaBox.width * 0.6));
     expect(inputBox.height, '输入框应便于手机触控').toBeGreaterThanOrEqual(44);
     expect(submitBox.width).toBeGreaterThanOrEqual(64);
     expect(submitBox.height).toBeGreaterThanOrEqual(44);
