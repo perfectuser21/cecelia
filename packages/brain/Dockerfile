@@ -76,6 +76,7 @@ COPY scripts/skill-manifest.sh ./scripts/
 # steps 投影 sync（#5705）：仓库 step-dod.json → Brain steps 表，走 DB_DEFAULTS 直连，只能在容器内跑；
 # 09-30 上产靠手工 docker cp 进容器（任务 b2bba893），进镜像后 docker exec 直接可用。
 COPY packages/brain/scripts/sync-steps-from-workspace.mjs ./scripts/
+COPY packages/brain/scripts/lib/walking-ci-pg-state.mjs ./scripts/lib/
 COPY packages/brain/scripts/phone-registry-agent.py ./scripts/
 COPY packages/brain/config/ ./config/
 COPY packages/brain/migrations/ ./migrations/

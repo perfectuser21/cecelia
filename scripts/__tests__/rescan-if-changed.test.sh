@@ -13,6 +13,24 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 SCRIPT="$REPO_ROOT/scripts/scan/rescan-if-changed.sh"
 TMPD=$(mktemp -d -t rescan-test.XXXXXX)
 trap 'rm -rf "$TMPD"' EXIT
+
+# The live remote may advance between cases. Isolate only this read, while
+# forwarding every other git operation to the binary already selected by PATH.
+RESCAN_FIXTURE_REAL_GIT=$(command -v git)
+RESCAN_FIXTURE_SHA=1111111111111111111111111111111111111111
+export RESCAN_FIXTURE_REAL_GIT RESCAN_FIXTURE_SHA
+mkdir -p "$TMPD/git-bin"
+cat > "$TMPD/git-bin/git" <<'GIT'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$#" -eq 3 && "$1" == ls-remote && "$2" == origin && "$3" == refs/heads/main ]]; then
+  printf '%s\trefs/heads/main\n' "$RESCAN_FIXTURE_SHA"
+  exit 0
+fi
+exec "$RESCAN_FIXTURE_REAL_GIT" "$@"
+GIT
+chmod +x "$TMPD/git-bin/git"
+export PATH="$TMPD/git-bin:$PATH"
 STATE="$TMPD/last-sha"
 MARK="$TMPD/scan-called"
 STUB_OK="$TMPD/stub-ok.sh"; STUB_FAIL="$TMPD/stub-fail.sh"
@@ -24,10 +42,7 @@ echo "=== rescan-if-changed.sh 事件扳机测试 ==="
 # 1 脚本存在
 if [[ -f "$SCRIPT" ]]; then pass "脚本存在"; else fail "脚本缺失: $SCRIPT"; fi
 
-CUR_SHA=$(git ls-remote origin refs/heads/main 2>/dev/null | awk '{print $1}')
-if [[ -z "$CUR_SHA" ]]; then
-  echo "⚠️ 拿不到 origin/main SHA(离线环境),跳过行为用例"; echo "结果: PASS=$PASS FAIL=$ERRORS"; exit $((ERRORS>0?1:0))
-fi
+CUR_SHA=$RESCAN_FIXTURE_SHA
 
 # 2 SHA 未变 → 不触发扫描
 echo "$CUR_SHA|1000" > "$STATE"; rm -f "$MARK"
@@ -115,10 +130,10 @@ fi
 # 11 脚本内锁不得与 crontab 外层应急锁同路径
 # 2026-08-18 回归:两层同路径时外层先占住,脚本每轮都判"上一轮仍在运行"直接跳过,
 # 扫描一轮都不跑。这里用真实的外层锁复现,不是形式检查。
-OUTER_LOCK=/tmp/cecelia-rescan.lock
+OUTER_LOCK="$TMPD/outer.lock"
 rm -rf "$OUTER_LOCK"; mkdir "$OUTER_LOCK"
 echo "old-sha-000|0" > "$STATE"; rm -f "$MARK"; OUT4="$TMPD/outer.err"; RC=0
-RESCAN_NOW_EPOCH=99999 RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" \
+RESCAN_LOCK_DIR="$TMPD/inner.lock" RESCAN_NOW_EPOCH=99999 RESCAN_STATE_FILE="$STATE" RESCAN_SCAN_CMD="$STUB_OK" \
   bash "$SCRIPT" >/dev/null 2>"$OUT4" || RC=$?
 rmdir "$OUTER_LOCK" 2>/dev/null || true
 if [[ $RC -eq 0 && -f "$MARK" ]]; then
