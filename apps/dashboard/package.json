@@ -11,7 +11,8 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
-    "test:pwa-upgrade": "GIT_SHA=pwa-upgrade-e2e vite build --outDir .dist-pwa-e2e && node e2e/playwright-cli.mjs test e2e/pwa-upgrade.spec.ts"
+    "test:pwa-upgrade": "GIT_SHA=pwa-upgrade-e2e vite build --outDir .dist-pwa-e2e && node e2e/playwright-cli.mjs test e2e/pwa-upgrade.spec.ts",
+    "test:task-desk": "GIT_SHA=task-desk-e2e vite build --outDir .dist-task-desk-e2e && node e2e/playwright-cli.mjs test e2e/task-desk.spec.ts"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^18.0.1",

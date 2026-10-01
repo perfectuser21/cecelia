@@ -8,16 +8,15 @@
  *   - processes: ps aux 计数 claude/codex 进程
  *   - relay: docker ps --filter name=cecelia-relay 计数（失败→null）
  *   - llm_capacity: getLlmCapacitySnapshot()
- *   - sessions: detectUserSessions() → headed/headless 分类
+ *   - sessions: 异步ps快照 → headed/headless 分类
  *
  * 单个数据源超时 5s 降级 null，整体请求仍返回 HTTP 200。
  */
 
 import { Router } from 'express';
 import os from 'os';
-import { execSync } from 'child_process';
 import { getLlmCapacitySnapshot } from '../llm-capacity.js';
-import { countClaudeProcesses } from '../platform-utils.js';
+import { probeProcesses, probeRelayContainers } from '../lib/ops-panorama-probes.js';
 
 const router = Router();
 
@@ -27,8 +26,9 @@ const SOURCE_TIMEOUT_MS = 5000;
  * 带超时包裹的 Promise，超时后 resolve null（fail-soft）。
  */
 function withTimeout(promise, ms = SOURCE_TIMEOUT_MS) {
-  const timer = new Promise((resolve) => setTimeout(() => resolve(null), ms));
-  return Promise.race([promise, timer]);
+  let timer;
+  const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve(null), ms); });
+  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -49,40 +49,6 @@ function getHostMetrics() {
     cpu_usage_pct: Math.round(cpu_usage_pct * 10) / 10,
     mem_used_pct: Math.round(mem_used_pct * 10) / 10,
   };
-}
-
-/**
- * 执行 docker ps 获取 relay 容器数量。
- * 失败时返回 null。
- */
-async function safeDockerPs() {
-  return new Promise((resolve) => {
-    try {
-      const output = execSync(
-        'docker ps --filter name=cecelia-relay --format "{{.Names}}"',
-        { encoding: 'utf-8', timeout: 4000 },
-      );
-      const lines = output.split('\n').filter(Boolean);
-      resolve(lines.length);
-    } catch {
-      resolve(null);
-    }
-  });
-}
-
-/**
- * 计算 codex 进程数（ps aux | grep codex，忽略 grep 自身）。
- */
-function countCodexProcesses() {
-  try {
-    const output = execSync(
-      "ps aux | grep codex | grep -v grep | wc -l",
-      { encoding: 'utf-8', timeout: 3000 },
-    );
-    return parseInt(output.trim(), 10) || 0;
-  } catch {
-    return 0;
-  }
 }
 
 /**
@@ -146,30 +112,18 @@ router.get('/', async (req, res) => {
   const sampled_at = new Date().toISOString();
 
   // 并行聚合所有数据源，单源超时 5s 降级 null
-  const [
-    tasksResult,
-    hostMetrics,
-    claudeTotal,
-    codexTotal,
-    relayCount,
-    llmCapacityRaw,
-    sessionsData,
-  ] = await Promise.all([
+  const [tasksResult, hostMetrics, processResult, relayCount, llmCapacityRaw] = await Promise.all([
     withTimeout(fetchTasksData(db).catch(() => null)),
     Promise.resolve(getHostMetrics()),
-    Promise.resolve(countClaudeProcesses()),
-    Promise.resolve(countCodexProcesses()),
-    withTimeout(safeDockerPs()),
+    withTimeout(probeProcesses()),
+    withTimeout(probeRelayContainers()),
     withTimeout(getLlmCapacitySnapshot().catch(() => null)),
-    withTimeout(import('../slot-allocator.js').then(m => m.detectUserSessions()).catch(() => null)),
   ]);
 
   const tasks = tasksResult ?? { in_progress_count: 0, vendor_dist: { claude: 0, codex: 0, grok: 0, unknown: 0 } };
 
-  const sessions = {
-    headed: sessionsData?.headed?.length ?? 0,
-    headless: sessionsData?.headless?.length ?? 0,
-  };
+  const processes = processResult ?? { claude_total: 0, codex_total: 0, sessions: { headed: 0, headless: 0 } };
+  const sessions = processes.sessions;
 
   const llm_capacity = sanitizeLlmCapacity(llmCapacityRaw);
 
@@ -182,8 +136,8 @@ router.get('/', async (req, res) => {
     sessions,
     host: hostMetrics,
     processes: {
-      claude_total: claudeTotal,
-      codex_total: codexTotal,
+      claude_total: processes.claude_total,
+      codex_total: processes.codex_total,
     },
     llm_capacity,
   });

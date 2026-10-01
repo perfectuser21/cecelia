@@ -40,3 +40,6 @@ jobs:
 
       - name: Verify stale PWA upgrade
         run: npm run test:pwa-upgrade
+
+      - name: Verify task desk receipts
+        run: npm run test:task-desk
