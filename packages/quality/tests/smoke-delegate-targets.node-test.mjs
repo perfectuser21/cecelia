@@ -1,11 +1,46 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer } from 'node:http';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { fixture, root, clientCommands } from './fixtures/smoke-production-guard-fixture.mjs';
+
+for (const [name, route] of [
+  ['company-key-results', '/api/brain/okr/company-key-results'],
+  ['company-kr-analysis', '/api/brain/okr/company-key-results/analysis'],
+]) {
+  test(`${name}: actual readonly curl ignores startup POST and additional target`, async () => {
+    const calls = [], additional = [];
+    const server = createHttpServer((req, res) => { calls.push([req.method, req.url]); res.end('{}'); });
+    const extra = createHttpServer((req, res) => { additional.push([req.method, req.url]); res.end('{}'); });
+    const temp = await mkdtemp(resolve(tmpdir(), 'company-http-curlrc-'));
+    try {
+      await new Promise(r => server.listen(0, '127.0.0.1', r));
+      await new Promise(r => extra.listen(0, '127.0.0.1', r));
+      await writeFile(resolve(temp, '.curlrc'), `request="POST"\ndata="local-fixture-only"\nurl="http://127.0.0.1:${extra.address().port}/extra"\n`);
+      // Real wrapper and real curl: stop only after HTTP, before newer main's inline contract imports.
+      // This transport boundary is not a replacement for the original 4+3 contract tests.
+      const boundary = resolve(temp, 'boundary.sh');
+      await writeFile(boundary, `set -T\ntrap 'case "$BASH_COMMAND" in node\\ --input-type=module*) exit 97;; esac' DEBUG\n`);
+      const env = { ...process.env, CURL_HOME: temp, BASH_ENV: boundary,
+        BRAIN_URL: `http://127.0.0.1:${server.address().port}` };
+      for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) delete env[key];
+      const child = spawn('bash', [resolve(root, 'packages/brain/scripts/smoke', `${name}-smoke.sh`)],
+        { cwd: root, env, timeout: 5000, killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = ''; child.stdout.on('data', d => output += d); child.stderr.on('data', d => output += d);
+      const code = await new Promise((r, j) => { child.on('close', r); child.on('error', j); });
+      assert.equal(code, 97, `must reach HTTP-to-contract boundary without importing unmerged business modules: ${output}`);
+      assert.deepEqual(calls, [['GET', route]], JSON.stringify({ calls, additional }));
+      assert.deepEqual(additional, [], 'curlrc must not append an unchecked target');
+    } finally {
+      await Promise.all([new Promise(r => server.close(r)), new Promise(r => extra.close(r))]);
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
+}
 
 for (const optIn of ['', '1']) {
   test(`ratchet delegates Walking to its required owner without executing it: opt-in=${optIn || 'default'}`, async () => {
