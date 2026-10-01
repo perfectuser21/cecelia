@@ -3,7 +3,7 @@ import {createAppServerClient} from './client.js';
 import {loadAppServerHomes} from './config.js';
 import {createProductionCapabilityProbes} from '../orchestrator/preflight/production-probes.js';
 import {UUID,validateHome} from './identity.js';
-const MACHINES=['xian-mac-m1','xian-mac-m4','us-mac-m4'];
+import {listComputeWorkerIds,isPrimaryWorker} from '../machine-registry.js';
 const view=row=>({reservation_id:row.id,home_id:row.config.homeId,machine_id:row.machine_id,status:row.status,generation:row.launch_generation,
  cancel_requested:row.cancel_requested,task_id:row.task_id});
 export function createAppServerController({pool,env=process.env,homes=loadAppServerHomes(env.CECELIA_APP_SERVER_HOMES_FILE),
@@ -20,7 +20,8 @@ export function createAppServerController({pool,env=process.env,homes=loadAppSer
   async ensure(input){
    if(!input||Object.keys(input).some(k=>!['home_id','request_key'].includes(k))||!UUID.test(input.request_key))throw Error('appserver_request_invalid');
    const home=homes[input.home_id];if(!home)throw Error('appserver_home_unconfigured');validateHome(home);
-   const pinned=await store.home(home.homeId);const candidates=pinned?[pinned.machine_id]:MACHINES;
+   const pinned=await store.home(home.homeId);const candidates=pinned?[pinned.machine_id]:listComputeWorkerIds()
+    .sort((a,b)=>Number(isPrimaryWorker(a))-Number(isPrimaryWorker(b))||a.localeCompare(b));
    let denied;
    for(const machineId of candidates){
     let reservation;

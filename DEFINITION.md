@@ -10,13 +10,15 @@
 
 
 
-**Brain 版本**: 1.354.11
+**Brain 版本**: 1.354.14
 
 OpenClaw 宿主业务工具名单绑定受保护 profile 及配置摘要；searchable/direct namespace 与消息回调保持原协议，宿主执行与派生代理入口仍拒绝。
 
 OpenClaw RPC 按固定合同区分无参数与对象参数；配置约束读取和退出登录保留 null，显式 null 不再冒充对象。
 
 聊天 app-server 与三类 Worker 执行器共用维护启动闸及同 boot；真实 create/start/attach 边界再次检查，维护回执包含聊天未清理实例和在途连接，未知 journal 拒签静默。
+聊天未绑定 HOME 的候选从有效执行目录读取，主力机最后尝试；新节点无需新增机器字面量，空目录不启动。
+
 
 Brain 镜像完整打包 Fleet Worker 共用运行模块；构建期及独立产物回归实际导入执行目录并读取部署策略。
 
