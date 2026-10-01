@@ -1,3 +1,4 @@
+import { COMPANY_KR_SQL_GUARD, isCompanyKr } from './lib/company-kr-metrics.js';
 import { randomUUID } from 'node:crypto';
 import pool from './db.js';
 import { broadcastTaskState } from './task-updater.js';
@@ -497,6 +498,10 @@ async function updateGoal({ goal_id, status, progress }) {
   }
 
   // 2. Try key_results (has progress column)
+  if (progress !== undefined) {
+    const identity = await pool.query('SELECT metadata,custom_props FROM key_results WHERE id=$1', [goal_id]);
+    if (isCompanyKr(identity.rows[0])) return { success: false, error: '公司KR progress须由原指标公式计算' };
+  }
   const krUpdates = [];
   const krValues = [];
   let krIdx = 1;
@@ -505,7 +510,7 @@ async function updateGoal({ goal_id, status, progress }) {
   krUpdates.push(`updated_at = NOW()`);
   krValues.push(goal_id);
   const krResult = await pool.query(
-    `UPDATE key_results SET ${krUpdates.join(', ')} WHERE id = $${krIdx} RETURNING *, title AS name`,
+    `UPDATE key_results SET ${krUpdates.join(', ')} WHERE id = $${krIdx} ${progress !== undefined ? `AND ${COMPANY_KR_SQL_GUARD}` : ''} RETURNING *, title AS name`,
     krValues
   );
   if (krResult.rows.length > 0) {
