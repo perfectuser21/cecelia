@@ -81,6 +81,7 @@
 - 公司 GET、窄 import/observations 接入现有 OKR router 并限流。观察必须关联任务、actor、事实、来源与幂等键，PG 微秒版本 CAS；指标与任务证据同事务。
 - 原公司库 Target/Start 值级入口，Current 以导入/已投影基线区分人类改动和待推机算；人类改动先入 Brain 留前后值事件，缺基线冲突留账停推。出站只写 Current，不写 Target/Start、公式及关系；独立镜保存 Brain ID/Source/更新时间，8/46 分别对账。
 - Current 外部写入前事务持久化待推机器尝试及 Notion writer 身份，响应超时/SQL 回执丢失后核对现场恢复基线，保留 Brain 较新观察；未确认旧基线或页面作者变化无法归因则留账停推，多进程不得覆盖未决尝试。Notion 无列级作者，值及页面作者一致只证明与机器尝试一致，不能绝对识别所有真人编辑。固定 Goal 页需仍归属于原 Goals 库，移库拒绝导入。
+- 公司投影整轮以 PG 会话级 advisory 锁串行：取得锁后才读取 Notion snapshot，覆盖 Target/Current 回读到外部写及回执确认；第二个独立连接/进程拿不到锁时零远端读取。成功和异常均 finally 解锁，解锁失败关闭连接，避免旧快照把另一进程新确认的指标当真人改动回滚。
 - callback/execution/tasks 三 writer、projects 重算、verifier、旧 KR3 批写、通用 action/PATCH 保护公司指标和来源身份；问题回答仅写 pending_questions，避免吞掉并发观察。OPC 两脚本纳入 scripts/ops 真身，保留原算法/六路径/七份 schedule，改为 Brain 观察及 Brain 读取。
 - 真实测试库事务验收 8+3 幂等、46 链接、原值精度、任务生命周期/非合成交接、人类 Current/Target、微秒 CAS 及并发元数据保留；测试结束回滚，无 schema 变更。
 

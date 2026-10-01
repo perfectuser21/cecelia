@@ -162,7 +162,11 @@ export async function runCompanyKrProjection(pool, { token = configuredToken(), 
   if (registered.rows.length !== 1 || registered.rows[0].notion_db_id !== COMPANY_KR_DATABASE) throw new Error('公司投影登记归属错误');
   if (inFlight.has(pool) || (lastRun.has(pool) && now - lastRun.get(pool) < 300000)) return { skipped: true, reason: 'interval' };
   inFlight.add(pool); lastRun.set(pool, now);
+  let lockClient, locked = false;
   try {
+    lockClient = await pool.connect();
+    locked = (await lockClient.query('SELECT pg_try_advisory_lock(hashtext($1)) AS acquired', ['notion-company-key-results-projection'])).rows[0]?.acquired === true;
+    if (!locked) return { skipped: true, reason: 'projection_locked' };
     const snapshot = await readCompanySnapshot({ token, notionReq });
     const { rows } = await pool.query("SELECT * FROM key_results WHERE metadata->>'metric_mode'=$1", [COMPANY_METRIC_MODE]);
     if (rows.length !== 8 || new Set(rows.map(r => r.custom_props?.company_notion?.page_id)).size !== 8) throw new Error('公司KR真身应为8条且映射唯一');
@@ -202,5 +206,13 @@ export async function runCompanyKrProjection(pool, { token = configuredToken(), 
       result.matched++;
     }
     return result;
-  } finally { inFlight.delete(pool); }
+  } finally {
+    inFlight.delete(pool);
+    if (lockClient) {
+      let destroy = false;
+      try { if (locked) await lockClient.query('SELECT pg_advisory_unlock(hashtext($1))', ['notion-company-key-results-projection']); }
+      catch (error) { destroy = true; throw error; }
+      finally { lockClient.release(destroy); }
+    }
+  }
 }

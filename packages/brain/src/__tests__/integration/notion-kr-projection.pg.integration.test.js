@@ -203,6 +203,12 @@ describe('公司KR真实SQL与HTTP', () => {
         await observeRecovery(oldValue, `pending-${mode}-old`);
         if (mode === 'response') fault = recoveryKr.source_page_id; else failConfirmation = true;
         await expect(project()).rejects.toThrow();
+        const releasedClient = await pool.connect();
+        try {
+          const released = (await releasedClient.query('SELECT pg_try_advisory_lock(hashtext($1)) AS acquired', ['notion-company-key-results-projection'])).rows[0].acquired;
+          if (released) await releasedClient.query('SELECT pg_advisory_unlock(hashtext($1))', ['notion-company-key-results-projection']);
+          expect(released).toBe(true);
+        } finally { releasedClient.release(); }
         const pendingRow = (await client.query('SELECT metadata FROM key_results WHERE id=$1', [recoveryKr.id])).rows[0];
         expect(pendingRow.metadata.company_projection_pending).toMatchObject({ value: String(oldValue), actor: 'brain-notion-projection' });
         expect(remote.get(recoveryKr.source_page_id).properties.Current.number).toBe(oldValue);
