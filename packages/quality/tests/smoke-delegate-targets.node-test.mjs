@@ -65,6 +65,13 @@ test('all actual curl executable aliases disable default configuration', async (
     }
   }
 });
+test('client startup options never become dependency lookup arguments', async () => {
+  for (const name of await readdir(resolve(root, 'packages/brain/scripts/smoke'))) {
+    if (!name.endsWith('.sh')) continue;
+    const source = await readFile(resolve(root, 'packages/brain/scripts/smoke', name), 'utf8');
+    assert.doesNotMatch(source, /\b(?:command\s+-v|which)\s+(?:psql\s+-X|curl\s+-q)\b/, name);
+  }
+});
 for (const [script] of delegates) {
   test(`${script}: every actual psql invocation disables startup configuration`, async () => {
     const source = await readFile(resolve(root, script), 'utf8');
