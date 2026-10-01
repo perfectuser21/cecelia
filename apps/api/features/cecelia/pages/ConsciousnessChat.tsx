@@ -1,3 +1,4 @@
+import TaskDeskLink from '../../workbench/task-desk/TaskDeskLink';
 /**
  * ConsciousnessChat v2 — 透明意识界面
  *
@@ -1117,6 +1118,7 @@ export default function ConsciousnessChat() {
                     正在查看历史对话 · 点击"返回当前对话"继续聊天
                   </div>
                 )}
+                <TaskDeskLink />
                 {/* 图片预览 */}
                 {pendingImage && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>

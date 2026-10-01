@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Inbox, RefreshCw, CheckCircle2, Archive, Clock, Atom, MessageSquare, ExternalLink, Link2 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import QuickCapture from '../components/QuickCapture';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import TaskDesk from '../../workbench/task-desk/TaskDesk';
 import AtomReview from '../components/AtomReview';
 
 interface Capture {
@@ -250,7 +250,7 @@ function KanbanColumn({ title, status, captures, updating, onUpdateStatus, onMar
   );
 }
 
-export default function GTDInbox(): React.ReactElement {
+export function CaptureHistory(): React.ReactElement {
   const [allCaptures, setAllCaptures] = useState<Capture[]>([]);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState<string | null>(null);
@@ -360,6 +360,7 @@ export default function GTDInbox(): React.ReactElement {
         <div className="flex items-center gap-2 text-sm font-medium text-gray-200">
           <Inbox className="w-4 h-4 text-slate-400" />
           <span>Capture 收件箱</span>
+          <Link to="?" className="ml-2 text-xs text-blue-300">返回交办台</Link>
         </div>
         <button
           onClick={fetchCaptures}
@@ -370,10 +371,6 @@ export default function GTDInbox(): React.ReactElement {
         </button>
       </div>
 
-      {/* QuickCapture */}
-      <div className="shrink-0 px-4 py-3 border-b border-slate-800/50">
-        <QuickCapture onSuccess={fetchCaptures} />
-      </div>
 
       {/* Tab 切换 */}
       <div className="shrink-0 flex gap-1 px-4 pt-3 pb-0">
@@ -440,4 +437,9 @@ export default function GTDInbox(): React.ReactElement {
       </div>
     </div>
   );
+}
+
+export default function GTDInbox(): React.ReactElement {
+  const [params] = useSearchParams();
+  return params.get("view") === "history" ? <CaptureHistory /> : <TaskDesk />;
 }
