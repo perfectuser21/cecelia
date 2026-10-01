@@ -57,14 +57,14 @@ class InstallerRecoveryTests(unittest.TestCase):
 
 
 class NetworkRecoveryTests(unittest.TestCase):
-    def invoke_confirm(self, root, state, evidence, verify=None, command=None):
+    def invoke_confirm(self, root, state, evidence, verify=None, command=None, adb=None):
         import tailscale_us_exit_activation as activation
         evidence_file = root / "evidence.json"
         evidence_file.write_text(json.dumps(evidence))
         with ExitStack() as stack:
             stack.enter_context(patch.object(activation, "read_transaction", return_value=(root, state)))
             stack.enter_context(patch.object(activation, "verify_transaction", side_effect=verify or (lambda _: (root, state))))
-            stack.enter_context(patch.object(activation, "verify_adb", side_effect=lambda home, serials=None: sorted(serials if serials is not None else activation.ADB_SERIALS)))
+            stack.enter_context(patch.object(activation, "verify_adb", side_effect=adb or (lambda home, serials=None: sorted(serials if serials is not None else activation.ADB_SERIALS))))
             stack.enter_context(patch.object(activation, "command", side_effect=command or (lambda _: 'label "cecelia-us-exit-v2"\nblock drop out quick proto { tcp udp } all')))
             stack.enter_context(patch.dict(os.environ, SSH_CONNECTION="100.71.151.105 123 100.86.57.69 22"))
             stack.enter_context(patch("tailscale_us_exit_lease.guard_alive", return_value=True))
@@ -122,6 +122,65 @@ class NetworkRecoveryTests(unittest.TestCase):
                 return "block drop out quick proto { tcp udp } all"
             with self.assertRaisesRegex(RuntimeError, "deadline"):
                 self.invoke_confirm(root, state, evidence, verify, command)
+            self.assertEqual(state["status"], "armed")
+
+    def test_baseline_capture_requires_known_adb_output_and_live_shell_for_device(self):
+        import tailscale_us_exit_recovery as recovery
+        import tailscale_us_exit_activation as activation
+        api = SimpleNamespace(ADB_SERIALS=activation.ADB_SERIALS, adb_prefix=lambda _: ["adb"])
+        for output in ("", "unknown daemon output", "List of devices attached\nANGYVB4227006983 unknown\n"):
+            api.command = lambda _, text=output: text
+            api.verify_adb = lambda *args, **kwargs: []
+            with self.assertRaises(RuntimeError):
+                recovery.capture_baseline(api, "/target", "a"*64, "root")
+        api.command = lambda _: "List of devices attached\nANGYVB4227006983 device\n"
+        api.verify_adb = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("shell failed"))
+        with self.assertRaisesRegex(RuntimeError, "shell"):
+            recovery.capture_baseline(api, "/target", "a"*64, "root")
+        api.command = lambda _: (_ for _ in ()).throw(RuntimeError("adb failed"))
+        with self.assertRaisesRegex(RuntimeError, "adb"):
+            recovery.capture_baseline(api, "/target", "a"*64, "root")
+
+    def test_immutable_baseline_rejects_candidate_home_serial_actor_age_and_digest_changes(self):
+        import tailscale_us_exit_recovery as recovery
+        import tailscale_us_exit_activation as activation
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, _ = self.fixture(root)
+            raw = (root / "phone-baseline.json").read_bytes()
+            with patch.object(recovery, "read_root_file", return_value=raw):
+                recovery.load_baseline(root, state, activation.ADB_SERIALS)
+                for key, value in (("candidate_sha256", "b"*64), ("target_home", "/elsewhere"),
+                                   ("approval_actor", "other"), ("armed_at", state["armed_at"]+121),
+                                   ("baseline_sha256", "b"*64)):
+                    with self.assertRaisesRegex(RuntimeError, "baseline"):
+                        recovery.load_baseline(root, dict(state, **{key: value}), activation.ADB_SERIALS)
+            changed = json.loads(raw)
+            changed["target_serials"] = []
+            bad = json.dumps(changed).encode()
+            with patch.object(recovery, "read_root_file", return_value=bad):
+                with self.assertRaisesRegex(RuntimeError, "baseline"):
+                    recovery.load_baseline(root, dict(state, baseline_sha256=hashlib.sha256(bad).hexdigest()), activation.ADB_SERIALS)
+
+    def test_network_recovery_cannot_hide_regression_of_previously_online_phone(self):
+        import tailscale_us_exit_activation as activation
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, evidence = self.fixture(root, ["ANGYVB4227006983"])
+            def fail(home, serials=None):
+                self.assertEqual(set(serials), {"ANGYVB4227006983"})
+                raise RuntimeError("online phone regressed")
+            with self.assertRaisesRegex(RuntimeError, "online phone regressed"):
+                self.invoke_confirm(root, state, evidence, adb=fail)
+            self.assertEqual(state["status"], "armed")
+
+    def test_default_confirmation_still_rejects_offline_phones(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, evidence = self.fixture(root)
+            state.pop("confirmation_scope")
+            with self.assertRaises(RuntimeError):
+                self.invoke_confirm(root, state, evidence)
             self.assertEqual(state["status"], "armed")
 
 
