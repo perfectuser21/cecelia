@@ -71,8 +71,8 @@ export function createScriptReservationStore(pool) {
     },
     async markRunning(id, identity) {
       if (!/^[a-f0-9]{64}$/.test(identity.container_id)) throw new Error('exact_container_id_required');
-      return rowUpdate(`UPDATE capacity_reservations SET status='running',container_id=$2,updated_at=NOW()
-        WHERE id=$1 AND status IN ('launching','running') AND worker_id=$3 AND worker_boot_id=$4 RETURNING *`,
+      return rowUpdate(`UPDATE capacity_reservations SET status=CASE WHEN status IN ('cleanup_pending','blocked') THEN status ELSE 'running' END,container_id=$2,updated_at=NOW()
+        WHERE id=$1 AND status IN ('launching','running','cleanup_pending','blocked') AND worker_id=$3 AND worker_boot_id=$4 RETURNING *`,
       [id,identity.container_id,identity.worker_id,identity.worker_boot_id]);
     },
     async recordUnknown(id, error) {

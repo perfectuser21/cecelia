@@ -41,7 +41,7 @@ function loadProtectedScriptProfiles(filename) {
   for(const profile of Object.values(config.profiles)) validateProfile(profile);
   return config.profiles;
 }
-function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),profiles={},docker}) {
+function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),profiles={},docker,assertLocalResources}) {
   fs.mkdirSync(stateRoot,{recursive:true,mode:0o700});
   const root=fs.realpathSync(stateRoot);
   fs.chmodSync(root,0o700);
@@ -130,11 +130,14 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
         }
         if(input.config_digest!==digest({job:input.job,profile_digest:digest(profile)}))throw new Error('script_config_digest_mismatch');
         if(input.worker_id && (input.worker_id!==workerId || input.worker_boot_id!==bootId))throw new Error('script_worker_changed');
+        if(typeof assertLocalResources!=='function')throw new Error('script_local_resources_unavailable');
+        await assertLocalResources();
         state={...initial(input),job_digest:digest(input.job),timeout_sec:input.job.timeout_sec};save(state);
         state.container_id=await docker.create({name:state.container_name,profile,command:input.job.cmd,
           env:input.job.env,identity:{reservation_id:state.reservation_id,intent_id:state.intent_id,launch_generation:state.launch_generation}});
         save(state); // exact ID 持久化后才可 start；重复请求只 inspect。
         state.status='starting';save(state);
+        await assertLocalResources();
         await docker.start(state.container_id);
         state.status='running';save(state);schedule(state);
         return observe(state);

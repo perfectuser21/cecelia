@@ -463,6 +463,7 @@ function createFleetWorkerRuntime({
   return Object.freeze({
     scriptRunner: createScriptRunner({ stateRoot: path.join(dataRoot, 'scripts'),
       machineId: workerId, workerId, profiles: loadProtectedScriptProfiles(env.CECELIA_SCRIPT_PROFILES_FILE),
+      assertLocalResources: createLocalResourceAdmission({workerId,diskPaths:healthDiskPaths,...(runCommand?{runCommand}:{})}),
       docker: createScriptDockerAdapter() }),
     attemptRunner,
     orchestratorRunner,
@@ -612,7 +613,7 @@ function createFleetWorkerServer(options = {}) {
         }
         const receipt={...result,request_nonce:body.request_nonce??null};
         writeJson(response,200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
-      } catch(error) {writeJson(response,409,{error:/^script_[a-z_]+$/.test(error.message)?error.message:'script_operation_failed'});}
+      } catch(error) {writeJson(response,error.statusCode===429?429:409,{error:/^script_[a-z_]+$/.test(error.message)?error.message:'script_operation_failed'});}
       return;
     }
     if (request.url === '/health') {
