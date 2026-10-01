@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ipaddress
+import hashlib
 import json
 import os
 import re
@@ -287,6 +288,8 @@ class InterfaceFirewall:
             self._apply(False)
         else:
             self.lease.unlink(missing_ok=True)
+            save_map_cache(self.cache.with_name("closed-policy.json"),
+                           {"sha256": hashlib.sha256(rules.encode()).hexdigest()})
 
     def protect_boot_gap(self):
         # Never reuse last cycle's public authorization, including a reused utun name.
@@ -295,10 +298,7 @@ class InterfaceFirewall:
     def refresh(self, binary, persist=True):
         self.snapshot = collect_snapshot(self.api, binary)
         if persist:
-            # 仅保存认证状态的两 US peer 精确字段；禁止缓存含密钥的 prefs。
-            safe_peers = [{key: peer.get(key) for key in ("ID", "DNSName", "ExitNodeOption", "CurAddr")}
-                          for peer in peers(self.snapshot["status"]) if approved(peer, self.approved)]
-            save_map_cache(self.peer_cache, {"observed_at": self.snapshot["observed_at"], "status": {"Peer": safe_peers}})
+            self.cache_bootstrap()
         try:
             current_map = self.api.run_json([binary, "debug", "derp-map"])
             if derp_endpoints(current_map):
@@ -309,3 +309,10 @@ class InterfaceFirewall:
             self.map = read_map_cache(self.cache)
         return bool(verified_interfaces(self.snapshot, self.api.ALLOWED_SELF_IPS,
             time.time(), self.approved))
+
+    def cache_bootstrap(self):
+        # 仅保存认证两 US peer 精确字段；禁止缓存含密钥的 prefs。
+        safe_peers = [{key: peer.get(key) for key in ("ID", "DNSName", "ExitNodeOption", "CurAddr")}
+                      for peer in peers(self.snapshot["status"]) if approved(peer, self.approved)]
+        save_map_cache(self.peer_cache, {"observed_at": self.snapshot["observed_at"], "status": {"Peer": safe_peers}})
+        save_map_cache(self.cache.with_name("bootstrap-context.json"), {"lan_interfaces": self.lan_interfaces})

@@ -27,6 +27,7 @@ PLIST = Path(f"/Library/LaunchDaemons/{LABEL}.plist")
 FILES = (INSTALL / "tailscale-us-exit-enforcer.py", INSTALL / "tailscale_us_exit_policy.py",
          INSTALL / "tailscale_us_exit_activation.py", INSTALL / "tailscale_us_exit_legacy.py", PLIST, GUARD_PLIST, INSTALL / "tailscale_us_exit_lease.py", CACHE,
          CACHE.with_name("bootstrap-peers.json"), CACHE.with_name("bootstrap-context.json"),
+         CACHE.with_name("closed-policy.json"),
          CACHE.with_name("business-lease.json"), CACHE.with_name("guard-health.json"))
 ADB_SERIALS = {"ANGYVB4227006983", "ANGYVB4402004137"}
 
@@ -300,6 +301,8 @@ def activate(args):
             verify_transaction(path)
             from tailscale_us_exit_policy import save_map_cache
             save_map_cache(CACHE, firewall.map)
+            firewall.cache_bootstrap()
+            verify_transaction(path)
             guarded_command(path, ["/sbin/pfctl", "-a", ANCHOR, "-f", str(path / "bootstrap.pf")])
             guarded_command(path, ["/bin/launchctl", "enable", "system/" + GUARD_LABEL])
             guarded_command(path, ["/bin/launchctl", "bootstrap", "system", str(GUARD_PLIST)])

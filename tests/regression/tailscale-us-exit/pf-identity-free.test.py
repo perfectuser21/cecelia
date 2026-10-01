@@ -400,6 +400,21 @@ class ActivationFailureTests(unittest.TestCase):
 
 
 class LeaseGuardTests(unittest.TestCase):
+    def test_unchanged_closed_bootstrap_is_not_loaded_every_guard_cycle(self):
+        import tempfile, hashlib
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import tailscale_us_exit_lease as lease
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            calls = []
+            rules = 'pass out quick on lo0 all no state label "cecelia-us-exit-v2"\nblock drop out quick'
+            firewall = SimpleNamespace(cache=root/"cache", pf_lock=root/"lock", lease=root/"lease",
+                rules=lambda _: rules, current_rules=lambda: rules, _apply=lambda allow: calls.append(allow))
+            with patch.object(lease, "read_map_cache", side_effect=[{}, {"sha256": hashlib.sha256(rules.encode()).hexdigest()}]):
+                lease.reconcile_once(firewall, now=2000)
+            self.assertEqual(calls, [])
+
     def test_closed_peer_bootstrap_does_not_survive_expired_cache_lease(self):
         import tempfile
         from types import SimpleNamespace
@@ -432,7 +447,8 @@ class LeaseGuardTests(unittest.TestCase):
         import tailscale_us_exit_lease as lease
         with tempfile.TemporaryDirectory() as directory:
             calls = []
-            firewall = SimpleNamespace(pf_lock=Path(directory)/"lock", lease=Path(directory)/"lease",
+            firewall = SimpleNamespace(cache=Path(directory)/"cache", rules=lambda _: "block drop out quick",
+                pf_lock=Path(directory)/"lock", lease=Path(directory)/"lease",
                 current_rules=lambda: "pass out quick on utun42 inet proto tcp from 100.86.57.69 to any no state",
                 _apply=lambda allow: calls.append(allow))
             with patch.object(lease, "read_map_cache", return_value={}):

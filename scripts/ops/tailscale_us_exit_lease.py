@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import importlib.util
 import os
 import re
@@ -53,8 +54,12 @@ def reconcile_once(firewall, now=None):
         lease = read_map_cache(firewall.lease, max_age=MAX_EVIDENCE_AGE)
         if valid_lease(lease, time.time() if now is None else now):
             return
-        # 同一短锁内读当代 lease 再撤权，避免误撤刚刚更新的授权。
-        if re.search(r"\bon utun\d+\b", firewall.current_rules()):
+        # 同一短锁核当代 lease；封闭规则也必须随 peer/DERP cache 到期更新。
+        desired = hashlib.sha256(firewall.rules(False).encode()).hexdigest()
+        recorded = read_map_cache(firewall.cache.with_name("closed-policy.json"))
+        installed = firewall.current_rules()
+        if (recorded.get("sha256") != desired or re.search(r"\bon utun\d+\b|\b(user|group)\b", installed)
+                or SIGNATURE not in installed or "block drop out quick" not in installed):
             firewall._apply(False)
 
 
