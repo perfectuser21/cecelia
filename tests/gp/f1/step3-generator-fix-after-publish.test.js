@@ -67,6 +67,7 @@ function createGitFixture() {
 function fakeDocker() {
   const waits = new Map();
   return {
+    verifyIdentity: vi.fn(async () => {}),
     prepare: vi.fn(async ({ attemptId }) => ({
       containerId: `container-${attemptId}`,
       credentialFifo: `/controlled/runtime/${attemptId}/credential.fifo`,

@@ -407,6 +407,7 @@ function createFleetWorkerRuntime({
     ...(runCommand ? { runCommand } : {}),
   });
   const docker = createDockerAdapter({
+    workerId,
     runtimeRoot: roots.runtime,
     ...(accessPrincipal === undefined
       ? {}
@@ -427,6 +428,7 @@ function createFleetWorkerRuntime({
     ?? digest;
   const postgresImageDigest = env.CECELIA_POSTGRES_IMAGE ?? POSTGRES_IMAGE;
   const resourceManager = createAttemptResourceManager({
+    workerId,
     postgresImageDigest,
     ...(runCommand ? { runCommand } : {}),
   });
