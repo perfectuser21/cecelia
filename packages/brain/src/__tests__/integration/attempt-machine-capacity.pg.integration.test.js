@@ -9,13 +9,14 @@ import {
 } from '../../orchestrator/attempt-resource-budget.js';
 import { createAttemptStore } from '../../orchestrator/attempt-store.js';
 
-const migrations = [357, 362, 363, 364, 425].map((version) => readFileSync(
+const migrations = [357, 362, 363, 364, 425, 501].map((version) => readFileSync(
   new URL(`../../../migrations/${{
     357: '357_harness_provider_attempts.sql',
     362: '362_kernel_attempt_telemetry_reconcile.sql',
     363: '363_kernel_fleet_execution_receipts.sql',
     364: '364_kernel_local_container_naming.sql',
     425: '425_harness_attempt_cleanup_outbox.sql',
+    501: '501_capacity_reservations.sql',
   }[version]}`, import.meta.url),
   'utf8',
 ));
@@ -98,6 +99,7 @@ beforeAll(async () => {
   await client.query(`CREATE SCHEMA ${quotedSchema}`);
   await client.query(`SET search_path TO ${quotedSchema}, public`);
   await client.query(`
+    CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT);
     CREATE TABLE schema_version (
       version TEXT PRIMARY KEY,
       description TEXT NOT NULL,

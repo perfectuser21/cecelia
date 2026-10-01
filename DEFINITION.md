@@ -10,7 +10,7 @@
 
 
 
-**Brain 版本**: 1.352.2
+**Brain 版本**: 1.352.4
 
 Janitor 新动作的CI冒烟使用十类执行者精确名单、471叠加502合法增量及只读任务白名单；真实PG路由验证默认停用且不触发清理。
 
@@ -23,7 +23,36 @@ Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增�
 - Brain 持久任务与 intent，远端固定鉴权接口；未确认操作只查询原回执，调度默认停用。新增 migration 502 约束专用任务类型及 intent 唯一性。
 - 保留前置 Harness 加权预约、Worker 本机 CPU/内存/磁盘/Docker 二次准入；不包含 OpenClaw 直聊、Linux 执行能力与动态授权。
 
+受管脚本准入仅写 blocked/queued，终态写入者守卫已登记。
+
+## Brain 1.352.3 — 脚本受管执行与共享预约
+
+- 容器脚本经共享机器预约、受认证 Worker 协议及精确清理回执执行；非 released 预约持续占位。
+- SCRIPT_MANAGED_MACHINES 仅在旧宿主脚本完成对账后启用；显式 profile 使用无宿主挂载容器，宿主运维脚本需另行兼容，未覆盖全部执行入口。
+- Worker 服务须显式设置 CECELIA_SCRIPT_PROFILES_FILE，指向服务账号或 root 所有、权限 0600 的配置；仅接受 legacy_host_scripts_reconciled=true 与 profile 内镜像 digest、非 root 用户、完整资源限额及显式 logMaxSizeBytes/logMaxFiles。日志轮转使用固定 local 驱动，限额纳入 profile digest，缺失拒绝启动。默认不启用，安装器不自动迁移旧宿主脚本或注入业务 profile。
+- journal 遗留操作锁不按年龄回收，script_operation_locked 保留预约并暴露运维阻断。
+
+受管脚本恢复按以下矩阵处理；所有任务状态写入均核对当前 run/reservation，取消或跨代任务只清理旧预约。
+
+| 任务 | 预约 | 认证 Worker 观测 | 处理 |
+| --- | --- | --- | --- |
+| queued / in_progress | reserved | 未送达 | 保留预约，交派发启动 |
+| queued / in_progress | launching | waiting_resources（含尚未 start 的容器） | 预约行锁下归队，不消耗执行重试 |
+| queued / in_progress | 非 released | running / restarting | 预约行锁下恢复 in_progress；等待终态 |
+| queued / in_progress | 非 released | created / unknown（启动中断） | 墓碑与精确清理确认后，按失败结算 |
+| queued / in_progress | 非 released | exited / cleaned + terminal | 认证清理释放后，原子 CAS 结算或重试 |
+| queued / in_progress | released | 已确认 terminal，结算未完成 | 继续扫描同 run/reservation，恢复结算；重试清除 run 后停止扫描 |
+| 任务终态或身份已换代 | 任意 | 任意 | 清理旧预约，不改当前任务 |
+
+cleanup_pending / blocked 预约继续清理；通信未知保留占位。预算释放与任务结算分别持久化，结算失败不得重新占回预算或漏扫。
+
+Worker 标准升级在预检前读取可信现役 plist 快照，保留既有地址、端口、令牌引用、路径与完整环境；预检和启动健康使用同一有效配置，私有快照及安装 plist 为0600，替换前复核旧配置指纹，失败保留事务回滚。
+
 机群统一资源预约与启动保护：Harness 按角色权重在同机事务锁内预约；资源未知、过期、并发不足均拒绝新增执行；未确认精确清理的执行继续占位。Worker 在 prepare/start 实际副作用前复验本机 CPU、内存与执行目录磁盘。安装保护保留 profile 至少10GiB可用余量和可信采样，高磁盘占用允许升级；新增受管 Harness 仍执行原85%磁盘压力门槛。
+
+## Brain 1.352.1 — 公司经营KR人工正式值与AI独立建议
+
+正式值由Notion工作面回灌；机器观察与建议独立存储。Brain统一触发每日及正式变更分析，OpenClaw受限分析员返回绑定快照的建议，可信收割校验、任务留痕并投影AI栏。
 
 ## Brain 1.350.4 — 节点接入与受控执行回执
 
@@ -31,7 +60,7 @@ Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增�
 - 运行机须部署 `scripts/ops/node-onboarding.mjs` 及相邻模块，并有Node、Python3、OpenSSH、已授权1Password CLI；macOS需现有GUI会话，非root Linux需现有systemd linger。不改网络或删业务文件。
 - 已认领有头会话复用现有探活合同，未知保留运行；tmux名称使用argv。
 - Janitor固定动作显式启用后才执行；专属连接互斥执行与配置，异常持久固定错误码，不确定running阻止重跑，锁响应不明及解锁失败销毁连接。生产动作注册表保持为空。
-- 本批没有migration501，不包含Linux执行器、全机自动清理或动态执行资格。
+- 节点接入仍不授予 Linux 执行器或动态执行资格；migration 501 为本次脚本预约单独引入。
 
 
 ## 1.350.1

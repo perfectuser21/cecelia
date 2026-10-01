@@ -38,6 +38,20 @@ function createApp() {
   return app;
 }
 
+// 来源检查与更新分别提供返回值，避免增加身份查询时消耗UPDATE fixture。
+function mockGoalPatch({ objective = null, keyResult = null } = {}) {
+  mockPool.query.mockImplementation(async (sql) => {
+    if (/^SELECT metadata, custom_props FROM (objectives|key_results) WHERE id=\$1$/.test(sql)) {
+      const row = sql.includes('FROM objectives') ? objective : keyResult;
+      return { rows: row ? [{ metadata: row.metadata || {}, custom_props: row.custom_props || {} }] : [] };
+    }
+    if (sql.startsWith('UPDATE objectives ')) return { rows: objective ? [objective] : [] };
+    if (sql.startsWith('UPDATE key_results ')) return { rows: keyResult ? [keyResult] : [] };
+    throw new Error(`测试未定义SQL:${sql}`);
+  });
+}
+const patchWrites = () => mockPool.query.mock.calls.filter(([sql]) => sql.startsWith('UPDATE '));
+
 describe('task-goals routes', () => {
   beforeEach(() => {
     // clearAllMocks 只清调用记录，不清未消费的 mockResolvedValueOnce 队列；
@@ -149,13 +163,18 @@ describe('task-goals routes', () => {
     });
 
     it('updates title and status (tries objectives first)', async () => {
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'g1', title: 'Updated', status: 'completed' }],
-      });
+      const updated = { id: 'g1', title: 'Updated', status: 'completed' };
+      mockGoalPatch({ objective: updated });
 
       const res = await request(app).patch('/goals/g1').send({ title: 'Updated', status: 'completed' });
       expect(res.status).toBe(200);
-      const [sql] = mockPool.query.mock.calls[0];
+      expect(res.body).toEqual(updated);
+      expect(mockPool.query.mock.calls.slice(0, 2).map(([sql]) => sql)).toEqual([
+        'SELECT metadata, custom_props FROM objectives WHERE id=$1',
+        'SELECT metadata, custom_props FROM key_results WHERE id=$1',
+      ]);
+      expect(patchWrites()).toHaveLength(1);
+      const [sql] = patchWrites()[0];
       expect(sql).toContain('title = $1');
       expect(sql).toContain('status = $2');
       expect(sql).toContain('UPDATE objectives');
@@ -173,28 +192,41 @@ describe('task-goals routes', () => {
     });
 
     it('returns 404 when goal not found in both tables', async () => {
-      // objectives: 0 行
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
-      // key_results: 0 行
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
-
+      mockGoalPatch();
       const res = await request(app).patch('/goals/missing').send({ title: 'x' });
       expect(res.status).toBe(404);
-      expect(mockPool.query).toHaveBeenCalledTimes(2);
+      expect(res.body).toEqual({ error: 'Goal not found', id: 'missing' });
+      expect(mockPool.query).toHaveBeenCalledTimes(4); // 两次来源检查和两次更新。
+      expect(patchWrites()).toHaveLength(2);
+      expect(patchWrites()[0][0]).toContain('UPDATE objectives');
+      expect(patchWrites()[1][0]).toContain('UPDATE key_results');
     });
 
     it('updates key_results when not found in objectives', async () => {
-      // objectives: 0 行
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
-      // key_results: 找到
-      mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 'kr1', status: 'completed' }],
-      });
-
+      const updated = { id: 'kr1', status: 'completed' };
+      mockGoalPatch({ keyResult: updated });
       const res = await request(app).patch('/goals/kr1').send({ status: 'completed' });
       expect(res.status).toBe(200);
-      const [sql2] = mockPool.query.mock.calls[1];
+      expect(res.body).toEqual(updated);
+      expect(patchWrites()).toHaveLength(2);
+      expect(patchWrites()[0][0]).toContain('UPDATE objectives');
+      const [sql2] = patchWrites()[1];
       expect(sql2).toContain('UPDATE key_results');
+    });
+  });
+
+  describe('公司正式字段来源保护', () => {
+    it.each([
+      ['objective', { title: '机器改名' }], ['objective', { status: 'completed' }],
+      ['keyResult', { title: '机器改名' }], ['keyResult', { status: 'completed' }],
+    ])('%s的title/status修改返回409，检查来源后零UPDATE：%j', async (table, body) => {
+      const company = { id: 'company', metadata: { metric_mode: 'company_formula_v1' }, custom_props: { company_notion: { page_id: 'notion-company-source' } } };
+      mockGoalPatch({ [table]: company });
+      const response = await request(app).patch('/goals/company').send(body);
+      expect(response.status).toBe(409);
+      expect(response.body.details).toContain('保留字段');
+      expect(patchWrites()).toHaveLength(0);
+      expect(mockPool.query.mock.calls.every(([sql]) => sql.startsWith('SELECT metadata, custom_props'))).toBe(true);
     });
   });
 
@@ -286,12 +318,12 @@ describe('task-goals routes', () => {
     });
 
     it('不带 metadata → SQL 不含 metadata（回归保护）', async () => {
-      mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'kr1', title: 'x' }] });
-
+      mockGoalPatch({ objective: { id: 'kr1', title: 'x' } });
       const res = await request(app).patch('/goals/kr1').send({ title: 'x' });
-
       expect(res.status).toBe(200);
-      const [sql] = mockPool.query.mock.calls[0];
+      expect(res.body).toEqual({ id: 'kr1', title: 'x' });
+      expect(patchWrites()).toHaveLength(1);
+      const [sql] = patchWrites()[0];
       expect(sql).not.toContain('metadata');
     });
   });

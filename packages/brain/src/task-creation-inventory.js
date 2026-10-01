@@ -83,6 +83,7 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'preview-cache-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'task-intake.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'task-generator-scheduler.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'lib/company-kr-analysis.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'thalamus.js', source: 'conversation', creates_executable_task: true, migration_status: 'routed' },
   { module: 'topic-selection-scheduler.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'topic-suggestion-manager.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },

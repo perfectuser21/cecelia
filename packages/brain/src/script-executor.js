@@ -1,3 +1,5 @@
+import {settleScriptRun} from './script-settlement.js';
+export {redactEnvValues} from './script-settlement.js';
 /**
  * script-executor.js — executor=script：确定性脚本步的派发 / 收割 / 重试（链 bf5088a3 棒 3，任务 5cdbd52a）。
  *
@@ -22,6 +24,7 @@
  *
  * run 留痕经棒 1 的 startRun/finishRun，终态经棒 2 的 finalizeTask，本文件不直写 task_runs / 终态。
  */
+import { usesManagedScript,prepareManagedScript,triggerManagedScript,reapManagedScripts } from './script-managed-executor.js';
 import { execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process';
 import { assertExternalExecutionAllowed } from './runtime-safety.js';
 import { randomBytes } from 'node:crypto';
@@ -29,9 +32,8 @@ import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { sshWithStdin, sshRun } from './lib/ssh-exec.js';
 import { sshTargetFor, resolveMachineId, listComputeWorkerIds } from './machine-registry.js';
 import { recordTaskEventSafe } from './lib/task-event-log.js';
-import { startRun, finishRun } from './lib/task-run.js';
+import { startRun } from './lib/task-run.js';
 import { finalizeTask } from './lib/task-terminal.js';
-import { getBackoffMs } from './lib/retry-policy.js';
 import { isAllowed } from './circuit-breaker.js';
 import { recordDispatchResult } from './dispatch-stats.js';
 import {
@@ -186,13 +188,6 @@ export function parseReapOutput(out, nonce) {
 }
 
 /** env 值脱敏：值 ≥3 字符才替换（更短的不是凭据，替换只会误伤输出）；长值优先。 */
-export function redactEnvValues(text, env) {
-  let out = String(text ?? '');
-  const values = Object.values(env ?? {}).filter((v) => typeof v === 'string' && v.length >= 3);
-  values.sort((a, b) => b.length - a.length);
-  for (const v of values) out = out.split(v).join('***');
-  return out;
-}
 
 export function hostConcurrency(env = process.env) {
   const n = Number.parseInt(env.SCRIPT_HOST_CONCURRENCY ?? '', 10);
@@ -233,6 +228,22 @@ export async function prepareScriptDispatch(task, deps = {}) {
       outcome: 'return',
       result: { dispatched: false, reason: 'script_payload_invalid', task_id: task.id, terminal: true, actions },
     };
+  }
+
+  if (usesManagedScript(full,spec,deps)) {
+    const prepared=await prepareManagedScript(full,spec,pool,deps);
+    if(prepared.outcome==='reserved')return {outcome:'proceed'};
+    if(prepared.outcome==='stale')return {outcome:'skip'};
+    const changed=await pool.query(`UPDATE tasks SET claimed_by = NULL, claimed_at = NULL, updated_at = NOW(),
+      status=CASE WHEN $2 THEN 'blocked' ELSE status END,error_message=CASE WHEN $2 THEN $3 ELSE error_message END
+      WHERE id=$1 AND status='queued' AND payload->>'script_run_id' IS NOT DISTINCT FROM $4
+        AND jsonb_array_length(COALESCE(payload->'script_attempts','[]'::jsonb))=$5
+        AND claimed_by IS NOT DISTINCT FROM $6 AND claimed_at IS NOT DISTINCT FROM $7::timestamptz RETURNING id`,
+      [task.id,prepared.outcome==='blocked',prepared.reason,full.payload?.script_run_id??null,
+        full.payload?.script_attempts?.length??0,full.claimed_by??null,full.claimed_at??null]);
+    if(!changed.rowCount)return {outcome:'skip'};
+    if(prepared.outcome==='wait'){holSkipIds.push(task.id);return {outcome:'skip'};}
+    return {outcome:'return',result:{dispatched:false,reason:prepared.reason,task_id:task.id,actions}};
   }
 
   // 熔断：ssh 派发连续失败才会开（与 cecelia-run / openclaw-agent 互不牵连）
@@ -319,6 +330,8 @@ export async function triggerScriptRun(task, deps = {}) {
     return { success: false, taskId: task.id, reason: 'script_payload_invalid', error: err.message, taskTerminal: true, configError: true };
   }
 
+  if(usesManagedScript(task,spec,deps))return triggerManagedScript(task,spec,pool,deps);
+
   const attempt = attemptNumberOf(payload);
   let runId;
   let runner;
@@ -380,76 +393,6 @@ export async function triggerScriptRun(task, deps = {}) {
 }
 
 // ── 收割 ───────────────────────────────────────────────────────────────────────
-async function settleScriptRun(pool, row, parsed, { hostId, runId }) {
-  const payload = row.payload ?? {};
-  const env = payload.env ?? {};
-  const stdout = redactEnvValues(parsed.stdout, env);
-  const stderr = redactEnvValues(parsed.stderr, env);
-  const prior = Array.isArray(payload.script_attempts) ? payload.script_attempts : [];
-  const attemptNo = prior.length + 1;
-  const artifacts = [
-    `${hostId}:~/brain-runs/${runId}.out`,
-    `${hostId}:~/brain-runs/${runId}.err`,
-    ...(Array.isArray(payload.artifact_paths) ? payload.artifact_paths.map((p) => `${hostId}:${p}`) : []),
-  ];
-  const script = {
-    exit_code: parsed.exit, timed_out: parsed.timedOut, host: hostId, run_id: runId,
-    attempts: attemptNo, stdout, stderr, artifacts,
-  };
-
-  if (parsed.exit === 0 && !parsed.timedOut) {
-    // 成功终态写 completed：hard 依赖门禁只放行 completed。
-    await finalizeTask(pool, row.id, 'completed', { mergeResult: { script }, onlyIfStatus: 'in_progress' });
-    await finishRun({ runId, status: 'completed', exitCode: 0, artifacts }, { pool });
-    await recordTaskEventSafe(pool, row.id, 'script_reaped', { run_id: runId, exit: 0 });
-    return 'completed';
-  }
-
-  const code = parsed.timedOut ? 'script_timeout' : `script_exit_${parsed.exit}`;
-  await finishRun({
-    runId,
-    status: parsed.timedOut ? 'timeout' : 'failed',
-    exitCode: parsed.exit,
-    artifacts,
-    error: code,
-  }, { pool });
-  const attempts = [...prior, {
-    attempt: attemptNo, run_id: runId, exit_code: parsed.exit, timed_out: parsed.timedOut, error: code,
-    stderr_tail: stderr.slice(-500), ended_at: new Date().toISOString(),
-  }];
-
-  const backoffMs = getBackoffMs('script_exec', prior.length);
-  if (backoffMs !== null) {
-    const nextRunAt = new Date(Date.now() + backoffMs).toISOString();
-    const requeued = await pool.query(
-      `UPDATE tasks
-          SET status = 'queued', claimed_by = NULL, claimed_at = NULL, updated_at = NOW(),
-              payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
-        WHERE id = $1 AND status = 'in_progress'
-        RETURNING id`,
-      [row.id, JSON.stringify({ script_attempts: attempts, next_run_at: nextRunAt, script_run_id: null })],
-    );
-    await recordTaskEventSafe(pool, row.id, 'script_attempt_failed', {
-      run_id: runId, exit: parsed.exit, timed_out: parsed.timedOut, will_retry: true, next_run_at: nextRunAt,
-    });
-    return requeued.rowCount > 0 ? 'retried' : 'skipped';
-  }
-
-  const firstErrLine = stderr.split('\n').map((l) => l.trim()).find(Boolean);
-  await finalizeTask(pool, row.id, 'failed', {
-    set: {
-      completed_at: 'now',
-      error_message: `${code}${firstErrLine ? `: ${firstErrLine}` : ''}`.slice(0, 500),
-    },
-    mergeResult: { script },
-    mergePayload: { script_attempts: attempts, failure_class: 'script_failed' },
-    onlyIfStatus: 'in_progress',
-  });
-  await recordTaskEventSafe(pool, row.id, 'script_attempt_failed', {
-    run_id: runId, exit: parsed.exit, timed_out: parsed.timedOut, will_retry: false,
-  });
-  return 'failed';
-}
 
 /**
  * 收割在跑的 script_run：远端 .exit 落地即结算。
@@ -457,15 +400,16 @@ async function settleScriptRun(pool, row, parsed, { hostId, runId }) {
  * 卡死交给活性合同 script（staleMinutes 75 + onStale fail）。取数 LIMIT 10、单条 ssh 20s，老任务先收。
  */
 export async function reapScriptRuns(pool, deps = {}) {
+  const managed = await reapManagedScripts(pool,deps,settleScriptRun);
   const execFileFn = deps.execFileFn ?? transport.execFileFn ?? nodeExecFile;
   const { rows } = await pool.query(
     `SELECT id, payload FROM tasks
       WHERE task_type = 'script_run' AND status = 'in_progress' AND executor_kind = 'script'
-        AND payload->>'script_run_id' IS NOT NULL
+        AND payload->>'script_run_id' IS NOT NULL AND payload->>'script_reservation_id' IS NULL
       ORDER BY started_at ASC NULLS FIRST
       LIMIT ${REAP_BATCH}`,
   );
-  const out = { reaped: 0, completed: 0, failed: 0, retried: 0 };
+  const out = managed;
   const computeWorkers = listComputeWorkerIds();
   for (const row of rows ?? []) {
     const runId = row.payload?.script_run_id;

@@ -5,10 +5,12 @@ import { companyKrView, COMPANY_METRIC_MODE } from '../lib/company-kr-metrics.js
 import { importCompanyKrs } from '../lib/company-kr-import.js';
 import { observeCompanyKr } from '../lib/company-kr-observations.js';
 import { readCompanySnapshot } from '../projection/company-key-results.js';
+import { createCompanyAnalysisRouter } from './company-kr-analysis.js';
 
 export function createCompanyKrRouter({ pool = defaultPool, token, notionReq } = {}) {
   const router = Router();
   router.use(rateLimit({ windowMs: 60000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
+  router.use(createCompanyAnalysisRouter(pool));
   router.get('/company-key-results', async (req, res) => {
     try {
       const { rows } = await pool.query(`SELECT kr.*, kr.updated_at::text AS observation_version, o.title AS objective_title FROM key_results kr LEFT JOIN objectives o ON o.id=kr.objective_id WHERE kr.metadata->>'metric_mode'=$1 ORDER BY kr.custom_props->'company_notion'->>'page_id'`, [COMPANY_METRIC_MODE]);

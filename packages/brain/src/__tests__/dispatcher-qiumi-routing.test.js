@@ -302,6 +302,17 @@ describe('dispatchQiumiTask：三态出口', () => {
 });
 
 describe('dispatchNextTask：接线点在 claim 之后、标 in_progress 之前', () => {
+  it('公司分析快照过期已终态，不回queued、不三振、不熔断其它OpenClaw任务', async () => {
+    _candidatePool = [candidate];
+    wireQueries();
+    routeQiumiTask.mockResolvedValue({ outcome: 'agent', model: null, runId: 'r1', payloadPatch: {} });
+    mockTriggerCeceliaRun.mockResolvedValue({ success: false, reason: 'company_kr_analysis_superseded', taskTerminal: true });
+    const result = await dispatchNextTask(null);
+    expect(result).toMatchObject({ dispatched: false, reason: 'company_kr_analysis_superseded', terminal: true });
+    expect(mockUpdateTask).not.toHaveBeenCalledWith({ task_id: 'q1', status: 'queued' });
+    expect(mockRecordFailure).not.toHaveBeenCalled();
+    expect(sqlsOf().some(s => s.includes('dispatch_fail_consecutive'))).toBe(false);
+  });
   it('device 决策：全程没把任务标成 in_progress，直接返回 qiumi_routed_device', async () => {
     _candidatePool = [candidate];
     wireQueries();

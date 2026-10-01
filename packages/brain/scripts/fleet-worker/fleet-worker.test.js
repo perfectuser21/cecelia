@@ -1749,13 +1749,13 @@ describe('Fleet Worker production runtime assembly', () => {
 });
 
 describe('Fleet Worker launchd plist template', () => {
-  it('pins TMPDIR to the OrbStack-shareable path (重装回归守卫：_cecelia 私有临时目录 OrbStack 读不了，container probe 必死)', () => {
+  it('renders TMPDIR from the validated shared directory (真实展开由安装器行为回归验证)', () => {
     const template = fs.readFileSync(
       path.join(path.dirname(new URL(import.meta.url).pathname), 'com.cecelia.fleet-worker.plist.template'),
       'utf8',
     );
     expect(template).toContain('<key>TMPDIR</key>');
-    expect(template).toContain('<string>/Users/Shared/cecelia-fleet-tmp</string>');
+    expect(template).toContain('<string>@@SHARED_TMPDIR@@</string>');
   });
 });
 
