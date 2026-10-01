@@ -6,6 +6,7 @@ const { resolveAttemptResourcePlan, dockerLimitArgs } = require('./attempt-resou
 const { execFile } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
 const { promisify } = require('node:util');
+const {guardLaunchCommand}=require('./local-resource-admission.cjs');
 
 const execFileAsync = promisify(execFile);
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
@@ -111,10 +112,12 @@ function createAttemptResourceManager({
   waitFn = defaultWait,
   healthAttempts = DEFAULT_HEALTH_ATTEMPTS,
   healthIntervalMs = DEFAULT_HEALTH_INTERVAL_MS,
+  assertCanLaunch=()=>{},
 } = {}) {
   if (typeof runCommand !== 'function') {
     throw new Error('attempt_resource_invalid_command_runner');
   }
+  runCommand=guardLaunchCommand(runCommand,assertCanLaunch);
   if (!IMAGE_DIGEST_PATTERN.test(postgresImageDigest ?? '')) {
     throw new Error('attempt_resource_invalid_postgres_digest');
   }

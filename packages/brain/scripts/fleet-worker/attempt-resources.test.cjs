@@ -445,3 +445,18 @@ describe('每个孤儿或失败创建资源独立核验归属',()=>{
     expect(runCommand.mock.calls.filter(([,args])=>args.includes('rm')).every(([,args])=>/^[a-f0-9]{64}$/.test(args.at(-1)))).toBe(true);
   });
 });
+
+describe('Postgres实际启动维护暂停',()=>{
+ it('创建network期间进入drain，禁止docker run且只清理本次准备资源',async()=>{
+  let drain=false;const calls=[];const observed=observedResourceCommand();
+  const manager=loadResourceManager()({workerId:'us-mac-m4',postgresImageDigest:POSTGRES_IMAGE,
+   healthAttempts:1,healthIntervalMs:0,assertCanLaunch:()=>{if(drain)throw Error('worker_draining');},
+   runCommand:async(command,args)=>{calls.push(args);
+    if(args[0]==='network'&&args[1]==='create'){drain=true;return {stdout:NETWORK_ID};}
+    return observed(command,args);
+   }});
+  await expect(manager.provision({attemptId:ATTEMPT_ID,role:'planner',requirements:{postgres:true}})).rejects.toThrow('worker_draining');
+  expect(calls.some(a=>a[0]==='run')).toBe(false);
+  expect(calls.filter(a=>a[0]==='network'&&a[1]==='rm')).toEqual([['network','rm','--',NETWORK_ID]]);
+ });
+});

@@ -10,9 +10,13 @@
 
 
 
-**Brain 版本**: 1.353.10
+**Brain 版本**: 1.354.7
 
-OpenClaw RPC 使用 migration 506 持久单代 stream_id 与固定 prepare deadline。Brain 在目录同机锁内等待本机 Docker Unix socket HTTP Upgrade 完成真实 attach，再通过 header 转交一次性流票；超时/拒绝留在恢复状态，不发票、不重试。Docker 多路流有界解帧且丢弃 stderr；模型正文、登录和刷新令牌只走 shim→Worker 内存数据面，不进 Brain、URL、日志或 journal。固定 Codex 0.158.0 experimental 官方协议白名单校验参数；动态工具声明及旧 thread 回调只允许固定 read/web_search/web_fetch（functions 命名空间），执行、派生调度和未知工具默认拒绝；三个方向的方法白名单只读自有属性。受信 profile 的 authAccountId 纳入 digest，缺失或账号不符拒认证。并发 turn 不阻塞 interrupt/steer/terminate 与认证回应；首次 RPC 前持久标记，远端 EOF 或 stdio 异常均非零退出并报告 recovery_required，不自动 reinitialize/replay，也不释放预约。grant revoke 拒新 prepare，显式 generation cancel 才关闭流并精确清理；本机 drain/准入拒新 attach，旧流和清理保留。已安装 OpenClaw 2026.9.7 客户端经 shim/HTTP 与专属真容器 initialize、initialized 后 model/list 连续往返已验；固定服务端通知的 emittedAtMs 只接受非负安全整数，未知信封字段仍拒；现网配置未切换，未登录、未调用模型，未验证旧 thread 恢复。
+Brain 镜像完整打包 Fleet Worker 共用运行模块；构建期及独立产物回归实际导入执行目录并读取部署策略。
+
+Worker维护暂停在本机三类runner与Docker最终副作用前执行；认证静默回执绑定nonce、同boot和活动版本，客户端断开不减在途计数，orchestrator真实子进程退出才归零。启动对账未确认或prepare潜在副作用后失败均拒签；候选工作区只保守占位，不自动清理。
+
+Mac Worker 版本探针只读固定 OrbStack bundle 的 CFBundleShortVersionString；不运行会初始化管理员目录的 orbctl version。Docker、镜像、自检容器与资源准入仍分别真实检查，版本不可读继续报 unavailable。
 
 CI趋势集成测试将北京自然日与滚动24小时设备窗口独立布置，覆盖陈旧、近期成功和无任务设备；生产巡检阈值不变。
 
@@ -87,6 +91,16 @@ cleanup_pending / blocked 预约继续清理；通信未知保留占位。预算
 Worker 标准升级在预检前读取可信现役 plist 快照，保留既有地址、端口、令牌引用、路径与完整环境；预检和启动健康使用同一有效配置，私有快照及安装 plist 为0600，替换前复核旧配置指纹，失败保留事务回滚。
 
 机群统一资源预约与启动保护：Harness 按角色权重在同机事务锁内预约；资源未知、过期、并发不足均拒绝新增执行；未确认精确清理的执行继续占位。Worker 在 prepare/start 实际副作用前复验本机 CPU、内存与执行目录磁盘。安装保护保留 profile 至少10GiB可用余量和可信采样，高磁盘占用允许升级；新增受管 Harness 仍执行原85%磁盘压力门槛。
+
+## Brain 1.353.4 — Walking真实CI恢复验收（原任务617259ae）
+
+- Walking仅显式授权且实际checkpointer URI与安全测试目标一致才写；专用CI运行真实Docker、回调与PG正例，real-env RunAll 明确委托而不冒充通过。
+- 狭窄CI重启控制以每进程随机令牌为屏障；回调有界重试，真实PG interrupt跨同容器重启恢复，同线程完成事件恰一次，总预算260秒。
+- 生产默认回调地址与通用callback幂等策略保持；生产或未知重启控制在checkpoint或Docker前拒绝，无通用执行权限扩展。
+
+## Brain 1.353.2 — 公司经营KR分析数据与执行指令分离
+
+公司分析任务仅以固定参数路由到专用分析员；完整KR快照在OpenClaw执行器构造提示时传入，避免指标名称和证据触发手机操作路由。既有手机判定与正式版本复验保持。
 
 ## Brain 1.352.1 — 公司经营KR人工正式值与AI独立建议
 
