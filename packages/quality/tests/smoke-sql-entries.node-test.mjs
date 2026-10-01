@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { fixture, root, clientCommands } from './fixtures/smoke-production-guard-fixture.mjs';
@@ -7,6 +8,60 @@ import { fixture, root, clientCommands } from './fixtures/smoke-production-guard
 const entries = JSON.parse(await readFile(resolve(root, 'packages/quality/smoke-sql-targets.json'), 'utf8'));
 const safe = 'postgresql://localhost:5432/cecelia_test';
 const unsafe = 'postgresql://localhost:5432/cecelia';
+
+const weighted = 'harness-weighted-reservation-smoke.sh';
+test('actual Node PG integration wrapper joins the live write inventory and classification', async () => {
+  const inventory = await readFile(resolve(root, 'packages/quality/smoke-write-targets.txt'), 'utf8');
+  assert.ok(inventory.split('\n').includes(weighted), 'Node PG writes must not depend on literal psql discovery');
+  assert.equal(entries[weighted]?.kind, 'write');
+  assert.match(entries[weighted].connection, /TEST_DATABASE_URL.*DB_/);
+  const source = await readFile(resolve(root, 'packages/brain/scripts/smoke', weighted), 'utf8');
+  assert.match(source, /vitest\.integration\.config\.js/);
+  assert.match(source, /attempt-weighted-reservation\.pg\.integration\.test\.js/);
+});
+
+for (const [name, overrides, accepted] of [
+  ['default', {}, false],
+  ['production URI overrides safe DB_*', { SMOKE_ALLOW_WRITE: '1', TEST_DATABASE_URL: unsafe }, false],
+  ['production DB_* fallback', { SMOKE_ALLOW_WRITE: '1', TEST_DATABASE_URL: '', DB_NAME: 'cecelia' }, false],
+  ['remote same-name URI', { SMOKE_ALLOW_WRITE: '1', TEST_DATABASE_URL: 'postgresql://remote.invalid/cecelia_test' }, false],
+  ['query host/port override', { SMOKE_ALLOW_WRITE: '1', TEST_DATABASE_URL: safe + '?host=remote.invalid&port=6543' }, false],
+  ['socket production database', { SMOKE_ALLOW_WRITE: '1', TEST_DATABASE_URL: 'socket:/tmp/cecelia_test?db=cecelia' }, false],
+  ['unknown safe suffix', { SMOKE_ALLOW_WRITE: '1', TEST_DATABASE_URL: 'postgresql://localhost:5432/unrelated_test' }, false],
+  ['URI missing host uses PGHOST', { SMOKE_ALLOW_WRITE: '1', TEST_DATABASE_URL: 'postgresql:///cecelia_test', PGHOST: 'remote.invalid' }, false],
+  ['URI missing port uses PGPORT', { SMOKE_ALLOW_WRITE: '1', TEST_DATABASE_URL: 'postgresql://localhost/cecelia_test', PGPORT: '6543' }, false],
+  ['remote DB_* fallback', { SMOKE_ALLOW_WRITE: '1', TEST_DATABASE_URL: '', DB_HOST: 'remote.invalid' }, false],
+  ['explicit safe URI ignores ineffective PG host/port', { SMOKE_ALLOW_WRITE: '1', PGHOST: 'remote.invalid', PGPORT: '6543' }, true],
+  ['safe explicit DB_* fallback ignores ineffective PG host/port', { SMOKE_ALLOW_WRITE: '1', TEST_DATABASE_URL: '', PGHOST: 'remote.invalid', PGPORT: '6543' }, true],
+  ['safe URI default port agrees with PGPORT', { SMOKE_ALLOW_WRITE: '1', TEST_DATABASE_URL: 'postgresql://localhost/cecelia_test', PGPORT: '5432' }, true],
+]) {
+  test(`actual weighted Node PG smoke target before Vitest execution: ${name}`, async () => {
+    const temp = await mkdtemp(resolve(tmpdir(), 'weighted-smoke-boundary-'));
+    const marker = resolve(temp, 'vitest-execution');
+    const boundary = resolve(temp, 'boundary.sh');
+    try {
+      // Execute actual wrapper validation and guard; stop before dependency lookup or real PG suite.
+      await writeFile(boundary, `set -T\ntrap 'case "$BASH_COMMAND" in exec\\ node*) printf reached > "$WEIGHTED_BOUNDARY"; exit 97;; esac' DEBUG\n`);
+      await fixture(async ({ smoke, dockerCalls, psqlCalls, requests }) => {
+        const result = await smoke(weighted, { BASH_ENV: boundary, WEIGHTED_BOUNDARY: marker,
+          DB_NAME: 'cecelia_test', DB_HOST: 'localhost', DB_PORT: '5432', TEST_DATABASE_URL: safe,
+          PGHOST: 'localhost', PGPORT: '5432', ...overrides });
+        if (accepted) {
+          assert.equal(result.code, 97, result.output); await readFile(marker);
+          assert.ok(requests.some(req => req.url === '/api/brain/health'));
+        } else {
+          await assert.rejects(readFile(marker), { code: 'ENOENT' });
+          if (!overrides.SMOKE_ALLOW_WRITE) {
+            assert.deepEqual(await dockerCalls(), []); assert.deepEqual(requests, []);
+          }
+        }
+        assert.deepEqual(await psqlCalls(), []);
+        assert.ok((await dockerCalls()).every(args => ['context', 'inspect'].includes(args[0])), 'no Docker business operation');
+        assert.ok(requests.every(req => req.method === 'GET' && req.url === '/api/brain/health'), 'no HTTP business write');
+      });
+    } finally { await rm(temp, { recursive: true, force: true }); }
+  });
+}
 for (const [name, classification] of Object.entries(entries)) {
   if (classification.kind !== 'readonly') continue;
   test(`${name}: readonly classification cannot execute curl or psql startup configuration`, async () => {
