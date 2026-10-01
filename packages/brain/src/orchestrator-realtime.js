@@ -12,6 +12,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 import WebSocket from 'ws';
 import pool from './db.js';
+import { assertLiveLLMAllowed } from './runtime-safety.js';
 
 // OpenAI Realtime API 配置
 const OPENAI_REALTIME_URL = 'wss://api.openai.com/v1/realtime';
@@ -97,6 +98,8 @@ const REALTIME_TOOLS = [
  * @returns {Object} { success, config? | error? }
  */
 export function getRealtimeConfig() {
+  try { assertLiveLLMAllowed(); }
+  catch (error) { return { success: false, error: error.message, code: error.code }; }
   const apiKey = getOpenaiApiKey();
   if (!apiKey) {
     return { success: false, error: 'OpenAI API key not configured' };
@@ -184,6 +187,11 @@ export async function handleRealtimeTool(toolName, args = {}, dbPool = pool) {
  * @param {import('http').IncomingMessage} _req - HTTP 请求
  */
 export function handleRealtimeWebSocket(clientWs, _req) {
+  try { assertLiveLLMAllowed(); }
+  catch (error) {
+    clientWs.close(1008, error.code);
+    return;
+  }
   const apiKey = getOpenaiApiKey();
   if (!apiKey) {
     clientWs.close(1008, 'OpenAI API key not configured');

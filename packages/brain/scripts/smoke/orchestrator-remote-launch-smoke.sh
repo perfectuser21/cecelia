@@ -28,7 +28,14 @@ const fail = (m) => { console.error("❌ " + m); process.exit(1); };
 const le = j.local_execution;
 const ft = j.fleet_transport;
 if (!le || typeof le.enabled !== "boolean") fail("缺 local_execution.enabled");
-if (le.enabled === false) {
+if (j.runtime?.isolated === true) {
+  if (j.runtime.background_automation !== false || le.enabled !== false ||
+      le.role !== "disabled" || le.reason !== "runtime_isolated")
+    fail("隔离实例必须明确关闭后台自动化与本机执行");
+  if (!ft || ft.enabled !== false || ft.status !== "disabled" || ft.reason !== "runtime_isolated" ||
+      !Array.isArray(ft.worker_machines) || ft.worker_machines.length !== 0)
+    fail("隔离实例必须关闭远程执行，且机器列表为空");
+} else if (le.enabled === false) {
   if (!ft || ft.enabled !== true) fail("闸关着（local_execution.enabled=false）但 fleet_transport 未就绪——调度器无任何执行路径");
   if (!Array.isArray(ft.worker_machines) || ft.worker_machines.length === 0) fail("fleet_transport 已启用但无 worker 机器（worker_machines 为空）");
 }

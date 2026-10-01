@@ -17,6 +17,13 @@ import request from 'supertest';
 
 // ── Mock 依赖（hoisted，goals.js 加载前生效）─────────────────────────────────
 
+// 模拟生产健康探测；DB、Docker、tick 和 fetch 均在本文件模拟。
+// 保留真正的模型/执行隔离闸，运行模式隔离由 health-runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', async importOriginal => ({
+  ...await importOriginal(),
+  isIsolatedRuntime: () => false,
+}));
+
 const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../db.js', () => ({ default: mockPool }));
 
@@ -138,11 +145,12 @@ beforeEach(() => {
     return Promise.resolve({ rows: [{ passed: 0, failed: 0, last_run_at: null }] });
   });
   // 默认 online
-  global.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200 }));
 });
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 // ── 测试套件 ─────────────────────────────────────────────────────────────────

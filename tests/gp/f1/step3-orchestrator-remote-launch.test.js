@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../../../packages/brain/src/runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 // F1「工厂 · 开发闭环」步骤 3 —— 闸开着（CECELIA_LOCAL_EXECUTION_ENABLED=false）时，
 // kernel-v1 headless 派发不能再一刀切拒绝，必须改道 orchestrator-remote-bridge 把执行
 // 权交给远端 primary worker（决策 e3a41ecc：闸语义="禁本机起，放行远程"）。

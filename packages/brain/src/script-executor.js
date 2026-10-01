@@ -23,6 +23,7 @@
  * run 留痕经棒 1 的 startRun/finishRun，终态经棒 2 的 finalizeTask，本文件不直写 task_runs / 终态。
  */
 import { execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process';
+import { assertExternalExecutionAllowed } from './runtime-safety.js';
 import { randomBytes } from 'node:crypto';
 import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 import { sshWithStdin, sshRun } from './lib/ssh-exec.js';
@@ -299,6 +300,7 @@ export async function dispatchScriptTask(task, deps = {}) {
  *   {success:false, reason:'script_payload_invalid', taskTerminal:true}  违规 payload：本函数已把任务终态 failed
  */
 export async function triggerScriptRun(task, deps = {}) {
+  assertExternalExecutionAllowed();
   const pool = await resolvePool(deps);
   const spawnFn = deps.spawnFn ?? transport.spawnFn ?? nodeSpawn;
   const payload = task.payload ?? {};

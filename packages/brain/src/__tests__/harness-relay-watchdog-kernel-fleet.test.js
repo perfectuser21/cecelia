@@ -1,3 +1,10 @@
+// Fleet传输、凭据、数据库和执行进程在本文件注入模拟；隔离策略由专用runtime回归验证。
+vi.mock('../db.js', () => ({ default: { query: vi.fn(async () => ({ rows: [] })) } }));
+vi.mock('../runtime-safety.js', async (importOriginal) => ({
+  ...await importOriginal(),
+  assertExternalExecutionAllowed: () => {},
+}));
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {
