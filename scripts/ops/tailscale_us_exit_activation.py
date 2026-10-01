@@ -218,11 +218,24 @@ def fresh_policy(home):
     return firewall
 
 
+def reject_user_agent(home):
+    uid = Path(home).stat().st_uid
+    for domain in ("gui", "user"):
+        service = f"{domain}/{uid}/{LABEL}"
+        result = subprocess.run(["/bin/launchctl", "print", service],
+                                text=True, capture_output=True, timeout=10)
+        if result.returncode == 0:
+            raise RuntimeError("目标用户仍加载旧代理；拒绝切换，不自动停止: " + service)
+        if not re.search(r"Could not find (?:service|domain)", result.stderr):
+            raise RuntimeError("无法审计目标用户旧代理: " + service)
+
+
 def activate(args):
     if os.geteuid() != 0:
         raise RuntimeError("切换需要 root")
     if args.approve_scope != "all-users-public-egress-and-bootstrap-exceptions":
         raise RuntimeError("必须明确审批全用户公网限制及 bootstrap 例外")
+    reject_user_agent(args.home)
     source = Path(__file__).resolve().parent
     firewall = fresh_policy(args.home)
     audit = preflight()
@@ -274,6 +287,7 @@ def activate(args):
         with locked(path):
             verify_transaction(path)
             preflight()
+            reject_user_agent(args.home)
             stop_job(GUARD_LABEL)
             verify_transaction(path)
             stop_job(LABEL)

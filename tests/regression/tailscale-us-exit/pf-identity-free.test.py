@@ -180,18 +180,19 @@ class ActivationFailureTests(unittest.TestCase):
         from unittest.mock import patch
         import tailscale_us_exit_activation as activation
         with tempfile.TemporaryDirectory() as directory:
-            checked = []
-            def run(arguments, **kwargs):
-                checked.append(arguments[-1])
-                if arguments[-1].startswith("gui/"):
-                    return SimpleNamespace(returncode=0, stderr="", stdout="state = running\npid = 777")
-                return SimpleNamespace(returncode=113, stderr="Could not find service", stdout="")
-            with patch.object(activation.subprocess, "run", side_effect=run), \
-                 patch.object(activation, "command") as commands:
-                with self.assertRaises(RuntimeError):
-                    activation.reject_user_agent(directory)
-            self.assertTrue(any(item.startswith("gui/") for item in checked))
-            commands.assert_not_called()
+            for domain in ("gui", "user"):
+                checked = []
+                def run(arguments, **kwargs):
+                    checked.append(arguments[-1])
+                    if arguments[-1].startswith(domain + "/"):
+                        return SimpleNamespace(returncode=0, stderr="", stdout="state = running\npid = 777")
+                    return SimpleNamespace(returncode=113, stderr="Could not find service", stdout="")
+                with patch.object(activation.subprocess, "run", side_effect=run), \
+                     patch.object(activation, "command") as commands:
+                    with self.assertRaises(RuntimeError):
+                        activation.reject_user_agent(directory)
+                self.assertTrue(any(item.startswith(domain + "/") for item in checked))
+                commands.assert_not_called()
 
     def test_loaded_daemon_must_be_stopped_before_anchor_restore(self):
         import tempfile, json
@@ -338,6 +339,7 @@ class ActivationFailureTests(unittest.TestCase):
             audit={"anchors": {activation.ANCHOR: "original pf"}, "states":"", "info":""}
             firewall=SimpleNamespace(map={}, rules=lambda _: candidate.read_text())
             with patch.object(activation, "FILES", (live,)), \
+                 patch.object(activation, "reject_user_agent"), \
                  patch.object(activation, "PLIST", root/"no-main.plist"), \
                  patch.object(activation, "GUARD_PLIST", root/"no-guard.plist"), \
                  patch.object(activation, "fresh_policy", return_value=firewall), \

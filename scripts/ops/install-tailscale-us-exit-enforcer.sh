@@ -84,6 +84,9 @@ else
   PLIST="$AGENT_DIR/$LABEL.plist"
   PLIST_STAGING="$PLIST"
 fi
+if [[ "$FIREWALL_MODE" == interface-v2 ]]; then
+  PLIST_STAGING="$CECELIA_US_EXIT_ACTIVATION_TRANSACTION/new-enforcer.plist"
+fi
 
 if [[ ! -f "$SOURCE" ]]; then
   echo "enforcer source not found: $SOURCE" >&2
@@ -98,7 +101,9 @@ CECELIA_US_EXIT_TARGET_HOME="$TARGET_HOME" \
 TAILSCALE_BE_CLI=1 \
   /usr/bin/python3 "$SOURCE" --check-client
 
-/bin/mkdir -p "$USER_CONFIG_DIR" "$AGENT_DIR"
+if [[ "$FIREWALL_MODE" == legacy ]]; then
+  /bin/mkdir -p "$USER_CONFIG_DIR" "$AGENT_DIR"
+fi
 
 if [[ "$SYSTEM_LIBEXEC_DIR" == "/usr/local/libexec/cecelia" ]]; then
   "$SUDO_BIN" /usr/bin/install -d -o root -g wheel -m 0755 "$INSTALL_DIR"
@@ -130,7 +135,7 @@ else
 fi
 
 # system 模式取代同标签的用户 LaunchAgent，避免登录后双实例竞争。
-if [[ "$SYSTEM_MODE" == true ]]; then
+if [[ "$SYSTEM_MODE" == true && "$FIREWALL_MODE" == legacy ]]; then
   /bin/rm -f "$AGENT_DIR/$LABEL.plist"
 fi
 
