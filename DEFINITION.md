@@ -10,10 +10,10 @@
 
 
 
-**Brain 版本**: 1.350.6
+**Brain 版本**: 1.351.2
 
 
-## Brain 1.350.6 — preview 专属缓存受控回收
+## Brain 1.351.2 — preview 专属缓存受控回收
 
 - 仅回收带私有归属登记的 preview npm 缓存；writer/回收共锁、固定 GitHub 终态复验、24 小时冷却、删除前 inode 校验与真实磁盘回执。旧缓存不追认。
 - Brain 持久任务与 intent，远端固定鉴权接口；未确认操作只查询原回执，调度默认停用。新增 migration 502 约束专用任务类型及 intent 唯一性。
