@@ -7,7 +7,7 @@ import os from 'node:os';
 import { once, EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 const require = createRequire(import.meta.url);
-const { profileDigest } = require('./app-server-profile.cjs');
+const { profileDigest, generationOwner } = require('./app-server-profile.cjs');
 let api = {}; try { api = require('./app-server-runner.cjs'); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND') throw e; }
 const profile = { image: `sha256:${'a'.repeat(64)}`, cpus: 2, memoryBytes: 1073741824,
   pidsLimit: 128, user: '1000:1000', tmpBytes: 67108864, network: 'none', homeKey: 'b'.repeat(64), workspaceKey: 'c'.repeat(64) };
@@ -33,9 +33,9 @@ function fixture() {
   };
   const config = { stateRoot: root, machineId, workerId, bootId, profiles: { chat: profile }, docker,
     assertLocalResources: async () => { if (rejectAdmission) throw Error('attempt_local_resources_unavailable'); } };
-  const input = (overrides = {}) => ({ reservation_id: randomUUID(), intent_id: randomUUID(), launch_generation: 1,
-    machine_id: machineId, worker_id: workerId, worker_boot_id: bootId, owner_key: `openclaw-${profile.homeKey}`,
-    config_digest: profileDigest(profile), profile: 'chat', ...overrides });
+  const input = (overrides = {}) => { const value = ({ reservation_id: randomUUID(), intent_id: randomUUID(), launch_generation: 1,
+    machine_id: machineId, worker_id: workerId, worker_boot_id: bootId, home_key: profile.homeKey,
+    config_digest: profileDigest(profile), profile: 'chat', ...overrides }); return {...value,owner_key:generationOwner(value)}; };
   return { root, docker, config, input, containers, runner: api.createAppServerRunner(config),
     stats: () => ({ creates, removes }), offline: value => { offline = value; }, pressure: value => { rejectAdmission = value; },
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
@@ -232,4 +232,21 @@ it('稳定 HOME 与每代 owner 分离，代际重放不能借同 HOME 身份启
     expect((await f.runner.start(b)).status).toBe('running');
     await expect(f.runner.start({...f.input(),home_key:profile.homeKey,owner_key:a.owner_key})).rejects.toThrow('appserver_identity_mismatch');
   } finally {f.cleanup();}
+});
+it('旧boot且journal缺失不是原实例不存在的证明，不能制造清理回执释放HOME',async()=>{
+ const f=fixture();try{const old=f.input();const restarted=api.createAppServerRunner({...f.config,bootId:randomUUID()});
+  await expect(restarted.cancel({...old,container_id:null,challenge:randomUUID()})).rejects.toThrow('appserver_intent_unknown');
+  expect(f.stats().removes).toBe(0);
+ }finally{f.cleanup();}
+});
+it('升级前HOME即owner且缺home_key的既有journal仍可原身份探活和精确清理',async()=>{
+ const f=fixture();try{
+  const input=f.input(),started=await f.runner.start(input),legacy={...input,owner_key:`openclaw-${profile.homeKey}`};delete legacy.home_key;
+  for(const name of [`${input.reservation_id}.json`,`home-${profile.homeKey}.json`]){
+   const file=path.join(f.root,name),state=JSON.parse(fs.readFileSync(file,'utf8'));state.owner_key=legacy.owner_key;delete state.home_key;fs.writeFileSync(file,JSON.stringify(state));
+  }
+  const restarted=api.createAppServerRunner({...f.config,bootId:randomUUID(),profiles:{}});
+  expect((await restarted.inspect(legacy)).status).toBe('running');
+  expect((await restarted.cancel({...legacy,container_id:started.container_id,challenge:randomUUID()})).absent).toBe(true);
+ }finally{f.cleanup();}
 });

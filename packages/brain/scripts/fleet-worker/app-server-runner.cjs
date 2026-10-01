@@ -3,11 +3,11 @@ const fs = require('node:fs');
 const { createBoundedAppServerStream } = require('./app-server-stream.cjs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const { validateAppServerProfile, profileDigest } = require('./app-server-profile.cjs');
+const { validateAppServerProfile, profileDigest, generationOwner } = require('./app-server-profile.cjs');
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const BINDINGS = ['reservation_id', 'intent_id', 'launch_generation', 'machine_id', 'worker_id',
-  'worker_boot_id', 'owner_key', 'config_digest', 'profile'];
+  'worker_boot_id', 'home_key', 'owner_key', 'config_digest', 'profile'];
 const ALLOWED = [...BINDINGS, 'container_id', 'challenge', 'stream_id'];
 
 function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profiles = {}, docker, assertLocalResources }) {
@@ -78,7 +78,7 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
     const profile = profiles[input.profile];
     if (!profile) throw new Error('appserver_profile_unavailable');
     const snapshot = validateAppServerProfile(profile);
-    if (input.config_digest !== profileDigest(snapshot) || input.owner_key !== `openclaw-${snapshot.homeKey}`) {
+    if (input.config_digest !== profileDigest(snapshot) || input.home_key !== snapshot.homeKey || input.owner_key !== generationOwner(input)) {
       throw new Error('appserver_identity_mismatch');
     }
     return { ...bindings(input), profile_snapshot: snapshot, container_id: null,
@@ -178,6 +178,7 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
     async cancel(input) {
       if (!UUID.test(input.challenge)) throw new Error('appserver_cleanup_challenge_required');
       return locked(input, async state => {
+        if(!state && input.worker_boot_id!==bootId)throw new Error('appserver_intent_unknown');
         state ??= initial(input);
         if (input.container_id !== state.container_id) throw new Error('appserver_identity_mismatch');
         state.tombstoned = true; state.status = 'cleanup_pending'; save(state);

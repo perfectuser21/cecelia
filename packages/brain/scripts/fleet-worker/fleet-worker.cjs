@@ -2,7 +2,7 @@
 'use strict';
 
 const { Buffer } = require('node:buffer');
-const { createHmac, timingSafeEqual } = require('node:crypto');
+const { createHmac, timingSafeEqual, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -24,6 +24,9 @@ const { probeFleetWorkerHealth } = require('./node-probe.cjs');
 const { createWorkspaceManager,createFleetRepoAllowlist } = require('./workspace-manager.cjs');
 const { createOrchestratorRunner, probeCredentialHome } = require('./orchestrator-runner.cjs');
 
+const {createAppServerRunner}=require('./app-server-runner.cjs');
+const {createAppServerDocker}=require('./app-server-docker.cjs');
+const {loadAppServerProfiles}=require('./app-server-profile.cjs');
 const { createScriptRunner, loadProtectedScriptProfiles } = require('./script-runner.cjs');
 const { createScriptDockerAdapter } = require('./script-docker.cjs');
 
@@ -463,6 +466,13 @@ function createFleetWorkerRuntime({
     console.warn(`[fleet-worker] credential_home_probe_failed: ${logCode(error?.message, 'unknown')}`);
   }
   return Object.freeze({
+    appServerRunner: createAppServerRunner({stateRoot:path.join(dataRoot,'app-servers'),machineId:workerId,workerId,bootId:randomUUID(),
+      profiles:loadAppServerProfiles(env.CECELIA_APP_SERVER_PROFILES_FILE),docker:createAppServerDocker(),
+      assertLocalResources:async()=>{
+        try{fs.lstatSync(env.CECELIA_DRAIN_MARKER??'/var/run/cecelia/fleet-worker.drain');throw Error('appserver_local_resources_unavailable');}
+        catch(error){if(error.code!=='ENOENT')throw Error('appserver_local_resources_unavailable');}
+        await createLocalResourceAdmission({workerId,diskPaths:healthDiskPaths,...(runCommand?{runCommand}:{})})();
+      }}),
     scriptRunner: createScriptRunner({ stateRoot: path.join(dataRoot, 'scripts'),
       machineId: workerId, workerId, profiles: loadProtectedScriptProfiles(env.CECELIA_SCRIPT_PROFILES_FILE),
       assertLocalResources: createLocalResourceAdmission({workerId,diskPaths:healthDiskPaths,...(runCommand?{runCommand}:{})}),
@@ -591,6 +601,26 @@ function createFleetWorkerServer(options = {}) {
   }
 
   return http.createServer(async (request, response) => {
+    if(request.url?.startsWith('/app-servers/')) {
+      if(!validBearer(request,attemptToken)){writeJson(response,401,{error:'unauthorized'});return;}
+      if(!options.appServerRunner){writeJson(response,503,{error:'appserver_runner_unconfigured'});return;}
+      try{
+        if(request.method!=='POST'){writeJson(response,405,{error:'method_not_allowed'});return;}
+        const body=await readJson(request,maximumRequestBytes),{request_nonce,...identity}=body;
+        let result;
+        if(request.url==='/app-servers/capabilities'){
+          if(Object.keys(identity).length)throw Error('appserver_identity_invalid');
+          result=options.appServerRunner.capabilities();
+        }else{
+          const match=request.url.match(/^\/app-servers\/([a-f0-9-]+)\/(start|inspect|cancel)$/);
+          if(!match||match[1]!==identity.reservation_id)throw Error('appserver_identity_invalid');
+          result=await options.appServerRunner[match[2]](identity);
+        }
+        const receipt={...result,request_nonce:request_nonce??null};
+        writeJson(response,receipt.status==='waiting_resources'?429:200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
+      }catch(error){writeJson(response,409,{error:/^appserver_[a-z_]+$/.test(error.message)?error.message:'appserver_operation_unconfirmed'});}
+      return;
+    }
     if (request.url?.startsWith('/scripts/')) {
       if (!validBearer(request, attemptToken)) { writeJson(response,401,{error:'unauthorized'});return; }
       if (!options.scriptRunner) { writeJson(response,503,{error:'script_runner_unconfigured'});return; }
@@ -803,6 +833,7 @@ function main(env = process.env) {
   const runtime = createFleetWorkerRuntime({ env });
   const server = createFleetWorkerServer({
     env,
+    appServerRunner: runtime.appServerRunner,
     scriptRunner: runtime.scriptRunner,
     attemptRunner: runtime.attemptRunner,
     orchestratorRunner: runtime.orchestratorRunner,

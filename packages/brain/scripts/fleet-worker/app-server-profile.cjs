@@ -46,4 +46,8 @@ function loadAppServerProfiles(filename) {
   } finally { fs.closeSync(fd); }
 }
 
-module.exports = { validateAppServerProfile, profileDigest, loadAppServerProfiles };
+function generationOwner(input) {
+  return `openclaw-${createHash('sha256').update(JSON.stringify([input.home_key,input.reservation_id,input.intent_id,input.launch_generation])).digest('hex')}`;
+}
+
+module.exports = { generationOwner, validateAppServerProfile, profileDigest, loadAppServerProfiles };
