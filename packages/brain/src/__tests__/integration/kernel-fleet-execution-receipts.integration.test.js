@@ -152,6 +152,8 @@ beforeAll(async () => {
     [oldBinaryInsertId, oldBinaryRunId],
   );
   await client.query(readFileSync(new URL('../../../migrations/425_harness_attempt_cleanup_outbox.sql', import.meta.url), 'utf8'));
+  await client.query('CREATE TABLE IF NOT EXISTS tasks(id UUID PRIMARY KEY,status TEXT)');
+  await client.query(readFileSync(new URL('../../../migrations/501_capacity_reservations.sql', import.meta.url), 'utf8'));
   store = createAttemptStore(schemaPool);
 }, 15_000);
 
