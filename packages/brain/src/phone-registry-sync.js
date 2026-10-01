@@ -99,11 +99,16 @@ export async function runPhoneRegistrySync(pool, opts = {}) {
       try {
         const raw = await exec(buildPhoneAgentCommand(host, { host, phones: rows, tasks, now }, program, inContainer, keyExistsFn), { timeoutMs: 90000 });
         const result = JSON.parse(raw.trim());
-        if (result.ok !== true || !Array.isArray(result.receipts)) throw new Error('执行机同步返回无效');
-        return { host, ...result };
+        if (result.ok !== true || !Array.isArray(result.receipts)
+          || !['generation', 'profiles_sha256', 'accounts_sha256'].every(key => /^[a-f0-9]{64}$/.test(result[key] ?? ''))) {
+          throw new Error('执行机同步返回无效');
+        }
+        return { ...result, host };
       } catch { return { host, ok: false, error: '执行机同步失败，未确认下发' }; }
     }));
     const failed = results.filter(r => !r.ok);
+    const mirrorsMatch = failed.length === 0 && ['generation', 'profiles_sha256', 'accounts_sha256']
+      .every(key => results[0][key] === results[1][key]);
     let accountFailures = 0;
     for (const result of results) {
       await record(q, 'phone_registry_runner_sync', { ...result, evidence: { host: result.host } });
@@ -117,13 +122,15 @@ export async function runPhoneRegistrySync(pool, opts = {}) {
         });
       }
     }
-    if (failed.length || plan.invalid.length) {
-      await bark('手机台账同步未全部确认', `失败执行机 ${failed.length}，需核对记录 ${plan.invalid.length}`, {
+    if (failed.length || plan.invalid.length || !mirrorsMatch) {
+      await bark('手机台账同步未全部确认', `失败执行机 ${failed.length}，需核对记录 ${plan.invalid.length}，双机镜子${mirrorsMatch ? '一致' : '未确认一致'}`, {
         dedupeKey: 'phone-registry-sync-failed', dedupeTtlSec: 1800,
       });
     }
-    await writeState(q, { ...state, runners: results, ...(failed.length ? {} : { completed_at: new Date(now).toISOString() }) });
-    return { ok: failed.length === 0 && plan.invalid.length === 0 && accountFailures === 0, updated: plan.changes.length, invalid: plan.invalid, failed, runners: results };
+    await writeState(q, { ...state, runners: results, mirrors_match: mirrorsMatch,
+      ...(mirrorsMatch ? { completed_at: new Date(now).toISOString() } : {}) });
+    return { ok: mirrorsMatch && plan.invalid.length === 0 && accountFailures === 0,
+      updated: plan.changes.length, invalid: plan.invalid, failed, runners: results, mirrors_match: mirrorsMatch };
   } finally {
     if (transaction) await q('ROLLBACK').catch(() => { destroy = true; });
     if (locked) await q('SELECT pg_advisory_unlock($1)', [LOCK_ID]).catch(() => { destroy = true; });
