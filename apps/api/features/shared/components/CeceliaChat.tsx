@@ -1,3 +1,4 @@
+import TaskDeskLink from '../../workbench/task-desk/TaskDeskLink';
 import { useRef, useEffect, useCallback, useState } from 'react';
 import {
   Brain,
@@ -445,6 +446,7 @@ export function CeceliaChat() {
           <div ref={messagesEndRef} />
         </div>
         <div className="p-3 border-t border-slate-700/50 flex-shrink-0 bg-slate-800/30">
+          <TaskDeskLink />
           {realtime.error && <p className="text-xs text-red-400 mb-2 truncate">{realtime.error}</p>}
           {pendingImage && (
             <div className="flex items-center gap-2 mb-2">

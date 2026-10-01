@@ -1,3 +1,4 @@
+import TaskDeskLink from '../../workbench/task-desk/TaskDeskLink';
 /**
  * CommandPalette — Cmd+K 居中命令面板
  *
@@ -142,6 +143,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
         boxShadow: '0 24px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04)',
         overflow: 'hidden',
       }}>
+        <div className="px-4 pt-3"><TaskDeskLink onNavigate={onClose} /></div>
         {/* Input bar */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8,

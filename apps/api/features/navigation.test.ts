@@ -27,7 +27,7 @@ describe('Cecelia 主导航', () => {
       },
       {
         label: 'AI 管理', path: '/brain-models',
-        children: ['/brain-models', '/system/team', '/knowledge/memory', '/settings'],
+        children: ['/brain-models', '/account-usage', '/system/team', '/knowledge/memory', '/settings'],
       },
       {
         label: '诊断与复盘', path: '/system',
@@ -40,10 +40,12 @@ describe('Cecelia 主导航', () => {
     ]);
   });
 
-  it('23 个终端入口去重且全部有可加载的页面', () => {
+  it('24 个终端入口去重且全部有可加载的页面', () => {
     const leaves = config.navGroups.flatMap(group => group.items.flatMap(item => item.children ?? [item]));
-    expect(leaves).toHaveLength(23);
-    expect(new Set(leaves.map(item => item.path)).size).toBe(23);
+    expect(leaves).toHaveLength(24);
+    expect(leaves.find(item => item.path === '/workbench/inbox')?.label).toBe('交办');
+    expect(leaves.find(item => item.path === '/account-usage')?.label).toBe('AI 额度');
+    expect(new Set(leaves.map(item => item.path)).size).toBe(24);
     for (const item of leaves) {
       const route = config.allRoutes.find(route => route.path === item.path);
       expect(route?.component, item.path).toBeTruthy();
