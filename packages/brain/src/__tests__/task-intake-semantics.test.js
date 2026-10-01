@@ -29,6 +29,10 @@ describe('口语授权与澄清恢复', () => {
     const f = fixture(text, coding);
     expect((await f.intake({ text, source_id: 'one' })).status).toBe(201);
   });
+  it.each(['修复 Cecelia 调研页面按钮', '修复代码审查页面的显示错误'])('页面名称不改变句首修改授权：%s', async (text) => {
+    const f = fixture(text, coding);
+    expect((await f.intake({ text, source_id: 'one' })).status).toBe(201);
+  });
   it('用户补充只读范围后原句修复歧义能消除', async () => {
     const text = '检查并修复 Cecelia 接单问题';
     const f = fixture(text);
