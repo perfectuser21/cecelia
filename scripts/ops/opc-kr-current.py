@@ -112,7 +112,10 @@ def main():
                     set_current(SOURCE_COST, cost, evidence[1], task_id, run_id, observed_at)]
         completed = call(BRAIN + "/tasks/" + task_id, {"status": "completed", "result": {
             "actor": ACTOR, "facts": receipts, "evidence": evidence,
-            "handoff": {"verdict": "PASS", "summary": "两条原口径机器观察及证据已入 Brain", "next_steps": []},
+            "handoff": {"schema_version": 1, "task_id": task_id, "title": "公司 KR 原口径机器观察",
+                        "verdict": "PASS", "done": ["两条原口径机器观察及证据已入 Brain"],
+                        "not_done": [], "next_steps": [], "data_sources": [BRAIN + "/okr/company-key-results"],
+                        "created_at": observed_at},
         }}, "PATCH")
         if completed.get("success") is not True or completed.get("status") != "completed":
             raise RuntimeError("采集任务完成回执未通过")

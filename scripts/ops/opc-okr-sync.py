@@ -5,6 +5,7 @@ import os
 import sys
 import time
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -109,7 +110,10 @@ def main():
         completed = call(BRAIN + "/tasks/" + task_id, {"status": "completed", "result": {
             "actor": ACTOR, "facts": {"company_krs": len(rows), "site_files": written},
             "evidence": {"source": BRAIN + "/okr/company-key-results", "run_id": run_id},
-            "handoff": {"verdict": "PASS", "summary": "Brain 公司原指标快照已同步执行现场", "next_steps": []},
+            "handoff": {"schema_version": 1, "task_id": task_id, "title": "公司 OKR 执行现场同步",
+                        "verdict": "PASS", "done": ["Brain 公司原指标快照已同步执行现场"],
+                        "not_done": [], "next_steps": [], "data_sources": [BRAIN + "/okr/company-key-results"],
+                        "created_at": datetime.now(timezone.utc).isoformat()},
         }}, "PATCH")
         if completed.get("success") is not True or completed.get("status") != "completed":
             raise RuntimeError("现场同步任务完成回执未通过")
