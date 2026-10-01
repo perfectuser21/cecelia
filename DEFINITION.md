@@ -12,6 +12,8 @@
 
 **Brain 版本**: 1.351.4
 
+受管脚本准入仅写 blocked/queued，终态写入者守卫已登记。
+
 ## Brain 1.351.4 — 现有执行目录统一（阶段4a）
 
 - system_registry设备真身按UUID绑定execution_nodes；不可变execution_node_versions保留历史endpoint/profile；execution_grants按surface/provider/account/repo/profile精确授权。
