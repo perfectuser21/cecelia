@@ -45,6 +45,7 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
   fs.mkdirSync(stateRoot,{recursive:true,mode:0o700});
   const root=fs.realpathSync(stateRoot);
   fs.chmodSync(root,0o700);
+  const timers=new Map();
   function validate(input) {
     if(!UUID.test(input?.reservation_id) || !UUID.test(input.intent_id)
       || input.machine_id!==machineId || !/^script-[a-f0-9-]+-a[1-9][0-9]*$/.test(input.owner_key)
@@ -85,10 +86,36 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
     if(container.labels && ['reservation_id','intent_id','launch_generation'].some((key)=>
       container.labels[`cecelia.script.${key}`]!==String(state[key]))) throw new Error('script_identity_mismatch');
     if(!state.container_id){state.container_id=container.id;save(state);}
+    if(container.status==='exited') {
+      state.terminal={exit_code:container.exit_code,stdout:container.stdout??'',stderr:container.stderr??'',timed_out:state.timed_out===true};save(state);
+    }
     return {...state,status:container.status,exit_code:container.exit_code,
       stdout:container.stdout??'',stderr:container.stderr??'',timed_out:state.timed_out===true};
   }
+  function schedule(state) {
+    if(state.tombstoned || state.terminal || timers.has(state.reservation_id))return;
+    const timer=setTimeout(async()=>{
+      timers.delete(state.reservation_id);
+      try {
+        await locked(state,async(current)=>{
+          if(!current || current.tombstoned)return;
+          const observed=await observe(current);
+          if(observed.status==='exited')return;
+          current.timed_out=true;current.tombstoned=true;current.status='cleanup_pending';
+          current.terminal={exit_code:124,stdout:'',stderr:'script_timeout',timed_out:true};save(current);
+          if(current.container_id)await docker.remove(current.container_id);
+          if(await docker.inspect(current.container_id??current.container_name))throw new Error('script_cleanup_unconfirmed');
+          current.status='cleaned';save(current);
+        });
+      } catch { /* journal 持续占用，由下一次认证 inspect/cancel 完成确认。 */ }
+    },Math.max(1,state.created_at+state.timeout_sec*1000-Date.now()));
+    timer.unref?.();timers.set(state.reservation_id,timer);
+  }
+  for(const name of fs.readdirSync(root)) {
+    if(/^[a-f0-9-]+\.json$/.test(name))schedule(JSON.parse(fs.readFileSync(path.join(root,name),'utf8')));
+  }
   return {
+    close(){for(const timer of timers.values())clearTimeout(timer);timers.clear();},
     capabilities() {
       return {machine_id:machineId,worker_id:workerId,worker_boot_id:bootId,
         profiles:Object.fromEntries(Object.entries(profiles).map(([name,p])=>[name,digest(validateProfile(p))]))};
@@ -101,6 +128,7 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
           if(state.job_digest!==digest(input.job))throw new Error('script_identity_mismatch');
           return observe(state);
         }
+        if(input.config_digest!==digest({job:input.job,profile_digest:digest(profile)}))throw new Error('script_config_digest_mismatch');
         if(input.worker_id && (input.worker_id!==workerId || input.worker_boot_id!==bootId))throw new Error('script_worker_changed');
         state={...initial(input),job_digest:digest(input.job),timeout_sec:input.job.timeout_sec};save(state);
         state.container_id=await docker.create({name:state.container_name,profile,command:input.job.cmd,
@@ -108,7 +136,7 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
         save(state); // exact ID 持久化后才可 start；重复请求只 inspect。
         state.status='starting';save(state);
         await docker.start(state.container_id);
-        state.status='running';save(state);
+        state.status='running';save(state);schedule(state);
         return observe(state);
       });
     },
