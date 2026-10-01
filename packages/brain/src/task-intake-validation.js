@@ -102,6 +102,7 @@ function hasMixedResearchRequest(text) {
     .some((clause) => {
       const researchAt = clause.search(/调研|研究|讨论/);
       const writeAt = clause.search(WRITE_WORDS);
+      if (researchAt >= 0 && /(?:不要|无需|不必|不用|禁止|不|勿)\s*$/.test(clause.slice(0, researchAt))) return false;
       return researchAt >= 0 && (writeAt < 0 || researchAt < writeAt);
     });
   return researchRequested && hasPositiveWrite(text);
