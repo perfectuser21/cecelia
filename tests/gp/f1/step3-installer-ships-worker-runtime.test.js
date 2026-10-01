@@ -88,6 +88,13 @@ describe('GP F1 step3 — installer 覆盖 worker 运行时依赖', () => {
   it.each(localRequires())(
     'installer 完整搬运 %s.cjs（SOURCE 声明 + cp staging + MOVE 落位）',
     (mod) => {
+      const array = installerSource.match(/^APP_SERVER_FILES=\(([^)]*)\)/m);
+      if (array?.[1].split(/\s+/).includes(`${mod}.cjs`)) {
+        expect(installerSource).toContain('mktemp "$RUNTIME_DIR/.${APP_SERVER_FILES[$index]}.XXXXXX"');
+        expect(installerSource).toContain('cp "$SCRIPT_DIR/${APP_SERVER_FILES[$index]}" "${STAGED_APP_SERVER_FILES[$index]}"');
+        expect(installerSource).toMatch(/"\$MOVE" "\$\{STAGED_APP_SERVER_FILES\[\$index\]\}"\s*\\\s*"\$RUNTIME_DIR\/\$\{APP_SERVER_FILES\[\$index\]\}"/);
+        return;
+      }
       // SOURCE 声明：installer 把它列为必需源文件
       expect(installerSource).toMatch(
         new RegExp(`_SOURCE="\\$SCRIPT_DIR/${mod}\\.cjs"`),
