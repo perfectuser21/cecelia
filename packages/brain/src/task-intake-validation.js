@@ -6,6 +6,7 @@ const FIELDS = ['intent', 'title', 'objective', 'mutation_intent', 'change_kind'
   'map_scope', 'confidence', 'evidence', 'questions'];
 const plainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const boundedString = (value, max) => typeof value === 'string' && value.trim().length > 0 && value.length <= max;
+const hasControlCharacter = (value) => [...value].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127);
 
 export function intakeError(status, error) {
   return { status, body: { error, task_id: null } };
@@ -14,8 +15,8 @@ export function intakeError(status, error) {
 export function normalizeIntakeInput(body, tenantId = 'default') {
   if (!plainObject(body) || Object.keys(body).some((k) => !['text', 'source_id', 'answers'].includes(k))
     || !boundedString(body.text, 6000) || !boundedString(body.source_id, 160)
-    || /[\x00-\x1f\x7f]/.test(body.source_id)
-    || !boundedString(tenantId, 128) || /[\x00-\x1f\x7f]/.test(tenantId)) return null;
+    || hasControlCharacter(body.source_id)
+    || !boundedString(tenantId, 128) || hasControlCharacter(tenantId)) return null;
   const suppliedAnswers = body.answers ?? {};
   if (!plainObject(suppliedAnswers) || Object.keys(suppliedAnswers).length > 10
     || Object.entries(suppliedAnswers).some(([k, v]) => !/^[a-zA-Z0-9_-]{1,64}$/.test(k)
@@ -57,18 +58,40 @@ function validQuestions(questions) {
       && q.options.length <= 4 && q.options.every((o) => boundedString(o, 100)))));
 }
 
-const WRITE_WORDS = /修复|修改|改动|新增|添加|实现|重构|改造|开发|删除|移除|\b(?:fix|modify|implement|refactor|add|remove|change)\b/i;
-const WRITE_NEGATION = /(?:不要|不许|禁止|无需|不|勿)(?:直接|实际|自动)?(?:修改|改动|修复|新增|删除|执行)|\b(?:do not|don't|without)\s+(?:modify|change|fix|edit|write)/i;
-function hasPositiveWrite(text) {
-  const cleaned = text.replace(/(?:不要|不许|禁止|无需|不|勿)(?:直接|实际|自动)?(?:修改|改动|修复|新增|删除|执行)/g, '')
-    .replace(/\b(?:do not|don't|without)\s+(?:modify|change|fix|edit|write)\b/gi, '');
-  return WRITE_WORDS.test(cleaned);
+const WRITE_WORDS = /修复|修改|改动|改成|新增|添加|实现|重构|改造|开发|删除|移除|\b(?:fix|modify|implement|refactor|add|remove|change)\b/i;
+const DISCUSSION = /调研|研究|讨论|分析|评估|了解|学习|解释|说明|审查|检查|看看|\b(?:research|discuss|review|explain)\b/i;
+const OPERATIONS = new RegExp(`${WRITE_WORDS.source}|发布|上传|投放|清空|删掉|重启|关闭|关机|部署|配置|调整`, 'i');
+const GENERAL_NO_WRITE = /(?:不要|不许|禁止|无需|不|勿)(?:直接|实际|自动)?(?:修改|改动|修复)(?:代码)?(?:$|[。，,；;！!？?\s])|\b(?:do not|don't|without)\s+(?:modify|change|fix|edit|write)/i;
+
+function actionClauses(text) {
+  return text.split(/[，,。；;\n]|但是|但/).flatMap((clause) => {
+    const affirmative = clause.replace(/(?:不要|不许|禁止|无需|不|勿)(?:直接|实际|自动)?(?:修改|改动|修复|新增|删除|执行|发布|部署|重启)[^，,。；;\n]*/g, '')
+      .replace(/\b(?:do not|don't|without)\s+(?:modify|change|fix|edit|write)\b.*/gi, '');
+    const discussionAt = affirmative.search(DISCUSSION);
+    const operationAt = affirmative.search(OPERATIONS);
+    if (discussionAt < 0 || (operationAt >= 0 && operationAt < discussionAt)) return [affirmative];
+    // “讨论如何修复”没有写入指令；“检查并修复”保留后半句的明确动作。
+    const joined = affirmative.split(/并且|然后|同时|以及|顺便|并|\band then\b/i);
+    return joined.length > 1 ? joined.slice(1) : [];
+  });
+}
+const hasPositiveWrite = (text) => actionClauses(text).some((clause) => WRITE_WORDS.test(clause));
+
+function resolvedText(input, candidate) {
+  const answers = Object.values(input.answers).join('\n');
+  // 只在补充回答明确重新限定范围时替代旧矛盾，模糊回答不能吞掉原始授权边界。
+  const resolvesReadOnly = /(?:只|仅)(?:做)?(?:调研|研究|审查|分析)|不(?:要)?修改代码/.test(answers);
+  const resolvesWrite = /改为|允许修改|直接(?:修改|修复)|确认(?:修改|修复)/.test(answers)
+    && hasPositiveWrite(answers) && !GENERAL_NO_WRITE.test(answers);
+  if ((candidate.mutation_intent === 'read_only' && resolvesReadOnly)
+    || (candidate.mutation_intent === 'write' && resolvesWrite)) return answers;
+  return [input.text, answers].filter(Boolean).join('\n');
 }
 
 // 只做保守矛盾防线；类别仍由整体语义候选及事实核验确定。
 function unsupportedAction(text) {
-  return /(?:发布|上传|投放).{0,24}(?:抖音|小红书|公众号|微博|内容|文章)|(?:内容|文章).{0,16}(?:发布到|上传到)/.test(text)
-    || /(?:删除|清空|删掉).{0,24}(?:数据库|生产数据|用户数据)|(?:重启|关闭|关机|部署).{0,20}(?:生产|服务器|机器)|(?:修改|配置|调整|关闭).{0,20}(?:生产防火墙|生产网络|生产路由)/.test(text);
+  return actionClauses(text).some((clause) => /(?:发布|上传|投放).{0,24}(?:抖音|小红书|公众号|微博|内容|文章)|(?:内容|文章).{0,16}(?:发布到|上传到)/.test(clause)
+    || /(?:删除|清空|删掉).{0,24}(?:数据库|生产数据|用户数据)|(?:重启|关闭|关机|部署).{0,20}(?:生产|服务器|机器)|(?:修改|配置|调整|关闭).{0,20}(?:生产防火墙|生产网络|生产路由)/.test(clause));
 }
 
 export function validateCandidate(candidate, input, facts) {
@@ -94,14 +117,17 @@ export function validateCandidate(candidate, input, facts) {
   if (candidate.map_scope.some((key) => !facts.mapNodes.some((node) => node.repo === repo && node.node_key === key))) {
     return { error: 'invalid_model_contract' };
   }
-  const fullText = corpus.join('\n');
+  const fullText = resolvedText(input, candidate);
   if (candidate.intent === 'unsupported' || unsupportedAction(fullText)) return { unsupported: true };
   const write = candidate.intent === 'coding_change';
+  const researchAt = fullText.search(/调研|研究|讨论/);
+  const mixed = researchAt >= 0 && researchAt < fullText.search(WRITE_WORDS) && hasPositiveWrite(fullText);
   const contradictory = write
-    ? candidate.mutation_intent !== 'write' || WRITE_NEGATION.test(fullText)
-      || !candidate.evidence.some(hasPositiveWrite) || !repo || !candidate.change_kind || !candidate.map_scope.length
+    ? candidate.mutation_intent !== 'write' || GENERAL_NO_WRITE.test(fullText)
+      || !hasPositiveWrite(fullText) || !candidate.evidence.some(hasPositiveWrite)
+      || !repo || !candidate.change_kind || !candidate.map_scope.length
     : candidate.mutation_intent !== 'read_only' || candidate.change_kind !== null || hasPositiveWrite(fullText);
-  if (candidate.intent === 'clarify' || candidate.confidence < 0.85 || contradictory) {
+  if (candidate.intent === 'clarify' || candidate.confidence < 0.85 || contradictory || mixed) {
     return { clarify: true, questions: clarificationQuestions(candidate.questions) };
   }
   return { candidate: { ...candidate, repo } };

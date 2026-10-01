@@ -15,6 +15,27 @@ export async function loadIntakeFacts(db) {
   return { repositories, mapNodes: rows };
 }
 
+export function createTaskIntakeList({ db }) {
+  return async (query = {}, { tenantId = 'default' } = {}) => {
+    const rawLimit = query.limit === undefined ? '20' : query.limit;
+    if (Object.keys(query).some((key) => key !== 'limit') || typeof rawLimit !== 'string'
+      || !/^[1-9][0-9]?$/.test(rawLimit) || Number(rawLimit) > 50) {
+      return intakeError(400, 'invalid_intake_query');
+    }
+    try {
+      const { rows } = await db.query(`SELECT t.id,
+          COALESCE(t.payload->'intake'->>'title',t.title) AS title,
+          t.status,t.created_at,t.updated_at,t.completed_at
+        FROM tasks t
+        WHERE t.payload->>'tenant_id'=$1 AND t.payload->'intake'->>'source'='dashboard'
+          AND EXISTS (SELECT 1 FROM work_routing_receipts r WHERE r.task_id=t.id
+            AND r.source='api' AND r.source_id LIKE 'dashboard:%')
+        ORDER BY t.created_at DESC,t.id DESC LIMIT $2`, [tenantId, Number(rawLimit)]);
+      return { status: 200, body: { tasks: rows } };
+    } catch { return intakeError(503, 'intake_storage_unavailable'); }
+  };
+}
+
 async function existingReceipt(db, input) {
   const { rows } = await db.query(`SELECT t.id, t.title, t.status, t.payload
     FROM work_routing_receipts r JOIN tasks t ON t.id=r.task_id
