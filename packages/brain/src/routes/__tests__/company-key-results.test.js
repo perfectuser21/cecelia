@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+const defaultPool = vi.hoisted(() => ({ query: vi.fn() }));
+vi.mock('../../db.js', () => ({ default: defaultPool }));
 import { createCompanyKrRouter } from '../company-key-results.js';
+import hierarchy from '../okr-hierarchy.js';
+import taskGoals from '../task-goals.js';
 
 describe('公司KR真实HTTP入口', () => {
   it('GET公司列表保留raw precision与显式source，不依赖最近5个Objective', async () => {
@@ -17,5 +21,23 @@ describe('公司KR真实HTTP入口', () => {
     expect((await request(app).post('/api/brain/okr/key-results/kr/observations').send({ current_value: 0 })).status).toBe(400);
     expect((await request(app).post('/api/brain/okr/company-key-results/import').send({})).status).toBe(400);
     expect(pool.connect).not.toHaveBeenCalled();
+  });
+  it('现有两个泛PATCH真实HTTP都不能清公司metadata或改Current', async () => {
+    defaultPool.query.mockResolvedValue({ rows: [{ metadata: { metric_mode: 'company_formula_v1' }, custom_props: { company_notion: { page_id: 'source' } } }] });
+    const app = express(); app.use(express.json()); app.use('/api/brain/okr', hierarchy); app.use('/api/brain/goals', taskGoals);
+    for (const path of ['/api/brain/okr/key-results/kr', '/api/brain/goals/kr']) {
+      for (const body of [{ metadata: null }, { metadata: { metric_mode: null } }, { current_value: 999 }]) {
+        defaultPool.query.mockClear();
+        expect((await request(app).patch(path).send(body)).status).toBe(409);
+        expect(defaultPool.query.mock.calls.every(([sql]) => !sql.includes('UPDATE'))).toBe(true);
+      }
+    }
+  });
+  it('公司Objective来源映射也不能被泛PATCH抹掉', async () => {
+    defaultPool.query.mockClear();
+    defaultPool.query.mockResolvedValue({ rows: [{ metadata: { source_system: 'notion-company-okr' }, custom_props: { company_notion: { page_id: 'goal' } } }] });
+    const app = express(); app.use(express.json()); app.use('/api/brain/okr', hierarchy);
+    expect((await request(app).patch('/api/brain/okr/objectives/goal').send({ custom_props: { company_notion: null } })).status).toBe(409);
+    expect(defaultPool.query.mock.calls.every(([sql]) => !sql.includes('UPDATE'))).toBe(true);
   });
 });
