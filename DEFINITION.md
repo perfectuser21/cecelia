@@ -10,9 +10,9 @@
 
 
 
-**Brain 版本**: 1.350.3
+**Brain 版本**: 1.350.4
 
-## Brain 1.350.3 — 节点接入与受控执行回执
+## Brain 1.350.4 — 节点接入与受控执行回执
 
 - `/machines` 接入表单提供进度、更正与幂等重试；受管主力机执行固定身份SSH安装、连续健康确认后登记台账。新节点只监控，`executors=[]`且执行能力为false，入执行池另需验收。
 - 运行机须部署 `scripts/ops/node-onboarding.mjs` 及相邻模块，并有Node、Python3、OpenSSH、已授权1Password CLI；macOS需现有GUI会话，非root Linux需现有systemd linger。不改网络或删业务文件。
