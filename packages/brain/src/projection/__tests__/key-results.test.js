@@ -122,3 +122,49 @@ describe('Brain KR 独立投影', () => {
     expect(await runNotionKrProjection(makePool(), deps())).toMatchObject({ created: 1 });
   });
 });
+
+describe('已同步KR页面消失后仍恢复', () => {
+  for (const state of ['deleted', 'archived', 'moved']) {
+    it(`指纹未变化但页面${state}时创建当前库投影`, async () => {
+      const { runNotionKrProjection, buildNotionKrProperties, krProjectionDigest } = await api();
+      requests.mockImplementation(async (_token, path, method) => {
+        if (path === '/pages/old-page') {
+          if (state === 'deleted') throw Object.assign(new Error('Notion 404'), { status: 404 });
+          return { archived: state === 'archived', parent: { database_id: state === 'moved' ? 'other-db' : DB }, properties: { 'Brain ID': { rich_text: [{ plain_text: KR.id }] } } };
+        }
+        if (path.includes('/databases/') && method === 'GET') return schema();
+        if (path.includes('/query')) return { results: [] };
+        return { id: 'recovered-page' };
+      });
+      const pool = makePool({ link: { external_id: 'old-page', content_hash: krProjectionDigest(DB, buildNotionKrProperties(KR)) } });
+      expect(await runNotionKrProjection(pool, deps())).toMatchObject({ created: 1, skipped: 0 });
+    });
+  }
+});
+
+describe('独立 KR 配置窄口', () => {
+  it('UUID规范化及公司库拒绝发生在任何网络和数据库变更之前', async () => {
+    const { configureKrProjection } = await api();
+    const pool = { connect: vi.fn() };
+    await expect(configureKrProjection(pool, 'not-a-uuid', deps())).rejects.toThrow('UUID');
+    await expect(configureKrProjection(pool, '684c40c2ba6383a7b6ba8161f110a18c', deps())).rejects.toThrow('公司 KR');
+    expect(pool.connect).not.toHaveBeenCalled();
+    expect(requests).not.toHaveBeenCalled();
+  });
+  it('名称和schema断言失败不连接DB或改注册表', async () => {
+    const { configureKrProjection } = await api();
+    requests.mockResolvedValue({ ...schema(), title: [{ plain_text: '公司经营KR' }] });
+    const pool = { connect: vi.fn() };
+    await expect(configureKrProjection(pool, DB, deps())).rejects.toThrow('独立');
+    expect(pool.connect).not.toHaveBeenCalled();
+  });
+  it('目标已由其它table/vessel/face拥有时回滚，绝不停旧库或抢占目标', async () => {
+    const { configureKrProjection } = await api();
+    const query = vi.fn(async sql => sql.includes('SELECT') ? { rows: [{ notion_db_id: DB, brain_table: 'tasks', vessel: 'other', face: 'inlet' }] } : { rows: [] });
+    const release = vi.fn();
+    await expect(configureKrProjection({ connect: async () => ({ query, release }) }, DB, deps())).rejects.toThrow('归属');
+    expect(query.mock.calls.some(([sql]) => /UPDATE|INSERT/.test(sql))).toBe(false);
+    expect(query.mock.calls.some(([sql]) => sql === 'ROLLBACK')).toBe(true);
+    expect(release).toHaveBeenCalledOnce();
+  });
+});

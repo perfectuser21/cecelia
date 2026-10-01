@@ -228,3 +228,16 @@ describe('独立 KR 投影沿 projection_links 对账', () => {
     expect(result.find(r => r.key === 'projection_counts')).toMatchObject({ ok: false, degraded: false });
   });
 });
+
+it('KR漏推时即使链接和远端都各一行仍报红，不能隐藏其余应投影KR', async () => {
+  const row = { notion_db_id: 'db-brain-kr', title: 'Brain Key Results', face: 'mirror', brain_table: 'key_results', direction: 'push', vessel: 'notion-kr-projection', status: 'active' };
+  const pool = { query: vi.fn(async sql => {
+    if (sql.includes('information_schema')) return { rows: [] };
+    if (sql.includes('FROM notion_projection_map')) return { rows: [row] };
+    if (sql.includes('FROM projection_links')) return { rows: [{ count: 1, entity_id: 'kr-1', external_id: 'p0' }] };
+    if (sql.includes('FROM key_results')) return { rows: [{ count: 38 }] };
+    return { rows: [] };
+  }) };
+  const result = await buildProjectionAssertions(pool, { notionReq: notionWith({ pages: { 'db-brain-kr': 1 } }), token: 't', botUserId: BOT });
+  expect(result.find(r => r.key === 'projection_counts')).toMatchObject({ ok: false, degraded: false });
+});

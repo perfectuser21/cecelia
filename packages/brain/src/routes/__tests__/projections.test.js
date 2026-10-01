@@ -55,3 +55,12 @@ describe('projections routes', () => {
     expect(response.status).toBe(429);
   });
 });
+
+describe('KR配置API真实路由挂接', () => {
+  it('无database_id必须返回400，已路由到窄配置校验', async () => {
+    const app = express(); app.set('trust proxy', 1); app.use(express.json()); app.use('/api/brain', projectionsRouter);
+    const response = await request(app).post('/api/brain/projections/notion/key-results/configure').set('X-Forwarded-For', '192.0.2.71').send({});
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain('UUID');
+  });
+});
