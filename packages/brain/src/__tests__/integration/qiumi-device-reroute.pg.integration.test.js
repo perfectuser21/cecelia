@@ -35,7 +35,7 @@ async function scenario(fn) {
       };
       const db = { query: async (sql, args) => {
         if (/UPDATE tasks/.test(sql) && beforeUpdate) await beforeUpdate(client);
-        if (/INSERT INTO task_events/.test(sql) && failEvent) return client.query(sql, [null, ...args.slice(1)]);
+        if (/INSERT INTO task_events/.test(sql) && failEvent) return client.query(sql, [args[0], null, args[2]]);
         return client.query(sql, args);
       }, connect: async () => {
         const savepoint = `reroute_fixture_${++transactionNo}`;
