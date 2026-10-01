@@ -15,6 +15,7 @@ import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 import pool from '../db.js';
+import { assertLiveLLMAllowed } from '../runtime-safety.js';
 import { generateProfileFactEmbeddingAsync } from '../embedding-service.js';
 
 const router = Router();
@@ -109,6 +110,7 @@ function parseCSVFacts(text) {
  * @returns {Promise<string[]>} facts 数组
  */
 async function parseFactsFromText(text) {
+  assertLiveLLMAllowed();
   const apiKey = getApiKey();
   if (!apiKey) throw new Error('MiniMax API key not available');
 

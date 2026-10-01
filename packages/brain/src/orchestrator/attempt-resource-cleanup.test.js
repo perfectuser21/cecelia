@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { confirmExpiredParentCleanup, inspectLocalContainer } from './attempt-resource-cleanup.js';
+import * as runtimeSafety from '../runtime-safety.js';
 
 const id = '11111111-1111-4111-8111-111111111111';
 const parent = { id, run_id: '22222222-2222-4222-8222-222222222222', actual_machine_id: 'us-mac-m4',
@@ -67,13 +68,31 @@ describe('恢复前精确旧进程清理', () => {
       response.end(JSON.stringify({ status: 'cleaned', attempt_id: id }));
     });
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const workerUrl = `http://127.0.0.1:${server.address().port}`;
+    // 仅此 fixture 模拟隔离策略；实际 HTTP 被限制在测试自建 loopback server。
+    const guard = vi.spyOn(runtimeSafety, 'assertExternalExecutionAllowed').mockImplementation(() => {});
     try {
       vi.stubEnv('KERNEL_FLEET_REMOTE_ENABLED', 'true');
       vi.stubEnv('KERNEL_FLEET_BRIDGE_TOKEN', 'unit-http-transport-secret-at-least-32-characters');
-      vi.stubEnv('FLEET_WORKER_US_MAC_M4_URL', `http://127.0.0.1:${server.address().port}`);
-      const receipt = await confirmExpiredParentCleanup({ ...parent, execution_transport: 'fleet-worker', local_container_naming: 'generation-v1' });
+      vi.stubEnv('FLEET_WORKER_US_MAC_M4_URL', workerUrl);
+      const receipt = await confirmExpiredParentCleanup({ ...parent, execution_transport: 'fleet-worker', local_container_naming: 'generation-v1' }, {
+        fetchFn: (url, options) => {
+          expect(new URL(url).origin).toBe(workerUrl);
+          return fetch(url, options);
+        },
+      });
       expect(receipt).toMatchObject({ status: 'cleaned', attempt_id: id });
       expect(requests).toEqual([{ method: 'POST', url: `/harness/attempts/${id}/cancel` }]);
-    } finally { await new Promise((resolve) => server.close(resolve)); }
+    } finally {
+      guard.mockRestore();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+  it('默认测试隔离仍阻止cleanup接触worker', async () => {
+    const fetchFn = vi.fn();
+    vi.stubEnv('NODE_ENV', 'test');
+    await expect(confirmExpiredParentCleanup({ ...parent, execution_transport: 'fleet-worker', local_container_naming: 'generation-v1' }, { fetchFn }))
+      .rejects.toMatchObject({ code: 'EXECUTION_RUNTIME_ISOLATED' });
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });

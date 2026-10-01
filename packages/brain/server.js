@@ -1,6 +1,7 @@
 // OTel 必须在所有其他 import 之前初始化（auto-instrumentation 要求）
 import { initOtel } from './src/otel.js';
-await initOtel();
+import { isIsolatedRuntime } from './src/runtime-safety.js';
+if (!isIsolatedRuntime()) await initOtel();
 
 import 'dotenv/config';
 import express from 'express';
@@ -135,7 +136,7 @@ import {
 // 宿主 ~/.gitconfig 只读挂载进容器、配了容器内不存在的 credential.helper，
 // 导致 GitHub-URL base_repo 的 harness clone/fetch/push 全失败。写可写 GIT_CONFIG_GLOBAL
 // 用 url.insteadOf 注入 x-access-token，一处修复 clone/fetch/push 全部。
-setupGitCredentials({
+if (!isIsolatedRuntime()) setupGitCredentials({
   token: process.env.GITHUB_TOKEN,
   configPath: '/tmp/brain-gitconfig',
   env: process.env,
@@ -559,8 +560,8 @@ app.use((err, _req, res, _next) => {
 });
 
 // Run migrations with retry (PG transient failures should not kill the process)
-if (process.env.SKIP_MIGRATIONS === 'true') {
-  console.log('[Server] SKIP_MIGRATIONS=true — 跳过数据库迁移');
+if (isIsolatedRuntime() || process.env.SKIP_MIGRATIONS === 'true') {
+  console.log('[Server] 被动实例或 SKIP_MIGRATIONS=true — 跳过数据库迁移');
 } else {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -585,7 +586,7 @@ if (process.env.SKIP_MIGRATIONS === 'true') {
   }
 }
 
-try {
+if (!isIsolatedRuntime()) try {
   const selfCheckOk = await runSelfCheck(pool);
   if (!selfCheckOk) {
     console.warn('[Server] Self-check failed, starting in degraded mode');
@@ -631,6 +632,7 @@ server.on('upgrade', (req, socket, head) => {
  * Idempotent: skips if /health returns 200.
  */
 async function startCeceliaBridge() {
+  if (isIsolatedRuntime()) return;
   const BRIDGE_PORT = process.env.BRIDGE_PORT || 3457;
   const bridgeUrl = `http://localhost:${BRIDGE_PORT}`;
   try {
@@ -686,32 +688,35 @@ if (!process.env.VITEST) {
     process.exit(1);
   }
 
-  // DBOS durable 底座（flag 门控，默认关=行为零变化）。bootDurable 内部 try/catch degrade，
-  // launch 失败只记日志、绝不阻断 brain 启动。放 listen 之前，确保 tick 路由时 DBOS 已就绪。
-  await bootDurable();
+  if (!isIsolatedRuntime()) {
+    // DBOS durable 底座（flag 门控，默认关=行为零变化）。bootDurable 内部 try/catch degrade，
+    // launch 失败只记日志、绝不阻断 brain 启动。放 listen 之前，确保 tick 路由时 DBOS 已就绪。
+    await bootDurable();
 
-  // migration 422 会把无法证明存活 authority 的旧 active v2 run 留为 ownerless。
-  // 在 listener 接受任何请求前先 fail-closed 收敛，定时 orphan guard 只做后备。
-  const { reconcileOwnerlessKernelRuns } = await import(
-    './src/orchestrator/kernel-controller-lifecycle.js'
-  );
-  const startupRecovered = await reconcileOwnerlessKernelRuns(pool);
-  if (startupRecovered.length > 0) {
-    console.log(`[Server] startup ownerless Kernel runs recovered=${startupRecovered.length}`);
-  }
+    // migration 422 会把无法证明存活 authority 的旧 active v2 run 留为 ownerless。
+    // 在 listener 接受任何请求前先 fail-closed 收敛，定时 orphan guard 只做后备。
+    const { reconcileOwnerlessKernelRuns } = await import(
+      './src/orchestrator/kernel-controller-lifecycle.js'
+    );
+    const startupRecovered = await reconcileOwnerlessKernelRuns(pool);
+    if (startupRecovered.length > 0) {
+      console.log(`[Server] startup ownerless Kernel runs recovered=${startupRecovered.length}`);
+    }
 
-  // 排空状态必须在 listener 接受任何请求前恢复完毕（任务 30861749）：原先
-  // restoreDrainState() 在 onBrainListening() 异步链尾部（initTickLoop 里）才跑，
-  // 而 Express 路由在 listenWithRetry() 之后立即可用——部署脚本的健康检查和
-  // drain-cancel 请求几乎必然抢在 restore 之前到达，新容器 _draining 还是初始
-  // false，cancel 被当 no-op，随后 restore 又把旧容器的持久化排空状态误恢复。
-  // 挪到这里与 reconcileOwnerlessKernelRuns 同一处 "listener 前收敛"，从根本上
-  // 消除这个时间窗口。
-  try {
-    const { restoreDrainState } = await import('./src/drain.js');
-    await restoreDrainState();
-  } catch (drainErr) {
-    console.error('[Server] restoreDrainState failed (non-fatal):', drainErr.message);
+    // 排空状态必须在 listener 接受任何请求前恢复完毕（任务 30861749）：原先
+    // restoreDrainState() 在 onBrainListening() 异步链尾部（initTickLoop 里）才跑，
+    // 而 Express 路由在 listenWithRetry() 之后立即可用——部署脚本的健康检查和
+    // drain-cancel 请求几乎必然抢在 restore 之前到达，新容器 _draining 还是初始
+    // false，cancel 被当 no-op，随后 restore 又把旧容器的持久化排空状态误恢复。
+    // 挪到这里与 reconcileOwnerlessKernelRuns 同一处 "listener 前收敛"，从根本上
+    // 消除这个时间窗口。
+    try {
+      const { restoreDrainState } = await import('./src/drain.js');
+      await restoreDrainState();
+    } catch (drainErr) {
+      console.error('[Server] restoreDrainState failed (non-fatal):', drainErr.message);
+    }
+
   }
 
   await listenWithRetry(server, Number(PORT), { maxAttempts: 3, retryDelayMs: 2_000 });
@@ -719,7 +724,9 @@ if (!process.env.VITEST) {
   // Acceptance 公网 listener（刀 1，决策 c08c2173）：token 未配置时静默不启动
   try {
     const ACCEPTANCE_PUBLIC_PORT = Number(process.env.ACCEPTANCE_PUBLIC_PORT || 5223);
-    acceptancePublicServer = startAcceptancePublicServer({ pool, port: ACCEPTANCE_PUBLIC_PORT });
+    if (!isIsolatedRuntime()) {
+      acceptancePublicServer = startAcceptancePublicServer({ pool, port: ACCEPTANCE_PUBLIC_PORT });
+    }
   } catch (err) {
     console.error('[acceptance-public] 启动失败（不影响主服务）:', err.message);
   }
@@ -730,6 +737,18 @@ if (!process.env.VITEST) {
 
 async function onBrainListening() {
   console.log(`Cecelia Brain running on http://localhost:${PORT}`);
+
+  // 必须先于恢复、自动派发、资源轮询和所有定时器，不能只关闭 tick。
+  if (isIsolatedRuntime()) {
+    initWebSocketServer(server);
+    // fork 启动器消失时自动退出，不允许测试服务变成无人持有的后台常驻。
+    if (typeof process.send === 'function') {
+      process.once('disconnect', () => process.exit(0));
+      process.send({ type: 'brain-test-ready' });
+    }
+    console.log('[Server] 被动测试/预览实例：后台自动化和真实模型调用已禁用');
+    return;
+  }
 
   if (shouldStartAttemptCleanupLoop(process.env)) {
     attemptCleanupLoop.start();
