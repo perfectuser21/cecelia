@@ -44,7 +44,7 @@ export function createScriptReservationStore(pool) {
           return { outcome: existing.status === 'released' ? 'released' : 'reserved', reservation: existing };
         }
         if (!validSnapshot(input)) return WAIT;
-        const task = (await client.query('SELECT status FROM tasks WHERE id=$1 FOR KEY SHARE', [input.taskId])).rows[0];
+        const task = (await client.query('SELECT status FROM tasks WHERE id=$1 FOR NO KEY UPDATE', [input.taskId])).rows[0];
         if (!['queued','in_progress'].includes(task?.status)) throw new Error('script_task_not_dispatchable');
         const occupied = (await client.query(`SELECT EXISTS (
           SELECT 1 FROM harness_attempts active WHERE
