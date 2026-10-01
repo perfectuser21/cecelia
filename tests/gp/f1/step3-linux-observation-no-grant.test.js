@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import probe from '../../../packages/brain/scripts/fleet-worker/node-probe.cjs';
 import { evaluateBaseAdmission } from '../../../packages/brain/src/orchestrator/fleet-node/node-admission.js';
@@ -40,4 +42,10 @@ it('脚本容器事实证明不提供授权；缺持久身份即拒绝，不能�
   await expect(collectLinuxScriptProof({ profile: {}, identity: {}, containerId: 'a'.repeat(64),
     deps: { runCommand: async () => { commands++; } } })).rejects.toThrow('linux_script_proof_unavailable');
   expect(commands).toBe(0);
+});
+
+it('Linux接入自动准备工具链和账号的真实产物合同持续验收，仍仅pending', () => {
+  const script = fileURLToPath(new URL('../../../packages/brain/scripts/fleet-worker/linux-pool-bootstrap.test.py', import.meta.url));
+  expect(() => execFileSync('python3', [script, 'BootstrapTests.test_missing_account_and_old_host_node_need_no_manual_setup'],
+    { encoding: 'utf8', timeout: 30000 })).not.toThrow();
 });
