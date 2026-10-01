@@ -137,3 +137,41 @@ describe('脚本预约权威状态机', () => {
     await expect(store.reserve(value)).resolves.toMatchObject({ outcome:'released' });
   });
 });
+
+describe('脚本预约拒绝未确认 Harness 清理和过时证据', () => {
+  it.each(['pending','leased','blocked'])('Harness 已终态但 %s outbox 仍阻止脚本', async (status) => {
+    const store = await reservationStore(); const value = await scriptInput();
+    const active = await harness.createAttempt(await harnessInput());
+    await pool.query(`INSERT INTO harness_attempt_cleanup_outbox
+      (attempt_id,run_id,target_machine_id,lease_generation,status,cleanup_cause)
+      VALUES($1,$2,$3,0,'pending','cancel_unknown')`, [active.id,active.run_id,machine]);
+    await pool.query("UPDATE harness_attempts SET status='failed' WHERE id=$1",[active.id]);
+    if (status === 'leased') await pool.query(`UPDATE harness_attempt_cleanup_outbox
+      SET status='leased',claim_owner='cleanup',claim_generation=1,claim_expires_at=NOW()+INTERVAL '1 minute'`);
+    if (status === 'blocked') await pool.query("UPDATE harness_attempt_cleanup_outbox SET status='blocked',blocked_at=NOW()");
+    await expect(store.reserve(value)).resolves.toMatchObject({outcome:'wait'});
+    expect((await pool.query('SELECT id FROM capacity_reservations')).rows).toHaveLength(0);
+  });
+  it('脚本等待同机事务锁期间快照过期，取得锁后拒绝预约', async () => {
+    const store = await reservationStore(); const value = await scriptInput();
+    const blocker = await pool.connect(); await blocker.query('BEGIN');
+    await blocker.query("SELECT pg_advisory_xact_lock(hashtextextended('harness_attempt_machine:' || $1::text,0))",[machine]);
+    value.capacitySnapshot.expires_at=Date.now()+50;
+    const pending=store.reserve(value);
+    await new Promise((resolve)=>setTimeout(resolve,100));
+    await blocker.query('COMMIT');blocker.release();
+    await expect(pending).resolves.toMatchObject({outcome:'wait'});
+    expect((await pool.query('SELECT id FROM capacity_reservations')).rows).toHaveLength(0);
+  });
+});
+
+it('任务取消事务先拿到行锁：reserve 读到提交后终态，不能新建预约', async () => {
+  const store=await reservationStore(); const value=await scriptInput();
+  const blocker=await pool.connect(); await blocker.query('BEGIN');
+  await blocker.query("UPDATE tasks SET status='cancelled' WHERE id=$1",[value.taskId]);
+  const pending=store.reserve(value).then((result)=>result,(error)=>error);
+  await new Promise((resolve)=>setTimeout(resolve,50));
+  await blocker.query('COMMIT');blocker.release();
+  expect(await pending).toBeInstanceOf(Error);
+  expect((await pool.query('SELECT id FROM capacity_reservations')).rows).toHaveLength(0);
+});
