@@ -360,7 +360,7 @@ function a6Pool({ unregistered = [], deadBound = [] } = {}) {
   const q = vi.fn(async (sql, params) => {
     if (typeof sql !== 'string') return { rows: [] };
     if (sql.includes('INSERT INTO skill_drift_alerts')) { writes.push({ sql, params }); return { rows: [] }; }
-    if (sql.includes("key = 'skill_inventory_state'")) return { rows: [{ value_json: { last_ok_at: '2026-09-30T00:00:00Z' } }] };
+    if (sql.includes("key = 'skill_inventory_state'")) return { rows: [{ value_json: { last_ok_at: new Date().toISOString() } }] };
     if (sql.includes('FROM ops_skills')) return { rows: unregistered.map((name) => ({ name })) };
     if (sql.includes('task_types') && sql.includes('presence')) return { rows: deadBound };
     if (sql.includes('fact_snapshot_headers')) return { rows: [{ repo: 'cecelia', kind: 'api', age_hours: '1' }] };
