@@ -14,7 +14,7 @@ async function readSourceFile(relativePath: string): Promise<string> {
 
 async function getManifestRoutes(relativePath: string): Promise<Array<{ path: string; component?: string; redirect?: string }>> {
   const content = await readSourceFile(relativePath)
-  const routeMatches = [...content.matchAll(/\{[^}]*path:\s*['"]([^'"]+)['"][^}]*\}/gs)]
+  const routeMatches = [...content.matchAll(/\{[^}]*?path:\s*['"]([^'"]+)['"][^}]*\}/gs)]
   return routeMatches.map(match => {
     const component = match[0].match(/component:\s*['"]([^'"]+)['"]/)?.[1]
     const redirect = match[0].match(/redirect:\s*['"]([^'"]+)['"]/)?.[1]
