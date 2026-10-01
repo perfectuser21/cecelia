@@ -700,6 +700,8 @@ jobs:
         run: bash scripts/ci/__tests__/us-vps-local-execution-disabled.test.sh
       - name: machine-registry 角色守卫（primary 唯一性 + us-mac-m4 字面量白名单棘轮）
         run: bash scripts/ci/__tests__/machine-registry-role-guard.test.sh
+      - name: CI 取消状态与串行 smoke 预算守卫
+        run: bash scripts/ci/__tests__/ci-results-smoke-budget.test.sh
 
   # ─── GP 锚产物闸（决策 109dd8eb ①）────────────────────────────
   # 闸从「声明」挪到「产物」：PR 触碰流水线路径（orchestrator / harness routes /
@@ -1753,6 +1755,7 @@ jobs:
           exit 1
       - name: Run all packages/brain/scripts/smoke/*.sh
         env:
+          SMOKE_ALLOW_WRITE: '1'
           BRAIN_URL: http://localhost:5221
           BRAIN_CONTAINER: cecelia-brain-smoke
           DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
@@ -1782,12 +1785,18 @@ jobs:
           PASSED=0
           for script in "${SCRIPTS[@]}"; do
             echo "── ▶️  $script"
-            if bash "$script"; then
+            STARTED_AT=$SECONDS
+            if timeout --kill-after=10s "${SMOKE_SCRIPT_TIMEOUT_SECONDS:-300}s" bash "$script"; then
               PASSED=$((PASSED + 1))
-              echo "── ✅ PASS: $script"
+              echo "── ✅ PASS: $script ($((SECONDS - STARTED_AT))s)"
             else
+              EXIT_CODE=$?
               FAILED=$((FAILED + 1))
-              echo "::error::❌ FAIL: $script"
+              if [ "$EXIT_CODE" -eq 124 ] || [ "$EXIT_CODE" -eq 137 ]; then
+                echo "::error::❌ TIMEOUT: $script ($((SECONDS - STARTED_AT))s, exit=$EXIT_CODE)"
+              else
+                echo "::error::❌ FAIL: $script ($((SECONDS - STARTED_AT))s, exit=$EXIT_CODE)"
+              fi
             fi
           done
           echo ""
