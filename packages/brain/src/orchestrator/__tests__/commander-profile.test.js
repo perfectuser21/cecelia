@@ -75,6 +75,11 @@ describe('Commander RunProfile parser', () => {
     'Authorization: Basic Zml4dHVyZQ==',
     'password is fixture-only-value',
     'token fixture-only-value',
+    '{"api_key":"fixture-only-value"}',
+    '"Authorization": "Basic Zml4dHVyZQ=="',
+    'api_key是fixture-only-value',
+    'OPENAI_API_KEY=fixture-only-value',
+    'credential_payload=fixture-only-value',
   ])('rejects invalid or secret-bearing authorization narratives %j', (user_authorization) => {
     expect(() => parseCommanderProfile({
       commanderMode: 'hybrid',
