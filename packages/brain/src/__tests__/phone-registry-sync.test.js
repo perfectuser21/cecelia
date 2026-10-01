@@ -3,6 +3,7 @@ import { runPhoneRegistrySync, buildPhoneAgentCommand } from '../phone-registry-
 const page = { id: 'p1', properties: { '类型': { select: { name: '安卓手机' } },
   '序列号': { rich_text: [{ plain_text: 'SER1' }] }, '名称': { title: [{ plain_text: '新昵称' }] },
   '账号': { rich_text: [{ plain_text: '抖音：测试号(id123)【当前】' }] } } };
+const manifest = { generation: 'a'.repeat(64), profiles_sha256: 'b'.repeat(64), accounts_sha256: 'c'.repeat(64) };
 const phone = { serial: 'SER1', nickname: '旧昵称', aliases: [], host: 'xian-m1', profile: 'p1', enabled: true,
   douyin_accounts: [], updated_at: new Date('2026-01-01'), model: 'REAL' };
 function fixture(state = {}) {
@@ -22,7 +23,7 @@ describe('台账同步调度', () => {
   it('完整分页读取后同事务写字段/被覆盖值/基线，提交后经mmv下发', async () => {
     const f = fixture(); const req = vi.fn().mockResolvedValueOnce({ results: [], has_more: true, next_cursor: 'cursor' })
       .mockResolvedValueOnce({ results: [page], has_more: false });
-    const exec = vi.fn(async cmd => { expect(f.calls.some(c => c.sql === 'COMMIT')).toBe(true); expect(cmd).toContain('mmv'); return JSON.stringify({ ok: true, receipts: [] }); });
+    const exec = vi.fn(async cmd => { expect(f.calls.some(c => c.sql === 'COMMIT')).toBe(true); expect(cmd).toContain('mmv'); return JSON.stringify({ ...manifest, ok: true, receipts: [] }); });
     const out = await runPhoneRegistrySync(f.pool, { token: 'test', notionReq: req, exec, now: 1900000000000, program: 'print("fixture")', inContainer: false });
     expect(out.updated).toBe(1); expect(exec).toHaveBeenCalledTimes(2);
     expect(req.mock.calls[1][3].start_cursor).toBe('cursor');
@@ -64,13 +65,24 @@ describe('台账同步调度', () => {
   }, 250);
   it.each(['unknown_account', 'unreadable', 'unreachable', 'cleanup_failed'])('核验%s必须去重提醒，忙碌手机仍仅延后核验', async (status) => {
     const f = fixture(); const bark = vi.fn();
-    const exec = vi.fn(async cmd => JSON.stringify({ ok: true, receipts: [
+    const exec = vi.fn(async cmd => JSON.stringify({ ...manifest, ok: true, receipts: [
       { serial: 'SER1', day: '2030-01-01', status: cmd.includes('xian-m1') ? status : 'task_busy' },
     ] }));
     const out = await runPhoneRegistrySync(f.pool, { token: 'test', notionReq: async () => ({ results: [] }), exec,
       now: 1900000000000, program: 'fixture', inContainer: false, bark });
     expect(out.ok).toBe(false); expect(bark).toHaveBeenCalledTimes(1);
     expect(bark.mock.calls[0][2]).toMatchObject({ dedupeKey: 'phone-account:SER1:2030-01-01', dedupeTtlSec: 86400 });
+  });
+
+  it.each(['missing_manifest', 'different_hash'])('双机%s不能宣称下发成功，保留重试与提醒', async kind => {
+    const f = fixture(); const bark = vi.fn();
+    const exec = async cmd => JSON.stringify({ ...(kind === 'missing_manifest' ? {} : manifest), ok: true, receipts: [],
+      ...(kind === 'different_hash' && cmd.includes('xian-m4') ? { profiles_sha256: 'd'.repeat(64) } : {}) });
+    const out = await runPhoneRegistrySync(f.pool, { token: 'test', notionReq: async () => ({ results: [] }), exec,
+      now: 1900000000000, program: 'fixture', inContainer: false, bark });
+    expect(out.ok).toBe(false); expect(bark).toHaveBeenCalledOnce();
+    const states = f.calls.filter(c => c.sql.includes('INSERT INTO working_memory')).map(c => JSON.parse(c.params[1]));
+    expect(states.at(-1)).not.toHaveProperty('completed_at');
   });
 
 });

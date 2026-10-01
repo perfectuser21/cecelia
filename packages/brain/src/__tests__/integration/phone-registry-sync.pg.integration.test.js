@@ -22,7 +22,7 @@ afterEach(async () => { await client?.end(); });
 async function run(pages) {
   return runPhoneRegistrySync({ connect: async () => ({ query: client.query.bind(client), release: vi.fn() }) }, {
     token: 'fixture', notionReq: async () => ({ results: pages, has_more: false }), now: 1900000000000, force: true,
-    inContainer: false, program: 'fixture', exec: async () => JSON.stringify({ ok: true, receipts: [] }), bark: vi.fn(),
+    inContainer: false, program: 'fixture', exec: async () => JSON.stringify({ ok: true, receipts: [], generation: 'a'.repeat(64), profiles_sha256: 'b'.repeat(64), accounts_sha256: 'c'.repeat(64) }), bark: vi.fn(),
   });
 }
 describe('手机入口真实PG写入证据', () => {
