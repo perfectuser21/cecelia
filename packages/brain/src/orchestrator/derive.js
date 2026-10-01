@@ -1388,6 +1388,21 @@ function deriveTask(observed) {
   // 3a. 既没有远端 PR，也没有 Runner 验证的本地候选。
   if (!implementationTarget) {
     if (!generatorSpawned) {
+      // run 60c1f156 案卷：合同已 approved 但冻结产物未落地（artifacts 空数组）时派
+      // generator，装配层（dispatcher buildAttemptCommon）必抛
+      // FROZEN_CONTRACT_ARTIFACTS_MISSING:approved_contract → pre-attempt BLOCKED；
+      // 该 BLOCKED 不置 generatorSpawned，下一跳仍落此分支重派 → 越过节点准入后 19 跳
+      // 热循环烧到 deadline。观测到零产物直接终局，绝不进装配。
+      // 只在确知 artifacts 为空数组时介入（真实 collectGroundTruth 恒提供该数组）；
+      // 纯函数测试里 contract.artifacts 缺省(undefined) → 非数组 → 守卫让路，零回归。
+      if (Array.isArray(observed.contract?.artifacts)
+        && observed.contract.artifacts.length === 0) {
+        return {
+          phase: 'failed',
+          action: ACTION.MARK_FAILED,
+          reason: 'frozen_contract_artifacts_missing',
+        };
+      }
       return { phase: 'generate', action: 'spawn:generator', reason: 'contract_approved' };
     }
     // Generator 从未真正跑过（所有 generator 回调都是基础设施失败：过期账号

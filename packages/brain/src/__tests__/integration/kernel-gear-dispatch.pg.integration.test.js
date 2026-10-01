@@ -168,7 +168,10 @@ async function driveOneHop({ taskId, runId, payload }) {
                 manifest_sha256: 'b'.repeat(64),
                 source_revision: 'c'.repeat(40),
               },
-              artifacts: [],
+              // 真 materializeDirectProfileContract 与批准同事务原子插入冻结产物，
+              // 故已物化的 approved 合同 artifacts 恒非空；空数组是「冻结产物未落地」
+              // 损坏态，会被 derive 的 frozen_contract_artifacts_missing 守卫终局（run 60c1f156）。
+              artifacts: [{ path: 'sprints/hotfix/tests/impact-contract.md' }],
               row: {},
             },
           };
