@@ -7,7 +7,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { buildSkillLedgerAssertion, SCAN_STALE_HOURS } from '../skill-ledger-assertion.js';
 
-function pool({ state = { last_ok_at: '2026-09-30T00:00:00Z' }, unregistered = [], deadBound = [] } = {}) {
+function pool({ state = { last_ok_at: new Date().toISOString() }, unregistered = [], deadBound = [] } = {}) {
   const writes = [];
   return {
     writes,
@@ -56,7 +56,7 @@ describe('buildSkillLedgerAssertion', () => {
     const p = pool({ unregistered: ['ghost-skill'] });
     // mock INSERT 抛错
     p.query = vi.fn(async (sql, params) => {
-      if (sql.includes("key = 'skill_inventory_state'")) return { rows: [{ value_json: { last_ok_at: '2026-09-30T00:00:00Z' } }] };
+      if (sql.includes("key = 'skill_inventory_state'")) return { rows: [{ value_json: { last_ok_at: new Date().toISOString() } }] };
       if (sql.includes('FROM ops_skills')) return { rows: [{ name: 'ghost-skill' }] };
       if (sql.includes('task_types')) return { rows: [] };
       if (sql.includes('INSERT INTO skill_drift_alerts')) throw new Error('db down');
