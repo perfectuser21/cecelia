@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { rerouteUnresolvedDevices } from '../qiumi-device-reroute.js';
 vi.mock('../../recurring-notion-sync.js', () => ({ notionReq: vi.fn(), getToken: () => 'tok' }));
 vi.mock('../../task-updater.js', () => ({ blockTask: vi.fn(), unblockTask: vi.fn() }));
 vi.mock('../../projection/commands.js', () => ({ recordProjectionCommand: vi.fn() }));
@@ -24,6 +25,8 @@ function setup(o = {}) {
       return reads > 1 && o.secondPage ? o.secondPage : page; }
     if (o.blockError && path.includes('start_cursor')) throw new Error('partial failure');
     if (path.includes('/nested/')) return { results: [block(o.nested)] };
+    if (o.malformed) return { results: [], has_more: true };
+    if (o.cycle) return { results: [], has_more: true, next_cursor: 'same' };
     if (path.includes('start_cursor')) return { results: [block(o.body ?? '手机：验收小黄')] };
     return { results: [block('正文前段', { id: 'nested', has_children: !!o.nested })], has_more: true, next_cursor: 'page-2' };
   });
@@ -39,13 +42,16 @@ function setup(o = {}) {
   return { candidate, page, notionReq, query };
 }
 async function run(o) {
-  const { applyOwnerStops } = await import('../../notion-gtd-sync.js');
+  const { applyOwnerStops, parseZhPage } = await import('../../notion-gtd-sync.js');
   const f = setup(o);
-  const result = await applyOwnerStops({ query: f.query }, 'tok', { notionReq: f.notionReq });
+  const result = o?.direct
+    ? await rerouteUnresolvedDevices({ query: f.query }, 'tok', { notionReq: f.notionReq, parsePage: parseZhPage })
+    : await applyOwnerStops({ query: f.query }, 'tok', { notionReq: f.notionReq });
   return { ...f, result, updates: f.query.mock.calls.filter(([sql]) => /UPDATE tasks/.test(sql)),
     events: f.query.mock.calls.filter(([sql]) => /INSERT INTO task_events/.test(sql)) };
 }
-describe('原Notion页设备补写自动恢复原task', () => {
+describe('qiumi-device-reroute 原Notion页设备补写自动恢复原task', () => {
+  it('独立helper与同步入口共享同一台账解析', async () => { expect((await run({ direct: true })).result.rerouted).toBe(1); });
   it.each(['进行中', '委派'])('%s完整读分页嵌套后恢复原task', async (status) => {
     const { result, updates, events, notionReq } = await run({ status, nested: '账号：验收小彩' });
     expect(result.rerouted).toBe(1); expect(updates).toHaveLength(1);
@@ -72,7 +78,7 @@ describe('原Notion页设备补写自动恢复原task', () => {
     const { result, updates } = await run({ status }); expect(result.rerouted).toBe(0); expect(updates).toHaveLength(0);
   });
   it.each([{ marker: `brain:${ID} extra` }, { marker: 'brain:other' }, { page: { id: 'copy' } },
-    { page: { archived: true } }, { page: { in_trash: true } }, { candidate: { task_type: 'data' } },
+    { page: { last_edited_by: { type: 'bot' } } }, { page: { archived: true } }, { page: { in_trash: true } }, { candidate: { task_type: 'data' } },
     { candidate: { status: 'completed' } }, { candidate: { status: 'paused' } }, { candidate: { blocked_reason: 'owner_hold' } },
   ])('归属或状态不匹配 %#', async (o) => {
     const { result, updates } = await run(o); expect(result.rerouted).toBe(0); expect(updates).toHaveLength(0);
@@ -84,10 +90,16 @@ describe('原Notion页设备补写自动恢复原task', () => {
   ])('不唯一、不完整台账 %#', async (o) => {
     const { result, updates } = await run(o); expect(result.rerouted).toBe(0); expect(updates).toHaveLength(0);
   });
-  it.each([{ pageError: true }, { blockError: true, title: '手机：验收小黄' }, { secondPage: { id: PAGE, last_edited_time: 'changed' } }])(
+  it.each([{ malformed: true }, { cycle: true }, { pageError: true }, { blockError: true, title: '手机：验收小黄' }, { secondPage: { id: PAGE, last_edited_time: 'changed' } }])(
     'Notion失败或读取期间改页 %#', async (o) => {
       const { result, updates } = await run(o); expect(result.rerouted).toBe(0); expect(updates).toHaveLength(0);
     });
+
+  it('正文超过默认20k仍读到末尾账号，不能截断后误选', async () => {
+    const o = { body: '文字'.repeat(12000) + '\n手机：验收小黄' };
+    const { result, updates } = await run(o);
+    expect(result.rerouted).toBe(1); expect(JSON.parse(updates[0][1][2]).body).toContain('手机：验收小黄');
+  });
   it('CAS零行不能记事件或成功', async () => {
     const { result, updates, events } = await run({ casLost: true });
     expect(result.rerouted).toBe(0); expect(updates).toHaveLength(1); expect(events).toHaveLength(0);

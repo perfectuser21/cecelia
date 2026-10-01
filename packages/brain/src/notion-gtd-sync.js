@@ -17,6 +17,7 @@ import {
   QIUMI_STATUS_MAP, ZH_HUMAN_ONLY_STATUSES, zhPriorityToBrain, zhWriteFor,
 } from './lib/qiumi-status-map.js';
 import { applyOwnerChanges, OWNER_STOP_FILTERS } from './lib/qiumi-owner-stops.js';
+import { rerouteUnresolvedDevices } from './lib/qiumi-device-reroute.js';
 export { OWNER_STOP_FILTERS } from './lib/qiumi-owner-stops.js';
 import { isFuture, sameInstant, scheduledNote, deviceBusyNote, deviceBusyExpiredNote } from './lib/qiumi-schedule.js';
 import { DEVICE_BUSY_EXPIRED_REASON } from './lib/qiumi-device-busy.js';
@@ -292,7 +293,9 @@ export async function applyOwnerStops(pool, token, { notionReq = defaultNotionRe
   const groups = await Promise.all(
     OWNER_STOP_FILTERS.map((filter) => queryAll(notionReq, token, GTD_DB_ID, filter)),
   );
-  return applyOwnerChanges(pool, groups.map((pages) => pages.map(parseZhPage)), { now });
+  const ownerStats = await applyOwnerChanges(pool, groups.map((pages) => pages.map(parseZhPage)), { now });
+  const deviceStats = await rerouteUnresolvedDevices(pool, token, { notionReq, parsePage: parseZhPage });
+  return { ...ownerStats, ...deviceStats };
 }
 
 /**
