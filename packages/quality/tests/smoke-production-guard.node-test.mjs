@@ -70,6 +70,7 @@ for (const script of scripts) {
 for (const [name, mutate] of [
   ['production DB', info => { info.Config.Env[1] = 'DB_NAME=cecelia'; }],
   ['production NODE_ENV', info => { info.Config.Env[0] = 'NODE_ENV=production'; }],
+  ['production DATABASE_URL override', info => { info.Config.Env.push('DATABASE_URL=postgresql://user@host/cecelia'); }],
   ['unknown database', info => { info.Config.Env[1] = 'DB_NAME=customer_test'; }],
   ['stopped container', info => { info.State.Running = false; }],
   ['mismatched host port', info => { info.Config.Env[2] = 'BRAIN_PORT=9'; }],
@@ -124,3 +125,18 @@ test('DB-writing smoke refuses a production cleanup connection', async () => {
     assert.deepEqual(requests, []);
   });
 });
+
+for (const overrides of [
+  { BRAIN_CONTAINER: '' },
+  { SMOKE_ALLOW_WRITE: 'true' },
+  { BRAIN: 'http://100.79.41.61:5221' },
+  { BRAIN: 'http://127.0.0.1:5221/api/brain' },
+]) {
+  test(`unverifiable target configuration is denied: ${JSON.stringify(overrides)}`, async () => {
+    await fixture(async ({ requests, smoke }) => {
+      const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1', ...overrides });
+      assert.equal(result.code, 0, result.output);
+      assert.deepEqual(requests, []);
+    });
+  });
+}

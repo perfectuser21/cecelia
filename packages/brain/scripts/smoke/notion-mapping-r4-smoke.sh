@@ -3,7 +3,7 @@
 # 验证：schema 动态查询 + 属性降级逻辑在源码中存在
 set -euo pipefail
 
-BRAIN="${BRAIN:-http://localhost:5221}"
+BRAIN="${BRAIN:-${BRAIN_URL:-http://localhost:5221}}"
 NOTES_JS="packages/brain/src/routes/notes.js"
 # Order 降级写入已随承诺地图格子镜子迁到 notion-probe-projection.js（#5612/#5614）
 SYNC_JS="packages/brain/src/notion-probe-projection.js"
@@ -34,8 +34,8 @@ if (!src.includes(\"'Order' in schemaProps\")) {
 console.log('✓ notion-probe-projection.js Order 条件写入逻辑存在');
 "
 
-# 可选：如果 Brain 正在运行且 Notion API key 已配置，验证 POST /notes 返回 warnings 数组
-if curl -sf --max-time 3 "${BRAIN}/api/brain/tick/status" >/dev/null 2>&1; then
+# 可选：显式授权并核对测试容器身份后，验证 POST /notes 返回 warnings 数组
+if node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "$BRAIN"; then
   HTTP_CODE=$(curl -s -o /tmp/r4-smoke-resp.json -w "%{http_code}" --max-time 10 \
     -X POST "${BRAIN}/api/brain/notes" \
     -H "Content-Type: application/json" \
@@ -51,7 +51,7 @@ if curl -sf --max-time 3 "${BRAIN}/api/brain/tick/status" >/dev/null 2>&1; then
     echo "ℹ️  POST /notes 返回 ${HTTP_CODE}（Notion API key 未配置或 Brain 降级），跳过 warnings 验证"
   fi
 else
-  echo "ℹ️  Brain 未运行，跳过 API 验证（仅静态检查）"
+  echo "ℹ️  仅执行静态检查，API 写入未授权或目标不安全"
 fi
 
 echo "✅ notion-mapping-r4 smoke 通过"

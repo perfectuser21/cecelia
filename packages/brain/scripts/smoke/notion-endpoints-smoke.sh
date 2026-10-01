@@ -5,6 +5,10 @@
 set -euo pipefail
 
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "$BRAIN_URL"; then
+  exit 0
+fi
+
 echo "🔍 notion-endpoints-smoke — target: $BRAIN_URL"
 
 # /notes 端点检查

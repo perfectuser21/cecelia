@@ -6,6 +6,10 @@ set -e
 DB="${DATABASE_URL:-postgresql://cecelia@localhost:5432/cecelia}"
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "$BRAIN" "$DB"; then
+  exit 0
+fi
+
 if ! psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] SKIP — 无 DB 连接"
   exit 0
