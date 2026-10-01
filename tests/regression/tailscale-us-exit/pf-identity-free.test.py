@@ -174,6 +174,25 @@ class InterfacePolicyTests(unittest.TestCase):
                     validate_preflight(anchors, info, states)
 
 class ActivationFailureTests(unittest.TestCase):
+    def test_loaded_user_agent_rejects_activation_without_stopping_it(self):
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import tailscale_us_exit_activation as activation
+        with tempfile.TemporaryDirectory() as directory:
+            checked = []
+            def run(arguments, **kwargs):
+                checked.append(arguments[-1])
+                if arguments[-1].startswith("gui/"):
+                    return SimpleNamespace(returncode=0, stderr="", stdout="state = running\npid = 777")
+                return SimpleNamespace(returncode=113, stderr="Could not find service", stdout="")
+            with patch.object(activation.subprocess, "run", side_effect=run), \
+                 patch.object(activation, "command") as commands:
+                with self.assertRaises(RuntimeError):
+                    activation.reject_user_agent(directory)
+            self.assertTrue(any(item.startswith("gui/") for item in checked))
+            commands.assert_not_called()
+
     def test_loaded_daemon_must_be_stopped_before_anchor_restore(self):
         import tempfile, json
         from types import SimpleNamespace
