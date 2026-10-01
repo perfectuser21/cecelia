@@ -30,6 +30,8 @@ WORKER_SOURCE="$SCRIPT_DIR/fleet-worker.cjs"
 PROBE_SOURCE="$SCRIPT_DIR/node-probe.cjs"
 PROFILE_REGISTRY_SOURCE="$SCRIPT_DIR/../../config/fleet-node-profiles.json"
 LOCAL_RESOURCE_ADMISSION_SOURCE="$SCRIPT_DIR/local-resource-admission.cjs"
+SCRIPT_RUNNER_SOURCE="$SCRIPT_DIR/script-runner.cjs"
+SCRIPT_DOCKER_SOURCE="$SCRIPT_DIR/script-docker.cjs"
 WORKSPACE_MANAGER_SOURCE="$SCRIPT_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SOURCE="$SCRIPT_DIR/attempt-runner.cjs"
 ORCHESTRATOR_RUNNER_SOURCE="$SCRIPT_DIR/orchestrator-runner.cjs"
@@ -50,6 +52,8 @@ STAGED_WORKER=''
 STAGED_PROBE=''
 STAGED_PROFILE_REGISTRY=''
 STAGED_LOCAL_RESOURCE_ADMISSION=''
+STAGED_SCRIPT_RUNNER=''
+STAGED_SCRIPT_DOCKER=''
 STAGED_WORKSPACE_MANAGER=''
 STAGED_ATTEMPT_RUNNER=''
 STAGED_ORCHESTRATOR_RUNNER=''
@@ -83,6 +87,8 @@ COMMAND_PATH="$TOOLCHAIN_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr
 WORKER_SCRIPT="$RUNTIME_DIR/fleet-worker.cjs"
 PROFILE_REGISTRY_SCRIPT="$RUNTIME_DIR/fleet-node-profiles.json"
 LOCAL_RESOURCE_ADMISSION_SCRIPT="$RUNTIME_DIR/local-resource-admission.cjs"
+SCRIPT_RUNNER_SCRIPT="$RUNTIME_DIR/script-runner.cjs"
+SCRIPT_DOCKER_SCRIPT="$RUNTIME_DIR/script-docker.cjs"
 WORKSPACE_MANAGER_SCRIPT="$RUNTIME_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SCRIPT="$RUNTIME_DIR/attempt-runner.cjs"
 ORCHESTRATOR_RUNNER_SCRIPT="$RUNTIME_DIR/orchestrator-runner.cjs"
@@ -638,6 +644,8 @@ cleanup_transaction() {
   [[ -z "$STAGED_PROBE" ]] || rm -f "$STAGED_PROBE"
   [[ -z "$STAGED_PROFILE_REGISTRY" ]] || rm -f "$STAGED_PROFILE_REGISTRY"
   [[ -z "$STAGED_LOCAL_RESOURCE_ADMISSION" ]] || rm -f "$STAGED_LOCAL_RESOURCE_ADMISSION"
+  [[ -z "$STAGED_SCRIPT_RUNNER" ]] || rm -f "$STAGED_SCRIPT_RUNNER"
+  [[ -z "$STAGED_SCRIPT_DOCKER" ]] || rm -f "$STAGED_SCRIPT_DOCKER"
   [[ -z "$STAGED_WORKSPACE_MANAGER" ]] || rm -f "$STAGED_WORKSPACE_MANAGER"
   [[ -z "$STAGED_ATTEMPT_RUNNER" ]] || rm -f "$STAGED_ATTEMPT_RUNNER"
   [[ -z "$STAGED_ORCHESTRATOR_RUNNER" ]] || rm -f "$STAGED_ORCHESTRATOR_RUNNER"
@@ -654,6 +662,8 @@ cleanup_transaction() {
       "$BACKUP_DIR/probe" \
       "$BACKUP_DIR/fleet-node-profiles" \
       "$BACKUP_DIR/local-resource-admission" \
+      "$BACKUP_DIR/script-runner" \
+      "$BACKUP_DIR/script-docker" \
       "$BACKUP_DIR/workspace-manager" \
       "$BACKUP_DIR/attempt-runner" \
       "$BACKUP_DIR/orchestrator-runner" \
@@ -687,6 +697,8 @@ prepare_transaction_paths() {
   STAGED_PROBE="$(mktemp "$RUNTIME_DIR/.node-probe.cjs.XXXXXX")"
   STAGED_PROFILE_REGISTRY="$(mktemp "$RUNTIME_DIR/.fleet-node-profiles.json.XXXXXX")"
   STAGED_LOCAL_RESOURCE_ADMISSION="$(mktemp "$RUNTIME_DIR/.local-resource-admission.cjs.XXXXXX")"
+  STAGED_SCRIPT_RUNNER="$(mktemp "$RUNTIME_DIR/.script-runner.cjs.XXXXXX")"
+  STAGED_SCRIPT_DOCKER="$(mktemp "$RUNTIME_DIR/.script-docker.cjs.XXXXXX")"
   STAGED_WORKSPACE_MANAGER="$(
     mktemp "$RUNTIME_DIR/.workspace-manager.cjs.XXXXXX"
   )"
@@ -714,7 +726,11 @@ stage_generation() {
   cp "$PROFILE_REGISTRY_SOURCE" "$STAGED_PROFILE_REGISTRY"
   chmod 0644 "$STAGED_PROFILE_REGISTRY"
   cp "$LOCAL_RESOURCE_ADMISSION_SOURCE" "$STAGED_LOCAL_RESOURCE_ADMISSION"
+  cp "$SCRIPT_RUNNER_SOURCE" "$STAGED_SCRIPT_RUNNER"
+  cp "$SCRIPT_DOCKER_SOURCE" "$STAGED_SCRIPT_DOCKER"
   chmod 0644 "$STAGED_LOCAL_RESOURCE_ADMISSION"
+  chmod 0644 "$STAGED_SCRIPT_RUNNER"
+  chmod 0644 "$STAGED_SCRIPT_DOCKER"
   cp "$WORKSPACE_MANAGER_SOURCE" "$STAGED_WORKSPACE_MANAGER"
   cp "$ATTEMPT_RUNNER_SOURCE" "$STAGED_ATTEMPT_RUNNER"
   cp "$ORCHESTRATOR_RUNNER_SOURCE" "$STAGED_ORCHESTRATOR_RUNNER"
@@ -1006,6 +1022,8 @@ stage_generation
 prior_worker_mode="$(snapshot_file "$WORKER_SCRIPT" "$BACKUP_DIR/worker")"
 prior_profile_registry_mode="$(snapshot_file "$PROFILE_REGISTRY_SCRIPT" "$BACKUP_DIR/fleet-node-profiles")"
 prior_local_resource_admission_mode="$(snapshot_file "$LOCAL_RESOURCE_ADMISSION_SCRIPT" "$BACKUP_DIR/local-resource-admission")"
+prior_script_runner_mode="$(snapshot_file "$SCRIPT_RUNNER_SCRIPT" "$BACKUP_DIR/script-runner")"
+prior_script_docker_mode="$(snapshot_file "$SCRIPT_DOCKER_SCRIPT" "$BACKUP_DIR/script-docker")"
 prior_probe_mode="$(
   snapshot_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe"
 )"
@@ -1048,6 +1066,8 @@ placement_ok=true
 "$MOVE" "$STAGED_PROBE" "$RUNTIME_DIR/node-probe.cjs" || placement_ok=false
 [[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_PROFILE_REGISTRY" "$PROFILE_REGISTRY_SCRIPT" || placement_ok=false
 [[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_LOCAL_RESOURCE_ADMISSION" "$LOCAL_RESOURCE_ADMISSION_SCRIPT" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_SCRIPT_RUNNER" "$SCRIPT_RUNNER_SCRIPT" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_SCRIPT_DOCKER" "$SCRIPT_DOCKER_SCRIPT" || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_WORKSPACE_MANAGER" "$WORKSPACE_MANAGER_SCRIPT" \
   || placement_ok=false
@@ -1111,6 +1131,10 @@ if [[ "$launch_ok" != true ]]; then
   restore_file "$PROFILE_REGISTRY_SCRIPT" "$BACKUP_DIR/fleet-node-profiles" "$prior_profile_registry_mode" \
     || rollback_ok=false
   restore_file "$LOCAL_RESOURCE_ADMISSION_SCRIPT" "$BACKUP_DIR/local-resource-admission" "$prior_local_resource_admission_mode" \
+    || rollback_ok=false
+  restore_file "$SCRIPT_RUNNER_SCRIPT" "$BACKUP_DIR/script-runner" "$prior_script_runner_mode" \
+    || rollback_ok=false
+  restore_file "$SCRIPT_DOCKER_SCRIPT" "$BACKUP_DIR/script-docker" "$prior_script_docker_mode" \
     || rollback_ok=false
   restore_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe" "$prior_probe_mode" \
     || rollback_ok=false
