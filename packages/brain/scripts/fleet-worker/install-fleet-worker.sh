@@ -228,6 +228,7 @@ run_default_preflight() {
   CECELIA_POSTGRES_IMAGE="$POSTGRES_IMAGE" \
   CECELIA_ORBSTACK_HOME="$ORBSTACK_HOME" \
   CECELIA_REPO_ROOT="$WORKTREE_ROOT" \
+  CECELIA_FLEET_DATA_ROOT="$FLEET_DATA_ROOT" \
   CECELIA_DRAIN_MARKER="$DRAIN_MARKER" \
     "$NODE_EXECUTABLE" - \
       "$NODE_PROBE" "$RUNNER_DIGEST" "$service_uid" "$service_gid" \
@@ -251,7 +252,10 @@ try {
   process.exit(1);
 }
 
-probeFleetWorkerHealth().then((report) => {
+probeFleetWorkerHealth({
+  diskPaths: [process.env.CECELIA_FLEET_DATA_ROOT, process.env.TMPDIR],
+  allowMissingDiskPaths: true,
+}).then((report) => {
   const failures = [];
   if (!report || report.orbstack?.version === 'unavailable') failures.push('orbstack');
   if (report?.docker?.available !== true) failures.push('docker');

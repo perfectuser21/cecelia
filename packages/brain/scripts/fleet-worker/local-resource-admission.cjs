@@ -2,6 +2,7 @@
 
 const { execFile } = require('node:child_process');
 const { readFileSync } = require('node:fs');
+const { lstat, stat } = require('node:fs/promises');
 const path = require('node:path');
 const { promisify } = require('node:util');
 const runFile = promisify(execFile);
@@ -14,6 +15,50 @@ function unavailable() {
 function numeric(text) {
   const value = String(text ?? '').trim();
   return /^\d+(?:\.\d+)?$/.test(value) ? Number(value) : NaN;
+}
+
+// Health reports must describe the filesystems that hold execution data. On
+// macOS the sealed system volume can be almost empty while Data is full.
+async function existingDiskDirectory(directory) {
+  let candidate = directory;
+  for (;;) {
+    try { await lstat(candidate); }
+    catch (error) {
+      const parent = path.dirname(candidate);
+      if (error.code !== 'ENOENT' || parent === candidate) throw error;
+      candidate = parent;
+      continue;
+    }
+    // A broken symlink or inaccessible directory must not be replaced by a
+    // different filesystem just because its target cannot be inspected.
+    if (!(await stat(candidate)).isDirectory()) throw unavailable();
+    return candidate;
+  }
+}
+
+async function probeDiskResources({ run, paths, allowMissingPaths = false }) {
+  const unknown = { disk_free_bytes: 0, disk_used_percent: 100 };
+  if (!Array.isArray(paths) || paths.length === 0
+    || !paths.every((entry) => typeof entry === 'string' && path.isAbsolute(entry))) return unknown;
+  try {
+    const actualPaths = allowMissingPaths
+      ? await Promise.all(paths.map(existingDiskDirectory)) : paths;
+    const samples = await Promise.all([...new Set(actualPaths)].map(async (directory) => {
+      const result = await run('df', ['-kP', directory]);
+      if (result?.ok === false || (result?.code != null && result.code !== 0)) throw unavailable();
+      const lines = String(result?.stdout ?? '').trim().split(/\r?\n/);
+      const fields = lines.at(-1).trim().split(/\s+/);
+      const free = numeric(fields[3]);
+      const used = /^\d+(?:\.\d+)?%$/.test(fields[4] ?? '') ? numeric(fields[4].slice(0, -1)) : NaN;
+      if (lines.length < 2 || !Number.isFinite(free) || !Number.isFinite(free * 1024)
+        || !Number.isFinite(used) || used > 100) throw unavailable();
+      return { disk_free_bytes: free * 1024, disk_used_percent: used };
+    }));
+    return {
+      disk_free_bytes: Math.min(...samples.map((sample) => sample.disk_free_bytes)),
+      disk_used_percent: Math.max(...samples.map((sample) => sample.disk_used_percent)),
+    };
+  } catch { return unknown; }
 }
 
 function validProfile(profile, workerId) {
@@ -91,4 +136,4 @@ function createLocalResourceAdmission({
   };
 }
 
-module.exports = { createLocalResourceAdmission };
+module.exports = { createLocalResourceAdmission, probeDiskResources };

@@ -10,7 +10,10 @@ describe('默认安装预检磁盘路径', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-preflight-'));
     try {
       const installer = fs.readFileSync(path.join(__dirname, 'install-fleet-worker.sh'), 'utf8');
-      const fn = installer.match(/run_default_preflight\(\) \{[\s\S]*?\n\}\n/)[0];
+      const fn = installer.slice(installer.indexOf('run_default_preflight() {'),
+        installer.indexOf('\nrun_preflight() {'));
+      const idCommand = path.join(root, 'id');
+      fs.writeFileSync(idCommand, '#!/bin/sh\nprintf "501\\n"\n', { mode: 0o755 });
       const hook = path.join(root, 'identity.cjs');
       fs.writeFileSync(hook, 'process.setgroups=()=>{};process.setgid=()=>{};process.setuid=()=>{};');
       const probe = path.join(root, 'probe.cjs');
@@ -22,7 +25,7 @@ describe('默认安装预检磁盘路径', () => {
       const result = spawnSync('bash', ['-s'], {
         input: `${fn}\nrun_default_preflight\n`, encoding: 'utf8', timeout: 5000,
         env: { ...process.env, NODE_OPTIONS: `--require=${hook}`, NODE_PROBE: probe,
-          NODE_EXECUTABLE: process.execPath, ID_COMMAND: 'id', COMMAND_PATH: process.env.PATH,
+          NODE_EXECUTABLE: process.execPath, ID_COMMAND: idCommand, COMMAND_PATH: process.env.PATH,
           SHARED_TMPDIR: path.join(root, 'shared'), FLEET_DATA_ROOT: path.join(root, 'future', 'worker'),
           WORKTREE_ROOT: root, RUNNER_DIGEST: 'digest', POSTGRES_IMAGE: 'test',
           ORBSTACK_HOME: root, BRAIN_HEALTH_URL: 'http://127.0.0.1', machine_id: 'us-mac-m4',

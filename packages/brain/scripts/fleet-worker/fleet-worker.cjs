@@ -392,6 +392,9 @@ function createFleetWorkerRuntime({
     runtime: mountRoots.runtime,
     credentials: path.join(dataRoot, 'credential-consumption'),
   });
+  const healthDiskPaths = Object.freeze([
+    dataRoot, path.dirname(roots.worktrees), path.dirname(roots.runtime),
+  ]);
   const workspaceManager = createWorkspaceManager({
     mirrorRoot: roots.mirrors,
     worktreeRoot: roots.worktrees,
@@ -433,7 +436,7 @@ function createFleetWorkerRuntime({
     githubCredentialConsumer,
     resourceManager,
     assertLocalResources: createLocalResourceAdmission({
-      workerId, diskPaths: [dataRoot, path.dirname(roots.worktrees), path.dirname(roots.runtime)],
+      workerId, diskPaths: healthDiskPaths,
       ...(runCommand ? { runCommand } : {}),
     }),
     // claude 单链凭据（attempt d80312c0 案卷）：宿主账号目录根 = OrbStack 属主
@@ -459,6 +462,7 @@ function createFleetWorkerRuntime({
     orchestratorRunner,
     attemptToken,
     roots,
+    healthDiskPaths,
     runnerImageDigest,
   });
 }
@@ -787,6 +791,7 @@ function main(env = process.env) {
     machineId: env.CECELIA_MACHINE_ID,
     runnerImageDigest: env.CECELIA_RUNNER_DIGEST,
     repoRoot: env.CECELIA_REPO_ROOT,
+    diskPaths: runtime.healthDiskPaths,
     drainMarkerPath: env.CECELIA_DRAIN_MARKER,
     callbackUrl: env.CECELIA_CALLBACK_URL,
   });
