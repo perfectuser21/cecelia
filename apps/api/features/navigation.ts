@@ -16,7 +16,7 @@ export function buildCoreNavigation(): NavGroup[] {
     items: [
       entry('/workbench/inbox', '交代事情', 'Inbox', {
         children: [
-          entry('/workbench/inbox', '收件箱', 'Inbox'),
+          entry('/workbench/inbox', '交办', 'Inbox'),
           entry('/cecelia/chat', '与 Cecelia 对话', 'MessageCircle'),
         ],
       }),
@@ -31,6 +31,7 @@ export function buildCoreNavigation(): NavGroup[] {
       entry('/brain-models', 'AI 管理', 'Brain', {
         children: [
           entry('/brain-models', '模型方案', 'Cpu'),
+          entry('/account-usage', 'AI 额度', 'Gauge'),
           entry('/system/team', '员工配置', 'Users'),
           entry('/knowledge/memory', '记忆管理', 'Brain'),
           entry('/settings', '系统设置', 'Settings'),
