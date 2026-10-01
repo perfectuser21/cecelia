@@ -145,6 +145,37 @@ sys.exit(1)
 """
   result=subprocess.run([sys.executable,'-c',script,str(HERE/'linux-pool-bootstrap.py')],capture_output=True,timeout=2)
   self.assertEqual(result.returncode,0,result.stderr.decode())
+ def test_exited_leader_keeps_group_identity_until_pipe_descendants_are_killed(self):
+  script="""import importlib.util,time,sys,subprocess,os,signal,pathlib
+spec=importlib.util.spec_from_file_location('b',sys.argv[1]);b=importlib.util.module_from_spec(spec);spec.loader.exec_module(b)
+clock=time.monotonic;start=clock();b.time.monotonic=lambda:clock()+(121 if clock()-start>0.1 else 0)
+code='import subprocess,sys,pathlib; p=subprocess.Popen([sys.executable,"-c","import time;time.sleep(8)"]);pathlib.Path(sys.argv[1]).write_text(str(p.pid))'
+pid=None
+try:
+ try:b.run_command(sys.executable,['-c',code,sys.argv[2]])
+ except b.CommandFailure:pass
+ else:raise AssertionError('deadline did not fire')
+ pid=int(pathlib.Path(sys.argv[2]).read_text())
+ deadline=clock()+0.5
+ while True:
+  state=subprocess.run(['/bin/ps','-o','stat=','-p',str(pid)],capture_output=True,text=True).stdout.strip()
+  if not state or state.startswith('Z'):break
+  if clock()>deadline:raise AssertionError('pipe descendant survived deadline')
+  time.sleep(0.01)
+finally:
+ if pid:
+  try:os.kill(pid,signal.SIGKILL)
+  except ProcessLookupError:pass
+"""
+  result=subprocess.run([sys.executable,'-c',script,str(HERE/'linux-pool-bootstrap.py'),str(self.root/'descendant.pid')],capture_output=True,timeout=3)
+  self.assertEqual(result.returncode,0,result.stderr.decode())
+ def test_normal_completed_command_does_not_signal_reaped_process_group(self):
+  original=bootstrap.os.killpg
+  try:
+   def unexpected(*args):raise AssertionError('reaped group must not be signalled')
+   bootstrap.os.killpg=unexpected
+   self.assertEqual(bootstrap.run_command(sys.executable,['-c','print("done")']),'done\n')
+  finally:bootstrap.os.killpg=original
  def test_pool_becomes_active_after_lock_and_stops_bootstrap(self):
   original=self.fake_run;reads=[0]
   def run(command,args,**kwargs):

@@ -69,7 +69,9 @@ def run_command(command,args,input=None):
   if code:raise CommandFailure(code,stdout,stderr)
   return stdout
  finally:
-  if process.poll() is None:
+  # returncode只由已完成的wait更新。禁止poll先回收leader：保留waitable
+  # leader作为专属session/PGID身份证据，再清理继承pipe的后代，最后有界回收。
+  if process.returncode is None:
    try:os.killpg(process.pid,signal.SIGKILL)
    except (ProcessLookupError,PermissionError):
     try:process.kill()
