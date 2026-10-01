@@ -23,6 +23,9 @@ const { probeFleetWorkerHealth } = require('./node-probe.cjs');
 const { createWorkspaceManager } = require('./workspace-manager.cjs');
 const { createOrchestratorRunner, probeCredentialHome } = require('./orchestrator-runner.cjs');
 
+const { createScriptRunner, loadProtectedScriptProfiles } = require('./script-runner.cjs');
+const { createScriptDockerAdapter } = require('./script-docker.cjs');
+
 const MAX_STRING_LENGTH = 1_024;
 const MAX_RESPONSE_BYTES = 65_536;
 const DEFAULT_MAX_REQUEST_BYTES = 1_048_576;
@@ -450,6 +453,9 @@ function createFleetWorkerRuntime({
     console.warn(`[fleet-worker] credential_home_probe_failed: ${logCode(error?.message, 'unknown')}`);
   }
   return Object.freeze({
+    scriptRunner: createScriptRunner({ stateRoot: path.join(dataRoot, 'scripts'),
+      machineId: workerId, workerId, profiles: loadProtectedScriptProfiles(env.CECELIA_SCRIPT_PROFILES_FILE),
+      docker: createScriptDockerAdapter() }),
     attemptRunner,
     orchestratorRunner,
     attemptToken,
@@ -582,6 +588,24 @@ function createFleetWorkerServer(options = {}) {
   }
 
   return http.createServer(async (request, response) => {
+    if (request.url?.startsWith('/scripts/')) {
+      if (!validBearer(request, attemptToken)) { writeJson(response,401,{error:'unauthorized'});return; }
+      if (!options.scriptRunner) { writeJson(response,503,{error:'script_runner_unconfigured'});return; }
+      try {
+        if (request.method !== 'POST') { writeJson(response,405,{error:'method_not_allowed'});return; }
+        const body=await readJson(request,maximumRequestBytes);
+        let result;
+        if(request.url==='/scripts/capabilities') result=options.scriptRunner.capabilities();
+        else {
+          const match=request.url.match(/^\/scripts\/([a-f0-9-]+)\/(start|inspect|cancel)$/);
+          if(!match || match[1]!==body.reservation_id) {writeJson(response,400,{error:'script_identity_invalid'});return;}
+          result=await options.scriptRunner[match[2]](body);
+        }
+        const receipt={...result,request_nonce:body.request_nonce??null};
+        writeJson(response,200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
+      } catch(error) {writeJson(response,409,{error:/^script_[a-z_]+$/.test(error.message)?error.message:'script_operation_failed'});}
+      return;
+    }
     if (request.url === '/health') {
       if (request.method !== 'GET') {
         writeJson(response, 405, { error: 'method_not_allowed' });
@@ -776,6 +800,7 @@ function main(env = process.env) {
   const runtime = createFleetWorkerRuntime({ env });
   const server = createFleetWorkerServer({
     env,
+    scriptRunner: runtime.scriptRunner,
     attemptRunner: runtime.attemptRunner,
     orchestratorRunner: runtime.orchestratorRunner,
     attemptToken: runtime.attemptToken,
