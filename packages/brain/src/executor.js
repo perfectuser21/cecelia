@@ -1,3 +1,4 @@
+import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
 /**
  * Cecelia Executor - Trigger headless Claude Code execution
  *
@@ -220,7 +221,7 @@ const CODEX_BRIDGES = (process.env.CODEX_BRIDGES || 'http://100.86.57.69:3458,ht
  */
 async function selectBestBridge() {
   const results = await Promise.allSettled(
-    CODEX_BRIDGES.map(async (url) => {
+    legacyExecutorEntries().filter(e=>e.executor==='codex').map(e=>e.url).map(async (url) => {
       const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -240,7 +241,7 @@ async function selectBestBridge() {
 
   if (healthy.length === 0) {
     console.warn('[executor] 所有 Codex Bridge 不可用，降级到 XIAN_CODEX_BRIDGE_URL');
-    return XIAN_CODEX_BRIDGE_URL;
+    throw new Error('execution_legacy_grant_unavailable:codex');
   }
 
   const selected = healthy[0];
@@ -2372,12 +2373,12 @@ async function triggerCodexReview(task) {
       };
     }
 
-    const child = spawn(codexBin, ['exec', '-c', 'approval_policy="never"', promptContent], {
+    const child = await withLegacyExecution({pool,machineId:process.env.CECELIA_MACHINE_ID,provider:'codex'},()=>spawn(codexBin, ['exec', '-c', 'approval_policy="never"', promptContent], {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: WORK_DIR,
       env: { ...process.env, TASK_ID: task.id, RUN_ID: runId, BRAIN_URL: process.env.BRAIN_URL || 'http://localhost:5221' },
-    });
+    }));
 
     // 收集 stdout，解析审查结果后回调 Brain
     let stdout = '';
@@ -2653,12 +2654,12 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
 
     const bridgeUrl = forceBridgeUrl ?? await selectBestBridge();
     const payload = buildCodexBridgePayload(task, runId, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize);
-    const response = await fetch(`${bridgeUrl}/run`, {
+    const response = await withLegacyExecution({pool,provider:'codex',endpoint:bridgeUrl},()=>fetch(`${bridgeUrl}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(15000),
-    });
+    }));
 
     const result = await response.json();
 
@@ -2853,7 +2854,7 @@ async function triggerLocalCodexExec(task) {
     ].join('\n');
     await writeFile(tmpScriptFile, scriptContent, { mode: 0o755 });
 
-    const proc = spawn('bash', [tmpScriptFile], { detached: true, stdio: 'ignore' });
+    const proc = await withLegacyExecution({pool,machineId:process.env.CECELIA_MACHINE_ID,provider:'codex'},()=>spawn('bash', [tmpScriptFile], { detached: true, stdio: 'ignore' }));
     proc.unref();
     // 打标：本地 codex-bin spawn → brain-local
     await setExecutorKind(task.id, EXECUTOR_KIND_FOR.__local_spawn);
@@ -3779,7 +3780,10 @@ async function _triggerCeceliaRunInner(task) {
       // 旧的西安 harness 全局开关 env 透传已删除（死代码）：harness 路由收编进
       // resolveExecutor（DB 驱动 machine+executor），graph 不再读任何全局开关。
 
+      const authorizeSpawn=operation=>withLegacyExecution({pool,machineId:process.env.CECELIA_MACHINE_ID,provider:provider??'claude'},operation);
+      await authorizeSpawn(()=>{});
       const dockerResult = await spawnDocker({
+        authorizeSpawn,
         task,
         prompt: promptContent,
         env: dockerEnv,
@@ -3835,7 +3839,7 @@ async function _triggerCeceliaRunInner(task) {
     const extraEnvKeys = Object.keys(extraEnv);
     console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}${model ? ` model=${model}` : ''}${provider ? ` provider=${provider}` : ''}${repoPath ? ` repo=${repoPath}` : ''}${extraEnvKeys.length ? ` extra_env=[${extraEnvKeys.join(',')}]` : ''}`);
 
-    const response = await fetch(`${EXECUTOR_BRIDGE_URL}/trigger-cecelia`, {
+    const response = await withLegacyExecution({pool,provider:provider??'claude',endpoint:EXECUTOR_BRIDGE_URL},()=>fetch(`${EXECUTOR_BRIDGE_URL}/trigger-cecelia`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(30000),
@@ -3850,7 +3854,7 @@ async function _triggerCeceliaRunInner(task) {
         provider: provider,
         extra_env: extraEnvKeys.length ? extraEnv : undefined
       })
-    });
+    }));
 
     const result = await response.json();
 

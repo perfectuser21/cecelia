@@ -152,7 +152,7 @@ load_runner_digest() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(profile.runner_image_digest);
@@ -166,7 +166,7 @@ load_postgres_image() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(profile.runtime_resources.postgres.image_digest);
@@ -180,7 +180,7 @@ load_disk_min_free_gib() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(String(profile.resources.disk_min_free_gib));
@@ -194,7 +194,7 @@ load_worker_bind_host() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(profile.worker_bind_host);
@@ -208,7 +208,7 @@ load_brain_health_url() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(profile.brain_health_url);

@@ -152,15 +152,17 @@ export const ROLE_WEIGHTS = Object.freeze({
   publisher: 1,
 });
 
+let executionProfileReader=()=>[];
+export function bindExecutionProfileReader(reader){executionProfileReader=reader;}
+
 export function listNodeProfiles() {
-  return profiles;
+  return Object.freeze(executionProfileReader().map(n=>n.profile).sort((a,b)=>profiles.findIndex(p=>p.machine_id===a.machine_id)-profiles.findIndex(p=>p.machine_id===b.machine_id)));
 }
 
 export function getNodeProfile(machineId) {
-  if (typeof machineId !== 'string' || !profilesById.has(machineId)) {
-    throw new Error('unknown_fleet_node');
-  }
-  return profilesById.get(machineId);
+  const profile=executionProfileReader().find(n=>n.canonical_id===machineId)?.profile;
+  if(!profile)throw new Error('unknown_fleet_node');
+  return profile;
 }
 
 export function getRoleCapacity({ baseCapacity, role } = {}) {
@@ -178,3 +180,9 @@ export function getRoleCapacity({ baseCapacity, role } = {}) {
     capacity: Math.floor(baseCapacity / weight),
   };
 }
+
+// 安装器只读取受控部署配置；它不构成Brain派发授权。
+export function getDeploymentNodeProfile(machineId){
+ const profile=profilesById.get(machineId);if(!profile)throw Error('unknown_fleet_node');return profile;
+}
+export function listDeploymentNodeProfiles(){return profiles;}

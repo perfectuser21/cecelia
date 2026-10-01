@@ -1,3 +1,4 @@
+import { currentWorkerUrls,current } from '../../execution-directory/directory.js';
 import { evaluateBaseAdmission } from './node-admission.js';
 import { getNodeProfile } from './node-profile.js';
 
@@ -180,7 +181,7 @@ async function readBoundedBody(response, signal) {
 
 export function createNodeAdmissionClient(options = {}) {
   const env = options.env ?? process.env;
-  const workerUrls = options.workerUrls ?? workerUrlsFromEnv(env);
+  const workerUrls = () => options.workerUrls ?? currentWorkerUrls();
   const fetchFn = options.fetchFn ?? globalThis.fetch;
   const evaluateBaseAdmissionFn = options.evaluateBaseAdmissionFn ?? evaluateBaseAdmission;
   const now = options.now ?? Date.now;
@@ -198,7 +199,7 @@ export function createNodeAdmissionClient(options = {}) {
   const pending = new Map();
 
   async function fetchAdmission(machineId, profile) {
-    const workerUrl = normalizeWorkerUrl(workerUrls?.[machineId]);
+    const workerUrl = normalizeWorkerUrl(workerUrls()?.[machineId]);
     if (!workerUrl) {
       return { value: failure(machineId, 'worker_url_missing'), evidenceExpiresAt: null };
     }
@@ -277,6 +278,8 @@ export function createNodeAdmissionClient(options = {}) {
   }
 
   async function getAdmission(machineId, { forceFresh = false } = {}) {
+    const directoryVersion=current()?.version;
+    if(cache.get(machineId)?.directoryVersion!==directoryVersion)cache.delete(machineId);
     let profile;
     try {
       profile = getNodeProfile(machineId);
@@ -288,13 +291,15 @@ export function createNodeAdmissionClient(options = {}) {
     const cached = cache.get(machineId);
     if (!forceFresh && cached && currentTime < cached.expiresAt) return cached.value;
     const inFlight = pending.get(machineId);
-    if (inFlight) return inFlight.promise;
+    if (inFlight?.directoryVersion===directoryVersion) return inFlight.promise;
 
-    const pendingEntry = {};
+    const pendingEntry = {directoryVersion};
     const operation = fetchAdmission(machineId, profile)
       .then(({ value, evidenceExpiresAt }) => {
+        if(current()?.version!==directoryVersion)return failure(machineId,'execution_version_stale');
         const fetchedAt = now();
         cache.set(machineId, {
+          directoryVersion,
           value,
           expiresAt: Math.min(
             fetchedAt + cacheTtlMs,

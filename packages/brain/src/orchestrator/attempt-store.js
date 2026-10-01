@@ -1,3 +1,5 @@
+import { directory } from '../execution-directory/directory.js';
+import { authorize } from '../execution-directory/store.js';
 import { prepareResourceBudget, ROLE_WEIGHTS, OCCUPIED_ATTEMPTS_SQL, RESOURCE_BUDGET_GUARD_SQL } from './attempt-resource-budget.js';
 /**
  * Harness Attempt authority store.
@@ -450,6 +452,7 @@ async function readConcurrentAttemptWinner(pool, runId, hop) {
 }
 
 export function createAttemptStore(pool, {
+  executionDirectory = false,
   transactionClient = false,
   queryOnlyTestAdapter = false,
 } = {}) {
@@ -465,7 +468,8 @@ export function createAttemptStore(pool, {
   return Object.freeze({
     async createAttempt(input) {
       const skill = input.bundle?.skill ?? null;
-      const capacity = prepareAttemptMachineCapacity(input);
+      const inputs={...input.bundle?.inputs};delete inputs._server_execution;
+      const capacity = prepareAttemptMachineCapacity({...input,bundle:{...input.bundle,inputs}});
       const isPool = typeof pool.connect === 'function'
         && typeof pool.release !== 'function';
       if (
@@ -487,6 +491,11 @@ export function createAttemptStore(pool, {
         if (ownsTransaction) await client.query('BEGIN');
         if (input.machineId != null) {
           await client.query(MACHINE_CAPACITY_LOCK_SQL, [input.machineId]);
+        }
+        if(executionDirectory){
+          const auth=await authorize(client,{snapshotVersion:directory.current()?.version,machineId:input.machineId,
+            surface:'harness',provider:input.provider,account:input.accountId,repo:input.bundle?.inputs?.workspace_spec?.repo});
+          capacity.bundle.inputs._server_execution={executionVersionId:auth.executionVersionId,grantId:auth.grantId};
         }
         const resourceBudget = prepareResourceBudget(input);
         const result = await client.query(

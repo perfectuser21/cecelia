@@ -10,7 +10,17 @@
 
 
 
-**Brain 版本**: 1.350.5
+**Brain 版本**: 1.351.4
+
+## Brain 1.351.4 — 现有执行目录统一（阶段4a）
+
+- system_registry设备真身按UUID绑定execution_nodes；不可变execution_node_versions保留历史endpoint/profile；execution_grants按surface/provider/account/repo/profile精确授权。
+- 初次部署只导入旧三Mac的18个Harness账号组合与2个普通执行器组合，标legacy-v1/legacy_policy，不伪造boot或canary。重启不复活已撤销授权，不开放新增节点激活接口。
+- Brain启动先载目录，10秒刷新、30秒过期拒绝新增。预约与prepare/start持同机锁核DB当前授权；服务器持久化版本/grant，旧清理按原版本执行。metadata.executors仅期望配置，不能授予执行权限。
+- 普通M1 Codex、MMV普通Codex（含本机review/spec_review/code_review_gate）及未识别调度机的本地spawn，返回execution_legacy_grant_denied；不改派。恢复须经后续受控能力验收登记，不能靠metadata或环境URL自行放行。
+- 受管脚本仍须SCRIPT_MANAGED_MACHINES、Worker受保护profile与本机资源准入；初次目录导入还需EXECUTION_LEGACY_SCRIPT_PROFILES显式列出允许profile。默认不增加脚本授权。
+- 安装器从getDeploymentNodeProfile读取受控部署基线；动态getNodeProfile专供Brain执行目录。Worker两仓白名单与Brain legacy repo scope同源。
+
 
 
 

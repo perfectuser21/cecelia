@@ -21,10 +21,20 @@ CREATE TABLE execution_grants (
  provider TEXT NOT NULL,account_id TEXT NOT NULL DEFAULT '',repo_scope TEXT[] NOT NULL DEFAULT '{}',profile_id TEXT NOT NULL DEFAULT '',
  provenance TEXT NOT NULL,evidence_task_id UUID REFERENCES tasks(id) ON DELETE RESTRICT,
  state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','active','revoked')),expires_at TIMESTAMPTZ,
+ UNIQUE(id,node_version_id),
  UNIQUE(node_version_id,surface,provider,account_id,repo_scope,profile_id)
 );
 ALTER TABLE capacity_reservations ADD COLUMN execution_version_id UUID REFERENCES execution_node_versions(id) ON DELETE RESTRICT,
  ADD COLUMN execution_grant_id UUID REFERENCES execution_grants(id) ON DELETE RESTRICT;
+ALTER TABLE capacity_reservations ADD CONSTRAINT execution_reservation_grant_fk FOREIGN KEY(execution_grant_id,execution_version_id)
+ REFERENCES execution_grants(id,node_version_id) ON DELETE RESTRICT,
+ ADD CONSTRAINT execution_reservation_pair CHECK((execution_version_id IS NULL)=(execution_grant_id IS NULL));
+CREATE FUNCTION execution_reservation_identity_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF NEW.execution_version_id IS DISTINCT FROM OLD.execution_version_id OR NEW.execution_grant_id IS DISTINCT FROM OLD.execution_grant_id THEN RAISE EXCEPTION 'execution_reservation_identity_immutable';END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER execution_reservation_identity_guard BEFORE UPDATE ON capacity_reservations FOR EACH ROW EXECUTE FUNCTION execution_reservation_identity_guard();
 CREATE FUNCTION execution_directory_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE canonical TEXT; mode TEXT;
 BEGIN
@@ -41,7 +51,7 @@ BEGIN
   SELECT n.canonical_id,v.identity_mode INTO canonical,mode FROM execution_node_versions v JOIN execution_nodes n USING(machine_registry_id) WHERE v.id=NEW.node_version_id;
   IF mode='attested-v1' AND NEW.state='active' AND (NEW.evidence_task_id IS NULL OR NOT EXISTS(SELECT 1 FROM tasks WHERE id=NEW.evidence_task_id AND status='completed')) THEN RAISE EXCEPTION 'execution_evidence_required';END IF;
  END IF;
- PERFORM pg_advisory_xact_lock(hashtextextended('harness_attempt_machine:'||canonical,0));
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('harness_attempt_machine:'||canonical,0)) THEN RAISE EXCEPTION 'execution_directory_busy';END IF;
  RETURN NEW;
 END $$;
 CREATE TRIGGER execution_nodes_guard BEFORE INSERT OR UPDATE OR DELETE ON execution_nodes FOR EACH ROW EXECUTE FUNCTION execution_directory_guard();

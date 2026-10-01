@@ -1,3 +1,4 @@
+import workspacePolicy from '../../scripts/fleet-worker/workspace-manager.cjs';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { hashConfig,endpointValid } from './directory.js';
@@ -7,7 +8,7 @@ export const LEGACY_BINDINGS=Object.freeze([
  ['xian-mac-m1','9e94241f-7eeb-4987-a657-107fd9ae263a','mac-mini-m1-xian',null],
  ['xian-mac-m4','af1834a6-a55d-4021-8490-143d5686c49e','mac-mini-m4-xian','codex'],
 ]);
-export const LEGACY_REPOS=Object.freeze(['perfectuser21/cecelia','perfectuser21/zenithjoy-workspace']);
+export const LEGACY_REPOS=Object.freeze(Object.keys(workspacePolicy.FLEET_REPOSITORIES));
 export function legacyRecords({env=process.env}={}) {
  const profiles=JSON.parse(readFileSync(new URL('../../config/fleet-node-profiles.json',import.meta.url),'utf8')).profiles;
  return LEGACY_BINDINGS.map(([canonical_id,machine_registry_id,name,legacy])=>{

@@ -32,3 +32,8 @@ describe('执行目录', () => {
     expect(d.targets()).toHaveLength(10);expect(d.matches({machineId:'unknown',surface:'harness',provider:'codex',account:'team1'})).toBeNull();
   });
 });
+it('并发refresh依次发布，不让早发晚到请求覆盖后续撤销；null操作快照不复活',async()=>{
+ const d=createExecutionDirectory();let release;const first=d.refresh({pool:{query:async()=>{await new Promise(r=>{release=r;});return {rows:rows()};}}});
+ await Promise.resolve();const next=rows();next[0].grants=[];const second=d.refresh({pool:db(next)});release();await Promise.all([first,second]);
+ expect(d.targets()).toHaveLength(10);await d.withSnapshot(null,async()=>expect(d.current()).toBeNull());
+});

@@ -16,7 +16,7 @@ async function loadContract() {
   expect(client.workerUrlsFromEnv, 'missing server-owned Worker URL mapping').toBeTypeOf('function');
   expect(profiles.getNodeProfile, 'missing NodeProfile lookup').toBeTypeOf('function');
   expect(admission.evaluateBaseAdmission, 'missing Brain-owned evaluator').toBeTypeOf('function');
-  return { ...client, ...profiles, ...admission };
+  return { ...client, ...profiles, ...admission,createNodeAdmissionClient:options=>client.createNodeAdmissionClient({...options,workerUrls:options?.workerUrls??client.workerUrlsFromEnv(options?.env??{})}) };
 }
 
 function response(body, status = 200, headers = {}) {

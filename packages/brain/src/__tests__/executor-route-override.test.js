@@ -1,3 +1,5 @@
+// 旧路由/payload合同使用注入执行动作；目录真实DB权限由execution-directory.pg覆盖。
+vi.mock('../execution-directory/legacy-executor.js',async original=>({...await original(),withLegacyExecution:async(_input,operation)=>operation()}));
 // 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
 vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
@@ -88,7 +90,7 @@ describe('triggerCeceliaRun: 显式 executor override 分支（phase 2 单元 1�
     getInternalTaskHandlerMock.mockReturnValue(null);
 
     // fetch：codex bridge /run 命中此 mock；US claude 不走 fetch
-    fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true, account: 'team3' }) }));
+    fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ok:true,status:'healthy',accounts:[{primaryUsedPct:10,tokenExpired:false}],account:'team3'}) }));
     vi.stubGlobal('fetch', fetchMock);
 
     const executor = await import('../executor.js');
