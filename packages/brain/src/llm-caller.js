@@ -21,6 +21,7 @@ import { getActiveProfile } from './model-profile.js';
 import { selectBestAccount, markAuthFailure, verifyAccountTokenLive } from './account-usage.js';
 import { CODEX_ACCOUNTS } from './llm-capacity.js';
 import { reportCall } from './langfuse-reporter.js';
+import { assertLiveLLMAllowed } from './runtime-safety.js';
 
 const BRIDGE_URL = process.env.EXECUTOR_BRIDGE_URL || 'http://localhost:3457';
 
@@ -134,6 +135,7 @@ function stripThinking(content) {
  * @returns {Promise<{text: string, model: string, provider: string, elapsed_ms: number}>}
  */
 export async function callLLM(agentId, prompt, options = {}) {
+  assertLiveLLMAllowed();
   const startTime = Date.now();
   const profile = getActiveProfile();
 
@@ -188,6 +190,7 @@ export async function callLLM(agentId, prompt, options = {}) {
       reportCall({ agentId, model, provider, prompt, text, elapsedMs: elapsed, startedAt: startTime }).catch(() => {});
       return { text, model, provider, elapsed_ms: elapsed, attempted_fallback: isFallback };
     } catch (err) {
+      if (err.code === 'LLM_ACCOUNT_UNAVAILABLE') throw err;
       lastError = err;
       console.warn(`[llm-caller] ${agentId} ${model} 失败: ${err.message}`);
     }
@@ -348,20 +351,19 @@ async function callClaudeViaBridge(prompt, model, timeout, _originalModel, image
 
   // 统一账号选择：所有模型共用 selectBestAccount，spending cap 过滤统一处理
   // 只传 accountId，由 bridge 在宿主机侧拼出正确 CLAUDE_CONFIG_DIR
-  // fallback_account：selectBestAccount 返回 null（全账号超配额/异常）时，仍传一个账号给 bridge
-  // 避免 bridge 在无 CLAUDE_CONFIG_DIR 环境下 spawn claude 报 "Not logged in"
-  const FALLBACK_ACCOUNT = process.env.CECELIA_FALLBACK_ACCOUNT || 'account1';
-  let accountId = FALLBACK_ACCOUNT;
+  // 无可用账号时必须停，不能用默认账号绕过额度/认证熔断。
+  let selection;
   try {
-    const selection = await selectBestAccount({ model: claudeModel });
-    if (selection) {
-      accountId = selection.accountId;
-    } else {
-      console.warn(`[llm-caller] selectBestAccount 返回 null，使用 fallback_account=${FALLBACK_ACCOUNT}`);
-    }
-  } catch (err) {
-    console.warn('[llm-caller] selectBestAccount failed, using fallback_account:', err.message);
+    selection = await selectBestAccount({ model: claudeModel });
+  } catch {
+    selection = null;
   }
+  if (!selection?.accountId) {
+    const error = new Error('没有可用的 Claude 账号，停止 Bridge 调用');
+    error.code = 'LLM_ACCOUNT_UNAVAILABLE';
+    throw error;
+  }
+  const accountId = selection.accountId;
 
   const BRIDGE_500_MAX_RETRIES = 2;
   const BRIDGE_500_RETRY_BASE_MS = 500;
@@ -561,6 +563,7 @@ async function callMiniMaxAPIStream(prompt, model, timeout, onChunk) {
  * @param {Function} onChunk - (delta: string, isDone: boolean) => void
  */
 export async function callLLMStream(agentId, prompt, options = {}, onChunk) {
+  assertLiveLLMAllowed();
   const profile = getActiveProfile();
   const agentConfig = profile?.config?.[agentId] || {};
   const model = options.model || agentConfig.model || 'MiniMax-M2.5-highspeed';

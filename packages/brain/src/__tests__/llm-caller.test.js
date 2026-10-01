@@ -1,3 +1,5 @@
+// 本文件显式模拟模型网络与凭据，独立测试 provider 行为；真实隔离由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertLiveLLMAllowed: () => {} }));
 /**
  * llm-caller.js 单元测试
  * 覆盖：callLLM、callLLMStream、_resetMinimaxKey、_resetAnthropicKey
@@ -265,27 +267,16 @@ describe('llm-caller', () => {
       await expect(callLLM('cortex', '测试')).rejects.toThrow('Bridge /llm-call error: 500');
     });
 
-    it('selectBestAccount 失败时仍能调用（使用 fallback accountId）', async () => {
+    it('selectBestAccount 失败时停止，不猜测默认账号', async () => {
       selectBestAccount.mockRejectedValueOnce(new Error('DB down'));
-      global.fetch.mockResolvedValueOnce(makeBridgeResponse('降级回复'));
-
-      const result = await callLLM('cortex', '测试');
-
-      expect(result.text).toBe('降级回复');
-      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      // 异常时使用 fallback_account（account1），确保 Bridge 有 CLAUDE_CONFIG_DIR
-      expect(body.accountId).toBe('account1');
+      await expect(callLLM('cortex', '测试')).rejects.toMatchObject({ code: 'LLM_ACCOUNT_UNAVAILABLE' });
+      expect(global.fetch).not.toHaveBeenCalled();
     });
 
-    it('selectBestAccount 返回 null 时使用 fallback accountId', async () => {
+    it('selectBestAccount 返回 null 时停止，不绕过账号熔断', async () => {
       selectBestAccount.mockResolvedValueOnce(null);
-      global.fetch.mockResolvedValueOnce(makeBridgeResponse('ok'));
-
-      await callLLM('cortex', '测试');
-
-      const body = JSON.parse(global.fetch.mock.calls[0][1].body);
-      // null 时使用 fallback_account（account1），避免 Bridge 无 CLAUDE_CONFIG_DIR 报 "Not logged in"
-      expect(body.accountId).toBe('account1');
+      await expect(callLLM('cortex', '测试')).rejects.toMatchObject({ code: 'LLM_ACCOUNT_UNAVAILABLE' });
+      expect(global.fetch).not.toHaveBeenCalled();
     });
 
     it('有图片时 provider=anthropic 保持 bridge（P0-5: bridge 现支持图片）', async () => {

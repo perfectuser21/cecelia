@@ -3,6 +3,8 @@
  * main 的真实 pg/execSync 仍由 --dry-run 冒烟覆盖（scripts/smoke/orchestrator-smoke.sh）。
  */
 import { describe, it, expect, vi } from 'vitest';
+// 生产依赖接线使用模拟 worker fetch；隔离策略有独立真实守卫测试。
+vi.mock('../../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
