@@ -8,7 +8,7 @@ import { resolvePrimaryWorkerId } from '../machine-registry.js';
 import { redactSecrets } from './failure-persistence.js';
 
 const PRIMARY = resolvePrimaryWorkerId();
-const CREDENTIAL_NARRATIVE = /\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|token|secret|password|authorization|authentication|auth)\b\s*(?:[:=]|\s+\S|is\s+\S)/i;
+const CREDENTIAL_NARRATIVE = /(?:^|[^a-z0-9])(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|token|secret|password|authorization|authentication|auth|credential[_ -]?payload)(?=$|[^a-z0-9])/i;
 
 const targetSchema = z.object({
   provider: z.string().min(1).max(128),
