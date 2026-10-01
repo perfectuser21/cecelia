@@ -25,3 +25,11 @@ it('可信Linux安装器在宿主平台不符时零副作用拒绝，不提供�
     runCommand: async () => { commands++; } })).rejects.toThrow('linux_pool_install_root_linux_required');
   expect(commands).toBe(0);
 });
+
+it('Linux验收canary只能走root完整宿主入口，不能由普通采样请求启动', async () => {
+  const { runLinuxPoolCanary } = await import('../../../packages/brain/scripts/fleet-worker/linux-pool-canary.cjs');
+  let commands = 0;
+  await expect(runLinuxPoolCanary({ nonce: 'a'.repeat(64) }, { platform: 'linux', getuid: () => 501,
+    lockHeld: true, runCommand: async () => { commands++; } })).rejects.toThrow('linux_pool_canary_unconfirmed');
+  expect(commands).toBe(0);
+});

@@ -33,7 +33,7 @@ function fixture(){
 const run=(f,value=nonce)=>require('./linux-pool-canary.cjs').runLinuxPoolCanary({nonce:value},f.deps);
 describe('root同池canary生命周期',()=>{
  it('先持久ID再启动，证明+精确清理+absence后才保存绑定身份的HMAC回执',async()=>{const f=fixture();const command=f.deps.runCommand;try{
-  f.deps.runCommand=async(c,a)=>{if(a[0]==='start')expect(f.state().container_id).toBe(id);return command(c,a);};
+  f.deps.runCommand=async(c,a)=>{if(c==='/usr/bin/docker'&&a[0]==='start')expect(f.state().container_id).toBe(id);return command(c,a);};
   const result=await run(f);expect(result.receipt).toMatchObject({nonce,execution:false,pool_verified:true,cleanup_confirmed:true,machine_registry_id:f.profile.machine_registry_id,config_digest:f.profile.config_digest,host_boot_id:hostBoot,worker_boot_id:workerBoot,revision:f.revision,container_id:id});
   expect(result.signature).toBe(createHmac('sha256',f.token).update(JSON.stringify(result.receipt)).digest('hex'));expect(f.state().envelope).toEqual(result);expect(fs.statSync(path.join(f.root,nonce+'.json')).mode&0o777).toBe(0o600);expect(JSON.stringify(f.state())).not.toContain(f.token);
   const create=f.calls.find(([,a])=>a[0]==='create')[1];for(const arg of ['--network=none','--read-only','--user=65534:65534','--cap-drop=ALL','--security-opt=no-new-privileges','--pull=never'])expect(create).toContain(arg);
@@ -49,7 +49,7 @@ describe('root同池canary生命周期',()=>{
  it('创建响应未知且未找到对象：同nonce只恢复、不重跑；新nonce不能绕未决',async()=>{const f=fixture();const cmd=f.deps.runCommand;try{
   f.deps.runCommand=async(c,a)=>{if(a[0]==='create')throw Error('response_lost');return cmd(c,a);};
   await expect(run(f)).rejects.toThrow(/linux_/);expect(f.state().container_id).toBeNull();await expect(run(f)).rejects.toThrow(/linux_/);await expect(run(f,'9'.repeat(64))).rejects.toThrow(/linux_/);
-  expect(f.calls.filter(([,a])=>a[0]==='start')).toHaveLength(0);
+  expect(f.calls.filter(([c,a])=>c==='/usr/bin/docker'&&a[0]==='start')).toHaveLength(0);
  }finally{f.cleanup();}});
  it('创建响应丢失后发现精确labels/image对象，只绑定ID清理，不启动重跑',async()=>{const f=fixture();const cmd=f.deps.runCommand;try{
   f.deps.runCommand=async(c,a)=>{const r=await cmd(c,a);if(a[0]==='create')throw Error('response_lost');return r;};
@@ -70,3 +70,44 @@ describe('root同池canary生命周期',()=>{
  }finally{f.cleanup();}});
  it('proof失败后仍精确清理，无成功回执',async()=>{const f=fixture();try{f.deps.collectProof=async()=>{throw Error('proof_failed');};await expect(run(f)).rejects.toThrow(/linux_/);expect(f.container).toBeNull();expect(f.state().cleanup_confirmed).toBe(true);expect(f.state().envelope).toBeUndefined();}finally{f.cleanup();}});
 });
+it('真实pending HTTP握手用于生命周期绑定，回执使用服务实际worker boot',async()=>{const f=fixture();const {createLinuxPoolServer}=require('./linux-pool-server.cjs');let server;
+ try{server=createLinuxPoolServer({profile:f.input,token:f.token,revision:f.revision,probe:async()=>null});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  f.deps.fetchFn=async(_url,options)=>fetch(`http://127.0.0.1:${server.address().port}/v1/pool/identity`,options);
+  const result=await run(f);expect(result.receipt.worker_boot_id).toMatch(/^[a-f0-9-]{36}$/);expect(result.receipt.worker_boot_id).not.toBe(workerBoot);
+ }finally{server?.closeAllConnections();if(server)await new Promise(r=>server.close(r));f.cleanup();}
+});
+it.each(['worker','host','daemon'])('%s身份在proof后变化，清理可保守恢复但没有成功签名',async(kind)=>{const f=fixture();const proof=f.deps.collectProof,fetchFn=f.deps.fetchFn,read=f.deps.readText,cmd=f.deps.runCommand;let changed=false;
+ try{f.deps.collectProof=async args=>{const result=await proof(args);changed=true;return result;};
+  f.deps.readText=async p=>changed&&kind==='host'?'3347658b-2aa4-4b38-91c0-a7b85531b918':read(p);
+  f.deps.runCommand=async(c,a)=>{const result=await cmd(c,a);if(changed&&kind==='daemon'&&a[0]==='info')return {stdout:JSON.stringify({ID:'other-daemon',CgroupDriver:'systemd',CgroupVersion:'2'})};return result;};
+  f.deps.fetchFn=async(u,o)=>{const result=await fetchFn(u,o);if(changed&&kind==='worker'){const body=await result.json();body.receipt.worker_boot_id='3347658b-2aa4-4b38-91c0-a7b85531b918';body.signature=createHmac('sha256',f.token).update(JSON.stringify(body.receipt)).digest('hex');return new Response(JSON.stringify(body));}return result;};
+  await expect(run(f)).rejects.toThrow(/linux_/);expect(f.state().envelope).toBeUndefined();expect(f.state().container_id).toBe(id);
+ }finally{f.cleanup();}
+});
+it('无Content-Length的身份响应分块超限立即cancel，零create',async()=>{const f=fixture();let cancelled=false;try{
+ f.deps.fetchFn=async()=>new Response(new ReadableStream({pull(controller){controller.enqueue(new Uint8Array(4096));},cancel(){cancelled=true;}}));
+ await expect(run(f)).rejects.toThrow(/linux_/);expect(cancelled).toBe(true);expect(f.calls.some(([,a])=>a[0]==='create')).toBe(false);
+}finally{f.cleanup();}});
+it('共用安装锁保留他人UUID，仅在已持flock下恢复自身旧canary锁',()=>{const f=fixture();try{
+ const {acquireCanaryInstallFence}=require('./linux-pool-canary.cjs'),filename=path.join(f.root,'install.lock');fs.writeFileSync(filename,'installer-owner',{mode:0o600});
+ expect(()=>acquireCanaryInstallFence({filename,nonce,uid:process.getuid(),underFlock:true})).toThrow(/linux_/);expect(fs.readFileSync(filename,'utf8')).toBe('installer-owner');
+ fs.writeFileSync(filename,JSON.stringify({owner_kind:'linux-pool-canary',nonce:'9'.repeat(64)}));
+ expect(()=>acquireCanaryInstallFence({filename,nonce,uid:process.getuid(),underFlock:false})).toThrow(/linux_/);
+ const release=acquireCanaryInstallFence({filename,nonce,uid:process.getuid(),underFlock:true});expect(JSON.parse(fs.readFileSync(filename,'utf8')).nonce).toBe(nonce);release();expect(fs.existsSync(filename)).toBe(false);
+}finally{f.cleanup();}});
+it('完成回执重放仍核安装身份及worker boot，不能跨重启当新证明',async()=>{const f=fixture();try{
+ await run(f);const fetchFn=f.deps.fetchFn;f.deps.fetchFn=async(u,o)=>{const body=await(await fetchFn(u,o)).json();body.receipt.worker_boot_id='4347658b-2aa4-4b38-91c0-a7b85531b918';body.signature=createHmac('sha256',f.token).update(JSON.stringify(body.receipt)).digest('hex');return new Response(JSON.stringify(body));};
+ await expect(run(f)).rejects.toThrow(/linux_/);expect(f.calls.filter(([,a])=>a[0]==='create')).toHaveLength(1);
+}finally{f.cleanup();}});
+it('完成回执不跨daemon替换重放，不能借同一worker boot认可旧池',async()=>{const f=fixture();try{
+ await run(f);const cmd=f.deps.runCommand;f.deps.runCommand=async(c,a)=>a[0]==='info'?{stdout:JSON.stringify({ID:'replacement-daemon',CgroupDriver:'systemd',CgroupVersion:'2'})}:cmd(c,a);
+ await expect(run(f)).rejects.toThrow(/linux_/);
+}finally{f.cleanup();}});
+it('尚未调用Docker create的slice启动失败可确证无容器，不永久阻塞下一nonce',async()=>{const f=fixture();const cmd=f.deps.runCommand;try{
+ f.deps.runCommand=async(c,a)=>{if(c==='/usr/bin/systemctl'&&a[0]==='start')throw Error('slice_failed');return cmd(c,a);};
+ await expect(run(f)).rejects.toThrow(/linux_/);expect(f.state()).toMatchObject({container_id:null,cleanup_confirmed:true});expect(f.calls.some(([,a])=>a[0]==='create')).toBe(false);
+ f.deps.runCommand=cmd;expect((await run(f,'8'.repeat(64))).receipt.cleanup_confirmed).toBe(true);
+}finally{f.cleanup();}});
+it('PID1非systemd时在创建任何journal目录前拒绝',async()=>{const f=fixture();try{
+ f.deps.stateRoot=path.join(f.root,'not-created');f.deps.readlink=async()=>'/usr/bin/node';await expect(run(f)).rejects.toThrow(/linux_/);expect(fs.existsSync(f.deps.stateRoot)).toBe(false);
+}finally{f.cleanup();}});

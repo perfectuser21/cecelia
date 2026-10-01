@@ -6,7 +6,7 @@ const {execFile}=require('node:child_process');
 const {promisify}=require('node:util');
 const {randomUUID}=require('node:crypto');
 const {validateLinuxPoolProfile,renderLinuxUnits}=require('./linux-pool-profile.cjs');
-const FILES=Object.freeze(['linux-pool-profile.cjs','linux-pool-proof.cjs','linux-pool-server.cjs','linux-resource-probe.cjs','linux-cgroup.cjs']);
+const FILES=Object.freeze(['linux-pool-canary.cjs','linux-pool-profile.cjs','linux-pool-proof.cjs','linux-pool-server.cjs','linux-resource-probe.cjs','linux-cgroup.cjs']);
 const SERVICE='cecelia-linux-pool.service';
 const SLICE='cecelia-workloads.slice';
 const fail=code=>{throw Error(code);};

@@ -1,6 +1,6 @@
 'use strict';
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
-const SOURCE_FILES=['linux-pool-profile.cjs','linux-pool-proof.cjs','linux-pool-server.cjs','linux-resource-probe.cjs','linux-cgroup.cjs'];
+const SOURCE_FILES=['linux-pool-canary.cjs','linux-pool-profile.cjs','linux-pool-proof.cjs','linux-pool-server.cjs','linux-resource-probe.cjs','linux-cgroup.cjs'];
 function fixture(){
  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'linux-pool-install-'))),calls=[];
  const put=(name,value,mode=0o600)=>{const target=path.join(root,name);fs.mkdirSync(path.dirname(target),{recursive:true,mode:0o755});fs.writeFileSync(target,value,{mode});return target;};
@@ -29,6 +29,7 @@ describe('可信Linux pool安装事务',()=>{
   const result=await install(x);expect(result).toMatchObject({installed:true,execution:false,revision:'c'.repeat(40)});
   const base=path.join(x.root,'usr/local/libexec/cecelia/fleet-worker');
   expect(require(path.join(base,'linux-pool-server.cjs')).createLinuxPoolServer).toBeTypeOf('function');
+  expect(require(path.join(base,'linux-pool-canary.cjs')).runLinuxPoolCanary).toBeTypeOf('function');
   expect(fs.readFileSync(path.join(base,'revision'),'utf8').trim()).toBe('c'.repeat(40));
   for(const file of ['fleet-pool.json','fleet-worker.token'])expect(fs.statSync(path.join(x.root,'etc/cecelia',file)).mode&0o777).toBe(0o600);
   const slice=fs.readFileSync(path.join(x.root,'etc/systemd/system/cecelia-workloads.slice'),'utf8');expect(slice).toContain('CPUQuota=50%');expect(slice).toContain('MemorySwapMax=0');expect(slice).toContain('TasksMax=128');
@@ -100,5 +101,5 @@ it('首次发布中途失败且尚无unit，不stop不存在服务，清除已�
  x.deps.fs={...fs,renameSync:(a,b)=>{if(++writes===2)throw Error('publish_failed');return fs.renameSync(a,b);}};
  x.deps.runCommand=async(c,a)=>{if(a[0]==='stop'&&!fs.existsSync(path.join(x.root,'etc/systemd/system/cecelia-linux-pool.service')))throw Object.assign(Error('unit_not_loaded'),{code:5});return run(c,a);};
  await expect(install(x)).rejects.toThrow('linux_pool_install_failed');
- expect(fs.existsSync(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/linux-pool-profile.cjs'))).toBe(false);expect(x.calls.some(([,a])=>a[0]==='stop')).toBe(false);
+ expect(fs.existsSync(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/linux-pool-profile.cjs'))).toBe(false);expect(fs.existsSync(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/linux-pool-canary.cjs'))).toBe(false);expect(x.calls.some(([,a])=>a[0]==='stop')).toBe(false);
 }finally{x.cleanup();}});
