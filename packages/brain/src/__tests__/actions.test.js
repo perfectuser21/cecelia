@@ -870,6 +870,7 @@ describe('actions.js', () => {
       // 第一个查询（objectives）返回空，第二个（key_results）返回结果
       mockQuery
         .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+        .mockResolvedValueOnce({ rows: [{ metadata: {}, custom_props: {} }] })
         .mockResolvedValueOnce({ rows: [fakeGoal] });
 
       const result = await updateGoal({
@@ -885,6 +886,7 @@ describe('actions.js', () => {
       // objectives 返回空，key_results 返回结果（包含 progress=0 参数）
       mockQuery
         .mockResolvedValueOnce({ rows: [], rowCount: 0 })  // objectives
+        .mockResolvedValueOnce({ rows: [{ metadata: {}, custom_props: {} }] }) // 系统KR身份
         .mockResolvedValueOnce({ rows: [fakeGoal] });       // key_results
 
       const result = await updateGoal({
@@ -893,8 +895,8 @@ describe('actions.js', () => {
       });
 
       expect(result.success).toBe(true);
-      // key_results 查询（call index 1）的参数应包含 0
-      const krParams = mockQuery.mock.calls[1][1];
+      // 实际key_results UPDATE仍必须携带0（身份读取不修改值）。
+      const krParams = mockQuery.mock.calls[2][1];
       expect(krParams).toContain(0);
     });
 
