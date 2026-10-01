@@ -302,6 +302,39 @@ class NetworkRecoveryTests(unittest.TestCase):
                 self.invoke_confirm(root, state, evidence, verify=verify, command=command, lease_check=current_lease)
             self.assertEqual(state["status"], "armed")
 
+    def test_real_transaction_ownership_read_crossing_deadline_is_rejected(self):
+        import tailscale_us_exit_activation as activation
+        clock = [1000]
+        state = {"status": "armed", "deadline": 1005, "rollback_label": "watchdog", "watchdog_pid": 777}
+        def ownership(_):
+            clock[0] = 1010
+            return "state = running\npid = 777"
+        with patch.object(activation, "read_transaction", return_value=(Path("/tmp"), state)), \
+             patch.object(activation.time, "time", side_effect=lambda: clock[0]), \
+             patch.object(activation, "command", side_effect=ownership), patch.object(activation.os, "kill"):
+            with self.assertRaisesRegex(RuntimeError, "期限"):
+                activation.verify_transaction("/tmp")
+
+    def test_final_ownership_handshake_cannot_outlive_guard_and_business_lease(self):
+        import tailscale_us_exit_activation as activation
+        import tailscale_us_exit_lease as lease
+        validate = lease.valid_lease
+        payload = {"signature": "cecelia-us-exit-v2", "generation": "current", "observed_at":1000, "expires_at":1015}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, evidence = self.fixture(root, activation.ADB_SERIALS)
+            state["confirmation_scope"] = "all-phones"
+            clock, reads = [1002], []
+            def verify(_):
+                reads.append(True)
+                if len(reads) == 3:
+                    clock[0] = 1020
+                return root, state
+            with self.assertRaises(RuntimeError):
+                self.invoke_confirm(root, state, evidence, verify=verify,
+                    lease_check=lambda *_: validate(payload, clock[0]))
+            self.assertEqual(state["status"], "armed")
+
 
 if __name__ == "__main__":
     unittest.main()
