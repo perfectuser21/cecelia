@@ -361,3 +361,4 @@ projects-table-upgrade-smoke.sh
 cell-color-step-level-smoke.sh
 project-locate-smoke.sh
 project-brief-smoke.sh
+fleet-local-resource-admission-smoke.sh
