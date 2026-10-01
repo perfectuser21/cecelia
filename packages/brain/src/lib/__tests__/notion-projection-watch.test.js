@@ -41,6 +41,14 @@ function notionWith({ pages = {}, tampered = {} } = {}) {
 }
 
 describe('A7 registry_coverage', () => {
+  it('公司8列级面必须单独对账，不能因不是mirror而漏验', async () => {
+    REG.push({ notion_db_id: '684c40c2-ba63-83a7-b6ba-8161f110a18c', title: 'Key Results', face: 'inlet', brain_table: 'key_results', direction: 'both', status: 'active', vessel: 'notion-company-key-results' });
+    try {
+      const { pool } = mkPool();
+      const rs = await buildProjectionAssertions(pool, { notionReq: notionWith(), token: 't', botUserId: BOT });
+      expect(rs.find(r => r.key === 'company_kr_counts')).toMatchObject({ ok: false });
+    } finally { REG.pop(); }
+  });
   it('全部带 notion_id 的表都已登记 → 绿', async () => {
     const { pool } = mkPool();
     const rs = await buildProjectionAssertions(pool, { notionReq: notionWith(), token: 't', botUserId: BOT, constants: {} });
@@ -205,4 +213,59 @@ describe('A11 mirror_db_reachable（镜子库探活，决策 24a37029）', () =>
     expect(a.degraded).toBe(true);
     expect(a.lost).toEqual([]);
   });
+});
+
+describe('独立 KR 投影沿 projection_links 对账', () => {
+  const registry = [{ notion_db_id: 'db-brain-kr', title: 'Brain Key Results', face: 'mirror', brain_table: 'key_results', direction: 'push', vessel: 'notion-kr-projection', status: 'active' }];
+  function krPool() {
+    return { query: vi.fn(async sql => {
+      if (sql.includes('information_schema')) return { rows: [] };
+      if (sql.includes('FROM notion_projection_map')) return { rows: registry };
+      if (sql.includes('count(*)') && sql.includes('projection_links')) return { rows: [{ count: 2 }] };
+      return { rows: [] };
+    }) };
+  }
+  it('非机器人修改KR镜子清links指纹，禁止向key_results写不存在的notion列', async () => {
+    const pool = krPool();
+    await buildProjectionAssertions(pool, { notionReq: notionWith({ tampered: { 'db-brain-kr': [{ by: 'human', title: '改过' }] } }), token: 't', botUserId: BOT });
+    expect(pool.query.mock.calls.some(([sql]) => /UPDATE projection_links SET content_hash = NULL/.test(sql))).toBe(true);
+    expect(pool.query.mock.calls.some(([sql]) => /UPDATE key_results SET notion_digest/.test(sql))).toBe(false);
+  });
+  it('KR库页数与已绑定Brain实体数不等须报红', async () => {
+    const result = await buildProjectionAssertions(krPool(), { notionReq: notionWith({ pages: { 'db-brain-kr': 3 } }), token: 't', botUserId: BOT });
+    expect(result.find(r => r.key === 'projection_counts')).toMatchObject({ ok: false, degraded: false });
+  });
+});
+
+it('KR漏推时即使链接和远端都各一行仍报红，不能隐藏其余应投影KR', async () => {
+  const row = { notion_db_id: 'db-brain-kr', title: 'Brain Key Results', face: 'mirror', brain_table: 'key_results', direction: 'push', vessel: 'notion-kr-projection', status: 'active' };
+  const pool = { query: vi.fn(async sql => {
+    if (sql.includes('information_schema')) return { rows: [] };
+    if (sql.includes('FROM notion_projection_map')) return { rows: [row] };
+    if (sql.includes('FROM projection_links')) return { rows: [{ count: 1, entity_id: 'kr-1', external_id: 'p0' }] };
+    if (sql.includes('FROM key_results')) return { rows: [{ count: 38 }] };
+    return { rows: [] };
+  }) };
+  const result = await buildProjectionAssertions(pool, { notionReq: notionWith({ pages: { 'db-brain-kr': 1 } }), token: 't', botUserId: BOT });
+  expect(result.find(r => r.key === 'projection_counts')).toMatchObject({ ok: false, degraded: false });
+});
+
+it('KR应投影数、正确库页ID与Brain ID链接全部一致才为绿', async () => {
+  const row = { notion_db_id: 'db-brain-kr', title: 'Brain Key Results', face: 'mirror', brain_table: 'key_results', direction: 'push', vessel: 'notion-kr-projection', status: 'active' };
+  const pool = { query: vi.fn(async sql => {
+    if (sql.includes('information_schema')) return { rows: [] };
+    if (sql.includes('FROM notion_projection_map')) return { rows: [row] };
+    if (sql.includes('FROM projection_links')) return { rows: [{ entity_id: 'kr-1', external_id: 'p1' }, { entity_id: 'kr-2', external_id: 'p2' }] };
+    if (sql.includes('FROM key_results')) return { rows: [{ count: 2 }] };
+    return { rows: [] };
+  }) };
+  const notionReq = vi.fn(async (_token, _path, _method, body) => body?.filter?.timestamp || !body ? {} : { results: ['1','2'].map(id => ({ id: `p${id}`, properties: { 'Brain ID': { rich_text: [{ plain_text: `kr-${id}` }] } } })), has_more: false });
+  const result = await buildProjectionAssertions(pool, { notionReq, token: 't', botUserId: BOT });
+  expect(result.find(r => r.key === 'projection_counts')).toMatchObject({ ok: true, degraded: false });
+  const wrongId = vi.fn(async (...args) => {
+    const response = await notionReq(...args);
+    if (response.results?.[0]) response.results[0].properties['Brain ID'].rich_text[0].plain_text = 'other-kr';
+    return response;
+  });
+  expect((await buildProjectionAssertions(pool, { notionReq: wrongId, token: 't', botUserId: BOT })).find(r => r.key === 'projection_counts')).toMatchObject({ ok: false, degraded: false });
 });

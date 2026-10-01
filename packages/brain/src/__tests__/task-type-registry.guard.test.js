@@ -70,7 +70,7 @@ const REGISTRY = join(SRC, 'lib', 'task-type-registry.js');
 //   LOCATION_MAP/TASK_REQUIREMENTS/ASYNC_CALLBACK_TYPES、executor.js 的 skillMap/modeMap）
 //   也已改注册表派生（对象型用 deep-equal fixture 校验零行为变化）。两个文件里各剩 1 处
 //   真正的 long-lived: map（task-router.js:135 的 2 项业务降级链 FALLBACK_STRATEGIES.skill、
-//   executor.js:2240 的 task_type→handler 函数路由表 _TASK_ROUTES，函数值无法进纯数据注册表）
+//   executor.js:2241 的 task_type→handler 函数路由表 _TASK_ROUTES，函数值无法进纯数据注册表）
 //   ——kind: enum 在这两个文件里已清零，只剩 kind: map。
 // - Task 6（补充五+补充六收尾）：`executor-contracts.js` 的 `EXECUTOR_KIND_FOR` 改从注册表
 //   `EXECUTOR_KIND_FOR_TASK_TYPE` 派生（+ 两个路径 sentinel），退出清单——清单变量从
@@ -107,10 +107,10 @@ export const REMAINING_LEGACY_SITES = {
   // 语义相近但值不同——第3份独立维护，PR1 只搬家不合并）+ BASE_LABELS（:1021，task_type→短展示
   // 标签，第5份独立维护的 label 映射，无匹配注册表字段）
   'routes/harness.js': ['934:TASK_TYPE_TO_SKILL', '1022:BASE_LABELS'],
-  // kind: map（long-lived）— Task 4 评估：:879 description 是 GET /api/brain/task-types
+  // kind: map（long-lived）— Task 4 评估：:894 description 是 GET /api/brain/task-types
   // 的人类可读展示文案（仅5个类型有文案，不是"哪类"的分类标签），要对应注册表字段需给全部
   // ~80 个 task_type 逐个写产品文案，属独立的文档撰写工作，非 PR1 零行为变化范围
-  'routes/tasks.js': ['893:description'],
+  'routes/tasks.js': ['894:description'],
   // kind: map（long-lived）— 唯一残留 :55 FALLBACK_STRATEGIES.skill（仅2项业务专用降级链 review→code_review→dev，非"哪类"的分类标签，无匹配注册表字段）
   'task-router.js': ['55:skill'],
   // kind: map（long-lived）— Task 6 评估：:25 TASK_TYPE_ADJUSTMENTS 是派发权重的数值
