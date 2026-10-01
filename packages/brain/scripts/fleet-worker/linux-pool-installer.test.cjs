@@ -24,7 +24,7 @@ function fixture(){
  return {root,calls,put,profile,options,deps,cleanup:()=>fs.rmSync(root,{recursive:true,force:true})};
 }
 const install=(x)=>require('./linux-pool-installer.cjs').installLinuxPool(x.options,x.deps);
-const SCRIPT_FILES=['linux-script-service.cjs','linux-script-launch-gate.cjs','linux-script-runtime.cjs','linux-script-docker.cjs','linux-script-permit.cjs','linux-script-bridge.cjs','script-runner.cjs'];
+const SCRIPT_FILES=['linux-script-canary.cjs','linux-script-service.cjs','linux-script-launch-gate.cjs','linux-script-runtime.cjs','linux-script-docker.cjs','linux-script-permit.cjs','linux-script-bridge.cjs','script-runner.cjs'];
 function withScripts(x){x.options.executionKeyPath='/staging/execution.key';x.put(x.options.executionKeyPath,'d'.repeat(64));for(const name of SCRIPT_FILES)x.put('/staging/source/'+name,fs.readFileSync(path.join(__dirname,name)),0o644);return x;}
 describe('可信Linux pool安装事务',()=>{
  it('显式独立root执行凭据安装Unix服务与私有pool，普通账号没有Docker权限或root key',async()=>{const x=withScripts(fixture());try{
@@ -35,6 +35,7 @@ describe('可信Linux pool安装事务',()=>{
   expect(unit).toContain('User=root');expect(unit).toContain('Group=_cecelia');expect(unit).toContain('RuntimeDirectoryMode=0750');expect(unit).not.toContain('SupplementaryGroups=docker');
   for(const directive of ['ProtectSystem=','ProtectHome=','ReadWritePaths=','PrivateMounts='])expect(unit).not.toContain(directive);
   expect(require(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/linux-script-service.cjs')).createLinuxScriptService).toBeTypeOf('function');
+  expect(require(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/linux-script-canary.cjs')).runLinuxScriptCanary).toBeTypeOf('function');
   const starts=x.calls.filter(([c,a])=>c==='/usr/bin/systemctl'&&a[0]==='start').map(([,a])=>a[1]);expect(starts).toEqual(['cecelia-linux-script.service','cecelia-linux-pool.service']);
   expect(JSON.stringify(result)).not.toContain('d'.repeat(64));
  }finally{x.cleanup();}});

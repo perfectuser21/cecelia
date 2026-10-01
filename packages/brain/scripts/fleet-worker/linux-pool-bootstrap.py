@@ -26,7 +26,7 @@ PINS={'x64':'fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6',
       'arm64':'6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2'}
 FILES=('linux-pool-installer.cjs','linux-pool-profile.cjs','linux-pool-proof.cjs','linux-pool-server.cjs',
        'linux-pool-canary.cjs','linux-resource-probe.cjs','linux-cgroup.cjs')
-SCRIPT_FILES=('linux-script-service.cjs','linux-script-launch-gate.cjs','linux-script-runtime.cjs','linux-script-docker.cjs',
+SCRIPT_FILES=('linux-script-canary.cjs','linux-script-service.cjs','linux-script-launch-gate.cjs','linux-script-runtime.cjs','linux-script-docker.cjs',
               'linux-script-permit.cjs','linux-script-bridge.cjs','script-runner.cjs')
 US_ID='1a379d80-ad36-47d3-88ba-e545ab299a54'
 MAX_ARCHIVE=64*1024*1024

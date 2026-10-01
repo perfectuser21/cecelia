@@ -48,7 +48,7 @@ class BootstrapTests(unittest.TestCase):
   self.account=True;self.group=True;self.call();self.assertFalse(any(c.endswith(('useradd','groupadd','usermod')) for c,_,_ in self.calls))
  def test_optional_root_execution_key_reaches_installer_only_via_private_file(self):
   self.put('/staging/execution.key',b'd'*64);self.options['execution_key_file']='/staging/execution.key'
-  for name in ['linux-script-service.cjs','linux-script-launch-gate.cjs','linux-script-runtime.cjs','linux-script-docker.cjs','linux-script-permit.cjs','linux-script-bridge.cjs','script-runner.cjs']:self.put('/staging/src/'+name,b'fixture-module',0o644)
+  for name in ['linux-script-canary.cjs','linux-script-service.cjs','linux-script-launch-gate.cjs','linux-script-runtime.cjs','linux-script-docker.cjs','linux-script-permit.cjs','linux-script-bridge.cjs','script-runner.cjs']:self.put('/staging/src/'+name,b'fixture-module',0o644)
   original=self.fake_run;seen=[]
   def run(command,args,**kwargs):
    if command.endswith('/node') and args[0].endswith('linux-pool-installer.cjs'):

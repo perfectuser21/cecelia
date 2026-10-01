@@ -9,7 +9,7 @@ const {validateLinuxPoolProfile,renderLinuxUnits}=require('./linux-pool-profile.
 const FILES=Object.freeze(['linux-pool-canary.cjs','linux-pool-profile.cjs','linux-pool-proof.cjs','linux-pool-server.cjs','linux-resource-probe.cjs','linux-cgroup.cjs']);
 const SERVICE='cecelia-linux-pool.service';
 const BRIDGE='cecelia-linux-script.service';
-const SCRIPT_FILES=['linux-script-service.cjs','linux-script-launch-gate.cjs','linux-script-runtime.cjs','linux-script-docker.cjs','linux-script-permit.cjs','linux-script-bridge.cjs','script-runner.cjs'];
+const SCRIPT_FILES=['linux-script-canary.cjs','linux-script-service.cjs','linux-script-launch-gate.cjs','linux-script-runtime.cjs','linux-script-docker.cjs','linux-script-permit.cjs','linux-script-bridge.cjs','script-runner.cjs'];
 const SCRIPT_UNIT='[Unit]\nDescription=Cecelia restricted script root bridge\nRequires=docker.service cecelia-workloads.slice\nAfter=docker.service cecelia-workloads.slice\nBefore=cecelia-linux-pool.service\n[Service]\nType=simple\nUser=root\nGroup=_cecelia\nExecStart=/usr/local/libexec/cecelia/toolchain/bin/node /usr/local/libexec/cecelia/fleet-worker/linux-script-service.cjs\nRestart=on-failure\nRestartSec=5\nRuntimeDirectory=cecelia-script\nRuntimeDirectoryMode=0750\nStateDirectory=cecelia/script-runtime\nStateDirectoryMode=0700\nNoNewPrivileges=yes\nCPUQuota=25%\nMemoryMax=268435456\nMemorySwapMax=0\nTasksMax=64\nUMask=0077\n[Install]\nWantedBy=multi-user.target\n';
 const SLICE='cecelia-workloads.slice';
 const fail=code=>{throw Error(code);};

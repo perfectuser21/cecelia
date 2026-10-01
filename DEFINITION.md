@@ -12,6 +12,8 @@
 
 **Brain 版本**: 1.353.18
 
+Linux脚本canary通过独立root许可调用真实Unix adapter，持久每个profile的预约/version/grant，核对完整宿主证明、随机标记输出及精确清理后签独立验收回执。未知启动不重跑，配置撤销后仍按旧journal恢复清理；安装器和bootstrap打包此入口。当前仅完成编排及安装产物回归，尚未执行HK现场验收或激活授权。
+
 Linux脚本客户端从受信目录版本读取profile摘要及凭据引用，启动在当前DB授权链内签独立root许可，历史清理绑定持久version/grant；Worker.token只做外层传输认证，不能伪造root回执。真实HTTP→Unix→持久runner→受限Docker合同已串通；请求尚未抵达时可先持久墓碑封住迟到启动。生产版本仍pending，未开放执行。
 
 脚本Worker客户端按流累计认证封套，超过128KiB立即取消读取；正文读取继续受原请求deadline约束，不再先整包缓存再判大小。
