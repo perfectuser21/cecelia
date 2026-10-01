@@ -458,193 +458,70 @@ function routeTaskWithFallback(taskData) {
   return routing;
 }
 
-/**
- * Diagnose task dispatch status for a KR
- *
- * Returns a detailed report on why tasks under a KR may not be dispatching:
- * - All initiatives under the KR (via okr_projects → okr_scopes → okr_initiatives)
- * - Task counts and statuses per initiative
- * - Dispatch blockers (reasons why tasks are not being queued/dispatched)
- *
- * @param {string} krId - KR (goal) ID to diagnose
- * @param {Object} pool - PostgreSQL pool instance (dependency injection)
- * @returns {Promise<Object>} - Diagnosis report
- */
+/** 诊断 KR 下 Project 的直接任务，不再读取退役层。 */
 async function diagnoseKR(krId, pool) {
-  console.log(`[task-router] diagnoseKR: starting diagnosis for kr_id=${krId}`);
-
-  // 1. Load KR info
   const krResult = await pool.query(
-    `SELECT id, title, status FROM key_results WHERE id = $1`,
-    [krId]
+    `SELECT id, title, status, priority, progress_pct AS progress FROM key_results WHERE id = $1`, [krId]
   );
-
-  if (krResult.rows.length === 0) {
-    console.warn(`[task-router] diagnoseKR: kr_id=${krId} not found`);
-    return null;
-  }
-
+  if (krResult.rows.length === 0) return null;
   const kr = krResult.rows[0];
-  console.log(`[task-router] diagnoseKR: kr found: "${kr.title}" (status=${kr.status})`);
-
-  // 2. Load all Projects under this KR (via okr_projects)
-  const projectsResult = await pool.query(`
-    SELECT p.id, p.title AS name, p.status, p.created_at
-    FROM okr_projects p
-    WHERE p.kr_id = $1
-    ORDER BY p.created_at ASC
-  `, [krId]);
-
-  const projects = projectsResult.rows;
-  console.log(`[task-router] diagnoseKR: found ${projects.length} projects under KR`);
-
-  // 3. For each project, load all initiatives
-  const initiativesData = [];
+  const projectsResult = await pool.query(
+    `SELECT id, name, status, created_at FROM projects WHERE kr_id = $1 ORDER BY created_at ASC`, [krId]
+  );
+  const projects = [];
   const dispatchBlockers = [];
-
-  for (const project of projects) {
-    const initResult = await pool.query(`
-      SELECT i.id, i.title AS name, i.status, i.created_at,
-             (SELECT COUNT(*) FROM tasks t WHERE t.okr_initiative_id = i.id) AS task_count,
-             (SELECT COUNT(*) FROM tasks t WHERE t.okr_initiative_id = i.id AND t.status IN ('queued', 'in_progress')) AS active_task_count,
-             (SELECT COUNT(*) FROM tasks t WHERE t.okr_initiative_id = i.id AND t.status = 'completed') AS completed_task_count,
-             (SELECT COUNT(*) FROM tasks t WHERE t.okr_initiative_id = i.id AND t.status IN ('failed', 'cancelled')) AS failed_task_count
-      FROM okr_initiatives i
-      INNER JOIN okr_scopes s ON s.id = i.scope_id
-      WHERE s.project_id = $1
-      ORDER BY i.created_at ASC
-    `, [project.id]);
-
-    const initiatives = initResult.rows;
-    console.log(`[task-router] diagnoseKR: project "${project.name}" has ${initiatives.length} initiatives`);
-
-    for (const initiative of initiatives) {
-      // Load recent tasks for this initiative
-      const tasksResult = await pool.query(`
-        SELECT id, title, task_type, status, priority, created_at, updated_at
-        FROM tasks
-        WHERE okr_initiative_id = $1
-        ORDER BY created_at DESC
-        LIMIT 10
-      `, [initiative.id]);
-
-      const tasks = tasksResult.rows;
-      const taskCount = parseInt(initiative.task_count, 10);
-      const activeTaskCount = parseInt(initiative.active_task_count, 10);
-
-      // Detect blockers
-      if (initiative.status === 'running' && taskCount === 0) {
-        const blocker = {
-          initiative_id: initiative.id,
-          initiative_name: initiative.name,
-          reason: 'no_tasks_created',
-          detail: '该 Initiative 下没有任何 Task，需要运行 initiative_plan 拆解'
-        };
-        dispatchBlockers.push(blocker);
-        console.warn(`[task-router] diagnoseKR: BLOCKER initiative="${initiative.name}" reason=no_tasks_created`);
-      } else if (initiative.status === 'running' && taskCount > 0 && activeTaskCount === 0) {
-        // Check if all tasks are completed or failed
-        const allCompleted = parseInt(initiative.completed_task_count, 10) === taskCount;
-        const allFailed = parseInt(initiative.failed_task_count, 10) === taskCount;
-
-        if (allCompleted) {
-          const blocker = {
-            initiative_id: initiative.id,
-            initiative_name: initiative.name,
-            reason: 'all_tasks_completed_initiative_still_active',
-            detail: '所有 Task 已完成，但 Initiative 仍为 active 状态，可能需要验收或关闭'
-          };
-          dispatchBlockers.push(blocker);
-          console.warn(`[task-router] diagnoseKR: BLOCKER initiative="${initiative.name}" reason=all_tasks_completed_initiative_still_active`);
-        } else if (allFailed) {
-          const blocker = {
-            initiative_id: initiative.id,
-            initiative_name: initiative.name,
-            reason: 'all_tasks_failed',
-            detail: '所有 Task 已失败，需要人工干预或重新规划'
-          };
-          dispatchBlockers.push(blocker);
-          console.warn(`[task-router] diagnoseKR: BLOCKER initiative="${initiative.name}" reason=all_tasks_failed`);
+  for (const project of projectsResult.rows) {
+    const statsResult = await pool.query(
+      `SELECT COUNT(*) AS task_count,
+              COUNT(*) FILTER (WHERE status IN ('queued','in_progress')) AS active_task_count,
+              COUNT(*) FILTER (WHERE status = 'completed') AS completed_task_count,
+              COUNT(*) FILTER (WHERE status IN ('failed','cancelled')) AS failed_task_count
+       FROM tasks WHERE project_id = $1 AND task_type <> 'project'`, [project.id]
+    );
+    const counts = statsResult.rows[0] || {};
+    const taskCount = Number(counts.task_count || 0);
+    const activeTaskCount = Number(counts.active_task_count || 0);
+    const completedTaskCount = Number(counts.completed_task_count || 0);
+    const failedTaskCount = Number(counts.failed_task_count || 0);
+    const taskResult = await pool.query(
+      `SELECT id, title, task_type, status, priority, created_at, updated_at
+       FROM tasks WHERE project_id = $1 AND task_type <> 'project' ORDER BY created_at DESC LIMIT 10`, [project.id]
+    );
+    let reason = null;
+    let detail = '';
+    if (project.status === 'active') {
+      if (taskCount === 0) {
+        reason = 'no_tasks_created'; detail = '该 Project 下没有 Task，需要拆解项目';
+      } else if (activeTaskCount === 0) {
+        if (completedTaskCount === taskCount) {
+          reason = 'all_tasks_completed_project_still_active'; detail = '任务全部完成，Project 仍需验收关闭';
+        } else if (failedTaskCount === taskCount) {
+          reason = 'all_tasks_failed'; detail = '任务全部失败，需要重新规划';
         } else {
-          const blocker = {
-            initiative_id: initiative.id,
-            initiative_name: initiative.name,
-            reason: 'no_active_tasks',
-            detail: `有 ${taskCount} 个 Task 但无 queued/in_progress，Task 可能处于异常状态`
-          };
-          dispatchBlockers.push(blocker);
-          console.warn(`[task-router] diagnoseKR: BLOCKER initiative="${initiative.name}" reason=no_active_tasks task_count=${taskCount}`);
+          reason = 'no_active_tasks'; detail = '项目有任务但无 queued/in_progress 任务';
         }
-      } else if (initiative.status !== 'running') {
-        console.log(`[task-router] diagnoseKR: initiative="${initiative.name}" skipped (status=${initiative.status})`);
       }
-
-      initiativesData.push({
-        id: initiative.id,
-        name: initiative.name,
-        status: initiative.status,
-        created_at: initiative.created_at,
-        project_id: project.id,
-        project_name: project.name,
-        task_count: taskCount,
-        active_task_count: activeTaskCount,
-        completed_task_count: parseInt(initiative.completed_task_count, 10),
-        failed_task_count: parseInt(initiative.failed_task_count, 10),
-        tasks: tasks.map(t => ({
-          id: t.id,
-          title: t.title,
-          task_type: t.task_type,
-          status: t.status,
-          priority: t.priority,
-          created_at: t.created_at,
-          updated_at: t.updated_at,
-          routing: routeTaskCreate({ title: t.title, task_type: t.task_type, kr_id: krId, initiative_id: initiative.id })
-        }))
-      });
     }
-
-    // Check if project has no initiatives at all
-    if (initiatives.length === 0 && project.status === 'active') {
-      const blocker = {
-        project_id: project.id,
-        project_name: project.name,
-        reason: 'no_initiatives',
-        detail: '该 Project 下没有任何 Initiative，需要秋米拆解'
-      };
-      dispatchBlockers.push(blocker);
-      console.warn(`[task-router] diagnoseKR: BLOCKER project="${project.name}" reason=no_initiatives`);
-    }
+    if (reason) dispatchBlockers.push({ project_id: project.id, project_name: project.name, reason, detail });
+    projects.push({
+      ...project, task_count: taskCount, active_task_count: activeTaskCount,
+      completed_task_count: completedTaskCount, failed_task_count: failedTaskCount,
+      tasks: taskResult.rows.map(task => ({
+        ...task, routing: routeTaskCreate({ title: task.title, task_type: task.task_type, kr_id: krId, project_id: project.id })
+      }))
+    });
   }
-
-  // 4. Summary
-  const totalInitiatives = initiativesData.length;
-  const activeInitiatives = initiativesData.filter(i => i.status === 'running').length;
-  const initiativesWithQueuedTasks = initiativesData.filter(i => i.active_task_count > 0).length;
-  const diagnosis = dispatchBlockers.length === 0 ? 'healthy' : 'blocked';
-
-  console.log(`[task-router] diagnoseKR: kr_id=${krId} diagnosis=${diagnosis} blockers=${dispatchBlockers.length} total_initiatives=${totalInitiatives} active=${activeInitiatives} with_queued=${initiativesWithQueuedTasks}`);
-
   return {
-    kr_id: kr.id,
-    kr_title: kr.title,
-    kr_status: kr.status,
-    kr_priority: kr.priority ?? null,
-    kr_progress: kr.progress ?? null,
+    kr_id: kr.id, kr_title: kr.title, kr_status: kr.status,
+    kr_priority: kr.priority ?? null, kr_progress: kr.progress ?? null,
     summary: {
       total_projects: projects.length,
-      total_initiatives: totalInitiatives,
-      active_initiatives: activeInitiatives,
-      initiatives_with_active_tasks: initiativesWithQueuedTasks,
+      active_projects: projects.filter(project => project.status === 'active').length,
+      projects_with_active_tasks: projects.filter(project => project.active_task_count > 0).length,
       dispatch_blocker_count: dispatchBlockers.length,
-      diagnosis
+      diagnosis: dispatchBlockers.length === 0 ? 'healthy' : 'blocked'
     },
-    dispatch_blockers: dispatchBlockers,
-    projects: projects.map(p => ({
-      id: p.id,
-      name: p.name,
-      status: p.status,
-      initiatives: initiativesData.filter(i => i.project_id === p.id)
-    }))
+    dispatch_blockers: dispatchBlockers, projects
   };
 }
 

@@ -2,7 +2,7 @@
  * executor=script 端到端 —— 真 PostgreSQL + 真 dispatcher/executor + 真远端 runner
  * （链 bf5088a3 棒3 PR B，任务 5cdbd52a）。
  *
- * 唯一替身：ssh 传输。假传输把「ssh <target> <远端命令>」改成本机 `sh -c <远端命令>`（HOME 指向临时目录），
+ * 传输替身＋账号配额/七日预算与桥健康外围隔离；dispatcher、allocator、PG和runner真跑。假传输把「ssh <target> <远端命令>」改成本机 `sh -c <远端命令>`（HOME 指向临时目录），
  * 所以远端 runner 脚本、.pid/.exit 三件套、超时杀进程组都是真的在跑，只是没有网络。
  * agent 步 = 既有 internal handler 执行路径的桩（不调模型）。
  *
@@ -23,7 +23,11 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTempMigratedDb } from '../helpers/temp-migrated-db.js';
 
-// 派发链上会打外网/查配额的两个外围模块：只替身这两个，其余全部真跑。
+// 仅隔离账号配额、账号七日预算与桥接健康等外围；slot allocator、dispatcher、PG和script并发槽全部真跑。
+vi.mock('../../token-budget-planner.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  calculateBudgetState: async () => ({ state: 'abundant', avg_remaining_pct: 100, pool_c_scale: 1 }),
+}));
 vi.mock('../../quota-guard.js', async (importOriginal) => ({
   ...(await importOriginal()),
   checkQuotaGuard: async () => ({ allow: true, priorityFilter: null, bestPct: 0, reason: 'test' }),

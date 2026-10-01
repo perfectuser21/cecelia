@@ -934,6 +934,7 @@ jobs:
         run: cd packages/brain && node src/migrate.js
       - name: Integration Tests
         env:
+          POSTGRES_INTEGRATION: '1'
           DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DB_HOST: localhost
           DB_PORT: '5432'
@@ -947,6 +948,11 @@ jobs:
           npx vitest run \
             --config vitest.integration.config.js \
             src/__tests__/integration/ \
+            src/__tests__/integration/account-quota-ledger.pg.integration.test.js \
+            src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js \
+            src/__tests__/commander-watchdog.pg.integration.test.js \
+            src/__tests__/integration/script-executor-chain.pg.integration.test.js \
+            src/__tests__/integration/script-executor-constraints.pg.integration.test.js \
             src/__tests__/migration-333.test.js \
             src/__tests__/migration-400-fact-snapshot.test.js \
             src/__tests__/migration-370-gp-governance-decisions.test.js \
@@ -1045,6 +1051,7 @@ jobs:
         run: cd packages/brain && node src/migrate.js
       - name: E2E Smoke Tests（golden-path + agent-lifecycle + dev-lifecycle）
         env:
+          POSTGRES_INTEGRATION: '1'
           DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DB_HOST: localhost
           DB_PORT: '5432'
@@ -1054,6 +1061,7 @@ jobs:
           NODE_ENV: test
         run: |
           cd packages/brain && npx vitest run \
+            --config vitest.integration.config.js \
             src/__tests__/integration/golden-path.integration.test.js \
             src/__tests__/integration/agent-lifecycle.integration.test.js \
             src/__tests__/integration/dev-task-lifecycle.e2e.test.js \

@@ -38,45 +38,45 @@
 
 ---
 
-### 2. extend_initiative（在现有 Initiative 下扩展）
+### 2. extend_project（在现有 Project 下扩展）
 
 **条件**：
-- 找到相似度 >= 0.65 的现有 Initiative
-- 新任务是该 Initiative 的合理扩展
+- 找到相似度 >= 0.65 的现有 Project
+- 新任务是该 Project 的合理扩展
 
 **输出**：
 ```json
 {
-  "action": "extend_initiative",
+  "action": "extend_project",
   "target": {
-    "level": "initiative",
-    "id": "<initiative_id>",
-    "title": "<initiative_title>"
+    "level": "project",
+    "id": "<project_id>",
+    "title": "<project_title>"
   },
   "confidence": 0.0-1.0,
-  "reason": "在现有 Initiative 下创建新 PR Plan"
+  "reason": "在现有 Project 下创建新 PR Plan"
 }
 ```
 
 ---
 
-### 3. create_initiative_under_kr（在现有 KR 下创建新 Initiative）
+### 3. create_project_under_kr（在现有 KR 下创建新 Project）
 
 **条件**：
 - 找到相似度 >= 0.60 的现有 KR
-- 新任务支持该 KR，但没有合适的现有 Initiative
+- 新任务支持该 KR，但没有合适的现有 Project
 
 **输出**：
 ```json
 {
-  "action": "create_initiative_under_kr",
+  "action": "create_project_under_kr",
   "target": {
     "level": "kr",
     "id": "<kr_id>",
     "title": "<kr_title>"
   },
   "confidence": 0.0-1.0,
-  "reason": "在现有 KR 下创建新 Initiative"
+  "reason": "在现有 KR 下创建新 Project"
 }
 ```
 
@@ -85,7 +85,7 @@
 ### 4. create_new_okr_kr（创建全新的 OKR/KR）
 
 **条件**：
-- 没有找到相关的 OKR/KR/Initiative
+- 没有找到相关的 OKR/KR/Project
 - 或相似度都很低（< 0.60）
 
 **输出**：
@@ -137,9 +137,9 @@
   "input": "{input}",
 
   "attach": {
-    "action": "duplicate_task | extend_initiative | create_initiative_under_kr | create_new_okr_kr",
+    "action": "duplicate_task | extend_project | create_project_under_kr | create_new_okr_kr",
     "target": {
-      "level": "task|initiative|kr|okr",
+      "level": "task|project|kr|okr",
       "id": "...",
       "title": "..."
     },
@@ -168,11 +168,11 @@
 ### 短路 A：优先查 Task（避免重复最致命）
 
 - task_score >= 0.85 → 立刻返回 duplicate_task
-- 不需要再看 Initiative/KR
+- 不需要再看 Project/KR
 
-### 短路 B：再查 Initiative（决定扩展还是新建）
+### 短路 B：再查 Project（决定扩展还是新建）
 
-- initiative_score >= 0.65 → 返回 extend_initiative
+- project_score >= 0.65 → 返回 extend_project
 - < 0.65 → 继续看 KR/OKR
 
 ---
@@ -229,7 +229,7 @@
 
 ---
 
-### 示例 2：扩展 Initiative
+### 示例 2：扩展 Project
 
 **输入**：
 ```
@@ -240,8 +240,8 @@
 ```json
 [
   {
-    "level": "initiative",
-    "id": "initiative_456",
+    "level": "project",
+    "id": "project_456",
     "title": "实现智能调度系统",
     "score": 0.71,
     "status": "in_progress"
@@ -253,14 +253,14 @@
 ```json
 {
   "attach": {
-    "action": "extend_initiative",
+    "action": "extend_project",
     "target": {
-      "level": "initiative",
-      "id": "initiative_456",
+      "level": "project",
+      "id": "project_456",
       "title": "实现智能调度系统"
     },
     "confidence": 0.75,
-    "reason": "属于现有 Initiative 的合理扩展"
+    "reason": "属于现有 Project 的合理扩展"
   },
   "route": {
     "path": "exploratory_then_dev",
@@ -273,7 +273,7 @@
   "next_call": {
     "skill": "/exploratory",
     "args": {
-      "initiative_id": "initiative_456",
+      "project_id": "project_456",
       "task_description": "添加任务优先级的动态调整功能"
     }
   }
@@ -284,7 +284,7 @@
 
 ## 注意事项
 
-1. **短路优先**：先查 Task（避免重复），再查 Initiative（决定扩展）
+1. **短路优先**：先查 Task（避免重复），再查 Project（决定扩展）
 2. **阈值柔性**：相似度阈值是建议值，根据实际情况灵活调整
 3. **保守原则**：不确定时倾向于 exploratory（安全）
 4. **用户友好**：reason 字段要清晰解释为什么做这个决策

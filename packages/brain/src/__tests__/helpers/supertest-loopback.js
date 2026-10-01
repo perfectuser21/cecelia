@@ -1,12 +1,19 @@
-/** Supertest 的默认 IPv4 URL 必须跟随测试服务器实际绑定的地址族。 */
-export function installSupertestLoopback(Test) {
-  const installed = Symbol.for('cecelia.supertest.address-family');
-  if (Test.prototype[installed]) return;
-  const original = Test.prototype.serverAddress;
-  Test.prototype.serverAddress = function (app, path) {
-    // 保留库的自动起服及 _server 所有权，结束请求后仍由库关闭服务。
+import Test from 'supertest/lib/test.js';
+
+/** 请求目标跟随实际监听地址族，保留 Supertest 起服和关闭服务的所有权。 */
+export function installSupertestLoopback(TestClass) {
+  const marker = Symbol.for('cecelia.supertest.listener-family');
+  const original = TestClass.prototype.serverAddress;
+  if (original[marker]) return;
+  function listenerAddress(app, path) {
     const url = original.call(this, app, path);
-    return app.address()?.family === 'IPv6' ? url.replace('//127.0.0.1:', '//[::1]:') : url;
-  };
-  Object.defineProperty(Test.prototype, installed, { value: true });
+    const address = app.address();
+    if (!address || typeof address === 'string' || address.family !== 'IPv6') return url;
+    const host = address.address === '::' ? '::1' : address.address;
+    return url.replace('://127.0.0.1:', `://[${host}]:`);
+  }
+  Object.defineProperty(listenerAddress, marker, { value: true });
+  TestClass.prototype.serverAddress = listenerAddress;
 }
+
+installSupertestLoopback(Test);

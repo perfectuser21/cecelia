@@ -70,6 +70,15 @@ vi.mock('../decision.js', () => ({
 }));
 vi.mock('../health-monitor.js', () => ({ runLayer2HealthCheck: vi.fn().mockResolvedValue({ summary: 'ok' }) }));
 vi.mock('../dept-heartbeat.js', () => ({ triggerDeptHeartbeats: vi.fn().mockResolvedValue({}) }));
+// 本测试验证suggestion入口退役，心跳巡检的真实LLM/网络由其独立测试覆盖。
+// executeTick的遗留清理支路必须隔离真实git worktree；此测试只验suggestion调用边界。
+vi.mock('../harness-worktree.js', () => ({
+  cleanupStaleHarnessWorktrees: vi.fn().mockResolvedValue({ cleaned: 0, skipped: 0 }),
+}));
+vi.mock('../heartbeat-plugin.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, tick: vi.fn(actual.tick) };
+});
 vi.mock('../daily-review-scheduler.js', () => ({ triggerDailyReview: vi.fn().mockResolvedValue({}) }));
 vi.mock('../quarantine.js', () => ({
   handleTaskFailure: vi.fn(),
@@ -101,7 +110,6 @@ vi.mock('../zombie-sweep.js', () => ({
   zombieSweep: vi.fn().mockResolvedValue({ worktrees: { removed: 0 }, processes: { killed: 0 }, lock_slots: { removed: 0 } }),
 }));
 vi.mock('../zombie-cleaner.js', () => ({ runZombieCleanup: vi.fn().mockResolvedValue({ slotsReclaimed: 0, worktreesRemoved: 0 }) }));
-vi.mock('../harness-worktree.js', () => ({ cleanupStaleHarnessWorktrees: vi.fn().mockResolvedValue({ cleaned: 0 }) }));
 vi.mock('../active-goals-zero-trigger.js', () => ({ maybeTriggerStrategySession: vi.fn().mockResolvedValue({ created: false }) }));
 vi.mock('../orphan-pr-worker.js', () => ({ scanOrphanPrs: vi.fn().mockResolvedValue({ scanned: 0, merged: 0, labeled: 0, closed: 0 }) }));
 vi.mock('../credential-expiry-checker.js', () => Object.fromEntries([
@@ -117,6 +125,7 @@ vi.mock('../shepherd.js', () => ({
 
 import { executeTriage, cleanupExpiredSuggestions } from '../suggestion-triage.js';
 import { tickState } from '../tick-state.js';
+import { tick as heartbeatTick } from '../heartbeat-plugin.js';
 
 // ── 测试 ──────────────────────────────────────────────────────────────────────
 
@@ -156,6 +165,7 @@ describe('Tick Suggestion Integration (v2 — L1 架构)', () => {
       const result = await executeTick();
 
       expect(result.success).toBe(true);
+      expect(heartbeatTick).toHaveBeenCalledTimes(1);
       expect(executeTriage).not.toHaveBeenCalled();
       for (const [path, name] of [
         ['../heartbeat-inspector.js', 'runHeartbeatInspection'],
@@ -170,6 +180,7 @@ describe('Tick Suggestion Integration (v2 — L1 架构)', () => {
       const result = await executeTick();
 
       expect(result.success).toBe(true);
+      expect(heartbeatTick).toHaveBeenCalledTimes(1);
       expect(cleanupExpiredSuggestions).not.toHaveBeenCalled();
     }, 60000);
 
@@ -177,6 +188,7 @@ describe('Tick Suggestion Integration (v2 — L1 架构)', () => {
       const result = await executeTick();
 
       expect(result.success).toBe(true);
+      expect(heartbeatTick).toHaveBeenCalledTimes(1);
 
       const suggestionActions = (result.actions_taken || []).filter(
         a => a.action === 'suggestion_triage' || a.action === 'suggestion_cleanup'
