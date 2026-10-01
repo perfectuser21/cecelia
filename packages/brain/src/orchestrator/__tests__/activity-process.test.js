@@ -8,6 +8,22 @@ import { callActivityProcess } from '../activity-process.js';
 const fixtureDir = dirname(fileURLToPath(new URL('./fixtures/activity-runtime/activity.mjs', import.meta.url)));
 
 describe('activity-process真实进程边界', () => {
+  test('真实子进程逐字节输出UTF-8，产物与stderr不得损坏', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'activity-process-utf8-'));
+    try {
+      const stdout = JSON.stringify({ outputs: { comments: [{ text: '如何报名人工智能课程' }] } });
+      const stderr = '地区：杭州';
+      await writeFile(join(cwd, 'utf8.mjs'), `const out=${JSON.stringify(stdout)},err=${JSON.stringify(stderr)};
+for (const [stream,text] of [[process.stdout,out],[process.stderr,err]]) {
+  for (const byte of Buffer.from(text)) { stream.write(Buffer.from([byte])); await new Promise(r=>setTimeout(r,5)); }
+}`);
+      const result = await callActivityProcess({ budget: { max_duration_s: 10, heartbeat_s: 1 },
+        runtime: { entry: 'utf8.mjs', argv: [] } }, { run_tag: 'utf8-run' }, { cwd });
+      expect(result.exit_code).toBe(0);
+      expect(result.stdout).toBe(stdout);
+      expect(result.stderr).toBe(stderr);
+    } finally { await rm(cwd, { recursive: true, force: true }); }
+  });
   test('预算内真实心跳触发安全取消，返回活动清理产物及真实退出码', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'activity-process-heartbeat-'));
     try {

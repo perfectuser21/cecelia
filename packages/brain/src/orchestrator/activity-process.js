@@ -36,11 +36,14 @@ export function callActivityProcess(activity, input, { cwd, signal, onHeartbeat 
       catch { stop('event_sink_failed'); }
       finally { heartbeatBusy = false; }
     }, activity.budget.heartbeat_s * 1000);
+    child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', chunk => {
-      if (Buffer.byteLength(stdout) + chunk.length > MAX_OUTPUT) stop('activity_output_overflow');
+      if (Buffer.byteLength(stdout) + Buffer.byteLength(chunk) > MAX_OUTPUT) stop('activity_output_overflow');
       else stdout += chunk;
     });
-    child.stderr.on('data', chunk => { if (Buffer.byteLength(stderr) < MAX_OUTPUT) stderr += chunk; });
+    child.stderr.on('data', chunk => {
+      if (Buffer.byteLength(stderr) + Buffer.byteLength(chunk) <= MAX_OUTPUT) stderr += chunk;
+    });
     child.stdin.on('error', () => {});
     child.stdin.end(JSON.stringify(input));
     let spawnError = null;
