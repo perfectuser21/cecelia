@@ -145,3 +145,19 @@ it('大量转义和多字节stdout不会扩大认证回执，清理不依赖日�
   const receipt=await x.runner.cancel({...x.input,container_id:c.id,challenge:randomUUID()});
   expect(receipt.status).toBe('cleaned');expect(x.containers.size).toBe(0);
 });
+it('资源等待超过执行期限并重启后仍可启动，执行期限从实际start计时',async()=>{
+  const x=await setup();x.runner.close();
+  const digest=(v)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
+  x.input.job.timeout_sec=1;
+  x.input.config_digest=digest({job:x.input.job,profile_digest:digest(x.options.profiles.harmless)});
+  const waiting=x.api.createScriptRunner({...x.options,assertLocalResources:async()=>{throw new Error('attempt_local_resources_unavailable');}});
+  runners.push(waiting);await waiting.start(x.input);waiting.close();
+  await new Promise((resolve)=>setTimeout(resolve,1100));
+  const restored=x.api.createScriptRunner(x.options);runners.push(restored);
+  await new Promise((resolve)=>setTimeout(resolve,30));
+  await expect(restored.inspect(x.input)).resolves.toMatchObject({status:'waiting_resources',tombstoned:false});
+  x.docker.start=async(id)=>{(await x.docker.inspect(id)).status='running';};
+  await expect(restored.start(x.input)).resolves.toMatchObject({status:'running'});
+  await new Promise((resolve)=>setTimeout(resolve,30));
+  await expect(restored.inspect(x.input)).resolves.toMatchObject({status:'running',tombstoned:false,timed_out:false});
+});
