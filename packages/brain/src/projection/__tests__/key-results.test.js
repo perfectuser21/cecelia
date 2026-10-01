@@ -18,6 +18,7 @@ beforeEach(() => {
   requests.mockReset();
   requests.mockImplementation(async (_token, path, method) => {
     if (path.includes('/query')) return { results: [] };
+    if (path === '/pages/page-new' && method === 'GET') return { parent: { database_id: DB }, properties: { 'Brain ID': { rich_text: [{ plain_text: KR.id }] } } };
     if (path.includes('/databases/') && method === 'GET') return schema();
     if (method === 'POST') return { id: 'page-new' };
     return {};
@@ -61,7 +62,7 @@ describe('Brain KR 独立投影', () => {
     requests.mockClear();
     const hash = krProjectionDigest(DB, buildNotionKrProperties(KR));
     expect(await runNotionKrProjection(makePool({ link: { external_id: 'page-new', content_hash: hash } }), { ...deps(), now: deps().now + 300001 })).toMatchObject({ skipped: 1 });
-    expect(requests).not.toHaveBeenCalled();
+    expect(requests.mock.calls.every(([,path,method]) => method === 'GET')).toBe(true);
   });
   it('数据库回执丢失时按Brain ID查找远程原行，禁止重复创建', async () => {
     const { runNotionKrProjection } = await api();
@@ -163,7 +164,7 @@ describe('独立 KR 配置窄口', () => {
     const query = vi.fn(async sql => sql.includes('SELECT') ? { rows: [{ notion_db_id: DB, brain_table: 'tasks', vessel: 'other', face: 'inlet' }] } : { rows: [] });
     const release = vi.fn();
     await expect(configureKrProjection({ connect: async () => ({ query, release }) }, DB, deps())).rejects.toThrow('归属');
-    expect(query.mock.calls.some(([sql]) => /UPDATE|INSERT/.test(sql))).toBe(false);
+    expect(query.mock.calls.some(([sql]) => /^(?:UPDATE|INSERT)/.test(sql.trim()))).toBe(false);
     expect(query.mock.calls.some(([sql]) => sql === 'ROLLBACK')).toBe(true);
     expect(release).toHaveBeenCalledOnce();
   });

@@ -15,13 +15,15 @@ const PAGE_CAP = 20; // 单库最多翻 20 页（2000 行），超出按 ≥ 记
 
 async function countNotionPages(notionReq, token, dbId, extraBody = {}) {
   let n = 0, cursor, pages = 0, capped = false;
+  const pageRows = [];
   do {
     const r = await notionReq(token, `/databases/${dbId}/query`, 'POST', { page_size: 100, ...(cursor ? { start_cursor: cursor } : {}), ...extraBody });
     n += (r?.results ?? []).length;
+    pageRows.push(...(r?.results ?? []));
     cursor = r?.has_more ? r?.next_cursor : null;
     if (++pages >= PAGE_CAP && cursor) { capped = true; break; }
   } while (cursor);
-  return { n, capped };
+  return { n, capped, pageRows };
 }
 
 const titleOf = (page) => {
@@ -116,16 +118,26 @@ export async function buildProjectionAssertions(pool, { notionReq, token, botUse
   for (const g of byDb.values()) {
     try {
       let brain = 0;
+      let krLinks = null;
       for (const t of g.tables) {
-        const { rows } = t === 'key_results'
-          ? await pool.query(`SELECT count(*)::int AS count FROM projection_links pl
-              JOIN key_results kr ON kr.id=pl.entity_id
-              WHERE pl.target='notion' AND pl.entity_type='key_results'`)
-          : await pool.query(`SELECT count(*)::int AS count FROM ${t} WHERE notion_id IS NOT NULL`);
+        const { rows } = await pool.query(t === 'key_results'
+          ? `SELECT count(*)::int AS count FROM key_results`
+          : `SELECT count(*)::int AS count FROM ${t} WHERE notion_id IS NOT NULL`);
         brain += Number(rows[0]?.count ?? 0);
+        if (t === 'key_results') {
+          const links = await pool.query(`SELECT pl.entity_id, pl.external_id FROM projection_links pl
+            JOIN key_results kr ON kr.id=pl.entity_id
+            WHERE pl.target='notion' AND pl.entity_type='key_results'`);
+          krLinks = links.rows;
+        }
       }
-      const { n, capped } = await countNotionPages(notionReq, token, g.dbId);
+      const { n, capped, pageRows } = await countNotionPages(notionReq, token, g.dbId);
       checked++;
+      if (krLinks && !capped) {
+        const remote = new Map(pageRows.map(page => [page.id, (page.properties?.['Brain ID']?.rich_text ?? []).map(p => p.plain_text ?? p.text?.content ?? '').join('')]));
+        const validLinks = krLinks.filter(link => remote.get(link.external_id) === link.entity_id).length;
+        if (validLinks !== brain) diffs.push(`${g.title}：应投影 ${brain}，有效链接 ${validLinks}，远端 ${n}`);
+      }
       if (!capped && n !== brain) diffs.push(`${g.title}：Brain ${brain}${g.tables.length > 1 ? `(${g.tables.join('+')})` : ''} vs Notion ${n}`);
     } catch { a10Degraded++; }
   }

@@ -102,9 +102,9 @@ async function pushKrRows(pool, token, dbId, notionReq) {
     try {
       const properties = buildNotionKrProperties(kr);
       const hash = krProjectionDigest(dbId, properties);
-      if (kr.external_id && kr.content_hash === hash) { result.skipped++; continue; }
       if (!databaseChecked) { await assertDatabase(token, dbId, notionReq); databaseChecked = true; }
       const existingId = await linkedPage(token, dbId, kr, notionReq);
+      if (existingId === kr.external_id && kr.content_hash === hash) { result.skipped++; continue; }
       const page = existingId
         ? await notionReq(token, `/pages/${existingId}`, 'PATCH', { properties })
         : await notionReq(token, '/pages', 'POST', { parent: { database_id: dbId }, properties });
@@ -128,4 +128,53 @@ async function pushKrRows(pool, token, dbId, notionReq) {
     throw error;
   }
   return result;
+}
+
+
+/** 配置只登记独立 KR 镜子；结构仍由既有迁移维护。 */
+export async function configureKrProjection(pool, databaseId, {
+  token = process.env.NOTION_API_KEY || process.env.NOTION_API_TOKEN || process.env.NOTION_INBOX_TOKEN,
+  notionReq = defaultNotionReq,
+} = {}) {
+  const raw = String(databaseId || '');
+  if (!/^(?:[a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i.test(raw)) throw new Error('database_id 必须为 Notion UUID');
+  const compact = normalizeNotionId(raw);
+  const canonical = `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
+  if (compact === normalizeNotionId(COMPANY_KR_DB_ID)) throw new Error('禁止登记公司 KR 库为 Brain 系统 KR 镜子');
+  if (!token) throw new Error('Notion token 未配置');
+  await assertDatabase(token, canonical, notionReq);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [KR_PROJECTION_VESSEL]);
+    const { rows } = await client.query(
+      `SELECT notion_db_id, brain_table, vessel, face FROM notion_projection_map
+       WHERE lower(replace(notion_db_id, '-', ''))=$1 FOR UPDATE`, [compact]);
+    if (rows.length > 1 || rows.some(r => r.brain_table !== 'key_results' || r.vessel !== KR_PROJECTION_VESSEL || r.face !== 'mirror')) throw new Error('目标投影库已有其它归属，拒绝抢占');
+    if (rows[0] && rows[0].notion_db_id !== canonical) {
+      await client.query('UPDATE notion_projection_map SET notion_db_id=$1, updated_at=NOW() WHERE notion_db_id=$2', [canonical, rows[0].notion_db_id]);
+    }
+    await client.query(
+      `UPDATE notion_projection_map SET status='dormant', updated_at=NOW()
+       WHERE brain_table='key_results' AND vessel=$1 AND face='mirror'
+         AND status='active' AND notion_db_id<>$2`, [KR_PROJECTION_VESSEL, canonical]);
+    const inserted = await client.query(
+      `INSERT INTO notion_projection_map(notion_db_id,title,face,brain_table,direction,vessel,status,space,notes)
+       VALUES ($1,$2,'mirror','key_results','push',$3,'active','system',$4)
+       ON CONFLICT (notion_db_id, COALESCE(brain_table, '')) DO UPDATE
+       SET title=EXCLUDED.title, direction='push', status='active', updated_at=NOW()
+       WHERE notion_projection_map.brain_table='key_results'
+         AND notion_projection_map.vessel=$3 AND notion_projection_map.face='mirror'
+       RETURNING notion_db_id`,
+      [canonical, KR_PROJECTION_TITLE, KR_PROJECTION_VESSEL, '独立系统 KR 镜子；经营 KR/OPC 口径保持独立；Current/Target/Progress 各列独立']);
+    if (!inserted.rowCount) throw new Error('目标投影库已有其它归属，拒绝抢占');
+    await client.query('COMMIT');
+    lastRunByPool.delete(pool);
+    return { database_id: canonical, vessel: KR_PROJECTION_VESSEL, status: 'active' };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }

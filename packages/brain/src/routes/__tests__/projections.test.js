@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const mocks = vi.hoisted(() => ({ query: vi.fn() }));
-vi.mock('../../db.js', () => ({ default: { query: mocks.query } }));
+const mocks = vi.hoisted(() => ({ query: vi.fn(), connect: vi.fn(), notionReq: vi.fn() }));
+vi.mock('../../db.js', () => ({ default: { query: mocks.query, connect: mocks.connect } }));
+
+vi.mock('../../recurring-notion-sync.js', () => ({ notionReq: (...args) => mocks.notionReq(...args) }));
 
 import projectionsRouter from '../projections.js';
 
@@ -63,4 +65,23 @@ describe('KR配置API真实路由挂接', () => {
     expect(response.status).toBe(400);
     expect(response.body.error).toContain('UUID');
   });
+});
+
+
+it('KR配置API成功返回规范库ID并调用事务登记', async () => {
+  const tokenBefore = process.env.NOTION_API_KEY;
+  process.env.NOTION_API_KEY = 'fake';
+  mocks.notionReq.mockResolvedValue({ title: [{ plain_text: 'Brain Key Results' }], properties: Object.fromEntries(Object.entries({Name:'title','Brain ID':'rich_text',Status:'select',Progress:'number',Current:'number',Target:'number',Unit:'rich_text',Source:'rich_text','Brain Updated At':'date'}).map(([name,type]) => [name,{type}])) });
+  const query = vi.fn(async () => ({ rows: [], rowCount: 1 })), release = vi.fn();
+  mocks.connect.mockResolvedValue({ query, release });
+  const app = express(); app.set('trust proxy', 1); app.use(express.json()); app.use('/api/brain', projectionsRouter);
+  try {
+    const response = await request(app).post('/api/brain/projections/notion/key-results/configure').set('X-Forwarded-For', '192.0.2.72').send({ database_id: '11111111111141118111111111111111' });
+    expect(response.status).toBe(200);
+    expect(response.body.database_id).toBe('11111111-1111-4111-8111-111111111111');
+    expect(query.mock.calls.some(([sql]) => sql === 'COMMIT')).toBe(true);
+    expect(release).toHaveBeenCalledOnce();
+  } finally {
+    if (tokenBefore === undefined) delete process.env.NOTION_API_KEY; else process.env.NOTION_API_KEY = tokenBefore;
+  }
 });
