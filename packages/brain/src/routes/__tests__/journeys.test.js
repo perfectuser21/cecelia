@@ -729,3 +729,40 @@ describe('GET /journey_features/:id', () => {
     expect(res.status).toBe(404);
   });
 });
+
+// 永久回归：活动指标接线（903e9956），保持逐工作流记录，非活动格子不继承。
+describe('近七日活动过程指标 API', () => {
+  beforeEach(() => mockQuery.mockReset());
+  async function get(path) {
+    const { default: router } = await import('../journeys.js');
+    const { default: express } = await import('express');
+    const { default: request } = await import('supertest');
+    const app = express(); app.use('/api/brain', router);
+    return request(app).get('/api/brain/' + path);
+  }
+  const metrics = [
+    { activity_id: 'a1', workflow_id: 'w1', p50_duration_ms: 0, first_pass_yield: 0, span_count: 2 },
+    { activity_id: 'a1', workflow_id: 'w2', p50_duration_ms: 900, first_pass_yield: 1, span_count: 3 },
+  ];
+  it('journey_steps 保留同一活动的两个工作流，未观测活动为空', async () => {
+    mockQuery.mockImplementation(async (sql) => ({ rows: String(sql).includes('activity_flow_metrics') ? metrics : [{ id: 'a1' }, { id: 'a2' }] }));
+    const res = await get('journey_steps');
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+    expect(res.body[0].flow_metrics).toEqual(metrics);
+    expect(res.body[1].flow_metrics).toEqual([]);
+  });
+  it('仅 activity 格子接线，step/enabler 保持空，颜色不变', async () => {
+    mockQuery.mockImplementation(async (sql) => ({ rows: String(sql).includes('activity_flow_metrics') ? metrics : [
+      { id: 'cell-a', step_id: 'a1', activity_id: 'a1', cell_level: 'activity', cell_status: 'red' },
+      { id: 'cell-s', step_id: 'a1', activity_id: 'a1', cell_level: 'step' },
+      { id: 'cell-e', activity_id: 'a1', cell_level: 'enabler' },
+    ] }));
+    const res = await get('journey_step_links?cells=1');
+    expect(res.body).toHaveLength(3);
+    expect(res.body[0].flow_metrics).toEqual(metrics);
+    expect(res.body[0].cell_status).toBe('red');
+    expect(res.body[1].flow_metrics).toEqual([]);
+    expect(res.body[2].flow_metrics).toEqual([]);
+  });
+});

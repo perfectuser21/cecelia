@@ -233,3 +233,29 @@ describe('buildStepLinkNotionProperties — 格子行 props（承诺地图翻色
     expect('Journey' in q).toBe(false);
   });
 });
+
+describe('活动近七日过程指标投影', () => {
+  it('单工作流保留零值；已过期与非活动格明确清除旧数字', async () => {
+    const { buildStepLinkNotionProperties } = await import('../notion-probe-projection.js');
+    const base = { journey_name: '路径', cell_level: 'activity', flow_metrics: [{ workflow_id: 'w1', p50_duration_ms: 0, first_pass_yield: 0, pass_rate: 0, span_count: 2 }] };
+    const props = buildStepLinkNotionProperties(base);
+    expect(props.FlowP50Ms).toEqual({ number: 0 });
+    expect(props.FlowFirstPassYield).toEqual({ number: 0 });
+    expect(props.FlowSpanCount).toEqual({ number: 2 });
+    for (const row of [{ ...base, flow_metrics: [] }, { ...base, cell_level: 'step' }, { ...base, cell_level: 'enabler' }]) {
+      const empty = buildStepLinkNotionProperties(row);
+      expect(empty.FlowP50Ms).toEqual({ number: null });
+      expect(empty.FlowFirstPassYield).toEqual({ number: null });
+    }
+  });
+  it('多个工作流不平均分位数；保留逐工作流明细', async () => {
+    const { buildStepLinkNotionProperties } = await import('../notion-probe-projection.js');
+    const props = buildStepLinkNotionProperties({ cell_level: 'activity', flow_metrics: [
+      { workflow_id: 'w1', p50_duration_ms: 100, first_pass_yield: 0.5, span_count: 2 },
+      { workflow_id: 'w2', p50_duration_ms: 900, first_pass_yield: 1, span_count: 3 },
+    ] });
+    expect(props.FlowP50Ms).toEqual({ number: null });
+    expect(props.FlowMetrics.rich_text[0].text.content).toContain('w1');
+    expect(props.FlowMetrics.rich_text[0].text.content).toContain('w2');
+  });
+});
