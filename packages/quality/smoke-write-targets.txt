@@ -125,3 +125,4 @@ task-run-primitive-smoke.sh
 workflow-run-lost-deadline-smoke.sh
 harness-weighted-reservation-smoke.sh
 managed-script-capacity-smoke.sh
+preview-owned-cache-smoke.sh
