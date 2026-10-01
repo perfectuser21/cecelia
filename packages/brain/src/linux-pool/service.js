@@ -84,7 +84,7 @@ export function createLinuxPoolAuthorization({pool,readDeployment=createDeployme
    const current=(await db.query('SELECT state FROM linux_pool_challenges WHERE id=$1 FOR UPDATE',[found.id])).rows[0];
    if(internal){
     if(current.state==='revoked'&&!await internallyRetiredPool(db,found.id,machineId))throw error('linux_pool_explicitly_revoked');
-    const marked=await db.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,pool_retired}',$2::jsonb),updated_at=now() WHERE claimed_by='linux-pool-onboarding' AND payload->'linux_onboarding'->'challenge'->>'id'=$1 AND payload->'linux_onboarding'->>'machine_registry_id'=$3 AND COALESCE(payload->'linux_onboarding'->>'revoked','false')<>'true'",[found.id,JSON.stringify(found.id),machineId]);
+    const marked=await db.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_pool_retired}',$2::jsonb),updated_at=now() WHERE claimed_by='linux-pool-onboarding' AND payload->'linux_onboarding'->'challenge'->>'id'=$1 AND payload->'linux_onboarding'->>'machine_registry_id'=$3 AND COALESCE(payload->'linux_onboarding'->>'revoked','false')<>'true'",[found.id,JSON.stringify(found.id),machineId]);
     if(!marked.rowCount)throw error('linux_pool_control_unavailable');
    }else await stopAutomaticOnboarding(db,machineId);
    await db.query("UPDATE linux_pool_challenges SET state='revoked' WHERE id=$1",[found.id]);

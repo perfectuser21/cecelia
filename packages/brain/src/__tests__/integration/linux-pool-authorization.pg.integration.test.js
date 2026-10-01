@@ -156,8 +156,20 @@ it('池挑战的内部淘汰与外部撤销持久区分，外部撤销停止已�
  const c=await service.challenge(machine,{expected_version_id:null}),flow=randomUUID();
  await pool.query("INSERT INTO tasks(id,status,claimed_by,payload) VALUES($1,'in_progress','linux-pool-onboarding',$2)",[flow,{linux_onboarding:{machine_registry_id:machine,challenge:c,phase:'pool_attest'}}]);
  await service.retire(machine,{challenge_id:c.id,expected_version_id:null});await service.retire(machine,{challenge_id:c.id,expected_version_id:null});
- expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[flow])).rows[0].payload.linux_onboarding.pool_retired).toBe(c.id);
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[flow])).rows[0].payload.linux_pool_retired).toBe(c.id);
  await service.revoke(machine,{challenge_id:c.id,expected_version_id:null});
  await expect(service.retire(machine,{challenge_id:c.id,expected_version_id:null})).rejects.toThrow('linux_pool_explicitly_revoked');
  expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[flow])).rows[0].payload.linux_onboarding.revoked).toBe(true);
+});
+it('内部retire已提交但回执丢失后，真实flow错误保存不能抹掉持久淘汰标记',async()=>{
+ const {createLinuxOnboardingFlow}=await import('../../linux-pool/onboarding-flow.js'),{requestHash}=await import('../../node-onboarding/spec.js');
+ const c=await service.challenge(machine,{expected_version_id:null}),flowId=randomUUID(),parentId=randomUUID();
+ const request={name:config.profile.machine_id,role:'worker',address:'100.64.0.2',ssh_user:'root',ssh_port:22,credential_ref:'op://CS/test/private key',host_key_fingerprint:'SHA256:'+'a'.repeat(43),region:'HK'};
+ const state={machine_registry_id:machine,parent_task_id:parentId,request_hash:requestHash(request),phase:'pool_attest',challenge:c,expected_version_id:null};
+ await pool.query("INSERT INTO tasks(id,status,payload) VALUES($1,'completed',$2)",[parentId,{node_onboarding:{id:machine,request}}]);
+ await pool.query("INSERT INTO tasks(id,status,claimed_by,payload) VALUES($1,'in_progress','linux-pool-onboarding',$2)",[flowId,{linux_onboarding:state}]);
+ await pool.query("UPDATE system_registry SET metadata='{\"role\":\"worker\",\"node_health\":{\"os\":\"linux\"},\"onboarding\":{}}' WHERE id=$1",[machine]);
+ const flow=createLinuxOnboardingFlow({pool,step:async()=>{await service.retire(machine,{challenge_id:c.id,expected_version_id:null});throw Error('lost reply after commit');}});
+ expect(await flow.advance(flowId)).toMatchObject({advanced:false,phase:'pool_attest'});
+ await expect(service.retire(machine,{challenge_id:c.id,expected_version_id:null})).resolves.toMatchObject({authorization_state:'revoked'});
 });
