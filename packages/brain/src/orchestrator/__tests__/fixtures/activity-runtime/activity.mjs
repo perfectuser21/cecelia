@@ -56,6 +56,8 @@ if (action === 'inspect') {
   });
 } else if (action === 'finalize') {
   result.outputs.cleanup = true;
+} else if (action === 'unclassified_complete') {
+  delete result.failure_class;
 } else if (action === 'wrongrun') {
   result.run_tag = 'other-run';
 } else if (action === 'poison') {

@@ -363,3 +363,4 @@ project-locate-smoke.sh
 project-brief-smoke.sh
 
 activity-contract-runtime-smoke.sh
+activity-event-ledger-smoke.sh

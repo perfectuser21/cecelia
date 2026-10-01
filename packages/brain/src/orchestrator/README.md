@@ -190,6 +190,27 @@ docker run --rm --entrypoint sh cecelia/runner:latest -c \
 provider_session_id、error_code，再查 `orchestrator_decision_log`。不要人工复制 session
 到另一个 role；需要恢复时让 watchdog 按上述规则接管。
 
+## 通用活动执行的真实事件账（显式启用）
+
+默认 `activity-contract-run.js --cwd <目录> --receipt <回执>` 仅本地原子回执，忽略事件数据库环境。
+外部执行机连接已注册的 Brain run 时，显式增加 `--event-db --brain-run-id <UUID> --event-source-id <独立UUID>`，
+连接串只通过 `ACTIVITY_EVENT_DATABASE_URL` 提供，凭据从 1Password 流程取得，不放进参数、契约或事件。
+服务调用 `runActivityContractWithEventStore(contract,input,{pool,runId,sourceId,cwd})`，也可直接使用
+`await createActivityEventSink({pool,runId,sourceId,runTag})` 的 `onEvent`，并在 finally 中 `await sink.close()`。
+
+sink 校验已有 `initiative_runs`，持有 source UUID 的会话锁，复用或并发 source 在执行活动前拒绝；
+每次重跑必须新 source UUID，此接口不从旧回执恢复活动。每事件在事务中通过 `createRunEventStore.append`
+调用真实 `append_harness_run_event` 并读回 payload；source_version/local_cursor 是本次调用序号，
+`event_ledger.cursor` 是数据库分配的 run 游标，两个序列可能不同。事件包含安全完整快照；
+活动原始 stdout/stderr 不进DB模式回执，transport 保留退出与耗时字段；结构化secret与明显凭据字符串拒写。
+
+开始事件未成功，主链不得副作用；事件存储失败仍按既有规则执行所有 finalize，保存已采产物并清理。
+终态事件若写失败，CLI本地回执仍保留产物、`event_failures` 与已确认DB游标，不把未确认事件当作落库。
+终态已提交而外部回调失败时，保留原事件并追加 `WF_RUN_FINALIZATION_CORRECTED`，记录修正对象与真实返回快照；
+修正事件若再拒写，只报告已确认游标与失败，不声称数据库终态一致。`auth_failed` 仅布尔状态可保留，字符串按凭据字段脱敏。
+此模块不创建或完成 task/run，不改默认任务路由。真数据库验证使用 `activity-event-ledger-smoke.sh`，
+本地仅接受显式 `cecelia_scratch`，CI使用独立 `cecelia_activity_event_scratch`；无连接环境即失败，无skip。
+
 ## Kernel 架构铁律
 
 1. 真相只在 Git、GitHub PR、数据库和已落库产物中；worker 对话、进程内状态和容器
