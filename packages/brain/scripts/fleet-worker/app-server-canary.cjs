@@ -79,7 +79,7 @@ async function main() {
   }
   console.log(JSON.stringify({ result: 'PASS', canary_id: tag, image, identities: generations.map(({ identity, state }) => ({
     reservation_id: identity.reservation_id, intent_id: identity.intent_id, launch_generation: identity.launch_generation,
-    container_id: state.container_id })), generations: 2, initialize: true, bounded_stdio: true,
+    container_id: state.container_id })), independent_instances: 2, initialize: true, bounded_stdio: true,
     resource_limits: true, home_preserved: true, host_mounts: 0, model_calls: 0 }));
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; }).finally(async () => {

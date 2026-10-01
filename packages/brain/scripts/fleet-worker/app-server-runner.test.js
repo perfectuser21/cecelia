@@ -179,3 +179,43 @@ it('stdio错误未确认attach进程退出时不能开放第二连接', async ()
     expect(await f.runner.attach({ ...input, stream_id: randomUUID() })).toHaveProperty('stdin');
   } finally { f.cleanup(); }
 });
+it('inspect持锁期间确认stdio关闭，锁释放后落盘并允许新流且不释放HOME', async () => {
+  const f = fixture(); let release;
+  try {
+    const input = f.input(); await f.runner.start(input);
+    const stream = await f.runner.attach({ ...input, stream_id: randomUUID() });
+    const original = f.docker.inspect;
+    let entered; const inspecting = new Promise(resolve => { entered = resolve; });
+    const held = new Promise(resolve => { release = resolve; });
+    f.docker.inspect = async id => { entered(); await held; return original(id); };
+    const observation = f.runner.inspect(input); await inspecting;
+    stream.kill();
+    expect(JSON.parse(fs.readFileSync(path.join(f.root, `${input.reservation_id}.json`))).stream_status).toBe('attached');
+    release(); await observation;
+    const next = await f.runner.attach({ ...input, stream_id: randomUUID() });
+    expect(next).toHaveProperty('stdin');
+    await expect(f.runner.start(f.input())).rejects.toThrow('appserver_home_busy');
+    next.kill();
+  } finally { release?.(); await new Promise(resolve => setTimeout(resolve, 20)); f.cleanup(); }
+});
+it('cancel持锁关闭流后持久化closed与墓碑，不能因关闭回执覆盖清理结果', async () => {
+  const f = fixture(); try {
+    const input = f.input(), state = await f.runner.start(input);
+    await f.runner.attach({ ...input, stream_id: randomUUID() });
+    await f.runner.cancel({ ...input, container_id: state.container_id, challenge: randomUUID() });
+    expect(JSON.parse(fs.readFileSync(path.join(f.root, `${input.reservation_id}.json`))))
+      .toMatchObject({ stream_status: 'closed', status: 'cleaned', tombstoned: true });
+    await expect(f.runner.attach({ ...input, stream_id: randomUUID() })).rejects.toThrow('appserver_launch_tombstoned');
+  } finally { f.cleanup(); }
+});
+it('其他操作锁阻止关闭回执时保留事件，下次成功取得锁才重放', async () => {
+  const f = fixture(); try {
+    const input = f.input(); await f.runner.start(input);
+    const stream = await f.runner.attach({ ...input, stream_id: randomUUID() });
+    const lock = path.join(f.root, `${input.reservation_id}.lock`);
+    fs.mkdirSync(lock, { mode: 0o700 }); stream.kill();
+    await expect(f.runner.attach({ ...input, stream_id: randomUUID() })).rejects.toThrow('appserver_operation_locked');
+    fs.rmdirSync(lock);
+    expect(await f.runner.attach({ ...input, stream_id: randomUUID() })).toHaveProperty('stdin');
+  } finally { f.cleanup(); }
+});

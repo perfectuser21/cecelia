@@ -16,7 +16,7 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
   if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
       || (stat.uid !== 0 && stat.uid !== process.getuid?.())) throw new Error('appserver_journal_untrusted');
   const root = fs.realpathSync(stateRoot);
-  const connections = new Map();
+  const connections = new Map(), pendingStreamCloses = new Map();
   function syncDirectory() {
     const fd = fs.openSync(root, 'r'); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   }
@@ -49,16 +49,30 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
         || !/^openclaw-[a-f0-9]{64}$/.test(input.owner_key) || !HASH.test(input.config_digest)
         || !/^[a-z][a-z0-9-]{0,63}$/.test(input.profile)) throw new Error('appserver_identity_invalid');
   }
+  // 只由已确认的子进程 close 产生事件；持锁重放，不能用旧 state 覆盖取消墓碑。
+  function flushStreamClose(reservationId) {
+    const pending = pendingStreamCloses.get(reservationId);
+    if (!pending) return;
+    const current = read(`${reservationId}.json`);
+    if (current?.stream_id === pending.streamId && matches(current, pending.identity)) {
+      current.stream_status = 'closed'; save(current);
+    }
+    if (connections.get(reservationId) === pending.child) connections.delete(reservationId);
+    pendingStreamCloses.delete(reservationId);
+  }
   async function locked(input, operation) {
     validate(input);
     const lock = path.join(root, `${input.reservation_id}.lock`);
     try { fs.mkdirSync(lock, { mode: 0o700 }); }
     catch (error) { if (error.code === 'EEXIST') throw new Error('appserver_operation_locked'); throw error; }
     try {
+      flushStreamClose(input.reservation_id);
       const state = read(`${input.reservation_id}.json`);
       if (state && !matches(state, input)) throw new Error('appserver_identity_mismatch');
       return await operation(state);
-    } finally { fs.rmdirSync(lock); }
+    } finally {
+      try { flushStreamClose(input.reservation_id); } finally { fs.rmdirSync(lock); }
+    }
   }
   function initial(input) {
     const profile = profiles[input.profile];
@@ -147,10 +161,11 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
         const child = createBoundedAppServerStream(docker.attach(state.container_id));
         connections.set(state.reservation_id, child);
         const releaseStream = () => {
-          connections.delete(state.reservation_id);
-          locked(bindings(state), async current => {
-            if (current?.stream_id === input.stream_id) { current.stream_status = 'closed'; save(current); }
-          }).catch(() => {}); // 未确认状态继续阻挡新连接，不释放容器或 HOME。
+          pendingStreamCloses.set(state.reservation_id, {
+            identity: bindings(state), streamId: input.stream_id, child,
+          });
+          // 当前操作持锁时由 finally 重放；外部锁/落盘失败则保留事件，下一次取锁重放。
+          locked(bindings(state), async () => {}).catch(() => {});
         };
         // 错误只请求断流；确认 attach 进程退出后才允许下一条连接。
         child.on('error', () => {});

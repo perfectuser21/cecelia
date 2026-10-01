@@ -12,9 +12,9 @@
 
 **Brain 版本**: 1.352.5
 
-专用 app-server runner 首批提供受限 generation 容器、HOME 单写 journal、精确 ID 取消墓碑及双向有界 JSONL；只有 attach 进程确认退出才释放流占位。Worker 重启后旧等待资源意图不可重新启动，旧身份仍可清理。标准安装器事务打包四模块，默认 profiles 为空，尚未接生产 start、Brain 预算或 OpenClaw RPC adapter，现网 OpenClaw 尚未由此治理。
+专用 app-server runner 首批提供受限 generation 容器、HOME 单写 journal、精确 ID 取消墓碑及双向有界 JSONL；只有 attach 进程确认退出才释放流占位；关闭事件在同一预约锁内重放，不能因锁争用丢失。Worker 重启后旧等待资源意图不可重新启动，旧身份仍可清理。标准安装器事务打包四模块，默认 profiles 为空，尚未接生产 start、Brain 预算或 OpenClaw RPC adapter，现网 OpenClaw 尚未由此治理。
 
-受信 app-server profile 固定镜像 digest、非 root UID/GID、CPU/内存/PID/tmpfs 配额、显式隔离网络和两个受标签验证的 named volume；禁止宿主 HOME、凭据与 socket 挂载。HOME 卷须由受控初始化预建 `/home/runner/.codex` 并赋予 profile 用户写权限；runner 不创建或删除持久卷。真实离线 canary 经 runner 两次 initialize 与 HOME marker 保留，不代表模型登录或线程恢复验证。日志驱动为 none；stdio 内容不进 journal，错误仅固定码。操作锁及未确认流/容器状态持续占位，后续控制面负责恢复。
+受信 app-server profile 固定镜像 digest、非 root UID/GID、CPU/内存/PID/tmpfs 配额、显式隔离网络和两个受标签验证的 named volume；禁止宿主 HOME、凭据与 socket 挂载。HOME 卷须由受控初始化预建 `/home/runner/.codex` 并赋予 profile 用户写权限；runner 不创建或删除持久卷。真实离线 canary 经 runner 两次独立运行实例（不同 reservation，各 launch_generation=1）initialize 与共享 HOME marker 保留，不代表模型登录或线程恢复验证。日志驱动为 none；stdio 内容不进 journal，错误仅固定码。操作锁及未确认流/容器状态持续占位，后续控制面负责恢复。
 
 Worker 标准升级保留可信现役配置，预检与启动健康使用同一有效配置；私有快照及安装 plist 为0600，替换前核指纹，失败事务回滚。
 
