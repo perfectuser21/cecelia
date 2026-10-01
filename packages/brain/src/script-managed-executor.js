@@ -39,6 +39,9 @@ export async function prepareManagedScript(task,spec,pool,deps={}) {
     capabilities=await client.capabilities(spec.host);
     capacitySnapshot=await collectSnapshot(spec.host,managed.profile);
   } catch {return {outcome:'wait',reason:'script_admission_unavailable'};}
+  if((capabilities.execution_version_id||capacitySnapshot.execution_version_id)
+    &&(['execution_version_id','worker_boot_id','policy_digest'].some(k=>capabilities[k]!==capacitySnapshot[k])
+      ||capabilities.profiles?.[managed.profile]!==capacitySnapshot.profile_digest))return {outcome:'wait',reason:'script_admission_changed'};
   if(!capabilities.profiles?.[managed.profile])return {outcome:'blocked',reason:'script_profile_unavailable'};
   const job={profile:managed.profile,cmd:spec.cmd,timeout_sec:spec.timeout_sec,env:spec.env};
   const attempt=(task.payload?.script_attempts?.length??0)+1;
@@ -129,7 +132,7 @@ export async function reapManagedScripts(pool,deps,settle) {
           // created/unknown 表明启动未完成；先持久墓碑并确认消失，再记失败重试。
         }
         if(!row.worker_id) {
-          const identity=await client.capabilities(row.machine_id);
+          const identity=await store.historicalWorker(row.id)??await client.capabilities(row.machine_id);
           row=await store.markLaunching(row.id,identity);
         }
         const claim=await store.claimCleanup(row.id,`script-reaper-${randomUUID()}`,60_000);

@@ -17,6 +17,6 @@ export function createLinuxRuntimeAdmission({pool,readDeployment=createRuntimeDe
   if(identity.worker_boot_id!==d.expected.worker_boot_id)fail();
   // 逻辑独占槽不把观测值换算为授权；真实动态资源与维护闸仍在root每次create/start复核。
   const captured_at=Date.now();return {verified:true,machine,captured_at,expires_at:captured_at+1000,execution_version_id:node.id,execution_grant_id:grant.id,
-   worker_boot_id:d.expected.worker_boot_id,policy_digest:d.policyDigest,capacity:{ok:true,physical_base_slots:1,effective_base_slots:1,available:1}};
+   worker_boot_id:d.expected.worker_boot_id,policy_digest:d.policyDigest,profile_digest:d.authority.profiles[profileId],capacity:{ok:true,physical_base_slots:1,effective_base_slots:1,available:1}};
  });
 }

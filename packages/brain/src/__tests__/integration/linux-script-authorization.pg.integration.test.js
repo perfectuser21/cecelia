@@ -21,7 +21,7 @@ import workerModule from '../../../scripts/fleet-worker/linux-pool-server.cjs';
 import dockerFixture from '../../../scripts/fleet-worker/linux-script-test-fixture.cjs';
 import {createScriptWorkerClient} from '../../script-worker-client.js';
 import {createLinuxScriptAuthorization} from '../../linux-pool/script-authority.js';
-import {usesManagedScript,prepareManagedScript} from '../../script-managed-executor.js';
+import {usesManagedScript,prepareManagedScript,reapManagedScripts} from '../../script-managed-executor.js';
 import {validateScriptPayload} from '../../lib/script-task-spec.js';
 const options=process.env.TEST_DATABASE_URL?{connectionString:process.env.TEST_DATABASE_URL}:DB_DEFAULTS;
 const database=process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_URL).pathname.slice(1):DB_DEFAULTS.database;
@@ -138,6 +138,24 @@ it('两个Linux脚本并发只有一个独占预约，跨version/grant或过期�
  const other=await scriptInput(),outcomes=await Promise.all([store.reserve({...input,capacitySnapshot:await snapshot()}),store.reserve({...other,capacitySnapshot:await snapshot()})]);
  expect(outcomes.filter(x=>x.outcome==='reserved')).toHaveLength(1);expect(outcomes.find(x=>x.outcome==='reserved').reservation.execution_version_id).toBe(p.execution_version_id);
 });
+it('预约事务即固定同代worker身份；迟到旧boot不能污染，重启清理无需当前capabilities',async()=>{
+ await activePool();const store=createScriptReservationStore(pool,{executionDirectory:true}),input=await scriptInput();
+ const {reservation:row}=await store.reserve({...input,capacitySnapshot:await snapshot()});
+ expect(row.worker_id).toBe(f.deployment.machine_id);expect(row.worker_boot_id).toBe(f.deployment.expected.worker_boot_id);
+ await expect(store.markLaunching(row.id,{worker_id:row.worker_id,worker_boot_id:randomUUID()})).rejects.toThrow('reservation_transition_rejected');
+ expect((await pool.query('SELECT worker_boot_id,status FROM capacity_reservations WHERE id=$1',[row.id])).rows[0]).toEqual({worker_boot_id:f.deployment.expected.worker_boot_id,status:'reserved'});
+ expect((await store.markLaunching(row.id,{worker_id:row.worker_id,worker_boot_id:row.worker_boot_id})).status).toBe('launching');
+});
+it('升级前空worker预约仅从持久版本补身份，崩溃reaper不读取当前能力',async()=>{
+ const p=await activePool(),input=await scriptInput(),id=randomUUID(),store=createScriptReservationStore(pool,{executionDirectory:true});
+ await pool.query(`INSERT INTO capacity_reservations(id,machine_id,owner_kind,owner_key,task_id,config_digest,allocation_mode,policy_version,snapshot_time,snapshot_digest,execution_version_id,execution_grant_id)
+  VALUES($1,$2,'script',$3,$4,$5,'exclusive_unclassified','script-exclusive-v1',now(),$5,$6,$7)`,[id,input.machineId,input.ownerKey,input.taskId,input.configDigest,p.execution_version_id,p.grant_ids.safe]);
+ await expect(store.markLaunching(id,{worker_id:input.machineId,worker_boot_id:randomUUID()})).rejects.toThrow('reservation_transition_rejected');
+ await pool.query("UPDATE tasks SET status='cancelled' WHERE id=$1",[input.taskId]);let capabilities=0;
+ const client={inspect:async()=>{throw Error('not started');},capabilities:async()=>{capabilities++;throw Error('new boot cannot fill history');},cancel:async(_machine,body)=>{expect(body.worker_boot_id).toBe(f.deployment.expected.worker_boot_id);return {authenticated:true,receipt:{...body,status:'cleaned',absent:true,tombstoned:true}};}};
+ await reapManagedScripts(pool,{managed:{client}},async()=>{});expect(capabilities).toBe(0);
+ expect((await pool.query('SELECT status,worker_boot_id FROM capacity_reservations WHERE id=$1',[id])).rows[0]).toEqual({status:'released',worker_boot_id:f.deployment.expected.worker_boot_id});
+});
 it.each(['success','resources','maintenance','unknown_create'])('真PG预约→HTTP→Unix→持久root adapter：%s仅精确回执能释放',async mode=>{
  const root=mkdtempSync(path.join(os.tmpdir(),'linux-pg-')),socketPath=path.join(root,'bridge.sock'),docker=dockerFixture.fixture();
  let bridgeClient,bridge,runtime,command,logs;
@@ -158,14 +176,14 @@ it.each(['success','resources','maintenance','unknown_create'])('真PG预约→H
    if(args[0]==='logs')return logs;return result;
   };
   runtime=runtimeModule.createLinuxScriptRuntime({stateRoot:path.join(root,'state'),pathRoot:root,ownerUid:process.getuid(),platform:'linux',getuid:()=>0,key:f.deployment.key,
-   deployment:prepared.runtime_configuration,assertCanLaunch:async()=>{if(['resources','maintenance'].includes(mode))throw Error('script_local_resources_unavailable');},run});
+   deployment:prepared.runtime_configuration,assertCanLaunch:async()=>{if(mode==='resources')throw Error('script_local_resources_unavailable');if(mode==='maintenance')throw Error('worker_draining');},run});
   bridge=bridgeModule.createLinuxScriptBridge({key:f.deployment.key,runtime});await new Promise(r=>bridge.listen(socketPath,r));bridgeClient=bridgeModule.createLinuxScriptBridgeClient({socketPath});
   const client=createScriptWorkerClient({pool,linuxAuthorization:createLinuxScriptAuthorization({readProtected:file=>file===f.deployment.authority.worker_credential.file?f.deployment.workerToken:f.deployment.key})});
   const store=createScriptReservationStore(pool,{executionDirectory:true}),input=await scriptInput(),job={profile:'safe',cmd:'printf actual-linux-output',timeout_sec:20,env:{}};
   input.configDigest=createHash('sha256').update(JSON.stringify({job,profile_digest:f.deployment.authority.profiles.safe})).digest('hex');
   let row=(await store.reserve({...input,capacitySnapshot:await snapshot()})).reservation;row=await store.markLaunching(row.id,await client.capabilities(input.machineId));
   const body=r=>({reservation_id:r.id,machine_id:r.machine_id,owner_key:r.owner_key,intent_id:r.intent_id,launch_generation:r.launch_generation,config_digest:r.config_digest,worker_id:r.worker_id,worker_boot_id:r.worker_boot_id});
-  if(mode==='unknown_create')await expect(client.start(input.machineId,{...body(row),job})).rejects.toThrow();
+  if(['unknown_create','maintenance'].includes(mode))await expect(client.start(input.machineId,{...body(row),job})).rejects.toThrow();
   else{
    const started=(await client.start(input.machineId,{...body(row),job})).receipt;
    if(mode==='success'){expect(started.terminal.stdout).toBe('actual-linux-output');row=await store.markRunning(row.id,started);}
