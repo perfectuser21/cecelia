@@ -84,3 +84,15 @@ it('服务组缺失或与专用账号不一致时前置拒绝，零目标落盘'
  x.deps.runCommand=async(c,a)=>c==='/usr/bin/getent'&&a[0]==='group'?{stdout:'_cecelia:x:99999:\n'}:run(c,a);
  await expect(install(x)).rejects.toThrow('linux_pool_install_account_required');expect(fs.existsSync(path.join(x.root,'etc'))).toBe(false);
 }finally{x.cleanup();}});
+it('真实安装token产物可被pending服务既有64字节读取器接受',async()=>{const x=fixture();let spy;try{
+ await install(x);
+ const {readInstalledFile}=require('./linux-pool-server.cjs');const lstat=fs.lstatSync;
+ // 只映射fixture父目录的root信任；文件内容、owner/mode、O_NOFOLLOW和字节上限均真读。
+ spy=vi.spyOn(fs,'lstatSync').mockImplementation((file,...args)=>{const stat=lstat(file,...args);if(stat.isDirectory()){stat.uid=0;stat.mode&=~0o022;}return stat;});
+ const token=readInstalledFile(path.join(x.root,'etc/cecelia/fleet-worker.token'),{mode:0o600,owner:process.getuid(),maxBytes:64});
+ expect(token).toBe('b'.repeat(64));
+}finally{spy?.mockRestore();x.cleanup();}});
+it('首次启用后启动失败必须在unit仍存在时disable，再删除新增文件',async()=>{const x=fixture();const run=x.deps.runCommand;try{
+ x.deps.runCommand=async(c,a)=>{if(a[0]==='start')throw Error('start_failed');if(a[0]==='disable'&&!fs.existsSync(path.join(x.root,'etc/systemd/system/cecelia-linux-pool.service')))throw Error('unit_not_found');return run(c,a);};
+ await expect(install(x)).rejects.toThrow('linux_pool_install_failed');expect(fs.existsSync(path.join(x.root,'etc/systemd/system/cecelia-linux-pool.service'))).toBe(false);
+}finally{x.cleanup();}});
