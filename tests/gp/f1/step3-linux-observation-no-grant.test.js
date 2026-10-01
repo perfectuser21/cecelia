@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 import probe from '../../../packages/brain/scripts/fleet-worker/node-probe.cjs';
 import { evaluateBaseAdmission } from '../../../packages/brain/src/orchestrator/fleet-node/node-admission.js';
@@ -32,4 +34,18 @@ it('Linux验收canary只能走root完整宿主入口，不能由普通采样请�
   await expect(runLinuxPoolCanary({ nonce: 'a'.repeat(64) }, { platform: 'linux', getuid: () => 501,
     lockHeld: true, runCommand: async () => { commands++; } })).rejects.toThrow('linux_pool_canary_unconfirmed');
   expect(commands).toBe(0);
+});
+
+it('脚本容器事实证明不提供授权；缺持久身份即拒绝，不能复用pool-canary名字绕过', async () => {
+  const { collectLinuxScriptProof } = await import('../../../packages/brain/scripts/fleet-worker/linux-pool-proof.cjs');
+  let commands = 0;
+  await expect(collectLinuxScriptProof({ profile: {}, identity: {}, containerId: 'a'.repeat(64),
+    deps: { runCommand: async () => { commands++; } } })).rejects.toThrow('linux_script_proof_unavailable');
+  expect(commands).toBe(0);
+});
+
+it('Linux接入自动准备工具链和账号的真实产物合同持续验收，仍仅pending', () => {
+  const script = fileURLToPath(new URL('../../../packages/brain/scripts/fleet-worker/linux-pool-bootstrap.test.py', import.meta.url));
+  expect(() => execFileSync('python3', [script, 'BootstrapTests.test_missing_account_and_old_host_node_need_no_manual_setup'],
+    { encoding: 'utf8', timeout: 30000 })).not.toThrow();
 });
