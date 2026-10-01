@@ -10,13 +10,24 @@
 
 
 
-**Brain 版本**: 1.354.0
+**Brain 版本**: 1.354.1
 
 Worker维护暂停在本机三类runner与Docker最终副作用前执行；认证静默回执绑定nonce、同boot和活动版本，客户端断开不减在途计数，orchestrator真实子进程退出才归零。启动对账未确认或prepare潜在副作用后失败均拒签；候选工作区只保守占位，不自动清理。
 
 Mac Worker 版本探针只读固定 OrbStack bundle 的 CFBundleShortVersionString；不运行会初始化管理员目录的 orbctl version。Docker、镜像、自检容器与资源准入仍分别真实检查，版本不可读继续报 unavailable。
 
 CI趋势集成测试将北京自然日与滚动24小时设备窗口独立布置，覆盖陈旧、近期成功和无任务设备；生产巡检阈值不变。
+
+Janitor 新动作的CI冒烟使用十类执行者精确名单、471叠加502合法增量及只读任务白名单；真实PG路由验证默认停用且不触发清理。
+
+
+Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增量；healthz 只隔离真实依赖，不污染机群配置读取。
+
+## Brain 1.352.2 — preview 专属缓存受控回收
+
+- 仅回收带私有归属登记的 preview npm 缓存；writer/回收共锁、固定 GitHub 终态复验、24 小时冷却、删除前 inode 校验与真实磁盘回执。旧缓存不追认。
+- Brain 持久任务与 intent，远端固定鉴权接口；未确认操作只查询原回执，调度默认停用。新增 migration 502 约束专用任务类型及 intent 唯一性。
+- 保留前置 Harness 加权预约、Worker 本机 CPU/内存/磁盘/Docker 二次准入；不包含 OpenClaw 直聊、Linux 执行能力与动态授权。
 
 受管脚本准入仅写 blocked/queued，终态写入者守卫已登记。
 

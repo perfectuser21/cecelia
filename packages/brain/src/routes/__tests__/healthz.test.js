@@ -17,12 +17,12 @@ vi.mock('../../db.js', () => ({
   default: { connect: mockConnect, query: mockQuery }
 }));
 
-vi.mock('../tick.js', () => ({ getTickStatus: vi.fn() }));
-vi.mock('../focus.js', () => ({ getDailyFocus: vi.fn(), setDailyFocus: vi.fn(), clearDailyFocus: vi.fn(), getFocusSummary: vi.fn() }));
-vi.mock('./shared.js', () => ({ getActivePolicy: vi.fn(), getWorkingMemory: vi.fn(), getTopTasks: vi.fn(), getRecentDecisions: vi.fn(), IDEMPOTENCY_TTL: 60, ALLOWED_ACTIONS: [] }));
-vi.mock('../nightly-orchestrator.js', () => ({ getNightlyOrchestratorStatus: vi.fn() }));
-vi.mock('../websocket.js', () => ({ default: { emit: vi.fn() }, WS_EVENTS: {} }));
-vi.mock('../selfcheck.js', () => ({ EXPECTED_SCHEMA_VERSION: '1' }));
+vi.mock('../../tick.js', () => ({ getTickStatus: vi.fn() }));
+vi.mock('../../focus.js', () => ({ getDailyFocus: vi.fn(), setDailyFocus: vi.fn(), clearDailyFocus: vi.fn(), getFocusSummary: vi.fn() }));
+vi.mock('../shared.js', () => ({ getActivePolicy: vi.fn(), getWorkingMemory: vi.fn(), getTopTasks: vi.fn(), getRecentDecisions: vi.fn(), IDEMPOTENCY_TTL: 60, ALLOWED_ACTIONS: [] }));
+vi.mock('../../nightly-orchestrator.js', () => ({ getNightlyOrchestratorStatus: vi.fn() }));
+vi.mock('../../websocket.js', () => ({ default: { emit: vi.fn() }, WS_EVENTS: {} }));
+vi.mock('../../selfcheck.js', () => ({ EXPECTED_SCHEMA_VERSION: '1' }));
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal();
   const { fileURLToPath } = await import('node:url');
