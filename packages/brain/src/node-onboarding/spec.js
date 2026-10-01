@@ -8,6 +8,7 @@ export const STAGES = [
 ];
 export const TERMINAL = new Set(['completed', 'completed_no_pr', 'failed', 'cancelled']);
 const FIELDS = ['name', 'address', 'ssh_user', 'ssh_port', 'credential_ref', 'host_key_fingerprint', 'role', 'region'];
+const hasControl = value => [...value].some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127);
 const ID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 
 export function enrollmentError(message, status = 400) {
@@ -19,7 +20,7 @@ export function validateEnrollment(input) {
   if (Object.keys(input).some(k => !FIELDS.includes(k))) throw enrollmentError('仅接受接入表单字段，不能提交密钥或执行命令');
   const value = { ...input, ssh_port: input.ssh_port ?? 22 };
   for (const key of FIELDS.filter(k => k !== 'ssh_port')) {
-    if (typeof value[key] !== 'string' || value[key].length > 300 || /[\x00-\x1f\x7f]/.test(value[key])) {
+    if (typeof value[key] !== 'string' || value[key].length > 300 || hasControl(value[key])) {
       throw enrollmentError(`接入字段 ${key} 无效`);
     }
     value[key] = value[key].trim();
@@ -47,7 +48,7 @@ export function buildOnboardingScript(id, input, mode = 'enroll', config = {}) {
   const request = validateEnrollment(input);
   const runnerPath = config.runnerPath || process.env.CECELIA_ONBOARDING_RUNNER_PATH
     || '/Users/administrator/perfect21/cecelia-deploy-main/scripts/ops/node-onboarding.mjs';
-  if (!runnerPath.startsWith('/') || /[\x00-\x1f\x7f]/.test(runnerPath)) throw enrollmentError('接入执行器路径未配置', 503);
+  if (!runnerPath.startsWith('/') || hasControl(runnerPath)) throw enrollmentError('接入执行器路径未配置', 503);
   const quoted = `'${runnerPath.replaceAll("'", "'\\''")}'`;
   return {
     host: config.host || resolvePrimaryWorkerId(), cmd: `node ${quoted}`, timeout_sec: 240,

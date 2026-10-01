@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
-import { createOnboardingService } from '../node-onboarding/service.js';
+import { createOnboardingService } from './service.js';
 
 const database = process.env.NODE_ONBOARDING_TEST_DB;
 const suite = database ? describe : describe.skip;

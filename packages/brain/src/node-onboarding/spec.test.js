@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   validateEnrollment, buildOnboardingScript, validateReceipt, onboardingView,
-} from '../node-onboarding/spec.js';
+} from './spec.js';
 
 import { createRoutedTask } from '../work-routing-store.js';
 

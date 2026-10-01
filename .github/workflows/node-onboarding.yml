@@ -41,7 +41,7 @@ jobs:
         working-directory: packages/brain
         env:
           NODE_ONBOARDING_TEST_DB: postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch
-        run: npx vitest run src/__tests__/machine-onboarding.test.js src/__tests__/machine-onboarding-routes.test.js src/__tests__/machine-onboarding-store.test.js --maxWorkers=1 --minWorkers=1
+        run: npx vitest run src/node-onboarding/spec.test.js src/node-onboarding/router.test.js src/node-onboarding/service.test.js --maxWorkers=1 --minWorkers=1
       - name: 设备页操作回归
         working-directory: apps/api
         run: npx vitest run features/system/pages/NodeOnboarding.test.tsx --maxWorkers=1
