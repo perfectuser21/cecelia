@@ -38,6 +38,17 @@ function localRequires() {
 }
 
 describe('GP F1 step3 — installer 覆盖 worker 运行时依赖', () => {
+  it('已打包的本机资源闸拒绝维护期间真实 Docker 启动边界，inspect 保留', async () => {
+    const { createLocalLaunchAdmission } = require('../../../packages/brain/scripts/fleet-worker/local-resource-admission.cjs');
+    const gate = createLocalLaunchAdmission({ lstat: () => ({}) });
+    const commands = [];
+    const run = gate.guardCommand(async (cmd, args) => { commands.push(args); });
+    await expect(run('docker', ['start', 'owned-container'])).rejects.toThrow('worker_draining');
+    await run('docker', ['inspect', 'owned-container']);
+    expect(commands).toEqual([['inspect', 'owned-container']]);
+    expect(gate.snapshot()).toMatchObject({ draining: true, in_flight_launches: 0 });
+  });
+
   it('真实 install-fleet-worker 升级保留配置、凭据引用和他人安装锁', () => {
     const output = execFileSync('bash', [join(WORKER_DIR, 'install-fleet-worker.test.sh')], {
       encoding: 'utf8', timeout: 120000,

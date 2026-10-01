@@ -69,15 +69,18 @@ function createOrchestratorRunner({
   spawnFn = spawn,
   mkdirFn = (p) => fs.mkdirSync(p, { recursive: true, mode: 0o700 }),
   openFn = (p) => fs.openSync(p, 'a'),
+  closeFn = fs.closeSync,
   resolveMainShaFn = null,
   repoSourceFor = (repo) => `https://github.com/${repo}.git`,
   env = process.env,
   probeCredentialHome: probeCredentialHomeFn = probeCredentialHome,
   existsFn = fs.existsSync,
+  assertCanLaunch = () => {},
 } = {}) {
   if (!workspaceManager || typeof workspaceManager.prepare !== 'function') {
     throw new Error('orchestrator_runner_workspace_manager_required');
   }
+  const liveChildren = new Set();
   const jobs = new Map(); // run_id → {status, worktreePath, taskId, pid, startedAt}
   // 2026-09-24 实证：Brain 侧 prepare 请求超时放弃后，这边作业停在 prepared 永不 start，
   // active() 一直计入 → maxConcurrent=2 只跑 1 条也持续 429（任务 281aa798）。
@@ -106,6 +109,7 @@ function createOrchestratorRunner({
   });
 
   return Object.freeze({
+    maintenance(){return {preparing:[...jobs.values()].filter(j=>j.status==='preparing').length,prepared:[...jobs.values()].filter(j=>j.status==='prepared').length,running_processes:liveChildren.size};},
     async prepare(body) {
       const runId = body?.run_id;
       if (!UUID_RE.test(runId ?? '')) throw httpError('orchestrator_run_id_invalid', 400);
@@ -120,6 +124,7 @@ function createOrchestratorRunner({
         // 'preparing'（并发重放，不等待）或其它非终态一律视为冲突
         throw httpError('orchestrator_already_exists', 409);
       }
+      assertCanLaunch();
       if (active() >= maxConcurrent) throw httpError('orchestrator_slots_exhausted', 429);
       // 槽位预占（Fix 2）：检查通过后、任何 await 之前立刻登记占位状态，
       // 防止并发 prepare 在 await 窗口内一起挤过 active() 检查、共同抢占同一个槽位。
@@ -130,6 +135,7 @@ function createOrchestratorRunner({
       jobs.set(runId, job);
       try {
         const baseSha = SHA_RE.test(body?.base_sha ?? '') ? body.base_sha : await resolveMainSha(repo);
+        assertCanLaunch();
         // Fix 1：spec 形状对齐 workspace-manager.cjs 真实 validateSpec（SPEC_FIELDS 白名单
         // 严格拒绝未知字段，task_id 不进 spec；branch 必须匹配 BRANCH_PATTERN=cp-*；
         // expected_head_sha 必须显式 null；mode 必须 read-write，因为 kernel 会在 worktree
@@ -162,6 +168,7 @@ function createOrchestratorRunner({
       expireStalePrepared();
       if (job.status === 'expired') throw httpError('orchestrator_prepared_expired', 410);
       if (job.status !== 'prepared') throw httpError('orchestrator_not_startable', 409);
+      assertCanLaunch();
       const sessionId = body?.controller_session_id;
       const generation = Number(body?.controller_generation);
       if (!UUID_RE.test(sessionId ?? '') || !Number.isSafeInteger(generation) || generation < 1) {
@@ -188,33 +195,44 @@ function createOrchestratorRunner({
       const logDir = path.join(dataRoot, 'orchestrator-logs');
       let stdio = 'ignore';
       let logPath = null;
+      let logFd = null;
       try { // 刀0 同款：零遗言不可接受，日志落盘失败不阻断 spawn
         mkdirFn(logDir);
         logPath = path.join(logDir, `kernel-${runId}.log`);
-        const fd = openFn(logPath);
-        stdio = ['ignore', fd, fd];
+        logFd = openFn(logPath);
+        stdio = ['ignore', logFd, logFd];
       } catch { /* stdio 保持 ignore */ }
-      const child = spawnFn(process.execPath, [
-        runner,
-        '--task-id', job.taskId,
-        '--run-id', runId,
-        '--controller-session-id', sessionId,
-        '--controller-generation', String(generation),
-      ], {
-        cwd: job.worktreePath,
-        detached: true,
-        stdio,
-        env: {
-          ...env,
-          CECELIA_HARNESS_RUNTIME: 'kernel-v1',
-          REPO_ROOT: job.worktreePath,
-          // skills 根不能指向任务 worktree（REPO_ROOT），否则 loadSkillBundle 找不到 SKILL.md。
-          CECELIA_SKILLS_ROOT: path.join(runnerRoot, 'packages/workflows/skills'),
-          CECELIA_CREDENTIAL_HOME_ROOT: credentialHome.root,
-          CECELIA_CREDENTIAL_TRUSTED_UIDS: String(credentialHome.uid),
-          ...(logPath ? { CECELIA_KERNEL_LOG_PATH: logPath } : {}),
-        },
-      });
+      let child;
+      try {
+        // prepare中的await与凭据/文件检查结束后，紧邻宿主spawn再次检查。
+        assertCanLaunch();
+        child = spawnFn(process.execPath, [
+          runner,
+          '--task-id', job.taskId,
+          '--run-id', runId,
+          '--controller-session-id', sessionId,
+          '--controller-generation', String(generation),
+        ], {
+          cwd: job.worktreePath,
+          detached: true,
+          stdio,
+          env: {
+            ...env,
+            CECELIA_HARNESS_RUNTIME: 'kernel-v1',
+            REPO_ROOT: job.worktreePath,
+            // skills 根不能指向任务 worktree（REPO_ROOT），否则 loadSkillBundle 找不到 SKILL.md。
+            CECELIA_SKILLS_ROOT: path.join(runnerRoot, 'packages/workflows/skills'),
+            CECELIA_CREDENTIAL_HOME_ROOT: credentialHome.root,
+            CECELIA_CREDENTIAL_TRUSTED_UIDS: String(credentialHome.uid),
+            ...(logPath ? { CECELIA_KERNEL_LOG_PATH: logPath } : {}),
+          },
+        });
+      } finally {
+        // spawn 已复制子端句柄；父端无论被暂停、同步失败或成功都立即关闭。
+        if (logFd !== null) {
+          try { closeFn(logFd); } catch { console.warn('[orchestrator-runner] log_fd_close_failed'); }
+        }
+      }
       // C2（终审）：detached spawn 的异步 ENOENT/EACCES 走 'error' 事件；不监听=
       // uncaughtException=整个 fleet-worker 进程崩（连坐 attempt 面）。必须在同步
       // pid 检查之前挂上，因为 error 事件也可能在下一个 tick 就到。
@@ -229,7 +247,9 @@ function createOrchestratorRunner({
       // C1（终审）：orchestrator 槽位只借不还——进程退出即释放槽位，否则 active()
       // 恒占坑，第 3 个 prepare 起 orchestrator_slots_exhausted。detached+unref 下
       // exit 事件在父进程（fleet-worker）存活期间仍会送达。
+      liveChildren.add(child);
       child.once('exit', (code) => {
+        liveChildren.delete(child);
         job.status = code === 0 ? 'done' : 'failed';
       });
       child.unref?.();
