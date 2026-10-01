@@ -15,6 +15,11 @@ async function close(server) {
   }
 }
 
+async function listenPair(desired, foreign, { portForAttempt = () => 0 } = {}) {
+  await listen(desired, { host: '::1', port: portForAttempt(0), ipv6Only: true });
+  await listen(foreign, { host: '127.0.0.1', port: desired.address().port });
+}
+
 describe('Supertest loopback matches the real listener family', () => {
   it('reaches IPv6 DB failure500 rather than a same-port IPv4 service401', async () => {
     let queryCalls = 0;
@@ -30,8 +35,7 @@ describe('Supertest loopback matches the real listener family', () => {
       res.end(JSON.stringify({ error: 'controlled_other_service' }));
     });
     try {
-      await listen(desired, { host: '::1', port: 0, ipv6Only: true });
-      await listen(foreign, { host: '127.0.0.1', port: desired.address().port });
+      await listenPair(desired, foreign);
       const probe = request(desired).get('/fixture');
       const res = await probe;
       expect(res.status).toBe(500);
@@ -42,6 +46,53 @@ describe('Supertest loopback matches the real listener family', () => {
     } finally {
       await close(foreign);
       await close(desired);
+    }
+  });
+
+  it('reserves both address families after a real IPv4-only port collision', async () => {
+    let blockerCalls = 0;
+    const blocker = http.createServer((_req, res) => { blockerCalls += 1; res.end('existing-listener'); });
+    const desired = http.createServer((_req, res) => res.end('desired'));
+    const foreign = http.createServer((_req, res) => res.end('foreign'));
+    try {
+      await listen(blocker, { host: '127.0.0.1', port: 0 });
+      const occupied = blocker.address().port;
+      await listenPair(desired, foreign, { portForAttempt: (attempt) => attempt === 0 ? occupied : 0 });
+      expect(desired.address().port).not.toBe(occupied);
+      expect(foreign.address().port).toBe(desired.address().port);
+      expect((await request(desired).get('/')).text).toBe('desired');
+      expect((await request(foreign).get('/')).text).toBe('foreign');
+      expect(blocker.listening).toBe(true);
+      expect(blocker.address().port).toBe(occupied);
+      expect(blockerCalls).toBe(0);
+    } finally {
+      await close(foreign);
+      await close(desired);
+      await close(blocker);
+    }
+  });
+
+  it('bounds real occupied-port retries and releases its own listeners', async () => {
+    const blocker = http.createServer();
+    const desired = http.createServer();
+    const foreign = http.createServer();
+    let attempts = 0;
+    try {
+      await listen(blocker, { host: '127.0.0.1', port: 0 });
+      const occupied = blocker.address().port;
+      await expect(listenPair(desired, foreign, {
+        maxAttempts: 3,
+        portForAttempt: () => { attempts += 1; return occupied; },
+      })).rejects.toMatchObject({ code: 'EADDRINUSE' });
+      expect(attempts).toBe(3);
+      expect(desired.listening).toBe(false);
+      expect(foreign.listening).toBe(false);
+      expect(blocker.listening).toBe(true);
+      expect(blocker.address().port).toBe(occupied);
+    } finally {
+      await close(foreign);
+      await close(desired);
+      await close(blocker);
     }
   });
 
