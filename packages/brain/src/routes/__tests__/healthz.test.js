@@ -28,6 +28,8 @@ vi.mock('fs', () => ({ readFileSync: () => JSON.stringify({ version: '1.0.0' }) 
 const { default: statusRouter } = await import('../status.js');
 import express from 'express';
 import supertest from 'supertest';
+import { readFileSync } from 'node:fs';
+import { validateNodeProfileRegistry } from '../../orchestrator/fleet-node/node-profile.js';
 
 function makeApp() {
   const app = express();
@@ -48,6 +50,12 @@ beforeEach(() => {
 });
 
 describe('GET /api/brain/healthz', () => {
+  it('版本读取 fixture 保留真实 fleet 注册表文件', () => {
+    const registry = JSON.parse(readFileSync(new URL('../../../config/fleet-node-profiles.json', import.meta.url), 'utf8'));
+    expect(validateNodeProfileRegistry(registry.profiles)).toBe(true);
+    expect(JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url))).version).toBe('1.0.0');
+  });
+
   it('DB ok + tick alive → status:ok + HTTP 200', async () => {
     mockQuery.mockResolvedValue({
       rows: [{ value_json: { timestamp: RECENT_TICK } }]
