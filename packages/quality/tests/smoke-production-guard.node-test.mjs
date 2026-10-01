@@ -453,3 +453,26 @@ test('guarded live psql invocations must disable default startup config', async 
     assert.doesNotMatch(commands, /\bpsql[ \t]+(?!-X(?:[ \t]|$))/, `${name}: psql must not read startup config`);
   }
 });
+
+
+for (const [name, overrides, expected] of [
+  ['disabled Harness', { HARNESS_ROLE_CHAIN_ENABLED: '' }, 'SKIP: real Harness role chain requires explicit opt-in'],
+  ['missing explicit DB', { HARNESS_ROLE_CHAIN_ENABLED: '1', DB_URL: '' }, 'DB_URL is required'],
+]) {
+  test(`role-chain keeps its inert input contract: ${name}`, async () => {
+    await fixture(async ({ requests, smoke }) => {
+      const result = await smoke('unified-work-router-role-chain', overrides);
+      assert.ok(result.output.includes(expected), result.output);
+      if (name === 'missing explicit DB') assert.notEqual(result.code, 0);
+      assert.deepEqual(requests, []);
+    });
+  });
+}
+test('valid Harness inputs still cannot write without the general write authorization', async () => {
+  await fixture(async ({ requests, smoke }) => {
+    const result = await smoke('unified-work-router-role-chain', { HARNESS_ROLE_CHAIN_ENABLED: '1',
+      DB_URL: 'postgresql://localhost/cecelia_test', BASELINE_SHA: 'fixture' });
+    assert.equal(result.code, 0, result.output);
+    assert.deepEqual(requests, []);
+  });
+});
