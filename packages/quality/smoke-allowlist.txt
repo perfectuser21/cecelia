@@ -361,6 +361,6 @@ projects-table-upgrade-smoke.sh
 cell-color-step-level-smoke.sh
 project-locate-smoke.sh
 project-brief-smoke.sh
-
 phone-registry-sync-smoke.sh
 smoke-production-guard-smoke.sh
+alertness-schema-smoke.sh

@@ -2,11 +2,12 @@
 // cecelia-bridge.js — HTTP bridge between Brain and cecelia-run
 const http = require('http');
 const fs = require('fs');
-const { execSync, exec } = require('child_process');
+const { execSync } = require('child_process');
+const { createBridgeLifecycle } = require('./lib/bridge-lifecycle.cjs');
+const llmLifecycle = createBridgeLifecycle();
 
 const PORT = process.env.BRIDGE_PORT || 3457;
 const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
-const BRIDGE_TIMEOUT_MS = parseInt(process.env.CECELIA_BRIDGE_TIMEOUT_MS || '120000', 10);
 
 const server = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/trigger-cecelia') {
@@ -81,16 +82,9 @@ const server = http.createServer((req, res) => {
         }
 
         const modelArg = model || 'haiku';
-        // MAX_BRIDGE_LLM_TIMEOUT_MS: 每请求超时的安全上限（默认 10 分钟），允许 Cortex Opus 等慢模型
-        // BRIDGE_TIMEOUT_MS 仍作为"未传 timeout 时"的默认值（120s）
-        const MAX_BRIDGE_LLM_TIMEOUT_MS = parseInt(process.env.CECELIA_BRIDGE_MAX_TIMEOUT_MS || '600000', 10);
-        const timeoutMs = Math.min(timeout || BRIDGE_TIMEOUT_MS, MAX_BRIDGE_LLM_TIMEOUT_MS);
         const claudeBin = process.env.CLAUDE_BIN || '/opt/homebrew/bin/claude';
         const args = ['-p', prompt, '--model', modelArg, '--output-format', 'text'];
 
-        const startTime = Date.now();
-        let timedOut = false;
-        const { spawn } = require('child_process');
         const env = Object.assign({}, process.env);
         delete env.CLAUDECODE;
         // 账号轮换：如果传入 accountId，用 homedir 拼出正确路径
@@ -103,53 +97,9 @@ const server = http.createServer((req, res) => {
         // cwd 隔离：LLM 调用的 session 不污染 cecelia 项目的 /resume 列表
         const llmWorkDir = '/tmp/cecelia-llm';
         try { require('fs').mkdirSync(llmWorkDir, { recursive: true }); } catch {}
-        const child = spawn(claudeBin, args, {
-          env,
-          cwd: llmWorkDir,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: timeoutMs,
-        });
-
-        let stdout = '';
-        let stderr = '';
-        child.stdout.on('data', d => stdout += d);
-        child.stderr.on('data', d => stderr += d);
-
-        const timer = setTimeout(() => {
-          timedOut = true;
-          child.kill('SIGTERM');
-        }, timeoutMs);
-
-        child.on('close', (code) => {
-          clearTimeout(timer);
-          const elapsed = Date.now() - startTime;
-
-          if (timedOut) {
-            console.warn(`[bridge] /llm-call timeout after ${elapsed}ms model=${modelArg} - returning degraded response`);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: false, status: 'timeout', degraded: true, message: 'LLM call timed out', elapsed_ms: elapsed }));
-            return;
-          }
-
-          if (code !== 0) {
-            console.error(`[bridge] /llm-call error (${elapsed}ms) code=${code}: ${stderr.slice(0, 200)}`);
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: false, error: stderr.slice(0, 500) || `exit code ${code}`, elapsed_ms: elapsed }));
-            return;
-          }
-
-          const text = stdout.trim();
-          console.log(`[bridge] /llm-call ${modelArg}${accountId ? ` [${accountId}]` : ''} → ${text.length} chars in ${elapsed}ms`);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, text, model: modelArg, elapsed_ms: elapsed }));
-        });
-
-        child.on('error', (err) => {
-          clearTimeout(timer);
-          const elapsed = Date.now() - startTime;
-          console.error(`[bridge] /llm-call spawn error (${elapsed}ms): ${err.message}`);
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: err.message, elapsed_ms: elapsed }));
+        llmLifecycle.run(req, res, {
+          command: claudeBin, args, timeout, model: modelArg,
+          options: { env, cwd: llmWorkDir, stdio: ['ignore', 'pipe', 'pipe'] },
         });
       } catch (err) {
         console.error(`[bridge] /llm-call parse error: ${err.message}`);
@@ -374,6 +324,8 @@ const server = http.createServer((req, res) => {
     res.end('Not Found');
   }
 });
+
+llmLifecycle.bindShutdown(server);
 
 server.listen(PORT, () => {
   console.log(`[bridge] cecelia-bridge listening on port ${PORT}`);

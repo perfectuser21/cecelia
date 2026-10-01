@@ -4,8 +4,9 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { execSync, spawn } = require('child_process');
-const { terminateChild } = require('./lib/child-kill.cjs');
+const { execSync } = require('child_process');
+const { createBridgeLifecycle, safeRespond } = require('./lib/bridge-lifecycle.cjs');
+const llmLifecycle = createBridgeLifecycle();
 
 // MIME → 文件扩展名（/llm-call 图片临时文件使用）
 const MIME_TO_EXT = {
@@ -20,7 +21,6 @@ try { fs.mkdirSync(BRIDGE_IMAGE_DIR, { recursive: true }); } catch {}
 
 const PORT = process.env.BRIDGE_PORT || 3457;
 const BRAIN_URL = process.env.BRAIN_URL || 'http://localhost:5221';
-const BRIDGE_TIMEOUT_MS = parseInt(process.env.CECELIA_BRIDGE_TIMEOUT_MS || '120000', 10);
 
 /**
  * 自动发现 claude 二进制文件路径。
@@ -49,16 +49,6 @@ function discoverClaudeBin() {
   return 'claude';
 }
 const CLAUDE_BIN = discoverClaudeBin();
-
-/**
- * Safe response helper — prevents ERR_HTTP_HEADERS_SENT crash.
- * Once res.end() is called, subsequent calls are no-ops.
- */
-function safeRespond(res, statusCode, body) {
-  if (res.writableEnded || res.headersSent) return;
-  res.writeHead(statusCode, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(body));
-}
 
 const server = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url === '/trigger-cecelia') {
@@ -113,7 +103,7 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
-      // 图片临时文件路径（多模态），需要在 close/error 回调里清理
+      // 图片临时文件路径（多模态），确认整个进程组退出后清理
       let imageTmpPath = null;
       const cleanupImage = () => {
         if (imageTmpPath) {
@@ -130,8 +120,6 @@ const server = http.createServer((req, res) => {
         }
 
         const modelArg = model || 'haiku';
-        const MAX_BRIDGE_LLM_TIMEOUT_MS = parseInt(process.env.CECELIA_BRIDGE_MAX_TIMEOUT_MS || '600000', 10);
-        const timeoutMs = Math.min(timeout || BRIDGE_TIMEOUT_MS, MAX_BRIDGE_LLM_TIMEOUT_MS);
 
         // ──────── 多模态：image_base64 支持 ────────
         // claude CLI 本身没有 --image 参数，但支持 Read 工具读取本地文件。
@@ -159,8 +147,6 @@ const server = http.createServer((req, res) => {
 
         const args = ['-p', finalPrompt, '--model', modelArg, '--output-format', 'text', ...extraArgs];
 
-        const startTime = Date.now();
-        let timedOut = false;
         const env = Object.assign({}, process.env);
         delete env.CLAUDECODE;
         const { homedir } = require('os');
@@ -179,51 +165,10 @@ const server = http.createServer((req, res) => {
 
         const llmWorkDir = '/tmp/cecelia-llm';
         try { fs.mkdirSync(llmWorkDir, { recursive: true }); } catch {}
-        const child = spawn(CLAUDE_BIN, args, {
-          env,
-          cwd: llmWorkDir,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: timeoutMs,
-        });
-
-        let stdout = '';
-        let stderr = '';
-        child.stdout.on('data', d => stdout += d);
-        child.stderr.on('data', d => stderr += d);
-
-        const timer = setTimeout(() => {
-          timedOut = true;
-          // 立即回话：claude -p 无视 SIGTERM 时 'close' 永远不来，调用方会一直等下去
-          console.warn(`[bridge] /llm-call timeout after ${Date.now() - startTime}ms model=${modelArg}`);
-          safeRespond(res, 200, { ok: false, status: 'timeout', degraded: true, message: 'LLM call timed out', elapsed_ms: Date.now() - startTime });
-          terminateChild(child, { graceMs: 5000 });
-        }, timeoutMs);
-
-        child.on('close', (code) => {
-          clearTimeout(timer);
-          cleanupImage();
-          const elapsed = Date.now() - startTime;
-
-          if (timedOut) return; // 超时那一刻已回话并收尸
-
-          if (code !== 0) {
-            console.error(`[bridge] /llm-call error (${elapsed}ms) code=${code}: ${stderr.slice(0, 200)}`);
-            safeRespond(res, 500, { ok: false, error: stderr.slice(0, 500) || `exit code ${code}`, elapsed_ms: elapsed });
-            return;
-          }
-
-          const text = stdout.trim();
-          const imgTag = imageTmpPath === null && image_base64 ? ' +image' : '';
-          console.log(`[bridge] /llm-call ${modelArg}${accountId ? ` [${accountId}]` : ''}${image_base64 ? ' +image' : ''} → ${text.length} chars in ${elapsed}ms`);
-          safeRespond(res, 200, { ok: true, text, model: modelArg, elapsed_ms: elapsed });
-        });
-
-        child.on('error', (err) => {
-          clearTimeout(timer);
-          cleanupImage();
-          const elapsed = Date.now() - startTime;
-          console.error(`[bridge] /llm-call spawn error (${elapsed}ms): ${err.message}`);
-          safeRespond(res, 500, { ok: false, error: err.message, elapsed_ms: elapsed });
+        llmLifecycle.run(req, res, {
+          command: CLAUDE_BIN, args, timeout, model: modelArg,
+          options: { env, cwd: llmWorkDir, stdio: ['ignore', 'pipe', 'pipe'] },
+          cleanup: cleanupImage,
         });
       } catch (err) {
         cleanupImage();
@@ -274,6 +219,8 @@ const server = http.createServer((req, res) => {
 process.on('uncaughtException', (err) => {
   console.error(`[bridge] Uncaught exception (recovered): ${err.message}`);
 });
+
+llmLifecycle.bindShutdown(server);
 
 server.listen(PORT, () => {
   console.log(`[bridge] Listening on port ${PORT}`);

@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../../../packages/brain/src/runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * 合同测试 — harness relay grok executor 收编
  * TASK_ID: a598772e-7f74-40f0-a022-d0e8d2b35dc0
