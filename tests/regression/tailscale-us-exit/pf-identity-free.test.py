@@ -130,6 +130,7 @@ class InterfacePolicyTests(unittest.TestCase):
         rules = self.policy.generate_rules(None, {}, allowed_self_ips={"100.86.57.69"},
             now=1000, lan_interfaces=["en0", "utun42", "bad interface"])
         self.assertIn("on en0 inet proto udp from 0.0.0.0 port 68 to 255.255.255.255 port 67 no state", rules)
+        self.assertIn("on en0 inet proto udp from (en0) port 68 to 255.255.255.255 port 67 no state", rules)
         self.assertNotIn("on utun42", rules)
 
     def test_stun_only_nodes_do_not_authorize_derp_tcp(self):
