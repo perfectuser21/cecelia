@@ -98,3 +98,18 @@ test('控制器失败即使输出正确ID也不得确认核验通过或误报账
   assert.equal(f.run().receipts[0].status, 'unreadable');
   assert.match(f.log(), /account-current/);
 });
+
+test('v1坐标上限迁到v2真实宽高须加一，v2尺寸不得再增加', t => {
+  const f = fixture(t); writeFileSync(join(f.conf, 'douyin-phone-profiles.tsv'), 'p1\tSER1\tMODEL\t1079\t2411\n');
+  assert.equal(f.run().ok, true);
+  assert.match(readFileSync(join(f.conf, 'douyin-phone-profiles.tsv'), 'utf8'), /SER1\tMODEL\t1080\t2412/);
+  assert.equal(f.run().ok, true);
+  assert.match(readFileSync(join(f.conf, 'douyin-phone-profiles.tsv'), 'utf8'), /SER1\tMODEL\t1080\t2412/);
+});
+test('业务成功但wrapper明确报告清场失败不得缓存当天核验通过', t => {
+  const f = fixture(t); const ctl = f.env.PHONE_AGENT_CONTROLLER;
+  writeFileSync(ctl, readFileSync(ctl, 'utf8') + '\nif [ "$3" = with-lock ]; then echo "warning: close-app cleanup failed" >&2; fi\n');
+  assert.equal(f.run().receipts[0].status, 'cleanup_failed');
+  assert.equal(f.run().receipts[0].status, 'cleanup_failed');
+  assert.equal((f.log().match(/account-current/g) ?? []).length, 2);
+});

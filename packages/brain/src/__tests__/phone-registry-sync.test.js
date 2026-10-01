@@ -62,10 +62,10 @@ describe('台账同步调度', () => {
     expect(f.calls.some(c => c.sql.includes('pg_advisory_unlock'))).toBe(true);
     expect(f.client.release).toHaveBeenCalled(); expect(exec).not.toHaveBeenCalled();
   }, 250);
-  it('未知账号或读取失败必须去重提醒，忙碌手机仍仅延后核验', async () => {
+  it.each(['unknown_account', 'unreadable', 'unreachable', 'cleanup_failed'])('核验%s必须去重提醒，忙碌手机仍仅延后核验', async (status) => {
     const f = fixture(); const bark = vi.fn();
     const exec = vi.fn(async cmd => JSON.stringify({ ok: true, receipts: [
-      { serial: 'SER1', day: '2030-01-01', status: cmd.includes('xian-m1') ? 'unreadable' : 'task_busy' },
+      { serial: 'SER1', day: '2030-01-01', status: cmd.includes('xian-m1') ? status : 'task_busy' },
     ] }));
     const out = await runPhoneRegistrySync(f.pool, { token: 'test', notionReq: async () => ({ results: [] }), exec,
       now: 1900000000000, program: 'fixture', inContainer: false, bark });
