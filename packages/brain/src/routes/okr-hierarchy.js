@@ -16,6 +16,7 @@ import pool from '../db.js';
 import { computeProgress } from '../advancement-progress.js';
 import taskProjectsRoutes from './task-projects.js';
 import { getProjectsForKrBatch } from '../project-progress.js';
+import { recalculateKrProgress } from '../lib/kr-recalculate-progress.js';
 
 const router = Router();
 
@@ -309,69 +310,16 @@ router.get('/tree', async (req, res) => {
 
 // ─── KR 进度重算 ──────────────────────────────────────────────────────────────
 
-/**
- * POST /api/brain/okr/key-results/:id/recalculate-progress
- * 重算指定 KR 的进度：
- *   current_value = completed tasks / total tasks × target_value
- *
- * 链路（棒5起，决策 ee4842a6/3feeae3e）：key_result → projects（真身表）→ tasks。
- * scope/initiative 层已退役（棒4，migration 499），不再经 okr_projects/okr_scopes/
- * okr_initiatives 查询。统计口径与 project-progress.js 的 project 级口径一致：
- * 排除已取消/归档的 Project、排除 task_type='project' 的子项目根任务、排除已取消任务。
- *
- * 注：这里是"该 KR 下所有 Project 的 task 扁平合计"写 current_value，与
- * kr-progress.js updateKrProgress()"按 project 分别算完成率再平均"写 progress 是
- * 两个不同字段、两种不同口径，历史上就是分开的（保持不变，不在本棒合并）。
- */
+/** 重算与定时同步共用 project 等权聚合；无有效 target 时 current_value 为 NULL。 */
 router.post('/key-results/:id/recalculate-progress', async (req, res) => {
   try {
-    const { id } = req.params;
-
-    // 验证 KR 存在
-    const krResult = await pool.query('SELECT id, target_value FROM key_results WHERE id = $1', [id]);
-    if (!krResult.rows.length) {
-      return res.status(404).json({ success: false, error: 'KeyResult not found' });
-    }
-    const { target_value } = krResult.rows[0];
-
-    // 统计该 KR 下所有 Project 关联的 tasks
-    const statsResult = await pool.query(`
-      SELECT
-        COUNT(t.id) FILTER (WHERE t.status IN ('completed', 'completed_no_pr')) AS completed_count,
-        COUNT(t.id) AS total_count
-      FROM projects p
-      LEFT JOIN tasks t ON t.project_id = p.id AND t.task_type <> 'project' AND t.status <> 'cancelled'
-      WHERE p.kr_id = $1 AND p.status NOT IN ('cancelled', 'archived')
-    `, [id]);
-
-    const { completed_count, total_count } = statsResult.rows[0];
-    const completedNum = parseInt(completed_count, 10) || 0;
-    const totalNum = parseInt(total_count, 10) || 0;
-
-    // 计算新进度（total=0 时进度为 0）
-    const newValue = totalNum > 0
-      ? Math.round((completedNum / totalNum) * parseFloat(target_value) * 100) / 100
-      : 0;
-
-    // 更新 current_value
-    await pool.query(
-      'UPDATE key_results SET current_value = $1, updated_at = now() WHERE id = $2',
-      [newValue, id]
-    );
-
-    res.json({
-      success: true,
-      kr_id: id,
-      completed_tasks: completedNum,
-      total_tasks: totalNum,
-      target_value: parseFloat(target_value),
-      current_value: newValue
-    });
+    const result = await recalculateKrProgress(pool, req.params.id);
+    if (!result) return res.status(404).json({ success: false, error: 'KeyResult not found' });
+    res.json({ success: true, ...result });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
-
 
 // ─── OKR 当前进度快照 ──────────────────────────────────────────────────────────
 

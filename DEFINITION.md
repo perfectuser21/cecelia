@@ -58,6 +58,18 @@
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
 
+## Brain 1.348.14 — golden_path 退役应急只读与调用观测（任务 6c2e8c71）
+
+- 旧运行回执与旧步骤决策写入口永久 410；`GOLDEN_PATH_LEGACY_READ=1` 仅允许五条旧读接口，不能写回执或推进 feature。
+- 旧接口命中通过现有 event-bus 写 `cecelia_events`，事件 `golden_path_legacy_access`；记录接口模板、方法、读写类型和拒绝/应急读放行。正文、查询参数、实体 ID 和凭据不入事件；事件失败沿用 event-bus 告警语义，退役闸仍生效。
+- 一周观察以本补丁生产上线时刻为起点，验收流量单独留证；原第一刀未记录命中，不能据此前日志无命中判定观察通过。旧表保留，第二刀及两条活链承接仍依原交接。
+
+## Brain 1.348.13 — KR 重算统一项目口径（任务 7aeb81a6）
+
+- 重算复用 project 等权聚合，写 progress 与 projects_v1 来源；目标值 NULL 或非有限时 current_value 保持 NULL。
+- 无 project 保留现有进度；并发写入条件校验并重新读取，人类更新优先。
+- 永久接口及真库回归覆盖 NaN 清理、等权换算、幂等和人类并发更新。
+
 ## Brain 1.348.12 — 归位器永远判新建修复（任务 912c1143，链 2afa6d69 第 6 棒）
 
 - 病根（2026-10-01 生产 be95ec9c 实测）：`POST /api/brain/projects/locate` 本项目排第一却 score=0.145<0.55 判 create；口语一句话前三全是 inactive 的「Test Project」。三因：embedding 对 200+ 候选逐个调用套 800ms 总超时必回退关键词；关键词用 Jaccard（交集/并集）被长候选文本稀释，又与语义共用 0.55 阈值；候选含 176 条 okr_projects 搬家带来的 inactive 历史项目。
