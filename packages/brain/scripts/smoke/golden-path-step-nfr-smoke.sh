@@ -28,11 +28,11 @@ req() {
   local method="$1" url="$2" data="${3:-}"
   local out
   if [ -n "$data" ]; then
-    echo "  \$ curl -X $method '$url' -d '$data'"
-    out=$(curl -s -w $'\n%{http_code}' -X "$method" "$url" -H 'Content-Type: application/json' -d "$data")
+    echo "  \$ curl -q -X $method '$url' -d '$data'"
+    out=$(curl -q -s -w $'\n%{http_code}' -X "$method" "$url" -H 'Content-Type: application/json' -d "$data")
   else
-    echo "  \$ curl -X $method '$url'"
-    out=$(curl -s -w $'\n%{http_code}' -X "$method" "$url")
+    echo "  \$ curl -q -X $method '$url'"
+    out=$(curl -q -s -w $'\n%{http_code}' -X "$method" "$url")
   fi
   CODE="${out##*$'\n'}"
   BODY="${out%$'\n'*}"

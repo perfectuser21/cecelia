@@ -36,7 +36,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! curl -sf "$BRAIN_URL/api/brain/health" >/dev/null 2>&1; then
+if ! curl -q -sf "$BRAIN_URL/api/brain/health" >/dev/null 2>&1; then
   echo "[blade-bc smoke] SKIP — Brain 未启动 ($BRAIN_URL)"
   exit 0
 fi
@@ -49,7 +49,7 @@ if ! command -v psql >/dev/null 2>&1 || ! psql "$DB" -X -tAc 'SELECT 1' >/dev/nu
   exit 0
 fi
 
-TASK_RESP=$(curl -sf -X POST "$BRAIN_URL/api/brain/tasks" \
+TASK_RESP=$(curl -q -sf -X POST "$BRAIN_URL/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d "{\"task_type\":\"talk\",\"title\":\"blade-bc-$SMOKE_TAG\",\"payload\":{\"worktree_path\":\"$JUDGE_WORKTREE\",\"sprint_dir\":\"sprints/s\",\"smoke_tag\":\"$SMOKE_TAG\"}}")
 TASK_ID=$(echo "$TASK_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
@@ -58,7 +58,7 @@ if [ -z "$TASK_ID" ]; then
   exit 1
 fi
 
-JUDGE_STATUS=$(curl -s -o /tmp/blade-bc-judge.json -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/judge" \
+JUDGE_STATUS=$(curl -q -s -o /tmp/blade-bc-judge.json -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/judge" \
   -H "Content-Type: application/json" \
   -d "{\"task_id\":\"$TASK_ID\",\"run_id\":\"00000000-0000-0000-0000-000000000098\",\"sprint_dir\":\"sprints/s\",\"worktree\":\"$JUDGE_WORKTREE\",\"agent_verdict\":\"PASS\"}")
 if [ "$JUDGE_STATUS" != "404" ]; then
@@ -68,7 +68,7 @@ fi
 echo "[blade-bc smoke] ✓ 无 exact run authority → 404 fail-closed"
 
 # 2. complete — 无 initiative_id → 400
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/complete" \
+STATUS=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/complete" \
   -H "Content-Type: application/json" \
   -d '{}')
 if [ "$STATUS" != "400" ]; then
@@ -78,7 +78,7 @@ fi
 echo "[blade-bc smoke] ✓ 无 initiative_id → 400"
 
 # 3. complete — 随机 UUID（无 initiative_run 记录）→ 200（保守继续）
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/complete" \
+STATUS=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/complete" \
   -H "Content-Type: application/json" \
   -d '{"initiative_id":"00000000-0000-0000-0000-000000000099","merged":true}')
 if [ "$STATUS" != "200" ]; then

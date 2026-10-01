@@ -24,7 +24,7 @@ PGUSER="${DB_USER:-cecelia}"; PGDB="${DB_NAME:-cecelia}"
 export PGPASSWORD="${DB_PASSWORD:-cecelia}"
 
 echo "[task-delete-postdeploy-filter-smoke] 1. Brain 健康"
-HEALTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${BRAIN_URL}/api/brain/health")
+HEALTH_CODE=$(curl -q -s -o /dev/null -w "%{http_code}" "${BRAIN_URL}/api/brain/health")
 if [[ "$HEALTH_CODE" != "200" ]]; then
   echo "[task-delete-postdeploy-filter-smoke] FAIL: GET /health → ${HEALTH_CODE}（期望 200）"
   exit 1
@@ -34,7 +34,7 @@ echo "[task-delete-postdeploy-filter-smoke] Brain 健康 ✓"
 echo "[task-delete-postdeploy-filter-smoke] 2. DELETE 存在的非终态任务 → 200 + DB cancelled"
 TID=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tAq -c "INSERT INTO tasks (task_type, status, title, payload) VALUES ('dev','pending_postdeploy','smoke: task-delete-ok','{}'::jsonb) RETURNING id" | tr -d ' \n')
 SUCCESS_BODY=$(mktemp)
-SUCCESS_CODE=$(curl -s -o "$SUCCESS_BODY" -w "%{http_code}" -X DELETE "${BRAIN_URL}/api/brain/tasks/${TID}")
+SUCCESS_CODE=$(curl -q -s -o "$SUCCESS_BODY" -w "%{http_code}" -X DELETE "${BRAIN_URL}/api/brain/tasks/${TID}")
 if [[ "$SUCCESS_CODE" != "200" ]]; then
   echo "[task-delete-postdeploy-filter-smoke] FAIL: 存在任务期望 200 得 ${SUCCESS_CODE}"
   rm -f "$SUCCESS_BODY"
@@ -52,7 +52,7 @@ echo "[task-delete-postdeploy-filter-smoke] DELETE 软删除生效，id=${TID} �
 echo "[task-delete-postdeploy-filter-smoke] 3. DELETE 不存在的任务 → 404 + JSON error/id"
 MISSING_TID='00000000-0000-0000-0000-000000000099'
 MISSING_BODY=$(mktemp)
-MISSING_CODE=$(curl -s -o "$MISSING_BODY" -w "%{http_code}" -X DELETE "${BRAIN_URL}/api/brain/tasks/${MISSING_TID}")
+MISSING_CODE=$(curl -q -s -o "$MISSING_BODY" -w "%{http_code}" -X DELETE "${BRAIN_URL}/api/brain/tasks/${MISSING_TID}")
 if [[ "$MISSING_CODE" != "404" ]]; then
   echo "[task-delete-postdeploy-filter-smoke] FAIL: 不存在任务期望 404 得 ${MISSING_CODE}"
   rm -f "$MISSING_BODY"
@@ -65,7 +65,7 @@ echo "[task-delete-postdeploy-filter-smoke] 404 JSON 合同生效 ✓"
 echo "[task-delete-postdeploy-filter-smoke] 4. DELETE 已 completed 任务 → 409，未被误改"
 TID2=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tAq -c "INSERT INTO tasks (task_type, status, title, payload) VALUES ('dev','completed','smoke: task-delete-terminal','{}'::jsonb) RETURNING id" | tr -d ' \n')
 COMPLETED_BODY=$(mktemp)
-CODE=$(curl -s -o "$COMPLETED_BODY" -w "%{http_code}" -X DELETE "${BRAIN_URL}/api/brain/tasks/${TID2}")
+CODE=$(curl -q -s -o "$COMPLETED_BODY" -w "%{http_code}" -X DELETE "${BRAIN_URL}/api/brain/tasks/${TID2}")
 if [[ "$CODE" != "409" ]]; then
   echo "[task-delete-postdeploy-filter-smoke] FAIL: 期望 409 得 ${CODE}"
   rm -f "$COMPLETED_BODY"
@@ -83,7 +83,7 @@ echo "[task-delete-postdeploy-filter-smoke] 终态保护生效（409，未误改
 
 echo "[task-delete-postdeploy-filter-smoke] 5. DELETE 已 cancelled 任务 → 409，未被误改"
 CANCELLED_BODY=$(mktemp)
-CANCELLED_CODE=$(curl -s -o "$CANCELLED_BODY" -w "%{http_code}" -X DELETE "${BRAIN_URL}/api/brain/tasks/${TID}")
+CANCELLED_CODE=$(curl -q -s -o "$CANCELLED_BODY" -w "%{http_code}" -X DELETE "${BRAIN_URL}/api/brain/tasks/${TID}")
 if [[ "$CANCELLED_CODE" != "409" ]]; then
   echo "[task-delete-postdeploy-filter-smoke] FAIL: 已 cancelled 任务期望 409 得 ${CANCELLED_CODE}"
   rm -f "$CANCELLED_BODY"

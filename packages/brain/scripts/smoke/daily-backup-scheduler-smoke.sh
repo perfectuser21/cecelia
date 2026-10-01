@@ -12,7 +12,7 @@ fi
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 
 echo "[daily-backup-smoke] 1. 检查 Brain 健康"
-STATUS=$(curl -sf "${BRAIN_URL}/api/brain/health" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','unknown'))")
+STATUS=$(curl -q -sf "${BRAIN_URL}/api/brain/health" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','unknown'))")
 if [[ "$STATUS" != "ok" && "$STATUS" != "healthy" && "$STATUS" != "degraded" ]]; then
   echo "[daily-backup-smoke] FAIL: Brain 不健康，status=${STATUS}"
   exit 1
@@ -62,7 +62,7 @@ console.log('tick-runner.js 接入验证通过 ✓');
 "
 
 echo "[daily-backup-smoke] 4. 触发强制备份（force=true），验证能创建 trigger_backup 任务"
-RESULT=$(curl -sf -X POST "${BRAIN_URL}/api/brain/backup/trigger-now" \
+RESULT=$(curl -q -sf -X POST "${BRAIN_URL}/api/brain/backup/trigger-now" \
   -H "Content-Type: application/json" \
   -d '{"force":true}' 2>/dev/null || echo '{"error":"curl_failed"}')
 echo "[daily-backup-smoke] trigger-now result: ${RESULT}"
@@ -94,7 +94,7 @@ fi
 
 if [[ -n "$TASK_ID" && "$TASK_ID" != "None" ]]; then
   echo "[daily-backup-smoke] 6. 通过 Brain API 验证任务存在"
-  TASK_RESULT=$(curl -sf "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo '{}')
+  TASK_RESULT=$(curl -q -sf "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo '{}')
   TASK_TYPE=$(echo "$TASK_RESULT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('task_type','unknown'))" 2>/dev/null || echo "unknown")
   if [[ "$TASK_TYPE" != "trigger_backup" ]]; then
     echo "[daily-backup-smoke] FAIL: 任务 task_type=${TASK_TYPE}，期望 trigger_backup"

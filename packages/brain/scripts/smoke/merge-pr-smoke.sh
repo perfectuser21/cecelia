@@ -14,10 +14,10 @@ fi
 AUTH=(); [ -n "$TOKEN" ] && AUTH=(-H "Authorization: Bearer $TOKEN")
 URL="$BRAIN_URL/api/brain/harness/attempt-run/merge-pr"
 echo "🔍 merge-pr smoke — $BRAIN_URL"
-PROBE=$(curl -s -m 15 -o /dev/null -w "%{http_code}" "${AUTH[@]}" -X POST "$URL" -H "Content-Type: application/json" -d '{}')
+PROBE=$(curl -q -s -m 15 -o /dev/null -w "%{http_code}" "${AUTH[@]}" -X POST "$URL" -H "Content-Type: application/json" -d '{}')
 if [ "$PROBE" = "404" ]; then echo "⚠️  端点未部署，软跳过"; exit 0; fi
 [ "$PROBE" = "400" ] || { echo "::error::空 body 应 400，得到 $PROBE"; exit 1; }
-RESP=$(curl -s -m 30 "${AUTH[@]}" -X POST "$URL" -H "Content-Type: application/json" -d '{"pr_number":99999999,"head_sha":"'$(printf 'a%.0s' {1..40})'"}')
+RESP=$(curl -q -s -m 30 "${AUTH[@]}" -X POST "$URL" -H "Content-Type: application/json" -d '{"pr_number":99999999,"head_sha":"'$(printf 'a%.0s' {1..40})'"}')
 ERR=$(printf '%s' "$RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("error") or "")' 2>/dev/null || echo parse_error)
 case "$ERR" in
   merge_pr_unavailable) echo "✅ merge-pr smoke 通过：参数闸 + 不存在 PR 结构化 409"; exit 0;;

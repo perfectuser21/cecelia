@@ -14,7 +14,7 @@ echo "=== smoke: nfr-decisions-assertion-ref ==="
 
 # 1. decisions API 可查到 nfr 类别的行
 echo "--- 1. 查询 nfr category decisions ---"
-NR=$(curl -sf "${BRAIN}/api/brain/decisions?status=active&limit=200" \
+NR=$(curl -q -sf "${BRAIN}/api/brain/decisions?status=active&limit=200" \
   | node -e "
 const d=require('fs').readFileSync('/dev/stdin','utf8');
 const rows=JSON.parse(d);
@@ -30,7 +30,7 @@ echo "  ✅ nfr category 存在"
 
 # 2. PATCH 测试：无 assertion_ref 点绿 → 422（需要先找一个无 assertion_ref 的 link_id）
 echo "--- 2. fail-closed 行为测试（无 assertion_ref 点绿应 422）---"
-LINK_ID=$(curl -sf "${BRAIN}/api/brain/journeys/steps/00000000-0000-0000-0000-000000000001/impact" 2>/dev/null \
+LINK_ID=$(curl -q -sf "${BRAIN}/api/brain/journeys/steps/00000000-0000-0000-0000-000000000001/impact" 2>/dev/null \
   | node -e "
 const d=require('fs').readFileSync('/dev/stdin','utf8');
 try{
@@ -43,7 +43,7 @@ try{
 if [ -z "${LINK_ID}" ]; then
   echo "  ⏭️  无可用的 no-assertion_ref link，跳过 fail-closed 实验（step 不存在属正常）"
 else
-  HTTP=$(curl -sf -o /dev/null -w "%{http_code}" \
+  HTTP=$(curl -q -sf -o /dev/null -w "%{http_code}" \
     -X PATCH "${BRAIN}/api/brain/journey_step_links/${LINK_ID}" \
     -H "Content-Type: application/json" \
     -d '{"cell_status":"green"}' 2>/dev/null || true)

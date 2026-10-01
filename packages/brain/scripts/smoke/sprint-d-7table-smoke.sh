@@ -17,10 +17,10 @@ do_curl() {
   local method="$1" url="$2" data="$3"
   local tmp; tmp=$(mktemp)
   if [ -z "$data" ]; then
-    HTTP_CODE=$(curl -s --connect-timeout "$CT" --max-time "$MT" \
+    HTTP_CODE=$(curl -q -s --connect-timeout "$CT" --max-time "$MT" \
       -o "$tmp" -w "%{http_code}" "$url")
   else
-    HTTP_CODE=$(curl -s --connect-timeout "$CT" --max-time "$MT" \
+    HTTP_CODE=$(curl -q -s --connect-timeout "$CT" --max-time "$MT" \
       -X "$method" -H "Content-Type: application/json" \
       -d "$data" -o "$tmp" -w "%{http_code}" "$url")
   fi

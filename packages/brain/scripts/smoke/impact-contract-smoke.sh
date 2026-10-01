@@ -20,7 +20,7 @@ DATABASE_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/ceceli
 
 # Case 1: change_kind 映射正确（change_kind=bugfix 与 payload.gear=segmented 独立存在）
 # task_type=dev(合法枚举), change_kind=bugfix(显式), payload.gear=segmented(通过 payload 传入)
-TASK=$(curl -sf -X POST "$BRAIN/api/brain/tasks" \
+TASK=$(curl -q -sf -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d "{\"title\":\"smoke:impact-contract:$SMOKE_TAG\",\"task_type\":\"dev\",\"change_kind\":\"bugfix\",\"base_sha\":\"$BASE_SHA\",\"repo_hint\":\"cecelia\",\"map_scope_hint\":[\"F1\"],\"payload\":{\"gear\":\"segmented\",\"smoke_tag\":\"$SMOKE_TAG\"}}" 2>/dev/null) || \
   { fail "POST /tasks 创建失败"; TASK="{}"; }
@@ -36,7 +36,7 @@ GR=$(echo "$TASK" | jq -r '.payload.gear // empty' 2>/dev/null)
 
 # Case 2: 非法合同被 Structure Gate 拒绝（缺必填字段）
 if [[ -n "$TASK_ID" ]]; then
-  HTTP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks/$TASK_ID/impact-contract" \
+  HTTP=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks/$TASK_ID/impact-contract" \
     -H "Content-Type: application/json" \
     -d '{"change_kind":"bugfix"}' 2>/dev/null) || HTTP="000"
   [[ "$HTTP" == "400" ]] && ok "非法合同被拒绝 HTTP 400" || fail "非法合同响应码错误: $HTTP（期望 400）"
@@ -44,7 +44,7 @@ fi
 
 # Case 3: 合法合同必须经过真实 Mapper；Mapper 未上线时 503，绝不靠 stub 创建 active 合同
 if [[ -n "$TASK_ID" ]]; then
-  HTTP=$(curl -s -o "$RESP_FILE" -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks/$TASK_ID/impact-contract" \
+  HTTP=$(curl -q -s -o "$RESP_FILE" -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks/$TASK_ID/impact-contract" \
     -H "Content-Type: application/json" \
     -d "{\"change_kind\":\"bugfix\",\"repo\":\"perfectuser21/cecelia\",\"base_revision\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"affected_capabilities\":[{\"capability_id\":\"brain\"}],\"required_assertions\":[]}" 2>/dev/null) || HTTP="000"
   if [[ "$HTTP" == "503" ]]; then
@@ -61,7 +61,7 @@ if [[ -n "$TASK_ID" ]]; then
 fi
 
 # Case 4: Gap 列表路由可达
-GAPS=$(curl -sf "$BRAIN/api/brain/harness/gaps?status=open" 2>/dev/null) || \
+GAPS=$(curl -q -sf "$BRAIN/api/brain/harness/gaps?status=open" 2>/dev/null) || \
   { fail "GET /harness/gaps 不可达"; GAPS="{}"; }
 echo "$GAPS" | jq -e 'type == "array"' >/dev/null 2>&1 && ok "GET /harness/gaps 返回数组" || \
   fail "GET /harness/gaps 结构异常"

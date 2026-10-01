@@ -60,7 +60,7 @@ fail() { echo "  FAIL: $1"; FAILED=1; }
 
 command -v jq >/dev/null 2>&1 || { echo "FATAL: jq 未安装"; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo "FATAL: docker 未安装"; exit 1; }
-command -v curl >/dev/null 2>&1 || { echo "FATAL: curl 未安装"; exit 1; }
+command -v curl -q >/dev/null 2>&1 || { echo "FATAL: curl -q 未安装"; exit 1; }
 
 [ -n "$BRAIN_CONTAINER" ] || { echo "FATAL: 未检测到 brain 容器（试过 cecelia-brain-smoke / cecelia-node-brain；可用 BRAIN_CONTAINER env 显式指定）"; exit 1; }
 docker ps --format '{{.Names}}' | grep -qx "$BRAIN_CONTAINER" \
@@ -68,7 +68,7 @@ docker ps --format '{{.Names}}' | grep -qx "$BRAIN_CONTAINER" \
 
 # 1) tick/status 验初始可达 + 字段存在
 echo "[1/5] GET /api/brain/tick/status 验可达 + enabled 字段"
-STATUS_BEFORE="$(curl -sf "$BRAIN_URL/api/brain/tick/status")" || {
+STATUS_BEFORE="$(curl -q -sf "$BRAIN_URL/api/brain/tick/status")" || {
   echo "FATAL: /api/brain/tick/status 不可达"
   exit 1
 }
@@ -87,7 +87,7 @@ echo "  baseline: last_tick=${LAST_TICK_BEFORE:-<null>} total_executions=$EXEC_C
 # 2) 主动触发 manual tick（不依赖 TICK_ENABLED / loop_running）
 echo ""
 echo "[2/5] POST /api/brain/tick — 触发 manual tick"
-TICK_RESP="$(curl -sf -X POST "$BRAIN_URL/api/brain/tick" -H 'Content-Type: application/json' -d '{}')" || {
+TICK_RESP="$(curl -q -sf -X POST "$BRAIN_URL/api/brain/tick" -H 'Content-Type: application/json' -d '{}')" || {
   fail "POST /api/brain/tick 失败"
   TICK_RESP="{}"
 }
@@ -119,7 +119,7 @@ sleep "$TICK_SETTLE_S"
 # 3) 验 last_tick 推进 / total_executions++
 echo ""
 echo "[3/5] 验 last_tick 推进 + tick_stats.total_executions++"
-STATUS_AFTER="$(curl -sf "$BRAIN_URL/api/brain/tick/status")"
+STATUS_AFTER="$(curl -q -sf "$BRAIN_URL/api/brain/tick/status")"
 LAST_TICK_AFTER="$(echo "$STATUS_AFTER" | jq -r '.last_tick // empty')"
 EXEC_COUNT_AFTER="$(echo "$STATUS_AFTER" | jq -r '.tick_stats.total_executions // 0')"
 

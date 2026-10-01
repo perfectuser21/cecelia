@@ -27,7 +27,7 @@ echo "🔍 attempt-run smoke — $BRAIN_URL"
 
 # 鸡生蛋守卫：端点尚未部署（旧版本 Brain 返回 404/HTML）→ 软跳过。
 # real-env-smoke 在 PR 阶段对着未含本端点的生产 Brain 跑；真验证发生在 brain-deploy 部署后。
-PROBE_CODE=$(curl -s -m 15 -o /dev/null -w "%{http_code}" "${AUTH[@]}" -X POST "$BRAIN_URL/api/brain/harness/attempt-run" -H "Content-Type: application/json" -d '{}')
+PROBE_CODE=$(curl -q -s -m 15 -o /dev/null -w "%{http_code}" "${AUTH[@]}" -X POST "$BRAIN_URL/api/brain/harness/attempt-run" -H "Content-Type: application/json" -d '{}')
 if [ "$PROBE_CODE" = "404" ]; then
   echo "⚠️  端点未部署（HTTP 404，Brain 版本落后于本 PR），软跳过；部署后由 post-deploy smoke 真跑"
   exit 0
@@ -42,7 +42,7 @@ fi
 
 ATTEMPT_ID=""
 for i in $(seq 1 "$DISPATCH_RETRIES"); do
-  RESP=$(curl -s -m 60 "${AUTH[@]}" -X POST "$BRAIN_URL/api/brain/harness/attempt-run" \
+  RESP=$(curl -q -s -m 60 "${AUTH[@]}" -X POST "$BRAIN_URL/api/brain/harness/attempt-run" \
     -H "Content-Type: application/json" \
     -d "{\"role\":\"canary\",\"title\":\"attempt-run smoke: read-only fleet canary\",\"payload\":{\"sprint_dir\":\"/var/empty/attempt-run-smoke\",\"base_repo\":\"https://github.com/perfectuser21/cecelia.git\",\"base_sha\":\"$BASE_SHA\",\"branch\":\"cp-attempt-run-smoke\",\"role_assignments\":{\"canary\":{\"provider\":\"codex\",\"account\":\"team1\"},\"reporter\":{\"provider\":\"codex\",\"account\":\"team1\"}}}}")
   STATUS=$(printf '%s' "$RESP" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("status") or d.get("error") or "")' 2>/dev/null || echo parse_error)
@@ -67,7 +67,7 @@ fi
 echo "  LAUNCHED attempt=${ATTEMPT_ID}，轮询终态…"
 
 for i in $(seq 1 "$POLL_LIMIT"); do
-  ROW=$(curl -s -m 30 "${AUTH[@]}" "$BRAIN_URL/api/brain/harness/attempt-run/$ATTEMPT_ID")
+  ROW=$(curl -q -s -m 30 "${AUTH[@]}" "$BRAIN_URL/api/brain/harness/attempt-run/$ATTEMPT_ID")
   ST=$(printf '%s' "$ROW" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status") or "")' 2>/dev/null || echo "")
   case "$ST" in
     completed)

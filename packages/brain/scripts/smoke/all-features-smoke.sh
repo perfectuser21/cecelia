@@ -18,7 +18,7 @@ echo "Time:  $NOW"
 echo ""
 
 # 拉取所有 feature（limit=500 保证一次全取）
-FEATURES_JSON=$(curl -sf "$BRAIN_URL/api/brain/features?limit=500")
+FEATURES_JSON=$(curl -q -sf "$BRAIN_URL/api/brain/features?limit=500")
 TOTAL=$(echo "$FEATURES_JSON" | jq '.features | length')
 echo "Features: $TOTAL"
 echo ""
@@ -56,7 +56,7 @@ while IFS= read -r row; do
   fi
 
   # 写回 smoke_status（PATCH 失败只警告，不中止）
-  if ! curl -sf -X PATCH "$BRAIN_URL/api/brain/features/$ID" \
+  if ! curl -q -sf -X PATCH "$BRAIN_URL/api/brain/features/$ID" \
     -H "Content-Type: application/json" \
     -d "{\"smoke_status\":\"$STATUS\",\"smoke_last_run\":\"$NOW\"}" \
     > /dev/null 2>&1; then

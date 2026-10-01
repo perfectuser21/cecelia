@@ -16,7 +16,7 @@ if ! psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
 fi
 
 echo "[smoke] 测试 POST /api/brain/journeys..."
-RESP=$(curl -sf -X POST "$BRAIN/api/brain/journeys" \
+RESP=$(curl -q -sf -X POST "$BRAIN/api/brain/journeys" \
   -H "Content-Type: application/json" \
   -d '{"name":"_smoke_journey_test_","journey_type":"dev_pipeline","description":"smoke test"}' 2>&1 || echo "CURL_FAIL")
 
@@ -35,7 +35,7 @@ DB_COUNT=$(psql "$DB" -tAc "SELECT COUNT(*) FROM journeys WHERE id='$JOURNEY_ID'
 psql "$DB" -tAc "DELETE FROM journeys WHERE id='$JOURNEY_ID'" >/dev/null
 
 echo "[smoke] 测试 POST /api/brain/issues..."
-IRESP=$(curl -sf -X POST "$BRAIN/api/brain/issues" \
+IRESP=$(curl -q -sf -X POST "$BRAIN/api/brain/issues" \
   -H "Content-Type: application/json" \
   -d '{"title":"_smoke_issue_test_","priority":"P2"}' 2>&1 || echo "CURL_FAIL")
 

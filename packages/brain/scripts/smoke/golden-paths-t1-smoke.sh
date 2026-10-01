@@ -33,7 +33,7 @@ fi
 # ── 2. POST 建 candidate 取回 id ──
 echo "── 2. POST /golden-paths 建 candidate ──"
 GP_ID=""
-post_resp=$(curl -s -X POST "$API/golden-paths" \
+post_resp=$(curl -q -s -X POST "$API/golden-paths" \
   -H "Content-Type: application/json" \
   -d '{"title":"smoke GP","one_liner":"smoke 用例"}')
 GP_ID=$(echo "$post_resp" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{console.log(JSON.parse(d).golden_path.id||'')}catch(e){console.log('')}})" 2>/dev/null)
@@ -47,7 +47,7 @@ fi
 # ── 3. GET ?status=candidate 能看到该 id ──
 if [[ -n "$GP_ID" ]]; then
   echo "── 3. GET /golden-paths?status=candidate ──"
-  get_resp=$(curl -s "$API/golden-paths?status=candidate")
+  get_resp=$(curl -q -s "$API/golden-paths?status=candidate")
   echo "$get_resp" | grep -q "$GP_ID" \
     && ok "GET ?status=candidate 含该 id" \
     || fail "GET ?status=candidate 未见该 id: $get_resp"
@@ -58,14 +58,14 @@ fi
 # ── 4. PATCH 合法流转成功；非法流转 409 ──
 if [[ -n "$GP_ID" ]]; then
   echo "── 4. PATCH 合法/非法流转 ──"
-  patch_ok_code=$(curl -s -o /tmp/gp-patch-ok.json -w "%{http_code}" -X PATCH "$API/golden-paths/$GP_ID" \
+  patch_ok_code=$(curl -q -s -o /tmp/gp-patch-ok.json -w "%{http_code}" -X PATCH "$API/golden-paths/$GP_ID" \
     -H "Content-Type: application/json" \
     -d '{"status":"proposed"}')
   [[ "$patch_ok_code" == "200" ]] \
     && ok "PATCH candidate→proposed 成功 (200)" \
     || fail "PATCH candidate→proposed 期望 200，得 $patch_ok_code: $(cat /tmp/gp-patch-ok.json 2>/dev/null)"
 
-  patch_bad_code=$(curl -s -o /tmp/gp-patch-bad.json -w "%{http_code}" -X PATCH "$API/golden-paths/$GP_ID" \
+  patch_bad_code=$(curl -q -s -o /tmp/gp-patch-bad.json -w "%{http_code}" -X PATCH "$API/golden-paths/$GP_ID" \
     -H "Content-Type: application/json" \
     -d '{"status":"delivered"}')
   [[ "$patch_bad_code" == "409" ]] \

@@ -17,7 +17,7 @@ BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 LEARNING_ID="6a569a1e-83c4-4052-a05a-59b2a09840a8"
 
 echo "[failure-type-smoke] 1. 检查 Brain 健康"
-STATUS=$(curl -sf "${BRAIN_URL}/api/brain/health" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.status||'unknown')")
+STATUS=$(curl -q -sf "${BRAIN_URL}/api/brain/health" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.status||'unknown')")
 if [[ "$STATUS" != "ok" && "$STATUS" != "healthy" ]]; then
   echo "[failure-type-smoke] FAIL: Brain 不健康，status=${STATUS}"
   exit 1
@@ -62,7 +62,7 @@ console.log('selfcheck EXPECTED_SCHEMA_VERSION = ' + m[1] + ' ✓');
 "
 
 echo "[failure-type-smoke] 5. （可选）通过 Brain API 验证 6a569a1e 已激活 dispatch_constraint"
-HIT=$(curl -sf "${BRAIN_URL}/api/brain/memory/search" -X POST -H "Content-Type: application/json" \
+HIT=$(curl -q -sf "${BRAIN_URL}/api/brain/memory/search" -X POST -H "Content-Type: application/json" \
   -d "{\"query\":\"failure_type 分类路由\",\"limit\":3}" 2>/dev/null \
   | node -e "
 const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8') || '{}');

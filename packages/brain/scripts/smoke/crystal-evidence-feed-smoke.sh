@@ -110,10 +110,10 @@ console.log('  ✓ POST /evidence 已挂且幂等');
 "
 
 echo "[evidence-feed-smoke] 7. live：真入库 → 查 DB 验字段 → 跑判官 → 验 data_gap"
-if curl -sf --max-time 5 "$BRAIN_URL/api/brain/health" >/dev/null 2>&1; then
+if curl -q -sf --max-time 5 "$BRAIN_URL/api/brain/health" >/dev/null 2>&1; then
   STAMP="$(date -u +%Y-%m-%dT%H:%M:%S).000Z"
   UNIT="smoke_evidence_feed"
-  RESP=$(curl -s --max-time 20 -X POST "$BRAIN_URL/api/brain/crystal/evidence" \
+  RESP=$(curl -q -s --max-time 20 -X POST "$BRAIN_URL/api/brain/crystal/evidence" \
     -H 'Content-Type: application/json' \
     -d "{\"unit_key\":\"$UNIT\",\"funnel_cell\":\"source\",\"runs\":3,\"passes\":3,\"baseline_tokens\":10158,\"hot_path_tokens\":696,\"avg_ms\":24071,\"device\":\"SMOKE|1.0|420\",\"crystallized\":true,\"has_postcondition\":true,\"verified_at\":\"$STAMP\"}")
   # Brain 可达但跑的是未含本端点的旧版本 → 跳过 live 段（部署前跑 smoke 不该误报失败）
@@ -132,7 +132,7 @@ let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>{
   console.log('    ✓ 真写库成功且字段正确 id=' + j.evidence.id + ' baseline=' + j.evidence.baseline_tokens);
 });
 "
-  RUN=$(curl -s --max-time 60 -X POST "$BRAIN_URL/api/brain/crystal/run")
+  RUN=$(curl -q -s --max-time 60 -X POST "$BRAIN_URL/api/brain/crystal/run")
   echo "$RUN" | node -e "
 let s=''; process.stdin.on('data',d=>s+=d).on('end',()=>{
   let j; try { j = JSON.parse(s); } catch { console.error('    判官响应非 JSON'); process.exit(1); }

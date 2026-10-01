@@ -15,7 +15,7 @@ fi
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 
 echo "[cb-reset-smoke] 1. Brain 健康"
-STATUS=$(curl -sf "${BRAIN_URL}/api/brain/health" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.status||'unknown')")
+STATUS=$(curl -q -sf "${BRAIN_URL}/api/brain/health" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.status||'unknown')")
 if [[ "$STATUS" != "ok" && "$STATUS" != "healthy" ]]; then
   echo "[cb-reset-smoke] FAIL: Brain 不健康，status=${STATUS}"
   exit 1
@@ -62,7 +62,7 @@ console.log('routes/goals.js 已接 async resetBreaker ✓');
 
 echo "[cb-reset-smoke] 4. 真实调 POST /circuit-breaker/cb-smoke-reset/reset"
 KEY="cb-smoke-reset-$(date +%s)"
-RES=$(curl -sf -X POST "${BRAIN_URL}/api/brain/circuit-breaker/${KEY}/reset")
+RES=$(curl -q -sf -X POST "${BRAIN_URL}/api/brain/circuit-breaker/${KEY}/reset")
 SUCCESS=$(echo "$RES" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.success===true)")
 STATE=$(echo "$RES" | node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log((d.state&&d.state.state)||'')")
 if [[ "$SUCCESS" != "true" ]]; then

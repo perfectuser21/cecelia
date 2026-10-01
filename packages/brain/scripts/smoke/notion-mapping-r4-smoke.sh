@@ -36,7 +36,7 @@ console.log('✓ notion-probe-projection.js Order 条件写入逻辑存在');
 
 # 可选：显式授权并核对测试容器身份后，验证 POST /notes 返回 warnings 数组
 if node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "$BRAIN"; then
-  HTTP_CODE=$(curl -s -o /tmp/r4-smoke-resp.json -w "%{http_code}" --max-time 10 \
+  HTTP_CODE=$(curl -q -s -o /tmp/r4-smoke-resp.json -w "%{http_code}" --max-time 10 \
     -X POST "${BRAIN}/api/brain/notes" \
     -H "Content-Type: application/json" \
     -d '{"title":"[smoke-r4] notion-mapping","content":"smoke test","type":"Note"}')

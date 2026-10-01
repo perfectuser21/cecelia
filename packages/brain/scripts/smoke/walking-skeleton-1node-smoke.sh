@@ -22,7 +22,7 @@ if ! docker ps --filter "name=$CONTAINER" --format '{{.Names}}' | grep -q "^$CON
 fi
 
 # 检测 endpoint 部署
-RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+RESPONSE=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST \
   http://localhost:5221/api/brain/walking-skeleton-1node/trigger \
   -H "Content-Type: application/json" \
   -d '{}')
@@ -33,7 +33,7 @@ fi
 
 echo "=== Phase 1: 正常 e2e（spawn → callback → resume） ==="
 START=$(date +%s)
-RESULT=$(curl -s -X POST \
+RESULT=$(curl -q -s -X POST \
   http://localhost:5221/api/brain/walking-skeleton-1node/trigger \
   -H "Content-Type: application/json" \
   -d '{}')
@@ -47,7 +47,7 @@ echo "trigger OK: thread_id=$THREAD_ID"
 # 等 callback 自动完成（5 分钟超时）
 STATUS=""
 for i in $(seq 1 60); do
-  STATUS=$(curl -s "http://localhost:5221/api/brain/walking-skeleton-1node/status/$THREAD_ID" 2>/dev/null | jq -r '.status // empty' 2>/dev/null)
+  STATUS=$(curl -q -s "http://localhost:5221/api/brain/walking-skeleton-1node/status/$THREAD_ID" 2>/dev/null | jq -r '.status // empty' 2>/dev/null)
   if [ "$STATUS" = "completed" ]; then
     ELAPSED=$(($(date +%s) - START))
     echo "✅ Phase 1 PASS — 完成耗时 ${ELAPSED}s (thread $THREAD_ID)"
@@ -65,7 +65,7 @@ fi
 echo ""
 echo "=== Phase 2: brain kill resume 测试（PG checkpointer 跨进程恢复） ==="
 
-RESULT2=$(curl -s -X POST http://localhost:5221/api/brain/walking-skeleton-1node/trigger \
+RESULT2=$(curl -q -s -X POST http://localhost:5221/api/brain/walking-skeleton-1node/trigger \
   -H "Content-Type: application/json" -d '{}')
 THREAD2=$(echo "$RESULT2" | jq -r '.thread_id // empty')
 if [ -z "$THREAD2" ] || [ "$THREAD2" = "null" ]; then
@@ -85,7 +85,7 @@ docker restart "$CONTAINER" 2>&1 | tail -2
 echo "等 brain ready..."
 BRAIN_READY=false
 for i in {1..30}; do
-  if curl -sf localhost:5221/api/brain/health >/dev/null 2>&1; then
+  if curl -q -sf localhost:5221/api/brain/health >/dev/null 2>&1; then
     echo "✓ brain ready (耗时 ${i}*2s)"
     BRAIN_READY=true
     break
@@ -105,7 +105,7 @@ fi
 echo "等 graph 从 PG checkpointer resume（callback 路由触发）..."
 STATUS2=""
 for i in $(seq 1 60); do
-  STATUS2=$(curl -s "http://localhost:5221/api/brain/walking-skeleton-1node/status/$THREAD2" 2>/dev/null | jq -r '.status // empty' 2>/dev/null)
+  STATUS2=$(curl -q -s "http://localhost:5221/api/brain/walking-skeleton-1node/status/$THREAD2" 2>/dev/null | jq -r '.status // empty' 2>/dev/null)
   if [ "$STATUS2" = "completed" ]; then
     echo "✅ Phase 2 PASS — brain restart 后 graph resume 成功 (thread $THREAD2)"
     exit 0

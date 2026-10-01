@@ -13,7 +13,7 @@ fi
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 
 echo "[rumination-smoke] 1. 检查 Brain 健康"
-STATUS=$(curl -sf "${BRAIN_URL}/api/brain/health" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','unknown'))")
+STATUS=$(curl -q -sf "${BRAIN_URL}/api/brain/health" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','unknown'))")
 if [[ "$STATUS" != "ok" && "$STATUS" != "healthy" ]]; then
   echo "[rumination-smoke] FAIL: Brain 不健康，status=${STATUS}"
   exit 1
@@ -29,7 +29,7 @@ fi
 echo "[rumination-smoke] rumination provider=${PROVIDER:-<not-configured>} ✓"
 
 echo "[rumination-smoke] 3. 触发强制反刍"
-RESULT=$(curl -sf -X POST "${BRAIN_URL}/api/brain/rumination/force" \
+RESULT=$(curl -q -sf -X POST "${BRAIN_URL}/api/brain/rumination/force" \
   -H "Content-Type: application/json" \
   -d '{}' 2>/dev/null || echo '{"error":"curl_failed"}')
 echo "[rumination-smoke] force rumination result: ${RESULT}"

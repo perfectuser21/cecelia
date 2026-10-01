@@ -16,7 +16,7 @@ fail() { echo "❌ $1"; ((FAIL++)) || true; }
 
 # 1. POST /tasks 创建一个 queued 任务
 echo "── 创建测试任务 ──"
-resp=$(curl -s -X POST "$API/tasks" \
+resp=$(curl -q -s -X POST "$API/tasks" \
   -H "Content-Type: application/json" \
   -d "{\"title\":\"smoke-t4-claim-protocol-$RANDOM-$$\",\"task_type\":\"talk\",\"priority\":\"P2\"}")
 TASK_ID=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
@@ -30,17 +30,17 @@ ok "创建任务 $TASK_ID"
 
 # 2. PATCH status → in_progress（带 X-Session-Id），验证 claimed_by + executor_kind 被写入
 echo "── PATCH in_progress → 验证 claimed_by/executor_kind ──"
-patch_resp=$(curl -s -X PATCH "$API/tasks/$TASK_ID" \
+patch_resp=$(curl -q -s -X PATCH "$API/tasks/$TASK_ID" \
   -H "Content-Type: application/json" \
   -H "X-Session-Id: smoke-session-t4" \
   -d '{"status":"in_progress"}')
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$API/tasks/$TASK_ID" \
+HTTP_CODE=$(curl -q -s -o /dev/null -w "%{http_code}" -X PATCH "$API/tasks/$TASK_ID" \
   -H "Content-Type: application/json" \
   -H "X-Session-Id: smoke-session-t4-check" \
   -d '{"status":"in_progress"}' 2>/dev/null || echo "000")
 
 # 查询任务验证字段
-task_resp=$(curl -s "$API/tasks/$TASK_ID" 2>/dev/null || echo "{}")
+task_resp=$(curl -q -s "$API/tasks/$TASK_ID" 2>/dev/null || echo "{}")
 claimed_by=$(echo "$task_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('claimed_by',''))" 2>/dev/null || echo "")
 executor_kind=$(echo "$task_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('executor_kind',''))" 2>/dev/null || echo "")
 
@@ -54,13 +54,13 @@ executor_kind=$(echo "$task_resp" | python3 -c "import sys,json; print(json.load
 
 # 3. POST /:id/claim（新任务）验证 executor_kind 可传入
 echo "── POST /claim 含 executor_kind ──"
-resp2=$(curl -s -X POST "$API/tasks" \
+resp2=$(curl -q -s -X POST "$API/tasks" \
   -H "Content-Type: application/json" \
   -d "{\"title\":\"smoke-t4-claim-endpoint-$RANDOM-$$\",\"task_type\":\"talk\",\"priority\":\"P2\"}")
 TASK_ID2=$(echo "$resp2" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
 
 if [[ -n "$TASK_ID2" ]]; then
-  claim_resp=$(curl -s -X POST "$API/tasks/$TASK_ID2/claim" \
+  claim_resp=$(curl -q -s -X POST "$API/tasks/$TASK_ID2/claim" \
     -H "Content-Type: application/json" \
     -d '{"claimer":"smoke-runner","executor_kind":"bridge"}')
   ek=$(echo "$claim_resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('executor_kind',''))" 2>/dev/null || echo "")

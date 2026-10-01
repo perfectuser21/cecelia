@@ -11,7 +11,7 @@ ok()   { echo "  ✅ $1"; ((PASS++)) || true; }
 fail() { echo "  ❌ $1"; ((FAIL++)) || true; }
 
 echo "── harness skill-drift smoke ──"
-r=$(curl -sf "$BRAIN/api/brain/harness/skill-drift") || { echo "  ❌ skill-drift GET 不可达"; echo "PASS: 0  FAIL: 1"; exit 1; }
+r=$(curl -q -sf "$BRAIN/api/brain/harness/skill-drift") || { echo "  ❌ skill-drift GET 不可达"; echo "PASS: 0  FAIL: 1"; exit 1; }
 
 echo "$r" | jq -e '.skills | length == 6' >/dev/null 2>&1 && ok "skills 恰好 6 项" || fail "skills 长度 != 6"
 echo "$r" | jq -e '.skills | map(.name) | sort == ["harness-contract-proposer","harness-contract-reviewer","harness-evaluator","harness-generator","harness-planner","harness-report"]' >/dev/null 2>&1 \
@@ -32,7 +32,7 @@ if [[ "$null_count" -eq 0 ]]; then
 else
   fail "有 $null_count 个 skill snapshot_version 为 null（#3339 类 bug）"
 fi
-code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/harness/skill-drift")
+code=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/harness/skill-drift")
 [[ "$code" != "200" ]] && ok "POST 同路径非 200（方法语义）" || fail "POST 返回了 200"
 
 echo ""

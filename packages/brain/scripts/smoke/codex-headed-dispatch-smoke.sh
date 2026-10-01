@@ -25,7 +25,7 @@ trap cleanup EXIT
 echo "── codex headed dispatch smoke ──"
 
 # 1. POST tasks(mode=headed, executor=codex) → 200 + id
-RESP=$(curl -sf -X POST "$BRAIN/api/brain/tasks" \
+RESP=$(curl -q -sf -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d "{\"task_type\":\"talk\",\"title\":\"headed-smoke-test-$SMOKE_TAG\",\"payload\":{\"executor\":\"codex\",\"mode\":\"headed\",\"journey_id\":\"bb8cc561-b3ee-4fec-b74d-2255694bd963\",\"smoke_tag\":\"$SMOKE_TAG\"}}" 2>/dev/null) || { fail "POST tasks(mode=headed) 不可达"; RESP="{}"; }
 echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);exit(0 if isinstance(d.get('id'),str) else 1)" 2>/dev/null \
@@ -33,7 +33,7 @@ echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);exit(0 if isin
   || fail "POST tasks(mode=headed) 响应异常: $RESP"
 
 # 2. POST tasks(mode=headed, executor=claude) → 200/201（T6 88e0b448 解锁后，原 400 拒绝已反转）
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
+CODE=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d "{\"task_type\":\"talk\",\"title\":\"claude-headed-smoke-$SMOKE_TAG\",\"payload\":{\"executor\":\"claude\",\"mode\":\"headed\",\"journey_id\":\"bb8cc561-b3ee-4fec-b74d-2255694bd963\",\"smoke_tag\":\"$SMOKE_TAG\"}}" 2>/dev/null || echo "000")
 [ "$CODE" = "200" ] || [ "$CODE" = "201" ] \
@@ -41,7 +41,7 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
   || fail "POST tasks(executor=claude, mode=headed) 应返 200/201，实际 $CODE"
 
 # 3. POST tasks(mode=headless) → 200（合法模式）
-CODE2=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
+CODE2=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d "{\"task_type\":\"talk\",\"title\":\"headless-smoke-$SMOKE_TAG\",\"payload\":{\"executor\":\"codex\",\"mode\":\"headless\",\"smoke_tag\":\"$SMOKE_TAG\"}}" 2>/dev/null || echo "000")
 [ "$CODE2" = "201" ] || [ "$CODE2" = "200" ] \
@@ -49,7 +49,7 @@ CODE2=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" 
   || fail "POST tasks(mode=headless) 应返 200/201，实际 $CODE2"
 
 # 4. POST tasks(mode=invalid) → 400
-CODE3=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
+CODE3=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d "{\"task_type\":\"talk\",\"title\":\"invalid-mode-$SMOKE_TAG\",\"payload\":{\"executor\":\"codex\",\"mode\":\"turbo\",\"smoke_tag\":\"$SMOKE_TAG\"}}" 2>/dev/null || echo "000")
 [ "$CODE3" = "400" ] \

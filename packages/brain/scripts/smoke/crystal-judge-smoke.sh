@@ -87,8 +87,8 @@ echo "[crystal-smoke] 7. live 触发（best-effort — 仅当 Brain 带 crystal 
 # cecelia-brain-smoke（带 crystal 路由）时才有真 Brain 可打。Brain 不可达 / 是不带 crystal
 # 的旧 Brain（POST /crystal/run 落到 content-pipeline 的 /:id/run 影子）时一律跳过，不判失败。
 # 真实 live 行为由 contract-dod.md 的 [BEHAVIOR] B-01..B-07 在 evaluator 的候选 Brain 上强制。
-if curl -sfS -m 4 -o /dev/null "$BRAIN_URL/api/brain/context" 2>/dev/null; then
-  RUN=$(curl -sfS -m 20 -X POST "$BRAIN_URL/api/brain/crystal/run" -H 'content-type: application/json' -d '{}' 2>/dev/null || echo '{}')
+if curl -q -sfS -m 4 -o /dev/null "$BRAIN_URL/api/brain/context" 2>/dev/null; then
+  RUN=$(curl -q -sfS -m 20 -X POST "$BRAIN_URL/api/brain/crystal/run" -H 'content-type: application/json' -d '{}' 2>/dev/null || echo '{}')
   if echo "$RUN" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);process.exit(j.ok===true&&j.grid_count===8&&Array.isArray(j.verdicts)&&j.verdicts.length===8?0:1)}catch{process.exit(1)}})"; then
     echo "  ✓ live /crystal/run 八格判决（候选 Brain 带 crystal 路由）"
   else

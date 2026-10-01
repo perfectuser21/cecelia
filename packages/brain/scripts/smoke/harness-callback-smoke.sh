@@ -20,7 +20,7 @@ if ! docker ps --filter "name=cecelia-node-brain" --format '{{.Names}}' | grep -
   exit 0
 fi
 
-RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+RESPONSE=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST \
   http://localhost:5221/api/brain/harness/callback/fake-container-id \
   -H "Content-Type: application/json" \
   -d '{"result":"completed","exit_code":0}')
@@ -31,7 +31,7 @@ if [ "$RESPONSE" = "404" ]; then
 fi
 
 if [ "$RESPONSE" = "000" ]; then
-  echo "SKIP: brain 不可达 (curl 失败) — 部署后再跑"
+  echo "SKIP: brain 不可达 (curl -q 失败) — 部署后再跑"
   exit 0
 fi
 

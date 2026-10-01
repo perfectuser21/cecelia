@@ -26,8 +26,8 @@ psql_q() { psql -qtAc "$1"; }
 echo "== F2 部署：蓝绿 sidecar drain 回路 =="
 
 grep -Eq '^[^#]*curl[^#]*tick/drain-cancel' scripts/lib/bluegreen-sidecar.sh \
-  && ok "[结构·钉子] bluegreen-sidecar.sh 含真实 curl 调用 tick/drain-cancel" \
-  || fail "[结构·钉子] bluegreen-sidecar.sh 未含真实 curl 调用 tick/drain-cancel（issue 53e7ee4b：blue 被删后唯一活路径必须由它收 drain；注意本断言只认真实 curl 调用行，日志 echo 行不算数）"
+  && ok "[结构·钉子] bluegreen-sidecar.sh 含真实 curl -q 调用 tick/drain-cancel" \
+  || fail "[结构·钉子] bluegreen-sidecar.sh 未含真实 curl -q 调用 tick/drain-cancel（issue 53e7ee4b：blue 被删后唯一活路径必须由它收 drain；注意本断言只认真实 curl -q 调用行，日志 echo 行不算数）"
 
 grep -q "drain_before_swap" scripts/brain-deploy.sh && grep -q "drain_cancel_with_retry" scripts/brain-deploy.sh \
   && ok "[结构] brain-deploy.sh 含 drain_before_swap + drain_cancel_with_retry" || fail "brain-deploy.sh 缺 drain_before_swap 或 drain_cancel_with_retry"
@@ -40,20 +40,20 @@ grep -q "drain_before_swap" scripts/brain-deploy.sh && grep -q "drain_cancel_wit
 #      不受 auto-complete 影响；
 #   ② 紧随其后的 GET drain-status 断言放宽为 draining:true 或 drain_completed:true 二择命中
 #      （有 in_progress 残留 → 前者；零数据 auto-complete → 后者），两条分支都代表 drain 生效过。
-curl -fsm 5 -X POST "$BRAIN_URL/api/brain/tick/drain" | grep -q '"draining":true' \
+curl -q -fsm 5 -X POST "$BRAIN_URL/api/brain/tick/drain" | grep -q '"draining":true' \
   && ok "[运行时] POST /tick/drain 响应体 draining:true（drainTick 无条件返回）" || fail "POST /tick/drain 响应体未含 draining:true"
 
-DRAIN_STATUS_BODY="$(curl -fsm 5 "$BRAIN_URL/api/brain/tick/drain-status")"
+DRAIN_STATUS_BODY="$(curl -q -fsm 5 "$BRAIN_URL/api/brain/tick/drain-status")"
 if echo "$DRAIN_STATUS_BODY" | grep -q '"draining":true' || echo "$DRAIN_STATUS_BODY" | grep -q '"drain_completed":true'; then
   ok "[运行时] drain-status 命中 draining:true 或 drain_completed:true（drain 生效，零数据环境 auto-complete 也算数）"
 else
   fail "drain-status 既非 draining:true 也非 drain_completed:true"
 fi
 
-curl -fsm 5 -X POST "$BRAIN_URL/api/brain/tick/drain-cancel" >/dev/null \
+curl -q -fsm 5 -X POST "$BRAIN_URL/api/brain/tick/drain-cancel" >/dev/null \
   && ok "[运行时] POST /tick/drain-cancel 可达" || fail "POST /tick/drain-cancel 失败"
 
-curl -fsm 5 "$BRAIN_URL/api/brain/tick/drain-status" | grep -q '"draining":false' \
+curl -q -fsm 5 "$BRAIN_URL/api/brain/tick/drain-status" | grep -q '"draining":false' \
   && ok "[运行时] drain-status.draining=false（已复原）" || fail "drain-status 未复原为 false"
 
 grep -q "DRAIN_RESTORE_MAX_AGE_MS" packages/brain/src/drain.js \

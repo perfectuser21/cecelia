@@ -10,11 +10,11 @@ fi
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 fail=0
 
-code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST "$BRAIN/api/brain/harness/judge" \
+code=$(curl -q -s -m 10 -o /dev/null -w '%{http_code}' -X POST "$BRAIN/api/brain/harness/judge" \
   -H 'Content-Type: application/json' -d '{}')
 if [ "$code" != "400" ]; then echo "❌ POST /harness/judge 期望 400 实得 $code"; fail=1; fi
 
-code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST \
+code=$(curl -q -s -m 10 -o /dev/null -w '%{http_code}' -X POST \
   "$BRAIN/api/brain/orchestrator/relay-runs/00000000-0000-0000-0000-000000000000" \
   -H 'Content-Type: application/json' -d '{"phase":"bogus"}')
 if [ "$code" != "400" ]; then echo "❌ POST /relay-runs 期望 400 实得 $code"; fail=1; fi

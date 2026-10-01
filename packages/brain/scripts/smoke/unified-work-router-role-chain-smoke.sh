@@ -25,7 +25,7 @@ json_get() { jq -er "$2" <<<"$1"; }
 
 git merge-base --is-ancestor "$BASELINE_SHA" HEAD \
   || fail 'frozen implementation baseline is not an ancestor of HEAD'
-curl -fsS "$BRAIN_URL/api/brain/health" >/dev/null \
+curl -q -fsS "$BRAIN_URL/api/brain/health" >/dev/null \
   || fail 'Brain controller endpoint is unavailable'
 
 TASK_ID=${HARNESS_ROLE_CHAIN_TASK_ID:-}
@@ -35,7 +35,7 @@ if [[ -z "$TASK_ID" ]]; then
     --arg base "$BASELINE_SHA" \
     --arg branch "$(git branch --show-current)" \
     '{title:$title,task_type:"harness_initiative",priority:"P1",change_kind:"bugfix",mutation_intent:"write",domain:"coding",payload:{repo:"cecelia",map_scope:["F0"],base_sha:$base,branch:$branch,target_environment:"local_api"}}')
-  CREATE_RESPONSE=$(curl -fsS -X POST "$BRAIN_URL/api/brain/tasks" \
+  CREATE_RESPONSE=$(curl -q -fsS -X POST "$BRAIN_URL/api/brain/tasks" \
     -H 'content-type: application/json' -d "$CREATE_BODY") \
     || fail 'Controller failed to create role-chain task'
   TASK_ID=$(json_get "$CREATE_RESPONSE" '.id // .task.id // .task_id')
@@ -56,7 +56,7 @@ done
 printf '%s\n' "$RUN_ID" > "$EVIDENCE_DIR/run-id"
 
 while ((SECONDS < DEADLINE)); do
-  RUN_JSON=$(curl -fsS "$BRAIN_URL/api/brain/orchestrator/relay-runs/by-id/$RUN_ID") \
+  RUN_JSON=$(curl -q -fsS "$BRAIN_URL/api/brain/orchestrator/relay-runs/by-id/$RUN_ID") \
     || fail 'authoritative Kernel run endpoint failed'
   PHASE=$(json_get "$RUN_JSON" '.phase')
   [[ "$PHASE" == done || "$PHASE" == failed ]] && break

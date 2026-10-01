@@ -12,7 +12,7 @@ fi
 echo "🔍 notion-endpoints-smoke — target: $BRAIN_URL"
 
 # /notes 端点检查
-CODE_NOTES=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN_URL}/api/brain/notes" \
+CODE_NOTES=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN_URL}/api/brain/notes" \
   -H "Content-Type: application/json" \
   -d '{"title":"smoke-test","content":"c","type":"Note"}')
 [ "$CODE_NOTES" = "201" ] || [ "$CODE_NOTES" = "502" ] || {
@@ -22,7 +22,7 @@ CODE_NOTES=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN_URL}/api/br
 echo "✅ /api/brain/notes OK (HTTP $CODE_NOTES)"
 
 # /notion/project 端点检查
-CODE_PROJ=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN_URL}/api/brain/notion/project" \
+CODE_PROJ=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN_URL}/api/brain/notion/project" \
   -H "Content-Type: application/json" \
   -d '{"title":"SmokeRun"}')
 [ "$CODE_PROJ" = "201" ] || [ "$CODE_PROJ" = "502" ] || {
@@ -32,7 +32,7 @@ CODE_PROJ=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN_URL}/api/bra
 echo "✅ /api/brain/notion/project OK (HTTP $CODE_PROJ)"
 
 # /notion/task 端点检查
-CODE_TASK=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN_URL}/api/brain/notion/task" \
+CODE_TASK=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN_URL}/api/brain/notion/task" \
   -H "Content-Type: application/json" \
   -d '{"title":"smoke task","ws_number":1}')
 [ "$CODE_TASK" = "201" ] || [ "$CODE_TASK" = "502" ] || {
@@ -42,7 +42,7 @@ CODE_TASK=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN_URL}/api/bra
 echo "✅ /api/brain/notion/task OK (HTTP $CODE_TASK)"
 
 # 400 验证：缺 title → 必须返回 400
-CODE_400=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN_URL}/api/brain/notes" \
+CODE_400=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN_URL}/api/brain/notes" \
   -H "Content-Type: application/json" \
   -d '{"content":"c","type":"Note"}')
 [ "$CODE_400" = "400" ] || {

@@ -32,7 +32,7 @@ BRAIN_CONTAINER="${BRAIN_CONTAINER:-cecelia-node-brain}"
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 
 # ── 1. 前置条件 ─────────────────────────────────────────────────────────────
-command -v curl >/dev/null 2>&1 || skip "curl 未安装"
+command -v curl -q >/dev/null 2>&1 || skip "curl -q 未安装"
 command -v docker >/dev/null 2>&1 || skip "docker 未安装"
 
 if ! docker ps --format '{{.Names}}' | grep -q "^${BRAIN_CONTAINER}$"; then
@@ -40,8 +40,8 @@ if ! docker ps --format '{{.Names}}' | grep -q "^${BRAIN_CONTAINER}$"; then
 fi
 
 # Health check
-if ! curl -sf "${BRAIN_URL}/api/brain/health" >/dev/null 2>&1; then
-  if ! curl -sf "${BRAIN_URL}/health" >/dev/null 2>&1; then
+if ! curl -q -sf "${BRAIN_URL}/api/brain/health" >/dev/null 2>&1; then
+  if ! curl -q -sf "${BRAIN_URL}/health" >/dev/null 2>&1; then
     skip "Brain ${BRAIN_URL} 不健康（health 端点 5xx/无响应）"
   fi
 fi
@@ -67,7 +67,7 @@ docker exec "$BRAIN_CONTAINER" node -e "
 log "✅ retry-policies module 可 import + 行为正确"
 
 # ── 3. /api/brain/harness-interrupts GET ───────────────────────────────────
-HTTP_CODE=$(curl -s -o /tmp/harness-interrupts-get.json -w '%{http_code}' "${BRAIN_URL}/api/brain/harness-interrupts" || echo 000)
+HTTP_CODE=$(curl -q -s -o /tmp/harness-interrupts-get.json -w '%{http_code}' "${BRAIN_URL}/api/brain/harness-interrupts" || echo 000)
 if [[ "$HTTP_CODE" != "200" ]]; then
   cat /tmp/harness-interrupts-get.json 2>/dev/null || true
   fail "GET /api/brain/harness-interrupts 返回 $HTTP_CODE"
@@ -82,7 +82,7 @@ log "✅ GET /api/brain/harness-interrupts → 200, 含 interrupts 字段"
 DUMMY_TASK_ID="00000000-0000-0000-0000-000000000abc"
 
 # 缺 decision → 400
-HTTP_CODE=$(curl -s -o /tmp/resume-empty.json -w '%{http_code}' \
+HTTP_CODE=$(curl -q -s -o /tmp/resume-empty.json -w '%{http_code}' \
   -X POST "${BRAIN_URL}/api/brain/harness-interrupts/${DUMMY_TASK_ID}/resume" \
   -H 'content-type: application/json' \
   --data '{}' || echo 000)
@@ -93,7 +93,7 @@ fi
 log "✅ POST resume 缺 decision → 400"
 
 # 非法 action → 400
-HTTP_CODE=$(curl -s -o /tmp/resume-bad.json -w '%{http_code}' \
+HTTP_CODE=$(curl -q -s -o /tmp/resume-bad.json -w '%{http_code}' \
   -X POST "${BRAIN_URL}/api/brain/harness-interrupts/${DUMMY_TASK_ID}/resume" \
   -H 'content-type: application/json' \
   --data '{"decision":{"action":"nuke_everything"}}' || echo 000)

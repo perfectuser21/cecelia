@@ -62,15 +62,15 @@ if (!['小彩', '小白', '小黄', '小蓝'].every((n) => note.includes(n))) { 
 process.exit(bad ? 1 : 0);
 "
 
-if [ -n "${BRAIN_URL:-}" ] && curl -sf -m 5 "$BRAIN_URL/api/brain/tick/status" >/dev/null 2>&1; then
+if [ -n "${BRAIN_URL:-}" ] && curl -q -sf -m 5 "$BRAIN_URL/api/brain/tick/status" >/dev/null 2>&1; then
   echo "[phone-registry-smoke] 3. Brain 路由"
-  BODY=$(curl -sf -m 10 "$BRAIN_URL/api/brain/phone-registry")
+  BODY=$(curl -q -sf -m 10 "$BRAIN_URL/api/brain/phone-registry")
   node -e "
 const b = JSON.parse(process.argv[1]);
 if (!(b.count >= 4) || !b.phones.some((p) => p.serial === 'ANGYVB4402004137' && p.nickname === '小黄')) { console.error('FAIL GET 返回', b.count); process.exit(1); }
 console.log('GET /phone-registry', b.count, '行 ✓');
 " "$BODY"
-  CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X PUT -H 'Content-Type: application/json' \
+  CODE=$(curl -q -s -o /dev/null -w '%{http_code}' -m 10 -X PUT -H 'Content-Type: application/json' \
     -d '{}' "$BRAIN_URL/api/brain/phone-registry/SMOKE0000")
   case "$CODE" in 400|401|503) echo "PUT 空 body → $CODE（未写库）✓" ;; *) echo "FAIL PUT 空 body 返回 $CODE"; exit 1 ;; esac
 fi

@@ -24,7 +24,7 @@ echo "🔍 cleanup-content-pipeline-smoke — Brain @ ${BRAIN_URL}"
 
 # ─── 1. 派一个 content-pipeline task ───────────────────────────────────────────
 echo "▶ [1/3] 注册 content-pipeline task（应停在 queued，不被 in-Brain 立即处理）..."
-TASK_ID=$(curl -sS -X POST "${BRAIN_URL}/api/brain/pipelines" \
+TASK_ID=$(curl -q -sS -X POST "${BRAIN_URL}/api/brain/pipelines" \
   -H "Content-Type: application/json" \
   -d '{"keyword":"smoke-cleanup-cp","content_type":"solo-company-case","priority":"P2"}' \
   | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))")
@@ -38,7 +38,7 @@ echo "  task_id: $TASK_ID"
 # 等 30s（一个 tick 周期），验证 task 不被推进
 echo "  等 30s 验证 task 仍 queued（in-Brain orchestrator 已下线）..."
 sleep 30
-STATUS=$(curl -sS "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))")
+STATUS=$(curl -q -sS "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))")
 case "$STATUS" in
   queued)
     echo "✅ task 仍 queued — in-Brain orchestrator 已下线，等 ZJ pipeline-worker 拉取"
@@ -56,7 +56,7 @@ esac
 
 # ─── 2. 旧 run-langgraph endpoint 已删 ─────────────────────────────────────────
 echo "▶ [2/3] POST /api/brain/pipelines/${TASK_ID}/run-langgraph → 应 404（路由已删）..."
-HTTP_CODE=$(curl -sS -o /tmp/cp-cleanup-langgraph.json -w '%{http_code}' \
+HTTP_CODE=$(curl -q -sS -o /tmp/cp-cleanup-langgraph.json -w '%{http_code}' \
   -X POST "${BRAIN_URL}/api/brain/pipelines/${TASK_ID}/run-langgraph" \
   -H "Content-Type: application/json" -d '{}' || true)
 if [ "$HTTP_CODE" = "404" ]; then
@@ -69,7 +69,7 @@ fi
 
 # ─── 3. /:id/run 仍工作但只返 202（不再同步 orchestrate）────────────────────────
 echo "▶ [3/3] POST /api/brain/pipelines/${TASK_ID}/run → 应 202..."
-HTTP_CODE=$(curl -sS -o /tmp/cp-cleanup-run.json -w '%{http_code}' \
+HTTP_CODE=$(curl -q -sS -o /tmp/cp-cleanup-run.json -w '%{http_code}' \
   -X POST "${BRAIN_URL}/api/brain/pipelines/${TASK_ID}/run" \
   -H "Content-Type: application/json" -d '{}' || true)
 if [ "$HTTP_CODE" = "202" ]; then

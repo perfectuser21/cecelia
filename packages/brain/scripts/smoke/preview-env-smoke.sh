@@ -16,7 +16,7 @@ ok()   { echo "✅ $1"; ((PASS++)) || true; }
 fail() { echo "❌ $1"; ((FAIL++)) || true; }
 
 # 0. 清理可能残留的旧记录
-curl -s -o /dev/null -X POST "$API/stop/$PR_NUM" || true
+curl -q -s -o /dev/null -X POST "$API/stop/$PR_NUM" || true
 
 # 0.5 容量准入闸门（capacity-gate.js）接入后，POST /start 唯一调用 admitPreview()，
 # 无有效 .runtime/host-disk.json 采样时会 layer1 拒绝（503 sample_missing），防静默瘫痪
@@ -40,7 +40,7 @@ fi
 
 # 1. POST /start 分配端口 + 触发（异步）启动脚本，同步返回 port/db_name
 echo "── POST /start ──"
-RESP=$(curl -s -X POST "$API/start" \
+RESP=$(curl -q -s -X POST "$API/start" \
   -H "Content-Type: application/json" \
   -d "{\"pr_number\":$PR_NUM,\"branch_name\":\"smoke-test-branch\"}")
 PORT=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('port',''))" 2>/dev/null)
@@ -54,7 +54,7 @@ fi
 
 # 2. GET /status/:pr 能查到刚分配的记录
 echo "── GET /status/:pr ──"
-code=$(curl -s -o /tmp/preview-status.json -w "%{http_code}" "$API/status/$PR_NUM")
+code=$(curl -q -s -o /tmp/preview-status.json -w "%{http_code}" "$API/status/$PR_NUM")
 [[ "$code" == "200" ]] \
   && ok "GET /status/$PR_NUM → 200" \
   || fail "GET /status/$PR_NUM → 期望 200，得 $code"
@@ -64,28 +64,28 @@ grep -q "$PR_NUM" /tmp/preview-status.json 2>/dev/null \
 
 # 3. GET /（列表）能看到活跃预览
 echo "── GET / (list) ──"
-code=$(curl -s -o /dev/null -w "%{http_code}" "$API/")
+code=$(curl -q -s -o /dev/null -w "%{http_code}" "$API/")
 [[ "$code" == "200" ]] \
   && ok "GET / → 200" \
   || fail "GET / → 期望 200，得 $code"
 
 # 4. POST /stop/:pr 销毁，DB 行标记 inactive
 echo "── POST /stop/:pr ──"
-code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API/stop/$PR_NUM")
+code=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$API/stop/$PR_NUM")
 [[ "$code" == "200" ]] \
   && ok "POST /stop/$PR_NUM → 200" \
   || fail "POST /stop/$PR_NUM → 期望 200，得 $code"
 
 # 5. 停止后 GET /status/:pr 状态应变为 inactive（DB 行仍在，标记已释放）
 echo "── GET /status/:pr after stop ──"
-STATUS_AFTER=$(curl -s "$API/status/$PR_NUM" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null)
+STATUS_AFTER=$(curl -q -s "$API/status/$PR_NUM" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null)
 [[ "$STATUS_AFTER" == "inactive" ]] \
   && ok "GET /status/:pr（停止后）→ status=inactive（已释放）" \
   || fail "GET /status/:pr（停止后）→ 期望 status=inactive，得: $STATUS_AFTER"
 
 # 6. GET /（列表）不应再包含该 PR（inactive 被过滤）
 echo "── GET / (list) 不含已停止的 PR ──"
-LIST_HAS_PR=$(curl -s "$API/" | grep -c "\"pr_number\":$PR_NUM" || true)
+LIST_HAS_PR=$(curl -q -s "$API/" | grep -c "\"pr_number\":$PR_NUM" || true)
 [[ "$LIST_HAS_PR" -eq 0 ]] \
   && ok "GET / 列表已不含 PR $PR_NUM（inactive 正确过滤）" \
   || fail "GET / 列表仍含已停止的 PR $PR_NUM"

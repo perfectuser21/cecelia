@@ -22,14 +22,14 @@ MAX_WAIT_SEC="${RETIRE_SMOKE_MAX_WAIT_SEC:-180}"
 echo "🔍 retire-harness-planner-smoke — Brain @ ${BRAIN_URL} (max_wait=${MAX_WAIT_SEC}s)"
 
 # 0. health check
-if ! curl -sf "${BRAIN_URL}/api/brain/tick/status" >/dev/null 2>&1; then
+if ! curl -q -sf "${BRAIN_URL}/api/brain/tick/status" >/dev/null 2>&1; then
   echo "❌ Brain not healthy at ${BRAIN_URL}/api/brain/tick/status" >&2
   exit 1
 fi
 
 # 1. 注册一个 harness_planner task
 echo "▶ 注册测试 task..."
-TASK_ID=$(curl -sS -X POST "${BRAIN_URL}/api/brain/tasks" \
+TASK_ID=$(curl -q -sS -X POST "${BRAIN_URL}/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d '{"title":"[smoke] retire-harness-planner verify","description":"smoke test — should be terminal_failure (subsumed by harness_initiative full graph)","task_type":"harness_planner","priority":"P2","trigger_source":"manual"}' \
   | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))")
@@ -44,7 +44,7 @@ echo "  task_id: $TASK_ID"
 #    生产环境 tick 会按 TICK_INTERVAL_MINUTES 自走（默认 2 分钟，可能比 wait 超时长）。
 #    无论环境如何主动 trigger 一次都是 idempotent + 加速的。
 echo "▶ 主动触发 tick（manual dispatch）..."
-TICK_RESULT=$(curl -sS -X POST "${BRAIN_URL}/api/brain/tick" -H "Content-Type: application/json" -d '{}' 2>&1 || echo '{"error":"tick_request_failed"}')
+TICK_RESULT=$(curl -q -sS -X POST "${BRAIN_URL}/api/brain/tick" -H "Content-Type: application/json" -d '{}' 2>&1 || echo '{"error":"tick_request_failed"}')
 echo "  tick result: ${TICK_RESULT}"
 
 # 3. 轮询 task status（最多 MAX_WAIT_SEC，5s 间隔）
@@ -53,7 +53,7 @@ echo "▶ 轮询 task status（${ATTEMPTS} attempts × 5s = ${MAX_WAIT_SEC}s）.
 STATUS=""
 ERR=""
 for i in $(seq 1 "${ATTEMPTS}"); do
-  RESP=$(curl -sS "${BRAIN_URL}/api/brain/tasks/${TASK_ID}")
+  RESP=$(curl -q -sS "${BRAIN_URL}/api/brain/tasks/${TASK_ID}")
   STATUS=$(echo "$RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))")
   case "$STATUS" in
     failed)
@@ -76,7 +76,7 @@ for i in $(seq 1 "${ATTEMPTS}"); do
       # 每 30s 重 trigger 一次 tick，防止 CI 环境永远没 tick 的角落情况
       if [ $((i % 6)) -eq 0 ]; then
         echo "  attempt ${i}: 仍 queued，重 trigger tick..."
-        curl -sS -X POST "${BRAIN_URL}/api/brain/tick" -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 || true
+        curl -q -sS -X POST "${BRAIN_URL}/api/brain/tick" -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 || true
       fi
       sleep 5
       ;;
@@ -87,5 +87,5 @@ for i in $(seq 1 "${ATTEMPTS}"); do
 done
 
 echo "❌ ${MAX_WAIT_SEC}s 内 task 未被派发处理 (last status=$STATUS)" >&2
-echo "  task body: $(curl -sS "${BRAIN_URL}/api/brain/tasks/${TASK_ID}")" >&2
+echo "  task body: $(curl -q -sS "${BRAIN_URL}/api/brain/tasks/${TASK_ID}")" >&2
 exit 1

@@ -51,10 +51,10 @@ request() {
   local method="$1" path="$2" data="${3:-}"
   local response
   if [ -n "$data" ]; then
-    response=$(curl -sS -w $'\n%{http_code}' -X "$method" "$API$path" \
+    response=$(curl -q -sS -w $'\n%{http_code}' -X "$method" "$API$path" \
       -H 'Content-Type: application/json' -d "$data")
   else
-    response=$(curl -sS -w $'\n%{http_code}' -X "$method" "$API$path")
+    response=$(curl -q -sS -w $'\n%{http_code}' -X "$method" "$API$path")
   fi
   HTTP_CODE="${response##*$'\n'}"
   HTTP_BODY="${response%$'\n'*}"
