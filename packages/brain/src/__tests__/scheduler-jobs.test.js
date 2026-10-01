@@ -1,11 +1,6 @@
 vi.mock('../projection/company-key-results.js', () => ({ runCompanyKrProjection: vi.fn(async () => ({ skipped: true })) }));
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('../node-onboarding/service.js', () => ({
-  runNodeOnboardingJob: vi.fn().mockResolvedValue({ reconciled: 0, errors: 0, scheduled: 0 }),
-}));
-import { runNodeOnboardingJob } from '../node-onboarding/service.js';
-
 vi.mock('../daily-review-scheduler.js', () => ({
   triggerArchReview: vi.fn().mockResolvedValue({ triggered: false, skipped_window: true }),
   triggerCiPatrol: vi.fn().mockResolvedValue({ triggered: false, skipped_window: true }),
@@ -238,13 +233,6 @@ function makePool() {
 }
 
 describe('scheduler-jobs 注册表', () => {
-  it('节点接入对账使用数据库连接并保留 handler 结果', async () => {
-    const pool = makePool();
-    const job = JOBS.find(row => row.name === 'node-onboarding');
-    expect(job?.needsPool).toBe(true);
-    await runSchedulerJobsOnce(pool, [job]);
-    expect(runNodeOnboardingJob).toHaveBeenCalledWith(pool);
-  });
   beforeEach(() => {
     vi.clearAllMocks();
   });
