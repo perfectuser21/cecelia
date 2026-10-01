@@ -1,9 +1,6 @@
 import { lockMapProjectionAuthority, readMap } from '../lib/map-read-service.js';
 import { parseBaseRepo } from './github-pr-discovery.js';
 import { isCanonicalTaskBranch, WORKSPACE_REPOSITORIES } from './workspace-spec.js';
-import {
-  defaultExactBranchHeadResolver, defaultExactCommitDiffResolver,
-} from './remote-exact-commit-blob-resolver.js';
 
 const SHA = /^[a-f0-9]{40}$/;
 const UUID = /^[a-f0-9-]{36}$/;
@@ -72,9 +69,11 @@ export async function rebaseReceiptForRecovery(client, { task, receipt, predeces
   const fresh = map?.freshness?.repos?.[receipt.repo];
   if (map?.freshness?.status !== 'fresh' || fresh?.status !== 'fresh'
       || fresh.source_revision !== request.base_sha) fail('recovery_rebase_map_changed');
-  const branchHead = await (deps.resolveBranchHead ?? defaultExactBranchHeadResolver)({ repo, branch });
+  const remote = !deps.resolveBranchHead || !deps.resolveCommitDiff
+    ? await import('./remote-exact-commit-blob-resolver.js') : null;
+  const branchHead = await (deps.resolveBranchHead ?? remote.defaultExactBranchHeadResolver)({ repo, branch });
   if (branchHead !== request.head_sha) fail('recovery_rebase_head_changed');
-  const diff = await (deps.resolveCommitDiff ?? defaultExactCommitDiffResolver)(
+  const diff = await (deps.resolveCommitDiff ?? remote.defaultExactCommitDiffResolver)(
     { repo, baseSha: request.base_sha, headSha: request.head_sha },
   );
   if (diff?.isAncestor !== true || !Array.isArray(diff.changedFiles)) fail('recovery_rebase_lineage_invalid');

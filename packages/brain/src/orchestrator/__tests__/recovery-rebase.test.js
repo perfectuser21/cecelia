@@ -49,7 +49,7 @@ describe('未封存失败任务的受控再基恢复', () => {
     expect(f.calls.some(c => c.sql === 'COMMIT')).toBe(false);
   });
 
-  it('显式请求不能恢复已封存或非planning，也不能夹带额外payload键', async () => {
+  it('显式请求仅从planning恢复，拒绝额外payload键及路径穿越', async () => {
     for (const mutate of [f => { f.input.phase = 'evaluate'; },
       f => { f.request.password = 'credential'; }, f => { f.request.sprint_dir = 'sprints/../escape'; }]) {
       const f = fixture(); mutate(f);
