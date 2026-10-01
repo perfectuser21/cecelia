@@ -7,6 +7,11 @@ function deny(reason) {
   console.log(`[smoke] 写入未启用：${reason}`);
   process.exit(1);
 }
+function rejectLibpqOverrides(env) {
+  if (['PGHOSTADDR', 'PGSERVICE', 'PGSERVICEFILE'].some(key => env[key])) {
+    deny('libpq 地址或服务覆盖变量无法核对，拒绝写入');
+  }
+}
 function databaseTarget(value) {
   const uri = new URL(value);
   if (!['postgres:', 'postgresql:'].includes(uri.protocol) || uri.search || uri.hash) {
@@ -27,6 +32,7 @@ function sameDatabase(left, right) {
   return left.database === right.database && left.host === right.host && left.port === right.port;
 }
 if (process.env.SMOKE_ALLOW_WRITE !== '1') deny('需 SMOKE_ALLOW_WRITE=1');
+rejectLibpqOverrides(process.env);
 try {
   const target = new URL(process.argv[2]);
   if (target.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(target.hostname)
@@ -44,6 +50,7 @@ try {
     const at = value.indexOf('=');
     return [value.slice(0, at), value.slice(at + 1)];
   }));
+  rejectLibpqOverrides(env);
   if (!info.State?.Running || !['test', 'development'].includes(env.NODE_ENV)
       || !safeDatabases.has(env.DB_NAME)) deny('容器必须运行在已知测试环境和安全库');
   // Brain db-config.js 的真连接来自 DB_HOST/DB_PORT/DB_NAME，不使用 DATABASE_URL。
