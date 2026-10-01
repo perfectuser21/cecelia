@@ -12,6 +12,23 @@ function rejectLibpqOverrides(env) {
     deny('libpq 地址或服务覆盖变量无法核对，拒绝写入');
   }
 }
+function requireLocalUnixEndpoint(value) {
+  const endpoint = new URL(value);
+  if (endpoint.protocol !== 'unix:' || endpoint.hostname || endpoint.username || endpoint.password
+      || endpoint.search || endpoint.hash || !endpoint.pathname.startsWith('/') || endpoint.pathname === '/') {
+    deny('Docker daemon 必须使用已核对的本地 Unix endpoint');
+  }
+}
+function checkDockerDaemonIdentity() {
+  // 环境覆盖提示也须本地；不改变用户 context、socket 或网络配置。
+  if (process.env.DOCKER_HOST) requireLocalUnixEndpoint(process.env.DOCKER_HOST);
+  const options = { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'pipe'] };
+  const context = process.env.DOCKER_CONTEXT || execFileSync('docker', ['context', 'show'], options).trim();
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(context)) deny('无法核对 Docker context 身份');
+  const endpoint = JSON.parse(execFileSync('docker',
+    ['context', 'inspect', '--format', '{{json .Endpoints.docker.Host}}', context], options));
+  requireLocalUnixEndpoint(endpoint);
+}
 function databaseTarget(value) {
   const uri = new URL(value);
   if (!['postgres:', 'postgresql:'].includes(uri.protocol) || uri.search || uri.hash) {
@@ -43,6 +60,7 @@ try {
   }
   const container = process.env.BRAIN_CONTAINER;
   if (!container) deny('缺少 BRAIN_CONTAINER，无法核对目标身份');
+  checkDockerDaemonIdentity();
   // inspect 结果仅在内存解析；错误不输出 stderr/Env，防止泄露凭据。
   const raw = execFileSync('docker', ['inspect', '--format', '{{json .}}', container], {
     encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'pipe'],
