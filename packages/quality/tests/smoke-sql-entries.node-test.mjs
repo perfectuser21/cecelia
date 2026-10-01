@@ -9,7 +9,7 @@ const entries = JSON.parse(await readFile(resolve(root, 'packages/quality/smoke-
 const safe = 'postgresql://localhost:5432/cecelia_test';
 const unsafe = 'postgresql://localhost:5432/cecelia';
 
-const weighted = 'harness-weighted-reservation-smoke.sh';
+for (const weighted of ['harness-weighted-reservation-smoke.sh', 'managed-script-capacity-smoke.sh']) {
 test('actual Node PG integration wrapper joins the live write inventory and classification', async () => {
   const inventory = await readFile(resolve(root, 'packages/quality/smoke-write-targets.txt'), 'utf8');
   assert.ok(inventory.split('\n').includes(weighted), 'Node PG writes must not depend on literal psql discovery');
@@ -17,7 +17,8 @@ test('actual Node PG integration wrapper joins the live write inventory and clas
   assert.match(entries[weighted].connection, /TEST_DATABASE_URL.*DB_/);
   const source = await readFile(resolve(root, 'packages/brain/scripts/smoke', weighted), 'utf8');
   assert.match(source, /vitest\.integration\.config\.js/);
-  assert.match(source, /attempt-weighted-reservation\.pg\.integration\.test\.js/);
+  assert.match(source, weighted.startsWith('harness-') ? /attempt-weighted-reservation\.pg\.integration\.test\.js/ : /script-capacity-reservation\.pg\.integration\.test\.js/);
+  if (weighted.startsWith('managed-')) assert.match(source, /script-managed-executor\.pg\.integration\.test\.js/);
 });
 
 for (const [name, overrides, accepted] of [
@@ -37,7 +38,7 @@ for (const [name, overrides, accepted] of [
   ['actual wrapper default DB_* overrides ineffective PG host/port', { SMOKE_ALLOW_WRITE: '1',
     TEST_DATABASE_URL: '', DB_NAME: '', DB_HOST: '', DB_PORT: '', PGHOST: 'remote.invalid', PGPORT: '6543' }, true],
 ]) {
-  test(`actual weighted Node PG smoke target before Vitest execution: ${name}`, async () => {
+  test(`${weighted} actual Node PG smoke target before Vitest execution: ${name}`, async () => {
     const temp = await mkdtemp(resolve(tmpdir(), 'weighted-smoke-boundary-'));
     const marker = resolve(temp, 'vitest-execution');
     const boundary = resolve(temp, 'boundary.sh');
@@ -63,6 +64,7 @@ for (const [name, overrides, accepted] of [
       });
     } finally { await rm(temp, { recursive: true, force: true }); }
   });
+}
 }
 for (const [name, classification] of Object.entries(entries)) {
   if (classification.kind !== 'readonly') continue;
