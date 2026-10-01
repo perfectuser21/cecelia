@@ -3,6 +3,18 @@ import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 let api;try{api=require('./app-server-rpc.cjs');}catch{api={};}
 const client=(policy,id,method,params={})=>policy.client({id,method,params});
+it('真实插件无参请求保留null合同，显式null不能冒充对象参数',()=>{
+ for(const method of ['configRequirements/read','account/logout']){
+  for(const params of [undefined,null]){
+   const p=api.createRpcPolicy(),frame={id:1,method,...(params===undefined?{}:{params})};
+   expect(p.client(frame).forward).toEqual(frame);
+   expect(p.server({id:1,result:null}).forward).toBeTruthy();
+  }
+  expect(client(api.createRpcPolicy(),1,method,{}).reply?.error.message).toBe('appserver_rpc_params_invalid');
+ }
+ expect(api.createRpcPolicy().client({id:1,method:'model/list'}).forward).toBeTruthy();
+ expect(client(api.createRpcPolicy(),1,'model/list',null).reply?.error.message).toBe('appserver_rpc_params_invalid');
+});
 it('固定0.158 experimental真实插件字段可通过，未知方法/字段和错误类型拒绝',()=>{
  expect(api.createRpcPolicy).toBeTypeOf('function');const p=api.createRpcPolicy();
  expect(client(p,1,'initialize',{clientInfo:{name:'openclaw',version:'2026.9.7'},capabilities:{experimentalApi:true}}).forward.method).toBe('initialize');
