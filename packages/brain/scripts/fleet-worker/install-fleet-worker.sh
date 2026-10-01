@@ -269,7 +269,9 @@ probeFleetWorkerHealth({
   if (report?.runtime_resources?.postgres?.available !== true) failures.push('postgres');
   if (!Number.isFinite(report?.resources?.disk_free_bytes)
       || report.resources.disk_free_bytes < diskMinFreeGib * GIB
-      || report.resources.disk_used_percent > 85) failures.push('disk');
+      || !Number.isFinite(report.resources.disk_used_percent)
+      || report.resources.disk_used_percent < 0
+      || report.resources.disk_used_percent > 100) failures.push('disk');
   if (!Number.isFinite(report?.resources?.memory_bytes)
       || report.resources.memory_bytes < 8 * GIB) failures.push('memory');
   if (report?.worktree?.root_ready !== true) failures.push('repository_access');
