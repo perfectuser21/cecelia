@@ -1,4 +1,4 @@
-import { runCompanyKrProjection } from './projection/company-key-results.js';
+import { runCompanyKrWorkflow } from './projection/company-kr-workflow.js';
 /**
  * scheduler-jobs.js — 声明式定时任务注册表（作战循环 P1-PR1）
  *
@@ -126,7 +126,7 @@ export const JOBS = [
   { name: 'notion-task-command-ingest', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionTaskCommandIngest, description: 'Notion Tasks 结构化回读：In Progress/Start → start_requested' },
   { name: 'projection-command-apply', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: applyProjectionCommands, description: 'Brain 状态机校验并应用 projection commands；真实 attempt 才能进入 in_progress' },
   { name: 'projection-outbox', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runProjectionOutbox, description: '本地数据库到 Notion/Obsidian 等可拆卸 projection 的通用 outbox' },
-  { name: 'notion-company-key-results', needsPool: true, timeoutMs: 120000, handler: runCompanyKrProjection, description: '公司8KR列级入口：先Target/Start入站再仅Current出站；原公式不写，5min自gate' },
+  { name: 'notion-company-key-results', needsPool: true, timeoutMs: 120000, handler: runCompanyKrWorkflow, description: '经营KR工作流：5min回灌人工正式值、投影独立AI建议；正式变更及每日定时去重派发受限OpenClaw分析，Brain统一收账' },
   { name: 'notion-kr-projection', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionKrProjection, description: 'Brain KR → 独立注册的只读镜子（5min 自 gate；经营 KR 库禁写；Current/Target/Progress 分列，02148cef）' },
   { name: 'ops-collector', needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsCollector(pool), description: '运行舱采集器（5min自gate，宿主launchctl+HK OpenClaw+GHA cron→ops_*投影，per-source心跳，G1 S1 刀1，task 6fcb5356）' },
   {

@@ -1,7 +1,6 @@
 """运行采集器和现场渲染器，验证指标的 Brain 单一写口。"""
 import importlib.util
 import json
-import re
 import subprocess
 import tempfile
 import threading
@@ -71,7 +70,6 @@ class Pipeline(unittest.TestCase):
     def test_real_objects_failure_records_task_without_observations(self):
         module = load("opc-kr-current")
         calls = []
-
         def call(url, body=None, method=None):
             calls.append((url, method, body))
             if url.endswith("/tasks"):
@@ -143,10 +141,10 @@ class Pipeline(unittest.TestCase):
         self.assertTrue(any(method == "PATCH" and body.get("status") == "completed"
                             for _, method, body in calls))
 
-    def collector(self, fail=False, completion_state="completed", brain_api=None):
+    def collector(self, fail=False, completion_state="completed", brain_api=None, rows=None):
         module = load("opc-kr-current")
         calls = []
-        rows = [item(SOURCE_DOD, "重命名后的经营指标"), item(SOURCE_COST, "不同标题")]
+        rows = rows if rows is not None else [item(SOURCE_DOD, "重命名后的经营指标"), item(SOURCE_COST, "不同标题")]
 
         def call(url, body=None, method=None):
             method = method or ("POST" if body is not None else "GET")
@@ -238,7 +236,6 @@ class Pipeline(unittest.TestCase):
         rows = company_rows()
         rows[5] = item(SOURCE_DOD, "名称无需KR编号", "1.234", 0.125)
         calls = []
-
         def call(url, body=None, method=None):
             calls.append(url)
             if urlsplit(url).hostname == "api.notion.com":
@@ -255,26 +252,26 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(renamed["areas"], [])
         self.assertTrue(all(urlsplit(url).hostname != "api.notion.com" for url in calls))
 
-    def test_empty_brain_snapshot_preserves_existing_site_files(self):
+    def test_empty_snapshot_refuses_all_six_site_writes(self):
+        self.assert_invalid_snapshot_preserves_six_files([])
+
+    def test_all_inactive_snapshot_clears_old_display(self):
         module = load("opc-okr-sync")
-        calls = []
-
+        rows = [dict(row, active=False) for row in company_rows()]
         def call(url, body=None, method=None):
-            calls.append((url, method, body))
-            return {"id": "empty-sync-task", "success": True}
-
+            if url.endswith("/tasks"):
+                return {"id": "inactive-sync-task"}
+            if url.endswith("/company-key-results"):
+                return {"success": True, "items": rows}
+            return {"success": True, "status": body.get("status") if body else None}
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "clawd/OKR-CURRENT.md"
             target.parent.mkdir()
-            target.write_text("上一份有效快照")
-            with patch.object(module, "ROOT", directory), patch.object(module, "fetch", return_value=[]), \
-                    patch.object(module, "call", side_effect=call):
-                with self.assertRaises(SystemExit):
-                    module.main()
-            self.assertEqual(target.read_text(), "上一份有效快照")
-            self.assertTrue(calls, "空快照失败也必须登记")
-            self.assertTrue(calls[0][0].endswith("/tasks"))
-            self.assertTrue(any(method == "PATCH" and body.get("status") == "failed" for _, method, body in calls))
+            target.write_text("旧的已归档KR")
+            with patch.object(module, "ROOT", directory), patch.object(module, "call", side_effect=call):
+                module.main()
+            self.assertNotIn("旧的已归档KR", target.read_text())
+            self.assertIn("当前无活动公司 KR", target.read_text())
 
     def test_unresolved_area_ids_refuse_to_misreport_departments(self):
         module = load("opc-okr-sync")
@@ -287,7 +284,6 @@ class Pipeline(unittest.TestCase):
     def assert_invalid_snapshot_preserves_six_files(self, rows):
         module = load("opc-okr-sync")
         calls = []
-
         def call(url, body=None, method=None):
             calls.append((url, method, body))
             if url.endswith("/company-key-results"):
@@ -314,21 +310,75 @@ class Pipeline(unittest.TestCase):
             self.assertTrue(any(method == "PATCH" and body.get("status") == "failed" for _, method, body in calls))
             self.assertFalse(any(method == "PATCH" and body.get("status") == "completed" for _, method, body in calls))
 
-    def test_missing_company_source_fails_before_any_site_write(self):
-        self.assert_invalid_snapshot_preserves_six_files(company_rows()[:-1])
+    def test_missing_seed_is_valid_dynamic_membership(self):
+        module = load("opc-okr-sync")
+        with patch.object(module, "call", return_value={"success": True, "items": company_rows()[:-1]}):
+            self.assertEqual(len(module.fetch()), 7)
 
     def test_unknown_replacement_source_fails_before_any_site_write(self):
         rows = company_rows()
         rows[-1] = item("unknown-but-unique-page", "同名公司指标")
         self.assert_invalid_snapshot_preserves_six_files(rows)
 
-    def test_standalone_source_catalog_matches_brain_catalog(self):
+    def test_ninth_uuid_source_and_unit_are_preserved_without_catalog_claim(self):
         module = load("opc-okr-sync")
-        brain = (ROOT / "packages/brain/src/lib/company-kr-metrics.js").read_text()
-        catalog = brain.split("export const COMPANY_KR_CATALOG = [", 1)[1].split("].map(", 1)[0]
-        expected = set(re.findall(r"\['([a-f0-9-]{36})',", catalog))
-        self.assertEqual(len(expected), 8)
-        self.assertEqual(module.SOURCE_PAGE_IDS, expected)
+        rows = company_rows() + [item("f6620310-18ed-4cbd-b3b2-0dd5f75d7bbc", "新客户KR")]
+        rows[-1]["unit"] = "客户数"
+        with patch.object(module, "call", return_value={"success": True, "items": rows}):
+            result = module.fetch()
+        self.assertEqual(len(result), 9)
+        self.assertEqual(next(row for row in result if row["kr"] == "新客户KR")["unit"], "客户数")
+
+    def test_duplicate_uuid_source_refuses_all_site_writes(self):
+        rows = company_rows()
+        rows.append(item(rows[0]["source_page_id"].replace("-", "").upper(), "重复来源"))
+        self.assert_invalid_snapshot_preserves_six_files(rows)
+
+    def test_inactive_rows_are_not_rendered_or_collected(self):
+        rows = company_rows()
+        rows[0]["active"] = False
+        rows[1]["status"] = "Paused"
+        rows[2]["status"] = "已归档"
+        rows[3]["sync_error"] = {"reason": "来源不可读"}
+        module = load("opc-okr-sync")
+        with patch.object(module, "call", return_value={"success": True, "items": rows}):
+            self.assertEqual(len(module.fetch()), 4)
+        for live in [[item("f6620310-18ed-4cbd-b3b2-0dd5f75d7bbc", "新增未配置采集")], [dict(item(SOURCE_DOD, "已暂停"), active=False)], [dict(item(SOURCE_COST, "归档"), status="archived")]]:
+            calls = self.collector(rows=live)
+            self.assertFalse(any(url.endswith("/observations") for url, _, _ in calls))
+            complete = next(body for _, method, body in calls if method == "PATCH" and body.get("status") == "completed")
+            self.assertEqual(complete["result"]["facts"], [])
+
+    def test_collector_empty_source_records_failure_without_observations(self):
+        calls = self.collector(fail=True, rows=[])
+        self.assertFalse(any(url.endswith("/observations") for url, _, _ in calls))
+        self.assertTrue(any(method == "PATCH" and body.get("status") == "failed" for _, method, body in calls))
+
+    def test_collector_dynamic_ninth_only_observes_two_explicit_sources(self):
+        rows = company_rows() + [item("f6620310-18ed-4cbd-b3b2-0dd5f75d7bbc", "无采集证据的新KR")]
+        calls = self.collector(rows=rows)
+        self.assertEqual({body["source_page_id"] for url, _, body in calls if url.endswith("/observations")}, {SOURCE_DOD, SOURCE_COST})
+        completed = next(body for _, method, body in calls if method == "PATCH" and body.get("status") == "completed")
+        self.assertEqual([row["observed_current_value"] for row in completed["result"]["facts"]], [2, 1])
+        self.assertEqual([row["formal_current_value"] for row in completed["result"]["facts"]], ["0", "0"])
+
+    def test_renderer_separates_formal_observation_and_ai_advice(self):
+        module = load("opc-okr-sync")
+        row = item(SOURCE_DOD, "指标", "1.234", 0.25)
+        row["observation"] = {"current_value": "2.345", "unit": "条", "evidence": [{"fact": "采集", "source": "task:one"}]}
+        row["advice"] = {"suggested_current": "2.345", "suggested_target": "10", "reason": "补采集证据", "stale": True}
+        with patch.object(module, "call", return_value={"success": True, "items": [row]}):
+            text = module.fmt(module.fetch(), "公司")
+        for expected in ["正式当前", "正式目标", "AI观察", "AI建议当前", "AI建议目标", "1.234", "2.345", "10", "已过期", "补采集证据"]:
+            self.assertIn(expected, text)
+
+    def test_collector_rejects_illegal_unrelated_source_before_observation(self):
+        module = load("opc-kr-current")
+        for invalid in [item("bad-source", "错误"), dict(item("f6620310-18ed-4cbd-b3b2-0dd5f75d7bbc", "无单位"), unit="")]:
+            with patch.object(module, "call", return_value={"success": True, "items": [item(SOURCE_DOD, "已知"), invalid]}) as call:
+                with self.assertRaises(RuntimeError):
+                    module.set_current(SOURCE_DOD, 2, {"fact": "snapshot", "source": "case"}, "task", "run", "time")
+                self.assertEqual(call.call_count, 1)
 
     def test_historical_values_are_labelled_unverified(self):
         module = load("opc-okr-sync")
