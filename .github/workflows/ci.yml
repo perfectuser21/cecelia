@@ -957,6 +957,7 @@ jobs:
             src/__tests__/integration/script-executor-constraints.pg.integration.test.js \
             src/__tests__/integration/attempt-weighted-reservation.pg.integration.test.js \
             src/__tests__/integration/script-capacity-reservation.pg.integration.test.js \
+            src/__tests__/integration/script-managed-executor.pg.integration.test.js \
             src/__tests__/migration-333.test.js \
             src/__tests__/migration-400-fact-snapshot.test.js \
             src/__tests__/migration-370-gp-governance-decisions.test.js \
