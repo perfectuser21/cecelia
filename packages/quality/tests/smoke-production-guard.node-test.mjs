@@ -45,7 +45,7 @@ async function fixture(run) {
     return new Promise((resolve, reject) => {
       const proc = spawn('bash', args, {
         cwd: root,
-        env: { ...process.env, PATH: `${temp}:${process.env.PATH}`, BRAIN: `http://127.0.0.1:${port}`, BRAIN_URL: `http://127.0.0.1:${port}`, BRAIN_CONTAINER: 'cecelia-brain-smoke', DATABASE_URL: 'postgresql://cecelia@localhost:5432/cecelia_test', SMOKE_ALLOW_WRITE: '', GUARD_DOCKER_LOG: dockerLog, GUARD_DOCKER_FIXTURE: JSON.stringify(dockerInfo), ...overrides },
+        env: { ...process.env, PATH: `${temp}:${process.env.PATH}`, BRAIN: `http://127.0.0.1:${port}`, BRAIN_URL: `http://127.0.0.1:${port}`, BRAIN_CONTAINER: 'cecelia-brain-smoke', DATABASE_URL: 'postgresql://cecelia@localhost:5432/cecelia_test', SMOKE_ALLOW_WRITE: '', PGHOSTADDR: '', PGSERVICE: '', PGSERVICEFILE: '', GUARD_DOCKER_LOG: dockerLog, GUARD_DOCKER_FIXTURE: JSON.stringify(dockerInfo), ...overrides },
       });
       let output = '';
       proc.stdout.on('data', data => { output += data; });
@@ -291,3 +291,28 @@ test('ignored DB_URL does not replace a safe actual DATABASE_URL', async () => {
     assert.match(result.output, /GUARD_ACCEPTED/);
   });
 });
+
+
+for (const variable of ['PGHOSTADDR', 'PGSERVICE', 'PGSERVICEFILE']) {
+  for (const [script, connection] of [
+    ['claimed-by-cleared', {}],
+    ['task-delete-postdeploy-filter', { DB_NAME: 'cecelia_test', DB_HOST: 'localhost', DB_PORT: '5432' }],
+    ['phone-registry', { DATABASE_URL: '', PGDATABASE: 'cecelia_test', PGHOST: 'localhost', PGPORT: '5432' }],
+  ]) {
+    test(`${script}: libpq ${variable} cannot override a checked local target`, async () => {
+      await fixture(async ({ requests, smoke }) => {
+        const result = await smoke(script, { SMOKE_ALLOW_WRITE: '1', ...connection,
+          [variable]: variable === 'PGHOSTADDR' ? '192.0.2.10' : 'external-service' }, undefined, true);
+        assert.doesNotMatch(result.output, /GUARD_ACCEPTED/, 'libpq target override escaped identity validation');
+        assert.deepEqual(requests, [], 'unsafe libpq settings reached Brain before rejection');
+      });
+    });
+  }
+  test(`container libpq ${variable} cannot override its checked local target`, async () => {
+    await fixture(async ({ requests, smoke, info }) => {
+      info.Config.Env.push(`${variable}=external-service`);
+      const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1' }, info);
+      assert.deepEqual(requests, [], result.output);
+    });
+  });
+}
