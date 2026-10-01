@@ -156,3 +156,12 @@ for (const connection of [
     });
   });
 }
+
+for (const script of ['inbox-p1', 'clips-notion', 'claimed-by-cleared', 'task-tasks-dedup']) {
+  test(`${script}: direct entry must refuse unauthorized writes`, async () => {
+    await fixture(async ({ requests, smoke }) => {
+      await smoke(script);
+      assert.deepEqual(requests, [], 'standalone smoke mutated Brain without authorization');
+    });
+  });
+}
