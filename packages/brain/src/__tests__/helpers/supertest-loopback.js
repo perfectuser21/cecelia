@@ -1,11 +1,10 @@
 import Test from 'supertest/lib/test.js';
 
-// Supertest uses IPv4 URLs even when its default listener is IPv6-only.
-// Keep its listen/close lifecycle, and align only the test request destination.
-const marker = Symbol.for('cecelia.supertest.listener-family');
-const original = Test.prototype.serverAddress;
-
-if (!original[marker]) {
+/** 请求目标跟随实际监听地址族，保留 Supertest 起服和关闭服务的所有权。 */
+export function installSupertestLoopback(TestClass) {
+  const marker = Symbol.for('cecelia.supertest.listener-family');
+  const original = TestClass.prototype.serverAddress;
+  if (original[marker]) return;
   function listenerAddress(app, path) {
     const url = original.call(this, app, path);
     const address = app.address();
@@ -14,5 +13,7 @@ if (!original[marker]) {
     return url.replace('://127.0.0.1:', `://[${host}]:`);
   }
   Object.defineProperty(listenerAddress, marker, { value: true });
-  Test.prototype.serverAddress = listenerAddress;
+  TestClass.prototype.serverAddress = listenerAddress;
 }
+
+installSupertestLoopback(Test);

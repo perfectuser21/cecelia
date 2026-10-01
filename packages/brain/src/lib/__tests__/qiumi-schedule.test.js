@@ -202,12 +202,12 @@ describe('回写与改期', () => {
       return { results: status === '委派' ? [moved] : [] };
     });
     const query = vi.fn(async (sql) => (/SELECT id, status/.test(sql)
-      ? { rows: [{ id: TID, status: 'queued', blocked_reason: null, scheduled_start: '2026-10-03T17:00:00.000+08:00' }] }
-      : { rows: [] }));
+      ? { rows: [{ id: TID, status: 'queued', scheduled_start: '2026-10-03T17:00:00.000+08:00', due_at: '2026-10-03T10:00:00Z' }] }
+      : { rows: [{ id: TID }] }));
     const r = await applyOwnerStops({ query }, 'tok', { notionReq: mockNotionReq, now: () => NOW });
     expect(r.rescheduled).toBe(1);
     const upd = query.mock.calls.find((c) => /next_run_at/.test(c[0]) && /UPDATE tasks/.test(c[0]));
-    expect(upd[1]).toEqual([TID, '2026-10-04T08:00:00.000+08:00']);
+    expect(upd[1]).toEqual([TID, '2026-10-04T08:00:00.000+08:00', true, '2026-10-03T18:00:00.000+08:00', false, ZH_ID]);
     expect(upd[0]).toMatch(/scheduled_start/);
     expect(upd[0]).toMatch(/- 'qiumi_pushed_status'/);
   });
@@ -225,7 +225,7 @@ describe('回写与改期', () => {
       [pastLegacy, { id: TID, status: 'queued', blocked_reason: null, scheduled_start: null }],
     ]) {
       mockNotionReq.mockImplementation(async (_t, _p, _m, body) => ({ results: body?.filter?.and?.[0]?.status?.equals === '委派' ? [page] : [] }));
-      const query = vi.fn(async (sql) => (/SELECT id, status/.test(sql) ? { rows: [row] } : { rows: [] }));
+      const query = vi.fn(async (sql) => (/SELECT id, status/.test(sql) ? { rows: [{ due_at: '2026-10-03T10:00:00Z', ...row }] } : { rows: [] }));
       const r = await applyOwnerStops({ query }, 'tok', { notionReq: mockNotionReq, now: () => NOW });
       expect(r.rescheduled).toBe(0);
       expect(query.mock.calls.some((c) => /UPDATE tasks/.test(c[0]))).toBe(false);
