@@ -10,7 +10,7 @@ const safe = 'postgresql://localhost:5432/cecelia_test';
 const unsafe = 'postgresql://localhost:5432/cecelia';
 
 for (const weighted of ['harness-weighted-reservation-smoke.sh', 'managed-script-capacity-smoke.sh']) {
-test('actual Node PG integration wrapper joins the live write inventory and classification', async () => {
+test(`${weighted} actual Node PG integration wrapper joins the live write inventory and classification`, async () => {
   const inventory = await readFile(resolve(root, 'packages/quality/smoke-write-targets.txt'), 'utf8');
   assert.ok(inventory.split('\n').includes(weighted), 'Node PG writes must not depend on literal psql discovery');
   assert.equal(entries[weighted]?.kind, 'write');
@@ -76,7 +76,7 @@ for (const [name, classification] of Object.entries(entries)) {
   });
 }
 function connectionEnv(connection, database) {
-  return { DATABASE_URL: connection, BRAIN_DB_URL: connection, DB_URL: connection, DB: connection,
+  return { TEST_DATABASE_URL: connection, DATABASE_URL: connection, BRAIN_DB_URL: connection, DB_URL: connection, DB: connection,
     SCRIPT_SMOKE_DB_URL: connection, GOV_GUARD_SMOKE_DB_URL: connection, TASK_RUN_SMOKE_DB_URL: connection,
     CONTAINER_DATABASE_URL: connection, DB_NAME: database, DB_HOST: 'localhost', DB_PORT: '5432',
     PGDATABASE: database, PGHOST: 'localhost', PGPORT: '5432', GUARD_EXECUTION_BOUNDARY: '1' };
