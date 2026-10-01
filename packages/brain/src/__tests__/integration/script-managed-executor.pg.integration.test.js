@@ -194,3 +194,15 @@ it('worker能力探测不可用时prepare与直接trigger均wait，释放claim�
   expect(current).toMatchObject({status:'queued',claimed_by:null});expect(current.payload.script_attempts).toBeUndefined();
   expect((await pool.query('SELECT id FROM capacity_reservations')).rows).toHaveLength(0);
 });
+it.each(['unavailable','wrong-profile'])('运行中重复trigger遇%s保持原任务身份并最终结算一次',async(kind)=>{
+  const first=await task();await triggerScriptRun(first,deps);
+  const before=(await pool.query('SELECT status,payload FROM tasks WHERE id=$1',[first.id])).rows[0];
+  const again=kind==='wrong-profile'?{...first,payload:{...first.payload,managed_script:{profile:'missing'}}}:first;
+  const retryDeps=kind==='unavailable'?{...deps,managed:{...deps.managed,client:{...deps.managed.client,
+    capabilities:async()=>{throw new Error('worker_http_503');}}}}:deps;
+  expect(await triggerScriptRun(again,retryDeps)).toMatchObject({success:true,pending:true});
+  expect((await pool.query('SELECT status,payload FROM tasks WHERE id=$1',[first.id])).rows[0]).toEqual(before);
+  await reapScriptRuns(pool,deps);
+  expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('completed');
+  expect(starts).toBe(1);
+});
