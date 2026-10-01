@@ -754,12 +754,14 @@ describe('近七日活动过程指标 API', () => {
   });
   it('仅 activity 格子接线，step/enabler 保持空，颜色不变', async () => {
     mockQuery.mockImplementation(async (sql) => ({ rows: String(sql).includes('activity_flow_metrics') ? metrics : [
-      { id: 'cell-a', step_id: 'a1', activity_id: 'a1', cell_level: 'activity', cell_status: 'red' },
+      { id: 'cell-a', step_id: 'a1', activity_id: 'a1', cell_level: 'activity', cell_kind: 'element', cell_status: 'red' },
       { id: 'cell-s', step_id: 'a1', activity_id: 'a1', cell_level: 'step' },
       { id: 'cell-e', activity_id: 'a1', cell_level: 'enabler' },
+      { id: 'legacy', step_id: 'a1', cell_level: 'activity', cell_kind: null },
     ] }));
     const res = await get('journey_step_links?cells=1');
-    expect(res.body).toHaveLength(3);
+    expect(res.body).toHaveLength(4);
+    expect(res.body[3].flow_metrics).toEqual([]);
     expect(res.body[0].flow_metrics).toEqual(metrics);
     expect(res.body[0].cell_status).toBe('red');
     expect(res.body[1].flow_metrics).toEqual([]);
