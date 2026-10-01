@@ -58,3 +58,22 @@ it('服务端namespace本身为宿主执行别名也拒绝；未决请求数量�
  const p=api.createRpcPolicy({maxPending:1});client(p,1,'model/list');expect(client(p,2,'model/list').reply.error.message).toBe('appserver_rpc_session_limit');
  const callback=p.server({id:'host',method:'item/tool/call',params:{tool:'run',namespace:'exec',arguments:{},threadId:'t',turnId:'u',callId:'c'}});expect(callback.reply.error.message).toBe('appserver_host_tool_denied');
 });
+
+it('方法白名单拒绝三个方向的继承属性，不能把原型当作空schema',()=>{
+ for(const method of ['__proto__','constructor','toString']){
+  const p=api.createRpcPolicy();
+  expect(p.client({id:1,method,params:{}}).reply?.error.message).toBe('appserver_rpc_method_denied');
+  expect(p.server({id:2,method,params:{}}).reply?.error.message).toBe('appserver_rpc_method_denied');
+  expect(()=>p.server({method,params:{}})).toThrow('appserver_rpc_notification_denied');
+ }
+});
+it('网关派生执行和未知动态工具在声明及旧线程回调两端默认拒绝',()=>{
+ const p=api.createRpcPolicy();
+ const names=['sessions_spawn','nodes','openclaw','unregistered_executor','constructor','read'];
+ const tools=names.map(name=>({type:'function',name,description:name,inputSchema:{}}));
+ expect(client(p,1,'thread/start',{dynamicTools:tools}).forward.params.dynamicTools.map(t=>t.name)).toEqual(['read']);
+ for(const name of names.slice(0,-1)){
+  expect(p.server({id:name,method:'item/tool/call',params:{tool:name,namespace:'functions',arguments:{},threadId:'t',turnId:'u',callId:'c'}}).reply?.error.message).toBe('appserver_host_tool_denied');
+ }
+ expect(p.server({id:'foreign-namespace',method:'item/tool/call',params:{tool:'read',namespace:'executor',arguments:{},threadId:'t',turnId:'u',callId:'c'}}).reply?.error.message).toBe('appserver_host_tool_denied');
+});

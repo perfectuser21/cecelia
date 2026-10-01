@@ -25,6 +25,6 @@ it('真实Brain控制HTTP→shim→Worker直连双向RPC；账号token不经过B
   input.write(JSON.stringify({id:1,method:'account/login/start',params:{type:'chatgptAuthTokens',accessToken:rpcToken,chatgptAccountId:'bound-account'}})+'\n');
   for(let i=0;i<100&&!received;i++)await new Promise(r=>setTimeout(r,10));
   expect(JSON.parse(received).id).toBe(1);expect(marked).toBe(1);expect(JSON.stringify(audited)).not.toContain(rpcToken);expect(audited).toHaveLength(2);
-  child.kill();await finished;expect(killed).toBeGreaterThan(0);expect(failure?.message).toBe('appserver_stream_unconfirmed');
+  child.kill();await finished;expect(killed).toBeGreaterThan(0);expect(failure?.message).toBe('appserver_stream_recovery_required');
  }finally{input.destroy();output.destroy();worker.closeAllConnections();brain.closeAllConnections();await Promise.all([new Promise(r=>worker.close(r)),new Promise(r=>brain.close(r))]);}
 });

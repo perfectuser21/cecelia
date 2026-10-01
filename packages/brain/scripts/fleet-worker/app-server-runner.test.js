@@ -272,3 +272,19 @@ it('本机drain/资源准入拒绝新attach，已运行实例仍可inspect和精
  expect((await f.runner.inspect(input)).status).toBe('running');expect((await f.runner.cancel({...input,container_id:state.container_id,challenge:randomUUID()})).absent).toBe(true);
  }finally{f.cleanup();}
 });
+
+it('真实attach握手未完成时不落attached也不解锁，失败后不发出可重试连接',async()=>{
+ const f=fixture();let rejectAttach;
+ try{
+  const input=f.input();await f.runner.start(input);
+  f.docker.attach=()=>{const pending=new Promise((_resolve,reject)=>{rejectAttach=reject;});pending.catch(()=>{});return pending;};
+  const connection=f.runner.attach({...input,stream_id:randomUUID()});connection.catch(()=>{});
+  for(let i=0;i<30&&!rejectAttach;i++)await new Promise(r=>setTimeout(r,1));
+  expect(JSON.parse(fs.readFileSync(path.join(f.root,`${input.reservation_id}.json`))).stream_status).toBe('attaching');
+  await expect(f.runner.inspect(input)).rejects.toThrow('appserver_operation_locked');
+  rejectAttach(Error('appserver_attach_unconfirmed'));
+  await expect(connection).rejects.toThrow('appserver_attach_unconfirmed');
+  expect((await f.runner.inspect(input)).status).toBe('running');
+  await expect(f.runner.attach({...input,stream_id:randomUUID()})).rejects.toThrow('appserver_stream_busy');
+ }finally{rejectAttach?.(Error('fixture cleanup'));f.cleanup();}
+});
