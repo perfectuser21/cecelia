@@ -9,6 +9,7 @@ const path = require('node:path');
 const process = require('node:process');
 const { clearTimeout, setTimeout } = require('node:timers');
 const { promisify } = require('node:util');
+const { probeDiskResources } = require('./local-resource-admission.cjs');
 
 const execFileAsync = promisify(execFile);
 const { AbortController } = globalThis;
@@ -139,25 +140,6 @@ function parseMemoryPressure(output) {
   );
   if (!match) return 100;
   return percentage(100 - Number.parseFloat(match[1]));
-}
-
-function parseDisk(output) {
-  const lines = String(output ?? '')
-    .trim()
-    .split(/\r?\n/)
-    .filter(Boolean);
-  if (lines.length < 2) {
-    return { disk_free_bytes: 0, disk_used_percent: 100 };
-  }
-  const fields = lines.at(-1).trim().split(/\s+/);
-  const availableBlocks = Number.parseInt(fields[3], 10);
-  const usedPercent = Number.parseFloat(String(fields[4] ?? '').replace('%', ''));
-  return {
-    disk_free_bytes: Number.isFinite(availableBlocks) && availableBlocks >= 0
-      ? availableBlocks * 1_024
-      : 0,
-    disk_used_percent: percentage(usedPercent),
-  };
 }
 
 function parsePower(output) {
@@ -575,7 +557,9 @@ async function probeFleetWorkerHealth(options = {}) {
       run('sysctl', ['-n', 'hw.memsize']),
       run('sysctl', ['-n', 'vm.loadavg']),
       run('memory_pressure', ['-Q']),
-      run('df', ['-k', '/']),
+      probeDiskResources({ run, paths: [repoRoot, ...(options.diskPaths
+        ?? (env.CECELIA_FLEET_DATA_ROOT ? [env.CECELIA_FLEET_DATA_ROOT] : []))],
+      allowMissingPaths: options.allowMissingDiskPaths === true }),
       run('launchctl', ['print', 'system/com.perfect21.fleet-worker']),
       run('sntp', ['-d', 'time.apple.com']),
       probeCallback(
@@ -602,7 +586,7 @@ async function probeFleetWorkerHealth(options = {}) {
     const cpuCores = finiteNumber(parseInteger(cpuResult.stdout));
     const memoryBytes = finiteNumber(parseInteger(memoryResult.stdout));
     const loadAverage = parseLoadAverage(loadResult.stdout);
-    const disk = parseDisk(diskResult.stdout);
+    const disk = diskResult;
     const power = parsePower(powerResult.stdout);
     const timeOutput = `${timeResult.stdout}\n${timeResult.stderr}`;
 

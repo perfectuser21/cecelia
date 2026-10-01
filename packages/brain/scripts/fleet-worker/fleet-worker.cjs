@@ -13,6 +13,7 @@ const {
   createFileAttemptStateStore,
 } = require('./attempt-runner.cjs');
 const { createAttemptResourceManager } = require('./attempt-resources.cjs');
+const { createLocalResourceAdmission } = require('./local-resource-admission.cjs');
 const {
   createCredentialEnvelopeConsumer,
 } = require('./credential-envelope.cjs');
@@ -391,6 +392,9 @@ function createFleetWorkerRuntime({
     runtime: mountRoots.runtime,
     credentials: path.join(dataRoot, 'credential-consumption'),
   });
+  const healthDiskPaths = Object.freeze([
+    dataRoot, path.dirname(roots.worktrees), path.dirname(roots.runtime),
+  ]);
   const workspaceManager = createWorkspaceManager({
     mirrorRoot: roots.mirrors,
     worktreeRoot: roots.worktrees,
@@ -431,6 +435,10 @@ function createFleetWorkerRuntime({
     credentialConsumer,
     githubCredentialConsumer,
     resourceManager,
+    assertLocalResources: createLocalResourceAdmission({
+      workerId, diskPaths: healthDiskPaths,
+      ...(runCommand ? { runCommand } : {}),
+    }),
     // claude 单链凭据（attempt d80312c0 案卷）：宿主账号目录根 = OrbStack 属主
     // home（installer 渲染进 plist）。仅 us-mac-m4 有 claude 账号目录；其余机器
     // claude attempt 会在 prepare 时 loud-fail attempt_claude_home_unavailable。
@@ -454,6 +462,7 @@ function createFleetWorkerRuntime({
     orchestratorRunner,
     attemptToken,
     roots,
+    healthDiskPaths,
     runnerImageDigest,
   });
 }
@@ -782,6 +791,7 @@ function main(env = process.env) {
     machineId: env.CECELIA_MACHINE_ID,
     runnerImageDigest: env.CECELIA_RUNNER_DIGEST,
     repoRoot: env.CECELIA_REPO_ROOT,
+    diskPaths: runtime.healthDiskPaths,
     drainMarkerPath: env.CECELIA_DRAIN_MARKER,
     callbackUrl: env.CECELIA_CALLBACK_URL,
   });

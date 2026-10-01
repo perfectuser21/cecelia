@@ -1399,6 +1399,9 @@ function createAttemptRunner({
   credentialConsumer,
   githubCredentialConsumer,
   resourceManager = NO_RUNTIME_RESOURCE_MANAGER,
+  assertLocalResources = async () => {
+    throw Object.assign(new Error('attempt_local_resources_unavailable'), { statusCode: 429 });
+  },
   claudeAccountsRoot = null,
   candidateRetentionTtlMs = CANDIDATE_RETENTION_TTL_MS,
   now = () => Date.now(),
@@ -1951,6 +1954,7 @@ function createAttemptRunner({
         throw new Error('attempt_already_exists');
       }
 
+      await assertLocalResources({ phase: 'prepare', attemptId: request.attempt_id });
       const { credential, githubCredential } = consumeAttemptCredentials(
         request,
         target,
@@ -1987,6 +1991,7 @@ function createAttemptRunner({
       let resources = EMPTY_RUNTIME_RESOURCES;
       if (executionContract.runtimeRequirements.postgres) {
         try {
+          await assertLocalResources({ phase: 'postgres', attemptId: request.attempt_id });
           resources = await resourceManager.provision({
             attemptId: request.attempt_id,
             // F3（复审实测坐实）：resourceManager（attempt-resources.cjs
@@ -2241,6 +2246,8 @@ function createAttemptRunner({
           throw new Error('attempt_credentials_unavailable');
         }
 
+        await assertLocalResources({ phase: 'start', attemptId });
+        if (cancellationRequests.has(attemptId)) return finalizeCancelledStart(state, lease);
         if (state.status === 'prepared') {
           await stateStore.save({
             ...state,
@@ -2248,6 +2255,7 @@ function createAttemptRunner({
             updated_at: new Date().toISOString(),
           });
         }
+        if (cancellationRequests.has(attemptId)) return finalizeCancelledStart(state, lease);
         try {
           await docker.start({
             attemptId,

@@ -1,3 +1,4 @@
+import { seedLifecycleAttempt } from '../../../tests/helpers/lifecycle-attempt-fixture.js';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -34,7 +35,7 @@ async function seedAttempt(initialStatus) {
   );
   await seedOwnedActiveV2Run(testPool, { runId, taskId, phase: 'planning' });
   const store = createAttemptStore(testPool);
-  await store.createAttempt({
+  await seedLifecycleAttempt(testPool, {
     id: attemptId,
     runId,
     hop: 1,
