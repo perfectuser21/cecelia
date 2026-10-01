@@ -18,6 +18,18 @@ sys.path.insert(0, str(OPS))
 
 
 class InstallerRecoveryTests(unittest.TestCase):
+    def test_isolated_rollback_watchdog_entry_has_no_installed_helper_dependency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            rollback = root / "rollback.py"
+            shutil.copy2(OPS / "tailscale_us_exit_activation.py", rollback)
+            result = subprocess.run([sys.executable, "-I", str(rollback), "watchdog",
+                "--transaction", str(root / "missing")], text=True, capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 1)
+            self.assertNotIn("ModuleNotFoundError", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertIn("No such file or directory", result.stderr)
+
     def test_real_installer_uses_current_root_transaction_guard_not_user_cache(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -70,7 +82,7 @@ class NetworkRecoveryTests(unittest.TestCase):
             stack.enter_context(patch("tailscale_us_exit_lease.guard_alive", return_value=True))
             stack.enter_context(patch("tailscale_us_exit_lease.valid_lease", return_value=True))
             stack.enter_context(patch("tailscale_us_exit_policy.read_map_cache", return_value={}))
-            stack.enter_context(patch("tailscale_us_exit_recovery.read_root_file", side_effect=lambda p: p.read_bytes(), create=True)) if "tailscale_us_exit_recovery" in sys.modules else None
+            stack.enter_context(patch("tailscale_us_exit_recovery.read_root_file", side_effect=lambda p: p.read_bytes()))
             output = io.StringIO()
             with redirect_stdout(output):
                 activation.confirm(SimpleNamespace(transaction=str(root), evidence=str(evidence_file)))
@@ -182,6 +194,37 @@ class NetworkRecoveryTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.invoke_confirm(root, state, evidence)
             self.assertEqual(state["status"], "armed")
+
+    def test_real_empty_listing_and_online_shell_results_are_the_only_baseline_source(self):
+        import tailscale_us_exit_recovery as recovery
+        import tailscale_us_exit_activation as activation
+        calls = []
+        api = SimpleNamespace(ADB_SERIALS=activation.ADB_SERIALS, adb_prefix=lambda _: ["adb"],
+            command=lambda _: "List of devices attached\n",
+            verify_adb=lambda home, serials: calls.append(serials) or list(serials))
+        baseline = recovery.capture_baseline(api, "/target", "a"*64, "root")
+        self.assertEqual(baseline["online_verified"], [])
+        self.assertEqual(set(baseline["offline"]), activation.ADB_SERIALS)
+        self.assertEqual(calls, [[]])
+        api.command = lambda _: "List of devices attached\nANGYVB4227006983 device product:fixture transport_id:1\n"
+        baseline = recovery.capture_baseline(api, "/target", "a"*64, "root")
+        self.assertEqual(baseline["online_verified"], ["ANGYVB4227006983"])
+        self.assertEqual(baseline["offline"], ["ANGYVB4402004137"])
+
+    def test_baseline_file_symlink_nonroot_or_public_permissions_are_rejected(self):
+        import tailscale_us_exit_recovery as recovery
+        import stat
+        with tempfile.TemporaryDirectory() as directory:
+            file = Path(directory) / "baseline"
+            file.write_bytes(b"{}")
+            link = file.with_name("symlink")
+            link.symlink_to(file)
+            with self.assertRaises(RuntimeError):
+                recovery.read_root_file(link)
+            for uid, mode in ((501, 0o600), (0, 0o644)):
+                with patch.object(recovery.os, "fstat", return_value=SimpleNamespace(st_uid=uid, st_mode=stat.S_IFREG|mode)):
+                    with self.assertRaises(RuntimeError):
+                        recovery.read_root_file(file)
 
 
 if __name__ == "__main__":
