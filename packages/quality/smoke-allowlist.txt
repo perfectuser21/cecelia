@@ -201,6 +201,7 @@ migration-346-idempotent-smoke.sh
 migration-verify.sh
 model-accounts-smoke.sh
 nfr-decisions-assertion-ref-smoke.sh
+node-onboarding-smoke.sh
 notion-capture-ingest-smoke.sh
 notion-inbox-ws3-smoke.sh
 notion-inlet-ingest-smoke.sh
