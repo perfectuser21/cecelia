@@ -6,12 +6,31 @@ import { readPageContent } from './notion-page-content.js';
 const ROUTE_KEYS = ['qiumi_route', 'run_id', 'provider', 'model', 'engine', 'qiumi_department',
   'qiumi_kind', 'qiumi_workflow_ref', 'workflow_ref', 'timeout_sec', 'thinking', 'acceptance'];
 const normId = (s) => String(s ?? '').replace(/-/g, '').toLowerCase();
+const validUserId = (id) => typeof id === 'string'
+  && /^(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/i.test(id);
+
+// 页面作者可为仅object/id的partial user；每次读页重新确认，不缓存编辑者身份。
+async function confirmedHuman(page, token, notionReq) {
+  const author = page.last_edited_by;
+  if (author?.object !== 'user' || !validUserId(author.id)) return false;
+  if (author.type !== undefined) return author.type === 'person';
+  let timer;
+  try {
+    const user = await Promise.race([
+      notionReq(token, `/users/${encodeURIComponent(author.id)}`, 'GET'),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(null), 30000); }),
+    ]);
+    return user?.object === 'user' && validUserId(user.id)
+      && normId(user.id) === normId(author.id) && user.type === 'person';
+  } catch { return false; }
+  finally { clearTimeout(timer); }
+}
 const editable = (page, row, parsePage) => {
   const zh = parsePage(page);
   return normId(page.id) === normId(row.payload.notion_zh_page_id)
     && zh.taskNo === `brain:${row.id}` && ['进行中', '委派'].includes(zh.status)
     && !page.archived && !page.in_trash && !zh.archived
-    && page.last_edited_by?.type !== 'bot' && !!page.last_edited_time;
+    && !!page.last_edited_time;
 };
 
 // 通用 reader 对正文增强采用部分成功；恢复派发必须要求每次请求完整成功。
@@ -60,6 +79,8 @@ async function queueWithReceipt(pool, row, source, resolution, page) {
     const evidence = {
       actor: 'notion-human', page_id: pageId, serial: resolution.phone.serial, matched_by: resolution.matchedBy,
       last_edited_time: page.last_edited_time, reason: 'device_unresolved_source_updated',
+      author_id: page.last_edited_by.id,
+      before: { qiumi_source: original }, after: { qiumi_source: source },
     };
     await client.query(
       `INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES ($1, $2, $3::jsonb, NOW())`,
@@ -92,7 +113,7 @@ export async function rerouteUnresolvedDevices(pool, token, { notionReq, parsePa
     try {
       const pageId = row.payload.notion_zh_page_id;
       const page = await notionReq(token, `/pages/${pageId}`, 'GET');
-      if (!editable(page, row, parsePage)) continue;
+      if (!editable(page, row, parsePage) || !await confirmedHuman(page, token, notionReq)) continue;
       const zh = parsePage(page);
       const body = await readCompleteBody(pageId, token, notionReq);
       const original = row.payload.qiumi_source;
@@ -103,7 +124,9 @@ export async function rerouteUnresolvedDevices(pool, token, { notionReq, parsePa
       // 正文读取可能跨多个请求；任何人工急停、页归属变化或新编辑都推迟到下一轮。
       const latest = await notionReq(token, `/pages/${pageId}`, 'GET');
       if (!editable(latest, row, parsePage) || latest.last_edited_time !== page.last_edited_time
-        || JSON.stringify(latest.properties) !== JSON.stringify(page.properties)) continue;
+        || JSON.stringify(latest.properties) !== JSON.stringify(page.properties)
+        || normId(latest.last_edited_by?.id) !== normId(page.last_edited_by.id)
+        || !await confirmedHuman(latest, token, notionReq)) continue;
       if (await queueWithReceipt(pool, row, source, resolution, page)) stats.rerouted += 1;
     } catch (err) {
       console.warn(`[qiumi-device-reroute] 保持原退回 task=${row.id}: ${err.message}`);
