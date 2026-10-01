@@ -7,6 +7,11 @@ import brainIntegrationConfig from '../packages/brain/vitest.integration.config.
 import { REPO_ROOT } from './helpers/repo-root.js';
 
 const POSTGRES_TESTS = [
+  'src/__tests__/integration/account-quota-ledger.pg.integration.test.js',
+  'src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js',
+  'src/__tests__/commander-watchdog.pg.integration.test.js',
+  'src/__tests__/integration/script-executor-chain.pg.integration.test.js',
+  'src/__tests__/integration/script-executor-constraints.pg.integration.test.js',
   'src/__tests__/migration-333.test.js',
   '../../tests/regression/relay-137fea96/contract-postdeploy-smoke-filter.test.ts',
 ];
@@ -20,6 +25,7 @@ describe('Brain PostgreSQL test layering', () => {
     const exclude = brainConfig.test?.exclude ?? [];
 
     expect(exclude).toEqual(expect.arrayContaining(POSTGRES_TESTS));
+    expect(exclude).toContain('src/__tests__/integration/**');
   });
 
   it('runs every excluded PostgreSQL test explicitly in brain-integration', () => {
@@ -29,10 +35,27 @@ describe('Brain PostgreSQL test layering', () => {
     const integrationExclude = brainIntegrationConfig.test?.exclude ?? [];
 
     expect(integrationStep).toBeDefined();
+    expect(integrationStep.env.POSTGRES_INTEGRATION).toBe('1');
+    expect(integrationExclude).not.toContain('src/__tests__/integration/**');
     expect(integrationStep.run).toContain('--config vitest.integration.config.js');
     for (const testPath of POSTGRES_TESTS) {
       expect(integrationStep.run).toContain(testPath);
       expect(integrationExclude).not.toContain(testPath);
+    }
+  });
+  it('guards migration fixtures before connecting outside the explicit CI PostgreSQL lane', () => {
+    const helper = readFileSync(join(REPO_ROOT, 'packages/brain/src/__tests__/helpers/temp-migrated-db.js'), 'utf8');
+    expect(helper).toMatch(/process\.env\.CI !== 'true'/);
+    expect(helper).toMatch(/process\.env\.POSTGRES_INTEGRATION !== '1'/);
+    expect(helper.indexOf('migration fixtures require CI PostgreSQL')).toBeLessThan(helper.indexOf('CREATE DATABASE'));
+    expect(helper).toContain("DB_DEFAULTS.database === 'cecelia'");
+  });
+
+  it('quota and PREPARE fixtures use the guarded test DB configuration', () => {
+    for (const file of ['account-quota-ledger.pg.integration.test.js', 'escalation-cancel-pending-sql.integration.test.js']) {
+      const source = readFileSync(join(REPO_ROOT, 'packages/brain/src/__tests__/integration', file), 'utf8');
+      expect(source).toContain("import { DB_DEFAULTS } from '../../db-config.js'");
+      expect(source).not.toContain('connectionString:');
     }
   });
 });
