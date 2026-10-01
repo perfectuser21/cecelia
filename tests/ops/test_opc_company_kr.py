@@ -12,6 +12,12 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_DOD = "3dbc40c2-ba63-8158-808a-e81bd769eb6b"
 SOURCE_COST = "3dbc40c2-ba63-812c-a185-e8eab139502a"
+COMPANY_SOURCES = (
+    "3dbc40c2-ba63-811d-89cc-c17863d7ba80", "3dbc40c2-ba63-81d0-a417-c8e2919f77f1",
+    "3dbc40c2-ba63-8116-bace-debc4c74d6e5", "3dbc40c2-ba63-81fd-a7da-d7c8e57fbc5f",
+    "3dbc40c2-ba63-81b4-b5ab-e27542cba851", SOURCE_DOD,
+    "3dbc40c2-ba63-811c-bbb7-f4e0e040098e", SOURCE_COST,
+)
 
 
 def load(name):
@@ -28,6 +34,10 @@ def item(source, name, value="0", ratio=0):
             "start_value": "0", "current_value": value, "target_value": "8",
             "progress_ratio": ratio, "progress_pct": None if ratio is None else ratio * 100,
             "status": "Open", "updated_at": "2026-10-01T06:00:00.000Z"}
+
+
+def company_rows():
+    return [item(source, "公司指标" + str(index)) for index, source in enumerate(COMPANY_SOURCES)]
 
 
 class Pipeline(unittest.TestCase):
@@ -117,7 +127,8 @@ class Pipeline(unittest.TestCase):
 
     def test_fetch_reads_brain_source_identity(self):
         module = load("opc-okr-sync")
-        rows = [item(SOURCE_DOD, "名称无需KR编号", "1.234", 0.125)]
+        rows = company_rows()
+        rows[5] = item(SOURCE_DOD, "名称无需KR编号", "1.234", 0.125)
         calls = []
 
         def call(url, body=None, method=None):
@@ -128,10 +139,11 @@ class Pipeline(unittest.TestCase):
 
         with patch.object(module, "call", side_effect=call):
             result = module.fetch()
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["cur"], "1.234")
-        self.assertEqual(result[0]["ratio"], 0.125)
-        self.assertEqual(result[0]["areas"], [])
+        self.assertEqual(len(result), 8)
+        renamed = next(row for row in result if row["kr"] == "名称无需KR编号")
+        self.assertEqual(renamed["cur"], "1.234")
+        self.assertEqual(renamed["ratio"], 0.125)
+        self.assertEqual(renamed["areas"], [])
         self.assertTrue(all("api.notion.com" not in url for url in calls))
 
     def test_empty_brain_snapshot_preserves_existing_site_files(self):
@@ -157,11 +169,49 @@ class Pipeline(unittest.TestCase):
 
     def test_unresolved_area_ids_refuse_to_misreport_departments(self):
         module = load("opc-okr-sync")
-        row = item(SOURCE_DOD, "有来源领域")
-        row["source_area_ids"] = ["300c40c2-real-source-area"]
-        with patch.object(module, "call", return_value={"success": True, "items": [row]}):
+        rows = company_rows()
+        rows[5]["source_area_ids"] = ["300c40c2-real-source-area"]
+        with patch.object(module, "call", return_value={"success": True, "items": rows}):
             with self.assertRaises(RuntimeError):
                 module.fetch()
+
+    def assert_invalid_snapshot_preserves_six_files(self, rows):
+        module = load("opc-okr-sync")
+        calls = []
+
+        def call(url, body=None, method=None):
+            calls.append((url, method, body))
+            if url.endswith("/company-key-results"):
+                return {"success": True, "items": rows}
+            if url.endswith("/tasks"):
+                return {"id": "invalid-sync-task"}
+            return {"success": True, "status": body.get("status") if body else None}
+
+        with tempfile.TemporaryDirectory() as directory:
+            targets = [Path(directory) / "clawd/OKR-CURRENT.md"] + [
+                Path(directory) / ("clawd-" + agent) / "OKR.md"
+                for agent in ["media", "fde", "dev", "people", "infra"]]
+            for target in targets:
+                target.parent.mkdir()
+                target.write_text("上一份有效快照：" + target.parent.name)
+            before = {target: target.read_bytes() for target in targets}
+            with patch.object(module, "ROOT", directory), patch.object(module, "call", side_effect=call), \
+                    patch.object(module, "write_site", wraps=module.write_site) as write:
+                with self.assertRaises(RuntimeError):
+                    module.main()
+                write.assert_not_called()
+            self.assertEqual({target: target.read_bytes() for target in targets}, before)
+            self.assertTrue(calls[0][0].endswith("/tasks"))
+            self.assertTrue(any(method == "PATCH" and body.get("status") == "failed" for _, method, body in calls))
+            self.assertFalse(any(method == "PATCH" and body.get("status") == "completed" for _, method, body in calls))
+
+    def test_missing_company_source_fails_before_any_site_write(self):
+        self.assert_invalid_snapshot_preserves_six_files(company_rows()[:-1])
+
+    def test_unknown_replacement_source_fails_before_any_site_write(self):
+        rows = company_rows()
+        rows[-1] = item("unknown-but-unique-page", "同名公司指标")
+        self.assert_invalid_snapshot_preserves_six_files(rows)
 
     def test_historical_values_are_labelled_unverified(self):
         module = load("opc-okr-sync")
