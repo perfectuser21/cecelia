@@ -71,7 +71,7 @@ describe('公司KR真实SQL与HTTP', () => {
     const pool = new pg.Pool({ host: process.env.DB_HOST || 'localhost', port: Number(process.env.DB_PORT || 5432), database: process.env.DB_NAME || 'cecelia_test', user: process.env.DB_USER || 'cecelia', password: process.env.DB_PASSWORD });
     const client = await pool.connect(); let taskId;
     const requests = [], remote = new Map();
-    let serial = 0, fault, failConfirmation = false, wrongGoalParent = false, projectionTime = Date.now();
+    let serial = 0, fault, failConfirmation = false, wrongGoalParent = false, onSnapshot, projectionTime = Date.now();
     // 模块自己的事务映射为savepoint，使真实事务产出可查且完全回滚。
     const scoped = { query: (...args) => client.query(...args), connect: async () => {
       const savepoint = `company_${++serial}`;
@@ -86,7 +86,11 @@ describe('公司KR真实SQL与HTTP', () => {
       requests.push({ path, method, body });
       if (path === '/users/me') return { id: 'projection-bot', type: 'bot' };
       if (path === `/databases/${COMPANY_KR_DATABASE}`) return { properties: Object.fromEntries(Object.entries({ Name: 'title', Current: 'number', Target: 'number', Start: 'number', Progress: 'formula', Goal: 'relation', Area: 'relation', Status: 'status' }).map(([k, type]) => [k, { type, ...(k === 'Progress' ? { formula: { expression: COMPANY_FORMULA } } : {}) }])) };
-      if (path.endsWith('/query')) return { results: [...remote.values()], has_more: false };
+      if (path.endsWith('/query')) {
+        const results = structuredClone([...remote.values()]);
+        if (onSnapshot) { const callback = onSnapshot; onSnapshot = null; await callback(); }
+        return { results, has_more: false };
+      }
       const id = path.split('/').pop();
       if (remote.has(id) && method === 'GET') return remote.get(id);
       if (remote.has(id) && method === 'PATCH') {
@@ -145,6 +149,18 @@ describe('公司KR真实SQL与HTTP', () => {
       expect((await client.query(`UPDATE key_results SET current_value=99 WHERE id=$1 AND ${COMPANY_KR_SQL_GUARD}`, [kr.id])).rowCount).toBe(0);
       const source = remote.get(kr.source_page_id); source.properties.Target.number = 1.234; source.last_edited_by.id = 'bot-after-human-target'; source.last_edited_time = '2026-10-01T01:00:00Z';
       requests.length = 0;
+      onSnapshot = async () => {
+        const otherClient = await pool.connect();
+        let acquired;
+        try {
+          acquired = (await otherClient.query('SELECT pg_try_advisory_lock(hashtext($1)) AS acquired', ['notion-company-key-results-projection'])).rows[0].acquired;
+          if (acquired) await otherClient.query('SELECT pg_advisory_unlock(hashtext($1))', ['notion-company-key-results-projection']);
+        } finally { otherClient.release(); }
+        expect(acquired).toBe(false);
+        const peerNotionReq = vi.fn(notionReq);
+        expect(await runCompanyKrProjection({ query: scoped.query, connect: () => pool.connect() }, { token: 'fake', notionReq: peerNotionReq })).toMatchObject({ skipped: true, reason: 'projection_locked' });
+        expect(peerNotionReq).not.toHaveBeenCalled();
+      };
       expect(await project()).toMatchObject({ expected: 8, remote: 8, matched: 8, patched: 1 });
       const writes = requests.filter(r => r.method === 'PATCH');
       expect(writes).toHaveLength(1); expect(Object.keys(writes[0].body.properties)).toEqual(['Current']);
