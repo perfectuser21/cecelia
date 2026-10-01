@@ -158,16 +158,32 @@ function createAttemptResourceManager({
     throw new Error('attempt_resource_invalid_health_interval');
   }
 
-  async function resolveIdentity({ attemptId, runtime } = {}) {
+  async function resolveIdentity({ attemptId, runtime, allowMissing = false } = {}) {
     assertAttemptId(attemptId); assertExactRuntime(attemptId, runtime);
     const previous = runtime.postgres;
     const id = await verifyContainerIdentity({ runCommand, containerId: previous.container_id,
-      containerName: previous.container_name, image: previous.image_digest, allowName: true,
+      containerName: previous.container_name, image: previous.image_digest, allowName: true, allowMissing,
       labels: { 'cecelia.fleet.attempt_id': attemptId, 'cecelia.fleet.resource': 'postgres' },
       errorCode: 'attempt_runtime_resource_owner_mismatch' });
     return Object.freeze({ postgres: Object.freeze({ ...previous, container_id: id }) });
   }
 
+  async function removeExactContainer(containerId) {
+    try { await runCommand('docker', ['rm', '-f', '--', containerId]); }
+    catch (error) { if (!isExplicitlyMissing(error)) throw new Error('attempt_resource_service_release_failed'); }
+  }
+  async function resolveNetworkIdentity(attemptId) {
+    const { networkName } = namesFor(attemptId);
+    let observed;
+    try { observed = await runCommand('docker', ['network', 'inspect', networkName]); }
+    catch (error) { if (isExplicitlyMissing(error)) return null; throw new Error('attempt_runtime_resource_owner_mismatch'); }
+    let value;
+    try { value = JSON.parse(observed.stdout)?.[0]; } catch { throw new Error('attempt_runtime_resource_owner_mismatch'); }
+    if (!CONTAINER_ID.test(value?.Id ?? '') || value.Name !== networkName
+        || value.Labels?.['cecelia.fleet.attempt_id'] !== attemptId
+        || value.Labels?.['cecelia.fleet.resource'] !== 'postgres') throw new Error('attempt_runtime_resource_owner_mismatch');
+    return value.Id;
+  }
   return Object.freeze({
     resolveIdentity,
     async provision({ attemptId, requirements, role } = {}) {
@@ -301,11 +317,14 @@ function createAttemptResourceManager({
       if (!runtime || Object.keys(runtime).length === 0) {
         return Object.freeze({ status: 'released' });
       }
-      // Ownership is bound to deterministic Attempt names plus an immutable
-      // digest recorded in state. It must not depend on the Worker's current
-      // baseline digest, otherwise an image upgrade makes old attempts leak.
       assertExactRuntime(attemptId, runtime);
-      await removeOwned(runCommand, attemptId);
+      const verified = await resolveIdentity({ attemptId, runtime, allowMissing: true });
+      const networkId = await resolveNetworkIdentity(attemptId);
+      if (verified.postgres.container_id) await removeExactContainer(verified.postgres.container_id);
+      if (networkId) {
+        try { await runCommand('docker', ['network', 'rm', '--', networkId]); }
+        catch (error) { if (!isExplicitlyMissing(error)) throw new Error('attempt_resource_release_failed'); }
+      }
       return Object.freeze({ status: 'released' });
     },
 
@@ -318,7 +337,8 @@ function createAttemptResourceManager({
       // The callback-sending Runner is still attached to the attempt network.
       // Only PostgreSQL can be removed before Brain durably accepts the claim;
       // finalize() removes the network after the Runner exits.
-      await removePostgresContainer(runCommand, attemptId);
+      const verified = await resolveIdentity({ attemptId, runtime, allowMissing: true });
+      if (verified.postgres.container_id) await removeExactContainer(verified.postgres.container_id);
       return Object.freeze({ status: 'released' });
     },
 

@@ -725,9 +725,9 @@ function createDockerAdapter({
       });
   }
 
-  async function verifyIdentity({ attemptId, runId, image, containerId }) {
-    if (!UUID_PATTERN.test(runId ?? '') || !IMAGE_DIGEST_PATTERN.test(image ?? '')) throw new Error('attempt_container_identity_unverified');
-    return verifyContainerIdentity({ runCommand, containerId, containerName: `cecelia-fleet-${attemptId}`, image,
+  async function verifyIdentity({ attemptId, runId, image, containerId, cleanup = false }) {
+    if (!UUID_PATTERN.test(runId ?? '') || (!(cleanup && image == null) && !IMAGE_DIGEST_PATTERN.test(image ?? ''))) throw new Error('attempt_container_identity_unverified');
+    return verifyContainerIdentity({ runCommand, containerId, allowMissing: cleanup, containerName: `cecelia-fleet-${attemptId}`, image,
       labels: { 'cecelia.fleet.attempt_id': attemptId, 'cecelia.fleet.run_id': runId, 'cecelia.fleet.worker_id': workerId },
       errorCode: 'attempt_container_identity_unverified' });
   }
@@ -1554,6 +1554,7 @@ function createAttemptRunner({
     if (!state.runtime_resources || Object.keys(state.runtime_resources).length === 0) {
       return;
     }
+    await verifyCleanupState(state);
     await resourceManager.releaseService({
       attemptId: state.attempt_id,
       runtime: state.runtime_resources,
@@ -1678,6 +1679,22 @@ function createAttemptRunner({
     await stateStore.save({ ...state, status: 'quarantined', resource_identity_unverified: true });
   }
 
+  async function verifyCleanupState(state) {
+    try {
+      if (identityUnverified(state) || typeof docker.verifyIdentity !== 'function') throw new Error('attempt_container_identity_unverified');
+      // Historical journals lack an image field. Their immutable ID plus exact labels
+      // still binds cleanup; the adapter verifies the observed pinned image with Docker.
+      const containerId = await docker.verifyIdentity({ attemptId: state.attempt_id, runId: state.run_id,
+        containerId: state.container_id, image: state.runner_image_digest, cleanup: true });
+      if (state.runtime_resources?.postgres) {
+        if (typeof resourceManager.resolveIdentity !== 'function') throw new Error('attempt_resource_identity_required');
+        state.runtime_resources = await resourceManager.resolveIdentity({ attemptId: state.attempt_id,
+          runtime: state.runtime_resources, allowMissing: true });
+      }
+      return { containerMissing: containerId === null };
+    } catch (error) { await parkUnverifiedIdentity(state); throw error; }
+  }
+
   function finalizeAttempt(attemptId, lease = null, expected = null) {
     const existing = finalizationPromises.get(attemptId);
     if (existing) return existing;
@@ -1702,6 +1719,9 @@ function createAttemptRunner({
       if (lease !== null) {
         assertLeaseFence(state, lease);
       }
+      let cleanupIdentity;
+      try { cleanupIdentity = await verifyCleanupState(state); }
+      catch { return Object.freeze({ status: 'quarantined', attempt_id: attemptId, reason: 'attempt_container_identity_unverified' }); }
       pendingCredentials.delete(attemptId);
       const retainsGeneratorCandidate = state.role === 'generator'
         && expected?.statusCode === 0;
@@ -1721,7 +1741,7 @@ function createAttemptRunner({
         await docker.remove({
           containerId: state.container_id,
           attemptId: state.attempt_id,
-          ...(expected?.containerMissing === true
+          ...(cleanupIdentity.containerMissing === true
             ? { containerMissing: true }
             : {}),
         });
@@ -2217,7 +2237,7 @@ function createAttemptRunner({
           try {
             if (typeof docker.verifyIdentity !== 'function') throw new Error('attempt_container_identity_unverified');
             await docker.verifyIdentity({ attemptId, runId: state.run_id, containerId: state.container_id,
-              image: state.runner_image_digest ?? runnerImageDigest });
+              image: state.runner_image_digest, cleanup: true });
           } catch (error) { await parkUnverifiedIdentity(state); throw error; }
           const inspected = await docker.inspect({
             containerId: state.container_id,
@@ -2491,13 +2511,12 @@ function createAttemptRunner({
         if (identityUnverified(state)) continue;
         if (state.status === 'candidate') {
           if (state.container_id) {
-            const inspected = await docker.inspect({ containerId: state.container_id });
+            let cleanupIdentity;
+            try { cleanupIdentity = await verifyCleanupState(state); } catch { continue; }
             await docker.remove({
               containerId: state.container_id,
               attemptId: state.attempt_id,
-              ...(inspected.status === 'missing'
-                ? { containerMissing: true }
-                : {}),
+              ...(cleanupIdentity.containerMissing ? { containerMissing: true } : {}),
             });
             await releaseResources(state);
             await releaseSourceCandidate(state);

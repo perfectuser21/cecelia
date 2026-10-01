@@ -19,7 +19,7 @@
 - Brain 角色预约与 Worker cgroups 共用 attempt-resource-policy：每基础槽 0.5 CPU、1 GiB、128 PID；轻档权重1、proposer权重2、generator/evaluator/judge权重4。fleet资源缓存物理槽由相同1GiB/.5CPU需求估算，替换原400MiB粗估；既有7/8/8上限不变，节点profile的最低6CPU/8GiB不当总预算。
 - 每个实际 Docker create/run 设置 CPU、内存、memory-swap和PID上限，memory-swap等于memory禁额外swap。Postgres固定占同一attempt总额中的0.25CPU/256MiB/32PID，runner扣减；轻档含PG时runner为0.25CPU/768MiB/96PID，不额外借预算。
 - 配额只从受信Worker节点与角色策略生成，忽略payload限额；缺失/未知profile或角色拒绝新容器。旧prepared/starting在新start前先持久化受信计划，再更新两个容器硬限；runner按持久精确容器ID启动。旧running仅探活/清理，不重新启动或追加预约。
-- 配额更新前inspect核对完整64位容器ID、attempt/worker/run或resource标签、固定镜像引用与Docker实际镜像ID；旧PG缺ID仅按精确归属解析一次，先持久再以ID更新。未知身份隔离占位，拒绝启动、凭据投递及自动清理；隔离写盘失败本进程仍保守保留。安装器同步部署身份校验模块并验证失败回滚。
+- 配额更新前inspect核对完整64位容器ID、attempt/worker/run或resource标签、固定镜像引用与Docker实际镜像ID；旧PG缺ID仅按精确归属解析一次，先持久再以ID更新。未知身份隔离占位，拒绝启动、凭据投递及自动清理；隔离写盘失败本进程仍保守保留；重启后cancel/reconcile/终态释放各自重新核验，失败零删除，PG和网络只按核验ID清理，明确不存在才幂等完成。安装器同步部署身份校验模块并验证失败回滚。
 - 真Docker canary以随机专属runner和PG验证总限额、runner OOM exit137及PG健康隔离；无provider调用，不挂宿主HOME/凭据/socket。CI永久运行。首批不开放Linux节点，不修改生产网络/schema；Linux采样、PSI及GPU准入仍属后续批次。
 
 ## Brain 1.352.4 — 现有执行目录统一（阶段4a）

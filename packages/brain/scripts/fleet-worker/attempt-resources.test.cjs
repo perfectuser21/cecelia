@@ -10,6 +10,18 @@ function loadResourceManager() {
   return loaded.createAttemptResourceManager;
 }
 
+const NETWORK_ID = 'b'.repeat(64);
+function observedResourceCommand(image = POSTGRES_IMAGE) {
+  return async (_command, args) => {
+    if (args[0] === 'inspect') return { stdout: JSON.stringify([{Id:POSTGRES_ID,Name:`/cecelia-pg-${ATTEMPT_ID}`,Image:`sha256:${'f'.repeat(64)}`,
+      Config:{Image:image,Labels:{'cecelia.fleet.attempt_id':ATTEMPT_ID,'cecelia.fleet.resource':'postgres'}}}]) };
+    if (args[0] === 'image') return {stdout:`sha256:${'f'.repeat(64)}`};
+    if (args[0] === 'network' && args[1] === 'inspect') return {stdout:JSON.stringify([{Id:NETWORK_ID,Name:`cecelia-attempt-${ATTEMPT_ID}`,
+      Labels:{'cecelia.fleet.attempt_id':ATTEMPT_ID,'cecelia.fleet.resource':'postgres'}}])};
+    return {stdout:''};
+  };
+}
+
 describe('Fleet Worker Attempt runtime resources', () => {
   it('creates a private network and healthy pinned PostgreSQL sidecar with ephemeral credentials', async () => {
     const createAttemptResourceManager = loadResourceManager();
@@ -127,7 +139,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
 
   it('releases only deterministic resources owned by the exact Attempt', async () => {
     const createAttemptResourceManager = loadResourceManager();
-    const runCommand = vi.fn(async () => ({ stdout: '' }));
+    const runCommand = vi.fn(observedResourceCommand());
     const manager = createAttemptResourceManager({
       workerId: 'us-mac-m4',
       runCommand,
@@ -145,15 +157,15 @@ describe('Fleet Worker Attempt runtime resources', () => {
       },
     })).resolves.toEqual({ status: 'released' });
 
-    expect(runCommand.mock.calls).toEqual([
-      ['docker', ['rm', '-f', '--', `cecelia-pg-${ATTEMPT_ID}`]],
-      ['docker', ['network', 'rm', '--', `cecelia-attempt-${ATTEMPT_ID}`]],
+    expect(runCommand.mock.calls.filter(([,args])=>args.includes('rm'))).toEqual([
+      ['docker', ['rm', '-f', '--', POSTGRES_ID]],
+      ['docker', ['network', 'rm', '--', NETWORK_ID]],
     ]);
   });
 
   it('releases only the PostgreSQL service before callback commit and retains the active Runner network', async () => {
     const createAttemptResourceManager = loadResourceManager();
-    const runCommand = vi.fn(async () => ({ stdout: '' }));
+    const runCommand = vi.fn(observedResourceCommand());
     const manager = createAttemptResourceManager({
       workerId: 'us-mac-m4',
       runCommand,
@@ -171,8 +183,8 @@ describe('Fleet Worker Attempt runtime resources', () => {
       },
     })).resolves.toEqual({ status: 'released' });
 
-    expect(runCommand.mock.calls).toEqual([
-      ['docker', ['rm', '-f', '--', `cecelia-pg-${ATTEMPT_ID}`]],
+    expect(runCommand.mock.calls.filter(([,args])=>args.includes('rm'))).toEqual([
+      ['docker', ['rm', '-f', '--', POSTGRES_ID]],
     ]);
     expect(JSON.stringify(runCommand.mock.calls)).not.toContain('network');
   });
@@ -180,7 +192,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
   it('releases an exact historical Attempt after the configured pinned digest changes', async () => {
     const createAttemptResourceManager = loadResourceManager();
     const previousPinnedImage = `postgres:16-alpine@sha256:${'a'.repeat(64)}`;
-    const runCommand = vi.fn(async () => ({ stdout: '' }));
+    const runCommand = vi.fn(observedResourceCommand(previousPinnedImage));
     const manager = createAttemptResourceManager({
       workerId: 'us-mac-m4',
       runCommand,
@@ -198,7 +210,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
       },
     })).resolves.toEqual({ status: 'released' });
 
-    expect(runCommand).toHaveBeenCalledTimes(2);
+    expect(runCommand.mock.calls.filter(([,args])=>args.includes('rm'))).toHaveLength(2);
   });
 
   it('treats explicit missing resources as idempotent but propagates real removal failures', async () => {
@@ -232,7 +244,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
     await expect(deniedManager.release({
       attemptId: ATTEMPT_ID,
       runtime,
-    })).rejects.toThrow('attempt_resource_release_failed');
+    })).rejects.toThrow('attempt_runtime_resource_owner_mismatch');
   });
 
   it('reconciles only labelled deterministic orphan resources outside the retained set', async () => {
@@ -341,4 +353,25 @@ describe('Postgres hard-limit update identity', () => {
     const updates=runCommand.mock.calls.filter(([,args])=>args[0]==='update');
     expect(updates).toHaveLength(1);expect(updates[0][1].at(-1)).toBe(id);
   });
+});
+describe('Postgres cleanup observes ownership before side effects',()=>{
+  it.each(['release','releaseService'])('%s 拒绝旧journal同名替换容器并且零删除',async entry=>{
+    const runCommand=vi.fn(async()=>({stdout:JSON.stringify([{Id:POSTGRES_ID,Name:`/cecelia-pg-${ATTEMPT_ID}`,Config:{Image:POSTGRES_IMAGE,Labels:{'cecelia.fleet.attempt_id':'other','cecelia.fleet.resource':'postgres'}}}])}));
+    const manager=loadResourceManager()({workerId:'us-mac-m4',postgresImageDigest:POSTGRES_IMAGE,runCommand});
+    await expect(manager[entry]({attemptId:ATTEMPT_ID,runtime:{postgres:{container_name:`cecelia-pg-${ATTEMPT_ID}`,network_name:`cecelia-attempt-${ATTEMPT_ID}`,image_digest:POSTGRES_IMAGE}}})).rejects.toThrow('attempt_runtime_resource_owner_mismatch');
+    expect(runCommand.mock.calls.some(([,args])=>args.includes('rm'))).toBe(false);
+  });
+});
+it('release在任一删除前拒绝同名替换network',async()=>{
+  const observed=observedResourceCommand();
+  const runCommand=vi.fn(async(file,args)=>{
+    const result=await observed(file,args);
+    if(args[0]==='network'&&args[1]==='inspect'){
+      const value=JSON.parse(result.stdout);value[0].Labels['cecelia.fleet.attempt_id']='other';return {stdout:JSON.stringify(value)};
+    }
+    return result;
+  });
+  const manager=loadResourceManager()({workerId:'us-mac-m4',postgresImageDigest:POSTGRES_IMAGE,runCommand});
+  await expect(manager.release({attemptId:ATTEMPT_ID,runtime:{postgres:{container_name:`cecelia-pg-${ATTEMPT_ID}`,network_name:`cecelia-attempt-${ATTEMPT_ID}`,image_digest:POSTGRES_IMAGE}}})).rejects.toThrow('attempt_runtime_resource_owner_mismatch');
+  expect(runCommand.mock.calls.some(([,args])=>args.includes('rm'))).toBe(false);
 });

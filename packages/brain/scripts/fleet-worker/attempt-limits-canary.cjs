@@ -60,18 +60,22 @@ async function main() {
   assert.equal(exit,'137'); assert.equal(stopped.State.OOMKilled,true);
   assert.equal((await inspect(postgresId)).State.Running,true);
   assert.match((await command(['exec',postgresId,'pg_isready'])).stdout,/accepting connections/);
+  await docker.verifyIdentity({attemptId,runId,image,containerId:runnerId,cleanup:true});
+  await docker.remove({attemptId,containerId:runnerId});
+  await manager.releaseService({attemptId,runtime:resources.runtime});
+  await manager.release({attemptId,runtime:resources.runtime});
   console.log(JSON.stringify({result:'PASS',attempt_id:attemptId,runner_id:runnerId,postgres_id:postgresId,
-    image,postgres_image:postgresImageDigest,plan,oom_isolated:true,postgres_healthy:true,model_calls:0}));
+    image,postgres_image:postgresImageDigest,plan,oom_isolated:true,postgres_healthy:true,identity_cleanup_verified:true,model_calls:0}));
 }
 async function cleanup() {
   // 只清理由本次随机 attempt 标签证明归属的精确容器ID。
   for (const name of [`cecelia-fleet-${attemptId}`,`cecelia-pg-${attemptId}`]) {
-    let value; try {value=await inspect(name);} catch(error){if(/No such (object|container)/.test(error.stderr||''))continue;throw error;}
+    let value; try {value=await inspect(name);} catch(error){if(/No such (object|container)/i.test(error.stderr||''))continue;throw error;}
     assert.equal(value.Config.Labels['cecelia.fleet.attempt_id'],attemptId);
     await command(['rm','-f','--',value.Id]);
   }
   const network=`cecelia-attempt-${attemptId}`;
-  let value;try{value=JSON.parse((await command(['network','inspect',network])).stdout)[0];}catch(error){if(!/not found|No such/.test(error.stderr||''))throw error;}
+  let value;try{value=JSON.parse((await command(['network','inspect',network])).stdout)[0];}catch(error){if(!/not found|No such/i.test(error.stderr||''))throw error;}
   if(value){assert.equal(value.Labels['cecelia.fleet.attempt_id'],attemptId);await command(['network','rm',value.Id]);}
   fs.rmSync(root,{recursive:true,force:true});
 }
