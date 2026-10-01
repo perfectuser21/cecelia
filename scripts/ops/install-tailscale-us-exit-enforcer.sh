@@ -206,7 +206,7 @@ fi
 
 if [[ "$FIREWALL_MODE" == interface-v2 && "$PLIST_STAGING" != "$PLIST" ]]; then
   "$SUDO_BIN" /usr/bin/install -o root -g wheel -m 0644 \
-    "$USER_CONFIG_DIR/$LABEL.lease.plist" "$SYSTEM_PLIST_DIR/$LABEL.lease.plist"
+    "$(dirname "$PLIST_STAGING")/$LABEL.lease.plist" "$SYSTEM_PLIST_DIR/$LABEL.lease.plist"
   /usr/bin/plutil -lint "$SYSTEM_PLIST_DIR/$LABEL.lease.plist" >/dev/null
 fi
 
