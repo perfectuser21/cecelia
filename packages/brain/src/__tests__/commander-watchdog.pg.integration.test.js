@@ -98,15 +98,18 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
   it('趋势 SQL：按北京自然日分组，连续两天零线索的 wf 叫、有线索的不叫；phone_registry 24h 无 completed 叫', async () => {
     // 当日去重状态在事务内隔离；ROLLBACK 恢复已有测试库记录。
     await client.query(`DELETE FROM working_memory WHERE key = 'workflow_trend_bark:last_day'`);
-    await client.query(`INSERT INTO phone_registry (serial, nickname, host, profile, enabled) VALUES ('S-STALE', '小测', 'xian-m4', 'p', true), ('S-IDLE', '小闲', 'xian-m4', 'p', true)`);
+    await client.query(`INSERT INTO phone_registry (serial, nickname, host, profile, enabled) VALUES ('S-STALE', '小测', 'xian-m4', 'p', true), ('S-IDLE', '小闲', 'xian-m4', 'p', true), ('S-FRESH', '小新', 'xian-m4', 'p', true)`);
     // 落点钉在北京 D-1 / D-2 的中午 12:00（按当前北京时刻反算小时数），不受用例运行时刻影响
     const bj = new Date(Date.now() + 8 * 3600e3);
     const minsToday = bj.getUTCHours() * 60 + bj.getUTCMinutes();
     const d1 = `${((minsToday + 24 * 60 - 12 * 60) / 60).toFixed(2)} hours`;
     const d2 = `${((minsToday + 48 * 60 - 12 * 60) / 60).toFixed(2)} hours`;
-    const mk = (wf, ago, leads, serial = 'S-STALE') => insertRun({ payload: { serial, source: 'cron', wf_id: wf, leads }, status: 'completed', dueAgo: ago, completedAgo: ago });
+    const mk = (wf, ago, leads, serial = 'S-TREND') => insertRun({ payload: { serial, source: 'cron', wf_id: wf, leads }, status: 'completed', dueAgo: ago, completedAgo: ago });
     await mk('zero-wf', d1, 0); await mk('zero-wf', d2, 0);
     await mk('ok-wf', d1, 0); await mk('ok-wf', d2, 3);
+    // 自然日中午在北京午前不足24h；设备滚动窗口用独立固定年龄，不能借用D-1夹具。
+    await mk('stale-device', '48 hours', 1, 'S-STALE');
+    await mk('fresh-device', '1 hour', 1, 'S-FRESH');
     const bark = vi.fn().mockResolvedValue(true);
     // 用当前时刻（北京日期由 SQL 与 JS 同算）但强制窗口
     const out = await runWorkflowTrendBark(client, { bark, windowOverride: true, staleSerialMs: 24 * 3600e3 });
