@@ -62,7 +62,7 @@ export default class MemoryService {
         status,
         metadata,
         created_at
-      FROM tasks WHERE id = $1`,
+      FROM tasks WHERE id = $1 AND task_type <> 'project'`,
       [id]
     );
 
@@ -70,12 +70,10 @@ export default class MemoryService {
       return this._formatDetail(result.rows[0]);
     }
 
-    // 再尝试从新 OKR project 表查询（okr_projects/okr_scopes/okr_initiatives）
+    // 项目引用直接解析 projects 真身。
     result = await this.pool.query(
-      `SELECT id, 'project' as level, title, NULL as description, NULL as status, metadata, created_at FROM okr_projects WHERE id = $1
-       UNION ALL SELECT id, 'scope' as level, title, NULL as description, NULL as status, metadata, created_at FROM okr_scopes WHERE id = $1
-       UNION ALL SELECT id, 'initiative' as level, title, NULL as description, NULL as status, metadata, created_at FROM okr_initiatives WHERE id = $1`,
-      [id]
+      `SELECT id, 'project' AS level, name AS title, description, status, metadata, created_at
+       FROM projects WHERE id = $1`, [id]
     );
 
     if (result.rows.length > 0) {

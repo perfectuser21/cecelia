@@ -5,7 +5,7 @@ const manifest: FeatureManifest = {
   navGroups: [{ id: 'workbench', label: 'Workbench', icon: 'PanelsTopLeft', order: 0 }],
   routes: [
     {
-      path: '/workbench', redirect: '/workbench/overview', requireAuth: true,
+      path: '/workbench', redirect: '/workbench/inbox', requireAuth: true,
       navItem: {
         label: 'Workbench', icon: 'PanelsTopLeft', group: 'workbench', order: 0,
         children: [

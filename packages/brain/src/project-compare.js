@@ -103,16 +103,12 @@ export async function getCompareMetrics({ project_ids, format = 'json', trend_we
   const [projectResult, taskResult, trendResult] = await Promise.all([
     // 查询A：项目基础信息 + KR 信息（新 OKR 表）
     pool.query(
-      `SELECT p.id, p.title AS name, p.table_type AS type, p.status, p.kr_id,
+      `SELECT p.id, p.name, 'project' AS type, p.status, p.kr_id,
               kr.id AS kr_goal_id, kr.title AS kr_title,
               CAST(CASE WHEN kr.target_value > 0
                 THEN ROUND((kr.current_value / kr.target_value) * 100)
                 ELSE 0 END AS integer) AS kr_progress
-       FROM (
-         SELECT id, title, 'project' AS table_type, status, kr_id FROM okr_projects
-         UNION ALL SELECT id, title, 'scope' AS table_type, status, NULL::uuid AS kr_id FROM okr_scopes
-         UNION ALL SELECT id, title, 'initiative' AS table_type, status, NULL::uuid AS kr_id FROM okr_initiatives
-       ) p
+       FROM projects p
        LEFT JOIN key_results kr ON p.kr_id = kr.id
        WHERE p.id = ANY($1::uuid[])`,
       [project_ids]
@@ -130,7 +126,7 @@ export async function getCompareMetrics({ project_ids, format = 'json', trend_we
          COUNT(*) FILTER (WHERE priority = 'P0' AND status = 'in_progress') AS p0_in_progress,
          COUNT(*) FILTER (WHERE updated_at >= now() - interval '7 days') AS recent_active
        FROM tasks
-       WHERE project_id = ANY($1::uuid[])
+       WHERE project_id = ANY($1::uuid[]) AND task_type <> 'project'
        GROUP BY project_id`,
       [project_ids]
     ),
@@ -140,7 +136,7 @@ export async function getCompareMetrics({ project_ids, format = 'json', trend_we
               to_char(completed_at::timestamptz AT TIME ZONE 'Asia/Shanghai', 'IYYY-"W"IW') AS week,
               COUNT(*) AS completed
        FROM tasks
-       WHERE project_id = ANY($1::uuid[])
+       WHERE project_id = ANY($1::uuid[]) AND task_type <> 'project'
          AND status = 'completed'
          AND completed_at >= now() - ($2 * interval '1 week')
        GROUP BY project_id, week
@@ -256,9 +252,7 @@ export async function generateCompareReport({ project_ids, format = 'json', _inc
 
   // 查询项目基础信息（新 OKR 表）
   const projectResult = await pool.query(
-    `SELECT id, title AS name, 'project' AS type, status, created_at, updated_at FROM okr_projects WHERE id = ANY($1::uuid[])
-     UNION ALL SELECT id, title AS name, 'scope' AS type, status, created_at, updated_at FROM okr_scopes WHERE id = ANY($1::uuid[])
-     UNION ALL SELECT id, title AS name, 'initiative' AS type, status, created_at, updated_at FROM okr_initiatives WHERE id = ANY($1::uuid[])`,
+    `SELECT id, name, 'project' AS type, status, created_at, updated_at FROM projects WHERE id = ANY($1::uuid[])`,
     [project_ids]
   );
 
@@ -287,7 +281,7 @@ export async function generateCompareReport({ project_ids, format = 'json', _inc
        COUNT(*) FILTER (WHERE priority = 'P0' AND status = 'in_progress') AS p0_in_progress,
        COUNT(*) FILTER (WHERE updated_at >= $2) AS recent_active
      FROM tasks
-     WHERE project_id = ANY($1::uuid[])
+     WHERE project_id = ANY($1::uuid[]) AND task_type <> 'project'
      GROUP BY project_id`,
     [project_ids, sevenDaysAgo]
   );

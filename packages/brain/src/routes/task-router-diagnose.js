@@ -2,19 +2,27 @@
  * Task Router Diagnose Route
  *
  * GET /task-router/diagnose/:kr_id
- *   — 诊断 KR 下所有 Initiative 的任务状态，分析为什么 7 天内未派发任何任务
+ *   — 诊断 KR 下所有 Project 的任务状态，分析为什么 7 天内未派发任何任务
  *
  * 返回：
  *   - kr_id, kr_title
- *   - initiatives[]  每个 Initiative 的任务状态分布
+ *   - projects[]  每个 Project 的任务状态分布
  *   - blockers[]     阻止派发的原因列表
  *   - summary        汇总统计
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 
 const router = Router();
+const diagnoseRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'diagnose_rate_limit_exceeded' },
+});
 
 // GET /task-router/diagnose — smoke / health check（无需 kr_id）
 router.get('/diagnose', (_req, res) => {
@@ -22,7 +30,7 @@ router.get('/diagnose', (_req, res) => {
 });
 
 // GET /task-router/diagnose/:kr_id
-router.get('/diagnose/:kr_id', async (req, res) => {
+router.get('/diagnose/:kr_id', diagnoseRateLimit, async (req, res) => {
   const { kr_id } = req.params;
   const { since_days = 7 } = req.query;
 
@@ -32,7 +40,7 @@ router.get('/diagnose/:kr_id', async (req, res) => {
     // ── 1. 读取 KR 信息（key_results 表，与 task-router.js 一致）──────
     const krResult = await pool.query(
       `SELECT id, title, status,
-              CASE WHEN target_value > 0 THEN ROUND(current_value / target_value * 100) ELSE 0 END AS progress,
+              progress_pct AS progress,
               NULL::text AS priority
        FROM key_results WHERE id = $1`,
       [kr_id]
@@ -46,29 +54,24 @@ router.get('/diagnose/:kr_id', async (req, res) => {
     const kr = krResult.rows[0];
     console.log(`[task-router-diagnose] KR 找到: ${kr.title} (${kr.status}, progress=${kr.progress})`);
 
-    // ── 2. 获取 KR 下所有 Initiative（通过 okr_projects → okr_scopes → okr_initiatives）
-    const initiativesResult = await pool.query(
-      `SELECT oi.id, oi.title AS name, oi.status, 'initiative'::text AS type, oi.created_at, oi.updated_at
-       FROM okr_projects op
-       JOIN okr_scopes os ON os.project_id = op.id
-       JOIN okr_initiatives oi ON oi.scope_id = os.id
-       WHERE op.kr_id = $1
-       ORDER BY oi.created_at ASC`,
-      [kr_id]
+    // KR → Project → Task。
+    const projectsResult = await pool.query(
+      `SELECT id, name, status, 'project'::text AS type, created_at, updated_at
+       FROM projects WHERE kr_id = $1 ORDER BY created_at ASC`, [kr_id]
     );
 
-    const initiatives = initiativesResult.rows;
-    console.log(`[task-router-diagnose] KR ${kr_id} 下找到 ${initiatives.length} 个 Initiative`);
+    const projects = projectsResult.rows;
+    console.log(`[task-router-diagnose] KR ${kr_id} 下找到 ${projects.length} 个 Project`);
 
-    if (initiatives.length === 0) {
+    if (projects.length === 0) {
       return res.json({
         kr_id,
         kr_title: kr.title,
         kr_status: kr.status,
-        initiatives: [],
-        blockers: [{ type: 'no_initiatives', description: 'KR 下没有任何 Initiative，无法派发任务' }],
+        projects: [],
+        blockers: [{ type: 'no_projects', description: 'KR 下没有任何 Project，无法派发任务' }],
         summary: {
-          total_initiatives: 0,
+          total_projects: 0,
           total_tasks: 0,
           dispatchable_tasks: 0,
           blocked_tasks: 0,
@@ -77,41 +80,41 @@ router.get('/diagnose/:kr_id', async (req, res) => {
       });
     }
 
-    const initiativeIds = initiatives.map(i => i.id);
+    const projectIds = projects.map(i => i.id);
 
-    // ── 3. 汇总每个 Initiative 的任务状态分布（用 okr_initiative_id）─────
+    // ── 3. 汇总每个 Project 的任务状态分布（用 project_id）─────
     const taskCountsResult = await pool.query(
       `SELECT
-         okr_initiative_id AS initiative_id,
+         project_id AS project_id,
          status,
          COUNT(*) AS cnt
        FROM tasks
-       WHERE okr_initiative_id = ANY($1::uuid[])
-       GROUP BY okr_initiative_id, status`,
-      [initiativeIds]
+       WHERE project_id = ANY($1::uuid[]) AND task_type <> 'project'
+       GROUP BY project_id, status`,
+      [projectIds]
     );
 
-    // 聚合为 { [initiative_id]: { queued, in_progress, completed, failed, ... } }
-    const countsByInitiative = {};
+    // 聚合为 { [project_id]: { queued, in_progress, completed, failed, ... } }
+    const countsByProject = {};
     for (const row of taskCountsResult.rows) {
-      if (!countsByInitiative[row.initiative_id]) {
-        countsByInitiative[row.initiative_id] = {};
+      if (!countsByProject[row.project_id]) {
+        countsByProject[row.project_id] = {};
       }
-      countsByInitiative[row.initiative_id][row.status] = parseInt(row.cnt);
+      countsByProject[row.project_id][row.status] = parseInt(row.cnt);
     }
 
-    // ── 4. 检查每个 Initiative 中 queued 任务的阻塞原因 ───────────────
+    // ── 4. 检查每个 Project 中 queued 任务的阻塞原因 ───────────────
     const queuedTasksResult = await pool.query(
       `SELECT
          t.id, t.title, t.status, t.priority,
-         t.okr_initiative_id AS project_id, t.goal_id,
+         t.project_id AS project_id, t.goal_id,
          t.created_at, t.updated_at,
          t.payload
        FROM tasks t
-       WHERE t.okr_initiative_id = ANY($1::uuid[])
+       WHERE t.project_id = ANY($1::uuid[]) AND t.task_type <> 'project'
          AND t.status = 'queued'
-       ORDER BY t.okr_initiative_id, t.created_at ASC`,
-      [initiativeIds]
+       ORDER BY t.project_id, t.created_at ASC`,
+      [projectIds]
     );
 
     const queuedTasks = queuedTasksResult.rows;
@@ -157,7 +160,7 @@ router.get('/diagnose/:kr_id', async (req, res) => {
         taskBlockers.push({
           task_id: task.id,
           task_title: task.title,
-          initiative_id: task.project_id,
+          project_id: task.project_id,
           blockers: reasons,
         });
         console.log(`[task-router-diagnose] 任务 "${task.title}" (${task.id}) 被阻塞: ${reasons.join(', ')}`);
@@ -167,15 +170,15 @@ router.get('/diagnose/:kr_id', async (req, res) => {
     // ── 6. 检查近 N 天的派发记录（查 in_progress + completed 任务）────
     const recentDispatchResult = await pool.query(
       `SELECT
-         t.id, t.title, t.status, t.okr_initiative_id AS project_id,
+         t.id, t.title, t.status, t.project_id AS project_id,
          t.updated_at
        FROM tasks t
-       WHERE t.okr_initiative_id = ANY($1::uuid[])
+       WHERE t.project_id = ANY($1::uuid[]) AND t.task_type <> 'project'
          AND t.status IN ('in_progress', 'completed', 'failed')
          AND t.updated_at >= NOW() - INTERVAL '1 day' * $2
        ORDER BY t.updated_at DESC
        LIMIT 20`,
-      [initiativeIds, parseInt(since_days)]
+      [projectIds, parseInt(since_days)]
     );
 
     const recentDispatches = recentDispatchResult.rows;
@@ -191,26 +194,26 @@ router.get('/diagnose/:kr_id', async (req, res) => {
       const anyRecentResult = await pool.query(
         `SELECT MAX(updated_at) AS last_updated
          FROM tasks
-         WHERE okr_initiative_id = ANY($1::uuid[])
+         WHERE project_id = ANY($1::uuid[]) AND task_type <> 'project'
            AND status IN ('in_progress', 'completed', 'failed')`,
-        [initiativeIds]
+        [projectIds]
       );
-      if (anyRecentResult.rows[0].last_updated) {
-        const lastActivity = new Date(anyRecentResult.rows[0].last_updated);
+      if (anyRecentResult.rows[0]?.last_updated) {
+        const lastActivity = new Date(anyRecentResult.rows[0]?.last_updated);
         lastDispatchDaysAgo = Math.round((now - lastActivity) / 86400000);
       }
     }
 
-    // ── 7. 组装 initiatives 数组 ──────────────────────────────────────
-    const initiativeDetails = initiatives.map(initiative => {
-      const counts = countsByInitiative[initiative.id] || {};
+    // ── 7. 组装 projects 数组 ──────────────────────────────────────
+    const projectDetails = projects.map(project => {
+      const counts = countsByProject[project.id] || {};
       const total = Object.values(counts).reduce((a, b) => a + b, 0);
       return {
-        id: initiative.id,
-        name: initiative.name,
-        status: initiative.status,
-        type: initiative.type,
-        created_at: initiative.created_at,
+        id: project.id,
+        name: project.name,
+        status: project.status,
+        type: project.type,
+        created_at: project.created_at,
         task_counts: {
           queued: counts.queued || 0,
           in_progress: counts.in_progress || 0,
@@ -220,7 +223,7 @@ router.get('/diagnose/:kr_id', async (req, res) => {
           total,
         },
         queued_task_blockers: taskBlockers
-          .filter(b => b.initiative_id === initiative.id)
+          .filter(b => b.project_id === project.id)
           .map(b => ({ task_id: b.task_id, task_title: b.task_title, blockers: b.blockers })),
       };
     });
@@ -228,15 +231,15 @@ router.get('/diagnose/:kr_id', async (req, res) => {
     // ── 8. 汇总 blockers ──────────────────────────────────────────────
     const blockers = [];
 
-    const totalQueued = initiativeDetails.reduce((s, i) => s + i.task_counts.queued, 0);
-    const totalTasks = initiativeDetails.reduce((s, i) => s + i.task_counts.total, 0);
+    const totalQueued = projectDetails.reduce((s, i) => s + i.task_counts.queued, 0);
+    const totalTasks = projectDetails.reduce((s, i) => s + i.task_counts.total, 0);
     const blockedCount = taskBlockers.length;
     const dispatchableCount = totalQueued - blockedCount;
 
     if (totalTasks === 0) {
       blockers.push({
         type: 'no_tasks',
-        description: `KR 下 ${initiatives.length} 个 Initiative 中没有任何任务，需要先创建任务`,
+        description: `KR 下 ${projects.length} 个 Project 中没有任何任务，需要先创建任务`,
       });
     }
 
@@ -274,12 +277,12 @@ router.get('/diagnose/:kr_id', async (req, res) => {
       });
     }
 
-    const inactiveInitiativeCount = initiativeDetails.filter(i => i.status !== 'running' && i.task_counts.queued > 0).length;
-    if (inactiveInitiativeCount > 0) {
+    const inactiveProjectCount = projectDetails.filter(i => i.status !== 'active' && i.task_counts.queued > 0).length;
+    if (inactiveProjectCount > 0) {
       blockers.push({
-        type: 'initiative_not_active',
-        count: inactiveInitiativeCount,
-        description: `${inactiveInitiativeCount} 个 Initiative 状态不是 active，但有 queued 任务`,
+        type: 'project_not_active',
+        count: inactiveProjectCount,
+        description: `${inactiveProjectCount} 个 Project 状态不是 active，但有 queued 任务`,
       });
     }
 
@@ -301,7 +304,7 @@ router.get('/diagnose/:kr_id', async (req, res) => {
       kr_priority: kr.priority,
       diagnosed_at: now.toISOString(),
       since_days: parseInt(since_days),
-      initiatives: initiativeDetails,
+      projects: projectDetails,
       blockers,
       recent_activity: recentDispatches.slice(0, 5).map(t => ({
         task_id: t.id,
@@ -310,7 +313,7 @@ router.get('/diagnose/:kr_id', async (req, res) => {
         updated_at: t.updated_at,
       })),
       summary: {
-        total_initiatives: initiatives.length,
+        total_projects: projects.length,
         total_tasks: totalTasks,
         queued_tasks: totalQueued,
         dispatchable_tasks: dispatchableCount,

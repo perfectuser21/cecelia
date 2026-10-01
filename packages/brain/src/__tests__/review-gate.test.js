@@ -41,7 +41,7 @@ describe('shouldTriggerReview', () => {
   it('D1: entity 有拆解产出且无 pending review → 返回 true', async () => {
     pool.query = vi.fn(async (sql) => {
       // 1. 检查子实体 - Project 有 Initiative 子实体
-      if (sql.includes('okr_initiatives') && sql.includes('okr_scopes')) {
+      if (sql.includes('FROM tasks WHERE project_id')) {
         return { rows: [{ id: 'child-1' }] };
       }
       // 2. 检查 pending review
@@ -62,7 +62,7 @@ describe('shouldTriggerReview', () => {
   it('D2: 已有 pending review → 返回 false', async () => {
     pool.query = vi.fn(async (sql) => {
       // 有子实体
-      if (sql.includes('okr_initiatives') && sql.includes('okr_scopes')) {
+      if (sql.includes('FROM tasks WHERE project_id')) {
         return { rows: [{ id: 'child-1' }] };
       }
       // 有 pending review
@@ -105,12 +105,13 @@ describe('shouldTriggerReview', () => {
     });
 
     const result = await shouldTriggerReview(pool, 'initiative', 'init-1');
-    expect(result).toBe(true);
+    expect(result).toBe(false);
+    expect(pool.query).not.toHaveBeenCalled();
   });
 
   it('已有 active decomp_review task → 返回 false', async () => {
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('okr_initiatives') && sql.includes('okr_scopes')) {
+      if (sql.includes('FROM tasks WHERE project_id')) {
         return { rows: [{ id: 'child-1' }] };
       }
       if (sql.includes('decomp_reviews')) {
@@ -140,7 +141,7 @@ describe('createReviewTask', () => {
     const insertCalls = [];
     pool.query = vi.fn(async (sql, params) => {
       // 收集子实体信息
-      if (sql.includes('okr_initiatives') && sql.includes('okr_scopes')) {
+      if (sql.includes('FROM tasks WHERE project_id')) {
         return { rows: [{ name: 'Init 1', status: 'active' }] };
       }
       // 创建 review 记录
@@ -181,7 +182,7 @@ describe('createReviewTask', () => {
   it('D4: 插入 decomp_reviews 记录', async () => {
     let reviewInserted = false;
     pool.query = vi.fn(async (sql) => {
-      if (sql.includes('okr_initiatives') && sql.includes('okr_scopes')) {
+      if (sql.includes('FROM tasks WHERE project_id')) {
         return { rows: [] };
       }
       if (sql.includes('INSERT INTO decomp_reviews')) {
@@ -198,7 +199,7 @@ describe('createReviewTask', () => {
     });
 
     await createReviewTask(pool, {
-      entityType: 'initiative',
+      entityType: 'project',
       entityId: 'init-1',
       entityName: 'Test Initiative',
       parentKrId: 'kr-1',
@@ -228,7 +229,7 @@ describe('processReviewResult', () => {
         return { rows: [] };
       }
       // 激活实体
-      if (sql.includes('UPDATE okr_projects') && sql.includes("'active'") && sql.includes("'pending_review'")) {
+      if (sql.includes('UPDATE projects') && sql.includes("'active'") && sql.includes("'pending_review'")) {
         activatedEntity = true;
         return { rows: [] };
       }
@@ -248,8 +249,8 @@ describe('processReviewResult', () => {
         return { rows: [] };
       }
       // 查询实体名称
-      if (sql.includes('okr_projects') && !sql.includes('decomp_reviews') && !sql.includes('UPDATE')) {
-        return { rows: [{ name: 'Test Project', parent_id: null }] };
+      if (sql.includes('FROM projects') && !sql.includes('decomp_reviews') && !sql.includes('UPDATE')) {
+        return { rows: [{ name: 'Test Project', kr_id: 'kr-1' }] };
       }
       // 查询 KR
       if (sql.includes('project_kr_links')) {
@@ -261,7 +262,7 @@ describe('processReviewResult', () => {
     await processReviewResult(pool, 'task-1', 'needs_revision', { issue: 'too coarse' });
     expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
       title: '修正拆解: Test Project',
-      task_type: 'initiative_plan',
+      task_type: 'project_plan',
     }));
   });
 
@@ -275,7 +276,7 @@ describe('processReviewResult', () => {
         return { rows: [] };
       }
       // 标记 blocked
-      if (sql.includes('UPDATE okr_projects') && sql.includes("'blocked'")) {
+      if (sql.includes('UPDATE projects') && sql.includes("'blocked'")) {
         entityBlocked = true;
         return { rows: [] };
       }
@@ -294,61 +295,11 @@ describe('processReviewResult', () => {
     expect(pool.query).toHaveBeenCalledTimes(1);
   });
 
-  it('D2-1: approved + entity_type=project → 为每个 initiative 创建 architecture_design (M2)', async () => {
-    pool.query = vi.fn(async (sql, params) => {
-      if (sql.includes('SELECT') && sql.includes('decomp_reviews') && sql.includes('task_id')) {
-        return { rows: [{ id: 'review-1', entity_type: 'project', entity_id: 'proj-1' }] };
-      }
-      if (sql.includes('UPDATE decomp_reviews') && sql.includes('verdict')) {
-        return { rows: [] };
-      }
-      if (sql.includes('UPDATE okr_projects') && sql.includes("'active'")) {
-        return { rows: [] };
-      }
-      // initiatives 查询
-      if (sql.includes('okr_initiatives') && sql.includes('okr_scopes')) {
-        return { rows: [{ id: 'init-1', name: 'Initiative A' }, { id: 'init-2', name: 'Initiative B' }] };
-      }
-      // 幂等检查：无已有 architecture_design
-      if (sql.includes('architecture_design') && sql.includes("IN ('queued', 'in_progress')")) {
-        return { rows: [] };
-      }
-      return { rows: [] };
-    });
-
+  it('审查通过不再为退役子层派发 architecture_design', async () => {
+    pool.query = vi.fn(async sql => ({ rows: sql.includes('WHERE task_id')
+      ? [{ id: 'review-1', entity_type: 'project', entity_id: 'proj-1' }] : [] }));
     await processReviewResult(pool, 'task-1', 'approved', {});
-    // 每个 initiative 应创建一个 architecture_design M2 任务
-    expect(mockCreateTask).toHaveBeenCalledTimes(2);
-    expect(mockCreateTask).toHaveBeenCalledWith(expect.objectContaining({
-      task_type: 'architecture_design',
-      project_id: 'init-1',
-      payload: expect.objectContaining({ mode: 'design' }),
-    }));
-  });
-
-  it('D2-2: approved + initiative 已有 queued architecture_design → 不重复创建', async () => {
-    pool.query = vi.fn(async (sql, params) => {
-      if (sql.includes('SELECT') && sql.includes('decomp_reviews') && sql.includes('task_id')) {
-        return { rows: [{ id: 'review-1', entity_type: 'project', entity_id: 'proj-1' }] };
-      }
-      if (sql.includes('UPDATE decomp_reviews') && sql.includes('verdict')) {
-        return { rows: [] };
-      }
-      if (sql.includes('UPDATE okr_projects') && sql.includes("'active'")) {
-        return { rows: [] };
-      }
-      if (sql.includes('okr_initiatives') && sql.includes('okr_scopes')) {
-        return { rows: [{ id: 'init-1', name: 'Initiative A' }] };
-      }
-      // 幂等：已有 architecture_design
-      if (sql.includes('architecture_design') && sql.includes("IN ('queued', 'in_progress')")) {
-        return { rows: [{ id: 'existing-ad' }] };
-      }
-      return { rows: [] };
-    });
-
-    await processReviewResult(pool, 'task-1', 'approved', {});
-    // 已有 queued → 不应调用 createTask
     expect(mockCreateTask).not.toHaveBeenCalled();
+    expect(pool.query.mock.calls.every(([sql]) => !/okr_(projects|scopes|initiatives)/.test(sql))).toBe(true);
   });
 });

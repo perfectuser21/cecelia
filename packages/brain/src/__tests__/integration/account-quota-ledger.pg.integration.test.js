@@ -7,24 +7,25 @@
 // 一抛就中断整轮采集，后面的账号静默陈旧——见 ops-model-accounts-collector.js:107-114）。
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
+import { DB_DEFAULTS } from '../../db-config.js';
 import { createQuotaLedgerLoader } from '../../orchestrator/preflight/account-quota-ledger.js';
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new pg.Pool({ ...DB_DEFAULTS });
 
 // brain-integration 的 pgvector service 容器是一次性的（随 job 起、随 job 销毁，
 // 见 .github/workflows/ci.yml brain-integration job），且全仓只有本文件在
 // src/__tests__/integration/ 下写 ops_model_accounts（另两个写这张表的文件是
 // account-quota-ledger.test.js / ops-model-accounts-collector.test.js，都是
 // unit 测试，brain-unit 用 --exclude 整目录排除、不会跑到这张真表）。
-// 因此用真实账号 id（claude-account1/2）落地是安全的；这里额外清一遍是为了
-// 本机 cecelia_scratch 这类持久库上重复跑不留痕迹。
+// 本fixture会清理真实格式的账号id，因此仅允许CI+POSTGRES显式开关下的一次性服务库；
+// 禁止在本机持久scratch/test库执行，不能将DELETE称为事务回滚。
 const TEST_LEDGER_IDS = ['itest-float', 'itest-int', 'claude-account1', 'claude-account2'];
 const cleanup = () => pool.query(
   `DELETE FROM ops_model_accounts WHERE account_id = ANY($1::text[])`,
   [TEST_LEDGER_IDS],
 );
 
-describe('[integration] ledger 装载器打真表', () => {
+describe.skipIf(process.env.CI !== 'true' || process.env.POSTGRES_INTEGRATION !== '1')('[integration] ledger 装载器打真表', () => {
   beforeAll(cleanup);
   afterAll(async () => { await cleanup(); await pool.end(); });
 

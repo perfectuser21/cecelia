@@ -680,7 +680,7 @@ const actionHandlers = {
     }
 
     const result = await pool.query(
-      `UPDATE objectives SET status = 'ready', updated_at = NOW()
+      `UPDATE key_results SET status = 'ready', updated_at = NOW()
        WHERE id = $1 AND status = 'reviewing'
        RETURNING id, title, status`,
       [kr_id]
