@@ -16,8 +16,7 @@ router.post('/jobs/:id/run', async (req, res) => {
     const result = await runJob(req.app.locals.pool, req.params.id);
     res.json(result);
   } catch (err) {
-    res.status(err.message.startsWith('Unknown') ? 404 : 500)
-       .json({ error: err.message });
+    res.status(err.status ?? 500).json({ error: err.code ?? 'JANITOR_INTERNAL_ERROR' });
   }
 });
 
@@ -29,7 +28,7 @@ router.patch('/jobs/:id/config', async (req, res) => {
     }
     res.json(await setJobConfig(req.app.locals.pool, req.params.id, { enabled }));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.status ?? 500).json({ error: err.code ?? 'JANITOR_INTERNAL_ERROR' });
   }
 });
 
