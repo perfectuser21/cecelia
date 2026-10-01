@@ -90,3 +90,20 @@ it('不能提前单独激活记录来跨过grant首次激活时限',async()=>{
  await new Promise(r=>setTimeout(r,250));
  await expect(pool.query("UPDATE execution_grants SET state='active' WHERE id=$1",[row.grant])).rejects.toThrow('appserver_canary_expired');
 });
+it('受信prepare并发幂等，自动登记验收任务；revoke不依赖在线Worker',async()=>{
+ let api={};try{api=await import('../../authorization-store.js');}catch(error){if(error.code!=='ERR_MODULE_NOT_FOUND')throw error;}
+ expect(api.createAuthorizationStore).toBeTypeOf('function');
+ const home={homeId:`chat-${randomUUID()}`,homeKey:randomUUID().replaceAll('-','').repeat(2),configDigest:'a'.repeat(64),provider:'codex',account:'team1',repo:'perfectuser21/cecelia',profile:`chat-${randomUUID()}`};
+ const node=(await pool.query('SELECT machine_registry_id FROM execution_node_versions WHERE id=$1',[version])).rows[0];
+ const boot=randomUUID();let offline=false;
+ const store=api.createAuthorizationStore({pool,homes:{[home.homeId]:home},client:{async probeCapabilities(){if(offline)throw Error('offline');return {machine_id:'xian-mac-m1',worker_id:'xian-mac-m1',worker_boot_id:boot,profiles:{[home.profile]:home.configDigest}};}},
+  createTask:async({db})=>({success:true,task:(await db.query("INSERT INTO tasks(id,status) VALUES($1,'in_progress') RETURNING *",[randomUUID()])).rows[0]})});
+ const input={home_id:home.homeId,machine_registry_id:node.machine_registry_id,expected_version_id:version};
+ const [a,b]=await Promise.all([store.prepare(input),store.prepare(input)]);expect(a.id).toBe(b.id);expect(a.state).toBe('prepared');
+ expect((await pool.query('SELECT state FROM execution_grants WHERE id=$1',[a.grant_id])).rows[0].state).toBe('pending');
+ expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[a.evidence_task_id])).rows[0].status).toBe('in_progress');
+ await expect(store.prepare({...input,endpoint:'http://arbitrary'})).rejects.toThrow('appserver_authorization_request_invalid');
+ offline=true;await store.revoke(a.id);
+ expect((await pool.query('SELECT state FROM app_server_authorizations WHERE id=$1',[a.id])).rows[0].state).toBe('revoked');
+ expect((await pool.query('SELECT state FROM execution_grants WHERE id=$1',[a.grant_id])).rows[0].state).toBe('revoked');
+});
