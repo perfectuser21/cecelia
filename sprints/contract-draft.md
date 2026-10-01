@@ -10,6 +10,7 @@
 - 健康授权需 fresh Self、美国稳定 ID/DNS、在线 ExitNodeStatus、prefs ID、各地址族公网与 MagicDNS 路由及 ifconfig 精确 Self 地址；PF 源地址绑定 Self，不硬编码 utun 名称。
 - DERP cache root600、有期限；peer bootstrap 独立认证精确 tuple、15 秒有上界，不生成 IP×port 笛卡尔积；缓存损坏按缺失处理。
 - 每次失效撤业务授权；独立 KeepAlive 守卫两秒巡检，业务 generation 最多 15 秒，加载/发布租约/撤权共用短 PF 锁。
+  PF 自身没有 TTL；主动撤权受 PF 命令耗时及锁等待影响，同时停止主巡检和独立守卫不能保证规则自动过期。
 - 激活前有效全锚点审计，其他身份查询、未知 quick、非零 states 均拒绝；input 默认放行让无状态 bootstrap 收响应。
 - 独立回滚需要真实 PID 握手；切换、回滚、确认共用事务锁，每次变更核 deadline。回滚先停 lease guard，恢复专用 anchor、脚本/plist/cache；不关闭 PF、不全局 flush。
 
@@ -23,3 +24,23 @@
 | 事务与进程 | 独立 PID 握手、跨截止安装器、文件恢复与过期 generation 回归 |
 
 官方网络依据：https://tailscale.com/docs/reference/faq/firewall-ports 。实现缩窄公网传输到精确端点，不直接采用官方宽泛 *:443/*:3478 建议。
+
+## E2E 验收（target_environment: local_api）
+
+在候选 checkout 执行同一永久回归：真实临时文件恢复、安装器跨事务截止、进程未退出时拒绝恢复、健康双栈与缓存封闭，以及目标 ADB 验收的命令和结果检查。在 macOS 另由实际 pfctl -vnf 解析生成规则；Linux 缺原生 PF 时仅跳过该解析用例，目标 M4 的实际解析需另附只读证据。此验收不加载生产 PF，也不操作手机。
+
+```bash
+set -euo pipefail
+python3 tests/regression/tailscale-us-exit/pf-identity-free.test.py -v
+bash -n scripts/ops/install-tailscale-us-exit-enforcer.sh
+```
+
+通过标准：26 条回归运行、进程 exit 0；PF 原生解析以目标机实际证据补齐。生产切换、真实美国出口/双 ADB 验收和取消回滚均属独立明确审批后的阶段。
+
+## Test Contract
+
+| Workstream | Test File | BEHAVIOR 覆盖 | 预期 Red 证据 |
+|---|---|---|---|
+| 原生执行入口 | `sprints/tests/pf-identity-free.test.mjs` | `native entry executes immutable PF deadlock regression suite` | 子进程运行唯一永久回归，退出异常、无完整结果或源码 digest 变化拒绝 |
+
+原生入口冻结永久 Python 回归的 SHA-256 并实跑该文件，避免重复断言和合同外测试漂移。根因 failing-test 提交 b139eca8bd 永久保留在本 PR 历史，CI core-regression 运行同一 Python 文件。
