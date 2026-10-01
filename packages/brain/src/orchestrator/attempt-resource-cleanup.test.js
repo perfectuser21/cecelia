@@ -43,7 +43,7 @@ describe('恢复前精确旧进程清理', () => {
       vi.stubEnv('FLEET_WORKER_US_MAC_M4_URL', `http://127.0.0.1:${server.address().port}`);
       const receipt = await confirmExpiredParentCleanup({ ...parent, execution_transport: 'fleet-worker', local_container_naming: 'generation-v1' });
       expect(receipt).toMatchObject({ status: 'cleaned', attempt_id: id });
-      expect(requests).toEqual([{ method: 'POST', url: `/v1/attempts/${id}/cancel` }]);
+      expect(requests).toEqual([{ method: 'POST', url: `/harness/attempts/${id}/cancel` }]);
     } finally { await new Promise((resolve) => server.close(resolve)); }
   });
 });

@@ -1,3 +1,4 @@
+import { confirmExpiredParentCleanup } from './orchestrator/attempt-resource-cleanup.js';
 import { reserveExpiredAttemptReplacement } from './orchestrator/attempt-resource-replacement.js';
 /**
  * harness-relay-watchdog — skill-relay run 的重点火看门狗（eval-1 实证的产品化）。
@@ -245,10 +246,7 @@ export async function reconcileExpiredKernelAttempt({
     replacement = await replaceExpiredAttempt({
       pool: db, parentAttempt: originalParentAttempt, childInput,
       ...(collectSnapshot ? { collectSnapshot } : {}),
-      confirmCleanup: confirmCleanup ?? (async (parent) => {
-        const launcher = createProductionExecutionTransport({ attemptStore: store });
-        return launcher.cancel({ attempt: parent, target: { machine: resumeMachineId } });
-      }),
+      confirmCleanup: confirmCleanup ?? confirmExpiredParentCleanup,
     });
   } catch (error) {
     return { ok: false, action: 'wait:capacity', failure_code: error?.message ?? 'replacement_cleanup_unconfirmed' };
@@ -946,14 +944,12 @@ async function _recoverKernelRun(run, task, deps, out) {
       leaseOwner: `watchdog:${process.pid}`,
       reserveChildHop: (parentAttempt) => reserveResumeIntent(dbPool, parentAttempt),
       onRecoveryAlert,
-      confirmCleanup: async (parent) => {
-        const launcher = deps.launcher ?? (deps.transportFactory ?? createProductionExecutionTransport)({
-          env: deps.env, fetchFn: deps.fetchFn, attemptStore, remoteBridgeTimeoutMs: 20_000,
-        });
-        return launcher.cancel({ attempt: parent, target: {
-          machine: parent.actual_machine_id ?? parent.machine_id ?? parent.requested_machine_id,
-        } });
-      },
+      confirmCleanup: (parent) => confirmExpiredParentCleanup(parent, {
+        env: deps.env ?? process.env, launcher: deps.launcher,
+        transportFactory: deps.transportFactory ?? createProductionExecutionTransport,
+        fetchFn: deps.fetchFn, removeContainer: deps.removeContainer,
+        inspectContainer: deps.inspectContainer,
+      }),
       ...(deps.collectCapacitySnapshot ? { collectSnapshot: deps.collectCapacitySnapshot } : {}),
       resumeAttempt: (child, context) => lowerResume(child, {
         ...context,

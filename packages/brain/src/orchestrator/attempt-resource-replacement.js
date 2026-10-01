@@ -29,6 +29,10 @@ export async function reserveExpiredAttemptReplacement({
       AND (lease_expires_at IS NULL OR lease_expires_at < clock_timestamp()) FOR UPDATE`,
     [parentAttempt.id, parentAttempt.lease_generation, parentAttempt.lease_owner])).rows[0];
     if (!locked) { await client.query('ROLLBACK'); return null; }
+    if (childInput.runId !== locked.run_id || childInput.role !== locked.role
+        || childInput.machineId !== (locked.actual_machine_id ?? locked.machine_id ?? locked.requested_machine_id)) {
+      throw new Error('replacement_identity_mismatch');
+    }
     let timer;
     let receipt;
     try {
