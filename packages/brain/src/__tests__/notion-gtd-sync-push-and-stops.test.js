@@ -201,7 +201,7 @@ describe('applyOwnerStops（急停只对任务号 brain: 的行生效）', () =>
     const query = vi.fn().mockResolvedValue({ rows: [{ id: TID, status: 'blocked', blocked_reason: 'owner_hold' }] });
     mockBlock.mockResolvedValue({ success: true }); mockUnblock.mockResolvedValue({ success: true });
     const r = await applyOwnerStops({ query }, 'tok', { notionReq: mockNotionReq });
-    expect(r).toEqual({ cancelled: 1, held: 1, resumed: 1, rescheduled: 0, ignored: [] });
+    expect(r).toEqual({ cancelled: 1, held: 1, resumed: 1, rescheduled: 0, rerouted: 0, ignored: [] });
     expect(mockRecord).toHaveBeenCalledWith({ query }, expect.objectContaining({ target: 'notion', entityId: TID, commandType: 'cancel_requested', externalId: `${ZH}:cancel_requested` }));
     expect(mockBlock).toHaveBeenCalledWith(TID, expect.objectContaining({ reason: 'owner_hold' }));
     expect(mockUnblock).toHaveBeenCalledWith(TID);

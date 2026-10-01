@@ -24,6 +24,12 @@ async function listProductionModules(directory) {
 }
 
 describe('task creation inventory', () => {
+  it('交办台按 API 来源登记到原子任务创建边界', () => {
+    expect(TASK_CREATION_INVENTORY.find(row => row.module === 'task-intake.js')).toEqual({
+      module: 'task-intake.js', source: 'api', creates_executable_task: true, migration_status: 'routed',
+    });
+  });
+
   it('records each executable creation boundary', () => {
     expect(TASK_CREATION_INVENTORY_VERSION).toBe(ROUTER_VERSION);
     expect(TASK_CREATION_INVENTORY.length).toBeGreaterThanOrEqual(33);
