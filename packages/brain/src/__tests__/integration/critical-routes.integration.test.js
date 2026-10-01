@@ -15,13 +15,19 @@
  * 运行环境：CI brain-unit job（含真实 PostgreSQL 服务）
  */
 
-import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
 
 // ─── Mock 外部服务（不测试 AI 调用和告警）─────────────────────────────────
+
+// 健康聚合用例模拟生产运行模式；tick、Docker 和 Xian fetch 均模拟，模型/执行闸保持真实。
+vi.mock('../../runtime-safety.js', async importOriginal => ({
+  ...await importOriginal(),
+  isIsolatedRuntime: () => false,
+}));
 
 // goals.js（含 /health）依赖 tick.js，mock 避免 DB 状态依赖
 vi.mock('../../tick.js', () => ({
@@ -169,6 +175,7 @@ describe('Brain 关键路由集成测试（真实 PostgreSQL）', () => {
 
   // 每个用例前重置 probe 默认返回为 healthy，避免用例间污染
   beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
     __dockerRuntimeProbeMock.mockReset();
     __dockerRuntimeProbeMock.mockResolvedValue({
       enabled: true,
@@ -178,6 +185,8 @@ describe('Brain 关键路由集成测试（真实 PostgreSQL）', () => {
       error: null,
     });
   });
+
+  afterEach(() => vi.unstubAllGlobals());
 
   afterAll(async () => {
     // 清理测试数据

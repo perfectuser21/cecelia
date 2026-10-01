@@ -11,6 +11,7 @@
  */
 
 import { readFileSync } from 'fs';
+import { assertLiveLLMAllowed } from './runtime-safety.js';
 import { homedir } from 'os';
 import { join } from 'path';
 import { generateProfileFactEmbeddingAsync } from './embedding-service.js';
@@ -232,6 +233,7 @@ const EXTRACT_PROMPT = `你是一个信息提取助手。从以下对话中**只
  * @param {string} reply - 本次回复
  */
 export async function extractAndSaveUserFacts(pool, userId = 'owner', messages = [], reply = '') {
+  assertLiveLLMAllowed();
   const apiKey = getApiKey();
   if (!apiKey) return;
 

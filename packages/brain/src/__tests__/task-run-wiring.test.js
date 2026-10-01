@@ -285,7 +285,7 @@ describe('执行路径接线钉子（漏接即红）', () => {
   it('executor：triggerCeceliaRun 是经 startRunForExecResult 的漏斗包装，内层改名', () => {
     const src = read('src/executor.js');
     expect(src).toMatch(/from '\.\/lib\/task-run\.js'/);
-    expect(src).toMatch(/async function triggerCeceliaRun\(task\)\s*\{\s*const execResult = await _triggerCeceliaRunInner\(task\);/);
+    expect(src).toMatch(/async function triggerCeceliaRun\(task\)\s*\{\s*assertExternalExecutionAllowed\(\);\s*const execResult = await _triggerCeceliaRunInner\(task\);/);
     expect(src).toMatch(/startRunForExecResult\(\{ task, execResult, source \}\)/);
     expect(src).toMatch(/async function _triggerCeceliaRunInner\(task\)/);
   });

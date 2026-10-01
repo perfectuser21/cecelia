@@ -43,7 +43,16 @@ if(!le || typeof le!=="object") fail("缺 local_execution 字段（本机执行�
 if(typeof le.enabled!=="boolean") fail("local_execution.enabled 不是布尔");
 if(typeof le.role!=="string") fail("local_execution.role 不是字符串");
 
-const expectRole = le.enabled ? "executor" : "scheduler_only";
+const isolated = j.runtime?.isolated === true;
+if(isolated){
+  const ft=j.fleet_transport;
+  if(j.runtime.background_automation!==false || le.enabled!==false || le.reason!=="runtime_isolated")
+    fail("隔离实例必须明确关闭后台自动化与本机执行");
+  if(!ft || ft.enabled!==false || ft.status!=="disabled" || ft.reason!=="runtime_isolated" ||
+     !Array.isArray(ft.worker_machines) || ft.worker_machines.length!==0)
+    fail("隔离实例必须关闭远程执行，且机器列表为空");
+}
+const expectRole = isolated ? "disabled" : le.enabled ? "executor" : "scheduler_only";
 if(le.role!==expectRole) fail(`role 与 enabled 不一致：enabled=${le.enabled} 期望 role=${expectRole}，实际 ${le.role}`);
 
 if(le.enabled===false){
