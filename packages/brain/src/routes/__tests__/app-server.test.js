@@ -15,3 +15,17 @@ it('内部API没有token即停用，不接受loopback豁免或自报执行身份
   expect((await post(`/generations/${randomUUID()}/cancel`,{worker_id:'fake'},env.CECELIA_INTERNAL_TOKEN)).status).toBe(409);expect(controller.cancel).not.toHaveBeenCalled();
  }finally{await new Promise(r=>server.close(r));}
 });
+it('验收入口沿用内部鉴权且仅返回脱敏状态；撤销不接收附加指令',async()=>{
+ const env={CECELIA_INTERNAL_TOKEN:'b'.repeat(32)},id=randomUUID(),calls=[];
+ const authorizationStore={async prepare(input){calls.push(input);return {id,state:'prepared',nonce:'must-not-be-returned',home:{homeKey:'private'},grant_id:randomUUID()};},async revoke(){return {id,state:'revoked'};}};
+ const app=express();app.use(express.json());app.use(createAppServerRouter({env,controller:{},authorizationStore}));
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+ const post=(url,body,token)=>fetch(`http://127.0.0.1:${server.address().port}`+url,{method:'POST',headers:{'content-type':'application/json',...(token?{'x-cecelia-token':token}:{})},body:JSON.stringify(body)});
+ try{
+  expect((await post('/authorizations/prepare',{})).status).toBe(401);expect(calls).toHaveLength(0);
+  const response=await post('/authorizations/prepare',{home_id:'chat-test'},env.CECELIA_INTERNAL_TOKEN);expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({id,state:'prepared'});
+  expect((await post(`/authorizations/${id}/revoke`,{command:'arbitrary'},env.CECELIA_INTERNAL_TOKEN)).status).toBe(409);
+  expect((await post(`/authorizations/${id}/revoke`,{},env.CECELIA_INTERNAL_TOKEN)).status).toBe(200);
+ }finally{await new Promise(r=>server.close(r));}
+});
