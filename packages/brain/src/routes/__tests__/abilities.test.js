@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockQuery = vi.fn();
 vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../../event-bus.js', () => ({ emit: vi.fn().mockResolvedValue(undefined) }));
 
 // golden_path 旧表已退役（任务 7d312fd8）：既有读路由用例在应急放行窗口下跑，
 // 退役 410 用例在下方 describe 里显式关 flag。
@@ -69,12 +70,12 @@ describe('abilities routes', () => {
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
-  it('POST /decisions target_type=golden_path：flag 开时仍校验 target 存在（应急窗口）', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // SELECT id FROM golden_path → 不存在
+  it('POST /decisions target_type=golden_path：应急窗口也永久 410', async () => {
     const res = await (await req())(await makeApp()).post('/api/brain/decisions')
       .send({ level: 'step', target_type: 'golden_path', target_id: 'g-none' });
-    expect(res.status).toBe(400);
-    expect(mockQuery.mock.calls[0][0]).toMatch(/FROM golden_path/);
+    expect(res.status).toBe(410);
+    expect(res.body.path_kind).toBe('write');
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 
   describe('golden_path 退役（GOLDEN_PATH_LEGACY_READ 未开，任务 7d312fd8）', () => {
@@ -87,7 +88,6 @@ describe('abilities routes', () => {
       ['GET', '/api/brain/golden_path/g1/decisions'],
       ['GET', '/api/brain/tasks/t1/golden-path-decisions'],
       ['GET', '/api/brain/journeys/bb8cc561-b3ee-4fec-b74d-2255694bd963/golden-paths'],
-      ['POST', '/api/brain/golden_path/g1/run-result'],
     ];
 
     it.each(READ_ROUTES)('%s %s → 410 + hint 指向 /api/brain/steps，不查库', async (method, url) => {

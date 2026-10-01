@@ -5,8 +5,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockQuery = vi.fn();
 vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../../event-bus.js', () => ({ emit: vi.fn().mockResolvedValue(undefined) }));
 
-// golden_path 旧表已退役（任务 7d312fd8）：画布/回写路由只在应急放行窗口下可达，
+// golden_path 旧表已退役（任务 7d312fd8）：只读画布在应急放行窗口下可达，回写永久 410，
 // 默认 410 见 abilities.test.js「golden_path 退役」用例。
 process.env.GOLDEN_PATH_LEGACY_READ = '1';
 
@@ -118,82 +119,14 @@ describe('GET /golden_path/canvas（只读画布生成器）', () => {
   });
 });
 
-describe('POST /golden_path/:id/run-result（run 终态回写）', () => {
+describe('POST /golden_path/:id/run-result（退役后永久只读）', () => {
   beforeEach(() => mockQuery.mockReset());
-
-  it('缺 run_id 返回 400', async () => {
+  it.each([{}, { verdict: 'completed' }, { run_id: 'run-1', verdict: 'completed' },
+    { run_id: 'run-1', verdict: 'failed' }])('任何回执都 410，不写旧表也不推进 feature', async (body) => {
     const res = await (await req())(await makeApp())
-      .post(`/api/brain/golden_path/${STEP1}/run-result`).send({ verdict: 'completed' });
-    expect(res.status).toBe(400);
-  });
-
-  it('verdict 不在封闭词表（completed|failed）返回 400', async () => {
-    const res = await (await req())(await makeApp())
-      .post(`/api/brain/golden_path/${STEP1}/run-result`)
-      .send({ run_id: 'run-1', verdict: 'accepted' });
-    expect(res.status).toBe(400);
-  });
-
-  it('step 不存在返回 404', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // golden_path 查不到
-    const res = await (await req())(await makeApp())
-      .post(`/api/brain/golden_path/${STEP1}/run-result`)
-      .send({ run_id: 'run-1', verdict: 'completed' });
-    expect(res.status).toBe(404);
-  });
-
-  it('completed 且 feature 为 planned → 单级推进 working（禁跳级）并写回执', async () => {
-    mockQuery.mockResolvedValueOnce({
-      rows: [{ id: STEP1, feature_id: 'f-1', feature_status: 'planned' }],
-    }); // 查 step + feature
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'rcpt-1' }] }); // INSERT 回执
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'f-1', status: 'working' }] }); // UPDATE feature
-    const res = await (await req())(await makeApp())
-      .post(`/api/brain/golden_path/${STEP1}/run-result`)
-      .send({ run_id: 'run-1', verdict: 'completed', evidence: { pr: 'x' } });
-    expect(res.status).toBe(201);
-    expect(res.body.feature_promotion).toMatchObject({ from: 'planned', to: 'working' });
-    // UPDATE 必须带 status='planned' 条件（防并发覆盖人工状态）
-    const updateCall = mockQuery.mock.calls.find(([sql]) => /UPDATE journey_features/.test(sql));
-    expect(updateCall[0]).toMatch(/status\s*=\s*'planned'/);
-  });
-
-  it('completed 但 feature 已是 working → 不推进，只写回执', async () => {
-    mockQuery.mockResolvedValueOnce({
-      rows: [{ id: STEP1, feature_id: 'f-1', feature_status: 'working' }],
-    });
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'rcpt-2' }] });
-    const res = await (await req())(await makeApp())
-      .post(`/api/brain/golden_path/${STEP1}/run-result`)
-      .send({ run_id: 'run-2', verdict: 'completed' });
-    expect(res.status).toBe(201);
-    expect(res.body.feature_promotion).toBeNull();
-    expect(mockQuery.mock.calls.some(([sql]) => /UPDATE journey_features/.test(sql))).toBe(false);
-  });
-
-  it('failed → 只写回执，绝不推进成熟度', async () => {
-    mockQuery.mockResolvedValueOnce({
-      rows: [{ id: STEP1, feature_id: 'f-1', feature_status: 'planned' }],
-    });
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'rcpt-3' }] });
-    const res = await (await req())(await makeApp())
-      .post(`/api/brain/golden_path/${STEP1}/run-result`)
-      .send({ run_id: 'run-3', verdict: 'failed' });
-    expect(res.status).toBe(201);
-    expect(res.body.feature_promotion).toBeNull();
-    expect(mockQuery.mock.calls.some(([sql]) => /UPDATE journey_features/.test(sql))).toBe(false);
-  });
-
-  it('同 (step, run_id) 重放 → 幂等 200，不重复写回执、不二次推进', async () => {
-    mockQuery.mockResolvedValueOnce({
-      rows: [{ id: STEP1, feature_id: 'f-1', feature_status: 'working' }],
-    });
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // INSERT ... ON CONFLICT DO NOTHING → 0 行
-    const res = await (await req())(await makeApp())
-      .post(`/api/brain/golden_path/${STEP1}/run-result`)
-      .send({ run_id: 'run-1', verdict: 'completed' });
-    expect(res.status).toBe(200);
-    expect(res.body.idempotent).toBe(true);
-    expect(mockQuery.mock.calls.some(([sql]) => /UPDATE journey_features/.test(sql))).toBe(false);
+      .post(`/api/brain/golden_path/${STEP1}/run-result`).send(body);
+    expect(res.status).toBe(410);
+    expect(res.body.path_kind).toBe('write');
+    expect(mockQuery).not.toHaveBeenCalled();
   });
 });
