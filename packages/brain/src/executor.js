@@ -1,3 +1,4 @@
+import { withLegacyRelayExecution } from './execution-directory/legacy-relay.js';
 import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
 /**
  * Cecelia Executor - Trigger headless Claude Code execution
@@ -2373,7 +2374,7 @@ async function triggerCodexReview(task) {
       };
     }
 
-    const child = await withLegacyExecution({pool,machineId:process.env.CECELIA_MACHINE_ID,provider:'codex'},()=>spawn(codexBin, ['exec', '-c', 'approval_policy="never"', promptContent], {
+    const child = await withLegacyRelayExecution({pool,location:os.hostname(),provider:'codex',credentialIdentity:process.env.CODEX_HOME,repo:task.payload?.repo??task.repo_hint},()=>spawn(codexBin, ['exec', '-c', 'approval_policy="never"', promptContent], {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: WORK_DIR,
@@ -2854,7 +2855,7 @@ async function triggerLocalCodexExec(task) {
     ].join('\n');
     await writeFile(tmpScriptFile, scriptContent, { mode: 0o755 });
 
-    const proc = await withLegacyExecution({pool,machineId:process.env.CECELIA_MACHINE_ID,provider:'codex'},()=>spawn('bash', [tmpScriptFile], { detached: true, stdio: 'ignore' }));
+    const proc = await withLegacyRelayExecution({pool,location:os.hostname(),provider:'codex',credentialIdentity:CODEX_HOME,repo:task.payload?.repo??task.repo_hint},()=>spawn('bash', [tmpScriptFile], { detached: true, stdio: 'ignore' }));
     proc.unref();
     // 打标：本地 codex-bin spawn → brain-local
     await setExecutorKind(task.id, EXECUTOR_KIND_FOR.__local_spawn);
@@ -3780,7 +3781,7 @@ async function _triggerCeceliaRunInner(task) {
       // 旧的西安 harness 全局开关 env 透传已删除（死代码）：harness 路由收编进
       // resolveExecutor（DB 驱动 machine+executor），graph 不再读任何全局开关。
 
-      const authorizeSpawn=operation=>withLegacyExecution({pool,machineId:process.env.CECELIA_MACHINE_ID,provider:provider??'claude'},operation);
+      const authorizeSpawn=operation=>withLegacyRelayExecution({pool,location:os.hostname(),provider:provider??'claude',credentialIdentity:credentials,repo:task.payload?.repo??task.repo_hint},operation);
       await authorizeSpawn(()=>{});
       const dockerResult = await spawnDocker({
         authorizeSpawn,

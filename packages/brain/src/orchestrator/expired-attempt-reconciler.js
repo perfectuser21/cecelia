@@ -1,5 +1,5 @@
 import { LOG_ACTION } from './constants.js';
-import { listCanonicalMachineIds } from './preflight/canonical-machine-id.js';
+import { LEGACY_BINDINGS } from '../execution-directory/legacy-policy.js';
 
 const INFLIGHT_STATUSES = new Set(['starting', 'running']);
 const PREPARED_WORKER_STATUSES = new Set(['prepared', 'starting']);
@@ -15,7 +15,7 @@ const TERMINAL_CODES = new Set([
 ]);
 
 function cleanupMachineKnown(attempt,machine){
- return Boolean(attempt?.task_bundle?.inputs?._server_execution?.executionVersionId) || listCanonicalMachineIds().includes(machine);
+ return Boolean(attempt?.task_bundle?.inputs?._server_execution?.executionVersionId) || LEGACY_BINDINGS.some(([id])=>id===machine);
 }
 
 function bounded(value, maximum = 1_000) {

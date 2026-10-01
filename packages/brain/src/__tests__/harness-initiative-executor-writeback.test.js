@@ -176,12 +176,13 @@ vi.mock('fs/promises', () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('fs', () => ({
-  readFileSync: vi.fn(() => 'SwapTotal: 0\nSwapFree: 0'),
+vi.mock('fs', async importOriginal => { const actual=await importOriginal(); return ({
+  ...actual,
+  readFileSync: vi.fn((file,...args) => String(file).endsWith('fleet-node-profiles.json')?actual.readFileSync(file,...args):'SwapTotal: 0\nSwapFree: 0'),
   readdirSync: vi.fn(() => []),
   unlinkSync: vi.fn(),
   existsSync: vi.fn(() => false),
-}));
+}); });
 
 vi.mock('../auto-learning.js', () => ({
   processExecutionAutoLearning: vi.fn().mockResolvedValue(undefined),

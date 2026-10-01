@@ -34,7 +34,12 @@ export async function resolveCleanup(db,{executionVersionId,persistedAttemptIden
  const bound=persistedAttemptIdentity?.execution_version_id??persistedAttemptIdentity?.task_bundle?.inputs?._server_execution?.executionVersionId;
  if(bound && bound!==executionVersionId)throw Error('execution_cleanup_identity_mismatch');
  if(!bound){
-  const oldGrant=(await db.query(`SELECT 1 FROM execution_grants WHERE node_version_id=$1 AND provenance='legacy_policy'
+  const legacyScript=persistedAttemptIdentity?.owner_kind==='script'
+   && persistedAttemptIdentity?.id && persistedAttemptIdentity?.intent_id
+   && Number.isInteger(persistedAttemptIdentity?.launch_generation)
+   && /^script-[a-f0-9-]+-a[1-9][0-9]*$/.test(persistedAttemptIdentity?.owner_key??'')
+   && /^[a-f0-9]{64}$/.test(persistedAttemptIdentity?.config_digest??'');
+  const oldGrant=legacyScript?true:(await db.query(`SELECT 1 FROM execution_grants WHERE node_version_id=$1 AND provenance='legacy_policy'
    AND surface=$2 AND provider=$3 AND account_id=$4 LIMIT 1`,[node.id,persistedAttemptIdentity?.owner_kind==='script'?'managed_script':'harness',
    persistedAttemptIdentity?.owner_kind==='script'?'script':persistedAttemptIdentity?.provider,persistedAttemptIdentity?.account_id??''])).rowCount;
   if(node.identity_mode!=='legacy-v1'||Number(node.revision)!==1||!oldGrant)throw Error('execution_cleanup_identity_mismatch');
