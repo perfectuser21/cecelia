@@ -288,6 +288,7 @@ function createRunner(deps) {
     credentialConsumer: deps.credentialConsumer,
     githubCredentialConsumer: deps.githubCredentialConsumer,
     resourceManager: deps.resourceManager,
+    assertLocalResources: deps.assertLocalResources ?? (async () => {}),
   });
 }
 
@@ -3330,5 +3331,56 @@ describe('worker 物化不覆盖已存在合同文件（r40 evaluator 候选被�
     materializeContractArtifacts(ws, [art(rel, 'RED')]);
     expect(fs.readFileSync(path.join(ws, rel), 'utf8')).toBe('RED');
     fs.rmSync(ws, { recursive: true, force: true });
+  });
+});
+
+
+describe('新增执行前本机资源复验', () => {
+  const lease = { owner: 'dispatcher-1', generation: 0 };
+  const denied = () => Object.assign(new Error('attempt_local_resources_unavailable'), { statusCode: 429 });
+  it('prepare拒绝发生在消费凭据和创建工作区之前', async () => {
+    const deps = dependencies({ assertLocalResources: vi.fn(async () => { throw denied(); }) });
+    await expect(createRunner(deps).prepare(request())).rejects.toMatchObject({ statusCode: 429 });
+    for (const fn of [deps.credentialConsumer.consume, deps.githubCredentialConsumer.consume,
+      deps.workspaceManager.prepare, deps.resourceManager.provision, deps.docker.prepare]) expect(fn).not.toHaveBeenCalled();
+  });
+  it('PG启动前重新复验，拒绝清理当前工作区', async () => {
+    const guard = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(denied());
+    const deps = dependencies({ assertLocalResources: guard });
+    const input = request({ runtime_resources: { postgres: true }, provider_spec: {
+      ...request().provider_spec, stdin: providerPrompt('generator', { runtime_resources: { postgres: true } }),
+    } });
+    await expect(createRunner(deps).prepare(input)).rejects.toMatchObject({ statusCode: 429 });
+    expect(deps.workspaceManager.cleanup).toHaveBeenCalledOnce();
+    expect(deps.resourceManager.provision).not.toHaveBeenCalled();
+    expect(deps.docker.prepare).not.toHaveBeenCalled();
+  });
+  it.each(['prepared','starting'])('%s启动拒绝保留状态和凭据，恢复后同lease可启动', async (status) => {
+    const guard = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(denied()).mockResolvedValue(undefined);
+    const deps = dependencies({ assertLocalResources: guard });
+    const runner = createRunner(deps);
+    await runner.prepare(request());
+    const state = await deps.stateStore.get(ATTEMPT_ID);
+    await deps.stateStore.save({ ...state, status });
+    deps.docker.inspect.mockResolvedValue({ status: 'created' });
+    await expect(runner.start(ATTEMPT_ID, lease)).rejects.toMatchObject({ statusCode: 429 });
+    expect((await deps.stateStore.get(ATTEMPT_ID)).status).toBe(status);
+    expect(deps.docker.start).not.toHaveBeenCalled();
+    await runner.start(ATTEMPT_ID, lease);
+    expect(deps.docker.start).toHaveBeenCalledOnce();
+    expect(deps.docker.start.mock.calls[0][0].credential).toEqual(CREDENTIAL);
+  });
+  it('精确重复prepare与running start不重复复验', async () => {
+    const guard = vi.fn(async () => {});
+    const deps = dependencies({ assertLocalResources: guard });
+    const runner = createRunner(deps);
+    const input = request();
+    await Promise.all([runner.prepare(input), runner.prepare(input)]);
+    expect(guard).toHaveBeenCalledTimes(1);
+    await Promise.all([runner.start(ATTEMPT_ID, lease), runner.start(ATTEMPT_ID, lease)]);
+    await runner.prepare(input);
+    await runner.start(ATTEMPT_ID, lease);
+    expect(guard).toHaveBeenCalledTimes(2);
+    expect(deps.docker.start).toHaveBeenCalledOnce();
   });
 });
