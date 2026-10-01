@@ -63,7 +63,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
         contract_id uuid,
         updated_at timestamptz DEFAULT now()
       );
-      CREATE TABLE ${concurrencySchema}.tasks (id uuid PRIMARY KEY);
+      CREATE TABLE ${concurrencySchema}.tasks (id uuid PRIMARY KEY, payload jsonb);
       CREATE TABLE ${concurrencySchema}.initiative_contract_artifacts (
         contract_id uuid NOT NULL REFERENCES ${concurrencySchema}.initiative_contracts(id),
         path text NOT NULL,
@@ -108,7 +108,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract PostgreSQL contra
         contract_id uuid,
         updated_at timestamptz DEFAULT now()
       ) ON COMMIT DROP;
-      CREATE TEMP TABLE tasks (id uuid PRIMARY KEY) ON COMMIT DROP;
+      CREATE TEMP TABLE tasks (id uuid PRIMARY KEY, payload jsonb) ON COMMIT DROP;
       CREATE TEMP TABLE initiative_contract_artifacts (
         contract_id uuid NOT NULL REFERENCES initiative_contracts(id),
         path text NOT NULL,
@@ -452,7 +452,7 @@ describe.runIf(HAS_REAL_POSTGRES)('materializeApprovedContract 合同重开后�
         contract_id uuid,
         updated_at timestamptz DEFAULT now()
       ) ON COMMIT DROP;
-      CREATE TEMP TABLE tasks (id uuid PRIMARY KEY) ON COMMIT DROP;
+      CREATE TEMP TABLE tasks (id uuid PRIMARY KEY, payload jsonb) ON COMMIT DROP;
       CREATE TEMP TABLE initiative_contract_artifacts (
         contract_id uuid NOT NULL REFERENCES initiative_contracts(id),
         path text NOT NULL,

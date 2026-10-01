@@ -4,10 +4,16 @@ import {
 } from './contract-artifacts.js';
 import { assertTestContractResolvable } from './contract-test-paths-seal.js';
 
-function assertArtifactProjection(artifacts, prdContent, contractContent) {
+function approvedSprintRoot(artifacts) {
+  const drafts = artifacts.filter(({ path }) => path.endsWith('/contract-draft.md'));
+  if (drafts.length !== 1) {
+    throw new Error('FROZEN_CONTRACT_ARTIFACT_INVALID:contract_root');
+  }
+  return drafts[0].path.slice(0, -'/contract-draft.md'.length);
+}
+
+function assertArtifactProjection(artifacts, prdContent, contractContent, root) {
   const byPath = new Map(artifacts.map((artifact) => [artifact.path, artifact.content]));
-  const draftPath = artifacts.find(({ path }) => path.endsWith('/contract-draft.md'))?.path;
-  const root = draftPath?.slice(0, -'/contract-draft.md'.length);
   const expectedPrd = byPath.get(`${root}/sprint-prd.md`);
   const expectedContract = `${byPath.get(`${root}/contract-draft.md`)}\n\n${byPath.get(`${root}/contract-dod.md`)}`;
   if (prdContent !== expectedPrd || contractContent !== expectedContract) {
@@ -41,7 +47,8 @@ export async function materializeApprovedContract(db, {
   const frozenArtifacts = artifactsProvided
     ? validateContractArtifacts(artifacts, { requireTests: true, requireCore: true })
     : [];
-  if (artifactsProvided) assertArtifactProjection(frozenArtifacts, prdContent, contractContent);
+  const sprintRoot = artifactsProvided ? approvedSprintRoot(frozenArtifacts) : null;
+  if (artifactsProvided) assertArtifactProjection(frozenArtifacts, prdContent, contractContent, sprintRoot);
   // r33（run 7f939e7c）：Test Contract 表不可解析的合同不许封印——否则 CI 覆盖检查
   // 在 generator 之后才红，fix 只能改封印文档，被不可变复核拦成确定性死循环。
   if (artifactsProvided) assertTestContractResolvable(contractContent, frozenArtifacts, { readRepoFile });
@@ -71,7 +78,9 @@ export async function materializeApprovedContract(db, {
       );
     }
     const taskResult = candidate?.current_task_id ? await client.query(
-      'SELECT id FROM tasks WHERE id = $1::uuid FOR UPDATE',
+      artifactsProvided
+        ? 'SELECT id, payload FROM tasks WHERE id = $1::uuid FOR UPDATE'
+        : 'SELECT id FROM tasks WHERE id = $1::uuid FOR UPDATE',
       [candidate.current_task_id],
     ) : { rows: [] };
     const lockedTaskId = taskResult.rows[0]?.id ?? null;
@@ -88,6 +97,28 @@ export async function materializeApprovedContract(db, {
     if (!run) {
       throw new Error(`cannot materialize approved contract: run ${runId} not found`);
     }
+    const payload = taskResult.rows[0]?.payload;
+    if (artifactsProvided && payload != null
+      && (typeof payload !== 'object' || Array.isArray(payload))) {
+      throw new Error('approved_contract_task_payload_invalid');
+    }
+    const existingRoot = payload?.sprint_dir;
+    const missingRoot = existingRoot == null || existingRoot === '';
+    if (artifactsProvided && !missingRoot && existingRoot !== sprintRoot) {
+      throw new Error('approved_contract_task_sprint_dir_mismatch');
+    }
+    // The locked run binds the task; the frozen Git artifacts bind the directory.
+    // Delay the narrow write until contract evidence passes, within the same transaction.
+    const fillTaskContext = async () => {
+      if (artifactsProvided && missingRoot) {
+        await client.query(
+          `UPDATE tasks
+              SET payload = jsonb_set(COALESCE(NULLIF(payload, 'null'::jsonb), '{}'::jsonb), '{sprint_dir}', to_jsonb($2::text), true)
+            WHERE id = $1::uuid`,
+          [lockedTaskId, sprintRoot],
+        );
+      }
+    };
     if (run.contract_id) {
       const existing = await client.query(
         `SELECT contract.id, contract.version, contract.status, contract.branch,
@@ -136,6 +167,7 @@ export async function materializeApprovedContract(db, {
           throw new Error(`attached approved contract evidence mismatch for run ${runId}`);
         }
         delete attached.evidence_matches;
+        await fillTaskContext();
         if (ownsClient) await client.query('COMMIT');
         return attached;
       }
@@ -320,6 +352,7 @@ export async function materializeApprovedContract(db, {
       }
       throw new Error(`cannot materialize approved contract: run ${runId} not found`);
     }
+    await fillTaskContext();
     if (ownsClient) await client.query('COMMIT');
     return rows[0];
   } catch (error) {
