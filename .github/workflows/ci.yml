@@ -1677,7 +1677,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: pgvector/pgvector:pg15

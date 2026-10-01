@@ -8,9 +8,9 @@
 
 
 
-**Brain 版本**: 1.348.16
+**Brain 版本**: 1.348.17
 
-## 1.348.16
+## 1.348.17
 
 ### 设备页节点接入与持续健康采样
 
@@ -5125,7 +5125,7 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 - **部署**：`bash scripts/dev-deploy.sh`（含 pg_dump 备份 + migrate 幂等）
 - **验证**：`bash scripts/dev-verify.sh`
 - **健康监控**：`scripts/dev-healthcheck.sh`（每 5 分钟轮询 5220，宕机 10 分钟后向 5221 创建 alert 任务）
-- **CI 自动部署**：develop 分支 push 触发 `.github/workflows/auto-dev-deploy.yml`
+- **CI 自动部署**：旧 develop 分支部署工作流已退役；Dev 环境配置、部署脚本和隔离检查保留。
 
 ### ZenithJoy 联动占位
 
