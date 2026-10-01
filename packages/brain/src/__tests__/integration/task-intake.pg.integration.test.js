@@ -6,14 +6,15 @@ import { createIntakeTestDatabase } from '../fixtures/task-intake-db.js';
 
 let pool, testDatabase;
 const prefix = `intake-test-${randomUUID()}`;
-let createTaskIntake, createTaskIntakeRouter;
+let createTaskIntake, createTaskIntakeList, createTaskIntakeRouter;
 const baseCandidate = (text, patch = {}) => ({ intent: 'research', title: text,
   objective: text, mutation_intent: 'read_only', change_kind: null, repo: null,
   map_scope: [], confidence: 0.98, evidence: [text], questions: [], ...patch });
 function fixture(candidate, db = pool) {
   const callLLM = vi.fn(async () => ({ text: JSON.stringify(candidate) }));
   const intake = createTaskIntake({ db, callLLM });
-  const app = express().use(express.json()).use('/api/brain/task-intake', createTaskIntakeRouter({ intake }));
+  const listTasks = createTaskIntakeList ? createTaskIntakeList({ db }) : undefined;
+  const app = express().use(express.json()).use('/api/brain/task-intake', createTaskIntakeRouter({ intake, listTasks }));
   return { app, intake, callLLM };
 }
 async function countTasks(sourceId) {
@@ -22,7 +23,7 @@ async function countTasks(sourceId) {
   )).rows[0].count);
 }
 beforeAll(async () => {
-  ({ createTaskIntake } = await import('../../task-intake.js').catch(() => ({})));
+  ({ createTaskIntake, createTaskIntakeList } = await import('../../task-intake.js').catch(() => ({})));
   ({ createTaskIntakeRouter } = await import('../../routes/task-intake.js').catch(() => ({})));
   expect(createTaskIntake, '需实现真实交办服务').toBeTypeOf('function');
   testDatabase = await createIntakeTestDatabase();
@@ -99,7 +100,25 @@ describe('真实HTTP与PostgreSQL收据', () => {
     expect(first.status).toBe(201);
     expect(second.status).toBe(201);
     expect(first.body.task_id).not.toBe(second.body.task_id);
+    expect(first.body.task.title).toBe(text);
+    expect(second.body.task.title).toBe(text);
     expect((await request(f.app).post('/api/brain/task-intake').send({ text, source_id, tenant_id: 'a' })).status).toBe(400);
+  });
+
+  it('GET历史只取该租户交办收据，隐藏后台任务与存储标题后缀', async () => {
+    const text = '调研交办历史的使用方式';
+    const f = fixture(baseCandidate(text));
+    const source_id = `${prefix}-history`;
+    const a = await request(f.app).post('/api/brain/task-intake').set('x-tenant-id', 'history-a').send({ text, source_id });
+    await request(f.app).post('/api/brain/task-intake').set('x-tenant-id', 'history-b').send({ text, source_id });
+    await pool.query("INSERT INTO tasks(title,status,task_type,payload) VALUES($1,'queued','research',$2::jsonb)",
+      [`${prefix}-后台任务`, JSON.stringify({ tenant_id: 'history-a' })]);
+    const list = await request(f.app).get('/api/brain/task-intake?limit=20').set('x-tenant-id', 'history-a');
+    expect(list.status).toBe(200);
+    expect(list.body.tasks).toHaveLength(1);
+    expect(list.body.tasks[0]).toMatchObject({ id: a.body.task_id, title: text, status: 'queued' });
+    expect(list.body.tasks[0]).not.toHaveProperty('payload');
+    expect((await request(f.app).get('/api/brain/task-intake?limit=51')).status).toBe(400);
   });
 
   it('真实task INSERT后收据失败时回滚，不留下半张任务', async () => {
