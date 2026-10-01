@@ -8,16 +8,20 @@ const {sampleLinuxResources,projectLinuxObservation}=require('./linux-resource-p
 const fail=()=>{throw Error('linux_pool_server_configuration_invalid');};
 const hash=value=>createHash('sha256').update(value).digest();
 function json(response,status,value){response.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});response.end(JSON.stringify(value));}
-async function readNonce(request,timeoutMs) {
+async function readJson(request,timeoutMs,maxBytes) {
   const chunks=[];let bytes=0;
   const deadline=setTimeout(()=>request.destroy(),timeoutMs);
-  try{for await(const chunk of request){bytes+=chunk.length;if(bytes>2048)throw Object.assign(Error(),{status:413});chunks.push(chunk);}}
+  try{for await(const chunk of request){bytes+=chunk.length;if(bytes>maxBytes)throw Object.assign(Error(),{status:413});chunks.push(chunk);}}
   finally{clearTimeout(deadline);}
   let input;try{input=JSON.parse(Buffer.concat(chunks).toString());}catch{throw Object.assign(Error(),{status:400});}
+  return input;
+}
+async function readNonce(request,timeoutMs) {
+  const input=await readJson(request,timeoutMs,2048);
   if(!input||Array.isArray(input)||Object.keys(input).length!==1||typeof input.nonce!=='string'||!/^[a-f0-9]{64}$/.test(input.nonce))throw Object.assign(Error(),{status:400});
   return input.nonce;
 }
-function createLinuxPoolServer({profile:input,token,revision,probe,bodyTimeoutMs=5000,headersTimeoutMs=5000}) {
+function createLinuxPoolServer({profile:input,token,revision,probe,scriptBridge,bodyTimeoutMs=5000,headersTimeoutMs=5000}) {
   const profile=validateLinuxPoolProfile(input),bootId=randomUUID();
   if(profile.scheduler_only||typeof token!=='string'||!/^[a-f0-9]{64}$/.test(token)||typeof revision!=='string'||!/^[a-f0-9]{40}$/.test(revision)
     ||![bodyTimeoutMs,headersTimeoutMs].every(v=>Number.isInteger(v)&&v>=50&&v<=5000)||headersTimeoutMs>bodyTimeoutMs)fail();
@@ -33,6 +37,18 @@ function createLinuxPoolServer({profile:input,token,revision,probe,bodyTimeoutMs
   const server=http.createServer({maxHeaderSize:4096,requestTimeout:bodyTimeoutMs,headersTimeout:headersTimeoutMs,
     connectionsCheckingInterval:Math.min(250,headersTimeoutMs)},async(request,response)=>{
     try {
+      if(scriptBridge&&request.url?.startsWith('/scripts/')) {
+        const auth=request.headers.authorization;
+        if(typeof auth!=='string'||!timingSafeEqual(hash(auth),tokenHash)){request.resume();json(response,401,{error:'unauthorized'});return;}
+        if(request.method!=='POST'){request.resume();json(response,405,{error:'method_not_allowed'});return;}
+        const match=request.url.match(/^\/scripts\/([a-f0-9-]{36})\/(start|inspect|cancel)$/);
+        if(!match){request.resume();json(response,400,{error:'linux_script_request_invalid'});return;}
+        const body=await readJson(request,bodyTimeoutMs,65536);
+        if(!body||body.reservation_id!==match[1]){json(response,400,{error:'linux_script_request_invalid'});return;}
+        try{const reply=await scriptBridge[match[2]](body);json(response,reply.status,reply.envelope);}
+        catch{json(response,409,{error:'linux_script_operation_unconfirmed'});}
+        return;
+      }
       if(request.url==='/health'&&request.method==='GET') {
         const observation=await health();
         json(response,200,{schema_version:'fleet-node-health/v1',machine_id:profile.machine_id,machine_registry_id:profile.machine_registry_id,
