@@ -45,6 +45,24 @@ describe('Brain PostgreSQL test layering', () => {
       expect(integrationExclude).not.toContain(testPath);
     }
   });
+  it('E2E Smoke入口保留三条真PG过滤器并使用集成配置', () => {
+    const smokeStep = workflow.jobs['e2e-smoke'].steps.find(
+      (step: { name?: string }) => step.name?.startsWith('E2E Smoke Tests'),
+    );
+    expect(smokeStep).toBeDefined();
+    expect(smokeStep.run).toContain('--config vitest.integration.config.js');
+    expect(smokeStep.env.POSTGRES_INTEGRATION).toBe('1');
+    expect(smokeStep.run).not.toContain('--passWithNoTests');
+    for (const testPath of [
+      'src/__tests__/integration/golden-path.integration.test.js',
+      'src/__tests__/integration/agent-lifecycle.integration.test.js',
+      'src/__tests__/integration/dev-task-lifecycle.e2e.test.js',
+    ]) {
+      expect(smokeStep.run).toContain(testPath);
+      expect(brainIntegrationConfig.test?.exclude).not.toContain(testPath);
+    }
+  });
+
   it('guards migration fixtures before connecting outside the explicit CI PostgreSQL lane', () => {
     const helper = readFileSync(join(REPO_ROOT, 'packages/brain/src/__tests__/helpers/temp-migrated-db.js'), 'utf8');
     expect(helper).toMatch(/process\.env\.CI !== 'true'/);
