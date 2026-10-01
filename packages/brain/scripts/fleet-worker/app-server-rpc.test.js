@@ -77,3 +77,13 @@ it('网关派生执行和未知动态工具在声明及旧线程回调两端默�
  }
  expect(p.server({id:'foreign-namespace',method:'item/tool/call',params:{tool:'read',namespace:'executor',arguments:{},threadId:'t',turnId:'u',callId:'c'}}).reply?.error.message).toBe('appserver_host_tool_denied');
 });
+
+it('真实0.158通知emittedAtMs保留有界时间戳，随后请求仍可用；不能扩大请求或未知字段授权',()=>{
+ const p=api.createRpcPolicy(),notification={method:'configWarning',params:{summary:'isolated canary warning',details:null},emittedAtMs:1790881000000};
+ expect(p.server(notification).forward).toEqual(notification);
+ expect(p.client({method:'initialized'}).forward).toBeTruthy();
+ expect(client(p,1,'model/list').forward).toBeTruthy();expect(p.server({id:1,result:{data:[]}}).forward).toBeTruthy();
+ for(const value of ['1790881000000',-1,Infinity])expect(()=>p.server({...notification,emittedAtMs:value})).toThrow('appserver_rpc_frame_invalid');
+ expect(()=>p.server({...notification,unregisteredPower:true})).toThrow('appserver_rpc_frame_invalid');
+ expect(()=>p.client({id:2,method:'model/list',params:{},emittedAtMs:1})).toThrow('appserver_rpc_frame_invalid');
+});

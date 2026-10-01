@@ -12,6 +12,19 @@ const identity={reservation_id:randomUUID(),intent_id:randomUUID(),launch_genera
 const runner=createAppServerRunner({stateRoot,...{machineId:identity.machine_id,workerId:identity.worker_id,bootId:identity.worker_boot_id},profiles:{canary:profile},docker,assertLocalResources:async()=>{}});
 const command=args=>run('docker',args,{encoding:'utf8',timeout:30000,maxBuffer:1048576});
 let worker,brain,child,state,pluginClient;
+function exchange(transport,id,method,params){
+ return new Promise((resolve,reject)=>{
+  let pending='';const timer=setTimeout(()=>finish(Error('appserver_canary_timeout')),15000);
+  const fail=()=>finish(Error('appserver_canary_exit'));
+  const data=chunk=>{pending+=chunk;let end;while((end=pending.indexOf('\n'))>=0){
+   const line=pending.slice(0,end);pending=pending.slice(end+1);let frame;try{frame=JSON.parse(line);}catch{return fail();}
+   if(frame.id===id){if(!frame.result||frame.error)return fail();finish(null,frame.result);return;}
+  }};
+  function finish(error,value){clearTimeout(timer);transport.stdout.off('data',data);transport.off('exit',fail);transport.stdin.off('error',fail);if(error)reject(error);else resolve(value);}
+  transport.once('exit',fail);transport.stdin.once('error',fail);transport.stdout.on('data',data);
+  transport.stdin.write(JSON.stringify({id,method,params})+'\n');
+ });
+}
 async function main(){
  for(const [kind,key]of [['home',profile.homeKey],['workspace',profile.workspaceKey]]){const name=`cecelia-appserver-${kind}-${key}`;await command(['volume','create','--label',`cecelia.appserver.kind=${kind}`,'--label',`cecelia.appserver.key=${key}`,'--label',`cecelia.appserver.canary=${tag}`,name]);volumes.push(name);}
  await command(['run','--rm',`--name=cecelia-appserver-${tag}-g999999`,`--label=cecelia.appserver.canary=${tag}`,'--network=none','--cpus=.5','--memory=128m','--memory-swap=128m','--pids-limit=32','--user=0:0','--read-only','--entrypoint=/bin/sh',`--mount=type=volume,src=${volumes[0]},dst=/home/runner`,`--mount=type=volume,src=${volumes[1]},dst=/workspace`,image,'-c','mkdir -p /home/runner/.codex && chown 1000:1000 /home/runner /home/runner/.codex /workspace']);
@@ -32,12 +45,18 @@ async function main(){
  stream.prepare_deadline=new Date(Date.now()+5000);
  child=spawn(process.execPath,[path.join(__dirname,'app-server-shim.cjs'),'app-server','--listen','stdio://'],{env:{PATH:process.env.PATH,CECELIA_APP_SERVER_SHIM_CONFIG:filename},stdio:['pipe','pipe','pipe']});child.stdin.on('error',()=>{});child.stderr.on('data',chunk=>{if(/^appserver_[a-z_]+\n$/.test(chunk.toString()))process.stderr.write(chunk);});
  const pluginPath=process.env.OPENCLAW_CANARY_CLIENT_MODULE;
- if(pluginPath){const module=await import(pluginPath);pluginClient=module.t.fromTransportForTests(child);await pluginClient.initialize();assert.equal(pluginClient.getServerVersion(),'0.158.0');}
- else {await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('appserver_canary_timeout')),15000);let pending='';child.once('exit',()=>{clearTimeout(timer);reject(Error('appserver_canary_exit'));});child.stdout.on('data',chunk=>{pending+=chunk;const end=pending.indexOf('\n');if(end<0)return;const frame=JSON.parse(pending.slice(0,end));assert.ok(frame.result);clearTimeout(timer);resolve();});child.stdin.write(JSON.stringify({id:1,method:'initialize',params:{clientInfo:{name:'cecelia_canary',version:'1'},capabilities:{experimentalApi:true}}})+'\n');});child.stdin.write('{"method":"initialized"}\n');}
+ if(pluginPath){const module=await import(pluginPath);pluginClient=module.t.fromTransportForTests(child);await pluginClient.initialize();assert.equal(pluginClient.getServerVersion(),'0.158.0');
+  assert.ok(Array.isArray((await pluginClient.request('model/list',{})).data));
+ }else {
+  await exchange(child,1,'initialize',{clientInfo:{name:'cecelia_canary',version:'1'},capabilities:{experimentalApi:true}});
+  child.stdin.write('{"method":"initialized"}\n');
+  assert.ok(Array.isArray((await exchange(child,2,'model/list',{})).data));
+ }
+
  revoked=true;await assert.rejects(client.prepareStream(row.id),/execution_grant_denied/);assert.equal((await runner.inspect(identity)).status,'running');
  const inspected=JSON.parse((await command(['inspect',state.container_id])).stdout)[0];assert.equal(inspected.HostConfig.Memory,profile.memoryBytes);assert.equal(inspected.HostConfig.NanoCpus,1e9);assert.equal(inspected.HostConfig.PidsLimit,64);assert.equal(inspected.Mounts.filter(m=>m.Type==='bind').length,0);
  const cleanup=await runner.cancel({...identity,container_id:state.container_id,challenge:randomUUID()});assert.equal(cleanup.absent,true);assert.equal(await docker.inspect(state.container_id),null);
- console.log(JSON.stringify({result:'PASS',canary_id:tag,image,reservation_id:identity.reservation_id,intent_id:identity.intent_id,container_id:state.container_id,stream_id:stream.id,plugin_client:pluginPath?'2026.9.7':'none',protocol:'0.158.0-experimental',initialize:true,shim_http_direct:true,grant_revoke_preserves_running:true,explicit_cancel_absent:true,host_mounts:0,model_calls:0}));
+ console.log(JSON.stringify({result:'PASS',canary_id:tag,image,reservation_id:identity.reservation_id,intent_id:identity.intent_id,container_id:state.container_id,stream_id:stream.id,plugin_client:pluginPath?'2026.9.7':'none',protocol:'0.158.0-experimental',initialize:true,post_initialize_roundtrip:true,shim_http_direct:true,grant_revoke_preserves_running:true,explicit_cancel_absent:true,host_mounts:0,model_calls:0}));
 }
 main().catch(error=>{console.error(/^appserver_[a-z_]+$/.test(error.message)?error.message:'appserver_rpc_canary_failed');process.exitCode=1;}).finally(async()=>{
  child?.kill();pluginClient?.close();runner.close();for(const server of [brain,worker])if(server){server.closeAllConnections();await new Promise(r=>server.close(r));}
