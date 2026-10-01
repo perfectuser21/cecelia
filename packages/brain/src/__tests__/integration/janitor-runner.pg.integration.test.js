@@ -119,4 +119,42 @@ describe('Janitor 真实数据库受控执行', () => {
     expect((await pool.query('SELECT status FROM janitor_runs')).rows[0].status).toBe('running');
     expect(await actionCount()).toBe(0);
   });
+
+  it('取锁查询超时也销毁连接，不能将实际持锁连接留在池中', async () => {
+    const api = service(recordAction);
+    await enable(api);
+    let backend;
+    let destroyed;
+    const timeoutPool = { connect: async () => {
+      const client = await pool.connect();
+      backend = client.processID;
+      const query = client.query.bind(client);
+      const release = client.release.bind(client);
+      client.query = (sql, args) => sql.includes('pg_try_advisory_lock')
+        ? query({ text: `${sql}, pg_sleep(0.08)`, values: args, query_timeout: 5 })
+        : query(sql, args);
+      client.release = value => { destroyed = value; release(value); };
+      return client;
+    } };
+    const observer = new pg.Client(options);
+    await observer.connect();
+    try {
+      await expect(api.runJob(timeoutPool, id)).rejects.toThrow();
+      expect(destroyed).toBe(true);
+      let gone = false;
+      for (let attempt = 0; attempt < 30; attempt++) {
+        const { rows } = await admin.query('SELECT 1 FROM pg_stat_activity WHERE pid=$1', [backend]);
+        if (!rows.length) { gone = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      expect(gone).toBe(true);
+      const { rows: [lock] } = await observer.query('SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked', [`janitor:${id}`]);
+      expect(lock.locked).toBe(true);
+      expect(await actionCount()).toBe(0);
+    } finally {
+      // This PID is the exact client created by this isolated test.
+      await admin.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid=$1', [backend]);
+      await observer.end();
+    }
+  });
 });
