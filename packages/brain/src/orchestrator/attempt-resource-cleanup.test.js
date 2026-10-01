@@ -23,6 +23,25 @@ describe('恢复前精确旧进程清理', () => {
       removeContainer: async () => outcome !== false, inspectContainer: async () => true });
     expect(receipt.status).toBe('unavailable');
   });
+  it('重复清理时精确inspect证实不存在才返回already_clean', async () => {
+    let exists = true;
+    const removeContainer = vi.fn(async () => { const removed = exists; exists = false; return removed; });
+    const inspectContainer = vi.fn(async () => exists);
+    const options = { env: { CECELIA_MACHINE_ID: 'us-mac-m4' }, removeContainer, inspectContainer };
+    expect(await confirmExpiredParentCleanup(parent, options)).toEqual({ status: 'cleaned', attempt_id: id });
+    expect(await confirmExpiredParentCleanup(parent, options)).toEqual({ status: 'already_clean', attempt_id: id });
+    expect(inspectContainer).toHaveBeenCalledTimes(2);
+  });
+  it.each([null, undefined])('inspect未知结果%s不能作为已停止证据', async (unknown) => {
+    expect(await confirmExpiredParentCleanup(parent, { env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
+      removeContainer: async () => false, inspectContainer: async () => unknown }))
+      .toMatchObject({ status: 'unavailable' });
+  });
+  it('daemon不可达不能被当成容器不存在', async () => {
+    await expect(confirmExpiredParentCleanup(parent, { env: { CECELIA_MACHINE_ID: 'us-mac-m4' },
+      removeContainer: async () => false, inspectContainer: async () => { throw new Error('docker_daemon_unavailable'); } }))
+      .rejects.toThrow('docker_daemon_unavailable');
+  });
   it('非目标host不调用本机docker也不退回worker假确认', async () => {
     const removeContainer = vi.fn(); const launcher = { cancel: vi.fn() };
     const receipt = await confirmExpiredParentCleanup(parent, { env: { CECELIA_MACHINE_ID: 'us-vps' }, launcher, removeContainer });

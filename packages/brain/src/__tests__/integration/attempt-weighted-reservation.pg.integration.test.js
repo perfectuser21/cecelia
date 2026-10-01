@@ -1,3 +1,4 @@
+import { confirmExpiredParentCleanup } from '../../orchestrator/attempt-resource-cleanup.js';
 import { reserveExpiredAttemptReplacement } from '../../orchestrator/attempt-resource-replacement.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -195,6 +196,34 @@ describe('真实 PG 加权预约与未确认取消', () => {
     await store.fail(first.id, { code: 'bundle_invalid' });
     expect((await pool.query('SELECT id FROM harness_attempt_cleanup_outbox')).rows).toHaveLength(0);
     await expect(store.createAttempt(await input('generator', 4))).resolves.toMatchObject({ status: 'queued' });
+  });
+
+  it('精确legacy清理成功后DB回滚，真实helper重试不存在容器并完成预算转移', async () => {
+    const parent = await store.createAttempt(await input('generator', 4));
+    await pool.query(`UPDATE harness_attempts SET status='running',lease_owner='old',lease_expires_at=NOW()-interval '1 minute',
+      execution_transport='local-docker',local_container_naming='legacy-unsuffixed' WHERE id=$1`, [parent.id]);
+    const old = (await pool.query('SELECT * FROM harness_attempts WHERE id=$1', [parent.id])).rows[0];
+    const childInput = { ...await input('generator', 4), runId: parent.run_id, hop: 2 };
+    let exists = true;
+    const receipts = [];
+    const confirmCleanup = async (locked) => {
+      const receipt = await confirmExpiredParentCleanup(locked, {
+        env: { CECELIA_MACHINE_ID: machine },
+        removeContainer: async () => { const removed = exists; exists = false; return removed; },
+        inspectContainer: async () => exists,
+      });
+      receipts.push(receipt.status);
+      return receipt;
+    };
+    await expect(reserveExpiredAttemptReplacement({ pool, parentAttempt: old,
+      childInput: { ...childInput, id: parent.id }, collectSnapshot: async () => snapshot(4), confirmCleanup }))
+      .rejects.toThrow();
+    expect((await pool.query('SELECT status FROM harness_attempts WHERE id=$1', [parent.id])).rows[0].status).toBe('running');
+    const replacement = await reserveExpiredAttemptReplacement({ pool, parentAttempt: old, childInput,
+      collectSnapshot: async () => snapshot(4), confirmCleanup });
+    expect(receipts).toEqual(['cleaned', 'already_clean']);
+    expect(replacement.child).toMatchObject({ id: childInput.id, status: 'queued' });
+    expect((await pool.query('SELECT status FROM harness_attempts WHERE id=$1', [parent.id])).rows[0].status).toBe('failed');
   });
 
 });
