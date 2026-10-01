@@ -1564,11 +1564,14 @@ async function buildTimeContext(krId) {
     if (!kr) return '';
 
     // 2. KR 下所有 Projects（按 sequence_order 排列）
-    // 迁移：projects → okr_projects（name → title）
+    // 时间预算存 projects.metadata；完成时间来自已完成子任务。
     const projResult = await pool.query(
-      `SELECT op.id, op.title AS name, op.status, NULL::int AS sequence_order,
-              NULL::int AS time_budget_days, op.created_at, op.completed_at
-       FROM okr_projects op
+      `SELECT op.id, op.name, op.status,
+              op.metadata->>'sequence_order' AS sequence_order,
+              op.metadata->>'time_budget_days' AS time_budget_days, op.created_at,
+              (SELECT MAX(t.completed_at) FROM tasks t
+               WHERE t.project_id = op.id AND t.task_type <> 'project' AND t.status = 'completed') AS completed_at
+       FROM projects op
        WHERE op.kr_id = $1
        ORDER BY op.created_at ASC`,
       [krId]
@@ -1734,80 +1737,44 @@ async function _fetchSprintFile(branch, filePath) {
 
 // ─── preparePrompt 子函数 ────────────────────────────────────────────────────
 
-function _prepareContinueDecompWithInitiative(task, krId, krTitle, initiativeId) {
+function _prepareProjectTaskDecomp(task, krId, krTitle, projectId) {
   const previousResult = task.payload?.previous_result || '';
+  const revision = task.payload?.revision === true;
+  const reviewSetup = [true, 'true'].includes(task.payload?.decomposition)
+    ? `PATCH /api/brain/okr/key-results/${krId} 设置 {"status":"decomposing"}；保持该状态，完成回调自动送审。\n`
+    : '';
+  const completionStep = revision
+    ? '根据审查意见修正拆解，并保留已有完成任务的证据；修正结果重新送审。'
+    : `判断 Project 的成功标准是否已达成；已有证据达成时 PATCH /api/brain/projects/${projectId} 状态为 completed。`;
   return `/decomp
 
-# 继续拆解: ${krTitle}
+# 项目拆解: ${krTitle}
 
-## 任务类型
-探索型任务继续拆解
+## 四层结构
+Objective → Key Result → Project → Task
 
-## Initiative ID
-${initiativeId}
+## 既有 Project
+- Project ID: ${projectId}
+- KR ID: ${krId}
+- 目标: ${task.payload?.kr_goal || task.description || krTitle}
+- 前一棒结果: ${previousResult || '(无)'}
 
-## 前一个 Task 执行结果
-${previousResult}
+## 执行
+${reviewSetup}1. GET /api/brain/projects/${projectId}，核对项目简报与已完成子任务。
+2. ${completionStep}
+3. 未达成时只登记下一步可执行任务，避免重复已完成任务。
 
-## KR 目标
-${task.payload?.kr_goal || task.description || ''}
-
-## 你的任务
-1. 分析前一个 Task 的执行结果
-2. 判断 Initiative 是否已完成 KR 目标
-   - 如果已完成 → 更新 Initiative 状态，不创建新 Task
-   - 如果未完成 → 创建下一个 Task，继续推进
-
-## 创建下一个 Task（如需要）
 POST /api/brain/action/create-task
 {
   "title": "下一步任务标题",
-  "project_id": "${initiativeId}",
-  "goal_id": "${krId}",
-  "task_type": "dev",
-  "prd_content": "完整 PRD...",
-  "payload": {
-    "initiative_id": "${initiativeId}",
-    "kr_goal": "${task.payload?.kr_goal || ''}"
-  }
-}`;
-}
-
-function _prepareInitiativeSupplementDecomp(task, krId, krTitle, projectId, initiativeId) {
-  return `/decomp
-
-# Initiative 补充拆解: ${krTitle}
-
-## 任务类型
-为已有 Initiative 创建可执行 Task
-
-## Initiative 信息
-- Initiative ID: ${initiativeId}
-- KR ID: ${krId}
-- Project ID: ${projectId}
-- 目标: ${task.description || krTitle}
-
-## 你的任务
-这个 Initiative 下缺少可执行的 Task。请为其创建 1-3 个具体、可执行的 Task。
-
-### 创建 Task
-POST /api/brain/action/create-task
-{
-  "title": "实现 [功能]",
-  "project_id": "${initiativeId}",
+  "project_id": "${projectId}",
   "goal_id": "${krId}",
   "task_type": "dev",
   "prd_content": "完整 PRD（目标、方案、验收标准）",
-  "payload": {
-    "initiative_id": "${initiativeId}",
-    "kr_goal": "${task.description || ''}"
-  }
+  "payload": { "kr_goal": "${task.payload?.kr_goal || ''}" }
 }
 
-## ⛔ 禁止
-- ❌ 不要创建新的 Initiative 或 Project（已经有了）
-- ❌ Task 的 project_id 必须指向 Initiative ID: ${initiativeId}
-- ❌ Task 的 goal_id 必须 = KR ID: ${krId}`;
+Task.project_id 必须指向上述 Project。`;
 }
 
 async function _prepareFirstDecomp(task, krId, krTitle) {
@@ -1822,111 +1789,55 @@ async function _prepareFirstDecomp(task, krId, krTitle) {
 
 ${timeContext}
 
-## 6 层架构（必须严格遵守）
-Global OKR (季度) → Area OKR (月度) → KR → **Project (1-2周)** → Initiative (1-2小时) → Task (PR)
+## 四层结构
+Objective → Key Result → Project → Task
 
-## 你的任务（按顺序执行）
+## 执行步骤
+1. PATCH /api/brain/okr/key-results/${krId} 设置 {"status":"decomposing"}；GET /api/brain/projects?kr_id=${krId}，核对既有项目、简报和任务；已有项目覆盖本次目标时继续该项目。
+2. 需要独立交付时创建 Project，并明确 KR 归属与项目目标。
 
-### Step 1: 为该 KR 新建专属 Project（⛔ 禁止复用已有 project！）
-
-**CRITICAL**: 每个 KR 必须有自己独立的 Project，不能复用 cecelia-core 或其他已有 project。
-
-首先查询 cecelia-core 的 repo_path：
-\`\`\`
-GET /api/tasks/projects
-找到 name='cecelia-core' 的记录，记录其 repo_path
-\`\`\`
-
-然后新建 KR 专属 Project：
-\`\`\`
-POST /api/brain/projects
+POST /api/brain/action/create-project
 {
   "name": "<KR 简短标题> 实现",
-  "type": "project",
   "description": "${task.description || krTitle}",
-  "repo_path": "<从 cecelia-core 获取的 repo_path>"
+  "kr_ids": ["${krId}"],
+  "repo_path": "<任务上下文中的真实仓库路径>"
 }
-\`\`\`
 
-okr_projects.kr_id 已在创建时直接绑定到该 KR（无需额外的桥接表）。
+3. 确认复用或新建的 Project 后，先 PATCH /api/brain/tasks/${task.id} 设置 {"result":{"decomposition_project_id": "<选定 Project ID>"}}，保存本棒的显式产出归属；再直接拆成有序 Tasks，Task.goal_id 绑定当前 KR。
 
-记录新建 Project 的 ID（后面 Step 2 要用）。
-
-### Step 2: 拆解模式
-- 使用 known 模式，直接拆解为 dev 任务
-
-### Step 3: 创建 Initiatives（写入 projects 表，type='initiative'，不是 goals 表！）
-
-Initiative 的 parent_id 必须指向 Step 1 新建的 KR 专属 Project ID。
-
-\`\`\`
-POST /api/brain/action/create-initiative
-{
-  "name": "Initiative 名称",
-  "parent_id": "<Step 1 新建的 Project ID>",
-  "kr_id": "${krId}",
-  "decomposition_mode": "known"
-}
-\`\`\`
-
-### Step 4: 创建 Tasks（goal_id 必须 = KR ID）
-
-\`\`\`
 POST /api/brain/action/create-task
 {
   "title": "实现 [功能]",
-  "project_id": "<Initiative ID>",
+  "project_id": "<Project ID>",
   "goal_id": "${krId}",
   "task_type": "dev",
   "prd_content": "完整 PRD（目标、方案、验收标准）",
-  "payload": {
-    "initiative_id": "<Initiative ID>",
-    "kr_goal": "${task.description || ''}"
-  }
+  "payload": { "kr_goal": "${task.description || ''}" }
 }
-\`\`\`
 
-### Step 5: 更新 KR 状态
-\`\`\`
-PUT /api/tasks/goals/${krId}
-{"status": "in_progress"}
-\`\`\`
+4. 保持 KR 的 decomposing 状态；完成回调自动送审并更新为 reviewing，确认通过后继续执行。
 
-## ⛔ 绝对禁止
-- ❌ 不能复用已有 project（cecelia-core 或其他）作为 Initiative 的 parent！
-- ❌ 不能在 goals 表创建 KR 以下的记录！goals 表只存 Global OKR / Area OKR / KR
-- ❌ 不能把 Task.project_id 指向 Project，必须指向 Initiative！
-- ❌ Task 的 goal_id 不能为空或指向错误的 KR！
-
-## 质量验证（创建完成后逐项检查）
-
-1. ✅ 新建了 KR 专属 Project（type='project'，有 repo_path）
-2. ✅ okr_projects.kr_id 已设置为当前 KR（新表直接存储，无需桥接表）
-3. ✅ Initiatives 的 parent_id = 新建 Project（不是 cecelia-core）
-4. ✅ 第一个 Task 的 task_type='dev'
-5. ✅ 所有 Task 的 goal_id = ${krId}
-6. ✅ 所有 Task 的 project_id 指向 Initiative（不是 Project）
-
-参考：~/.claude/skills/okr/SKILL.md Stage 2 (Line 332-408)`;
+## 验收
+- Project.kr_id = 当前 KR；Project 有明确目标与验收标准。
+- Tasks 的 project_id = Project ID，goal_id = 当前 KR。
+- 核对已有完成项，避免重复登记；逐棒完成留下 handoff。`;
 }
 
 async function _prepareDecompositionPrompt(task) {
   const krId = task.goal_id || task.payload?.kr_id || '';
   const krTitle = task.title?.replace(/^(OKR 拆解|拆解|继续拆解)[：:]\s*/, '') || '';
-  const projectId = task.project_id || task.payload?.project_id || '';
-  const isContinue = task.payload?.decomposition === 'continue';
-  const initiativeId = task.payload?.initiative_id || task.payload?.feature_id || '';
-
-  if (isContinue && initiativeId) return _prepareContinueDecompWithInitiative(task, krId, krTitle, initiativeId);
-  if (!isContinue && initiativeId) return _prepareInitiativeSupplementDecomp(task, krId, krTitle, projectId, initiativeId);
+  const projectId = task.project_id || task.payload?.project_id
+    || (task.payload?.entity_type === 'project' ? task.payload?.entity_id : '') || '';
+  if (projectId) return _prepareProjectTaskDecomp(task, krId, krTitle, projectId);
   return _prepareFirstDecomp(task, krId, krTitle);
 }
 
-function _prepareScopePlanPrompt(task) {
+async function _prepareScopePlanPrompt(task) {
   const formatHint = [
     '\n\n## 输出格式要求',
-    '用结构化 Markdown 输出。每个 Initiative：',
-    '### Initiative N：名称',
+    '用结构化 Markdown 输出。每个 Task：',
+    '### Task N：名称',
     '| 维度 | 内容 |',
     '|------|------|',
     '| **功能边界** | 只做什么、不碰什么 |',
@@ -1937,14 +1848,14 @@ function _prepareScopePlanPrompt(task) {
     '| **SPIDR-D** | Data 范围 |',
     '| **SPIDR-R** | Rules 渐进 |',
   ].join('\n');
-  return `/decomp\n\n[scope_plan] ${task.description || task.title}${formatHint}`;
+  return `${await _prepareDecompositionPrompt(task)}\n${formatHint}`;
 }
 
-function _prepareProjectPlanPrompt(task) {
+async function _prepareProjectPlanPrompt(task) {
   const formatHint = [
     '\n\n## 输出格式要求',
-    '用结构化 Markdown 输出。每个 Scope：',
-    '### Scope N：名称',
+    '用结构化 Markdown 输出。每个 Task：',
+    '### Task N：名称',
     '| 维度 | 内容 |',
     '|------|------|',
     '| **功能边界** | 只处理什么、不碰什么 |',
@@ -1957,10 +1868,10 @@ function _prepareProjectPlanPrompt(task) {
     '| **SPIDR-R** | Rules 渐进 |',
     '',
     '最后加总结表：',
-    '| Scope | 对应成功标准 | 预计天数 | 执行顺序 |',
+    '| Task | 对应成功标准 | 预计天数 | 执行顺序 |',
     '|-------|------------|---------|---------|',
   ].join('\n');
-  return `/decomp\n\n[project_plan] ${task.description || task.title}${formatHint}`;
+  return `${await _prepareDecompositionPrompt({ ...task, project_id: task.project_id || task.payload?.entity_id || task.payload?.project_id })}\n${formatHint}`;
 }
 
 function _prepareSprintPrompt(task, taskType) {
@@ -2300,7 +2211,7 @@ function _isSprintOrHarnessDevMode(taskType, payload) {
 }
 
 function _prepareInitiativePlanPrompt(t) {
-  return `/decomp\n\n${t.description || t.title}`;
+  return _prepareDecompositionPrompt(t);
 }
 
 function _prepareInitiativeVerifyPrompt(t) {

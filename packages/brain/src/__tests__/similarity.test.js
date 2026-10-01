@@ -169,15 +169,15 @@ describe('SimilarityService', () => {
       }
     });
 
-    it('should not apply penalty for completed initiatives', () => {
+    it('should not apply penalty for completed projects', () => {
       const entity = {
-        level: 'initiative',
+        level: 'project',
         text: 'implement priority system',
         status: 'completed'
       };
 
       const score = service.calculateScore('implement priority system', entity);
-      expect(score).toBeGreaterThan(0.5); // No penalty for initiative
+      expect(score).toBeGreaterThan(0.5); // No penalty for project
     });
 
     it('should clamp score to 1.0', () => {
@@ -193,10 +193,10 @@ describe('SimilarityService', () => {
   });
 
   describe('getAllActiveEntities', () => {
-    it('should query tasks and initiatives (KRs disabled)', async () => {
+    it('should query tasks and projects (KRs disabled)', async () => {
       mockDb.query
         .mockResolvedValueOnce({ rows: [] }) // tasks
-        .mockResolvedValueOnce({ rows: [] }); // initiatives
+        .mockResolvedValueOnce({ rows: [] }); // projects
 
       const result = await service.getAllActiveEntities();
 
@@ -234,7 +234,7 @@ describe('SimilarityService', () => {
       });
     });
 
-    it('should format initiative entities correctly', async () => {
+    it('should format project entities correctly', async () => {
       mockDb.query
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({
@@ -253,7 +253,7 @@ describe('SimilarityService', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchObject({
-        level: 'initiative',
+        level: 'project',
         id: 'init-456',
         title: 'Smart scheduling system',
         status: 'active',
@@ -318,7 +318,7 @@ describe('SimilarityService', () => {
       expect(result[0].text).toBe('Task title ');
     });
 
-    it('should combine tasks and initiatives (KRs disabled)', async () => {
+    it('should combine tasks and projects (KRs disabled)', async () => {
       mockDb.query
         .mockResolvedValueOnce({ rows: [{ id: 'task-1', title: 'Task 1', status: 'pending' }] })
         .mockResolvedValueOnce({ rows: [{ id: 'init-1', title: 'Init 1', status: 'active' }] });
@@ -326,7 +326,7 @@ describe('SimilarityService', () => {
       const result = await service.getAllActiveEntities();
 
       expect(result).toHaveLength(2);
-      expect(result.map(e => e.level)).toEqual(['task', 'initiative']);
+      expect(result.map(e => e.level)).toEqual(['task', 'project']);
     });
   });
 
@@ -413,7 +413,7 @@ describe('SimilarityService', () => {
     it('should filter by repo', async () => {
       mockDb.query
         .mockResolvedValueOnce({ rows: [] }) // tasks
-        .mockResolvedValueOnce({ rows: [] }) // initiatives
+        .mockResolvedValueOnce({ rows: [] }) // projects
         .mockResolvedValueOnce({ rows: [] }); // KRs
 
       await service.getAllActiveEntities({ repo: 'cecelia-workspace' });
