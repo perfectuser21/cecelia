@@ -698,3 +698,7 @@ it('专属cache scheduler需要pool并进入默认停用Janitor合同', async ()
   const pool = {}; await job.handler(pool);
   expect(runPreviewCacheJanitor).toHaveBeenCalledWith(pool);
 });
+it('机器体征始终先采集，Janitor网络等待不能排在体征前', () => {
+  expect(JOBS[0].name).toBe('machine-vitals');
+  expect(JOBS.findIndex(job => job.name === 'preview-owned-cache-janitor')).toBeGreaterThan(0);
+});
