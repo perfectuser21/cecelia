@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolveCanonicalRoutingEvidence } from '../work-routing-store.js';
 import * as fixtures from './fixtures/task-intake-db.js';
 
@@ -16,7 +16,8 @@ describe('交办Git证据夹具', () => {
     const source = join(directory, 'source');
     let fixture;
     try {
-      git(repository, ['clone', '--shared', '--no-checkout', repository, source]);
+      git(repository, ['clone', '--depth', '1', '--no-checkout', pathToFileURL(repository).href, source]);
+      expect(git(source, ['rev-parse', '--is-shallow-repository'])).toBe('true');
       git(source, ['update-ref', '-d', 'refs/remotes/origin/main']);
       const originalRefs = git(source, ['show-ref']);
       const head = git(source, ['rev-parse', 'HEAD']);

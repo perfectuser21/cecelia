@@ -62,6 +62,7 @@ const WRITE_WORDS = /修复|修改|改动|改成|新增|添加|实现|重构|改
 const DISCUSSION = /调研|研究|讨论|分析|评估|了解|学习|解释|说明|审查|检查|看看|\b(?:research|discuss|review|explain)\b/i;
 const OPERATIONS = new RegExp(`${WRITE_WORDS.source}|发布|上传|投放|清空|删掉|重启|关闭|关机|部署|配置|调整`, 'i');
 const GENERAL_NO_WRITE = /(?:不要|不许|禁止|无需|不|勿)(?:直接|实际|自动)?(?:修改|改动|修复)(?:代码)?(?:$|[。，,；;！!？?\s])|\b(?:do not|don't|without)\s+(?:modify|change|fix|edit|write)/i;
+const WRITE_SCOPE_OPTION = '修改代码，实现具体效果';
 
 function actionClauses(text) {
   return text.split(/[，,。；;\n]|但是|但/).flatMap((clause) => {
@@ -81,7 +82,8 @@ function resolvedText(input, candidate) {
   const answers = Object.values(input.answers).join('\n');
   // 只在补充回答明确重新限定范围时替代旧矛盾，模糊回答不能吞掉原始授权边界。
   const resolvesReadOnly = /(?:只|仅)(?:做)?(?:调研|研究|审查|分析)|不(?:要)?修改代码/.test(answers);
-  const resolvesWrite = /改为|允许修改|直接(?:修改|修复)|确认(?:修改|修复)/.test(answers)
+  const resolvesWrite = (/改为|允许修改|直接(?:修改|修复)|确认(?:修改|修复)/.test(answers)
+    || Object.values(input.answers).includes(WRITE_SCOPE_OPTION))
     && hasPositiveWrite(answers) && !GENERAL_NO_WRITE.test(answers);
   if ((candidate.mutation_intent === 'read_only' && resolvesReadOnly)
     || (candidate.mutation_intent === 'write' && resolvesWrite)) return answers;
@@ -91,7 +93,18 @@ function resolvedText(input, candidate) {
 // 只做保守矛盾防线；类别仍由整体语义候选及事实核验确定。
 function unsupportedAction(text) {
   return actionClauses(text).some((clause) => /(?:发布|上传|投放).{0,24}(?:抖音|小红书|公众号|微博|内容|文章)|(?:内容|文章).{0,16}(?:发布到|上传到)/.test(clause)
-    || /(?:删除|清空|删掉).{0,24}(?:数据库|生产数据|用户数据)|(?:重启|关闭|关机|部署).{0,20}(?:生产|服务器|机器)|(?:修改|配置|调整|关闭).{0,20}(?:生产防火墙|生产网络|生产路由)/.test(clause));
+    || /(?:删除|清空|删掉).{0,24}(?:数据库|生产数据|用户数据)|(?:重启|关闭|关机|部署).{0,20}(?:生产|服务器|机器)|(?:修改|配置|调整|关闭).{0,20}生产.{0,12}(?:防火墙|网络|路由)/.test(clause)
+    || /(?:把|将|让).{0,12}(?:生产服务器|生产机器|服务器|机器).{0,12}(?:重启|关闭|关机)/.test(clause));
+}
+
+function hasMixedResearchRequest(text) {
+  const researchRequested = text.split(/[，,。；;\n]|并且|然后|同时|以及|顺便|并|\band then\b/i)
+    .some((clause) => {
+      const researchAt = clause.search(/调研|研究|讨论/);
+      const writeAt = clause.search(WRITE_WORDS);
+      return researchAt >= 0 && (writeAt < 0 || researchAt < writeAt);
+    });
+  return researchRequested && hasPositiveWrite(text);
 }
 
 export function validateCandidate(candidate, input, facts) {
@@ -120,8 +133,7 @@ export function validateCandidate(candidate, input, facts) {
   const fullText = resolvedText(input, candidate);
   if (candidate.intent === 'unsupported' || unsupportedAction(fullText)) return { unsupported: true };
   const write = candidate.intent === 'coding_change';
-  const researchAt = fullText.search(/调研|研究|讨论/);
-  const mixed = researchAt >= 0 && researchAt < fullText.search(WRITE_WORDS) && hasPositiveWrite(fullText);
+  const mixed = hasMixedResearchRequest(fullText);
   const contradictory = write
     ? candidate.mutation_intent !== 'write' || GENERAL_NO_WRITE.test(fullText)
       || !hasPositiveWrite(fullText) || !candidate.evidence.some(hasPositiveWrite)
@@ -136,7 +148,7 @@ export function validateCandidate(candidate, input, facts) {
 function clarificationQuestions(questions) {
   const safe = questions.filter((q) => !/repo|map_scope|executor|task_type|仓库路径|节点编号/i.test(JSON.stringify(q)));
   return safe.length ? safe : [{ id: 'goal', prompt: '希望我只调研或审查并给出建议，还是直接修改代码？请说明具体系统和希望达到的效果。',
-    options: ['只调研或审查，给出建议', '修改代码，实现具体效果'] }];
+    options: ['只调研或审查，给出建议', WRITE_SCOPE_OPTION] }];
 }
 
 export function buildRoutingRequest(candidate, input) {
