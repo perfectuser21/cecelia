@@ -19,17 +19,17 @@ function privateDirectory(directory,uid,boundary='/',create=true){
  try{const s=fs.lstatSync(directory);if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==uid||(s.mode&0o022))fail();}
  catch(error){if(error.code!=='ENOENT')throw error;if(!create)fail();fs.mkdirSync(directory,{mode:0o700});}
 }
-function journal(root,uid,{schemaVersion='linux-pool-canary-state/v1'}={}){
+function journal(root,uid,{schemaVersion='linux-pool-canary-state/v1',maxBytes=131072}={}){
  privateDirectory(root,uid,uid===0?'/':root);
  const filename=nonce=>path.join(root,nonce+'.json');
  const read=nonce=>{let fd;try{
   fd=fs.openSync(filename(nonce),fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);const stat=fs.fstatSync(fd);
-  if(!stat.isFile()||stat.uid!==uid||(stat.mode&0o777)!==0o600||stat.nlink!==1||stat.size>131072)fail();
+  if(!stat.isFile()||stat.uid!==uid||(stat.mode&0o777)!==0o600||stat.nlink!==1||stat.size>maxBytes)fail();
   const buffer=Buffer.alloc(stat.size+1),bytes=fs.readSync(fd,buffer,0,buffer.length,0);if(bytes!==stat.size)fail();
   const value=JSON.parse(buffer.subarray(0,bytes));if(value.nonce!==nonce||value.schema_version!==schemaVersion)fail();return value;
  }catch(error){if(error.code==='ENOENT')return null;throw error;}finally{if(fd!==undefined)fs.closeSync(fd);}};
- const save=state=>{const dest=filename(state.nonce),temp=dest+'.'+randomUUID();let fd;try{
-  fd=fs.openSync(temp,'wx',0o600);fs.writeFileSync(fd,JSON.stringify(state));fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;fs.renameSync(temp,dest);
+ const save=state=>{const raw=JSON.stringify(state);if(Buffer.byteLength(raw)>maxBytes)fail();const dest=filename(state.nonce),temp=dest+'.'+randomUUID();let fd;try{
+  fd=fs.openSync(temp,'wx',0o600);fs.writeFileSync(fd,raw);fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;fs.renameSync(temp,dest);
   const dir=fs.openSync(root,'r');try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}
  }finally{if(fd!==undefined)fs.closeSync(fd);try{fs.unlinkSync(temp);}catch(error){if(error.code!=='ENOENT')throw error;}}};
  return {read,save,assertNoPending(){for(const name of fs.readdirSync(root)){if(!/^[a-f0-9]{64}\.json$/.test(name))continue;const state=read(name.slice(0,-5));if(!state?.cleanup_confirmed)fail();}}};

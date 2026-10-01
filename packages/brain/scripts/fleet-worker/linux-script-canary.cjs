@@ -26,7 +26,7 @@ async function runLinuxScriptCanary({nonce},deps={}){
  if((deps.platform??process.platform)!=='linux'||(deps.getuid??process.getuid)()!==0||!deps.lockHeld||!HEX.test(nonce??''))fail();
  const load=deps.loadConfiguration??configuration,config=structuredClone(await load()),d=config.deployment,p=validateLinuxPoolProfile(d.pool);
  if(!HEX.test(config.key??'')||!HEX.test(config.workerToken??'')||config.key===config.workerToken)fail();
- const binding=hash(config),store=createCanaryJournal(deps.stateRoot??'/var/lib/cecelia/script-canary',deps.rootUid??0,{schemaVersion:'linux-script-canary-state/v1'});
+ const binding=hash(config),store=createCanaryJournal(deps.stateRoot??'/var/lib/cecelia/script-canary',deps.rootUid??0,{schemaVersion:'linux-script-canary-state/v1',maxBytes:2*1024*1024});
  let state=store.read(nonce);
  if(state?.envelope){if(state.config_binding!==binding)fail();return state.envelope;}
  const client=deps.client??createLinuxScriptBridgeClient(),collect=deps.collectProof??collectLinuxScriptProof;

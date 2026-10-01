@@ -4,6 +4,7 @@ const {runLinuxScriptCanary}=require('./linux-script-canary.cjs');
 const {verifyLinuxScriptPermit}=require('./linux-script-permit.cjs');
 const {fixture}=require('./linux-script-test-fixture.cjs');
 const {validateLinuxPoolProfile}=require('./linux-pool-profile.cjs');
+const {createCanaryJournal}=require('./linux-pool-canary.cjs');
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const roots=[];afterEach(()=>{for(const p of roots.splice(0))fs.rmSync(p,{recursive:true,force:true});});
 function setup(){
@@ -19,7 +20,7 @@ function setup(){
  const client=Object.fromEntries(['start','inspect','cancel'].map(action=>[action,async input=>{
   const {permit,...body}=input;verifyLinuxScriptPermit({key,expected,action,body,permit});calls.push(action);
   if(action==='start'){state={...body,status:'running',container_id:'a'.repeat(64)};if(lost)throw Error('response lost');}
-  if(action==='inspect')state={...state,status:'exited',terminal:{exit_code:0,stdout:nonce+':safe\n',stderr:'',timed_out:false}};
+  if(action==='inspect')state={...state,status:'exited',terminal:{exit_code:0,stdout:state?.job?.cmd.split("'")[3]+'\n',stderr:'',timed_out:false}};
   if(action==='cancel'){if(removeFailure)throw Error('cleanup unknown');state={...state,...body,status:'cleaned',absent:true,tombstoned:true};}
   const receipt={...state,request_nonce:body.request_nonce};return {status:200,envelope:{receipt,signature:createHmac('sha256',key).update(JSON.stringify(receipt)).digest('hex')}};
  }]));
@@ -30,6 +31,18 @@ function setup(){
  return {root,nonce,key,calls,config,deps,set lost(v){lost=v;},set removeFailure(v){removeFailure=v;}};
 }
 describe('真实受限adapter专用canary编排',()=>{
+ it('写盘与读取使用同一边界，超限不覆盖已有可读日志',()=>{
+  const x=setup(),store=createCanaryJournal(x.root,process.getuid(),{maxBytes:256}),state={schema_version:'linux-pool-canary-state/v1',nonce:x.nonce,cleanup_confirmed:true};
+  store.save(state);expect(()=>store.save({...state,extra:'x'.repeat(256)})).toThrow();expect(store.read(x.nonce)).toEqual(state);
+ });
+ it('最大32个profile完成后journal可重读，同nonce不重启且新nonce可验收',async()=>{
+  const x=setup(),entry=x.config.deployment.profiles.safe;
+  x.config.deployment.profiles=Object.fromEntries(Array.from({length:32},(_,n)=>['safe'+n,entry]));
+  const first=await runLinuxScriptCanary({nonce:x.nonce},x.deps);expect(first.receipt.cases).toHaveLength(32);
+  expect(fs.statSync(path.join(x.root,x.nonce+'.json')).size).toBeGreaterThan(131072);
+  expect(await runLinuxScriptCanary({nonce:x.nonce},x.deps)).toEqual(first);expect(x.calls.filter(a=>a==='start')).toHaveLength(32);
+  expect((await runLinuxScriptCanary({nonce:'f'.repeat(64)},x.deps)).receipt.cases).toHaveLength(32);
+ });
  it('持久意图→真实脚本入口→独立宿主证明→实际输出→精确清理后才签回执',async()=>{
   const x=setup(),envelope=await runLinuxScriptCanary({nonce:x.nonce},x.deps);
   expect(x.calls).toEqual(['start','inspect','cancel']);expect(envelope.receipt).toMatchObject({schema_version:'linux-script-canary/v1',nonce:x.nonce,execution:false,script_adapter_verified:true,cleanup_confirmed:true});
