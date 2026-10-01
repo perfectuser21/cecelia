@@ -283,12 +283,18 @@ describe.sequential('direct profile contract PostgreSQL authority', () => {
         };
       },
     };
-    const pending = createDirectProfileContractMaterializer({ pool: proxiedPool })(fixture.runId);
+    // Attach rejection handling before COMMIT can unblock the competing connection.
+    const pending = createDirectProfileContractMaterializer({ pool: proxiedPool })(fixture.runId)
+      .then(value => ({ value }), error => ({ error }));
     await started;
     await updater.query('COMMIT');
     updater.release();
 
-    await expect(pending).rejects.toThrow('DIRECT_PROFILE_CONTRACT_INVALID:impact_missing');
+    const outcome = await pending;
+    expect(outcome.error).toMatchObject({
+      code: 'DIRECT_PROFILE_CONTRACT_INVALID',
+      message: 'DIRECT_PROFILE_CONTRACT_INVALID:impact_missing',
+    });
     expect((await pool.query(
       'SELECT contract_id FROM initiative_runs WHERE id=$1',
       [fixture.runId],
@@ -315,14 +321,20 @@ describe.sequential('direct profile contract PostgreSQL authority', () => {
         };
       },
     };
-    const pending = createDirectProfileContractMaterializer({ pool: proxiedPool })(fixture.runId);
+    // Attach rejection handling before COMMIT can unblock the competing connection.
+    const pending = createDirectProfileContractMaterializer({ pool: proxiedPool })(fixture.runId)
+      .then(value => ({ value }), error => ({ error }));
     await started;
     await finalizer.query("UPDATE initiative_runs SET phase='failed' WHERE id=$1", [fixture.runId]);
     await finalizer.query("UPDATE tasks SET status='failed' WHERE id=$1", [fixture.taskId]);
     await finalizer.query('COMMIT');
     finalizer.release();
 
-    await expect(pending).rejects.toThrow('DIRECT_PROFILE_CONTRACT_INVALID:run_not_active');
+    const outcome = await pending;
+    expect(outcome.error).toMatchObject({
+      code: 'DIRECT_PROFILE_CONTRACT_INVALID',
+      message: 'DIRECT_PROFILE_CONTRACT_INVALID:run_not_active',
+    });
   });
 
   it('preserves a legacy NULL seed through NOT VALID and fails closed at consumption', async () => {
