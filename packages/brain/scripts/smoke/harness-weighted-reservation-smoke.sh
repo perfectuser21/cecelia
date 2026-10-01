@@ -2,7 +2,7 @@
 # 真 PostgreSQL 验证加权竞争、取消占位、确认释放与恢复回滚；只创建隔离 schema。
 set -euo pipefail
 
-if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${TEST_DATABASE_URL:---db-env}"; then
+if ! DB_NAME="${DB_NAME:-cecelia_test}" node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${TEST_DATABASE_URL:---db-env}"; then
   [[ "${SMOKE_ALLOW_WRITE:-}" != '1' ]] && exit 0
   exit 1
 fi
