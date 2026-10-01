@@ -21,7 +21,7 @@ const schema=`managed_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const pool=new pg.Pool({...options,options:`-c search_path=${schema},public`});
 const admin=new pg.Client(options);
 const root=mkdtempSync(path.join(tmpdir(),'managed-protocol-'));
-const containers=new Map();let starts=0,server,runner,deps,rejectStart=false;
+const containers=new Map();let starts=0,server,runner,deps,rejectStart=false,rejectCreated=false;
 const token='test-worker-secret-'.repeat(4),machine='us-mac-m4';
 beforeAll(async()=>{
   await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
@@ -38,7 +38,7 @@ beforeAll(async()=>{
     '363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations']) {
     await pool.query(readFileSync(new URL(`../../../migrations/${file}.sql`,import.meta.url),'utf8'));
   }
-  runner=createScriptRunner({assertLocalResources:async()=>{if(rejectStart)throw Object.assign(new Error('attempt_local_resources_unavailable'),{statusCode:429});},stateRoot:root,machineId:machine,workerId:machine,bootId:'boot-fixture',
+  runner=createScriptRunner({assertLocalResources:async()=>{if(rejectStart||(rejectCreated&&containers.size>0))throw Object.assign(new Error('attempt_local_resources_unavailable'),{statusCode:429});},stateRoot:root,machineId:machine,workerId:machine,bootId:'boot-fixture',
     profiles:{harmless:{image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,logMaxSizeBytes:1048576,logMaxFiles:2,user:'1000:1000',cwd:'/job'}},
     docker:{async create({name,command,identity}){const id=randomUUID().replaceAll('-','').repeat(2);
       containers.set(id,{id,name,command,status:'created',labels:Object.fromEntries(Object.entries(identity).map(([k,v])=>[`cecelia.script.${k}`,String(v)]))});return id;},
@@ -54,8 +54,14 @@ beforeAll(async()=>{
     collectSnapshot:async()=>({verified:true,machine,captured_at:Date.now(),expires_at:Date.now()+60_000,
       capacity:{ok:true,physical_base_slots:6,effective_base_slots:6}})}};
 });
-beforeEach(async()=>{await pool.query('TRUNCATE capacity_reservations,tasks,task_runs,task_events CASCADE');starts=0;rejectStart=false;containers.clear();});
+beforeEach(async()=>{await pool.query('TRUNCATE capacity_reservations,tasks,task_runs,task_events CASCADE');starts=0;rejectStart=false;rejectCreated=false;containers.clear();});
 afterAll(async()=>{runner?.close();if(server)await new Promise(r=>server.close(r));await pool.end();await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();rmSync(root,{recursive:true,force:true});});
+function interceptQueries(before) {
+  const call=async(query,sql,args)=>{await before(sql,args);return query(sql,args);};
+  return {query:(sql,args)=>call(pool.query.bind(pool),sql,args),connect:async()=>{
+    const client=await pool.connect();return {query:(sql,args)=>call(client.query.bind(client),sql,args),release:()=>client.release()};
+  }};
+}
 async function task(extra={}) {
   const id=randomUUID();const payload={host:machine,cmd:'printf actual-managed-output',timeout_sec:30,managed_script:{profile:'harmless'},...extra};
   return (await pool.query("INSERT INTO tasks(id,status,payload,claimed_by) VALUES($1,'queued',$2,'fixture') RETURNING *",[id,payload])).rows[0];
@@ -209,13 +215,12 @@ it.each(['unavailable','wrong-profile'])('运行中重复trigger遇%s保持原�
 it.each(['prepare','launch','wait'])('旧%s请求暂停后新代运行，所有身份写入均不得覆盖新代',async(boundary)=>{
   const first=await task();let resume,arrive;
   const paused=new Promise(r=>{arrive=r;}),gate=new Promise(r=>{resume=r;});let once=true;
-  const delayed={connect:pool.connect.bind(pool),query:async(sql,args)=>{
+  const delayed=interceptQueries(async(sql,args)=>{
     const target=boundary==='prepare'?sql.startsWith('UPDATE tasks SET payload=payload||')
       :boundary==='launch'?sql.startsWith("UPDATE tasks SET status='in_progress',executor_kind")
-      :sql.startsWith("UPDATE tasks SET status='queued',claimed_by=NULL");
+      :sql.startsWith('SELECT status,task_id,owner_key FROM capacity_reservations');
     if(once&&target){once=false;arrive();await gate;}
-    return pool.query(sql,args);
-  }};
+  });
   if(boundary==='wait')rejectStart=true;
   const pending=triggerScriptRun(first,{...deps,pool:delayed});
   // Attach error handling while the deliberate interleaving runs.
@@ -238,11 +243,10 @@ it.each(['prepare','launch','wait'])('旧%s请求暂停后新代运行，所有�
 it.each(['trigger','prepare'])('旧%s准入拒绝不能释放或阻断新代任务',async(entry)=>{
   const first=await task();let resume,arrive;let once=true;
   const paused=new Promise(r=>{arrive=r;}),gate=new Promise(r=>{resume=r;});
-  const delayed={connect:pool.connect.bind(pool),query:async(sql,args)=>{
+  const delayed=interceptQueries(async(sql,args)=>{
     const target=entry==='trigger'?sql.startsWith('UPDATE tasks SET status=$2'):sql.startsWith('UPDATE tasks SET claimed_by = NULL');
     if(once&&target){once=false;arrive();await gate;}
-    return pool.query(sql,args);
-  }};
+  });
   const oldDeps={...deps,pool:delayed,managed:{...deps.managed,client:{...deps.managed.client,capabilities:async()=>({profiles:{}})}}};
   const pending=(entry==='trigger'?triggerScriptRun(first,oldDeps):prepareScriptDispatch(first,oldDeps));
   await paused;await triggerScriptRun(first,deps);await reapScriptRuns(pool,deps);
@@ -256,10 +260,9 @@ it.each(['trigger','prepare'])('旧%s准入拒绝不能释放或阻断新代任�
 it('同代旧429迟到时，已经成功启动的预约不能被回队',async()=>{
   const first=await task();rejectStart=true;let resume,arrive;let once=true;
   const paused=new Promise(r=>{arrive=r;}),gate=new Promise(r=>{resume=r;});
-  const delayed={connect:pool.connect.bind(pool),query:async(sql,args)=>{
-    if(once&&sql.startsWith("UPDATE tasks SET status='queued',claimed_by=NULL")){once=false;arrive();await gate;}
-    return pool.query(sql,args);
-  }};
+  const delayed=interceptQueries(async(sql,args)=>{
+    if(once&&sql.startsWith('SELECT status,task_id,owner_key FROM capacity_reservations')){once=false;arrive();await gate;}
+  });
   const pending=triggerScriptRun(first,{...deps,pool:delayed});await paused;
   rejectStart=false;await triggerScriptRun(first,deps);
   const before=(await pool.query('SELECT * FROM tasks WHERE id=$1',[first.id])).rows[0];
@@ -281,5 +284,18 @@ it('后发429先回队而先发请求后在真实worker启动，权威运行回�
   expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('in_progress');
   expect((await pool.query('SELECT status FROM capacity_reservations')).rows[0].status).toBe('running');
   await reapScriptRuns(pool,deps);
+  expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('completed');expect(starts).toBe(1);
+});
+
+it('容器已create但资源拒start时，收割补绑身份不能误判执行状态',async()=>{
+  const first=await task();rejectCreated=true;
+  expect(await triggerScriptRun(first,deps)).toMatchObject({success:false,wait:true});
+  expect(containers.size).toBe(1);expect(starts).toBe(0);
+  await reapScriptRuns(pool,deps);
+  expect((await pool.query('SELECT status,container_id FROM capacity_reservations')).rows[0])
+    .toMatchObject({status:'launching',container_id:expect.any(String)});
+  expect(await triggerScriptRun(first,deps)).toMatchObject({success:false,wait:true});
+  expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('queued');
+  rejectCreated=false;await triggerScriptRun(first,deps);await reapScriptRuns(pool,deps);
   expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('completed');expect(starts).toBe(1);
 });
