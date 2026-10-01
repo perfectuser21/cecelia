@@ -21,7 +21,7 @@ const schema=`managed_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const pool=new pg.Pool({...options,options:`-c search_path=${schema},public`});
 const admin=new pg.Client(options);
 const root=mkdtempSync(path.join(tmpdir(),'managed-protocol-'));
-const containers=new Map();let starts=0,server,runner,deps,rejectStart=false,rejectCreated=false;
+const containers=new Map();let starts=0,server,runner,deps,rejectStart=false,rejectCreated=false,holdRunning=false,dockerFault=null;
 const token='test-worker-secret-'.repeat(4),machine='us-mac-m4';
 beforeAll(async()=>{
   await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
@@ -40,10 +40,13 @@ beforeAll(async()=>{
   }
   runner=createScriptRunner({assertLocalResources:async()=>{if(rejectStart||(rejectCreated&&containers.size>0))throw Object.assign(new Error('attempt_local_resources_unavailable'),{statusCode:429});},stateRoot:root,machineId:machine,workerId:machine,bootId:'boot-fixture',
     profiles:{harmless:{image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,logMaxSizeBytes:1048576,logMaxFiles:2,user:'1000:1000',cwd:'/job'}},
-    docker:{async create({name,command,identity}){const id=randomUUID().replaceAll('-','').repeat(2);
+    docker:{async create({name,command,identity}){if(dockerFault==='unknown')throw new Error('create_unconfirmed');const id=randomUUID().replaceAll('-','').repeat(2);
       containers.set(id,{id,name,command,status:'created',labels:Object.fromEntries(Object.entries(identity).map(([k,v])=>[`cecelia.script.${k}`,String(v)]))});return id;},
       async inspect(id){return [...containers.values()].find(c=>c.id===id||c.name===id)??null;},
-      async start(id){starts++;const c=containers.get(id);const r=await exec('/bin/sh',['-c',c.command]);Object.assign(c,{status:'exited',exit_code:0,stdout:r.stdout,stderr:''});},
+      async start(id){if(dockerFault==='created')throw new Error('start_unconfirmed');starts++;const c=containers.get(id);
+        if(holdRunning){c.status='running';return;}
+        const r=await exec('/bin/sh',['-c',c.command]).catch(error=>error);
+        Object.assign(c,{status:'exited',exit_code:typeof r.code==='number'?r.code:0,stdout:r.stdout,stderr:r.stderr??''});},
       async remove(id){containers.delete(id);}}});
   server=createFleetWorkerServer({machineId:machine,attemptToken:token,scriptRunner:runner});
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
@@ -54,7 +57,7 @@ beforeAll(async()=>{
     collectSnapshot:async()=>({verified:true,machine,captured_at:Date.now(),expires_at:Date.now()+60_000,
       capacity:{ok:true,physical_base_slots:6,effective_base_slots:6}})}};
 });
-beforeEach(async()=>{await pool.query('TRUNCATE capacity_reservations,tasks,task_runs,task_events CASCADE');starts=0;rejectStart=false;rejectCreated=false;containers.clear();});
+beforeEach(async()=>{await pool.query('TRUNCATE capacity_reservations,tasks,task_runs,task_events CASCADE');starts=0;rejectStart=false;rejectCreated=false;holdRunning=false;dockerFault=null;containers.clear();});
 afterAll(async()=>{runner?.close();if(server)await new Promise(r=>server.close(r));await pool.end();await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();rmSync(root,{recursive:true,force:true});});
 function interceptQueries(before) {
   const call=async(query,sql,args)=>{await before(sql,args);return query(sql,args);};
@@ -298,4 +301,74 @@ it('容器已create但资源拒start时，收割补绑身份不能误判执行�
   expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('queued');
   rejectCreated=false;await triggerScriptRun(first,deps);await reapScriptRuns(pool,deps);
   expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('completed');expect(starts).toBe(1);
+});
+
+async function queuedTimeout() {
+  const first=await task({timeout_sec:1});rejectStart=true;await triggerScriptRun(first,deps);
+  let resume,arrive;const paused=new Promise(r=>{arrive=r;}),gate=new Promise(r=>{resume=r;});
+  const delayed={...deps.managed.client,start:async(...args)=>{
+    arrive();await gate;await deps.managed.client.start(...args);throw new Error('response_lost');
+  }};
+  const pending=triggerScriptRun(first,{...deps,managed:{...deps.managed,client:delayed}});await paused;
+  await triggerScriptRun(first,deps);holdRunning=true;rejectStart=false;resume();await pending;
+  const reservation=(await pool.query('SELECT * FROM capacity_reservations')).rows[0];
+  const deadline=Date.now()+3000;let journal;
+  do {
+    journal=JSON.parse(readFileSync(path.join(root,`${reservation.id}.json`),'utf8'));
+    if(journal.status==='cleaned')break;
+    await new Promise(r=>setTimeout(r,20));
+  } while(Date.now()<deadline);
+  expect(journal).toMatchObject({status:'cleaned',terminal:{timed_out:true,exit_code:124}});
+  expect(containers.size).toBe(0);
+  expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('queued');
+  return first;
+}
+it.each([false,true])('真实worker超时自清理的queued任务可结算，released后崩溃恢复=%s',async(crash)=>{
+  const first=await queuedTimeout();
+  if(crash){
+    const interrupted=interceptQueries(async sql=>{if(sql.includes("SET status = 'queued'"))throw new Error('crash_before_settle');});
+    await reapScriptRuns(interrupted,{...deps,pool:interrupted});
+    expect((await pool.query('SELECT status FROM capacity_reservations')).rows[0].status).toBe('released');
+    expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[first.id])).rows[0].payload.script_attempts).toBeUndefined();
+  }
+  expect(await reapScriptRuns(pool,deps)).toMatchObject({reaped:1,retried:1});
+  const current=(await pool.query('SELECT status,payload FROM tasks WHERE id=$1',[first.id])).rows[0];
+  expect(current).toMatchObject({status:'queued',payload:{script_run_id:null,script_attempts:[{timed_out:true,exit_code:124}]}});
+  expect((await pool.query('SELECT status,confirmed_receipt FROM capacity_reservations')).rows[0])
+    .toMatchObject({status:'released',confirmed_receipt:{terminal:{timed_out:true}}});
+  expect((await pool.query('SELECT status FROM task_runs')).rows).toEqual([{status:'timeout'}]);
+  expect(await reapScriptRuns(pool,deps)).toMatchObject({reaped:0});expect(starts).toBe(1);
+});
+it('queued超时任务已取消时只清理预算，不恢复或重试任务',async()=>{
+  const first=await queuedTimeout();await pool.query("UPDATE tasks SET status='cancelled' WHERE id=$1",[first.id]);
+  await reapScriptRuns(pool,deps);
+  expect((await pool.query('SELECT status,payload FROM tasks WHERE id=$1',[first.id])).rows[0])
+    .toMatchObject({status:'cancelled'});
+  expect((await pool.query('SELECT status FROM capacity_reservations')).rows[0].status).toBe('released');
+  expect((await pool.query("SELECT * FROM task_events WHERE event_type='script_attempt_failed'")).rows).toHaveLength(0);
+});
+it('丢失429响应后认证inspect等待态可回队，不消耗执行重试',async()=>{
+  const first=await task();rejectStart=true;
+  await triggerScriptRun(first,{...deps,managed:{...deps.managed,client:{...deps.managed.client,
+    start:async(...args)=>{await deps.managed.client.start(...args);throw new Error('lost_wait_response');}}}});
+  await reapScriptRuns(pool,deps);
+  const current=(await pool.query('SELECT status,payload FROM tasks WHERE id=$1',[first.id])).rows[0];
+  expect(current.status).toBe('queued');expect(current.payload.script_attempts).toBeUndefined();
+  expect((await pool.query('SELECT status FROM capacity_reservations')).rows[0].status).toBe('launching');
+});
+it.each(['created','unknown'])('worker启动中断遗留%s时先强取消再重试，不永久占位',async(state)=>{
+  const first=await task();dockerFault=state;await triggerScriptRun(first,deps);
+  expect(await reapScriptRuns(pool,deps)).toMatchObject({reaped:1,retried:1});
+  expect((await pool.query('SELECT status,confirmed_receipt FROM capacity_reservations')).rows[0])
+    .toMatchObject({status:'released',confirmed_receipt:{tombstoned:true,absent:true}});
+  expect(containers.size).toBe(0);
+});
+it.each([['printf completed','completed'],['exit 7','failed']])('released的queued任务按可信终态结算%s',async(cmd,status)=>{
+  const first=await task({cmd,script_attempts:[{attempt:1}]});await triggerScriptRun(first,deps);
+  const interrupted=interceptQueries(async sql=>{if(sql.startsWith('UPDATE tasks SET status ='))throw new Error('defer_settle');});
+  await reapScriptRuns(interrupted,{...deps,pool:interrupted});
+  expect((await pool.query('SELECT status FROM capacity_reservations')).rows[0].status).toBe('released');
+  await pool.query("UPDATE tasks SET status='queued' WHERE id=$1",[first.id]);
+  expect(await reapScriptRuns(pool,deps)).toMatchObject({reaped:1,[status]:1});
+  expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe(status);
 });
