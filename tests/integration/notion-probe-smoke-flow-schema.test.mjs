@@ -9,5 +9,6 @@ it('Notion投影真实smoke保持schema安全路径和既有投影行为', () =>
   expect(output).toContain('探针：建页/补列/回写/指纹去重');
   expect(output).toContain('判定回执：业务行过滤/批次前缀/判定原因');
   expect(output).toContain('格子行：翻色 → PATCH CellStatus=pending');
+  expect(output).toMatch(/Tests\s+14 passed\s+\(14\)/);
   expect(output).toContain('[notion-probe-projection-smoke] PASS');
 }, 35000);
