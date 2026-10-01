@@ -63,7 +63,7 @@ export async function triggerManagedScript(task,spec,pool,deps={}) {
       [task.id,blocked?'blocked':'queued',blocked?prepared.reason:null,task.payload?.script_attempts?.length??0,task.claimed_by??null,task.claimed_at??null]);
     // 已有执行身份由预约收割器恢复；重复请求的探测失败不能回退运行任务。
     if(!changed.rowCount)return {success:true,taskId:task.id,executor:'script',pending:true};
-    return {success:false,reason:prepared.reason??'script_capacity_wait',wait:true,configError:true};
+    return {success:false,reason:prepared.reason??'script_capacity_wait',wait:true,taskStateHandled:true,configError:true};
   }
   let row=prepared.reservation;
   const dispatchId=randomUUID();
@@ -87,7 +87,7 @@ export async function triggerManagedScript(task,spec,pool,deps={}) {
           AND payload->>'script_dispatch_id'=$4
         RETURNING id`,[task.id,row.id,row.owner_key,dispatchId]);
       if(!waiting.rowCount)return {success:true,taskId:task.id,executor:'script',pending:true};
-      return {success:false,reason:'script_local_resources_wait',wait:true,configError:true};
+      return {success:false,reason:'script_local_resources_wait',wait:true,taskStateHandled:true,configError:true};
     }
     if(result.container_id && ['launching','running'].includes(row.status))row=await prepared.store.markRunning(row.id,result);
     await startRun({taskId:task.id,runId:row.owner_key,source:'script',context:{transport:'managed-container',reservation_id:row.id}},{pool});
