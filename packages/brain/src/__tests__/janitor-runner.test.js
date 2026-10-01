@@ -70,4 +70,35 @@ describe('受控 Janitor 执行', () => {
     expect(f.pool.connect).not.toHaveBeenCalled();
     expect(f.client.query).not.toHaveBeenCalled();
   });
+
+  it('解锁失败销毁连接，不把持锁连接归还池', async () => {
+    const f = fixture();
+    const query = f.client.query.getMockImplementation();
+    f.client.query.mockImplementation(async (sql, args) => {
+      if (sql.includes('pg_advisory_unlock')) throw new Error('connection interrupted');
+      return query(sql, args);
+    });
+    await expect(f.api.runJob(f.pool, 'owned-cache')).rejects.toMatchObject({ code: 'JANITOR_LOCK_RELEASE_FAILED' });
+    expect(f.client.release).toHaveBeenCalledWith(true);
+  });
+
+  it('注册表复制后不接受外部换成另一个动作', async () => {
+    const action = vi.fn(async () => ({ status: 'success' }));
+    const entry = { JOB_ID: 'owned-cache', JOB_NAME: '原动作', run: action };
+    const registry = [entry];
+    const api = janitor.createJanitor(registry);
+    const replacement = vi.fn();
+    entry.run = replacement;
+    registry.length = 0;
+    const f = fixture();
+    await api.runJob(f.pool, 'owned-cache');
+    expect(action).toHaveBeenCalledOnce();
+    expect(replacement).not.toHaveBeenCalled();
+  });
+
+  it('重复注册或无执行函数不能装入动作表', () => {
+    const entry = { JOB_ID: 'owned-cache', JOB_NAME: '缓存', run: vi.fn() };
+    expect(() => janitor.createJanitor([entry, entry])).toThrow('JANITOR_INVALID_REGISTRY');
+    expect(() => janitor.createJanitor([{ ...entry, run: null }])).toThrow('JANITOR_INVALID_REGISTRY');
+  });
 });
