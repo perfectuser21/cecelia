@@ -1,3 +1,5 @@
+import {directory} from '../../execution-directory/directory.js';
+import {legacyRecords} from '../../execution-directory/legacy-policy.js';
 // Fleet传输、凭据、数据库和执行进程在本文件注入模拟；隔离策略由专用runtime回归验证。
 vi.mock('../../db.js', () => ({ default: { query: vi.fn(async () => ({ rows: [] })) } }));
 vi.mock('../../runtime-safety.js', async (importOriginal) => ({
@@ -36,6 +38,8 @@ function testCredentialPayload() {
 
 function buildTestDeps(overrides = {}) {
   return buildRealDeps({
+      startExecutionDirectory:async()=>directory.refresh({pool:{query:async()=>({rows:legacyRecords({env:{FLEET_WORKER_US_MAC_M4_URL:WORKER_URL,FLEET_WORKER_XIAN_MAC_M1_URL:'http://xian-m1.internal:5231',FLEET_WORKER_XIAN_MAC_M4_URL:'http://xian-m4.internal:5231',...overrides.env}})})}}),
+    executionAuthority:async(_method,input,run)=>run(input,{canonical_id:input.target.machine,endpoints:{worker:overrides.env?.[`FLEET_WORKER_${input.target.machine.toUpperCase().replaceAll('-','_')}_URL`]}}),
     resolveRepoHead: vi.fn(async () => BASE_SHA),
     loadCredential: vi.fn(async () => testCredentialPayload()),
     resolveGitHubToken: vi.fn(async () => 'github-pat-for-production-wiring-test'),

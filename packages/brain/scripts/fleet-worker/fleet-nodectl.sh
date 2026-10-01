@@ -59,7 +59,7 @@ read_health_and_admit() {
 import { readFile } from 'node:fs/promises';
 import { Buffer } from 'node:buffer';
 import { evaluateBaseAdmission } from './packages/brain/src/orchestrator/fleet-node/node-admission.js';
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const MAX_HEALTH_BODY_BYTES = 64 * 1024;
 const machineId = process.env.FLEET_NODECTL_ADMIT_MACHINE;

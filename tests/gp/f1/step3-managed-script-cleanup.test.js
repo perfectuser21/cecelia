@@ -19,11 +19,17 @@ it('F1造完真验：已确认清理的脚本意图，认证协议拒绝任何�
     profiles:{safe:profile},assertLocalResources:async()=>{},docker:{inspect:async()=>null,create:async()=>{creates++;throw new Error('late launch');}}});
   server=workerModule.createFleetWorkerServer({machineId:machine,attemptToken:token,scriptRunner:runner});
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
-  const client=createScriptWorkerClient({urls:{[machine]:`http://127.0.0.1:${server.address().port}`},token});
+  // 本例验证真实认证协议与取消墓碑；目录授权由真实PG integration独立验证。
+  const endpoint=`http://127.0.0.1:${server.address().port}`;
+  const actions=[];
+  const client=createScriptWorkerClient({token,authorizeRequest:async(target,action,body,operation)=>{
+    expect(target).toBe(machine);actions.push(action);return operation(endpoint);
+  }});
   const request={reservation_id:randomUUID(),intent_id:randomUUID(),machine_id:machine,owner_key:`script-${randomUUID()}-a1`,
     launch_generation:1,worker_id:machine,worker_boot_id:'gp-boot',config_digest:digest({job,profile_digest:digest(profile)})};
   const clean=await client.cancel(machine,{...request,container_id:null,challenge:randomUUID()});
   expect(clean).toMatchObject({authenticated:true,receipt:{status:'cleaned',tombstoned:true,absent:true}});
   await expect(client.start(machine,{...request,job})).rejects.toThrow('http_409');
   expect(creates).toBe(0);
+  expect(actions).toEqual(['cancel','start']);
 });

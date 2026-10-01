@@ -21,7 +21,7 @@ const {
   createGitHubCredentialEnvelopeConsumer,
 } = require('./github-credential-envelope.cjs');
 const { probeFleetWorkerHealth } = require('./node-probe.cjs');
-const { createWorkspaceManager } = require('./workspace-manager.cjs');
+const { createWorkspaceManager,createFleetRepoAllowlist } = require('./workspace-manager.cjs');
 const { createOrchestratorRunner, probeCredentialHome } = require('./orchestrator-runner.cjs');
 
 const { createScriptRunner, loadProtectedScriptProfiles } = require('./script-runner.cjs');
@@ -481,15 +481,6 @@ function createFleetWorkerRuntime({
   });
 }
 
-function createFleetRepoAllowlist(env = {}) {
-  return Object.freeze({
-    'perfectuser21/cecelia': env.CECELIA_FLEET_REPO_SOURCE
-      ?? 'https://github.com/perfectuser21/cecelia.git',
-    'perfectuser21/zenithjoy-workspace':
-      env.CECELIA_FLEET_ZENITHJOY_REPO_SOURCE
-      ?? 'https://github.com/perfectuser21/zenithjoy-workspace.git',
-  });
-}
 
 function findUntrustedWorkspaceField(value) {
   if (!value || typeof value !== 'object') return null;

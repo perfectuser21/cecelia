@@ -1,3 +1,4 @@
+import { createProductionExecutionTransport } from '../orchestrator/production-transport.js';
 // Fleet传输、凭据、数据库和执行进程在本文件注入模拟；隔离策略由专用runtime回归验证。
 vi.mock('../db.js', () => ({ default: { query: vi.fn(async () => ({ rows: [] })) } }));
 vi.mock('../runtime-safety.js', async (importOriginal) => ({
@@ -177,6 +178,7 @@ function resumeOptions(overrides = {}) {
     },
     task: { id: 'task-1', payload: {} },
     dbPool: { query: vi.fn() },
+    transportFactory: options => createProductionExecutionTransport({...options,executionAuthority:async(_method,input,operation)=>operation(input,{canonical_id:input.target.machine,endpoints:{worker:BRIDGE_URL}})}),
     callbackSecret: CALLBACK_TOKEN,
     leaseOwner: 'watchdog:test',
     attemptStore: resumeStore(),
@@ -1881,4 +1883,10 @@ describe('kernel fleet watchdog recovery', () => {
       attemptId: PARENT_ID,
     }));
   });
+});
+
+it('恢复默认factory边界传递同一数据库用于最终目录授权',async()=>{
+ const pool={query:vi.fn()};const factory=vi.fn(()=>{throw Error('factory-boundary');});
+ await expect(resumeKernelAttempt(childAttempt(),resumeOptions({dbPool:pool,transportFactory:factory}))).rejects.toThrow('factory-boundary');
+ expect(factory).toHaveBeenCalledWith(expect.objectContaining({pool}));
 });

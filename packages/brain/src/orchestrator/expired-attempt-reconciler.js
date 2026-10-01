@@ -1,5 +1,5 @@
 import { LOG_ACTION } from './constants.js';
-import { listCanonicalMachineIds } from './preflight/canonical-machine-id.js';
+import { LEGACY_BINDINGS } from '../execution-directory/legacy-policy.js';
 
 const INFLIGHT_STATUSES = new Set(['starting', 'running']);
 const PREPARED_WORKER_STATUSES = new Set(['prepared', 'starting']);
@@ -7,12 +7,16 @@ const CONFIRMED_CANCEL_STATUSES = new Set([
   'cleaned',
   'already_clean',
 ]);
-const CANONICAL_FLEET_TARGETS = new Set(listCanonicalMachineIds());
+
 const TERMINAL_CODES = new Set([
   'worker_attempt_missing_after_lease',
   'worker_attempt_replacement_required_after_lease',
   'worker_attempt_quarantined_after_lease',
 ]);
+
+function cleanupMachineKnown(attempt,machine){
+ return Boolean(attempt?.task_bundle?.inputs?._server_execution?.executionVersionId) || LEGACY_BINDINGS.some(([id])=>id===machine);
+}
 
 function bounded(value, maximum = 1_000) {
   return String(value ?? '').slice(0, maximum);
@@ -40,7 +44,7 @@ function fleetRecoveryCandidate(attempt) {
     && attempt?.actual_machine_id == null
     && attempt?.remote_job_id == null
     && attempt?.machine_attestation_status == null
-    && CANONICAL_FLEET_TARGETS.has(attempt?.requested_machine_id)
+    && cleanupMachineKnown(attempt, attempt?.requested_machine_id)
     && attempt?.task_bundle?.inputs?.execution_surface === 'fleet-worker'
   );
 }
@@ -51,7 +55,7 @@ function legacyLaunchReceiptEmpty(attempt) {
     && attempt?.actual_machine_id == null
     && attempt?.remote_job_id == null
     && attempt?.machine_attestation_status == null
-    && CANONICAL_FLEET_TARGETS.has(attempt?.requested_machine_id)
+    && cleanupMachineKnown(attempt, attempt?.requested_machine_id)
   );
 }
 
@@ -59,7 +63,7 @@ function launchReceiptConfirmed(attempt) {
   return (
     attempt?.execution_transport === 'fleet-worker'
     && attempt?.machine_attestation_status === 'verified'
-    && CANONICAL_FLEET_TARGETS.has(attempt?.actual_machine_id)
+    && cleanupMachineKnown(attempt, attempt?.actual_machine_id)
     && attempt.actual_machine_id === attempt.requested_machine_id
     && typeof attempt.remote_job_id === 'string'
     && attempt.remote_job_id.length > 0

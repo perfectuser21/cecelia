@@ -5,6 +5,7 @@ import { defineConfig } from 'vitest/config';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
+  'src/__tests__/integration/execution-directory.pg.integration.test.js',
   'src/__tests__/integration/preview-cache.pg.integration.test.js',
   'src/__tests__/integration/task-intake.pg.integration.test.js',
   'src/__tests__/integration/account-quota-ledger.pg.integration.test.js',
@@ -107,7 +108,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
 
 export default defineConfig({
   test: {
-    setupFiles: ['src/__tests__/helpers/supertest-loopback.js'],
+    setupFiles: ['src/__tests__/helpers/supertest-loopback.js','src/__tests__/helpers/execution-directory-fixture.js'],
     globals: true,
     env: {
       CECELIA_MAP_REPO_SCOPES: 'perfectuser21/cecelia=cecelia,cecelia=cecelia',

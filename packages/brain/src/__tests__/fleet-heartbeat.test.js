@@ -1,3 +1,4 @@
+import {seedExecutionDirectoryFixture} from './helpers/execution-directory-fixture.js';
 /**
  * fleet-heartbeat.test.js
  *
@@ -55,6 +56,7 @@ describe('fleet heartbeat 可信度判定', () => {
   });
 
   beforeEach(async () => {
+    await seedExecutionDirectoryFixture();
     vi.useFakeTimers();
     mockCollectRemote = vi.fn(async (url) => okHealth(url));
     vi.stubGlobal('fetch', mockCollectRemote);
