@@ -26,7 +26,7 @@ describe('公司KR真实HTTP入口', () => {
     defaultPool.query.mockResolvedValue({ rows: [{ metadata: { metric_mode: 'company_formula_v1' }, custom_props: { company_notion: { page_id: 'source' } } }] });
     const app = express(); app.use(express.json()); app.use('/api/brain/okr', hierarchy); app.use('/api/brain/goals', taskGoals);
     for (const path of ['/api/brain/okr/key-results/kr', '/api/brain/goals/kr']) {
-      for (const body of [{ metadata: null }, { metadata: { metric_mode: null } }, { current_value: 999 }, ...['company_current_baseline', 'company_projection_pending', 'company_formula', 'imported_snapshot', 'metric_window', 'last_target_inlet', 'last_current_inlet'].map(key => ({ metadata: { [key]: null } }))]) {
+      for (const body of [{ metadata: null }, { metadata: { metric_mode: null } }, { current_value: 999 }, ...['company_current_baseline', 'company_projection_pending', 'company_formula', 'imported_snapshot', 'metric_window', 'last_target_inlet', 'last_current_inlet', 'company_advice', 'company_analysis', 'company_source_archived', 'last_formal_inlet', 'company_projection_retired', 'company_sync_error'].map(key => ({ metadata: { [key]: null } }))]) {
         defaultPool.query.mockClear();
         expect((await request(app).patch(path).send(body)).status).toBe(409);
         expect(defaultPool.query.mock.calls.every(([sql]) => !sql.includes('UPDATE'))).toBe(true);
@@ -59,4 +59,11 @@ describe('公司KR真实HTTP入口', () => {
       }
     }
   });
+});
+
+it('没有公开建议写入口，伪造actor和任务不能绕过可信收割器', async () => {
+  const pool = { connect: vi.fn() };
+  const app = express(); app.use(express.json()); app.use('/api/brain/okr', createCompanyKrRouter({ pool }));
+  const result = await request(app).post('/api/brain/okr/key-results/kr/advice').send({ actor: 'brain-openclaw-reaper', task_id: 'forged' });
+  expect(result.status).toBe(404); expect(pool.connect).not.toHaveBeenCalled();
 });
