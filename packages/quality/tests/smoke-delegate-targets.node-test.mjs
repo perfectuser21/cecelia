@@ -5,7 +5,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
-import { fixture, root } from './fixtures/smoke-production-guard-fixture.mjs';
+import { fixture, root, clientCommands } from './fixtures/smoke-production-guard-fixture.mjs';
 
 test('c8 forwards the checked connection instead of inherited container SMOKE_DATABASE_URL', async () => {
   await fixture(async ({ smoke, info, dockerCalls }) => {
@@ -72,6 +72,14 @@ test('client startup options never become dependency lookup arguments', async ()
     assert.doesNotMatch(source, /\b(?:command\s+-v|which)\s+(?:psql\s+-X|curl\s+-q)\b/, name);
   }
 });
+test('startup audit excludes inert diagnostics and lookups but retains actual client calls', () => {
+  for (const client of ['psql', 'curl']) {
+    assert.equal(clientCommands(`command -v ${client}\necho "${client} 不在 PATH"`).includes(client), false);
+    assert.ok(clientCommands(`echo "$( ${client} -c fixture )"`).includes(client), 'command substitution must remain audited');
+    assert.ok(clientCommands(`command -v ${client} || ${client} fixture`).includes(`${client} fixture`), 'lookup must not hide another call on the same line');
+    assert.ok(clientCommands(`${client} fixture`).includes(`${client} fixture`));
+  }
+});
 for (const [script] of delegates) {
   test(`${script}: every actual psql invocation disables startup configuration`, async () => {
     const source = await readFile(resolve(root, script), 'utf8');
@@ -114,8 +122,13 @@ function postgresFixture() {
     });
   });
 }
-for (const [script, args] of delegates) {
-  test(`${script}: native psql cannot reconnect through PSQLRC`, async t => {
+const goldenSource = await readFile(resolve(root, 'packages/brain/scripts/smoke/golden-paths-t1-smoke.sh'), 'utf8');
+const goldenLine = goldenSource.split('\n').find(line => line.includes('[[ -n "$GP_ID" ]] && command -v psql'));
+assert.ok(goldenLine, 'Golden Paths conditional database check must remain covered');
+const goldenQuery = goldenLine.slice(goldenLine.indexOf('&& psql') + 3).split('; then')[0];
+for (const [script, args] of [...delegates, ['-c', ['DB="$DATABASE_URL"; ' + goldenQuery]]]) {
+  const name = script === '-c' ? 'golden-paths-t1 actual conditional psql' : script;
+  test(`${name}: native psql cannot reconnect through PSQLRC`, async t => {
     let psql;
     try { psql = execFileSync('which', ['psql'], { encoding: 'utf8' }).trim(); }
     catch { t.skip('native psql unavailable; mandatory command checks still run'); return; }
@@ -134,7 +147,7 @@ for (const [script, args] of delegates) {
         assert.equal(redirects, 0, 'default psql startup configuration changed the actual endpoint');
         assert.equal(result.code, 0, result.output);
         const calls = await psqlCalls();
-        assert.equal(calls.length, script.startsWith('packages/') ? 1 : 2);
+        assert.equal(calls.length, script === 'scripts/preview-ledger-activate.sh' ? 2 : 1);
         for (const call of calls) assert.equal(call[0], '-X');
       });
     } finally {

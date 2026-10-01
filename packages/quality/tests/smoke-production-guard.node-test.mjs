@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 
-import { root, fixture } from './fixtures/smoke-production-guard-fixture.mjs';
+import { root, fixture, clientCommands } from './fixtures/smoke-production-guard-fixture.mjs';
 
 const scripts = ['notion-mapping-r4', 'notion-endpoints', 'notion-brain-first'];
 
@@ -350,7 +350,7 @@ test('guarded live shell curl calls must disable default config before other fla
     if (!name.endsWith('.sh')) continue;
     const source = await readFile(resolve(smokeDir, name), 'utf8');
     if (!source.includes('smoke-production-guard.mjs')) continue;
-    const commands = source.split('\n').filter(line => !line.trim().startsWith('#')).join('\n');
+    const commands = clientCommands(source);
     assert.doesNotMatch(commands, /\bcurl[ \t]+(?!-q(?:[ \t]|$))/, `${name}: curl must not read external defaults`);
   }
 });
@@ -416,7 +416,7 @@ test('guarded live psql invocations must disable default startup config', async 
     if (!name.endsWith('.sh')) continue;
     const source = await readFile(resolve(smokeDir, name), 'utf8');
     if (!source.includes('smoke-production-guard.mjs')) continue;
-    const commands = source.split('\n').filter(line => !line.trim().startsWith('#') && !/command -v psql/.test(line)).join('\n');
+    const commands = clientCommands(source);
     assert.doesNotMatch(commands, /\bpsql[ \t]+(?!-X(?:[ \t]|$))/, `${name}: psql must not read startup config`);
   }
 });

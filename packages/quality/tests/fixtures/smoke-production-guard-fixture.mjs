@@ -6,6 +6,12 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
+export function clientCommands(source) {
+  return source.split('\n').filter(line => !line.trim().startsWith('#')).join('\n')
+    .replace(/\b(?:command\s+-v|which)\s+(?:psql|curl)\b/g, '')
+    .replace(/\b(?:echo|log|skip|fail|printf|ok|pass)\s+("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g,
+      (command, argument) => argument.includes('$(') || argument.includes('`') ? command : '');
+}
 export async function fixture(run, { health } = {}) {
   const requests = [];
   const server = createServer((req, res) => {
@@ -44,7 +50,7 @@ trap guard_fixture_boundary DEBUG
   await writeFile(resolve(temp, 'psql'), '#!/usr/bin/env node\nconst fs=require("node:fs"); fs.appendFileSync(process.env.GUARD_PSQL_LOG,JSON.stringify(process.argv.slice(2))+"\\n"); if (process.env.GUARD_NATIVE_PSQL) { const {spawnSync}=require("node:child_process"); const env={...process.env}; for(const k of ["PGHOSTADDR","PGSERVICE","PGSERVICEFILE"]) if(!env[k]) delete env[k]; const r=spawnSync(process.env.GUARD_NATIVE_PSQL,process.argv.slice(2),{stdio:"inherit",env,timeout:3000,killSignal:"SIGKILL"}); process.exit(r.status ?? 1); } console.log(1);\n', { mode: 0o755 });
   const info = { State: { Running: true }, Config: { Env: ['NODE_ENV=test', 'DB_NAME=cecelia_test', `BRAIN_PORT=${port}`] }, HostConfig: { NetworkMode: 'host' }, NetworkSettings: { Ports: {} } };
   async function smoke(script, overrides = {}, dockerInfo = info, guardOnly = false, scriptArgs = []) {
-    let args = [script.includes('/') ? script : `packages/brain/scripts/smoke/${script.endsWith('.sh') ? script : script + '-smoke.sh'}`, ...scriptArgs];
+    let args = [script === '-c' || script.includes('/') ? script : `packages/brain/scripts/smoke/${script.endsWith('.sh') ? script : script + '-smoke.sh'}`, ...scriptArgs];
     if (guardOnly) {
       const source = await readFile(resolve(root, args[0]), 'utf8');
       const prefix = source.slice(0, source.indexOf('\nfi') + 3)

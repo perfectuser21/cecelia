@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
-import { fixture, root } from './fixtures/smoke-production-guard-fixture.mjs';
+import { fixture, root, clientCommands } from './fixtures/smoke-production-guard-fixture.mjs';
 
 const entries = JSON.parse(await readFile(resolve(root, 'packages/quality/smoke-sql-targets.json'), 'utf8'));
 const safe = 'postgresql://localhost:5432/cecelia_test';
@@ -11,7 +11,7 @@ for (const [name, classification] of Object.entries(entries)) {
   if (classification.kind !== 'readonly') continue;
   test(`${name}: readonly classification cannot execute curl or psql startup configuration`, async () => {
     const source = await readFile(resolve(root, 'packages/brain/scripts/smoke', name), 'utf8');
-    const commands = source.split('\n').filter(line => !line.trim().startsWith('#')).join('\n');
+    const commands = clientCommands(source);
     assert.equal(/\bpsql[ \t]+(?!-X(?:[ \t]|$))/.test(commands), false, 'readonly SQL can execute psqlrc writes');
     assert.equal(/\bcurl[ \t]+(?!-q(?:[ \t]|$))/.test(commands), false, 'readonly HTTP can execute curlrc overrides');
   });
