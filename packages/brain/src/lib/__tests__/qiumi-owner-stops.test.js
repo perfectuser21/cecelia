@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../recurring-notion-sync.js', () => ({ notionReq: vi.fn(), getToken: () => 'tok' }));
-vi.mock('../task-updater.js', () => ({ blockTask: vi.fn(), unblockTask: vi.fn() }));
-vi.mock('../projection/commands.js', () => ({ recordProjectionCommand: vi.fn() }));
+vi.mock('../../recurring-notion-sync.js', () => ({ notionReq: vi.fn(), getToken: () => 'tok' }));
+vi.mock('../../task-updater.js', () => ({ blockTask: vi.fn(), unblockTask: vi.fn() }));
+vi.mock('../../projection/commands.js', () => ({ recordProjectionCommand: vi.fn() }));
 
 const ID = '15f42776-8d1b-430d-b27a-38a480b93151';
 const PAGE = '11111111-2222-3333-4444-555555555555';
@@ -27,7 +27,7 @@ function setup({ start = START, end = END, row = {}, updateRows = [{ id: ID }] }
 }
 
 async function run(options) {
-  const { applyOwnerStops } = await import('../notion-gtd-sync.js');
+  const { applyOwnerStops } = await import('../../notion-gtd-sync.js');
   const fixture = setup(options);
   const result = await applyOwnerStops({ query: fixture.query }, 'tok', { notionReq: fixture.notionReq, now: () => NOW });
   const update = fixture.query.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql));
