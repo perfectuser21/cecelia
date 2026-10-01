@@ -27,6 +27,7 @@ export async function settleScriptRun(pool, row, parsed, { hostId, runId, reserv
   const script = {
     exit_code: parsed.exit, timed_out: parsed.timedOut, host: hostId, run_id: runId,
     attempts: attemptNo, stdout, stderr, artifacts,
+    ...(reservationId?{logs_truncated:parsed.logs_truncated===true,logs_unavailable:parsed.logs_unavailable===true}:{}),
   };
 
   if (parsed.exit === 0 && !parsed.timedOut) {
