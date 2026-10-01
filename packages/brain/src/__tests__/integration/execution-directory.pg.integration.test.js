@@ -5,6 +5,9 @@ import { beforeAll,afterAll,it,expect } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { directory } from '../../execution-directory/directory.js';
 import { importLegacyPolicy,authorize,resolveCleanup,revokeGrant } from '../../execution-directory/store.js';
+import { createAttemptStore } from '../../orchestrator/attempt-store.js';
+import { createScriptReservationStore } from '../../orchestrator/script-reservation-store.js';
+import { createTransportAuthority } from '../../execution-directory/transport-authority.js';
 import { LEGACY_BINDINGS } from '../../execution-directory/legacy-policy.js';
 const options=process.env.TEST_DATABASE_URL?{connectionString:process.env.TEST_DATABASE_URL}:DB_DEFAULTS;
 const database=process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_URL).pathname.slice(1):DB_DEFAULTS.database;
@@ -14,8 +17,9 @@ const admin=new pg.Client(options);const pool=new pg.Pool({...options,max:8,opti
 const env={FLEET_WORKER_US_MAC_M4_URL:'http://mmv:5231',FLEET_WORKER_XIAN_MAC_M1_URL:'http://m1:5231',FLEET_WORKER_XIAN_MAC_M4_URL:'http://m4:5231'};
 const request=()=>({snapshotVersion:directory.current().version,machineId:'us-mac-m4',surface:'harness',provider:'codex',account:'team1',repo:'perfectuser21/cecelia'});
 beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
- await pool.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT);CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);CREATE TABLE capacity_reservations(id UUID PRIMARY KEY);`);
+ await pool.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT);CREATE TABLE initiative_runs(id UUID PRIMARY KEY,phase TEXT DEFAULT 'planning',map_recovery_contract_id UUID,orchestrator_version TEXT DEFAULT 'v2');CREATE TABLE map_recovery_consumptions(contract_id UUID,attempt_id UUID);CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);`);
  for(const [,id,name]of LEGACY_BINDINGS)await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')",[id,name]);
+ for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations'])await pool.query(readFileSync(new URL(`../../../migrations/${name}.sql`,import.meta.url),'utf8'));
  await pool.query(readFileSync(new URL('../../../migrations/503_execution_directory.sql',import.meta.url),'utf8'));
  await importLegacyPolicy({pool,env});await directory.refresh({pool});
 });
@@ -49,4 +53,25 @@ it('最终launch持有同机锁，撤销与launch串行；撤销提交后新增�
  let revoked=false;const revoking=revokeGrant({pool,grantId:auth.grantId}).then(()=>{revoked=true;});
  await new Promise(r=>setTimeout(r,30));expect(revoked).toBe(false);unlocked();await launch;await revoking;
  await expect(authorize(pool,request())).rejects.toThrow('execution_grant_denied');
+});
+
+const capacitySnapshot=()=>({verified:true,machine:'xian-mac-m1',expires_at:Date.now()+60_000,capacity:{ok:true,available:8,physical_base_slots:8,effective_base_slots:8}});
+it('实际Harness预约剥离伪造字段并持久化精确版本；最终prepare拒绝被撤销授权',async()=>{
+ const runId=randomUUID();await pool.query("INSERT INTO initiative_runs(id) VALUES($1)",[runId]);
+ const input={id:randomUUID(),runId,hop:1,phase:'planning',role:'reporter',provider:'codex',accountId:'team1',machineId:'xian-mac-m1',callbackSecretHash:'a'.repeat(64),capacitySnapshot:capacitySnapshot(),
+  bundle:{inputs:{execution_surface:'fleet-worker',workspace_spec:{repo:'perfectuser21/cecelia'},_server_execution:{executionVersionId:randomUUID(),grantId:randomUUID()}}}};
+ const store=createAttemptStore(pool,{executionDirectory:true});const result=await store.createAttempt(input);const a=result.attempt??result;
+ const actual=(await pool.query('SELECT * FROM harness_attempts WHERE id=$1',[a.id])).rows[0];
+ expect(actual.task_bundle.inputs._server_execution.executionVersionId).not.toBe(input.bundle.inputs._server_execution.executionVersionId);
+ const authority=createTransportAuthority({pool});let calls=0;
+ await authority('prepare',{attempt:actual,target:{machine:input.machineId},bundle:{inputs:{_server_execution:{fake:true}}}},async trusted=>{calls++;expect(trusted.bundle).toEqual(actual.task_bundle);});
+ await revokeGrant({pool,grantId:actual.task_bundle.inputs._server_execution.grantId});
+ await expect(authority('start',{attempt:actual,target:{machine:input.machineId}},()=>{calls++;})).rejects.toThrow('execution_grant_denied');
+ await authority('cancel',{attempt:actual,target:{machine:input.machineId}},async(_,n)=>expect(n.endpoints.worker).toBe('http://m1:5231'));
+ expect(calls).toBe(1);
+});
+it('脚本预约没有显式profile授权即拒绝，外来版本字段不能制造许可',async()=>{
+ const taskId=randomUUID();await pool.query("INSERT INTO tasks(id,status) VALUES($1,'queued')",[taskId]);
+ const store=createScriptReservationStore(pool,{executionDirectory:true});
+ await expect(store.reserve({taskId,machineId:'xian-mac-m1',ownerKey:`script-${taskId}-a1`,configDigest:'a'.repeat(64),capacitySnapshot:capacitySnapshot(),profileId:'unknown',executionVersionId:randomUUID()})).rejects.toThrow('execution_grant_denied');
 });
