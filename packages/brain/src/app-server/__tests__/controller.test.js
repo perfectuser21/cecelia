@@ -27,3 +27,16 @@ it('新节点候选来自有效执行目录，空目录不再派发旧硬编码�
  await directory.refresh({pool:{query:async()=>({rows:[]})}});calls.length=0;
  expect(await controller.ensure({...input,request_key:randomUUID()})).toEqual({status:'waiting_resources'});expect(calls).toEqual([]);
 });
+
+it('普通聊天接口不能取得待验收实例的流票',async()=>{
+ let called=false;const id=randomUUID();
+ const controller=createAppServerController({pool:{},homes:{},store:{get:async()=>({id,policy_version:'app-server-canary-v1'}),recordUnknown:async()=>{}},client:{prepareStream:async()=>{called=true;return {};}}});
+ await expect(controller.prepareStream(id)).rejects.toThrow('appserver_canary_stream_internal');expect(called).toBe(false);
+});
+
+it('普通ensure不能取消或接管正在验收的HOME',async()=>{
+ let inspected=false;const controller=createAppServerController({pool:{},homes:{[home.homeId]:home},
+  store:{home:async()=>({machine_id:'xian-mac-m1'}),latest:async()=>({id:randomUUID(),policy_version:'app-server-canary-v1'}),recordUnknown:async()=>{}},
+  client:{inspect:async()=>{inspected=true;throw Error('unexpected_inspect');}}});
+ await expect(controller.ensure({home_id:home.homeId,request_key:randomUUID()})).rejects.toThrow('appserver_canary_request_isolated');expect(inspected).toBe(false);
+});

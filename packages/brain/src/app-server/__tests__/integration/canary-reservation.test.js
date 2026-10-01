@@ -41,6 +41,7 @@ it('pending仅可创建两代受限验收预约；整机占位、并发幂等及
  const [a,b]=await Promise.all([st.reserveCanary(input),st.reserveCanary(input)]);
  expect(a.reservation.id).toBe(b.reservation.id);expect(a.reservation.policy_version).toBe('app-server-canary-v1');
  const first=a.reservation;
+ await expect(st.reserve({home,requestKey:auth.nonce,machineId:'xian-mac-m1',capabilities,capacitySnapshot})).rejects.toThrow('appserver_canary_request_isolated');
  const other=await prepare();expect((await st.reserveCanary({capabilities:other.capabilities,capacitySnapshot:other.capacitySnapshot,authorizationId:other.auth.id,sequence:1})).outcome).toBe('wait');
  await expect(st.reserveCanary({...input,sequence:2})).rejects.toThrow('appserver_home_busy');
  let called=0;await st.withOperation(first.id,'start',row=>{expect(row.canary_authorization.id).toBe(auth.id);called++;});expect(called).toBe(1);

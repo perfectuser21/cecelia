@@ -26,7 +26,7 @@ export function createAppServerStore({pool,createTask=createGenerationTask,after
     if(existingHome&&(existingHome.home_key!==home.homeKey||digest(validateHome(existingHome.config))!==digest(home)))throw Error('appserver_home_configuration_conflict');
     if(existingHome&&existingHome.machine_id!==machineId)throw Error('appserver_home_affinity');
     const previous=(await db.query(`${SELECT} AND g.home_key=$1 ORDER BY g.generation DESC`,[home.homeKey])).rows;
-    const retry=previous.find(r=>r.request_key===requestKey);if(retry)return {outcome:retry.status==='released'?'released':'reserved',reservation:retry};
+    const retry=previous.find(r=>r.request_key===requestKey);if(retry&&Boolean(canary)!==(retry.policy_version==='app-server-canary-v1'))throw Error('appserver_canary_request_isolated');if(retry)return {outcome:retry.status==='released'?'released':'reserved',reservation:retry};
     if(previous.some(r=>r.status!=='released'))throw Error('appserver_home_busy');
     await db.query(MACHINE_CAPACITY_LOCK_SQL,[machineId]);
     const auth=canary?await authorizePreparedCanary(db,{id:canary.id,home,machineId,capabilities}):await authorize(db,{snapshotVersion:directory.current()?.version,machineId,surface:'app_server',provider:home.provider,account:home.account,repo:home.repo,profileId:home.profile});
