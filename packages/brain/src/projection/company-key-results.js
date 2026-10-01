@@ -11,6 +11,16 @@ const areas = p => (p?.Area?.relation || []).map(v => v.id);
 const configuredToken = () => process.env.NOTION_API_KEY || process.env.NOTION_API_TOKEN || process.env.NOTION_INBOX_TOKEN;
 const sameDecimal = (a, b) => a === null || b === null ? a === b : Number(a) === Number(b);
 
+async function releaseProjectionLock(client, locked, cycleError) {
+  let destroy = false;
+  try { if (locked) await client.query('SELECT pg_advisory_unlock(hashtext($1))', ['notion-company-key-results-projection']); }
+  catch (error) {
+    destroy = true;
+    if (!cycleError) throw error;
+    console.warn('[company-kr-projection] 解锁失败，关闭连接并保留原周期错误:', error.message);
+  } finally { client.release(destroy); }
+}
+
 async function confirmAttempt(client, task, kr, attempt, recovered) {
   const saved = await client.query("UPDATE key_results SET metadata=(metadata-'company_projection_pending') || jsonb_build_object('company_current_baseline',$2::text) WHERE id=$1 RETURNING *", [kr.id, attempt.value]);
   await appendCompanyReceipt(client, task, { kind: 'machine_projection_confirmed', attempt_id: attempt.attempt_id, actor: attempt.actor, source_page_id: kr.custom_props.company_notion.page_id, fact: recovered ? '现场值匹配持久化机器尝试，恢复回执；保留Brain较新观察' : '机器Current投影完成并确认现场基线', before_baseline: kr.metadata.company_current_baseline, after_baseline: attempt.value, brain_metric_preserved: kr.metadata.company_metric, recovered, observed_at: new Date().toISOString(), evidence: [{ source: `notion:${kr.custom_props.company_notion.page_id}`, fact: '现场值等于已登记机器投影值' }] });
@@ -162,7 +172,7 @@ export async function runCompanyKrProjection(pool, { token = configuredToken(), 
   if (registered.rows.length !== 1 || registered.rows[0].notion_db_id !== COMPANY_KR_DATABASE) throw new Error('公司投影登记归属错误');
   if (inFlight.has(pool) || (lastRun.has(pool) && now - lastRun.get(pool) < 300000)) return { skipped: true, reason: 'interval' };
   inFlight.add(pool); lastRun.set(pool, now);
-  let lockClient, locked = false;
+  let lockClient, cycleError, locked = false;
   try {
     lockClient = await pool.connect();
     locked = (await lockClient.query('SELECT pg_try_advisory_lock(hashtext($1)) AS acquired', ['notion-company-key-results-projection'])).rows[0]?.acquired === true;
@@ -206,13 +216,9 @@ export async function runCompanyKrProjection(pool, { token = configuredToken(), 
       result.matched++;
     }
     return result;
-  } finally {
+  } catch (error) { cycleError = error; throw error; }
+  finally {
     inFlight.delete(pool);
-    if (lockClient) {
-      let destroy = false;
-      try { if (locked) await lockClient.query('SELECT pg_advisory_unlock(hashtext($1))', ['notion-company-key-results-projection']); }
-      catch (error) { destroy = true; throw error; }
-      finally { lockClient.release(destroy); }
-    }
+    if (lockClient) await releaseProjectionLock(lockClient, locked, cycleError);
   }
 }
