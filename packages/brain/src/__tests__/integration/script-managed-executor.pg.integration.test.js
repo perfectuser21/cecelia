@@ -149,3 +149,20 @@ it('旧released扫描暂停后新代已启动，旧结算CAS不得终结新代�
   expect((await pool.query('SELECT status,payload,result FROM tasks WHERE id=$1',[first.id])).rows[0]).toEqual(before);
   expect(before.status).toBe('in_progress');expect(starts).toBe(2);
 });
+it.each(['a','"','汉字'])('真实HTTP传递大输出 %s 后仍能清理结算，并明确截断',async(text)=>{
+  const first=await task({cmd:`node -e 'process.stdout.write(${JSON.stringify(text)}.repeat(70000))'`});
+  await triggerScriptRun(first,deps);await reapScriptRuns(pool,deps);
+  const row=(await pool.query('SELECT status,result FROM tasks WHERE id=$1',[first.id])).rows[0];
+  expect(row.status).toBe('completed');expect(Buffer.byteLength(JSON.stringify(row.result.script.stdout))).toBeLessThanOrEqual(48000);
+  expect(row.result.script.logs_truncated).toBe(true);expect(containers.size).toBe(0);
+});
+it.each(['worker_id','worker_boot_id'])('认证HTTP错 %s cancel 不删除、不释放预算',async(field)=>{
+  const first=await task();await triggerScriptRun(first,deps);
+  const row=(await pool.query('SELECT * FROM capacity_reservations')).rows[0];
+  const input={reservation_id:row.id,machine_id:row.machine_id,owner_key:row.owner_key,intent_id:row.intent_id,
+    launch_generation:row.launch_generation,config_digest:row.config_digest,worker_id:row.worker_id,
+    worker_boot_id:row.worker_boot_id,container_id:row.container_id,challenge:randomUUID(),[field]:'wrong'};
+  await expect(deps.managed.client.cancel(machine,input)).rejects.toThrow('http_409');
+  expect(containers.size).toBe(1);
+  expect((await pool.query('SELECT status FROM capacity_reservations')).rows[0].status).toBe('running');
+});
