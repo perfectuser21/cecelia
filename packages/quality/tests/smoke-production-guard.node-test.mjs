@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
+import { createServer as createTcpServer } from 'node:net';
 import { mkdtemp, writeFile, rm, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, dirname } from 'node:path';
@@ -32,7 +33,7 @@ async function fixture(run) {
   const temp = await mkdtemp(resolve(tmpdir(), 'smoke-write-guard-'));
   const dockerLog = resolve(temp, 'docker-calls');
   await writeFile(resolve(temp, 'docker'), '#!/usr/bin/env node\nconst fs = require("node:fs"); fs.appendFileSync(process.env.GUARD_DOCKER_LOG, JSON.stringify(process.argv.slice(2))+"\\n"); if(process.argv[2]==="exec") process.stdout.write("fixture-token"); else process.stdout.write(process.env.GUARD_DOCKER_FIXTURE);\n', { mode: 0o755 });
-  await writeFile(resolve(temp, 'psql'), '#!/usr/bin/env bash\ncase "$*" in *COUNT*) echo 1;; *) echo 1;; esac\n', { mode: 0o755 });
+  await writeFile(resolve(temp, 'psql'), '#!/usr/bin/env node\nif (process.env.GUARD_NATIVE_PSQL) { const {spawnSync}=require("node:child_process"); const env={...process.env}; for(const k of ["PGHOSTADDR","PGSERVICE","PGSERVICEFILE"]) if(!env[k]) delete env[k]; const r=spawnSync(process.env.GUARD_NATIVE_PSQL,process.argv.slice(2),{stdio:"inherit",env}); process.exit(r.status ?? 1); } console.log(1);\n', { mode: 0o755 });
   const info = { State: { Running: true }, Config: { Env: ['NODE_ENV=test', 'DB_NAME=cecelia_test', `BRAIN_PORT=${port}`] }, HostConfig: { NetworkMode: 'host' }, NetworkSettings: { Ports: {} } };
   async function smoke(script, overrides = {}, dockerInfo = info, guardOnly = false) {
     let args = [`packages/brain/scripts/smoke/${script.endsWith('.sh') ? script : script + '-smoke.sh'}`];
@@ -384,5 +385,70 @@ test('guarded live shell curl calls must disable default config before other fla
     if (!source.includes('smoke-production-guard.mjs')) continue;
     const commands = source.split('\n').filter(line => !line.trim().startsWith('#')).join('\n');
     assert.doesNotMatch(commands, /\bcurl[ \t]+(?!-q(?:[ \t]|$))/, `${name}: curl must not read external defaults`);
+  }
+});
+
+
+// 最小 PostgreSQL wire fixture：仅回显 1，不连接或写入任何数据库。
+function postgresFixture() {
+  const message = (type, body) => { const size = Buffer.alloc(4); size.writeInt32BE(body.length + 4); return Buffer.concat([Buffer.from(type), size, body]); };
+  return createTcpServer(socket => {
+    let pending = Buffer.alloc(0), started = false;
+    socket.on('data', chunk => {
+      pending = Buffer.concat([pending, chunk]);
+      while (pending.length >= (started ? 5 : 8)) {
+        const length = pending.readInt32BE(started ? 1 : 0);
+        if (pending.length < length + (started ? 1 : 0)) return;
+        if (!started && pending.readInt32BE(4) === 80877103) {
+          pending = pending.subarray(length); socket.write('N'); continue;
+        }
+        const type = started ? String.fromCharCode(pending[0]) : '';
+        pending = pending.subarray(length + (started ? 1 : 0));
+        if (!started) {
+          started = true;
+          socket.write(Buffer.concat([message('R', Buffer.alloc(4)), message('S', Buffer.from('client_encoding\0UTF8\0')), message('S', Buffer.from('server_version\0' + '16.0\0')), message('Z', Buffer.from('I'))]));
+        } else if (type === 'Q') {
+          const meta = Buffer.alloc(18); meta.writeInt32BE(23, 6); meta.writeInt16BE(4, 10); meta.writeInt32BE(-1, 12);
+          const row = Buffer.from([0, 1, 0, 0, 0, 1, 49]);
+          socket.write(Buffer.concat([message('T', Buffer.concat([Buffer.from([0, 1]), Buffer.from('?column?\0'), meta])), message('D', row), message('C', Buffer.from('SELECT 1\0')), message('Z', Buffer.from('I'))]));
+        } else if (type === 'X') { socket.end(); }
+      }
+    });
+  });
+}
+
+test('native psql default config cannot reconnect a guarded smoke to another endpoint', async t => {
+  let psql;
+  try { psql = execFileSync('which', ['psql'], { encoding: 'utf8' }).trim(); }
+  catch { t.skip('native psql unavailable; mandatory guarded command checks still run'); return; }
+  const db = postgresFixture();
+  let redirects = 0;
+  const other = createTcpServer(socket => { redirects++; socket.destroy(); });
+  const temp = await mkdtemp(resolve(tmpdir(), 'smoke-psqlrc-'));
+  await Promise.all([new Promise(r => db.listen(0, '127.0.0.1', r)), new Promise(r => other.listen(0, '127.0.0.1', r))]);
+  const config = resolve(temp, 'psqlrc');
+  await writeFile(config, `\\connect postgresql://fixture@127.0.0.1:${other.address().port}/cecelia_test\n`);
+  try {
+    await fixture(async ({ requests, smoke, info }) => {
+      info.Config.Env.push(`DB_PORT=${db.address().port}`);
+      await smoke('notion-brain-first', { SMOKE_ALLOW_WRITE: '1', GUARD_NATIVE_PSQL: psql,
+        DATABASE_URL: `postgresql://fixture@127.0.0.1:${db.address().port}/cecelia_test`, PSQLRC: config });
+      assert.equal(redirects, 0, 'psql default config changed the actual endpoint');
+      assert.ok(requests.some(req => req.method === 'POST'), 'safe native psql did not reach authorized smoke writes');
+    });
+  } finally {
+    await Promise.all([new Promise(r => db.close(r)), new Promise(r => other.close(r))]);
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('guarded live psql invocations must disable default startup config', async () => {
+  const smokeDir = resolve(root, 'packages/brain/scripts/smoke');
+  for (const name of await readdir(smokeDir)) {
+    if (!name.endsWith('.sh')) continue;
+    const source = await readFile(resolve(smokeDir, name), 'utf8');
+    if (!source.includes('smoke-production-guard.mjs')) continue;
+    const commands = source.split('\n').filter(line => !line.trim().startsWith('#') && !/command -v psql/.test(line)).join('\n');
+    assert.doesNotMatch(commands, /\bpsql[ \t]+(?!-X(?:[ \t]|$))/, `${name}: psql must not read startup config`);
   }
 });
