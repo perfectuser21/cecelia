@@ -219,3 +219,17 @@ it('其他操作锁阻止关闭回执时保留事件，下次成功取得锁才�
     expect(await f.runner.attach({ ...input, stream_id: randomUUID() })).toHaveProperty('stdin');
   } finally { f.cleanup(); }
 });
+
+it('稳定 HOME 与每代 owner 分离，代际重放不能借同 HOME 身份启动', async () => {
+  const f = fixture(); try {
+    const owner = input => `openclaw-${require('node:crypto').createHash('sha256').update(JSON.stringify([input.home_key,input.reservation_id,input.intent_id,input.launch_generation])).digest('hex')}`;
+    const a = {...f.input(),home_key:profile.homeKey}; a.owner_key=owner(a);
+    const started=await f.runner.start(a);
+    const b={...f.input(),home_key:profile.homeKey,launch_generation:2};b.owner_key=owner(b);
+    expect(b.owner_key).not.toBe(a.owner_key);
+    await expect(f.runner.start(b)).rejects.toThrow('appserver_home_busy');
+    await f.runner.cancel({...a,container_id:started.container_id,challenge:randomUUID()});
+    expect((await f.runner.start(b)).status).toBe('running');
+    await expect(f.runner.start({...f.input(),home_key:profile.homeKey,owner_key:a.owner_key})).rejects.toThrow('appserver_identity_mismatch');
+  } finally {f.cleanup();}
+});
