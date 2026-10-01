@@ -18,7 +18,7 @@ it('验收流按持久身份选择窄策略，并把拒绝审计写回Worker',as
  expect(forwarded).toBe(0);expect(JSON.parse(seen).error.message).toBe('appserver_canary_method_denied');
  expect(audits.at(-1)).toMatchObject({complete:false,rejected:1});hub.close();
 });
-it.each(['malformed','unknown-response','truncated','clean'])('验收证据只在完整流终结后封存：%s',async ending=>{
+it.each(['malformed','unknown-response','truncated','server-truncated','clean'])('验收证据只在完整流终结后封存：%s',async ending=>{
  const f=fixture();f.child.rpcCanary=true;f.child.rpcCanaryExpiresAt=Date.now()+60000;
  const audits=[];f.runner.recordCanaryEvidence=async(_id,value)=>audits.push(value);
  const hub=api.createStreamHub({runner:f.runner}),ticket=await hub.prepare(f.identity),input=new PassThrough(),output=new PassThrough();
@@ -28,6 +28,7 @@ it.each(['malformed','unknown-response','truncated','clean'])('验收证据只�
   const result=frame.method==='initialize'?{userAgent:'codex_cli_rs/0.158.0'}:frame.method==='model/list'?{data:[],nextCursor:null}:frame.method==='config/read'?{config:{}}:{requirements:null};
   f.child.stdout.write(JSON.stringify({id:frame.id,result})+'\n');
  }});
+ f.child.stdin.once('finish',()=>{f.child.stdout.end();f.child.emit('close');});
  hub.claim(ticket.stream_id,ticket.token,input,output);
  input.write(JSON.stringify({id:1,method:'initialize',params:{clientInfo:{name:'canary',version:'1'}}})+'\n');
  input.write('{"method":"initialized"}\n');
@@ -36,7 +37,7 @@ it.each(['malformed','unknown-response','truncated','clean'])('验收证据只�
  expect(audits.some(e=>e.complete)).toBe(false);
  if(ending==='malformed')input.end('{oops}\n');
  else if(ending==='unknown-response'){f.child.stdout.write('{"id":999,"result":{}}\n');input.end();}
- else input.end(ending==='truncated'?'{oops':'');
+ else {if(ending==='server-truncated')f.child.stdout.write('{"bad_tail":');input.end(ending==='truncated'?'{oops':'');}
  await new Promise(r=>setTimeout(r,25));
  expect(audits.at(-1)).toMatchObject({complete:ending==='clean',sealed:true});hub.close();
 });

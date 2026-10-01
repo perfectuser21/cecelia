@@ -42,7 +42,8 @@ function valid(value,schema,definitions,{strict=false}={}){
  }
  return check(value,schema,0,strict);
 }
-function createRpcPolicy({maxPending=128,maxIds=100000,accountId=null,hostTools}={}){
+function createRpcPolicy({maxPending=128,maxIds=100000,accountId=null,hostTools,canary=false}={}){
+ if(canary)return require('./app-server-canary-policy.cjs').createCanaryPolicy(createRpcPolicy({maxPending:4,maxIds:4}));
  const allowedTools=new Set(resolveHostTools(hostTools));
  const clientPending=new Map(),serverPending=new Map(),usedClient=new Set(),usedServer=new Set();let closed=false;
  const checkOpen=()=>{if(closed)throw Error('appserver_rpc_closed');};
