@@ -7,10 +7,12 @@
 | Workstream | Test File | BEHAVIOR | Red |
 |---|---|---|---|
 | PG自然日与24h边界 | `packages/brain/src/__tests__/commander-watchdog.pg.integration.test.js` | 设备成功批恰好 24h 不叫，超过 1ms 才叫；近期无批设备不叫 | 历史基础修复RED7dd5d5aba2（主线已修），UTC真实PG 3失败4通过，北京0/6/12时原共享夹具误判；/tmp/watchdog7a8a-red.log |
-| 原生验收入口 | `sprints/10020020-watchdog-time-fixture/tests/watchdog-time-fixture.test.mjs` | native entry executes all permanent PG cases under UTC and Shanghai without skips | 委托同一永久PG套件，历史旧共享夹具子进程非零退出；新scope检全部8项与两个时区 |
+| 原生验收入口 | `sprints/10020020-watchdog-time-fixture/tests/watchdog-time-fixture.test.mjs` | native entry executes all permanent PG cases under UTC and Shanghai without skips | 委托同一永久PG套件，历史旧共享夹具子进程非零退出；新scope检全部10项与两个时区 |
 
 ## E2E验收
 
 ```bash
 DB_NAME=cecelia_scratch npx vitest run sprints/10020020-watchdog-time-fixture/tests/watchdog-time-fixture.test.mjs --maxWorkers=1 --minWorkers=1
 ```
+
+正常同步main5d722后的永久套件保留Walking已合并真实时钟与北京跨日2项，加本任务全天与精确边界；两TZ各10项真实PG零skip。入口计数同步10，历史8项封存字节与审批保留，不将旧seal用于新冻结证据。
