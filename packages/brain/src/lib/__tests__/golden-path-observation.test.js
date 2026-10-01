@@ -4,7 +4,7 @@ import request from 'supertest';
 
 const { query } = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../../db.js', () => ({ default: { query } }));
-import router from '../abilities.js';
+import router from '../../routes/abilities.js';
 
 const savedFlag = process.env.GOLDEN_PATH_LEGACY_READ;
 function app() {
