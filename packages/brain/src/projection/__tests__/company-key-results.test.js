@@ -1,5 +1,46 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runCompanyKrProjection, readCompanySnapshot } from '../company-key-results.js';
+import { COMPANY_FORMULA, COMPANY_GOALS, COMPANY_KR_CATALOG, COMPANY_KR_DATABASE, companyMetric } from '../../lib/company-kr-metrics.js';
+
+function recoveryFixture(failure) {
+  const task = { id: 'registered-import', result: {} };
+  const rows = COMPANY_KR_CATALOG.map((source, i) => ({ id: `kr-${i}`, unit: source.unit, updated_at: new Date('2026-10-01T00:00:00Z'), metadata: { metric_mode: 'company_formula_v1', company_metric: companyMetric(0, i ? 0 : 1, 5), company_current_baseline: '0', imported_snapshot: { task_id: task.id }, validation_state: 'verified_observation' }, custom_props: { company_notion: { page_id: source.page_id, database_id: COMPANY_KR_DATABASE } } }));
+  const pages = COMPANY_KR_CATALOG.map(source => ({ id: source.page_id, parent: { database_id: COMPANY_KR_DATABASE }, last_edited_time: '2026-10-01T00:00:00Z', last_edited_by: { id: 'projection-bot' }, properties: { Name: { title: [{ plain_text: source.title }] }, Goal: { relation: [{ id: source.goal_id }] }, Area: { relation: [] }, Current: { number: 0 }, Target: { number: 5 }, Start: { number: 0 }, Status: { status: { name: 'Open' } } } }));
+  let failOnce = true;
+  const query = vi.fn(async (sql, args = []) => {
+    if (sql.includes('FROM notion_projection_map')) return { rows: [{ notion_db_id: COMPANY_KR_DATABASE }] };
+    if (sql.includes('FROM tasks')) return { rows: [structuredClone(task)] };
+    if (sql.includes('FROM key_results')) return { rows: structuredClone(sql.includes('WHERE id=$1') ? rows.filter(r => r.id === args[0]) : rows) };
+    if (sql.startsWith('UPDATE tasks')) { task.result = JSON.parse(args[1]); return { rows: [], rowCount: 1 }; }
+    if (sql.startsWith('UPDATE key_results')) {
+      const row = rows.find(r => r.id === args[0]);
+      if (sql.includes('company_current_baseline')) {
+        if (failure === 'baseline' && failOnce) { failOnce = false; throw new Error('baseline SQL failed'); }
+        row.metadata.company_current_baseline = typeof args[1] === 'string' && args[1].startsWith('"') ? JSON.parse(args[1]) : args[1];
+        if (sql.includes("metadata-'company_projection_pending'")) delete row.metadata.company_projection_pending;
+      } else if (sql.includes('company_projection_pending')) row.metadata.company_projection_pending = JSON.parse(args[1]);
+      else if (sql.includes('metadata=$5')) row.metadata = JSON.parse(args[4]);
+      return { rows: [structuredClone(row)], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 1 };
+  });
+  const pool = { query, connect: async () => ({ query, release() {} }) };
+  const notionReq = vi.fn(async (_token, path, method, body) => {
+    if (path === `/databases/${COMPANY_KR_DATABASE}`) return { properties: Object.fromEntries(Object.entries({ Name: 'title', Current: 'number', Target: 'number', Start: 'number', Progress: 'formula', Goal: 'relation', Area: 'relation', Status: 'status' }).map(([key, type]) => [key, { type, ...(key === 'Progress' ? { formula: { expression: COMPANY_FORMULA } } : {}) }])) };
+    if (path.endsWith('/query')) return { results: structuredClone(pages), has_more: false };
+    const page = pages.find(p => path.endsWith(p.id));
+    if (page) {
+      if (method === 'PATCH') {
+        Object.assign(page.properties, body.properties);
+        if (failure === 'response' && failOnce) { failOnce = false; throw new Error('response timeout after apply'); }
+      }
+      return structuredClone(page);
+    }
+    const goal = COMPANY_GOALS.find(g => path.endsWith(g.page_id));
+    return { properties: { Name: { title: [{ plain_text: goal.title }] }, Area: { relation: [] } } };
+  });
+  return { pool, notionReq, rows, pages, task };
+}
 
 describe('公司库列级投影门', () => {
   it('未登记零请求，无token零写', async () => {
@@ -10,5 +51,17 @@ describe('公司库列级投影门', () => {
   });
   it('库schema类型不符必须拒绝，不把其它列当指标', async () => {
     await expect(readCompanySnapshot({ token: 'fake', notionReq: vi.fn(async () => ({ properties: {} })) })).rejects.toThrow();
+  });
+  it.each(['response', 'baseline'])('远端已写但%s丢失：恢复不能把旧机器值当真人覆盖新观察', async failure => {
+    const fixture = recoveryFixture(failure);
+    await expect(runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq: fixture.notionReq, now: 1000000 })).rejects.toThrow();
+    const pending = fixture.rows[0].metadata.company_projection_pending;
+    fixture.rows[0].metadata.company_metric = companyMetric(0, 2, 5);
+    fixture.rows[0].metadata.last_observation = { actor: 'opc-kr-current', observed_at: '2026-10-01T01:00:00Z' };
+    expect(await runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq: fixture.notionReq, now: 1300001 })).toMatchObject({ claims: 0 });
+    expect(fixture.rows[0].metadata).toMatchObject({ company_metric: { current: '2' }, validation_state: 'verified_observation', company_current_baseline: '2' });
+    expect(fixture.pages[0].properties.Current.number).toBe(2);
+    expect(pending).toMatchObject({ value: '1', actor: 'brain-notion-projection' });
+    expect(fixture.task.result.metric_observations.some(e => e.kind === 'human_current_claim')).toBe(false);
   });
 });
