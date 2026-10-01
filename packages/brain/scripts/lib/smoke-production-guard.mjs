@@ -15,6 +15,17 @@ function databaseTarget(value) {
   const host = ['localhost', '127.0.0.1', '[::1]'].includes(uri.hostname) ? 'loopback' : uri.hostname;
   return { database: decodeURIComponent(uri.pathname.slice(1)), host, port: uri.port || '5432' };
 }
+function envDatabaseTarget(env, prefix, fallbackDatabase) {
+  const hostname = env[`${prefix}HOST`] || 'localhost';
+  return {
+    database: env[prefix === 'PG' ? 'PGDATABASE' : 'DB_NAME'] || fallbackDatabase,
+    host: ['localhost', '127.0.0.1', '::1'].includes(hostname) ? 'loopback' : hostname,
+    port: env[`${prefix}PORT`] || '5432',
+  };
+}
+function sameDatabase(left, right) {
+  return left.database === right.database && left.host === right.host && left.port === right.port;
+}
 if (process.env.SMOKE_ALLOW_WRITE !== '1') deny('需 SMOKE_ALLOW_WRITE=1');
 try {
   const target = new URL(process.argv[2]);
@@ -35,19 +46,20 @@ try {
   }));
   if (!info.State?.Running || !['test', 'development'].includes(env.NODE_ENV)
       || !safeDatabases.has(env.DB_NAME)) deny('容器必须运行在已知测试环境和安全库');
-  // libpq 的 URI query 可覆盖 dbname/host/port，故拒绝所有 query/hash。
-  const containerDb = env.DATABASE_URL ? databaseTarget(env.DATABASE_URL) : {
-    database: env.DB_NAME,
-    host: ['localhost', '127.0.0.1', '::1'].includes(env.DB_HOST || 'localhost') ? 'loopback' : env.DB_HOST,
-    port: env.DB_PORT || '5432',
-  };
-  if (containerDb.database !== env.DB_NAME) deny('容器连接与声明库名不一致');
-  // psql 清理仅能碰同一已核对的本机数据库服务，远程同名库不能冒充。
+  // Brain db-config.js 的真连接来自 DB_HOST/DB_PORT/DB_NAME，不使用 DATABASE_URL。
+  const containerDb = envDatabaseTarget(env, 'DB_', env.DB_NAME);
+  if (containerDb.host !== 'loopback') deny('容器真实数据库必须是本机测试服务');
+  // 多余 URI 不能掩盖真实离散变量；冲突时保守拒绝。
+  if (env.DATABASE_URL && !sameDatabase(databaseTarget(env.DATABASE_URL), containerDb)) {
+    deny('容器 URI 与 Brain 实际 DB_* 连接不一致');
+  }
   if (process.argv[3]) {
-    const cleanupDb = databaseTarget(process.argv[3]);
-    if (cleanupDb.database !== containerDb.database || cleanupDb.host !== 'loopback'
-        || containerDb.host !== 'loopback' || cleanupDb.port !== containerDb.port) {
-      deny('清理连接必须指向容器的同一本机安全数据库服务');
+    const cleanupDb = process.argv[3] === '--db-env'
+      ? envDatabaseTarget(process.env, 'DB_', 'cecelia')
+      : process.argv[3] === '--pg-env'
+        ? envDatabaseTarget(process.env, 'PG', '') : databaseTarget(process.argv[3]);
+    if (cleanupDb.host !== 'loopback' || !sameDatabase(cleanupDb, containerDb)) {
+      deny('操作连接必须指向容器的同一本机安全数据库服务');
     }
   }
   const containerPort = env.BRAIN_PORT || '5221';

@@ -6,7 +6,7 @@
 set -euo pipefail
 
 # 真 Brain 写入必须显式授权，并核对本机测试容器。
-if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DB_URL:-${DATABASE_URL:-postgresql://localhost/cecelia}}"; then
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
   exit 0
 fi
 
@@ -21,7 +21,7 @@ fi
 echo "[rumination-smoke] Brain 健康 ✓"
 
 echo "[rumination-smoke] 2. 检查 rumination provider 配置（必须为 anthropic-api 或 anthropic，不能是 codex）"
-PROVIDER=$(psql -U cecelia -d cecelia -t -c "SELECT config->'rumination'->>'provider' FROM model_profiles WHERE is_active = true LIMIT 1;" 2>/dev/null | tr -d ' \n' || true)
+PROVIDER=$(psql "${DATABASE_URL:-postgresql://localhost/cecelia}" -t -c "SELECT config->'rumination'->>'provider' FROM model_profiles WHERE is_active = true LIMIT 1;" 2>/dev/null | tr -d ' \n' || true)
 if [[ "$PROVIDER" == "codex" || "$PROVIDER" == "openai" ]]; then
   echo "[rumination-smoke] FAIL: rumination provider=${PROVIDER}（错误配置）"
   exit 1
@@ -50,7 +50,7 @@ if [[ "$PROCESSED" == "0" ]]; then
 fi
 
 echo "[rumination-smoke] 4. 验证最近 60s 有 rumination_run 心跳"
-COUNT=$(psql -U cecelia -d cecelia -t -c "
+COUNT=$(psql "${DATABASE_URL:-postgresql://localhost/cecelia}" -t -c "
   SELECT COUNT(*) FROM cecelia_events
   WHERE event_type = 'rumination_run'
     AND created_at > NOW() - INTERVAL '60 seconds';

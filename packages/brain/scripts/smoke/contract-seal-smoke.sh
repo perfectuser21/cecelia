@@ -12,7 +12,7 @@ fi
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 TOKEN="${BRAIN_INTERNAL_TOKEN:-}"
 if [ -z "$TOKEN" ] && command -v docker >/dev/null 2>&1; then
-  TOKEN=$(docker exec cecelia-node-brain printenv CECELIA_INTERNAL_TOKEN 2>/dev/null || true)
+  TOKEN=$(docker exec "$BRAIN_CONTAINER" printenv CECELIA_INTERNAL_TOKEN 2>/dev/null || true)
 fi
 AUTH=(); [ -n "$TOKEN" ] && AUTH=(-H "Authorization: Bearer $TOKEN")
 

@@ -276,3 +276,18 @@ test('phone registry checks the PG_* connection it actually uses when no URI exi
     assert.doesNotMatch(result.output, /GUARD_ACCEPTED/);
   });
 });
+
+test('standalone claimed-by script rejects actual production DATABASE_URL before POST', async () => {
+  await fixture(async ({ requests, smoke }) => {
+    const result = await smoke('claimed-by-cleared', { SMOKE_ALLOW_WRITE: '1', DB_URL: 'postgresql://localhost/cecelia_test',
+      DATABASE_URL: 'postgresql://localhost/cecelia' });
+    assert.equal(result.code, 0, result.output);
+    assert.deepEqual(requests, [], 'standalone operation escaped the checked DB target');
+  });
+});
+test('ignored DB_URL does not replace a safe actual DATABASE_URL', async () => {
+  await fixture(async ({ smoke }) => {
+    const result = await smoke('claimed-by-cleared', { SMOKE_ALLOW_WRITE: '1', DB_URL: 'postgresql://remote/cecelia' }, undefined, true);
+    assert.match(result.output, /GUARD_ACCEPTED/);
+  });
+});
