@@ -7,6 +7,7 @@ const phone = { serial: 'SER1', nickname: '旧昵称', aliases: [], host: 'xian-
   douyin_accounts: [], updated_at: new Date('2026-01-01'), model: 'REAL' };
 function fixture(state = {}) {
   const calls = []; const client = { release: vi.fn(), query: vi.fn(async (sql, params = []) => {
+    if (typeof sql === 'object') { params = sql.values ?? []; sql = sql.text; }
     calls.push({ sql, params });
     if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: true }] };
     if (sql.includes('SELECT value_json')) return { rows: [{ value_json: state }] };
@@ -53,4 +54,23 @@ describe('台账同步调度', () => {
     const cmd = buildPhoneAgentCommand('xian-m1', { phones: [{ nickname: "$(touch /tmp/nope)'" }] }, 'fixture', false);
     expect(cmd).not.toContain('$(touch'); expect(() => buildPhoneAgentCommand('bad; command', {}, '', false)).toThrow();
   });
+  it('Notion请求挂起必须限时解锁，无写入或下一页请求', async () => {
+    const f = fixture(); const req = vi.fn(() => new Promise(() => {})); const exec = vi.fn();
+    await expect(runPhoneRegistrySync(f.pool, { token: 'test', notionReq: req, exec, notionTimeoutMs: 20 })).rejects.toThrow(/超时/);
+    expect(req).toHaveBeenCalledTimes(1);
+    expect(f.calls.some(c => c.sql === 'BEGIN')).toBe(false);
+    expect(f.calls.some(c => c.sql.includes('pg_advisory_unlock'))).toBe(true);
+    expect(f.client.release).toHaveBeenCalled(); expect(exec).not.toHaveBeenCalled();
+  }, 250);
+  it('未知账号或读取失败必须去重提醒，忙碌手机仍仅延后核验', async () => {
+    const f = fixture(); const bark = vi.fn();
+    const exec = vi.fn(async cmd => JSON.stringify({ ok: true, receipts: [
+      { serial: 'SER1', day: '2030-01-01', status: cmd.includes('xian-m1') ? 'unreadable' : 'task_busy' },
+    ] }));
+    const out = await runPhoneRegistrySync(f.pool, { token: 'test', notionReq: async () => ({ results: [] }), exec,
+      now: 1900000000000, program: 'fixture', inContainer: false, bark });
+    expect(out.ok).toBe(false); expect(bark).toHaveBeenCalledTimes(1);
+    expect(bark.mock.calls[0][2]).toMatchObject({ dedupeKey: 'phone-account:SER1:2030-01-01', dedupeTtlSec: 86400 });
+  });
+
 });

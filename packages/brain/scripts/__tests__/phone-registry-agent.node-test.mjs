@@ -89,3 +89,12 @@ test('核验超时先TERM收尾后退出，不直接杀掉wrapper留在途子进
   assert.equal(r.status, 0, r.stderr); const out = JSON.parse(r.stdout); assert.equal(out.code, 124); assert.ok(out.elapsed < 3);
   assert.equal(readFileSync(join(f.dir, 'cleaned'), 'utf8'), '1');
 });
+
+test('控制器失败即使输出正确ID也不得确认核验通过或误报账号不一致', t => {
+  const f = fixture(t); const ctl = f.env.PHONE_AGENT_CONTROLLER;
+  writeFileSync(ctl, readFileSync(ctl, 'utf8') + '\nexit 17\n');
+  // lock-status仍正常，只有持锁核验命令返回失败。
+  writeFileSync(ctl, readFileSync(ctl, 'utf8').replace('exit 17', 'if [ "$3" = with-lock ]; then exit 17; fi'));
+  assert.equal(f.run().receipts[0].status, 'unreadable');
+  assert.match(f.log(), /account-current/);
+});
