@@ -66,9 +66,9 @@ console.log('建单写入 / 入口校验 / 路由落列 / 投影读列 全部接
 
 if [ -n "${TASK_KIND_SMOKE_DB_URL:-}" ]; then
   echo "[task-kind-column-smoke] 6. 真库：列 / 约束 validated / 无 NULL"
-  psql "$TASK_KIND_SMOKE_DB_URL" -Atc "SELECT 1 FROM information_schema.columns WHERE table_name='tasks' AND column_name='kind'" | grep -q 1 || { echo "FAIL tasks.kind 列不存在"; exit 1; }
-  psql "$TASK_KIND_SMOKE_DB_URL" -Atc "SELECT convalidated FROM pg_constraint WHERE conrelid='tasks'::regclass AND conname='tasks_kind_check'" | grep -q t || { echo "FAIL tasks_kind_check 不存在或未 validated"; exit 1; }
-  NULLS=$(psql "$TASK_KIND_SMOKE_DB_URL" -Atc "SELECT count(*) FROM tasks WHERE kind IS NULL")
+  psql -X "$TASK_KIND_SMOKE_DB_URL" -Atc "SELECT 1 FROM information_schema.columns WHERE table_name='tasks' AND column_name='kind'" | grep -q 1 || { echo "FAIL tasks.kind 列不存在"; exit 1; }
+  psql -X "$TASK_KIND_SMOKE_DB_URL" -Atc "SELECT convalidated FROM pg_constraint WHERE conrelid='tasks'::regclass AND conname='tasks_kind_check'" | grep -q t || { echo "FAIL tasks_kind_check 不存在或未 validated"; exit 1; }
+  NULLS=$(psql -X "$TASK_KIND_SMOKE_DB_URL" -Atc "SELECT count(*) FROM tasks WHERE kind IS NULL")
   [ "$NULLS" = "0" ] || { echo "FAIL 仍有 $NULLS 行 kind IS NULL"; exit 1; }
   echo "真库列/约束/回填 ✓"
 else

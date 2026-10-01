@@ -1,3 +1,4 @@
+import { runPreviewCacheJanitor } from './preview-cache-scheduler.js';
 import { runCompanyKrWorkflow } from './projection/company-kr-workflow.js';
 /**
  * scheduler-jobs.js — 声明式定时任务注册表（作战循环 P1-PR1）
@@ -82,6 +83,7 @@ export const JOBS = [
   // machine-vitals 必须排首位：串行轮内后面 19 个 job 的延迟会把采样推过 STALE_MS(180s)，
   // harness 派发热路径读到的就是过期缓存（beeba317 终审 Fix 3）。
   { name: 'machine-vitals', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => sampleMachineVitals(pool), description: '本机体征采样（docker容器数/VM内存/盘，60s，harness admission 数据源，beeba317）' },
+  { name: 'preview-owned-cache-janitor', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runPreviewCacheJanitor, description: 'MMV专属npm cache过期回收：默认停用、真实任务与持久回执对账' },
   { name: 'arch-review', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerArchReview, description: '架构巡检（自带4h窗口+guard）' },
   { name: 'ci-patrol', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerCiPatrol, description: 'CI/CD 巡检（自带北京08:00窗口+当日去重）' },
   { name: 'strategy-trigger', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeTriggerStrategySession, description: '战略会应急触发（自带active_goals gate+24h冷却）' },

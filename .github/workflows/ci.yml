@@ -592,6 +592,13 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: 专属cache真实writer与强鉴权HTTP故障回归
+        run: node --test scripts/preview-cache.test.mjs scripts/preview-cache-http.test.mjs
       - name: preview start 依赖隔离/旧进程顺序自测
         run: bash scripts/__tests__/preview-env-start.test.sh
       - name: Harness PR 与 Preview 容量闸解耦自测
@@ -1758,6 +1765,16 @@ jobs:
           echo "::error::Brain not healthy in 90s"
           docker logs cecelia-brain-smoke
           exit 1
+      - name: Map Manifest real PG positive
+        env:
+          SMOKE_ALLOW_WRITE: '1'
+          BRAIN_URL: http://localhost:5221
+          BRAIN_CONTAINER: cecelia-brain-smoke
+          DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
+          NODE_ENV: test
+        run: |
+          cd packages/brain
+          npx vitest run --config vitest.real-env-smoke.config.js
       - name: Run all packages/brain/scripts/smoke/*.sh
         env:
           SMOKE_ALLOW_WRITE: '1'

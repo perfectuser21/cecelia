@@ -7,12 +7,17 @@
 #   3. 有 Brain（BRAIN_URL）时：GET /api/brain/phone-registry 返回 ≥4 行且含小黄；PUT 空 body 不得 200（不写库）
 #      （无令牌 401 由单测钉住：CI 容器 host 网络 + 未配 token 时 loopback 放行，这里测不出来）
 set -euo pipefail
+
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DATABASE_URL:---pg-env}"; then
+  exit 0
+fi
 cd "$(dirname "$0")/../.."
 
 ROWS_JSON=""
 if command -v psql >/dev/null 2>&1 && { [ -n "${DATABASE_URL:-}" ] || [ -n "${PGDATABASE:-}" ]; }; then
   echo "[phone-registry-smoke] 2. 真库 phone_registry 种子"
-  ROWS_JSON=$(psql ${DATABASE_URL:+"$DATABASE_URL"} -v ON_ERROR_STOP=1 -Atc \
+  ROWS_JSON=$(psql -X ${DATABASE_URL:+"$DATABASE_URL"} -v ON_ERROR_STOP=1 -Atc \
     "SELECT COALESCE(json_agg(row_to_json(p) ORDER BY serial), '[]') FROM phone_registry p" 2>/dev/null || echo "")
   if [ -n "$ROWS_JSON" ]; then
     N=$(node -e "console.log(JSON.parse(process.argv[1]).length)" "$ROWS_JSON")
@@ -57,15 +62,15 @@ if (!['小彩', '小白', '小黄', '小蓝'].every((n) => note.includes(n))) { 
 process.exit(bad ? 1 : 0);
 "
 
-if [ -n "${BRAIN_URL:-}" ] && curl -sf -m 5 "$BRAIN_URL/api/brain/tick/status" >/dev/null 2>&1; then
+if [ -n "${BRAIN_URL:-}" ] && curl -q -sf -m 5 "$BRAIN_URL/api/brain/tick/status" >/dev/null 2>&1; then
   echo "[phone-registry-smoke] 3. Brain 路由"
-  BODY=$(curl -sf -m 10 "$BRAIN_URL/api/brain/phone-registry")
+  BODY=$(curl -q -sf -m 10 "$BRAIN_URL/api/brain/phone-registry")
   node -e "
 const b = JSON.parse(process.argv[1]);
 if (!(b.count >= 4) || !b.phones.some((p) => p.serial === 'ANGYVB4402004137' && p.nickname === '小黄')) { console.error('FAIL GET 返回', b.count); process.exit(1); }
 console.log('GET /phone-registry', b.count, '行 ✓');
 " "$BODY"
-  CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X PUT -H 'Content-Type: application/json' \
+  CODE=$(curl -q -s -o /dev/null -w '%{http_code}' -m 10 -X PUT -H 'Content-Type: application/json' \
     -d '{}' "$BRAIN_URL/api/brain/phone-registry/SMOKE0000")
   case "$CODE" in 400|401|503) echo "PUT 空 body → $CODE（未写库）✓" ;; *) echo "FAIL PUT 空 body 返回 $CODE"; exit 1 ;; esac
 fi
