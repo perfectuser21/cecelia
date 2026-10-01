@@ -28,11 +28,17 @@ const up = readFileSync('migrations/471_script_executor_kind_and_task_type.sql',
 if ((up.match(/NOT VALID/g) || []).length !== 2 || /VALIDATE CONSTRAINT/.test(up)) { console.error('FAIL 471 必须两条都 NOT VALID 且不含 VALIDATE'); process.exit(1); }
 const list = (name) => { const m = up.match(new RegExp(name + '\\\\s+CHECK\\\\s*\\\\(([\\\\s\\\\S]*?)\\\\)\\\\s*NOT VALID')); return m ? [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]).sort() : []; };
 const ek = list('tasks_executor_kind_check'), tt = list('tasks_task_type_check');
+const extension = readFileSync('migrations/502_preview_owned_cache_janitor.sql', 'utf8');
+for (const [constraint,column,value] of [['tasks_executor_kind_check','executor_kind','preview-janitor'],['tasks_task_type_check','task_type','janitor']]) {
+  const tuple = '(' + [constraint,column,value].map(x => String.fromCharCode(39) + x + String.fromCharCode(39)).join(',') + ')';
+  if (!extension.includes(tuple)) { console.error('FAIL 502 缺精确合同增量'); process.exit(1); }
+}
+ek.push('preview-janitor'); ek.sort(); tt.push('janitor'); tt.sort();
 if (JSON.stringify(ek) !== JSON.stringify([...VALID_EXECUTOR_KINDS].sort())) { console.error('FAIL executor_kind 名单 != VALID_EXECUTOR_KINDS'); process.exit(1); }
 if (JSON.stringify(tt) !== JSON.stringify([...R.DB_WHITELISTED_TASK_TYPES].sort())) { console.error('FAIL task_type 名单 != 注册表 DB 白名单'); process.exit(1); }
 const v = readFileSync('migrations/472_validate_script_executor_constraints.sql', 'utf8');
 for (const c of ['tasks_executor_kind_check', 'tasks_task_type_check']) if (!v.includes('VALIDATE CONSTRAINT ' + c)) { console.error('FAIL 472 缺 VALIDATE ' + c); process.exit(1); }
-console.log('471/472 结构正确，名单与 lib 真身一致 ✓');
+console.log('471/472 结构正确，叠加502增量后与 lib 真身一致 ✓');
 "
 
 echo "[script-executor-contract-smoke] 3. payload 契约：合法通过 / 违规被拒"

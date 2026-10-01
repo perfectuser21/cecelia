@@ -10,11 +10,28 @@
 
 
 
-**Brain 版本**: 1.352.6
+**Brain 版本**: 1.353.6
+
+CI趋势集成测试将北京自然日与滚动24小时设备窗口独立布置，覆盖陈旧、近期成功和无任务设备；生产巡检阈值不变。
+
+专用 app-server runner 首批提供受限 generation 容器、HOME 单写 journal、精确 ID 取消墓碑及双向有界 JSONL；只有 attach 进程确认退出才释放流占位；关闭事件在同一预约锁内重放，不能因锁争用丢失。Worker 重启后旧等待资源意图不可重新启动，旧身份仍可清理。标准安装器事务打包四模块，默认 profiles 为空，尚未接生产 start、Brain 预算或 OpenClaw RPC adapter，现网 OpenClaw 尚未由此治理。
+
+受信 app-server profile 固定镜像 digest、非 root UID/GID、CPU/内存/PID/tmpfs 配额、显式隔离网络和两个受标签验证的 named volume；禁止宿主 HOME、凭据与 socket 挂载。HOME 卷须由受控初始化预建 `/home/runner/.codex` 并赋予 profile 用户写权限；runner 不创建或删除持久卷。真实离线 canary 经 runner 两次独立运行实例（不同 reservation，各 launch_generation=1）initialize 与共享 HOME marker 保留，不代表模型登录或线程恢复验证。日志驱动为 none；stdio 内容不进 journal，错误仅固定码。操作锁及未确认流/容器状态持续占位，后续控制面负责恢复。
+
+Janitor 新动作的CI冒烟使用十类执行者精确名单、471叠加502合法增量及只读任务白名单；真实PG路由验证默认停用且不触发清理。
+
+
+Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增量；healthz 只隔离真实依赖，不污染机群配置读取。
+
+## Brain 1.352.2 — preview 专属缓存受控回收
+
+- 仅回收带私有归属登记的 preview npm 缓存；writer/回收共锁、固定 GitHub 终态复验、24 小时冷却、删除前 inode 校验与真实磁盘回执。旧缓存不追认。
+- Brain 持久任务与 intent，远端固定鉴权接口；未确认操作只查询原回执，调度默认停用。新增 migration 502 约束专用任务类型及 intent 唯一性。
+- 保留前置 Harness 加权预约、Worker 本机 CPU/内存/磁盘/Docker 二次准入；不包含 OpenClaw 直聊、Linux 执行能力与动态授权。
 
 受管脚本准入仅写 blocked/queued，终态写入者守卫已登记。
 
-## Brain 1.352.6 — Harness 单任务容器硬限（12338dda）
+## Brain 1.353.6 — Harness 单任务容器硬限（12338dda）
 
 - Brain 角色预约与 Worker cgroups 共用 attempt-resource-policy：每基础槽 0.5 CPU、1 GiB、128 PID；轻档权重1、proposer权重2、generator/evaluator/judge权重4。fleet资源缓存物理槽由相同1GiB/.5CPU需求估算，替换原400MiB粗估；既有7/8/8上限不变，节点profile的最低6CPU/8GiB不当总预算。
 - 每个实际 Docker create/run 设置 CPU、内存、memory-swap和PID上限，memory-swap等于memory禁额外swap。Postgres固定占同一attempt总额中的0.25CPU/256MiB/32PID，runner扣减；轻档含PG时runner为0.25CPU/768MiB/96PID，不额外借预算。
@@ -63,8 +80,13 @@ cleanup_pending / blocked 预约继续清理；通信未知保留占位。预算
 - 历史恢复与清理 fixture 按真实容量、执行身份和事务语义验证，保留父终态并发约束。
 
 
+Worker 标准升级在预检前读取可信现役 plist 快照，保留既有地址、端口、令牌引用、路径与完整环境；预检和启动健康使用同一有效配置，私有快照及安装 plist 为0600，替换前复核旧配置指纹，失败保留事务回滚。
 
 机群统一资源预约与启动保护：Harness 按角色权重在同机事务锁内预约；资源未知、过期、并发不足均拒绝新增执行；未确认精确清理的执行继续占位。Worker 在 prepare/start 实际副作用前复验本机 CPU、内存与执行目录磁盘。安装保护保留 profile 至少10GiB可用余量和可信采样，高磁盘占用允许升级；新增受管 Harness 仍执行原85%磁盘压力门槛。
+
+## Brain 1.352.1 — 公司经营KR人工正式值与AI独立建议
+
+正式值由Notion工作面回灌；机器观察与建议独立存储。Brain统一触发每日及正式变更分析，OpenClaw受限分析员返回绑定快照的建议，可信收割校验、任务留痕并投影AI栏。
 
 ## Brain 1.350.4 — 节点接入与受控执行回执
 

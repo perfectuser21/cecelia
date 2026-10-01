@@ -28,16 +28,20 @@ describe('迁移 471：登记 script 与 script_run', () => {
     expect(sql).not.toMatch(/VALIDATE CONSTRAINT/);
   });
 
-  it("executor_kind 列表 == VALID_EXECUTOR_KINDS，且含 'script'", () => {
+  it("471 executor_kind 加已登记的502增量后等于当前注册表，且含 script", () => {
     const list = listOf(strip(readFileSync(file, 'utf8')), 'tasks_executor_kind_check');
     expect(list).toContain('script');
-    expect([...list].sort()).toEqual([...VALID_EXECUTOR_KINDS].sort());
+    expect(readFileSync(join(MIG, '502_preview_owned_cache_janitor.sql'), 'utf8'))
+      .toContain("('tasks_executor_kind_check','executor_kind','preview-janitor')");
+    expect([...list, 'preview-janitor'].sort()).toEqual([...VALID_EXECUTOR_KINDS].sort());
   });
 
-  it("task_type 列表 == 注册表 DB 白名单，且含 'script_run'", () => {
+  it("471 task_type 加已登记的502增量后等于当前DB白名单，且含 script_run", () => {
     const list = listOf(strip(readFileSync(file, 'utf8')), 'tasks_task_type_check');
     expect(list).toContain('script_run');
-    expect([...list].sort()).toEqual([...DB_WHITELISTED_TASK_TYPES].sort());
+    expect(readFileSync(join(MIG, '502_preview_owned_cache_janitor.sql'), 'utf8'))
+      .toContain("('tasks_task_type_check','task_type','janitor')");
+    expect([...list, 'janitor'].sort()).toEqual([...DB_WHITELISTED_TASK_TYPES].sort());
   });
 
   it('写 schema_version 471', () => {
