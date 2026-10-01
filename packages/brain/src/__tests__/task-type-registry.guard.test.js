@@ -70,7 +70,7 @@ const REGISTRY = join(SRC, 'lib', 'task-type-registry.js');
 //   LOCATION_MAP/TASK_REQUIREMENTS/ASYNC_CALLBACK_TYPES、executor.js 的 skillMap/modeMap）
 //   也已改注册表派生（对象型用 deep-equal fixture 校验零行为变化）。两个文件里各剩 1 处
 //   真正的 long-lived: map（task-router.js:135 的 2 项业务降级链 FALLBACK_STRATEGIES.skill、
-//   executor.js:2240 的 task_type→handler 函数路由表 _TASK_ROUTES，函数值无法进纯数据注册表）
+//   executor.js:2241 的 task_type→handler 函数路由表 _TASK_ROUTES，函数值无法进纯数据注册表）
 //   ——kind: enum 在这两个文件里已清零，只剩 kind: map。
 // - Task 6（补充五+补充六收尾）：`executor-contracts.js` 的 `EXECUTOR_KIND_FOR` 改从注册表
 //   `EXECUTOR_KIND_FOR_TASK_TYPE` 派生（+ 两个路径 sentinel），退出清单——清单变量从
