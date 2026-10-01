@@ -2,9 +2,11 @@
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const execute = promisify(execFile);
+const {guardLaunchCommand}=require('./local-resource-admission.cjs');
 
 // 命令作为容器 entrypoint 参数传入；宿主不经 shell，任务无权传 docker flags。
-function createScriptDockerAdapter({ run = execute } = {}) {
+function createScriptDockerAdapter({ run = execute, assertCanLaunch=()=>{} } = {}) {
+  run=guardLaunchCommand(run,assertCanLaunch);
   const command = (args) => run('docker', args, { encoding: 'utf8',timeout:20_000,maxBuffer:1024*1024 });
   return {
     async create({ name, profile, command: script, env = {}, identity }) {

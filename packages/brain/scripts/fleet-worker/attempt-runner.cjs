@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { promisify } = require('node:util');
+const {guardLaunchCommand}=require('./local-resource-admission.cjs');
 
 const execFileAsync = promisify(execFile);
 const CANONICAL_MACHINE_IDS = new Set([
@@ -406,11 +407,13 @@ function createDockerAdapter({
   resolveMountSource = fs.realpathSync,
   mountAccessPrincipal,
   cleanupAccessPrincipal,
+  assertCanLaunch=()=>{},
 } = {}) {
   const root = assertRuntimeRoot(runtimeRoot, 'runtime_root');
   if (typeof runCommand !== 'function') {
     throw new Error('attempt_runner_invalid_docker_command_runner');
   }
+  runCommand=guardLaunchCommand(runCommand,assertCanLaunch);
   if (typeof writeCredential !== 'function') {
     throw new Error('attempt_runner_invalid_credential_writer');
   }
@@ -759,7 +762,9 @@ function createDockerAdapter({
     ) {
       throw new Error('attempt_github_credential_fifo_invalid');
     }
+    assertCanLaunch();
     await verifyIdentity({ attemptId, runId, image, containerId });
+    let blockedByDrain=false;
     try {
       const plan = resolveAttemptResourcePlan({ workerId, role, postgres: hasPostgres });
       await runCommand('docker', ['update', ...dockerLimitArgs(plan.runner), '--', containerId], undefined);
@@ -778,11 +783,13 @@ function createDockerAdapter({
           credential.authJson,
         );
       }
+    } catch(error) {
+      blockedByDrain=error.message==='worker_draining';throw error;
     } finally {
-      if (githubCredentialFifo) {
+      if (!blockedByDrain && githubCredentialFifo) {
         fs.rmSync(githubCredentialFifo, { force: true });
       }
-      if (credentialFifo) {
+      if (!blockedByDrain && credentialFifo) {
         fs.rmSync(credentialFifo, { force: true });
       }
     }
@@ -1415,6 +1422,7 @@ function createAttemptRunner({
   assertLocalResources = async () => {
     throw Object.assign(new Error('attempt_local_resources_unavailable'), { statusCode: 429 });
   },
+  assertCanLaunch=()=>{},
   claudeAccountsRoot = null,
   candidateRetentionTtlMs = CANDIDATE_RETENTION_TTL_MS,
   now = () => Date.now(),
@@ -1964,7 +1972,10 @@ function createAttemptRunner({
     };
   }
 
+  // 可能有副作用的 prepare 失败不能靠空 journal 证明静默；同 boot 保持未决。
+  let maintenanceUnconfirmed = false;
   const runner = {
+    async maintenance(){if(maintenanceUnconfirmed)throw Error('worker_maintenance_unconfirmed');const states=await stateStore.list();return {pending:states.filter(s=>s.status!=='terminal').length};},
     async prepare(input) {
       const {
         request,
@@ -1984,6 +1995,7 @@ function createAttemptRunner({
         return inFlight.promise;
       }
 
+      let sideEffectsPossible = false;
       const operation = (async () => {
       const existing = await stateStore.get(request.attempt_id);
       if (existing) {
@@ -1999,9 +2011,11 @@ function createAttemptRunner({
         throw new Error('attempt_already_exists');
       }
 
+      assertCanLaunch();
       const resourceLimits = resolveAttemptResourcePlan({ workerId, role: target.role,
         postgres: executionContract.runtimeRequirements.postgres === true });
       await assertLocalResources({ phase: 'prepare', attemptId: request.attempt_id });
+      assertCanLaunch();
       const { credential, githubCredential } = consumeAttemptCredentials(
         request,
         target,
@@ -2011,6 +2025,7 @@ function createAttemptRunner({
       // /host-claude-config，entrypoint（canonical 镜像内现成逻辑）软链
       // .credentials.json 回原件，全执行体共享单条 OAuth 链。
       const claudeConfigMount = resolveClaudeConfigMount(target);
+      sideEffectsPossible = true;
       const workspace = await prepareVerifiedWorkspace(request.workspace_spec, {
         nodeDeps: executionContract.runtimeRequirements.node_deps === true,
       });
@@ -2038,7 +2053,9 @@ function createAttemptRunner({
       let resources = EMPTY_RUNTIME_RESOURCES;
       if (executionContract.runtimeRequirements.postgres) {
         try {
+          assertCanLaunch();
           await assertLocalResources({ phase: 'postgres', attemptId: request.attempt_id });
+          assertCanLaunch();
           resources = await resourceManager.provision({
             attemptId: request.attempt_id, role: target.role,
             // F3（复审实测坐实）：resourceManager（attempt-resources.cjs
@@ -2056,6 +2073,7 @@ function createAttemptRunner({
 
       let prepared;
       try {
+        assertCanLaunch();
         prepared = await docker.prepare(dockerRequestFor({
           request,
           providerSpec,
@@ -2148,6 +2166,9 @@ function createAttemptRunner({
       });
       try {
         return await operation;
+      } catch (error) {
+        if (sideEffectsPossible) maintenanceUnconfirmed = true;
+        throw error;
       } finally {
         if (prepareOperations.get(request.attempt_id)?.promise === operation) {
           prepareOperations.delete(request.attempt_id);
@@ -2301,6 +2322,7 @@ function createAttemptRunner({
           throw new Error('attempt_credentials_unavailable');
         }
 
+        assertCanLaunch();
         state.resource_limits = resolveAttemptResourcePlan({ workerId, role: state.role,
           postgres: Boolean(state.runtime_resources?.postgres) });
         try {
@@ -2318,6 +2340,7 @@ function createAttemptRunner({
           catch (error) { if (isIdentityFailure(error)) await parkUnverifiedIdentity(state); throw error; }
         }
         await assertLocalResources({ phase: 'start', attemptId });
+        assertCanLaunch();
         if (cancellationRequests.has(attemptId)) return finalizeCancelledStart(state, lease);
         if (state.status === 'prepared') {
           await stateStore.save({
@@ -2327,6 +2350,7 @@ function createAttemptRunner({
           });
         }
         if (cancellationRequests.has(attemptId)) return finalizeCancelledStart(state, lease);
+        assertCanLaunch();
         try {
           await docker.start({
             attemptId, role: state.role, hasPostgres: Boolean(state.runtime_resources?.postgres),
@@ -2351,6 +2375,7 @@ function createAttemptRunner({
             return finalizeCancelledStart(state, lease);
           }
         } catch (error) {
+          if(error.message==='worker_draining')throw error;
           pendingCredentials.delete(attemptId);
           if (isIdentityFailure(error)) { await parkUnverifiedIdentity(state); throw error; }
           const cleanup = await finalizeAttempt(attemptId, lease);
