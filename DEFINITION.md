@@ -10,7 +10,9 @@
 
 
 
-**Brain 版本**: 1.354.14
+**Brain 版本**: 1.354.15
+
+OpenClaw shim 每次物理启动使用新幂等键；Brain 仅对已开始RPC且持久通道closed、或明确exited/dead的旧代自动精确取消。清理回执未知继续占位，确认absent后保留原HOME与机器亲和创建下一代；不自动重放RPC，未开始RPC的closed及Worker崩溃遗留锁仍保守拒绝。
 
 OpenClaw 宿主业务工具名单绑定受保护 profile 及配置摘要；searchable/direct namespace 与消息回调保持原协议，宿主执行与派生代理入口仍拒绝。
 

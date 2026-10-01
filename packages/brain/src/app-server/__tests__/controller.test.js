@@ -7,7 +7,7 @@ const home={homeId:'chat-test',homeKey:'a'.repeat(64),provider:'codex',account:'
 it('首次M1/M4离线可选择MMV，已有HOME离线不改派且缺默认配置不探测',async()=>{
  await seedExecutionDirectoryFixture();
  const row={id:randomUUID(),config:home,status:'running',machine_id:'us-mac-m4'},calls=[];
- const store={home:async()=>null,reserve:async()=>({outcome:'reserved',reservation:row}),observe:async()=>row,recordUnknown:async()=>{}};
+ const store={latest:async()=>null,home:async()=>null,reserve:async()=>({outcome:'reserved',reservation:row}),observe:async()=>row,recordUnknown:async()=>{}};
  const client={capabilities:async(_h,m)=>{calls.push(m);if(m!=='us-mac-m4')throw Error('appserver_worker_unavailable');return {};},start:async()=>({})};
  const controller=createAppServerController({pool:{},store,client,homes:{[home.homeId]:home},collectSnapshot:async()=>({})});
  const input={home_id:home.homeId,request_key:randomUUID()};expect((await controller.ensure(input)).machine_id).toBe('us-mac-m4');expect(calls).toEqual(['xian-mac-m1','xian-mac-m4','us-mac-m4']);
@@ -19,7 +19,7 @@ it('新节点候选来自有效执行目录，空目录不再派发旧硬编码�
  const node=structuredClone(directory.current().nodes[0]);node.canonical_id='new-compute';
  await directory.refresh({pool:{query:async()=>({rows:[node]})}});
  const row={id:randomUUID(),config:home,status:'running',machine_id:'new-compute'},calls=[];
- const store={home:async()=>null,reserve:async()=>({outcome:'reserved',reservation:row}),observe:async()=>row};
+ const store={latest:async()=>null,home:async()=>null,reserve:async()=>({outcome:'reserved',reservation:row}),observe:async()=>row};
  const client={capabilities:async(_h,m)=>{calls.push(m);return {};},start:async()=>({})};
  const controller=createAppServerController({pool:{},store,client,homes:{[home.homeId]:home},collectSnapshot:async()=>({})});
  const input={home_id:home.homeId,request_key:randomUUID()};

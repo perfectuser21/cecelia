@@ -49,7 +49,7 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
         || !/^openclaw-[a-f0-9]{64}$/.test(input.owner_key) || !HASH.test(input.config_digest)
         || !/^[a-z][a-z0-9-]{0,63}$/.test(input.profile)) throw new Error('appserver_identity_invalid');
   }
-  // 只由已确认的子进程 close 产生事件；持锁重放，不能用旧 state 覆盖取消墓碑。
+  // 只由已确认的 attach 通道 close 产生事件；持锁重放，不表示容器已停止。
   function flushStreamClose(reservationId) {
     const pending = pendingStreamCloses.get(reservationId);
     if (!pending) return;
@@ -204,7 +204,7 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
           // 当前操作持锁时由 finally 重放；外部锁/落盘失败则保留事件，下一次取锁重放。
           locked(bindings(state), async () => {}).catch(() => {});
         };
-        // 错误只请求断流；确认 attach 进程退出后才允许下一条连接。
+        // 错误只请求断流；确认 attach 通道关闭后才落盘 closed。
         child.on('error', () => {});
         child.once('close', releaseStream);
         state.stream_status = 'attached'; save(state);

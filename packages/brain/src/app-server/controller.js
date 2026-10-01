@@ -10,6 +10,14 @@ export function createAppServerController({pool,env=process.env,homes=loadAppSer
  store=createAppServerStore({pool}),client=createAppServerClient({pool,store,env}),collectSnapshot}={}){
  collectSnapshot??=async machine=>{const capacity=await createProductionCapabilityProbes({env,cacheTtlMs:0}).getMachineBaseCapacity({machine});const captured_at=Date.now();return {verified:true,machine,captured_at,expires_at:captured_at+1000,capacity};};
  async function observe(id){const verified=await client.inspect(id);return store.observe(id,verified);}
+ async function recover(id){
+  const verified=await client.inspect(id),row=await store.observe(id,verified),r=verified.receipt;
+  if(row.status==='released')return row;
+  // rpc_started 后 Worker 永远拒绝同代重attach；closed 此时是稳定条件。
+  // HTTP EOF、未开始RPC的closed、重启后内存无连接均不足以授权自动取消。
+  if(['exited','dead'].includes(r.status)||(r.rpc_started===true&&r.stream_status==='closed'&&UUID.test(r.stream_id)))return cancel(id);
+  return row;
+ }
  async function cancel(id){await store.requestCancel(id);
   // 先追回可能丢失的create回执；失败仍只能按持久身份取消，Worker独立校验。
   try{await observe(id);}catch{ /* 未知仍占位；cancel的精确回执是唯一释放条件。 */ }
@@ -20,7 +28,9 @@ export function createAppServerController({pool,env=process.env,homes=loadAppSer
   async ensure(input){
    if(!input||Object.keys(input).some(k=>!['home_id','request_key'].includes(k))||!UUID.test(input.request_key))throw Error('appserver_request_invalid');
    const home=homes[input.home_id];if(!home)throw Error('appserver_home_unconfigured');validateHome(home);
-   const pinned=await store.home(home.homeId);const candidates=pinned?[pinned.machine_id]:listComputeWorkerIds()
+   const pinned=await store.home(home.homeId);
+   if(pinned){const previous=await store.latest(home.homeId);if(previous)await guarded(previous.id,()=>previous.cancel_requested?cancel(previous.id):recover(previous.id));}
+   const candidates=pinned?[pinned.machine_id]:listComputeWorkerIds()
     .sort((a,b)=>Number(isPrimaryWorker(a))-Number(isPrimaryWorker(b))||a.localeCompare(b));
    let denied;
    for(const machineId of candidates){
@@ -42,7 +52,7 @@ export function createAppServerController({pool,env=process.env,homes=loadAppSer
   async inspect(id){if(!UUID.test(id))throw Error('appserver_request_invalid');const row=await store.get(id);if(row.status==='released')return view(row);return guarded(id,async()=>view(await observe(id)));},
   async cancel(id){if(!UUID.test(id))throw Error('appserver_request_invalid');const row=await store.get(id);if(row.status==='released')return view(row);return guarded(id,async()=>view(await cancel(id)));},
   async reconcile(){const rows=await store.listOutstanding();const outcomes=[];
-   for(const row of rows.slice(0,5)){try{outcomes.push(view(await guarded(row.id,()=>row.cancel_requested?cancel(row.id):observe(row.id))));}
+   for(const row of rows.slice(0,5)){try{outcomes.push(view(await guarded(row.id,()=>row.cancel_requested?cancel(row.id):recover(row.id))));}
     catch{outcomes.push({...view(row),status:'unconfirmed'});}}
    return outcomes;
   },

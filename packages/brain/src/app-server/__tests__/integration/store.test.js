@@ -66,12 +66,15 @@ it('真实Brain controller→签名HTTP→Worker journal闭环；丢start回执�
  const home=config(),profile={image:`sha256:${'f'.repeat(64)}`,cpus:1,memoryBytes:1024**3,pidsLimit:128,user:'1000:1000',tmpBytes:1024**2,network:'none',homeKey:home.homeKey,workspaceKey:'e'.repeat(64)};
  home.configDigest=profileDigest(profile);
  const stateRoot=fs.mkdtempSync(path.join(os.tmpdir(),'appserver-pg-http-')),bootId=randomUUID(),token='test-controller-token-with-32-characters';
- let creates=0,lost=true;const containers=new Map();
+ const {EventEmitter}=await import('node:events'),{PassThrough}=await import('node:stream');
+ let creates=0,lost=true,lostCleanup=false,raw;const containers=new Map();
  const runner=createAppServerRunner({stateRoot,machineId:'xian-mac-m1',workerId:'xian-mac-m1',bootId,profiles:{chat:profile},assertLocalResources:async()=>{},docker:{
-  async create({name,identity}){const id=(++creates).toString(16).padStart(64,'0');containers.set(id,{id,name,status:'created',labels:Object.fromEntries(Object.entries(identity).map(([k,v])=>[`cecelia.appserver.${k}`,String(v)]))});return id;},async inspect(id){return containers.get(id)??null;},async start(id){containers.get(id).status='running';},async remove(id){containers.delete(id);}}});
+  async create({name,identity}){const id=(++creates).toString(16).padStart(64,'0');containers.set(id,{id,name,status:'created',labels:Object.fromEntries(Object.entries(identity).map(([k,v])=>[`cecelia.appserver.${k}`,String(v)]))});return id;},async inspect(id){return containers.get(id)??null;},async start(id){containers.get(id).status='running';},async remove(id){containers.delete(id);},
+  attach(){raw=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stdout:new PassThrough(),kill(){this.emit('close');}});return raw;}}});
  const server=createFleetWorkerServer({attemptToken:token,appServerRunner:runner});await new Promise(r=>server.listen(0,'127.0.0.1',r));
  const fetchFn=async(url,options)=>{expect(new URL(url).hostname).toBe('m1');const response=await fetch(`http://127.0.0.1:${server.address().port}${new URL(url).pathname}`,options);
-  if(url.endsWith('/start')&&lost){lost=false;await response.text();throw Error('simulated_start_receipt_lost');}return response;};
+  if(url.endsWith('/start')&&lost){lost=false;await response.text();throw Error('simulated_start_receipt_lost');}
+  if(url.endsWith('/cancel')&&lostCleanup){lostCleanup=false;await response.text();throw Error('simulated_cleanup_receipt_lost');}return response;};
  const client=createAppServerClient({pool,store:st,env:{KERNEL_FLEET_BRIDGE_TOKEN:token},fetchFn});
  const make=()=>createAppServerController({pool,store:st,homes:{[home.homeId]:home},client,collectSnapshot:async machine=>snapshot(machine)});
  const request={home_id:home.homeId,request_key:randomUUID()};
@@ -82,9 +85,19 @@ it('真实Brain controller→签名HTTP→Worker journal闭环；丢start回执�
   await pool.query("UPDATE tasks SET status='completed' WHERE id=$1",[row.task_id]);
   expect((await make().reconcile())[0].status).toBe('running');expect(creates).toBe(1);
   expect((await make().ensure(request)).reservation_id).toBe(row.id);expect(creates).toBe(1);
+  const ticket=await client.prepareStream(row.id);
+  await runner.markRpcStarted({...workerIdentity(row),stream_id:ticket.stream_id});
+  const reconnect={...request,request_key:randomUUID()};
+  await expect(make().ensure(reconnect)).rejects.toThrow('appserver_home_busy');expect(containers.size).toBe(1);
+  raw.kill();await new Promise(r=>setTimeout(r,10));lostCleanup=true;
+  await expect(make().ensure(reconnect)).rejects.toThrow('appserver_worker_unavailable');
+  expect(containers.size).toBe(0);expect((await st.get(row.id)).status).toBe('cleanup_pending');expect(creates).toBe(1);
+  const next=await make().ensure(reconnect);expect(next.generation).toBe(2);expect(next.machine_id).toBe('xian-mac-m1');
+  expect((await st.get(row.id)).status).toBe('released');expect(creates).toBe(2);expect(containers.size).toBe(1);
+  expect((await make().ensure(request)).status).toBe('released');expect(creates).toBe(2);
   await revokeGrant({pool,grantId:row.execution_grant_id});
-  await expect(make().ensure(request)).rejects.toThrow('execution_grant_denied');
-  expect((await make().cancel(row.id)).status).toBe('released');expect(containers.size).toBe(0);
+  await expect(make().ensure(reconnect)).rejects.toThrow('execution_grant_denied');
+  expect((await make().cancel(next.reservation_id)).status).toBe('released');expect(containers.size).toBe(0);
   const settled=await st.get(row.id);expect(settled.confirmed_receipt).toMatchObject({status:'cleaned',home_key:home.homeKey,owner_key:row.owner_key});
   expect((await st.home(home.homeId)).machine_id).toBe('xian-mac-m1');
   await expect(reserve(home,randomUUID(),'xian-mac-m4')).rejects.toThrow('appserver_home_affinity');
