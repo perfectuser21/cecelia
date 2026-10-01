@@ -13,6 +13,7 @@ import re
 import signal
 import subprocess
 import tempfile
+import time
 from datetime import datetime, timezone, timedelta
 
 PROFILE_NAME = 'douyin-phone-profiles.tsv'
@@ -30,7 +31,7 @@ def field(value):
 def parse_profiles(text):
     columns = None
     out = {}
-    for row in csv.reader(io.StringIO(text), delimiter='\t'):
+    for row in csv.reader(io.StringIO(text), delimiter='\t', quoting=csv.QUOTE_NONE):
         if not row:
             continue
         if row[0] in ('profile', '#profile'):
@@ -58,7 +59,7 @@ def render(phones, old_profiles, old_accounts):
     dimensions = parse_profiles(old_profiles)
     extras = [key for key in ('density', 'sdk', 'locale', 'app_version') if any(key in row for row in dimensions.values())]
     tags = {}
-    for row in csv.reader(io.StringIO(old_accounts), delimiter='\t'):
+    for row in csv.reader(io.StringIO(old_accounts), delimiter='\t', quoting=csv.QUOTE_NONE):
         if row and not row[0].startswith('#') and len(row) >= 4:
             tags[(row[0], row[1])] = row[3]
     profiles = ['#registry_version 2', '# Generated from Brain phone_registry', '#' + '\t'.join(HEAD + extras)]
@@ -209,7 +210,14 @@ def command(argv, timeout_s=20):
         return 124, ''
 
 
-def reconcile(config, bundle):
+def reconcile(config, bundle, budget_s=50):
+    deadline = time.monotonic() + budget_s
+    def run_ctl(argv):
+        # 最多5s TERM收尾和2s KILL回收，必须早于上游90s SSH期限。
+        remaining = deadline - time.monotonic() - 7
+        if remaining <= 0:
+            return 124, ''
+        return command(argv, timeout_s=min(20, remaining))
     state_path = config / '.phone-registry-reconcile.json'
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     day = datetime.fromtimestamp(bundle['now'] / 1000, timezone(timedelta(hours=8))).strftime('%Y-%m-%d')
@@ -231,12 +239,18 @@ def reconcile(config, bundle):
         if task_busy(phone, bundle['tasks'], bundle['phones']):
             receipts.append({**base, 'status': 'task_busy'})
             continue
-        rc, output = command([ctl, '--profile', phone['profile'], 'lock-status'])
+        if deadline - time.monotonic() <= 7:
+            receipts.append({**base, 'status': 'budget_exhausted'})
+            continue
+        rc, output = run_ctl([ctl, '--profile', phone['profile'], 'lock-status'])
         if rc != 0 or not re.search(r'^lock=free\s*$', output, re.M):
             receipts.append({**base, 'status': 'busy' if rc == 0 else 'unreachable'})
             continue
         owner = 'registry-' + day + '-' + phone['serial']
-        rc, output = command([ctl, '--profile', phone['profile'], 'with-lock', owner, '--',
+        if deadline - time.monotonic() <= 7:
+            receipts.append({**base, 'status': 'budget_exhausted'})
+            continue
+        rc, output = run_ctl([ctl, '--profile', phone['profile'], 'with-lock', owner, '--',
                               ctl, '--profile', phone['profile'], 'account-current', expected])
         ids = re.findall(r'^douyin_id=([A-Za-z0-9_-]+)\s*$', output, re.M)
         actual = ids[0] if len(ids) == 1 else None
