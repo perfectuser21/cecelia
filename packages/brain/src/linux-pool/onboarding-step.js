@@ -27,7 +27,7 @@ export function createLinuxOnboardingStep({pool,ssh=createOnboardingSSH(),creden
   const policy=()=>JSON.parse(state.policy_json),fact=()=>JSON.parse(state.installation_json).receipt,runtime=()=>JSON.parse(state.runtime_json);
   switch(state.phase){
    case 'renew_revoke':
-    await runtimeAuthorization.revoke(id,{runtime_id:state.previous_runtime_id,expected_version_id:state.expected_version_id});return next('renew_wait');
+    await runtimeAuthorization.retire(id,{runtime_id:state.previous_runtime_id,expected_version_id:state.expected_version_id});return next('renew_wait');
    case 'renew_wait':{
     const occupied=(await pool.query("SELECT id FROM capacity_reservations WHERE machine_id=$1 AND status<>'released' LIMIT 1",[machine.name])).rows.length;
     if(occupied)return state;return next('refresh_installation');
@@ -83,7 +83,8 @@ export function createLinuxOnboardingStep({pool,ssh=createOnboardingSSH(),creden
    }
    case 'script_canary':return next('script_activate',{script_envelope_json:JSON.stringify(await remote('script_canary',{nonce:runtime().nonce}))});
    case 'script_activate':{
-    if(await recover('script',id,state,JSON.parse(state.script_envelope_json)))return next('script_prepare',{runtime_json:null,script_envelope_json:null});
+    const recovered=await recover('script',id,state,JSON.parse(state.script_envelope_json));
+    if(recovered)return next(recovered.phase??'script_prepare',{...(recovered===true?{}:recovered),runtime_json:null,script_envelope_json:null});
     const result=await runtimeAuthorization.activate(id,{runtime_id:runtime().id,expected_version_id:state.expected_version_id,envelope:JSON.parse(state.script_envelope_json)});
     if(result.execution!==true||result.authorization_state!=='active')throw error('linux_pool_runtime_unavailable');return next('active',{active:result});
    }

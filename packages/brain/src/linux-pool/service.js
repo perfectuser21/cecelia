@@ -4,6 +4,7 @@ import { transaction } from '../execution-directory/store.js';
 import { MACHINE_CAPACITY_LOCK_SQL } from '../orchestrator/attempt-machine-capacity.js';
 import { createDeploymentReader,US_SCHEDULER_ID,UUID,error,exact } from './deployment.js';
 import { verifyCanaryEnvelope } from './receipt.js';
+import {lockOnboardingRevocation,stopAutomaticOnboarding,internallyRetiredPool} from './onboarding-revocation.js';
 const request=(body,keys)=>{if(!exact(body,keys))throw error('linux_pool_request_invalid');};
 const versionValid=v=>v===null||UUID.test(v??'');
 /** 本片只准备授权记录。没有Linux脚本adapter验收，不生成active版本或grant。 */
@@ -68,7 +69,7 @@ export function createLinuxPoolAuthorization({pool,readDeployment=createDeployme
    return {attestation_id:a.id,execution_version_id:id,authorization_state:'ready',execution:false,expires_at:a.expires_at};
   });await directory.refresh({pool});return result;
  }
- async function revoke(machineId,body){
+ async function retireOrRevoke(machineId,body,internal){
   const selector=Object.hasOwn(body??{},'challenge_id')?'challenge_id':'attestation_id';
   request(body,[selector,'expected_version_id']);if(!UUID.test(machineId??'')||!UUID.test(body[selector]??''))throw error('linux_pool_request_invalid');
   // 撤销只需要持久身份；机器停用、部署文件或凭据丢失均不能阻止撤销。
@@ -76,9 +77,16 @@ export function createLinuxPoolAuthorization({pool,readDeployment=createDeployme
    WHERE ${selector==='attestation_id'?'a':'c'}.id=$1 AND c.machine_registry_id=$2`,[body[selector],machineId])).rows[0];
   if(!found)throw error('linux_pool_attestation_unavailable');
   const result=await transaction(pool,async db=>{
+   if(!internal)await lockOnboardingRevocation(db,machineId);
    await db.query(MACHINE_CAPACITY_LOCK_SQL,[found.expected.machine_id]);
    const node=(await db.query('SELECT * FROM execution_nodes WHERE machine_registry_id=$1',[machineId])).rows[0];cas(node,body.expected_version_id);
    if(node&&node.canonical_id!==found.expected.machine_id)throw error('linux_pool_identity_conflict');
+   const current=(await db.query('SELECT state FROM linux_pool_challenges WHERE id=$1 FOR UPDATE',[found.id])).rows[0];
+   if(internal){
+    if(current.state==='revoked'&&!await internallyRetiredPool(db,found.id,machineId))throw error('linux_pool_explicitly_revoked');
+    const marked=await db.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,pool_retired}',$2::jsonb),updated_at=now() WHERE claimed_by='linux-pool-onboarding' AND payload->'linux_onboarding'->'challenge'->>'id'=$1 AND payload->'linux_onboarding'->>'machine_registry_id'=$3 AND COALESCE(payload->'linux_onboarding'->>'revoked','false')<>'true'",[found.id,JSON.stringify(found.id),machineId]);
+    if(!marked.rowCount)throw error('linux_pool_control_unavailable');
+   }else await stopAutomaticOnboarding(db,machineId);
    await db.query("UPDATE linux_pool_challenges SET state='revoked' WHERE id=$1",[found.id]);
    const a=(await db.query("UPDATE linux_pool_attestations SET state='revoked' WHERE challenge_id=$1 RETURNING execution_version_id",[found.id])).rows[0];
    if(a?.execution_version_id){await db.query("UPDATE execution_grants SET state='revoked' WHERE node_version_id=$1",[a.execution_version_id]);await db.query("UPDATE execution_node_versions SET state='revoked' WHERE id=$1",[a.execution_version_id]);}
@@ -95,5 +103,5 @@ export function createLinuxPoolAuthorization({pool,readDeployment=createDeployme
    state:r.state==='revoked'?'revoked':r.expired?'expired':!deployment?'unavailable':policy_digest!==deployment.policyDigest
     ||machine_status!=='active'||['scheduler','scheduler_only'].includes(metadata?.role)||metadata?.scheduler_only===true?'invalidated':r.state}))};
  }
- return {challenge,attest,activate,revoke,get};
+ return {challenge,attest,activate,revoke:(machineId,body)=>retireOrRevoke(machineId,body,false),retire:(machineId,body)=>retireOrRevoke(machineId,body,true),get};
 }

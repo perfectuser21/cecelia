@@ -33,6 +33,20 @@ it('并发只登记一个内部接入子任务，nonce/intent服务端生成且o
  expect(rows[0].payload.linux_onboarding).toMatchObject({phase:'probe',nonce:expect.stringMatching(/^[a-f0-9]{64}$/),intent_id:expect.any(String)});
  expect(await f.ensure({...machine,metadata:{...machine.metadata,role:'observer'}},parent)).toBe(null);
 });
+it('metadata把原observer改成worker不能自行登记执行验收，原任务角色才是授权上限',async()=>{
+ machine.metadata.onboarding.request.role='observer';
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,request,role}','\"observer\"') WHERE id=$1",[parent]);
+ await pool.query('UPDATE system_registry SET metadata=$2 WHERE id=$1',[machine.id,machine.metadata]);
+ let called=false;const f=flow({step:async()=>{called=true;}}),id=await f.ensure(machine,parent);if(id)await f.advance(id);
+ expect(id).toBe(null);expect(called).toBe(false);
+});
+it('已生成的续验阶段收到持久撤销后不会再触SSH，也不能通过ensure重建',async()=>{
+ let calls=0;const f=flow({step:async()=>{calls++;}}),id=await f.ensure(machine,parent);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(jsonb_set(payload,'{linux_onboarding,phase}','\"renew_wait\"'),'{linux_onboarding,revoked}','true') WHERE id=$1",[id]);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,execution_revoked}','true') WHERE id=$1",[parent]);
+ expect(await f.advance(id)).toMatchObject({advanced:false});expect(calls).toBe(0);expect(await f.ensure(machine,parent)).toBe(null);
+ expect(await f.view(id)).toMatchObject({phase:'revoked',execution:false});
+});
 it('会话锁覆盖外部副作用；阶段先落库，未知保留同intent，重试不重建任务',async()=>{
  let calls=0,release;const wait=new Promise(r=>{release=r;});
  const f=flow({step:async(_task,_machine,s,save)=>{calls++;await save({...s,phase:'bootstrap'});await wait;throw Error('private-secret');}});

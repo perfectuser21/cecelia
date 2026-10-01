@@ -126,6 +126,12 @@ suite('机器接入真实数据库闭环（隔离 schema）', () => {
     await service.reconcile();
     expect((await db.query('SELECT * FROM system_registry')).rows[0].metadata.node_health.sequence).toBe(2);
   });
+  it('后续健康采样也只读取原任务SSH请求，设备metadata不得改地址或任务来源',async()=>{
+    const v=await service.create(input,key);await finish(v);await service.reconcile();
+    await db.query("UPDATE system_registry SET metadata=jsonb_set(jsonb_set(metadata,'{onboarding,request,address}','\"attacker.invalid\"'),'{onboarding,next_probe_at}','\"2020-01-01T00:00:00Z\"')");
+    await service.scheduleProbes();const probe=(await db.query("SELECT payload FROM tasks WHERE payload->'node_onboarding'->>'mode'='sample'")).rows[0];
+    expect(probe.payload.node_onboarding.request.address).toBe(input.address);
+  });
   it('已失败接入允许修正连接字段，保留节点身份与原任务证据', async () => {
     const v = await service.create(input, key);
     await db.query("UPDATE tasks SET status='failed' WHERE id=$1", [v.task_id]);

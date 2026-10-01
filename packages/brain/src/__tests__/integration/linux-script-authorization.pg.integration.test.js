@@ -10,6 +10,7 @@ import {DB_DEFAULTS} from '../../db-config.js';
 import {fixture} from '../../linux-pool/runtime-receipt.test-fixture.js';
 import {createLinuxRuntimeAuthorization} from '../../linux-pool/runtime-service.js';
 import {createOnboardingRecovery} from '../../linux-pool/onboarding-recovery.js';
+import {createLinuxOnboardingStep} from '../../linux-pool/onboarding-step.js';
 import {directory} from '../../execution-directory/directory.js';
 import {authorize,resolveCleanup} from '../../execution-directory/store.js';
 import {routeWork} from '../../work-router.js';
@@ -105,6 +106,26 @@ it('过期验收只在完整签名清理确认后撤销并归档旧子任务，�
  expect((await pool.query('SELECT state FROM linux_script_authorizations WHERE id=$1',[p.id])).rows[0].state).toBe('revoked');
  expect((await pool.query('SELECT status,result FROM tasks WHERE id=$1',[p.evidence_task_id])).rows[0]).toMatchObject({status:'archived',result:{actor:'linux-pool-onboarding',evidence:{signature:envelope.signature}}});
  const next=await service.prepare(machine,{expected_version_id:null});expect(next.nonce).not.toBe(p.nonce);expect(next.execution_version_id).not.toBe(p.execution_version_id);
+});
+it('显式撤销prepared后过期不得被内部恢复重新prepare，撤销在途续验也持久阻断',async()=>{
+ const p=await service.prepare(machine,{expected_version_id:null}),envelope=await signed(p),state={runtime_json:JSON.stringify(p),expected_version_id:null};
+ const flowId=randomUUID();await pool.query("INSERT INTO tasks(id,status,payload) VALUES($1,'in_progress',$2)",[flowId,{linux_onboarding:{machine_registry_id:machine,phase:'renew_wait'}}]);
+ await service.revoke(machine,{runtime_id:p.id,expected_version_id:null});await pool.query("UPDATE linux_script_authorizations SET challenge_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[p.id]);
+ const recover=createOnboardingRecovery({pool,runtimeAuthorization:service,readRuntime:async()=>f.deployment,afterTerminal:async()=>{}});
+ await expect(recover('script',machine,state,envelope)).rejects.toThrow('linux_pool_explicitly_revoked');
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[flowId])).rows[0].payload.linux_onboarding.revoked).toBe(true);
+});
+it('active已提交但阶段回执丢失跨24小时后，按实际current version进入内部续验且不误用旧CAS',async()=>{
+ const p=await service.prepare(machine,{expected_version_id:null}),envelope=await signed(p);await service.activate(machine,{runtime_id:p.id,expected_version_id:null,envelope});
+ await pool.query("UPDATE linux_script_authorizations SET authorization_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[p.id]);
+ let state={phase:'script_activate',runtime_json:JSON.stringify(p),script_envelope_json:JSON.stringify(envelope),expected_version_id:null};
+ const recover=createOnboardingRecovery({pool,runtimeAuthorization:service,readRuntime:async()=>f.deployment,afterTerminal:async()=>{}});
+ const step=createLinuxOnboardingStep({pool,runtimeAuthorization:service,recover});
+ const original=structuredClone(state);
+ await step({id:f.deployment.parent_task_id},{id:machine,name:f.deployment.machine_id,metadata:{onboarding:{request:{}}}},state,async s=>{state=s;});
+ expect(state).toMatchObject({phase:'renew_wait',expected_version_id:p.execution_version_id});
+ expect(await recover('script',machine,original,envelope)).toMatchObject({phase:'renew_wait',expected_version_id:p.execution_version_id});
+ expect((await pool.query('SELECT state FROM linux_script_authorizations WHERE id=$1',[p.id])).rows[0].state).toBe('revoked');
 });
 it('激活中途失败回滚task完成/证据/目录/grants；授权历史及过期不可扩张',async()=>{
  const p=await service.prepare(machine,{expected_version_id:null});await pool.query(`CREATE FUNCTION reject_script_active() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state='active' THEN RAISE EXCEPTION 'fixture_failure';END IF;RETURN NEW;END $$;CREATE TRIGGER reject_script_active BEFORE UPDATE ON execution_grants FOR EACH ROW EXECUTE FUNCTION reject_script_active()`);

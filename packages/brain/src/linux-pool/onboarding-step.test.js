@@ -40,7 +40,7 @@ it('任务JSONB重排后仍下发原序列化profile，许可digest不能变代'
 });
 it('续验撤销后等旧预约精确释放，不触安装或canary；未知占位不得自动释放',async()=>{
  const x=setup();let occupied=true,revokes=0;
- x.deps.pool.query=async()=>({rows:occupied?[{id:randomUUID()}]:[]});x.deps.runtimeAuthorization.revoke=async()=>{revokes++;};
+ x.deps.pool.query=async()=>({rows:occupied?[{id:randomUUID()}]:[]});x.deps.runtimeAuthorization.retire=async()=>{revokes++;};
  await x.save({...x.state,phase:'renew_revoke',previous_runtime_id:randomUUID()});const step=createLinuxOnboardingStep(x.deps);
  await step(x.task,x.machine,x.state,x.save);expect(revokes).toBe(1);expect(x.state.phase).toBe('renew_wait');
  await step(x.task,x.machine,x.state,x.save);expect(x.state.phase).toBe('renew_wait');expect(x.calls).toEqual([]);
