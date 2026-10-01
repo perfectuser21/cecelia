@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 真 Brain 写入必须显式授权，并核对本机测试容器。
-if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DB_URL:-${DATABASE_URL:-postgresql://localhost/cecelia}}"; then
+# Harness 开关与必需输入只做 Bash 校验；所有外部动作仍由写入护栏保护。
+if [[ "${HARNESS_ROLE_CHAIN_ENABLED:-}" != '1' ]]; then
+  printf '%s\n' 'SKIP: real Harness role chain requires explicit opt-in'
+  exit 0
+fi
+: "${DB_URL:?DB_URL is required}"
+: "${BASELINE_SHA:?BASELINE_SHA is required}"
+
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "$DB_URL"; then
   exit 0
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT_DIR"
 
-if [[ "${HARNESS_ROLE_CHAIN_ENABLED:-}" != '1' ]]; then
-  printf '%s\n' 'SKIP: real Harness role chain requires explicit opt-in'
-  exit 0
-fi
-
-: "${DB_URL:?DB_URL is required}"
-: "${BASELINE_SHA:?BASELINE_SHA is required}"
 BRAIN_URL=${BRAIN_URL:-http://127.0.0.1:5221}
 EVIDENCE_DIR=${ROLE_CHAIN_EVIDENCE_DIR:-"$ROOT_DIR/sprints/08121555-unified-work-router/evidence/role-chain"}
 mkdir -p "$EVIDENCE_DIR"

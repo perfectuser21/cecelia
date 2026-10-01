@@ -192,7 +192,11 @@ test('all explicit live Brain shell write entries remain registered and guarded'
     }
     assert.ok(listed.has(name), `${name}: new live write script must join write guard inventory`);
     assert.match(source, /smoke-production-guard\.mjs/, `${name}: standalone write guard missing`);
-    if (!optional.has(name)) {
+    if (name === 'unified-work-router-role-chain-smoke.sh') {
+      const prefix = source.slice(0, source.indexOf('if ! node '));
+      assert.doesNotMatch(prefix, /(?:^|[ \t;(])(?:curl|psql|mkdir|docker|cd|git|node)\b|\$\(/m,
+        'Harness input checks must remain inert before write guard');
+    } else if (!optional.has(name)) {
       const commands = source.split('\n').filter(line => line.trim() && !line.startsWith('#'));
       assert.match(commands[1], /if ! node.*smoke-production-guard\.mjs/, `${name}: guard must run before any side effect`);
     }
