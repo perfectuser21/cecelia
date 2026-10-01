@@ -1,6 +1,7 @@
 // docker-prune 已取消（2026-07-08 用户拍板：旧机制 + 部署自杀竞态 Issue 97cf5a41）。
 // 框架保留：新 job import 后加进 REGISTRY 即可。
-const REGISTRY = [];
+import { previewCacheJob } from './preview-cache-controller.js';
+const REGISTRY = [previewCacheJob];
 
 export async function getJobs(pool) {
   const { rows: configs } = await pool.query(
@@ -114,12 +115,14 @@ export function createJanitor(registry) {
       let result;
       let actionError;
       try {
-        result = await job.run({ run_id: run.id, signal });
+        result = await job.run({ run_id: run.id, signal, pool });
+        if (result?.status === 'unconfirmed') throw failure('JANITOR_UNCONFIRMED');
         if (!result || !['success', 'failed', 'skipped'].includes(result.status)
             || (result.freed_bytes != null && (!Number.isSafeInteger(result.freed_bytes) || result.freed_bytes < 0))) {
           throw failure('JANITOR_INVALID_RESULT', 500);
         }
       } catch (err) {
+        if (err?.code === 'JANITOR_UNCONFIRMED') throw err;
         actionError = failure(err?.code === 'JANITOR_INVALID_RESULT' ? err.code : 'JANITOR_ACTION_FAILED', 500);
         result = { status: 'failed', freed_bytes: null };
       }
@@ -140,6 +143,26 @@ export function createJanitor(registry) {
     });
   }
 
+  async function reconcileJob(pool, jobId) {
+    const job = find(jobId);
+    if (typeof job.reconcile !== 'function') throw failure('JANITOR_UNCONFIRMED');
+    return locked(pool, jobId, async (client, ensureConnected, signal) => {
+      const { rows } = await client.query("SELECT id FROM janitor_runs WHERE job_id=$1 AND status='running' ORDER BY started_at LIMIT 1", [jobId]);
+      if (!rows.length) return { status: 'idle' };
+      const result = await job.reconcile({ pool, run_id: rows[0].id, signal });
+      ensureConnected();
+      if (!result || !['success', 'failed', 'skipped'].includes(result.status)
+          || (result.freed_bytes != null && (!Number.isSafeInteger(result.freed_bytes) || result.freed_bytes < 0))) {
+        throw failure('JANITOR_UNCONFIRMED');
+      }
+      const update = await client.query("UPDATE janitor_runs SET status=$1,output=$2,freed_bytes=$3,finished_at=now() WHERE id=$4 AND status='running'",
+        [result.status, `JANITOR_RECONCILED_${result.status.toUpperCase()}`, result.freed_bytes ?? null, rows[0].id]);
+      ensureConnected();
+      if (update.rowCount !== 1) throw failure('JANITOR_UNCONFIRMED');
+      return result;
+    });
+  }
+
   async function setJobConfig(pool, jobId, { enabled }) {
     find(jobId);
     if (typeof enabled !== 'boolean') throw failure('JANITOR_INVALID_CONFIG', 400);
@@ -152,7 +175,7 @@ export function createJanitor(registry) {
       return { job_id: jobId, enabled };
     });
   }
-  return Object.freeze({ runJob, setJobConfig });
+  return Object.freeze({ runJob, setJobConfig, reconcileJob });
 }
 
-export const { runJob, setJobConfig } = createJanitor(REGISTRY);
+export const { runJob, setJobConfig, reconcileJob } = createJanitor(REGISTRY);

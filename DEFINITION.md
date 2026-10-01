@@ -10,17 +10,40 @@
 
 
 
-**Brain 版本**: 1.352.5
-
-受管脚本准入仅写 blocked/queued，终态写入者守卫已登记。
+**Brain 版本**: 1.352.6
 
 专用 app-server runner 首批提供受限 generation 容器、HOME 单写 journal、精确 ID 取消墓碑及双向有界 JSONL；只有 attach 进程确认退出才释放流占位；关闭事件在同一预约锁内重放，不能因锁争用丢失。Worker 重启后旧等待资源意图不可重新启动，旧身份仍可清理。标准安装器事务打包四模块，默认 profiles 为空，尚未接生产 start、Brain 预算或 OpenClaw RPC adapter，现网 OpenClaw 尚未由此治理。
 
 受信 app-server profile 固定镜像 digest、非 root UID/GID、CPU/内存/PID/tmpfs 配额、显式隔离网络和两个受标签验证的 named volume；禁止宿主 HOME、凭据与 socket 挂载。HOME 卷须由受控初始化预建 `/home/runner/.codex` 并赋予 profile 用户写权限；runner 不创建或删除持久卷。真实离线 canary 经 runner 两次独立运行实例（不同 reservation，各 launch_generation=1）initialize 与共享 HOME marker 保留，不代表模型登录或线程恢复验证。日志驱动为 none；stdio 内容不进 journal，错误仅固定码。操作锁及未确认流/容器状态持续占位，后续控制面负责恢复。
 
-Worker 标准升级保留可信现役配置，预检与启动健康使用同一有效配置；私有快照及安装 plist 为0600，替换前核指纹，失败事务回滚。
+Janitor 新动作的CI冒烟使用十类执行者精确名单、471叠加502合法增量及只读任务白名单；真实PG路由验证默认停用且不触发清理。
 
-## Brain 1.351.3 — 脚本受管执行与共享预约
+
+Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增量；healthz 只隔离真实依赖，不污染机群配置读取。
+
+## Brain 1.352.2 — preview 专属缓存受控回收
+
+- 仅回收带私有归属登记的 preview npm 缓存；writer/回收共锁、固定 GitHub 终态复验、24 小时冷却、删除前 inode 校验与真实磁盘回执。旧缓存不追认。
+- Brain 持久任务与 intent，远端固定鉴权接口；未确认操作只查询原回执，调度默认停用。新增 migration 502 约束专用任务类型及 intent 唯一性。
+- 保留前置 Harness 加权预约、Worker 本机 CPU/内存/磁盘/Docker 二次准入；不包含 OpenClaw 直聊、Linux 执行能力与动态授权。
+
+受管脚本准入仅写 blocked/queued，终态写入者守卫已登记。
+
+## Brain 1.352.4 — 现有执行目录统一（阶段4a）
+
+- system_registry设备真身按UUID绑定execution_nodes；不可变execution_node_versions保留历史endpoint/profile；execution_grants按surface/provider/account/repo/profile精确授权。
+- 初次部署只导入旧三Mac的18个Harness账号组合与2个普通执行器组合，标legacy-v1/legacy_policy，不伪造boot或canary。重启不复活已撤销授权，不开放新增节点激活接口。
+- Brain启动先载目录，10秒刷新、30秒过期拒绝新增。预约与prepare/start持同机锁核DB当前授权；服务器持久化版本/grant，旧清理按原版本执行。metadata.executors仅期望配置，不能授予执行权限。
+- 普通M1 Codex、MMV普通Codex桥接组合缺少legacy授权时返回execution_legacy_grant_denied或路由execution_grant_denied；本机review/spec_review/code_review_gate与普通Docker分支缺少受信宿主/凭据绑定时返回execution_legacy_identity_required。均不改派，恢复须经后续受控能力验收登记，不能靠metadata或环境URL自行放行。
+- 受管脚本仍须SCRIPT_MANAGED_MACHINES、Worker受保护profile与本机资源准入；初次目录导入还需EXECUTION_LEGACY_SCRIPT_PROFILES显式列出允许profile。默认不增加脚本授权。
+- 恢复子任务同事务重核目录并持久化新身份；撤销后恢复不得创建child。旧script预约凭持久强身份使用legacy-v1首版endpoint清理，不依赖新增profile许可；旧Fleet未回执清理不依赖当前可派发目录。
+- 普通本机spawn、非kernel skill-relay与headed新启动缺少目录内宿主/凭据账号绑定时返回execution_legacy_identity_required；xian relay显式team3账号缺少对应legacy grant时返回execution_grant_denied。保留已有docker/tmux探活，不终止已有session、不借Harness授权或改派。
+- 安装器从getDeploymentNodeProfile读取受控部署基线；动态getNodeProfile专供Brain执行目录。Worker两仓白名单与Brain legacy repo scope同源。
+
+
+
+
+## Brain 1.350.3 — 脚本受管执行与共享预约
 
 - 容器脚本经共享机器预约、受认证 Worker 协议及精确清理回执执行；非 released 预约持续占位。
 - SCRIPT_MANAGED_MACHINES 仅在旧宿主脚本完成对账后启用；显式 profile 使用无宿主挂载容器，宿主运维脚本需另行兼容，未覆盖全部执行入口。
@@ -41,7 +64,19 @@ Worker 标准升级保留可信现役配置，预检与启动健康使用同一�
 
 cleanup_pending / blocked 预约继续清理；通信未知保留占位。预算释放与任务结算分别持久化，结算失败不得重新占回预算或漏扫。
 
+## Brain 1.349.3 — Harness 加权资源预约
+
+- 同机事务锁内按角色权重预约；未确认清理持续占位，恢复需先确认旧执行停止。
+- 历史恢复与清理 fixture 按真实容量、执行身份和事务语义验证，保留父终态并发约束。
+
+
+Worker 标准升级在预检前读取可信现役 plist 快照，保留既有地址、端口、令牌引用、路径与完整环境；预检和启动健康使用同一有效配置，私有快照及安装 plist 为0600，替换前复核旧配置指纹，失败保留事务回滚。
+
 机群统一资源预约与启动保护：Harness 按角色权重在同机事务锁内预约；资源未知、过期、并发不足均拒绝新增执行；未确认精确清理的执行继续占位。Worker 在 prepare/start 实际副作用前复验本机 CPU、内存与执行目录磁盘。安装保护保留 profile 至少10GiB可用余量和可信采样，高磁盘占用允许升级；新增受管 Harness 仍执行原85%磁盘压力门槛。
+
+## Brain 1.352.1 — 公司经营KR人工正式值与AI独立建议
+
+正式值由Notion工作面回灌；机器观察与建议独立存储。Brain统一触发每日及正式变更分析，OpenClaw受限分析员返回绑定快照的建议，可信收割校验、任务留痕并投影AI栏。
 
 ## Brain 1.350.4 — 节点接入与受控执行回执
 
@@ -49,7 +84,7 @@ cleanup_pending / blocked 预约继续清理；通信未知保留占位。预算
 - 运行机须部署 `scripts/ops/node-onboarding.mjs` 及相邻模块，并有Node、Python3、OpenSSH、已授权1Password CLI；macOS需现有GUI会话，非root Linux需现有systemd linger。不改网络或删业务文件。
 - 已认领有头会话复用现有探活合同，未知保留运行；tmux名称使用argv。
 - Janitor固定动作显式启用后才执行；专属连接互斥执行与配置，异常持久固定错误码，不确定running阻止重跑，锁响应不明及解锁失败销毁连接。生产动作注册表保持为空。
-- 节点接入仍不授予 Linux 执行器或动态执行资格；migration 501 为本次脚本预约单独引入。
+- 本批没有migration501，不包含Linux执行器、全机自动清理或动态执行资格。
 
 
 ## 1.350.1

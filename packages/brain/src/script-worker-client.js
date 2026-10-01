@@ -1,12 +1,13 @@
 import { createHmac,randomUUID,timingSafeEqual } from 'node:crypto';
-import { workerUrlsFromEnv } from './orchestrator/fleet-node/node-admission-client.js';
+import { createScriptAuthority } from './execution-directory/script-authority.js';
 
 /** 只有认证响应能产生 authenticated 封套；HTTP缺失/超时/404从不算清理成功。 */
-export function createScriptWorkerClient({env=process.env,urls=workerUrlsFromEnv(env),token=env.KERNEL_FLEET_BRIDGE_TOKEN,
+export function createScriptWorkerClient({env=process.env,pool,authorizeRequest=createScriptAuthority({pool}),token=env.KERNEL_FLEET_BRIDGE_TOKEN,
   fetchFn=globalThis.fetch,timeoutMs=20_000}={}) {
   async function request(machine,action,body={}) {
-    if(typeof token!=='string'||token.length<32||!urls[machine])throw new Error('script_worker_unconfigured');
-    const url=new URL(urls[machine]);
+    return authorizeRequest(machine,action,body,async workerEndpoint=>{
+    if(typeof token!=='string'||token.length<32||!workerEndpoint)throw new Error('script_worker_unconfigured');
+    const url=new URL(workerEndpoint);
     if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.pathname!=='/'||url.search||url.hash)throw new Error('script_worker_url_invalid');
     const requestNonce=randomUUID();
     const endpoint=action==='capabilities'?'/scripts/capabilities':`/scripts/${body.reservation_id}/${action}`;
@@ -22,6 +23,7 @@ export function createScriptWorkerClient({env=process.env,urls=workerUrlsFromEnv
     if(response.status===429 && envelope.receipt.status!=='waiting_resources')throw new Error('script_worker_receipt_unverified');
     if(action!=='capabilities'&&['reservation_id','owner_key','intent_id','launch_generation','config_digest'].some(k=>body[k]!==envelope.receipt[k]))throw new Error('script_worker_identity_mismatch');
     return {authenticated:true,receipt:envelope.receipt};
+    });
   }
   return {capabilities:async(machine)=>(await request(machine,'capabilities')).receipt,
     start:(machine,body)=>request(machine,'start',body),inspect:(machine,body)=>request(machine,'inspect',body),

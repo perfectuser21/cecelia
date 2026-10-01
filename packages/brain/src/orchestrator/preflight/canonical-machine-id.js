@@ -1,15 +1,5 @@
 import { listComputeWorkerIds, resolvePrimaryWorkerId } from '../../machine-registry.js';
 
-// 顺序保证：primary 必须排第一——execution-transport.js 用解构
-// [LOCAL_MACHINE_ID, ...REMOTE] = listCanonicalMachineIds()，首位即本机语义。
-const primaryId = resolvePrimaryWorkerId();
-const CANONICAL_MACHINE_IDS = Object.freeze([
-  primaryId,
-  ...listComputeWorkerIds().filter((id) => id !== primaryId),
-]);
-
-const CANONICAL_MACHINE_SET = new Set(CANONICAL_MACHINE_IDS);
-
 function registeredFleetIds(fleet) {
   return new Set((fleet ?? [])
     .filter((entry) => entry?.registered !== false)
@@ -32,7 +22,7 @@ export function resolveCanonicalMachineId({
   if (!candidate) {
     throw new Error('missing canonical machine id');
   }
-  if (!CANONICAL_MACHINE_SET.has(candidate)) {
+  if (!listCanonicalMachineIds().includes(candidate)) {
     throw new Error(`unknown canonical machine id: ${candidate}`);
   }
 
@@ -46,6 +36,7 @@ export function resolveCanonicalMachineId({
 }
 
 export function listCanonicalMachineIds() {
-  return [...CANONICAL_MACHINE_IDS];
+  const ids=listComputeWorkerIds();const primary=resolvePrimaryWorkerId();
+  return [primary,...ids.filter(id=>id!==primary)].filter(id=>ids.includes(id));
 }
 

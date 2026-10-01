@@ -25,6 +25,7 @@ describe('buildRealDeps 凭据 loader 接线', () => {
     const resolveAccountHome = vi.fn(() => '/exec/only');
 
     await buildRealDeps({
+      startExecutionDirectory:async()=>{},
       pool: { query: vi.fn() },
       env: {
         CECELIA_CREDENTIAL_HOME_ROOT: '/x',
@@ -48,6 +49,7 @@ describe('buildRealDeps 凭据 loader 接线', () => {
 
   it('CECELIA_CREDENTIAL_TRUSTED_UIDS 非法时构造即 fail-loud', async () => {
     await expect(buildRealDeps({
+      startExecutionDirectory:async()=>{},
       pool: { query: vi.fn() },
       env: { CECELIA_CREDENTIAL_TRUSTED_UIDS: 'abc', CECELIA_MACHINE_ID: 'us-mac-m4' },
       handlers: {},

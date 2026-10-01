@@ -590,6 +590,13 @@ jobs:
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: 专属cache真实writer与强鉴权HTTP故障回归
+        run: node --test scripts/preview-cache.test.mjs scripts/preview-cache-http.test.mjs
       - name: preview start 依赖隔离/旧进程顺序自测
         run: bash scripts/__tests__/preview-env-start.test.sh
       - name: Harness PR 与 Preview 容量闸解耦自测
@@ -957,6 +964,7 @@ jobs:
             src/__tests__/integration/script-executor-constraints.pg.integration.test.js \
             src/__tests__/integration/attempt-weighted-reservation.pg.integration.test.js \
             src/__tests__/integration/script-capacity-reservation.pg.integration.test.js \
+            src/__tests__/integration/execution-directory.pg.integration.test.js \
             src/__tests__/integration/script-managed-executor.pg.integration.test.js \
             src/__tests__/migration-333.test.js \
             src/__tests__/migration-400-fact-snapshot.test.js \

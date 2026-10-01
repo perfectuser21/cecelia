@@ -552,6 +552,7 @@ export async function executeInDocker(opts) {
   }
 
   const result = await runDocker(args, {
+    authorizeSpawn:opts.authorizeSpawn,
     taskId,
     taskType,
     timeoutMs,

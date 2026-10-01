@@ -16,18 +16,22 @@ psql_q() { psql -qtAc "$1"; }
 
 echo "== F4 故障自愈：liveness 合同层 =="
 node -e '
-import("./packages/brain/src/executor-contracts.js").then(m => {
+import("./packages/brain/src/executor-contracts.js").then(async m => {
   // PR1-B 由七增八：openclaw-agent = 秋米中文 GTD 任务的执行者（Brain 经 ssh 在 MMV 起 agent）
   // 棒3 由八增九：script = executor=script 一等任务类型
-  if (!Array.isArray(m.VALID_EXECUTOR_KINDS) || m.VALID_EXECUTOR_KINDS.length !== 9)
-    { console.error("VALID_EXECUTOR_KINDS 应为 9 kind，实际 " + m.VALID_EXECUTOR_KINDS.length); process.exit(1); }
+  const expected = ["brain-local","relay-container","kernel-process","headed-session","bridge","external-worker","codex-review-local","openclaw-agent","script","preview-janitor"];
+  if (!Array.isArray(m.VALID_EXECUTOR_KINDS) || JSON.stringify([...m.VALID_EXECUTOR_KINDS].sort()) !== JSON.stringify(expected.sort()))
+    { console.error("VALID_EXECUTOR_KINDS 精确名单不符"); process.exit(1); }
+  const janitor = m.EXECUTOR_CONTRACTS["preview-janitor"];
+  if (await janitor.probe(null, null) !== "unknown" || janitor.staleMinutes !== null || janitor.onStale !== "none")
+    { console.error("Janitor 合同不允许通用看门狗终止"); process.exit(1); }
   for (const k of m.VALID_EXECUTOR_KINDS) {
     const c = m.EXECUTOR_CONTRACTS[k];
     if (!c || typeof c.probe !== "function") { console.error("kind 缺 probe: " + k); process.exit(1); }
   }
   process.exit(0);
 }).catch(e => { console.error(e.message); process.exit(1); })
-' && ok "[结构] executor-contracts 七 kind 各有 probe（进程级导入）" || fail "executor-contracts 结构断言失败"
+' && ok "[结构] executor-contracts 十 kind 各有 probe（进程级导入）" || fail "executor-contracts 结构断言失败"
 
 node -e '
 import("./packages/brain/src/lib/codex-review-liveness.js").then(m => {

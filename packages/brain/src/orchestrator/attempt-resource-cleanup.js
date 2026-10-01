@@ -17,7 +17,7 @@ export async function inspectLocalContainer(containerId, { execFileFn = execFile
 }
 
 export async function confirmExpiredParentCleanup(parent, {
-  env = process.env, launcher, transportFactory = createProductionExecutionTransport,
+  pool, env = process.env, launcher, transportFactory = createProductionExecutionTransport,
   removeContainer, inspectContainer = inspectLocalContainer, fetchFn,
 } = {}) {
   const machine = parent.actual_machine_id ?? parent.machine_id ?? parent.requested_machine_id;
@@ -44,6 +44,6 @@ export async function confirmExpiredParentCleanup(parent, {
     }
     return { status: removed === true ? 'cleaned' : 'already_clean', attempt_id: parent.id };
   }
-  const transport = launcher ?? transportFactory({ env, fetchFn, remoteBridgeTimeoutMs: 20_000 });
+  const transport = launcher ?? transportFactory({ pool, env, fetchFn, remoteBridgeTimeoutMs: 20_000 });
   return transport.cancel({ attempt: parent, target: { machine } });
 }

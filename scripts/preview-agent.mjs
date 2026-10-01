@@ -33,6 +33,7 @@ import { execFile } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import previewRoutes from '../packages/brain/src/routes/preview.js';
+import { createCacheRouter } from './preview-cache/router.mjs';
 
 // 端口选 5241 而非邻近号段：5221 是 socat（转发 us-vps），5231 已被 fleet-node-health
 // 占用（2026-09-17 实测返回 {"error":"not_found"}，且 lsof 在普通权限下看不到它）。
@@ -70,6 +71,7 @@ const app = express();
 app.use(express.json({ limit: '1mb' }));
 
 // 与 Brain 同路径挂载，CI 才能只改地址、不改调用脚本
+app.use('/api/brain/preview/janitor/cache', createCacheRouter());
 app.use('/api/brain/preview', previewRoutes);
 
 // CI 在调 start 之前会先探 health 拿 uptime，用于判断对端有没有中途重启

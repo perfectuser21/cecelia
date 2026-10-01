@@ -218,7 +218,7 @@ else
   fail "跳过二进制查找测试" "脚本没有 PATH 导出行"
 fi
 
-# ── 测试 9：PR npm cache 也是对账源，终态 PR 必须回收 ────────────────────────
+# ── 测试 9：PR npm cache 也是对账源，终态 PR 的未知归属cache保留给固定Janitor策略 ────────────────────────
 setup
 mkdir -p "$PREVIEW_BASE_DIR/.npm-cache-preview-107/_cacache"
 printf 'cache-data' >"$PREVIEW_BASE_DIR/.npm-cache-preview-107/_cacache/index"
@@ -226,11 +226,11 @@ printf '#!/bin/bash\necho ""\n' >"$BIN/psql"; chmod +x "$BIN/psql"
 printf '#!/bin/bash\necho "MERGED"\n' >"$BIN/gh"; chmod +x "$BIN/gh"
 
 OUT=$(bash "$REAPER" 2>&1)
-if [ ! -d "$PREVIEW_BASE_DIR/.npm-cache-preview-107" ] \
-  && echo "$OUT" | grep -q "npm cache.*已删除"; then
-  pass "MERGED PR 的独立 npm cache 被发现并回收"
+if [ -d "$PREVIEW_BASE_DIR/.npm-cache-preview-107" ] \
+  && echo "$OUT" | grep -q "保留 npm cache.*preview-owned-npm-cache-expiry-v1"; then
+  pass "MERGED PR 的独立 npm cache 被发现并保留"
 else
-  fail "MERGED PR 的独立 npm cache 泄漏" "output=$OUT"
+  fail "MERGED PR 的独立 npm cache 被旁路删除" "output=$OUT"
 fi
 teardown
 
@@ -240,7 +240,7 @@ teardown
 # ══════════════════════════════════════════════════════════════════════════════
 
 echo ""
-echo "── 测试 10：正常路径 — pid 文件 cmdline 含 preview-<pr> → 进程被终止 + DB inactive + npm 清理 ──"
+echo "── 测试 10：正常路径 — pid 文件 cmdline 含 preview-<pr> → 进程被终止 + DB inactive + npm 保留 ──"
 setup
 PR=108
 mkdir -p "$PREVIEW_BASE_DIR/preview-$PR"
@@ -255,8 +255,8 @@ sleep 0.2
 if ! alive "$TGT" \
   && echo "$OUT" | grep -q "已终止" \
   && echo "$OUT" | grep -q "inactive" \
-  && [ ! -d "$PREVIEW_BASE_DIR/.npm-cache-preview-$PR" ]; then
-  pass "正常路径：pid 文件命中 → 进程终止 + DB inactive + npm 清理"
+  && [ -d "$PREVIEW_BASE_DIR/.npm-cache-preview-$PR" ]; then
+  pass "正常路径：pid 文件命中 → 进程终止 + DB inactive + npm 保留"
 else
   fail "正常路径未按预期回收" "alive=$(alive "$TGT" && echo Y || echo N) out=$OUT"
 fi

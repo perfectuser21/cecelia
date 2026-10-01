@@ -1,3 +1,4 @@
+import { directory } from '../execution-directory/directory.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -778,4 +779,9 @@ describe('expired attempt transactional authority', () => {
     expect(client.query.mock.calls.map(([sql]) => sql)).not.toContain('COMMIT');
     expect(client.release).toHaveBeenCalledOnce();
   });
+});
+
+it('旧Fleet未回执attempt在目录不可用时仍按历史身份进入清理',async()=>{
+ await directory.refresh({pool:{query:async()=>({rows:[]})}});
+ expect(oldestExpiredAttempt([ATTEMPT],NOW)).toBe(ATTEMPT);
 });

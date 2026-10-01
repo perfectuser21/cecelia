@@ -159,7 +159,8 @@ export async function executeOnHost(opts) {
 
   console.log(`[host-executor] spawn task=${taskId} worktree=${worktreePath} mode=${inContainer ? 'container-ssh' : 'host-direct'} launcher=${launcherLabel}`);
 
-  return new Promise((resolve) => {
+  return new Promise((resolve,reject) => {
+    const launch=()=>{
     const proc = spawnFn(cmdArgs[0], cmdArgs.slice(1), {
       cwd: inContainer ? undefined : worktreePath,
       env: spawnEnv,
@@ -225,5 +226,8 @@ export async function executeOnHost(opts) {
         ended_at: new Date().toISOString(),
       });
     });
+    };
+    if(opts.authorizeSpawn)Promise.resolve().then(()=>opts.authorizeSpawn(launch)).catch(reject);
+    else launch();
   });
 }

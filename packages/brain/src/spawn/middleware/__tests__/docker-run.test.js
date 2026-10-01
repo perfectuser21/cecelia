@@ -27,6 +27,14 @@ describe('runDocker() docker-run middleware', () => {
     ({ runDocker } = await import('../docker-run.js'));
   });
 
+  it('授权锁仅覆盖实际spawn，进程运行期间不持锁；拒绝时不启动', async()=>{
+    const proc=makeProc();mockSpawnFn.mockReturnValueOnce(proc);let released=false;
+    const p=runDocker(['run'],{taskId:'guarded',timeoutMs:5000,name:'guarded',authorizeSpawn:async launch=>{await launch();released=true;}});
+    await Promise.resolve();await Promise.resolve();expect(released).toBe(true);expect(mockSpawnFn).toHaveBeenCalledOnce();
+    proc.emit('exit',0,null);await p;mockSpawnFn.mockClear();
+    await expect(runDocker(['run'],{authorizeSpawn:async()=>{throw Error('execution_grant_denied');}})).rejects.toThrow('execution_grant_denied');expect(mockSpawnFn).not.toHaveBeenCalled();
+  });
+
   it('resolves with exit_code 0 on happy path', async () => {
     const proc = makeProc();
     mockSpawnFn.mockReturnValueOnce(proc);

@@ -1017,6 +1017,8 @@ run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null \
 
 cp "$installed_plist" "$test_root/canonical-worker.plist"
 
+cp "$installed_plist" "$test_root/canonical-worker.plist"
+
 seed_prior_generation() {
   local tag="$1"
   printf '%s\n' "prior-worker-$tag" > "$installed_worker"
