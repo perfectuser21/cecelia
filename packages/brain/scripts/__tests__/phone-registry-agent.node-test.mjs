@@ -113,3 +113,15 @@ test('业务成功但wrapper明确报告清场失败不得缓存当天核验通�
   assert.equal(f.run().receipts[0].status, 'cleanup_failed');
   assert.equal((f.log().match(/account-current/g) ?? []).length, 2);
 });
+
+test('v2扩展技术列按serial保留，enabled严格从Brain真身导出', t => {
+  const f = fixture(t); const path = join(f.conf, 'douyin-phone-profiles.tsv');
+  writeFileSync(path, '#registry_version 2\n#profile\tserial\tmodel\twidth\theight\tdensity\tsdk\tlocale\tapp_version\tenabled\nv1\tSER1\tMODEL\t1080\t2412\t440\t34\tzh-CN\t31.0\tfalse\n');
+  assert.equal(f.run().ok, true);
+  const rows = readFileSync(path, 'utf8').trim().split('\n');
+  const columns = rows.find(row => row.startsWith('#profile')).slice(1).split('\t');
+  const row = rows.find(row => row.startsWith('p1\t')).split('\t');
+  const values = Object.fromEntries(columns.map((key, i) => [key, row[i]]));
+  assert.equal(values.density, '440'); assert.equal(values.sdk, '34'); assert.equal(values.locale, 'zh-CN');
+  assert.equal(values.app_version, '31.0'); assert.equal(values.enabled, 'true');
+});
