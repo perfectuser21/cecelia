@@ -12,6 +12,9 @@
 #   闸6 tasks_task_type_check 存在且已验证（461 NOT VALID + 462 VALIDATE 两步都到位，convalidated=true）
 # 只删自己插的行（固定 title 前缀），绝不动别人的行。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
@@ -31,7 +34,7 @@ case "$DB_HOST" in
   *) [[ -n "$SELF_SHORT" && "$DB_HOST" == "$SELF_SHORT" ]] || [[ -n "$SELF_FQDN" && "$DB_HOST" == "$SELF_FQDN" ]] \
        || fail "拒绝连接非本机数据库 host: ${DB_HOST}（只准 localhost/127.0.0.1/本机 hostname）" ;;
 esac
-q() { "$PSQL" "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"; }
+q() { "$PSQL" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"; }
 
 # 合并前 Minor②：闸4/闸4b 原先"随便什么失败都判绿"——INSERT 语句本身打错列名
 # 之类的语法错误也会让 psql 非 0 退出，被当成"确实撞上去重索引"，假绿。改成精确
@@ -41,7 +44,7 @@ q() { "$PSQL" "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"; }
 #         1=INSERT 居然成功了（去重失效）；2=撞到别的非预期错误（脚本本身有 bug）。
 qfail23505() {
   local sql="$1" out
-  if out="$("$PSQL" "$DATABASE_URL" -v VERBOSITY=verbose -v ON_ERROR_STOP=1 -c "$sql" 2>&1)"; then
+  if out="$("$PSQL" -X "$DATABASE_URL" -v VERBOSITY=verbose -v ON_ERROR_STOP=1 -c "$sql" 2>&1)"; then
     return 1
   fi
   if [[ "$out" == *'ERROR:  23505:'* && "$out" == *'"idx_tasks_dedup_active"'* ]]; then
@@ -52,7 +55,7 @@ qfail23505() {
 }
 
 T="[smoke] qiumi-foundation $$"
-cleanup() { "$PSQL" "$DATABASE_URL" -q -c "DELETE FROM tasks WHERE title LIKE '${T}%'" >/dev/null 2>&1 || true; }
+cleanup() { "$PSQL" -X "$DATABASE_URL" -q -c "DELETE FROM tasks WHERE title LIKE '${T}%'" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 cleanup
 

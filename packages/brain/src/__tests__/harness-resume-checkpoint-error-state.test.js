@@ -186,12 +186,16 @@ vi.mock('fs/promises', () => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('fs', () => ({
+vi.mock('fs', async () => {
+  const actual = await vi.importActual('fs');
+  const { preserveFleetConfigFs } = await import('./helpers/fleet-config-fs-fixture.js');
+  return preserveFleetConfigFs(actual, {
   readFileSync: vi.fn(() => 'SwapTotal: 0\nSwapFree: 0'),
   readdirSync: vi.fn(() => []),
   unlinkSync: vi.fn(),
   existsSync: vi.fn(() => false),
-}));
+});
+});
 
 vi.mock('../auto-learning.js', () => ({
   processExecutionAutoLearning: vi.fn().mockResolvedValue(undefined),

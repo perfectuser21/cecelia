@@ -1,3 +1,4 @@
+import {seedExecutionDirectoryPgFixture,refreshExecutionDirectoryPgFixture} from '../helpers/execution-directory-pg-fixture.js';
 // 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
 vi.mock('../../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 import { closePgPool, trackPgPool } from './helpers/close-pg-pool.js';
@@ -23,7 +24,7 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createKernelRun } from '../../orchestrator/kernel-run-store.js';
 import { spawnSkillRelaySession } from '../../harness-skill-relay.js';
@@ -65,6 +66,7 @@ async function createIsolatedDatabase() {
     stdio: 'pipe',
   });
   testPool = trackPgPool(new Pool({ ...DB_DEFAULTS, database: databaseName, max: 10 }));
+  await seedExecutionDirectoryPgFixture(testPool);
 }
 
 async function dropIsolatedDatabase() {
@@ -113,6 +115,7 @@ async function runCount(taskId) {
   return rows[0].n;
 }
 
+beforeEach(async()=>refreshExecutionDirectoryPgFixture(testPool));
 beforeAll(createIsolatedDatabase, 60_000);
 afterAll(dropIsolatedDatabase, 30_000);
 
@@ -235,6 +238,7 @@ describe('Session Controller durable authority（真 PG）', () => {
     const task={id:seeded.taskId,ability_id:null,payload:seeded.payload};
     const result = await spawnSkillRelaySession(task, {
       pool:testPool,
+      authorizeLegacyRelay:async(_identity,operation)=>operation(),
       createKernelRun:(dbPool,input)=>createRoutedKernelRun(dbPool,input),
       execFn:(command)=>String(command).includes('tmux has-session')?'TMUX_DEAD':'',
       loadSkill:()=> 'SKILL_CONTENT',

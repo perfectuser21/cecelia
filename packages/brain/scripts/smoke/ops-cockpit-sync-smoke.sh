@@ -5,6 +5,9 @@
 #   ② 人工列不会被采集器的 UPSERT 冲掉（分区是整个双向设计的地基）
 #   ③ 停用失败必须留下 enable_error（不可逆动作绝不静默）
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 : "${DATABASE_URL:?DATABASE_URL is required and must target a test or scratch database}"
@@ -12,7 +15,7 @@ PSQL="$(command -v psql)"; NODE="$(command -v node)"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DB_NAME="$("$NODE" -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DB_NAME" =~ (_test|_scratch)$ ]] || fail "refuse non-test db: ${DB_NAME:-empty}"
-q() { "$PSQL" "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"; }
+q() { "$PSQL" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"; }
 
 TAG="cockpit-$$"
 cleanup() { q "DELETE FROM ops_workflows WHERE name LIKE '${TAG}%'" >/dev/null 2>&1 || true; }

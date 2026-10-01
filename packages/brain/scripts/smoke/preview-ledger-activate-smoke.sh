@@ -28,6 +28,10 @@
 #      写反了拿到的是预览库名，账本照样永远写不进去，现象与修之前一模一样
 #   ⑤ Step 7 不许再出现硬编码库名
 set -uo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "postgresql://${DB_HOST:-${PGHOST:-localhost}}:${PGPORT:-5432}/${DB_NAME:-${PGDATABASE:-cecelia_test}}"; then
+  exit 0
+fi
+export DB_HOST="${DB_HOST:-${PGHOST:-localhost}}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 ACTIVATE="$REPO_ROOT/scripts/preview-ledger-activate.sh"
@@ -45,7 +49,7 @@ PGU="${DB_USER:-${PGUSER:-cecelia}}"
 PGP="${DB_PASSWORD:-${PGPASSWORD:-cecelia}}"
 LEDGER_DB="${DB_NAME:-${PGDATABASE:-cecelia_test}}"
 
-psql_q() { PGPASSWORD="$PGP" psql -h "$PGH" -U "$PGU" -d "$1" -tAc "$2" 2>&1; }
+psql_q() { PGPASSWORD="$PGP" psql -X -h "$PGH" -U "$PGU" -d "$1" -tAc "$2" 2>&1; }
 
 # postgres 必须真的在。这里**不做静默跳过** —— 一个从不执行的守卫等于没有守卫，
 # 而 CI（ci-smoke-glob-runner.yml）永远挂着 postgres service，连不上就是真出事了。

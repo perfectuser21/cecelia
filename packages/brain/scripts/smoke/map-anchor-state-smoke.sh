@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # scratch-only 真验火：精确锚点、查询时五态、revision receipt 与影响半径。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT_DIR"
@@ -13,9 +16,9 @@ NODE_EXECUTABLE="$(command -v node)"
 PSQL_EXECUTABLE="$(command -v psql)"
 DATABASE_NAME="$($NODE_EXECUTABLE -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DATABASE_NAME" =~ (_test|_scratch)$ ]] || fail "拒绝连接非测试库: ${DATABASE_NAME:-<empty>}"
-[[ "$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')" == "$DATABASE_NAME" ]] \
+[[ "$($PSQL_EXECUTABLE -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')" == "$DATABASE_NAME" ]] \
   || fail '数据库连接目标不一致'
-[[ "$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='407')")" == 't' ]] \
+[[ "$($PSQL_EXECUTABLE -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='407')")" == 't' ]] \
   || fail 'schema_version 407 不存在'
 
 SMOKE_SCOPE="map-anchor-state-smoke-$$"
@@ -227,7 +230,7 @@ pass '当前 revision 最新 FAIL→red'
 pass '快照超过 15 分钟→unknown'
 pass 'repo 隔离 radius 返回业务节点/必跑断言，Cross-cut radius 非空'
 
-RESIDUE="$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "
+RESIDUE="$($PSQL_EXECUTABLE -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "
   SELECT
     (SELECT count(*) FROM map_projection_runs WHERE scope_key='$SMOKE_SCOPE')::text || '|' ||
     (SELECT count(*) FROM map_manifest_versions WHERE scope_key='$SMOKE_SCOPE')::text || '|' ||

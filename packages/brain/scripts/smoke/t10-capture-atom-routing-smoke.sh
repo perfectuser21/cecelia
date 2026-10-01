@@ -15,6 +15,9 @@
 # 出现，见 t10-smoke-db-target-consistency.test.js 的回归护栏）。
 
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "postgresql://${DB_HOST:-localhost}:${DB_PORT:-5432}/${DB_NAME:-cecelia_test}"; then
+  exit 0
+fi
 
 cd "$(git rev-parse --show-toplevel)"
 
@@ -86,7 +89,7 @@ await pool.end();
 echo "$RESULT" | grep -q '"id"' || { echo "FAIL: createAutoLearning 未返回 id（learnings 主写入未成功）"; exit 1; }
 echo "  learning 写入结果: $RESULT"
 
-COUNT=$(PGPASSWORD="$DB_PASSWORD" psql "$DB" -t -c "
+COUNT=$(PGPASSWORD="$DB_PASSWORD" psql -X "$DB" -t -c "
   SELECT count(*) FROM capture_atoms ca
   JOIN captures c ON c.id = ca.capture_id
   WHERE ca.target_type = 'learning'

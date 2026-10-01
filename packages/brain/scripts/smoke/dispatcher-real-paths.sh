@@ -16,6 +16,11 @@
 
 set -eo pipefail  # 不用 -u，python3 子进程偶有空输出导致 "unbound variable"
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia_test}"; then
+  exit 0
+fi
+
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 DB_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia_test}"
 MAX_WAIT_SEC="${DISPATCHER_SMOKE_MAX_WAIT_SEC:-90}"
@@ -35,7 +40,7 @@ pass() { echo "  ✅ $1"; PASSED=$((PASSED+1)); }
 fail() { echo "  ❌ $1"; FAILED=$((FAILED+1)); }
 
 # health check
-if ! curl -sf "${BRAIN_URL}/api/brain/tick/status" >/dev/null 2>&1; then
+if ! curl -q -sf "${BRAIN_URL}/api/brain/tick/status" >/dev/null 2>&1; then
   echo "❌ Brain not healthy at ${BRAIN_URL}" >&2
   exit 1
 fi
@@ -67,7 +72,7 @@ if extra:
     d.setdefault('payload', {}).update(extra_obj)
 print(json.dumps(d))
 ")
-  curl -sS -m 10 -X POST "${BRAIN_URL}/api/brain/tasks" \
+  curl -q -sS -m 10 -X POST "${BRAIN_URL}/api/brain/tasks" \
     -H "Content-Type: application/json" \
     -d "$payload" \
     | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))"
@@ -75,12 +80,12 @@ print(json.dumps(d))
 
 trigger_tick() {
   # tick 偶尔慢（dispatcher iter 多 task），10s timeout 足够；超时不算失败
-  curl -sS -m 10 -X POST "${BRAIN_URL}/api/brain/tick" -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 || true
+  curl -q -sS -m 10 -X POST "${BRAIN_URL}/api/brain/tick" -H "Content-Type: application/json" -d '{}' >/dev/null 2>&1 || true
 }
 
 get_task_field() {
   # $1=task_id $2=field
-  curl -sS -m 10 "${BRAIN_URL}/api/brain/tasks/$1" | python3 -c "
+  curl -q -sS -m 10 "${BRAIN_URL}/api/brain/tasks/$1" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
 field = '$2'
@@ -138,7 +143,7 @@ echo ""
 # ─── Case B: empty queue 不抛 ───────────────────────────
 echo "[Case B] empty queue — dispatch 不抛"
 # 注册 0 个 dispatchable task；触发 tick；不应抛 5xx
-TICK_RESP=$(curl -sS -o /tmp/tick-resp.json -w '%{http_code}' \
+TICK_RESP=$(curl -q -sS -o /tmp/tick-resp.json -w '%{http_code}' \
   -X POST "${BRAIN_URL}/api/brain/tick" \
   -H "Content-Type: application/json" \
   -d '{}' 2>&1 || echo "000")
@@ -154,7 +159,7 @@ echo ""
 echo "[Case C] initiative-lock — 同 project 并发 harness_initiative，只 1 个能 dispatch"
 # project_id 必须指向真实存在的 projects 行（棒1 migration 497 起 tasks_project_id_fkey
 # 外键生效，棒4留痕：合成 UUID 会被 FK 拒绝，改走 POST /api/brain/projects 建一行真的）。
-PROJ_RESP=$(curl -sS -m 10 -X POST "${BRAIN_URL}/api/brain/projects" \
+PROJ_RESP=$(curl -q -sS -m 10 -X POST "${BRAIN_URL}/api/brain/projects" \
   -H "Content-Type: application/json" \
   -d "{\"name\":\"[smoke-${SMOKE_RUN_ID}] dispatcher-real-paths Case C\"}")
 PROJ_ID=$(echo "$PROJ_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
@@ -198,10 +203,10 @@ echo ""
 # Brain status 转换守卫：queued 直接 → failed 被拒，必须先 in_progress
 for tid in "${A_TASK:-}" "${B1_TASK:-}" "${B2_TASK:-}"; do
   [ -z "$tid" ] && continue
-  curl -sS -X PATCH "${BRAIN_URL}/api/brain/tasks/${tid}" \
+  curl -q -sS -X PATCH "${BRAIN_URL}/api/brain/tasks/${tid}" \
     -H "Content-Type: application/json" \
     -d '{"status":"in_progress"}' >/dev/null 2>&1 || true
-  curl -sS -X PATCH "${BRAIN_URL}/api/brain/tasks/${tid}" \
+  curl -q -sS -X PATCH "${BRAIN_URL}/api/brain/tasks/${tid}" \
     -H "Content-Type: application/json" \
     -d '{"status":"failed","result":{"smoke":"dispatcher-real-paths cleanup"}}' >/dev/null 2>&1 || true
 done

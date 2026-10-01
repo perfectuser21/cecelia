@@ -1,3 +1,4 @@
+import '../../../packages/brain/src/__tests__/helpers/execution-directory-fixture.js';
 // F1「工厂 · 开发闭环」步骤 3「造完真验」—— 边：kernel run 在跑场机上取凭据
 //
 // 2026-09-23 实证：MMV fleet-worker 以 _cecelia（HOME=/var/empty）起 run.js，凭据在 administrator
@@ -53,7 +54,7 @@ describe('F1 step3 · kernel run 在跑场机取凭据', () => {
     const root = hostHome();
     const env = { CECELIA_CREDENTIAL_HOME_ROOT: root, CECELIA_CREDENTIAL_TRUSTED_UIDS: String(process.getuid()) };
     const envelope = await brokerFor(env).issue({
-      attemptId: ATTEMPT_ID, accountId: 'team1', machineId: 'us-mac-m4',
+      repo:'perfectuser21/cecelia',provider:'codex',attemptId: ATTEMPT_ID, accountId: 'team1', machineId: 'us-mac-m4',
       deadlineAt: new Date(Date.now() + 3600e3).toISOString(),
     });
     expect(envelope).toMatchObject({ contract_version: 'credential-envelope/v1', account_id: 'team1' });
@@ -63,7 +64,7 @@ describe('F1 step3 · kernel run 在跑场机取凭据', () => {
     const env = { CECELIA_CREDENTIAL_HOME_ROOT: fs.mkdtempSync(path.join(os.tmpdir(), 'empty-home-')) };
     roots.push(env.CECELIA_CREDENTIAL_HOME_ROOT);
     await expect(brokerFor(env).issue({
-      attemptId: ATTEMPT_ID, accountId: 'team1', machineId: 'us-mac-m4',
+      repo:'perfectuser21/cecelia',provider:'codex',attemptId: ATTEMPT_ID, accountId: 'team1', machineId: 'us-mac-m4',
       deadlineAt: new Date(Date.now() + 3600e3).toISOString(),
     })).rejects.toThrow('credential_source_unavailable');
   });
