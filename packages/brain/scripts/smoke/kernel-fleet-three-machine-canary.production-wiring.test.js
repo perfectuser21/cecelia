@@ -1,3 +1,5 @@
+import { directory } from '../../src/execution-directory/directory.js';
+import { legacyRecords } from '../../src/execution-directory/legacy-policy.js';
 /* global AbortSignal, Response */
 
 import {
@@ -89,8 +91,9 @@ function workerHealthResponse(machine) {
 }
 
 describe('createLiveDispatch production probe wiring', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    await directory.refresh({pool:{query:async()=>({rows:legacyRecords({env:WORKER_ENV})})}});
   });
 
   afterEach(() => {
@@ -101,6 +104,9 @@ describe('createLiveDispatch production probe wiring', () => {
     'probes canonical %s identity and blocks a drifted node before attempt creation',
     async (targetMachine) => {
       pool.query.mockImplementation(async (sql, params) => {
+        if (/pg_advisory_xact_lock/.test(sql)) return {rows:[]};
+        if (/SELECT (?:id|metadata) FROM system_registry/.test(sql)) return {rows:[]};
+        if (/FROM execution_nodes/.test(sql)) return {rows:legacyRecords({env:WORKER_ENV})};
         if (/INSERT INTO initiative_runs/.test(sql)) {
           return { rows: [{ id: RUN_ID }], rowCount: 1 };
         }

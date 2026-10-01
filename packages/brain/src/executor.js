@@ -213,10 +213,6 @@ const XIAN_CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.8
 // 西安 Mac mini M1 Codex Bridge URL (via Tailscale)
 const XIAN_M1_BRIDGE_URL = process.env.XIAN_M1_BRIDGE_URL || 'http://100.88.166.55:3458';
 
-// 多机 Codex Bridge 列表（负载均衡）
-const CODEX_BRIDGES = (process.env.CODEX_BRIDGES || 'http://100.86.57.69:3458,http://100.88.166.55:3458')
-  .split(',').map(s => s.trim()).filter(Boolean);
-
 /**
  * 从多个 Codex Bridge 中选择最空闲的
  */

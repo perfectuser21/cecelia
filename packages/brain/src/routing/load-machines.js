@@ -13,7 +13,7 @@ export async function loadActiveMachines() {
   if(!directory.current())await directory.refresh({pool});
   return (directory.current()?.nodes??[]).filter(n=>n.machine_status==='active').map(n=>({
     name:n.name,status:n.machine_status,id:n.machine_registry_id,canonical_id:n.canonical_id,
-    metadata:{...n.metadata,executors:legacyExecutorEntries().filter(e=>e.machineId===n.canonical_id).map(({machineId,...e})=>e)},
+    metadata:{...n.metadata,executors:legacyExecutorEntries().filter(e=>e.machineId===n.canonical_id).map(({machineId:_machineId,...e})=>e)},
   }));
 }
 export function clearMachineCache(){return directory.refresh({pool}).catch(()=>null);}

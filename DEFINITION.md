@@ -14,6 +14,8 @@
 
 Brain 镜像完整打包 Fleet Worker 共用运行模块；构建期及独立产物回归实际导入执行目录并读取部署策略。
 
+执行目录的既有回归显式登记测试设备与授权；文件系统替身保留真实节点策略读取，数据库权限及恢复断言继续使用真实 PostgreSQL。
+
 Worker维护暂停在本机三类runner与Docker最终副作用前执行；认证静默回执绑定nonce、同boot和活动版本，客户端断开不减在途计数，orchestrator真实子进程退出才归零。启动对账未确认或prepare潜在副作用后失败均拒签；候选工作区只保守占位，不自动清理。
 
 Mac Worker 版本探针只读固定 OrbStack bundle 的 CFBundleShortVersionString；不运行会初始化管理员目录的 orbctl version。Docker、镜像、自检容器与资源准入仍分别真实检查，版本不可读继续报 unavailable。

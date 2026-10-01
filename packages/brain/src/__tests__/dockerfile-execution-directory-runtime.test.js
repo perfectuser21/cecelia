@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 const brain = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const repository = resolve(brain, '../..');
 
-it('真实 Dockerfile 的运行产物能导入执行目录并读取部署策略', () => {
+it('dockerfile-execution-directory-runtime：真实 Dockerfile 的运行产物能导入执行目录并读取部署策略', () => {
   const artifact = mkdtempSync(join(tmpdir(), 'brain-runtime-artifact-'));
   try {
     // 从真实 runtime stage 的 COPY 重建内部文件，不能链接源码掩盖漏打包。
