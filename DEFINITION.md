@@ -10,7 +10,9 @@
 
 
 
-**Brain 版本**: 1.353.7
+**Brain 版本**: 1.353.10
+
+Linux 执行池部署合同使用独立 systemd slice 的 CPU/内存/PID 限额；仅可信私有配置指定固定 Docker socket、固定池名和镜像 digest。零预算保持不可执行，US 调度节点按稳定设备 UUID 禁止执行。此合同与单元生成器尚未接入服务安装或目录授权，不能将生成配置当作通过验收。
 
 Linux 首批资源观测提供 cgroup v1/v2 可见祖先、分数 CPU、内存剩余、PSI、事件计数与关键路径磁盘采样。Linux health 早返回，不执行 Mac 命令或创建探测容器；CPU/内存限额观测代表采样进程自身 cgroup；PSI 来自 /proc/pressure，逐项固定 scope=system，仅表示可见系统压力，不能当作任务池压力或宿主授权证明。namespace 根不证明宿主祖先可见。未验证 Docker 工作负载池时核心资源保持拒绝值，execution/pool_verified 固定 false；GPU 未核验标 unknown。标准 Mac 安装器完整打包解析器并可回滚。真实隔离容器 canary 验证0.5核/128MiB实际限额，仅证明自身观测，不开放 Linux 执行、systemd 接入或目录授权。
 
