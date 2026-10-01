@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 'use strict';
+const { CONTAINER_ID, verifyContainerIdentity } = require('./attempt-container-identity.cjs');
+const { resolveAttemptResourcePlan, dockerLimitArgs } = require('./attempt-resource-policy.cjs');
 
 const { execFile } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
@@ -55,13 +57,15 @@ function validateRequirements(value) {
   return Object.freeze({ postgres: value.postgres === true });
 }
 
-function runtimeFor(attemptId, postgresImageDigest) {
+function runtimeFor(attemptId, postgresImageDigest, containerId, networkId) {
   const { containerName, networkName } = namesFor(attemptId);
   return Object.freeze({
     postgres: Object.freeze({
       container_name: containerName,
       network_name: networkName,
       image_digest: postgresImageDigest,
+      container_id: containerId,
+      network_id: networkId,
     }),
   });
 }
@@ -70,11 +74,11 @@ function parseOwnedRows(stdout, expectedName) {
   const rows = [];
   for (const line of String(stdout ?? '').split(/\r?\n/)) {
     if (!line) continue;
-    const [name, attemptId] = line.split('\t');
-    if (!UUID_PATTERN.test(attemptId ?? '') || name !== expectedName(attemptId)) {
+    const [id, name, attemptId] = line.split('\t');
+    if (!CONTAINER_ID.test(id ?? '') || !UUID_PATTERN.test(attemptId ?? '') || name !== expectedName(attemptId)) {
       continue;
     }
-    rows.push(Object.freeze({ name, attemptId }));
+    rows.push(Object.freeze({ id, name, attemptId }));
   }
   return rows;
 }
@@ -85,37 +89,6 @@ function isExplicitlyMissing(error) {
     .join('\n');
   return /no such (?:container|network)|(?:container|network).*not found/i
     .test(detail);
-}
-
-async function removePostgresContainer(runCommand, attemptId) {
-  const { containerName } = namesFor(attemptId);
-  try {
-    await runCommand('docker', ['rm', '-f', '--', containerName]);
-  } catch (error) {
-    if (!isExplicitlyMissing(error)) {
-      throw new Error('attempt_resource_service_release_failed', { cause: error });
-    }
-  }
-}
-
-async function removeOwned(runCommand, attemptId) {
-  const { networkName } = namesFor(attemptId);
-  const failures = [];
-  try {
-    await removePostgresContainer(runCommand, attemptId);
-  } catch (error) {
-    failures.push(error);
-  }
-  try {
-    await runCommand('docker', ['network', 'rm', '--', networkName]);
-  } catch (error) {
-    if (!isExplicitlyMissing(error)) failures.push(error);
-  }
-  if (failures.length > 0) {
-    throw new Error('attempt_resource_release_failed', {
-      cause: new AggregateError(failures),
-    });
-  }
 }
 
 function assertExactRuntime(attemptId, runtime) {
@@ -132,6 +105,7 @@ function assertExactRuntime(attemptId, runtime) {
 }
 
 function createAttemptResourceManager({
+  workerId,
   runCommand = defaultRunCommand,
   postgresImageDigest,
   randomBytesFn = randomBytes,
@@ -157,8 +131,45 @@ function createAttemptResourceManager({
     throw new Error('attempt_resource_invalid_health_interval');
   }
 
+  async function resolveIdentity({ attemptId, runtime, allowMissing = false } = {}) {
+    assertAttemptId(attemptId); assertExactRuntime(attemptId, runtime);
+    const previous = runtime.postgres;
+    // Absence is an observation, never permission to bind a different container.
+    if (previous.container_missing === true && previous.container_id == null) {
+      if (!allowMissing) throw new Error('attempt_runtime_resource_owner_mismatch');
+      return runtime;
+    }
+    const id = await verifyContainerIdentity({ runCommand, containerId: previous.container_id,
+      containerName: previous.container_name, image: previous.image_digest, allowName: true, allowMissing,
+      labels: { 'cecelia.fleet.attempt_id': attemptId, 'cecelia.fleet.resource': 'postgres' },
+      errorCode: 'attempt_runtime_resource_owner_mismatch' });
+    return Object.freeze({ postgres: Object.freeze({ ...previous, container_id: id ?? previous.container_id ?? null, container_missing: id === null }) });
+  }
+
+  async function removeExactContainer(containerId) {
+    try { await runCommand('docker', ['rm', '-f', '--', containerId]); }
+    catch (error) { if (!isExplicitlyMissing(error)) throw new Error('attempt_resource_service_release_failed'); }
+  }
+  async function removeExactNetwork(networkId) {
+    try { await runCommand('docker', ['network', 'rm', '--', networkId]); }
+    catch (error) { if (!isExplicitlyMissing(error)) throw new Error('attempt_resource_release_failed'); }
+  }
+  async function resolveNetworkIdentity(attemptId, networkId) {
+    const { networkName } = namesFor(attemptId);
+    let observed;
+    if (networkId != null && !CONTAINER_ID.test(networkId)) throw new Error('attempt_runtime_resource_owner_mismatch');
+    try { observed = await runCommand('docker', ['network', 'inspect', networkId ?? networkName]); }
+    catch (error) { if (isExplicitlyMissing(error)) return null; throw new Error('attempt_runtime_resource_owner_mismatch'); }
+    let value;
+    try { value = JSON.parse(observed.stdout)?.[0]; } catch { throw new Error('attempt_runtime_resource_owner_mismatch'); }
+    if (!CONTAINER_ID.test(value?.Id ?? '') || (networkId && value.Id !== networkId) || value.Name !== networkName
+        || value.Labels?.['cecelia.fleet.attempt_id'] !== attemptId
+        || value.Labels?.['cecelia.fleet.resource'] !== 'postgres') throw new Error('attempt_runtime_resource_owner_mismatch');
+    return value.Id;
+  }
   return Object.freeze({
-    async provision({ attemptId, requirements } = {}) {
+    resolveIdentity,
+    async provision({ attemptId, requirements, role } = {}) {
       assertAttemptId(attemptId);
       const validated = validateRequirements(requirements);
       if (!validated.postgres) {
@@ -169,6 +180,7 @@ function createAttemptResourceManager({
         });
       }
 
+      const plan = resolveAttemptResourcePlan({ workerId, role, postgres: true });
       const { containerName, networkName } = namesFor(attemptId);
       const suffix = randomBytesFn(32).toString('hex');
       if (!/^[a-f0-9]{64}$/.test(suffix)) {
@@ -177,10 +189,11 @@ function createAttemptResourceManager({
       const username = `attempt_${suffix.slice(0, 16)}`;
       const password = suffix.slice(16, 48);
       const database = `acceptance_${suffix.slice(48)}_scratch`;
-      let networkCreated = false;
-      let containerCreated = false;
+      let networkAttempted = false, containerAttempted = false;
+      let networkId, containerId;
       try {
-        await runCommand('docker', [
+        networkAttempted = true;
+        const networkCreated = await runCommand('docker', [
           'network',
           'create',
           '--label',
@@ -190,9 +203,12 @@ function createAttemptResourceManager({
           '--',
           networkName,
         ]);
-        networkCreated = true;
-        await runCommand('docker', [
+        networkId = String(networkCreated.stdout ?? '').trim();
+        if (!CONTAINER_ID.test(networkId)) throw new Error('attempt_resource_identity_required');
+        containerAttempted = true;
+        const created = await runCommand('docker', [
           'run',
+          ...dockerLimitArgs(plan.postgres),
           '--detach',
           '--name',
           containerName,
@@ -212,14 +228,15 @@ function createAttemptResourceManager({
           `POSTGRES_DB=${database}`,
           postgresImageDigest,
         ]);
-        containerCreated = true;
+        containerId = String(created.stdout ?? '').trim();
+        if (!CONTAINER_ID.test(containerId)) throw new Error('attempt_resource_identity_required');
 
         let healthy = false;
         for (let attempt = 0; attempt < healthAttempts; attempt += 1) {
           const readiness = await runCommand('docker', [
             'exec',
             '--',
-            containerName,
+            containerId,
             'pg_isready',
             '-U',
             username,
@@ -236,7 +253,7 @@ function createAttemptResourceManager({
 
         const dbUrl = `postgresql://${username}:${password}@postgres:5432/${database}`;
         return Object.freeze({
-          runtime: runtimeFor(attemptId, postgresImageDigest),
+          runtime: runtimeFor(attemptId, postgresImageDigest, containerId, networkId),
           environment: Object.freeze({
             DB_URL: dbUrl,
             DATABASE_URL: dbUrl,
@@ -250,39 +267,48 @@ function createAttemptResourceManager({
         });
       } catch (error) {
         const cleanupFailures = [];
-        if (containerCreated) {
+        if (containerAttempted) {
           try {
-            await runCommand('docker', ['rm', '-f', '--', containerName]);
-          } catch (cleanupError) {
-            if (!isExplicitlyMissing(cleanupError)) cleanupFailures.push(cleanupError);
-          }
+            if (!CONTAINER_ID.test(containerId ?? '')) throw new Error('attempt_resource_identity_required');
+            const verified = await resolveIdentity({ attemptId, runtime: runtimeFor(attemptId, postgresImageDigest, containerId, networkId), allowMissing: true });
+            if (!verified.postgres.container_missing) await removeExactContainer(verified.postgres.container_id);
+          } catch (cleanupError) { cleanupFailures.push(cleanupError); }
         }
-        if (networkCreated) {
+        if (networkAttempted) {
           try {
-            await runCommand('docker', ['network', 'rm', '--', networkName]);
-          } catch (cleanupError) {
-            if (!isExplicitlyMissing(cleanupError)) cleanupFailures.push(cleanupError);
-          }
+            if (!CONTAINER_ID.test(networkId ?? '')) throw new Error('attempt_resource_identity_required');
+            const verifiedId = await resolveNetworkIdentity(attemptId, networkId);
+            if (verifiedId) await removeExactNetwork(verifiedId);
+          } catch (cleanupError) { cleanupFailures.push(cleanupError); }
         }
         if (cleanupFailures.length > 0) {
-          throw new Error(`attempt_resource_rollback_failed:${error.message}`, {
+          const rollbackError = new Error(`attempt_resource_rollback_failed:${error.message}`, {
             cause: new AggregateError([error, ...cleanupFailures]),
           });
+          rollbackError.cleanupUnconfirmed = true;
+          throw rollbackError;
         }
         throw error;
       }
     },
 
+    async enforceLimits({ attemptId, role, runtime } = {}) {
+      assertAttemptId(attemptId); assertExactRuntime(attemptId, runtime);
+      if (!CONTAINER_ID.test(runtime.postgres.container_id ?? '')) throw new Error('attempt_resource_identity_required');
+      const verified = await resolveIdentity({ attemptId, runtime });
+      const plan = resolveAttemptResourcePlan({ workerId, role, postgres: true });
+      await runCommand('docker', ['update', ...dockerLimitArgs(plan.postgres), '--', verified.postgres.container_id]);
+    },
     async release({ attemptId, runtime } = {}) {
       assertAttemptId(attemptId);
       if (!runtime || Object.keys(runtime).length === 0) {
         return Object.freeze({ status: 'released' });
       }
-      // Ownership is bound to deterministic Attempt names plus an immutable
-      // digest recorded in state. It must not depend on the Worker's current
-      // baseline digest, otherwise an image upgrade makes old attempts leak.
       assertExactRuntime(attemptId, runtime);
-      await removeOwned(runCommand, attemptId);
+      const verified = await resolveIdentity({ attemptId, runtime, allowMissing: true });
+      const networkId = await resolveNetworkIdentity(attemptId, runtime.postgres.network_id);
+      if (!verified.postgres.container_missing) await removeExactContainer(verified.postgres.container_id);
+      if (networkId) await removeExactNetwork(networkId);
       return Object.freeze({ status: 'released' });
     },
 
@@ -295,7 +321,8 @@ function createAttemptResourceManager({
       // The callback-sending Runner is still attached to the attempt network.
       // Only PostgreSQL can be removed before Brain durably accepts the claim;
       // finalize() removes the network after the Runner exits.
-      await removePostgresContainer(runCommand, attemptId);
+      const verified = await resolveIdentity({ attemptId, runtime, allowMissing: true });
+      if (!verified.postgres.container_missing) await removeExactContainer(verified.postgres.container_id);
       return Object.freeze({ status: 'released' });
     },
 
@@ -312,7 +339,8 @@ function createAttemptResourceManager({
           '--filter',
           'label=cecelia.fleet.resource=postgres',
           '--format',
-          '{{.Names}}\t{{.Label "cecelia.fleet.attempt_id"}}',
+          '{{.ID}}\t{{.Names}}\t{{.Label "cecelia.fleet.attempt_id"}}',
+          '--no-trunc',
         ])).stdout,
         (attemptId) => namesFor(attemptId).containerName,
       );
@@ -323,16 +351,26 @@ function createAttemptResourceManager({
           '--filter',
           'label=cecelia.fleet.resource=postgres',
           '--format',
-          '{{.Name}}\t{{.Label "cecelia.fleet.attempt_id"}}',
+          '{{.ID}}\t{{.Name}}\t{{.Label "cecelia.fleet.attempt_id"}}',
+          '--no-trunc',
         ])).stdout,
         (attemptId) => namesFor(attemptId).networkName,
       );
-      const removableAttemptIds = new Set([
-        ...containers.map(({ attemptId }) => attemptId),
-        ...networks.map(({ attemptId }) => attemptId),
-      ].filter((attemptId) => !retained.has(attemptId)));
-      for (const attemptId of [...removableAttemptIds].sort()) {
-        await removeOwned(runCommand, attemptId);
+      const removableAttemptIds = new Set();
+      for (const { id, attemptId } of containers) {
+        if (retained.has(attemptId)) continue;
+        const verifiedId = await verifyContainerIdentity({ runCommand, containerId: id,
+          containerName: namesFor(attemptId).containerName, allowMissing: true,
+          labels: { 'cecelia.fleet.attempt_id': attemptId, 'cecelia.fleet.resource': 'postgres' },
+          errorCode: 'attempt_runtime_resource_owner_mismatch' });
+        if (verifiedId) await removeExactContainer(verifiedId);
+        removableAttemptIds.add(attemptId);
+      }
+      for (const { id, attemptId } of networks) {
+        if (retained.has(attemptId)) continue;
+        const verifiedId = await resolveNetworkIdentity(attemptId, id);
+        if (verifiedId) await removeExactNetwork(verifiedId);
+        removableAttemptIds.add(attemptId);
       }
       return Object.freeze({
         removed_attempts: Object.freeze([...removableAttemptIds].sort()),

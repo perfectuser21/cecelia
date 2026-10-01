@@ -28,6 +28,7 @@ export const OPENCLAW_AGENT_EXECUTOR_KIND = 'openclaw-agent';
 export const SCRIPT_EXECUTOR_KIND = 'script';
 
 export const VALID_EXECUTOR_KINDS = [
+  'app-server-controller',
   'preview-janitor',
   'brain-local',
   'relay-container',
@@ -122,6 +123,7 @@ async function _defaultKernelPool() {
 
 export const EXECUTOR_CONTRACTS = {
   // 固定HTTP回执由专属controller收割；本机进程与时间均不能证明远端删除状态。
+  'app-server-controller': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
   'preview-janitor': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
   /**
    * brain-local: Brain 直接 spawn 的本地进程（cecelia-run / codex exec）

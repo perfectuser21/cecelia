@@ -46,7 +46,7 @@ export async function prepareManagedScript(task,spec,pool,deps={}) {
     WHERE id=$1 AND status IN ('queued','in_progress')
       AND jsonb_array_length(COALESCE(payload->'script_attempts','[]'::jsonb))=$3
       AND (payload->>'script_run_id' IS NULL OR payload->>'script_run_id'=$4)
-      AND EXISTS (SELECT 1 FROM capacity_reservations WHERE id=$5 AND status IN ('reserved','launching','running'))
+      AND EXISTS (SELECT 1 FROM capacity_reservations WHERE owner_kind='script' AND id=$5 AND status IN ('reserved','launching','running'))
     RETURNING id`,[task.id,JSON.stringify({script_reservation_id:result.reservation.id,host_id:spec.host}),attempt-1,ownerKey,result.reservation.id]);
   if(!bound.rowCount)return {outcome:'stale',reason:'script_attempt_superseded'};
   return {...result,job,capabilities,store,client};
@@ -72,7 +72,7 @@ export async function triggerManagedScript(task,spec,pool,deps={}) {
       AND payload->>'script_reservation_id'=$3
       AND (payload->>'script_run_id' IS NULL OR payload->>'script_run_id'=$4)
       AND jsonb_array_length(COALESCE(payload->'script_attempts','[]'::jsonb))=$5
-      AND EXISTS (SELECT 1 FROM capacity_reservations WHERE id=$3::uuid AND status IN ('reserved','launching','running')) RETURNING id`,
+      AND EXISTS (SELECT 1 FROM capacity_reservations WHERE owner_kind='script' AND id=$3::uuid AND status IN ('reserved','launching','running')) RETURNING id`,
   [task.id,JSON.stringify({script_run_id:row.owner_key,script_reservation_id:row.id,script_managed:true,script_dispatch_id:dispatchId}),row.id,row.owner_key,task.payload?.script_attempts?.length??0]);
   if(!current.rowCount)return {success:true,taskId:task.id,executor:'script',pending:true};
   const fresh=row.status==='reserved';

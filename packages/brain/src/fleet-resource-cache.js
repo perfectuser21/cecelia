@@ -1,3 +1,4 @@
+import resourcePolicy from '../scripts/fleet-worker/attempt-resource-policy.cjs';
 /**
  * Fleet Resource Cache — 全局多机器资源感知
  *
@@ -69,7 +70,7 @@ async function collectServerStats(server, prevLastPingAt) {
 
     const totalMemMB = Math.round(stats.memory.totalGB * 1024);
     const cpuCores = stats.cpu.cores;
-    const physicalCapacity = calculatePhysicalCapacity(totalMemMB, cpuCores, 400, 0.5);
+    const physicalCapacity = calculatePhysicalCapacity(totalMemMB, cpuCores, resourcePolicy.BASE_SLOT.memoryBytes / 1024 ** 2, resourcePolicy.BASE_SLOT.cpus);
 
     const cpuPressure = stats.cpu.usagePercent / 100;
     const memPressure = stats.memory.usagePercent / 100;

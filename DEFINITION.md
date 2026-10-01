@@ -1,5 +1,7 @@
 # Cecelia 定义文档
 
+**Brain 版本**: 1.355.2
+
 并发合同 PG 回归在释放行锁前注册拒绝处理，避免预期拒绝被 CI 计为未捕获错误；生产合同拒绝语义保持。
 
 **版本**: 2.0.0
@@ -10,7 +12,10 @@
 
 
 
-**Brain 版本**: 1.355.1
+聊天未绑定 HOME 的候选从有效执行目录读取，主力机最后尝试；新节点无需新增机器字面量，空目录不启动。
+
+
+执行者冒烟精确名单纳入504新增app-server-controller与app_server_run，继续核验471历史集合及502/504增量；专属控制器合同不交通用看门狗终止。
 
 Brain 镜像完整打包 Fleet Worker 共用运行模块；构建期及独立产物回归实际导入执行目录并读取部署策略。
 
@@ -21,6 +26,12 @@ Worker维护暂停在本机三类runner与Docker最终副作用前执行；认�
 Mac Worker 版本探针只读固定 OrbStack bundle 的 CFBundleShortVersionString；不运行会初始化管理员目录的 orbctl version。Docker、镜像、自检容器与资源准入仍分别真实检查，版本不可读继续报 unavailable。
 
 CI趋势集成测试将北京自然日与滚动24小时设备窗口独立布置，覆盖陈旧、近期成功和无任务设备；生产巡检阈值不变。
+
+专用 app-server runner 首批提供受限 generation 容器、HOME 单写 journal、精确 ID 取消墓碑及双向有界 JSONL；只有 attach 进程确认退出才释放流占位；关闭事件在同一预约锁内重放，不能因锁争用丢失。Worker 重启后旧等待资源意图不可重新启动，旧身份仍可清理。标准安装器事务打包四模块，默认 profiles 为空，本次已接 Brain 持久整机预约与认证 Worker start/inspect/cancel，默认没有 app_server grant 或 HOME/profile 配置；尚未接 OpenClaw RPC adapter，现网聊天尚未由此治理。
+
+OpenClaw controller 使用独立 app_server 执行面、owner_kind 与 app_server_run 事件账，普通派发器不重派。受保护 HOME 配置绑定账号/仓库/profile digest；首次 M1/M4 优先、MMV 兜底，首次预约后机器亲和不可变。同 HOME 先取写锁，再取与 Harness/script 相同机器预算锁；每代独立 owner_key/intent/reservation，整机 exclusive_unclassified 占位。脚本 reaper 所有读写只处理 script owner。Worker HTTP 响应按块累计，超过 128KiB 立即取消读取并中止网络，响应体读取也受 deadline 约束；超时和断链只返回固定错误。内部 API 必须配置认证 token，客户端不能指定机器、身份、授权或配额；最终 start 再核当前目录精确 grant，撤销及换版拒绝启动。inspect/cancel 使用持久历史版本 endpoint；取消意图先落库，精确认证墓碑/缺失回执才释放，任务/turn/TTL 终态不释放。reconciler 只探查和续完已请求取消，不自动另起实例；旧 boot 且 journal 缺失时拒绝制造清理回执。
+
+受信 app-server profile 固定镜像 digest、非 root UID/GID、CPU/内存/PID/tmpfs 配额、显式隔离网络和两个受标签验证的 named volume；禁止宿主 HOME、凭据与 socket 挂载。HOME 卷须由受控初始化预建 `/home/runner/.codex` 并赋予 profile 用户写权限；runner 不创建或删除持久卷。真实离线 canary 经 runner 两次独立运行实例（不同 reservation，各 launch_generation=1）initialize 与共享 HOME marker 保留，不代表模型登录或线程恢复验证。日志驱动为 none；stdio 内容不进 journal，错误仅固定码。操作锁及未确认流/容器状态持续占位，后续控制面负责恢复。
 
 Janitor 新动作的CI冒烟使用十类执行者精确名单、471叠加502合法增量及只读任务白名单；真实PG路由验证默认停用且不触发清理。
 
@@ -45,6 +56,14 @@ Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增�
 - 保留前置 Harness 加权预约、Worker 本机 CPU/内存/磁盘/Docker 二次准入；不包含 OpenClaw 直聊、Linux 执行能力与动态授权。
 
 受管脚本准入仅写 blocked/queued，终态写入者守卫已登记。
+
+## Brain 1.353.8 — Harness 单任务容器硬限（12338dda）
+
+- Brain 角色预约与 Worker cgroups 共用 attempt-resource-policy：每基础槽 0.5 CPU、1 GiB、128 PID；轻档权重1、proposer权重2、generator/evaluator/judge权重4。fleet资源缓存物理槽由相同1GiB/.5CPU需求估算，替换原400MiB粗估；既有7/8/8上限不变，节点profile的最低6CPU/8GiB不当总预算。
+- 每个实际 Docker create/run 设置 CPU、内存、memory-swap和PID上限，memory-swap等于memory禁额外swap。Postgres固定占同一attempt总额中的0.25CPU/256MiB/32PID，runner扣减；轻档含PG时runner为0.25CPU/768MiB/96PID，不额外借预算。
+- 配额只从受信Worker节点与角色策略生成，忽略payload限额；缺失/未知profile或角色拒绝新容器。旧prepared/starting在新start前先持久化受信计划，再更新两个容器硬限；runner按持久精确容器ID启动。旧running仅探活/清理，不重新启动或追加预约。
+- 配额更新前inspect核对完整64位容器ID、attempt/worker/run或resource标签、固定镜像引用与Docker实际镜像ID；旧PG缺ID仅按精确归属解析一次，先持久再以ID更新。未知身份隔离占位，拒绝启动、凭据投递及自动清理；隔离写盘失败本进程仍保守保留；重启后cancel/reconcile/终态释放各自重新核验，失败零删除，PG和网络只按核验ID清理，明确不存在才幂等完成。缺失观察不覆盖已绑定container_id；后续解析与重启禁止降级为按名称认领替换容器。孤儿回收逐资源使用完整ID和独立归属核验，不借网络标签授权删除同名容器；新网络ID随PG持久化。创建响应丢失保留现场并报告cleanupUnconfirmed，Runner隔离工作区，不按名称回滚。安装器同步部署身份校验模块并验证失败回滚。
+- 真Docker canary以随机专属runner和PG验证总限额、runner OOM exit137及PG健康隔离；无provider调用，不挂宿主HOME/凭据/socket。CI永久运行。首批不开放Linux节点，不修改生产网络/schema；Linux采样、PSI及GPU准入仍属后续批次。
 
 ## Brain 1.352.4 — 现有执行目录统一（阶段4a）
 

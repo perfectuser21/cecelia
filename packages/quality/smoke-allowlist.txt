@@ -17,6 +17,7 @@ admission-report-smoke.sh
 advancement-items-smoke.sh
 anchor-backfill-smoke.sh
 anchor-check-smoke.sh
+app-server-controller-smoke.sh
 autoblock-sql-param-fix-smoke.sh
 battle-report-smoke.sh
 battle-report-v2-smoke.sh
@@ -373,7 +374,10 @@ preview-owned-cache-smoke.sh
 managed-script-capacity-smoke.sh
 node-onboarding-smoke.sh
 
+app-server-generation-smoke.sh
 execution-directory-smoke.sh
+
+attempt-runtime-limits-smoke.sh
 company-kr-analysis-smoke.sh
 
 smoke-production-guard-smoke.sh
