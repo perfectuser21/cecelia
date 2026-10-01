@@ -31,7 +31,7 @@ if [ "$RESPONSE" = "404" ]; then
 fi
 
 if [ "$RESPONSE" = "000" ]; then
-  echo "SKIP: brain 不可达 (curl -q 失败) — 部署后再跑"
+  echo "SKIP: brain 不可达 (curl 失败) — 部署后再跑"
   exit 0
 fi
 

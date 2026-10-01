@@ -32,7 +32,7 @@ BRAIN_CONTAINER="${BRAIN_CONTAINER:-cecelia-node-brain}"
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 
 # ── 1. 前置条件 ─────────────────────────────────────────────────────────────
-command -v curl -q >/dev/null 2>&1 || skip "curl -q 未安装"
+command -v curl >/dev/null 2>&1 || skip "curl 未安装"
 command -v docker >/dev/null 2>&1 || skip "docker 未安装"
 
 if ! docker ps --format '{{.Names}}' | grep -q "^${BRAIN_CONTAINER}$"; then

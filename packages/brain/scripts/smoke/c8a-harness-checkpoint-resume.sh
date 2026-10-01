@@ -56,8 +56,8 @@ fi
 if ! docker inspect "$BRAIN_CONTAINER" >/dev/null 2>&1; then
   skip "$BRAIN_CONTAINER 容器不存在（未部署）"
 fi
-if ! command -v psql -X >/dev/null 2>&1; then
-  skip "psql -X 不在 PATH（需要 PostgreSQL client）"
+if ! command -v psql >/dev/null 2>&1; then
+  skip "psql 不在 PATH（需要 PostgreSQL client）"
 fi
 
 if ! psql -X "$DB_URL" -tAc "SELECT 1" >/dev/null 2>&1; then

@@ -51,8 +51,8 @@ fi
 echo "[smoke] L2 PASS: Brain healthy"
 
 # ── L3 真环境验证 ─────────────────────────────────────────────────────
-if ! command -v psql -X >/dev/null 2>&1; then
-  echo "[smoke] L3 SKIP: psql -X 不可用，L3 跳过（L1 静态已 PASS）"
+if ! command -v psql >/dev/null 2>&1; then
+  echo "[smoke] L3 SKIP: psql 不可用，L3 跳过（L1 静态已 PASS）"
   exit 0
 fi
 

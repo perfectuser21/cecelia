@@ -23,8 +23,8 @@ grep -q "ALTER TABLE decisions ADD COLUMN IF NOT EXISTS review_after" "$MIG" \
 
 # ── L3 真库：psql 确认已应用 ──
 echo "── L3 真库 schema（psql）──"
-if ! command -v psql -X >/dev/null 2>&1; then
-  echo "[smoke] L3 SKIP: psql -X 不可用（L1 静态已 PASS）"
+if ! command -v psql >/dev/null 2>&1; then
+  echo "[smoke] L3 SKIP: psql 不可用（L1 静态已 PASS）"
 elif ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] L3 SKIP: DB 不可达（L1 静态已 PASS）"
 else

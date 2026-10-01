@@ -11,7 +11,7 @@ PASS=0; FAIL=0
 ok()   { echo "✅ $1"; PASS=$((PASS+1)); }
 fail() { echo "❌ $1"; FAIL=$((FAIL+1)); }
 
-if ! command -v psql -X >/dev/null 2>&1 || ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
+if ! command -v psql >/dev/null 2>&1 || ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] SKIP: DB 不可达"; exit 0
 fi
 

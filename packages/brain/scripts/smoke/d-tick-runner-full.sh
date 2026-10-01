@@ -60,7 +60,7 @@ fail() { echo "  FAIL: $1"; FAILED=1; }
 
 command -v jq >/dev/null 2>&1 || { echo "FATAL: jq 未安装"; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo "FATAL: docker 未安装"; exit 1; }
-command -v curl -q >/dev/null 2>&1 || { echo "FATAL: curl -q 未安装"; exit 1; }
+command -v curl >/dev/null 2>&1 || { echo "FATAL: curl 未安装"; exit 1; }
 
 [ -n "$BRAIN_CONTAINER" ] || { echo "FATAL: 未检测到 brain 容器（试过 cecelia-brain-smoke / cecelia-node-brain；可用 BRAIN_CONTAINER env 显式指定）"; exit 1; }
 docker ps --format '{{.Names}}' | grep -qx "$BRAIN_CONTAINER" \

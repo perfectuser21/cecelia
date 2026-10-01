@@ -26,8 +26,8 @@ psql_q() { psql -X -qtAc "$1"; }
 echo "== F2 部署：蓝绿 sidecar drain 回路 =="
 
 grep -Eq '^[^#]*curl[^#]*tick/drain-cancel' scripts/lib/bluegreen-sidecar.sh \
-  && ok "[结构·钉子] bluegreen-sidecar.sh 含真实 curl -q 调用 tick/drain-cancel" \
-  || fail "[结构·钉子] bluegreen-sidecar.sh 未含真实 curl -q 调用 tick/drain-cancel（issue 53e7ee4b：blue 被删后唯一活路径必须由它收 drain；注意本断言只认真实 curl -q 调用行，日志 echo 行不算数）"
+  && ok "[结构·钉子] bluegreen-sidecar.sh 含真实 curl 调用 tick/drain-cancel" \
+  || fail "[结构·钉子] bluegreen-sidecar.sh 未含真实 curl 调用 tick/drain-cancel（issue 53e7ee4b：blue 被删后唯一活路径必须由它收 drain；注意本断言只认真实 curl 调用行，日志 echo 行不算数）"
 
 grep -q "drain_before_swap" scripts/brain-deploy.sh && grep -q "drain_cancel_with_retry" scripts/brain-deploy.sh \
   && ok "[结构] brain-deploy.sh 含 drain_before_swap + drain_cancel_with_retry" || fail "brain-deploy.sh 缺 drain_before_swap 或 drain_cancel_with_retry"

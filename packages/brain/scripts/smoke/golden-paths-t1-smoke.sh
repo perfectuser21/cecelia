@@ -18,7 +18,7 @@ fail() { echo "❌ $1"; FAIL=$((FAIL+1)); }
 # ── 1. 表存在 + 非法状态 INSERT 被 CHECK 拒（psql）──
 echo "── 1. golden_paths 表 + CHECK 约束（psql）──"
 if ! command -v psql >/dev/null 2>&1; then
-  echo "[smoke] SKIP: psql -X 不可用"
+  echo "[smoke] SKIP: psql 不可用"
 elif ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] SKIP: DB 不可达"
 else
@@ -77,7 +77,7 @@ else
 fi
 
 # ── 5. 清理该测试行 ──
-if [[ -n "$GP_ID" ]] && command -v psql >/dev/null 2>&1 && psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
+if [[ -n "$GP_ID" ]] && command -v psql >/dev/null 2>&1 && psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "── 5. 清理测试行 ──"
   psql -X "$DB" -tAc "DELETE FROM golden_paths WHERE id = '$GP_ID'" >/dev/null 2>&1 \
     && ok "清理测试行 $GP_ID" || fail "清理测试行失败"

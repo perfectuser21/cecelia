@@ -84,8 +84,8 @@ console.log('scheduler-jobs.js 接线正确');
 
 # ── L3 真库：captures 表真实接受 source=conversation-claude ──
 echo "── L3 真库（psql）──"
-if ! command -v psql -X >/dev/null 2>&1; then
-  echo "[smoke] L3 SKIP: psql -X 不可用（L1 静态已 PASS）"
+if ! command -v psql >/dev/null 2>&1; then
+  echo "[smoke] L3 SKIP: psql 不可用（L1 静态已 PASS）"
 elif ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] L3 SKIP: DB 不可达（L1 静态已 PASS）"
 else

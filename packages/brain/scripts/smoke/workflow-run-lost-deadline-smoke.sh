@@ -46,7 +46,7 @@ want(ssh2.length === 0 && !calls2.some((s) => /UPDATE/.test(s)), '未到期零 U
 process.exit(bad ? 1 : 0);
 "
 
-if command -v psql -X >/dev/null 2>&1 && { [ -n "${DATABASE_URL:-}" ] || [ -n "${PGDATABASE:-}" ]; }; then
+if command -v psql >/dev/null 2>&1 && { [ -n "${DATABASE_URL:-}" ] || [ -n "${PGDATABASE:-}" ]; }; then
   echo "[wf-lost-smoke] 2. 真库事务内到期判定"
   node --input-type=module -e "
 import pg from 'pg';

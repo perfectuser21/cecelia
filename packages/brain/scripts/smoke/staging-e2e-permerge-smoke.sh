@@ -50,7 +50,7 @@ if ! curl -q -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then
 fi
 echo "[smoke] L2 PASS: Brain healthy"
 
-if ! command -v psql -X >/dev/null 2>&1 || ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
+if ! command -v psql >/dev/null 2>&1 || ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] L3 SKIP: psql/DB 不可用；L1 静态已 PASS"
   exit 0
 fi

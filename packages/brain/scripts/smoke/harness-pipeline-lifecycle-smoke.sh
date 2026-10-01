@@ -36,7 +36,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 # 此脚本设计用于手动/定时运行（最长 90 分钟），不适合 CI 短跑
 [[ "${CI:-}" == "true" ]] && skip "CI 环境不跑此脚本（耗时最长 90min，设计为手动/定时触发）"
 
-command -v curl -q >/dev/null 2>&1 || skip "curl -q 未安装"
+command -v curl >/dev/null 2>&1 || skip "curl 未安装"
 
 if ! curl -q -sf -m 5 "${BRAIN_URL}/api/brain/health" -o /dev/null 2>&1; then
   skip "Brain ${BRAIN_URL} 不健康"
@@ -97,9 +97,9 @@ while true; do
   TASK_JSON=$(curl -q -sf -m 10 "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo "")
   if [[ -z "$TASK_JSON" ]]; then
     CONSECUTIVE_ERRORS=$(( CONSECUTIVE_ERRORS + 1 ))
-    log "⚠ curl -q 失败 (${CONSECUTIVE_ERRORS}/5)，Brain 可能在重启..."
+    log "⚠ curl 失败 (${CONSECUTIVE_ERRORS}/5)，Brain 可能在重启..."
     if (( CONSECUTIVE_ERRORS >= 5 )); then
-      fail "连续 5 次 curl -q 失败，Brain 已失联 (task_id=${TASK_ID})"
+      fail "连续 5 次 curl 失败，Brain 已失联 (task_id=${TASK_ID})"
     fi
     sleep "$POLL_INTERVAL"
     continue

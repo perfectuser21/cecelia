@@ -16,8 +16,8 @@ ok()   { echo "✅ $1"; PASS=$((PASS+1)); }
 fail() { echo "❌ $1"; FAIL=$((FAIL+1)); }
 
 # ── 前置：psql 可用 + DB 可达 ──
-if ! command -v psql -X >/dev/null 2>&1; then
-  echo "[smoke] SKIP: psql -X 不可用"
+if ! command -v psql >/dev/null 2>&1; then
+  echo "[smoke] SKIP: psql 不可用"
   exit 0
 fi
 if ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
