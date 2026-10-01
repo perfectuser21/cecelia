@@ -14,26 +14,31 @@ let current: typeof queued;
 let submissions: { body: Record<string, unknown>; key: string | null }[];
 let detailError: boolean, submitError: boolean, retryError: boolean, holdSubmit: boolean;
 let releaseSubmit: (() => void) | undefined;
+let holdHistory: boolean, machinesError: boolean;
+let releaseHistory: (() => void) | undefined;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
 beforeEach(() => {
-  history = []; current = { ...queued }; submissions = [];
+  history = []; current = { ...queued }; submissions = []; holdHistory = false; machinesError = false;
   detailError = false; submitError = false; retryError = false; holdSubmit = false;
   vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
-    if (url === '/api/brain/machines') return json([]);
+    if (url === '/api/brain/machines') return machinesError ? json({}, 503) : json([]);
     if (url === base && options?.method === 'POST') {
       submissions.push({ body: JSON.parse(String(options.body)), key: new Headers(options.headers).get('Idempotency-Key') });
       if (holdSubmit) await new Promise<void>(resolve => { releaseSubmit = resolve; });
       return submitError ? json({ error: 'Internal failure' }, 503) : json(current, 202);
     }
-    if (url === base) return json({ items: history });
+    if (url === base) {
+      if (holdHistory) await new Promise<void>(resolve => { releaseHistory = resolve; });
+      return json({ items: history });
+    }
     if (url === `${base}/request-1/retry`) return retryError ? json({ error: 'Internal failure' }, 409) : json(queued);
     if (url === `${base}/request-1`) return detailError ? json({ error: 'Internal failure' }, 502) : json(current);
     throw new Error(`Unexpected request: ${url}`);
   }));
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
-const mount = () => render(<MemoryRouter><MachinesPage /></MemoryRouter>);
+const mount = () => render(<MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><MachinesPage /></MemoryRouter>);
 async function openForm() {
   fireEvent.click(await screen.findByRole('button', { name: '接入新机器' }));
   return screen.getByRole('button', { name: '开始接入' });
@@ -141,4 +146,18 @@ describe('设备页接入新机器', () => {
     view.unmount(); const calls = vi.mocked(fetch).mock.calls.length;
     await tick(); expect(vi.mocked(fetch).mock.calls).toHaveLength(calls);
   });
+  it('历史记录晚返回不会覆盖刚提交的请求', async () => {
+    holdHistory = true; mount(); const submit = await openForm(); fillForm();
+    fireEvent.click(submit); await screen.findByText('连接检查');
+    await act(async () => releaseHistory?.());
+    expect(screen.getByText('连接检查')).toBeInTheDocument();
+  });
+  it('设备刷新异常时保留完成结果并显示中文错误', async () => {
+    history = [queued]; vi.useFakeTimers(); await act(async () => { mount(); });
+    expect(screen.getByText('连接检查')).toBeInTheDocument();
+    machinesError = true; current = { ...queued, status: 'completed' }; await tick();
+    expect(screen.getByText('接入完成')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('设备列表刷新失败');
+  });
+
 });
