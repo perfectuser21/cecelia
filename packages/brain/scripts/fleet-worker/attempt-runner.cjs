@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+const { resolveAttemptResourcePlan, dockerLimitArgs } = require('./attempt-resource-policy.cjs');
 
 const { execFile, spawn } = require('node:child_process');
 const { createHash, randomBytes } = require('node:crypto');
@@ -396,6 +397,7 @@ function isExplicitlyMissingDockerObject(error) {
 }
 
 function createDockerAdapter({
+  workerId,
   runCommand = defaultRunCommand,
   runtimeRoot,
   writeCredential = defaultWriteCredential,
@@ -448,6 +450,7 @@ function createDockerAdapter({
   }
 
   async function prepareContainer(input) {
+      const resourcePlan = resolveAttemptResourcePlan({ workerId, role: input?.role, postgres: Boolean(input?.runtimeNetwork) });
       const attemptId = input?.attemptId;
       assertAttemptId(attemptId);
       if (
@@ -564,6 +567,7 @@ function createDockerAdapter({
         : [];
       const createArgs = [
         'create',
+        ...dockerLimitArgs(resourcePlan.runner),
         '--name',
         containerName,
         ...labelArgs(input.labels),
@@ -721,6 +725,7 @@ function createDockerAdapter({
   }
 
   async function startContainer({
+    role, hasPostgres = false,
     attemptId,
     containerId,
     credentialFifo,
@@ -752,7 +757,9 @@ function createDockerAdapter({
     }
     const containerName = `cecelia-fleet-${attemptId}`;
     try {
-      await runCommand('docker', ['start', containerName], undefined);
+      const plan = resolveAttemptResourcePlan({ workerId, role, postgres: hasPostgres });
+      await runCommand('docker', ['update', ...dockerLimitArgs(plan.runner), '--', containerId], undefined);
+      await runCommand('docker', ['start', containerId], undefined);
       if (githubCredential) {
         await writeGitHubCredential(
           containerName,
@@ -1954,6 +1961,8 @@ function createAttemptRunner({
         throw new Error('attempt_already_exists');
       }
 
+      const resourceLimits = resolveAttemptResourcePlan({ workerId, role: target.role,
+        postgres: executionContract.runtimeRequirements.postgres === true });
       await assertLocalResources({ phase: 'prepare', attemptId: request.attempt_id });
       const { credential, githubCredential } = consumeAttemptCredentials(
         request,
@@ -1993,7 +2002,7 @@ function createAttemptRunner({
         try {
           await assertLocalResources({ phase: 'postgres', attemptId: request.attempt_id });
           resources = await resourceManager.provision({
-            attemptId: request.attempt_id,
+            attemptId: request.attempt_id, role: target.role,
             // F3（复审实测坐实）：resourceManager（attempt-resources.cjs
             // validateRequirements）只认 {postgres} 这一个字段，见到未知键
             // 一律 throw attempt_runtime_requirements_invalid。node_deps 是
@@ -2050,6 +2059,7 @@ function createAttemptRunner({
         lease_generation: request.lease_generation,
         provider: providerSpec.provider,
         role: target.role,
+        resource_limits: resourceLimits,
         prepare_request_fingerprint: requestFingerprint,
         credential_delivery_status: 'pending',
         ...(credential ? { credential: credential.metadata } : {}),
@@ -2246,6 +2256,13 @@ function createAttemptRunner({
           throw new Error('attempt_credentials_unavailable');
         }
 
+        state.resource_limits = resolveAttemptResourcePlan({ workerId, role: state.role,
+          postgres: Boolean(state.runtime_resources?.postgres) });
+        await stateStore.save(state);
+        if (state.runtime_resources?.postgres) {
+          if (typeof resourceManager.enforceLimits !== 'function') throw new Error('attempt_resource_limits_unavailable');
+          await resourceManager.enforceLimits({ attemptId, role: state.role, runtime: state.runtime_resources });
+        }
         await assertLocalResources({ phase: 'start', attemptId });
         if (cancellationRequests.has(attemptId)) return finalizeCancelledStart(state, lease);
         if (state.status === 'prepared') {
@@ -2258,7 +2275,7 @@ function createAttemptRunner({
         if (cancellationRequests.has(attemptId)) return finalizeCancelledStart(state, lease);
         try {
           await docker.start({
-            attemptId,
+            attemptId, role: state.role, hasPostgres: Boolean(state.runtime_resources?.postgres),
             containerId: state.container_id,
             credentialFifo: state.credential_fifo,
             githubCredentialFifo: state.github_credential_fifo,

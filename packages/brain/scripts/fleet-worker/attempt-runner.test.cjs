@@ -237,6 +237,7 @@ function dependencies(overrides = {}) {
     }),
   };
   const resourceManager = {
+    enforceLimits: vi.fn(async () => {}),
     provision: vi.fn(async () => {
       events.push('resource.provision');
       return {
@@ -304,6 +305,7 @@ async function prepareAndStart(runner, input) {
 async function prepareAndStartContainer(docker, input) {
   const prepared = await docker.prepare(input);
   await docker.start({
+    role: input.role, hasPostgres: Boolean(input.runtimeNetwork),
     attemptId: input.attemptId,
     ...prepared,
     credential: input.credential,
@@ -1371,6 +1373,7 @@ describe('Fleet Worker Attempt runner', () => {
       }));
 
       expect(deps.resourceManager.provision).toHaveBeenCalledWith({
+        role: 'evaluator',
         attemptId: ATTEMPT_ID,
         requirements: { postgres: true },
       });
@@ -1606,6 +1609,7 @@ describe('Fleet Worker Attempt runner', () => {
     await prepareAndStart(runner, postgresRequest);
 
     expect(deps.resourceManager.provision).toHaveBeenCalledWith({
+        role: 'evaluator',
       attemptId: ATTEMPT_ID,
       requirements: { postgres: true },
     });
@@ -2351,7 +2355,7 @@ describe('Fleet Worker durable runtime adapters', () => {
       error.stderr = 'No such object: exact-attempt';
       throw error;
     });
-    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+    const docker = createDockerAdapter({ workerId: WORKER_ID, runCommand, runtimeRoot });
 
     try {
       await expect(docker.inspect({
@@ -2373,7 +2377,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     const runCommand = vi.fn(async () => {
       throw new Error(message);
     });
-    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+    const docker = createDockerAdapter({ workerId: WORKER_ID, runCommand, runtimeRoot });
 
     try {
       await expect(docker.inspect({
@@ -2539,6 +2543,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
     const runCommand = vi.fn(async () => ({ stdout: '' }));
     const docker = createDockerAdapter({
+    workerId: WORKER_ID,
       runCommand,
       runtimeRoot,
       resolveMountSource: (source) => source,
@@ -2602,6 +2607,7 @@ describe('Fleet Worker durable runtime adapters', () => {
       return { stdout: '' };
     });
     const docker = createDockerAdapter({
+    workerId: WORKER_ID,
       runCommand,
       runtimeRoot,
       resolveMountSource: (source) => source,
@@ -2655,7 +2661,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     fs.mkdirSync(attemptRuntime, { recursive: true });
     fs.writeFileSync(path.join(attemptRuntime, 'task-bundle.json'), 'bounded prompt');
     const runCommand = vi.fn();
-    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+    const docker = createDockerAdapter({ workerId: WORKER_ID, runCommand, runtimeRoot });
 
     try {
       await docker.remove({
@@ -2679,7 +2685,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     const runCommand = vi.fn(async () => {
       throw new Error('Error response from daemon: No such container: exact-attempt');
     });
-    const docker = createDockerAdapter({ runCommand, runtimeRoot });
+    const docker = createDockerAdapter({ workerId: WORKER_ID, runCommand, runtimeRoot });
 
     try {
       await expect(docker.remove({
@@ -2703,6 +2709,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     const writeGitHubCredential = vi.fn(async () => undefined);
     const resolveMountSource = vi.fn((source) => `/canonical${source}`);
     const docker = createDockerAdapter({
+    workerId: WORKER_ID,
       runCommand,
       runtimeRoot,
       writeCredential,
@@ -2855,9 +2862,9 @@ describe('Fleet Worker durable runtime adapters', () => {
       expect(createArgs.join(' ')).not.toContain(CREDENTIAL.authJson);
       expect(createArgs.join(' ')).not.toContain(GITHUB_TOKEN);
       expect(createArgs).toEqual(expect.arrayContaining(['--user', 'root']));
-      expect(runCommand.mock.calls[4]).toEqual([
+      expect(runCommand.mock.calls[5]).toEqual([
         'docker',
-        ['start', 'cecelia-fleet-22222222-2222-4222-8222-222222222222'],
+        ['start', 'container-created'],
         undefined,
       ]);
       expect(writeGitHubCredential).not.toHaveBeenCalled();
@@ -2888,6 +2895,7 @@ describe('Fleet Worker durable runtime adapters', () => {
       return { stdout: '' };
     });
     const docker = createDockerAdapter({
+    workerId: WORKER_ID,
       runCommand,
       runtimeRoot,
       writeCredential: vi.fn(async () => undefined),
@@ -2957,6 +2965,7 @@ describe('Fleet Worker durable runtime adapters', () => {
       return { stdout: '' };
     });
     const docker = createDockerAdapter({
+    workerId: WORKER_ID,
       runCommand,
       runtimeRoot,
       writeCredential: vi.fn(async () => undefined),
@@ -3049,10 +3058,12 @@ describe('Fleet Worker durable runtime adapters', () => {
 
     try {
       expect(() => createDockerAdapter({
+    workerId: WORKER_ID,
         runtimeRoot,
         mountAccessPrincipal: 'operator allow everyone',
       })).toThrow(/attempt_runner_invalid_mount_access_principal/);
       expect(() => createDockerAdapter({
+    workerId: WORKER_ID,
         runtimeRoot,
         cleanupAccessPrincipal: '_cecelia allow everyone',
       })).toThrow(/attempt_runner_invalid_cleanup_access_principal/);
@@ -3250,6 +3261,7 @@ describe('Fleet claude 单链挂载（attempt d80312c0 Not logged in 案卷回�
     });
     const resolveMountSource = vi.fn((source) => `/canonical${source}`);
     const docker = createDockerAdapter({
+    workerId: WORKER_ID,
       runCommand,
       runtimeRoot,
       writeCredential: vi.fn(async () => undefined),
@@ -3416,4 +3428,55 @@ describe('新增执行前本机资源复验', () => {
     expect(guard).toHaveBeenCalledTimes(2);
     expect(deps.docker.start).toHaveBeenCalledOnce();
   });
+});
+describe('Harness actual Docker hard limits', () => {
+  it('actual prepare applies shared role CPU/memory/swap/PID limits instead of caller limits', async () => {
+    const { createDockerAdapter } = loadAttemptRunner();
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-limits-'));
+    const runCommand = vi.fn(async () => ({ stdout: 'exact-container' }));
+    const docker = createDockerAdapter({workerId: WORKER_ID, runtimeRoot:root,runCommand,resolveMountSource:source=>source});
+    const deps = dependencies(); const runner = createRunner(deps);
+    try {
+      await runner.prepare(request());
+      const input = deps.docker.prepare.mock.calls[0][0];
+      await docker.prepare({...input,limits:{cpus:100,memoryBytes:-1,pidsLimit:-1}});
+      const args = runCommand.mock.calls.find(([file,args])=>file==='docker'&&args[0]==='create')[1];
+      for(const [flag,value] of [['--cpus','2'],['--memory',String(4*1024**3)],['--memory-swap',String(4*1024**3)],['--pids-limit','512']]) {
+        expect(args[args.indexOf(flag)+1]).toBe(value);
+      }
+    } finally {fs.rmSync(root,{recursive:true,force:true});}
+  });
+  it('old prepared journal persists trusted limits before start and cannot use caller limits', async () => {
+    const deps = dependencies(); const runner = createRunner(deps); await runner.prepare(request());
+    const state = deps.stateStore.states.get(ATTEMPT_ID); delete state.resource_limits;
+    deps.docker.start.mockImplementation(async () => {
+      expect(deps.stateStore.states.get(ATTEMPT_ID).resource_limits.runner.memoryBytes).toBe(4*1024**3);
+      return {containerId: state.container_id};
+    });
+    await runner.start(ATTEMPT_ID,{owner:'dispatcher-1',generation:0,limits:{memoryBytes:-1}});
+    expect(deps.docker.start).toHaveBeenCalledWith(expect.objectContaining({role:'generator',hasPostgres:false}));
+  });
+});
+it('Docker adapter 默认缺少受信Worker profile时拒绝create，不能借payload workerId自授', async () => {
+  const { createDockerAdapter } = loadAttemptRunner();
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'fleet-unknown-profile-'));
+  const runCommand=vi.fn(async()=>({stdout:'unexpected'}));
+  try {
+    const docker=createDockerAdapter({runtimeRoot:root,runCommand});
+    await expect(docker.prepare({workerId:WORKER_ID,role:'generator',limits:{memoryBytes:1}})).rejects.toThrow('attempt_resource_profile_unavailable');
+    expect(runCommand).not.toHaveBeenCalled();
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+it('旧带PG的prepared记录先持久化总预算并限制sidecar，再启动runner', async () => {
+  const deps=dependencies(),runner=createRunner(deps);
+  await runner.prepare(request({runtime_resources:{postgres:true},provider_spec:{...request().provider_spec,
+    stdin:providerPrompt('generator',{runtime_resources:{postgres:true}})}}));
+  const state=deps.stateStore.states.get(ATTEMPT_ID);delete state.resource_limits;
+  const steps=[];
+  deps.resourceManager.enforceLimits.mockImplementation(async()=>{
+    expect(deps.stateStore.states.get(ATTEMPT_ID).resource_limits.postgres.memoryBytes).toBe(256*1024**2);steps.push('pg');
+  });
+  deps.docker.start.mockImplementation(async input=>{expect(input.hasPostgres).toBe(true);steps.push('runner');});
+  await runner.start(ATTEMPT_ID,{owner:'dispatcher-1',generation:0});
+  expect(steps).toEqual(['pg','runner']);
 });

@@ -372,3 +372,5 @@ managed-script-capacity-smoke.sh
 node-onboarding-smoke.sh
 
 execution-directory-smoke.sh
+
+attempt-runtime-limits-smoke.sh

@@ -850,6 +850,12 @@ installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.pl
 [[ -f "$installed_plist" ]] || fail "--apply did not install the rendered plist"
 [[ -f "$installed_worker" && -f "$installed_probe" ]] \
   || fail "--apply did not install a stable Worker runtime"
+cmp -s "$SCRIPT_DIR/attempt-resource-policy.cjs" "$runtime_dir/attempt-resource-policy.cjs" \
+  || fail "--apply did not install exact shared resource policy"
+node - "$runtime_dir/attempt-resource-policy.cjs" <<'NODE'
+const assert = require('node:assert/strict');
+assert.equal(require(process.argv[2]).resolveAttemptResourcePlan({workerId:'us-mac-m4',role:'generator'}).runner.memoryBytes, 4*1024**3);
+NODE
 cmp -s "$SCRIPT_DIR/local-resource-admission.cjs" "$installed_local_admission" \
   || fail "--apply did not install exact local admission module bytes"
 cmp -s "$SCRIPT_DIR/../../config/fleet-node-profiles.json" "$installed_profile_registry" \
@@ -1091,6 +1097,9 @@ assert_resource_placement_failure_rolled_back() {
   chmod 0640 "$installed_profile_registry"
   cp "$installed_local_admission" "$snapshot_dir/admission"
   cp "$installed_profile_registry" "$snapshot_dir/profiles"
+  printf 'prior-policy-%s\n' "$filename" > "$runtime_dir/attempt-resource-policy.cjs"
+  chmod 0600 "$runtime_dir/attempt-resource-policy.cjs"
+  cp "$runtime_dir/attempt-resource-policy.cjs" "$snapshot_dir/policy"
   rm -f "$FLEET_WORKER_MV_FAIL_ONCE"
   if failure_output="$(FLEET_WORKER_MV="$test_root/mv" \
     FLEET_WORKER_MV_FAIL_TARGET="$runtime_dir/$filename" \
@@ -1107,6 +1116,8 @@ assert_resource_placement_failure_rolled_back() {
   [[ "$(mode_of "$installed_local_admission")" == 600 \
     && "$(mode_of "$installed_profile_registry")" == 640 ]] \
     || fail "$filename placement rollback changed old resource file modes"
+  cmp -s "$snapshot_dir/policy" "$runtime_dir/attempt-resource-policy.cjs" || fail "$filename changed old policy bytes"
+  [[ "$(mode_of "$runtime_dir/attempt-resource-policy.cjs")" == 600 ]] || fail "$filename changed old policy mode"
   [[ "$(<"$launch_state")" == running ]] || fail "$filename rollback did not restore loaded service"
 }
 
@@ -1130,11 +1141,11 @@ assert_resource_first_install_rolled_back() (
   grep -Fq 'install_failed_rolled_back' <<<"$failure_output" \
     || fail "first $filename placement failure lacked rollback signature"
   [[ ! -e "$fresh_runtime/local-resource-admission.cjs" \
-    && ! -e "$fresh_runtime/fleet-node-profiles.json" ]] \
+    && ! -e "$fresh_runtime/fleet-node-profiles.json" && ! -e "$fresh_runtime/attempt-resource-policy.cjs" ]] \
     || fail "first $filename rollback leaked newly installed resource files"
 )
 
-for resource_file in fleet-node-profiles.json local-resource-admission.cjs; do
+for resource_file in fleet-node-profiles.json local-resource-admission.cjs attempt-resource-policy.cjs; do
   assert_resource_placement_failure_rolled_back "$resource_file"
   assert_resource_first_install_rolled_back "$resource_file"
 done

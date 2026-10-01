@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+const { resolveAttemptResourcePlan, dockerLimitArgs } = require('./attempt-resource-policy.cjs');
 
 const { execFile } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
@@ -131,6 +132,7 @@ function assertExactRuntime(attemptId, runtime) {
 }
 
 function createAttemptResourceManager({
+  workerId,
   runCommand = defaultRunCommand,
   postgresImageDigest,
   randomBytesFn = randomBytes,
@@ -155,7 +157,7 @@ function createAttemptResourceManager({
   }
 
   return Object.freeze({
-    async provision({ attemptId, requirements } = {}) {
+    async provision({ attemptId, requirements, role } = {}) {
       assertAttemptId(attemptId);
       const validated = validateRequirements(requirements);
       if (!validated.postgres) {
@@ -166,6 +168,7 @@ function createAttemptResourceManager({
         });
       }
 
+      const plan = resolveAttemptResourcePlan({ workerId, role, postgres: true });
       const { containerName, networkName } = namesFor(attemptId);
       const suffix = randomBytesFn(32).toString('hex');
       if (!/^[a-f0-9]{64}$/.test(suffix)) {
@@ -190,6 +193,7 @@ function createAttemptResourceManager({
         networkCreated = true;
         await runCommand('docker', [
           'run',
+          ...dockerLimitArgs(plan.postgres),
           '--detach',
           '--name',
           containerName,
@@ -270,6 +274,11 @@ function createAttemptResourceManager({
       }
     },
 
+    async enforceLimits({ attemptId, role, runtime } = {}) {
+      assertAttemptId(attemptId); assertExactRuntime(attemptId, runtime);
+      const plan = resolveAttemptResourcePlan({ workerId, role, postgres: true });
+      await runCommand('docker', ['update', ...dockerLimitArgs(plan.postgres), '--', runtime.postgres.container_name]);
+    },
     async release({ attemptId, runtime } = {}) {
       assertAttemptId(attemptId);
       if (!runtime || Object.keys(runtime).length === 0) {

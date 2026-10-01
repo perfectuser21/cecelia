@@ -87,6 +87,12 @@ describe('fleet-resource-cache', () => {
     expect(cap.physicalCapacity).toBe(8);
   });
 
+  it('真实 fleet 采样按 Worker 共享 policy 的 1GiB/.5CPU 基础槽估算', async () => {
+    fleetCache.startFleetRefresh(); await vi.advanceTimersByTimeAsync(100);
+    const { calculatePhysicalCapacity } = await import('../platform-utils.js');
+    expect(calculatePhysicalCapacity).toHaveBeenCalledWith(16384,10,1024,0.5);
+  });
+
   it('getTotalEffectiveSlots 返回正数', async () => {
     fleetCache.startFleetRefresh();
     await vi.advanceTimersByTimeAsync(100);

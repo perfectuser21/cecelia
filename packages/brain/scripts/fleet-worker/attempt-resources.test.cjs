@@ -19,6 +19,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
       return { stdout: args[0] === 'run' ? 'postgres-container-id' : '' };
     });
     const manager = createAttemptResourceManager({
+      workerId: 'us-mac-m4',
       runCommand,
       postgresImageDigest: POSTGRES_IMAGE,
       randomBytesFn: () => Buffer.from('0123456789abcdef0123456789abcdef'),
@@ -26,6 +27,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
     });
 
     const provisioned = await manager.provision({
+      role: 'generator',
       attemptId: ATTEMPT_ID,
       requirements: { postgres: true },
     });
@@ -93,6 +95,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
       return { stdout: args[0] === 'run' ? 'postgres-container-id' : '' };
     });
     const manager = createAttemptResourceManager({
+      workerId: 'us-mac-m4',
       runCommand,
       postgresImageDigest: POSTGRES_IMAGE,
       randomBytesFn: () => Buffer.alloc(32, 7),
@@ -101,6 +104,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
     });
 
     await expect(manager.provision({
+      role: 'generator',
       attemptId: ATTEMPT_ID,
       requirements: { postgres: true },
     })).rejects.toThrow('attempt_postgres_not_ready');
@@ -123,6 +127,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
     const createAttemptResourceManager = loadResourceManager();
     const runCommand = vi.fn(async () => ({ stdout: '' }));
     const manager = createAttemptResourceManager({
+      workerId: 'us-mac-m4',
       runCommand,
       postgresImageDigest: POSTGRES_IMAGE,
     });
@@ -148,6 +153,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
     const createAttemptResourceManager = loadResourceManager();
     const runCommand = vi.fn(async () => ({ stdout: '' }));
     const manager = createAttemptResourceManager({
+      workerId: 'us-mac-m4',
       runCommand,
       postgresImageDigest: POSTGRES_IMAGE,
     });
@@ -174,6 +180,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
     const previousPinnedImage = `postgres:16-alpine@sha256:${'a'.repeat(64)}`;
     const runCommand = vi.fn(async () => ({ stdout: '' }));
     const manager = createAttemptResourceManager({
+      workerId: 'us-mac-m4',
       runCommand,
       postgresImageDigest: POSTGRES_IMAGE,
     });
@@ -202,6 +209,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
       },
     };
     const missingManager = createAttemptResourceManager({
+      workerId: 'us-mac-m4',
       runCommand: vi.fn(async () => {
         throw new Error('Error response from daemon: No such container');
       }),
@@ -213,6 +221,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
     })).resolves.toEqual({ status: 'released' });
 
     const deniedManager = createAttemptResourceManager({
+      workerId: 'us-mac-m4',
       runCommand: vi.fn(async () => {
         throw new Error('permission denied while removing resource');
       }),
@@ -249,6 +258,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
       return { stdout: '' };
     });
     const manager = createAttemptResourceManager({
+      workerId: 'us-mac-m4',
       runCommand,
       postgresImageDigest: POSTGRES_IMAGE,
     });
@@ -279,4 +289,19 @@ describe('Fleet Worker Attempt runtime resources', () => {
       'operator-postgres',
     ]);
   });
+});
+it('真实PG创建与旧sidecar限额更新均固定为预约内份额，未知Worker不得启动', async () => {
+  const factory=loadResourceManager();const calls=[];
+  const runCommand=async(file,args)=>{calls.push(args);return {stdout:args[0]==='exec'?'accepting connections':'canary-id'};};
+  const manager=factory({workerId:'us-mac-m4',postgresImageDigest:POSTGRES_IMAGE,runCommand});
+  const result=await manager.provision({attemptId:ATTEMPT_ID,role:'planner',requirements:{postgres:true},limits:{memoryBytes:-1}});
+  await manager.enforceLimits({attemptId:ATTEMPT_ID,role:'planner',runtime:result.runtime});
+  for(const verb of ['run','update']) {
+    const args=calls.find(a=>a[0]===verb);
+    for(const [flag,value] of [['--cpus','.25'],['--memory',String(256*1024**2)],['--memory-swap',String(256*1024**2)],['--pids-limit','32']]) {
+      expect(Number(args[args.indexOf(flag)+1])).toBe(Number(value));
+    }
+  }
+  const unavailable=factory({postgresImageDigest:POSTGRES_IMAGE,runCommand});
+  await expect(unavailable.provision({attemptId:ATTEMPT_ID,role:'planner',requirements:{postgres:true}})).rejects.toThrow('attempt_resource_profile_unavailable');
 });

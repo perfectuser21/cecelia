@@ -86,7 +86,7 @@ const branch = `cp-real-runner-${attemptId.slice(0, 8)}`;
 const callbackToken = `runner-smoke-${randomUUID()}`;
 const callback = await listenForCallbacks(attemptId, callbackToken);
 const containerName = `cecelia-fleet-${attemptId}`;
-const docker = createDockerAdapter({ runtimeRoot: runtime });
+const docker = createDockerAdapter({ workerId: 'us-mac-m4', runtimeRoot: runtime });
 
 try {
   execFileSync('git', ['init', '--bare', remote], { stdio: 'ignore' });
@@ -173,6 +173,7 @@ try {
     },
   });
   await docker.start({
+    role: 'generator', hasPostgres: false,
     attemptId, containerId: prepared.containerId,
     credentialFifo: prepared.credentialFifo,
     credential: { credentialRef, authJson },
