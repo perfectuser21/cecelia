@@ -96,6 +96,24 @@ describe('Supertest loopback matches the real listener family', () => {
     }
   });
 
+  it('does not retry native errors other than address collision', async () => {
+    const desired = http.createServer();
+    const foreign = http.createServer();
+    let attempts = 0;
+    try {
+      await listen(desired, { host: '::1', port: 0, ipv6Only: true });
+      await expect(listenPair(desired, foreign, {
+        portForAttempt: () => { attempts += 1; return 0; },
+      })).rejects.toMatchObject({ code: 'ERR_SERVER_ALREADY_LISTEN' });
+      expect(attempts).toBe(1);
+      expect(desired.listening).toBe(false);
+      expect(foreign.listening).toBe(false);
+    } finally {
+      await close(foreign);
+      await close(desired);
+    }
+  });
+
   it('implicit server500 still executes the handler and automatically closes', async () => {
     let queryCalls = 0;
     const probe = request((_req, res) => {
