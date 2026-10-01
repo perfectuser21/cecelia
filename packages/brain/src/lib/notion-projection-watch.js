@@ -66,7 +66,12 @@ export async function buildProjectionAssertions(pool, { notionReq, token, botUse
            VALUES ('mirror_tamper', 0, 1, $1, $2::jsonb)`,
           [`🔒 ${r.title} 被非机器人编辑：${titleOf(page)}`, JSON.stringify({ db: r.notion_db_id, table: r.brain_table, page: page.id, by })],
         ).catch(() => {});
-        await pool.query(`UPDATE ${r.brain_table} SET notion_digest = NULL WHERE notion_id = $1`, [page.id]).catch(() => {});
+        if (r.brain_table === 'key_results' && r.vessel === 'notion-kr-projection') {
+          await pool.query(`UPDATE projection_links SET content_hash = NULL
+            WHERE target='notion' AND entity_type='key_results' AND external_id=$1`, [page.id]);
+        } else {
+          await pool.query(`UPDATE ${r.brain_table} SET notion_digest = NULL WHERE notion_id = $1`, [page.id]).catch(() => {});
+        }
       }
     } catch { a8Degraded++; }
   }
@@ -103,7 +108,7 @@ export async function buildProjectionAssertions(pool, { notionReq, token, botUse
   });
 
   // ── A10 逐库行数对账 ──────────────────────────────────────
-  const pushMirrors = mirrors.filter(r => r.direction === 'push' && r.brain_table && /^notion-push-sync/.test(r.vessel || ''));
+  const pushMirrors = mirrors.filter(r => r.direction === 'push' && r.brain_table && (/^notion-push-sync/.test(r.vessel || '') || (r.brain_table === 'key_results' && r.vessel === 'notion-kr-projection')));
   // 一库多表（AI Notes=decisions+initiative_contracts，运行图谱=ops_agents+ops_schedule_entries）：Brain 侧合计再比
   const byDb = new Map();
   for (const r of pushMirrors) { const k = normalizeNotionId(r.notion_db_id); if (!byDb.has(k)) byDb.set(k, { title: r.title, dbId: r.notion_db_id, tables: [] }); byDb.get(k).tables.push(r.brain_table); }
@@ -112,7 +117,11 @@ export async function buildProjectionAssertions(pool, { notionReq, token, botUse
     try {
       let brain = 0;
       for (const t of g.tables) {
-        const { rows } = await pool.query(`SELECT count(*)::int AS count FROM ${t} WHERE notion_id IS NOT NULL`);
+        const { rows } = t === 'key_results'
+          ? await pool.query(`SELECT count(*)::int AS count FROM projection_links pl
+              JOIN key_results kr ON kr.id=pl.entity_id
+              WHERE pl.target='notion' AND pl.entity_type='key_results'`)
+          : await pool.query(`SELECT count(*)::int AS count FROM ${t} WHERE notion_id IS NOT NULL`);
         brain += Number(rows[0]?.count ?? 0);
       }
       const { n, capped } = await countNotionPages(notionReq, token, g.dbId);
