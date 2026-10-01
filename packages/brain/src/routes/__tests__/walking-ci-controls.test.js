@@ -59,6 +59,20 @@ describe('Walking restart control permission before checkpointer or Docker', () 
     await request(app()).get('/api/brain/walking-skeleton-1node/instance').expect(403);
     expect(pointers).not.toHaveBeenCalled();
   });
+  it('invalid thread rejects before any PG access', async () => {
+    ci(); await request(app()).get('/api/brain/walking-skeleton-1node/ready/not-a-uuid').expect(400);
+    expect(pointers).not.toHaveBeenCalled();
+  });
+  it.each([{ next: [], tasks: [] }, { next: ['await_callback'], tasks: [] }, { next: ['await_callback'], tasks: [{ name: 'await_callback', interrupts: [] }] }])('unpersisted or completed state %j is not ready', async state => {
+    ci(); getState.mockResolvedValueOnce(state);
+    const res = await request(app()).get('/api/brain/walking-skeleton-1node/ready/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa').expect(200);
+    expect(res.body.ready).toBe(false);
+  });
+  it('PG readiness failure returns 503 and false', async () => {
+    ci(); getState.mockRejectedValueOnce(new Error('fixture unavailable'));
+    const res = await request(app()).get('/api/brain/walking-skeleton-1node/ready/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa').expect(503);
+    expect(res.body.ready).toBe(false);
+  });
   it('CI readiness requires decoded actual interrupt, not just mapping', async () => {
     ci();
     const res = await request(app()).get('/api/brain/walking-skeleton-1node/ready/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa').expect(200);

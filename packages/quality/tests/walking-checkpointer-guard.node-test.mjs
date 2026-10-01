@@ -37,7 +37,7 @@ else console.log('cecelia-node-brain');
         BRAIN_CONTAINER: 'walking-ci-brain', WALKING_INSPECT: JSON.stringify(info) };
       for (const key of ['DOCKER_HOST', 'DOCKER_CONTEXT', 'PGHOSTADDR', 'PGSERVICE', 'PGSERVICEFILE',
         'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) delete env[key];
-      const child = spawn('bash', ['-c', prefix + '\nprintf GUARD_ACCEPTED'], { cwd: root, env });
+      const child = spawn('bash', ['-c', prefix + '\nprintf GUARD_ACCEPTED'], { cwd: root, env, timeout: 15000, killSignal: 'SIGKILL' });
       let output = ''; child.stdout.on('data', d => output += d); child.stderr.on('data', d => output += d);
       const code = await new Promise((r, j) => { child.on('close', r); child.on('error', j); });
       assert.equal(output.includes('GUARD_ACCEPTED'), accepted, output);

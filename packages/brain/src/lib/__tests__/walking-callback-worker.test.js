@@ -94,6 +94,14 @@ describe('actual Walking callback worker', () => {
     expect(result.calls.every(([method]) => method === 'GET')).toBe(true);
     expect(result.calls.length).toBeLessThanOrEqual(40);
   });
+  it('unchanged valid instance token exhausts without POST', async () => {
+    for (const [key, value] of Object.entries({ CI: 'true', WALKING_CI_OWNER: '1', NODE_ENV: 'test',
+      DB_NAME: 'cecelia_test', DB_HOST: 'localhost', DB_PORT: '5432', BRAIN_PORT: '5221',
+      DATABASE_URL: 'postgresql://localhost:5432/cecelia_test' })) vi.stubEnv(key, value);
+    const result = await runWorker(0, true, 'old');
+    expect(result.code).not.toBe(0); expect(result.calls).toHaveLength(40);
+    expect(result.calls.every(([method]) => method === 'GET')).toBe(true);
+  });
   it('CI remote database override is rejected before Docker', async () => {
     vi.stubEnv('CI', 'true'); vi.stubEnv('WALKING_CI_OWNER', '1'); vi.stubEnv('NODE_ENV', 'test');
     vi.stubEnv('DB_NAME', 'cecelia_test'); vi.stubEnv('DATABASE_URL', 'postgresql://remote/cecelia_test');

@@ -1783,8 +1783,14 @@ jobs:
           fi
           FAILED=0
           PASSED=0
+          DELEGATED=0
           for script in "${SCRIPTS[@]}"; do
             echo "── ▶️  $script"
+            if [ "${script##*/}" = 'walking-skeleton-1node-smoke.sh' ]; then
+              DELEGATED=$((DELEGATED + 1))
+              echo "── DELEGATED: Walking actual acceptance belongs to required walking-ci-e2e"
+              continue
+            fi
             STARTED_AT=$SECONDS
             if timeout --kill-after=10s "${SMOKE_SCRIPT_TIMEOUT_SECONDS:-300}s" bash "$script"; then
               PASSED=$((PASSED + 1))
@@ -1800,13 +1806,85 @@ jobs:
             fi
           done
           echo ""
-          echo "📊 Smoke 结果 — 通过: $PASSED, 失败: $FAILED, 总计: ${#SCRIPTS[@]}"
+          echo "📊 Smoke 结果 — 通过: $PASSED, 失败: $FAILED, 委托 walking-ci-e2e: $DELEGATED, 总计: ${#SCRIPTS[@]}"
           [ "$FAILED" -eq 0 ]
       - name: Cleanup brain container
         if: always()
         run: |
           docker logs cecelia-brain-smoke 2>&1 | tail -100 || true
           docker rm -f cecelia-brain-smoke 2>/dev/null || true
+
+  # Walking owns two actual Docker/PG phases; legacy RunAll only delegates this entry.
+  walking-ci-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: cecelia
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+          POSTGRES_DB: cecelia_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U cecelia -d cecelia_test"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_NAME: cecelia_test
+      DB_USER: cecelia
+      DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+      DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Permanent actual target rejection regression
+        run: node --test packages/quality/tests/walking-checkpointer-guard.node-test.mjs
+      - name: Install dependencies and migrate dedicated service
+        run: |
+          npm ci
+          cd packages/brain
+          node src/migrate.js
+      - name: Prepare isolated Brain and actual Alpine worker
+        run: |
+          docker pull alpine
+          docker build -f packages/brain/Dockerfile -t cecelia-brain:walking-ci .
+          docker run -d --name cecelia-brain-walking-ci --network host \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e DB_HOST -e DB_PORT -e DB_NAME -e DB_USER -e DB_PASSWORD -e DATABASE_URL \
+            -e CI=true -e WALKING_CI_OWNER=1 -e NODE_ENV=test -e BRAIN_PORT=5221 \
+            -e CECELIA_TICK_ENABLED=false -e ENV_REGION=us \
+            -e CECELIA_CKPT_QUERY_TIMEOUT_MS=5000 -e CECELIA_CKPT_STATEMENT_TIMEOUT_MS=5000 \
+            -e CECELIA_CKPT_CONNECTION_TIMEOUT_MS=5000 -e DB_QUERY_TIMEOUT_MS=5000 -e REPO_ROOT=/repo_root \
+            -v "$GITHUB_WORKSPACE/packages/workflows:/repo_root/packages/workflows:ro" \
+            cecelia-brain:walking-ci
+          for i in $(seq 1 90); do
+            if curl -q -fsS --max-time 2 http://localhost:5221/api/brain/walking-skeleton-1node/instance >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: True two-thread Docker callback checkpoint restart acceptance
+        env:
+          SMOKE_ALLOW_WRITE: '1'
+          BRAIN_CONTAINER: cecelia-brain-walking-ci
+        run: |
+          set -o pipefail
+          timeout --kill-after=10s 300s bash packages/brain/scripts/smoke/walking-skeleton-1node-smoke.sh | tee /tmp/walking-ci-e2e-proof.log
+      - name: Save owned fixture evidence
+        if: always()
+        run: docker logs cecelia-brain-walking-ci > /tmp/walking-ci-e2e-brain.log 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: walking-ci-real-pg-proof
+          path: /tmp/walking-ci-e2e-*.log
+      - name: Cleanup dedicated Brain fixture
+        if: always()
+        run: docker rm -f cecelia-brain-walking-ci 2>/dev/null || true
 
   # ─── Harness DoD 完整性校验（harness PR 专用，非 harness 自动跳过）──
   harness-dod-integrity:
@@ -2057,13 +2135,18 @@ jobs:
   # ─── Gate: 所有检查通过才能合并 ─────────────────────────────
   ci-passed:
     if: always()
-    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-gp-anchor-artifact, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, real-env-smoke, workspace-api-smoke, quality-tests, goldset-eval, mcp-readonly-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell, runner-tests-shell, deploy-shell-tests, ops-tests-shell]
+    needs: [secrets-scan, dod-format-check, dep-audit, registry-lint, eslint, pr-size-check, branch-naming, engine-tests, engine-tests-shell, dashboard-staging-gate-smoke, lint-migration-unique-version, lint-auto-merge-decision, lint-fs-guard-selection, lint-deploy-effect-assert, brain-unit, brain-unit-all, brain-diff-coverage, brain-integration, workspace-build, workspace-test, e2e-smoke, core-regression, dod-behavior-dynamic, harness-dod-integrity, harness-contract-lint, docker-infra-smoke, lint-test-pairing, lint-feature-has-smoke, lint-gp-anchor-artifact, lint-base-fresh, lint-tdd-commit-order, lint-learning-constraint-coverage, lint-test-quality, lint-no-mock-only-test, lint-no-fake-test, lint-single-exit, real-env-smoke, walking-ci-e2e, workspace-api-smoke, quality-tests, goldset-eval, mcp-readonly-tests, dispatch-worker-test, brain-version-bump-gate, brain-tests-shell, runner-tests-shell, deploy-shell-tests, ops-tests-shell]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Check results
         run: |
           FAILED=false
+          # Unconditional actual Walking owner must run: skipped is not a positive proof.
+          if [ "${{ needs.walking-ci-e2e.result }}" != 'success' ]; then
+            echo "Walking actual CI owner failed: ${{ needs.walking-ci-e2e.result }}"
+            exit 1
+          fi
 
           # 有条件依赖允许 skipped；取消、空值和未知结果一律阻断合并。
           check() {

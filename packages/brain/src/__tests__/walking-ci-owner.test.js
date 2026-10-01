@@ -23,7 +23,7 @@ describe('Walking actual CI owner and PG acceptance', () => {
     expect(spawnSync('bash', ['-c', rendered]).status).toBe(result === 'success' ? 0 : 1);
   });
   it('legacy runner delegates Walking without counting a pass or skip', () => {
-    const runner = workflow.jobs['real-env-smoke'].steps.find(step => step.name.startsWith('Run all')).run;
+    const runner = workflow.jobs['real-env-smoke'].steps.find(step => step.name?.startsWith('Run all')).run;
     expect(runner).toContain('walking-skeleton-1node-smoke.sh');
     expect(runner).toContain('DELEGATED'); expect(runner).toContain('walking-ci-e2e');
   });
