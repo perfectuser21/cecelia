@@ -3,12 +3,18 @@
  * content_type 注册表及外部 AI/告警依赖使用 mock，数据库与 HTTP 路由不 mock。
  */
 
-import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { cleanupRoutedTasks } from '../helpers/routed-task-cleanup.js';
+
+// 健康聚合用例模拟生产运行模式；tick、Docker 和 Xian fetch 均模拟，模型/执行闸保持真实。
+vi.mock('../../runtime-safety.js', async importOriginal => ({
+  ...await importOriginal(),
+  isIsolatedRuntime: () => false,
+}));
 
 vi.mock('../../tick.js', () => ({
   getTickStatus: vi.fn().mockResolvedValue({
@@ -207,6 +213,7 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
 
   // 每个用例前重置 probe 默认返回为 healthy，防止跨用例污染
   beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
     __dockerRuntimeProbeMock.mockReset();
     __dockerRuntimeProbeMock.mockResolvedValue({
       enabled: true,
@@ -216,6 +223,8 @@ describe('Golden Path E2E — Brain 3 条核心链路（真实 PostgreSQL）', (
       error: null,
     });
   });
+
+  afterEach(() => vi.unstubAllGlobals());
 
   afterAll(async () => {
     if (insertedTaskIds.length > 0) {

@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * N3 skill-relay 最小接线（harness-skill-relay initiative，主理人 2026-07-04 拍板）：
  * task.payload.orchestrator==='skill-relay' → spawn 单 claude session 跑 harness-controller skill，
