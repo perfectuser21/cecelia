@@ -33,3 +33,11 @@ it('Linux验收canary只能走root完整宿主入口，不能由普通采样请�
     lockHeld: true, runCommand: async () => { commands++; } })).rejects.toThrow('linux_pool_canary_unconfirmed');
   expect(commands).toBe(0);
 });
+
+it('脚本容器事实证明不提供授权；缺持久身份即拒绝，不能复用pool-canary名字绕过', async () => {
+  const { collectLinuxScriptProof } = await import('../../../packages/brain/scripts/fleet-worker/linux-pool-proof.cjs');
+  let commands = 0;
+  await expect(collectLinuxScriptProof({ profile: {}, identity: {}, containerId: 'a'.repeat(64),
+    deps: { runCommand: async () => { commands++; } } })).rejects.toThrow('linux_script_proof_unavailable');
+  expect(commands).toBe(0);
+});

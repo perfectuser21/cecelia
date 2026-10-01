@@ -10,7 +10,9 @@
 
 
 
-**Brain 版本**: 1.353.14
+**Brain 版本**: 1.353.15
+
+Linux 受管脚本事实证明入口复用完整宿主和父slice采集核心，但独立校验reservation/intent/generation、worker boot、目录version/grant、profile摘要、固定镜像及精确CPU/内存/swap/PID/日志配额。宿主boot与daemon须匹配可信绑定，所有容器操作均只读；原pool-canary的名称、标签前缀与用户限制保留。输出linux-script-proof/v1且execution=false，不兼容旧池验收schema，不产生执行许可。本片仅adapter证明零件，未接root执行桥/runner持久profile身份或HTTP启动，也未完成真实Linux canary。
 
 Linux 池 migration505 将 nonce 挑战、验收签名及 CAS 授权准备写入独立真表。内部 machines/linux-pool 路由只接受记录 ID 与 expected_version_id；完整期望及凭据绑定来自 CECELIA_LINUX_POOL_DEPLOYMENTS_FILE 指向的受保护部署登记文件和 1Password 同步凭据文件，默认未配置拒绝。验收绑定设备 UUID、固定 revision/config、host/worker boot、daemon、完整 slice 资源证明和精确清理；nonce 限时一次消费，历史不可改，同机器锁与预约共享。ready 仅建立 pending 版本与 managed_script/script 显式 profile 许可，容量为0，API execution=false；503 的 attested active 硬拒保留。US 稳定 UUID、scheduler 和零预算均拒绝。撤销即使部署配置或凭据不可用仍按持久身份执行；过期不得续期复活，历史清理定位保留。本片未部署或执行生产DDL，仍需可信bootstrap、Linux脚本adapter/真实执行清理、机器页调用及真实systemd池验收。
 
