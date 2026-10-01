@@ -32,6 +32,13 @@ async function runLinuxScriptCanary({nonce,cleanupReceipt=false},deps={}){
  const client=deps.client??createLinuxScriptBridgeClient(),collect=deps.collectProof??collectLinuxScriptProof;
  const identity=()=> (deps.identity??readLinuxPoolIdentity)({profile:p,token:config.workerToken,revision:d.revision,nonce});
  const pause=deps.sleep??(ms=>new Promise(r=>setTimeout(r,ms)));
+ const cleanupConfirmed=()=>Array.isArray(state.cases)&&state.cases.length>0&&state.cases.length<=32&&state.cases.every(r=>{
+  if(r.attempted===false)return r.container_id===null&&r.cleanup==null;
+  const c=r.cleanup;
+  return r.attempted===true&&(r.container_id===null||HEX.test(r.container_id??''))&&c?.status==='cleaned'
+   &&c.absent===true&&c.tombstoned===true&&UUID.test(c.challenge??'')&&c.container_id===r.container_id
+   &&Object.entries(r.identity).every(([k,v])=>c[k]===v);
+ });
  async function call(action,r,extras={}){
   const body={...r.identity,...extras,request_nonce:randomUUID()},permit=signLinuxScriptPermit({key:config.key,expected:r.expected,action,body});
   const reply=await client[action]({...body,permit}),e=reply.envelope,receipt=e?.receipt;
@@ -47,11 +54,12 @@ async function runLinuxScriptCanary({nonce,cleanupReceipt=false},deps={}){
   }
   const challenge=randomUUID(),receipt=await call('cancel',r,{container_id:r.container_id,challenge});
   if(receipt.container_id!==r.container_id||receipt.status!=='cleaned'||receipt.absent!==true||receipt.tombstoned!==true||receipt.challenge!==challenge)fail();
-  r.cleanup=receipt;state.cleanup_confirmed=state.cases.every(c=>!c.attempted||!!c.cleanup);store.save(state);
+  r.cleanup=receipt;state.cleanup_confirmed=cleanupConfirmed();store.save(state);
  }
  if(state){
   for(const r of state.cases)try{await clean(r);}catch{/* 未决资源保持占位。 */}
-  if(cleanupReceipt&&state.cleanup_confirmed&&state.cases.length&&state.cases.every(r=>!r.attempted||r.cleanup)){
+  const confirmed=cleanupConfirmed();if(state.cleanup_confirmed!==confirmed){state.cleanup_confirmed=confirmed;store.save(state);}
+  if(cleanupReceipt&&confirmed){
    if(!state.cleanup_envelope){const e=state.cases[0].expected;
     const receipt={schema_version:'linux-script-canary-cleanup/v1',nonce,machine_id:state.cases[0].identity.machine_id,
      ...Object.fromEntries(['machine_registry_id','pool_config_digest','revision','host_boot_id','worker_boot_id','daemon_id','execution_version_id'].map(k=>[k,e[k]])),
