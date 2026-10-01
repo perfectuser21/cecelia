@@ -44,11 +44,22 @@ def run_command(command,args,input=None):
   env={'PATH':'/usr/bin:/bin:/usr/sbin:/sbin','HOME':'/','DOCKER_HOST':'unix:///var/run/docker.sock'})
  selector=selectors.DefaultSelector();output={process.stdout:bytearray(),process.stderr:bytearray()};deadline=time.monotonic()+120
  try:
-  if input is not None:process.stdin.write(input.encode());process.stdin.close()
+  pending=memoryview(input.encode()) if input is not None else None
+  if process.stdin:
+   os.set_blocking(process.stdin.fileno(),False)
+   if pending:selector.register(process.stdin,selectors.EVENT_WRITE)
+   else:process.stdin.close()
   for stream in output:selector.register(stream,selectors.EVENT_READ)
   while selector.get_map():
    if time.monotonic()>deadline:raise CommandFailure(-1)
    for key,_ in selector.select(timeout=0.25):
+    if key.fileobj is process.stdin:
+     try:written=os.write(process.stdin.fileno(),pending[:4096])
+     except BlockingIOError:continue
+     except BrokenPipeError:raise CommandFailure(-1)
+     pending=pending[written:]
+     if not pending:selector.unregister(process.stdin);process.stdin.close()
+     continue
     data=os.read(key.fileobj.fileno(),4096)
     if not data:selector.unregister(key.fileobj);continue
     output[key.fileobj].extend(data)

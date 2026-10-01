@@ -1,4 +1,4 @@
-import fcntl, hashlib, importlib.util, io, json, os, pathlib, tarfile, tempfile, unittest
+import fcntl, hashlib, importlib.util, io, json, os, pathlib, tarfile, tempfile, unittest, subprocess, sys
 HERE=pathlib.Path(__file__).resolve().parent
 spec=importlib.util.spec_from_file_location('linux_bootstrap',HERE/'linux-pool-bootstrap.py')
 bootstrap=importlib.util.module_from_spec(spec);spec.loader.exec_module(bootstrap)
@@ -116,6 +116,35 @@ class BootstrapTests(unittest.TestCase):
  def test_command_output_is_bounded_without_echoing_child_data(self):
   with self.assertRaises(bootstrap.CommandFailure) as caught:bootstrap.run_command('/bin/sh',['-c','head -c 70000 /dev/zero'])
   self.assertEqual(caught.exception.stdout,'');self.assertEqual(caught.exception.stderr,'')
+ def test_real_stdin_delivers_complete_profile_before_closing(self):
+  output=bootstrap.run_command(sys.executable,['-c','import sys;print(len(sys.stdin.buffer.read()))'],input='x'*65536)
+  self.assertEqual(output.strip(),'65536')
+ def test_stdin_backpressure_remains_inside_command_deadline(self):
+  # 独立进程隔离时钟加速；真实子进程不读stdin，强制测试最大合法profile。
+  script="""import importlib.util,time,sys,subprocess,os
+spec=importlib.util.spec_from_file_location('b',sys.argv[1]);b=importlib.util.module_from_spec(spec);spec.loader.exec_module(b)
+clock=time.monotonic;start=clock();b.time.monotonic=lambda:clock()+(121 if clock()-start>0.1 else 0)
+original=subprocess.Popen
+def popen(*args,**kwargs):
+ p=original(*args,**kwargs)
+ if sys.platform=='linux' and p.stdin:
+  import fcntl
+  fcntl.fcntl(p.stdin.fileno(),fcntl.F_SETPIPE_SZ,4096)
+ elif p.stdin:
+  # Darwin允许64KiB；注入真实满管道，模拟Linux较小pipe的写端背压。
+  os.set_blocking(p.stdin.fileno(),False)
+  try:
+   while True:os.write(p.stdin.fileno(),b'x'*4096)
+  except BlockingIOError:pass
+  os.set_blocking(p.stdin.fileno(),True)
+ return p
+b.subprocess.Popen=popen
+try:b.run_command(sys.executable,['-c','import time;time.sleep(5)'],input='x'*65536)
+except b.CommandFailure:sys.exit(0)
+sys.exit(1)
+"""
+  result=subprocess.run([sys.executable,'-c',script,str(HERE/'linux-pool-bootstrap.py')],capture_output=True,timeout=2)
+  self.assertEqual(result.returncode,0,result.stderr.decode())
  def test_pool_becomes_active_after_lock_and_stops_bootstrap(self):
   original=self.fake_run;reads=[0]
   def run(command,args,**kwargs):
