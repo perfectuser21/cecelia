@@ -1,3 +1,4 @@
+import { assertCompanyPatch } from '../lib/company-kr-metrics.js';
 /**
  * Task Goals route (migrated to new OKR tables: objectives + key_results)
  *
@@ -221,6 +222,7 @@ router.get('/:id', async (req, res) => {
 // PATCH /goals/:id — 先更新 objectives，0 行受影响再更新 key_results
 router.patch('/:id', async (req, res) => {
   try {
+    await assertCompanyPatch(pool, req.params.id, req.body, 'both');
     const { title, status, area_id, owner_role, custom_props, metadata } = req.body;
 
     const setClauses = [];
@@ -279,7 +281,7 @@ router.patch('/:id', async (req, res) => {
     }
     res.json(result.rows[0]);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to update goal', details: err.message });
+    res.status(err.status || 500).json({ error: 'Failed to update goal', details: err.message });
   }
 });
 

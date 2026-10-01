@@ -1,3 +1,4 @@
+import { COMPANY_KR_SQL_GUARD } from './lib/company-kr-metrics.js';
 /**
  * callback-processor.js
  *
@@ -412,7 +413,7 @@ export async function processExecutionCallback(data, pool) {
             ? Math.round((krProgress / 100) * targetVal * 100) / 100
             : krProgress;
           await pool.query(
-            'UPDATE key_results SET current_value = $1, updated_at = NOW() WHERE id = $2',
+            `UPDATE key_results SET current_value = $1, updated_at = NOW() WHERE id = $2 AND ${COMPANY_KR_SQL_GUARD}`,
             [newValue, krId]
           );
         }

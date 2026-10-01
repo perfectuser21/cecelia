@@ -1,3 +1,4 @@
+import { isCompanyKr, COMPANY_KR_SQL_GUARD } from './lib/company-kr-metrics.js';
 /**
  * KR Progress Calculator - KR 进度自动更新
  *
@@ -27,6 +28,9 @@ import { computeKrProgressFromProjects } from './project-progress.js';
 export async function updateKrProgress(pool, krId) {
   if (!krId) return { krId: null, progress: 0, completed: 0, total: 0 };
 
+  const identity = await pool.query('SELECT metadata, custom_props FROM key_results WHERE id=$1', [krId]);
+  if (isCompanyKr(identity.rows[0])) return { krId, skipped: true, reason: 'company_metric', progress: identity.rows[0].metadata?.company_metric?.ratio == null ? null : identity.rows[0].metadata.company_metric.ratio * 100, completed: 0, total: 0 };
+
   const { hasProjects, progress, projectCount, projects } = await computeKrProgressFromProjects(pool, krId);
 
   if (!hasProjects) {
@@ -42,7 +46,7 @@ export async function updateKrProgress(pool, krId) {
           'progress_computed_at', now()::text
         ),
         updated_at = NOW()
-    WHERE id = $1
+    WHERE id = $1 AND ${COMPANY_KR_SQL_GUARD}
   `, [krId, progress]);
 
   const completed = projects.filter((p) => p.progress === 100).length;
@@ -60,7 +64,7 @@ export async function updateKrProgress(pool, krId) {
 export async function syncAllKrProgress(pool) {
   const krsResult = await pool.query(`
     SELECT id FROM key_results
-    WHERE status NOT IN ('completed', 'cancelled')
+    WHERE status NOT IN ('completed', 'cancelled') AND ${COMPANY_KR_SQL_GUARD}
       AND id NOT IN (
         SELECT kr_id FROM kr_verifiers WHERE enabled = true
       )
