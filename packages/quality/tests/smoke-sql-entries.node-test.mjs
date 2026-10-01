@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
@@ -65,6 +65,26 @@ for (const [name, overrides, accepted] of [
     } finally { await rm(temp, { recursive: true, force: true }); }
   });
 }
+  test(`${weighted}: unset TEST_DATABASE_URL cannot be replaced by later real dotenv import`, async () => {
+    const temp = await mkdtemp(resolve(tmpdir(), 'node-pg-dotenv-boundary-'));
+    try {
+      await mkdir(resolve(temp, 'brain/src'), { recursive: true });
+      await symlink(resolve(root, 'node_modules'), resolve(temp, 'node_modules'));
+      await writeFile(resolve(temp, 'package.json'), '{"type":"module"}');
+      await writeFile(resolve(temp, '.env'), 'TEST_DATABASE_URL=postgresql://remote.invalid/cecelia_test\n');
+      await writeFile(resolve(temp, 'brain/src/db-config.js'), await readFile(resolve(root, 'packages/brain/src/db-config.js')));
+      const check = resolve(temp, 'check.mjs'), boundary = resolve(temp, 'boundary.sh');
+      await writeFile(check, `import assert from 'node:assert/strict'; import { DB_DEFAULTS } from './brain/src/db-config.js'; assert.equal(process.env.TEST_DATABASE_URL || '', ''); assert.equal(DB_DEFAULTS.host, 'localhost'); assert.equal(DB_DEFAULTS.database, 'cecelia_test');`);
+      await writeFile(boundary, `set -T\ntrap 'case "$BASH_COMMAND" in exec\\ node*) node "$DOTENV_CHECK"; exit $?;; esac' DEBUG\n`);
+      await fixture(async ({ smoke, psqlCalls, requests }) => {
+        const result = await smoke(weighted, { SMOKE_ALLOW_WRITE: '1', TEST_DATABASE_URL: undefined,
+          DB_NAME: 'cecelia_test', DB_HOST: 'localhost', DB_PORT: '5432', BASH_ENV: boundary, DOTENV_CHECK: check });
+        assert.equal(result.code, 0, result.output); assert.deepEqual(await psqlCalls(), []);
+        assert.ok(requests.some(req => req.url === '/api/brain/health'));
+      });
+    } finally { await rm(temp, { recursive: true, force: true }); }
+  });
+
 }
 for (const [name, classification] of Object.entries(entries)) {
   if (classification.kind !== 'readonly') continue;
