@@ -3440,3 +3440,22 @@ describe('Worker维护暂停的Attempt最终边界',()=>{
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
  });
 });
+it.each(['state-and-remove','postgres-unknown','workspace-unknown'])('prepare副作用后%s失败且无journal时maintenance保守未决',async(mode)=>{
+ const deps=dependencies();
+ if(mode==='state-and-remove'){
+  deps.stateStore.save.mockRejectedValue(Error('disk_full'));
+  deps.docker.remove.mockRejectedValue(Error('docker_unavailable'));
+ }else if(mode==='postgres-unknown'){
+  deps.resourceManager.provision.mockRejectedValue(Error('command_result_lost'));
+ }else deps.workspaceManager.prepare.mockRejectedValue(Error('workspace_result_lost'));
+ const runner=createRunner(deps),input=mode==='postgres-unknown'?request({runtime_resources:{postgres:true},provider_spec:{...request().provider_spec,stdin:providerPrompt('evaluator',{runtime_resources:{postgres:true}})},target:{...request().target,role:'evaluator'}}):request();
+ await expect(runner.prepare(input)).rejects.toThrow();expect(await deps.stateStore.list()).toEqual([]);
+ await expect(runner.maintenance()).rejects.toThrow('worker_maintenance_unconfirmed');
+ await runner.reconcile();await expect(runner.maintenance()).rejects.toThrow('worker_maintenance_unconfirmed');
+});
+
+it('副作用前drain拒绝不会将干净Worker永久标记未决',async()=>{
+ const deps=dependencies();deps.assertCanLaunch=()=>{throw Error('worker_draining');};const runner=createRunner(deps);
+ await expect(runner.prepare(request())).rejects.toThrow('worker_draining');expect(deps.workspaceManager.prepare).not.toHaveBeenCalled();
+ expect(await runner.maintenance()).toEqual({pending:0});
+});

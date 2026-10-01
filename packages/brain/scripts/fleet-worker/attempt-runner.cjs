@@ -1927,8 +1927,10 @@ function createAttemptRunner({
     };
   }
 
+  // 可能有副作用的 prepare 失败不能靠空 journal 证明静默；同 boot 保持未决。
+  let maintenanceUnconfirmed = false;
   const runner = {
-    async maintenance(){const states=await stateStore.list();return {pending:states.filter(s=>s.status!=='terminal').length};},
+    async maintenance(){if(maintenanceUnconfirmed)throw Error('worker_maintenance_unconfirmed');const states=await stateStore.list();return {pending:states.filter(s=>s.status!=='terminal').length};},
     async prepare(input) {
       const {
         request,
@@ -1948,6 +1950,7 @@ function createAttemptRunner({
         return inFlight.promise;
       }
 
+      let sideEffectsPossible = false;
       const operation = (async () => {
       const existing = await stateStore.get(request.attempt_id);
       if (existing) {
@@ -1975,6 +1978,7 @@ function createAttemptRunner({
       // /host-claude-config，entrypoint（canonical 镜像内现成逻辑）软链
       // .credentials.json 回原件，全执行体共享单条 OAuth 链。
       const claudeConfigMount = resolveClaudeConfigMount(target);
+      sideEffectsPossible = true;
       const workspace = await prepareVerifiedWorkspace(request.workspace_spec, {
         nodeDeps: executionContract.runtimeRequirements.node_deps === true,
       });
@@ -2113,6 +2117,9 @@ function createAttemptRunner({
       });
       try {
         return await operation;
+      } catch (error) {
+        if (sideEffectsPossible) maintenanceUnconfirmed = true;
+        throw error;
       } finally {
         if (prepareOperations.get(request.attempt_id)?.promise === operation) {
           prepareOperations.delete(request.attempt_id);

@@ -43,3 +43,14 @@ it('默认runtime共享真实marker，orchestrator新prepare拒绝且不执行�
   expect(await runtime.attemptRunner.maintenance()).toEqual({pending:0});expect(await runtime.scriptRunner.maintenance()).toEqual({pending:0});expect(await runtime.orchestratorRunner.maintenance()).toEqual({preparing:0,prepared:0,running_processes:0});
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+it.each(['pending','failed'])('启动reconcile处于%s时绝不签发静默回执',async(mode)=>{
+ const token='protected-maintenance-token-'.repeat(3),gate=createLocalLaunchAdmission({lstat:()=>({})});let release,entered;
+ const held=new Promise(r=>release=r),started=new Promise(r=>entered=r);
+ const attempt={prepare:async()=>{},start:async()=>{},inspect:async()=>{},cancel:async()=>{},terminal:async()=>{},reconcile:async()=>{entered();if(mode==='failed')throw Error('docker_unavailable');await held;},maintenance:()=>({pending:0})};
+ const server=createFleetWorkerServer({attemptToken:token,launchAdmission:gate,attemptRunner:attempt,scriptRunner:{maintenance:()=>({pending:0})},orchestratorRunner:{maintenance:()=>({preparing:0,prepared:0,running_processes:0})}});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));await started;
+ try{
+  const response=await fetch(`http://127.0.0.1:${server.address().port}/maintenance/status`,{method:'POST',headers:{authorization:`Bearer ${token}`},body:JSON.stringify({request_nonce:randomUUID()})});
+  expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'worker_maintenance_unconfirmed'});
+ }finally{release();server.closeAllConnections();await new Promise(r=>server.close(r));}
+});

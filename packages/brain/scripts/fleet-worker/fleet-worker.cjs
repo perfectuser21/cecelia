@@ -611,6 +611,7 @@ function createFleetWorkerServer(options = {}) {
         if(request.method!=='POST'){writeJson(response,405,{error:'method_not_allowed'});return;}
         const body=await readJson(request,4096);
         if(!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(body.request_nonce??'')||Object.keys(body).some(k=>k!=='request_nonce'))throw Error('invalid_nonce');
+        if(!attemptReady||reconciliationFailed)throw Error('maintenance_reconciliation_unconfirmed');
         const gate=options.launchAdmission;
         if(!gate||[attemptRunner,options.scriptRunner,options.orchestratorRunner].some(r=>typeof r?.maintenance!=='function'))throw Error('maintenance_unconfigured');
         const before=gate.snapshot(),attempts=await attemptRunner.maintenance(),scripts=await options.scriptRunner.maintenance(),orchestrators=await options.orchestratorRunner.maintenance(),after=gate.snapshot();
