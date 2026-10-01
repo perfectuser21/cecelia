@@ -3,7 +3,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import pool from '../../db.js';
-import { shouldTriggerReview } from '../../review-gate.js';
+import { shouldTriggerReview, createReviewTask, processReviewResult } from '../../review-gate.js';
+import { triggerCompletedDecompositionReview } from '../../decomposition-review-trigger.js';
 import { reviewProjectCompletion } from '../../progress-reviewer.js';
 import { diagnoseKR } from '../../task-router.js';
 import { findRelatedProject } from '../../entity-linker.js';
@@ -13,6 +14,8 @@ import { generateCompareReport, getCompareMetrics } from '../../project-compare.
 import { preparePrompt } from '../../executor.js';
 import diagnoseRoutes from '../../routes/task-router-diagnose.js';
 import intentMatchRoutes from '../../routes/intent-match.js';
+import tasksRoutes from '../../routes/tasks.js';
+import taskTasksRoutes from '../../routes/task-tasks.js';
 import MemoryService from '../../services/memory-service.js';
 import { actionHandlers } from '../../decision-executor.js';
 
@@ -106,11 +109,54 @@ describe('真实 PostgreSQL：仅存在 projects 的新项目贯穿按需入口'
     expect(intent.status).toBe(200);
     expect(intent.body.matched_projects).toEqual(expect.arrayContaining([expect.objectContaining({ id: projectId })]));
   });
-  it('真实 Key Result 的拆解确认可从 reviewing 放行到 ready', async () => {
-    await pool.query("UPDATE key_results SET status = 'reviewing' WHERE id = $1", [krId]);
-    expect(await actionHandlers.okr_decomp_review({ kr_id: krId }, {})).toMatchObject({ success: true, kr_id: krId });
-    const result = await pool.query('SELECT status FROM key_results WHERE id = $1', [krId]);
-    expect(result.rows[0].status).toBe('ready');
-  });
 
+  it('真实拆解完成、修正再审、复用确认门与 KR 放行贯穿同一 Project', async () => {
+    const createRecordedTask = async task => {
+      const id = randomUUID();
+      await pool.query(`INSERT INTO tasks(id,title,status,task_type,project_id,goal_id,payload)
+        VALUES($1,$2,'queued',$3,$4,$5,$6)`, [id, task.title, task.task_type, task.project_id, task.goal_id, task.payload]);
+      return { task: { id } };
+    };
+    const decompId = randomUUID();
+    // 同 KR 最新项目并非本次目标；本棒显式选定较旧项目进行复用。
+    await pool.query('UPDATE projects SET kr_id=$1 WHERE id=$2', [krId, otherProjectId]);
+    await pool.query(`INSERT INTO tasks(id,title,status,task_type,goal_id,payload)
+      VALUES($1,'项目拆解','completed','dev',$2,'{"decomposition":"true"}')`, [decompId, krId]);
+    const patchApp = express();
+    patchApp.use(express.json());
+    // 与 server.js 相同顺序：嵌套兼容路由 → Brain 真路由 → Tasks fallback。
+    patchApp.use('/api/brain/tasks/tasks', taskTasksRoutes);
+    patchApp.use('/api/brain', tasksRoutes);
+    patchApp.use('/api/brain/tasks', taskTasksRoutes);
+    const saved = await request(patchApp).patch(`/api/brain/tasks/${decompId}`)
+      .send({ result: { decomposition_project_id: projectId } });
+    expect(saved.status).toBe(200);
+    const selection = (await pool.query('SELECT result,success_metrics FROM tasks WHERE id=$1', [decompId])).rows[0];
+    expect(selection.result.decomposition_project_id).toBe(projectId);
+    expect(selection.success_metrics?.decomposition_project_id).toBeUndefined();
+    await pool.query("UPDATE key_results SET status = 'decomposing' WHERE id = $1", [krId]);
+    const createReview = (db, params) => createReviewTask(db, params, createRecordedTask);
+    expect(await triggerCompletedDecompositionReview(pool, decompId, { createReview }))
+      .toMatchObject({ reviewed: true, project_id: projectId });
+    const first = (await pool.query(`SELECT id,task_id FROM decomp_reviews WHERE entity_id=$1 AND verdict IS NULL`, [projectId])).rows[0];
+    const confirmation = (await pool.query(`SELECT id FROM pending_actions WHERE params->>'kr_id'=$1 AND status='pending_approval'`, [krId])).rows[0];
+    await pool.query("UPDATE tasks SET status='completed' WHERE id=$1", [first.task_id]);
+    await processReviewResult(pool, first.task_id, 'needs_revision', { issue: '补验收边界' }, createRecordedTask);
+    const revision = (await pool.query(`SELECT id,project_id,goal_id FROM tasks WHERE payload->>'review_id'=$1 AND task_type='project_plan'`, [first.id])).rows[0];
+    expect(revision).toMatchObject({ project_id: projectId, goal_id: krId });
+    await pool.query("UPDATE tasks SET status='completed' WHERE id=$1", [revision.id]);
+    expect(await triggerCompletedDecompositionReview(pool, revision.id, { createReview }))
+      .toMatchObject({ reviewed: true, project_id: projectId });
+    const second = (await pool.query(`SELECT task_id FROM decomp_reviews WHERE entity_id=$1 AND verdict IS NULL`, [projectId])).rows[0];
+    expect(second.task_id).not.toBe(first.task_id);
+    const refreshed = (await pool.query('SELECT id,params,context FROM pending_actions WHERE id=$1', [confirmation.id])).rows[0];
+    expect(refreshed.params.project_id).toBe(projectId);
+    expect(refreshed.context.decomposition_task_id).toBe(revision.id);
+    expect(refreshed.context.tasks).not.toContain(`${keyword}旧根投影`);
+    await pool.query("UPDATE tasks SET status='completed' WHERE id=$1", [second.task_id]);
+    await processReviewResult(pool, second.task_id, 'approved', {});
+    expect((await pool.query('SELECT status FROM projects WHERE id=$1', [projectId])).rows[0].status).toBe('active');
+    expect(await actionHandlers.okr_decomp_review({ kr_id: krId }, {})).toMatchObject({ success: true, kr_id: krId });
+    expect((await pool.query('SELECT status FROM key_results WHERE id=$1', [krId])).rows[0].status).toBe('ready');
+  });
 });

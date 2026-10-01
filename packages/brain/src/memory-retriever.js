@@ -447,7 +447,7 @@ async function searchSemanticMemory(pool, query, _mode) {
     for (const m of (results.matches || [])) {
       candidates.push({
         id: m.id,
-        source: m.level === 'capability' ? 'capability' : 'task',
+        source: ['capability', 'project', 'kr', 'okr'].includes(m.level) ? m.level : 'task',
         title: m.title || '',
         description: m.description || '',
         text: `${m.title || ''} ${m.description || ''}`,
@@ -540,15 +540,9 @@ async function searchSemanticMemory(pool, query, _mode) {
       query.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/g, ' ').split(/\s+/).filter(t => t.length > 1)
     );
     if (queryTokens.size > 0) {
-      // 迁移：projects → okr_projects UNION okr_initiatives（name → title）
       const projectResults = await pool.query(
-        `SELECT id, title AS name, description, 'project' AS type, created_at
-         FROM okr_projects
-         UNION ALL
-         SELECT id, title AS name, description, 'initiative' AS type, created_at
-         FROM okr_initiatives
-         ORDER BY created_at DESC
-         LIMIT 30`
+        `SELECT id, name, description, 'project' AS type, created_at
+         FROM projects ORDER BY created_at DESC LIMIT 30`
       );
       for (const p of projectResults.rows) {
         const text = `${p.name || ''} ${p.description || ''}`.toLowerCase()
@@ -559,7 +553,7 @@ async function searchSemanticMemory(pool, query, _mode) {
           const union = new Set([...queryTokens, ...textTokens]).size;
           candidates.push({
             id: p.id,
-            source: p.type === 'initiative' ? 'initiative' : 'project',
+            source: 'project',
             title: p.name || '',
             description: (p.description || '').slice(0, 300),
             full_content: p.description || '',
@@ -594,19 +588,16 @@ async function searchSemanticMemory(pool, query, _mode) {
  */
 async function _enrichStructuredCandidates(pool, candidates) {
   const goalIds = candidates.filter(c => c.source === 'kr' || c.source === 'okr').map(c => c.id);
-  const projectIds = candidates.filter(c => c.source === 'initiative' || c.source === 'project').map(c => c.id);
-  const initiativeIds = candidates.filter(c => c.source === 'initiative').map(c => c.id);
+  const projectIds = candidates.filter(c => c.source === 'project').map(c => c.id);
 
   try {
-    // task_count for goals via okr_projects.kr_id
+    // task_count for KR via projects.kr_id
     if (goalIds.length > 0) {
       const res = await pool.query(
         `SELECT op.kr_id as goal_id, COUNT(t.id)::int as task_count
          FROM tasks t
-         JOIN okr_initiatives oi ON oi.id = t.project_id
-         JOIN okr_scopes os ON oi.scope_id = os.id
-         JOIN okr_projects op ON op.id = os.project_id
-         WHERE op.kr_id = ANY($1) AND t.status NOT IN ('completed','cancelled','quarantined')
+         JOIN projects op ON op.id = t.project_id
+         WHERE op.kr_id = ANY($1) AND t.task_type <> 'project' AND t.status NOT IN ('completed','cancelled','quarantined')
          GROUP BY op.kr_id`,
         [goalIds]
       );
@@ -623,34 +614,27 @@ async function _enrichStructuredCandidates(pool, candidates) {
       const res = await pool.query(
         `SELECT project_id, COUNT(id)::int as task_count
          FROM tasks
-         WHERE project_id = ANY($1) AND status NOT IN ('completed','cancelled','quarantined')
+         WHERE project_id = ANY($1) AND task_type <> 'project' AND status NOT IN ('completed','cancelled','quarantined')
          GROUP BY project_id`,
         [projectIds]
       );
       const countMap = Object.fromEntries(res.rows.map(r => [r.project_id, r.task_count]));
       for (const c of candidates) {
-        if ((c.source === 'initiative' || c.source === 'project') && countMap[c.id] !== undefined) {
+        if (c.source === 'project' && countMap[c.id] !== undefined) {
           c.task_count = countMap[c.id];
         }
       }
     }
 
-    // parent_kr_title for initiatives（通过 okr_scopes → okr_projects.kr_id → key_results）
-    if (initiativeIds.length > 0) {
+    // 项目直接通过 kr_id 获取上级目标。
+    if (projectIds.length > 0) {
       const res = await pool.query(
-        `SELECT oi.id as initiative_id, kr.title as kr_title
-         FROM key_results kr
-         JOIN okr_projects op ON op.kr_id = kr.id
-         JOIN okr_scopes os ON os.project_id = op.id
-         JOIN okr_initiatives oi ON oi.scope_id = os.id
-         WHERE oi.id = ANY($1)`,
-        [initiativeIds]
+        `SELECT p.id AS project_id, kr.title AS kr_title FROM projects p
+         JOIN key_results kr ON kr.id = p.kr_id WHERE p.id = ANY($1)`, [projectIds]
       );
-      const krMap = Object.fromEntries(res.rows.map(r => [r.initiative_id, r.kr_title]));
+      const krMap = Object.fromEntries(res.rows.map(r => [r.project_id, r.kr_title]));
       for (const c of candidates) {
-        if (c.source === 'initiative' && krMap[c.id]) {
-          c.parent_kr_title = krMap[c.id];
-        }
+        if (c.source === 'project' && krMap[c.id]) c.parent_kr_title = krMap[c.id];
       }
     }
   } catch (err) {
