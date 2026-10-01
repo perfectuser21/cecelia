@@ -8,13 +8,15 @@ function fixture(){
  put('/staging/profile.json',JSON.stringify(profile));put('/staging/token','b'.repeat(64));put('/staging/node','trusted-node',0o755);
  for(const name of SOURCE_FILES)put('/staging/source/'+name,fs.readFileSync(path.join(__dirname,name)),0o644);
  const options={sourceDir:'/staging/source',profilePath:'/staging/profile.json',tokenPath:'/staging/token',nodePath:'/staging/node',revision:'c'.repeat(40)};
- const deps={root,rootUid:process.getuid(),platform:'linux',getuid:()=>0,readlink:async()=>'/usr/lib/systemd/systemd',runCommand:async(command,args)=>{
+ const deps={root,rootUid:process.getuid(),rootGid:process.getgid(),platform:'linux',getuid:()=>0,readlink:async()=>'/usr/lib/systemd/systemd',runCommand:async(command,args)=>{
   calls.push([command,args]);
   if(command==='/usr/bin/systemd-detect-virt')throw Object.assign(Error(),{code:1,stdout:'none\n'});
   if(command==='/usr/bin/id')return {stdout:String(args[0]==='-u'?process.getuid():process.getgid())};
+  if(command==='/usr/bin/getent'&&args[0]==='group')return {stdout:`_cecelia:x:${process.getgid()}:\n`};
   if(command==='/usr/bin/getent')return {stdout:`_cecelia:x:${process.getuid()}:${process.getgid()}:service:/var/lib/cecelia:/usr/sbin/nologin\n`};
   if(command==='/staging/node')return {stdout:'v24.1.0\n'};
   if(command==='/usr/bin/docker')return {stdout:JSON.stringify({ID:'daemon-fixed',CgroupDriver:'systemd',CgroupVersion:'2'})};
+  if(args.includes('--property=DropInPaths'))return {stdout:''};
   if(args[0]==='show')return {stdout:args.at(-1)==='cecelia-workloads.slice'?'inactive\n':'LoadState=not-found\nActiveState=inactive\nUnitFileState=\n'};
   if(args[0]==='is-active')return {stdout:'active\n'};
   return {stdout:''};
@@ -51,5 +53,34 @@ describe('可信Linux pool安装事务',()=>{
   expect(fs.existsSync(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/linux-cgroup.cjs'))).toBe(false);
   expect(x.calls).toContainEqual(['/usr/bin/systemctl',['start','cecelia-linux-pool.service']]);
  }finally{x.cleanup();}});
- it('他人锁不删除，不落盘',async()=>{const x=fixture();try{x.put('/run/lock/cecelia-linux-pool.install.lock','another-owner');await expect(install(x)).rejects.toThrow('linux_pool_install_locked');expect(fs.readFileSync(path.join(x.root,'run/lock/cecelia-linux-pool.install.lock'),'utf8')).toBe('another-owner');}finally{x.cleanup();}});
+ it('他人锁不删除，不落盘',async()=>{const x=fixture();try{x.put('/run/cecelia/linux-pool.install.lock','another-owner');await expect(install(x)).rejects.toThrow('linux_pool_install_locked');expect(fs.readFileSync(path.join(x.root,'run/cecelia/linux-pool.install.lock'),'utf8')).toBe('another-owner');}finally{x.cleanup();}});
 });
+
+it('服务状态在安装锁后重新读取，失败恢复锁内旧状态',async()=>{const x=fixture();let shows=0,failed=false;const run=x.deps.runCommand;try{
+ x.deps.runCommand=async(c,a)=>{if(a[0]==='show'&&a.at(-1)==='cecelia-linux-pool.service'){shows++;return {stdout:shows===1?'LoadState=not-found\nActiveState=inactive\nUnitFileState=\n':'LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n'};}if(a[0]==='start'&&!failed){failed=true;throw Error('start_failed');}return run(c,a);};
+ await expect(install(x)).rejects.toThrow('linux_pool_install_failed');expect(shows).toBe(2);expect(x.calls).toContainEqual(['/usr/bin/systemctl',['start','cecelia-linux-pool.service']]);
+}finally{x.cleanup();}});
+it('新装start失败移除本片新增文件，保留原来不存在的服务状态',async()=>{const x=fixture();const run=x.deps.runCommand;try{
+ x.deps.runCommand=async(c,a)=>{if(a[0]==='start')throw Error('start_failed');return run(c,a);};await expect(install(x)).rejects.toThrow('linux_pool_install_failed');
+ expect(fs.existsSync(path.join(x.root,'etc/cecelia/fleet-worker.token'))).toBe(false);expect(fs.existsSync(path.join(x.root,'etc/systemd/system/cecelia-linux-pool.service'))).toBe(false);
+ expect(x.calls).toContainEqual(['/usr/bin/systemctl',['disable','cecelia-linux-pool.service']]);
+}finally{x.cleanup();}});
+
+it('已有systemd drop-in拒绝，不让外部覆盖固定slice或服务合同',async()=>{const x=fixture();const run=x.deps.runCommand;try{
+ x.deps.runCommand=async(c,a)=>a.includes('--property=DropInPaths')?{stdout:'/etc/systemd/system/cecelia-linux-pool.service.d/override.conf'}:run(c,a);
+ await expect(install(x)).rejects.toThrow('linux_pool_install_unit_override');expect(fs.existsSync(path.join(x.root,'etc'))).toBe(false);
+}finally{x.cleanup();}});
+it('回滚也失败时保留root私有恢复清单和备份，不报告安装成功',async()=>{const x=fixture();try{
+ x.put('/etc/cecelia/fleet-worker.token','previous-token');let writes=0;
+ x.deps.fs={...fs,renameSync:(a,b)=>{writes++;if(writes>=4)throw Error('disk_write_failed');return fs.renameSync(a,b);}};
+ await expect(install(x)).rejects.toThrow('linux_pool_install_rollback_failed');
+ const archives=path.join(x.root,'var/lib/cecelia/fleet-install'),names=fs.readdirSync(archives);expect(names).toHaveLength(1);
+ const dir=path.join(archives,names[0]);expect(fs.statSync(dir).mode&0o777).toBe(0o700);
+ const manifest=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json'),'utf8'));expect(manifest.entries).toContainEqual(expect.objectContaining({name:'/etc/cecelia/fleet-worker.token',mode:0o600}));
+ expect(JSON.stringify(manifest)).not.toContain('previous-token');for(const file of fs.readdirSync(dir))expect(fs.statSync(path.join(dir,file)).mode&0o777).toBe(0o600);
+}finally{x.cleanup();}});
+
+it('服务组缺失或与专用账号不一致时前置拒绝，零目标落盘',async()=>{const x=fixture();const run=x.deps.runCommand;try{
+ x.deps.runCommand=async(c,a)=>c==='/usr/bin/getent'&&a[0]==='group'?{stdout:'_cecelia:x:99999:\n'}:run(c,a);
+ await expect(install(x)).rejects.toThrow('linux_pool_install_account_required');expect(fs.existsSync(path.join(x.root,'etc'))).toBe(false);
+}finally{x.cleanup();}});
