@@ -28,7 +28,7 @@ const active = local => ({
   fleet_transport: { enabled: !local, status: local ? 'disabled' : 'ready', worker_machines: local ? [] : ['fixture-worker'] },
 });
 for (const script of ['local-execution-guard-smoke.sh', 'orchestrator-remote-launch-smoke.sh']) {
-  describe(`/health smoke ${script}`, () => {
+  describe('/health smoke ' + script, () => {
     it('隔离实例明确禁用所有执行路径时通过', async () => {
       await expect(runFixture(script, passive())).resolves.toMatchObject({ stdout: expect.stringContaining('OK') });
     });
