@@ -10,7 +10,9 @@
 
 
 
-**Brain 版本**: 1.354.9
+**Brain 版本**: 1.354.11
+
+OpenClaw 宿主业务工具名单绑定受保护 profile 及配置摘要；searchable/direct namespace 与消息回调保持原协议，宿主执行与派生代理入口仍拒绝。
 
 OpenClaw RPC 按固定合同区分无参数与对象参数；配置约束读取和退出登录保留 null，显式 null 不再冒充对象。
 

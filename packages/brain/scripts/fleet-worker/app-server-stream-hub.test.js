@@ -21,6 +21,21 @@ it('真实双向流单次领取，错误凭证不消耗，首次写入先持久�
  f.child.stdout.write(JSON.stringify({id:1,result:{data:[],nextCursor:null}})+'\n');await new Promise(r=>setTimeout(r,10));expect(JSON.parse(seen).id).toBe(1);
  input.end();hub.close();
 });
+it('真实双向流采用runner权限，保留消息回调字段且拒绝宿主exec',async()=>{
+ const f=fixture();f.child.rpcHostTools=['read','message'];
+ const hub=api.createStreamHub({runner:f.runner}),p=await hub.prepare(f.identity);
+ const input=new PassThrough(),output=new PassThrough(),upstream=[],downstream=[];
+ f.child.stdin.on('data',x=>upstream.push(JSON.parse(x)));output.on('data',x=>downstream.push(JSON.parse(x)));
+ hub.claim(p.stream_id,p.token,input,output);
+ const call={id:'message',method:'item/tool/call',params:{tool:'message',namespace:'openclaw',arguments:{text:'offline'},threadId:'t',turnId:'u',callId:'c'}};
+ f.child.stdout.write(JSON.stringify(call)+'\n');
+ f.child.stdout.write(JSON.stringify({...call,id:'exec',params:{...call.params,tool:'exec'}})+'\n');
+ await new Promise(r=>setTimeout(r,10));
+ expect(downstream).toEqual([call]);expect(upstream[0].error.message).toBe('appserver_host_tool_denied');
+ const response={id:'message',result:{contentItems:[{type:'inputText',text:'ok'}],success:true}};
+ input.write(JSON.stringify(response)+'\n');await new Promise(r=>setTimeout(r,10));
+ expect(upstream[1]).toEqual(response);hub.close();
+});
 it('过期未领取票关闭唯一attach；缺持久化确认不向Codex写字节，错误不泄正文',async()=>{
  expect(api.createStreamHub).toBeTypeOf('function');let now=100;const f=fixture(),hub=api.createStreamHub({runner:f.runner,now:()=>now,ticketMs:10});
  const p=await hub.prepare(f.identity);now=111;

@@ -28,7 +28,7 @@ function createStreamHub({runner,now=Date.now,ticketMs=5000,maxStreams=32}={}){
     if(entry?.expiresAt<=now())stop(entry);throw Error('appserver_stream_ticket_invalid');
    }
    entry.claimed=true;clearTimeout(entry.timer);entry.input=input;entry.output=output;entry.token=null;
-   const policy=createRpcPolicy({accountId:entry.child.rpcAccountId});entry.policy=policy;let started=false;
+   const policy=createRpcPolicy({accountId:entry.child.rpcAccountId,hostTools:entry.child.rpcHostTools});entry.policy=policy;let started=false;
    const write=(target,frame,callback)=>{const raw=JSON.stringify(frame)+'\n';if(target.destroyed)return callback(Error('appserver_stream_closed'));if(target.write(raw))callback();else target.once('drain',callback);};
    function guard(direction){return new Transform({readableHighWaterMark:65536,writableHighWaterMark:65536,transform(chunk,_encoding,callback){
     const process=()=>{try{const frame=JSON.parse(chunk.toString('utf8')),result=policy[direction](frame);

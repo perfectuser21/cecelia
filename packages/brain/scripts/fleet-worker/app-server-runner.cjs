@@ -195,6 +195,7 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
         if (Date.now() >= deadline || raw.closed) { raw.kill(); throw Error('appserver_attach_unconfirmed'); }
         const child = createBoundedAppServerStream(raw);
         child.rpcAccountId = state.profile_snapshot.authAccountId ?? null;
+        child.rpcHostTools = state.profile_snapshot.hostTools;
         connections.set(state.reservation_id, child);
         const releaseStream = () => {
           pendingStreamCloses.set(state.reservation_id, {

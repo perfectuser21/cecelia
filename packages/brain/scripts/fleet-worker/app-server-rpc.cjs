@@ -1,18 +1,19 @@
 'use strict';
 const contract=require('./app-server-contract.json');
-// 动态工具在插件宿主执行；只开放固定读取工具，执行/调度代理和未知扩展默认拒绝。
-const DATA_TOOLS=new Set(['read','web_search','web_fetch']);
-const allowedNamespace=name=>name==null||name==='functions';
+const {resolveHostTools,DEFAULT_HOST_TOOLS}=require('./app-server-profile.cjs');
+// 动态工具在插件宿主执行，权限取自已绑定的profile，客户端声明不能扩大名单。
+const DATA_TOOLS=new Set(DEFAULT_HOST_TOOLS);
+const allowedNamespace=name=>name==null||['functions','openclaw','openclaw_direct'].includes(name);
 const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const idValid=v=>typeof v==='string'&&v.length>0&&v.length<=256||Number.isSafeInteger(v);
 const key=id=>`${typeof id}:${id}`;
 const deny=(id,code)=>({reply:{id,error:{code:-32600,message:code}}});
-const filterTools=tools=>tools.flatMap(tool=>{
- if(tool.type!=='namespace')return hostTool(tool.name)?[]:[tool];
+const filterTools=(tools,allowed)=>tools.flatMap(tool=>{
+ if(tool.type!=='namespace')return hostTool(tool.name,allowed)?[]:[tool];
  if(!allowedNamespace(tool.name))return [];
- const children=filterTools(tool.tools);return children.length?[{...tool,tools:children}]:[];
+ const children=filterTools(tool.tools,allowed);return children.length?[{...tool,tools:children}]:[];
 });
-const hostTool=name=>typeof name!=='string'||!DATA_TOOLS.has(name);
+const hostTool=(name,allowed=DATA_TOOLS)=>typeof name!=='string'||!allowed.has(name);
 // 只支持固定生成物使用的 draft-07 关键字；执行步数/递归深度有界。
 function valid(value,schema,definitions,{strict=false}={}){
  let steps=0;
@@ -41,7 +42,8 @@ function valid(value,schema,definitions,{strict=false}={}){
  }
  return check(value,schema,0,strict);
 }
-function createRpcPolicy({maxPending=128,maxIds=100000,accountId=null}={}){
+function createRpcPolicy({maxPending=128,maxIds=100000,accountId=null,hostTools}={}){
+ const allowedTools=new Set(resolveHostTools(hostTools));
  const clientPending=new Map(),serverPending=new Map(),usedClient=new Set(),usedServer=new Set();let closed=false;
  const checkOpen=()=>{if(closed)throw Error('appserver_rpc_closed');};
  function response(frame,pending,fromClient){
@@ -61,8 +63,8 @@ function createRpcPolicy({maxPending=128,maxIds=100000,accountId=null}={}){
   const params=Object.hasOwn(frame,'params')?frame.params:(schema.type==='null'?null:{});
   if(!valid(params,schema,set.definitions,{strict:true}))return deny(frame.id,'appserver_rpc_params_invalid');
   if(kind==='client'&&method==='account/login/start'&&(!accountId||frame.params.type!=='chatgptAuthTokens'||frame.params.chatgptAccountId!==accountId))return deny(frame.id,'appserver_account_binding_denied');
-  if(kind==='server'&&method==='item/tool/call'&&(hostTool(frame.params.tool)||!allowedNamespace(frame.params.namespace)))return deny(frame.id,'appserver_host_tool_denied');
-  if(kind==='client'&&method==='thread/start'&&frame.params.dynamicTools)frame={...frame,params:{...frame.params,dynamicTools:filterTools(frame.params.dynamicTools)}};
+  if(kind==='server'&&method==='item/tool/call'&&(hostTool(frame.params.tool,allowedTools)||!allowedNamespace(frame.params.namespace)))return deny(frame.id,'appserver_host_tool_denied');
+  if(kind==='client'&&method==='thread/start'&&frame.params.dynamicTools)frame={...frame,params:{...frame.params,dynamicTools:filterTools(frame.params.dynamicTools,allowedTools)}};
   used.add(key(frame.id));pending.set(key(frame.id),method);return {forward:frame};
  }
  function receive(frame,kind){
