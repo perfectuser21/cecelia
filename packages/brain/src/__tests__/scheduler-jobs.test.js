@@ -1,3 +1,4 @@
+vi.mock('../projection/company-key-results.js', () => ({ runCompanyKrProjection: vi.fn(async () => ({ skipped: true })) }));
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../node-onboarding/service.js', () => ({
@@ -563,6 +564,8 @@ describe('projection 独立调度 loop', () => {
       'notion-task-command-ingest',
       'projection-command-apply',
       'projection-outbox',
+      'notion-company-key-results',
+      'notion-kr-projection',
     ]);
     expect(schedulerJobsModule.SERIAL_JOBS.map(job => job.name)).not.toEqual(
       expect.arrayContaining(independentNames),
@@ -589,6 +592,8 @@ describe('projection 独立调度 loop', () => {
       'notion-task-command-ingest',
       'projection-command-apply',
       'projection-outbox',
+      'notion-company-key-results',
+      'notion-kr-projection',
     ]);
   });
 

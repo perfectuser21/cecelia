@@ -1,3 +1,4 @@
+import { runCompanyKrProjection } from './projection/company-key-results.js';
 /**
  * scheduler-jobs.js — 声明式定时任务注册表（作战循环 P1-PR1）
  *
@@ -42,6 +43,7 @@ import { runNotionProductPush } from './notion-inbox-push.js';
 import { runNotionVerdictIngest } from './notion-verdict-ingest.js';
 import { applyProjectionCommands } from './projection/commands.js';
 import { runProjectionOutbox } from './projection/outbox.js';
+import { runNotionKrProjection } from './projection/key-results.js';
 import { runNotionTaskCommandIngest } from './projection/notion.js';
 import { runOpsCollector } from './ops-collector.js';
 import { runSchedulerLiveness } from './ops-scheduler-liveness.js';
@@ -124,6 +126,8 @@ export const JOBS = [
   { name: 'notion-task-command-ingest', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionTaskCommandIngest, description: 'Notion Tasks 结构化回读：In Progress/Start → start_requested' },
   { name: 'projection-command-apply', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: applyProjectionCommands, description: 'Brain 状态机校验并应用 projection commands；真实 attempt 才能进入 in_progress' },
   { name: 'projection-outbox', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runProjectionOutbox, description: '本地数据库到 Notion/Obsidian 等可拆卸 projection 的通用 outbox' },
+  { name: 'notion-company-key-results', needsPool: true, timeoutMs: 120000, handler: runCompanyKrProjection, description: '公司8KR列级入口：先Target/Start入站再仅Current出站；原公式不写，5min自gate' },
+  { name: 'notion-kr-projection', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionKrProjection, description: 'Brain KR → 独立注册的只读镜子（5min 自 gate；经营 KR 库禁写；Current/Target/Progress 分列，02148cef）' },
   { name: 'ops-collector', needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsCollector(pool), description: '运行舱采集器（5min自gate，宿主launchctl+HK OpenClaw+GHA cron→ops_*投影，per-source心跳，G1 S1 刀1，task 6fcb5356）' },
   {
     name: 'ops-model-accounts-collector',
@@ -175,6 +179,8 @@ const PROJECTION_JOB_NAME_SET = new Set([
   'notion-task-command-ingest',
   'projection-command-apply',
   'projection-outbox',
+  'notion-company-key-results',
+  'notion-kr-projection',
 ]);
 
 export const PROJECTION_JOBS = JOBS.filter(job => PROJECTION_JOB_NAME_SET.has(job.name));
