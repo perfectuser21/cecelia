@@ -2,6 +2,11 @@
 # Real API + PostgreSQL smoke for the versioned Golden Path contract Gate.
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DB_URL:-${DATABASE_URL:-postgresql://localhost/cecelia}}"; then
+  exit 0
+fi
+
 API="${BRAIN_URL:-http://localhost:5221}/api/brain"
 DB_URL="${DB_URL:-${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}}"
 RUN_KEY="gp-contract-smoke-$(date +%s)-$$"
