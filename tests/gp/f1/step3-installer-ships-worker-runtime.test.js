@@ -16,6 +16,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { probeFleetWorkerHealth } = require('../../../packages/brain/scripts/fleet-worker/node-probe.cjs');
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const WORKER_DIR = join(ROOT, 'packages/brain/scripts/fleet-worker');
@@ -41,6 +44,27 @@ describe('GP F1 step3 — installer 覆盖 worker 运行时依赖', () => {
     });
     expect(output).toContain('PASS: Fleet Worker installer behavioral contract');
   }, 125000);
+
+  it('真实健康模块只读 OrbStack bundle，服务账号不触碰管理员目录', async () => {
+    for (const readable of [true, false]) {
+      const calls = [];
+      const report = await probeFleetWorkerHealth({ machineId: 'xian-mac-m1',
+        execFileFn: async (file, args, options) => {
+          calls.push(file);
+          if (file !== '/usr/libexec/PlistBuddy' || !readable) throw Error('EPERM');
+          expect(args).toEqual(['-c', 'Print :CFBundleShortVersionString', '/Applications/OrbStack.app/Contents/Info.plist']);
+          expect(options.shell).toBe(false);
+          return { stdout: '2.2.1\n' };
+        },
+        makeTempDirFn: async () => { throw Error('no probe container'); },
+        statFn: async () => { throw Error('missing'); }, fetchFn: async () => ({ ok: false }),
+      });
+      expect(report.orbstack.version).toBe(readable ? '2.2.1' : 'unavailable');
+      expect(calls).not.toContain('orbctl');
+      expect(report.docker.available).toBe(false);
+      expect(report.container.probe_succeeded).toBe(false);
+    }
+  });
 
   const modules = localRequires();
 
