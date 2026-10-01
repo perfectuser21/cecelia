@@ -36,3 +36,9 @@ describe('无正文日志的有界JSONL流', () => {
     expect((await errors)[0].message).toBe('appserver_frame_truncated');
   });
 });
+it('单个大chunk含多帧时也服从readable背压，不把全部帧堆入输出队列',()=>{
+ const stream=api.createJsonlBoundary({maxFrameBytes:1024});
+ expect(stream.write(Buffer.from('x\n'.repeat(100000)))).toBe(false);
+ expect(stream.readableLength).toBeLessThanOrEqual(65536+1024);
+ stream.destroy();
+});
