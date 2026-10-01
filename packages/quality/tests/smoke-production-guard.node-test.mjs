@@ -45,7 +45,7 @@ async function fixture(run) {
     return new Promise((resolve, reject) => {
       const proc = spawn('bash', args, {
         cwd: root,
-        env: { ...process.env, PATH: `${temp}:${process.env.PATH}`, BRAIN: `http://127.0.0.1:${port}`, BRAIN_URL: `http://127.0.0.1:${port}`, BRAIN_CONTAINER: 'cecelia-brain-smoke', DATABASE_URL: 'postgresql://cecelia@localhost:5432/cecelia_test', SMOKE_ALLOW_WRITE: '', PGHOSTADDR: '', PGSERVICE: '', PGSERVICEFILE: '', GUARD_DOCKER_LOG: dockerLog, GUARD_DOCKER_FIXTURE: JSON.stringify(dockerInfo), ...overrides },
+        env: { ...process.env, PATH: `${temp}:${process.env.PATH}`, BRAIN: `http://127.0.0.1:${port}`, BRAIN_URL: `http://127.0.0.1:${port}`, BRAIN_CONTAINER: 'cecelia-brain-smoke', DATABASE_URL: 'postgresql://cecelia@localhost:5432/cecelia_test', SMOKE_ALLOW_WRITE: '', PGHOSTADDR: '', PGSERVICE: '', PGSERVICEFILE: '', http_proxy: '', HTTP_PROXY: '', https_proxy: '', HTTPS_PROXY: '', all_proxy: '', ALL_PROXY: '', GUARD_DOCKER_LOG: dockerLog, GUARD_DOCKER_FIXTURE: JSON.stringify(dockerInfo), ...overrides },
       });
       let output = '';
       proc.stdout.on('data', data => { output += data; });
@@ -313,6 +313,41 @@ for (const variable of ['PGHOSTADDR', 'PGSERVICE', 'PGSERVICEFILE']) {
       info.Config.Env.push(`${variable}=external-service`);
       const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1' }, info);
       assert.deepEqual(requests, [], result.output);
+    });
+  });
+}
+
+
+test('curl proxy must not redirect authorized smoke writes outside the checked container', async () => {
+  const proxied = [];
+  const proxy = createServer((req, res) => {
+    proxied.push({ method: req.method, url: req.url });
+    req.resume();
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ warnings: [] }));
+  });
+  await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  try {
+    await fixture(async ({ requests, smoke }) => {
+      const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1',
+        http_proxy: `http://127.0.0.1:${proxy.address().port}`, HTTP_PROXY: '',
+        HTTPS_PROXY: '', https_proxy: '', ALL_PROXY: '', all_proxy: '',
+        NO_PROXY: '', no_proxy: '' });
+      assert.equal(result.code, 0, result.output);
+      assert.deepEqual(proxied, [], 'curl wrote through a proxy outside the validated container');
+      assert.deepEqual(requests, [], 'configured proxy must be denied before target contact');
+    });
+  } finally { await new Promise(resolve => proxy.close(resolve)); }
+});
+
+
+for (const variable of ['HTTP_PROXY', 'https_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY']) {
+  test(`configured ${variable} cannot change a validated write target`, async () => {
+    await fixture(async ({ requests, smoke }) => {
+      const result = await smoke('claimed-by-cleared', { SMOKE_ALLOW_WRITE: '1',
+        [variable]: 'http://127.0.0.1:9' }, undefined, true);
+      assert.doesNotMatch(result.output, /GUARD_ACCEPTED/);
+      assert.deepEqual(requests, []);
     });
   });
 }
