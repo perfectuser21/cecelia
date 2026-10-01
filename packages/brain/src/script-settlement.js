@@ -39,7 +39,7 @@ export async function settleScriptRun(pool, row, parsed, { hostId, runId, reserv
     return 'completed';
   }
 
-  const code = parsed.timedOut ? 'script_timeout' : `script_exit_${parsed.exit}`;
+  const code = parsed.failureCode ?? (parsed.timedOut ? 'script_timeout' : `script_exit_${parsed.exit}`);
   await finishRun({
     runId,
     status: parsed.timedOut ? 'timeout' : 'failed',

@@ -185,7 +185,7 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
         if(after)throw new Error('script_cleanup_unconfirmed');
         state.status='cleaned';save(state);
         return {...Object.fromEntries([...BINDINGS,'worker_id','worker_boot_id','container_id'].map((k)=>[k,state[k]])),
-          status:'cleaned',absent:true,tombstoned:true,challenge:input.challenge,terminal:state.terminal??null};
+          status:'cleaned',absent:true,tombstoned:true,challenge:input.challenge,terminal:state.terminal??{exit_code:null,stdout:'',stderr:'script_cancelled_without_exit',failure_code:'script_cancelled_without_exit'}};
       });
     },
   };

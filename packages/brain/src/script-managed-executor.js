@@ -81,12 +81,13 @@ export async function reapManagedScripts(pool,deps,settle) {
         try {observed=(await client.inspect(row.machine_id,body(row))).receipt;}
         catch(error) {
           // 404 或 unknown 不是清理证明。只有已终态任务可主动发送 cancel 形成持久墓碑。
-          if(['queued','in_progress'].includes(row.task_status))throw error;
+          if(['queued','in_progress'].includes(row.task_status) && row.status!=='launching')throw error;
         }
         if(observed?.container_id && !row.container_id)row=await store.markRunning(row.id,observed);
         terminal=observed?.terminal ?? (observed?.status==='exited'?observed:null);
         const task=(await pool.query('SELECT * FROM tasks WHERE id=$1',[row.task_id])).rows[0];
-        if(!terminal && ['queued','in_progress'].includes(task?.status) && !observed?.timed_out)continue;
+        if(!terminal && ['queued','in_progress'].includes(task?.status) && !observed?.timed_out
+          && (observed || row.status!=='launching'))continue;
         if(!row.worker_id) {
           const identity=await client.capabilities(row.machine_id);
           row=await store.markLaunching(row.id,identity);
@@ -101,7 +102,7 @@ export async function reapManagedScripts(pool,deps,settle) {
       if(task?.status==='in_progress' && terminal) {
         await startRun({taskId:task.id,runId:row.owner_key,source:'script',context:{transport:'managed-container',reservation_id:row.id}},{pool});
         const verdict=await settle(pool,task,{exit:terminal.exit_code,timedOut:terminal.timed_out===true,
-          stdout:terminal.stdout??'',stderr:terminal.stderr??'',logs_truncated:terminal.logs_truncated,logs_unavailable:terminal.logs_unavailable,artifacts:[`managed://${row.machine_id}/${row.container_id}`]},
+          stdout:terminal.stdout??'',stderr:terminal.stderr??'',failureCode:terminal.failure_code,logs_truncated:terminal.logs_truncated,logs_unavailable:terminal.logs_unavailable,artifacts:[`managed://${row.machine_id}/${row.container_id}`]},
         {hostId:row.machine_id,runId:row.owner_key,reservationId:row.id});
         if(verdict==='skipped')continue;
         out.reaped++;if(verdict==='completed')out.completed++;else if(verdict==='retried')out.retried++;else out.failed++;
