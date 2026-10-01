@@ -43,8 +43,8 @@ trap guard_fixture_boundary DEBUG
   await writeFile(resolve(temp, 'docker'), '#!/usr/bin/env node\nconst fs = require("node:fs"); fs.appendFileSync(process.env.GUARD_DOCKER_LOG, JSON.stringify(process.argv.slice(2))+"\\n"); if(process.argv[2]==="context") { if(process.env.GUARD_DOCKER_CONTEXT_ERROR==="1") process.exit(1); if(process.argv[3]==="show") process.stdout.write(process.env.GUARD_DOCKER_ACTIVE_CONTEXT || "default"); else process.stdout.write(JSON.stringify(process.env.GUARD_DOCKER_ENDPOINT || "unix:///tmp/guard-fixture.sock")); } else if(process.argv[2]==="exec") process.stdout.write("fixture-token"); else process.stdout.write(process.env.GUARD_DOCKER_FIXTURE);\n', { mode: 0o755 });
   await writeFile(resolve(temp, 'psql'), '#!/usr/bin/env node\nconst fs=require("node:fs"); fs.appendFileSync(process.env.GUARD_PSQL_LOG,JSON.stringify(process.argv.slice(2))+"\\n"); if (process.env.GUARD_NATIVE_PSQL) { const {spawnSync}=require("node:child_process"); const env={...process.env}; for(const k of ["PGHOSTADDR","PGSERVICE","PGSERVICEFILE"]) if(!env[k]) delete env[k]; const r=spawnSync(process.env.GUARD_NATIVE_PSQL,process.argv.slice(2),{stdio:"inherit",env,timeout:3000,killSignal:"SIGKILL"}); process.exit(r.status ?? 1); } console.log(1);\n', { mode: 0o755 });
   const info = { State: { Running: true }, Config: { Env: ['NODE_ENV=test', 'DB_NAME=cecelia_test', `BRAIN_PORT=${port}`] }, HostConfig: { NetworkMode: 'host' }, NetworkSettings: { Ports: {} } };
-  async function smoke(script, overrides = {}, dockerInfo = info, guardOnly = false) {
-    let args = [`packages/brain/scripts/smoke/${script.endsWith('.sh') ? script : script + '-smoke.sh'}`];
+  async function smoke(script, overrides = {}, dockerInfo = info, guardOnly = false, scriptArgs = []) {
+    let args = [script.includes('/') ? script : `packages/brain/scripts/smoke/${script.endsWith('.sh') ? script : script + '-smoke.sh'}`, ...scriptArgs];
     if (guardOnly) {
       const source = await readFile(resolve(root, args[0]), 'utf8');
       const prefix = source.slice(0, source.indexOf('\nfi') + 3)
