@@ -233,12 +233,13 @@ describe('设备页接入新机器', () => {
     expect(submissions).toHaveLength(0);
   });
   it('已验收节点根据真实健康采样显示纳管与执行状态', async () => {
-    machines = [machine('healthy-node', 'US', { onboarding: { state: 'managed' }, node_health: {
+    machines = [machine('healthy-node', 'US', { role: 'observer', onboarding: { state: 'managed' }, node_health: {
       observed_at: new Date(Date.now() - 20_000).toISOString(), capabilities: { collector: true, janitor: true, execution: false },
     } })];
     mount(); const card = await screen.findByRole('button', { name: /healthy-node/ });
     expect(within(card).getByLabelText('健康采样有效')).toBeInTheDocument();
     expect(within(card).getByText('监控纳管')).toBeInTheDocument();
+    expect(within(card).getByText('监控节点')).toBeInTheDocument();
     expect(within(card).getByText('执行未启用')).toBeInTheDocument();
     expect(within(card).getByText(/健康采样：.*秒前/)).toBeInTheDocument();
     expect(screen.getByText('1 台监控健康')).toBeInTheDocument();
