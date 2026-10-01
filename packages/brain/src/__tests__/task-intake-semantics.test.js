@@ -61,6 +61,11 @@ describe('口语授权与澄清恢复', () => {
     expect(await f.intake({ text, source_id: 'one' })).toMatchObject({ status: 200, body: { outcome: 'clarification_required' } });
     expect(f.createRoutedTask).not.toHaveBeenCalled();
   });
+  it.each(['不要调研', '无需调研', '不必研究'])('明确排除调研不形成复合目标：%s', async (excluded) => {
+    const text = `直接修复 Cecelia 接单错误，${excluded}`;
+    const f = fixture(text, coding);
+    expect((await f.intake({ text, source_id: 'one' })).status).toBe(201);
+  });
   it.each([
     ['把生产服务器重启一下', {}],
     ['修改生产服务器的网络配置', coding],
