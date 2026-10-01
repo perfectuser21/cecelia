@@ -48,4 +48,15 @@ describe('公司KR真实HTTP入口', () => {
     expect((await request(app).patch('/api/brain/okr/objectives/goal').send({ custom_props: { company_notion: null } })).status).toBe(409);
     expect(defaultPool.query.mock.calls.every(([sql]) => !sql.includes('UPDATE'))).toBe(true);
   });
+  it('普通系统KR也不能经泛PATCH伪造公司来源身份', async () => {
+    defaultPool.query.mockResolvedValue({ rows: [{ metadata: {}, custom_props: {} }] });
+    const app = express(); app.use(express.json()); app.use('/api/brain/okr', hierarchy); app.use('/api/brain/goals', taskGoals);
+    for (const path of ['/api/brain/okr/key-results/system', '/api/brain/okr/objectives/system', '/api/brain/goals/system']) {
+      for (const body of [{ custom_props: { company_notion: { page_id: 'fake' } } }, { metadata: { metric_mode: 'company_formula_v1' } }, { metadata: { source_system: 'notion-company-okr' } }]) {
+        defaultPool.query.mockClear();
+        expect((await request(app).patch(path).send(body)).status).toBe(409);
+        expect(defaultPool.query.mock.calls.every(([sql]) => !sql.includes('UPDATE'))).toBe(true);
+      }
+    }
+  });
 });
