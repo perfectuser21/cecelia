@@ -1,3 +1,4 @@
+import { closePgPool, trackPgPool } from './helpers/close-pg-pool.js';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -45,12 +46,12 @@ export function createKernelLeasePgFixture() {
       },
       stdio: 'pipe',
     });
-    testPool = new Pool({
+    testPool = trackPgPool(new Pool({
       ...DB_DEFAULTS, database: databaseName, max: 10, statement_timeout: 10_000, lock_timeout: 5_000,
-    });
+    }));
   }
   async function dropIsolatedDatabase() {
-    if (testPool) await testPool.end().catch(() => {});
+    if (testPool) await closePgPool(testPool);
     if (adminPool && databaseName) {
       await adminPool.query(
         'UPDATE pg_database SET datallowconn=false WHERE datname=$1',
