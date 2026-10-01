@@ -69,6 +69,12 @@ describe('Commander RunProfile parser', () => {
     'Bearer fixture-credential',
     'token=fixture-credential',
     'password: fixture-credential',
+    'api_key=fixture-only-value',
+    'api-key: fixture-only-value',
+    'api key = fixture-only-value',
+    'Authorization: Basic Zml4dHVyZQ==',
+    'password is fixture-only-value',
+    'token fixture-only-value',
   ])('rejects invalid or secret-bearing authorization narratives %j', (user_authorization) => {
     expect(() => parseCommanderProfile({
       commanderMode: 'hybrid',
