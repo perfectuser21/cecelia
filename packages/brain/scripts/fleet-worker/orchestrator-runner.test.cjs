@@ -57,6 +57,20 @@ function build(overrides = {}) {
 }
 
 describe('orchestrator-runner', () => {
+  it('维护暂停拒新prepare/start，已运行幂等查询与terminal仍可用',async()=>{
+    let draining=true;
+    const gate=()=>{if(draining)throw Object.assign(Error('worker_draining'),{statusCode:429});};
+    const x=build({assertCanLaunch:gate});
+    await expect(x.runner.prepare({run_id:RUN_ID,task_id:RUN_ID})).rejects.toThrow('worker_draining');
+    expect(x.prepared).toHaveLength(0);draining=false;
+    await x.runner.prepare({run_id:RUN_ID,task_id:RUN_ID});draining=true;
+    await expect(x.runner.start(RUN_ID,{controller_session_id:SESSION_ID,controller_generation:1})).rejects.toThrow('worker_draining');
+    expect(x.spawned).toHaveLength(0);draining=false;
+    await x.runner.start(RUN_ID,{controller_session_id:SESSION_ID,controller_generation:1});draining=true;
+    expect((await x.runner.start(RUN_ID,{})).status).toBe('running');
+    expect((await x.runner.inspect(RUN_ID)).status).toBe('running');
+    await x.runner.terminal(RUN_ID,{outcome:'done'});expect(x.spawned).toHaveLength(1);
+  });
   it('prepare 复用 workspaceManager 且以 run_id 为工作区键，spec 形状通过真实 validateSpec', async () => {
     const { runner, prepared } = build();
     const receipt = await runner.prepare({ run_id: RUN_ID, task_id: RUN_ID, repo: 'perfectuser21/cecelia' });
