@@ -1,19 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createPreviewCacheController } from '../preview-cache-controller.js';
-import { routeWork } from '../work-router.js';
-import { PREVIEW_CACHE_AUTHORITY, PREVIEW_CACHE_POLICY } from '../preview-cache-authority.js';
+import { PREVIEW_CACHE_POLICY } from '../preview-cache-authority.js';
 import { createJanitor } from '../janitor.js';
 describe('固定preview cache控制面', () => {
-  it('内部能力仍须固定policy/machine/write/type合同，任意operations write保留coding分类', () => {
-    const input = { source: 'scheduler', source_id: 'fixture', title: '清理', mutation_intent: 'write',
-      declared_domain: 'operations', requested_task_type: 'janitor', task: { executor_kind: 'preview-janitor' },
-      metadata: { policy: PREVIEW_CACHE_POLICY, machine: 'mmv' } };
-    expect(routeWork(input, [], { previewCacheAuthority: PREVIEW_CACHE_AUTHORITY })).toMatchObject({ work_kind: 'operations', artifact_kind: 'execution' });
-    for (const metadata of [{ policy: 'other', machine: 'mmv' }, { policy: PREVIEW_CACHE_POLICY, machine: 'm4' }]) {
-      expect(() => routeWork({ ...input, metadata }, [], { previewCacheAuthority: PREVIEW_CACHE_AUTHORITY })).toThrow('janitor_authority_required');
-    }
-    expect(() => routeWork({ ...input, requested_task_type: 'data', task: {} })).toThrow('repo_unknown');
-  });
   it('未知运行结果保留running，绝不写成failed以便再次删除', async () => {
     const writes = [];
     const client = { on() {}, removeListener() {}, release() {}, query: async (sql) => {

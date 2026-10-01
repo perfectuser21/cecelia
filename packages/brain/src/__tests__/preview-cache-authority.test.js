@@ -1,3 +1,4 @@
+import { PREVIEW_CACHE_AUTHORITY, PREVIEW_CACHE_POLICY } from '../preview-cache-authority.js';
 import { describe, it, expect } from 'vitest';
 import { routeWork } from '../work-router.js';
 import { createRoutedTask } from '../work-routing-store.js';
@@ -23,3 +24,13 @@ describe('Janitor固定HTTP执行合同', () => {
     expect(EXECUTOR_CONTRACTS['preview-janitor'].staleMinutes).toBeNull();
   });
 });
+  it('内部能力仍须固定policy/machine/write/type合同，任意operations write保留coding分类', () => {
+    const input = { source: 'scheduler', source_id: 'fixture', title: '清理', mutation_intent: 'write',
+      declared_domain: 'operations', requested_task_type: 'janitor', task: { executor_kind: 'preview-janitor' },
+      metadata: { policy: PREVIEW_CACHE_POLICY, machine: 'mmv' } };
+    expect(routeWork(input, [], { previewCacheAuthority: PREVIEW_CACHE_AUTHORITY })).toMatchObject({ work_kind: 'operations', artifact_kind: 'execution' });
+    for (const metadata of [{ policy: 'other', machine: 'mmv' }, { policy: PREVIEW_CACHE_POLICY, machine: 'm4' }]) {
+      expect(() => routeWork({ ...input, metadata }, [], { previewCacheAuthority: PREVIEW_CACHE_AUTHORITY })).toThrow('janitor_authority_required');
+    }
+    expect(() => routeWork({ ...input, requested_task_type: 'data', task: {} })).toThrow('repo_unknown');
+  });
