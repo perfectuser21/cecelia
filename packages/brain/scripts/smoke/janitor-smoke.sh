@@ -6,7 +6,7 @@ BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 echo "[janitor-smoke] 开始验证..."
 
 echo "[janitor-smoke] 检查 GET /jobs..."
-RESP=$(curl -sf "${BRAIN_URL}/api/brain/janitor/jobs" 2>&1) || {
+RESP=$(curl -q -sf "${BRAIN_URL}/api/brain/janitor/jobs" 2>&1) || {
   echo "[janitor-smoke] FAIL: GET /jobs 无响应"
   exit 1
 }

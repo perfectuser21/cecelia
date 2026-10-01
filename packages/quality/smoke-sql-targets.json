@@ -1,4 +1,10 @@
 {
+  "preview-owned-cache-smoke.sh": {
+    "kind": "write",
+    "connection": "DB_NAME/DB_HOST/DB_PORT为实际createIntakeTestDatabase连接；默认cecelia_scratch、/tmp、5432。显式/tmp保守拒绝；TEST_DATABASE_URL/DATABASE_URL及PGHOST/PGPORT不控制该fixture。已检DB_*在callee前export冻结。",
+    "evidence": "真实PGsuite preview-cache.pg.integration.test.js使用createIntakeTestDatabase：CREATE/DROP私有schema并写tasks与路由收据；wrapper默认/生产/远端/端口/有效配置用实际首callee受控边界验证，未执行数据库。",
+    "source_commit": "ee00e9bff8c951a5e3c8eba7d9af9013b9b4ad94"
+  },
   "managed-script-capacity-smoke.sh": {"kind":"write","connection":"TEST_DATABASE_URL最高优先，否则实际DB_HOST/DB_PORT/DB_NAME；URI缺port时实际PGPORT一致校验。","evidence":"实际NodePG两callee script-capacity-reservation/script-managed-executor.pg.integration.test.js用Client及Pool CREATE/TRUNCATE/DROP私有schema；受控真实wrapper默认及有效URI/DB边界回归不运行数据库。","source_commit":"1ef58332eda5fabf1218fc4db70e4905602811fd"},
   "ability-id-chain-pr2-smoke.sh": {
     "kind": "readonly",
