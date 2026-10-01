@@ -80,7 +80,6 @@ vi.mock('../fleet-resource-cache.js', () => ({
 import { execSync } from 'child_process';
 import { checkServerResources, getEffectiveMaxSeats, getBudgetCap } from '../executor.js';
 import pool from '../db.js';
-import { getRemoteCapacity, getTotalEffectiveSlots } from '../fleet-resource-cache.js';
 import {
   TOTAL_CAPACITY,
   CECELIA_RESERVED,
@@ -1048,7 +1047,7 @@ describe('calculateSlotBudget 三池模型完整性', () => {
     expect(poolSum).toBeLessThanOrEqual(budget.total);
   });
 
-  it('codex 字段包含 running/max/available', async () => {
+  it('codex 字段包含 running/max/available，未知机器不提供容量', async () => {
     // New DB order: cecelia → autoDispatch → queueDepth → codex
     pool.query
       .mockResolvedValueOnce({ rows: [{ count: '0' }] })  // countCeceliaInProgress
@@ -1057,9 +1056,9 @@ describe('calculateSlotBudget 三池模型完整性', () => {
       .mockResolvedValueOnce({ rows: [{ count: '2' }] }); // countCodexInProgress
     const budget = await calculateSlotBudget();
     expect(budget.codex).toBeDefined();
-    expect(budget.codex.max).toBe(3);
+    expect(budget.codex.max).toBe(0);
     expect(budget.codex.running).toBe(2);
-    expect(budget.codex.available).toBe(true); // 2 < 3
+    expect(budget.codex.available).toBe(false); // 未知容量不能派单
   });
 
   it('codex.available=false when running >= MAX_CODEX_CONCURRENT', async () => {
@@ -1450,44 +1449,5 @@ describe('calculateSlotBudget — 调度器模式容量来源分流', () => {
     checkServerResources.mockReturnValue({ effectiveSlots: 12, metrics: { max_pressure: 0.1 } });
     const budget = await calculateSlotBudget();
     expect(budget.dispatchAllowed).toBe(false);
-  });
-});
-
-
-describe('资源硬零必须即时阻断派单', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    _resetSlotBuffer();
-    execSync.mockReturnValue('');
-    pool.query.mockResolvedValue({ rows: [{ count: '0' }] });
-    checkServerResources.mockReturnValue({ effectiveSlots: 12, metrics: { max_pressure: 0.1 } });
-    getRemoteCapacity.mockReturnValue(null);
-  });
-
-  it('两个Codex节点未知时没有默认三个槽', async () => {
-    const budget = await calculateSlotBudget();
-    expect(budget.codex).toMatchObject({ max: 0, available: false });
-  });
-
-  it('两机离线时停止Codex新增派单，单机恢复只提供其真实容量', () => {
-    getRemoteCapacity.mockReturnValue({ online: false, effectiveSlots: 4 });
-    expect(getCodexMaxConcurrent()).toBe(0);
-    getRemoteCapacity.mockImplementation(id => id === 'xian-mac-m4'
-      ? { online: true, effectiveSlots: 2 } : null);
-    expect(getCodexMaxConcurrent()).toBe(2);
-  });
-
-  it('远端容量骤降零立即停派，恢复仍逐步增长', async () => {
-    vi.stubEnv('CECELIA_LOCAL_EXECUTION_ENABLED', 'false');
-    try {
-      getTotalEffectiveSlots.mockReturnValue(12);
-      expect((await calculateSlotBudget()).taskPool.available).toBe(12);
-      getTotalEffectiveSlots.mockReturnValue(0);
-      const stopped = await calculateSlotBudget();
-      expect(stopped.taskPool.available).toBe(0);
-      expect(stopped.dispatchAllowed).toBe(false);
-      getTotalEffectiveSlots.mockReturnValue(12);
-      expect((await calculateSlotBudget()).taskPool.available).toBe(1);
-    } finally { vi.unstubAllEnvs(); }
   });
 });

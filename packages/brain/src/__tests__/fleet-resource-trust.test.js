@@ -85,6 +85,15 @@ describe('资源报告必须可信且不能通过重复读取延寿', () => {
     });
   });
 
+  it('允许30秒内时钟偏差及重复有效样本', async () => {
+    health.observed_at = new Date(Date.now() + 30_000).toISOString();
+    await collect();
+    expect(fleet.isServerOnline('us-mac-m4')).toBe(true);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fleet.isServerOnline('us-mac-m4')).toBe(true);
+    expect(fleet.getFleetStatus()[0].observed_at).toBe(health.observed_at);
+  });
+
   it('重复有效样本可读取，但从采样时刻达到90秒时所有出口立即拒派', async () => {
     health.observed_at = new Date(Date.now() - 80_000).toISOString();
     await collect();

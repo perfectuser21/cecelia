@@ -39,7 +39,6 @@ const USER_RESERVED_BASE = 1;                // Pool B: minimum when user absent
 const USER_PRIORITY_HEADROOM = 1;            // Extra free slots when user is active (1 headroom)
 const SESSION_TTL_SECONDS = 24 * 60 * 60;   // 24 hours: long-running harness/pipeline sessions stay valid
 const CODEX_ACCOUNT_COUNT = 5;              // Codex 账号总数（硬上限）
-const CODEX_FALLBACK_CONCURRENT = 3;        // Fleet cache 不可用时的降级值
 
 /**
  * 动态计算 Codex 并发上限（基于 fleet cache 的远程机器 effectiveSlots）
@@ -49,9 +48,6 @@ function getCodexMaxConcurrent() {
   const m4 = getRemoteCapacity('xian-mac-m4');
   const m1 = getRemoteCapacity('xian-mac-m1');
   const remoteSlots = (m4?.online ? m4.effectiveSlots : 0) + (m1?.online ? m1.effectiveSlots : 0);
-  if (remoteSlots === 0 && !m4?.online && !m1?.online) {
-    return CODEX_FALLBACK_CONCURRENT; // fleet cache 不可用时降级
-  }
   return Math.min(remoteSlots, CODEX_ACCOUNT_COUNT);
 }
 const BACKPRESSURE_THRESHOLD = 20;          // 队列深度超过此值时触发降速（从5调到20，防止正常KR拆解任务卡死系统）
@@ -364,7 +360,8 @@ let _previousPoolCBudget = null;
  * First call (no previous value) passes through without buffering.
  */
 function applySlotBuffer(newValue) {
-  if (_previousPoolCBudget === null) {
+  // 资源耗尽必须当次归零；恢复仍沿用每 tick +1 的缓冲。
+  if (newValue === 0 || _previousPoolCBudget === null) {
     _previousPoolCBudget = newValue;
     return newValue;
   }
@@ -539,6 +536,7 @@ async function calculateSlotBudget() {
       pool_c_scale: budgetState.pool_c_scale,
     } : null,
     dispatchAllowed: availableBuffered > 0 && !tokenExhausted,
+    resourceAdmissionBlocked: effectiveSlots === 0 && codexMax === 0,
     backpressure,
   };
 }
