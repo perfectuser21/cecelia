@@ -80,7 +80,8 @@ try {
   if (env.DATABASE_URL && !sameDatabase(databaseTarget(env.DATABASE_URL), containerDb)) {
     deny('容器 URI 与 Brain 实际 DB_* 连接不一致');
   }
-  if (process.argv[3]) {
+  if (process.argv[3] === '--checkpointer' && !env.DATABASE_URL) deny('checkpointer 必须显式使用已核对的容器 DATABASE_URL');
+  if (process.argv[3] && process.argv[3] !== '--checkpointer') {
     const cleanupDb = process.argv[3] === '--db-env'
       ? envDatabaseTarget(process.env, 'DB_', 'cecelia')
       : process.argv[3] === '--pg-env'
