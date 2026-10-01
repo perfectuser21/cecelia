@@ -33,7 +33,8 @@ describe('Linux执行池可信部署合同', () => {
     }
   });
   it.each([
-    {endpoint_host:'0.0.0.0'}, {endpoint_host:'public.example'}, {docker_host:'tcp://other:2375'},
+    {endpoint_host:'0.0.0.0'}, {endpoint_host:'127.2.3.4'}, {endpoint_host:'0:0:0:0:0:0:0:0'}, {endpoint_host:'::ffff:127.0.0.1'}, {endpoint_host:'public.example'}, {docker_host:'tcp://other:2375'},
+    {machine_id:['vps-hk']}, {machine_registry_id:[us]},
     {machine_id:'bad\nExecStart=/bin/sh'}, {machine_registry_id:'unknown'}, {role:'admin'},
     {canary_image:'node:latest'}, {command:'/bin/sh'}, {cgroup_parent:'production.slice'},
     {pool:{cpu_cores:-1,memory_bytes:536870912,pids_limit:256}},
@@ -60,6 +61,9 @@ describe('Linux执行池可信部署合同', () => {
       const link=path.join(dir,'link');fs.symlinkSync(file,link);expect(()=>loadLinuxPoolProfile(link)).toThrow('linux_pool_profile_untrusted');
       fs.chmodSync(file,0o644);expect(()=>loadLinuxPoolProfile(file)).toThrow('linux_pool_profile_untrusted');
       fs.chmodSync(file,0o600);expect(()=>loadLinuxPoolProfile(file,{uid:999999})).toThrow('linux_pool_profile_untrusted');
+      const originalRead=fs.readSync;
+      const spy=vi.spyOn(fs,'readSync').mockImplementation((...args)=>{const result=originalRead(...args);fs.chmodSync(file,0o644);return result;});
+      try {expect(()=>loadLinuxPoolProfile(file)).toThrow('linux_pool_profile_untrusted');} finally {spy.mockRestore();fs.chmodSync(file,0o600);}
       fs.writeFileSync(file,'x'.repeat(65537));expect(()=>loadLinuxPoolProfile(file)).toThrow('linux_pool_profile_untrusted');
     } finally {fs.rmSync(dir,{recursive:true,force:true});}
   });

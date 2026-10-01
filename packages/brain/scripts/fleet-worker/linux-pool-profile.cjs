@@ -12,14 +12,21 @@ function exactKeys(value, keys) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value,key))) invalid();
 }
+function usableEndpoint(value) {
+  if(typeof value!=='string')return false;
+  const family=isIP(value);
+  if(family===4){const first=Number(value.split('.')[0]);return first!==0&&first!==127&&first<224;}
+  if(family!==6)return false;
+  const canonical=new URL(`http://[${value}]/`).hostname;
+  return !['[::]','[::1]'].includes(canonical)&&!canonical.startsWith('[::ffff:')&&!canonical.startsWith('[ff');
+}
 function validateLinuxPoolProfile(input) {
   exactKeys(input,['schema_version','machine_registry_id','machine_id','role','endpoint_host','docker_host','pool','canary_image']);
   exactKeys(input.pool,['cpu_cores','memory_bytes','pids_limit']);
   const {cpu_cores:cpu,memory_bytes:memory,pids_limit:pids}=input.pool;
-  if (input.schema_version!==1 || !UUID.test(input.machine_registry_id)
-    || !/^[a-z][a-z0-9-]{1,62}$/.test(input.machine_id) || !['worker','scheduler'].includes(input.role)
-    || typeof input.endpoint_host!=='string' || !isIP(input.endpoint_host)
-    || ['0.0.0.0','::','::1','127.0.0.1'].includes(input.endpoint_host)
+  if (input.schema_version!==1 || typeof input.machine_registry_id!=='string' || !UUID.test(input.machine_registry_id)
+    || typeof input.machine_id!=='string' || !/^[a-z][a-z0-9-]{1,62}$/.test(input.machine_id) || !['worker','scheduler'].includes(input.role)
+    || !usableEndpoint(input.endpoint_host)
     || input.docker_host!=='unix:///var/run/docker.sock'
     || typeof input.canary_image!=='string' || input.canary_image.length>256
     || !/^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$/.test(input.canary_image)
@@ -47,7 +54,9 @@ function loadLinuxPoolProfile(filename,{uid=process.getuid()}={}) {
     const buffer=Buffer.alloc(65537),count=fs.readSync(fd,buffer,0,buffer.length,0);
     const after=fs.fstatSync(fd,{bigint:true}),current=fs.lstatSync(filename,{bigint:true});
     if(count>65536||current.isSymbolicLink()||current.dev!==before.dev||current.ino!==before.ino
-      ||after.size!==before.size||after.mtimeNs!==before.mtimeNs||BigInt(count)!==after.size) fail('linux_pool_profile_untrusted');
+      ||after.size!==before.size||after.mtimeNs!==before.mtimeNs||after.ctimeNs!==before.ctimeNs
+      ||after.mode!==before.mode||after.uid!==before.uid||current.mode!==before.mode||current.uid!==before.uid
+      ||current.ctimeNs!==before.ctimeNs||BigInt(count)!==after.size) fail('linux_pool_profile_untrusted');
     let decoded;try{decoded=JSON.parse(buffer.subarray(0,count).toString('utf8'));}catch{invalid();}
     return validateLinuxPoolProfile(decoded);
   } catch(error) {
