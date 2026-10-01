@@ -235,17 +235,19 @@ describe('buildStepLinkNotionProperties — 格子行 props（承诺地图翻色
 });
 
 describe('活动近七日过程指标投影', () => {
-  it('单工作流保留零值；已过期与非活动格明确清除旧数字', async () => {
+  it('单工作流保留零值；活动过期清空，非活动与旧连接不发送指标', async () => {
     const { buildStepLinkNotionProperties } = await import('../notion-probe-projection.js');
     const base = { journey_name: '路径', cell_kind: 'element', cell_level: 'activity', flow_metrics: [{ workflow_id: 'w1', p50_duration_ms: 0, first_pass_yield: 0, pass_rate: 0, span_count: 2 }] };
     const props = buildStepLinkNotionProperties(base);
     expect(props.FlowP50Ms).toEqual({ number: 0 });
     expect(props.FlowFirstPassYield).toEqual({ number: 0 });
     expect(props.FlowSpanCount).toEqual({ number: 2 });
-    for (const row of [{ ...base, flow_metrics: [] }, { ...base, cell_level: 'step' }, { ...base, cell_level: 'enabler' }, { ...base, cell_kind: null }]) {
+    const expired = buildStepLinkNotionProperties({ ...base, flow_metrics: [] });
+    expect(expired.FlowP50Ms).toEqual({ number: null });
+    expect(expired.FlowFirstPassYield).toEqual({ number: null });
+    for (const row of [{ ...base, cell_level: 'step' }, { ...base, cell_level: 'enabler' }, { ...base, cell_kind: null }]) {
       const empty = buildStepLinkNotionProperties(row);
-      expect(empty.FlowP50Ms).toEqual({ number: null });
-      expect(empty.FlowFirstPassYield).toEqual({ number: null });
+      expect(Object.keys(empty).filter(key => key.startsWith('Flow'))).toEqual([]);
     }
   });
   it('多个工作流不平均分位数；保留逐工作流明细', async () => {

@@ -21,17 +21,20 @@ describe('新增活动指标列未就绪时保留正确页面绑定', () => {
       return { rows: [] };
     });
   });
-  it.each(['read', 'add', 'type', 'malformed', 'unconfirmed', 'changed_type'])('%s失败不向页面发未就绪属性，不解绑或标同步', async failure => {
+  it.each(['read', 'add', 'type', 'malformed', 'read-array', 'read-string', 'unconfirmed', 'changed_type', 'missing-after-add'])('%s失败不向页面发未就绪属性，不解绑或标同步', async failure => {
     const schema = buildStepLinkDbProps();
-    if (['add', 'unconfirmed', 'changed_type'].includes(failure)) delete schema.FlowP50Ms;
+    if (['add', 'unconfirmed', 'changed_type', 'missing-after-add'].includes(failure)) delete schema.FlowP50Ms;
     if (failure === 'type') schema.FlowP50Ms = { rich_text: {} };
     request.mockImplementation(async (_token, path, method, body) => {
       if (path.startsWith('/databases/') && method === 'GET') {
         if (failure === 'read') throw new Error('Notion 503 schema unavailable');
+        if (failure === 'read-array') return { properties: [] };
+        if (failure === 'read-string') return { properties: 'bad' };
         return failure === 'malformed' ? {} : { properties: schema };
       }
       if (path.startsWith('/databases/') && method === 'PATCH') {
         if (failure === 'unconfirmed' || failure === 'malformed') return {};
+        if (failure === 'missing-after-add') return { properties: schema };
         if (failure === 'changed_type') return { properties: { ...schema, FlowP50Ms: { type: 'rich_text' } } };
         throw new Error('Notion 503 schema patch failed');
       }
@@ -50,6 +53,18 @@ describe('新增活动指标列未就绪时保留正确页面绑定', () => {
       cell_level: kind === 'legacy' ? 'activity' : kind, cell_kind: kind === 'legacy' ? null : 'element' });
     expect(Object.keys(props).filter(key => key.startsWith('Flow'))).toEqual([]);
     expect(props.Name.title[0].text.content).toContain('路径');
+  });
+  it('补列后以远端真实schema继续推送，不覆盖已有列', async () => {
+    const schema = buildStepLinkDbProps(); delete schema.FlowP50Ms;
+    request.mockImplementation(async (_token, path, method) => {
+      if (!path.startsWith('/databases/')) return {};
+      return { properties: method === 'GET' ? schema : buildStepLinkDbProps() };
+    });
+    await runNotionPushSync({ query });
+    const repair = request.mock.calls.find(([, path, method]) => path.startsWith('/databases/') && method === 'PATCH');
+    expect(Object.keys(repair[3].properties)).toEqual(['FlowP50Ms']);
+    expect(request.mock.calls.some(([, path]) => path === '/pages/correct-page')).toBe(true);
+    expect(row.notion_id).toBe('correct-page');
   });
   it('活动七日过期继续显式清空，schema就绪后可真实推送', async () => {
     request.mockImplementation(async (_token, path, method) =>

@@ -1,4 +1,4 @@
-import { selectStepLinksForProjection } from './lib/notion-activity-flow.js';
+import { selectStepLinksForProjection, loadStepLinkProjectionSchema } from './lib/notion-activity-flow.js';
 import { notionReq, getToken } from './recurring-notion-sync.js';
 import { createRoutedTask } from './work-routing-store.js';
 import { finalizeTask } from './lib/task-terminal.js';
@@ -9,7 +9,7 @@ import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 import { pushRegisteredRows, resolveDbId, isPageGoneError, isWrongDatabaseError } from './lib/notion-projection-engine.js';
-import { OPS_DB_PROPS, buildTasksDbProps, buildStepLinkDbProps, diffMissingProps } from './ops-notion-schema.js';
+import { OPS_DB_PROPS, buildTasksDbProps } from './ops-notion-schema.js';
 import { buildStepLinkNotionProperties } from './notion-probe-projection.js';
 import {
   ensureOpsDbProps, inferProviderFromModelId, pickProviderQuota, buildQuotaProps,
@@ -1077,20 +1077,12 @@ async function pushJourneyStepLinks(pool, token) {
   const rows = await selectStepLinksForProjection(pool);
   if (rows.length === 0) return;
   const dbId = STEP_LINKS_DB || await resolveDbId(pool, 'journey_step_links');
-  let schemaProps = {};
+  let schemaProps;
   try {
-    // 只读一次 schema：既判 Order 列有无，也算缺列（有缺才 PATCH，不重发已有列）
-    const schema = await notionReq(token, `/databases/${dbId}`, 'GET');
-    schemaProps = { ...(schema?.properties || {}) };
-    const missing = diffMissingProps(schemaProps, buildStepLinkDbProps());
-    const added = Object.keys(missing);
-    if (added.length) {
-      await notionReq(token, `/databases/${dbId}`, 'PATCH', { properties: missing });
-      Object.assign(schemaProps, missing);
-      console.log(`[step_link] Backbone-Step Map 补列: ${added.join(', ')}`);
-    }
+    schemaProps = await loadStepLinkProjectionSchema(token, dbId, notionReq);
   } catch (err) {
     await logSyncError(pool, `[step_link] 补列/读 schema 失败: ${err.message}`);
+    return;
   }
   await pushRegisteredRows(pool, token, {
     table: 'journey_step_links', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'step_link',

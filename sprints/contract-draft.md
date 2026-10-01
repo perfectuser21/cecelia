@@ -12,7 +12,7 @@
 - apps/api/features/planning/pages/MapPage.tsx
 - apps/dashboard/src/pages/strategist/StrategistLinePage.tsx
 
-允许对应永久回归、smoke白名单与已有版本五件套/DEFINITION/DoD同步。无schema/网络/采收改动。指标按activity+workflow独立数组；严禁平均p50或任选workflow。归属依journey/workflow真实父链与当前scope边，不按活动名或自由key兜底。仅cell_kind非空的activity格接线；step/enabler/legacy为空。增量dirty25+sweep25持久id游标先推进，失败不伪造synced。Notion无数据明确number:null；指纹不变不PATCH。地图主响应直接显示，radius故障不挡过程指标。一次做对显示未使用兜底口径与独立通过率。
+允许对应永久回归、smoke白名单与已有版本五件套/DEFINITION/DoD同步。无schema/网络/采收改动。指标按activity+workflow独立数组；严禁平均p50或任选workflow。归属依journey/workflow真实父链与当前scope边，不按活动名或自由key兜底。仅cell_kind非空的activity格接线；step/enabler/legacy为空。增量dirty25+sweep25持久id游标先推进，失败不伪造synced。Notion活动无数据明确number:null；非活动/旧连接不追加Flow。新增Flow列以真实schema响应确认存在且类型一致；schema读取、补列、响应结构或类型校验失败均停本轮格子推送，保留正确页面绑定与指纹，不进入错库解绑。指纹不变不PATCH。地图主响应直接显示，radius故障不挡过程指标。一次做对显示未使用兜底口径与独立通过率。
 
 ## Test Contract
 | 功能 | Test File | BEHAVIOR 覆盖 | 预期 Red 证据 |

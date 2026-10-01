@@ -1,4 +1,36 @@
 import { attachActivityFlowMetrics } from './activity-flow-metrics.js';
+import { buildStepLinkDbProps, diffMissingProps } from '../ops-notion-schema.js';
+
+/** 新指标列未就绪不能进入错库自愈；已有列类型冲突不覆盖人管 schema。 */
+export async function loadStepLinkProjectionSchema(token, dbId, notionReq) {
+  const wanted = buildStepLinkDbProps();
+  const readProperties = schema => {
+    const properties = schema?.properties;
+    if (!properties || typeof properties !== 'object' || Array.isArray(properties)) {
+      throw new Error('step_link schema 缺少有效 properties');
+    }
+    return properties;
+  };
+  const checkFlowTypes = (properties, requireAll = false) => {
+    for (const [name, definition] of Object.entries(wanted)) {
+      if (!name.startsWith('Flow')) continue;
+      if (!(name in properties) && !requireAll) continue;
+      const expectedType = Object.keys(definition)[0];
+      const property = properties[name];
+      const actualType = property?.type ?? (property && typeof property === 'object'
+        && expectedType in property ? expectedType : null);
+      if (actualType !== expectedType) throw new Error(`step_link 指标列未就绪: ${name}`);
+    }
+  };
+  let properties = readProperties(await notionReq(token, `/databases/${dbId}`, 'GET'));
+  checkFlowTypes(properties);
+  const missing = diffMissingProps(properties, wanted);
+  if (Object.keys(missing).length) {
+    properties = readProperties(await notionReq(token, `/databases/${dbId}`, 'PATCH', { properties: missing }));
+  }
+  checkFlowTypes(properties, true);
+  return properties;
+}
 /** 独立预留25个活动复核名额；游标先于外部推送持久推进，失败不伪造synced。 */
 export async function selectStepLinksForProjection(db) {
   const { rows: dirty } = await db.query(`SELECT l.*, j.name AS journey_name, s.name AS step_name
@@ -19,7 +51,8 @@ export async function selectStepLinksForProjection(db) {
   return attachActivityFlowMetrics(db, rows, { cells: true });
 }
 export function buildNotionFlowProperties(row) {
-  const metrics = row.cell_level === 'activity' && row.cell_kind ? (row.flow_metrics ?? []) : [];
+  if (row.cell_level !== 'activity' || !row.cell_kind) return {};
+  const metrics = row.flow_metrics ?? [];
   const single = metrics.length === 1 ? metrics[0] : null;
   const number = key => ({ number: single?.[key] == null ? null : Number(single[key]) });
   const text = metrics.map(m => JSON.stringify({ workflow_id: m.workflow_id, p50_ms: m.p50_duration_ms,

@@ -29,7 +29,8 @@ describe('活动 span-only 与七日过期复核', () => {
       if (s.includes('FROM journey_step_links l')) return { rows: dirty };
       return { rows: [] };
     });
-    mockNotionReq.mockImplementation(async (_token, _path, method) => method === 'GET' ? { properties: {} } : {});
+    const flowSchema = (await import('../ops-notion-schema.js')).buildStepLinkDbProps();
+    mockNotionReq.mockImplementation(async (_token, path, method) => path.startsWith('/databases/') ? { properties: flowSchema } : {});
     const { runNotionPushSync } = await import('../notion-push-sync.js');
     await runNotionPushSync({ query: mockQuery });
     const patch = mockNotionReq.mock.calls.find(c => c[1] === '/pages/clean-page' && c[2] === 'PATCH');
@@ -221,7 +222,9 @@ describe('runNotionPushSync — new push functions', () => {
     expect(src).toMatch(/import\('\.\/notion-probe-projection\.js'\)/);
     expect(src).toMatch(/await runProbeProjection\(pool, \{ token, logSyncError \}\)/);
     expect(src).toMatch(/buildStepLinkNotionProperties\(l, schemaProps\)/);
-    expect(src).toMatch(/buildStepLinkDbProps\(\)/);
+    expect(src).toMatch(/loadStepLinkProjectionSchema\(token, dbId, notionReq\)/);
+    const flow = readFileSync(new URL('../lib/notion-activity-flow.js', import.meta.url), 'utf8');
+    expect(flow).toMatch(/buildStepLinkDbProps\(\)/);
     // 镜子换库（迁移 479）：旧 Backbone-Step Map 369c… 在回收站，常量必须指向「承诺地图格子」并与注册表一致（守夜 A9）
     expect(src).toMatch(/STEP_LINKS_DB\s*=\s*'3e8c40c2-ba63-8194-a47c-dcf5f4b508bb'/);
     expect(src).not.toMatch(/369c40c2-ba63-81e2-b95a-e5e3d0592676/);
@@ -261,6 +264,7 @@ describe('runNotionPushSync — step_link Order 属性降级回归 [ARTIFACT R4]
 
     mockNotionReq
       .mockResolvedValueOnce({ properties: { Name: { type: 'title' }, Status: { type: 'select' } } }) // schema GET（无 Order）
+      .mockResolvedValueOnce({ properties: { ...(await import('../ops-notion-schema.js')).buildStepLinkDbProps(), Name: { type: 'title' }, Status: { type: 'select' } } }) // 补列后的真实 schema（仍无 Order）
       .mockResolvedValue({ id: 'sl-notion-r4' }); // pages POST
 
     const { runNotionPushSync } = await import('../notion-push-sync.js');

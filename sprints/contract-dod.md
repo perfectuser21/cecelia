@@ -8,3 +8,6 @@
   Test: manual:bash -c "cd apps/dashboard && npx vitest run && npm run build"
 
 生产输出由部署后真实GET与Notion页回读验收，Brain result记录事实、证据、actor与完整handoff，不将历史指标当新夜批。
+
+- [x] [BEHAVIOR] 新活动指标列读写失败、异常响应、漏列或类型冲突时保留正确页面绑定与同步指纹；非活动格和旧连接行不发送Flow。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/notion-push-sync-flow-schema.test.js"
