@@ -1,3 +1,4 @@
+/** 从创建起跟踪公共 connect/remove；查询出错移出池的 socket 也必须退出。 */
 const tracked = new WeakMap();
 export function trackPgPool(pool) {
   const clients = new Set();
@@ -9,22 +10,24 @@ export function trackPgPool(pool) {
   return pool;
 }
 
-/** pg-pool 的 end 先移除 clients 再回调；remove 事件才确认 socket 已退出。 */
 export async function closePgPool(pool) {
-  const count = pool.totalCount;
-  if (!count) return pool.end();
-  let removed = 0;
+  const state = tracked.get(pool);
+  if (!state) throw new Error('PG 测试池必须在首次连接前登记跟踪');
   let onRemove;
   let timer;
   const socketsClosed = new Promise((resolve, reject) => {
-    onRemove = () => { if (++removed === count) resolve(); };
+    onRemove = () => { if (!state.clients.size) resolve(); };
     pool.on('remove', onRemove);
     timer = setTimeout(() => reject(new Error('PG 测试连接退出超时')), 5000);
+    if (!state.clients.size) resolve();
   });
   try {
     await Promise.all([pool.end(), socketsClosed]);
   } finally {
     clearTimeout(timer);
     pool.removeListener('remove', onRemove);
+    pool.removeListener('connect', state.connect);
+    pool.removeListener('remove', state.remove);
+    tracked.delete(pool);
   }
 }

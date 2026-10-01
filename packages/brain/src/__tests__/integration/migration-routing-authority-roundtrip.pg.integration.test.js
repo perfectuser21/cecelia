@@ -1,4 +1,4 @@
-import { closePgPool } from './helpers/close-pg-pool.js';
+import { closePgPool, trackPgPool } from './helpers/close-pg-pool.js';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -55,7 +55,7 @@ beforeAll(async()=>{
   adminPool=new Pool({...DB_DEFAULTS,database:'postgres',max:1,statement_timeout:10000});
   await adminPool.query(`CREATE DATABASE ${quote(databaseName)}`);
   migrate();
-  pool=new Pool({...DB_DEFAULTS,database:databaseName,max:3});
+  pool=trackPgPool(new Pool({...DB_DEFAULTS,database:databaseName,max:3}));
 },60000);
 
 afterAll(async()=>{

@@ -1,4 +1,4 @@
-import { closePgPool } from './helpers/close-pg-pool.js';
+import { closePgPool, trackPgPool } from './helpers/close-pg-pool.js';
 /**
  * [BEHAVIOR] Session Controller ownership + createKernelRun fail-closed + migration 415 列
  * + 启动链收敛（sprint 08131104 Harness 入口统一，issue 962d399c 无主 Kernel Run 修复）。
@@ -62,7 +62,7 @@ async function createIsolatedDatabase() {
     },
     stdio: 'pipe',
   });
-  testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 10 });
+  testPool = trackPgPool(new Pool({ ...DB_DEFAULTS, database: databaseName, max: 10 }));
 }
 
 async function dropIsolatedDatabase() {

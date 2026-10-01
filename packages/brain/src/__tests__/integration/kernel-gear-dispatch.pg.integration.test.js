@@ -1,4 +1,4 @@
-import { closePgPool } from './helpers/close-pg-pool.js';
+import { closePgPool, trackPgPool } from './helpers/close-pg-pool.js';
 /**
  * [BEHAVIOR] kernel 真读 gear：initiative_runs.gear round-trip + observed.gear 注入 +
  * hotfix 一跳角色分布（sprint 08091640）。真 Postgres 集成——真 migrate（含 396）+ 真
@@ -64,7 +64,7 @@ async function createIsolatedDatabase() {
     },
     stdio: 'pipe',
   });
-  testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 10 });
+  testPool = trackPgPool(new Pool({ ...DB_DEFAULTS, database: databaseName, max: 10 }));
 }
 
 async function dropIsolatedDatabase() {

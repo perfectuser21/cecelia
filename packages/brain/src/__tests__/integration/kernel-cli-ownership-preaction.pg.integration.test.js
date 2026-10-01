@@ -1,4 +1,4 @@
-import { closePgPool } from './helpers/close-pg-pool.js';
+import { closePgPool, trackPgPool } from './helpers/close-pg-pool.js';
 /**
  * [BEHAVIOR] Kernel CLI 在任何 task 业务状态推进前完成 Controller ownership CAS。
  *
@@ -45,7 +45,7 @@ async function createIsolatedDatabase() {
     },
     stdio: 'pipe',
   });
-  testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 5 });
+  testPool = trackPgPool(new Pool({ ...DB_DEFAULTS, database: databaseName, max: 5 }));
 }
 async function dropIsolatedDatabase() {
   if (testPool) await closePgPool(testPool);

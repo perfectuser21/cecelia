@@ -1,4 +1,4 @@
-import { closePgPool } from './helpers/close-pg-pool.js';
+import { closePgPool, trackPgPool } from './helpers/close-pg-pool.js';
 /**
  * [BEHAVIOR] Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复 + 日志脱敏
  * （sprint 08131104 Harness 入口统一，issue 962d399c 无主 Kernel Run 修复）。
@@ -64,7 +64,7 @@ async function createIsolatedDatabase() {
     },
     stdio: 'pipe',
   });
-  testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 10 });
+  testPool = trackPgPool(new Pool({ ...DB_DEFAULTS, database: databaseName, max: 10 }));
 }
 
 async function dropIsolatedDatabase() {

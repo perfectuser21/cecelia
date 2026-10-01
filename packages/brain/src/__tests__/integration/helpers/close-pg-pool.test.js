@@ -4,12 +4,14 @@ import { closePgPool, trackPgPool } from './close-pg-pool.js';
 
 describe('关闭 PG 测试连接池', () => {
   it('end 已返回但 socket 尚在退出时，等待全部 remove 后才允许清库', async () => {
-    const pool = new EventEmitter();
+    const pool = trackPgPool(new EventEmitter());
     pool.totalCount = 2;
+    const clients = [{}, {}];
+    clients.forEach(client => pool.emit('connect', client));
     let closed = 0;
     pool.end = async () => {
-      setTimeout(() => { closed++; pool.emit('remove', {}); }, 5);
-      setTimeout(() => { closed++; pool.emit('remove', {}); }, 15);
+      setTimeout(() => { closed++; pool.emit('remove', clients[0]); }, 5);
+      setTimeout(() => { closed++; pool.emit('remove', clients[1]); }, 15);
     };
     await closePgPool(pool);
     expect(closed).toBe(2);
@@ -17,7 +19,7 @@ describe('关闭 PG 测试连接池', () => {
   });
 
   it('空连接池直接关闭', async () => {
-    const pool = new EventEmitter();
+    const pool = trackPgPool(new EventEmitter());
     pool.totalCount = 0;
     let ended = false;
     pool.end = async () => { ended = true; };
