@@ -25,6 +25,7 @@ function fixture() {
       ['/sys/fs/cgroup'+dir+'/memory.max']:dir===cg?'536870912':'max',
       ['/sys/fs/cgroup'+dir+'/memory.current']:'104857600',
       ['/sys/fs/cgroup'+dir+'/memory.high']:'max',
+      ['/sys/fs/cgroup'+dir+'/memory.swap.max']:'0',
       ['/sys/fs/cgroup'+dir+'/memory.events']:'oom 0\noom_kill 0\n',
       ['/sys/fs/cgroup'+dir+'/cpuset.cpus.effective']:'0-3',
       ['/sys/fs/cgroup'+dir+'/pids.max']:dir===cg?'256':'max',
@@ -32,10 +33,11 @@ function fixture() {
   }
   const calls=[];
   const deps={getuid:()=>0,readText:async filename=>{if(!(filename in files))throw Object.assign(Error(),{code:'ENOENT'});return files[filename];},
-    readlink:async()=> 'cgroup:[4026531835]',
+    readlink:async p=>p==='/proc/1/exe'?'/usr/lib/systemd/systemd':'cgroup:[4026531835]',
     statfs:async()=>({bsize:4096n,blocks:10000000n,bfree:8000000n,bavail:7000000n}),
     runCommand:async(command,args)=>{
       calls.push({command,args});
+      if(command==='/usr/bin/systemd-detect-virt')throw Object.assign(Error(),{code:1,stdout:'none\n'});
       if(command==='/usr/bin/systemctl')return {stdout:cg+'\n'};
       if(args[0]==='info')return {stdout:JSON.stringify({ID:'daemon-hk',CgroupDriver:'systemd',CgroupVersion:'2',DockerRootDir:'/var/lib/docker'})};
       if(args[0]==='image')return {stdout:imageId+'\n'};
@@ -50,7 +52,7 @@ describe('Linux真实执行池证明',()=>{
     expect(proof).toMatchObject({schema_version:'linux-pool-proof/v1',pool_verified:true,execution:false,
       container_id:id,cgroup_parent_path:cg,daemon_id:'daemon-hk',cpu_cores:0.5,
       memory_limit_bytes:536870912,memory_available_bytes:432013312,pids_limit:256,pids_available:252});
-    expect(f.calls.every(c=>['/usr/bin/docker','/usr/bin/systemctl'].includes(c.command))).toBe(true);
+    expect(f.calls.every(c=>['/usr/bin/docker','/usr/bin/systemctl','/usr/bin/systemd-detect-virt'].includes(c.command))).toBe(true);
   });
   it.each([
     ['假同名容器',f=>{f.container.Id='f'.repeat(64);}],
@@ -64,6 +66,9 @@ describe('Linux真实执行池证明',()=>{
     ['非root可信验收入口',f=>{f.deps.getuid=()=>501;}],
     ['父池无限内存',f=>{f.files['/sys/fs/cgroup'+cg+'/memory.max']='max';}],
     ['PID上限未限制',f=>{f.files['/sys/fs/cgroup'+cg+'/pids.max']='max';}],
+    ['池允许额外swap',f=>{f.files['/sys/fs/cgroup'+cg+'/memory.swap.max']='max';}],
+    ['容器中systemd冒充完整宿主',f=>{const run=f.deps.runCommand;f.deps.runCommand=(c,a)=>c==='/usr/bin/systemd-detect-virt'?Promise.resolve({stdout:'lxc\n'}):run(c,a);}],
+    ['PID1不是systemd',f=>{const readlink=f.deps.readlink;f.deps.readlink=p=>p==='/proc/1/exe'?Promise.resolve('/usr/bin/node'):readlink(p);}],
     ['未知状态',f=>{f.container.State.Running=false;}],
   ])('%s保守拒绝',async(_name,modify)=>{
     const f=fixture();modify(f);await expect(collectLinuxPoolProof(f)).rejects.toThrow('linux_pool_proof_unavailable');
