@@ -1,5 +1,7 @@
 # Cecelia 定义文档
 
+Kernel 工作区读取正规路由 canonical payload.repo，保留合法 legacy base_repo；冲突与非法显式身份拒绝，不回退到错误仓库。
+
 并发合同 PG 回归在释放行锁前注册拒绝处理，避免预期拒绝被 CI 计为未捕获错误；生产合同拒绝语义保持。
 
 **版本**: 2.0.0
