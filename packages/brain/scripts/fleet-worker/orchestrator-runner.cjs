@@ -69,6 +69,7 @@ function createOrchestratorRunner({
   spawnFn = spawn,
   mkdirFn = (p) => fs.mkdirSync(p, { recursive: true, mode: 0o700 }),
   openFn = (p) => fs.openSync(p, 'a'),
+  closeFn = fs.closeSync,
   resolveMainShaFn = null,
   repoSourceFor = (repo) => `https://github.com/${repo}.git`,
   env = process.env,
@@ -194,35 +195,44 @@ function createOrchestratorRunner({
       const logDir = path.join(dataRoot, 'orchestrator-logs');
       let stdio = 'ignore';
       let logPath = null;
+      let logFd = null;
       try { // 刀0 同款：零遗言不可接受，日志落盘失败不阻断 spawn
         mkdirFn(logDir);
         logPath = path.join(logDir, `kernel-${runId}.log`);
-        const fd = openFn(logPath);
-        stdio = ['ignore', fd, fd];
+        logFd = openFn(logPath);
+        stdio = ['ignore', logFd, logFd];
       } catch { /* stdio 保持 ignore */ }
-      // prepare中的await与凭据/文件检查结束后，紧邻宿主spawn再次检查。
-      assertCanLaunch();
-      const child = spawnFn(process.execPath, [
-        runner,
-        '--task-id', job.taskId,
-        '--run-id', runId,
-        '--controller-session-id', sessionId,
-        '--controller-generation', String(generation),
-      ], {
-        cwd: job.worktreePath,
-        detached: true,
-        stdio,
-        env: {
-          ...env,
-          CECELIA_HARNESS_RUNTIME: 'kernel-v1',
-          REPO_ROOT: job.worktreePath,
-          // skills 根不能指向任务 worktree（REPO_ROOT），否则 loadSkillBundle 找不到 SKILL.md。
-          CECELIA_SKILLS_ROOT: path.join(runnerRoot, 'packages/workflows/skills'),
-          CECELIA_CREDENTIAL_HOME_ROOT: credentialHome.root,
-          CECELIA_CREDENTIAL_TRUSTED_UIDS: String(credentialHome.uid),
-          ...(logPath ? { CECELIA_KERNEL_LOG_PATH: logPath } : {}),
-        },
-      });
+      let child;
+      try {
+        // prepare中的await与凭据/文件检查结束后，紧邻宿主spawn再次检查。
+        assertCanLaunch();
+        child = spawnFn(process.execPath, [
+          runner,
+          '--task-id', job.taskId,
+          '--run-id', runId,
+          '--controller-session-id', sessionId,
+          '--controller-generation', String(generation),
+        ], {
+          cwd: job.worktreePath,
+          detached: true,
+          stdio,
+          env: {
+            ...env,
+            CECELIA_HARNESS_RUNTIME: 'kernel-v1',
+            REPO_ROOT: job.worktreePath,
+            // skills 根不能指向任务 worktree（REPO_ROOT），否则 loadSkillBundle 找不到 SKILL.md。
+            CECELIA_SKILLS_ROOT: path.join(runnerRoot, 'packages/workflows/skills'),
+            CECELIA_CREDENTIAL_HOME_ROOT: credentialHome.root,
+            CECELIA_CREDENTIAL_TRUSTED_UIDS: String(credentialHome.uid),
+            ...(logPath ? { CECELIA_KERNEL_LOG_PATH: logPath } : {}),
+          },
+        });
+      } finally {
+        // spawn 已复制子端句柄；父端无论被暂停、同步失败或成功都立即关闭。
+        if (logFd !== null) {
+          try { closeFn(logFd); } catch { console.warn('[orchestrator-runner] log_fd_close_failed'); }
+        }
+      }
       // C2（终审）：detached spawn 的异步 ENOENT/EACCES 走 'error' 事件；不监听=
       // uncaughtException=整个 fleet-worker 进程崩（连坐 attempt 面）。必须在同步
       // pid 检查之前挂上，因为 error 事件也可能在下一个 tick 就到。
