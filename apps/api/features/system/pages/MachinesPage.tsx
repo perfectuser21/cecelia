@@ -5,9 +5,10 @@ import {
   XCircle, Wifi, WifiOff, ChevronRight, RefreshCw,
 } from 'lucide-react';
 import { machinesApi, Machine } from '../api/machines.api';
+import NodeOnboarding from './NodeOnboarding';
 
 const COUNTRY_FLAG: Record<string, string> = { US: '🇺🇸', CN: '🇨🇳', HK: '🇭🇰' };
-const LOCATION_LABEL: Record<string, string> = { US: '美国', Xian: '西安', HK: '香港', CN: '西安' };
+const LOCATION_LABEL: Record<string, string> = { US: '美国', Xian: '西安', HK: '香港', CN: '中国大陆', other: '其他', Unknown: '未知地区' };
 
 function groupByLocation(machines: Machine[]): Record<string, Machine[]> {
   const groups: Record<string, Machine[]> = {};
@@ -19,8 +20,23 @@ function groupByLocation(machines: Machine[]): Record<string, Machine[]> {
   return groups;
 }
 
-function MachineCard({ machine, onClick }: { machine: Machine; onClick: () => void }) {
+const HEALTH_FRESHNESS_MS = 5 * 60_000;
+const NODE_ROLE_LABEL: Record<string, string> = { observer: '监控节点', worker: '执行节点', service: '服务节点', database: '数据库节点' };
+function healthState(machine: Machine, now: number) {
+  const health = machine.metadata.node_health;
+  const observedAt = health?.observed_at;
+  const age = now - new Date(observedAt || '').getTime();
+  const valid = Number.isFinite(age) && age >= -30_000;
+  const fresh = valid && age <= HEALTH_FRESHNESS_MS && health?.capabilities?.collector === true;
+  const seconds = Math.max(0, Math.floor(age / 1000));
+  const elapsed = !valid ? '尚无有效健康采样' : seconds < 60 ? `${seconds} 秒前` : `${Math.floor(seconds / 60)} 分钟前`;
+  return { fresh, valid, observedAt, elapsed };
+}
+
+function MachineCard({ machine, now, onClick }: { machine: Machine; now: number; onClick: () => void }) {
   const meta = machine.metadata;
+  const managed = meta.onboarding?.state === 'managed';
+  const health = healthState(machine, now);
   const hasErrors = machine.conflicts.some(c => c.severity === 'error');
   const hasWarnings = machine.conflicts.some(c => c.severity === 'warning');
   const errorCount = machine.conflicts.filter(c => c.severity === 'error').length;
@@ -39,7 +55,10 @@ function MachineCard({ machine, onClick }: { machine: Machine; onClick: () => vo
     >
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2">
-          {machine.tailscale_online ? (
+          {managed ? (
+            health.fresh ? <CheckCircle2 aria-label="健康采样有效" className="w-4 h-4 text-green-500 flex-shrink-0" />
+              : <AlertTriangle aria-label={health.valid ? '健康数据已过期' : '尚无有效健康采样'} className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+          ) : machine.tailscale_online ? (
             <Wifi className="w-4 h-4 text-green-500 flex-shrink-0" />
           ) : (
             <WifiOff className="w-4 h-4 text-gray-400 flex-shrink-0" />
@@ -54,8 +73,15 @@ function MachineCard({ machine, onClick }: { machine: Machine; onClick: () => vo
         <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
       </div>
 
+      {managed && <div className="mb-2 text-xs space-y-1">
+        <p className="text-gray-600 dark:text-gray-300"><span>监控纳管</span><span className="ml-2">{meta.node_health?.capabilities?.execution === true ? '执行已启用' : '执行未启用'}</span></p>
+        <p className={health.fresh ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'}>
+          {health.valid ? <time dateTime={health.observedAt} title={new Date(health.observedAt!).toLocaleString('zh-CN')}>健康采样：{health.elapsed}{!health.fresh && '（已过期）'}</time> : health.elapsed}
+        </p>
+      </div>}
+
       {meta.role && (
-        <div className="text-xs text-gray-600 dark:text-gray-300 mb-2">{meta.role}</div>
+        <div className="text-xs text-gray-600 dark:text-gray-300 mb-2">{managed ? NODE_ROLE_LABEL[meta.role] || meta.role : meta.role}</div>
       )}
 
       <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 mb-2">
@@ -91,17 +117,23 @@ function MachineCard({ machine, onClick }: { machine: Machine; onClick: () => vo
 export default function MachinesPage() {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
 
   const fetchMachines = async () => {
     setLoading(true);
     try {
       const data = await machinesApi.list();
       setMachines(data);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '加载失败');
+      setRefreshError(null);
+    } catch {
+      setRefreshError('设备列表刷新失败，请点击刷新重试');
     } finally {
       setLoading(false);
     }
@@ -113,19 +145,10 @@ export default function MachinesPage() {
   const conflictCount = machines.filter(m => m.conflicts.some(c => c.severity === 'error')).length;
   const warnCount = machines.filter(m => m.conflicts.some(c => c.severity === 'warning')).length;
   const groups = groupByLocation(machines);
-  const locationOrder = ['US', 'HK', 'Xian'];
+  const priorityLocations = ['US', 'HK', 'Xian', 'CN', 'other'];
+  const locationOrder = [...priorityLocations, ...Object.keys(groups).filter(loc => !priorityLocations.includes(loc)).sort()];
+  const monitored = machines.filter(machine => machine.metadata.onboarding?.state === 'managed' && healthState(machine, now).fresh).length;
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[200px]">
-        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return <div className="p-6 text-center text-red-500">{error}</div>;
-  }
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -139,8 +162,9 @@ export default function MachinesPage() {
             <span>{machines.length} 台设备</span>
             <span className="flex items-center gap-1">
               <CheckCircle2 className="w-4 h-4 text-green-500" />
-              {online} 在线
+              {online} 台 Tailscale 在线
             </span>
+            {monitored > 0 && <span>{monitored} 台监控健康</span>}
             {conflictCount > 0 && (
               <span className="flex items-center gap-1 text-red-500">
                 <XCircle className="w-4 h-4" />
@@ -155,14 +179,23 @@ export default function MachinesPage() {
             )}
           </div>
         </div>
+        <div className="flex items-center gap-2">
+        <button onClick={() => setOnboardingOpen(true)} className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white">接入新机器</button>
         <button
-          onClick={fetchMachines}
+          onClick={() => fetchMachines()}
+          disabled={loading}
           className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
         >
           <RefreshCw className="w-4 h-4" />
           刷新
         </button>
+        </div>
       </div>
+
+      {refreshError && <p role="alert" className="mb-4 text-sm text-red-600">{refreshError}</p>}
+      <NodeOnboarding open={onboardingOpen} onOpen={() => setOnboardingOpen(true)} onClose={() => setOnboardingOpen(false)} onCompleted={() => fetchMachines()} />
+
+      {loading && <p role="status" className="mb-4 text-sm text-gray-500">正在加载设备…</p>}
 
       {locationOrder.filter(loc => groups[loc]).map(loc => (
         <div key={loc} className="mb-8">
@@ -174,6 +207,7 @@ export default function MachinesPage() {
               <MachineCard
                 key={machine.id}
                 machine={machine}
+                now={now}
                 onClick={() => navigate(`/machines/${machine.name}`)}
               />
             ))}
