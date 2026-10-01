@@ -13,7 +13,7 @@ gate_run = gate.split('        run: |\n', 1)[1]
 gate_run = '\n'.join(line[10:] for line in gate_run.splitlines() if line.startswith('          '))
 for status in ['success', 'skipped', 'failure', 'cancelled', 'unknown', '']:
     run = re.sub(r'\$\{\{ needs\.[\w-]+\.result \}\}',
-                 lambda m: 'success' if 'core-regression' in m[0] else status, gate_run)
+                 lambda m: 'success' if any(name in m[0] for name in ['core-regression', 'walking-ci-e2e']) else status, gate_run)
     (out / ('gate-' + (status or 'empty') + '.sh')).write_text(run)
 glob_workflow = pathlib.Path(sys.argv[3]).read_text()
 glob_gate = glob_workflow.split('  smoke-glob-runner-passed:\n', 1)[1]

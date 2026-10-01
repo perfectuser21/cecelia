@@ -8,10 +8,22 @@
  * 修复后：worktree 含 .dev-lock 或 .dev-mode.* 且 mtime 在 24h 内 → 跳过删除。
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'fs';
 import { join } from 'path';
 import os from 'os';
+const dockerBoundary = vi.hoisted(() => ({ failure: false }));
+// Only Docker is outside this filesystem contract; Git and cleanup locks stay real.
+vi.mock('child_process', async importOriginal => {
+  const actual = await importOriginal();
+  return { ...actual, execSync: (command, options) => {
+    if (command === "docker ps --format '{{.ID}}'") {
+      if (dockerBoundary.failure) throw new Error('isolated Docker probe unavailable');
+      return '';
+    }
+    return actual.execSync(command, options);
+  } };
+});
 import { cleanupStaleWorktrees, hasActiveDevLock } from '../../packages/brain/src/startup-recovery.js';
 
 describe('cleanupStaleWorktrees 保护活跃 lock（W7.3 Bug #E）', () => {
@@ -19,6 +31,7 @@ describe('cleanupStaleWorktrees 保护活跃 lock（W7.3 Bug #E）', () => {
   let worktreeBase;
 
   beforeEach(() => {
+    dockerBoundary.failure = false;
     testRoot = join(os.tmpdir(), `cleanup-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
     worktreeBase = join(testRoot, 'worktrees');
     mkdirSync(worktreeBase, { recursive: true });
@@ -47,6 +60,19 @@ describe('cleanupStaleWorktrees 保护活跃 lock（W7.3 Bug #E）', () => {
     expect(existsSync(wt)).toBe(true);
     // 至少一次 skip 计数（具体值依 git list 失败时是否走到 scan）
     expect(stats.skipped_active_lock).toBeGreaterThanOrEqual(1);
+    expect(stats.removed).toBe(0);
+  });
+
+  it('Docker probe failure preserves the real active directory without deletion', async () => {
+    dockerBoundary.failure = true;
+    const wt = join(worktreeBase, 'cp-docker-unknown');
+    mkdirSync(wt);
+    writeFileSync(join(wt, '.dev-lock'), '{}');
+    const stats = await cleanupStaleWorktrees({
+      repoRoot: testRoot, worktreeBase, cleanupLockDir: join(testRoot, '.cleanup-lock'),
+    });
+    expect(existsSync(wt)).toBe(true);
+    expect(stats.skipped_docker_probe).toBe(1);
     expect(stats.removed).toBe(0);
   });
 
