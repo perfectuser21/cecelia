@@ -177,3 +177,20 @@ it('启动请求未抵达worker时，先认证cancel持久墓碑才释放并允�
   expect(next.status).toBe('queued');expect(next.payload.script_attempts).toHaveLength(1);expect(starts).toBe(0);
   await triggerScriptRun(next,deps);expect(starts).toBe(1);
 });
+it('直接trigger旧宿主任务也明确blocked并释放claim',async()=>{
+  const first=await task({managed_script:undefined,cwd:'/Users/administrator/project'});
+  expect(await triggerScriptRun(first,deps)).toMatchObject({success:false,reason:'script_managed_spec_required'});
+  expect((await pool.query('SELECT status,claimed_by,error_message FROM tasks WHERE id=$1',[first.id])).rows[0])
+    .toMatchObject({status:'blocked',claimed_by:null,error_message:'script_managed_spec_required'});
+  expect(starts).toBe(0);
+});
+it('worker能力探测不可用时prepare与直接trigger均wait，释放claim且不消耗执行重试',async()=>{
+  const first=await task();
+  const unavailable={...deps,managed:{...deps.managed,client:{...deps.managed.client,capabilities:async()=>{throw new Error('worker_http_503');}}}};
+  expect(await prepareScriptDispatch(first,unavailable)).toMatchObject({outcome:'skip'});
+  await pool.query("UPDATE tasks SET status='in_progress',claimed_by='fixture' WHERE id=$1",[first.id]);
+  expect(await triggerScriptRun(first,unavailable)).toMatchObject({success:false,wait:true});
+  const current=(await pool.query('SELECT status,claimed_by,payload FROM tasks WHERE id=$1',[first.id])).rows[0];
+  expect(current).toMatchObject({status:'queued',claimed_by:null});expect(current.payload.script_attempts).toBeUndefined();
+  expect((await pool.query('SELECT id FROM capacity_reservations')).rows).toHaveLength(0);
+});
