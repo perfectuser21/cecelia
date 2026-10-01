@@ -12,7 +12,7 @@ Kernel 工作区读取正规路由 canonical payload.repo，保留合法 legacy 
 
 
 
-**Brain 版本**: 1.353.1
+**Brain 版本**: 1.353.2
 
 机群统一资源预约与启动保护：Harness 按角色权重在同机事务锁内预约；资源未知、过期、并发不足均拒绝新增执行；未确认精确清理的执行继续占位。Worker 在 prepare/start 实际副作用前复验本机 CPU、内存与执行目录磁盘。安装保护保留 profile 至少10GiB可用余量和可信采样，高磁盘占用允许升级；新增受管 Harness 仍执行原85%磁盘压力门槛。
 
