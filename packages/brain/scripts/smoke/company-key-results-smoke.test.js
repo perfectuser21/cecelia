@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 import { COMPANY_KR_CATALOG, COMPANY_METRIC_MODE, companyMetric } from '../../src/lib/company-kr-metrics.js';
 
 const script = fileURLToPath(new URL('./company-key-results-smoke.sh', import.meta.url));
@@ -25,6 +26,12 @@ async function run(body) {
   } finally { await new Promise(resolve => server.close(resolve)); }
 }
 describe('company-key-results-smoke 真实HTTP只读合同', () => {
+  it('公司只读smoke必须唯一登记在通过基线，禁止以deny或debt代替', () => {
+    const entries = name => readFileSync(new URL(`../../../quality/smoke-${name}.txt`, import.meta.url), 'utf8').split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#'));
+    expect(entries('allowlist').filter(name => name === 'company-key-results-smoke.sh')).toEqual(['company-key-results-smoke.sh']);
+    expect(entries('denylist')).not.toContain('company-key-results-smoke.sh');
+    expect(entries('debt')).not.toContain('company-key-results-smoke.sh');
+  });
   it('未登记空集及完整8条原精度指标通过且只发GET', async () => {
     for (const items of [[], validItems()]) { const result = await run({ success: true, items }); expect(result.code, result.output).toBe(0); }
   });
