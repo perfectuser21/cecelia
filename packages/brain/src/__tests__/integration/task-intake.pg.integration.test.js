@@ -1,16 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import pg from 'pg';
 import express from 'express';
 import request from 'supertest';
+import { createIntakeTestDatabase } from '../fixtures/task-intake-db.js';
 
-const database = process.env.DB_NAME || 'cecelia_scratch';
-if (database !== 'cecelia_scratch' && !(process.env.CI === 'true' && database === 'cecelia_test')) {
-  throw new Error('交办集成测试仅允许本机cecelia_scratch或CI隔离cecelia_test');
-}
-const pool = new pg.Pool({ database, host: process.env.DB_HOST || '/tmp',
-  user: process.env.DB_USER || process.env.USER, port: Number(process.env.DB_PORT || 5432),
-  password: process.env.DB_PASSWORD || '', max: 5 });
+let pool, testDatabase;
 const prefix = `intake-test-${randomUUID()}`;
 let createTaskIntake, createTaskIntakeRouter;
 const baseCandidate = (text, patch = {}) => ({ intent: 'research', title: text,
@@ -31,9 +25,10 @@ beforeAll(async () => {
   ({ createTaskIntake } = await import('../../task-intake.js').catch(() => ({})));
   ({ createTaskIntakeRouter } = await import('../../routes/task-intake.js').catch(() => ({})));
   expect(createTaskIntake, '需实现真实交办服务').toBeTypeOf('function');
-  expect((await pool.query('SELECT current_database() AS name')).rows[0].name).toBe(database);
+  testDatabase = await createIntakeTestDatabase();
+  pool = testDatabase.pool;
 });
-afterAll(async () => { await pool.end(); });
+afterAll(async () => { await testDatabase?.close(); });
 
 describe('真实HTTP与PostgreSQL收据', () => {
   it.each([
@@ -67,6 +62,23 @@ describe('真实HTTP与PostgreSQL收据', () => {
     expect(await countTasks(source_id)).toBe(1);
     expect(Number((await pool.query('SELECT count(*) FROM work_routing_receipts WHERE task_id=$1',
       [results[0].body.task_id])).rows[0].count)).toBe(1);
+  });
+
+  it('明确代码修改经过真实active地图门禁落harness任务及完整收据', async () => {
+    const text = '修复 Cecelia 接单重复创建任务的问题';
+    const f = fixture(baseCandidate(text, { intent: 'coding_change', mutation_intent: 'write',
+      change_kind: 'bugfix', repo: 'cecelia', map_scope: ['F1'] }));
+    const response = await request(f.app).post('/api/brain/task-intake')
+      .send({ text, source_id: `${prefix}-coding` });
+    expect(response.status).toBe(201);
+    const row = (await pool.query(`SELECT t.task_type,t.payload,r.* FROM tasks t
+      JOIN work_routing_receipts r ON r.task_id=t.id WHERE t.id=$1`, [response.body.task_id])).rows[0];
+    expect(row.task_type).toBe('harness_initiative');
+    expect(row).toMatchObject({ repo: 'cecelia', map_scope: ['F1'], change_kind: 'bugfix',
+      pipeline: 'harness', work_kind: 'coding_mutation', default_execution_profile: 'hotfix-v1' });
+    expect(row.payload.routing_receipt_id).toBe(row.id);
+    expect(row.evidence.base_sha).toMatch(/^[a-f0-9]{40}$/);
+    expect(row.map_scope_validation_version).toBeTruthy();
   });
 
   it('同key异内容并发冲突不会创建第二张task', async () => {
