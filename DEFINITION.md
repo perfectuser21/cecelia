@@ -10,7 +10,9 @@
 
 
 
-**Brain 版本**: 1.353.18
+**Brain 版本**: 1.353.19
+
+Linux运行时受信部署独立绑定完整脚本profile、镜像ID、父任务与双凭据；root canary回执验签严格核对所有profile、version/grant、随机输出、宿主资源证明及完整取消墓碑。此验证零件尚未接数据库激活，生产仍pending。
 
 Linux脚本canary通过独立root许可调用真实Unix adapter，持久每个profile的预约/version/grant，核对完整宿主证明、随机标记输出及精确清理后签独立验收回执。未知启动不重跑，配置撤销后仍按旧journal恢复清理；安装器和bootstrap打包此入口。当前仅完成编排及安装产物回归，尚未执行HK现场验收或激活授权。
 

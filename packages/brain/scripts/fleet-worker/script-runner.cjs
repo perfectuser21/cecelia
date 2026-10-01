@@ -197,4 +197,4 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
     },
   };
 }
-module.exports={createScriptRunner,loadProtectedScriptProfiles};
+module.exports={createScriptRunner,loadProtectedScriptProfiles,validateScriptProfile:validateProfile};
