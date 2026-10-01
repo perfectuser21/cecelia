@@ -1,3 +1,5 @@
+import { directory } from '../execution-directory/directory.js';
+import { authorize } from '../execution-directory/store.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { MACHINE_CAPACITY_LOCK_SQL } from './attempt-machine-capacity.js';
 import { getNodeProfile } from './fleet-node/node-profile.js';
@@ -16,7 +18,7 @@ function validSnapshot(input) {
 const required = (row, message) => { if (!row) throw new Error(message); return row; };
 
 /** 非 Harness 预约不依赖 tasks.status、task_runs 或 lease 存活时间。 */
-export function createScriptReservationStore(pool) {
+export function createScriptReservationStore(pool,{executionDirectory=false}={}) {
   async function transaction(fn) {
     const client = await pool.connect();
     try {
@@ -36,6 +38,8 @@ export function createScriptReservationStore(pool) {
         || !/^[a-f0-9]{64}$/.test(input.configDigest)) throw new Error('invalid_reservation_identity');
       return transaction(async (client) => {
         await client.query(MACHINE_CAPACITY_LOCK_SQL, [input.machineId]);
+        const auth=executionDirectory?await authorize(client,{snapshotVersion:directory.current()?.version,machineId:input.machineId,
+          surface:'managed_script',provider:'script',profileId:input.profileId}):null;
         const existing = (await client.query(
           "SELECT * FROM capacity_reservations WHERE owner_kind='script' AND owner_key=$1 FOR UPDATE", [input.ownerKey])).rows[0];
         if (existing) {
@@ -56,11 +60,11 @@ export function createScriptReservationStore(pool) {
         ) AS occupied`, [input.machineId])).rows[0].occupied;
         if (occupied || !validSnapshot(input)) return WAIT;
         const reservation = (await client.query(`INSERT INTO capacity_reservations
-          (id,machine_id,owner_kind,owner_key,task_id,config_digest,allocation_mode,policy_version,snapshot_time,snapshot_digest)
-          SELECT $1,$2,'script',$3,$4,$5,'exclusive_unclassified','script-exclusive-v1',to_timestamp($8/1000.0),$6
+          (id,machine_id,owner_kind,owner_key,task_id,config_digest,allocation_mode,policy_version,snapshot_time,snapshot_digest${auth?',execution_version_id,execution_grant_id':''})
+          SELECT $1,$2,'script',$3,$4,$5,'exclusive_unclassified','script-exclusive-v1',to_timestamp($8/1000.0),$6${auth?',$9,$10':''}
           WHERE $7::double precision > EXTRACT(EPOCH FROM clock_timestamp()) * 1000 RETURNING *`,
         [randomUUID(),input.machineId,input.ownerKey,input.taskId,input.configDigest,digest(input.capacitySnapshot),input.capacitySnapshot.expires_at,
-          input.capacitySnapshot.captured_at ?? Date.now()])).rows[0];
+          input.capacitySnapshot.captured_at ?? Date.now(),...(auth?[auth.executionVersionId,auth.grantId]:[])])).rows[0];
         return reservation ? { outcome: 'reserved', reservation } : WAIT;
       });
     },

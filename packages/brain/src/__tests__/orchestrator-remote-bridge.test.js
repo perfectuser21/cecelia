@@ -1,3 +1,5 @@
+import { directory } from '../execution-directory/directory.js';
+import { legacyRecords } from '../execution-directory/legacy-policy.js';
 import { describe, it, expect, vi } from 'vitest';
 import { createOrchestratorBridge } from '../orchestrator-remote-bridge.js';
 
@@ -7,6 +9,8 @@ const RUN_ID = '33333333-3333-4333-8333-333333333333';
 function fetchOk(body) {
   return vi.fn(async () => ({ ok: true, status: 202, json: async () => body }));
 }
+
+await directory.refresh({pool:{query:async()=>({rows:legacyRecords({env:ENV})})}});
 
 describe('orchestrator-remote-bridge', () => {
   it('prepare 打 primary 的 /harness/orchestrators/prepare，带 Bearer', async () => {

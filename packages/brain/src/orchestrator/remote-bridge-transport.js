@@ -324,8 +324,10 @@ export function createRemoteBridgeTransport({
         }
         credentialEnvelope = await configuredCredentialBroker.issue({
           attemptId: attempt.id,
-          accountId: target?.account,
           machineId: machine,
+          repo:bundle?.inputs?.workspace_spec?.repo,
+          provider:target?.provider,
+          accountId:target?.account,
           deadlineAt,
         });
         if (
@@ -344,6 +346,9 @@ export function createRemoteBridgeTransport({
         githubCredentialEnvelope = await configuredGitHubCredentialBroker.issue({
           attemptId: attempt.id,
           machineId: machine,
+          repo:bundle?.inputs?.workspace_spec?.repo,
+          provider:target?.provider,
+          accountId:target?.account,
           deadlineAt,
         });
         if (

@@ -40,6 +40,7 @@ export async function runDocker(args, opts) {
   const startedAt = new Date(startedAtMs).toISOString();
 
   return new Promise((resolve, reject) => {
+    const launch=()=>{
     const proc = nodeSpawn('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
@@ -178,5 +179,8 @@ export async function runDocker(args, opts) {
         ended_at: endedAt,
       }));
     });
+    };
+    if(opts.authorizeSpawn)Promise.resolve().then(()=>opts.authorizeSpawn(launch)).catch(reject);
+    else launch();
   });
 }

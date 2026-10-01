@@ -8,7 +8,7 @@ curl -sf "$BRAIN_URL/api/brain/health" >/dev/null
 
 cd "$ROOT"
 node --input-type=module <<'NODE'
-import { listNodeProfiles } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { listDeploymentNodeProfiles as listNodeProfiles } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const expectedDigest =
   'sha256:aeaf290525a623a2182fdce5376ca914e9de2d0b1bab0ba18d7d07b9ea379033';

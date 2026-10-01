@@ -50,6 +50,8 @@ fi
 # ── 白名单 + 每文件命中数棘轮（Mac Studio 迁移清单，见文件头注释）────
 # 格式：相对 packages/brain/src 的路径 => 登记的最大命中数
 declare -A REGISTERED_HITS=(
+  # 现役迁移绑定：UUID及原账号权限只在初始化配置集中登记，动态调度不按机名分支。
+  ["execution-directory/legacy-policy.js"]=2
   ["harness-skill-relay.js"]=1
   ["orchestrator/production-transport.js"]=2
   ["orchestrator/fleet-node/node-admission-client.js"]=1

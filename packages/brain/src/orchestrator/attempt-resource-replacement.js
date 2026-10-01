@@ -45,7 +45,7 @@ export async function reserveExpiredAttemptReplacement({
       throw new Error('replacement_cleanup_unconfirmed');
     }
     const { createAttemptStore } = await import('./attempt-store.js');
-    const store = createAttemptStore(client, { transactionClient: true });
+    const store = createAttemptStore(client, { transactionClient: true, executionDirectory: true });
     const failed = await store.fail(locked.id, { code: 'resumed_as_child', message: 'exact old worker cleanup confirmed before replacement' },
       { leaseOwner: locked.lease_owner, leaseGeneration: locked.lease_generation, requireExpired: true });
     if (!failed.attempt) throw new Error('replacement_parent_fenced');

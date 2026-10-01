@@ -10,7 +10,11 @@
 
 
 
-**Brain 版本**: 1.354.2
+**Brain 版本**: 1.354.3
+
+Brain 镜像完整打包 Fleet Worker 共用运行模块；构建期及独立产物回归实际导入执行目录并读取部署策略。
+
+执行目录的既有回归显式登记测试设备与授权；文件系统替身保留真实节点策略读取，数据库权限及恢复断言继续使用真实 PostgreSQL。
 
 Worker维护暂停在本机三类runner与Docker最终副作用前执行；认证静默回执绑定nonce、同boot和活动版本，客户端断开不减在途计数，orchestrator真实子进程退出才归零。启动对账未确认或prepare潜在副作用后失败均拒签；候选工作区只保守占位，不自动清理。
 
@@ -37,7 +41,21 @@ Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增�
 
 受管脚本准入仅写 blocked/queued，终态写入者守卫已登记。
 
-## Brain 1.352.3 — 脚本受管执行与共享预约
+## Brain 1.352.4 — 现有执行目录统一（阶段4a）
+
+- system_registry设备真身按UUID绑定execution_nodes；不可变execution_node_versions保留历史endpoint/profile；execution_grants按surface/provider/account/repo/profile精确授权。
+- 初次部署只导入旧三Mac的18个Harness账号组合与2个普通执行器组合，标legacy-v1/legacy_policy，不伪造boot或canary。重启不复活已撤销授权，不开放新增节点激活接口。
+- Brain启动先载目录，10秒刷新、30秒过期拒绝新增。预约与prepare/start持同机锁核DB当前授权；服务器持久化版本/grant，旧清理按原版本执行。metadata.executors仅期望配置，不能授予执行权限。
+- 普通M1 Codex、MMV普通Codex桥接组合缺少legacy授权时返回execution_legacy_grant_denied或路由execution_grant_denied；本机review/spec_review/code_review_gate与普通Docker分支缺少受信宿主/凭据绑定时返回execution_legacy_identity_required。均不改派，恢复须经后续受控能力验收登记，不能靠metadata或环境URL自行放行。
+- 受管脚本仍须SCRIPT_MANAGED_MACHINES、Worker受保护profile与本机资源准入；初次目录导入还需EXECUTION_LEGACY_SCRIPT_PROFILES显式列出允许profile。默认不增加脚本授权。
+- 恢复子任务同事务重核目录并持久化新身份；撤销后恢复不得创建child。旧script预约凭持久强身份使用legacy-v1首版endpoint清理，不依赖新增profile许可；旧Fleet未回执清理不依赖当前可派发目录。
+- 普通本机spawn、非kernel skill-relay与headed新启动缺少目录内宿主/凭据账号绑定时返回execution_legacy_identity_required；xian relay显式team3账号缺少对应legacy grant时返回execution_grant_denied。保留已有docker/tmux探活，不终止已有session、不借Harness授权或改派。
+- 安装器从getDeploymentNodeProfile读取受控部署基线；动态getNodeProfile专供Brain执行目录。Worker两仓白名单与Brain legacy repo scope同源。
+
+
+
+
+## Brain 1.350.3 — 脚本受管执行与共享预约
 
 - 容器脚本经共享机器预约、受认证 Worker 协议及精确清理回执执行；非 released 预约持续占位。
 - SCRIPT_MANAGED_MACHINES 仅在旧宿主脚本完成对账后启用；显式 profile 使用无宿主挂载容器，宿主运维脚本需另行兼容，未覆盖全部执行入口。
@@ -57,6 +75,12 @@ Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增�
 | 任务终态或身份已换代 | 任意 | 任意 | 清理旧预约，不改当前任务 |
 
 cleanup_pending / blocked 预约继续清理；通信未知保留占位。预算释放与任务结算分别持久化，结算失败不得重新占回预算或漏扫。
+
+## Brain 1.349.3 — Harness 加权资源预约
+
+- 同机事务锁内按角色权重预约；未确认清理持续占位，恢复需先确认旧执行停止。
+- 历史恢复与清理 fixture 按真实容量、执行身份和事务语义验证，保留父终态并发约束。
+
 
 Worker 标准升级在预检前读取可信现役 plist 快照，保留既有地址、端口、令牌引用、路径与完整环境；预检和启动健康使用同一有效配置，私有快照及安装 plist 为0600，替换前复核旧配置指纹，失败保留事务回滚。
 
@@ -82,7 +106,7 @@ Worker 标准升级在预检前读取可信现役 plist 快照，保留既有地
 - 运行机须部署 `scripts/ops/node-onboarding.mjs` 及相邻模块，并有Node、Python3、OpenSSH、已授权1Password CLI；macOS需现有GUI会话，非root Linux需现有systemd linger。不改网络或删业务文件。
 - 已认领有头会话复用现有探活合同，未知保留运行；tmux名称使用argv。
 - Janitor固定动作显式启用后才执行；专属连接互斥执行与配置，异常持久固定错误码，不确定running阻止重跑，锁响应不明及解锁失败销毁连接。生产动作注册表保持为空。
-- 节点接入仍不授予 Linux 执行器或动态执行资格；migration 501 为本次脚本预约单独引入。
+- 本批没有migration501，不包含Linux执行器、全机自动清理或动态执行资格。
 
 
 ## 1.350.1

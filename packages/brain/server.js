@@ -1,3 +1,4 @@
+import { startExecutionDirectory } from './src/execution-directory/store.js';
 // OTel 必须在所有其他 import 之前初始化（auto-instrumentation 要求）
 import { initOtel } from './src/otel.js';
 import { isIsolatedRuntime } from './src/runtime-safety.js';
@@ -587,6 +588,8 @@ if (isIsolatedRuntime() || process.env.SKIP_MIGRATIONS === 'true') {
     }
   }
 }
+
+if (!isIsolatedRuntime()) await startExecutionDirectory({pool});
 
 if (!isIsolatedRuntime()) try {
   const selfCheckOk = await runSelfCheck(pool);

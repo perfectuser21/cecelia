@@ -20,7 +20,7 @@ describe('GitHub Credential Broker', () => {
       randomUUID: () => CREDENTIAL_REF,
     });
 
-    const envelope = await broker.issue({
+    const envelope = await broker.issue({repo:'perfectuser21/cecelia',provider:'codex',accountId:'team1',
       attemptId: ATTEMPT_ID,
       machineId: 'xian-mac-m4',
       deadlineAt: DEADLINE,
@@ -44,7 +44,7 @@ describe('GitHub Credential Broker', () => {
       controllerMachineId: 'xian-mac-m4',
       loadToken: vi.fn(async () => TOKEN),
     });
-    await expect(outsideAuthority.issue({
+    await expect(outsideAuthority.issue({repo:'perfectuser21/cecelia',provider:'codex',accountId:'team1',
       attemptId: ATTEMPT_ID,
       machineId: 'xian-mac-m4',
       deadlineAt: DEADLINE,
@@ -55,7 +55,7 @@ describe('GitHub Credential Broker', () => {
       loadToken: vi.fn(async () => ''),
       now: () => NOW,
     });
-    await expect(missing.issue({
+    await expect(missing.issue({repo:'perfectuser21/cecelia',provider:'codex',accountId:'team1',
       attemptId: ATTEMPT_ID,
       machineId: 'us-mac-m4',
       deadlineAt: DEADLINE,
@@ -66,7 +66,7 @@ describe('GitHub Credential Broker', () => {
       loadToken: vi.fn(async () => null),
       now: () => NOW,
     });
-    await expect(nonString.issue({
+    await expect(nonString.issue({repo:'perfectuser21/cecelia',provider:'codex',accountId:'team1',
       attemptId: ATTEMPT_ID,
       machineId: 'us-mac-m4',
       deadlineAt: DEADLINE,
@@ -83,7 +83,7 @@ describe('GitHub Credential Broker', () => {
         randomUUID: () => CREDENTIAL_REF,
       });
 
-      const envelope = await broker.issue({
+      const envelope = await broker.issue({repo:'perfectuser21/cecelia',provider:'codex',accountId:'team1',
         attemptId: ATTEMPT_ID,
         machineId: 'xian-mac-m4',
         deadlineAt: DEADLINE,
@@ -103,7 +103,7 @@ describe('GitHub Credential Broker', () => {
         loadToken,
         now: () => NOW,
       });
-      await expect(broker.issue({
+      await expect(broker.issue({repo:'perfectuser21/cecelia',provider:'codex',accountId:'team1',
         attemptId: ATTEMPT_ID,
         machineId: 'xian-mac-m4',
         deadlineAt: DEADLINE,

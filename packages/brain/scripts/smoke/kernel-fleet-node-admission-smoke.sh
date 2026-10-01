@@ -5,6 +5,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 node --input-type=module <<'NODE'
+import './packages/brain/src/__tests__/helpers/execution-directory-fixture.js';
 import {
   getNodeProfile,
   getRoleCapacity,

@@ -46,7 +46,7 @@ function broker(overrides = {}) {
 describe('central Codex Credential Broker', () => {
   it('issues one immutable envelope bound to the selected Attempt, account, and machine', async () => {
     const loadCredential = vi.fn(async () => authJson());
-    const result = await broker({ loadCredential }).issue({
+    const result = await broker({ loadCredential }).issue({repo:'perfectuser21/cecelia',
       attemptId: ATTEMPT_ID,
       accountId: 'team4',
       machineId: 'xian-mac-m4',
@@ -86,7 +86,7 @@ describe('central Codex Credential Broker', () => {
   ])('rejects %s before reading credential bytes', async (_label, options, input, code) => {
     const loadCredential = vi.fn(async () => authJson());
     const instance = broker({ loadCredential, ...options });
-    await expect(instance.issue({
+    await expect(instance.issue({repo:'perfectuser21/cecelia',
       attemptId: ATTEMPT_ID,
       accountId: 'team4',
       machineId: 'xian-mac-m4',
@@ -98,7 +98,7 @@ describe('central Codex Credential Broker', () => {
 
   it('fails closed when access-token lifetime does not cover deadline plus margin', async () => {
     const loadCredential = vi.fn(async () => authJson(NOW + 62 * 60 * 1000));
-    await expect(broker({ loadCredential }).issue({
+    await expect(broker({ loadCredential }).issue({repo:'perfectuser21/cecelia',
       attemptId: ATTEMPT_ID,
       accountId: 'team4',
       machineId: 'xian-mac-m4',
@@ -111,7 +111,7 @@ describe('central Codex Credential Broker', () => {
     await expect(broker({
       loadCredential,
       now: () => Number.MAX_VALUE,
-    }).issue({
+    }).issue({repo:'perfectuser21/cecelia',
       attemptId: ATTEMPT_ID,
       accountId: 'team4',
       machineId: 'xian-mac-m4',
@@ -124,7 +124,7 @@ describe('central Codex Credential Broker', () => {
     const loadCredential = vi.fn(async () => `{${SECRET}`);
     let error;
     try {
-      await broker({ loadCredential }).issue({
+      await broker({ loadCredential }).issue({repo:'perfectuser21/cecelia',
         attemptId: ATTEMPT_ID,
         accountId: 'team4',
         machineId: 'xian-mac-m4',
@@ -144,7 +144,7 @@ describe('central Codex Credential Broker', () => {
     });
     await expect(broker({
       loadCredential: vi.fn(async () => oversized),
-    }).issue({
+    }).issue({repo:'perfectuser21/cecelia',
       attemptId: ATTEMPT_ID,
       accountId: 'team4',
       machineId: 'xian-mac-m4',
@@ -157,7 +157,7 @@ describe('central Codex Credential Broker', () => {
     ['credential_source_permissions'],
   ])('passes the loader failure %s through instead of masking it as payload_invalid', async (code) => {
     const loadCredential = vi.fn(async () => { throw new Error(code); });
-    await expect(broker({ loadCredential }).issue({
+    await expect(broker({ loadCredential }).issue({repo:'perfectuser21/cecelia',
       attemptId: ATTEMPT_ID, accountId: 'team4', machineId: 'xian-mac-m4', deadlineAt: DEADLINE,
     })).rejects.toThrow(code);
   });
@@ -166,7 +166,7 @@ describe('central Codex Credential Broker', () => {
     const loadCredential = vi.fn(async () => { throw new Error(`ENOENT ${SECRET}`); });
     let error;
     try {
-      await broker({ loadCredential }).issue({
+      await broker({ loadCredential }).issue({repo:'perfectuser21/cecelia',
         attemptId: ATTEMPT_ID, accountId: 'team4', machineId: 'xian-mac-m4', deadlineAt: DEADLINE,
       });
     } catch (caught) { error = caught; }
@@ -178,7 +178,7 @@ describe('central Codex Credential Broker', () => {
     const loadCredential = vi.fn(async () => { throw new Error(`credential_source_unavailable ${SECRET}`); });
     let error;
     try {
-      await broker({ loadCredential }).issue({
+      await broker({ loadCredential }).issue({repo:'perfectuser21/cecelia',
         attemptId: ATTEMPT_ID, accountId: 'team4', machineId: 'xian-mac-m4', deadlineAt: DEADLINE,
       });
     } catch (caught) { error = caught; }
@@ -193,7 +193,7 @@ describe('权威判据锁定（角色置换前基线）', () => {
     const result = await broker({
       controllerMachineId: resolvePrimaryWorkerId(),
       loadCredential,
-    }).issue({
+    }).issue({repo:'perfectuser21/cecelia',
       attemptId: ATTEMPT_ID,
       accountId: 'team4',
       machineId: 'xian-mac-m4',
@@ -209,7 +209,7 @@ describe('权威判据锁定（角色置换前基线）', () => {
     ['未知控制器（undefined）', undefined],
   ])('%s fail-closed，错误码不变', async (_label, controllerMachineId) => {
     const loadCredential = vi.fn(async () => authJson());
-    await expect(broker({ controllerMachineId, loadCredential }).issue({
+    await expect(broker({ controllerMachineId, loadCredential }).issue({repo:'perfectuser21/cecelia',
       attemptId: ATTEMPT_ID,
       accountId: 'team4',
       machineId: 'xian-mac-m4',

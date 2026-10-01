@@ -9,14 +9,14 @@ const machines=(deps)=>String((deps.env??process.env).SCRIPT_MANAGED_MACHINES??'
 export const usesManagedScript=(task,spec,deps={})=>Boolean(task.payload?.managed_script)||machines(deps).includes(spec.host);
 function dependencies(pool,deps) {
   const env=deps.env??process.env;
-  const client=deps.managed?.client??createScriptWorkerClient({env});
+  const client=deps.managed?.client??createScriptWorkerClient({env,pool});
   const collectSnapshot=deps.managed?.collectSnapshot??(async(machine)=>{
     const probes=createProductionCapabilityProbes({env,cacheTtlMs:0});
     const capacity=await probes.getMachineBaseCapacity({machine});
     const captured_at=Date.now();
     return {verified:true,machine,captured_at,expires_at:captured_at+1000,capacity};
   });
-  return {client,collectSnapshot,store:createScriptReservationStore(pool)};
+  return {client,collectSnapshot,store:createScriptReservationStore(pool,{executionDirectory:deps.managed?.executionDirectory??true})};
 }
 function body(row) {
   return {reservation_id:row.id,machine_id:row.machine_id,owner_key:row.owner_key,intent_id:row.intent_id,
@@ -39,7 +39,7 @@ export async function prepareManagedScript(task,spec,pool,deps={}) {
   const attempt=(task.payload?.script_attempts?.length??0)+1;
   const ownerKey=`script-${task.id}-a${attempt}`;
   const configDigest=digest({job,profile_digest:capabilities.profiles[managed.profile]});
-  const result=await store.reserve({taskId:task.id,machineId:spec.host,ownerKey,configDigest,capacitySnapshot});
+  const result=await store.reserve({taskId:task.id,machineId:spec.host,ownerKey,configDigest,capacitySnapshot,profileId:managed.profile});
   if(result.outcome==='wait')return result;
   if(result.outcome==='released')return {outcome:'blocked',reason:'script_attempt_already_released'};
   const bound=await pool.query(`UPDATE tasks SET payload=payload||$2::jsonb,updated_at=NOW()
