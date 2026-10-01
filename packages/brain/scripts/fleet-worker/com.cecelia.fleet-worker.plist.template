@@ -26,7 +26,7 @@
     <!-- 探测/attempt 临时目录必须落在 OrbStack 文件共享可读路径：_cecelia 私有
          /var/folders、/tmp 下 0700 目录 docker bind mount 一律 permission denied。 -->
     <key>TMPDIR</key>
-    <string>/Users/Shared/cecelia-fleet-tmp</string>
+    <string>@@SHARED_TMPDIR@@</string>
     <key>CECELIA_MACHINE_ID</key>
     <string>@@MACHINE_ID@@</string>
     <key>CECELIA_RUNNER_DIGEST</key>
@@ -38,7 +38,7 @@
     <key>CECELIA_FLEET_WORKER_HOST</key>
     <string>@@WORKER_BIND_HOST@@</string>
     <key>CECELIA_FLEET_WORKER_PORT</key>
-    <string>5231</string>
+    <string>@@WORKER_PORT@@</string>
     <key>CECELIA_DRAIN_MARKER</key>
     <string>@@DRAIN_MARKER@@</string>
     <key>CECELIA_REPO_ROOT</key>
