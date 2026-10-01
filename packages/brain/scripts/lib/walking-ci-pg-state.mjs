@@ -10,6 +10,8 @@ assert.match(thread || '', /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/);
 // This timer lives inside docker exec; killing only the host CLI would leave a reader behind.
 const deadline = setTimeout(() => { console.error('Walking PG proof deadline reached'); process.exit(1); }, 7000);
 deadline.unref();
+// Imported modules log diagnostics; this dedicated CLI reserves stdout for its JSON proof.
+console.log = (...values) => console.error(...values);
 const { getPgCheckpointer } = await import('../../src/orchestrator/pg-checkpointer.js');
 const { getCompiledWalkingSkeleton } = await import('../../src/workflows/walking-skeleton-1node.graph.js');
 const { default: pool } = await import('../../src/db.js');
@@ -33,8 +35,8 @@ try {
     assert.equal(lookup[0].status, 'completed'); assert.equal(events, 1, 'One actual completion event required');
     assert.equal(state.values.result, `hello-from-${lookup[0].container_id}`);
   }
-  console.log(JSON.stringify({ thread_id: thread, mode, container_id: lookup[0].container_id,
-    checkpoint_id: state.config.configurable.checkpoint_id, restart_instance: state.values.restartInstanceId, finalized: state.values.finalized, events }));
+  process.stdout.write(JSON.stringify({ thread_id: thread, mode, container_id: lookup[0].container_id,
+    checkpoint_id: state.config.configurable.checkpoint_id, restart_instance: state.values.restartInstanceId, finalized: state.values.finalized, events }) + '\n');
 } finally {
   await checkpointer?.end(); await pool.end(); clearTimeout(deadline);
 }
