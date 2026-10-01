@@ -63,9 +63,9 @@ describe('脚本与 Harness 共用机器预约', () => {
   });
 });
 
-async function reservationStore() {
+async function reservationStore(connectionPool = pool) {
   const { createScriptReservationStore } = await import('../../orchestrator/script-reservation-store.js');
-  return createScriptReservationStore(pool);
+  return createScriptReservationStore(connectionPool);
 }
 async function scriptInput() {
   const taskId = randomUUID();
@@ -153,25 +153,54 @@ describe('脚本预约拒绝未确认 Harness 清理和过时证据', () => {
     expect((await pool.query('SELECT id FROM capacity_reservations')).rows).toHaveLength(0);
   });
   it('脚本等待同机事务锁期间快照过期，取得锁后拒绝预约', async () => {
-    const store = await reservationStore(); const value = await scriptInput();
+    const value = await scriptInput();
+    const creator=await pool.connect(); const pid=(await creator.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+    const store=await reservationStore({connect:async()=>({query:creator.query.bind(creator),release(){}})});
     const blocker = await pool.connect(); await blocker.query('BEGIN');
     await blocker.query("SELECT pg_advisory_xact_lock(hashtextextended('harness_attempt_machine:' || $1::text,0))",[machine]);
-    value.capacitySnapshot.expires_at=Date.now()+50;
+    value.capacitySnapshot.expires_at=Date.now()+150;
     const pending=store.reserve(value);
-    await new Promise((resolve)=>setTimeout(resolve,100));
+    const waited=await waitsForLock(pid);
+    await new Promise((resolve)=>setTimeout(resolve,Math.max(0,value.capacitySnapshot.expires_at-Date.now()+5)));
     await blocker.query('COMMIT');blocker.release();
-    await expect(pending).resolves.toMatchObject({outcome:'wait'});
+    expect(waited).toBe(true);
+    await expect(pending).resolves.toMatchObject({outcome:'wait'});creator.release();
     expect((await pool.query('SELECT id FROM capacity_reservations')).rows).toHaveLength(0);
   });
 });
 
 it('任务取消事务先拿到行锁：reserve 读到提交后终态，不能新建预约', async () => {
-  const store=await reservationStore(); const value=await scriptInput();
+  const value=await scriptInput();
+  const creator=await pool.connect();const pid=(await creator.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+  const store=await reservationStore({connect:async()=>({query:creator.query.bind(creator),release(){}})});
   const blocker=await pool.connect(); await blocker.query('BEGIN');
   await blocker.query("UPDATE tasks SET status='cancelled' WHERE id=$1",[value.taskId]);
   const pending=store.reserve(value).then((result)=>result,(error)=>error);
-  await new Promise((resolve)=>setTimeout(resolve,50));
+  const waited=await waitsForLock(pid);
   await blocker.query('COMMIT');blocker.release();
-  expect(await pending).toBeInstanceOf(Error);
+  const outcome=await pending;creator.release();
+  expect(waited).toBe(true);
+  expect(outcome).toBeInstanceOf(Error);
+  expect((await pool.query('SELECT id FROM capacity_reservations')).rows).toHaveLength(0);
+});
+
+async function waitsForLock(pid) {
+  for(let i=0;i<200;i++) {
+    const row=(await pool.query('SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1',[pid])).rows[0];
+    if(row?.wait_event_type==='Lock')return true;
+    await new Promise((resolve)=>setTimeout(resolve,5));
+  }
+  return false;
+}
+it('INSERT 发出前跨越快照期限，数据库最终闸门拒绝写入',async()=>{
+  const value=await scriptInput();value.capacitySnapshot.expires_at=Date.now()+100;
+  const delayed={connect:async()=>{
+    const c=await pool.connect();return {release:()=>c.release(),query:async(sql,args)=>{
+      if(sql.startsWith('INSERT INTO capacity_reservations')) await new Promise((r)=>setTimeout(r,150));
+      return c.query(sql,args);
+    }};
+  }};
+  const store=await reservationStore(delayed);
+  await expect(store.reserve(value)).resolves.toMatchObject({outcome:'wait'});
   expect((await pool.query('SELECT id FROM capacity_reservations')).rows).toHaveLength(0);
 });
