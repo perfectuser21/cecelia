@@ -17,6 +17,27 @@ vi.mock('../recurring-notion-sync.js', () => ({
   getToken: () => 'fake-token',
 }));
 const mockCreateRoutedTask = vi.fn();
+
+describe('活动 span-only 与七日过期复核', () => {
+  it('持续 dirty 不占用保留 sweep 配额；已同步活动也推新 spans', async () => {
+    const dirty = Array.from({ length: 25 }, (_, n) => ({ id: 'dirty-' + n, journey_name: '路径', step_id: 'a1', cell_level: 'activity', notion_id: 'dirty-page-' + n }));
+    const clean = { id: 'sweep-51', journey_name: '路径', step_id: 'a2', cell_level: 'activity', notion_id: 'clean-page', updated_at: '2026-01-01', notion_synced_at: '2026-10-01' };
+    mockQuery.mockImplementation(async sql => {
+      const s = String(sql);
+      if (s.includes('activity_flow_metrics')) return { rows: [{ activity_id: 'a2', workflow_id: 'w1', p50_duration_ms: 100, first_pass_yield: 1, pass_rate: 0, span_count: 1 }] };
+      if (s.includes('activity_flow_sweep')) return { rows: [clean] };
+      if (s.includes('FROM journey_step_links l')) return { rows: dirty };
+      return { rows: [] };
+    });
+    mockNotionReq.mockImplementation(async (_token, _path, method) => method === 'GET' ? { properties: {} } : {});
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+    const patch = mockNotionReq.mock.calls.find(c => c[1] === '/pages/clean-page' && c[2] === 'PATCH');
+    expect(patch).toBeDefined();
+    expect(patch[3].properties.FlowP50Ms).toEqual({ number: 100 });
+    expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('activity_flow_sweep_cursor'))).toBe(true);
+  });
+});
 vi.mock('../work-routing-store.js', () => ({
   createRoutedTask: mockCreateRoutedTask,
 }));
