@@ -58,7 +58,8 @@ function createRpcPolicy({maxPending=128,maxIds=100000,accountId=null}={}){
   if(!schema)return deny(frame.id,'appserver_rpc_method_denied');
   if(used.has(key(frame.id)))return deny(frame.id,'appserver_rpc_id_reused');
   if(used.size>=maxIds||pending.size>=maxPending)return deny(frame.id,'appserver_rpc_session_limit');
-  if(!valid(frame.params??{},schema,set.definitions,{strict:true}))return deny(frame.id,'appserver_rpc_params_invalid');
+  const params=Object.hasOwn(frame,'params')?frame.params:(schema.type==='null'?null:{});
+  if(!valid(params,schema,set.definitions,{strict:true}))return deny(frame.id,'appserver_rpc_params_invalid');
   if(kind==='client'&&method==='account/login/start'&&(!accountId||frame.params.type!=='chatgptAuthTokens'||frame.params.chatgptAccountId!==accountId))return deny(frame.id,'appserver_account_binding_denied');
   if(kind==='server'&&method==='item/tool/call'&&(hostTool(frame.params.tool)||!allowedNamespace(frame.params.namespace)))return deny(frame.id,'appserver_host_tool_denied');
   if(kind==='client'&&method==='thread/start'&&frame.params.dynamicTools)frame={...frame,params:{...frame.params,dynamicTools:filterTools(frame.params.dynamicTools)}};

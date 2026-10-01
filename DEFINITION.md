@@ -10,7 +10,9 @@
 
 
 
-**Brain 版本**: 1.354.8
+**Brain 版本**: 1.354.9
+
+OpenClaw RPC 按固定合同区分无参数与对象参数；配置约束读取和退出登录保留 null，显式 null 不再冒充对象。
 
 聊天 app-server 与三类 Worker 执行器共用维护启动闸及同 boot；真实 create/start/attach 边界再次检查，维护回执包含聊天未清理实例和在途连接，未知 journal 拒签静默。
 

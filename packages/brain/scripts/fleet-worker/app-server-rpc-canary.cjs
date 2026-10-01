@@ -47,10 +47,14 @@ async function main(){
  const pluginPath=process.env.OPENCLAW_CANARY_CLIENT_MODULE;
  if(pluginPath){const module=await import(pluginPath);pluginClient=module.t.fromTransportForTests(child);await pluginClient.initialize();assert.equal(pluginClient.getServerVersion(),'0.158.0');
   assert.ok(Array.isArray((await pluginClient.request('model/list',{})).data));
+  assert.ok((await pluginClient.request('config/read',{})).config);
+  assert.ok(Object.hasOwn(await pluginClient.request('configRequirements/read'),'requirements'));
  }else {
   await exchange(child,1,'initialize',{clientInfo:{name:'cecelia_canary',version:'1'},capabilities:{experimentalApi:true}});
   child.stdin.write('{"method":"initialized"}\n');
   assert.ok(Array.isArray((await exchange(child,2,'model/list',{})).data));
+  assert.ok((await exchange(child,3,'config/read',{})).config);
+  assert.ok(Object.hasOwn(await exchange(child,4,'configRequirements/read'),'requirements'));
  }
 
  revoked=true;await assert.rejects(client.prepareStream(row.id),/execution_grant_denied/);assert.equal((await runner.inspect(identity)).status,'running');
