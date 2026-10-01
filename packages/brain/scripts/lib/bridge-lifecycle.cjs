@@ -47,6 +47,12 @@ function createBridgeLifecycle() {
 
     const startTime = Date.now();
     const timeoutMs = Math.min(positiveInt(timeout, defaultTimeout, maxTimeout), maxTimeout);
+    // 在创建进程/定时器的现场验证范围，避免上游配置变更移除硬上限。
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 600000) {
+      cleanup();
+      safeRespond(res, 400, { ok: false, error: 'Invalid LLM timeout' });
+      return;
+    }
     let child;
     try {
       // 新进程组让所有未自行setsid的后代一起收尸；不使用spawn内建的单PID timeout。
