@@ -37,13 +37,14 @@ beforeAll(async () => {
   await admin.query(`CREATE SCHEMA ${schema}`);
   const client = await pool.connect();
   try {
-    await client.query(`CREATE TABLE schema_version(version TEXT PRIMARY KEY, description TEXT, applied_at TIMESTAMPTZ);
+    await client.query(`CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT);
+      CREATE TABLE schema_version(version TEXT PRIMARY KEY, description TEXT, applied_at TIMESTAMPTZ);
       CREATE TABLE initiative_runs(id UUID PRIMARY KEY, phase TEXT DEFAULT 'planning', map_recovery_contract_id UUID,
         orchestrator_version TEXT DEFAULT 'v2');
       CREATE TABLE map_recovery_consumptions(contract_id UUID, attempt_id UUID);`);
     for (const name of ['357_harness_provider_attempts', '362_kernel_attempt_telemetry_reconcile',
       '363_kernel_fleet_execution_receipts', '364_kernel_local_container_naming',
-      '425_harness_attempt_cleanup_outbox']) {
+      '425_harness_attempt_cleanup_outbox', '501_capacity_reservations']) {
       await client.query(readFileSync(new URL(`../../../migrations/${name}.sql`, import.meta.url), 'utf8'));
     }
     await client.query('ALTER TABLE harness_attempts ADD COLUMN failure_class TEXT');

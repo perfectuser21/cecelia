@@ -495,10 +495,6 @@ async function probeFleetWorkerHealth(options = {}) {
       options.workerBindHost ?? env.CECELIA_FLEET_WORKER_HOST,
       '',
     );
-    const orbstackHome = boundedString(
-      options.orbstackHome ?? env.CECELIA_ORBSTACK_HOME,
-      '/var/empty',
-    );
     const drainMarkerPath = boundedString(
       options.drainMarkerPath ?? env.CECELIA_DRAIN_MARKER,
       DEFAULT_DRAIN_MARKER,
@@ -536,9 +532,9 @@ async function probeFleetWorkerHealth(options = {}) {
       disposable,
     ] = await Promise.all([
       run('sw_vers', ['-productVersion']),
-      run('orbctl', ['version'], {
-        env: { ...env, HOME: orbstackHome },
-      }),
+      // orbctl 2.2初始化用户run目录会chmod；版本读取不应触碰管理员HOME。
+      run('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleShortVersionString',
+        '/Applications/OrbStack.app/Contents/Info.plist']),
       run('docker', ['info', '--format', '{{json .}}']),
       run('docker', ['image', 'inspect', '--format', '{{json .RepoDigests}}', commandDigest]),
       run('docker', ['image', 'inspect', '--format', '{{json .RepoDigests}}', postgresImageDigest]),

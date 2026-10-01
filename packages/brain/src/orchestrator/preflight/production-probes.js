@@ -133,7 +133,24 @@ export function createProductionCapabilityProbes(deps = {}) {
     }
   }
 
+  async function baseCapacity(machine, profile = getNodeProfile(machine)) {
+    const row = await fleetRow(machine);
+    return { row, effectiveBaseSlots: boundedBaseSlots(row?.effective_slots, profile.capacity),
+      physicalBaseSlots: boundedBaseSlots(row?.physical_capacity, profile.capacity) };
+  }
+
   return Object.freeze({
+    async getMachineBaseCapacity({ machine }) {
+      const admission = await admittedNode(machine);
+      if (!admission.admitted) return { ok: false, signature: admission.signature };
+      try {
+        const { row, effectiveBaseSlots, physicalBaseSlots } = await baseCapacity(machine);
+        return { ok: row?.online === true, effective_base_slots: effectiveBaseSlots,
+          physical_base_slots: physicalBaseSlots, observed_at: now(),
+          signature: row?.online === true ? null : 'machine_offline' };
+      } catch { return { ok: false, signature: 'machine_capacity_unavailable' }; }
+    },
+
     async resolveCanonicalMachineId() {
       const snapshot = await fleetSnapshot();
       const fleet = Array.isArray(snapshot?.fleet) ? snapshot.fleet : [];
@@ -195,15 +212,8 @@ export function createProductionCapabilityProbes(deps = {}) {
         };
       }
 
-      const row = await fleetRow(machine);
-      const effectiveBaseSlots = boundedBaseSlots(
-        row?.effective_slots,
-        profile.capacity,
-      );
-      const physicalBaseSlots = boundedBaseSlots(
-        row?.physical_capacity,
-        profile.capacity,
-      );
+      const base = await baseCapacity(machine, profile);
+      const { row, effectiveBaseSlots, physicalBaseSlots } = base;
       const availableCapacity = getRoleCapacity({
         baseCapacity: effectiveBaseSlots,
         role,
