@@ -33,6 +33,8 @@ function sameDatabase(left, right) {
 }
 if (process.env.SMOKE_ALLOW_WRITE !== '1') deny('需 SMOKE_ALLOW_WRITE=1');
 rejectLibpqOverrides(process.env);
+if (['http_proxy', 'HTTP_PROXY', 'https_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY']
+  .some(key => process.env[key])) deny('代理可能改变 curl 实际目标，拒绝写入');
 try {
   const target = new URL(process.argv[2]);
   if (target.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(target.hostname)
