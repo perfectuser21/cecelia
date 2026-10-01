@@ -14,6 +14,8 @@
 
 Linux可信root bootstrap 使用Python3启动，内置官方Node24.21.0双架构归档digest并只取Node二进制，不依赖或替换宿主Node20；自动准备无补充组的nologin专用账号，随后交既有事务安装器落盘pending服务。固定本地Docker/systemd完整宿主、受保护profile/token/source及空slice先验，US/scheduler/零预算拒绝；stdin非阻塞读写共用deadline、异常路径保留未回收leader身份后清理专属进程组的有界命令/下载、持久flock与0600恢复回执，账号创建结果未知也不伪称回滚。失败保留安全账号，既有配置/units由安装器恢复，不改网络/daemon/旧业务cgroup。永久回归覆盖20项；官方arm64归档已在独立无网非root受限容器真执行Node版本并清理，尚非HK systemd现场验收。
 
+Linux受限脚本核心由root journal、独立30秒HMAC许可和固定Docker adapter组成，实际复用script-runner生命周期；profile/版本/grant/预约/worker boot/daemon身份先持久，所有create/start均再验许可与本机闸。创建回执未知永久占位，不以单次名称缺失签清理；旧grant撤销后只允许依据持久完整ID、标签和镜像核验清理。日志/资源限额固定，默认无网非root只读，不向服务账号开放Docker。当前仅核心模块和回归合同，尚未安装root桥或开放Linux执行。
+
 Linux 受管脚本事实证明入口复用完整宿主和父slice采集核心，但独立校验reservation/intent/generation、worker boot、目录version/grant、profile摘要、固定镜像及精确CPU/内存/swap/PID/日志配额。宿主boot与daemon须匹配可信绑定，所有容器操作均只读；原pool-canary的名称、标签前缀与用户限制保留。输出linux-script-proof/v1且execution=false，不兼容旧池验收schema，不产生执行许可。本片仅adapter证明零件，未接root执行桥/runner持久profile身份或HTTP启动，也未完成真实Linux canary。
 
 Linux 池 migration505 将 nonce 挑战、验收签名及 CAS 授权准备写入独立真表。内部 machines/linux-pool 路由只接受记录 ID 与 expected_version_id；完整期望及凭据绑定来自 CECELIA_LINUX_POOL_DEPLOYMENTS_FILE 指向的受保护部署登记文件和 1Password 同步凭据文件，默认未配置拒绝。验收绑定设备 UUID、固定 revision/config、host/worker boot、daemon、完整 slice 资源证明和精确清理；nonce 限时一次消费，历史不可改，同机器锁与预约共享。ready 仅建立 pending 版本与 managed_script/script 显式 profile 许可，容量为0，API execution=false；503 的 attested active 硬拒保留。US 稳定 UUID、scheduler 和零预算均拒绝。撤销即使部署配置或凭据不可用仍按持久身份执行；过期不得续期复活，历史清理定位保留。本片未部署或执行生产DDL，仍需可信bootstrap、Linux脚本adapter/真实执行清理、机器页调用及真实systemd池验收。
