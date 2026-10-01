@@ -215,3 +215,24 @@ test('内核凭据锁拒绝活进程竞争并在释放后可重新获取', async
     await release(); release = await acquireCredentialLock(path);
   } finally { if (release) await release(); await rm(home, { recursive: true, force: true }); }
 });
+
+test('接入父进程遭SIGKILL后内核锁自动释放', { timeout: 8000 }, async () => {
+  const { acquireCredentialLock } = await import('../node-onboarding-runner.mjs');
+  const home = await mkdtemp(join(tmpdir(), 'node-crash-lock-')); const path = join(home, 'owner.lock');
+  const source = `import { acquireCredentialLock } from ${JSON.stringify(new URL('../node-onboarding-runner.mjs', import.meta.url).href)}; await acquireCredentialLock(${JSON.stringify(path)}); process.stdout.write('READY\\n');`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', source], { stdio: ['ignore', 'pipe', 'ignore'] });
+  const closed = new Promise(resolve => child.once('close', resolve)); let release;
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('持锁测试进程未就绪')), 3000);
+      child.once('error', error => { clearTimeout(timer); reject(error); });
+      child.stdout.once('data', () => { clearTimeout(timer); resolve(); });
+    });
+    await assert.rejects(acquireCredentialLock(path));
+    child.kill('SIGKILL'); await closed;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try { release = await acquireCredentialLock(path); break; } catch { await new Promise(resolve => setTimeout(resolve, 50)); }
+    }
+    assert.equal(typeof release, 'function', '父进程死亡必须释放内核锁');
+  } finally { child.kill('SIGKILL'); await closed; if (release) await release(); await rm(home, { recursive: true, force: true }); }
+});

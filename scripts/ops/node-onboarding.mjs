@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isIP } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
-import { runCommand } from './node-onboarding-runner.mjs';
+import { runCommand, acquireCredentialLock } from './node-onboarding-runner.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ERRORS = {
@@ -71,7 +71,7 @@ function remoteInput(payload, source) {
 export async function onboard(input, dependencies = {}) {
   const runner = dependencies.runner || runCommand;
   let home = dependencies.home || homedir();
-  const steps = []; let stage = 'connect'; let directory; let locked = false;
+  const steps = []; let stage = 'connect'; let directory; let locked = false; let releaseLock;
   const controller = new AbortController();
   const totalTimeoutMs = Math.min(175000, dependencies.totalTimeoutMs || 175000);
   const deadline = Date.now() + totalTimeoutMs;
@@ -106,8 +106,12 @@ export async function onboard(input, dependencies = {}) {
     await privateDirectory(join(home, '.credentials'));
     const root = await privateDirectory(join(home, '.credentials/cecelia-onboarding'));
     directory = join(root, request.id);
-    // 并发安装同一身份时拒绝进入，避免互相覆盖凭据。
-    try { await mkdir(directory, { mode: 0o700 }); locked = true; } catch { fail('CREDENTIAL_FAILED'); }
+    // flock保证跨进程互斥；持锁后可安全回收SIGKILL或重启留下的密钥。
+    try {
+      releaseLock = await acquireCredentialLock(join(root, request.id + '.lock'), { signal: controller.signal, onLost: () => controller.abort() });
+      await rm(directory, { recursive: true, force: true });
+      await mkdir(directory, { mode: 0o700 }); locked = true;
+    } catch { fail('CREDENTIAL_FAILED'); }
     const key = join(directory, 'key'); const knownHosts = join(directory, 'known_hosts');
     try {
       const secret = await call('op', ['read', request.credential_ref], { timeoutMs: 15000 });
@@ -146,16 +150,25 @@ export async function onboard(input, dependencies = {}) {
       catch (error) { if (attempt === 5 || request.mode === 'sample') throw error; await sleep(2000); }
     }
     await sleep(10500);
-    const sample = await remote('sample');
-    const health = verifySample(sample, request, probe, first);
-    done(); return { ...receipt, verified: true, service: sample.service, health };
+    // collect本身可能耗时，持续轮询直到同一进程真正产生下一份样本。
+    for (let attempt = 0; attempt < 88; attempt++) {
+      const sample = await remote('sample');
+      const health = verifySample(sample, request, probe);
+      if (health.boot_id !== first.boot_id) fail('VERIFY_FAILED');
+      if (health.sequence > first.sequence && Date.parse(health.observed_at) > Date.parse(first.observed_at)) {
+        done(); return { ...receipt, verified: true, service: sample.service, health };
+      }
+      await sleep(2000);
+    }
+    fail('VERIFY_FAILED');
   } catch (error) {
     const error_code = controller.signal.aborted ? 'TIMEOUT' : (error.safeCode || ({ connect: 'CONNECT_FAILED', probe: 'PROBE_FAILED', install: 'INSTALL_FAILED', verify: 'VERIFY_FAILED' }[stage]));
     steps.push({ key: stage, label: labels[stage], status: 'failed' });
     return { ...receipt, error_code, error: ERRORS[error_code] };
   } finally {
     clearTimeout(timer); controller.abort(); process.removeListener('SIGTERM', stop); process.removeListener('SIGINT', stop);
-    if (locked) await rm(directory, { recursive: true, force: true });
+    try { if (locked) await rm(directory, { recursive: true, force: true }); }
+    finally { if (releaseLock) await releaseLock(); }
   }
 }
 
