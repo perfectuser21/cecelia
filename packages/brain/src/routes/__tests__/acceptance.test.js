@@ -31,6 +31,16 @@ const HEAD = {
   spec_sha: 'c'.repeat(64),
 };
 
+it('HTTP fixture 的监听地址与 Supertest 请求的 IPv4 地址一致', async () => {
+  const pool = { query: vi.fn(async () => ({ rows: [] })) };
+  const probe = request(await makeApp(pool)).get('/api/brain/acceptance/pending');
+  const address = probe.app.address();
+  const res = await probe;
+  expect(address.address).toBe('127.0.0.1');
+  expect(res.status).toBe(200);
+  expect(pool.query).toHaveBeenCalledTimes(1);
+});
+
 describe('POST /api/brain/acceptance/runs', () => {
   it('建新单：201，check_key 用调用方给的规程格号原样落库（不再生成流水号）', async () => {
     const inserted = [];
