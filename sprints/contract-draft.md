@@ -41,6 +41,7 @@ bash -n scripts/ops/install-tailscale-us-exit-enforcer.sh
 
 | Workstream | Test File | BEHAVIOR 覆盖 | 预期 Red 证据 |
 |---|---|---|---|
+| 根合同采集守卫 | `sprints/tests/root-contract.test.mjs` | `根合同登记通过且子Sprint孤儿仍被真实守卫拒绝` | 合入 main 的真实根/子合同采集守卫自测，不扩合同吸收子 Sprint 孤儿 |
 | 原生执行入口 | `sprints/tests/pf-identity-free.test.mjs` | `native entry executes immutable PF deadlock regression suite` | 子进程运行唯一永久回归，退出异常、无完整结果或源码 digest 变化拒绝 |
 
 原生入口冻结永久 Python 回归的 SHA-256 并实跑该文件，避免重复断言和合同外测试漂移。根因 failing-test 提交 b139eca8bd 永久保留在本 PR 历史，CI core-regression 运行同一 Python 文件。
