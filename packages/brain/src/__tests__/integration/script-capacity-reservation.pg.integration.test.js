@@ -62,3 +62,78 @@ describe('脚本与 Harness 共用机器预约', () => {
     await expect(pool.query('DELETE FROM tasks WHERE id=$1',[row.task_id])).rejects.toThrow();
   });
 });
+
+async function reservationStore() {
+  const { createScriptReservationStore } = await import('../../orchestrator/script-reservation-store.js');
+  return createScriptReservationStore(pool);
+}
+async function scriptInput() {
+  const taskId = randomUUID();
+  await pool.query("INSERT INTO tasks(id,status) VALUES($1,'queued')", [taskId]);
+  return { taskId, machineId: machine, ownerKey: `script-${taskId}-a1`, configDigest: 'b'.repeat(64), capacitySnapshot: snapshot() };
+}
+function cleanupReceipt(row, extras = {}) {
+  return { authenticated: true, receipt: { status: 'cleaned', absent: true, tombstoned: true,
+    reservation_id: row.id, machine_id: row.machine_id, owner_key: row.owner_key,
+    launch_generation: row.launch_generation, intent_id: row.intent_id,
+    worker_id: row.worker_id, worker_boot_id: row.worker_boot_id, container_id: row.container_id,
+    challenge: row.cleanup_challenge, ...extras } };
+}
+describe('脚本预约权威状态机', () => {
+  it('脚本与 Harness 并发只产生一方预约', async () => {
+    const store = await reservationStore();
+    const [s, h] = await Promise.all([scriptInput(), harnessInput()]);
+    const outcomes = await Promise.allSettled([store.reserve(s), harness.createAttempt(h)]);
+    const count = (await pool.query(`SELECT (SELECT count(*) FROM capacity_reservations)
+      + (SELECT count(*) FROM harness_attempts) AS n`)).rows[0].n;
+    expect(Number(count)).toBe(1);
+    expect(outcomes.some((x) => x.status === 'fulfilled')).toBe(true);
+  });
+  it('相同 owner 并发幂等；config 改变拒绝，即使快照已过期', async () => {
+    const store = await reservationStore(); const value = await scriptInput();
+    const outcomes = await Promise.all([store.reserve(value),store.reserve(value)]);
+    expect(outcomes[0].reservation.id).toBe(outcomes[1].reservation.id);
+    await expect(store.reserve({ ...value, capacitySnapshot: null })).resolves.toMatchObject({ outcome:'reserved' });
+    await expect(store.reserve({ ...value, configDigest: 'c'.repeat(64) })).rejects.toThrow('configuration_conflict');
+  });
+  it('已有 Harness 或 pending cleanup 时脚本等待；缺失、过期和零快照拒绝', async () => {
+    const store = await reservationStore(); const value = await scriptInput();
+    await harness.createAttempt(await harnessInput());
+    await expect(store.reserve(value)).resolves.toMatchObject({ outcome:'wait' });
+    await pool.query("UPDATE harness_attempts SET status='failed' RETURNING id");
+    for (const capacitySnapshot of [null,{ ...snapshot(),expires_at:0 },
+      { ...snapshot(), capacity:{ ...snapshot().capacity,effective_base_slots:0 } }]) {
+      await expect(store.reserve({ ...value,capacitySnapshot })).resolves.toMatchObject({ outcome:'wait' });
+    }
+  });
+  it('cleanup lease 过期和任务取消仍占用，错误 generation/challenge/auth 无法释放', async () => {
+    const store = await reservationStore(); const value = await scriptInput();
+    let { reservation: row } = await store.reserve(value);
+    row = await store.markLaunching(row.id, { worker_id:'worker',worker_boot_id:'boot' });
+    row = await store.markRunning(row.id, { worker_id:'worker',worker_boot_id:'boot',container_id:'d'.repeat(64) });
+    await pool.query("UPDATE tasks SET status='cancelled' WHERE id=$1",[row.task_id]);
+    const claim = await store.claimCleanup(row.id,'reaper',60_000);
+    await expect(store.confirmCleanup(claim,cleanupReceipt(claim,{ launch_generation:2 }))).rejects.toThrow('cleanup_receipt_mismatch');
+    await expect(store.confirmCleanup(claim,cleanupReceipt(claim,{ challenge:randomUUID() }))).rejects.toThrow('cleanup_receipt_mismatch');
+    await expect(store.confirmCleanup(claim,{ ...cleanupReceipt(claim),authenticated:false })).rejects.toThrow('cleanup_receipt_unverified');
+    await pool.query("UPDATE capacity_reservations SET cleanup_claim_expires_at=NOW()-INTERVAL '1 second' WHERE id=$1",[row.id]);
+    await expect(harness.createAttempt(await harnessInput())).rejects.toThrow('capacity_contended');
+    const newer = await store.claimCleanup(row.id,'reaper2',60_000);
+    await expect(store.confirmCleanup(claim,cleanupReceipt(claim))).rejects.toThrow('cleanup_claim_stale');
+    await expect(store.confirmCleanup(newer,cleanupReceipt(newer))).resolves.toMatchObject({ status:'released' });
+    await expect(harness.createAttempt(await harnessInput())).resolves.toMatchObject({ status:'queued' });
+    await expect(pool.query("UPDATE capacity_reservations SET status='reserved',released_at=NULL WHERE id=$1",[row.id])).rejects.toThrow('released_terminal');
+  });
+  it('不可换容器或重绑 launch generation；released owner 不可重新启动', async () => {
+    const store = await reservationStore(); const value = await scriptInput();
+    const { reservation: row } = await store.reserve(value);
+    await store.markLaunching(row.id,{ worker_id:'worker',worker_boot_id:'boot' });
+    await store.markRunning(row.id,{ worker_id:'worker',worker_boot_id:'boot',container_id:'d'.repeat(64) });
+    await expect(store.markRunning(row.id,{ worker_id:'worker',worker_boot_id:'boot',container_id:'e'.repeat(64) })).rejects.toThrow();
+    await expect(pool.query('UPDATE capacity_reservations SET launch_generation=2 WHERE id=$1',[row.id])).rejects.toThrow('identity_immutable');
+    const claim = await store.claimCleanup(row.id,'reaper',60_000);
+    await store.confirmCleanup(claim,cleanupReceipt(claim));
+    await expect(store.markLaunching(row.id,{ worker_id:'worker',worker_boot_id:'boot' })).rejects.toThrow();
+    await expect(store.reserve(value)).resolves.toMatchObject({ outcome:'released' });
+  });
+});
