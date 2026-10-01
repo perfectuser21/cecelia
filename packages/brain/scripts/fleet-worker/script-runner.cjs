@@ -105,7 +105,7 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
       exit_code:container.exit_code,timed_out:state.timed_out===true};
   }
   function schedule(state) {
-    if(state.tombstoned || state.terminal || timers.has(state.reservation_id))return;
+    if(state.tombstoned || state.terminal || state.status==='waiting_resources' || !state.started_at || timers.has(state.reservation_id))return;
     const timer=setTimeout(async()=>{
       timers.delete(state.reservation_id);
       try {
@@ -120,7 +120,7 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
           current.status='cleaned';save(current);
         });
       } catch { /* journal 持续占用，由下一次认证 inspect/cancel 完成确认。 */ }
-    },Math.max(1,state.created_at+state.timeout_sec*1000-Date.now()));
+    },Math.max(1,state.started_at+state.timeout_sec*1000-Date.now()));
     timer.unref?.();timers.set(state.reservation_id,timer);
   }
   for(const name of fs.readdirSync(root)) {
@@ -154,7 +154,7 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
           env:input.job.env,identity:{reservation_id:state.reservation_id,intent_id:state.intent_id,launch_generation:state.launch_generation}});
         save(state); // exact ID 持久化后才可 start；重复请求只 inspect。
         if(!await admit())return state;
-        state.status='starting';save(state);
+        state.status='starting';state.started_at=Date.now();save(state);
         await docker.start(state.container_id);
         state.status='running';save(state);schedule(state);
         return observe(state);
@@ -164,7 +164,7 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
       return locked(input,async(state)=>{
         if(!state)throw new Error('script_intent_unknown');
         const result=await observe(state);
-        if(['created','running','restarting'].includes(result.status) && Date.now()>state.created_at+state.timeout_sec*1000) {
+        if(state.started_at && ['created','running','restarting'].includes(result.status) && Date.now()>state.started_at+state.timeout_sec*1000) {
           state.timed_out=true;save(state);
           return {...result,timed_out:true};
         }

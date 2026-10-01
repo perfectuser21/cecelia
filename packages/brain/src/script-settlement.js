@@ -64,10 +64,11 @@ export async function settleScriptRun(pool, row, parsed, { hostId, runId, reserv
         RETURNING id`,
       [row.id, JSON.stringify({ script_attempts: attempts, next_run_at: nextRunAt, script_run_id: null }),reservationId,runId],
     );
+    if (!requeued.rowCount) return 'skipped';
     await recordTaskEventSafe(pool, row.id, 'script_attempt_failed', {
       run_id: runId, exit: parsed.exit, timed_out: parsed.timedOut, will_retry: true, next_run_at: nextRunAt,
     });
-    return requeued.rowCount > 0 ? 'retried' : 'skipped';
+    return 'retried';
   }
 
   const firstErrLine = stderr.split('\n').map((l) => l.trim()).find(Boolean);
