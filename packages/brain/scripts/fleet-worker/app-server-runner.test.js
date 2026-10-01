@@ -165,3 +165,17 @@ it('runner输出分片完整JSONL才交付，不把凭据或错误正文写journ
   connection.kill();
  }finally{await new Promise(resolve=>setTimeout(resolve,20));f.cleanup();}
 });
+it('stdio错误未确认attach进程退出时不能开放第二连接', async () => {
+  const f = fixture(); try {
+    const input = f.input(); await f.runner.start(input);
+    let raw; const attach = f.docker.attach;
+    f.docker.attach = () => { raw = attach(); raw.kill = () => true; return raw; };
+    const stream = await f.runner.attach({ ...input, stream_id: randomUUID() });
+    stream.on('error', () => {});
+    raw.emit('error', new Error('untrusted child error'));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await expect(f.runner.attach({ ...input, stream_id: randomUUID() })).rejects.toThrow('appserver_stream_busy');
+    raw.emit('close', 1); await new Promise(resolve => setTimeout(resolve, 20));
+    expect(await f.runner.attach({ ...input, stream_id: randomUUID() })).toHaveProperty('stdin');
+  } finally { f.cleanup(); }
+});

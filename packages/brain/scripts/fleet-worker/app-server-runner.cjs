@@ -152,7 +152,8 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
             if (current?.stream_id === input.stream_id) { current.stream_status = 'closed'; save(current); }
           }).catch(() => {}); // 未确认状态继续阻挡新连接，不释放容器或 HOME。
         };
-        child.once('error', releaseStream);
+        // 错误只请求断流；确认 attach 进程退出后才允许下一条连接。
+        child.on('error', () => {});
         child.once('close', releaseStream);
         state.stream_status = 'attached'; save(state);
         return child;

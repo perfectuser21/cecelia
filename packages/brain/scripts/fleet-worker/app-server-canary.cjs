@@ -52,12 +52,13 @@ async function main() {
     await command(['volume', 'create', '--label', `cecelia.appserver.kind=${kind}`, '--label', `cecelia.appserver.key=${key}`,
       '--label', `cecelia.appserver.canary=${tag}`, name]); volumes.push(name);
   }
-  await command(['run', '--rm', `--name=cecelia-appserver-canary-init-${tag}`, `--label=cecelia.appserver.canary=${tag}`,
+  await command(['run', '--rm', `--name=cecelia-appserver-${tag}-g999999`, `--label=cecelia.appserver.canary=${tag}`,
     '--network=none', '--user=0:0', '--read-only', '--entrypoint=/bin/sh',
     `--mount=type=volume,src=${volumes[0]},dst=/home/runner`, `--mount=type=volume,src=${volumes[1]},dst=/workspace`,
     image, '-c', 'mkdir -p /home/runner/.codex && chown 1000:1000 /home/runner /home/runner/.codex /workspace']);
   for (let generation = 0; generation < 2; generation++) {
-    const identity = input(); const state = await runner.start(identity); generations.push({ identity, state });
+    const identity = input(), tracked = { identity, state: null }; generations.push(tracked);
+    const state = tracked.state = await runner.start(identity);
     assert.equal(state.status, 'running');
     const inspected = JSON.parse((await command(['inspect', state.container_id])).stdout)[0];
     assert.equal(inspected.HostConfig.Memory, profile.memoryBytes); assert.equal(inspected.HostConfig.MemorySwap, profile.memoryBytes);
@@ -76,15 +77,19 @@ async function main() {
     assert.equal(await docker.inspect(state.container_id), null);
     assert.equal(JSON.parse((await command(['volume', 'inspect', volumes[0]])).stdout)[0].Name, volumes[0]);
   }
-  console.log(JSON.stringify({ result: 'PASS', image, generations: 2, initialize: true, bounded_stdio: true,
+  console.log(JSON.stringify({ result: 'PASS', canary_id: tag, image, identities: generations.map(({ identity, state }) => ({
+    reservation_id: identity.reservation_id, intent_id: identity.intent_id, launch_generation: identity.launch_generation,
+    container_id: state.container_id })), generations: 2, initialize: true, bounded_stdio: true,
     resource_limits: true, home_preserved: true, host_mounts: 0, model_calls: 0 }));
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; }).finally(async () => {
   runner.close();
   for (const { identity, state } of generations) {
-    const existing = await docker.inspect(state.container_id).catch(() => null);
+    const existing = await docker.inspect(state?.container_id ?? `cecelia-appserver-${identity.reservation_id}-g${identity.launch_generation}`);
     if (existing && existing.labels['cecelia.appserver.reservation_id'] === identity.reservation_id) await docker.remove(existing.id);
   }
+  const initializer = await docker.inspect(`cecelia-appserver-${tag}-g999999`);
+  if (initializer?.labels['cecelia.appserver.canary'] === tag) await docker.remove(initializer.id);
   for (const name of volumes) {
     const resource = JSON.parse((await command(['volume', 'inspect', name])).stdout)[0];
     if (resource.Labels['cecelia.appserver.canary'] === tag) await command(['volume', 'rm', name]);

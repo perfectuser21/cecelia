@@ -9,6 +9,14 @@ fail() {
   exit 1
 }
 
+mode_of() {
+  case "$(uname -s)" in
+    Darwin) stat -f '%Lp' "$1" ;;
+    Linux) stat -c '%a' "$1" ;;
+    *) fail "unsupported operating system for mode assertion" ;;
+  esac
+}
+
 [[ -f "$INSTALLER" ]] || fail "missing install-fleet-worker.sh entrypoint"
 
 test_root="$(mktemp -d)"
@@ -848,8 +856,26 @@ installed_github_credential_envelope="$runtime_dir/github-credential-envelope.cj
 installed_access_helper="$runtime_dir/refresh-fleet-worker-docker-access.sh"
 installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.plist"
 [[ -f "$installed_plist" ]] || fail "--apply did not install the rendered plist"
+python3 - "$installed_plist" "$shared_tmpdir" <<'PYPLIST'
+import plistlib, sys
+with open(sys.argv[1], 'rb') as source:
+    value = plistlib.load(source)
+assert value['EnvironmentVariables']['TMPDIR'] == sys.argv[2], 'installed TMPDIR differs from preflight'
+assert '@@' not in str(value), 'unexpanded template'
+PYPLIST
+
 [[ -f "$installed_worker" && -f "$installed_probe" ]] \
   || fail "--apply did not install a stable Worker runtime"
+app_server_files=(app-server-profile.cjs app-server-docker.cjs app-server-stream.cjs app-server-runner.cjs)
+for module in "${app_server_files[@]}"; do
+  cmp -s "$SCRIPT_DIR/$module" "$runtime_dir/$module" \
+    || fail "--apply did not install exact $module bytes"
+  [[ "$(mode_of "$runtime_dir/$module")" == 644 ]] || fail "$module mode is not 644"
+done
+node - "$runtime_dir/app-server-runner.cjs" <<'NODE'
+const assert = require('node:assert/strict');
+assert.equal(typeof require(process.argv[2]).createAppServerRunner, 'function');
+NODE
 cmp -s "$SCRIPT_DIR/local-resource-admission.cjs" "$installed_local_admission" \
   || fail "--apply did not install exact local admission module bytes"
 cmp -s "$SCRIPT_DIR/../../config/fleet-node-profiles.json" "$installed_profile_registry" \
@@ -987,13 +1013,7 @@ run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null \
 [[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 4 ]] \
   || fail "repeat --apply duplicated an existing ACL"
 
-mode_of() {
-  case "$(uname -s)" in
-    Darwin) stat -f '%Lp' "$1" ;;
-    Linux) stat -c '%a' "$1" ;;
-    *) fail "unsupported operating system for mode assertion" ;;
-  esac
-}
+
 
 cp "$installed_plist" "$test_root/canonical-worker.plist"
 
@@ -1101,6 +1121,12 @@ assert_resource_placement_failure_rolled_back() {
   chmod 0640 "$installed_profile_registry"
   cp "$installed_local_admission" "$snapshot_dir/admission"
   cp "$installed_profile_registry" "$snapshot_dir/profiles"
+  local module
+  for module in "${app_server_files[@]}"; do
+    printf 'prior-%s-%s\n' "$filename" "$module" > "$runtime_dir/$module"
+    chmod 0600 "$runtime_dir/$module"
+    cp "$runtime_dir/$module" "$snapshot_dir/$module"
+  done
   rm -f "$FLEET_WORKER_MV_FAIL_ONCE"
   if failure_output="$(FLEET_WORKER_MV="$test_root/mv" \
     FLEET_WORKER_MV_FAIL_TARGET="$runtime_dir/$filename" \
@@ -1117,6 +1143,10 @@ assert_resource_placement_failure_rolled_back() {
   [[ "$(mode_of "$installed_local_admission")" == 600 \
     && "$(mode_of "$installed_profile_registry")" == 640 ]] \
     || fail "$filename placement rollback changed old resource file modes"
+  for module in "${app_server_files[@]}"; do
+    cmp -s "$snapshot_dir/$module" "$runtime_dir/$module" || fail "$filename changed old $module bytes"
+    [[ "$(mode_of "$runtime_dir/$module")" == 600 ]] || fail "$filename changed old $module mode"
+  done
   [[ "$(<"$launch_state")" == running ]] || fail "$filename rollback did not restore loaded service"
 }
 
@@ -1142,9 +1172,12 @@ assert_resource_first_install_rolled_back() (
   [[ ! -e "$fresh_runtime/local-resource-admission.cjs" \
     && ! -e "$fresh_runtime/fleet-node-profiles.json" ]] \
     || fail "first $filename rollback leaked newly installed resource files"
+  for module in "${app_server_files[@]}"; do
+    [[ ! -e "$fresh_runtime/$module" ]] || fail "first $filename rollback leaked $module"
+  done
 )
 
-for resource_file in fleet-node-profiles.json local-resource-admission.cjs; do
+for resource_file in fleet-node-profiles.json local-resource-admission.cjs "${app_server_files[@]}"; do
   assert_resource_placement_failure_rolled_back "$resource_file"
   assert_resource_first_install_rolled_back "$resource_file"
 done
