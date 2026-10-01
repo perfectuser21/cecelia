@@ -51,7 +51,7 @@ console.log(files.length + ' 个文件全部指向 capabilities_legacy ✓');
 
 echo "[vs-model-areas-kind-smoke] 3. 真库集成（可选）"
 if [[ "${DB_NAME:-}" =~ _(test|scratch)$ ]] && command -v pg_isready >/dev/null 2>&1 && pg_isready -q 2>/dev/null; then
-  npx vitest run src/__tests__/integration/migration-493-vs-model.pg.integration.test.js
+  POSTGRES_INTEGRATION=1 npx vitest run --config vitest.integration.config.js src/__tests__/integration/migration-493-vs-model.pg.integration.test.js
 else
   echo "skip 真库（DB_NAME 非 *_test/*_scratch 或 PG 不可达）"
 fi
