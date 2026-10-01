@@ -10,7 +10,9 @@
 
 
 
-**Brain 版本**: 1.353.24
+**Brain 版本**: 1.353.25
+
+Brain接入控制面固定SSH指纹、禁agent/转发/密码交互，只经stdin传镜像内Python程序与私有payload。root复用已有bootstrap和有界命令，先持久intent，安装回执丢失只核现场不重装；安装事实按独立root key回签nonce/intent/boot/daemon/镜像/pool，Brain验真后才可登记部署。runtime配置绑定当前boot，canary仅调用两条已安装固定CLI；传输secret所有退出路径清理。Brain镜像固定op2.32.1双架构归档SHA，不含凭据；arm64在无网只读Alpine容器实测版本通过。仍待持久阶段编排与机器页接线，未部署生产。
 
 接入控制面保守预算最多2核且不超过半机，内存保留至少2GiB/半机且池最多4GiB，独占槽1；首个受信shell profile无网、非root，观测过期或预算不足拒绝配置。独立256bit Worker/root凭据按机器UUID的CS标签查找，创建意图必须先提交，结果未知只找回不重复创建；先1Password读回再双写私有600文件，secret不进入参数或回执。控制面模块尚未接机器页编排、镜像op安装和生产部署。
 
