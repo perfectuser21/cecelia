@@ -469,5 +469,13 @@ class LeaseGuardTests(unittest.TestCase):
                 lease.reconcile_once(firewall, now=1002)
             self.assertEqual(calls, [])
 
+def load_tests(loader, tests, pattern):
+    spec = importlib.util.spec_from_file_location("pf_recovery_tests", Path(__file__).with_name("pf-recovery.test.py"))
+    recovery = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(recovery)
+    tests.addTests(loader.loadTestsFromModule(recovery))
+    return tests
+
+
 if __name__ == "__main__":
     unittest.main()
