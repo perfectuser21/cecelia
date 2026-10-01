@@ -1,3 +1,4 @@
+vi.mock('../app-server/controller.js',()=>({reconcileAppServers:vi.fn().mockResolvedValue([])}));
 vi.mock('../preview-cache-scheduler.js', () => ({ runPreviewCacheJanitor: vi.fn().mockResolvedValue({ status: 'disabled' }) }));
 import { runPreviewCacheJanitor } from '../preview-cache-scheduler.js';
 vi.mock('../projection/company-key-results.js', () => ({ runCompanyKrProjection: vi.fn(async () => ({ skipped: true })) }));

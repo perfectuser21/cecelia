@@ -455,7 +455,7 @@ describe('remote Bridge prepare', () => {
 
     expect(issue).toHaveBeenCalledOnce();
     expect(issue).toHaveBeenCalledWith({
-        repo:'perfectuser21/cecelia',provider:'codex',accountId:'team3',
+        repo:'perfectuser21/cecelia',provider:'codex',
       attemptId: 'attempt-1',
       accountId: 'team3',
       machineId: MACHINE,

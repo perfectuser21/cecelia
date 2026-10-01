@@ -71,14 +71,14 @@ export function createScriptReservationStore(pool,{executionDirectory=false}={})
     async markLaunching(id, identity) {
       if (!identity.worker_id || !identity.worker_boot_id) throw new Error('worker_identity_required');
       return rowUpdate(`UPDATE capacity_reservations SET status='launching',worker_id=$2,worker_boot_id=$3,updated_at=NOW()
-        WHERE id=$1 AND status IN ('reserved','launching') RETURNING *`, [id,identity.worker_id,identity.worker_boot_id]);
+        WHERE owner_kind='script' AND id=$1 AND status IN ('reserved','launching') RETURNING *`, [id,identity.worker_id,identity.worker_boot_id]);
     },
     async markRunning(id, identity) {
       if (!/^[a-f0-9]{64}$/.test(identity.container_id)) throw new Error('exact_container_id_required');
       return transaction(async (client) => {
         // reservation 行锁串行化确认执行与回队；运行事实优先于同代迟到的资源等待。
         const row=required((await client.query(`UPDATE capacity_reservations SET status=CASE WHEN status IN ('cleanup_pending','blocked') OR $5 THEN status ELSE 'running' END,container_id=$2,updated_at=NOW()
-          WHERE id=$1 AND status IN ('launching','running','cleanup_pending','blocked') AND worker_id=$3 AND worker_boot_id=$4 RETURNING *`,
+          WHERE owner_kind='script' AND id=$1 AND status IN ('launching','running','cleanup_pending','blocked') AND worker_id=$3 AND worker_boot_id=$4 RETURNING *`,
         [id,identity.container_id,identity.worker_id,identity.worker_boot_id,!['running','exited','restarting'].includes(identity.status)])).rows[0],'reservation_transition_rejected');
         if(['running','exited','restarting'].includes(identity.status)) {
           await client.query(`UPDATE tasks SET status='in_progress',updated_at=NOW()
@@ -90,7 +90,7 @@ export function createScriptReservationStore(pool,{executionDirectory=false}={})
     },
     async requeueWaiting(id, dispatchId) {
       return transaction(async (client) => {
-        const row=(await client.query('SELECT status,task_id,owner_key FROM capacity_reservations WHERE id=$1 FOR UPDATE',[id])).rows[0];
+        const row=(await client.query("SELECT status,task_id,owner_key FROM capacity_reservations WHERE owner_kind='script' AND id=$1 FOR UPDATE",[id])).rows[0];
         if(row?.status!=='launching')return false;
         const changed=await client.query(`UPDATE tasks SET status='queued',claimed_by=NULL,claimed_at=NULL,updated_at=NOW()
           WHERE id=$1 AND status='in_progress' AND payload->>'script_reservation_id'=$2
@@ -101,12 +101,12 @@ export function createScriptReservationStore(pool,{executionDirectory=false}={})
     },
     async recordUnknown(id, error) {
       return rowUpdate(`UPDATE capacity_reservations SET last_error=$2,updated_at=NOW()
-        WHERE id=$1 AND status <> 'released' RETURNING *`, [id,String(error).slice(0,500)]);
+        WHERE owner_kind='script' AND id=$1 AND status <> 'released' RETURNING *`, [id,String(error).slice(0,500)]);
     },
     async listOutstanding(limit = 100) {
       return (await pool.query(`SELECT r.*,t.status AS task_status FROM capacity_reservations r
-        LEFT JOIN tasks t ON t.id=r.task_id WHERE r.status <> 'released' OR (t.status IN ('queued','in_progress')
-          AND t.payload->>'script_run_id'=r.owner_key AND t.payload->>'script_reservation_id'=r.id::text)
+        LEFT JOIN tasks t ON t.id=r.task_id WHERE r.owner_kind='script' AND (r.status <> 'released' OR (t.status IN ('queued','in_progress')
+          AND t.payload->>'script_run_id'=r.owner_key AND t.payload->>'script_reservation_id'=r.id::text))
         ORDER BY r.updated_at LIMIT $1`, [limit])).rows;
     },
     async claimCleanup(id, owner, leaseMs) {
@@ -114,14 +114,14 @@ export function createScriptReservationStore(pool,{executionDirectory=false}={})
       return (await pool.query(`UPDATE capacity_reservations SET status='cleanup_pending',cleanup_claim_owner=$2,
         cleanup_claim_generation=cleanup_claim_generation+1,cleanup_challenge=$3,
         cleanup_claim_expires_at=clock_timestamp()+($4 * interval '1 millisecond'),updated_at=NOW()
-        WHERE id=$1 AND status <> 'released' AND
+        WHERE owner_kind='script' AND id=$1 AND status <> 'released' AND
           (cleanup_claim_expires_at IS NULL OR cleanup_claim_expires_at < clock_timestamp()) RETURNING *`,
       [id,owner,randomUUID(),leaseMs])).rows[0] ?? null;
     },
     async confirmCleanup(claim, verified) {
       if (verified?.authenticated !== true) throw new Error('cleanup_receipt_unverified');
       return transaction(async (client) => {
-        const row = required((await client.query('SELECT * FROM capacity_reservations WHERE id=$1 FOR UPDATE', [claim.id])).rows[0], 'reservation_missing');
+        const row = required((await client.query("SELECT * FROM capacity_reservations WHERE owner_kind='script' AND id=$1 FOR UPDATE", [claim.id])).rows[0], 'reservation_missing');
         if (row.status !== 'cleanup_pending' || row.cleanup_claim_owner !== claim.cleanup_claim_owner
           || row.cleanup_claim_generation !== claim.cleanup_claim_generation
           || new Date(row.cleanup_claim_expires_at).getTime() <= Date.now()) throw new Error('cleanup_claim_stale');
@@ -132,7 +132,7 @@ export function createScriptReservationStore(pool,{executionDirectory=false}={})
         if (receipt?.status !== 'cleaned' || receipt.absent !== true || receipt.tombstoned !== true
           || Object.entries(bindings).some(([key,value]) => receipt[key] !== value)) throw new Error('cleanup_receipt_mismatch');
         return (await client.query(`UPDATE capacity_reservations SET status='released',released_at=NOW(),
-          confirmed_receipt=$2::jsonb,updated_at=NOW() WHERE id=$1 RETURNING *`, [row.id,JSON.stringify(receipt)])).rows[0];
+          confirmed_receipt=$2::jsonb,updated_at=NOW() WHERE owner_kind='script' AND id=$1 RETURNING *`, [row.id,JSON.stringify(receipt)])).rows[0];
       });
     },
   });

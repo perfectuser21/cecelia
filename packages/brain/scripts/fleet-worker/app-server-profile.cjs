@@ -1,7 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const { createHash } = require('node:crypto');
-const KEYS = ['image', 'cpus', 'memoryBytes', 'pidsLimit', 'user', 'tmpBytes', 'network', 'homeKey', 'workspaceKey'];
+const KEYS = ['image', 'cpus', 'memoryBytes', 'pidsLimit', 'user', 'tmpBytes', 'network', 'homeKey', 'workspaceKey', 'authAccountId'];
 const HASH = /^[a-f0-9]{64}$/;
 
 function validateAppServerProfile(profile) {
@@ -13,6 +13,7 @@ function validateAppServerProfile(profile) {
       || !/^[1-9][0-9]*:[1-9][0-9]*$/.test(profile.user)
       || !Number.isSafeInteger(profile.tmpBytes) || profile.tmpBytes < 1048576 || profile.tmpBytes > profile.memoryBytes
       || (profile.network !== 'none' && !/^cecelia-appserver-[a-z0-9-]{1,40}$/.test(profile.network))
+      || (profile.authAccountId !== undefined && !/^[a-zA-Z0-9_-]{1,128}$/.test(profile.authAccountId))
       || !HASH.test(profile.homeKey) || !HASH.test(profile.workspaceKey)) {
     throw new Error('appserver_profile_invalid');
   }
@@ -46,4 +47,8 @@ function loadAppServerProfiles(filename) {
   } finally { fs.closeSync(fd); }
 }
 
-module.exports = { validateAppServerProfile, profileDigest, loadAppServerProfiles };
+function generationOwner(input) {
+  return `openclaw-${createHash('sha256').update(JSON.stringify([input.home_key,input.reservation_id,input.intent_id,input.launch_generation])).digest('hex')}`;
+}
+
+module.exports = { generationOwner, validateAppServerProfile, profileDigest, loadAppServerProfiles };

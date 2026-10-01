@@ -32,8 +32,8 @@ if(hit.length){console.error('含破坏性语句，违反纯加');process.exit(1
 # 2. DB 不变量（CI 无 DB 自动跳过）
 PGPASSWORD="${PGPASSWORD:-cecelia}"; export PGPASSWORD
 DB_HOST="${PGHOST:-localhost}"; DB_USER="${PGUSER:-cecelia}"; DB_NAME="${PGDATABASE:-cecelia}"
-q() { psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -tAc "$1" 2>/dev/null; }
-if psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1" >/dev/null 2>&1; then
+q() { psql -X -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -tAc "$1" 2>/dev/null; }
+if psql -X -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1" >/dev/null 2>&1; then
   echo "── DB 不变量 ──"
 
   unmapped=$(q "SELECT count(*) FROM tasks t WHERE t.task_type='harness_initiative' AND t.created_at < COALESCE((SELECT applied_at FROM schema_version WHERE version='300'), 'infinity'::timestamptz) AND NOT EXISTS (SELECT 1 FROM harness_initiative_migration_map m WHERE m.harness_task_id=t.id)")

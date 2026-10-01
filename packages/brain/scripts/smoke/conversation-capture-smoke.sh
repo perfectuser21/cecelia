@@ -5,6 +5,9 @@
 #          VALID_SOURCES/VALID_NATURES + scheduler-jobs.js 接线。
 # L3 真库：captures 表接受 source=conversation-claude 插入 + working_memory 可写扫描哨兵。
 set -uo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"   # packages/brain
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
@@ -83,15 +86,15 @@ console.log('scheduler-jobs.js 接线正确');
 echo "── L3 真库（psql）──"
 if ! command -v psql >/dev/null 2>&1; then
   echo "[smoke] L3 SKIP: psql 不可用（L1 静态已 PASS）"
-elif ! psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
+elif ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] L3 SKIP: DB 不可达（L1 静态已 PASS）"
 else
   # source=conversation-claude 真实可插入并回滚（不留痕）
-  psql "$DB" -tAc "BEGIN; INSERT INTO captures (content, source, dedupe_key) VALUES ('smoke-test', 'conversation-claude', 'smoke-conversation-capture-$$'); ROLLBACK;" >/dev/null 2>&1 \
+  psql -X "$DB" -tAc "BEGIN; INSERT INTO captures (content, source, dedupe_key) VALUES ('smoke-test', 'conversation-claude', 'smoke-conversation-capture-$$'); ROLLBACK;" >/dev/null 2>&1 \
     && ok "captures 表接受 source=conversation-claude 插入" \
     || fail "captures 表拒绝 source=conversation-claude 插入"
   # working_memory 表存在（哨兵落点）
-  WM=$(psql "$DB" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_name='working_memory'" 2>/dev/null)
+  WM=$(psql -X "$DB" -tAc "SELECT count(*) FROM information_schema.tables WHERE table_name='working_memory'" 2>/dev/null)
   [ "$WM" = "1" ] && ok "working_memory 表存在（扫描哨兵落点）" || fail "working_memory 表不存在"
 fi
 

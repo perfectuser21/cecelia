@@ -7,6 +7,9 @@
 #   3. 传输安全：runner 里没有 cmd / env 值明文（只有 base64）
 #   4. （可选）SCRIPT_SMOKE_DB_URL：真库里 script_run/script 可写（471/472 已应用）
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${SCRIPT_SMOKE_DB_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 cd "$(dirname "$0")/../.."
 
 echo "[script-executor-dispatch-smoke] 1. 接线检查"
@@ -66,9 +69,9 @@ try {
 
 if [ -n "${SCRIPT_SMOKE_DB_URL:-}" ]; then
   echo "[script-executor-dispatch-smoke] 4. 真库：script_run/script 可写"
-  ID=$(psql "$SCRIPT_SMOKE_DB_URL" -qAtc "INSERT INTO tasks (title, task_type, status, executor_kind, payload) VALUES ('script smoke '||gen_random_uuid(), 'script_run', 'cancelled', 'script', '{}'::jsonb) RETURNING id")
+  ID=$(psql -X "$SCRIPT_SMOKE_DB_URL" -qAtc "INSERT INTO tasks (title, task_type, status, executor_kind, payload) VALUES ('script smoke '||gen_random_uuid(), 'script_run', 'cancelled', 'script', '{}'::jsonb) RETURNING id")
   [ -n "$ID" ] || { echo "FAIL 真库写 script_run 失败"; exit 1; }
-  psql "$SCRIPT_SMOKE_DB_URL" -Atc "DELETE FROM tasks WHERE id = '$ID'" >/dev/null
+  psql -X "$SCRIPT_SMOKE_DB_URL" -Atc "DELETE FROM tasks WHERE id = '$ID'" >/dev/null
   echo "真库 script_run/script 可写 ✓"
 else
   echo "[script-executor-dispatch-smoke] 4. 跳过真库检查（未设 SCRIPT_SMOKE_DB_URL）"

@@ -426,7 +426,7 @@ const VALID_TASK_TYPES_FIX = ['dev', 'review', 'talk', 'data', 'qa', 'audit', 'r
 describe('task-type-registry：零行为变化', () => {
   for (const [name, expected] of Object.entries(FIX)) {
     it(`${name} 派生集合保持原类型并显式保护Janitor`, () => {
-      const added = ['CANCEL_EXEMPT_TYPES', 'PROTECTED_TASK_TYPES', 'ESCALATION_EXEMPT_TASK_TYPES'].includes(name) ? ['janitor'] : [];
+      const added = ['CANCEL_EXEMPT_TYPES', 'PROTECTED_TASK_TYPES', 'ESCALATION_EXEMPT_TASK_TYPES'].includes(name) ? ['janitor','app_server_run'] : name==='ANCHOR_EXEMPT_TASK_TYPES'?['app_server_run']:[];
       same(R[name].filter((t) => t !== NEW_TYPE && t !== NEW_TYPE_SCRIPT), [...expected, ...added]);
     });
   }
@@ -444,7 +444,7 @@ describe('task-type-registry：零行为变化', () => {
   it('TICK_DISPATCH_EXCLUDED 派生集合 == 替换前字面量 + project（PR3 放开第二道闸：qiumi_task 移出，project 留下）', () => {
     // script_run（棒 3）：PR A 期间在此名单里（执行体接线前不许被 tick 当普通任务派给 claude），
     // PR B 接线 script-executor 后移出——必须用不做剔除的严格相等钉住。
-    same(R.TICK_DISPATCH_EXCLUDED, [...TICK_DISPATCH_EXCLUDED_FIX, 'project', 'janitor']);
+    same(R.TICK_DISPATCH_EXCLUDED, [...TICK_DISPATCH_EXCLUDED_FIX, 'project', 'janitor','app_server_run']);
     expect(R.TICK_DISPATCH_EXCLUDED).not.toContain('script_run');
     expect(
       R.TICK_DISPATCH_EXCLUDED,
@@ -457,7 +457,7 @@ describe('task-type-registry：零行为变化', () => {
   });
 
   it('EXECUTOR_KIND_FOR_TASK_TYPE == 替换前 EXECUTOR_KIND_FOR 的 task_type 部分 + qiumi_task', () => {
-    expect(R.EXECUTOR_KIND_FOR_TASK_TYPE).toEqual({ ...FIX_EXECUTOR_KIND, qiumi_task: 'openclaw-agent', script_run: 'script', janitor: 'preview-janitor' });
+    expect(R.EXECUTOR_KIND_FOR_TASK_TYPE).toEqual({ ...FIX_EXECUTOR_KIND, qiumi_task: 'openclaw-agent', script_run: 'script', janitor: 'preview-janitor', app_server_run:'app-server-controller' });
   });
 
   it('qiumi_task 声明符合 spec 1.1（PR3：V 标签已开 + tick_dispatchable=true，第一道闸改由 QIUMI_DISPATCH_ENABLED 门控 headed_manual）', () => {
@@ -551,7 +551,7 @@ describe('task-type-registry：零行为变化', () => {
     const dbList = [...m[1].matchAll(/'([a-z0-9_-]+)'/g)].map((x) => x[1]);
     const added = readFileSync(join(HERE, '..', '..', '..', 'migrations', '502_preview_owned_cache_janitor.sql'), 'utf8');
     expect(added).toContain("('tasks_task_type_check','task_type','janitor')");
-    same(R.DB_WHITELISTED_TASK_TYPES, [...dbList, 'janitor']);
+    same(R.DB_WHITELISTED_TASK_TYPES, [...dbList, 'janitor','app_server_run']);
     expect(dbList).toContain('qiumi_task');
     expect(dbList).toContain('script_run');
   });

@@ -44,9 +44,13 @@ describe('orchestrator-chat memory unification (D1)', () => {
       generateMemoryStreamL1Async: vi.fn(),
     }));
 
-    vi.doMock('node:fs', () => ({
+    vi.doMock('node:fs', async () => {
+  const actual = await vi.importActual('node:fs');
+  const { preserveFleetConfigFs } = await import('./helpers/fleet-config-fs-fixture.js');
+  return preserveFleetConfigFs(actual, {
       readFileSync: vi.fn(() => JSON.stringify({ api_key: 'test-minimax-key' })),
-    }));
+    });
+});
 
     vi.doMock('node:os', () => ({
       homedir: vi.fn().mockReturnValue('/home/testuser'),

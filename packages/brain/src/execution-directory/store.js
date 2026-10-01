@@ -8,7 +8,7 @@ export async function transaction(pool,fn){
 }
 // 调用方持有同机预约锁；所有写入触发器也使用这个锁。
 export async function authorize(db,input,operation=a=>a){
- if(input.surface==='harness'&&(typeof input.repo!=='string'||!input.repo))throw Error('execution_repo_required');
+ if(['harness','app_server'].includes(input.surface)&&(typeof input.repo!=='string'||!input.repo))throw Error('execution_repo_required');
  return transaction(db,async c=>{
   const snapshot=directory.current();
   if(!snapshot||snapshot.version!==input.snapshotVersion)throw Error('execution_snapshot_unavailable');

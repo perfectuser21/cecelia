@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # 被动实例依赖显式迁移准备 schema，不准靠启动后台评估器建表。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 : "${DATABASE_URL:?DATABASE_URL must target test or scratch}"
-DATABASE_NAME="$(node -e 'process.stdout.write(decodeURIComponent(new URL(process.argv[1]).pathname.slice(1)))' "$DATABASE_URL")"
-[[ "$DATABASE_NAME" =~ (_test|_scratch)$ ]] || { echo '拒绝连接非测试库'; exit 1; }
 MIGRATION="$ROOT_DIR/packages/brain/migrations/500_alertness_schema.sql"
 [[ -f "$MIGRATION" ]] || { echo 'FAIL: alertness schema migration missing'; exit 1; }
 SQL_FILE="$(mktemp)"

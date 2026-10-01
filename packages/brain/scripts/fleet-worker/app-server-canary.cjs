@@ -9,9 +9,9 @@ const { promisify } = require('node:util');
 const { randomUUID, createHash } = require('node:crypto');
 const { createAppServerDocker } = require('./app-server-docker.cjs');
 const { createAppServerRunner } = require('./app-server-runner.cjs');
-const { profileDigest } = require('./app-server-profile.cjs');
+const { profileDigest, generationOwner } = require('./app-server-profile.cjs');
 const run = promisify(execFile);
-const image = process.env.APP_SERVER_CANARY_IMAGE || 'sha256:aeaf290525a623a2182fdce5376ca914e9de2d0b1bab0ba18d7d07b9ea379033';
+const image = process.env.APP_SERVER_CANARY_IMAGE || 'sha256:97529d0c8b2197ea8a4b9c7bd8082c21c616d05e59e1946f556579f6f6523777';
 const tag = randomUUID(), hash = value => createHash('sha256').update(value).digest('hex');
 const profile = { image, cpus: 1, memoryBytes: 536870912, pidsLimit: 64, user: '1000:1000', tmpBytes: 33554432,
   network: 'none', homeKey: hash(`${tag}:home`), workspaceKey: hash(`${tag}:workspace`) };
@@ -22,9 +22,9 @@ const generations = [], volumes = [];
 const command = args => run('docker', args, { encoding: 'utf8', timeout: 30000, maxBuffer: 1048576 });
 const runner = createAppServerRunner({ stateRoot: root, machineId, workerId, bootId, profiles: { canary: profile }, docker,
   assertLocalResources: async () => {} }); // 本机准入拒绝由单测覆盖；canary固定低配额隔离资源。
-const input = () => ({ reservation_id: randomUUID(), intent_id: randomUUID(), launch_generation: 1,
-  machine_id: machineId, worker_id: workerId, worker_boot_id: bootId, owner_key: `openclaw-${profile.homeKey}`,
-  profile: 'canary', config_digest: profileDigest(profile) });
+const input = () => {const value=({ reservation_id: randomUUID(), intent_id: randomUUID(), launch_generation: 1,
+  machine_id: machineId, worker_id: workerId, worker_boot_id: bootId, home_key: profile.homeKey,
+  profile: 'canary', config_digest: profileDigest(profile) });return {...value,owner_key:generationOwner(value)};};
 async function initialize(identity) {
   const stream = await runner.attach({ ...identity, stream_id: randomUUID() });
   const response = new Promise((resolve, reject) => {

@@ -13,7 +13,8 @@ it('F1造完真验：专用容器取消墓碑跨重启禁止迟到启动；默�
     homeKey: 'b'.repeat(64), workspaceKey: 'c'.repeat(64) };
   const identity = { reservation_id: randomUUID(), intent_id: randomUUID(), launch_generation: 1,
     machine_id: 'gp-node', worker_id: 'gp-worker', worker_boot_id: randomUUID(),
-    profile: 'canary', owner_key: `openclaw-${profile.homeKey}`, config_digest: profileModule.profileDigest(profile) };
+    profile: 'canary', home_key: profile.homeKey, config_digest: profileModule.profileDigest(profile) };
+  identity.owner_key=profileModule.generationOwner(identity);
   let creates = 0;
   const config = { stateRoot: root, machineId: identity.machine_id, workerId: identity.worker_id,
     bootId: identity.worker_boot_id, assertLocalResources: async () => {},
@@ -29,4 +30,24 @@ it('F1造完真验：专用容器取消墓碑跨重启禁止迟到启动；默�
     await expect(restarted.start(identity)).rejects.toThrow('appserver_launch_tombstoned');
     expect(creates).toBe(0);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+it('F1受管实例：默认HOME配置与普通任务入口都不能制造app-server执行许可',async()=>{
+ const [{createAppServerController},{routeWork},{APP_SERVER_AUTHORITY},{TICK_DISPATCH_EXCLUDED}]=await Promise.all([
+  import('../../../packages/brain/src/app-server/controller.js'),import('../../../packages/brain/src/work-router.js'),
+  import('../../../packages/brain/src/app-server/task-authority.js'),import('../../../packages/brain/src/lib/task-type-registry.js')]);
+ let queries=0;const pool={query:async()=>{queries++;throw Error('unexpected database');}};
+ await expect(createAppServerController({pool,env:{}}).ensure({home_id:'chat-test',request_key:randomUUID()})).rejects.toThrow('appserver_home_unconfigured');expect(queries).toBe(0);
+ const request={source:'scheduler',source_id:'gp',title:'受管实例',requested_task_type:'app_server_run',declared_domain:'operations',mutation_intent:'write',metadata:{policy:'app-server-exclusive-v1'},task:{executor_kind:'app-server-controller'}};
+ expect(()=>routeWork(request,[])).toThrow('appserver_task_authority_required');
+ expect(routeWork(request,[],{appServerAuthority:APP_SERVER_AUTHORITY}).canonical_task_type).toBe('app_server_run');
+ expect(TICK_DISPATCH_EXCLUDED).toContain('app_server_run');
+});
+
+it('F1聊天执行隔离：旧thread宿主exec被拒，进行中的turn仍可立即interrupt',async()=>{
+ const {default:rpc}=await import('../../../packages/brain/scripts/fleet-worker/app-server-rpc.cjs');const policy=rpc.createRpcPolicy();
+ expect(policy.client({id:1,method:'turn/start',params:{threadId:'t',input:[]}}).forward).toBeTruthy();
+ expect(policy.server({id:'legacy',method:'item/tool/call',params:{tool:'exec',arguments:{},threadId:'t',turnId:'u',callId:'c'}}).reply.error.message).toBe('appserver_host_tool_denied');
+ expect(policy.client({id:2,method:'turn/interrupt',params:{threadId:'t',turnId:'u'}}).forward).toBeTruthy();
+ expect(policy.close().uncertain).toBe(true);
 });

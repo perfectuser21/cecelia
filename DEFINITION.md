@@ -10,20 +10,34 @@
 
 
 
-**Brain 版本**: 1.353.13
 
 Linux 执行池部署合同使用独立 systemd slice 的 CPU/内存/PID 限额；仅可信私有配置指定固定 Docker socket、固定池名和镜像 digest。零预算保持不可执行，US 调度节点按稳定设备 UUID 禁止执行。此合同与单元生成器尚未接入服务安装或目录授权，不能将生成配置当作通过验收。
 
 Linux 池证明采集器限定可信 SSH/root 验收入口和完整 systemd 宿主/VM，容器内 systemd 保守拒绝；核对固定 Docker socket 的完整容器身份、镜像、非 root 隔离参数、宿主 PID 的真实父 slice，再读取该池及可见祖先的 CPU/内存/PID 限额和可用量。宿主 boot、进程出生时间、namespace、挂载与池配置在采集前后复验；输出仍 execution=false，尚不代表签名回执、清理确认或目录授权完成。
 
 Linux pending 服务提供只读健康采样与认证 nonce 身份回执，绑定设备 UUID、固定修订、配置摘要和进程 boot；核心资源及所有执行入口保持拒绝，采样器自报状态不能授予执行。采样合并并发、请求有界，令牌只读私有安装文件；systemd 采集服务自身另限0.25核/256MiB/64进程，与任务池分离。尚未安装到现网。
+**Brain 版本**: 1.354.13
+
+OpenClaw RPC 按固定合同区分无参数与对象参数；配置约束读取和退出登录保留 null，显式 null 不再冒充对象。
+
+聊天 app-server 与三类 Worker 执行器共用维护启动闸及同 boot；真实 create/start/attach 边界再次检查，维护回执包含聊天未清理实例和在途连接，未知 journal 拒签静默。
+
+Brain 镜像完整打包 Fleet Worker 共用运行模块；构建期及独立产物回归实际导入执行目录并读取部署策略。
+
+执行目录的既有回归显式登记测试设备与授权；文件系统替身保留真实节点策略读取，数据库权限及恢复断言继续使用真实 PostgreSQL。
+
+Worker维护暂停在本机三类runner与Docker最终副作用前执行；认证静默回执绑定nonce、同boot和活动版本，客户端断开不减在途计数，orchestrator真实子进程退出才归零。启动对账未确认或prepare潜在副作用后失败均拒签；候选工作区只保守占位，不自动清理。
+
+Mac Worker 版本探针只读固定 OrbStack bundle 的 CFBundleShortVersionString；不运行会初始化管理员目录的 orbctl version。Docker、镜像、自检容器与资源准入仍分别真实检查，版本不可读继续报 unavailable。
 
 Linux 首批资源观测提供 cgroup v1/v2 可见祖先、分数 CPU、内存剩余、PSI、事件计数与关键路径磁盘采样。Linux health 早返回，不执行 Mac 命令或创建探测容器；CPU/内存限额观测代表采样进程自身 cgroup；PSI 来自 /proc/pressure，逐项固定 scope=system，仅表示可见系统压力，不能当作任务池压力或宿主授权证明。namespace 根不证明宿主祖先可见。未验证 Docker 工作负载池时核心资源保持拒绝值，execution/pool_verified 固定 false；GPU 未核验标 unknown。标准 Mac 安装器完整打包解析器并可回滚。真实隔离容器 canary 验证0.5核/128MiB实际限额，仅证明自身观测，不开放 Linux 执行、systemd 接入或目录授权。
 
 
 CI趋势集成测试将北京自然日与滚动24小时设备窗口独立布置，覆盖陈旧、近期成功和无任务设备；生产巡检阈值不变。
 
-专用 app-server runner 首批提供受限 generation 容器、HOME 单写 journal、精确 ID 取消墓碑及双向有界 JSONL；只有 attach 进程确认退出才释放流占位；关闭事件在同一预约锁内重放，不能因锁争用丢失。Worker 重启后旧等待资源意图不可重新启动，旧身份仍可清理。标准安装器事务打包四模块，默认 profiles 为空，尚未接生产 start、Brain 预算或 OpenClaw RPC adapter，现网 OpenClaw 尚未由此治理。
+专用 app-server runner 首批提供受限 generation 容器、HOME 单写 journal、精确 ID 取消墓碑及双向有界 JSONL；只有 attach 进程确认退出才释放流占位；关闭事件在同一预约锁内重放，不能因锁争用丢失。Worker 重启后旧等待资源意图不可重新启动，旧身份仍可清理。标准安装器事务打包 runner 与 RPC 所需模块，默认 profiles 为空，本次已接 Brain 持久整机预约与认证 Worker start/inspect/cancel，默认没有 app_server grant 或 HOME/profile 配置；已提供受控 OpenClaw RPC adapter，现网配置未切换，聊天尚未由此治理。
+
+OpenClaw controller 使用独立 app_server 执行面、owner_kind 与 app_server_run 事件账，普通派发器不重派。受保护 HOME 配置绑定账号/仓库/profile digest；首次 M1/M4 优先、MMV 兜底，首次预约后机器亲和不可变。同 HOME 先取写锁，再取与 Harness/script 相同机器预算锁；每代独立 owner_key/intent/reservation，整机 exclusive_unclassified 占位。脚本 reaper 所有读写只处理 script owner。Worker HTTP 响应按块累计，超过 128KiB 立即取消读取并中止网络，响应体读取也受 deadline 约束；超时和断链只返回固定错误。内部 API 必须配置认证 token，客户端不能指定机器、身份、授权或配额；最终 start 再核当前目录精确 grant，撤销及换版拒绝启动。inspect/cancel 使用持久历史版本 endpoint；取消意图先落库，精确认证墓碑/缺失回执才释放，任务/turn/TTL 终态不释放。reconciler 只探查和续完已请求取消，不自动另起实例；旧 boot 且 journal 缺失时拒绝制造清理回执。
 
 受信 app-server profile 固定镜像 digest、非 root UID/GID、CPU/内存/PID/tmpfs 配额、显式隔离网络和两个受标签验证的 named volume；禁止宿主 HOME、凭据与 socket 挂载。HOME 卷须由受控初始化预建 `/home/runner/.codex` 并赋予 profile 用户写权限；runner 不创建或删除持久卷。真实离线 canary 经 runner 两次独立运行实例（不同 reservation，各 launch_generation=1）initialize 与共享 HOME marker 保留，不代表模型登录或线程恢复验证。日志驱动为 none；stdio 内容不进 journal，错误仅固定码。操作锁及未确认流/容器状态持续占位，后续控制面负责恢复。
 
@@ -31,6 +45,12 @@ Janitor 新动作的CI冒烟使用十类执行者精确名单、471叠加502合�
 
 
 Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增量；healthz 只隔离真实依赖，不污染机群配置读取。
+
+## Brain 1.354.2 — 本地smoke生产写入护栏（原任务617259ae）
+
+- 默认拒绝真实写入；显式授权仍须验证本地Docker daemon、隔离容器、实际连接及健康身份，生产代理与未知目标保守拒绝。
+- 63个SQL候选逐项登记55写与8只读，Node PG和下游连接按实际优先级核验；curl与psql禁读启动配置，保留真实本机边界回归。
+- Map Manifest真实PG正例归专属测试Brain；Walking棘轮明确委托已合入的required owner，不执行且不冒充通过；保留全部主线业务与验收。
 
 ## Brain 1.352.2 — preview 专属缓存受控回收
 
@@ -40,7 +60,7 @@ Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增�
 
 受管脚本准入仅写 blocked/queued，终态写入者守卫已登记。
 
-## Brain 1.353.6 — Harness 单任务容器硬限（12338dda）
+## Brain 1.353.10 — Harness 单任务容器硬限（12338dda）
 
 - Brain 角色预约与 Worker cgroups 共用 attempt-resource-policy：每基础槽 0.5 CPU、1 GiB、128 PID；轻档权重1、proposer权重2、generator/evaluator/judge权重4。fleet资源缓存物理槽由相同1GiB/.5CPU需求估算，替换原400MiB粗估；既有7/8/8上限不变，节点profile的最低6CPU/8GiB不当总预算。
 - 每个实际 Docker create/run 设置 CPU、内存、memory-swap和PID上限，memory-swap等于memory禁额外swap。Postgres固定占同一attempt总额中的0.25CPU/256MiB/32PID，runner扣减；轻档含PG时runner为0.25CPU/768MiB/96PID，不额外借预算。
@@ -92,6 +112,16 @@ cleanup_pending / blocked 预约继续清理；通信未知保留占位。预算
 Worker 标准升级在预检前读取可信现役 plist 快照，保留既有地址、端口、令牌引用、路径与完整环境；预检和启动健康使用同一有效配置，私有快照及安装 plist 为0600，替换前复核旧配置指纹，失败保留事务回滚。
 
 机群统一资源预约与启动保护：Harness 按角色权重在同机事务锁内预约；资源未知、过期、并发不足均拒绝新增执行；未确认精确清理的执行继续占位。Worker 在 prepare/start 实际副作用前复验本机 CPU、内存与执行目录磁盘。安装保护保留 profile 至少10GiB可用余量和可信采样，高磁盘占用允许升级；新增受管 Harness 仍执行原85%磁盘压力门槛。
+
+## Brain 1.353.4 — Walking真实CI恢复验收（原任务617259ae）
+
+- Walking仅显式授权且实际checkpointer URI与安全测试目标一致才写；专用CI运行真实Docker、回调与PG正例，real-env RunAll 明确委托而不冒充通过。
+- 狭窄CI重启控制以每进程随机令牌为屏障；回调有界重试，真实PG interrupt跨同容器重启恢复，同线程完成事件恰一次，总预算260秒。
+- 生产默认回调地址与通用callback幂等策略保持；生产或未知重启控制在checkpoint或Docker前拒绝，无通用执行权限扩展。
+
+## Brain 1.353.2 — 公司经营KR分析数据与执行指令分离
+
+公司分析任务仅以固定参数路由到专用分析员；完整KR快照在OpenClaw执行器构造提示时传入，避免指标名称和证据触发手机操作路由。既有手机判定与正式版本复验保持。
 
 ## Brain 1.352.1 — 公司经营KR人工正式值与AI独立建议
 

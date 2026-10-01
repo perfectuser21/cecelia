@@ -13,6 +13,11 @@
 # 退出码：0=PASS 或 SKIP，1=FAIL（卡死/超时/非预期终止）
 set -uo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
+
 SMOKE_NAME="harness-pipeline-lifecycle"
 log()  { echo "[smoke:$SMOKE_NAME] $*"; }
 fail() { log "FAIL — $*"; exit 1; }
@@ -33,7 +38,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 
 command -v curl >/dev/null 2>&1 || skip "curl 未安装"
 
-if ! curl -sf -m 5 "${BRAIN_URL}/api/brain/health" -o /dev/null 2>&1; then
+if ! curl -q -sf -m 5 "${BRAIN_URL}/api/brain/health" -o /dev/null 2>&1; then
   skip "Brain ${BRAIN_URL} 不健康"
 fi
 
@@ -48,7 +53,7 @@ log "前置 OK — Brain 健康, PRD 存在"
 
 log "创建 harness_initiative 任务 (sprint_dir=${SPRINT_DIR})..."
 
-TASK_JSON=$(curl -sf -m 10 -X POST "${BRAIN_URL}/api/brain/tasks" \
+TASK_JSON=$(curl -q -sf -m 10 -X POST "${BRAIN_URL}/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d "{
     \"task_type\": \"harness_initiative\",
@@ -80,7 +85,7 @@ CONSECUTIVE_ERRORS=0
 while true; do
   ELAPSED=$(( $(date +%s) - START_TIME ))
   if (( ELAPSED >= MAX_WAIT )); then
-    LAST_JSON=$(curl -sf -m 10 "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo '{}')
+    LAST_JSON=$(curl -q -sf -m 10 "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo '{}')
     if command -v jq >/dev/null 2>&1; then
       LAST_STATUS=$(echo "$LAST_JSON" | jq -r '.status // "unknown"')
     else
@@ -89,7 +94,7 @@ while true; do
     fail "超时（${MAX_WAIT}s），pipeline 疑似卡死。最后 status=${LAST_STATUS}, task_id=${TASK_ID}"
   fi
 
-  TASK_JSON=$(curl -sf -m 10 "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo "")
+  TASK_JSON=$(curl -q -sf -m 10 "${BRAIN_URL}/api/brain/tasks/${TASK_ID}" 2>/dev/null || echo "")
   if [[ -z "$TASK_JSON" ]]; then
     CONSECUTIVE_ERRORS=$(( CONSECUTIVE_ERRORS + 1 ))
     log "⚠ curl 失败 (${CONSECUTIVE_ERRORS}/5)，Brain 可能在重启..."

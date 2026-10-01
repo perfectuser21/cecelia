@@ -323,9 +323,10 @@ describe('Fleet Worker health-only service', () => {
       expect(args).toBeInstanceOf(Array);
       expect(options).toMatchObject({ shell: false });
       if (file === 'sw_vers') return { stdout: '15.5\n' };
-      if (file === 'orbctl') {
-        expect(options.env.HOME).toBe('/Users/orbstack-owner');
-        return { stdout: '{"version":"1.9.4"}' };
+      if (file === 'orbctl') throw new Error('panic: chmod administrator run: operation not permitted');
+      if (file === '/usr/libexec/PlistBuddy') {
+        expect(args).toEqual(['-c', 'Print :CFBundleShortVersionString', '/Applications/OrbStack.app/Contents/Info.plist']);
+        return { stdout: '1.9.4\n' };
       }
       if (file === 'docker' && args[0] === 'info') return { stdout: '{"ServerVersion":"27.5"}' };
       if (file === 'docker' && args[0] === 'image') return { stdout: JSON.stringify([`runner@${DIGEST}`]) };
@@ -425,9 +426,10 @@ describe('Fleet Worker health-only service', () => {
         postgres: { available: true, image_digest: POSTGRES_IMAGE },
       });
     }
+    expect(execFileFn.mock.calls.some(([file]) => file === 'orbctl')).toBe(false);
     const requiredCommands = [
       ['sw_vers', (args) => args.includes('-productVersion')],
-      ['orbctl', (args) => args.length === 1 && args[0] === 'version'],
+      ['/usr/libexec/PlistBuddy', (args) => args[0] === '-c' && args[1] === 'Print :CFBundleShortVersionString'],
       ['docker', (args) => args[0] === 'info'],
       ['docker', (args) => args[0] === 'image'
         && args[1] === 'inspect'

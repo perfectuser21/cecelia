@@ -1,7 +1,5 @@
 import { describe,it,expect } from 'vitest';
 import { createRequire } from 'node:module';
-import { EventEmitter } from 'node:events';
-import { PassThrough } from 'node:stream';
 const require=createRequire(import.meta.url);let api={};try{api=require('./app-server-docker.cjs');}catch(e){if(e.code!=='MODULE_NOT_FOUND')throw e;}
 const id='d'.repeat(64),key='b'.repeat(64),workspace='c'.repeat(64);
 const profile={image:'sha256:'+'a'.repeat(64),cpus:2,memoryBytes:1073741824,pidsLimit:128,user:'1000:1000',tmpBytes:67108864,network:'none',homeKey:key,workspaceKey:workspace};
@@ -31,9 +29,17 @@ describe('专用 app-server Docker 合同',()=>{
   const calls=[];const d=adapter({run:async(_cmd,args)=>{calls.push(args);return {stdout:''}}});
   await expect(d.remove(name)).rejects.toThrow('appserver_container_id_invalid');await d.remove(id);expect(calls).toEqual([['rm','--force',id]]);
  });
- it('attach提供分离流且不传播Docker CLI信号，stderr被丢弃',()=>{
-  const child=new EventEmitter();Object.assign(child,{stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough(),kill:()=>true});let args;
-  const d=adapter({spawn:(_cmd,a,opts)=>{args=a;expect(opts.stdio).toEqual(['pipe','pipe','ignore']);return child;}});
-  const stream=d.attach(id);expect(args).toEqual(['attach','--sig-proxy=false',id]);expect(stream).toBe(child);
+ it('attach使用明确context优先于DOCKER_HOST，拒绝远程端点且不spawn CLI',async()=>{
+  const calls=[];const d=adapter({env:{DOCKER_CONTEXT:'trusted',DOCKER_HOST:'unix:///ignored.sock'},run:async(cmd,args)=>{calls.push([cmd,args]);return {stdout:JSON.stringify([{Endpoints:{docker:{Host:'tcp://127.0.0.1:2375'}}}])};}});
+  await expect(d.attach(id)).rejects.toThrow('appserver_attach_endpoint_denied');
+  expect(calls).toEqual([['docker',['context','inspect','trusted']]]);
  });
+});
+it('聊天Docker最终create/start边界读取维护闸，清理保持可用',async()=>{
+ let drain=false;const calls=[];const d=adapter({assertCanLaunch:()=>{if(drain)throw Error('worker_draining');},run:async(cmd,args)=>{
+  calls.push(args);if(args[0]==='volume'){const result=await resources(cmd,args);drain=true;return result;}return {stdout:id};
+ }});
+ await expect(d.create({name,profile,identity:{reservation_id:'00000000-0000-4000-8000-000000000001',intent_id:'00000000-0000-4000-8000-000000000002',launch_generation:1}})).rejects.toThrow('worker_draining');
+ await expect(d.start(id)).rejects.toThrow('worker_draining');await d.remove(id);
+ expect(calls.some(a=>['create','start'].includes(a[0]))).toBe(false);expect(calls.at(-1)).toEqual(['rm','--force',id]);
 });

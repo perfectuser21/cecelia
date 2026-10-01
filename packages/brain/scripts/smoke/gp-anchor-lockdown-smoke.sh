@@ -14,6 +14,9 @@
 # 不覆盖：base_repo 不含 zenithjoy-workspace 的零回归路径——已由
 # packages/brain/src/__tests__/harness-orchestrator-lockdown.test.js SC-209 单测覆盖。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 EXECUTOR_FILE="packages/brain/src/executor.js"
 JUDGE_FILE="packages/brain/src/harness-judge.js"
@@ -50,7 +53,7 @@ console.log('[smoke] L1b PASS: runMechanicalGate 含 GP-Anchor 一致性核查�
 " || exit 1
 
 # ── L2 Brain health gate ───────────────────────────────────────────────
-if ! curl -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then
+if ! curl -q -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then
   echo "[smoke] L2 SKIP: Brain 不可达（$BRAIN）— L1 静态已 PASS，L3 跳过"
   exit 0
 fi
@@ -62,7 +65,7 @@ if ! command -v psql >/dev/null 2>&1; then
   exit 0
 fi
 
-if ! psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
+if ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] L3 SKIP: DB 连接失败（$DB 凭据/host 不对，CI env 缺 DATABASE_URL）；L1 静态已 PASS"
   exit 0
 fi
@@ -71,11 +74,11 @@ TID=$(uuidgen 2>/dev/null | tr 'A-Z' 'a-z' || node -e "console.log(require('cryp
 echo "[smoke] L3: task=${TID}, base_repo=zenithjoy-workspace, no gp_anchor"
 
 cleanup() {
-  psql "$DB" -tAc "DELETE FROM tasks WHERE id='$TID'::uuid" >/dev/null 2>&1 || true
+  psql -X "$DB" -tAc "DELETE FROM tasks WHERE id='$TID'::uuid" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-psql "$DB" -tAc "INSERT INTO tasks(id, title, status, task_type, priority, payload, created_at, updated_at) VALUES ('$TID'::uuid, '[smoke] gp-anchor lockdown', 'in_progress', 'harness_initiative', 'P2', '{\"orchestrator\":\"skill-relay\",\"base_repo\":\"https://github.com/perfectuser21/zenithjoy-workspace.git\"}'::jsonb, NOW(), NOW())" >/dev/null
+psql -X "$DB" -tAc "INSERT INTO tasks(id, title, status, task_type, priority, payload, created_at, updated_at) VALUES ('$TID'::uuid, '[smoke] gp-anchor lockdown', 'in_progress', 'harness_initiative', 'P2', '{\"orchestrator\":\"skill-relay\",\"base_repo\":\"https://github.com/perfectuser21/zenithjoy-workspace.git\"}'::jsonb, NOW(), NOW())" >/dev/null
 
 RESULT=$(node --input-type=module -e "
 import { runHarnessInitiativeRouter } from './packages/brain/src/executor.js';
@@ -99,8 +102,8 @@ if (r.error !== 'missing_gp_anchor') { console.error('L3 FAIL: 期望 error=miss
 console.log('[smoke] L3 PASS: base_repo含zenithjoy-workspace且无gp_anchor的harness_initiative被立即terminal failed');
 " "$RESULT" || exit 1
 
-STATUS=$(psql "$DB" -tAc "SELECT status FROM tasks WHERE id='$TID'::uuid")
-FAILURE_CLASS=$(psql "$DB" -tAc "SELECT custom_props->>'failure_class' FROM tasks WHERE id='$TID'::uuid")
+STATUS=$(psql -X "$DB" -tAc "SELECT status FROM tasks WHERE id='$TID'::uuid")
+FAILURE_CLASS=$(psql -X "$DB" -tAc "SELECT custom_props->>'failure_class' FROM tasks WHERE id='$TID'::uuid")
 
 if [[ "$STATUS" != "failed" ]]; then
   echo "[smoke] L3 FAIL: tasks.status='$STATUS' (期望 'failed')"

@@ -84,13 +84,13 @@ console.log('关键路径 ' + checks.length + ' 处全部经 hub ✓');
 
 echo "[task-terminal-relay-hub-smoke] 5. 真库列 + Brain 活着"
 DB_URL="${DATABASE_URL:-postgresql://${DB_USER:-cecelia}@${DB_HOST:-localhost}:${DB_PORT:-5432}/${DB_NAME:-cecelia_test}}"
-COLS=$(psql "$DB_URL" -At -c "SELECT count(*) FROM information_schema.columns WHERE table_name='tasks' AND column_name IN ('parent_task_id','sequence_no','result','claimed_by','completed_at')")
+COLS=$(psql -X "$DB_URL" -At -c "SELECT count(*) FROM information_schema.columns WHERE table_name='tasks' AND column_name IN ('parent_task_id','sequence_no','result','claimed_by','completed_at')")
 if [ "$COLS" != "5" ]; then echo "FAIL: tasks 接棒相关列不齐（$COLS/5）"; exit 1; fi
-RECEIPTS=$(psql "$DB_URL" -At -c "SELECT count(*) FROM information_schema.tables WHERE table_name='work_routing_receipts'")
+RECEIPTS=$(psql -X "$DB_URL" -At -c "SELECT count(*) FROM information_schema.tables WHERE table_name='work_routing_receipts'")
 if [ "$RECEIPTS" != "1" ]; then echo "FAIL: work_routing_receipts 表不存在（接棒子任务幂等依赖它）"; exit 1; fi
 echo "tasks 接棒列 5/5 + work_routing_receipts ✓"
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
-if ! curl -sf --max-time 10 "$BRAIN_URL/api/brain/health" | grep -q '"status"'; then echo "FAIL: Brain 健康端点不可达 $BRAIN_URL"; exit 1; fi
+if ! curl -q -sf --max-time 10 "$BRAIN_URL/api/brain/health" | grep -q '"status"'; then echo "FAIL: Brain 健康端点不可达 $BRAIN_URL"; exit 1; fi
 echo "Brain 健康 ✓"
 
 echo "[task-terminal-relay-hub-smoke] ✅ 全部通过"

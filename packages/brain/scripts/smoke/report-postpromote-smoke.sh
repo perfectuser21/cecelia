@@ -16,6 +16,9 @@
 # 该逻辑在死图 reportNode 里，随 orchestrator 硬校验失效，功能缺口已登记 issue 6de4fd22，
 # 不在本任务修复范围，不重建等价断言。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 SP="packages/brain/src/staging-promote.js"
 RUNNER="packages/brain/src/staging-e2e-runner.js"
@@ -57,27 +60,27 @@ if(!/promoted_by/.test(m) || !/ADD COLUMN/i.test(m)){console.error('L1 FAIL: 307
 console.log('[smoke] L1 PASS: 三态派发 + 幂等 + watchdog exact-run 生命周期闭合 + migration307 齐全');
 " || exit 1
 
-if ! curl -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then
+if ! curl -q -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then
   echo "[smoke] L2 SKIP: Brain 不可达（$BRAIN）— L1 静态已 PASS"; exit 0
 fi
 echo "[smoke] L2 PASS: Brain healthy"
 
-if ! command -v psql >/dev/null 2>&1 || ! psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
+if ! command -v psql >/dev/null 2>&1 || ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] L3 SKIP: psql/DB 不可用；L1 静态已 PASS"; exit 0
 fi
-HAS_COL=$(psql "$DB" -tAc "SELECT count(*) FROM information_schema.columns WHERE table_name='staging_e2e_results' AND column_name='promoted_by'")
+HAS_COL=$(psql -X "$DB" -tAc "SELECT count(*) FROM information_schema.columns WHERE table_name='staging_e2e_results' AND column_name='promoted_by'")
 if [[ "$HAS_COL" != "1" ]]; then
   echo "[smoke] L3 SKIP: promoted_by 列不存在（migration 307 未应用）；L1 静态已 PASS"; exit 0
 fi
 
 IID="smoke-s3-$$-$RANDOM"
-cleanup() { psql "$DB" -tAc "DELETE FROM tasks WHERE task_type='harness_report' AND payload->>'initiative_id'='$IID'" >/dev/null 2>&1 || true; }
+cleanup() { psql -X "$DB" -tAc "DELETE FROM tasks WHERE task_type='harness_report' AND payload->>'initiative_id'='$IID'" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 INS="INSERT INTO tasks (title, description, task_type, status, priority, payload) SELECT '[Harness Report] smoke','d','harness_report','queued','P2','{\"initiative_id\":\"$IID\"}'::jsonb WHERE NOT EXISTS (SELECT 1 FROM tasks WHERE task_type='harness_report' AND payload->>'initiative_id'='$IID')"
-psql "$DB" -tAc "$INS" >/dev/null
-psql "$DB" -tAc "$INS" >/dev/null   # 第二次同 initiative → 被挡
-N=$(psql "$DB" -tAc "SELECT count(*) FROM tasks WHERE task_type='harness_report' AND payload->>'initiative_id'='$IID'")
+psql -X "$DB" -tAc "$INS" >/dev/null
+psql -X "$DB" -tAc "$INS" >/dev/null   # 第二次同 initiative → 被挡
+N=$(psql -X "$DB" -tAc "SELECT count(*) FROM tasks WHERE task_type='harness_report' AND payload->>'initiative_id'='$IID'")
 if [[ "$N" != "1" ]]; then echo "[smoke] L3 FAIL: harness_report 幂等失效（同 initiative 行数=$N，期望 1）"; exit 1; fi
 
 echo "[smoke] L3 PASS: harness_report 按 initiative_id 幂等（重复 INSERT 被挡）+ promoted_by 列存在"
