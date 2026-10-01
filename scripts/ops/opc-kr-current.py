@@ -74,7 +74,7 @@ def cost_line_up():
 
 def company_items():
     snapshot = call(BRAIN + "/okr/company-key-results")
-    if snapshot.get("success") is not True or not isinstance(snapshot.get("items"), list):
+    if snapshot.get("success") is not True or not isinstance(snapshot.get("items"), list) or not snapshot["items"]:
         raise RuntimeError("公司 KR 快照读取失败")
     active, seen = {}, set()
     for item in snapshot["items"]:

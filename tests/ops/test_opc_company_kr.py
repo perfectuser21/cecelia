@@ -70,7 +70,6 @@ class Pipeline(unittest.TestCase):
     def test_real_objects_failure_records_task_without_observations(self):
         module = load("opc-kr-current")
         calls = []
-
         def call(url, body=None, method=None):
             calls.append((url, method, body))
             if url.endswith("/tasks"):
@@ -237,7 +236,6 @@ class Pipeline(unittest.TestCase):
         rows = company_rows()
         rows[5] = item(SOURCE_DOD, "名称无需KR编号", "1.234", 0.125)
         calls = []
-
         def call(url, body=None, method=None):
             calls.append(url)
             if urlsplit(url).hostname == "api.notion.com":
@@ -254,18 +252,18 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(renamed["areas"], [])
         self.assertTrue(all(urlsplit(url).hostname != "api.notion.com" for url in calls))
 
-    def test_empty_authoritative_snapshot_clears_inactive_company_rows(self):
+    def test_empty_snapshot_refuses_all_six_site_writes(self):
+        self.assert_invalid_snapshot_preserves_six_files([])
+
+    def test_all_inactive_snapshot_clears_old_display(self):
         module = load("opc-okr-sync")
-        calls = []
-
+        rows = [dict(row, active=False) for row in company_rows()]
         def call(url, body=None, method=None):
-            calls.append((url, method, body))
             if url.endswith("/tasks"):
-                return {"id": "empty-sync-task"}
+                return {"id": "inactive-sync-task"}
             if url.endswith("/company-key-results"):
-                return {"success": True, "items": []}
+                return {"success": True, "items": rows}
             return {"success": True, "status": body.get("status") if body else None}
-
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "clawd/OKR-CURRENT.md"
             target.parent.mkdir()
@@ -274,7 +272,6 @@ class Pipeline(unittest.TestCase):
                 module.main()
             self.assertNotIn("旧的已归档KR", target.read_text())
             self.assertIn("当前无活动公司 KR", target.read_text())
-            self.assertTrue(any(method == "PATCH" and body.get("status") == "completed" for _, method, body in calls))
 
     def test_unresolved_area_ids_refuse_to_misreport_departments(self):
         module = load("opc-okr-sync")
@@ -287,7 +284,6 @@ class Pipeline(unittest.TestCase):
     def assert_invalid_snapshot_preserves_six_files(self, rows):
         module = load("opc-okr-sync")
         calls = []
-
         def call(url, body=None, method=None):
             calls.append((url, method, body))
             if url.endswith("/company-key-results"):
@@ -347,11 +343,16 @@ class Pipeline(unittest.TestCase):
         module = load("opc-okr-sync")
         with patch.object(module, "call", return_value={"success": True, "items": rows}):
             self.assertEqual(len(module.fetch()), 4)
-        for live in [[], [dict(item(SOURCE_DOD, "已暂停"), active=False)], [dict(item(SOURCE_COST, "归档"), status="archived")]]:
+        for live in [[item("f6620310-18ed-4cbd-b3b2-0dd5f75d7bbc", "新增未配置采集")], [dict(item(SOURCE_DOD, "已暂停"), active=False)], [dict(item(SOURCE_COST, "归档"), status="archived")]]:
             calls = self.collector(rows=live)
             self.assertFalse(any(url.endswith("/observations") for url, _, _ in calls))
             complete = next(body for _, method, body in calls if method == "PATCH" and body.get("status") == "completed")
             self.assertEqual(complete["result"]["facts"], [])
+
+    def test_collector_empty_source_records_failure_without_observations(self):
+        calls = self.collector(fail=True, rows=[])
+        self.assertFalse(any(url.endswith("/observations") for url, _, _ in calls))
+        self.assertTrue(any(method == "PATCH" and body.get("status") == "failed" for _, method, body in calls))
 
     def test_collector_dynamic_ninth_only_observes_two_explicit_sources(self):
         rows = company_rows() + [item("f6620310-18ed-4cbd-b3b2-0dd5f75d7bbc", "无采集证据的新KR")]

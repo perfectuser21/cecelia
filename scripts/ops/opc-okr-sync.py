@@ -28,8 +28,8 @@ def fetch():
     if snapshot.get("success") is not True:
         raise RuntimeError("Brain 公司 KR 快照读取失败")
     items = snapshot.get("items")
-    if not isinstance(items, list):
-        raise RuntimeError("公司 KR 快照缺少来源列表，保留既有现场")
+    if not isinstance(items, list) or not items:
+        raise RuntimeError("公司 KR 真身快照为空或缺少来源列表，保留既有现场")
     rows, seen = [], set()
     for item in items:
         try:
