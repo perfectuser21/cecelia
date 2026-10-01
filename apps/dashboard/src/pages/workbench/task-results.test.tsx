@@ -42,6 +42,31 @@ describe('真实结果解析', () => {
     render(<TaskResult id={id} task={{ id, status: 'completed', result: { handoff: { not_done: ['尚未验收'], next_steps: ['继续调研'] } } }} error={null} loading={false} />);
     expect(screen.getByText('状态已完成，尚无结果证据')).toBeInTheDocument();
   });
+  it('系统自动补记的完成标题不计作执行产出证据', () => {
+    const result = parseResult({ id, result: { handoff: { synthesized: true, done: ['完成：调研测试策略'] } } });
+    expect(result.summaries).toEqual([]);
+    expect(result.artifactValues).toEqual([]);
+    expect(result.hasEvidence).toBe(false);
+  });
+  it.each(['completed', 'completed_no_pr'])('%s合成交接明确标记系统补记且保留无证据提示', status => {
+    render(<TaskResult id={id} task={{ id, status, result: { handoff: { synthesized: true, done: ['完成：调研测试策略'] } } }} error={null} loading={false} />);
+    expect(screen.getByText('以下交接信息由系统补记，不作为执行结果证据。')).toBeInTheDocument();
+    expect(screen.getByText('完成：调研测试策略')).toBeInTheDocument();
+    expect(screen.getByText('状态已完成，尚无结果证据')).toBeInTheDocument();
+  });
+  it.each([
+    { summary: '有证据的调研结论' },
+    { pr_url: 'https://github.com/org/repo/pull/9' },
+    { payload: { findings: '真实检查发现' } },
+  ])('系统补记不影响独立真实摘要或产物作为证据 %j', evidence => {
+    const task = { id, status: 'completed', ...evidence, result: { handoff: { synthesized: true, done: ['完成：调研测试策略'] } } };
+    expect(parseResult(task).hasEvidence).toBe(true);
+    render(<TaskResult id={id} task={task} error={null} loading={false} />);
+    expect(screen.queryByText('状态已完成，尚无结果证据')).not.toBeInTheDocument();
+  });
+  it('执行者的实际交接完成事项仍算结果证据', () => {
+    expect(parseResult({ id, result: { handoff: { done: ['验证了3个真实样本'] } } }).hasEvidence).toBe(true);
+  });
   it('空交接分组不展示空标题，真实事项保留', () => {
     const result = parseResult({ id, result: { handoff: { done: '已完成审查', not_done: [], next_steps: [] } } });
     expect(result.sections.map(section => section.key)).toEqual(['done']);
