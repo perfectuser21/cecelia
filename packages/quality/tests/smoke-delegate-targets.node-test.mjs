@@ -43,8 +43,15 @@ for (const name of await readdir(resolve(root, 'packages/brain/scripts/smoke')))
   test(`${name}: all actual SQL alias calls disable startup configuration`, () => {
     const commands = source.replace(/\\\n/g, ' ').split('\n').filter(line => !line.trim().startsWith('#')).join('\n');
     for (const match of commands.matchAll(aliasCall)) {
-      assert.match(commands.slice(match.index + match[0].length), /^\s+-X(?:\s|$)/,
+      const remainder = commands.slice(match.index + match[0].length);
+      assert.match(remainder, /^\s+-X(?:\s|$)/,
         `unchecked SQL alias in ${name}`);
+      const firstArg = remainder.trimStart().match(/^(?:-[\w]+|"\$[\w]+")/)[0];
+      // Execute the exact alias spelling and first argument through Bash, with a local shell-only recorder.
+      // No original query, database client, subprocess, or external endpoint executes here.
+      const actual = execFileSync('bash', ['-c', `psql() { printf '%s' "$1"; }; PSQL=psql; PSQL_EXECUTABLE=psql; ${match[0]} ${firstArg}`],
+        { encoding: 'utf8', timeout: 1000 });
+      assert.equal(actual, '-X', `${name}: actual alias argv omitted startup isolation`);
     }
   });
 }
