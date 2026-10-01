@@ -17,7 +17,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
-const { probeFleetWorkerHealth } = createRequire(import.meta.url)('../../../packages/brain/scripts/fleet-worker/node-probe.cjs');
+const require = createRequire(import.meta.url);
+const { probeFleetWorkerHealth } = require('../../../packages/brain/scripts/fleet-worker/node-probe.cjs');
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const WORKER_DIR = join(ROOT, 'packages/brain/scripts/fleet-worker');
