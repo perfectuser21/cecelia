@@ -20,6 +20,12 @@ function setup() {
  return {f,root,key,expected,options,runtime,body,request};
 }
 describe('root journal实际复用script-runner生命周期',()=>{
+ it('启动请求尚未到达时可先持久墓碑确认缺失，迟到的同代启动不能复活',async()=>{
+  const x=setup(),body={...x.body,container_id:null,challenge:randomUUID()};delete body.job;
+  expect(await x.runtime.cancel(x.request('cancel',body))).toMatchObject({absent:true,tombstoned:true});
+  await expect(x.runtime.start(x.request('start'))).rejects.toThrow('script_launch_tombstoned');
+  expect(x.f.calls.some(a=>['create','start','rm'].includes(a[0]))).toBe(false);
+ });
  it('真实持久runtime→实际script-runner→受限adapter，重建后不重跑，旧grant撤销仍可精确清理',async()=>{
   const x=setup(),started=await x.runtime.start(x.request('start'));expect(started.container_id).toBe('a'.repeat(64));
   const disk=JSON.parse(fs.readFileSync(path.join(x.root,x.body.reservation_id+'.runtime.json'),'utf8'));

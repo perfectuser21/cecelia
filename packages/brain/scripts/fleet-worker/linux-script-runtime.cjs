@@ -79,12 +79,13 @@ function createLinuxScriptRuntime({stateRoot,key,deployment:input,assertCanLaunc
    verifyLinuxScriptPermit({key,expected,action,body,permit});
    if(r){if(IDENTITY.some(k=>r.identity[k]!==body[k]))fail('identity_mismatch');}
    else {
-    if(action!=='start'||deployment.execution_enabled!==true)fail('intent_unknown');
+    if(action!=='start'&&action!=='cancel'||action==='start'&&deployment.execution_enabled!==true)fail('intent_unknown');
     const entry=deployment.profiles[body.profile_id],identity=Object.fromEntries(IDENTITY.map(k=>[k,body[k]]));
     if(identity.machine_id!==pool.machine_id||identity.worker_id!==pool.machine_id||identity.worker_boot_id!==deployment.worker_boot_id
      ||identity.execution_version_id!==expected.execution_version_id||identity.execution_grant_id!==expected.execution_grant_id
-     ||body.job?.profile!==body.profile_id||identity.config_digest!==digest({job:body.job,profile_digest:expected.profile_digest}))fail('identity_mismatch');
-    r={identity,profile:entry.profile,job_digest:digest(body.job),timeout_sec:body.job.timeout_sec,pool:deployment.pool,
+     ||action==='start'&&(body.job?.profile!==body.profile_id||identity.config_digest!==digest({job:body.job,profile_digest:expected.profile_digest}))
+     ||action==='cancel'&&(body.container_id!==null||!UUID.test(body.challenge??'')))fail('identity_mismatch');
+    r={identity,profile:entry.profile,job_digest:digest(action==='start'?body.job:null),timeout_sec:action==='start'?body.job.timeout_sec:1,pool:deployment.pool,
      image_id:entry.image_id,daemon_id:deployment.daemon_id,expected,phase:'planned',container_id:null};write(r);
    }
    return await context.run({action,body,permit},async()=>{
