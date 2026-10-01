@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { applyOwnerChanges } from '../qiumi-owner-stops.js';
 
 vi.mock('../../recurring-notion-sync.js', () => ({ notionReq: vi.fn(), getToken: () => 'tok' }));
 vi.mock('../../task-updater.js', () => ({ blockTask: vi.fn(), unblockTask: vi.fn() }));
@@ -23,7 +24,7 @@ function setup({ start = START, end = END, row = {}, updateRows = [{ id: ID }] }
   const query = vi.fn(async (sql) => (/SELECT/.test(sql)
     ? { rows: [{ id: ID, status: 'queued', scheduled_start: START, due_at: new Date(END), ...row }] }
     : { rows: updateRows, rowCount: updateRows.length }));
-  return { query, notionReq };
+  return { query, notionReq, page };
 }
 
 async function run(options) {
@@ -38,7 +39,10 @@ describe('中文页截止改期同步', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('只改结束时间也同步 due_at，开始未变不得覆盖重试退避', async () => {
-    const { result, update } = await run({ end: '2026-10-04T18:00:00+08:00' });
+    const fixture = setup({ end: '2026-10-04T18:00:00+08:00' });
+    const { parseZhPage } = await import('../../notion-gtd-sync.js');
+    const result = await applyOwnerChanges({ query: fixture.query }, [[], [], [parseZhPage(fixture.page)]], { now: () => NOW });
+    const update = fixture.query.mock.calls.find(([sql]) => /UPDATE tasks/.test(sql));
     expect(result.rescheduled).toBe(1);
     expect(update[1]).toEqual([ID, START, false, '2026-10-04T18:00:00+08:00', true, PAGE]);
     expect(update[0]).toMatch(/due_at/);
