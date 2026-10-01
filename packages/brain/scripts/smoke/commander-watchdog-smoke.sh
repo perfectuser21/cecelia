@@ -7,6 +7,11 @@
 #   3. JOBS 注册：commander-watchdog / workflow-trend-bark 在 scheduler-liveness 之前
 #   4. 有 Brain（BRAIN_URL）时：POST /commander-heartbeat 非法 tag → 400；kind=launch 无在途单 → 202
 set -euo pipefail
+
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
 cd "$(dirname "$0")/../.."
 
 echo "[cmdr-smoke] 1. 看门狗 proven-to-fire（心跳伪造过期）"

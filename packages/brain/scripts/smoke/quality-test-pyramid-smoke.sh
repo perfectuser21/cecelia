@@ -3,6 +3,11 @@
 # 验收：测试金字塔快照端点（brain 1.261.0，PR #3876）POST 存 / GET 读全链可用
 set -uo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
+
 API="${BRAIN_URL:-http://localhost:5221}/api/brain"
 PASS=0; FAIL=0
 

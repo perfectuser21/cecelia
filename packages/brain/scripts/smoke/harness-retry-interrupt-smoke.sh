@@ -18,6 +18,11 @@
 # 跳过条件：缺 docker / brain 容器不健康 → exit 0 + 打印 SKIP。
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
+
 SMOKE_NAME="harness-retry-interrupt"
 log() { echo "[smoke:$SMOKE_NAME] $*"; }
 fail() { log "FAIL $*"; exit 1; }

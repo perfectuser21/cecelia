@@ -10,6 +10,11 @@
 #   7.（live，Brain 可达时）POST /api/brain/crystal/run 返回 ok + grid_count 8；不可达则跳过不判失败
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
+
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 
 echo "[crystal-smoke] 1. migration 435 建齐四表"

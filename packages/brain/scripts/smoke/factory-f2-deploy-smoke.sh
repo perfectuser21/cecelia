@@ -12,6 +12,11 @@
 #   必须由它收 drain-cancel；现状 0 处引用。红在此断言，修复留给 commit-2（同 PR）。
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DB_URL:-${DATABASE_URL:-postgresql://localhost/cecelia}}"; then
+  exit 0
+fi
+
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 PASS=0; FAIL=0
 ok()   { echo "✅ $1"; PASS=$((PASS+1)); }

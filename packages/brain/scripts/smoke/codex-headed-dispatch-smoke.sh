@@ -4,6 +4,11 @@
 # Sprint: sprints/07071654-codex-headed-dispatch
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DB_URL:-${DATABASE_URL:-postgresql://localhost/cecelia}}"; then
+  exit 0
+fi
+
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
 SMOKE_TAG="codex-headed-dispatch-${GITHUB_RUN_ID:-local}-$$-$RANDOM"

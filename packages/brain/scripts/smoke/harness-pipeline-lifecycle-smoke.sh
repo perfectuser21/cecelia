@@ -13,6 +13,11 @@
 # 退出码：0=PASS 或 SKIP，1=FAIL（卡死/超时/非预期终止）
 set -uo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
+
 SMOKE_NAME="harness-pipeline-lifecycle"
 log()  { echo "[smoke:$SMOKE_NAME] $*"; }
 fail() { log "FAIL — $*"; exit 1; }

@@ -2,6 +2,11 @@
 # preview-environments-smoke.sh — per-branch preview 环境 API 冒烟验证
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
+
 BASE_URL="${BRAIN_URL:-http://localhost:5221}/api/brain"
 PR_NUM=9999
 BRANCH="smoke-test-branch"

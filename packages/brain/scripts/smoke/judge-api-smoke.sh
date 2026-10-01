@@ -2,6 +2,11 @@
 # judge-api-smoke.sh — 刀2 两端点部署冒烟：路由存在且参数校验生效（空/坏 body 应答 400 而非 404）。
 # proven-to-fire 验证法：把 URL 改成不存在的路由名跑一次，必须报红。
 set -uo pipefail
+
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 fail=0
 

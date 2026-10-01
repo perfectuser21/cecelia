@@ -5,6 +5,11 @@
 #       无 learnings 时返回 {"processed":0} 也是健康状态
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DB_URL:-${DATABASE_URL:-postgresql://localhost/cecelia}}"; then
+  exit 0
+fi
+
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 
 echo "[rumination-smoke] 1. 检查 Brain 健康"

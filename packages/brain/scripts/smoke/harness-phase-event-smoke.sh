@@ -3,6 +3,11 @@
 # 不依赖 psql/真实 initiative_run；用 400/404 响应验证路由已挂载
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DB_URL:-${DATABASE_URL:-postgresql://localhost/cecelia}}"; then
+  exit 0
+fi
+
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 PASS=0; FAIL=0
 

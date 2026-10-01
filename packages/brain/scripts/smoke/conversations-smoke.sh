@@ -4,6 +4,11 @@
 # 前提：Brain 已启动于 localhost:5221
 
 set -e
+
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "http://localhost:5221"; then
+  exit 0
+fi
 BRAIN="http://localhost:5221"
 
 # ── 1. POST 缺 journey_id → 400 ───────────────────────────

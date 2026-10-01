@@ -3,6 +3,11 @@
 # 只测 400 路径（缺 pr_url），不真建 task 避免 DB 污染。
 # proven-to-fire：把路由名改成不存在的跑一次，必须报红（404≠400）。
 set -uo pipefail
+
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 fail=0
 code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -X POST "$BRAIN/api/brain/harness/staging-e2e" \

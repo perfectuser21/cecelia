@@ -4,6 +4,11 @@
 # L3 真库：psql 探表 + CHECK 约束。API 全链：POST 建 candidate → GET 过滤 → PATCH 合法/非法流转 → 清理。
 set -uo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DB_URL:-${DATABASE_URL:-postgresql://localhost/cecelia}}"; then
+  exit 0
+fi
+
 API="${BRAIN_URL:-http://localhost:5221}/api/brain"
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
 PASS=0; FAIL=0

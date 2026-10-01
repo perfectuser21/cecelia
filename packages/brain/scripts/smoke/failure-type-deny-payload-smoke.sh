@@ -8,6 +8,11 @@
 #   5. （DB 可达时）learning 6a569a1e 的 dispatch_constraint 已写入
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
+
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 LEARNING_ID="6a569a1e-83c4-4052-a05a-59b2a09840a8"
 

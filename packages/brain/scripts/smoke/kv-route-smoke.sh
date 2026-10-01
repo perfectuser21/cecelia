@@ -9,6 +9,11 @@
 # 用法：BRAIN_URL=http://localhost:5221 bash kv-route-smoke.sh
 
 set -uo pipefail
+
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 
 # skip guard：真 Brain 不在（或只是 stub）→ SKIP 不 FAIL（根池/放行闸惯例）

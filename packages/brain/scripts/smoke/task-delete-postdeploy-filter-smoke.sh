@@ -10,6 +10,11 @@
 #      （仍 pending_postdeploy），非 smoke 对照任务正常消费为 completed
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DB_URL:-${DATABASE_URL:-postgresql://localhost/cecelia}}"; then
+  exit 0
+fi
+
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 
 # 离散变量 + 显式参数连接约定（与 tasks-ability-id-smoke.sh 一致）

@@ -3,6 +3,11 @@
 # task_id: 07b2fd3b-724b-4da3-bdf3-827821b66ba5
 set -e
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
+
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 DEDUPE_KEY="smoke-inbox-$(date +%s)"
 

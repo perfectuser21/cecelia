@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # publish-pr-smoke.sh —— 第 66 批 publish-pr 薄端点真环境冒烟（参数闸 + 防漂移路径，不真开 PR）。
 set -euo pipefail
+
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 TOKEN="${BRAIN_INTERNAL_TOKEN:-}"
 if [ -z "$TOKEN" ] && command -v docker >/dev/null 2>&1; then

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -165,3 +165,47 @@ for (const script of ['inbox-p1', 'clips-notion', 'claimed-by-cleared', 'task-ta
     });
   });
 }
+
+
+test('all explicit live Brain shell write entries remain registered and guarded', async () => {
+  const listed = new Set((await readFile(resolve(root, 'packages/quality/smoke-write-targets.txt'), 'utf8'))
+    .split('\n').filter(line => line && !line.startsWith('#')));
+  const smokeDir = resolve(root, 'packages/brain/scripts/smoke');
+  const optional = new Set(['notion-mapping-r4-smoke.sh', 'notion-endpoints-smoke.sh', 'notion-brain-first-smoke.sh']);
+  for (const name of await readdir(smokeDir)) {
+    if (!name.endsWith('.sh')) continue;
+    const source = await readFile(resolve(smokeDir, name), 'utf8');
+    if (!/-X\s+(POST|PATCH|DELETE|PUT)/.test(source)) continue;
+    if (name === 'callback-stage-receipt-smoke.sh') {
+      assert.match(source, /127\.0\.0\.1:\$PORT/, 'fixture exception must remain tied to its private server');
+      continue;
+    }
+    assert.ok(listed.has(name), `${name}: new live write script must join write guard inventory`);
+    assert.match(source, /smoke-production-guard\.mjs/, `${name}: standalone write guard missing`);
+    if (!optional.has(name)) {
+      const commands = source.split('\n').filter(line => line.trim() && !line.startsWith('#'));
+      assert.match(commands[1], /if ! node.*smoke-production-guard\.mjs/, `${name}: guard must run before any side effect`);
+    }
+  }
+});
+
+test('ratchet runner does not execute a registered write script without authorization', async () => {
+  const temp = await mkdtemp(resolve(tmpdir(), 'smoke-runner-guard-'));
+  const marker = resolve(temp, 'mutated');
+  await writeFile(resolve(temp, 'inbox-p1-smoke.sh'), `#!/bin/bash\ntouch '${marker}'\n`);
+  try {
+    const result = await new Promise((resolveResult, reject) => {
+      const proc = spawn('bash', ['packages/quality/scripts/run-smoke-ratchet.sh'], {
+        cwd: root, env: { ...process.env, SMOKE_DIR: temp, SMOKE_ALLOW_WRITE: '' },
+      });
+      let output = '';
+      proc.stdout.on('data', data => { output += data; });
+      proc.stderr.on('data', data => { output += data; });
+      proc.on('error', reject);
+      proc.on('close', code => resolveResult({ code, output }));
+    });
+    assert.equal(result.code, 0, result.output);
+    assert.match(result.output, /SKIP.*write-guard/);
+    await assert.rejects(readFile(marker), { code: 'ENOENT' });
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});

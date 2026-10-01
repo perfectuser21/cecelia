@@ -10,6 +10,11 @@
 
 set -uo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "http://localhost:5221"; then
+  exit 0
+fi
+
 if ! docker ps --filter "name=cecelia-node-brain" --format '{{.Names}}' | grep -q cecelia-node-brain; then
   echo "SKIP: brain 容器不在跑（cecelia-node-brain）"
   exit 0

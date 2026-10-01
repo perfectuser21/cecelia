@@ -37,6 +37,7 @@ _load_list() { grep -v '^#' "$1" | grep -v '^[[:space:]]*$' | sort; }
 ALLOWLIST_ENTRIES=$(_load_list "$ALLOWLIST")
 DENYLIST_ENTRIES=$(_load_list "$DENYLIST")
 DEBT_ENTRIES=$(_load_list "$DEBT_LIST")
+WRITE_TARGETS=$(_load_list "$QUALITY_DIR/smoke-write-targets.txt")
 
 _in_list() { echo "$2" | grep -qxF "$1"; }
 
@@ -77,6 +78,15 @@ for script in "$SMOKE_DIR"/*.sh; do
     UNREGISTERED_NAMES+=("$fname")
     echo "::error::❌ UNREGISTERED: $fname（新脚本未登记，见 packages/quality/README）"
     continue
+  fi
+
+  # 真 Brain 写入入口必须通过身份校验；默认本地执行只运行安全脚本。
+  if _in_list "$fname" "$WRITE_TARGETS"; then
+    if ! node "$REPO_ROOT/packages/brain/scripts/lib/smoke-production-guard.mjs" "$BRAIN_URL"; then
+      SKIP=$((SKIP + 1))
+      echo "⏭  SKIP  [write-guard] $fname"
+      continue
+    fi
   fi
 
   # 3. 运行脚本

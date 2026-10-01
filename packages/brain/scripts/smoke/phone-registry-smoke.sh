@@ -7,6 +7,11 @@
 #   3. 有 Brain（BRAIN_URL）时：GET /api/brain/phone-registry 返回 ≥4 行且含小黄；PUT 空 body 不得 200（不写库）
 #      （无令牌 401 由单测钉住：CI 容器 host 网络 + 未配 token 时 loopback 放行，这里测不出来）
 set -euo pipefail
+
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DB_URL:-${DATABASE_URL:-postgresql://localhost/cecelia}}"; then
+  exit 0
+fi
 cd "$(dirname "$0")/../.."
 
 ROWS_JSON=""

@@ -7,6 +7,11 @@
 #   4. POST /api/brain/circuit-breaker/cb-smoke-reset/reset → 200 + state.state == 'CLOSED'
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
+
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 
 echo "[cb-reset-smoke] 1. Brain 健康"

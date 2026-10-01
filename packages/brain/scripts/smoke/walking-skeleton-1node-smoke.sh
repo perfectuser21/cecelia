@@ -9,8 +9,12 @@
 
 set -uo pipefail
 
-CONTAINER="cecelia-node-brain"
-COMPOSE_FILE="/Users/administrator/perfect21/cecelia/docker-compose.yml"
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "http://localhost:5221"; then
+  exit 0
+fi
+
+CONTAINER="$BRAIN_CONTAINER"
 
 if ! docker ps --filter "name=$CONTAINER" --format '{{.Names}}' | grep -q "^$CONTAINER$"; then
   echo "SKIP: brain 容器 ($CONTAINER) 不在跑"
@@ -75,7 +79,7 @@ echo "trigger Phase 2: $THREAD2"
 sleep 1
 
 echo "kill brain container..."
-docker compose -f "$COMPOSE_FILE" restart node-brain 2>&1 | tail -2
+docker restart "$CONTAINER" 2>&1 | tail -2
 
 # 等 brain 重启并 ready
 echo "等 brain ready..."

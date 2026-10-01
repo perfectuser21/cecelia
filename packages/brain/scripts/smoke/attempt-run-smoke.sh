@@ -7,6 +7,11 @@
 # 机器容量被占（machine_capacity_contended / capacity 类 preflight BLOCKED）时重试后软跳过——
 # 部署窗口常有在途 attempt，这不是本端点的缺陷；其它失败一律硬红。
 set -euo pipefail
+
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 # 宿主→容器不算 loopback：生产 Brain 配了 CECELIA_INTERNAL_TOKEN 时必须带 Bearer。
 # 取法：env 优先，其次 docker exec；都没有（CI 临时 Brain 无 token）则裸跑走 loopback。

@@ -2,6 +2,11 @@
 # advancement_items 推进项模型真环境冒烟
 # 自建 throwaway ability，不依赖 seed 数据，CI 空库也能跑。
 set -euo pipefail
+
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 PASS=0; FAIL=0
 ok()   { echo "  ✅ $1"; ((PASS++)) || true; }

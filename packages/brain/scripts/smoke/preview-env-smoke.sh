@@ -3,6 +3,11 @@
 # 验收：WS1 预览闸 lifecycle API（POST /start → GET /status → POST /stop）
 set -uo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
+
 API="${BRAIN_URL:-http://localhost:5221}/api/brain/preview"
 PASS=0; FAIL=0
 PR_NUM=999001
