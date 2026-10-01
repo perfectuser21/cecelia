@@ -206,3 +206,25 @@ describe('A11 mirror_db_reachable（镜子库探活，决策 24a37029）', () =>
     expect(a.lost).toEqual([]);
   });
 });
+
+describe('独立 KR 投影沿 projection_links 对账', () => {
+  const registry = [{ notion_db_id: 'db-brain-kr', title: 'Brain Key Results', face: 'mirror', brain_table: 'key_results', direction: 'push', vessel: 'notion-kr-projection', status: 'active' }];
+  function krPool() {
+    return { query: vi.fn(async sql => {
+      if (sql.includes('information_schema')) return { rows: [] };
+      if (sql.includes('FROM notion_projection_map')) return { rows: registry };
+      if (sql.includes('count(*)') && sql.includes('projection_links')) return { rows: [{ count: 2 }] };
+      return { rows: [] };
+    }) };
+  }
+  it('非机器人修改KR镜子清links指纹，禁止向key_results写不存在的notion列', async () => {
+    const pool = krPool();
+    await buildProjectionAssertions(pool, { notionReq: notionWith({ tampered: { 'db-brain-kr': [{ by: 'human', title: '改过' }] } }), token: 't', botUserId: BOT });
+    expect(pool.query.mock.calls.some(([sql]) => /UPDATE projection_links SET content_hash = NULL/.test(sql))).toBe(true);
+    expect(pool.query.mock.calls.some(([sql]) => /UPDATE key_results SET notion_digest/.test(sql))).toBe(false);
+  });
+  it('KR库页数与已绑定Brain实体数不等须报红', async () => {
+    const result = await buildProjectionAssertions(krPool(), { notionReq: notionWith({ pages: { 'db-brain-kr': 3 } }), token: 't', botUserId: BOT });
+    expect(result.find(r => r.key === 'projection_counts')).toMatchObject({ ok: false, degraded: false });
+  });
+});
