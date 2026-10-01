@@ -652,7 +652,7 @@ jobs:
       - name: Self-test (fixture cases)
         run: bash .github/workflows/scripts/__tests__/lint-migration-unique-version.test.sh
 
-  # ─── Auto-merge 决策脚本自测 ───────────────────────────────────
+  # ─── Auto-merge 决策与聚合闸自测（所有 PR / push 必跑）──────────
   # 守卫 should-auto-merge.sh：确保 feat(harness): PR 被跳过（交给 harness 裁判 gate），
   # 普通 fix/feat PR 正常合并。防止未来改动误删跳过逻辑或误伤手动 /dev 流程。
   lint-auto-merge-decision:
@@ -662,6 +662,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Self-test (auto-merge decision cases)
         run: bash .github/workflows/scripts/__tests__/should-auto-merge.test.sh
+      - name: Self-test (aggregate gate result cases)
+        run: node --test .github/workflows/scripts/__tests__/ci-aggregate-results.test.mjs
 
   # 守卫 list-fs-guard-tests.sh：CI 快路用 vitest --changed 会漏跑 fs 读取型守卫测试
   # （#3506 / 2026-07-02 两次应验）。本 job 强制守护 selector 选择逻辑（Tier A，无需 vitest）；
