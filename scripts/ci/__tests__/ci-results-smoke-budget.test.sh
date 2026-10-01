@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-python3 - "$ROOT/.github/workflows/ci.yml" "$TMP" <<'PY'
+python3 - "$ROOT/.github/workflows/ci.yml" "$TMP" "$ROOT/.github/workflows/ci-smoke-glob-runner.yml" <<'PY'
 import pathlib, re, sys
 workflow = pathlib.Path(sys.argv[1]).read_text()
 out = pathlib.Path(sys.argv[2])
@@ -15,6 +15,13 @@ for status in ['success', 'skipped', 'failure', 'cancelled', 'unknown', '']:
     run = re.sub(r'\$\{\{ needs\.[\w-]+\.result \}\}',
                  lambda m: 'success' if 'core-regression' in m[0] else status, gate_run)
     (out / ('gate-' + (status or 'empty') + '.sh')).write_text(run)
+glob_workflow = pathlib.Path(sys.argv[3]).read_text()
+glob_gate = glob_workflow.split('  smoke-glob-runner-passed:\n', 1)[1]
+glob_run = glob_gate.split('        run: |\n', 1)[1]
+glob_run = '\n'.join(line[10:] for line in glob_run.splitlines() if line.startswith('          '))
+for status in ['success', 'skipped', 'failure', 'cancelled', 'timed_out', 'unknown', '']:
+    run = glob_run.replace('${{ needs.smoke-glob-runner.result }}', status)
+    (out / ('glob-gate-' + (status or 'empty') + '.sh')).write_text(run)
 smoke_job = workflow.split('  real-env-smoke:\n', 1)[1].split('\n  harness-dod-integrity:', 1)[0]
 minutes = int(re.search(r'    timeout-minutes: (\d+)', smoke_job)[1])
 (out / 'budget').write_text(str(minutes))
@@ -34,6 +41,16 @@ for state in success skipped failure cancelled unknown empty; do
   esac
   if [[ "$code" != "$expected" ]]; then
     echo "FAIL: ci-passed $state exit=${code}，期望 $expected"
+    FAILED=$((FAILED + 1))
+  fi
+done
+for state in success skipped failure cancelled timed_out unknown empty; do
+  code=0
+  bash "$TMP/glob-gate-$state.sh" > "$TMP/glob-gate-$state.log" 2>&1 || code=$?
+  expected=1
+  [[ "$state" != success ]] || expected=0
+  if [[ "$code" != "$expected" ]]; then
+    echo "FAIL: Smoke Glob Runner Passed $state exit=${code}，期望 $expected"
     FAILED=$((FAILED + 1))
   fi
 done
@@ -58,4 +75,4 @@ fi
 if [[ "$FAILED" -gt 0 ]]; then
   exit 1
 fi
-echo 'PASS: CI 状态白名单、串行预算、真超时终止与继续执行均通过'
+echo 'PASS: CI 与必需 Smoke 汇总状态白名单、串行预算、真超时终止与继续执行均通过'
