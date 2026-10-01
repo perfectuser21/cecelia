@@ -1,3 +1,4 @@
+import { closePgPool } from './helpers/close-pg-pool.js';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -58,7 +59,7 @@ beforeAll(async()=>{
 },60000);
 
 afterAll(async()=>{
-  if (pool) await pool.end().catch(()=>{});
+  if (pool) await closePgPool(pool);
   if (adminPool && databaseName) {
     await adminPool.query('UPDATE pg_database SET datallowconn=false WHERE datname=$1',[databaseName]).catch(()=>{});
     await adminPool.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()',[databaseName]).catch(()=>{});

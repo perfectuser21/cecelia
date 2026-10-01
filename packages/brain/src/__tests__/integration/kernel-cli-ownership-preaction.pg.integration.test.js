@@ -1,3 +1,4 @@
+import { closePgPool } from './helpers/close-pg-pool.js';
 /**
  * [BEHAVIOR] Kernel CLI 在任何 task 业务状态推进前完成 Controller ownership CAS。
  *
@@ -47,7 +48,7 @@ async function createIsolatedDatabase() {
   testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 5 });
 }
 async function dropIsolatedDatabase() {
-  if (testPool) await testPool.end().catch(() => {});
+  if (testPool) await closePgPool(testPool);
   if (adminPool && databaseName) {
     await adminPool.query(
       'UPDATE pg_database SET datallowconn=false WHERE datname=$1',

@@ -1,3 +1,4 @@
+import { closePgPool } from './helpers/close-pg-pool.js';
 /**
  * [BEHAVIOR] Controller / Kernel 生命周期隔离 + 无主 fail-closed 恢复 + 日志脱敏
  * （sprint 08131104 Harness 入口统一，issue 962d399c 无主 Kernel Run 修复）。
@@ -67,7 +68,7 @@ async function createIsolatedDatabase() {
 }
 
 async function dropIsolatedDatabase() {
-  if (testPool) await testPool.end().catch(() => {});
+  if (testPool) await closePgPool(testPool);
   if (adminPool && databaseName) {
     await adminPool.query(
       'UPDATE pg_database SET datallowconn=false WHERE datname=$1',
