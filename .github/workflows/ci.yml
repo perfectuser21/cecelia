@@ -1679,7 +1679,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.brain == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 全量 smoke 最近成功耗时 21m46s，预算包含容器启动和清理。
+    timeout-minutes: 30
     services:
       postgres:
         image: pgvector/pgvector:pg15
@@ -2047,7 +2048,15 @@ jobs:
         run: |
           FAILED=false
 
-          check() { local n=$1 r=$2; if [ "$r" = "failure" ]; then echo "❌ $n"; FAILED=true; elif [ "$r" = "skipped" ]; then echo "⏭️  $n (skipped)"; else echo "✅ $n"; fi; }
+          # 有条件依赖允许 skipped；取消、空值和未知结果一律阻断合并。
+          check() {
+            local n="$1" r="$2"
+            case "$r" in
+              success) echo "✅ $n" ;;
+              skipped) echo "⏭️  $n (skipped)" ;;
+              *) echo "❌ $n (result=${r:-empty})"; FAILED=true ;;
+            esac
+          }
 
           check "secrets-scan"      "${{ needs.secrets-scan.result }}"
           check "dod-format-check"  "${{ needs.dod-format-check.result }}"
