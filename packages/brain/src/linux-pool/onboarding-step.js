@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import {fileURLToPath} from 'node:url';
 import {lookup} from 'node:dns/promises';
 import {isIP} from 'node:net';
 import serverModule from '../../scripts/fleet-worker/linux-pool-server.cjs';
@@ -12,17 +10,16 @@ import {createLinuxPoolAuthorization} from './service.js';
 import {createLinuxRuntimeAuthorization} from './runtime-service.js';
 import {error} from './deployment.js';
 import {createOnboardingRecovery} from './onboarding-recovery.js';
+import {createOnboardingArtifacts} from './onboarding-artifact.js';
 export const ONBOARDING_IMAGE='alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc';
-const FILES=['linux-pool-installer.cjs','linux-pool-profile.cjs','linux-pool-proof.cjs','linux-pool-server.cjs','linux-pool-canary.cjs','linux-resource-probe.cjs','linux-cgroup.cjs',
- 'linux-script-canary.cjs','linux-script-service.cjs','linux-script-launch-gate.cjs','linux-script-runtime.cjs','linux-script-docker.cjs','linux-script-permit.cjs','linux-script-bridge.cjs','script-runner.cjs'];
-const sourceFiles=()=>Object.fromEntries(FILES.map(name=>[name,fs.readFileSync(fileURLToPath(new URL('../../scripts/fleet-worker/'+name,import.meta.url)),'utf8')]));
 /** 每次只推进一个持久阶段。所有外部副作用之前的intent/nonce由调用方已经写入tasks。 */
 export function createLinuxOnboardingStep({pool,ssh=createOnboardingSSH(),credentials=createOnboardingCredentials(),writer=createLinuxDeploymentWriter(),
- poolAuthorization=createLinuxPoolAuthorization({pool}),runtimeAuthorization=createLinuxRuntimeAuthorization({pool}),sources=sourceFiles,
+ poolAuthorization=createLinuxPoolAuthorization({pool}),runtimeAuthorization=createLinuxRuntimeAuthorization({pool}),artifacts=createOnboardingArtifacts(),
  readSecret=p=>serverModule.readInstalledFile(p,{mode:0o600,owner:0,maxBytes:64}),recover=createOnboardingRecovery({pool,poolAuthorization,runtimeAuthorization})}={}){
  return async(task,machine,state,save)=>{
   const id=machine.id,request=machine.metadata.onboarding.request;
-  const remote=(action,extra={})=>ssh(id,request,{action,machine_registry_id:id,nonce:state.nonce,...extra});
+  let cached;const artifact=()=>cached??=artifacts.read(state.revision,state.artifact_digest);
+  const remote=(action,extra={})=>ssh(id,request,{action,machine_registry_id:id,nonce:state.nonce,...extra},{source:artifact().program});
   const next=(phase,patch={})=>save({...state,...patch,phase,error:null,next_retry_at:null});
   const policy=()=>JSON.parse(state.policy_json),fact=()=>JSON.parse(state.installation_json).receipt,runtime=()=>JSON.parse(state.runtime_json);
   switch(state.phase){
@@ -33,6 +30,7 @@ export function createLinuxOnboardingStep({pool,ssh=createOnboardingSSH(),creden
     if(occupied)return state;return next('refresh_installation');
    }
    case 'probe':{
+    if(!state.artifact_digest){cached=artifacts.capture();state={...state,revision:cached.revision,artifact_digest:cached.digest};await save(state);}
     if(!/^[a-f0-9]{40}$/.test(state.revision??''))throw error('linux_pool_control_unavailable');
     const observed=await remote('probe',{image:ONBOARDING_IMAGE});
     if(observed.machine_registry_id!==id||observed.nonce!==state.nonce||observed.image!==ONBOARDING_IMAGE)throw error('linux_pool_prerequisites_unavailable');
@@ -49,7 +47,7 @@ export function createLinuxOnboardingStep({pool,ssh=createOnboardingSSH(),creden
    case 'bootstrap':{
     const files=state.credential_files,p=policy(),key=readSecret(files.execution_credential_file);
     const envelope=await remote(state.phase==='bootstrap'?'bootstrap':'installation',{intent_id:state.intent_id,pool:p.pool,revision:state.revision,
-     ...(state.phase==='bootstrap'?{sources:sources(),worker_token:readSecret(files.worker_credential_file),execution_key:key}:{})});
+     ...(state.phase==='bootstrap'?{sources:artifact().files,worker_token:readSecret(files.worker_credential_file),execution_key:key}:{})});
     verifyLinuxInstallation(envelope,{machine_registry_id:id,nonce:state.nonce,intent_id:state.intent_id,pool:p.pool,revision:state.revision,key});
     return next('deployment',{installation_json:JSON.stringify(envelope)});
    }

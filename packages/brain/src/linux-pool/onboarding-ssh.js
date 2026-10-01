@@ -16,7 +16,7 @@ export function runOnboardingCommand(command,args,{input='',timeoutMs=15000}={})
 /** 只传送镜像内的固定控制程序；request必须来自已登记接入任务，payload只由后台阶段机生成。 */
 export function createOnboardingSSH({root='/root/.credentials/fleet-control',pathRoot='/',owner=process.getuid?.()??0,
  run=runOnboardingCommand,readKey=ref=>createPrivateOp()(['read',ref]),source}={}){
- return async(machineId,input,payload)=>{
+ return async(machineId,input,payload,execution={})=>{
   let stage;
   try{
    if(!UUID.test(machineId??''))throw fail();const request=validateEnrollment(input);
@@ -32,8 +32,9 @@ export function createOnboardingSSH({root='/root/.credentials/fleet-control',pat
     if(result.trim().split(/\s+/)[1]===request.host_key_fingerprint.replace(/=$/,''))trusted.push(line);
    }
    if(!trusted.length)throw fail();fs.writeFileSync(hosts,trusted.join('\n')+'\n',{mode:0o600,flag:'wx'});
-   const program=source??("__name__='cecelia_onboarding'\n"+['linux-pool-bootstrap.py','linux-onboarding-remote.py'].map(name=>
+   const program=execution.source??source??("__name__='cecelia_onboarding'\n"+['linux-pool-bootstrap.py','linux-onboarding-remote.py'].map(name=>
     fs.readFileSync(fileURLToPath(new URL('../../scripts/fleet-worker/'+name,import.meta.url)),'utf8')).join('\n'));
+   if(typeof program!=='string'||!program||Buffer.byteLength(program)>1024*1024)throw fail();
    const data=Buffer.from(JSON.stringify({...payload,machine_registry_id:machineId,remote_source:program})).toString('base64');
    if(data.length>2*1024*1024)throw fail();
    const remote=(request.ssh_user==='root'?'':'/usr/bin/sudo -n ')+'/usr/bin/python3 -c \'import sys;exec(sys.stdin.readline())\'';

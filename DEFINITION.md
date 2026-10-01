@@ -10,7 +10,9 @@
 
 
 
-**Brain 版本**: 1.353.28
+**Brain 版本**: 1.353.29
+
+Linux接入在首次SSH前将当前镜像40位GIT_SHA对应15个Worker源码和完整远端bootstrap程序原子存入root私有artifacts缓存，任务持久revision+工件摘要。跨Brain升级后所有SSH和安装仍读取原工件字节；缓存缺失或摘要错误拒绝，不能以新源码冒充旧revision或更换既有intent。
 
 接入内部淘汰与显式撤销分开持久：外部撤销在同接入锁内停止已生成自动阶段，不能由过期恢复复活；已提交active丢回执跨24小时按同代原签名和实际current version转内部续验。执行角色上限和后续采样SSH均来自原登记任务，设备metadata仅可缩权。
 
