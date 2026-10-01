@@ -88,4 +88,3 @@ export async function settleScriptRun(pool, row, parsed, { hostId, runId, reserv
   });
   return 'failed';
 }
-
