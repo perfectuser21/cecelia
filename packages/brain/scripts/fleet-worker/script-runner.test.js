@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { randomUUID, createHmac } from 'node:crypto';
+import { randomUUID, createHmac, createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
@@ -10,7 +10,8 @@ const require = createRequire(import.meta.url);
 const exec = promisify(execFile);
 const roots = [];
 const servers = [];
-afterEach(async () => { for (const s of servers.splice(0)) await new Promise((r) => s.close(r));
+const runners = [];
+afterEach(async () => { for(const runner of runners.splice(0)) runner.close?.(); for (const s of servers.splice(0)) await new Promise((r) => s.close(r));
   for (const root of roots.splice(0)) rmSync(root,{ recursive:true,force:true }); });
 async function setup() {
   const api = await import('./script-runner.cjs').catch(() => ({}));
@@ -27,10 +28,12 @@ async function setup() {
   };
   const options = { stateRoot:root,machineId:'us-mac-m4',workerId:'worker-1',bootId:'boot-1',docker,
     profiles:{ harmless:{ image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,user:'1000:1000',cwd:'/job' } } };
-  const runner=api.createScriptRunner(options);
+  const runner=api.createScriptRunner(options);runners.push(runner);
   const input={ reservation_id:randomUUID(),machine_id:'us-mac-m4',owner_key:`script-${randomUUID()}-a1`,
     intent_id:randomUUID(),launch_generation:1,config_digest:'c'.repeat(64),
     job:{ profile:'harmless',cmd:'printf managed-script-ok',timeout_sec:30,env:{} } };
+  const digest=(v)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
+  input.config_digest=digest({job:input.job,profile_digest:digest(options.profiles.harmless)});
   return { api,root,containers,docker,options,runner,input,counts:()=>({creates,starts}) };
 }
 describe('受管脚本 worker 协议', () => {
@@ -94,4 +97,22 @@ describe('受管脚本 worker 协议', () => {
     await expect(x.runner.start({...x.input,config_digest:'d'.repeat(64)})).rejects.toThrow('script_identity_mismatch');
     expect(x.counts()).toEqual({creates:1,starts:1});
   });
+});
+
+it('部署 profile 改动后拒绝旧 digest，首次请求不能伪造配置身份',async()=>{
+  const x=await setup();
+  await expect(x.runner.start({...x.input,config_digest:'0'.repeat(64)})).rejects.toThrow('script_config_digest_mismatch');
+  expect(x.counts()).toEqual({creates:0,starts:0});
+});
+it('worker 定时清理超时容器并持久保存124，重启后仍能读取终态',async()=>{
+  const x=await setup();
+  const digest=(v)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
+  x.input.job.timeout_sec=1;
+  x.input.config_digest=digest({job:x.input.job,profile_digest:digest(x.options.profiles.harmless)});
+  x.docker.start=async(id)=>{const c=await x.docker.inspect(id);c.status='running';};
+  await x.runner.start(x.input);
+  await new Promise((r)=>setTimeout(r,1200));
+  expect(x.containers.size).toBe(0);
+  const restored=x.api.createScriptRunner(x.options);runners.push(restored);
+  await expect(restored.inspect(x.input)).resolves.toMatchObject({status:'cleaned',terminal:{exit_code:124,timed_out:true}});
 });
