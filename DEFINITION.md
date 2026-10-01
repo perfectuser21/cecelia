@@ -1,6 +1,7 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.355.9
+**Brain 版本**: 1.355.11
+
 
 
 
@@ -17,6 +18,8 @@
 
 
 
+
+现有机器接入入口对Linux worker自动登记执行子任务，固定SSH核root实际资源后生成保守单shell profile，复用CS独立凭据，bootstrap签名身份→505池证明→507真实adapter验收→同代active。凭据绑定可由root私有credential-bindings.json指定既有item，浏览器不能提供授权身份。Brain独占会话锁覆盖外部步骤，原始签名/profile保持序列化，未知保留intent与nonce。到期前一小时或boot改变自动撤销旧许可、等所有旧预约精确清理、重读安装身份并新代验收；过期挑战仅凭完整验签清理归档重建，显式撤销不自动复活。机器卡片只投影当前未过期授权及服务内部fresh身份，元数据不可伪造；US永久scheduler_only。缺Docker/systemd/cgroup前置如实报出，受信控制目录最窄RW挂载，生产HK现场验收仍由部署阶段执行。
 
 Brain接入控制面固定SSH指纹、禁agent/转发/密码交互，只经stdin传镜像内Python程序与私有payload。root复用已有bootstrap和有界命令，先持久intent，安装回执丢失只核现场不重装；安装事实按独立root key回签nonce/intent/boot/daemon/镜像/pool，Brain验真后才可登记部署。runtime配置绑定当前boot，canary仅调用两条已安装固定CLI；传输secret所有退出路径清理。Brain镜像固定op2.32.1双架构归档SHA，不含凭据；arm64在无网只读Alpine容器实测版本通过。仍待持久阶段编排与机器页接线，未部署生产。
 

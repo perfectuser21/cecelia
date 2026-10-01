@@ -20,15 +20,16 @@ suite('机器接入真实数据库闭环（隔离 schema）', () => {
     await db.query(`CREATE TABLE tasks (
       id uuid PRIMARY KEY, title text, task_type text, status text, payload jsonb,
       result jsonb, error_message text, created_at timestamptz DEFAULT now(),
-      updated_at timestamptz DEFAULT now(), completed_at timestamptz
+      updated_at timestamptz DEFAULT now(), completed_at timestamptz,
+      parent_task_id uuid,claimed_by text,claimed_at timestamptz,started_at timestamptz
     ); CREATE TABLE system_registry (
       id uuid PRIMARY KEY, type text, name text, description text, status text, metadata jsonb,
       created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), UNIQUE(type,name)
-    )`);
+    ); CREATE TABLE execution_nodes(machine_registry_id uuid PRIMARY KEY,current_version_id uuid)`);
     const createTask = async args => {
       const { rows } = await args.db.query(
-        `INSERT INTO tasks(id,title,task_type,status,payload) VALUES($1,$2,$3,'queued',$4) RETURNING *`,
-        [randomUUID(), args.title, args.task_type, JSON.stringify(args.payload)]);
+        `INSERT INTO tasks(id,title,task_type,status,payload,parent_task_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,
+        [randomUUID(), args.title, args.task_type, args.status??'queued',JSON.stringify(args.payload),args.parent_task_id??null]);
       return { success: true, task: rows[0] };
     };
     service = createOnboardingService({ pool: db, createTask });
@@ -78,6 +79,14 @@ suite('机器接入真实数据库闭环（隔离 schema）', () => {
     expect(row.metadata.node_health.node_id).toBe(v.id);
     await service.get(v.id);
     expect((await db.query('SELECT * FROM system_registry')).rows).toHaveLength(1);
+  });
+  it('同一Web登记入口在Linux worker观测成功后自动登记执行验收子任务，监控不冒充可执行',async()=>{
+    const v=await service.create({...input,role:'worker'},key);await finish(v);await service.reconcile();
+    const current=await service.get(v.id);expect(current).toMatchObject({status:'in_progress',automatic:true,stage:'execution_probe',capabilities:{execution:false}});
+    const tasks=(await db.query("SELECT * FROM tasks WHERE payload ? 'linux_onboarding'")).rows;expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({status:'in_progress',parent_task_id:v.task_id,claimed_by:'linux-pool-onboarding'});
+    expect(tasks[0].payload.linux_onboarding.nonce).toMatch(/^[a-f0-9]{64}$/);await service.get(v.id);await service.reconcile();
+    expect((await db.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);
   });
   it('exit=0或伪造服务成功不能激活设备，且允许针对失败回执重试', async () => {
     const v = await service.create(input, key); await finish(v, { verified: false });

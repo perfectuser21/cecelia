@@ -20,6 +20,7 @@ class RemoteTests(unittest.TestCase):
   self.request = {'action':'bootstrap', 'machine_registry_id':self.machine, 'nonce':'a'*64, 'intent_id':str(uuid.uuid4()),
    'revision':'a'*40, 'pool':self.pool, 'sources':{name:'source' for name in namespace['FILES']+namespace['SCRIPT_FILES']}, 'worker_token':'b'*64,'execution_key':'c'*64}
   self.write('/proc/sys/kernel/random/boot_id', self.boot)
+  self.write('/proc/meminfo', 'MemTotal: 8388608 kB\n')
   def install(options):
    self.installs += 1
    self.write('/etc/cecelia/script-pool.json',json.dumps(self.pool)); self.write('/etc/cecelia/script-execution.key','c'*64)
@@ -67,6 +68,10 @@ class RemoteTests(unittest.TestCase):
   with self.assertRaises(ValueError):self.call(request)
   self.assertEqual(self.call({'action':'script_canary','machine_registry_id':self.machine,'nonce':'a'*64}),{'signature':'existing-canary'})
   self.assertEqual(self.calls[-1][1],['/usr/local/libexec/cecelia/fleet-worker/linux-script-canary.cjs','--nonce','a'*64])
+ def test_renewal_reads_current_boot_without_install_or_secret_transport(self):
+  self.call();self.worker=str(uuid.uuid4());self.write('/run/cecelia-script/worker-boot-id',self.worker)
+  request={k:self.request[k] for k in ['machine_registry_id','nonce','intent_id','pool','revision']};request['action']='installation'
+  self.assertEqual(self.call(request)['receipt']['worker_boot_id'],self.worker);self.assertEqual(self.installs,1)
  def test_untrusted_stage_path_refuses(self):
   target=self.root/'var/lib/cecelia/onboarding';target.parent.mkdir(parents=True);target.symlink_to(self.root)
   with self.assertRaises(ValueError):self.call()

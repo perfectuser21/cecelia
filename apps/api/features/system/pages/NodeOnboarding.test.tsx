@@ -8,6 +8,7 @@ const fingerprint = `SHA256:${'a'.repeat(43)}`;
 const queued = {
   id: 'request-1', task_id: 'task-1', machine_name: 'node-1', status: 'queued', stage: 'connection' as string | null, error: null as string | null,
   notice: undefined as string | undefined,
+  automatic: undefined as boolean | undefined,
   steps: [{ key: 'connection', label: '连接检查', status: 'pending' }],
 };
 let history: typeof queued[];
@@ -119,6 +120,14 @@ describe('设备页接入新机器', () => {
     const count = () => vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/brain/machines').length;
     expect(count()).toBe(2);
     await tick(); expect(count()).toBe(2);
+  });
+  it('执行接入完成后持续核验，授权续验时撤下完成提示，重新就绪才刷新设备', async () => {
+    current={...queued,status:'completed',automatic:true,notice:'执行已接入'};history=[current];vi.useFakeTimers();await act(async()=>{mount();});
+    expect(screen.getByText('执行已接入')).toBeInTheDocument();
+    current={...queued,status:'in_progress',automatic:true,notice:'正在续验执行授权'};await tick();
+    expect(screen.queryByText('接入完成')).not.toBeInTheDocument();expect(screen.getByText('正在续验执行授权')).toBeInTheDocument();
+    const count=()=>vi.mocked(fetch).mock.calls.filter(([url])=>url==='/api/brain/machines').length,before=count();
+    current={...queued,status:'completed',automatic:true};await tick();expect(count()).toBe(before+1);await tick();expect(count()).toBe(before+1);
   });
   it('轮询失败保留进度、显示中文错误且不误报成功', async () => {
     history = [queued]; vi.useFakeTimers(); await act(async () => { mount(); });
@@ -253,6 +262,12 @@ describe('设备页接入新机器', () => {
     expect(within(card).getByText(/健康采样：.*分钟前/)).toBeInTheDocument();
     expect(screen.queryByText('1 台监控健康')).not.toBeInTheDocument();
     expect(within(card).queryByText(/离线/)).not.toBeInTheDocument();
+  });
+  it('机器卡片只相信后台同代执行投影，metadata自报不能启用执行', async () => {
+    const first=machine('trusted-node','HK',{onboarding:{state:'managed'},node_health:{observed_at:new Date().toISOString(),capabilities:{execution:false}}});
+    machines=[{...first,execution:{enabled:true,expires_at:new Date(Date.now()+60000).toISOString(),verified_until:new Date(Date.now()+60000).toISOString()}},machine('forged-node','HK',{onboarding:{state:'managed'},node_health:{observed_at:new Date().toISOString(),capabilities:{execution:true}}})] as typeof machines;
+    mount();expect(within(await screen.findByRole('button',{name:/trusted-node/})).getByText('执行已启用')).toBeInTheDocument();
+    expect(within(screen.getByRole('button',{name:/forged-node/})).getByText('执行未启用')).toBeInTheDocument();
   });
   it('页面停留期间健康采样会自然转为过期', async () => {
     vi.useFakeTimers();
