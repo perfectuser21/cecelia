@@ -18,6 +18,8 @@ async function run(activities, extraInput = {}, cancel = false, badSink = false)
   await copyFile(fixture, join(cwd, 'activity.mjs'));
   await mkdir(join(cwd, 'nested'));
   await copyFile(fixture, join(cwd, 'nested', 'activity.mjs'));
+  await mkdir(join(cwd, '_nested'));
+  await copyFile(fixture, join(cwd, '_nested', '_activity.mjs'));
   const trace = join(cwd, 'trace.jsonl');
   const receipt = join(cwd, 'receipt.json');
   const childPid = join(cwd, 'child.pid');
@@ -66,8 +68,8 @@ describe('opt-in契约CLI真实子进程闭环', () => {
     expect(r.code, r.stderr).toBe(0);
     expect(r.result.outputs.delivered).toEqual([{ id: 'a:fragment', owner: 'a' }]);
   });
-  test('支持cwd下面的安全相对路径入口', async () => {
-    const r = await run([activity('deliver', 1, { entry: 'nested/activity.mjs' })]);
+  test.each(['nested/activity.mjs', '_nested/_activity.mjs'])('支持cwd下面的安全相对路径入口%s', async entry => {
+    const r = await run([activity('deliver', 1, { entry })]);
     expect(r.code, r.stderr).toBe(0);
   });
   test('各活动预算独立传入，不把组预算相加', async () => {
@@ -192,6 +194,7 @@ describe('opt-in契约CLI真实子进程闭环', () => {
     ['缺预算', a => { delete a.budget; }],
     ['绝对入口', a => { a.runtime.entry = '/tmp/activity.mjs'; }],
     ['越界入口', a => { a.runtime.entry = '../activity.mjs'; }],
+    ['schema未声明cjs入口', a => { a.runtime.entry = 'activity.cjs'; }],
   ])('拒绝%s且不启动活动', async (_, mutate) => {
     const a = activity('inspect', 1); mutate(a);
     const r = await run([a, activity('deliver', 2)]);
