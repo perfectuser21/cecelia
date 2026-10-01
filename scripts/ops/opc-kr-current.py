@@ -23,9 +23,10 @@ def call(url, body=None, method=None):
 
 
 def objects():
-    out = subprocess.run(["docker", "exec", "openclaw-gateway", "node",
-                          "/root/.openclaw/opc-objects.mjs", "list"],
+    out = subprocess.run(["/usr/bin/node", "/opt/openclaw/state/opc-objects.mjs", "list"],
                          capture_output=True, text=True, timeout=90)
+    if out.returncode:
+        raise RuntimeError("经营对象读取失败（退出码 %s）：%s" % (out.returncode, out.stderr.strip()))
     d = json.loads(out.stdout)
     assert d.get("ok"), d.get("error")
     return d["records"], d["now_ms"]

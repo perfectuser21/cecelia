@@ -369,3 +369,4 @@ phone-registry-sync-smoke.sh
 alertness-schema-smoke.sh
 
 managed-script-capacity-smoke.sh
+node-onboarding-smoke.sh
