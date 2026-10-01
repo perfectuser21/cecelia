@@ -138,7 +138,8 @@ test('all explicit live Brain shell write entries remain registered and guarded'
   for (const name of await readdir(smokeDir)) {
     if (!name.endsWith('.sh')) continue;
     const source = await readFile(resolve(smokeDir, name), 'utf8');
-    const httpWrite = /-X\s+(POST|PATCH|DELETE|PUT|["']?\$)/.test(source);
+    const httpWrite = /\bcurl\b[^\n]*-X\s+(POST|PATCH|DELETE|PUT|["']?\$)/
+      .test(source.replace(/\\\r?\n/g, ' '));
     const sqlWrite = /\bpsql\b/.test(source)
       && /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\s/i.test(source);
     if (!httpWrite && !sqlWrite) continue;

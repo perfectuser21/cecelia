@@ -4,7 +4,7 @@
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
     "evidence": "INSERT仅js.match源码断言；psql两处仅information_schema SELECT列类型。",
     "sha256": "ee3bb0cfc553f6e82f9c0bf70b1d05caef97aedc258893c2afc3d3546782a077",
-    "source_commit": "post-5785 readonly startup-config guard"
+    "source_commit": "d664db65c9"
   },
   "account-quota-gate-smoke.sh": {
     "kind": "write",
@@ -95,14 +95,14 @@
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
     "evidence": "CREATE仅grep迁移源码；psql仅information_schema SELECT，HTTP GET healthz。",
     "sha256": "336872f3fe2d17640450bfd373f1a04335ac88ac2cc33d98705b51100827711c",
-    "source_commit": "post-5785 readonly startup-config guard"
+    "source_commit": "d664db65c9"
   },
   "harness-initiative-migrate-smoke.sh": {
     "kind": "readonly",
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
     "evidence": "CREATE/INSERT仅node文件结构断言；q函数所有调用仅SELECT迁移映射不变量。",
     "sha256": "35876e941cf1979109d44fe36b24043816426f47f72a44271e6aaffc2a43dd27",
-    "source_commit": "post-5785 readonly startup-config guard"
+    "source_commit": "d664db65c9"
   },
   "harness-orchestrator-lockdown-smoke.sh": {
     "kind": "write",
@@ -121,7 +121,7 @@
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
     "evidence": "UPDATE仅说明和readFile源码断言；实际psql仅information_schema SELECT，HTTP GET tick/status。",
     "sha256": "047d29a54e172af99dcc4cd5d7673b2236ff2c3a041235d95aecbadacb08b8bf",
-    "source_commit": "post-5785 readonly startup-config guard"
+    "source_commit": "d664db65c9"
   },
   "line-context-smoke.sh": {
     "kind": "write",
@@ -338,14 +338,14 @@
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
     "evidence": "ALTER仅readFile源码断言；TASK_KIND_SMOKE_DB_URL所有psql实际均SELECT列/约束/NULL行数。",
     "sha256": "970c46295d1ad64e48fb7e358703d18145975556f3981ff824b9ae263ab38f95",
-    "source_commit": "post-5785 readonly startup-config guard"
+    "source_commit": "d664db65c9"
   },
   "task-run-outlets-smoke.sh": {
     "kind": "readonly",
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
     "evidence": "INSERT仅grep迁移文件断言；实际psql仅SELECT notion_projection_map状态/方向。",
     "sha256": "e3a7ba1398096a3df78ae5265c7d5e126a618bfd1fadc3505e92e103dbbecb2c",
-    "source_commit": "post-5785 readonly startup-config guard"
+    "source_commit": "d664db65c9"
   },
   "task-run-primitive-smoke.sh": {
     "kind": "write",
@@ -358,14 +358,14 @@
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
     "evidence": "UPDATE仅静态写口代码扫描；实际psql仅SELECT列/表存在，HTTP GET health。",
     "sha256": "785d7bfc1132902f01c3fd80b837fa72044af3100cc9e8bc08e064eb0461b524",
-    "source_commit": "post-5785 readonly startup-config guard"
+    "source_commit": "d664db65c9"
   },
   "tasks-ability-id-smoke.sh": {
     "kind": "readonly",
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
     "evidence": "INSERT仅注释；node仅readFile路由结构；实际psql仅SELECT tasks列类型。",
     "sha256": "ec26f4c3a2df52c69ec8c9c0a5c89cd456bd0fa54b43ebda32d3cb4be30a6e76",
-    "source_commit": "post-5785 readonly startup-config guard"
+    "source_commit": "d664db65c9"
   },
   "workflow-run-lost-deadline-smoke.sh": {
     "kind": "write",
