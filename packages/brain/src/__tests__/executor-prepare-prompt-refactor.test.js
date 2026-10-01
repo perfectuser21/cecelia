@@ -26,12 +26,12 @@ describe('preparePrompt 重构：子函数存在', () => {
     expect(executorSrc).toContain('_prepareDecompositionPrompt');
   });
 
-  it('提取了 _prepareContinueDecompWithInitiative 子函数', () => {
-    expect(executorSrc).toContain('_prepareContinueDecompWithInitiative');
+  it('提取了 _prepareProjectTaskDecomp 子函数', () => {
+    expect(executorSrc).toContain('_prepareProjectTaskDecomp');
   });
 
-  it('提取了 _prepareInitiativeSupplementDecomp 子函数', () => {
-    expect(executorSrc).toContain('_prepareInitiativeSupplementDecomp');
+  it('既有项目拆解不再按退役子层派发', () => {
+    expect(executorSrc).not.toContain('function _prepareInitiativeSupplementDecomp');
   });
 
   it('提取了 _prepareFirstDecomp 子函数', () => {

@@ -17,32 +17,19 @@ import { createTask } from './actions.js';
  * 条件：entity 有拆解产出（子实体）且没有 pending review task。
  *
  * @param {import('pg').Pool} pool - 数据库连接池
- * @param {string} entityType - 'project' | 'initiative'
+ * @param {string} entityType - 'project'
  * @param {string} entityId - 实体 UUID
  * @returns {Promise<boolean>} true = 需要审查
  */
 async function shouldTriggerReview(pool, entityType, entityId) {
   if (!entityType || !entityId) return false;
 
-  // 1. 检查是否有拆解产出
-  let hasChildren = false;
-  if (entityType === 'project') {
-    // Project 的子实体是 Initiative（迁移：projects WHERE type='initiative' → okr_initiatives via scopes）
-    const r = await pool.query(
-      `SELECT 1 FROM okr_initiatives oi
-       JOIN okr_scopes os ON oi.scope_id = os.id
-       WHERE os.project_id = $1 LIMIT 1`,
-      [entityId]
-    );
-    hasChildren = r.rows.length > 0;
-  } else if (entityType === 'initiative') {
-    // Initiative 的子实体是 Task
-    const r = await pool.query(
-      `SELECT 1 FROM tasks WHERE project_id = $1 LIMIT 1`,
-      [entityId]
-    );
-    hasChildren = r.rows.length > 0;
-  }
+  // 四层模型：Project 的直接子实体是 Task；退役层不再触发审查。
+  if (entityType !== 'project') return false;
+  const children = await pool.query(
+    `SELECT 1 FROM tasks WHERE project_id = $1 AND task_type <> 'project' LIMIT 1`, [entityId]
+  );
+  const hasChildren = children.rows.length > 0;
 
   if (!hasChildren) return false;
 
@@ -74,7 +61,7 @@ async function shouldTriggerReview(pool, entityType, entityId) {
  *
  * @param {import('pg').Pool} pool - 数据库连接池
  * @param {Object} params
- * @param {string} params.entityType - 'project' | 'initiative'
+ * @param {string} params.entityType - 'project'
  * @param {string} params.entityId - 实体 UUID
  * @param {string} params.entityName - 实体名称
  * @param {string} params.parentKrId - 所属 KR ID
@@ -83,24 +70,12 @@ async function shouldTriggerReview(pool, entityType, entityId) {
 async function createReviewTask(pool, { entityType, entityId, entityName, parentKrId }, taskCreator = createTask) {
   // 1. 收集拆解产出信息
   let childrenSummary = '';
-  if (entityType === 'project') {
-    // 迁移：projects WHERE type='initiative' → okr_initiatives via okr_scopes
-    const r = await pool.query(
-      `SELECT oi.title AS name, oi.status
-       FROM okr_initiatives oi
-       JOIN okr_scopes os ON oi.scope_id = os.id
-       WHERE os.project_id = $1
-       ORDER BY oi.created_at ASC`,
-      [entityId]
-    );
-    childrenSummary = r.rows.map((c, i) => `${i + 1}. ${c.name} (${c.status})`).join('\n');
-  } else if (entityType === 'initiative') {
-    const r = await pool.query(
-      `SELECT title, status FROM tasks WHERE project_id = $1 ORDER BY created_at ASC`,
-      [entityId]
-    );
-    childrenSummary = r.rows.map((c, i) => `${i + 1}. ${c.title} (${c.status})`).join('\n');
-  }
+  if (entityType !== 'project') throw new Error('layer_retired');
+  const children = await pool.query(
+    `SELECT title, status FROM tasks WHERE project_id = $1 AND task_type <> 'project' ORDER BY sequence_no ASC NULLS LAST, created_at ASC`,
+    [entityId]
+  );
+  childrenSummary = children.rows.map((c, i) => `${i + 1}. ${c.title} (${c.status})`).join('\n');
 
   // 2. 创建 decomp_reviews 记录（verdict=NULL 表示 pending）
   const reviewRow = await pool.query(
@@ -137,6 +112,7 @@ async function createReviewTask(pool, { entityType, entityId, entityName, parent
         '请返回 verdict: approved / needs_revision / rejected',
         '以及 findings（JSON）说明审查发现。',
       ].join('\n'),
+    project_id: entityId,
     goal_id: parentKrId || null,
     task_type: 'decomp_review',
     priority: 'P0',
@@ -196,74 +172,24 @@ async function processReviewResult(pool, taskId, verdict, findings, taskCreator 
 
   console.log(`[review-gate] Review ${reviewId} verdict: ${verdict} for ${entityType} ${entityId}`);
 
+  if (entityType !== 'project') return;
+
   // 3. 根据 verdict 执行后续动作
   if (verdict === 'approved') {
     // 激活实体
     await pool.query(
-      `UPDATE okr_projects SET status = 'active' WHERE id = $1 AND status = 'pending_review'`,
+      `UPDATE projects SET status = 'active' WHERE id = $1 AND status = 'pending_review'`,
       [entityId]
     );
     console.log(`[review-gate] Entity ${entityId} activated (approved)`);
 
-    // 断链 #2: entity_type=project 时，为每个 initiative 创建 architecture_design (M2 design) 任务
-    if (entityType === 'project') {
-      try {
-        // 迁移：projects WHERE type='initiative' → okr_initiatives via okr_scopes
-        const initiatives = await pool.query(
-          `SELECT oi.id, oi.title AS name
-           FROM okr_initiatives oi
-           JOIN okr_scopes os ON oi.scope_id = os.id
-           WHERE os.project_id = $1 AND oi.status != 'done'`,
-          [entityId]
-        );
-        const { createTask: createAdM2Task } = await import('./actions.js');
-        for (const initiative of initiatives.rows) {
-          // 幂等检查：initiative 已有 queued/in_progress 的 architecture_design 时跳过
-          const existing = await pool.query(
-            `SELECT id FROM tasks
-             WHERE project_id = $1 AND task_type = 'architecture_design'
-               AND status IN ('queued', 'in_progress')
-             LIMIT 1`,
-            [initiative.id]
-          );
-          if (existing.rows.length > 0) {
-            console.log(`[review-gate] architecture_design(M2) already queued for initiative ${initiative.id}, skip`);
-            continue;
-          }
-          await createAdM2Task({
-            title: `[M2 Design] architecture_design — ${initiative.name}`,
-            description: `Vivian 已 approved，为 Initiative「${initiative.name}」生成技术设计文档 + 拆分 dev Tasks。`,
-            priority: 'P1',
-            project_id: initiative.id,
-            task_type: 'architecture_design',
-            trigger_source: 'review_gate_auto',
-            payload: { mode: 'design', approved_review_task_id: taskId, parent_project_id: entityId }
-          });
-          console.log(`[review-gate] 断链#2 修复: architecture_design(M2 design) created for initiative ${initiative.id}`);
-        }
-      } catch (adM2Err) {
-        console.error(`[review-gate] architecture_design(M2) creation failed (non-fatal): ${adM2Err.message}`);
-      }
-    }
-
   } else if (verdict === 'needs_revision') {
     // 创建修正 decomp task
-    // 迁移：projects → okr_projects（title 列替代 name）
     const entityRow = await pool.query(
-      `SELECT title AS name, NULL::uuid AS parent_id FROM okr_projects WHERE id = $1`,
-      [entityId]
+      `SELECT name, kr_id FROM projects WHERE id = $1`, [entityId]
     );
     const entityName = entityRow.rows[0]?.name || 'Unknown';
-
-    // 找到关联的 KR
-    let krId = null;
-    if (entityRow.rows[0]?.parent_id) {
-      const krResult = await pool.query(
-        `SELECT kr_id FROM okr_projects WHERE id = $1 LIMIT 1`,
-        [entityRow.rows[0].parent_id]
-      );
-      krId = krResult.rows[0]?.kr_id || null;
-    }
+    const krId = entityRow.rows[0]?.kr_id || null;
 
     const revisionTask = await taskCreator({
       db: pool,
@@ -278,8 +204,9 @@ async function processReviewResult(pool, taskId, verdict, findings, taskCreator 
           '',
           '请根据审查意见修正拆解结构。',
         ].join('\n'),
+      project_id: entityId,
       goal_id: krId,
-      task_type: 'initiative_plan',
+      task_type: 'project_plan',
       priority: 'P0',
       trigger_source: 'brain_auto',
       allow_unscoped: true,
@@ -296,7 +223,7 @@ async function processReviewResult(pool, taskId, verdict, findings, taskCreator 
   } else if (verdict === 'rejected') {
     // 标记实体 blocked
     await pool.query(
-      `UPDATE okr_projects SET status = 'blocked' WHERE id = $1`,
+      `UPDATE projects SET status = 'blocked' WHERE id = $1`,
       [entityId]
     );
     console.log(`[review-gate] Entity ${entityId} blocked (rejected)`);

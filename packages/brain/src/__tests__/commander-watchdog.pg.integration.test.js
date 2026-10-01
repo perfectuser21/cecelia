@@ -11,7 +11,7 @@ import { DB_DEFAULTS } from '../db-config.js';
 import { recordCommanderHeartbeat, runCommanderWatchdog, runWorkflowTrendBark } from '../commander-watchdog.js';
 
 let DB_AVAILABLE = false;
-{
+if (process.env.POSTGRES_INTEGRATION === '1') {
   let probePool;
   try {
     probePool = new pg.Pool({ ...DB_DEFAULTS, max: 1, connectionTimeoutMillis: 2000 });
@@ -31,7 +31,11 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
 
   beforeAll(async () => { pool = new pg.Pool({ ...DB_DEFAULTS, max: 1 }); });
   afterAll(async () => { await pool.end(); });
-  beforeEach(async () => { client = await pool.connect(); await client.query('BEGIN'); });
+  beforeEach(async () => {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    await client.query("DELETE FROM working_memory WHERE key = 'workflow_trend_bark:last_day'");
+  });
   afterEach(async () => { await client.query('ROLLBACK'); client.release(); });
 
   async function insertRun({ payload, dueAgo = '30 minutes', status = 'in_progress', completedAgo = null, title = null }) {

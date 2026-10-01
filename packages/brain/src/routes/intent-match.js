@@ -1,7 +1,7 @@
 /**
  * Intent Match Route - 根据用户自然语言查询匹配的 Goals/Projects
  * POST /api/brain/intent/match
- * 迁移：goals → objectives + key_results，projects → okr_projects
+ * 迁移：goals → objectives + key_results，projects → projects
  */
 import { Router } from 'express';
 import pool from '../db.js';
@@ -93,12 +93,12 @@ router.post('/match', async (req, res) => {
 
     const allGoals = [...combinedGoals, ...extraGoals].slice(0, safeLimit);
 
-    // --- okr_projects 搜索 ---
+    // --- projects 搜索 ---
     const projectsResult = await pool.query(`
-      SELECT id, title AS name, 'project'::text AS type, status, NULL::text AS description, kr_id AS parent_id,
-             CASE WHEN title ILIKE $2 THEN 0 ELSE 1 END AS name_rank
-      FROM okr_projects
-      WHERE title ILIKE $1
+      SELECT id, name, 'project'::text AS type, status, NULL::text AS description, kr_id AS parent_id,
+             CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END AS name_rank
+      FROM projects
+      WHERE name ILIKE $1
         AND status NOT IN ('completed', 'cancelled', 'archived')
       ORDER BY name_rank ASC, updated_at DESC
       LIMIT $3

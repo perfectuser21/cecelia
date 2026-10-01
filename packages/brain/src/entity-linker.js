@@ -58,16 +58,9 @@ export async function findRelatedProject(text) {
     if (keywords.length === 0) return null;
 
     for (const kw of keywords) {
-      // 迁移：projects → okr_projects UNION okr_scopes UNION okr_initiatives（title 替代 name）
       const result = await pool.query(
-        `SELECT id, title AS name FROM okr_projects WHERE title ILIKE $1
-         UNION ALL
-         SELECT id, title AS name FROM okr_scopes WHERE title ILIKE $1
-         UNION ALL
-         SELECT id, title AS name FROM okr_initiatives WHERE title ILIKE $1
-         ORDER BY name
-         LIMIT 1`,
-        [`%${kw}%`, `%${kw}%`, `%${kw}%`]
+        `SELECT id, name FROM projects WHERE name ILIKE $1 ORDER BY name LIMIT 1`,
+        [`%${kw}%`]
       );
       if (result.rows.length > 0) return result.rows[0];
     }

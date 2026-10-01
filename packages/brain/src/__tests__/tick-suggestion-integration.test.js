@@ -70,6 +70,14 @@ vi.mock('../decision.js', () => ({
 }));
 vi.mock('../health-monitor.js', () => ({ runLayer2HealthCheck: vi.fn().mockResolvedValue({ summary: 'ok' }) }));
 vi.mock('../dept-heartbeat.js', () => ({ triggerDeptHeartbeats: vi.fn().mockResolvedValue({}) }));
+// 本测试验证suggestion入口退役，心跳巡检的真实LLM/网络由其独立测试覆盖。
+// executeTick的遗留清理支路必须隔离真实git worktree；此测试只验suggestion调用边界。
+vi.mock('../harness-worktree.js', () => ({
+  cleanupStaleHarnessWorktrees: vi.fn().mockResolvedValue({ cleaned: 0, skipped: 0 }),
+}));
+vi.mock('../heartbeat-plugin.js', () => ({
+  tick: vi.fn().mockResolvedValue({ ran: false, actions: [] }),
+}));
 vi.mock('../daily-review-scheduler.js', () => ({ triggerDailyReview: vi.fn().mockResolvedValue({}) }));
 vi.mock('../quarantine.js', () => ({
   handleTaskFailure: vi.fn(),
@@ -95,6 +103,7 @@ vi.mock('../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue({}
 // ── 导入被测函数 ──────────────────────────────────────────────────────────────
 
 import { executeTriage, cleanupExpiredSuggestions } from '../suggestion-triage.js';
+import { tick as heartbeatTick } from '../heartbeat-plugin.js';
 
 // ── 测试 ──────────────────────────────────────────────────────────────────────
 
@@ -115,6 +124,7 @@ describe('Tick Suggestion Integration (v2 — L1 架构)', () => {
       const result = await executeTick();
 
       expect(result.success).toBe(true);
+      expect(heartbeatTick).toHaveBeenCalledTimes(1);
       expect(executeTriage).not.toHaveBeenCalled();
     }, 60000);
 
@@ -122,6 +132,7 @@ describe('Tick Suggestion Integration (v2 — L1 架构)', () => {
       const result = await executeTick();
 
       expect(result.success).toBe(true);
+      expect(heartbeatTick).toHaveBeenCalledTimes(1);
       expect(cleanupExpiredSuggestions).not.toHaveBeenCalled();
     }, 60000);
 
@@ -129,6 +140,7 @@ describe('Tick Suggestion Integration (v2 — L1 架构)', () => {
       const result = await executeTick();
 
       expect(result.success).toBe(true);
+      expect(heartbeatTick).toHaveBeenCalledTimes(1);
 
       const suggestionActions = (result.actions_taken || []).filter(
         a => a.action === 'suggestion_triage' || a.action === 'suggestion_cleanup'

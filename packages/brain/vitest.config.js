@@ -5,9 +5,15 @@ import { defineConfig } from 'vitest/config';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
+  'src/__tests__/integration/account-quota-ledger.pg.integration.test.js',
+  'src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js',
+  'src/__tests__/commander-watchdog.pg.integration.test.js',
+  'src/__tests__/integration/script-executor-chain.pg.integration.test.js',
+  'src/__tests__/integration/script-executor-constraints.pg.integration.test.js',
   'src/__tests__/integration/pg-pool-close.pg.integration.test.js',
   'src/__tests__/migration-400-fact-snapshot.test.js',
   'src/__tests__/integration/kr-progress-project-aggregation.integration.test.js',
+  'src/__tests__/integration/project-readers.pg.integration.test.js',
   'src/__tests__/integration/one-session-judge-merge.pg.integration.test.js',
   'src/__tests__/integration/recurring-engine.pg.integration.test.js',
   'src/__tests__/integration/planner-recovery-run-binding.pg.integration.test.js',
@@ -94,6 +100,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
 
 export default defineConfig({
   test: {
+    setupFiles: ['src/__tests__/helpers/supertest-loopback.js'],
     globals: true,
     env: {
       CECELIA_MAP_REPO_SCOPES: 'perfectuser21/cecelia=cecelia,cecelia=cecelia',
@@ -133,6 +140,8 @@ export default defineConfig({
     // 以下测试需要真实 PostgreSQL 连接或有其他 CI 环境 pre-existing 失败
     // brain-unit 跑纯单元测试（有 vi.mock('db.js') 的），集成测试走 brain-integration
     exclude: [
+      // 与 CI unit 一致：真实 PG 与建库迁移 fixture 只交集成层。
+      'src/__tests__/integration/**',
       // DB 集成测试（pool.query 直连，beforeAll import pool）
       'src/__tests__/actions-dedup.test.js',
       'src/__tests__/actions-goal-validation.test.js',
