@@ -889,6 +889,8 @@ const options = {
 NODE
 [[ -f "$installed_workspace_manager" && -f "$installed_attempt_runner" ]] \
   || fail "--apply omitted the Workspace/Attempt runtime modules"
+[[ -f "$runtime_dir/script-runner.cjs" && -f "$runtime_dir/script-docker.cjs" ]] \
+  || fail "--apply omitted managed script runtime modules"
 [[ -f "$installed_orchestrator_runner" ]] \
   || fail "--apply omitted the Orchestrator runtime module"
 [[ -f "$installed_attempt_resources" ]] \
