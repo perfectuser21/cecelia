@@ -5,6 +5,7 @@ const KR = { id: '22222222-2222-4222-8222-222222222222', title: '管家闭环', 
   progress: 25, current_value: '2', target_value: '8', unit: '条',
   metadata: { progress_source: 'projects_v1' }, updated_at: '2026-10-01T00:00:00Z' };
 const requests = vi.fn();
+const schema = () => ({ title: [{ plain_text: 'Brain Key Results' }], properties: Object.fromEntries(Object.entries({Name:'title','Brain ID':'rich_text',Status:'select',Progress:'number',Current:'number',Target:'number',Unit:'rich_text',Source:'rich_text','Brain Updated At':'date'}).map(([name,type]) => [name,{type}])) });
 const makePool = ({ registered = true, dbId = DB, rows = [KR], link = null } = {}) => ({
   query: vi.fn(async (sql) => {
     if (sql.includes('FROM notion_projection_map')) return { rows: registered ? [{ notion_db_id: dbId }] : [] };
@@ -17,6 +18,7 @@ beforeEach(() => {
   requests.mockReset();
   requests.mockImplementation(async (_token, path, method) => {
     if (path.includes('/query')) return { results: [] };
+    if (path.includes('/databases/') && method === 'GET') return schema();
     if (method === 'POST') return { id: 'page-new' };
     return {};
   });
@@ -63,7 +65,7 @@ describe('Brain KR 独立投影', () => {
   });
   it('数据库回执丢失时按Brain ID查找远程原行，禁止重复创建', async () => {
     const { runNotionKrProjection } = await api();
-    requests.mockImplementation(async (_token, path) => path.includes('/query') ? { results: [{ id: 'existing-page' }] } : {});
+    requests.mockImplementation(async (_token, path) => path.includes('/query') ? { results: [{ id: 'existing-page' }] } : path.includes('/databases/') ? schema() : {});
     expect(await runNotionKrProjection(makePool(), deps())).toMatchObject({ patched: 1 });
     expect(requests.mock.calls.some(([,path,method]) => path === '/pages' && method === 'POST')).toBe(false);
     expect(requests.mock.calls.some(([,path,method]) => path === '/pages/existing-page' && method === 'PATCH')).toBe(true);
@@ -74,6 +76,43 @@ describe('Brain KR 独立投影', () => {
     const pool = makePool();
     await expect(runNotionKrProjection(pool, deps())).rejects.toThrow('KR 投影失败');
     expect(pool.query.mock.calls.some(([sql]) => sql.includes('INSERT INTO projection_links'))).toBe(false);
+  });
+  it('库名或列类型不符时零页面写；失败回执不会伪装成成功', async () => {
+    const { runNotionKrProjection } = await api();
+    requests.mockImplementation(async () => ({ ...schema(), title: [{ plain_text: 'Key Results' }] }));
+    await expect(runNotionKrProjection(makePool(), deps())).rejects.toThrow('独立');
+    expect(requests.mock.calls.some(([,path,method]) => path.startsWith('/pages') && ['PATCH','POST'].includes(method))).toBe(false);
+  });
+  it('旧链接错库时按当前独立库查回页面，不更新错误页面', async () => {
+    const { runNotionKrProjection } = await api();
+    requests.mockImplementation(async (_token, path, method) => {
+      if (path === '/pages/wrong-page') return { parent: { database_id: 'company-db' }, properties: { 'Brain ID': { rich_text: [{ plain_text: KR.id }] } } };
+      if (path.includes('/query')) return { results: [{ id: 'right-page' }] };
+      if (path.includes('/databases/') && method === 'GET') return schema();
+      return {};
+    });
+    expect(await runNotionKrProjection(makePool({ link: { external_id: 'wrong-page' } }), deps())).toMatchObject({ patched: 1 });
+    expect(requests.mock.calls.some(([,path,method]) => path === '/pages/wrong-page' && method === 'PATCH')).toBe(false);
+    expect(requests.mock.calls.some(([,path,method]) => path === '/pages/right-page' && method === 'PATCH')).toBe(true);
+  });
+  it('同Brain ID有多行时拒绝任选或创建，交由对账排错', async () => {
+    const { runNotionKrProjection } = await api();
+    requests.mockImplementation(async (_token, path) => path.includes('/query') ? { results: [{ id: 'a' }, { id: 'b' }] } : schema());
+    await expect(runNotionKrProjection(makePool(), deps())).rejects.toThrow('重复投影');
+    expect(requests.mock.calls.some(([,path,method]) => path.startsWith('/pages') && ['PATCH','POST'].includes(method))).toBe(false);
+  });
+  it('远程请求超过五分钟时禁止重入，scheduler超时不能创建并行投影', async () => {
+    const { runNotionKrProjection } = await api();
+    let release;
+    const blocked = new Promise(resolve => { release = resolve; });
+    requests.mockImplementation(async (_token, path, method) => path.includes('/databases/') && method === 'GET' ? blocked : path.includes('/query') ? { results: [] } : { id: 'slow-page' });
+    const pool = makePool();
+    const first = runNotionKrProjection(pool, deps());
+    await vi.waitFor(() => expect(requests).toHaveBeenCalled());
+    const repeated = runNotionKrProjection(pool, { ...deps(), now: deps().now + 600001 });
+    release(schema());
+    await expect(repeated).resolves.toMatchObject({ skipped: true, reason: 'in_flight' });
+    await first.catch(() => {});
   });
   it('同一pool五分钟内自gate，其他pool不共用节流', async () => {
     const { runNotionKrProjection } = await api();
