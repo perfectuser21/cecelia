@@ -17,7 +17,7 @@ from datetime import datetime, timezone, timedelta
 
 PROFILE_NAME = 'douyin-phone-profiles.tsv'
 ACCOUNT_NAME = 'douyin-account-routes.tsv'
-HEAD = ['profile', 'serial', 'model', 'width', 'height', 'nickname', 'host', 'owner', 'role', 'wechat']
+HEAD = ['profile', 'serial', 'model', 'width', 'height', 'nickname', 'host', 'owner', 'role', 'wechat', 'enabled']
 
 
 def field(value):
@@ -56,11 +56,12 @@ def parse_profiles(text):
 
 def render(phones, old_profiles, old_accounts):
     dimensions = parse_profiles(old_profiles)
+    extras = [key for key in ('density', 'sdk', 'locale', 'app_version') if any(key in row for row in dimensions.values())]
     tags = {}
     for row in csv.reader(io.StringIO(old_accounts), delimiter='\t'):
         if row and not row[0].startswith('#') and len(row) >= 4:
             tags[(row[0], row[1])] = row[3]
-    profiles = ['#registry_version 2', '# Generated from Brain phone_registry', '#' + '\t'.join(HEAD)]
+    profiles = ['#registry_version 2', '# Generated from Brain phone_registry', '#' + '\t'.join(HEAD + extras)]
     accounts = ['# Generated from Brain phone_registry']
     seen_serial, seen_profile = set(), set()
     for p in sorted(phones, key=lambda x: x['serial']):
@@ -79,7 +80,8 @@ def render(phones, old_profiles, old_accounts):
             raise ValueError('real dimensions missing')
         wx = p.get('wechat')
         wechat = (field(wx.get('id')) + '(' + field(wx.get('nickname')) + ')') if wx else '未登录'
-        values = [profile, serial, p.get('model'), width, height, p.get('nickname'), p['host'], p.get('owner'), p.get('role'), wechat]
+        values = [profile, serial, p.get('model'), width, height, p.get('nickname'), p['host'], p.get('owner'), p.get('role'), wechat, 'true']
+        values.extend(size.get(key, '') for key in extras)
         profiles.append('\t'.join(field(v) for v in values))
         registered = p.get('douyin_accounts', [])
         if sum(a.get('current', False) is True for a in registered) > 1:
