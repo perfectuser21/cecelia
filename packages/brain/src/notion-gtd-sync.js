@@ -16,10 +16,10 @@ import { withBackoff } from './lib/notion-backoff.js';
 import {
   QIUMI_STATUS_MAP, ZH_HUMAN_ONLY_STATUSES, zhPriorityToBrain, zhWriteFor,
 } from './lib/qiumi-status-map.js';
-import { blockTask, unblockTask } from './task-updater.js';
-import { toStartIso, isFuture, sameInstant, scheduledNote, deviceBusyNote, deviceBusyExpiredNote } from './lib/qiumi-schedule.js';
+import { applyOwnerChanges, OWNER_STOP_FILTERS } from './lib/qiumi-owner-stops.js';
+export { OWNER_STOP_FILTERS } from './lib/qiumi-owner-stops.js';
+import { isFuture, sameInstant, scheduledNote, deviceBusyNote, deviceBusyExpiredNote } from './lib/qiumi-schedule.js';
 import { DEVICE_BUSY_EXPIRED_REASON } from './lib/qiumi-device-busy.js';
-import { recordProjectionCommand } from './projection/commands.js';
 
 export const GTD_DB_ID = process.env.NOTION_GTD_DB_ID || 'c69c40c2-ba63-8271-badf-01c5410d8929';
 export const EN_TASKS_DB = 'd5bc40c2-ba63-82ef-965a-8153b7ad81a0';
@@ -287,78 +287,12 @@ async function pushOneQiumiRow(pool, token, t, { notionReq, today, now }) {
 }
 
 /** 急停三个查询：只读三个人工动作态，且必须 OpenClaw任务号 以 brain: 开头（归属铁律） */
-export const OWNER_STOP_FILTERS = Object.freeze(['淘汰', '阻塞', '委派'].map((s) => Object.freeze({
-  and: [
-    { property: '状态', status: { equals: s } },
-    { property: 'OpenClaw任务号', rich_text: { starts_with: 'brain:' } },
-  ],
-})));
-
-/** 主理人急停：淘汰→cancel_requested、阻塞→owner_hold、从阻塞拖回委派→unblock。 */
+/** 主理人急停与 queued 改期，查询/解析中文页后交给 Brain 写入模块。 */
 export async function applyOwnerStops(pool, token, { notionReq = defaultNotionReq, now = () => new Date() } = {}) {
-  let cancelled = 0; let held = 0; let resumed = 0; let rescheduled = 0;
-  const ignored = []; // 急停没落地的行——不计数也要说出来，别静默
-  const [discarded, holds, redelegated] = await Promise.all(
+  const groups = await Promise.all(
     OWNER_STOP_FILTERS.map((filter) => queryAll(notionReq, token, GTD_DB_ID, filter)),
   );
-  const taskIdOf = (page) => parseZhPage(page).taskNo.match(BRAIN_MARK_RE)?.[1] ?? null;
-  for (const page of discarded) {
-    const id = taskIdOf(page);
-    if (!id) continue;
-    // externalId 必须与"人编辑页面"无关：带 last_edited_time 的话，页面每被碰一次就是一条新命令，
-    // 而任务早已 cancelled → 状态机一路 rejected，projection_commands 每轮涨一条死命令。
-    // 消解不能靠清中文页的任务号（人工态行 AI 永不写，主理人铁律），只能靠固定键 + ON CONFLICT。
-    await recordProjectionCommand(pool, {
-      target: 'notion', externalId: `${page.id}:cancel_requested`, entityType: 'tasks',
-      entityId: id, commandType: 'cancel_requested', payload: { source: 'qiumi_owner_stop' },
-    });
-    cancelled += 1;
-  }
-  for (const page of holds) {
-    const id = taskIdOf(page);
-    if (!id) continue;
-    const r = await blockTask(id, { reason: 'owner_hold', detail: '主理人在中文表拖到阻塞' });
-    if (r?.success) { held += 1; continue; }
-    const reason = r?.error || 'block_failed';
-    ignored.push({ id, action: 'hold', reason });
-    console.warn(`[notion-gtd-sync] 急停未生效 task=${id} action=hold reason=${reason}`);
-  }
-  for (const page of redelegated) {
-    const id = taskIdOf(page);
-    if (!id) continue;
-    const { rows } = await pool.query(
-      "SELECT id, status, blocked_reason, payload->>'scheduled_start' AS scheduled_start FROM tasks WHERE id=$1", [id],
-    );
-    const t = rows[0];
-    // 已排期（委派 + brain: 任务号 + 仍在排队）的行，主理人改了预期开始时间 → 跟着改期；
-    // 清回写指纹，让中文「已排期」提示按新时间刷新。清空开始时间 = 立即可派。
-    // 只和 scheduled_start（上次从 Notion 排进来的时间）比，不和 next_run_at 比：
-    // 失败重排的退避也写 next_run_at，直接比会把退避冲掉。本功能上线前入账的任务没有 scheduled_start，
-    // 只在开始时间落在未来时接管，免得把存量任务的退避改没。
-    if (t?.status === 'queued') {
-      const start = toStartIso(parseZhPage(page).startAt);
-      const changed = !sameInstant(start, t.scheduled_start);
-      if (changed && (t.scheduled_start || isFuture(start, now()))) {
-        await pool.query(
-          `UPDATE tasks SET payload = COALESCE(payload,'{}'::jsonb)
-                    || jsonb_build_object('next_run_at', $2::text, 'scheduled_start', $2::text),
-                  notion_props = COALESCE(notion_props,'{}'::jsonb) - 'qiumi_pushed_status', updated_at = NOW()
-            WHERE id = $1 AND status = 'queued'`,
-          [id, start ?? ''],
-        );
-        rescheduled += 1;
-      }
-      continue;
-    }
-    if (t?.status === 'blocked' && t.blocked_reason === 'owner_hold') {
-      const r = await unblockTask(id);
-      if (r?.success) { resumed += 1; continue; }
-      const reason = r?.error || 'unblock_failed';
-      ignored.push({ id, action: 'resume', reason });
-      console.warn(`[notion-gtd-sync] 急停未生效 task=${id} action=resume reason=${reason}`);
-    }
-  }
-  return { cancelled, held, resumed, rescheduled, ignored };
+  return applyOwnerChanges(pool, groups.map((pages) => pages.map(parseZhPage)), { now });
 }
 
 /**
