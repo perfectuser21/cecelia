@@ -275,11 +275,13 @@ describe('kernel terminal mismatch reconciliation on real PostgreSQL', () => {
           throw error;
         },
       );
+      // INSERT 会在 COMMIT 解锁时立即拒绝；提前接上断言，避免事件循环先报 unhandled rejection。
+      const writerRejected = expect(writer).rejects.toMatchObject({ code: '23514' });
       await new Promise(resolve => setTimeout(resolve, 75));
       expect(writerSettled).toBe(false);
 
       await repairClient.query('COMMIT');
-      await expect(writer).rejects.toMatchObject({ code: '23514' });
+      await writerRejected;
       await writerClient.query('ROLLBACK');
 
       const state = await testPool.query(
