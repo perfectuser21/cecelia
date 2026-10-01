@@ -166,3 +166,14 @@ it.each(['worker_id','worker_boot_id'])('认证HTTP错 %s cancel 不删除、不
   expect(containers.size).toBe(1);
   expect((await pool.query('SELECT status FROM capacity_reservations')).rows[0].status).toBe('running');
 });
+it('启动请求未抵达worker时，先认证cancel持久墓碑才释放并允许下一次尝试',async()=>{
+  const first=await task();
+  expect(await triggerScriptRun(first,{...deps,managed:{...deps.managed,client:{...deps.managed.client,
+    start:async()=>{throw new Error('request_never_arrived');}}}})).toMatchObject({success:true,pending:true});
+  await reapScriptRuns(pool,deps);
+  const reservation=(await pool.query('SELECT * FROM capacity_reservations')).rows[0];
+  expect(reservation).toMatchObject({status:'released',confirmed_receipt:{tombstoned:true,container_id:null}});
+  const next=(await pool.query('SELECT * FROM tasks WHERE id=$1',[first.id])).rows[0];
+  expect(next.status).toBe('queued');expect(next.payload.script_attempts).toHaveLength(1);expect(starts).toBe(0);
+  await triggerScriptRun(next,deps);expect(starts).toBe(1);
+});
