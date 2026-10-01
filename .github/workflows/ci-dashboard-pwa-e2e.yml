@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - 'apps/dashboard/**'
+      - 'apps/api/features/**'
       - '.github/workflows/ci-dashboard-pwa-e2e.yml'
   push:
     branches: [main]
     paths:
       - 'apps/dashboard/**'
+      - 'apps/api/features/**'
       - '.github/workflows/ci-dashboard-pwa-e2e.yml'
 
 jobs:
