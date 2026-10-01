@@ -572,6 +572,8 @@ jobs:
         run: bash scripts/__tests__/test-pyramid-guard.test.sh
       - name: rescan-if-changed 事件扳机自测
         run: bash scripts/__tests__/rescan-if-changed.test.sh
+      - name: rescan remote fixture race regression
+        run: node --test scripts/__tests__/rescan-fixture-isolation.test.mjs
       - name: main-repo-sentinel 主仓哨兵自测
         run: bash scripts/__tests__/main-repo-sentinel.test.sh
       - name: anchor-sentinel 锚点哨兵自测
