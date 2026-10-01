@@ -317,7 +317,7 @@ router.post('/key-results/:id/recalculate-progress', async (req, res) => {
     if (!result) return res.status(404).json({ success: false, error: 'KeyResult not found' });
     res.json({ success: true, ...result });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(err.status || 500).json({ success: false, error: err.message });
   }
 });
 

@@ -49,7 +49,13 @@
 
 **一致性闸加第五条**：kv 里每个库都必须有对应推送函数、且该函数必须真的被调用。这条直接针对本次遗漏形态（「库纳管了但没写推送」）和 Notion 停更根因（「函数写了但挂在无人调用的死链上」），已 proven-to-fire。
 
-## Brain 1.348.13 — 归位器永远判新建修复（任务 912c1143，链 2afa6d69 第 6 棒）
+## Brain 1.348.13 — KR 重算统一项目口径（任务 7aeb81a6）
+
+- 重算复用 project 等权聚合，写 progress 与 projects_v1 来源；目标值 NULL 或非有限时 current_value 保持 NULL。
+- 无 project 保留现有进度；并发写入条件校验并重新读取，人类更新优先。
+- 永久接口及真库回归覆盖 NaN 清理、等权换算、幂等和人类并发更新。
+
+## Brain 1.348.12 — 归位器永远判新建修复（任务 912c1143，链 2afa6d69 第 6 棒）
 
 - 病根（2026-10-01 生产 be95ec9c 实测）：`POST /api/brain/projects/locate` 本项目排第一却 score=0.145<0.55 判 create；口语一句话前三全是 inactive 的「Test Project」。三因：embedding 对 200+ 候选逐个调用套 800ms 总超时必回退关键词；关键词用 Jaccard（交集/并集）被长候选文本稀释，又与语义共用 0.55 阈值；候选含 176 条 okr_projects 搬家带来的 inactive 历史项目。
 - 修法：关键词分改 query 覆盖率（交集/query 有效 token 数），过滤单字与含口语虚词的 bigram；关键词阈值独立 `PROJECT_LOCATE_KEYWORD_THRESHOLD` 默认 0.5，语义仍 `PROJECT_LOCATE_THRESHOLD` 0.55，响应 threshold 随打分方式返回；embedding 只对关键词预筛前 20 名调用；候选排除 inactive；reason 标签改 `keyword_bigram_coverage`。
