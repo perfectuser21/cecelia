@@ -26,7 +26,7 @@ describe('交办Git证据夹具', () => {
         for (const ref of refs) git(source, ['update-ref', '-d', ref]);
         expect(git(source, ['for-each-ref', '--format=%(refname)'])).toBe('');
       }
-      const originalRefs = git(source, ['show-ref']);
+      const originalRefs = git(source, ['for-each-ref', '--format=%(objectname) %(refname)']);
       const request = { source: 'api', source_id: 'fixture', repo: 'intake-test-repo' };
       await expect(resolveCanonicalRoutingEvidence(request, [{ repo: request.repo, path: source }]))
         .rejects.toMatchObject({ code: 'routing_evidence_unavailable' });
@@ -36,7 +36,7 @@ describe('交办Git证据夹具', () => {
       expect(fixture.path).not.toBe(source);
       expect(await resolveCanonicalRoutingEvidence(request, [{ repo: request.repo, path: fixture.path }]))
         .toMatchObject({ base_sha: head });
-      expect(git(source, ['show-ref'])).toBe(originalRefs);
+      expect(git(source, ['for-each-ref', '--format=%(objectname) %(refname)'])).toBe(originalRefs);
       await fixture.close();
       expect(existsSync(fixture.path)).toBe(false);
     } finally {
