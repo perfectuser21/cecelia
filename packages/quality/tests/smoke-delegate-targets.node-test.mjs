@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -7,6 +7,16 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { fixture, root, clientCommands } from './fixtures/smoke-production-guard-fixture.mjs';
+
+test('ratchet long-list membership survives early grep exit under pipefail', async () => {
+  const source = await readFile(resolve(root, 'packages/quality/scripts/run-smoke-ratchet.sh'), 'utf8');
+  const membership = source.match(/^_in_list\(\).*$/m)[0];
+  const input = 'abilities-api-smoke.sh\n' + 'private-fixture-tail\n'.repeat(100000);
+  for (const [name, expected] of [['abilities-api-smoke.sh', 0], ['abilities-api-smoke', 1]]) {
+    const result = spawnSync('bash', ['-c', `set -uo pipefail\n${membership}\nentries=$(cat)\n_in_list '${name}' "$entries"`], { input, encoding: 'utf8', timeout: 5000 });
+    assert.equal(result.status, expected, `literal membership must not turn into SIGPIPE exit 141: ${result.stderr}`);
+  }
+});
 
 for (const [name, route] of [
   ['company-key-results', '/api/brain/okr/company-key-results'],
