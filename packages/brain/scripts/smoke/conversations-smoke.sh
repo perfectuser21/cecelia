@@ -4,10 +4,15 @@
 # 前提：Brain 已启动于 localhost:5221
 
 set -e
+
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "http://localhost:5221"; then
+  exit 0
+fi
 BRAIN="http://localhost:5221"
 
 # ── 1. POST 缺 journey_id → 400 ───────────────────────────
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/conversations" \
+CODE=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/conversations" \
   -H "Content-Type: application/json" \
   -d '{}')
 if [ "$CODE" != "400" ]; then
@@ -17,7 +22,7 @@ fi
 echo "[PASS] POST 缺 journey_id → 400"
 
 # ── 2. POST 非法 journey_id → 400 ────────────────────────
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/conversations" \
+CODE=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/conversations" \
   -H "Content-Type: application/json" \
   -d '{"journey_id":"not-a-uuid"}')
 if [ "$CODE" != "400" ]; then
@@ -27,7 +32,7 @@ fi
 echo "[PASS] POST 非法 journey_id → 400"
 
 # ── 3. GET 不传 journey_id → 400 ─────────────────────────
-CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BRAIN/api/brain/conversations")
+CODE=$(curl -q -s -o /dev/null -w "%{http_code}" "$BRAIN/api/brain/conversations")
 if [ "$CODE" != "400" ]; then
   echo "[FAIL] GET 不传 journey_id 预期 400，得到 $CODE"
   exit 1
@@ -35,7 +40,7 @@ fi
 echo "[PASS] GET 不传 journey_id → 400"
 
 # ── 4. PATCH 无效 status → 400 ───────────────────────────
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BRAIN/api/brain/conversations/00000000-0000-4000-a000-000000000001" \
+CODE=$(curl -q -s -o /dev/null -w "%{http_code}" -X PATCH "$BRAIN/api/brain/conversations/00000000-0000-4000-a000-000000000001" \
   -H "Content-Type: application/json" \
   -d '{"status":"invalid_status"}')
 if [ "$CODE" != "400" ]; then

@@ -9,10 +9,15 @@
 # 用法：BRAIN_URL=http://localhost:5221 bash kv-route-smoke.sh
 
 set -uo pipefail
+
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 
 # skip guard：真 Brain 不在（或只是 stub）→ SKIP 不 FAIL（根池/放行闸惯例）
-HEALTH=$(curl -s -m 3 "$BRAIN/api/brain/health" 2>/dev/null) || HEALTH=""
+HEALTH=$(curl -q -s -m 3 "$BRAIN/api/brain/health" 2>/dev/null) || HEALTH=""
 if ! echo "$HEALTH" | grep -q '"status":"healthy"'; then
   echo "[smoke:kv-route] SKIP — $BRAIN 无真实 Brain（health: ${HEALTH:-不可达}）"
   exit 0
@@ -28,21 +33,21 @@ TEST_KEY="smoke-kv-$$"
 TEST_VAL='{"smoke":true}'
 
 # A: GET 不存在 key → 404
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -m 8 "$BRAIN/api/brain/kv/$TEST_KEY") || STATUS="000"
+STATUS=$(curl -q -s -o /dev/null -w "%{http_code}" -m 8 "$BRAIN/api/brain/kv/$TEST_KEY") || STATUS="000"
 [[ "${STATUS}" == "404" ]] && ok "GET 不存在 key → 404" || fail "GET 不存在 key：期望 404，实际 ${STATUS}"
 
 # B: POST 写入 → 200 ok=true
-RESP=$(curl -sf -m 8 -X POST "$BRAIN/api/brain/kv/$TEST_KEY" \
+RESP=$(curl -q -sf -m 8 -X POST "$BRAIN/api/brain/kv/$TEST_KEY" \
   -H "Content-Type: application/json" \
   -d "$TEST_VAL") || RESP=""
 echo "${RESP}" | grep -q '"ok":true' && ok "POST 写入 → ok=true" || fail "POST 写入失败: ${RESP}"
 
 # C: GET 存在的 key → 200 含 value
-GRESP=$(curl -sf -m 8 "$BRAIN/api/brain/kv/$TEST_KEY") || GRESP=""
+GRESP=$(curl -q -sf -m 8 "$BRAIN/api/brain/kv/$TEST_KEY") || GRESP=""
 echo "${GRESP}" | grep -q '"value"' && ok "GET 已写入 key → 含 value" || fail "GET 响应无 value: ${GRESP}"
 
 # seven-ring-audit-last 结构合法（可选，不存在不报错）
-AUDIT=$(curl -s -m 8 "$BRAIN/api/brain/kv/seven-ring-audit-last") || AUDIT=""
+AUDIT=$(curl -q -s -m 8 "$BRAIN/api/brain/kv/seven-ring-audit-last") || AUDIT=""
 if echo "${AUDIT}" | grep -q '"value"'; then
   echo "${AUDIT}" | grep -q '"rings"' && ok "seven-ring-audit-last 含 rings 字段" || fail "seven-ring-audit-last 结构异常: ${AUDIT}"
 else

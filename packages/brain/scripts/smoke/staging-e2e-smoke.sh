@@ -10,6 +10,9 @@
 #   L3 (真验)  : DB 里 staging_e2e_results 表存在 + task_type 约束接受 'staging_e2e'
 #                + 能写入并读回一条 verdict='PASS' 记录 → cleanup。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 RUNNER_FILE="packages/brain/src/staging-e2e-runner.js"
 EXECUTOR_FILE="packages/brain/src/executor.js"
@@ -63,7 +66,7 @@ console.log('[smoke] L1 PASS: runner+executor+POST /staging-e2e(pr_url幂等)+mi
 " || exit 1
 
 # ── L2 Brain health gate ───────────────────────────────────────────────
-if ! curl -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then
+if ! curl -q -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then
   echo "[smoke] L2 SKIP: Brain 不可达（$BRAIN）— L1 静态已 PASS，L3 跳过"
   exit 0
 fi
@@ -74,7 +77,7 @@ if ! command -v psql >/dev/null 2>&1; then
   echo "[smoke] L3 SKIP: psql 不可用（L1 静态已 PASS）"
   exit 0
 fi
-if ! psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
+if ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] L3 SKIP: DB 连接失败（CI 凭据/host 不对）；L1 静态已 PASS"
   exit 0
 fi
@@ -84,41 +87,41 @@ IID=$(uuidgen 2>/dev/null | tr 'A-Z' 'a-z' || node -e "console.log(require('cryp
 echo "[smoke] L3: 真验证 task=$TID"
 
 cleanup() {
-  psql "$DB" -tAc "DELETE FROM staging_e2e_results WHERE task_id='$TID'::uuid" >/dev/null 2>&1 || true
-  psql "$DB" -tAc "DELETE FROM tasks WHERE id='$TID'::uuid" >/dev/null 2>&1 || true
+  psql -X "$DB" -tAc "DELETE FROM staging_e2e_results WHERE task_id='$TID'::uuid" >/dev/null 2>&1 || true
+  psql -X "$DB" -tAc "DELETE FROM tasks WHERE id='$TID'::uuid" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 # 1) 表存在
-HAS_TABLE=$(psql "$DB" -tAc "SELECT to_regclass('public.staging_e2e_results') IS NOT NULL")
+HAS_TABLE=$(psql -X "$DB" -tAc "SELECT to_regclass('public.staging_e2e_results') IS NOT NULL")
 if [[ "$HAS_TABLE" != "t" ]]; then
   echo "[smoke] L3 FAIL: staging_e2e_results 表不存在（migration 304 未应用）"; exit 1
 fi
 
 # 2) task_type 约束接受 'staging_e2e'（直插，模拟 reportNode 路径）
-if ! psql "$DB" -tAc "INSERT INTO tasks(id, title, status, task_type, priority, created_at, updated_at) VALUES ('$TID'::uuid, '[smoke] staging_e2e', 'queued', 'staging_e2e', 'P2', NOW(), NOW())" >/dev/null 2>&1; then
+if ! psql -X "$DB" -tAc "INSERT INTO tasks(id, title, status, task_type, priority, created_at, updated_at) VALUES ('$TID'::uuid, '[smoke] staging_e2e', 'queued', 'staging_e2e', 'P2', NOW(), NOW())" >/dev/null 2>&1; then
   echo "[smoke] L3 FAIL: tasks.task_type 约束拒绝 'staging_e2e'（migration 304 约束未追加）"; exit 1
 fi
 
 # 3) verdict 能落库并读回
 SMOKE_PR="https://pr/smoke-$TID"
-psql "$DB" -tAc "INSERT INTO staging_e2e_results(task_id, initiative_id, pr_url, verdict, reason, scenarios_total, scenarios_passed) VALUES ('$TID'::uuid, '$IID'::uuid, '$SMOKE_PR', 'PASS', NULL, 1, 1) ON CONFLICT (pr_url) DO NOTHING" >/dev/null
-VERDICT=$(psql "$DB" -tAc "SELECT verdict FROM staging_e2e_results WHERE task_id='$TID'::uuid")
+psql -X "$DB" -tAc "INSERT INTO staging_e2e_results(task_id, initiative_id, pr_url, verdict, reason, scenarios_total, scenarios_passed) VALUES ('$TID'::uuid, '$IID'::uuid, '$SMOKE_PR', 'PASS', NULL, 1, 1) ON CONFLICT (pr_url) DO NOTHING" >/dev/null
+VERDICT=$(psql -X "$DB" -tAc "SELECT verdict FROM staging_e2e_results WHERE task_id='$TID'::uuid")
 if [[ "$VERDICT" != "PASS" ]]; then
   echo "[smoke] L3 FAIL: staging_e2e_results.verdict='$VERDICT'（期望 'PASS'）"; exit 1
 fi
 
 # 4) 修正4：pr_url UNIQUE（migration 305）—— 同 pr_url 重复 INSERT 被挡，不新增行
-psql "$DB" -tAc "INSERT INTO staging_e2e_results(initiative_id, pr_url, verdict, scenarios_total, scenarios_passed) VALUES ('$IID'::uuid, '$SMOKE_PR', 'FAIL', 0, 0) ON CONFLICT (pr_url) DO NOTHING" >/dev/null
-DUP_ROWS=$(psql "$DB" -tAc "SELECT count(*) FROM staging_e2e_results WHERE pr_url='$SMOKE_PR'")
+psql -X "$DB" -tAc "INSERT INTO staging_e2e_results(initiative_id, pr_url, verdict, scenarios_total, scenarios_passed) VALUES ('$IID'::uuid, '$SMOKE_PR', 'FAIL', 0, 0) ON CONFLICT (pr_url) DO NOTHING" >/dev/null
+DUP_ROWS=$(psql -X "$DB" -tAc "SELECT count(*) FROM staging_e2e_results WHERE pr_url='$SMOKE_PR'")
 if [[ "$DUP_ROWS" != "1" ]]; then
   echo "[smoke] L3 FAIL: pr_url 幂等失效（同 pr_url 行数=$DUP_ROWS，期望 1）—— migration 305 UNIQUE 未生效"; exit 1
 fi
-DUP_VERDICT=$(psql "$DB" -tAc "SELECT verdict FROM staging_e2e_results WHERE pr_url='$SMOKE_PR'")
+DUP_VERDICT=$(psql -X "$DB" -tAc "SELECT verdict FROM staging_e2e_results WHERE pr_url='$SMOKE_PR'")
 if [[ "$DUP_VERDICT" != "PASS" ]]; then
   echo "[smoke] L3 FAIL: 重复 INSERT 覆盖了既有 verdict（='$DUP_VERDICT'，期望仍 'PASS'）"; exit 1
 fi
-psql "$DB" -tAc "DELETE FROM staging_e2e_results WHERE pr_url='$SMOKE_PR'" >/dev/null 2>&1 || true
+psql -X "$DB" -tAc "DELETE FROM staging_e2e_results WHERE pr_url='$SMOKE_PR'" >/dev/null 2>&1 || true
 
 echo "[smoke] L3 PASS: 表存在 + 约束接受 staging_e2e + verdict 落库读回 + pr_url UNIQUE 幂等生效"
 echo "[smoke] staging-e2e OK (L1+L2+L3)"

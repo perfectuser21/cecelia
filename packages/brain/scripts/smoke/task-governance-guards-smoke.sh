@@ -8,6 +8,9 @@
 #   5. 单一写口：src 内仅 lib/task-dependencies.js（与 gap-dependencies 白名单）含边 INSERT
 #   6. （可选）GOV_GUARD_SMOKE_DB_URL 指向已跑完迁移的库：触发器存在且 proven-to-fire（事务内违规插入被拒并回滚）
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${GOV_GUARD_SMOKE_DB_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 cd "$(dirname "$0")/../.."
 
 echo "[task-governance-guards-smoke] 1-2. 守卫纯逻辑"
@@ -86,8 +89,8 @@ console.log('src 内无人绕过 lib/task-dependencies.js 直写 task_dependenci
 
 if [ -n "${GOV_GUARD_SMOKE_DB_URL:-}" ]; then
   echo "[task-governance-guards-smoke] 6. 真库：触发器存在且 proven-to-fire"
-  psql "$GOV_GUARD_SMOKE_DB_URL" -Atc "SELECT 1 FROM pg_trigger WHERE tgrelid='tasks'::regclass AND tgname='trg_tasks_owner_decision_protocol'" | grep -q 1 || { echo "FAIL 触发器不存在"; exit 1; }
-  OUT=$(psql "$GOV_GUARD_SMOKE_DB_URL" -v ON_ERROR_STOP=1 -c "BEGIN; INSERT INTO tasks (title, task_type, status, priority, blocked_at, blocked_reason) VALUES ('gov-guard-smoke', 'research', 'blocked', 'P2', NOW(), 'owner_decision'); ROLLBACK;" 2>&1 || true)
+  psql -X "$GOV_GUARD_SMOKE_DB_URL" -Atc "SELECT 1 FROM pg_trigger WHERE tgrelid='tasks'::regclass AND tgname='trg_tasks_owner_decision_protocol'" | grep -q 1 || { echo "FAIL 触发器不存在"; exit 1; }
+  OUT=$(psql -X "$GOV_GUARD_SMOKE_DB_URL" -v ON_ERROR_STOP=1 -c "BEGIN; INSERT INTO tasks (title, task_type, status, priority, blocked_at, blocked_reason) VALUES ('gov-guard-smoke', 'research', 'blocked', 'P2', NOW(), 'owner_decision'); ROLLBACK;" 2>&1 || true)
   echo "$OUT" | grep -q "owner_decision_protocol_violation" || { echo "FAIL 违规插入未被触发器拒绝: $OUT"; exit 1; }
   echo "真库触发器违规插入被拒 ✓"
 else

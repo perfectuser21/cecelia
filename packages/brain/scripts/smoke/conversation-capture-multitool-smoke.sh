@@ -4,6 +4,9 @@
 # migration 356 历史行改名。与 conversation-capture-smoke.sh（PR#4135 原版）互补，本脚本
 # 聚焦本次新增的多工具/闲置判定/迁移部分。
 set -uo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"   # packages/brain
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
@@ -91,18 +94,18 @@ fi
 echo "── L3 真库（psql）──"
 if ! command -v psql >/dev/null 2>&1; then
   echo "[smoke] L3 SKIP: psql 不可用（L1 静态已 PASS）"
-elif ! psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
+elif ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] L3 SKIP: DB 不可达（L1 静态已 PASS）"
 else
   for src in conversation-codex conversation-grok; do
-    psql "$DB" -tAc "BEGIN; INSERT INTO captures (content, source, dedupe_key) VALUES ('smoke-test', '$src', 'smoke-mt-$src-$$'); ROLLBACK;" >/dev/null 2>&1 \
+    psql -X "$DB" -tAc "BEGIN; INSERT INTO captures (content, source, dedupe_key) VALUES ('smoke-test', '$src', 'smoke-mt-$src-$$'); ROLLBACK;" >/dev/null 2>&1 \
       && ok "captures 表接受 source=$src 插入" \
       || fail "captures 表拒绝 source=$src 插入"
   done
-  psql "$DB" -tAc "BEGIN; INSERT INTO captures (content, source, nature, dedupe_key) VALUES ('smoke-test', 'conversation-claude', 'session_summary', 'smoke-mt-summary-$$'); ROLLBACK;" >/dev/null 2>&1 \
+  psql -X "$DB" -tAc "BEGIN; INSERT INTO captures (content, source, nature, dedupe_key) VALUES ('smoke-test', 'conversation-claude', 'session_summary', 'smoke-mt-summary-$$'); ROLLBACK;" >/dev/null 2>&1 \
     && ok "captures 表接受 nature=session_summary 插入" \
     || fail "captures 表拒绝 nature=session_summary 插入"
-  LEGACY=$(psql "$DB" -tAc "SELECT count(*) FROM captures WHERE source = 'conversation'" 2>/dev/null)
+  LEGACY=$(psql -X "$DB" -tAc "SELECT count(*) FROM captures WHERE source = 'conversation'" 2>/dev/null)
   [ "$LEGACY" = "0" ] && ok "无残留 source='conversation'（migration 356 已生效）" || fail "仍有 $LEGACY 行 source='conversation' 未改名"
 fi
 

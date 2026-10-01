@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # scratch-only 真验火：完整 Manifest 激活、精确结构与确定性 Projection 重建。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT_DIR"
@@ -14,7 +17,7 @@ PSQL_EXECUTABLE="$(command -v psql)"
 DATABASE_NAME="$($NODE_EXECUTABLE -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DATABASE_NAME" =~ (_test|_scratch)$ ]] || fail "拒绝连接非测试库: ${DATABASE_NAME:-<empty>}"
 
-ACTIVE_DATABASE="$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')"
+ACTIVE_DATABASE="$($PSQL_EXECUTABLE -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')"
 [[ "$ACTIVE_DATABASE" == "$DATABASE_NAME" ]] \
   || fail "连接目标不一致: expected=$DATABASE_NAME actual=$ACTIVE_DATABASE"
 
@@ -22,7 +25,7 @@ SMOKE_SCOPE="map-projection-smoke-$$"
 SMOKE_DECISION_ID="$($NODE_EXECUTABLE -e "process.stdout.write(require('node:crypto').randomUUID())")"
 
 cleanup() {
-  "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
+  "$PSQL_EXECUTABLE" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
     -c "DELETE FROM map_projection_runs WHERE scope_key = '$SMOKE_SCOPE'" \
     -c "DELETE FROM map_manifest_versions WHERE scope_key = '$SMOKE_SCOPE'" \
     -c "DELETE FROM map_scope_repositories WHERE scope_key = '$SMOKE_SCOPE'" \
@@ -32,7 +35,7 @@ cleanup() {
 trap cleanup EXIT
 
 db_scalar() {
-  "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"
+  "$PSQL_EXECUTABLE" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"
 }
 
 printf '%s\n' '── map projection scratch smoke ──'

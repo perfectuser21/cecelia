@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { COMPANY_KR_CATALOG, COMPANY_METRIC_MODE, companyMetric } from '../../src/lib/company-kr-metrics.js';
 
 const script = fileURLToPath(new URL('./company-key-results-smoke.sh', import.meta.url));
@@ -13,12 +15,12 @@ const validItems = () => COMPANY_KR_CATALOG.map((source, index) => ({
   progress_ratio: companyMetric('0', '2.345', '5').ratio,
   progress_pct: 46.9, validation_state: 'unverified', updated_at: '2026-10-01T08:00:00.123001Z', formal_revision: 'a'.repeat(64),
 }));
-async function run(body) {
+async function run(body, environment = {}) {
   const calls = [];
   const server = createServer((req, res) => { calls.push([req.method, req.url]); res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
-    const child = spawn('bash', [script], { env: { ...process.env, BRAIN_URL: `http://127.0.0.1:${server.address().port}` }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('bash', [script], { env: { ...process.env, ...environment, BRAIN_URL: `http://127.0.0.1:${server.address().port}` }, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = ''; child.stdout.on('data', data => { output += data; }); child.stderr.on('data', data => { output += data; });
     const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
     expect(calls).toEqual([['GET', '/api/brain/okr/company-key-results']]);
@@ -45,5 +47,14 @@ describe('company-key-results-smoke 真实HTTP只读合同', () => {
     const numeric = validItems(); numeric[0].current_value = 2.345;
     const wrongRatio = validItems(); wrongRatio[0].progress_ratio = 0;
     for (const items of [numeric, wrongRatio]) { const result = await run({ success: true, items }); expect(result.code, result.output).not.toBe(0); }
+  });
+  it('恶意 curl 启动配置仍只执行 GET，不附加业务写入', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'company-kr-curlrc-'));
+    try {
+      writeFileSync(join(home, '.curlrc'), 'request = "POST"\ndata = "local-fixture-only"\n');
+      const result = await run({ success: true, items: validItems() }, { CURL_HOME: home,
+        http_proxy: '', https_proxy: '', all_proxy: '', HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '' });
+      expect(result.code, result.output).toBe(0);
+    } finally { rmSync(home, { recursive: true, force: true }); }
   });
 });
