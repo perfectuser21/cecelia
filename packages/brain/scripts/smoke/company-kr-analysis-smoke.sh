@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
-RESPONSE="$(curl -fsS --max-time 15 "${BRAIN_URL%/}/api/brain/okr/company-key-results/analysis")"
+RESPONSE="$(curl -q -fsS --max-time 15 "${BRAIN_URL%/}/api/brain/okr/company-key-results/analysis")"
 node --input-type=module - "$RESPONSE" <<'JS'
 import assert from 'node:assert/strict';
 const body = JSON.parse(process.argv[2]);

@@ -10,6 +10,11 @@
 #   BRAIN_URL  Brain API 地址，默认 http://localhost:5221
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
+
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
 SMOKE_TAG="blade-bc-${GITHUB_RUN_ID:-local}-$$-$RANDOM"
@@ -20,7 +25,7 @@ fi
 
 cleanup() {
   if command -v psql >/dev/null 2>&1; then
-    psql "$DB" -X -v ON_ERROR_STOP=1 -c \
+    psql -X "$DB" -v ON_ERROR_STOP=1 -c \
       "DELETE FROM initiative_runs WHERE current_task_id IN (
          SELECT id FROM tasks WHERE payload->>'smoke_tag' = '$SMOKE_TAG'
        );
@@ -31,7 +36,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! curl -sf "$BRAIN_URL/api/brain/health" >/dev/null 2>&1; then
+if ! curl -q -sf "$BRAIN_URL/api/brain/health" >/dev/null 2>&1; then
   echo "[blade-bc smoke] SKIP — Brain 未启动 ($BRAIN_URL)"
   exit 0
 fi
@@ -39,12 +44,12 @@ fi
 echo "[blade-bc smoke] 检查 harness judge 机械闸 + complete 收账权守卫..."
 
 # 1. Judge 必须绑定 exact run authority，脱离 run 的客户端请求 fail-closed。
-if ! command -v psql >/dev/null 2>&1 || ! psql "$DB" -X -tAc 'SELECT 1' >/dev/null 2>&1; then
+if ! command -v psql >/dev/null 2>&1 || ! psql -X "$DB" -tAc 'SELECT 1' >/dev/null 2>&1; then
   echo "[blade-bc smoke] SKIP — DB/psql 不可达，无法建立 Judge exact-run authority"
   exit 0
 fi
 
-TASK_RESP=$(curl -sf -X POST "$BRAIN_URL/api/brain/tasks" \
+TASK_RESP=$(curl -q -sf -X POST "$BRAIN_URL/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d "{\"task_type\":\"talk\",\"title\":\"blade-bc-$SMOKE_TAG\",\"payload\":{\"worktree_path\":\"$JUDGE_WORKTREE\",\"sprint_dir\":\"sprints/s\",\"smoke_tag\":\"$SMOKE_TAG\"}}")
 TASK_ID=$(echo "$TASK_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
@@ -53,7 +58,7 @@ if [ -z "$TASK_ID" ]; then
   exit 1
 fi
 
-JUDGE_STATUS=$(curl -s -o /tmp/blade-bc-judge.json -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/judge" \
+JUDGE_STATUS=$(curl -q -s -o /tmp/blade-bc-judge.json -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/judge" \
   -H "Content-Type: application/json" \
   -d "{\"task_id\":\"$TASK_ID\",\"run_id\":\"00000000-0000-0000-0000-000000000098\",\"sprint_dir\":\"sprints/s\",\"worktree\":\"$JUDGE_WORKTREE\",\"agent_verdict\":\"PASS\"}")
 if [ "$JUDGE_STATUS" != "404" ]; then
@@ -63,7 +68,7 @@ fi
 echo "[blade-bc smoke] ✓ 无 exact run authority → 404 fail-closed"
 
 # 2. complete — 无 initiative_id → 400
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/complete" \
+STATUS=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/complete" \
   -H "Content-Type: application/json" \
   -d '{}')
 if [ "$STATUS" != "400" ]; then
@@ -73,7 +78,7 @@ fi
 echo "[blade-bc smoke] ✓ 无 initiative_id → 400"
 
 # 3. complete — 随机 UUID（无 initiative_run 记录）→ 200（保守继续）
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/complete" \
+STATUS=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN_URL/api/brain/harness/complete" \
   -H "Content-Type: application/json" \
   -d '{"initiative_id":"00000000-0000-0000-0000-000000000099","merged":true}')
 if [ "$STATUS" != "200" ]; then

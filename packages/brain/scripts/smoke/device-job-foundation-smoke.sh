@@ -9,6 +9,9 @@
 #
 # 跑完必清理：只删自己插的那条（按固定 title 前缀），绝不动别人的行。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -16,14 +19,14 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 DB_URL="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia_test}"
 PROBE_TITLE="[smoke] device-job-foundation probe $$"
 
-q() { psql "$DB_URL" -t -A -c "$1"; }
+q() { psql -X "$DB_URL" -t -A -c "$1"; }
 
 cleanup() {
-  psql "$DB_URL" -q -c "DELETE FROM tasks WHERE title = '${PROBE_TITLE}'" >/dev/null 2>&1 || true
+  psql -X "$DB_URL" -q -c "DELETE FROM tasks WHERE title = '${PROBE_TITLE}'" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-if ! psql "$DB_URL" -c 'SELECT 1' >/dev/null 2>&1; then
+if ! psql -X "$DB_URL" -c 'SELECT 1' >/dev/null 2>&1; then
   echo "SKIP: 连不上数据库（${DB_URL}），跳过真环境验证"
   exit 0
 fi

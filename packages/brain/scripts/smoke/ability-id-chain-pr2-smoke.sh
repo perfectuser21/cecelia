@@ -67,9 +67,9 @@ PGHOST="${DB_HOST:-localhost}"; PGPORT="${DB_PORT:-5432}"
 PGUSER="${DB_USER:-cecelia}"; PGDB="${DB_NAME:-cecelia}"
 export PGPASSWORD="${DB_PASSWORD:-cecelia}"
 if pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" >/dev/null 2>&1; then
-  IR_COL=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
+  IR_COL=$(psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
     -c "SELECT data_type FROM information_schema.columns WHERE table_name='initiative_runs' AND column_name='ability_id';" 2>/dev/null || echo "")
-  AI_COL=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
+  AI_COL=$(psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
     -c "SELECT data_type FROM information_schema.columns WHERE table_name='advancement_items' AND column_name='notion_synced_at';" 2>/dev/null || echo "")
   if [ "$IR_COL" = "uuid" ] && [ "$AI_COL" = "timestamp with time zone" ]; then
     echo "  PASS: initiative_runs.ability_id (uuid) + advancement_items.notion_synced_at (timestamptz) 实列均存在"

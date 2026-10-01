@@ -376,3 +376,5 @@ node-onboarding-smoke.sh
 app-server-generation-smoke.sh
 execution-directory-smoke.sh
 company-kr-analysis-smoke.sh
+
+smoke-production-guard-smoke.sh

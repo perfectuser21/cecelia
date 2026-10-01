@@ -42,11 +42,15 @@ vi.mock('util', () => ({
   }
 }));
 
-vi.mock('fs', () => ({
+vi.mock('fs', async () => {
+  const actual = await vi.importActual('fs');
+  const { preserveFleetConfigFs } = await import('../helpers/fleet-config-fs-fixture.js');
+  return preserveFleetConfigFs(actual, {
   readdirSync: mockReaddirSync,
   readFileSync: mockReadFileSync,
   existsSync: mockExistsSync
-}));
+});
+});
 
 let applySelfHealing;
 let getRecoveryStatus;
@@ -91,11 +95,15 @@ describe('alertness/healing', () => {
         });
       })
     }));
-    vi.mock('fs', () => ({
+    vi.mock('fs', async () => {
+  const actual = await vi.importActual('fs');
+  const { preserveFleetConfigFs } = await import('../helpers/fleet-config-fs-fixture.js');
+  return preserveFleetConfigFs(actual, {
       readdirSync: mockReaddirSync,
       readFileSync: mockReadFileSync,
       existsSync: mockExistsSync
-    }));
+    });
+});
 
     const mod = await import('../../alertness/healing.js');
     applySelfHealing = mod.applySelfHealing;

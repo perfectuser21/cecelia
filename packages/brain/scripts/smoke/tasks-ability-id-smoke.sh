@@ -37,7 +37,7 @@ PGHOST="${DB_HOST:-localhost}"; PGPORT="${DB_PORT:-5432}"
 PGUSER="${DB_USER:-cecelia}"; PGDB="${DB_NAME:-cecelia}"
 export PGPASSWORD="${DB_PASSWORD:-cecelia}"
 if pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" >/dev/null 2>&1; then
-  COL_TYPE=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
+  COL_TYPE=$(psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
     -c "SELECT data_type FROM information_schema.columns WHERE table_name='tasks' AND column_name='ability_id';" 2>/dev/null || echo "")
   if [ "$COL_TYPE" = "uuid" ]; then
     echo "  PASS: tasks.ability_id 实列存在且为 uuid"
