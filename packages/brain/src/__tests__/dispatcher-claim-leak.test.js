@@ -192,4 +192,21 @@ describe('dispatchNextTask — claim leak on mid-flight exception (fabf6bd6)', (
     expect(releasedClaim).toBe(false);
     expect(markedFailed).toBe(false);
   });
+  it('执行器返回资源wait时保留等待语义，不登记失败或增加熔断',async()=>{
+    const {triggerCeceliaRun}=await import('../executor.js');
+    const {recordFailure}=await import('../circuit-breaker.js');
+    triggerCeceliaRun.mockResolvedValueOnce({success:false,wait:true,configError:true,reason:'script_local_resources_wait'});
+    mockQuery.mockImplementation(async(sql)=>{
+      if(/UPDATE tasks SET claimed_by\s*=\s*\$1/.test(sql))return {rows:[{id:TASK_ID}]};
+      if(/SELECT \* FROM tasks WHERE id/.test(sql))return {rows:[ROUTED_TASK]};
+      if(/FROM work_routing_receipts receipt/.test(sql))return {rows:[canonicalRoutingReceipt(ROUTED_TASK)]};
+      return {rows:[]};
+    });
+    const {dispatchNextTask}=await import('../dispatcher.js');
+    const result=await dispatchNextTask([]);
+    expect(result).toMatchObject({dispatched:false,reason:'wait:capacity'});
+    expect(recordFailure).not.toHaveBeenCalled();
+    expect(mockQuery.mock.calls.some(([sql,args])=>sql.includes('INSERT INTO task_events')&&args?.includes('failed_dispatch'))).toBe(false);
+  });
+
 });
