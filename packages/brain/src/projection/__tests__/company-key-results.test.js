@@ -52,6 +52,15 @@ describe('公司库列级投影门', () => {
   it('库schema类型不符必须拒绝，不把其它列当指标', async () => {
     await expect(readCompanySnapshot({ token: 'fake', notionReq: vi.fn(async () => ({ properties: {} })) })).rejects.toThrow();
   });
+  it('固定Goal页被移出原Goals库时拒绝来源归属，不伪造源库声明', async () => {
+    const fixture = recoveryFixture();
+    const notionReq = async (...args) => {
+      const page = await fixture.notionReq(...args);
+      if (COMPANY_GOALS.some(g => args[1] === `/pages/${g.page_id}`)) page.parent = { database_id: 'wrong-goal-db' };
+      return page;
+    };
+    await expect(readCompanySnapshot({ token: 'fake', notionReq })).rejects.toThrow('Goal来源库归属');
+  });
   it.each(['response', 'baseline'])('远端已写但%s丢失：恢复不能把旧机器值当真人覆盖新观察', async failure => {
     const fixture = recoveryFixture(failure);
     await expect(runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq: fixture.notionReq, now: 1000000 })).rejects.toThrow();
