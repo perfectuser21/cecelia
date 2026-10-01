@@ -11,7 +11,7 @@ const repository = fileURLToPath(new URL('../../../..', import.meta.url));
 const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
 describe('交办Git证据夹具', () => {
-  it('源克隆无origin/main时用独立Git事实提供真实HEAD且不改源refs', async () => {
+  it.each(['缺少 origin/main', 'detached HEAD 且没有任何 ref'])('%s：独立Git事实提供真实HEAD且不改源refs', async (layout) => {
     const directory = mkdtempSync(join(tmpdir(), 'intake-source-without-main-'));
     const source = join(directory, 'source');
     let fixture;
@@ -19,8 +19,14 @@ describe('交办Git证据夹具', () => {
       git(repository, ['clone', '--depth', '1', '--no-checkout', pathToFileURL(repository).href, source]);
       expect(git(source, ['rev-parse', '--is-shallow-repository'])).toBe('true');
       git(source, ['update-ref', '-d', 'refs/remotes/origin/main']);
-      const originalRefs = git(source, ['show-ref']);
       const head = git(source, ['rev-parse', 'HEAD']);
+      if (layout === 'detached HEAD 且没有任何 ref') {
+        git(source, ['update-ref', '--no-deref', 'HEAD', head]);
+        const refs = git(source, ['for-each-ref', '--format=%(refname)']).split('\n').filter(Boolean);
+        for (const ref of refs) git(source, ['update-ref', '-d', ref]);
+        expect(git(source, ['for-each-ref', '--format=%(refname)'])).toBe('');
+      }
+      const originalRefs = git(source, ['show-ref']);
       const request = { source: 'api', source_id: 'fixture', repo: 'intake-test-repo' };
       await expect(resolveCanonicalRoutingEvidence(request, [{ repo: request.repo, path: source }]))
         .rejects.toMatchObject({ code: 'routing_evidence_unavailable' });
