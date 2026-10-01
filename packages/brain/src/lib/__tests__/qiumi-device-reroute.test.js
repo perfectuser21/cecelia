@@ -75,6 +75,9 @@ describe('qiumi-device-reroute 原Notion页设备补写自动恢复原task', () 
     expect(args[1]).not.toContain('headed_manual'); expect(args[1]).not.toContain('next_run_at');
     expect(JSON.parse(args[2]).body).toContain('账号：验收小彩'); expect(JSON.parse(args[2]).body).toContain('手机：验收小黄');
     expect(events).toHaveLength(1); expect(events[0][1][1]).toBe('qiumi_device_rerouted');
+    expect(JSON.parse(events[0][1][2])).toMatchObject({ author_id: AUTHOR,
+      before: { qiumi_source: { title: '抖音采集', remark: '', body: '设备：未知' } },
+      after: { qiumi_source: JSON.parse(args[2]) } });
     expect(notionReq.mock.calls.filter(([, , method]) => method === 'GET')).toHaveLength(5);
   });
   it.each([{ title: '手机：验收小黄', body: '' }, { remark: '账号：验收小彩', body: '' }])('标题备注有效补写 %#', async (o) => {

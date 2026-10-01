@@ -54,12 +54,12 @@ async function scenario(fn) {
     };
     const read = async () => (await client.query('SELECT status,payload,due_at,notion_props,blocked_reason FROM tasks WHERE id=$1', [id])).rows[0];
     const events = async () => (await client.query("SELECT payload FROM task_events WHERE task_id=$1 AND event_type='qiumi_device_rerouted'", [id])).rows;
-    await fn({ client, id, pageId, sync, read, events, payload, nickname, serial });
+    await fn({ client, id, pageId, authorId: page.last_edited_by.id, sync, read, events, payload, nickname, serial });
   } finally { await client.query('ROLLBACK'); client.release(); }
 }
 describe('Notion设备补写重路由 — 真PG原task验收', () => {
   it.each(['手机', '账号'])('%s补写更新原task一次，真实payload/事件/截止保留，重复同步幂等', async (field) => {
-    await scenario(async ({ client, id, sync, read, events, payload, nickname, serial }) => {
+    await scenario(async ({ client, id, authorId, sync, read, events, payload, nickname, serial }) => {
       const content = field === '账号' ? `账号：验收账号${id}` : `手机：${nickname}`;
       expect((await sync({ content })).rerouted).toBe(1);
       const row = await read(); expect(row.status).toBe('queued'); expect(row.blocked_reason).toBeNull();
@@ -70,6 +70,8 @@ describe('Notion设备补写重路由 — 真PG原task验收', () => {
       expect(row.due_at.toISOString()).toBe('2030-10-05T09:00:00.000Z');
       expect(row.notion_props).toEqual({ preserved: true });
       expect(await events()).toHaveLength(1); expect((await events())[0].payload.serial).toBe(serial);
+      expect((await events())[0].payload).toMatchObject({ author_id: authorId,
+        before: { qiumi_source: payload.qiumi_source }, after: { qiumi_source: row.payload.qiumi_source } });
       expect((await sync()).rerouted).toBe(0);
       expect((await client.query("SELECT id FROM tasks WHERE payload->>'notion_zh_page_id'=$1", [payload.notion_zh_page_id])).rows).toEqual([{ id }]);
     });
