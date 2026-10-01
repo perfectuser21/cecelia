@@ -2,13 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { triggerCompletedDecompositionReview } from '../decomposition-review-trigger.js';
 
 describe('拆解完成回调只消费 projects 和直接子任务', () => {
-  function makePool(task = { task_type: 'dev', payload: { decomposition: 'true' }, goal_id: 'kr', project_id: 'project' }) {
+  function makePool(task = { task_type: 'dev', payload: { decomposition: 'true' }, goal_id: 'kr', project_id: 'project' }, children = [{ title: '实现任务' }]) {
     return { query: vi.fn(async sql => {
       expect(sql).not.toMatch(/okr_(projects|scopes|initiatives)/);
       if (sql.includes('FROM tasks WHERE id')) return { rows: [task] };
       if (sql.includes('FROM key_results')) return { rows: [{ id: 'kr', title: '目标', status: 'decomposing' }] };
       if (sql.includes('FROM projects')) return { rows: [{ id: 'project', name: '新项目' }] };
-      if (sql.includes('FROM tasks WHERE project_id')) return { rows: [{ title: '实现任务' }] };
+      if (sql.includes('FROM tasks WHERE project_id')) return { rows: children };
       return { rows: [] };
     }) };
   }
@@ -30,10 +30,18 @@ describe('拆解完成回调只消费 projects 和直接子任务', () => {
   });
 
   it('项目无直接任务时不创建空确认门', async () => {
-    const pool = makePool();
+    const pool = makePool(undefined, []);
     const createReview = vi.fn();
     await triggerCompletedDecompositionReview(pool, 'completed-task', { shouldReview: vi.fn(async () => false), createReview });
     expect(createReview).not.toHaveBeenCalled();
     expect(pool.query.mock.calls.some(([sql]) => sql.includes('INSERT INTO pending_actions'))).toBe(false);
+  });
+  it('已有审查的重试仍补齐确认门与 KR 状态，且不重复派审查任务', async () => {
+    const pool = makePool();
+    const createReview = vi.fn();
+    await triggerCompletedDecompositionReview(pool, 'completed-task', { shouldReview: vi.fn(async () => false), createReview });
+    expect(createReview).not.toHaveBeenCalled();
+    expect(pool.query.mock.calls.some(([sql]) => sql.includes('INSERT INTO pending_actions'))).toBe(true);
+    expect(pool.query.mock.calls.some(([sql]) => sql.includes("status = 'reviewing'"))).toBe(true);
   });
 });
