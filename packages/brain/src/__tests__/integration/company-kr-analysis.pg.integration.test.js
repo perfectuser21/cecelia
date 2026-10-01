@@ -53,6 +53,16 @@ describe('公司KR分析真实任务账', () => {
       await client.query("INSERT INTO tasks(id,title,status,task_type,executor_kind,payload) VALUES($1,'过期建议回归','in_progress','qiumi_task','openclaw-agent',$2::jsonb)", [staleId, JSON.stringify(task.payload)]);
       const stale = await consumeCompanyAnalysis(scoped, { ...task, id: staleId }, { text }, { now });
       expect(stale.saved).toEqual([]); expect(stale.stale.map(i => i.id)).toEqual([krId]);
+      await client.query("UPDATE tasks SET status='completed_no_pr',created_at=clock_timestamp()-interval '3 seconds' WHERE id=ANY($1::uuid[])", [[task.id, staleId]]);
+      const changed = await requestCompanyKrAnalysis(scoped, { now });
+      expect(changed.success).toBe(true);
+      await client.query("UPDATE tasks SET status='completed_no_pr',created_at=clock_timestamp()-interval '1 second' WHERE id=$1", [changed.task_id]);
+      await client.query("UPDATE key_results SET metadata=jsonb_set(metadata,'{company_metric,target}','\"10\"'::jsonb),target_value=10 WHERE id=$1", [krId]);
+      const restored = await requestCompanyKrAnalysis(scoped, { now });
+      expect(restored.success).toBe(true);
+      expect(restored.task_id).not.toBe(task.id);
+      expect((await client.query('SELECT status FROM tasks WHERE id=$1', [restored.task_id])).rows[0].status).toBe('queued');
+      expect(await requestCompanyKrAnalysis(scoped, { now })).toMatchObject({ skipped: true, task_id: restored.task_id, reason: 'in_progress' });
       await client.query("UPDATE key_results SET status='archived' WHERE id=$1", [krId]);
       expect((await companyAnalysisSnapshot(scoped, now)).items).toEqual([]);
     } finally { await client.query('ROLLBACK'); client.release(); await pool.end(); }

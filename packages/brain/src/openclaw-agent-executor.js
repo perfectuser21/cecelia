@@ -217,7 +217,13 @@ export async function triggerOpenclawAgent(task, deps = {}) {
   }
   if (task.payload?.company_kr_analysis?.version === 1) {
     try { await assertCompanyAnalysisDispatch(pool, task); }
-    catch (error) { return { success: false, taskId: task.id, reason: 'company_kr_analysis_superseded', error: error.message }; }
+    catch (error) {
+      if (error.code !== 'company_kr_analysis_superseded') return { success: false, taskId: task.id, reason: 'openclaw_agent_spawn_failed', error: error.message };
+      await finalizeTask(pool, task.id, 'failed', { set: { error_message: 'company_kr_analysis_superseded' },
+        mergeResult: { company_analysis_rejected: { actor: 'brain', fact: error.message, at: new Date().toISOString() } }, onlyIfStatus: ['queued', 'in_progress'] });
+      await markCompanyAnalysis(pool, task, 'failed', error.message);
+      return { success: false, taskId: task.id, reason: 'company_kr_analysis_superseded', error: error.message, taskTerminal: true };
+    }
   }
 
   let remote;

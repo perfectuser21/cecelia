@@ -19,6 +19,7 @@ export function analysisPlan(config, input, latest, { hour = 0, manual = false, 
   if (latest && OPEN.has(latest.status)) return { run: false, reason: 'in_progress' };
   const previous = latest?.payload?.company_kr_analysis;
   const same = previous?.formal_hash === input.formal_hash && previous?.day === input.day;
+  if (latest?.status === 'failed' && latest.error_message === 'company_kr_analysis_superseded') return { run: true, trigger: manual ? 'manual' : 'change' };
   if (same && latest.status === 'failed' && manual && retry) return { run: true, trigger: 'manual' };
   if (same) return { run: false, reason: latest.status === 'failed' ? 'failed_requires_retry' : 'already_analyzed' };
   if (manual) return { run: true, trigger: 'manual' };
@@ -59,11 +60,12 @@ export function companyAnalysisPrompt(input) {
 }
 
 export async function assertCompanyAnalysisDispatch(pool, task) {
-  if (task.payload?.qiumi_department !== COMPANY_ANALYST) fail('公司KR分析必须使用受限专用分析员');
+  const superseded = message => { const error = new Error(message); error.code = 'company_kr_analysis_superseded'; throw error; };
+  if (task.payload?.qiumi_department !== COMPANY_ANALYST) superseded('公司KR分析必须使用受限专用分析员');
   const config = (await pool.query('SELECT value_json FROM working_memory WHERE key=$1', [COMPANY_ANALYSIS_CONFIG])).rows[0]?.value_json;
-  if (config?.enabled !== true) fail('公司KR分析已停用');
+  if (config?.enabled !== true) superseded('公司KR分析已停用');
   const current = await companyAnalysisSnapshot(pool);
-  if (!current.items.length || current.formal_hash !== task.payload.company_kr_analysis.formal_hash) fail('正式设置或KR有效范围已变化，请使用最新快照');
+  if (!current.items.length || current.formal_hash !== task.payload.company_kr_analysis.formal_hash) superseded('正式设置或KR有效范围已变化，请使用最新快照');
 }
 
 export async function markCompanyAnalysis(pool, task, status, error = null) {
@@ -92,7 +94,7 @@ export async function requestCompanyKrAnalysis(pool, { now = new Date(), manual 
     input.trigger = plan.trigger;
     const { createTask: defaultCreateTask } = await import('../actions.js');
     const taskCreator = createTask || defaultCreateTask;
-    const sourceId = `company-kr-analysis:${input.day}:${input.formal_hash}${retry && latest?.status === 'failed' ? `:${randomUUID()}` : ''}`;
+    const sourceId = `company-kr-analysis:${input.day}:${input.formal_hash}:${latest?.id || 'initial'}${retry && latest?.status === 'failed' ? `:${randomUUID()}` : ''}`;
     const title = `公司经营KR分析 ${input.day} ${input.formal_hash.slice(0, 8)}`;
     const creation = await taskCreator({ db: client, source: 'scheduler', source_id: sourceId, title,
       description: '只读正式目标与经营证据，输出供主理人确认的独立建议。', priority: 'P2', task_type: 'qiumi_task',

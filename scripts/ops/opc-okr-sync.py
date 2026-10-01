@@ -2,23 +2,15 @@
 """公司 OKR 下行同步：Brain 原指标快照 → 六个既有执行现场。"""
 import json
 import os
-import sys
 import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 BRAIN = os.environ.get("CECELIA_BRAIN_API", "http://localhost:5221/api/brain").rstrip("/")
 ROOT = "/opt/openclaw/workspaces-root"
 ACTOR = "opc-okr-sync"
-# 独立部署脚本的来源合同；对应 Brain COMPANY_KR_CATALOG，不按标题编号认领。
-SOURCE_PAGE_IDS = frozenset({
-    "3dbc40c2-ba63-811d-89cc-c17863d7ba80", "3dbc40c2-ba63-81d0-a417-c8e2919f77f1",
-    "3dbc40c2-ba63-8116-bace-debc4c74d6e5", "3dbc40c2-ba63-81fd-a7da-d7c8e57fbc5f",
-    "3dbc40c2-ba63-81b4-b5ab-e27542cba851", "3dbc40c2-ba63-8158-808a-e81bd769eb6b",
-    "3dbc40c2-ba63-811c-bbb7-f4e0e040098e", "3dbc40c2-ba63-812c-a185-e8eab139502a",
-})
 AREA2AGENT = {"智能获客": ["media"], "新媒体": ["media"], "AI交付FDE": ["fde"],
               "研发部": ["dev"], "人事运营": ["people"], "基础设施": ["infra"],
               "ZenithJoy": ["clawd"]}
@@ -36,14 +28,24 @@ def fetch():
     if snapshot.get("success") is not True:
         raise RuntimeError("Brain 公司 KR 快照读取失败")
     items = snapshot.get("items")
-    if not isinstance(items, list) or len(items) != len(SOURCE_PAGE_IDS):
-        raise RuntimeError("公司 KR 快照须包含完整8条来源，保留既有现场")
+    if not isinstance(items, list):
+        raise RuntimeError("公司 KR 快照缺少来源列表，保留既有现场")
     rows, seen = [], set()
     for item in items:
-        source = item["source_page_id"]
-        if source not in SOURCE_PAGE_IDS or source in seen or item.get("metric_mode") != "company_formula_v1":
+        try:
+            source = item["source_page_id"]
+            identity = UUID(source) if isinstance(source, str) and len(source) in (32, 36) else None
+        except (ValueError, TypeError, KeyError):
+            identity = None
+        if not identity or not identity.int or identity in seen or item.get("metric_mode") != "company_formula_v1":
             raise RuntimeError("公司 KR 来源映射不合法，拒绝重写现场")
-        seen.add(source)
+        seen.add(identity)
+        if not isinstance(item.get("unit"), str) or not item["unit"].strip():
+            raise RuntimeError("公司 KR 原单位缺失，拒绝重写现场")
+        inactive = {"done", "complete", "completed", "closed", "cancelled", "canceled", "archived", "paused", "on hold", "suspended",
+                    "已完成", "完成", "已归档", "归档", "暂停", "已暂停", "取消", "已取消"}
+        if item.get("active") is False or item.get("sync_error") or str(item.get("status", "")).strip().lower() in inactive:
+            continue
         area_ids = item.get("source_area_ids", [])
         area_names = item.get("source_area_names", [])
         if len(area_ids) != len(area_names) or any(not isinstance(name, str) or not name for name in area_names):
@@ -51,7 +53,8 @@ def fetch():
         rows.append({"kr": item["title"], "o": (item.get("objective") or {}).get("title", ""),
                      "areas": area_names, "validation_state": item.get("validation_state"),
                      "start": item["start_value"], "cur": item["current_value"],
-                     "target": item["target_value"], "ratio": item["progress_ratio"], "st": item["status"]})
+                     "target": item["target_value"], "ratio": item["progress_ratio"], "st": item["status"],
+                     "unit": item["unit"], "observation": item.get("observation"), "advice": item.get("advice")})
     return sorted(rows, key=lambda row: row["kr"])
 
 
@@ -59,17 +62,24 @@ def fmt(rows, title):
     now = time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time() + 8 * 3600))
     lines = ["# %s" % title, "",
              "> 快照 %s ｜ 真身在 Brain；公司 KR 保留原 Start/Current/Target 与公式口径。本文件自动重写勿手改。" % now, "",
+             "> 正式数字由主理人在 Notion 填写；AI观察和建议单独列示，尚未经主理人确认。", "",
              "> KR3.1 当前机算范围为四项快照，尚无连续7天证据。", "",
-             "| KR | 目标 | 当前 | 进度 | 部门 | 证据态 |", "|---|---|---|---|---|---|"]
+             "| KR | 单位 | 正式目标 | 正式当前 | 正式进度 | AI观察 | AI建议当前 | AI建议目标 | AI建议 | 部门 | 正式证据态 |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
+    if not rows:
+        lines += ["", "当前无活动公司 KR。"]
     for row in rows:
         ratio = row["ratio"]
         progress = "unknown" if ratio is None else format(ratio * 100, ".12g") + "%"
         state = {"unverified": "历史值·未验证", "historical_unverified": "历史值·未验证",
                  "historical_snapshot": "历史快照·未验证", "verified_observation": "有观察证据",
                  "observed": "有观察证据", "verified": "已验证"}.get(row.get("validation_state"), "unknown")
-        lines.append("| %s | %s | %s | %s | %s | %s |" % (
-            row["kr"], "unknown" if row["target"] is None else row["target"],
-            "unknown" if row["cur"] is None else row["cur"], progress, "、".join(row["areas"]) or "-", state))
+        observation, advice = row.get("observation") or {}, row.get("advice") or {}
+        summary = ("【已过期】" if advice.get("stale") else "") + advice.get("reason", "")
+        values = [row["kr"], row.get("unit"), row["target"], row["cur"], progress,
+                  observation.get("current_value"), advice.get("suggested_current"), advice.get("suggested_target"),
+                  summary or "暂无建议", "、".join(row["areas"]) or "-", state]
+        lines.append("| " + " | ".join("unknown" if v is None else str(v).replace("|", "\\|").replace("\n", "<br>") for v in values) + " |")
     lines += ["", "## 会议要求（对每条 KR）",
               "1. 进度：Current 现在是多少、和 Target 差多少（必须带证据引用，无证据写 unknown）",
               "2. 今日计划：为缩小差距今天做什么",
@@ -101,8 +111,6 @@ def main():
         call(BRAIN + "/tasks/" + task_id + "/claim", {"claimer": ACTOR, "executor_kind": "external-worker"}, "POST")
         call(BRAIN + "/tasks/" + task_id, {"status": "in_progress"}, "PATCH")
         rows = fetch()
-        if not rows:
-            sys.exit("Brain 没有公司 KR，拒绝清空既有现场文件")
         director = ROOT + "/clawd/OKR-CURRENT.md"
         write_site(director, fmt(rows, "ZenithJoy 公司 OKR（全量·Director 视图）"))
         written.append(director)

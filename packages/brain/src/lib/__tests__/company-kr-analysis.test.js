@@ -22,6 +22,7 @@ describe('公司KR分析启动规则', () => {
     const failed = { status: 'failed', payload: { company_kr_analysis: input } };
     expect(analysisPlan({ enabled: true, hour: 8 }, input, failed, { hour: 9 })).toMatchObject({ run: false, reason: 'failed_requires_retry' });
     expect(analysisPlan({ enabled: true, hour: 8 }, input, failed, { hour: 9, manual: true, retry: true })).toMatchObject({ run: true, trigger: 'manual' });
+    expect(analysisPlan({ enabled: true, hour: 8 }, input, { ...failed, error_message: 'company_kr_analysis_superseded' }, { hour: 9 })).toMatchObject({ run: true, trigger: 'change' });
   });
   it('停用和没有有效KR不派；人工触发不能越过停用', () => {
     expect(analysisPlan({ enabled: false }, input, null, { manual: true })).toMatchObject({ run: false, reason: 'disabled' });
