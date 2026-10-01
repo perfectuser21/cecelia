@@ -22,7 +22,7 @@ beforeEach(() => {
   db.query.mockReset();
   db.query.mockImplementation(async (sql) => {
     if (oldTables.test(sql)) throw new Error('冻结表不含新项目');
-    if (/FROM projects\b/.test(sql)) return { rows: [project] };
+    if (/FROM projects\b/.test(sql)) return { rows: /ANY\(\$1/.test(sql) ? [project, { ...project, id: 'project-other' }] : [project] };
     if (/FROM key_results\b/.test(sql)) return { rows: [{ id: 'kr-new', title: '接力目标', status: 'in_progress' }] };
     if (/COUNT\(/i.test(sql)) return { rows: [{ total: '1', completed: '0' }] };
     if (/SELECT 1 FROM tasks WHERE project_id/.test(sql)) return { rows: [{ id: 'child' }] };
@@ -87,5 +87,18 @@ describe('新 projects 真身对按需入口可见（d8ca5e1e 永久回归）', 
     expect(prompt).toContain('Objective → Key Result → Project → Task');
     expect(prompt).not.toMatch(/create-initiative|okr_projects|6 层架构|必须指向 Initiative/);
     expect(prompt).toContain('"project_id": "<Project ID>"');
+  });
+
+  it.each(['project_plan', 'scope_plan', 'initiative_plan'])('无项目的 %s 先生成 Project，不使用空 ID', async (task_type) => {
+    const prompt = await preparePrompt({ task_type, title: '拆解目标', goal_id: 'kr-new' });
+    expect(prompt).toContain('POST /api/brain/action/create-project');
+    expect(prompt).not.toContain('GET /api/brain/projects/，');
+  });
+
+  it('继续任务优先当前 Project，旧 payload 的子层 ID 不进入提示', async () => {
+    const prompt = await preparePrompt({ title: '继续拆解', project_id: project.id, goal_id: 'kr-new',
+      payload: { decomposition: 'continue', initiative_id: 'frozen-initiative' } });
+    expect(prompt).toContain(`"project_id": "${project.id}"`);
+    expect(prompt).not.toContain('frozen-initiative');
   });
 });
