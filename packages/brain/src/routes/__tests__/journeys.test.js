@@ -3,6 +3,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockQuery = vi.fn();
 vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
 
+it('HTTP fixture 的监听地址与 Supertest 请求的 IPv4 地址一致', async () => {
+  mockQuery.mockResolvedValueOnce({ rows: [] });
+  const { default: router } = await import('../journeys.js');
+  const express = await import('express');
+  const app = express.default();
+  app.use('/api/brain', router);
+  const request = await import('supertest');
+  const probe = request.default(app).get('/api/brain/journey_steps');
+  const address = probe.app.address();
+  const res = await probe;
+  expect(address.address).toBe('127.0.0.1');
+  expect(res.status).toBe(200);
+  expect(mockQuery).toHaveBeenCalledTimes(1);
+});
+
 describe('POST /api/brain/journeys', () => {
   beforeEach(() => { mockQuery.mockReset(); });
 

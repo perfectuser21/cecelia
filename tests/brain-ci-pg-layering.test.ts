@@ -63,6 +63,32 @@ describe('Brain PostgreSQL test layering', () => {
     }
   });
 
+  it.each([
+    ['probe-targets-cells-smoke.sh', 'migration-496-probe-targets-cells.pg.integration.test.js'],
+    ['vs-model-areas-kind-smoke.sh', 'migration-493-vs-model.pg.integration.test.js'],
+    ['vs-model-spans-smoke.sh', 'migration-495-vs-model-spans.pg.integration.test.js'],
+    ['vs-model-workflows-smoke.sh', 'migration-494-vs-model-workflows.pg.integration.test.js'],
+  ])('Smoke Glob入口 %s 保留真PG过滤器并用集成配置', (script, filter) => {
+    const source = readFileSync(join(REPO_ROOT, 'packages/brain/scripts/smoke', script), 'utf8');
+    const invocation = source.match(/^[^\n]*npx vitest run[^\n]*$/m)?.[0] ?? '';
+    expect(invocation).toContain('--config vitest.integration.config.js');
+    expect(invocation).toContain('POSTGRES_INTEGRATION=1');
+    expect(invocation).toContain(`src/__tests__/integration/${filter}`);
+    expect(invocation).not.toContain('--passWithNoTests');
+    expect(brainIntegrationConfig.test?.exclude).not.toContain(`src/__tests__/integration/${filter}`);
+  });
+
+  it('Smoke Glob的真PG入口继续使用CI一次性数据库及迁移步骤', () => {
+    const globWorkflow = parse(readFileSync(join(REPO_ROOT, '.github/workflows/ci-smoke-glob-runner.yml'), 'utf8'));
+    const job = globWorkflow.jobs['smoke-glob-runner'];
+    expect(job.services.postgres.env.POSTGRES_DB).toBe('cecelia_test');
+    expect(job.steps.find((step: { name?: string }) => step.name === 'Run Migrations').run).toContain('node src/migrate.js');
+    const smokeStep = job.steps.find((step: { name?: string }) => step.name === 'Run Smoke Ratchet Gate');
+    expect(smokeStep.env.DB_NAME).toBe('cecelia_test');
+    expect(smokeStep.env.PGDATABASE).toBe('cecelia_test');
+    expect(smokeStep.run).toContain('run-smoke-ratchet.sh');
+  });
+
   it('guards migration fixtures before connecting outside the explicit CI PostgreSQL lane', () => {
     const helper = readFileSync(join(REPO_ROOT, 'packages/brain/src/__tests__/helpers/temp-migrated-db.js'), 'utf8');
     expect(helper).toMatch(/process\.env\.CI !== 'true'/);
