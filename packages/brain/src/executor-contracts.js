@@ -231,7 +231,7 @@ export const EXECUTOR_CONTRACTS = {
         if (claimedBy.startsWith('session:') || claimedBy.startsWith('tmux:')) {
           const sessionName = claimedBy.replace(/^(session:|tmux:)/, '');
           try {
-            execFileSync('tmux', ['has-session', '-t', sessionName], {
+            execSync(`tmux has-session -t ${JSON.stringify(sessionName)} 2>/dev/null`, {
               timeout: 3000, stdio: 'pipe',
             });
             return 'alive';
