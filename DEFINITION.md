@@ -1,6 +1,7 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.355.6
+**Brain 版本**: 1.355.7
+
 
 
 
@@ -15,6 +16,12 @@
 
 
 
+
+Linux脚本预约在授权事务中固定同版本worker/boot，启动转换按既有身份CAS；能力与fresh快照的版本、boot、policy、profile摘要混代时零预约。升级前空身份只从预约对应历史版本补齐，reaper不取新boot污染旧许可。真PG永久回归核旧boot拒绝与崩溃清理，维护拒绝使用真实worker_draining码并仅凭精确墓碑释放。
+
+可信接入后台提供部署文档写入器：分别验证池/脚本完整配置及0600凭据引用，按旧policy摘要CAS，在受保护目录互斥并fsync原子替换。拒绝符号链接、宽权限、未知字段和过大文档，文档不存secret；无HTTP配置写入口，浏览器不持有授权字段。尚待接自动SSH编排。
+
+Linux脚本准入使用验收过的受信池预算与独占逻辑槽1；fresh认证身份绑定boot/revision/config，预约在DB总额锁内再核version/grant/摘要。动态资源与维护仍由root每create/start复核。新Linux目录canonical ID直接进入managed，缺profile不可退回宿主SSH，不需手填机器环境白名单。真实PG→HTTP→Unix→持久adapter回归产生实际shell输出，资源/维护拒绝只凭精确墓碑释放，create未知持续占位；尚未HK现场部署。
 
 507新增脚本runtime验收真表：prepare用受信部署根自动登记子任务并创建pending版本/grants；root签名canary逐profile验真后，同事务finalizeTask写事实/证据/actor并CAS激活同一代，仅开放managed_script。nonce十分钟、授权最长24小时，过期不续期、撤销不复活；历史清理保留，US与scheduler硬拒。JSONB不得重排下发profile摘要。此片仅scratch真表验收，生产未迁移/激活，Linux物理准入与机器页自动编排仍待接线。
 

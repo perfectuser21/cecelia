@@ -41,7 +41,7 @@ describe('Brain独立root执行许可',()=>{
  });
  it('Linux能力只从active受信目录读profile摘要，不从Worker接收权限或凭据',()=>{
   const f=fixture(),auth=createLinuxScriptAuthorization(f.options);
-  expect(auth.capabilities('hk-vps',f)).toEqual({machine_id:'hk-vps',worker_id:'hk-vps',worker_boot_id:f.node.worker_boot_id,profiles:{safe:f.profileDigest}});
+  expect(auth.capabilities('hk-vps',f)).toEqual({machine_id:'hk-vps',worker_id:'hk-vps',worker_boot_id:f.node.worker_boot_id,execution_version_id:f.node.id,policy_digest:f.node.config_hash,profiles:{safe:f.profileDigest}});
   f.node.state='pending';expect(()=>auth.capabilities('hk-vps',f)).toThrow();
  });
 });

@@ -27,7 +27,7 @@ export function createLinuxScriptAuthorization({readProtected=serverModule.readI
  }
  function capabilities(machine,authority){
   const {node,p}=policy(machine,authority);if(node.state!=='active'||node.profile.execution!==true)fail();
-  return {machine_id:machine,worker_id:node.worker_id,worker_boot_id:node.worker_boot_id,profiles:{...p.profiles}};
+  return {machine_id:machine,worker_id:node.worker_id,worker_boot_id:node.worker_boot_id,execution_version_id:node.id,policy_digest:node.config_hash,profiles:{...p.profiles}};
  }
  async function prepare(machine,action,input,authority){
   const {node,p,e}=policy(machine,authority),row=authority.reservation,grant=authority.grant;
