@@ -28,6 +28,7 @@ beforeEach(() => {
     if (/SELECT 1 FROM tasks WHERE project_id/.test(sql)) return { rows: [{ id: 'child' }] };
     return { rows: [] };
   });
+
 });
 
 describe('新 projects 真身对按需入口可见（d8ca5e1e 永久回归）', () => {
@@ -100,5 +101,12 @@ describe('新 projects 真身对按需入口可见（d8ca5e1e 永久回归）', 
       payload: { decomposition: 'continue', initiative_id: 'frozen-initiative' } });
     expect(prompt).toContain(`"project_id": "${project.id}"`);
     expect(prompt).not.toContain('frozen-initiative');
+  });
+  it('修正已有 Project 的提示重启拆解审查，不能直接完成项目', async () => {
+    const prompt = await preparePrompt({ task_type: 'project_plan', title: '修正拆解', goal_id: 'kr-new',
+      project_id: project.id, payload: { decomposition: 'true', revision: true } });
+    expect(prompt).toContain('设置 {"status":"decomposing"}');
+    expect(prompt).toContain('根据审查意见修正拆解');
+    expect(prompt).not.toContain('状态为 completed');
   });
 });

@@ -14,6 +14,7 @@ import { preparePrompt } from '../../executor.js';
 import diagnoseRoutes from '../../routes/task-router-diagnose.js';
 import intentMatchRoutes from '../../routes/intent-match.js';
 import MemoryService from '../../services/memory-service.js';
+import { actionHandlers } from '../../decision-executor.js';
 
 vi.mock('../../openai-client.js', () => ({ generateEmbedding: vi.fn(async () => null) }));
 vi.mock('../../learning.js', () => ({ searchRelevantLearnings: vi.fn(async () => []) }));
@@ -105,4 +106,11 @@ describe('真实 PostgreSQL：仅存在 projects 的新项目贯穿按需入口'
     expect(intent.status).toBe(200);
     expect(intent.body.matched_projects).toEqual(expect.arrayContaining([expect.objectContaining({ id: projectId })]));
   });
+  it('真实 Key Result 的拆解确认可从 reviewing 放行到 ready', async () => {
+    await pool.query("UPDATE key_results SET status = 'reviewing' WHERE id = $1", [krId]);
+    expect(await actionHandlers.okr_decomp_review({ kr_id: krId }, {})).toMatchObject({ success: true, kr_id: krId });
+    const result = await pool.query('SELECT status FROM key_results WHERE id = $1', [krId]);
+    expect(result.rows[0].status).toBe('ready');
+  });
+
 });

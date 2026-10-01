@@ -44,4 +44,41 @@ describe('拆解完成回调只消费 projects 和直接子任务', () => {
     expect(pool.query.mock.calls.some(([sql]) => sql.includes('INSERT INTO pending_actions'))).toBe(true);
     expect(pool.query.mock.calls.some(([sql]) => sql.includes("status = 'reviewing'"))).toBe(true);
   });
+  it('修正拆解可从 reviewing 再送审，兼容旧 entity_id 且不选同 KR 的别项目', async () => {
+    const pool = makePool({ task_type: 'project_plan', goal_id: 'kr', payload: {
+      decomposition: 'true', revision: true, entity_type: 'project', entity_id: 'revised-project',
+    } });
+    const delegate = pool.query.getMockImplementation();
+    pool.query.mockImplementation(async (sql, args) => {
+      if (sql.includes('FROM key_results')) {
+        return { rows: args[2] === true ? [{ id: 'kr', title: '目标', status: 'reviewing' }] : [] };
+      }
+      if (sql.includes('FROM projects')) {
+        expect(args[1]).toBe('revised-project');
+        return { rows: [{ id: args[1], name: '修正项目' }] };
+      }
+      return delegate(sql, args);
+    });
+    const createReview = vi.fn(async () => ({ task: { id: 'second-review' } }));
+    expect(await triggerCompletedDecompositionReview(pool, 'revision-task', {
+      shouldReview: vi.fn(async () => true), createReview,
+    })).toMatchObject({ reviewed: true, project_id: 'revised-project' });
+    expect(createReview).toHaveBeenCalledWith(pool, expect.objectContaining({ entityId: 'revised-project' }));
+  });
+  it('复用确认门时刷新当前项目和修正后的任务上下文', async () => {
+    const pool = makePool();
+    const delegate = pool.query.getMockImplementation();
+    pool.query.mockImplementation(async (sql, args) => {
+      if (sql.includes('SELECT id FROM pending_actions')) return { rows: [{ id: 'old-confirmation' }] };
+      return delegate(sql, args);
+    });
+    await triggerCompletedDecompositionReview(pool, 'revision-task', {
+      shouldReview: vi.fn(async () => false), createReview: vi.fn(),
+    });
+    const update = pool.query.mock.calls.find(([sql]) => sql.includes('UPDATE pending_actions'));
+    expect(update).toBeDefined();
+    expect(JSON.parse(update[1][1])).toMatchObject({ project_name: '新项目', tasks: ['实现任务'] });
+    expect(update[1][2]).toBe('old-confirmation');
+  });
+
 });
