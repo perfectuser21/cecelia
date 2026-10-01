@@ -1,5 +1,9 @@
 # Cecelia 定义文档
 
+**Brain 版本**: 1.355.5
+
+
+
 并发合同 PG 回归在释放行锁前注册拒绝处理，避免预期拒绝被 CI 计为未捕获错误；生产合同拒绝语义保持。
 
 **版本**: 2.0.0
@@ -22,7 +26,6 @@ Linux 执行池部署合同使用独立 systemd slice 的 CPU/内存/PID 限额�
 Linux 池证明采集器限定可信 SSH/root 验收入口和完整 systemd 宿主/VM，容器内 systemd 保守拒绝；核对固定 Docker socket 的完整容器身份、镜像、非 root 隔离参数、宿主 PID 的真实父 slice，再读取该池及可见祖先的 CPU/内存/PID 限额和可用量。宿主 boot、进程出生时间、namespace、挂载与池配置在采集前后复验；采集输出仍 execution=false，只有后续canary完成精确清理才签名；Brain验收仅允许准备pending授权，仍不开放执行。
 
 Linux pending 服务提供只读健康采样与认证 nonce 身份回执，绑定设备 UUID、固定修订、配置摘要和进程 boot；核心资源及所有执行入口保持拒绝，采样器自报状态不能授予执行。采样合并并发、请求有界，令牌只读私有安装文件；systemd 采集服务自身另限0.25核/256MiB/64进程，与任务池分离。尚未安装到现网。
-**Brain 版本**: 1.354.17
 
 OpenClaw shim 每次物理启动使用新幂等键；Brain 仅对已开始RPC且持久通道closed、或明确exited/dead的旧代自动精确取消。清理回执未知继续占位，确认absent后保留原HOME与机器亲和创建下一代；不自动重放RPC，未开始RPC的closed及Worker崩溃遗留锁仍保守拒绝。
 
@@ -33,6 +36,8 @@ OpenClaw RPC 按固定合同区分无参数与对象参数；配置约束读取�
 聊天 app-server 与三类 Worker 执行器共用维护启动闸及同 boot；真实 create/start/attach 边界再次检查，维护回执包含聊天未清理实例和在途连接，未知 journal 拒签静默。
 聊天未绑定 HOME 的候选从有效执行目录读取，主力机最后尝试；新节点无需新增机器字面量，空目录不启动。
 
+
+执行者冒烟精确名单纳入504新增app-server-controller与app_server_run，继续核验471历史集合及502/504增量；专属控制器合同不交通用看门狗终止。
 
 Brain 镜像完整打包 Fleet Worker 共用运行模块；构建期及独立产物回归实际导入执行目录并读取部署策略。
 
