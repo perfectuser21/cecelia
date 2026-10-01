@@ -41,6 +41,14 @@ function notionWith({ pages = {}, tampered = {} } = {}) {
 }
 
 describe('A7 registry_coverage', () => {
+  it('公司8列级面必须单独对账，不能因不是mirror而漏验', async () => {
+    REG.push({ notion_db_id: '684c40c2-ba63-83a7-b6ba-8161f110a18c', title: 'Key Results', face: 'inlet', brain_table: 'key_results', direction: 'both', status: 'active', vessel: 'notion-company-key-results' });
+    try {
+      const { pool } = mkPool();
+      const rs = await buildProjectionAssertions(pool, { notionReq: notionWith(), token: 't', botUserId: BOT });
+      expect(rs.find(r => r.key === 'company_kr_counts')).toMatchObject({ ok: false });
+    } finally { REG.pop(); }
+  });
   it('全部带 notion_id 的表都已登记 → 绿', async () => {
     const { pool } = mkPool();
     const rs = await buildProjectionAssertions(pool, { notionReq: notionWith(), token: 't', botUserId: BOT, constants: {} });
