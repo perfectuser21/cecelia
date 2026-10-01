@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 
 let createTaskIntakeRouter;
 beforeAll(async () => {
-  ({ createTaskIntakeRouter } = await import('../routes/task-intake.js').catch(() => ({})));
+  ({ createTaskIntakeRouter } = await import('../task-intake.js').catch(() => ({})));
   expect(createTaskIntakeRouter, '必须接入真实HTTP路由').toBeTypeOf('function');
 });
 describe('task-intake HTTP契约', () => {
@@ -26,7 +26,7 @@ describe('task-intake HTTP契约', () => {
     expect(intake.mock.calls[0][1]).toEqual({ tenantId: 'default' });
   });
   it('server.js实际挂载入口', () => {
-    const server = readFileSync(new URL('../../server.js', import.meta.url), 'utf8');
+    const server = readFileSync(new URL('../../../server.js', import.meta.url), 'utf8');
     expect(server).toContain("import taskIntakeRoutes from './src/routes/task-intake.js'");
     expect(server).toContain("app.use('/api/brain/task-intake', taskIntakeRoutes)");
   });
