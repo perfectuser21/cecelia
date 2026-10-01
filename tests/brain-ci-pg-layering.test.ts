@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { DB_DEFAULTS } from '../packages/brain/src/db-config.js';
+import { createTempMigratedDb } from '../packages/brain/src/__tests__/helpers/temp-migrated-db.js';
 import { parse } from 'yaml';
 import brainConfig from '../packages/brain/vitest.config.js';
 import brainIntegrationConfig from '../packages/brain/vitest.integration.config.js';
@@ -51,11 +53,38 @@ describe('Brain PostgreSQL test layering', () => {
     expect(helper).toContain("DB_DEFAULTS.database === 'cecelia'");
   });
 
+  it('拒绝本机、缺开关和生产库，保护在创建连接之前生效', async () => {
+    const oldCI = process.env.CI;
+    const oldPG = process.env.POSTGRES_INTEGRATION;
+    const oldDB = DB_DEFAULTS.database;
+    try {
+      process.env.CI = 'false';
+      process.env.POSTGRES_INTEGRATION = '1';
+      await expect(createTempMigratedDb('blocked')).rejects.toThrow('migration fixtures require CI PostgreSQL');
+      process.env.CI = 'true';
+      delete process.env.POSTGRES_INTEGRATION;
+      await expect(createTempMigratedDb('blocked')).rejects.toThrow('migration fixtures require CI PostgreSQL');
+      process.env.POSTGRES_INTEGRATION = '1';
+      DB_DEFAULTS.database = 'cecelia';
+      await expect(createTempMigratedDb('blocked')).rejects.toThrow('migration fixtures reject production DB');
+    } finally {
+      if (oldCI === undefined) delete process.env.CI;
+      else process.env.CI = oldCI;
+      if (oldPG === undefined) delete process.env.POSTGRES_INTEGRATION;
+      else process.env.POSTGRES_INTEGRATION = oldPG;
+      DB_DEFAULTS.database = oldDB;
+    }
+  });
+
   it('quota and PREPARE fixtures use the guarded test DB configuration', () => {
     for (const file of ['account-quota-ledger.pg.integration.test.js', 'escalation-cancel-pending-sql.integration.test.js']) {
       const source = readFileSync(join(REPO_ROOT, 'packages/brain/src/__tests__/integration', file), 'utf8');
       expect(source).toContain("import { DB_DEFAULTS } from '../../db-config.js'");
       expect(source).not.toContain('connectionString:');
+      if (file.startsWith('account-quota-ledger')) {
+        expect(source).toContain("process.env.CI !== 'true'");
+        expect(source).toContain("process.env.POSTGRES_INTEGRATION !== '1'");
+      }
     }
   });
 });
