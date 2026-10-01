@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 import { closePgPool, trackPgPool } from './helpers/close-pg-pool.js';
 /**
  * [BEHAVIOR] Session Controller ownership + createKernelRun fail-closed + migration 415 列

@@ -1,3 +1,4 @@
+import { assertExternalExecutionAllowed } from './runtime-safety.js';
 /**
  * harness-skill-relay — N3 最小接线（harness-skill-relay initiative，主理人 2026-07-04 拍板）。
  *
@@ -537,6 +538,7 @@ export function buildRelayPrompt({ kind, skillContent, task, sprintDir, brainUrl
 }
 
 export async function spawnSkillRelaySession(task, deps = {}) {
+  assertExternalExecutionAllowed();
   // preview Brain 隔离闸（2026-08-05 preview-4643 事故）：预览 Brain 由生产快照
   // 整库克隆而来且作为生产 Brain 子进程启动，继承生产 env（同一 fleet bridge
   // token、callback 指回生产 Brain）。startup-sync 会把克隆的 in_progress 任务

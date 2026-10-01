@@ -1,4 +1,5 @@
 import { resolvePrimaryWorkerId } from '../machine-registry.js';
+import { assertExternalExecutionAllowed } from '../runtime-safety.js';
 import { createRemoteBridgeTransport } from './remote-bridge-transport.js';
 
 export const DEFAULT_LOCAL_MACHINE_ID = resolvePrimaryWorkerId();
@@ -29,12 +30,15 @@ function isValidHttpBaseUrl(value) {
 }
 
 function guardWorkerConfiguration(worker, {
+  env,
   enabled,
   workerUrls,
   sharedSecret,
   callbackBaseUrl,
 }) {
   const assertAvailable = (input, { requireWorkspace = false } = {}) => {
+    assertExternalExecutionAllowed();
+    assertExternalExecutionAllowed(env);
     const machine = input?.target?.machine;
     const workerUrl = workerUrls?.[machine];
     const workspaceSpec = input?.bundle?.inputs?.workspace_spec;
@@ -174,6 +178,7 @@ export function createProductionExecutionTransport({
   });
 
   return guardWorkerConfiguration(worker, {
+    env,
     enabled,
     workerUrls,
     sharedSecret,
