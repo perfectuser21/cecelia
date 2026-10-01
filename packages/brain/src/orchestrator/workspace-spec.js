@@ -9,6 +9,37 @@ export const WORKSPACE_REPOSITORIES = Object.freeze([
   'perfectuser21/zenithjoy-workspace',
 ]);
 
+function isSupportedLegacyRepository(value) {
+  return typeof value === 'string' && (
+    ['cecelia', 'zenithjoy', 'zenithjoy-workspace', ...WORKSPACE_REPOSITORIES,
+      '/Users/administrator/perfect21/cecelia', '/Users/administrator/perfect21/zenithjoy',
+      '/root/cecelia', '/root/zenithjoy', '/root/zenithjoy-workspace', '/workspace'].includes(value)
+    || /^https:\/\/github\.com\/perfectuser21\/(?:cecelia|zenithjoy-workspace)(?:\.git)?\/?$/.test(value)
+  );
+}
+
+function resolveTaskRepository(payload) {
+  const canonicalPresent = Object.hasOwn(payload, 'repo');
+  const legacyPresent = Object.hasOwn(payload, 'base_repo');
+  const canonical = payload.repo === 'cecelia' ? WORKSPACE_REPOSITORIES[0]
+    : payload.repo === 'zenithjoy-workspace' ? WORKSPACE_REPOSITORIES[1]
+      : WORKSPACE_REPOSITORIES.includes(payload.repo) ? payload.repo : null;
+  if (canonicalPresent && (typeof payload.repo !== 'string' || !canonical)) {
+    throw new Error('workspace_repo_not_supported');
+  }
+  if (legacyPresent && !isSupportedLegacyRepository(payload.base_repo)) {
+    throw new Error('workspace_repo_not_supported');
+  }
+  const legacy = legacyPresent ? parseBaseRepo(payload.base_repo) : null;
+  if (legacyPresent && !WORKSPACE_REPOSITORIES.includes(legacy)) {
+    throw new Error('workspace_repo_not_supported');
+  }
+  if (canonicalPresent && legacyPresent && canonical !== legacy) {
+    throw new Error('workspace_repo_conflict');
+  }
+  return canonical ?? legacy ?? WORKSPACE_REPOSITORIES[0];
+}
+
 const shaSchema = (field) => z.string().regex(
   CANONICAL_SHA,
   `${field} must be a 40-character lowercase Git SHA`,
@@ -71,10 +102,7 @@ export function createWorkspaceSpecResolver({ resolveRepoHead } = {}) {
     bundle,
   } = {}) {
     const payload = ctx?.observed?.task?.payload ?? {};
-    const requestedRepo = payload.base_repo;
-    const repo = requestedRepo == null || requestedRepo === ''
-      ? 'perfectuser21/cecelia'
-      : parseBaseRepo(requestedRepo);
+    const repo = resolveTaskRepository(payload);
     if (!WORKSPACE_REPOSITORIES.includes(repo)) {
       throw new Error('workspace_repo_not_supported');
     }
