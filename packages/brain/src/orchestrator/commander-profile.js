@@ -5,8 +5,10 @@ import {
   parseCommanderMode,
 } from './commander-contract.js';
 import { resolvePrimaryWorkerId } from '../machine-registry.js';
+import { redactSecrets } from './failure-persistence.js';
 
 const PRIMARY = resolvePrimaryWorkerId();
+const CREDENTIAL_NARRATIVE = /(?:^|[^a-z0-9])(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|token|secret|password|authorization|authentication|auth|credential[_ -]?payload)(?=$|[^a-z0-9])/i;
 
 const targetSchema = z.object({
   provider: z.string().min(1).max(128),
@@ -58,7 +60,18 @@ export function parseCommanderProfile({ commanderMode, payload }) {
   }
 
   const source = payload && typeof payload === 'object' ? payload : {};
-  assertNoSecretMaterial(source);
+  const { user_authorization: authorizationNarrative, ...scannedPayload } = source;
+  if (authorizationNarrative !== undefined) {
+    if (typeof authorizationNarrative !== 'string'
+      || authorizationNarrative.length > 4_000
+      || CREDENTIAL_NARRATIVE.test(authorizationNarrative)
+      || redactSecrets(authorizationNarrative) !== authorizationNarrative) {
+      throw new Error('secret_material_forbidden');
+    }
+  }
+  // This public task field records a decision; it is never an authentication input.
+  // Retain the original task payload and scan every other field recursively.
+  assertNoSecretMaterial(scannedPayload);
   // 缺省 profile 回退（r56 run 4c6a461c 实证）：第 27 批把 commander_mode 缺省反转
   // hybrid 后，常规任务注册不带 payload.commander，parse(undefined) 会让 kernel 进程
   // 秒死——「缺省 hybrid」要可用，profile 也必须有缺省。优先级：显式 payload.commander
