@@ -837,6 +837,8 @@ installed_plist="$install_dir/com.perfect21.fleet-worker.plist"
 runtime_dir="$test_root/usr/local/libexec/cecelia/fleet-worker"
 installed_worker="$runtime_dir/fleet-worker.cjs"
 installed_probe="$runtime_dir/node-probe.cjs"
+installed_local_admission="$runtime_dir/local-resource-admission.cjs"
+installed_profile_registry="$runtime_dir/fleet-node-profiles.json"
 installed_workspace_manager="$runtime_dir/workspace-manager.cjs"
 installed_attempt_runner="$runtime_dir/attempt-runner.cjs"
 installed_orchestrator_runner="$runtime_dir/orchestrator-runner.cjs"
@@ -848,6 +850,43 @@ installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.pl
 [[ -f "$installed_plist" ]] || fail "--apply did not install the rendered plist"
 [[ -f "$installed_worker" && -f "$installed_probe" ]] \
   || fail "--apply did not install a stable Worker runtime"
+cmp -s "$SCRIPT_DIR/local-resource-admission.cjs" "$installed_local_admission" \
+  || fail "--apply did not install exact local admission module bytes"
+cmp -s "$SCRIPT_DIR/../../config/fleet-node-profiles.json" "$installed_profile_registry" \
+  || fail "--apply did not install exact profile registry bytes"
+# Load the installed module and its default adjacent profile, without touching
+# the host's Docker daemon or injecting loadProfile (which would mask bad paths).
+node - "$installed_local_admission" <<'NODE'
+const assert = require('node:assert/strict');
+const { createLocalResourceAdmission } = require(process.argv[2]);
+const samples = new Map([
+  ['sysctl -n hw.ncpu', '8'],
+  ['sysctl -n hw.memsize', String(16 * 1024 ** 3)],
+  ['sysctl -n vm.loadavg', '{ 1.0 0.8 0.6 }'],
+  ['memory_pressure -Q', 'System-wide memory free percentage: 60%'],
+  ['docker info --format {{json .}}', JSON.stringify({ NCPU: 8, MemTotal: 12 * 1024 ** 3 })],
+  ['df -kP /controlled', 'Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/test 100000000 10000000 90000000 10% /controlled'],
+]);
+let calls = 0;
+const options = {
+  workerId: 'xian-mac-m4', platform: 'darwin', diskPaths: ['/controlled'],
+  runCommand: async (file, args, commandOptions) => {
+    const key = [file, ...args].join(' ');
+    assert(samples.has(key), `unexpected probe: ${key}`);
+    assert.equal(commandOptions.shell, false);
+    calls++;
+    return { stdout: samples.get(key) };
+  },
+};
+(async () => {
+  await createLocalResourceAdmission(options)();
+  assert.equal(calls, samples.size);
+  samples.set('memory_pressure -Q', 'System-wide memory free percentage: 9%');
+  await assert.rejects(createLocalResourceAdmission(options)(), {
+    message: 'attempt_local_resources_unavailable', statusCode: 429,
+  });
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+NODE
 [[ -f "$installed_workspace_manager" && -f "$installed_attempt_runner" ]] \
   || fail "--apply omitted the Workspace/Attempt runtime modules"
 [[ -f "$installed_orchestrator_runner" ]] \
@@ -1037,6 +1076,68 @@ assert_support_placement_failure_rolled_back() {
 }
 
 assert_support_placement_failure_rolled_back
+
+assert_resource_placement_failure_rolled_back() {
+  local filename="$1"
+  local snapshot_dir="$test_root/resource-rollback-$filename"
+  local failure_output
+  seed_prior_generation "resource-$filename"
+  mkdir -p "$snapshot_dir"
+  printf 'prior-admission-%s\n' "$filename" > "$installed_local_admission"
+  printf 'prior-profiles-%s\n' "$filename" > "$installed_profile_registry"
+  chmod 0600 "$installed_local_admission"
+  chmod 0640 "$installed_profile_registry"
+  cp "$installed_local_admission" "$snapshot_dir/admission"
+  cp "$installed_profile_registry" "$snapshot_dir/profiles"
+  rm -f "$FLEET_WORKER_MV_FAIL_ONCE"
+  if failure_output="$(FLEET_WORKER_MV="$test_root/mv" \
+    FLEET_WORKER_MV_FAIL_TARGET="$runtime_dir/$filename" \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1)"; then
+    fail "$filename placement failure unexpectedly succeeded"
+  fi
+  [[ -e "$FLEET_WORKER_MV_FAIL_ONCE" ]] || fail "$filename placement fault was not reached"
+  grep -Fq 'install_failed_rolled_back' <<<"$failure_output" \
+    || fail "$filename placement failure lacked rollback signature"
+  cmp -s "$snapshot_dir/admission" "$installed_local_admission" \
+    || fail "$filename placement failure changed old admission bytes"
+  cmp -s "$snapshot_dir/profiles" "$installed_profile_registry" \
+    || fail "$filename placement failure changed old profile bytes"
+  [[ "$(mode_of "$installed_local_admission")" == 600 \
+    && "$(mode_of "$installed_profile_registry")" == 640 ]] \
+    || fail "$filename placement rollback changed old resource file modes"
+  [[ "$(<"$launch_state")" == running ]] || fail "$filename rollback did not restore loaded service"
+}
+
+assert_resource_first_install_rolled_back() (
+  filename="$1"
+  fresh_root="$test_root/resource-first-$filename"
+  install_dir="$fresh_root/Library/LaunchDaemons"
+  log_dir="$fresh_root/var/log/cecelia"
+  worker_data_root="$fresh_root/var/lib/cecelia/fleet-worker"
+  shared_tmpdir="$fresh_root/Users/Shared/cecelia-fleet-tmp"
+  fresh_runtime="$fresh_root/usr/local/libexec/cecelia/fleet-worker"
+  mkdir -p "$install_dir" "$log_dir"
+  printf 'absent\n' > "$launch_state"
+  rm -f "$FLEET_WORKER_MV_FAIL_ONCE"
+  if failure_output="$(FLEET_WORKER_MV="$test_root/mv" \
+    FLEET_WORKER_MV_FAIL_TARGET="$fresh_runtime/$filename" \
+    run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply 2>&1)"; then
+    fail "first $filename placement failure unexpectedly succeeded"
+  fi
+  [[ -e "$FLEET_WORKER_MV_FAIL_ONCE" ]] || fail "first $filename placement fault was not reached"
+  grep -Fq 'install_failed_rolled_back' <<<"$failure_output" \
+    || fail "first $filename placement failure lacked rollback signature"
+  [[ ! -e "$fresh_runtime/local-resource-admission.cjs" \
+    && ! -e "$fresh_runtime/fleet-node-profiles.json" ]] \
+    || fail "first $filename rollback leaked newly installed resource files"
+)
+
+for resource_file in fleet-node-profiles.json local-resource-admission.cjs; do
+  assert_resource_placement_failure_rolled_back "$resource_file"
+  assert_resource_first_install_rolled_back "$resource_file"
+done
+# A later placement failure proves both newly placed files are removed together.
+assert_resource_first_install_rolled_back fleet-worker.cjs
 
 assert_failed_upgrade_rolled_back() {
   local failure_match="$1"

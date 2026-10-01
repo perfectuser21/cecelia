@@ -1,3 +1,5 @@
+import { confirmExpiredParentCleanup } from './orchestrator/attempt-resource-cleanup.js';
+import { reserveExpiredAttemptReplacement } from './orchestrator/attempt-resource-replacement.js';
 /**
  * harness-relay-watchdog — skill-relay run 的重点火看门狗（eval-1 实证的产品化）。
  *
@@ -180,6 +182,9 @@ export async function reconcileExpiredKernelAttempt({
   reserveChildHop,
   randomUUIDFn = randomUUID,
   onRecoveryAlert,
+  confirmCleanup,
+  collectSnapshot,
+  replaceExpiredAttempt = reserveExpiredAttemptReplacement,
 }) {
   const store = injectedAttemptStore ?? createAttemptStore(db);
   const originalParentAttempt = await store.getById(attemptId);
@@ -208,19 +213,6 @@ export async function reconcileExpiredKernelAttempt({
     return { ok: false, deduped: true };
   }
 
-  const reclaimed = await store.reclaim(attemptId, {
-    leaseOwner,
-    leaseSeconds: 300,
-  });
-  if (!reclaimed) return { ok: false, deduped: true };
-
-  const rotatedParent = await store.rotateCallbackSecret(attemptId, {
-    leaseOwner: reclaimed.lease_owner,
-    leaseGeneration: reclaimed.lease_generation,
-    callbackSecretHash: hashCallbackSecret(generateCallbackSecret()),
-  });
-  if (!rotatedParent) return { ok: false, deduped: true };
-
   const callbackSecret = generateCallbackSecret();
   const childId = randomUUIDFn();
   const resumeMachineId = originalParentAttempt.actual_machine_id
@@ -230,7 +222,7 @@ export async function reconcileExpiredKernelAttempt({
     originalParentAttempt.task_bundle,
     { attemptId: childId, hop: childHop },
   );
-  const child = await store.createAttempt({
+  const childInput = {
     id: childId,
     runId: originalParentAttempt.run_id,
     hop: childHop,
@@ -248,7 +240,19 @@ export async function reconcileExpiredKernelAttempt({
     restartReason: 'lease_expired',
     workstreamKey: originalParentAttempt.workstream_key ?? 'ws1',
     timeDerived: originalParentAttempt.time_derived === true,
-  });
+  };
+  let replacement;
+  try {
+    replacement = await replaceExpiredAttempt({
+      pool: db, parentAttempt: originalParentAttempt, childInput,
+      ...(collectSnapshot ? { collectSnapshot } : {}),
+      confirmCleanup: confirmCleanup ?? confirmExpiredParentCleanup,
+    });
+  } catch (error) {
+    return { ok: false, action: 'wait:capacity', failure_code: error?.message ?? 'replacement_cleanup_unconfirmed' };
+  }
+  if (!replacement) return { ok: false, deduped: true };
+  const { child, parent: reclaimed } = replacement;
   if (!child || child.id !== childId) {
     return { ok: false, deduped: true };
   }
@@ -269,6 +273,7 @@ export async function reconcileExpiredKernelAttempt({
   try {
     resumed = await resumeAttempt(resumableChild, {
       parentAttempt: reclaimed,
+      parentCleanupConfirmed: true,
       originalParentAttempt,
       reclaimedParentAttempt: reclaimed,
       callbackSecret,
@@ -302,6 +307,9 @@ export async function reconcileExpiredKernelAttempt({
     }, {
       leaseOwner: resumableChild.lease_owner,
       leaseGeneration: resumableChild.lease_generation,
+      ...(resumed?.cleanup_confirmed !== true ? { retainResources: true,
+        cleanupIdentity: resumed?.cleanup_identity ?? { actualMachineId: resumeMachineId, executionTransport: 'fleet-worker' },
+      } : {}),
     });
     const parentFailure = await tryFailClaimedAttempt(store, attemptId, {
       code: failureCode,
@@ -325,7 +333,7 @@ export async function reconcileExpiredKernelAttempt({
     if (persistenceEvidence.length > 0 || additionalErrors.length > 0) {
       throw aggregateFailureEvidence(persistenceEvidence, additionalErrors);
     }
-    return parentFailure.result?.deduped
+    return childFailure.result?.deduped
       ? { ok: false, deduped: true }
       : { ok: false, terminal: true, failure_code: failureCode };
   }
@@ -764,6 +772,8 @@ export async function resumeKernelAttempt(attempt, {
         ok: false,
         failure_code: 'resume_child_cleanup_unconfirmed',
         cleanup_status: childCleanup.status,
+        cleanup_confirmed: childCleanup.confirmed,
+        cleanup_identity: launched ?? { actualMachineId: target.machine, executionTransport: 'fleet-worker' },
         error: diagnostic,
         recovery_alert: recoveryAlert,
       };
@@ -772,6 +782,8 @@ export async function resumeKernelAttempt(attempt, {
       ok: false,
       failure_code: 'resume_launch_failed',
       cleanup_status: childCleanup.status,
+        cleanup_confirmed: childCleanup.confirmed,
+        cleanup_identity: launched ?? { actualMachineId: target.machine, executionTransport: 'fleet-worker' },
       error: errorMessage(error),
     };
   }
@@ -817,6 +829,8 @@ export async function resumeKernelAttempt(attempt, {
       ok: false,
       failure_code: 'resume_receipt_persist_failed',
       cleanup_status: childCleanup.status,
+        cleanup_confirmed: childCleanup.confirmed,
+        cleanup_identity: launched ?? { actualMachineId: target.machine, executionTransport: 'fleet-worker' },
       cleanup_diagnostic: sanitizedCleanupDiagnostic,
       lifecycle_detail: lifecycleDetail,
       recovery_alert: recoveryAlert,
@@ -852,6 +866,8 @@ export async function resumeKernelAttempt(attempt, {
         ok: false,
         failure_code: 'resume_child_cleanup_unconfirmed',
         cleanup_status: childCleanup.status,
+        cleanup_confirmed: childCleanup.confirmed,
+        cleanup_identity: launched ?? { actualMachineId: target.machine, executionTransport: 'fleet-worker' },
         error: diagnostic,
         recovery_alert: recoveryAlert,
       };
@@ -860,6 +876,8 @@ export async function resumeKernelAttempt(attempt, {
       ok: false,
       failure_code: 'resume_start_failed',
       cleanup_status: childCleanup.status,
+        cleanup_confirmed: childCleanup.confirmed,
+        cleanup_identity: launched ?? { actualMachineId: target.machine, executionTransport: 'fleet-worker' },
       error: errorMessage(error),
     };
   }
@@ -926,6 +944,13 @@ async function _recoverKernelRun(run, task, deps, out) {
       leaseOwner: `watchdog:${process.pid}`,
       reserveChildHop: (parentAttempt) => reserveResumeIntent(dbPool, parentAttempt),
       onRecoveryAlert,
+      confirmCleanup: (parent) => confirmExpiredParentCleanup(parent, {
+        env: deps.env ?? process.env, launcher: deps.launcher,
+        transportFactory: deps.transportFactory ?? createProductionExecutionTransport,
+        fetchFn: deps.fetchFn, removeContainer: deps.removeContainer,
+        inspectContainer: deps.inspectContainer,
+      }),
+      ...(deps.collectCapacitySnapshot ? { collectSnapshot: deps.collectCapacitySnapshot } : {}),
       resumeAttempt: (child, context) => lowerResume(child, {
         ...context,
         task,

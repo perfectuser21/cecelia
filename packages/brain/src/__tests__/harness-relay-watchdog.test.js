@@ -56,7 +56,12 @@ function makeDeps({
   orchestratorHeartbeatAt = null,
   startedAt = null,
 } = {}) {
+  latestAttempt = latestAttempt ? {
+    run_id: RUN_ID, hop: 1, phase: 'evaluate', role: 'evaluator', machine_id: 'us-mac-m4',
+    lease_owner: 'dispatcher-parent', lease_generation: 0, ...latestAttempt,
+  } : null;
   const pool = { query: vi.fn() };
+  pool.connect = async () => ({ query: (...args) => pool.query(...args), release: vi.fn() });
   pool.query.mockImplementation(async (sql, params = []) => {
     if (/FROM initiative_runs r(?:\s|$)/.test(sql)) {
       return { rows: [{ id: RUN_ID, initiative_id: TASK_ID, current_task_id: TASK_ID, phase: 'planning', attempts: String(attempts), deadline_at: new Date(Date.now() + 3600e3).toISOString(), pr_url: prUrl, orchestrator_host: orchestratorHost, orchestrator_heartbeat_at: orchestratorHeartbeatAt, started_at: startedAt, controller_session_id: CONTROLLER_SESSION_ID, controller_generation: '1' }] };
@@ -71,7 +76,7 @@ function makeDeps({
       return { rows: [{ hop: params[1] }] };
     }
     if (
-      /WITH guarded_run AS MATERIALIZED \([\s\S]*inserted AS \(\s*INSERT INTO harness_attempts/.test(sql)
+      /guarded_run AS MATERIALIZED \([\s\S]*inserted AS \(\s*INSERT INTO harness_attempts/.test(sql)
     ) {
       return {
         rows: [{
@@ -157,6 +162,9 @@ function makeDeps({
   return {
     pool,
     attemptStore: createAttemptStore(pool, { queryOnlyTestAdapter: true }),
+    collectCapacitySnapshot: async ({ machineId }) => ({ verified: true, machine: machineId, expires_at: Date.now() + 30_000,
+      capacity: { ok: true, physical_base_slots: 7, effective_base_slots: 7 } }),
+    launcher: { cancel: vi.fn(async ({ attempt }) => ({ status: 'cleaned', attempt_id: attempt.id })) },
     execFn,
     spawnFn: vi.fn().mockResolvedValue({ ok: true, containerId: 'cecelia-relay-x' }),
   };
@@ -309,8 +317,8 @@ describe('resumeStalledRelayRuns', () => {
       expect.objectContaining({
         parentAttempt: expect.objectContaining({
           id: '22222222-2222-4222-8222-222222222222',
-          lease_owner: expect.stringMatching(/^watchdog:/),
-          lease_generation: 1,
+          lease_owner: 'dispatcher-parent',
+          lease_generation: 0,
         }),
         originalParentAttempt: expect.objectContaining({
           id: '22222222-2222-4222-8222-222222222222',
@@ -321,8 +329,8 @@ describe('resumeStalledRelayRuns', () => {
         reclaimedParentAttempt: expect.objectContaining({
           id: '22222222-2222-4222-8222-222222222222',
           provider_session_id: 'thread-1',
-          lease_owner: expect.stringMatching(/^watchdog:/),
-          lease_generation: 1,
+          lease_owner: 'dispatcher-parent',
+          lease_generation: 0,
         }),
         callbackSecret: expect.any(String),
         onRecoveryAlert: expect.any(Function),
@@ -374,7 +382,7 @@ describe('resumeStalledRelayRuns', () => {
     });
     const queryImpl = deps.pool.query.getMockImplementation();
     deps.pool.query.mockImplementation(async (sql, params) => {
-      if (/UPDATE harness_attempts\s+SET status = \$2/.test(String(sql))) {
+      if (/UPDATE harness_attempts\s+SET status = \$2/.test(String(sql)) && params[2] === 'resume_launch_failed') {
         throw new Error(persistenceDiagnostic);
       }
       return queryImpl(sql, params);

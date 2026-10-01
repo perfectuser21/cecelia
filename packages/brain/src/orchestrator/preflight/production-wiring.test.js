@@ -910,6 +910,7 @@ describe('production capability wiring', () => {
     }, {
       leaseOwner: LEASE_OWNER,
       leaseGeneration: 4,
+      ...(!canExactCancel ? { retainResources: true, cleanupIdentity: { actualMachineId: target.machine, executionTransport: 'fleet-worker' } } : {}),
     });
   });
 
@@ -1034,6 +1035,8 @@ describe('production capability wiring', () => {
     }, {
       leaseOwner: LEASE_OWNER,
       leaseGeneration: 4,
+      retainResources: true,
+      cleanupIdentity: { actualMachineId: target.machine, executionTransport: 'fleet-worker' },
     });
     expect(spawnDetached).not.toHaveBeenCalled();
   });

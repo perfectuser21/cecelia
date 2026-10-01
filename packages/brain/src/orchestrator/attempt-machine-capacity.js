@@ -1,3 +1,4 @@
+import { MACHINE_CAPACITY_CONTENDED } from './attempt-resource-budget.js';
 export const AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED =
   'autonomous_singleton_capacity_contended';
 
@@ -23,9 +24,13 @@ export function prepareAttemptMachineCapacity(input) {
     && snapshot.capacity.autonomous_progress_floor === true
     && Number(snapshot.capacity.available) === 1
     && Number(snapshot.capacity.physical_capacity) >= 1;
+  const manualSingleton = snapshot?.verified === true
+    && snapshot.machine === input.machineId && snapshot.capacity?.ok === true
+    && snapshot.capacity.manual_capacity_override === true
+    && snapshot.capacity.available === 1;
   const bundle = input?.bundle ?? {};
   const inputs = bundle.inputs ?? {};
-  if (autonomousSingleton) {
+  if (autonomousSingleton || manualSingleton) {
     return {
       autonomousSingleton,
       bundle: {
@@ -33,7 +38,8 @@ export function prepareAttemptMachineCapacity(input) {
         inputs: {
           ...inputs,
           _server_allocation: {
-            autonomous_progress_floor: true,
+            ...(autonomousSingleton ? { autonomous_progress_floor: true } : {}),
+            ...(manualSingleton ? { manual_capacity_override: true } : {}),
             machine_id: input.machineId,
             capability_snapshot_id: snapshot.capability_snapshot_id ?? null,
           },
@@ -55,7 +61,7 @@ export function prepareAttemptMachineCapacity(input) {
 export function readAttemptCreationOutcome(result) {
   const row = result?.rows?.[0] ?? null;
   if (row?.machine_capacity_contended === true) {
-    throw new Error(AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED);
+    throw new Error(MACHINE_CAPACITY_CONTENDED);
   }
   if (row && Object.hasOwn(row, 'attempt')) return row.attempt;
   return row;

@@ -132,7 +132,7 @@ validateNodeProfileRegistry(registry.profiles);
 const profiles = deepFreeze(registry.profiles);
 const profilesById = new Map(profiles.map((profile) => [profile.machine_id, profile]));
 
-const ROLE_WEIGHTS = Object.freeze({
+export const ROLE_WEIGHTS = Object.freeze({
   commander: 1,
   planner: 1,
   reviewer: 1,

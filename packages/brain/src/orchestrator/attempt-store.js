@@ -1,3 +1,4 @@
+import { prepareResourceBudget, ROLE_WEIGHTS, OCCUPIED_ATTEMPTS_SQL, RESOURCE_BUDGET_GUARD_SQL } from './attempt-resource-budget.js';
 /**
  * Harness Attempt authority store.
  *
@@ -487,8 +488,9 @@ export function createAttemptStore(pool, {
         if (input.machineId != null) {
           await client.query(MACHINE_CAPACITY_LOCK_SQL, [input.machineId]);
         }
+        const resourceBudget = prepareResourceBudget(input);
         const result = await client.query(
-          `WITH guarded_run AS MATERIALIZED (
+          `WITH ${OCCUPIED_ATTEMPTS_SQL}, guarded_run AS MATERIALIZED (
            SELECT run.id, run.map_recovery_contract_id
              FROM initiative_runs run
             WHERE run.id = $2
@@ -527,17 +529,7 @@ export function createAttemptStore(pool, {
                      WHERE existing.run_id = guarded_run.id
                        AND existing.hop = $3
                   )
-               OR NOT EXISTS (
-                    SELECT 1
-                      FROM harness_attempts active
-                     WHERE COALESCE(active.requested_machine_id, active.machine_id) = $8
-                       AND active.status IN ('queued','starting','running')
-                       AND (
-                         $22::boolean
-                         OR active.task_bundle #>>
-                              '{inputs,_server_allocation,autonomous_progress_floor}' = 'true'
-                       )
-                  )
+               OR ${RESOURCE_BUDGET_GUARD_SQL}
          ),
          inserted AS (
            INSERT INTO harness_attempts (
@@ -599,7 +591,11 @@ export function createAttemptStore(pool, {
           input.restartReason ?? null,
           input.workstreamKey ?? 'ws1',
           input.timeDerived ?? DERIVED_TIME_ROLES.has(input.role),
-          capacity.autonomousSingleton,
+          resourceBudget.singleton,
+          resourceBudget.budget,
+          ROLE_WEIGHTS,
+          resourceBudget.valid,
+          Number.isFinite(input.capacitySnapshot?.expires_at) ? input.capacitySnapshot.expires_at : 0,
         ],
         );
         const winner = readAttemptCreationOutcome(result)
@@ -790,13 +786,32 @@ export function createAttemptStore(pool, {
         leaseOwner = null,
         leaseGeneration = null,
         requireExpired = false,
+        retainResources = false,
+        cleanupIdentity = null,
       } = {},
     ) {
       if (!['failed', 'cancelled'].includes(status)) {
         throw new Error(`invalid failure status: ${status}`);
       }
       const result = await mutateAfterRunLock(id, (client) => client.query(
-        `UPDATE harness_attempts
+        `${retainResources ? `WITH cleanup_candidates AS MATERIALIZED (
+           SELECT * FROM harness_attempts
+            WHERE id=$1 AND status NOT IN (${TERMINAL_SQL})
+              AND ($6::text IS NULL OR lease_owner=$6)
+              AND ($7::integer IS NULL OR lease_generation=$7)
+              AND ($8::boolean IS FALSE OR lease_expires_at IS NULL OR lease_expires_at<NOW())
+            FOR UPDATE
+         ), cleanup_intent AS (
+           INSERT INTO harness_attempt_cleanup_outbox (
+             run_id, attempt_id, target_machine_id, execution_transport, remote_job_id,
+             lease_owner, lease_generation, cleanup_cause, cleanup_cause_message
+           ) SELECT run_id, id, COALESCE($9::jsonb->>'actualMachineId', actual_machine_id, requested_machine_id, machine_id),
+                    COALESCE($9::jsonb->>'executionTransport', execution_transport),
+                    COALESCE($9::jsonb->>'remoteJobId', remote_job_id), lease_owner, lease_generation, $3, $4
+               FROM cleanup_candidates
+           ON CONFLICT (attempt_id, lease_generation) DO NOTHING
+           RETURNING id
+         ) ` : ''}UPDATE harness_attempts
             SET status = $2,
                 error_code = $3,
                 error_message = $4,
@@ -805,6 +820,7 @@ export function createAttemptStore(pool, {
                 lease_expires_at = NULL,
                 updated_at = NOW()
           WHERE id = $1
+            ${retainResources ? "AND (SELECT COUNT(*) FROM cleanup_intent) >= 0" : ""}
             AND status NOT IN (${TERMINAL_SQL})
             AND ($6::text IS NULL OR lease_owner = $6)
             AND ($7::integer IS NULL OR lease_generation = $7)
@@ -823,6 +839,7 @@ export function createAttemptStore(pool, {
           leaseOwner,
           leaseGeneration,
           requireExpired,
+          ...(retainResources ? [cleanupIdentity] : []),
         ],
       ));
       const attempt = firstRow(result);
