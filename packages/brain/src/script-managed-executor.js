@@ -66,13 +66,14 @@ export async function triggerManagedScript(task,spec,pool,deps={}) {
     return {success:false,reason:prepared.reason??'script_capacity_wait',wait:true,configError:true};
   }
   let row=prepared.reservation;
+  const dispatchId=randomUUID();
   const current=await pool.query(`UPDATE tasks SET status='in_progress',executor_kind='script',started_at=COALESCE(started_at,NOW()),
     payload=payload||$2::jsonb,updated_at=NOW() WHERE id=$1 AND status IN ('queued','in_progress')
       AND payload->>'script_reservation_id'=$3
       AND (payload->>'script_run_id' IS NULL OR payload->>'script_run_id'=$4)
       AND jsonb_array_length(COALESCE(payload->'script_attempts','[]'::jsonb))=$5
       AND EXISTS (SELECT 1 FROM capacity_reservations WHERE id=$3::uuid AND status IN ('reserved','launching','running')) RETURNING id`,
-  [task.id,JSON.stringify({script_run_id:row.owner_key,script_reservation_id:row.id,script_managed:true}),row.id,row.owner_key,task.payload?.script_attempts?.length??0]);
+  [task.id,JSON.stringify({script_run_id:row.owner_key,script_reservation_id:row.id,script_managed:true,script_dispatch_id:dispatchId}),row.id,row.owner_key,task.payload?.script_attempts?.length??0]);
   if(!current.rowCount)return {success:true,taskId:task.id,executor:'script',pending:true};
   const fresh=row.status==='reserved';
   try {
@@ -83,7 +84,8 @@ export async function triggerManagedScript(task,spec,pool,deps={}) {
     if(result.status==='waiting_resources'){
       const waiting=await pool.query(`UPDATE tasks SET status='queued',claimed_by=NULL,claimed_at=NULL,updated_at=NOW()
         WHERE id=$1 AND status='in_progress' AND payload->>'script_reservation_id'=$2 AND payload->>'script_run_id'=$3
-        RETURNING id`,[task.id,row.id,row.owner_key]);
+          AND payload->>'script_dispatch_id'=$4
+        RETURNING id`,[task.id,row.id,row.owner_key,dispatchId]);
       if(!waiting.rowCount)return {success:true,taskId:task.id,executor:'script',pending:true};
       return {success:false,reason:'script_local_resources_wait',wait:true,configError:true};
     }
