@@ -11,7 +11,8 @@ export default function NodeOnboarding({ open, onOpen, onClose, onCompleted }: {
   open: boolean; onOpen: () => void; onClose: () => void; onCompleted: () => void;
 }) {
   const [items, setItems] = useState<NodeOnboardingRequest[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [operationError, setOperationError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<string | null>(null);
   const busy = useRef(false);
   const callbacks = useRef({ onOpen, onCompleted });
@@ -28,10 +29,11 @@ export default function NodeOnboarding({ open, onOpen, onClose, onCompleted }: {
     nodeOnboardingApi.list(controller.signal).then(({ items: requests }) => {
       if (controller.signal.aborted) return;
       const unfinished = requests.filter(item => item.status !== 'completed');
-      setItems(previous => [...previous, ...unfinished.filter(item => !previous.some(existing => existing.id === item.id))]);
+      const recent = requests.filter(item => item.status === 'completed').slice(0, 5);
+      setItems(previous => [...previous, ...[...unfinished, ...recent].filter(item => !previous.some(existing => existing.id === item.id))]);
       if (unfinished.length) callbacks.current.onOpen();
     }).catch(cause => {
-      if (!controller.signal.aborted) { setError(cause.message); callbacks.current.onOpen(); }
+      if (!controller.signal.aborted) { setReadError(cause.message); callbacks.current.onOpen(); }
     });
     return () => controller.abort();
   }, []);
@@ -48,7 +50,7 @@ export default function NodeOnboarding({ open, onOpen, onClose, onCompleted }: {
         if (result.status === 'fulfilled') accept(result.value);
         else failure = result.reason instanceof Error ? result.reason.message : '进度读取失败';
       }
-      setError(failure);
+      setReadError(failure);
       timer = setTimeout(poll, 4000);
     }
     timer = setTimeout(poll, 4000);
@@ -56,9 +58,9 @@ export default function NodeOnboarding({ open, onOpen, onClose, onCompleted }: {
   }, [open, activeIds]);
   async function retry(item: NodeOnboardingRequest) {
     if (busy.current || (item.status !== 'failed' && item.status !== 'cancelled')) return;
-    busy.current = true; setRetrying(item.id); setError(null);
+    busy.current = true; setRetrying(item.id); setOperationError(null);
     try { accept(await nodeOnboardingApi.retry(item.id)); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : '重试接入失败'); }
+    catch (cause) { setOperationError(cause instanceof Error ? cause.message : '重试接入失败'); }
     finally { busy.current = false; setRetrying(null); }
   }
   return (
@@ -68,7 +70,8 @@ export default function NodeOnboarding({ open, onOpen, onClose, onCompleted }: {
         <button type="button" onClick={onClose} className="text-sm text-gray-500">关闭接入面板</button>
       </div>
       <NodeOnboardingForm onCreated={accept} />
-      {error && <p role="alert" className="mt-3 text-sm text-red-600">{error}</p>}
+      {readError && <p role="alert" className="mt-3 text-sm text-red-600">{readError}</p>}
+      {operationError && <p role="alert" className="mt-3 text-sm text-red-600">{operationError}</p>}
       <div aria-live="polite" className="space-y-3 mt-5">
         {items.map(item => <article key={item.id} className="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
           <div className="flex justify-between gap-2"><h3 className="font-medium">{item.machine_name}</h3><span>{statuses[item.status]}</span></div>

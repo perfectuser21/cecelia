@@ -7,9 +7,9 @@ const initial: NodeOnboardingInput = {
 const inputStyle = 'mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm';
 function validate(input: NodeOnboardingInput): string | null {
   if (!input.name || !input.address || !input.ssh_user || !input.credential_ref || !input.host_key_fingerprint) return '请填写机器名称、连接地址、SSH 用户、1Password 引用和主机指纹';
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$/.test(input.name)) return '机器名称请使用字母、数字、点、短横线或下划线，最长 63 字符';
+  if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(input.name)) return '机器名称须为 2–63 位小写字母、数字或连字符';
   if (!/^[a-zA-Z0-9][a-zA-Z0-9.:-]*$/.test(input.address)) return '连接地址请填写 IP 或主机名';
-  if (!/^[a-zA-Z_][a-zA-Z0-9_-]*\$?$/.test(input.ssh_user)) return 'SSH 用户格式不正确';
+  if (!/^[a-z_][a-z0-9_-]{0,31}$/i.test(input.ssh_user)) return 'SSH 用户须以字母或下划线开头，最多 32 位字母、数字、下划线或连字符';
   if (!Number.isInteger(input.ssh_port) || input.ssh_port < 1 || input.ssh_port > 65535) return 'SSH 端口须为 1–65535 的整数';
   if (!/^op:\/\/CS\/[^/\r\n]+\/[^/\r\n]+$/.test(input.credential_ref)) return '请填写 CS Vault 中的 1Password 引用（op://CS/条目/字段），不要填写明文密钥';
   if (!/^SHA256:[A-Za-z0-9+/]{43}=?$/.test(input.host_key_fingerprint)) return '主机指纹请填写完整 SHA256 指纹';
