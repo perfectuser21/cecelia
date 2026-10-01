@@ -62,3 +62,15 @@ it('流许可只暴露签名绑定的header票；prepare使用持久流ID和最�
  }});
  expect(client.prepareStream).toBeTypeOf('function');expect(await client.prepareStream(id)).toMatchObject({token:ticket,stream_id:streamId,stream_url:`http://m1:5231/app-server-streams/${streamId}`});
 });
+
+it('验收start携带完整身份签名短期许可，保留Worker原始回执签名',async()=>{
+ const token='a'.repeat(32),row={id:randomUUID(),intent_id:randomUUID(),launch_generation:1,machine_id:'xian-mac-m1',worker_id:'worker',worker_boot_id:randomUUID(),owner_key:'openclaw-'+ 'c'.repeat(64),home_key:'d'.repeat(64),config_digest:'e'.repeat(64),config:{profile:'chat'},canary_authorization:{id:randomUUID(),nonce:randomUUID(),challenge_expires_at:new Date(Date.now()+60000)}};
+ const {createRequire}=await import('node:module');const {verifyCanaryPermit}=createRequire(import.meta.url)('../../../scripts/fleet-worker/app-server-canary-permit.cjs');
+ let sent,signature;
+ const client=createAppServerClient({pool:{},store:{withOperation:async(_id,_action,fn)=>fn(row,'http://m1:5231')},env:{KERNEL_FLEET_BRIDGE_TOKEN:token},fetchFn:async(_url,options)=>{
+  sent=JSON.parse(options.body);const receipt={...workerIdentity(row),status:'running',request_nonce:sent.request_nonce};signature=createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex');return new Response(JSON.stringify({receipt,signature}));
+ }});
+ const result=await client.start(row.id);
+ expect(()=>verifyCanaryPermit(sent.canary_permit,workerIdentity(row),token)).not.toThrow();
+ expect(sent.canary_permit.payload.authorization_id).toBe(row.canary_authorization.id);expect(result.signature).toBe(signature);
+});

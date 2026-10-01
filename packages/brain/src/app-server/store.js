@@ -6,6 +6,7 @@ import {MACHINE_CAPACITY_LOCK_SQL} from '../orchestrator/attempt-machine-capacit
 import {getNodeProfile} from '../orchestrator/fleet-node/node-profile.js';
 import {validateHome,digest,generationOwner,receiptMatches,HASH,UUID} from './identity.js';
 import {createGenerationTask} from './task-authority.js';
+import {authorizePreparedCanary,authorizeCanaryReservation,readCanaryAuthorization} from './canary-authority.js';
 const SELECT=`SELECT r.*,g.home_key,g.request_key,g.generation,g.cancel_requested,h.config FROM capacity_reservations r
  JOIN app_server_generations g ON g.reservation_id=r.id JOIN app_server_homes h ON h.home_key=g.home_key WHERE r.owner_kind='app_server'`;
 const WAIT=Object.freeze({outcome:'wait',reason:'capacity'});
@@ -18,8 +19,7 @@ export function createAppServerStore({pool,createTask=createGenerationTask,after
  function snapshotValid(s,m){try{return s?.verified===true&&s.machine===m&&s.expires_at>Date.now()&&s.capacity?.ok===true&&[s.capacity.physical_base_slots,s.capacity.effective_base_slots,getNodeProfile(m).capacity].every(n=>Number.isInteger(n)&&n>0);}catch{return false;}}
  const authInput=row=>({snapshotVersion:directory.current()?.version,machineId:row.machine_id,surface:'app_server',provider:row.config.provider,
   account:row.config.account,repo:row.config.repo,profileId:row.config.profile,executionVersionId:row.execution_version_id,grantId:row.execution_grant_id});
- return Object.freeze({get,
-  async reserve({home:raw,requestKey,machineId,capacitySnapshot,capabilities}){
+ async function reserve({home:raw,requestKey,machineId,capacitySnapshot,capabilities},canary){
    const home=validateHome(raw);if(!UUID.test(requestKey))throw Error('appserver_request_identity_invalid');
    return tx(async db=>{await homeLock(db,home.homeKey);
     const existingHome=(await db.query('SELECT * FROM app_server_homes WHERE home_key=$1 OR home_id=$2',[home.homeKey,home.homeId])).rows[0];
@@ -29,7 +29,7 @@ export function createAppServerStore({pool,createTask=createGenerationTask,after
     const retry=previous.find(r=>r.request_key===requestKey);if(retry)return {outcome:retry.status==='released'?'released':'reserved',reservation:retry};
     if(previous.some(r=>r.status!=='released'))throw Error('appserver_home_busy');
     await db.query(MACHINE_CAPACITY_LOCK_SQL,[machineId]);
-    const auth=await authorize(db,{snapshotVersion:directory.current()?.version,machineId,surface:'app_server',provider:home.provider,account:home.account,repo:home.repo,profileId:home.profile});
+    const auth=canary?await authorizePreparedCanary(db,{id:canary.id,home,machineId,capabilities}):await authorize(db,{snapshotVersion:directory.current()?.version,machineId,surface:'app_server',provider:home.provider,account:home.account,repo:home.repo,profileId:home.profile});
     if(!snapshotValid(capacitySnapshot,machineId))return WAIT;
     if(capabilities?.machine_id!==machineId||capabilities.worker_id!==auth.node.worker_id||!UUID.test(capabilities.worker_boot_id)
       ||capabilities.profiles?.[home.profile]!==home.configDigest)throw Error('appserver_worker_configuration_mismatch');
@@ -44,19 +44,30 @@ export function createAppServerStore({pool,createTask=createGenerationTask,after
     await db.query('INSERT INTO app_server_homes(home_key,home_id,machine_id,config) VALUES($1,$2,$3,$4) ON CONFLICT(home_key) DO NOTHING',[home.homeKey,home.homeId,machineId,home]);
     await db.query(`INSERT INTO capacity_reservations(id,machine_id,owner_kind,owner_key,task_id,config_digest,allocation_mode,policy_version,snapshot_time,snapshot_digest,
      launch_generation,intent_id,worker_id,worker_boot_id,execution_version_id,execution_grant_id)
-     VALUES($1,$2,'app_server',$3,$4,$5,'exclusive_unclassified','app-server-exclusive-v1',to_timestamp($6/1000.0),$7,$8,$9,$10,$11,$12,$13)`,
+     VALUES($1,$2,'app_server',$3,$4,$5,'exclusive_unclassified',$14,to_timestamp($6/1000.0),$7,$8,$9,$10,$11,$12,$13)`,
      [id,machineId,generationOwner({home_key:home.homeKey,reservation_id:id,intent_id:intent,launch_generation:generation}),made.task.id,home.configDigest,
-      capacitySnapshot.captured_at,digest(capacitySnapshot),generation,intent,capabilities.worker_id,capabilities.worker_boot_id,auth.executionVersionId,auth.grantId]);
+      capacitySnapshot.captured_at,digest(capacitySnapshot),generation,intent,capabilities.worker_id,capabilities.worker_boot_id,auth.executionVersionId,auth.grantId,canary?'app-server-canary-v1':'app-server-exclusive-v1']);
     await db.query('INSERT INTO app_server_generations(reservation_id,home_key,request_key,generation) VALUES($1,$2,$3,$4)',[id,home.homeKey,requestKey,generation]);
+    if(canary)await db.query('INSERT INTO app_server_canary_attempts(authorization_id,sequence_no,reservation_id) VALUES($1,$2,$3)',[canary.id,canary.sequence,id]);
     return {outcome:'reserved',reservation:await get(id,db)};
    });
+  }
+ async function launchAuthority(db,row,operation=a=>a){
+  if(row.policy_version==='app-server-canary-v1'){const auth=await authorizeCanaryReservation(db,row);return operation(auth);}
+  return authorize(db,authInput(row),operation);
+ }
+ return Object.freeze({get,reserve:input=>reserve(input),
+  async reserveCanary(input){
+   if(!input||Object.keys(input).some(k=>!['authorizationId','sequence','capacitySnapshot','capabilities'].includes(k))||!UUID.test(input.authorizationId)||![1,2].includes(input.sequence))throw Error('appserver_canary_request_invalid');
+   const a=await readCanaryAuthorization(pool,input.authorizationId);
+   return reserve({home:a.home,requestKey:input.sequence===1?a.nonce:a.id,machineId:a.canonical_id,capacitySnapshot:input.capacitySnapshot,capabilities:input.capabilities},{id:a.id,sequence:input.sequence});
   },
   async home(homeId){return (await pool.query('SELECT * FROM app_server_homes WHERE home_id=$1',[homeId])).rows[0]??null;},
   async latest(homeId){return (await pool.query(`${SELECT} AND h.home_id=$1 AND r.status<>'released' ORDER BY g.generation DESC LIMIT 1`,[homeId])).rows[0]??null;},
   async listOutstanding(){return (await pool.query(`${SELECT} AND r.status<>'released' ORDER BY r.updated_at LIMIT 100`)).rows;},
   async reserveStream(id){return locked(id,async(row,db)=>{
    if(row.status==='released'||row.cancel_requested)throw Error('appserver_launch_tombstoned');
-   await authorize(db,authInput(row));
+   await launchAuthority(db,row);
    await db.query("INSERT INTO app_server_streams(id,reservation_id,prepare_deadline) VALUES($1,$2,now()+interval '5 seconds') ON CONFLICT(reservation_id) DO NOTHING",[randomUUID(),id]);
    return (await db.query('SELECT * FROM app_server_streams WHERE reservation_id=$1',[id])).rows[0];
   });},
@@ -65,7 +76,8 @@ export function createAppServerStore({pool,createTask=createGenerationTask,after
    return locked(id,async(row,db)=>{
     if(action==='start'||action==='prepare-stream'){
      if(row.status==='released'||row.cancel_requested)throw Error('appserver_launch_tombstoned');
-     return authorize(db,authInput(row),async auth=>{
+     return launchAuthority(db,row,async auth=>{
+      if(auth.canary)row={...row,canary_authorization:auth.canary};
       if(action==='prepare-stream'){
        const stream=(await db.query('SELECT * FROM app_server_streams WHERE reservation_id=$1',[id])).rows[0];
        if(!stream||Number(new Date(stream.prepare_deadline))<=Date.now())throw Error('appserver_stream_recovery_required');

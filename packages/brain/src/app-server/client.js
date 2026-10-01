@@ -49,11 +49,15 @@ export function createAppServerClient({pool,store,env=process.env,fetchFn=global
     ||envelope.receipt.stream_id!==body.stream_id||!Number.isFinite(envelope.receipt.expires_at)||envelope.receipt.expires_at<=Date.now()||envelope.receipt.expires_at>body.prepare_deadline)throw Error('appserver_worker_receipt_unverified');
    return {authenticated:true,receipt:envelope.receipt,streamToken};
   }
-  return {authenticated:true,receipt:envelope.receipt};
+  return {authenticated:true,receipt:envelope.receipt,signature:envelope.signature};
   }finally{clearTimeout(timer);}
  }
  const operation=(id,action)=>store.withOperation(id,action,async(row,url)=>{
   const body=workerIdentity(row);
+  if(action==='start'&&row.canary_authorization){
+   const a=row.canary_authorization,payload={authorization_id:a.id,nonce:a.nonce,expires_at:Number(new Date(a.challenge_expires_at)),identity:{...body}};
+   body.canary_permit={payload,signature:createHmac('sha256',token).update(JSON.stringify(payload)).digest('hex')};
+  }
   if(action==='prepare-stream')Object.assign(body,{stream_id:row.stream.id,prepare_deadline:Number(new Date(row.stream.prepare_deadline))});
   if(action==='cancel')Object.assign(body,{container_id:row.container_id,challenge:row.cleanup_challenge});
   const verified=await request(url,row.machine_id,action,body);
