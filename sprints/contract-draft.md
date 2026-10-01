@@ -36,7 +36,7 @@ python3 tests/regression/tailscale-us-exit/pf-identity-free.test.py -v
 bash -n scripts/ops/install-tailscale-us-exit-enforcer.sh
 ```
 
-通过标准：42 条回归运行、进程 exit 0；PF 原生解析以目标机实际证据补齐。生产切换、真实美国出口/双 ADB 验收和取消回滚均属独立明确审批后的阶段。
+通过标准：45 条回归运行、进程 exit 0；PF 原生解析以目标机实际证据补齐。生产切换、真实美国出口/双 ADB 验收和取消回滚均属独立明确审批后的阶段。
 
 ## Test Contract
 

@@ -112,6 +112,8 @@ def verify_transaction(path):
     if not pid or not re.search(r"state\s*=\s*running", job) or not re.search(rf"pid\s*=\s*{pid}\b", job):
         raise RuntimeError("自动回滚没有存活且已握手的独立进程")
     os.kill(pid, 0)
+    if time.time() >= state["deadline"]:
+        raise RuntimeError("自动回滚握手读取已跨事务期限")
     return path, state
 
 
@@ -392,6 +394,10 @@ def confirm(args):
         baseline = (load_baseline(path, state, ADB_SERIALS)
                     if state.get("confirmation_scope") == "network-recovery" else None)
         verify_transaction(path)
+        if not guard_alive(CACHE) or not valid_lease(read_map_cache(CACHE.with_name("business-lease.json"), max_age=15), time.time()):
+            raise RuntimeError("末次验收读取后守卫或健康授权已失效；保留自动回滚")
+        if time.time() >= state["deadline"]:
+            raise RuntimeError("末次健康验收读取已跨事务期限；保留自动回滚")
         mode = "network-only" if state.get("confirmation_scope") == "network-recovery" else "all-phones"
         state.update(status="confirmed", confirmed_at=time.time(), evidence=evidence,
                      confirmation_mode=mode, phones_outstanding=outstanding,
