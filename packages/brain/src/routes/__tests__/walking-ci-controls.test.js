@@ -4,9 +4,11 @@ import request from 'supertest';
 
 const pointers = vi.hoisted(() => vi.fn().mockResolvedValue({}));
 const invoke = vi.hoisted(() => vi.fn().mockResolvedValue({}));
+const getState = vi.hoisted(() => vi.fn().mockResolvedValue({ next: ['await_callback'],
+  tasks: [{ name: 'await_callback', interrupts: [{ value: { type: 'wait_callback' } }] }] }));
 vi.mock('../../orchestrator/pg-checkpointer.js', () => ({ getPgCheckpointer: pointers }));
 vi.mock('../../workflows/walking-skeleton-1node.graph.js', () => ({
-  getCompiledWalkingSkeleton: vi.fn(async () => ({ invoke })),
+  getCompiledWalkingSkeleton: vi.fn(async () => ({ invoke, getState })),
 }));
 vi.mock('../../db.js', () => ({ default: { query: vi.fn() } }));
 import router from '../walking-skeleton.js';
@@ -46,5 +48,15 @@ describe('Walking restart control permission before checkpointer or Docker', () 
     await request(app()).get('/api/brain/walking-skeleton-1node/instance').expect(403);
     await request(app()).post('/api/brain/walking-skeleton-1node/trigger').send({ wait_for_restart: true }).expect(403);
     expect(pointers).not.toHaveBeenCalled();
+  });
+  it('production readiness lookup is rejected before checkpoint access', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    await request(app()).get('/api/brain/walking-skeleton-1node/ready/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa').expect(403);
+    expect(pointers).not.toHaveBeenCalled();
+  });
+  it('CI readiness requires decoded actual interrupt, not just mapping', async () => {
+    ci();
+    const res = await request(app()).get('/api/brain/walking-skeleton-1node/ready/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa').expect(200);
+    expect(res.body.ready).toBe(true); expect(getState).toHaveBeenCalled();
   });
 });

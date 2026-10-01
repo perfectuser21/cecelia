@@ -19,7 +19,8 @@ async function runWorker(failures, restart = false, badInstance = false) {
   const calls = []; let instances = 0;
   const server = createServer((req, res) => {
     calls.push([req.method, req.url]);
-    if (req.method === 'GET') { instances++;
+    if (req.method === 'GET' && req.url.includes('/ready/')) { res.end('{"ready":true}'); }
+    else if (req.method === 'GET') { instances++;
       if (badInstance) { res.writeHead(503); res.end('{"instance_id":"not-a-uuid"}'); }
       else res.end(JSON.stringify({ instance_id: instances < 3 ? oldInstance : newInstance })); }
     else { const count = calls.filter(([method]) => method === 'POST').length;
@@ -37,7 +38,8 @@ fetch(a.at(-1),{method:p?'POST':'GET',body:p?.slice(12),signal:AbortSignal.timeo
     await writeFile(join(temp, 'sleep'), '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 });
     const transported = worker.replaceAll('http://host.docker.internal:5221', `http://127.0.0.1:${server.address().port}`)
       .replaceAll('http://127.0.0.1:5221', `http://127.0.0.1:${server.address().port}`);
-    const child = spawn('sh', ['-c', transported], { env: { ...process.env, PATH: `${temp}:${process.env.PATH}` } });
+    const child = spawn('sh', ['-c', transported], { env: { ...process.env, PATH: `${temp}:${process.env.PATH}` },
+      timeout: 8000, killSignal: 'SIGKILL' });
     let output = ''; child.stdout.on('data', d => output += d); child.stderr.on('data', d => output += d);
     const code = await new Promise((r, j) => { child.on('close', r); child.on('error', j); });
     return { code, calls, output, args };
@@ -66,6 +68,7 @@ describe('actual Walking callback worker', () => {
     expect(result.code, result.output).toBe(0);
     expect(result.args).toContain('--network'); expect(result.args).toContain('host');
     expect(result.calls.slice(0, 3).map(([method]) => method)).toEqual(['GET', 'GET', 'GET']);
+    expect(result.calls.some(([method, url]) => method === 'GET' && url.includes('/ready/'))).toBe(true);
     expect(result.calls.filter(([method]) => method === 'POST')).toHaveLength(1);
   });
   it('restart control cannot be used in production', async () => {
