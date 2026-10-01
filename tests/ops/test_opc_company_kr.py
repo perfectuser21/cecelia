@@ -2,7 +2,10 @@
 import importlib.util
 import json
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -28,7 +31,7 @@ def item(source, name, value="0", ratio=0):
 
 
 class Pipeline(unittest.TestCase):
-    def collector(self, fail=False):
+    def collector(self, fail=False, completion_state="completed"):
         module = load("opc-kr-current")
         calls = []
         rows = [item(SOURCE_DOD, "重命名后的经营指标"), item(SOURCE_COST, "不同标题")]
@@ -47,12 +50,14 @@ class Pipeline(unittest.TestCase):
                 if fail:
                     raise RuntimeError("observation rejected")
                 return {"success": True, "item": rows[0], "duplicate": False}
+            if method == "PATCH" and body.get("status") == "completed":
+                return {"success": True, "status": completion_state}
             return {"success": True, "status": body.get("status") if body else None}
 
         with patch.object(module, "call", side_effect=call), \
                 patch.object(module, "dod_count", return_value=["F1", "N1"]), \
                 patch.object(module, "cost_line_up", return_value=1):
-            if fail:
+            if fail or completion_state != "completed":
                 with self.assertRaises(RuntimeError):
                     module.main()
             else:
@@ -90,6 +95,10 @@ class Pipeline(unittest.TestCase):
         self.assertFalse(any(method == "PATCH" and body.get("status") == "completed" for _, method, body in calls))
         self.assertTrue(any(method == "PATCH" and body.get("status") == "failed" for _, method, body in calls))
 
+    def test_refused_completion_is_recorded_as_failure(self):
+        calls = self.collector(completion_state="in_progress")
+        self.assertTrue(any(method == "PATCH" and body.get("status") == "failed" for _, method, body in calls))
+
     def test_renderer_uses_raw_values_and_original_ratio(self):
         module = load("opc-okr-sync")
         row = {"kr": "原指标", "o": "O3", "areas": [], "start": "2", "cur": "1.234",
@@ -124,14 +133,140 @@ class Pipeline(unittest.TestCase):
 
     def test_empty_brain_snapshot_preserves_existing_site_files(self):
         module = load("opc-okr-sync")
+        calls = []
+
+        def call(url, body=None, method=None):
+            calls.append((url, method, body))
+            return {"id": "empty-sync-task", "success": True}
+
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "clawd/OKR-CURRENT.md"
             target.parent.mkdir()
             target.write_text("上一份有效快照")
-            with patch.object(module, "ROOT", directory), patch.object(module, "fetch", return_value=[]):
+            with patch.object(module, "ROOT", directory), patch.object(module, "fetch", return_value=[]), \
+                    patch.object(module, "call", side_effect=call):
                 with self.assertRaises(SystemExit):
                     module.main()
             self.assertEqual(target.read_text(), "上一份有效快照")
+            self.assertTrue(calls, "空快照失败也必须登记")
+            self.assertTrue(calls[0][0].endswith("/tasks"))
+            self.assertTrue(any(method == "PATCH" and body.get("status") == "failed" for _, method, body in calls))
+
+    def test_unresolved_area_ids_refuse_to_misreport_departments(self):
+        module = load("opc-okr-sync")
+        row = item(SOURCE_DOD, "有来源领域")
+        row["source_area_ids"] = ["300c40c2-real-source-area"]
+        with patch.object(module, "call", return_value={"success": True, "items": [row]}):
+            with self.assertRaises(RuntimeError):
+                module.fetch()
+
+    def test_historical_values_are_labelled_unverified(self):
+        module = load("opc-okr-sync")
+        row = {"kr": "公司 KR", "o": "O1", "areas": [], "start": "0", "cur": "0",
+               "target": "5", "ratio": 0, "st": "Open", "validation_state": "unverified"}
+        text = module.fmt([row], "公司")
+        self.assertIn("历史值·未验证", text)
+        self.assertIn("四项快照", text)
+        row["validation_state"] = "verified_observation"
+        self.assertIn("有观察证据", module.fmt([row], "公司"))
+
+    def test_real_http_observation_preserves_raw_payload_and_source(self):
+        module = load("opc-kr-current")
+        received = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(json.dumps({"success": True, "items": [item(SOURCE_DOD, "变更名称")]}).encode())
+
+            def do_POST(self):
+                received.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"success":true,"duplicate":false}')
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with patch.object(module, "BRAIN", "http://127.0.0.1:%s/api/brain" % server.server_port):
+                module.set_current(SOURCE_DOD, "1.234", {"fact": "真实测试观察", "source": "case"},
+                                   "registered-task", "run", "2026-10-01T07:00:00Z")
+            self.assertEqual(received[0][0], "/api/brain/okr/key-results/brain-" + SOURCE_DOD + "/observations")
+            self.assertEqual(received[0][1]["current_value"], "1.234")
+            self.assertEqual(received[0][1]["task_id"], "registered-task")
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+    def test_duplicate_source_mapping_stops_before_write(self):
+        module = load("opc-kr-current")
+        with patch.object(module, "call", return_value={"success": True, "items": [item(SOURCE_DOD, "a"), item(SOURCE_DOD, "b")]}) as call:
+            with self.assertRaises(RuntimeError):
+                module.set_current(SOURCE_DOD, 2, {"fact": "snapshot", "source": "case"}, "task", "run", "time")
+            self.assertEqual(call.call_count, 1)
+
+    def test_original_dod_snapshot_four_checks_and_boundaries(self):
+        module = load("opc-kr-current")
+        records = [{"状态": "进行中", "标题": "维修1", "下次检查时间": 10_000_000},
+                   {"状态": "已完成", "标题": "维修2", "下次检查时间": None}]
+
+        class Database:
+            def execute(self, *_):
+                return self
+
+            def fetchone(self):
+                return (json.dumps({"lastRunStatus": "ok"}),)
+
+        class Process:
+            stdout = "Use%\n84%\n"
+
+        with patch.object(module, "objects", return_value=(records, 10_000_000)), \
+                patch.object(module.sqlite3, "connect", return_value=Database()), \
+                patch.object(module.subprocess, "run", return_value=Process()):
+            self.assertEqual(module.dod_count(), ["F1", "F3", "F4", "N1"])
+            records[0]["下次检查时间"] = 10_000_000 - 3_600_000
+            Process.stdout = "Use%\n85%\n"
+            self.assertEqual(module.dod_count(), ["F1", "F4"])
+
+    def test_original_cost_line_requires_non_grey_cost(self):
+        module = load("opc-kr-current")
+        with patch.object(module.os.path, "exists", return_value=True):
+            with patch("builtins.open", return_value=StringIO("成本 GREY\n其他 GREEN\n")):
+                self.assertEqual(module.cost_line_up(), 0)
+            with patch("builtins.open", return_value=StringIO("成本 GREEN\n")):
+                self.assertEqual(module.cost_line_up(), 1)
+
+    def test_renderer_writes_six_actual_site_files_after_registration(self):
+        module = load("opc-okr-sync")
+        calls = []
+
+        def call(url, body=None, method=None):
+            calls.append((url, method, body))
+            if url.endswith("/tasks"):
+                return {"id": "sync-task"}
+            return {"success": True, "status": body.get("status") if body else None}
+
+        row = {"kr": "KR3.1", "o": "O3", "areas": [], "start": "0", "cur": "2", "target": "8", "ratio": 0.25, "st": "Open"}
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ["clawd", "clawd-media", "clawd-fde", "clawd-dev", "clawd-people", "clawd-infra"]:
+                (Path(directory) / name).mkdir()
+            with patch.object(module, "ROOT", directory), patch.object(module, "fetch", return_value=[row]), \
+                    patch.object(module, "call", side_effect=call):
+                module.main()
+            director = (Path(directory) / "clawd/OKR-CURRENT.md").read_text()
+            self.assertIn("25%", director)
+            self.assertIn("Brain", director)
+            for name in ["media", "fde", "dev", "people", "infra"]:
+                self.assertIn("暂无直接挂钩", (Path(directory) / ("clawd-" + name) / "OKR.md").read_text())
+            complete = [body for _, method, body in calls if method == "PATCH" and body.get("status") == "completed"]
+            self.assertEqual(len(complete[0]["result"]["facts"]["site_files"]), 6)
+            self.assertFalse(list(Path(directory).rglob("*.tmp")))
 
 
 if __name__ == "__main__":
