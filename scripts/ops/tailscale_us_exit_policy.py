@@ -89,7 +89,7 @@ def verified_interfaces(snapshot, allowed_self_ips, now, approved_nodes):
 
 def derp_endpoints(derp_map):
     result = set()
-    regions = (derp_map or {}).get("Regions", {})
+    regions = derp_map.get("Regions", {}) if isinstance(derp_map, dict) else {}
     if not isinstance(regions, dict):
         return []
     for region in regions.values():
@@ -137,7 +137,7 @@ def generate_rules(snapshot, derp_map, *, allowed_self_ips, now=None, approved_n
     now = time.time() if now is None else now
     approved_nodes = APPROVED if approved_nodes is None else approved_nodes
     lines = ['pass out quick on lo0 all no state label "cecelia-us-exit-v2"']
-    for interface in sorted(set(lan_interfaces)):
+    for interface in sorted({value for value in lan_interfaces if isinstance(value, str)}):
         if re.fullmatch(r"en\d+", interface):
             lines.append(f"pass out quick on {interface} inet proto udp from 0.0.0.0 port 68 to 255.255.255.255 port 67 no state")
     for net in PRIVATE_NETS:
@@ -228,10 +228,14 @@ class InterfaceFirewall:
         self.map = read_map_cache(self.cache)
         self.peer_cache = self.cache.with_name("bootstrap-peers.json")
         self.snapshot = read_map_cache(self.peer_cache, max_age=MAX_EVIDENCE_AGE) or None
+        if self.snapshot and (not isinstance(self.snapshot.get("observed_at"), (int, float))
+                              or not isinstance(self.snapshot.get("status"), dict)):
+            self.snapshot = None
         context = read_map_cache(self.cache.with_name("bootstrap-context.json"))
         self.lan_interfaces = native_read(["/sbin/ifconfig", "-l"]).split() if read_interfaces else context.get("lan_interfaces", [])
         if not isinstance(self.lan_interfaces, list):
             self.lan_interfaces = []
+        self.lan_interfaces = [value for value in self.lan_interfaces if isinstance(value, str) and re.fullmatch(r"en\d+", value)]
         self.pf_lock = self.cache.with_name("pf-transaction.lock")
         self.lease = self.cache.with_name("business-lease.json")
         self.approved = {api.PRIMARY_ID: api.PRIMARY_DNS, api.SECONDARY_ID: api.SECONDARY_DNS}

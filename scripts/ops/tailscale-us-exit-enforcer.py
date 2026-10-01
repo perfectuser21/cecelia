@@ -365,7 +365,7 @@ def main() -> int:
                 reason=reason,
             )
             return 2 if fail_closed else 0
-        except (EnforcementError, OSError, subprocess.SubprocessError) as exc:
+        except (EnforcementError, OSError, ValueError, TypeError, AttributeError, subprocess.SubprocessError) as exc:
             message = str(exc)
             if "firewall" in locals() and hasattr(firewall, "refresh"):
                 fail_closed_applied = False
