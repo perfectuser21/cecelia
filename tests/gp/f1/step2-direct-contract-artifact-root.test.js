@@ -10,10 +10,34 @@
 // 真 import 被改模块 direct-profile-contract.js（守卫在边上），不 mock 它。
 import { describe, it, expect } from 'vitest';
 import { resolveDirectArtifactRoot } from '../../../packages/brain/src/orchestrator/direct-profile-contract.js';
+import { materializeApprovedContract } from '../../../packages/brain/src/orchestrator/contract-store.js';
+import { createHash } from 'node:crypto';
 
 const receipt = { id: '11111111-2222-4333-8444-555555555555' };
 
 describe('F1 step2 · 直配合同产物根目录必须匹配 runner 物化前缀契约', () => {
+  it('approved task context rejects ambiguous Git roots before acquiring a database lease', async () => {
+    const artifacts = [
+      ['sprints/a/contract-dod.md', '# DoD'],
+      ['sprints/a/contract-draft.md', '# Contract'],
+      ['sprints/a/sprint-prd.md', '# PRD'],
+      ['sprints/a/tests/edge.test.mjs', 'test("edge", () => {})'],
+      ['sprints/b/contract-draft.md', '# Other contract'],
+    ].map(([path, content]) => ({ path, content,
+      sha256: createHash('sha256').update(content).digest('hex'),
+      byte_length: Buffer.byteLength(content), source_revision: 'a'.repeat(40),
+    }));
+    let databaseAcquired = false;
+    const db = { connect: async () => {
+      databaseAcquired = true;
+      throw new Error('unexpected_database_acquisition');
+    } };
+    await expect(materializeApprovedContract(db, {
+      runId: receipt.id, version: 1, branch: 'cp-approved', artifacts,
+      prdContent: '# PRD', contractContent: '# Contract\n\n# DoD',
+    })).rejects.toThrow('FROZEN_CONTRACT_ARTIFACT_INVALID:contract_root');
+    expect(databaseAcquired).toBe(false);
+  });
   it('有合法 sprint_dir → 产物根目录就是它（末尾斜杠剥掉），runner 才认 ${sprint_dir}/tests/', () => {
     expect(resolveDirectArtifactRoot(receipt, 'sprints/09192245-kernel-848e07bf')).toBe('sprints/09192245-kernel-848e07bf');
     expect(resolveDirectArtifactRoot(receipt, 'sprints/09192245-kernel-848e07bf/')).toBe('sprints/09192245-kernel-848e07bf');

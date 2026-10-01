@@ -95,8 +95,8 @@ function makeEnv({ observedSeq, dispatch, finalizeRun } = {}) {
         if (sql.includes('pg_advisory_xact_lock')) {
           return { rows: [{}] };
         }
-        if (sql.includes('SELECT id FROM tasks') && sql.includes('FOR UPDATE')) {
-          return { rows: [{ id: TASK_ID }] };
+        if (/SELECT id(?:, payload)? FROM tasks/.test(sql) && sql.includes('FOR UPDATE')) {
+          return { rows: [{ id: TASK_ID, payload: {} }] };
         }
         if (sql.includes('SELECT run.initiative_id, run.contract_id')) {
           return { rows: [{ initiative_id: TASK_ID, contract_id: null }] };
