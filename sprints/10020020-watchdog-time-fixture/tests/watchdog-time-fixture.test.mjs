@@ -17,7 +17,7 @@ it('native entry executes all permanent PG cases under UTC and Shanghai without 
       env: { ...process.env, TZ, POSTGRES_INTEGRATION: '1', DB_NAME: process.env.DB_NAME ?? 'cecelia_test' },
     });
     expect(result.stdout).toMatch(/Test Files\s+1 passed \(1\)/);
-    expect(result.stdout).toMatch(/Tests\s+8 passed \(8\)/);
+    expect(result.stdout).toMatch(/Tests\s+10 passed \(10\)/);
     expect(result.stdout).not.toMatch(/skipped/);
   }
 }, 65000);
