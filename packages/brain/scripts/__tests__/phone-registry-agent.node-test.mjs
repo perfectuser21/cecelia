@@ -62,3 +62,30 @@ test('缺失真实宽高或非法数据不覆盖任何可用代', t => {
   const out = f.run({ phones: [{ ...phones[0], serial: 'NEW' }] });
   assert.equal(out.ok, false); assert.equal(readFileSync(join(f.conf, 'douyin-phone-profiles.tsv'), 'utf8'), before); assert.equal(f.log(), '');
 });
+test('同代发布切指针故障，两个入口均保留旧可用数据', t => {
+  const f = fixture(t); const code = `import importlib.util, pathlib, json, os
+s=importlib.util.spec_from_file_location('agent',${JSON.stringify(script)}); m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+c=pathlib.Path(os.environ['PHONE_AGENT_CONFIG']); p=(c/m.PROFILE_NAME).read_text();a=(c/m.ACCOUNT_NAME).read_text()
+replace=m.os.replace;count=0
+def fail_switch(src,dest):
+ global count
+ if pathlib.Path(dest).name=='.phone-registry-current':
+  count+=1
+  if count==2: raise OSError('injected pointer switch failure')
+ return replace(src,dest)
+m.os.replace=fail_switch
+try:m.publish(c,'new-profiles','new-accounts',p,a)
+except OSError:pass
+else:raise AssertionError('expected failure')
+print(json.dumps({'profiles':(c/m.PROFILE_NAME).read_text()==p,'accounts':(c/m.ACCOUNT_NAME).read_text()==a}))`;
+  const r = spawnSync('python3', ['-c', code], { env: f.env, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), { profiles: true, accounts: true });
+});
+test('核验超时先TERM收尾后退出，不直接杀掉wrapper留在途子进程', t => {
+  const f = fixture(t); const child = join(f.dir, 'slow.py');
+  writeFileSync(child, 'import signal,time,os,pathlib,sys\ndef stop(s,f):\n pathlib.Path(os.environ["PHONE_TEST_DIR"],"cleaned").write_text("1");sys.exit(143)\nsignal.signal(signal.SIGTERM,stop)\ntime.sleep(60)\n');
+  const code = `import importlib.util,json,time\ns=importlib.util.spec_from_file_location('agent',${JSON.stringify(script)});m=importlib.util.module_from_spec(s);s.loader.exec_module(m)\nstart=time.monotonic();code,out=m.command(['python3',${JSON.stringify(child)}],timeout_s=.3);print(json.dumps({'code':code,'elapsed':time.monotonic()-start}))`;
+  const r = spawnSync('python3', ['-c', code], { env: f.env, encoding: 'utf8', timeout: 5000 });
+  assert.equal(r.status, 0, r.stderr); const out = JSON.parse(r.stdout); assert.equal(out.code, 124); assert.ok(out.elapsed < 3);
+  assert.equal(readFileSync(join(f.dir, 'cleaned'), 'utf8'), '1');
+});
