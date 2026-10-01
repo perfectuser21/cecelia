@@ -1,13 +1,32 @@
 import express from 'express';
 import request from 'supertest';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAcceptanceInternalRouter } from '../acceptance.js';
 
-function makeApp(pool) {
+const fixtureServers = new Set();
+
+afterEach(async () => {
+  try {
+    await Promise.all([...fixtureServers].map((server) => new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })));
+  } finally {
+    fixtureServers.clear();
+  }
+});
+
+async function makeApp(pool) {
   const app = express();
   app.use(express.json());
   app.use('/api/brain/acceptance', createAcceptanceInternalRouter({ pool }));
-  return app;
+  // Supertest always requests 127.0.0.1; bind the same address family explicitly.
+  // Let the test lifecycle close the server even when an assertion fails.
+  const server = await new Promise((resolve, reject) => {
+    const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
+    listener.once('error', reject);
+  });
+  fixtureServers.add(server);
+  return server;
 }
 
 function makeClient(scripts) {
@@ -52,7 +71,7 @@ describe('POST /api/brain/acceptance/runs', () => {
         return { rows: [{ id: `c-${inserted.length}`, check_key: params[1], kind: params[2], name: params[3] }] };
       }
     });
-    const res = await request(makeApp(makePool(client)))
+    const res = await request(await makeApp(makePool(client)))
       .post('/api/brain/acceptance/runs')
       .send({ run_key: 'r1', title: 'T', detail: HEAD, checks: [
         { check_key: 'S1-c1', kind: 'FR', name: 'step1' },
@@ -68,7 +87,7 @@ describe('POST /api/brain/acceptance/runs', () => {
       if (sql.includes('SELECT * FROM acceptance_runs WHERE run_key')) return { rows: [RUN_ROW] };
       if (sql.includes('FROM acceptance_checks WHERE run_id')) return { rows: [{ check_key: 'r1:001' }] };
     });
-    const res = await request(makeApp(makePool(client)))
+    const res = await request(await makeApp(makePool(client)))
       .post('/api/brain/acceptance/runs')
       .send({ run_key: 'r1', title: 'T', detail: HEAD, checks: [{ check_key: 'S1-c1', kind: 'FR', name: 'x' }] });
     expect(res.status).toBe(200);
@@ -89,7 +108,7 @@ describe('POST /api/brain/acceptance/runs', () => {
         return { rows: [{ check_key: 'r1:001' }] };
       }
     });
-    const res = await request(makeApp(makePool(client)))
+    const res = await request(await makeApp(makePool(client)))
       .post('/api/brain/acceptance/runs')
       .send({ run_key: 'r1', title: 'T', detail: HEAD, checks: [{ check_key: 'S1-c1', kind: 'FR', name: 'x' }] });
     expect(res.status).toBe(200);
@@ -99,19 +118,19 @@ describe('POST /api/brain/acceptance/runs', () => {
   });
 
   it('缺 run_key/title → 400', async () => {
-    const res = await request(makeApp(makePool(makeClient(() => undefined))))
+    const res = await request(await makeApp(makePool(makeClient(() => undefined))))
       .post('/api/brain/acceptance/runs').send({ title: 'T', checks: [{ kind: 'FR', name: 'x' }] });
     expect(res.status).toBe(400);
   });
 
   it('checks 空数组 → 400', async () => {
-    const res = await request(makeApp(makePool(makeClient(() => undefined))))
+    const res = await request(await makeApp(makePool(makeClient(() => undefined))))
       .post('/api/brain/acceptance/runs').send({ run_key: 'r1', title: 'T', checks: [] });
     expect(res.status).toBe(400);
   });
 
   it('kind 非法 → 400', async () => {
-    const res = await request(makeApp(makePool(makeClient(() => undefined))))
+    const res = await request(await makeApp(makePool(makeClient(() => undefined))))
       .post('/api/brain/acceptance/runs').send({ run_key: 'r1', title: 'T', checks: [{ check_key: 'S1-c1', kind: 'XX', name: 'x' }] });
     expect(res.status).toBe(400);
   });
@@ -126,7 +145,7 @@ describe('POST /api/brain/acceptance/runs', () => {
         return { rows: [{ id: 'c-1', check_key: params[1], kind: params[2], name: params[3], detail: params[5] }] };
       }
     });
-    const res = await request(makeApp(makePool(client)))
+    const res = await request(await makeApp(makePool(client)))
       .post('/api/brain/acceptance/runs')
       .send({ run_key: 'r-detail', title: 'T', detail: HEAD, checks: [
         { check_key: 'S1-c1', kind: 'FR', name: 'step1', detail: { op: ['点击发送'], exp: '消息送达', pass: '收到回执', fail: '无回执' } },
@@ -142,12 +161,12 @@ describe('GET /api/brain/acceptance/runs/:run_key', () => {
       if (sql.includes('SELECT * FROM acceptance_runs WHERE run_key')) return { rows: [RUN_ROW] };
       if (sql.includes('FROM acceptance_checks WHERE run_id')) return { rows: [{ check_key: 'r1:001' }] };
     });
-    const ok = await request(makeApp(makePool(client))).get('/api/brain/acceptance/runs/r1');
+    const ok = await request(await makeApp(makePool(client))).get('/api/brain/acceptance/runs/r1');
     expect(ok.status).toBe(200);
     expect(ok.body.checks).toHaveLength(1);
 
     const miss = makeClient(() => ({ rows: [] }));
-    const nf = await request(makeApp(makePool(miss))).get('/api/brain/acceptance/runs/none');
+    const nf = await request(await makeApp(makePool(miss))).get('/api/brain/acceptance/runs/none');
     expect(nf.status).toBe(404);
   });
 });
@@ -162,7 +181,7 @@ describe('POST /api/brain/acceptance/catalog（目录快照上载）', () => {
       }),
       connect: vi.fn(),
     };
-    const res = await request(makeApp(pool))
+    const res = await request(await makeApp(pool))
       .post('/api/brain/acceptance/catalog')
       .send({ catalog: { golden_paths: [{ id: 'g1' }], apps: [] } });
     expect(res.status).toBe(200);
@@ -172,9 +191,9 @@ describe('POST /api/brain/acceptance/catalog（目录快照上载）', () => {
 
   it('缺 catalog / golden_paths 非数组 → 400', async () => {
     const pool = { query: vi.fn(), connect: vi.fn() };
-    const r1 = await request(makeApp(pool)).post('/api/brain/acceptance/catalog').send({});
+    const r1 = await request(await makeApp(pool)).post('/api/brain/acceptance/catalog').send({});
     expect(r1.status).toBe(400);
-    const r2 = await request(makeApp(pool)).post('/api/brain/acceptance/catalog').send({ catalog: { golden_paths: 'x' } });
+    const r2 = await request(await makeApp(pool)).post('/api/brain/acceptance/catalog').send({ catalog: { golden_paths: 'x' } });
     expect(r2.status).toBe(400);
     expect(pool.query).not.toHaveBeenCalled();
   });
@@ -201,7 +220,7 @@ describe('POST /api/brain/acceptance/results（内网版）', () => {
       }
       return { rows: [] };
     });
-    const res = await request(makeApp(makePool(client)))
+    const res = await request(await makeApp(makePool(client)))
       .post('/api/brain/acceptance/results')
       .send({ run_key: 'r1', results: [{ check_key: 'r1:001', result: '通过', submitted_by: 'alice@zenjoymedia.media' }] });
     expect(res.status).toBe(200);
@@ -217,7 +236,7 @@ describe('POST /api/brain/acceptance/results（内网版）', () => {
       if (sql.includes('SELECT check_key FROM acceptance_checks')) return { rows: [] };
       return { rows: [] };
     });
-    const res = await request(makeApp(makePool(client)))
+    const res = await request(await makeApp(makePool(client)))
       .post('/api/brain/acceptance/results')
       .send({ run_key: 'r1', results: [{ check_key: 'ghost:001', result: '通过' }] });
     expect(res.status).toBe(400);
@@ -239,7 +258,7 @@ describe('GET /api/brain/acceptance/pending（内网版）', () => {
         return { rows: [] };
       }),
     };
-    const res = await request(makeApp(pool)).get('/api/brain/acceptance/pending');
+    const res = await request(await makeApp(pool)).get('/api/brain/acceptance/pending');
     expect(res.status).toBe(200);
     expect(res.body.runs).toHaveLength(1);
     expect(res.body.runs[0].checks).toHaveLength(1);
@@ -250,7 +269,8 @@ describe('GET /api/brain/acceptance/pending（内网版）', () => {
       connect: vi.fn(),
       query: vi.fn(async () => { throw new Error('db down'); }),
     };
-    const res = await request(makeApp(pool)).get('/api/brain/acceptance/pending');
+    const res = await request(await makeApp(pool)).get('/api/brain/acceptance/pending');
+    expect(pool.query).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'internal_error' });
   });
@@ -259,7 +279,7 @@ describe('GET /api/brain/acceptance/pending（内网版）', () => {
 describe('GET /api/brain/acceptance/runs?gp_id=（历史查询）', () => {
   it('缺 gp_id：400', async () => {
     const client = makeClient(() => undefined);
-    const res = await request(makeApp(makePool(client))).get('/api/brain/acceptance/runs');
+    const res = await request(await makeApp(makePool(client))).get('/api/brain/acceptance/runs');
     expect(res.status).toBe(400);
   });
 
@@ -279,7 +299,7 @@ describe('GET /api/brain/acceptance/runs?gp_id=（历史查询）', () => {
         return { rows: [] };
       }),
     };
-    const res = await request(makeApp(pool))
+    const res = await request(await makeApp(pool))
       .get('/api/brain/acceptance/runs')
       .query({ gp_id: 'gp1' });
     expect(res.status).toBe(200);
