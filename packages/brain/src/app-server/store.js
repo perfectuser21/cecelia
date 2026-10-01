@@ -52,6 +52,7 @@ export function createAppServerStore({pool,createTask=createGenerationTask,after
    });
   },
   async home(homeId){return (await pool.query('SELECT * FROM app_server_homes WHERE home_id=$1',[homeId])).rows[0]??null;},
+  async latest(homeId){return (await pool.query(`${SELECT} AND h.home_id=$1 AND r.status<>'released' ORDER BY g.generation DESC LIMIT 1`,[homeId])).rows[0]??null;},
   async listOutstanding(){return (await pool.query(`${SELECT} AND r.status<>'released' ORDER BY r.updated_at LIMIT 100`)).rows;},
   async reserveStream(id){return locked(id,async(row,db)=>{
    if(row.status==='released'||row.cancel_requested)throw Error('appserver_launch_tombstoned');

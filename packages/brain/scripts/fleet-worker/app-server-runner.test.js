@@ -12,7 +12,7 @@ let api = {}; try { api = require('./app-server-runner.cjs'); } catch (e) { if (
 const profile = { image: `sha256:${'a'.repeat(64)}`, cpus: 2, memoryBytes: 1073741824,
   pidsLimit: 128, user: '1000:1000', tmpBytes: 67108864, network: 'none', homeKey: 'b'.repeat(64), workspaceKey: 'c'.repeat(64) };
 
-function fixture() {
+function fixture(selectedProfile = profile) {
   expect(api).toHaveProperty('createAppServerRunner');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'appserver-runner-'));
   const machineId = 'test-machine', workerId = 'worker-one', bootId = randomUUID();
@@ -31,17 +31,27 @@ function fixture() {
       return Object.assign(child, { stdin: new PassThrough(), stdout: new PassThrough(), kill: () => child.emit('close', 0) });
     },
   };
-  const config = { stateRoot: root, machineId, workerId, bootId, profiles: { chat: profile }, docker,
+  const config = { stateRoot: root, machineId, workerId, bootId, profiles: { chat: selectedProfile }, docker,
     assertLocalResources: async () => { if (rejectAdmission) throw Error('attempt_local_resources_unavailable'); } };
   const input = (overrides = {}) => { const value = ({ reservation_id: randomUUID(), intent_id: randomUUID(), launch_generation: 1,
     machine_id: machineId, worker_id: workerId, worker_boot_id: bootId, home_key: profile.homeKey,
-    config_digest: profileDigest(profile), profile: 'chat', ...overrides }); return {...value,owner_key:generationOwner(value)}; };
+    config_digest: profileDigest(selectedProfile), profile: 'chat', ...overrides }); return {...value,owner_key:generationOwner(value)}; };
   return { root, docker, config, input, containers, runner: api.createAppServerRunner(config),
     stats: () => ({ creates, removes }), offline: value => { offline = value; }, pressure: value => { rejectAdmission = value; },
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 
 describe('app-server generation 与 HOME 单写生命周期', () => {
+  it('attach仅传递持久化profile工具权限，客户端身份字段不能添加执行工具', async () => {
+    const f = fixture({...profile, hostTools:['read','message']});
+    try {
+      const input=f.input();await f.runner.start(input);
+      await expect(f.runner.attach({...input,stream_id:randomUUID(),hostTools:['exec']})).rejects.toThrow('appserver_identity_invalid');
+      const child=await f.runner.attach({...input,stream_id:randomUUID()});
+      expect(child.rpcHostTools).toEqual(['message','read']);
+      child.kill();
+    } finally { f.cleanup(); }
+  });
   it('一代只允许一个stdio连接；断开只释放流租约，HOME和预算继续占位', async () => {
     const f = fixture(); try {
       const input = f.input(); await f.runner.start(input);
