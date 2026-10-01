@@ -12,6 +12,7 @@
  * 覆盖每个被 require 的 .cjs 模块。
  */
 import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -34,6 +35,13 @@ function localRequires() {
 }
 
 describe('GP F1 step3 — installer 覆盖 worker 运行时依赖', () => {
+  it('真实 install-fleet-worker 升级保留配置、凭据引用和他人安装锁', () => {
+    const output = execFileSync('bash', [join(WORKER_DIR, 'install-fleet-worker.test.sh')], {
+      encoding: 'utf8', timeout: 120000,
+    });
+    expect(output).toContain('PASS: Fleet Worker installer behavioral contract');
+  }, 125000);
+
   const modules = localRequires();
 
   it('fleet-worker.cjs 的本地 require 清单非空（解析器自证）', () => {

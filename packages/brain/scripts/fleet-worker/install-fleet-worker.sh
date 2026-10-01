@@ -28,6 +28,8 @@ NODE_PROBE="${FLEET_WORKER_NODE_PROBE:-$DEFAULT_NODE_PROBE}"
 NODE_EXECUTABLE="${FLEET_WORKER_NODE_EXECUTABLE:-$(command -v node || true)}"
 WORKER_SOURCE="$SCRIPT_DIR/fleet-worker.cjs"
 PROBE_SOURCE="$SCRIPT_DIR/node-probe.cjs"
+PROFILE_REGISTRY_SOURCE="$SCRIPT_DIR/../../config/fleet-node-profiles.json"
+LOCAL_RESOURCE_ADMISSION_SOURCE="$SCRIPT_DIR/local-resource-admission.cjs"
 WORKSPACE_MANAGER_SOURCE="$SCRIPT_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SOURCE="$SCRIPT_DIR/attempt-runner.cjs"
 ORCHESTRATOR_RUNNER_SOURCE="$SCRIPT_DIR/orchestrator-runner.cjs"
@@ -41,11 +43,17 @@ RUNNER_DIGEST=''
 POSTGRES_IMAGE=''
 DISK_MIN_FREE_GIB=''
 WORKER_BIND_HOST=''
+WORKER_PORT='5231'
+WORKER_DOCKER_HOST='unix:///var/run/docker.sock'
+EXISTING_CONFIG_SNAPSHOT=''
+EXISTING_CONFIG_HELPER="$SCRIPT_DIR/install-existing-config.py"
 BRAIN_HEALTH_URL=''
 LOCK_DIR=''
 BACKUP_DIR=''
 STAGED_WORKER=''
 STAGED_PROBE=''
+STAGED_PROFILE_REGISTRY=''
+STAGED_LOCAL_RESOURCE_ADMISSION=''
 STAGED_WORKSPACE_MANAGER=''
 STAGED_ATTEMPT_RUNNER=''
 STAGED_ORCHESTRATOR_RUNNER=''
@@ -76,7 +84,10 @@ esac
 RUNTIME_DIR="${FLEET_WORKER_RUNTIME_DIR:-$SYSTEM_ROOT/usr/local/libexec/cecelia/fleet-worker}"
 TOOLCHAIN_BIN="$SYSTEM_ROOT/usr/local/libexec/cecelia/toolchain/bin"
 COMMAND_PATH="$TOOLCHAIN_BIN:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+WORKER_COMMAND_PATH="$COMMAND_PATH"
 WORKER_SCRIPT="$RUNTIME_DIR/fleet-worker.cjs"
+PROFILE_REGISTRY_SCRIPT="$RUNTIME_DIR/fleet-node-profiles.json"
+LOCAL_RESOURCE_ADMISSION_SCRIPT="$RUNTIME_DIR/local-resource-admission.cjs"
 WORKSPACE_MANAGER_SCRIPT="$RUNTIME_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SCRIPT="$RUNTIME_DIR/attempt-runner.cjs"
 ORCHESTRATOR_RUNNER_SCRIPT="$RUNTIME_DIR/orchestrator-runner.cjs"
@@ -213,15 +224,18 @@ run_default_preflight() {
   service_uid="$("$ID_COMMAND" -u _cecelia)"
   service_gid="$("$ID_COMMAND" -g _cecelia)"
 
-  PATH="$COMMAND_PATH" \
+  PATH="$WORKER_COMMAND_PATH" \
   TMPDIR="$SHARED_TMPDIR" \
-  DOCKER_HOST='unix:///var/run/docker.sock' \
+  DOCKER_HOST="$WORKER_DOCKER_HOST" \
   CECELIA_CALLBACK_URL="$BRAIN_HEALTH_URL" \
   CECELIA_MACHINE_ID="$machine_id" \
+  CECELIA_FLEET_WORKER_HOST="$WORKER_BIND_HOST" \
+  CECELIA_FLEET_WORKER_PORT="$WORKER_PORT" \
   CECELIA_RUNNER_DIGEST="$RUNNER_DIGEST" \
   CECELIA_POSTGRES_IMAGE="$POSTGRES_IMAGE" \
   CECELIA_ORBSTACK_HOME="$ORBSTACK_HOME" \
   CECELIA_REPO_ROOT="$WORKTREE_ROOT" \
+  CECELIA_FLEET_DATA_ROOT="$FLEET_DATA_ROOT" \
   CECELIA_DRAIN_MARKER="$DRAIN_MARKER" \
     "$NODE_EXECUTABLE" - \
       "$NODE_PROBE" "$RUNNER_DIGEST" "$service_uid" "$service_gid" \
@@ -245,7 +259,10 @@ try {
   process.exit(1);
 }
 
-probeFleetWorkerHealth().then((report) => {
+probeFleetWorkerHealth({
+  diskPaths: [process.env.CECELIA_FLEET_DATA_ROOT, process.env.TMPDIR],
+  allowMissingDiskPaths: true,
+}).then((report) => {
   const failures = [];
   if (!report || report.orbstack?.version === 'unavailable') failures.push('orbstack');
   if (report?.docker?.available !== true) failures.push('docker');
@@ -253,7 +270,9 @@ probeFleetWorkerHealth().then((report) => {
   if (report?.runtime_resources?.postgres?.available !== true) failures.push('postgres');
   if (!Number.isFinite(report?.resources?.disk_free_bytes)
       || report.resources.disk_free_bytes < diskMinFreeGib * GIB
-      || report.resources.disk_used_percent > 85) failures.push('disk');
+      || !Number.isFinite(report.resources.disk_used_percent)
+      || report.resources.disk_used_percent < 0
+      || report.resources.disk_used_percent > 100) failures.push('disk');
   if (!Number.isFinite(report?.resources?.memory_bytes)
       || report.resources.memory_bytes < 8 * GIB) failures.push('memory');
   if (report?.worktree?.root_ready !== true) failures.push('repository_access');
@@ -314,7 +333,9 @@ run_preflight_with_retry() {
 }
 
 probe_started_worker_once() {
-  local health_url="http://$WORKER_BIND_HOST:5231/health"
+  local health_host="$WORKER_BIND_HOST"
+  [[ "$health_host" != *:* ]] || health_host="[$health_host]"
+  local health_url="http://$health_host:$WORKER_PORT/health"
   if [[ -n "$STARTUP_PROBE" ]]; then
     "$STARTUP_PROBE" "$health_url" "$machine_id"
     return
@@ -578,6 +599,8 @@ render_plist() {
       line="${line//@@RUNNER_DIGEST@@/$escaped_digest}"
       line="${line//@@POSTGRES_IMAGE@@/$escaped_postgres}"
       line="${line//@@WORKER_BIND_HOST@@/$escaped_bind_host}"
+      line="${line//@@WORKER_PORT@@/$WORKER_PORT}"
+      line="${line//@@SHARED_TMPDIR@@/$(xml_escape "$SHARED_TMPDIR")}"
       line="${line//@@BRAIN_HEALTH_URL@@/$escaped_brain_health}"
       line="${line//@@NODE_EXECUTABLE@@/$escaped_node}"
       line="${line//@@WORKER_SCRIPT@@/$escaped_worker}"
@@ -590,7 +613,11 @@ render_plist() {
       printf '%s\n' "$line"
     done < "$TEMPLATE" > "$temporary"
 
-    chmod 0644 "$temporary"
+    chmod 0600 "$temporary"
+    if [[ -n "$EXISTING_CONFIG_SNAPSHOT" ]]; then
+      python3 "$EXISTING_CONFIG_HELPER" merge "$temporary" "$EXISTING_CONFIG_SNAPSHOT" \
+        || die "existing_configuration_untrusted"
+    fi
     "$MOVE" "$temporary" "$target"
   )
 }
@@ -624,8 +651,11 @@ render_access_plist() {
 }
 
 cleanup_transaction() {
+  [[ -z "$EXISTING_CONFIG_SNAPSHOT" ]] || rm -f "$EXISTING_CONFIG_SNAPSHOT"
   [[ -z "$STAGED_WORKER" ]] || rm -f "$STAGED_WORKER"
   [[ -z "$STAGED_PROBE" ]] || rm -f "$STAGED_PROBE"
+  [[ -z "$STAGED_PROFILE_REGISTRY" ]] || rm -f "$STAGED_PROFILE_REGISTRY"
+  [[ -z "$STAGED_LOCAL_RESOURCE_ADMISSION" ]] || rm -f "$STAGED_LOCAL_RESOURCE_ADMISSION"
   [[ -z "$STAGED_WORKSPACE_MANAGER" ]] || rm -f "$STAGED_WORKSPACE_MANAGER"
   [[ -z "$STAGED_ATTEMPT_RUNNER" ]] || rm -f "$STAGED_ATTEMPT_RUNNER"
   [[ -z "$STAGED_ORCHESTRATOR_RUNNER" ]] || rm -f "$STAGED_ORCHESTRATOR_RUNNER"
@@ -640,6 +670,8 @@ cleanup_transaction() {
     rm -f \
       "$BACKUP_DIR/worker" \
       "$BACKUP_DIR/probe" \
+      "$BACKUP_DIR/fleet-node-profiles" \
+      "$BACKUP_DIR/local-resource-admission" \
       "$BACKUP_DIR/workspace-manager" \
       "$BACKUP_DIR/attempt-runner" \
       "$BACKUP_DIR/orchestrator-runner" \
@@ -659,18 +691,21 @@ cleanup_transaction() {
 }
 
 prepare_transaction_paths() {
-  local runtime_parent
+  local runtime_parent candidate_lock
 
   [[ ! -L "$RUNTIME_DIR" ]] || die "runtime_path_invalid"
   runtime_parent="$(dirname "$RUNTIME_DIR")"
   mkdir -p "$RUNTIME_DIR"
   chmod 0755 "$runtime_parent" "$RUNTIME_DIR"
-  LOCK_DIR="$INSTALL_DIR/.fleet-worker.install.lock"
-  mkdir "$LOCK_DIR" 2>/dev/null || die "install_locked"
+  candidate_lock="$INSTALL_DIR/.fleet-worker.install.lock"
+  mkdir "$candidate_lock" 2>/dev/null || die "install_locked"
+  LOCK_DIR="$candidate_lock"
   trap cleanup_transaction EXIT
   BACKUP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/fleet-worker-backup.XXXXXX")"
   STAGED_WORKER="$(mktemp "$RUNTIME_DIR/.fleet-worker.cjs.XXXXXX")"
   STAGED_PROBE="$(mktemp "$RUNTIME_DIR/.node-probe.cjs.XXXXXX")"
+  STAGED_PROFILE_REGISTRY="$(mktemp "$RUNTIME_DIR/.fleet-node-profiles.json.XXXXXX")"
+  STAGED_LOCAL_RESOURCE_ADMISSION="$(mktemp "$RUNTIME_DIR/.local-resource-admission.cjs.XXXXXX")"
   STAGED_WORKSPACE_MANAGER="$(
     mktemp "$RUNTIME_DIR/.workspace-manager.cjs.XXXXXX"
   )"
@@ -695,6 +730,10 @@ prepare_transaction_paths() {
 stage_generation() {
   cp "$WORKER_SOURCE" "$STAGED_WORKER"
   cp "$PROBE_SOURCE" "$STAGED_PROBE"
+  cp "$PROFILE_REGISTRY_SOURCE" "$STAGED_PROFILE_REGISTRY"
+  chmod 0644 "$STAGED_PROFILE_REGISTRY"
+  cp "$LOCAL_RESOURCE_ADMISSION_SOURCE" "$STAGED_LOCAL_RESOURCE_ADMISSION"
+  chmod 0644 "$STAGED_LOCAL_RESOURCE_ADMISSION"
   cp "$WORKSPACE_MANAGER_SOURCE" "$STAGED_WORKSPACE_MANAGER"
   cp "$ATTEMPT_RUNNER_SOURCE" "$STAGED_ATTEMPT_RUNNER"
   cp "$ORCHESTRATOR_RUNNER_SOURCE" "$STAGED_ORCHESTRATOR_RUNNER"
@@ -920,6 +959,42 @@ if [[ "$mode" == 'apply' && "$("$ID_COMMAND" -u)" != '0' ]]; then
   die "root_required" 77
 fi
 
+installed_plist="$INSTALL_DIR/$LABEL.plist"
+installed_access_plist="$INSTALL_DIR/$ACCESS_LABEL.plist"
+if [[ "$mode" == 'apply' ]]; then
+  [[ ! -L "$INSTALL_DIR" && ! -L "$installed_plist" \
+    && ! -L "$installed_access_plist" ]] || die "install_path_invalid"
+  if [[ -e "$installed_plist" ]]; then
+    EXISTING_CONFIG_SNAPSHOT="$(mktemp "${TMPDIR:-/tmp}/fleet-worker-config.XXXXXX")"
+    chmod 0600 "$EXISTING_CONFIG_SNAPSHOT"
+    trap cleanup_transaction EXIT
+    if ! existing_settings="$(python3 "$EXISTING_CONFIG_HELPER" snapshot \
+      "$installed_plist" "$machine_id" "$RUNTIME_DIR" "$EXISTING_CONFIG_SNAPSHOT")"; then
+      die "existing_configuration_untrusted"
+    fi
+    while IFS=$'\t' read -r setting value; do
+      case "$setting" in
+        WORKER_BIND_HOST) WORKER_BIND_HOST="$value" ;;
+        WORKER_PORT) WORKER_PORT="$value" ;;
+        WORKER_TOKEN_FILE) WORKER_TOKEN_FILE="$value" ;;
+        FLEET_DATA_ROOT) FLEET_DATA_ROOT="$value" ;;
+        WORKTREE_ROOT) WORKTREE_ROOT="$value" ;;
+        ORBSTACK_HOME) ORBSTACK_HOME="$value" ;;
+        BRAIN_HEALTH_URL) BRAIN_HEALTH_URL="$value" ;;
+        RUNNER_DIGEST) RUNNER_DIGEST="$value" ;;
+        POSTGRES_IMAGE) POSTGRES_IMAGE="$value" ;;
+        DRAIN_MARKER) DRAIN_MARKER="$value" ;;
+        SHARED_TMPDIR) SHARED_TMPDIR="$value" ;;
+        WORKER_DOCKER_HOST) WORKER_DOCKER_HOST="$value" ;;
+        WORKER_COMMAND_PATH) WORKER_COMMAND_PATH="$value" ;;
+        NODE_EXECUTABLE) NODE_EXECUTABLE="$value" ;;
+        *) die "existing_configuration_untrusted" ;;
+      esac
+    done <<< "$existing_settings"
+    unset existing_settings setting value
+  fi
+fi
+
 validate_worker_data_root_path
 if [[ "$mode" == 'apply' ]]; then
   prepare_orbstack_access
@@ -984,6 +1059,8 @@ prepare_transaction_paths
 stage_generation
 
 prior_worker_mode="$(snapshot_file "$WORKER_SCRIPT" "$BACKUP_DIR/worker")"
+prior_profile_registry_mode="$(snapshot_file "$PROFILE_REGISTRY_SCRIPT" "$BACKUP_DIR/fleet-node-profiles")"
+prior_local_resource_admission_mode="$(snapshot_file "$LOCAL_RESOURCE_ADMISSION_SCRIPT" "$BACKUP_DIR/local-resource-admission")"
 prior_probe_mode="$(
   snapshot_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe"
 )"
@@ -1015,6 +1092,11 @@ prior_access_plist_mode="$(
   snapshot_file "$installed_access_plist" "$BACKUP_DIR/access-plist"
 )"
 
+if [[ -n "$EXISTING_CONFIG_SNAPSHOT" ]]; then
+  python3 "$EXISTING_CONFIG_HELPER" check "$installed_plist" "$EXISTING_CONFIG_SNAPSHOT" \
+    || die "existing_configuration_untrusted"
+fi
+
 if [[ "$prior_access_service_loaded" == true ]]; then
   "$LAUNCHCTL" bootout "system/$ACCESS_LABEL" >/dev/null 2>&1 || true
 fi
@@ -1024,6 +1106,8 @@ fi
 
 placement_ok=true
 "$MOVE" "$STAGED_PROBE" "$RUNTIME_DIR/node-probe.cjs" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_PROFILE_REGISTRY" "$PROFILE_REGISTRY_SCRIPT" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_LOCAL_RESOURCE_ADMISSION" "$LOCAL_RESOURCE_ADMISSION_SCRIPT" || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_WORKSPACE_MANAGER" "$WORKSPACE_MANAGER_SCRIPT" \
   || placement_ok=false
@@ -1083,6 +1167,10 @@ if [[ "$launch_ok" != true ]]; then
   "$LAUNCHCTL" bootout "system/$LABEL" >/dev/null 2>&1 || true
   rollback_ok=true
   restore_file "$WORKER_SCRIPT" "$BACKUP_DIR/worker" "$prior_worker_mode" \
+    || rollback_ok=false
+  restore_file "$PROFILE_REGISTRY_SCRIPT" "$BACKUP_DIR/fleet-node-profiles" "$prior_profile_registry_mode" \
+    || rollback_ok=false
+  restore_file "$LOCAL_RESOURCE_ADMISSION_SCRIPT" "$BACKUP_DIR/local-resource-admission" "$prior_local_resource_admission_mode" \
     || rollback_ok=false
   restore_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe" "$prior_probe_mode" \
     || rollback_ok=false

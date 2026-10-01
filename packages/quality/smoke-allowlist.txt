@@ -1,6 +1,7 @@
 # Smoke PASS 基线（allowlist）
 # 列表内脚本失败 → CI 红（棘轮闸）
 # 新增脚本默认须加入此文件或 smoke-denylist.txt（新债不许欠）
+task-intake-smoke.sh
 # 更新方式：在 CI 通过后从 smoke-debt.txt 迁移经确认能通过的脚本到此处
 abilities-api-smoke.sh
 ability-id-chain-pr2-smoke.sh
@@ -42,6 +43,7 @@ codex-grok-launcher-supervisor-smoke.sh
 codex-headed-dispatch-smoke.sh
 codex-test-gen-smoke.sh
 commander-invoker-smoke.sh
+company-key-results-smoke.sh
 compute-ssh-reachability-smoke.sh
 contract-seal-smoke.sh
 conversation-agent-smoke.sh
@@ -199,6 +201,7 @@ migration-346-idempotent-smoke.sh
 migration-verify.sh
 model-accounts-smoke.sh
 nfr-decisions-assertion-ref-smoke.sh
+node-onboarding-smoke.sh
 notion-capture-ingest-smoke.sh
 notion-inbox-ws3-smoke.sh
 notion-inlet-ingest-smoke.sh
@@ -361,4 +364,9 @@ projects-table-upgrade-smoke.sh
 cell-color-step-level-smoke.sh
 project-locate-smoke.sh
 project-brief-smoke.sh
+harness-weighted-reservation-smoke.sh
+phone-registry-sync-smoke.sh
+alertness-schema-smoke.sh
+fleet-local-resource-admission-smoke.sh
+company-kr-analysis-smoke.sh
 activity-flow-metrics-smoke.sh

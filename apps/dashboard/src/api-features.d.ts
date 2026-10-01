@@ -8,6 +8,7 @@
 declare module '@features/core' {
   export interface NavGroupItem {
     path: string;
+    exact?: boolean;
     icon: string;
     label: string;
     featureKey: string;

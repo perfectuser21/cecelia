@@ -656,8 +656,20 @@ while [ $TRIES -lt $MAX_TRIES ]; do
     BRIDGE_SRC="$ROOT_DIR/packages/brain/scripts/cecelia-bridge.js"
     BRIDGE_DST="${HOST_HOME}/bin/cecelia-bridge.js"
     if [[ -f "$BRIDGE_SRC" ]]; then
-      # 同 cecelia-run 的 cp identical 防中止
-      cp "$BRIDGE_SRC" "$BRIDGE_DST" 2>&1 || true
+      # Bridge文件未落地不算部署成功；复制异常时EXIT回执必须保留failed。
+      DEPLOY_SUCCESS=false
+      # 入口依赖先到位再更新入口，避免宿主bin首次部署缺模块导致Bridge起不来。
+      BRIDGE_LIB_SRC="$ROOT_DIR/packages/brain/scripts/lib/bridge-lifecycle.cjs"
+      BRIDGE_LIB_DIR="${HOST_HOME}/bin/lib"
+      mkdir -p "$BRIDGE_LIB_DIR"
+      if ! cmp -s "$BRIDGE_LIB_SRC" "$BRIDGE_LIB_DIR/bridge-lifecycle.cjs"; then
+        cp "$BRIDGE_LIB_SRC" "$BRIDGE_LIB_DIR/bridge-lifecycle.cjs"
+      fi
+      # 内容一致时不cp；真正的权限/磁盘错误必须让set -e终止，不能吞掉。
+      if ! cmp -s "$BRIDGE_SRC" "$BRIDGE_DST"; then
+        cp "$BRIDGE_SRC" "$BRIDGE_DST"
+      fi
+      DEPLOY_SUCCESS=true
       echo "  Updated $BRIDGE_DST (v${VERSION})"
       # 重启 bridge（launchd 或 systemd）
       if [[ "$DEPLOY_MODE" == "launchd" ]]; then

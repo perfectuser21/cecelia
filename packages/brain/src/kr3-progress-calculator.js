@@ -1,3 +1,4 @@
+import { COMPANY_KR_SQL_GUARD } from './lib/company-kr-metrics.js';
 /**
  * kr3-progress-calculator.js
  *
@@ -107,9 +108,9 @@ export async function calculate(dbPool) {
 export async function writeProgressToKR(pool, pct) {
   const { rowCount } = await pool.query(
     `UPDATE key_results
-     SET progress = $1, progress_pct = $1, updated_at = NOW()
+     SET progress = $1::integer, progress_pct = $1::integer::numeric, updated_at = NOW()
      WHERE (title ILIKE '%小程序%' OR title ILIKE '%KR3%')
-       AND status IN ('active','in_progress','ready','decomposing')`,
+       AND status IN ('active','in_progress','ready','decomposing') AND ${COMPANY_KR_SQL_GUARD}`,
     [pct]
   );
   return rowCount > 0;

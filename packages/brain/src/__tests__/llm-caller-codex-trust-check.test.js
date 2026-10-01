@@ -1,3 +1,4 @@
+vi.mock('../runtime-safety.js', () => ({ assertLiveLLMAllowed: () => {} }));
 /**
  * 回归测试：codex exec 缺 --skip-git-repo-check 导致 fallback #1 必失败
  *

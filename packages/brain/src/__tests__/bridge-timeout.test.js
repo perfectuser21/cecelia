@@ -1,3 +1,6 @@
+vi.mock('child_process', async original => ({ ...await original(), spawn: vi.fn(() => { throw new Error('测试禁止启动真实模型进程'); }) }));
+// 本文件显式模拟模型网络与凭据，独立测试 provider 行为；真实隔离由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertLiveLLMAllowed: () => {} }));
 /**
  * Bridge 超时降级测试
  * 验证：bridge 超时 → degraded 响应 → llm-caller 正确处理
@@ -29,6 +32,8 @@ vi.mock('../db.js', () => ({
 describe('Bridge timeout degraded response', () => {
   beforeEach(async () => {
     vi.resetAllMocks();
+    const { selectBestAccount } = await import('../account-usage.js');
+    selectBestAccount.mockResolvedValue({ accountId: 'account1' });
     const { getActiveProfile } = await import('../model-profile.js');
     getActiveProfile.mockReturnValue({
       id: 'test',

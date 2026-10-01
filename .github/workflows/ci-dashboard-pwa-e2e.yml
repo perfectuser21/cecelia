@@ -4,11 +4,13 @@ on:
   pull_request:
     paths:
       - 'apps/dashboard/**'
+      - 'apps/api/features/**'
       - '.github/workflows/ci-dashboard-pwa-e2e.yml'
   push:
     branches: [main]
     paths:
       - 'apps/dashboard/**'
+      - 'apps/api/features/**'
       - '.github/workflows/ci-dashboard-pwa-e2e.yml'
 
 jobs:
@@ -38,3 +40,6 @@ jobs:
 
       - name: Verify stale PWA upgrade
         run: npm run test:pwa-upgrade
+
+      - name: Verify task desk receipts
+        run: npm run test:task-desk

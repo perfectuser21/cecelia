@@ -1,3 +1,10 @@
+// Fleet传输、凭据、数据库和执行进程在本文件注入模拟；隔离策略由专用runtime回归验证。
+vi.mock('../db.js', () => ({ default: { query: vi.fn(async () => ({ rows: [] })) } }));
+vi.mock('../runtime-safety.js', async (importOriginal) => ({
+  ...await importOriginal(),
+  assertExternalExecutionAllowed: () => {},
+}));
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -6,6 +13,20 @@ import {
   resumeKernelAttempt,
 } from '../harness-relay-watchdog.js';
 import { signMachineAttestation } from '../orchestrator/machine-attestation.js';
+
+// These tests exercise post-reservation launch/error handling. The replacement
+// transaction and its cleanup proof are covered by the real PostgreSQL suite.
+function reservedReplacement(store) {
+  return async ({ parentAttempt, childInput }) => {
+    const parent = await store.reclaim(parentAttempt.id, { leaseOwner: 'watchdog:test', leaseSeconds: 300 });
+    if (!parent) return null;
+    await store.rotateCallbackSecret(parentAttempt.id, {
+      leaseOwner: parent.lease_owner, leaseGeneration: parent.lease_generation,
+      callbackSecretHash: 'test-rotated-secret',
+    });
+    return { parent, child: await store.createAttempt(childInput) };
+  };
+}
 
 const PARENT_ID = '11111111-1111-4111-8111-111111111111';
 const CHILD_ID = '22222222-2222-4222-8222-222222222222';
@@ -1094,6 +1115,7 @@ describe('kernel fleet watchdog recovery', () => {
       await reconcileExpiredKernelAttempt({
         db: { query: vi.fn() },
         attemptStore: store,
+        replaceExpiredAttempt: reservedReplacement(store),
         attemptId: PARENT_ID,
         leaseOwner: 'watchdog:test',
         resumeAttempt: vi.fn(async () => ({
@@ -1154,6 +1176,7 @@ describe('kernel fleet watchdog recovery', () => {
       await reconcileExpiredKernelAttempt({
         db: { query: vi.fn() },
         attemptStore: store,
+        replaceExpiredAttempt: reservedReplacement(store),
         attemptId: PARENT_ID,
         leaseOwner: 'watchdog:test',
         resumeAttempt: vi.fn(async () => ({
@@ -1218,6 +1241,7 @@ describe('kernel fleet watchdog recovery', () => {
       await reconcileExpiredKernelAttempt({
         db: { query: vi.fn() },
         attemptStore: store,
+        replaceExpiredAttempt: reservedReplacement(store),
         attemptId: PARENT_ID,
         leaseOwner: 'watchdog:test',
         resumeAttempt: vi.fn(async () => {
@@ -1267,7 +1291,6 @@ describe('kernel fleet watchdog recovery', () => {
         container_id: 'parent-job',
       })),
       cancel: vi.fn()
-        .mockResolvedValueOnce({ status: 'cleaned', attempt_id: PARENT_ID })
         .mockResolvedValueOnce({ status: 'missing' }),
       prepare: vi.fn(async () => ({
         jobId: 'child-job',
@@ -1288,6 +1311,7 @@ describe('kernel fleet watchdog recovery', () => {
       await reconcileExpiredKernelAttempt({
         db: { query: vi.fn() },
         attemptStore: store,
+        replaceExpiredAttempt: reservedReplacement(store),
         attemptId: PARENT_ID,
         leaseOwner: 'watchdog:test',
         resumeAttempt: (child, context) => resumeKernelAttempt(child, {
@@ -1312,6 +1336,8 @@ describe('kernel fleet watchdog recovery', () => {
     }), {
       leaseOwner: 'watchdog:test',
       leaseGeneration: 0,
+      retainResources: true,
+      cleanupIdentity: expect.objectContaining({ actualMachineId: 'xian-mac-m4', remoteJobId: 'child-job' }),
     });
     expect(store.fail).toHaveBeenNthCalledWith(2, PARENT_ID, expect.objectContaining({
       code: 'resume_receipt_persist_failed',
@@ -1436,6 +1462,7 @@ describe('kernel fleet watchdog recovery', () => {
     await reconcileExpiredKernelAttempt({
       db: { query: vi.fn() },
       attemptStore: store,
+      replaceExpiredAttempt: reservedReplacement(store),
       attemptId: PARENT_ID,
       leaseOwner: 'watchdog:test',
       resumeAttempt,
@@ -1471,6 +1498,8 @@ describe('kernel fleet watchdog recovery', () => {
     expect(store.fail).toHaveBeenCalledWith(CHILD_ID, expect.any(Object), {
       leaseOwner: 'watchdog:test',
       leaseGeneration: 0,
+      retainResources: true,
+      cleanupIdentity: { actualMachineId: 'xian-mac-m1', executionTransport: 'fleet-worker' },
     });
     expect(store.fail).toHaveBeenCalledWith(PARENT_ID, expect.any(Object), {
       leaseOwner: 'watchdog:test',
@@ -1496,6 +1525,7 @@ describe('kernel fleet watchdog recovery', () => {
     await expect(reconcileExpiredKernelAttempt({
       db: { query: vi.fn() },
       attemptStore: store,
+      replaceExpiredAttempt: reservedReplacement(store),
       attemptId: PARENT_ID,
       leaseOwner: 'watchdog:test',
       resumeAttempt,
@@ -1531,6 +1561,7 @@ describe('kernel fleet watchdog recovery', () => {
     await expect(reconcileExpiredKernelAttempt({
       db: { query: vi.fn() },
       attemptStore: store,
+      replaceExpiredAttempt: reservedReplacement(store),
       attemptId: PARENT_ID,
       leaseOwner: 'watchdog:test',
       resumeAttempt: vi.fn(async () => {
@@ -1593,6 +1624,7 @@ describe('kernel fleet watchdog recovery', () => {
       await reconcileExpiredKernelAttempt({
         db: { query: vi.fn() },
         attemptStore: store,
+        replaceExpiredAttempt: reservedReplacement(store),
         attemptId: PARENT_ID,
         leaseOwner: 'watchdog:test',
         resumeAttempt: vi.fn(async () => {
@@ -1638,7 +1670,6 @@ describe('kernel fleet watchdog recovery', () => {
     const launcher = {
       inspect: vi.fn(async () => ({ status: 'running', attempt_id: PARENT_ID })),
       cancel: vi.fn()
-        .mockResolvedValueOnce({ status: 'cleaned', attempt_id: PARENT_ID })
         .mockResolvedValueOnce({ status: 'missing', httpStatus: 404 }),
       prepare: vi.fn(async () => {
         throw new Error(
@@ -1653,6 +1684,7 @@ describe('kernel fleet watchdog recovery', () => {
     await reconcileExpiredKernelAttempt({
       db: { query: vi.fn() },
       attemptStore: store,
+      replaceExpiredAttempt: reservedReplacement(store),
       attemptId: PARENT_ID,
       leaseOwner: 'watchdog:test',
       resumeAttempt: (child, context) => resumeKernelAttempt(child, {
@@ -1717,6 +1749,7 @@ describe('kernel fleet watchdog recovery', () => {
       await reconcileExpiredKernelAttempt({
         db: { query: vi.fn() },
         attemptStore: store,
+        replaceExpiredAttempt: reservedReplacement(store),
         attemptId: PARENT_ID,
         leaseOwner: 'watchdog:test',
         resumeAttempt: vi.fn(async () => ({ ok: false, failure_code: 'resume_launch_failed' })),
@@ -1769,6 +1802,7 @@ describe('kernel fleet watchdog recovery', () => {
       await reconcileExpiredKernelAttempt({
         db: { query: vi.fn() },
         attemptStore: store,
+        replaceExpiredAttempt: reservedReplacement(store),
         attemptId: PARENT_ID,
         leaseOwner: 'watchdog:test',
         resumeAttempt: vi.fn(async () => ({ ok: false, failure_code: 'resume_launch_failed' })),
@@ -1827,6 +1861,7 @@ describe('kernel fleet watchdog recovery', () => {
       await reconcileExpiredKernelAttempt({
         db: { query: vi.fn() },
         attemptStore: store,
+        replaceExpiredAttempt: reservedReplacement(store),
         attemptId: PARENT_ID,
         leaseOwner: 'watchdog:test',
         resumeAttempt: vi.fn(async () => ({ ok: false, failure_code: 'resume_launch_failed' })),

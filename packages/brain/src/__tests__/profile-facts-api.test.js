@@ -5,6 +5,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
+// 模拟 MiniMax 的 API 协议测试；真实隔离由 routes/__tests__/profile-facts.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertLiveLLMAllowed: () => {} }));
+vi.mock('../notion-memory-sync.js', () => ({ pushFactToNotion: vi.fn() }));
 import express from 'express';
 import request from 'supertest';
 

@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * executor=script 端到端 —— 真 PostgreSQL + 真 dispatcher/executor + 真远端 runner
  * （链 bf5088a3 棒3 PR B，任务 5cdbd52a）。
@@ -20,7 +22,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTempMigratedDb } from '../helpers/temp-migrated-db.js';
 
 // 仅隔离账号配额、账号七日预算与桥接健康等外围；slot allocator、dispatcher、PG和script并发槽全部真跑。
@@ -80,6 +82,16 @@ beforeAll(async () => {
     return { action: 'stub' };
   };
 }, 240_000);
+
+// 预算闸读真实账号缓存；独立测试库没有 OAuth 凭据，显式种健康缓存而非借用运行机配额。
+beforeEach(async () => {
+  await db.pool.query(`
+    INSERT INTO account_usage_cache (account_id, five_hour_pct, seven_day_pct, seven_day_sonnet_pct, fetched_at)
+    VALUES ('account1', 0, 0, 0, NOW()), ('account2', 0, 0, 0, NOW())
+    ON CONFLICT (account_id) DO UPDATE SET five_hour_pct = 0, seven_day_pct = 0,
+      seven_day_sonnet_pct = 0, fetched_at = NOW()
+  `);
+});
 
 afterAll(async () => {
   if (router && handlerBackup) router.INTERNAL_TASK_HANDLERS.harness_intervention = handlerBackup;

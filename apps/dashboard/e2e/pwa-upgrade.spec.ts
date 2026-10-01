@@ -136,3 +136,56 @@ for (const targetPath of workbenchPaths) {
     await context.close();
   });
 }
+
+for (const viewport of [
+  { width: 1440, height: 1000 },
+  { width: 390, height: 844 },
+  { width: 320, height: 740 },
+]) {
+  test(`首页交代入口在 ${viewport.width}px 视口中可输入且提交按钮完整可见`, async ({ page }) => {
+    serveCurrentBuild = true;
+    await page.setViewportSize(viewport);
+    await page.route('**/api/**', route => {
+      const pathname = new URL(route.request().url()).pathname;
+      if (pathname === '/api/brain/task-intake') return route.fulfill({ status: 200, contentType: 'application/json', body: '{"tasks":[]}' });
+      if (pathname === '/api/brain/captures' || pathname === '/api/brain/initiatives') {
+        return route.fulfill({ status: 200, contentType: 'application/json', body: '{"items":[]}' });
+      }
+      return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"首页布局验收：数据服务隔离"}' });
+    });
+
+    await page.goto(origin);
+    await expect(page).toHaveURL(/\/workbench\/inbox$/);
+    const input = page.getByRole('textbox', { name: '交办内容' });
+    const submit = page.getByRole('button', { name: '提交交办' });
+    await expect(input).toBeVisible();
+    await input.fill('检查首页输入区在不同设备上的布局');
+    await expect(submit).toBeEnabled();
+    await page.locator('main').evaluate(async main => {
+      const animations = main.getAnimations({ subtree: true })
+        .filter(animation => animation.effect?.getTiming().iterations !== Infinity);
+      await Promise.all(animations.map(animation => animation.finished.catch(() => {})));
+    });
+
+    const inputBox = (await input.boundingBox())!;
+    const submitBox = (await submit.boundingBox())!;
+    const mainBox = (await page.locator('main').boundingBox())!;
+    const inputAreaBox = (await input.locator('..').boundingBox())!;
+    expect(inputBox.width, '输入框应使用交办输入面的主要可用宽度').toBeGreaterThanOrEqual(Math.max(160, inputAreaBox.width * 0.6));
+    expect(inputBox.height, '输入框应便于手机触控').toBeGreaterThanOrEqual(44);
+    expect(submitBox.width).toBeGreaterThanOrEqual(64);
+    expect(submitBox.height).toBeGreaterThanOrEqual(44);
+
+    for (const box of [inputBox, submitBox]) {
+      expect(box.x).toBeGreaterThanOrEqual(mainBox.x);
+      expect(box.y).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+      expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+    }
+    expect(
+      inputBox.x + inputBox.width <= submitBox.x || inputBox.y + inputBox.height <= submitBox.y,
+      '输入框与提交按钮不能重叠',
+    ).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewport.width);
+  });
+}

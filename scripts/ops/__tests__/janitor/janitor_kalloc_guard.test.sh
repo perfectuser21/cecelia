@@ -29,6 +29,7 @@ ok() { echo "PASS: $1"; PASS=$((PASS + 1)); }
 fail() { echo "FAIL: $1"; FAIL=$((FAIL + 1)); }
 
 JANITOR="$(dirname "$0")/../../janitor.sh"
+source "$(dirname "$JANITOR")/janitor-effects.sh"
 if [ ! -f "${JANITOR}" ]; then
   echo "ERROR: janitor.sh not found at ${JANITOR}"
   exit 1
