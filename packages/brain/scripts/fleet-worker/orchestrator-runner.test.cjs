@@ -46,7 +46,7 @@ function build(overrides = {}) {
       if (spawned.length > 1) children.push(child);
       return child;
     }),
-    mkdirFn: vi.fn(), openFn: vi.fn(() => 7),
+    mkdirFn: vi.fn(), openFn: vi.fn(() => 7), closeFn: vi.fn(),
     resolveMainShaFn: vi.fn(async () => 'a'.repeat(40)),
     env: { DB_HOST: '100.79.41.61', CECELIA_ORBSTACK_HOME: '/Users/host-admin' },
     probeCredentialHome: vi.fn(() => ({ root: '/Users/host-admin', uid: 501 })),
@@ -57,6 +57,20 @@ function build(overrides = {}) {
 }
 
 describe('orchestrator-runner', () => {
+  it('维护暂停拒新prepare/start，已运行幂等查询与terminal仍可用',async()=>{
+    let draining=true;
+    const gate=()=>{if(draining)throw Object.assign(Error('worker_draining'),{statusCode:429});};
+    const x=build({assertCanLaunch:gate});
+    await expect(x.runner.prepare({run_id:RUN_ID,task_id:RUN_ID})).rejects.toThrow('worker_draining');
+    expect(x.prepared).toHaveLength(0);draining=false;
+    await x.runner.prepare({run_id:RUN_ID,task_id:RUN_ID});draining=true;
+    await expect(x.runner.start(RUN_ID,{controller_session_id:SESSION_ID,controller_generation:1})).rejects.toThrow('worker_draining');
+    expect(x.spawned).toHaveLength(0);draining=false;
+    await x.runner.start(RUN_ID,{controller_session_id:SESSION_ID,controller_generation:1});draining=true;
+    expect((await x.runner.start(RUN_ID,{})).status).toBe('running');
+    expect((await x.runner.inspect(RUN_ID)).status).toBe('running');
+    await x.runner.terminal(RUN_ID,{outcome:'done'});expect(x.spawned).toHaveLength(1);
+  });
   it('prepare 复用 workspaceManager 且以 run_id 为工作区键，spec 形状通过真实 validateSpec', async () => {
     const { runner, prepared } = build();
     const receipt = await runner.prepare({ run_id: RUN_ID, task_id: RUN_ID, repo: 'perfectuser21/cecelia' });
@@ -295,4 +309,29 @@ describe('orchestrator-runner', () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+});
+
+it('maintenance不把terminal请求当宿主进程已退出，真实exit才减存活计数',async()=>{
+ const {runner,children}=build();await runner.prepare({run_id:RUN_ID,task_id:RUN_ID,repo:'perfectuser21/cecelia'});
+ expect(runner.maintenance).toBeTypeOf('function');expect(runner.maintenance()).toMatchObject({prepared:1,running_processes:0});
+ await runner.start(RUN_ID,{controller_session_id:SESSION_ID,controller_generation:1});await runner.terminal(RUN_ID,{outcome:'done'});
+ expect(runner.maintenance().running_processes).toBe(1);children[0]._emit('exit',0);expect(runner.maintenance().running_processes).toBe(0);
+});
+
+it.each(['drain','spawn-error','success'])('日志父端fd在%s后关闭一次；子端继承不受影响',async(mode)=>{
+ const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'orch-log-close-'));let fd,draining=false,child;
+ const closeFn=vi.fn(value=>fs.closeSync(value)),spawnFn=vi.fn((_cmd,_args,options)=>{
+  expect(options.stdio).toEqual(['ignore',fd,fd]);fs.fstatSync(fd);
+  if(mode==='spawn-error')throw Error('spawn_sync_failed');
+  child=require('node:child_process').spawn(process.execPath,['-e',"require('node:fs').writeSync(1,'child remains writable')"],{stdio:options.stdio});return child;
+ });
+ const {runner}=build({spawnFn,closeFn,openFn:()=>{fd=fs.openSync(path.join(root,'kernel.log'),'a');if(mode==='drain')draining=true;return fd;},assertCanLaunch:()=>{if(draining)throw Error('worker_draining');}});
+ try{
+  await runner.prepare({run_id:RUN_ID,task_id:RUN_ID});const start=runner.start(RUN_ID,{controller_session_id:SESSION_ID,controller_generation:1});
+  if(mode==='success')await start;else await expect(start).rejects.toThrow(mode==='drain'?'worker_draining':'spawn_sync_failed');
+  expect(closeFn).toHaveBeenCalledTimes(1);expect(closeFn).toHaveBeenCalledWith(fd);expect(()=>fs.fstatSync(fd)).toThrow();
+  expect(spawnFn).toHaveBeenCalledTimes(mode==='drain'?0:1);
+  if(child){await new Promise((resolve,reject)=>{child.once('exit',code=>code===0?resolve():reject(Error('child_failed')));child.once('error',reject);});expect(fs.readFileSync(path.join(root,'kernel.log'),'utf8')).toBe('child remains writable');}
+ }finally{if(fd!==undefined){try{fs.closeSync(fd);}catch{}}if(child&&child.exitCode===null){child.kill();await new Promise(r=>child.once('exit',r));}fs.rmSync(root,{recursive:true,force:true});}
 });

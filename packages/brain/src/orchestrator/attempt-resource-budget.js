@@ -38,7 +38,8 @@ export const OCCUPIED_ATTEMPTS_SQL = `occupied AS MATERIALIZED (
 )`;
 
 export const RESOURCE_BUDGET_GUARD_SQL = `(
-  $25::boolean AND $26::double precision > EXTRACT(EPOCH FROM clock_timestamp()) * 1000
+  NOT EXISTS (SELECT 1 FROM capacity_reservations WHERE machine_id = $8 AND status <> 'released')
+  AND $25::boolean AND $26::double precision > EXTRACT(EPOCH FROM clock_timestamp()) * 1000
   AND NOT EXISTS (
     SELECT 1 FROM occupied WHERE NOT ($24::jsonb ? occupied.role)
   ) AND (

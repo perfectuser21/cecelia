@@ -649,3 +649,20 @@ describe('production capability probes', () => {
     });
   });
 });
+
+describe('非 Harness 基础容量探针', () => {
+  it('无需伪装 Harness role，返回同一 admitted fleet 基础槽并拒绝离线节点', async () => {
+    const create = await loadFactory();
+    let online = true;
+    const probes = create({ cacheTtlMs:0,fetchFn:async()=>response({fleet:[{
+      id:'us-mac-m4',online,effective_slots:3,physical_capacity:5,pressure:0.3,
+    }]}),nodeAdmissionClient:{getAdmission:async()=>({base_admitted:true,state:'base_admitted',dispatch_ready:true})} });
+    expect(probes.getMachineBaseCapacity).toBeTypeOf('function');
+    await expect(probes.getMachineBaseCapacity({machine:'us-mac-m4'})).resolves.toMatchObject({
+      ok:true,effective_base_slots:3,physical_base_slots:5,
+    });
+    online=false;
+    await new Promise((resolve)=>setTimeout(resolve,2));
+    await expect(probes.getMachineBaseCapacity({machine:'us-mac-m4'})).resolves.toMatchObject({ok:false});
+  });
+});
