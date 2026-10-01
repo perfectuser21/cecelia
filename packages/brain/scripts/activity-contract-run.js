@@ -38,6 +38,7 @@ export async function main(argv = process.argv.slice(2), stream = process.stdin)
       else { if (sourceId) throw new Error('invalid_cli_argument'); sourceId = value; }
     }
     if (eventDb ? !runId || !sourceId : runId || sourceId) throw new Error('event_db_binding_required');
+    stream.setEncoding?.('utf8');
     let text = '';
     for await (const chunk of stream) {
       text += chunk;
