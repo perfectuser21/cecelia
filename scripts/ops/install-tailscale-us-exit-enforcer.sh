@@ -5,6 +5,7 @@ LABEL="com.cecelia.tailscale-us-exit"
 TARGET_HOME="${HOME}"
 LOAD_AGENT=true
 SYSTEM_MODE=true
+FIREWALL_MODE=legacy
 SYSTEM_PLIST_DIR="/Library/LaunchDaemons"
 SYSTEM_LIBEXEC_DIR="/usr/local/libexec/cecelia"
 SYSTEM_STATE_DIR="/var/db/cecelia/tailscale-us-exit"
@@ -14,6 +15,10 @@ SUDO_BIN="${CECELIA_SUDO_BIN:-/usr/bin/sudo}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --firewall-mode)
+      FIREWALL_MODE="$2"
+      shift 2
+      ;;
     --home)
       TARGET_HOME="$2"
       shift 2
@@ -48,6 +53,19 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+case "$FIREWALL_MODE" in
+  legacy) ;;
+  interface-v2)
+    if [[ "$LOAD_AGENT" == true ]]; then
+      echo "新模式只通过事务切换器加载；安装器需 --no-load" >&2; exit 64
+    fi
+    # 新模式扩大到全机公网。只能由具备独立自动回滚的已审批事务安装。
+    /usr/bin/python3 "$(dirname "$0")/tailscale_us_exit_activation.py" verify-transaction \
+      --transaction "${CECELIA_US_EXIT_ACTIVATION_TRANSACTION:?需要已审批切换事务}"
+    ;;
+  *) echo "未知防火墙模式" >&2; exit 64 ;;
+esac
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SOURCE="${CECELIA_US_EXIT_SOURCE:-$SCRIPT_DIR/tailscale-us-exit-enforcer.py}"
@@ -94,20 +112,41 @@ else
   /usr/bin/install -m 0755 "$SOURCE" "$INSTALLED_SCRIPT"
 fi
 
+if [[ "$FIREWALL_MODE" == interface-v2 ]]; then
+  for module in tailscale_us_exit_policy.py tailscale_us_exit_activation.py tailscale_us_exit_lease.py; do
+    if [[ "$SYSTEM_LIBEXEC_DIR" == "/usr/local/libexec/cecelia" ]]; then
+      "$SUDO_BIN" /usr/bin/install -o root -g wheel -m 0755 "$SCRIPT_DIR/$module" "$INSTALL_DIR/$module"
+    else
+      /usr/bin/install -m 0755 "$SCRIPT_DIR/$module" "$INSTALL_DIR/$module"
+    fi
+  done
+fi
+
+# 所有模式共享旧计数器/回滚支持模块，安装后入口必须可导入。
+if [[ "$SYSTEM_LIBEXEC_DIR" == "/usr/local/libexec/cecelia" ]]; then
+  "$SUDO_BIN" /usr/bin/install -o root -g wheel -m 0755 "$SCRIPT_DIR/tailscale_us_exit_legacy.py" "$INSTALL_DIR/tailscale_us_exit_legacy.py"
+else
+  /usr/bin/install -m 0755 "$SCRIPT_DIR/tailscale_us_exit_legacy.py" "$INSTALL_DIR/tailscale_us_exit_legacy.py"
+fi
+
 # system 模式取代同标签的用户 LaunchAgent，避免登录后双实例竞争。
 if [[ "$SYSTEM_MODE" == true ]]; then
   /bin/rm -f "$AGENT_DIR/$LABEL.plist"
 fi
 
-/usr/bin/python3 - "$PLIST_STAGING" "$INSTALLED_SCRIPT" "$STATE_DIR" "$LOG_DIR" "$SYSTEM_MODE" "$TARGET_USER" "$TARGET_UID" "$TARGET_HOME" <<'PY'
+/usr/bin/python3 - "$PLIST_STAGING" "$INSTALLED_SCRIPT" "$STATE_DIR" "$LOG_DIR" "$SYSTEM_MODE" "$TARGET_USER" "$TARGET_UID" "$TARGET_HOME" "$FIREWALL_MODE" <<'PY'
 import plistlib
 import sys
+from pathlib import Path
+import copy
 
-plist_path, script_path, state_dir, log_dir, system_mode, target_user, target_uid, target_home = sys.argv[1:]
+plist_path, script_path, state_dir, log_dir, system_mode, target_user, target_uid, target_home, firewall_mode = sys.argv[1:]
 payload = {
     "Label": "com.cecelia.tailscale-us-exit",
     "ProgramArguments": ["/usr/bin/python3", script_path, "--once"],
     "EnvironmentVariables": {
+        "CECELIA_US_EXIT_FIREWALL_MODE": firewall_mode,
+        "CECELIA_US_EXIT_DERP_CACHE": f"{state_dir}/derp-map.json",
         "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         "CECELIA_US_EXIT_PRIMARY_DNS": "mac-mini-m4-us.tailce7a8b.ts.net",
         "CECELIA_US_EXIT_SECONDARY_DNS": "vps-us.tailce7a8b.ts.net",
@@ -137,6 +176,17 @@ if system_mode == "true":
     })
 with open(plist_path, "wb") as handle:
     plistlib.dump(payload, handle, fmt=plistlib.FMT_XML, sort_keys=False)
+if firewall_mode == "interface-v2":
+    guard = copy.deepcopy(payload)
+    guard["Label"] += ".lease"
+    guard["ProgramArguments"] = ["/usr/bin/python3", str(Path(script_path).with_name("tailscale_us_exit_lease.py"))]
+    guard.pop("StartInterval", None)
+    guard["KeepAlive"] = True
+    guard["ThrottleInterval"] = 2
+    guard["StandardOutPath"] = f"{log_dir}/lease-guard.log"
+    guard["StandardErrorPath"] = f"{log_dir}/lease-guard-error.log"
+    with Path(plist_path).with_name(guard["Label"] + ".plist").open("wb") as handle:
+        plistlib.dump(guard, handle, fmt=plistlib.FMT_XML, sort_keys=False)
 PY
 
 if [[ "$SYSTEM_MODE" == true ]]; then
@@ -147,6 +197,12 @@ if [[ "$SYSTEM_MODE" == true ]]; then
     /bin/mkdir -p "$SYSTEM_PLIST_DIR"
     /usr/bin/install -m 0644 "$PLIST_STAGING" "$PLIST"
   fi
+fi
+
+if [[ "$FIREWALL_MODE" == interface-v2 && "$PLIST_STAGING" != "$PLIST" ]]; then
+  "$SUDO_BIN" /usr/bin/install -o root -g wheel -m 0644 \
+    "$USER_CONFIG_DIR/$LABEL.lease.plist" "$SYSTEM_PLIST_DIR/$LABEL.lease.plist"
+  /usr/bin/plutil -lint "$SYSTEM_PLIST_DIR/$LABEL.lease.plist" >/dev/null
 fi
 
 /usr/bin/plutil -lint "$PLIST" >/dev/null

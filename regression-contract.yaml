@@ -60,6 +60,14 @@ ci:
 # Golden Paths（must-never-break 核心断言）
 # ============================================================================
 golden_paths:
+  - id: M4-PF-IDENTITY-FREE-US-EXIT-01
+    name: "西安 PF 不进入身份查询；全机公网失败关闭与精确 Tailscale 恢复"
+    priority: P0
+    trigger: [PR, Release]
+    method: auto
+    test_command: "python3 tests/regression/tailscale-us-exit/pf-identity-free.test.py -v"
+    must_never_break: true
+
   - id: KERNEL-LEGACY-CALLBACK-EXACTLY-ONCE-01
     name: "Legacy Bridge 保持 provider-neutral 工作区解析、attempt 精确结算与 quarantine 终态"
     priority: P0

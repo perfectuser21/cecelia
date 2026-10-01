@@ -1,75 +1,15 @@
-# Sprint PRD — Cecelia Dashboard 首页加固定状态标识文字 "Cecelia Harness 工厂线已贯通"
+# 西安 M4：消除 PF 身份查询锁闭环
 
-## OKR 对齐
+任务：e3001293-281c-4ea6-a793-8c03af84aa63；分支：cp-1001-m4-pf-pcb。
 
-- **对应 KR**：Cecelia Harness Pipeline 端到端贯通验证
-- **当前进度**：待确认（Brain API 暂无响应）
-- **本次推进预期**：完成 harness 内部线 staging→production 贯通标识，可视化验证
+gp-anchor: none(infra)
 
-## 背景
+已符号化的内核栈确认：PF user 匹配取得 TCP PCB 锁，与 TCP TIME_WAIT 和 ADB socket mutex 形成三锁闭环。修复切断 PF 身份查询，不依赖猜测系统升级有效。
 
-在 Cecelia Dashboard 首页加入一行固定状态标识文字，作为 harness 内部线 staging→production 贯通的端到端可视化验证锚点。文字内容固定为 "Cecelia Harness 工厂线已贯通"，不依赖运行时数据。
+本棒交付显式 interface-v2 模式、永久回归、真实 macOS 候选解析、受审批事务切换器和独立租约守卫。当前生产保持旧脚本；网络切换须主理人明确批准全用户公网 TCP/UDP 限制及 bootstrap 例外。
 
-## Golden Path（核心场景）
+顺利路径：生成只读候选 → 核实美国节点身份及双栈路由 → 原生解析通过 → 审查 PR/CI → 明确审批 → 零状态及有效锚点预检 → 武装独立回滚 → 加载恢复规则和租约守卫 → 主巡检授予美国接口业务 → 另一机 SSH、美国出口、双 ADB 验收 → 取消回滚。
 
-用户从 [打开 Cecelia Dashboard 首页] → 经过 [页面渲染完成] → 到达 [可见固定文字 "Cecelia Harness 工厂线已贯通"]
+失败路径：陈旧或不完整健康证据、未知接口复用、节点身份或出口偏好变化立即撤业务 pass；官方控制、认证 DERP 与有上界的两美国 peer 精确 UDP tuple 保留恢复通路。守卫在主巡检停止时撤销到期业务授权。安装超期、守卫握手失败或验收未完成恢复原专用 anchor、脚本及 plist，不清全局状态、不关闭 PF、不改其他锚点。
 
-具体：
-1. 用户访问 `localhost:5174`（或 Dashboard 根路径）
-2. Dashboard 首页渲染完成
-3. 页面中可见文字 "Cecelia Harness 工厂线已贯通"（固定显示，不依赖登录状态或数据加载）
-
-## 边界情况
-
-- 文字在页面刷新后仍然存在（静态渲染，无动态依赖）
-- 文字在浅色/深色主题切换后均可见
-- 不影响现有首页其他元素的布局
-
-## 范围限定
-
-**在范围内**：
-- `apps/dashboard/` 首页组件加入一行静态文字
-- Playwright E2E 验证文字可见性
-
-**不在范围内**：
-- 动态状态读取（不查 Brain API 状态）
-- 多语言/国际化
-- 样式主题深度适配（基本可见即可）
-
-## 假设
-
-- [ASSUMPTION: "首页" = Dashboard 打开后默认可见的主页面（根路径对应组件，推测为 /canvas 路由对应页面或 App 主布局区域）]
-- [ASSUMPTION: 文字位置为首页顶部或主要内容区可见位置，具体坐标由 Generator 决定]
-- [ASSUMPTION: 静态硬编码文字，不从 API 读取]
-
-## NFR 约束
-
-<!-- 来源: decisions 表 category=nfr，PrepPRD 显式值优先 -->
-- 超时/延迟: 待定（PrepPRD 未指定）
-- 频控: 不适用
-- 版本要求: 无
-- 可观测: Playwright 截图可确认文字存在
-
-## 预期受影响文件
-
-- `apps/dashboard/src/pages/` 中首页对应组件（或 `App.tsx` 主布局区域）：添加静态文字行
-
-## E2E 验收
-
-> 最终可执行 E2E 脚本由 Proposer 在 GAN 阶段产出（target_environment=mac_web → Playwright）。
-
-```bash
-# 占位：proposer 将按 target_environment=mac_web 填入 Playwright 脚本
-# 期望验收点（自然语言）：
-# 1. 启动 Dashboard（localhost:5174）
-# 2. 打开首页
-# 3. 页面中存在文字 "Cecelia Harness 工厂线已贯通"（text assertion）
-# 4. 截图留档（可视化确认）
-```
-
-## journey_type: user_facing
-## journey_type_reason: 涉及 apps/dashboard/ 前端页面，需浏览器渲染验证
-## target_environment: mac_web
-## target_environment_reason: Cecelia Dashboard 是内网产品，Playwright 跑 localhost:5174，走本机 mac_web 环境
-## journey_id: （来源 task.payload.journey_id，本次 Brain API 未响应，待 Proposer 补填）
-## step_id: （来源 PrepPRD Golden Path 锚定结果，PrepPRD 未提供，待 Proposer 补填）
+测试策略：永久 Python 行为与文件恢复回归进入无路径门 core-regression；既有 20 条强制器测试；Impact Contract 的 MJ5 三条和 F1 一条断言；M4 仅执行 /tmp 候选及 pfctl -n。本棒不把生产激活、手机操作或升级作为已完成验收。
