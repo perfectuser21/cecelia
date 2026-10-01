@@ -5,7 +5,12 @@ import { describe, expect, it } from 'vitest';
 function listen(server, options) {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(options, resolve);
+    try {
+      server.listen(options, () => { server.removeListener('error', reject); resolve(); });
+    } catch (error) {
+      server.removeListener('error', reject);
+      reject(error);
+    }
   });
 }
 
@@ -15,9 +20,18 @@ async function close(server) {
   }
 }
 
-async function listenPair(desired, foreign, { portForAttempt = () => 0 } = {}) {
-  await listen(desired, { host: '::1', port: portForAttempt(0), ipv6Only: true });
-  await listen(foreign, { host: '127.0.0.1', port: desired.address().port });
+async function listenPair(desired, foreign, { portForAttempt = () => 0, maxAttempts = 8 } = {}) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      await listen(desired, { host: '::1', port: portForAttempt(attempt), ipv6Only: true });
+      await listen(foreign, { host: '127.0.0.1', port: desired.address().port });
+      return;
+    } catch (error) {
+      await close(foreign);
+      await close(desired);
+      if (error.code !== 'EADDRINUSE' || attempt === maxAttempts - 1) throw error;
+    }
+  }
 }
 
 describe('Supertest loopback matches the real listener family', () => {
