@@ -51,7 +51,7 @@ echo "════════════════════════�
 echo ""
 
 # ── 执行循环 ────────────────────────────────────────────────────
-PASS=0; FAIL_BASELINE=0; FAIL_DEBT=0; SKIP=0; UNREGISTERED=0; TOTAL=0
+PASS=0; FAIL_BASELINE=0; FAIL_DEBT=0; SKIP=0; DELEGATED=0; UNREGISTERED=0; TOTAL=0
 BASELINE_FAIL_NAMES=()
 DEBT_FAIL_NAMES=()
 UNREGISTERED_NAMES=()
@@ -77,6 +77,12 @@ for script in "$SMOKE_DIR"/*.sh; do
     UNREGISTERED=$((UNREGISTERED + 1))
     UNREGISTERED_NAMES+=("$fname")
     echo "::error::❌ UNREGISTERED: $fname（新脚本未登记，见 packages/quality/README）"
+    continue
+  fi
+
+  if [ "$fname" = 'walking-skeleton-1node-smoke.sh' ]; then
+    DELEGATED=$((DELEGATED + 1))
+    echo "── DELEGATED: $fname → required walking-ci-e2e"
     continue
   fi
 
@@ -114,6 +120,7 @@ echo "════════════════════════�
 echo "📊 Smoke Ratchet 结果（$(date -u +%Y-%m-%dT%H:%MZ)）"
 printf "   %-20s %d\n" "TOTAL:"       "$TOTAL"
 printf "   %-20s %d\n" "PASS:"        "$PASS"
+printf "   %-20s %d\n" "DELEGATED:"   "$DELEGATED"
 printf "   %-20s %d\n" "SKIP(deny):"  "$SKIP"
 printf "   %-20s %d\n" "FAIL(基线):"  "$FAIL_BASELINE"
 printf "   %-20s %d\n" "FAIL(债务):"  "$FAIL_DEBT"
