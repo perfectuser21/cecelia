@@ -175,6 +175,7 @@ class InterfacePolicyTests(unittest.TestCase):
 
 class ActivationFailureTests(unittest.TestCase):
     def test_loaded_daemon_must_be_stopped_before_anchor_restore(self):
+        import tempfile, json
         from types import SimpleNamespace
         from unittest.mock import patch
         import tailscale_us_exit_activation as activation
@@ -182,6 +183,22 @@ class ActivationFailureTests(unittest.TestCase):
              patch.object(activation, "command", side_effect=RuntimeError("bootout failed")):
             with self.assertRaises(RuntimeError):
                 activation.stop_job(activation.GUARD_LABEL)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            live = path / "live.py"
+            live.write_text("current")
+            (path / "backup").write_text("previous")
+            state = {"status": "armed", "files": [{"target": str(live),
+                     "existed": True, "backup": "backup"}]}
+            (path / "transaction.json").write_text(json.dumps(state))
+            with patch.object(activation, "read_transaction", return_value=(path, state)), \
+                 patch.object(activation, "stop_job", side_effect=RuntimeError("still alive")), \
+                 patch.object(activation, "command") as commands:
+                with self.assertRaises(RuntimeError):
+                    activation.rollback(path)
+            self.assertEqual(live.read_text(), "current")
+            self.assertEqual(json.loads((path / "transaction.json").read_text())["status"], "armed")
+            commands.assert_not_called()
 
     def test_confirmation_requires_both_target_adb_shell_results(self):
         import tempfile
