@@ -351,3 +351,38 @@ for (const variable of ['HTTP_PROXY', 'https_proxy', 'HTTPS_PROXY', 'all_proxy',
     });
   });
 }
+
+
+test('default curlrc cannot redirect writes from the checked test container', async () => {
+  const temp = await mkdtemp(resolve(tmpdir(), 'smoke-curlrc-'));
+  const proxied = [];
+  const proxy = createServer((req, res) => {
+    proxied.push(req.method);
+    req.resume();
+    res.end(JSON.stringify({ warnings: [] }));
+  });
+  await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  await writeFile(resolve(temp, '.curlrc'), `proxy = "http://127.0.0.1:${proxy.address().port}"\nnoproxy = ""\n`);
+  try {
+    await fixture(async ({ requests, smoke }) => {
+      const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1', CURL_HOME: temp });
+      assert.equal(result.code, 0, result.output);
+      assert.deepEqual(proxied, [], 'default curlrc redirected smoke writes outside the checked container');
+      assert.ok(requests.some(req => req.method === 'POST'), 'direct authorized write was not exercised');
+    });
+  } finally {
+    await new Promise(resolve => proxy.close(resolve));
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('guarded live shell curl calls must disable default config before other flags', async () => {
+  const smokeDir = resolve(root, 'packages/brain/scripts/smoke');
+  for (const name of await readdir(smokeDir)) {
+    if (!name.endsWith('.sh')) continue;
+    const source = await readFile(resolve(smokeDir, name), 'utf8');
+    if (!source.includes('smoke-production-guard.mjs')) continue;
+    const commands = source.split('\n').filter(line => !line.trim().startsWith('#')).join('\n');
+    assert.doesNotMatch(commands, /\bcurl[ \t]+(?!-q(?:[ \t]|$))/, `${name}: curl must not read external defaults`);
+  }
+});
