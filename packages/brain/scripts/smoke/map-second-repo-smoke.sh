@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # test/scratch-only：证明第二个 repo 用同一四类扫描器、Manifest adapter 与 Projector。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT_DIR"
@@ -22,7 +25,7 @@ MANIFEST_FILE="$TMP_REPO/manifest.json"
 export DATABASE_URL SMOKE_SCOPE SMOKE_REPO SMOKE_DECISION_ID MANIFEST_FILE
 
 cleanup() {
-  "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
+  "$PSQL_EXECUTABLE" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
     -c "DELETE FROM map_projection_runs WHERE scope_key='$SMOKE_SCOPE'" \
     -c "DELETE FROM map_manifest_versions WHERE scope_key='$SMOKE_SCOPE'" \
     -c "DELETE FROM map_scope_repositories WHERE scope_key='$SMOKE_SCOPE'" \

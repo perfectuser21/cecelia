@@ -11,6 +11,9 @@
 #   L3 (真验)  : 真 DB 上 promote_status CHECK 约束生效 + 放行状态机 pending→promoted + 幂等
 #                （重复 confirm WHERE pending 不命中）。**绝不真跑 promote-dashboard.sh（不打 :5211 live）。**
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 PROMOTE="packages/brain/src/staging-promote.js"
 RUNNER="packages/brain/src/staging-e2e-runner.js"
@@ -52,39 +55,39 @@ if(!/promote_status/.test(m) || !/ADD COLUMN/i.test(m)){console.error('L1 FAIL: 
 console.log('[smoke] L1 PASS: staging-promote + runner分流 + base_repo + 回流接口幂等 + migration306 齐全');
 " || exit 1
 
-if ! curl -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then
+if ! curl -q -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then
   echo "[smoke] L2 SKIP: Brain 不可达（$BRAIN）— L1 静态已 PASS"; exit 0
 fi
 echo "[smoke] L2 PASS: Brain healthy"
 
-if ! command -v psql >/dev/null 2>&1 || ! psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
+if ! command -v psql -X >/dev/null 2>&1 || ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] L3 SKIP: psql/DB 不可用；L1 静态已 PASS"; exit 0
 fi
-HAS_COL=$(psql "$DB" -tAc "SELECT count(*) FROM information_schema.columns WHERE table_name='staging_e2e_results' AND column_name='promote_status'")
+HAS_COL=$(psql -X "$DB" -tAc "SELECT count(*) FROM information_schema.columns WHERE table_name='staging_e2e_results' AND column_name='promote_status'")
 if [[ "$HAS_COL" != "1" ]]; then
   echo "[smoke] L3 SKIP: promote_status 列不存在（migration 306 未应用）；L1 静态已 PASS"; exit 0
 fi
 
 PR="https://pr/s2-smoke-$$-$RANDOM"
-cleanup() { psql "$DB" -tAc "DELETE FROM staging_e2e_results WHERE pr_url='$PR'" >/dev/null 2>&1 || true; }
+cleanup() { psql -X "$DB" -tAc "DELETE FROM staging_e2e_results WHERE pr_url='$PR'" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 IID=$(node -e "console.log(require('crypto').randomUUID())")
-psql "$DB" -tAc "INSERT INTO staging_e2e_results(initiative_id, pr_url, verdict, staging_port, promote_status) VALUES ('$IID'::uuid, '$PR', 'PASS', 5222, 'pending_promote') ON CONFLICT (pr_url) DO NOTHING" >/dev/null
+psql -X "$DB" -tAc "INSERT INTO staging_e2e_results(initiative_id, pr_url, verdict, staging_port, promote_status) VALUES ('$IID'::uuid, '$PR', 'PASS', 5222, 'pending_promote') ON CONFLICT (pr_url) DO NOTHING" >/dev/null
 
 # ① CHECK 约束拒绝非法 promote_status
-if psql "$DB" -tAc "UPDATE staging_e2e_results SET promote_status='bogus' WHERE pr_url='$PR'" >/dev/null 2>&1; then
+if psql -X "$DB" -tAc "UPDATE staging_e2e_results SET promote_status='bogus' WHERE pr_url='$PR'" >/dev/null 2>&1; then
   echo "[smoke] L3 FAIL: CHECK 约束未拒绝非法 promote_status"; exit 1
 fi
 
 # ② 放行状态机 pending→promoting→promoted
-psql "$DB" -tAc "UPDATE staging_e2e_results SET promote_status='promoting' WHERE pr_url='$PR' AND promote_status='pending_promote'" >/dev/null
-psql "$DB" -tAc "UPDATE staging_e2e_results SET promote_status='promoted', promoted_at=now() WHERE pr_url='$PR' AND promote_status='promoting'" >/dev/null
-ST=$(psql "$DB" -tAc "SELECT promote_status FROM staging_e2e_results WHERE pr_url='$PR'")
+psql -X "$DB" -tAc "UPDATE staging_e2e_results SET promote_status='promoting' WHERE pr_url='$PR' AND promote_status='pending_promote'" >/dev/null
+psql -X "$DB" -tAc "UPDATE staging_e2e_results SET promote_status='promoted', promoted_at=now() WHERE pr_url='$PR' AND promote_status='promoting'" >/dev/null
+ST=$(psql -X "$DB" -tAc "SELECT promote_status FROM staging_e2e_results WHERE pr_url='$PR'")
 if [[ "$ST" != "promoted" ]]; then echo "[smoke] L3 FAIL: 状态机未到 promoted（=$ST）"; exit 1; fi
 
 # ③ 幂等：重复 confirm（已 promoted，WHERE pending 不命中）→ 0 行
-AFF=$(psql "$DB" -tAc "WITH u AS (UPDATE staging_e2e_results SET promote_status='promoting' WHERE pr_url='$PR' AND promote_status='pending_promote' RETURNING 1) SELECT count(*) FROM u")
+AFF=$(psql -X "$DB" -tAc "WITH u AS (UPDATE staging_e2e_results SET promote_status='promoting' WHERE pr_url='$PR' AND promote_status='pending_promote' RETURNING 1) SELECT count(*) FROM u")
 if [[ "$AFF" != "0" ]]; then echo "[smoke] L3 FAIL: 重复 confirm 仍生效（非幂等，affected=$AFF）"; exit 1; fi
 
 echo "[smoke] L3 PASS: CHECK 约束 + 放行状态机 pending→promoted + 重复 confirm 幂等"

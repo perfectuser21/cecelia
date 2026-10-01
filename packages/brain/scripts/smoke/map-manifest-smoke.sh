@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # scratch-only 真验火：完整 Map Manifest 校验、幂等 draft 与原子激活。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT_DIR"
@@ -22,7 +25,7 @@ SMOKE_SCOPE="map-manifest-smoke-$$"
 SMOKE_DECISION_ID="$($NODE_EXECUTABLE -e "process.stdout.write(require('node:crypto').randomUUID())")"
 
 cleanup() {
-  "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
+  "$PSQL_EXECUTABLE" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
     -c "DELETE FROM map_projection_runs WHERE scope_key = '$SMOKE_SCOPE'" \
     -c "DELETE FROM map_manifest_versions WHERE scope_key = '$SMOKE_SCOPE'" \
     -c "DELETE FROM map_scope_repositories WHERE scope_key = '$SMOKE_SCOPE'" \
@@ -32,7 +35,7 @@ cleanup() {
 trap cleanup EXIT
 
 db_scalar() {
-  "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"
+  "$PSQL_EXECUTABLE" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"
 }
 
 printf '%s\n' '── map manifest scratch smoke ──'

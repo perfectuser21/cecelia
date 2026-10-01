@@ -4,10 +4,13 @@
 # getRecentHandoffs 命中 → trap 清理临时行。镜像目录用 mktemp（不污染 docs/handoffs）。
 # 连接：优先 DATABASE_URL（CI real-env-smoke 提供，用户 cecelia）；无则本机默认 postgres。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 cd "$(dirname "$0")/../.."   # packages/brain
 
 if [ -n "${DATABASE_URL:-}" ]; then
-  PSQL="psql ${DATABASE_URL} -tA"
+  PSQL="psql -X ${DATABASE_URL} -tA"
 else
   export PGPASSWORD="${PGPASSWORD:-postgres}"
   PSQL="${PSQL:-psql -h localhost -p 5432 -U postgres -d cecelia -tA}"

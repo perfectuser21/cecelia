@@ -8,6 +8,9 @@
 #   L2 (gate)  : Brain 健康；不可达 SKIP exit 0。
 #   L3 (真验)  : 真 DB 上 pr_url UNIQUE 生效 —— 同 pr_url 重复 INSERT 被挡、不覆盖 verdict。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 ROUTE="packages/brain/src/routes/harness.js"
 RUNNER="packages/brain/src/staging-e2e-runner.js"
@@ -41,31 +44,31 @@ if(!/UNIQUE/i.test(m) || !/pr_url/.test(m)){console.error('L1 FAIL: 305 缺 pr_u
 console.log('[smoke] L1 PASS: POST /staging-e2e 幂等去重 + recordResult/305 幂等齐全');
 " || exit 1
 
-if ! curl -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then
+if ! curl -q -sf "$BRAIN/api/brain/health" >/dev/null 2>&1; then
   echo "[smoke] L2 SKIP: Brain 不可达（$BRAIN）— L1 静态已 PASS"
   exit 0
 fi
 echo "[smoke] L2 PASS: Brain healthy"
 
-if ! command -v psql >/dev/null 2>&1 || ! psql "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
+if ! command -v psql -X >/dev/null 2>&1 || ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "[smoke] L3 SKIP: psql/DB 不可用；L1 静态已 PASS"
   exit 0
 fi
-if [[ "$(psql "$DB" -tAc "SELECT to_regclass('public.staging_e2e_results') IS NOT NULL")" != "t" ]]; then
+if [[ "$(psql -X "$DB" -tAc "SELECT to_regclass('public.staging_e2e_results') IS NOT NULL")" != "t" ]]; then
   echo "[smoke] L3 SKIP: staging_e2e_results 表不存在（migration 未应用）；L1 静态已 PASS"
   exit 0
 fi
 
 PR="https://pr/permerge-smoke-$$-$RANDOM"
 IID=$(node -e "console.log(require('crypto').randomUUID())")
-cleanup() { psql "$DB" -tAc "DELETE FROM staging_e2e_results WHERE pr_url='$PR'" >/dev/null 2>&1 || true; }
+cleanup() { psql -X "$DB" -tAc "DELETE FROM staging_e2e_results WHERE pr_url='$PR'" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-psql "$DB" -tAc "INSERT INTO staging_e2e_results(initiative_id, pr_url, verdict, scenarios_total, scenarios_passed) VALUES ('$IID'::uuid, '$PR', 'PASS', 1, 1) ON CONFLICT (pr_url) DO NOTHING" >/dev/null
+psql -X "$DB" -tAc "INSERT INTO staging_e2e_results(initiative_id, pr_url, verdict, scenarios_total, scenarios_passed) VALUES ('$IID'::uuid, '$PR', 'PASS', 1, 1) ON CONFLICT (pr_url) DO NOTHING" >/dev/null
 # 同 pr_url 重复 INSERT（verdict 改 FAIL）→ 被 UNIQUE 挡
-psql "$DB" -tAc "INSERT INTO staging_e2e_results(initiative_id, pr_url, verdict, scenarios_total, scenarios_passed) VALUES ('$IID'::uuid, '$PR', 'FAIL', 0, 0) ON CONFLICT (pr_url) DO NOTHING" >/dev/null
-ROWS=$(psql "$DB" -tAc "SELECT count(*) FROM staging_e2e_results WHERE pr_url='$PR'")
-VERD=$(psql "$DB" -tAc "SELECT verdict FROM staging_e2e_results WHERE pr_url='$PR'")
+psql -X "$DB" -tAc "INSERT INTO staging_e2e_results(initiative_id, pr_url, verdict, scenarios_total, scenarios_passed) VALUES ('$IID'::uuid, '$PR', 'FAIL', 0, 0) ON CONFLICT (pr_url) DO NOTHING" >/dev/null
+ROWS=$(psql -X "$DB" -tAc "SELECT count(*) FROM staging_e2e_results WHERE pr_url='$PR'")
+VERD=$(psql -X "$DB" -tAc "SELECT verdict FROM staging_e2e_results WHERE pr_url='$PR'")
 if [[ "$ROWS" != "1" || "$VERD" != "PASS" ]]; then
   echo "[smoke] L3 FAIL: pr_url 幂等失效（rows=$ROWS verdict=$VERD，期望 1/PASS）"; exit 1
 fi

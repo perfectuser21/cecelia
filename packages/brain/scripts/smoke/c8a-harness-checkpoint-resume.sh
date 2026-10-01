@@ -25,6 +25,12 @@
 # 退出码：0=PASS，非 0=FAIL（任何一步失败立刻 exit 1）。
 # 跳过条件：缺 docker / brain container / psql / DB 不可达 → exit 0 + 打印 SKIP。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${CONTAINER_DATABASE_URL:-${DATABASE_URL:-postgresql://localhost/cecelia}}"; then
+  exit 0
+fi
 
 SMOKE_NAME="c8a-harness-checkpoint-resume"
 log() { echo "[smoke:$SMOKE_NAME] $*"; }
@@ -51,11 +57,11 @@ fi
 if ! docker inspect "$BRAIN_CONTAINER" >/dev/null 2>&1; then
   skip "$BRAIN_CONTAINER 容器不存在（未部署）"
 fi
-if ! command -v psql >/dev/null 2>&1; then
-  skip "psql 不在 PATH（需要 PostgreSQL client）"
+if ! command -v psql -X >/dev/null 2>&1; then
+  skip "psql -X 不在 PATH（需要 PostgreSQL client）"
 fi
 
-if ! psql "$DB_URL" -tAc "SELECT 1" >/dev/null 2>&1; then
+if ! psql -X "$DB_URL" -tAc "SELECT 1" >/dev/null 2>&1; then
   skip "无法连接 DATABASE_URL=$DB_URL"
 fi
 
@@ -66,9 +72,9 @@ log "thread_id=$THREAD_ID"
 # 失败时清理（trap 在 EXIT，正常退出时也跑）
 cleanup() {
   log "cleanup checkpoints/checkpoint_blobs/checkpoint_writes for thread_id=$THREAD_ID"
-  psql "$DB_URL" -c "DELETE FROM checkpoints WHERE thread_id='$THREAD_ID';"        >/dev/null 2>&1 || true
-  psql "$DB_URL" -c "DELETE FROM checkpoint_blobs WHERE thread_id='$THREAD_ID';"   >/dev/null 2>&1 || true
-  psql "$DB_URL" -c "DELETE FROM checkpoint_writes WHERE thread_id='$THREAD_ID';"  >/dev/null 2>&1 || true
+  psql -X "$DB_URL" -c "DELETE FROM checkpoints WHERE thread_id='$THREAD_ID';"        >/dev/null 2>&1 || true
+  psql -X "$DB_URL" -c "DELETE FROM checkpoint_blobs WHERE thread_id='$THREAD_ID';"   >/dev/null 2>&1 || true
+  psql -X "$DB_URL" -c "DELETE FROM checkpoint_writes WHERE thread_id='$THREAD_ID';"  >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -156,7 +162,7 @@ echo "$PUT_OUT" | grep -q "PUT_OK 5_checkpoints_written" || fail "step1 Postgres
 
 # ── Step 2: 验 checkpoints 表写入 ≥ 5 行 ─────────────────────────────────────
 log "step2: 验 checkpoints 表写入 ≥ 5 行"
-COUNT_BEFORE=$(psql "$DB_URL" -tAc "SELECT count(*) FROM checkpoints WHERE thread_id='$THREAD_ID';")
+COUNT_BEFORE=$(psql -X "$DB_URL" -tAc "SELECT count(*) FROM checkpoints WHERE thread_id='$THREAD_ID';")
 log "checkpoints rows before restart = $COUNT_BEFORE"
 [[ "$COUNT_BEFORE" -ge 5 ]] || fail "step2 checkpoints 行数不足（实际 $COUNT_BEFORE，期望 ≥ 5）"
 
@@ -168,7 +174,7 @@ docker restart "$BRAIN_CONTAINER" >/dev/null
 log "step4: 等 $BRAIN_URL/api/brain/tick/status 200（最多 90s）"
 HEALTHY=false
 for i in $(seq 1 18); do
-  if curl -sf "$BRAIN_URL/api/brain/tick/status" >/dev/null 2>&1; then
+  if curl -q -sf "$BRAIN_URL/api/brain/tick/status" >/dev/null 2>&1; then
     HEALTHY=true
     log "Brain 已 healthy（第 ${i} 次探测）"
     break
@@ -179,7 +185,7 @@ done
 
 # ── Step 5: 验 checkpoints 跨重启仍持久 ──────────────────────────────────────
 log "step5: 验 checkpoints 跨 Brain 重启仍持久"
-COUNT_AFTER=$(psql "$DB_URL" -tAc "SELECT count(*) FROM checkpoints WHERE thread_id='$THREAD_ID';")
+COUNT_AFTER=$(psql -X "$DB_URL" -tAc "SELECT count(*) FROM checkpoints WHERE thread_id='$THREAD_ID';")
 log "checkpoints rows after restart = $COUNT_AFTER"
 [[ "$COUNT_AFTER" -ge 5 ]] || fail "step5 重启后 checkpoints 行丢失（实际 $COUNT_AFTER，期望 ≥ 5）"
 
