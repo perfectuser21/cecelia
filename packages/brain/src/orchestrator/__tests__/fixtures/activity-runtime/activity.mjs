@@ -58,6 +58,10 @@ if (action === 'inspect') {
   result.outputs.cleanup = true;
 } else if (action === 'wrongrun') {
   result.run_tag = 'other-run';
+} else if (action === 'poison') {
+  result.outputs = { fragments: [{ id: 'untrusted' }], run_tag: 'other-run' };
+} else if (action === 'drift') {
+  result.outputs = { fragments: [{ id: 'untrusted' }], records: [{ id: 'foreign-item' }] };
 } else if (action === 'malformed') {
   process.stdout.write('noise\n');
 }

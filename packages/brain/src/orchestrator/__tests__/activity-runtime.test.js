@@ -13,7 +13,7 @@ const activity = (key, order, overrides = {}) => ({ key, order, budget: { max_du
 const grouped = (key, order, when) => activity(key, order, { phase: 'per_item',
   per_item: { group: 'records', items: '$.records', input: 'record', identity: 'id', ...(when ? { when } : {}) } });
 
-async function run(activities, extraInput = {}, cancel = false) {
+async function run(activities, extraInput = {}, cancel = false, badSink = false) {
   const cwd = await mkdtemp(join(tmpdir(), 'cecelia-activity-'));
   await copyFile(fixture, join(cwd, 'activity.mjs'));
   await mkdir(join(cwd, 'nested'));
@@ -23,7 +23,7 @@ async function run(activities, extraInput = {}, cancel = false) {
   const childPid = join(cwd, 'child.pid');
   const input = { run_tag: 'offline-run', trace, child_pid: childPid, records: [{ id: 'a' }, { id: 'b', reject: true }], fragments: [], ...extraInput };
   try {
-    const child = spawn(process.execPath, [cli, '--cwd', cwd, '--receipt', receipt], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [cli, '--cwd', cwd, '--receipt', badSink ? join(cwd, 'activity.mjs', 'receipt.json') : receipt], { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; });
     child.stderr.on('data', chunk => { stderr += chunk; });
@@ -161,7 +161,7 @@ describe('opt-in契约CLI真实子进程闭环', () => {
       await copyFile(fixture, join(cwd, 'activity.mjs'));
       const { runActivityContract } = await import('../activity-runtime.js');
       let rejected = false;
-      const r = await runActivityContract({ workflow: 'offline-example', activities: [activity('partial', 1),
+      const r = await runActivityContract({ workflow: 'offline-example', activities: [activity('partial', 1, { max_attempts: 2 }),
         activity('deliver', 2), activity('finalize', 3, { phase: 'finalize' })] },
       { run_tag: 'offline-example', trace: join(cwd, 'trace'), fragments: [] }, { cwd, onEvent: async event => {
         if ((event.event_type === 'ACTIVITY_FINISHED' && !rejected) || (always && rejected)) {
@@ -173,7 +173,16 @@ describe('opt-in契约CLI真实子进程闭环', () => {
       expect(r.outputs.fragments).toEqual([{ id: 'retained', owner: 'partial' }]);
       expect(r.outputs.cleanup).toBe(true);
       expect(r.activities.map(x => x.key)).toEqual(['partial', 'finalize']);
+      expect(r.activities[0].attempts).toHaveLength(1);
     } finally { await rm(cwd, { recursive: true, force: true }); }
+  });
+  test('CLI最终receipt写失败仍输出唯一JSON和已执行finalize产物', async () => {
+    const r = await run([activity('finalize', 1, { phase: 'finalize' })], {}, false, true);
+    expect(r.code).toBe(1);
+    expect(r.result).not.toBeNull();
+    expect(r.result.reason_code).toBe('event_sink_failed');
+    expect(r.result.outputs.cleanup).toBe(true);
+    expect(r.events.map(x => x.action)).toEqual(['finalize']);
   });
   test.each([
     ['legacy shell说明不是JSON协议', a => { delete a.runtime.protocol; }],
@@ -195,5 +204,12 @@ describe('opt-in契约CLI真实子进程闭环', () => {
     expect(r.code, r.stderr).toBe(1);
     expect(r.result.status).toBe('failed');
     expect(r.result.outputs.cleanup).toBe(true);
+  });
+  test.each(['poison', 'drift'])('拒绝%s污染且不部分合并无效结果', async action => {
+    const a = action === 'drift' ? grouped(action, 1) : activity(action, 1);
+    const r = await run([a, activity('deliver', 2), activity('finalize', 3, { phase: 'finalize' })]);
+    expect(r.code, r.stderr).toBe(1);
+    expect(r.result.outputs.fragments).toBeUndefined();
+    expect(r.events.map(x => x.action)).toEqual([action, 'finalize']);
   });
 });
