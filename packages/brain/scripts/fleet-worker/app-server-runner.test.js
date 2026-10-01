@@ -288,3 +288,30 @@ it('真实attach握手未完成时不落attached也不解锁，失败后不发�
   await expect(f.runner.attach({...input,stream_id:randomUUID()})).rejects.toThrow('appserver_stream_busy');
  }finally{rejectAttach?.(Error('fixture cleanup'));f.cleanup();}
 });
+
+it('聊天启动在资源采样后重新核维护闸，零create且预约持续占位',async()=>{
+ const f=fixture();let drain=false;
+ try{
+  const runner=api.createAppServerRunner({...f.config,assertCanLaunch:()=>{if(drain)throw Error('worker_draining');},assertLocalResources:async()=>{drain=true;}});
+  await expect(runner.start(f.input())).rejects.toThrow('worker_draining');
+  expect(f.stats().creates).toBe(0);expect(await runner.maintenance()).toEqual({pending:1});
+ }finally{f.cleanup();}
+});
+it('聊天maintenance包含存活、未知journal与已清理状态，重启仍保守',async()=>{
+ const f=fixture();try{
+  expect(await f.runner.maintenance()).toEqual({pending:0});const input=f.input(),started=await f.runner.start(input);
+  expect(await f.runner.maintenance()).toEqual({pending:1});
+  expect(await api.createAppServerRunner({...f.config,bootId:randomUUID()}).maintenance()).toEqual({pending:1});
+  await f.runner.cancel({...input,container_id:started.container_id,challenge:randomUUID()});expect(await f.runner.maintenance()).toEqual({pending:0});
+  fs.writeFileSync(path.join(f.root,'unknown.lock'),'uncertain');await expect(f.runner.maintenance()).rejects.toThrow('worker_maintenance_unconfirmed');
+ }finally{f.cleanup();}
+});
+it('维护期间聊天attach拒绝，既有实例inspect和cancel仍可用',async()=>{
+ const f=fixture();let drain=false;try{
+  const runner=api.createAppServerRunner({...f.config,assertCanLaunch:()=>{if(drain)throw Error('worker_draining');}});
+  const input=f.input(),started=await runner.start(input);drain=true;
+  await expect(runner.attach({...input,stream_id:randomUUID()})).rejects.toThrow('worker_draining');
+  expect((await runner.inspect(input)).status).toBe('running');
+  expect((await runner.cancel({...input,container_id:started.container_id,challenge:randomUUID()})).absent).toBe(true);
+ }finally{f.cleanup();}
+});

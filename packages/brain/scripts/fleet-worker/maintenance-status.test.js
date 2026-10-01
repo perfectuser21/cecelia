@@ -54,3 +54,12 @@ it.each(['pending','failed'])('启动reconcile处于%s时绝不签发静默回�
   expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'worker_maintenance_unconfirmed'});
  }finally{release();server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
+it('真实maintenance回执包含聊天未清理实例，不能因旧三类为空就签静默',async()=>{
+ const token='chat-maintenance-token-'.repeat(3),gate=createLocalLaunchAdmission({lstat:()=>({})});let pending=1;
+ const attempt={prepare:async()=>{},start:async()=>{},inspect:async()=>{},cancel:async()=>{},terminal:async()=>{},reconcile:async()=>{},maintenance:()=>({pending:0})};
+ const server=createFleetWorkerServer({attemptToken:token,launchAdmission:gate,attemptRunner:attempt,scriptRunner:{maintenance:()=>({pending:0})},orchestratorRunner:{maintenance:()=>({preparing:0,prepared:0,running_processes:0})},appServerRunner:{maintenance:()=>({pending})}});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const status=async()=>{const response=await fetch(`http://127.0.0.1:${server.address().port}/maintenance/status`,{method:'POST',headers:{authorization:`Bearer ${token}`},body:JSON.stringify({request_nonce:randomUUID()})});return (await response.json()).receipt;};
+ try{expect(await status()).toMatchObject({app_servers:{pending:1},quiescent:false});pending=0;expect(await status()).toMatchObject({app_servers:{pending:0},quiescent:true});}
+ finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
+});

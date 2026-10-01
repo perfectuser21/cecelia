@@ -35,3 +35,11 @@ describe('专用 app-server Docker 合同',()=>{
   expect(calls).toEqual([['docker',['context','inspect','trusted']]]);
  });
 });
+it('聊天Docker最终create/start边界读取维护闸，清理保持可用',async()=>{
+ let drain=false;const calls=[];const d=adapter({assertCanLaunch:()=>{if(drain)throw Error('worker_draining');},run:async(cmd,args)=>{
+  calls.push(args);if(args[0]==='volume'){const result=await resources(cmd,args);drain=true;return result;}return {stdout:id};
+ }});
+ await expect(d.create({name,profile,identity:{reservation_id:'00000000-0000-4000-8000-000000000001',intent_id:'00000000-0000-4000-8000-000000000002',launch_generation:1}})).rejects.toThrow('worker_draining');
+ await expect(d.start(id)).rejects.toThrow('worker_draining');await d.remove(id);
+ expect(calls.some(a=>['create','start'].includes(a[0]))).toBe(false);expect(calls.at(-1)).toEqual(['rm','--force',id]);
+});
