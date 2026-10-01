@@ -253,3 +253,19 @@ it.each(['trigger','prepare'])('旧%s准入拒绝不能释放或阻断新代任�
   resume();await pending;
   expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[first.id])).rows[0]).toEqual(before);
 });
+it('同代旧429迟到时，已经成功启动的预约不能被回队',async()=>{
+  const first=await task();rejectStart=true;let resume,arrive;let once=true;
+  const paused=new Promise(r=>{arrive=r;}),gate=new Promise(r=>{resume=r;});
+  const delayed={connect:pool.connect.bind(pool),query:async(sql,args)=>{
+    if(once&&sql.startsWith("UPDATE tasks SET status='queued',claimed_by=NULL")){once=false;arrive();await gate;}
+    return pool.query(sql,args);
+  }};
+  const pending=triggerScriptRun(first,{...deps,pool:delayed});await paused;
+  rejectStart=false;await triggerScriptRun(first,deps);
+  const before=(await pool.query('SELECT * FROM tasks WHERE id=$1',[first.id])).rows[0];
+  resume();expect(await pending).toMatchObject({success:true,pending:true});
+  expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[first.id])).rows[0]).toEqual(before);
+  await reapScriptRuns(pool,deps);
+  expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('completed');
+  expect(starts).toBe(1);
+});
