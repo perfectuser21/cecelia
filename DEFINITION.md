@@ -5133,3 +5133,5 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 - 实际拆解提示使用 Objective → Key Result → Project → Task；首次复用或新建项目通过本棒 result.decomposition_project_id 显式保存归属。
 - 拆解回调、修正再审与确认门刷新使用同一 Project；主理人确认放行更新 key_results。多项目未显式选择时拒绝猜选。
 - 真 PostgreSQL 事务回归覆盖真实 HTTP 选择项目、首次送审、修正再审、审批激活与 KR 放行；测试结束回滚。
+
+- KR 诊断的数据库入口挂 express-rate-limit，每来源每分钟30次，超额请求在SQL执行前返回429；无KR参数的健康入口独立可读。

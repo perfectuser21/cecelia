@@ -12,9 +12,17 @@
  */
 
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 
 const router = Router();
+const diagnoseRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'diagnose_rate_limit_exceeded' },
+});
 
 // GET /task-router/diagnose — smoke / health check（无需 kr_id）
 router.get('/diagnose', (_req, res) => {
@@ -22,7 +30,7 @@ router.get('/diagnose', (_req, res) => {
 });
 
 // GET /task-router/diagnose/:kr_id
-router.get('/diagnose/:kr_id', async (req, res) => {
+router.get('/diagnose/:kr_id', diagnoseRateLimit, async (req, res) => {
   const { kr_id } = req.params;
   const { since_days = 7 } = req.query;
 

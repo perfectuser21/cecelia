@@ -33,9 +33,9 @@ describe('buildTimeContext', () => {
 
     pool.query = vi.fn(async (sql) => {
       if (sql.includes('FROM objectives')) {
-        return { rows: [{ title: 'KR-1', target_date: futureDate, time_budget_days: 30 }] };
+        return { rows: [{ title: 'KR-1', target_date: futureDate, time_budget_days: null }] };
       }
-      if (sql.includes('okr_projects')) {
+      if (sql.includes('FROM projects')) {
         return { rows: [] };
       }
       return { rows: [] };
@@ -45,7 +45,7 @@ describe('buildTimeContext', () => {
     expect(result).toContain('时间上下文');
     expect(result).toContain('KR 目标日期');
     expect(result).toContain('KR 剩余天数');
-    expect(result).toContain('KR 时间预算: 30 天');
+    expect(result).toContain('所有 Project 的 time_budget_days 之和不应超过 KR 剩余天数');
   });
 
   it('D2: 返回包含顺序提示的上下文', async () => {
@@ -56,7 +56,7 @@ describe('buildTimeContext', () => {
       if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: null, time_budget_days: null }] };
       }
-      if (sql.includes('okr_projects')) {
+      if (sql.includes('FROM projects')) {
         return {
           rows: [
             {
@@ -64,7 +64,7 @@ describe('buildTimeContext', () => {
               time_budget_days: 14, created_at: tenDaysAgo.toISOString(), completed_at: now.toISOString(),
             },
             {
-              id: 'proj-2', name: 'Project 2', status: 'pending', sequence_order: 2,
+              id: 'proj-2', name: 'Project 2', status: 'planning', sequence_order: 2,
               time_budget_days: 14, created_at: null, completed_at: null,
             },
           ],
@@ -77,6 +77,12 @@ describe('buildTimeContext', () => {
     expect(result).toContain('顺序提示');
     expect(result).toContain('这是第 2/3 个 Project');
     expect(result).toContain('1/2 完成');
+    expect(result).toContain('[completed] Project 1 (序号 1), 预算 14 天, 实际 10 天');
+    expect(result).toContain('[planning] Project 2 (序号 2), 预算 14 天');
+    const projectRead = pool.query.mock.calls.find(([sql]) => sql.includes('FROM projects'));
+    expect(projectRead[1]).toEqual(['kr-1']);
+    expect(projectRead[0]).toContain("op.metadata->>'sequence_order'");
+    expect(projectRead[0]).toContain("op.metadata->>'time_budget_days'");
   });
 
   it('D3: 返回包含已完成 Project 摘要的上下文', async () => {
@@ -87,7 +93,7 @@ describe('buildTimeContext', () => {
       if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: null, time_budget_days: null }] };
       }
-      if (sql.includes('okr_projects')) {
+      if (sql.includes('FROM projects')) {
         return {
           rows: [{
             id: 'proj-1', name: 'Project Alpha', status: 'completed', sequence_order: 1,
@@ -102,6 +108,10 @@ describe('buildTimeContext', () => {
     expect(result).toContain('[completed] Project Alpha');
     expect(result).toContain('实际 7 天');
     expect(result).toContain('前 1 个已完成');
+    const projectRead = pool.query.mock.calls.find(([sql]) => sql.includes('FROM projects'));
+    expect(projectRead[0]).toContain('MAX(t.completed_at)');
+    expect(projectRead[0]).toContain('t.project_id = op.id');
+    expect(projectRead[0]).toContain("t.task_type <> 'project'");
   });
 
   it('D4: 返回包含 sequence_order 约束的上下文', async () => {
@@ -109,7 +119,7 @@ describe('buildTimeContext', () => {
       if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: null, time_budget_days: null }] };
       }
-      if (sql.includes('okr_projects')) {
+      if (sql.includes('FROM projects')) {
         return { rows: [] };
       }
       return { rows: [] };
@@ -145,7 +155,7 @@ describe('buildTimeContext', () => {
       if (sql.includes('FROM objectives')) {
         return { rows: [{ title: 'KR-1', target_date: threeDaysLater, time_budget_days: null }] };
       }
-      if (sql.includes('okr_projects')) {
+      if (sql.includes('FROM projects')) {
         return { rows: [] };
       }
       return { rows: [] };
@@ -164,9 +174,9 @@ describe('preparePrompt with time context', () => {
   it('OKR 拆解 prompt 包含时间上下文 section', async () => {
     pool.query = vi.fn(async (sql) => {
       if (sql.includes('FROM objectives')) {
-        return { rows: [{ title: 'KR-1', target_date: '2026-03-31', time_budget_days: 30 }] };
+        return { rows: [{ title: 'KR-1', target_date: new Date(Date.now() + 14 * 86400000).toISOString(), time_budget_days: null }] };
       }
-      if (sql.includes('okr_projects')) {
+      if (sql.includes('FROM projects')) {
         return { rows: [] };
       }
       return { rows: [] };
@@ -181,7 +191,7 @@ describe('preparePrompt with time context', () => {
     });
 
     expect(prompt).toContain('时间上下文');
-    expect(prompt).toContain('/okr');
+    expect(prompt).toContain('/decomp');
     expect(prompt).toContain('OKR 拆解: Test KR');
   });
 
@@ -190,6 +200,7 @@ describe('preparePrompt with time context', () => {
       task_type: 'dev',
       goal_id: 'kr-1',
       title: '继续拆解: Test',
+      project_id: 'project-1',
       description: 'Continue',
       payload: {
         decomposition: 'continue',
@@ -198,8 +209,13 @@ describe('preparePrompt with time context', () => {
       },
     });
 
-    // continue 模式走不同的分支，不调用 buildTimeContext
-    expect(prompt).toContain('继续拆解');
+    // 继续棒明确挂原 Project，携带前棒事实；旧子层 ID 不决定新归属。
+    expect(prompt).toContain('GET /api/brain/projects/project-1');
+    expect(prompt).toContain('Some result');
+    expect(prompt).toContain('"project_id": "project-1"');
+    expect(prompt).not.toContain('init-1');
+    expect(prompt).not.toContain('POST /api/brain/action/create-project');
     expect(prompt).not.toContain('时间上下文');
+    expect(pool.query.mock.calls.some(([sql]) => sql.includes('FROM projects'))).toBe(false);
   });
 });
