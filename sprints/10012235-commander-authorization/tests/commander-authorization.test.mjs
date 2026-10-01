@@ -19,5 +19,5 @@ it('native entry executes permanent task authorization and secret rejection suit
   ], { cwd: brainRoot, timeout: 30_000, maxBuffer: 2 * 1024 * 1024,
     env: { ...process.env, DB_NAME: 'cecelia_scratch' },
   });
-  expect(result.stdout).toMatch(/Tests\s+36 passed \(36\)/);
+  expect(result.stdout).toMatch(/Tests\s+42 passed \(42\)/);
 }, 35_000);
