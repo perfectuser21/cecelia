@@ -29,7 +29,7 @@ import { startRun, finishRun } from './lib/task-run.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { qiumiEnv, phoneNodeName } from './routing/env.js';
 import { splitExecParamsBlock } from './routing/exec-params.js';
-import { consumeCompanyAnalysis, markCompanyAnalysis, assertCompanyAnalysisDispatch } from './lib/company-kr-analysis.js';
+import { consumeCompanyAnalysis, markCompanyAnalysis, assertCompanyAnalysisDispatch, companyAnalysisPrompt } from './lib/company-kr-analysis.js';
 import {
   parseDeviceBusyMarker, planDeviceBusy, requeueForDeviceBusy, DEVICE_BUSY_EXPIRED_REASON, DUE_AT_SELECT_SQL,
 } from './lib/qiumi-device-busy.js';
@@ -185,10 +185,11 @@ function appliedParamsNotice(p) {
 function promptOf(task) {
   const p = task.payload ?? {};
   const s = p.qiumi_source ?? {};
+  const sourceBody = p.company_kr_analysis?.version === 1 ? companyAnalysisPrompt(p.company_kr_analysis) : s.body;
   // 能走到派发，就说明路由已按参数块定案（块解析出错会在路由层直接 fail，到不了这里）
-  const block = s.body ? splitExecParamsBlock(s.body) : { present: false, rest: s.body };
+  const block = sourceBody ? splitExecParamsBlock(sourceBody) : { present: false, rest: sourceBody };
   const applied = block.present && Boolean(p.qiumi_department);
-  const body = applied ? block.rest : s.body;
+  const body = applied ? block.rest : sourceBody;
   return [
     applied ? appliedParamsNotice(p) : null,
     s.title,
