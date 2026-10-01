@@ -140,3 +140,19 @@ for (const overrides of [
     });
   });
 }
+
+for (const connection of [
+  'postgresql://cecelia@localhost:5432/cecelia_test?dbname=cecelia',
+  'postgresql://cecelia@localhost:5432/cecelia_test#cecelia',
+  'https://localhost:5432/cecelia_test',
+  'postgresql://cecelia@remote-server:5432/cecelia_test',
+  'postgresql://cecelia@localhost:9999/cecelia_test',
+]) {
+  test(`cleanup connection must resolve to the same local DB service: ${connection}`, async () => {
+    await fixture(async ({ requests, smoke }) => {
+      const result = await smoke('notion-brain-first', { SMOKE_ALLOW_WRITE: '1', DATABASE_URL: connection });
+      assert.equal(result.code, 0, result.output);
+      assert.deepEqual(requests, [], 'unsafe effective cleanup DB target passed guard');
+    });
+  });
+}
