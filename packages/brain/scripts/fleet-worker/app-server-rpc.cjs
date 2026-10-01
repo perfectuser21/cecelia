@@ -68,7 +68,13 @@ function createRpcPolicy({maxPending=128,maxIds=100000,accountId=null}={}){
   checkOpen();if(!object(frame)||frame.jsonrpc!==undefined&&frame.jsonrpc!=='2.0')throw Error('appserver_rpc_frame_invalid');
   const hasId=Object.hasOwn(frame,'id');if(hasId&&!idValid(frame.id))throw Error('appserver_rpc_id_invalid');
   if(Object.hasOwn(frame,'method')){
-   if(typeof frame.method!=='string'||Object.keys(frame).some(k=>!['id','method','params','jsonrpc'].includes(k)))throw Error('appserver_rpc_frame_invalid');
+   const envelopeKeys=['id','method','params','jsonrpc'];
+   // 固定0.158真实服务端通知附加的发出时间；它不是方法权限或控制字段。
+   if(kind==='server'&&!hasId){
+    envelopeKeys.push('emittedAtMs');
+    if(Object.hasOwn(frame,'emittedAtMs')&&(!Number.isSafeInteger(frame.emittedAtMs)||frame.emittedAtMs<0))throw Error('appserver_rpc_frame_invalid');
+   }
+   if(typeof frame.method!=='string'||Object.keys(frame).some(k=>!envelopeKeys.includes(k)))throw Error('appserver_rpc_frame_invalid');
    if(!hasId){
     if(kind==='client'){if(frame.method!=='initialized'||frame.params!==undefined&&(!object(frame.params)||Object.keys(frame.params).length))throw Error('appserver_rpc_notification_denied');}
     else {const s=Object.hasOwn(contract.notification.methods,frame.method)?contract.notification.methods[frame.method]:null;if(!s||!valid(frame.params??{},s,contract.notification.definitions))throw Error('appserver_rpc_notification_denied');}
