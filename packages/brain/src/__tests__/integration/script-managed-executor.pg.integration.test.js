@@ -117,7 +117,7 @@ it('cleanup_pending时发现丢失的exact容器ID仍可补绑并最终清理',a
 
 it('预约后本机压力升高返回wait并放队列claim，恢复后同一意图只启动一次',async()=>{
   const first=await task();rejectStart=true;
-  expect(await triggerScriptRun(first,deps)).toMatchObject({success:false,wait:true});
+  expect(await triggerScriptRun(first,deps)).toMatchObject({success:false,wait:true,taskStateHandled:true});
   const waiting=(await pool.query('SELECT status,claimed_by,payload FROM tasks WHERE id=$1',[first.id])).rows[0];
   expect(waiting).toMatchObject({status:'queued',claimed_by:null});expect(waiting.payload.script_attempts).toBeUndefined();
   rejectStart=false;
