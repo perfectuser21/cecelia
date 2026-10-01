@@ -6,7 +6,8 @@ import MachinesPage from './MachinesPage';
 const base = '/api/brain/machines/onboarding';
 const fingerprint = `SHA256:${'a'.repeat(43)}`;
 const queued = {
-  id: 'request-1', task_id: 'task-1', machine_name: 'node-1', status: 'queued', stage: 'connection', error: null as string | null,
+  id: 'request-1', task_id: 'task-1', machine_name: 'node-1', status: 'queued', stage: 'connection' as string | null, error: null as string | null,
+  notice: undefined as string | undefined,
   steps: [{ key: 'connection', label: '连接检查', status: 'pending' }],
 };
 let history: typeof queued[];
@@ -158,6 +159,18 @@ describe('设备页接入新机器', () => {
     machinesError = true; current = { ...queued, status: 'completed' }; await tick();
     expect(screen.getByText('接入完成')).toBeInTheDocument();
     expect(screen.getByRole('alert')).toHaveTextContent('设备列表刷新失败');
+  });
+
+  it('执行中未收到步骤回执时明确提示等待验收', async () => {
+    history = [{ ...queued, status: 'in_progress', stage: null }]; mount();
+    expect(await screen.findByText('执行中，等待验收回执')).toBeInTheDocument();
+    expect(screen.queryByText('已完成')).not.toBeInTheDocument();
+  });
+  it('成功后展示监控与执行能力的验收边界说明', async () => {
+    history = [queued]; vi.useFakeTimers(); await act(async () => { mount(); });
+    current = { ...queued, status: 'completed', notice: '节点监控已接入；清理默认为观察模式，执行任务能力需另行验收' };
+    await tick();
+    expect(screen.getByText(current.notice!)).toBeInTheDocument();
   });
 
 });
