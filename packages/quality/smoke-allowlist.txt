@@ -362,3 +362,5 @@ projects-table-upgrade-smoke.sh
 cell-color-step-level-smoke.sh
 project-locate-smoke.sh
 project-brief-smoke.sh
+
+activity-contract-runtime-smoke.sh

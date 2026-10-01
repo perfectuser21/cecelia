@@ -8,7 +8,9 @@
 
 
 
-**Brain 版本**: 1.348.14
+**Brain 版本**: 1.349.0
+
+通用业务活动执行（阶段3，显式调用）：`packages/brain/scripts/activity-contract-run.js` 读取已组装JSON契约，按 order/runtime.entry/budget/failure 与 per_item 分组调用活动，保留产物、指标、证据，预算到期请求清理并执行 finalize。协议与接线边界见 `packages/brain/src/orchestrator/README.md`；生产任务路由未接入，未部署。
 
 ## 1.283.0
 
