@@ -30,11 +30,12 @@ async function fixture(run) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
   const temp = await mkdtemp(resolve(tmpdir(), 'smoke-write-guard-'));
-  await writeFile(resolve(temp, 'docker'), '#!/usr/bin/env node\nprocess.stdout.write(process.env.GUARD_DOCKER_FIXTURE);\n', { mode: 0o755 });
+  const dockerLog = resolve(temp, 'docker-calls');
+  await writeFile(resolve(temp, 'docker'), '#!/usr/bin/env node\nconst fs = require("node:fs"); fs.appendFileSync(process.env.GUARD_DOCKER_LOG, JSON.stringify(process.argv.slice(2))+"\\n"); if(process.argv[2]==="exec") process.stdout.write("fixture-token"); else process.stdout.write(process.env.GUARD_DOCKER_FIXTURE);\n', { mode: 0o755 });
   await writeFile(resolve(temp, 'psql'), '#!/usr/bin/env bash\ncase "$*" in *COUNT*) echo 1;; *) echo 1;; esac\n', { mode: 0o755 });
   const info = { State: { Running: true }, Config: { Env: ['NODE_ENV=test', 'DB_NAME=cecelia_test', `BRAIN_PORT=${port}`] }, HostConfig: { NetworkMode: 'host' }, NetworkSettings: { Ports: {} } };
   async function smoke(script, overrides = {}, dockerInfo = info, guardOnly = false) {
-    let args = [`packages/brain/scripts/smoke/${script}-smoke.sh`];
+    let args = [`packages/brain/scripts/smoke/${script.endsWith('.sh') ? script : script + '-smoke.sh'}`];
     if (guardOnly) {
       const source = await readFile(resolve(root, args[0]), 'utf8');
       const prefix = source.slice(0, source.indexOf('\nfi') + 3)
@@ -44,7 +45,7 @@ async function fixture(run) {
     return new Promise((resolve, reject) => {
       const proc = spawn('bash', args, {
         cwd: root,
-        env: { ...process.env, PATH: `${temp}:${process.env.PATH}`, BRAIN: `http://127.0.0.1:${port}`, BRAIN_URL: `http://127.0.0.1:${port}`, BRAIN_CONTAINER: 'cecelia-brain-smoke', DATABASE_URL: 'postgresql://cecelia@localhost:5432/cecelia_test', SMOKE_ALLOW_WRITE: '', GUARD_DOCKER_FIXTURE: JSON.stringify(dockerInfo), ...overrides },
+        env: { ...process.env, PATH: `${temp}:${process.env.PATH}`, BRAIN: `http://127.0.0.1:${port}`, BRAIN_URL: `http://127.0.0.1:${port}`, BRAIN_CONTAINER: 'cecelia-brain-smoke', DATABASE_URL: 'postgresql://cecelia@localhost:5432/cecelia_test', SMOKE_ALLOW_WRITE: '', GUARD_DOCKER_LOG: dockerLog, GUARD_DOCKER_FIXTURE: JSON.stringify(dockerInfo), ...overrides },
       });
       let output = '';
       proc.stdout.on('data', data => { output += data; });
@@ -53,7 +54,8 @@ async function fixture(run) {
       proc.on('close', code => resolve({ code, output }));
     });
   }
-  try { await run({ requests, smoke, info, port }); }
+  async function dockerCalls() { return (await readFile(resolve(temp, 'docker-calls'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)); }
+  try { await run({ requests, smoke, info, port, dockerCalls }); }
   finally { await new Promise(resolve => server.close(resolve)); await rm(temp, { recursive: true, force: true }); }
 }
 
@@ -248,5 +250,29 @@ test('Brain DB_HOST cannot be hidden behind an unused loopback DATABASE_URL', as
     info.Config.Env.push('DB_HOST=remote-production', 'DATABASE_URL=postgresql://localhost/cecelia_test');
     const result = await smoke('notion-mapping-r4', { SMOKE_ALLOW_WRITE: '1' }, info);
     assert.deepEqual(requests, [], result.output);
+  });
+});
+
+
+for (const script of ['attempt-run', 'contract-seal', 'merge-pr', 'publish-pr']) {
+  test(`${script}: token comes only from the validated test container`, async () => {
+    await fixture(async ({ smoke, dockerCalls }) => {
+      const result = await smoke(script, { SMOKE_ALLOW_WRITE: '1', BRAIN_INTERNAL_TOKEN: '' });
+      const reads = (await dockerCalls()).filter(args => args[0] === 'exec');
+      assert.ok(reads.length, 'token fallback was not exercised');
+      assert.ok(reads.every(args => args[1] === 'cecelia-brain-smoke'), 'read credential from an unvalidated container');
+    });
+  });
+}
+test('dispatcher route authority helper uses a checked DATABASE_URL', async () => {
+  await fixture(async ({ smoke }) => {
+    const result = await smoke('dispatcher-real-paths.sh', { SMOKE_ALLOW_WRITE: '1', DATABASE_URL: 'postgresql://localhost/cecelia' }, undefined, true);
+    assert.doesNotMatch(result.output, /GUARD_ACCEPTED/);
+  });
+});
+test('phone registry checks the PG_* connection it actually uses when no URI exists', async () => {
+  await fixture(async ({ smoke }) => {
+    const result = await smoke('phone-registry', { SMOKE_ALLOW_WRITE: '1', DATABASE_URL: '', PGDATABASE: 'cecelia', PGHOST: 'localhost' }, undefined, true);
+    assert.doesNotMatch(result.output, /GUARD_ACCEPTED/);
   });
 });
