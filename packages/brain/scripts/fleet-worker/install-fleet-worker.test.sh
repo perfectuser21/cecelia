@@ -866,8 +866,8 @@ PYPLIST
 
 [[ -f "$installed_worker" && -f "$installed_probe" ]] \
   || fail "--apply did not install a stable Worker runtime"
-app_server_files=(app-server-profile.cjs app-server-docker.cjs app-server-stream.cjs app-server-runner.cjs)
-for module in "${app_server_files[@]}"; do
+auxiliary_files=(app-server-profile.cjs app-server-docker.cjs app-server-stream.cjs app-server-runner.cjs linux-cgroup.cjs linux-resource-probe.cjs)
+for module in "${auxiliary_files[@]}"; do
   cmp -s "$SCRIPT_DIR/$module" "$runtime_dir/$module" \
     || fail "--apply did not install exact $module bytes"
   [[ "$(mode_of "$runtime_dir/$module")" == 644 ]] || fail "$module mode is not 644"
@@ -1124,7 +1124,7 @@ assert_resource_placement_failure_rolled_back() {
   cp "$installed_local_admission" "$snapshot_dir/admission"
   cp "$installed_profile_registry" "$snapshot_dir/profiles"
   local module
-  for module in "${app_server_files[@]}"; do
+  for module in "${auxiliary_files[@]}"; do
     printf 'prior-%s-%s\n' "$filename" "$module" > "$runtime_dir/$module"
     chmod 0600 "$runtime_dir/$module"
     cp "$runtime_dir/$module" "$snapshot_dir/$module"
@@ -1145,7 +1145,7 @@ assert_resource_placement_failure_rolled_back() {
   [[ "$(mode_of "$installed_local_admission")" == 600 \
     && "$(mode_of "$installed_profile_registry")" == 640 ]] \
     || fail "$filename placement rollback changed old resource file modes"
-  for module in "${app_server_files[@]}"; do
+  for module in "${auxiliary_files[@]}"; do
     cmp -s "$snapshot_dir/$module" "$runtime_dir/$module" || fail "$filename changed old $module bytes"
     [[ "$(mode_of "$runtime_dir/$module")" == 600 ]] || fail "$filename changed old $module mode"
   done
@@ -1174,12 +1174,12 @@ assert_resource_first_install_rolled_back() (
   [[ ! -e "$fresh_runtime/local-resource-admission.cjs" \
     && ! -e "$fresh_runtime/fleet-node-profiles.json" ]] \
     || fail "first $filename rollback leaked newly installed resource files"
-  for module in "${app_server_files[@]}"; do
+  for module in "${auxiliary_files[@]}"; do
     [[ ! -e "$fresh_runtime/$module" ]] || fail "first $filename rollback leaked $module"
   done
 )
 
-for resource_file in fleet-node-profiles.json local-resource-admission.cjs "${app_server_files[@]}"; do
+for resource_file in fleet-node-profiles.json local-resource-admission.cjs "${auxiliary_files[@]}"; do
   assert_resource_placement_failure_rolled_back "$resource_file"
   assert_resource_first_install_rolled_back "$resource_file"
 done

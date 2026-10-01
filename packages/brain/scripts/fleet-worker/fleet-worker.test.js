@@ -379,6 +379,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const input = {
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       postgresImageDigest: POSTGRES_IMAGE,
@@ -534,6 +535,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       postgresImageDigest: POSTGRES_IMAGE,
@@ -570,6 +572,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       postgresImageDigest: POSTGRES_IMAGE,
@@ -601,6 +604,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       postgresImageDigest: POSTGRES_IMAGE,
@@ -637,6 +641,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'xian-mac-m4',
       workerBindHost: '100.86.57.69',
       runnerImageDigest: DIGEST,
@@ -660,6 +665,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'xian-mac-m4',
       workerBindHost: '100.86.57.69',
       runnerImageDigest: DIGEST,
@@ -705,6 +711,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       repoRoot: '/repo',
@@ -759,6 +766,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       repoRoot: '/repo',
@@ -779,6 +787,7 @@ describe('Fleet Worker health-only service', () => {
     const execFileFn = vi.fn(async () => ({ stdout: '' }));
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       repoRoot: '/repo',

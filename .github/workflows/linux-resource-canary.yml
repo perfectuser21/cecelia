@@ -1,0 +1,35 @@
+name: Linux resource observation canary
+on:
+  pull_request:
+    paths:
+      - 'packages/brain/scripts/fleet-worker/linux-*'
+      - '.github/workflows/linux-resource-canary.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: linux-resource-canary-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  observer-cgroup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Resolve test image to immutable local ID
+        run: |
+          docker pull node:24-bookworm-slim
+          echo "LINUX_RESOURCE_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' node:24-bookworm-slim)" >> "$GITHUB_ENV"
+      - name: Read actual limited cgroup without granting execution
+        run: |
+          set -o pipefail
+          node packages/brain/scripts/fleet-worker/linux-resource-canary.cjs | tee linux-resource-canary.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-resource-observation
+          path: linux-resource-canary.log
+          if-no-files-found: ignore

@@ -33,9 +33,9 @@ LOCAL_RESOURCE_ADMISSION_SOURCE="$SCRIPT_DIR/local-resource-admission.cjs"
 SCRIPT_RUNNER_SOURCE="$SCRIPT_DIR/script-runner.cjs"
 SCRIPT_DOCKER_SOURCE="$SCRIPT_DIR/script-docker.cjs"
 # 专用 runner 仅打包，不增加服务入口或默认可执行 profile。
-APP_SERVER_FILES=(app-server-profile.cjs app-server-docker.cjs app-server-stream.cjs app-server-runner.cjs)
-STAGED_APP_SERVER_FILES=('' '' '' '')
-PRIOR_APP_SERVER_MODES=('' '' '' '')
+AUXILIARY_FILES=(app-server-profile.cjs app-server-docker.cjs app-server-stream.cjs app-server-runner.cjs linux-cgroup.cjs linux-resource-probe.cjs)
+STAGED_AUXILIARY_FILES=('' '' '' '' '' '')
+PRIOR_AUXILIARY_MODES=('' '' '' '' '' '')
 WORKSPACE_MANAGER_SOURCE="$SCRIPT_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SOURCE="$SCRIPT_DIR/attempt-runner.cjs"
 ORCHESTRATOR_RUNNER_SOURCE="$SCRIPT_DIR/orchestrator-runner.cjs"
@@ -662,7 +662,7 @@ render_access_plist() {
 
 cleanup_transaction() {
   local staged module
-  for staged in "${STAGED_APP_SERVER_FILES[@]}"; do
+  for staged in "${STAGED_AUXILIARY_FILES[@]}"; do
     [[ -z "$staged" ]] || rm -f "$staged"
   done
   [[ -z "$EXISTING_CONFIG_SNAPSHOT" ]] || rm -f "$EXISTING_CONFIG_SNAPSHOT"
@@ -683,7 +683,7 @@ cleanup_transaction() {
   [[ -z "$STAGED_ACCESS_HELPER" ]] || rm -f "$STAGED_ACCESS_HELPER"
   [[ -z "$STAGED_ACCESS_PLIST" ]] || rm -f "$STAGED_ACCESS_PLIST"
   if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
-    for module in "${APP_SERVER_FILES[@]}"; do rm -f "$BACKUP_DIR/$module"; done
+    for module in "${AUXILIARY_FILES[@]}"; do rm -f "$BACKUP_DIR/$module"; done
     rm -f \
       "$BACKUP_DIR/worker" \
       "$BACKUP_DIR/probe" \
@@ -727,8 +727,8 @@ prepare_transaction_paths() {
   STAGED_LOCAL_RESOURCE_ADMISSION="$(mktemp "$RUNTIME_DIR/.local-resource-admission.cjs.XXXXXX")"
   STAGED_SCRIPT_RUNNER="$(mktemp "$RUNTIME_DIR/.script-runner.cjs.XXXXXX")"
   STAGED_SCRIPT_DOCKER="$(mktemp "$RUNTIME_DIR/.script-docker.cjs.XXXXXX")"
-  for index in "${!APP_SERVER_FILES[@]}"; do
-    STAGED_APP_SERVER_FILES[$index]="$(mktemp "$RUNTIME_DIR/.${APP_SERVER_FILES[$index]}.XXXXXX")"
+  for index in "${!AUXILIARY_FILES[@]}"; do
+    STAGED_AUXILIARY_FILES[$index]="$(mktemp "$RUNTIME_DIR/.${AUXILIARY_FILES[$index]}.XXXXXX")"
   done
   STAGED_WORKSPACE_MANAGER="$(
     mktemp "$RUNTIME_DIR/.workspace-manager.cjs.XXXXXX"
@@ -753,9 +753,9 @@ prepare_transaction_paths() {
 
 stage_generation() {
   local index
-  for index in "${!APP_SERVER_FILES[@]}"; do
-    cp "$SCRIPT_DIR/${APP_SERVER_FILES[$index]}" "${STAGED_APP_SERVER_FILES[$index]}"
-    chmod 0644 "${STAGED_APP_SERVER_FILES[$index]}"
+  for index in "${!AUXILIARY_FILES[@]}"; do
+    cp "$SCRIPT_DIR/${AUXILIARY_FILES[$index]}" "${STAGED_AUXILIARY_FILES[$index]}"
+    chmod 0644 "${STAGED_AUXILIARY_FILES[$index]}"
   done
   cp "$WORKER_SOURCE" "$STAGED_WORKER"
   cp "$PROBE_SOURCE" "$STAGED_PROBE"
@@ -1091,9 +1091,9 @@ prepare_logs
 prepare_transaction_paths
 stage_generation
 
-for index in "${!APP_SERVER_FILES[@]}"; do
-  module="${APP_SERVER_FILES[$index]}"
-  PRIOR_APP_SERVER_MODES[$index]="$(snapshot_file "$RUNTIME_DIR/$module" "$BACKUP_DIR/$module")"
+for index in "${!AUXILIARY_FILES[@]}"; do
+  module="${AUXILIARY_FILES[$index]}"
+  PRIOR_AUXILIARY_MODES[$index]="$(snapshot_file "$RUNTIME_DIR/$module" "$BACKUP_DIR/$module")"
 done
 prior_worker_mode="$(snapshot_file "$WORKER_SCRIPT" "$BACKUP_DIR/worker")"
 prior_profile_registry_mode="$(snapshot_file "$PROFILE_REGISTRY_SCRIPT" "$BACKUP_DIR/fleet-node-profiles")"
@@ -1144,9 +1144,9 @@ if [[ "$prior_service_loaded" == true ]]; then
 fi
 
 placement_ok=true
-for index in "${!APP_SERVER_FILES[@]}"; do
-  [[ "$placement_ok" != true ]] || "$MOVE" "${STAGED_APP_SERVER_FILES[$index]}" \
-    "$RUNTIME_DIR/${APP_SERVER_FILES[$index]}" || placement_ok=false
+for index in "${!AUXILIARY_FILES[@]}"; do
+  [[ "$placement_ok" != true ]] || "$MOVE" "${STAGED_AUXILIARY_FILES[$index]}" \
+    "$RUNTIME_DIR/${AUXILIARY_FILES[$index]}" || placement_ok=false
 done
 [[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_PROBE" "$RUNTIME_DIR/node-probe.cjs" || placement_ok=false
 [[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_PROFILE_REGISTRY" "$PROFILE_REGISTRY_SCRIPT" || placement_ok=false
@@ -1211,9 +1211,9 @@ if [[ "$launch_ok" != true ]]; then
   "$LAUNCHCTL" bootout "system/$ACCESS_LABEL" >/dev/null 2>&1 || true
   "$LAUNCHCTL" bootout "system/$LABEL" >/dev/null 2>&1 || true
   rollback_ok=true
-  for index in "${!APP_SERVER_FILES[@]}"; do
-    module="${APP_SERVER_FILES[$index]}"
-    restore_file "$RUNTIME_DIR/$module" "$BACKUP_DIR/$module" "${PRIOR_APP_SERVER_MODES[$index]}" \
+  for index in "${!AUXILIARY_FILES[@]}"; do
+    module="${AUXILIARY_FILES[$index]}"
+    restore_file "$RUNTIME_DIR/$module" "$BACKUP_DIR/$module" "${PRIOR_AUXILIARY_MODES[$index]}" \
       || rollback_ok=false
   done
   restore_file "$WORKER_SCRIPT" "$BACKUP_DIR/worker" "$prior_worker_mode" \
