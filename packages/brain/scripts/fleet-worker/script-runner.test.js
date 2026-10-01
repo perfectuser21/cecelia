@@ -49,7 +49,7 @@ describe('受管脚本 worker 协议', () => {
       const result=await runner.start(x.input);
       expect(result.status).toBe('waiting_resources');expect(x.counts().starts).toBe(0);
       expect(x.counts().creates).toBe(phase==='create'?1:0);
-      const cancel=await runner.cancel(x.input);expect(cancel.tombstoned).toBe(true);
+      const cancel=await runner.cancel({...x.input,container_id:result.container_id,challenge:randomUUID()});expect(cancel.tombstoned).toBe(true);
     }
   });
   it('真实 HTTP 认证后启动无害脚本，持久意图先于 create，重复/重启请求不重跑', async () => {

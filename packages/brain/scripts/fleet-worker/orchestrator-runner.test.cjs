@@ -310,3 +310,10 @@ describe('orchestrator-runner', () => {
     }
   });
 });
+
+it('maintenance不把terminal请求当宿主进程已退出，真实exit才减存活计数',async()=>{
+ const {runner,children}=build();await runner.prepare({run_id:RUN_ID,task_id:RUN_ID,repo:'perfectuser21/cecelia'});
+ expect(runner.maintenance).toBeTypeOf('function');expect(runner.maintenance()).toMatchObject({prepared:1,running_processes:0});
+ await runner.start(RUN_ID,{controller_session_id:SESSION_ID,controller_generation:1});await runner.terminal(RUN_ID,{outcome:'done'});
+ expect(runner.maintenance().running_processes).toBe(1);children[0]._emit('exit',0);expect(runner.maintenance().running_processes).toBe(0);
+});

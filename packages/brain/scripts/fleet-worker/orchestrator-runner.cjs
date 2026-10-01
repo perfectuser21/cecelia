@@ -74,10 +74,12 @@ function createOrchestratorRunner({
   env = process.env,
   probeCredentialHome: probeCredentialHomeFn = probeCredentialHome,
   existsFn = fs.existsSync,
+  assertCanLaunch = () => {},
 } = {}) {
   if (!workspaceManager || typeof workspaceManager.prepare !== 'function') {
     throw new Error('orchestrator_runner_workspace_manager_required');
   }
+  const liveChildren = new Set();
   const jobs = new Map(); // run_id → {status, worktreePath, taskId, pid, startedAt}
   // 2026-09-24 实证：Brain 侧 prepare 请求超时放弃后，这边作业停在 prepared 永不 start，
   // active() 一直计入 → maxConcurrent=2 只跑 1 条也持续 429（任务 281aa798）。
@@ -106,6 +108,7 @@ function createOrchestratorRunner({
   });
 
   return Object.freeze({
+    maintenance(){return {preparing:[...jobs.values()].filter(j=>j.status==='preparing').length,prepared:[...jobs.values()].filter(j=>j.status==='prepared').length,running_processes:liveChildren.size};},
     async prepare(body) {
       const runId = body?.run_id;
       if (!UUID_RE.test(runId ?? '')) throw httpError('orchestrator_run_id_invalid', 400);
@@ -120,6 +123,7 @@ function createOrchestratorRunner({
         // 'preparing'（并发重放，不等待）或其它非终态一律视为冲突
         throw httpError('orchestrator_already_exists', 409);
       }
+      assertCanLaunch();
       if (active() >= maxConcurrent) throw httpError('orchestrator_slots_exhausted', 429);
       // 槽位预占（Fix 2）：检查通过后、任何 await 之前立刻登记占位状态，
       // 防止并发 prepare 在 await 窗口内一起挤过 active() 检查、共同抢占同一个槽位。
@@ -130,6 +134,7 @@ function createOrchestratorRunner({
       jobs.set(runId, job);
       try {
         const baseSha = SHA_RE.test(body?.base_sha ?? '') ? body.base_sha : await resolveMainSha(repo);
+        assertCanLaunch();
         // Fix 1：spec 形状对齐 workspace-manager.cjs 真实 validateSpec（SPEC_FIELDS 白名单
         // 严格拒绝未知字段，task_id 不进 spec；branch 必须匹配 BRANCH_PATTERN=cp-*；
         // expected_head_sha 必须显式 null；mode 必须 read-write，因为 kernel 会在 worktree
@@ -162,6 +167,7 @@ function createOrchestratorRunner({
       expireStalePrepared();
       if (job.status === 'expired') throw httpError('orchestrator_prepared_expired', 410);
       if (job.status !== 'prepared') throw httpError('orchestrator_not_startable', 409);
+      assertCanLaunch();
       const sessionId = body?.controller_session_id;
       const generation = Number(body?.controller_generation);
       if (!UUID_RE.test(sessionId ?? '') || !Number.isSafeInteger(generation) || generation < 1) {
@@ -194,6 +200,8 @@ function createOrchestratorRunner({
         const fd = openFn(logPath);
         stdio = ['ignore', fd, fd];
       } catch { /* stdio 保持 ignore */ }
+      // prepare中的await与凭据/文件检查结束后，紧邻宿主spawn再次检查。
+      assertCanLaunch();
       const child = spawnFn(process.execPath, [
         runner,
         '--task-id', job.taskId,
@@ -229,7 +237,9 @@ function createOrchestratorRunner({
       // C1（终审）：orchestrator 槽位只借不还——进程退出即释放槽位，否则 active()
       // 恒占坑，第 3 个 prepare 起 orchestrator_slots_exhausted。detached+unref 下
       // exit 事件在父进程（fleet-worker）存活期间仍会送达。
+      liveChildren.add(child);
       child.once('exit', (code) => {
+        liveChildren.delete(child);
         job.status = code === 0 ? 'done' : 'failed';
       });
       child.unref?.();

@@ -10,7 +10,7 @@
 
 
 
-**Brain 版本**: 1.353.9
+**Brain 版本**: 1.353.11
 
 Mac Worker 版本探针只读固定 OrbStack bundle 的 CFBundleShortVersionString；不运行会初始化管理员目录的 orbctl version。Docker、镜像、自检容器与资源准入仍分别真实检查，版本不可读继续报 unavailable。
 
