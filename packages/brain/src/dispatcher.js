@@ -519,6 +519,11 @@ export async function dispatchNextTask(goalIds) {
 
   // 0. Three-pool slot budget check (replaces flat MAX_SEATS - INTERACTIVE_RESERVE)
   const slotBudget = await calculateSlotBudget();
+  // 无可信资源时驱逐也不能恢复容量；保留运行中的任务，只拒绝新增派单。
+  if (slotBudget.resourceAdmissionBlocked) {
+    await recordDispatchResult(pool, false, 'resource_unavailable');
+    return { dispatched: false, reason: 'resource_unavailable', budget: slotBudget, actions };
+  }
   if (!slotBudget.dispatchAllowed) {
     // Eviction: if a high-priority task is waiting, try to evict a low-priority one
     try {

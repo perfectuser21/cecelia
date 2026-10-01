@@ -8,16 +8,24 @@
 
 
 
-**Brain 版本**: 1.350.1
+**Brain 版本**: 1.350.3
+
+## Brain 1.350.3 — 节点接入与受控执行回执
+
+- `/machines` 接入表单提供进度、更正与幂等重试；受管主力机执行固定身份SSH安装、连续健康确认后登记台账。新节点只监控，`executors=[]`且执行能力为false，入执行池另需验收。
+- 运行机须部署 `scripts/ops/node-onboarding.mjs` 及相邻模块，并有Node、Python3、OpenSSH、已授权1Password CLI；macOS需现有GUI会话，非root Linux需现有systemd linger。不改网络或删业务文件。
+- 已认领有头会话复用现有探活合同，未知保留运行；tmux名称使用argv。
+- Janitor固定动作显式启用后才执行；专属连接互斥执行与配置，异常持久固定错误码，不确定running阻止重跑，锁响应不明及解锁失败销毁连接。生产动作注册表保持为空。
+- 本批没有migration501，不包含Linux执行器、全机自动清理或动态执行资格。
+
 
 ## 1.350.1
 
-### 设备页节点接入与持续健康采样
+### 机群资源报告可信度与硬零派单保护（任务 de1ff21f）
 
-- 复用 `/machines`：名称、SSH 地址、用途、CS Vault 私钥引用和主机指纹提交接入；任务进度、具体失败阶段、更正和重试可追踪。
-- Brain 通过既有 `script_run` 派给受管主力机执行，验收服务状态和连续采样后登记 `system_registry(type=machine)`；同一请求与目标并发幂等。
-- 后台持续采样；新节点只启用监控与专属缓存观察，`executors=[]`，执行能力须另行验收。macOS 要求已有 GUI 会话，Linux 非 root 要求已有 systemd linger；不修改网络或删除业务文件。
-- 执行主机须部署 `scripts/ops/node-onboarding.mjs` 及相邻 Python/JS 模块，并已有 Node、Python 3、OpenSSH 与已授权的 1Password CLI。路径可通过 `CECELIA_ONBOARDING_RUNNER_PATH` 配置。
+- Worker资源缓存校验机器身份、协议、原始采样时间及六项有限资源数值；所有容量读取按原始样本时效拒绝陈旧数据，返回可诊断拒绝原因。
+- 西安Codex节点均未知或离线时容量为零；资源容量归零立即停止新增派单，恢复继续逐步增长。
+- 本交付不改变运行中任务，不替代机器总预算原子预留或本地启动闸。
 
 ## 1.348.20
 
