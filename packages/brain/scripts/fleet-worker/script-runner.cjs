@@ -106,7 +106,7 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
     return {...state,status:state.status==='waiting_resources'&&container.status==='created'?'waiting_resources':container.status,
       exit_code:container.exit_code,timed_out:state.timed_out===true};
   }
-  function schedule(state) {
+  function schedule(state,minDelay=1) {
     if(state.tombstoned || state.terminal || state.status==='waiting_resources' || !state.started_at || timers.has(state.reservation_id))return;
     const timer=setTimeout(async()=>{
       timers.delete(state.reservation_id);
@@ -121,8 +121,12 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
           if(await docker.inspect(current.container_id??current.container_name))throw new Error('script_cleanup_unconfirmed');
           current.status='cleaned';save(current);
         });
-      } catch { /* journal 持续占用，由下一次认证 inspect/cancel 完成确认。 */ }
-    },Math.max(1,state.started_at+state.timeout_sec*1000-Date.now()));
+      } catch(error) {
+        // start/inspect仍持锁时保留deadline，不能丢掉唯一的超时清理机会。
+        if(error.message==='script_operation_locked')schedule(state,100);
+        // 其它错误保留journal占位，由认证inspect/cancel继续确认。
+      }
+    },Math.max(minDelay,state.started_at+state.timeout_sec*1000-Date.now()));
     timer.unref?.();timers.set(state.reservation_id,timer);
   }
   for(const name of fs.readdirSync(root)) {
@@ -157,6 +161,7 @@ function createScriptRunner({stateRoot,machineId,workerId,bootId=randomUUID(),pr
         save(state); // exact ID 持久化后才可 start；重复请求只 inspect。
         if(!await admit())return state;
         state.status='starting';state.started_at=Date.now();save(state);
+        schedule(state); // Docker start已生效但响应丢失仍须按持久deadline清理。
         await docker.start(state.container_id);
         state.status='running';save(state);schedule(state);
         return observe(state);

@@ -62,4 +62,19 @@ describe('root journal实际复用script-runner生命周期',()=>{
   const restored=createLinuxScriptRuntime({...x.options,assertCanLaunch:async()=>{},deployment:{...x.options.deployment,worker_boot_id:randomUUID()}});runners.push(restored);
   await expect(restored.start(x.request('start'))).rejects.toThrow('linux_script_deployment_changed');expect(x.f.calls.some(a=>a[0]==='create')).toBe(false);
  });
+ it.each([0,1300])('start实际生效但%s毫秒后丢回执，当前进程仍精确超时清理',async delay=>{
+  const x=setup();x.runtime.close();x.body.job.timeout_sec=1;
+  x.body.config_digest=hash({job:x.body.job,profile_digest:x.expected.profile_digest});
+  x.f.record.identity.config_digest=x.body.config_digest;
+  const run=x.options.run;
+  const runtime=createLinuxScriptRuntime({...x.options,run:async(...args)=>{
+   const result=await run(...args);
+   if(args[1][0]==='start'){if(delay)await new Promise(r=>setTimeout(r,delay));throw Error('lost start response');}
+   return result;
+  }});runners.push(runtime);
+  await expect(runtime.start(x.request('start'))).rejects.toThrow('linux_script_operation_unconfirmed');
+  await new Promise(r=>setTimeout(r,delay?350:1300));
+  expect(x.f.calls.filter(a=>a[0]==='rm')).toEqual([['rm','--force','a'.repeat(64)]]);
+  const observed=await runtime.inspect(x.request('inspect'));expect(observed).toMatchObject({status:'cleaned',terminal:{exit_code:124,timed_out:true}});
+ });
 });
