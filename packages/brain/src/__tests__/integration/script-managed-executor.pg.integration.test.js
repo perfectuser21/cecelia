@@ -38,7 +38,7 @@ beforeAll(async()=>{
     '363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations']) {
     await pool.query(readFileSync(new URL(`../../../migrations/${file}.sql`,import.meta.url),'utf8'));
   }
-  runner=createScriptRunner({stateRoot:root,machineId:machine,workerId:machine,bootId:'boot-fixture',
+  runner=createScriptRunner({assertLocalResources:async()=>{},stateRoot:root,machineId:machine,workerId:machine,bootId:'boot-fixture',
     profiles:{harmless:{image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,user:'1000:1000',cwd:'/job'}},
     docker:{async create({name,command,identity}){const id=randomUUID().replaceAll('-','').repeat(2);
       containers.set(id,{id,name,command,status:'created',labels:Object.fromEntries(Object.entries(identity).map(([k,v])=>[`cecelia.script.${k}`,String(v)]))});return id;},
@@ -89,4 +89,28 @@ it('受管机器的旧宿主cwd任务明确blocked，绝不发SSH',async()=>{
   const out=await prepareScriptDispatch(first,deps);
   expect(out).toMatchObject({outcome:'return',result:{reason:'script_managed_spec_required'}});
   expect((await pool.query('SELECT id FROM capacity_reservations')).rows).toHaveLength(0);expect(starts).toBe(0);
+});
+
+it('确认清理后任务写入失败，重启收割released预约补结算且不重新占位',async()=>{
+  const first=await task();await triggerScriptRun(first,deps);
+  let fail=true;
+  const faulty={connect:pool.connect.bind(pool),query:async(sql,args)=>{
+    if(fail&&sql.startsWith("UPDATE tasks SET status = 'completed'")){fail=false;throw new Error('crash_before_settle');}
+    return pool.query(sql,args);
+  }};
+  await reapScriptRuns(faulty,{...deps,pool:faulty});
+  expect((await pool.query('SELECT status FROM capacity_reservations')).rows).toEqual([{status:'released'}]);
+  expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('in_progress');
+  await reapScriptRuns(pool,deps);
+  expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('completed');
+  expect(starts).toBe(1);
+});
+it('cleanup_pending时发现丢失的exact容器ID仍可补绑并最终清理',async()=>{
+  const first=await task();await triggerScriptRun(first,{...deps,managed:{...deps.managed,client:{...deps.managed.client,
+    start:async(...args)=>{await deps.managed.client.start(...args);throw new Error('lost_response');}}}});
+  await pool.query("UPDATE tasks SET status='cancelled' WHERE id=$1",[first.id]);
+  await pool.query("UPDATE capacity_reservations SET status='cleanup_pending'");
+  await reapScriptRuns(pool,deps);
+  expect((await pool.query('SELECT status,container_id FROM capacity_reservations')).rows[0]).toMatchObject({status:'released',container_id:expect.any(String)});
+  expect(containers.size).toBe(0);
 });

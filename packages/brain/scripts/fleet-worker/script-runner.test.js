@@ -26,7 +26,7 @@ async function setup() {
       const result=await exec('/bin/sh',['-c',c.command]); c.stdout=result.stdout;c.exit_code=0;c.status='exited'; },
     async remove(id) { const c=await this.inspect(id); if(c) containers.delete(c.name); },
   };
-  const options = { stateRoot:root,machineId:'us-mac-m4',workerId:'worker-1',bootId:'boot-1',docker,
+  const options = { assertLocalResources:async()=>{},stateRoot:root,machineId:'us-mac-m4',workerId:'worker-1',bootId:'boot-1',docker,
     profiles:{ harmless:{ image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,user:'1000:1000',cwd:'/job' } } };
   const runner=api.createScriptRunner(options);runners.push(runner);
   const input={ reservation_id:randomUUID(),machine_id:'us-mac-m4',owner_key:`script-${randomUUID()}-a1`,
@@ -115,4 +115,16 @@ it('worker 定时清理超时容器并持久保存124，重启后仍能读取终
   expect(x.containers.size).toBe(0);
   const restored=x.api.createScriptRunner(x.options);runners.push(restored);
   await expect(restored.inspect(x.input)).resolves.toMatchObject({status:'cleaned',terminal:{exit_code:124,timed_out:true}});
+});
+
+it('每个新启动即时复验；缺本机probe和容量预留后压力升高都不执行',async()=>{
+  const x=await setup();
+  const missing=x.api.createScriptRunner({...x.options,assertLocalResources:undefined});runners.push(missing);
+  await expect(missing.start(x.input)).rejects.toThrow('script_local_resources_unavailable');
+  let count=0;
+  const pressured=x.api.createScriptRunner({...x.options,assertLocalResources:async()=>{
+    if(++count===2)throw new Error('attempt_local_resources_unavailable');
+  }});runners.push(pressured);
+  await expect(pressured.start(x.input)).rejects.toThrow('attempt_local_resources_unavailable');
+  expect(x.counts()).toEqual({creates:1,starts:0});
 });
