@@ -10,7 +10,16 @@
 
 
 
-**Brain 版本**: 1.352.1
+**Brain 版本**: 1.352.2
+
+## Brain 1.352.2 — 失败 Kernel 任务的受控再基恢复
+
+- 内部鉴权的 canonical 创建入口仅在显式恢复请求下允许同任务 failed 前任重新进入 planning；核验最新收据、失败前任、无活动尝试、fresh 地图、同仓同分支实际 Git head 与 base 血统。
+- 在同一事务追加接班收据、更新任务锚点并签发新 Controller/run；旧收据、失败 run、旧封存合同均保留，新 run 不继承旧裁决。并发重试返回同一 Controller，失败整笔回滚；留事实、Git/map 证据与 actor。
+- 永久回归覆盖真实 HTTP 入口、内部鉴权、真实隔离 PostgreSQL 事务/并发及真实 Map/Radius/preflight。原有无显式请求的恢复限制保持。
+
+
+
 
 机群统一资源预约与启动保护：Harness 按角色权重在同机事务锁内预约；资源未知、过期、并发不足均拒绝新增执行；未确认精确清理的执行继续占位。Worker 在 prepare/start 实际副作用前复验本机 CPU、内存与执行目录磁盘。安装保护保留 profile 至少10GiB可用余量和可信采样，高磁盘占用允许升级；新增受管 Harness 仍执行原85%磁盘压力门槛。
 
