@@ -33,7 +33,7 @@ async function fixture(run) {
   const temp = await mkdtemp(resolve(tmpdir(), 'smoke-write-guard-'));
   const dockerLog = resolve(temp, 'docker-calls');
   await writeFile(resolve(temp, 'docker'), '#!/usr/bin/env node\nconst fs = require("node:fs"); fs.appendFileSync(process.env.GUARD_DOCKER_LOG, JSON.stringify(process.argv.slice(2))+"\\n"); if(process.argv[2]==="exec") process.stdout.write("fixture-token"); else process.stdout.write(process.env.GUARD_DOCKER_FIXTURE);\n', { mode: 0o755 });
-  await writeFile(resolve(temp, 'psql'), '#!/usr/bin/env node\nif (process.env.GUARD_NATIVE_PSQL) { const {spawnSync}=require("node:child_process"); const env={...process.env}; for(const k of ["PGHOSTADDR","PGSERVICE","PGSERVICEFILE"]) if(!env[k]) delete env[k]; const r=spawnSync(process.env.GUARD_NATIVE_PSQL,process.argv.slice(2),{stdio:"inherit",env}); process.exit(r.status ?? 1); } console.log(1);\n', { mode: 0o755 });
+  await writeFile(resolve(temp, 'psql'), '#!/usr/bin/env node\nif (process.env.GUARD_NATIVE_PSQL) { const {spawnSync}=require("node:child_process"); const env={...process.env}; for(const k of ["PGHOSTADDR","PGSERVICE","PGSERVICEFILE"]) if(!env[k]) delete env[k]; const r=spawnSync(process.env.GUARD_NATIVE_PSQL,process.argv.slice(2),{stdio:"inherit",env,timeout:3000,killSignal:"SIGKILL"}); process.exit(r.status ?? 1); } console.log(1);\n', { mode: 0o755 });
   const info = { State: { Running: true }, Config: { Env: ['NODE_ENV=test', 'DB_NAME=cecelia_test', `BRAIN_PORT=${port}`] }, HostConfig: { NetworkMode: 'host' }, NetworkSettings: { Ports: {} } };
   async function smoke(script, overrides = {}, dockerInfo = info, guardOnly = false) {
     let args = [`packages/brain/scripts/smoke/${script.endsWith('.sh') ? script : script + '-smoke.sh'}`];
@@ -393,6 +393,7 @@ test('guarded live shell curl calls must disable default config before other fla
 function postgresFixture() {
   const message = (type, body) => { const size = Buffer.alloc(4); size.writeInt32BE(body.length + 4); return Buffer.concat([Buffer.from(type), size, body]); };
   return createTcpServer(socket => {
+    socket.setTimeout(5000, () => socket.destroy());
     let pending = Buffer.alloc(0), started = false;
     socket.on('data', chunk => {
       pending = Buffer.concat([pending, chunk]);
