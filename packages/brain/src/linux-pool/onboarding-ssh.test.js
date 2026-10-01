@@ -19,6 +19,11 @@ it('固定SSH通道校验指纹且只有stdin带源码/动作/secret，工作文
  expect(call.args).toContain('ClearAllForwardings=yes');expect(JSON.stringify(call.args)).not.toContain('private-token');expect(call.options.input).not.toContain('PRIVATE-SSH-KEY');
  const body=JSON.parse(Buffer.from(call.options.input.split('\n')[1],'base64'));expect(body.token).toBe('private-token');expect(fs.readdirSync(x.root)).toEqual([]);
 });
+it('接入恢复通过stdin使用原工件远端程序，不混入新镜像控制源码',async()=>{
+ const x=setup();await x.send(randomUUID(),x.request,{action:'probe'},{source:'fixed old remote program'});
+ const call=x.calls.find(c=>c.command.endsWith('/ssh')),body=JSON.parse(Buffer.from(call.options.input.split('\n')[1],'base64'));
+ expect(body.remote_source).toBe('fixed old remote program');expect(JSON.stringify(call.args)).not.toContain('fixed old remote program');
+});
 it.each(['fingerprint','symlink','timeout','field'])('%s失败不透出密钥且清理本地工作目录',async kind=>{
  const x=setup();let run=x.options.run;
  if(kind==='fingerprint')run=async(c,a,o)=>c.endsWith('ssh-keygen')?'256 SHA256:wrong':x.options.run(c,a,o);
