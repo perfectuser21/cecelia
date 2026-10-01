@@ -63,7 +63,7 @@ describe('T10 smoke 脚本写入路径/校验路径数据库目标一致性 [BEH
   it('psql 校验必须复用 DB_PASSWORD/PGPASSWORD，不能构造无凭据连接', () => {
     const src = readScript();
     expect(src).toMatch(/DB_PASSWORD="\$\{DB_PASSWORD:-\$\{PGPASSWORD:-\}\}"/);
-    expect(src).toMatch(/PGPASSWORD="\$DB_PASSWORD"\s+psql\s+"\$DB"/);
+    expect(src).toMatch(/PGPASSWORD="\$DB_PASSWORD"\s+psql\s+-X\s+"\$DB"/);
   });
 
   it('脚本必须显式拒绝 DB_NAME=cecelia（生产库），防止未来被误用于生产库', () => {

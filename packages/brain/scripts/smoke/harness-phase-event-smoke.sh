@@ -3,6 +3,11 @@
 # 不依赖 psql/真实 initiative_run；用 400/404 响应验证路由已挂载
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
+
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 PASS=0; FAIL=0
 
@@ -10,16 +15,16 @@ ok()   { echo "✅ $1"; PASS=$((PASS+1)); }
 fail() { echo "❌ $1"; FAIL=$((FAIL+1)); }
 
 # Brain 不可达时优雅跳过（不阻断 CI）
-curl -sf "${BRAIN}/api/brain/harness/ping" >/dev/null 2>&1 || { echo "SKIP: Brain not running at ${BRAIN}"; exit 0; }
+curl -q -sf "${BRAIN}/api/brain/harness/ping" >/dev/null 2>&1 || { echo "SKIP: Brain not running at ${BRAIN}"; exit 0; }
 echo "Brain reachable at ${BRAIN}"
 
 # 1. POST /phase-event 缺必填字段 → 400（路由已注册 + 校验逻辑正确）
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN}/api/brain/harness/phase-event" \
+STATUS=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN}/api/brain/harness/phase-event" \
   -H 'Content-Type: application/json' -d '{}')
 [ "$STATUS" = "400" ] && ok "POST /phase-event 缺字段 → 400" || fail "POST /phase-event 缺字段 → $STATUS (期望 400)"
 
 # 2. POST /phase-event 带合法格式 UUID（FK 不存在 → 500；路由未挂载 → 404）
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN}/api/brain/harness/phase-event" \
+STATUS=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN}/api/brain/harness/phase-event" \
   -H 'Content-Type: application/json' \
   -d '{"initiative_id":"00000000-0000-0000-0000-000000000001","node":"smoke","status":"running","model":"smoke-test"}')
 [ "$STATUS" != "404" ] \
@@ -27,7 +32,7 @@ STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BRAIN}/api/brain/harn
   || fail "POST /phase-event 路由未挂载 (404)"
 
 # 3. PATCH /phase-event/:id 不存在 ID → 404 含 "not found"（路由层给出，而非 Express 默认）
-PATCH_OUT=$(curl -s -w '\n%{http_code}' -X PATCH "${BRAIN}/api/brain/harness/phase-event/999999999" \
+PATCH_OUT=$(curl -q -s -w '\n%{http_code}' -X PATCH "${BRAIN}/api/brain/harness/phase-event/999999999" \
   -H 'Content-Type: application/json' \
   -d '{"status":"completed","ts_end":0,"cost_usd":0}')
 PATCH_BODY=$(echo "$PATCH_OUT" | head -1)

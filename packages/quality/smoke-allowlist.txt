@@ -373,3 +373,5 @@ preview-owned-cache-smoke.sh
 managed-script-capacity-smoke.sh
 node-onboarding-smoke.sh
 company-kr-analysis-smoke.sh
+
+smoke-production-guard-smoke.sh

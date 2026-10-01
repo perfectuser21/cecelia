@@ -7,13 +7,16 @@
 # 与 journey-goldenpaths-invariants-smoke / handoff-smoke 的夹具纪律一致。
 # 连接：优先 DATABASE_URL（CI real-env-smoke 提供，用户 cecelia）；无则本机默认 postgres。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 cd "$(dirname "$0")/../.."   # packages/brain
 
 if [ -n "${DATABASE_URL:-}" ]; then
-  PSQL="psql ${DATABASE_URL} -tA"
+  PSQL="psql -X ${DATABASE_URL} -tA"
 else
   export PGPASSWORD="${PGPASSWORD:-postgres}"
-  PSQL="psql -h localhost -p 5432 -U postgres -d cecelia -tA"
+  PSQL="psql -X -h localhost -p 5432 -U postgres -d cecelia -tA"
 fi
 export SMOKE_DATABASE_URL="${DATABASE_URL:-}"
 export PGPASSWORD="${PGPASSWORD:-postgres}"

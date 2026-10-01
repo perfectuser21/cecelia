@@ -96,6 +96,7 @@ jobs:
 
       - name: Run Smoke Ratchet Gate
         env:
+          SMOKE_ALLOW_WRITE: '1'
           BRAIN_URL: http://localhost:5221
           BRAIN_CONTAINER: cecelia-brain-smoke
           DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test

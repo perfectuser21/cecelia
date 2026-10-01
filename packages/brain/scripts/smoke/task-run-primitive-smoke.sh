@@ -7,6 +7,9 @@
 #   4. 迁移 468 additive（Notion 记账列）
 #   5. （可选）TASK_RUN_SMOKE_DB_URL 指向已跑完迁移的库：startRun 幂等 / finishRun 补终态 / 已终态不覆盖 / 记账列存在
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${TASK_RUN_SMOKE_DB_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 cd "$(dirname "$0")/../.."
 
 echo "[task-run-primitive-smoke] 1. 原语导出 + 纯逻辑"
@@ -58,7 +61,7 @@ echo "468 ✓"
 
 if [ -n "${TASK_RUN_SMOKE_DB_URL:-}" ]; then
   echo "[task-run-primitive-smoke] 5. 真库：幂等 / 终态 / 已终态不覆盖"
-  N=$(psql "$TASK_RUN_SMOKE_DB_URL" -Atc "SELECT count(*) FROM information_schema.columns WHERE table_name='task_runs' AND column_name IN ('notion_id','notion_synced_at','notion_digest')")
+  N=$(psql -X "$TASK_RUN_SMOKE_DB_URL" -Atc "SELECT count(*) FROM information_schema.columns WHERE table_name='task_runs' AND column_name IN ('notion_id','notion_synced_at','notion_digest')")
   [ "$N" = "3" ] || { echo "FAIL 记账列缺失 count=$N"; exit 1; }
   TASK_RUN_SMOKE_DB_URL="$TASK_RUN_SMOKE_DB_URL" node --input-type=module -e "
 import pg from 'pg';

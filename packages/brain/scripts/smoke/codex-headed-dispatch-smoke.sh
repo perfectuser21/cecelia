@@ -4,6 +4,11 @@
 # Sprint: sprints/07071654-codex-headed-dispatch
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
+
 BRAIN="${BRAIN_URL:-http://localhost:5221}"
 DB="${DATABASE_URL:-postgresql://cecelia:cecelia@localhost:5432/cecelia}"
 SMOKE_TAG="codex-headed-dispatch-${GITHUB_RUN_ID:-local}-$$-$RANDOM"
@@ -11,7 +16,7 @@ PASS=0; FAIL=0
 ok()   { echo "  ✅ $1"; ((PASS++)) || true; }
 fail() { echo "  ❌ $1"; ((FAIL++)) || true; }
 cleanup() {
-  psql "$DB" \
+  psql -X "$DB" \
     -c "UPDATE tasks SET status='cancelled', updated_at=NOW() WHERE payload->>'smoke_tag' = '$SMOKE_TAG' AND status NOT IN ('completed','cancelled')" \
     >/dev/null 2>&1 || true
 }
@@ -20,7 +25,7 @@ trap cleanup EXIT
 echo "── codex headed dispatch smoke ──"
 
 # 1. POST tasks(mode=headed, executor=codex) → 200 + id
-RESP=$(curl -sf -X POST "$BRAIN/api/brain/tasks" \
+RESP=$(curl -q -sf -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d "{\"task_type\":\"talk\",\"title\":\"headed-smoke-test-$SMOKE_TAG\",\"payload\":{\"executor\":\"codex\",\"mode\":\"headed\",\"journey_id\":\"bb8cc561-b3ee-4fec-b74d-2255694bd963\",\"smoke_tag\":\"$SMOKE_TAG\"}}" 2>/dev/null) || { fail "POST tasks(mode=headed) 不可达"; RESP="{}"; }
 echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);exit(0 if isinstance(d.get('id'),str) else 1)" 2>/dev/null \
@@ -28,7 +33,7 @@ echo "$RESP" | python3 -c "import sys,json;d=json.load(sys.stdin);exit(0 if isin
   || fail "POST tasks(mode=headed) 响应异常: $RESP"
 
 # 2. POST tasks(mode=headed, executor=claude) → 200/201（T6 88e0b448 解锁后，原 400 拒绝已反转）
-CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
+CODE=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d "{\"task_type\":\"talk\",\"title\":\"claude-headed-smoke-$SMOKE_TAG\",\"payload\":{\"executor\":\"claude\",\"mode\":\"headed\",\"journey_id\":\"bb8cc561-b3ee-4fec-b74d-2255694bd963\",\"smoke_tag\":\"$SMOKE_TAG\"}}" 2>/dev/null || echo "000")
 [ "$CODE" = "200" ] || [ "$CODE" = "201" ] \
@@ -36,7 +41,7 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
   || fail "POST tasks(executor=claude, mode=headed) 应返 200/201，实际 $CODE"
 
 # 3. POST tasks(mode=headless) → 200（合法模式）
-CODE2=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
+CODE2=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d "{\"task_type\":\"talk\",\"title\":\"headless-smoke-$SMOKE_TAG\",\"payload\":{\"executor\":\"codex\",\"mode\":\"headless\",\"smoke_tag\":\"$SMOKE_TAG\"}}" 2>/dev/null || echo "000")
 [ "$CODE2" = "201" ] || [ "$CODE2" = "200" ] \
@@ -44,7 +49,7 @@ CODE2=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" 
   || fail "POST tasks(mode=headless) 应返 200/201，实际 $CODE2"
 
 # 4. POST tasks(mode=invalid) → 400
-CODE3=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
+CODE3=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" \
   -H "Content-Type: application/json" \
   -d "{\"task_type\":\"talk\",\"title\":\"invalid-mode-$SMOKE_TAG\",\"payload\":{\"executor\":\"codex\",\"mode\":\"turbo\",\"smoke_tag\":\"$SMOKE_TAG\"}}" 2>/dev/null || echo "000")
 [ "$CODE3" = "400" ] \
@@ -52,7 +57,7 @@ CODE3=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BRAIN/api/brain/tasks" 
   || fail "POST tasks(mode=invalid) 应返 400，实际 $CODE3"
 
 # 5. initiative_runs 表含 tmux_killed_at 字段（migration 316）
-COL=$(psql "$DB" -t -c "SELECT column_name FROM information_schema.columns WHERE table_name='initiative_runs' AND column_name='tmux_killed_at'" 2>/dev/null | tr -d ' ' || echo "")
+COL=$(psql -X "$DB" -t -c "SELECT column_name FROM information_schema.columns WHERE table_name='initiative_runs' AND column_name='tmux_killed_at'" 2>/dev/null | tr -d ' ' || echo "")
 [ "$COL" = "tmux_killed_at" ] \
   && ok "initiative_runs.tmux_killed_at 字段存在（migration 316）" \
   || fail "initiative_runs.tmux_killed_at 字段不存在（migration 316 未跑？）"

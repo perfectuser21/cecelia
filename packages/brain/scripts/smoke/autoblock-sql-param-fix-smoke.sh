@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Smoke: autoblock SQL 参数类型修复验证（$2::int cast）
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${BRAIN_DB_URL:-${DATABASE_URL:-postgresql://localhost/cecelia}}"; then
+  exit 0
+fi
 BRAIN_DB_URL="${BRAIN_DB_URL:-${DATABASE_URL:-postgresql://localhost/cecelia}}"
 echo "🔍 smoke: autoblock-sql-param-fix (\$2::int cast)"
 # 验证修复后 SQL 执行无报错
-psql "$BRAIN_DB_URL" -c "
+psql -X "$BRAIN_DB_URL" -c "
 DO \$\$
 DECLARE
   test_id uuid := gen_random_uuid();
