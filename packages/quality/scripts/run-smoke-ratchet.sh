@@ -39,7 +39,7 @@ DENYLIST_ENTRIES=$(_load_list "$DENYLIST")
 DEBT_ENTRIES=$(_load_list "$DEBT_LIST")
 WRITE_TARGETS=$(_load_list "$QUALITY_DIR/smoke-write-targets.txt")
 
-_in_list() { echo "$2" | grep -qxF "$1"; }
+_in_list() { grep -qxF "$1" <<< "$2"; }
 
 echo "══════════════════════════════════════════════"
 echo "🔬 Smoke Ratchet Gate"
