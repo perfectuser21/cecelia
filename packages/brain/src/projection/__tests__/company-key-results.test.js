@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runCompanyKrProjection, readCompanySnapshot, ingestCompanyCurrent } from '../company-key-results.js';
-import { COMPANY_FORMULA, COMPANY_GOALS, COMPANY_KR_CATALOG, COMPANY_KR_DATABASE, companyMetric } from '../../lib/company-kr-metrics.js';
+import { COMPANY_FORMULA, COMPANY_GOALS, COMPANY_GOAL_DATABASE, COMPANY_KR_CATALOG, COMPANY_KR_DATABASE, companyMetric } from '../../lib/company-kr-metrics.js';
 
 function recoveryFixture(failure) {
   const task = { id: 'registered-import', result: {} };
@@ -26,6 +26,7 @@ function recoveryFixture(failure) {
   });
   const pool = { query, connect: async () => ({ query, release() {} }) };
   const notionReq = vi.fn(async (_token, path, method, body) => {
+    if (path === '/users/me') return { id: 'projection-bot', type: 'bot' };
     if (path === `/databases/${COMPANY_KR_DATABASE}`) return { properties: Object.fromEntries(Object.entries({ Name: 'title', Current: 'number', Target: 'number', Start: 'number', Progress: 'formula', Goal: 'relation', Area: 'relation', Status: 'status' }).map(([key, type]) => [key, { type, ...(key === 'Progress' ? { formula: { expression: COMPANY_FORMULA } } : {}) }])) };
     if (path.endsWith('/query')) return { results: structuredClone(pages), has_more: false };
     const page = pages.find(p => path.endsWith(p.id));
@@ -37,7 +38,7 @@ function recoveryFixture(failure) {
       return structuredClone(page);
     }
     const goal = COMPANY_GOALS.find(g => path.endsWith(g.page_id));
-    return { properties: { Name: { title: [{ plain_text: goal.title }] }, Area: { relation: [] } } };
+    return { id: goal.page_id, parent: { database_id: COMPANY_GOAL_DATABASE }, properties: { Name: { title: [{ plain_text: goal.title }] }, Area: { relation: [] } } };
   });
   return { pool, notionReq, rows, pages, task };
 }
@@ -105,5 +106,16 @@ describe('公司库列级投影门', () => {
     };
     await expect(runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq, now: 1000000 })).resolves.toMatchObject({ patched: 1, claims: 0 });
     expect(fixture.task.result.metric_observations.filter(e => e.kind === 'machine_projection_confirmed')).toHaveLength(1);
+  });
+  it('现场等于待推机器值但作者变化时无法归因，保留新观察与未决值并留账停推', async () => {
+    const fixture = recoveryFixture('response');
+    await expect(runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq: fixture.notionReq, now: 1000000 })).rejects.toThrow();
+    fixture.rows[0].metadata.company_metric = companyMetric(0, 2, 5);
+    fixture.pages[0].last_edited_by.id = 'human-unknown-field-edit'; fixture.notionReq.mockClear();
+    await expect(runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq: fixture.notionReq, now: 1300001 })).rejects.toThrow('作者');
+    expect(fixture.notionReq.mock.calls.some(([, , method]) => method === 'PATCH')).toBe(false);
+    expect(fixture.rows[0].metadata).toMatchObject({ company_metric: { current: '2' }, validation_state: 'verified_observation', company_projection_pending: { value: '1' } });
+    expect(fixture.task.result.metric_observations.some(e => e.kind === 'machine_projection_ambiguous')).toBe(true);
+    expect(fixture.task.result.metric_observations.some(e => e.kind === 'human_current_claim')).toBe(false);
   });
 });
