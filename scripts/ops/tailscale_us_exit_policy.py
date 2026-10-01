@@ -140,6 +140,7 @@ def generate_rules(snapshot, derp_map, *, allowed_self_ips, now=None, approved_n
     for interface in sorted({value for value in lan_interfaces if isinstance(value, str)}):
         if re.fullmatch(r"en\d+", interface):
             lines.append(f"pass out quick on {interface} inet proto udp from 0.0.0.0 port 68 to 255.255.255.255 port 67 no state")
+            lines.append(f"pass out quick on {interface} inet proto udp from ({interface}) port 68 to 255.255.255.255 port 67 no state")
     for net in PRIVATE_NETS:
         lines.append(f"pass out quick {family(ipaddress.ip_network(net).network_address)} from any to {net} no state")
     for net in CONTROL_NETS:

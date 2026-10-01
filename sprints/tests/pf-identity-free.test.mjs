@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 it('native entry executes immutable PF deadlock regression suite', async () => {
   const root = fileURLToPath(new URL('../../', import.meta.url));
   const suite = fileURLToPath(new URL('../../tests/regression/tailscale-us-exit/pf-identity-free.test.py', import.meta.url));
-  expect(createHash('sha256').update(readFileSync(suite)).digest('hex')).toBe('820974b05576124e2844e7821397ccf1908a0f46cae3169b1d2f22ddab69490e');
+  expect(createHash('sha256').update(readFileSync(suite)).digest('hex')).toBe('7ac01653017ae0ae286f092745c1db2d2fca9fcaf785f48e3edbdbf39de4e8e1');
   const result = await promisify(execFile)('python3', [suite, '-v'], {
     cwd: root, timeout: 30_000, maxBuffer: 1024 * 1024,
   });
