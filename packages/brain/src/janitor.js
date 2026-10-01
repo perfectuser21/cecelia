@@ -57,6 +57,9 @@ export function createJanitor(registry) {
     const controller = new AbortController();
     let acquired = false;
     let broken = false;
+    let result;
+    let operationError;
+    let unlockFailed = false;
     const onError = () => { broken = true; controller.abort(); };
     client.on?.('error', onError);
     const ensureConnected = () => {
@@ -69,9 +72,10 @@ export function createJanitor(registry) {
       ensureConnected();
       if (!lock?.locked) throw failure('JANITOR_BUSY', 423);
       acquired = true;
-      return await callback(client, ensureConnected, controller.signal);
+      result = await callback(client, ensureConnected, controller.signal);
+    } catch (err) {
+      operationError = err;
     } finally {
-      let unlockFailed = false;
       if (acquired && !broken) {
         try {
           const { rows: [unlocked] } = await client.query(
@@ -82,8 +86,11 @@ export function createJanitor(registry) {
       }
       client.removeListener?.('error', onError);
       client.release(broken || unlockFailed);
-      if (unlockFailed) throw failure('JANITOR_LOCK_RELEASE_FAILED', 503);
     }
+    if (operationError) throw operationError;
+    if (unlockFailed) throw failure('JANITOR_LOCK_RELEASE_FAILED', 503);
+    ensureConnected();
+    return result;
   }
 
   async function runJob(pool, jobId) {
