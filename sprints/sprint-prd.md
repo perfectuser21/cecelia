@@ -1,6 +1,6 @@
 # 西安 M4：消除 PF 身份查询锁闭环
 
-任务：e3001293-281c-4ea6-a793-8c03af84aa63；分支：cp-1001-m4-pf-pcb。
+任务：e3001293-281c-4ea6-a793-8c03af84aa63；分支：cp-10011638-m4-pf-pcb。
 
 gp-anchor: none(infra)
 

@@ -174,6 +174,40 @@ class InterfacePolicyTests(unittest.TestCase):
                     validate_preflight(anchors, info, states)
 
 class ActivationFailureTests(unittest.TestCase):
+    def test_loaded_daemon_must_be_stopped_before_anchor_restore(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import tailscale_us_exit_activation as activation
+        with patch.object(activation.subprocess, "run", return_value=SimpleNamespace(returncode=0)), \
+             patch.object(activation, "command", side_effect=RuntimeError("bootout failed")):
+            with self.assertRaises(RuntimeError):
+                activation.stop_job(activation.GUARD_LABEL)
+
+    def test_confirmation_requires_both_target_adb_shell_results(self):
+        import tempfile
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import tailscale_us_exit_activation as activation
+        targets = {"ANGYVB4227006983", "ANGYVB4402004137"}
+        with tempfile.TemporaryDirectory() as directory:
+            adb = Path(directory) / "adb"
+            adb.touch()
+            calls = []
+            def run(arguments):
+                calls.append(arguments)
+                return "1\n" if arguments[-2:] == ["getprop", "sys.boot_completed"] else "cecelia-pf-confirm\n"
+            with patch.object(activation, "adb_binary", return_value=str(adb)), \
+                 patch.object(activation.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="target")), \
+                 patch.object(activation, "command", side_effect=run):
+                self.assertEqual(set(activation.verify_adb(directory)), targets)
+                self.assertEqual(len(calls), 4)
+                self.assertEqual({call[call.index("-s")+1] for call in calls}, targets)
+            with patch.object(activation, "adb_binary", return_value=str(adb)), \
+                 patch.object(activation.pwd, "getpwuid", return_value=SimpleNamespace(pw_name="target")), \
+                 patch.object(activation, "command", return_value="0\n"):
+                with self.assertRaises(RuntimeError):
+                    activation.verify_adb(directory)
+
     def test_candidate_must_match_fresh_authenticated_policy(self):
         from tailscale_us_exit_activation import validate_candidate
         rules = "pass out quick on lo0 all no state\nblock drop out quick proto { tcp udp } all\n"
