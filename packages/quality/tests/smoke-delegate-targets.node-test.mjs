@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
@@ -28,6 +28,36 @@ const delegates = [
   ['packages/brain/scripts/model-accounts-seed-e2e.sh', []],
   ['scripts/preview-ledger-activate.sh', ['cecelia_test', '123']],
 ];
+const aliasCall = /(?:"\$(?:\{)?PSQL(?:_EXECUTABLE)?(?:\})?"|\$(?:\{)?PSQL(?:_EXECUTABLE)?(?:\})?)(?=\s)/g;
+test('startup scanner recognizes quoted, unquoted and command-substitution SQL aliases', () => {
+  for (const command of ['$PSQL -c', '"$PSQL" -c', '$PSQL_EXECUTABLE -c', '"$PSQL_EXECUTABLE" -c',
+    '$($PSQL_EXECUTABLE -c)', '$("$PSQL_EXECUTABLE" -c)', '${PSQL} -c']) {
+    assert.ok(command.match(aliasCall), command);
+  }
+  assert.equal('$PSQL_DB'.match(aliasCall), null);
+});
+for (const name of await readdir(resolve(root, 'packages/brain/scripts/smoke'))) {
+  if (!name.endsWith('.sh')) continue;
+  const source = await readFile(resolve(root, 'packages/brain/scripts/smoke', name), 'utf8');
+  if (!source.match(aliasCall) || !source.includes('command -v psql')) continue;
+  test(`${name}: all actual SQL alias calls disable startup configuration`, () => {
+    const commands = source.replace(/\\\n/g, ' ').split('\n').filter(line => !line.trim().startsWith('#')).join('\n');
+    for (const match of commands.matchAll(aliasCall)) {
+      assert.match(commands.slice(match.index + match[0].length), /^\s+-X(?:\s|$)/,
+        `unchecked SQL alias in ${name}`);
+    }
+  });
+}
+test('all actual curl executable aliases disable default configuration', async () => {
+  for (const name of await readdir(resolve(root, 'packages/brain/scripts/smoke'))) {
+    if (!name.endsWith('.sh')) continue;
+    const source = await readFile(resolve(root, 'packages/brain/scripts/smoke', name), 'utf8');
+    const commands = source.replace(/\\\n/g, ' ').split('\n').filter(line => !line.trim().startsWith('#')).join('\n');
+    for (const match of commands.matchAll(/"?\$CURL_EXECUTABLE"?(?=\s)/g)) {
+      assert.match(commands.slice(match.index + match[0].length), /^\s+-q(?:\s|$)/, name);
+    }
+  }
+});
 for (const [script] of delegates) {
   test(`${script}: every actual psql invocation disables startup configuration`, async () => {
     const source = await readFile(resolve(root, script), 'utf8');
