@@ -9,6 +9,9 @@ import { COMPANY_GOALS, COMPANY_KR_CATALOG, COMPANY_KR_DATABASE, COMPANY_FORMULA
 import { runCompanyKrProjection, COMPANY_KR_VESSEL } from '../../projection/company-key-results.js';
 import { recalculateKrProgress } from '../../lib/kr-recalculate-progress.js';
 import { buildNotionKrProperties } from '../../projection/key-results.js';
+import { writeProgressToKR } from '../../kr3-progress-calculator.js';
+import { answerQuestionForGoal } from '../../okr-tick.js';
+import { observeCompanyKr } from '../../lib/company-kr-observations.js';
 
 describe('独立 KR 投影真实 PostgreSQL', () => {
   it('原始指标独立投影、链接真实入库且第二轮零远程写，事务最终回滚', async () => {
@@ -78,6 +81,7 @@ describe('公司KR真实SQL与HTTP', () => {
       if (path === `/databases/${COMPANY_KR_DATABASE}`) return { properties: Object.fromEntries(Object.entries({ Name: 'title', Current: 'number', Target: 'number', Start: 'number', Progress: 'formula', Goal: 'relation', Area: 'relation', Status: 'status' }).map(([k, type]) => [k, { type, ...(k === 'Progress' ? { formula: { expression: COMPANY_FORMULA } } : {}) }])) };
       if (path.endsWith('/query')) return { results: [...remote.values()], has_more: false };
       const id = path.split('/').pop();
+      if (remote.has(id) && method === 'GET') return remote.get(id);
       if (remote.has(id) && method === 'PATCH') { Object.assign(remote.get(id).properties, body.properties); return remote.get(id); }
       const goal = COMPANY_GOALS.find(g => g.page_id === id);
       if (goal) return { id, properties: { Name: name(goal.title), Area: { relation: [] }, Status: { status: { name: 'Not Started' } } } };
@@ -157,6 +161,34 @@ describe('公司KR真实SQL与HTTP', () => {
       expect(saved.metadata).toMatchObject({ company_metric: { current: '3.456' }, validation_state: 'unverified', company_current_baseline: '3.456' });
       const claim = (await client.query('SELECT result FROM tasks WHERE id=$1', [taskId])).rows[0].result.metric_observations.find(e => e.kind === 'human_current_claim');
       expect(claim).toMatchObject({ editor: 'human-current', before: { current: '2.345' }, after: { current: '3.456' } });
+      const companyBefore = (await client.query("SELECT id,progress FROM key_results WHERE metadata->>'metric_mode'='company_formula_v1' ORDER BY id")).rows;
+      await writeProgressToKR(scoped, 99);
+      expect((await client.query("SELECT id,progress FROM key_results WHERE metadata->>'metric_mode'='company_formula_v1' ORDER BY id")).rows).toEqual(companyBefore);
+      // 同毫秒不同微秒必须拒绝旧版本；不能依赖JS Date的毫秒截断。
+      await client.query("UPDATE key_results SET updated_at='2026-10-01T03:00:00.123001Z' WHERE id=$1", [kr.id]);
+      const oldVersion = (await request(app).get('/api/brain/okr/company-key-results')).body.items.find(r => r.id === kr.id).updated_at;
+      await client.query("UPDATE key_results SET updated_at='2026-10-01T03:00:00.123002Z' WHERE id=$1", [kr.id]);
+      expect((await request(app).post(`/api/brain/okr/key-results/${kr.id}/observations`).send({ ...body, idempotency_key: 'microsecond-stale', expected_updated_at: oldVersion })).status).toBe(409);
+      // 问题读取旧metadata后发生新观察，回答仅更新questions，不能吞掉指标/证据。
+      await client.query("UPDATE key_results SET metadata=jsonb_set(metadata,'{pending_questions}','[{\"id\":\"question\"}]'::jsonb,true) WHERE id=$1", [kr.id]);
+      const questionDb = { query: async (sql, args) => {
+        const result = await client.query(sql, args);
+        if (sql.includes('SELECT metadata')) {
+          const fresh = (await request(app).get('/api/brain/okr/company-key-results')).body.items.find(r => r.id === kr.id);
+          await observeCompanyKr(scoped, kr.id, { ...body, current_value: '4.567', observed_at: '2026-10-01T04:00:00Z', expected_updated_at: fresh.updated_at, idempotency_key: 'concurrent-question' });
+        }
+        return result;
+      } };
+      await answerQuestionForGoal(kr.id, 'question', '保留指标', questionDb);
+      saved = (await client.query('SELECT * FROM key_results WHERE id=$1', [kr.id])).rows[0];
+      expect(saved.metadata).toMatchObject({ metric_mode: 'company_formula_v1', company_metric: { current: '4.567' }, last_observation: { idempotency_key: 'concurrent-question' }, pending_questions: [{ id: 'question', answer: '保留指标', answered: true }] });
+      // 基线缺失时无法判别来源，留账停该页，双方值都保留。
+      await client.query("UPDATE key_results SET metadata=metadata-'company_current_baseline' WHERE id=$1", [kr.id]);
+      requests.length = 0;
+      await expect(runCompanyKrProjection(scoped, { token: 'fake', notionReq, now: Date.now() + 600002 })).rejects.toThrow('无基线冲突');
+      expect(requests.filter(r => r.method === 'PATCH')).toHaveLength(0);
+      expect((await client.query('SELECT metadata FROM key_results WHERE id=$1', [kr.id])).rows[0].metadata.company_metric.current).toBe('4.567');
+      expect((await client.query('SELECT result FROM tasks WHERE id=$1', [taskId])).rows[0].result.metric_observations.some(e => e.kind === 'current_conflict')).toBe(true);
     } finally { await client.query('ROLLBACK'); client.release(); await pool.end(); }
   }, 30000);
 });
