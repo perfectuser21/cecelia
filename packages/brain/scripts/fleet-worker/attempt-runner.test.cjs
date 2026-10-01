@@ -2546,7 +2546,7 @@ describe('Fleet Worker durable runtime adapters', () => {
     }
   });
 
-  it('removes the container and runtime when Docker omits the created id', async () => {
+  it('Docker创建响应缺ID时保留现场而非按名称删除', async () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
     const runCommand = vi.fn(async () => ({ stdout: '' }));
@@ -2596,12 +2596,8 @@ describe('Fleet Worker durable runtime adapters', () => {
         credential: CREDENTIAL,
       })).rejects.toThrow(/attempt_container_id_missing/);
 
-      expect(runCommand).toHaveBeenCalledWith(
-        'docker',
-        ['rm', '-f', '--', `cecelia-fleet-${ATTEMPT_ID}`],
-        undefined,
-      );
-      expect(fs.existsSync(path.join(runtimeRoot, ATTEMPT_ID))).toBe(false);
+      expect(runCommand.mock.calls.some(([,args])=>args.includes('rm'))).toBe(false);
+      expect(fs.existsSync(path.join(runtimeRoot, ATTEMPT_ID))).toBe(true);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }
@@ -2655,30 +2651,31 @@ describe('Fleet Worker durable runtime adapters', () => {
       }).catch((caught) => caught);
 
       expect(error.message).toContain('attempt_container_rollback_failed');
-      expect(error.rollbackContainerId).toBe(`cecelia-fleet-${ATTEMPT_ID}`);
+      expect(error.rollbackContainerId).toBeUndefined();
+      expect(error.cleanupUnconfirmed).toBe(true);
       expect(fs.existsSync(path.join(runtimeRoot, ATTEMPT_ID))).toBe(true);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
     }
   });
 
-  it('removes an owned runtime without calling Docker when reconciliation proves the container missing', async () => {
+  it('清理入口独立确认原容器ID缺失才移除runtime', async () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-docker-adapter-'));
     const attemptRuntime = path.join(runtimeRoot, ATTEMPT_ID);
     fs.mkdirSync(attemptRuntime, { recursive: true });
     fs.writeFileSync(path.join(attemptRuntime, 'task-bundle.json'), 'bounded prompt');
-    const runCommand = vi.fn();
+    const runCommand = vi.fn(async()=>{throw Error('No such container');});
     const docker = createDockerAdapter({ workerId: WORKER_ID, runCommand, runtimeRoot });
 
     try {
       await docker.remove({
-        containerId: 'already-missing',
+        containerId: DOCKER_ID,
         attemptId: ATTEMPT_ID,
         containerMissing: true,
       });
 
-      expect(runCommand).not.toHaveBeenCalled();
+      expect(runCommand.mock.calls.some(([,args])=>args.includes('rm'))).toBe(false);
       expect(fs.existsSync(attemptRuntime)).toBe(false);
     } finally {
       fs.rmSync(runtimeRoot, { recursive: true, force: true });
@@ -2697,7 +2694,7 @@ describe('Fleet Worker durable runtime adapters', () => {
 
     try {
       await expect(docker.remove({
-        containerId: 'already-missing',
+        containerId: DOCKER_ID,
         attemptId: ATTEMPT_ID,
       })).resolves.toEqual({ removed: true });
       expect(fs.existsSync(attemptRuntime)).toBe(false);
@@ -3451,7 +3448,7 @@ describe('Harness actual Docker hard limits', () => {
   it('actual prepare applies shared role CPU/memory/swap/PID limits instead of caller limits', async () => {
     const { createDockerAdapter } = loadAttemptRunner();
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-limits-'));
-    const runCommand = vi.fn(async () => ({ stdout: 'exact-container' }));
+    const runCommand = vi.fn(async () => ({ stdout: DOCKER_ID }));
     const docker = createDockerAdapter({workerId: WORKER_ID, runtimeRoot:root,runCommand,resolveMountSource:source=>source});
     const deps = dependencies(); const runner = createRunner(deps);
     try {
@@ -3600,4 +3597,27 @@ it('真实Docker adapter历史清理允许无镜像journal与明确缺失，但�
     await expect(docker.verifyIdentity(identity)).rejects.toThrow('attempt_container_identity_unverified');
     expect(runCommand.mock.calls.some(([,args])=>args.includes('rm'))).toBe(false);
   } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+it('真实adapter remove拒绝完整ID但错误run归属，删除入口独立核验',async()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'runner-remove-owner-'));
+  const runCommand=vi.fn(async()=>({stdout:JSON.stringify([{Id:DOCKER_ID,Name:`/cecelia-fleet-${ATTEMPT_ID}`,Image:IMAGE_DIGEST,
+    Config:{Image:IMAGE_DIGEST,Labels:{'cecelia.fleet.attempt_id':ATTEMPT_ID,'cecelia.fleet.worker_id':WORKER_ID,'cecelia.fleet.run_id':OTHER_ATTEMPT_ID}}}])}));
+  try{
+    const docker=loadAttemptRunner().createDockerAdapter({workerId:WORKER_ID,runtimeRoot:root,runCommand});
+    await expect(docker.remove({attemptId:ATTEMPT_ID,runId:RUN_ID,containerId:DOCKER_ID})).rejects.toThrow('attempt_container_identity_unverified');
+    expect(runCommand.mock.calls.some(([,args])=>args.includes('rm'))).toBe(false);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+it('Docker create响应丢失时真实adapter保留现场，Runner回滚隔离工作区且零按名删除',async()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'runner-create-lost-'));
+  const runCommand=vi.fn(async(_file,args)=>{if(args[0]==='create')throw Error('create response lost');return {stdout:''};});
+  const docker=loadAttemptRunner().createDockerAdapter({workerId:WORKER_ID,runtimeRoot:root,runCommand,resolveMountSource:source=>source});
+  const deps=dependencies({docker}),runner=createRunner(deps);
+  try{
+    await expect(runner.prepare(request())).rejects.toThrow('attempt_launch_rollback_failed');
+    expect(runCommand.mock.calls.some(([,args])=>args.includes('rm'))).toBe(false);
+    expect(deps.workspaceManager.quarantine).toHaveBeenCalledOnce();
+    expect(deps.workspaceManager.cleanup).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(root,ATTEMPT_ID))).toBe(true);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });

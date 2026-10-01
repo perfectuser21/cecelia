@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-const { verifyContainerIdentity } = require('./attempt-container-identity.cjs');
+const { CONTAINER_ID, verifyContainerIdentity } = require('./attempt-container-identity.cjs');
 const { resolveAttemptResourcePlan, dockerLimitArgs } = require('./attempt-resource-policy.cjs');
 
 const { execFile, spawn } = require('node:child_process');
@@ -644,7 +644,7 @@ function createDockerAdapter({
         }),
         input.image,
       ];
-      let created;
+      let created, createAttempted = false;
       try {
         if (needsGitHubCredential) {
           await runCommand(
@@ -689,30 +689,25 @@ function createDockerAdapter({
             '+',
           ], undefined);
         }
+        createAttempted = true;
         created = await runCommand('docker', createArgs);
-        if (!String(created?.stdout ?? '').trim()) {
+        if (!CONTAINER_ID.test(String(created?.stdout ?? '').trim())) {
           throw new Error('attempt_container_id_missing');
         }
       } catch (error) {
-        let removalError = null;
-        try {
-          await runCommand(
-            'docker',
-            ['rm', '-f', '--', containerName],
-            undefined,
-          );
-        } catch (cleanupError) {
-          if (!isExplicitlyMissingDockerObject(cleanupError)) {
-            removalError = cleanupError;
+        if (createAttempted) {
+          const containerId = String(created?.stdout ?? '').trim();
+          try {
+            if (!CONTAINER_ID.test(containerId)) throw new Error('attempt_container_identity_unverified');
+            await removeContainer({ attemptId, runId: input.runId, image: input.image, containerId });
+          } catch (cleanupError) {
+            const rollbackError = new Error(`attempt_container_rollback_failed:${error.message}`, {
+              cause: new AggregateError([error, cleanupError]),
+            });
+            rollbackError.cleanupUnconfirmed = true;
+            if (CONTAINER_ID.test(containerId)) rollbackError.rollbackContainerId = containerId;
+            throw rollbackError;
           }
-        }
-        if (removalError) {
-          const rollbackError = new Error(
-            `attempt_container_rollback_failed:${error.message}`,
-            { cause: new AggregateError([error, removalError]) },
-          );
-          rollbackError.rollbackContainerId = containerName;
-          throw rollbackError;
         }
         fs.rmSync(attemptRuntime, { recursive: true, force: true });
         throw error;
@@ -726,9 +721,10 @@ function createDockerAdapter({
   }
 
   async function verifyIdentity({ attemptId, runId, image, containerId, cleanup = false }) {
-    if (!UUID_PATTERN.test(runId ?? '') || (!(cleanup && image == null) && !IMAGE_DIGEST_PATTERN.test(image ?? ''))) throw new Error('attempt_container_identity_unverified');
+    if ((!(cleanup && runId == null) && !UUID_PATTERN.test(runId ?? '')) || (!(cleanup && image == null) && !IMAGE_DIGEST_PATTERN.test(image ?? ''))) throw new Error('attempt_container_identity_unverified');
     return verifyContainerIdentity({ runCommand, containerId, allowMissing: cleanup, containerName: `cecelia-fleet-${attemptId}`, image,
-      labels: { 'cecelia.fleet.attempt_id': attemptId, 'cecelia.fleet.run_id': runId, 'cecelia.fleet.worker_id': workerId },
+      labels: { 'cecelia.fleet.attempt_id': attemptId, ...(runId == null ? {} : {'cecelia.fleet.run_id': runId}), 'cecelia.fleet.worker_id': workerId },
+      labelPatterns: { 'cecelia.fleet.run_id': UUID_PATTERN },
       errorCode: 'attempt_container_identity_unverified' });
   }
 
@@ -793,6 +789,17 @@ function createDockerAdapter({
     return Object.freeze({ containerId });
   }
 
+  async function removeContainer({ containerId, attemptId, runId, image } = {}) {
+    assertAttemptId(attemptId);
+    const verifiedId = await verifyIdentity({ attemptId, runId, image, containerId, cleanup: true });
+    if (verifiedId) {
+      try { await runCommand('docker', ['rm', '-f', '--', verifiedId], undefined); }
+      catch (error) { if (!isExplicitlyMissingDockerObject(error)) throw error; }
+    }
+    fs.rmSync(path.join(root, attemptId), { recursive: true, force: true });
+    return Object.freeze({ removed: true });
+  }
+
   return Object.freeze({
     prepare: prepareContainer,
     verifyIdentity,
@@ -829,23 +836,13 @@ function createDockerAdapter({
       });
     },
 
-    async remove({ containerId, attemptId, containerMissing = false } = {}) {
-      assertAttemptId(attemptId);
-      if (!containerMissing) {
-        try {
-          await runCommand('docker', ['rm', '-f', '--', containerId], undefined);
-        } catch (error) {
-          if (!isExplicitlyMissingDockerObject(error)) throw error;
-        }
-      }
-      fs.rmSync(path.join(root, attemptId), { recursive: true, force: true });
-      return Object.freeze({ removed: true });
-    },
+    remove: removeContainer,
 
     async listOwned({ workerId } = {}) {
       const result = await runCommand('docker', [
         'ps',
         '-a',
+        '--no-trunc',
         '--filter',
         `label=cecelia.fleet.worker_id=${workerId}`,
         '--format',
@@ -1794,7 +1791,8 @@ function createAttemptRunner({
     resources,
   }) {
     const cleanupFailures = [];
-    let containerCleanupFailed = false;
+    let containerCleanupFailed = error?.cleanupUnconfirmed === true;
+    if (containerCleanupFailed) cleanupFailures.push(new Error('attempt_cleanup_identity_unconfirmed'));
     const rollbackContainerId = containerId ?? error?.rollbackContainerId;
     if (rollbackContainerId) {
       try {

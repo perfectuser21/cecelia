@@ -24,6 +24,8 @@ const runCommand = async (file,args) => {
   // 保留真实 adapter 的全部资源参数；仅测试程序替代模型入口，专属网络禁外连。
   if(file === 'docker' && args[0] === 'create') args=[args[0],'--entrypoint','node',...args.slice(1),'-e',program];
   if(file === 'docker' && args[0] === 'network' && args[1] === 'create') args=[...args.slice(0,2),'--internal',...args.slice(2)];
+  if(file === 'docker' && (args[0] === 'ps' || (args[0] === 'network' && args[1] === 'ls')))
+    args=[...args,'--filter',`label=cecelia.fleet.attempt_id=${attemptId}`];
   return run(file,args,{encoding:'utf8',timeout:30000,maxBuffer:1024**2});
 };
 const docker = createDockerAdapter({workerId,runtimeRoot:runtime,runCommand});
@@ -64,8 +66,11 @@ async function main() {
   await docker.remove({attemptId,containerId:runnerId});
   await manager.releaseService({attemptId,runtime:resources.runtime});
   await manager.release({attemptId,runtime:resources.runtime});
+  resources=await manager.provision({attemptId,role,requirements:{postgres:true}});
+  const reconciled=await manager.reconcile();
+  assert.deepEqual(reconciled.removed_attempts,[attemptId]);
   console.log(JSON.stringify({result:'PASS',attempt_id:attemptId,runner_id:runnerId,postgres_id:postgresId,
-    image,postgres_image:postgresImageDigest,plan,oom_isolated:true,postgres_healthy:true,identity_cleanup_verified:true,model_calls:0}));
+    image,postgres_image:postgresImageDigest,plan,oom_isolated:true,postgres_healthy:true,identity_cleanup_verified:true,orphan_cleanup_verified:true,model_calls:0}));
 }
 async function cleanup() {
   // 只清理由本次随机 attempt 标签证明归属的精确容器ID。
