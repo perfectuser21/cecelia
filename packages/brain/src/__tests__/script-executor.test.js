@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 /**
  * script-executor.test.js —— executor=script 的派发/收割逻辑（链 bf5088a3 棒3 PR B，任务 5cdbd52a）。
  *
