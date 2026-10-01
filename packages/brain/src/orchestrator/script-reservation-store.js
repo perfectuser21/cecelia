@@ -57,9 +57,11 @@ export function createScriptReservationStore(pool) {
         if (occupied || !validSnapshot(input)) return WAIT;
         const reservation = (await client.query(`INSERT INTO capacity_reservations
           (id,machine_id,owner_kind,owner_key,task_id,config_digest,allocation_mode,policy_version,snapshot_time,snapshot_digest)
-          VALUES ($1,$2,'script',$3,$4,$5,'exclusive_unclassified','script-exclusive-v1',NOW(),$6) RETURNING *`,
-        [randomUUID(),input.machineId,input.ownerKey,input.taskId,input.configDigest,digest(input.capacitySnapshot)])).rows[0];
-        return { outcome: 'reserved', reservation };
+          SELECT $1,$2,'script',$3,$4,$5,'exclusive_unclassified','script-exclusive-v1',to_timestamp($8/1000.0),$6
+          WHERE $7::double precision > EXTRACT(EPOCH FROM clock_timestamp()) * 1000 RETURNING *`,
+        [randomUUID(),input.machineId,input.ownerKey,input.taskId,input.configDigest,digest(input.capacitySnapshot),input.capacitySnapshot.expires_at,
+          input.capacitySnapshot.captured_at ?? Date.now()])).rows[0];
+        return reservation ? { outcome: 'reserved', reservation } : WAIT;
       });
     },
     async markLaunching(id, identity) {
