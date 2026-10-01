@@ -21,7 +21,7 @@ async function scenario(fn) {
       VALUES($1,$2,'qiumi_task','blocked','device_unresolved',NOW(),$3::jsonb,'2030-10-05 09:00:00',
       '{"qiumi_pushed_status":"blocked","preserved":true}')`, [id, `设备重路由验收${id}`, JSON.stringify(payload)]);
     const text = (s) => [{ plain_text: s }];
-    const page = { id: pageId, last_edited_time: '2030-10-01T00:00:00Z', properties: {
+    const page = { id: pageId, last_edited_time: '2030-10-01T00:00:00Z', last_edited_by: { object: 'user', id: randomUUID(), type: 'person' }, properties: {
       '名称': { title: text(source.title) }, '备注': { rich_text: [] },
       'OpenClaw任务号': { rich_text: text(`brain:${id}`) }, '状态': { status: { name: '进行中' } },
     } };
