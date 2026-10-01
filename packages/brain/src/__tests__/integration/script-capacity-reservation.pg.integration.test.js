@@ -40,9 +40,7 @@ beforeAll(async () => {
     '363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox']) {
     await pool.query(readFileSync(new URL(`../../../migrations/${name}.sql`, import.meta.url),'utf8'));
   }
-  await pool.query(`CREATE TABLE capacity_reservations(id UUID PRIMARY KEY,machine_id TEXT,owner_kind TEXT,
-    owner_key TEXT,task_id UUID REFERENCES tasks(id) ON DELETE RESTRICT,config_digest TEXT,allocation_mode TEXT,
-    policy_version TEXT,snapshot_time TIMESTAMPTZ,snapshot_digest TEXT,status TEXT DEFAULT 'reserved')`);
+  await pool.query(readFileSync(new URL('../../../migrations/501_capacity_reservations.sql', import.meta.url),'utf8'));
 });
 beforeEach(async () => { await pool.query('TRUNCATE capacity_reservations,tasks,harness_attempt_cleanup_outbox,harness_attempts,initiative_runs CASCADE'); });
 afterAll(async () => { await pool.end(); await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); await admin.end(); });
