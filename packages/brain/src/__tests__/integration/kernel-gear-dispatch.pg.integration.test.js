@@ -1,3 +1,4 @@
+import { seedLifecycleAttempt } from './helpers/lifecycle-attempt-fixture.js';
 import { closePgPool, trackPgPool } from './helpers/close-pg-pool.js';
 /**
  * [BEHAVIOR] kernel 真读 gear：initiative_runs.gear round-trip + observed.gear 注入 +
@@ -191,7 +192,7 @@ async function driveOneHop({ taskId, runId, payload }) {
         dispatch: async (action, ctx) => {
           dispatchedAction = action;
           dispatchedRole = resolveAction(action).role; // 真 dispatcher 的 action→role 映射
-          await attemptStore.createAttempt({
+          await seedLifecycleAttempt(testPool, {
             id: randomUUID(),
             runId,
             hop: ctx.hop,

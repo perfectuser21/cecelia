@@ -1,3 +1,4 @@
+import { seedLifecycleAttempt } from './helpers/lifecycle-attempt-fixture.js';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -38,7 +39,7 @@ async function seedRun({ phase = 'planning' } = {}) {
 async function seedRunningAttempt({ runId, hop = 1, leaseGeneration = 7 }) {
   const attemptId = randomUUID();
   const machineId = `cleanup-worker-${randomUUID()}`;
-  await createAttemptStore(testPool).createAttempt({
+  await seedLifecycleAttempt(testPool, {
     id: attemptId,
     runId,
     hop,
@@ -221,7 +222,8 @@ describe('Kernel attempt cleanup outbox on real PostgreSQL', () => {
         phase: 'generate',
         role: 'generator',
         provider: 'codex',
-        machineId: `race-worker-${randomUUID()}`,
+        machineId: 'xian-mac-m4',
+        capacitySnapshot: { verified: true, machine: 'xian-mac-m4', expires_at: Date.now() + 60_000, capacity: { ok: true, physical_base_slots: 8, effective_base_slots: 8 } },
         callbackSecretHash: 'b'.repeat(64),
         bundle: {},
       });

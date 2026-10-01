@@ -1,3 +1,4 @@
+import { MACHINE_CAPACITY_CONTENDED } from './attempt-resource-budget.js';
 import { randomUUID as nodeRandomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import os from 'node:os';
@@ -910,8 +911,12 @@ function freezeLaunchReceipt(receipt, target, executionSurface = null) {
   });
 }
 
-function unsafeCancelDiagnostic(result) {
-  if (['cancelled', 'cleaned', 'already_clean'].includes(result?.status)) return null;
+function unsafeCancelDiagnostic(result, attempt) {
+  const fleet = attempt?.task_bundle?.inputs?.execution_surface === 'fleet-worker';
+  const identityMatches = result?.attempt_id === attempt?.id;
+  if (['cleaned', 'already_clean'].includes(result?.status) && identityMatches) return null;
+  if (!fleet && result?.status === 'cancelled'
+      && (result.attempt_id == null || identityMatches)) return null;
   const status = result?.status ?? 'unknown';
   const httpStatus = result?.httpStatus == null ? '' : ` (HTTP ${result.httpStatus})`;
   return `orphan cancellation unsafe: ${status}${httpStatus}`;
@@ -920,7 +925,7 @@ function unsafeCancelDiagnostic(result) {
 async function cancelAfterLaunch(launcher, { attempt, target, launchReceipt }) {
   try {
     const result = await launcher.cancel({ attempt, target, launchReceipt });
-    return unsafeCancelDiagnostic(result);
+    return unsafeCancelDiagnostic(result, attempt);
   } catch (error) {
     return `orphan cancellation failed: ${errorMessage(error)}`;
   }
@@ -1259,7 +1264,7 @@ export function createDispatcher(deps) {
           : {}),
       });
     } catch (error) {
-      if (error?.message !== AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED) throw error;
+      if (![AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED, MACHINE_CAPACITY_CONTENDED].includes(error?.message)) throw error;
       return {
         status: 'DONE_WITH_CONCERNS',
         control_status: 'BLOCKED',
@@ -1359,6 +1364,9 @@ export function createDispatcher(deps) {
         }, {
           leaseOwner: attempt.lease_owner,
           leaseGeneration: attempt.lease_generation,
+          ...(cancelDiagnostic !== null ? { retainResources: true,
+            ...(fleetLaunch ? { cleanupIdentity: { actualMachineId: selectedMachine, executionTransport: 'fleet-worker' } } : {}),
+          } : {}),
         });
       } catch (failError) {
         throw await failurePersistenceError(deps, {
@@ -1407,6 +1415,7 @@ export function createDispatcher(deps) {
         }, {
           leaseOwner: attempt.lease_owner,
           leaseGeneration: attempt.lease_generation,
+          ...(cancelDiagnostic !== null ? { retainResources: true, cleanupIdentity: launched } : {}),
         });
       } catch (failError) {
         const lifecycleError = new Error(message);
@@ -1453,6 +1462,7 @@ export function createDispatcher(deps) {
           }, {
             leaseOwner: attempt.lease_owner,
             leaseGeneration: attempt.lease_generation,
+          ...(cancelDiagnostic !== null ? { retainResources: true, cleanupIdentity: launched } : {}),
           });
         } catch (failError) {
           throw await failurePersistenceError(deps, {

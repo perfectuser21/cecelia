@@ -1,3 +1,4 @@
+import { seedLifecycleAttempt } from './helpers/lifecycle-attempt-fixture.js';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -769,7 +770,7 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
     expect(repairDispatches).toEqual(['spawn:judge']);
     await setTaskStatus(run.taskId, 'in_progress');
 
-    const evidenceJudgeAttempt = await attemptStore.createAttempt({
+    const evidenceJudgeAttempt = await seedLifecycleAttempt(testPool, {
       id: randomUUID(),
       runId: run.runId,
       hop: 3,
@@ -846,7 +847,7 @@ describe('Kernel failure classifications on real PostgreSQL writers', () => {
     }, testPool);
 
     const judgeAttemptId = randomUUID();
-    const judgeAttempt = await attemptStore.createAttempt({
+    const judgeAttempt = await seedLifecycleAttempt(testPool, {
       id: judgeAttemptId,
       runId: run.runId,
       hop: 2,
@@ -1044,7 +1045,7 @@ describe('Kernel no-progress through real loop, attempt store, HTTP callback, an
         dispatchCount += 1;
         const attemptId = randomUUID();
         const candidateBranch = `cp-kernel-pg-${run.taskId}`;
-        await attemptStore.createAttempt({
+        await seedLifecycleAttempt(testPool, {
           id: attemptId,
           runId: run.runId,
           hop: ctx.hop,
@@ -1157,7 +1158,7 @@ describe('Kernel callback convergence on real PostgreSQL', () => {
     const credentialRef = randomUUID();
     const store = createAttemptStore(testPool);
 
-    await store.createAttempt({
+    await seedLifecycleAttempt(testPool, {
       id: attemptId,
       runId: run.runId,
       hop: 1,

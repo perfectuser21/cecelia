@@ -1,3 +1,4 @@
+import { reserveExpiredAttemptReplacement } from '../../orchestrator/attempt-resource-replacement.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
@@ -126,4 +127,74 @@ describe('真实 PG 加权预约与未确认取消', () => {
     expect((await pool.query('SELECT id FROM harness_attempt_cleanup_outbox')).rows).toHaveLength(0);
     await expect(store.createAttempt(await input('reporter', 4))).rejects.toThrow('capacity_contended');
   });
+  it('确认旧进程退出后原子替换4槽父为4槽子，不产生8槽窗口', async () => {
+    const parent = await store.createAttempt(await input('generator', 4));
+    await pool.query("UPDATE harness_attempts SET status='running',lease_owner='old',lease_expires_at=NOW()-interval '1 minute' WHERE id=$1", [parent.id]);
+    const old = (await pool.query('SELECT * FROM harness_attempts WHERE id=$1', [parent.id])).rows[0];
+    const childInput = { ...await input('generator', 4), runId: parent.run_id, hop: 2 };
+    const replacement = await reserveExpiredAttemptReplacement({ pool, parentAttempt: old, childInput,
+      collectSnapshot: async () => snapshot(4),
+      confirmCleanup: async (locked) => ({ status: 'cleaned', attempt_id: locked.id }),
+    });
+    expect(replacement.child.status).toBe('queued');
+    expect((await pool.query('SELECT status FROM harness_attempts WHERE id=$1', [parent.id])).rows[0].status).toBe('failed');
+    expect((await pool.query("SELECT id FROM harness_attempts WHERE status IN ('queued','running','starting')")).rows).toHaveLength(1);
+  });
+  it.each(['unknown', 'wrong_identity', 'rollback_after_clean'])('恢复%s保留父预算和原generation', async (scenario) => {
+    const parent = await store.createAttempt(await input('generator', 4));
+    await pool.query("UPDATE harness_attempts SET status='running',lease_owner='old',lease_expires_at=NOW()-interval '1 minute' WHERE id=$1", [parent.id]);
+    const old = (await pool.query('SELECT * FROM harness_attempts WHERE id=$1', [parent.id])).rows[0];
+    const childInput = { ...await input('generator', 4), runId: parent.run_id, hop: 2,
+      ...(scenario === 'rollback_after_clean' ? { id: parent.id } : {}) };
+    await expect(reserveExpiredAttemptReplacement({ pool, parentAttempt: old, childInput,
+      collectSnapshot: async () => snapshot(4),
+      confirmCleanup: async () => ({ status: scenario === 'unknown' ? 'missing' : 'cleaned',
+        attempt_id: scenario === 'wrong_identity' ? randomUUID() : old.id }),
+    })).rejects.toThrow();
+    expect((await pool.query('SELECT status,lease_generation FROM harness_attempts WHERE id=$1', [parent.id])).rows[0])
+      .toEqual({ status: 'running', lease_generation: old.lease_generation });
+    await expect(store.createAttempt(await input('reporter', 4))).rejects.toThrow('capacity_contended');
+  });
+  it('已续租父不会被取消或替换', async () => {
+    const parent = await store.createAttempt(await input('generator', 4));
+    await pool.query("UPDATE harness_attempts SET status='running',lease_owner='old',lease_expires_at=NOW()+interval '1 minute' WHERE id=$1", [parent.id]);
+    const old = (await pool.query('SELECT * FROM harness_attempts WHERE id=$1', [parent.id])).rows[0];
+    let cancelled = false;
+    expect(await reserveExpiredAttemptReplacement({ pool, parentAttempt: old,
+      childInput: { ...await input('generator', 4), runId: parent.run_id, hop: 2 },
+      collectSnapshot: async () => snapshot(4), confirmCleanup: async () => { cancelled = true; },
+    })).toBeNull();
+    expect(cancelled).toBe(false);
+  });
+
+  it('活动和多代cleanup交集只计一个attempt，不重复扣权重', async () => {
+    const first = await store.createAttempt(await input('proposer', 4));
+    for (const generation of [0, 1]) {
+      await pool.query(`INSERT INTO harness_attempt_cleanup_outbox(run_id,attempt_id,target_machine_id,lease_generation,cleanup_cause)
+        VALUES($1,$2,$3,$4,'unknown')`, [first.run_id, first.id, machine, generation]);
+    }
+    await expect(store.createAttempt(await input('proposer', 4))).resolves.toMatchObject({ status: 'queued' });
+    await expect(store.createAttempt(await input('reporter', 4))).rejects.toThrow('capacity_contended');
+  });
+  it('未知既存role阻止新增，不能默认为零权重', async () => {
+    const first = await store.createAttempt(await input('proposer', 4));
+    await pool.query('ALTER TABLE harness_attempts DROP CONSTRAINT harness_attempts_role_check');
+    await pool.query("UPDATE harness_attempts SET role='future_role' WHERE id=$1", [first.id]);
+    await expect(store.createAttempt(await input('reporter', 7))).rejects.toThrow('capacity_contended');
+  });
+  it('回执写入失败时cleanup保留刚验证的外部执行identity', async () => {
+    const first = await store.createAttempt(await input('generator', 4));
+    await store.fail(first.id, { code: 'launch_receipt_persist_failed' }, {
+      retainResources: true, cleanupIdentity: { actualMachineId: machine, executionTransport: 'fleet-worker', remoteJobId: 'external-exact-job' },
+    });
+    expect((await pool.query('SELECT target_machine_id,execution_transport,remote_job_id FROM harness_attempt_cleanup_outbox')).rows)
+      .toEqual([{ target_machine_id: machine, execution_transport: 'fleet-worker', remote_job_id: 'external-exact-job' }]);
+  });
+  it('从未launch的普通失败无需cleanup并释放预算', async () => {
+    const first = await store.createAttempt(await input('generator', 4));
+    await store.fail(first.id, { code: 'bundle_invalid' });
+    expect((await pool.query('SELECT id FROM harness_attempt_cleanup_outbox')).rows).toHaveLength(0);
+    await expect(store.createAttempt(await input('generator', 4))).resolves.toMatchObject({ status: 'queued' });
+  });
+
 });

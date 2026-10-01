@@ -1,3 +1,4 @@
+import { seedLifecycleAttempt } from './helpers/lifecycle-attempt-fixture.js';
 /**
  * gan-case-file.pg.integration.test.js —— 案卷式 GAN 写读全链，真库实证。
  *
@@ -80,7 +81,7 @@ async function seedRunWithAttempt(pool, { role, hop, phase, taskBundleInputs }) 
   );
   await seedOwnedActiveV2Run(pool, { runId, taskId, phase });
   const store = createAttemptStore(pool);
-  await store.createAttempt({
+  await seedLifecycleAttempt(pool, {
     id: attemptId,
     runId,
     hop,
@@ -214,7 +215,7 @@ describe('案卷式 GAN 写读全链（真库）', () => {
     ];
     for (const { hop, role, round } of rounds) {
       const attemptId = randomUUID();
-      await store.createAttempt({
+      await seedLifecycleAttempt(testPool, {
         id: attemptId,
         runId,
         hop,
@@ -271,7 +272,7 @@ describe('案卷式 GAN 写读全链（真库）', () => {
     // 第一次：reviewer attempt 基础设施崩溃，status=failed（即使意外带了
     // decision 也不该落案卷行，不能抢占槽位）。
     const firstAttemptId = randomUUID();
-    await store.createAttempt({
+    await seedLifecycleAttempt(testPool, {
       id: firstAttemptId,
       runId,
       hop: 1,
@@ -308,7 +309,7 @@ describe('案卷式 GAN 写读全链（真库）', () => {
     // 第二次：同一 round 的权威 reviewer attempt 真正跑完，completed——如果第
     // 一次意外占了槽位，这里的 INSERT 会撞 ON CONFLICT DO NOTHING 被静默丢弃。
     const secondAttemptId = randomUUID();
-    await store.createAttempt({
+    await seedLifecycleAttempt(testPool, {
       id: secondAttemptId,
       runId,
       hop: 2,
@@ -362,7 +363,7 @@ describe('案卷式 GAN 写读全链（真库）', () => {
 
     for (const round of [1, 2, 3]) {
       const attemptId = randomUUID();
-      await store.createAttempt({
+      await seedLifecycleAttempt(testPool, {
         id: attemptId,
         runId,
         hop: round,

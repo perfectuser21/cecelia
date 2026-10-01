@@ -1,20 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { DB_DEFAULTS } from '../../db-config.js';
 import {
-  AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED,
-} from '../../orchestrator/attempt-machine-capacity.js';
+  MACHINE_CAPACITY_CONTENDED,
+} from '../../orchestrator/attempt-resource-budget.js';
 import { createAttemptStore } from '../../orchestrator/attempt-store.js';
 
-const migrations = [357, 362, 363, 364].map((version) => readFileSync(
+const migrations = [357, 362, 363, 364, 425].map((version) => readFileSync(
   new URL(`../../../migrations/${{
     357: '357_harness_provider_attempts.sql',
     362: '362_kernel_attempt_telemetry_reconcile.sql',
     363: '363_kernel_fleet_execution_receipts.sql',
     364: '364_kernel_local_container_naming.sql',
+    425: '425_harness_attempt_cleanup_outbox.sql',
   }[version]}`, import.meta.url),
   'utf8',
 ));
@@ -48,18 +49,23 @@ function attemptInput({ runId, hop, machineId }) {
     machineId,
     callbackSecretHash: 'a'.repeat(64),
     bundle: { inputs: { task: 'machine capacity integration' } },
+    capacitySnapshot: { verified: true, machine: machineId, expires_at: Date.now() + 60_000,
+      capacity: { ok: true, available: 2, physical_base_slots: 8, effective_base_slots: 8 } },
   };
 }
 
 function autonomousSingletonSnapshot(machineId) {
   return {
     verified: true,
+    expires_at: Date.now() + 60_000,
     machine: machineId,
     capability_snapshot_id: randomUUID(),
     capacity: {
       ok: true,
       available: 1,
       physical_capacity: 1,
+      physical_base_slots: 1,
+      effective_base_slots: 1,
       autonomous_progress_floor: true,
     },
   };
@@ -97,6 +103,7 @@ beforeAll(async () => {
       description TEXT NOT NULL,
       applied_at TIMESTAMPTZ NOT NULL
     );
+    CREATE TABLE map_recovery_consumptions (contract_id UUID, attempt_id UUID);
     CREATE TABLE initiative_runs (
       id UUID PRIMARY KEY,
       phase TEXT NOT NULL DEFAULT 'planning',
@@ -107,6 +114,10 @@ beforeAll(async () => {
   `);
   for (const migration of migrations) await client.query(migration);
 }, 15_000);
+
+beforeEach(async () => {
+  await client.query('TRUNCATE harness_attempt_cleanup_outbox, harness_attempts, initiative_runs, map_recovery_consumptions CASCADE');
+});
 
 afterAll(async () => {
   if (client) {
@@ -124,7 +135,7 @@ describe('attempt machine singleton capacity on PostgreSQL', () => {
     _direction,
     firstIsSingleton,
   ) => {
-    const machineId = `singleton-race-${randomUUID()}`;
+    const machineId = 'xian-mac-m4';
     const firstRunId = randomUUID();
     const secondRunId = randomUUID();
     await client.query(
@@ -182,7 +193,7 @@ describe('attempt machine singleton capacity on PostgreSQL', () => {
 
       expect(observedMachineLock).toBe(true);
       expect(secondOutcome.status).toBe('rejected');
-      expect(secondOutcome.error?.message).toBe(AUTONOMOUS_SINGLETON_CAPACITY_CONTENDED);
+      expect(secondOutcome.error?.message).toBe(MACHINE_CAPACITY_CONTENDED);
       const rows = await client.query(
         `SELECT id FROM harness_attempts
           WHERE run_id = ANY($1::uuid[])
@@ -199,7 +210,7 @@ describe('attempt machine singleton capacity on PostgreSQL', () => {
   }, 15_000);
 
   it('preserves same run/hop winner and releases singleton capacity after terminal', async () => {
-    const machineId = `singleton-release-${randomUUID()}`;
+    const machineId = 'xian-mac-m4';
     const firstRunId = randomUUID();
     const nextRunId = randomUUID();
     await client.query(

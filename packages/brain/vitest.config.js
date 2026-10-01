@@ -32,6 +32,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/kernel-controller-lease-renewal.pg.integration.test.js',
   'src/__tests__/integration/harness-watchdog-kernel-identity.pg.integration.test.js',
   'src/__tests__/integration/attempt-machine-capacity.pg.integration.test.js',
+  'src/__tests__/integration/attempt-weighted-reservation.pg.integration.test.js',
   'src/__tests__/integration/kernel-attempt-cleanup-outbox.pg.integration.test.js',
   'src/__tests__/integration/migration-425-populated-upgrade.pg.integration.test.js',
   'src/__tests__/integration/migration-425-outbox-shape.pg.integration.test.js',

@@ -1,3 +1,4 @@
+import { seedLifecycleAttempt } from './helpers/lifecycle-attempt-fixture.js';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -6,7 +7,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createAttemptCleanupOutboxStore } from '../../orchestrator/attempt-cleanup-outbox-store.js';
-import { createAttemptStore } from '../../orchestrator/attempt-store.js';
 import { seedOwnedActiveV2Run } from './helpers/controller-authority-fixture.js';
 
 const { Pool } = pg;
@@ -31,7 +31,7 @@ async function seedIntent(overrides = {}) {
     [taskId, `cleanup outbox store ${taskId}`],
   );
   await seedOwnedActiveV2Run(testPool, { runId, taskId, phase: 'planning' });
-  await createAttemptStore(testPool).createAttempt({
+  await seedLifecycleAttempt(testPool, {
     id: attemptId,
     runId,
     hop: 1,

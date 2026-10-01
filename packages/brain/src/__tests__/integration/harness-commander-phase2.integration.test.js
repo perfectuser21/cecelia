@@ -1,3 +1,4 @@
+import { seedLifecycleAttempt } from './helpers/lifecycle-attempt-fixture.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import pg from 'pg';
@@ -106,7 +107,7 @@ describe('Commander Phase 2 PostgreSQL authority chain', () => {
       evidence_refs: ['event:1'],
     };
     const attempts = createAttemptStore(migrationPool);
-    await attempts.createAttempt({
+    await seedLifecycleAttempt(migrationPool, {
       id: attemptId,
       runId,
       hop: 1,
@@ -200,7 +201,7 @@ describe('Commander Phase 2 PostgreSQL authority chain', () => {
        VALUES ($1,'hybrid','v2')`,
       [runId],
     );
-    await attempts.createAttempt({
+    await seedLifecycleAttempt(migrationPool, {
       id: failedAttemptId,
       runId,
       hop: 1,
@@ -230,7 +231,7 @@ describe('Commander Phase 2 PostgreSQL authority chain', () => {
         reason_code: 'provider_unavailable',
       },
     });
-    await attempts.createAttempt({
+    await seedLifecycleAttempt(migrationPool, {
       id: replacementAttemptId,
       runId,
       hop: 2,

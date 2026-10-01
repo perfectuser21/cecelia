@@ -1,3 +1,4 @@
+import { seedLifecycleAttempt } from './helpers/lifecycle-attempt-fixture.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
@@ -72,6 +73,8 @@ function attemptInput({ runId, hop, machineId }) {
     role: 'generator',
     provider: 'codex',
     machineId,
+    capacitySnapshot: { verified: true, machine: machineId, expires_at: Date.now() + 60_000,
+      capacity: { ok: true, physical_base_slots: 8, effective_base_slots: 8 } },
     callbackSecretHash: 'a'.repeat(64),
     bundle: { inputs: { task: 'fleet receipt integration' } },
   };
@@ -108,6 +111,7 @@ beforeAll(async () => {
       description TEXT NOT NULL,
       applied_at TIMESTAMPTZ NOT NULL
     );
+    CREATE TABLE map_recovery_consumptions(contract_id UUID, attempt_id UUID);
     CREATE TABLE initiative_runs (
       id UUID PRIMARY KEY,
       phase TEXT NOT NULL DEFAULT 'planning',
@@ -147,6 +151,7 @@ beforeAll(async () => {
      ) VALUES ($1,$2,1,'generate','generator','codex','us-mac-m4','{}','old-binary-hash')`,
     [oldBinaryInsertId, oldBinaryRunId],
   );
+  await client.query(readFileSync(new URL('../../../migrations/425_harness_attempt_cleanup_outbox.sql', import.meta.url), 'utf8'));
   store = createAttemptStore(schemaPool);
 }, 15_000);
 
@@ -241,8 +246,8 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
     );
     const semanticAttempt = attemptInput({ runId, hop: 31, machineId: 'us-mac-m4' });
     const runnerAttempt = attemptInput({ runId, hop: 32, machineId: 'us-mac-m4' });
-    await store.createAttempt(semanticAttempt);
-    await store.createAttempt(runnerAttempt);
+    await seedLifecycleAttempt(schemaPool, semanticAttempt);
+    await seedLifecycleAttempt(schemaPool, runnerAttempt);
 
     await store.complete(semanticAttempt.id, {
       status: 'blocked',
@@ -279,7 +284,7 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
       `INSERT INTO initiative_runs (id,orchestrator_version) VALUES ($1,'v2')`,
       [runId],
     );
-    const input = attemptInput({ runId, hop: 1, machineId: 'verified-worker' });
+    const input = attemptInput({ runId, hop: 1, machineId: 'xian-mac-m1' });
 
     await store.createAttempt(input);
 
@@ -289,8 +294,8 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
       [input.id],
     );
     expect(row.rows[0]).toEqual({
-      machine_id: 'verified-worker',
-      requested_machine_id: 'verified-worker',
+      machine_id: 'xian-mac-m1',
+      requested_machine_id: 'xian-mac-m1',
       lease_generation: 0,
       local_container_naming: 'generation-v1',
     });
@@ -302,9 +307,9 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
       `INSERT INTO initiative_runs (id,orchestrator_version) VALUES ($1,'v2')`,
       [runId],
     );
-    const winnerInput = attemptInput({ runId, hop: 41, machineId: 'us-mac-m4' });
+    const winnerInput = attemptInput({ runId, hop: 41, machineId: 'xian-mac-m4' });
     const duplicateInput = {
-      ...attemptInput({ runId, hop: 41, machineId: 'xian-mac-m4' }),
+      ...attemptInput({ runId, hop: 41, machineId: 'xian-mac-m1' }),
       id: randomUUID(),
     };
     const winnerClient = await pool.connect();
@@ -357,7 +362,7 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
       );
       expect(rows.rows).toEqual([{
         id: winnerInput.id,
-        requested_machine_id: 'us-mac-m4',
+        requested_machine_id: 'xian-mac-m4',
       }]);
 
       const launch = vi.fn();
@@ -379,7 +384,7 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
           digest: `sha256:${'d'.repeat(64)}`,
           content: 'generate',
         })),
-        machineId: 'us-mac-m4',
+        machineId: 'xian-mac-m4',
         randomUUID: () => duplicateInput.id,
         createCallbackSecret: () => 'duplicate-callback-secret',
       });
@@ -422,7 +427,7 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
       [runId],
     );
     const input = attemptInput({ runId, hop: 1, machineId: 'requested-worker' });
-    await store.createAttempt(input);
+    await seedLifecycleAttempt(schemaPool, input);
     await client.query(
       'UPDATE harness_attempts SET lease_owner = $2 WHERE id = $1',
       [input.id, 'brain-1'],
@@ -513,7 +518,7 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
       [runId],
     );
     const input = attemptInput({ runId, hop: 1, machineId: 'reclaim-worker' });
-    await store.createAttempt(input);
+    await seedLifecycleAttempt(schemaPool, input);
     await store.markStarting(input.id, { leaseOwner: 'brain-1', leaseSeconds: 90 });
     await client.query(
       `UPDATE harness_attempts SET lease_expires_at = NOW() - INTERVAL '1 second' WHERE id = $1`,
@@ -541,7 +546,7 @@ describe('migrations 363-366 and fleet execution receipts on PostgreSQL', () => 
       [runId],
     );
     const input = attemptInput({ runId, hop: 1, machineId: 'reclaim-worker' });
-    await store.createAttempt(input);
+    await seedLifecycleAttempt(schemaPool, input);
     await store.markStarting(input.id, { leaseOwner: 'same-owner', leaseSeconds: 90 });
     await client.query(
       `UPDATE harness_attempts SET lease_expires_at = NOW() - INTERVAL '1 second' WHERE id = $1`,
