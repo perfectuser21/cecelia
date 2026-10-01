@@ -139,4 +139,10 @@ describe('公司库列级投影门', () => {
     expect(result).toMatchObject({ claims: 0, patched: 1 });
     expect(fixture.rows[0].metadata).toMatchObject({ company_metric: { current: '2' }, company_current_baseline: '2', validation_state: 'verified_observation' });
   });
+  it('外部响应失败且解锁也失败时关闭PG连接，保留原失败原因', async () => {
+    const fixture = recoveryFixture('response'), release = vi.fn();
+    fixture.pool.connect = async () => ({ query: (sql, args) => sql.includes('pg_advisory_unlock') ? Promise.reject(new Error('unlock SQL failed')) : fixture.pool.query(sql, args), release });
+    await expect(runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq: fixture.notionReq, now: 1000000 })).rejects.toThrow('response timeout after apply');
+    expect(release).toHaveBeenCalledWith(true);
+  });
 });
