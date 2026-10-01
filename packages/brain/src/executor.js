@@ -60,7 +60,7 @@ const EXTERNAL_CLAIM_GRACE_MS = Number(process.env.EXTERNAL_CLAIM_GRACE_MS || 45
 import { classifyCodexFailure } from './lib/codex-fatal-patterns.js';
 import { classifyDispatchReasonCode, dispatchFailureFromError } from './lib/dispatch-reason-code.js';
 import { raise } from './alerting.js';
-import { EXECUTOR_KIND_FOR, resolveExecutorKind, isExternallyExecuted } from './executor-contracts.js';
+import { EXECUTOR_KIND_FOR, resolveExecutorKind, isExternallyExecuted, assessTaskLiveness } from './executor-contracts.js';
 import {
   isExternalRunMirror,
   externalActivityAgeMs,
@@ -4037,13 +4037,23 @@ async function probeTaskLiveness() {
 
   // Get all in_progress tasks from DB
   const result = await pool.query(`
-    SELECT id, title, payload, started_at, task_type, executor_kind, error_message, claimed_by, claimed_at,
+    SELECT id, title, payload, started_at, task_type, executor_kind, error_message, claimed_by, claimed_at, updated_at,
            ${EXTERNAL_ACTIVITY_AGE_SQL} AS external_activity_age_sec
     FROM tasks
     WHERE status = 'in_progress'
   `);
 
   for (const task of result.rows) {
+    // 已认领有头会话可能在远端；本机无 PID 不足以判死，沿用合同的 unknown 保留语义。
+    if (task.executor_kind === 'headed-session'
+        && typeof task.claimed_by === 'string' && task.claimed_by.trim()) {
+      const liveness = await assessTaskLiveness(task, { activeProcesses, pool });
+      if (liveness.verdict === 'alive' || liveness.verdict === 'unknown') {
+        suspectProcesses.delete(task.id);
+        continue;
+      }
+    }
+
     const runId = task.payload?.current_run_id;
     const entry = activeProcesses.get(task.id);
 
