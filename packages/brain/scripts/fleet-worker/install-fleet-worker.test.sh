@@ -848,6 +848,14 @@ installed_github_credential_envelope="$runtime_dir/github-credential-envelope.cj
 installed_access_helper="$runtime_dir/refresh-fleet-worker-docker-access.sh"
 installed_access_plist="$install_dir/com.perfect21.fleet-worker-docker-access.plist"
 [[ -f "$installed_plist" ]] || fail "--apply did not install the rendered plist"
+python3 - "$installed_plist" "$shared_tmpdir" <<'PYPLIST'
+import plistlib, sys
+with open(sys.argv[1], 'rb') as source:
+    value = plistlib.load(source)
+assert value['EnvironmentVariables']['TMPDIR'] == sys.argv[2], 'installed TMPDIR differs from preflight'
+assert '@@' not in str(value), 'unexpanded template'
+PYPLIST
+
 [[ -f "$installed_worker" && -f "$installed_probe" ]] \
   || fail "--apply did not install a stable Worker runtime"
 cmp -s "$SCRIPT_DIR/local-resource-admission.cjs" "$installed_local_admission" \
