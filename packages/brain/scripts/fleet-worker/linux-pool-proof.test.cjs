@@ -120,3 +120,50 @@ describe('Linux真实执行池证明',()=>{
     await expect(collectLinuxPoolProof(f)).rejects.toThrow('linux_pool_proof_unavailable');
   });
 });
+
+describe('受管脚本真实容器证明',()=>{
+  function scriptFixture(){
+    const f=fixture();
+    const scriptProfile={image:'test/script@sha256:'+'e'.repeat(64),cpus:0.25,memoryBytes:134217728,pidsLimit:32,
+      logMaxSizeBytes:65536,logMaxFiles:2,user:'10001:10001',cwd:'/workspace'};
+    const identity={reservation_id:'657e2e9a-c0bb-47df-a282-a1b2ff8b2ff2',intent_id:'7a57c0d2-9ef8-4ab9-b4a4-87a3562037e9',launch_generation:2,
+      machine_id:f.profile.machine_id,owner_key:'script-309836c1-08cd-4eb7-827d-1c3c09b30135-a1',config_digest:'f'.repeat(64),
+      worker_id:f.profile.machine_id,worker_boot_id:'55daf575-0078-450c-93cb-1eddb688c32f',
+      execution_version_id:'c451ee88-fd1c-4197-b3aa-70b5f0633237',execution_grant_id:'e6024b1e-8ae8-4520-a7dd-d9f35b0398f0',profile_id:'readonly-report'};
+    const name=`cecelia-script-${identity.reservation_id}-g${identity.launch_generation}`;
+    f.container.Name='/'+name;f.container.Config.Image=scriptProfile.image;f.container.Config.User=scriptProfile.user;
+    f.container.Config.WorkingDir=scriptProfile.cwd;
+    f.container.Config.Labels=Object.fromEntries(Object.entries(identity).map(([k,v])=>['cecelia.script.'+k,String(v)]));
+    f.container.Config.Labels['cecelia.script.profile_digest']=require('node:crypto').createHash('sha256').update(JSON.stringify(scriptProfile)).digest('hex');
+    f.container.HostConfig.LogConfig={Type:'local',Config:{'max-size':'65536','max-file':'2'}};
+    return {...f,scriptProfile,identity,containerId:id,expectedHostBootId:'1347658b-2aa4-4b38-91c0-a7b85531b918',expectedDaemonId:'daemon-hk'};
+  }
+  const collect=f=>require('./linux-pool-proof.cjs').collectLinuxScriptProof(f);
+  it('真实script名称/持久身份/profile得到独立事实证明，不能成为旧pool-canary回执',async()=>{
+    const f=scriptFixture();const proof=await collect(f);
+    expect(proof).toMatchObject({schema_version:'linux-script-proof/v1',execution:false,script_verified:true,
+      container_id:id,cgroup_parent_path:cg,identity:f.identity});
+    expect(f.calls.filter(c=>c.args[0]==='image').every(c=>c.args.at(-1)===f.scriptProfile.image)).toBe(true);
+    await expect(collectLinuxPoolProof({...f,expected:{container_id:id,name:f.container.Name.slice(1),labels:f.container.Config.Labels}})).rejects.toThrow('linux_pool_proof_unavailable');
+  });
+  it.each([
+    ['外来reservation标签',f=>f.container.Config.Labels['cecelia.script.reservation_id']='wrong'],
+    ['旧worker boot',f=>f.container.Config.Labels['cecelia.script.worker_boot_id']='old'],
+    ['旧execution version',f=>f.container.Config.Labels['cecelia.script.execution_version_id']='old'],
+    ['错误profile digest',f=>f.container.Config.Labels['cecelia.script.profile_digest']='a'.repeat(64)],
+    ['同池内擅自增加CPU',f=>f.container.HostConfig.NanoCpus=500000000],
+    ['同池内擅自增加内存',f=>f.container.HostConfig.Memory=f.container.HostConfig.MemorySwap=268435456],
+    ['同池内擅自增加PID',f=>f.container.HostConfig.PidsLimit=64],
+    ['profile超池预算',f=>f.scriptProfile.cpus=1],
+    ['错误固定镜像',f=>f.container.Config.Image=f.profile.canary_image],
+    ['错误工作目录',f=>f.container.Config.WorkingDir='/tmp'],
+    ['无限日志',f=>f.container.HostConfig.LogConfig.Config={}],
+    ['宿主boot与验收身份不符',f=>f.expectedHostBootId='88cf1bbe-a1a3-44ac-9f21-f17477a61689'],
+    ['daemon与验收身份不符',f=>f.expectedDaemonId='other-daemon'],
+    ['缺失完整container ID',f=>f.containerId=null],
+    ['缺失持久grant',f=>delete f.identity.execution_grant_id],
+  ])('%s拒绝且不修改容器',async(_name,mutate)=>{
+    const f=scriptFixture();mutate(f);await expect(collect(f)).rejects.toThrow('linux_script_proof_unavailable');
+    expect(f.calls.some(c=>['create','start','rm','stop','update'].includes(c.args[0]))).toBe(false);
+  });
+});
