@@ -46,6 +46,15 @@ class BootstrapTests(unittest.TestCase):
   self.assertNotIn('b'*64,json.dumps(self.calls));self.assertNotIn('b'*64,json.dumps(result))
  def test_existing_account_is_not_modified_and_no_docker_group_added(self):
   self.account=True;self.group=True;self.call();self.assertFalse(any(c.endswith(('useradd','groupadd','usermod')) for c,_,_ in self.calls))
+ def test_optional_root_execution_key_reaches_installer_only_via_private_file(self):
+  self.put('/staging/execution.key',b'd'*64);self.options['execution_key_file']='/staging/execution.key'
+  for name in ['linux-script-canary.cjs','linux-script-service.cjs','linux-script-launch-gate.cjs','linux-script-runtime.cjs','linux-script-docker.cjs','linux-script-permit.cjs','linux-script-bridge.cjs','script-runner.cjs']:self.put('/staging/src/'+name,b'fixture-module',0o644)
+  original=self.fake_run;seen=[]
+  def run(command,args,**kwargs):
+   if command.endswith('/node') and args[0].endswith('linux-pool-installer.cjs'):
+    values=dict(zip(args[1::2],args[2::2]));secret=pathlib.Path(values['--execution-key-file']);seen.append(secret.read_bytes());self.assertEqual(secret.stat().st_mode&0o777,0o600)
+   return original(command,args,**kwargs)
+  self.deps['run']=run;self.call();self.assertEqual(seen,[b'd'*64]);self.assertNotIn('d'*64,json.dumps(self.calls))
  def test_checksum_mismatch_precedes_account_and_install_mutation(self):
   self.put('/staging/node.tar.xz',b'corrupt')
   with self.assertRaisesRegex(bootstrap.BootstrapError,'linux_pool_bootstrap_archive_unverified'):self.call()

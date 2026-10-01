@@ -4,8 +4,16 @@ import { createLinuxPoolRouter } from './router.js';
 import { createDeploymentReader,normalizeDeployment } from './deployment.js';
 const servers=[];
 afterEach(async()=>{vi.unstubAllEnvs();await Promise.all(servers.splice(0).map(s=>new Promise(r=>s.close(r))));});
-async function fixture(){let calls=0;const service=Object.fromEntries(['challenge','attest','activate','revoke','get'].map(method=>[method,async(id,body)=>{calls++;return {method,id,body,execution:false};}]));
- const app=express();app.use(express.json({limit:'40kb'}));app.use('/machines/linux-pool',createLinuxPoolRouter(service));const server=app.listen(0,'127.0.0.1');servers.push(server);await new Promise(r=>server.once('listening',r));return {url:`http://127.0.0.1:${server.address().port}/machines/linux-pool/a`,calls:()=>calls};}
+async function fixture(){let calls=0;const service=Object.fromEntries(['challenge','attest','activate','revoke','get','prepare'].map(method=>[method,async(id,body)=>{calls++;return {method,id,body,execution:false};}]));
+ const app=express();app.use(express.json({limit:'300kb'}));app.use('/machines/linux-pool',createLinuxPoolRouter(service,service));const server=app.listen(0,'127.0.0.1');servers.push(server);await new Promise(r=>server.once('listening',r));return {url:`http://127.0.0.1:${server.address().port}/machines/linux-pool/a`,calls:()=>calls};}
+it('脚本runtime固定内部端点同样认证，浏览器机器PATCH不能注入授权',async()=>{
+ vi.stubEnv('CECELIA_INTERNAL_TOKEN','internal-fixture-token');const f=await fixture();
+ for(const method of ['prepare','activate','revoke']){
+  expect((await fetch(f.url+'/runtime/'+method,{method:'POST'})).status).toBe(401);
+  const r=await fetch(f.url+'/runtime/'+method,{method:'POST',headers:{Authorization:'Bearer internal-fixture-token','Content-Type':'application/json'},body:JSON.stringify({expected_version_id:null})});
+  expect(r.status).toBe(200);expect((await r.json()).method).toBe(method);
+ }expect(f.calls()).toBe(3);
+});
 it('真实HTTP未配置及错误内部token均拒绝，loopback也不能自授',async()=>{
  vi.stubEnv('CECELIA_INTERNAL_TOKEN','');const f=await fixture();
  expect((await fetch(f.url+'/challenges',{method:'POST'})).status).toBe(503);expect(f.calls()).toBe(0);
