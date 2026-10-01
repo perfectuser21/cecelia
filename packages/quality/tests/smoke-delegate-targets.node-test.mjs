@@ -7,6 +7,57 @@ import { resolve } from 'node:path';
 import { test } from 'node:test';
 import { fixture, root, clientCommands } from './fixtures/smoke-production-guard-fixture.mjs';
 
+for (const optIn of ['', '1']) {
+  test(`ratchet delegates Walking to its required owner without executing it: opt-in=${optIn || 'default'}`, async () => {
+    const temp = await mkdtemp(resolve(tmpdir(), 'walking-ratchet-'));
+    try {
+      const walkingMarker = resolve(temp, 'walking-executed');
+      const ordinaryMarker = resolve(temp, 'ordinary-executed');
+      await writeFile(resolve(temp, 'walking-skeleton-1node-smoke.sh'), `touch '${walkingMarker}'\nexit 0\n`);
+      await writeFile(resolve(temp, 'abilities-api-smoke.sh'), `touch '${ordinaryMarker}'\nexit 0\n`);
+      await fixture(async ({ smoke, dockerCalls, requests }) => {
+        const result = await smoke('packages/quality/scripts/run-smoke-ratchet.sh', { SMOKE_DIR: temp, SMOKE_ALLOW_WRITE: optIn });
+        assert.equal(result.code, 0, result.output);
+        await assert.rejects(readFile(walkingMarker), { code: 'ENOENT' });
+        await readFile(ordinaryMarker);
+        assert.match(result.output, /DELEGATED.*walking-skeleton-1node-smoke\.sh.*walking-ci-e2e/);
+        assert.match(result.output, /DELEGATED:\s+1/);
+        assert.match(result.output, /PASS:\s+1/);
+        assert.match(result.output, /SKIP\(deny\):\s+0/);
+        assert.match(result.output, /FAIL\(债务\):\s+0/);
+        assert.doesNotMatch(result.output, /(?:PASS|SKIP|FAIL).*walking-skeleton-1node-smoke\.sh/);
+        assert.deepEqual(await dockerCalls(), [], 'delegation precedes Docker identity probing');
+        assert.deepEqual(requests, [], 'delegation performs no HTTP or business write');
+      });
+    } finally { await rm(temp, { recursive: true, force: true }); }
+  });
+}
+
+for (const [name, scriptExit, gateExit, summary, executed] of [
+  ['abilities-api-smoke.sh', 0, 0, /PASS:\s+1/, true],
+  ['abilities-api-smoke.sh', 9, 1, /FAIL\(基线\):\s+1/, true],
+  ['brain-guidance-smoke.sh', 9, 0, /FAIL\(债务\):\s+1/, true],
+  ['walking-ratchet-unregistered-fixture.sh', 0, 1, null, false],
+  ['map-engine-smoke.sh', 9, 0, /SKIP\(deny\):\s+1/, false],
+]) {
+  test(`Walking delegation preserves ratchet classification: ${name} exit=${scriptExit}`, async () => {
+    const temp = await mkdtemp(resolve(tmpdir(), 'walking-ratchet-classification-'));
+    try {
+      const marker = resolve(temp, 'executed');
+      await writeFile(resolve(temp, name), `touch '${marker}'\nexit ${scriptExit}\n`);
+      await fixture(async ({ smoke, dockerCalls, requests }) => {
+        const result = await smoke('packages/quality/scripts/run-smoke-ratchet.sh', { SMOKE_DIR: temp, SMOKE_ALLOW_WRITE: '' });
+        assert.equal(result.code, gateExit, result.output);
+        if (summary) assert.match(result.output, summary);
+        else assert.doesNotMatch(result.output, /PASS:.*walking-ratchet-unregistered-fixture/);
+        if (executed) await readFile(marker);
+        else await assert.rejects(readFile(marker), { code: 'ENOENT' });
+        assert.deepEqual(await dockerCalls(), []); assert.deepEqual(requests, []);
+      });
+    } finally { await rm(temp, { recursive: true, force: true }); }
+  });
+}
+
 test('c8 forwards the checked connection instead of inherited container SMOKE_DATABASE_URL', async () => {
   await fixture(async ({ smoke, info, dockerCalls }) => {
     info.Config.Env.push('SMOKE_DATABASE_URL=postgresql://localhost/cecelia');
