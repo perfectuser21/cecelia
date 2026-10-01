@@ -37,6 +37,7 @@ function MachineCard({ machine, now, onClick }: { machine: Machine; now: number;
   const meta = machine.metadata;
   const managed = meta.onboarding?.state === 'managed';
   const health = healthState(machine, now);
+  const executionEnabled=machine.execution?.enabled===true&&Date.parse(machine.execution.verified_until||'')>now;
   const hasErrors = machine.conflicts.some(c => c.severity === 'error');
   const hasWarnings = machine.conflicts.some(c => c.severity === 'warning');
   const errorCount = machine.conflicts.filter(c => c.severity === 'error').length;
@@ -74,7 +75,7 @@ function MachineCard({ machine, now, onClick }: { machine: Machine; now: number;
       </div>
 
       {managed && <div className="mb-2 text-xs space-y-1">
-        <p className="text-gray-600 dark:text-gray-300"><span>监控纳管</span><span className="ml-2">{meta.node_health?.capabilities?.execution === true ? '执行已启用' : '执行未启用'}</span></p>
+        <p className="text-gray-600 dark:text-gray-300"><span>监控纳管</span><span className="ml-2">{executionEnabled ? '执行已启用' : '执行未启用'}</span></p>
         <p className={health.fresh ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'}>
           {health.valid ? <time dateTime={health.observedAt} title={new Date(health.observedAt!).toLocaleString('zh-CN')}>健康采样：{health.elapsed}{!health.fresh && '（已过期）'}</time> : health.elapsed}
         </p>
@@ -140,6 +141,8 @@ export default function MachinesPage() {
   };
 
   useEffect(() => { fetchMachines(); }, []);
+  const managed=machines.some(m=>m.metadata.onboarding?.state==='managed');
+  useEffect(()=>{if(!managed)return;const timer=setInterval(()=>fetchMachines(),30_000);return()=>clearInterval(timer);},[managed]);
 
   const online = machines.filter(m => m.tailscale_online).length;
   const conflictCount = machines.filter(m => m.conflicts.some(c => c.severity === 'error')).length;

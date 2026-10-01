@@ -36,7 +36,17 @@ export function createOnboardingCredentials({root='/root/.credentials/fleet-cont
   try{
    if(!UUID.test(machineId??'')||!path.isAbsolute(root)||typeof save!=='function'||(state&&!['creating','ready'].includes(state.phase)))throw unavailable();
    parents();directory(root);const dir=path.join(root,machineId);try{fs.mkdirSync(dir,{mode:0o700});}catch(e){if(e.code!=='EEXIST')throw e;}directory(dir);
-   let item=state?.phase==='ready'?state.item_id:null,created;
+   let configured;
+   try{
+    const file=path.join(root,'credential-bindings.json'),s=fs.lstatSync(file);
+    if(!s.isFile()||s.isSymbolicLink()||s.uid!==owner||(s.mode&0o777)!==0o600||s.size>65536)throw unavailable();
+    const doc=JSON.parse(fs.readFileSync(file,'utf8'));
+    if(doc.schema_version!==1||!doc.items||Array.isArray(doc.items)||Object.keys(doc).sort().join(',')!=='items,schema_version'
+     ||Object.entries(doc.items).some(([id,value])=>!UUID.test(id)||! /^[a-z2-7]{26}$/.test(value)))throw unavailable();
+    configured=doc.items[machineId];
+   }catch(e){if(e.code!=='ENOENT')throw e;}
+   let item=state?.phase==='ready'?state.item_id:configured,created;
+   if(configured&&item&&configured!==item)throw unavailable();
    if(!item){
     const title='Cecelia Linux '+machineId,tag='cecelia-linux:'+machineId;
     const found=JSON.parse(await run(['item','list','--vault','CS','--tags',tag,'--format','json']));

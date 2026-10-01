@@ -41,3 +41,9 @@ it('意图落盘失败零创建，重复匹配、宽权限目录和符号链接�
  fs.chmodSync(path.join(x.root,x.id),0o755);await expect(x.ensure(x.id,null,x.save)).rejects.toThrow();
  fs.rmdirSync(path.join(x.root,x.id));fs.symlinkSync(x.root,path.join(x.root,x.id));await expect(x.ensure(x.id,null,x.save)).rejects.toThrow();
 });
+it('受保护机器绑定复用既有CS item，零创建且无新凭据',async()=>{
+ const x=setup(),item='hggqzux4bkd6obcjp44zko6ywm';
+ fs.writeFileSync(path.join(x.root,'credential-bindings.json'),JSON.stringify({schema_version:1,items:{[x.id]:item}}),{mode:0o600});
+ const calls=[],ensure=createOnboardingCredentials({root:x.root,pathRoot:x.root,run:async args=>{calls.push(args);if(args[0]!=='read')throw Error('must only read');return args[1].endsWith('worker_token')?'b'.repeat(64):'c'.repeat(64);}});
+ const result=await ensure(x.id,null,x.save);expect(result.item_id).toBe(item);expect(calls).toHaveLength(2);expect(x.state.item_id).toBe(item);
+});

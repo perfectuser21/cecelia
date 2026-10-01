@@ -51,6 +51,12 @@ services:
       # 2026-09-12 生产实证：导致 os.homedir() 拼错路径，harness-credentials.js
       # 读不到这份凭据文件 → github_token_unavailable）。
       - /root/.credentials:/root/.credentials:ro
+      # 接入控制面唯一可写凭据子目录；宿主必须预建root:root 0700，禁止compose创建宽权限目录。
+      - type: bind
+        source: /root/.credentials/fleet-control
+        target: /root/.credentials/fleet-control
+        bind:
+          create_host_path: false
       # packages/workflows 不再单独叠只读挂载（09-28 事故，任务 ddee8737）：部署根守卫在本容器内对部署根
       # git checkout -f / reset --hard，只读子挂载让任何改到该目录的提交都部署失败。该目录随部署根整体可写。
       # Config: OKR validation spec (read-only, mounted at /config for validate-okr-structure.js)
@@ -85,6 +91,8 @@ services:
       - path: ${CECELIA_INTERNAL_ENV_FILE:-/root/.credentials/cecelia-internal.env}
         required: false
     environment:
+      - CECELIA_LINUX_POOL_DEPLOYMENTS_FILE=/root/.credentials/fleet-control/pools.json
+      - CECELIA_LINUX_SCRIPT_DEPLOYMENTS_FILE=/root/.credentials/fleet-control/scripts.json
       - NODE_ENV=production
       - TZ=Asia/Shanghai
       - ENV_REGION=${ENV_REGION:-us}

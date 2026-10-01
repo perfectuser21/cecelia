@@ -55,6 +55,7 @@ export interface MachineMetadata {
 }
 
 export interface Machine {
+  execution?: { enabled: boolean; expires_at: string | null; verified_until: string | null };
   id: string;
   name: string;
   description: string;

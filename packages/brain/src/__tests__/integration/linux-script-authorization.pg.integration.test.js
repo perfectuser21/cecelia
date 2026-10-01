@@ -9,6 +9,7 @@ import {beforeAll,beforeEach,afterAll,it,expect} from 'vitest';
 import {DB_DEFAULTS} from '../../db-config.js';
 import {fixture} from '../../linux-pool/runtime-receipt.test-fixture.js';
 import {createLinuxRuntimeAuthorization} from '../../linux-pool/runtime-service.js';
+import {createOnboardingRecovery} from '../../linux-pool/onboarding-recovery.js';
 import {directory} from '../../execution-directory/directory.js';
 import {authorize,resolveCleanup} from '../../execution-directory/store.js';
 import {routeWork} from '../../work-router.js';
@@ -92,6 +93,18 @@ it('到期、配置换代、机器scheduler/US和请求注入均不能签发或�
  await expect(service.activate(machine,{runtime_id:p.id,expected_version_id:null,envelope:await signed(p)})).rejects.toThrow('linux_pool_runtime_unavailable');
  await pool.query("UPDATE system_registry SET metadata='{\"role\":\"scheduler\"}' WHERE id=$1",[machine]);await expect(service.prepare(machine,{expected_version_id:null})).rejects.toThrow('linux_pool_machine_forbidden');
  await expect(service.prepare('1a379d80-ad36-47d3-88ba-e545ab299a54',{expected_version_id:null})).rejects.toThrow('linux_pool_machine_forbidden');
+});
+it('过期验收只在完整签名清理确认后撤销并归档旧子任务，再准备全新代；未知不换nonce',async()=>{
+ const p=await service.prepare(machine,{expected_version_id:null}),state={runtime_json:JSON.stringify(p),expected_version_id:null};
+ const recover=createOnboardingRecovery({pool,runtimeAuthorization:service,readRuntime:async()=>f.deployment,afterTerminal:async()=>{}});
+ const envelope=await signed(p);expect(await recover('script',machine,state,envelope)).toBe(false);
+ await pool.query("UPDATE linux_script_authorizations SET challenge_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[p.id]);
+ await expect(recover('script',machine,state,await signed(p,r=>r.cases[0].cleanup.absent=false))).rejects.toThrow('linux_pool_runtime_receipt_invalid');
+ expect((await pool.query('SELECT state FROM linux_script_authorizations WHERE id=$1',[p.id])).rows[0].state).toBe('prepared');
+ expect(await recover('script',machine,state,envelope)).toBe(true);expect(await recover('script',machine,state,envelope)).toBe(true);
+ expect((await pool.query('SELECT state FROM linux_script_authorizations WHERE id=$1',[p.id])).rows[0].state).toBe('revoked');
+ expect((await pool.query('SELECT status,result FROM tasks WHERE id=$1',[p.evidence_task_id])).rows[0]).toMatchObject({status:'archived',result:{actor:'linux-pool-onboarding',evidence:{signature:envelope.signature}}});
+ const next=await service.prepare(machine,{expected_version_id:null});expect(next.nonce).not.toBe(p.nonce);expect(next.execution_version_id).not.toBe(p.execution_version_id);
 });
 it('激活中途失败回滚task完成/证据/目录/grants；授权历史及过期不可扩张',async()=>{
  const p=await service.prepare(machine,{expected_version_id:null});await pool.query(`CREATE FUNCTION reject_script_active() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state='active' THEN RAISE EXCEPTION 'fixture_failure';END IF;RETURN NEW;END $$;CREATE TRIGGER reject_script_active BEFORE UPDATE ON execution_grants FOR EACH ROW EXECUTE FUNCTION reject_script_active()`);

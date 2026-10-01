@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { clearMachineCache } from '../routing/load-machines.js';
+import {createLinuxOnboardingFlow} from '../linux-pool/onboarding-flow.js';
 import {
   buildOnboardingScript, enrollmentError, onboardingView, requestHash, validateEnrollment,
   validateReceipt,
@@ -10,7 +11,8 @@ const META = "payload->'node_onboarding'";
 const PROBE_INTERVAL_MS = 120_000;
 const taskCreator = async args => (await import('../actions.js')).createTask(args);
 
-export function createOnboardingService({ pool, createTask = taskCreator, config = {}, now = () => new Date() }) {
+export function createOnboardingService({ pool, createTask = taskCreator, config = {}, now = () => new Date(), execution=createLinuxOnboardingFlow({pool,createTask}) }) {
+  const present=async task=>onboardingView(task,now(),task.payload.node_onboarding.execution_task_id?await execution.view(task.payload.node_onboarding.execution_task_id):undefined);
   async function transaction(fn) {
     const client = await pool.connect();
     try {
@@ -119,6 +121,10 @@ export function createOnboardingService({ pool, createTask = taskCreator, config
         meta.registration_error = 'name_conflict';
         await db.query(`UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,registration_error}','"name_conflict"') WHERE id=$1`, [row.id]);
       }
+      if(result.rows.length){
+        const id=await execution.ensure({id:meta.id,name:meta.request.name,metadata},row.id,db);
+        if(id)meta.execution_task_id=id;
+      }
       clearMachineCache();
     } else if (meta.mode === 'sample') {
       // 旧回执不得覆盖更新样本；失败保留上次健康数据，由时间戳将节点降为 stale。
@@ -154,7 +160,7 @@ export function createOnboardingService({ pool, createTask = taskCreator, config
       await lock(db, id);
       const task = await latest(db, id);
       await reconcileTask(db, task);
-      return onboardingView(task, now());
+      return present(task);
     });
   }
 
@@ -164,13 +170,14 @@ export function createOnboardingService({ pool, createTask = taskCreator, config
       `SELECT * FROM (SELECT DISTINCT ON (${META}->>'id') * FROM tasks WHERE ${META}->>'mode'='enroll'
        ORDER BY ${META}->>'id',created_at DESC,id DESC) AS latest ORDER BY created_at DESC,id DESC LIMIT 100`);
     rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    return { items: rows.map(row => onboardingView(row, now())) };
+    return { items: await Promise.all(rows.map(present)) };
   }
 
   async function retry(id) {
     return transaction(async db => {
       await lock(db, id);
       const previous = await latest(db, id);
+      if(previous.payload.node_onboarding.execution_task_id){await execution.retry(previous.payload.node_onboarding.execution_task_id);return present(previous);}
       if (!['failed', 'cancelled'].includes(onboardingView(previous, now()).status)) throw enrollmentError('进行中或已完成的接入不能重复启动', 409);
       const meta = previous.payload.node_onboarding;
       const task = await enqueue(db, { ...meta, registration_error: null, retry_of_task_id: previous.id }, (meta.attempt || 0) + 1);
@@ -206,10 +213,10 @@ export function createOnboardingService({ pool, createTask = taskCreator, config
     }
     return { scheduled };
   }
-  return { create, get, list, retry, reconcile, scheduleProbes };
+  return { create, get, list, retry, reconcile, scheduleProbes,advanceExecution:()=>execution.run() };
 }
 
 export async function runNodeOnboardingJob(pool) {
   const service = createOnboardingService({ pool });
-  return { ...await service.reconcile(), ...await service.scheduleProbes() };
+  return { ...await service.reconcile(), ...await service.scheduleProbes(), ...await service.advanceExecution() };
 }

@@ -5,7 +5,7 @@ import NodeOnboardingForm from './NodeOnboardingForm';
 
 const statuses = { queued: '等待接入', in_progress: '正在接入', completed: '接入完成', failed: '接入失败', cancelled: '已取消' };
 const stepStatuses = { pending: '待开始', running: '进行中', completed: '已完成', failed: '失败' };
-const active = (request: NodeOnboardingRequest) => request.status === 'queued' || request.status === 'in_progress';
+const active = (request: NodeOnboardingRequest) => request.status === 'queued' || request.status === 'in_progress' || request.automatic === true;
 
 export default function NodeOnboarding({ open, onOpen, onClose, onCompleted }: {
   open: boolean; onOpen: () => void; onClose: () => void; onCompleted: () => void;
@@ -23,6 +23,7 @@ export default function NodeOnboarding({ open, onOpen, onClose, onCompleted }: {
     if (item.status === 'completed' && !completed.current.has(item.id)) {
       completed.current.add(item.id); callbacks.current.onCompleted();
     }
+    if(item.status !== 'completed' && completed.current.delete(item.id)) callbacks.current.onCompleted();
   }
   useEffect(() => {
     const controller = new AbortController();
@@ -30,6 +31,7 @@ export default function NodeOnboarding({ open, onOpen, onClose, onCompleted }: {
       if (controller.signal.aborted) return;
       const unfinished = requests.filter(item => item.status !== 'completed');
       const recent = requests.filter(item => item.status === 'completed').slice(0, 5);
+      for(const item of recent) completed.current.add(item.id);
       setItems(previous => [...previous, ...[...unfinished, ...recent].filter(item => !previous.some(existing => existing.id === item.id))]);
       if (unfinished.length) callbacks.current.onOpen();
     }).catch(cause => {
@@ -37,9 +39,9 @@ export default function NodeOnboarding({ open, onOpen, onClose, onCompleted }: {
     });
     return () => controller.abort();
   }, []);
-  const activeIds = items.filter(active).map(item => item.id).sort().join(',');
+  const activeIds = items.filter(item=>active(item)&&(open||item.automatic===true)).map(item => item.id).sort().join(',');
   useEffect(() => {
-    if (!open || !activeIds) return;
+    if (!activeIds) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
@@ -76,7 +78,7 @@ export default function NodeOnboarding({ open, onOpen, onClose, onCompleted }: {
         {items.map(item => <article key={item.id} className="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
           <div className="flex justify-between gap-2"><h3 className="font-medium">{item.machine_name}</h3><span>{statuses[item.status]}</span></div>
           {item.status === 'in_progress' && !item.stage && <p className="mt-2 text-sm text-gray-500">执行中，等待验收回执</p>}
-          {item.status === 'completed' && item.notice && <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">{item.notice}</p>}
+          {item.notice && <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">{item.notice}</p>}
           <ol className="my-2 space-y-1 text-sm">{item.steps.map(step => <li key={step.key}>
             <span>{step.label}</span><span className="ml-2 text-gray-500">{stepStatuses[step.status]}</span>
             {step.message && <p className="text-gray-500">{step.message}</p>}
