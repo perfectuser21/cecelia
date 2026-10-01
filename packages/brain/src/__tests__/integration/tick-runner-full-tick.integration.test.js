@@ -267,6 +267,23 @@ describe('tick-runner executeTick — full tick wire-up', () => {
     vi.clearAllMocks();
   });
 
+  it('fixture 外部边界阻止真实清理、凭据读取和 LLM/GitHub 调用', async () => {
+    for (const [path, names] of [
+      ['../../zombie-cleaner.js', ['runZombieCleanup']],
+      ['../../harness-worktree.js', ['cleanupStaleHarnessWorktrees']],
+      ['../../zombie-sweep.js', ['zombieSweep']],
+      ['../../heartbeat-inspector.js', ['runHeartbeatInspection']],
+      ['../../active-goals-zero-trigger.js', ['maybeTriggerStrategySession']],
+      ['../../orphan-pr-worker.js', ['scanOrphanPrs']],
+      ['../../credential-expiry-checker.js', ['checkAndAlertExpiringCredentials', 'recoverAuthQuarantinedTasks', 'scanAuthLayerHealth', 'cleanupDuplicateRescueTasks', 'cancelCredentialAlertTasks']],
+      ['../../shepherd.js', ['shepherdOpenPRs', 'reconcileTerminalOpenPRs']],
+      ['../../llm-caller.js', ['callLLM']],
+    ]) {
+      const module = await import(path);
+      for (const name of names) expect(vi.isMockFunction(module[name]), `${path}:${name}`).toBe(true);
+    }
+  });
+
   it('一次 executeTick：8 个 plugin .tick 都被调；dispatcher 被调；tickState 时间戳前移', async () => {
     const before = Date.now() - 1; // 防同毫秒赋值导致 ">" 比较失败
 
