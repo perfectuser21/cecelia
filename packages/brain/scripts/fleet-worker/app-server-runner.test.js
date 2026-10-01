@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'node:module';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHmac } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -31,7 +31,7 @@ function fixture(selectedProfile = profile) {
       return Object.assign(child, { stdin: new PassThrough(), stdout: new PassThrough(), kill: () => child.emit('close', 0) });
     },
   };
-  const config = { stateRoot: root, machineId, workerId, bootId, profiles: { chat: selectedProfile }, docker,
+  const config = { stateRoot: root, machineId, workerId, bootId, profiles: { chat: selectedProfile }, docker, canaryKey:'test-canary-signing-key-with-32-characters',
     assertLocalResources: async () => { if (rejectAdmission) throw Error('attempt_local_resources_unavailable'); } };
   const input = (overrides = {}) => { const value = ({ reservation_id: randomUUID(), intent_id: randomUUID(), launch_generation: 1,
     machine_id: machineId, worker_id: workerId, worker_boot_id: bootId, home_key: profile.homeKey,
@@ -42,6 +42,21 @@ function fixture(selectedProfile = profile) {
 }
 
 describe('app-server generation 与 HOME 单写生命周期', () => {
+  it('签名验收许可绑定同代身份；流只能进入验收模式且审计跨重启保存',async()=>{
+    const f=fixture();try{
+      const input=f.input(),payload={authorization_id:randomUUID(),nonce:randomUUID(),expires_at:Date.now()+60000,identity:input};
+      const permit={payload,signature:createHmac('sha256',f.config.canaryKey).update(JSON.stringify(payload)).digest('hex')};
+      await expect(f.runner.start({...input,canary_permit:{...permit,signature:'0'.repeat(64)}})).rejects.toThrow('appserver_canary_permit_invalid');
+      expect(f.stats().creates).toBe(0);
+      await f.runner.start({...input,canary_permit:permit});
+      const stream_id=randomUUID(),child=await f.runner.attach({...input,stream_id});expect(child.rpcCanary).toBe(true);
+      await f.runner.recordCanaryEvidence({...input,stream_id},{complete:false,rejected:1,failed:0,methods:[]});
+      child.kill();await new Promise(r=>setTimeout(r,10));
+      const restarted=api.createAppServerRunner(f.config),state=await restarted.inspect(input);
+      expect(state.canary_evidence).toMatchObject({authorization_id:payload.authorization_id,nonce:payload.nonce,complete:false,rejected:1});
+      await expect(restarted.start(input)).rejects.toThrow('appserver_canary_permit_invalid');
+    }finally{f.cleanup();}
+  });
   it('attach仅传递持久化profile工具权限，客户端身份字段不能添加执行工具', async () => {
     const f = fixture({...profile, hostTools:['read','message']});
     try {
