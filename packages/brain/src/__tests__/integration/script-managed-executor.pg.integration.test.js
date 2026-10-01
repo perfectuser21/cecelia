@@ -206,3 +206,50 @@ it.each(['unavailable','wrong-profile'])('运行中重复trigger遇%s保持原�
   expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('completed');
   expect(starts).toBe(1);
 });
+it.each(['prepare','launch','wait'])('旧%s请求暂停后新代运行，所有身份写入均不得覆盖新代',async(boundary)=>{
+  const first=await task();let resume,arrive;
+  const paused=new Promise(r=>{arrive=r;}),gate=new Promise(r=>{resume=r;});let once=true;
+  const delayed={connect:pool.connect.bind(pool),query:async(sql,args)=>{
+    const target=boundary==='prepare'?sql.startsWith('UPDATE tasks SET payload=payload||')
+      :boundary==='launch'?sql.startsWith("UPDATE tasks SET status='in_progress',executor_kind")
+      :sql.startsWith("UPDATE tasks SET status='queued',claimed_by=NULL");
+    if(once&&target){once=false;arrive();await gate;}
+    return pool.query(sql,args);
+  }};
+  if(boundary==='wait')rejectStart=true;
+  const pending=triggerScriptRun(first,{...deps,pool:delayed});
+  // Attach error handling while the deliberate interleaving runs.
+  const settled=pending.then(value=>({value}),error=>({error}));await paused;
+  rejectStart=false;
+  await triggerScriptRun(first,deps);await reapScriptRuns(pool,deps);
+  const next=(await pool.query(`UPDATE tasks SET status='queued',payload=(payload-'script_run_id'-'script_reservation_id')
+    ||'{"script_attempts":[{"attempt":1}]}'::jsonb WHERE id=$1 RETURNING *`,[first.id])).rows[0];
+  await triggerScriptRun(next,deps);
+  const before=(await pool.query('SELECT status,payload,result FROM tasks WHERE id=$1',[first.id])).rows[0];
+  const runs=(await pool.query('SELECT run_id,status FROM task_runs ORDER BY run_id')).rows;
+  resume();const result=await settled;
+  expect(result.error).toBeUndefined();
+  expect((await pool.query('SELECT status,payload,result FROM tasks WHERE id=$1',[first.id])).rows[0]).toEqual(before);
+  expect((await pool.query('SELECT run_id,status FROM task_runs ORDER BY run_id')).rows).toEqual(runs);
+  expect((await pool.query("SELECT owner_key,status FROM capacity_reservations WHERE status<>'released'")).rows)
+    .toEqual([{owner_key:`script-${first.id}-a2`,status:'running'}]);
+  expect(result.value).toMatchObject({success:true,pending:true});expect(starts).toBe(2);
+});
+it.each(['trigger','prepare'])('旧%s准入拒绝不能释放或阻断新代任务',async(entry)=>{
+  const first=await task();let resume,arrive;let once=true;
+  const paused=new Promise(r=>{arrive=r;}),gate=new Promise(r=>{resume=r;});
+  const delayed={connect:pool.connect.bind(pool),query:async(sql,args)=>{
+    const target=entry==='trigger'?sql.startsWith('UPDATE tasks SET status=$2'):sql.startsWith('UPDATE tasks SET claimed_by = NULL');
+    if(once&&target){once=false;arrive();await gate;}
+    return pool.query(sql,args);
+  }};
+  const oldDeps={...deps,pool:delayed,managed:{...deps.managed,client:{...deps.managed.client,capabilities:async()=>({profiles:{}})}}};
+  const pending=(entry==='trigger'?triggerScriptRun(first,oldDeps):prepareScriptDispatch(first,oldDeps));
+  await paused;await triggerScriptRun(first,deps);await reapScriptRuns(pool,deps);
+  const next=(await pool.query(`UPDATE tasks SET status='queued',claimed_by='new-claim',payload=(payload-'script_run_id'-'script_reservation_id')
+    ||'{"script_attempts":[{"attempt":1}]}'::jsonb WHERE id=$1 RETURNING *`,[first.id])).rows[0];
+  await triggerScriptRun(next,deps);
+  const before=(await pool.query('SELECT * FROM tasks WHERE id=$1',[first.id])).rows[0];
+  resume();await pending;
+  expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[first.id])).rows[0]).toEqual(before);
+});
