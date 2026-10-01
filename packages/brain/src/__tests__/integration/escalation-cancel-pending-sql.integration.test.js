@@ -28,16 +28,13 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
+import { DB_DEFAULTS } from '../../db-config.js';
 import { buildCancelPendingQuery, buildPauseLowPriorityQuery } from '../../alertness/escalation.js';
-
-const DB_URL = process.env.DATABASE_URL
-  || process.env.BRAIN_DB_URL
-  || 'postgresql://localhost/cecelia';
 
 let pool;
 
 beforeAll(() => {
-  pool = new pg.Pool({ connectionString: DB_URL, max: 2 });
+  pool = new pg.Pool({ ...DB_DEFAULTS, max: 2 });
 });
 
 afterAll(async () => {
@@ -65,7 +62,7 @@ async function prepareWithUninferredThirdParam(pool, sql, name) {
   }
 }
 
-describe('cancel_pending SQL 参数类型（真库 PREPARE，禁 mock）', () => {
+describe.skipIf(process.env.POSTGRES_INTEGRATION !== '1')('cancel_pending SQL 参数类型（真库 PREPARE，禁 mock）', () => {
   it('keepCritical=false 的 SQL 能被 Postgres 成功 PREPARE（$3 类型可推断）', async () => {
     const sql = buildCancelPendingQuery(false);
     await expect(prepareWithUninferredThirdParam(pool, sql, 'guard_cancel_pending_f')).resolves.toBe(true);

@@ -112,6 +112,7 @@ export interface NavGroup {
 
 export interface NavGroupItem {
   path: string;
+  exact?: boolean;
   icon: string;
   label: string;
   featureKey: string;

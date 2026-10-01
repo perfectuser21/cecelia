@@ -22,6 +22,10 @@ const { Pool } = pg;
 const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 export async function createTempMigratedDb(prefix = 'tmpdb') {
+  if (process.env.CI !== 'true' || process.env.POSTGRES_INTEGRATION !== '1') {
+    throw new Error('migration fixtures require CI PostgreSQL');
+  }
+  if (DB_DEFAULTS.database === 'cecelia') throw new Error('migration fixtures reject production DB');
   if (!/^[a-z][a-z0-9]{1,15}$/.test(prefix)) throw new Error('unsafe temp db prefix');
   const name = `${prefix}_${process.pid}_${randomUUID().replaceAll('-', '')}`;
   const quoted = `"${name}"`;

@@ -20,42 +20,19 @@ import { createTask } from './actions.js';
  * @returns {Promise<Object>} 完成审查数据
  */
 async function reviewProjectCompletion(pool, projectId) {
-  // 1. 获取 Project 信息（okr_projects 直接含 kr_id 字段）
   const projResult = await pool.query(
-    `SELECT op.id, op.title AS name, op.status, op.created_at, op.completed_at,
-            NULL::int AS time_budget_days,
-            op.kr_id,
-            NULL::uuid AS parent_id
-     FROM okr_projects op WHERE op.id = $1`,
-    [projectId]
+    `SELECT p.id, p.name, p.status, p.created_at, p.kr_id,
+            p.metadata->>'time_budget_days' AS time_budget_days,
+            (SELECT MAX(t.completed_at) FROM tasks t
+             WHERE t.project_id = p.id AND t.task_type <> 'project' AND t.status = 'completed') AS completed_at
+     FROM projects p WHERE p.id = $1`, [projectId]
   );
-
-  if (projResult.rows.length === 0) {
-    return { found: false, projectId };
-  }
-
+  if (projResult.rows.length === 0) return { found: false, projectId };
   const project = projResult.rows[0];
-
-  // 2. 收集 Initiative 统计（迁移：projects WHERE type='initiative' → okr_initiatives via scopes）
-  const initResult = await pool.query(
-    `SELECT COUNT(*) AS total,
-            COUNT(*) FILTER (WHERE oi.status = 'done') AS completed
-     FROM okr_initiatives oi
-     JOIN okr_scopes os ON oi.scope_id = os.id
-     WHERE os.project_id = $1`,
-    [projectId]
-  );
-  const { total: initiativeTotal, completed: initiativeCompleted } = initResult.rows[0];
-
-  // 3. 收集 Task 统计（迁移：通过 okr_initiatives 关联）
   const taskResult = await pool.query(
     `SELECT COUNT(*) AS total,
-            COUNT(*) FILTER (WHERE t.status = 'completed') AS completed
-     FROM tasks t
-     JOIN okr_initiatives oi ON oi.id = t.project_id
-     JOIN okr_scopes os ON oi.scope_id = os.id
-     WHERE os.project_id = $1`,
-    [projectId]
+            COUNT(*) FILTER (WHERE status = 'completed') AS completed
+     FROM tasks WHERE project_id = $1 AND task_type <> 'project'`, [projectId]
   );
   const { total: taskTotal, completed: taskCompleted } = taskResult.rows[0];
 
@@ -65,7 +42,8 @@ async function reviewProjectCompletion(pool, projectId) {
   const actualDays = Math.max(1, Math.round((completedAt - createdAt) / (24 * 60 * 60 * 1000)));
 
   // 5. 对比时间预算
-  const budgetDays = project.time_budget_days || null;
+  const rawBudget = Number(project.time_budget_days);
+  const budgetDays = Number.isFinite(rawBudget) && rawBudget > 0 ? rawBudget : null;
   const timeRatio = budgetDays ? +(actualDays / budgetDays).toFixed(2) : null;
 
   return {
@@ -74,8 +52,6 @@ async function reviewProjectCompletion(pool, projectId) {
     projectName: project.name,
     status: project.status,
     krId: project.kr_id,
-    initiativeCount: parseInt(initiativeTotal, 10),
-    initiativeCompleted: parseInt(initiativeCompleted, 10),
     taskCount: parseInt(taskTotal, 10),
     taskCompleted: parseInt(taskCompleted, 10),
     actualDays,
@@ -98,11 +74,10 @@ async function shouldAdjustPlan(pool, krId, completedProjectId) {
   if (!krId) return null;
 
   // 1. 查询 KR 下所有 Projects
-  // 迁移：projects → okr_projects（name → title）
   const projectsResult = await pool.query(
-    `SELECT op.id, op.title AS name, op.status, NULL::int AS sequence_order,
-            NULL::int AS time_budget_days, op.end_date AS deadline
-     FROM okr_projects op
+    `SELECT op.id, op.name, op.status, op.metadata->>'sequence_order' AS sequence_order,
+            op.metadata->>'time_budget_days' AS time_budget_days, op.end_date AS deadline
+     FROM projects op
      WHERE op.kr_id = $1
      ORDER BY op.created_at ASC`,
     [krId]
@@ -110,7 +85,7 @@ async function shouldAdjustPlan(pool, krId, completedProjectId) {
 
   const projects = projectsResult.rows;
   const completedProjects = projects.filter(p => p.status === 'completed');
-  const pendingProjects = projects.filter(p => p.status === 'pending' || p.status === 'pending_review');
+  const pendingProjects = projects.filter(p => ['planning', 'pending', 'pending_review'].includes(p.status));
 
   // 2. 没有后续 pending Project → 不需要调整
   if (pendingProjects.length === 0) {
@@ -242,17 +217,13 @@ async function executePlanAdjustment(pool, findings, _planContext) {
   for (const adj of findings.adjustments) {
     if (!adj.project_id) continue;
 
-    const _updates = [];
-    const _values = [adj.project_id];
-    let _paramIdx = 2;
-
     const metaUpdates = {};
     if (adj.time_budget_days !== undefined) {
       metaUpdates.time_budget_days = adj.time_budget_days;
     }
 
     if (Object.keys(metaUpdates).length > 0 || adj.deadline !== undefined) {
-      // Try okr_projects first with metadata for time_budget_days, end_date for deadline
+      // 计划字段更新 projects 真身。
       const newTableUpdates = [];
       const newTableValues = [adj.project_id];
       let newIdx = 2;
@@ -267,7 +238,7 @@ async function executePlanAdjustment(pool, findings, _planContext) {
       newTableUpdates.push('updated_at = NOW()');
 
       const _newResult = await pool.query(
-        `UPDATE okr_projects SET ${newTableUpdates.join(', ')} WHERE id = $1`,
+        `UPDATE projects SET ${newTableUpdates.join(', ')} WHERE id = $1`,
         newTableValues
       );
 

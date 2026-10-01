@@ -142,8 +142,9 @@ jobs:
       - name: Gate check
         run: |
           RESULT="${{ needs.smoke-glob-runner.result }}"
-          if [ "$RESULT" = "failure" ]; then
-            echo "❌ smoke-glob-runner 失败（基线脚本未通过或有未登记新脚本）"
+          # 底层 job 无路径条件，必须真实成功，skipped / cancelled 也不能放行。
+          if [ "$RESULT" != "success" ]; then
+            echo "❌ smoke-glob-runner 未成功完成（result=${RESULT:-empty}）"
             echo "  → 查看 'Run Smoke Ratchet Gate' step 获取详情"
             exit 1
           fi

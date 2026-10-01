@@ -22,10 +22,10 @@ vi.mock('../similarity.js', () => {
                 score: 0.88,
                 status: 'completed',
                 text: 'implement priority algorithm',
-                metadata: { initiative_id: 'init-456' }
+                metadata: { project_id: 'init-456' }
               },
               {
-                level: 'initiative',
+                level: 'project',
                 id: 'init-456',
                 title: 'Smart scheduling system',
                 score: 0.71,
@@ -156,7 +156,7 @@ describe('Attachment Decision API Routes', () => {
       expect(response.body.attach.confidence).toBeGreaterThanOrEqual(0.85);
     });
 
-    it('should return extend_initiative decision for related initiative', async () => {
+    it('should return extend_project decision for related project', async () => {
       const response = await request(app)
         .post('/api/brain/attach-decision')
         .send({
@@ -170,7 +170,7 @@ describe('Attachment Decision API Routes', () => {
               status: 'pending'
             },
             {
-              level: 'initiative',
+              level: 'project',
               id: 'init-456',
               title: 'Smart scheduling system',
               score: 0.71,
@@ -181,12 +181,12 @@ describe('Attachment Decision API Routes', () => {
         .expect(200);
 
       expect(response.body.success).toBe(true);
-      expect(response.body.attach.action).toBe('extend_initiative');
-      expect(response.body.attach.target.level).toBe('initiative');
+      expect(response.body.attach.action).toBe('extend_project');
+      expect(response.body.attach.target.level).toBe('project');
       expect(response.body.attach.target.id).toBe('init-456');
     });
 
-    it('should return create_initiative_under_kr decision for related KR', async () => {
+    it('should return create_project_under_kr decision for related KR', async () => {
       const response = await request(app)
         .post('/api/brain/attach-decision')
         .send({
@@ -204,7 +204,7 @@ describe('Attachment Decision API Routes', () => {
         .expect(200);
 
       expect(response.body.success).toBe(true);
-      expect(response.body.attach.action).toBe('create_initiative_under_kr');
+      expect(response.body.attach.action).toBe('create_project_under_kr');
       expect(response.body.attach.target.level).toBe('kr');
     });
 
@@ -293,9 +293,9 @@ describe('Attachment Decision API Routes', () => {
               status: 'pending'
             },
             {
-              level: 'initiative',
+              level: 'project',
               id: 'init-999',
-              title: 'Some initiative',
+              title: 'Some project',
               score: 0.95,
               status: 'active'
             }
@@ -303,12 +303,12 @@ describe('Attachment Decision API Routes', () => {
         })
         .expect(200);
 
-      // Should return duplicate_task even though initiative has higher score
+      // Should return duplicate_task even though project has higher score
       expect(response.body.attach.action).toBe('duplicate_task');
       expect(response.body.attach.target.id).toBe('task-high');
     });
 
-    it('should skip tasks with score < 0.85 and check initiatives', async () => {
+    it('should skip tasks with score < 0.85 and check projects', async () => {
       const response = await request(app)
         .post('/api/brain/attach-decision')
         .send({
@@ -322,9 +322,9 @@ describe('Attachment Decision API Routes', () => {
               status: 'pending'
             },
             {
-              level: 'initiative',
+              level: 'project',
               id: 'init-999',
-              title: 'Related initiative',
+              title: 'Related project',
               score: 0.75,
               status: 'active'
             }
@@ -332,8 +332,8 @@ describe('Attachment Decision API Routes', () => {
         })
         .expect(200);
 
-      // Should skip task and return extend_initiative
-      expect(response.body.attach.action).toBe('extend_initiative');
+      // Should skip task and return extend_project
+      expect(response.body.attach.action).toBe('extend_project');
       expect(response.body.attach.target.id).toBe('init-999');
     });
 

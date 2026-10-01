@@ -5127,3 +5127,15 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 - Cecelia develop 环境与 ZenithJoy develop 环境（`ZJ_DEV_PORT=5230`，待 ZJ 侧确认）配合
 - `staging-e2e-runner.js` 导出 `ZJ_DEV_PORT` 常量（默认 5230，可通过环境变量覆盖）
 - 本 Sprint 不修改任何 ZenithJoy 仓库文件，联动在后续 Sprint 实施
+
+
+## 1.348.17
+
+### Project 按需读取与拆解审查闭环（任务 d8ca5e1e）
+
+- 七处按需读方统一读取 projects 真身，子任务直接按 Task.project_id 关联，排除迁移保留的 project 根任务。
+- 实际拆解提示使用 Objective → Key Result → Project → Task；首次复用或新建项目通过本棒 result.decomposition_project_id 显式保存归属。
+- 拆解回调、修正再审与确认门刷新使用同一 Project；主理人确认放行更新 key_results。多项目未显式选择时拒绝猜选。
+- 真 PostgreSQL 事务回归覆盖真实 HTTP 选择项目、首次送审、修正再审、审批激活与 KR 放行；测试结束回滚。
+
+- KR 诊断的数据库入口挂 express-rate-limit，每来源每分钟30次，超额请求在SQL执行前返回429；无KR参数的健康入口独立可读。
