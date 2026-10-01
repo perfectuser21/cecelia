@@ -11,7 +11,7 @@ afterEach(async()=>{runner?.close();if(server)await new Promise(r=>server.close(
 it('F1造完真验：已确认清理的脚本意图，认证协议拒绝任何迟到启动',async()=>{
   root=mkdtempSync(path.join(tmpdir(),'gp-managed-script-'));
   const machine='us-mac-m4',token='gp-script-worker-token-'.repeat(3);
-  const profile={image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,user:'1000:1000',cwd:'/job'};
+  const profile={image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,logMaxSizeBytes:1048576,logMaxFiles:2,user:'1000:1000',cwd:'/job'};
   const job={profile:'safe',cmd:'printf harmless',timeout_sec:30,env:{}};
   const digest=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
   let creates=0;

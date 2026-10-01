@@ -8,7 +8,8 @@ function createScriptDockerAdapter({ run = execute } = {}) {
   const command = (args) => run('docker', args, { encoding: 'utf8',timeout:20_000,maxBuffer:1024*1024 });
   return {
     async create({ name, profile, command: script, env = {}, identity }) {
-      const args = ['create',`--name=${name}`,'--network=none','--read-only','--cap-drop=ALL',
+      const args = ['create',`--name=${name}`,'--log-driver=local',
+        `--log-opt=max-size=${profile.logMaxSizeBytes}`,`--log-opt=max-file=${profile.logMaxFiles}`,'--network=none','--read-only','--cap-drop=ALL',
         '--security-opt=no-new-privileges','--restart=no',`--cpus=${profile.cpus}`,
         `--memory=${profile.memoryBytes}`,`--memory-swap=${profile.memoryBytes}`,`--pids-limit=${profile.pidsLimit}`,
         `--user=${profile.user}`,`--workdir=${profile.cwd}`,'--entrypoint=/bin/sh',

@@ -12,9 +12,11 @@ function validateProfile(profile) {
     || !Number.isFinite(profile.cpus) || profile.cpus<=0
     || !Number.isSafeInteger(profile.memoryBytes) || profile.memoryBytes<=0
     || !Number.isSafeInteger(profile.pidsLimit) || profile.pidsLimit<=0
+    || !Number.isSafeInteger(profile.logMaxSizeBytes) || profile.logMaxSizeBytes<=0
+    || !Number.isSafeInteger(profile.logMaxFiles) || profile.logMaxFiles<=0
     || !/^[1-9][0-9]*:[1-9][0-9]*$/.test(profile.user)
     || typeof profile.cwd!=='string' || !profile.cwd.startsWith('/') || profile.cwd.includes('..')
-    || Object.keys(profile).some((k)=>!['image','cpus','memoryBytes','pidsLimit','user','cwd'].includes(k))) {
+    || Object.keys(profile).some((k)=>!['image','cpus','memoryBytes','pidsLimit','logMaxSizeBytes','logMaxFiles','user','cwd'].includes(k))) {
     throw new Error('script_profile_invalid');
   }
   return profile;

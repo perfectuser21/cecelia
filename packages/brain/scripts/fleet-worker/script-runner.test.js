@@ -27,7 +27,7 @@ async function setup() {
     async remove(id) { const c=await this.inspect(id); if(c) containers.delete(c.name); },
   };
   const options = { assertLocalResources:async()=>{},stateRoot:root,machineId:'us-mac-m4',workerId:'worker-1',bootId:'boot-1',docker,
-    profiles:{ harmless:{ image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,user:'1000:1000',cwd:'/job' } } };
+    profiles:{ harmless:{ image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,logMaxSizeBytes:1048576,logMaxFiles:2,user:'1000:1000',cwd:'/job' } } };
   const runner=api.createScriptRunner(options);runners.push(runner);
   const input={ reservation_id:randomUUID(),machine_id:'us-mac-m4',owner_key:`script-${randomUUID()}-a1`,
     intent_id:randomUUID(),launch_generation:1,worker_id:'worker-1',worker_boot_id:'boot-1',config_digest:'c'.repeat(64),

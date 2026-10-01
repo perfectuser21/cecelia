@@ -39,7 +39,7 @@ beforeAll(async()=>{
     await pool.query(readFileSync(new URL(`../../../migrations/${file}.sql`,import.meta.url),'utf8'));
   }
   runner=createScriptRunner({assertLocalResources:async()=>{if(rejectStart)throw Object.assign(new Error('attempt_local_resources_unavailable'),{statusCode:429});},stateRoot:root,machineId:machine,workerId:machine,bootId:'boot-fixture',
-    profiles:{harmless:{image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,user:'1000:1000',cwd:'/job'}},
+    profiles:{harmless:{image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,logMaxSizeBytes:1048576,logMaxFiles:2,user:'1000:1000',cwd:'/job'}},
     docker:{async create({name,command,identity}){const id=randomUUID().replaceAll('-','').repeat(2);
       containers.set(id,{id,name,command,status:'created',labels:Object.fromEntries(Object.entries(identity).map(([k,v])=>[`cecelia.script.${k}`,String(v)]))});return id;},
       async inspect(id){return [...containers.values()].find(c=>c.id===id||c.name===id)??null;},
