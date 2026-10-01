@@ -4,6 +4,11 @@ import { COMPANY_KR_CATALOG, COMPANY_GOALS } from '../company-kr-metrics.js';
 
 const snapshot = () => ({ records: COMPANY_KR_CATALOG.map(r => ({ ...r, start: 0, current: 0, target: 8, area_ids: [], status: 'Open', updated_at: '2026-09-14T15:05:00Z' })), goals: COMPANY_GOALS.map(g => ({ ...g, area_ids: [], status: 'Not Started' })) });
 describe('公司source ID导入', () => {
+  it('相同pageID但其它源库归属的Goal不得被认领', async () => {
+    const query = vi.fn(async sql => sql.includes('FROM objectives') ? { rows: [{ id: 'foreign', metadata: { source_system: 'notion-company-okr' }, custom_props: { company_notion: { database_id: 'wrong-database' } } }] } : sql.includes('FROM tasks') ? { rows: [{ id: 'task', result: {} }] } : sql.includes('INSERT INTO key_results') ? { rows: [{ id: 'new' }] } : { rows: [], rowCount: 1 });
+    await expect(importCompanyKrs({ connect: async () => ({ query, release() {} }) }, snapshot(), { actor: 'codex', task_id: 'task' })).rejects.toThrow('归属');
+    expect(query.mock.calls.some(([sql]) => sql.includes('INSERT INTO key_results'))).toBe(false);
+  });
   it('缺页或错Goal必须在BEGIN前拒绝', async () => {
     const pool = { connect: vi.fn() };
     const data = snapshot(); data.records.pop();
