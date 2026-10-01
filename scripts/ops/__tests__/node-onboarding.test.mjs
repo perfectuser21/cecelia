@@ -10,7 +10,7 @@ const moduleUrl = new URL('../node-onboarding.mjs', import.meta.url);
 const pythonPath = fileURLToPath(new URL('../node-agent.py', import.meta.url));
 const remotePath = fileURLToPath(new URL('../node-agent-remote.py', import.meta.url));
 const request = { id: '12345678-1234-4234-8234-123456789abc', name: 'test-node', address: '192.0.2.1', ssh_user: 'runner', ssh_port: 22, credential_ref: 'op://CS/example/private key', host_key_fingerprint: `SHA256:${'A'.repeat(43)}`, role: 'worker', region: 'test', mode: 'enroll' };
-const health = (seq = 1) => ({ schema_version: 1, node_id: request.id, agent_version: '1', observed_at: new Date(Date.now() + seq * 1000).toISOString(), sequence: seq, hostname: 'test-host', os: 'linux', resources: { memory_total_bytes: 1024, memory_available_bytes: 512, cpu_load_1m: 0, cpu_cores: 2, disk_free_bytes: 2048, disk_total_bytes: 4096 }, capabilities: { collector: true, janitor: true, execution: false }, janitor: { policy: 'owned-cache-only', mode: 'observe' } });
+const health = (seq = 1) => ({ schema_version: 1, node_id: request.id, agent_version: '1', boot_id: 'a2345678-1234-4234-8234-123456789abc', observed_at: new Date(Date.now() + seq * 1000).toISOString(), sequence: seq, hostname: 'test-host', os: 'linux', resources: { memory_total_bytes: 1024, memory_available_bytes: 512, cpu_load_1m: 0, cpu_cores: 2, disk_free_bytes: 2048, disk_total_bytes: 4096 }, capabilities: { collector: true, janitor: true, execution: false }, janitor: { policy: 'owned-cache-only', mode: 'observe' } });
 async function runtime() {
   try { return await import(moduleUrl); } catch (error) { if (error.code === 'ERR_MODULE_NOT_FOUND') assert.fail('节点接入运行时尚未实现'); throw error; }
 }
@@ -78,6 +78,7 @@ test('真实 collector 子进程产生两份健康样本且权限600', { timeout
       if (samples.length < 2) await new Promise(resolve => setTimeout(resolve, 200));
     }
     assert.equal(samples.length, 2, '实际后台采集必须持续刷新'); assert.ok(Date.parse(samples[1].observed_at) - Date.parse(samples[0].observed_at) >= 9900);
+    assert.match(samples[1].boot_id, /^[0-9a-f-]{36}$/); assert.equal(samples[0].boot_id, samples[1].boot_id);
     assert.equal(samples[1].node_id, request.id); assert.equal(samples[1].capabilities.execution, false); assert.ok(samples[1].resources.memory_total_bytes > 0); assert.equal((await stat(path)).mode & 0o777, 0o600);
   } finally { child.kill('SIGTERM'); await closed; await rm(home, { recursive: true, force: true }); }
 });
@@ -144,4 +145,43 @@ test('SSH stdin 启动器真实执行 Python 探测代码', async () => {
 test('命令超时终止真实子进程且错误不含stderr', async () => {
   const { runCommand } = await import('../node-onboarding-runner.mjs');
   await assert.rejects(runCommand('python3', ['-c', 'import sys,time; sys.stderr.write("PRIVATE-SECRET"); time.sleep(5)'], { timeoutMs: 50 }), error => !error.message.includes('PRIVATE-SECRET'));
+});
+
+
+test('名称与后端统一为2至63位且允许数字开头', async () => {
+  const { validateRequest } = await runtime();
+  for (const name of ['1n', 'aa', 'a'.repeat(63)]) assert.equal(validateRequest({ ...request, name }).name, name);
+  for (const name of ['a', '', 'a'.repeat(64), '-aa', 'A-node', 'a_node']) assert.throws(() => validateRequest({ ...request, name }));
+  assert.equal(validateRequest({ ...request, ssh_user: 'a'.repeat(32) }).ssh_user.length, 32);
+  for (const ssh_user of ['a'.repeat(33), 'user$']) assert.throws(() => validateRequest({ ...request, ssh_user }));
+  for (const credential_ref of ['op://CS/item/section/field', 'op://CS/item', 'op://CS//field']) assert.throws(() => validateRequest({ ...request, credential_ref }));
+});
+
+test('连续验收拒绝缺失启动身份及跨进程样本', async () => {
+  const { verifySample } = await runtime(); const first = health(1);
+  const probe = { hostname: 'test-host', os: 'linux' }; const service = { enabled: true, active: true };
+  for (const boot_id of [undefined, 'invalid', 'b2345678-1234-4234-8234-123456789abc']) {
+    assert.throws(() => verifySample({ service, health: { ...health(2), boot_id } }, request, probe, first));
+  }
+});
+
+test('真实采集器重启更换启动身份并延续已有序号', { timeout: 10000 }, async () => {
+  const home = await mkdtemp(join(tmpdir(), 'node-reboot-'));
+  const path = join(home, '.local/state/cecelia-node', request.id, 'health.json'); const samples = [];
+  try {
+    for (let run = 0; run < 2; run++) {
+      const child = spawn('python3', [pythonPath, '--node-id', request.id, '--home', home], { stdio: 'ignore' });
+      const closed = new Promise(resolve => child.once('close', resolve));
+      try {
+        const started = Date.now();
+        while (Date.now() - started < 3000) {
+          try { const sample = JSON.parse(await readFile(path, 'utf8')); if (!samples.length || sample.sequence > samples[0].sequence) { samples.push(sample); break; } } catch {}
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+      } finally { child.kill('SIGTERM'); await closed; }
+    }
+    assert.equal(samples.length, 2); assert.match(samples[0].boot_id, /^[0-9a-f-]{36}$/);
+    assert.notEqual(samples[1].boot_id, samples[0].boot_id); assert.ok(samples[1].sequence > samples[0].sequence);
+    assert.ok(Date.parse(samples[1].observed_at) > Date.parse(samples[0].observed_at));
+  } finally { await rm(home, { recursive: true, force: true }); }
 });
