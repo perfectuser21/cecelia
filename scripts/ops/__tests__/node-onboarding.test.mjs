@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, stat, rm, access } from 'node:fs/promises';
+import { mkdtemp, readFile, stat, rm, access, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -27,7 +27,7 @@ function harness(overrides = {}) {
       if (payload.action === 'probe') return { stdout: JSON.stringify({ os: 'linux', hostname: 'test-host' }), code: 0 };
       if (payload.action === 'install') return { stdout: '{}', code: 0 };
       sampleCount++;
-      return { stdout: JSON.stringify({ service: { enabled: true, active: !overrides.inactive }, health: overrides.stale ? { ...health(sampleCount), observed_at: '2020-01-01T00:00:00Z' } : health(overrides.stuck ? 1 : sampleCount) }), code: 0 };
+      return { stdout: JSON.stringify({ service: { enabled: true, active: !overrides.inactive }, health: overrides.stale ? { ...health(sampleCount), observed_at: '2020-01-01T00:00:00Z' } : health(overrides.stuck || (overrides.slow && sampleCount < 3) ? 1 : sampleCount) }), code: 0 };
     }
     throw new Error('未知命令');
   };
@@ -113,7 +113,7 @@ with tempfile.TemporaryDirectory() as t:
  assert any('enable' in cmd for cmd in commands)
  assert all('prune' not in ' '.join(cmd) for cmd in commands)
 `;
-  const result = spawnSync('python3', ['-c', script], { encoding: 'utf8' }); assert.equal(result.status, 0, result.stderr);
+  const result = spawnSync('python3', ['-c', script], { encoding: 'utf8' }); assert.equal(result.status, 0, result.stderr || String(result.error || '子进程退出失败'));
 });
 
 test('整轮超时也中断采样等待并清理凭据', async () => {
@@ -138,7 +138,7 @@ test('SSH stdin 启动器真实执行 Python 探测代码', async () => {
     await onboard({ ...request, mode: 'sample' }, { runner: h.runner, home, sleep: async () => {} });
     const ssh = h.calls.find(call => call.command === 'ssh');
     const result = spawnSync('python3', ['-c', 'import sys; exec(sys.stdin.readline())'], { input: ssh.options.input, encoding: 'utf8' });
-    assert.equal(result.status, 0, result.stderr); const probe = JSON.parse(result.stdout); assert.ok(['linux', 'darwin'].includes(probe.os)); assert.ok(probe.hostname);
+    assert.equal(result.status, 0, result.stderr || String(result.error || '子进程退出失败')); const probe = JSON.parse(result.stdout); assert.ok(['linux', 'darwin'].includes(probe.os)); assert.ok(probe.hostname);
   } finally { await rm(home, { recursive: true, force: true }); }
 });
 
@@ -184,4 +184,34 @@ test('真实采集器重启更换启动身份并延续已有序号', { timeout: 
     assert.notEqual(samples[1].boot_id, samples[0].boot_id); assert.ok(samples[1].sequence > samples[0].sequence);
     assert.ok(Date.parse(samples[1].observed_at) > Date.parse(samples[0].observed_at));
   } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+
+test('后台采样耗时增加时在截止前轮询序号增长', async () => {
+  const { onboard } = await runtime(); const home = await mkdtemp(join(tmpdir(), 'node-slow-')); const h = harness({ slow: true });
+  try {
+    const result = await onboard(request, { runner: h.runner, home, sleep: async () => {} });
+    assert.equal(result.verified, true); assert.equal(result.health.sequence, 3);
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+test('回收上次进程留下的私钥目录并允许重新接入', async () => {
+  const { onboard } = await runtime(); const home = await mkdtemp(join(tmpdir(), 'node-stale-')); const h = harness();
+  const stale = join(home, '.credentials/cecelia-onboarding', request.id);
+  try {
+    await mkdir(stale, { recursive: true, mode: 0o700 }); await writeFile(join(stale, 'key'), 'STALE-PRIVATE-SECRET', { mode: 0o600 });
+    const result = await onboard(request, { runner: h.runner, home, sleep: async () => {} });
+    assert.equal(result.verified, true); await assert.rejects(access(join(stale, 'key')));
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+test('内核凭据锁拒绝活进程竞争并在释放后可重新获取', async () => {
+  const { acquireCredentialLock } = await import('../node-onboarding-runner.mjs');
+  assert.equal(typeof acquireCredentialLock, 'function', '必须提供跨进程凭据锁');
+  const home = await mkdtemp(join(tmpdir(), 'node-live-lock-')); const path = join(home, 'owner.lock'); let release;
+  try {
+    release = await acquireCredentialLock(path);
+    await assert.rejects(acquireCredentialLock(path));
+    await release(); release = await acquireCredentialLock(path);
+  } finally { if (release) await release(); await rm(home, { recursive: true, force: true }); }
 });
