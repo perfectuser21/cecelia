@@ -37,7 +37,13 @@ export async function main(argv = process.argv.slice(2), stream = process.stdin)
     result = { schema_version: 1, run_tag: envelope?.input?.run_tag ?? null, status: 'failed',
       reason_code: 'invalid_contract', detail: error.message, outputs: {}, metrics: {}, evidence: [], activities: [] };
   } finally { process.off('SIGTERM', stop); process.off('SIGINT', stop); }
-  persist(result);
+  try { persist(result); }
+  catch {
+    result.reason_code = 'event_sink_failed';
+    if (result.status === 'completed') result.status = result.activities.some(a =>
+      a.attempts?.some(attempt => Object.values(attempt.outputs || {}).some(value =>
+        Array.isArray(value) ? value.length > 0 : value != null))) ? 'partial' : 'failed';
+  }
   process.stdout.write(JSON.stringify(result) + '\n');
   return result.status === 'completed' ? 0 : result.status === 'partial' ? 2 : 1;
 }

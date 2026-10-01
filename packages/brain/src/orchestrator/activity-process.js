@@ -21,7 +21,8 @@ export function callActivityProcess(activity, input, { cwd, signal, onHeartbeat 
     const stop = code => {
       if (reason) return;
       reason = code;
-      kill('SIGTERM');
+      // JSON活动根负责把取消转换成业务安全边界请求，不向外部动作广播TERM。
+      if (child.pid) { try { process.kill(child.pid, 'SIGTERM'); } catch (error) { if (error.code !== 'ESRCH') stderr += '\nprocess_signal_failed'; } }
       graceTimer = setTimeout(() => kill('SIGKILL'), (activity.runtime.cleanup_grace_s ?? 5) * 1000);
     };
     const abort = () => stop('run_cancelled');

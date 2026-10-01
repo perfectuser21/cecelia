@@ -41,7 +41,7 @@ export function parseActivityContract(contract) {
     const r = a.runtime;
     requireValid(object(r) && r.protocol === 'json-stdio-v1', 'json_stdio_protocol_required');
     requireValid(['setup', 'source', 'per_item', 'batch_end', 'finalize'].includes(r.phase), 'activity_phase_invalid');
-    requireValid(typeof r.entry === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]*\.(?:js|mjs|cjs|sh)$/.test(r.entry), 'activity_entry_invalid');
+    requireValid(typeof r.entry === 'string' && /^(?:[a-zA-Z0-9_][a-zA-Z0-9_-]*\/)*[a-zA-Z0-9_][a-zA-Z0-9_-]*\.(?:js|mjs|sh)$/.test(r.entry), 'activity_entry_invalid');
     requireValid(r.argv === undefined || (Array.isArray(r.argv) && r.argv.every(v => typeof v === 'string')), 'activity_argv_invalid');
     requireValid(r.on_failure === undefined || ['continue', 'stop_run'].includes(r.on_failure), 'activity_failure_policy_invalid');
     requireValid(r.max_attempts === undefined || [1, 2].includes(r.max_attempts), 'activity_attempts_invalid');

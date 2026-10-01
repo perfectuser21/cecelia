@@ -21,15 +21,34 @@ export async function runActivityContract(contract, input, { cwd = process.cwd()
   const receipt = { schema_version: 1, workflow: plan.workflow, run_tag: input.run_tag,
     status: 'running', outputs: {}, metrics: {}, evidence: [], activities: [] };
   let cursor = 0, failed = false, productive = false, stopped = false;
-  const emit = async (event_type, payload = {}) => onEvent({ cursor: ++cursor, event_type, run_tag: input.run_tag, ...payload }, structuredClone(receipt));
+  const emit = async (event_type, payload = {}) => {
+    const event = { cursor: ++cursor, event_type, run_tag: input.run_tag, ...payload };
+    try { await onEvent(event, structuredClone(receipt)); return true; }
+    catch {
+      failed = true; stopped = true;
+      receipt.reason_code = 'event_sink_failed';
+      receipt.event_failures ||= []; receipt.event_failures.push({ cursor: event.cursor, event_type });
+      return false;
+    }
+  };
   const snapshot = () => ({ context, input: original, item: null });
 
   function mergeOutputs(result, grouping, item) {
+    // 全部验完再提交上下文，避免后一个无效字段留下前一个字段的半份污染。
+    for (const identity of ['run_tag', 'line_key']) {
+      if (Object.hasOwn(result.outputs, identity) && result.outputs[identity] !== original[identity]) {
+        throw new Error('activity_output_run_identity_mismatch');
+      }
+    }
+    if (grouping) {
+      const values = result.outputs[grouping.items.slice(2)];
+      if (values !== undefined && (!Array.isArray(values)
+        || values.some(row => !object(row) || row[grouping.identity] !== item[grouping.identity]))) {
+        throw new Error('per_item_output_identity_mismatch');
+      }
+    }
     for (const [key, value] of Object.entries(result.outputs)) {
       if (grouping && key === grouping.items.slice(2)) {
-        if (!Array.isArray(value) || value.some(row => !object(row) || row[grouping.identity] !== item[grouping.identity])) {
-          throw new Error('per_item_output_identity_mismatch');
-        }
         const current = context[key];
         const at = current.findIndex(row => row[grouping.identity] === item[grouping.identity]);
         for (const update of value) Object.assign(current[at], update);
@@ -60,10 +79,13 @@ export async function runActivityContract(contract, input, { cwd = process.cwd()
         if (grouping) activityInput[grouping.input] = structuredClone(item);
         activityInput.budget = structuredClone(a.budget);
         activityInput.attempt = attempt;
-        await emit('ACTIVITY_STARTED', { activity: a.key, item: record.item, attempt, budget: a.budget });
+        const recorded = await emit('ACTIVITY_STARTED', { activity: a.key, item: record.item, attempt, budget: a.budget });
+        if (!recorded && a.runtime.phase !== 'finalize') throw new Error('event_sink_failed');
         transport = await callActivityProcess(a, activityInput, { cwd,
           signal: a.runtime.phase === 'finalize' ? undefined : signal,
-          onHeartbeat: details => emit('ACTIVITY_HEARTBEAT', { activity: a.key, item: record.item, attempt, ...details }) });
+          onHeartbeat: async details => {
+            if (!await emit('ACTIVITY_HEARTBEAT', { activity: a.key, item: record.item, attempt, ...details })) throw new Error('event_sink_failed');
+          } });
         result = parseActivityResult(JSON.parse(transport.stdout), activityInput);
         if (result.status === 'completed' && transport.exit_code !== 0 && !transport.reason_code) throw new Error('activity_exit_status_mismatch');
         if (transport.reason_code) result = { ...result, status: hasProducts(result.outputs) ? 'partial' : 'failed',
@@ -82,12 +104,15 @@ export async function runActivityContract(contract, input, { cwd = process.cwd()
       if (result.status === 'completed') break;
       const declared = result.failure_class === 'needs_human' ? a.failure.needs_human.cases : a.failure[result.failure_class];
       if (!Array.isArray(declared) || declared.length === 0) { record.reason_code = 'undeclared_failure_class'; break; }
-      if (result.failure_class !== 'retryable' || signal?.aborted || attempt === (a.runtime.max_attempts ?? 1)) break;
+      if (result.failure_class !== 'retryable' || stopped || signal?.aborted || attempt === (a.runtime.max_attempts ?? 1)) break;
     }
     if (a.runtime.phase !== 'finalize' && record.attempts.some(row => hasProducts(row.outputs))) productive = true;
     if (record.status !== 'completed') {
       failed = true;
-      if (a.runtime.phase !== 'finalize' && (a.runtime.on_failure ?? 'stop_run') === 'stop_run') stopped = true;
+      const terminal = record.attempts.at(-1);
+      if (a.runtime.phase !== 'finalize' && (record.reason_code === 'undeclared_failure_class'
+        || ['fatal', 'needs_human'].includes(terminal?.failure_class)
+        || signal?.aborted || (a.runtime.on_failure ?? 'stop_run') === 'stop_run')) stopped = true;
     }
   }
 
@@ -118,5 +143,6 @@ export async function runActivityContract(contract, input, { cwd = process.cwd()
   }
   receipt.status = failed ? productive ? 'partial' : 'failed' : 'completed';
   await emit('WF_RUN_FINALIZED', { status: receipt.status });
+  receipt.status = failed ? productive ? 'partial' : 'failed' : 'completed';
   return receipt;
 }

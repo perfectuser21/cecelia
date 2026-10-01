@@ -24,12 +24,12 @@ CLI stdout 只有一个终态 JSON；exit 0/2/1 对应 completed/partial/failed�
 | runtime 字段 | 程序语义 |
 |---|---|
 | protocol | 必须为 `json-stdio-v1`；旧 shell 参数说明不作可执行协议 |
-| entry / argv | 活动目录下 basename 与字符串参数数组；JS 用当前 Node、可执行 SH 直接调用，均不走 shell 拼接 |
+| entry / argv | 活动目录下安全相对路径与字符串参数数组，拒绝绝对路径和上级目录；JS 用当前 Node、可执行 SH 直接调用，均不走 shell 拼接 |
 | input | 可选目标顶层字段→路径映射；`$.field` 为累计上下文、`$input.field` 为原输入、`$item.field` 为当前条目；缺映射传累计上下文 |
 | per_item | `{group,items:'$.collection',input:'item_field',identity:'id_field',when?:{path,equals}}`；仅用于 per_item phase，同组绑定相同且必须连续 |
 | on_failure | `continue` / `stop_run`，默认后者；失败回执保留产物并按该策略推进 |
 | max_attempts | 1 / 2，默认1；只有结果 retryable 且 failure.retryable 非空才允许第二次 |
-| cleanup_grace_s | 1–30，默认5；到预算或取消先TERM请求活动清理，宽限到期KILL同一进程组 |
+| cleanup_grace_s | 1–30，默认5；到预算或取消只向JSON活动根发TERM，由它通知动作在安全边界清理；宽限到期KILL同一进程组 |
 
 每个活动独立传自己的 `budget`，映射与原输入不能覆盖预算；`attempt` 由执行器注入。
 `order` 排序后，同组逐条目走完整链才进入下个条目；`when` 不满足记 skipped。
@@ -37,6 +37,8 @@ CLI stdout 只有一个终态 JSON；exit 0/2/1 对应 completed/partial/failed�
 集合。每次调用的完整 outputs/metrics/evidence/传输结果都保存在 activities.attempts，
 聚合 metrics 按活动 key 分开，避免把不同活动的业务计数误算成一个值。
 主链错误或取消后仍按顺序执行全部 finalize；finalize 成功不能把主链失败改成成功。
+fatal、needs_human、未声明失败分类始终停止主链，即使 on_failure=continue 也不续跑。
+事件接收端失败记录 `event_sink_failed` 并停主链，保留已完成产物并执行全部 finalize。
 业务探针、锁、重放幂等与远程副作用清理由活动负责，通用执行器不猜业务规则。
 
 实施/验证路径：真实 CLI 子进程 smoke 先报 RED（提交 `ca45f4c219`），再实现并验
