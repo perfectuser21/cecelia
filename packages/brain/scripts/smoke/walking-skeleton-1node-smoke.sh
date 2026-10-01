@@ -1,120 +1,74 @@
 #!/usr/bin/env bash
-# walking-skeleton-1node smoke — LangGraph 修正 Sprint Stream 5
-#
-# 真 e2e：起 brain → trigger → 等 spawn docker → 等 callback POST → 验证 status=completed。
-# 含 Phase 2 brain kill resume 测试（PG checkpointer 跨进程 resume 实证）。
-#
-# 默认 SKIP（brain 不在跑），CI 不阻塞。本地手动跑：
-#   bash packages/brain/scripts/smoke/walking-skeleton-1node-smoke.sh
+# Actual Docker -> callback -> PG completion, then persisted interrupt across restart.
+set -euo pipefail
 
-set -uo pipefail
-
-# 真 Brain 写入必须显式授权，并核对本机测试容器。
 if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "http://localhost:5221" --checkpointer; then
-  exit 0
+  [[ "${SMOKE_ALLOW_WRITE:-}" != '1' ]] && exit 0
+  exit 1
 fi
 
 CONTAINER="$BRAIN_CONTAINER"
+DEADLINE=$((SECONDS + 260))
+TARGET='http://localhost:5221/api/brain/walking-skeleton-1node'
+fail() { echo "Walking FAIL: $*" >&2; exit 1; }
+bounded() {
+  local remaining=$((DEADLINE - SECONDS))
+  ((remaining > 0)) || fail 'absolute 260s deadline reached'
+  timeout "${remaining}s" "$@"
+}
+instance() { bounded curl -q -fsS --max-time 5 "$TARGET/instance" | jq -er '.instance_id'; }
+trigger() { bounded curl -q -fsS --max-time 5 -H 'Content-Type: application/json' \
+  -d "$1" "$TARGET/trigger" | jq -er '.thread_id'; }
+pg_state() {
+  bounded timeout 8s docker exec -e CECELIA_CKPT_QUERY_TIMEOUT_MS=5000 \
+    -e CECELIA_CKPT_STATEMENT_TIMEOUT_MS=5000 -e CECELIA_CKPT_CONNECTION_TIMEOUT_MS=5000 \
+    "$CONTAINER" node scripts/lib/walking-ci-pg-state.mjs "$1" "$2"
+}
+wait_state() {
+  local mode="$1" thread="$2" until=$((SECONDS + $3)) proof
+  while ((SECONDS < until && SECONDS < DEADLINE)); do
+    if proof=$(pg_state "$mode" "$thread" 2>/dev/null); then printf '%s\n' "$proof"; return 0; fi
+    sleep 1
+  done
+  pg_state "$mode" "$thread" || true # Only this owned thread; preserve safe failure diagnostics.
+  fail "$mode PG proof absent for own thread $thread"
+}
 
-if ! docker ps --filter "name=$CONTAINER" --format '{{.Names}}' | grep -q "^$CONTAINER$"; then
-  echo "SKIP: brain 容器 ($CONTAINER) 不在跑"
-  exit 0
-fi
+# This read-only control verifies the dedicated CI runtime before any graph trigger.
+OLD_INSTANCE=$(instance) || fail 'dedicated CI instance unavailable'
+[[ "$OLD_INSTANCE" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]] || fail 'invalid instance UUID'
+bounded docker inspect "$CONTAINER" >/dev/null || fail 'dedicated container absent'
 
-# 检测 endpoint 部署
-RESPONSE=$(curl -q -s -o /dev/null -w "%{http_code}" -X POST \
-  http://localhost:5221/api/brain/walking-skeleton-1node/trigger \
-  -H "Content-Type: application/json" \
-  -d '{}')
-if [ "$RESPONSE" = "404" ]; then
-  echo "SKIP: walking-skeleton-1node endpoint 未部署（旧版 brain image）"
-  exit 0
-fi
+echo '=== Phase 1: actual Docker callback and PG completion ==='
+THREAD1=$(trigger '{}') || fail 'Phase 1 trigger failed'
+[[ "$THREAD1" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]] || fail 'invalid Phase 1 thread UUID'
+wait_state completed "$THREAD1" 60
+echo "Phase 1 PASS: $THREAD1 actual PG finalized and event count 1"
 
-echo "=== Phase 1: 正常 e2e（spawn → callback → resume） ==="
-START=$(date +%s)
-RESULT=$(curl -q -s -X POST \
-  http://localhost:5221/api/brain/walking-skeleton-1node/trigger \
-  -H "Content-Type: application/json" \
-  -d '{}')
-THREAD_ID=$(echo "$RESULT" | jq -r '.thread_id // empty')
-if [ -z "$THREAD_ID" ] || [ "$THREAD_ID" = "null" ]; then
-  echo "FAIL Phase 1: trigger 没返回 thread_id, response=$RESULT"
-  exit 1
-fi
-echo "trigger OK: thread_id=$THREAD_ID"
-
-# 等 callback 自动完成（5 分钟超时）
-STATUS=""
-for i in $(seq 1 60); do
-  STATUS=$(curl -q -s "http://localhost:5221/api/brain/walking-skeleton-1node/status/$THREAD_ID" 2>/dev/null | jq -r '.status // empty' 2>/dev/null)
-  if [ "$STATUS" = "completed" ]; then
-    ELAPSED=$(($(date +%s) - START))
-    echo "✅ Phase 1 PASS — 完成耗时 ${ELAPSED}s (thread $THREAD_ID)"
-    break
-  fi
-  sleep 5
+echo '=== Phase 2: persisted PG interrupt and actual same-container restart ==='
+THREAD2=$(trigger '{"wait_for_restart":true}') || fail 'Phase 2 trigger failed'
+[[ "$THREAD2" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ ]] || fail 'invalid Phase 2 thread UUID'
+[[ "$THREAD1" != "$THREAD2" ]] || fail 'two distinct tracked threads required'
+WAITING=$(wait_state waiting "$THREAD2" 30)
+printf '%s\n' "$WAITING"
+[[ $(jq -er '.restart_instance' <<<"$WAITING") == "$OLD_INSTANCE" ]] || fail 'checkpoint restart instance mismatch'
+WORKER2=$(jq -er '.container_id' <<<"$WAITING")
+BEFORE_START=$(bounded docker inspect --format '{{.State.StartedAt}}' "$CONTAINER")
+bounded timeout 20s docker restart "$CONTAINER"
+READY_UNTIL=$((SECONDS + 90))
+NEW_INSTANCE=''
+while ((SECONDS < READY_UNTIL && SECONDS < DEADLINE)); do
+  NEW_INSTANCE=$(instance 2>/dev/null || true)
+  if [[ "$NEW_INSTANCE" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ && "$NEW_INSTANCE" != "$OLD_INSTANCE" ]]; then break; fi
+  sleep 1
 done
-
-if [ "$STATUS" != "completed" ]; then
-  echo "❌ Phase 1 FAIL — 5 分钟超时未完成 (last status=$STATUS)"
-  exit 1
-fi
-
-# Phase 2: brain kill resume 测试
-echo ""
-echo "=== Phase 2: brain kill resume 测试（PG checkpointer 跨进程恢复） ==="
-
-RESULT2=$(curl -q -s -X POST http://localhost:5221/api/brain/walking-skeleton-1node/trigger \
-  -H "Content-Type: application/json" -d '{}')
-THREAD2=$(echo "$RESULT2" | jq -r '.thread_id // empty')
-if [ -z "$THREAD2" ] || [ "$THREAD2" = "null" ]; then
-  echo "FAIL Phase 2: trigger 没返回 thread_id, response=$RESULT2"
-  exit 1
-fi
-echo "trigger Phase 2: $THREAD2"
-
-# 给 spawn 一点时间触发（spawn docker 是即时的，sibling alpine 还在 sleep 2 + 后续 wget）
-# 我们要在 callback 到达前 kill brain，模拟 brain 崩溃但 sibling container 还活着
-sleep 1
-
-echo "kill brain container..."
-docker restart "$CONTAINER" 2>&1 | tail -2
-
-# 等 brain 重启并 ready
-echo "等 brain ready..."
-BRAIN_READY=false
-for i in {1..30}; do
-  if curl -q -sf localhost:5221/api/brain/health >/dev/null 2>&1; then
-    echo "✓ brain ready (耗时 ${i}*2s)"
-    BRAIN_READY=true
-    break
-  fi
-  sleep 2
-done
-
-if [ "$BRAIN_READY" = "false" ]; then
-  echo "❌ Phase 2 FAIL — brain restart 后 60s 未 ready"
-  exit 1
-fi
-
-# 等 callback 自动完成
-# 注意：alpine container 在 brain restart 期间发的 callback 可能被 brain reject（brain 还没 ready）
-# 真实场景下 callback router 应该有 retry，但 walking skeleton 验证 PG checkpointer 还在
-# 即使 callback 失败，graph state 应该可恢复（在 await_callback 节点 interrupt）
-echo "等 graph 从 PG checkpointer resume（callback 路由触发）..."
-STATUS2=""
-for i in $(seq 1 60); do
-  STATUS2=$(curl -q -s "http://localhost:5221/api/brain/walking-skeleton-1node/status/$THREAD2" 2>/dev/null | jq -r '.status // empty' 2>/dev/null)
-  if [ "$STATUS2" = "completed" ]; then
-    echo "✅ Phase 2 PASS — brain restart 后 graph resume 成功 (thread $THREAD2)"
-    exit 0
-  fi
-  sleep 5
-done
-
-# Phase 2 失败时给个有用 hint
-echo "❌ Phase 2 FAIL — brain restart 后 graph 未在 5min 内 completed (last status=$STATUS2)"
-echo "   可能原因 a) callback 在 brain restart 窗口被丢；b) PG checkpointer 没保 state"
-echo "   debug: SELECT * FROM walking_skeleton_thread_lookup WHERE thread_id='$THREAD2';"
-exit 1
+[[ "$NEW_INSTANCE" =~ ^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$ && "$NEW_INSTANCE" != "$OLD_INSTANCE" ]] || fail 'new Node instance not observed'
+AFTER_START=$(bounded docker inspect --format '{{.State.StartedAt}}' "$CONTAINER")
+[[ "$AFTER_START" != "$BEFORE_START" ]] || fail 'actual container restart not observed'
+COMPLETED=$(wait_state completed "$THREAD2" 60)
+printf '%s\n' "$COMPLETED"
+[[ $(jq -er '.container_id' <<<"$COMPLETED") == "$WORKER2" && $(jq -er '.restart_instance' <<<"$COMPLETED") == "$OLD_INSTANCE" ]] || fail 'same worker/checkpoint restart identity lost'
+# A late duplicate callback may ACK without finalizing: re-read both real PG outcomes.
+pg_state completed "$THREAD1"
+pg_state completed "$THREAD2"
+echo "Phase 2 PASS: $THREAD2 same PG thread resumed, unique event, new instance $NEW_INSTANCE"

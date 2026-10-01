@@ -1,4 +1,5 @@
 /** 公司经营 KR 的来源、原值与公式；不从项目/任务比例推导经营指标。 */
+import { createHash } from 'node:crypto';
 export const COMPANY_METRIC_MODE = 'company_formula_v1';
 export const COMPANY_KR_DATABASE = '684c40c2-ba63-83a7-b6ba-8161f110a18c';
 export const COMPANY_GOAL_DATABASE = '29ec40c2-ba63-8301-99c1-8110bfd84d9b';
@@ -22,6 +23,23 @@ export const COMPANY_KR_SQL_GUARD = "COALESCE(metadata->>'metric_mode','') <> 'c
 
 export function isCompanyKr(row) {
   return row?.metadata?.metric_mode === COMPANY_METRIC_MODE || Boolean(row?.custom_props?.company_notion);
+}
+
+export function isActiveCompanyKr(kr) {
+  const status = String(kr?.metadata?.company_status || kr?.status || '').trim().toLowerCase();
+  return isCompanyKr(kr) && !kr.metadata?.company_source_archived && !kr.metadata?.company_sync_error
+    && !['completed', 'cancelled', 'archived'].includes(kr.status)
+    && !/^(done|complete[dt]?|closed|cancelled|canceled|archived|paused|on hold|suspended|已完成|完成|已归档|归档|暂停|已暂停|取消|已取消)$/.test(status);
+}
+
+/** 正式版本不受观察、建议、页面编辑时间及元数据写入影响。 */
+export function companyFormalRevision(kr) {
+  const m = kr.metadata?.company_metric || {}, s = kr.custom_props?.company_notion || {};
+  return createHash('sha256').update(JSON.stringify({ title: kr.title ?? null, status: kr.metadata?.company_status ?? kr.status ?? null,
+    lifecycle: kr.status ?? null, archived: Boolean(kr.metadata?.company_source_archived), source_valid: !kr.metadata?.company_sync_error, unit: kr.unit ?? null,
+    start: rawDecimal(m.start), current: rawDecimal(m.current), target: rawDecimal(m.target),
+    database_id: s.database_id ?? null, page_id: s.page_id ?? null, goal_id: s.goal_id ?? null,
+    area_ids: [...(s.area_ids || [])].sort(), objective_id: kr.objective_id ?? null })).digest('hex');
 }
 
 /** 原 decimal 字符串避免 numeric(12,2) 的舍入成为公式输入。 */
@@ -81,6 +99,7 @@ export function canonicalCompanyVersion(value) {
 export function companyKrView(kr) {
   const metric = kr.metadata?.company_metric || {};
   const source = kr.custom_props?.company_notion || {};
+  const revision = companyFormalRevision(kr);
   return {
     id: kr.id, title: kr.title, source_page_id: source.page_id, source_goal_id: source.goal_id,
     objective: { id: kr.objective_id || null, title: kr.objective_title || null }, source_area_ids: source.area_ids || [],
@@ -88,13 +107,18 @@ export function companyKrView(kr) {
     current_value: metric.current ?? null, target_value: metric.target ?? null,
     progress_ratio: metric.ratio ?? null, progress_pct: metric.ratio == null ? null : Number((metric.ratio * 100).toFixed(1)),
     validation_state: kr.metadata?.validation_state || 'unverified', status: kr.metadata?.company_status || kr.status,
-    updated_at: companyVersion(kr),
+    updated_at: companyVersion(kr), formal_revision: revision, active: isActiveCompanyKr(kr),
+    observation: kr.metadata?.last_observation || null,
+    analysis: kr.metadata?.company_analysis || null,
+    sync_error: kr.metadata?.company_sync_error || null,
+    advice: kr.metadata?.company_advice ? { ...kr.metadata.company_advice, stale: kr.metadata.company_advice.formal_revision !== revision } : null,
   };
 }
 
 export function companyPatchIsReserved(body) {
   return ['metadata', 'custom_props'].some(key => key in body && (body[key] === null || typeof body[key] !== 'object' || Array.isArray(body[key])))
-    || ['current_value', 'target_value', 'unit', 'objective_id'].some(key => key in body)
+    || ['current_value', 'target_value', 'unit', 'objective_id', 'title', 'status', 'progress', 'progress_pct'].some(key => key in body)
+    || ['company_advice', 'company_analysis', 'company_sync_error', 'company_formal_revision', 'company_source_archived', 'last_formal_inlet', 'company_advice_projection', 'company_projection_retired'].some(key => key in (body.metadata || {}))
     || ['metric_mode', 'company_metric', 'company_status', 'validation_state', 'progress_source', 'unit_source', 'last_observation', 'source_system', 'company_current_baseline', 'company_projection_pending', 'company_formula', 'imported_snapshot', 'metric_window', 'last_target_inlet', 'last_current_inlet'].some(key => key in (body.metadata || {}))
     || 'company_notion' in (body.custom_props || {});
 }

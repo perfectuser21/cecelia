@@ -11,7 +11,7 @@ const input = {
   role: 'reviewer',
   provider: 'auto',
   accountId: null,
-  machineId: 'worker-1',
+  machineId: 'us-mac-m4',
   callbackSecretHash: 'b'.repeat(64),
   bundle: {
     skill: {
@@ -1495,10 +1495,13 @@ describe('attempt store', () => {
     const capacitySnapshot = {
       verified: true,
       machine: input.machineId,
+      expires_at: Date.now() + 60_000,
       capacity: {
         ok: true,
         available: 1,
         physical_capacity: 1,
+        physical_base_slots: 1,
+        effective_base_slots: 1,
         autonomous_progress_floor: true,
       },
     };
@@ -1517,13 +1520,13 @@ describe('attempt store', () => {
       /status\s+IN\s*\(\s*'queued'\s*,\s*'starting'\s*,\s*'running'\s*\)/i,
     );
     expect(sql).toMatch(
-      /COALESCE\(active\.requested_machine_id,\s*active\.machine_id\)\s*=\s*\$8/i,
+      /\$8 IN \(active\.actual_machine_id, active\.requested_machine_id, active\.machine_id\)/i,
     );
     expect(sql).toMatch(
       /existing\.run_id\s*=\s*run\.id[\s\S]*existing\.hop\s*=\s*\$3/i,
     );
     expect(sql).toMatch(
-      /active\.task_bundle\s*#>>\s*'\{inputs,_server_allocation,autonomous_progress_floor\}'\s*=\s*'true'/i,
+      /task_bundle\s*#>>\s*'\{inputs,_server_allocation,autonomous_progress_floor\}'\s*=\s*'true'/i,
     );
     expect(values[21]).toBe(true);
     expect(values[13]).toMatchObject({
@@ -1613,6 +1616,8 @@ describe('attempt store', () => {
           ok: true,
           available: 1,
           physical_capacity: 1,
+        physical_base_slots: 1,
+        effective_base_slots: 1,
           autonomous_progress_floor: true,
         },
       },
@@ -1638,10 +1643,12 @@ describe('attempt store', () => {
           ok: true,
           available: 1,
           physical_capacity: 1,
+        physical_base_slots: 1,
+        effective_base_slots: 1,
           autonomous_progress_floor: true,
         },
       },
-    })).rejects.toThrow(/^autonomous_singleton_capacity_contended$/);
+    })).rejects.toThrow(/^machine_capacity_contended$/);
   });
 
   it('atomically consumes a run-bound map recovery contract only with its generator attempt', async () => {

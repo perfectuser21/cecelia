@@ -16,7 +16,11 @@ import { join, dirname } from 'path';
 import pool from '../db.js';
 import { clearMachineCache } from '../routing/load-machines.js';
 
+import { createOnboardingRouter } from '../node-onboarding/router.js';
+import { createOnboardingService } from '../node-onboarding/service.js';
+
 const router = Router();
+router.use('/onboarding', createOnboardingRouter(createOnboardingService({ pool })));
 
 // 宿主机每分钟写入的 Tailscale 状态缓存文件路径（Brain 容器挂载了宿主机目录）
 // 宿主机 tailscale 状态缓存文件：cron 每分钟写入，容器通过挂载共享路径读取

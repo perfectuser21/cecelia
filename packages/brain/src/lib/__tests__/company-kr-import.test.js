@@ -9,10 +9,10 @@ describe('公司source ID导入', () => {
     await expect(importCompanyKrs({ connect: async () => ({ query, release() {} }) }, snapshot(), { actor: 'codex', task_id: 'task' })).rejects.toThrow('归属');
     expect(query.mock.calls.some(([sql]) => sql.includes('INSERT INTO key_results'))).toBe(false);
   });
-  it('缺页或错Goal必须在BEGIN前拒绝', async () => {
+  it('重复来源必须在BEGIN前拒绝', async () => {
     const pool = { connect: vi.fn() };
-    const data = snapshot(); data.records.pop();
-    await expect(importCompanyKrs(pool, data, { actor: 'codex', task_id: 'task' })).rejects.toThrow('8');
+    const data = snapshot(); data.records.push(data.records[0]);
+    await expect(importCompanyKrs(pool, data, { actor: 'codex', task_id: 'task' })).rejects.toThrow('重复');
     expect(pool.connect).not.toHaveBeenCalled();
   });
   it('按sourcepage而非同名编号认领，6人工历史0标未验证；空Area保持空', async () => {
@@ -29,3 +29,14 @@ describe('公司source ID导入', () => {
     expect(release).toHaveBeenCalledOnce();
   });
 });
+
+  it('公司KR可增长到9条并使用明确Unit和新Goal，不按标题认领', async () => {
+    const data = snapshot();
+    data.goals.push({ page_id: 'new-goal', title: '新目标', area_ids: ['area'], status: 'Open' });
+    data.records.push({ page_id: 'new-page', goal_id: 'new-goal', title: data.records[0].title, unit: '客户数', area_ids: ['area'], start: 0, current: 1, target: 9, status: 'Open' });
+    let seq = 0;
+    const query = vi.fn(async sql => /INSERT INTO (?:objectives|key_results)/.test(sql) ? { rows: [{ id: `id-${++seq}` }] } : sql.includes('FROM tasks') ? { rows: [{ id: 'task', result: {} }] } : { rows: [] });
+    const result = await importCompanyKrs({ connect: async () => ({ query, release() {} }) }, data, { task_id: 'task', actor: 'test' });
+    expect(result).toMatchObject({ created: 9, company_kr_count: 9 });
+    expect(query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO key_results'))).toHaveLength(9);
+  });

@@ -22,6 +22,11 @@ export interface MachineConflict {
 }
 
 export interface MachineMetadata {
+  node_health?: {
+    observed_at?: string;
+    capabilities?: { collector: boolean; janitor: boolean; execution: boolean };
+  };
+  onboarding?: { state?: string };
   hardware?: string;
   cpu?: string;
   gpu?: string;

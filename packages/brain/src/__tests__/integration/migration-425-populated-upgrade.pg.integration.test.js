@@ -1,3 +1,4 @@
+import { seedLifecycleAttempt } from '../../../tests/helpers/lifecycle-attempt-fixture.js';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -64,7 +65,7 @@ async function seedActiveV2Run() {
 async function seedRunningAttempt({ runId, hop = 1, leaseGeneration = 31 }) {
   const attemptId = randomUUID();
   const machineId = `upgrade-worker-${randomUUID()}`;
-  await createAttemptStore(testPool).createAttempt({
+  await seedLifecycleAttempt(testPool, {
     id: attemptId,
     runId,
     hop,
@@ -384,7 +385,7 @@ describe.sequential('migration 425 populated upgrade and outbox guards on Postgr
     const { runId } = await seedActiveV2Run();
     const attemptId = randomUUID();
     const store = createAttemptStore(testPool);
-    await store.createAttempt({
+    await seedLifecycleAttempt(testPool, {
       id: attemptId,
       runId,
       hop: 1,
