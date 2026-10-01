@@ -325,3 +325,10 @@ tests:
     ci: L4
     status: active
     note: "受控HTTP验证Observer冒烟：隔离必须停止、生产必须推进、后台泄漏报红"
+
+  - id: brain-health-smoke-isolation
+    path: packages/brain/src/__tests__/health-smoke-isolation.test.js
+    type: integration
+    ci: L4
+    status: active
+    note: "健康冒烟真实HTTP夹具：隔离时执行通道全禁，生产调度器仍必须有远端通道"
