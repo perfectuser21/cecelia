@@ -10,7 +10,7 @@ const moduleUrl = new URL('../node-onboarding.mjs', import.meta.url);
 const pythonPath = fileURLToPath(new URL('../node-agent.py', import.meta.url));
 const remotePath = fileURLToPath(new URL('../node-agent-remote.py', import.meta.url));
 const request = { id: '12345678-1234-4234-8234-123456789abc', name: 'test-node', address: '192.0.2.1', ssh_user: 'runner', ssh_port: 22, credential_ref: 'op://CS/example/private key', host_key_fingerprint: `SHA256:${'A'.repeat(43)}`, role: 'worker', region: 'test', mode: 'enroll' };
-const health = (seq = 1) => ({ schema_version: 1, node_id: request.id, agent_version: '1', observed_at: new Date().toISOString(), sequence: seq, hostname: 'test-host', os: 'linux', resources: { memory_total_bytes: 1024, memory_available_bytes: 512, cpu_load_1m: 0, cpu_cores: 2, disk_free_bytes: 2048, disk_total_bytes: 4096 }, capabilities: { collector: true, janitor: true, execution: false }, janitor: { policy: 'owned-cache-only', mode: 'observe' } });
+const health = (seq = 1) => ({ schema_version: 1, node_id: request.id, agent_version: '1', observed_at: new Date(Date.now() + seq * 1000).toISOString(), sequence: seq, hostname: 'test-host', os: 'linux', resources: { memory_total_bytes: 1024, memory_available_bytes: 512, cpu_load_1m: 0, cpu_cores: 2, disk_free_bytes: 2048, disk_total_bytes: 4096 }, capabilities: { collector: true, janitor: true, execution: false }, janitor: { policy: 'owned-cache-only', mode: 'observe' } });
 async function runtime() {
   try { return await import(moduleUrl); } catch (error) { if (error.code === 'ERR_MODULE_NOT_FOUND') assert.fail('节点接入运行时尚未实现'); throw error; }
 }
@@ -104,7 +104,7 @@ with tempfile.TemporaryDirectory() as t:
  commands=[]
  def run(args):
   commands.append(args)
-  return 'enabled' if 'is-enabled' in args else 'active'
+  return 'yes' if 'show-user' in args else ('enabled' if 'is-enabled' in args else 'active')
  r.install(h,node,pathlib.Path(${JSON.stringify(pythonPath)}).read_text(),system='linux',uid=1234,run=run)
  before=(h/f'.local/share/cecelia-node/{node}/node-agent.py').read_bytes()
  r.install(h,node,pathlib.Path(${JSON.stringify(pythonPath)}).read_text(),system='linux',uid=1234,run=run)
@@ -113,4 +113,35 @@ with tempfile.TemporaryDirectory() as t:
  assert all('prune' not in ' '.join(cmd) for cmd in commands)
 `;
   const result = spawnSync('python3', ['-c', script], { encoding: 'utf8' }); assert.equal(result.status, 0, result.stderr);
+});
+
+test('整轮超时也中断采样等待并清理凭据', async () => {
+  const { onboard } = await runtime(); const home = await mkdtemp(join(tmpdir(), 'node-timeout-')); const h = harness();
+  try {
+    const started = Date.now();
+    const result = await onboard(request, { runner: h.runner, home, totalTimeoutMs: 100, sleep: () => new Promise(resolve => setTimeout(resolve, 500)) });
+    assert.equal(result.error_code, 'TIMEOUT'); assert.ok(Date.now() - started < 350);
+    await assert.rejects(access(join(home, '.credentials/cecelia-onboarding', request.id, 'key')));
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+test('拒绝超出资源总量的伪健康样本', async () => {
+  const { verifySample } = await runtime(); const value = health();
+  value.resources.memory_available_bytes = value.resources.memory_total_bytes + 1;
+  assert.throws(() => verifySample({ health: value, service: { enabled: true, active: true } }, request, { hostname: 'test-host', os: 'linux' }));
+});
+
+test('SSH stdin 启动器真实执行 Python 探测代码', async () => {
+  const { onboard } = await runtime(); const home = await mkdtemp(join(tmpdir(), 'node-wire-')); const h = harness();
+  try {
+    await onboard({ ...request, mode: 'sample' }, { runner: h.runner, home, sleep: async () => {} });
+    const ssh = h.calls.find(call => call.command === 'ssh');
+    const result = spawnSync('python3', ['-c', 'import sys; exec(sys.stdin.readline())'], { input: ssh.options.input, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr); const probe = JSON.parse(result.stdout); assert.ok(['linux', 'darwin'].includes(probe.os)); assert.ok(probe.hostname);
+  } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+test('命令超时终止真实子进程且错误不含stderr', async () => {
+  const { runCommand } = await import('../node-onboarding-runner.mjs');
+  await assert.rejects(runCommand('python3', ['-c', 'import sys,time; sys.stderr.write("PRIVATE-SECRET"); time.sleep(5)'], { timeoutMs: 50 }), error => !error.message.includes('PRIVATE-SECRET'));
 });
