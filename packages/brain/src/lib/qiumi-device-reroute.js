@@ -2,7 +2,6 @@
 import { loadRegistryPool } from '../routing/cheap-gates.js';
 import { resolvePhone } from '../routing/phone-resolver.js';
 import { readPageContent } from './notion-page-content.js';
-import { recordTaskEventSafe } from './task-event-log.js';
 
 const ROUTE_KEYS = ['qiumi_route', 'run_id', 'provider', 'model', 'engine', 'qiumi_department',
   'qiumi_kind', 'qiumi_workflow_ref', 'workflow_ref', 'timeout_sec', 'thinking', 'acceptance'];
@@ -37,6 +36,45 @@ async function readCompleteBody(pageId, token, notionReq) {
   return body;
 }
 
+// 只在独立借出的client上开短事务；Notion与台账解析都已在事务外完成。
+async function queueWithReceipt(pool, row, source, resolution, page) {
+  const client = await pool.connect();
+  const pageId = row.payload.notion_zh_page_id;
+  const original = row.payload.qiumi_source;
+  let begun = false;
+  let discardClient = false;
+  try {
+    await client.query('BEGIN');
+    begun = true;
+    const updated = await client.query(
+        `UPDATE tasks SET status = 'queued', blocked_reason = NULL, blocked_at = NULL,
+           blocked_until = NULL, blocked_detail = NULL, error_message = NULL, claimed_by = NULL, claimed_at = NULL,
+           payload = (COALESCE(payload, '{}'::jsonb) - $2::text[]) || jsonb_build_object('qiumi_source', $3::jsonb),
+           notion_props = COALESCE(notion_props, '{}'::jsonb) - 'qiumi_pushed_status', updated_at = NOW()
+         WHERE id = $1 AND status = 'blocked' AND blocked_reason = 'device_unresolved' AND task_type = 'qiumi_task'
+           AND payload->>'notion_zh_page_id' = $5 AND payload->'qiumi_source' = $4::jsonb
+           AND payload->>'device_task_id' IS NULL RETURNING id`,
+        [row.id, ROUTE_KEYS, JSON.stringify(source), JSON.stringify(original), pageId],
+      );
+    if (!updated.rows?.length) { await client.query('ROLLBACK'); return false; }
+    const evidence = {
+      actor: 'notion-human', page_id: pageId, serial: resolution.phone.serial, matched_by: resolution.matchedBy,
+      last_edited_time: page.last_edited_time, reason: 'device_unresolved_source_updated',
+    };
+    await client.query(
+      `INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES ($1, $2, $3::jsonb, NOW())`,
+      [row.id, 'qiumi_device_rerouted', JSON.stringify(evidence)],
+    );
+    await client.query('COMMIT');
+    return true;
+  } catch (err) {
+    if (begun) {
+      try { await client.query('ROLLBACK'); } catch { discardClient = true; }
+    } else discardClient = true;
+    throw err;
+  } finally { client.release(discardClient); }
+}
+
 export async function rerouteUnresolvedDevices(pool, token, { notionReq, parsePage }) {
   const stats = { rerouted: 0 };
   const { rows = [] } = await pool.query(
@@ -66,22 +104,7 @@ export async function rerouteUnresolvedDevices(pool, token, { notionReq, parsePa
       const latest = await notionReq(token, `/pages/${pageId}`, 'GET');
       if (!editable(latest, row, parsePage) || latest.last_edited_time !== page.last_edited_time
         || JSON.stringify(latest.properties) !== JSON.stringify(page.properties)) continue;
-      const updated = await pool.query(
-        `UPDATE tasks SET status = 'queued', blocked_reason = NULL, blocked_at = NULL,
-           blocked_until = NULL, blocked_detail = NULL, error_message = NULL, claimed_by = NULL, claimed_at = NULL,
-           payload = (COALESCE(payload, '{}'::jsonb) - $2::text[]) || jsonb_build_object('qiumi_source', $3::jsonb),
-           notion_props = COALESCE(notion_props, '{}'::jsonb) - 'qiumi_pushed_status', updated_at = NOW()
-         WHERE id = $1 AND status = 'blocked' AND blocked_reason = 'device_unresolved' AND task_type = 'qiumi_task'
-           AND payload->>'notion_zh_page_id' = $5 AND payload->'qiumi_source' = $4::jsonb
-           AND payload->>'device_task_id' IS NULL RETURNING id`,
-        [row.id, ROUTE_KEYS, JSON.stringify(source), JSON.stringify(original), pageId],
-      );
-      if (!updated.rows?.length) continue;
-      stats.rerouted += 1;
-      await recordTaskEventSafe(pool, row.id, 'qiumi_device_rerouted', {
-        actor: 'notion-human', page_id: pageId, serial: resolution.phone.serial, matched_by: resolution.matchedBy,
-        last_edited_time: page.last_edited_time, reason: 'device_unresolved_source_updated',
-      });
+      if (await queueWithReceipt(pool, row, source, resolution, page)) stats.rerouted += 1;
     } catch (err) {
       console.warn(`[qiumi-device-reroute] 保持原退回 task=${row.id}: ${err.message}`);
     }
