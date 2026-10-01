@@ -8,6 +8,9 @@
 #      名字含"客服"但 biz_area=zenithjoy → 归 ZenithJoy（正则猜不出、字段猜得出）
 #   4. 残渣断言：/warroom/lines 不出现 [smoke]%/gp-agg-smoke%（deprecated 被过滤）
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "postgresql://${DB_HOST:-localhost}:${DB_PORT:-5432}/${DB_NAME:-cecelia}"; then
+  exit 0
+fi
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../../../.."
 API="${BRAIN_URL:-http://localhost:5221}/api/brain"
@@ -33,25 +36,25 @@ if ! pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" >/dev/null 2>&1; then
 fi
 
 echo "[smoke:journeys-bizarea] Case 2: biz_area 列 + CHECK 约束"
-COL=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
+COL=$(psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
   -c "SELECT data_type FROM information_schema.columns WHERE table_name='journeys' AND column_name='biz_area';" 2>/dev/null || echo "")
 if [ "$COL" != "text" ]; then
   echo "  WARN: biz_area 列未应用（'$COL'）— migration 389 未跑，CI fresh DB 会跑"; echo "[smoke:journeys-bizarea] DONE"; exit 0
 fi
-BAD=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
+BAD=$(psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
   -c "INSERT INTO journeys (name, status, biz_area) VALUES ('[smoke-bizarea] bad', 'active', 'not-a-bucket') RETURNING id;" 2>&1 || true)
 echo "$BAD" | grep -q "violates check constraint" || { echo "  FAIL: 非法桶值未被 CHECK 拦截"; exit 1; }
 echo "  PASS: 列存在且 CHECK 生效"
 
 echo "[smoke:journeys-bizarea] Case 3: 行为断言（种数据→打端点）"
-INFRA_ID=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
+INFRA_ID=$(psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
   -c "INSERT INTO journeys (name, status, biz_area) VALUES ('[smoke-bizarea] 机群底座', 'active', 'infrastructure') RETURNING id;")
-KEFU_ID=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
+KEFU_ID=$(psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -tA \
   -c "INSERT INTO journeys (name, status, biz_area) VALUES ('[smoke-bizarea] 某某客服线', 'active', 'zenithjoy') RETURNING id;")
-cleanup() { psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -c "DELETE FROM journeys WHERE name LIKE '[smoke-bizarea]%';" >/dev/null 2>&1 || true; }
+cleanup() { psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -c "DELETE FROM journeys WHERE name LIKE '[smoke-bizarea]%';" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-LINES=$(curl -sf "${API}/warroom/lines") || { echo "  FAIL: /warroom/lines 不可达"; exit 1; }
+LINES=$(curl -q -sf "${API}/warroom/lines") || { echo "  FAIL: /warroom/lines 不可达"; exit 1; }
 echo "$LINES" | node -e "
 let d=''; process.stdin.on('data',c=>d+=c).on('end',()=>{
   const j = JSON.parse(d);
@@ -68,9 +71,9 @@ let d=''; process.stdin.on('data',c=>d+=c).on('end',()=>{
 echo "[smoke:journeys-bizarea] Case 4: deprecated 线不出现在 /lines（自包含断言）"
 # 不断言全局无 gp-agg 残渣：同场 CI 的 gp-aggregation smoke 会临时新建 active 残渣线，
 # 那是它的测试数据不是本刀的病。本刀保证的是 deprecated 状态被过滤。
-psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -c \
+psql -X -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDB" -c \
   "INSERT INTO journeys (name, status, biz_area) VALUES ('[smoke-bizarea] 已退役线', 'deprecated', 'cecelia');" >/dev/null
-LINES2=$(curl -sf "${API}/warroom/lines") || { echo "  FAIL: /warroom/lines 不可达"; exit 1; }
+LINES2=$(curl -q -sf "${API}/warroom/lines") || { echo "  FAIL: /warroom/lines 不可达"; exit 1; }
 echo "$LINES2" | grep -q "smoke-bizarea] 已退役线" && { echo "  FAIL: deprecated 线仍出现在 /lines"; exit 1; }
 echo "  PASS: deprecated 线已被过滤"
 

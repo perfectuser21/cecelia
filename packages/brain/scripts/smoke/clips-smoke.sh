@@ -10,6 +10,11 @@
 # 失败条件：任一 HTTP code / JSON 字段不符合预期
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
+
 BASE="${BRAIN_URL:-http://localhost:5221}/api/brain/clips"
 OUT=/tmp/smoke-clips.json
 
@@ -19,7 +24,7 @@ echo "   target: $BASE"
 # --- 1. POST /clips —————————————————————————————————————
 TEST_URL="https://www.douyin.com/video/smoke-test-$(date +%s)"
 
-HTTP_CODE=$(curl -sS -o "$OUT" -w "%{http_code}" \
+HTTP_CODE=$(curl -q -sS -o "$OUT" -w "%{http_code}" \
   -X POST "$BASE" \
   -H "Content-Type: application/json" \
   -d "{\"url\":\"$TEST_URL\",\"requested_by\":\"smoke\"}")
@@ -45,7 +50,7 @@ fi
 echo "   created clip id: $CLIP_ID"
 
 # --- 2. GET /clips ——————————————————————————————————————
-HTTP_CODE=$(curl -sS -o "$OUT" -w "%{http_code}" "$BASE?limit=5")
+HTTP_CODE=$(curl -q -sS -o "$OUT" -w "%{http_code}" "$BASE?limit=5")
 
 if [ "$HTTP_CODE" != "200" ]; then
   echo "❌ GET /clips: HTTP $HTTP_CODE (expected 200)"
@@ -61,7 +66,7 @@ fi
 echo "   GET /clips: OK"
 
 # --- 3. GET /clips/:id ——————————————————————————————————
-HTTP_CODE=$(curl -sS -o "$OUT" -w "%{http_code}" "$BASE/$CLIP_ID")
+HTTP_CODE=$(curl -q -sS -o "$OUT" -w "%{http_code}" "$BASE/$CLIP_ID")
 
 if [ "$HTTP_CODE" != "200" ]; then
   echo "❌ GET /clips/$CLIP_ID: HTTP $HTTP_CODE (expected 200)"
@@ -77,7 +82,7 @@ fi
 echo "   GET /clips/:id: OK"
 
 # --- 4. 重复 URL → 409 ——————————————————————————————————
-HTTP_CODE=$(curl -sS -o "$OUT" -w "%{http_code}" \
+HTTP_CODE=$(curl -q -sS -o "$OUT" -w "%{http_code}" \
   -X POST "$BASE" \
   -H "Content-Type: application/json" \
   -d "{\"url\":\"$TEST_URL\",\"requested_by\":\"smoke\"}")

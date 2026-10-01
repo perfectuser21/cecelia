@@ -63,7 +63,7 @@ if ! pg_isready -d "$DATABASE_URL" -q 2>/dev/null; then
 fi
 
 log "Test 5: task_events 表存在（软检查）"
-TABLE_EXISTS=$(psql "$DATABASE_URL" -tAc \
+TABLE_EXISTS=$(psql -X "$DATABASE_URL" -tAc \
   "SELECT COUNT(*) FROM information_schema.tables
    WHERE table_name='task_events'" 2>/dev/null || echo "ERR")
 
@@ -76,14 +76,14 @@ else
 fi
 
 # ── Brain runtime 检查 ─────────────────────────────────────────────────────
-if ! curl -sf "${BRAIN_URL}/healthz" >/dev/null 2>&1; then
+if ! curl -q -sf "${BRAIN_URL}/healthz" >/dev/null 2>&1; then
   log "SKIP brain runtime — Brain 未启动 ($BRAIN_URL)"
   log "✅ harness-executor-reliability smoke PASS"
   exit 0
 fi
 
 log "Test 6: Brain schema_version >= 268"
-SCHEMA_VER=$(curl -sf "${BRAIN_URL}/healthz" 2>/dev/null \
+SCHEMA_VER=$(curl -q -sf "${BRAIN_URL}/healthz" 2>/dev/null \
   | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const j=JSON.parse(d);console.log(j.schema_version||j.db_version||'unknown')}catch{console.log('unknown')}})" \
   || echo "unknown")
 log "  schema_version reported: $SCHEMA_VER"

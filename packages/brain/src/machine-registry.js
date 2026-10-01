@@ -139,8 +139,8 @@ export function listComputeWorkerIds() {
   return (directory.current()?.nodes??[]).filter(n=>n.state==='active'&&n.machine_status==='active'&&endpointValid(n.endpoints?.worker)&&n.grants.some(g=>g.state==='active'&&(!g.expires_at||Date.parse(g.expires_at)>Date.now()))).map(n=>n.canonical_id);
 }
 
-/** worker 桥地址：FLEET_WORKER_<ID大写下划线>_URL env 覆盖优先，否则 tailscaleIp:5231 */
-export function workerBridgeUrlFor(machineId, env = process.env) {
+/** worker 桥地址来自已发布执行目录。 */
+export function workerBridgeUrlFor(machineId) {
   return currentNode(machineId)?.endpoints?.worker ?? null;
 }
 

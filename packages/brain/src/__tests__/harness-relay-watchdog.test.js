@@ -1,3 +1,17 @@
+// 本文件验证watchdog状态机，PG原子替换合同由attempt-weighted-reservation.pg回归验证。
+vi.mock('../orchestrator/attempt-resource-replacement.js', async original => ({...await original(),
+ reserveExpiredAttemptReplacement: async ({pool,parentAttempt,childInput,confirmCleanup}) => {
+  const receipt=await confirmCleanup(parentAttempt);
+  if(!['cleaned','already_clean'].includes(receipt?.status)||receipt.attempt_id!==parentAttempt.id)throw Error('replacement_cleanup_unconfirmed');
+  const {createAttemptStore}=await import('../orchestrator/attempt-store.js');
+  const store=createAttemptStore(pool,{queryOnlyTestAdapter:true});
+  const failed=await store.fail(parentAttempt.id,{code:'resumed_as_child',message:'fixture exact cleanup confirmed'},
+   {leaseOwner:parentAttempt.lease_owner,leaseGeneration:parentAttempt.lease_generation,requireExpired:true});
+  if(!failed.attempt)return null;
+  return {parent:parentAttempt,child:await store.createAttempt(childInput)};
+ }
+}));
+import './helpers/execution-directory-fixture.js';
 /**
  * relay watchdog（重点火循环产品化）+ PATCH phase 白名单扩展（进度条数据源）。
  *

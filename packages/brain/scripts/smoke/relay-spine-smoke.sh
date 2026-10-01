@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # relay-spine-smoke — 接力棒 PR1 脊柱真库火：真列落地、project 类型放开、FK 在、链上下文可拼、派发 prompt 已接注入。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 : "${DATABASE_URL:?DATABASE_URL is required and must target a test or scratch database}"
 PSQL="$(command -v psql)"; NODE="$(command -v node)"
 DB_NAME="$("$NODE" -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DB_NAME" =~ (_test|_scratch)$ ]] || fail "refuse non-test db: ${DB_NAME:-empty}"
-q() { "$PSQL" "$DATABASE_URL" -v ON_ERROR_STOP=1 -qAtc "$1"; }
+q() { "$PSQL" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -qAtc "$1"; }
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"; BRAIN_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 [[ "$(q "SELECT count(*) FROM information_schema.columns WHERE table_name='tasks' AND column_name IN ('parent_task_id','sequence_no')")" == "2" ]] || fail "parent_task_id/sequence_no 真列缺失"
