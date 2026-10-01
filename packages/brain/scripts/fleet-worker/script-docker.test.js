@@ -9,9 +9,11 @@ describe('脚本 Docker 强身份适配器',()=>{
     const adapter=createScriptDockerAdapter({run:async(file,args)=>{calls.push([file,args]);return {stdout:'a'.repeat(64)};}});
     await adapter.create({name:'cecelia-script-123',command:'printf "$(touch /escape)"',
       identity:{reservation_id:'r',intent_id:'i',launch_generation:1},env:{TASK_X:'value'},
-      profile:{image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,user:'1000:1000',cwd:'/job'}});
+      profile:{image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,logMaxSizeBytes:1048576,logMaxFiles:2,user:'1000:1000',cwd:'/job'}});
     expect(calls).toHaveLength(1);expect(calls[0][0]).toBe('docker');const argv=calls[0][1];
     for(const flag of ['--network=none','--read-only','--cap-drop=ALL','--security-opt=no-new-privileges','--restart=no']) expect(argv).toContain(flag);
+    expect(argv).toContain('--log-driver=local');
+    expect(argv).toContain('--log-opt=max-size=1048576');expect(argv).toContain('--log-opt=max-file=2');
     expect(argv).toContain('--cpus=1');expect(argv).toContain('--memory=67108864');expect(argv).toContain('--pids-limit=16');
     expect(argv.some(x=>/--(volume|mount|privileged)/.test(x))).toBe(false);
     expect(argv.at(-1)).toBe('printf "$(touch /escape)"');

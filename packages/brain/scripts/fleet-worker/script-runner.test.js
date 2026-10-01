@@ -161,3 +161,9 @@ it('资源等待超过执行期限并重启后仍可启动，执行期限从实�
   await new Promise((resolve)=>setTimeout(resolve,30));
   await expect(restored.inspect(x.input)).resolves.toMatchObject({status:'running',tombstoned:false,timed_out:false});
 });
+
+it.each(['logMaxSizeBytes','logMaxFiles'])('受保护profile缺少日志轮转上限 %s 则拒绝启动',async(field)=>{
+  const x=await setup();delete x.options.profiles.harmless[field];
+  await expect(x.runner.start(x.input)).rejects.toThrow('script_profile_invalid');
+  expect(x.counts()).toEqual({creates:0,starts:0});
+});
