@@ -1,3 +1,4 @@
+import { COMPANY_KR_SQL_GUARD } from './lib/company-kr-metrics.js';
 /**
  * KR Verifier — 不可伪造的 KR 进度验证引擎
  *
@@ -29,8 +30,8 @@ export async function runAllVerifiers() {
              g.metadata->>'metric_to' as metric_to
       FROM kr_verifiers v
       JOIN key_results g ON g.id = v.kr_id
-      WHERE v.enabled = true
-        AND g.status IN ('active', 'in_progress')
+      WHERE v.enabled = true AND ${COMPANY_KR_SQL_GUARD.replaceAll('metadata', 'g.metadata').replaceAll('custom_props', 'g.custom_props')}
+        AND g.status IN ('active', 'in_progress') AND ${COMPANY_KR_SQL_GUARD.replaceAll('metadata', 'g.metadata').replaceAll('custom_props', 'g.custom_props')}
         AND (v.last_checked IS NULL
              OR v.last_checked < NOW() - make_interval(mins => v.check_interval_minutes))
     `);
@@ -73,7 +74,7 @@ export async function runAllVerifiers() {
               current_value = $2,
               metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('metric_current', $3),
               updated_at = NOW()
-          WHERE id = $4
+          WHERE id = $4 AND ${COMPANY_KR_SQL_GUARD}
         `, [progress, currentValue, String(currentValue), v.kr_id]);
 
         updated++;
@@ -179,7 +180,7 @@ export async function getKrVerifierHealth() {
 export async function resetAllKrProgress() {
   const { rows: verifiers } = await pool.query(`
     SELECT v.kr_id, v.current_value, v.threshold, g.title
-    FROM kr_verifiers v JOIN key_results g ON g.id = v.kr_id WHERE v.enabled = true
+    FROM kr_verifiers v JOIN key_results g ON g.id = v.kr_id WHERE v.enabled = true AND ${COMPANY_KR_SQL_GUARD.replaceAll('metadata', 'g.metadata').replaceAll('custom_props', 'g.custom_props')}
   `);
 
   let fixed = 0;
@@ -193,7 +194,7 @@ export async function resetAllKrProgress() {
         current_value = $2,
         metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('metric_current', $3),
         updated_at = NOW()
-      WHERE id = $4
+      WHERE id = $4 AND ${COMPANY_KR_SQL_GUARD}
     `, [progress, currentValue, String(currentValue), v.kr_id]);
     fixed++;
   }
