@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   validateEnrollment, buildOnboardingScript, validateReceipt, onboardingView,
-} from './spec.js';
+} from '../spec.js';
 
-import { createRoutedTask } from '../work-routing-store.js';
+import { createRoutedTask } from '../../work-routing-store.js';
 
 const id = '68d1b8de-435c-4edb-b674-d13fefde0fa2';
 const now = new Date('2026-10-01T06:00:00Z');

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { createOnboardingRouter } from './router.js';
+import { createOnboardingRouter } from '../router.js';
 function setup() {
   const service = Object.fromEntries(['create', 'list', 'get', 'retry'].map(k => [k, vi.fn()]));
   const app = express();
