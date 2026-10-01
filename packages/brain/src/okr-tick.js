@@ -320,9 +320,9 @@ async function addQuestionToGoal(goalId, question) {
  * @param {string} questionId - Question ID
  * @param {string} answer - Answer text
  */
-async function answerQuestionForGoal(goalId, questionId, answer) {
+async function answerQuestionForGoal(goalId, questionId, answer, db = pool) {
   // Get current metadata
-  const result = await pool.query(
+  const result = await db.query(
     'SELECT metadata FROM key_results WHERE id = $1',
     [goalId]
   );
@@ -345,11 +345,11 @@ async function answerQuestionForGoal(goalId, questionId, answer) {
   metadata.pending_questions = questions;
 
   // Update key_result metadata
-  await pool.query(`
+  await db.query(`
     UPDATE key_results
-    SET metadata = $2, updated_at = NOW()
+    SET metadata = jsonb_set(COALESCE(metadata,'{}'::jsonb), '{pending_questions}', $2::jsonb, true), updated_at = NOW()
     WHERE id = $1
-  `, [goalId, metadata]);
+  `, [goalId, JSON.stringify(questions)]);
 
   return { success: true, question_id: questionId, goal_id: goalId };
 }

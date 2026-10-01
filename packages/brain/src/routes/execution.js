@@ -1,3 +1,4 @@
+import { COMPANY_KR_SQL_GUARD } from '../lib/company-kr-metrics.js';
 import { Router } from 'express';
 import pool from '../db.js';
 import { exec, execSync } from 'child_process';
@@ -996,7 +997,7 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
             const newValue = targetVal > 0
               ? Math.round((krProgress / 100) * targetVal * 100) / 100
               : krProgress;
-            await pool.query('UPDATE key_results SET current_value = $1, updated_at = NOW() WHERE id = $2', [newValue, krId]);
+            await pool.query(`UPDATE key_results SET current_value = $1, updated_at = NOW() WHERE id = $2 AND ${COMPANY_KR_SQL_GUARD}`, [newValue, krId]);
           }
         }
       } catch (rollupErr) {

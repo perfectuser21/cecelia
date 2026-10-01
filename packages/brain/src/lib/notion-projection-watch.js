@@ -9,19 +9,22 @@
  *  A10 projection_counts  🔒 push 库：Brain 有 notion_id 的行数 == Notion 页数（人往镜子里加行会被抓）；Notion 不可达 → degraded 不红
  */
 import { loadProjectionMap, findUnregisteredNotionTables, normalizeNotionId } from './notion-projection-registry.js';
+import { COMPANY_KR_CATALOG, COMPANY_METRIC_MODE, COMPANY_KR_DATABASE } from './company-kr-metrics.js';
 
 const SINCE_HOURS = 24;
 const PAGE_CAP = 20; // 单库最多翻 20 页（2000 行），超出按 ≥ 记
 
 async function countNotionPages(notionReq, token, dbId, extraBody = {}) {
   let n = 0, cursor, pages = 0, capped = false;
+  const pageRows = [];
   do {
     const r = await notionReq(token, `/databases/${dbId}/query`, 'POST', { page_size: 100, ...(cursor ? { start_cursor: cursor } : {}), ...extraBody });
     n += (r?.results ?? []).length;
+    pageRows.push(...(r?.results ?? []));
     cursor = r?.has_more ? r?.next_cursor : null;
     if (++pages >= PAGE_CAP && cursor) { capped = true; break; }
   } while (cursor);
-  return { n, capped };
+  return { n, capped, pageRows };
 }
 
 const titleOf = (page) => {
@@ -66,7 +69,12 @@ export async function buildProjectionAssertions(pool, { notionReq, token, botUse
            VALUES ('mirror_tamper', 0, 1, $1, $2::jsonb)`,
           [`🔒 ${r.title} 被非机器人编辑：${titleOf(page)}`, JSON.stringify({ db: r.notion_db_id, table: r.brain_table, page: page.id, by })],
         ).catch(() => {});
-        await pool.query(`UPDATE ${r.brain_table} SET notion_digest = NULL WHERE notion_id = $1`, [page.id]).catch(() => {});
+        if (r.brain_table === 'key_results' && r.vessel === 'notion-kr-projection') {
+          await pool.query(`UPDATE projection_links SET content_hash = NULL
+            WHERE target='notion' AND entity_type='key_results' AND external_id=$1`, [page.id]);
+        } else {
+          await pool.query(`UPDATE ${r.brain_table} SET notion_digest = NULL WHERE notion_id = $1`, [page.id]).catch(() => {});
+        }
       }
     } catch { a8Degraded++; }
   }
@@ -103,7 +111,7 @@ export async function buildProjectionAssertions(pool, { notionReq, token, botUse
   });
 
   // ── A10 逐库行数对账 ──────────────────────────────────────
-  const pushMirrors = mirrors.filter(r => r.direction === 'push' && r.brain_table && /^notion-push-sync/.test(r.vessel || ''));
+  const pushMirrors = mirrors.filter(r => r.direction === 'push' && r.brain_table && (/^notion-push-sync/.test(r.vessel || '') || (r.brain_table === 'key_results' && r.vessel === 'notion-kr-projection')));
   // 一库多表（AI Notes=decisions+initiative_contracts，运行图谱=ops_agents+ops_schedule_entries）：Brain 侧合计再比
   const byDb = new Map();
   for (const r of pushMirrors) { const k = normalizeNotionId(r.notion_db_id); if (!byDb.has(k)) byDb.set(k, { title: r.title, dbId: r.notion_db_id, tables: [] }); byDb.get(k).tables.push(r.brain_table); }
@@ -111,12 +119,26 @@ export async function buildProjectionAssertions(pool, { notionReq, token, botUse
   for (const g of byDb.values()) {
     try {
       let brain = 0;
+      let krLinks = null;
       for (const t of g.tables) {
-        const { rows } = await pool.query(`SELECT count(*)::int AS count FROM ${t} WHERE notion_id IS NOT NULL`);
+        const { rows } = await pool.query(t === 'key_results'
+          ? `SELECT count(*)::int AS count FROM key_results`
+          : `SELECT count(*)::int AS count FROM ${t} WHERE notion_id IS NOT NULL`);
         brain += Number(rows[0]?.count ?? 0);
+        if (t === 'key_results') {
+          const links = await pool.query(`SELECT pl.entity_id, pl.external_id FROM projection_links pl
+            JOIN key_results kr ON kr.id=pl.entity_id
+            WHERE pl.target='notion' AND pl.entity_type='key_results'`);
+          krLinks = links.rows;
+        }
       }
-      const { n, capped } = await countNotionPages(notionReq, token, g.dbId);
+      const { n, capped, pageRows } = await countNotionPages(notionReq, token, g.dbId);
       checked++;
+      if (krLinks && !capped) {
+        const remote = new Map(pageRows.map(page => [page.id, (page.properties?.['Brain ID']?.rich_text ?? []).map(p => p.plain_text ?? p.text?.content ?? '').join('')]));
+        const validLinks = krLinks.filter(link => remote.get(link.external_id) === link.entity_id).length;
+        if (validLinks !== brain) diffs.push(`${g.title}：应投影 ${brain}，有效链接 ${validLinks}，远端 ${n}`);
+      }
       if (!capped && n !== brain) diffs.push(`${g.title}：Brain ${brain}${g.tables.length > 1 ? `(${g.tables.join('+')})` : ''} vs Notion ${n}`);
     } catch { a10Degraded++; }
   }
@@ -130,6 +152,25 @@ export async function buildProjectionAssertions(pool, { notionReq, token, botUse
 
   // ── A11 镜子库探活 ────────────────────────────────────────
   results.push(await probeMirrorDbs(active, { notionReq, token }));
+  if (active.some(r => r.vessel === 'notion-company-key-results' && r.brain_table === 'key_results')) {
+    try {
+      const { rows } = await pool.query("SELECT custom_props,metadata FROM key_results WHERE metadata->>'metric_mode'=$1", [COMPANY_METRIC_MODE]);
+      const { pageRows, n, capped } = await countNotionPages(notionReq, token, COMPANY_KR_DATABASE);
+      const number = value => value == null ? null : Number(value);
+      const matched = rows.filter(kr => {
+        const source = kr.custom_props?.company_notion;
+        const metric = kr.metadata?.company_metric;
+        const page = pageRows.find(p => p.id === source?.page_id);
+        return source?.database_id === COMPANY_KR_DATABASE && COMPANY_KR_CATALOG.some(c => c.page_id === source.page_id && c.goal_id === source.goal_id)
+          && page && !page.archived && !page.in_trash && normalizeNotionId(page.parent?.database_id) === normalizeNotionId(COMPANY_KR_DATABASE)
+          && ['Current', 'Target', 'Start'].every((column, i) => page.properties?.[column]?.number === number([metric?.current, metric?.target, metric?.start][i]));
+      }).length;
+      const ok = rows.length === 8 && new Set(rows.map(r => r.custom_props?.company_notion?.page_id)).size === 8 && n === 8 && matched === 8 && !capped;
+      results.push({ key: 'company_kr_counts', label: '公司8KR列级面完整性', ok, detail: `应投影=8 真身=${rows.length} 远端=${n} 显式映射且指标一致=${matched}` });
+    } catch (error) {
+      results.push({ key: 'company_kr_counts', label: '公司8KR列级面完整性', ok: false, degraded: true, detail: `公司8KR对账未完成:${error.message}` });
+    }
+  }
 
   return results;
 }

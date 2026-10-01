@@ -14,7 +14,7 @@ async function readSourceFile(relativePath: string): Promise<string> {
 
 async function getManifestRoutes(relativePath: string): Promise<Array<{ path: string; component?: string; redirect?: string }>> {
   const content = await readSourceFile(relativePath)
-  const routeMatches = [...content.matchAll(/\{[^}]*?path:\s*['"]([^'"]+)['"][^}]*\}/gs)]
+  const routeMatches = [...content.matchAll(/\{\s*path:\s*['"]([^'"]+)['"][^}]*\}/gs)]
   return routeMatches.map(match => {
     const component = match[0].match(/component:\s*['"]([^'"]+)['"]/)?.[1]
     const redirect = match[0].match(/redirect:\s*['"]([^'"]+)['"]/)?.[1]
@@ -28,16 +28,17 @@ describe('OwnerCockpit 路由接线 — 防孤儿断言', () => {
     expect(content).toContain('OwnerCockpitPage')
   })
 
-  it('根路由进入收件箱，且 Overview 仍挂载 OwnerCockpit（防孤儿 manifest 断言）', async () => {
+  it('默认入口进入 Inbox，且 Overview 继续挂载 OwnerCockpit（防孤儿 manifest 断言）', async () => {
     const routes = await getManifestRoutes('apps/api/features/dashboard/index.ts')
     const rootRoute = routes.find(r => r.path === '/')
     expect(rootRoute).toBeDefined()
     expect(rootRoute?.redirect).toBe('/workbench/inbox')
 
     const workbenchRoutes = await getManifestRoutes('apps/api/features/workbench/index.ts')
-    const entryRoute = workbenchRoutes.find(r => r.path === rootRoute?.redirect && r.component)
-    expect(entryRoute?.component).toBe('WorkbenchInbox')
-    expect(workbenchRoutes.find(r => r.path === '/workbench')?.redirect).toBe(rootRoute?.redirect)
+    const workbenchEntry = workbenchRoutes.find(r => r.path === '/workbench')
+    expect(workbenchEntry?.redirect).toBe(rootRoute?.redirect)
+    const inboxRoute = workbenchRoutes.find(r => r.path === '/workbench/inbox' && r.component)
+    expect(inboxRoute?.component).toBe('WorkbenchInbox')
     const overviewRoute = workbenchRoutes.find(r => r.path === '/workbench/overview' && r.component)
     expect(overviewRoute).toBeDefined()
     expect(overviewRoute?.component).toBe('WorkbenchOverview')

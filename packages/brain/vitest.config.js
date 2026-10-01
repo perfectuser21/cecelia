@@ -16,6 +16,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/migration-400-fact-snapshot.test.js',
   'src/__tests__/integration/kr-progress-project-aggregation.integration.test.js',
   'src/__tests__/integration/project-readers.pg.integration.test.js',
+  'src/__tests__/integration/notion-kr-projection.pg.integration.test.js',
   'src/__tests__/integration/one-session-judge-merge.pg.integration.test.js',
   'src/__tests__/integration/recurring-engine.pg.integration.test.js',
   'src/__tests__/integration/planner-recovery-run-binding.pg.integration.test.js',
