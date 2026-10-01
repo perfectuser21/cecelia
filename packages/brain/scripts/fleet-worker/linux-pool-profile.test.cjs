@@ -52,6 +52,10 @@ describe('Linux执行池可信部署合同', () => {
     expect(units.service).toContain('ExecStart=/usr/local/libexec/cecelia/toolchain/bin/node /usr/local/libexec/cecelia/fleet-worker/linux-pool-server.cjs');
     expect(units.service).not.toContain('Slice=cecelia-workloads.slice');
     expect(units.service).not.toContain('Environment=');
+    expect(units.service).toContain('CPUQuota=25%');
+    expect(units.service).toContain('MemoryMax=268435456');
+    expect(units.service).toContain('TasksMax=64');
+    expect(units.service).toContain('StateDirectory=cecelia/fleet-worker');
   });
   it('只读可信0600配置，拒软链、宽权限、陌生属主和超长内容', () => {
     const dir=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'linux-pool-profile-'));

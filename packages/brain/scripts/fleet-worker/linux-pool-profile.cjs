@@ -72,7 +72,7 @@ function renderLinuxUnits(profile) {
   if(!verified.execution_budget_available) fail('linux_pool_budget_unavailable');
   return Object.freeze({
     slice:`[Unit]\nDescription=Cecelia isolated workload pool\n[Slice]\nCPUAccounting=yes\nCPUQuota=${verified.pool.cpu_cores*100}%\nMemoryAccounting=yes\nMemoryMax=${verified.pool.memory_bytes}\nMemorySwapMax=0\nTasksAccounting=yes\nTasksMax=${verified.pool.pids_limit}\n`,
-    service:'[Unit]\nDescription=Cecelia Linux pool verifier\nAfter=docker.service network.target\nRequires=docker.service\n[Service]\nType=simple\nUser=_cecelia\nGroup=_cecelia\nExecStart=/usr/local/libexec/cecelia/toolchain/bin/node /usr/local/libexec/cecelia/fleet-worker/linux-pool-server.cjs\nRestart=on-failure\nRestartSec=5\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/cecelia/fleet-worker\nUMask=0077\n[Install]\nWantedBy=multi-user.target\n',
+    service:'[Unit]\nDescription=Cecelia Linux pool verifier\nAfter=docker.service network.target\nRequires=docker.service\n[Service]\nType=simple\nUser=_cecelia\nGroup=_cecelia\nExecStart=/usr/local/libexec/cecelia/toolchain/bin/node /usr/local/libexec/cecelia/fleet-worker/linux-pool-server.cjs\nRestart=on-failure\nRestartSec=5\nCPUAccounting=yes\nCPUQuota=25%\nMemoryAccounting=yes\nMemoryMax=268435456\nMemorySwapMax=0\nTasksAccounting=yes\nTasksMax=64\nStateDirectory=cecelia/fleet-worker\nStateDirectoryMode=0700\nNoNewPrivileges=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/cecelia/fleet-worker\nUMask=0077\n[Install]\nWantedBy=multi-user.target\n',
   });
 }
 module.exports={validateLinuxPoolProfile,loadLinuxPoolProfile,renderLinuxUnits};
