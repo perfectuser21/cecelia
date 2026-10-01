@@ -118,7 +118,7 @@ else
 fi
 
 if [[ "$FIREWALL_MODE" == interface-v2 ]]; then
-  for module in tailscale_us_exit_policy.py tailscale_us_exit_activation.py tailscale_us_exit_lease.py; do
+  for module in tailscale_us_exit_policy.py tailscale_us_exit_activation.py tailscale_us_exit_lease.py tailscale_us_exit_recovery.py; do
     if [[ "$SYSTEM_LIBEXEC_DIR" == "/usr/local/libexec/cecelia" ]]; then
       "$SUDO_BIN" /usr/bin/install -o root -g wheel -m 0755 "$SCRIPT_DIR/$module" "$INSTALL_DIR/$module"
     else

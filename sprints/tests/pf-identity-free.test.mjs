@@ -8,12 +8,14 @@ import { fileURLToPath } from 'node:url';
 it('native entry executes immutable PF deadlock regression suite', async () => {
   const root = fileURLToPath(new URL('../../', import.meta.url));
   const suite = fileURLToPath(new URL('../../tests/regression/tailscale-us-exit/pf-identity-free.test.py', import.meta.url));
-  expect(createHash('sha256').update(readFileSync(suite)).digest('hex')).toBe('81f1d148aab773d33fbe6c8f072ff3ed53051e6e38aadd7340bcff59a4c659c5');
+  expect(createHash('sha256').update(readFileSync(suite)).digest('hex')).toBe('f79b12301e1791e7d61ae8b0aa7a0f5b3fe0c399cdd402d8bbf8b36345a15ad5');
+  const recovery = fileURLToPath(new URL('../../tests/regression/tailscale-us-exit/pf-recovery.test.py', import.meta.url));
+  expect(createHash('sha256').update(readFileSync(recovery)).digest('hex')).toBe('3bc5e7347a8286a41206496f5b43c6df9bd9a1f0ffb536ac0c8b246f7da89cec');
   const result = await promisify(execFile)('python3', [suite, '-v'], {
     cwd: root, timeout: 30_000, maxBuffer: 1024 * 1024,
   });
   const output = result.stdout + result.stderr;
-  expect(output).toMatch(/Ran 29 tests/);
+  expect(output).toMatch(/Ran 42 tests/);
   expect(output).toMatch(/\nOK(?: \(skipped=1\))?\s*$/);
   expect(output).not.toMatch(/FAILED|Traceback/);
 }, 35_000);

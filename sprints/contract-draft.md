@@ -12,6 +12,7 @@
 - 每次失效撤业务授权；独立 KeepAlive 守卫两秒巡检，业务 generation 最多 15 秒；封闭策略也随 peer/DERP 缓存到期主动刷新，成功加载摘要避免重复写 PF，加载/发布租约/撤权共用短 PF 锁。
   PF 自身没有 TTL；主动撤权受 PF 命令耗时及锁等待影响，同时停止主巡检和独立守卫不能保证规则自动过期。
 - 激活前有效全锚点审计，其他身份查询、未知 quick、非零 states 均拒绝；input 默认放行让无状态 bootstrap 收响应。
+- 默认确认仍需双目标手机真实 shell；仅激活时明确审批 network-recovery 可按激活前 root600/hash 绑定基线验收，基线在线手机不得退化，原离线设备记 phones_outstanding。网络确认不表示手机恢复或任务完成；confirm 不能改确认范围。
 - 独立回滚需要真实 PID 握手；切换、回滚、确认共用事务锁，每次变更核 deadline。激活拒绝目标 gui/user 已加载旧代理，新 installer staging 只写 root 事务目录。回滚先停 lease guard，恢复专用 anchor、脚本/plist/cache；不关闭 PF、不全局 flush。
 
 ## 接缝
@@ -35,7 +36,7 @@ python3 tests/regression/tailscale-us-exit/pf-identity-free.test.py -v
 bash -n scripts/ops/install-tailscale-us-exit-enforcer.sh
 ```
 
-通过标准：29 条回归运行、进程 exit 0；PF 原生解析以目标机实际证据补齐。生产切换、真实美国出口/双 ADB 验收和取消回滚均属独立明确审批后的阶段。
+通过标准：42 条回归运行、进程 exit 0；PF 原生解析以目标机实际证据补齐。生产切换、真实美国出口/双 ADB 验收和取消回滚均属独立明确审批后的阶段。
 
 ## Test Contract
 

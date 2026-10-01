@@ -25,7 +25,7 @@ GUARD_LABEL = LABEL + ".lease"
 GUARD_PLIST = Path(f"/Library/LaunchDaemons/{GUARD_LABEL}.plist")
 PLIST = Path(f"/Library/LaunchDaemons/{LABEL}.plist")
 FILES = (INSTALL / "tailscale-us-exit-enforcer.py", INSTALL / "tailscale_us_exit_policy.py",
-         INSTALL / "tailscale_us_exit_activation.py", INSTALL / "tailscale_us_exit_legacy.py", PLIST, GUARD_PLIST, INSTALL / "tailscale_us_exit_lease.py", CACHE,
+         INSTALL / "tailscale_us_exit_activation.py", INSTALL / "tailscale_us_exit_recovery.py", INSTALL / "tailscale_us_exit_legacy.py", PLIST, GUARD_PLIST, INSTALL / "tailscale_us_exit_lease.py", CACHE,
          CACHE.with_name("bootstrap-peers.json"), CACHE.with_name("bootstrap-context.json"),
          CACHE.with_name("closed-policy.json"),
          CACHE.with_name("business-lease.json"), CACHE.with_name("guard-health.json"))
@@ -232,15 +232,22 @@ def reject_user_agent(home):
 
 
 def activate(args):
+    from tailscale_us_exit_recovery import capture_baseline, save_baseline, load_baseline
     if os.geteuid() != 0:
         raise RuntimeError("切换需要 root")
     if args.approve_scope != "all-users-public-egress-and-bootstrap-exceptions":
         raise RuntimeError("必须明确审批全用户公网限制及 bootstrap 例外")
     reject_user_agent(args.home)
+    confirmation_scope = getattr(args, "confirmation_scope", "all-phones")
+    if confirmation_scope not in ("all-phones", "network-recovery"):
+        raise RuntimeError("未知确认审批范围")
+    candidate = Path(args.candidate).read_text()
+    candidate_sha256 = hashlib.sha256(candidate.encode()).hexdigest()
+    baseline = (capture_baseline(sys.modules[__name__], args.home, candidate_sha256, args.actor)
+                if confirmation_scope == "network-recovery" else None)
     source = Path(__file__).resolve().parent
     firewall = fresh_policy(args.home)
     audit = preflight()
-    candidate = Path(args.candidate).read_text()
     if re.search(r"\b(user|group)\b|log\s*\([^)]*user", candidate):
         raise RuntimeError("候选含身份查询")
     if not candidate.rstrip().endswith("block drop out quick proto { tcp udp } all"):
@@ -263,10 +270,14 @@ def activate(args):
     shutil.copy2(__file__, path / "rollback.py")
     state = {"anchor": ANCHOR, "approval_actor": args.actor,
              "approval_scope": args.approve_scope, "status": "armed",
-             "deadline": time.time() + args.timeout, "files": entries,
+             "deadline": time.time() + args.timeout, "armed_at": time.time(), "files": entries,
              "target_home": args.home,
+             "confirmation_scope": confirmation_scope,
              "rollback_label": LABEL + ".rollback." + path.name,
-             "candidate_sha256": hashlib.sha256(candidate.encode()).hexdigest()}
+             "candidate_sha256": candidate_sha256}
+    if baseline is not None:
+        state["baseline_sha256"] = save_baseline(path, baseline)
+        load_baseline(path, state, ADB_SERIALS)
     save_transaction(path, state)
     rollback_plist = path / "rollback.plist"
     with rollback_plist.open("wb") as stream:
@@ -329,12 +340,21 @@ def adb_binary(home):
     raise RuntimeError("未找到目标机器 ADB；拒绝取消回滚")
 
 
-def verify_adb(home):
+def adb_prefix(home):
     user = pwd.getpwuid(Path(home).stat().st_uid).pw_name
     binary = adb_binary(home)
-    prefix = ["/usr/bin/sudo", "-n", "-u", user, "/usr/bin/env", "HOME=" + home, binary]
+    return ["/usr/bin/sudo", "-n", "-u", user, "/usr/bin/env", "HOME=" + home, binary]
+
+
+def verify_adb(home, serials=None):
+    serials = ADB_SERIALS if serials is None else set(serials)
+    if not serials <= ADB_SERIALS:
+        raise RuntimeError("未知目标手机")
+    if not serials:
+        return []
+    prefix = adb_prefix(home)
     verified = []
-    for serial in sorted(ADB_SERIALS):
+    for serial in sorted(serials):
         if command(prefix + ["-s", serial, "shell", "getprop", "sys.boot_completed"]).strip() != "1":
             raise RuntimeError("目标手机尚未完成启动: " + serial)
         if command(prefix + ["-s", serial, "shell", "echo", "cecelia-pf-confirm"]).strip() != "cecelia-pf-confirm":
@@ -344,10 +364,12 @@ def verify_adb(home):
 
 
 def confirm(args):
+    from tailscale_us_exit_recovery import required_phones, load_baseline
     path, _ = read_transaction(args.transaction)
     with locked(path):
         path, state = verify_transaction(path)
         evidence = json.loads(Path(args.evidence).read_text())
+        required, outstanding = required_phones(path, state, ADB_SERIALS)
         source_ip = os.environ.get("SSH_CONNECTION", "").split(" ")[0]
         if not source_ip or source_ip in ("127.0.0.1", "::1", "100.86.57.69", "100.88.166.55"):
             raise RuntimeError("确认必须从另一台机器 SSH 进入")
@@ -355,10 +377,10 @@ def confirm(args):
                 or evidence.get("candidate_sha256") != state["candidate_sha256"]
                 or not 0 <= time.time() - evidence.get("observed_at", 0) <= 120
                 or evidence.get("us_exit_verified") is not True
-                or set(evidence.get("adb_serials_verified", [])) != ADB_SERIALS
+                or set(evidence.get("adb_serials_verified", [])) != set(required)
                 or not evidence.get("actor")):
             raise RuntimeError("缺 fresh 的同候选远程 SSH、美国出口和双 ADB 验收事实")
-        evidence["adb_serials_verified"] = verify_adb(state["target_home"])
+        evidence["adb_serials_verified"] = verify_adb(state["target_home"], serials=required)
         verify_transaction(path)
         from tailscale_us_exit_lease import guard_alive, valid_lease
         from tailscale_us_exit_policy import read_map_cache
@@ -367,10 +389,18 @@ def confirm(args):
         rules = command(["/sbin/pfctl", "-a", ANCHOR, "-sr"])
         if re.search(r"\b(user|group)\b|log\s*\([^)]*user", rules) or "block drop out quick" not in rules:
             raise RuntimeError("当前专用 anchor 未保持新策略")
-        state.update(status="confirmed", confirmed_at=time.time(), evidence=evidence)
+        baseline = (load_baseline(path, state, ADB_SERIALS)
+                    if state.get("confirmation_scope") == "network-recovery" else None)
+        verify_transaction(path)
+        mode = "network-only" if state.get("confirmation_scope") == "network-recovery" else "all-phones"
+        state.update(status="confirmed", confirmed_at=time.time(), evidence=evidence,
+                     confirmation_mode=mode, phones_outstanding=outstanding,
+                     baseline_phone_states=baseline["device_states"] if baseline else {})
         save_transaction(path, state)
     command(["/bin/launchctl", "bootout", "system/" + state["rollback_label"]])
-    print(json.dumps({"status": "confirmed", "transaction": str(path)}))
+    print(json.dumps({"status": "confirmed", "transaction": str(path),
+                      "confirmation_mode": mode, "phones_outstanding": outstanding,
+                      "baseline_phone_states": state["baseline_phone_states"], "task_completed": False}))
 
 
 def main():
@@ -381,6 +411,7 @@ def main():
     parser.add_argument("--home")
     parser.add_argument("--actor")
     parser.add_argument("--approve-scope")
+    parser.add_argument("--confirmation-scope", choices=("all-phones", "network-recovery"), default="all-phones")
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--evidence")
     args = parser.parse_args()

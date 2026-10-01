@@ -69,7 +69,7 @@ class InstallerRecoveryTests(unittest.TestCase):
 
 
 class NetworkRecoveryTests(unittest.TestCase):
-    def invoke_confirm(self, root, state, evidence, verify=None, command=None, adb=None):
+    def invoke_confirm(self, root, state, evidence, verify=None, command=None, adb=None, baseline_read=None):
         import tailscale_us_exit_activation as activation
         evidence_file = root / "evidence.json"
         evidence_file.write_text(json.dumps(evidence))
@@ -82,7 +82,7 @@ class NetworkRecoveryTests(unittest.TestCase):
             stack.enter_context(patch("tailscale_us_exit_lease.guard_alive", return_value=True))
             stack.enter_context(patch("tailscale_us_exit_lease.valid_lease", return_value=True))
             stack.enter_context(patch("tailscale_us_exit_policy.read_map_cache", return_value={}))
-            stack.enter_context(patch("tailscale_us_exit_recovery.read_root_file", side_effect=lambda p: p.read_bytes()))
+            stack.enter_context(patch("tailscale_us_exit_recovery.read_root_file", side_effect=baseline_read or (lambda p: p.read_bytes())))
             output = io.StringIO()
             with redirect_stdout(output):
                 activation.confirm(SimpleNamespace(transaction=str(root), evidence=str(evidence_file)))
@@ -255,6 +255,27 @@ class NetworkRecoveryTests(unittest.TestCase):
             api.command = lambda _, value=status: "List of devices attached\nANGYVB4227006983 " + value + "\n"
             baseline = recovery.capture_baseline(api, "/target", "a"*64, "root")
             self.assertEqual(baseline["device_states"], {"ANGYVB4227006983": status, "ANGYVB4402004137": "absent"})
+
+    def test_confirmation_final_baseline_reread_crossing_deadline_keeps_rollback_armed(self):
+        import tailscale_us_exit_activation as activation
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state, evidence = self.fixture(root, activation.ADB_SERIALS)
+            clock = [1000]
+            reads = []
+            def baseline_read(path):
+                reads.append(path)
+                if len(reads) == 2:
+                    clock[0] = 1010
+                return path.read_bytes()
+            def verify(_):
+                if clock[0] >= 1005:
+                    raise RuntimeError("deadline expired")
+                return root, state
+            with self.assertRaisesRegex(RuntimeError, "deadline"):
+                self.invoke_confirm(root, state, evidence, verify=verify, baseline_read=baseline_read)
+            self.assertEqual(len(reads), 2)
+            self.assertEqual(state["status"], "armed")
 
 
 if __name__ == "__main__":
