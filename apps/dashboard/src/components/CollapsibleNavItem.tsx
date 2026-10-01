@@ -21,10 +21,9 @@ export default function CollapsibleNavItem({
   const Icon = item.icon;
   const children = item.children || [];
 
-  // Check if any child is active
-  const isChildActive = children.some(
-    (child) => currentPath === child.path || currentPath.startsWith(child.path + '/')
-  );
+  const isChildPathActive = (child: NavItem) =>
+    currentPath === child.path || (!child.exact && currentPath.startsWith(child.path + '/'));
+  const isChildActive = children.some(isChildPathActive);
   const isParentExactActive = currentPath === item.path;
   const isParentActive = isChildActive || isParentExactActive;
 
@@ -163,7 +162,7 @@ export default function CollapsibleNavItem({
           <div className="pl-9 mt-0.5 space-y-0.5">
             {children.map((child) => {
               const ChildIcon = child.icon;
-              const isActive = currentPath === child.path || currentPath.startsWith(child.path + '/');
+              const isActive = isChildPathActive(child);
               return (
                 <Link
                   key={child.path}
