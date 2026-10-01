@@ -18,10 +18,36 @@ import { randomUUID } from 'node:crypto';
 import { getPgCheckpointer } from '../orchestrator/pg-checkpointer.js';
 import { getCompiledWalkingSkeleton } from '../workflows/walking-skeleton-1node.graph.js';
 import pool from '../db.js';
+import { assertWalkingCiMode, walkingProcessInstance, isWalkingCheckpointWaiting } from '../lib/walking-callback-worker.js';
 
 const router = Router();
 
-router.post('/walking-skeleton-1node/trigger', async (_req, res) => {
+router.get('/walking-skeleton-1node/instance', (_req, res) => {
+  try { assertWalkingCiMode(); } catch { return res.status(403).json({ ok: false, error: 'CI control denied' }); }
+  return res.json({ instance_id: walkingProcessInstance });
+});
+
+router.get('/walking-skeleton-1node/ready/:threadId', async (req, res) => {
+  try { assertWalkingCiMode(); } catch { return res.status(403).json({ ok: false, error: 'CI control denied' }); }
+  if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(req.params.threadId)) {
+    return res.status(400).json({ ok: false, error: 'Invalid thread UUID' });
+  }
+  try {
+    const graph = await getCompiledWalkingSkeleton(await getPgCheckpointer());
+    const state = await graph.getState({ configurable: { thread_id: req.params.threadId } });
+    return res.json({ ready: isWalkingCheckpointWaiting(state) });
+  } catch { return res.status(503).json({ ready: false }); }
+});
+
+router.post('/walking-skeleton-1node/trigger', async (req, res) => {
+  const requested = Object.hasOwn(req.body || {}, 'wait_for_restart');
+  if (Object.keys(req.body || {}).some(key => key !== 'wait_for_restart')
+    || (requested && req.body.wait_for_restart !== true)) {
+    return res.status(400).json({ ok: false, error: 'Unknown Walking control' });
+  }
+  if (requested || process.env.WALKING_CI_OWNER !== undefined) {
+    try { assertWalkingCiMode(); } catch { return res.status(403).json({ ok: false, error: 'CI control denied' }); }
+  }
   const threadId = randomUUID();
   try {
     const checkpointer = await getPgCheckpointer();
@@ -31,7 +57,7 @@ router.post('/walking-skeleton-1node/trigger', async (_req, res) => {
     // 但若 spawn_node 中 PG 写失败 invoke 会立即 throw。我们用 fire-and-forget
     // pattern 让 trigger 立即返回，错误走 .catch 写 stderr 日志。
     app
-      .invoke({ triggerId: threadId }, { configurable: { thread_id: threadId } })
+      .invoke({ triggerId: threadId, ...(requested ? { restartInstanceId: walkingProcessInstance } : {}) }, { configurable: { thread_id: threadId } })
       .catch((err) => {
         console.error(`[walking-skeleton] invoke failed thread=${threadId}: ${err.message}`);
       });
