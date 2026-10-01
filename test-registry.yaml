@@ -264,7 +264,7 @@ tests:
     note: "GET /api/brain/topics 路由契约：文件存在、路由注册、实现结构、topic-selector/llm-caller 契约"
 
   - id: brain-runtime-isolation
-    path: packages/brain/src/__tests__/runtime-isolation.test.js
+    path: packages/brain/src/__tests__/runtime-safety.test.js
     type: unit
     ci: L4
     status: active
@@ -299,3 +299,9 @@ tests:
     ci: L4
     status: active
     note: "MiniMax、embedding和导出执行函数不能绕过运行隔离"
+  - id: brain-profile-facts-runtime-isolation
+    path: packages/brain/src/routes/__tests__/profile-facts.test.js
+    type: unit
+    ci: L4
+    status: active
+    note: "文本事实导入不能绕过模型隔离读取凭据或发起请求"

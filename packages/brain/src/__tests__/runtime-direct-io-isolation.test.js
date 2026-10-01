@@ -8,7 +8,6 @@ vi.mock('../db.js', () => ({ default: { query: io.query } }));
 vi.mock('../embedding-service.js', () => ({ generateProfileFactEmbeddingAsync: vi.fn() }));
 vi.mock('../notion-memory-sync.js', () => ({ pushFactToNotion: vi.fn() }));
 vi.mock('openai', () => ({ default: io.openai }));
-import profileFacts from '../routes/profile-facts.js';
 import { extractAndSaveUserFacts, _resetApiKey } from '../user-profile.js';
 import { generateEmbedding, generateEmbeddingsBatch } from '../openai-client.js';
 import { assertExternalExecutionAllowed } from '../runtime-safety.js';
@@ -26,14 +25,6 @@ beforeEach(() => {
 afterEach(() => { _resetApiKey(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe('直接模型I/O不得绕过运行隔离', () => {
-  it('profile facts真实import路由在读MiniMax凭据前拒绝', async () => {
-    const handler = profileFacts.stack.find(layer => layer.route?.path === '/import').route.stack[0].handle;
-    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
-    await handler({ body: { text: '一段需要模型分析的文本' } }, res);
-    expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('禁止真实模型调用') }));
-    expect(io.read).not.toHaveBeenCalled(); expect(io.fetch).not.toHaveBeenCalled(); expect(io.query).not.toHaveBeenCalled();
-  });
   it('extractAndSaveUserFacts在读凭据前拒绝', async () => {
     await expect(extractAndSaveUserFacts({ query: io.query }, 'owner', [{ role: 'user', content: 'fixture' }]))
       .rejects.toMatchObject({ code: 'LLM_RUNTIME_ISOLATED' });
