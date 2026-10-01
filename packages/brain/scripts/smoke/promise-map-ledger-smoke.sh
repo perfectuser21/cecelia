@@ -51,12 +51,15 @@ echo "OK: 落账 API 四要件齐"
 
 # 5. Notion push 格子行合同（棒4-2，决策 10a68212 改）：格子行进 Backbone-Step Map 且按 updated_at 增量可更新，
 #    每轮 LIMIT 50 防洪水（原合同「排除格子行」已被承诺地图翻色进 Notion 的需求取代）
-grep -q "l.updated_at > l.notion_synced_at" packages/brain/src/notion-push-sync.js \
+grep -q "selectStepLinksForProjection(pool)" packages/brain/src/notion-push-sync.js \
+  || { echo "FAIL: notion push 未委派格子行持续投影"; exit 1; }
+grep -q "l.updated_at > l.notion_synced_at" packages/brain/src/lib/notion-activity-flow.js \
   || { echo "FAIL: notion push 格子行未走 updated_at 增量"; exit 1; }
 grep -q "buildStepLinkNotionProperties(l, schemaProps)" packages/brain/src/notion-push-sync.js \
   || { echo "FAIL: notion push 格子行未走 buildStepLinkNotionProperties（Cell* 列）"; exit 1; }
-grep -A12 "FROM journey_step_links l" packages/brain/src/notion-push-sync.js | grep -q "LIMIT 50" \
-  || { echo "FAIL: notion push 格子行每轮上限 50 缺失"; exit 1; }
+[ "$(grep -c "LIMIT 25" packages/brain/src/lib/notion-activity-flow.js)" -eq 2 ] \
+  || { echo "FAIL: notion push dirty25+sweep25 每轮上限 50 缺失"; exit 1; }
+(cd packages/brain && npx vitest run src/lib/__tests__/notion-activity-flow.test.js)
 echo "OK: notion push 格子行增量可更新合同在位"
 
 # 6. selfcheck 地板已推进到 ≥350(数值断言,后续 migration 推进不误伤本 smoke——07-18 刀A1 351 曾被旧等值断言打红)
