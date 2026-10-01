@@ -60,4 +60,15 @@ describe('canonical task repository identity', () => {
       await expect(resolve({ repo: 'cecelia', base_repo }))
         .rejects.toThrow('workspace_repo_not_supported');
     });
+
+  it.each([
+    'other/cecelia', 'other/zenithjoy-workspace', 'unknown-cecelia-repo',
+    'https://evil.example/perfectuser21/cecelia',
+    'https://github.com/other/cecelia.git',
+    'https://github.com/other/zenithjoy-workspace.git',
+    'https://github.com.evil.example/perfectuser21/cecelia',
+    '/tmp/attacker/cecelia', '/tmp/unknown-cecelia-repo',
+  ])('rejects legacy identities that merely contain a supported alias %s', async (base_repo) => {
+    await expect(resolve({ base_repo })).rejects.toThrow('workspace_repo_not_supported');
+  });
 });

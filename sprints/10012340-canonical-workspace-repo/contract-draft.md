@@ -15,7 +15,7 @@ cd packages/brain
 npx vitest run src/orchestrator/workspace-spec-canonical-repo.test.js src/orchestrator/workspace-spec.test.js --maxWorkers=1 --minWorkers=1
 ```
 
-通过标准：新35项与旧40项全过。永久RED原版21失败14通过，来源旧任务失败不改。完整CI、native Evaluate/Judge、实际恢复获客须另外验证，不以本地PASS替代。
+通过标准：新44项与旧40项全过。永久RED原版21失败14通过，来源旧任务失败不改。完整CI、native Evaluate/Judge、实际恢复获客须另外验证，不以本地PASS替代。
 
 ## Test Contract
 

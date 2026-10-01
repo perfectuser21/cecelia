@@ -9,6 +9,15 @@ export const WORKSPACE_REPOSITORIES = Object.freeze([
   'perfectuser21/zenithjoy-workspace',
 ]);
 
+function isSupportedLegacyRepository(value) {
+  return typeof value === 'string' && (
+    ['cecelia', 'zenithjoy', 'zenithjoy-workspace', ...WORKSPACE_REPOSITORIES,
+      '/Users/administrator/perfect21/cecelia', '/Users/administrator/perfect21/zenithjoy',
+      '/root/cecelia', '/root/zenithjoy', '/root/zenithjoy-workspace', '/workspace'].includes(value)
+    || /^https:\/\/github\.com\/perfectuser21\/(?:cecelia|zenithjoy-workspace)(?:\.git)?\/?$/.test(value)
+  );
+}
+
 function resolveTaskRepository(payload) {
   const canonicalPresent = Object.hasOwn(payload, 'repo');
   const legacyPresent = Object.hasOwn(payload, 'base_repo');
@@ -18,7 +27,7 @@ function resolveTaskRepository(payload) {
   if (canonicalPresent && (typeof payload.repo !== 'string' || !canonical)) {
     throw new Error('workspace_repo_not_supported');
   }
-  if (legacyPresent && (typeof payload.base_repo !== 'string' || !payload.base_repo.trim())) {
+  if (legacyPresent && !isSupportedLegacyRepository(payload.base_repo)) {
     throw new Error('workspace_repo_not_supported');
   }
   const legacy = legacyPresent ? parseBaseRepo(payload.base_repo) : null;

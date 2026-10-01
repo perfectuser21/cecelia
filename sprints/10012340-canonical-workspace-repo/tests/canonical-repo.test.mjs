@@ -18,5 +18,5 @@ it('native entry verifies canonical repository and legacy safeguards', async () 
     'src/orchestrator/workspace-spec-canonical-repo.test.js', 'src/orchestrator/workspace-spec.test.js',
     '--maxWorkers=1', '--minWorkers=1'],
   { cwd: path.join(root, 'packages/brain'), timeout: 30000, maxBuffer: 2097152 });
-  expect(result.stdout).toMatch(/Tests\s+75 passed \(75\)/);
+  expect(result.stdout).toMatch(/Tests\s+84 passed \(84\)/);
 }, 35000);
