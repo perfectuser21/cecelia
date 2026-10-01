@@ -21,10 +21,11 @@ test('ratchet long-list membership survives early grep exit under pipefail', asy
 for (const [name, route] of [
   ['company-key-results', '/api/brain/okr/company-key-results'],
   ['company-kr-analysis', '/api/brain/okr/company-key-results/analysis'],
+  ['janitor', '/api/brain/janitor/jobs'],
 ]) {
   test(`${name}: actual readonly curl ignores startup POST and additional target`, async () => {
     const calls = [], additional = [];
-    const server = createHttpServer((req, res) => { calls.push([req.method, req.url]); res.end('{}'); });
+    const server = createHttpServer((req, res) => { calls.push([req.method, req.url]); res.end(name === 'janitor' ? JSON.stringify({ jobs: [{ id: 'preview-owned-npm-cache-expiry-v1', enabled: false, name: 'private-fixture' }] }) : '{}'); });
     const extra = createHttpServer((req, res) => { additional.push([req.method, req.url]); res.end('{}'); });
     const temp = await mkdtemp(resolve(tmpdir(), 'company-http-curlrc-'));
     try {
