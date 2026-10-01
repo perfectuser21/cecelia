@@ -35,7 +35,7 @@ SCRIPT_DOCKER_SOURCE="$SCRIPT_DIR/script-docker.cjs"
 RESOURCE_POLICY_SOURCE="$SCRIPT_DIR/attempt-resource-policy.cjs"
 CONTAINER_IDENTITY_SOURCE="$SCRIPT_DIR/attempt-container-identity.cjs"
 # 专用 runner 仅打包，不增加服务入口或默认可执行 profile。
-APP_SERVER_FILES=(app-server-profile.cjs app-server-docker.cjs app-server-stream.cjs app-server-runner.cjs app-server-rpc.cjs app-server-stream-hub.cjs app-server-contract.json app-server-shim.cjs)
+APP_SERVER_FILES=(app-server-profile.cjs app-server-docker.cjs app-server-attach.cjs app-server-stream.cjs app-server-runner.cjs app-server-rpc.cjs app-server-stream-hub.cjs app-server-contract.json app-server-shim.cjs)
 STAGED_APP_SERVER_FILES=('' '' '' '' '' '' '' '')
 PRIOR_APP_SERVER_MODES=('' '' '' '' '' '' '' '')
 WORKSPACE_MANAGER_SOURCE="$SCRIPT_DIR/workspace-manager.cjs"

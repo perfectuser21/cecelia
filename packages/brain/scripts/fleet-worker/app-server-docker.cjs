@@ -1,12 +1,13 @@
 'use strict';
-const { execFile, spawn: spawnChild } = require('node:child_process');
+const { execFile } = require('node:child_process');
+const { attachUnixSocket } = require('./app-server-attach.cjs');
 const { promisify } = require('node:util');
 const { validateAppServerProfile } = require('./app-server-profile.cjs');
 const ID = /^[a-f0-9]{64}$/;
 const NAME = /^cecelia-appserver-[a-f0-9-]{36}-g[1-9][0-9]*$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
-function createAppServerDocker({ run = promisify(execFile), spawn = spawnChild } = {}) {
+function createAppServerDocker({ run = promisify(execFile), env = process.env } = {}) {
   const command = async args => {
     try { return await run('docker', args, { encoding: 'utf8', timeout: 20000, maxBuffer: 1048576 }); }
     catch (error) {
@@ -63,9 +64,18 @@ function createAppServerDocker({ run = promisify(execFile), spawn = spawnChild }
     },
     async start(id) { exact(id); await command(['start', id]); },
     async remove(id) { exact(id); await command(['rm', '--force', id]); },
-    attach(id) {
+    async attach(id, { deadline = Date.now() + 5000 } = {}) {
       exact(id);
-      return spawn('docker', ['attach', '--sig-proxy=false', id], { stdio: ['pipe', 'pipe', 'ignore'] });
+      let host = env.DOCKER_CONTEXT ? null : env.DOCKER_HOST;
+      if (!host) {
+        let result;
+        try { result = await run('docker', ['context', 'inspect', ...(env.DOCKER_CONTEXT ? [env.DOCKER_CONTEXT] : [])],
+          { encoding: 'utf8', timeout: Math.max(1, Math.min(5000, deadline - Date.now())), maxBuffer: 65536, env });
+          host = JSON.parse(result.stdout)?.[0]?.Endpoints?.docker?.Host;
+        } catch { throw Error('appserver_attach_unconfirmed'); }
+      }
+      if (typeof host !== 'string' || !/^unix:\/\/\/[^\x00\r\n?#]+$/.test(host)) throw Error('appserver_attach_endpoint_denied');
+      return attachUnixSocket(host.slice(7), id, deadline);
     },
   };
 }

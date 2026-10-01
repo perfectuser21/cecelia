@@ -36,15 +36,15 @@ async function runShim(config,input=process.stdin,output=process.stdout){
  const {value:stream,token}=await control(config,`/generations/${g.reservation_id}/stream`,{}),url=endpoint(stream.stream_url);
  if(!UUID.test(stream.stream_id)||url.pathname!==`/app-server-streams/${stream.stream_id}`||!/^[a-f0-9]{64}$/.test(token??'')||stream.expires_at<=Date.now())throw Error('appserver_stream_ticket_invalid');
  // 无任何自动重试；写后断链一律回报未知，由受管generation精确清理闭环。
- return new Promise((resolve,reject)=>{
+ return new Promise((_resolve,reject)=>{
   let settled=false;const transport=url.protocol==='https:'?https:http;
   const request=transport.request(url,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/x-ndjson'}},response=>{
    clearTimeout(timer);if(response.statusCode!==200){response.destroy();finish(Error('appserver_stream_recovery_required'));return;}
-   pipeline(response,createJsonlBoundary(),output,error=>finish(error?Error('appserver_stream_unconfirmed'):undefined));
+   pipeline(response,createJsonlBoundary(),output,()=>finish());
    pipeline(input,createJsonlBoundary(),request,error=>{if(error)finish(Error('appserver_stream_unconfirmed'));});
   });
   const timer=setTimeout(()=>finish(Error('appserver_stream_unconfirmed')),6000);
-  function finish(error){if(settled)return;settled=true;clearTimeout(timer);request.destroy();if(error)reject(error);else resolve();}
+  function finish(){if(settled)return;settled=true;clearTimeout(timer);request.destroy();reject(Error('appserver_stream_recovery_required'));}
   request.on('error',()=>finish(Error('appserver_stream_unconfirmed')));request.flushHeaders();
  });
 }

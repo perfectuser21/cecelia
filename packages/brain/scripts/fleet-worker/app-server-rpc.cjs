@@ -1,12 +1,18 @@
 'use strict';
 const contract=require('./app-server-contract.json');
-const HOST_TOOLS=new Set(['exec','process','gateway_exec','gateway_process','node_exec','sandbox_exec','sandbox_process']);
+// 动态工具在插件宿主执行；只开放固定读取工具，执行/调度代理和未知扩展默认拒绝。
+const DATA_TOOLS=new Set(['read','web_search','web_fetch']);
+const allowedNamespace=name=>name==null||name==='functions';
 const object=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const idValid=v=>typeof v==='string'&&v.length>0&&v.length<=256||Number.isSafeInteger(v);
 const key=id=>`${typeof id}:${id}`;
 const deny=(id,code)=>({reply:{id,error:{code:-32600,message:code}}});
-const filterTools=tools=>tools.filter(tool=>!hostTool(tool.name)).map(tool=>tool.type==='namespace'?{...tool,tools:filterTools(tool.tools)}:tool).filter(tool=>tool.type!=='namespace'||tool.tools.length);
-const hostTool=name=>typeof name!=='string'||HOST_TOOLS.has(name.toLowerCase().split(/[./:]/).at(-1));
+const filterTools=tools=>tools.flatMap(tool=>{
+ if(tool.type!=='namespace')return hostTool(tool.name)?[]:[tool];
+ if(!allowedNamespace(tool.name))return [];
+ const children=filterTools(tool.tools);return children.length?[{...tool,tools:children}]:[];
+});
+const hostTool=name=>typeof name!=='string'||!DATA_TOOLS.has(name);
 // 只支持固定生成物使用的 draft-07 关键字；执行步数/递归深度有界。
 function valid(value,schema,definitions,{strict=false}={}){
  let steps=0;
@@ -48,13 +54,13 @@ function createRpcPolicy({maxPending=128,maxIds=100000,accountId=null}={}){
   pending.delete(key(frame.id));return {forward:frame};
  }
  function request(frame,kind,pending,used){
-  const method=frame.method,set=contract[kind],schema=set.methods[method];
+  const method=frame.method,set=contract[kind],schema=Object.hasOwn(set.methods,method)?set.methods[method]:null;
   if(!schema)return deny(frame.id,'appserver_rpc_method_denied');
   if(used.has(key(frame.id)))return deny(frame.id,'appserver_rpc_id_reused');
   if(used.size>=maxIds||pending.size>=maxPending)return deny(frame.id,'appserver_rpc_session_limit');
   if(!valid(frame.params??{},schema,set.definitions,{strict:true}))return deny(frame.id,'appserver_rpc_params_invalid');
   if(kind==='client'&&method==='account/login/start'&&(!accountId||frame.params.type!=='chatgptAuthTokens'||frame.params.chatgptAccountId!==accountId))return deny(frame.id,'appserver_account_binding_denied');
-  if(kind==='server'&&method==='item/tool/call'&&(hostTool(frame.params.tool)||(frame.params.namespace!=null&&hostTool(frame.params.namespace))))return deny(frame.id,'appserver_host_tool_denied');
+  if(kind==='server'&&method==='item/tool/call'&&(hostTool(frame.params.tool)||!allowedNamespace(frame.params.namespace)))return deny(frame.id,'appserver_host_tool_denied');
   if(kind==='client'&&method==='thread/start'&&frame.params.dynamicTools)frame={...frame,params:{...frame.params,dynamicTools:filterTools(frame.params.dynamicTools)}};
   used.add(key(frame.id));pending.set(key(frame.id),method);return {forward:frame};
  }
@@ -65,7 +71,7 @@ function createRpcPolicy({maxPending=128,maxIds=100000,accountId=null}={}){
    if(typeof frame.method!=='string'||Object.keys(frame).some(k=>!['id','method','params','jsonrpc'].includes(k)))throw Error('appserver_rpc_frame_invalid');
    if(!hasId){
     if(kind==='client'){if(frame.method!=='initialized'||frame.params!==undefined&&(!object(frame.params)||Object.keys(frame.params).length))throw Error('appserver_rpc_notification_denied');}
-    else {const s=contract.notification.methods[frame.method];if(!s||!valid(frame.params??{},s,contract.notification.definitions))throw Error('appserver_rpc_notification_denied');}
+    else {const s=Object.hasOwn(contract.notification.methods,frame.method)?contract.notification.methods[frame.method]:null;if(!s||!valid(frame.params??{},s,contract.notification.definitions))throw Error('appserver_rpc_notification_denied');}
     return {forward:frame};
    }
    return kind==='client'?request(frame,'client',clientPending,usedClient):request(frame,'server',serverPending,usedServer);

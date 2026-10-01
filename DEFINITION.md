@@ -12,7 +12,7 @@
 
 **Brain 版本**: 1.353.10
 
-OpenClaw RPC 使用 migration 506 持久单代 stream_id 与固定 prepare deadline。Brain 在目录同机锁内完成真实 Worker attach，再通过 header 转交一次性流票；模型正文、登录和刷新令牌只走 shim→Worker 内存数据面，不进 Brain、URL、日志或 journal。固定 Codex 0.158.0 experimental 官方协议白名单校验参数；宿主 exec/process 七类动态工具声明及旧 thread 回调均拒绝。受信 profile 的 authAccountId 纳入 digest，缺失或账号不符拒认证。并发 turn 不阻塞 interrupt/steer/terminate 与认证回应；首次 RPC 前持久标记，断线后 recovery_required，不自动 reinitialize/replay，也不释放预约。grant revoke 拒新 prepare，显式 generation cancel 才关闭流并精确清理；本机 drain/准入拒新 attach，旧流和清理保留。已安装 OpenClaw 2026.9.7 客户端经 shim/HTTP 与专属真容器 initialize 已验；现网配置未切换，未登录、未调用模型，未验证旧 thread 恢复。
+OpenClaw RPC 使用 migration 506 持久单代 stream_id 与固定 prepare deadline。Brain 在目录同机锁内等待本机 Docker Unix socket HTTP Upgrade 完成真实 attach，再通过 header 转交一次性流票；超时/拒绝留在恢复状态，不发票、不重试。Docker 多路流有界解帧且丢弃 stderr；模型正文、登录和刷新令牌只走 shim→Worker 内存数据面，不进 Brain、URL、日志或 journal。固定 Codex 0.158.0 experimental 官方协议白名单校验参数；动态工具声明及旧 thread 回调只允许固定 read/web_search/web_fetch（functions 命名空间），执行、派生调度和未知工具默认拒绝；三个方向的方法白名单只读自有属性。受信 profile 的 authAccountId 纳入 digest，缺失或账号不符拒认证。并发 turn 不阻塞 interrupt/steer/terminate 与认证回应；首次 RPC 前持久标记，远端 EOF 或 stdio 异常均非零退出并报告 recovery_required，不自动 reinitialize/replay，也不释放预约。grant revoke 拒新 prepare，显式 generation cancel 才关闭流并精确清理；本机 drain/准入拒新 attach，旧流和清理保留。已安装 OpenClaw 2026.9.7 客户端经 shim/HTTP 与专属真容器 initialize 已验；现网配置未切换，未登录、未调用模型，未验证旧 thread 恢复。
 
 CI趋势集成测试将北京自然日与滚动24小时设备窗口独立布置，覆盖陈旧、近期成功和无任务设备；生产巡检阈值不变。
 

@@ -168,7 +168,9 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
         await assertLocalResources(state.profile_snapshot);
         if (Date.now() >= deadline) throw Error('appserver_stream_ticket_expired');
         state.stream_id = input.stream_id; state.stream_status = 'attaching'; save(state);
-        const child = createBoundedAppServerStream(docker.attach(state.container_id));
+        const raw = await docker.attach(state.container_id, { deadline });
+        if (Date.now() >= deadline || raw.closed) { raw.kill(); throw Error('appserver_attach_unconfirmed'); }
+        const child = createBoundedAppServerStream(raw);
         child.rpcAccountId = state.profile_snapshot.authAccountId ?? null;
         connections.set(state.reservation_id, child);
         const releaseStream = () => {
