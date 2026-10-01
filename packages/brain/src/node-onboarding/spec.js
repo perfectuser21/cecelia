@@ -27,13 +27,13 @@ export function validateEnrollment(input) {
   if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(value.name)) throw enrollmentError('机器名称须为 2–63 位小写字母、数字或连字符');
   value.address = value.address.toLowerCase();
   const ip = isIP(value.address);
-  if (!ip && !/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(value.address)) throw enrollmentError('机器地址无效');
+  if (!ip && !/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/.test(value.address)) throw enrollmentError('机器地址无效');
   if (/^(localhost(?:\.|$)|127\.|0\.|169\.254\.|::1$|::$|fe80:|::ffff:)/i.test(value.address)) {
     throw enrollmentError('不能接入回环、未指定或链路本地地址');
   }
   if (!/^[a-z_][a-z0-9_-]{0,31}$/i.test(value.ssh_user)) throw enrollmentError('SSH 用户名无效');
   if (!Number.isInteger(value.ssh_port) || value.ssh_port < 1 || value.ssh_port > 65535) throw enrollmentError('SSH 端口须为 1–65535 的整数');
-  if (!/^op:\/\/CS\/[^/]+\/(?:[^/]+\/)?[^/]+$/.test(value.credential_ref)) throw enrollmentError('请选择 CS Vault 的 1Password 私钥引用');
+  if (!/^op:\/\/CS\/[^/]+\/[^/]+$/.test(value.credential_ref)) throw enrollmentError('请选择 CS Vault 的 1Password 私钥引用');
   if (!/^SHA256:[A-Za-z0-9+/]{43}=?$/.test(value.host_key_fingerprint)) throw enrollmentError('需要经过核对的 SHA256 主机指纹');
   if (!['observer', 'worker', 'service', 'database'].includes(value.role)) throw enrollmentError('节点用途无效');
   if (!['US', 'HK', 'CN', 'other'].includes(value.region)) throw enrollmentError('地区无效');
@@ -80,7 +80,8 @@ export function validateReceipt(task, at = new Date()) {
       || !Number.isInteger(h.sequence) || h.sequence < 2 || !['linux', 'darwin'].includes(h.os)
       || typeof h.hostname !== 'string' || !h.hostname || h.hostname.length > 255
       || !Number.isFinite(age) || age < -30_000 || age > 90_000
-      || h.capabilities?.collector !== true || h.capabilities?.janitor !== true) fail();
+      || !ID.test(h.boot_id || '') || h.capabilities?.collector !== true || h.capabilities?.janitor !== true
+      || h.capabilities?.execution !== false || h.janitor?.mode !== 'observe' || h.janitor?.policy !== 'owned-cache-only') fail();
   const v = h.resources;
   for (const k of ['memory_total_bytes', 'memory_available_bytes', 'cpu_load_1m', 'cpu_cores', 'disk_free_bytes', 'disk_total_bytes']) {
     if (!Number.isFinite(v?.[k]) || v[k] < 0) fail();
@@ -105,13 +106,24 @@ export function onboardingView(task, now = new Date()) {
   } else if (status !== 'in_progress') {
     status = 'queued';
   }
+  if (meta.registration_error) { status = 'failed'; report = null; error = '设备名已被其他记录占用，不能覆盖已有台账'; }
+  const failedReceipt = readReceipt(task);
+  const trustedFailure = status === 'failed' && failedReceipt?.id === meta.id
+    && failedReceipt?.name === meta.request.name && failedReceipt?.mode === meta.mode;
+  const states = new Map(trustedFailure && Array.isArray(failedReceipt.steps)
+    ? failedReceipt.steps.filter(s => STAGES.some(([k]) => k === s.key) && ['completed', 'failed'].includes(s.status)).map(s => [s.key, s.status]) : []);
+  const errors = { HOST_KEY_MISMATCH: 'SSH 主机指纹与指定值不一致', CREDENTIAL_FAILED: '无法读取指定的 SSH 凭据',
+    CONNECT_FAILED: '可信 SSH 连接或 Python3 环境不可用', PROBE_FAILED: '节点系统探测失败',
+    INSTALL_FAILED: '节点服务安装失败，请检查服务管理环境', VERIFY_FAILED: '服务状态或连续健康样本未通过验收',
+    TIMEOUT: '节点接入超过执行时限', INVALID_REQUEST: '节点接入参数不合法' };
+  if (trustedFailure && Object.hasOwn(errors, failedReceipt.error_code)) error = errors[failedReceipt.error_code];
   return {
     id: meta.id, task_id: task.id, machine_name: meta.request.name,
-    status, stage: status === 'completed' ? 'register' : status === 'in_progress' ? 'connect' : null,
+    status, stage: status === 'completed' ? 'register' : [...states].find(([, value]) => value === 'failed')?.[0] ?? null,
     error, capabilities: report?.health.capabilities ?? null,
     notice: status === 'completed' ? '节点监控已接入；清理默认为观察模式，执行任务能力需另行验收' : null,
     steps: STAGES.map(([key, label]) => ({ key, label,
-      status: status === 'completed' ? 'completed' : status === 'in_progress' && key === 'connect' ? 'running' : 'pending',
+      status: status === 'completed' ? 'completed' : states.get(key) || 'pending',
     })),
   };
 }

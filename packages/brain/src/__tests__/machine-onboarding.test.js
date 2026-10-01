@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   validateEnrollment, buildOnboardingScript, validateReceipt, onboardingView,
 } from '../node-onboarding/spec.js';
+
+import { createRoutedTask } from '../work-routing-store.js';
 
 const id = '68d1b8de-435c-4edb-b674-d13fefde0fa2';
 const now = new Date('2026-10-01T06:00:00Z');
@@ -15,6 +17,7 @@ const receipt = () => ({
   service: { enabled: true, active: true },
   health: {
     schema_version: 1, node_id: id, agent_version: '1', observed_at: now.toISOString(),
+    boot_id: id, janitor: { mode: 'observe', policy: 'owned-cache-only' },
     sequence: 2, hostname: 'hk-worker-2', os: 'linux',
     resources: { memory_total_bytes: 8e9, memory_available_bytes: 4e9, cpu_load_1m: 0.4,
       cpu_cores: 4, disk_free_bytes: 10e9, disk_total_bytes: 40e9 },
@@ -40,7 +43,7 @@ describe('机器接入契约', () => {
     ['address', '127.0.0.1'], ['address', '169.254.169.254'], ['address', 'node;touch /tmp/pwn'],
     ['address', '-oProxyCommand=bad'], ['ssh_user', 'root;id'], ['ssh_port', 0],
     ['credential_ref', '/tmp/key'], ['host_key_fingerprint', 'trust-me'], ['role', 'root'],
-    ['name', '../node'],
+    ['name', '../node'], ['credential_ref', 'op://CS/item/section/field'], ['address', 'node..test'],
   ])('拒绝非法字段 %s=%s', (field, value) => {
     expect(() => validateEnrollment({ ...input, [field]: value })).toThrow();
   });
@@ -62,6 +65,10 @@ describe('真实验收回执', () => {
   });
   it.each([
     r => { r.verified = false; },
+    r => { r.health.capabilities.execution = true; },
+    r => { r.health.janitor.mode = 'delete'; },
+    r => { r.health.janitor.policy = 'all'; },
+    r => { delete r.health.boot_id; },
     r => { r.id = 'another-node'; },
     r => { r.name = 'another-machine'; },
     r => { r.health.node_id = 'another-node'; },
@@ -80,15 +87,49 @@ describe('真实验收回执', () => {
   it('exit=0但没有回执时不能显示成功，也不能凭进行中的stdout成功', () => {
     const t = task(); t.result.script.stdout = 'done';
     expect(onboardingView(t, now)).toMatchObject({ status: 'failed', error: expect.any(String) });
-    expect(onboardingView(task('in_progress'), now).status).toBe('in_progress');
+    expect(onboardingView(task('in_progress'), now)).toMatchObject({ status: 'in_progress', stage: null });
   });
   it('历史接入按完成时刻验收，不因查看时间变化把成功改失败', () => {
     expect(onboardingView(task(), new Date('2026-10-02')).status).toBe('completed');
+  });
+  it('只从匹配身份的回执恢复失败步骤，错误文本使用本地定义', () => {
+    const r = { ...receipt(), verified: false, error_code: 'HOST_KEY_MISMATCH', error: 'secret', steps: [{ key: 'connect', status: 'failed' }] };
+    const v = onboardingView(task('failed', r), now);
+    expect(v.stage).toBe('connect');
+    expect(v.error).toContain('指纹');
+    expect(v.steps[0].status).toBe('failed');
+    expect(JSON.stringify(v)).not.toContain('secret');
   });
   it('取消/失败保留终态且不泄漏脚本原始错误输出', () => {
     const t = task('failed'); t.error_message = 'private-key-secret';
     expect(onboardingView(t, now)).toMatchObject({ status: 'failed' });
     expect(JSON.stringify(onboardingView(t, now))).not.toContain('private-key-secret');
     expect(onboardingView(task('cancelled'), now).status).toBe('cancelled');
+  });
+});
+
+describe('接入脚本真实路由接线', () => {
+  it('建单路由保留脚本执行器、主力机及结构化请求', async () => {
+    const db = { query: vi.fn(async sql => {
+      if (/INSERT INTO tasks/.test(sql)) return { rows: [{ id, payload: {} }], rowCount: 1 };
+      if (/INSERT INTO work_routing_receipts/.test(sql)) return { rows: [{ id: 'receipt' }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    }) };
+    const script = buildOnboardingScript(id, input);
+    await createRoutedTask(db, { source: 'api', source_id: id, title: '接入机器',
+      description: '确定性安装', requested_task_type: 'script_run',
+      mutation_intent: 'none', declared_domain: 'operations',
+      metadata: { ...script, node_onboarding: { id, request: input, mode: 'enroll' } },
+      task: { priority: 'P2', executor_kind: 'script' },
+    });
+    const insert = db.query.mock.calls.find(([sql]) => /INSERT INTO tasks/.test(sql));
+    expect(insert).toBeTruthy();
+    expect(insert[1]).toContain('script_run');
+    expect(insert[1]).toContain('script');
+    const payload = insert[1].map(v => {
+      try { return JSON.parse(v); } catch { return null; }
+    }).find(v => v?.node_onboarding);
+    expect(payload).toMatchObject({ host: script.host, env: script.env, node_onboarding: { id, request: input } });
+    expect(payload.harness_runtime).toBeUndefined();
   });
 });

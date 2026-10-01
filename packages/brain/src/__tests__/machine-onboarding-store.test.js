@@ -44,6 +44,7 @@ suite('机器接入真实数据库闭环（隔离 schema）', () => {
       type: 'node_onboarding_receipt', id: view.id, mode: 'enroll', name: input.name,
       verified: true, service: { enabled: true, active: true }, health: {
         schema_version: 1, node_id: view.id, agent_version: '1', observed_at: new Date().toISOString(),
+        boot_id: view.id, janitor: { mode: 'observe', policy: 'owned-cache-only' },
         sequence: 2, hostname: input.name, os: 'linux',
         resources: { memory_total_bytes: 8e9, memory_available_bytes: 4e9,
           cpu_load_1m: 0.2, cpu_cores: 4, disk_free_bytes: 10e9, disk_total_bytes: 40e9 },
@@ -93,6 +94,53 @@ suite('机器接入真实数据库闭环（隔离 schema）', () => {
     const results = await Promise.allSettled([service.retry(v.id), service.retry(v.id)]);
     expect(results.filter(x => x.status === 'fulfilled')).toHaveLength(1);
     expect((await db.query('SELECT * FROM tasks')).rows).toHaveLength(2);
+  });
+  it('验收后名称发生冲突不会覆盖台账，也不阻塞其他接入', async () => {
+    const v = await service.create(input, key); await finish(v);
+    await db.query(`INSERT INTO system_registry(id,type,name,status,metadata) VALUES($1,'machine',$2,'active','{}')`, [randomUUID(), input.name]);
+    await service.reconcile();
+    expect((await service.get(v.id)).status).toBe('failed');
+    expect((await db.query('SELECT * FROM system_registry')).rows[0].id).not.toBe(v.id);
+  });
+  it('采集器重启后接受新时间戳的低序号，拒绝旧时间戳回放', async () => {
+    const v = await service.create(input, key); await finish(v); await service.reconcile();
+    await db.query(`UPDATE system_registry SET metadata=jsonb_set(jsonb_set(metadata,'{onboarding,next_probe_at}','"2020-01-01T00:00:00Z"'),'{node_health,sequence}','1000')`);
+    await service.scheduleProbes();
+    const probe = (await db.query("SELECT * FROM tasks WHERE payload->'node_onboarding'->>'mode'='sample'")).rows[0];
+    await finish({ id: v.id, task_id: probe.id }, { mode: 'sample' });
+    await service.reconcile();
+    expect((await db.query('SELECT * FROM system_registry')).rows[0].metadata.node_health.sequence).toBe(2);
+    const old = new Date(Date.now()-30000).toISOString();
+    const report = JSON.parse((await db.query('SELECT * FROM tasks WHERE id=$1',[probe.id])).rows[0].result.script.stdout);
+    report.health.observed_at = old; report.health.sequence = 5000;
+    await db.query(`UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,reconciled}','false'),result=$2 WHERE id=$1`, [probe.id, JSON.stringify({script:{exit_code:0,stdout:JSON.stringify(report)}})]);
+    await service.reconcile();
+    expect((await db.query('SELECT * FROM system_registry')).rows[0].metadata.node_health.sequence).toBe(2);
+  });
+  it('已失败接入允许修正连接字段，保留节点身份与原任务证据', async () => {
+    const v = await service.create(input, key);
+    await db.query("UPDATE tasks SET status='failed' WHERE id=$1", [v.task_id]);
+    const corrected = await service.create({ ...input, ssh_user: 'correct-user' }, randomUUID());
+    expect(corrected.id).toBe(v.id); expect(corrected.task_id).not.toBe(v.task_id);
+    const old = (await db.query('SELECT * FROM tasks WHERE id=$1', [v.task_id])).rows[0];
+    expect(old.payload.node_onboarding.request.ssh_user).toBe(input.ssh_user);
+  });
+  it('前三台采样被阻塞不应饿死后续节点', async () => {
+    for (let i = 0; i < 4; i++) {
+      const name = `node-${i}`;
+      const v = await service.create({ ...input, name, address: `192.0.2.${10+i}` }, randomUUID());
+      await finish(v, { name }); await service.reconcile();
+    }
+    await db.query(`UPDATE system_registry SET metadata=jsonb_set(metadata,'{onboarding,next_probe_at}','"2020-01-01T00:00:00Z"')`);
+    expect((await service.scheduleProbes()).scheduled).toBe(3);
+    await db.query("UPDATE tasks SET status='blocked' WHERE payload->'node_onboarding'->>'mode'='sample'");
+    await db.query(`UPDATE system_registry SET metadata=jsonb_set(metadata,'{onboarding,next_probe_at}','"2020-01-01T00:00:00Z"')`);
+    expect((await service.scheduleProbes()).scheduled).toBe(1);
+  });
+  it('完成脚本后重复提交返回成功前必须登记设备', async () => {
+    const v = await service.create(input, key); await finish(v);
+    expect((await service.create(input, key)).status).toBe('completed');
+    expect((await db.query('SELECT * FROM system_registry')).rows).toHaveLength(1);
   });
   it('后台对账无需用户打开页面，并为已接入节点建立受限健康采样任务', async () => {
     const v = await service.create(input, key); await finish(v);

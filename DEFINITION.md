@@ -8,7 +8,16 @@
 
 
 
-**Brain 版本**: 1.348.15
+**Brain 版本**: 1.348.16
+
+## 1.348.16
+
+### 设备页节点接入与持续健康采样
+
+- 复用 `/machines`：名称、SSH 地址、用途、CS Vault 私钥引用和主机指纹提交接入；任务进度、具体失败阶段、更正和重试可追踪。
+- Brain 通过既有 `script_run` 派给受管主力机执行，验收服务状态和连续采样后登记 `system_registry(type=machine)`；同一请求与目标并发幂等。
+- 后台持续采样；新节点只启用监控与专属缓存观察，`executors=[]`，执行能力须另行验收。macOS 要求已有 GUI 会话，Linux 非 root 要求已有 systemd linger；不修改网络或删除业务文件。
+- 执行主机须部署 `scripts/ops/node-onboarding.mjs` 及相邻 Python/JS 模块，并已有 Node、Python 3、OpenSSH 与已授权的 1Password CLI。路径可通过 `CECELIA_ONBOARDING_RUNNER_PATH` 配置。
 
 ## 1.283.0
 

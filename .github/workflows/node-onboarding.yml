@@ -1,0 +1,47 @@
+name: Node Onboarding Regression
+on:
+  pull_request:
+    paths:
+      - 'packages/brain/src/node-onboarding/**'
+      - 'packages/brain/src/__tests__/machine-onboarding*'
+      - 'packages/brain/src/routes/machines.js'
+      - 'packages/brain/src/scheduler-jobs.js'
+      - 'scripts/ops/node-*'
+      - 'scripts/ops/__tests__/node-onboarding.test.mjs'
+      - 'apps/api/features/system/**'
+      - '.github/workflows/node-onboarding.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: onboarding_ci
+          POSTGRES_PASSWORD: onboarding_ci
+          POSTGRES_DB: cecelia_scratch
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: 真实采集与凭据生命周期回归
+        run: node --test --test-concurrency=1 scripts/ops/__tests__/node-onboarding.test.mjs
+      - name: 接入契约、HTTP 和真实数据库回归
+        working-directory: packages/brain
+        env:
+          NODE_ONBOARDING_TEST_DB: postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch
+        run: npx vitest run src/__tests__/machine-onboarding.test.js src/__tests__/machine-onboarding-routes.test.js src/__tests__/machine-onboarding-store.test.js --maxWorkers=1 --minWorkers=1
+      - name: 设备页操作回归
+        working-directory: apps/api
+        run: npx vitest run features/system/pages/NodeOnboarding.test.tsx --maxWorkers=1
