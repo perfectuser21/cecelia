@@ -125,3 +125,27 @@ it('预约后本机压力升高返回wait并放队列claim，恢复后同一意�
   await reapScriptRuns(pool,deps);
   expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[first.id])).rows[0].status).toBe('completed');
 });
+it('旧released扫描暂停后新代已启动，旧结算CAS不得终结新代任务',async()=>{
+  const first=await task();await triggerScriptRun(first,deps);
+  const failSettle={connect:pool.connect.bind(pool),query:async(sql,args)=>{
+    if(sql.startsWith("UPDATE tasks SET status = 'completed'"))throw new Error('defer_settle');
+    return pool.query(sql,args);
+  }};
+  await reapScriptRuns(failSettle,{...deps,pool:failSettle});
+  let release,arrived;const paused=new Promise(r=>{arrived=r;}),gate=new Promise(r=>{release=r;});
+  let intercept=true;
+  const delayed={connect:pool.connect.bind(pool),query:async(sql,args)=>{
+    const value=await pool.query(sql,args);
+    if(intercept&&sql==='SELECT * FROM tasks WHERE id=$1'){intercept=false;arrived();await gate;}
+    return value;
+  }};
+  const stale=reapScriptRuns(delayed,{...deps,pool:delayed});await paused;
+  await reapScriptRuns(pool,deps);
+  const next=(await pool.query(`UPDATE tasks SET status='queued',payload=(payload-'script_run_id'-'script_reservation_id')
+    ||'{"script_attempts":[{"attempt":1}]}'::jsonb WHERE id=$1 RETURNING *`,[first.id])).rows[0];
+  await triggerScriptRun(next,deps);
+  const before=(await pool.query('SELECT status,payload,result FROM tasks WHERE id=$1',[first.id])).rows[0];
+  release();await stale;
+  expect((await pool.query('SELECT status,payload,result FROM tasks WHERE id=$1',[first.id])).rows[0]).toEqual(before);
+  expect(before.status).toBe('in_progress');expect(starts).toBe(2);
+});

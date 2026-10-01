@@ -30,7 +30,7 @@ async function setup() {
     profiles:{ harmless:{ image:`alpine@sha256:${'b'.repeat(64)}`,cpus:1,memoryBytes:67108864,pidsLimit:16,user:'1000:1000',cwd:'/job' } } };
   const runner=api.createScriptRunner(options);runners.push(runner);
   const input={ reservation_id:randomUUID(),machine_id:'us-mac-m4',owner_key:`script-${randomUUID()}-a1`,
-    intent_id:randomUUID(),launch_generation:1,config_digest:'c'.repeat(64),
+    intent_id:randomUUID(),launch_generation:1,worker_id:'worker-1',worker_boot_id:'boot-1',config_digest:'c'.repeat(64),
     job:{ profile:'harmless',cmd:'printf managed-script-ok',timeout_sec:30,env:{} } };
   const digest=(v)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
   input.config_digest=digest({job:input.job,profile_digest:digest(options.profiles.harmless)});
@@ -127,4 +127,21 @@ it('每个新启动即时复验；缺本机probe和容量预留后压力升高�
   }});runners.push(pressured);
   await expect(pressured.start(x.input)).resolves.toMatchObject({status:'waiting_resources'});
   expect(x.counts()).toEqual({creates:1,starts:0});
+});
+
+it.each(['worker_id','worker_boot_id'])('错误 %s 的取消不得删除容器或写墓碑',async(field)=>{
+  const x=await setup();await x.runner.start(x.input);
+  await expect(x.runner.cancel({...x.input,[field]:'wrong',container_id:'a'.repeat(64),challenge:randomUUID()})).rejects.toThrow('script_identity_mismatch');
+  expect(x.containers.size).toBe(1);
+  expect(JSON.parse(readFileSync(path.join(x.root,`${x.input.reservation_id}.json`),'utf8')).tombstoned).toBe(false);
+});
+it('大量转义和多字节stdout不会扩大认证回执，清理不依赖日志读取',async()=>{
+  const x=await setup();await x.runner.start(x.input);
+  const c=[...x.containers.values()][0];c.stdout=('"\\汉字').repeat(40000);
+  const state=await x.runner.inspect(x.input);
+  expect(Buffer.byteLength(JSON.stringify(state))).toBeLessThan(100000);
+  expect(state.terminal.logs_truncated).toBe(true);
+  x.docker.logs=async()=>{throw new Error('logs_read_failed');};
+  const receipt=await x.runner.cancel({...x.input,container_id:c.id,challenge:randomUUID()});
+  expect(receipt.status).toBe('cleaned');expect(x.containers.size).toBe(0);
 });
