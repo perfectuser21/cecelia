@@ -1,12 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { createLocalResourceAdmission } from './local-resource-admission.cjs';
 
 const require = createRequire(import.meta.url);
-const directory = fileURLToPath(new URL('.', import.meta.url));
 const installer = readFileSync(new URL('./install-fleet-worker.sh', import.meta.url), 'utf8');
 // Execute the production preflight without changing host users or services.
 const preflight = installer.match(/<<'NODE'\n('use strict';\n\nconst probePath = process\.argv\[2\];[\s\S]*?)\nNODE/)[1];
@@ -21,7 +19,7 @@ const report = () => ({
 async function installResult(health) {
   let stderr = '';
   const process = {
-    argv: ['node', '-', '/fixture/node-probe.cjs', digest, '450', '450', '10', directory + 'install-prerequisites.cjs'],
+    argv: ['node', '-', '/fixture/node-probe.cjs', digest, '450', '450', '10'],
     env: { CECELIA_FLEET_DATA_ROOT: '/fixture/data', TMPDIR: '/fixture/tmp' },
     setgroups() {}, setgid() {}, setuid() {},
     stderr: { write(value) { stderr += value; } }, exit(code) { this.exitCode = code; },
