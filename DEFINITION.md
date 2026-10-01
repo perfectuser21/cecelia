@@ -1,6 +1,7 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.355.14
+**Brain 版本**: 1.355.15
+
 
 
 
@@ -20,6 +21,8 @@
 
 
 
+
+池内部淘汰标记存tasks.payload独立字段，与linux_onboarding阶段快照分离；retire提交后回执丢失仍可幂等恢复，不因错误快照覆盖而误认显式撤销。
 
 Linux接入在首次SSH前将当前镜像40位GIT_SHA对应15个Worker源码和完整远端bootstrap程序原子存入root私有artifacts缓存，任务持久revision+工件摘要。跨Brain升级后所有SSH和安装仍读取原工件字节；缓存缺失或摘要错误拒绝，不能以新源码冒充旧revision或更换既有intent。
 
