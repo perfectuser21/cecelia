@@ -1,9 +1,12 @@
 import express from 'express';
 import pool from '../db.js';
 import { computeProgress } from '../advancement-progress.js';
-import { legacyReadEnabled, sendGoldenPathRetired, guardLegacyRead } from '../lib/golden-path-legacy.js';
+import { sendGoldenPathRetired, guardLegacyRead } from '../lib/golden-path-legacy.js';
+
+import { observeGoldenPathLegacy } from '../lib/golden-path-observation.js';
 
 const router = express.Router();
+router.use(observeGoldenPathLegacy);
 
 const ABILITY_KINDS = ['ability', 'feature'];
 const ABILITY_STATUS = ['working', 'broken', 'planned', 'building', 'done', 'deprecated'];
@@ -115,21 +118,8 @@ router.post('/decisions', async (req, res) => {
       if (!exists.rows.length)
         return res.status(400).json({ error: `target_id not found in journey_features: ${target_id}` });
     }
-    // target_type=golden_path：旧表已退役（任务 7d312fd8），默认拒挂新决策；应急放行窗口下沿用存在性校验
-    if (target_type === 'golden_path') {
-      if (!legacyReadEnabled()) return sendGoldenPathRetired(res, { write: true });
-      if (!target_id)
-        return res.status(400).json({ error: 'target_id is required when target_type=golden_path' });
-      let exists;
-      try {
-        exists = await pool.query('SELECT id FROM golden_path WHERE id=$1', [target_id]);
-      } catch {
-        // 非法 uuid 格式 → 视为不存在的 target_id（400 而非 500）
-        return res.status(400).json({ error: `invalid target_id: ${target_id}` });
-      }
-      if (!exists.rows.length)
-        return res.status(400).json({ error: `target_id not found in golden_path: ${target_id}` });
-    }
+    // 应急窗口只读：旧步骤不再承接新决策。
+    if (target_type === 'golden_path') return sendGoldenPathRetired(res, { write: true });
     const { rows } = await pool.query(
       `INSERT INTO decisions (category, topic, decision, reason, level, target_type, target_id, scope)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
@@ -187,8 +177,6 @@ router.get('/golden_path', async (req, res) => {
 router.post('/golden_path', (_req, res) => sendGoldenPathRetired(res, { write: true }));
 
 // ---------- 件7：map↔画布对齐（map=SSOT，决策 e66cf847）----------
-
-const RUN_RESULT_VERDICTS = ['completed', 'failed'];
 
 // GET /api/brain/golden_path/canvas?owner_task_id=...
 //   只读画布生成器：golden_path（L4 step，order_no）→ n8n V4 骨架 stages JSON。
@@ -265,67 +253,8 @@ router.get('/golden_path/canvas', async (req, res) => {
   }
 });
 
-// POST /api/brain/golden_path/:id/run-result — run 终态回写 step 成熟度
-//   verdict 封闭词表 completed|failed；幂等键 (golden_path_id, run_id)（重放返回 200 idempotent）。
-//   成熟度单级推进：completed 且 feature.status='planned' → 'working'，其余一律不动
-//   （加厚靠真实反馈、禁跳级；done 需要更强验收证据，不在本端点自动打）。
-//   UPDATE 带 status='planned' 谓词：并发重放/人工改状态时绝不回退或跳级。
-router.post('/golden_path/:id/run-result', async (req, res) => {
-  try {
-    if (guardLegacyRead(res)) return;
-    const { run_id, verdict, evidence } = req.body || {};
-    if (!run_id) return res.status(400).json({ error: 'run_id is required' });
-    if (!RUN_RESULT_VERDICTS.includes(verdict))
-      return res.status(400).json({ error: `verdict must be one of: ${RUN_RESULT_VERDICTS.join('|')}` });
-    let stepRows;
-    try {
-      ({ rows: stepRows } = await pool.query(
-        `SELECT gp.id, gp.feature_id, jf.status AS feature_status
-         FROM golden_path gp
-         LEFT JOIN journey_features jf ON jf.id = gp.feature_id
-         WHERE gp.id=$1`, [req.params.id]
-      ));
-    } catch (err) {
-      if (err.code === '22P02')
-        return res.status(400).json({ error: `invalid golden_path id: ${req.params.id}` });
-      throw err;
-    }
-    if (!stepRows.length)
-      return res.status(404).json({ error: `golden_path step not found: ${req.params.id}` });
-    const step = stepRows[0];
-    const { rows: receiptRows } = await pool.query(
-      `INSERT INTO golden_path_run_receipts (golden_path_id, run_id, verdict, evidence)
-       VALUES ($1,$2,$3,$4)
-       ON CONFLICT (golden_path_id, run_id) DO NOTHING
-       RETURNING id`,
-      [step.id, run_id, verdict, JSON.stringify(evidence || {})]
-    );
-    if (!receiptRows.length) {
-      // 同 (step, run) 重放：幂等返回，不重复写、不二次推进
-      return res.json({ idempotent: true, golden_path_id: step.id, run_id });
-    }
-    let featurePromotion = null;
-    if (verdict === 'completed' && step.feature_id && step.feature_status === 'planned') {
-      const { rows: promoted } = await pool.query(
-        `UPDATE journey_features SET status='working', updated_at=now()
-         WHERE id=$1 AND status='planned' RETURNING id, status`,
-        [step.feature_id]
-      );
-      if (promoted.length)
-        featurePromotion = { feature_id: step.feature_id, from: 'planned', to: 'working' };
-    }
-    res.status(201).json({
-      receipt_id: receiptRows[0].id,
-      golden_path_id: step.id,
-      run_id,
-      verdict,
-      feature_promotion: featurePromotion,
-    });
-  } catch (err) {
-    console.error('[abilities] POST /golden_path/:id/run-result error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
+// POST /api/brain/golden_path/:id/run-result — 旧回执写路径永久退役，应急读 flag 不放行。
+router.post('/golden_path/:id/run-result', (_req, res) => sendGoldenPathRetired(res, { write: true }));
 
 // PATCH /api/brain/golden_path/:id — 写路径已退役：一律 410
 router.patch('/golden_path/:id', (_req, res) => sendGoldenPathRetired(res, { write: true }));
