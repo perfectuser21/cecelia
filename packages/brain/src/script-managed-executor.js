@@ -50,8 +50,11 @@ export async function triggerManagedScript(task,spec,pool,deps={}) {
   const prepared=await prepareManagedScript(task,spec,pool,deps);
   if(prepared.outcome!=='reserved'){
     const blocked=prepared.outcome==='blocked';
-    await pool.query(`UPDATE tasks SET status=$2,claimed_by=NULL,claimed_at=NULL,error_message=$3,updated_at=NOW()
-      WHERE id=$1 AND status IN ('queued','in_progress')`,[task.id,blocked?'blocked':'queued',blocked?prepared.reason:null]);
+    const changed=await pool.query(`UPDATE tasks SET status=$2,claimed_by=NULL,claimed_at=NULL,error_message=$3,updated_at=NOW()
+      WHERE id=$1 AND status IN ('queued','in_progress') AND payload->>'script_run_id' IS NULL RETURNING id`,
+      [task.id,blocked?'blocked':'queued',blocked?prepared.reason:null]);
+    // 已有执行身份由预约收割器恢复；重复请求的探测失败不能回退运行任务。
+    if(!changed.rowCount)return {success:true,taskId:task.id,executor:'script',pending:true};
     return {success:false,reason:prepared.reason??'script_capacity_wait',wait:true,configError:true};
   }
   let row=prepared.reservation;
