@@ -82,11 +82,8 @@ export async function triggerManagedScript(task,spec,pool,deps={}) {
     if(!fresh&&verified.receipt.status==='waiting_resources')verified=await prepared.client.start(spec.host,{...body(row),job:prepared.job});
     const result=verified.receipt;
     if(result.status==='waiting_resources'){
-      const waiting=await pool.query(`UPDATE tasks SET status='queued',claimed_by=NULL,claimed_at=NULL,updated_at=NOW()
-        WHERE id=$1 AND status='in_progress' AND payload->>'script_reservation_id'=$2 AND payload->>'script_run_id'=$3
-          AND payload->>'script_dispatch_id'=$4
-        RETURNING id`,[task.id,row.id,row.owner_key,dispatchId]);
-      if(!waiting.rowCount)return {success:true,taskId:task.id,executor:'script',pending:true};
+      const waiting=await prepared.store.requeueWaiting(row.id,dispatchId);
+      if(!waiting)return {success:true,taskId:task.id,executor:'script',pending:true};
       return {success:false,reason:'script_local_resources_wait',wait:true,taskStateHandled:true,configError:true};
     }
     if(result.container_id && ['launching','running'].includes(row.status))row=await prepared.store.markRunning(row.id,result);
@@ -112,7 +109,9 @@ export async function reapManagedScripts(pool,deps,settle) {
           // 404 或 unknown 不是清理证明。未知 launching 可主动 cancel 形成持久墓碑，再凭认证确认释放。
           if(['queued','in_progress'].includes(row.task_status) && row.status!=='launching')throw error;
         }
-        if(observed?.container_id && !row.container_id)row=await store.markRunning(row.id,observed);
+        if(observed?.container_id && (!row.container_id || ['running','exited','restarting'].includes(observed.status))) {
+          row=await store.markRunning(row.id,observed);
+        }
         terminal=observed?.terminal ?? (observed?.status==='exited'?observed:null);
         const task=(await pool.query('SELECT * FROM tasks WHERE id=$1',[row.task_id])).rows[0];
         if(!terminal && ['queued','in_progress'].includes(task?.status) && !observed?.timed_out

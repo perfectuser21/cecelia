@@ -71,9 +71,29 @@ export function createScriptReservationStore(pool) {
     },
     async markRunning(id, identity) {
       if (!/^[a-f0-9]{64}$/.test(identity.container_id)) throw new Error('exact_container_id_required');
-      return rowUpdate(`UPDATE capacity_reservations SET status=CASE WHEN status IN ('cleanup_pending','blocked') THEN status ELSE 'running' END,container_id=$2,updated_at=NOW()
-        WHERE id=$1 AND status IN ('launching','running','cleanup_pending','blocked') AND worker_id=$3 AND worker_boot_id=$4 RETURNING *`,
-      [id,identity.container_id,identity.worker_id,identity.worker_boot_id]);
+      return transaction(async (client) => {
+        // reservation 行锁串行化确认执行与回队；运行事实优先于同代迟到的资源等待。
+        const row=required((await client.query(`UPDATE capacity_reservations SET status=CASE WHEN status IN ('cleanup_pending','blocked') OR $5 THEN status ELSE 'running' END,container_id=$2,updated_at=NOW()
+          WHERE id=$1 AND status IN ('launching','running','cleanup_pending','blocked') AND worker_id=$3 AND worker_boot_id=$4 RETURNING *`,
+        [id,identity.container_id,identity.worker_id,identity.worker_boot_id,['created','waiting_resources'].includes(identity.status)])).rows[0],'reservation_transition_rejected');
+        if(['running','exited','restarting'].includes(identity.status)) {
+          await client.query(`UPDATE tasks SET status='in_progress',updated_at=NOW()
+            WHERE id=$1 AND status IN ('queued','in_progress') AND payload->>'script_run_id'=$2
+              AND payload->>'script_reservation_id'=$3`,[row.task_id,row.owner_key,row.id]);
+        }
+        return row;
+      });
+    },
+    async requeueWaiting(id, dispatchId) {
+      return transaction(async (client) => {
+        const row=(await client.query('SELECT status,task_id,owner_key FROM capacity_reservations WHERE id=$1 FOR UPDATE',[id])).rows[0];
+        if(row?.status!=='launching')return false;
+        const changed=await client.query(`UPDATE tasks SET status='queued',claimed_by=NULL,claimed_at=NULL,updated_at=NOW()
+          WHERE id=$1 AND status='in_progress' AND payload->>'script_reservation_id'=$2
+            AND payload->>'script_run_id'=$3 AND payload->>'script_dispatch_id'=$4 RETURNING id`,
+          [row.task_id,id,row.owner_key,dispatchId]);
+        return changed.rowCount>0;
+      });
     },
     async recordUnknown(id, error) {
       return rowUpdate(`UPDATE capacity_reservations SET last_error=$2,updated_at=NOW()
