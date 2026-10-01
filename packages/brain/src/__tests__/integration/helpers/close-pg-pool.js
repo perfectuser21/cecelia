@@ -1,4 +1,6 @@
 /** 从创建起跟踪公共 connect/remove；查询出错移出池的 socket 也必须退出。 */
+import { clearTimeout, setTimeout } from 'node:timers';
+
 const tracked = new WeakMap();
 export function trackPgPool(pool) {
   const clients = new Set();
