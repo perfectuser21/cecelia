@@ -49,6 +49,7 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 SCRIPT_PATH="$0"
 [[ -L "$SCRIPT_PATH" ]] && SCRIPT_PATH="$(readlink -f "$SCRIPT_PATH" 2>/dev/null || echo "$SCRIPT_PATH")"
 CECELIA_REPO="$(cd "$(dirname "$SCRIPT_PATH")/../.." && pwd)"
+source "$(dirname "$SCRIPT_PATH")/janitor-effects.sh" || exit 1
 BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 TOTAL_STEPS=10
 # 磁盘用量查数据卷；APFS 下 / 是只读系统卷 firmlink，数据在 /System/Volumes/Data
@@ -192,6 +193,7 @@ if [ "$MODE" = "frequent" ]; then
   # 精确百分比放 description。抽成函数是为了能被 __tests__ 提取做行为级断言。
   check_cpu_pressure_alert() {
     [ "$CPU_PCT" -ge "$CPU_ALERT_THRESHOLD" ] 2>/dev/null || return 0
+    janitor_observe_only "CPU 高压 ${CPU_PCT}%，仅观察告警" && return 0
     echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] CPU 高压 ${CPU_PCT}%，上报 Brain 告警..."
     curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" \
       -H "Content-Type: application/json" \
@@ -265,6 +267,7 @@ if [ "$MODE" = "frequent" ]; then
       if [ -z "${KALLOC_HOUR:-}" ] && [ "${KALLOC_SAFE_TZ}" != "UTC" ] \
          && [ ! -f "${tzdir}/${KALLOC_SAFE_TZ}" ]; then
         echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，但时区 ${KALLOC_SAFE_TZ} 不可用（${tzdir} 下查无此条目），fail-closed 不自动重启"
+        janitor_observe_only "kalloc.1024 时区不可用，仅观察告警" && return 0
         curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
           -d "{\"title\":\"🔴 kalloc.1024 危险（${KALLOC_CRITICAL_GB}G 档，安全时段时区不可用）（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存 ${gb}GB 已超危险阈值 ${KALLOC_CRITICAL_GB}GB，但安全时段时区 ${KALLOC_SAFE_TZ} 在 ${tzdir} 下查无条目，已 fail-closed 不自动重启，请人工重启并修 KALLOC_SAFE_TZ。\"}" \
           2>/dev/null || true
@@ -294,12 +297,14 @@ if [ "$MODE" = "frequent" ]; then
         sudo -n shutdown -r now 2>/dev/null
       else
         echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 危险 ${gb}GB，非安全时段仅告警"
+        janitor_observe_only "kalloc.1024 非安全时段，仅观察告警" && return 0
         curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
           -d "{\"title\":\"🔴 kalloc.1024 危险（${KALLOC_CRITICAL_GB}G 档）（Janitor检测）\",\"priority\":\"P0\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存 ${gb}GB 已超危险阈值 ${KALLOC_CRITICAL_GB}GB，当前不在 ${KALLOC_SAFE_TZ} ${KALLOC_SAFE_HOUR_START}-${KALLOC_SAFE_HOUR_END} 点安全时段，暂不自动重启，请尽快手动重启。\"}" \
           2>/dev/null || true
       fi
     elif [ "$kb" -ge $((KALLOC_ALERT_GB*1024*1024)) ] 2>/dev/null; then
       echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] kalloc.1024 偏高 ${gb}GB，上报 Brain 告警"
+      janitor_observe_only "kalloc.1024 偏高，仅观察告警" && return 0
       curl -s --max-time 5 -X POST "${BRAIN_URL}/api/brain/tasks" -H "Content-Type: application/json" \
         -d "{\"title\":\"🟡 kalloc.1024 偏高（${KALLOC_ALERT_GB}G 档）（Janitor检测）\",\"priority\":\"P1\",\"task_type\":\"harness_intervention\",\"domain\":\"agent_ops\",\"description\":\"内核内存 ${gb}GB 超过 ${KALLOC_ALERT_GB}GB 告警线，缓慢泄漏中，建议本周找空档重启一次。危险线 ${KALLOC_CRITICAL_GB}GB。\"}" \
         2>/dev/null || true
@@ -500,6 +505,7 @@ if [ "$MODE" = "frequent" ]; then
     is_exempt_resident_service "$pid" "$cmd" && return
 
     if is_orphan "$pid"; then
+      janitor_observe_only "node/vitest 孤儿候选 pid=$pid (${secs}s)" && return 0
       kill "$pid" 2>/dev/null
       sleep 1
       kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
@@ -517,6 +523,7 @@ if [ "$MODE" = "frequent" ]; then
   # kill 后回报 Brain
   notify_brain_orphan_killed() {
     local pid="$1" cwd="$2"
+    janitor_observe_only "Brain 孤儿回报 pid=$pid" && return 0
     [ -z "$cwd" ] && return 0
 
     local lockfile branch
@@ -565,6 +572,7 @@ if [ "$MODE" = "frequent" ]; then
     is_exempt_resident_service "$pid" "$cmd" && return
 
     if is_claude_orphan "$pid" "$tty" "$ppid"; then
+      janitor_observe_only "claude 孤儿候选 pid=$pid (${secs}s)" && return 0
       local cwd
       cwd=$(lsof -p "$pid" -a -d cwd -Fn 2>/dev/null | grep '^n' | head -1 | sed 's/^n//')
 
@@ -619,6 +627,7 @@ if [ "$MODE" = "frequent" ]; then
     if [ -n "$audiomxd_cpu" ] && [ "$audiomxd_cpu" -ge "$AUDIOMXD_CPU_THRESHOLD" ] 2>/dev/null; then
       audiomxd_nice=$(ps -o nice= -p "$audiomxd_pid" 2>/dev/null | tr -d ' ')
       if [ "$audiomxd_nice" != "20" ]; then
+        janitor_observe_only "audiomxd 降优先级候选 pid=$audiomxd_pid" && continue
         if sudo -n /usr/sbin/taskpolicy -b -p "$audiomxd_pid" 2>/dev/null && \
            sudo -n /usr/bin/renice 20 -p "$audiomxd_pid" >/dev/null 2>&1; then
           echo "$(date '+%Y-%m-%d %H:%M:%S') [frequent] jailed audiomxd pid=${audiomxd_pid}（CPU ${audiomxd_cpu}%，已钉死E核后台nice20，蓝牙路由死循环兜底v2）"
@@ -628,7 +637,8 @@ if [ "$MODE" = "frequent" ]; then
   done
 
   # 已退出的 harness relay 容器每轮顺手清一次（留 1h 尸检窗口）
-  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1 \
+     && ! janitor_observe_only "已退出容器 prune 候选"; then
     relay_prune_out=$(docker container prune -f --filter "until=1h" 2>/dev/null || true)
     relay_reclaimed=$(echo "$relay_prune_out" | grep "Total reclaimed space" | awk -F': ' '{print $2}')
     [ -n "$relay_reclaimed" ] && [ "$relay_reclaimed" != "0B" ] && \
