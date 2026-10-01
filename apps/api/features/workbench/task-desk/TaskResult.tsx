@@ -19,6 +19,7 @@ export default function TaskResult({ id, task, error, loading }: { id: string; t
       {result.summaries.map(summary => <p key={summary} className="whitespace-pre-wrap break-words text-sm leading-relaxed">{summary}</p>)}
       {['blocked', 'failed'].includes(task.status ?? '') && result.reasons.length === 0 && <p className="text-sm text-amber-300">尚未提供具体原因</p>}
       {result.reasons.length > 0 && <div className="space-y-1 text-sm text-amber-300"><h3>原因</h3>{result.reasons.map(reason => <p className="whitespace-pre-wrap break-words" key={reason}>{reason}</p>)}</div>}
+      {result.synthesized && result.sections.length > 0 && <p className="text-xs text-slate-400">以下交接信息由系统补记，不作为执行结果证据。</p>}
       {result.sections.map(section => <div key={section.key} className="space-y-1"><h3 className="text-sm font-medium text-slate-300">{labels[section.key]}</h3><StructuredValue value={section.value} /></div>)}
       {result.artifactValues.length > 0 && <div className="space-y-2 text-sm"><h3>产物</h3>{result.artifactValues.map(value => safeHttpUrl(value)
         ? <a key={value} href={value} target="_blank" rel="noopener noreferrer" className="block break-all text-blue-300 underline">{value}</a>

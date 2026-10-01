@@ -18,6 +18,7 @@ export function parseResult(task: TaskRecord) {
   const lastRun = record(payload.last_run_result);
   const handoff = record(result.handoff);
   const artifacts = record(handoff.artifacts);
+  const synthesized = handoff.synthesized === true;
   const summaries = strings([task.summary, result.summary, record(result.receipt).text, payload.findings, lastRun.result_summary]);
   const reasonSources = [task, result, lastRun];
   const reasons = strings(reasonSources.flatMap(source => {
@@ -32,6 +33,6 @@ export function parseResult(task: TaskRecord) {
     ...(Array.isArray(artifacts.paths) ? artifacts.paths : [artifacts.paths]), artifacts.path]);
   const sections = (['done', 'not_done', 'next_steps'] as const).filter(key => nonempty(handoff[key]))
     .map(key => ({ key, value: handoff[key] }));
-  const hasEvidence = summaries.length > 0 || artifactValues.length > 0 || sections.some(s => s.key === 'done');
-  return { summaries, reasons, artifactValues, sections, hasEvidence };
+  const hasEvidence = summaries.length > 0 || artifactValues.length > 0 || !synthesized && sections.some(s => s.key === 'done');
+  return { summaries, reasons, artifactValues, sections, hasEvidence, synthesized };
 }
