@@ -1,3 +1,4 @@
+import ActivityFlowMetrics, { type ActivityFlowMetric } from '../components/ActivityFlowMetrics';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { buildMindmapTree, toMindElixirData } from './mapMindmap';
@@ -5,6 +6,7 @@ import { buildMindmapTree, toMindElixirData } from './mapMindmap';
 type MapState = 'green' | 'red' | 'gray' | 'unknown' | 'not_applicable';
 
 interface MapNode {
+  flow_metrics?: ActivityFlowMetric[];
   key: string;
   type: string;
   name: string;
@@ -338,15 +340,16 @@ export default function MapPage() {
               {streams.map((stream) => (
                 <article key={stream.key} className="rounded-xl border border-slate-200 bg-slate-100 p-4 dark:border-slate-700 dark:bg-slate-900">
                   <h3 className="mb-3 flex items-center justify-between font-semibold"><span>{stream.name}</span><StateBadge node={stream} /></h3>
+                  {stream.flow_metrics && <ActivityFlowMetrics metrics={stream.flow_metrics} />}
                   <div className="space-y-2">
-                    {capabilityForStream(stream).map((node) => <NodeButton key={node.key} node={node} onClick={() => void openNode(node, 2)} />)}
+                    {capabilityForStream(stream).map((node) => <div key={node.key}><NodeButton node={node} onClick={() => void openNode(node, 2)} />{node.flow_metrics && <ActivityFlowMetrics metrics={node.flow_metrics} />}</div>)}
                   </div>
                 </article>
               ))}
             </div>
             {ungroupedCapabilities.length > 0 && (
               <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                {ungroupedCapabilities.map((node) => <NodeButton key={node.key} node={node} onClick={() => void openNode(node, 2)} />)}
+                {ungroupedCapabilities.map((node) => <div key={node.key}><NodeButton node={node} onClick={() => void openNode(node, 2)} />{node.flow_metrics && <ActivityFlowMetrics metrics={node.flow_metrics} />}</div>)}
               </div>
             )}
           </section>

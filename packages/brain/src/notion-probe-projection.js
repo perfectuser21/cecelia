@@ -1,3 +1,4 @@
+import { buildNotionFlowProperties } from './lib/notion-activity-flow.js';
 /**
  * notion-probe-projection.js — 验证层三样证据投影到 Notion 驾驶舱（链 bf5088a3 棒4-2，决策 10a68212）
  *
@@ -113,7 +114,7 @@ export function buildStepLinkNotionProperties(l, schemaProps = {}) {
     properties.AssertionRef = rich(l.assertion_ref || '');
   }
   if (l.journey_name) properties.Journey = rich(l.journey_name);
-  return properties;
+  return { ...properties, ...buildNotionFlowProperties(l) };
 }
 
 function isStaleRelationError(err) {

@@ -1,3 +1,4 @@
+import { attachActivityFlowMetrics } from '../lib/activity-flow-metrics.js';
 import { Router } from 'express';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { rateLimit } from 'express-rate-limit';
@@ -416,7 +417,7 @@ router.get('/journey_steps', async (req, res) => {
       `SELECT * FROM journey_steps ${where} ORDER BY journey_id, step_number LIMIT $${params.length}`,
       params
     );
-    res.json(rows);
+    res.json(await attachActivityFlowMetrics(pool, rows));
   } catch (err) {
     console.error('[journeys] GET /journey_steps error:', err.message);
     res.status(500).json({ error: err.message });
@@ -469,7 +470,7 @@ router.get('/journey_step_links', async (req, res) => {
       `SELECT * FROM journey_step_links ${where} ORDER BY journey_id, step_order LIMIT $${params.length}`,
       params
     );
-    res.json(rows);
+    res.json(await attachActivityFlowMetrics(pool, rows, { cells: true }));
   } catch (err) {
     console.error('[journeys] GET /journey_step_links error:', err.message);
     res.status(500).json({ error: err.message });

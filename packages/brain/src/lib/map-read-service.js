@@ -1,3 +1,4 @@
+import { attachMapFlowMetrics, loadActivityFlowMetrics } from './activity-flow-metrics.js';
 import { withConsistentSnapshot } from './consistent-read.js';
 import { loadMapImpactRadius } from './map-impact-radius.js';
 import { projectMapManifest } from './map-projection-store.js';
@@ -269,8 +270,9 @@ async function loadMapContext(client, { scopeKey, now, authority = null }) {
   const freshness = summarizeMapFreshness(stateResult.headers, now, repos);
   const graph = await loadProjectionGraph(client, projectionRun.id);
   const stateById = new Map(stateResult.states.map((item) => [item.node_id, item]));
-  const nodes = graph.nodes.map((node) => publicNode(node, stateById.get(node.node_id)));
+  const publicNodes = graph.nodes.map((node) => publicNode(node, stateById.get(node.node_id)));
   const edges = graph.edges.map(publicEdge);
+  const nodes = attachMapFlowMetrics(publicNodes, edges, await loadActivityFlowMetrics(client));
   return { manifestVersion, projectionRun, adapters, freshness, nodes, edges };
 }
 

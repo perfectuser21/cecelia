@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import planningManifest from '@features/core/planning';
 import MapPage from '@features/core/planning/pages/MapPage';
+import ActivityFlowMetrics from '@features/core/planning/components/ActivityFlowMetrics';
 import systemHubManifest from '@features/core/system-hub';
 
 const revision = 'c'.repeat(40);
@@ -109,6 +110,32 @@ describe('Universal Map 页面权威', () => {
     expect(screen.getByText('50%')).toBeInTheDocument();
     expect(screen.getByText('0%')).toBeInTheDocument();
     expect(screen.getByText(/未使用兜底/)).toBeInTheDocument();
+  });
+
+  it('radius失败仍显示主地图指标，价值流指标不依赖下钻', async () => {
+    const current = vi.mocked(global.fetch).getMockImplementation()!;
+    vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/radius')) return json({ error: { message: '地图半径不可用' } }, false);
+      const response = await current(input, init);
+      if (String(input) === '/api/brain/map?scope=cecelia') {
+        const body = await response.json();
+        return json({ ...body, nodes: body.nodes.map((n: any) => n.key === 'factory' ? { ...n, flow_metrics: [{ activity_id: 'b', workflow_id: 'w2', activity_name: '编排', p50_duration_ms: 500, first_pass_yield: 1, pass_rate: 0, span_count: 2 }] } : n) });
+      }
+      return response;
+    });
+    render(<MapPage />);
+    expect(await screen.findByText('0.5秒')).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: /F0 事实投影/ }));
+    expect((await screen.findAllByText('Error')).length).toBeGreaterThan(0);
+    expect(screen.getByText('1.5秒')).toBeInTheDocument();
+  });
+  it('零值和未观测数据分别显示，不把空值当百分比', () => {
+    const { rerender } = render(<ActivityFlowMetrics metrics={[{ activity_id: 'zero', p50_duration_ms: 0, first_pass_yield: 0, pass_rate: null, span_count: 0 }]} />);
+    expect(screen.getByText('0秒')).toBeInTheDocument();
+    expect(screen.getByText('0%')).toBeInTheDocument();
+    expect(screen.getByText('—')).toBeInTheDocument();
+    rerender(<ActivityFlowMetrics metrics={[]} />);
+    expect(screen.getByText('暂无活动执行数据')).toBeInTheDocument();
   });
 
   it('只从动态 feature manifest 注册唯一 /map 页面', () => {
