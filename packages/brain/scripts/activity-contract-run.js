@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { writeFileSync, renameSync, mkdirSync } from 'node:fs';
+import { writeFileSync, renameSync, mkdirSync, realpathSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runActivityContract } from '../src/orchestrator/activity-runtime.js';
@@ -75,6 +75,11 @@ export async function main(argv = process.argv.slice(2), stream = process.stdin)
   process.stdout.write(JSON.stringify(result) + '\n');
   return result.status === 'completed' ? 0 : result.status === 'partial' ? 2 : 1;
 }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+let directEntry = false;
+try {
+  directEntry = Boolean(process.argv[1])
+    && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+} catch { /* stdin/eval等非文件入口导入此模块时不启动CLI。 */ }
+if (directEntry) {
   main().then(code => { process.exitCode = code; });
 }
