@@ -1,4 +1,4 @@
-import {createHmac,randomUUID,timingSafeEqual} from 'node:crypto';
+import {createHmac,createHash,randomUUID,timingSafeEqual} from 'node:crypto';
 import {authorize} from '../execution-directory/store.js';
 import {directory,endpointValid} from '../execution-directory/directory.js';
 import {workerIdentity,receiptMatches} from './identity.js';
@@ -33,7 +33,7 @@ export function createAppServerClient({pool,store,env=process.env,fetchFn=global
  async function request(endpoint,machine,action,body={}){
   if(typeof token!=='string'||token.length<32||!endpointValid(endpoint))throw Error('appserver_worker_unconfigured');
   const nonce=randomUUID(),route=action==='capabilities'?'/app-servers/capabilities':`/app-servers/${body.reservation_id}/${action}`;
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),action==='prepare-stream'?Math.min(timeoutMs,6000):timeoutMs);
   try{
   const response=await fetchFn(`${new URL(endpoint).origin}${route}`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({...body,request_nonce:nonce}),signal:controller.signal}).catch(()=>{throw Error(controller.signal.aborted?'appserver_worker_response_timeout':'appserver_worker_unavailable');});
   const raw=await readBounded(response,controller);
@@ -43,19 +43,28 @@ export function createAppServerClient({pool,store,env=process.env,fetchFn=global
   if(!/^[a-f0-9]{64}$/.test(envelope.signature??'')||!timingSafeEqual(Buffer.from(signature),Buffer.from(envelope.signature))
    ||envelope.receipt?.request_nonce!==nonce||envelope.receipt.machine_id!==machine
    ||(response.status===429&&envelope.receipt.status!=='waiting_resources'))throw Error('appserver_worker_receipt_unverified');
+  if(action==='prepare-stream'){
+   const streamToken=response.headers.get('x-appserver-stream-token');
+   if(!/^[a-f0-9]{64}$/.test(streamToken??'')||envelope.receipt.token_digest!==createHash('sha256').update(streamToken).digest('hex')
+    ||envelope.receipt.stream_id!==body.stream_id||!Number.isFinite(envelope.receipt.expires_at)||envelope.receipt.expires_at<=Date.now()||envelope.receipt.expires_at>body.prepare_deadline)throw Error('appserver_worker_receipt_unverified');
+   return {authenticated:true,receipt:envelope.receipt,streamToken};
+  }
   return {authenticated:true,receipt:envelope.receipt};
   }finally{clearTimeout(timer);}
  }
  const operation=(id,action)=>store.withOperation(id,action,async(row,url)=>{
   const body=workerIdentity(row);
+  if(action==='prepare-stream')Object.assign(body,{stream_id:row.stream.id,prepare_deadline:Number(new Date(row.stream.prepare_deadline))});
   if(action==='cancel')Object.assign(body,{container_id:row.container_id,challenge:row.cleanup_challenge});
   const verified=await request(url,row.machine_id,action,body);
   if(!receiptMatches(row,verified.receipt))throw Error('appserver_worker_identity_mismatch');
+  if(action==='prepare-stream')return {token:verified.streamToken,stream_id:body.stream_id,stream_url:`${new URL(url).origin}/app-server-streams/${body.stream_id}`,expires_at:verified.receipt.expires_at};
   return verified;
  });
  return Object.freeze({
   capabilities:async(home,machine)=>authorize(pool,{snapshotVersion:directory.current()?.version,machineId:machine,surface:'app_server',provider:home.provider,account:home.account,repo:home.repo,profileId:home.profile},
    async auth=>(await request(auth.node.endpoints.worker,machine,'capabilities')).receipt),
+  prepareStream:async id=>{await store.reserveStream(id);return operation(id,'prepare-stream');},
   start:id=>operation(id,'start'),inspect:id=>operation(id,'inspect'),cancel:id=>operation(id,'cancel'),
  });
 }

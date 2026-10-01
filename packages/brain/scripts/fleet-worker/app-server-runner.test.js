@@ -250,3 +250,25 @@ it('升级前HOME即owner且缺home_key的既有journal仍可原身份探活和�
   expect((await restarted.cancel({...legacy,container_id:started.container_id,challenge:randomUUID()})).absent).toBe(true);
  }finally{f.cleanup();}
 });
+it('RPC首次写前持久同流意图，断线跨重启禁止二次initialize/replay，原容器仍占位且可精确清理',async()=>{
+ const f=fixture();try{const input=f.input(),state=await f.runner.start(input),identity={...input,stream_id:randomUUID()};
+ const channel=await f.runner.attach(identity);expect(f.runner.markRpcStarted).toBeTypeOf('function');
+ await f.runner.markRpcStarted(identity);channel.kill();await new Promise(r=>setTimeout(r,10));
+ const restarted=api.createAppServerRunner({...f.config,bootId:randomUUID()});
+ await expect(restarted.attach({...input,stream_id:randomUUID()})).rejects.toThrow('appserver_stream_recovery_required');
+ expect((await restarted.inspect(input)).status).toBe('running');
+ expect((await restarted.cancel({...input,container_id:state.container_id,challenge:randomUUID()})).absent).toBe(true);
+ }finally{f.cleanup();}
+});
+it('目录授权的attach截止期过去后即使Docker探活迟到也不启动attach',async()=>{
+ const f=fixture();try{const input=f.input();await f.runner.start(input);let attached=0;const original=f.docker.inspect;
+ f.docker.inspect=async id=>{await new Promise(r=>setTimeout(r,20));return original(id);};f.docker.attach=()=>{attached++;throw Error('must not attach');};
+ await expect(f.runner.attach({...input,stream_id:randomUUID()},{deadline:Date.now()+5})).rejects.toThrow('appserver_stream_ticket_expired');expect(attached).toBe(0);
+ }finally{f.cleanup();}
+});
+it('本机drain/资源准入拒绝新attach，已运行实例仍可inspect和精确cancel',async()=>{
+ const f=fixture();try{const input=f.input(),state=await f.runner.start(input);let attaches=0;f.docker.attach=()=>{attaches++;throw Error('must not attach');};f.pressure(true);
+ await expect(f.runner.attach({...input,stream_id:randomUUID()})).rejects.toThrow('attempt_local_resources_unavailable');expect(attaches).toBe(0);
+ expect((await f.runner.inspect(input)).status).toBe('running');expect((await f.runner.cancel({...input,container_id:state.container_id,challenge:randomUUID()})).absent).toBe(true);
+ }finally{f.cleanup();}
+});

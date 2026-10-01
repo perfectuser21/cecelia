@@ -875,7 +875,7 @@ node - "$runtime_dir/attempt-resource-policy.cjs" <<'NODE'
 const assert = require('node:assert/strict');
 assert.equal(require(process.argv[2]).resolveAttemptResourcePlan({workerId:'us-mac-m4',role:'generator'}).runner.memoryBytes, 4*1024**3);
 NODE
-app_server_files=(app-server-profile.cjs app-server-docker.cjs app-server-stream.cjs app-server-runner.cjs)
+app_server_files=(app-server-profile.cjs app-server-docker.cjs app-server-stream.cjs app-server-runner.cjs app-server-rpc.cjs app-server-stream-hub.cjs app-server-contract.json app-server-shim.cjs)
 for module in "${app_server_files[@]}"; do
   cmp -s "$SCRIPT_DIR/$module" "$runtime_dir/$module" \
     || fail "--apply did not install exact $module bytes"

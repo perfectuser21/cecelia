@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'packages/brain/scripts/fleet-worker/app-server-*'
+      - 'packages/brain/src/app-server/**'
+      - 'packages/brain/migrations/506_app_server_streams.sql'
       - '.github/workflows/app-server-canary.yml'
   workflow_dispatch:
 permissions:
@@ -30,10 +32,16 @@ jobs:
         run: |
           set -o pipefail
           node packages/brain/scripts/fleet-worker/app-server-canary.cjs | tee app-server-canary.log
+      - name: Direct shim HTTP RPC and explicit generation cleanup
+        run: |
+          set -o pipefail
+          node packages/brain/scripts/fleet-worker/app-server-rpc-canary.cjs | tee app-server-rpc-canary.log
       - name: Keep identity and quota evidence (no credentials or model calls)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: app-server-canary-evidence
-          path: app-server-canary.log
+          path: |
+            app-server-canary.log
+            app-server-rpc-canary.log
           if-no-files-found: ignore

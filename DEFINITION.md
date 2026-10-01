@@ -10,11 +10,13 @@
 
 
 
-**Brain 版本**: 1.353.8
+**Brain 版本**: 1.353.10
+
+OpenClaw RPC 使用 migration 506 持久单代 stream_id 与固定 prepare deadline。Brain 在目录同机锁内完成真实 Worker attach，再通过 header 转交一次性流票；模型正文、登录和刷新令牌只走 shim→Worker 内存数据面，不进 Brain、URL、日志或 journal。固定 Codex 0.158.0 experimental 官方协议白名单校验参数；宿主 exec/process 七类动态工具声明及旧 thread 回调均拒绝。受信 profile 的 authAccountId 纳入 digest，缺失或账号不符拒认证。并发 turn 不阻塞 interrupt/steer/terminate 与认证回应；首次 RPC 前持久标记，断线后 recovery_required，不自动 reinitialize/replay，也不释放预约。grant revoke 拒新 prepare，显式 generation cancel 才关闭流并精确清理；本机 drain/准入拒新 attach，旧流和清理保留。已安装 OpenClaw 2026.9.7 客户端经 shim/HTTP 与专属真容器 initialize 已验；现网配置未切换，未登录、未调用模型，未验证旧 thread 恢复。
 
 CI趋势集成测试将北京自然日与滚动24小时设备窗口独立布置，覆盖陈旧、近期成功和无任务设备；生产巡检阈值不变。
 
-专用 app-server runner 首批提供受限 generation 容器、HOME 单写 journal、精确 ID 取消墓碑及双向有界 JSONL；只有 attach 进程确认退出才释放流占位；关闭事件在同一预约锁内重放，不能因锁争用丢失。Worker 重启后旧等待资源意图不可重新启动，旧身份仍可清理。标准安装器事务打包四模块，默认 profiles 为空，本次已接 Brain 持久整机预约与认证 Worker start/inspect/cancel，默认没有 app_server grant 或 HOME/profile 配置；尚未接 OpenClaw RPC adapter，现网聊天尚未由此治理。
+专用 app-server runner 首批提供受限 generation 容器、HOME 单写 journal、精确 ID 取消墓碑及双向有界 JSONL；只有 attach 进程确认退出才释放流占位；关闭事件在同一预约锁内重放，不能因锁争用丢失。Worker 重启后旧等待资源意图不可重新启动，旧身份仍可清理。标准安装器事务打包 runner 与 RPC 所需模块，默认 profiles 为空，本次已接 Brain 持久整机预约与认证 Worker start/inspect/cancel，默认没有 app_server grant 或 HOME/profile 配置；已提供受控 OpenClaw RPC adapter，现网配置未切换，聊天尚未由此治理。
 
 OpenClaw controller 使用独立 app_server 执行面、owner_kind 与 app_server_run 事件账，普通派发器不重派。受保护 HOME 配置绑定账号/仓库/profile digest；首次 M1/M4 优先、MMV 兜底，首次预约后机器亲和不可变。同 HOME 先取写锁，再取与 Harness/script 相同机器预算锁；每代独立 owner_key/intent/reservation，整机 exclusive_unclassified 占位。脚本 reaper 所有读写只处理 script owner。Worker HTTP 响应按块累计，超过 128KiB 立即取消读取并中止网络，响应体读取也受 deadline 约束；超时和断链只返回固定错误。内部 API 必须配置认证 token，客户端不能指定机器、身份、授权或配额；最终 start 再核当前目录精确 grant，撤销及换版拒绝启动。inspect/cancel 使用持久历史版本 endpoint；取消意图先落库，精确认证墓碑/缺失回执才释放，任务/turn/TTL 终态不释放。reconciler 只探查和续完已请求取消，不自动另起实例；旧 boot 且 journal 缺失时拒绝制造清理回执。
 
@@ -33,7 +35,7 @@ Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增�
 
 受管脚本准入仅写 blocked/queued，终态写入者守卫已登记。
 
-## Brain 1.353.8 — Harness 单任务容器硬限（12338dda）
+## Brain 1.353.10 — Harness 单任务容器硬限（12338dda）
 
 - Brain 角色预约与 Worker cgroups 共用 attempt-resource-policy：每基础槽 0.5 CPU、1 GiB、128 PID；轻档权重1、proposer权重2、generator/evaluator/judge权重4。fleet资源缓存物理槽由相同1GiB/.5CPU需求估算，替换原400MiB粗估；既有7/8/8上限不变，节点profile的最低6CPU/8GiB不当总预算。
 - 每个实际 Docker create/run 设置 CPU、内存、memory-swap和PID上限，memory-swap等于memory禁额外swap。Postgres固定占同一attempt总额中的0.25CPU/256MiB/32PID，runner扣减；轻档含PG时runner为0.25CPU/768MiB/96PID，不额外借预算。

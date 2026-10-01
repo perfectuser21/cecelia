@@ -2,7 +2,7 @@
 'use strict';
 
 const { Buffer } = require('node:buffer');
-const { createHmac, timingSafeEqual, randomUUID } = require('node:crypto');
+const { createHmac, createHash, timingSafeEqual, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -24,6 +24,7 @@ const { probeFleetWorkerHealth } = require('./node-probe.cjs');
 const { createWorkspaceManager,createFleetRepoAllowlist } = require('./workspace-manager.cjs');
 const { createOrchestratorRunner, probeCredentialHome } = require('./orchestrator-runner.cjs');
 
+const {createStreamHub}=require('./app-server-stream-hub.cjs');
 const {createAppServerRunner}=require('./app-server-runner.cjs');
 const {createAppServerDocker}=require('./app-server-docker.cjs');
 const {loadAppServerProfiles}=require('./app-server-profile.cjs');
@@ -600,21 +601,36 @@ function createFleetWorkerServer(options = {}) {
       });
   }
 
-  return http.createServer(async (request, response) => {
+  const streamHub=options.appServerRunner?createStreamHub({runner:options.appServerRunner}):null;
+  const server=http.createServer(async (request, response) => {
+    if(request.url?.startsWith('/app-server-streams/')) {
+      try {
+        const match=request.url.match(/^\/app-server-streams\/([a-f0-9-]{36})$/);
+        if(request.method!=='POST'||!match||!streamHub)throw Error('appserver_stream_ticket_invalid');
+        const token=request.headers.authorization?.replace(/^Bearer /,'');
+        streamHub.claim(match[1],token,request,response);
+        response.writeHead(200,{'content-type':'application/x-ndjson','cache-control':'no-store'});response.flushHeaders();
+      } catch {writeJson(response,401,{error:'appserver_stream_ticket_invalid'});}
+      return;
+    }
     if(request.url?.startsWith('/app-servers/')) {
       if(!validBearer(request,attemptToken)){writeJson(response,401,{error:'unauthorized'});return;}
       if(!options.appServerRunner){writeJson(response,503,{error:'appserver_runner_unconfigured'});return;}
       try{
         if(request.method!=='POST'){writeJson(response,405,{error:'method_not_allowed'});return;}
-        const body=await readJson(request,maximumRequestBytes),{request_nonce,...identity}=body;
+        const body=await readJson(request,maximumRequestBytes),{request_nonce,prepare_deadline,...identity}=body;
         let result;
         if(request.url==='/app-servers/capabilities'){
           if(Object.keys(identity).length)throw Error('appserver_identity_invalid');
           result=options.appServerRunner.capabilities();
         }else{
-          const match=request.url.match(/^\/app-servers\/([a-f0-9-]+)\/(start|inspect|cancel)$/);
+          const match=request.url.match(/^\/app-servers\/([a-f0-9-]+)\/(start|inspect|cancel|prepare-stream)$/);
           if(!match||match[1]!==identity.reservation_id)throw Error('appserver_identity_invalid');
-          result=await options.appServerRunner[match[2]](identity);
+          if(match[2]==='prepare-stream'){
+            const prepared=await streamHub.prepare(identity,{deadline:prepare_deadline});
+            response.setHeader('x-appserver-stream-token',prepared.token);response.setHeader('cache-control','no-store');
+            result={...identity,stream_id:prepared.stream_id,expires_at:prepared.expires_at,token_digest:createHash('sha256').update(prepared.token).digest('hex')};
+          }else{if(prepare_deadline!==undefined)throw Error('appserver_identity_invalid');result=await options.appServerRunner[match[2]](identity);}
         }
         const receipt={...result,request_nonce:request_nonce??null};
         writeJson(response,receipt.status==='waiting_resources'?429:200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
@@ -630,7 +646,7 @@ function createFleetWorkerServer(options = {}) {
         let result;
         if(request.url==='/scripts/capabilities') result=options.scriptRunner.capabilities();
         else {
-          const match=request.url.match(/^\/scripts\/([a-f0-9-]+)\/(start|inspect|cancel)$/);
+          const match=request.url.match(/^\/scripts\/([a-f0-9-]+)\/(start|inspect|cancel|prepare-stream)$/);
           if(!match || match[1]!==body.reservation_id) {writeJson(response,400,{error:'script_identity_invalid'});return;}
           result=await options.scriptRunner[match[2]](body);
         }
@@ -818,6 +834,8 @@ function createFleetWorkerServer(options = {}) {
       writeJson(response, statusCode, { error: errorCode });
     }
   });
+  server.once('close',()=>streamHub?.close());
+  return server;
 }
 
 function parsePort(value) {

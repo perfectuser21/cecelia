@@ -43,3 +43,11 @@ it('F1受管实例：默认HOME配置与普通任务入口都不能制造app-ser
  expect(routeWork(request,[],{appServerAuthority:APP_SERVER_AUTHORITY}).canonical_task_type).toBe('app_server_run');
  expect(TICK_DISPATCH_EXCLUDED).toContain('app_server_run');
 });
+
+it('F1聊天执行隔离：旧thread宿主exec被拒，进行中的turn仍可立即interrupt',async()=>{
+ const {default:rpc}=await import('../../../packages/brain/scripts/fleet-worker/app-server-rpc.cjs');const policy=rpc.createRpcPolicy();
+ expect(policy.client({id:1,method:'turn/start',params:{threadId:'t',input:[]}}).forward).toBeTruthy();
+ expect(policy.server({id:'legacy',method:'item/tool/call',params:{tool:'exec',arguments:{},threadId:'t',turnId:'u',callId:'c'}}).reply.error.message).toBe('appserver_host_tool_denied');
+ expect(policy.client({id:2,method:'turn/interrupt',params:{threadId:'t',turnId:'u'}}).forward).toBeTruthy();
+ expect(policy.close().uncertain).toBe(true);
+});

@@ -151,14 +151,25 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
         return observe(state);
       });
     },
-    async attach(input) {
+    async markRpcStarted(input) {
+      return locked(input, async state => {
+        if (!state || state.tombstoned || state.stream_id !== input.stream_id || state.stream_status !== 'attached') throw Error('appserver_stream_identity_mismatch');
+        state.rpc_started = true; save(state);
+      });
+    },
+    async attach(input, {deadline = Infinity} = {}) {
       if (!UUID.test(input.stream_id)) throw new Error('appserver_stream_identity_required');
       return locked(input, async state => {
         if (!state || state.tombstoned) throw new Error('appserver_launch_tombstoned');
+        if (state.rpc_started) throw Error('appserver_stream_recovery_required');
         if (state.stream_status && state.stream_status !== 'closed') throw new Error('appserver_stream_busy');
         if ((await observe(state)).status !== 'running') throw new Error('appserver_not_running');
+        if (typeof assertLocalResources !== 'function') throw Error('appserver_local_resources_unavailable');
+        await assertLocalResources(state.profile_snapshot);
+        if (Date.now() >= deadline) throw Error('appserver_stream_ticket_expired');
         state.stream_id = input.stream_id; state.stream_status = 'attaching'; save(state);
         const child = createBoundedAppServerStream(docker.attach(state.container_id));
+        child.rpcAccountId = state.profile_snapshot.authAccountId ?? null;
         connections.set(state.reservation_id, child);
         const releaseStream = () => {
           pendingStreamCloses.set(state.reservation_id, {

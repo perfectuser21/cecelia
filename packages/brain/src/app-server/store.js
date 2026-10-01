@@ -53,12 +53,25 @@ export function createAppServerStore({pool,createTask=createGenerationTask,after
   },
   async home(homeId){return (await pool.query('SELECT * FROM app_server_homes WHERE home_id=$1',[homeId])).rows[0]??null;},
   async listOutstanding(){return (await pool.query(`${SELECT} AND r.status<>'released' ORDER BY r.updated_at LIMIT 100`)).rows;},
+  async reserveStream(id){return locked(id,async(row,db)=>{
+   if(row.status==='released'||row.cancel_requested)throw Error('appserver_launch_tombstoned');
+   await authorize(db,authInput(row));
+   await db.query("INSERT INTO app_server_streams(id,reservation_id,prepare_deadline) VALUES($1,$2,now()+interval '5 seconds') ON CONFLICT(reservation_id) DO NOTHING",[randomUUID(),id]);
+   return (await db.query('SELECT * FROM app_server_streams WHERE reservation_id=$1',[id])).rows[0];
+  });},
   async withOperation(id,action,operation){
-   if(!['start','inspect','cancel'].includes(action))throw Error('appserver_operation_invalid');
+   if(!['start','inspect','cancel','prepare-stream'].includes(action))throw Error('appserver_operation_invalid');
    return locked(id,async(row,db)=>{
-    if(action==='start'){
+    if(action==='start'||action==='prepare-stream'){
      if(row.status==='released'||row.cancel_requested)throw Error('appserver_launch_tombstoned');
-     return authorize(db,authInput(row),auth=>operation(row,auth.node.endpoints.worker));
+     return authorize(db,authInput(row),async auth=>{
+      if(action==='prepare-stream'){
+       const stream=(await db.query('SELECT * FROM app_server_streams WHERE reservation_id=$1',[id])).rows[0];
+       if(!stream||Number(new Date(stream.prepare_deadline))<=Date.now())throw Error('appserver_stream_recovery_required');
+       return operation({...row,stream},auth.node.endpoints.worker);
+      }
+      return operation(row,auth.node.endpoints.worker);
+     });
     }
     if(action==='cancel'&&!row.cancel_requested)throw Error('appserver_cancel_intent_required');
     const version=await resolveCleanup(db,{executionVersionId:row.execution_version_id,persistedAttemptIdentity:row});

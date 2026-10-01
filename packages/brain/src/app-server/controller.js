@@ -37,6 +37,7 @@ export function createAppServerController({pool,env=process.env,homes=loadAppSer
    }
    if(denied)throw denied;return {status:'waiting_resources'};
   },
+  async prepareStream(id){if(!UUID.test(id))throw Error('appserver_request_invalid');return guarded(id,()=>client.prepareStream(id));},
   async inspect(id){if(!UUID.test(id))throw Error('appserver_request_invalid');const row=await store.get(id);if(row.status==='released')return view(row);return guarded(id,async()=>view(await observe(id)));},
   async cancel(id){if(!UUID.test(id))throw Error('appserver_request_invalid');const row=await store.get(id);if(row.status==='released')return view(row);return guarded(id,async()=>view(await cancel(id)));},
   async reconcile(){const rows=await store.listOutstanding();const outcomes=[];

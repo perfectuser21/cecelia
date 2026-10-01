@@ -21,7 +21,7 @@ const reserve=(home,requestKey=randomUUID(),machineId='xian-mac-m1')=>store().re
 beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
  await pool.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT,result JSONB,updated_at TIMESTAMPTZ,completed_at TIMESTAMPTZ,claimed_by TEXT,claimed_at TIMESTAMPTZ,payload JSONB DEFAULT '{}',task_type TEXT CONSTRAINT tasks_task_type_check CHECK(task_type IN ('dev','janitor')),executor_kind TEXT CONSTRAINT tasks_executor_kind_check CHECK(executor_kind IN ('headed-session','preview-janitor')));CREATE TABLE initiative_runs(id UUID PRIMARY KEY,phase TEXT DEFAULT 'planning',map_recovery_contract_id UUID,orchestrator_version TEXT DEFAULT 'v2');CREATE TABLE map_recovery_consumptions(contract_id UUID,attempt_id UUID);CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);`);
  for(const [,id,name]of LEGACY_BINDINGS)await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')",[id,name]);
- for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations','503_execution_directory','504_app_server_generations'])await pool.query(readFileSync(new URL(`../../../../migrations/${name}.sql`,import.meta.url),'utf8'));
+ for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations','503_execution_directory','504_app_server_generations','506_app_server_streams'])await pool.query(readFileSync(new URL(`../../../../migrations/${name}.sql`,import.meta.url),'utf8'));
  await importLegacyPolicy({pool,env});
  // 测试fixture显式授予独立surface；生产迁移没有seed授权。
  await pool.query("INSERT INTO execution_grants(node_version_id,surface,provider,account_id,repo_scope,profile_id,provenance,state) SELECT current_version_id,'app_server','codex','team1',ARRAY['perfectuser21/cecelia'],'chat','test_explicit_policy','active' FROM execution_nodes");
@@ -125,7 +125,7 @@ it('默认建账factory经真实createTask/work-router写tasks与不可变路由
  try{
   await db.query("CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ)");
   for(const [,id,name]of LEGACY_BINDINGS)await db.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')",[id,name]);
-  for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations','503_execution_directory','504_app_server_generations'])await db.query(readFileSync(new URL(`../../../../migrations/${name}.sql`,import.meta.url),'utf8'));
+  for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations','503_execution_directory','504_app_server_generations','506_app_server_streams'])await db.query(readFileSync(new URL(`../../../../migrations/${name}.sql`,import.meta.url),'utf8'));
   await importLegacyPolicy({pool:db,env});await db.query("INSERT INTO execution_grants(node_version_id,surface,provider,account_id,repo_scope,profile_id,provenance,state) SELECT current_version_id,'app_server','codex','team1',ARRAY['perfectuser21/cecelia'],'chat','test_explicit_policy','active' FROM execution_nodes");await directory.refresh({pool:db});
   const h=config(),result=await createAppServerStore({pool:db}).reserve({home:h,requestKey:randomUUID(),machineId:'xian-mac-m1',capacitySnapshot:snapshot('xian-mac-m1'),capabilities:caps('xian-mac-m1')});
   const row=(await db.query('SELECT t.*,r.work_kind,r.canonical_task_type FROM tasks t JOIN work_routing_receipts r ON r.task_id=t.id WHERE t.id=$1',[result.reservation.task_id])).rows[0];
@@ -133,4 +133,15 @@ it('默认建账factory经真实createTask/work-router写tasks与不可变路由
   expect(row.payload.home_key).toBe(h.homeKey);
   expect((await db.query("SELECT 1 FROM schema_version WHERE version='504'")).rowCount).toBe(1);
  }finally{await fixture.close();await directory.refresh({pool});}
+});
+it('流意图跨重启保持同ID；真实attach与撤销同锁，未知/过期不新建第二条许可',async()=>{
+ const st=store(),a=await reserve(config(),randomUUID(),'xian-mac-m1'),id=a.reservation.id;
+ expect(st.reserveStream).toBeTypeOf('function');const stream=await st.reserveStream(id);expect((await store().reserveStream(id)).id).toBe(stream.id);
+ let entered,release;const ready=new Promise(r=>entered=r),hold=new Promise(r=>release=r);let revoked=false;
+ const attached=st.withOperation(id,'prepare-stream',async row=>{expect(row.stream.id).toBe(stream.id);entered();await hold;});await ready;
+ const revocation=revokeGrant({pool,grantId:a.reservation.execution_grant_id}).then(()=>revoked=true);
+ await new Promise(r=>setTimeout(r,20));expect(revoked).toBe(false);release();await attached;await revocation;
+ let invoked=false;await expect(st.withOperation(id,'prepare-stream',()=>invoked=true)).rejects.toThrow('execution_grant_denied');expect(invoked).toBe(false);
+ await expect(pool.query('UPDATE app_server_streams SET id=$2 WHERE id=$1',[stream.id,randomUUID()])).rejects.toThrow('appserver_stream_identity_immutable');
+ expect((await st.get(id)).status).not.toBe('released');
 });
