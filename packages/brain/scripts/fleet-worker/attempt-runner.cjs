@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+const { verifyContainerIdentity } = require('./attempt-container-identity.cjs');
 const { resolveAttemptResourcePlan, dockerLimitArgs } = require('./attempt-resource-policy.cjs');
 
 const { execFile, spawn } = require('node:child_process');
@@ -724,8 +725,15 @@ function createDockerAdapter({
       });
   }
 
+  async function verifyIdentity({ attemptId, runId, image, containerId }) {
+    if (!UUID_PATTERN.test(runId ?? '') || !IMAGE_DIGEST_PATTERN.test(image ?? '')) throw new Error('attempt_container_identity_unverified');
+    return verifyContainerIdentity({ runCommand, containerId, containerName: `cecelia-fleet-${attemptId}`, image,
+      labels: { 'cecelia.fleet.attempt_id': attemptId, 'cecelia.fleet.run_id': runId, 'cecelia.fleet.worker_id': workerId },
+      errorCode: 'attempt_container_identity_unverified' });
+  }
+
   async function startContainer({
-    role, hasPostgres = false,
+    role, hasPostgres = false, runId, image,
     attemptId,
     containerId,
     credentialFifo,
@@ -755,21 +763,21 @@ function createDockerAdapter({
     ) {
       throw new Error('attempt_github_credential_fifo_invalid');
     }
-    const containerName = `cecelia-fleet-${attemptId}`;
+    await verifyIdentity({ attemptId, runId, image, containerId });
     try {
       const plan = resolveAttemptResourcePlan({ workerId, role, postgres: hasPostgres });
       await runCommand('docker', ['update', ...dockerLimitArgs(plan.runner), '--', containerId], undefined);
       await runCommand('docker', ['start', containerId], undefined);
       if (githubCredential) {
         await writeGitHubCredential(
-          containerName,
+          containerId,
           '/tmp/cecelia-prompts/github-credential.fifo',
           githubCredential.token,
         );
       }
       if (credential) {
         await writeCredential(
-          containerName,
+          containerId,
           '/tmp/cecelia-prompts/credential.fifo',
           credential.authJson,
         );
@@ -787,6 +795,7 @@ function createDockerAdapter({
 
   return Object.freeze({
     prepare: prepareContainer,
+    verifyIdentity,
     start: startContainer,
 
     async inspect({ containerId } = {}) {
@@ -1541,6 +1550,7 @@ function createAttemptRunner({
   }
 
   async function releaseRuntimeService(state) {
+    if (identityUnverified(state)) throw new Error('attempt_container_identity_unverified');
     if (!state.runtime_resources || Object.keys(state.runtime_resources).length === 0) {
       return;
     }
@@ -1556,6 +1566,8 @@ function createAttemptRunner({
   const cancellationRequests = new Set();
   const terminalWaiters = new Set();
   const finalizationPromises = new Map();
+  const unverifiedIdentities = new Set();
+  const identityUnverified = state => state.resource_identity_unverified || unverifiedIdentities.has(state.attempt_id);
 
   async function waitForInFlightPrepare(attemptId, lease) {
     const preparing = prepareOperations.get(attemptId);
@@ -1659,6 +1671,13 @@ function createAttemptRunner({
     );
   }
 
+  const isIdentityFailure = error => /^(attempt_container_identity_unverified|attempt_runtime_resource_owner_mismatch|attempt_resource_identity_required)$/.test(error?.message);
+  async function parkUnverifiedIdentity(state) {
+    unverifiedIdentities.add(state.attempt_id);
+    pendingCredentials.delete(state.attempt_id);
+    await stateStore.save({ ...state, status: 'quarantined', resource_identity_unverified: true });
+  }
+
   function finalizeAttempt(attemptId, lease = null, expected = null) {
     const existing = finalizationPromises.get(attemptId);
     if (existing) return existing;
@@ -1670,6 +1689,7 @@ function createAttemptRunner({
       if (state.worker_id !== workerId) {
         throw new Error('attempt_worker_owner_mismatch');
       }
+      if (identityUnverified(state)) return Object.freeze({ status: 'quarantined', attempt_id: attemptId, reason: 'attempt_container_identity_unverified' });
       if (
         expected
         && (
@@ -2060,6 +2080,7 @@ function createAttemptRunner({
         provider: providerSpec.provider,
         role: target.role,
         resource_limits: resourceLimits,
+        runner_image_digest: runnerImageDigest,
         prepare_request_fingerprint: requestFingerprint,
         credential_delivery_status: 'pending',
         ...(credential ? { credential: credential.metadata } : {}),
@@ -2191,7 +2212,13 @@ function createAttemptRunner({
             deduped: true,
           });
         }
+        if (identityUnverified(state)) throw new Error('attempt_container_identity_unverified');
         if (state.status === 'starting') {
+          try {
+            if (typeof docker.verifyIdentity !== 'function') throw new Error('attempt_container_identity_unverified');
+            await docker.verifyIdentity({ attemptId, runId: state.run_id, containerId: state.container_id,
+              image: state.runner_image_digest ?? runnerImageDigest });
+          } catch (error) { await parkUnverifiedIdentity(state); throw error; }
           const inspected = await docker.inspect({
             containerId: state.container_id,
           });
@@ -2258,10 +2285,19 @@ function createAttemptRunner({
 
         state.resource_limits = resolveAttemptResourcePlan({ workerId, role: state.role,
           postgres: Boolean(state.runtime_resources?.postgres) });
+        try {
+          if (typeof docker.verifyIdentity !== 'function') throw new Error('attempt_container_identity_unverified');
+          await docker.verifyIdentity({ attemptId, runId: state.run_id, containerId: state.container_id,
+            image: state.runner_image_digest ?? runnerImageDigest });
+          if (state.runtime_resources?.postgres) {
+            if (typeof resourceManager.resolveIdentity !== 'function' || typeof resourceManager.enforceLimits !== 'function') throw new Error('attempt_resource_identity_required');
+            state.runtime_resources = await resourceManager.resolveIdentity({ attemptId, runtime: state.runtime_resources });
+          }
+        } catch (error) { await parkUnverifiedIdentity(state); throw error; }
         await stateStore.save(state);
         if (state.runtime_resources?.postgres) {
-          if (typeof resourceManager.enforceLimits !== 'function') throw new Error('attempt_resource_limits_unavailable');
-          await resourceManager.enforceLimits({ attemptId, role: state.role, runtime: state.runtime_resources });
+          try { await resourceManager.enforceLimits({ attemptId, role: state.role, runtime: state.runtime_resources }); }
+          catch (error) { if (isIdentityFailure(error)) await parkUnverifiedIdentity(state); throw error; }
         }
         await assertLocalResources({ phase: 'start', attemptId });
         if (cancellationRequests.has(attemptId)) return finalizeCancelledStart(state, lease);
@@ -2276,6 +2312,7 @@ function createAttemptRunner({
         try {
           await docker.start({
             attemptId, role: state.role, hasPostgres: Boolean(state.runtime_resources?.postgres),
+            runId: state.run_id, image: state.runner_image_digest ?? runnerImageDigest,
             containerId: state.container_id,
             credentialFifo: state.credential_fifo,
             githubCredentialFifo: state.github_credential_fifo,
@@ -2297,6 +2334,7 @@ function createAttemptRunner({
           }
         } catch (error) {
           pendingCredentials.delete(attemptId);
+          if (isIdentityFailure(error)) { await parkUnverifiedIdentity(state); throw error; }
           const cleanup = await finalizeAttempt(attemptId, lease);
           if (cleanup.status !== 'cleaned') {
             throw new Error(`attempt_start_rollback_failed:${error.message}`, {
@@ -2450,6 +2488,7 @@ function createAttemptRunner({
       const reclaimedCandidates = [];
 
       for (const state of ownedStates) {
+        if (identityUnverified(state)) continue;
         if (state.status === 'candidate') {
           if (state.container_id) {
             const inspected = await docker.inspect({ containerId: state.container_id });

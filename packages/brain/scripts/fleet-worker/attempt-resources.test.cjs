@@ -1,6 +1,7 @@
 'use strict';
 
 const ATTEMPT_ID = '22222222-2222-4222-8222-222222222222';
+const POSTGRES_ID = 'a'.repeat(64);
 const POSTGRES_IMAGE = `postgres:16-alpine@sha256:${'f'.repeat(64)}`;
 
 function loadResourceManager() {
@@ -16,7 +17,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
     const runCommand = vi.fn(async (command, args) => {
       calls.push([command, args]);
       if (args[0] === 'exec') return { stdout: 'postgres:5432 - accepting connections' };
-      return { stdout: args[0] === 'run' ? 'postgres-container-id' : '' };
+      return { stdout: args[0] === 'run' ? POSTGRES_ID : '' };
     });
     const manager = createAttemptResourceManager({
       workerId: 'us-mac-m4',
@@ -78,6 +79,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
     });
     expect(provisioned.runtime).toEqual({
       postgres: {
+        container_id: POSTGRES_ID,
         container_name: `cecelia-pg-${ATTEMPT_ID}`,
         network_name: `cecelia-attempt-${ATTEMPT_ID}`,
         image_digest: POSTGRES_IMAGE,
@@ -92,7 +94,7 @@ describe('Fleet Worker Attempt runtime resources', () => {
     const createAttemptResourceManager = loadResourceManager();
     const runCommand = vi.fn(async (_command, args) => {
       if (args[0] === 'exec') throw new Error('postgres not ready');
-      return { stdout: args[0] === 'run' ? 'postgres-container-id' : '' };
+      return { stdout: args[0] === 'run' ? POSTGRES_ID : '' };
     });
     const manager = createAttemptResourceManager({
       workerId: 'us-mac-m4',
@@ -292,7 +294,11 @@ describe('Fleet Worker Attempt runtime resources', () => {
 });
 it('真实PG创建与旧sidecar限额更新均固定为预约内份额，未知Worker不得启动', async () => {
   const factory=loadResourceManager();const calls=[];
-  const runCommand=async(file,args)=>{calls.push(args);return {stdout:args[0]==='exec'?'accepting connections':'canary-id'};};
+  const runCommand=async(file,args)=>{calls.push(args);
+    if(args[0]==='inspect')return {stdout:JSON.stringify([{Id:POSTGRES_ID,Name:`/cecelia-pg-${ATTEMPT_ID}`,Image:`sha256:${'f'.repeat(64)}`,
+      Config:{Image:POSTGRES_IMAGE,Labels:{'cecelia.fleet.attempt_id':ATTEMPT_ID,'cecelia.fleet.resource':'postgres'}}}])};
+    if(args[0]==='image')return {stdout:`sha256:${'f'.repeat(64)}`};
+    return {stdout:args[0]==='exec'?'accepting connections':POSTGRES_ID};};
   const manager=factory({workerId:'us-mac-m4',postgresImageDigest:POSTGRES_IMAGE,runCommand});
   const result=await manager.provision({attemptId:ATTEMPT_ID,role:'planner',requirements:{postgres:true},limits:{memoryBytes:-1}});
   await manager.enforceLimits({attemptId:ATTEMPT_ID,role:'planner',runtime:result.runtime});
@@ -304,4 +310,35 @@ it('真实PG创建与旧sidecar限额更新均固定为预约内份额，未知W
   }
   const unavailable=factory({postgresImageDigest:POSTGRES_IMAGE,runCommand});
   await expect(unavailable.provision({attemptId:ATTEMPT_ID,role:'planner',requirements:{postgres:true}})).rejects.toThrow('attempt_resource_profile_unavailable');
+});
+describe('Postgres hard-limit update identity', () => {
+  const id='a'.repeat(64), other='b'.repeat(64);
+  const runtime=(containerId=id)=>({postgres:{container_name:`cecelia-pg-${ATTEMPT_ID}`,network_name:`cecelia-attempt-${ATTEMPT_ID}`,
+    image_digest:POSTGRES_IMAGE,...(containerId?{container_id:containerId}:{})}});
+  const observed=()=>({Id:id,Name:`/cecelia-pg-${ATTEMPT_ID}`,Image:`sha256:${'f'.repeat(64)}`,
+    Config:{Image:POSTGRES_IMAGE,Labels:{'cecelia.fleet.attempt_id':ATTEMPT_ID,'cecelia.fleet.resource':'postgres'}}});
+  it.each(['wrong-attempt','wrong-resource','wrong-image','replacement-id','wrong-name'])('%s rejects before any update',async scenario=>{
+    const value=observed();
+    if(scenario==='wrong-attempt')value.Config.Labels['cecelia.fleet.attempt_id']='33333333-3333-4333-8333-333333333333';
+    if(scenario==='wrong-resource')value.Config.Labels['cecelia.fleet.resource']='other';
+    if(scenario==='wrong-image')value.Config.Image=`sha256:${'c'.repeat(64)}`;
+    if(scenario==='replacement-id')value.Id=other;
+    if(scenario==='wrong-name')value.Name='/somebody-elses-postgres';
+    const runCommand=vi.fn(async()=>({stdout:JSON.stringify([value])}));
+    const manager=loadResourceManager()({workerId:'us-mac-m4',postgresImageDigest:POSTGRES_IMAGE,runCommand});
+    await expect(manager.enforceLimits({attemptId:ATTEMPT_ID,role:'planner',runtime:runtime()})).rejects.toThrow('attempt_runtime_resource_owner_mismatch');
+    expect(runCommand.mock.calls.some(([,args])=>args[0]==='update')).toBe(false);
+  });
+  it('legacy identity resolves without updating and then only the persisted full ID may be updated',async()=>{
+    const runCommand=vi.fn(async(_file,args)=>({stdout:args[0]==='image'?`sha256:${'f'.repeat(64)}`:JSON.stringify([observed()])}));
+    const manager=loadResourceManager()({workerId:'us-mac-m4',postgresImageDigest:POSTGRES_IMAGE,runCommand});
+    expect(manager).toHaveProperty('resolveIdentity');
+    const resolved=await manager.resolveIdentity({attemptId:ATTEMPT_ID,runtime:runtime(null)});
+    expect(resolved.postgres.container_id).toBe(id);
+    expect(runCommand.mock.calls.some(([,args])=>args[0]==='update')).toBe(false);
+    await expect(manager.enforceLimits({attemptId:ATTEMPT_ID,role:'planner',runtime:runtime(null)})).rejects.toThrow('attempt_resource_identity_required');
+    await manager.enforceLimits({attemptId:ATTEMPT_ID,role:'planner',runtime:resolved});
+    const updates=runCommand.mock.calls.filter(([,args])=>args[0]==='update');
+    expect(updates).toHaveLength(1);expect(updates[0][1].at(-1)).toBe(id);
+  });
 });

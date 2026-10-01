@@ -40,13 +40,13 @@ async function main() {
   resources = await manager.provision({attemptId,role,requirements:{postgres:true}});
   postgresId = (await inspect(resources.runtime.postgres.container_name)).Id;
   const prepared = await docker.prepare({attemptId,runId,workerId,image,role,model:'canary',taskId:randomUUID(),timeoutSeconds:30,
-    providerSpec:{provider:'claude',stdin:'{}'},roleEnv:{},labels:{'cecelia.fleet.attempt_id':attemptId,'cecelia.fleet.worker_id':workerId},
+    providerSpec:{provider:'claude',stdin:'{}'},roleEnv:{},labels:{'cecelia.fleet.attempt_id':attemptId,'cecelia.fleet.worker_id':workerId,'cecelia.fleet.run_id':runId},
     callback:{url:'http://127.0.0.1:5221/api/brain/callback',token:'offline-canary'},lease:{owner:'canary',generation:1},
     workspaceMount:{source:workspace,target:'/workspace',readOnly:true},workspaceAdminMount:{source:admin,target:admin,readOnly:true},
     runtimeNetwork:resources.networkName,runtimeEnvironment:{}});
   runnerId=prepared.containerId;
   await manager.enforceLimits({attemptId,role,runtime:resources.runtime});
-  await docker.start({...prepared,attemptId,role,hasPostgres:true});
+  await docker.start({...prepared,attemptId,role,runId,image,hasPostgres:true});
   const plan=resolveAttemptResourcePlan({workerId,role,postgres:true});
   const [runner,pg]=await Promise.all([inspect(runnerId),inspect(postgresId)]);
   checkLimits(runner,plan.runner);checkLimits(pg,plan.postgres);

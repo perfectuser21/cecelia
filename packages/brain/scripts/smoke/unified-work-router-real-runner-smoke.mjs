@@ -173,7 +173,7 @@ try {
     },
   });
   await docker.start({
-    role: 'generator', hasPostgres: false,
+    role: 'generator', hasPostgres: false, runId, image,
     attemptId, containerId: prepared.containerId,
     credentialFifo: prepared.credentialFifo,
     credential: { credentialRef, authJson },

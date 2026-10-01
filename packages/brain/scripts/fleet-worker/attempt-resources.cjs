@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+const { CONTAINER_ID, verifyContainerIdentity } = require('./attempt-container-identity.cjs');
 const { resolveAttemptResourcePlan, dockerLimitArgs } = require('./attempt-resource-policy.cjs');
 
 const { execFile } = require('node:child_process');
@@ -55,13 +56,14 @@ function validateRequirements(value) {
   return Object.freeze({ postgres: value.postgres === true });
 }
 
-function runtimeFor(attemptId, postgresImageDigest) {
+function runtimeFor(attemptId, postgresImageDigest, containerId) {
   const { containerName, networkName } = namesFor(attemptId);
   return Object.freeze({
     postgres: Object.freeze({
       container_name: containerName,
       network_name: networkName,
       image_digest: postgresImageDigest,
+      container_id: containerId,
     }),
   });
 }
@@ -156,7 +158,18 @@ function createAttemptResourceManager({
     throw new Error('attempt_resource_invalid_health_interval');
   }
 
+  async function resolveIdentity({ attemptId, runtime } = {}) {
+    assertAttemptId(attemptId); assertExactRuntime(attemptId, runtime);
+    const previous = runtime.postgres;
+    const id = await verifyContainerIdentity({ runCommand, containerId: previous.container_id,
+      containerName: previous.container_name, image: previous.image_digest, allowName: true,
+      labels: { 'cecelia.fleet.attempt_id': attemptId, 'cecelia.fleet.resource': 'postgres' },
+      errorCode: 'attempt_runtime_resource_owner_mismatch' });
+    return Object.freeze({ postgres: Object.freeze({ ...previous, container_id: id }) });
+  }
+
   return Object.freeze({
+    resolveIdentity,
     async provision({ attemptId, requirements, role } = {}) {
       assertAttemptId(attemptId);
       const validated = validateRequirements(requirements);
@@ -191,7 +204,7 @@ function createAttemptResourceManager({
           networkName,
         ]);
         networkCreated = true;
-        await runCommand('docker', [
+        const created = await runCommand('docker', [
           'run',
           ...dockerLimitArgs(plan.postgres),
           '--detach',
@@ -214,6 +227,8 @@ function createAttemptResourceManager({
           postgresImageDigest,
         ]);
         containerCreated = true;
+        const containerId = String(created.stdout ?? '').trim();
+        if (!CONTAINER_ID.test(containerId)) throw new Error('attempt_resource_identity_required');
 
         let healthy = false;
         for (let attempt = 0; attempt < healthAttempts; attempt += 1) {
@@ -237,7 +252,7 @@ function createAttemptResourceManager({
 
         const dbUrl = `postgresql://${username}:${password}@postgres:5432/${database}`;
         return Object.freeze({
-          runtime: runtimeFor(attemptId, postgresImageDigest),
+          runtime: runtimeFor(attemptId, postgresImageDigest, containerId),
           environment: Object.freeze({
             DB_URL: dbUrl,
             DATABASE_URL: dbUrl,
@@ -276,8 +291,10 @@ function createAttemptResourceManager({
 
     async enforceLimits({ attemptId, role, runtime } = {}) {
       assertAttemptId(attemptId); assertExactRuntime(attemptId, runtime);
+      if (!CONTAINER_ID.test(runtime.postgres.container_id ?? '')) throw new Error('attempt_resource_identity_required');
+      const verified = await resolveIdentity({ attemptId, runtime });
       const plan = resolveAttemptResourcePlan({ workerId, role, postgres: true });
-      await runCommand('docker', ['update', ...dockerLimitArgs(plan.postgres), '--', runtime.postgres.container_name]);
+      await runCommand('docker', ['update', ...dockerLimitArgs(plan.postgres), '--', verified.postgres.container_id]);
     },
     async release({ attemptId, runtime } = {}) {
       assertAttemptId(attemptId);

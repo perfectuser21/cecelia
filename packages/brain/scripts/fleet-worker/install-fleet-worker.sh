@@ -33,6 +33,7 @@ LOCAL_RESOURCE_ADMISSION_SOURCE="$SCRIPT_DIR/local-resource-admission.cjs"
 SCRIPT_RUNNER_SOURCE="$SCRIPT_DIR/script-runner.cjs"
 SCRIPT_DOCKER_SOURCE="$SCRIPT_DIR/script-docker.cjs"
 RESOURCE_POLICY_SOURCE="$SCRIPT_DIR/attempt-resource-policy.cjs"
+CONTAINER_IDENTITY_SOURCE="$SCRIPT_DIR/attempt-container-identity.cjs"
 WORKSPACE_MANAGER_SOURCE="$SCRIPT_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SOURCE="$SCRIPT_DIR/attempt-runner.cjs"
 ORCHESTRATOR_RUNNER_SOURCE="$SCRIPT_DIR/orchestrator-runner.cjs"
@@ -56,6 +57,7 @@ STAGED_LOCAL_RESOURCE_ADMISSION=''
 STAGED_SCRIPT_RUNNER=''
 STAGED_SCRIPT_DOCKER=''
 STAGED_RESOURCE_POLICY=''
+STAGED_CONTAINER_IDENTITY=''
 STAGED_WORKSPACE_MANAGER=''
 STAGED_ATTEMPT_RUNNER=''
 STAGED_ORCHESTRATOR_RUNNER=''
@@ -92,6 +94,7 @@ LOCAL_RESOURCE_ADMISSION_SCRIPT="$RUNTIME_DIR/local-resource-admission.cjs"
 SCRIPT_RUNNER_SCRIPT="$RUNTIME_DIR/script-runner.cjs"
 SCRIPT_DOCKER_SCRIPT="$RUNTIME_DIR/script-docker.cjs"
 RESOURCE_POLICY_SCRIPT="$RUNTIME_DIR/attempt-resource-policy.cjs"
+CONTAINER_IDENTITY_SCRIPT="$RUNTIME_DIR/attempt-container-identity.cjs"
 WORKSPACE_MANAGER_SCRIPT="$RUNTIME_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SCRIPT="$RUNTIME_DIR/attempt-runner.cjs"
 ORCHESTRATOR_RUNNER_SCRIPT="$RUNTIME_DIR/orchestrator-runner.cjs"
@@ -652,6 +655,7 @@ cleanup_transaction() {
   [[ -z "$STAGED_SCRIPT_RUNNER" ]] || rm -f "$STAGED_SCRIPT_RUNNER"
   [[ -z "$STAGED_SCRIPT_DOCKER" ]] || rm -f "$STAGED_SCRIPT_DOCKER"
   [[ -z "$STAGED_RESOURCE_POLICY" ]] || rm -f "$STAGED_RESOURCE_POLICY"
+  [[ -z "$STAGED_CONTAINER_IDENTITY" ]] || rm -f "$STAGED_CONTAINER_IDENTITY"
   [[ -z "$STAGED_WORKSPACE_MANAGER" ]] || rm -f "$STAGED_WORKSPACE_MANAGER"
   [[ -z "$STAGED_ATTEMPT_RUNNER" ]] || rm -f "$STAGED_ATTEMPT_RUNNER"
   [[ -z "$STAGED_ORCHESTRATOR_RUNNER" ]] || rm -f "$STAGED_ORCHESTRATOR_RUNNER"
@@ -671,6 +675,7 @@ cleanup_transaction() {
       "$BACKUP_DIR/script-runner" \
       "$BACKUP_DIR/script-docker" \
       "$BACKUP_DIR/resource-policy" \
+      "$BACKUP_DIR/container-identity" \
       "$BACKUP_DIR/workspace-manager" \
       "$BACKUP_DIR/attempt-runner" \
       "$BACKUP_DIR/orchestrator-runner" \
@@ -707,6 +712,7 @@ prepare_transaction_paths() {
   STAGED_SCRIPT_RUNNER="$(mktemp "$RUNTIME_DIR/.script-runner.cjs.XXXXXX")"
   STAGED_SCRIPT_DOCKER="$(mktemp "$RUNTIME_DIR/.script-docker.cjs.XXXXXX")"
   STAGED_RESOURCE_POLICY="$(mktemp "$RUNTIME_DIR/.attempt-resource-policy.cjs.XXXXXX")"
+  STAGED_CONTAINER_IDENTITY="$(mktemp "$RUNTIME_DIR/.attempt-container-identity.cjs.XXXXXX")"
   STAGED_WORKSPACE_MANAGER="$(
     mktemp "$RUNTIME_DIR/.workspace-manager.cjs.XXXXXX"
   )"
@@ -737,7 +743,9 @@ stage_generation() {
   cp "$SCRIPT_RUNNER_SOURCE" "$STAGED_SCRIPT_RUNNER"
   cp "$SCRIPT_DOCKER_SOURCE" "$STAGED_SCRIPT_DOCKER"
   cp "$RESOURCE_POLICY_SOURCE" "$STAGED_RESOURCE_POLICY"
+  cp "$CONTAINER_IDENTITY_SOURCE" "$STAGED_CONTAINER_IDENTITY"
   chmod 0644 "$STAGED_RESOURCE_POLICY"
+  chmod 0644 "$STAGED_CONTAINER_IDENTITY"
   chmod 0644 "$STAGED_LOCAL_RESOURCE_ADMISSION"
   chmod 0644 "$STAGED_SCRIPT_RUNNER"
   chmod 0644 "$STAGED_SCRIPT_DOCKER"
@@ -1035,6 +1043,7 @@ prior_local_resource_admission_mode="$(snapshot_file "$LOCAL_RESOURCE_ADMISSION_
 prior_script_runner_mode="$(snapshot_file "$SCRIPT_RUNNER_SCRIPT" "$BACKUP_DIR/script-runner")"
 prior_script_docker_mode="$(snapshot_file "$SCRIPT_DOCKER_SCRIPT" "$BACKUP_DIR/script-docker")"
 prior_resource_policy_mode="$(snapshot_file "$RESOURCE_POLICY_SCRIPT" "$BACKUP_DIR/resource-policy")"
+prior_container_identity_mode="$(snapshot_file "$CONTAINER_IDENTITY_SCRIPT" "$BACKUP_DIR/container-identity")"
 prior_probe_mode="$(
   snapshot_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe"
 )"
@@ -1080,6 +1089,7 @@ placement_ok=true
 [[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_SCRIPT_RUNNER" "$SCRIPT_RUNNER_SCRIPT" || placement_ok=false
 [[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_SCRIPT_DOCKER" "$SCRIPT_DOCKER_SCRIPT" || placement_ok=false
 [[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_RESOURCE_POLICY" "$RESOURCE_POLICY_SCRIPT" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_CONTAINER_IDENTITY" "$CONTAINER_IDENTITY_SCRIPT" || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_WORKSPACE_MANAGER" "$WORKSPACE_MANAGER_SCRIPT" \
   || placement_ok=false
@@ -1149,6 +1159,8 @@ if [[ "$launch_ok" != true ]]; then
   restore_file "$SCRIPT_DOCKER_SCRIPT" "$BACKUP_DIR/script-docker" "$prior_script_docker_mode" \
     || rollback_ok=false
   restore_file "$RESOURCE_POLICY_SCRIPT" "$BACKUP_DIR/resource-policy" "$prior_resource_policy_mode" \
+    || rollback_ok=false
+  restore_file "$CONTAINER_IDENTITY_SCRIPT" "$BACKUP_DIR/container-identity" "$prior_container_identity_mode" \
     || rollback_ok=false
   restore_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe" "$prior_probe_mode" \
     || rollback_ok=false
