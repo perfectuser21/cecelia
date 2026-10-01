@@ -79,6 +79,8 @@ async function queueWithReceipt(pool, row, source, resolution, page) {
     const evidence = {
       actor: 'notion-human', page_id: pageId, serial: resolution.phone.serial, matched_by: resolution.matchedBy,
       last_edited_time: page.last_edited_time, reason: 'device_unresolved_source_updated',
+      author_id: page.last_edited_by.id,
+      before: { qiumi_source: original }, after: { qiumi_source: source },
     };
     await client.query(
       `INSERT INTO task_events (task_id, event_type, payload, created_at) VALUES ($1, $2, $3::jsonb, NOW())`,
