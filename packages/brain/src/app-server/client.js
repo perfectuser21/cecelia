@@ -62,6 +62,12 @@ export function createAppServerClient({pool,store,env=process.env,fetchFn=global
   return verified;
  });
  return Object.freeze({
+  probeCapabilities:async(machineRegistryId,expectedVersionId)=>{
+   const node=(await pool.query(`SELECT v.*,n.canonical_id FROM execution_nodes n JOIN execution_node_versions v ON v.id=n.current_version_id
+    JOIN system_registry r ON r.id=n.machine_registry_id WHERE n.machine_registry_id=$1 AND v.id=$2 AND v.state='active' AND r.type='machine' AND r.status='active'`,[machineRegistryId,expectedVersionId])).rows[0];
+   if(!node)throw Error('appserver_authorization_node_unavailable');
+   return (await request(node.endpoints.worker,node.canonical_id,'capabilities')).receipt;
+  },
   capabilities:async(home,machine)=>authorize(pool,{snapshotVersion:directory.current()?.version,machineId:machine,surface:'app_server',provider:home.provider,account:home.account,repo:home.repo,profileId:home.profile},
    async auth=>(await request(auth.node.endpoints.worker,machine,'capabilities')).receipt),
   prepareStream:async id=>{await store.reserveStream(id);return operation(id,'prepare-stream');},

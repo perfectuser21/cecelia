@@ -1,7 +1,11 @@
 import express from 'express';
 import {timingSafeEqual} from 'node:crypto';
 import {createAppServerController} from '../app-server/controller.js';
-export function createAppServerRouter({pool,env=process.env,controller=createAppServerController({pool,env})}){
+import {createAuthorizationStore} from '../app-server/authorization-store.js';
+import {createAppServerClient} from '../app-server/client.js';
+import {loadAppServerHomes} from '../app-server/config.js';
+export function createAppServerRouter({pool,env=process.env,controller=createAppServerController({pool,env}),
+ authorizationStore=createAuthorizationStore({pool,homes:loadAppServerHomes(env.CECELIA_APP_SERVER_HOMES_FILE),client:createAppServerClient({pool,env})})}){
  const router=express.Router();
  router.use((req,res,next)=>{const token=env.CECELIA_INTERNAL_TOKEN;
   if(typeof token!=='string'||token.length<32)return res.status(503).json({error:'appserver_internal_auth_unconfigured'});
@@ -10,6 +14,8 @@ export function createAppServerRouter({pool,env=process.env,controller=createApp
   next();
  });
  const run=fn=>async(req,res)=>{try{res.json(await fn(req));}catch(error){res.status(409).json({error:/^(appserver|execution)_[a-z_0-9]+$/.test(error.message)?error.message:'appserver_operation_unconfirmed'});}};
+ router.post('/authorizations/prepare',run(async req=>{const row=await authorizationStore.prepare(req.body);return {id:row.id,state:row.state,expires_at:row.authorization_expires_at};}));
+ router.post('/authorizations/:id/revoke',run(req=>{if(Object.keys(req.body??{}).length)throw Error('appserver_authorization_request_invalid');return authorizationStore.revoke(req.params.id);}));
  router.post('/generations',run(req=>controller.ensure(req.body)));
  router.post('/generations/:id/stream',async(req,res)=>{
   try{if(Object.keys(req.body??{}).length)throw Error('appserver_request_invalid');
