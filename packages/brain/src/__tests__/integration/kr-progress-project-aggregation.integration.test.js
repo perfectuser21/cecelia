@@ -155,3 +155,20 @@ describe('KR 重算写库回归（任务7aeb81a6）', () => {
     expect(rows[0].progress).toBe(83);
   });
 });
+
+
+it('无项目清理与人类更新交错时保留新目标和新现值（审阅回归）', async () => {
+  await pool.query('UPDATE key_results SET target_value=NULL,current_value=12,progress=42 WHERE id=$1',[krNoProjectId]);
+  let changed = false;
+  const racingPool = { query: async (sql, params) => {
+    if (!changed && sql.includes('FROM projects')) {
+      changed = true;
+      await pool.query('UPDATE key_results SET target_value=100,current_value=70 WHERE id=$1',[krNoProjectId]);
+    }
+    return pool.query(sql,params);
+  }};
+  const result = await recalculateKrProgress(racingPool,krNoProjectId);
+  expect(result).toMatchObject({target_value:100,current_value:70,progress:42});
+  const { rows } = await pool.query('SELECT current_value FROM key_results WHERE id=$1',[krNoProjectId]);
+  expect(Number(rows[0].current_value)).toBe(70);
+});
