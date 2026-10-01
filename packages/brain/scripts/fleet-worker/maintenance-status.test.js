@@ -38,6 +38,9 @@ it('默认runtime共享真实marker，orchestrator新prepare拒绝且不执行�
  try{
   const runtime=createFleetWorkerRuntime({env:{CECELIA_MACHINE_ID:'us-mac-m4',CECELIA_RUNNER_DIGEST:`sha256:${'a'.repeat(64)}`,CECELIA_FLEET_WORKER_TOKEN_FILE:tokenFile,CECELIA_FLEET_DATA_ROOT:path.join(root,'data'),CECELIA_DRAIN_MARKER:marker},runCommand:async()=>{commands++;throw Error('unexpected command');},probeCredentialHomeFn:()=>{}});
   expect(runtime.launchAdmission.snapshot().draining).toBe(true);
+  expect(runtime.appServerRunner.capabilities().worker_boot_id).toBe(runtime.launchAdmission.snapshot().boot_id);
+  await expect(runtime.appServerRunner.start({})).rejects.toThrow('worker_draining');
+  expect(await runtime.appServerRunner.maintenance()).toEqual({pending:0});
   await expect(runtime.orchestratorRunner.prepare({run_id:randomUUID(),task_id:randomUUID(),repo:'perfectuser21/cecelia'})).rejects.toThrow('worker_draining');
   expect(commands).toBe(0);expect(runtime.launchAdmission.snapshot().in_flight_launches).toBe(0);
   expect(await runtime.attemptRunner.maintenance()).toEqual({pending:0});expect(await runtime.scriptRunner.maintenance()).toEqual({pending:0});expect(await runtime.orchestratorRunner.maintenance()).toEqual({preparing:0,prepared:0,running_processes:0});

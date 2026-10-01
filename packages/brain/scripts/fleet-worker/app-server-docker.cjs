@@ -7,8 +7,9 @@ const ID = /^[a-f0-9]{64}$/;
 const NAME = /^cecelia-appserver-[a-f0-9-]{36}-g[1-9][0-9]*$/;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
-function createAppServerDocker({ run = promisify(execFile), env = process.env } = {}) {
+function createAppServerDocker({ run = promisify(execFile), env = process.env, assertCanLaunch = () => {} } = {}) {
   const command = async args => {
+    if (['create', 'start'].includes(args[0])) assertCanLaunch();
     try { return await run('docker', args, { encoding: 'utf8', timeout: 20000, maxBuffer: 1048576 }); }
     catch (error) {
       const absent = /^Error(?: response from daemon)?: No such (?:object|container):/m.test(error.stderr ?? '');
@@ -75,6 +76,7 @@ function createAppServerDocker({ run = promisify(execFile), env = process.env } 
         } catch { throw Error('appserver_attach_unconfirmed'); }
       }
       if (typeof host !== 'string' || !/^unix:\/\/\/[^\x00\r\n?#]+$/.test(host)) throw Error('appserver_attach_endpoint_denied');
+      assertCanLaunch();
       return attachUnixSocket(host.slice(7), id, deadline);
     },
   };

@@ -10,7 +10,7 @@ const BINDINGS = ['reservation_id', 'intent_id', 'launch_generation', 'machine_i
   'worker_boot_id', 'home_key', 'owner_key', 'config_digest', 'profile'];
 const ALLOWED = [...BINDINGS, 'container_id', 'challenge', 'stream_id'];
 
-function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profiles = {}, docker, assertLocalResources }) {
+function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profiles = {}, docker, assertLocalResources, assertCanLaunch = () => {} }) {
   fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
   const stat = fs.lstatSync(stateRoot);
   if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
@@ -110,11 +110,28 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
     return { ...state, status: container.status, oomKilled: container.oomKilled === true };
   }
   return {
+    async maintenance() {
+      try {
+        let pending = connections.size + pendingStreamCloses.size;
+        for (const filename of fs.readdirSync(root)) {
+          if (/^home-[a-f0-9]{64}\.json$/.test(filename)) {
+            const owner = read(filename); validate(owner);
+            if (!read(`${owner.reservation_id}.json`)) throw Error('unbound_home');
+            continue;
+          }
+          if (!UUID.test(filename.replace(/\.json$/, '')) || !filename.endsWith('.json')) throw Error('unknown_journal');
+          const state = read(filename); if (!state) throw Error("missing_journal"); validate(bindings(state));
+          if (state.status !== 'cleaned' || state.tombstoned !== true) pending++;
+        }
+        return { pending };
+      } catch { throw Error('worker_maintenance_unconfirmed'); }
+    },
     capabilities() {
       return { machine_id: machineId, worker_id: workerId, worker_boot_id: bootId,
         profiles: Object.fromEntries(Object.entries(profiles).map(([name, profile]) => [name, profileDigest(profile)])) };
     },
     async start(input) {
+      assertCanLaunch();
       return locked(input, async state => {
         if (state?.tombstoned) throw new Error('appserver_launch_tombstoned');
         if (state && state.status !== 'waiting_resources') return observe(state);
@@ -131,6 +148,7 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
           }
         };
         if (!await admit()) return state;
+        assertCanLaunch();
         if (!state.container_id) {
           state.status = 'launching'; save(state);
           state.container_id = await docker.create({ name: state.container_name, profile: state.profile_snapshot,
@@ -139,7 +157,9 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
           save(state);
         }
         if (!await admit()) return state;
+        assertCanLaunch();
         state.status = 'starting'; save(state);
+        assertCanLaunch();
         await docker.start(state.container_id);
         state.status = 'running'; save(state);
         return observe(state);
@@ -158,6 +178,7 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
       });
     },
     async attach(input, {deadline = Infinity} = {}) {
+      assertCanLaunch();
       if (!UUID.test(input.stream_id)) throw new Error('appserver_stream_identity_required');
       return locked(input, async state => {
         if (!state || state.tombstoned) throw new Error('appserver_launch_tombstoned');
@@ -166,8 +187,10 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
         if ((await observe(state)).status !== 'running') throw new Error('appserver_not_running');
         if (typeof assertLocalResources !== 'function') throw Error('appserver_local_resources_unavailable');
         await assertLocalResources(state.profile_snapshot);
+        assertCanLaunch();
         if (Date.now() >= deadline) throw Error('appserver_stream_ticket_expired');
         state.stream_id = input.stream_id; state.stream_status = 'attaching'; save(state);
+        assertCanLaunch();
         const raw = await docker.attach(state.container_id, { deadline });
         if (Date.now() >= deadline || raw.closed) { raw.kill(); throw Error('appserver_attach_unconfirmed'); }
         const child = createBoundedAppServerStream(raw);
