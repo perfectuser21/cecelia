@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { runCompanyKrProjection, readCompanySnapshot } from '../company-key-results.js';
+import { runCompanyKrProjection, readCompanySnapshot, ingestCompanyCurrent } from '../company-key-results.js';
 import { COMPANY_FORMULA, COMPANY_GOALS, COMPANY_KR_CATALOG, COMPANY_KR_DATABASE, companyMetric } from '../../lib/company-kr-metrics.js';
 
 function recoveryFixture(failure) {
@@ -63,5 +63,38 @@ describe('公司库列级投影门', () => {
     expect(fixture.pages[0].properties.Current.number).toBe(2);
     expect(pending).toMatchObject({ value: '1', actor: 'brain-notion-projection' });
     expect(fixture.task.result.metric_observations.some(e => e.kind === 'human_current_claim')).toBe(false);
+  });
+  it('重启后现场仍旧基线时保留未决尝试、较新观察并留账停推，禁止重发覆盖', async () => {
+    const fixture = recoveryFixture('response');
+    await expect(runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq: fixture.notionReq, now: 1000000 })).rejects.toThrow();
+    fixture.pages[0].properties.Current.number = 0;
+    fixture.rows[0].metadata.company_metric = companyMetric(0, 2, 5);
+    fixture.notionReq.mockClear();
+    for (let i = 0; i < 2; i++) await expect(runCompanyKrProjection({ ...fixture.pool }, { token: 'fake', notionReq: fixture.notionReq, now: 1300001 })).rejects.toThrow('未决');
+    expect(fixture.notionReq.mock.calls.some(([, , method]) => method === 'PATCH')).toBe(false);
+    expect(fixture.rows[0].metadata).toMatchObject({ company_metric: { current: '2' }, company_projection_pending: { value: '1' }, validation_state: 'verified_observation' });
+    expect(fixture.task.result.metric_observations.filter(e => e.kind === 'machine_projection_uncertain')).toHaveLength(1);
+  });
+  it('未决尝试存在时其它真人Current仍优先；旧机器值迟到不吞掉真人主张', async () => {
+    const fixture = recoveryFixture('response');
+    await expect(runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq: fixture.notionReq, now: 1000000 })).rejects.toThrow();
+    fixture.rows[0].metadata.company_metric = companyMetric(0, 2, 5);
+    fixture.pages[0].properties.Current.number = 3; fixture.pages[0].last_edited_by.id = 'human';
+    expect(await runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq: fixture.notionReq, now: 1300001 })).toMatchObject({ claims: 1, patched: 0 });
+    expect(fixture.rows[0].metadata).toMatchObject({ company_metric: { current: '3' }, company_projection_pending: { value: '1', superseded_by_human: true }, validation_state: 'unverified' });
+    fixture.pages[0].properties.Current.number = 1;
+    expect(await runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq: fixture.notionReq, now: 1600002 })).toMatchObject({ claims: 0, patched: 1 });
+    expect(fixture.rows[0].metadata).toMatchObject({ company_metric: { current: '3' }, validation_state: 'unverified' });
+    expect(fixture.pages[0].properties.Current.number).toBe(3);
+  });
+  it('另一进程先核对同一机器尝试时成功响应确认应幂等', async () => {
+    const fixture = recoveryFixture();
+    const notionReq = async (...args) => {
+      const page = await fixture.notionReq(...args);
+      if (args[2] === 'PATCH') await ingestCompanyCurrent(fixture.pool, 'kr-0', { page_id: page.id, current: page.properties.Current.number, updated_at: page.last_edited_time });
+      return page;
+    };
+    await expect(runCompanyKrProjection(fixture.pool, { token: 'fake', notionReq, now: 1000000 })).resolves.toMatchObject({ patched: 1, claims: 0 });
+    expect(fixture.task.result.metric_observations.filter(e => e.kind === 'machine_projection_confirmed')).toHaveLength(1);
   });
 });
