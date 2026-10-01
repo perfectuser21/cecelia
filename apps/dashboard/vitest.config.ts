@@ -13,7 +13,7 @@ export default defineConfig({
       deps: {
         // 让 react-markdown 走 vite transform 管道（应用下方 react alias），
         // 否则它会被 optimizeDeps 预打包并把根部 React 19 烘焙进去 → 与 dashboard React 18 撞车
-        inline: [/react-markdown/, /remark-/, /micromark/, /mdast/, /hast/, /unist/, /vfile/, /unified/, /property-information/, /space-separated-tokens/, /comma-separated-tokens/, /html-url-attributes/, /devlop/, /trim-lines/, /decode-named-character-reference/, /character-entities/, /ccount/, /escape-string-regexp/, /markdown-table/, /zwitch/, /longest-streak/, /bail/, /is-plain-obj/, /extend/, /estree-util-is-identifier-name/],
+        inline: [/react-router/, /lucide-react/, /react-markdown/, /remark-/, /micromark/, /mdast/, /hast/, /unist/, /vfile/, /unified/, /property-information/, /space-separated-tokens/, /comma-separated-tokens/, /html-url-attributes/, /devlop/, /trim-lines/, /decode-named-character-reference/, /character-entities/, /ccount/, /escape-string-regexp/, /markdown-table/, /zwitch/, /longest-streak/, /bail/, /is-plain-obj/, /extend/, /estree-util-is-identifier-name/],
       },
     },
   },
@@ -26,7 +26,10 @@ export default defineConfig({
       // 与组件用的 React 18 撞车 → "Objects are not valid as a React child"。
       react: path.resolve(__dirname, 'node_modules/react'),
       'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
+      'react-router-dom': path.resolve(__dirname, 'node_modules/react-router-dom/dist/index.js'),
+      'react-router': path.resolve(__dirname, '../../node_modules/react-router/dist/index.js'),
+      'lucide-react': path.resolve(__dirname, '../../node_modules/lucide-react/dist/esm/lucide-react.js'),
     },
-    dedupe: ['react', 'react-dom'],
+    dedupe: ['react', 'react-dom', 'react-router-dom'],
   },
 });
