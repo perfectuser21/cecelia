@@ -1,0 +1,32 @@
+import {randomUUID} from 'node:crypto';
+import {readFileSync,existsSync} from 'node:fs';
+import pg from 'pg';
+import {beforeAll,afterAll,it,expect} from 'vitest';
+import {DB_DEFAULTS} from '../../../db-config.js';
+import {importLegacyPolicy} from '../../../execution-directory/store.js';
+import {LEGACY_BINDINGS} from '../../../execution-directory/legacy-policy.js';
+const options=process.env.TEST_DATABASE_URL?{connectionString:process.env.TEST_DATABASE_URL}:DB_DEFAULTS;
+if(!/_(scratch|test)$/.test(process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_URL).pathname:DB_DEFAULTS.database))throw Error('scratch/test database required');
+const schema=`app_auth_${process.pid}_${randomUUID().replaceAll('-','')}`;
+const admin=new pg.Client(options),pool=new pg.Pool({...options,max:4,options:`-c search_path=${schema},public`});
+let version;
+beforeAll(async()=>{
+ await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
+ await pool.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');
+  CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT);
+  CREATE TABLE capacity_reservations(id UUID PRIMARY KEY);
+  CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);`);
+ for(const [,id,name]of LEGACY_BINDINGS)await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')",[id,name]);
+ await pool.query(readFileSync(new URL('../../../../migrations/503_execution_directory.sql',import.meta.url),'utf8'));
+ await pool.query("ALTER TABLE execution_grants DROP CONSTRAINT execution_grants_surface_check;ALTER TABLE execution_grants ADD CONSTRAINT execution_grants_surface_check CHECK(surface IN ('harness','legacy_executor','managed_script','app_server'))");
+ await importLegacyPolicy({pool,env:{FLEET_WORKER_US_MAC_M4_URL:'http://mmv:5231',FLEET_WORKER_XIAN_MAC_M1_URL:'http://m1:5231',FLEET_WORKER_XIAN_MAC_M4_URL:'http://m4:5231'}});
+ version=(await pool.query("SELECT current_version_id FROM execution_nodes WHERE canonical_id='xian-mac-m1'")).rows[0].current_version_id;
+ const migration=new URL('../../../../migrations/508_app_server_authorizations.sql',import.meta.url);
+ if(existsSync(migration))await pool.query(readFileSync(migration,'utf8'));
+});
+afterAll(async()=>{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();});
+it('Mac legacy版本不能绕过验收直接激活聊天授权，原18+2保持不变',async()=>{
+ const query=pool.query("INSERT INTO execution_grants(node_version_id,surface,provider,account_id,repo_scope,profile_id,provenance,state) VALUES($1,'app_server','codex','team1',ARRAY['perfectuser21/cecelia'],'chat','legacy_policy','active')",[version]);
+ await expect(query).rejects.toThrow('appserver_authorization_required');
+ expect((await pool.query("SELECT count(*)::int AS n FROM execution_grants WHERE surface IN ('harness','legacy_executor')")).rows[0].n).toBe(20);
+});
