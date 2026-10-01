@@ -33,7 +33,6 @@ zj-staging-guardrail-smoke.sh
 # === 需要 xian 远端机器 ===
 harness-xian-spawn-smoke.sh
 xian-bridge-health-smoke.sh
-xian-generator-routing-smoke.sh
 
 # === 需要真实 Fleet Worker、Runner 与角色 Provider ===
 unified-work-router-role-chain-smoke.sh

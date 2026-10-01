@@ -126,7 +126,6 @@ harness-evaluator-gate-smoke.sh
 harness-gear-smoke.sh
 harness-lifecycle-gates-smoke.sh
 harness-ping-smoke.sh
-harness-planner-async-smoke.sh
 harness-planner-v8-smoke.sh
 harness-protocol-smoke.sh
 harness-report-mjs-smoke.sh
