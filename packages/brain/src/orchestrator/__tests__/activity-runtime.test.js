@@ -13,7 +13,7 @@ const activity = (key, order, overrides = {}) => ({ key, order, budget: { max_du
 const grouped = (key, order, when) => activity(key, order, { phase: 'per_item',
   per_item: { group: 'records', items: '$.records', input: 'record', identity: 'id', ...(when ? { when } : {}) } });
 
-async function run(activities, extraInput = {}) {
+async function run(activities, extraInput = {}, cancel = false) {
   const cwd = await mkdtemp(join(tmpdir(), 'cecelia-activity-'));
   await copyFile(fixture, join(cwd, 'activity.mjs'));
   const trace = join(cwd, 'trace.jsonl');
@@ -27,7 +27,16 @@ async function run(activities, extraInput = {}) {
     child.stderr.on('data', chunk => { stderr += chunk; });
     child.stdin.on('error', () => {});
     child.stdin.end(JSON.stringify({ contract: { workflow: 'offline-example', activities }, input }));
-    const code = await new Promise(resolve => child.on('close', resolve));
+    const finished = new Promise(resolve => child.on('close', resolve));
+    if (cancel) {
+      for (let i = 0; i < 100; i++) {
+        try { if ((await readFile(trace, 'utf8')).includes('safe-stop')) break; } catch {}
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+      child.kill('SIGTERM');
+    }
+    const code = await finished;
     const parse = async path => JSON.parse(await readFile(path, 'utf8'));
     let result = null, durable = null, events = [], pid = null;
     try { result = JSON.parse(stdout); } catch {}
@@ -116,6 +125,29 @@ describe('opt-in契约CLI真实子进程闭环', () => {
     expect(r.pid).toBeGreaterThan(0);
     expect(() => process.kill(r.pid, 0)).toThrow();
     expect(r.result.outputs.cleanup).toBe(true);
+  }, 10000);
+  test.each(['fatal', 'needs_human'])('%s即使continue也停主链且不重试', async action => {
+    const r = await run([activity(action, 1, { on_failure: 'continue', max_attempts: 2 }),
+      activity('deliver', 2), activity('finalize', 3, { phase: 'finalize' })]);
+    expect(r.code, r.stderr).toBe(2);
+    expect(r.events.map(x => x.action)).toEqual([action, 'finalize']);
+  });
+  test('未声明failure类别即使continue也停主链', async () => {
+    const a = activity('partial', 1, { on_failure: 'continue' }); a.failure = { ...failure, retryable: [] };
+    const r = await run([a, activity('deliver', 2), activity('finalize', 3, { phase: 'finalize' })]);
+    expect(r.code, r.stderr).toBe(2);
+    expect(r.events.map(x => x.action)).toEqual(['partial', 'finalize']);
+    expect(r.result.activities[0].reason_code).toBe('undeclared_failure_class');
+  });
+  test('取消仅通知活动根，子动作在安全边界自行退出并保留JSON，然后finalize', async () => {
+    const r = await run([activity('safe-stop', 1, { cleanup_grace_s: 1 }), activity('deliver', 2),
+      activity('finalize', 3, { phase: 'finalize' })], {}, true);
+    expect(r.code, r.stderr).toBe(2);
+    expect(r.events.some(x => x.action === 'child_term')).toBe(false);
+    expect(r.events.filter(x => !x.cleanup).map(x => x.action)).toEqual(['safe-stop', 'finalize']);
+    expect(r.result.outputs.fragments).toEqual([{ id: 'safely-retained' }]);
+    expect(r.result.activities[0].attempts[0].reason_code).toBe('run_cancelled');
+    expect(r.durable).toEqual(r.result);
   }, 10000);
   test.each([
     ['legacy shell说明不是JSON协议', a => { delete a.runtime.protocol; }],

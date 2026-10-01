@@ -19,9 +19,9 @@ if (action === 'inspect') {
 } else if (action === 'deliver') {
   result.outputs.delivered = input.fragments;
   result.metrics.delivered = input.fragments.length;
-} else if (action === 'partial' || action === 'fatal') {
+} else if (action === 'partial' || action === 'fatal' || action === 'needs_human') {
   result.status = 'partial';
-  result.failure_class = action === 'fatal' ? 'fatal' : 'retryable';
+  result.failure_class = action === 'partial' ? 'retryable' : action;
   result.outputs.fragments = [{ id: 'retained', owner: 'partial' }];
   finish(2);
 } else if (action === 'retry') {
@@ -40,6 +40,20 @@ if (action === 'inspect') {
   writeFileSync(input.child_pid, String(child.pid));
   process.on('SIGTERM', () => {});
   setInterval(() => {}, 100);
+} else if (action === 'safe-stop') {
+  const child = spawn(process.execPath, ['-e', `
+    const fs = require('node:fs');
+    const trace = process.argv[1];
+    process.on('SIGTERM', () => { fs.appendFileSync(trace, JSON.stringify({action:'child_term'})+'\\n'); process.exit(0); });
+    const timer = setInterval(() => {
+      if (fs.existsSync(trace+'.stop')) { clearInterval(timer); process.exit(0); }
+    }, 20);
+  `, input.trace], { stdio: 'ignore' });
+  process.on('SIGTERM', () => { trace({ cleanup: true }); writeFileSync(input.trace + '.stop', 'stop'); });
+  child.on('close', () => {
+    result.status = 'partial'; result.failure_class = 'retryable';
+    result.outputs.fragments = [{ id: 'safely-retained' }]; finish(2);
+  });
 } else if (action === 'finalize') {
   result.outputs.cleanup = true;
 } else if (action === 'wrongrun') {
@@ -47,4 +61,4 @@ if (action === 'inspect') {
 } else if (action === 'malformed') {
   process.stdout.write('noise\n');
 }
-if (!['partial', 'fatal', 'timeout', 'hang'].includes(action) && !(action === 'retry' && input.attempt === 1)) finish();
+if (!['partial', 'fatal', 'needs_human', 'timeout', 'hang', 'safe-stop'].includes(action) && !(action === 'retry' && input.attempt === 1)) finish();
