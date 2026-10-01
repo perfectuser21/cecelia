@@ -29,6 +29,10 @@ fail() { echo "  FAIL: $1"; FAILED=1; }
 command -v jq >/dev/null 2>&1 || { echo "FATAL: jq 未安装"; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo "FATAL: curl 未安装"; exit 1; }
 
+# 隔离实例必须保持被动；生产实例继续验证计数与时间推进。
+RUNTIME_BODY="$(curl -sf "$BRAIN_URL/api/brain/health")"
+ISOLATED="$(echo "$RUNTIME_BODY" | jq -r '.runtime.isolated == true')"
+
 # 1) GET /api/brain/observer/state — 返回 200 + 必需字段齐全
 echo "[1/3] GET /api/brain/observer/state 验关键字段"
 STATE_BODY="$(curl -sf -w '\nHTTP_STATUS:%{http_code}\n' "$BRAIN_URL/api/brain/observer/state" 2>&1)" || {
@@ -43,6 +47,28 @@ if [ "$HTTP_CODE" = "200" ]; then
   pass "HTTP 200"
 else
   fail "HTTP $HTTP_CODE (期望 200)"
+  exit 1
+fi
+
+if [ "$ISOLATED" = "true" ]; then
+  echo "$RUNTIME_BODY" | jq -e '.runtime.background_automation == false' >/dev/null \
+    || { fail '隔离实例后台自动化未禁用'; exit 1; }
+  assert_passive() {
+    echo "$1" | jq -e 'has("run_count") and has("last_run_at") and
+      has("alertness") and has("health") and has("resources") and
+      .run_count == 0 and .last_run_at == null and
+      .alertness == null and .health == null and .resources == null' >/dev/null \
+      || { fail '被动实例不应执行 Observer 后台采样'; exit 1; }
+  }
+  assert_passive "$JSON_BODY"
+  sleep "$SLEEP_S"
+  assert_passive "$(curl -sf "$BRAIN_URL/api/brain/observer/state")"
+  curl -sf "$BRAIN_URL/api/brain/observer/health" \
+    | jq -e '.healthy == false and .reason == "never_run"' >/dev/null \
+    || { fail '未运行的 Observer 不得伪报健康'; exit 1; }
+  pass '被动实例在采样窗口内保持从未运行'
+  echo '✅ E1 Observer Runner Flow smoke PASSED'
+  exit 0
 fi
 
 INITIAL_RUN_COUNT="$(echo "$JSON_BODY" | jq -r '.run_count // empty')"
