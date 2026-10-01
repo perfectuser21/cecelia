@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MachinesPage from './MachinesPage';
@@ -17,13 +17,23 @@ let detailError: boolean, submitError: boolean, retryError: boolean, holdSubmit:
 let releaseSubmit: (() => void) | undefined;
 let holdHistory: boolean, machinesError: boolean;
 let releaseHistory: (() => void) | undefined;
+const machine = (name: string, location: string, extra: Record<string, unknown> = {}) => ({
+  id: name, name, description: '', status: 'active', tailscale_online: false, tailscale_last_seen: null,
+  metadata: { physical_location: location, services: [], deprecated: [], ...extra }, conflicts: [], updated_at: new Date().toISOString(),
+});
+let machines: ReturnType<typeof machine>[];
+let holdMachines: boolean;
+let releaseMachines: (() => void) | undefined;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
 beforeEach(() => {
-  history = []; current = { ...queued }; submissions = []; holdHistory = false; machinesError = false;
+  machines = []; holdMachines = false; history = []; current = { ...queued }; submissions = []; holdHistory = false; machinesError = false;
   detailError = false; submitError = false; retryError = false; holdSubmit = false;
   vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
-    if (url === '/api/brain/machines') return machinesError ? json({}, 503) : json([]);
+    if (url === '/api/brain/machines') {
+      if (holdMachines) await new Promise<void>(resolve => { releaseMachines = resolve; });
+      return machinesError ? json({}, 503) : json(machines);
+    }
     if (url === base && options?.method === 'POST') {
       submissions.push({ body: JSON.parse(String(options.body)), key: new Headers(options.headers).get('Idempotency-Key') });
       if (holdSubmit) await new Promise<void>(resolve => { releaseSubmit = resolve; });
@@ -33,7 +43,7 @@ beforeEach(() => {
       if (holdHistory) await new Promise<void>(resolve => { releaseHistory = resolve; });
       return json({ items: history });
     }
-    if (url === `${base}/request-1/retry`) return retryError ? json({ error: 'Internal failure' }, 409) : json(queued);
+    if (url === `${base}/request-1/retry` || url === `${base}/request-failed/retry`) return retryError ? json({ error: 'Internal failure' }, 409) : json(queued);
     if (url === `${base}/request-1`) return detailError ? json({ error: 'Internal failure' }, 502) : json(current);
     throw new Error(`Unexpected request: ${url}`);
   }));
@@ -171,6 +181,87 @@ describe('设备页接入新机器', () => {
     current = { ...queued, status: 'completed', notice: '节点监控已接入；清理默认为观察模式，执行任务能力需另行验收' };
     await tick();
     expect(screen.getByText(current.notice!)).toBeInTheDocument();
+  });
+
+  it('展示所有地区并保持现有地区优先排序', async () => {
+    machines = ['other', 'CN', 'HK', 'US', 'Xian', 'Europe'].map(loc => machine(`node-${loc}`, loc));
+    mount(); await screen.findByRole('button', { name: /node-US/ });
+    for (const node of machines) expect(screen.getByRole('button', { name: new RegExp(node.name) })).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { level: 2 }).map(item => item.textContent?.trim())).toEqual([
+      '🇺🇸 美国', '🇭🇰 香港', '西安', '🇨🇳 中国大陆', '其他', 'Europe',
+    ]);
+  });
+  it('刷新期间保留表单，失败重提仍使用原幂等键', async () => {
+    mount(); const submit = await openForm(); fillForm(); submitError = true;
+    fireEvent.click(submit); await screen.findByRole('alert');
+    holdMachines = true; fireEvent.click(screen.getByRole('button', { name: '刷新' }));
+    expect(screen.getByLabelText('机器名称', { exact: true })).toHaveValue('node-1');
+    await act(async () => releaseMachines?.());
+    submitError = false; fireEvent.click(screen.getByRole('button', { name: '开始接入' }));
+    await screen.findByRole('link', { name: '查看任务' });
+    expect(submissions).toHaveLength(2);
+    expect(submissions[1].key).toBe(submissions[0].key);
+  });
+  it('恢复最近5个完成记录及说明且不重复刷新设备', async () => {
+    history = Array.from({ length: 7 }, (_, index) => ({ ...queued, id: `done-${index}`, machine_name: `done-${index}`, status: 'completed', notice: `验收说明${index}` }));
+    mount(); fireEvent.click(await screen.findByRole('button', { name: '接入新机器' }));
+    expect(await screen.findByText('验收说明0')).toBeInTheDocument();
+    expect(screen.getAllByText('接入完成')).toHaveLength(5);
+    expect(screen.queryByText('验收说明5')).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/brain/machines')).toHaveLength(1);
+  });
+  it('其他请求轮询成功不会抹掉重试操作错误', async () => {
+    history = [queued, { ...queued, id: 'request-failed', machine_name: 'failed-node', status: 'failed' }];
+    vi.useFakeTimers(); await act(async () => { mount(); });
+    retryError = true;
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '重试接入' })); });
+    expect(screen.getByRole('alert')).toHaveTextContent('重试接入失败');
+    await tick(); expect(screen.getByRole('alert')).toHaveTextContent('重试接入失败');
+  });
+  it.each(['a', 'Node-1', 'node_1', 'node.1'])('拦截不符合后端契约的机器名称 %s', async name => {
+    mount(); const submit = await openForm(); fillForm();
+    fireEvent.change(screen.getByLabelText('机器名称', { exact: true }), { target: { value: name } });
+    fireEvent.click(submit);
+    expect(await screen.findByRole('alert')).toHaveTextContent('2–63 位小写字母');
+    expect(submissions).toHaveLength(0);
+  });
+  it.each(['a'.repeat(33), 'user$'])('拦截不符合后端契约的 SSH 用户 %s', async user => {
+    mount(); const submit = await openForm(); fillForm();
+    fireEvent.change(screen.getByLabelText('SSH 用户', { exact: true }), { target: { value: user } });
+    fireEvent.click(submit);
+    expect(await screen.findByRole('alert')).toHaveTextContent('SSH 用户');
+    expect(submissions).toHaveLength(0);
+  });
+  it('已验收节点根据真实健康采样显示纳管与执行状态', async () => {
+    machines = [machine('healthy-node', 'US', { onboarding: { state: 'managed' }, node_health: {
+      observed_at: new Date(Date.now() - 20_000).toISOString(), capabilities: { collector: true, janitor: true, execution: false },
+    } })];
+    mount(); const card = await screen.findByRole('button', { name: /healthy-node/ });
+    expect(within(card).getByLabelText('健康采样有效')).toBeInTheDocument();
+    expect(within(card).getByText('监控纳管')).toBeInTheDocument();
+    expect(within(card).getByText('执行未启用')).toBeInTheDocument();
+    expect(within(card).getByText(/健康采样：.*秒前/)).toBeInTheDocument();
+    expect(screen.getByText('1 台监控健康')).toBeInTheDocument();
+  });
+  it('陈旧采样提示健康过期，不能假报在线或归因为离线', async () => {
+    machines = [machine('stale-node', 'HK', { onboarding: { state: 'managed' }, node_health: {
+      observed_at: new Date(Date.now() - 600_000).toISOString(), capabilities: { collector: true, janitor: true, execution: false },
+    } })];
+    mount(); const card = await screen.findByRole('button', { name: /stale-node/ });
+    expect(within(card).getByLabelText('健康数据已过期')).toBeInTheDocument();
+    expect(within(card).getByText(/健康采样：.*分钟前/)).toBeInTheDocument();
+    expect(screen.queryByText('1 台监控健康')).not.toBeInTheDocument();
+    expect(within(card).queryByText(/离线/)).not.toBeInTheDocument();
+  });
+  it('页面停留期间健康采样会自然转为过期', async () => {
+    vi.useFakeTimers();
+    machines = [machine('aging-node', 'US', { onboarding: { state: 'managed' }, node_health: {
+      observed_at: new Date(Date.now() - 290_000).toISOString(), capabilities: { collector: true, janitor: true, execution: false },
+    } })];
+    await act(async () => { mount(); });
+    expect(screen.getByLabelText('健康采样有效')).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(screen.getByLabelText('健康数据已过期')).toBeInTheDocument();
   });
 
 });
