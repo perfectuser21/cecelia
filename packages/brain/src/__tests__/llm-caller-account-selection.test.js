@@ -1,3 +1,6 @@
+vi.mock('child_process', async original => ({ ...await original(), spawn: vi.fn(() => { throw new Error('测试禁止启动真实模型进程'); }) }));
+// 本文件显式模拟模型网络与凭据，独立测试 provider 行为；真实隔离由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertLiveLLMAllowed: () => {} }));
 /**
  * llm-caller-account-selection.test.js
  *
@@ -103,19 +106,18 @@ describe('llm-caller accountId 传递给 bridge（ACS 系列）', () => {
     expect(requestBody.configDir).toBeUndefined();
   });
 
-  it('ACS3: selectBestAccount 返回 null 时，使用 fallback accountId', async () => {
+  it('ACS3: 无可用账号时拒绝，不回落到 account1', async () => {
     mockSelectBestAccount.mockResolvedValue(null);
-
-    await callLLM('thalamus', '测试 prompt');
-
-    expect(mockFetch).toHaveBeenCalled();
-    const callArgs = mockFetch.mock.calls[0];
-    const requestBody = JSON.parse(callArgs[1].body);
-
-    // null 时使用 fallback_account（account1），避免 Bridge 无 CLAUDE_CONFIG_DIR 报 "Not logged in"
-    expect(requestBody.accountId).toBe('account1');
-    expect(requestBody.configDir).toBeUndefined();
+    await expect(callLLM('thalamus', '测试 prompt')).rejects.toMatchObject({ code: 'LLM_ACCOUNT_UNAVAILABLE' });
+    expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  it('ACS4: 账号状态查询失败时拒绝，不猜测默认账号', async () => {
+    mockSelectBestAccount.mockRejectedValue(new Error('account store unavailable'));
+    await expect(callLLM('thalamus', '测试 prompt')).rejects.toMatchObject({ code: 'LLM_ACCOUNT_UNAVAILABLE' });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
 });
 
 describe('llm-caller 图片视觉支持（VB 系列）', () => {

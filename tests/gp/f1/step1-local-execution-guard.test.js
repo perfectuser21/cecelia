@@ -1,3 +1,5 @@
+// 此执行器测试注入模拟传输；真实隔离入口由 runtime-isolation.test.js 验证。
+vi.mock('../../../packages/brain/src/runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {} }));
 // F1「工厂 · 开发闭环」步骤 1 —— 边：调度器机器不许自己把活接下来干
 //
 // ── 事故（2026-09-12 全天追查，handoff 202609122045）──

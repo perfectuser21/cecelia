@@ -1,3 +1,10 @@
+// Fleet传输、凭据、数据库和执行进程在本文件注入模拟；隔离策略由专用runtime回归验证。
+vi.mock('../../db.js', () => ({ default: { query: vi.fn(async () => ({ rows: [] })) } }));
+vi.mock('../../runtime-safety.js', async (importOriginal) => ({
+  ...await importOriginal(),
+  assertExternalExecutionAllowed: () => {},
+}));
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { buildRealDeps } from '../run.js';
@@ -32,6 +39,14 @@ function buildTestDeps(overrides = {}) {
     resolveRepoHead: vi.fn(async () => BASE_SHA),
     loadCredential: vi.fn(async () => testCredentialPayload()),
     resolveGitHubToken: vi.fn(async () => 'github-pat-for-production-wiring-test'),
+    // 准入失败/账号冷缓存也不得落到真实告警持久化或宿主凭据探测。
+    isAccountUsable: vi.fn(async () => true),
+    emitAlert: vi.fn(async () => {}),
+    onPreflightBlocked: vi.fn(async () => {}),
+    onFailurePersistenceFailed: vi.fn(async () => {}),
+    fetchFn: vi.fn(async () => { throw new Error('unexpected unmocked fetch'); }),
+    spawnDetached: vi.fn(async () => { throw new Error('unexpected unmocked spawn'); }),
+    removeContainer: vi.fn(async () => { throw new Error('unexpected unmocked removal'); }),
     ...overrides,
   });
 }

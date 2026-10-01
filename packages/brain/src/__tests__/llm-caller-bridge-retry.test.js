@@ -1,3 +1,6 @@
+vi.mock('child_process', async original => ({ ...await original(), spawn: vi.fn(() => { throw new Error('测试禁止启动真实模型进程'); }) }));
+// 本文件显式模拟模型网络与凭据，独立测试 provider 行为；真实隔离由 runtime-isolation.test.js 验证。
+vi.mock('../runtime-safety.js', () => ({ assertLiveLLMAllowed: () => {} }));
 /**
  * Test: callClaudeViaBridge Bridge 500 重试逻辑
  * 验证 Bridge 返回 500 时自动重试，而不是立即抛出错误
