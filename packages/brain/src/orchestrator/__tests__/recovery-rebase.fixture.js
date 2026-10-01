@@ -57,4 +57,3 @@ export function fixture({ activeRun = null, predecessorTask = taskId } = {}) {
   };
   return { pool: { connect: async () => client }, input, deps, calls, request };
 }
-
