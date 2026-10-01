@@ -131,10 +131,10 @@ def resources(state):
     return result
 
 
-def collect(state, node_id, sequence):
+def collect(state, node_id, sequence, boot_id):
     return {'schema_version': 1, 'node_id': node_id, 'agent_version': '1',
             'observed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            'sequence': sequence, 'hostname': socket.gethostname(), 'os': platform.system().lower(),
+            'sequence': sequence, 'boot_id': boot_id, 'hostname': socket.gethostname(), 'os': platform.system().lower(),
             'resources': resources(state),
             'capabilities': {'collector': True, 'janitor': True, 'execution': False},
             'janitor': inspect_cache(state)}
@@ -146,6 +146,7 @@ def serve(home, node_id):
     with os.fdopen(fd, 'w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         sequence = 0
+        boot_id = str(uuid.uuid4())
         health = state / 'health.json'
         if health.is_symlink():
             raise ValueError('健康文件不允许软链')
@@ -156,7 +157,7 @@ def serve(home, node_id):
             sequence = int(previous.get('sequence', 0))
         while True:
             sequence += 1
-            atomic_json(health, collect(state, node_id, sequence))
+            atomic_json(health, collect(state, node_id, sequence, boot_id))
             time.sleep(10)
 
 

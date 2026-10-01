@@ -20,7 +20,7 @@ export function validateRequest(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('INVALID_REQUEST');
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
   const dns = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
-  if (!uuid.test(value.id) || !/^[a-z][a-z0-9-]{0,62}$/.test(value.name)
+  if (!uuid.test(value.id) || !/^[a-z0-9][a-z0-9-]{1,62}$/.test(value.name)
     || typeof value.address !== 'string' || !(isIP(value.address) || dns.test(value.address))
     || !/^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$/.test(value.ssh_user)
     || !Number.isInteger(value.ssh_port) || value.ssh_port < 1 || value.ssh_port > 65535
@@ -35,7 +35,7 @@ export function validateRequest(value) {
 export function verifySample(sample, request, probe, previous, now = Date.now()) {
   const h = sample?.health; const s = sample?.service; const observed = Date.parse(h?.observed_at);
   if (s?.enabled !== true || s.active !== true || h?.schema_version !== 1 || h.node_id !== request.id
-    || h.agent_version !== '1' || h.hostname !== probe.hostname || h.os !== probe.os
+    || h.agent_version !== '1' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(h.boot_id) || h.hostname !== probe.hostname || h.os !== probe.os
     || !Number.isSafeInteger(h.sequence) || h.sequence < 1 || !Number.isFinite(observed)
     || now - observed > 90000 || observed - now > 30000
     || h.capabilities?.collector !== true || h.capabilities?.janitor !== true || h.capabilities?.execution !== false
@@ -45,7 +45,7 @@ export function verifySample(sample, request, probe, previous, now = Date.now())
   }
   if (h.resources.memory_total_bytes <= 0 || h.resources.cpu_cores < 1 || h.resources.disk_total_bytes <= 0
     || h.resources.memory_available_bytes > h.resources.memory_total_bytes || h.resources.disk_free_bytes > h.resources.disk_total_bytes) fail('VERIFY_FAILED');
-  if (previous && (h.sequence <= previous.sequence || observed <= Date.parse(previous.observed_at))) fail('VERIFY_FAILED');
+  if (previous && (h.boot_id !== previous.boot_id || h.sequence <= previous.sequence || observed <= Date.parse(previous.observed_at))) fail('VERIFY_FAILED');
   return h;
 }
 
