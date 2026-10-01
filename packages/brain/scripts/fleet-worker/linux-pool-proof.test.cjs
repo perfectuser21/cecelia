@@ -33,8 +33,8 @@ function fixture() {
   }
   const calls=[];
   const deps={getuid:()=>0,readText:async filename=>{if(!(filename in files))throw Object.assign(Error(),{code:'ENOENT'});return files[filename];},
-    readlink:async p=>p==='/proc/1/exe'?'/usr/lib/systemd/systemd':'cgroup:[4026531835]',
-    statfs:async()=>({bsize:4096n,blocks:10000000n,bfree:8000000n,bavail:7000000n}),
+    readlink:async p=>p==='/proc/1/exe'?'/usr/lib/systemd/systemd':p.split('/').at(-1)+':[4026531835]',
+    statfs:async()=>({type:0x63677270n,bsize:4096n,blocks:10000000n,bfree:8000000n,bavail:7000000n}),
     runCommand:async(command,args)=>{
       calls.push({command,args});
       if(command==='/usr/bin/systemd-detect-virt')throw Object.assign(Error(),{code:1,stdout:'none\n'});
@@ -69,6 +69,16 @@ describe('Linux真实执行池证明',()=>{
     ['池允许额外swap',f=>{f.files['/sys/fs/cgroup'+cg+'/memory.swap.max']='max';}],
     ['容器中systemd冒充完整宿主',f=>{const run=f.deps.runCommand;f.deps.runCommand=(c,a)=>c==='/usr/bin/systemd-detect-virt'?Promise.resolve({stdout:'lxc\n'}):run(c,a);}],
     ['PID1不是systemd',f=>{const readlink=f.deps.readlink;f.deps.readlink=p=>p==='/proc/1/exe'?Promise.resolve('/usr/bin/node'):readlink(p);}],
+    ['宿主PID namespace不匹配',f=>{const link=f.deps.readlink;f.deps.readlink=p=>p==='/proc/self/ns/pid'?Promise.resolve('pid:[9999]'):link(p);}],
+    ['宿主挂载namespace不匹配',f=>{const link=f.deps.readlink;f.deps.readlink=p=>p==='/proc/self/ns/mnt'?Promise.resolve('mnt:[9999]'):link(p);}],
+    ['cgroup祖先被tmpfs覆盖',f=>{f.files['/proc/self/mountinfo']+='31 30 0:29 / /sys/fs/cgroup/cecelia.slice rw - tmpfs tmpfs rw\n';}],
+    ['实际文件系统不是cgroup2',f=>{f.deps.statfs=async()=>({type:0x1021994n,bsize:4096n,blocks:10000n,bfree:8000n,bavail:7000n});}],
+    ['追加CAP_SYS_ADMIN',f=>{f.container.HostConfig.CapAdd=['SYS_ADMIN'];}],
+    ['宿主PID共享',f=>{f.container.HostConfig.PidMode='host';}],
+    ['宿主IPC共享',f=>{f.container.HostConfig.IpcMode='host';}],
+    ['宿主UTS共享',f=>{f.container.HostConfig.UTSMode='host';}],
+    ['关闭seccomp',f=>{f.container.HostConfig.SecurityOpt.push('seccomp=unconfined');}],
+    ['关闭apparmor',f=>{f.container.HostConfig.SecurityOpt.push('apparmor=unconfined');}],
     ['未知状态',f=>{f.container.State.Running=false;}],
   ])('%s保守拒绝',async(_name,modify)=>{
     const f=fixture();modify(f);await expect(collectLinuxPoolProof(f)).rejects.toThrow('linux_pool_proof_unavailable');
@@ -87,5 +97,26 @@ describe('Linux真实执行池证明',()=>{
     const proof=await collectLinuxPoolProof(f);
     expect(proof.cpu_cores).toBe(0.25);expect(proof.memory_limit_bytes).toBe(268435456);
     expect(proof.memory_available_bytes).toBe(163577856);expect(proof.pids_limit).toBe(64);
+  });
+  it('祖先在采集中收紧CPU/内存/cpuset/PID任一限制则拒绝旧证明',async()=>{
+    for(const [file,value] of [['cpu.max','10000 100000'],['memory.max','134217728'],['cpuset.cpus.effective','0'],['pids.max','8']]) {
+      const f=fixture(),read=f.deps.readText;
+      f.files['/sys/fs/cgroup/cecelia.slice/pids.max']='128';
+      f.deps.readText=async filename=>{
+        const text=await read(filename);
+        if(filename==='/sys/fs/cgroup/cecelia.slice/pids.current')f.files['/sys/fs/cgroup/cecelia.slice/'+file]=value;
+        return text;
+      };
+      await expect(collectLinuxPoolProof(f)).rejects.toThrow('linux_pool_proof_unavailable');
+    }
+  });
+  it('Docker daemon在采集期间更换时拒绝旧端点证明',async()=>{
+    const f=fixture(),run=f.deps.runCommand;let reads=0;
+    f.deps.runCommand=async(c,a)=>{
+      const result=await run(c,a);
+      if(a[0]==='info'&&++reads>1){const info=JSON.parse(result.stdout);info.ID='replacement';return {stdout:JSON.stringify(info)};}
+      return result;
+    };
+    await expect(collectLinuxPoolProof(f)).rejects.toThrow('linux_pool_proof_unavailable');
   });
 });

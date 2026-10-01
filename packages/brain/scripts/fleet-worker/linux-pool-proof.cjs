@@ -29,8 +29,10 @@ function verifyContainer(value,expected,profile,imageId) {
     ||h?.CgroupParent!==profile.cgroup_parent||h.Privileged!==false||h.ReadonlyRootfs!==true||h.NetworkMode!=='none'
     ||!Array.isArray(value.Mounts)||value.Mounts.length!==0
     ||!Array.isArray(h.CapDrop)||h.CapDrop.length!==1||h.CapDrop[0]!=='ALL'
-    ||!Array.isArray(h.SecurityOpt)||!h.SecurityOpt.includes('no-new-privileges')
-    ||['Binds','Devices','DeviceRequests'].some(key=>h[key]!=null&&(!Array.isArray(h[key])||h[key].length))
+    ||!Array.isArray(h.SecurityOpt)||h.SecurityOpt.length!==1||h.SecurityOpt[0]!=='no-new-privileges'
+    ||['Binds','Devices','DeviceRequests','CapAdd'].some(key=>h[key]!=null&&(!Array.isArray(h[key])||h[key].length))
+    ||['PidMode','UTSMode','UsernsMode'].some(key=>h[key]!=null&&!['','private'].includes(h[key]))
+    ||h.IpcMode!=null&&!['','private'].includes(h.IpcMode)
     ||!Number.isSafeInteger(h.NanoCpus)||h.NanoCpus<=0||h.NanoCpus>profile.pool.cpu_cores*1e9
     ||!Number.isSafeInteger(h.Memory)||h.Memory<=0||h.Memory>profile.pool.memory_bytes||h.MemorySwap!==h.Memory
     ||!Number.isSafeInteger(h.PidsLimit)||h.PidsLimit<=0||h.PidsLimit>profile.pool.pids_limit)fail();
@@ -44,7 +46,17 @@ async function collectLinuxPoolProof({profile:input,expected,deps={}}) {
       ||typeof expected.name!=='string'||!/^cecelia-pool-canary-[a-z0-9-]{1,80}$/.test(expected.name)
       ||!expected.labels||typeof expected.labels!=='object'||Array.isArray(expected.labels)
       ||!Object.keys(expected.labels).length||Object.entries(expected.labels).some(([k,v])=>!k.startsWith('cecelia.pool.')||typeof v!=='string'||!v||v.length>256))fail();
-    const read=deps.readText??readBounded,readlink=deps.readlink??fs.readlink;
+    const rawRead=deps.readText??readBounded,readlink=deps.readlink??fs.readlink;
+    const staticFiles=new Map();
+    const read=async filename=>{
+      const track=/\/(?:cpu\.max|memory\.max|memory\.high|memory\.swap\.max|cpuset\.cpus\.effective|pids\.max)$/.test(filename)
+        ||filename==='/sys/devices/system/cpu/online';
+      let value;
+      try{value=await rawRead(filename);}catch(error){if(!track||error.code!=='ENOENT')throw error;value=null;}
+      if(track){if(staticFiles.has(filename)&&staticFiles.get(filename)!==value)fail();staticFiles.set(filename,value);}
+      if(value===null)throw Object.assign(Error(),{code:'ENOENT'});
+      return value;
+    };
     const run=deps.runCommand??((command,args)=>promisify(execFile)(command,args,{shell:false,timeout:5000,maxBuffer:65536,
       env:{PATH:'/usr/bin:/bin',HOME:'/',DOCKER_HOST:profile.docker_host}}));
     if(!['/usr/lib/systemd/systemd','/lib/systemd/systemd'].includes(await readlink('/proc/1/exe')))fail();
@@ -56,9 +68,13 @@ async function collectLinuxPoolProof({profile:input,expected,deps={}}) {
     const docker=async args=>(await run('/usr/bin/docker',args)).stdout;
     const boot=(await read('/proc/sys/kernel/random/boot_id')).trim();
     if(!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(boot))fail();
-    const hostNamespace=await readlink('/proc/1/ns/cgroup');
-    if(!/^cgroup:\[\d+\]$/.test(hostNamespace)||(await readlink('/proc/self/ns/cgroup'))!==hostNamespace)fail();
-    const info=JSON.parse(await docker(['info','--format','{{json .}}']));
+    const namespaces={};
+    for(const kind of ['cgroup','pid','mnt']) {
+      namespaces[kind]=await readlink('/proc/1/ns/'+kind);
+      if(!new RegExp('^'+kind+':\\[\\d+\\]$').test(namespaces[kind])||await readlink('/proc/self/ns/'+kind)!==namespaces[kind])fail();
+    }
+    const getInfo=async()=>JSON.parse(await docker(['info','--format','{{json .}}']));
+    const info=await getInfo();
     if(info.CgroupDriver!=='systemd'||info.CgroupVersion!=='2'||typeof info.ID!=='string'||!info.ID||info.ID.length>256
       ||typeof info.DockerRootDir!=='string'||!info.DockerRootDir.startsWith('/')||info.DockerRootDir.includes('\0'))fail();
     const poolPath=(await run('/usr/bin/systemctl',['show','--property=ControlGroup','--value',profile.cgroup_parent])).stdout.trim();
@@ -77,6 +93,12 @@ async function collectLinuxPoolProof({profile:input,expected,deps={}}) {
     const poolMembership='0::'+poolPath+'\n';
     const hierarchy=locateHierarchy(poolMembership,mounts,'memory');
     if(hierarchy.version!==2||!hierarchy.rootVisible||hierarchy.mount!=='/sys/fs/cgroup')fail();
+    for(const line of mounts.trim().split('\n')) {
+      const mount=line.split(' - ')[0].split(' ')[4]?.replace(/\\(040|011|012|134)/g,(_,octal)=>String.fromCharCode(parseInt(octal,8)));
+      if(mount?.startsWith(hierarchy.mount+'/'))fail();
+    }
+    const statfs=deps.statfs??(filename=>fs.statfs(filename,{bigint:true}));
+    for(const ancestor of hierarchy.paths)if((await statfs(ancestor)).type!==0x63677270n)fail();
     const directory=hierarchy.paths[0];
     const poolLimits=async()=>({cpu:await read(directory+'/cpu.max'),memory:await read(directory+'/memory.max'),
       swap:await read(directory+'/memory.swap.max'),pids:await read(directory+'/pids.max')});
@@ -98,13 +120,22 @@ async function collectLinuxPoolProof({profile:input,expected,deps={}}) {
       const available=used>limit?0n:limit-used;pidsAvailable=pidsAvailable<available?pidsAvailable:available;
     }
     if((await read('/proc/sys/kernel/random/boot_id')).trim()!==boot
-      ||await readlink('/proc/1/ns/cgroup')!==hostNamespace||await readlink('/proc/self/ns/cgroup')!==hostNamespace
       ||await read('/proc/'+pid+'/cgroup')!==membership||pidIdentity(await read('/proc/'+pid+'/stat'),pid)!==birth
       ||await inspect()!==pid||JSON.stringify(await poolLimits())!==JSON.stringify(limits)
       ||await read('/proc/self/mountinfo')!==mounts)fail();
+    for(const kind of Object.keys(namespaces))if(await readlink('/proc/1/ns/'+kind)!==namespaces[kind]
+      ||await readlink('/proc/self/ns/'+kind)!==namespaces[kind])fail();
+    for(const [filename,value] of staticFiles){
+      let current;
+      try{current=await rawRead(filename);}catch(error){if(error.code!=='ENOENT')throw error;current=null;}
+      if(current!==value)fail();
+    }
+    const finalInfo=await getInfo();
+    if(['ID','DockerRootDir','CgroupDriver','CgroupVersion'].some(key=>finalInfo[key]!==info[key]))fail();
+    for(const ancestor of hierarchy.paths)if((await statfs(ancestor)).type!==0x63677270n)fail();
     return {schema_version:'linux-pool-proof/v1',execution:false,pool_verified:true,
       machine_registry_id:profile.machine_registry_id,config_digest:profile.config_digest,
-      host_boot_id:boot,host_cgroup_namespace:hostNamespace,daemon_id:info.ID,container_id:expected.container_id,
+      host_boot_id:boot,host_cgroup_namespace:namespaces.cgroup,daemon_id:info.ID,container_id:expected.container_id,
       container_pid:pid,container_start_time:birth,cgroup_parent:profile.cgroup_parent,cgroup_parent_path:poolPath,
       observed_at:observation.observed_at,cpu_cores:observation.cpu_cores,memory_limit_bytes:observation.memory_limit_bytes,
       memory_available_bytes:observation.memory_available_bytes,pids_limit:Number(pidsLimit),pids_available:Number(pidsAvailable),
