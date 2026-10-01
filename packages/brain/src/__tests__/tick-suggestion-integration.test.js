@@ -92,9 +92,31 @@ vi.mock('../goal-evaluator.js', () => ({
 vi.mock('../desire/index.js', () => ({ runDesireSystem: vi.fn().mockResolvedValue({}) }));
 vi.mock('../rumination.js', () => ({ runRumination: vi.fn().mockResolvedValue({}) }));
 
+// 真实 executeTick 保留；仅隔离会访问机器、凭据或外部服务的边界。
+vi.mock('../heartbeat-inspector.js', () => ({
+  HEARTBEAT_INTERVAL_MS: 30 * 60 * 1000,
+  runHeartbeatInspection: vi.fn().mockResolvedValue({ skipped: false, actions_count: 0 }),
+}));
+vi.mock('../zombie-sweep.js', () => ({
+  zombieSweep: vi.fn().mockResolvedValue({ worktrees: { removed: 0 }, processes: { killed: 0 }, lock_slots: { removed: 0 } }),
+}));
+vi.mock('../zombie-cleaner.js', () => ({ runZombieCleanup: vi.fn().mockResolvedValue({ slotsReclaimed: 0, worktreesRemoved: 0 }) }));
+vi.mock('../harness-worktree.js', () => ({ cleanupStaleHarnessWorktrees: vi.fn().mockResolvedValue({ cleaned: 0 }) }));
+vi.mock('../active-goals-zero-trigger.js', () => ({ maybeTriggerStrategySession: vi.fn().mockResolvedValue({ created: false }) }));
+vi.mock('../orphan-pr-worker.js', () => ({ scanOrphanPrs: vi.fn().mockResolvedValue({ scanned: 0, merged: 0, labeled: 0, closed: 0 }) }));
+vi.mock('../credential-expiry-checker.js', () => Object.fromEntries([
+  'checkAndAlertExpiringCredentials', 'recoverAuthQuarantinedTasks', 'scanAuthLayerHealth',
+  'cleanupDuplicateRescueTasks', 'cancelCredentialAlertTasks',
+].map(name => [name, vi.fn().mockResolvedValue({ alerted: 0, recovered: 0, cancelled: 0 })])));
+vi.mock('../shepherd.js', () => ({
+  shepherdOpenPRs: vi.fn().mockResolvedValue({ scanned: 0 }),
+  reconcileTerminalOpenPRs: vi.fn().mockResolvedValue({ scanned: 0 }),
+}));
+
 // ── 导入被测函数 ──────────────────────────────────────────────────────────────
 
 import { executeTriage, cleanupExpiredSuggestions } from '../suggestion-triage.js';
+import { tickState } from '../tick-state.js';
 
 // ── 测试 ──────────────────────────────────────────────────────────────────────
 
@@ -108,6 +130,9 @@ describe('Tick Suggestion Integration (v2 — L1 架构)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    tickState.lastHeartbeatTime = 0;
+    tickState.lastZombieSweepTime = 0;
+    tickState.lastZombieCleanupTime = 0;
   });
 
   test('fixture 外部边界阻止真实清理、凭据读取和网络调用', async () => {
@@ -132,6 +157,13 @@ describe('Tick Suggestion Integration (v2 — L1 架构)', () => {
 
       expect(result.success).toBe(true);
       expect(executeTriage).not.toHaveBeenCalled();
+      for (const [path, name] of [
+        ['../heartbeat-inspector.js', 'runHeartbeatInspection'],
+        ['../zombie-sweep.js', 'zombieSweep'],
+        ['../zombie-cleaner.js', 'runZombieCleanup'],
+        ['../harness-worktree.js', 'cleanupStaleHarnessWorktrees'],
+        ['../active-goals-zero-trigger.js', 'maybeTriggerStrategySession'],
+      ]) expect((await import(path))[name], `${path}:${name}`).toHaveBeenCalledTimes(1);
     }, 60000);
 
     test('tick 不调用 cleanupExpiredSuggestions', async () => {
