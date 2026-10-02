@@ -106,8 +106,11 @@ async function reuseConcurrentSnapshot(pool,q,checkMain,conflict,waitMs){
     // 人改映射/父级不能被一次CAS重试掩盖；此函数只读，不执行返回的接力计划。
     await preparePilotManifestAdvance(pool,q);
     const snapshot=await exportImplementationSnapshot(pool,q);
+    if(Date.now()>=deadline)throw conflict;
     if(snapshot.scope!==q.scope||snapshot.repo!==q.repo||snapshot.revision!==q.revision)throw conflict;
-    if(snapshot.status==='verified'&&snapshot.gaps.length===0){await checkMain();return snapshot;}
+    if(snapshot.status==='verified'&&snapshot.gaps.length===0){
+      await checkMain();if(Date.now()>=deadline)throw conflict;return snapshot;
+    }
     if(snapshot.gaps.some(g=>!['manifest_source_mismatch','scope_manifest_missing','definition_snapshot_missing'].includes(g.code)))throw conflict;
     const remaining=deadline-Date.now();if(remaining<=0)break;
     await new Promise(resolve=>setTimeout(resolve,Math.min(50,remaining)));
