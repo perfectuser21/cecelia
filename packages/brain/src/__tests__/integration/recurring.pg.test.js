@@ -35,7 +35,7 @@ beforeAll(async () => {
   await importLegacyPolicy({ pool, env: { FLEET_WORKER_XIAN_MAC_M1_URL: 'http://fixture:5231' } });
   await pool.query("INSERT INTO phone_registry(serial,nickname,host,profile,douyin_accounts,enabled) VALUES($1,'expiry fixture',$2,$3,$4,true)", [phone.serial, phone.host, phone.profile, JSON.stringify([{ id: 'fixture', current: true }])]);
   await seedHistorical(); // Real 508 task/lease, before 513; no historical owner backfill.
-  await applyPhoneScheduleMigration(pool, '513_phone_scheduled_slots');
+  await applyPhoneScheduleMigration(pool, '517_phone_scheduled_slots');
   // Fixture-only creation hook: never UPDATE a phone payload or disable a guard.
   await pool.query(`CREATE FUNCTION fixture_phone_expiry() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.payload ? 'phone_schedule' THEN NEW.payload:=NEW.payload||jsonb_build_object('expires_at','${expired}');NEW.created_at:=now()-interval '2 hours';END IF;RETURN NEW;END $$;
     CREATE TRIGGER fixture_phone_expiry BEFORE INSERT ON tasks FOR EACH ROW EXECUTE FUNCTION fixture_phone_expiry()`);

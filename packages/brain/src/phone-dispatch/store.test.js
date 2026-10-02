@@ -21,7 +21,7 @@ it('HTTP binding迁移不补写既有508 lease，不创建grant或改当前节�
  const before=(await pool.query('SELECT * FROM phone_dispatches WHERE id=$1',[r.id])).rows[0];
  const grants=(await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows;
  const nodes=(await pool.query('SELECT * FROM execution_nodes ORDER BY canonical_id')).rows;
- await pool.query(readFileSync(new URL('../../migrations/511_phone_http_bindings.sql',import.meta.url),'utf8'));
+ await pool.query(readFileSync(new URL('../../migrations/515_phone_http_bindings.sql',import.meta.url),'utf8'));
  expect((await pool.query('SELECT * FROM phone_dispatches WHERE id=$1',[r.id])).rows[0]).toEqual(before);
  expect((await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows).toEqual(grants);
  expect((await pool.query('SELECT * FROM execution_nodes ORDER BY canonical_id')).rows).toEqual(nodes);
@@ -54,7 +54,7 @@ beforeAll(async()=>{
   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'fixture-worker','fixture-boot',$13)`,[id,taskId,reservation,serial,machine,host,profile,account,version,grant,lease,execution,'f'.repeat(64)]);
  const capture=async()=>({row:(await pool.query('SELECT * FROM phone_dispatches WHERE id=$1',[id])).rows[0],grants:(await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows,nodes:(await pool.query('SELECT * FROM execution_nodes ORDER BY canonical_id')).rows});
  migrationBefore=await capture();
- const httpLeaseMigration=new URL('../../migrations/512_phone_http_leases.sql',import.meta.url);if(existsSync(httpLeaseMigration))await pool.query(readFileSync(httpLeaseMigration,'utf8'));
+ const httpLeaseMigration=new URL('../../migrations/516_phone_http_leases.sql',import.meta.url);if(existsSync(httpLeaseMigration))await pool.query(readFileSync(httpLeaseMigration,'utf8'));
  migrationAfter=await capture();
  const {createPhoneDispatchStore}=await import('./store.js');store=createPhoneDispatchStore({pool,afterTask:async()=>{}});
 });

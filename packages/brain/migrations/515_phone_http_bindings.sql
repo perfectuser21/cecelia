@@ -23,4 +23,4 @@ BEGIN
 END $$;
 CREATE TRIGGER phone_http_endpoint_guard BEFORE INSERT OR UPDATE ON execution_node_versions
  FOR EACH ROW EXECUTE FUNCTION phone_http_endpoint_guard();
-INSERT INTO schema_version(version,description,applied_at) VALUES('511','Phone HTTP read-only immutable hub and physical identity binding',now()) ON CONFLICT(version) DO NOTHING;
+INSERT INTO schema_version(version,description,applied_at) VALUES('515','Phone HTTP read-only immutable hub and physical identity binding',now()) ON CONFLICT(version) DO NOTHING;

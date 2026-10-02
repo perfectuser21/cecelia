@@ -39,4 +39,4 @@ END $$;
 -- Existing 508 guard already makes every new identity column immutable on UPDATE.
 CREATE TRIGGER phone_http_lease_identity_guard BEFORE INSERT OR UPDATE ON phone_dispatches
  FOR EACH ROW EXECUTE FUNCTION guard_phone_http_lease_identity();
-INSERT INTO schema_version(version,description,applied_at) VALUES('512','Historical immutable phone HTTP lease snapshots; execution remains disconnected',now()) ON CONFLICT(version) DO NOTHING;
+INSERT INTO schema_version(version,description,applied_at) VALUES('516','Historical immutable phone HTTP lease snapshots; execution remains disconnected',now()) ON CONFLICT(version) DO NOTHING;

@@ -24,7 +24,7 @@ beforeAll(async()=>{
  for(const [,id,name]of LEGACY_BINDINGS)await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active') ON CONFLICT(id) DO NOTHING",[id,`C7 fixture ${name}`]);
  await importLegacyPolicy({pool,env:{FLEET_WORKER_XIAN_MAC_M1_URL:'http://fixture-m1:5231'}});
  await pool.query("INSERT INTO phone_registry(serial,nickname,host,profile,douyin_accounts,enabled) VALUES($1,'C7 fixture',$2,$3,$4,true)",[phone.serial,phone.host,phone.profile,JSON.stringify([{id:phone.account_id,current:true}])]);
- await seedOldLease();await applyPhoneScheduleMigration(pool,'513_phone_scheduled_slots');legacyAfter=await captureLegacy();
+ await seedOldLease();await applyPhoneScheduleMigration(pool,'517_phone_scheduled_slots');legacyAfter=await captureLegacy();
  store=await import('./schedule-store.js');
 },180000);
 afterAll(async()=>{if(pool)await pool.end();await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();},30000);

@@ -47,7 +47,7 @@ export async function createPhoneClaimFixture(onPool, { busyLegacy = false, work
       CREATE TABLE device_locks(device_name TEXT PRIMARY KEY,locked_by TEXT);`);
     await applyPhoneScheduleMigration(pool, '509_headed_task_takeover');
   }
-  await applyPhoneScheduleMigration(pool, '513_phone_scheduled_slots');
+  await applyPhoneScheduleMigration(pool, '517_phone_scheduled_slots');
   await pool.query(`CREATE FUNCTION fixture_worker_payload() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.payload ? 'phone_schedule' THEN NEW.payload:=NEW.payload||'{"parallel_worker":true,"pipeline":"canvas","canonical":"exploratory"}'::jsonb;NEW.created_at:=now()-interval '1 hour';END IF;RETURN NEW;END $$;
     CREATE TRIGGER fixture_worker_payload BEFORE INSERT ON tasks FOR EACH ROW EXECUTE FUNCTION fixture_worker_payload()`);
   const now = new Date(); now.setSeconds(10, 0); const due = new Date(now); due.setSeconds(0, 0);

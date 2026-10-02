@@ -19,7 +19,7 @@ beforeAll(async()=>{
  await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
  pool=new pg.Pool({...DB_DEFAULTS,max:1,connectionTimeoutMillis:500,options:`-c search_path=${schema}`});holder.pool=pool;
  expect((await pool.query('SELECT current_database() db,current_schema() schema')).rows[0]).toEqual({db:DB_DEFAULTS.database,schema});
- await createPhoneScheduleSchema(pool);await applyPhoneScheduleMigration(pool,'513_phone_scheduled_slots');
+ await createPhoneScheduleSchema(pool);await applyPhoneScheduleMigration(pool,'517_phone_scheduled_slots');
  await pool.query(`ALTER TABLE tasks ADD COLUMN assigned_to TEXT,ADD COLUMN queued_at TIMESTAMPTZ DEFAULT now(),ADD COLUMN started_at TIMESTAMPTZ,ADD COLUMN error_message TEXT,ADD COLUMN status_history JSONB;
  ALTER TABLE recurring_tasks ADD COLUMN created_at TIMESTAMPTZ DEFAULT now(),ADD COLUMN executor TEXT;
  CREATE TABLE working_memory(key TEXT PRIMARY KEY,value_json JSONB,updated_at TIMESTAMPTZ DEFAULT now());`);

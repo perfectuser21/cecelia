@@ -96,4 +96,4 @@ END $$;
 CREATE CONSTRAINT TRIGGER phone_scheduled_task_commit AFTER INSERT ON tasks DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION verify_phone_schedule_commit();
 CREATE CONSTRAINT TRIGGER phone_scheduled_slot_commit AFTER INSERT ON phone_scheduled_slots DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION verify_phone_schedule_commit();
 CREATE CONSTRAINT TRIGGER phone_scheduled_owner_commit AFTER INSERT ON phone_task_owners DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION verify_phone_schedule_commit();
-INSERT INTO schema_version(version,description) VALUES('513','受信phone定时slot、真实路由回执与queued早期owner保护') ON CONFLICT(version) DO NOTHING;
+INSERT INTO schema_version(version,description) VALUES('517','受信phone定时slot、真实路由回执与queued早期owner保护') ON CONFLICT(version) DO NOTHING;
