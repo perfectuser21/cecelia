@@ -1,34 +1,33 @@
-import {execFileSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
-import {fileURLToPath} from 'node:url';
-import {readFileSync} from 'node:fs';
 import pg from 'pg';
 import {beforeAll,afterAll,it,expect,vi} from 'vitest';
 import {DB_DEFAULTS} from '../db-config.js';
+import {createPhoneScheduleSchema,applyPhoneScheduleMigration} from '../__tests__/fixtures/phone-schedule-schema.js';
 import {importLegacyPolicy} from '../execution-directory/store.js';
 import {LEGACY_BINDINGS} from '../execution-directory/legacy-policy.js';
 import {PHONE_SCHEDULE_REGISTRY_AUTHORITY} from './task-authority.js';
 const holder=vi.hoisted(()=>({pool:null}));
 vi.mock('../db.js',()=>({default:{query:(...a)=>holder.pool.query(...a),connect:(...a)=>holder.pool.connect(...a)}}));
 vi.mock('../task-updater.js',()=>({broadcastTaskState:vi.fn()}));
-const dbName=`phone_schedule_${process.pid}_${randomUUID().replaceAll('-','')}`;
-const admin=new pg.Client({...DB_DEFAULTS,database:'postgres'});
+const schema=`phone_schedule_${process.pid}_${randomUUID().replaceAll('-','')}`;
+if(DB_DEFAULTS.database!=='cecelia_scratch'&&!(process.env.CI==='true'&&/_(test)$/.test(DB_DEFAULTS.database)))throw Error('phone_schedule_fixture_scratch_required');
+const admin=new pg.Client(DB_DEFAULTS);
 let pool,store,legacyBefore,legacyAfter;
 const phone={machine_id:'xian-mac-m1',serial:`fixture-${process.pid}`,host:'xian-m1',profile:'fixture-profile',account_id:'fixture-account',action:'adb_get_state'};
 const auth={registryAuthority:PHONE_SCHEDULE_REGISTRY_AUTHORITY};
 const now=new Date();now.setSeconds(10,0);const due=new Date(now);due.setSeconds(0,0);
 beforeAll(async()=>{
- await admin.connect();await admin.query(`CREATE DATABASE ${dbName}`);
- const setup=new pg.Client({...DB_DEFAULTS,database:dbName});await setup.connect();await setup.query("CREATE TABLE schema_version(version VARCHAR(10) PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ DEFAULT now());INSERT INTO schema_version(version,description) VALUES('513','isolated fixture: defer new migration until historical lease exists')");await setup.end();
- execFileSync(process.execPath,['src/migrate.js'],{cwd:fileURLToPath(new URL('../../',import.meta.url)),env:{...process.env,NODE_ENV:'test',DB_NAME:dbName,DB_HOST:DB_DEFAULTS.host,DB_PORT:String(DB_DEFAULTS.port),DB_USER:DB_DEFAULTS.user,DB_PASSWORD:DB_DEFAULTS.password},stdio:'pipe'});
- pool=new pg.Pool({...DB_DEFAULTS,database:dbName,max:8});holder.pool=pool;
+ await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
+ pool=new pg.Pool({...DB_DEFAULTS,max:8,options:`-c search_path=${schema}`});holder.pool=pool;
+ const location=(await pool.query('SELECT current_database() database,current_schema() schema')).rows[0];expect(location).toEqual({database:DB_DEFAULTS.database,schema});process.stdout.write(`phone_schedule_fixture_location ${JSON.stringify(location)}\n`);
+ await createPhoneScheduleSchema(pool);
  for(const [,id,name]of LEGACY_BINDINGS)await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active') ON CONFLICT(id) DO NOTHING",[id,`C7 fixture ${name}`]);
  await importLegacyPolicy({pool,env:{FLEET_WORKER_XIAN_MAC_M1_URL:'http://fixture-m1:5231'}});
  await pool.query("INSERT INTO phone_registry(serial,nickname,host,profile,douyin_accounts,enabled) VALUES($1,'C7 fixture',$2,$3,$4,true)",[phone.serial,phone.host,phone.profile,JSON.stringify([{id:phone.account_id,current:true}])]);
- await seedOldLease();await pool.query("DELETE FROM schema_version WHERE version='513'");await pool.query(readFileSync(new URL('../../migrations/513_phone_scheduled_slots.sql',import.meta.url),'utf8'));legacyAfter=await captureLegacy();
+ await seedOldLease();await applyPhoneScheduleMigration(pool,'513_phone_scheduled_slots');legacyAfter=await captureLegacy();
  store=await import('./schedule-store.js');
 },180000);
-afterAll(async()=>{if(pool)await pool.end();await admin.query(`DROP DATABASE IF EXISTS ${dbName}`);await admin.end();},30000);
+afterAll(async()=>{if(pool)await pool.end();await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();},30000);
 async function captureLegacy(){return {dispatch:(await pool.query('SELECT * FROM phone_dispatches WHERE serial=$1',[phone.serial])).rows[0],task:(await pool.query('SELECT * FROM tasks WHERE id=(SELECT task_id FROM phone_dispatches WHERE serial=$1)',[phone.serial])).rows[0],grants:(await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows};}
 async function seedOldLease(){
  const old=(await pool.query('SELECT v.* FROM execution_nodes n JOIN execution_node_versions v ON v.id=n.current_version_id WHERE n.canonical_id=$1',[phone.machine_id])).rows[0];const version=randomUUID(),grant=randomUUID(),task=randomUUID(),dispatch=randomUUID(),reservation=randomUUID(),execution=randomUUID();
