@@ -166,4 +166,18 @@ describe('受管脚本真实容器证明',()=>{
     const f=scriptFixture();mutate(f);await expect(collect(f)).rejects.toThrow('linux_script_proof_unavailable');
     expect(f.calls.some(c=>['create','start','rm','stop','update'].includes(c.args[0]))).toBe(false);
   });
+  it.each([
+    ['input',f=>delete f.identity.execution_grant_id],
+    ['host_identity',f=>f.expectedDaemonId='wrong'],
+    ['container_contract',f=>f.container.HostConfig.Privileged=true],
+    ['cgroup_ownership',f=>f.files['/proc/2314/cgroup']='0::/foreign'],
+    ['resource_sampling',f=>f.files['/proc/meminfo']='invalid'],
+    ['final_stability',f=>{const read=f.deps.readText;let n=0;f.deps.readText=p=>p==='/proc/2314/stat'&&++n>1?Promise.resolve('changed'):read(p);}]
+  ])('%s拒绝保留旧错误码，只暴露内部固定阶段',async(stage,mutate)=>{
+    const f=scriptFixture();mutate(f);let failure;
+    try{await collect(f);}catch(e){failure=e;}
+    expect(failure?.message).toBe('linux_script_proof_unavailable');
+    expect(require('./linux-pool-proof.cjs').readProofFailureStage(failure)).toBe(stage);
+  });
+
 });
