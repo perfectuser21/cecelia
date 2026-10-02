@@ -13,7 +13,7 @@ describe('网站功能清单', () => {
     }
     expect(screen.getByText('249')).toBeVisible();
     expect(screen.getByText(/可用数是已验收下限/)).toBeVisible();
-    expect(screen.getByText(/2026-10-01/)).toBeVisible();
+    expect(screen.getByText(/^盘点 2026-10-01/)).toBeVisible();
     expect(screen.getByText(/配置变更闭环增加 1 项/)).toBeVisible();
   });
 

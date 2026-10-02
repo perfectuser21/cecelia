@@ -24,7 +24,7 @@ export function buildCoreNavigation(): NavGroup[] {
           entry('/system/feature-map', '架构图', 'Network'),
           entry('/test-pyramid', '测试质量', 'Triangle'),
           entry('/traces', '调用追踪', 'Route'),
-          entry('/ledger', '功能账本', 'ClipboardList'),
+          entry('/website-functions', '网站功能', 'ClipboardList'),
           entry('/workbench/activity', '活动记录', 'History'),
           entry('/knowledge/dev-log', '开发日志', 'FileText'),
           entry('/cecelia/growth', '成长档案', 'Sprout'),
