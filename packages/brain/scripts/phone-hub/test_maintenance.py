@@ -22,6 +22,13 @@ class MaintenanceTest(unittest.TestCase):
         self.assertFalse(self.read()['quiescent'])
         self.journal.end_activity(token)
         self.assertTrue(self.read()['quiescent'])
+    def test_marker_native_generation_returned_for_whole_round_comparison(self):
+        self.marker.write_text('drain');first=self.read()
+        native=self.marker.stat();identity=first['marker_identity']
+        self.assertEqual(identity['ino'],str(native.st_ino));self.assertEqual(identity['mtime_ns'],str(native.st_mtime_ns))
+        self.assertTrue(identity['boot_id']);self.assertIsInstance(identity['ctime_ns'],str)
+        self.marker.rename(self.root/'previous');self.marker.write_text('drain')
+        second=self.read();self.assertNotEqual(identity,second['marker_identity'])
     def test_real_fork_activity_mutation_during_scan_revokes_quiescence(self):
         self.marker.write_text('drain')
         def mutate():

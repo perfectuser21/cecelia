@@ -4,6 +4,7 @@ import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
+import {markerFixture} from './fixtures.js';
 const require=createRequire(import.meta.url),source=fileURLToPath(new URL('.',import.meta.url));
 async function configuredFixture(run){
  const {SOURCE_FILES,buildManifest}=require('./configuration.cjs');
@@ -61,7 +62,7 @@ it('维护自身只读探测不伪造外部活动竞态',async()=>{
    const t=f.targets[0];return {code:0,stdout:JSON.stringify({schema:'phone-physical-probe/v1',request_nonce:JSON.parse(input).request_nonce,
     machine_id:t.machine_id,worker_id:t.worker_id,physical_boot_id:t.physical_boot_id,config_digest:t.config_digest,build_digest:t.build_digest,action_digest:t.action_digest,action:'adb_get_state',
     resources:{cpu_count:4,memory_total_bytes:8000000000,memory_free_bytes:1000000000,load_1m:0.2,data_free_bytes:1000000000},adb_daemon:{reachable:true},external_locks:{occupied:0},
-    maintenance:{draining:true,stable:true,quiescent:true,pending:0,in_flight:0,activity_revision:2},observed_at:new Date().toISOString()})};
+    maintenance:{draining:true,stable:true,quiescent:true,pending:0,in_flight:0,activity_revision:2,marker_identity:markerFixture},observed_at:new Date().toISOString()})};
   };
   const runtime=await createRuntime({configPath:f.configPath,tokenPath:f.tokenPath,sourceRoot:f.installed,runControl:f.control,runProbe});
   expect((await runtime.maintenance()).quiescent).toBe(true);

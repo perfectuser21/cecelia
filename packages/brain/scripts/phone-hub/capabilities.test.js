@@ -1,10 +1,11 @@
 import {it,expect} from 'vitest';
 import {createRequire} from 'node:module';
 import {execFileSync,spawn} from 'node:child_process';
+import {markerFixture} from './fixtures.js';
 const require=createRequire(import.meta.url),digest='a'.repeat(64);
 const target={machine_id:'fixture-machine',worker_id:'fixture-worker',physical_boot_id:'fixture-observed-boot',config_digest:digest,build_digest:digest,action_digest:digest,ssh:{host:'fixture-host',user:'administrator',port:22}};
 const observation=()=>({machine_id:target.machine_id,worker_id:target.worker_id,physical_boot_id:target.physical_boot_id,config_digest:digest,build_digest:digest,action:'adb_get_state',action_digest:digest,
- resources:{cpu_count:4,memory_total_bytes:8000000000,memory_free_bytes:1000000000,load_1m:0.2,data_free_bytes:1000000000},adb_daemon:{reachable:true},external_locks:{occupied:0},maintenance:{draining:true,stable:true,pending:0,in_flight:0,activity_revision:0,quiescent:true},observed_at:new Date().toISOString()});
+ resources:{cpu_count:4,memory_total_bytes:8000000000,memory_free_bytes:1000000000,load_1m:0.2,data_free_bytes:1000000000},adb_daemon:{reachable:true},external_locks:{occupied:0},maintenance:{draining:true,stable:true,pending:0,in_flight:0,activity_revision:0,quiescent:true,marker_identity:markerFixture},observed_at:new Date().toISOString()});
 function realFixture(value,record=[]){return async(file,args,input)=>{
  record.push({file,args,input});
  const script='const r=JSON.parse(process.argv[1]);process.stdout.write(JSON.stringify({schema:"phone-physical-probe/v1",request_nonce:r.request_nonce,...JSON.parse(process.argv[2])}));';
