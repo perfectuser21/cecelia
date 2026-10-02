@@ -1,4 +1,4 @@
-import {LINUX_POOL_AUTHORITY} from '../linux-pool/task-authority.js';
+import {LINUX_POOL_AUTHORITY} from './task-authority.js';
 import {it,expect} from 'vitest';
 import {routeWork} from '../work-router.js';
 import {createRoutedTask} from '../work-routing-store.js';
