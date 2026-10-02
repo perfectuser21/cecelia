@@ -85,13 +85,18 @@ export function normalizeSpan(raw, index) {
 }
 
 export async function writeSpans(pool, rows) {
+  // 按实际冲突键固定取锁顺序；保存输入序号供响应恢复调用者的顺序。
+  const ordered = rows.map((row, index) => ({ row, index, key: JSON.stringify(row.occurrence_key === null
+    ? [row.params[0], 'legacy', row.params[3] || row.params[2] || row.params[4], row.params[5]]
+    : [row.params[0], 'occurrence', row.occurrence_key]) }))
+    .sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : a.index - b.index);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const ids = [];
-    for (const row of rows) {
+    const inserted = [];
+    for (const { row, index } of ordered) {
       const result = await client.query(row.occurrence_key === null ? LEGACY_SQL : OCCURRENCE_SQL, row.params);
-      if (result.rows.length) ids.push(result.rows[0].id);
+      if (result.rows.length) inserted.push({ id: result.rows[0].id, index });
       else if (row.occurrence_key !== null) {
         // INSERT等待竞争事务后，下一条READ COMMITTED查询读取获胜者，不覆盖执行事实。
         const existing = (await client.query('SELECT payload_sha256 FROM spans WHERE run_id=$1 AND occurrence_key=$2',
@@ -102,6 +107,7 @@ export async function writeSpans(pool, rows) {
       }
     }
     await client.query('COMMIT');
+    const ids = inserted.sort((a, b) => a.index - b.index).map(row => row.id);
     return { inserted: ids.length, skipped: rows.length - ids.length, count: rows.length, ids };
   } catch (error) { await client.query('ROLLBACK'); throw error; }
   finally { client.release(); }
