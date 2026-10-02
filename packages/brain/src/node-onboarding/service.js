@@ -10,7 +10,7 @@ import {
 const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const META = "payload->'node_onboarding'";
 const PROBE_INTERVAL_MS = 120_000;
-const taskCreator = async args => (await import('../actions.js')).createTask(args);
+const taskCreator = async (args, internal) => (await import('../actions.js')).createTask(args, internal);
 
 export function createOnboardingService({ pool, createTask = taskCreator, config = {}, now = () => new Date(), execution=createLinuxOnboardingFlow({pool,createTask}) }) {
   const present=async task=>onboardingView(task,now(),task.payload.node_onboarding.execution_task_id?await execution.view(task.payload.node_onboarding.execution_task_id):undefined);
@@ -181,7 +181,7 @@ export function createOnboardingService({ pool, createTask = taskCreator, config
     return transaction(async db => {
       await lock(db, id);
       const previous = await latest(db, id);
-      if(previous.payload.node_onboarding.execution_task_id){await execution.retry(previous.payload.node_onboarding.execution_task_id);return present(previous);}
+      if(previous.payload.node_onboarding.execution_task_id){const resumed=await execution.retry(previous.payload.node_onboarding.execution_task_id,db);if(resumed?.task_id)previous.payload.node_onboarding.execution_task_id=resumed.task_id;return present(previous);}
       if (!['failed', 'cancelled'].includes(onboardingView(previous, now()).status)) throw enrollmentError('进行中或已完成的接入不能重复启动', 409);
       const meta = previous.payload.node_onboarding;
       if (meta.adoption) {

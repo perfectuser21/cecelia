@@ -33,7 +33,7 @@
 - [x] [BEHAVIOR] required smoke合同：T1/F4精确十三执行器并核手机独立收口；script保留471历史名单并叠加508精确增量；手机身份smoke在allowlist唯一登记，永久执行真实Node合同块及完整script shell回归。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/__tests__/script-executor-contract-smoke.test.js src/__tests__/executor-contracts.test.js src/__tests__/migration-471-script-executor.test.js --maxWorkers=1 --minWorkers=1"
 
-- [x] [BEHAVIOR] legacy bridge一次有头接管（真实Linux507/手机508/接管509三独立迁移版本）：生产token、原路由、CAS幂等、活run/预约/callback拒绝、真实双连接advisory闸、普通writer及人赢元数据兼容，真实终态helper提交后持久保存handoff；普通与有头legacy PATCH经真实HTTP/afterTerminalTransition/saveHandoff查库，失败ROLLBACK无handoff。普通无owner DELETE真实删行及CASCADE子行；owned DELETE拒绝且完整task/owner保留；ordinary UPDATE、missing DELETE零行与既有非cascade FK 23503保持。
+- [x] [BEHAVIOR] legacy bridge一次有头接管（真实Linux507/手机508/接管509三独立迁移版本）：生产token、原路由、CAS幂等、活run/预约/callback拒绝、真实双连接advisory闸、普通writer及人赢元数据兼容，真实终态helper提交后持久保存handoff；普通与有头legacy PATCH经真实HTTP/afterTerminalTransition/saveHandoff查库，失败ROLLBACK无handoff。普通无owner DELETE真实删行及CASCADE子行；owned DELETE拒绝且完整task/owner保留；ordinary UPDATE、missing DELETE零行与既有非cascade FK 23503保持。独立最低fixture叠加actual image510/Linux512及生产engine登记SQL，五种既有/新增kind与unknown拒绝、叠加后真实owned旧writer拒绝保持。
   Test: manual:bash -c 'cd packages/brain && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/headed-takeover.pg.integration.test.js --maxWorkers=1 --minWorkers=1'
 - [x] [BEHAVIOR] 迟到回执与session所有权：HTTP/队列/CAS持久屏障，原PATCH同session心跳兼容、跨session拒绝。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/routes/__tests__/execution-headed-callback-owner.test.js src/routes/__tests__/claim-protocol.test.js src/__tests__/executor-headed-liveness.test.js --maxWorkers=1 --minWorkers=1"
@@ -45,3 +45,24 @@
 
 - [x] [BEHAVIOR] headed-authoring 集成：真实回执先核保留结果与authoring完成，再核有头owner，两读失败均不入队；原四次INSERT重试、普通PATCH与有头提交后交接保持，真实隔离数据库登记与共享活动均保留。
   Test: manual:bash -c 'cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/workflow-authoring/task-guard.test.js src/routes/__tests__/execution-headed-callback-owner.test.js ../../tests/integration/execution-callback-await.test.js --maxWorkers=1 --minWorkers=1 && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/headed-takeover.pg.integration.test.js src/__tests__/integration/workflow-authoring.pg.integration.test.js src/__tests__/integration/shared-activities.pg.integration.test.js --maxWorkers=1 --minWorkers=1'
+
+- [x] [BEHAVIOR] linuxcontroller 私有Symbol授权贯穿接入与canary父子登记；公开伪造拒绝；双探针与startup同步保持controller原claim，普通audit不享豁免。
+  Test: manual:cd packages/brain && npx vitest run src/linux-pool/task-authority.test.js src/__tests__/liveness-probe.test.js src/__tests__/executor-startup-sync.test.js src/__tests__/external-executor-predicate.test.js
+
+- [x] [BEHAVIOR] linuxcontrollerpg 增量512保留旧约束、未知kind拒绝，真实隔离PG双探针与启动同步保持父子任务；两个创建点均验证内部权限。
+  Test: manual:cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/linux-controller-contract.pg.integration.test.js src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js src/__tests__/integration/linux-script-authorization.pg.integration.test.js
+
+- [x] [BEHAVIOR] canarystage 失败只持久内部固定阶段/时间/原错误码，外部异常文本不可注入；诊断先于cleanup，原签名/资源/终态条件不变。
+  Test: manual:cd packages/brain && npx vitest run scripts/fleet-worker/linux-pool-proof.test.cjs scripts/fleet-worker/linux-script-canary.test.cjs
+
+- [x] [BEHAVIOR] linuxretry 原官方入口仅接续具有原节点验收/路由/零spawn事件与固定误收错误的终态控制任务；原failed历史保留，容量/旧授权未知或其他claim拒绝，并发只登记一棒。
+  Test: manual:cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js
+
+- [x] [BEHAVIOR] linuxretrybudget 接续固定新工件及安装intent但保原预算与凭据cache；原预算缺失/空/非法/身份不匹配拒绝登记接续棒，probe必做全等，预算变化禁止安装；默认服务完整透传私有controller权限。
+  Test: manual:cd packages/brain && npx vitest run src/linux-pool/onboarding-step.test.js src/node-onboarding/__tests__/service-controller-authority-forwarding.test.js
+
+- [x] [BEHAVIOR] capabilityversions 真实PG验证不可变定义、身份匹配版本指针、来源字节核验、完整历史快照、共享幂等更新及注册层级防环；Workflow返回组织与版本状态。
+  Test: manual:bash packages/brain/scripts/smoke/definition-versions-smoke.sh
+
+- [x] [BEHAVIOR] capabilityinterfaces 固定KR来源和Skill摘要真实核验；登记参数拒绝与HTTP错误语义、旧接口默认值保持。
+  Test: manual:cd packages/brain && npx vitest run src/lib/__tests__/company-kr-source.test.js src/lib/__tests__/definition-history.test.js src/lib/__tests__/definition-versions.test.js src/lib/__tests__/implementation-bindings.test.js src/lib/__tests__/journey-registration.test.js src/lib/__tests__/journey-organization.test.js src/routes/__tests__/journey-registration.test.js src/routes/__tests__/journeys.test.js src/routes/__tests__/promise-map-api.test.js --maxWorkers=1 --minWorkers=1

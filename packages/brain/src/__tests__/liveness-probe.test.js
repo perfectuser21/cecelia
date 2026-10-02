@@ -379,3 +379,16 @@ describe('probeTaskLiveness — REVIEW 分支（codex-review-local lock 探活�
     expect(suspectProcesses.has(taskId)).toBe(false);
   });
 });
+
+describe('Linux专用controller的父流程与canary证据',()=>{
+ it.each(['linux-pool-onboarding','linux-script-canary:fixture'])('%s无本机PID不能被双确认回队',async claimed_by=>{
+  vi.clearAllMocks();suspectProcesses.clear();
+  const row={id:randomUUID(),task_type:'audit',executor_kind:'linux-pool-controller',claimed_by,
+   started_at:new Date(Date.now()-600000).toISOString(),payload:{}};
+  mockPool.query.mockResolvedValue({rows:[],rowCount:1}).mockResolvedValueOnce({rows:[row]});
+  await probeTaskLiveness();
+  expect(suspectProcesses.has(row.id)).toBe(false);
+  mockPool.query.mockResolvedValueOnce({rows:[row]});await probeTaskLiveness();
+  expect(mockPool.query.mock.calls.some(([sql])=>/UPDATE tasks|INSERT INTO task_events/.test(sql))).toBe(false);
+ });
+});

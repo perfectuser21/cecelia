@@ -7,3 +7,4 @@
 - 在守卫前冻结退役smoke原默认HOST/PORT，真实私有dotenv回归覆盖未设与部分显式目标，阻止配置加载后漂移到未核服务。
 - 合入固定共享活动511与六活动工作流主线；回执保留authoring/有头所有权双门禁及各自失败封闭，保留限流、提交后交接和退役目标冻结。
 - 修复未部署509无owner DELETE返回NULL抑制普通删除；仅DELETE返回OLD，保留owned拒绝、UPDATE与数据库CASCADE/FK约束。
+- 合入固定Linux controller与不可变定义版本主线，保511/512/513及原有头门禁；私有实际迁移叠加核image510/Linux512的真实engine台账、kind与owned保护，保版本化fixture及全部共享验收。

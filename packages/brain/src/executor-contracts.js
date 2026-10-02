@@ -1,3 +1,4 @@
+import {LINUX_POOL_EXECUTOR_KIND} from './linux-pool/task-authority.js';
 /**
  * executor-contracts.js
  *
@@ -28,6 +29,7 @@ export const OPENCLAW_AGENT_EXECUTOR_KIND = 'openclaw-agent';
 export const SCRIPT_EXECUTOR_KIND = 'script';
 
 export const VALID_EXECUTOR_KINDS = [
+  LINUX_POOL_EXECUTOR_KIND,
   'phone-ssh-controller',
   'app-server-controller',
   'preview-janitor',
@@ -107,6 +109,8 @@ export const EXTERNALLY_EXECUTED_KINDS = Object.freeze([
  */
 export function isExternallyExecuted(task) {
   if (!task) return false;
+  // audit是通用类型；只有网关私有authority铸造并持久化的kind才交专用controller。
+  if (task.executor_kind === LINUX_POOL_EXECUTOR_KIND) return true;
   if (EXTERNALLY_EXECUTED_TASK_TYPES.includes(task.task_type)) return true;
   return Boolean(task.executor_kind) && EXTERNALLY_EXECUTED_KINDS.includes(task.executor_kind);
 }
@@ -124,6 +128,7 @@ async function _defaultKernelPool() {
 // ─── 五合同 ────────────────────────────────────────────────────────────────────
 
 export const EXECUTOR_CONTRACTS = {
+  [LINUX_POOL_EXECUTOR_KIND]: { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
   // 手机租约与容量由认证远端退出/解锁回执结算，超时不能回队。
   'phone-ssh-controller': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
   // 固定HTTP回执由专属controller收割；本机进程与时间均不能证明远端删除状态。

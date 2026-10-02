@@ -8,6 +8,9 @@ const {sampleLinuxResources,readBounded}=require('./linux-resource-probe.cjs');
 const {parseCpuMax,parseMemoryLimit,locateHierarchy,unsigned}=require('./linux-cgroup.cjs');
 const {validateLinuxPoolProfile}=require('./linux-pool-profile.cjs');
 const ERROR='linux_pool_proof_unavailable';
+const failureStages=new WeakMap();
+const failure=(code,stage)=>{const error=Error(code);failureStages.set(error,stage);return error;};
+const readProofFailureStage=error=>failureStages.get(error);
 const fail=()=>{throw Error(ERROR);};
 const MAX_SAFE=BigInt(Number.MAX_SAFE_INTEGER);
 function profileInput(profile) {
@@ -44,6 +47,7 @@ function verifyContainer(value,expected,profile,imageId,policy) {
   return s.Pid;
 }
 async function collectContainerProof({profile:input,expected,policy,deps={}}) {
+  let stage='input';
   try {
     const profile=validateLinuxPoolProfile(profileInput(input));
     if(!profile.execution_budget_available||(deps.getuid??process.getuid)()!==0
@@ -62,6 +66,7 @@ async function collectContainerProof({profile:input,expected,policy,deps={}}) {
     };
     const run=deps.runCommand??((command,args)=>promisify(execFile)(command,args,{shell:false,timeout:5000,maxBuffer:65536,
       env:{PATH:'/usr/bin:/bin',HOME:'/',DOCKER_HOST:profile.docker_host}}));
+    stage='host_identity';
     if(!['/usr/lib/systemd/systemd','/lib/systemd/systemd'].includes(await readlink('/proc/1/exe')))fail();
     // 容器内root和namespace根不足以证明宿主祖先可见。首版只接收完整VM/宿主systemd环境。
     let noContainer=false;
@@ -90,7 +95,10 @@ async function collectContainerProof({profile:input,expected,policy,deps={}}) {
       if(!Array.isArray(values)||values.length!==1)fail();
       return verifyContainer(values[0],expected,profile,imageId,policy);
     };
-    const pid=await inspect(),membership=await read('/proc/'+pid+'/cgroup');
+    stage='container_contract';
+    const pid=await inspect();
+    stage='cgroup_ownership';
+    const membership=await read('/proc/'+pid+'/cgroup');
     if(membership.trim()!=='0::'+poolPath+'/docker-'+expected.container_id+'.scope')fail();
     const birth=pidIdentity(await read('/proc/'+pid+'/stat'),pid);
     const mounts=await read('/proc/self/mountinfo');
@@ -109,6 +117,7 @@ async function collectContainerProof({profile:input,expected,policy,deps={}}) {
     const limits=await poolLimits();
     if(parseCpuMax(limits.cpu)!==profile.pool.cpu_cores||parseMemoryLimit(limits.memory)!==BigInt(profile.pool.memory_bytes)
       ||unsigned(limits.swap)!==0n||unsigned(limits.pids)!==BigInt(profile.pool.pids_limit))fail();
+    stage='resource_sampling';
     const observation=await sampleLinuxResources({readText:filename=>filename==='/proc/self/cgroup'?Promise.resolve(poolMembership):read(filename),
       statfs:deps.statfs,diskPaths:[profile.data_root,info.DockerRootDir]});
     if(observation.status!=='observed')fail();
@@ -123,6 +132,7 @@ async function collectContainerProof({profile:input,expected,policy,deps={}}) {
       pidsLimit=pidsLimit<limit?pidsLimit:limit;
       const available=used>limit?0n:limit-used;pidsAvailable=pidsAvailable<available?pidsAvailable:available;
     }
+    stage='final_stability';
     if((await read('/proc/sys/kernel/random/boot_id')).trim()!==boot
       ||await read('/proc/'+pid+'/cgroup')!==membership||pidIdentity(await read('/proc/'+pid+'/stat'),pid)!==birth
       ||await inspect()!==pid||JSON.stringify(await poolLimits())!==JSON.stringify(limits)
@@ -144,7 +154,7 @@ async function collectContainerProof({profile:input,expected,policy,deps={}}) {
       observed_at:observation.observed_at,cpu_cores:observation.cpu_cores,memory_limit_bytes:observation.memory_limit_bytes,
       memory_available_bytes:observation.memory_available_bytes,pids_limit:Number(pidsLimit),pids_available:Number(pidsAvailable),
       disk_free_bytes:observation.disk_free_bytes,disk_used_percent:observation.disk_used_percent};
-  } catch {throw Error(ERROR);}
+  } catch {throw failure(ERROR,stage);}
 }
 async function collectLinuxPoolProof({profile,expected,deps={}}) {
   try {
@@ -184,6 +194,6 @@ async function collectLinuxScriptProof({profile,scriptProfile,identity,container
     const expected={container_id:containerId,name:`cecelia-script-${bound.reservation_id}-g${bound.launch_generation}`,labels};
     const proof=await collectContainerProof({profile:p,expected,policy:{image:script.image,user:script.user,script,hostBootId:expectedHostBootId,daemonId:expectedDaemonId},deps});
     return {...proof,schema_version:'linux-script-proof/v1',script_verified:true,identity:bound,profile_digest:profileDigest};
-  }catch{throw Error('linux_script_proof_unavailable');}
+  }catch(error){throw failure('linux_script_proof_unavailable',readProofFailureStage(error)??'input');}
 }
-module.exports={collectLinuxPoolProof,collectLinuxScriptProof};
+module.exports={collectLinuxPoolProof,collectLinuxScriptProof,readProofFailureStage};
