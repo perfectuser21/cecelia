@@ -1,4 +1,5 @@
 import {it,expect} from 'vitest';
+import {randomUUID} from 'node:crypto';
 import {fixture} from './helpers/kernel-capacity-fixture.js';
 it('默认Codex并发竞争M1/M4后MMV兜底，每run只有一条预约且只启动一次',async()=>{
  const f=await fixture();try{
@@ -11,7 +12,8 @@ it('默认Codex并发竞争M1/M4后MMV兜底，每run只有一条预约且只启
   const fallback=rows.find(r=>r.machine_id==='us-mac-m4');expect(fallback.task_bundle.inputs.capability_evidence.capacity_reselection.skipped_machines).toEqual(['xian-mac-m1','xian-mac-m4']);
   for(const row of rows){expect(row.account_id).toBe('team2');expect(row.task_bundle.inputs.capability_evidence.to_target.machine).toBe(row.machine_id);}
   expect(f.prepared.every(x=>x.spec.execution.codexHome==='/trusted/codex/team2')).toBe(true);
-  expect(f.calls.every(x=>x.capacitySnapshot.machine===x.machineId&&x.capacitySnapshot.account===x.accountId)).toBe(true);
+  expect(f.calls.every(x=>x.capacitySnapshot.machine===x.machineId&&x.capacitySnapshot.account===x.accountId&&x.bundle.inputs.capability_snapshot_id===x.capacitySnapshot.capability_snapshot_id)).toBe(true);
+  expect(new Set(f.calls.map(x=>x.capacitySnapshot.capability_snapshot_id)).size).toBe(f.calls.length);
   const previous=f.starts.length;await f.dispatch(contexts.find(c=>c.runId===fallback.run_id));expect(f.starts).toHaveLength(previous);
  }finally{await f.close();}
 },20000);
@@ -84,5 +86,24 @@ it('routing strict_affinity不能被角色fallback覆盖，预检资源满时零
   f.deps.preflightGate=createCapabilityGate({getMachineHealth:async()=>({ok:true}),getMachineCapacity:async({machine})=>({ok:true,available:machine==='xian-mac-m1'?0:1,physical_base_slots:1,effective_base_slots:1}),probeProviderAuth:async()=>({ok:true}),probeGitHub:async()=>({ok:true}),probeModelCapability:async()=>({ok:true})});
   const ctx=await f.context({routing:{preferred_machine:'xian-mac-m1',strict_affinity:true},role_assignments:{planner:{provider:'codex',account:'team1',fallback_targets:[{provider:'codex',account:'team1',machine:'us-mac-m4'}]}}});
   expect((await f.dispatch(ctx)).action).toBe('wait:capacity');expect(f.calls).toHaveLength(0);expect(f.starts).toHaveLength(0);
+ }finally{await f.close();}
+});
+
+it.each(['running','cleanup_pending','blocked'])('两个聊天HOME整机占位%s时Kernel只可回MMV，终态task不释放聊天预约',async status=>{
+ const f=await fixture();try{
+  for(const machine of ['xian-mac-m1','xian-mac-m4']){
+   const taskId=randomUUID(),id=randomUUID();
+   await f.pool.query("INSERT INTO tasks(id,status,task_type,executor_kind) VALUES($1,'completed','app_server_run','app-server-controller')",[taskId]);
+   const grant=(await f.pool.query("INSERT INTO execution_grants(node_version_id,surface,provider,account_id,repo_scope,profile_id,provenance,state) SELECT current_version_id,'app_server','codex','team1',ARRAY['perfectuser21/cecelia'],'chat','test_explicit_policy','active' FROM execution_nodes WHERE canonical_id=$1 RETURNING id,node_version_id",[machine])).rows[0];
+   // 真实预约表中的两份独立聊天占位；本测试不生成聊天许可，也不执行聊天进程。
+   await f.pool.query(`INSERT INTO capacity_reservations(id,machine_id,owner_kind,owner_key,task_id,config_digest,allocation_mode,policy_version,snapshot_time,snapshot_digest,status,worker_id,worker_boot_id,container_id,execution_version_id,execution_grant_id)
+    VALUES($1::uuid,$2,'app_server',($1::uuid)::text,$3,$4,'exclusive_unclassified','app-server-exclusive-v1',now(),$4,$5,$2,$6,$4,$7,$8)`,[id,machine,taskId,'b'.repeat(64),status,randomUUID(),grant.node_version_id,grant.id]);
+  }
+  await (await import('../../execution-directory/directory.js')).directory.refresh({pool:f.pool});
+  const ctx=await f.context(),result=await f.dispatch(ctx);expect(result.status).toBe('LAUNCHED');
+  expect(f.starts.map(x=>x.target.machine)).toEqual(['us-mac-m4']);
+  expect((await f.pool.query('SELECT machine_id FROM harness_attempts WHERE run_id=$1',[ctx.runId])).rows).toEqual([{machine_id:'us-mac-m4'}]);
+  const chat=(await f.pool.query("SELECT machine_id,status,allocation_mode FROM capacity_reservations WHERE owner_kind='app_server' ORDER BY machine_id")).rows;
+  expect(chat).toEqual(['xian-mac-m1','xian-mac-m4'].map(machine_id=>({machine_id,status,allocation_mode:'exclusive_unclassified'})));
  }finally{await f.close();}
 });
