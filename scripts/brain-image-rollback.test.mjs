@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const run = promisify(execFile), image = n => 'sha256:' + String(n).repeat(64), sha = n => String(n).repeat(40);
-test('正式rollback从失败的新镜像恢复原完整ID后才解除原pending', async t => {
+for (const mode of ['failed-deploy', 'lost-rollback']) test(`正式rollback断线恢复 ${mode} 复用原pending并按完整ID启动`, async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'image-rollback-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   for (const dir of ['state', 'scripts/lib', 'scripts/brain-image-retention', 'bin']) await mkdir(join(root, dir), { recursive: true, mode: 0o700 });
@@ -21,8 +21,14 @@ export const store=createStore(${JSON.stringify(join(root, 'state'))});
 export const ledger=createDeploymentLedger({store,docker:{snapshot:async()=>({containers:[{name:'/cecelia-node-brain',running:true,image_id:image(current())}],images:[1,2].map(n=>({id:image(n),tags:['cecelia-brain:1.0.'+n],git_sha:sha(n)}))})},health:async()=>({status:'healthy',version:'1.0.'+current(),git_sha:sha(current())})});`;
   await writeFile(join(root, 'fixture.mjs'), fixture);
   const { store, ledger } = await import(join(root, 'fixture.mjs'));
-  const deployment_id = randomUUID(); await ledger.begin({ deployment_id, version: '1.0.2', git_sha: sha(2) });
-  await writeFile(statePath, '2'); await assert.rejects(ledger.finish(deployment_id, 'recovered'), /DEPLOY_IMAGE_MISMATCH/);
+  const deployment_id = randomUUID();
+  if (mode === 'failed-deploy') {
+    await ledger.begin({ deployment_id, version: '1.0.2', git_sha: sha(2) });
+    await writeFile(statePath, '2'); await assert.rejects(ledger.finish(deployment_id, 'recovered'), /DEPLOY_IMAGE_MISMATCH/);
+  } else {
+    await writeFile(statePath, '2');
+    await ledger.rollback({ deployment_id, version: '1.0.1', git_sha: sha(1), image_id: image(1) });
+  }
   await writeFile(join(root, 'scripts/brain-image-retention/cli.mjs'), `import {ledger} from '../../fixture.mjs';
 const [command,id,version,git_sha,image_id]=process.argv.slice(2);
 try {if(command==='rollback') {const r=await ledger.rollback({deployment_id:id,version,git_sha,image_id});process.stdout.write([r.deployment_id,r.outcome,r.image_id].join(' '));}
@@ -42,6 +48,6 @@ esac
   const calls = await readFile(join(root, 'calls'), 'utf8');
   assert.match(calls, new RegExp('compose.*' + image(1))); // 完整ID必须传入compose，不能仅信可移动tag。
   assert.equal((await store.read('ledger.json')).pending, null);
-  assert.equal((await store.read(`deployment-${deployment_id}.json`)).receipt.outcome, 'recovered');
-  assert.deepEqual((await store.read('ledger.json')).successes, []);
+  assert.equal((await store.read(`deployment-${deployment_id}.json`)).receipt.outcome, mode === 'failed-deploy' ? 'recovered' : 'success');
+  assert.equal((await store.read('ledger.json')).successes.length, mode === 'failed-deploy' ? 0 : 1);
 });

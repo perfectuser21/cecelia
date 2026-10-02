@@ -59,3 +59,13 @@ test('没有未决部署时rollback建立正常回滚保护，并绑定实际目
  x.state.current=x.state.health=3;await x.ledger.finish(result.deployment_id,result.outcome);
  assert.equal((await x.store.read('ledger.json')).successes[0].image_id,image(3));
 });
+test('独立rollback预约回执丢失，同UUID及shell新UUID均复用原目标身份',async t=>{
+ const x=await setup(t),request={deployment_id:randomUUID(),version:'1.0.3',git_sha:sha(3),image_id:image(3)};
+ const first=await x.ledger.rollback(request);
+ assert.deepEqual(await x.ledger.rollback(request),first);
+ assert.deepEqual(await x.ledger.rollback({...request,deployment_id:randomUUID()}),first);
+ await assert.rejects(x.ledger.rollback({...request,deployment_id:randomUUID(),git_sha:sha(2)}),/ROLLBACK_TARGET_MISMATCH/);
+ assert.equal((await x.store.read('ledger.json')).pending.deployment_id,first.deployment_id);
+ x.state.current=x.state.health=3;await x.ledger.finish(first.deployment_id,first.outcome);
+ assert.equal((await x.store.read('ledger.json')).successes[0].image_id,image(3));
+});

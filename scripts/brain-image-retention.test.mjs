@@ -97,3 +97,11 @@ test('持锁父进程被杀时，在途子进程继承同一锁直至真正退�
   await new Promise(resolve=>setTimeout(resolve,50));await store.withLock(async lease=>lease.assertHeld());
  }finally{parent.kill('SIGKILL');if(childPid)process.kill(childPid,'SIGKILL');await rm(root,{recursive:true,force:true});}
 });
+test('US构建自有摘要仅允许唯一cecelia-brain与完整image ID严格相同',()=>{
+ const {snapshot,ledger}=fixture(),target=snapshot.images[3];
+ target.digests=[`cecelia-brain@${target.id}`];
+ assert.ok(selectImages(snapshot,ledger,now).some(x=>x.id===target.id));
+ for(const digests of [[`other@${target.id}`],[`cecelia-brain@${image(5).id}`],[`cecelia-brain@${target.id}`,`cecelia-brain@${target.id}`]]){
+  target.digests=digests;assert.equal(selectImages(snapshot,ledger,now).some(x=>x.id===target.id),false);
+ }
+});
