@@ -31,7 +31,7 @@ describe('六层目录源映射', () => {
     a.definition_version={id:a.current_definition_version_id,activity_id:a.id,source_commit:'c'.repeat(40),
       payload:{activity_id:a.id,contract:{steps:[contract]},steps:[entry],implementation_bindings:[
         {scope:'activity',status:'verified',validation_scope:'reference_only'},
-        {scope:'step',step_key:'read',kind:'raw',status:'unresolved',raw:contract.implementation}]}};
+        {scope:'step',step_key:'read',field:'implementation',kind:'raw',status:'unresolved',raw:contract.implementation}]}};
     return {data,s,a,entry};
   }
   it('精确当前Step声明补Input/Output/实现且保持未核验，原expect与canonical check/dod都展示', () => {
@@ -71,6 +71,7 @@ describe('六层目录源映射', () => {
     for(const [field,value] of Object.entries({Input:'直接输入',Output:'直接输出','验收标准':'直接标准','实现来源':'直接实现'}))
       expect(row.properties[field].rich_text[0].text.content).toBe(value);
     expect(JSON.parse(row.properties['证据读取'].rich_text[0].text.content).definition.check).toBe(entry.contract.check);
+    expect(row.gaps).toContain('implementation_unverified');
   });
   function versionedInput() {
     const data=sample(),w=data.workflows[0];
