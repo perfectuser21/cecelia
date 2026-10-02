@@ -63,8 +63,8 @@ async function definitions(db,q,revision,gaps) {
   for(const row of activities)if(row.source_repo!==q.repo||row.source_commit!==revision)gaps.push({code:'activity_definition_source_mismatch',activity_definition_version_id:row.id,revision});
   return {workflows,activities};
 }
-function versionEvidence(rows){return rows.map(({payload,...row})=>row);}
-function projectionEvidence(context){if(!context)return null;const {manifest,mapped,registryRepo,...evidence}=context;return evidence;}
+function versionEvidence(rows){return rows.map(({payload:_payload,...row})=>row);}
+function projectionEvidence(context){if(!context)return null;const {manifest:_manifest,mapped:_mapped,registryRepo:_registryRepo,...evidence}=context;return evidence;}
 function matchedBindings(activity,q,revision,paths){return (activity.payload.implementation_bindings||[]).filter(b=>['code','skill'].includes(b.kind)&&b.repo===q.repo&&b.revision===revision&&paths.has(b.path));}
 
 async function readSide(db,q,side,registry) {
