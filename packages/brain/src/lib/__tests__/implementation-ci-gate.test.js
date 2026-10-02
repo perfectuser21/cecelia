@@ -48,7 +48,7 @@ it('真实CLI输出可回读收据，测试非零时进程非零退出',()=>{
   const run=()=>spawnSync(process.execPath,[cli,'--repo-root',root,'--report',input,'--output',output],{encoding:'utf8'});
   expect(run().status).toBe(0);expect(JSON.parse(readFileSync(output,'utf8')).verdict).toBe('PASS');
   writeFileSync(join(root,'scripts/smoke/lock.sh'),'exit 9\n');git('add','scripts/smoke/lock.sh');git('commit','-qm','fail-test');
-  report.source.head_revision=git('rev-parse','HEAD');report.head.revision=report.source.head_revision;report.source.changed_files.push({path:'scripts/smoke/lock.sh'});
+  report.source.head_revision=git('rev-parse','HEAD');report.head.revision=report.source.head_revision;report.head.graph_snapshot.source_revision=report.source.head_revision;report.source.changed_files.push({path:'scripts/smoke/lock.sh'});
   writeFileSync(input,JSON.stringify(report));expect(run().status).toBe(1);expect(JSON.parse(readFileSync(output,'utf8')).assertions[0].exit_code).toBe(9);
 });
 it('测试进程不继承外部BASH_ENV启动脚本',async()=>{
@@ -58,7 +58,7 @@ it('测试进程不继承外部BASH_ENV启动脚本',async()=>{
 it('测试篡改后续测试时立即FAIL并停止，不能以旧字节hash记录PASS',async()=>{
   const {root,report,git}=fixture();
   writeFileSync(join(root,'scripts/smoke/lock.sh'),"printf 'exit 0\\n' > scripts/smoke/next.sh\n");writeFileSync(join(root,'scripts/smoke/next.sh'),'exit 88\n');
-  git('add','scripts/smoke');git('commit','-qm','two-tests');report.source.head_revision=git('rev-parse','HEAD');report.head.revision=report.source.head_revision;
+  git('add','scripts/smoke');git('commit','-qm','two-tests');report.source.head_revision=git('rev-parse','HEAD');report.head.revision=report.source.head_revision;report.head.graph_snapshot.source_revision=report.source.head_revision;
   report.source.changed_files.push({path:'scripts/smoke/lock.sh'},{path:'scripts/smoke/next.sh'});
   report.required_assertions.push({...report.required_assertions[0],assertion_ref:'scripts/smoke/next.sh'});
   const receipt=await runImplementationGate({repoRoot:root,report});expect(receipt.verdict).toBe('FAIL');expect(receipt.assertions).toHaveLength(1);
@@ -73,6 +73,6 @@ it.each(['empty-projection','fake-graph-digest','wrong-activity-coverage'])('不
 });
 it('真测试非零退出保留FAIL收据而不是映射成功冒充验证成功',async()=>{
   const {root,report,git}=fixture();writeFileSync(join(root,'scripts/smoke/lock.sh'),'exit 7\n');git('add','.');git('commit','-qm','fail-test');
-  report.source.head_revision=git('rev-parse','HEAD');report.head.revision=report.source.head_revision;report.source.changed_files.push({path:'scripts/smoke/lock.sh'});
+  report.source.head_revision=git('rev-parse','HEAD');report.head.revision=report.source.head_revision;report.head.graph_snapshot.source_revision=report.source.head_revision;report.source.changed_files.push({path:'scripts/smoke/lock.sh'});
   const receipt=await runImplementationGate({repoRoot:root,report});expect(receipt.verdict).toBe('FAIL');expect(receipt.assertions[0].exit_code).toBe(7);
 });
