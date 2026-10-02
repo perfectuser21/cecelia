@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.357.0
+**Brain 版本**: 1.357.1
+
+
 
 
 
@@ -34,6 +36,9 @@ Brain 镜像完整打包 Fleet Worker 共用运行模块；构建期及独立产
 Worker维护暂停在本机三类runner与Docker最终副作用前执行；认证静默回执绑定nonce、同boot和活动版本，客户端断开不减在途计数，orchestrator真实子进程退出才归零。启动对账未确认或prepare潜在副作用后失败均拒签；候选工作区只保守占位，不自动清理。
 
 Mac Worker 版本探针只读固定 OrbStack bundle 的 CFBundleShortVersionString；不运行会初始化管理员目录的 orbctl version。Docker、镜像、自检容器与资源准入仍分别真实检查，版本不可读继续报 unavailable。
+
+Linux 首批资源观测提供 cgroup v1/v2 可见祖先、分数 CPU、内存剩余、PSI、事件计数与关键路径磁盘采样。Linux health 早返回，不执行 Mac 命令或创建探测容器；CPU/内存限额观测代表采样进程自身 cgroup；PSI 来自 /proc/pressure，逐项固定 scope=system，仅表示可见系统压力，不能当作任务池压力或宿主授权证明。namespace 根不证明宿主祖先可见。未验证 Docker 工作负载池时核心资源保持拒绝值，execution/pool_verified 固定 false；GPU 未核验标 unknown。标准 Mac 安装器完整打包解析器并可回滚。真实隔离容器 canary 验证0.5核/128MiB实际限额，仅证明自身观测，不开放 Linux 执行、systemd 接入或目录授权。
+
 
 CI趋势集成测试将北京自然日与滚动24小时设备窗口独立布置，覆盖陈旧、近期成功和无任务设备；生产巡检阈值不变。
 
