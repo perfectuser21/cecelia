@@ -34,8 +34,9 @@ vi.mock('node:child_process',async importOriginal=>{
  const blocked={spawn:deny,spawnSync:deny,exec:deny,execSync:deny,execFile:deny,execFileSync:deny,fork:deny};
  return {...actual,...blocked,default:{...actual.default,...blocked}};
 });
-let server,origin,dispatchNextTask,fetchSpy;
+let server,origin,dispatchNextTask,fetchSpy,killSpy;
 beforeAll(async()=>{
+ killSpy=vi.spyOn(process,'kill').mockImplementation((...args)=>{fixture.kills.push(args);throw Error('退役fixture禁止native kill');});
  await admin.connect();
  for(let i=0;i<schemas.length;i++){
   await admin.query(`CREATE SCHEMA ${schemas[i]}`);await initializeRetirementSchema(pools[i]);
@@ -54,7 +55,7 @@ beforeAll(async()=>{
  });
 });
 afterAll(async()=>{
- fetchSpy?.mockRestore();if(server)await new Promise(resolve=>server.close(resolve));
+ fetchSpy?.mockRestore();killSpy?.mockRestore();if(server)await new Promise(resolve=>server.close(resolve));
  for(const p of pools)await p.end();
  for(const schema of schemas)await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
  await admin.end();
