@@ -14,6 +14,7 @@ node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config
   src/lib/__tests__/task-run.test.js \
   src/lib/__tests__/integration/implementation-report.test.js \
   src/lib/__tests__/integration/release-index.test.js \
+  src/lib/__tests__/integration/pilot-release-verification.test.js \
   src/lib/__tests__/integration/run-definition-binding.test.js \
   src/lib/__tests__/integration/task-run-definition.test.js \
   src/routes/__tests__/integration/releases.test.js \
