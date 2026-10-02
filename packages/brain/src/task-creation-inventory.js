@@ -3,6 +3,7 @@ import { ROUTER_VERSION } from './work-router.js';
 export const TASK_CREATION_INVENTORY_VERSION = ROUTER_VERSION;
 
 export const TASK_CREATION_INVENTORY = Object.freeze([
+  { module: 'linux-pool/runtime-service.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'app-server/store.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed', delegates_to: 'app-server/task-authority.js' },
   { module: 'app-server/task-authority.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'node-onboarding/service.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },

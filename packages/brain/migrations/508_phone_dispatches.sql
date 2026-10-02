@@ -112,4 +112,4 @@ BEGIN
  RETURN NEW;
 END $$;
 CREATE TRIGGER phone_capacity_release_guard BEFORE UPDATE ON capacity_reservations FOR EACH ROW EXECUTE FUNCTION guard_phone_capacity_release();
-INSERT INTO schema_version(version,description,applied_at) VALUES('507','手机独立持久身份、共享整机预约与旧writer守卫',now()) ON CONFLICT(version) DO NOTHING;
+INSERT INTO schema_version(version,description,applied_at) VALUES('508','手机独立持久身份、共享整机预约与旧writer守卫',now()) ON CONFLICT(version) DO NOTHING;

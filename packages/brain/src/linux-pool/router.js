@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { internalAuth } from '../middleware/internal-auth.js';
-export function createLinuxPoolRouter(service){
+export function createLinuxPoolRouter(service,runtime){
  const router=Router();
  router.use((req,res,next)=>{
   res.set('Cache-Control','no-store');
@@ -16,5 +16,6 @@ export function createLinuxPoolRouter(service){
  router.post('/:id/attest',handle(req=>service.attest(req.params.id,req.body)));
  router.post('/:id/activate',handle(req=>service.activate(req.params.id,req.body)));
  router.post('/:id/revoke',handle(req=>service.revoke(req.params.id,req.body)));
+ if(runtime)for(const action of ['prepare','activate','revoke'])router.post('/:id/runtime/'+action,handle(req=>runtime[action](req.params.id,req.body)));
  return router;
 }
