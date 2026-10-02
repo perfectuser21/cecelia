@@ -268,3 +268,8 @@ it('两个真实session并发接管，同task只有一个owner，败者409',asyn
  expect(results.find(r=>r.status==='rejected').reason.statusCode).toBe(409);
  expect((await pool.query('SELECT task_id FROM headed_task_takeovers WHERE task_id=$1',[task])).rowCount).toBe(1);
 });
+
+it('有头接管使用独立未部署509版本记录，不占手机508',async()=>{
+ const rows=(await pool.query("SELECT version,description FROM schema_version WHERE description LIKE '有头会话%'")).rows;
+ expect(rows).toEqual([{version:'509',description:'有头会话一次性接管legacy bridge及持久执行屏障'}]);
+});
