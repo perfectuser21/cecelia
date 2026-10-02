@@ -59,7 +59,7 @@ async function installLinuxPool(options,deps={}) {
  const upgradeFail=()=>fail('linux_pool_install_upgrade_unconfirmed');
  const hash=data=>createHash('sha256').update(data).digest('hex');
  const equalSecret=(a,b)=>a.length===b.length&&timingSafeEqual(a,b);
- let upgrade;
+ let upgrade,upgradeLock=null,ownTransaction=null;
  function pseudo(name){
   const filename=real(name);let fd;
   try{fd=fs.openSync(filename,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);const before=fs.fstatSync(fd);
@@ -70,6 +70,9 @@ async function installLinuxPool(options,deps={}) {
  }
  async function upgradeIdle({installed=true}={}){
   try{
+   try{const held=fs.lstatSync(real('/run/cecelia/linux-pool.install.lock'));if(!upgradeLock||held.dev!==upgradeLock.dev||held.ino!==upgradeLock.ino)upgradeFail();}catch(e){if(e.code!=='ENOENT')throw e;}
+   const recovery=real('/var/lib/cecelia/fleet-install');
+   try{if(fs.readdirSync(recovery).some(name=>path.join(recovery,name)!==ownTransaction))upgradeFail();}catch(e){if(e.code!=='ENOENT')throw e;}
    if(!upgrade){upgrade=JSON.parse(readFile(options.upgradePath,{mode:0o600,max:65536}).data);
     const keys=['schema_version','machine_registry_id','config_digest','revision','host_boot_id','daemon_id','worker_boot_id','source_sha256','intent_id'];
     if(Object.keys(upgrade).length!==keys.length||keys.some(k=>!Object.hasOwn(upgrade,k))||upgrade.schema_version!==1
@@ -187,12 +190,12 @@ async function installLinuxPool(options,deps={}) {
  try{
   mkdir('/run/cecelia');
   try{lockFd=fs.openSync(real(lock),'wx',0o600);}catch(error){if(error.code==='EEXIST')fail('linux_pool_install_locked');throw error;}
-  lockStat=fs.fstatSync(lockFd);fs.writeFileSync(lockFd,randomUUID());fs.fsyncSync(lockFd);
+  lockStat=fs.fstatSync(lockFd);upgradeLock={dev:lockStat.dev,ino:lockStat.ino};fs.writeFileSync(lockFd,randomUUID());fs.fsyncSync(lockFd);
   // 锁后重新检查池；其它root管理器仍需遵守同一维护协议。
   await idle();
   prior=await serviceStates();
   for(const entry of entries){mkdir(path.dirname(entry.name));let snapshot=null;try{snapshot=readFile(entry.name,{owner:entry.uid,mode:entry.mode,max:134217728});}catch(error){if(error.code!=='ENOENT')throw error;}originals.set(entry.name,snapshot);}
-  mkdir('/var/lib/cecelia/fleet-install');stage=real('/var/lib/cecelia/fleet-install/txn-'+randomUUID());fs.mkdirSync(stage,{mode:0o700});
+  mkdir('/var/lib/cecelia/fleet-install');stage=real('/var/lib/cecelia/fleet-install/txn-'+randomUUID());fs.mkdirSync(stage,{mode:0o700});ownTransaction=stage;
   for(const[name,snapshot]of originals){if(snapshot){const target=path.join(stage,String([...originals.keys()].indexOf(name)));const fd=fs.openSync(target,'wx',0o600);try{fs.writeFileSync(fd,snapshot.data);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}}}syncDir(stage);
   const manifest={schema_version:1,prior,...(upgrade?{upgrade_intent_id:upgrade.intent_id}:{}),entries:[...originals].map(([name,snapshot],index)=>({name,backup:snapshot?String(index):null,...(snapshot?{mode:snapshot.mode,uid:snapshot.uid,gid:snapshot.gid}:{})}))};
   const manifestFd=fs.openSync(path.join(stage,'manifest.json'),'wx',0o600);try{fs.writeFileSync(manifestFd,JSON.stringify(manifest));fs.fsyncSync(manifestFd);}finally{fs.closeSync(manifestFd);}syncDir(stage);
