@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, copyFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, copyFile, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -10,7 +10,7 @@ const sha = 'a'.repeat(40), previousSha = 'b'.repeat(40);
 const image = `sha256:${'1'.repeat(64)}`, previousImage = `sha256:${'2'.repeat(64)}`;
 const container = '3'.repeat(64), deployment = '11111111-1111-4111-8111-111111111111';
 async function fixture(t, scenario = '') {
-  const root = await mkdtemp(join(tmpdir(), 'sidecar-completion-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'sidecar-completion-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'scripts/lib'), { recursive: true });
   await mkdir(join(root, 'scripts/brain-image-retention'), { recursive: true });

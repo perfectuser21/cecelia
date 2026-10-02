@@ -289,6 +289,12 @@ bluegreen_swap() {
       send_bark "⚠️ 蓝绿 sidecar 缺少内部鉴权凭据 SSOT v${version}，已保留 blue（5221 仍可用）"
       return 1
     fi
+    local expected_sha="${EXPECTED_SHA:-}"
+    [[ -n "$expected_sha" ]] || expected_sha=$(git -C "$root_dir" rev-parse HEAD 2>/dev/null) || return 1
+    if [[ ! "$expected_sha" =~ ^[a-f0-9]{40}$ ]]; then
+      echo "[bluegreen] ❌ 缺少部署目标 SHA，终止切换（blue 保留）"
+      return 1
+    fi
     docker rm -f "$sidecar_name" >/dev/null 2>&1 || true  # 清理上次残留
 
     # ── 打 blue-fallback 快照（sidecar compose up 失败时回退用）──────────────
@@ -311,12 +317,7 @@ bluegreen_swap() {
     # 挂载 docker.sock 和部署根目录，等 blue 消失后执行 compose up。
     # sidecar 脚本（bluegreen-sidecar.sh）通过 root_dir 挂载可访问，
     # 失败时自动用 blue-fallback tag 恢复（见 bluegreen-sidecar.sh）。
-    # sidecar 跑在默认 bridge 网络（未加 --network host），Linux Docker 不会像
-    # Mac/Windows Docker Desktop 那样自动解析 host.docker.internal——sidecar 里
-    # cancel_drain_after_up() 靠这个域名连 Brain 做 healthz 探活和 drain-cancel，
-    # 缺这个 flag 会让两者全部 DNS 解析失败，全靠 15 分钟运行期自愈兜底掩盖
-    # （任务 40f798ac，us-vps 生产实测：手动 POST drain-cancel 立即生效，证明
-    # app 层逻辑本身没问题，纯粹是 sidecar 连不上）。
+    # sidecar 的健康/收尾经既有 Docker socket 在固定容器内执行；网络配置保持现状。
     local retention_mounts=()
     if [[ -n "${CECELIA_IMAGE_DEPLOYMENT_ID:-}" ]]; then
       retention_mounts=(-v "${CECELIA_IMAGE_RETENTION_DIR}:${CECELIA_IMAGE_RETENTION_DIR}:rw"
@@ -333,6 +334,7 @@ bluegreen_swap() {
         -v "${CECELIA_INTERNAL_ENV_FILE}:${CECELIA_INTERNAL_ENV_FILE}:ro" \
         -w "${root_dir}" \
         -e "BRAIN_VERSION=${version}" \
+        -e "EXPECTED_SHA=${expected_sha}" \
         -e "ENV_REGION=${env_region}" \
         -e "DEPLOY_ROOT=${root_dir}" \
         -e "CECELIA_INTERNAL_ENV_FILE=${CECELIA_INTERNAL_ENV_FILE}" \

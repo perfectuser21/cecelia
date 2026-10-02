@@ -85,6 +85,7 @@ function runSwap(dir, log, extraEnv = {}) {
           PATH: `${dir}:${process.env.PATH}`,
           DOCKER_LOG: log,
           GREEN_STABLE_SUCCESSES: '1',
+          EXPECTED_SHA: 'a'.repeat(40),
           CECELIA_INTERNAL_ENV_FILE: credentialFile,
           ...extraEnv,
         },
@@ -174,6 +175,7 @@ describe('bluegreen_swap', () => {
       // 日志里还有一行 "rm -f cecelia-bluegreen-sidecar"（清理上次残留），必须只挑 run 那一行
       const sidecarRunLine = calls.split('\n').find((l) => l.startsWith('run ') && l.includes('cecelia-bluegreen-sidecar'));
       expect(sidecarRunLine, 'sidecar 的 docker run 调用应该出现在 mock docker 日志里').toBeTruthy();
+      expect(sidecarRunLine).toContain('EXPECTED_SHA=' + 'a'.repeat(40));
       expect(
         sidecarRunLine,
         'sidecar 容器跑在默认 bridge 网络（未加 --network host），Linux Docker 不会像 Mac/Windows' +
@@ -338,11 +340,23 @@ function makeSidecarMockDocker(dir, { inspectExists = false, primaryComposeFails
   const script = `#!/usr/bin/env bash
 echo "$@" >> "${log}"
 case "$1" in
+  image)
+    echo 'sha256:${'1'.repeat(64)}|["cecelia-brain:9.9.9"]|GIT_SHA=${'a'.repeat(40)}'
+    exit 0 ;;
+  exec)
+    if [[ "$*" == *"/healthz"* ]]; then exit 0; fi
+    if [[ "$*" == *"/health"* ]]; then echo '{"status":"healthy","version":"9.9.9","git_sha":"${'a'.repeat(40)}"}'; exit 0; fi
+    if [[ "$*" == *"/drain-cancel"* ]]; then echo '{"success":true}'; exit 0; fi
+    exit 1 ;;
   inspect)
+    if [[ -f "${dir}/started" ]]; then
+      echo '${'3'.repeat(64)} sha256:${'1'.repeat(64)} /cecelia-node-brain true node-brain'; exit 0
+    fi
     # 模拟 blue 容器消失（sidecar 一启动就看不到它）
     if [[ "${inspectExists}" == "true" ]]; then exit 0; else exit 1; fi
     ;;
   compose)
+    touch "${dir}/started"
     # compose up：区分 BRAIN_VERSION=blue-fallback 还是真实版本
     if [[ "\${BRAIN_VERSION:-}" == "blue-fallback" ]]; then
       if [[ "${fallbackSucceeds}" == "true" ]]; then exit 0; else exit 2; fi
@@ -383,6 +397,7 @@ function runSidecar(dir, log, deployRoot, extraEnv = {}) {
         PATH: `${dir}:${process.env.PATH}`,
         HOME: dir,
         BRAIN_VERSION: '9.9.9',
+        EXPECTED_SHA: 'a'.repeat(40),
         ENV_REGION: 'us',
         DEPLOY_ROOT: deployRoot,
         CECELIA_INTERNAL_ENV_FILE: credentialFile,
