@@ -17,7 +17,7 @@ import { scanRepo } from '../../../../../../scripts/scan/scan-graph.mjs';
 const {pilotGraphTargets}=await import('../../../../../../scripts/scan/pilot-graph-targets.mjs').catch(()=>({}));
 import { contractsFixture } from '../../../__tests__/fixtures/shared-activity-contracts.js';
 import { syncActivityContracts } from '../../../activity-contract-sync.js';
-import { exportImplementationSnapshot } from '../../implementation-ci-snapshot.js';
+import { exportImplementationSnapshot,refreshImplementationSnapshot } from '../../implementation-ci-snapshot.js';
 import { readImplementationImpact } from '../../implementation-impact.js';
 import { createImplementationScratch,importImplementationSnapshot,projectImplementationSnapshot } from '../../../../../../scripts/ci/implementation-snapshot.mjs';
 import { runProjection } from '../../../map/projector.js';
@@ -95,5 +95,32 @@ it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真
     expect(await preserved()).toEqual(before);
     git('remote','set-url','origin','https://github.com/other/cecelia.git');
     await expect(pilotGraphTargets(db,{repo:'cecelia',root:dir})).rejects.toThrow('source repo');
+    git('remote','set-url','origin','https://github.com/perfectuser21/zenithjoy-workspace.git');
+    const prior=(await db.query("SELECT * FROM map_manifest_versions WHERE scope_key='zenithjoy' AND status='active'")).rows[0];
+    const nextManifest=structuredClone(prior.manifest);nextManifest.capabilities[0].name='不应覆盖人工修改';
+    const nextDraft=await submitMapManifest(db,nextManifest);
+    const humanManifest=structuredClone(prior.manifest);humanManifest.capabilities[0].name='并发人工修改';
+    const humanDraft=await submitMapManifest(db,humanManifest);await activateMapManifest(db,humanDraft.manifest_version.id);
+    await expect(activateMapManifest(db,nextDraft.manifest_version.id,{expectedActive:{id:prior.id,digest:prior.digest}})).rejects.toMatchObject({code:'MAP_MANIFEST_ACTIVE_CONFLICT'});
+    expect((await db.query("SELECT id FROM map_manifest_versions WHERE scope_key='zenithjoy' AND status='active'")).rows[0].id).toBe(humanDraft.manifest_version.id);
+
+    const edited=structuredClone((await db.query("SELECT manifest FROM map_manifest_versions WHERE scope_key='zenithjoy' AND status='active'")).rows[0].manifest);
+    edited.capabilities[0].name='人工名称保留';edited.shared_prerequisites.reason='人工说明保留';
+    const editDraft=await submitMapManifest(db,edited);await activateMapManifest(db,editDraft.manifest_version.id);
+    const fetchMain=async(...args)=>String(args[0]).includes('/commits/main')?{ok:true,text:async()=>git('rev-parse','HEAD')}:contracts.fetchFn(...args);
+    for(const marker of ['M2','M3']){
+      writeFileSync(join(dir,'src/shared.js'),`export const shared='${marker}';\n`);git('add','src/shared.js');git('-c','core.hooksPath=/dev/null','commit','-m',marker);
+      const next=git('rev-parse','HEAD');contracts.docs.keyword_acquisition.activities[0].implementation_bindings[0].revision=next;contracts.refresh();
+      await refreshImplementationSnapshot(db,{scope:'zenithjoy',repo:'perfectuser21/zenithjoy-workspace',revision:next},{fetchFn:fetchMain,resolveToken:async()=>'',readBinding:async b=>git('show',`${b.revision}:${b.path}`)+'\n'});
+      const current=(await db.query("SELECT manifest FROM map_manifest_versions WHERE scope_key='zenithjoy' AND status='active'")).rows[0].manifest;
+      expect(current.capabilities[0].brain_binding.source_revision).toBe(next);
+      expect(current.capabilities[0].name).toBe('人工名称保留');expect(current.shared_prerequisites.reason).toBe('人工说明保留');
+      expect((await db.query("SELECT DISTINCT attributes->>'mapping_status' status FROM map_projection_nodes n JOIN map_projection_runs r ON r.id=n.run_id WHERE r.scope_key='zenithjoy' AND r.status='active'")).rows).toEqual([{status:'unknown'}]);
+      await scanRepo({name:'zenithjoy-pilot-source',root:dir},db);
+      const response=await fetch(`http://127.0.0.1:${server.address().port}/api/brain/map/rebuild`,{method:'POST',headers:{'Content-Type':'application/json','X-Internal-Token':'fixture-internal-token'},body:JSON.stringify({scope_key:'zenithjoy'})});expect(response.status).toBe(200);
+      expect((await db.query("SELECT DISTINCT attributes->>'mapping_status' status FROM map_projection_nodes n JOIN map_projection_runs r ON r.id=n.run_id WHERE r.scope_key='zenithjoy' AND r.status='active'")).rows).toEqual([{status:'verified'}]);
+    }
+    expect(await preserved()).toEqual(before);
+
   }finally{if(server)await new Promise(resolve=>server.close(resolve));await fixture.close();rmSync(dir,{recursive:true,force:true});}
 });
