@@ -300,6 +300,65 @@ it('新棒登记或终态事件失败回滚全部旧状态与双指针',async()=
  expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(x.id);
 });
 
+async function handoffSnapshot(){
+ return {tasks:(await pool.query('SELECT * FROM tasks ORDER BY id')).rows,registry:(await pool.query('SELECT * FROM system_registry ORDER BY id')).rows,
+  events:(await pool.query('SELECT * FROM task_events ORDER BY task_id,event_type')).rows};
+}
+it.each(['creator_before','creator_after','source_pointer','registry_pointer','result_link','event'])('接续%s失败在自有或外层事务均完整回滚',async point=>{
+ let armed=false;const creator=async(...args)=>{
+  if(armed&&point==='creator_before')throw Error('handoff-proof');
+  const made=await createTask(...args);if(armed&&point==='creator_after')throw Error('handoff-proof');return made;
+ };
+ const x=await installedContinuation({createTask:creator});armed=true;
+ const trigger=['source_pointer','registry_pointer','result_link','event'].includes(point),table=point==='registry_pointer'?'system_registry':point==='event'?'task_events':'tasks';
+ if(trigger){
+  const condition=point==='source_pointer'?`OLD.id='${parent}'::uuid`:point==='registry_pointer'?'TRUE':point==='result_link'?"OLD.status='archived' AND NEW.result->'evidence'->>'continuation_task_id' IS NOT NULL":'TRUE';
+  await pool.query(`CREATE FUNCTION reject_handoff() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'handoff-proof'; END $$;
+   CREATE TRIGGER reject_handoff BEFORE ${point==='event'?'INSERT':'UPDATE'} ON ${table} FOR EACH ROW WHEN (${condition}) EXECUTE FUNCTION reject_handoff()`);
+ }
+ const before=await handoffSnapshot();
+ try{
+  await expect(x.f.retry(x.id)).rejects.toThrow('handoff-proof');expect(await handoffSnapshot()).toEqual(before);
+  const c=await pool.connect();try{
+   await c.query('BEGIN');await expect(x.f.retry(x.id,c)).rejects.toThrow('handoff-proof');await c.query('ROLLBACK');
+  }finally{await c.query('ROLLBACK');c.release();}
+  expect(await handoffSnapshot()).toEqual(before);
+ }finally{if(trigger)await pool.query(`DROP TRIGGER reject_handoff ON ${table};DROP FUNCTION reject_handoff()`);}
+});
+it('归档到新棒登记的事务中间外部只见旧active，提交后只见新active',async()=>{
+ let armed=false,entered,release;const reached=new Promise(r=>{entered=r;}),wait=new Promise(r=>{release=r;});
+ const creator=async(...args)=>{if(armed){entered((await args[0].db.query('SELECT status FROM tasks WHERE id=$1',[args[0].parent_task_id])).rows[0].status);await wait;}return createTask(...args);};
+ const x=await installedContinuation({createTask:creator});armed=true;const pending=x.f.retry(x.id).then(value=>({value}),err=>({err}));
+ try{
+  expect(await reached).toBe('archived');
+  expect((await pool.query("SELECT id FROM tasks WHERE status IN ('queued','in_progress')")).rows).toEqual([{id:x.id}]);
+  expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(x.id);
+ }finally{release();await pending;}
+ const outcome=await pending;expect(outcome.err).toBeUndefined();const next=outcome.value;
+ expect((await pool.query("SELECT id FROM tasks WHERE status IN ('queued','in_progress')")).rows).toEqual([{id:next.task_id}]);
+});
+it('外层事务成功返回后仍可整体回滚，未提交接续不影响读者',async()=>{
+ const x=await installedContinuation(),before=await handoffSnapshot(),c=await pool.connect();
+ try{await c.query('BEGIN');const next=await x.f.retry(x.id,c);expect(next.task_id).not.toBe(x.id);expect(await handoffSnapshot()).toEqual(before);await c.query('ROLLBACK');}
+ finally{await c.query('ROLLBACK');c.release();}
+ expect(await handoffSnapshot()).toEqual(before);
+});
+it('无关同标题活跃任务仍按原唯一索引拒绝，旧棒和双指针完整保留',async()=>{
+ const x=await installedContinuation();await pool.query('UPDATE tasks SET goal_id=$2 WHERE id=$1',[x.id,randomUUID()]);
+ await pool.query("INSERT INTO tasks(id,title,status,payload) VALUES($1,$2,'queued','{}')",[randomUUID(),x.before.title]);
+ const before=await handoffSnapshot();await expect(x.f.retry(x.id)).rejects.toMatchObject({code:'23505',constraint:'idx_tasks_dedup_active'});
+ expect(await handoffSnapshot()).toEqual(before);
+});
+it.each(['parent_task_id','payload','created_by','executor_kind','status','task_type','title'])('creator返回的%s不属于当前接续时拒绝认领或前移',async field=>{
+ let armed=false;const creator=async(...args)=>{
+  const made=await createTask(...args);if(!armed)return made;
+  const value=field==='parent_task_id'?randomUUID():field==='payload'?{unrelated:true}:field==='status'?'queued':'foreign';
+  await args[0].db.query(`UPDATE tasks SET ${field}=$2 WHERE id=$1`,[made.task.id,value]);return made;
+ };
+ const x=await installedContinuation({createTask:creator});armed=true;const before=await handoffSnapshot();
+ await expect(x.f.retry(x.id)).rejects.toThrow('linux_pool_retry_unconfirmed');expect(await handoffSnapshot()).toEqual(before);
+});
+
 it('真实SQL重验签名清理与私有旧安装，再原子接续；证据签名损坏不建棒',async()=>{
  const f=flow({step:async()=>{}}),id=await f.ensure(machine,parent),row=(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0],s=row.payload.linux_onboarding;
  const policy=buildLinuxOnboardingPolicy({machine_registry_id:machine.id,machine_id:machine.name,role:'worker',endpoint_host:'100.64.0.2',image:ONBOARDING_IMAGE,image_id:'sha256:'+'c'.repeat(64),observation:{os:'linux',observed_at:new Date().toISOString(),resources:{cpu_cores:4,memory_total_bytes:8*2**30}}});
