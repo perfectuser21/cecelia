@@ -17,7 +17,9 @@ export async function authorize(db,input,operation=a=>a){
   if(!expected)throw Error('execution_node_unavailable');
   await c.query(MACHINE_CAPACITY_LOCK_SQL,[input.machineId]);
   const node=(await c.query(`SELECT v.*,n.canonical_id FROM execution_nodes n JOIN execution_node_versions v ON v.id=n.current_version_id
-    JOIN system_registry r ON r.id=n.machine_registry_id WHERE n.canonical_id=$1 AND v.state='active' AND r.type='machine' AND r.status='active'`,[input.machineId])).rows[0];
+    JOIN system_registry r ON r.id=n.machine_registry_id WHERE n.canonical_id=$1 AND v.state='active' AND r.type='machine' AND r.status='active'
+    AND (v.platform<>'linux' OR (r.id<>'1a379d80-ad36-47d3-88ba-e545ab299a54'::uuid
+     AND COALESCE(r.metadata->>'role','') NOT IN ('scheduler','scheduler_only') AND COALESCE(r.metadata->>'scheduler_only','false')<>'true'))`,[input.machineId])).rows[0];
   if(!node||node.id!==expected.id||!(input.surface==='phone_ssh'?phoneSshValid(node.endpoints?.phone_ssh):endpointValid(node.endpoints?.worker)))throw Error('execution_version_stale');
   if(input.executionVersionId&&input.executionVersionId!==node.id)throw Error('execution_version_stale');
   const grant=(await c.query(`SELECT * FROM execution_grants WHERE node_version_id=$1 AND surface=$2 AND provider=$3
