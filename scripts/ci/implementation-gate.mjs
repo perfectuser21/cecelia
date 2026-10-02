@@ -11,6 +11,8 @@ const sha=value=>createHash('sha256').update(value).digest('hex');
 const fail=code=>{throw Object.assign(Error(code),{code});};
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024});
 const objectId=value=>typeof value==='string'&&/^[0-9a-f]{40}$/.test(value);
+const hashId=value=>typeof value==='string'&&/^[0-9a-f]{64}$/.test(value);
+const uuid=value=>typeof value==='string'&&/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value);
 function testEnvironment() {
   const env={PATH:`${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,CI:'true',NODE_ENV:'test',LANG:'C.UTF-8'};
   // 测试库连接是显式能力；不继承解释器启动钩子、模块搜索覆盖或通用凭据。
@@ -36,14 +38,25 @@ function assertReport(report) {
   if(!objectId(report.source?.base_revision)||!objectId(report.source?.head_revision))fail('IMPACT_REVISION_REQUIRED');
   for(const side of ['base','head']){
     const evidence=report[side];
-    if(evidence?.revision!==report.source[`${side}_revision`]||!evidence.graph_snapshot?.digest
-      ||!evidence.projection||!Array.isArray(evidence.gaps)||evidence.gaps.length
+    if(evidence?.revision!==report.source[`${side}_revision`]||!hashId(evidence.graph_snapshot?.digest)
+      ||evidence.graph_snapshot.source_revision!==evidence.revision
+      ||!uuid(evidence.projection?.projection_run_id)||!uuid(evidence.projection?.manifest_version_id)
+      ||!hashId(evidence.projection?.projection_digest)||!hashId(evidence.projection?.manifest_digest)
+      ||!Array.isArray(evidence.gaps)||evidence.gaps.length
       ||evidence.traversal?.truncated!==false)fail('IMPACT_SNAPSHOT_UNKNOWN');
+    for(const kind of ['workflows','activities']){
+      const versions=evidence.definition_versions?.[kind];
+      if(!Array.isArray(versions)||!versions.length||versions.some(v=>!uuid(v.id)||!hashId(v.payload_sha256)))fail('IMPACT_DEFINITION_UNKNOWN');
+    }
   }
   if(!Array.isArray(report.affected_usages)||!Array.isArray(report.required_assertions))fail('IMPACT_REPORT_INVALID');
   if(report.affected_usages.length&&!report.required_assertions.length)fail('IMPACT_REGRESSION_MISSING');
   for(const usage of report.affected_usages){
-    if(!report.required_assertions.some(item=>(item.capability_ids||[]).includes(usage.capability_id)))fail('IMPACT_REGRESSION_MISSING');
+    if(!Array.isArray(usage.evidence)||!usage.evidence.length)fail('IMPACT_USAGE_EVIDENCE_MISSING');
+    for(const evidence of usage.evidence){
+      if(!evidence.capability_id||!evidence.activity_id||!report.required_assertions.some(item=>(item.source_bindings||[]).some(
+        binding=>binding.capability_id===evidence.capability_id&&binding.activity_id===evidence.activity_id)))fail('IMPACT_REGRESSION_MISSING');
+    }
   }
 }
 async function toolchains(root,kind) {
