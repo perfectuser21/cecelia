@@ -20,17 +20,35 @@ async function snapshotSteps(client,activity) {
     return {step_id:matches[0]?.id||null,locator:{activity_id:activity.id,step_key:step.key},contract:step,registration:matches[0]||null};
   });
 }
+function verifyDocument(workflow,doc) {
+  if(!doc||typeof doc!=='object'||Array.isArray(doc)||!Array.isArray(doc.activities)) throw Error(`工作流缺少完整契约: ${workflow.id}`);
+  if((workflow.source_workflow&&doc.workflow!==workflow.source_workflow)
+    ||(!workflow.source_workflow&&doc.key!==workflow.key)
+    ||(workflow.source_capability&&doc.capability!==workflow.source_capability)
+    ||(doc.capability_id&&doc.capability_id!==workflow.capability_id)) throw Error(`工作流契约身份不匹配: ${workflow.id}`);
+}
 export async function snapshotDefinitions(client,{workflowIds,source,bindingsByActivity=new Map(),documentsByWorkflow=new Map()}) {
   if(!/^[0-9a-f]{40}$/.test(source.commit||'')) throw Error('快照必须使用固定commit');
+  const workflows=new Map();
+  for(const id of workflowIds) {
+    const workflow=(await client.query('SELECT * FROM workflows WHERE id=$1',[id])).rows[0];
+    if(!workflow) throw Error(`工作流不存在: ${id}`);
+    verifyDocument(workflow,documentsByWorkflow.get(id));
+    workflows.set(id,workflow);
+  }
   const activities=(await client.query(`SELECT DISTINCT a.* FROM journey_steps a JOIN workflow_activity_refs r ON r.activity_id=a.id
     WHERE r.workflow_id=ANY($1::uuid[]) AND r.active ORDER BY a.id`,[workflowIds])).rows;
-  const versions=new Map();
+  const versions=new Map(),sources=new Map();
   for(const a of activities) {
     const match=a.contract_source?.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)\/blob\/([0-9a-f]{40})\/(.+)$/);
     if(!match) throw Error(`活动缺少固定来源: ${a.id}`);
-    const activitySource={repo:match[1],commit:source.commit,path:match[3]};
+    if(match[1]!==source.repo||match[2]!==source.commit) throw Error(`活动来源不匹配: ${a.id}`);
+    sources.set(a.id,{repo:match[1],commit:match[2],path:match[3]});
     const binding=bindingsByActivity.get(a.id);
     if(!binding) throw Error(`活动缺少绑定核验证据: ${a.id}`);
+  }
+  for(const a of activities) {
+    const binding=bindingsByActivity.get(a.id),activitySource=sources.get(a.id);
     const payload={activity_id:a.id,definition_key:`${a.capability_key}.${a.activity_key}`,contract:a.contract,
       steps:await snapshotSteps(client,a),implementation_bindings:binding,resources:a.contract?.resources||{},verification:{preconditions:a.contract?.preconditions||[],postconditions:a.contract?.postconditions||[],steps:a.contract?.steps||[]}};
     const versionId=await saveVersion(client,'activity',a.id,payload,activitySource);
@@ -38,11 +56,10 @@ export async function snapshotDefinitions(client,{workflowIds,source,bindingsByA
     await client.query('UPDATE workflow_activity_refs SET activity_definition_version_id=$2 WHERE activity_id=$1 AND workflow_id=ANY($3::uuid[]) AND active AND activity_definition_version_id IS DISTINCT FROM $2',[a.id,versionId,workflowIds]);
   }
   for(const id of workflowIds) {
-    const workflow=(await client.query('SELECT * FROM workflows WHERE id=$1',[id])).rows[0];
-    if(!workflow) throw Error(`工作流不存在: ${id}`);
+    const workflow=workflows.get(id);
     const refs=(await client.query('SELECT * FROM workflow_activity_refs WHERE workflow_id=$1 AND active ORDER BY sequence_no',[id])).rows;
     const payload={workflow_id:id,key:workflow.key,name:workflow.name,capability_id:workflow.capability_id,channel:workflow.channel,form:workflow.form,
-      contract:documentsByWorkflow.get(id)||null,activities:refs.map(r=>({reference_id:r.id,slot_key:r.slot_key,sequence_no:r.sequence_no,activity_id:r.activity_id,activity_version_id:versions.get(r.activity_id),source_ref:r.source_ref}))};
+      contract:documentsByWorkflow.get(id),activities:refs.map(r=>({reference_id:r.id,slot_key:r.slot_key,sequence_no:r.sequence_no,activity_id:r.activity_id,activity_version_id:versions.get(r.activity_id),source_ref:r.source_ref}))};
     await saveVersion(client,'workflow',id,payload,{...source,path:workflow.source_path||source.path});
   }
 }
