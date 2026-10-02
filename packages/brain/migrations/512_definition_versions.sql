@@ -19,6 +19,12 @@ CREATE TABLE IF NOT EXISTS workflow_definition_versions (
  created_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE(workflow_id,source_repo,source_path,payload_sha256),UNIQUE(workflow_id,id)
 );
+ALTER TABLE activity_definition_versions DROP CONSTRAINT IF EXISTS activity_payload_identity;
+ALTER TABLE activity_definition_versions ADD CONSTRAINT activity_payload_identity CHECK(
+  COALESCE(payload->>'activity_id'=activity_id::text,false) AND COALESCE(jsonb_typeof(payload->'contract')='object',false));
+ALTER TABLE workflow_definition_versions DROP CONSTRAINT IF EXISTS workflow_payload_identity;
+ALTER TABLE workflow_definition_versions ADD CONSTRAINT workflow_payload_identity CHECK(
+  COALESCE(payload->>'workflow_id'=workflow_id::text,false) AND COALESCE(jsonb_typeof(payload->'contract')='object',false));
 CREATE OR REPLACE FUNCTION immutable_definition_version() RETURNS trigger AS $$
 BEGIN RAISE EXCEPTION '定义快照不可变：禁止UPDATE/DELETE'; END $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS immutable_activity_version ON activity_definition_versions;
