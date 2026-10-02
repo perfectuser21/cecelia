@@ -69,7 +69,8 @@ function checkSchema(name, dbId, actual, wanted, requireAll = false) {
 
 /**
  * 所有库先预检，类型或关系冲突时整批不写；只补缺列，不重命名/删除/修改既有属性。
- * Notion 跨库无事务：中途失败保留已补列，下一轮重试；只有逐库GET读回通过才返回verified。
+ * Notion 无CAS或跨库事务：写前重读缩小人工并发窗口，不能承诺原子性。
+ * 中途失败保留已补列，下一轮重试；只有最终逐库GET读回通过才返回verified。
  */
 export async function ensureDirectorySchemas({ dbs, token, notionReq }) {
   const schemas = buildDirectorySchemas(dbs);
@@ -80,12 +81,20 @@ export async function ensureDirectorySchemas({ dbs, token, notionReq }) {
   }
   const added = {};
   for (const name of LAYERS) {
+    if (Object.keys(missing[name]).length) {
+      const current = await notionReq(token, `/databases/${dbs[name]}`, 'GET');
+      missing[name] = checkSchema(name, dbs[name], current, schemas[name]);
+    }
     added[name] = Object.keys(missing[name]);
     if (added[name].length) {
       await notionReq(token, `/databases/${dbs[name]}`, 'PATCH', { properties: missing[name] });
       const actual = await notionReq(token, `/databases/${dbs[name]}`, 'GET');
       checkSchema(name, dbs[name], actual, schemas[name], true);
     }
+  }
+  for (const name of LAYERS) {
+    const actual = await notionReq(token, `/databases/${dbs[name]}`, 'GET');
+    checkSchema(name, dbs[name], actual, schemas[name], true);
   }
   return { verified: true, added };
 }
