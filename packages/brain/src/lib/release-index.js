@@ -101,6 +101,12 @@ async function readEnablerCalls(db, activities, components) {
     return { ...call, activity_id, step_id: step?.step_id || null, source_status: verified ? 'verified' : 'unknown', source_evidence: component || null };
   });
 }
+function governanceChecksMatch(expected,observed){
+  if(!Array.isArray(expected)||!Array.isArray(observed)||expected.length!==observed.length)return false;
+  const key=c=>JSON.stringify([c?.id,c?.path,c?.script_sha256]);
+  if(new Set(expected.map(key)).size!==expected.length||new Set(observed.map(key)).size!==observed.length)return false;
+  return expected.every(c=>observed.some(r=>r&&r.exit_code===0&&!r.error&&key(r)===key(c)));
+}
 function validateCiEvidence(items, definitions, components) {
   const valid = [], gaps = [];
   for (const [index, { report, receipt }] of items.entries()) {
@@ -114,8 +120,7 @@ function validateCiEvidence(items, definitions, components) {
       && receipt?.report_sha256 === createHash('sha256').update(JSON.stringify(report)).digest('hex');
     if(report.governance_evidence)ok &&= same(receipt?.governance_evidence?.files,report.governance_evidence.files)
       && receipt?.governance_evidence?.policy_sha256===report.governance_evidence.policy_sha256
-      && receipt?.governance_evidence?.checks?.length===report.governance_evidence.checks.length
-      && receipt.governance_evidence.checks.every(c=>c&&c.exit_code===0&&!c.error&&report.governance_evidence.checks.some(r=>r.id===c.id&&r.path===c.path&&r.script_sha256===c.script_sha256));
+      && governanceChecksMatch(report.governance_evidence.checks,receipt?.governance_evidence?.checks);
     const assertions = report?.required_assertions;
     ok &&= Array.isArray(assertions) && assertions.length > 0 && Array.isArray(receipt?.assertions)
       && assertions.every(a => a && a.source_repo === repo && receipt.assertions.some(r => r && r.assertion_ref === a.assertion_ref && r.source_repo === repo && r.source_revision === revision

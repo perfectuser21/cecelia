@@ -119,24 +119,39 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: tooling/package-lock.json
       - name: 下载固定SHA中央bundle（PR无中央写凭据）
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          [[ "$BASE" =~ ^[0-9a-f]{40}$ && "$HEAD" =~ ^[0-9a-f]{40}$ ]] || exit 1
           mkdir -p "$RUNNER_TEMP/implementation-input" "$RUNNER_TEMP/implementation-output"
+          gap_code=IMPLEMENTATION_CI_ARTIFACT_DOWNLOAD_FAILED
+          record_download_gap() {
+            result=$?
+            trap - ERR
+            jq -n --arg code "$gap_code" --arg base "$BASE" --arg head "$HEAD" \
+              '{status:"unknown",stage:"snapshot_download",code:$code,base_revision:$base,head_revision:$head}' > "$RUNNER_TEMP/implementation-output/gap.json"
+            exit "$result"
+          }
+          trap record_download_gap ERR
+          gap_code=IMPLEMENTATION_CI_REVISION_INVALID
+          [[ "$BASE" =~ ^[0-9a-f]{40}$ && "$HEAD" =~ ^[0-9a-f]{40}$ ]]
+          gap_code=IMPLEMENTATION_CI_ARTIFACT_DOWNLOAD_FAILED
           if [[ "$MODE" == main ]]; then
             gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "implementation-snapshot-$HEAD" -D "$RUNNER_TEMP/implementation-input/head"
             gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "implementation-baseline-$HEAD" -D "$RUNNER_TEMP/implementation-input/base"
           else
             artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=implementation-snapshot-$BASE" | jq -r --arg base "$BASE" '.artifacts | map(select(.expired == false and .workflow_run.head_branch == "main" and .workflow_run.head_sha == $base and .workflow_run.repository_id == .workflow_run.head_repository_id)) | first | .id // empty')
-            test -n "$artifact" || { echo '::error::固定base中央snapshot artifact缺失，不能用latest'; exit 1; }
+            if [[ -z "$artifact" ]]; then
+              gap_code=IMPLEMENTATION_CI_BASE_ARTIFACT_MISSING
+              echo '::error::固定base中央snapshot artifact缺失，不能用latest'
+              false
+            fi
             artifact_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact" --jq '.workflow_run.id')
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$artifact_run" --jq '.event + " " + .path' | grep -Eq '^(push|workflow_dispatch) .github/workflows/implementation-impact.yml$' || exit 1
+            gap_code=IMPLEMENTATION_CI_ARTIFACT_ORIGIN_INVALID
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$artifact_run" --jq '.event + " " + .path' | grep -Eq '^(push|workflow_dispatch) .github/workflows/implementation-impact.yml$'
+            gap_code=IMPLEMENTATION_CI_ARTIFACT_DOWNLOAD_FAILED
             gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > "$RUNNER_TEMP/implementation-input/base.zip"
             unzip -q "$RUNNER_TEMP/implementation-input/base.zip" -d "$RUNNER_TEMP/implementation-input/base"
             mv "$RUNNER_TEMP/implementation-input/base/head.json" "$RUNNER_TEMP/implementation-input/base/base.json"

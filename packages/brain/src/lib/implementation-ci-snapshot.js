@@ -82,6 +82,16 @@ export async function exportImplementationSnapshot(pool,input){
   try{await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const result=await readSnapshot(db,q);await db.query('COMMIT');return result;}
   catch(error){await db.query('ROLLBACK');throw error;}finally{db.release();}
 }
+/** 目标主机与仓库由受信adapter常量选择，外部输入只作为编码后的path/query。 */
+export function implementationGitHubUrl(repo,{path,revision}={}){
+  const base=repo===CONTRACT_REPO?'https://api.github.com/repos/perfectuser21/zenithjoy-workspace':
+    repo==='perfectuser21/cecelia'?'https://api.github.com/repos/perfectuser21/cecelia':null;
+  if(!base)throw ciFailure('SYNC_ADAPTER_MISSING');
+  if(path===undefined)return `${base}/commits/main`;
+  if(typeof path!=='string'||!path||path.split('/').some(p=>!p||p==='.'||p==='..')
+    ||typeof revision!=='string'||!/^[0-9a-f]{40}$/.test(revision))throw ciFailure('SOURCE_PATH_INVALID');
+  return `${base}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(revision)}`;
+}
 export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalThis.fetch,resolveToken=resolveGitHubToken,
   readBinding,allowRepos=(process.env.CECELIA_IMPLEMENTATION_CI_REPOS??`${CONTRACT_REPO},perfectuser21/cecelia`).split(',').map(r=>r.trim()).filter(Boolean)}={}){
   const q=validateSnapshotQuery(input);
@@ -96,7 +106,7 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
   const token=await resolveToken();
   const checkMain=async()=>{
     await checkRegistration();
-    const response=await fetchFn(`https://api.github.com/repos/${q.repo}/commits/main`,{headers:{Accept:'application/vnd.github.sha',Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});
+    const response=await fetchFn(implementationGitHubUrl(q.repo),{redirect:'error',headers:{Accept:'application/vnd.github.sha',Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});
     if(!response.ok)throw ciFailure('MAIN_UNAVAILABLE','远端main不可读',503);
     if((await response.text()).trim()!==q.revision)throw ciFailure('MAIN_MOVED','请求revision不等于远端main',409);
   };
@@ -104,7 +114,7 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
   if(q.repo===CONTRACT_REPO)await syncActivityContracts(pool,{fetchFn,resolveToken:async()=>token,expectedRevision:q.revision,beforeCommit:checkMain,synchronizeSteps:true,readBinding});
   else{
     const readFile=async(path,revision=q.revision)=>{
-      const response=await fetchFn(`https://api.github.com/repos/${q.repo}/contents/${path}?ref=${revision}`,{headers:{Accept:'application/vnd.github.raw',Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});
+      const response=await fetchFn(implementationGitHubUrl(q.repo,{path,revision}),{redirect:'error',headers:{Accept:'application/vnd.github.raw',Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});
       if(!response.ok)throw ciFailure('SOURCE_UNAVAILABLE',`固定源码不可读: ${path}`);return response.text();
     };
     const text=await readFile('packages/brain/config/company-kr-workflow.json'),spec=JSON.parse(text);
