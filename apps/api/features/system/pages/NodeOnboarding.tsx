@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { nodeOnboardingApi, NodeOnboardingRequest } from '../api/node-onboarding.api';
-import NodeOnboardingForm from './NodeOnboardingForm';
+import NodeOnboardingForm, { ExistingNode } from './NodeOnboardingForm';
 
 const statuses = { queued: '等待接入', in_progress: '正在接入', completed: '接入完成', failed: '接入失败', cancelled: '已取消' };
 const stepStatuses = { pending: '待开始', running: '进行中', completed: '已完成', failed: '失败' };
 const active = (request: NodeOnboardingRequest) => request.status === 'queued' || request.status === 'in_progress' || request.automatic === true;
 
-export default function NodeOnboarding({ open, onOpen, onClose, onCompleted }: {
-  open: boolean; onOpen: () => void; onClose: () => void; onCompleted: () => void;
+export default function NodeOnboarding({ open, onOpen, onClose, onCompleted, existing }: {
+  existing?: ExistingNode; open: boolean; onOpen: () => void; onClose: () => void; onCompleted: () => void;
 }) {
   const [items, setItems] = useState<NodeOnboardingRequest[]>([]);
   const [readError, setReadError] = useState<string | null>(null);
@@ -68,10 +68,10 @@ export default function NodeOnboarding({ open, onOpen, onClose, onCompleted }: {
   return (
     <section hidden={!open} aria-label="新机器接入" className="mb-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5 text-gray-900 dark:text-white">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold">接入新机器</h2>
+        <h2 className="text-lg font-semibold">{existing ? `接入现有机器：${existing.name}` : '接入新机器'}</h2>
         <button type="button" onClick={onClose} className="text-sm text-gray-500">关闭接入面板</button>
       </div>
-      <NodeOnboardingForm onCreated={accept} />
+      <NodeOnboardingForm key={existing?.name ?? 'new'} existing={existing} onCreated={accept} />
       {readError && <p role="alert" className="mt-3 text-sm text-red-600">{readError}</p>}
       {operationError && <p role="alert" className="mt-3 text-sm text-red-600">{operationError}</p>}
       <div aria-live="polite" className="space-y-3 mt-5">

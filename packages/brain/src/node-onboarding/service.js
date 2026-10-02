@@ -1,3 +1,4 @@
+import { adoptReceipt, registryIdentity, registryTarget, requireAdoption } from './registry-adoption.js';
 import { randomUUID } from 'node:crypto';
 import { clearMachineCache } from '../routing/load-machines.js';
 import {createLinuxOnboardingFlow} from '../linux-pool/onboarding-flow.js';
@@ -60,35 +61,36 @@ export function createOnboardingService({ pool, createTask = taskCreator, config
     const task = await transaction(async db => {
       // 幂等键与目标地址各自串行化，避免不同名称抢同一个目标。
       await lock(db, `key:${key}`);
-      for (const value of [`name:${request.name}`, `address:${request.address}:${request.ssh_port}`].sort()) await lock(db, value);
+      for (const value of [`name:${request.name}`, `address:${request.address}`].sort()) await lock(db, value);
       const { rows: seen } = await db.query(
         `SELECT * FROM tasks WHERE ${META}->>'idempotency_key'=$1 ORDER BY created_at DESC LIMIT 1`, [key]);
       if (seen[0]) {
         if (seen[0].payload.node_onboarding.request_hash !== hash) throw enrollmentError('同一提交标识不能更换接入信息', 409);
         return latest(db, seen[0].payload.node_onboarding.id);
       }
+      // 台账行锁把同机多个可信地址归并到同一个持久UUID。
+      const target = await registryTarget(db, request);
       const { rows: pending } = await db.query(
         `SELECT * FROM tasks WHERE ${META}->>'mode'='enroll' AND
-         (${META}->'request'->>'name'=$1 OR (${META}->'request'->>'address'=$2 AND ${META}->'request'->>'ssh_port'=$3))
-         ORDER BY created_at DESC LIMIT 1`, [request.name, request.address, String(request.ssh_port)]);
-      const { rows: existing } = await db.query(
-        `SELECT id FROM system_registry WHERE type='machine' AND
-         (name=$1 OR metadata->>'tailscale_ip'=$2 OR metadata->>'address'=$2) LIMIT 1`, [request.name, request.address]);
+         (${META}->'request'->>'name'=$1 OR ${META}->'request'->>'address'=$2 OR ${META}->>'id'=$3)
+         ORDER BY created_at DESC,id DESC LIMIT 1`, [request.name, request.address, target?.id ?? null]);
       if (pending[0]) {
         const previous = pending[0];
         const meta = previous.payload.node_onboarding;
+        if (target && target.id !== meta.id) throw enrollmentError('原接入与设备台账身份不一致', 409);
         if (meta.request_hash === hash) return previous;
-        if (existing.length || !['failed', 'cancelled'].includes(onboardingView(previous, now()).status)) {
+        if (meta.adoption) requireAdoption(target, meta);
+        if ((target && !meta.adoption) || !['failed', 'cancelled'].includes(onboardingView(previous, now()).status)) {
           throw enrollmentError('名称或地址已有接入记录，请查看原接入记录', 409);
         }
-        await lock(db, meta.id);
+        if (!target) await lock(db, meta.id);
         const current = await latest(db, meta.id);
         if (current.id !== previous.id) throw enrollmentError('接入状态已变化，请刷新后重试', 409);
         return enqueue(db, { ...meta, request, request_hash: hash, idempotency_key: key,
           registration_error: null, retry_of_task_id: previous.id }, (meta.attempt || 0) + 1);
       }
-      if (existing.length) throw enrollmentError('该机器已在设备台账中，请使用现有设备记录', 409);
-      return enqueue(db, { id: randomUUID(), mode: 'enroll', request,
+      if (target?.metadata?.onboarding) throw enrollmentError('该机器已有接入记录', 409);
+      return enqueue(db, { id: target?.id ?? randomUUID(), ...(target ? { adoption: registryIdentity(target) } : {}), mode: 'enroll', request,
         idempotency_key: key, request_hash: hash });
     });
     return get(task.payload.node_onboarding.id);
@@ -111,18 +113,18 @@ export function createOnboardingService({ pool, createTask = taskCreator, config
         onboarding: { id: meta.id, request: meta.request, task_id: row.id, state: 'managed',
           managed_at: now().toISOString(), next_probe_at: new Date(now().getTime() + PROBE_INTERVAL_MS).toISOString() },
       };
-      const result = await db.query(
+      const result = meta.adoption ? await adoptReceipt(db, meta, metadata) : await db.query(
         `INSERT INTO system_registry(id,type,name,description,status,metadata)
          VALUES($1,'machine',$2,'通过受信 SSH 接入的监控节点','active',$3)
          ON CONFLICT(type,name) DO UPDATE SET updated_at=now()
-         WHERE system_registry.metadata->'onboarding'->>'id'=$1::text RETURNING id`,
+         WHERE system_registry.metadata->'onboarding'->>'id'=$1::text RETURNING id,metadata`,
         [meta.id, meta.request.name, JSON.stringify(metadata)]);
       if (!result.rows.length) {
         meta.registration_error = 'name_conflict';
         await db.query(`UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,registration_error}','"name_conflict"') WHERE id=$1`, [row.id]);
       }
       if(result.rows.length){
-        const id=await execution.ensure({id:meta.id,name:meta.request.name,metadata},row.id,db);
+        const id=await execution.ensure({id:meta.id,name:meta.request.name,metadata:result.rows[0].metadata},row.id,db);
         if(id)meta.execution_task_id=id;
       }
       clearMachineCache();
@@ -158,7 +160,9 @@ export function createOnboardingService({ pool, createTask = taskCreator, config
   async function get(id) {
     return transaction(async db => {
       await lock(db, id);
-      const task = await latest(db, id);
+      const found = await latest(db, id);
+      // 与后台对账共用任务行锁，等待后读取最新回执标记，防止旧快照重复登记。
+      const task = (await db.query('SELECT * FROM tasks WHERE id=$1 FOR UPDATE', [found.id])).rows[0];
       await reconcileTask(db, task);
       return present(task);
     });
@@ -180,6 +184,10 @@ export function createOnboardingService({ pool, createTask = taskCreator, config
       if(previous.payload.node_onboarding.execution_task_id){await execution.retry(previous.payload.node_onboarding.execution_task_id);return present(previous);}
       if (!['failed', 'cancelled'].includes(onboardingView(previous, now()).status)) throw enrollmentError('进行中或已完成的接入不能重复启动', 409);
       const meta = previous.payload.node_onboarding;
+      if (meta.adoption) {
+        requireAdoption(await registryTarget(db, meta.request), meta);
+        if ((await latest(db, id)).id !== previous.id) throw enrollmentError('接入状态已变化，请刷新后重试', 409);
+      }
       const task = await enqueue(db, { ...meta, registration_error: null, retry_of_task_id: previous.id }, (meta.attempt || 0) + 1);
       return onboardingView(task, now());
     });

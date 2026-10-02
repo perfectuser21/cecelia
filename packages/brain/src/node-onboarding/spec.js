@@ -108,7 +108,7 @@ export function onboardingView(task, now = new Date(), execution) {
   } else if (status !== 'in_progress') {
     status = 'queued';
   }
-  if (meta.registration_error) { status = 'failed'; report = null; error = '设备名已被其他记录占用，不能覆盖已有台账'; }
+  if (meta.registration_error) { status = 'failed'; report = null; error = meta.adoption ? '设备身份或连接地址已变化，不能覆盖已有台账' : '设备名已被其他记录占用，不能覆盖已有台账'; }
   const failedReceipt = readReceipt(task);
   const trustedFailure = status === 'failed' && failedReceipt?.id === meta.id
     && failedReceipt?.name === meta.request.name && failedReceipt?.mode === meta.mode;

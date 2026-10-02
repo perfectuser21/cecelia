@@ -215,8 +215,8 @@ describe('设备页接入新机器', () => {
 
   it('展示所有地区并保持现有地区优先排序', async () => {
     machines = ['other', 'CN', 'HK', 'US', 'Xian', 'Europe'].map(loc => machine(`node-${loc}`, loc));
-    mount(); await screen.findByRole('button', { name: /node-US/ });
-    for (const node of machines) expect(screen.getByRole('button', { name: new RegExp(node.name) })).toBeInTheDocument();
+    mount(); await screen.findByRole('button', { name: /^node-US/ });
+    for (const node of machines) expect(screen.getByRole('button', { name: new RegExp(`^${node.name}`) })).toBeInTheDocument();
     expect(screen.getAllByRole('heading', { level: 2 }).map(item => item.textContent?.trim())).toEqual([
       '🇺🇸 美国', '🇭🇰 香港', '西安', '🇨🇳 中国大陆', '其他', 'Europe',
     ]);

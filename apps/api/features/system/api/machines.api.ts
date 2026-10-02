@@ -35,6 +35,7 @@ export interface MachineMetadata {
   disk?: string;
   os?: string;
   tailscale_name?: string;
+  address?: string;
   tailscale_ip?: string;
   public_ip?: string;
   ssh_alias?: string;
