@@ -42,8 +42,18 @@ export function expandUnresolvedAccountTargets(targets = []) {
 }
 
 // runtime所在机器是调度器落点，不是用户pin；只对无显式机器策略的Codex使用缺省顺序。
-const MACHINE_POLICY_KEYS = ['machine', 'machineId', 'machine_id', 'requested_machine_id', 'executor_machine',
-  'preferred_machine', 'strict_affinity', 'fallback_targets', 'fallback_policy', 'fallback_strategy'];
+const MACHINE_TARGET_KEYS = ['machine', 'machineId', 'machine_id', 'requested_machine_id', 'executor_machine', 'preferred_machine'];
+const MACHINE_POLICY_KEYS = [...MACHINE_TARGET_KEYS, 'strict_affinity', 'fallback_targets', 'fallback_policy', 'fallback_strategy'];
+export function hasUnsupportedMachinePolicy(payload, roleAssignment) {
+  const policies = [
+    [payload, ['machine', 'machine_id', 'requested_machine_id', 'executor_machine']],
+    [payload.routing ?? {}, ['preferred_machine']],
+    [roleAssignment, ['machine']],
+  ];
+  return policies.some(([policy, supported]) => MACHINE_TARGET_KEYS.some(
+    key => Object.hasOwn(policy, key) && !supported.includes(key),
+  ));
+}
 export function defaultCodexTargets({role, provider, account, model, candidateMachine, payload = {}, roleAssignment = {}, repo}) {
   const policies = [payload, payload.routing ?? {}, roleAssignment];
   if (role === 'commander' || provider !== 'codex' || candidateMachine
