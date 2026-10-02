@@ -387,3 +387,4 @@ company-kr-analysis-smoke.sh
 smoke-production-guard-smoke.sh
 
 linux-script-runtime-smoke.sh
+kernel-codex-failover-smoke.sh
