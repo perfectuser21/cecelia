@@ -248,7 +248,7 @@ export function buildBackboneActivityBody(r) {
     h2('副作用与模型'),
     ...bullets([
       ...(c.side_effects || []).map((s) => `${s.kind === 'external_visible' ? '对外可见' : '内部写入'} · ${s.target}：${s.description}`),
-      ...((c.model || []).length ? c.model.map((m) => `模型 ${m.provider}/${m.model}：${m.purpose}`) : ['不调大模型']),
+      ...((c.model || []).length ? c.model.map((m) => `模型 ${m.provider}/${m.model}：${m.purpose}`) : [(c.invokers || []).includes('agent') ? '调用大模型；实际型号见运行记录' : '不调大模型']),
     ]),
     h2('已知缺口'),
     ...bullets((c.known_gaps || []).map((g) => `${g.gap}（任务 ${g.task}）`)),

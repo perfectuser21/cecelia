@@ -290,3 +290,12 @@ describe('活动模型信息',()=>{
     expect(properties.Cost.rich_text[0].text.content).toBe('调用大模型；实际型号见运行记录');
   });
 });
+
+describe('活动正文模型信息',()=>{
+  it('正文与属性一致，未固定型号的agent仍标明调用大模型',async()=>{
+    const {buildBackboneActivityBody}=await import('../activity-contract-sync.js');
+    const blocks=buildBackboneActivityBody({contract:{name:'分析',invokers:['agent']}});
+    expect(JSON.stringify(blocks)).toContain('调用大模型；实际型号见运行记录');
+    expect(JSON.stringify(blocks)).not.toContain('不调大模型');
+  });
+});
