@@ -5,7 +5,9 @@ try {
   if (!['begin', 'finish', 'rollback'].includes(command) || args.length !== ({ begin: 3, finish: 2, rollback: 4 })[command]) throw fail('INVALID_COMMAND');
   const base = process.env.BRAIN_URL || 'http://127.0.0.1:5221';
   if (!['http://127.0.0.1:5221', 'http://localhost:5221', 'http://host.docker.internal:5221'].includes(base)) throw fail('INVALID_HEALTH_ENDPOINT');
-  const runtime = await createRuntime({ root: process.env.CECELIA_IMAGE_RETENTION_DIR || ROOT, health: () => readHealth(base) });
+  const expectedContainerId = process.env.CECELIA_IMAGE_EXPECTED_CONTAINER_ID;
+  if (expectedContainerId !== undefined && (command !== 'finish' || !/^[a-f0-9]{64}$/.test(expectedContainerId))) throw fail('INVALID_CONTAINER_ID');
+  const runtime = await createRuntime({ expectedContainerId, root: process.env.CECELIA_IMAGE_RETENTION_DIR || ROOT, health: () => readHealth(base) });
   if (!runtime) {
     if (!['begin', 'rollback'].includes(command)) throw fail('HOST_CONFIG_MISSING');
     process.stdout.write('disabled\n');
