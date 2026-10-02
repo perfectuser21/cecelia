@@ -10,6 +10,7 @@ import uuid
 from unittest.mock import patch
 import admission
 from journal import Journal
+from runner import Runner, Config
 import test_activation as activation_fixture
 
 
@@ -81,6 +82,14 @@ class AdmissionTest(unittest.TestCase):
         self.assertEqual(state['pending'][identity['dispatch_id']]['identity'], identity)
         self.assertNotIn('receipt', state['pending'][identity['dispatch_id']])
         self.assertEqual(gate.snapshot()['pending'], state['pending'])
+
+    def test_pre_intent_is_visible_to_physical_maintenance_before_dispatch_journal(self):
+        runner = Runner(Config(**self.fixture.worker, journal_root=str(self.journal_root)))
+        admission.Admission().register(self.fixture.identity)
+        self.assertEqual(list(runner.journal.keys()), [])
+        maintenance = runner.maintenance()
+        self.assertGreaterEqual(maintenance['pending'], 1)
+        self.assertGreaterEqual(maintenance['in_flight'], 1)
 
     def test_corrupt_missing_or_replaced_guard_is_unknown_not_initialized(self):
         path = self.root / 'admission-state.json'; original = path.read_bytes()
