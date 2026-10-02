@@ -398,7 +398,7 @@ export async function triggerScriptRun(task, deps = {}) {
 /**
  * 收割在跑的 script_run：远端 .exit 落地即结算。
  * 三态：exit 0 → completed；exit≠0/超时 → 按 retry-policy 重排或 failed；NO_EXIT → 一律不动（还在跑），
- * 卡死交给活性合同 script（staleMinutes 75 + onStale fail）。取数 LIMIT 10、单条 ssh 20s，老任务先收。
+ * 卡死交给活性合同 script（staleMinutes 75 + onStale fail）。每轮10项按UUID游标轮转、最多4个SSH并发，每条20s。
  */
 export async function reapScriptRuns(pool, deps = {}) {
   const results = await Promise.allSettled([reapLegacyScriptRuns(pool, deps), reapManagedScriptRuns(pool, deps)]);

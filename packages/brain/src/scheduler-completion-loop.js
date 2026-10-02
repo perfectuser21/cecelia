@@ -10,11 +10,11 @@ export function startCompletionJobsLoop(pool, jobs, runOnce) {
       if (pending.has(job.name)) continue;
       pending.add(job.name);
       const invocation = Promise.resolve()
-        .then(() => job.needsPool ? job.handler(pool) : job.handler())
-        .finally(() => pending.delete(job.name));
+        .then(() => job.needsPool ? job.handler(pool) : job.handler());
       // 沿用统一job的超时、错误及哨兵记录；不把观察超时当作副作用已结束。
-      runOnce(pool, [{ ...job, handler: () => invocation }])
-        .catch(() => {}); // runOnce 已负责错误哨兵；不输出业务内容。
+      const observation = Promise.resolve().then(() => runOnce(pool, [{ ...job, handler: () => invocation }]));
+      // 旧哨兵写也必须结束，避免下一次观测先落库、随后被旧at覆盖。
+      Promise.allSettled([invocation, observation]).then(() => pending.delete(job.name));
     }
   }, INTERVAL_MS);
   timer.unref?.();
