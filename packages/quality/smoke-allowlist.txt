@@ -397,3 +397,4 @@ kernel-codex-failover-smoke.sh
 workflow-authoring-smoke.sh
 
 shared-activities-smoke.sh
+directory-projection-smoke.sh
