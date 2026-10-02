@@ -22,7 +22,10 @@ describe('严格目录页投影', () => {
     vi.setSystemTime(new Date('2026-10-02T13:43:27.456Z'));
     try {
       const f = runtimeFixture();
+      const timestamps = [];
       const notionReq = async (...args) => {
+        const sent = args[3]?.properties?.['同步时间']?.date?.start;
+        if (sent) timestamps.push(sent);
         const result = await f.notionReq(...args);
         const date = result.properties?.['同步时间']?.date;
         if (date?.start) date.start = new Date(Math.floor(Date.parse(date.start) / 60000) * 60000).toISOString().replace('Z', '+00:00');
@@ -31,7 +34,6 @@ describe('严格目录页投影', () => {
       const result = await api.runDirectoryProjection(f.pool, { token: 'test', notionReq, force: true });
       expect(result.failed).toBe(0);
       expect(f.links).toHaveLength(6);
-      const timestamps = f.writes.flatMap(w => w.body.properties['同步时间'] ? [w.body.properties['同步时间'].date.start] : []);
       expect(timestamps).toHaveLength(6);
       expect(new Set(timestamps)).toEqual(new Set(['2026-10-02T13:43:00.000Z']));
     } finally { vi.useRealTimers(); }
