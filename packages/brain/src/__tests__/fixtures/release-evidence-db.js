@@ -16,7 +16,7 @@ export async function releaseEvidenceDatabase(){
     await fixture.advance();
     const schema=(await db.query('SELECT current_schema() AS name')).rows[0].name;
     pool=new pg.Pool({...DB_DEFAULTS,max:6,options:`-c search_path=${schema}`});
-    const migration=new URL('../../../migrations/514_release_definition_evidence.sql',import.meta.url);
+    const migration=new URL('../../../migrations/515_release_definition_evidence.sql',import.meta.url);
     if(existsSync(migration))await db.query(readFileSync(migration,'utf8'));
     const workflows=(await db.query('SELECT * FROM workflow_definition_versions WHERE source_commit=$1 ORDER BY workflow_id',[RELEASE_HEAD])).rows;
     const activities=(await db.query('SELECT * FROM activity_definition_versions WHERE source_commit=$1 ORDER BY activity_id',[RELEASE_HEAD])).rows;

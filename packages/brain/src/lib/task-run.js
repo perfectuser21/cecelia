@@ -193,7 +193,9 @@ export async function startRun({ taskId, runId, source, context, definition } = 
 
 async function startDefinedRun({taskId,runId,source,context,definition},deps){
   if(!taskId||!runId||!definition||typeof definition!=='object')throw Error('固定定义起跑缺少任务、运行或版本');
-  const ctx=buildRunContext({...context,source});
+  const definition_preflight=Object.fromEntries(['release_id','workflow_definition_version_id','snapshot_sha256','runtime_snapshot_sha256','attempt_key']
+    .filter(key=>definition[key]!==undefined).map(key=>[key,definition[key]]));
+  const ctx=buildRunContext({...context,source,definition_preflight});
   const pool=await resolvePool(deps),client=await pool.connect();
   try{
     await client.query('BEGIN');

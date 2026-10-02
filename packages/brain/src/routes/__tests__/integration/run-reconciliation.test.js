@@ -9,7 +9,7 @@ import { createRunReconciliationRouter } from '../../run-reconciliation.js';
 let f,app;
 beforeEach(async()=>{
   f=await releaseEvidenceDatabase();await f.db.query('DROP TABLE spans CASCADE');
-  for(const file of ['495_vs_model_spans.sql','513_span_occurrences.sql','515_span_definition_provenance.sql'])await f.db.query(readFileSync(new URL(`../../../../migrations/${file}`,import.meta.url),'utf8'));
+  for(const file of ['495_vs_model_spans.sql','514_span_occurrences.sql','516_span_definition_provenance.sql'])await f.db.query(readFileSync(new URL(`../../../../migrations/${file}`,import.meta.url),'utf8'));
   app=express();app.use('/runs',createRunReconciliationRouter({pool:f.db}));
 });
 afterEach(async()=>{await f?.close();f=null;});

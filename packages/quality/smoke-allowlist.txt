@@ -402,4 +402,4 @@ definition-versions-smoke.sh
 span-ingestion-smoke.sh
 implementation-impact-smoke.sh
 
-packages/brain/scripts/smoke/release-evidence-smoke.sh
+release-evidence-smoke.sh

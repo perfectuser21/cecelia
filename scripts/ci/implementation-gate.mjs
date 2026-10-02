@@ -1,6 +1,6 @@
 /** 固定影响报告→本仓固定测试→执行收据；不执行网络报告携带的 command。 */
 import { createHash } from 'node:crypto';
-import { assertImplementationReport as assertReport } from './implementation-report.mjs';
+import { assertImplementationReport as assertReport } from '../../packages/brain/src/lib/implementation-report.js';
 import { execFileSync,spawnSync } from 'node:child_process';
 import { readFile,realpath,writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';

@@ -44,5 +44,5 @@ DROP TRIGGER IF EXISTS immutable_release_observation ON release_observations;
 CREATE TRIGGER immutable_release_observation BEFORE UPDATE OR DELETE ON release_observations FOR EACH ROW EXECUTE FUNCTION immutable_release_evidence();
 DROP TRIGGER IF EXISTS immutable_run_definition_binding ON run_definition_bindings;
 CREATE TRIGGER immutable_run_definition_binding BEFORE UPDATE OR DELETE ON run_definition_bindings FOR EACH ROW EXECUTE FUNCTION immutable_release_evidence();
-INSERT INTO schema_version(version,description) VALUES('514','不可变发布版本、部署实测与运行定义绑定') ON CONFLICT(version) DO NOTHING;
+INSERT INTO schema_version(version,description) VALUES('515','不可变发布版本、部署实测与运行定义绑定') ON CONFLICT(version) DO NOTHING;
 COMMIT;
