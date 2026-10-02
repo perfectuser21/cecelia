@@ -197,6 +197,7 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
         if(state.canary&&state.canary.expires_at<=Date.now())throw Error('appserver_canary_permit_invalid');
         if (state.rpc_started) throw Error('appserver_stream_recovery_required');
         if (state.stream_status && state.stream_status !== 'closed') throw new Error('appserver_stream_busy');
+        if (input.worker_boot_id !== bootId) throw Error('appserver_worker_changed');
         if ((await observe(state)).status !== 'running') throw new Error('appserver_not_running');
         if (typeof assertLocalResources !== 'function') throw Error('appserver_local_resources_unavailable');
         await assertLocalResources(state.profile_snapshot);

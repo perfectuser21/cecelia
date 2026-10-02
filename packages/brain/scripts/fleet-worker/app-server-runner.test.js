@@ -42,6 +42,14 @@ function fixture(selectedProfile = profile) {
 }
 
 describe('app-server generation 与 HOME 单写生命周期', () => {
+  it('Worker重启后即使旧journal从未开流也不能按旧boot attach，历史精确取消仍可达',async()=>{
+    const f=fixture();let attached;
+    try{
+      const input=f.input(),started=await f.runner.start(input),restarted=api.createAppServerRunner({...f.config,bootId:randomUUID()});
+      await expect(restarted.attach({...input,stream_id:randomUUID()}).then(child=>{attached=child;return child;})).rejects.toThrow('appserver_worker_changed');
+      expect((await restarted.cancel({...input,container_id:started.container_id,challenge:randomUUID()})).absent).toBe(true);
+    }finally{attached?.kill();f.cleanup();}
+  });
   it('签名验收许可绑定同代身份；流只能进入验收模式且审计跨重启保存',async()=>{
     const f=fixture();try{
       const input=f.input(),payload={authorization_id:randomUUID(),nonce:randomUUID(),expires_at:Date.now()+60000,identity:input};

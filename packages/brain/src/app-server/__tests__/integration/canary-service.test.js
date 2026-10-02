@@ -185,3 +185,17 @@ it.each(['start','prepareStream'])('pending挑战在cap探测期间到期后拒�
   expect(f.calls.filter(x=>x==='create')).toHaveLength(action==='start'?0:1);expect(f.calls.filter(x=>x==='attach')).toHaveLength(0);
  }finally{await f.close();}
 });
+it('fresh签名cap完成后Worker重启，真实HTTP开流仍由Worker拒旧boot且精确清理可达',async()=>{
+ const f=await fixture();try{
+  const a=await f.authorizationStore.prepare(f.input);await (await service(f)).advance(a.id);await directory.refresh({pool:f.pool});
+  const capabilities=await f.client.probeCapabilities(a.machine_registry_id,a.node_version_id);
+  const {reservation:row}=await f.store.reserve({home:f.home,requestKey:randomUUID(),machineId:'xian-mac-m1',capacitySnapshot:await f.collectSnapshot('xian-mac-m1'),capabilities});
+  await f.store.observe(row.id,await f.client.start(row.id));
+  const {createAppServerClient}=await import('../../client.js');
+  const client=createAppServerClient({pool:f.pool,store:f.store,env:f.env,fetchFn:async(url,options)=>{
+   const response=await fetch(url,options);if(url.endsWith('/capabilities'))f.restart(true);return response;
+  }});
+  await expect(client.prepareStream(row.id)).rejects.toThrow('appserver_worker_http_409');expect(f.calls.filter(x=>x==='attach')).toHaveLength(2);
+  await f.store.requestCancel(row.id);expect(await f.store.confirmCleanup(row.id,await f.client.cancel(row.id))).toMatchObject({status:'released'});
+ }finally{await f.close();}
+});
