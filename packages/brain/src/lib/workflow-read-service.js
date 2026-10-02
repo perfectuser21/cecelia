@@ -3,7 +3,8 @@ import { JOURNEY_ORGANIZATION_SQL } from './journey-organization.js';
 const activities = `SELECT COALESCE(jsonb_agg(item ORDER BY sequence_no),'[]'::jsonb) FROM (
   SELECT r.sequence_no, to_jsonb(a) || jsonb_build_object(
     'legacy_workflow_id',a.workflow_id,'workflow_id',w.id,
-    'usage',jsonb_build_object('workflow_id',w.id,'reference_id',r.id,'slot_key',r.slot_key,'sequence_no',r.sequence_no),
+    'usage',jsonb_build_object('workflow_id',w.id,'reference_id',r.id,'slot_key',r.slot_key,'sequence_no',r.sequence_no,
+      'activity_definition_version_id',r.activity_definition_version_id),
     'activity_id',a.id,'canonical_id',a.id,'definition_key',a.capability_key || '.' || a.activity_key,
     'slot_key',r.slot_key,'sequence_no',r.sequence_no,'source_ref',r.source_ref,
     'source',jsonb_build_object('repo',r.source_repo,'path',r.source_path,'commit',r.source_commit),
