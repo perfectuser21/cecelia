@@ -9,7 +9,7 @@ describe('Cecelia 主导航', () => {
     config = await buildCoreConfig();
   });
 
-  it('只展示四个可折叠分类及其职责内的入口', () => {
+  it('只展示三个可折叠分类及其职责内的入口', () => {
     expect(config.navGroups).toHaveLength(1);
     expect(config.navGroups[0].title).toBe('');
     expect(config.navGroups[0].items.map(item => ({
@@ -18,34 +18,29 @@ describe('Cecelia 主导航', () => {
       children: item.children?.map(child => child.path),
     }))).toEqual([
       {
-        label: '交代事情', path: '/workbench/inbox',
-        children: ['/workbench/inbox', '/cecelia/chat'],
-      },
-      {
-        label: '机器与资源', path: '/machines',
-        children: ['/machines', '/system/infra', '/live-monitor', '/system/claude'],
-      },
-      {
-        label: 'AI 管理', path: '/brain-models',
-        children: ['/brain-models', '/account-usage', '/system/team', '/knowledge/memory', '/settings'],
-      },
-      {
-        label: '诊断与复盘', path: '/system',
+        label: '运行与诊断', path: '/system',
         children: [
           '/system', '/system/cecelia', '/system/automation', '/system/engine',
           '/map', '/system/feature-map', '/test-pyramid', '/traces', '/ledger',
           '/workbench/activity', '/knowledge/dev-log', '/cecelia/growth', '/cecelia/evolution',
         ],
       },
+      {
+        label: 'AI 管理', path: '/brain-models',
+        children: ['/brain-models', '/account-usage', '/system/team', '/knowledge/memory', '/settings'],
+      },
+      {
+        label: '机器资源', path: '/machines',
+        children: ['/machines', '/system/infra', '/live-monitor', '/system/claude'],
+      },
     ]);
   });
 
-  it('24 个终端入口去重且全部有可加载的页面', () => {
+  it('22 个终端入口去重且全部有可加载的页面', () => {
     const leaves = config.navGroups.flatMap(group => group.items.flatMap(item => item.children ?? [item]));
-    expect(leaves).toHaveLength(24);
-    expect(leaves.find(item => item.path === '/workbench/inbox')?.label).toBe('交办');
+    expect(leaves).toHaveLength(22);
     expect(leaves.find(item => item.path === '/account-usage')?.label).toBe('AI 额度');
-    expect(new Set(leaves.map(item => item.path)).size).toBe(24);
+    expect(new Set(leaves.map(item => item.path)).size).toBe(22);
     for (const item of leaves) {
       const route = config.allRoutes.find(route => route.path === item.path);
       expect(route?.component, item.path).toBeTruthy();
@@ -75,7 +70,7 @@ describe('Cecelia 主导航', () => {
   it('任务规划、内容生产、知识记录与 Notion 维护入口不再出现在主导航', () => {
     const visiblePaths = config.navGroups.flatMap(group => group.items.flatMap(item => [item.path, ...(item.children?.map(child => child.path) ?? [])]));
     for (const path of [
-      '/workbench/overview', '/workbench/tasks', '/workbench/projections',
+      '/workbench/inbox', '/cecelia/chat', '/workbench/overview', '/workbench/tasks', '/workbench/projections',
       '/gtd', '/gtd/area', '/gtd/okr', '/gtd/projects', '/gtd/tasks', '/gtd/knowledge',
       '/today', '/pipeline', '/strategist', '/okr-roadmap',
       '/content-factory', '/knowledge/content', '/knowledge/decisions',
@@ -87,7 +82,7 @@ describe('Cecelia 主导航', () => {
     expect(visiblePaths).toContain('/knowledge/memory');
   });
 
-  it.each(['/', '/workbench'])('%s 默认进入交代事情', path => {
-    expect(config.allRoutes.find(route => route.path === path)?.redirect).toBe('/workbench/inbox');
+  it.each(['/', '/workbench'])('%s 默认进入运行与诊断', path => {
+    expect(config.allRoutes.find(route => route.path === path)?.redirect).toBe('/system');
   });
 });
