@@ -273,3 +273,25 @@ it('有头接管使用独立未部署509版本记录，不占手机508',async()=
  const rows=(await pool.query("SELECT version,description FROM schema_version WHERE description LIKE '有头会话%'")).rows;
  expect(rows).toEqual([{version:'509',description:'有头会话一次性接管legacy bridge及持久执行屏障'}]);
 });
+
+it('真实Linux507、手机508、接管509顺序执行并保留三个独立版本记录',async()=>{
+ const integrated=`headed_migrations_${process.pid}_${randomUUID().replaceAll('-','')}`;
+ const client=new pg.Client({...DB_DEFAULTS,options:`-c search_path=${integrated},public`});
+ await client.connect();
+ try{
+  await client.query(`CREATE SCHEMA ${integrated}`);
+  // 独立schema仅复制基础表形状，不复制已有迁移的函数、触发器或版本记录。
+  for(const table of ['tasks','task_runs','initiative_runs','harness_attempts','harness_attempt_cleanup_outbox','kernel_controller_sessions','callback_queue','device_locks'])
+   await client.query(`CREATE TABLE ${table} (LIKE ${schema}.${table} INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING INDEXES)`);
+  await client.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');
+   CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);
+   ALTER TABLE tasks ADD CONSTRAINT tasks_executor_kind_check CHECK(executor_kind IN ('bridge','headed-session'));`);
+  for(const name of ['501_capacity_reservations','503_execution_directory','507_linux_script_authorization','508_phone_dispatches','509_headed_task_takeover'])
+   await client.query(readFileSync(new URL(`../../../migrations/${name}.sql`,import.meta.url),'utf8'));
+  const rows=(await client.query("SELECT version,description FROM schema_version WHERE version IN ('507','508','509') ORDER BY version")).rows;
+  expect(rows).toHaveLength(3);expect(rows.map(row=>row.version)).toEqual(['507','508','509']);
+  expect(rows[0].description).toContain('Linux');expect(rows[0].description).not.toContain('手机独立');
+  expect(rows[1].description).toContain('手机独立');expect(rows[2].description).toContain('有头会话');
+  expect((await client.query("SELECT count(*) AS n FROM execution_grants WHERE surface='phone_ssh'")).rows[0].n).toBe('0');
+ }finally{await client.query(`DROP SCHEMA IF EXISTS ${integrated} CASCADE`);await client.end();}
+});
