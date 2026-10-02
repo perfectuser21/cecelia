@@ -1,6 +1,6 @@
 import {createHmac,randomUUID} from 'node:crypto';
-import fixtureModule from '../../scripts/fleet-worker/linux-script-test-fixture.cjs';
-import {normalizeRuntimeDeployment,runtimeDigest as hash} from './runtime-deployment.js';
+import fixtureModule from '../../../scripts/fleet-worker/linux-script-test-fixture.cjs';
+import {normalizeRuntimeDeployment,runtimeDigest as hash} from '../runtime-deployment.js';
 export function fixture(){
  const {record:r}=fixtureModule.fixture(),now=Date.now(),deployment=normalizeRuntimeDeployment({pool:r.pool,revision:'a'.repeat(40),host_boot_id:randomUUID(),worker_boot_id:r.identity.worker_boot_id,daemon_id:r.daemon_id,
   profiles:{safe:{profile:r.profile,image_id:r.image_id}},worker_credential_file:'/etc/worker.token',execution_credential_file:'/etc/execution.key',parent_task_id:randomUUID()},'b'.repeat(64),'c'.repeat(64));
