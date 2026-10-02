@@ -1,0 +1,25 @@
+import {afterEach,it,expect} from 'vitest';
+import express from 'express';
+import request from 'supertest';
+import {releaseEvidenceDatabase} from '../fixtures/release-evidence-db.js';
+import {createReleasesRouter} from '../../routes/releases.js';
+import {readCapabilitySystem} from '../../lib/capability-system.js';
+let f;
+afterEach(async()=>{await f?.close();f=null;});
+it('真实同步AV显式Enabler来源经HTTP冻结，旧legacy符号保未知且地图解释文件证据',async()=>{
+ f=await releaseEvidenceDatabase({fullActivityBindings:true,enablerDeclarations:true});
+ await f.db.query('CREATE TABLE journey_features (LIKE public.journey_features INCLUDING ALL)');
+ const app=express();app.use(express.json());app.use('/releases',createReleasesRouter({pool:f.db,trustedCollectors:['fixture-collector']}));
+ const response=await request(app).post('/releases').send(f.releaseInput);expect(response.status,response.body).toBe(201);
+ const release=response.body.release,call=release.payload.allowed_enabler_calls.find(c=>c.id===f.call);
+ expect(call).toMatchObject({id:f.call,enabler_id:f.enabler,source_status:'verified',validation_scope:'reference_only',symbol_status:'unverified'});
+ expect(call.impl_ref).toContain('#lock-acquire');expect(call.source_evidence).toHaveLength(1);
+ expect(call.source_evidence[0]).toMatchObject({kind:'code',revision:'b'.repeat(40),path:'src/controller.js',validation_scope:'reference_only'});
+ const replay=await request(app).post('/releases').send(f.releaseInput);expect(replay.status).toBe(200);expect(replay.body.release.id).toBe(release.id);
+ const registry=await readCapabilitySystem(f.db),enabler=registry.enablers.find(e=>e.id===f.enabler);
+ expect(enabler).toMatchObject({source_verified:true,validation_scope:'reference_only',symbol_status:'unverified'});
+ expect(enabler.calls).toContainEqual(expect.objectContaining({id:f.call,source_status:'verified'}));
+ expect(registry.activities.some(a=>a.implementation_bindings.some(b=>b.enabler_key==='test-lock'))).toBe(true);
+ await f.db.query("UPDATE enablers SET impl_ref='changed/path',active=false WHERE id=$1",[f.enabler]);
+ const frozen=await request(app).get('/releases/'+release.id);expect(frozen.body.release.payload.allowed_enabler_calls).toEqual(release.payload.allowed_enabler_calls);
+});
