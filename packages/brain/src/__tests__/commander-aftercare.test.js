@@ -84,13 +84,22 @@ describe('Commander finalize→售后证据→tick结束→下岗', () => {
     expect((await run(f)).status).toBe('retained');
     expect(f.events).not.toContain('remove');
   });
-  it('周期抢跑后disable不取消tick，等其自然结束才删', async () => {
+  it('运输未中断抢跑tick时，等成功结束才删', async () => {
     const f = fixture(); f.setBusy(false); f.setAck(receipt(f.ctx));
     const disable = f.deps.quiesceJob;
     f.deps.quiesceJob = async () => { await disable(); f.setBusy(true); };
     f.deps.sleep = async () => { expect(f.events).not.toContain('remove'); f.setBusy(false); };
     expect((await run(f)).status).toBe('retired');
     expect(f.events).toEqual(['record', 'disable', 'remove']);
+  });
+  it('运输禁用取消了抢跑tick：error状态必须保留，不能伪记成功下岗', async () => {
+    const f = fixture(); f.setBusy(false); f.setAck(receipt(f.ctx));
+    const read = f.deps.readJobs, disable = f.deps.quiesceJob; let cancelled = false;
+    f.deps.quiesceJob = async () => { await disable(); cancelled = true; };
+    f.deps.readJobs = async () => (await read()).map(job => cancelled
+      ? { ...job, state: { lastRunStatus: 'error', lastError: 'Cron job disabled by operator.' } } : job);
+    expect(await run(f)).toEqual({ status: 'retained', reason: 'last-tick-not-successful' });
+    expect(f.events).toEqual(['record', 'disable']);
   });
   it('超时清掉running标记不能冒充自然成功退出', async () => {
     const f = fixture(); f.setBusy(false); f.setAck(receipt(f.ctx));

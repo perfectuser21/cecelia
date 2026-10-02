@@ -162,7 +162,7 @@ export function buildEscortRelaunchRemote({ host, tag, serial, profile, taskId, 
     + `每轮末尾必须发心跳: ${gatewayExec} ${sq(heartbeat)}`;
   const delivery = process.env.COMMANDER_ESCORT_DELIVERY === 'none' ? '--no-deliver'
     : `--announce --channel feishu --to ${sq(ESCORT_FEISHU_TO)} --account main --best-effort-deliver`;
-  return `openclaw cron add --timeout 90000 --name ${sq(name)} --agent media --session ${sq(`session:${name}`)} `
+  return `openclaw cron add --timeout 90000 --name ${sq(name)} --agent work-commander --session ${sq(`session:${name}`)} `
     + `--every 10m ${delivery} --message ${sq(msg)}`;
 }
 

@@ -143,7 +143,7 @@ describe('buildEscortRelaunchRemote', () => {
   });
   it('同名 escort-<host>-<TAG>，消息注明接班只读接上不重发起，带 Brain 单号；远端串单引号安全', () => {
     const remote = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmd09300200', serial: 'ANGYVB4402004137', profile: 'legacy', taskId: 'task-run-1', relaunchCount: 2 });
-    expect(remote).toContain("cron add --timeout 90000 --name 'escort-xian-m4-cmd09300200' --agent media");
+    expect(remote).toContain("cron add --timeout 90000 --name 'escort-xian-m4-cmd09300200' --agent work-commander");
     expect(remote).toContain("--session 'session:escort-xian-m4-cmd09300200' --every 10m");
     expect(remote).toContain('接班');
     expect(remote).toContain('只读账本与日志接上');

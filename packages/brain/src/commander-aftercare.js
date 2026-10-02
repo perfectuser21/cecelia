@@ -36,7 +36,7 @@ export async function finishEscortAftercare(context, deps) {
       const receipt = await deps.readReceipt();
       if (owned.idle && owned.job.state.lastRunStatus === 'ok' && validReceipt(receipt, context)) {
         await deps.recordAftercare(receipt);
-        // interval cron 的 disable 只挡未来周期，不取消当前 tick。
+        // 禁用行为取决于运输实现；可能取消刚抢跑的tick，后续必须读回ok，否则保留。
         await deps.quiesceJob(context.escortId);
         while (deps.now() - started < deps.timeoutMs) {
           const checked = ownedIdleJob(await deps.readJobs(), context);
