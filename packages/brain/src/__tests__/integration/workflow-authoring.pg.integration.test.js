@@ -141,12 +141,15 @@ async function registrySnapshot() {
   }
   return result;
 }
-describe('authoring 与真实511共享底座读模型贯通', () => {
+describe('authoring 与真实共享关系和版本底座读模型贯通', () => {
   it('真实迁移后登记、共享复用和重排均保留真身ID及引用ID，读模型返回实际顺序', async () => {
-    for (const table of ['spans', 'schema_version', 'steps', 'enablers', 'enabler_calls']) {
+    for (const table of ['spans', 'schema_version', 'steps', 'enablers', 'enabler_calls', 'areas']) {
       await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
     }
+    // 真实迁移仅落隔离 schema，避免解析到 public 的版本表或触发器。
+    await client.query(`SET search_path TO ${schema}`);
     await client.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url), 'utf8'));
+    await client.query(readFileSync(new URL('../../../migrations/512_definition_versions.sql', import.meta.url), 'utf8'));
     const owner = await register();
     const ownerView = (await listWorkflows(client, { id: owner.workflow_id }))[0];
     expect(ownerView.activity_count).toBe(6);
