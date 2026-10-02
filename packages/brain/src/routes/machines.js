@@ -16,10 +16,14 @@ import { join, dirname } from 'path';
 import pool from '../db.js';
 import { clearMachineCache } from '../routing/load-machines.js';
 
+import { createLinuxPoolRouter } from '../linux-pool/router.js';
+import { createLinuxPoolAuthorization } from '../linux-pool/service.js';
+
 import { createOnboardingRouter } from '../node-onboarding/router.js';
 import { createOnboardingService } from '../node-onboarding/service.js';
 
 const router = Router();
+router.use('/linux-pool', createLinuxPoolRouter(createLinuxPoolAuthorization({ pool })));
 router.use('/onboarding', createOnboardingRouter(createOnboardingService({ pool })));
 
 // 宿主机每分钟写入的 Tailscale 状态缓存文件路径（Brain 容器挂载了宿主机目录）
