@@ -1,5 +1,6 @@
 'use strict';
 const {execFile}=require('node:child_process');
+const os=require('node:os'),{isIP}=require('node:net');
 const {createPhoneHubServer}=require('./service.cjs');
 const {loadConfiguration}=require('./configuration.cjs');
 const {createCapabilities}=require('./capabilities.cjs');
@@ -32,5 +33,20 @@ async function createRuntime({runControl:control=runControl,runProbe,...configur
   return {configured:true,identity,capabilities,maintenance,server:createPhoneHubServer({token:config.token,identity,capabilities,maintenance})};
  }catch{return {configured:false,server:createPhoneHubServer()};}
 }
-module.exports={createRuntime,runControl};
-if(require.main===module)createRuntime().then(runtime=>runtime.server.listen(3459,'0.0.0.0'));
+async function startRuntimeListener(runtime){
+ const match=runtime?.configured===true&&/^http:\/\/([0-9.]+):3459\/?$/.exec(runtime.identity?.http_endpoint);
+ const address=match&&match[1],octets=address&&address.split('.').map(Number);
+ if(!address||isIP(address)!==4||octets[0]!==100||octets[1]<64||octets[1]>127||
+  !Object.values(os.networkInterfaces()).flat().some(iface=>iface?.family==='IPv4'&&iface.internal===false&&iface.address===address))throw Error('phone_hub_listener_untrusted');
+ const server=runtime.server;
+ await new Promise((resolve,reject)=>{
+  const failed=error=>{server.removeListener('listening',ready);reject(error);};
+  const ready=()=>{server.removeListener('error',failed);resolve();};
+  server.once('error',failed);
+  try{server.listen(3459,address,ready);}catch(error){server.removeListener('error',failed);failed(error);}
+ });
+}
+module.exports={createRuntime,runControl,startRuntimeListener};
+if(require.main===module)createRuntime().then(startRuntimeListener).catch(()=>{
+ process.stderr.write('phone_hub_listener_unavailable\n');process.exitCode=1;
+});

@@ -90,7 +90,7 @@ it('缺失可信配置、非本机、DNS、公网、loopback或wildcard都拒绝
  const {startRuntimeListener}=require('./runtime.cjs');
  const interfaces=vi.spyOn(os,'networkInterfaces').mockReturnValue({utun9:[{address:'100.100.100.100',family:'IPv4',internal:false}]});
  try{
-  for(const endpoint of ['http://100.100.100.101:3459/','http://fixture-hub:3459/','http://8.8.8.8:3459/','http://127.0.0.1:3459/','http://0.0.0.0:3459/','http://100.63.255.255:3459/','http://100.128.0.1:3459/','http://100.100.100.100:3457/','http://100.100.100.100:3459/path','http://[::]:3459/']){
+  for(const endpoint of ['http://100.100.100.101:3459/','http://fixture-hub:3459/','http://8.8.8.8:3459/','http://127.0.0.1:3459/','http://0.0.0.0:3459/','http://100.63.255.255:3459/','http://100.128.0.1:3459/','http://100.100.100.100:3457/','http://100.100.100.100:3459/path','http://[::]:3459/','http://user@100.100.100.100:3459/','http://100.100.100.100:3459/?unsafe=1','http://100.100.100.100:3459/#unsafe','http://0100.100.100.100:3459/']){
    const server={listen:vi.fn()};await expect(startRuntimeListener({configured:true,identity:{http_endpoint:endpoint},server})).rejects.toThrow('phone_hub_listener_untrusted');expect(server.listen).not.toHaveBeenCalled();
   }
   const server={listen:vi.fn()};await expect(startRuntimeListener({configured:false,server})).rejects.toThrow('phone_hub_listener_untrusted');expect(server.listen).not.toHaveBeenCalled();
@@ -105,4 +105,27 @@ it('本机Tailscale端口被占用时保留bind失败，不能fallback或改占l
   await expect(startRuntimeListener({configured:true,identity:{http_endpoint:'http://100.100.100.100:3459/'},server})).rejects.toBe(failure);
   expect(server.listen).toHaveBeenCalledTimes(1);
  }finally{interfaces.mockRestore();}
+});
+
+it('internal网卡不能代替本机Tailscale非内部地址证据',async()=>{
+ const {startRuntimeListener}=require('./runtime.cjs');
+ const interfaces=vi.spyOn(os,'networkInterfaces').mockReturnValue({lo0:[{address:'100.100.100.100',family:'IPv4',internal:true}]});
+ try{const server={listen:vi.fn()};await expect(startRuntimeListener({configured:true,identity:{http_endpoint:'http://100.100.100.100:3459/'},server})).rejects.toThrow('phone_hub_listener_untrusted');expect(server.listen).not.toHaveBeenCalled();}finally{interfaces.mockRestore();}
+});
+
+it('真实生产入口缺配置时快速退出1且不调用任何监听',async()=>{
+ await configuredFixture(async f=>{
+  const preload=path.join(f.root,'deny-listener.cjs');
+  fs.writeFileSync(preload,`const fs=require('node:fs'),net=require('node:net');const open=fs.openSync;fs.openSync=function(file,...args){if(typeof file==='string'&&file.startsWith('/etc/cecelia/phone-hub/'))throw Object.assign(Error('missing fixture config'),{code:'ENOENT'});return open.call(this,file,...args);};net.Server.prototype.listen=function(){process.stderr.write('unexpected_listener');process.exit(42);};`,{mode:0o600});
+  let failure;try{execFileSync(process.execPath,['--require',preload,path.join(source,'runtime.cjs')],{timeout:2000,encoding:'utf8',stdio:['ignore','pipe','pipe']});}catch(error){failure=error;}
+  expect(failure?.status).toBe(1);expect(failure?.signal).toBe(null);expect(failure?.stderr).toBe('phone_hub_listener_unavailable\n');
+ });
+});
+it('真实私有ephemeral socket发生EADDRINUSE后只做一次bind且拒绝',async()=>{
+ const net=require('node:net'),{startRuntimeListener}=require('./runtime.cjs');
+ const occupied=net.createServer();await new Promise(resolve=>occupied.listen(0,'127.0.0.1',resolve));
+ const contender=net.createServer(),nativeListen=contender.listen.bind(contender),port=occupied.address().port;
+ const call=vi.spyOn(contender,'listen').mockImplementation((_port,_host,ready)=>nativeListen(port,'127.0.0.1',ready));
+ const interfaces=vi.spyOn(os,'networkInterfaces').mockReturnValue({utun9:[{address:'100.100.100.100',family:'IPv4',internal:false}]});
+ try{await expect(startRuntimeListener({configured:true,identity:{http_endpoint:'http://100.100.100.100:3459/'},server:contender})).rejects.toMatchObject({code:'EADDRINUSE'});expect(call).toHaveBeenCalledTimes(1);expect(contender.listening).toBe(false);}finally{interfaces.mockRestore();call.mockRestore();await new Promise(resolve=>occupied.close(resolve));}
 });
