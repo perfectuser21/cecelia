@@ -50,6 +50,8 @@ describe('PATCH /tasks/:id — pre-flight 三振复活路径', () => {
   let handler;
   beforeEach(() => {
     vi.clearAllMocks();
+    mockQuery.mockReset();
+    mockQuery.mockResolvedValueOnce({ rows: [{ ordinary_eligible: true }] });
     handler = findPatchHandler();
   });
 
@@ -65,7 +67,7 @@ describe('PATCH /tasks/:id — pre-flight 三振复活路径', () => {
     // 查询 current task for revival check
     mockQuery.mockResolvedValueOnce({ rows: [blockedTask] }); // SELECT status, blocked_reason, metadata
     // UPDATE RETURNING
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: taskId, status: 'queued', description: '补充的描述内容' }] });
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: taskId, status: 'queued', description: '补充的描述内容' }] });
 
     const req = {
       params: { id: taskId },
@@ -104,7 +106,7 @@ describe('PATCH /tasks/:id — pre-flight 三振复活路径', () => {
     // revival 检查
     mockQuery.mockResolvedValueOnce({ rows: [{ status: 'queued', blocked_reason: null, metadata: null }] });
     // UPDATE
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: taskId, status: 'queued', description: '正常描述' }] });
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: taskId, status: 'queued', description: '正常描述' }] });
 
     const req = {
       params: { id: taskId },
@@ -126,7 +128,7 @@ describe('PATCH /tasks/:id — pre-flight 三振复活路径', () => {
     const taskId = 'task-other-blocked';
 
     mockQuery.mockResolvedValueOnce({ rows: [{ status: 'blocked', blocked_reason: 'manual_block', metadata: null }] });
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: taskId, status: 'blocked', description: '补充描述' }] });
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: taskId, status: 'blocked', description: '补充描述' }] });
 
     const req = {
       params: { id: taskId },

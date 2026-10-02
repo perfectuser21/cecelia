@@ -23,6 +23,7 @@ vi.mock('../../task-updater.js', () => ({
 
 /** 铺一行 SELECT 返回的任务行，字段照 tasks.js 里 SELECT 的列对齐。 */
 function mockTaskRow(overrides) {
+  mockQuery.mockResolvedValueOnce({ rows: [{ ordinary_eligible: true }] });
   mockQuery.mockResolvedValueOnce({
     rows: [{
       id: 't1',
@@ -40,7 +41,7 @@ function mockTaskRow(overrides) {
   });
 }
 
-/** 取最近一次 UPDATE tasks 的 SQL 文本（mockQuery 第二次调用即 UPDATE）。 */
+/** 取最近一次 UPDATE tasks 的 SQL 文本（真实资格与状态两次SELECT之后即 UPDATE）。 */
 function lastUpdateSql() {
   const updateCall = mockQuery.mock.calls.find(([sql]) => /^\s*UPDATE tasks/i.test(sql));
   return updateCall ? updateCall[0] : '';
@@ -70,7 +71,7 @@ describe('PATCH /tasks/:id 完成态按执行面分流（PR1）', () => {
 
   it('qiumi_task 写 completed_no_pr → 200，且清 claimed_by/claimed_at', async () => {
     mockTaskRow({ status: 'in_progress', task_type: 'qiumi_task', claimed_by: 'x' });
-    mockQuery.mockResolvedValueOnce({ rows: [{ status: 'completed_no_pr', updated_at: 'x' }] });
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'completed_no_pr', updated_at: 'x' }] });
     const res = await request(app).patch('/api/brain/tasks/t1').send({ status: 'completed_no_pr' });
     expect(res.status).toBe(200);
     const update = lastUpdateSql();
@@ -83,7 +84,7 @@ describe('PATCH /tasks/:id 完成态按执行面分流（PR1）', () => {
 
   it('research 写 completed 行为不变（不进 409）', async () => {
     mockTaskRow({ status: 'in_progress', task_type: 'research', review_required_raw: null, pr_url: null });
-    mockQuery.mockResolvedValueOnce({ rows: [{ status: 'completed', updated_at: 'x' }] });
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'completed', updated_at: 'x' }] });
     const res = await request(app).patch('/api/brain/tasks/t1').send({ status: 'completed' });
     expect(res.status).toBe(200);
   });

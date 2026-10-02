@@ -37,8 +37,8 @@ function coding(body = {}) {
 
 function mockUnownedPatch(rows){
   mockPool.query.mockImplementation(async sql=>{
-    if(sql.includes("payload->'headed_takeover'"))return {rows:rows.length?[{headed_takeover:null}]:[]};
-    if(/^UPDATE tasks/.test(sql))return {rows};
+    if(sql.includes('ordinary_eligible'))return {rows:rows.length?[{headed_takeover:null,ordinary_eligible:true}]:[]};
+    if(/^UPDATE tasks/.test(sql))return {rowCount:rows.length,rows};
     throw new Error('unexpected SQL outside PATCH owner lookup and UPDATE');
   });
 }
@@ -337,15 +337,16 @@ describe('task-tasks routes', () => {
 
     it('updates status and priority', async () => {
       // 状态机保护：PATCH handler 先 SELECT 当前状态，再 UPDATE
+      mockPool.query.mockResolvedValueOnce({ rows: [{ ordinary_eligible: true }] }); // First task/owner authority SELECT.
       mockPool.query.mockResolvedValueOnce({ rows: [{ status: 'queued' }] }); // SELECT current status
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ id: 't1', status: 'completed', priority: 'P0' }],
+        rowCount: 1, rows: [{ id: 't1', status: 'completed', priority: 'P0' }],
       }); // UPDATE RETURNING *
 
       const res = await request(app).patch('/tasks/t1').send({ status: 'completed', priority: 'P0' });
       expect(res.status).toBe(200);
-      // mock.calls[1] 是 UPDATE（calls[0] 是 SELECT current status）
-      const [sql] = mockPool.query.mock.calls[1];
+      // Native owner authority and status SELECTs precede the same parameterized UPDATE.
+      const [sql] = mockPool.query.mock.calls.find(([sql])=>/^UPDATE tasks/.test(sql));
       expect(sql).toContain('status = $1');
       expect(sql).toContain('priority = $2');
     });
@@ -355,7 +356,7 @@ describe('task-tasks routes', () => {
       const res = await request(app).patch('/tasks/missing').send({ title: 'x' });
       expect(res.status).toBe(404);
       expect(mockPool.query.mock.calls[0][0]).toContain("payload->'headed_takeover'");
-      expect(mockPool.query.mock.calls.filter(([sql])=>/^UPDATE tasks/.test(sql))).toHaveLength(1);
+      expect(mockPool.query.mock.calls.filter(([sql])=>/^UPDATE tasks/.test(sql))).toHaveLength(0);
     });
 
     it('updates okr_initiative_id when provided', async () => {

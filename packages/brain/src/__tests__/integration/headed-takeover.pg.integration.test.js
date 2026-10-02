@@ -36,6 +36,7 @@ beforeAll(async()=>{
  CREATE TABLE kernel_controller_sessions(id text PRIMARY KEY,task_id uuid REFERENCES tasks(id),run_id uuid,status text DEFAULT 'active');
  CREATE TABLE callback_queue(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id uuid REFERENCES tasks(id),run_id text,processed_at timestamptz);
  CREATE TABLE device_locks(device_name text PRIMARY KEY,locked_by text);
+ CREATE TABLE phone_task_owners(task_id uuid PRIMARY KEY REFERENCES tasks(id));
  CREATE TABLE schema_version(version text PRIMARY KEY,description text,applied_at timestamptz);
  CREATE TABLE work_routing_receipts(id uuid PRIMARY KEY,task_id uuid,canonical_task_type text,work_kind text);
  CREATE TABLE task_events(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id uuid,event_type text,payload jsonb);

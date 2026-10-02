@@ -35,8 +35,9 @@ describe('PATCH /api/brain/tasks/:task_id — canceled 状态出口 [BEHAVIOR]',
 
   it('canceled → completed 应返回 200（此前因缺 canceled 出口条目返回 409 死锁）', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 'task-canceled-1', status: 'canceled' }] }) // SELECT
-      .mockResolvedValueOnce({ rows: [{ id: 'task-canceled-1', status: 'completed' }] }); // UPDATE
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ordinary_eligible: true }] }) // Native authority read precedes original task query.
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'task-canceled-1', status: 'canceled' }] }) // SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'task-canceled-1', status: 'completed' }] }); // UPDATE
 
     const res = await request(app)
       .patch('/api/brain/tasks/task-canceled-1')
@@ -47,8 +48,9 @@ describe('PATCH /api/brain/tasks/:task_id — canceled 状态出口 [BEHAVIOR]',
 
   it('canceled → failed 应返回 200', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 'task-canceled-2', status: 'canceled' }] })
-      .mockResolvedValueOnce({ rows: [{ id: 'task-canceled-2', status: 'failed' }] });
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ordinary_eligible: true }] }) // Native authority read precedes original task query.
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'task-canceled-2', status: 'canceled' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'task-canceled-2', status: 'failed' }] });
 
     const res = await request(app)
       .patch('/api/brain/tasks/task-canceled-2')
@@ -59,8 +61,9 @@ describe('PATCH /api/brain/tasks/:task_id — canceled 状态出口 [BEHAVIOR]',
 
   it('回归哨兵：quarantined → completed 仍然通过（不因本次改动破坏既有出口）', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 'task-q-1', status: 'quarantined' }] })
-      .mockResolvedValueOnce({ rows: [{ id: 'task-q-1', status: 'completed' }] });
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ordinary_eligible: true }] }) // Native authority read precedes original task query.
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'task-q-1', status: 'quarantined' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'task-q-1', status: 'completed' }] });
 
     const res = await request(app)
       .patch('/api/brain/tasks/task-q-1')

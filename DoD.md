@@ -103,3 +103,6 @@
 
 - [x] [BEHAVIOR] 手机夹具仅本地scratch/精确CI test，非法CI库在连接前拒绝。
   Test: manual:bash -c 'cd packages/brain && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run src/__tests__/fixtures/phone-claim-schema.test.js --maxWorkers=1 --minWorkers=1'
+
+- [x] [BEHAVIOR] B23b公开PATCH：真实执行器及owner在任何审核阻塞/终态/harness副作用前拒绝公开执行写；nested纯标题/优先级/描述保人赢且phone描述不隐式回队，普通恢复及完成闸、有头同会话提交后handoff保；最终执行UPDATE双谓词与实际计数、缺行真实DELETE404及未知资格失败关闭。
+  Test: manual:bash -c 'cd packages/brain && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/task-tasks-patch.pg.test.js src/__tests__/integration/headed-takeover.pg.integration.test.js src/routes/__tests__/task-phone-patch.test.js src/routes/__tests__/task-task-patch.test.js src/routes/__tests__/task-mutation-rate-limit.test.js src/routes/__tests__/tasks-result-backfill.test.js src/routes/__tests__/tasks-completed-gate.test.js src/routes/__tests__/tasks-completed-no-pr.test.js src/routes/__tests__/tasks-canceled-transition.test.js src/routes/__tests__/tasks-lifecycle-timestamps.test.js src/__tests__/harness-completion-authority.test.js --maxWorkers=1 --minWorkers=1'

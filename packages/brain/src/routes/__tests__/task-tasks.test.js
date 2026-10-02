@@ -114,8 +114,8 @@ describe('task-tasks routes — PATCH 参数对齐', () => {
 
   it('只更新 priority 时参数必须是 priority + task id，不能产生幽灵占位参数', async () => {
     mockPool.query.mockImplementation(async sql=>{
-      if(sql.includes("payload->'headed_takeover'"))return {rows:[{headed_takeover:null}]};
-      if(/^UPDATE tasks/.test(sql))return {rows:[{id:'task-priority',priority:'P0'}]};
+      if(sql.includes('ordinary_eligible'))return {rows:[{headed_takeover:null,ordinary_eligible:true}]};
+      if(/^UPDATE tasks/.test(sql))return {rowCount:1,rows:[{id:'task-priority',priority:'P0'}]};
       throw new Error('unexpected SQL outside PATCH owner lookup and UPDATE');
     });
 
@@ -128,6 +128,7 @@ describe('task-tasks routes — PATCH 参数对齐', () => {
   });
 
   it('blocked task 存在 unresolved Harness gap 时拒绝直写为 queued', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ ordinary_eligible: true }] });
     mockPool.query.mockResolvedValueOnce({ rows: [{
       id: 'task-gap-blocked',
       status: 'blocked',
@@ -143,7 +144,7 @@ describe('task-tasks routes — PATCH 参数对齐', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('harness_gap_dependencies_unresolved');
-    expect(mockPool.query).toHaveBeenCalledTimes(1);
+    expect(mockPool.query).toHaveBeenCalledTimes(2);
   });
 });
 

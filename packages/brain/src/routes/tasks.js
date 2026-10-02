@@ -1,3 +1,5 @@
+import { phoneOrdinaryQueueSql } from '../task-queue-lanes.js';
+import { readPhonePatchAuthority, phonePatchRejection, checkPhonePatchWrite } from './task-phone-patch.js';
 import {headedTaskMutation,registerHeadedTakeoverRoute} from './task-headed-takeover.js';
 import { rateLimit } from 'express-rate-limit';
 import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
@@ -409,6 +411,9 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
       }
     }
 
+    const phoneAuthority = await readPhonePatchAuthority(pool, task_id);
+    if (phoneAuthority !== 'ordinary') return phonePatchRejection(res, phoneAuthority, task_id, true);
+
     // Get current task
     const taskResult = await pool.query(
       `SELECT id, status, claimed_by, executor_kind, task_type,
@@ -595,11 +600,12 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
 
     params.push(task_id);
     const updateResult = await pool.query(
-      `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = $${paramIdx}
+      `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = $${paramIdx} AND ${phoneOrdinaryQueueSql('tasks')}
        RETURNING status, updated_at, started_at, completed_at`,
       params
     );
 
+    if (!await checkPhonePatchWrite(pool, updateResult, res, task_id, true)) return;
     const updatedTask = updateResult.rows[0];
 
     // relay handoff 登记缺口修复（08-04）：skill-relay 直接 PATCH result.handoff 不走

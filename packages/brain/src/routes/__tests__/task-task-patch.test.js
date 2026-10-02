@@ -34,7 +34,7 @@ function captureHandler(pool) {
 describe('registerTaskPatchRoute', () => {
   it('unresolved Harness Gap 存在时拒绝 blocked → queued', async () => {
     const pool = {
-      query: vi.fn().mockResolvedValue({
+      query: vi.fn().mockResolvedValueOnce({rows:[{ordinary_eligible:true}]}).mockResolvedValue({
         rows: [{
           status: 'blocked',
           task_type: 'dev',
@@ -55,7 +55,7 @@ describe('registerTaskPatchRoute', () => {
 
     expect(response.statusCode).toBe(409);
     expect(response.body).toMatchObject({ error: 'harness_gap_dependencies_unresolved' });
-    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(pool.query).toHaveBeenCalledTimes(2);
   });
 
   it('空 PATCH 请求返回 400 且不写 tasks', async () => {

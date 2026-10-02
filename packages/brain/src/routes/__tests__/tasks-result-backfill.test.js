@@ -24,7 +24,7 @@ describe('PATCH /api/brain/tasks/:task_id — result 补写 [BEHAVIOR]', () => {
     vi.resetModules();
     mockQuery.mockReset();
     // 默认兜底：事件/KR 等后续查询一律返回空行，防未 mock 的调用炸 rows
-    mockQuery.mockResolvedValue({ rows: [] });
+    mockQuery.mockResolvedValue({ rowCount: 0, rows: [] });
     app = express();
     app.use(express.json());
     const { default: router } = await import('../tasks.js');
@@ -33,8 +33,9 @@ describe('PATCH /api/brain/tasks/:task_id — result 补写 [BEHAVIOR]', () => {
 
   it('completed task + body.result → 200 且 UPDATE 含 result COALESCE merge（补写场景，原 409）', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 't1', status: 'completed' }] }) // SELECT
-      .mockResolvedValueOnce({ rows: [{ status: 'completed', updated_at: 'x' }] }); // UPDATE
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ordinary_eligible: true }] }) // Native authority read precedes original task query.
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 't1', status: 'completed' }] }) // SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'completed', updated_at: 'x' }] }); // UPDATE
 
     const res = await request(app)
       .patch('/api/brain/tasks/t1')
@@ -51,8 +52,9 @@ describe('PATCH /api/brain/tasks/:task_id — result 补写 [BEHAVIOR]', () => {
 
   it('completed→completed 无 result → 200 幂等 no-op（不 409、不写 history）', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 't2', status: 'completed' }] })
-      .mockResolvedValueOnce({ rows: [{ status: 'completed', updated_at: 'x' }] });
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ordinary_eligible: true }] }) // Native authority read precedes original task query.
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 't2', status: 'completed' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'completed', updated_at: 'x' }] });
 
     const res = await request(app)
       .patch('/api/brain/tasks/t2')
@@ -65,8 +67,9 @@ describe('PATCH /api/brain/tasks/:task_id — result 补写 [BEHAVIOR]', () => {
 
   it('in_progress→completed 带 result → 200 且 status 与 result 同时进 UPDATE', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 't3', status: 'in_progress' }] })
-      .mockResolvedValueOnce({ rows: [{ status: 'completed', updated_at: 'x' }] });
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ordinary_eligible: true }] }) // Native authority read precedes original task query.
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 't3', status: 'in_progress' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'completed', updated_at: 'x' }] });
 
     const res = await request(app)
       .patch('/api/brain/tasks/t3')
@@ -81,8 +84,9 @@ describe('PATCH /api/brain/tasks/:task_id — result 补写 [BEHAVIOR]', () => {
 
   it('只带 result 无 status → 200（纯补写合法）', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 't4', status: 'completed' }] })
-      .mockResolvedValueOnce({ rows: [{ status: 'completed', updated_at: 'x' }] });
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ordinary_eligible: true }] }) // Native authority read precedes original task query.
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 't4', status: 'completed' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'completed', updated_at: 'x' }] });
 
     const res = await request(app)
       .patch('/api/brain/tasks/t4')
@@ -118,7 +122,8 @@ describe('PATCH /api/brain/tasks/:task_id — result 补写 [BEHAVIOR]', () => {
   });
 
   it('回归哨兵：completed → failed 仍 409（终态间迁移不放行）', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 't7', status: 'completed' }] });
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [{ ordinary_eligible: true }] });
+    mockQuery.mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 't7', status: 'completed' }] });
     const res = await request(app)
       .patch('/api/brain/tasks/t7')
       .send({ status: 'failed' });

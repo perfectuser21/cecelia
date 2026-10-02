@@ -118,7 +118,7 @@ describe('收账权收归 — PATCH /tasks/:id', () => {
   beforeEach(async () => {
     vi.resetModules();
     mockQuery.mockReset();
-    mockQuery.mockResolvedValue({ rows: [] });
+    mockQuery.mockResolvedValue({ rowCount: 0, rows: [] });
     finalizeMock.mockReset();
     vi.doMock('../db.js', () => ({ default: { query: (...a) => mockQuery(...a) } }));
     vi.doMock('../lib/harness-finalize.js', () => ({ finalizeHarnessTask: finalizeMock }));
@@ -130,8 +130,9 @@ describe('收账权收归 — PATCH /tasks/:id', () => {
 
   it('harness relay completed + finalize 拒 → 200 accepted:false 且 UPDATE 无 status 子句', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 't1', status: 'in_progress', task_type: 'harness_initiative', orchestrator: 'skill-relay' }] }) // SELECT
-      .mockResolvedValueOnce({ rows: [{ status: 'in_progress', updated_at: 'x' }] }); // UPDATE
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ordinary_eligible: true }] }) // Actual authority SELECT runs first.
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 't1', status: 'in_progress', task_type: 'harness_initiative', orchestrator: 'skill-relay' }] }) // SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'in_progress', updated_at: 'x' }] }); // UPDATE
     finalizeMock.mockResolvedValue({ applies: true, allow: false, reason: 'pr_not_merged' });
 
     const res = await request(app).patch('/api/brain/tasks/t1').send({ status: 'completed' });
@@ -146,8 +147,9 @@ describe('收账权收归 — PATCH /tasks/:id', () => {
 
   it('harness relay completed + finalize 放行 → UPDATE 含 status 子句（原路径 completed）', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 't2', status: 'in_progress', task_type: 'harness_initiative', orchestrator: 'skill-relay' }] })
-      .mockResolvedValueOnce({ rows: [{ status: 'completed', updated_at: 'x' }] });
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ordinary_eligible: true }] }) // Actual authority SELECT runs first.
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 't2', status: 'in_progress', task_type: 'harness_initiative', orchestrator: 'skill-relay' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'completed', updated_at: 'x' }] });
     finalizeMock.mockResolvedValue({ applies: true, allow: true });
 
     const res = await request(app).patch('/api/brain/tasks/t2').send({ status: 'completed' });
@@ -160,8 +162,9 @@ describe('收账权收归 — PATCH /tasks/:id', () => {
 
   it('非 harness completed → 不调 finalize，原路径 status 子句', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ id: 't3', status: 'in_progress', task_type: 'dev', orchestrator: null }] })
-      .mockResolvedValueOnce({ rows: [{ status: 'completed', updated_at: 'x' }] });
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ordinary_eligible: true }] }) // Actual authority SELECT runs first.
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 't3', status: 'in_progress', task_type: 'dev', orchestrator: null }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'completed', updated_at: 'x' }] });
 
     const res = await request(app).patch('/api/brain/tasks/t3').send({ status: 'completed' });
 
@@ -180,7 +183,7 @@ describe('收账权收归 — PATCH /task/:id（task-tasks.js）', () => {
   beforeEach(async () => {
     vi.resetModules();
     mockQuery.mockReset();
-    mockQuery.mockResolvedValue({ rows: [] });
+    mockQuery.mockResolvedValue({ rowCount: 0, rows: [] });
     finalizeMock.mockReset();
     vi.doMock('../db.js', () => ({ default: { query: (...a) => mockQuery(...a) } }));
     vi.doMock('../lib/harness-finalize.js', () => ({ finalizeHarnessTask: finalizeMock }));
@@ -192,8 +195,9 @@ describe('收账权收归 — PATCH /task/:id（task-tasks.js）', () => {
 
   it('harness relay completed + finalize 拒 → 200 accepted:false 且 UPDATE 无 status/completed_at（不落 400）', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ status: 'in_progress', task_type: 'harness_initiative', orchestrator: 'skill-relay' }] }) // 状态机 SELECT
-      .mockResolvedValueOnce({ rows: [{ id: 'tt1', status: 'in_progress' }] }); // UPDATE RETURNING *
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ordinary_eligible: true }] }) // Actual authority SELECT runs first.
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'in_progress', task_type: 'harness_initiative', orchestrator: 'skill-relay' }] }) // 状态机 SELECT
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'tt1', status: 'in_progress' }] }); // UPDATE RETURNING *
     finalizeMock.mockResolvedValue({ applies: true, allow: false, reason: 'pr_not_merged' });
 
     const res = await request(app).patch('/tt1').send({ status: 'completed' });
@@ -210,8 +214,9 @@ describe('收账权收归 — PATCH /task/:id（task-tasks.js）', () => {
 
   it('harness relay completed + finalize 放行 → 原路径写 status/completed_at', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ status: 'in_progress', task_type: 'harness_initiative', orchestrator: 'skill-relay' }] })
-      .mockResolvedValueOnce({ rows: [{ id: 'tt2', status: 'completed' }] });
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ordinary_eligible: true }] }) // Actual authority SELECT runs first.
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'in_progress', task_type: 'harness_initiative', orchestrator: 'skill-relay' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'tt2', status: 'completed' }] });
     finalizeMock.mockResolvedValue({ applies: true, allow: true });
 
     const res = await request(app).patch('/tt2').send({ status: 'completed' });
@@ -224,8 +229,9 @@ describe('收账权收归 — PATCH /task/:id（task-tasks.js）', () => {
 
   it('非 harness completed → 不调 finalize，原路径 status 子句', async () => {
     mockQuery
-      .mockResolvedValueOnce({ rows: [{ status: 'in_progress', task_type: 'dev', orchestrator: null }] })
-      .mockResolvedValueOnce({ rows: [{ id: 'tt3', status: 'completed' }] });
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ ordinary_eligible: true }] }) // Actual authority SELECT runs first.
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ status: 'in_progress', task_type: 'dev', orchestrator: null }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'tt3', status: 'completed' }] });
 
     const res = await request(app).patch('/tt3').send({ status: 'completed' });
 
@@ -244,7 +250,7 @@ describe('收账权收归 — POST /harness/complete', () => {
   beforeEach(async () => {
     vi.resetModules();
     mockQuery.mockReset();
-    mockQuery.mockResolvedValue({ rowCount: 1, rows: [] });
+    mockQuery.mockResolvedValue({ rowCount: 0, rows: [] });
     finalizeMock.mockReset();
     vi.doMock('../db.js', () => ({ default: { query: (...a) => mockQuery(...a) } }));
     vi.doMock('../lib/harness-finalize.js', () => ({ finalizeHarnessTask: finalizeMock }));

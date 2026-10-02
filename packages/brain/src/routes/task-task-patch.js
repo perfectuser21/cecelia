@@ -1,3 +1,5 @@
+import { phoneOrdinaryQueueSql } from '../task-queue-lanes.js';
+import { phoneMetadataOnly, readPhonePatchAuthority, phonePatchRejection, checkPhonePatchWrite } from './task-phone-patch.js';
 import {headedTaskMutation} from './task-headed-takeover.js';
 import { rateLimit } from 'express-rate-limit';
 import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
@@ -21,6 +23,13 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
       let harnessDemoteReason = null;
       const reservedError = authoringMutationError(null, { result: taskResult });
       if (reservedError) return res.status(409).json(reservedError);
+
+      if (Object.keys(req.body).length === 0) return res.status(400).json({ error: 'No fields to update' });
+      const phoneAuthority = await readPhonePatchAuthority(pool, req.params.id);
+      if (phoneAuthority === 'missing' || (phoneAuthority === 'phone' && !phoneMetadataOnly(req.body))) {
+        return phonePatchRejection(res, phoneAuthority, req.params.id);
+      }
+      let executionMutation = status !== undefined || taskResult !== undefined || okrInitiativeId !== undefined || prUrl !== undefined;
 
       if (status !== undefined) {
         const current = await pool.query(
@@ -119,13 +128,14 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
         return res.status(400).json({ error: 'No fields to update' });
       }
 
-      if (description) {
+      if (description && phoneAuthority === 'ordinary') {
         const current = await pool.query(
           'SELECT status, blocked_reason, metadata FROM tasks WHERE id = $1',
           [req.params.id],
         );
         const task = current.rows[0];
         if (task?.status === 'blocked' && task.blocked_reason === 'pre_flight_rejected') {
+          executionMutation = true;
           setClauses.push("status = 'queued'", 'blocked_reason = NULL', 'blocked_at = NULL', 'blocked_detail = NULL');
           const cleanedMetadata = { ...(task.metadata || {}) };
           delete cleanedMetadata.pre_flight_fail_count;
@@ -140,12 +150,10 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
       setClauses.push('updated_at = NOW()');
       params.push(req.params.id);
       const result = await pool.query(
-        `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+        `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = $${paramIndex}${executionMutation ? ` AND ${phoneOrdinaryQueueSql('tasks')}` : ''} RETURNING *`,
         params,
       );
-      if (!result.rows.length) {
-        return res.status(404).json({ error: 'Task not found', id: req.params.id });
-      }
+      if (!await checkPhonePatchWrite(pool, result, res, req.params.id)) return;
       // 终态收口（lib/task-terminal.js）：动态 SET 写完终态后必经钩子（completed / completed_no_pr 接棒）
       if (!harnessDemoted && isTerminalStatus(result.rows[0].status) && isTerminalStatus(status)) {
         await pool.afterCommit(original => afterTerminalTransition(original, req.params.id, result.rows[0].status, { sessionId: req.headers?.['x-session-id'] || null }));

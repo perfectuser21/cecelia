@@ -58,7 +58,7 @@ describe('task mutation rate limit: real HTTP, database fixture only', () => {
 
   it('field PATCH aliases share budget; request 301 cannot enter owner transaction or terminal hooks', async () => {
     vi.stubEnv('CECELIA_INTERNAL_TOKEN', 'isolated-rate-test');
-    const pool = { connect: vi.fn(), query: vi.fn(async () => ({ rows: [{ id: 'task', status: 'in_progress' }] })) };
+    const pool = { connect: vi.fn(), query: vi.fn(async sql => /ordinary_eligible/.test(sql) ? { rows: [{ id: 'task', ordinary_eligible: true }] } : { rowCount: 1, rows: [{ id: 'task', status: 'in_progress' }] }) };
     const app = appWithJson(), router = express.Router();
     registerTaskPatchRoute(router, { pool, terminalStatuses: ['completed', 'failed', 'cancelled'] });
     app.use('/api/brain/tasks/tasks', router); app.use('/api/brain/tasks', router);
@@ -72,7 +72,7 @@ describe('task mutation rate limit: real HTTP, database fixture only', () => {
   });
 
   it('execution PATCH preserves ordinary result-only requests; request 301 performs no new SQL or terminal effects', async () => {
-    effects.query.mockImplementation(async () => ({ rows: [{ id: 'task', status: 'completed', updated_at: 'fixture' }] }));
+    effects.query.mockImplementation(async sql => /ordinary_eligible/.test(sql) ? { rows: [{ id: 'task', ordinary_eligible: true }] } : { rowCount: 1, rows: [{ id: 'task', status: 'completed', updated_at: 'fixture' }] });
     const { default: router } = await import('../tasks.js');
     const app = appWithJson(); app.use('/api/brain', router);
     await burst(app, 'patch', ['/api/brain/tasks/task'], { result: { evidence: 'existing result' } }, 200);
