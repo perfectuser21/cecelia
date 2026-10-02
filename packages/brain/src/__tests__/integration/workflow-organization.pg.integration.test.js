@@ -50,6 +50,11 @@ it('真实HTTP工作流同时返回规范能力身份、部门继承及平台形
   expect(kw.activities[0].usage).toHaveProperty('activity_definition_version_id', null);
   expect(bm.activities[0].legacy_workflow_id).toBe(ids.wfA);
   expect(bm.channel).toBe('douyin'); expect(bm.form).toBe('android_rpa');
+  const activity = await request(app).get(`/api/brain/activities/${ids.activity}`);
+  expect(activity.status, activity.body.error).toBe(200);
+  expect(activity.body.activity).toMatchObject({ canonical_id: ids.activity, definition_status: 'unknown', definition_version: null });
+  expect((await request(app).get(`/api/brain/activities/${randomUUID()}`)).status).toBe(404);
+  expect((await request(app).get('/api/brain/activities/bad')).status).toBe(400);
 });
 it('缺失部门归属明确unknown，部门祖先环查询有界并报告缺口', async () => {
   await db.query('UPDATE journeys SET area_id=NULL WHERE id=$1', [ids.stream]);
