@@ -1,6 +1,6 @@
 /** 运行身份只绑定一次；运行生命周期仍由现有执行系统管理。 */
 import defaultPool from '../db.js';
-import { UUID,evidenceHash,evidenceObject,evidenceText,evidenceTransaction,requireEvidence,getRelease,evaluateReleaseObservation } from './release-index.js';
+import { UUID,evidenceHash,evidenceObject,evidenceText,evidenceTransaction,requireEvidence,getRelease,evaluateReleaseObservation,getReleaseGate,lockReleaseTarget } from './release-index.js';
 const HASH=/^[0-9a-f]{64}$/;
 function validateInput(runId,input){
   evidenceText(runId,'run_id');
@@ -49,12 +49,17 @@ async function lockRunProtocol(db,runId){
   requireEvidence(!exists,'已有旧协议span的运行不可追加新身份','LEGACY_RUN_CONFLICT',409);
 }
 export async function bindRunDefinition(pool,runId,input){
+  return evidenceTransaction(pool,`run-definition:${runId}`,db=>bindRunDefinitionInTransaction(db,runId,input));
+}
+/** 调用方须已BEGIN；内部任务创建与固定身份共用提交/回滚。 */
+export async function bindRunDefinitionInTransaction(db,runId,input){
   validateInput(runId,input);const hash=evidenceHash(input);
-  return evidenceTransaction(pool,`run-definition:${runId}`,async db=>{
     await lockRunProtocol(db,runId);
     const existing=(await db.query('SELECT * FROM run_definition_bindings WHERE run_id=$1',[runId])).rows[0];
     if(existing){requireEvidence(existing.payload_sha256===hash,'run已绑定其他定义','CONFLICT',409);return {binding:existing,created:false};}
     const release=await getRelease(db,input.release_id);
+    await lockReleaseTarget(db,release.environment,release.target);
+    requireEvidence((await getReleaseGate(db,release.id)).deployed,'当前部署已漂移或release已替换','DEPLOYMENT_UNVERIFIED',409);
     const observation=(await db.query('SELECT * FROM release_observations WHERE id=$1 AND release_id=$2',[input.observation_id,input.release_id])).rows[0];
     requireEvidence(observation&&evaluateReleaseObservation(release,observation).deployed,'运行需要CI核验及匹配的实际部署观测','DEPLOYMENT_UNVERIFIED',409);
     const workflow=release.payload.workflows.find(w=>w.id===input.workflow_definition_version_id&&w.workflow_id===input.workflow_id);
@@ -69,7 +74,6 @@ export async function bindRunDefinition(pool,runId,input){
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,[runId,input.release_id,input.observation_id,input.workflow_id,input.workflow_definition_version_id,
       input.snapshot_sha256,JSON.stringify(input.expected_path),input.source_kind,input.task_run_id||null,input.external_origin||null,input.attempt_key,input.actor,hash,input])).rows[0];
     return {binding,created:true};
-  });
 }
 export async function getRunDefinitionBinding(db,runId){
   evidenceText(runId,'run_id');db ||= defaultPool;

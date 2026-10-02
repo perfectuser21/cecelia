@@ -152,6 +152,7 @@ export function evaluateReleaseObservation(release, observation) {
   const gaps = [];
   if (!payload) gaps.push({ code: 'observation_missing' });
   else {
+    if (observation.release_id !== release.id) gaps.push({ code: 'current_release_mismatch' });
     if (release.environment !== payload.environment || release.target !== payload.target) gaps.push({ code: 'deployment_target_mismatch' });
     if (!observation.collector || !observation.evidence_ref) gaps.push({ code: 'observation_evidence_missing' });
     if (!Array.isArray(actual) || !same([...release.payload.components].sort((a,b) => componentKey(a).localeCompare(componentKey(b))), [...actual].sort((a,b) => componentKey(a).localeCompare(componentKey(b))))) gaps.push({ code: 'component_mismatch' });
@@ -159,6 +160,9 @@ export function evaluateReleaseObservation(release, observation) {
   const matched = !gaps.length;
   if (release.payload.verification.status !== 'verified') gaps.push({ code: 'release_unverified' });
   return { deployed: !gaps.length, actual_matches: matched, gaps };
+}
+export async function lockReleaseTarget(db,environment,target) {
+  await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`release-target:${JSON.stringify([environment,target])}`]);
 }
 export async function recordReleaseObservation(pool, releaseId, input, { trustedCollector } = {}) {
   evidenceText(releaseId, 'release_id', UUID);
@@ -169,6 +173,9 @@ export async function recordReleaseObservation(pool, releaseId, input, { trusted
   validateComponents(input.components, true); const hash = evidenceHash(input);
   return evidenceTransaction(pool, `release-observation:${releaseId}:${input.event_key}`, async db => {
     const release = await getRelease(db, releaseId);
+    // 锁住声明目标和实际目标；稳定排序避免错目标交叉观测死锁。
+    const targets = [...new Set([JSON.stringify([release.environment,release.target]),JSON.stringify([input.environment,input.target])])].sort();
+    for (const value of targets) await lockReleaseTarget(db,...JSON.parse(value));
     const existing = (await db.query('SELECT * FROM release_observations WHERE release_id=$1 AND event_key=$2', [releaseId, input.event_key])).rows[0];
     if (existing) { requireEvidence(existing.payload_sha256 === hash, '观测事件已绑定其他实测内容', 'CONFLICT', 409); return { observation: existing, created: false }; }
     const observation = (await db.query(`INSERT INTO release_observations(release_id,event_key,attempt_key,payload_sha256,payload,collector,evidence_ref,observed_at)
