@@ -151,6 +151,7 @@ const app = express();
 app.locals.pool = pool;
 app.set('kernelFleetBridgeToken', process.env.KERNEL_FLEET_BRIDGE_TOKEN);
 const kernelFleetTerminalTransport = createProductionExecutionTransport({
+  pool,
   env: process.env,
   fetchFn: globalThis.fetch,
 });

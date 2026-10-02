@@ -9,7 +9,7 @@ on:
       - 'packages/brain/src/routes/machines.js'
       - 'packages/brain/src/scheduler-jobs.js'
       - 'scripts/ops/node-*'
-      - 'scripts/ops/__tests__/node-onboarding.test.mjs'
+      - 'scripts/ops/__tests__/node-onboarding*.test.mjs'
       - 'apps/api/features/system/**'
       - '.github/workflows/node-onboarding.yml'
   workflow_dispatch:
@@ -38,7 +38,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: 真实采集与凭据生命周期回归
-        run: node --test --test-concurrency=1 scripts/ops/__tests__/node-onboarding.test.mjs
+        run: node --test --test-concurrency=1 scripts/ops/__tests__/node-onboarding*.test.mjs
       - name: 接入契约、HTTP 和真实数据库回归
         working-directory: packages/brain
         env:

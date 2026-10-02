@@ -21,7 +21,7 @@ describe('Cecelia 主导航', () => {
         label: '运行与诊断', path: '/system',
         children: [
           '/system', '/system/cecelia', '/system/automation', '/system/engine',
-          '/map', '/system/feature-map', '/test-pyramid', '/traces', '/ledger',
+          '/map', '/system/feature-map', '/test-pyramid', '/traces', '/website-functions',
           '/workbench/activity', '/knowledge/dev-log', '/cecelia/growth', '/cecelia/evolution',
         ],
       },
@@ -39,6 +39,8 @@ describe('Cecelia 主导航', () => {
   it('22 个终端入口去重且全部有可加载的页面', () => {
     const leaves = config.navGroups.flatMap(group => group.items.flatMap(item => item.children ?? [item]));
     expect(leaves).toHaveLength(22);
+    expect(leaves.find(item => item.path === '/website-functions')?.label).toBe('网站功能');
+    expect(config.allRoutes.find(route => route.path === '/ledger')?.component).toBe('LedgerPage');
     expect(leaves.find(item => item.path === '/account-usage')?.label).toBe('AI 额度');
     expect(new Set(leaves.map(item => item.path)).size).toBe(22);
     for (const item of leaves) {
