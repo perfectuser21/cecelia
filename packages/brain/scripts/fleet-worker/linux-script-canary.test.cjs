@@ -31,6 +31,31 @@ function setup(){
  return {root,nonce,key,calls,config,deps,set lost(v){lost=v;},set removeFailure(v){removeFailure=v;}};
 }
 describe('真实受限adapter专用canary编排',()=>{
+ it('首次start前初始journal已提交后进程中断，恢复可证明全部未尝试且零外部调用',async()=>{
+  const x=setup(),rename=fs.renameSync;let interrupted=false;
+  fs.renameSync=(source,dest)=>{rename(source,dest);if(String(dest)===path.join(x.root,x.nonce+'.json')&&!interrupted){interrupted=true;throw Error('interrupted after initial intent');}};
+  try{await expect(runLinuxScriptCanary({nonce:x.nonce,cleanupReceipt:true},x.deps)).rejects.toThrow();}finally{fs.renameSync=rename;}
+  const initial=JSON.parse(fs.readFileSync(path.join(x.root,x.nonce+'.json')));expect(initial.cases.every(c=>c.attempted===false&&c.container_id===null)).toBe(true);expect(x.calls).toEqual([]);
+  const result=await runLinuxScriptCanary({nonce:x.nonce,cleanupReceipt:true},x.deps);
+  expect(result.receipt.schema_version).toBe('linux-script-canary-cleanup/v1');expect(result.receipt.cases.every(c=>c.not_started&&c.cleanup===null&&c.container_id===null)).toBe(true);
+  expect(await runLinuxScriptCanary({nonce:x.nonce,cleanupReceipt:true},x.deps)).toEqual(result);expect(x.calls).toEqual([]);
+  expect(JSON.parse(fs.readFileSync(path.join(x.root,x.nonce+'.json'))).cleanup_confirmed).toBe(true);
+  expect((await runLinuxScriptCanary({nonce:'f'.repeat(64)},x.deps)).receipt.schema_version).toBe('linux-script-canary/v1');
+  expect(x.calls.filter(action=>action==='start')).toHaveLength(1);
+ });
+ it('恢复汇总不能把缺失attempted或身份不符墓碑当成清理完成',async()=>{
+  for(const kind of ['attempted','identity']){
+   const x=setup();x.lost=true;await expect(runLinuxScriptCanary({nonce:x.nonce},x.deps)).rejects.toThrow();
+   const file=path.join(x.root,x.nonce+'.json'),state=JSON.parse(fs.readFileSync(file));
+   if(kind==='attempted'){delete state.cases[0].attempted;state.cases[0].container_id=null;delete state.cases[0].cleanup;}
+   else state.cases[0].cleanup.reservation_id=randomUUID();
+   fs.writeFileSync(file,JSON.stringify(state));
+   await expect(runLinuxScriptCanary({nonce:x.nonce,cleanupReceipt:true},x.deps)).rejects.toThrow();
+   expect(JSON.parse(fs.readFileSync(file)).cleanup_confirmed).toBe(false);
+   await expect(runLinuxScriptCanary({nonce:'f'.repeat(64)},x.deps)).rejects.toThrow();
+   expect(x.calls.filter(action=>action==='start')).toHaveLength(1);
+  }
+ });
  it('失败后只在所有精确墓碑齐全时返回独立cleanup回执，旧nonce不重启',async()=>{
   const x=setup();x.lost=true;x.removeFailure=true;await expect(runLinuxScriptCanary({nonce:x.nonce,cleanupReceipt:true},x.deps)).rejects.toThrow();
   await expect(runLinuxScriptCanary({nonce:x.nonce,cleanupReceipt:true},x.deps)).rejects.toThrow();x.removeFailure=false;
