@@ -13,6 +13,8 @@ description: 当用户要求创建、注册或更新 workflow，或把已经跑�
 
 使用本 skill 同目录的 `scripts/client.mjs`（Node.js 22+）。环境变量 `CECELIA_API_BASE_URL` 默认 `http://localhost:5221/api/brain`。敏感 API 使用 `CECELIA_INTERNAL_TOKEN`，按组织凭据规则从 1Password 注入环境，绝不把凭据写入 JSON、输出或命令参数。执行前确认脚本路径与 API 在同一执行机可达；网关文件路径不能直接交给远端节点。
 
+OpenClaw 使用 Codex 隔离执行器时，原生 `bash` 可能位于另一个执行环境。调用本流程的 Brain API 和本地脚本时优先使用 `gateway_exec`，让请求 JSON、调用器、凭据缓存和 `localhost:5221` 留在同一网关宿主；先按该工具定义填写参数。若文件不可见或 localhost 不通，检查执行主机并切换到网关工具，不把这类内部路径问题交给用户补资料。只有确认当前工具与网关同机时才直接用原生终端。
+
 将请求保存为 JSON，再调用：
 
 ```text
