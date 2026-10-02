@@ -71,6 +71,10 @@ it.each(['empty-projection','fake-graph-digest','wrong-activity-coverage'])('不
   if(reason==='wrong-activity-coverage')report.required_assertions[0].source_bindings[0].activity_id='another-activity';
   await expect(runImplementationGate({repoRoot:root,report})).rejects.toThrow();
 });
+it('Activity级回归不能冒充指定Step的回归',async()=>{
+  const {root,report}=fixture();report.affected_usages[0].evidence[0].assertion_step_ids=['55555555-5555-4555-8555-555555555555'];
+  await expect(runImplementationGate({repoRoot:root,report})).rejects.toThrow('IMPACT_REGRESSION_MISSING');
+});
 it('真测试非零退出保留FAIL收据而不是映射成功冒充验证成功',async()=>{
   const {root,report,git}=fixture();writeFileSync(join(root,'scripts/smoke/lock.sh'),'exit 7\n');git('add','.');git('commit','-qm','fail-test');
   report.source.head_revision=git('rev-parse','HEAD');report.head.revision=report.source.head_revision;report.head.graph_snapshot.source_revision=report.source.head_revision;report.source.changed_files.push({path:'scripts/smoke/lock.sh'});
