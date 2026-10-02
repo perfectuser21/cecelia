@@ -103,3 +103,6 @@
 
 - [x] [BEHAVIOR] 门禁：事实、版本及DoD映射通过；本刀范围限本地真实进程与协议库，HTTP调度与生产激活仍属下一刀。
   Test: manual:bash -c "node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs"
+
+- [x] [BEHAVIOR] phonrunnerinfra 真实smoke直接执行固定SSH client身份/protocol与Python永久回归，仅自有临时进程、锁和socketfixture；生产资源/HTTP activation仍拒绝，不连接DB、API、设备或既有5037。
+  Test: manual:bash packages/brain/scripts/smoke/phone-runner-infra-smoke.sh
