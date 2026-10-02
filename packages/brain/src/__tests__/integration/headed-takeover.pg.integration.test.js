@@ -11,7 +11,7 @@ const pool=new pg.Pool({...DB_DEFAULTS,max:5,options:`-c search_path=${schema},p
 let task;
 beforeAll(async()=>{
  await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
- await pool.query(`CREATE TABLE tasks(id uuid PRIMARY KEY,status text DEFAULT 'queued',task_type text DEFAULT 'data',executor_kind text DEFAULT 'bridge',claimed_by text,claimed_at timestamptz,started_at timestamptz,updated_at timestamptz DEFAULT now(),row_version integer DEFAULT 0,payload jsonb DEFAULT '{}',status_history jsonb DEFAULT '[]');
+ await pool.query(`CREATE TABLE tasks(id uuid PRIMARY KEY,status text DEFAULT 'queued',task_type text DEFAULT 'data',executor_kind text DEFAULT 'bridge',claimed_by text,claimed_at timestamptz,started_at timestamptz,updated_at timestamptz DEFAULT now(),row_version integer DEFAULT 0,payload jsonb DEFAULT '{}',status_history jsonb DEFAULT '[]',result jsonb,completed_at timestamptz,quota_exhausted_at timestamptz,pr_url text,pr_status text,error_message text,blocked_detail jsonb);
  CREATE TABLE headed_task_takeovers(task_id uuid PRIMARY KEY REFERENCES tasks(id),generation uuid NOT NULL,request_id uuid NOT NULL,session_id text NOT NULL,previous_run_id text,previous_owner jsonb NOT NULL,created_at timestamptz DEFAULT now());
  CREATE TABLE task_runs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id uuid REFERENCES tasks(id),run_id text,status text DEFAULT 'running',ended_at timestamptz);
  CREATE TABLE initiative_runs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),current_task_id uuid REFERENCES tasks(id),phase text DEFAULT 'planning');
@@ -79,6 +79,15 @@ it('真实HTTP：生产无token/错token拒绝；授权接管后仅本session PA
   expect((await send(`/tasks/${task}`,'PATCH',{...headers,'x-session-id':'other'},{})).status).toBe(409);
   expect((await send(`/tasks/${task}`,'PATCH',headers,{})).status).toBe(200);
  }finally{if(savedToken===undefined)delete process.env.CECELIA_INTERNAL_TOKEN;else process.env.CECELIA_INTERNAL_TOKEN=savedToken;process.env.NODE_ENV=savedMode;await new Promise(resolve=>server.close(resolve));}
+});
+it('队列处理器拒绝有run_id和缺run_id的旧回调，保持新owner',async()=>{
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+ await takeOverHeadedTask(pool,request());
+ const {processExecutionCallback}=await import('../../callback-processor.js');
+ const seen=[];const guarded={query:(...args)=>{seen.push(args[0]);return pool.query(...args);},connect:()=>pool.connect()};
+ for(const run_id of ['legacy-run',undefined])await expect(processExecutionCallback({task_id:task,run_id,status:'AI Done'},guarded)).rejects.toThrow('headed_task_owned');
+ expect(seen.every(sql=>sql.includes('headed_takeover'))).toBe(true);
+ expect((await pool.query('SELECT status,claimed_by FROM tasks WHERE id=$1',[task])).rows[0]).toEqual({status:'in_progress',claimed_by:'session:actual-session'});
 });
 it('持久接管后，任何迟到自动run/回执/预约INSERT都失败关闭',async()=>{
  await pool.query('INSERT INTO headed_task_takeovers(task_id,generation,request_id,session_id,previous_owner) VALUES($1,$2,$3,$4,$5)',[task,randomUUID(),randomUUID(),'actual-session',{kind:'bridge',run_status:'unknown'}]);
