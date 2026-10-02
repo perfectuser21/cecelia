@@ -60,6 +60,10 @@ function createDrainOwner({marker=MARKER,runLaunchctl=args=>execFileSync('/bin/l
     return receipt;
   }
   return {
+    withOwned(machine,owner,fn) {return withLock(machine,owner,()=>{
+      if(!current(machine,owner))throw fail('drain_owner_unconfirmed');
+      return fn();
+    });},
     drain(machine,owner) {return withLock(machine,owner,()=>{
       const existing=current(machine,owner);if(existing)return {created:false,receipt:existing};
       const receipt=create(machine,owner);

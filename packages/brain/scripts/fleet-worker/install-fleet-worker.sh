@@ -48,6 +48,8 @@ ACCESS_HELPER_SOURCE="$SCRIPT_DIR/refresh-fleet-worker-docker-access.sh"
 ACCESS_TEMPLATE="$SCRIPT_DIR/com.cecelia.fleet-worker-docker-access.plist.template"
 DRAIN_MARKER="${FLEET_WORKER_DRAIN_MARKER:-/var/run/cecelia/fleet-worker.drain}"
 RUNNER_DIGEST=''
+CANONICAL_RUNNER_DIGEST=''
+canonical_expected=''
 POSTGRES_IMAGE=''
 DISK_MIN_FREE_GIB=''
 WORKER_BIND_HOST=''
@@ -951,7 +953,7 @@ prepare_logs() {
   fi
 }
 
-[[ $# -ge 1 && $# -le 3 ]] || { usage; exit 64; }
+[[ $# -ge 1 && $# -le 4 ]] || { usage; exit 64; }
 machine_id="$1"
 shift
 require_machine "$machine_id"
@@ -961,7 +963,13 @@ render_target=''
 if [[ $# -gt 0 ]]; then
   case "$1" in
     --apply)
-      [[ $# -eq 1 ]] || { usage; exit 64; }
+      if [[ $# -eq 3 && "$2" == '--restore-canonical-runner' ]]; then
+        canonical_expected="$3"
+        [[ "$machine_id" == 'xian-mac-m4' && "$canonical_expected" =~ ^[a-f0-9]{64}$ ]] \
+          || die "canonical_runner_request_invalid"
+      else
+        [[ $# -eq 1 ]] || { usage; exit 64; }
+      fi
       mode='apply'
       ;;
     --render-to)
@@ -990,6 +998,7 @@ fi
 if ! RUNNER_DIGEST="$(load_runner_digest)"; then
   die "node_profile_unavailable"
 fi
+CANONICAL_RUNNER_DIGEST="$RUNNER_DIGEST"
 if ! POSTGRES_IMAGE="$(load_postgres_image)"; then
   die "node_profile_unavailable"
 fi
@@ -1006,6 +1015,10 @@ fi
 
 if [[ "$mode" == 'apply' && "$("$ID_COMMAND" -u)" != '0' ]]; then
   die "root_required" 77
+fi
+if [[ -n "$canonical_expected" ]]; then
+  python3 "$EXISTING_CONFIG_HELPER" canonical-install-guard "$machine_id" \
+    || die "canonical_runner_owner_unconfirmed"
 fi
 
 installed_plist="$INSTALL_DIR/$LABEL.plist"
@@ -1041,6 +1054,18 @@ if [[ "$mode" == 'apply' ]]; then
       esac
     done <<< "$existing_settings"
     unset existing_settings setting value
+    if [[ -n "$canonical_expected" ]]; then
+      if ! canonical_setting="$(python3 "$EXISTING_CONFIG_HELPER" canonical-runner \
+        "$EXISTING_CONFIG_SNAPSHOT" "$canonical_expected")"; then
+        die "canonical_runner_configuration_changed"
+      fi
+      [[ "$canonical_setting" == $'RUNNER_DIGEST\t'"$CANONICAL_RUNNER_DIGEST" ]] \
+        || die "canonical_runner_baseline_mismatch"
+      RUNNER_DIGEST="$CANONICAL_RUNNER_DIGEST"
+      unset canonical_setting
+    fi
+  elif [[ -n "$canonical_expected" ]]; then
+    die "canonical_runner_existing_node_required"
   fi
 fi
 
