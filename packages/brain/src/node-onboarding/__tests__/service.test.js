@@ -12,7 +12,7 @@ suite('机器接入真实数据库闭环（隔离 schema）', () => {
     role: 'observer', region: 'HK' };
   const key = '64c5b5a5-6074-483b-a884-58d292cf200f';
   beforeAll(async () => {
-    if (new URL(database).pathname !== '/cecelia_scratch') throw new Error('本地集成验收只允许 cecelia_scratch');
+    if (new URL(database).pathname !== '/cecelia_scratch' && !(process.env.CI === 'true' && new URL(database).pathname === '/cecelia_test')) throw new Error('本地集成验收只允许 cecelia_scratch；CI仅允许隔离cecelia_test');
     schema = `onboarding_${randomUUID().replaceAll('-', '')}`;
     admin = new pg.Pool({ connectionString: database });
     await admin.query(`CREATE SCHEMA ${schema}`);
