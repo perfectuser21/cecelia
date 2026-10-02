@@ -1,13 +1,13 @@
-"""一次性看护：ADB执行前孩子强身份落盘，超时/取消只终止自己的孩子。"""
+"""一次性看护：固定socket查询前孩子强身份落盘，超时/取消只终止自己的孩子。"""
 import json
 import os
 from pathlib import Path
-import pwd
 import resource
 import select
 import signal
 import time
 from journal import safe_open
+from adb_socket import get_state
 from phone_lease import PhoneLease
 from process_identity import process_identity, process_matches
 
@@ -85,9 +85,10 @@ def launch_child(config, identity, journal, state):
             os.dup2(output_fd, 1)
             os.close(output_fd)
             signal.signal(signal.SIGTERM, signal.SIG_DFL)
-            os.execve(config.adb, [config.adb, '-s', identity['serial'], 'get-state'],
-                      {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'C',
-                       'HOME': pwd.getpwuid(os.getuid()).pw_dir})
+            # 此孩子只运行固定socket函数；不调用任何配置hook、不exec外部ADB。
+            result = get_state(identity['serial'], config.hard_cap_sec, _port=config.adb_server_port)
+            os.write(1, result.encode('ascii'))
+            os._exit(0)
         except Exception:
             os._exit(126)
     os.close(ready_w)

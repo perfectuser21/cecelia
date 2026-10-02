@@ -28,7 +28,9 @@ def denied_resources():
 class Config:
     journal_root: str = '/var/lib/cecelia/phone-ssh'
     lock_root: str = '/private/tmp/openclaw-phone/locks'
+    # 弃用：仅保留给永久恶意可执行文件fixture设置陷阱，生产执行器完全不读取。
     adb: str = '/opt/homebrew/bin/adb'
+    adb_server_port: int = 5037
     machine_id: str = ''
     worker_id: str = ''
     host: str = ''
@@ -71,6 +73,8 @@ class Runner:
         self.config = config
         if not all(isinstance(value, str) and value for value in (config.machine_id, config.worker_id, config.host)):
             raise ValueError('phone_worker_unconfigured')
+        if not isinstance(config.adb_server_port, int) or isinstance(config.adb_server_port, bool) or not 0 < config.adb_server_port <= 65535:
+            raise ValueError('phone_adb_server_config_invalid')
         if not 0 < config.hard_cap_sec <= 10:
             raise ValueError('phone_hard_cap_invalid')
         self.journal = Journal(config.journal_root)
