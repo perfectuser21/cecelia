@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { companyKrSpec, registerCompanyKrWorkflow } from '../lib/company-kr-registration.js';
-import { attachRunsToWorkflow } from '../lib/task-run.js';
+import { companyKrSpec, registerCompanyKrWorkflow } from '../company-kr-registration.js';
+import { attachRunsToWorkflow } from '../task-run.js';
 
 describe('公司KR正式登记', () => {
   it('已有实现完整登记为五个活动、八个有判定与代码来源的步骤', () => {

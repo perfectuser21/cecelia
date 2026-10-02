@@ -43,7 +43,7 @@ describe('OpenClaw公司KR可信收割', () => {
 describe('公司工作流只有回灌成功后启动', () => {
   it('成功同步先于分析，跳周期或错误不分析', async () => {
     const order = [], analyze = vi.fn(async () => { order.push('analyze'); return { task_id: 't' }; });
-    await runCompanyKrWorkflow({}, { project: async () => { order.push('project'); return { matched: 8 }; }, analyze });
+    await runCompanyKrWorkflow({}, { project: async () => { order.push('project'); return { matched: 8 }; }, analyze, register: async () => ({}), projectRegistration: async () => ({}) });
     expect(order).toEqual(['project', 'analyze']);
     analyze.mockClear();
     await runCompanyKrWorkflow({}, { project: async () => ({ skipped: true }), analyze });

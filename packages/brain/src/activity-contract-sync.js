@@ -183,7 +183,8 @@ export async function pushBackboneActivities(pool, token, { notionReq = defaultN
   const { rows } = await pool.query(
     `SELECT id, capability_key, activity_key, contract, contract_sha256, contract_source, promise, status, notion_id, notion_digest
        FROM journey_steps
-      WHERE contract IS NOT NULL AND (notion_synced_at IS NULL OR updated_at > notion_synced_at)
+      WHERE contract IS NOT NULL AND capability_key IS DISTINCT FROM 'company_kr_analysis'
+        AND (notion_synced_at IS NULL OR updated_at > notion_synced_at)
       ORDER BY capability_key, step_number
       LIMIT 50`);
   if (rows.length === 0) return { created: 0, patched: 0, skipped: 0, failed: 0, cleared: 0 };

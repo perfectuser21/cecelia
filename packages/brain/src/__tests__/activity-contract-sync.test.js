@@ -271,3 +271,15 @@ describe('buildBackboneActivityProps', () => {
     expect(t('Notes')).toContain('8bb3af55');
   });
 });
+
+// KR 专用投影独占创建这些活动，两个调度lane不可同时POST同一行。
+describe('KR活动投影唯一写口', () => {
+  it('通用活动推送从SQL选行时排除KR，不能在创建后才分流', async () => {
+    const { pushBackboneActivities } = await import('../activity-contract-sync.js');
+    const pool = { query: vi.fn().mockResolvedValueOnce({ rows: [{ notion_db_id: 'db' }] }).mockResolvedValueOnce({ rows: [] }) };
+    const notionReq = vi.fn();
+    await pushBackboneActivities(pool, 'token', { notionReq });
+    expect(pool.query.mock.calls[1][0]).toContain("capability_key IS DISTINCT FROM 'company_kr_analysis'");
+    expect(notionReq).not.toHaveBeenCalled();
+  });
+});
