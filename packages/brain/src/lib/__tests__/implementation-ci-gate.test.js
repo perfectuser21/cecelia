@@ -15,8 +15,8 @@ function fixture() {
   mkdirSync(join(root,'scripts/smoke'),{recursive:true});writeFileSync(join(root,'scripts/smoke/lock.sh'),'#!/bin/bash\nset -e\nprintf tested > actual-output\n');
   writeFileSync(join(root,'controller.js'),'old');git('add','.');git('commit','-qm','base');const base=git('rev-parse','HEAD');
   writeFileSync(join(root,'controller.js'),'new');git('add','.');git('commit','-qm','head');const head=git('rev-parse','HEAD');
-  const side=revision=>({revision,graph_snapshot:{digest:'a'.repeat(64)},projection:{projection_digest:'b'.repeat(64)},definition_versions:['version'],gaps:[],traversal:{truncated:false}});
-  const report={source:{repo:'example/repo',base_revision:base,head_revision:head,changed_files:[{path:'controller.js'}]},base:side(base),head:side(head),mapping_status:'verified',gaps:[],affected_usages:[{workflow_id:'workflow',reference_id:'usage',capability_id:'capability'}],required_assertions:[{assertion_ref:'scripts/smoke/lock.sh',source_repo:'example/repo',capability_ids:['capability'],source_bindings:[{journey_step_link_id:'link',assertion_revision:1,activity_id:'activity'}],command:'touch MUST_NOT_EXECUTE'}]};
+  const side=revision=>({revision,graph_snapshot:{repo:'example/repo',source_revision:revision,digest:'a'.repeat(64)},projection:{projection_run_id:'11111111-1111-4111-8111-111111111111',manifest_version_id:'22222222-2222-4222-8222-222222222222',manifest_digest:'b'.repeat(64),projection_digest:'c'.repeat(64)},definition_versions:{workflows:[{id:'33333333-3333-4333-8333-333333333333',payload_sha256:'d'.repeat(64)}],activities:[{id:'44444444-4444-4444-8444-444444444444',payload_sha256:'e'.repeat(64)}]},gaps:[],traversal:{truncated:false}});
+  const report={source:{repo:'example/repo',base_revision:base,head_revision:head,changed_files:[{path:'controller.js'}]},base:side(base),head:side(head),mapping_status:'verified',gaps:[],affected_usages:[{workflow_id:'workflow',reference_id:'usage',activity_id:'activity',capability_ids:['capability'],evidence:[{capability_id:'capability',activity_id:'activity'}]}],required_assertions:[{assertion_ref:'scripts/smoke/lock.sh',source_repo:'example/repo',capability_ids:['capability'],source_bindings:[{journey_step_link_id:'link',assertion_revision:1,activity_id:'activity',capability_id:'capability'}],command:'touch MUST_NOT_EXECUTE'}]};
   return {root,report,git};
 }
 it('真git diff与固定报告对账，只执行本仓测试，HTTP command不执行并保留来源收据',async()=>{
@@ -63,6 +63,13 @@ it('测试篡改后续测试时立即FAIL并停止，不能以旧字节hash记�
   report.required_assertions.push({...report.required_assertions[0],assertion_ref:'scripts/smoke/next.sh'});
   const receipt=await runImplementationGate({repoRoot:root,report});expect(receipt.verdict).toBe('FAIL');expect(receipt.assertions).toHaveLength(1);
   expect(receipt.assertions[0].error).toBe('IMPACT_SOURCE_CHANGED_DURING_TEST');
+});
+it.each(['empty-projection','fake-graph-digest','wrong-activity-coverage'])('不接受空证据和同能力另一活动的测试：%s',async reason=>{
+  const {root,report}=fixture();
+  if(reason==='empty-projection')report.base.projection={};
+  if(reason==='fake-graph-digest')report.head.graph_snapshot.digest='x';
+  if(reason==='wrong-activity-coverage')report.required_assertions[0].source_bindings[0].activity_id='another-activity';
+  await expect(runImplementationGate({repoRoot:root,report})).rejects.toThrow();
 });
 it('真测试非零退出保留FAIL收据而不是映射成功冒充验证成功',async()=>{
   const {root,report,git}=fixture();writeFileSync(join(root,'scripts/smoke/lock.sh'),'exit 7\n');git('add','.');git('commit','-qm','fail-test');
