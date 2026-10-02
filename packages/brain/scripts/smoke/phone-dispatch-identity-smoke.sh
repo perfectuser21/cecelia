@@ -18,7 +18,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 # 真实 PG 行为在测试独立 schema 中验证；fixture grant 随 schema 清理。
 exec node "$(node -p 'require.resolve("vitest/vitest.mjs")')" run \
   --config vitest.integration.config.js \
-  src/__tests__/integration/phone-dispatch.pg.integration.test.js \
+  src/phone-dispatch/store.test.js \
   src/phone-dispatch/identity.test.js \
   src/phone-dispatch/contracts.test.js \
   --maxWorkers=1 --minWorkers=1

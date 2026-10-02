@@ -2,11 +2,11 @@ import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import pg from 'pg';
 import {beforeAll,beforeEach,afterAll,it,expect} from 'vitest';
-import {DB_DEFAULTS} from '../../db-config.js';
-import {directory} from '../../execution-directory/directory.js';
-import {importLegacyPolicy,revokeGrant} from '../../execution-directory/store.js';
-import {LEGACY_BINDINGS} from '../../execution-directory/legacy-policy.js';
-import {createAttemptStore} from '../../orchestrator/attempt-store.js';
+import {DB_DEFAULTS} from '../db-config.js';
+import {directory} from '../execution-directory/directory.js';
+import {importLegacyPolicy,revokeGrant} from '../execution-directory/store.js';
+import {LEGACY_BINDINGS} from '../execution-directory/legacy-policy.js';
+import {createAttemptStore} from '../orchestrator/attempt-store.js';
 const options=process.env.TEST_DATABASE_URL?{connectionString:process.env.TEST_DATABASE_URL}:DB_DEFAULTS;
 if(!/_(scratch|test)$/.test(process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_URL).pathname:DB_DEFAULTS.database))throw Error('scratch/test required');
 const schema=`phone_dispatch_${process.pid}_${randomUUID().replaceAll('-','')}`;
@@ -23,14 +23,14 @@ beforeAll(async()=>{
  CREATE TABLE initiative_runs(id UUID PRIMARY KEY,phase TEXT DEFAULT 'planning',map_recovery_contract_id UUID,orchestrator_version TEXT DEFAULT 'v2');CREATE TABLE map_recovery_consumptions(contract_id UUID,attempt_id UUID);
  CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);`);
  for(const [,id,name]of LEGACY_BINDINGS)await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')",[id,name]);
- for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','490_phone_registry','501_capacity_reservations','503_execution_directory','504_app_server_generations','507_phone_dispatches'])await pool.query(readFileSync(new URL(`../../../migrations/${name}.sql`,import.meta.url),'utf8'));
+ for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','490_phone_registry','501_capacity_reservations','503_execution_directory','504_app_server_generations','507_phone_dispatches'])await pool.query(readFileSync(new URL(`../../migrations/${name}.sql`,import.meta.url),'utf8'));
  await importLegacyPolicy({pool,env:{FLEET_WORKER_XIAN_MAC_M1_URL:'http://m1:5231'}});
  const old=(await pool.query('SELECT * FROM execution_node_versions WHERE id=(SELECT current_version_id FROM execution_nodes WHERE canonical_id=$1)',[machine])).rows[0];
  const version=randomUUID();await pool.query(`INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,platform,endpoints,profile,config_hash,state) VALUES($1,$2,2,'legacy-v1',$3,'darwin',$4,$5,$6,'active')`,[version,old.machine_registry_id,old.worker_id,{phone_ssh:{host,port:22,user:'administrator',hub:{host:'us-vps',port:22,user:'administrator'}}},old.profile,old.config_hash]);
  await pool.query('UPDATE execution_nodes SET current_version_id=$1 WHERE canonical_id=$2',[version,machine]);
  expect((await pool.query("SELECT * FROM execution_grants WHERE surface='phone_ssh'")).rows).toHaveLength(0);
  await pool.query("INSERT INTO phone_registry(serial,nickname,host,profile,douyin_accounts) VALUES($1,'test',$2,$3,$4::jsonb)",[serial,host,profile,JSON.stringify([{id:account,current:true}])]);
- const {createPhoneDispatchStore}=await import('../../phone-dispatch/store.js');store=createPhoneDispatchStore({pool,afterTask:async()=>{}});
+ const {createPhoneDispatchStore}=await import('./store.js');store=createPhoneDispatchStore({pool,afterTask:async()=>{}});
 });
 beforeEach(async()=>{
  await pool.query('TRUNCATE phone_dispatches,capacity_reservations,tasks,harness_attempt_cleanup_outbox,harness_attempts,initiative_runs CASCADE');
@@ -99,7 +99,7 @@ it('远端操作开始前 launch 意图已提交；响应丢失和实例重建�
   expect((await pool.query('SELECT state FROM phone_dispatches WHERE id=$1',[r.id])).rows[0].state).toBe('launching');
   expect(endpoint.hub.host).toBe('us-vps');expect(row.action).toBe('adb_get_state');throw Error('response_lost');
  })).rejects.toThrow('response_lost');
- const {createPhoneDispatchStore}=await import('../../phone-dispatch/store.js');const fresh=createPhoneDispatchStore({pool,afterTask:async()=>{}});
+ const {createPhoneDispatchStore}=await import('./store.js');const fresh=createPhoneDispatchStore({pool,afterTask:async()=>{}});
  expect((await fresh.get(r.id)).state).toBe('unknown');await expect(fresh.withLaunch(r.id,()=>{})).rejects.toThrow('phone_launch_forbidden');
 });
 it('能力严格限定 adb_get_state，持久 grant 与phone profile分开',async()=>{
@@ -142,7 +142,7 @@ it('同机锁等待直到snapshot过期，最终拒绝且不留下预约/ledger'
  expect((await pending).outcome).toBe('wait');expect((await pool.query('SELECT * FROM phone_dispatches')).rows).toHaveLength(0);expect((await pool.query('SELECT * FROM capacity_reservations')).rows).toHaveLength(0);
 });
 it('phone 与真实 script store 共用整机容量，无owner借道',async()=>{
- const {createScriptReservationStore}=await import('../../orchestrator/script-reservation-store.js');const scripts=createScriptReservationStore(pool);
+ const {createScriptReservationStore}=await import('../orchestrator/script-reservation-store.js');const scripts=createScriptReservationStore(pool);
  const {dispatch:r}=await store.reserve(await input()),scriptTask=await input();
  const req={taskId:scriptTask.taskId,machineId:machine,ownerKey:`script-${scriptTask.taskId}-a1`,configDigest:'a'.repeat(64),capacitySnapshot:snapshot()};
  expect((await scripts.reserve(req)).outcome).toBe('wait');
@@ -170,7 +170,7 @@ it.each(['grant','snapshot'])('registry 行锁等待越过 %s 期限时最终lau
  await expect(store.withLaunch(r.id,()=>{calls++;})).rejects.toThrow('phone_launch_forbidden');expect(calls).toBe(0);
 });
 it('finish 保留已写handoff；提交后真实pool上的接棒入口仍能读取下一棒',async()=>{
- const {createPhoneDispatchStore}=await import('../../phone-dispatch/store.js'),v=await input();
+ const {createPhoneDispatchStore}=await import('./store.js'),v=await input();
  const handoff={schema_version:1,summary:'existing',next_steps:[{kind:'task',title:'next baton'}]};
  await pool.query('UPDATE tasks SET result=$2::jsonb WHERE id=$1',[v.taskId,JSON.stringify({handoff,other_evidence:'preserve'})]);
  let calls=0;
