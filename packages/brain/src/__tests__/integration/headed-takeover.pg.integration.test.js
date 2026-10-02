@@ -1,6 +1,8 @@
 import pg from 'pg';
 import {randomUUID} from 'node:crypto';
-import {readFileSync,existsSync} from 'node:fs';
+import {readFileSync,existsSync,mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {beforeAll,afterAll,beforeEach,it,expect} from 'vitest';
 import {DB_DEFAULTS} from '../../db-config.js';
 import express from 'express';
@@ -9,6 +11,7 @@ const schema=`headed_takeover_${process.pid}_${randomUUID().replaceAll('-','')}`
 const admin=new pg.Client(DB_DEFAULTS);
 const pool=new pg.Pool({...DB_DEFAULTS,max:5,options:`-c search_path=${schema},public -c statement_timeout=1000`});
 let task,legacyRun;
+const handoffDocs=mkdtempSync(join(tmpdir(),'headed-takeover-handoff-'));
 beforeAll(async()=>{
  await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
  await pool.query(`CREATE TABLE tasks(id uuid PRIMARY KEY,status text DEFAULT 'queued',task_type text DEFAULT 'data',executor_kind text DEFAULT 'bridge',claimed_by text,claimed_at timestamptz,started_at timestamptz,updated_at timestamptz DEFAULT now(),row_version integer DEFAULT 0,payload jsonb DEFAULT '{}',status_history jsonb DEFAULT '[]',result jsonb,completed_at timestamptz,quota_exhausted_at timestamptz,pr_url text,pr_status text,error_message text,blocked_detail jsonb);
@@ -24,13 +27,14 @@ beforeAll(async()=>{
  CREATE TABLE work_routing_receipts(id uuid PRIMARY KEY,task_id uuid,canonical_task_type text,work_kind text);
  CREATE TABLE task_events(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id uuid,event_type text,payload jsonb);
  ALTER TABLE tasks ADD COLUMN success_metrics jsonb;
+ ALTER TABLE tasks ADD COLUMN title text,ADD COLUMN description text,ADD COLUMN priority text,ADD COLUMN due_at timestamptz,ADD COLUMN notion_id text,ADD COLUMN notion_synced_at timestamptz,ADD COLUMN parent_task_id uuid,ADD COLUMN project_id uuid,ADD COLUMN summary text;
  CREATE TABLE harness_gaps(source_task_id uuid,status text);
  CREATE TABLE harness_gap_dependencies(source_task_id uuid,status text);
  CREATE TABLE task_dependencies(from_task_id uuid,edge_type text,status text);`);
  const migration=new URL('../../../migrations/508_headed_task_takeover.sql',import.meta.url);
  if(existsSync(migration))await pool.query(readFileSync(migration,'utf8'));
 });
-afterAll(async()=>{await pool.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();});
+afterAll(async()=>{await pool.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();rmSync(handoffDocs,{recursive:true,force:true});});
 beforeEach(async()=>{task=randomUUID();legacyRun='legacy-'+task;const receipt=randomUUID();await pool.query('INSERT INTO tasks(id,payload) VALUES($1,$2)',[task,{routing_receipt_id:receipt,work_kind:'coding_review',current_run_id:legacyRun,review_required:true}]);await pool.query("INSERT INTO work_routing_receipts(id,task_id,canonical_task_type,work_kind) VALUES($1,$2,'data','coding_review')",[receipt,task]);});
 it('真实双连接：takeover先持专用exclusive闸，资源创建try shared失败，不等task',async()=>{
  const owner=await pool.connect(),writer=await pool.connect();
@@ -42,6 +46,35 @@ it('真实双连接：takeover先持专用exclusive闸，资源创建try shared�
  }finally{await owner.query('ROLLBACK');owner.release();writer.release();}
 });
 const request=()=>({taskId:task,requestId:randomUUID(),sessionId:'actual-session',expectedRowVersion:0,expectedExecutorKind:'bridge',expectedCurrentRunId:legacyRun});
+it('owner在执行中和完成后均不阻止人赢title/due_at及Notion同步元数据，结果证据仍保护',async()=>{
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+ const owner=await takeOverHeadedTask(pool,request());
+ for(const terminal of [false,true]){
+  if(terminal){const db=await pool.connect();try{await db.query('BEGIN');await db.query("SELECT set_config('cecelia.headed_owner_generation',$1,true)",[owner.generation]);await db.query("UPDATE tasks SET status='completed',claimed_by=NULL,claimed_at=NULL WHERE id=$1",[task]);await db.query('COMMIT');}finally{db.release();}}
+  await pool.query("UPDATE tasks SET title=$2,due_at='2026-10-03T00:00:00Z',notion_id='human-note',notion_synced_at=now(),updated_at=now() WHERE id=$1",[task,terminal?'人赢完成标题':'人赢执行中标题']);
+  const row=(await pool.query('SELECT title,due_at,notion_synced_at,result FROM tasks WHERE id=$1',[task])).rows[0];
+  expect(row.title).toBe(terminal?'人赢完成标题':'人赢执行中标题');expect(row.due_at.toISOString()).toBe('2026-10-03T00:00:00.000Z');expect(row.notion_synced_at).toBeInstanceOf(Date);expect(row.result).toBeNull();
+  await expect(pool.query("UPDATE tasks SET result='{}' WHERE id=$1",[task])).rejects.toThrow('headed_task_owned');
+ }
+});
+it('真实终态helper在外层COMMIT后保存handoff，跨session元数据可编辑但证据不可覆写',async()=>{
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');await takeOverHeadedTask(pool,request());
+ const {registerTaskPatchRoute}=await import('../../routes/task-task-patch.js');
+ const router=express.Router();registerTaskPatchRoute(router,{pool,terminalStatuses:['completed','failed','cancelled']});
+ const app=express();app.use(express.json());app.use('/tasks',router);
+ const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+ const origin=`http://127.0.0.1:${server.address().port}`,savedToken=process.env.CECELIA_INTERNAL_TOKEN,savedDocs=process.env.HANDOFF_DOCS_DIR;
+ process.env.CECELIA_INTERNAL_TOKEN='terminal-owner-fixture';process.env.HANDOFF_DOCS_DIR=handoffDocs;
+ const send=(body,owned=true)=>fetch(`${origin}/tasks/${task}`,{method:'PATCH',headers:{'content-type':'application/json',...(owned?{authorization:'Bearer terminal-owner-fixture','x-session-id':'actual-session'}:{'x-session-id':'human-editor'})},body:JSON.stringify(body)});
+ try{
+  const completed=await send({status:'completed'});expect(completed.status,JSON.stringify(await completed.json())).toBe(200);
+  const handoff=(await pool.query("SELECT result->'handoff' AS handoff FROM tasks WHERE id=$1",[task])).rows[0].handoff;
+  expect(handoff).toMatchObject({task_id:task,session_id:'actual-session',synthesized:true});
+  expect((await send({title:'完成后人类校正标题'},false)).status).toBe(200);
+  expect((await send({result:{handoff:{verdict:'forged'}}},false)).status).toBe(401);
+  expect((await pool.query("SELECT result->'handoff' AS handoff FROM tasks WHERE id=$1",[task])).rows[0].handoff).toEqual(handoff);
+ }finally{if(savedToken===undefined)delete process.env.CECELIA_INTERNAL_TOKEN;else process.env.CECELIA_INTERNAL_TOKEN=savedToken;if(savedDocs===undefined)delete process.env.HANDOFF_DOCS_DIR;else process.env.HANDOFF_DOCS_DIR=savedDocs;await new Promise(resolve=>server.close(resolve));}
+});
 it('普通任务FOR UPDATE仍保持既有FK等待，guard不新增55P03',async()=>{
  const owner=await pool.connect(),writer=await pool.connect();
  try{
