@@ -1,6 +1,7 @@
 /** 发布版本、实测记录只追加；green仅由冻结定义、CI证据和实际组件共同派生。 */
 import { createHash } from 'node:crypto';
 import defaultPool from '../db.js';
+import { assertImplementationReport } from '../../../../scripts/ci/implementation-report.mjs';
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SHA = /^[0-9a-f]{40}$/;
 const HASH = /^[0-9a-f]{64}$/;
@@ -104,6 +105,7 @@ function validateCiEvidence(items, definitions, components) {
   const valid = [], gaps = [];
   for (const [index, { report, receipt }] of items.entries()) {
     const repo = report?.source?.repo, revision = report?.source?.head_revision;
+    try { assertImplementationReport(report); } catch (error) { gaps.push({code:'ci_report_unverified',index,reason:error.code || 'IMPACT_REPORT_INVALID'}); continue; }
     let ok = report?.mapping_status === 'verified' && report?.truncated === false && Array.isArray(report?.gaps) && !report.gaps.length
       && components.some(c => c.kind === 'repo' && c.repo === repo && c.revision === revision)
       && receipt?.actor === 'implementation_ci_gate' && receipt?.verdict === 'PASS' && receipt?.scope === 'regression_tests'
