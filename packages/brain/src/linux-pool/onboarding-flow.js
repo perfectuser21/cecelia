@@ -21,14 +21,21 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
  const eligible=m=>m.id!==US_SCHEDULER_ID&&m.metadata?.role==='worker'&&m.metadata?.node_health?.os==='linux'&&!m.metadata?.scheduler_only;
  const sourceTask=async(c,id)=>(await c.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0]?.payload?.node_onboarding;
  const permitted=(source,machine)=>source?.id===machine.id&&source.request?.name===machine.name&&source.request.role==='worker'&&source.execution_revoked!==true;
- async function record(c,machine,state,parentId){
+ async function record(c,machine,state,parentId,verifyNew=false){
    const made=await createTask({db:c,title:'自动接入Linux执行池 '+machine.name,description:'可信SSH安装、池验收与受限脚本真实canary；只有同代授权激活才完成。',
     task_type:'audit',executor_kind:LINUX_POOL_EXECUTOR_KIND,status:'in_progress',source:'scheduler',source_id:'linux-pool-onboarding:'+state.nonce,trigger_source:'node_onboarding',allow_unscoped:true,
     parent_task_id:parentId,mutation_intent:'read_only',declared_domain:'operations',created_by:actor,payload:{linux_onboarding:state}},{linuxPoolAuthority:LINUX_POOL_AUTHORITY});
    if(!made?.success||!made.task?.id)throw error('linux_pool_control_unavailable');const id=made.task.id;
-   await c.query("UPDATE tasks SET claimed_by=$2,claimed_at=now(),started_at=COALESCE(started_at,now()) WHERE id=$1",[id,actor]);
-   await c.query("UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,execution_task_id}',$2::jsonb),updated_at=now() WHERE id=$1",[state.parent_task_id,JSON.stringify(id)]);
-   await c.query("UPDATE system_registry SET metadata=jsonb_set(metadata,'{onboarding,execution_task_id}',$2::jsonb),updated_at=now() WHERE id=$1",[machine.id,JSON.stringify(id)]);
+   if(verifyNew){
+    const created=await c.query(`SELECT id FROM tasks WHERE id=$1 AND id<>$2 AND parent_task_id=$2 AND title=$3
+     AND task_type='audit' AND status='in_progress' AND executor_kind=$4 AND created_by=$5 AND payload->'linux_onboarding'=$6::jsonb FOR UPDATE`,
+     [id,parentId,'自动接入Linux执行池 '+machine.name,LINUX_POOL_EXECUTOR_KIND,actor,JSON.stringify(state)]);
+    if(created.rowCount!==1)throw error('linux_pool_retry_unconfirmed');
+   }
+   const claimed=await c.query("UPDATE tasks SET claimed_by=$2,claimed_at=now(),started_at=COALESCE(started_at,now()) WHERE id=$1",[id,actor]);
+   const linked=await c.query("UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,execution_task_id}',$2::jsonb),updated_at=now() WHERE id=$1",[state.parent_task_id,JSON.stringify(id)]);
+   const projected=await c.query("UPDATE system_registry SET metadata=jsonb_set(metadata,'{onboarding,execution_task_id}',$2::jsonb),updated_at=now() WHERE id=$1",[machine.id,JSON.stringify(id)]);
+   if(verifyNew&&[claimed,linked,projected].some(r=>r.rowCount!==1))throw error('linux_pool_retry_unconfirmed');
    return id;
  }
  async function ensure(machine,parentId,db){
@@ -135,10 +142,17 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
     if(!machine||machine.name!==candidate.name||!eligible(machine)||!permitted(source?.payload?.node_onboarding,machine)
      ||source.payload.node_onboarding.execution_task_id!==id||machine.metadata?.onboarding?.execution_task_id!==id
      ||requestHash(source.payload.node_onboarding.request)!==s.request_hash)throw error('linux_pool_retry_unconfirmed');
-    const state=await bootstrapRecovery.prepareInstalled(c,task,source,machine),next=await record(c,machine,state,id);
-    const closed=await finalizeTask(c,id,'archived',{relay:false,onlyIfStatus:['in_progress'],where:{sql:'claimed_by=$1',params:[actor]},
-     mergeResult:{actor,fact:'旧安装与失败canary签名清理已核验；保留全部旧意图并登记新版工件接续棒',evidence:{continuation_task_id:next,cleanup_runtime_id:state.upgrade_cleanup_runtime_id,previous_attempt:state.previous_attempt,intent_id:state.intent_id,revision:state.revision,artifact_digest:state.artifact_digest}}});
+    const state=await bootstrapRecovery.prepareInstalled(c,task,source,machine);
+    // 活跃标题唯一索引要求先归档；所有写入同事务，失败时旧棒与双指针一起回滚。
+    const closed=await finalizeTask(c,id,'archived',{relay:false,onlyIfStatus:['in_progress'],where:{sql:'claimed_by=$1',params:[actor]},returning:['result'],
+     mergeResult:{actor,fact:'旧安装与失败canary签名清理已核验；保留全部旧意图并登记新版工件接续棒',evidence:{cleanup_runtime_id:state.upgrade_cleanup_runtime_id,previous_attempt:state.previous_attempt,intent_id:state.intent_id,revision:state.revision,artifact_digest:state.artifact_digest}}});
     if(closed.rowCount!==1)throw error('linux_pool_retry_unconfirmed');
+    const next=await record(c,machine,state,id,true);
+    // native终态已清claim；以本事务归档结果和原payload绑定补充关联，不重写终态。
+    const linked=await c.query(`UPDATE tasks SET result=jsonb_set(result,'{evidence,continuation_task_id}',$2::jsonb),updated_at=now()
+     WHERE id=$1 AND status='archived' AND payload=$3::jsonb AND result=$4::jsonb RETURNING id`,
+     [id,JSON.stringify(next),JSON.stringify(task.payload),JSON.stringify(closed.task.result)]);
+    if(linked.rowCount!==1)throw error('linux_pool_retry_unconfirmed');
     await c.query("INSERT INTO task_events(task_id,event_type,payload,created_at) VALUES($1,'linux_installed_upgrade',$2,now())",[id,{actor,continuation_task_id:next,previous_attempt:state.previous_attempt,cleanup_runtime_id:state.upgrade_cleanup_runtime_id}]);
     return next;
    }
