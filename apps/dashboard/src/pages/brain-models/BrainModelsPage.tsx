@@ -4,8 +4,10 @@
  * 查看/切换 Brain 各 organ 使用的 LLM 模型
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { saveAndVerifyModel, type ModelChangeReceipt } from './modelChange';
+import ModelChangeResult from './ModelChangeResult';
 
 interface ModelInfo {
   id: string;
@@ -70,7 +72,13 @@ export default function BrainModelsPage() {
   const [savingOrgan, setSavingOrgan] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  const [changeReceipt, setChangeReceipt] = useState<ModelChangeReceipt | null>(null);
+  const [changeError, setChangeError] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
+
+  const operationLock = useRef(false);
+  const receiptContext = useRef<{ profileId: string; agentId: string; model: string; provider: string } | null>(null);
+  const busy = switching !== null || savingOrgan !== null;
 
   const showToast = (msg: string, ok = true) => {
     setToast({ msg, ok });
@@ -84,18 +92,27 @@ export default function BrainModelsPage() {
         fetch('/api/brain/model-profiles/active'),
         fetch('/api/brain/model-profiles/models'),
       ]);
-      if (profilesRes.ok) {
-        const d = await profilesRes.json();
-        if (d.success) setProfiles(d.profiles);
+      if (![profilesRes, activeRes, modelsRes].every(response => response.ok)) {
+        throw new Error('配置读取失败，请刷新重试');
       }
-      if (activeRes.ok) {
-        const d = await activeRes.json();
-        if (d.success) setActiveProfile(d.profile);
+      const [profileData, activeData, modelData] = await Promise.all([
+        profilesRes.json(), activeRes.json(), modelsRes.json(),
+      ]);
+      if (!profileData.success || !activeData.success || !modelData.success) {
+        throw new Error('配置读取失败，请刷新重试');
       }
-      if (modelsRes.ok) {
-        const d = await modelsRes.json();
-        if (d.success) setAvailableModels(d.models);
+      const context = receiptContext.current;
+      const current = context && activeData.profile?.config?.[context.agentId];
+      if (context && (context.profileId !== activeData.profile?.id
+        || current?.model !== context.model || current?.provider !== context.provider)) {
+        setChangeReceipt(null);
+        setToast(null);
+        receiptContext.current = null;
       }
+      setChangeError(null);
+      setProfiles(profileData.profiles);
+      setActiveProfile(activeData.profile);
+      setAvailableModels(modelData.models);
       setFetchError(null);
       setLastRefresh(new Date());
     } catch (e: unknown) {
@@ -106,7 +123,14 @@ export default function BrainModelsPage() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const handleSwitchProfile = async (profileId: string) => {
+    if (operationLock.current) return;
+    operationLock.current = true;
+    receiptContext.current = null;
     setSwitching(profileId);
+    setChangeReceipt(null);
+    setChangeError(null);
+    setEditingOrgan(null);
+    setToast(null);
     try {
       const res = await fetch('/api/brain/model-profiles/active', {
         method: 'PUT',
@@ -114,34 +138,36 @@ export default function BrainModelsPage() {
         body: JSON.stringify({ profile_id: profileId }),
       });
       const d = await res.json();
-      if (d.success) {
+      if (res.ok && d.success) {
         showToast(`已切换到：${profiles.find(p => p.id === profileId)?.name}`);
         await fetchData();
       } else {
         showToast(d.error || '切换失败', false);
       }
     } catch { showToast('网络错误', false); }
-    finally { setSwitching(null); }
+    finally { operationLock.current = false; setSwitching(null); }
   };
 
   const handleSaveOrgan = async (organId: string, modelId: string, provider: string) => {
+    if (operationLock.current) return;
+    operationLock.current = true;
+    receiptContext.current = null;
     setSavingOrgan(organId);
+    setToast(null);
+    setChangeReceipt(null);
+    setChangeError(null);
     try {
-      const res = await fetch('/api/brain/model-profiles/active/agent', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_id: organId, model_id: modelId, provider }),
-      });
-      const d = await res.json();
-      if (d.success) {
-        showToast(`${ORGAN_META[organId]?.label ?? organId} → ${modelId}`);
-        setEditingOrgan(null);
-        await fetchData();
-      } else {
-        showToast(d.error || '保存失败', false);
-      }
-    } catch { showToast('网络错误', false); }
-    finally { setSavingOrgan(null); }
+      const { profile, receipt } = await saveAndVerifyModel<Profile>(organId, modelId, provider);
+      setActiveProfile(profile);
+      setProfiles(current => current.map(item => item.id === profile.id ? profile : item));
+      receiptContext.current = { profileId: profile.id, agentId: organId, ...receipt.current };
+      setChangeReceipt(receipt);
+      setLastRefresh(new Date());
+      showToast(`${ORGAN_META[organId]?.label ?? organId}：已生效`);
+      setEditingOrgan(null);
+    } catch (error) {
+      setChangeError(error instanceof Error ? error.message : '未确认生效：网络错误，请刷新当前配置');
+    } finally { operationLock.current = false; setSavingOrgan(null); }
   };
 
   const S = {
@@ -237,6 +263,8 @@ export default function BrainModelsPage() {
         </div>
       )}
 
+      {changeError && <div role="alert" style={{ color: '#f85149', marginBottom: 20 }}>{changeError}</div>}
+      {changeReceipt && <ModelChangeResult receipt={changeReceipt} />}
       {/* 加载错误提示 */}
       {fetchError && (
         <div style={{
@@ -245,7 +273,7 @@ export default function BrainModelsPage() {
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
           <span>⚠ {fetchError}</span>
-          <button style={{ ...S.editBtn, color: '#f85149', borderColor: '#da363344' }} onClick={fetchData}>
+          <button style={{ ...S.editBtn, color: '#f85149', borderColor: '#da363344' }} onClick={fetchData} disabled={busy}>
             重试
           </button>
         </div>
@@ -263,7 +291,7 @@ export default function BrainModelsPage() {
             </div>
           </div>
         </div>
-        <button style={S.backBtn} onClick={fetchData}>刷新</button>
+        <button style={S.backBtn} onClick={fetchData} disabled={busy}>刷新</button>
       </div>
 
       {/* Profile 切换 */}
@@ -274,7 +302,7 @@ export default function BrainModelsPage() {
             <div
               key={p.id}
               style={S.profileCard(true, p.is_active)}
-              onClick={() => !p.is_active && handleSwitchProfile(p.id)}
+              onClick={() => !busy && !p.is_active && handleSwitchProfile(p.id)}
             >
               {p.is_active && <div style={S.activeBadge}>激活中</div>}
               <div style={{ fontSize: 14, fontWeight: 600, color: '#e6edf3', marginBottom: 4 }}>
@@ -291,7 +319,7 @@ export default function BrainModelsPage() {
                   <button
                     style={{ ...S.saveBtn, width: '100%', padding: '6px 0' }}
                     onClick={e => { e.stopPropagation(); handleSwitchProfile(p.id); }}
-                    disabled={switching === p.id}
+                    disabled={busy}
                   >
                     {switching === p.id ? '切换中...' : '切换到此 Profile'}
                   </button>
@@ -349,7 +377,7 @@ export default function BrainModelsPage() {
                         organId={organId}
                         current={cfg}
                         models={providerModels}
-                        saving={isSaving}
+                        saving={busy || isSaving}
                         onSave={handleSaveOrgan}
                         onCancel={() => setEditingOrgan(null)}
                         saveBtn={S.saveBtn}
@@ -371,7 +399,7 @@ export default function BrainModelsPage() {
                             {TIER_BADGE[cfg.tier].label}
                           </span>
                         )}
-                        <button style={S.editBtn} onClick={() => setEditingOrgan(organId)}>
+                        <button style={S.editBtn} disabled={busy} onClick={() => setEditingOrgan(organId)}>
                           调整
                         </button>
                       </>
@@ -419,6 +447,7 @@ function OrganEditor({
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
       <select
         style={selectStyle}
+        disabled={saving}
         value={selectedModel}
         onChange={e => setSelectedModel(e.target.value)}
       >
@@ -433,12 +462,12 @@ function OrganEditor({
       )}
       <button
         style={saveBtn}
-        disabled={saving}
+        disabled={saving || selectedModel === current.model}
         onClick={() => onSave(organId, selectedModel, selectedInfo?.provider ?? current.provider)}
       >
         {saving ? '保存...' : '保存'}
       </button>
-      <button style={cancelBtn} onClick={onCancel}>取消</button>
+      <button style={cancelBtn} disabled={saving} onClick={onCancel}>取消</button>
     </div>
   );
 }

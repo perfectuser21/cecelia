@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getActiveProfile, updateAgentModel, _resetProfileCache } from '../model-profile.js';
 
-function database({ stale = false, missing = false, eventError = false } = {}) {
+function database({ stale = false, missing = false, eventError = false, executor = false } = {}) {
   const original = { id: 'profile-test', name: '测试', is_active: true,
-    config: { thalamus: { provider: 'minimax', model: 'MiniMax-M2.1' } } };
+    config: { thalamus: { provider: 'minimax', model: 'MiniMax-M2.1' }, ...(executor ? {
+      executor: { default_provider: 'minimax', fixed_provider: { talk: 'minimax' },
+        model_map: { dev: { minimax: 'MiniMax-M2.5-highspeed', anthropic: null } } },
+    } : {}) } };
   let stored = structuredClone(original);
   const query = vi.fn(async (sql, values) => {
     if (sql.startsWith('SELECT')) return { rows: [structuredClone(stored)] };
@@ -53,5 +56,16 @@ describe('单Agent模型修改闭环', () => {
     await expect(updateAgentModel(pool, 'thalamus', 'claude-haiku-4-5-20251001')).rejects.toThrow('事件账不可用');
     expect(pool.stored().config).toEqual(pool.original.config);
     expect(getActiveProfile().id).not.toBe('profile-test');
+  });
+
+  it('执行Agent跨服务商修改必须改变该Agent实际选路，不能改全员默认值', async () => {
+    const pool = database({ executor: true });
+    const result = await updateAgentModel(pool, 'dev', 'claude-sonnet-4-6');
+    expect(result.profile.config.executor.fixed_provider.dev).toBe('anthropic');
+    expect(result.profile.config.executor.default_provider).toBe('minimax');
+    expect(result.profile.config.executor.fixed_provider.talk).toBe('minimax');
+    expect(result.profile.config.executor.model_map.dev.anthropic).toBe('claude-sonnet-4-6');
+    expect(result.previous.model_map.minimax).toBe('MiniMax-M2.5-highspeed');
+    expect(result.receipt.verified).toBe(true);
   });
 });
