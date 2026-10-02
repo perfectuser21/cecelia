@@ -19,6 +19,46 @@ function sample() {
 }
 const config = { value_stream_bindings: [{ journey_id: fixtureEntityId(2), scope: 'cecelia', node_key: 'product' }] };
 describe('六层目录源映射', () => {
+  function versionedInput() {
+    const data=sample(),w=data.workflows[0];
+    w.current_definition_version_id=fixtureEntityId(301);
+    w.definition_version={id:w.current_definition_version_id,workflow_id:w.id,
+      source_repo:'perfectuser21/zenithjoy-workspace',source_path:'product-map/contracts/keyword_acquisition.yaml',source_commit:'a'.repeat(40),
+      payload:{workflow_id:w.id,contract:{trigger_inputs:['Keyword','Account','Device']}}};
+    return {data,w};
+  }
+  it('当前版本契约trigger_inputs映射Input并清缺口，保内部来源且不推导Trigger/Output/策略', () => {
+    const {data,w}=versionedInput(),row=api.buildDirectoryRows(data,config).find(r=>r.id===w.id);
+    expect(row.properties.Input.rich_text[0].text.content).toBe('["Keyword","Account","Device"]');
+    expect(row.gaps).not.toContain('workflow_input_undeclared');
+    expect(row.gaps).toEqual(expect.arrayContaining(['workflow_trigger_undeclared','workflow_output_undeclared','execution_policy_undeclared']));
+    expect(row.definitionVersion).toEqual({id:w.current_definition_version_id,source_repo:w.definition_version.source_repo,
+      source_path:w.definition_version.source_path,source_commit:w.definition_version.source_commit});
+  });
+  it.each(['text','empty','duplicate','not-string','bad-type','wrong-object','wrong-version','wrong-payload','no-pointer','kr'])('当前版本%s不伪造Input', kind => {
+    const {data,w}=versionedInput(),v=w.definition_version;
+    if(kind==='text')v.payload.contract.trigger_inputs='Keyword';
+    if(kind==='empty')v.payload.contract.trigger_inputs=[];
+    if(kind==='duplicate')v.payload.contract.trigger_inputs=['Keyword','Keyword'];
+    if(kind==='not-string')v.payload.contract.trigger_inputs=[1];
+    if(kind==='bad-type')v.payload.contract.trigger_inputs=[' keyword '];
+    if(kind==='wrong-object')v.workflow_id=fixtureEntityId(302);
+    if(kind==='wrong-version')v.id=fixtureEntityId(302);
+    if(kind==='wrong-payload')v.payload.workflow_id=fixtureEntityId(302);
+    if(kind==='no-pointer')w.current_definition_version_id=null;
+    if(kind==='kr')v.payload.contract={runtime:{},steps:[],activities:[]};
+    const row=api.buildDirectoryRows(data,config).find(r=>r.id===w.id);
+    expect(row.properties.Input.rich_text).toEqual([]);
+    expect(row.gaps).toContain('workflow_input_undeclared');
+  });
+  it.each(['direct','contract','explicit-empty'])('已有%s Input优先，不让版本契约覆盖直接声明', kind => {
+    const {data,w}=versionedInput();
+    if(kind==='direct')w.input='原输入';
+    if(kind==='contract')w.contract={inputs:['Existing']};
+    if(kind==='explicit-empty')w.input='';
+    const row=api.buildDirectoryRows(data,config).find(r=>r.id===w.id);
+    expect(row.properties.Input.rich_text).toEqual(kind==='explicit-empty'?[]:[{text:{content:kind==='direct'?'原输入':'["Existing"]'}}]);
+  });
   it('跨Workflow同sequence和slot的引用输入反序仍有相同使用位置、编排和属性hash', () => {
     const data = sample();
     data.refs = [
