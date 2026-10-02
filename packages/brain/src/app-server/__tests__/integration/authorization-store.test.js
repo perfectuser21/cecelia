@@ -6,7 +6,7 @@ import {DB_DEFAULTS} from '../../../db-config.js';
 import {importLegacyPolicy} from '../../../execution-directory/store.js';
 import {LEGACY_BINDINGS} from '../../../execution-directory/legacy-policy.js';
 const options=process.env.TEST_DATABASE_URL?{connectionString:process.env.TEST_DATABASE_URL}:DB_DEFAULTS;
-if(!/_(scratch|test)$/.test(process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_URL).pathname:DB_DEFAULTS.database))throw Error('scratch/test database required');
+if(!(process.env.CI==='true'?/_(scratch|test)$/:/_scratch$/).test(process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_URL).pathname:DB_DEFAULTS.database))throw Error('scratch/test database required');
 const schema=`app_auth_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const admin=new pg.Client(options),pool=new pg.Pool({...options,max:4,options:`-c search_path=${schema},public`});
 let version;
