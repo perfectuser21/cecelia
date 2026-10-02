@@ -149,8 +149,13 @@ export function buildEscortRelaunchRemote({ host, tag, serial, profile, taskId, 
   const heartbeatUrl = `${(process.env.COMMANDER_BRAIN_URL || 'http://localhost:5221').replace(/\/$/, '')}/api/brain/commander-heartbeat`;
   const heartbeat = `curl -fsS --max-time 8 -X POST ${sq(heartbeatUrl)} `
     + `-H ${sq('Content-Type: application/json')} -d ${sq(JSON.stringify({ tag, host, serial: serial ?? '', escort_name: name }))}`;
+  const skillRoot = process.env.COMMANDER_SKILL_ROOT || '/Users/administrator/openclaw-root/workspaces-root/clawd-work-commander/skills';
+  const skill = typeof cap === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(cap)
+    ? `先执行 ${gatewayExec} ${sq(`cat ${sq(`${skillRoot}/wf-${cap}/SKILL.md`)}`)} 读取相同workflow专属skill；核对commander_capability=${cap}。读不到或不匹配只保留现场和缺证据，不套用别的workflow。`
+    : '调度能力缺失：只读账本与日志、写心跳，不自选workflow或套用其他专属skill；记录缺能力证据。';
   const msg = `先执行 ${gatewayExec} ${sq(`cat ${sq(ESCORT_SOP)}`)} 读取网关 SOP 并严格遵守辅佐三原则。`
     + `你可能落在任意跑场机；SOP、日志、findings、openclaw CLI 均在网关，相关读写经 ${gatewayExec} 执行，不能把本机文件不存在当成网关文件不存在。`
+    + skill
     + `接班：前任 escort 心跳中断（第${relaunchCount}次接班），你只读账本与日志接上现场，不重新发起 run、不重跑任何步骤。`
     + `本轮上下文: ${cap ? `cap=${cap} ` : ''}TAG=${tag} 机器=${host} serial=${serial ?? '未知'} profile=${profile ?? '未知'} `
     + `日志=/Users/administrator/.openclaw/m4-logs/${host}-live.log escort名=${name} Brain单=${taskId}。`

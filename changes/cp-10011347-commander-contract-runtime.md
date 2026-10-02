@@ -9,3 +9,5 @@ Commander 验收补修：接班消息通过注册表主网关 SSH 读取 SOP，�
 接班时限补修：登记新陪跑后立即请求首轮执行，避免在15分钟心跳过期与调度门之后再等10分钟周期；有效恢复仍只认实际心跳，首轮入队失败单独记事件。显式 COMMANDER_BRAIN_URL 与 COMMANDER_ESCORT_DELIVERY=none 支持隔离验收，默认生产心跳与投递保持原值。
 
 Commander 售后协调器在真实 finalize 后异步请求末轮，只接受同 run 随机 nonce 回执；Brain 原子留痕并读回成功后暂停周期，确认当前 tick 自然结束再注销。协调器缺失、读不到、重名、售后失败与超时保留现场。独立安装器成套发布 CLI 与模块，生产业务入口未切换。
+
+阶段4：`generate-commander-skill.mjs` 设计时读取显式编译契约与业务SOP，按order生成活动正常态、预算、失败分类、探针与售后规则；纯stdin/stdout无网络和模型调用。接班读取同cap专属skill，缺能力不自选。生产未部署；真机验证结果以Brain阶段4原任务为准。

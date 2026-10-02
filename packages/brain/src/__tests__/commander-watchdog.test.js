@@ -103,6 +103,28 @@ describe('recordCommanderHeartbeat', () => {
   });
 });
 
+it('已声明能力的接班必须先读相同专属skill，缺能力不能自选', () => {
+  const remote = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmdfixture', cap: 'keyword_acquisition', taskId: 'run1', relaunchCount: 1 });
+  const args = JSON.parse(execFileSync('/bin/sh', ['-c', `openclaw(){ python3 -c 'import sys,json;print(json.dumps(sys.argv[1:]))' "$@"; }; ${remote}`], { encoding: 'utf8' }));
+  expect(args[args.indexOf('--message') + 1]).toContain('wf-keyword_acquisition/SKILL.md');
+  expect(args[args.indexOf('--message') + 1]).toContain('专属skill');
+  const legacy = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmdfixture', taskId: 'run1', relaunchCount: 1 });
+  expect(legacy).toContain('能力缺失');
+});
+
+it('自启动真实心跳携带cap后落账，接班沿同cap加载专属skill', async () => {
+  let patch;
+  const pool = { query: async (sql, params) => {
+    if (sql.includes('UPDATE tasks')) { patch = JSON.parse(params[1]); return { rowCount: 1 }; }
+    if (sql.includes("payload->>'tag'")) return { rows: [{ id: 'run1', payload: { escort_id: 'id1' } }] };
+    return { rows: [] };
+  }};
+  const result = await recordCommanderHeartbeat(pool, { tag: 'cmdfixture', host: 'xian-m4',
+    cap: 'benchmark_link_acquisition', serial: 'S1', profile: 'legacy' });
+  expect(result.matched).toBe(true); expect(patch.cap).toBe('benchmark_link_acquisition');
+  expect(buildEscortRelaunchRemote({ ...patch, taskId: 'run1', relaunchCount: 1 })).toContain('wf-benchmark_link_acquisition/SKILL.md');
+});
+
 describe('buildEscortRelaunchRemote', () => {
   it('隔离验收可显式指定心跳 API 与关闭对外投递，默认生产行为不变', () => {
     const oldUrl = process.env.COMMANDER_BRAIN_URL;
