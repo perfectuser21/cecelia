@@ -1,3 +1,4 @@
+import {MACHINE_CAPACITY_LOCK_SQL} from '../orchestrator/attempt-machine-capacity.js';
 import {prepareFailedControllerRetry} from './onboarding-retry.js';
 import {LINUX_POOL_AUTHORITY,LINUX_POOL_EXECUTOR_KIND} from './task-authority.js';
 import {randomBytes,randomUUID} from 'node:crypto';
@@ -116,8 +117,12 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
      &&next.status==='in_progress'&&next.payload?.linux_onboarding?.resume_of_task_id===id)return current;
     throw error('linux_pool_retry_unconfirmed');
    }
+   const candidate=(await c.query("SELECT name FROM system_registry WHERE id=$1 AND type='machine' AND status='active'",[s.machine_registry_id])).rows[0];
+   if(!candidate)throw error('linux_pool_retry_unconfirmed');
+   // 与runtime保持capacity→registry同序；取得行锁后复核机器名，防读取期间换代。
+   await c.query(MACHINE_CAPACITY_LOCK_SQL,[candidate.name]);
    const machine=(await c.query("SELECT * FROM system_registry WHERE id=$1 AND type='machine' AND status='active' FOR UPDATE",[s.machine_registry_id])).rows[0];
-   if(!machine||!eligible(machine))throw error('linux_pool_retry_unconfirmed');
+   if(!machine||machine.name!==candidate.name||!eligible(machine))throw error('linux_pool_retry_unconfirmed');
    const state=await prepareFailedControllerRetry(c,task,source,machine,revision);
    const next=await record(c,machine,state,id);
    await c.query("INSERT INTO task_events(task_id,event_type,payload,created_at) VALUES($1,'linux_controller_retry',$2,now())",

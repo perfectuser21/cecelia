@@ -1,4 +1,3 @@
-import {MACHINE_CAPACITY_LOCK_SQL} from '../orchestrator/attempt-machine-capacity.js';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {requestHash,validateReceipt} from '../node-onboarding/spec.js';
 import {error} from './deployment.js';
@@ -20,7 +19,6 @@ export async function prepareFailedControllerRetry(db,task,source,machine,revisi
   AND payload->>'reason'='no_spawn_evidence' AND payload->>'headed_manual'='false'
   AND payload->'evidence'='{"active_process":false,"process_log":false,"dispatch_receipt":false}'::jsonb`,[task.id]);
  if(!route.rowCount||!event.rowCount)deny();
- await db.query(MACHINE_CAPACITY_LOCK_SQL,[machine.name]);
  if((await db.query("SELECT id FROM capacity_reservations WHERE machine_id=$1 AND status<>'released' LIMIT 1",[machine.name])).rowCount)deny();
  const node=(await db.query('SELECT current_version_id FROM execution_nodes WHERE machine_registry_id=$1',[machine.id])).rows[0];
  if((node?.current_version_id??null)!==s.expected_version_id)deny();
