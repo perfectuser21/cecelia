@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.360.7
+**Brain 版本**: 1.360.8
 
 
 Linux接入控制目录在宿主保持私有凭据缓存，容器统一挂到root父目录下的/run/cecelia-fleet-control；共享凭据目录及其所有者不变，所有权校验不放宽。

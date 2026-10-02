@@ -88,9 +88,11 @@ describe('专属cache真实writer→HTTP→PG闭环', () => {
       expect(a.request.intent_id).toBe(b.request.intent_id); expect(a.task_id).toBe(b.task_id);
       await expect(pool.query("UPDATE janitor_cache_intents SET request='{}' WHERE task_id=$1", [a.task_id])).rejects.toThrow();
       await pool.query("UPDATE tasks SET payload='{}' WHERE id=$1", [a.task_id]);
-      expect((await f.controller.claim(plan.resources[0], randomUUID())).request).toEqual(a.request);
+      const nextRun = randomUUID();
+      await pool.query("INSERT INTO janitor_runs(id,job_id,job_name,status) VALUES($1,$2,'fixture','running')", [nextRun, POLICY]);
+      expect((await f.controller.claim(plan.resources[0], nextRun)).request).toEqual(a.request);
       await pool.query("DELETE FROM janitor_cache_intents WHERE task_id=$1", [a.task_id]);
-      await pool.query('DELETE FROM janitor_runs WHERE id=$1', [run]);
+      await pool.query('DELETE FROM janitor_runs WHERE id=ANY($1::uuid[])', [[run, nextRun]]);
     } finally { await f.close(); }
   });
   it('请求响应丢失保留running和原blocked任务，只读同intent回执对账后补终态', async () => {

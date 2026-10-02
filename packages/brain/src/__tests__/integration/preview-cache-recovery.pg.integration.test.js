@@ -98,11 +98,14 @@ it('恢复先锁run并确认零intent，延迟claim必须等待skipped提交后�
 
 it('claim事务期间signal中止则回滚任务与intent，不留下后提交', async () => {
   const id = await running(); const abort = new AbortController();
+  let createdTask;
   const c = controller({ createTask: async (...args) => {
-    const made = await (await import('../../actions.js')).createTask(...args); abort.abort(); return made;
+    const made = await (await import('../../actions.js')).createTask(...args);
+    createdTask = made.task.id; abort.abort(); return made;
   } });
   await expect(c.claim(candidate(), id, abort.signal)).rejects.toThrow();
   expect(await intents(id)).toHaveLength(0);
+  expect((await pool.query('SELECT id FROM tasks WHERE id=$1', [createdTask])).rows).toHaveLength(0);
   expect(await api(c.reconcile).reconcileJob(pool, POLICY)).toMatchObject({ status: 'skipped' });
 });
 
