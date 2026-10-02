@@ -4,6 +4,7 @@ import { runConsistentMapRead } from '../lib/map-read-service.js';
 import { readCapabilitySystem,listSystemReleases,listSystemRuns,readSystemReleaseEvidence,readSystemRunEvidence } from '../lib/capability-system.js';
 import { readImplementationImpact } from '../lib/implementation-impact.js';
 import { systemImpactProjection } from '../lib/capability-system-impact.js';
+import { readCapabilityCoverage } from '../lib/capability-source-coverage.js';
 import { UUID } from '../lib/release-index.js';
 const invalid=message=>{throw Object.assign(Error(message),{status:400});};
 export function createCapabilitySystemRouter({pool}){
@@ -19,6 +20,7 @@ export function createCapabilitySystemRouter({pool}){
     return {workflowId:q.workflow_id,limit:q.limit===undefined?20:Number(q.limit),offset:q.offset===undefined?0:Number(q.offset)};
   }
   router.get('/registry',read(db=>readCapabilitySystem(db)));
+  router.get('/coverage',read((db,req)=>readCapabilityCoverage(db,req.query)));
   router.get('/releases',read((db,req)=>listSystemReleases(db,options(req.query))));
   router.get('/runs',read((db,req)=>listSystemRuns(db,options(req.query))));
   router.get('/releases/:id/evidence',read((db,req)=>{if(!UUID.test(req.params.id))invalid('release id须为UUID');return readSystemReleaseEvidence(db,req.params.id);}));
