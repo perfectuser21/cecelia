@@ -1,6 +1,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {existsSync,mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
+import {createHash} from 'node:crypto';
 import {join} from 'node:path';
 import {execFileSync,spawnSync} from 'node:child_process';
 import yaml from 'js-yaml';
@@ -13,7 +14,7 @@ function fixture(){
  mkdirSync(join(root,'scripts/smoke'),{recursive:true});writeFileSync(join(root,'scripts/smoke/pilot.sh'),'#!/bin/bash\nset -e\ntest -z "${CECELIA_INTERNAL_TOKEN:-}"\nprintf tested > actual-output\n');writeFileSync(join(root,'entry.js'),'export const fixed = true;\n');git('add','.');git('commit','-qm','fixture');const revision=git('rev-parse','HEAD');git('update-ref','refs/remotes/origin/main',revision);
  const id=n=>`${String(n).padStart(8,'0')}-1111-4111-8111-111111111111`,repo='perfectuser21/zenithjoy-workspace';
  const row=(n,payload,identity)=>{const source={repo,path:'contracts/pilot.json',commit:revision};return {id:id(n),...identity,source_repo:repo,source_path:source.path,source_commit:revision,payload,payload_sha256:pilotPlanHash({source,payload})};};
- const activity=row(2,{activity_id:id(3),steps:[{step_id:id(4),locator:{activity_id:id(3),step_key:'verify'}}],implementation_bindings:[]},{activity_id:id(3)});
+ const activity=row(2,{activity_id:id(3),steps:[{step_id:id(4),locator:{activity_id:id(3),step_key:'verify'}}],implementation_bindings:[{kind:'code',scope:'activity',status:'verified',repo,path:'entry.js',revision,digest:'sha256:'+createHash('sha256').update(readFileSync(join(root,'entry.js'))).digest('hex')}]},{activity_id:id(3)});
  const workflow=row(1,{workflow_id:id(5),capability_id:id(6),activities:[{reference_id:id(7),activity_id:id(3),activity_version_id:id(2)}]},{workflow_id:id(5)});
  const snapshot={schema_version:1,scope:'zenithjoy',repo,revision,status:'verified',gaps:[],definitions:{workflows:[workflow],activities:[activity]},assertions:[null,id(4)].map((step,i)=>({id:id(10+i),journey_id:id(6),step_id:id(3),step_id_ref:step,assertion_ref:'scripts/smoke/pilot.sh',assertion_revision:1}))};
  snapshot.snapshot_sha256=pilotPlanHash(snapshot);return {root,snapshot,git,outputDir:join(root,'evidence'),event:'push',ref:'refs/heads/main'};

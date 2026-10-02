@@ -5,7 +5,7 @@ import {releaseEvidenceDatabase,RELEASE_HEAD} from '../../../__tests__/fixtures/
 import {createRelease,getRelease} from '../../release-index.js';
 import {registerCapabilityRegression} from '../../capability-regressions.js';
 let f,service;
-beforeEach(async()=>{expect(existsSync(new URL('../../pilot-release-verification.js',import.meta.url)),'必须有独立完整试点发布验证').toBe(true);service=await import('../../pilot-release-verification.js');f=await releaseEvidenceDatabase();});
+beforeEach(async()=>{expect(existsSync(new URL('../../pilot-release-verification.js',import.meta.url)),'必须有独立完整试点发布验证').toBe(true);service=await import('../../pilot-release-verification.js');f=await releaseEvidenceDatabase({fullActivityBindings:true});});
 afterEach(async()=>{await f?.close();f=null;});
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 async function plan(){return service.buildPilotReleasePlan({scope:'phones',repo:f.releaseInput.components[0].repo,revision:RELEASE_HEAD,definitions:{workflows:f.workflows,activities:f.activities},assertions:(await f.db.query('SELECT * FROM journey_step_links ORDER BY id')).rows});}
@@ -46,6 +46,7 @@ it('正式main refresh补齐原未登记四Step并保旧UUID，旧版本仍缺�
  const revision='c'.repeat(40),names=['open_benchmark_profile','list_recent_videos','resolve_video_links','persist_candidates'];
  const before=(await f.db.query('SELECT id FROM steps ORDER BY id')).rows.map(r=>r.id);
  const discovery=f.contracts.docs.benchmark_link_acquisition.activities.find(a=>a.key==='discovery');discovery.steps=[...discovery.steps,...names.map((key,i)=>({key,order:i+2}))];f.contracts.refresh();
+ for(const doc of Object.values(f.contracts.docs))for(const a of doc.activities)for(const b of a.implementation_bindings||[])b.revision=revision;
  await f.sync(revision);await f.map(revision);
  const query={scope:'phones',repo:f.releaseInput.components[0].repo,revision},old=await exportImplementationSnapshot(f.db,query);
  const oldPlan=service.buildPilotReleasePlan({...query,definitions:old.definitions,assertions:old.assertions});expect(oldPlan.gaps.filter(g=>g.code==='pilot_step_identity_missing').map(g=>g.step_key).sort()).toEqual([...names].sort());

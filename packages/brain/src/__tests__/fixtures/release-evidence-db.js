@@ -14,6 +14,7 @@ export async function releaseEvidenceDatabase(options={}){
       await db.query('INSERT INTO steps(activity_id,step_order,key,activity_key) VALUES($1,1,$2,$3)',[activity.id,`${activity.capability_key}.${activity.activity_key}.${key}`,activity.activity_key]);
     }
     for(const doc of Object.values(fixture.contracts.docs))for(const activity of doc.activities)for(const step of activity.steps||[])delete step.implementation;
+    if(options.fullActivityBindings)for(const doc of Object.values(fixture.contracts.docs))for(const activity of doc.activities)if(!activity.ref)activity.implementation_bindings=[{kind:'code',repo:IMPACT_REPO,path:'src/controller.js',revision:releaseHead}];
     await fixture.advance();
     const schema=(await db.query('SELECT current_schema() AS name')).rows[0].name;
     pool=new pg.Pool({...DB_DEFAULTS,max:6,options:`-c search_path=${schema}`});

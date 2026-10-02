@@ -26,6 +26,8 @@ export function buildPilotReleasePlan({scope,repo,revision,definitions,assertion
    return Object.fromEntries(['id',identity,'payload_sha256','source_repo','source_commit'].map(k=>[k,r[k]]));
   }));
  }
+ const referenced=new Set((definitions?.workflows||[]).flatMap(w=>(w.payload?.activities||[]).map(r=>r.activity_version_id)));
+ for(const a of definitions?.activities||[])if(referenced.has(a.id)&&!(a.payload?.implementation_bindings||[]).some(b=>b.scope==='activity'&&['code','skill'].includes(b.kind)&&b.status==='verified'&&b.repo===repo&&b.revision===revision&&typeof b.path==='string'&&b.path.length&&/^sha256:[0-9a-f]{64}$/.test(b.digest||'')))gap('pilot_activity_implementation_missing',{activity_id:a.activity_id,activity_definition_version_id:a.id});
  for(const w of definitions?.workflows||[]){
   if(!uuid(w.payload?.capability_id)||!Array.isArray(w.payload?.activities)||!w.payload.activities.length){gap('pilot_workflow_identity_missing',{id:w.id});continue;}
   for(const ref of w.payload.activities){
