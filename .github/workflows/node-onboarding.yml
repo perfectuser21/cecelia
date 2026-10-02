@@ -4,6 +4,7 @@ on:
     paths:
       - 'packages/brain/src/node-onboarding/**'
       - 'packages/brain/src/linux-pool/**'
+      - 'packages/brain/scripts/fleet-worker/linux-*'
       - 'packages/brain/src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js'
       - 'packages/brain/src/__tests__/machine-onboarding*'
       - 'packages/brain/src/routes/machines.js'
@@ -52,6 +53,9 @@ jobs:
       - name: 设备页操作回归
         working-directory: apps/api
         run: npx vitest run features/system/pages/NodeOnboarding.test.tsx --maxWorkers=1
+      - name: Linux可信升级与root安装恢复回归
+        working-directory: packages/brain
+        run: npx vitest run src/linux-pool/onboarding-upgrade.test.js src/linux-pool/onboarding-step.test.js scripts/fleet-worker/linux-pool-installer.test.cjs scripts/fleet-worker/linux-pool-bootstrap.test.js scripts/fleet-worker/linux-onboarding-remote.test.js --maxWorkers=1 --minWorkers=1
       - name: Linux自动接入与续验真实数据库回归
         working-directory: packages/brain
         env:
