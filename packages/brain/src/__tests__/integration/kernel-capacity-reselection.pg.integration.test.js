@@ -1,3 +1,4 @@
+import {directory} from '../../execution-directory/directory.js';
 import {it,expect} from 'vitest';
 import {randomUUID} from 'node:crypto';
 import {fixture} from './helpers/kernel-capacity-fixture.js';
@@ -105,5 +106,38 @@ it.each(['running','cleanup_pending','blocked'])('两个聊天HOME整机占位%s
   expect((await f.pool.query('SELECT machine_id FROM harness_attempts WHERE run_id=$1',[ctx.runId])).rows).toEqual([{machine_id:'us-mac-m4'}]);
   const chat=(await f.pool.query("SELECT machine_id,status,allocation_mode FROM capacity_reservations WHERE owner_kind='app_server' ORDER BY machine_id")).rows;
   expect(chat).toEqual(['xian-mac-m1','xian-mac-m4'].map(machine_id=>({machine_id,status,allocation_mode:'exclusive_unclassified'})));
+ }finally{await f.close();}
+});
+
+it('持续回归同run/hop八路并发只有一个启动及一行预约',async()=>{
+ const f=await fixture();try{
+ const ctx=await f.context({executor_account:'team2'});
+ const results=await Promise.all(Array.from({length:8},()=>f.dispatch(ctx)));
+ expect(results.filter(r=>r.status==='LAUNCHED')).toHaveLength(1);
+ expect(f.starts).toHaveLength(1);expect(f.prepared).toHaveLength(1);
+ expect((await f.pool.query('SELECT id FROM harness_attempts WHERE run_id=$1',[ctx.runId])).rows).toHaveLength(1);
+ }finally{await f.close();}
+},20000);
+it('持续回归容量回滚后第二候选fresh拒绝，零新预约零启动',async()=>{
+ const f=await fixture();try{
+ await f.dispatch(await f.context());const gate=f.deps.preflightGate;const seen=[];
+ f.deps.preflightGate={...gate,validateSnapshotForDispatch:async(s,b)=>{seen.push(s.machine);return s.machine==='xian-mac-m4'?{status:'blocked',action:'wait:human_review',fallback_reason:'review_stale_snapshot'}:gate.validateSnapshotForDispatch(s,b);}};
+ const ctx=await f.context(),result=await f.dispatch(ctx);
+ expect(result.fallback_reason).toBe('review_stale_snapshot');expect(seen).toEqual(['xian-mac-m1','xian-mac-m4']);
+ expect(f.starts).toHaveLength(1);expect((await f.pool.query('SELECT id FROM harness_attempts WHERE run_id=$1',[ctx.runId])).rows).toHaveLength(0);
+ }finally{await f.close();}
+});
+it('持续回归换机账号变化时accountHome与预约快照同步变化',async()=>{
+ const f=await fixture();try{
+ await f.dispatch(await f.context());const initial=f.starts[0].target.account;
+ await f.pool.query("UPDATE execution_grants SET state='revoked' WHERE node_version_id=(SELECT current_version_id FROM execution_nodes WHERE canonical_id='xian-mac-m4') AND surface='harness' AND account_id=$1",[initial]);
+ await directory.refresh({pool:f.pool});
+ const homes=[];f.deps.resolveAccountHome=(provider,account)=>{homes.push(account);return `/trusted/${provider}/${account}`;};
+ expect((await f.dispatch(await f.context())).status).toBe('LAUNCHED');
+ const second=f.starts.at(-1),last=f.calls.at(-1);
+ expect(second.target.machine).toBe('xian-mac-m4');expect(second.target.account).not.toBe(initial);
+ expect(homes).toEqual([initial,second.target.account]);
+ expect(f.prepared.at(-1).spec.execution.codexHome).toBe(`/trusted/codex/${second.target.account}`);
+ expect(last.accountId).toBe(second.target.account);expect(last.capacitySnapshot.account).toBe(second.target.account);
  }finally{await f.close();}
 });
