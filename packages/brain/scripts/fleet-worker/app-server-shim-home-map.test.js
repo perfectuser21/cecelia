@@ -76,3 +76,14 @@ it('真实shim进程从进程环境选择HOME，未知agent在任何HTTP前失�
   expect(seen).toHaveLength(3);
  }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));f.close();}
 });
+it('可选requestKey仍要求字符串，数组不能被正则隐式转成UUID',()=>{
+ const f=configFile({...base,homeId:'chat-single',requestKey:['00000000-0000-4000-8000-000000000000']});
+ try{expect(()=>loadShimConfig(f.file,{})).toThrow('appserver_shim_config_invalid');}finally{f.close();}
+});
+it('白名单有界：128项可选择，129项拒绝',()=>{
+ const entries=Array.from({length:129},(_,i)=>({codexHome:'/trusted/agent-'+i,homeId:'chat-'+i}));
+ const accepted=configFile({...base,homeMap:entries.slice(0,128)}),rejected=configFile({...base,homeMap:entries});
+ try{expect(loadShimConfig(accepted.file,{CODEX_HOME:'/trusted/agent-127'}).homeId).toBe('chat-127');
+  expect(()=>loadShimConfig(rejected.file,{CODEX_HOME:'/trusted/agent-127'})).toThrow('appserver_shim_config_invalid');
+ }finally{accepted.close();rejected.close();}
+});
