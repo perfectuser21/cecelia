@@ -1,8 +1,8 @@
 """固定只读物理探针；安装字节和OS事实，不启动daemon/业务/自修复。"""
 from datetime import datetime, timezone
+import fcntl
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import re
@@ -70,13 +70,20 @@ def daemon_observation():
 def external_locks(root):
     root=Path(root);info=root.lstat()
     if not stat.S_ISDIR(info.st_mode):raise ValueError('phone_lock_observation_unknown')
-    occupied=0
+    occupied=set()
     for path in root.iterdir():
         mode=path.lstat().st_mode
-        if path.name.endswith('.lock') and stat.S_ISDIR(mode):occupied+=1
-        elif path.name.endswith('.guard') and stat.S_ISREG(mode):pass
+        name=path.name.rsplit('.',1)[0]
+        if not re.fullmatch('[A-Za-z0-9][A-Za-z0-9._:-]{0,127}',name):raise ValueError('phone_lock_observation_unknown')
+        if path.name.endswith('.lock') and stat.S_ISDIR(mode):occupied.add(name)
+        elif path.name.endswith('.guard') and stat.S_ISREG(mode):
+            fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+            try:
+                try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                except BlockingIOError:occupied.add(name)
+            finally:os.close(fd)
         else:raise ValueError('phone_lock_observation_unknown')
-    return {'occupied':occupied}
+    return {'occupied':len(occupied)}
 
 def collect(*,manifest_path='/etc/cecelia/phone-ssh/probe.json',source_root='/opt/cecelia/phone-ssh',
             config_path='/etc/cecelia/phone-ssh/worker.json',journal_root='/var/lib/cecelia/phone-ssh',
