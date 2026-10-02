@@ -1,4 +1,6 @@
-import { expect,it } from 'vitest';
+import { expect,it,vi } from 'vitest';
+import pg from 'pg';
+import {coverageDatabase} from '../../../__tests__/fixtures/capability-coverage-db.js';
 import { versionsDatabase } from '../../../__tests__/fixtures/definition-versions-db.js';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync,rmSync,writeFileSync,mkdirSync,realpathSync } from 'node:fs';
@@ -21,11 +23,15 @@ import { exportImplementationSnapshot,refreshImplementationSnapshot } from '../.
 import { readImplementationImpact } from '../../implementation-impact.js';
 import { createImplementationScratch,importImplementationSnapshot,projectImplementationSnapshot } from '../../../../../../scripts/ci/implementation-snapshot.mjs';
 import { runProjection } from '../../../map/projector.js';
+async function preparePilotSchema(db,graphOnly=false){
+ const tables=graphOnly?['fact_snapshot_headers','graph_edges','graph_snapshot_versions','graph_edge_snapshots']:['decisions','map_scope_repositories','map_manifest_versions','map_projection_runs','map_projection_nodes','map_projection_edges','fact_snapshot_headers','graph_edges','graph_snapshot_versions','graph_edge_snapshots','journey_step_links','journey_features','test_registry','api_registry','db_schema_registry','journey_assertion_receipts'];
+ for(const table of tables)await db.query(`CREATE TABLE ${table}(LIKE public.${table} INCLUDING ALL)`);
+}
 it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真实Git扫描后固定投影',async()=>{
   const fixture=await versionsDatabase(),dir=realpathSync(mkdtempSync(join(tmpdir(),'pilot-registration-')));let server;
   try{
     const {db}=fixture;
-    for(const table of ['decisions','map_scope_repositories','map_manifest_versions','map_projection_runs','map_projection_nodes','map_projection_edges','fact_snapshot_headers','graph_edges','graph_snapshot_versions','graph_edge_snapshots','journey_step_links','journey_features','test_registry','api_registry','db_schema_registry','journey_assertion_receipts'])await db.query(`CREATE TABLE ${table}(LIKE public.${table} INCLUDING ALL)`);
+    await preparePilotSchema(db);
     await db.query(`INSERT INTO journeys(id,name,parent_journey_id) VALUES('afa6abca-53c0-4815-8594-b7fb81ca547f','获客',NULL),
       ('a1000000-0000-4000-8000-000000000001','关键词','afa6abca-53c0-4815-8594-b7fb81ca547f'),('a1000000-0000-4000-8000-000000000002','对标','afa6abca-53c0-4815-8594-b7fb81ca547f')`);
     mkdirSync(join(dir,'src'));writeFileSync(join(dir,'src/controller.js'),"import './shared.js';\n");writeFileSync(join(dir,'src/shared.js'),'export const shared=true;\n');
@@ -132,7 +138,7 @@ it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真
 it('Cecelia事实alias沿用源仓扫描profile，不扩大到根目录运行文件',async()=>{
   const fixture=await versionsDatabase(),dir=realpathSync(mkdtempSync(join(tmpdir(),'pilot-profile-')));
   try{
-    for(const table of ['fact_snapshot_headers','graph_edges','graph_snapshot_versions','graph_edge_snapshots'])await fixture.db.query(`CREATE TABLE ${table}(LIKE public.${table} INCLUDING ALL)`);
+    await preparePilotSchema(fixture.db,true);
     mkdirSync(join(dir,'packages/brain/src'),{recursive:true});mkdirSync(join(dir,'runtime'));
     writeFileSync(join(dir,'packages/brain/src/entry.js'),"import './lib.js';\n");writeFileSync(join(dir,'packages/brain/src/lib.js'),'export const lib=true;\n');
     writeFileSync(join(dir,'runtime/phantom.js'),"import '../packages/brain/src/lib.js';\n");
@@ -141,4 +147,35 @@ it('Cecelia事实alias沿用源仓扫描profile，不扩大到根目录运行文
     const scan=await scanRepo({name:'cecelia-kr-source',sourceName:'cecelia',root:dir},fixture.db);expect(scan.error).toBeUndefined();
     expect((await fixture.db.query("SELECT src_path,dst_path FROM graph_edges WHERE repo='cecelia-kr-source'")).rows).toEqual([{src_path:'packages/brain/src/entry.js',dst_path:'packages/brain/src/lib.js'}]);
   }finally{await fixture.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+it.each(['coverage','pilot','graph'])('seedonly %s调用真实设置链，query前截停public复制并验证私有来源',async kind=>{
+ let f;const calls=[];const original=pg.Client.prototype.query;
+ const spy=vi.spyOn(pg.Client.prototype,'query').mockImplementation(function(sql,...args){
+  const text=typeof sql==='string'?sql:sql.text;calls.push(text);
+  if(/LIKE\s+public\.|SET\s+search_path[^;]*\bpublic\b/i.test(text))throw Error('unsafe_caller_query_before_pg');
+  return original.call(this,sql,...args);
+ });
+ try{
+  if(kind==='coverage')f=await coverageDatabase();
+  else{f=await versionsDatabase();await preparePilotSchema(f.db,kind==='graph');}
+  const identity=(await f.db.query('SELECT current_database() name,current_schema() schema')).rows[0];
+  expect(identity.name).toBe(process.env.DB_NAME);expect(identity.schema).toBe(f.schema);
+  const fks=(await f.db.query(`SELECT n.nspname target FROM pg_constraint c JOIN pg_class r ON r.oid=c.conrelid JOIN pg_namespace own ON own.oid=r.relnamespace JOIN pg_class t ON t.oid=c.confrelid JOIN pg_namespace n ON n.oid=t.relnamespace WHERE own.nspname=$1 AND c.contype='f'`,[f.schema])).rows;
+  expect(fks.length).toBeGreaterThan(0);expect(fks.every(r=>r.target===f.schema)).toBe(true);
+  if(kind==='coverage'){
+   const skill=(await f.db.query('SELECT content_md,content_digest,dispatch_command FROM skill_registry WHERE id=$1',[f.coverageIds.skill])).rows[0];
+   expect(skill).toMatchObject({content_md:'PRIVATE_CONTENT',dispatch_command:'PRIVATE_COMMAND',content_digest:expect.stringMatching(/^[a-f0-9]{64}$/)});
+   expect((await f.db.query('SELECT count(*)::int n FROM api_registry')).rows[0].n).toBe(3);
+  }else if(kind==='pilot'){
+   const triggers=(await f.db.query(`SELECT tgname FROM pg_trigger WHERE tgrelid='journey_assertion_receipts'::regclass AND NOT tgisinternal`)).rows;
+   expect(triggers).toContainEqual({tgname:'trg_journey_assertion_receipts_append_only'});
+   const decision=randomUUID();await f.db.query('INSERT INTO decisions(id) VALUES($1)',[decision]);
+   await f.db.query("INSERT INTO journeys(id,name,parent_journey_id) VALUES('afa6abca-53c0-4815-8594-b7fb81ca547f','获客',NULL),('a1000000-0000-4000-8000-000000000001','关键词','afa6abca-53c0-4815-8594-b7fb81ca547f'),('a1000000-0000-4000-8000-000000000002','对标','afa6abca-53c0-4815-8594-b7fb81ca547f')");
+   const draft=await submitMapManifest(f.db,buildPilotManifest('phones',{revision:'a'.repeat(40),decision}));
+   expect(draft.manifest_version.source_decision_id).toBe(decision);
+   await expect(f.db.query("UPDATE map_manifest_versions SET manifest=manifest||'{\"tampered\":true}' WHERE id=$1",[draft.manifest_version.id])).rejects.toMatchObject({code:'P0001'});
+  }else expect((await f.db.query("SELECT to_regclass('graph_edge_snapshots') relation")).rows[0].relation).toBe('graph_edge_snapshots');
+ }finally{await f?.close();spy.mockRestore();}
+ expect(calls.some(sql=>/DROP SCHEMA/.test(sql))).toBe(true);
 });
