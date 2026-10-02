@@ -110,9 +110,16 @@ router.get('/journeys/:id', async (req, res) => {
 // PATCH /api/brain/journeys/:id — 承诺地图字段（mapper 落账用）
 router.patch('/journeys/:id', internalAuthOrLoopback, async (req, res) => {
   try {
-    const { home, domain, trigger, endpoint, description, maturity } = req.body;
+    const { home, domain, trigger, endpoint, description, maturity, area_id } = req.body;
     if (home && !VALID_HOME.includes(home)) {
       return res.status(400).json({ error: `home must be one of: ${VALID_HOME.join(',')}` });
+    }
+    if (area_id !== undefined) {
+      if (typeof area_id !== 'string' || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(area_id)) {
+        return res.status(400).json({ error: 'area_id must be a UUID' });
+      }
+      const area = await pool.query('SELECT id FROM areas WHERE id=$1', [area_id]);
+      if (!area.rows.length) return res.status(400).json({ error: 'area_id does not exist' });
     }
     const sets = [];
     const vals = [];
@@ -123,6 +130,7 @@ router.patch('/journeys/:id', internalAuthOrLoopback, async (req, res) => {
     if (endpoint !== undefined)    { sets.push(`endpoint=$${idx++}`);    vals.push(endpoint); }
     if (description !== undefined) { sets.push(`description=$${idx++}`); vals.push(description); }
     if (maturity !== undefined)    { sets.push(`maturity=$${idx++}`);    vals.push(maturity); }
+    if (area_id !== undefined)    { sets.push(`area_id=$${idx++}`, 'notion_synced_at=NULL'); vals.push(area_id); }
     if (!sets.length) return res.status(400).json({ error: 'no fields to update' });
     sets.push(`updated_at=NOW()`);
     vals.push(req.params.id);
@@ -131,6 +139,9 @@ router.patch('/journeys/:id', internalAuthOrLoopback, async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'not found' });
     res.json(rows[0]);
   } catch (err) {
+    if (req.body?.area_id !== undefined && err.code === '23503') {
+      return res.status(400).json({ error: 'area_id does not exist' });
+    }
     console.error('[journeys] PATCH /journeys/:id error:', err.message);
     res.status(500).json({ error: err.message });
   }
