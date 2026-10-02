@@ -191,6 +191,12 @@ beforeEach(() => {
     if (/SELECT \* FROM tasks WHERE id/.test(sql)) {
       return Promise.resolve({ rows: currentTask ? [currentTask] : [] });
     }
+    if (/ordinary_eligible/.test(sql)) {
+      return Promise.resolve({ rows: currentTask ? [{ id: currentTask.id, ordinary_eligible: true }] : [] });
+    }
+    if (/^UPDATE tasks SET status = \$1/.test(sql) && params?.[1] === currentTask?.id) {
+      return Promise.resolve({ rows: [], rowCount: 1 });
+    }
     return Promise.resolve({ rows: [], rowCount: 0 });
   });
   mockCheckAvailable.mockResolvedValue({ available: true });

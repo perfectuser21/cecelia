@@ -150,8 +150,10 @@ describe('POST /api/brain/dispatch-now', () => {
 
     // SELECT query
     mockQuery.mockResolvedValueOnce({ rows: [mockTask] });
+    // Actual authority read precedes start mutation.
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: mockTask.id, ordinary_eligible: true }] });
     // UPDATE status to in_progress
-    mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
 
     mockTriggerCeceliaRun.mockResolvedValueOnce({
       success: true,
@@ -195,14 +197,15 @@ describe('POST /api/brain/dispatch-now', () => {
     const mockTask = { id: 'fail-task', status: 'queued', task_type: 'dev', created_at: '2026-07-01T00:00:00Z' };
 
     mockQuery.mockResolvedValueOnce({ rows: [mockTask] });
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // UPDATE to in_progress
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: mockTask.id, ordinary_eligible: true }] }); // native authority
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 }); // UPDATE to in_progress
 
     mockTriggerCeceliaRun.mockResolvedValueOnce({
       success: false,
       error: 'Executor unavailable',
     });
 
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // Rollback to queued
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 }); // Rollback to queued
 
     const { default: router } = await import('../routes/execution.js');
     const handler = router.stack.find(l => l.route?.path === '/dispatch-now').route.stack[0].handle;
@@ -213,9 +216,9 @@ describe('POST /api/brain/dispatch-now', () => {
     await handler(req, res);
 
     expect(res.status).toHaveBeenCalledWith(500);
-    // Verify rollback: third query should set status back to queued
+    // Authority read is separate; final UPDATE still uses the original status/id parameters.
     expect(mockQuery).toHaveBeenCalledWith(
-      'UPDATE tasks SET status = $1 WHERE id = $2',
+      expect.stringContaining('UPDATE tasks SET status = $1 WHERE id = $2 AND tasks.executor_kind IS DISTINCT FROM'),
       ['queued', 'fail-task']
     );
   });
@@ -236,6 +239,7 @@ describe('POST /dispatch-now — S2 锚点闸', () => {
       payload: {},
     };
     mockQuery.mockResolvedValueOnce({ rows: [unanchored] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: unanchored.id, ordinary_eligible: true }] });
 
     const { default: router } = await import('../routes/execution.js');
     const handler = router.stack.find(l => l.route?.path === '/dispatch-now').route.stack[0].handle;

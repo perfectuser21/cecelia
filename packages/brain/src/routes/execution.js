@@ -1,3 +1,4 @@
+import { phoneOrdinaryQueueSql } from '../task-queue-lanes.js';
 import {assertAutomaticTaskOwner} from '../lib/headed-task-owner.js';
 import { COMPANY_KR_SQL_GUARD } from '../lib/company-kr-metrics.js';
 import { Router } from 'express';
@@ -3994,6 +3995,18 @@ router.post('/dispatch-now', async (req, res) => {
       });
     }
 
+    const authority = await pool.query(
+      `SELECT tasks.id, (${phoneOrdinaryQueueSql('tasks')}) AS ordinary_eligible FROM tasks WHERE tasks.id = $1`,
+      [task_id]
+    );
+    if (authority.rows.length === 0) {
+      return res.status(409).json({ error: 'manual_dispatch_conflict', taskId: task_id });
+    }
+    if (authority.rows[0].ordinary_eligible === false) {
+      return res.status(409).json({ error: 'phone_task_owned', taskId: task_id });
+    }
+    if (authority.rows[0].ordinary_eligible !== true) throw Error('manual_dispatch_authority_unknown');
+
     // S2 锚点闸（MJ5 刀2）：dispatch-now 与 tick 派发同闸——无锚不点火
     // （07-17 验火发现本端点绕过 dispatcher 的 checkAnchor，闸必须站住所有必经之路）
     const anchorResult = checkAnchor(task);
@@ -4012,10 +4025,18 @@ router.post('/dispatch-now', async (req, res) => {
     if (deviceGate.acquired) deviceLockTaskId = task.id;
 
     // 标记为 in_progress
-    await pool.query(
-      'UPDATE tasks SET status = $1, started_at = NOW() WHERE id = $2',
+    const started = await pool.query(
+      `UPDATE tasks SET status = $1, started_at = NOW() WHERE id = $2 AND ${phoneOrdinaryQueueSql('tasks')}`,
       ['in_progress', task_id]
     );
+
+    if (started.rowCount !== 1) {
+      if (deviceLockTaskId) {
+        const ownLock = deviceLockTaskId; deviceLockTaskId = null;
+        await releaseDeviceLockNonFatal(ownLock, 'dispatch-now');
+      }
+      return res.status(409).json({ error: 'manual_dispatch_conflict', taskId: task_id });
+    }
 
     // 直接触发执行（不经过 tick loop）
     const execResult = await triggerCeceliaRun(task);
@@ -4030,11 +4051,17 @@ router.post('/dispatch-now', async (req, res) => {
       });
     } else {
       // 执行失败：回退 status（任务回 queued 不触发终态释放链，锁必须就地放掉）
-      await pool.query(
-        'UPDATE tasks SET status = $1 WHERE id = $2',
+      const requeued = await pool.query(
+        `UPDATE tasks SET status = $1 WHERE id = $2 AND ${phoneOrdinaryQueueSql('tasks')}`,
         ['queued', task_id]
       );
-      if (deviceLockTaskId) await releaseDeviceLockNonFatal(deviceLockTaskId, 'dispatch-now');
+      if (deviceLockTaskId) {
+        const ownLock = deviceLockTaskId; deviceLockTaskId = null;
+        await releaseDeviceLockNonFatal(ownLock, 'dispatch-now');
+      }
+      if (requeued.rowCount !== 1) {
+        return res.status(500).json({ success: false, error: 'manual_dispatch_requeue_conflict', taskId: task_id });
+      }
       console.error(`[dispatch-now] Task ${task_id} dispatch failed: ${execResult.error}`);
       res.status(500).json({
         success: false,

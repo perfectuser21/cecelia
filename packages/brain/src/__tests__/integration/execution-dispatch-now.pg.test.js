@@ -151,7 +151,7 @@ it.each(['authority','start','requeue'])('real ordinary second-session deletion 
 });
 
 it('ordinary real nonphone executor remains executable', async () => {
- await setup(); const id = (await f.pool.query("INSERT INTO tasks(title,status,task_type,executor_kind,payload) VALUES('manual bridge neighbor','queued','dev','bridge','{}') RETURNING id")).rows[0].id;
+ await setup(); const id = (await f.pool.query("INSERT INTO tasks(title,status,task_type,executor_kind,payload) VALUES('manual nonphone neighbor','queued','dev','headed-session','{}') RETURNING id")).rows[0].id;
  expect((await post(id)).status).toBe(200); expect(h.trigger).toHaveBeenCalledTimes(1);
 });
 it('unknown authority result boolean fails closed with no external gates', async () => {
