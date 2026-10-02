@@ -232,7 +232,7 @@ export async function updateAgentModel(pool, agentId, modelId, options = {}) {
     // brain 层: 直接更新 thalamus 或 cortex
     previous.provider = config[agentId]?.provider;
     previous.model = config[agentId]?.model;
-    config[agentId] = { provider: newProvider, model: modelId };
+    config[agentId] = { ...config[agentId], provider: newProvider, model: modelId };
   } else {
     // executor 层: 更新 model_map
     const modelMap = { ...config.executor.model_map };

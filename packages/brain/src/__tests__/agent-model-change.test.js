@@ -68,4 +68,11 @@ describe('单Agent模型修改闭环', () => {
     expect(result.previous.model_map.minimax).toBe('MiniMax-M2.5-highspeed');
     expect(result.receipt.verified).toBe(true);
   });
+
+  it('修改主模型保留已有降级配置', async () => {
+    const pool = database();
+    pool.stored().config.thalamus.fallbacks = [{ provider: 'anthropic-api', model: 'claude-haiku-4-5-20251001' }];
+    const result = await updateAgentModel(pool, 'thalamus', 'claude-haiku-4-5-20251001');
+    expect(result.profile.config.thalamus.fallbacks).toEqual([{ provider: 'anthropic-api', model: 'claude-haiku-4-5-20251001' }]);
+  });
 });
