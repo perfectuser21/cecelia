@@ -208,6 +208,8 @@ async function expireRecurringInstances(db, now, raiseFn) {
          FROM tasks t
         WHERE t.trigger_source = 'recurring'
           AND t.status IN ('queued', 'paused')
+          AND t.executor_kind IS DISTINCT FROM 'phone-ssh-controller'
+          AND NOT EXISTS (SELECT 1 FROM phone_task_owners o WHERE o.task_id = t.id)
           AND (CASE WHEN t.payload->>'expires_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
                     THEN (t.payload->>'expires_at')::timestamptz END) <= $1::timestamptz
           AND NOT EXISTS (SELECT 1 FROM tasks c WHERE c.title = t.title AND c.status IN ('cancelled', 'canceled'))
@@ -223,6 +225,8 @@ async function expireRecurringInstances(db, now, raiseFn) {
             updated_at = NOW()
        FROM cand
       WHERE tasks.id = cand.id
+        AND tasks.executor_kind IS DISTINCT FROM 'phone-ssh-controller'
+        AND NOT EXISTS (SELECT 1 FROM phone_task_owners o WHERE o.task_id = tasks.id)
     RETURNING tasks.id, tasks.title`,
     [now.toISOString()],
   );
