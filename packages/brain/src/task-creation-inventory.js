@@ -82,6 +82,7 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'rumination.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
   { module: 'staging-promote.js', source: 'child', creates_executable_task: true, migration_status: 'routed' },
   { module: 'suggestion-dispatcher.js', source: 'discovery', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'image-retention-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'preview-cache-controller.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   { module: 'task-intake.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'task-generator-scheduler.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },

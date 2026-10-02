@@ -1,3 +1,9 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
+import express from 'express';
+import request from 'supertest';
+import janitorRouter from '../../routes/janitor.js';
 import { beforeAll, afterAll, it, expect } from 'vitest';
 import { readFile, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -21,7 +27,7 @@ async function setup(){
  const root=await realpath(await mkdtemp(join(tmpdir(),'image-janitor-pg-'))),store=createStore(root),now=Date.now();
  const state={ids:[1,2,3,4,5],calls:[],available:10*GiB,unknown:false,lose:false};
  await store.withLock(lease=>store.save('ledger.json',{schema_version:1,generation:1,pending:null,successes:[1,2,3].map(n=>({deployment_id:randomUUID(),image_id:image(n),version:`1.0.${n}`,git_sha:'a'.repeat(40),confirmed_at:new Date(now-n*1000).toISOString()}))},lease));
- const docker={snapshot:async()=>({machine_registry_id:US_MACHINE_ID,daemon_id:'pg-fixture',docker_root_dir:'/mnt/data/docker',volume_dev:1,observed_at:new Date().toISOString(),disk:{total_bytes:100*GiB,available_bytes:state.available},
+ const docker={absent:async id=>!state.ids.some(n=>image(n)===id),snapshot:async()=>({machine_registry_id:US_MACHINE_ID,daemon_id:'pg-fixture',docker_root_dir:'/mnt/data/docker',volume_dev:1,observed_at:new Date().toISOString(),disk:{total_bytes:100*GiB,available_bytes:state.available},
   images:state.ids.map(n=>({id:image(n),tags:[`cecelia-brain:1.0.${n}`],digests:[`cecelia-brain@${image(n)}`],created_at:new Date(now-2*86400000).toISOString()})),containers:[{id:'a'.repeat(64),image_id:image(1),name:'/cecelia-node-brain',running:true}]}),
   remove:async id=>{state.calls.push(id);const row=(await pool.query("SELECT t.status FROM tasks t JOIN janitor_image_intents j ON j.task_id=t.id WHERE j.request->>'image_id'=$1 ORDER BY j.created_at DESC LIMIT 1",[id])).rows[0];expect(row.status).toBe('in_progress');if(!state.unknown){state.ids=state.ids.filter(n=>image(n)!==id);state.available+=6*GiB;}}};
  const engine=createRetentionEngine({store,docker});
@@ -30,6 +36,17 @@ async function setup(){
  const api=createJanitor([{JOB_ID:POLICY,JOB_NAME:'US镜像清理',run:controller.run,reconcile:controller.reconcile}]);
  return {store,state,engine,controller,api,close:()=>rm(root,{recursive:true,force:true})};
 }
+it('正式HTTP入口列出默认关闭US策略，传入镜像字段也不能绕过关闭闸',async()=>{
+ const app=express();app.use(express.json());app.locals.pool=pool;app.use('/api/brain/janitor',janitorRouter);
+ const jobs=await request(app).get('/api/brain/janitor/jobs');expect(jobs.status).toBe(200);
+ expect(jobs.body.jobs.find(x=>x.id===POLICY)).toMatchObject({enabled:false});
+ const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+ try {const result=await promisify(execFile)('bash',[fileURLToPath(new URL('../../../scripts/smoke/us-image-retention-smoke.sh',import.meta.url))],{env:{...process.env,BRAIN_URL:'http://127.0.0.1:'+server.address().port}});expect(result.stdout).toContain('[us-image-retention-smoke] PASS');}
+ finally {await new Promise(resolve=>server.close(resolve));}
+ const denied=await request(app).post('/api/brain/janitor/jobs/'+POLICY+'/run').send({image_id:image(4),enabled:true});
+ expect(denied.status).toBe(409);expect(denied.body.error).toBe('JANITOR_DISABLED');
+ expect((await pool.query('SELECT count(*)::int AS n FROM janitor_image_intents')).rows[0].n).toBe(0);
+});
 it('迁移默认停用，明确启用后两项真实任务/路由收据/文件回执同一完整ID闭环',async()=>{
  const f=await setup();try{
   await expect(f.api.runJob(pool,POLICY)).rejects.toMatchObject({code:'JANITOR_DISABLED'});expect(f.state.calls).toEqual([]);
@@ -58,5 +75,26 @@ it('未知删除持续占位，错误task回执拒收，身份正确精确缺失
   const broken=createImageRetentionController({pool,engine:{...f.engine,receipt:async id=>({...await f.engine.receipt(id),task_id:randomUUID()})}});
   expect((await broken.reconcile({run_id:row.run_id})).status).toBe('unconfirmed');
   expect((await f.api.reconcileJob(pool,POLICY)).status).toBe('success');expect(f.state.calls).toHaveLength(1);
+ }finally{await f.close();}
+});
+it('任务预约落库后尚未调用引擎就断线，关闭后只读对账不补执行',async()=>{
+ const f=await setup();try{
+  const broken=createImageRetentionController({pool,engine:{...f.engine,execute:async()=>{throw Error('disconnected before execute');}}});
+  const api=createJanitor([{JOB_ID:POLICY,JOB_NAME:'fixture',run:broken.run,reconcile:broken.reconcile}]);
+  await expect(api.runJob(pool,POLICY)).rejects.toMatchObject({code:'JANITOR_UNCONFIRMED'});
+  await api.setJobConfig(pool,POLICY,{enabled:false});expect((await f.api.reconcileJob(pool,POLICY)).status).toBe('skipped');
+  expect(f.state.calls).toHaveLength(0);
+  const row=(await pool.query('SELECT t.status,j.receipt FROM tasks t JOIN janitor_image_intents j ON j.task_id=t.id ORDER BY j.created_at DESC LIMIT 1')).rows[0];
+  expect(row.status).toBe('failed');expect(row.receipt).toMatchObject({status:'skipped',attempted:false});
+ }finally{await f.close();}
+});
+it('两个controller并发认领只创建一任务，回执封存后不可覆写',async()=>{
+ const f=await setup();try{
+  const run_id=randomUUID();await pool.query("INSERT INTO janitor_runs(id,job_id,job_name,status) VALUES($1,$2,'fixture','running')",[run_id,POLICY]);
+  const plan=await f.engine.plan(run_id);const [a,b]=await Promise.all([f.controller.claim(plan,plan.images[0].id),f.controller.claim(plan,plan.images[0].id)]);
+  expect(a.task_id).toBe(b.task_id);expect(a.request.intent_id).toBe(b.request.intent_id);
+  expect((await f.controller.reconcile({run_id})).status).toBe('skipped');expect(f.state.calls).toHaveLength(0);
+  await expect(pool.query("UPDATE janitor_image_intents SET receipt='{}' WHERE task_id=$1",[a.task_id])).rejects.toThrow();
+  await pool.query("UPDATE janitor_runs SET status='skipped' WHERE id=$1",[run_id]);
  }finally{await f.close();}
 });
