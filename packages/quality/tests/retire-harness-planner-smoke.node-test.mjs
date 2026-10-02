@@ -63,12 +63,20 @@ test('retire smoke显式生产DB拒绝，零PG runner/零业务HTTP请求',async
 test('retire smoke DB_*与容器绑定不一致拒绝，零PG runner',async()=>{
  await transport(async({smoke,env,calls})=>{
   const r=await smoke('retire-harness-planner',{...env,SMOKE_ALLOW_WRITE:'1',DB_NAME:'cecelia_scratch'});
-  assert.equal(r.code,1,r.output);assert.deepEqual(await calls(),[]);
+  assert.equal(r.code,1,r.output);assert.match(r.output,/操作连接必须/);assert.deepEqual(await calls(),[]);
  });
 });
 test('retire smoke本地NODE_ENV=test不能授权cecelia_test，只有CI才允许该库',async()=>{
  await transport(async({smoke,env,calls})=>{
   const r=await smoke('retire-harness-planner',{...env,SMOKE_ALLOW_WRITE:'1',CI:'false',NODE_ENV:'test'});
-  assert.equal(r.code,1,r.output);assert.deepEqual(await calls(),[]);
+  assert.equal(r.code,1,r.output);assert.match(r.output,/本地仅scratch/);assert.deepEqual(await calls(),[]);
+ });
+});
+test('retire smoke本地只允许守卫已核scratch，成功运行同一唯一入口',async()=>{
+ await transport(async({smoke,env,calls,info})=>{
+  const scratch=structuredClone(info);scratch.Config.Env[1]='DB_NAME=cecelia_scratch';
+  const r=await smoke('retire-harness-planner',{...env,SMOKE_ALLOW_WRITE:'1',CI:'false',DB_NAME:'cecelia_scratch'},scratch);
+  assert.equal(r.code,0,r.output);const recorded=await calls();assert.equal(recorded.length,1);
+  assert.equal(recorded[0].db,'cecelia_scratch');assert.equal(recorded[0].url,'');assert.ok(recorded[0].args.includes(entry));
  });
 });
