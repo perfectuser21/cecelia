@@ -1,48 +1,15 @@
 import { beforeEach,afterEach,it,expect } from 'vitest';
-import { randomUUID } from 'node:crypto';
 import express from 'express';
 import request from 'supertest';
-import { versionsDatabase,seedWorkflows } from '../fixtures/definition-versions-db.js';
-import { contractsFixture,HEAD as BASE } from '../fixtures/shared-activity-contracts.js';
-import { syncActivityContracts } from '../../activity-contract-sync.js';
+import { implementationImpactDatabase,IMPACT_REPO as repo } from '../fixtures/implementation-impact-db.js';
 import { createMapRouter } from '../../routes/map.js';
-const HEAD='b'.repeat(40),repo='perfectuser21/zenithjoy-workspace',registry='phone-source';
-let fixture,db,ids,contracts,app,capabilities;
+const BASE='a'.repeat(40),HEAD='b'.repeat(40);
+let fixture,db,ids,app,capabilities,graph,map,advance;
 const input=(extra={})=>({scope:'phones',repo,base_revision:BASE,head_revision:HEAD,changed_files:['src/shared-lock.js'],...extra});
 const post=extra=>request(app).post('/map/implementation-impact').send(input(extra));
-async function graph(revision,edges=[['src/controller.js','src/shared-lock.js']],key=registry){
-  await db.query("INSERT INTO graph_snapshot_versions(repo,source_revision,scanner_version,row_count,scanned_at) VALUES($1,$2,'graph-v1',$3,NOW())",[key,revision,edges.length]);
-  for(const [src,dst] of edges) await db.query("INSERT INTO graph_edge_snapshots(repo,source_revision,src_path,dst_path,edge_type) VALUES($1,$2,$3,$4,'import')",[key,revision,src,dst]);
-}
-async function map(revision,capIds=capabilities,scope='phones',key=registry,sourceRepo=repo){
-  await db.query("UPDATE map_manifest_versions SET status='superseded' WHERE scope_key=$1",[scope]);
-  await db.query("UPDATE map_projection_runs SET status='superseded' WHERE scope_key=$1",[scope]);
-  const id=randomUUID(),run=randomUUID(),digest=(revision===BASE?'c':'d').repeat(64);
-  const binding=(type,entity_id)=>({entity_type:type,entity_id,source_repo:sourceRepo,source_revision:revision});
-  const manifest={scope_key:scope,schema_version:1,value_streams:[{key:'flow',brain_binding:binding('value_stream',ids.valueStream)}],capabilities:capIds.map((cap,i)=>({key:`F${i}`,value_stream_key:'flow',brain_binding:binding('capability',cap)}))};
-  await db.query("INSERT INTO map_manifest_versions(id,scope_key,version,source_decision_id,manifest,digest,status,activated_at) VALUES($1,$2,$3,$4,$5,$6,'active',NOW())",[id,scope,revision===BASE?1:2,randomUUID(),manifest,digest]);
-  await db.query("INSERT INTO map_projection_runs(id,scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES($1,$2,$3,$4,$5,'binding-v2',$4,'active',NOW())",[run,scope,id,digest,{[key]:revision}]);
-  for(const node of manifest.capabilities)await db.query("INSERT INTO map_projection_nodes(run_id,node_id,node_type,node_key,name,attributes) VALUES($1,$2,'capability',$3,'能力',$4)",[run,randomUUID().replaceAll('-','').padStart(64,'0'),node.key,{brain_binding:node.brain_binding,canonical_entity_id:node.brain_binding.entity_id,mapping_status:'verified'}]);
-  return {id,run,digest};
-}
-async function sync(revision){
-  contracts.docs.keyword_acquisition.activities[0].implementation_bindings=[{kind:'code',repo,path:'src/controller.js',revision}];contracts.refresh();
-  const fetchFn=async(...args)=>String(args[0]).includes('/commits/main')?{ok:true,text:async()=>revision}:contracts.fetchFn(...args);
-  await syncActivityContracts(db,{...contracts,fetchFn,readBinding:async()=>'export const controller=true;\n'});
-}
-async function advance({remove=false,capIds=capabilities,edges}={}){
-  if(remove)contracts.docs.benchmark_link_acquisition.activities=contracts.docs.benchmark_link_acquisition.activities.filter(a=>a.ref!=='keyword_acquisition.preflight');
-  await sync(HEAD); await graph(HEAD,edges); await map(HEAD,capIds);
-}
 beforeEach(async()=>{
-  fixture=await versionsDatabase();db=fixture.db;ids=await seedWorkflows(db);await fixture.migrate();
-  for(const table of ['map_scope_repositories','map_manifest_versions','map_projection_runs','map_projection_nodes','graph_snapshot_versions','graph_edge_snapshots','journey_step_links'])await db.query(`CREATE TABLE ${table}(LIKE public.${table} INCLUDING ALL)`);
-  contracts=contractsFixture(); await sync(BASE);
-  capabilities=(await db.query('SELECT capability_id FROM workflows ORDER BY key')).rows.map(r=>r.capability_id);
-  const activity=(await db.query("SELECT id FROM journey_steps WHERE activity_key='preflight'")).rows[0].id;
-  for(const cap of capabilities)await db.query("INSERT INTO journey_step_links(journey_id,step_id,step_order,assertion_ref) VALUES($1,$2,1,'tests/controller.test.js')",[cap,activity]);
-  await db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('phones',$1,'legacy-ledger-v1',$2)",[registry,{source_repo:repo}]);
-  await graph(BASE); await map(BASE);app=express();app.use(express.json());app.use('/map',createMapRouter({pool:db}));
+  fixture=await implementationImpactDatabase();({db,ids,capabilities,graph,map,advance}=fixture);
+  app=express();app.use(express.json());app.use('/map',createMapRouter({pool:db}));
 });
 afterEach(async()=>{await fixture?.close();});
 it('精确逆向共享controller找到两个Workflow；固定双版本证据与使用位置并集',async()=>{
@@ -86,4 +53,36 @@ it('固定版本输入严格检查数组、非法路径及内部鉴权',async()=
   for(const extra of [{base_revision:[BASE]},{changed_files:['../controller.js']},{max_depth:0}])expect((await post(extra)).status).toBe(400);
   const prior=process.env.CECELIA_INTERNAL_TOKEN;process.env.CECELIA_INTERNAL_TOKEN='impact-fixture-token';
   try{expect((await post()).status).toBe(401);}finally{if(prior===undefined)delete process.env.CECELIA_INTERNAL_TOKEN;else process.env.CECELIA_INTERNAL_TOKEN=prior;}
+});
+it('head明确删除最后引用是known_removed，保留base消费者与回归断言',async()=>{
+  fixture.contracts.docs.keyword_acquisition.activities=fixture.contracts.docs.keyword_acquisition.activities.filter(a=>a.key!=='preflight');
+  await advance({remove:true,bindings:[]});
+  const r=await post();expect(r.status,r.body).toBe(200);expect(r.body.head.affected_usages).toEqual([]);
+  expect(r.body.head.impact_status).toBe('known_removed');expect(r.body.head.removal_evidence).toHaveLength(2);
+  expect(r.body.mapping_status).toBe('verified');expect(r.body.affected_usages).toHaveLength(2);expect(r.body.required_assertions).toHaveLength(1);
+  expect(r.body.affected_usages.every(u=>u.sides.join(',')==='base')).toBe(true);
+});
+it('技能绑定同样沿精确逆向边找到两个共享使用者',async()=>{
+  await advance({bindings:[{kind:'skill',repo,path:'skills/controller/SKILL.md'}],edges:[['skills/controller/SKILL.md','src/shared-lock.js']]});
+  const r=await post();expect(r.status,r.body).toBe(200);expect(r.body.head.affected_usages).toHaveLength(2);
+  expect(r.body.head.affected_usages.every(u=>u.implementation.kind==='skill')).toBe(true);
+});
+it('同revision多投影须显式digest消歧，绑定来源漂移不能伪verified',async()=>{
+  await advance();
+  const projection=(await db.query("SELECT * FROM map_projection_runs WHERE status='active'")).rows[0];
+  await db.query("INSERT INTO map_projection_runs(scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES($1,$2,$3,$4,'other-projector',$5,'superseded',NOW())",['phones',projection.manifest_version_id,projection.manifest_digest,projection.fact_revisions,'e'.repeat(64)]);
+  let r=await post();expect(r.status,r.body).toBe(200);expect(r.body.head.gaps).toContainEqual(expect.objectContaining({code:'projection_snapshot_ambiguous'}));expect(r.body.mapping_status).toBe('unknown');
+  r=await post({head_projection_digest:projection.projection_digest});expect(r.status,r.body).toBe(200);expect(r.body.mapping_status).toBe('verified');
+  await db.query("UPDATE map_manifest_versions SET manifest=jsonb_set(manifest,'{capabilities,0,brain_binding,source_revision}',to_jsonb($1::text)) WHERE status='active'",[BASE]);
+  r=await post({head_projection_digest:projection.projection_digest});expect(r.status,r.body).toBe(200);expect(r.body.mapping_status).toBe('unknown');expect(r.body.head.gaps).toContainEqual(expect.objectContaining({code:'capability_source_mismatch'}));
+});
+it('逐changed_file核覆盖，已映射共享依赖不能掩盖新入口缺口',async()=>{
+  await advance();const r=await post({changed_files:['src/shared-lock.js','src/new-api.js']});
+  expect(r.status,r.body).toBe(200);expect(r.body.affected_usages).toHaveLength(2);expect(r.body.mapping_status).toBe('unknown');
+  expect(r.body.unclaimed_paths).toEqual([{path:'src/new-api.js'}]);expect(r.body.gaps).toContainEqual(expect.objectContaining({code:'changed_file_unclaimed',path:'src/new-api.js'}));
+});
+it('最后引用删除证据不能掩盖同次变更的另一未知新入口',async()=>{
+  fixture.contracts.docs.keyword_acquisition.activities=fixture.contracts.docs.keyword_acquisition.activities.filter(a=>a.key!=='preflight');
+  await advance({remove:true,bindings:[]});const r=await post({changed_files:['src/shared-lock.js','src/new-api.js']});
+  expect(r.status,r.body).toBe(200);expect(r.body.head.impact_status).toBe('known_removed');expect(r.body.mapping_status).toBe('unknown');expect(r.body.unclaimed_paths).toEqual([{path:'src/new-api.js'}]);
 });
