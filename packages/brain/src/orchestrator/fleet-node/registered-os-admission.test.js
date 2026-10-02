@@ -2,7 +2,7 @@ import {completeReport as healthFixture,merge} from '../../__tests__/helpers/fle
 import {it,expect} from 'vitest';
 import * as contract from './node-profile.js';
 import {evaluateBaseAdmission} from './node-admission.js';
-const NOW_MS=Date.now(),GIB=1024**3;
+const NOW_MS=Date.now();
 const completeReport=(profile,overrides={})=>healthFixture(profile,overrides,NOW_MS);
 it('既有Mac目录OS版本可更新，部署canonical保持15.6.1且其它准入维度不得放宽',async()=>{
  const profile=contract.getNodeProfile('xian-mac-m4'),candidate=structuredClone(profile);candidate.version_policy.os='26.6.2';
