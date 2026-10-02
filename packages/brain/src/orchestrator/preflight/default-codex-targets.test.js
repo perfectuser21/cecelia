@@ -12,7 +12,7 @@ it('默认Codex按M1→M4→MMV展开已授权账号，runtime所在机器不作
 it.each([
  {role:'commander'},{provider:'claude'},{candidateMachine:'xian-mac-m4'},
  {roleAssignment:{machine:'us-mac-m4'}},{roleAssignment:{strict_affinity:false}},{roleAssignment:{fallback_targets:[]}},
- {payload:{machine:'us-mac-m4'}},{payload:{machine_id:'us-mac-m4'}},{payload:{requested_machine_id:'us-mac-m4'}},
+ {payload:{machine:'us-mac-m4'}},{payload:{machineId:'xian-mac-m1'}},{payload:{routing:{machineId:'xian-mac-m1'}}},{payload:{machine_id:'us-mac-m4'}},{payload:{requested_machine_id:'us-mac-m4'}},
  {payload:{executor_machine:'us-mac-m4'}},{payload:{routing:{preferred_machine:'us-mac-m4'}}},
  {payload:{routing:{strict_affinity:true}}},{payload:{routing:{fallback_targets:[]}}},
 ])('显式机器或策略与commander不进入缺省展开 %#',patch=>{
@@ -27,4 +27,12 @@ it('目录撤销/仓库范围/未知账号不能被默认顺序补回',()=>{
   expect(targets.defaultCodexTargets({...input,account:'team1'}).map(t=>t.machine)).toEqual(['us-mac-m4']);
   expect(targets.defaultCodexTargets({...input,account:'unknown'})).toEqual([]);
  });
+});
+
+it.each([null,'0',undefined,NaN])('未知容量值不能伪装成明确资源耗尽：%s',async available=>{
+ const {createCapabilityGate}=await import('./capability-gate.js');
+ const candidates=targets.defaultCodexTargets({...input,account:'team1'});
+ const gate=createCapabilityGate({getMachineHealth:async()=>({ok:true}),getMachineCapacity:async()=>({ok:true,available})});
+ const result=await gate.evaluate({preferred_target:candidates[0],candidate_targets:candidates,requirements:{}});
+ expect(result.action).toBe('wait:human_review');
 });

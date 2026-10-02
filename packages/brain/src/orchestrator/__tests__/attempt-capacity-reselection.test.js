@@ -2,7 +2,7 @@ import {it,expect} from 'vitest';
 import {randomUUID} from 'node:crypto';
 import * as storeModule from '../attempt-store.js';
 function setup({rollbackFails=false,commitFails=false,queryFails=false,external=false,winner=null}={}){
- const calls=[],input={id:randomUUID(),runId:randomUUID(),hop:1,phase:'generate',role:'generator',provider:'codex',accountId:'team1',machineId:'xian-mac-m1',callbackSecretHash:'a'.repeat(64),bundle:{inputs:{}}};
+ const releases=[],calls=[],input={id:randomUUID(),runId:randomUUID(),hop:1,phase:'generate',role:'generator',provider:'codex',accountId:'team1',machineId:'xian-mac-m1',callbackSecretHash:'a'.repeat(64),bundle:{inputs:{}}};
  const query=async sql=>{
   calls.push(sql);
   if(sql==='ROLLBACK'&&rollbackFails)throw Error('rollback disconnected');
@@ -14,8 +14,8 @@ function setup({rollbackFails=false,commitFails=false,queryFails=false,external=
   if(sql.includes('SELECT attempt.*'))return {rows:winner?[winner]:[]};
   return {rows:[]};
  };
- const client={query,release(){}},pool={query,connect:async()=>client};
- return {calls,input,store:storeModule.createAttemptStore(external?client:pool,{transactionClient:external})};
+ const client={query,release(error){releases.push(error);}},pool={query,connect:async()=>client};
+ return {calls,releases,input,store:storeModule.createAttemptStore(external?client:pool,{transactionClient:external})};
 }
 async function rejection(f){try{await f.store.createAttempt(f.input);}catch(error){return error;}throw Error('expected rejection');}
 it('只有明确零attempt容量guard且自持事务ROLLBACK成功才签发身份绑定重选资格',async()=>{
@@ -37,4 +37,9 @@ it('容量guard竞争后同run/hop已有winner，返回旧winner而非重选',as
  const winner={id:randomUUID(),machine_id:'us-mac-m4'},f=setup({winner});
  await expect(f.store.createAttempt(f.input)).resolves.toEqual(winner);
  expect(f.calls.at(-1)).toBe('COMMIT');expect(f.calls).not.toContain('ROLLBACK');
+});
+
+it('回滚未确认的连接必须丢弃，不把持锁事务归还连接池',async()=>{
+ const f=setup({rollbackFails:true});await rejection(f);
+ expect(f.releases).toHaveLength(1);expect(f.releases[0]).toBeInstanceOf(Error);
 });
