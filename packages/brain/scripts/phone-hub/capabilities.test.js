@@ -27,7 +27,8 @@ it('未知机器及caller伪造目标不能执行SSH',async()=>{
 });
 it('nonce/身份/完整digest/资源观测/新鲜度任何未知都拒绝',async()=>{
  const {createCapabilities}=require('./capabilities.cjs');
- for(const patch of [{physical_boot_id:'changed'},{worker_id:'changed'},{config_digest:'b'.repeat(64)},{build_digest:'b'.repeat(64)},{action_digest:'b'.repeat(64)},{resources:{}},{external_locks:{occupied:false}},{adb_daemon:{}},{observed_at:'invalid'},{observed_at:new Date(Date.now()-60000).toISOString()},{request_nonce:'replayed'},{available:1},{maintenance:{pending:0}}]){
+ for(const patch of [{physical_boot_id:'changed'},{worker_id:'changed'},{config_digest:'b'.repeat(64)},{build_digest:'b'.repeat(64)},{action_digest:'b'.repeat(64)},{resources:{}},{external_locks:{occupied:false}},{external_locks:{occupied:1}},{adb_daemon:{}},{observed_at:'invalid'},{observed_at:new Date(Date.now()-60000).toISOString()},{request_nonce:'replayed'},{available:1},{maintenance:{pending:0}},
+  {maintenance:{...observation().maintenance,marker_identity:undefined}},{maintenance:{...observation().maintenance,marker_identity:{...markerFixture,boot_id:'different boot'}}}]){
   await expect(createCapabilities({targets:[target],run:realFixture({...observation(),...patch})})(target.machine_id)).rejects.toThrow('phone_capabilities_unconfirmed');
  }
 });
