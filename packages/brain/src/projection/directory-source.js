@@ -8,7 +8,7 @@ const select = name => ({ select: { name: String(name || 'unknown') } });
 
 export function buildDirectoryRows(data, config = {}) {
   const rows = [], journeys = new Map(data.journeys.map(j => [j.id, j]));
-  const refs = data.refs.filter(r => r.active).sort((a, b) => a.sequence_no - b.sequence_no || a.slot_key.localeCompare(b.slot_key));
+  const refs = data.refs.filter(r => r.active).sort((a, b) => a.sequence_no - b.sequence_no || a.slot_key.localeCompare(b.slot_key) || a.workflow_id.localeCompare(b.workflow_id));
   const bindings = config.value_stream_bindings || [], seen = new Set(), nodes = new Set();
   for (const b of bindings) {
     const key = `${b.scope}:${b.node_key}`;
