@@ -113,7 +113,11 @@ describe('task-tasks routes — PATCH 参数对齐', () => {
   });
 
   it('只更新 priority 时参数必须是 priority + task id，不能产生幽灵占位参数', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'task-priority', priority: 'P0' }] });
+    mockPool.query.mockImplementation(async sql=>{
+      if(sql.includes("payload->'headed_takeover'"))return {rows:[{headed_takeover:null}]};
+      if(/^UPDATE tasks/.test(sql))return {rows:[{id:'task-priority',priority:'P0'}]};
+      throw new Error('unexpected SQL outside PATCH owner lookup and UPDATE');
+    });
 
     const res = await request(app).patch('/tasks/task-priority').send({ priority: 'P0' });
 

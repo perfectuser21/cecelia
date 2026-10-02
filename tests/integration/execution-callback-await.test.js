@@ -53,7 +53,11 @@ afterEach(() => {
 
 describe('/execution-callback — callback_queue INSERT 行为', () => {
   it('INSERT 全部失败 → 返回 503', { timeout: 15000 }, async () => {
-    mockQuery.mockRejectedValue(new Error('DB unavailable'));
+    mockQuery.mockImplementation(async sql=>{
+      if(sql.includes("payload->'headed_takeover'"))return {rows:[{headed_takeover:null}]};
+      if(sql.includes('INSERT INTO callback_queue'))throw new Error('DB unavailable');
+      throw new Error('unexpected SQL outside owner check and queue retries');
+    });
 
     const res = await request(app)
       .post('/api/brain/execution-callback')
