@@ -25,3 +25,12 @@ it('既有Skill digest=sha256:<hex>声明也必须核对，返回规范digest',a
   const [result]=await validateImplementationBindings({implementation_bindings:[binding]},async()=>skill);
   expect(result.digest).toBe(`sha256:${result.content_sha256}`);
 });
+it('本仓contract版本仅从已经固定的契约来源解析，读文件和记录均用实际SHA', async () => {
+  const revision = 'b'.repeat(40), read = vi.fn(async () => 'export const run = true;\n');
+  const declared = { kind: 'code', repo: 'org/repo', path: 'src/run.js', revision: 'contract' };
+  const [result] = await validateImplementationBindings({ implementation_bindings: [declared] }, read, { repo: 'org/repo', commit: revision });
+  expect(read.mock.calls[0][0].revision).toBe(revision);
+  expect(result).toMatchObject({ revision, raw: declared, status: 'verified' });
+  await expect(validateImplementationBindings({ implementation_bindings: [declared] }, read)).rejects.toThrow();
+  await expect(validateImplementationBindings({ implementation_bindings: [declared] }, read, { repo: 'another/repo', commit: revision })).rejects.toThrow();
+});
