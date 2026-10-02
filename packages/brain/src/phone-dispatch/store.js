@@ -63,16 +63,15 @@ export function createPhoneDispatchStore({pool,afterTask=afterTerminalTransition
   },
   async withLaunch(id,operation){
    // 先提交一次性 launch 意图；远端调用失败也不能恢复为可重启的 reserved。
-   await locked(id,async(row,db)=>{
+   const launchEndpoint=await locked(id,async(row,db)=>{
     if(row.state!=='reserved')throw Error('phone_launch_forbidden');
-    await authorize(db,AUTH(row));return transition(db,row,'launching');
+    const auth=await authorize(db,AUTH(row));await transition(db,row,'launching');return auth.node.endpoints.phone_ssh;
    });
    try{return await locked(id,async(row,db)=>{
     if(row.state!=='launching')throw Error('phone_launch_forbidden');
-    return authorize(db,AUTH(row),async auth=>{
-     await registry(db,{serial:row.serial,host:row.host,profileId:row.profile,account:row.account_id},auth.node.endpoints.phone_ssh);
-     return operation(row,auth.node.endpoints.phone_ssh);
-    });
+    // registry SHARE 可能等待；持有后才最终核grant/快照，避免等待期间过期。
+    await registry(db,{serial:row.serial,host:row.host,profileId:row.profile,account:row.account_id},launchEndpoint);
+    return authorize(db,AUTH(row),auth=>operation(row,auth.node.endpoints.phone_ssh));
    });}catch(e){await locked(id,async(row,db)=>row.state==='terminal'?row:transition(db,row,'unknown',String(e.message).slice(0,500)));throw e;}
   },
   async recordUnknown(id,error){return locked(id,async(row,db)=>{
