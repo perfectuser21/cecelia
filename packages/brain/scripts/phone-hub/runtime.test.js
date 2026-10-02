@@ -54,3 +54,24 @@ it('公开control请求无法配置journal/marker/owner/路径，失主activity�
   await expect(f.control({operation:'end',token:randomUUID()})).rejects.toThrow();
  });
 });
+it('维护自身只读探测不伪造外部活动竞态',async()=>{
+ const {createRuntime}=require('./runtime.cjs');
+ await configuredFixture(async f=>{
+  const runProbe=async(_file,_args,input)=>{
+   const t=f.targets[0];return {code:0,stdout:JSON.stringify({schema:'phone-physical-probe/v1',request_nonce:JSON.parse(input).request_nonce,
+    machine_id:t.machine_id,worker_id:t.worker_id,physical_boot_id:t.physical_boot_id,config_digest:t.config_digest,build_digest:t.build_digest,action_digest:t.action_digest,action:'adb_get_state',
+    resources:{cpu_count:4,memory_total_bytes:8000000000,memory_free_bytes:1000000000,load_1m:0.2,data_free_bytes:1000000000},adb_daemon:{reachable:true},external_locks:{occupied:0},
+    maintenance:{draining:true,stable:true,quiescent:true,pending:0,in_flight:0,activity_revision:2},observed_at:new Date().toISOString()})};
+  };
+  const runtime=await createRuntime({configPath:f.configPath,tokenPath:f.tokenPath,sourceRoot:f.installed,runControl:f.control,runProbe});
+  expect((await runtime.maintenance()).quiescent).toBe(true);
+ });
+});
+it('已启动不可变版本的实际文件改变后不继续签发旧hash',async()=>{
+ const {createRuntime}=require('./runtime.cjs');await configuredFixture(async f=>{
+  const runtime=await createRuntime({configPath:f.configPath,tokenPath:f.tokenPath,sourceRoot:f.installed,runControl:f.control,runProbe:async()=>{throw Error('must not execute');}});
+  fs.appendFileSync(path.join(f.installed,'control.py'),'\nchanged');
+  await expect(runtime.capabilities('fixture-target')).rejects.toThrow('phone_hub_version_changed');
+  await expect(runtime.maintenance()).rejects.toThrow('phone_hub_version_changed');
+ });
+});
