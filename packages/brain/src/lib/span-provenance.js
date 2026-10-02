@@ -30,6 +30,7 @@ export function validateSpanBinding(row,context) {
   const span=row.normalized,identity=row.provenance;
   const {binding,release,workflow,activities=[]}=context||{};
   if(!binding||!release||!workflow)fail('RUN_BINDING_MISSING');
+  if(binding.payload?.runtime_snapshot_sha256&&span.evidence?.runtime_snapshot_sha256!==binding.payload.runtime_snapshot_sha256)fail('RUNTIME_SNAPSHOT_MISMATCH');
   if(binding.id!==identity.run_binding_id||binding.run_id!==span.run_id
     ||binding.workflow_id!==span.workflow_id||binding.workflow_definition_version_id!==identity.workflow_definition_version_id
     ||binding.attempt_key!==identity.attempt_key)fail('RUN_IDENTITY_MISMATCH');

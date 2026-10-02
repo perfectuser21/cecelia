@@ -7,23 +7,26 @@ import { releaseEvidenceDatabase } from '../fixtures/release-evidence-db.js';
 const holder=vi.hoisted(()=>({pool:null}));
 vi.mock('../../db.js',()=>({default:{query:(...a)=>holder.pool.query(...a),connect:(...a)=>holder.pool.connect(...a)}}));
 import router from '../../routes/spans.js';
+import { createRunReconciliationRouter } from '../../routes/run-reconciliation.js';
 const releases=await import('../../lib/release-index.js').catch(()=>({}));
 const runs=await import('../../lib/run-definition-binding.js').catch(()=>({}));
 let f,app,bindings,release;
 beforeEach(async()=>{
   expect(runs.bindRunDefinition).toBeTypeOf('function');
   f=await releaseEvidenceDatabase();holder.pool=f.db;
+  // LIKE INCLUDING ALL会重命名复制索引；按真实495建立Span表，避免夹具残留假旧索引。
+  await f.db.query('DROP TABLE spans CASCADE');
   for(const file of ['495_vs_model_spans.sql','513_span_occurrences.sql','515_span_definition_provenance.sql'])await f.db.query(readFileSync(new URL(`../../../migrations/${file}`,import.meta.url),'utf8'));
   release=(await releases.createRelease(f.db,f.releaseInput)).release;
   const observation=(await releases.recordReleaseObservation(f.db,release.id,f.observationInput,{trustedCollector:'fixture-collector'})).observation;
   bindings=[];
   for(const [i,w] of f.workflows.entries())bindings.push((await runs.bindRunDefinition(f.db,`fixed-${i}`,f.runInput(release,observation,w))).binding);
-  app=express();app.use(express.json());app.use('/api/brain',router);
+  app=express();app.use(express.json());app.use('/api/brain',router);app.use('/api/brain/runs',createRunReconciliationRouter({pool:f.db}));
 });
 afterEach(async()=>{await f?.close();f=null;});
 function span(index=0,extra={}){
   const w=f.workflows[index],ref=w.payload.activities[0],b=bindings[index];
-  return {run_id:b.run_id,workflow_id:w.workflow_id,activity_id:ref.activity_id,started_at:'2026-10-02T10:00:00Z',ended_at:'2026-10-02T10:00:01Z',executor_kind:'code',outcome:'pass',occurrence_key:'position-1',identity_protocol:2,run_binding_id:b.id,reference_id:ref.reference_id,workflow_definition_version_id:w.id,activity_definition_version_id:ref.activity_version_id,attempt_key:b.attempt_key,...extra};
+  return {run_id:b.run_id,workflow_id:w.workflow_id,activity_id:ref.activity_id,started_at:'2026-10-02T10:00:00Z',ended_at:'2026-10-02T10:00:01Z',executor_kind:'code',outcome:'pass',occurrence_key:'position-1',identity_protocol:2,run_binding_id:b.id,reference_id:ref.reference_id,workflow_definition_version_id:w.id,activity_definition_version_id:ref.activity_version_id,attempt_key:b.attempt_key,evidence:{runtime_snapshot_sha256:b.payload.runtime_snapshot_sha256},...extra};
 }
 const post=body=>request(app).post('/api/brain/spans').send(body);
 const count=async()=>Number((await f.db.query('SELECT count(*) n FROM spans')).rows[0].n);
@@ -67,4 +70,13 @@ it('含引号run ID的新旧混合批次使用一致加锁顺序',async()=>{
   await new Promise(resolve=>setTimeout(resolve,20));
   const result=await Promise.all([first,post([span(),a,b])]);
   expect(result.map(r=>r.status),JSON.stringify(result.map(r=>r.body))).toEqual([200,200]);expect(await count()).toBe(3);
+});
+it('真实HTTP对账读取冻结计划和落库Span，缺失不冒绿，外部run无内部任务假链接',async()=>{
+  const url=`/api/brain/runs/${bindings[0].run_id}/reconciliation`;
+  let r=await request(app).get(url);expect(r.status,r.body).toBe(200);expect(r.body).toMatchObject({business_outcome:'unknown',evidence_status:'incomplete',links:{task_run_id:null,initiative_run_id:null,harness_attempt_ids:[]}});
+  const planned=bindings[0].expected_path.map((item,i)=>span(0,{...item,occurrence_key:`expected-${i}`}));
+  const posted=await post(planned);expect(posted.status,posted.body).toBe(200);
+  r=await request(app).get(url);expect(r.status,r.body).toBe(200);expect(r.body).toMatchObject({business_outcome:'pass',evidence_status:'verified',missing:[],unexpected:[]});
+  expect(r.body.duration_ms.wall).toBe(1000);expect(r.body.span_count).toBe(planned.length);
+  const old=await request(app).get('/api/brain/runs/unversioned/reconciliation');expect(old.body.evidence_status).toBe('unknown');
 });

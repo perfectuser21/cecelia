@@ -5,6 +5,14 @@ import { defineConfig } from 'vitest/config';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
+  'src/lib/__tests__/integration/release-index.test.js',
+  'src/lib/__tests__/integration/run-definition-binding.test.js',
+  'src/lib/__tests__/integration/task-run-definition.test.js',
+  'src/routes/__tests__/integration/releases.test.js',
+  'src/routes/__tests__/integration/run-definitions.test.js',
+  'src/routes/__tests__/integration/run-reconciliation.test.js',
+  'src/__tests__/integration/span-provenance.pg.integration.test.js',
+
   'src/lib/__tests__/integration/implementation-context.test.js',
   'src/__tests__/integration/workflow-authoring.pg.integration.test.js',
   'src/__tests__/integration/kernel-recovery-rebase.pg.integration.test.js',
