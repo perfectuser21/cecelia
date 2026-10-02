@@ -1,5 +1,6 @@
 """C4原子闸永久真实fork/flock回归；仅私有fixture，无生产授权/设备。"""
 import json
+import fcntl
 import os
 from pathlib import Path
 import signal
@@ -234,5 +235,44 @@ class AdmissionTest(unittest.TestCase):
         with self.assertRaises(ValueError): admission.HostExclusive().acquire()
         self.assertEqual((self.host_root / '.host-activity.json').read_bytes(), raw)
 
+
+    def test_host_primary_numeric_fd_reuse_for_same_inode_is_rejected(self):
+        host = admission.HostExclusive().acquire(); fd = host.fd; original = os.dup(fd)
+        try:
+            os.close(fd); raw = os.open(self.host_root / 'host.guard', os.O_RDONLY)
+            if raw != fd: os.dup2(raw, fd); os.close(raw)
+            with self.assertRaises(ValueError): host.verify()
+        finally:
+            os.dup2(original, fd); os.close(original); host.close()
+
+    def test_host_fd_assignment_and_cross_thread_borrow_are_rejected(self):
+        host = admission.HostExclusive().acquire(); result = []
+        try:
+            with self.assertRaises((ValueError, AttributeError)): host.fd = host.fd
+            def borrowed():
+                try: host.verify(); result.append('accepted')
+                except ValueError: result.append('denied')
+            thread = threading.Thread(target=borrowed); thread.start(); thread.join(timeout=1)
+            self.assertFalse(thread.is_alive()); self.assertEqual(result, ['denied'])
+        finally: host.close()
+
+    def test_host_raw_fork_cannot_adopt_owner_or_transfer_authority(self):
+        host = admission.HostExclusive().acquire()
+        try:
+            self.assertEqual(self.child(lambda: host.verify()), b'denied')
+            self.assertEqual(self.child(lambda: host.transfer()), b'denied')
+            self.assertEqual(self.child(lambda: host.close()), b'denied')
+        finally: host.close()
+
+    def test_host_verify_never_repairs_downgraded_shared_lock(self):
+        host = admission.HostExclusive().acquire(); fd = host.fd
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH)
+            with self.assertRaises(ValueError): host.verify()
+            raw = os.open(self.host_root / 'host.guard', os.O_RDONLY)
+            try: fcntl.flock(raw, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            finally: os.close(raw)
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_EX); host.close()
 
 if __name__ == '__main__': unittest.main()
