@@ -60,7 +60,7 @@ describe('VALID_EXECUTOR_KINDS', () => {
         'script',
       ])
     );
-    expect(VALID_EXECUTOR_KINDS).toHaveLength(11);
+    expect(VALID_EXECUTOR_KINDS).toHaveLength(12);
   });
 });
 

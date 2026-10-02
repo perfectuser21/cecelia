@@ -1,3 +1,4 @@
+import { phoneSshValid } from '../phone-dispatch/identity.js';
 import { bindExecutionProfileReader } from '../orchestrator/fleet-node/node-profile.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
@@ -14,7 +15,7 @@ export function createExecutionDirectory({now=Date.now,ttlMs=30_000}={}) {
  const context=new AsyncLocalStorage();let published=null;let refreshTail=Promise.resolve();
  function current(){const scoped=context.getStore();const s=scoped===undefined?published:scoped;return s&&s.expiresAt>now()?s:null;}
  function targets(){return (current()?.nodes??[]).flatMap(n=>n.grants.filter(g=>eligible(n,g)&&g.surface==='harness').map(g=>({provider:g.provider,account:g.account_id,machine:n.canonical_id}))).sort((a,b)=>['codex','claude','grok'].indexOf(a.provider)-['codex','claude','grok'].indexOf(b.provider)||a.account.localeCompare(b.account)||a.machine.localeCompare(b.machine));}
- function eligible(n,g){return n.state==='active'&&n.machine_status==='active'&&endpointValid(n.endpoints?.worker)&&g.state==='active'&&(!g.expires_at||Date.parse(g.expires_at)>now());}
+ function eligible(n,g){return n.state==='active'&&n.machine_status==='active'&&(g.surface==='phone_ssh'?phoneSshValid(n.endpoints?.phone_ssh):endpointValid(n.endpoints?.worker))&&g.state==='active'&&(!g.expires_at||Date.parse(g.expires_at)>now());}
  function matches({machineId,surface,provider,account='',repo,profileId=''}){
   if(['harness','app_server'].includes(surface)&&!repo)return null;
   const n=current()?.nodes.find(n=>n.canonical_id===machineId);
