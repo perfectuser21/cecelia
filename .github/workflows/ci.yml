@@ -934,7 +934,8 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      - run: cd packages/brain && npm ci
+      # Fixed-revision CLI tests also import the root graph scanner dependencies.
+      - run: npm ci
       - name: Run Migrations
         env:
           DB_HOST: localhost

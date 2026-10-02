@@ -1,4 +1,5 @@
 /** CI与发布入口共用的纯报告证据校验；不访问进程、文件、网络或数据库。 */
+import { assertGovernanceCoverage } from './implementation-ci-governance.js';
 const fail=code=>{throw Object.assign(Error(code),{code});};
 const objectId=value=>typeof value==='string'&&/^[0-9a-f]{40}$/.test(value);
 const hashId=value=>typeof value==='string'&&/^[0-9a-f]{64}$/.test(value);
@@ -20,7 +21,10 @@ function assertFileCoverage(report) {
       if(item.change_index!==index||item.path!==path||!Array.isArray(item.matched_paths)||item.truncated!==false)fail('IMPACT_FILE_COVERAGE_MISSING');
       return item;
     });
-    if(!pair.some(item=>item.matched_paths.length))fail('IMPACT_FILE_COVERAGE_MISSING');
+    if(!pair.some(item=>item.matched_paths.length)){
+      if(pair.every(item=>item.coverage_kind==='governance'))assertGovernanceCoverage(report,change.path);
+      else fail('IMPACT_FILE_COVERAGE_MISSING');
+    }
   }
 }
 export function assertImplementationReport(report) {
@@ -41,7 +45,10 @@ export function assertImplementationReport(report) {
     }
   }
   if(!Array.isArray(report.affected_usages)||!Array.isArray(report.required_assertions))fail('IMPACT_REPORT_INVALID');
-  if(!report.affected_usages.length)fail('IMPACT_USAGE_EVIDENCE_MISSING');
+  if(!report.affected_usages.length){
+    if(report.ci_context?.purpose!=='admission_only'||report.impact_status!=='governance_only'||report.required_assertions.length)fail('IMPACT_USAGE_EVIDENCE_MISSING');
+    for(const change of report.source.changed_files||[])assertGovernanceCoverage(report,change.path);
+  }
   assertFileCoverage(report);
   if(report.affected_usages.length&&!report.required_assertions.length)fail('IMPACT_REGRESSION_MISSING');
   for(const usage of report.affected_usages){

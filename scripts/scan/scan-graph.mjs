@@ -31,7 +31,7 @@ const DEFAULT_REPOS = [
   },
 ];
 export const REPOS = process.env.SCAN_REPO_NAME && process.env.SCAN_REPO_ROOT
-  ? [{ name: process.env.SCAN_REPO_NAME, root: process.env.SCAN_REPO_ROOT }]
+  ? [{ name: process.env.SCAN_REPO_NAME, root: process.env.SCAN_REPO_ROOT, ...(process.env.SCAN_SOURCE_REPO_NAME && { sourceName: process.env.SCAN_SOURCE_REPO_NAME }) }]
   : DEFAULT_REPOS;
 
 export function selectGraphRepos(repos, rawSelection) {
@@ -93,7 +93,7 @@ export async function scanRepo(repo, pool) {
     const edges = [];
 
     // 确定扫描目录
-    const scanDirs = repo.name === 'cecelia'
+    const scanDirs = (repo.sourceName || repo.name) === 'cecelia'
       ? getCeceliaScanDirs(repo.root)
       : getGenericScanDirs(repo.root);
 

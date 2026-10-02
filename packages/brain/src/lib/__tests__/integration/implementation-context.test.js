@@ -56,3 +56,18 @@ it('显式repo别名按scope唯一定位，跨scope不串，未登记和多登�
   await expect(resolveImplementationRegistryRepo(db, query))
     .rejects.toMatchObject({ code: 'MAP_IMPLEMENTATION_REPO_NOT_CONFIGURED', status: 422 });
 });
+
+it('新manifest已推进但图仍旧SHA时不污染base历史；混合来源不能核验',async()=>{
+  const {db}=fixture;
+  const {exportImplementationSnapshot}=await import('../../implementation-ci-snapshot.js');
+  const original=await exportImplementationSnapshot(db,query);
+  await fixture.advance();
+  await db.query("UPDATE map_projection_runs SET fact_revisions=$1 WHERE scope_key='phones' AND status='active'",[{'phone-source':revision}]);
+  const gaps=[],context=await loadImplementationRevisionContext(db,query,revision,'phone-source',null,gaps);
+  expect(context?.manifest_version_id).toBe(original.map.manifest.id);expect(gaps).toEqual([]);
+  const snapshot=await exportImplementationSnapshot(db,query);
+  expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');expect(snapshot.map.manifest.id).toBe(original.map.manifest.id);
+  await db.query("UPDATE map_manifest_versions SET manifest=jsonb_set(manifest,'{value_streams,0,brain_binding,source_revision}',to_jsonb($1::text)) WHERE id=$2",['b'.repeat(40),original.map.manifest.id]);
+  const mixed=[];expect(await loadImplementationRevisionContext(db,query,revision,'phone-source',null,mixed)).toBeNull();expect(mixed.length).toBeGreaterThan(0);
+  expect((await exportImplementationSnapshot(db,query)).status).toBe('unknown');
+});
