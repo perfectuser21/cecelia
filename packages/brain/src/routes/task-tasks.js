@@ -516,25 +516,44 @@ registerTaskDependencyRoutes(router, { pool });
 // 其余 → UPDATE status='cancelled'，200 返回更新后整行。
 router.delete('/:id', async (req, res) => {
   try {
-    const current = await pool.query('SELECT status FROM tasks WHERE id = $1', [req.params.id]);
-    if (!current.rows.length) {
-      return res.status(404).json({ error: 'Task not found', id: req.params.id });
-    }
-    const currentStatus = current.rows[0].status;
-    if (TERMINAL_STATUSES.includes(currentStatus)) {
-      return res.status(409).json({
-        error: 'State machine violation',
-        details: `Cannot delete task in terminal status '${currentStatus}'`,
-      });
-    }
-
+    const authoritySql = `SELECT status, (${phoneOrdinaryQueueSql('tasks')}) AS ordinary_eligible FROM tasks WHERE id = $1`;
+    const rejectIneligible = (current, afterZeroMutation = false) => {
+      if (!current.rows.length) {
+        res.status(404).json({ error: 'Task not found', id: req.params.id });
+        return true;
+      }
+      if (current.rows.length !== 1) throw Error('public_delete_authority_unknown');
+      const task = current.rows[0];
+      if (TERMINAL_STATUSES.includes(task.status)) {
+        res.status(409).json({
+          error: 'State machine violation',
+          details: `Cannot delete task in terminal status '${task.status}'`,
+        });
+        return true;
+      }
+      if (task.ordinary_eligible === false) {
+        res.status(409).json({ error: 'phone_task_owned' });
+        return true;
+      }
+      if (task.ordinary_eligible !== true) throw Error('public_delete_authority_unknown');
+      if (afterZeroMutation) {
+        res.status(409).json({ error: 'task_delete_conflict' });
+        return true;
+      }
+      return false;
+    };
+    if (rejectIneligible(await pool.query(authoritySql, [req.params.id]))) return;
     const result = await pool.query(
-      `UPDATE tasks SET status = 'cancelled', updated_at = NOW() WHERE id = $1 RETURNING *`,
-      [req.params.id]
+      `UPDATE tasks SET status = 'cancelled', updated_at = NOW()
+       WHERE id = $1 AND (status IS NULL OR status <> ALL($2::text[])) AND ${phoneOrdinaryQueueSql('tasks')} RETURNING *`,
+      [req.params.id, TERMINAL_STATUSES]
     );
-
-    if (!result.rows.length) {
-      return res.status(404).json({ error: 'Task not found', id: req.params.id });
+    if (![0, 1].includes(result.rowCount) || result.rows.length !== result.rowCount) {
+      throw Error('public_delete_mutation_result_unknown');
+    }
+    if (result.rowCount === 0) {
+      rejectIneligible(await pool.query(authoritySql, [req.params.id]), true);
+      return;
     }
     res.json(result.rows[0]);
   } catch (err) {
