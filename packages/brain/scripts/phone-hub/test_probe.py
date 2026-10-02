@@ -16,6 +16,8 @@ from process_identity import boot_id
 class ProbeTest(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
+        daemon_patch=patch.object(importlib.import_module('probe'),'daemon_observation',return_value={'reachable':False})
+        daemon_patch.start();self.addCleanup(daemon_patch.stop)
     def tearDown(self):self.tmp.cleanup()
     def setup_probe(self):
         probe=importlib.import_module('probe');self.source=self.root/'source';self.source.mkdir()
@@ -75,4 +77,56 @@ class ProbeTest(unittest.TestCase):
             result=self.collect(probe)
         self.assertEqual(result['adb_daemon'],{'reachable':False})
         connect.assert_not_called()
+
+class DaemonObservationTest(unittest.TestCase):
+    def mapped_connection(self,real_connect,address):
+        def connect(target,timeout):
+            self.assertEqual(target,('127.0.0.1',5037));self.assertEqual(timeout,0.3)
+            return real_connect(address,timeout=timeout)
+        return connect
+    def test_fixed_target_maps_only_to_owned_listener_and_closes_connection(self):
+        probe=importlib.import_module('probe');real_connect=socket.create_connection
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1',0));listener.listen();listener.settimeout(1)
+            with patch.object(socket,'create_connection',side_effect=self.mapped_connection(real_connect,listener.getsockname())) as connect:
+                self.assertEqual(probe.daemon_observation(),{'reachable':True})
+            connect.assert_called_once_with(('127.0.0.1',5037),timeout=0.3)
+            peer,_=listener.accept()
+            with peer:
+                peer.settimeout(1);self.assertEqual(peer.recv(1),b'')
+    def test_owned_non_listening_port_preserves_real_refusal_or_timeout_contract(self):
+        probe=importlib.import_module('probe');real_connect=socket.create_connection;native_error=[]
+        with socket.socket() as owned:
+            owned.bind(('127.0.0.1',0));address=owned.getsockname()
+            def connect(target,timeout):
+                self.assertEqual(target,('127.0.0.1',5037));self.assertEqual(timeout,0.3)
+                try:return real_connect(address,timeout=timeout)
+                except OSError as error:native_error.append(error);raise
+            with patch.object(socket,'create_connection',side_effect=connect) as mapped:
+                try:value=probe.daemon_observation()
+                except ValueError as error:
+                    self.assertEqual(str(error),'phone_adb_observation_unknown')
+                    self.assertEqual(len(native_error),1);self.assertIsInstance(native_error[0],socket.timeout)
+                    self.assertIs(error.__cause__,native_error[0]);outcome='timeout_unknown'
+                else:
+                    self.assertEqual(len(native_error),1);self.assertIsInstance(native_error[0],ConnectionRefusedError)
+                    self.assertEqual(value,{'reachable':False});outcome='refused_false'
+            mapped.assert_called_once_with(('127.0.0.1',5037),timeout=0.3)
+            self.assertGreaterEqual(owned.fileno(),0);self.assertEqual(owned.getsockname(),address)
+            self.native_result={'type':type(native_error[0]).__name__,'errno':native_error[0].errno,'outcome':outcome}
+    def test_injected_connection_refused_is_false_without_real_daemon_access(self):
+        probe=importlib.import_module('probe')
+        with patch.object(socket,'create_connection',side_effect=ConnectionRefusedError('private fixture refusal')) as connect:
+            self.assertEqual(probe.daemon_observation(),{'reachable':False})
+        connect.assert_called_once_with(('127.0.0.1',5037),timeout=0.3)
+    def test_timeout_is_unknown_not_false_daemon_evidence(self):
+        probe=importlib.import_module('probe')
+        with patch.object(socket,'create_connection',side_effect=socket.timeout('private fixture timeout')) as connect:
+            with self.assertRaisesRegex(ValueError,'phone_adb_observation_unknown'):probe.daemon_observation()
+        connect.assert_called_once_with(('127.0.0.1',5037),timeout=0.3)
+    def test_other_socket_error_is_unknown_not_false_daemon_evidence(self):
+        probe=importlib.import_module('probe')
+        with patch.object(socket,'create_connection',side_effect=OSError('private fixture error')) as connect:
+            with self.assertRaisesRegex(ValueError,'phone_adb_observation_unknown'):probe.daemon_observation()
+        connect.assert_called_once_with(('127.0.0.1',5037),timeout=0.3)
 if __name__=='__main__':unittest.main()

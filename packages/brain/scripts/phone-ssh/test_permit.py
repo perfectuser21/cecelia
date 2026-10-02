@@ -26,6 +26,8 @@ class PermitTest(unittest.TestCase):
         self.addCleanup(self.port_patch.stop)
         data_patch = patch.object(permit, '_DATA_ROOT', self.fixture.root); data_patch.start()
         self.addCleanup(data_patch.stop)
+        drain_patch = patch.object(permit, '_FLEET_DRAIN', self.fixture.root / 'fleet-worker.drain'); drain_patch.start()
+        self.addCleanup(drain_patch.stop)
         self.control = {'schema':'phone-admission-control/v1','revision':0,
                         'control_epoch':admission.Admission().snapshot()['control_epoch'], 'draining':False,
                         'writer_contract':'phone-admission-writers/v1','host_gate_contract':'managed-phone-host/v1'}

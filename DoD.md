@@ -121,3 +121,12 @@
 
 - [x] [BEHAVIOR] batch3 Hub基础闭包：真实HTTP固定认证与缺配置503；execution默认未接，maintenance保unknown且不声称完整physical排他，capabilities纯库闭包保留；物理probe及其完整测试归后批。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run scripts/phone-hub/service.test.js scripts/phone-hub/maintenance.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] batch4 Hub及物理源码闭包：真实十八/十二文件绑定配置与安装hash，原HTTP身份/nonce/drain约束保留；只有测试fixture授权，生产缺配置、资源与activation仍拒绝。
+  Test: manual:bash packages/brain/scripts/smoke/phone-hub-closure-smoke.sh
+
+- [x] [BEHAVIOR] batch4 私有probe：collect固定daemonFalse并零既有socket访问；原daemon函数只映射己ephemeral真实可达/EOF和native错误，超时unknown不报False；permit只观察己drainmarker。
+  Test: manual:bash -c "cd packages/brain/scripts/phone-hub && python3 -B -m unittest test_probe -v"
+
+- [x] [BEHAVIOR] batch4 原runner预算：永久真实fork/flock/固定socket及取消故障窗口扩入原wrapper，保持40秒子进程硬上限，Brain生产调度未接线。
+  Test: manual:bash packages/brain/scripts/smoke/phone-runner-infra-smoke.sh
