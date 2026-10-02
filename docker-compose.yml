@@ -203,7 +203,7 @@ services:
     network_mode: host
     working_dir: /app
     volumes:
-      - ./apps/dashboard/dist:/app
+      - ${DASHBOARD_DIST_DIR:-./apps/dashboard/dist}:/app:ro
       - ./frontend-proxy.js:/frontend-proxy.js:ro
     command: node /frontend-proxy.js
     depends_on:
