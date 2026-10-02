@@ -17,7 +17,7 @@ async function configuredFixture(run){
   const configPath=path.join(root,'config.json'),tokenPath=path.join(root,'token'),journal=path.join(root,'journal'),marker=path.join(root,'drain');
   fs.writeFileSync(configPath,JSON.stringify(manifest),{mode:0o600});fs.writeFileSync(tokenPath,token,{mode:0o600});fs.writeFileSync(marker,'drain');
   const pySource=path.join(source,'../phone-ssh');execFileSync('python3',['-B','-c','from journal import Journal;import sys;Journal(sys.argv[1])',journal],{env:{...process.env,PYTHONPATH:pySource}});
-  const control=request=>Promise.resolve(JSON.parse(execFileSync('python3',['-B','-c','import sys,json;sys.path.insert(0,sys.argv[1]);from control import handle;print(json.dumps(handle(json.loads(sys.argv[2]),sys.argv[3],sys.argv[4])))',source,JSON.stringify(request),journal,marker],{encoding:'utf8'})));
+  const control=async request=>JSON.parse(execFileSync('python3',['-B','-c','import sys,json;sys.path.insert(0,sys.argv[1]);from control import handle;print(json.dumps(handle(json.loads(sys.argv[2]),sys.argv[3],sys.argv[4])))',source,JSON.stringify(request),journal,marker],{encoding:'utf8',stdio:['ignore','pipe','pipe']}));
   await run({root,manifest,installed,configPath,tokenPath,token,control,targets,journal});
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 }
@@ -25,6 +25,7 @@ it('固定生产manifest按实际依赖bytes校验；变更hash/未知配置/不
  const {createRuntime}=require('./runtime.cjs');
  await configuredFixture(async f=>{
   for(const mode of ['missing','tampered','token-mode']){
+   fs.copyFileSync(path.join(source,'service.cjs'),path.join(f.installed,'service.cjs'));fs.chmodSync(f.tokenPath,0o600);
    if(mode==='tampered')fs.appendFileSync(path.join(f.installed,'service.cjs'),'\nchanged');
    if(mode==='token-mode')fs.chmodSync(f.tokenPath,0o644);
    const runtime=await createRuntime({configPath:mode==='missing'?path.join(f.root,'missing'):f.configPath,tokenPath:f.tokenPath,sourceRoot:f.installed,runControl:f.control});expect(runtime.configured).toBe(false);
