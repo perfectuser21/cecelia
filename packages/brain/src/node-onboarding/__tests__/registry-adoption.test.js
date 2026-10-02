@@ -107,4 +107,31 @@ suite('既有机器采用原UUID（真实PG）', () => {
     expect(tasks[0].parent_task_id).toBe(v.task_id);expect(tasks[0].payload.linux_onboarding.machine_registry_id).toBe(id);
     expect((await machine()).metadata.services).toEqual(original.services);
   });
+  it('未用作SSH目标的第二地址变化也拒绝验收',async()=>{
+    const v=await service.create(input,randomUUID());await finish(v);
+    await db.query("UPDATE system_registry SET metadata=jsonb_set(metadata,'{tailscale_ip}','\"100.100.1.99\"') WHERE id=$1",[id]);
+    expect((await service.get(id)).status).toBe('failed');
+    expect((await machine()).metadata.onboarding).toBeUndefined();
+  });
+  it('接入期间新增镜子状态、服务与账户逐字保留',async()=>{
+    const v=await service.create(input,randomUUID());
+    const patch={services:['fresh-service'],accounts:['fresh-account'],online_status:'online',battery_percent:55,last_heartbeat:'2026-10-02T00:00:00Z',hardware:{cpu:'existing'},role:'worker'};
+    await db.query("UPDATE system_registry SET status='mirror-offline',metadata=metadata||$2::jsonb WHERE id=$1",[id,JSON.stringify(patch)]);
+    await finish(v);expect((await service.get(id)).status).toBe('completed');
+    const row=await machine();expect(row.status).toBe('mirror-offline');expect(row.metadata).toMatchObject({...patch,role:'observer'});
+    expect((await db.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rowCount).toBe(0);
+  });
+  it('tailscale_name同址冲突也禁止换名另建',async()=>{
+    await db.query("UPDATE system_registry SET metadata=metadata||$2::jsonb WHERE id=$1",[id,JSON.stringify({tailscale_name:'existing-host'})]);
+    await expect(service.create({...input,name:'other-name',address:'existing-host'},randomUUID())).rejects.toMatchObject({status:409});
+    expect((await db.query('SELECT id FROM tasks')).rowCount).toBe(0);
+  });
+  it('失败原入口重试与修订请求并发不重复登记',async()=>{
+    const v=await service.create(input,randomUUID());await finish(v,false);await service.get(id);
+    const outcomes=await Promise.allSettled([service.retry(id),service.create({...input,ssh_user:'operator'},randomUUID())]);
+    expect(outcomes.filter(r=>r.status==='fulfilled')).toHaveLength(1);
+    expect(outcomes.filter(r=>r.status==='rejected')[0].reason.status).toBe(409);
+    expect((await db.query('SELECT id FROM tasks')).rowCount).toBe(2);
+  });
+
 });
