@@ -21,6 +21,24 @@ import {
 
 const GATEWAY = sshTargetFor(resolvePrimaryWorkerId());
 
+it('接班消息先经网关 SSH 读 SOP；心跳 JSON 经 shell 原样到达 curl', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const remote = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmd10020630', serial: 'S1', profile: 'legacy', taskId: 'run1', relaunchCount: 1 });
+  // 实际 shell 解码 cron --message，不靠正则假设引号正确。
+  const args = JSON.parse(execFileSync('/bin/sh', ['-c', `openclaw(){ python3 -c 'import sys,json;print(json.dumps(sys.argv[1:]))' "$@"; }; ${remote}`], { encoding: 'utf8' }));
+  const message = args[args.indexOf('--message') + 1];
+  expect(message).toContain(`ssh -o BatchMode=yes -o ConnectTimeout=10 ${GATEWAY}`);
+  const heartbeat = message.match(/每轮末尾必须发心跳: (.*)$/)?.[1];
+  expect(heartbeat).toBeTruthy();
+  const output = execFileSync('/bin/sh', ['-c', `
+    curl(){ python3 -c 'import sys,json;print(json.dumps(sys.argv[1:]))' "$@"; }
+    ssh(){ while [ "$1" = "-o" ]; do shift 2; done; shift; eval "$1"; }
+    ${heartbeat}
+  `], { encoding: 'utf8' });
+  const curlArgs = JSON.parse(output);
+  expect(JSON.parse(curlArgs[curlArgs.indexOf('-d') + 1])).toMatchObject({ tag: 'cmd10020630', host: 'xian-m4', serial: 'S1' });
+});
+
 function makePool(handlers) {
   const calls = [];
   const query = vi.fn(async (sql, params) => {
