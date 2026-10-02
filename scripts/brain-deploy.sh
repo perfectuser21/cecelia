@@ -471,7 +471,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
         echo "  [dry-run] docker compose -f ${COMPOSE_FILE} up -d node-brain (cecelia-brain:${VERSION})"
     elif ! BRAIN_VERSION="${VERSION}" ENV_REGION="${ENV_REGION}" \
-      docker compose --env-file "$ROOT_DIR/.env.docker" \
+      docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
         -f "$ROOT_DIR/${COMPOSE_FILE}" up -d node-brain; then
         echo ""
         echo "[FAIL] docker compose up -d failed. Rolling back..."
@@ -479,12 +479,12 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
             PREV_VERSION=$(tail -2 "$VERSIONS_FILE" | head -1)
             echo "  Rolling back to v${PREV_VERSION}..."
             BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
-              docker compose --env-file "$ROOT_DIR/.env.docker" \
+              docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
                 -f "$ROOT_DIR/${COMPOSE_FILE}" up -d node-brain || true
             echo "  Rolled back to v${PREV_VERSION}"
         else
             echo "  No previous version found. Stopping container."
-            docker compose --env-file "$ROOT_DIR/.env.docker" \
+            docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
               -f "$ROOT_DIR/${COMPOSE_FILE}" stop node-brain || true
         fi
         exit 1
@@ -749,12 +749,12 @@ else
         PREV_VERSION=$(tail -2 "$VERSIONS_FILE" | head -1)
         echo "  Rolling back to v${PREV_VERSION}..."
         BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
-          docker compose --env-file "$ROOT_DIR/.env.docker" \
+          docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
             -f "$ROOT_DIR/${COMPOSE_FILE}" up -d node-brain
         echo "  Rolled back to v${PREV_VERSION}"
     else
         echo "  No previous version found. Stopping container."
-        docker compose --env-file "$ROOT_DIR/.env.docker" \
+        docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
           -f "$ROOT_DIR/${COMPOSE_FILE}" stop node-brain
     fi
 fi

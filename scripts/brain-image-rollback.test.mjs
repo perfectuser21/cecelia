@@ -6,8 +6,6 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createStore } from './brain-image-retention/storage.mjs';
-import { createDeploymentLedger } from './brain-image-retention/ledger.mjs';
 const run = promisify(execFile), image = n => 'sha256:' + String(n).repeat(64), sha = n => String(n).repeat(40);
 test('正式rollback从失败的新镜像恢复原完整ID后才解除原pending', async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'image-rollback-')));

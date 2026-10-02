@@ -105,7 +105,7 @@ done
 # ── 主路径：用新版镜像 compose up ────────────────────────────────────────────
 echo "[sidecar] compose up node-brain (BRAIN_VERSION=${BRAIN_VERSION})..."
 if BRAIN_VERSION="$BRAIN_VERSION" ENV_REGION="$ENV_REGION" \
-    docker compose --env-file "$DEPLOY_ROOT/.env.docker" \
+    docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$DEPLOY_ROOT/.env.docker" \
       -f "$COMPOSE_FILE_PATH" up -d node-brain 2>&1; then
   echo "[sidecar] ✅ compose up 成功 v${BRAIN_VERSION}"
 
@@ -122,7 +122,7 @@ echo "[sidecar] ❌ compose up 失败 exit=${PRIMARY_EXIT}，尝试 blue-fallbac
 # blue-fallback = 删 blue 前由 bluegreen_swap 打的 docker tag，是最后一次健康 blue 的快照。
 # 退出码语义：fallback 成功 → exit 0（5221 已恢复）；fallback 也失败 → exit 1（5221 宕机）
 if BRAIN_VERSION=blue-fallback ENV_REGION="$ENV_REGION" \
-    docker compose --env-file "$DEPLOY_ROOT/.env.docker" \
+    docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$DEPLOY_ROOT/.env.docker" \
       -f "$COMPOSE_FILE_PATH" up -d node-brain 2>&1; then
   echo "[sidecar] ✅ blue-fallback 恢复成功，5221 已恢复旧版本"
   _sidecar_bark "⚠️ 蓝绿 sidecar：v${BRAIN_VERSION} 新镜像启动失败，已回退 blue-fallback，5221 已恢复，请检查新镜像问题"

@@ -35,18 +35,6 @@ services:
     volumes:
       # Docker socket: Brain 调 dockerd spawn 兄弟 pipeline 容器
       - /var/run/docker.sock:/var/run/docker.sock
-      # US历史Brain镜像策略：同卷私有状态与只读Docker数据卷身份；宿主预建700，默认job关闭。
-      - type: bind
-        source: /mnt/openclaw_data/cecelia-janitor
-        target: /mnt/openclaw_data/cecelia-janitor
-        bind:
-          create_host_path: false
-      - type: bind
-        source: /mnt/openclaw_data/docker
-        target: /run/cecelia-docker-data
-        read_only: true
-        bind:
-          create_host_path: false
       # Skills SSOT（B57/B58）：.claude/skills/* 是指向这里的 symlink，不 mount 则容器内
       # symlink 悬空 → harness SKILL 加载失败（loadSkillContent 全 miss）；dist 未 mount 则
       # Brain 无法 dispatch relay。us-vps 上需要这两个仓库分别 clone 到 /root/ 下。
