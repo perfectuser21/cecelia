@@ -11,6 +11,11 @@ vi.mock('../node-onboarding/service.js', () => ({
   runNodeExecutionOnboardingJob: vi.fn().mockResolvedValue({ advanced: 0 }),
 }));
 
+// 注册表只验接线和哨兵；判官真实窗口、去重与数据库错误由 crystal-judge.test.js 验证。
+vi.mock('../crystal-judge.js', () => ({
+  maybeRunCrystalJudge: vi.fn().mockResolvedValue({ triggered: false, reason: 'isolated_business_handler' }),
+}));
+
 vi.mock('../daily-review-scheduler.js', () => ({
   triggerArchReview: vi.fn().mockResolvedValue({ triggered: false, skipped_window: true }),
   triggerCiPatrol: vi.fn().mockResolvedValue({ triggered: false, skipped_window: true }),
