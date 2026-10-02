@@ -56,3 +56,11 @@ it('正式main refresh补齐原未登记四Step并保旧UUID，旧版本仍缺�
  for(const w of next.definitions.workflows)for(const ref of w.payload.activities){const a=next.definitions.activities.find(a=>a.id===ref.activity_version_id);for(const step of [null,...a.payload.steps.map(s=>s.step_id)])await registerCapabilityRegression(f.db,{capability_id:w.payload.capability_id,activity_id:a.activity_id,step_id:step,assertion_ref:'scripts/smoke/lock.sh'});}
  const full=await exportImplementationSnapshot(f.db,query);expect(service.buildPilotReleasePlan({...query,definitions:full.definitions,assertions:full.assertions}).verification_status).toBe('verified');expect(oldPlan.verification_status).toBe('unknown');
 });
+it('完整断言不能替代缺失Activity实现，只有Step绑定也不能升格',async()=>{
+ await f.close();f=await releaseEvidenceDatabase();await cover();const p=await plan();
+ expect(p.verification_status).toBe('unknown');expect(new Set(p.gaps.filter(g=>g.code==='pilot_activity_implementation_missing').map(g=>g.activity_id)).size).toBe(8);
+ const e=evidence(p);e.report.verification_status='verified';e.report.gaps=[];e.receipt.report_sha256=hash(e.report);
+ const {release}=await createRelease(f.db,{...f.releaseInput,ci_evidence:[e]});expect(release.payload.verification.ci_status).toBe('unknown');
+ const definitions=structuredClone({workflows:f.workflows,activities:f.activities});for(const a of definitions.activities)a.payload.implementation_bindings=[{...f.activities.find(a=>a.payload.implementation_bindings.length).payload.implementation_bindings[0],scope:'step',step_id:a.payload.steps[0].step_id}];
+ const stepOnly=service.buildPilotReleasePlan({scope:'phones',repo:p.source.repo,revision:RELEASE_HEAD,definitions,assertions:(await f.db.query('SELECT * FROM journey_step_links')).rows});expect(stepOnly.verification_status).toBe('unknown');
+});
