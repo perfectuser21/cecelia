@@ -406,3 +406,4 @@ implementation-impact-smoke.sh
 release-evidence-smoke.sh
 capability-system-smoke.sh
 capability-kr-regression-smoke.sh
+pilot-release-verification-smoke.sh

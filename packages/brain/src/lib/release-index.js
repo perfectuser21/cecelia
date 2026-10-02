@@ -1,3 +1,4 @@
+import {validatePilotReleaseEvidence} from './pilot-release-verification.js';
 /** 发布版本、实测记录只追加；green仅由冻结定义、CI证据和实际组件共同派生。 */
 import { createHash } from 'node:crypto';
 import defaultPool from '../db.js';
@@ -107,10 +108,15 @@ function governanceChecksMatch(expected,observed){
   if(new Set(expected.map(key)).size!==expected.length||new Set(observed.map(key)).size!==observed.length)return false;
   return expected.every(c=>observed.some(r=>r&&r.exit_code===0&&!r.error&&key(r)===key(c)));
 }
-function validateCiEvidence(items, definitions, components) {
-  const valid = [], gaps = [];
+async function validateCiEvidence(db, items, definitions, components) {
+  const valid = [], gaps = [], assertionPlans = [];
   for (const [index, { report, receipt }] of items.entries()) {
     const repo = report?.source?.repo, revision = report?.source?.head_revision;
+    if(report?.protocol==='pilot_release_verification_v1'){
+      try { assertionPlans.push(await validatePilotReleaseEvidence(db,report,receipt,definitions)); valid.push(repo); }
+      catch(error){ gaps.push({code:'pilot_release_unverified',index,reason:error.code}); }
+      continue;
+    }
     if(receipt?.purpose==='admission_only'||report?.ci_context?.purpose==='admission_only'){gaps.push({code:'ci_admission_only',index});continue;}
     try { assertImplementationReport(report); } catch (error) { gaps.push({code:'ci_report_unverified',index,reason:error.code || 'IMPACT_REPORT_INVALID'}); continue; }
     let ok = report?.mapping_status === 'verified' && report?.truncated === false && Array.isArray(report?.gaps) && !report.gaps.length
@@ -133,7 +139,7 @@ function validateCiEvidence(items, definitions, components) {
     if (ok) valid.push(repo); else gaps.push({ code: 'ci_evidence_unverified', index });
   }
   for (const repo of new Set(components.filter(c => c.kind === 'repo').map(c => c.repo))) if (!valid.includes(repo)) gaps.push({ code: 'ci_repo_evidence_missing', repo });
-  return { status: gaps.length ? 'unknown' : 'verified', gaps };
+  return { status: gaps.length ? 'unknown' : 'verified', gaps, assertionPlans };
 }
 export async function createRelease(pool, input) {
   validateRelease(input); const requestHash = evidenceHash(input);
@@ -143,10 +149,11 @@ export async function createRelease(pool, input) {
     await db.query('LOCK TABLE journey_steps,steps,enablers,enabler_calls IN SHARE MODE');
     const definitions = await readDefinitions(db, input);
     const allowed_enabler_calls = await readEnablerCalls(db, definitions.activities, input.components);
-    const ci = validateCiEvidence(input.ci_evidence, definitions, input.components);
+    const ci = await validateCiEvidence(db, input.ci_evidence, definitions, input.components);
     const stepGaps = definitions.activities.flatMap(a => (a.payload.steps || []).filter(s => !s.step_id || !UUID.test(s.step_id) || s.locator?.activity_id !== a.activity_id).map(s => ({code:'step_identity_missing',activity_definition_version_id:a.id,step_key:s.locator?.step_key || null})));
     const gaps = [...stepGaps, ...ci.gaps, ...allowed_enabler_calls.filter(c => c.source_status !== 'verified').map(c => ({ code: 'enabler_source_unknown', enabler_call_id: c.id }))];
     const payload = { schema_version: 1, ...definitions, components: input.components, ci_evidence: input.ci_evidence, allowed_enabler_calls,
+      ...(ci.assertionPlans.length ? {assertion_plans:ci.assertionPlans} : {}),
       verification: { definition_status: stepGaps.length ? 'unknown' : 'verified', step_coverage_status: stepGaps.length ? 'unknown' : 'verified', ci_status: ci.status, status: gaps.length ? 'unknown' : 'verified', gaps } };
     const manifestHash = evidenceHash({ environment: input.environment, target: input.target, payload });
     const release = (await db.query(`INSERT INTO release_versions(release_key,manifest_sha256,request_sha256,environment,target,actor,payload)

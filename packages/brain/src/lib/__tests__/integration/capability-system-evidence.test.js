@@ -49,3 +49,11 @@ it('每条CI仅链接报告来源与release固定WV完整交集，缺失/外仓/
   expect(result.ci_evidence.find(ci=>ci.evidence_ref==='subset').definition_versions.map(w=>w.id)).toEqual([original.report.head.definition_versions.workflows[0].id]);
   for(const ref of ['alien','digest','missing','malformed','wrong-head','wrong-identity'])expect(result.ci_evidence.find(ci=>ci.evidence_ref===ref).definition_versions,ref).toEqual([]);
 });
+it('完整试点协议只从顶层固定版本关联；未知协议不能借旧head回退',async()=>{
+ const input=structuredClone(f.releaseInput),base=input.ci_evidence[0];
+ for(const [name,change] of [['pilot',()=>{}],['pilot-subset',c=>c.report.definition_versions.workflows.pop()],['pilot-alien',c=>c.report.source.repo='alien/repo'],['unknown-protocol',c=>c.report.protocol='future-protocol']]){
+  const c=structuredClone(base);c.evidence_ref=name;c.report.protocol='pilot_release_verification_v1';c.report.definition_versions=c.report.head.definition_versions;change(c);input.ci_evidence.push(c);
+ }
+ const {release}=await createRelease(f.db,input),result=await service.readSystemReleaseEvidence(f.db,release.id);
+ expect(result.ci_evidence.map(c=>c.definition_versions.length)).toEqual([2,2,1,0,0]);
+});

@@ -10,10 +10,13 @@ if [[ "${CI:-}" != true ]]; then export DB_HOST="${DB_HOST:-/tmp}"; fi
 cd "$BRAIN_DIR"
 node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js \
   src/lib/__tests__/span-provenance.test.js \
+  src/lib/__tests__/pilot-release-verification.test.js \
+  src/__tests__/integration/pilot-release-ci.pg.integration.test.js \
   src/lib/__tests__/run-reconciliation.test.js \
   src/lib/__tests__/task-run.test.js \
   src/lib/__tests__/integration/implementation-report.test.js \
   src/lib/__tests__/integration/release-index.test.js \
+  src/lib/__tests__/integration/pilot-release-verification.test.js \
   src/lib/__tests__/integration/run-definition-binding.test.js \
   src/lib/__tests__/integration/task-run-definition.test.js \
   src/routes/__tests__/integration/releases.test.js \
