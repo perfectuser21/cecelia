@@ -3,6 +3,7 @@ import { startCompletionJobsLoop, stopCompletionJobsLoop } from './scheduler-com
 import {reconcileAppServers} from './app-server/controller.js';
 import { runPreviewCacheJanitor } from './preview-cache-scheduler.js';
 import { runCompanyKrWorkflow } from './projection/company-kr-workflow.js';
+import { runDirectoryJob } from './projection/directory-job.js';
 /**
  * scheduler-jobs.js — 声明式定时任务注册表（作战循环 P1-PR1）
  *
@@ -154,6 +155,7 @@ export const JOBS = [
   { name: 'credential-freshness', needsPool: true, timeoutMs: 120_000, handler: (pool) => maybeRunCredentialFreshness(pool), description: '凭据保鲜守卫：每日探活关键凭据(Tailscale/GitHub/飞书)+到期体检+auth key 自动续期。2026-09-16 实证 Tailscale API key 过期 18 天无人知、备用 PAT 元数据没写却已 401 —— 元数据只是声明，活性探测才是真相' },
   // 顺序要紧：先采集再推送，否则推的是上一轮的旧数（尤其 liveness 要用最新 last_run_at 算）
   { name: 'ops-notion-push', needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionPush(pool), description: '运行舱四表推 Notion 驾驶舱（机器列单向覆盖含活性告警）。旧链挂在无人import的legacy-notion-push-scheduler上从不执行，致Notion停更两天，故单独接现代调度层' },
+  { name: 'notion-directory', needsPool: true, timeoutMs: 120_000, handler: (pool) => runDirectoryJob(pool), description: '六层目录：先导入人工组织树，再按固定身份分批投影机器关系；锁与游标防重入，未知留缺口，读回后收据' },
   { name: 'notion-inlet-ingest', needsPool: true, timeoutMs: 120_000, handler: (pool) => runNotionInletIngest(pool), description: '✍️入口血管（三面模型PR②b，决策297ffee5）：遍历注册表 face=inlet&active 的库，「决策」库→decisions、员工Skill库zip→/api/skill-eval/upload；收据表幂等，人改了再收并留痕，机器不写入口库；自gate 5min' },
   { name: 'notion-gtd-sync', needsPool: true, timeoutMs: 30_000, livenessIntervalSec: 30, handler: (pool) => gtdSyncJobHandler(pool), description: '秋米中文GTD表↔英文Tasks库双向同步+入账+急停+回写（QIUMI_SYNC_ENABLED 门，handler 只确保 30s 自循环在跑并回报上次结果；活性按 handler 自报 liveness_at 算，09-24 卡死案；决策 b8abd28c，task b7efdbff）' },
   { name: 'ops-notion-ingest', needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsNotionIngest(pool, { execFn: defaultExec }), description: '运行舱人工列回读（Notion→Brain，last_edited_time增量）。含停用意图落实——主理人拍板直接生效真停n8n，故幂等+留痕+失败落enable_error显红' },

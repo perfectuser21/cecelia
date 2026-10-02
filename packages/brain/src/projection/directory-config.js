@@ -29,8 +29,11 @@ export function validateDirectoryConfig(input) {
     if (input[name] === undefined) continue;
     if (!Array.isArray(input[name]) || input[name].length > 500) throw new Error('目录绑定列表无效');
     for (const row of input[name]) {
-      keys(row, fields);
+      keys(row, name === 'value_stream_bindings' ? [...fields,'expected_node_name','expected_journey_name'] : fields);
       for (const field of fields) if (typeof row[field] !== 'string' || !row[field].trim() || row[field].length > 200) throw new Error('目录绑定字段缺失');
+      if (name === 'value_stream_bindings' && (row.expected_node_name !== undefined || row.expected_journey_name !== undefined)) {
+        for (const field of ['expected_node_name','expected_journey_name']) if (typeof row[field] !== 'string' || !row[field].trim() || row[field].length > 200) throw new Error('目录名称绑定必须完整');
+      }
       if (name === 'value_stream_bindings') uuid(row.journey_id);
       else { uuid(row.brain_id); uuid(row.notion_id); }
     }
@@ -64,7 +67,8 @@ async function assertRegistry(client, dbs) {
   const caps = rows.filter(r => r.brain_table === 'capabilities');
   const active = caps.filter(r => r.status === 'active');
   if (active.length) {
-    if (active.length !== 1 || !dbs.capabilities || compact(active[0].notion_db_id) !== compact(dbs.capabilities)) throw new Error('能力正式目录已存在，禁止重复建库');
+    if (active.length !== 1 || dbs.capabilities && compact(active[0].notion_db_id) !== compact(dbs.capabilities)) throw new Error('能力正式目录已存在，禁止重复建库');
+    dbs.capabilities ||= active[0].notion_db_id;
   } else if (!caps.some(r => r.notion_db_id === 'unmapped:capabilities' && r.status === 'archived' && r.direction === 'none')) throw new Error('缺少能力目录未映射的正式登记');
   return active.length > 0;
 }
@@ -91,6 +95,10 @@ export async function configureDirectoryProjection(pool, input, { token, notionR
     token ||= getToken();
     const registered = await assertRegistry(client, config.dbs);
     buildDirectoryRows(await loadDirectorySource(client), config); // 先核显式VS来源，失败零外部写
+    if (registered && config.parent_page_id) {
+      const found = await findCapabilityDatabase({ token, parentPageId: config.parent_page_id, notionReq });
+      if (compact(found) !== compact(config.dbs.capabilities)) throw new Error('能力正式目录父页来源不匹配');
+    }
     if (!registered) {
       if (!config.parent_page_id) throw new Error('能力目录认领需要父页证据');
       const found = await findCapabilityDatabase({ token, parentPageId: config.parent_page_id, notionReq });
