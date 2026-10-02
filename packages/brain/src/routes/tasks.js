@@ -1,3 +1,6 @@
+import {headedTaskMutation,registerHeadedTakeoverRoute} from './task-headed-takeover.js';
+import { rateLimit } from 'express-rate-limit';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import { COMPANY_KR_SQL_GUARD } from '../lib/company-kr-metrics.js';
 import { Router } from 'express';
 import pool from '../db.js';
@@ -363,7 +366,8 @@ router.post('/learnings-received', async (req, res) => {
  * PATCH /api/brain/tasks/:task_id
  * 更新任务状态（Engine 调用）
  */
-router.patch('/tasks/:task_id', async (req, res) => {
+registerHeadedTakeoverRoute(router,{pool});
+router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), headedTaskMutation(pool,async (req, res, pool) => {
   try {
     const { task_id } = req.params;
     const { status, result } = req.body;
@@ -404,7 +408,6 @@ router.patch('/tasks/:task_id', async (req, res) => {
         });
       }
     }
-
 
     // Get current task
     const taskResult = await pool.query(
@@ -619,8 +622,8 @@ router.patch('/tasks/:task_id', async (req, res) => {
     const becameRelayTerminal = isRelayTerminalStatus(status) && !isStatusNoop && !harnessDemoted;
     const handoffArrivedOnTerminal = Boolean(result?.handoff) && isRelayTerminalStatus(updatedTask?.status);
     if (becameRelayTerminal || handoffArrivedOnTerminal) {
-      const hook = await afterTerminalTransition(pool, task_id, updatedTask?.status || status, { sessionId: req.headers['x-session-id'] || null });
-      relay = hook.relay ?? null;
+      const hook = await pool.afterCommit(pool => afterTerminalTransition(pool, task_id, updatedTask?.status || status, { sessionId: req.headers['x-session-id'] || null }));
+      relay = hook?.relay ?? null;
     }
 
     if (status && !isStatusNoop && !harnessDemoted) {
@@ -696,7 +699,6 @@ router.patch('/tasks/:task_id', async (req, res) => {
       }
     }
 
-
     res.json({
       // 被降级时不许再报 success:true —— 请求的状态变更没发生，
       // 报成功就是"写被丢弃却发成功回执"（issue 9cce296f 那一族）。
@@ -721,7 +723,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
       details: err.message
     });
   }
-});
+}));
 
 
 // ==================== Blocked Tasks API ====================

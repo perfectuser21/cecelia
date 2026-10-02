@@ -127,3 +127,4 @@ harness-weighted-reservation-smoke.sh
 managed-script-capacity-smoke.sh
 preview-owned-cache-smoke.sh
 phone-dispatch-identity-smoke.sh
+headed-takeover-smoke.sh

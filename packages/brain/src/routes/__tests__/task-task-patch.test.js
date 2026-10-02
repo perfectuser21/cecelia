@@ -19,9 +19,9 @@ function createResponse() {
 function captureHandler(pool) {
   let handler;
   const router = {
-    patch: vi.fn((path, registered) => {
+    patch: vi.fn((path, ...handlers) => {
       expect(path).toBe('/:id');
-      handler = registered;
+      handler = handlers.at(-1);
     }),
   };
   registerTaskPatchRoute(router, {
