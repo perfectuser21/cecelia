@@ -1,3 +1,4 @@
+import { isPhoneDispatchTask } from './phone-dispatch/task-ownership.js';
 import { withLegacyRelayExecution } from './execution-directory/legacy-relay.js';
 import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
 /**
@@ -4172,8 +4173,8 @@ async function probeTaskLiveness() {
     // 走下方 SUSPECT→DEAD 必然「零证据回队」——0929 秋米 87c9a08b 起 4 分钟即被回队，而 MMV 上
     // agent 实际在跑。生死交给专属收割器（reapOpenclawAgentRuns / script-reaper 读远端 .exit）
     // 与合同层超时（executor-contracts staleMinutes → zombie-reaper）。
-    // device_job 虽也是外部执行体，但它没有远端 .exit 可读，保留上方认领新鲜度 + 超时兜底（0923）。
-    if (isExternallyExecuted(task) && !EXTERNAL_WATCHDOG_TYPES.has(task.task_type)) {
+    // 旧device_job保留45分钟策略；独立手机controller由持久租约及远端退出/解锁回执收口。
+    if (isPhoneDispatchTask(task) || (isExternallyExecuted(task) && !EXTERNAL_WATCHDOG_TYPES.has(task.task_type))) {
       suspectProcesses.delete(task.id);
       continue;
     }
