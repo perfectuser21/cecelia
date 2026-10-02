@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VERSIONS_FILE="$ROOT_DIR/.brain-versions"
 ENV_REGION="${ENV_REGION:-us}"
+source "$SCRIPT_DIR/lib/brain-image-retention.sh"
 
 # Determine target version
 if [ $# -ge 1 ]; then
@@ -29,10 +30,18 @@ if ! docker image inspect "cecelia-brain:${TARGET}" > /dev/null 2>&1; then
   exit 1
 fi
 
+TARGET_SHA=$(docker image inspect "cecelia-brain:${TARGET}" --format '{{json .Config.Env}}' | node -e '
+ const env=JSON.parse(require("fs").readFileSync(0,"utf8"));const sha=env.filter(x=>x.startsWith("GIT_SHA="));
+ if(sha.length!==1)process.exit(1);process.stdout.write(sha[0].slice(8));' || true)
+retention_begin "$TARGET" "$TARGET_SHA"
+trap 'retention_finish recovered || true' EXIT
+COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
+if [[ "$(uname -s)" == Linux ]]; then COMPOSE_FILE="$ROOT_DIR/docker-compose.us-vps.yml"; fi
+
 # Stop current + start target
 BRAIN_VERSION="${TARGET}" ENV_REGION="${ENV_REGION}" \
   docker compose --env-file "$ROOT_DIR/.env.docker" \
-    -f "$ROOT_DIR/docker-compose.yml" up -d node-brain
+    -f "$COMPOSE_FILE" up -d node-brain
 
 # Wait for healthy (max 60s)
 echo ""
@@ -44,6 +53,8 @@ while [ $TRIES -lt $MAX_TRIES ]; do
   TRIES=$((TRIES + 1))
   if curl -sf http://localhost:5221/api/brain/tick/status > /dev/null 2>&1; then
     echo ""
+    retention_finish success
+    trap - EXIT
     echo "=== Rollback SUCCESS: cecelia-brain v${TARGET} is healthy ==="
     exit 0
   fi

@@ -25,11 +25,12 @@ if [[ "$ENV_REGION" == "us" && -f "$DEPLOY_ROOT/docker-compose.us-vps.yml" ]]; t
 fi
 CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:?CECELIA_INTERNAL_ENV_FILE 必填}"
 BARK_TOKEN="${BARK_TOKEN:-}"
+source "$DEPLOY_ROOT/scripts/lib/brain-image-retention.sh"
 # sidecar 本身由 `docker run` 起在独立容器内（见 bluegreen.sh bluegreen_swap），
 # 不在 node-brain 的 compose 网络里，也未 --network host。要够到宿主发布的
 # 5221 必须走 host.docker.internal（同 bluegreen_canary_host 的 /.dockerenv 判据，
 # 这里恒为容器内执行，直接定死，不必再判 /.dockerenv）。可用 BRAIN_URL 覆盖测试。
-BRAIN_URL="${BRAIN_URL:-http://host.docker.internal:5221}"
+export BRAIN_URL="${BRAIN_URL:-http://host.docker.internal:5221}"
 
 # 告警（non-fatal，token 缺失静默）
 _sidecar_bark() {
@@ -109,6 +110,7 @@ if BRAIN_VERSION="$BRAIN_VERSION" ENV_REGION="$ENV_REGION" \
   echo "[sidecar] ✅ compose up 成功 v${BRAIN_VERSION}"
 
   cancel_drain_after_up
+  retention_finish success || exit 1
 
   exit 0
 fi
@@ -127,6 +129,7 @@ if BRAIN_VERSION=blue-fallback ENV_REGION="$ENV_REGION" \
   _sidecar_log "[sidecar-partial-fail] primary_exit=${PRIMARY_EXIT} brain_version=${BRAIN_VERSION} recovered=blue-fallback"
 
   cancel_drain_after_up
+  retention_finish recovered || exit 1
 
   exit 0  # 5221 已恢复，sidecar 整体视为成功
 else
