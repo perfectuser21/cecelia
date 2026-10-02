@@ -12,6 +12,7 @@ const manifest: FeatureManifest = {
   ],
 
   routes: [
+    { path: '/website-functions', component: 'WebsiteFunctionsPage' },
     // Ops Center
     {
       path: '/ops/live',
@@ -71,6 +72,7 @@ const manifest: FeatureManifest = {
   ],
 
   components: {
+    WebsiteFunctionsPage: () => import('./pages/website-functions/WebsiteFunctionsPage'),
     LiveDashboard: () => import('./pages/LiveDashboard'),
     VpsMonitor: () => import('./pages/VpsMonitor'),
     ClaudeMonitor: () => import('./pages/ClaudeMonitor'),
