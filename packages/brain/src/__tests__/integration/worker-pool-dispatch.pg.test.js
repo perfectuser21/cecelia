@@ -65,8 +65,8 @@ it('native busy association lookup failure never clears an unknown busy slot or 
 it.each(['locked', 'unknown_device'])('native %s cleanup preserves phone claim and clears only its ordinary preclaim', async mode => {
   f = await createPhoneClaimFixture(p => holder.pool = p, { busyLegacy: true });
   const id = await f.ordinary({ parallel_worker: true, device_serial: 'fixture-device' }), before = await f.snapshot(), seam = fixtureExec(['slot7']);
-  await f.pool.query('CREATE TABLE device_locks(device_name TEXT PRIMARY KEY,locked_by TEXT,locked_at TIMESTAMPTZ,expires_at TIMESTAMPTZ)');
-  if (mode === 'locked') await f.pool.query("INSERT INTO device_locks VALUES('fixture-device','fixture-other',now(),now()+interval '1 hour')");
+
+  if (mode === 'locked') await f.pool.query("INSERT INTO device_locks(device_name,locked_by,locked_at,expires_at) VALUES('fixture-device','fixture-other',now(),now()+interval '1 hour')");
   else await f.pool.query(`CREATE FUNCTION fixture_terminal_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${id}' AND NEW.status='failed' THEN RAISE EXCEPTION 'fixture_terminal_failure';END IF;RETURN NEW;END $$;CREATE TRIGGER fixture_terminal_failure BEFORE UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION fixture_terminal_failure()`);
   const query = f.pool.query.bind(f.pool); let releaseSql;
   const proxy = { query: (sql, args) => { if (/SET claimed_by = NULL/.test(sql)) releaseSql = sql; return query(sql, args); } };

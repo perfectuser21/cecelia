@@ -1,7 +1,8 @@
+import {createPhoneScheduleSchema,applyPhoneScheduleMigration} from '../__tests__/fixtures/phone-schedule-schema.js';
 import {observation} from '../__tests__/fixtures/phone-capacity.js';
 import {resolvePhoneHubBinding} from './http-binding.js';
 import {randomUUID} from 'node:crypto';
-import {existsSync,readFileSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
 import pg from 'pg';
 import {beforeAll,beforeEach,afterAll,it,expect} from 'vitest';
 import {DB_DEFAULTS} from '../db-config.js';
@@ -12,7 +13,7 @@ import {createAttemptStore} from '../orchestrator/attempt-store.js';
 const options=process.env.TEST_DATABASE_URL?{connectionString:process.env.TEST_DATABASE_URL}:DB_DEFAULTS;
 if(!/_(scratch|test)$/.test(process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_URL).pathname:DB_DEFAULTS.database))throw Error('scratch/test required');
 const schema=`phone_dispatch_${process.pid}_${randomUUID().replaceAll('-','')}`;
-const admin=new pg.Client(options),pool=new pg.Pool({...options,max:8,options:`-c search_path=${schema},public`});
+const admin=new pg.Client(options),pool=new pg.Pool({...options,max:8,options:`-c search_path=${schema}`});
 const machine='xian-mac-m1',host='xian-m1',serial='test-phone',profile='test-profile',account='test-account';
 let store,sshVersion,migrationBefore,migrationAfter;
 const snapshot=()=>({verified:true,machine,captured_at:Date.now(),expires_at:Date.now()+30_000,capacity:{ok:true,available:1,physical_base_slots:8,effective_base_slots:8}});
@@ -30,16 +31,8 @@ it('HTTP binding迁移不补写既有508 lease，不创建grant或改当前节�
 });
 beforeAll(async()=>{
  await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
- await pool.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');
- CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT,result JSONB,updated_at TIMESTAMPTZ,completed_at TIMESTAMPTZ,claimed_by TEXT,claimed_at TIMESTAMPTZ,payload JSONB DEFAULT '{}',task_type TEXT CONSTRAINT tasks_task_type_check CHECK(task_type IN ('dev','device_job')),executor_kind TEXT CONSTRAINT tasks_executor_kind_check CHECK(executor_kind IN ('headed-session')));
- CREATE TABLE initiative_runs(id UUID PRIMARY KEY,phase TEXT DEFAULT 'planning',map_recovery_contract_id UUID,orchestrator_version TEXT DEFAULT 'v2');CREATE TABLE map_recovery_consumptions(contract_id UUID,attempt_id UUID);
- CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);`);
+ await createPhoneScheduleSchema(pool,{skipHttp:true});
  for(const [,id,name]of LEGACY_BINDINGS)await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')",[id,name]);
- for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','490_phone_registry','501_capacity_reservations','503_execution_directory','504_app_server_generations','507_linux_script_authorization','272_janitor','510_us_brain_image_retention','508_phone_dispatches']){
-  await pool.query(readFileSync(new URL(`../../migrations/${name}.sql`,import.meta.url),'utf8'));
-  // Real migration 510 delegates version registration to migrate.js; execute the same wrapper after its SQL.
-  if(name==='510_us_brain_image_retention')await pool.query('INSERT INTO schema_version(version,description) VALUES($1,$2) ON CONFLICT(version) DO NOTHING',['510','us_brain_image_retention']);
- }
  await importLegacyPolicy({pool,env:{FLEET_WORKER_XIAN_MAC_M1_URL:'http://m1:5231'}});
  const old=(await pool.query('SELECT * FROM execution_node_versions WHERE id=(SELECT current_version_id FROM execution_nodes WHERE canonical_id=$1)',[machine])).rows[0];
  const version=randomUUID();sshVersion=version;await pool.query(`INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,platform,endpoints,profile,config_hash,state) VALUES($1,$2,2,'legacy-v1',$3,'darwin',$4,$5,$6,'active')`,[version,old.machine_registry_id,old.worker_id,{phone_ssh:{host,port:22,user:'administrator',hub:{host:'us-vps',port:22,user:'administrator'}}},old.profile,old.config_hash]);
@@ -56,7 +49,7 @@ beforeAll(async()=>{
   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'fixture-worker','fixture-boot',$13)`,[id,taskId,reservation,serial,machine,host,profile,account,version,grant,lease,execution,'f'.repeat(64)]);
  const capture=async()=>({row:(await pool.query('SELECT * FROM phone_dispatches WHERE id=$1',[id])).rows[0],grants:(await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows,nodes:(await pool.query('SELECT * FROM execution_nodes ORDER BY canonical_id')).rows});
  migrationBefore=await capture();
- const httpLeaseMigration=new URL('../../migrations/516_phone_http_leases.sql',import.meta.url);if(existsSync(httpLeaseMigration))await pool.query(readFileSync(httpLeaseMigration,'utf8'));
+ const httpLeaseMigration=new URL('../../migrations/516_phone_http_leases.sql',import.meta.url);await pool.query(readFileSync(httpLeaseMigration,'utf8'));
  migrationAfter=await capture();
  const {createPhoneDispatchStore}=await import('./store.js');store=createPhoneDispatchStore({pool,afterTask:async()=>{}});
 });
@@ -288,8 +281,8 @@ it('finish 保留已写handoff；提交后真实pool上的接棒入口仍能读�
 });
 
 it('已部署Linux507、手机508、Hub511与C1 512各自留schema_version，不抢用同一版本号',async()=>{
- const rows=(await pool.query("SELECT version,description FROM schema_version WHERE version IN ('507','508','511','512') ORDER BY version")).rows;
- expect(rows.map(row=>row.version)).toEqual(['507','508','511','512']);
+ const rows=(await pool.query("SELECT version,description FROM schema_version WHERE version IN ('507','508','511','512','513','514','515','516') ORDER BY version")).rows;
+ expect(rows.map(row=>row.version)).toEqual(['507','508','511','512','513','514','515','516']);
  expect(rows[0].description).not.toContain('手机独立');
  expect(rows[1].description).toContain('手机独立');
 });

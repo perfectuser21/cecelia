@@ -13,8 +13,8 @@ afterEach(async () => { if (server) { server.closeAllConnections(); await new Pr
 async function setup() {
  f = await createPhoneClaimFixture(pool => h.pool = pool, { publicClaims: true });
  expect(f.location).toEqual({ db: DB_DEFAULTS.database, schema: f.schema });
- const ledger = (await f.pool.query("SELECT version FROM schema_version WHERE version IN ('471','508','509','513') ORDER BY version")).rows;
- expect(ledger).toEqual(['471','508','509','513'].map(version => ({ version })));
+ const ledger = (await f.pool.query("SELECT version FROM schema_version WHERE version IN ('471','508','509','517') ORDER BY version")).rows;
+ expect(ledger).toEqual(['471','508','509','517'].map(version => ({ version })));
  const tasks = (await import('../../routes/task-tasks.js')).default, legacy = (await import('../../routes/tasks.js')).default;
  const app = express(); app.use(express.json());
  // Actual server registration precedence: nested tasks, legacy brain routes, canonical fallback.
@@ -69,10 +69,8 @@ it.each(['other-claim','delete'])('real second-session ordinary %s uses actual50
  }};
  const result=await claim(id); expect(changed).toBe(true);
  if(point==='delete') {
-  // Real509 unowned BEFORE DELETE returns NEW(null), suppressing physical deletion.
-  // Preserve that fact, never disable guard to invent a DELETE race.
-  expect(mutationRows).toBe(0); expect(result).toMatchObject({status:200,body:{id,claimed_by:'fixture-agent'}});
-  expect((await query('SELECT claimed_by FROM tasks WHERE id=$1',[id])).rows[0].claimed_by).toBe('fixture-agent');
+  expect(mutationRows).toBe(1); expect(result).toEqual({status:404,body:{error:'Task not found'}});
+  expect((await query('SELECT id FROM tasks WHERE id=$1',[id])).rows).toEqual([]);
  } else {
   expect(mutationRows).toBe(1); expect(result).toEqual({status:409,body:{error:'Task already claimed',claimed_by:'fixture-other',claimed_at:'2026-01-01T00:00:00.000Z'}});
  }

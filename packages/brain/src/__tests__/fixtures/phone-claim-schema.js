@@ -40,13 +40,6 @@ export async function createPhoneClaimFixture(onPool, { busyLegacy = false, work
     await c.query('COMMIT');
   } catch (error) { await c.query('ROLLBACK'); throw error; } finally { c.release(); }
   if (busyLegacy) await pool.query("INSERT INTO dispatch_events(task_id,event_type,reason) VALUES($1,'dispatched','worker_pool:slot7')", [old]);
-  if (publicClaims) {
-    await pool.query(`CREATE TABLE task_runs(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),task_id UUID REFERENCES tasks(id),run_id TEXT,status TEXT,ended_at TIMESTAMPTZ);
-      CREATE TABLE kernel_controller_sessions(id TEXT PRIMARY KEY,task_id UUID REFERENCES tasks(id),run_id UUID,status TEXT);
-      CREATE TABLE callback_queue(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),task_id UUID REFERENCES tasks(id),run_id TEXT,processed_at TIMESTAMPTZ);
-      CREATE TABLE device_locks(device_name TEXT PRIMARY KEY,locked_by TEXT);`);
-    await applyPhoneScheduleMigration(pool, '509_headed_task_takeover');
-  }
   await applyPhoneScheduleMigration(pool, '517_phone_scheduled_slots');
   await pool.query(`CREATE FUNCTION fixture_worker_payload() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.payload ? 'phone_schedule' THEN NEW.payload:=NEW.payload||'{"parallel_worker":true,"pipeline":"canvas","canonical":"exploratory"}'::jsonb;NEW.created_at:=now()-interval '1 hour';END IF;RETURN NEW;END $$;
     CREATE TRIGGER fixture_worker_payload BEFORE INSERT ON tasks FOR EACH ROW EXECUTE FUNCTION fixture_worker_payload()`);

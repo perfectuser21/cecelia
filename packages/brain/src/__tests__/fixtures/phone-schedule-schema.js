@@ -1,3 +1,4 @@
+import {applyPhoneMainSchema} from './phone-main-schema.js';
 import {readFileSync} from 'node:fs';
 const BASE_SQL=`
  CREATE TABLE schema_version(version VARCHAR(10) PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ DEFAULT now());
@@ -22,5 +23,9 @@ export async function applyPhoneScheduleMigration(pool,name){
 }
 export async function createPhoneScheduleSchema(pool,{ publicClaims = false, skipHttp = false } = {}){
  await pool.query(BASE_SQL);
- for(const name of ['272_janitor','357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','413_work_routing_receipts','421_work_routing_projection_guard','425_harness_attempt_cleanup_outbox','426_map_repository_and_route_snapshot_authority','427_direct_profile_frozen_contract','465_work_routing_receipt_supersession',...(publicClaims ? ['471_script_executor_kind_and_task_type','472_validate_script_executor_constraints'] : []),'490_phone_registry','501_capacity_reservations','503_execution_directory','504_app_server_generations','507_linux_script_authorization','508_phone_dispatches','510_us_brain_image_retention',...(skipHttp ? [] : ['515_phone_http_bindings','516_phone_http_leases'])])await applyPhoneScheduleMigration(pool,name);
+ for(const name of ['272_janitor','357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','413_work_routing_receipts','421_work_routing_projection_guard','425_harness_attempt_cleanup_outbox','426_map_repository_and_route_snapshot_authority','427_direct_profile_frozen_contract','465_work_routing_receipt_supersession','471_script_executor_kind_and_task_type','472_validate_script_executor_constraints','490_phone_registry','501_capacity_reservations','503_execution_directory','504_app_server_generations','507_linux_script_authorization','508_phone_dispatches','510_us_brain_image_retention'])await applyPhoneScheduleMigration(pool,name);
+ await applyPhoneMainSchema(pool);
+ await pool.query(`CREATE TABLE kernel_controller_sessions(id TEXT PRIMARY KEY,task_id UUID REFERENCES tasks(id),run_id UUID,status TEXT);
+ CREATE TABLE callback_queue(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),task_id UUID REFERENCES tasks(id),run_id TEXT,processed_at TIMESTAMPTZ);`);
+ for(const name of ['065_device_locks','448_device_locks_phones','509_headed_task_takeover',...(skipHttp ? [] : ['515_phone_http_bindings','516_phone_http_leases'])])await applyPhoneScheduleMigration(pool,name);
 }
