@@ -10,6 +10,7 @@ import uuid
 from unittest.mock import patch
 import admission
 import probe
+import worker
 from journal import Journal
 from runner import Runner, Config
 import test_activation as activation_fixture
@@ -151,6 +152,32 @@ class AdmissionTest(unittest.TestCase):
             os._exit(0)
         os.close(write); result = os.read(read, 64); os.close(read); os.waitpid(child, 0)
         host.close(); self.assertEqual(result, b'accepted')
+
+    def test_detached_worker_resets_parent_lock_metadata_but_keeps_real_host_fd(self):
+        journal = Journal(self.journal_root); key = str(uuid.uuid4())
+        host = admission.HostExclusive().acquire()
+        ready_r, ready_w = os.pipe(); go_r, go_w = os.pipe()
+        with journal.locked(key):
+            child = os.fork()
+            if child == 0:
+                try:
+                    os.close(ready_r); os.close(go_w)
+                    fd = host.transfer()
+                    worker.detach(keep_fds=(fd, ready_w, go_r))
+                    journal.after_detach()
+                    admission.discard_fork_context()
+                    os.write(ready_w, b'R'); os.close(ready_w)
+                    if os.read(go_r, 1) != b'G': os._exit(2)
+                    os.close(go_r); host.verify()
+                    with journal.locked(key): journal.write(key, {'phase':'worker_verified'})
+                    host.close(); os._exit(0)
+                except Exception: os._exit(1)
+            os.close(ready_w); os.close(go_r)
+            self.assertEqual(os.read(ready_r, 1), b'R'); os.close(ready_r)
+        os.write(go_w, b'G'); os.close(go_w)
+        _, status = os.waitpid(child, 0); host.close()
+        self.assertEqual(status, 0)
+        self.assertEqual(journal.read(key)['phase'], 'worker_verified')
 
     def test_host_pending_legacy_activity_is_not_reaped_or_treated_as_free(self):
         raw = b'{"schema":1,"activities":{"unknown-owner":{"pid":1}}}'
