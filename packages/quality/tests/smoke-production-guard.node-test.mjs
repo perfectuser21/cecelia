@@ -471,7 +471,7 @@ test('authorized writes require a confirmed local Unix context endpoint', async 
 
 test('phone-dispatch-identity: default refuses with exit 1 before any requests', async () => {
   await fixture(async ({ requests, smoke }) => {
-    const result = await smoke('phone-dispatch-identity');
+    const result = await smoke('phone-dispatch-identity', { DB_HOST: 'localhost', DB_PORT: '5432', DB_NAME: 'cecelia_test' });
     assert.equal(result.code, 1, result.output);
     assert.deepEqual(requests, [], 'phone identity smoke contacted Brain without authorization');
   });
@@ -479,14 +479,14 @@ test('phone-dispatch-identity: default refuses with exit 1 before any requests',
 test('phone-dispatch-identity: explicitly authorized production DB refuses with exit 1', async () => {
   await fixture(async ({ requests, smoke, info }) => {
     info.Config.Env[1] = 'DB_NAME=cecelia';
-    const result = await smoke('phone-dispatch-identity', { SMOKE_ALLOW_WRITE: '1', DB_NAME: 'cecelia' }, info);
+    const result = await smoke('phone-dispatch-identity', { SMOKE_ALLOW_WRITE: '1', DB_NAME: 'cecelia', DB_HOST: 'localhost', DB_PORT: '5432' }, info);
     assert.equal(result.code, 1, result.output);
     assert.deepEqual(requests, [], 'phone identity smoke reached a production database');
   });
 });
 test('phone-dispatch-identity: production scheduler behind proxy refuses with only health GET', async () => {
   await fixture(async ({ requests, smoke }) => {
-    const result = await smoke('phone-dispatch-identity', { SMOKE_ALLOW_WRITE: '1', DB_NAME: 'cecelia_test' });
+    const result = await smoke('phone-dispatch-identity', { SMOKE_ALLOW_WRITE: '1', DB_NAME: 'cecelia_test', DB_HOST: 'localhost', DB_PORT: '5432' });
     assert.equal(result.code, 1, result.output);
     assert.deepEqual(requests, [{ method: 'GET', url: '/api/brain/health' }]);
   }, { health: { local_execution: { role: 'scheduler_only' } } });
