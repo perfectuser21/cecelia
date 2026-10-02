@@ -161,4 +161,30 @@ describe('共享活动真实数据库合同', () => {
     expect((await request(app).get(`/api/brain/activities/${randomUUID()}/consumers`)).status).toBe(404);
   });
 
+  it('并发较慢的旧HEAD不得覆盖先完成的新HEAD，包括首次同步',async()=>{
+    await migrate();const old=contractsFixture(),fresh=contractsFixture();
+    fresh.docs.keyword_acquisition.activities[0].name='新版本预检';fresh.refresh();
+    const freshFetch=fresh.fetchFn;fresh.fetchFn=async url=>url.includes('/commits/main')?{ok:true,text:async()=> 'b'.repeat(40)}:freshFetch(url);
+    let unblock,started;const blocked=new Promise(resolve=>{unblock=resolve;});const ready=new Promise(resolve=>{started=resolve;});
+    const oldFetch=old.fetchFn;old.fetchFn=async url=>{if(url.includes('contracts/benchmark_link_acquisition.yaml')){started();await blocked;}return oldFetch(url);};
+    const pending=syncActivityContracts(db,old);await ready;
+    try { await syncActivityContracts(db,fresh); } finally { unblock(); }
+    await expect(pending).rejects.toThrow('同步快照已变化');
+    expect((await client.query('SELECT name FROM journey_steps WHERE id=$1',[legacy[0]])).rows[0].name).toBe('新版本预检');
+    expect((await client.query('SELECT DISTINCT source_commit FROM workflow_activity_refs WHERE active')).rows).toEqual([{source_commit:'b'.repeat(40)}]);
+  });
+  it('加载期间登记映射变化必须拒绝旧计划，零部分写入',async()=>{
+    await migrate();const before=await snapshot(),f=contractsFixture(),fetch=f.fetchFn;
+    let changed=false;f.fetchFn=async url=>{if(!changed&&url.includes('contracts/keyword_acquisition.yaml')){changed=true;await client.query("UPDATE workflows SET source_workflow='new-source' WHERE id=$1",[keyword]);}return fetch(url);};
+    await expect(syncActivityContracts(db,f)).rejects.toThrow('同步快照已变化');expect(await snapshot()).toEqual(before);
+  });
+  it('定义拥有者工作流退休后，活跃消费者仍同步并保留规范身份',async()=>{
+    await migrate();const f=contractsFixture();await syncActivityContracts(db,f);
+    await client.query("UPDATE workflows SET status='retired' WHERE id=$1",[keyword]);
+    f.docs.keyword_acquisition.activities[0].name='共享预检新版';f.refresh();
+    await syncActivityContracts(db,f);
+    expect((await client.query('SELECT name FROM journey_steps WHERE id=$1',[legacy[0]])).rows[0].name).toBe('共享预检新版');
+    expect((await client.query('SELECT workflow_id,activity_id FROM workflow_activity_refs WHERE slot_key=$1 AND active',['preflight'])).rows).toEqual([{workflow_id:benchmark,activity_id:legacy[0]}]);
+  });
+
 });
