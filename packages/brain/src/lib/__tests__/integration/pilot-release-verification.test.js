@@ -37,3 +37,7 @@ it('漏Step/漏登记断言、重复回执、PR purpose以及篡改计划均不�
   const r=await createRelease(f.db,{...f.releaseInput,release_key:`bad-${i}`,ci_evidence:[e]});expect(r.release.payload.verification.ci_status).toBe('unknown');
  }
 });
+it('自洽hash不能冒充未登记scope或缺失规范映射',async()=>{
+ await cover();const p=await plan(),e=evidence(p);e.report.scope='unregistered';e.report.assertion_plan_sha256=service.pilotPlanHash(service.pilotPlanBody(e.report));e.receipt.assertion_plan_sha256=e.report.assertion_plan_sha256;e.receipt.report_sha256=hash(e.report);
+ const {release}=await createRelease(f.db,{...f.releaseInput,ci_evidence:[e]});expect(release.payload.verification.ci_status).toBe('unknown');
+});
