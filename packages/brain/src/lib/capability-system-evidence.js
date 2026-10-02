@@ -40,6 +40,13 @@ export async function listSystemRuns(db,options={}) {
   const runs=(await db.query(`${source} SELECT * FROM run_records ${filter} ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`,[...params,limit,offset])).rows;
   return {runs,total,limit,offset};
 }
+function ciWorkflowVersions(item,workflows){
+  const reported=item.report?.head?.definition_versions?.workflows,source=item.report?.source;
+  if(!Array.isArray(reported)||!source)return [];
+  const fields=['id','workflow_id','payload_sha256','source_repo','source_commit'];
+  return workflows.filter(w=>w.source_repo===source.repo&&w.source_commit===source.head_revision
+    &&reported.some(r=>r&&fields.every(key=>r[key]===w[key]))).map(w=>pick(w,fields));
+}
 export async function readSystemReleaseEvidence(db,id){
   const row=await getRelease(db,id);
   return {release:await releaseSummary(db,row),components:(row.payload.components||[]).map(c=>pick(c,['kind','repo','path','revision','digest'])),verification:row.payload.verification,
@@ -47,7 +54,7 @@ export async function readSystemReleaseEvidence(db,id){
       source:pick(item.report?.source,['repo','base_revision','head_revision']),
       ...pick(item.receipt,['report_sha256','verdict','recorded_at']),
       assertions:(item.receipt?.assertions||[]).map(a=>pick(a,['assertion_ref','source_repo','source_revision','test_sha256','exit_code'])),
-      definition_versions:row.payload.workflows.map(w=>pick(w,['id','workflow_id','payload_sha256','source_repo','source_commit']))}))};
+      definition_versions:ciWorkflowVersions(item,row.payload.workflows||[])}))};
 }
 export async function readSystemRunEvidence(db,runId){
   const context=await getRunDefinitionBinding(db,runId);
