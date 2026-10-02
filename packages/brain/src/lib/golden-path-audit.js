@@ -7,6 +7,10 @@ const HTTP_ROUTES = new Set(['/golden_path', '/golden_path/canvas', '/golden_pat
   '/tasks/:id/golden-path-decisions', '/journeys/:journey_id/golden-paths', '/golden_path/:id',
   '/golden_path/:id/run-result', '/decisions']);
 const INTERNAL = new Set(['step_invariants', 'cumulative_fr']);
+export function validateGoldenPathHttp(input) {
+  if (!HTTP_ROUTES.has(input.route) || !['GET', 'HEAD', 'POST', 'PATCH'].includes(input.method)
+      || !['read', 'write'].includes(input.path_kind)) throw new Error('gp_http_route_invalid');
+}
 export function createGoldenPathAudit({ root, store, source, flag, windowId = 'unadmitted', admission = null }) {
   if (windowId !== 'unadmitted' && !/^[a-f0-9-]{36}$/.test(windowId)) throw new Error('gp_window_invalid');
   const journal = createGoldenPathJournal(path.join(root, windowId));
@@ -74,8 +78,7 @@ export function createGoldenPathAudit({ root, store, source, flag, windowId = 'u
       });
     },
     recordHttp(input) {
-      if (!HTTP_ROUTES.has(input.route) || !['GET', 'HEAD', 'POST', 'PATCH'].includes(input.method)
-          || !['read', 'write'].includes(input.path_kind)) throw new Error('gp_http_route_invalid');
+      validateGoldenPathHttp(input);
       return serial(() => persist('golden_path_legacy_access', { route: input.route, method: input.method,
         path_kind: input.path_kind, outcome: input.allowed ? 'legacy_read_allowed' : 'rejected',
         caller: { kind: 'unknown', identity_source: 'not_bound' } }));

@@ -39,8 +39,11 @@ export function createGoldenPathAuditStore(pool, { timeoutMs = 4_000 } = {}) {
           AND event_type='golden_path_observation_health' AND payload->>'instance_id'=$1
           ORDER BY id DESC LIMIT 1) AS latest`, values: [instanceId], query_timeout: 2_000 })).rows[0];
     },
-    async persist(type, payload) {
+    async persist(type, payload, { isolatedRequestOnly = false } = {}) {
       if (Object.hasOwn(payload, 'gp_db_created_at')) throw new Error('gp_audit_reserved_time');
+      if (isolatedRequestOnly && (type !== 'golden_path_legacy_access'
+          || payload.window_id !== 'isolated-request-only' || payload.observation_mode !== 'isolated_request_only'
+          || Object.hasOwn(payload, 'source') || Object.hasOwn(payload, 'instance_id'))) throw new Error('gp_isolated_payload_invalid');
       const deadline = Date.now() + timeoutMs;
       const remaining = () => { const left = deadline - Date.now(); if (left <= 0) throw expired(); return left; };
       const client = await acquire(pool, deadline);
@@ -56,6 +59,13 @@ export function createGoldenPathAuditStore(pool, { timeoutMs = 4_000 } = {}) {
       };
       try {
         await query('BEGIN');
+        if (isolatedRequestOnly) {
+          // 必须是执行INSERT的同一连接；env/URL不能证明实际库隔离。
+          const name = (await query('SELECT current_database() AS name')).rows[0]?.name;
+          if (typeof name !== 'string' || !/(?:^|[_-])(test|testing|dev|scratch|staging|preview|eval|evaluator)$/i.test(name)) {
+            throw new Error('gp_isolated_database_unproven');
+          }
+        }
         await query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [payload.audit_id]);
         const found = await query(
           `SELECT id,event_type,payload,(payload->>'gp_db_created_at')::timestamptz AS created_at,

@@ -1,17 +1,33 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { isIsolatedRuntime } from '../runtime-safety.js';
-import { createGoldenPathAudit } from './golden-path-audit.js';
+import { createGoldenPathAudit, validateGoldenPathHttp } from './golden-path-audit.js';
 import { createGoldenPathAuditStore } from './golden-path-audit-store.js';
 import { readGoldenPathT0 } from './golden-path-window.js';
 
 let active = null, timer = null, admissionLoader = null, archivedT0 = null, tickRunning = false;
 export const setGoldenPathAudit = audit => { active = audit; };
-export const recordGoldenPathHttp = input => active?.recordHttp(input)
-  ?? Promise.resolve({ persisted: false, reason: 'gp_runtime_not_started' });
+export async function recordGoldenPathHttp(input, { pool, env = process.env } = {}) {
+  if (active) return active.recordHttp(input);
+  if (!pool || !isIsolatedRuntime(env)) return { persisted: false, reason: 'gp_runtime_not_started' };
+  validateGoldenPathHttp(input);
+  // 隔离请求只落事件账；不创建observer、文件、timer或可验收的正式窗口。
+  try {
+    const row = await createGoldenPathAuditStore(pool).persist('golden_path_legacy_access', {
+      audit_id: randomUUID(), window_id: 'isolated-request-only', observation_mode: 'isolated_request_only',
+      observer_actor: 'brain:golden-path-observation', route: input.route, method: input.method,
+      path_kind: input.path_kind, outcome: input.allowed ? 'legacy_read_allowed' : 'rejected',
+      flag: env.GOLDEN_PATH_LEGACY_READ === '1', caller: { kind: 'unknown', identity_source: 'not_bound' },
+    }, { isolatedRequestOnly: true });
+    return { persisted: true, event_id: row.id };
+  } catch (error) {
+    return { persisted: false, reason: error.message === 'gp_isolated_database_unproven'
+      ? error.message : 'gp_isolated_request_audit_failed' };
+  }
+}
 export const recordGoldenPathInternal = operation => active?.recordInternal(operation)
   ?? Promise.resolve({ persisted: false, reason: 'gp_runtime_not_started' });
 

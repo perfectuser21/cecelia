@@ -21,13 +21,13 @@ function identify(req) {
 }
 
 /** 退役观察窗：每次入口命中先落既有事件账；失败不打开退役写口。 */
-export async function observeGoldenPathLegacy(req, res, next) {
+export async function observeGoldenPathLegacy(req, res, next, auditOptions = undefined) {
   const match = identify(req);
   if (!match) return next();
   const [kind, , route] = match;
   const enabled = legacyReadEnabled();
   const allowed = kind === 'read' && enabled;
-  const audit = await recordGoldenPathHttp({ method: req.method, route, path_kind: kind, allowed });
+  const audit = await recordGoldenPathHttp({ method: req.method, route, path_kind: kind, allowed }, auditOptions);
   if (!allowed || !audit.persisted) return sendGoldenPathRetired(res, { write: kind === 'write' });
   return next();
 }

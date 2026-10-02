@@ -7,15 +7,20 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createGoldenPathAuditStore } from '../../lib/golden-path-audit-store.js';
 import { readGoldenPathT0 } from '../../lib/golden-path-window.js';
+import express from 'express';
+import request from 'supertest';
+import { observeGoldenPathLegacy } from '../../lib/golden-path-observation.js';
+import { recordGoldenPathHttp, setGoldenPathAudit } from '../../lib/golden-path-audit-runtime.js';
 import { goldenPathSource } from '../../lib/golden-path-audit-runtime.js';
 const options = process.env.TEST_DATABASE_URL ? { connectionString: process.env.TEST_DATABASE_URL } : DB_DEFAULTS;
 const database = process.env.TEST_DATABASE_URL ? new URL(process.env.TEST_DATABASE_URL).pathname.slice(1) : DB_DEFAULTS.database;
 if (!/_(scratch|test)$/.test(database)) throw new Error('scratch/test database required');
 const pool = new pg.Pool({ ...options, max: 4 });
-const windowId = randomUUID(), roots = [];
+const windowId = randomUUID(), roots = [], passiveIds = [];
 beforeAll(async () => { expect((await pool.query("SELECT to_regclass('cecelia_events') AS name")).rows[0].name).toBeTruthy(); });
 afterAll(async () => {
   await pool.query("DELETE FROM cecelia_events WHERE source='golden-path-retirement' AND payload->>'window_id'=$1", [windowId]);
+  if (passiveIds.length) await pool.query('DELETE FROM cecelia_events WHERE id=ANY($1::bigint[])', [passiveIds]);
   await pool.end(); for (const root of roots) rmSync(root, { recursive: true, force: true });
 });
 const payload = () => ({ audit_id: randomUUID(), window_id: windowId, lifecycle: 'heartbeat' });
@@ -151,4 +156,40 @@ it('发行后DB行event_type改变仍存在必须拒绝，不当成清理后arch
   const receipt = await createGoldenPathAuditStore(pool).issueT0({ root, windowId, source });
   await pool.query("UPDATE cecelia_events SET event_type='golden_path_legacy_access' WHERE id=$1", [receipt.id]);
   expect(await readGoldenPathT0({ pool, root, window: { window_id: windowId, t0_event_id: receipt.id, source } })).toBeNull();
+});
+
+it('隔离真实HTTP拒绝仍持久请求事件，无后台观察或正式窗口，未知caller不读取私密请求', async () => {
+  setGoldenPathAudit(null);
+  const seen = [], wrapped = { async connect() { const c = await pool.connect(); return {
+    async query(input) { const result = await c.query(input); if (/INSERT INTO cecelia_events/.test(input.text)) seen.push(...result.rows); return result; },
+    release(value) { c.release(value); },
+  }; } };
+  const app = express(); app.use(express.json());
+  app.use('/api/brain', (req, res, next) => observeGoldenPathLegacy(req, res, next, { pool: wrapped, env: { NODE_ENV: 'test' } }));
+  app.use((req, res) => res.status(200).end());
+  await request(app).post('/api/brain/golden_path/private-id/run-result?token=private-token')
+    .set('X-Actor', 'forged-caller').send({ run_id: 'private-run' }).expect(410);
+  passiveIds.push(...seen.map(row => row.id));
+  expect(seen).toHaveLength(1);
+  const row = (await pool.query('SELECT event_type,source,payload FROM cecelia_events WHERE id=$1', [seen[0].id])).rows[0];
+  expect(row.event_type).toBe('golden_path_legacy_access');
+  expect(row.payload).toMatchObject({ window_id: 'isolated-request-only', observation_mode: 'isolated_request_only',
+    route: '/golden_path/:id/run-result', path_kind: 'write', outcome: 'rejected', caller: { kind: 'unknown', identity_source: 'not_bound' } });
+  expect(JSON.stringify(row)).not.toMatch(/private-|forged-caller/);
+  expect(row.payload).not.toHaveProperty('instance_id'); expect(row.payload).not.toHaveProperty('source');
+});
+it('实际非隔离postgres连接即使env自报test仍拒绝，不信配置名', async () => {
+  setGoldenPathAudit(null);
+  const neutralOptions = { ...options };
+  if (options.connectionString) {
+    const address = new URL(options.connectionString); address.pathname = '/postgres';
+    neutralOptions.connectionString = address.href;
+  } else neutralOptions.database = 'postgres';
+  const neutral = new pg.Pool({ ...neutralOptions, max: 1 });
+  try {
+    expect((await neutral.query('SELECT current_database() AS name')).rows[0].name).toBe('postgres');
+    const result = await recordGoldenPathHttp({ method: 'POST', route: '/golden_path', path_kind: 'write', allowed: false },
+      { pool: neutral, env: { NODE_ENV: 'test', DB_NAME: 'cecelia_test' } });
+    expect(result).toEqual({ persisted: false, reason: 'gp_isolated_database_unproven' });
+  } finally { await neutral.end(); }
 });
