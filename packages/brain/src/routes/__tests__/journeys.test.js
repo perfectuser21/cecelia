@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockQuery = vi.fn();
-vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../../db.js', () => ({ default: { query: mockQuery, connect: async () => ({
+  query: async (sql, values) => /^(BEGIN|COMMIT|ROLLBACK|LOCK TABLE)/.test(sql)
+    ? { rows: [] } : sql.includes('AS organization FROM journeys')
+      ? { rows: [{ organization: { gaps: [] } }] } : mockQuery(sql, values),
+  release() {},
+}) } }));
 
 it('HTTP fixture 的监听地址与 Supertest 请求的 IPv4 地址一致', async () => {
   mockQuery.mockResolvedValueOnce({ rows: [] });
@@ -562,7 +567,9 @@ describe('PATCH /journeys/:id 承诺地图字段', () => {
   beforeEach(() => { mockQuery.mockReset(); });
 
   it('白名单更新 home/domain/trigger/endpoint', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'j1', home: 'biz' }] });
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'a0000000-0000-4000-8000-000000000001', parent_journey_id: null }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'a0000000-0000-4000-8000-000000000001', home: 'biz' }] });
 
     const { default: router } = await import('../journeys.js');
     const express = await import('express');
@@ -572,7 +579,7 @@ describe('PATCH /journeys/:id 承诺地图字段', () => {
 
     const request = await import('supertest');
     const res = await request.default(await bindFixture(app))
-      .patch('/api/brain/journeys/j1')
+      .patch('/api/brain/journeys/a0000000-0000-4000-8000-000000000001')
       .send({ home: 'biz', domain: '智能客服', trigger: 't', endpoint: 'e' });
     expect(res.status).toBe(200);
   });

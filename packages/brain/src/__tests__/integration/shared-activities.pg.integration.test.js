@@ -20,7 +20,7 @@ beforeEach(async () => {
   expect((await client.query('SELECT current_database() AS name')).rows[0].name).toBe(DB_DEFAULTS.database);
   schema = `shared_activity_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['enablers','enabler_calls','schema_version','journeys','workflows','journey_steps','steps','spans','ops_agents','ops_workflows','tasks','task_runs'])
+  for (const table of ['areas','enablers','enabler_calls','schema_version','journeys','workflows','journey_steps','steps','spans','ops_agents','ops_workflows','tasks','task_runs'])
     await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
   await client.query(`SET search_path TO ${schema}`);
   db = { query: client.query.bind(client), connect: async () => ({ query: client.query.bind(client), release() {} }) }; holder.db = db;
@@ -40,6 +40,7 @@ afterEach(async () => {
 async function migrate() {
   expect(existsSync(migration), '共享关系迁移必须存在').toBe(true);
   await client.query(readFileSync(migration,'utf8'));
+  await client.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql',import.meta.url),'utf8'));
 }
 async function snapshot() {
   return (await client.query(`SELECT jsonb_build_object('activities',(SELECT jsonb_agg(to_jsonb(a) ORDER BY id) FROM journey_steps a),

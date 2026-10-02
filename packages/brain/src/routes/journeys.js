@@ -5,74 +5,17 @@ import { rateLimit } from 'express-rate-limit';
 import pool from '../db.js';
 import { buildCascadeReport } from '../cascade-list.js';
 import { classifyJourneyCellAssertion } from '../lib/journey-cell-assertion.js';
+import { journeyRegistrationRouter } from './journey-registration.js';
 
 const router = Router();
 router.use(rateLimit({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false }));
 
-const VALID_JOURNEY_TYPES = ['user_facing', 'autonomous', 'dev_pipeline', 'agent_remote'];
 const VALID_THICKNESS     = ['thin', 'medium', 'thick', 'mature'];
 const VALID_PRIORITY      = ['P0', 'P1', 'P2', 'P3'];
-const VALID_HOME          = ['biz', 'pre', 'xcut', 'factory'];
 const VALID_SOFTNESS      = ['hard', 'soft'];
 const VALID_CELL_STATUS   = ['gray', 'red', 'pending', 'green'];
 
-// POST /api/brain/journeys
-router.post('/journeys', internalAuthOrLoopback, async (req, res) => {
-  try {
-    const { name, journey_type, description, maturity, status, e2e_test_path, area, steps,
-            home, trigger, endpoint } = req.body;
-    if (!name) return res.status(400).json({ error: 'name is required' });
-    if (!journey_type || !VALID_JOURNEY_TYPES.includes(journey_type)) {
-      return res.status(400).json({ error: `journey_type must be one of: ${VALID_JOURNEY_TYPES.join(',')}` });
-    }
-    if (home && !VALID_HOME.includes(home)) {
-      return res.status(400).json({ error: `home must be one of: ${VALID_HOME.join(',')}` });
-    }
-
-    // area name → area_id lookup
-    let areaId = null;
-    if (area) {
-      const { rows } = await pool.query('SELECT id FROM areas WHERE name=$1 LIMIT 1', [area]);
-      if (rows.length > 0) areaId = rows[0].id;
-    }
-
-    const { rows } = await pool.query(
-      `INSERT INTO journeys
-         (name, journey_type, description, maturity, status, e2e_test_path, area_id,
-          home, trigger, endpoint, notion_synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL)
-       RETURNING *`,
-      [
-        name,
-        journey_type,
-        description || null,
-        maturity || 'not_started',
-        status || 'active',
-        e2e_test_path || null,
-        areaId,
-        home || null,
-        trigger || null,
-        endpoint || null,
-      ]
-    );
-    const journey = rows[0];
-
-    if (Array.isArray(steps) && steps.length > 0) {
-      for (let i = 0; i < steps.length; i++) {
-        await pool.query(
-          `INSERT INTO journey_steps (journey_id, name, step_number, notion_synced_at)
-           VALUES ($1,$2,$3,NULL) ON CONFLICT (journey_id, step_number) DO NOTHING`,
-          [journey.id, steps[i], i + 1]
-        );
-      }
-    }
-
-    res.status(201).json(journey);
-  } catch (err) {
-    console.error('[journeys] POST /journeys error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
+router.use(journeyRegistrationRouter(pool));
 
 // GET /api/brain/journeys
 router.get('/journeys', async (req, res) => {
@@ -104,35 +47,6 @@ router.get('/journeys/:id', async (req, res) => {
     res.json(rows[0]);
   } catch (err) {
     console.error('[journeys] GET /journeys/:id error:', err.message);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// PATCH /api/brain/journeys/:id — 承诺地图字段（mapper 落账用）
-router.patch('/journeys/:id', internalAuthOrLoopback, async (req, res) => {
-  try {
-    const { home, domain, trigger, endpoint, description, maturity } = req.body;
-    if (home && !VALID_HOME.includes(home)) {
-      return res.status(400).json({ error: `home must be one of: ${VALID_HOME.join(',')}` });
-    }
-    const sets = [];
-    const vals = [];
-    let idx = 1;
-    if (home !== undefined)        { sets.push(`home=$${idx++}`);        vals.push(home); }
-    if (domain !== undefined)      { sets.push(`domain=$${idx++}`);      vals.push(domain); }
-    if (trigger !== undefined)     { sets.push(`trigger=$${idx++}`);     vals.push(trigger); }
-    if (endpoint !== undefined)    { sets.push(`endpoint=$${idx++}`);    vals.push(endpoint); }
-    if (description !== undefined) { sets.push(`description=$${idx++}`); vals.push(description); }
-    if (maturity !== undefined)    { sets.push(`maturity=$${idx++}`);    vals.push(maturity); }
-    if (!sets.length) return res.status(400).json({ error: 'no fields to update' });
-    sets.push(`updated_at=NOW()`);
-    vals.push(req.params.id);
-    const { rows } = await pool.query(
-      `UPDATE journeys SET ${sets.join(',')} WHERE id=$${idx} RETURNING *`, vals);
-    if (!rows.length) return res.status(404).json({ error: 'not found' });
-    res.json(rows[0]);
-  } catch (err) {
-    console.error('[journeys] PATCH /journeys/:id error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
