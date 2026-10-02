@@ -13,8 +13,10 @@ export async function validateImplementationBindings(contract,readBinding) {
     const content=await readBinding(binding);
     if(typeof content!=='string'||!content.trim()) throw Error('实现绑定引用不存在或为空');
     const contentSha=createHash('sha256').update(content).digest('hex');
+    const digest=`sha256:${contentSha}`;
+    if(binding.digest!==undefined&&binding.digest!==digest) throw Error('实现绑定digest不匹配');
     if(binding.sha256!==undefined&&binding.sha256!==contentSha) throw Error('实现绑定digest不匹配');
-    const result={...binding,...location,raw:binding,content_sha256:contentSha,validation_scope:'reference_only',status:'verified'};
+    const result={...binding,...location,raw:binding,digest,content_sha256:contentSha,validation_scope:'reference_only',status:'verified'};
     if(binding.kind==='skill') {
       const frontmatter=content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
       const metadata=frontmatter?yaml.load(frontmatter[1]):null;
