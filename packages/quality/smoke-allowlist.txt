@@ -355,6 +355,7 @@ notion-mirror-labels-smoke.sh
 notion-map-value-streams-smoke.sh
 qiumi-model-family-smoke.sh
 phone-registry-smoke.sh
+phone-dispatch-identity-smoke.sh
 workflow-run-lost-deadline-smoke.sh
 commander-watchdog-smoke.sh
 brain-image-scripts-smoke.sh

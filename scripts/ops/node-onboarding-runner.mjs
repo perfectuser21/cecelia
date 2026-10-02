@@ -1,10 +1,56 @@
 import { spawn } from 'node:child_process';
+import { constants } from 'node:fs';
+import { lstat, open, realpath } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// 只读取已有私有缓存中的单一赋值；不执行 shell，不修改父进程环境。
+async function opEnvironment(env) {
+  if (env.OP_SERVICE_ACCOUNT_TOKEN?.trim()) return env;
+  const unsafe = () => new Error('1Password 凭据缓存不安全或格式无效');
+  let file;
+  try {
+    const directory = join(await realpath(homedir()), '.credentials');
+    let parent;
+    try { parent = await lstat(directory); } catch (error) { if (error.code === 'ENOENT') return env; throw error; }
+    if (!parent.isDirectory() || parent.uid !== process.getuid() || (parent.mode & 0o7777) !== 0o700) throw unsafe();
+    try { file = await open(join(directory, '1password.env'), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+    catch (error) { if (error.code === 'ENOENT') return env; throw error; }
+    const before = await file.stat();
+    if (!before.isFile() || before.uid !== process.getuid() || (before.mode & 0o7777) !== 0o600
+      || before.nlink !== 1 || before.size < 1 || before.size > 16384) throw unsafe();
+    const buffer = Buffer.alloc(16385);
+    let source;
+    try {
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+      const after = await file.stat(); const currentParent = await lstat(directory);
+      if (bytesRead !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs
+        || after.mode !== before.mode || after.uid !== before.uid || after.nlink !== 1
+        || currentParent.dev !== parent.dev || currentParent.ino !== parent.ino || currentParent.mode !== parent.mode) throw unsafe();
+      source = buffer.toString('utf8', 0, bytesRead);
+    } finally { buffer.fill(0); }
+    let token;
+    for (const raw of source.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith('#')) continue;
+      const match = /^(?:export\s+)?OP_SERVICE_ACCOUNT_TOKEN\s*=\s*(?:([A-Za-z0-9_./+=-]+)|'([A-Za-z0-9_./+=-]+)'|"([A-Za-z0-9_./+=-]+)")$/.exec(line);
+      if (!match || token !== undefined) throw unsafe();
+      token = match[1] || match[2] || match[3];
+    }
+    if (!token) throw unsafe();
+    return { ...env, OP_SERVICE_ACCOUNT_TOKEN: token };
+  } catch { throw unsafe(); }
+  finally { if (file) await file.close(); }
+}
+
 // 独立进程组可在超时/取消时同时清理 SSH 和其子进程，stderr 永不进入回执。
-export function runCommand(command, args, { input = '', timeoutMs = 15000, signal } = {}) {
+export async function runCommand(command, args, { input = '', timeoutMs = 15000, signal } = {}) {
+  let env = { ...process.env, LC_ALL: 'C' };
+  if (command === 'op') env = await opEnvironment(env);
+  if (signal?.aborted) throw new Error('命令执行失败');
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { detached: true, stdio: ['pipe', 'pipe', 'ignore'], shell: false, env: { ...process.env, LC_ALL: 'C' } });
+    const child = spawn(command, args, { detached: true, stdio: ['pipe', 'pipe', 'ignore'], shell: false, env });
     let stdout = ''; let finished = false;
     const kill = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} };
     const finish = (error, code) => {

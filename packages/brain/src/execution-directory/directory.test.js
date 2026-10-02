@@ -37,3 +37,9 @@ it('并发refresh依次发布，不让早发晚到请求覆盖后续撤销；nul
  await Promise.resolve();const next=rows();next[0].grants=[];const second=d.refresh({pool:db(next)});release();await Promise.all([first,second]);
  expect(d.targets()).toHaveLength(10);await d.withSnapshot(null,async()=>expect(d.current()).toBeNull());
 });
+it('手机目录使用独立批准SSH hub，不借worker HTTP endpoint',async()=>{
+ const d=createExecutionDirectory(),value=rows(),n=value[0];n.endpoints={phone_ssh:{host:'xian-m1',port:22,user:'administrator',hub:{host:'us-vps',port:22,user:'administrator'}}};
+ n.grants=[{surface:'phone_ssh',provider:'adb',account_id:'test',profile_id:'adb_get_state',state:'active',repo_scope:[]}];
+ await d.refresh({pool:db(value)});const req={machineId:n.canonical_id,surface:'phone_ssh',provider:'adb',account:'test',profileId:'adb_get_state'};
+ expect(d.matches(req)).not.toBeNull();n.endpoints={worker:'http://worker:5231'};await d.refresh({pool:db(value)});expect(d.matches(req)).toBeNull();
+});

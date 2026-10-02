@@ -69,3 +69,15 @@ test('独立rollback预约回执丢失，同UUID及shell新UUID均复用原目�
  x.state.current=x.state.health=3;await x.ledger.finish(first.deployment_id,first.outcome);
  assert.equal((await x.store.read('ledger.json')).successes[0].image_id,image(3));
 });
+for (const duringHealth of [false, true]) {
+ test(`sidecar固定容器在finish${duringHealth?'健康中':'开始前'}被同镜像容器替换，仍拒绝落成功回执`,async t=>{
+  const x=await setup(t);await x.ledger.begin(x.request);
+  let id=duringHealth?'a'.repeat(64):'b'.repeat(64);
+  const ledger=createDeploymentLedger({store:x.store,expectedContainerId:'a'.repeat(64),
+   docker:{snapshot:async()=>({containers:[{id,name:'/cecelia-node-brain',running:true,image_id:image(2)}],images:[{id:image(2),tags:['cecelia-brain:1.0.2'],git_sha:sha(2)}]})},
+   health:async()=>{id='b'.repeat(64);return {status:'healthy',version:'1.0.2',git_sha:sha(2)};}});
+  await assert.rejects(ledger.finish(x.request.deployment_id,'success'),/DEPLOY_CONTAINER_MISMATCH/);
+  assert.ok((await x.store.read('ledger.json')).pending);
+  assert.equal((await x.store.read(`deployment-${x.request.deployment_id}.json`)).receipt,null);
+ });
+}

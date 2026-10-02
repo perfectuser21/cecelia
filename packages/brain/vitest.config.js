@@ -116,6 +116,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/timestamp-utc-roundtrip.pg.integration.test.js',
   'src/__tests__/integration/project-compare-week-timezone.pg.integration.test.js',
   'src/__tests__/integration/ops-learnings-date-filter-timezone.pg.integration.test.js',
+  'src/phone-dispatch/store.test.js',
 ];
 
 export default defineConfig({
