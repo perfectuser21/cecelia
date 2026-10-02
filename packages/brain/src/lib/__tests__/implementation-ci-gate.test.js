@@ -2,7 +2,8 @@ import { afterEach,expect,it } from 'vitest';
 import { mkdtempSync,writeFileSync,mkdirSync,rmSync,readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { execFileSync,spawnSync } from 'node:child_process';
 import { runImplementationGate } from '../../../../../scripts/ci/implementation-gate.mjs';
 
 const roots=[];
@@ -35,9 +36,20 @@ it.each(['unknown','gap','truncated','empty-tests','foreign-test','wrong-head','
   if(reason==='missing-diff')report.source.changed_files=[];
   await expect(runImplementationGate({repoRoot:root,report})).rejects.toThrow();
 });
-it('本地测试已改、已删除或链接仓外均不执行',async()=>{
+it('本地测试内容已改不能冒充提交时的测试',async()=>{
   const {root,report}=fixture();writeFileSync(join(root,'scripts/smoke/lock.sh'),'exit 0');
   await expect(runImplementationGate({repoRoot:root,report})).rejects.toThrow(/SOURCE_STATE|DIRTY/);
+});
+it('真实CLI输出可回读收据，测试非零时进程非零退出',()=>{
+  const {root,report,git}=fixture();
+  const cli=fileURLToPath(new URL('../../../../../scripts/ci/implementation-gate.mjs',import.meta.url));
+  const input=join(root,'report.json'),output=join(root,'receipt.json');
+  writeFileSync(input,JSON.stringify(report));
+  const run=()=>spawnSync(process.execPath,[cli,'--repo-root',root,'--report',input,'--output',output],{encoding:'utf8'});
+  expect(run().status).toBe(0);expect(JSON.parse(readFileSync(output,'utf8')).verdict).toBe('PASS');
+  writeFileSync(join(root,'scripts/smoke/lock.sh'),'exit 9\n');git('add','scripts/smoke/lock.sh');git('commit','-qm','fail-test');
+  report.source.head_revision=git('rev-parse','HEAD');report.head.revision=report.source.head_revision;report.source.changed_files.push({path:'scripts/smoke/lock.sh'});
+  writeFileSync(input,JSON.stringify(report));expect(run().status).toBe(1);expect(JSON.parse(readFileSync(output,'utf8')).assertions[0].exit_code).toBe(9);
 });
 it('真测试非零退出保留FAIL收据而不是映射成功冒充验证成功',async()=>{
   const {root,report,git}=fixture();writeFileSync(join(root,'scripts/smoke/lock.sh'),'exit 7\n');git('add','.');git('commit','-qm','fail-test');
