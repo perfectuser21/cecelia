@@ -40,6 +40,34 @@ class BootstrapTests(unittest.TestCase):
    return json.dumps({'installed':True,'execution':False,'revision':'c'*40,'config_digest':'d'*64})
   raise AssertionError((command,args))
  def call(self):return bootstrap.bootstrap(self.options,self.deps)
+ def prepare_upgrade(self):
+  self.account=True;self.group=True
+  self.options['execution_key_file']='/staging/execution.key';self.put('/staging/execution.key',b'd'*64)
+  for name in bootstrap.SCRIPT_FILES:self.put('/staging/src/'+name,b'fixture-module',0o644)
+  self.options['upgrade_file']='/staging/upgrade.json';self.put('/staging/upgrade.json',json.dumps({'revision':'a'*40}).encode())
+  original=self.fake_run;self.verifies=0
+  def run(command,args,**kwargs):
+   if command.endswith('systemctl'):return 'active\n'
+   if command.endswith('/node') and args[-1]=='--verify-only':
+    self.verifies+=1;self.calls.append((command,args,kwargs));return json.dumps({'verified':True,'execution':False,'revision':'a'*40,'config_digest':'d'*64})
+   return original(command,args,**kwargs)
+  self.deps['run']=run
+ def test_bound_active_upgrade_runs_full_readonly_verifier_before_install(self):
+  self.prepare_upgrade();result=self.call();self.assertTrue(result['installed']);self.assertEqual(self.verifies,1)
+  args=[a for c,a,k in self.calls if c.endswith('/node') and a[0].endswith('linux-pool-installer.cjs')]
+  self.assertEqual(len(args),2);self.assertEqual(args[0][-1],'--verify-only');self.assertIn('--upgrade-file',args[1])
+  self.assertFalse(any(c.endswith(('useradd','groupadd')) for c,a,k in self.calls))
+ def test_readonly_upgrade_verification_never_installs(self):
+  self.prepare_upgrade();self.options['verify_only']=True;result=self.call();self.assertTrue(result['verified'])
+  self.assertEqual(self.verifies,1);self.assertFalse(any(c.endswith('/node') and a[0].endswith('linux-pool-installer.cjs') and a[-1]!='--verify-only' for c,a,k in self.calls))
+ def test_bound_upgrade_verification_failure_prevents_install_and_account_mutation(self):
+  self.prepare_upgrade();original=self.deps['run']
+  def run(command,args,**kwargs):
+   if command.endswith('/node') and args[-1]=='--verify-only':raise bootstrap.CommandFailure(1,'','unconfirmed')
+   return original(command,args,**kwargs)
+  self.deps['run']=run
+  with self.assertRaisesRegex(bootstrap.BootstrapError,'linux_pool_bootstrap_upgrade_unconfirmed'):self.call()
+  self.assertFalse(any(c.endswith(('useradd','groupadd')) for c,a,k in self.calls))
  def test_missing_account_and_old_host_node_need_no_manual_setup(self):
   result=self.call();self.assertTrue(result['installed']);self.assertFalse(result['execution']);self.assertTrue(self.account);self.assertTrue(self.group)
   self.assertFalse(any(command in ['node','/usr/bin/node','npm'] for command,_,_ in self.calls));self.assertFalse(any('docker' in args for command,args,_ in self.calls if command.endswith('useradd')))
