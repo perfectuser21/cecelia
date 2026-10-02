@@ -231,5 +231,9 @@ export function createOnboardingService({ pool, createTask = taskCreator, config
 
 export async function runNodeOnboardingJob(pool) {
   const service = createOnboardingService({ pool });
-  return { ...await service.reconcile(), ...await service.scheduleProbes(), ...await service.advanceExecution() };
+  return { ...await service.reconcile(), ...await service.scheduleProbes() };
+}
+
+export function runNodeExecutionOnboardingJob(pool) {
+  return createOnboardingService({ pool }).advanceExecution();
 }
