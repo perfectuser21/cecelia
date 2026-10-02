@@ -8,6 +8,14 @@ it('仅持久版本导出不可变HTTP身份，caller复制品不能取得信任
  expect(Object.isFrozen(b.physical)).toBe(true);expect(calls[0].args).toEqual([n.id]);expect(calls[0].sql).not.toContain('current_version_id');
  n.endpoints.phone_hub.http_endpoint='http://evil:3459/';expect(b.http_endpoint).toBe(endpoint().http_endpoint);
 });
+it('C1历史lease解析只接受dispatch ID，不接受caller快照/URL；节点brand不是leasebrand',async()=>{
+ const {resolvePhoneHttpLeaseBinding,isPhoneHttpLeaseBinding}=await import('./http-binding.js');
+ let queries=0;const db={query:async()=>{queries++;return {rows:[]};}};
+ for(const input of [{dispatchId:'bad'},{dispatchId:node().id,httpBinding:endpoint()},{dispatchId:node().id,url:endpoint().http_endpoint}])await expect(resolvePhoneHttpLeaseBinding(db,input)).rejects.toThrow('phone_http_lease_binding_invalid');
+ expect(queries).toBe(0);expect(isPhoneHttpLeaseBinding(endpoint())).toBe(false);
+ const n=node(),b=await resolvePhoneHubBinding({query:async()=>({rows:[n]})},{executionVersionId:n.id,machineId:n.canonical_id});
+ expect(isPhoneHttpLeaseBinding(b)).toBe(false);
+});
 it('缺boot/hash/物理身份、多余键和非固定HTTP入口拒绝',()=>{
  expect(phoneHubEndpointValid(endpoint(),'fixture-machine')).toBe(true);
  for(const key of Object.keys(endpoint())){const e=endpoint();delete e[key];expect(phoneHubEndpointValid(e,'fixture-machine')).toBe(false);}

@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto';
-import {readFileSync} from 'node:fs';
+import {existsSync,readFileSync} from 'node:fs';
 import pg from 'pg';
 import {beforeAll,beforeEach,afterAll,it,expect} from 'vitest';
 import {DB_DEFAULTS} from '../db-config.js';
@@ -34,6 +34,7 @@ beforeAll(async()=>{
  CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);`);
  for(const [,id,name]of LEGACY_BINDINGS)await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')",[id,name]);
  for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','490_phone_registry','501_capacity_reservations','503_execution_directory','504_app_server_generations','507_phone_dispatches'])await pool.query(readFileSync(new URL(`../../migrations/${name}.sql`,import.meta.url),'utf8'));
+ const httpLeaseMigration=new URL('../../migrations/510_phone_http_leases.sql',import.meta.url);if(existsSync(httpLeaseMigration))await pool.query(readFileSync(httpLeaseMigration,'utf8'));
  await importLegacyPolicy({pool,env:{FLEET_WORKER_XIAN_MAC_M1_URL:'http://m1:5231'}});
  const old=(await pool.query('SELECT * FROM execution_node_versions WHERE id=(SELECT current_version_id FROM execution_nodes WHERE canonical_id=$1)',[machine])).rows[0];
  const version=randomUUID();await pool.query(`INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,platform,endpoints,profile,config_hash,state) VALUES($1,$2,2,'legacy-v1',$3,'darwin',$4,$5,$6,'active')`,[version,old.machine_registry_id,old.worker_id,{phone_ssh:{host,port:22,user:'administrator',hub:{host:'us-vps',port:22,user:'administrator'}}},old.profile,old.config_hash]);
@@ -41,6 +42,72 @@ beforeAll(async()=>{
  expect((await pool.query("SELECT * FROM execution_grants WHERE surface='phone_ssh'")).rows).toHaveLength(0);
  await pool.query("INSERT INTO phone_registry(serial,nickname,host,profile,douyin_accounts) VALUES($1,'test',$2,$3,$4::jsonb)",[serial,host,profile,JSON.stringify([{id:account,current:true}])]);
  const {createPhoneDispatchStore}=await import('./store.js');store=createPhoneDispatchStore({pool,afterTask:async()=>{}});
+});
+
+async function httpVersion(){
+ const original=(await pool.query('SELECT v.* FROM execution_nodes n JOIN execution_node_versions v ON n.current_version_id=v.id WHERE n.canonical_id=$1',[machine])).rows[0];
+ const revision=Number((await pool.query('SELECT max(revision) AS n FROM execution_node_versions WHERE machine_registry_id=$1',[original.machine_registry_id])).rows[0].n)+1;
+ const binding={http_endpoint:'http://127.0.0.1:3459/',hub_id:'fixture-hub',hub_boot_id:'fixture-hub-boot',hub_config_digest:'a'.repeat(64),hub_build_digest:'b'.repeat(64),physical:{machine_id:machine,worker_id:original.worker_id,physical_boot_id:'fixture-phone-boot',config_digest:'c'.repeat(64),build_digest:'d'.repeat(64),action_digest:'e'.repeat(64)}};
+ const id=randomUUID();await pool.query(`INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,worker_boot_id,platform,endpoints,profile,config_hash,state)
+  VALUES($1,$2,$3,'legacy-v1',$4,$5,'darwin',$6,$7,$8,'active')`,[id,original.machine_registry_id,revision,original.worker_id,binding.physical.physical_boot_id,{...original.endpoints,phone_hub:binding},original.profile,original.config_hash]);
+ await pool.query('UPDATE execution_nodes SET current_version_id=$1 WHERE canonical_id=$2',[id,machine]);
+ await pool.query("INSERT INTO execution_grants(node_version_id,surface,provider,account_id,profile_id,provenance,state) VALUES($1,'phone_ssh','adb',$2,'adb_get_state','isolated_c1_test','active')",[id,account]);
+ await directory.refresh({pool});return {id,binding};
+}
+async function httpInput(){const {remoteIdentity,...value}=await input();return value;}
+it('C1真实旧507租约维持SSH/null，不补造HTTP身份',async()=>{
+ const {dispatch:r}=await store.reserve(await input());
+ expect(r.transport_mode).toBe('ssh');expect(r.http_binding).toBe(null);
+ const {resolvePhoneHttpLeaseBinding}=await import('./http-binding.js');
+ await expect(resolvePhoneHttpLeaseBinding(pool,{dispatchId:r.id})).rejects.toThrow('phone_http_lease_binding_unavailable');
+ expect((await store.get(r.id)).http_binding).toBe(null);
+});
+it('C1真正DB版本完整快照持久化；worker/boot来自版本，不取caller',async()=>{
+ const v=await httpVersion(),request=await httpInput(),{dispatch:r}=await store.reserveHttp(request);
+ expect(r.transport_mode).toBe('http');expect(r.http_binding).toEqual({execution_version_id:v.id,...v.binding});
+ expect(r.worker_id).toBe(v.binding.physical.worker_id);expect(r.worker_boot_id).toBe(v.binding.physical.physical_boot_id);
+ expect((await pool.query('SELECT http_binding FROM phone_dispatches WHERE id=$1',[r.id])).rows[0].http_binding).toEqual(r.http_binding);
+ const {resolvePhoneHttpLeaseBinding,isPhoneHttpLeaseBinding,isPhoneHubBinding}=await import('./http-binding.js');
+ const b=await resolvePhoneHttpLeaseBinding(pool,{dispatchId:r.id});expect(isPhoneHttpLeaseBinding(b)).toBe(true);expect(isPhoneHubBinding(b)).toBe(true);
+ expect(isPhoneHttpLeaseBinding({...b})).toBe(false);expect(isPhoneHubBinding({...b})).toBe(false);expect(Object.isFrozen(b.physical)).toBe(true);
+ expect(b).toMatchObject({dispatch_id:r.id,task_id:r.task_id,lease_token:r.lease_token,execution_grant_id:r.execution_grant_id,...r.http_binding});
+});
+it('C1历史lease在current换版与grant撤销/过期后仍读原快照，未知不另起',async()=>{
+ const original=await httpVersion(),request=await httpInput(),{dispatch:r}=await store.reserveHttp(request);
+ await store.recordUnknown(r.id,'isolated delivery unknown');await httpVersion();
+ await pool.query("UPDATE execution_grants SET state='revoked',expires_at=now()-interval '1 second' WHERE id=$1",[r.execution_grant_id]);
+ const {resolvePhoneHttpLeaseBinding}=await import('./http-binding.js');
+ const b=await resolvePhoneHttpLeaseBinding(pool,{dispatchId:r.id});expect(b.execution_version_id).toBe(original.id);expect(b).toMatchObject(r.http_binding);
+ expect((await store.reserveHttp(request)).dispatch.id).toBe(r.id);expect((await store.reserveHttp(request)).outcome).toBe('unknown');
+ expect((await pool.query('SELECT status FROM capacity_reservations WHERE id=$1',[r.reservation_id])).rows[0].status).toBe('cleanup_pending');
+});
+it('C1 HTTP快照及mode不可改；伪造/缺字段/错历史版本的INSERT被DB拒绝',async()=>{
+ await httpVersion();const {dispatch:r}=await store.reserveHttp(await httpInput());
+ for(const sql of ["http_binding='{}'","http_binding=NULL","transport_mode='ssh'"])await expect(pool.query(`UPDATE phone_dispatches SET ${sql} WHERE id=$1`,[r.id])).rejects.toThrow('phone_identity_immutable');
+ const candidates=[{},null,{...r.http_binding,execution_version_id:randomUUID()},{...r.http_binding,http_endpoint:'http://evil:3459/'},{...r.http_binding,available:1}];
+ for(const key of Object.keys(r.http_binding)){const b=structuredClone(r.http_binding);delete b[key];candidates.push(b);}
+ for(const key of Object.keys(r.http_binding.physical)){const b=structuredClone(r.http_binding);delete b.physical[key];candidates.push(b);}
+ for(const http_binding of candidates)await expect(pool.query('INSERT INTO phone_dispatches SELECT (jsonb_populate_record(NULL::phone_dispatches,$1::jsonb)).*',[JSON.stringify({...r,http_binding})])).rejects.toThrow('phone_http_lease_identity_mismatch');
+});
+it('C1缺目录HTTP身份／callerURL／克隆binding／错worker不能借默认许可',async()=>{
+ await expect(store.reserveHttp(await httpInput())).rejects.toThrow('phone_http_binding_unavailable');
+ const v=await httpVersion(),request=await httpInput();
+ for(const patch of [{httpBinding:{execution_version_id:v.id,...v.binding}},{http_endpoint:'http://evil:3459/'},{executionVersionId:randomUUID()},{remoteIdentity:{worker_id:'caller',worker_boot_id:'caller'}}])await expect(store.reserveHttp({...request,...patch})).rejects.toThrow();
+ expect((await pool.query('SELECT * FROM phone_dispatches')).rows).toHaveLength(0);
+});
+it('C1 HTTP执行仍默认拒绝，旧receipt不能finish，DB不能进入launching',async()=>{
+ await httpVersion();const {dispatch:r}=await store.reserveHttp(await httpInput());let calls=0;
+ await expect(store.withLaunch(r.id,()=>{calls++;})).rejects.toThrow('phone_http_execution_not_connected');
+ await expect(store.observe(r.id,receipt(r,{status:'running'}))).rejects.toThrow('phone_http_execution_not_connected');
+ await expect(store.finish(r.id,receipt(r))).rejects.toThrow('phone_http_execution_not_connected');
+ await expect(pool.query("UPDATE phone_dispatches SET state='launching' WHERE id=$1",[r.id])).rejects.toThrow('phone_http_execution_not_connected');
+ expect(calls).toBe(0);expect((await store.get(r.id)).state).toBe('reserved');
+});
+it('C1同task跨mode拒绝，HTTP唯一预约仍遵守整机shared占位',async()=>{
+ await httpVersion();const request=await httpInput();
+ const [a,b]=await Promise.all([store.reserveHttp(request),store.reserveHttp(request)]);expect(a.dispatch.id).toBe(b.dispatch.id);
+ await expect(store.reserve({...request,remoteIdentity:{worker_id:'old',worker_boot_id:'old'}})).rejects.toThrow('phone_transport_conflict');
+ expect((await store.reserveHttp(await httpInput())).outcome).toBe('wait');
 });
 beforeEach(async()=>{
  await pool.query('TRUNCATE phone_dispatches,capacity_reservations,tasks,harness_attempt_cleanup_outbox,harness_attempts,initiative_runs CASCADE');
@@ -137,8 +204,9 @@ it('reserved 未launch不接受completed；unknown retry明确返回未知且不
 it('仅worker HTTP endpoint不能取得手机授权，缺hub同样拒绝',async()=>{
  const original=(await pool.query('SELECT v.* FROM execution_node_versions v JOIN execution_nodes n ON n.current_version_id=v.id WHERE n.canonical_id=$1',[machine])).rows[0];
  try{
-  for(const [index,endpoints] of [{worker:'http://m1:5231'},{phone_ssh:{host,port:22,user:'administrator'}}].entries()){
-   const version=randomUUID();await pool.query("INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,platform,endpoints,profile,config_hash,state) VALUES($1,$2,$3,'legacy-v1',$4,'darwin',$5,$6,$7,'active')",[version,original.machine_registry_id,index+3,original.worker_id,endpoints,original.profile,original.config_hash]);
+  for(const endpoints of [{worker:'http://m1:5231'},{phone_ssh:{host,port:22,user:'administrator'}}]){
+   const revision=Number((await pool.query('SELECT max(revision) AS n FROM execution_node_versions WHERE machine_registry_id=$1',[original.machine_registry_id])).rows[0].n)+1;
+   const version=randomUUID();await pool.query("INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,platform,endpoints,profile,config_hash,state) VALUES($1,$2,$3,'legacy-v1',$4,'darwin',$5,$6,$7,'active')",[version,original.machine_registry_id,revision,original.worker_id,endpoints,original.profile,original.config_hash]);
    await pool.query('UPDATE execution_nodes SET current_version_id=$1 WHERE canonical_id=$2',[version,machine]);
    await pool.query("INSERT INTO execution_grants(node_version_id,surface,provider,account_id,profile_id,provenance,state) VALUES($1,'phone_ssh','adb',$2,'adb_get_state','test','active')",[version,account]);await directory.refresh({pool});
    await expect(store.reserve(await input())).rejects.toThrow('execution_version_stale');
