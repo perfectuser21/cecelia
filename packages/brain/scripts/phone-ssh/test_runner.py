@@ -333,6 +333,19 @@ class PhoneRunnerTest(unittest.TestCase):
         self.assertEqual(self.finish()['status'], 'failed')
         self.assertEqual(self.launches(), 0)
 
+    def test_drain_before_child_exec_revokes_handshake_and_reaps_child(self):
+        r = self.setup_runner()
+        def drain(stage):
+            if stage == 'after_child_identity':
+                (self.root / 'drain').write_text('maintenance')
+        self.config.fault = drain
+        r.start(self.identity)
+        receipt = self.finish()
+        self.assertEqual(receipt['status'], 'failed')
+        self.assertEqual(self.launches(), 0)
+        state = r.journal.read(self.identity['dispatch_id'])
+        self.assertTrue(load().process_absent(state['child_identity']))
+
     def test_pending_intent_is_counted_and_broken_journal_denies_maintenance(self):
         r = self.setup_runner(fault=lambda stage: (_ for _ in ()).throw(RuntimeError('fault')))
         with self.assertRaises(RuntimeError):
