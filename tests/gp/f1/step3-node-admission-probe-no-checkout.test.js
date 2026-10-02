@@ -59,6 +59,7 @@ describe('F1 step3 · 跑场机节点准入探针不做全量检出', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       repoRoot,

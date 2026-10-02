@@ -18,6 +18,7 @@ async function sample(diskResponses = {}, diskPaths = ['/repo', '/worker', '/mou
     return { stdout: '' };
   });
   const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
     env, repoRoot: '/repo', diskPaths, execFileFn,
     fetchFn: async () => ({ ok: true }),
     statFn: async () => { throw new Error('absent'); },
