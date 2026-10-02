@@ -10,11 +10,17 @@ export async function resolveImplementationRegistryRepo(db,q) {
   return rows[0].repo;
 }
 export async function loadImplementationRevisionContext(db,q,revision,registry,projectionDigest,gaps) {
-  const rows=(await db.query(`SELECT p.id projection_run_id,p.projection_digest,p.manifest_digest projection_manifest_digest,p.fact_revisions,
+  const candidates=(await db.query(`SELECT p.id projection_run_id,p.projection_digest,p.manifest_digest projection_manifest_digest,p.fact_revisions,
     m.id manifest_version_id,m.digest manifest_digest,m.manifest
     FROM map_projection_runs p JOIN map_manifest_versions m ON m.id=p.manifest_version_id
     WHERE p.scope_key=$1 AND m.scope_key=$1 AND p.status IN ('active','superseded') AND p.fact_revisions->>$2=$3
-      AND ($4::text IS NULL OR p.projection_digest=$4) ORDER BY p.created_at DESC,p.id`,[q.scope,registry,revision,projectionDigest||null])).rows.filter(r=>manifestMatchesImplementationSource(r.manifest,q.repo,revision));
+      AND ($4::text IS NULL OR p.projection_digest=$4) ORDER BY p.created_at DESC,p.id`,[q.scope,registry,revision,projectionDigest||null])).rows;
+  const rows=candidates.filter(r=>manifestMatchesImplementationSource(r.manifest,q.repo,revision));
+  if(!rows.length)for(const c of candidates)for(const [field,type] of [['capabilities','capability'],['value_streams','value_stream']])for(const node of c.manifest[field]||[]){
+    const b=node.brain_binding;
+    if(!b)gaps.push({code:`${type}_mapping_missing`,node_key:node.key,revision});
+    else if(b.source_repo!==q.repo||b.source_revision!==revision)gaps.push({code:`${type}_source_mismatch`,node_key:node.key,revision});
+  }
   if(!rows.length){gaps.push({code:'projection_snapshot_missing',revision});return null;}
   if(new Set(rows.map(row=>`${row.manifest_digest}:${row.projection_digest}`)).size>1){gaps.push({code:'projection_snapshot_ambiguous',revision});return null;}
   const context=rows[0],mapped=new Map();
