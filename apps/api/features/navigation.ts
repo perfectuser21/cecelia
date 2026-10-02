@@ -14,30 +14,7 @@ export function buildCoreNavigation(): NavGroup[] {
   return [{
     title: '',
     items: [
-      entry('/workbench/inbox', '交代事情', 'Inbox', {
-        children: [
-          entry('/workbench/inbox', '交办', 'Inbox'),
-          entry('/cecelia/chat', '与 Cecelia 对话', 'MessageCircle'),
-        ],
-      }),
-      entry('/machines', '机器与资源', 'Server', {
-        children: [
-          entry('/machines', '设备清单', 'Monitor'),
-          entry('/system/infra', '资源监控', 'Server'),
-          entry('/live-monitor', '运行监控', 'Activity'),
-          entry('/system/claude', '会话管理', 'MessagesSquare'),
-        ],
-      }),
-      entry('/brain-models', 'AI 管理', 'Brain', {
-        children: [
-          entry('/brain-models', '模型方案', 'Cpu'),
-          entry('/account-usage', 'AI 额度', 'Gauge'),
-          entry('/system/team', '员工配置', 'Users'),
-          entry('/knowledge/memory', '记忆管理', 'Brain'),
-          entry('/settings', '系统设置', 'Settings'),
-        ],
-      }),
-      entry('/system', '诊断与复盘', 'Activity', {
+      entry('/system', '运行与诊断', 'Activity', {
         children: [
           entry('/system', '运行健康', 'Activity', { exact: true }),
           entry('/system/cecelia', '执行概览', 'Bot'),
@@ -52,6 +29,23 @@ export function buildCoreNavigation(): NavGroup[] {
           entry('/knowledge/dev-log', '开发日志', 'FileText'),
           entry('/cecelia/growth', '成长档案', 'Sprout'),
           entry('/cecelia/evolution', '进化复盘', 'TrendingUp'),
+        ],
+      }),
+      entry('/brain-models', 'AI 管理', 'Brain', {
+        children: [
+          entry('/brain-models', '模型方案', 'Cpu'),
+          entry('/account-usage', 'AI 额度', 'Gauge'),
+          entry('/system/team', '员工配置', 'Users'),
+          entry('/knowledge/memory', '记忆管理', 'Brain'),
+          entry('/settings', '系统设置', 'Settings'),
+        ],
+      }),
+      entry('/machines', '机器资源', 'Server', {
+        children: [
+          entry('/machines', '设备清单', 'Monitor'),
+          entry('/system/infra', '资源监控', 'Server'),
+          entry('/live-monitor', '运行监控', 'Activity'),
+          entry('/system/claude', '会话管理', 'MessagesSquare'),
         ],
       }),
     ],
