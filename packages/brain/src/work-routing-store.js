@@ -1,3 +1,4 @@
+import {assertPhoneTaskAuthority} from './phone-dispatch/task-authority.js';
 import {assertAppServerAuthority} from './app-server/task-authority.js';
 import { assertPreviewCacheAuthority } from './preview-cache-authority.js';
 import { createHash } from 'node:crypto';
@@ -187,6 +188,7 @@ export function stripReanchorEvidence(evidence) {
 }
 
 export async function createRoutedTask(db, request, repositoryFacts = null, options = {}) {
+  assertPhoneTaskAuthority(request, options);
   assertPreviewCacheAuthority(request, options);
   assertAppServerAuthority(request, options);
   const ownsTransaction = options.transaction !== 'existing';

@@ -1,3 +1,4 @@
+import {assertPhoneTaskAuthority} from './phone-dispatch/task-authority.js';
 import {assertAppServerAuthority} from './app-server/task-authority.js';
 import { assertPreviewCacheAuthority } from './preview-cache-authority.js';
 export const CHANGE_KINDS = Object.freeze(['new_capability', 'capability_change', 'bugfix', 'parameter_only']);
@@ -158,7 +159,8 @@ export function selectPipeline(input) {
 }
 
 export function routeWork(input, repositoryFacts = [], context = {}) {
-  const previewCache = assertPreviewCacheAuthority(input, context) || assertAppServerAuthority(input, context);
+  const phone = assertPhoneTaskAuthority(input, context);
+  const previewCache = assertPreviewCacheAuthority(input, context) || assertAppServerAuthority(input, context) || phone;
   const request = normalizeWorkRequest(input);
   const work_kind = previewCache ? 'operations' : classifyWork(request);
   const artifact_kind = previewCache ? 'execution' : classifyArtifactKind(request);
