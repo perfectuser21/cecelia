@@ -202,3 +202,48 @@ it.each(['missing','empty','malformed','shape','machine','profile','oversized','
  expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);
  expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(id);
 });
+
+it('官方bootstrap恢复持原会话锁后换新intent，旧尝试留事件，重复retry幂等',async()=>{
+ let prepared=0;const f=flow({step:async()=>{},bootstrapRecovery:{prepare:async(_db,t)=>{prepared++;return {...t.payload.linux_onboarding,intent_id:randomUUID(),revision:'b'.repeat(40),error:null,upgrade_json:'{}',previous_attempt:{intent_id:t.payload.linux_onboarding.intent_id,binding:'a'.repeat(64)}};}}});
+ const id=await f.ensure(machine,parent);await pool.query("UPDATE tasks SET payload=jsonb_set(jsonb_set(payload,'{linux_onboarding,phase}','\"bootstrap\"'),'{linux_onboarding,error}','\"linux_pool_ssh_unavailable\"') WHERE id=$1",[id]);
+ const old=(await pool.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0].payload.linux_onboarding;
+ await f.retry(id);await f.retry(id);const state=(await pool.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0].payload.linux_onboarding;
+ expect(prepared).toBe(1);expect(state.intent_id).not.toBe(old.intent_id);expect(state.previous_attempt.intent_id).toBe(old.intent_id);
+ const events=(await pool.query("SELECT payload FROM task_events WHERE task_id=$1 AND event_type='linux_bootstrap_retry'",[id])).rows;
+ expect(events).toHaveLength(1);expect(events[0].payload.evidence.previous_attempt.intent_id).toBe(old.intent_id);
+});
+it('bootstrap全远端窗口持capacity锁，其他连接不能在SSH期间获得同机新预算',async()=>{
+ let entered,release;const inside=new Promise(r=>entered=r),wait=new Promise(r=>release=r);
+ const f=flow({step:async()=>{entered();await wait;}}),id=await f.ensure(machine,parent);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,phase}','\"bootstrap\"') WHERE id=$1",[id]);
+ const advance=f.advance(id),other=await pool.connect();let contended;
+ try{await inside;await other.query('BEGIN');contended=(await other.query("SELECT pg_try_advisory_xact_lock(hashtextextended('harness_attempt_machine:' || $1::text,0)) AS locked",[machine.name])).rows[0].locked;}
+ finally{await other.query('ROLLBACK');other.release();release();await advance;}
+ expect(contended).toBe(false);
+});
+it.each(['reservation','runtime','grant'])('bootstrap发现%s阻止SSH，失败仍持久且不释放未知产物',async kind=>{
+ let calls=0;const f=flow({step:async()=>{calls++;}}),id=await f.ensure(machine,parent);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,phase}','\"bootstrap\"') WHERE id=$1",[id]);
+ if(kind==='reservation')await pool.query("INSERT INTO capacity_reservations VALUES($1,$2,'running')",[randomUUID(),machine.name]);
+ if(kind==='runtime')await pool.query("INSERT INTO linux_script_authorizations(id,machine_registry_id,execution_version_id,state,authorization_expires_at) VALUES($1,$2,$3,'prepared',now()+interval '1 hour')",[randomUUID(),machine.id,randomUUID()]);
+ if(kind==='grant'){const version=randomUUID();await pool.query("INSERT INTO execution_node_versions VALUES($1,'active',$2)",[version,machine.id]);await pool.query("INSERT INTO execution_grants VALUES($1,$2,'active',now()+interval '1 hour','managed_script','script','shell')",[randomUUID(),version]);}
+ await f.advance(id);expect(calls).toBe(0);
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0].payload.linux_onboarding.error).toBe('linux_pool_bootstrap_recovery_unconfirmed');
+});
+it('升级授权复核错误不能进入SSH；容量事务正常结束且原intent保留',async()=>{
+ let calls=0;const f=flow({step:async()=>{calls++;},bootstrapRecovery:{authorize:async()=>{throw Error('linux_pool_bootstrap_recovery_unconfirmed');}}}),id=await f.ensure(machine,parent);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(jsonb_set(payload,'{linux_onboarding,phase}','\"bootstrap\"'),'{linux_onboarding,upgrade_json}','\"{}\"') WHERE id=$1",[id]);
+ await f.advance(id);expect(calls).toBe(0);expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0].payload.linux_onboarding.phase).toBe('bootstrap');
+});
+
+it('等待容量锁期间任务被撤销或换intent，不覆盖新状态也不执行SSH',async()=>{
+ let calls=0;const f=flow({step:async()=>{calls++;}}),id=await f.ensure(machine,parent),other=await pool.connect(),nonce='f'.repeat(64);let pending;
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,phase}','\"bootstrap\"') WHERE id=$1",[id]);
+ try{
+  await other.query('BEGIN');await other.query(MACHINE_CAPACITY_LOCK_SQL,[machine.name]);pending=f.advance(id).catch(()=>null);
+  let waiting=false;for(let n=0;n<100;n++){waiting=(await admin.query("SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event='advisory' AND query LIKE '%harness_attempt_machine%'",[schema])).rowCount>0;if(waiting)break;await new Promise(r=>setTimeout(r,5));}expect(waiting).toBe(true);
+  await other.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,nonce}',$2::jsonb) WHERE id=$1",[id,JSON.stringify(nonce)]);
+  await other.query('COMMIT');await pending;
+ }finally{await other.query('ROLLBACK');other.release();await pending;}
+ expect(calls).toBe(0);expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0].payload.linux_onboarding.nonce).toBe(nonce);
+});

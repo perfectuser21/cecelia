@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { runtimeFixture } from './directory-runtime.fixture.js';
 const api = await import('../directory-projector.js').catch(() => ({}));
 const id = '00000000-0000-4000-8000-000000000001';
 const dbId = '00000000-0000-4000-8000-000000000002';
@@ -16,6 +17,27 @@ function fixture({ linked = true, identity = id, parent = dbId, readbackWrong = 
   return { pool: { query }, query, notionReq, row };
 }
 describe('严格目录页投影', () => {
+  it('真实运行生成分钟整值，Notion日期分钟化读回后六层都能落收据', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-02T13:43:27.456Z'));
+    try {
+      const f = runtimeFixture();
+      const timestamps = [];
+      const notionReq = async (...args) => {
+        const sent = args[3]?.properties?.['同步时间']?.date?.start;
+        if (sent) timestamps.push(sent);
+        const result = await f.notionReq(...args);
+        const date = result.properties?.['同步时间']?.date;
+        if (date?.start) date.start = new Date(Math.floor(Date.parse(date.start) / 60000) * 60000).toISOString().replace('Z', '+00:00');
+        return result;
+      };
+      const result = await api.runDirectoryProjection(f.pool, { token: 'test', notionReq, force: true });
+      expect(result.failed).toBe(0);
+      expect(f.links).toHaveLength(6);
+      expect(timestamps).toHaveLength(6);
+      expect(new Set(timestamps)).toEqual(new Set(['2026-10-02T13:43:00.000Z']));
+    } finally { vi.useRealTimers(); }
+  });
   function pagedFixture(count=26, corrupt) {
     const f=fixture(), propertyId='rel%3A%2Fid';
     const all=Array.from({length:26},(_,i)=>({id:`20000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`}));

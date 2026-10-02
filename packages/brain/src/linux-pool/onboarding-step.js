@@ -48,7 +48,8 @@ export function createLinuxOnboardingStep({pool,ssh=createOnboardingSSH(),creden
    case 'bootstrap':{
     const files=state.credential_files,p=policy(),key=readSecret(files.execution_credential_file);
     const envelope=await remote(state.phase==='bootstrap'?'bootstrap':'installation',{intent_id:state.intent_id,pool:p.pool,revision:state.revision,
-     ...(state.phase==='bootstrap'?{sources:artifact().files,worker_token:readSecret(files.worker_credential_file),execution_key:key}:{})});
+     ...(state.phase==='bootstrap'?{sources:artifact().files,worker_token:readSecret(files.worker_credential_file),execution_key:key,
+      ...(state.upgrade_json?{upgrade:JSON.parse(state.upgrade_json),previous_attempt:state.previous_attempt}:{})}:{})});
     verifyLinuxInstallation(envelope,{machine_registry_id:id,nonce:state.nonce,intent_id:state.intent_id,pool:p.pool,revision:state.revision,key});
     return next('deployment',{installation_json:JSON.stringify(envelope)});
    }
