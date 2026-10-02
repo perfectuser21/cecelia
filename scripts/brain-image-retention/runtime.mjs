@@ -19,7 +19,7 @@ export async function readHealth(base = 'http://127.0.0.1:5221') {
   const value = JSON.parse(Buffer.concat(chunks).toString());
   return { status: value.status, version: value.version, git_sha: value.git_sha };
 }
-export async function createRuntime({ root = ROOT, dataPath, executable, health = readHealth } = {}) {
+export async function createRuntime({ root = ROOT, dataPath, executable, health = readHealth, expectedContainerId } = {}) {
   const store = createStore(root);
   let config;
   try { config = await store.read('config.json'); }
@@ -32,5 +32,5 @@ export async function createRuntime({ root = ROOT, dataPath, executable, health 
   const container = await lstat('/.dockerenv').then(() => true).catch(error => { if (error.code === 'ENOENT') return false; throw error; });
   const { schema_version, ...expected } = config;
   const docker = createDockerAdapter({ root, dataPath: dataPath ?? (container ? '/run/cecelia-docker-data' : config.docker_root_dir), expected, ...(executable ? { executable } : {}) });
-  return Object.freeze({ store, docker, engine: createRetentionEngine({ store, docker }), ledger: createDeploymentLedger({ store, docker, health }) });
+  return Object.freeze({ store, docker, engine: createRetentionEngine({ store, docker }), ledger: createDeploymentLedger({ store, docker, health: expectedContainerId === undefined ? health : lease => docker.containerHealth(expectedContainerId, lease), expectedContainerId }) });
 }

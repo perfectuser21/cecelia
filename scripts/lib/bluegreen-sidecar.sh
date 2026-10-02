@@ -85,13 +85,12 @@ _sidecar_health() {
     });' "$TARGET_SHA" "$TARGET_TAGS" "$HEALTH_VERSION" || return 1
   _sidecar_same_target
 }
-# 保留官方 ledger 的身份、锁、健康、镜像版本/SHA和幂等回执校验，只改变执行位置。
+# 当前发布的官方CLI持锁收尾；健康探测在固定目标容器内执行，旧fallback无需新CLI。
 retention_finish() {
   [[ -n "${CECELIA_IMAGE_DEPLOYMENT_ID:-}" ]] || return 0
   local receipt
   _sidecar_same_target || return 1
-  receipt=$(docker exec -e BRAIN_URL=http://127.0.0.1:5221 \
-    -e "CECELIA_IMAGE_RETENTION_DIR=${CECELIA_IMAGE_RETENTION_DIR}" "$TARGET_CONTAINER" \
+  receipt=$(BRAIN_URL=http://127.0.0.1:5221 CECELIA_IMAGE_EXPECTED_CONTAINER_ID="$TARGET_CONTAINER" \
     node /app/scripts/brain-image-retention/cli.mjs finish "$CECELIA_IMAGE_DEPLOYMENT_ID" "$1") || return 1
   [[ "$receipt" == "$1" ]] && _sidecar_same_target
 }
