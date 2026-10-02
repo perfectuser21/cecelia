@@ -19,7 +19,8 @@ export async function releaseEvidenceDatabase(options={}){
       activity.runtime={entry:'discover-keyword.sh',phase:'source'};activity.execution={via:'xian-m4 batch2.sh:78 → harvest-keyword.sh:35-43 → douyin-phone-adb'};
       for(const step of activity.steps||[])step.implementation={ref:'harvest-keyword.sh:35 open-search',status:'implemented'};
     }
-    await fixture.advance();
+    if(options.enablerDeclarations)for(const doc of Object.values(fixture.contracts.docs))for(const activity of doc.activities)for(const binding of activity.implementation_bindings||[])binding.enabler_key='test-lock';
+    await fixture.advance(options.enablerDeclarations?{bindings:fixture.contracts.docs.keyword_acquisition.activities[0].implementation_bindings}:{});
     const schema=(await db.query('SELECT current_schema() AS name')).rows[0].name;
     pool=new pg.Pool({...DB_DEFAULTS,max:6,options:`-c search_path=${schema}`});
     const migration=new URL('../../../migrations/515_release_definition_evidence.sql',import.meta.url);
@@ -28,7 +29,7 @@ export async function releaseEvidenceDatabase(options={}){
     const activities=(await db.query('SELECT * FROM activity_definition_versions WHERE source_commit=$1 ORDER BY activity_id',[releaseHead])).rows;
     const bound=activities.find(a=>a.payload.implementation_bindings.some(b=>b.kind==='code')),binding=bound.payload.implementation_bindings.find(b=>b.kind==='code');
     const enabler=randomUUID(),call=randomUUID();
-    await db.query("INSERT INTO enablers(id,key,name,kind,impl_ref) VALUES($1,'test-lock','锁','code',$2)",[enabler,`${IMPACT_REPO}@${releaseHead}:${binding.path}`]);
+    await db.query("INSERT INTO enablers(id,key,name,kind,impl_ref) VALUES($1,'test-lock','锁','code',$2)",[enabler,options.enablerDeclarations?`legacy:${binding.path}#lock-acquire`:`${IMPACT_REPO}@${releaseHead}:${binding.path}`]);
     await db.query("INSERT INTO enabler_calls(id,caller_type,caller_id,enabler_id) VALUES($1,'activity',$2,$3)",[call,bound.activity_id,enabler]);
     const report=await readImplementationImpact(db,{scope:options.scope||'phones',repo:IMPACT_REPO,base_revision:options.baseRevision||'a'.repeat(40),head_revision:releaseHead,changed_files:['src/shared-lock.js']});
     const receipt={schema_version:1,actor:'implementation_ci_gate',source:report.source,report_sha256:createHash('sha256').update(JSON.stringify(report)).digest('hex'),verdict:'PASS',scope:'regression_tests',business_runtime_status:'not_evaluated',recorded_at:new Date().toISOString(),assertions:report.required_assertions.map(a=>({assertion_ref:a.assertion_ref,source_repo:a.source_repo,source_revision:releaseHead,source_bindings:a.source_bindings,test_sha256:'f'.repeat(64),exit_code:0,error:null,signal:null}))};
