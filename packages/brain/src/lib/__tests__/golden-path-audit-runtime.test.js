@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { goldenPathSource, startGoldenPathAudit, goldenPathAuditListening, stopGoldenPathAudit, setGoldenPathAudit, drainGoldenPathListener } from '../golden-path-audit-runtime.js';
 import { readGoldenPathJournal, listGoldenPathJournals } from '../golden-path-journal.js';
-import { readGoldenPathT0Archive } from '../golden-path-archive.js';
+import { readGoldenPathT0Archive, archiveGoldenPathT0 } from '../golden-path-archive.js';
 const roots = [];
 afterEach(async () => { await stopGoldenPathAudit(); vi.useRealTimers(); for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 it('正式候选先监听覆盖，外部真实T0后才独立归档，跨部署保同窗与精确source', async () => {
@@ -39,7 +39,10 @@ it('正式候选先监听覆盖，外部真实T0后才独立归档，跨部署�
   const dir = path.join(root, 'logs/gp-observation', windowId);
   expect(fs.existsSync(path.join(dir, 't0-receipt.json'))).toBe(false);
   window.t0_event_id = 500;
-  t0 = { db_time_verified: true, id: 500, created_at: new Date(), payload: { window_id: windowId, source, gp_db_created_at: new Date().toISOString() } };
+  t0 = { event_type: 'golden_path_observation_t0', event_source: 'golden-path-retirement', storage_type: 'timestamp without time zone', storage_text: '2026-10-02T00:00:00.000000', issuance: { format: 'gp-t0-issuer-v1', storage_type: 'timestamp without time zone', storage_text: '2026-10-02T00:00:00.000000', clock_utc_text: '2026-10-02T00:00:00.000000' }, id: 500, created_at: new Date(), payload: { window_id: windowId, source, gp_db_created_at: new Date().toISOString() } };
+  // 外部受控发行的DB回执夹具；runtime本身不得把普通DB行自动升格。
+  const receipt = { ...t0 }; delete receipt.storage_type; delete receipt.storage_text; delete receipt.event_type; delete receipt.event_source;
+  archiveGoldenPathT0(dir, receipt);
   await vi.advanceTimersByTimeAsync(30_000);
   expect(readGoldenPathT0Archive(dir).id).toBe(500);
   expect(events.some(row => row.payload.lifecycle === 'heartbeat')).toBe(true);

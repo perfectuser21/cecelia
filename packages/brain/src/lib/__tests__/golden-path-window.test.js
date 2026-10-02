@@ -15,11 +15,12 @@ import { inspectGoldenPathWindow } from '../golden-path-window.js';
 const roots = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 const BEGIN = Date.parse('2026-10-02T00:00:00Z'), WEEK = 7 * 24 * 3600_000;
-function fixture({ archived = false, short = false, unknown = false, gap = false, missingAck = false, flagOn = false, leaseGap = false, sourceMismatch = false, missingManifest = false, dbAckMismatch = false, frequencyMs = 60_000 } = {}) {
+function fixture({ unissued = false, archived = false, short = false, unknown = false, gap = false, missingAck = false, flagOn = false, leaseGap = false, sourceMismatch = false, missingManifest = false, dbAckMismatch = false, frequencyMs = 60_000 } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'gp-window-private-')); roots.push(root);
   const windowId = randomUUID(), source = goldenPathSource({ GIT_SHA: 'a'.repeat(40) });
   const window = { window_id: windowId, t0_event_id: 123, source };
-  const t0 = { db_time_verified: true, id: 123, created_at: new Date(BEGIN).toISOString(), payload: { window_id: windowId, source, gp_db_created_at: new Date(BEGIN).toISOString() } };
+  const t0 = { event_type: 'golden_path_observation_t0', event_source: 'golden-path-retirement', issuance: { format: 'gp-t0-issuer-v1', storage_type: 'timestamp without time zone', storage_text: '2026-10-02T00:00:00.000000', clock_utc_text: '2026-10-02T00:00:00.000000' }, id: 123, created_at: new Date(BEGIN).toISOString(), payload: { window_id: windowId, source, gp_db_created_at: new Date(BEGIN).toISOString() } };
+  if (unissued) { delete t0.issuance; t0.db_time_verified = true; }
   const journal = createGoldenPathJournal(path.join(root, windowId));
   archiveGoldenPathT0(path.join(root, windowId), t0);
   registerGoldenPathServing(root, journal.instanceId, windowId);
@@ -63,7 +64,7 @@ function fixture({ archived = false, short = false, unknown = false, gap = false
   const pool = { query: async input => {
     const sql = input.text;
     if (sql.includes('FROM tasks')) return { rows: [{ window }] };
-    if (sql.includes('FROM cecelia_events')) return { rows: archived ? [] : [t0] };
+    if (sql.includes('FROM cecelia_events')) return { rows: archived ? [] : [{ ...t0, storage_type: t0.issuance?.storage_type, storage_text: t0.issuance?.storage_text }] };
     if (sql.includes('clock_timestamp')) return { rows: [{ db_now: new Date(BEGIN + WEEK - (short ? 1 : 0)).toISOString() }] };
     throw new Error('unexpected query');
   } };
@@ -78,6 +79,10 @@ describe('七日裁决只读边界', () => {
   it('DB七日清理后只用先前真实T0回执归档，不使用自报日期', async () => {
     const f = fixture({ archived: true });
     expect((await inspectGoldenPathWindow(f)).accepted).toBe(true);
+  });
+  it('旧自动归档即使自报db_time_verified也不是发行证据', async () => {
+    const result = await inspectGoldenPathWindow(fixture({ unissued: true }));
+    expect(result.accepted).toBe(false); expect(result.reasons).toContain('t0_or_source_unproven');
   });
   it.each([
     ['差1毫秒', { short: true }, 'seven_real_days_incomplete'],

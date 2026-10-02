@@ -15,11 +15,14 @@ describe('golden-path-audit-store永久边界', () => {
     const release = vi.fn();
     const query = async input => {
       if (input.text === 'COMMIT') throw new Error('unknown commit');
-      if (input.text.includes('INSERT INTO')) return { rows: [{ id: 123, created_at: new Date(), gp_db_created_at: new Date().toISOString(), db_time: new Date() }] };
+      if (input.text.includes('INSERT INTO')) {
+        const at = new Date();
+        return { rows: [{ id: 123, created_at: at, gp_db_created_at: at.toISOString(), db_time: at }] };
+      }
       return { rows: [] };
     };
     const store = createGoldenPathAuditStore({ connect: async () => ({ query, release }) });
-    await expect(store.persist('health', { audit_id: 'id' })).rejects.toThrow();
+    await expect(store.persist('health', { audit_id: 'id' })).rejects.toThrow('unknown commit');
     expect(release).toHaveBeenCalledWith(true);
   });
   it('事务advisory锁核已有audit_id，不在commit与ACK间故障后重复插入', async () => {
@@ -38,4 +41,17 @@ describe('golden-path-audit-store永久边界', () => {
     expect(calls.some(c => /INSERT/.test(c.sql))).toBe(false);
     expect(calls.at(-1).sql).toBe('COMMIT');
   });
+  it('T0 writer实际存储类型未知不得INSERT，不能按caller自报时区猜', async () => {
+    const calls = [];
+    const query = async input => {
+      calls.push(input.text);
+      if (input.text.includes('FROM pg_attribute')) return { rows: [{ type: 'text' }] };
+      return { rows: [] };
+    };
+    const store = createGoldenPathAuditStore({ connect: async () => ({ query, release() {} }) });
+    await expect(store.persist('golden_path_observation_t0', { audit_id: 'type-unknown' })).rejects.toThrow('gp_t0_storage_unproven');
+    expect(calls.some(sql => sql.includes('INSERT INTO'))).toBe(false);
+    expect(calls.at(-1)).toBe('ROLLBACK');
+  });
+
 });
