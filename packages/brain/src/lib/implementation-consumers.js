@@ -2,6 +2,7 @@
 import { computeFreshness } from './registry-freshness.js';
 import { canonicalAssertionCommandText } from './gp-assertion-command.js';
 import { assertionDigest } from './journey-assertion-receipt.js';
+import { readMapBrainBindings } from './map-brain-bindings.js';
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SHA=/^[0-9a-f]{40}$/;
@@ -29,11 +30,13 @@ async function loadContext(db,q,gaps) {
   if(!context)fail('IMPLEMENTATION_MAP_NOT_FOUND','scope没有已激活地图',404);
   if(!context.projection_run_id||context.projection_manifest_digest!==context.manifest_digest)gaps.push({code:'projection_missing_or_stale'});
   const nodes=context.projection_run_id?(await db.query(`SELECT node_key,attributes FROM map_projection_nodes WHERE run_id=$1 AND node_type='capability'`,[context.projection_run_id])).rows:[];
+  const authority=await readMapBrainBindings(db,context.manifest,q.scope);
   const mapped=new Map();
   for(const node of context.manifest.capabilities||[]){
     const binding=node.brain_binding,projection=nodes.find(p=>p.node_key===node.key)?.attributes;
     if(!binding||binding.entity_type!=='capability'||!UUID.test(binding.entity_id||'')){gaps.push({code:'capability_mapping_missing',node_key:node.key});continue;}
     mapped.set(binding.entity_id,node.key);
+    if(authority[node.key]?.mapping_status!=='verified')gaps.push({code:'capability_authority_changed',node_key:node.key,evidence:authority[node.key]||null});
     if(projection?.canonical_entity_id!==binding.entity_id||projection?.mapping_status!=='verified')gaps.push({code:'capability_mapping_unverified',node_key:node.key});
   }
   const header=(await db.query("SELECT * FROM fact_snapshot_headers WHERE repo=$1 AND kind='graph'",[registryRepo])).rows[0];
@@ -68,7 +71,7 @@ async function readAssertions(db,usages,gaps) {
     let command;try{command=canonicalAssertionCommandText(row.assertion_ref);}catch{continue;}
     const group=groups.get(row.assertion_ref)||{assertion_ref:row.assertion_ref,command,capability_ids:[],source_bindings:[],validation_status:'not_evaluated'};
     if(!group.capability_ids.includes(row.journey_id))group.capability_ids.push(row.journey_id);
-    group.source_bindings.push({journey_step_link_id:row.id,assertion_revision:row.assertion_revision,assertion_digest:assertionDigest(row.assertion_ref),activity_id:row.step_id,step_id:row.step_id_ref});
+    group.source_bindings.push({assertion_source:'current_registration',journey_step_link_id:row.id,assertion_revision:row.assertion_revision,assertion_digest:assertionDigest(row.assertion_ref),activity_id:row.step_id,step_id:row.step_id_ref});
     groups.set(row.assertion_ref,group);
   }
   for(const capability of capabilities)if(![...groups.values()].some(g=>g.capability_ids.includes(capability)))gaps.push({code:'regression_missing',capability_id:capability});
