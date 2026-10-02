@@ -53,7 +53,7 @@ it('partial actual runner只APPLY517/518、repeat0，真实511..518八账无519�
  expect(applied).toEqual(['517','518']);expect(repeated).toEqual([]);
  expect((await pool.query("SELECT version FROM schema_version WHERE version BETWEEN '511' AND '518' ORDER BY version")).rows.map(r=>r.version)).toEqual(['511','512','513','514','515','516','517','518']);
  expect((await pool.query("SELECT to_regclass('phone_task_owners') owners,to_regclass('phone_scheduled_slots') slots")).rows[0]).toEqual({owners:null,slots:null});
- expect((await pool.query("SELECT tgname FROM pg_trigger WHERE tgname IN ('phone_http_endpoint_guard','phone_http_lease_identity_guard') ORDER BY tgname")).rows.map(r=>r.tgname)).toEqual(['phone_http_endpoint_guard','phone_http_lease_identity_guard']);
+ expect((await pool.query("SELECT tgname FROM pg_trigger WHERE tgrelid IN ('execution_node_versions'::regclass,'phone_dispatches'::regclass) AND tgname IN ('phone_http_endpoint_guard','phone_http_lease_identity_guard') ORDER BY tgname")).rows.map(r=>r.tgname)).toEqual(['phone_http_endpoint_guard','phone_http_lease_identity_guard']);
  expect((await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows).toEqual(before.grants);
  expect((await pool.query('SELECT * FROM execution_nodes ORDER BY canonical_id')).rows).toEqual(before.nodes);
 });
