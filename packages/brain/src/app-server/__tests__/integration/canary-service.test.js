@@ -1,5 +1,7 @@
 import {it,expect} from 'vitest';
 import {fixture} from './canary-service-fixture.js';
+import {randomUUID} from 'node:crypto';
+import {directory} from '../../../execution-directory/directory.js';
 async function service(f,extra={}){
  let api={};try{api=await import('../../canary-service.js');}catch(e){if(e.code!=='ERR_MODULE_NOT_FOUND')throw e;}
  expect(api.createAppServerCanaryService).toBeTypeOf('function');return api.createAppServerCanaryService({...f,...extra,pollMs:5,pollTimeoutMs:1000});
@@ -57,4 +59,82 @@ it('并发推进只有一个会话占验收锁；资源不足零启动且可继�
   expect(await first).toMatchObject({state:'waiting_resources'});expect(f.calls).toEqual([]);
   await f.authorizationStore.revoke(a.id);expect(await (await service(f)).advance(a.id)).toMatchObject({state:'revoked'});expect(f.calls).toEqual([]);
  }finally{release?.();await f.close();}
+});
+it('活授权普通预约必须完整HOME/config与验收boot；Worker换boot拒绝旧预约start/流，未知旧boot不假释放',async()=>{
+ const f=await fixture();try{
+  const s=await service(f),a=await s.prepare(f.input);await s.advance(a.id);await directory.refresh({pool:f.pool});
+  const capabilities=await f.client.probeCapabilities(a.machine_registry_id,a.node_version_id);
+  const input={home:f.home,requestKey:randomUUID(),machineId:'xian-mac-m1',capacitySnapshot:await f.collectSnapshot('xian-mac-m1'),capabilities};
+  await expect(f.store.reserve({...input,capabilities:{...capabilities,worker_boot_id:randomUUID()}})).rejects.toThrow('appserver_active_authorization_mismatch');
+  await expect(f.store.reserve({...input,home:{...f.home,homeKey:'e'.repeat(64),homeId:'chat-other'}})).rejects.toThrow('appserver_active_authorization_mismatch');
+  const {reservation:row}=await f.store.reserve(input);f.restart(true);
+  await expect(f.client.start(row.id)).rejects.toThrow('appserver_worker_configuration_mismatch');
+  await expect(f.client.prepareStream(row.id)).rejects.toThrow('appserver_worker_configuration_mismatch');
+  expect(f.calls.filter(x=>x==='create')).toHaveLength(2);
+  const pending=await f.store.requestCancel(row.id);
+  // 没有Worker journal且旧boot变化时，未知取消不能伪造释放。
+  await expect(f.client.cancel(pending.id)).rejects.toThrow();expect((await f.store.get(row.id)).status).toBe('cleanup_pending');
+ }finally{await f.close();}
+});
+it('普通实例启动后Worker换boot，拒绝旧grant继续attach但历史同代清理仍可确认',async()=>{
+ const f=await fixture();try{
+  const s=await service(f),a=await s.prepare(f.input);await s.advance(a.id);await directory.refresh({pool:f.pool});
+  const capabilities=await f.client.probeCapabilities(a.machine_registry_id,a.node_version_id);
+  const {reservation:row}=await f.store.reserve({home:f.home,requestKey:randomUUID(),machineId:'xian-mac-m1',capacitySnapshot:await f.collectSnapshot('xian-mac-m1'),capabilities});
+  await f.store.observe(row.id,await f.client.start(row.id));f.restart(true);
+  await expect(f.client.prepareStream(row.id)).rejects.toThrow('appserver_worker_configuration_mismatch');
+  await f.store.requestCancel(row.id);expect(await f.store.confirmCleanup(row.id,await f.client.cancel(row.id))).toMatchObject({status:'released'});
+  expect(f.containers.size).toBe(0);
+ }finally{await f.close();}
+});
+it('cancel已经成功但响应丢失，重建后精确释放且不重复RPC',async()=>{
+ const f=await fixture();try{
+  const a=await f.authorizationStore.prepare(f.input);let lost=true;
+  const client={...f.client,cancel:async id=>{const result=await f.client.cancel(id);if(lost){lost=false;throw Error('lost cancel response');}return result;}};
+  await expect((await service(f,{client})).advance(a.id)).rejects.toThrow('lost cancel response');
+  expect(f.containers.size).toBe(0);expect((await f.store.listOutstanding())).toHaveLength(1);
+  expect((await f.pool.query('SELECT state FROM execution_grants WHERE id=$1',[a.grant_id])).rows[0].state).toBe('pending');
+  f.restart();expect(await (await service(f)).advance(a.id)).toMatchObject({state:'active'});
+  expect(f.calls.filter(x=>x==='initialize')).toHaveLength(2);expect(f.calls.filter(x=>x==='create')).toHaveLength(2);
+ }finally{await f.close();}
+});
+it('evidence提交成功后回执丢失，JSONB证据复用且不重复RPC',async()=>{
+ const f=await fixture();try{
+  const a=await f.authorizationStore.prepare(f.input);let lost=true;
+  const evidence={...f.evidence,record:async(...args)=>{const result=await f.evidence.record(...args);if(lost){lost=false;throw Error('lost record response');}return result;}};
+  await expect((await service(f,{evidence})).advance(a.id)).rejects.toThrow('lost record response');
+  expect((await f.pool.query('SELECT * FROM app_server_canary_evidence')).rows).toHaveLength(1);
+  f.restart();expect(await (await service(f)).advance(a.id)).toMatchObject({state:'active'});
+  expect(f.calls.filter(x=>x==='initialize')).toHaveLength(2);expect(f.calls.filter(x=>x==='create')).toHaveLength(2);
+ }finally{await f.close();}
+});
+it('grant写入失败必须回滚任务完成与accepted，重试复用两代持久签名',async()=>{
+ const f=await fixture();try{
+  const a=await f.authorizationStore.prepare(f.input);
+  await f.pool.query(`CREATE FUNCTION review_reject_active() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.surface='app_server' AND NEW.state='active' THEN RAISE EXCEPTION 'review_grant_failure'; END IF;RETURN NEW;END $$;CREATE TRIGGER review_reject_active BEFORE UPDATE ON execution_grants FOR EACH ROW EXECUTE FUNCTION review_reject_active();`);
+  await expect((await service(f)).advance(a.id)).rejects.toThrow('review_grant_failure');
+  expect((await f.pool.query('SELECT status FROM tasks WHERE id=$1',[a.evidence_task_id])).rows[0].status).toBe('in_progress');
+  expect((await f.pool.query('SELECT state,evidence FROM app_server_authorizations WHERE id=$1',[a.id])).rows[0]).toEqual({state:'prepared',evidence:null});
+  expect((await f.pool.query('SELECT state FROM execution_grants WHERE id=$1',[a.grant_id])).rows[0].state).toBe('pending');
+  expect((await f.pool.query('SELECT * FROM app_server_canary_evidence')).rows).toHaveLength(2);expect(await f.store.listOutstanding()).toHaveLength(0);
+  await f.pool.query('DROP TRIGGER review_reject_active ON execution_grants');
+  expect(await (await service(f)).advance(a.id)).toMatchObject({state:'active'});expect(f.calls.filter(x=>x==='initialize')).toHaveLength(2);expect(f.calls.filter(x=>x==='create')).toHaveLength(2);
+ }finally{await f.close();}
+});
+it('RPC已开始但双向流未封存，重建保持占位且绝不重放initialize',async()=>{
+ const f=await fixture();let req;try{
+  const {request}=await import('node:http'),a=await f.authorizationStore.prepare(f.input);
+  const protocol=ticket=>new Promise((resolve,reject)=>{
+   req=request(ticket.stream_url,{method:'POST',headers:{authorization:`Bearer ${ticket.token}`,'content-type':'application/x-ndjson'}},res=>{
+    res.once('data',()=>{resolve();});res.on('error',()=>{});
+   });req.on('error',reject);req.flushHeaders();req.write(JSON.stringify({id:1,method:'initialize',params:{clientInfo:{name:'cecelia_canary',version:'1'},capabilities:{experimentalApi:true}}})+'\n');
+  });
+  await expect((await service(f,{protocol})).advance(a.id)).rejects.toThrow('appserver_canary_evidence_unconfirmed');
+  expect(f.calls.filter(x=>x==='initialize')).toHaveLength(1);
+  await expect((await service(f)).advance(a.id)).rejects.toThrow('appserver_canary_evidence_unconfirmed');
+  expect(f.calls.filter(x=>x==='initialize')).toHaveLength(1);expect(f.calls.filter(x=>x==='create')).toHaveLength(1);
+  expect(await f.store.listOutstanding()).toHaveLength(1);expect(f.containers.size).toBe(1);
+  expect((await f.pool.query('SELECT state FROM execution_grants WHERE id=$1',[a.grant_id])).rows[0].state).toBe('pending');
+  expect((await f.pool.query('SELECT status FROM tasks WHERE id=$1',[a.evidence_task_id])).rows[0].status).toBe('in_progress');
+ }finally{req?.destroy();await f.close();}
 });

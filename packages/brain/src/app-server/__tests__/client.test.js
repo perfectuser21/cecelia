@@ -2,12 +2,14 @@ import {it,expect} from 'vitest';
 import {createHmac,randomUUID} from 'node:crypto';
 import {createAppServerClient} from '../client.js';
 import {workerIdentity} from '../identity.js';
+function capabilityReply(row,body,token){const receipt={machine_id:row.machine_id,worker_id:row.worker_id,worker_boot_id:row.worker_boot_id,profiles:{[row.config.profile]:row.config_digest},request_nonce:body.request_nonce};return new Response(JSON.stringify({receipt,signature:createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex')}));}
+
 it('Worker响应缺签名、重放nonce或HOME/boot不同均不得形成认证封套',async()=>{
  const token='a'.repeat(32),row={id:randomUUID(),intent_id:randomUUID(),launch_generation:1,machine_id:'xian-mac-m1',worker_id:'worker',worker_boot_id:randomUUID(),owner_key:'openclaw-'+ 'c'.repeat(64),home_key:'d'.repeat(64),config_digest:'e'.repeat(64),config:{profile:'chat'}};
  const store={withOperation:async(_id,_action,fn)=>fn(row,'http://m1:5231')};
  for(const mutation of ['signature','nonce','home','boot']){
   const client=createAppServerClient({pool:{},store,env:{KERNEL_FLEET_BRIDGE_TOKEN:token},fetchFn:async(_url,options)=>{
-   const body=JSON.parse(options.body),receipt={...workerIdentity(row),status:'running',request_nonce:body.request_nonce};
+   const body=JSON.parse(options.body);if(_url.endsWith('/capabilities'))return capabilityReply(row,body,token);const receipt={...workerIdentity(row),status:'running',request_nonce:body.request_nonce};
    if(mutation==='nonce')receipt.request_nonce=randomUUID();if(mutation==='home')receipt.home_key='f'.repeat(64);if(mutation==='boot')receipt.worker_boot_id=randomUUID();
    return new Response(JSON.stringify({receipt,signature:mutation==='signature'?'0'.repeat(64):createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex')}));
   }});
@@ -56,7 +58,7 @@ it('流许可只暴露签名绑定的header票；prepare使用持久流ID和最�
  const store={reserveStream:async()=>row.stream,withOperation:async(_id,action,fn)=>{expect(action).toBe('prepare-stream');return fn(row,'http://m1:5231');}};
  const {createHash}=await import('node:crypto');
  const client=createAppServerClient({pool:{},store,env:{KERNEL_FLEET_BRIDGE_TOKEN:token},fetchFn:async(url,options)=>{
-  expect(url).toBe(`http://m1:5231/app-servers/${id}/prepare-stream`);const body=JSON.parse(options.body);expect(body.stream_id).toBe(streamId);
+  const body=JSON.parse(options.body);if(url.endsWith('/capabilities'))return capabilityReply(row,body,token);expect(url).toBe(`http://m1:5231/app-servers/${id}/prepare-stream`);expect(body.stream_id).toBe(streamId);
   const receipt={...workerIdentity(row),stream_id:streamId,expires_at:Date.now()+3000,request_nonce:body.request_nonce,token_digest:createHash('sha256').update(ticket).digest('hex')};
   return new Response(JSON.stringify({receipt,signature:createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex')}),{headers:{'x-appserver-stream-token':ticket}});
  }});
@@ -68,7 +70,7 @@ it('验收start携带完整身份签名短期许可，保留Worker原始回执�
  const {createRequire}=await import('node:module');const {verifyCanaryPermit}=createRequire(import.meta.url)('../../../scripts/fleet-worker/app-server-canary-permit.cjs');
  let sent,signature;
  const client=createAppServerClient({pool:{},store:{withOperation:async(_id,_action,fn)=>fn(row,'http://m1:5231')},env:{KERNEL_FLEET_BRIDGE_TOKEN:token},fetchFn:async(_url,options)=>{
-  sent=JSON.parse(options.body);const receipt={...workerIdentity(row),status:'running',request_nonce:sent.request_nonce};signature=createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex');return new Response(JSON.stringify({receipt,signature}));
+  sent=JSON.parse(options.body);if(_url.endsWith('/capabilities'))return capabilityReply(row,sent,token);const receipt={...workerIdentity(row),status:'running',request_nonce:sent.request_nonce};signature=createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex');return new Response(JSON.stringify({receipt,signature}));
  }});
  const result=await client.start(row.id);
  expect(()=>verifyCanaryPermit(sent.canary_permit,workerIdentity(row),token)).not.toThrow();

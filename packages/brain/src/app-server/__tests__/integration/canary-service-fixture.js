@@ -56,7 +56,7 @@ export async function fixture(){
  const input={home_id:home.homeId,machine_registry_id:node.machine_registry_id,expected_version_id:node.current_version_id};
  const collectSnapshot=async machine=>({verified:true,machine,captured_at:Date.now(),expires_at:Date.now()+60000,capacity:{ok:true,physical_base_slots:8,effective_base_slots:8}});
  return {pool,home,store,client,authorizationStore,evidence,input,env,calls,containers,root,collectSnapshot,
-  restart(){runner.close();runner=createAppServerRunner(runnerConfig);},
+  restart(changedBoot=false){runner.close();if(changedBoot)runnerConfig.bootId=randomUUID();runner=createAppServerRunner(runnerConfig);},
   set removeFails(v){removeFails=v;},set startLost(v){startLost=v;},set invalidProtocol(v){invalidProtocol=v;},
   async close(){runner.close();server.closeAllConnections();await new Promise(r=>server.close(r));await pool.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();fs.rmSync(root,{recursive:true,force:true});},
  };

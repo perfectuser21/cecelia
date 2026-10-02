@@ -7,24 +7,41 @@ import {directory} from '../../../execution-directory/directory.js';
 import {importLegacyPolicy,revokeGrant} from '../../../execution-directory/store.js';
 import {LEGACY_BINDINGS} from '../../../execution-directory/legacy-policy.js';
 import {createAppServerStore} from '../../../app-server/store.js';
+import {createAuthorizationStore} from '../../../app-server/authorization-store.js';
 const options=process.env.TEST_DATABASE_URL?{connectionString:process.env.TEST_DATABASE_URL}:DB_DEFAULTS;
 if(!/_(scratch|test)$/.test(process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_URL).pathname:DB_DEFAULTS.database))throw Error('scratch/test database required');
 const schema=`app_server_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const admin=new pg.Client(options),pool=new pg.Pool({...options,max:8,options:`-c search_path=${schema},public`});
 const env={FLEET_WORKER_US_MAC_M4_URL:'http://mmv:5231',FLEET_WORKER_XIAN_MAC_M1_URL:'http://m1:5231',FLEET_WORKER_XIAN_MAC_M4_URL:'http://m4:5231'};
-const config=()=>({homeId:`chat-${randomUUID()}`,homeKey:randomUUID().replaceAll('-','').repeat(2),provider:'codex',account:'team1',repo:'perfectuser21/cecelia',profile:'chat',configDigest:'a'.repeat(64)});
+const config=()=>({homeId:`chat-${randomUUID()}`,homeKey:randomUUID().replaceAll('-','').repeat(2),provider:'codex',account:'team1',repo:'perfectuser21/cecelia',profile:'chat-'+randomUUID(),configDigest:'a'.repeat(64)});
 const snapshot=machine=>({verified:true,machine,captured_at:Date.now(),expires_at:Date.now()+60_000,capacity:{ok:true,physical_base_slots:8,effective_base_slots:8}});
-const caps=machine=>({machine_id:machine,worker_id:machine,worker_boot_id:randomUUID(),profiles:{chat:'a'.repeat(64)}});
+const boots=new Map();
+const caps=(machine,home)=>{if(!boots.has(machine))boots.set(machine,randomUUID());return {machine_id:machine,worker_id:machine,worker_boot_id:boots.get(machine),profiles:{[home.profile]:home.configDigest}};};
 const createTask=async({db})=>({success:true,task:(await db.query("INSERT INTO tasks(id,status,task_type,executor_kind) VALUES($1,'in_progress','app_server_run','app-server-controller') RETURNING *",[randomUUID()])).rows[0]});
 const store=()=>createAppServerStore({pool,createTask,afterTask:async()=>{}});
-const reserve=(home,requestKey=randomUUID(),machineId='xian-mac-m1')=>store().reserve({home,requestKey,machineId,capacitySnapshot:snapshot(machineId),capabilities:caps(machineId)});
+// 存储层历史测试只装配已验收权威记录；完整Worker签名链由canary-service真HTTP回归覆盖。
+async function authorizeFixture(home,machine,capabilities=caps(machine,home),db=pool){
+ const existing=(await db.query("SELECT id FROM app_server_authorizations WHERE home->>'homeKey'=$1 AND state='active'",[home.homeKey])).rows[0];if(existing)return;
+ const node=(await db.query('SELECT * FROM execution_nodes WHERE canonical_id=$1',[machine])).rows[0];
+ const auth=await createAuthorizationStore({pool:db,homes:{[home.homeId]:home},client:{probeCapabilities:async()=>capabilities},...(db===pool?{createTask}:{})}).prepare({home_id:home.homeId,machine_registry_id:node.machine_registry_id,expected_version_id:node.current_version_id});
+ const c=await db.connect();try{await c.query('BEGIN');
+  await c.query("SELECT pg_advisory_xact_lock(hashtextextended('app-server-home:'||$1,0))",[home.homeKey]);
+  await c.query("SELECT pg_advisory_xact_lock(hashtextextended('harness_attempt_machine:'||$1,0))",[machine]);
+  if((await c.query('SELECT state FROM app_server_authorizations WHERE id=$1',[auth.id])).rows[0].state==='active'){await c.query('COMMIT');return;}
+  await c.query("UPDATE tasks SET status='completed' WHERE id=$1",[auth.evidence_task_id]);
+  await c.query("UPDATE app_server_authorizations SET state='accepted',accepted_at=now(),evidence=$2 WHERE id=$1",[auth.id,{nonce:auth.nonce,worker_boot_id:auth.worker_boot_id,config_digest:home.configDigest,cleanup_confirmed:true}]);
+  await c.query("UPDATE execution_grants SET state='active' WHERE id=$1",[auth.grant_id]);
+  await c.query("UPDATE app_server_authorizations SET state='active',activated_at=now() WHERE id=$1",[auth.id]);await c.query('COMMIT');
+ }catch(error){await c.query('ROLLBACK');throw error;}finally{c.release();}
+ await directory.refresh({pool:db});
+}
+const reserve=async(home,requestKey=randomUUID(),machineId='xian-mac-m1')=>{await authorizeFixture(home,machineId);return store().reserve({home,requestKey,machineId,capacitySnapshot:snapshot(machineId),capabilities:caps(machineId,home)});};
 beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
  await pool.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT,result JSONB,updated_at TIMESTAMPTZ,completed_at TIMESTAMPTZ,claimed_by TEXT,claimed_at TIMESTAMPTZ,payload JSONB DEFAULT '{}',task_type TEXT CONSTRAINT tasks_task_type_check CHECK(task_type IN ('dev','janitor')),executor_kind TEXT CONSTRAINT tasks_executor_kind_check CHECK(executor_kind IN ('headed-session','preview-janitor')));CREATE TABLE initiative_runs(id UUID PRIMARY KEY,phase TEXT DEFAULT 'planning',map_recovery_contract_id UUID,orchestrator_version TEXT DEFAULT 'v2');CREATE TABLE map_recovery_consumptions(contract_id UUID,attempt_id UUID);CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);`);
  for(const [,id,name]of LEGACY_BINDINGS)await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')",[id,name]);
- for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations','503_execution_directory','504_app_server_generations','506_app_server_streams'])await pool.query(readFileSync(new URL(`../../../../migrations/${name}.sql`,import.meta.url),'utf8'));
+ for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations','503_execution_directory','504_app_server_generations','506_app_server_streams','508_app_server_authorizations','509_app_server_canary_attempts'])await pool.query(readFileSync(new URL(`../../../../migrations/${name}.sql`,import.meta.url),'utf8'));
  await importLegacyPolicy({pool,env});
- // 测试fixture显式授予独立surface；生产迁移没有seed授权。
- await pool.query("INSERT INTO execution_grants(node_version_id,surface,provider,account_id,repo_scope,profile_id,provenance,state) SELECT current_version_id,'app_server','codex','team1',ARRAY['perfectuser21/cecelia'],'chat','test_explicit_policy','active' FROM execution_nodes");
+
 });
 beforeEach(async()=>{await directory.refresh({pool});});
 afterAll(async()=>{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();});
@@ -68,7 +85,7 @@ it('真实Brain controller→签名HTTP→Worker journal闭环；丢start回执�
  const stateRoot=fs.mkdtempSync(path.join(os.tmpdir(),'appserver-pg-http-')),bootId=randomUUID(),token='test-controller-token-with-32-characters';
  const {EventEmitter}=await import('node:events'),{PassThrough}=await import('node:stream');
  let creates=0,lost=true,lostCleanup=false,raw;const containers=new Map();
- const runner=createAppServerRunner({stateRoot,machineId:'xian-mac-m1',workerId:'xian-mac-m1',bootId,profiles:{chat:profile},assertLocalResources:async()=>{},docker:{
+ const runner=createAppServerRunner({stateRoot,machineId:'xian-mac-m1',workerId:'xian-mac-m1',bootId,profiles:{[home.profile]:profile},assertLocalResources:async()=>{},docker:{
   async create({name,identity}){const id=(++creates).toString(16).padStart(64,'0');containers.set(id,{id,name,status:'created',labels:Object.fromEntries(Object.entries(identity).map(([k,v])=>[`cecelia.appserver.${k}`,String(v)]))});return id;},async inspect(id){return containers.get(id)??null;},async start(id){containers.get(id).status='running';},async remove(id){containers.delete(id);},
   attach(){raw=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stdout:new PassThrough(),kill(){this.emit('close');}});return raw;}}});
  const server=createFleetWorkerServer({attemptToken:token,appServerRunner:runner});await new Promise(r=>server.listen(0,'127.0.0.1',r));
@@ -78,6 +95,7 @@ it('真实Brain controller→签名HTTP→Worker journal闭环；丢start回执�
  const client=createAppServerClient({pool,store:st,env:{KERNEL_FLEET_BRIDGE_TOKEN:token},fetchFn});
  const make=()=>createAppServerController({pool,store:st,homes:{[home.homeId]:home},client,collectSnapshot:async machine=>snapshot(machine)});
  const request={home_id:home.homeId,request_key:randomUUID()};
+ await authorizeFixture(home,'xian-mac-m1',{machine_id:'xian-mac-m1',worker_id:'xian-mac-m1',worker_boot_id:bootId,profiles:{[home.profile]:home.configDigest}});
  try{
   await expect(make().ensure({...request,machine_id:'us-mac-m4',limits:{cpus:64}})).rejects.toThrow('appserver_request_invalid');
   await expect(make().ensure(request)).rejects.toThrow('appserver_worker_unavailable');expect(creates).toBe(1);
@@ -104,7 +122,7 @@ it('真实Brain controller→签名HTTP→Worker journal闭环；丢start回执�
  }finally{await new Promise(r=>server.close(r));fs.rmSync(stateRoot,{recursive:true,force:true});}
 });
 it('同机最终start与撤销串行，取消落库后迟到start拒绝，独立generation仅在精确清理后生成',async()=>{
- await pool.query("UPDATE execution_grants SET state='active' WHERE surface='app_server'");await directory.refresh({pool});
+ await directory.refresh({pool});
  const h=config(),a=await reserve(h,randomUUID(),'xian-mac-m4');const st=store();
  let release,entered;const hold=new Promise(r=>release=r),ready=new Promise(r=>entered=r);let revoked=false;
  const start=st.withOperation(a.reservation.id,'start',async()=>{entered();await hold;});await ready;
@@ -118,7 +136,7 @@ it('同机最终start与撤销串行，取消落库后迟到start拒绝，独立
  for(const changed of [{authenticated:false,receipt},{authenticated:true,receipt:{...receipt,owner_key:'openclaw-'+ '0'.repeat(64)}},{authenticated:true,receipt:{...receipt,home_key:'0'.repeat(64)}},{authenticated:true,receipt:{...receipt,challenge:randomUUID()}}])await expect(st.confirmCleanup(pending.id,changed)).rejects.toThrow('appserver_cleanup_receipt_mismatch');
  await st.confirmCleanup(pending.id,{authenticated:true,receipt});
  const task=(await pool.query('SELECT status,result FROM tasks WHERE id=$1',[pending.task_id])).rows[0];expect(task.status).toBe('completed');expect(task.result.app_server_receipt).toEqual(receipt);
- await pool.query("UPDATE execution_grants SET state='active' WHERE id=$1",[a.reservation.execution_grant_id]);await directory.refresh({pool});
+ await pool.query("UPDATE app_server_authorizations SET state='revoked' WHERE grant_id=$1",[a.reservation.execution_grant_id]);await authorizeFixture(h,'xian-mac-m4');
  const next=await reserve(h,randomUUID(),'xian-mac-m4');expect(next.reservation.launch_generation).toBe(2);expect(next.reservation.owner_key).not.toBe(a.reservation.owner_key);
  await expect(pool.query("UPDATE app_server_homes SET machine_id='us-mac-m4' WHERE home_key=$1",[h.homeKey])).rejects.toThrow('appserver_home_affinity_immutable');
 });
@@ -138,9 +156,9 @@ it('默认建账factory经真实createTask/work-router写tasks与不可变路由
  try{
   await db.query("CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ)");
   for(const [,id,name]of LEGACY_BINDINGS)await db.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')",[id,name]);
-  for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations','503_execution_directory','504_app_server_generations','506_app_server_streams'])await db.query(readFileSync(new URL(`../../../../migrations/${name}.sql`,import.meta.url),'utf8'));
-  await importLegacyPolicy({pool:db,env});await db.query("INSERT INTO execution_grants(node_version_id,surface,provider,account_id,repo_scope,profile_id,provenance,state) SELECT current_version_id,'app_server','codex','team1',ARRAY['perfectuser21/cecelia'],'chat','test_explicit_policy','active' FROM execution_nodes");await directory.refresh({pool:db});
-  const h=config(),result=await createAppServerStore({pool:db}).reserve({home:h,requestKey:randomUUID(),machineId:'xian-mac-m1',capacitySnapshot:snapshot('xian-mac-m1'),capabilities:caps('xian-mac-m1')});
+  for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations','503_execution_directory','504_app_server_generations','506_app_server_streams','508_app_server_authorizations','509_app_server_canary_attempts'])await db.query(readFileSync(new URL(`../../../../migrations/${name}.sql`,import.meta.url),'utf8'));
+  await importLegacyPolicy({pool:db,env});await directory.refresh({pool:db});
+  const h=config();await authorizeFixture(h,'xian-mac-m1',caps('xian-mac-m1',h),db);const result=await createAppServerStore({pool:db}).reserve({home:h,requestKey:randomUUID(),machineId:'xian-mac-m1',capacitySnapshot:snapshot('xian-mac-m1'),capabilities:caps('xian-mac-m1',h)});
   const row=(await db.query('SELECT t.*,r.work_kind,r.canonical_task_type FROM tasks t JOIN work_routing_receipts r ON r.task_id=t.id WHERE t.id=$1',[result.reservation.task_id])).rows[0];
   expect(row).toMatchObject({task_type:'app_server_run',canonical_task_type:'app_server_run',executor_kind:'app-server-controller',work_kind:'operations',status:'in_progress'});
   expect(row.payload.home_key).toBe(h.homeKey);

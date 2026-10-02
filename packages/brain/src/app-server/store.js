@@ -7,6 +7,7 @@ import {getNodeProfile} from '../orchestrator/fleet-node/node-profile.js';
 import {validateHome,digest,generationOwner,receiptMatches,HASH,UUID} from './identity.js';
 import {createGenerationTask} from './task-authority.js';
 import {authorizePreparedCanary,authorizeCanaryReservation,readCanaryAuthorization} from './canary-authority.js';
+import {assertActiveAppServerAuthorization} from './active-authority.js';
 const SELECT=`SELECT r.*,g.home_key,g.request_key,g.generation,g.cancel_requested,h.config FROM capacity_reservations r
  JOIN app_server_generations g ON g.reservation_id=r.id JOIN app_server_homes h ON h.home_key=g.home_key WHERE r.owner_kind='app_server'`;
 const WAIT=Object.freeze({outcome:'wait',reason:'capacity'});
@@ -30,6 +31,7 @@ export function createAppServerStore({pool,createTask=createGenerationTask,after
     if(previous.some(r=>r.status!=='released'))throw Error('appserver_home_busy');
     await db.query(MACHINE_CAPACITY_LOCK_SQL,[machineId]);
     const auth=canary?await authorizePreparedCanary(db,{id:canary.id,home,machineId,capabilities}):await authorize(db,{snapshotVersion:directory.current()?.version,machineId,surface:'app_server',provider:home.provider,account:home.account,repo:home.repo,profileId:home.profile});
+    if(!canary)await assertActiveAppServerAuthorization(db,auth,home,capabilities?.worker_boot_id);
     if(!snapshotValid(capacitySnapshot,machineId))return WAIT;
     if(capabilities?.machine_id!==machineId||capabilities.worker_id!==auth.node.worker_id||!UUID.test(capabilities.worker_boot_id)
       ||capabilities.profiles?.[home.profile]!==home.configDigest)throw Error('appserver_worker_configuration_mismatch');
@@ -54,7 +56,7 @@ export function createAppServerStore({pool,createTask=createGenerationTask,after
   }
  async function launchAuthority(db,row,operation=a=>a){
   if(row.policy_version==='app-server-canary-v1'){const auth=await authorizeCanaryReservation(db,row);return operation(auth);}
-  return authorize(db,authInput(row),operation);
+  return authorize(db,authInput(row),async auth=>{await assertActiveAppServerAuthorization(db,auth,row.config,row.worker_boot_id);return operation(auth);});
  }
  return Object.freeze({get,reserve:input=>reserve(input),
   async reserveCanary(input){

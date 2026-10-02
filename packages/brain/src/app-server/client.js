@@ -53,6 +53,10 @@ export function createAppServerClient({pool,store,env=process.env,fetchFn=global
   }finally{clearTimeout(timer);}
  }
  const operation=(id,action)=>store.withOperation(id,action,async(row,url)=>{
+  if(action==='start'||action==='prepare-stream'){
+   const caps=(await request(url,row.machine_id,'capabilities')).receipt;
+   if(caps.worker_id!==row.worker_id||caps.worker_boot_id!==row.worker_boot_id||caps.profiles?.[row.config.profile]!==row.config_digest)throw Error('appserver_worker_configuration_mismatch');
+  }
   const body=workerIdentity(row);
   if(action==='start'&&row.canary_authorization){
    const a=row.canary_authorization,payload={authorization_id:a.id,nonce:a.nonce,expires_at:Number(new Date(a.challenge_expires_at)),identity:{...body}};
