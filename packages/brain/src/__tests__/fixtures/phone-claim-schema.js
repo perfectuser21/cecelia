@@ -7,7 +7,7 @@ import { importLegacyPolicy } from '../../execution-directory/store.js';
 import { LEGACY_BINDINGS } from '../../execution-directory/legacy-policy.js';
 import { PHONE_SCHEDULE_REGISTRY_AUTHORITY } from '../../phone-dispatch/task-authority.js';
 
-export async function createPhoneClaimFixture(onPool, { busyLegacy = false, workerHistorical = true, publicClaims = false } = {}) {
+export async function createPhoneClaimFixture(onPool, { busyLegacy = false, workerHistorical = true, publicClaims = false, beforeSchedule = async () => {} } = {}) {
   assertPhoneFixtureDatabase(DB_DEFAULTS.database,process.env.CI,'phone_claim_fixture_scratch_required');
   const schema = `phone_claim_${process.pid}_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Client(DB_DEFAULTS); let pool, created = false;
@@ -41,6 +41,7 @@ export async function createPhoneClaimFixture(onPool, { busyLegacy = false, work
     await c.query('COMMIT');
   } catch (error) { await c.query('ROLLBACK'); throw error; } finally { c.release(); }
   if (busyLegacy) await pool.query("INSERT INTO dispatch_events(task_id,event_type,reason) VALUES($1,'dispatched','worker_pool:slot7')", [old]);
+  await beforeSchedule(pool);
   await applyPhoneScheduleMigration(pool, '517_phone_scheduled_slots');
   await pool.query(`CREATE FUNCTION fixture_worker_payload() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.payload ? 'phone_schedule' THEN NEW.payload:=NEW.payload||'{"parallel_worker":true,"pipeline":"canvas","canonical":"exploratory"}'::jsonb;NEW.created_at:=now()-interval '1 hour';END IF;RETURN NEW;END $$;
     CREATE TRIGGER fixture_worker_payload BEFORE INSERT ON tasks FOR EACH ROW EXECUTE FUNCTION fixture_worker_payload()`);
