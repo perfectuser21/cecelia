@@ -61,6 +61,7 @@ async function setup({contracts=false,assertionChange=false,generatedChange=fals
   return {base,head,b,h};
 }
 function cli(base,head,mode='main'){
+  if(process.env.CI!=='true'||process.env.GITHUB_ACTIONS!=='true'||DB_DEFAULTS.database!=='cecelia_test')throw Object.assign(Error('完整CLI仅允许真实CI测试库'),{code:'IMPLEMENTATION_FIXTURE_CI_REQUIRED'});
   const script=fileURLToPath(new URL('../../../../../scripts/ci/implementation-pr-gate.mjs',import.meta.url));
   return childProcess.spawnSync(process.execPath,[script,'--repo-root',root,'--scope','phones','--base',base,'--head',head,'--mode',mode,
     '--snapshot-base',join(out,'base.json'),'--snapshot-head',join(out,'head.json'),'--output-dir',out],{encoding:'utf8',env:process.env});
@@ -137,13 +138,14 @@ it.each([{}, {contracts:true}, {assertionChange:true}, {contracts:true,generated
  expect((await fixture.db.query('SELECT id,manifest,digest,source_decision_id,version FROM map_manifest_versions ORDER BY version')).rows).toEqual(history);
 });
 
-it('boundaryonly本机scratch完整CLI入口在spawn前拒绝，误选不得复制public',()=>{
+it('boundaryonly非CI完整CLI入口在spawn前拒绝，误选不得复制public',()=>{
  root=mkdtempSync(join(tmpdir(),'cli-boundary-root-'));out=mkdtempSync(join(tmpdir(),'cli-boundary-out-'));
+ vi.stubEnv('CI','false');vi.stubEnv('GITHUB_ACTIONS','false');
  const spy=vi.spyOn(childProcess,'spawnSync').mockImplementation(()=>{throw Error('deny_real_spawn');});
  try{
   let failure;try{cli('a'.repeat(40),'b'.repeat(40));}catch(error){failure=error;}
   expect(spy).toHaveBeenCalledTimes(0);expect(failure).toMatchObject({code:'IMPLEMENTATION_FIXTURE_CI_REQUIRED'});
- }finally{spy.mockRestore();}
+ }finally{try{spy.mockRestore();}finally{vi.unstubAllEnvs();}}
 });
 
 it('实际库名不符时只读身份后断开，即使CI变量为真也不向生产发送清理DDL',async()=>{

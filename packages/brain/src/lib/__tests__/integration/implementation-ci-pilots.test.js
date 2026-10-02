@@ -26,7 +26,10 @@ import { readImplementationImpact } from '../../implementation-impact.js';
 import { createImplementationScratch as originalImplementationScratch,importImplementationSnapshot,projectImplementationSnapshot } from '../../../../../../scripts/ci/implementation-snapshot.mjs';
 import { runProjection } from '../../../map/projector.js';
 const implementationFixture={create:originalImplementationScratch};
-function createImplementationScratch(){return implementationFixture.create();}
+function createImplementationScratch(){
+ if(process.env.CI!=='true'||process.env.GITHUB_ACTIONS!=='true'||DB_DEFAULTS.database!=='cecelia_test')throw Object.assign(Error('完整试点仅允许真实CI测试库'),{code:'IMPLEMENTATION_FIXTURE_CI_REQUIRED'});
+ return implementationFixture.create();
+}
 it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真实Git扫描后固定投影',async()=>{
   const fixture=await versionsDatabase(),dir=realpathSync(mkdtempSync(join(tmpdir(),'pilot-registration-')));let server;
   try{
@@ -182,10 +185,11 @@ it.each(['coverage','pilot','graph'])('seedonly %s调用真实设置链，query�
  expect(calls.some(sql=>/DROP SCHEMA/.test(sql))).toBe(true);
 });
 
-it('boundaryonly本机scratch试点入口在adapter前拒绝，误选不得复制public',async()=>{
+it('boundaryonly非CI试点入口在adapter前拒绝，误选不得复制public',async()=>{
+ vi.stubEnv('CI','false');vi.stubEnv('GITHUB_ACTIONS','false');
  const spy=vi.spyOn(implementationFixture,'create').mockImplementation(async()=>{throw Error('deny_real_clone');});
  try{
   let failure;try{await createImplementationScratch();}catch(error){failure=error;}
   expect(spy).toHaveBeenCalledTimes(0);expect(failure).toMatchObject({code:'IMPLEMENTATION_FIXTURE_CI_REQUIRED'});
- }finally{spy.mockRestore();}
+ }finally{try{spy.mockRestore();}finally{vi.unstubAllEnvs();}}
 });
