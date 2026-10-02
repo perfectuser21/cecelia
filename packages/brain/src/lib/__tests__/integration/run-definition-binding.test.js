@@ -2,9 +2,9 @@ import { afterEach,beforeEach,expect,it } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { releaseEvidenceDatabase } from '../../../__tests__/fixtures/release-evidence-db.js';
-const releases=await import('../../release-index.js').catch(()=>({}));
-const service=await import('../../run-definition-binding.js').catch(()=>({}));
-const routes=await import('../../../routes/run-definitions.js').catch(()=>({}));
+import * as releases from '../../release-index.js';
+import * as service from '../../run-definition-binding.js';
+import * as routes from '../../../routes/run-definitions.js';
 let fixture,release,observation,app;
 beforeEach(async()=>{
   expect(service.bindRunDefinition,'运行定义绑定服务必须存在').toBeTypeOf('function');
