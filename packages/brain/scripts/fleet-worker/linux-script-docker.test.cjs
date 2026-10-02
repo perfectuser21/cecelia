@@ -13,7 +13,7 @@ describe('Linux root bridge Docker限制核心',()=>{
   await a.start(ID);expect(f.calls.find(a=>a[0]==='start')).toEqual(['start',ID]);
  });
  it('固定local禁用压缩，单文件日志预算可启动且不增加大小或份数',async()=>{
-  const f=fixture(),r=f.record;r.profile.logMaxFiles=1;f.record=r;
+  const f=fixture({logMaxFiles:1}),r=f.record;
   const a=createLinuxScriptDockerAdapter(f.options);await a.create({...f.input,profile:r.profile});
   const flags=f.calls.find(args=>args[0]==='create');
   expect(flags).toContain('--log-opt=compress=false');expect(flags).toContain('--log-opt=max-file=1');

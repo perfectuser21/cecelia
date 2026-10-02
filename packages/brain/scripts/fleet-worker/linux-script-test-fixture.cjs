@@ -1,9 +1,9 @@
 const {createHash}=require('node:crypto');
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const ID='a'.repeat(64);
-function fixture() {
+function fixture({logMaxFiles=2}={}) {
  const identity={reservation_id:'12345678-1234-4234-8234-123456789abc',intent_id:'22345678-1234-4234-8234-123456789abc',launch_generation:1,machine_id:'hk-vps',owner_key:'script-12345678-1234-4234-8234-123456789abc-a1',config_digest:'',worker_id:'hk-vps',worker_boot_id:'32345678-1234-4234-8234-123456789abc',execution_version_id:'42345678-1234-4234-8234-123456789abc',execution_grant_id:'52345678-1234-4234-8234-123456789abc',profile_id:'safe'};
- const profile={image:'test/image@sha256:'+'c'.repeat(64),cpus:0.25,memoryBytes:134217728,pidsLimit:32,logMaxSizeBytes:1048576,logMaxFiles:2,user:'65534:65534',cwd:'/tmp'};
+ const profile={image:'test/image@sha256:'+'c'.repeat(64),cpus:0.25,memoryBytes:134217728,pidsLimit:32,logMaxSizeBytes:1048576,logMaxFiles,user:'65534:65534',cwd:'/tmp'};
  const job={profile:'safe',cmd:'printf ok',timeout_sec:30,env:{CI:'1'}};
  identity.config_digest=hash({job,profile_digest:hash(profile)});
  let record={identity,profile,job_digest:hash(job),timeout_sec:job.timeout_sec,pool:{schema_version:1,machine_registry_id:'71d632df-252a-4991-ad6b-3647fbbea9f7',machine_id:'hk-vps',role:'worker',endpoint_host:'100.90.1.4',docker_host:'unix:///var/run/docker.sock',pool:{cpu_cores:1,memory_bytes:1073741824,pids_limit:128},canary_image:profile.image},image_id:'sha256:'+'d'.repeat(64),daemon_id:'daemon-fixed',phase:'planned',container_id:null};
