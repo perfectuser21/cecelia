@@ -1,18 +1,13 @@
 # DoD — 受控再基恢复
 - [x] [BEHAVIOR] C7 B2.1 recurring过期收口：DISTINCT ON候选前及最终UPDATE同时排除真实phone执行器与持久owner；真实513producer/旧508租约/历史无owner手机保持原账，伪payload普通及同title邻居合法过期，保取消去重、原字段/history及仅RETURNING计数。最终目标故障为真实SQL负例，不声称非法身份重绑竞态。
   Test: manual:bash -c 'cd packages/brain && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/recurring.pg.test.js src/phone-dispatch/recurring-dispatch.pg.test.js src/phone-dispatch/schedule-store.pg.test.js src/phone-dispatch/recurring-dispatch.test.js src/phone-dispatch/schedule-store.test.js src/__tests__/recurring-engine.test.js --maxWorkers=1 --minWorkers=1'
-
-
 - [x] [BEHAVIOR] 显式受鉴权入口追加收据、签发Controller、保留失败事实；旧入口与无显式请求仍拒绝。
   Test: manual:bash -c "npx vitest run tests/gp/f1/step1-controlled-recovery.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] Map/Git/活跃身份改变即拒绝，旧恢复保护保持。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/orchestrator/__tests__/recovery-rebase.test.js src/orchestrator/__tests__/kernel-run-store.test.js src/__tests__/relay-runs-canonical-create.test.js src/orchestrator/preflight/base-sha-reanchor.test.js --maxWorkers=1 --minWorkers=1"
-
 真实隔离PG 6项已通过，详见永久 integration。正式 native、Judge、CI 与部署状态记录于 Brain 任务，不据本 DoD 宣称已完成。
-
 - [x] [BEHAVIOR] 正规恢复冻结目标贯穿ground-truth同run候选与真实dispatcher到attempt/launcher边界，排除旧us投影；冲突profile与非法target无新run或派发。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/orchestrator/__tests__/recovery-target-cross-path.test.js --maxWorkers=1 --minWorkers=1"
-
 - [x] [BEHAVIOR] identity 身份与许可：手机SSH执行面独立授权；身份字段逐项绑定，未知或过期容量拒绝，动作只允许adb_get_state。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/phone-dispatch/identity.test.js src/phone-dispatch/contracts.test.js src/execution-directory --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] ledger 持久台账：真实PostgreSQL验证已部署image510后补缺号508与507独立台账及十三执行器，验证同单唯一预约、同机互斥、一次launch、丢回复保留占位、认证回执幂等结算及旧writer保护。
@@ -21,27 +16,24 @@
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/__tests__/executor-contracts.test.js src/__tests__/migration-471-script-executor.test.js src/__tests__/executor-headed-liveness.test.js src/phone-dispatch/task-ownership.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] gates 门禁：事实、版本及DoD映射全部通过。
   Test: manual:bash -c "node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs && node packages/quality/scripts/devgate/check-dod-mapping.cjs DoD.md"
-
 - [x] [BEHAVIOR] smoke 写入护栏：新smoke默认及显式生产目标拒绝且没有业务写请求；永久守卫验证覆盖真实shell入口。
   Test: manual:bash -c "node --test packages/quality/tests/smoke-production-guard.node-test.mjs packages/quality/tests/phone-dispatch-smoke-env.node-test.mjs"
-
 - [x] [BEHAVIOR] required smoke合同：T1/F4精确十三执行器并核手机独立收口；script保留471历史名单并叠加508精确增量；手机身份smoke在allowlist唯一登记，永久执行真实Node合同块及完整script shell回归。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/__tests__/script-executor-contract-smoke.test.js src/__tests__/executor-contracts.test.js src/__tests__/migration-471-script-executor.test.js --maxWorkers=1 --minWorkers=1"
-
 - [x] [BEHAVIOR] legacy bridge一次有头接管（真实Linux507/手机508/接管509三独立迁移版本）：生产token、原路由、CAS幂等、活run/预约/callback拒绝、真实双连接advisory闸、普通writer及人赢元数据兼容，真实终态helper提交后持久保存handoff。
   Test: manual:bash -c 'cd packages/brain && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/headed-takeover.pg.integration.test.js --maxWorkers=1 --minWorkers=1'
 - [x] [BEHAVIOR] 迟到回执与session所有权：HTTP/队列/CAS持久屏障，原PATCH同session心跳兼容、跨session拒绝。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/routes/__tests__/execution-headed-callback-owner.test.js src/routes/__tests__/claim-protocol.test.js src/__tests__/executor-headed-liveness.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] 旧HTTP合同：未接管单PATCH缺失404及priority/initiative参数对齐保留；owner读取失败不UPDATE或入callback_queue，owner通过后的INSERT仍四次重试全失败503，真实owned迟到回执先拒绝。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run ../../tests/integration/execution-callback-await.test.js src/__tests__/routes/task-tasks.test.js src/routes/__tests__/task-tasks.test.js src/routes/__tests__/execution-headed-callback-owner.test.js src/lib/__tests__/headed-task-owner.test.js src/routes/__tests__/task-headed-takeover.test.js --maxWorkers=1 --minWorkers=1"
-
 - [x] [BEHAVIOR] headed HTTP限流：接管POST两注册路径、执行与字段PATCH真实第301请求429；双alias共享预算，错误认证计数，拒绝前不新增数据库/owner/终态副作用；固定draft7/Retry-After且无legacy头，原普通结果/metadata及接管合同保留。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/routes/__tests__/task-mutation-rate-limit.test.js src/routes/__tests__/task-task-patch.test.js src/routes/__tests__/task-headed-takeover.test.js src/routes/__tests__/headed-patch-transaction.test.js src/lib/__tests__/headed-task-owner.test.js src/routes/__tests__/tasks-result-backfill.test.js src/routes/__tests__/tasks-completed-gate.test.js --maxWorkers=1 --minWorkers=1"
-
 - [x] [BEHAVIOR] legacy bridge一次有头接管（真实Linux507/手机508/接管509三独立迁移版本）：生产token、原路由、CAS幂等、活run/预约/callback拒绝、真实双连接advisory闸、普通writer及人赢元数据兼容，真实终态helper提交后持久保存handoff；普通与有头legacy PATCH经真实HTTP/afterTerminalTransition/saveHandoff查库，失败ROLLBACK无handoff。
   Test: manual:bash -c 'cd packages/brain && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/headed-takeover.pg.integration.test.js --maxWorkers=1 --minWorkers=1'
 - [x] [BEHAVIOR] 旧HTTP合同：未接管单PATCH缺失404及priority/initiative参数对齐保留；owner读取失败不UPDATE或入callback_queue，owner通过后的INSERT仍四次重试全失败503，真实owned迟到回执先拒绝。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run ../../tests/integration/execution-callback-await.test.js src/__tests__/routes/task-tasks.test.js src/routes/__tests__/task-tasks.test.js src/__tests__/task-tasks-preflight-revival.test.js src/__tests__/task-type-registry.guard.test.js src/routes/__tests__/execution-headed-callback-owner.test.js src/lib/__tests__/headed-task-owner.test.js src/routes/__tests__/task-headed-takeover.test.js --maxWorkers=1 --minWorkers=1"
-
 - [x] [BEHAVIOR] 退役隔离验收：原守卫核DB、锁空连接串后运行唯一真实PG入口；私有API建单/GET、真实路由收据与dispatch/terminal/selector查退役事实；测试内allow/full/unknown/drain/billing保持原闸、普通邻居不变且零执行；本地仅scratch、CI仅test。覆盖范围不包含共享全局tick整轮。
   Test: manual:bash -c 'node --test packages/quality/tests/retire-harness-planner-smoke.node-test.mjs && cd packages/brain && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js --maxWorkers=1 --minWorkers=1'
+
+- [x] [BEHAVIOR] C7 B2.2a 普通候选与认领隔离：固定SQL别名在helper、两类peek与worker LIMIT前排除真实phone执行器和owner，最终CAS与自属claim释放再次核对；NULL执行器和伪payload普通邻居保留优先级及预算，真实phone在途槽关联保持保守。真实两连接普通状态/认领竞态零发射；phone最终mutation为实际SQL负例，不冒称身份重绑竞态；本刀不包含manualdispatch、callback、cleanup或C8执行。
+  Test: manual:bash -c 'cd packages/brain && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/dispatch-helpers.pg.test.js src/__tests__/integration/worker-pool-dispatch.pg.test.js src/__tests__/integration/recurring.pg.test.js src/phone-dispatch/schedule-store.pg.test.js src/phone-dispatch/recurring-dispatch.pg.test.js src/__tests__/task-queue-lanes.test.js src/__tests__/task-queue-lanes-route.test.js src/__tests__/dispatch-helpers.test.js src/__tests__/worker-pool-dispatch.test.js src/__tests__/dispatcher.test.js src/__tests__/dispatcher-claim-leak.test.js src/__tests__/dispatcher-hol.test.js src/__tests__/dispatcher-device-lock.test.js src/__tests__/dispatcher-xian-harness-bypass.test.js --maxWorkers=1 --minWorkers=1'

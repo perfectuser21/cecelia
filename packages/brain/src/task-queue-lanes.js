@@ -2,6 +2,13 @@ import { PIPELINE_TASK_TYPES } from './lib/task-type-registry.js';
 
 export { PIPELINE_TASK_TYPES };
 
+/** Fixed internal aliases only; payload flags never confer execution ownership. */
+export function phoneOrdinaryQueueSql(alias) {
+  if (alias !== 't' && alias !== 'tasks') throw Error('phone_queue_sql_alias_invalid');
+  return `${alias}.executor_kind IS DISTINCT FROM 'phone-ssh-controller'
+    AND NOT EXISTS (SELECT 1 FROM phone_task_owners o WHERE o.task_id = ${alias}.id)`;
+}
+
 function sqlString(value) {
   return `'${value.replaceAll("'", "''")}'`;
 }

@@ -14,6 +14,7 @@
  */
 
 import pool from './db.js';
+import { phoneOrdinaryQueueSql } from './task-queue-lanes.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { assertDispatchRoutingReceipt } from './orchestrator/dispatcher.js';
 import { isGlobalQuotaCooling, getQuotaCoolingState } from './quota-cooling.js';
@@ -530,6 +531,7 @@ export async function dispatchNextTask(goalIds) {
       // Peek at the next queued task to check its priority
       const peekResult = await pool.query(`
         SELECT priority FROM tasks WHERE status = 'queued'
+          AND ${phoneOrdinaryQueueSql('tasks')}
         ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 9 END, created_at ASC
         LIMIT 1
       `);
@@ -569,6 +571,7 @@ export async function dispatchNextTask(goalIds) {
           const { getTaskLocation } = await import('./task-router.js');
           const peekXian = await pool.query(`
             SELECT task_type, location FROM tasks WHERE status = 'queued'
+              AND ${phoneOrdinaryQueueSql('tasks')}
             ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 9 END, created_at ASC
             LIMIT 1
           `);
@@ -841,6 +844,7 @@ export async function dispatchNextTask(goalIds) {
     const claimResult = await pool.query(
       `UPDATE tasks SET claimed_by = $1, claimed_at = NOW()
        WHERE id = $2 AND claimed_by IS NULL
+         AND status = 'queued' AND ${phoneOrdinaryQueueSql('tasks')}
        RETURNING id`,
       [claimerId, candidate.id]
     );

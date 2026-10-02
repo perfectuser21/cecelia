@@ -24,6 +24,7 @@ import { existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { acquireDeviceLock, releaseDeviceLocksHeldBy } from './device-lock-helpers.js';
 import { finalizeTask } from './lib/task-terminal.js';
+import { phoneOrdinaryQueueSql } from './task-queue-lanes.js';
 
 export const WORKER_SLOTS = ['slot7', 'slot8', 'slot9'];
 export const MAX_CONCURRENT = 2;
@@ -138,6 +139,7 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
   const { rows: tasks } = await pool.query(
     `SELECT id, title, payload FROM tasks
       WHERE status = 'queued' AND claimed_by IS NULL
+        AND ${phoneOrdinaryQueueSql('tasks')}
         AND ( (payload->>'parallel_worker')::boolean IS TRUE
               OR (payload->>'pipeline' = 'canvas' AND payload->>'canonical' = 'exploratory') )
       ORDER BY created_at ASC
@@ -156,7 +158,8 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
     // CAS 预占：/dev worker claim 撞 409 见此名字即知预占、继续（任务 873acc6d 约定）
     const claim = await pool.query(
       `UPDATE tasks SET claimed_by = 'interactive-dev-skill', claimed_at = NOW()
-        WHERE id = $1 AND status = 'queued' AND claimed_by IS NULL`,
+        WHERE id = $1 AND status = 'queued' AND claimed_by IS NULL
+          AND ${phoneOrdinaryQueueSql('tasks')}`,
       [task.id]
     );
     if (claim.rowCount === 0) continue; // 别人抢先，换下一个任务
@@ -185,7 +188,8 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
           console.error(`[worker-pool] unknown_device terminal mark failed (task=${task.id}): ${markErr.message}`);
           try {
             await pool.query(
-              `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = 'interactive-dev-skill'`,
+              `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = 'interactive-dev-skill'
+                AND ${phoneOrdinaryQueueSql('tasks')}`,
               [task.id],
             );
           } catch (releaseErr) {
@@ -197,7 +201,8 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
       if (lockResult.result !== 'acquired') {
         console.log(`[worker-pool] device ${deviceSerial} locked by ${lockResult.holder?.locked_by}, revert task ${task.id}`);
         await pool.query(
-          `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = 'interactive-dev-skill'`,
+          `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = 'interactive-dev-skill'
+            AND ${phoneOrdinaryQueueSql('tasks')}`,
           [task.id],
         );
         continue; // 槽位没动过，不推进 slotIdx，留给下一个任务
@@ -249,7 +254,8 @@ export async function runWorkerPoolDispatch(pool, deps = {}) {
           [task.id, 'failed_dispatch', `worker_pool:${slot}: ${err.message}`.slice(0, 500)]
         );
         await pool.query(
-          `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = 'interactive-dev-skill'`,
+          `UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = $1 AND claimed_by = 'interactive-dev-skill'
+            AND ${phoneOrdinaryQueueSql('tasks')}`,
           [task.id]
         );
         // 发射失败 revert 处同步释放设备锁（G5 同 dispatcher 原则）：任务回 queued

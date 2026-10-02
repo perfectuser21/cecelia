@@ -14,6 +14,7 @@
  */
 
 import pool from './db.js';
+import { phoneOrdinaryQueueSql } from './task-queue-lanes.js';
 import { updateTask, createTask } from './actions.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { sortTasksByWeight } from './task-weight.js';
@@ -76,6 +77,7 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
     WHERE ${goalCondition}
       AND t.status = 'queued'
       AND t.claimed_by IS NULL
+      AND ${phoneOrdinaryQueueSql('t')}
       -- headed_manual 消费语义（task 94ee0ec4，铁律 9f14c074）：建单方标记
       -- payload.headed_manual=true（jsonb 布尔或字符串 'true' 均识别，payload->>
       -- 对两种写法都返回文本 'true'）的任务留给有头人工执行，不进无头自动派发。
