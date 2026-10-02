@@ -966,6 +966,9 @@ jobs:
             src/__tests__/integration/script-capacity-reservation.pg.integration.test.js \
             src/__tests__/integration/execution-directory.pg.integration.test.js \
             src/app-server/__tests__/integration/store.test.js \
+            src/app-server/__tests__/integration/authorization.test.js \
+            src/app-server/__tests__/integration/canary-reservation.test.js \
+            src/app-server/__tests__/integration/canary-service.test.js \
             src/__tests__/integration/linux-pool-authorization.pg.integration.test.js \
             src/__tests__/integration/linux-script-authorization.pg.integration.test.js \
             src/__tests__/integration/script-managed-executor.pg.integration.test.js \

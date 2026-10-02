@@ -52,7 +52,7 @@ export function createAppServerController({pool,env=process.env,homes=loadAppSer
   async inspect(id){if(!UUID.test(id))throw Error('appserver_request_invalid');const row=await store.get(id);if(row.status==='released')return view(row);return guarded(id,async()=>view(await observe(id)));},
   async cancel(id){if(!UUID.test(id))throw Error('appserver_request_invalid');const row=await store.get(id);if(row.status==='released')return view(row);return guarded(id,async()=>view(await cancel(id)));},
   async reconcile(){const rows=await store.listOutstanding();const outcomes=[];
-   for(const row of rows.slice(0,5)){try{outcomes.push(view(await guarded(row.id,()=>row.cancel_requested?cancel(row.id):recover(row.id))));}
+   for(const row of rows.filter(row=>row.policy_version!=='app-server-canary-v1').slice(0,5)){try{outcomes.push(view(await guarded(row.id,()=>row.cancel_requested?cancel(row.id):recover(row.id))));}
     catch{outcomes.push({...view(row),status:'unconfirmed'});}}
    return outcomes;
   },

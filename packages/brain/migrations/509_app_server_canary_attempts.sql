@@ -27,3 +27,12 @@ BEGIN
 END $$;
 CREATE TRIGGER app_server_canary_attempt_guard BEFORE INSERT OR UPDATE OR DELETE ON app_server_canary_attempts FOR EACH ROW EXECUTE FUNCTION app_server_canary_attempt_guard();
 INSERT INTO schema_version(version,description,applied_at) VALUES('509','两代受限聊天验收预约及不可改写身份',now()) ON CONFLICT(version) DO NOTHING;
+
+CREATE TABLE app_server_canary_evidence (
+ reservation_id UUID PRIMARY KEY REFERENCES app_server_canary_attempts(reservation_id),
+ envelope JSONB NOT NULL,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT statement_timestamp()
+);
+CREATE FUNCTION app_server_canary_evidence_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'appserver_canary_evidence_immutable';END $$;
+CREATE TRIGGER app_server_canary_evidence_immutable BEFORE UPDATE OR DELETE ON app_server_canary_evidence FOR EACH ROW EXECUTE FUNCTION app_server_canary_evidence_immutable();

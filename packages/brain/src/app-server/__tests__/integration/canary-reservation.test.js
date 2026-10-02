@@ -65,3 +65,30 @@ it('授权撤销和boot变化拒绝新start，但历史精确清理仍可达',as
  await expect(st.withOperation(result.reservation.id,'start',()=>called=true)).rejects.toThrow('appserver_canary_authorization_denied');expect(called).toBe(false);
  await st.withOperation(result.reservation.id,'inspect',(_row,url)=>expect(url).toBe('http://m1:5231'));
 });
+
+it('激活必须两代Worker签名封存成功且精确清理；证据和任务留痕同事务',async()=>{
+ let api={};try{api=await import('../../canary-evidence.js');}catch(e){if(e.code!=='ERR_MODULE_NOT_FOUND')throw e;}
+ expect(api.createCanaryEvidenceStore).toBeTypeOf('function');
+ const {createHmac}=await import('node:crypto'),{workerIdentity}=await import('../../identity.js');
+ const {auth,capabilities,capacitySnapshot}=await prepare(),st=store(),token='canary-test-key-'.repeat(3);
+ for(const row of await st.listOutstanding()){const pending=await st.requestCancel(row.id);await st.confirmCleanup(row.id,{authenticated:true,receipt:{...workerIdentity(pending),container_id:pending.container_id,challenge:pending.cleanup_challenge,status:'cleaned',absent:true,tombstoned:true}});}
+ const evidence=api.createCanaryEvidenceStore({pool,store:st,token,client:{probeCapabilities:async()=>capabilities},afterTask:async()=>{}});
+ await expect(evidence.activate(auth.id)).rejects.toThrow('appserver_canary_evidence_incomplete');
+ for(const sequence of [1,2]){
+  const {reservation:row}=await st.reserveCanary({authorizationId:auth.id,sequence,capabilities,capacitySnapshot});
+  const stream=await st.reserveStream(row.id);
+  const receipt={...workerIdentity(row),container_id:'f'.repeat(64),status:'exited',stream_id:stream.id,stream_status:'closed',rpc_started:true,request_nonce:randomUUID(),
+   canary_evidence:{authorization_id:auth.id,nonce:auth.nonce,expires_at:Number(new Date(auth.challenge_expires_at)),stream_id:stream.id,complete:true,sealed:true,rejected:0,failed:0,
+    methods:['initialize','model/list','config/read','configRequirements/read'].map(method=>({method,result_digest:'a'.repeat(64)}))}};
+  const sign=r=>({authenticated:true,receipt:r,signature:createHmac('sha256',token).update(JSON.stringify(r)).digest('hex')});
+  await expect(evidence.record(row.id,{...sign(receipt),signature:'0'.repeat(64)})).rejects.toThrow('appserver_canary_evidence_invalid');
+  await expect(evidence.record(row.id,sign({...receipt,canary_evidence:{...receipt.canary_evidence,sealed:false}}))).rejects.toThrow('appserver_canary_evidence_invalid');
+  await st.observe(row.id,sign(receipt));await evidence.record(row.id,sign(receipt));
+  await expect(evidence.activate(auth.id)).rejects.toThrow('appserver_canary_evidence_incomplete');
+  const pending=await st.requestCancel(row.id);await st.confirmCleanup(row.id,sign({...workerIdentity(pending),container_id:pending.container_id,challenge:pending.cleanup_challenge,status:'cleaned',absent:true,tombstoned:true}));
+ }
+ expect(await evidence.activate(auth.id)).toMatchObject({id:auth.id,state:'active'});
+ expect((await pool.query('SELECT state FROM execution_grants WHERE id=$1',[auth.grant_id])).rows[0].state).toBe('active');
+ const task=(await pool.query('SELECT status,result FROM tasks WHERE id=$1',[auth.evidence_task_id])).rows[0];expect(task.status).toBe('completed');expect(task.result.actor).toBe('brain:app-server-canary');expect(task.result.evidence.generations).toHaveLength(2);
+ expect((await evidence.activate(auth.id)).state).toBe('active');
+});
