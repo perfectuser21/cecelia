@@ -49,3 +49,19 @@ it('Linux接入自动准备工具链和账号的真实产物合同持续验收�
   expect(() => execFileSync('python3', [script, 'BootstrapTests.test_missing_account_and_old_host_node_need_no_manual_setup'],
     { encoding: 'utf8', timeout: 30000 })).not.toThrow();
 });
+
+it('F1升级验证不能由verifyOnly布尔值自授，缺私有升级文件在任何读取或命令前拒绝', async () => {
+  const { installLinuxPool } = await import('../../../packages/brain/scripts/fleet-worker/linux-pool-installer.cjs');
+  let reads=0,commands=0;
+  await expect(installLinuxPool({sourceDir:'/fixed/source',profilePath:'/fixed/profile',tokenPath:'/fixed/token',nodePath:'/fixed/node',
+    revision:'a'.repeat(40),executionKeyPath:'/fixed/key',verifyOnly:true},{platform:'linux',getuid:()=>0,
+    fs:{lstatSync:()=>{reads++;throw Error('unexpected read');}},runCommand:async()=>{commands++;}})).rejects.toThrow('linux_pool_install_input_invalid');
+  expect(reads).toBe(0);expect(commands).toBe(0);
+});
+
+it('F1升级重放边：原started字节保留，目标完整回执丢失只验证，不再次安装', () => {
+  const script=fileURLToPath(new URL('../../../packages/brain/scripts/fleet-worker/linux-onboarding-remote.test.py',import.meta.url));
+  expect(()=>execFileSync('python3',[script,'RemoteTests.test_upgrade_links_started_attempt_without_changing_its_bytes',
+    'RemoteTests.test_upgrade_target_lost_response_revalidates_all_files_without_install',
+    'RemoteTests.test_partial_upgrade_refuses_without_reinstall'],{encoding:'utf8',timeout:30000})).not.toThrow();
+});
