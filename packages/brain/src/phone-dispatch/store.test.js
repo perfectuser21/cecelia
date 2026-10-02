@@ -191,3 +191,10 @@ it('已部署Linux507与手机508各自留schema_version，不抢用同一版本
  expect(rows[0].description).not.toContain('手机独立');
  expect(rows[1].description).toContain('手机独立');
 });
+
+it('主线510已安装后补缺号508：真实版本账独立且保留image与phone两执行器',async()=>{
+ const versions=(await pool.query("SELECT version FROM schema_version WHERE version IN ('507','508','510') ORDER BY version")).rows.map(r=>r.version);
+ expect(versions).toEqual(['507','508','510']);
+ expect((await pool.query("SELECT enabled FROM janitor_config WHERE job_id='us-brain-image-retention-v1'")).rows).toEqual([{enabled:false}]);
+ for(const executor of ['image-janitor','phone-ssh-controller'])await expect(pool.query("INSERT INTO tasks(id,status,task_type,executor_kind) VALUES($1,'queued','dev',$2)",[randomUUID(),executor])).resolves.toMatchObject({rowCount:1});
+});
