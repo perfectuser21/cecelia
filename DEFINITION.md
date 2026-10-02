@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.361.0
+**Brain 版本**: 1.361.1
 
 现役西安M4可经显式固定canonical runner安装恢复：原受保护plist摘要CAS与自属drain合作锁/真实继承FD绑定，仅runner切到受信aeaf，显式路径同时要求Worker有效drain marker为同一固定marker（缺字段采用默认），其它字段与普通升级保留语义不变；旧快照继续用于launch前核验和失败回滚。
 
