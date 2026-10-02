@@ -106,16 +106,22 @@ def collect(*,manifest_path='/etc/cecelia/phone-ssh/probe.json',source_root='/op
         if not stat.S_ISREG(value.st_mode):raise ValueError('phone_drain_unconfirmed')
         return (value.st_dev,value.st_ino,value.st_size,value.st_mtime_ns,value.st_ctime_ns)
     before_marker=marker();before=runner.journal.activity_snapshot()
+    before_locks=external_locks(lock_root)
     maintenance=runner.maintenance()
+    after_locks=external_locks(lock_root)
     after=runner.journal.activity_snapshot();after_marker=marker()
+    occupied=max(before_locks['occupied'],after_locks['occupied'])
+    maintenance['journal_pending']=maintenance['pending']
+    maintenance['external_occupied']=occupied
+    maintenance['pending']+=occupied
     maintenance['draining']=before_marker is not None and after_marker is not None
-    maintenance['stable']=maintenance['stable'] and before['revision']==after['revision'] and before_marker==after_marker
+    maintenance['stable']=maintenance['stable'] and before['revision']==after['revision'] and before_marker==after_marker and before_locks==after_locks
     maintenance['quiescent']=maintenance['draining'] and maintenance['stable'] and maintenance['pending']==0 and maintenance['in_flight']==0
     build=hashlib.sha256(json.dumps(actual,sort_keys=True,separators=(',',':')).encode()).hexdigest()
     config=hashlib.sha256(json.dumps({'manifest':manifest,'worker_identity':identity,'actual_hashes':actual},sort_keys=True,separators=(',',':')).encode()).hexdigest()
     return {'machine_id':identity['machine_id'],'worker_id':identity['worker_id'],'physical_boot_id':boot_id(),
             'config_digest':config,'build_digest':build,'action':'adb_get_state','action_digest':actual['adb_socket.py'],
-            'resources':real_resources(journal_root),'adb_daemon':daemon_observation(),'external_locks':external_locks(lock_root),
+            'resources':real_resources(journal_root),'adb_daemon':daemon_observation(),'external_locks':{'occupied':occupied},
             'maintenance':maintenance,'observed_at':datetime.now(timezone.utc).isoformat()}
 
 def validate_request(request):
