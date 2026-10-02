@@ -105,7 +105,9 @@ def bootstrap(options,deps=None):
  run=deps.get('run',run_command);readlink=deps.get('readlink',os.readlink)
  if deps.get('platform',platform.system())!='Linux' or deps.get('getuid',os.geteuid)()!=0:fail('root_linux_required')
  required={'source_dir','profile_file','token_file','revision'}
- if not isinstance(options,dict) or not required<=options.keys() or options.keys()-required-{'node_archive','execution_key_file'}:fail('input_invalid')
+ if not isinstance(options,dict) or not required<=options.keys() or options.keys()-required-{'node_archive','execution_key_file','upgrade_file','verify_only'}:fail('input_invalid')
+ if 'verify_only' in options and (options['verify_only'] is not True or 'upgrade_file' not in options):fail('input_invalid')
+ if 'upgrade_file' in options and 'execution_key_file' not in options:fail('input_invalid')
  if not isinstance(options['revision'],str) or not re.fullmatch('[a-f0-9]{40}',options['revision']):fail('input_invalid')
  def real(value):
   if not isinstance(value,str) or not value.startswith('/') or '\0' in value or os.path.normpath(value)!=value:fail('input_invalid')
@@ -159,8 +161,13 @@ def bootstrap(options,deps=None):
    if error.code!=1 or error.stdout.strip()!='none':fail('host_unavailable')
   info=json.loads(run('/usr/bin/docker',['info','--format','{{json .}}']))
   if info.get('CgroupDriver')!='systemd' or info.get('CgroupVersion')!='2' or not info.get('ID'):fail('daemon_unavailable')
+  upgrade_raw=read(real(options['upgrade_file']),0o600,65536) if 'upgrade_file' in options else None
+  upgrade=json.loads(upgrade_raw) if upgrade_raw is not None else None
+  if upgrade is not None and (not isinstance(upgrade,dict) or not re.fullmatch('[a-f0-9]{40}',upgrade.get('revision',''))):fail('upgrade_unconfirmed')
   def idle():
-   if run('/usr/bin/systemctl',['show','--property=ActiveState','--value','cecelia-workloads.slice']).strip()!='inactive':fail('pool_busy')
+   state=run('/usr/bin/systemctl',['show','--property=ActiveState','--value','cecelia-workloads.slice']).strip()
+   # active只是已有安装候选；完整身份/文件/真实空闲验证在任何账号或服务变更前由新固定installer执行。
+   if state!='inactive' and not (state=='active' and upgrade is not None):fail('pool_busy')
   idle()
   arch={'x86_64':'x64','aarch64':'arm64'}.get(deps.get('machine',platform.machine()))
   if not arch:fail('architecture_unsupported')
@@ -194,6 +201,16 @@ def bootstrap(options,deps=None):
   run(str(node),['--input-type=commonjs','-e',validate,str(sources/'linux-pool-profile.cjs')],input=raw_profile.decode())
   write(stage/'profile.json',raw_profile);write(stage/'worker.token',token)
   if execution_key:write(stage/'execution.key',execution_key)
+  install_args=[str(sources/'linux-pool-installer.cjs'),'--source-dir',str(sources),'--profile-file',str(stage/'profile.json'),
+   '--token-file',str(stage/'worker.token'),'--node-path',str(node),'--revision',options['revision']]
+  if execution_key:install_args+=['--execution-key-file',str(stage/'execution.key')]
+  if upgrade is not None:
+   write(stage/'upgrade.json',upgrade_raw);install_args+=['--upgrade-file',str(stage/'upgrade.json')]
+   try:
+    verified=json.loads(run(str(node),install_args+['--verify-only']))
+    if verified.get('verified') is not True or verified.get('execution') is not False or verified.get('revision')!=upgrade['revision'] or not re.fullmatch('[a-f0-9]{64}',verified.get('config_digest','')):fail('upgrade_unconfirmed')
+   except Exception:fail('upgrade_unconfirmed')
+   if options.get('verify_only') is True:return verified
   def lookup(kind):
    try:return run('/usr/bin/getent',[kind,'_cecelia']).strip().split(':')
    except CommandFailure as error:
@@ -222,9 +239,7 @@ def bootstrap(options,deps=None):
   if set(run('/usr/bin/id',['-G','_cecelia']).split())!={group[2]}:fail('account_unavailable')
   account_prepared=True;receipt('prepared')
   # 非登录账号是幂等前置；失败不删除可能已被系统使用的uid/gid，不声称整体回滚。
-  raw=run(str(node),[str(sources/'linux-pool-installer.cjs'),'--source-dir',str(sources),'--profile-file',str(stage/'profile.json'),
-   '--token-file',str(stage/'worker.token'),'--node-path',str(node),'--revision',options['revision']]
-   +(['--execution-key-file',str(stage/'execution.key')] if execution_key else []))
+  raw=run(str(node),install_args)
   result=json.loads(raw)
   if result.get('installed') is not True or result.get('execution') is not False or result.get('revision')!=options['revision'] or not re.fullmatch('[a-f0-9]{64}',result.get('config_digest','')):fail('install_failed')
   receipt('prepared',installed=True)

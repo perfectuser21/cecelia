@@ -72,6 +72,64 @@ class RemoteTests(unittest.TestCase):
   self.call();self.worker=str(uuid.uuid4());self.write('/run/cecelia-script/worker-boot-id',self.worker)
   request={k:self.request[k] for k in ['machine_registry_id','nonce','intent_id','pool','revision']};request['action']='installation'
   self.assertEqual(self.call(request)['receipt']['worker_boot_id'],self.worker);self.assertEqual(self.installs,1)
+ def upgrade_request(self):
+  self.call()
+  old=self.root/'var/lib/cecelia/onboarding'/self.request['intent_id']/'intent.json'
+  state=json.loads(old.read_text());state['phase']='started';old.write_text(json.dumps(state));self.old_marker=old;self.old_bytes=old.read_bytes()
+  request={**self.request,'intent_id':str(uuid.uuid4())}
+  request['upgrade']={'schema_version':1,'machine_registry_id':self.machine,'config_digest':'e'*64,'revision':'a'*40,
+   'host_boot_id':self.boot,'daemon_id':'daemon','worker_boot_id':self.worker,
+   'source_sha256':{k:hashlib.sha256(v.encode()).hexdigest() for k,v in request['sources'].items() if k!='linux-pool-installer.cjs'},'intent_id':request['intent_id']}
+  request['previous_attempt']={'intent_id':self.request['intent_id'],'binding':state['binding']}
+  original=self.deps['bootstrap'];self.verifications=[]
+  def install(options):
+   upgrade=json.loads(pathlib.Path(options['upgrade_file']).read_text())
+   self.assertEqual(upgrade['intent_id'],request['intent_id'])
+   if options.get('verify_only'):
+    self.verifications.append(upgrade)
+    if (self.root/'usr/local/libexec/cecelia/fleet-worker/revision').read_text()!=options['revision']:raise ValueError('partial_target')
+    return {'verified':True,'execution':False,'revision':options['revision'],'config_digest':'e'*64}
+   return original(options)
+  self.deps['bootstrap']=install
+  return request
+ def test_upgrade_links_started_attempt_without_changing_its_bytes(self):
+  request=self.upgrade_request();self.call(request)
+  self.assertEqual(self.installs,2);self.assertEqual(self.old_marker.read_bytes(),self.old_bytes)
+  marker=self.root/'var/lib/cecelia/onboarding'/request['intent_id']/'intent.json'
+  self.assertEqual(json.loads(marker.read_text())['previous_attempt'],request['previous_attempt'])
+ def test_upgrade_previous_binding_must_match_before_install(self):
+  request=self.upgrade_request();request['previous_attempt']['binding']='f'*64
+  with self.assertRaises(ValueError):self.call(request)
+  self.assertEqual(self.installs,1);self.assertEqual(self.old_marker.read_bytes(),self.old_bytes)
+ def test_upgrade_target_lost_response_revalidates_all_files_without_install(self):
+  request=self.upgrade_request();self.call(request)
+  marker=self.root/'var/lib/cecelia/onboarding'/request['intent_id']/'intent.json'
+  state=json.loads(marker.read_text());state['phase']='started';marker.write_text(json.dumps(state))
+  response=self.call(request)
+  self.assertTrue(response['receipt']['installed']);self.assertEqual(self.installs,2);self.assertEqual(len(self.verifications),1)
+  self.assertEqual(self.verifications[0]['source_sha256'],request['upgrade']['source_sha256'])
+  self.assertEqual(self.verifications[0]['revision'],request['revision'])
+  for name in ['worker.token','execution.key']:self.assertFalse((marker.parent/name).exists())
+ def test_partial_upgrade_refuses_without_reinstall(self):
+  request=self.upgrade_request();self.call(request)
+  self.write('/usr/local/libexec/cecelia/fleet-worker/revision','d'*40)
+  with self.assertRaises(ValueError):self.call(request)
+  self.assertEqual(self.installs,2);self.assertEqual(len(self.verifications),1)
+ def test_upgrade_authority_change_cannot_reuse_intent(self):
+  request=self.upgrade_request();self.call(request);request['upgrade']['worker_boot_id']=str(uuid.uuid4())
+  with self.assertRaises(ValueError):self.call(request)
+  self.assertEqual(self.installs,2);self.assertEqual(self.verifications,[])
+ def test_failed_upgrade_preserves_both_intents_and_never_reinstalls(self):
+  request=self.upgrade_request()
+  def lost(options):
+   if options.get('verify_only'):raise ValueError('target_unconfirmed')
+   self.installs+=1;raise ValueError('installation_lost')
+  self.deps['bootstrap']=lost
+  for _ in range(2):
+   with self.assertRaises(ValueError):self.call(request)
+  self.assertEqual(self.installs,2);self.assertEqual(self.old_marker.read_bytes(),self.old_bytes)
+  marker=self.root/'var/lib/cecelia/onboarding'/request['intent_id']/'intent.json'
+  self.assertEqual(json.loads(marker.read_text())['phase'],'started')
  def test_untrusted_stage_path_refuses(self):
   target=self.root/'var/lib/cecelia/onboarding';target.parent.mkdir(parents=True);target.symlink_to(self.root)
   with self.assertRaises(ValueError):self.call()
