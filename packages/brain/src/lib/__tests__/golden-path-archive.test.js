@@ -10,7 +10,7 @@ import { fixture } from './gp-audit-fixture.js';
 describe('golden-path-archive永久边界', () => {
   it('T0独立归档不随实例journal丢失，不用任务自报日期补证', async () => {
     const f = fixture(), windowId = randomUUID(), source = goldenPathSource({ GIT_SHA: 'a'.repeat(40) });
-    const receipt = { id: 123, created_at: '2026-10-02T00:00:00Z', payload: { window_id: windowId, source, gp_db_created_at: '2026-10-02T00:00:00Z' } };
+    const receipt = { db_time_verified: true, id: 123, created_at: '2026-10-02T00:00:00Z', payload: { window_id: windowId, source, gp_db_created_at: '2026-10-02T00:00:00Z' } };
     const audit = createGoldenPathAudit({ root: f.root, store: f.store, source, windowId, flag: () => false });
     await audit.archiveT0(receipt);
     rmSync(audit.file); rmSync(audit.file.replace('.jsonl', '.registration.json'));

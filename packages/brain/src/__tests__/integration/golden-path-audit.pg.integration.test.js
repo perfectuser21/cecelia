@@ -53,12 +53,32 @@ it('真实COMMIT生效但ACK丢失明确失败，重放查同一事件', async (
 });
 it('真实T0数据库绝对时刻独立归档，清理后保原值，无带区时刻历史拒绝', async () => {
   const source = goldenPathSource({ GIT_SHA: 'a'.repeat(40) });
-  const row = (await pool.query(`INSERT INTO cecelia_events(event_type,source,payload) VALUES
-    ('golden_path_observation_t0','golden-path-retirement',$1::jsonb||jsonb_build_object('gp_db_created_at',clock_timestamp())) RETURNING id`, [JSON.stringify({ window_id: windowId, source })])).rows[0];
+  const row = await createGoldenPathAuditStore(pool).persist('golden_path_observation_t0', { audit_id: randomUUID(), window_id: windowId, source });
   const root = mkdtempSync(path.join(os.tmpdir(), 'gp-t0-pg-')); roots.push(root); const dir = path.join(root, windowId); mkdirSync(dir, { mode: 0o700 });
   const window = { window_id: windowId, t0_event_id: row.id, source }, receipt = await readGoldenPathT0({ pool, root, window }); expect(receipt).toBeTruthy();
   archiveGoldenPathT0(dir, receipt); await pool.query('DELETE FROM cecelia_events WHERE id=$1', [row.id]);
   expect(await readGoldenPathT0({ pool, root, window })).toEqual(JSON.parse(JSON.stringify(receipt)));
   const old = (await pool.query("INSERT INTO cecelia_events(event_type,source,payload) VALUES('golden_path_observation_t0','golden-path-retirement',$1) RETURNING id", [JSON.stringify({ window_id: windowId, source })])).rows[0];
   expect(await readGoldenPathT0({ pool, root, window: { ...window, t0_event_id: old.id } })).toBeNull();
+});
+
+it('真实新事件caller倒签8天必须拒绝，不把payload alias自比当DB锚', async () => {
+  const source = goldenPathSource({ GIT_SHA: 'a'.repeat(40) });
+  const dbNow = (await pool.query('SELECT clock_timestamp() AS time')).rows[0].time;
+  const forged = new Date(dbNow.getTime() - 8 * 86400_000).toISOString();
+  const row = (await pool.query(`INSERT INTO cecelia_events(event_type,source,payload)
+    VALUES('golden_path_observation_t0','golden-path-retirement',$1) RETURNING id`,
+  [JSON.stringify({ window_id: windowId, source, gp_db_created_at: forged })])).rows[0];
+  expect(await readGoldenPathT0({ pool, root: '/unused', window: { window_id: windowId, t0_event_id: row.id, source } })).toBeNull();
+});
+
+it('真实DB lease按instance最新持久heartbeat/end与DBclock返回，非本机时间', async () => {
+  const store = createGoldenPathAuditStore(pool), instance_id = randomUUID();
+  const event = await store.persist('golden_path_observation_health', { ...payload(), instance_id, healthy: true });
+  const live = await store.lease(instance_id);
+  expect(live.latest.lifecycle).toBe('heartbeat');
+  expect(Date.parse(live.latest.gp_db_created_at)).toBe(event.created_at.getTime());
+  expect(live.db_now.getTime()).toBeGreaterThanOrEqual(event.created_at.getTime());
+  await store.persist('golden_path_observation_health', { ...payload(), instance_id, lifecycle: 'instance_end', healthy: true });
+  expect((await store.lease(instance_id)).latest.lifecycle).toBe('instance_end');
 });

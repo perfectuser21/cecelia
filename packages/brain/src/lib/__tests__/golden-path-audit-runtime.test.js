@@ -1,9 +1,14 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
+import http from 'node:http';
+import express from 'express';
+import { fixture } from './gp-audit-fixture.js';
+import { observeGoldenPathLegacy } from '../golden-path-observation.js';
 import { randomUUID } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
-import { goldenPathSource, startGoldenPathAudit, goldenPathAuditListening, stopGoldenPathAudit } from '../golden-path-audit-runtime.js';
+import { goldenPathSource, startGoldenPathAudit, goldenPathAuditListening, stopGoldenPathAudit, setGoldenPathAudit, drainGoldenPathListener } from '../golden-path-audit-runtime.js';
 import { readGoldenPathJournal, listGoldenPathJournals } from '../golden-path-journal.js';
 import { readGoldenPathT0Archive } from '../golden-path-archive.js';
 const roots = [];
@@ -34,7 +39,7 @@ it('正式候选先监听覆盖，外部真实T0后才独立归档，跨部署�
   const dir = path.join(root, 'logs/gp-observation', windowId);
   expect(fs.existsSync(path.join(dir, 't0-receipt.json'))).toBe(false);
   window.t0_event_id = 500;
-  t0 = { id: 500, created_at: new Date(), payload: { window_id: windowId, source, gp_db_created_at: new Date().toISOString() } };
+  t0 = { db_time_verified: true, id: 500, created_at: new Date(), payload: { window_id: windowId, source, gp_db_created_at: new Date().toISOString() } };
   await vi.advanceTimersByTimeAsync(30_000);
   expect(readGoldenPathT0Archive(dir).id).toBe(500);
   expect(events.some(row => row.payload.lifecycle === 'heartbeat')).toBe(true);
@@ -49,4 +54,44 @@ it('正式候选先监听覆盖，外部真实T0后才独立归档，跨部署�
       .toEqual(expect.arrayContaining(['instance_start', 'listening', 'instance_end']));
   }
   expect(events.some(row => row.event_type === 'golden_path_observation_t0')).toBe(false);
+});
+
+it('真实慢body未排空关机必须gap且不得clean end；后到请求不冒零调用', async () => {
+  const f = fixture(); setGoldenPathAudit(f.audit); await f.audit.start();
+  const app = express(); let entered; const entry = new Promise(r => { entered = r; });
+  app.use((_req, _res, next) => { entered(); next(); }); app.use(express.json()); app.use(observeGoldenPathLegacy);
+  const server = http.createServer(app); await new Promise(r => server.listen(0, '127.0.0.1', r));
+  await goldenPathAuditListening();
+  const socket = net.connect(server.address().port, '127.0.0.1'); let reply = '';
+  socket.on('data', data => { reply += data.toString(); }); await new Promise(r => socket.once('connect', r));
+  socket.write('POST /golden_path HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{');
+  await entry;
+  const drained = await drainGoldenPathListener(server, 10);
+  try {
+    expect(drained).toBe(false);
+    expect(await stopGoldenPathAudit({ timeoutMs: 20, listenerDrained: drained })).toMatchObject({ completed: false });
+    expect(f.audit.status()).toMatchObject({ healthy: false, lastGap: 'gp_shutdown_incomplete' });
+    const rows = readGoldenPathJournal(f.audit.file);
+    expect(rows.some(row => row.kind === 'gap')).toBe(true);
+    expect(rows.some(row => row.kind === 'intent' && row.payload.lifecycle === 'instance_end')).toBe(false);
+    socket.write('}'); await new Promise(r => socket.once('close', r)); expect(reply).toContain('410');
+  } finally { socket.destroy(); server.closeAllConnections(); }
+});
+
+it('真实正常排空回执才允许clean instance_end', async () => {
+  const f = fixture(); setGoldenPathAudit(f.audit); await f.audit.start();
+  const app = express(); app.get('/ok', (_req, res) => res.json({ ok: true }));
+  const server = http.createServer(app); await new Promise(r => server.listen(0, '127.0.0.1', r));
+  await goldenPathAuditListening();
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/ok`); await response.json();
+  const drained = await drainGoldenPathListener(server, 200);
+  expect(drained).toBe(true); expect(await stopGoldenPathAudit({ listenerDrained: drained })).toEqual({ completed: true });
+  expect(f.audit.status().healthy).toBe(true);
+  expect(readGoldenPathJournal(f.audit.file).some(row => row.kind === 'intent' && row.payload.lifecycle === 'instance_end')).toBe(true);
+});
+it('观测启动未获得持久ACK拒绝启动，不以warning后继续接listener', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gp-startup-failed-private-')); roots.push(root);
+  const pool = { query: async () => ({ rows: [{ window: null }] }), connect: async () => { throw new Error('database unavailable'); } };
+  await expect(startGoldenPathAudit({ pool, env: { NODE_ENV: 'production', REPO_ROOT: root, GIT_SHA: 'a'.repeat(40) } }))
+    .rejects.toThrow('gp_startup_incomplete');
 });

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
+import { createGoldenPathAudit } from '../golden-path-audit.js';
 import { readGoldenPathJournal } from '../golden-path-journal.js';
 import { startGoldenPathAudit, setGoldenPathAudit, stopGoldenPathAudit } from '../golden-path-audit-runtime.js';
 import { fixture, hit } from './gp-audit-fixture.js';
@@ -55,6 +56,27 @@ describe('GP专属持久审计', () => {
     expect(f.events.map(e => e.payload.lifecycle)).toEqual(['instance_start', 'listening', 'heartbeat', 'instance_end']);
     expect(f.events.every(e => e.payload.window_id === 'unadmitted')).toBe(true);
     expect(f.events.some(e => e.event_type === 'golden_path_observation_t0')).toBe(false);
+  });
+
+  async function overlap() {
+    const f = fixture(); let now = '2026-10-02T00:00:30Z';
+    f.store.lease = async instanceId => { const row = f.events.findLast(e => e.payload.instance_id === instanceId); return {
+      db_now: now, latest: row ? { ...row.payload, gp_db_created_at: row.gp_db_created_at } : null,
+    }; };
+    await f.audit.recover(); await f.audit.start(); await f.audit.listening(); await f.audit.heartbeat();
+    const next = createGoldenPathAudit({ root: f.root, store: f.store, source: f.audit.identity().source, flag: () => false });
+    return { f, next, expire: () => { now = '2026-10-02T00:01:01Z'; } };
+  }
+  it('正常bluegreen仍有真实DB lease的活实例不得永久记崩溃gap', async () => {
+    const { f, next } = await overlap(); await next.recover();
+    expect(next.status().healthy).toBe(true);
+    await f.audit.stop(); await next.heartbeat(); expect(next.status().healthy).toBe(true);
+  });
+  it('并行实例真正无end且DB lease过期后必须永久gap', async () => {
+    const { next, expire } = await overlap(); await next.recover();
+    expect(next.status().healthy).toBe(true); expire(); await next.heartbeat();
+    expect(next.status().healthy).toBe(false);
+    expect(readGoldenPathJournal(next.file).some(r => r.kind === 'gap' && r.reason === 'gp_previous_instance_unclosed')).toBe(true);
   });
 
 });
