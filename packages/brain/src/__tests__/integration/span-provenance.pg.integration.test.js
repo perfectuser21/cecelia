@@ -16,7 +16,7 @@ beforeEach(async()=>{
   f=await releaseEvidenceDatabase();holder.pool=f.db;
   // LIKE INCLUDING ALL会重命名复制索引；按真实495建立Span表，避免夹具残留假旧索引。
   await f.db.query('DROP TABLE spans CASCADE');
-  for(const file of ['495_vs_model_spans.sql','513_span_occurrences.sql','515_span_definition_provenance.sql'])await f.db.query(readFileSync(new URL(`../../../migrations/${file}`,import.meta.url),'utf8'));
+  for(const file of ['495_vs_model_spans.sql','514_span_occurrences.sql','516_span_definition_provenance.sql'])await f.db.query(readFileSync(new URL(`../../../migrations/${file}`,import.meta.url),'utf8'));
   release=(await releases.createRelease(f.db,f.releaseInput)).release;
   const observation=(await releases.recordReleaseObservation(f.db,release.id,f.observationInput,{trustedCollector:'fixture-collector'})).observation;
   bindings=[];

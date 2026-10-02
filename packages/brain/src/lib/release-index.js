@@ -1,7 +1,7 @@
 /** 发布版本、实测记录只追加；green仅由冻结定义、CI证据和实际组件共同派生。 */
 import { createHash } from 'node:crypto';
 import defaultPool from '../db.js';
-import { assertImplementationReport } from '../../../../scripts/ci/implementation-report.mjs';
+import { assertImplementationReport } from './implementation-report.js';
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SHA = /^[0-9a-f]{40}$/;
 const HASH = /^[0-9a-f]{64}$/;

@@ -56,5 +56,5 @@ CREATE TRIGGER task_runs_check_definition_identity BEFORE INSERT OR UPDATE OF ru
  FOR EACH ROW EXECUTE FUNCTION check_task_run_definition_identity();
 COMMENT ON COLUMN spans.reference_id IS '冻结Workflow内的Activity引用位置；共享Activity及重复引用分别归属';
 COMMENT ON COLUMN spans.enabler_call_id IS '发布版本内冻结的Enabler调用关系；不关联当前可变调用表';
-INSERT INTO schema_version(version,description) VALUES('515','Span固定运行/定义身份、批次归属校验与旧协议降级防护') ON CONFLICT(version) DO NOTHING;
+INSERT INTO schema_version(version,description) VALUES('516','Span固定运行/定义身份、批次归属校验与旧协议降级防护') ON CONFLICT(version) DO NOTHING;
 COMMIT;
