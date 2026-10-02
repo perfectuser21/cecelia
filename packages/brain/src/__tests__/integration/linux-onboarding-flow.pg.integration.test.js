@@ -1,3 +1,4 @@
+import {MACHINE_CAPACITY_LOCK_SQL} from '../../orchestrator/attempt-machine-capacity.js';
 import {assertLinuxPoolAuthority} from '../../linux-pool/task-authority.js';
 import pg from 'pg';
 import {randomUUID} from 'node:crypto';
@@ -8,7 +9,7 @@ import {projectLinuxExecution} from '../../linux-pool/onboarding-projection.js';
 const options=process.env.TEST_DATABASE_URL?{connectionString:process.env.TEST_DATABASE_URL}:DB_DEFAULTS;
 const database=process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_URL).pathname.slice(1):DB_DEFAULTS.database;
 if(database!=='cecelia_scratch'&&!(process.env.CI&&database==='cecelia_test'))throw Error('local scratch only');
-const schema='linux_onboard_'+randomUUID().replaceAll('-',''),admin=new pg.Client(options),pool=new pg.Pool({...options,options:`-c search_path=${schema},public`});
+const schema='linux_onboard_'+randomUUID().replaceAll('-',''),admin=new pg.Client(options),pool=new pg.Pool({...options,application_name:schema,options:`-c search_path=${schema},public`});
 let machine,parent;
 beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY,title TEXT,task_type TEXT,executor_kind TEXT,created_by TEXT,error_message TEXT,status TEXT,payload JSONB,result JSONB,parent_task_id UUID,claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now(),created_at TIMESTAMPTZ DEFAULT now(),completed_at TIMESTAMPTZ);
  CREATE TABLE work_routing_receipts(task_id UUID,source TEXT,source_id TEXT,canonical_task_type TEXT);
@@ -160,4 +161,19 @@ it('并发原retry只登记一棒，新父子claim不冒领，source指针原子
  expect(results[0].task_id).toBe(results[1].task_id);
  expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(2);
  expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(results[0].task_id);
+});
+
+it('retry等待capacity期间不抢registry行锁，避免与runtime的capacity→registry锁序互锁',async()=>{
+ const {f,id}=await failedController(),other=await pool.connect();let pending,readError;
+ try{
+  await other.query('BEGIN');await other.query(MACHINE_CAPACITY_LOCK_SQL,[machine.name]);
+  pending=f.retry(id);let waiting=false;
+  for(let n=0;n<100;n++){
+   waiting=(await admin.query("SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event='advisory' AND query LIKE '%harness_attempt_machine%'",[schema])).rowCount>0;
+   if(waiting)break;await new Promise(r=>setTimeout(r,5));
+  }
+  expect(waiting).toBe(true);
+  try{await other.query('SELECT id FROM system_registry WHERE id=$1 FOR SHARE NOWAIT',[machine.id]);}catch(e){readError=e.code;}
+ }finally{await other.query('ROLLBACK');other.release();await pending;}
+ expect(readError).toBeUndefined();
 });
