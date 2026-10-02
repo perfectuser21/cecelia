@@ -11,6 +11,7 @@ vi.mock('../../alerting.js', () => ({ raise: vi.fn() }));
 const holder = vi.hoisted(() => ({ db: null }));
 vi.mock('../../db.js', () => ({ default: { query: (...args) => holder.db.query(...args), connect: (...args) => holder.db.connect(...args) } }));
 import routes from '../../routes/workflows.js';
+import { companyKrSpec as spec, registerCompanyKrWorkflow } from '../../lib/company-kr-registration.js';
 const migration = new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url);
 let client, schema, db, keyword, benchmark, capBenchmark, legacy;
 beforeEach(async () => {
@@ -82,4 +83,29 @@ describe('共享活动真实数据库合同', () => {
     expect(rows).toContainEqual({workflow_id:benchmark,span_count:1,tokens_total:'10'});
     expect(rows).toContainEqual({workflow_id:null,span_count:1,tokens_total:'20'});
   });
+  it('KR登记补全共享关系，五活动八步骤及既有ID和运行事实保持',async()=>{
+    await migrate();
+    await client.query(`INSERT INTO journeys(id,name,parent_journey_id,capability_code) VALUES($1,'管家 · G5 算力与基础设施调度',$2,'G5')`,[spec.capability_id,randomUUID()]);
+    await client.query(`INSERT INTO ops_agents(id,source,host_alias,name) VALUES(1,'openclaw','mmv',$1)`,[spec.agent]);
+    await client.query(`INSERT INTO ops_workflows(id,source,wf_id,name) VALUES(1,'scheduler',$1,$1)`,[spec.runtime]);
+    const first=await registerCompanyKrWorkflow(db);
+    const ids=(await client.query('SELECT id FROM journey_steps WHERE workflow_id=$1 ORDER BY step_number',[first.workflow_id])).rows;
+    await registerCompanyKrWorkflow(db);
+    expect((await client.query('SELECT id FROM journey_steps WHERE workflow_id=$1 ORDER BY step_number',[first.workflow_id])).rows).toEqual(ids);
+    const app=express(); app.use('/api/brain',routes);
+    const detail=await request(app).get(`/api/brain/workflows/${first.workflow_id}`);
+    expect(detail.body.workflow.activities).toHaveLength(5);
+    expect(detail.body.workflow.activities.flatMap(a=>a.steps)).toHaveLength(8);
+  });
+  it('消费者HTTP反查共享归属；独有活动metrics指向规范价值流',async()=>{
+    await migrate(); await syncActivityContracts(db,contractsFixture());
+    const app=express(); app.use('/api/brain',routes);
+    const result=await request(app).get(`/api/brain/activities/${legacy[0]}/consumers`);
+    expect(result.status).toBe(200); expect(result.body.consumers.map(c=>c.workflow_id).sort()).toEqual([keyword,benchmark].sort());
+    const activity=(await client.query("SELECT id FROM journey_steps WHERE capability_key='benchmark_link_acquisition'")).rows[0].id;
+    await client.query(`INSERT INTO spans(run_id,activity_id,workflow_id,started_at,executor_kind) VALUES('own',$1,$2,now(),'code')`,[activity,benchmark]);
+    const expected=(await client.query('SELECT parent_journey_id FROM journeys WHERE id=$1',[capBenchmark])).rows[0].parent_journey_id;
+    expect((await client.query('SELECT value_stream_id FROM activity_flow_metrics WHERE activity_id=$1',[activity])).rows[0].value_stream_id).toBe(expected);
+  });
+
 });
