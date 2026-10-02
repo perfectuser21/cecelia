@@ -91,6 +91,7 @@ import orgUnitsRouter from './src/routes/org-units.js';
 import stepProbesRouter from './src/routes/step-probes.js';
 import stepsRouter from './src/routes/steps.js';
 import workflowsRouter from './src/routes/workflows.js';
+import workflowAuthoringRouter from './src/routes/workflow-authoring.js';
 import spansRouter from './src/routes/spans.js';
 import phoneRegistryRouter from './src/routes/phone-registry.js';
 import commanderHeartbeatRouter from './src/routes/commander-heartbeat.js';
@@ -452,6 +453,7 @@ app.use('/api/brain', orgUnitsRouter);
 app.use('/api/brain', stepProbesRouter); // 步级探针注册表（链 bf5088a3 棒2，决策 702949b6）
 app.use('/api/brain', stepsRouter); // Step / 使能件只读清单 GET /steps、/enablers（价值流建模⑤，决策 3e867cad，任务 741cdf5a）
 app.use('/api/brain', workflowsRouter); // Workflow 只读清单 GET /workflows（价值流建模③，决策 3e867cad，任务 ce41cd59）
+app.use('/api/brain/workflow-authoring', workflowAuthoringRouter);
 app.use('/api/brain', spansRouter); // 执行段上报 POST/GET /spans（价值流建模④，决策 3e867cad，任务 ec643d60）
 app.use('/api/brain', phoneRegistryRouter); // 手机台账 GET/PUT /phone-registry（任务 b923b1f7，决策 432172f7）
 app.use('/api/brain', commanderHeartbeatRouter); // Commander escort 心跳 POST /commander-heartbeat（任务 17ea4536，决策 3c98fb36）

@@ -1,4 +1,5 @@
 import { afterTerminalTransition, isTerminalStatus } from '../lib/task-terminal.js';
+import { authoringMutationError } from '../workflow-authoring/task-guard.js';
 
 /** 注册 tasks/:id 的字段更新与状态保护路由。 */
 export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
@@ -15,10 +16,12 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
       } = req.body;
       let harnessDemoted = false;
       let harnessDemoteReason = null;
+      const reservedError = authoringMutationError(null, { result: taskResult });
+      if (reservedError) return res.status(409).json(reservedError);
 
       if (status !== undefined) {
         const current = await pool.query(
-          `SELECT status,
+          `SELECT status, payload, result,
                   task_type,
                   payload->>'orchestrator' AS orchestrator,
                   EXISTS (
@@ -42,6 +45,8 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
           return res.status(404).json({ error: 'Task not found', id: req.params.id });
         }
         const currentTask = current.rows[0];
+        const authoringError = authoringMutationError(currentTask, { status });
+        if (authoringError) return res.status(409).json(authoringError);
         if (
           currentTask.status === 'blocked'
           && ['queued', 'in_progress', 'completed'].includes(status)
