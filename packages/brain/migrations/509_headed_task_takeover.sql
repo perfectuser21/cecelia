@@ -103,5 +103,5 @@ $$;
 CREATE TRIGGER aa_headed_task_owner_guard BEFORE UPDATE OR DELETE ON tasks FOR EACH ROW EXECUTE FUNCTION headed_task_owner_guard();
 CREATE FUNCTION headed_takeover_immutable() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'headed_takeover_immutable'; END; $$;
 CREATE TRIGGER headed_takeover_immutable BEFORE UPDATE OR DELETE ON headed_task_takeovers FOR EACH ROW EXECUTE FUNCTION headed_takeover_immutable();
-INSERT INTO schema_version(version,description,applied_at) VALUES('508','有头会话一次性接管legacy bridge及持久执行屏障',NOW()) ON CONFLICT(version) DO NOTHING;
+INSERT INTO schema_version(version,description,applied_at) VALUES('509','有头会话一次性接管legacy bridge及持久执行屏障',NOW()) ON CONFLICT(version) DO NOTHING;
 COMMIT;

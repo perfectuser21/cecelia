@@ -31,7 +31,7 @@ beforeAll(async()=>{
  CREATE TABLE harness_gaps(source_task_id uuid,status text);
  CREATE TABLE harness_gap_dependencies(source_task_id uuid,status text);
  CREATE TABLE task_dependencies(from_task_id uuid,edge_type text,status text);`);
- const migration=new URL('../../../migrations/508_headed_task_takeover.sql',import.meta.url);
+ const migration=new URL('../../../migrations/509_headed_task_takeover.sql',import.meta.url);
  if(existsSync(migration))await pool.query(readFileSync(migration,'utf8'));
 });
 afterAll(async()=>{await pool.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();rmSync(handoffDocs,{recursive:true,force:true});});
