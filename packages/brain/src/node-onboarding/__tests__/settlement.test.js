@@ -8,8 +8,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // 接棒是既有独立合同；本夹具保留真实terminal SQL、收割与ensure，只隔离下游接棒。
 vi.mock('../../lib/relay-baton.js', () => ({ relayOnComplete: async () => null }));
+// 外部机器目录不读共享CI台账；模拟clear后无执行机器的真实配置边界。
+vi.mock('../../routing/load-machines.js', async () => {
+  const { directory } = await import('../../execution-directory/directory.js');
+  return { clearMachineCache: () => directory.refresh({ pool: { query: async () => ({ rows: [] }) } }) };
+});
 import { buildRunnerScript, reapLegacyScriptRuns } from '../../script-executor.js';
 import { createOnboardingService } from '../service.js';
+import { directory } from '../../execution-directory/directory.js';
 
 const url = process.env.NODE_ONBOARDING_TEST_DB;
 const suite = url ? describe : describe.skip;
@@ -41,7 +47,10 @@ suite('脚本收尾真实PG与runner闭环', () => {
     service = createOnboardingService({ pool, createTask });
     home = await mkdtemp(join(tmpdir(), 'script-settlement-'));
   });
-  beforeEach(async () => { await pool.query('TRUNCATE tasks,system_registry,task_events,task_runs'); });
+  beforeEach(async () => {
+    await pool.query('TRUNCATE tasks,system_registry,task_events,task_runs');
+    await directory.refresh({ pool: { query: async () => ({ rows: [] }) } });
+  });
   afterAll(async () => {
     await pool?.end();
     if (schema) await admin.query(`DROP SCHEMA ${schema} CASCADE`);
