@@ -156,7 +156,7 @@ export function buildBackboneActivityProps(r) {
     Failure: rich(describeFailure(c.failure)),
     '副作用': rich(lines((c.side_effects || []).map((s) => `${s.kind}@${s.target}: ${s.description}`)) || '无'),
     'Runs as': sel(runsAs(c.invokers)),
-    Cost: rich((c.model || []).length ? lines(c.model.map((m) => `${m.provider}/${m.model}: ${m.purpose}`)) : '不调大模型'),
+    Cost: rich((c.model || []).length ? lines(c.model.map((m) => `${m.provider}/${m.model}: ${m.purpose}`)) : (c.invokers || []).includes('agent') ? '调用大模型；实际型号见运行记录' : '不调大模型'),
     '步骤清单': rich(describeSteps(c.steps)),
     Notes: rich(lines((c.known_gaps || []).map((g) => `${g.gap}（${g.task}）`))),
     '对外承诺': rich(r.promise),
@@ -183,7 +183,8 @@ export async function pushBackboneActivities(pool, token, { notionReq = defaultN
   const { rows } = await pool.query(
     `SELECT id, capability_key, activity_key, contract, contract_sha256, contract_source, promise, status, notion_id, notion_digest
        FROM journey_steps
-      WHERE contract IS NOT NULL AND (notion_synced_at IS NULL OR updated_at > notion_synced_at)
+      WHERE contract IS NOT NULL AND capability_key IS DISTINCT FROM 'company_kr_analysis'
+        AND (notion_synced_at IS NULL OR updated_at > notion_synced_at)
       ORDER BY capability_key, step_number
       LIMIT 50`);
   if (rows.length === 0) return { created: 0, patched: 0, skipped: 0, failed: 0, cleared: 0 };
@@ -247,7 +248,7 @@ export function buildBackboneActivityBody(r) {
     h2('副作用与模型'),
     ...bullets([
       ...(c.side_effects || []).map((s) => `${s.kind === 'external_visible' ? '对外可见' : '内部写入'} · ${s.target}：${s.description}`),
-      ...((c.model || []).length ? c.model.map((m) => `模型 ${m.provider}/${m.model}：${m.purpose}`) : ['不调大模型']),
+      ...((c.model || []).length ? c.model.map((m) => `模型 ${m.provider}/${m.model}：${m.purpose}`) : [(c.invokers || []).includes('agent') ? '调用大模型；实际型号见运行记录' : '不调大模型']),
     ]),
     h2('已知缺口'),
     ...bullets((c.known_gaps || []).map((g) => `${g.gap}（任务 ${g.task}）`)),
