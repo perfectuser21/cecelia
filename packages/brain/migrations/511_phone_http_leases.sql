@@ -36,7 +36,7 @@ BEGIN
  IF NEW.state NOT IN ('reserved','unknown') THEN RAISE EXCEPTION 'phone_http_execution_not_connected'; END IF;
  RETURN NEW;
 END $$;
--- Existing 507 guard already makes every new identity column immutable on UPDATE.
+-- Existing 508 guard already makes every new identity column immutable on UPDATE.
 CREATE TRIGGER phone_http_lease_identity_guard BEFORE INSERT OR UPDATE ON phone_dispatches
  FOR EACH ROW EXECUTE FUNCTION guard_phone_http_lease_identity();
-INSERT INTO schema_version(version,description,applied_at) VALUES('510','Historical immutable phone HTTP lease snapshots; execution remains disconnected',now()) ON CONFLICT(version) DO NOTHING;
+INSERT INTO schema_version(version,description,applied_at) VALUES('511','Historical immutable phone HTTP lease snapshots; execution remains disconnected',now()) ON CONFLICT(version) DO NOTHING;
