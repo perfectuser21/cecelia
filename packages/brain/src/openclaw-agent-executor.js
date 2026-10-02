@@ -29,6 +29,7 @@ import { startRun, finishRun } from './lib/task-run.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { qiumiEnv, phoneNodeName } from './routing/env.js';
 import { splitExecParamsBlock } from './routing/exec-params.js';
+import { consumeCompanyAnalysis, markCompanyAnalysis, assertCompanyAnalysisDispatch, companyAnalysisPrompt } from './lib/company-kr-analysis.js';
 import {
   parseDeviceBusyMarker, planDeviceBusy, requeueForDeviceBusy, DEVICE_BUSY_EXPIRED_REASON, DUE_AT_SELECT_SQL,
 } from './lib/qiumi-device-busy.js';
@@ -184,10 +185,11 @@ function appliedParamsNotice(p) {
 function promptOf(task) {
   const p = task.payload ?? {};
   const s = p.qiumi_source ?? {};
+  const sourceBody = p.company_kr_analysis?.version === 1 ? companyAnalysisPrompt(p.company_kr_analysis) : s.body;
   // 能走到派发，就说明路由已按参数块定案（块解析出错会在路由层直接 fail，到不了这里）
-  const block = s.body ? splitExecParamsBlock(s.body) : { present: false, rest: s.body };
+  const block = sourceBody ? splitExecParamsBlock(sourceBody) : { present: false, rest: sourceBody };
   const applied = block.present && Boolean(p.qiumi_department);
-  const body = applied ? block.rest : s.body;
+  const body = applied ? block.rest : sourceBody;
   return [
     applied ? appliedParamsNotice(p) : null,
     s.title,
@@ -213,6 +215,16 @@ export async function triggerOpenclawAgent(task, deps = {}) {
   const department = task.payload?.qiumi_department;
   if (!runId || !department) {
     return { success: false, taskId: task.id, reason: 'openclaw_agent_spawn_failed', error: 'missing run_id/department' };
+  }
+  if (task.payload?.company_kr_analysis?.version === 1) {
+    try { await assertCompanyAnalysisDispatch(pool, task); }
+    catch (error) {
+      if (error.code !== 'company_kr_analysis_superseded') return { success: false, taskId: task.id, reason: 'openclaw_agent_spawn_failed', error: error.message };
+      await finalizeTask(pool, task.id, 'failed', { set: { error_message: 'company_kr_analysis_superseded' },
+        mergeResult: { company_analysis_rejected: { actor: 'brain', fact: error.message, at: new Date().toISOString() } }, onlyIfStatus: ['queued', 'in_progress'] });
+      await markCompanyAnalysis(pool, task, 'failed', error.message);
+      return { success: false, taskId: task.id, reason: 'company_kr_analysis_superseded', error: error.message, taskTerminal: true };
+    }
   }
 
   let remote;
@@ -307,6 +319,17 @@ function parseReceipt(exit, tail) {
       try { text = JSON.parse(`"${all[all.length - 1][1]}"`); } catch { text = null; }
     }
   }
+  if (text == null) {
+    // OpenClaw当前CLI也输出多行result.payloads；从行首对象尝试完整包装。
+    const starts = [...tail.matchAll(/^[ \t]*\{/gm)].map(m => m.index).slice(-100);
+    for (const start of starts) {
+      try {
+        const parsed = JSON.parse(tail.slice(start).trim());
+        const visible = parsed.finalAssistantVisibleText ?? parsed?.result?.payloads?.[0]?.text;
+        if (typeof visible === 'string') { text = visible; break; }
+      } catch { /* 非完整CLI包装，继续寻找。 */ }
+    }
+  }
   return { exit, text, log_tail: tail.slice(-2000), reaped_at: new Date().toISOString() };
 }
 
@@ -393,6 +416,7 @@ export async function reapOpenclawAgentRuns(pool, deps = {}) {
   );
   const out = { reaped: 0, completed: 0, failed: 0, requeued: 0 };
   for (const r of rows ?? []) {
+    const companyAnalysis = r.payload?.company_kr_analysis?.version === 1;
     if (!isSafeRunId(r.run_id)) {
       console.warn(`[openclaw-agent] 收割跳过非法 run_id: ${String(r.run_id).slice(0, 60)}`);
       continue;
@@ -401,7 +425,7 @@ export async function reapOpenclawAgentRuns(pool, deps = {}) {
     try {
       stdout = await sshRun(execFileFn, [
         ...SSH_BASE_ARGS, primaryTarget(),
-        `if [ -f ~/brain-runs/${r.run_id}.exit ]; then echo EXIT=$(cat ~/brain-runs/${r.run_id}.exit); tail -c 20000 ~/brain-runs/${r.run_id}.log 2>/dev/null; else echo NO_EXIT; fi`,
+        `if [ -f ~/brain-runs/${r.run_id}.exit ]; then echo EXIT=$(cat ~/brain-runs/${r.run_id}.exit); tail -c ${companyAnalysis ? 160000 : 20000} ~/brain-runs/${r.run_id}.log 2>/dev/null; else echo NO_EXIT; fi`,
       ], { timeout: REAP_SSH_TIMEOUT_MS, encoding: 'utf8' });
     } catch (err) {
       console.warn(`[openclaw-agent] 收割 ${r.run_id} 探测失败: ${err.message}`);
@@ -415,10 +439,16 @@ export async function reapOpenclawAgentRuns(pool, deps = {}) {
     const busy = await settleDeviceBusy(pool, r, receipt, now());
     if (busy === 'requeued') { out.requeued++; continue; }
     if (busy === 'failed') { out.failed++; out.reaped++; continue; }
-    const outcome = reapOutcome(receipt, tail);
+    let outcome = reapOutcome(receipt, tail);
+    let analysis = null;
+    if (companyAnalysis && outcome.status === 'completed_no_pr') {
+      try { analysis = await (deps.consumeCompanyAnalysis || consumeCompanyAnalysis)(pool, r, receipt); }
+      catch (error) { outcome = { status: 'failed', reason: `company_kr_analysis_rejected: ${error.message}`, yieldSummary: null }; }
+    }
+    if (companyAnalysis && outcome.status === 'failed') await (deps.markCompanyAnalysis || markCompanyAnalysis)(pool, r, 'failed', outcome.reason);
     if (outcome.status === 'completed_no_pr') {
       // completed_no_pr 是可接棒终态（RELAY_TERMINAL_STATUSES）：finalizeTask 写完自动接棒
-      await finalizeTask(pool, r.id, 'completed_no_pr', { mergeResult: { receipt }, onlyIfStatus: 'in_progress' });
+      await finalizeTask(pool, r.id, 'completed_no_pr', { mergeResult: { receipt, ...(analysis ? { company_kr_analysis: analysis } : {}) }, onlyIfStatus: 'in_progress' });
       out.completed++;
     } else {
       const mergeResult = outcome.yieldSummary ? { receipt, yield_summary: outcome.yieldSummary } : { receipt };

@@ -1,3 +1,4 @@
+import {seedExecutionDirectoryFixture} from './helpers/execution-directory-fixture.js';
 /**
  * fleet-heartbeat.test.js
  *
@@ -39,12 +40,15 @@ describe('fleet heartbeat 可信度判定', () => {
   let fleetCache;
   let mockCollectRemote; // 2026-09-13 传输换 worker HTTP：本变量现指 fetch stub，
                          // 用例的 mockResolvedValue/mockRejectedValue 切换语义原样保留。
-  const okHealth = () => ({
+  const okHealth = (url) => ({
     ok: true,
     status: 200,
     json: async () => ({
       schema_version: 'fleet-node-health/v1',
+      machine_id: String(url).includes('100.71.151.105') ? 'us-mac-m4' : String(url).includes('100.86.57.69') ? 'xian-mac-m4' : 'xian-mac-m1',
+      observed_at: new Date().toISOString(),
       resources: {
+        disk_free_bytes: 40 * 1024 ** 3, disk_used_percent: 60,
         cpu_cores: 10, memory_bytes: 14 * 1024 ** 3,
         cpu_pressure_percent: 20, memory_pressure_percent: 50,
       },
@@ -52,8 +56,9 @@ describe('fleet heartbeat 可信度判定', () => {
   });
 
   beforeEach(async () => {
+    await seedExecutionDirectoryFixture();
     vi.useFakeTimers();
-    mockCollectRemote = vi.fn(async () => okHealth());
+    mockCollectRemote = vi.fn(async (url) => okHealth(url));
     vi.stubGlobal('fetch', mockCollectRemote);
     fleetCache = await import('../fleet-resource-cache.js');
   });

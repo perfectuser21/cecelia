@@ -1,3 +1,5 @@
+import {assertAppServerAuthority} from './app-server/task-authority.js';
+import { assertPreviewCacheAuthority } from './preview-cache-authority.js';
 export const CHANGE_KINDS = Object.freeze(['new_capability', 'capability_change', 'bugfix', 'parameter_only']);
 export const ROUTER_VERSION = 'work-router-v1';
 const SOURCES = new Set(['inbox', 'conversation', 'api', 'thalamus', 'discovery', 'scheduler', 'child']);
@@ -155,10 +157,11 @@ export function selectPipeline(input) {
   return { work_kind: input.work_kind, change_kind: null, pipeline: nonCoding[0], canonical_task_type: requestedTaskType ?? nonCoding[1], default_execution_profile: null, impact_contract_required: false, orchestrator: nonCoding[0], ...axes };
 }
 
-export function routeWork(input, repositoryFacts = []) {
+export function routeWork(input, repositoryFacts = [], context = {}) {
+  const previewCache = assertPreviewCacheAuthority(input, context) || assertAppServerAuthority(input, context);
   const request = normalizeWorkRequest(input);
-  const work_kind = classifyWork(request);
-  const artifact_kind = classifyArtifactKind(request);
+  const work_kind = previewCache ? 'operations' : classifyWork(request);
+  const artifact_kind = previewCache ? 'execution' : classifyArtifactKind(request);
   const answer_known = classifyAnswerKnown(request);
   // execution 类交付物是 run,不强制解析 repo(map/impact 尺子不适用)
   const repo = (work_kind === 'coding_mutation' && artifact_kind === 'code')

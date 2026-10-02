@@ -1,30 +1,17 @@
-import { resolvePrimaryWorkerId, listComputeWorkerIds } from '../../machine-registry.js';
-
-const PRIMARY = resolvePrimaryWorkerId();
-const CODEX_ACCOUNTS = Object.freeze(['team1', 'team2', 'team3', 'team4', 'team5']);
-const MACHINES = Object.freeze(listComputeWorkerIds());
-
-const VERIFIED_TARGETS = Object.freeze([
-  ...CODEX_ACCOUNTS.flatMap((account) => (
-    MACHINES.map((machine) => Object.freeze({ provider: 'codex', account, machine }))
-  )),
-  Object.freeze({ provider: 'claude', account: 'account1', machine: PRIMARY }),
-  Object.freeze({ provider: 'claude', account: 'account2', machine: PRIMARY }),
-  Object.freeze({ provider: 'grok', account: 'grok', machine: PRIMARY }),
-]);
+import { directory } from '../../execution-directory/directory.js';
 
 function targetKey(target) {
   return `${target?.provider ?? ''}:${target?.account ?? ''}:${target?.machine ?? ''}`;
 }
 
-const VERIFIED_TARGET_KEYS = new Set(VERIFIED_TARGETS.map(targetKey));
+
 
 export function listVerifiedExecutionTargets() {
-  return VERIFIED_TARGETS.map((target) => ({ ...target }));
+  return directory.targets();
 }
 
 export function isVerifiedExecutionTarget(target) {
-  return VERIFIED_TARGET_KEYS.has(targetKey(target));
+  return listVerifiedExecutionTargets().some(t => targetKey(t) === targetKey(target));
 }
 
 // run c06b79af 案卷：调用方未解析账号（account=null）的目标不在白名单，
@@ -44,7 +31,7 @@ export function expandUnresolvedAccountTargets(targets = []) {
       push({ ...target });
       continue;
     }
-    for (const verified of VERIFIED_TARGETS) {
+    for (const verified of listVerifiedExecutionTargets()) {
       if (verified.provider === target?.provider && verified.machine === target?.machine) {
         push({ ...target, account: verified.account });
       }

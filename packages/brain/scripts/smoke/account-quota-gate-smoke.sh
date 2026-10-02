@@ -8,6 +8,10 @@
 # 本脚本走真链路：真 PG 写行 → 真 createQuotaLedgerLoader 读 → 真 judgeAccount 裁决。
 # 由 ci.yml 的 real-env-smoke job 执行（带 PGHOST/PGDATABASE/... 环境变量与真 Brain 容器）。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "postgresql://${PGHOST:-localhost}:${PGPORT:-5432}/${PGDATABASE:-cecelia_test}"; then
+  exit 0
+fi
+export PGDATABASE="${PGDATABASE:-cecelia_test}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT"
@@ -16,13 +20,13 @@ PSQL_DB="${PGDATABASE:-cecelia_test}"
 echo "▶️  account-quota-gate smoke — db=$PSQL_DB"
 
 # ── 0. 建表（migration 幂等；本地/CI 顺序不确定时自愈）────────────
-psql -d "$PSQL_DB" -v ON_ERROR_STOP=1 -q \
+psql -X -d "$PSQL_DB" -v ON_ERROR_STOP=1 -q \
   -f packages/brain/migrations/449_ops_model_accounts.sql
-psql -d "$PSQL_DB" -v ON_ERROR_STOP=1 -q \
+psql -X -d "$PSQL_DB" -v ON_ERROR_STOP=1 -q \
   -f packages/brain/migrations/455_ops_model_accounts_failure_streak.sql
 
 cleanup() {
-  psql -d "$PSQL_DB" -q -c \
+  psql -X -d "$PSQL_DB" -q -c \
     "DELETE FROM ops_model_accounts WHERE account_id IN ('claude-account1','claude-account2','codex-team1')" \
     >/dev/null 2>&1 || true
 }
@@ -30,7 +34,7 @@ trap cleanup EXIT
 cleanup
 
 # ── 1. 铺两行真数据：一个超 7d 阈值、一个健康 ─────────────────────
-psql -d "$PSQL_DB" -v ON_ERROR_STOP=1 -q -c \
+psql -X -d "$PSQL_DB" -v ON_ERROR_STOP=1 -q -c \
   "INSERT INTO ops_model_accounts
      (account_id,provider,five_hour_pct,seven_day_pct,host_alias,forwardable,forward_targets,status,consecutive_failures)
    VALUES
@@ -49,7 +53,7 @@ const fail = (m) => { console.error('❌ ' + m); process.exitCode = 1; };
 
 // 浮点必须在**参数绑定**路径上被拒 —— 这是 toPct 必须 Math.round 的根据。
 // 注意只有参数绑定会抛；SQL 字面量 89.6 会被 PG 的 assignment cast 取整后接受，
-// 所以这条断言不能用 psql -c 写（采集器走的正是参数绑定）。
+// 所以这条断言不能用 psql -X -c 写（采集器走的正是参数绑定）。
 let floatRejected = false;
 try {
   await pool.query(

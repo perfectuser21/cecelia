@@ -39,7 +39,7 @@ esac
 # ⚠️ 豁免的判据只能是「**整个 postgres 都连不上**」，绝不能是「这个库不存在」——
 #    MMV 上 postgres 好好的、只是没有 cecelia 这个库，那必须报死：那正是 0922 假红根因。
 #    守卫里这两条是配对断言（②库不存在→退非 0 ／ ⑦整体不可达→退 0），缺一不可。
-if ! PGPASSWORD="${DB_PASSWORD:-cecelia}" psql \
+if ! PGPASSWORD="${DB_PASSWORD:-cecelia}" psql -X \
      -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" \
      -d postgres -tAc "SELECT 1" 2>/dev/null | grep -q '^1$'; then
   echo "[preview-ledger] postgres 整体不可达（mock/受限环境），跳过账本回写"
@@ -48,7 +48,7 @@ fi
 
 # RETURNING 1 是关键：psql 对 "UPDATE 0" 和 "UPDATE 1" 都退 0，
 # 不显式数行就分辨不出「写进去了」和「一行都没匹配上」。
-OUT="$(PGPASSWORD="${DB_PASSWORD:-cecelia}" psql \
+OUT="$(PGPASSWORD="${DB_PASSWORD:-cecelia}" psql -X \
   -h "${DB_HOST:-localhost}" -U "${DB_USER:-cecelia}" -d "$LEDGER_DB" \
   -v ON_ERROR_STOP=1 -tAc \
   "UPDATE preview_environments

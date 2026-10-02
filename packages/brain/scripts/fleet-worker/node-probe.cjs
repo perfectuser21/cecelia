@@ -9,6 +9,8 @@ const path = require('node:path');
 const process = require('node:process');
 const { clearTimeout, setTimeout } = require('node:timers');
 const { promisify } = require('node:util');
+const { probeDiskResources } = require('./local-resource-admission.cjs');
+const { sampleLinuxResources, projectLinuxObservation } = require('./linux-resource-probe.cjs');
 
 const execFileAsync = promisify(execFile);
 const { AbortController } = globalThis;
@@ -139,25 +141,6 @@ function parseMemoryPressure(output) {
   );
   if (!match) return 100;
   return percentage(100 - Number.parseFloat(match[1]));
-}
-
-function parseDisk(output) {
-  const lines = String(output ?? '')
-    .trim()
-    .split(/\r?\n/)
-    .filter(Boolean);
-  if (lines.length < 2) {
-    return { disk_free_bytes: 0, disk_used_percent: 100 };
-  }
-  const fields = lines.at(-1).trim().split(/\s+/);
-  const availableBlocks = Number.parseInt(fields[3], 10);
-  const usedPercent = Number.parseFloat(String(fields[4] ?? '').replace('%', ''));
-  return {
-    disk_free_bytes: Number.isFinite(availableBlocks) && availableBlocks >= 0
-      ? availableBlocks * 1_024
-      : 0,
-    disk_used_percent: percentage(usedPercent),
-  };
 }
 
 function parsePower(output) {
@@ -486,6 +469,17 @@ async function probeFleetWorkerHealth(options = {}) {
     postgresImageDigest,
   });
 
+  if ((options.platform ?? process.platform) === 'linux') {
+    report.os.version = 'Linux';
+    report.linux_observation = await sampleLinuxResources({
+      ...options.linuxResourceOptions,
+      now: options.now ?? options.linuxResourceOptions?.now,
+      diskPaths: options.diskPaths ?? [options.repoRoot ?? env.CECELIA_REPO_ROOT ?? process.cwd(),
+        env.CECELIA_FLEET_DATA_ROOT ?? '/var/lib/cecelia/fleet-worker', tmpdir()],
+    });
+    return report;
+  }
+
   try {
     const run = createCommandRunner({
       execFileFn: options.execFileFn ?? execFileAsync,
@@ -512,10 +506,6 @@ async function probeFleetWorkerHealth(options = {}) {
     const workerBindHost = boundedString(
       options.workerBindHost ?? env.CECELIA_FLEET_WORKER_HOST,
       '',
-    );
-    const orbstackHome = boundedString(
-      options.orbstackHome ?? env.CECELIA_ORBSTACK_HOME,
-      '/var/empty',
     );
     const drainMarkerPath = boundedString(
       options.drainMarkerPath ?? env.CECELIA_DRAIN_MARKER,
@@ -554,9 +544,9 @@ async function probeFleetWorkerHealth(options = {}) {
       disposable,
     ] = await Promise.all([
       run('sw_vers', ['-productVersion']),
-      run('orbctl', ['version'], {
-        env: { ...env, HOME: orbstackHome },
-      }),
+      // orbctl 2.2初始化用户run目录会chmod；版本读取不应触碰管理员HOME。
+      run('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleShortVersionString',
+        '/Applications/OrbStack.app/Contents/Info.plist']),
       run('docker', ['info', '--format', '{{json .}}']),
       run('docker', ['image', 'inspect', '--format', '{{json .RepoDigests}}', commandDigest]),
       run('docker', ['image', 'inspect', '--format', '{{json .RepoDigests}}', postgresImageDigest]),
@@ -575,7 +565,9 @@ async function probeFleetWorkerHealth(options = {}) {
       run('sysctl', ['-n', 'hw.memsize']),
       run('sysctl', ['-n', 'vm.loadavg']),
       run('memory_pressure', ['-Q']),
-      run('df', ['-k', '/']),
+      probeDiskResources({ run, paths: [repoRoot, ...(options.diskPaths
+        ?? (env.CECELIA_FLEET_DATA_ROOT ? [env.CECELIA_FLEET_DATA_ROOT] : []))],
+      allowMissingPaths: options.allowMissingDiskPaths === true }),
       run('launchctl', ['print', 'system/com.perfect21.fleet-worker']),
       run('sntp', ['-d', 'time.apple.com']),
       probeCallback(
@@ -602,7 +594,7 @@ async function probeFleetWorkerHealth(options = {}) {
     const cpuCores = finiteNumber(parseInteger(cpuResult.stdout));
     const memoryBytes = finiteNumber(parseInteger(memoryResult.stdout));
     const loadAverage = parseLoadAverage(loadResult.stdout);
-    const disk = parseDisk(diskResult.stdout);
+    const disk = diskResult;
     const power = parsePower(powerResult.stdout);
     const timeOutput = `${timeResult.stdout}\n${timeResult.stderr}`;
 
@@ -676,4 +668,5 @@ async function probeFleetWorkerHealth(options = {}) {
 
 module.exports = {
   probeFleetWorkerHealth,
+  projectLinuxObservation,
 };

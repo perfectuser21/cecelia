@@ -17,17 +17,32 @@ vi.mock('../../db.js', () => ({
   default: { connect: mockConnect, query: mockQuery }
 }));
 
-vi.mock('../tick.js', () => ({ getTickStatus: vi.fn() }));
-vi.mock('../focus.js', () => ({ getDailyFocus: vi.fn(), setDailyFocus: vi.fn(), clearDailyFocus: vi.fn(), getFocusSummary: vi.fn() }));
-vi.mock('./shared.js', () => ({ getActivePolicy: vi.fn(), getWorkingMemory: vi.fn(), getTopTasks: vi.fn(), getRecentDecisions: vi.fn(), IDEMPOTENCY_TTL: 60, ALLOWED_ACTIONS: [] }));
-vi.mock('../nightly-orchestrator.js', () => ({ getNightlyOrchestratorStatus: vi.fn() }));
-vi.mock('../websocket.js', () => ({ default: { emit: vi.fn() }, WS_EVENTS: {} }));
-vi.mock('../selfcheck.js', () => ({ EXPECTED_SCHEMA_VERSION: '1' }));
-vi.mock('fs', () => ({ readFileSync: () => JSON.stringify({ version: '1.0.0' }) }));
+vi.mock('../../tick.js', () => ({ getTickStatus: vi.fn() }));
+vi.mock('../../focus.js', () => ({ getDailyFocus: vi.fn(), setDailyFocus: vi.fn(), clearDailyFocus: vi.fn(), getFocusSummary: vi.fn() }));
+vi.mock('../shared.js', () => ({ getActivePolicy: vi.fn(), getWorkingMemory: vi.fn(), getTopTasks: vi.fn(), getRecentDecisions: vi.fn(), IDEMPOTENCY_TTL: 60, ALLOWED_ACTIONS: [] }));
+vi.mock('../../nightly-orchestrator.js', () => ({ getNightlyOrchestratorStatus: vi.fn() }));
+vi.mock('../../websocket.js', () => ({ default: { emit: vi.fn() }, WS_EVENTS: {} }));
+vi.mock('../../selfcheck.js', () => ({ EXPECTED_SCHEMA_VERSION: '1' }));
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal();
+  const { fileURLToPath } = await import('node:url');
+  const packagePath = fileURLToPath(new URL('../../../package.json', import.meta.url));
+  return {
+    ...actual,
+    readFileSync(path, ...options) {
+      const target = path instanceof URL ? fileURLToPath(path) : path;
+      if (target === packagePath) return JSON.stringify({ version: '1.0.0' });
+      return actual.readFileSync(path, ...options);
+    },
+  };
+});
 
 const { default: statusRouter } = await import('../status.js');
 import express from 'express';
 import supertest from 'supertest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { validateNodeProfileRegistry } from '../../orchestrator/fleet-node/node-profile.js';
 
 function makeApp() {
   const app = express();
@@ -48,6 +63,13 @@ beforeEach(() => {
 });
 
 describe('GET /api/brain/healthz', () => {
+  it('版本读取 fixture 保留真实 fleet 注册表文件', () => {
+    const registry = JSON.parse(readFileSync(new URL('../../../config/fleet-node-profiles.json', import.meta.url), 'utf8'));
+    expect(validateNodeProfileRegistry(registry.profiles)).toBe(true);
+    expect(JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url))).version).toBe('1.0.0');
+    expect(JSON.parse(readFileSync(fileURLToPath(new URL('../../../package.json', import.meta.url)))).version).toBe('1.0.0');
+  });
+
   it('DB ok + tick alive → status:ok + HTTP 200', async () => {
     mockQuery.mockResolvedValue({
       rows: [{ value_json: { timestamp: RECENT_TICK } }]

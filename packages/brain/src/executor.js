@@ -1,3 +1,5 @@
+import { withLegacyRelayExecution } from './execution-directory/legacy-relay.js';
+import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
 /**
  * Cecelia Executor - Trigger headless Claude Code execution
  *
@@ -61,7 +63,7 @@ const EXTERNAL_CLAIM_GRACE_MS = Number(process.env.EXTERNAL_CLAIM_GRACE_MS || 45
 import { classifyCodexFailure } from './lib/codex-fatal-patterns.js';
 import { classifyDispatchReasonCode, dispatchFailureFromError } from './lib/dispatch-reason-code.js';
 import { raise } from './alerting.js';
-import { EXECUTOR_KIND_FOR, resolveExecutorKind, isExternallyExecuted } from './executor-contracts.js';
+import { EXECUTOR_KIND_FOR, resolveExecutorKind, isExternallyExecuted, assessTaskLiveness } from './executor-contracts.js';
 import {
   isExternalRunMirror,
   externalActivityAgeMs,
@@ -211,16 +213,12 @@ const XIAN_CODEX_BRIDGE_URL = process.env.XIAN_CODEX_BRIDGE_URL || 'http://100.8
 // 西安 Mac mini M1 Codex Bridge URL (via Tailscale)
 const XIAN_M1_BRIDGE_URL = process.env.XIAN_M1_BRIDGE_URL || 'http://100.88.166.55:3458';
 
-// 多机 Codex Bridge 列表（负载均衡）
-const CODEX_BRIDGES = (process.env.CODEX_BRIDGES || 'http://100.86.57.69:3458,http://100.88.166.55:3458')
-  .split(',').map(s => s.trim()).filter(Boolean);
-
 /**
  * 从多个 Codex Bridge 中选择最空闲的
  */
 async function selectBestBridge() {
   const results = await Promise.allSettled(
-    CODEX_BRIDGES.map(async (url) => {
+    legacyExecutorEntries().filter(e=>e.executor==='codex').map(e=>e.url).map(async (url) => {
       const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -240,7 +238,7 @@ async function selectBestBridge() {
 
   if (healthy.length === 0) {
     console.warn('[executor] 所有 Codex Bridge 不可用，降级到 XIAN_CODEX_BRIDGE_URL');
-    return XIAN_CODEX_BRIDGE_URL;
+    throw new Error('execution_legacy_grant_unavailable:codex');
   }
 
   const selected = healthy[0];
@@ -2372,12 +2370,12 @@ async function triggerCodexReview(task) {
       };
     }
 
-    const child = spawn(codexBin, ['exec', '-c', 'approval_policy="never"', promptContent], {
+    const child = await withLegacyRelayExecution({pool,location:os.hostname(),provider:'codex',credentialIdentity:process.env.CODEX_HOME,repo:task.payload?.repo??task.repo_hint},()=>spawn(codexBin, ['exec', '-c', 'approval_policy="never"', promptContent], {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: WORK_DIR,
       env: { ...process.env, TASK_ID: task.id, RUN_ID: runId, BRAIN_URL: process.env.BRAIN_URL || 'http://localhost:5221' },
-    });
+    }));
 
     // 收集 stdout，解析审查结果后回调 Brain
     let stdout = '';
@@ -2653,12 +2651,12 @@ async function triggerCodexBridge(task, forceBridgeUrl = null) {
 
     const bridgeUrl = forceBridgeUrl ?? await selectBestBridge();
     const payload = buildCodexBridgePayload(task, runId, promptContent, taskBranch, injectedAccounts, isCodexDev, isCrystallize);
-    const response = await fetch(`${bridgeUrl}/run`, {
+    const response = await withLegacyExecution({pool,provider:'codex',endpoint:bridgeUrl},()=>fetch(`${bridgeUrl}/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(15000),
-    });
+    }));
 
     const result = await response.json();
 
@@ -2853,7 +2851,7 @@ async function triggerLocalCodexExec(task) {
     ].join('\n');
     await writeFile(tmpScriptFile, scriptContent, { mode: 0o755 });
 
-    const proc = spawn('bash', [tmpScriptFile], { detached: true, stdio: 'ignore' });
+    const proc = await withLegacyRelayExecution({pool,location:os.hostname(),provider:'codex',credentialIdentity:CODEX_HOME,repo:task.payload?.repo??task.repo_hint},()=>spawn('bash', [tmpScriptFile], { detached: true, stdio: 'ignore' }));
     proc.unref();
     // 打标：本地 codex-bin spawn → brain-local
     await setExecutorKind(task.id, EXECUTOR_KIND_FOR.__local_spawn);
@@ -3779,7 +3777,10 @@ async function _triggerCeceliaRunInner(task) {
       // 旧的西安 harness 全局开关 env 透传已删除（死代码）：harness 路由收编进
       // resolveExecutor（DB 驱动 machine+executor），graph 不再读任何全局开关。
 
+      const authorizeSpawn=operation=>withLegacyRelayExecution({pool,location:os.hostname(),provider:provider??'claude',credentialIdentity:credentials,repo:task.payload?.repo??task.repo_hint},operation);
+      await authorizeSpawn(()=>{});
       const dockerResult = await spawnDocker({
+        authorizeSpawn,
         task,
         prompt: promptContent,
         env: dockerEnv,
@@ -3835,7 +3836,7 @@ async function _triggerCeceliaRunInner(task) {
     const extraEnvKeys = Object.keys(extraEnv);
     console.log(`[executor] Calling cecelia-bridge for task=${task.id} type=${taskType} mode=${permissionMode}${model ? ` model=${model}` : ''}${provider ? ` provider=${provider}` : ''}${repoPath ? ` repo=${repoPath}` : ''}${extraEnvKeys.length ? ` extra_env=[${extraEnvKeys.join(',')}]` : ''}`);
 
-    const response = await fetch(`${EXECUTOR_BRIDGE_URL}/trigger-cecelia`, {
+    const response = await withLegacyExecution({pool,provider:provider??'claude',endpoint:EXECUTOR_BRIDGE_URL},()=>fetch(`${EXECUTOR_BRIDGE_URL}/trigger-cecelia`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(30000),
@@ -3850,7 +3851,7 @@ async function _triggerCeceliaRunInner(task) {
         provider: provider,
         extra_env: extraEnvKeys.length ? extraEnv : undefined
       })
-    });
+    }));
 
     const result = await response.json();
 
@@ -4042,13 +4043,23 @@ async function probeTaskLiveness() {
 
   // Get all in_progress tasks from DB
   const result = await pool.query(`
-    SELECT id, title, payload, started_at, task_type, executor_kind, error_message, claimed_by, claimed_at,
+    SELECT id, title, payload, started_at, task_type, executor_kind, error_message, claimed_by, claimed_at, updated_at,
            ${EXTERNAL_ACTIVITY_AGE_SQL} AS external_activity_age_sec
     FROM tasks
     WHERE status = 'in_progress'
   `);
 
   for (const task of result.rows) {
+    // 已认领有头会话可能在远端；本机无 PID 不足以判死，沿用合同的 unknown 保留语义。
+    if (task.executor_kind === 'headed-session'
+        && typeof task.claimed_by === 'string' && task.claimed_by.trim()) {
+      const liveness = await assessTaskLiveness(task, { activeProcesses, pool });
+      if (liveness.verdict === 'alive' || liveness.verdict === 'unknown') {
+        suspectProcesses.delete(task.id);
+        continue;
+      }
+    }
+
     const runId = task.payload?.current_run_id;
     const entry = activeProcesses.get(task.id);
 

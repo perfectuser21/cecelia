@@ -71,6 +71,8 @@ beforeAll(async () => {
   process.env.DB_NAME = db.name;
   process.env.NODE_ENV = 'test';
   vi.resetModules();
+  const {seedExecutionDirectoryPgFixture}=await import('../helpers/execution-directory-pg-fixture.js');
+  await seedExecutionDirectoryPgFixture(db.pool);
   dispatcher = await import('../../dispatcher.js');
   scriptExec = await import('../../script-executor.js');
   router = await import('../../task-router.js');
@@ -85,6 +87,8 @@ beforeAll(async () => {
 
 // 预算闸读真实账号缓存；独立测试库没有 OAuth 凭据，显式种健康缓存而非借用运行机配额。
 beforeEach(async () => {
+  const {refreshExecutionDirectoryPgFixture}=await import('../helpers/execution-directory-pg-fixture.js');
+  await refreshExecutionDirectoryPgFixture(db.pool);
   await db.pool.query(`
     INSERT INTO account_usage_cache (account_id, five_hour_pct, seven_day_pct, seven_day_sonnet_pct, fetched_at)
     VALUES ('account1', 0, 0, 0, NOW()), ('account2', 0, 0, 0, NOW())

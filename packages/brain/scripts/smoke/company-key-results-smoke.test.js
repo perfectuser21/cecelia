@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { COMPANY_KR_CATALOG, COMPANY_METRIC_MODE, companyMetric } from '../../src/lib/company-kr-metrics.js';
 
 const script = fileURLToPath(new URL('./company-key-results-smoke.sh', import.meta.url));
@@ -11,14 +13,14 @@ const validItems = () => COMPANY_KR_CATALOG.map((source, index) => ({
   source_area_ids: [], unit: source.unit, metric_mode: COMPANY_METRIC_MODE,
   start_value: '0', current_value: '2.345', target_value: '5',
   progress_ratio: companyMetric('0', '2.345', '5').ratio,
-  progress_pct: 46.9, validation_state: 'unverified', updated_at: '2026-10-01T08:00:00.123001Z',
+  progress_pct: 46.9, validation_state: 'unverified', updated_at: '2026-10-01T08:00:00.123001Z', formal_revision: 'a'.repeat(64),
 }));
-async function run(body) {
+async function run(body, environment = {}) {
   const calls = [];
   const server = createServer((req, res) => { calls.push([req.method, req.url]); res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
-    const child = spawn('bash', [script], { env: { ...process.env, BRAIN_URL: `http://127.0.0.1:${server.address().port}` }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('bash', [script], { env: { ...process.env, ...environment, BRAIN_URL: `http://127.0.0.1:${server.address().port}` }, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = ''; child.stdout.on('data', data => { output += data; }); child.stderr.on('data', data => { output += data; });
     const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });
     expect(calls).toEqual([['GET', '/api/brain/okr/company-key-results']]);
@@ -35,13 +37,24 @@ describe('company-key-results-smoke 真实HTTP只读合同', () => {
   it('未登记空集及完整8条原精度指标通过且只发GET', async () => {
     for (const items of [[], validItems()]) { const result = await run({ success: true, items }); expect(result.code, result.output).toBe(0); }
   });
-  it('只有7条或未知来源替代第8条均失败', async () => {
-    const unknown = validItems(); unknown[0].source_page_id = 'unknown';
-    for (const items of [validItems().slice(0, 7), unknown]) { const result = await run({ success: true, items }); expect(result.code, result.output).not.toBe(0); }
+  it('数量由主理人设置，7条与新合法来源均通过；重复来源拒绝', async () => {
+    const dynamic = validItems(); dynamic[0].source_page_id = '00000000-0000-4000-8000-000000000001';
+    for (const items of [validItems().slice(0, 7), dynamic]) { const result = await run({ success: true, items }); expect(result.code, result.output).toBe(0); }
+    const duplicate = validItems(); duplicate[0].source_page_id = duplicate[1].source_page_id;
+    expect((await run({ success: true, items: duplicate })).code).not.toBe(0);
   });
   it('数值冒充raw或公式ratio失真均失败', async () => {
     const numeric = validItems(); numeric[0].current_value = 2.345;
     const wrongRatio = validItems(); wrongRatio[0].progress_ratio = 0;
     for (const items of [numeric, wrongRatio]) { const result = await run({ success: true, items }); expect(result.code, result.output).not.toBe(0); }
+  });
+  it('恶意 curl 启动配置仍只执行 GET，不附加业务写入', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'company-kr-curlrc-'));
+    try {
+      writeFileSync(join(home, '.curlrc'), 'request = "POST"\ndata = "local-fixture-only"\n');
+      const result = await run({ success: true, items: validItems() }, { CURL_HOME: home,
+        http_proxy: '', https_proxy: '', all_proxy: '', HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '' });
+      expect(result.code, result.output).toBe(0);
+    } finally { rmSync(home, { recursive: true, force: true }); }
   });
 });

@@ -6,6 +6,9 @@
 #   2. 有库（DATABASE_URL/PG*）时：真表事务内插一条 5h 前的镜像单跑 job，读回 status/result.reason，ROLLBACK 不留痕
 #   3. JOBS 注册：workflow-run-lost-deadline 在 scheduler-liveness 之前（liveness 自动把它入 ops_workflows）
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://${PGHOST:-localhost}:${PGPORT:-5432}/${PGDATABASE:-}}"; then
+  exit 0
+fi
 cd "$(dirname "$0")/../.."
 
 echo "[wf-lost-smoke] 1. 假库 proven-to-fire"

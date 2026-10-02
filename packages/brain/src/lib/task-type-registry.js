@@ -207,7 +207,8 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   // ── 虚拟类型（不在 DB 白名单，只用于免锚判断）──
   deploy_drill:      T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
   nightly:            T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
-  janitor:            T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
+  app_server_run: T('app-server', false, false, 'app-server-controller', 'external-worker', true, false, 'protected', true, [ANC, PROT, ESC, CX]),
+  janitor:            T('preview-janitor', false, false, 'preview-janitor', 'preview-janitor', true, false, 'protected', true, [ANC, PROT, ESC, CX]),
   harness_controller: workflow(T('none', false, false, null, 'none', false, false, 'none', false, [ANC])),
 });
 
@@ -396,7 +397,7 @@ export const EXTERNAL_WATCHDOG_TASK_TYPES = Object.freeze(
  *   script         = Brain 经 ssh 在跑场机起的确定性脚本（script_run）
  * content-* 的 surface 是 'external'（ZJ pipeline-worker 编排），启动同步对它的回队语义另有来历，不纳入。
  */
-const REMOTE_EXECUTION_SURFACES = new Set(['device', 'openclaw-agent', 'script']);
+const REMOTE_EXECUTION_SURFACES = new Set(['device', 'openclaw-agent', 'script', 'preview-janitor', 'app-server']);
 /**
  * 进程不在 Brain 本机的任务类型（0929 实证：启动同步/活性探针靠本机进程证据判活，
  * 对这些类型恒判死 → 每次部署/每轮探针都被回队，同一活重复执行）。

@@ -21,7 +21,7 @@ const router = Router();
 export const SERVERS = MACHINES;
 
 // 能跑编程任务的机器（供 fleet-resource-cache 使用）
-export const COMPUTE_SERVERS = listComputeWorkerIds();
+export const computeServerIds = listComputeWorkerIds;
 
 const DEFAULT_SSH_IDENTITY = () =>
   process.env.CECELIA_SSH_IDENTITY || path.join(process.env.HOME || '', '.ssh', 'air2');

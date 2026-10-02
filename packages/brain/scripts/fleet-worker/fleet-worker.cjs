@@ -2,7 +2,7 @@
 'use strict';
 
 const { Buffer } = require('node:buffer');
-const { createHmac, timingSafeEqual } = require('node:crypto');
+const { createHmac, createHash, timingSafeEqual, randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -13,15 +13,23 @@ const {
   createFileAttemptStateStore,
 } = require('./attempt-runner.cjs');
 const { createAttemptResourceManager } = require('./attempt-resources.cjs');
+const { createLocalResourceAdmission,createLocalLaunchAdmission,wrapLaunchRunner } = require('./local-resource-admission.cjs');
 const {
   createCredentialEnvelopeConsumer,
 } = require('./credential-envelope.cjs');
 const {
   createGitHubCredentialEnvelopeConsumer,
 } = require('./github-credential-envelope.cjs');
-const { probeFleetWorkerHealth } = require('./node-probe.cjs');
-const { createWorkspaceManager } = require('./workspace-manager.cjs');
+const { probeFleetWorkerHealth, projectLinuxObservation } = require('./node-probe.cjs');
+const { createWorkspaceManager,createFleetRepoAllowlist } = require('./workspace-manager.cjs');
 const { createOrchestratorRunner, probeCredentialHome } = require('./orchestrator-runner.cjs');
+
+const {createStreamHub}=require('./app-server-stream-hub.cjs');
+const {createAppServerRunner}=require('./app-server-runner.cjs');
+const {createAppServerDocker}=require('./app-server-docker.cjs');
+const {loadAppServerProfiles}=require('./app-server-profile.cjs');
+const { createScriptRunner, loadProtectedScriptProfiles } = require('./script-runner.cjs');
+const { createScriptDockerAdapter } = require('./script-docker.cjs');
 
 const MAX_STRING_LENGTH = 1_024;
 const MAX_RESPONSE_BYTES = 65_536;
@@ -87,6 +95,7 @@ function projectHealth(report) {
     ? report
     : {};
   return {
+    ...(source.linux_observation ? { linux_observation: projectLinuxObservation(source.linux_observation) } : {}),
     schema_version: safeString(source.schema_version, 'fleet-node-health/v1'),
     machine_id: safeString(source.machine_id, 'unconfigured'),
     observed_at: safeString(source.observed_at, '1970-01-01T00:00:00.000Z'),
@@ -359,6 +368,8 @@ function createFleetWorkerRuntime({
   runCommand,
   probeCredentialHome: probeCredentialHomeFn = probeCredentialHome,
 } = {}) {
+  const launchAdmission=createLocalLaunchAdmission({markerPath:env.CECELIA_DRAIN_MARKER??'/var/run/cecelia/fleet-worker.drain'});
+  const assertCanLaunch=launchAdmission.assertCanLaunch;
   const workerId = env.CECELIA_MACHINE_ID;
   if (!CANONICAL_MACHINE_IDS.has(workerId)) {
     throw new Error('fleet_worker_machine_id_invalid');
@@ -391,6 +402,9 @@ function createFleetWorkerRuntime({
     runtime: mountRoots.runtime,
     credentials: path.join(dataRoot, 'credential-consumption'),
   });
+  const healthDiskPaths = Object.freeze([
+    dataRoot, path.dirname(roots.worktrees), path.dirname(roots.runtime),
+  ]);
   const workspaceManager = createWorkspaceManager({
     mirrorRoot: roots.mirrors,
     worktreeRoot: roots.worktrees,
@@ -399,6 +413,8 @@ function createFleetWorkerRuntime({
     ...(runCommand ? { runCommand } : {}),
   });
   const docker = createDockerAdapter({
+    workerId,
+    assertCanLaunch,
     runtimeRoot: roots.runtime,
     ...(accessPrincipal === undefined
       ? {}
@@ -419,10 +435,13 @@ function createFleetWorkerRuntime({
     ?? digest;
   const postgresImageDigest = env.CECELIA_POSTGRES_IMAGE ?? POSTGRES_IMAGE;
   const resourceManager = createAttemptResourceManager({
+    workerId,
+    assertCanLaunch,
     postgresImageDigest,
     ...(runCommand ? { runCommand } : {}),
   });
-  const attemptRunner = createAttemptRunner({
+  const attemptRunner = wrapLaunchRunner(createAttemptRunner({
+    assertCanLaunch,
     workspaceManager,
     docker,
     stateStore,
@@ -431,18 +450,23 @@ function createFleetWorkerRuntime({
     credentialConsumer,
     githubCredentialConsumer,
     resourceManager,
+    assertLocalResources: createLocalResourceAdmission({
+      workerId, diskPaths: healthDiskPaths,
+      ...(runCommand ? { runCommand } : {}),
+    }),
     // claude 单链凭据（attempt d80312c0 案卷）：宿主账号目录根 = OrbStack 属主
     // home（installer 渲染进 plist）。仅 us-mac-m4 有 claude 账号目录；其余机器
     // claude attempt 会在 prepare 时 loud-fail attempt_claude_home_unavailable。
     claudeAccountsRoot: env.CECELIA_ORBSTACK_HOME ?? null,
-  });
-  const orchestratorRunner = createOrchestratorRunner({
+  }),launchAdmission);
+  const orchestratorRunner = wrapLaunchRunner(createOrchestratorRunner({
+    assertCanLaunch,
     workspaceManager,
     dataRoot: roots.state,
     hostname: workerId,
     maxConcurrent: Number(env.CECELIA_ORCHESTRATOR_MAX_CONCURRENT ?? 2),
     env,
-  });
+  }),launchAdmission);
   // 启动时探测一次凭据根，只告警不阻断：attempt 面不依赖它，orchestrator start 时还会再探测并 fail-loud。
   try {
     probeCredentialHomeFn(env.CECELIA_ORBSTACK_HOME);
@@ -450,23 +474,23 @@ function createFleetWorkerRuntime({
     console.warn(`[fleet-worker] credential_home_probe_failed: ${logCode(error?.message, 'unknown')}`);
   }
   return Object.freeze({
+    appServerRunner: wrapLaunchRunner(createAppServerRunner({stateRoot:path.join(dataRoot,'app-servers'),machineId:workerId,workerId,bootId:launchAdmission.snapshot().boot_id,
+      assertCanLaunch,profiles:loadAppServerProfiles(env.CECELIA_APP_SERVER_PROFILES_FILE),docker:createAppServerDocker({assertCanLaunch}),
+      assertLocalResources:createLocalResourceAdmission({workerId,diskPaths:healthDiskPaths,...(runCommand?{runCommand}:{})})}),launchAdmission),
+    launchAdmission,
+    scriptRunner: wrapLaunchRunner(createScriptRunner({ assertCanLaunch,stateRoot: path.join(dataRoot, 'scripts'),
+      machineId: workerId, workerId, profiles: loadProtectedScriptProfiles(env.CECELIA_SCRIPT_PROFILES_FILE),
+      assertLocalResources: createLocalResourceAdmission({workerId,diskPaths:healthDiskPaths,...(runCommand?{runCommand}:{})}),
+      docker: createScriptDockerAdapter({assertCanLaunch}) }),launchAdmission),
     attemptRunner,
     orchestratorRunner,
     attemptToken,
     roots,
+    healthDiskPaths,
     runnerImageDigest,
   });
 }
 
-function createFleetRepoAllowlist(env = {}) {
-  return Object.freeze({
-    'perfectuser21/cecelia': env.CECELIA_FLEET_REPO_SOURCE
-      ?? 'https://github.com/perfectuser21/cecelia.git',
-    'perfectuser21/zenithjoy-workspace':
-      env.CECELIA_FLEET_ZENITHJOY_REPO_SOURCE
-      ?? 'https://github.com/perfectuser21/zenithjoy-workspace.git',
-  });
-}
 
 function findUntrustedWorkspaceField(value) {
   if (!value || typeof value !== 'object') return null;
@@ -581,7 +605,80 @@ function createFleetWorkerServer(options = {}) {
       });
   }
 
-  return http.createServer(async (request, response) => {
+  const streamHub=options.appServerRunner?createStreamHub({runner:options.appServerRunner}):null;
+  const server=http.createServer(async (request, response) => {
+    if(request.url?.startsWith('/app-server-streams/')) {
+      try {
+        const match=request.url.match(/^\/app-server-streams\/([a-f0-9-]{36})$/);
+        if(request.method!=='POST'||!match||!streamHub)throw Error('appserver_stream_ticket_invalid');
+        const token=request.headers.authorization?.replace(/^Bearer /,'');
+        streamHub.claim(match[1],token,request,response);
+        response.writeHead(200,{'content-type':'application/x-ndjson','cache-control':'no-store'});response.flushHeaders();
+      } catch {writeJson(response,401,{error:'appserver_stream_ticket_invalid'});}
+      return;
+    }
+    if(request.url?.startsWith('/app-servers/')) {
+      if(!validBearer(request,attemptToken)){writeJson(response,401,{error:'unauthorized'});return;}
+      if(!options.appServerRunner){writeJson(response,503,{error:'appserver_runner_unconfigured'});return;}
+      try{
+        if(request.method!=='POST'){writeJson(response,405,{error:'method_not_allowed'});return;}
+        const body=await readJson(request,maximumRequestBytes),{request_nonce,prepare_deadline,...identity}=body;
+        let result;
+        if(request.url==='/app-servers/capabilities'){
+          if(Object.keys(identity).length)throw Error('appserver_identity_invalid');
+          result=options.appServerRunner.capabilities();
+        }else{
+          const match=request.url.match(/^\/app-servers\/([a-f0-9-]+)\/(start|inspect|cancel|prepare-stream)$/);
+          if(!match||match[1]!==identity.reservation_id)throw Error('appserver_identity_invalid');
+          if(match[2]==='prepare-stream'){
+            const prepared=await streamHub.prepare(identity,{deadline:prepare_deadline});
+            response.setHeader('x-appserver-stream-token',prepared.token);response.setHeader('cache-control','no-store');
+            result={...identity,stream_id:prepared.stream_id,expires_at:prepared.expires_at,token_digest:createHash('sha256').update(prepared.token).digest('hex')};
+          }else{if(prepare_deadline!==undefined)throw Error('appserver_identity_invalid');result=await options.appServerRunner[match[2]](identity);}
+        }
+        const receipt={...result,request_nonce:request_nonce??null};
+        writeJson(response,receipt.status==='waiting_resources'?429:200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
+      }catch(error){writeJson(response,error.message==='worker_draining'?429:409,{error:/^(appserver_[a-z_]+|worker_draining)$/.test(error.message)?error.message:'appserver_operation_unconfirmed'});}
+      return;
+    }
+    if(request.url==='/maintenance/status'){
+      if(!validBearer(request,attemptToken)){writeJson(response,401,{error:'unauthorized'});return;}
+      try{
+        if(request.method!=='POST'){writeJson(response,405,{error:'method_not_allowed'});return;}
+        const body=await readJson(request,4096);
+        if(!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(body.request_nonce??'')||Object.keys(body).some(k=>k!=='request_nonce'))throw Error('invalid_nonce');
+        if(!attemptReady||reconciliationFailed)throw Error('maintenance_reconciliation_unconfirmed');
+        const gate=options.launchAdmission;
+        if(!gate||[attemptRunner,options.scriptRunner,options.orchestratorRunner,...(options.appServerRunner?[options.appServerRunner]:[])].some(r=>typeof r?.maintenance!=='function'))throw Error('maintenance_unconfigured');
+        const before=gate.snapshot(),attempts=await attemptRunner.maintenance(),scripts=await options.scriptRunner.maintenance(),orchestrators=await options.orchestratorRunner.maintenance(),appServers=options.appServerRunner?await options.appServerRunner.maintenance():{pending:0},after=gate.snapshot();
+        const stable=before.activity_revision===after.activity_revision;
+        const counts=[attempts.pending,scripts.pending,orchestrators.preparing,orchestrators.prepared,orchestrators.running_processes,appServers.pending];
+        if(!counts.every(n=>Number.isSafeInteger(n)&&n>=0))throw Error('maintenance_unknown');
+        const receipt={schema_version:'fleet-maintenance/v1',machine_id:machineId,...after,observed_at:new Date().toISOString(),request_nonce:body.request_nonce,
+          in_flight_launches:Math.max(before.in_flight_launches,after.in_flight_launches),observation_stable:stable,attempts,scripts,orchestrators,app_servers:appServers,
+          quiescent:stable&&before.draining&&after.draining&&before.in_flight_launches===0&&after.in_flight_launches===0&&counts.every(n=>n===0)};
+        writeJson(response,200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
+      }catch{writeJson(response,503,{error:'worker_maintenance_unconfirmed'});}
+      return;
+    }
+    if (request.url?.startsWith('/scripts/')) {
+      if (!validBearer(request, attemptToken)) { writeJson(response,401,{error:'unauthorized'});return; }
+      if (!options.scriptRunner) { writeJson(response,503,{error:'script_runner_unconfigured'});return; }
+      try {
+        if (request.method !== 'POST') { writeJson(response,405,{error:'method_not_allowed'});return; }
+        const body=await readJson(request,maximumRequestBytes);
+        let result;
+        if(request.url==='/scripts/capabilities') result=options.scriptRunner.capabilities();
+        else {
+          const match=request.url.match(/^\/scripts\/([a-f0-9-]+)\/(start|inspect|cancel|prepare-stream)$/);
+          if(!match || match[1]!==body.reservation_id) {writeJson(response,400,{error:'script_identity_invalid'});return;}
+          result=await options.scriptRunner[match[2]](body);
+        }
+        const receipt={...result,request_nonce:body.request_nonce??null};
+        writeJson(response,receipt.status==='waiting_resources'?429:200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
+      } catch(error) {writeJson(response,error.statusCode===429?429:409,{error:/^script_[a-z_]+$/.test(error.message)?error.message:'script_operation_failed'});}
+      return;
+    }
     if (request.url === '/health') {
       if (request.method !== 'GET') {
         writeJson(response, 405, { error: 'method_not_allowed' });
@@ -761,6 +858,8 @@ function createFleetWorkerServer(options = {}) {
       writeJson(response, statusCode, { error: errorCode });
     }
   });
+  server.once('close',()=>streamHub?.close());
+  return server;
 }
 
 function parsePort(value) {
@@ -776,12 +875,16 @@ function main(env = process.env) {
   const runtime = createFleetWorkerRuntime({ env });
   const server = createFleetWorkerServer({
     env,
+    appServerRunner: runtime.appServerRunner,
+    launchAdmission: runtime.launchAdmission,
+    scriptRunner: runtime.scriptRunner,
     attemptRunner: runtime.attemptRunner,
     orchestratorRunner: runtime.orchestratorRunner,
     attemptToken: runtime.attemptToken,
     machineId: env.CECELIA_MACHINE_ID,
     runnerImageDigest: env.CECELIA_RUNNER_DIGEST,
     repoRoot: env.CECELIA_REPO_ROOT,
+    diskPaths: runtime.healthDiskPaths,
     drainMarkerPath: env.CECELIA_DRAIN_MARKER,
     callbackUrl: env.CECELIA_CALLBACK_URL,
   });

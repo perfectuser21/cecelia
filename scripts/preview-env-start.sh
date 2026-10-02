@@ -180,10 +180,9 @@ log "  ✓ worktree 创建完成: ${WORK_DIR}"
 log "Step 2: 构建 apps/dashboard（dashboard 目录独立 npm ci，含 devDeps）..."
 DASH_DIR="${WORK_DIR}/apps/dashboard"
 DIST_DIR="${DASH_DIR}/dist"
-NPM_CACHE_DIR="${PREVIEW_BASE_DIR}/.npm-cache-preview-${PR_NUMBER}"
-mkdir -p "$NPM_CACHE_DIR"
 
-if (cd "$DASH_DIR" && npm ci --cache "$NPM_CACHE_DIR" >> "$LOG_FILE" 2>&1 \
+
+if (cd "$DASH_DIR" && node "${SCRIPT_DIR}/preview-cache/writer.mjs" "$PR_NUMBER" frontend >> "$LOG_FILE" 2>&1 \
     && npm run build >> "$LOG_FILE" 2>&1); then
   log "  ✓ 前端构建完成: ${DIST_DIR}"
 else
@@ -224,9 +223,7 @@ else
   NPM_LOGS_DIR="${PREVIEW_BASE_DIR}/.npm-logs-preview-${PR_NUMBER}"
   mkdir -p "$NPM_LOGS_DIR"
   log "  根 lock 与镜像不一致或镜像无依赖指纹，安装 PR 的 Brain 生产依赖..."
-  if (cd "$WORK_DIR" && npm ci --workspace=packages/brain \
-      --omit=dev --omit=optional --ignore-scripts \
-      --cache "$NPM_CACHE_DIR" --logs-dir "$NPM_LOGS_DIR" \
+  if (cd "$WORK_DIR" && node "${SCRIPT_DIR}/preview-cache/writer.mjs" "$PR_NUMBER" brain \
       >> "$LOG_FILE" 2>&1); then
     log "  ✓ PR Brain 生产依赖安装完成"
   else

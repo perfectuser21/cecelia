@@ -1,3 +1,4 @@
+import {seedExecutionDirectoryPgFixture,refreshExecutionDirectoryPgFixture} from '../helpers/execution-directory-pg-fixture.js';
 import { closePgPool, trackPgPool } from './helpers/close-pg-pool.js';
 /**
  * [BEHAVIOR] Kernel CLI 在任何 task 业务状态推进前完成 Controller ownership CAS。
@@ -9,7 +10,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createKernelRun } from '../../orchestrator/kernel-run-store.js';
 const { Pool } = pg;
@@ -46,6 +47,7 @@ async function createIsolatedDatabase() {
     stdio: 'pipe',
   });
   testPool = trackPgPool(new Pool({ ...DB_DEFAULTS, database: databaseName, max: 5 }));
+  await seedExecutionDirectoryPgFixture(testPool);
 }
 async function dropIsolatedDatabase() {
   if (testPool) await closePgPool(testPool);
@@ -184,6 +186,7 @@ async function readOracle({ taskId, runId }) {
   );
   return rows[0];
 }
+beforeEach(async()=>refreshExecutionDirectoryPgFixture(testPool));
 beforeAll(createIsolatedDatabase, 60_000);
 afterAll(dropIsolatedDatabase, 30_000);
 describe('Kernel CLI ownership pre-action fence（真 PG）', () => {

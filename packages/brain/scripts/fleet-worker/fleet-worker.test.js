@@ -323,9 +323,10 @@ describe('Fleet Worker health-only service', () => {
       expect(args).toBeInstanceOf(Array);
       expect(options).toMatchObject({ shell: false });
       if (file === 'sw_vers') return { stdout: '15.5\n' };
-      if (file === 'orbctl') {
-        expect(options.env.HOME).toBe('/Users/orbstack-owner');
-        return { stdout: '{"version":"1.9.4"}' };
+      if (file === 'orbctl') throw new Error('panic: chmod administrator run: operation not permitted');
+      if (file === '/usr/libexec/PlistBuddy') {
+        expect(args).toEqual(['-c', 'Print :CFBundleShortVersionString', '/Applications/OrbStack.app/Contents/Info.plist']);
+        return { stdout: '1.9.4\n' };
       }
       if (file === 'docker' && args[0] === 'info') return { stdout: '{"ServerVersion":"27.5"}' };
       if (file === 'docker' && args[0] === 'image') return { stdout: JSON.stringify([`runner@${DIGEST}`]) };
@@ -379,6 +380,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const input = {
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       postgresImageDigest: POSTGRES_IMAGE,
@@ -424,9 +426,10 @@ describe('Fleet Worker health-only service', () => {
         postgres: { available: true, image_digest: POSTGRES_IMAGE },
       });
     }
+    expect(execFileFn.mock.calls.some(([file]) => file === 'orbctl')).toBe(false);
     const requiredCommands = [
       ['sw_vers', (args) => args.includes('-productVersion')],
-      ['orbctl', (args) => args.length === 1 && args[0] === 'version'],
+      ['/usr/libexec/PlistBuddy', (args) => args[0] === '-c' && args[1] === 'Print :CFBundleShortVersionString'],
       ['docker', (args) => args[0] === 'info'],
       ['docker', (args) => args[0] === 'image'
         && args[1] === 'inspect'
@@ -450,7 +453,7 @@ describe('Fleet Worker health-only service', () => {
       ['sysctl', (args) => args.includes('hw.memsize')],
       ['sysctl', (args) => args.includes('vm.loadavg')],
       ['memory_pressure', (args) => args.includes('-Q')],
-      ['df', (args) => args.includes('-k')],
+      ['df', (args) => args.includes('-kP')],
       ['launchctl', (args) => args[0] === 'print'
         && args.includes('system/com.perfect21.fleet-worker')],
       ['sntp', (args) => args.length === 2
@@ -534,6 +537,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       postgresImageDigest: POSTGRES_IMAGE,
@@ -570,6 +574,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       postgresImageDigest: POSTGRES_IMAGE,
@@ -601,6 +606,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       postgresImageDigest: POSTGRES_IMAGE,
@@ -637,6 +643,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'xian-mac-m4',
       workerBindHost: '100.86.57.69',
       runnerImageDigest: DIGEST,
@@ -660,6 +667,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'xian-mac-m4',
       workerBindHost: '100.86.57.69',
       runnerImageDigest: DIGEST,
@@ -705,6 +713,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       repoRoot: '/repo',
@@ -759,6 +768,7 @@ describe('Fleet Worker health-only service', () => {
     });
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       repoRoot: '/repo',
@@ -779,6 +789,7 @@ describe('Fleet Worker health-only service', () => {
     const execFileFn = vi.fn(async () => ({ stdout: '' }));
 
     const report = await probeFleetWorkerHealth({
+      platform: 'darwin',
       machineId: 'us-mac-m4',
       runnerImageDigest: DIGEST,
       repoRoot: '/repo',
@@ -923,6 +934,17 @@ describe('Fleet Worker Attempt API', () => {
       ...overrides,
     };
   }
+
+  it('资源复验拒绝返回429固定码', async () => {
+    const { createFleetWorkerServer } = await loadServerContract();
+    const runner = runnerDouble();
+    runner.prepare.mockRejectedValue(Object.assign(new Error('attempt_local_resources_unavailable'), { statusCode: 429 }));
+    const server = createFleetWorkerServer({ attemptRunner: runner, attemptToken: token });
+    const response = await request(server, 'POST', '/harness/attempts/prepare', { headers: auth, body: launchBody() });
+    expect(response.statusCode).toBe(429);
+    expect(JSON.parse(response.body)).toEqual({ error: 'attempt_local_resources_unavailable' });
+    server.close();
+  });
 
   function runnerDouble() {
     return {
@@ -1600,6 +1622,7 @@ describe('Fleet Worker production runtime assembly', () => {
         reconcile: expect.any(Function),
       });
       expect(runtime.runnerImageDigest).toBe(`sha256:${'a'.repeat(64)}`);
+      expect(runtime.healthDiskPaths).toEqual([dataRoot, dataRoot, dataRoot]);
       expect(runtime.roots).toEqual({
         mirrors: path.join(dataRoot, 'mirrors'),
         worktrees: path.join(dataRoot, 'worktrees'),
@@ -1651,6 +1674,7 @@ describe('Fleet Worker production runtime assembly', () => {
       });
       expect(fs.statSync(mountRoot).mode & 0o777).toBe(0o755);
       expect(fs.statSync(runtime.roots.worktrees).mode & 0o777).toBe(0o755);
+      expect(runtime.healthDiskPaths).toEqual([dataRoot, mountRoot, mountRoot]);
       expect(fs.statSync(runtime.roots.runtime).mode & 0o777).toBe(0o755);
       expect(
         fs.statSync(path.join(runtime.roots.worktrees, '.admin')).mode & 0o777,
@@ -1736,13 +1760,13 @@ describe('Fleet Worker production runtime assembly', () => {
 });
 
 describe('Fleet Worker launchd plist template', () => {
-  it('pins TMPDIR to the OrbStack-shareable path (重装回归守卫：_cecelia 私有临时目录 OrbStack 读不了，container probe 必死)', () => {
+  it('renders TMPDIR from the validated shared directory (真实展开由安装器行为回归验证)', () => {
     const template = fs.readFileSync(
       path.join(path.dirname(new URL(import.meta.url).pathname), 'com.cecelia.fleet-worker.plist.template'),
       'utf8',
     );
     expect(template).toContain('<key>TMPDIR</key>');
-    expect(template).toContain('<string>/Users/Shared/cecelia-fleet-tmp</string>');
+    expect(template).toContain('<string>@@SHARED_TMPDIR@@</string>');
   });
 });
 

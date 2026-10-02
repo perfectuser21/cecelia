@@ -3,13 +3,16 @@
 # 棒1（决策 ee4842a6/3feeae3e）更新：链根从 tasks(task_type='project') 改成 projects 表真身行，
 # 本脚本的种子数据/断言跟着改（Notion 页 id/指纹挪进 projects.notion_props；决策 context 带 project_id）。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 : "${DATABASE_URL:?DATABASE_URL is required and must target a test or scratch database}"
 PSQL="$(command -v psql)"; NODE="$(command -v node)"
 DB_NAME="$("$NODE" -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DB_NAME" =~ (_test|_scratch)$ ]] || fail "refuse non-test db: ${DB_NAME:-empty}"
-q() { "$PSQL" "$DATABASE_URL" -v ON_ERROR_STOP=1 -qAtc "$1"; }
+q() { "$PSQL" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -qAtc "$1"; }
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"; BRAIN_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 [[ "$(q "SELECT count(*) FROM notion_projection_map WHERE notion_db_id='d83c40c2-ba63-8323-8dc7-01cc291c4d9b' AND brain_table='tasks' AND direction='push'")" == "1" ]] || fail "Projects←tasks(project 根) 未登记"

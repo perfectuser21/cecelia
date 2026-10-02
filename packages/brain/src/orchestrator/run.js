@@ -1,3 +1,4 @@
+import { startExecutionDirectory } from '../execution-directory/store.js';
 /**
  * run.js —— orchestrator CLI 入口（独立于 Brain 容器生命周期的主机进程，D6）。
  *
@@ -69,7 +70,7 @@ import {
 } from './expired-attempt-reconciler.js';
 import { listCanonicalMachineIds } from './preflight/canonical-machine-id.js';
 
-const CANONICAL_MACHINE_IDS = new Set(listCanonicalMachineIds());
+
 
 /**
  * kernel 告警 adapter：把 capability-gate 的 `{ kind, ... }` 事件映射到 alerting.raise。
@@ -216,9 +217,10 @@ export async function buildRealDeps(overrides = {}) {
   const pool = overrides.pool
     ?? (await import('../db.js')).default; // 延迟 import：--help/参数错误时不连库
   overrides.onPool?.(pool);
+  await (overrides.startExecutionDirectory ?? startExecutionDirectory)({pool,env:overrides.env??process.env});
   const execCmd = overrides.execCmd
     ?? ((cmd) => execSync(cmd, { encoding: 'utf-8', maxBuffer: 16 * 1024 * 1024, timeout: 60_000 }));
-  const attemptStore = overrides.attemptStore ?? createAttemptStore(pool);
+  const attemptStore = overrides.attemptStore ?? createAttemptStore(pool,{executionDirectory:true});
   const commanderStore = overrides.commanderStore ?? createCommanderStore(pool);
   const eventStore = overrides.eventStore ?? createRunEventStore(pool);
   const commanderAttemptStore = {
@@ -269,7 +271,7 @@ export async function buildRealDeps(overrides = {}) {
   const leaseOwner = overrides.leaseOwner ?? `${os.hostname()}:${process.pid}`;
   const brainUrl = overrides.brainUrl ?? env.BRAIN_URL ?? DEFAULT_WORKER_BRAIN_URL;
   const machineId = overrides.machineId ?? env.CECELIA_MACHINE_ID ?? DEFAULT_LOCAL_MACHINE_ID;
-  if (!CANONICAL_MACHINE_IDS.has(machineId)) {
+  if (!listCanonicalMachineIds().includes(machineId)) {
     throw new Error(`invalid_kernel_machine_id:${String(machineId)}`);
   }
   let dispatch = overrides.dispatch;
@@ -364,6 +366,8 @@ export async function buildRealDeps(overrides = {}) {
           loadToken: overrides.resolveGitHubToken ?? resolveGitHubToken,
         });
       launcher = createProductionExecutionTransport({
+        executionAuthority:overrides.executionAuthority,
+        pool,
         env,
         spawnDetached,
         removeContainer,

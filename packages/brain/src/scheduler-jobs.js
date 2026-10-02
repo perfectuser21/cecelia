@@ -1,4 +1,6 @@
-import { runCompanyKrProjection } from './projection/company-key-results.js';
+import {reconcileAppServers} from './app-server/controller.js';
+import { runPreviewCacheJanitor } from './preview-cache-scheduler.js';
+import { runCompanyKrWorkflow } from './projection/company-kr-workflow.js';
 /**
  * scheduler-jobs.js — 声明式定时任务注册表（作战循环 P1-PR1）
  *
@@ -61,6 +63,7 @@ import { gtdSyncJobHandler } from './notion-gtd-sync.js';
 import { defaultExec } from './host-exec.js';
 import { maybeRunCrystalJudge } from './crystal-judge.js';
 import { reapOpenclawAgentRuns } from './openclaw-agent-executor.js';
+import { runNodeOnboardingJob } from './node-onboarding/service.js';
 import { reapScriptRuns } from './script-executor.js';
 import { reconcileDelegatedDeviceJobs } from './routing/device-delegation.js';
 import { syncCodingEvidence } from './crystal/coding-evidence.js';
@@ -81,6 +84,8 @@ export const JOBS = [
   // machine-vitals 必须排首位：串行轮内后面 19 个 job 的延迟会把采样推过 STALE_MS(180s)，
   // harness 派发热路径读到的就是过期缓存（beeba317 终审 Fix 3）。
   { name: 'machine-vitals', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => sampleMachineVitals(pool), description: '本机体征采样（docker容器数/VM内存/盘，60s，harness admission 数据源，beeba317）' },
+  { name: 'app-server-reconcile', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: reconcileAppServers, description: '按持久HOME/代际身份恢复探查与取消；无授权不启动，不按TTL释放' },
+  { name: 'preview-owned-cache-janitor', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runPreviewCacheJanitor, description: 'MMV专属npm cache过期回收：默认停用、真实任务与持久回执对账' },
   { name: 'arch-review', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerArchReview, description: '架构巡检（自带4h窗口+guard）' },
   { name: 'ci-patrol', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerCiPatrol, description: 'CI/CD 巡检（自带北京08:00窗口+当日去重）' },
   { name: 'strategy-trigger', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: maybeTriggerStrategySession, description: '战略会应急触发（自带active_goals gate+24h冷却）' },
@@ -125,7 +130,7 @@ export const JOBS = [
   { name: 'notion-task-command-ingest', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionTaskCommandIngest, description: 'Notion Tasks 结构化回读：In Progress/Start → start_requested' },
   { name: 'projection-command-apply', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: applyProjectionCommands, description: 'Brain 状态机校验并应用 projection commands；真实 attempt 才能进入 in_progress' },
   { name: 'projection-outbox', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runProjectionOutbox, description: '本地数据库到 Notion/Obsidian 等可拆卸 projection 的通用 outbox' },
-  { name: 'notion-company-key-results', needsPool: true, timeoutMs: 120000, handler: runCompanyKrProjection, description: '公司8KR列级入口：先Target/Start入站再仅Current出站；原公式不写，5min自gate' },
+  { name: 'notion-company-key-results', needsPool: true, timeoutMs: 120000, handler: runCompanyKrWorkflow, description: '经营KR工作流：5min回灌人工正式值、投影独立AI建议；正式变更及每日定时去重派发受限OpenClaw分析，Brain统一收账' },
   { name: 'notion-kr-projection', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runNotionKrProjection, description: 'Brain KR → 独立注册的只读镜子（5min 自 gate；经营 KR 库禁写；Current/Target/Progress 分列，02148cef）' },
   { name: 'ops-collector', needsPool: true, timeoutMs: 120_000, handler: (pool) => runOpsCollector(pool), description: '运行舱采集器（5min自gate，宿主launchctl+HK OpenClaw+GHA cron→ops_*投影，per-source心跳，G1 S1 刀1，task 6fcb5356）' },
   {
@@ -154,6 +159,7 @@ export const JOBS = [
   { name: 'crystal-judge', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => maybeRunCrystalJudge(pool), description: '每日结晶判官（北京05:00窗口+当日去重，OpenClaw 八格六指标聚合→三态判决→每日结晶报告落库，Crystal 第4件）' },
   { name: 'openclaw-agent-reaper', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reapOpenclawAgentRuns(pool), description: '秋米 openclaw-agent 收割（60s，读 MMV ~/brain-runs/<run_id>.exit → completed_no_pr/failed，PR3）' },
   { name: 'script-reaper', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reapScriptRuns(pool), description: 'executor=script 收割（60s，读跑场机 ~/brain-runs/<run_id>.exit → completed / 按 retry-policy 重排一次 / failed 带 exit code 与截断 stderr，链 bf5088a3 棒3）' },
+  { name: 'node-onboarding', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => runNodeOnboardingJob(pool), description: '节点接入验收对账与受信 SSH 健康采样调度' },
   { name: 'qiumi-device-reconcile', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => reconcileDelegatedDeviceJobs(pool), description: '秋米设备任务对账（60s，子 device_job 终态回写父 qiumi_task，PR3 补充五）' },
   { name: 'owner-decision-deadline', needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runOwnerDecisionDeadline(pool), description: '主理人决策到期兑现（决策105a5868三档协议，任务8aa79219）：blocked owner_decision(waiting_on=human)到期未应答→可逆按default走(同批准同一内部函数，via=default_on_deadline，decisions made_by=system，Bark P2「可推翻」)；不可逆不自动执行→blocked_until顺延24h+留痕次数+Bark P1再催。进程内10min自gate，调度轮60s都会调用故活性尺子=60s；整轮有界（query_timeout/statement_timeout/取连接超时/90s预算），不重演09-24 notion-gtd-sync卡死案' },
   { name: 'skill-dist-drift', needsPool: true, timeoutMs: 120_000, livenessIntervalSec: 60, handler: (pool) => runSkillDistDrift(pool), description: 'skill 分发漂移检测（链 bf5088a3 棒8，任务 1141f101）：真身 MMV ~/.claude/skills 与跑场机 xian-m4/xian-m1 的 skill 清单哈希（跟随符号链接按内容算，悬空链接单列）30min 自 gate 比对，结果写 working_memory.skill_manifest_drift，晨报/日报出 🟡 AMBER。us-vps 零执行：只经 ssh(mmv 跳板) 送脚本到目标机执行、读回 JSON；ssh 失败/超时=unreachable（未核对），绝不当零个 skill' },

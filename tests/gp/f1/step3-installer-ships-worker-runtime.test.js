@@ -12,9 +12,13 @@
  * 覆盖每个被 require 的 .cjs 模块。
  */
 import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { probeFleetWorkerHealth } = require('../../../packages/brain/scripts/fleet-worker/node-probe.cjs');
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const WORKER_DIR = join(ROOT, 'packages/brain/scripts/fleet-worker');
@@ -34,6 +38,45 @@ function localRequires() {
 }
 
 describe('GP F1 step3 — installer 覆盖 worker 运行时依赖', () => {
+  it('已打包的本机资源闸拒绝维护期间真实 Docker 启动边界，inspect 保留', async () => {
+    const { createLocalLaunchAdmission } = require('../../../packages/brain/scripts/fleet-worker/local-resource-admission.cjs');
+    const gate = createLocalLaunchAdmission({ lstat: () => ({}) });
+    const commands = [];
+    const run = gate.guardCommand(async (cmd, args) => { commands.push(args); });
+    await expect(run('docker', ['start', 'owned-container'])).rejects.toThrow('worker_draining');
+    await run('docker', ['inspect', 'owned-container']);
+    expect(commands).toEqual([['inspect', 'owned-container']]);
+    expect(gate.snapshot()).toMatchObject({ draining: true, in_flight_launches: 0 });
+  });
+
+  it('真实 install-fleet-worker 升级保留配置、凭据引用和他人安装锁', () => {
+    const output = execFileSync('bash', [join(WORKER_DIR, 'install-fleet-worker.test.sh')], {
+      encoding: 'utf8', timeout: 120000,
+    });
+    expect(output).toContain('PASS: Fleet Worker installer behavioral contract');
+  }, 125000);
+
+  it('真实健康模块只读 OrbStack bundle，服务账号不触碰管理员目录', async () => {
+    for (const readable of [true, false]) {
+      const calls = [];
+      const report = await probeFleetWorkerHealth({ machineId: 'xian-mac-m1', platform: 'darwin',
+        execFileFn: async (file, args, options) => {
+          calls.push(file);
+          if (file !== '/usr/libexec/PlistBuddy' || !readable) throw Error('EPERM');
+          expect(args).toEqual(['-c', 'Print :CFBundleShortVersionString', '/Applications/OrbStack.app/Contents/Info.plist']);
+          expect(options.shell).toBe(false);
+          return { stdout: '2.2.1\n' };
+        },
+        makeTempDirFn: async () => { throw Error('no probe container'); },
+        statFn: async () => { throw Error('missing'); }, fetchFn: async () => ({ ok: false }),
+      });
+      expect(report.orbstack.version).toBe(readable ? '2.2.1' : 'unavailable');
+      expect(calls).not.toContain('orbctl');
+      expect(report.docker.available).toBe(false);
+      expect(report.container.probe_succeeded).toBe(false);
+    }
+  });
+
   const modules = localRequires();
 
   it('fleet-worker.cjs 的本地 require 清单非空（解析器自证）', () => {
@@ -45,6 +88,13 @@ describe('GP F1 step3 — installer 覆盖 worker 运行时依赖', () => {
   it.each(localRequires())(
     'installer 完整搬运 %s.cjs（SOURCE 声明 + cp staging + MOVE 落位）',
     (mod) => {
+      const array = installerSource.match(/^AUXILIARY_FILES=\(([^)]*)\)/m);
+      if (array?.[1].split(/\s+/).includes(`${mod}.cjs`)) {
+        expect(installerSource).toContain('mktemp "$RUNTIME_DIR/.${AUXILIARY_FILES[$index]}.XXXXXX"');
+        expect(installerSource).toContain('cp "$SCRIPT_DIR/${AUXILIARY_FILES[$index]}" "${STAGED_AUXILIARY_FILES[$index]}"');
+        expect(installerSource).toMatch(/"\$MOVE" "\$\{STAGED_AUXILIARY_FILES\[\$index\]\}"\s*\\\s*"\$RUNTIME_DIR\/\$\{AUXILIARY_FILES\[\$index\]\}"/);
+        return;
+      }
       // SOURCE 声明：installer 把它列为必需源文件
       expect(installerSource).toMatch(
         new RegExp(`_SOURCE="\\$SCRIPT_DIR/${mod}\\.cjs"`),

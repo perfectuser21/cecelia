@@ -2,6 +2,9 @@
 # ops-workflows-smoke — 运行舱刀4/5 真库火：业务流程表、skill 表、三层关联链。
 # 验的是"workflow → agent → skill"三层能否落库并互指。纯 psql 确定性。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
@@ -9,7 +12,7 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 PSQL="$(command -v psql)"; NODE="$(command -v node)"
 DB_NAME="$("$NODE" -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DB_NAME" =~ (_test|_scratch)$ ]] || fail "拒绝连接非测试库: ${DB_NAME:-<empty>}"
-q() { "$PSQL" "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"; }
+q() { "$PSQL" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"; }
 
 TAG="wf-smoke-$$"
 cleanup() {

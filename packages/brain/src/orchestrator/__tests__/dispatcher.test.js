@@ -1544,7 +1544,7 @@ describe('createDispatcher', () => {
     );
   });
 
-  it('returns retryable BLOCKED when autonomous singleton machine capacity is contended', async () => {
+  it.each(['autonomous_singleton_capacity_contended', 'machine_capacity_contended'])('returns retryable BLOCKED for %s', async (capacityError) => {
     const deps = makeDeps();
     deps.preflightGate = {
       evaluate: vi.fn(async () => ({
@@ -1567,7 +1567,7 @@ describe('createDispatcher', () => {
       validateSnapshotForDispatch: vi.fn(async () => ({ status: 'ok' })),
     };
     deps.attemptStore.createAttempt.mockRejectedValueOnce(
-      new Error('autonomous_singleton_capacity_contended'),
+      new Error(capacityError),
     );
 
     const result = await createDispatcher(deps)('spawn:evaluator', {
@@ -1581,7 +1581,7 @@ describe('createDispatcher', () => {
     expect(result).toMatchObject({
       status: 'DONE_WITH_CONCERNS',
       control_status: 'BLOCKED',
-      fallback_reason: 'autonomous_singleton_capacity_contended',
+      fallback_reason: capacityError,
       failure_class: 'infrastructure_blocked',
       should_create_attempt: false,
       should_enter_generator_fix: false,
@@ -2880,6 +2880,7 @@ describe('createDispatcher', () => {
     }, {
       leaseOwner: 'dispatcher-test:4242',
       leaseGeneration: 0,
+      retainResources: true,
     });
     expect(deps.launcher.cancel).toHaveBeenCalledWith({
       attempt: expect.objectContaining({
@@ -3470,6 +3471,7 @@ describe('createDispatcher', () => {
     }, {
       leaseOwner: 'dispatcher-test:4242',
       leaseGeneration: 0,
+      retainResources: true,
     });
   });
 
@@ -3514,6 +3516,22 @@ describe('createDispatcher', () => {
     },
   );
 
+  it.each([undefined, 'different-attempt'])('拒绝缺失或错配清理回执 %s 并保留预约', async (receiptId) => {
+    const deps = makeDeps();
+    deps.resolveWorkspaceSpec = vi.fn(async () => ({ repo: 'perfectuser21/cecelia', base_sha: 'a'.repeat(40),
+      branch: 'cp-cancel-identity', expected_head_sha: null, mode: 'read-write', run_id: runId, attempt_id: attemptId }));
+    deps.launcher.prepare = vi.fn(async () => { throw new Error('prepare_failed'); });
+    deps.launcher.start = vi.fn();
+    deps.launcher.cancel.mockResolvedValueOnce({ status: 'cleaned', attempt_id: receiptId });
+    await expect(createDispatcher(deps)('spawn:generator', { taskId, runId, hop: 5, observed,
+      decision: { phase: 'generate' } })).rejects.toThrow('prepare_failed');
+    expect(deps.launcher.start).not.toHaveBeenCalled();
+    expect(deps.attemptStore.fail).toHaveBeenCalledWith(attemptId,
+      expect.objectContaining({ message: expect.stringContaining('orphan cancellation unsafe: cleaned') }),
+      expect.objectContaining({ retainResources: true,
+        cleanupIdentity: { actualMachineId: 'brain-1', executionTransport: 'fleet-worker' } }));
+  });
+
   it('continues to diagnose an abnormal Fleet Worker cancel status', async () => {
     const deps = makeDeps();
     deps.resolveWorkspaceSpec = vi.fn(async () => ({
@@ -3551,6 +3569,8 @@ describe('createDispatcher', () => {
     }, {
       leaseOwner: 'dispatcher-test:4242',
       leaseGeneration: 0,
+      retainResources: true,
+      cleanupIdentity: { actualMachineId: 'brain-1', executionTransport: 'fleet-worker' },
     });
   });
 
@@ -3576,6 +3596,7 @@ describe('createDispatcher', () => {
     }, {
       leaseOwner: 'dispatcher-test:4242',
       leaseGeneration: 0,
+      retainResources: true,
     });
   });
 

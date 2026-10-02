@@ -58,7 +58,7 @@ echo "468 注册表占位 ✓"
 
 if [ -n "${TASK_RUN_SMOKE_DB_URL:-}" ]; then
   echo "[task-run-outlets-smoke] 6. 真库：占位行存在且未误开推送"
-  ST=$(psql "$TASK_RUN_SMOKE_DB_URL" -Atc "SELECT status || '/' || direction FROM notion_projection_map WHERE brain_table='task_runs' ORDER BY (status='active') DESC LIMIT 1")
+  ST=$(psql -X "$TASK_RUN_SMOKE_DB_URL" -Atc "SELECT status || '/' || direction FROM notion_projection_map WHERE brain_table='task_runs' ORDER BY (status='active') DESC LIMIT 1")
   case "$ST" in
     pending_vessel/none|active/push|active/both) echo "注册表 task_runs 行 = $ST ✓" ;;
     *) echo "FAIL 注册表 task_runs 行异常: '$ST'"; exit 1 ;;

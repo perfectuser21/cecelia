@@ -7,7 +7,7 @@ import subprocess
 import time
 import urllib.request
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 BRAIN = os.environ.get("CECELIA_BRAIN_API", "http://localhost:5221/api/brain").rstrip("/")
 SOURCE_DOD = "3dbc40c2-ba63-8158-808a-e81bd769eb6b"
@@ -23,9 +23,10 @@ def call(url, body=None, method=None):
 
 
 def objects():
-    out = subprocess.run(["docker", "exec", "openclaw-gateway", "node",
-                          "/root/.openclaw/opc-objects.mjs", "list"],
+    out = subprocess.run(["/usr/bin/node", "/opt/openclaw/state/opc-objects.mjs", "list"],
                          capture_output=True, text=True, timeout=90)
+    if out.returncode:
+        raise RuntimeError("经营对象读取失败（退出码 %s）：%s" % (out.returncode, out.stderr.strip()))
     d = json.loads(out.stdout)
     assert d.get("ok"), d.get("error")
     return d["records"], d["now_ms"]
@@ -71,14 +72,37 @@ def cost_line_up():
     return 0
 
 
-def set_current(source_page_id, value, evidence, task_id, run_id, observed_at):
+def company_items():
     snapshot = call(BRAIN + "/okr/company-key-results")
-    if snapshot.get("success") is not True:
+    if snapshot.get("success") is not True or not isinstance(snapshot.get("items"), list) or not snapshot["items"]:
         raise RuntimeError("公司 KR 快照读取失败")
-    rows = [row for row in snapshot["items"] if row["source_page_id"] == source_page_id]
-    if len(rows) != 1 or rows[0].get("metric_mode") != "company_formula_v1":
-        raise RuntimeError("公司 KR 来源映射不唯一或模式不合法")
-    item = rows[0]
+    active, seen = {}, set()
+    for item in snapshot["items"]:
+        try:
+            source = item["source_page_id"]
+            identity = UUID(source) if isinstance(source, str) and len(source) in (32, 36) else None
+        except (ValueError, TypeError, KeyError):
+            identity = None
+        if not identity or not identity.int or identity in seen or item.get("metric_mode") != "company_formula_v1":
+            raise RuntimeError("公司 KR 来源映射不唯一或模式不合法")
+        seen.add(identity)
+        if not isinstance(item.get("unit"), str) or not item["unit"].strip():
+            raise RuntimeError("公司 KR 原单位缺失")
+        inactive = {"done", "complete", "completed", "closed", "cancelled", "canceled", "archived", "paused", "on hold", "suspended",
+                    "已完成", "完成", "已归档", "归档", "暂停", "已暂停", "取消", "已取消"}
+        if item.get("active") is False or item.get("sync_error") or str(item.get("status", "")).strip().lower() in inactive:
+            continue
+        active[str(identity)] = item
+    return active
+
+
+def set_current(source_page_id, value, evidence, task_id, run_id, observed_at):
+    """历史函数名保留；只写独立观察，正式Current保持主理人填写值。"""
+    if source_page_id not in (SOURCE_DOD, SOURCE_COST):
+        raise RuntimeError("此来源未配置采集算法，不能编造观察")
+    item = company_items().get(source_page_id)
+    if not item:
+        return {"source_page_id": source_page_id, "skipped": True, "reason": "来源缺失或已停止分析"}
     response = call(BRAIN + "/okr/key-results/" + item["id"] + "/observations", {
         "source_page_id": source_page_id, "current_value": value, "unit": item["unit"],
         "actor": ACTOR, "observed_at": observed_at, "evidence": [evidence], "task_id": task_id,
@@ -86,8 +110,9 @@ def set_current(source_page_id, value, evidence, task_id, run_id, observed_at):
     }, "POST")
     if response.get("success") is not True:
         raise RuntimeError("公司 KR 观察未入账")
-    return {"source_page_id": source_page_id, "current_value": value,
-            "evidence": evidence, "duplicate": response.get("duplicate", False)}
+    return {"source_page_id": source_page_id, "observed_current_value": value,
+            "formal_current_value": (response.get("item") or {}).get("current_value", item["current_value"]),
+            "unit": item["unit"], "evidence": evidence, "duplicate": response.get("duplicate", False)}
 
 
 def main():
@@ -102,18 +127,32 @@ def main():
     try:
         call(BRAIN + "/tasks/" + task_id + "/claim", {"claimer": ACTOR, "executor_kind": "external-worker"}, "POST")
         call(BRAIN + "/tasks/" + task_id, {"status": "in_progress"}, "PATCH")
-        passed, cost = dod_count(), cost_line_up()
+        active = company_items()
         observed_at = datetime.now(timezone.utc).isoformat()
-        evidence = [{"fact": "当前快照检查通过：" + ",".join(passed), "source": "opc-kr-current.py:dod_count",
-                     "passed_checks": passed, "maximum_checked": 4, "window": "snapshot", "continuous_seven_days_verified": False},
-                    {"fact": "当日晨报存在非 GREY 成本行" if cost else "当日晨报未发现非 GREY 成本行",
-                     "source": "opc-kr-current.py:cost_line_up", "business_day": time.strftime("%Y-%m-%d", time.localtime(time.time() + 8 * 3600))}]
-        receipts = [set_current(SOURCE_DOD, len(passed), evidence[0], task_id, run_id, observed_at),
-                    set_current(SOURCE_COST, cost, evidence[1], task_id, run_id, observed_at)]
+        receipts, evidence, skipped = [], [], []
+        for source in (SOURCE_DOD, SOURCE_COST):
+            if source not in active:
+                skipped.append({"source_page_id": source, "reason": "来源缺失或已停止分析"})
+                continue
+            if source == SOURCE_DOD:
+                passed = dod_count()
+                value = len(passed)
+                proof = {"fact": "当前快照检查通过：" + ",".join(passed), "source": "opc-kr-current.py:dod_count",
+                         "passed_checks": passed, "maximum_checked": 4, "window": "snapshot", "continuous_seven_days_verified": False}
+            else:
+                value = cost_line_up()
+                proof = {"fact": "当日晨报存在非 GREY 成本行" if value else "当日晨报未发现非 GREY 成本行",
+                         "source": "opc-kr-current.py:cost_line_up", "business_day": time.strftime("%Y-%m-%d", time.localtime(time.time() + 8 * 3600))}
+            receipt = set_current(source, value, proof, task_id, run_id, observed_at)
+            if receipt.get("skipped"):
+                skipped.append(receipt)
+            else:
+                receipts.append(receipt)
+                evidence.append(proof)
         completed = call(BRAIN + "/tasks/" + task_id, {"status": "completed", "result": {
-            "actor": ACTOR, "facts": receipts, "evidence": evidence,
+            "actor": ACTOR, "facts": receipts, "evidence": evidence, "skipped": skipped,
             "handoff": {"schema_version": 1, "task_id": task_id, "title": "公司 KR 原口径机器观察",
-                        "verdict": "PASS", "done": ["两条原口径机器观察及证据已入 Brain"],
+                        "verdict": "PASS", "done": ["%s条独立机器观察及证据已入 Brain；正式数字由主理人填写" % len(receipts)],
                         "not_done": [], "next_steps": [], "data_sources": [BRAIN + "/okr/company-key-results"],
                         "created_at": observed_at},
         }}, "PATCH")

@@ -7,34 +7,13 @@
 
 import pool from '../db.js';
 
-const CACHE_TTL_MS = Number(process.env.MACHINE_CACHE_TTL_MS || 5000);
-
-let _cache = null;
-let _cacheAt = 0;
-
-/**
- * @returns {Promise<Array<{ name: string, status: string, metadata: Object }>>}
- */
+import { legacyExecutorEntries } from '../execution-directory/legacy-executor.js';
+import { directory } from '../execution-directory/directory.js';
 export async function loadActiveMachines() {
-  const now = Date.now();
-  if (_cache && now - _cacheAt < CACHE_TTL_MS) {
-    return _cache;
-  }
-  const { rows } = await pool.query(
-    // ORDER BY name：确定性选机（配合 select-load-balanced 取 candidates[0]，
-    // 默认任务稳定落到字典序第一台满足标签的机器，不随 DB 物理顺序漂移）。
-    `SELECT name, status, metadata
-     FROM system_registry
-     WHERE type = 'machine' AND status = 'active'
-     ORDER BY name`,
-  );
-  _cache = rows;
-  _cacheAt = now;
-  return rows;
+  if(!directory.current())await directory.refresh({pool});
+  return (directory.current()?.nodes??[]).filter(n=>n.machine_status==='active').map(n=>({
+    name:n.name,status:n.machine_status,id:n.machine_registry_id,canonical_id:n.canonical_id,
+    metadata:{...n.metadata,executors:legacyExecutorEntries().filter(e=>e.machineId===n.canonical_id).map(({machineId:_machineId,...e})=>e)},
+  }));
 }
-
-/** 测试 / PATCH 后手动清缓存。 */
-export function clearMachineCache() {
-  _cache = null;
-  _cacheAt = 0;
-}
+export function clearMachineCache(){return directory.refresh({pool}).catch(()=>null);}
