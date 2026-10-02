@@ -28,7 +28,8 @@ export function validRecoveryExecutionTarget(request) {
   const hasHash = Object.hasOwn(request,'expected_profile_hash');
   if (!hasTarget && !hasHash) return true;
   const target = request.execution_target;
-  return hasTarget && hasHash && /^[a-f0-9]{64}$/.test(request.expected_profile_hash ?? '')
+  return hasTarget && hasHash && typeof request.expected_profile_hash === 'string'
+    && /^[a-f0-9]{64}$/.test(request.expected_profile_hash)
     && target && typeof target === 'object' && !Array.isArray(target)
     && Object.keys(target).every(key => TARGET_FIELDS.includes(key))
     && ['machine','provider','account'].every(key => typeof target[key] === 'string'
