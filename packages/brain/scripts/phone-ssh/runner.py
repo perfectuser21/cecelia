@@ -170,8 +170,8 @@ class Runner:
             return self.view(identity, state)
 
     def maintenance(self):
+        before = self.journal.activity_snapshot()
         pending = 0
-        revision = 0
         for key in self.journal.keys():
             with self.journal.locked(key):
                 state = self.journal.read(key)
@@ -182,8 +182,10 @@ class Runner:
                     raise ValueError('phone_maintenance_unconfirmed')
                 self.view(state['identity'], state)
                 pending += not bool(state.get('receipt')) or (state.get('worker_identity') is not None and not process_absent(state['worker_identity']))
-                revision += state['revision']
-        return {'pending': pending, 'activity_revision': revision}
+        after = self.journal.activity_snapshot()
+        return {'pending': pending, 'activity_revision': after['revision'],
+                'in_flight': max(before['in_flight'], after['in_flight']),
+                'stable': before['revision'] == after['revision']}
 
     def handle(self, request):
         if not isinstance(request, dict) or set(request) != {'schema', 'request_nonce', 'operation', 'identity'} or request['schema'] != SCHEMA or request['operation'] not in ('start', 'inspect', 'cancel'):
