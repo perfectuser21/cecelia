@@ -9,8 +9,9 @@ function createMaintenance({local,targets,probe}){
    catch{return {machine_id:target.machine_id,status:'unknown'};}
   }));
   const after=await local();if(!valid(after))throw Error('phone_maintenance_unconfirmed');
-  const stable=before.activity_revision===after.activity_revision&&before.stable&&after.stable&&before.draining&&after.draining;
-  return {proof_scope:'hub-control',hub_control:after,targets:observations,pending:Math.max(before.pending,after.pending),
+  const known=observations.every(v=>v.status==='verified');
+  const stable=known&&observations.every(v=>v.stable)&&before.activity_revision===after.activity_revision&&before.stable&&after.stable&&before.draining&&after.draining;
+  return {proof_scope:'hub-control',hub_control:after,targets:observations,pending:known?Math.max(before.pending,after.pending)+observations.reduce((sum,v)=>sum+v.pending,0):null,
    stable,quiescent:stable&&before.quiescent&&after.quiescent&&observations.every(v=>v.status==='verified'&&v.quiescent)};
  };
 }

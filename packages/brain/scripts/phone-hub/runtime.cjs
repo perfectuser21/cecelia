@@ -18,12 +18,17 @@ async function createRuntime({runControl:control=runControl,runProbe,...configur
   await control({operation:'snapshot'});
   const identity={hub_id:config.manifest.hub_id,boot_id:native.boot_id,hub_process_identity:native.owner,
    build_digest:config.build_digest,config_digest:config.config_digest,http_endpoint:config.manifest.http_endpoint};
+  const assertVersion=()=>{try{const current=loadConfiguration(configuration);if(current.build_digest!==config.build_digest||current.config_digest!==config.config_digest||current.token!==config.token)throw Error('changed');}
+   catch{throw Error('phone_hub_version_changed');}};
   const probe=createCapabilities({targets:config.manifest.targets,...(runProbe?{run:runProbe}:{})});
   const capabilities=async machine=>{
+   assertVersion();
    const {token}=await control({operation:'begin'});
-   try{return await probe(machine);}finally{await control({operation:'end',token});}
+   try{const value=await probe(machine);assertVersion();return value;}finally{await control({operation:'end',token});}
   };
-  const maintenance=createMaintenance({local:()=>control({operation:'maintenance'}),targets:config.manifest.targets,probe:capabilities});
+  // status读取不纳入自己的launch/activity计数；并发真实capabilities仍改全局revision。
+  const readMaintenance=createMaintenance({local:()=>control({operation:'maintenance'}),targets:config.manifest.targets,probe});
+  const maintenance=async()=>{assertVersion();const value=await readMaintenance();assertVersion();return value;};
   return {configured:true,identity,capabilities,maintenance,server:createPhoneHubServer({token:config.token,identity,capabilities,maintenance})};
  }catch{return {configured:false,server:createPhoneHubServer()};}
 }

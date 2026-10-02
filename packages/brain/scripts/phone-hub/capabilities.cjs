@@ -9,7 +9,11 @@ function targetValidFull(target){return target&&Object.keys(target).length===fie
  ['config_digest','build_digest','action_digest'].every(k=>/^[a-f0-9]{64}$/.test(target[k]??''))&&targetValid(target.ssh);}
 function observationValid(value,target,nonce){
  const resources=value?.resources;
- return value?.schema==='phone-physical-probe/v1'&&value.request_nonce===nonce&&
+ const allowed=['schema','request_nonce','machine_id','worker_id','physical_boot_id','config_digest','build_digest','action','action_digest','resources','adb_daemon','external_locks','maintenance','observed_at'];
+ const m=value?.maintenance;
+ return value&&Object.keys(value).length===allowed.length&&Object.keys(value).every(k=>allowed.includes(k))&&
+  m&&['pending','in_flight','activity_revision'].every(k=>Number.isSafeInteger(m[k])&&m[k]>=0)&&['draining','stable','quiescent'].every(k=>typeof m[k]==='boolean')&&
+  (!m.quiescent||(m.draining&&m.stable&&m.pending===0&&m.in_flight===0))&&value.schema==='phone-physical-probe/v1'&&value.request_nonce===nonce&&
   ['machine_id','worker_id','physical_boot_id','config_digest','build_digest','action_digest'].every(k=>value[k]===target[k])&&value.action==='adb_get_state'&&
   resources&&['cpu_count','memory_total_bytes','data_free_bytes'].every(k=>Number.isSafeInteger(resources[k])&&resources[k]>0)&&
   Number.isSafeInteger(resources.memory_free_bytes)&&resources.memory_free_bytes>=0&&resources.memory_free_bytes<=resources.memory_total_bytes&&
