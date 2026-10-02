@@ -61,3 +61,10 @@ it('分页筛选不改变来源分母且服务可在数据库READ ONLY事务内�
     expect(r.items).toHaveLength(1); expect(r.sources.find(s => s.kind === 'apis').total).toBe(3);
   } finally { await client.query('ROLLBACK'); client.release(); }
 });
+
+it('同scope canonical来源歧义使API归属降unknown，不任意选登记',async()=>{
+  await f.db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) SELECT scope_key,'ambiguous-source',adapter_key,adapter_config FROM map_scope_repositories WHERE repo='phone-source'");
+  const r=await read({kind:'apis'});
+  expect(r.items.find(i=>i.id===f.coverageIds.api)).toMatchObject({coverage_status:'unknown',consumers:[]});
+  expect(r.sources.find(s=>s.kind==='apis').total).toBe(3);
+});

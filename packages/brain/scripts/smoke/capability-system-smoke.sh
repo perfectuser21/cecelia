@@ -19,6 +19,8 @@ node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config
   src/lib/__tests__/integration/implementation-ci-company.test.js \
   src/lib/__tests__/integration/implementation-ci-pilots.test.js \
   src/lib/__tests__/integration/implementation-ci-pilot-manifest.test.js \
+  src/lib/__tests__/integration/capability-source-coverage.test.js \
+  src/routes/__tests__/integration/capability-source-coverage.test.js \
   src/routes/__tests__/integration/implementation-ci.test.js \
   src/__tests__/integration/implementation-ci-cli.pg.integration.test.js \
   --maxWorkers=1 --minWorkers=1

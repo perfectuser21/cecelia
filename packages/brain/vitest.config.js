@@ -9,6 +9,8 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/lib/__tests__/integration/implementation-ci-company.test.js',
   'src/lib/__tests__/integration/implementation-ci-pilots.test.js',
   'src/lib/__tests__/integration/implementation-ci-pilot-manifest.test.js',
+  'src/lib/__tests__/integration/capability-source-coverage.test.js',
+  'src/routes/__tests__/integration/capability-source-coverage.test.js',
   'src/lib/__tests__/integration/capability-regressions.test.js',
   'src/routes/__tests__/integration/capability-regressions.test.js',
   'src/lib/__tests__/integration/capability-system-evidence.test.js',
