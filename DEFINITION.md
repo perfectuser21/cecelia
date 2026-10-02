@@ -5,6 +5,10 @@
 
 
 
+手机第二刀提供 MMV 固定 SSH 工具及 Mac 一次性 adb_get_state runner：两跳严格 known_hosts、固定命令和 JSON stdin，回执绑定 nonce 与完整持久身份；远端私有 fsync journal 一次 launch intent、取消墓碑、真实孩子限时退出与自己的旧协议手机锁释放。未知或坏 journal 保留占位，旧锁包括 stale 均拒绝接管，不关闭 APP。Brain 生产 runtime 不直接使用 SSH 工具；既定主线仍是 Brain HTTP→MMV→SSH→手机宿主。
+
+本刀未接调度、未部署、未开放 grant；资源 hook 默认拒绝。预预约只读 capabilities、HTTP hub 认证、真实容量/资源采样、跨进程维护 HTTP 汇总与部署激活由后续刀次完成；当前仅提供保守 phone maintenance 读取接口，不宣称生产就绪。
+
 
 
 
