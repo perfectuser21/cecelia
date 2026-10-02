@@ -7,6 +7,7 @@ import socket
 import signal
 import threading
 import unittest
+import uuid
 from unittest.mock import patch
 import admission
 import permit
@@ -227,3 +228,10 @@ class PermitTest(unittest.TestCase):
             self.assertEqual(opened(), before)
         finally:
             for fd in opened() - before: os.close(fd)
+
+    def test_partial_control_publication_epoch_mismatch_never_permits(self):
+        child = self.child(); state = admission.Admission().snapshot()
+        state['control_epoch'] = str(uuid.uuid4())
+        self.fixture.write(self.fixture.root / 'admission-state.json', json.dumps(state).encode())
+        with self.assertRaises(ValueError): permit.send(self.identity, self.host, child)
+        self.assertFalse(select.select([self.server], [], [], 0.02)[0])
