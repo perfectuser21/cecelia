@@ -1,3 +1,4 @@
+import { phoneSshValid } from '../phone-dispatch/identity.js';
 import { directory,endpointValid,hashConfig } from './directory.js';
 import { legacyRecords } from './legacy-policy.js';
 import { MACHINE_CAPACITY_LOCK_SQL } from '../orchestrator/attempt-machine-capacity.js';
@@ -19,7 +20,7 @@ export async function authorize(db,input,operation=a=>a){
     JOIN system_registry r ON r.id=n.machine_registry_id WHERE n.canonical_id=$1 AND v.state='active' AND r.type='machine' AND r.status='active'
     AND (v.platform<>'linux' OR (r.id<>'1a379d80-ad36-47d3-88ba-e545ab299a54'::uuid
      AND COALESCE(r.metadata->>'role','') NOT IN ('scheduler','scheduler_only') AND COALESCE(r.metadata->>'scheduler_only','false')<>'true'))`,[input.machineId])).rows[0];
-  if(!node||node.id!==expected.id||!endpointValid(node.endpoints?.worker))throw Error('execution_version_stale');
+  if(!node||node.id!==expected.id||!(input.surface==='phone_ssh'?phoneSshValid(node.endpoints?.phone_ssh):endpointValid(node.endpoints?.worker)))throw Error('execution_version_stale');
   if(input.executionVersionId&&input.executionVersionId!==node.id)throw Error('execution_version_stale');
   const grant=(await c.query(`SELECT * FROM execution_grants WHERE node_version_id=$1 AND surface=$2 AND provider=$3
     AND account_id=$4 AND profile_id=$5 AND state='active' AND (expires_at IS NULL OR expires_at>clock_timestamp())
