@@ -44,7 +44,7 @@ it('caller不能设置URL/SSH参数/command，畸形nonce和多余键拒绝且�
 it('执行路径永远503，GET能力与错误方法拒绝，不产生业务副作用',async()=>{
  await fixture(configured(),async base=>{
   for(const action of ['start','inspect','cancel'])expect(await post(base,`/phones/${randomUUID()}/${action}`,{request_nonce:randomUUID()})).toEqual({status:503,body:{error:'phone_runtime_not_connected'}});
-  expect((await fetch(base+'/phones/capabilities')).status).toBe(405);
+  expect((await fetch(base+'/phones/capabilities',{headers:{authorization:`Bearer ${token}`}})).status).toBe(405);
   expect(await (await fetch(base+'/health')).json()).toMatchObject({execution:false,scope:'phone-hub'});
  });
 });
