@@ -1,4 +1,5 @@
 import { directory } from '../../execution-directory/directory.js';
+import { MACHINES, MACHINE_ROLES } from '../../machine-registry.js';
 
 function targetKey(target) {
   return `${target?.provider ?? ''}:${target?.account ?? ''}:${target?.machine ?? ''}`;
@@ -38,6 +39,33 @@ export function expandUnresolvedAccountTargets(targets = []) {
     }
   }
   return expanded;
+}
+
+// runtime所在机器是调度器落点，不是用户pin；只对无显式机器策略的Codex使用缺省顺序。
+const MACHINE_TARGET_KEYS = ['machine', 'machineId', 'machine_id', 'requested_machine_id', 'executor_machine', 'preferred_machine'];
+const MACHINE_POLICY_KEYS = [...MACHINE_TARGET_KEYS, 'strict_affinity', 'fallback_targets', 'fallback_policy', 'fallback_strategy'];
+export function hasUnsupportedMachinePolicy(payload, roleAssignment) {
+  const policies = [
+    [payload, ['machine', 'machine_id', 'requested_machine_id', 'executor_machine']],
+    [payload.routing ?? {}, ['preferred_machine']],
+    [roleAssignment, ['machine']],
+  ];
+  return policies.some(([policy, supported]) => MACHINE_TARGET_KEYS.some(
+    key => Object.hasOwn(policy, key) && !supported.includes(key),
+  ));
+}
+export function defaultCodexTargets({role, provider, account, model, candidateMachine, payload = {}, roleAssignment = {}, repo}) {
+  const policies = [payload, payload.routing ?? {}, roleAssignment];
+  if (role === 'commander' || provider !== 'codex' || candidateMachine
+      || policies.some(policy => MACHINE_POLICY_KEYS.some(key => Object.hasOwn(policy, key)))) return null;
+  const requested = [MACHINE_ROLES.SECONDARY, MACHINE_ROLES.PRIMARY]
+    .flatMap(role => MACHINES.filter(machine => machine.machineRole === role))
+    .map(({id: machine}) => ({
+    provider, account, ...(model ? {model} : {}), machine,
+  }));
+  return expandUnresolvedAccountTargets(requested).filter(target => directory.matches({
+    machineId: target.machine, surface: 'harness', provider: target.provider, account: target.account, repo,
+  }));
 }
 
 function isExhausted(target, exhaustedTargets) {

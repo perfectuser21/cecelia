@@ -21,7 +21,7 @@ it('F4真实Node合同块保留精确名单且校验手机不能通用判死',()
  const result=run(['-e',code]);expect(result.code,result.output).toBe(0);
  expect(code).toContain('EXECUTOR_CONTRACTS["phone-ssh-controller"]');
 });
-it('script完整shell验证471历史名单叠加507且不弱化payload安全闸',()=>{
+it('script完整shell验证471历史名单叠加508且不弱化payload安全闸',()=>{
  let result;
  try{result={code:0,output:execFileSync('bash',[join(root,'packages/brain/scripts/smoke/script-executor-contract-smoke.sh')],{cwd:root,env,encoding:'utf8',timeout:10000,stdio:['ignore','pipe','pipe']})};}
  catch(error){result={code:error.status,output:String(error.stdout)+String(error.stderr)};}
