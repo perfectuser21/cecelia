@@ -3,10 +3,10 @@ import path from 'node:path';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import serverModule from '../../scripts/fleet-worker/linux-pool-server.cjs';
-import {UUID,HEX,error} from './deployment.js';
+import {UUID,HEX,error,ONBOARDING_CONTROL_ROOT} from './deployment.js';
 const unavailable=()=>error('linux_pool_credentials_unconfirmed');
 /** 不source环境文件，不把token放argv，子进程输出与错误只在私有控制面内使用。 */
-export function createPrivateOp({credentialFile='/root/.credentials/1password.env',configRoot='/root/.credentials/fleet-control/op',read=serverModule.readInstalledFile}={}){
+export function createPrivateOp({credentialFile=path.join(ONBOARDING_CONTROL_ROOT,'1password.env'),configRoot=path.join(ONBOARDING_CONTROL_ROOT,'op'),read=serverModule.readInstalledFile}={}){
  return async(args,input='')=>{
   const text=read(credentialFile,{mode:0o600,owner:0,maxBytes:16384});
   const entries=text.split('\n').filter(line=>/^\s*(?:export\s+)?OP_SERVICE_ACCOUNT_TOKEN=/.test(line));
@@ -22,7 +22,7 @@ export function createPrivateOp({credentialFile='/root/.credentials/1password.en
  };
 }
 /** 调用方持每机器DB会话锁，save先提交创建意图再允许外部副作用；未知结果仅重读CS，不重复create。 */
-export function createOnboardingCredentials({root='/root/.credentials/fleet-control',run=createPrivateOp(),pathRoot='/',owner=process.getuid?.()??0}={}){
+export function createOnboardingCredentials({root=ONBOARDING_CONTROL_ROOT,run=createPrivateOp(),pathRoot='/',owner=process.getuid?.()??0}={}){
  function directory(p){const s=fs.lstatSync(p);if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==(pathRoot==='/'?0:owner)||(s.mode&0o777)!==0o700)throw unavailable();}
  function parents(){let p=root;for(;;){const s=fs.lstatSync(p);if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==(pathRoot==='/'?0:owner)||(s.mode&0o022))throw unavailable();if(p===pathRoot)break;const up=path.dirname(p);if(up===p)throw unavailable();p=up;}}
  function cache(file,value){

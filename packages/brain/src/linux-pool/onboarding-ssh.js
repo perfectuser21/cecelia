@@ -4,7 +4,7 @@ import {execFile} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {validateEnrollment} from '../node-onboarding/spec.js';
 import {createPrivateOp} from './onboarding-credentials.js';
-import {UUID,error} from './deployment.js';
+import {UUID,error,ONBOARDING_CONTROL_ROOT} from './deployment.js';
 const fail=()=>error('linux_pool_ssh_unavailable');
 export function runOnboardingCommand(command,args,{input='',timeoutMs=15000}={}){
  return new Promise((resolve,reject)=>{
@@ -14,7 +14,7 @@ export function runOnboardingCommand(command,args,{input='',timeoutMs=15000}={})
  });
 }
 /** 只传送镜像内的固定控制程序；request必须来自已登记接入任务，payload只由后台阶段机生成。 */
-export function createOnboardingSSH({root='/root/.credentials/fleet-control',pathRoot='/',owner=process.getuid?.()??0,
+export function createOnboardingSSH({root=ONBOARDING_CONTROL_ROOT,pathRoot='/',owner=process.getuid?.()??0,
  run=runOnboardingCommand,readKey=ref=>createPrivateOp()(['read',ref]),source}={}){
  return async(machineId,input,payload,execution={})=>{
   let stage;

@@ -54,7 +54,7 @@ services:
       # 接入控制面唯一可写凭据子目录；宿主必须预建root:root 0700，禁止compose创建宽权限目录。
       - type: bind
         source: /root/.credentials/fleet-control
-        target: /root/.credentials/fleet-control
+        target: /run/cecelia-fleet-control
         bind:
           create_host_path: false
       # packages/workflows 不再单独叠只读挂载（09-28 事故，任务 ddee8737）：部署根守卫在本容器内对部署根
@@ -91,8 +91,8 @@ services:
       - path: ${CECELIA_INTERNAL_ENV_FILE:-/root/.credentials/cecelia-internal.env}
         required: false
     environment:
-      - CECELIA_LINUX_POOL_DEPLOYMENTS_FILE=/root/.credentials/fleet-control/pools.json
-      - CECELIA_LINUX_SCRIPT_DEPLOYMENTS_FILE=/root/.credentials/fleet-control/scripts.json
+      - CECELIA_LINUX_POOL_DEPLOYMENTS_FILE=/run/cecelia-fleet-control/pools.json
+      - CECELIA_LINUX_SCRIPT_DEPLOYMENTS_FILE=/run/cecelia-fleet-control/scripts.json
       - NODE_ENV=production
       - TZ=Asia/Shanghai
       - ENV_REGION=${ENV_REGION:-us}
