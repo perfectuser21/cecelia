@@ -6,14 +6,14 @@ import { importLegacyPolicy } from '../../execution-directory/store.js';
 import { LEGACY_BINDINGS } from '../../execution-directory/legacy-policy.js';
 import { PHONE_SCHEDULE_REGISTRY_AUTHORITY } from '../../phone-dispatch/task-authority.js';
 
-export async function createPhoneClaimFixture(onPool, { busyLegacy = false, workerHistorical = true } = {}) {
+export async function createPhoneClaimFixture(onPool, { busyLegacy = false, workerHistorical = true, publicClaims = false } = {}) {
   if (DB_DEFAULTS.database !== 'cecelia_scratch' && !(process.env.CI === 'true' && /_test$/.test(DB_DEFAULTS.database))) throw Error('phone_claim_fixture_scratch_required');
   const schema = `phone_claim_${process.pid}_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Client(DB_DEFAULTS); let pool, created = false;
   try {
   await admin.connect(); await admin.query(`CREATE SCHEMA ${schema}`); created = true;
   pool = new pg.Pool({ ...DB_DEFAULTS, max: 5, options: `-c search_path=${schema}` }); onPool(pool);
-  await createPhoneScheduleSchema(pool);
+  await createPhoneScheduleSchema(pool, { publicClaims });
   await pool.query(`ALTER TABLE tasks ADD COLUMN metadata JSONB DEFAULT '{}',ADD COLUMN assigned_to TEXT,ADD COLUMN queued_at TIMESTAMPTZ DEFAULT now(),ADD COLUMN started_at TIMESTAMPTZ,ADD COLUMN error_message TEXT,ADD COLUMN status_history JSONB;
     ALTER TABLE recurring_tasks ADD COLUMN created_at TIMESTAMPTZ DEFAULT now(),ADD COLUMN executor TEXT;
     CREATE TABLE task_dependencies(from_task_id UUID,to_task_id UUID,edge_type TEXT,status TEXT);
@@ -40,6 +40,13 @@ export async function createPhoneClaimFixture(onPool, { busyLegacy = false, work
     await c.query('COMMIT');
   } catch (error) { await c.query('ROLLBACK'); throw error; } finally { c.release(); }
   if (busyLegacy) await pool.query("INSERT INTO dispatch_events(task_id,event_type,reason) VALUES($1,'dispatched','worker_pool:slot7')", [old]);
+  if (publicClaims) {
+    await pool.query(`CREATE TABLE task_runs(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),task_id UUID REFERENCES tasks(id),run_id TEXT,status TEXT,ended_at TIMESTAMPTZ);
+      CREATE TABLE kernel_controller_sessions(id TEXT PRIMARY KEY,task_id UUID REFERENCES tasks(id),run_id UUID,status TEXT);
+      CREATE TABLE callback_queue(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),task_id UUID REFERENCES tasks(id),run_id TEXT,processed_at TIMESTAMPTZ);
+      CREATE TABLE device_locks(device_name TEXT PRIMARY KEY,locked_by TEXT);`);
+    await applyPhoneScheduleMigration(pool, '509_headed_task_takeover');
+  }
   await applyPhoneScheduleMigration(pool, '513_phone_scheduled_slots');
   await pool.query(`CREATE FUNCTION fixture_worker_payload() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.payload ? 'phone_schedule' THEN NEW.payload:=NEW.payload||'{"parallel_worker":true,"pipeline":"canvas","canonical":"exploratory"}'::jsonb;NEW.created_at:=now()-interval '1 hour';END IF;RETURN NEW;END $$;
     CREATE TRIGGER fixture_worker_payload BEFORE INSERT ON tasks FOR EACH ROW EXECUTE FUNCTION fixture_worker_payload()`);
