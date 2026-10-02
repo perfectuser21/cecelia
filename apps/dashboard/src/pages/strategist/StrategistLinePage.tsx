@@ -1,3 +1,4 @@
+import ActivityFlowMetrics, { type ActivityFlowMetric } from '@features/core/planning/components/ActivityFlowMetrics';
 /**
  * StrategistLinePage — 军师台线空间（七页签）
  *
@@ -100,6 +101,7 @@ type TabKey = typeof TABS[number]['key'];
 // ── 格子账本类型 ─────────────────────────────────────────────────────────────
 
 interface JourneyStep {
+  flow_metrics?: ActivityFlowMetric[];
   id: string;
   journey_id: string;
   name: string;
@@ -477,6 +479,7 @@ function OverviewTab({ detail, lineId }: { detail: LineDetail | null; lineId: st
                             {step.name}
                           </span>
                         </div>
+                        <ActivityFlowMetrics metrics={step.flow_metrics} />
                         {step.promise && !isSelected && (
                           <div className="text-[10px] text-slate-600 mt-0.5 truncate pl-3.5">{step.promise}</div>
                         )}
@@ -1076,6 +1079,7 @@ function ElementsTab({ lineId }: { lineId: string }) {
                             {step.name}
                           </span>
                         </div>
+                        <ActivityFlowMetrics metrics={step.flow_metrics} />
                       </td>
                       <td className="text-center px-2 py-2.5 w-10">
                         {capCells.length > 0 ? (

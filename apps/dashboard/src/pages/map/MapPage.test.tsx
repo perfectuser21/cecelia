@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import planningManifest from '@features/core/planning';
 import MapPage from '@features/core/planning/pages/LegacyFeatureMap';
+import ActivityFlowMetrics from '@features/core/planning/components/ActivityFlowMetrics';
 import systemHubManifest from '@features/core/system-hub';
 
 const revision = 'c'.repeat(40);
@@ -23,7 +24,7 @@ const envelope = {
 const nodes = [
   { key: 'factory', type: 'value_stream', name: '工厂', display_order: 1, attributes: {}, state: 'green', state_reason: 'receipt_passed' },
   { key: 'butler', type: 'value_stream', name: '管家', display_order: 2, attributes: {}, state: 'green', state_reason: 'receipt_passed' },
-  { key: 'F0', type: 'capability', name: '事实投影', display_order: 1, attributes: {}, state: 'green', state_reason: 'receipt_passed' },
+  { flow_metrics: [{ activity_id: 'a1', workflow_id: 'w1', activity_name: '采集', p50_duration_ms: 1500, first_pass_yield: 0.5, pass_rate: 0, span_count: 4 }], key: 'F0', type: 'capability', name: '事实投影', display_order: 1, attributes: {}, state: 'green', state_reason: 'receipt_passed' },
   { key: 'G1', type: 'capability', name: '统一查询', display_order: 2, attributes: {}, state: 'unknown', state_reason: 'snapshot_stale' },
   { key: 'backbone-1', type: 'backbone', name: '投影骨干', display_order: 1, attributes: {}, state: 'green', state_reason: 'receipt_passed' },
   { key: 'feature-1', type: 'feature', name: '确定性投影', display_order: 1, attributes: {}, state: 'green', state_reason: 'receipt_passed' },
@@ -100,6 +101,43 @@ describe('Universal Map 页面权威', () => {
   });
 
   afterEach(() => vi.clearAllMocks());
+
+  it('活动过程显示 p50、一次做对、样本和实际通过率，解释兜底口径', async () => {
+    render(<MapPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /F0 事实投影/ }));
+    expect(await screen.findByText('近7天过程')).toBeInTheDocument();
+    expect(screen.getByText('1.5秒')).toBeInTheDocument();
+    expect(screen.getByText('50%')).toBeInTheDocument();
+    expect(screen.getByText('0%')).toBeInTheDocument();
+    expect(screen.getByText(/未使用兜底/)).toBeInTheDocument();
+  });
+
+  it('radius失败仍显示主地图指标，价值流指标不依赖下钻', async () => {
+    const current = vi.mocked(global.fetch).getMockImplementation()!;
+    vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+      if (String(input).includes('/radius')) return json({ error: { message: '地图半径不可用' } }, false);
+      const response = await current(input, init);
+      if (String(input) === '/api/brain/map?scope=cecelia') {
+        const body = await response.json();
+        return json({ ...body, nodes: body.nodes.map((n: any) => n.key === 'factory' ? { ...n, flow_metrics: [{ activity_id: 'b', workflow_id: 'w2', activity_name: '编排', p50_duration_ms: 500, first_pass_yield: 1, pass_rate: 0, span_count: 2 }] } : n) });
+      }
+      return response;
+    });
+    render(<MapPage />);
+    expect(await screen.findByText('0.5秒')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('旧地图来源仓库'), { target: { value: 'cecelia' } });
+    fireEvent.click(await screen.findByRole('button', { name: /F0 事实投影/ }));
+    expect((await screen.findAllByText('Error')).length).toBeGreaterThan(0);
+    expect(screen.getByText('1.5秒')).toBeInTheDocument();
+  });
+  it('零值和未观测数据分别显示，不把空值当百分比', () => {
+    const { rerender } = render(<ActivityFlowMetrics metrics={[{ activity_id: 'zero', p50_duration_ms: 0, first_pass_yield: 0, pass_rate: null, span_count: 0 }]} />);
+    expect(screen.getByText('0秒')).toBeInTheDocument();
+    expect(screen.getByText('0%')).toBeInTheDocument();
+    expect(screen.getByText('—')).toBeInTheDocument();
+    rerender(<ActivityFlowMetrics metrics={[]} />);
+    expect(screen.getByText('暂无活动执行数据')).toBeInTheDocument();
+  });
 
   it('只从动态 feature manifest 注册唯一 /map 页面', () => {
     expect(planningManifest.routes).toContainEqual(expect.objectContaining({

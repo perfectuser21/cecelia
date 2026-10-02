@@ -42,10 +42,16 @@ async function state(scope) {
 beforeAll(async () => {
   await admin.connect();
   await admin.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['journeys', 'workflows', 'areas', 'decisions', 'map_scope_repositories', 'fact_snapshot_headers', 'map_manifest_versions', 'map_projection_runs', 'map_projection_nodes', 'map_projection_edges', 'graph_edges', 'api_registry', 'test_registry', 'db_schema_registry']) {
+  for (const table of ['journeys', 'workflows', 'journey_steps', 'areas', 'decisions', 'map_scope_repositories', 'fact_snapshot_headers', 'map_manifest_versions', 'map_projection_runs', 'map_projection_nodes', 'map_projection_edges', 'graph_edges', 'api_registry', 'test_registry', 'db_schema_registry']) {
     await admin.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
   }
   db = new pg.Pool({ ...DB_DEFAULTS, max: 5, options: `-c search_path=${schema}` });
+  await db.query(`CREATE VIEW activity_flow_metrics AS SELECT
+    NULL::uuid AS activity_id, NULL::uuid AS workflow_id, NULL::uuid AS value_stream_id,
+    0::bigint AS runs, 0::bigint AS span_count, NULL::numeric AS p50_duration_ms,
+    NULL::numeric AS p95_duration_ms, NULL::numeric AS avg_wait_ms, NULL::numeric AS fallback_rate,
+    NULL::numeric AS first_pass_yield, NULL::numeric AS pass_rate,
+    0::numeric AS tokens_total, 0::numeric AS cost_usd_total WHERE FALSE`);
   await db.query("INSERT INTO journeys(id,name,parent_journey_id) VALUES($1,'流',NULL),($2,'能力',$1),($3,'另一流',NULL),($4,'另一能力',$3)", [vs,cap,otherVs,otherCap]);
   await db.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','map','绑定测试','active')", [decision]);
 });
@@ -166,6 +172,9 @@ it('正式地图和节点GET复核漂移并重建权威绑定属性，不改持�
   const read=async()=>{
     const map=await request(app).get('/map').query({scope}); expect(map.status,map.body).toBe(200);
     const node=await request(app).get('/map/nodes/F1').query({scope}); expect(node.status,node.body).toBe(200);
+    const expectedMetrics = node.body.node.type === 'capability' ? [] : undefined;
+    expect(node.body.node.flow_metrics).toEqual(expectedMetrics);
+    expect(map.body.nodes.find(n=>n.key==='F1').flow_metrics).toEqual(expectedMetrics);
     expect(node.body.node.attributes).toEqual(map.body.nodes.find(n=>n.key==='F1').attributes);
     return node.body.node.attributes;
   };

@@ -17,6 +17,28 @@ vi.mock('../recurring-notion-sync.js', () => ({
   getToken: () => 'fake-token',
 }));
 const mockCreateRoutedTask = vi.fn();
+
+describe('活动 span-only 与七日过期复核', () => {
+  it('持续 dirty 不占用保留 sweep 配额；已同步活动也推新 spans', async () => {
+    const dirty = Array.from({ length: 25 }, (_, n) => ({ id: 'dirty-' + n, journey_name: '路径', step_id: 'a1', cell_level: 'activity', cell_kind: 'element', notion_id: 'dirty-page-' + n }));
+    const clean = { id: 'sweep-51', journey_name: '路径', step_id: 'a2', cell_level: 'activity', cell_kind: 'element', notion_id: 'clean-page', updated_at: '2026-01-01', notion_synced_at: '2026-10-01' };
+    mockQuery.mockImplementation(async sql => {
+      const s = String(sql);
+      if (s.includes('activity_flow_metrics')) return { rows: [{ activity_id: 'a2', workflow_id: 'w1', p50_duration_ms: 100, first_pass_yield: 1, pass_rate: 0, span_count: 1 }] };
+      if (s.includes('activity_flow_sweep')) return { rows: [clean] };
+      if (s.includes('FROM journey_step_links l')) return { rows: dirty };
+      return { rows: [] };
+    });
+    const flowSchema = (await import('../ops-notion-schema.js')).buildStepLinkDbProps();
+    mockNotionReq.mockImplementation(async (_token, path, method) => path.startsWith('/databases/') ? { properties: flowSchema } : {});
+    const { runNotionPushSync } = await import('../notion-push-sync.js');
+    await runNotionPushSync({ query: mockQuery });
+    const patch = mockNotionReq.mock.calls.find(c => c[1] === '/pages/clean-page' && c[2] === 'PATCH');
+    expect(patch).toBeDefined();
+    expect(patch[3].properties.FlowP50Ms).toEqual({ number: 100 });
+    expect(mockQuery.mock.calls.some(([sql]) => String(sql).includes('activity_flow_sweep_cursor'))).toBe(true);
+  });
+});
 vi.mock('../work-routing-store.js', () => ({
   createRoutedTask: mockCreateRoutedTask,
 }));
@@ -181,7 +203,7 @@ describe('runNotionPushSync — new push functions', () => {
     expect(linksQuery).toBeTruthy();
   });
 
-  it('pushJourneyStepLinks 推格子行且增量可更新（棒4-2，决策 10a68212）：不再排除 cell_kind、按 updated_at > notion_synced_at 重推、每轮 LIMIT 50', async () => {
+  it('pushJourneyStepLinks 推格子行且增量可更新（棒4-2，决策 10a68212）：不再排除 cell_kind、按 updated_at > notion_synced_at 重推、每轮保留 dirty 25 与活动 sweep 25', async () => {
     // 原合同（348 时代）排除格子行防洪水；现在格子颜色要进 Notion 承诺地图（283 行首推每轮 50 行约 30 分钟排空），
     // 之后每轮只有 cell_status 翻色（迁移 478 触发器抬 updated_at）的行会重推。
     const { runNotionPushSync } = await import('../notion-push-sync.js');
@@ -191,7 +213,7 @@ describe('runNotionPushSync — new push functions', () => {
     expect(linksQuery).toBeTruthy();
     expect(linksQuery).not.toContain('cell_kind IS NULL');
     expect(linksQuery).toMatch(/l\.updated_at > l\.notion_synced_at/);
-    expect(linksQuery).toMatch(/LIMIT 50/);
+    expect(linksQuery).toMatch(/LIMIT 25/);
   });
 
   it('runNotionPushSync 末尾挂接验证层投影 runProbeProjection（吞错不连坐）', async () => {
@@ -200,7 +222,9 @@ describe('runNotionPushSync — new push functions', () => {
     expect(src).toMatch(/import\('\.\/notion-probe-projection\.js'\)/);
     expect(src).toMatch(/await runProbeProjection\(pool, \{ token, logSyncError \}\)/);
     expect(src).toMatch(/buildStepLinkNotionProperties\(l, schemaProps\)/);
-    expect(src).toMatch(/buildStepLinkDbProps\(\)/);
+    expect(src).toMatch(/loadStepLinkProjectionSchema\(token, dbId, notionReq\)/);
+    const flow = readFileSync(new URL('../lib/notion-activity-flow.js', import.meta.url), 'utf8');
+    expect(flow).toMatch(/buildStepLinkDbProps\(\)/);
     // 镜子换库（迁移 479）：旧 Backbone-Step Map 369c… 在回收站，常量必须指向「承诺地图格子」并与注册表一致（守夜 A9）
     expect(src).toMatch(/STEP_LINKS_DB\s*=\s*'3e8c40c2-ba63-8194-a47c-dcf5f4b508bb'/);
     expect(src).not.toMatch(/369c40c2-ba63-81e2-b95a-e5e3d0592676/);
@@ -240,6 +264,7 @@ describe('runNotionPushSync — step_link Order 属性降级回归 [ARTIFACT R4]
 
     mockNotionReq
       .mockResolvedValueOnce({ properties: { Name: { type: 'title' }, Status: { type: 'select' } } }) // schema GET（无 Order）
+      .mockResolvedValueOnce({ properties: { ...(await import('../ops-notion-schema.js')).buildStepLinkDbProps(), Name: { type: 'title' }, Status: { type: 'select' } } }) // 补列后的真实 schema（仍无 Order）
       .mockResolvedValue({ id: 'sl-notion-r4' }); // pages POST
 
     const { runNotionPushSync } = await import('../notion-push-sync.js');
@@ -320,6 +345,8 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] }); // issues
     mockQuery.mockResolvedValueOnce({ rows: [] }); // tasks (pushTasks 档位)
     mockQuery.mockResolvedValueOnce({ rows: [] }); // journey_step_links
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // activity sweep cursor
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // activity sweep
     mockQuery.mockResolvedValueOnce({ rows: [] }); // decisions
     mockQuery.mockResolvedValueOnce({ rows: [] }); // initiative_contracts
     mockQuery.mockResolvedValueOnce({ rows: [{ notion_db_id: FEATURE_DB }] }); // pushAdvancementItems: resolveDbId(journey_features) 有 active 行才推
@@ -365,6 +392,8 @@ describe('runNotionPushSync — pushAdvancementItems', () => {
     mockQuery.mockResolvedValueOnce({ rows: [] }); // tasks (pushTasks 档位)
     mockQuery.mockResolvedValueOnce({ rows: [] });
     mockQuery.mockResolvedValueOnce({ rows: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // activity sweep cursor
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // activity sweep
     mockQuery.mockResolvedValueOnce({ rows: [{ notion_db_id: FEATURE_DB }] }); // resolveDbId(journey_features)
     mockQuery.mockResolvedValueOnce({
       rows: [{ ability_id: 'ab-2', ability_notion_id: 'notion-ab-2', done: '0', doing: '0', todo: '1' }],

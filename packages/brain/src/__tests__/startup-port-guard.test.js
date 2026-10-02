@@ -16,11 +16,6 @@ import net from 'net';
 import { createServer } from 'http';
 import { isPortInUse, waitForPortFree, listenWithRetry } from '../startup-port-guard.js';
 
-// Use high, random ports to avoid conflicting with running Brain on 5221
-function randomPort() {
-  return 40000 + Math.floor(Math.random() * 20000);
-}
-
 function occupyPort(port) {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
@@ -40,30 +35,28 @@ describe('startup-port-guard', () => {
   });
 
   describe('isPortInUse', () => {
-    it('returns false for a free port', async () => {
-      const port = randomPort();
-      await expect(isPortInUse(port)).resolves.toBe(false);
+    it('returns false when the OS can allocate a port', async () => {
+      await expect(isPortInUse(0)).resolves.toBe(false);
     });
 
     it('returns true for an occupied port', async () => {
-      const port = randomPort();
-      const srv = await occupyPort(port);
+      const srv = await occupyPort(0);
+      const port = srv.address().port;
       cleanup.push(srv);
       await expect(isPortInUse(port)).resolves.toBe(true);
     });
   });
 
   describe('waitForPortFree', () => {
-    it('resolves immediately when port is free', async () => {
-      const port = randomPort();
+    it('resolves immediately when the OS can allocate a port', async () => {
       const t0 = Date.now();
-      await waitForPortFree(port, { maxWaitMs: 5000, pollMs: 100, log: () => {} });
+      await waitForPortFree(0, { maxWaitMs: 5000, pollMs: 100, log: () => {} });
       expect(Date.now() - t0).toBeLessThan(500);
     });
 
     it('retries while port is occupied and resolves once freed', async () => {
-      const port = randomPort();
-      const srv = await occupyPort(port);
+      const srv = await occupyPort(0);
+      const port = srv.address().port;
       const logs = [];
 
       // Free the port after ~250ms
@@ -81,8 +74,8 @@ describe('startup-port-guard', () => {
     });
 
     it('throws if port stays occupied past maxWaitMs', async () => {
-      const port = randomPort();
-      const srv = await occupyPort(port);
+      const srv = await occupyPort(0);
+      const port = srv.address().port;
       cleanup.push(srv);
 
       await expect(
@@ -93,17 +86,25 @@ describe('startup-port-guard', () => {
 
   describe('listenWithRetry', () => {
     it('succeeds on a free port (first attempt)', async () => {
-      const port = randomPort();
       const server = createServer();
       cleanup.push(server);
+      const listen = vi.spyOn(server, 'listen');
 
-      await listenWithRetry(server, port, { maxAttempts: 3, retryDelayMs: 50, log: () => {} });
+      const logs = [];
+      await listenWithRetry(server, 0, { maxAttempts: 1, log: message => logs.push(message) });
       expect(server.listening).toBe(true);
+      expect(listen).toHaveBeenCalledTimes(1);
+      expect(listen).toHaveBeenCalledWith(0);
+      const address = server.address();
+      expect(Number.isInteger(address.port)).toBe(true);
+      expect(address.port).toBeGreaterThan(0);
+      expect(address.port).toBeLessThanOrEqual(65535);
+      expect(logs).toEqual([]);
     });
 
     it('retries on EADDRINUSE and eventually succeeds when port is freed', async () => {
-      const port = randomPort();
-      const blocker = await occupyPort(port);
+      const blocker = await occupyPort(0);
+      const port = blocker.address().port;
 
       // Free the port after ~200ms
       setTimeout(() => blocker.close(), 200);
@@ -122,8 +123,8 @@ describe('startup-port-guard', () => {
     });
 
     it('rethrows EADDRINUSE after exhausting maxAttempts', async () => {
-      const port = randomPort();
-      const blocker = await occupyPort(port);
+      const blocker = await occupyPort(0);
+      const port = blocker.address().port;
       cleanup.push(blocker);
 
       const server = createServer();

@@ -1,4 +1,6 @@
 import { Registry, Selection, stateLabel } from "./model";
+import ActivityFlowMetrics, { type ActivityFlowMetric } from '../../components/ActivityFlowMetrics';
+import { ReadState, useRead } from './useRead';
 export function State({ value }: { value?: string }) {
   const state = stateLabel(value);
   return (
@@ -19,6 +21,10 @@ export default function ActivityDetail({
   onShowCanonical?: () => void;
 }) {
   const { activity, usage } = selection;
+  const flow = useRead<Array<{ id: string; flow_metrics?: ActivityFlowMetric[] }>>(
+    `/api/brain/journey_steps?activity_id=${encodeURIComponent(activity.id)}`,
+  );
+  const metrics = flow.data?.find(row => row.id === activity.id)?.flow_metrics ?? [];
   const canUseBindings =
     !usage ||
     Boolean(
@@ -40,6 +46,10 @@ export default function ActivityDetail({
       <p className="my-2">
         <State value={activity.definition_status} />
       </p>
+      <ReadState loading={flow.loading} error={flow.error} />
+      {flow.data && !flow.error && <ActivityFlowMetrics metrics={usage
+        ? metrics.filter(metric => Boolean(usage.workflow_id) && metric.workflow_id === usage.workflow_id)
+        : metrics} />}
       {usage && (
         <p className="text-sm">
           使用位置 <code>{usage.reference_id}</code> · {usage.slot_key} · 顺序{" "}

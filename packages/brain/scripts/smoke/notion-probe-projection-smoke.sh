@@ -76,10 +76,11 @@ echo "[notion-probe-projection-smoke] 4. 接线钉子"
 node -e "
 const fs = require('fs');
 const checks = [
-  ['src/notion-push-sync.js', [\"import('./notion-probe-projection.js')\", 'await runProbeProjection(pool, { token, logSyncError })', 'l.updated_at > l.notion_synced_at', 'buildStepLinkDbProps()', 'buildStepLinkNotionProperties(l, schemaProps)', \"STEP_LINKS_DB      = '3e8c40c2-ba63-8194-a47c-dcf5f4b508bb'\"]],
+  ['src/notion-push-sync.js', [\"import('./notion-probe-projection.js')\", 'await runProbeProjection(pool, { token, logSyncError })', 'selectStepLinksForProjection(pool)', 'loadStepLinkProjectionSchema(token, dbId, notionReq)', 'buildStepLinkNotionProperties(l, schemaProps)', \"STEP_LINKS_DB      = '3e8c40c2-ba63-8194-a47c-dcf5f4b508bb'\"]],
   ['migrations/479_step_links_notion_db.sql', [\"'3e8c40c2-ba63-8194-a47c-dcf5f4b508bb'\", \"status = 'archived'\"]],
   ['migrations/478_notion_projection_probe_receipts.sql', ['ALTER TABLE step_probes ADD COLUMN IF NOT EXISTS notion_id', 'ALTER TABLE journey_assertion_receipts ADD COLUMN IF NOT EXISTS notion_digest', 'trg_touch_journey_step_links_updated_at', \"'step_probes', 'push'\", \"'journey_assertion_receipts', 'push'\"]],
   ['migrations/rollback/478_notion_projection_probe_receipts.down.sql', [\"DELETE FROM schema_version WHERE version = '478'\"]],
+  ['src/lib/notion-activity-flow.js', ['l.updated_at > l.notion_synced_at', 'activity_flow_sweep_cursor', 'export async function loadStepLinkProjectionSchema', 'buildStepLinkDbProps()']],
   ['src/ops-notion-schema.js', ['PROBE_DB_PROPS', 'buildStepLinkDbProps']],
   ['../../scripts/ops/create-probe-notion-dbs.js', ['3dbc40c2-ba63-810e-b96f-f7523838b411', \"'/databases', 'POST'\"]],
 ];
@@ -93,5 +94,8 @@ else { console.error('FAIL step_links SELECT 仍排除格子行'); fail = true; 
 if (fail) process.exit(1);
 console.log('主链挂接 / 迁移 478 / 列定义 / 建库脚本 全部接线 ✓');
 "
+
+echo "[notion-probe-projection-smoke] 5. 活动列 schema 安全回归"
+npx vitest run src/__tests__/notion-push-sync-flow-schema.test.js --maxWorkers=1 --minWorkers=1
 
 echo "[notion-probe-projection-smoke] PASS"

@@ -384,6 +384,8 @@ execution-directory-smoke.sh
 
 attempt-runtime-limits-smoke.sh
 company-kr-analysis-smoke.sh
+activity-flow-metrics-smoke.sh
+
 
 smoke-production-guard-smoke.sh
 

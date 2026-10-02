@@ -1,3 +1,4 @@
+import { selectStepLinksForProjection, loadStepLinkProjectionSchema } from './lib/notion-activity-flow.js';
 import { notionReq, getToken } from './recurring-notion-sync.js';
 import { createRoutedTask } from './work-routing-store.js';
 import { finalizeTask } from './lib/task-terminal.js';
@@ -8,7 +9,7 @@ import { join as joinPath } from 'node:path';
 import { computeProgress } from './advancement-progress.js';
 import { buildWorkflowPageBlocks } from './ops-collector.js';
 import { pushRegisteredRows, resolveDbId, isPageGoneError, isWrongDatabaseError } from './lib/notion-projection-engine.js';
-import { OPS_DB_PROPS, buildTasksDbProps, buildStepLinkDbProps, diffMissingProps } from './ops-notion-schema.js';
+import { OPS_DB_PROPS, buildTasksDbProps } from './ops-notion-schema.js';
 import { buildStepLinkNotionProperties } from './notion-probe-projection.js';
 import {
   ensureOpsDbProps, inferProviderFromModelId, pickProviderQuota, buildQuotaProps,
@@ -1068,36 +1069,20 @@ export async function pullNotionTasksForTest(pool, token, opts = {}) {
 /**
  * journey_step_links → Backbone-Step Map（棒4-2，决策 10a68212）：格子行（cell_kind 非空，承诺地图）与旧连接行一起推，
  * 增量 = 新行 或 updated_at > notion_synced_at（迁移 478 触发器：cell_status 等非记账列变化才抬）。
- * 每轮最多 50 行：283 个格子首推约 30 分钟排空，之后每轮只有翻色的行；指纹不变的行引擎只抬 synced 不打 Notion。
+ * 每轮 dirty 25 + 持久游标活动复核 25：span-only变化与7日过期也进入既有指纹推送链。
  * 格子列 CellKind/CellKey/CellStatus/AssertionRef + Journey（文本）缺列即补；不要求 step/journey notion_id
  * （AI Steps 已废弃；AI Journey 库 358c… 在回收站，journeys.notion_id 全指向死页，不能做 relation）。
  */
 async function pushJourneyStepLinks(pool, token) {
-  const { rows } = await pool.query(`
-    SELECT l.*, j.name AS journey_name, s.name AS step_name
-    FROM journey_step_links l
-    JOIN journeys j ON j.id = l.journey_id
-    LEFT JOIN journey_steps s ON s.id = l.step_id
-    WHERE l.notion_synced_at IS NULL OR l.updated_at > l.notion_synced_at
-    ORDER BY l.updated_at
-    LIMIT 50
-  `);
+  const rows = await selectStepLinksForProjection(pool);
   if (rows.length === 0) return;
   const dbId = STEP_LINKS_DB || await resolveDbId(pool, 'journey_step_links');
-  let schemaProps = {};
+  let schemaProps;
   try {
-    // 只读一次 schema：既判 Order 列有无，也算缺列（有缺才 PATCH，不重发已有列）
-    const schema = await notionReq(token, `/databases/${dbId}`, 'GET');
-    schemaProps = { ...(schema?.properties || {}) };
-    const missing = diffMissingProps(schemaProps, buildStepLinkDbProps());
-    const added = Object.keys(missing);
-    if (added.length) {
-      await notionReq(token, `/databases/${dbId}`, 'PATCH', { properties: missing });
-      Object.assign(schemaProps, missing);
-      console.log(`[step_link] Backbone-Step Map 补列: ${added.join(', ')}`);
-    }
+    schemaProps = await loadStepLinkProjectionSchema(token, dbId, notionReq);
   } catch (err) {
     await logSyncError(pool, `[step_link] 补列/读 schema 失败: ${err.message}`);
+    return;
   }
   await pushRegisteredRows(pool, token, {
     table: 'journey_step_links', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'step_link',

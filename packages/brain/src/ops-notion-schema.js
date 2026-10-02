@@ -140,6 +140,9 @@ export function buildStepLinkDbProps() {
   return {
     CellKind: { select: {} }, CellKey: { rich_text: {} }, CellStatus: { select: {} },
     AssertionRef: { rich_text: {} }, Journey: { rich_text: {} },
+    FlowP50Ms: { number: { format: 'number' } }, FlowFirstPassYield: { number: { format: 'percent' } },
+    FlowPassRate: { number: { format: 'percent' } }, FlowSpanCount: { number: { format: 'number' } },
+    FlowMetrics: { rich_text: {} },
   };
 }
 
