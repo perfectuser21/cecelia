@@ -1,4 +1,5 @@
 /** 精确实现身份→版本引用→业务消费者；地图只提供显式身份，不反写业务真身。 */
+import { loadHistoricalImplementationContext } from './implementation-context.js';
 import { computeFreshness } from './registry-freshness.js';
 import { canonicalAssertionCommandText } from './gp-assertion-command.js';
 import { assertionDigest } from './journey-assertion-receipt.js';
@@ -96,7 +97,7 @@ async function readAssertions(db,usages,gaps) {
 export async function readImplementationConsumers(db,input,{pinnedContext=null}={}) {
   const q=validateImplementationQuery(input),gaps=[];
   if(pinnedContext&&!q.versionId)fail('IMPLEMENTATION_INPUT_INVALID','固定context必须指定workflow_version_id');
-  const context=pinnedContext??await loadContext(db,q,gaps);
+  const context=pinnedContext??(q.versionId?await loadHistoricalImplementationContext(db,q,gaps):await loadContext(db,q,gaps));
   const rows=await selectedVersions(db,q,[...context.mapped.keys()]);
   const activities=new Map(),workflows=new Map(),usages=[];
   for(const row of rows){
@@ -117,6 +118,6 @@ export async function readImplementationConsumers(db,input,{pinnedContext=null}=
   const requiredAssertions=await readAssertions(db,usages,gaps);
   return {scope_key:q.scope,source:{repo:q.repo,registry_repo:context.registryRepo,path:q.path,kind:q.kind,revision:q.revision,digest:q.digest||null},
     manifest_version_id:context.manifest_version_id,manifest_digest:context.manifest_digest,projection_run_id:context.projection_run_id,projection_digest:context.projection_digest,
-    mapping_status:gaps.length?'unknown':'verified',verification_status:'unknown',organization_status:pinnedContext?'historical_membership_unknown_organization':q.versionId?'historical_membership_current_organization':'current',
+    mapping_status:gaps.length?'unknown':'verified',verification_status:'unknown',scope_status:context.scope_status??'verified',organization_status:q.versionId?'historical_membership_unknown_organization':'current',
     activities:[...activities.values()],workflows:[...workflows.values()],usages,required_assertions:requiredAssertions,gaps};
 }

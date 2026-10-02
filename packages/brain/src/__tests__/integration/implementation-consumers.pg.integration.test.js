@@ -58,7 +58,7 @@ it('移除当前消费者不改历史Workflow快照；历史组织不冒充已�
   await db.query("UPDATE workflows SET status='retired' WHERE id=$1",[ids.benchmark]);await syncActivityContracts(db,{...contracts,readBinding:async()=>'export const lock = true;\n'});
   expect((await get()).body.workflows).toHaveLength(1);
   const r=await get({workflow_version_id:version});expect(r.status,r.body).toBe(200);expect(r.body.workflows.map(w=>w.workflow_id)).toEqual([ids.benchmark]);
-  expect(r.body.organization_status).toBe('historical_membership_current_organization');
+  expect(r.body.organization_status).toBe('historical_membership_unknown_organization');
 });
 it('共享Step实现带规范locator；未注册Step身份明确unknown，不能借最新Steps补历史',async()=>{
   contracts.docs.keyword_acquisition.activities[0].implementation_bindings=[];
