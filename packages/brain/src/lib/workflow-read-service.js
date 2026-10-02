@@ -1,4 +1,5 @@
 /** 工作流列表、详情及活动消费者共享同一个关系读模型；单条SQL保证一致快照。 */
+import { JOURNEY_ORGANIZATION_SQL } from './journey-organization.js';
 const activities = `SELECT COALESCE(jsonb_agg(item ORDER BY sequence_no),'[]'::jsonb) FROM (
   SELECT r.sequence_no, to_jsonb(a) || jsonb_build_object(
     'legacy_workflow_id',a.workflow_id,'workflow_id',w.id,
@@ -34,7 +35,8 @@ export async function listWorkflows(pool, {capabilityId,valueStreamId,status,id}
   for (const [column,value] of [['w.capability_id',capabilityId],['c.parent_journey_id',valueStreamId],['w.status',status],['w.id',id]]) {
     if (value !== undefined) { params.push(value); where.push(`${column} = $${params.length}`); }
   }
-  return (await pool.query(`SELECT w.*,c.name AS capability_name,c.parent_journey_id AS value_stream_id,
+  return (await pool.query(`SELECT w.*,c.name AS capability_name,c.capability_code,c.parent_journey_id AS value_stream_id,
+    (${JOURNEY_ORGANIZATION_SQL}) AS organization,
     (SELECT count(*)::int FROM workflow_activity_refs r WHERE r.workflow_id=w.id AND r.active) AS activity_count,
     (${activities}) AS activities
     FROM workflows w
