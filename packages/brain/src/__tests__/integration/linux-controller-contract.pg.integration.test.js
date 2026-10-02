@@ -9,11 +9,12 @@ const options=process.env.TEST_DATABASE_URL?{connectionString:process.env.TEST_D
 const database=process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_URL).pathname.slice(1):DB_DEFAULTS.database;
 if(database!=='cecelia_scratch'&&!(process.env.CI&&database==='cecelia_test'))throw Error('local scratch only');
 const schema='linux_controller_'+randomUUID().replaceAll('-',''),admin=new pg.Client(options);
-const pool=new pg.Pool({...options,options:`-c search_path=${schema},public`});state.pool=pool;
+const pool=new pg.Pool({...options,options:`-c search_path=${schema}`});state.pool=pool;
 let executor;
 beforeAll(async()=>{
  await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
  await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY,title TEXT,task_type TEXT,executor_kind TEXT CONSTRAINT tasks_executor_kind_check CHECK(executor_kind IN ('brain-local','image-janitor')),status TEXT,payload JSONB DEFAULT '{}',error_message TEXT,claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now(),created_at TIMESTAMPTZ DEFAULT now());`);
+ await pool.query('CREATE TABLE task_runs(task_id UUID,started_at TIMESTAMPTZ,ended_at TIMESTAMPTZ)');
  await pool.query(readFileSync(new URL('../../../migrations/512_linux_pool_controller.sql',import.meta.url),'utf8'));
  executor=await import('../../executor.js');
 });
