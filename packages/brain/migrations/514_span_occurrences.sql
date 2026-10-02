@@ -16,5 +16,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_spans_occurrence ON spans(run_id,occurrence
   WHERE occurrence_key IS NOT NULL;
 COMMENT ON COLUMN spans.occurrence_key IS '上报者冻结的真实发生位置与重试身份；重传复用、再次执行新建；NULL=旧幂等协议';
 COMMENT ON COLUMN spans.payload_sha256 IS 'Brain对规范化持久字段计算的SHA256；同run/occurrence异内容409，不覆盖原事实';
-INSERT INTO schema_version(version,description) VALUES('513','Span发生位置幂等、服务端摘要及旧客户端partial索引兼容') ON CONFLICT(version) DO NOTHING;
+INSERT INTO schema_version(version,description) VALUES('514','Span发生位置幂等、服务端摘要及旧客户端partial索引兼容') ON CONFLICT(version) DO NOTHING;
 COMMIT;
