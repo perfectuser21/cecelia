@@ -4,6 +4,8 @@ vi.mock('../app-server/controller.js',()=>({reconcileAppServers:vi.fn().mockReso
 vi.mock('../preview-cache-scheduler.js', () => ({ runPreviewCacheJanitor: vi.fn().mockResolvedValue({ status: 'disabled' }) }));
 import { runPreviewCacheJanitor } from '../preview-cache-scheduler.js';
 vi.mock('../projection/company-key-results.js', () => ({ runCompanyKrProjection: vi.fn(async () => ({ skipped: true })) }));
+// 目录真实handler会开独立连接并访问Notion；此文件仅验证调度，行为由directory单元与真实PG测试覆盖。
+vi.mock('../projection/directory-job.js', () => ({ runDirectoryJob: vi.fn().mockResolvedValue({ skipped: true, reason: 'not_configured' }) }));
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../node-onboarding/service.js', () => ({
@@ -253,6 +255,7 @@ describe('scheduler-jobs 注册表', () => {
     const results = await runSchedulerJobsOnce(pool, [job]);
     expect(runDirectoryJob).toHaveBeenCalledTimes(1);
     expect(runDirectoryJob).toHaveBeenCalledWith(pool);
+    expect(runDirectoryJob.mock.calls[0][0]).toBe(pool);
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({ name: 'notion-directory', ok: true });
   });
