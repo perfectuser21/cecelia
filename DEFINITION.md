@@ -13,6 +13,8 @@ GPU 观测通过 Mac Worker 的限时 IORegistry 采样与既有健康缓存传�
 
 
 
+Kernel 派发按统一机器角色表生成 M1/M4 优先、MMV 最后的默认候选，并保持执行目录授权交集。未支持的机器字段在工作区准备和预约前以 unsupported_machine_policy 拒绝，含空值；既有六处机器指定继续生效，不新增别名。
+
 
 
 

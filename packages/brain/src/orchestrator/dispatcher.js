@@ -12,7 +12,7 @@ import {
   sanitizeDiagnostic,
 } from './failure-persistence.js';
 import { deriveCapabilityRequirements } from './preflight/requirements.js';
-import { expandUnresolvedAccountTargets, defaultCodexTargets } from './preflight/execution-targets.js';
+import { expandUnresolvedAccountTargets, defaultCodexTargets, hasUnsupportedMachinePolicy } from './preflight/execution-targets.js';
 import { isConfirmedCapacityRollback } from './attempt-store.js';
 import { HARNESS_BUNDLE_MAX_BYTES } from './constants.js';
 import { resolvePrimaryWorkerId } from '../machine-registry.js';
@@ -979,6 +979,14 @@ export function createDispatcher(deps) {
     const callbackSecret = createCallbackSecret();
     const skill = spec.skill ? deps.loadSkill(spec.skill) : null;
     const payload = asObject(ctx.observed.task.payload);
+    const roleAssignment = spec.role === 'commander'
+      ? {}
+      : asObject(asObject(payload.role_assignments)[spec.role]);
+    if (spec.role !== 'commander' && hasUnsupportedMachinePolicy(payload, roleAssignment)) {
+      return {status: 'DONE_WITH_CONCERNS', control_status: 'BLOCKED',
+        action: 'wait:human_review', failure_class: 'infrastructure_blocked', fallback_reason: 'unsupported_machine_policy',
+        should_create_attempt: false, should_enter_generator_fix: false};
+    }
     const attemptMetadata = {
       logicalCycleId: commanderContext?.logical_cycle_id
         ?? ctx.retry?.logical_cycle_id
@@ -1049,9 +1057,6 @@ export function createDispatcher(deps) {
         return preAttemptAssemblyFault(error, 'WORKSPACE_RESOLUTION_FAILED');
       }
     }
-    const roleAssignment = spec.role === 'commander'
-      ? {}
-      : asObject(asObject(payload.role_assignments)[spec.role]);
     const {
       role: _commanderRole,
       ...commanderTarget
