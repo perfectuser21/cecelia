@@ -1,7 +1,70 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { createKernelRun } from '../kernel-run-store.js';
+import { seedExecutionDirectoryFixture } from '../../__tests__/helpers/execution-directory-fixture.js';
 
 import { fixture, runId, taskId, receiptId, newReceiptId, base } from './recovery-rebase.fixture.js';
+
+const target = { machine: 'xian-mac-m4', provider: 'codex', account: 'team2' };
+const emptyProfileHash = createHash('sha256').update('{}').digest('hex');
+async function targetFixture() {
+  const f = fixture();
+  Object.assign(f.request, { execution_target: { ...target }, expected_profile_hash: emptyProfileHash });
+  const snapshot = await seedExecutionDirectoryFixture();
+  const node = snapshot.nodes.find(n => n.canonical_id === target.machine);
+  const grant = node.grants.find(g => g.surface === 'harness' && g.account_id === target.account);
+  const client = await f.pool.connect(), query = client.query;
+  client.query = async (sql, params) => {
+    if (/SELECT v\.\*,n.canonical_id/.test(sql)) return { rows: [node] };
+    if (/SELECT \* FROM execution_grants/.test(sql)) return { rows: [grant] };
+    return query(sql, params);
+  };
+  return { ...f, node, grant };
+}
+
+describe('恢复冻结已授权执行目标', () => {
+  it('同事务冻结Commander和完整阶段链，收据保存目录授权且新run重签', async () => {
+    const f = await targetFixture();
+    const result = await createKernelRun(f.pool, f.input, f.deps);
+    expect(result.created).toBe(true);
+    const update = f.calls.find(c => /UPDATE tasks SET payload/.test(c.sql));
+    const payload = JSON.parse(update.params[1]);
+    expect(payload.commander).toEqual({ primary: target, fallbacks: [] });
+    expect(payload.routing).toMatchObject({ preferred_machine: target.machine, strict_affinity: true });
+    for (const role of ['planner','proposer','reviewer','generator','evaluator','judge','publisher']) {
+      expect(payload.role_assignments[role]).toEqual({ ...target, strict_affinity: true });
+    }
+    const receipt = f.calls.find(c => /INSERT INTO work_routing_receipts/.test(c.sql));
+    expect(JSON.parse(receipt.params[15]).recovery_rebase.execution_profile).toMatchObject({
+      target, previous_profile_hash: emptyProfileHash,
+      execution_version_id: f.node.id, grant_id: f.grant.id,
+    });
+    expect(f.calls.find(c => /INSERT INTO initiative_runs/.test(c.sql)).params[15]).toBeNull();
+    expect(f.calls.some(c => /UPDATE (initiative_runs|work_routing_receipts|execution_grants)/.test(c.sql))).toBe(false);
+  });
+
+  it('旧profile CAS失败时无新增收据', async () => {
+    const f = await targetFixture(); f.request.expected_profile_hash = '0'.repeat(64);
+    await expect(createKernelRun(f.pool, f.input, f.deps)).rejects.toThrow('recovery_rebase_profile_changed');
+    expect(f.calls.some(c => /INSERT INTO work_routing_receipts/.test(c.sql))).toBe(false);
+  });
+
+  it('拒绝非目录目标且无新增收据', async () => {
+    const f = await targetFixture(); f.request.execution_target.machine = 'untrusted-host';
+    await expect(createKernelRun(f.pool, f.input, f.deps)).rejects.toThrow('recovery_rebase_execution_denied');
+    expect(f.calls.some(c => /INSERT INTO work_routing_receipts/.test(c.sql))).toBe(false);
+  });
+
+  it('目标与hash必须成对提供，拒绝额外target字段和无界名称', async () => {
+    for (const mutate of [f => { delete f.request.expected_profile_hash; },
+      f => { delete f.request.execution_target; }, f => { f.request.execution_target.url = 'http://unknown'; },
+      f => { f.request.execution_target.account = 'a'.repeat(129); }]) {
+      const f = await targetFixture(); mutate(f);
+      await expect(createKernelRun(f.pool, f.input, f.deps)).rejects.toThrow('recovery_rebase_request_invalid');
+      expect(f.calls).toHaveLength(0);
+    }
+  });
+});
 
 describe('未封存失败任务的受控再基恢复', () => {
   it('同任务追加新收据并重新签发controller；旧run和旧收据保持不变', async () => {

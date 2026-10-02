@@ -1,9 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createKernelRun } from '../../orchestrator/kernel-run-store.js';
 import { seedRoutedKernelTask } from './helpers/routed-kernel-fixture.js';
+import { directory } from '../../execution-directory/directory.js';
+import { importLegacyPolicy } from '../../execution-directory/store.js';
+import { LEGACY_BINDINGS } from '../../execution-directory/legacy-policy.js';
+import { FIXTURE_EXECUTION_ENV } from '../helpers/execution-directory-pg-fixture.js';
 
 const admin = new pg.Pool({ ...DB_DEFAULTS, max: 4 });
 const schema = `recovery_rebase_${process.pid}_${randomUUID().replaceAll('-', '')}`;
@@ -12,7 +17,8 @@ const tables = ['tasks', 'initiative_runs', 'initiative_contracts', 'kernel_cont
   'harness_attempts', 'task_events', 'cecelia_events', 'map_manifest_versions', 'map_scope_repositories',
   'fact_snapshot_headers', 'graph_snapshot_versions', 'map_projection_runs', 'map_projection_nodes',
   'map_projection_edges', 'test_registry', 'api_registry', 'db_schema_registry', 'graph_edges',
-  'graph_edge_snapshots', 'journey_assertion_receipts', 'harness_impact_contracts'];
+  'graph_edge_snapshots', 'journey_assertion_receipts', 'harness_impact_contracts',
+  'system_registry','schema_version'];
 const oldBase = 'a'.repeat(40), base = 'b'.repeat(40), head = 'c'.repeat(40);
 const pool = {
   async connect() {
@@ -36,6 +42,20 @@ beforeAll(async () => {
     ON work_routing_receipts FOR EACH ROW EXECUTE FUNCTION public.reject_work_routing_receipt_mutation()`);
   await pool.query(`CREATE TRIGGER work_routing_task_projection_immutable BEFORE UPDATE
     ON tasks FOR EACH ROW EXECUTE FUNCTION public.reject_work_routing_task_projection_mutation()`);
+  // 本地scratch地板可能尚无503；目录DDL仅在独立fixture schema内执行。
+  for (const name of ['501_capacity_reservations','503_execution_directory']) {
+    await pool.query(readFileSync(new URL(`../../../migrations/${name}.sql`,import.meta.url),'utf8'));
+  }
+  for (const [, id, name] of LEGACY_BINDINGS) {
+    await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')", [id,name]);
+  }
+  await importLegacyPolicy({ pool, env: FIXTURE_EXECUTION_ENV });
+});
+beforeEach(async () => {
+  await pool.query("UPDATE execution_grants SET state='active',expires_at=NULL");
+  await pool.query(`UPDATE execution_nodes n SET current_version_id=v.id
+    FROM execution_node_versions v WHERE n.machine_registry_id=v.machine_registry_id AND v.revision=1`);
+  await directory.refresh({ pool });
 });
 afterAll(async () => {
   await admin.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
@@ -69,6 +89,111 @@ async function fixture() {
     } };
   return { ids, input, request, map, deps, previous: previous.rows[0] };
 }
+
+const target = { machine: 'xian-mac-m4', provider: 'codex', account: 'team2' };
+async function targetFixture() {
+  const f = await fixture();
+  Object.assign(f.request, { execution_target: { ...target },
+    expected_profile_hash: createHash('sha256').update('{}').digest('hex') });
+  const node = directory.current().nodes.find(n => n.canonical_id === target.machine);
+  const grant = node.grants.find(g => g.surface === 'harness' && g.account_id === target.account);
+  return { ...f, node, grant };
+}
+
+describe('已授权目标恢复真实PG', () => {
+  it('合法xian目标保存完整冻结profile与grant证据，旧历史和许可不变', async () => {
+    const f = await targetFixture();
+    const oldReceipt = (await pool.query('SELECT * FROM work_routing_receipts WHERE id=$1',[f.ids.receiptId])).rows[0];
+    const oldGrants = (await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows;
+    const result = await createKernelRun(pool, f.input, f.deps);
+    const receipt = (await pool.query('SELECT * FROM work_routing_receipts WHERE supersedes_receipt_id=$1',[f.ids.receiptId])).rows[0];
+    expect(receipt.evidence.recovery_rebase.execution_profile).toMatchObject({ target,
+      execution_version_id:f.node.id,grant_id:f.grant.id,previous_profile_hash:f.request.expected_profile_hash });
+    const payload = (await pool.query('SELECT payload FROM tasks WHERE id=$1',[f.ids.taskId])).rows[0].payload;
+    expect(payload.commander).toEqual({ primary:target,fallbacks:[] });
+    for (const role of ['planner','proposer','reviewer','generator','evaluator','judge','publisher']) {
+      expect(payload.role_assignments[role]).toEqual({...target,strict_affinity:true});
+    }
+    expect(result.run.contract_id).toBeNull();
+    expect((await pool.query('SELECT * FROM initiative_runs WHERE id=$1',[f.previous.id])).rows[0]).toEqual(f.previous);
+    expect((await pool.query('SELECT * FROM work_routing_receipts WHERE id=$1',[f.ids.receiptId])).rows[0]).toEqual(oldReceipt);
+    expect((await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows).toEqual(oldGrants);
+  });
+
+  it('同目标并发/重试返回同代，冲突目标拒绝且零增', async () => {
+    const f = await targetFixture();
+    const results = await Promise.all([createKernelRun(pool,f.input,f.deps),createKernelRun(pool,f.input,f.deps)]);
+    expect(results.map(r=>r.created).sort()).toEqual([false,true]);
+    expect(results[0].run.id).toBe(results[1].run.id);
+    expect((await createKernelRun(pool,f.input,f.deps)).created).toBe(false);
+    const conflict = {...f.input,recoveryRebase:{...f.request,execution_target:{...target,account:'team3'}}};
+    await expect(createKernelRun(pool,conflict,f.deps)).rejects.toThrow('recovery_rebase_active_run');
+    expect((await pool.query('SELECT count(*)::int n FROM work_routing_receipts WHERE task_id=$1',[f.ids.taskId])).rows[0].n).toBe(2);
+    expect((await pool.query("SELECT count(*)::int n FROM task_events WHERE task_id=$1 AND event_type='kernel_unsealed_recovery_rebased'",[f.ids.taskId])).rows[0].n).toBe(1);
+  });
+
+  it('撤销/过期grant、缺失repo授权、目录换代或过期都回滚且不扩许可', async () => {
+    for (const mode of ['revoked','expired','repo','version','snapshot']) {
+      const f = await targetFixture();
+      if (mode === 'revoked') await pool.query("UPDATE execution_grants SET state='revoked' WHERE id=$1",[f.grant.id]);
+      if (mode === 'expired') await pool.query("UPDATE execution_grants SET expires_at=NOW()-INTERVAL '1 minute' WHERE id=$1",[f.grant.id]);
+      if (mode === 'repo') {
+        f.request.execution_target.account='repo-restricted';
+        await pool.query(`INSERT INTO execution_grants(id,node_version_id,surface,provider,account_id,
+          repo_scope,profile_id,provenance,state) VALUES($1,$2,'harness','codex','repo-restricted',
+          ARRAY['perfectuser21/zenithjoy-workspace'],'','test','active')`,[randomUUID(),f.node.id]);
+      }
+      if (mode === 'version') {
+        const newVersion = randomUUID();
+        await pool.query(`INSERT INTO execution_node_versions
+          (id,machine_registry_id,revision,identity_mode,worker_id,platform,endpoints,profile,config_hash,state)
+          SELECT $2,machine_registry_id,2,identity_mode,worker_id,platform,endpoints,profile,config_hash,state
+          FROM execution_node_versions WHERE id=$1`,[f.node.id,newVersion]);
+        await pool.query('UPDATE execution_nodes SET current_version_id=$2 WHERE canonical_id=$1',[target.machine,newVersion]);
+      }
+      const grantsBefore = (await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows;
+      const run = () => createKernelRun(pool,f.input,f.deps);
+      await expect(mode === 'snapshot' ? directory.withSnapshot({...directory.current(),expiresAt:0},run) : run())
+        .rejects.toThrow('recovery_rebase_execution_denied');
+      expect((await pool.query('SELECT count(*)::int n FROM work_routing_receipts WHERE task_id=$1',[f.ids.taskId])).rows[0].n).toBe(1);
+      expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[f.ids.taskId])).rows[0].status).toBe('failed');
+      expect((await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows).toEqual(grantsBefore);
+      await pool.query("UPDATE execution_grants SET state='active',expires_at=NULL");
+      await pool.query('UPDATE execution_nodes SET current_version_id=$2 WHERE canonical_id=$1',[target.machine,f.node.id]);
+      await directory.refresh({pool});
+    }
+  });
+
+  it('恢复持目标机器锁期间并发撤销被真实目录guard拒绝', async () => {
+    const f = await targetFixture();
+    let unlock, acquired;
+    const gate = new Promise(resolve=>{unlock=resolve;});
+    const locked = new Promise(resolve=>{acquired=resolve;});
+    const preflight = f.deps.ensureMapImpactPreflight;
+    f.deps.ensureMapImpactPreflight = async (...args)=>{acquired();await gate;return preflight(...args);};
+    const recovery = createKernelRun(pool,f.input,f.deps);
+    await locked;
+    try {
+      await expect(pool.query("UPDATE execution_grants SET state='revoked' WHERE id=$1",[f.grant.id]))
+        .rejects.toThrow('execution_directory_busy');
+    } finally { unlock(); }
+    expect((await recovery).created).toBe(true);
+    expect((await pool.query('SELECT state FROM execution_grants WHERE id=$1',[f.grant.id])).rows[0].state).toBe('active');
+  });
+
+  it('profile CAS和下游preflight失败实际回滚目标、事件与owner', async () => {
+    for (const mode of ['profile','preflight']) {
+      const f = await targetFixture();
+      if (mode === 'profile') f.request.expected_profile_hash='0'.repeat(64);
+      else f.deps.ensureMapImpactPreflight=async()=>{throw Error('map_projection_changed');};
+      await expect(createKernelRun(pool,f.input,f.deps)).rejects.toThrow(mode === 'profile' ? 'recovery_rebase_profile_changed' : 'map_projection_changed');
+      expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[f.ids.taskId])).rows[0].payload.commander).toBeUndefined();
+      for (const table of ['task_events','cecelia_events','kernel_controller_sessions']) {
+        expect((await pool.query(`SELECT count(*)::int n FROM ${table} WHERE task_id=$1`,[f.ids.taskId])).rows[0].n).toBe(0);
+      }
+    }
+  });
+});
 
 describe('受控再基恢复真实PG事务', () => {
   it('新收据/owner/run落库；失败前任和旧收据原样保留', async () => {

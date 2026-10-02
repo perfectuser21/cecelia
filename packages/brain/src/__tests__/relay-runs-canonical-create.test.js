@@ -55,7 +55,9 @@ describe('canonical POST /orchestrator/relay-runs', () => {
     const body = { initiative_id: INITIATIVE_ID, current_task_id: TASK_ID,
       created_source: 'explicit_recovery', predecessor_run_id: RUN_ID,
       recovery_rebase: { expected_receipt_id: TASK_ID, base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40),
-        actor: 'session:operator', reason: '真实恢复', sprint_dir: 'sprints' } };
+        actor: 'session:operator', reason: '真实恢复', sprint_dir: 'sprints',
+        expected_profile_hash:'a'.repeat(64),
+        execution_target:{provider:'codex',account:'team2',machine:'xian-mac-m4'} } };
     for (const token of ['', 'wrong']) {
       const response = await request(app).post('/api/brain/orchestrator/relay-runs')
         .set('X-Internal-Token', token).send(body);
