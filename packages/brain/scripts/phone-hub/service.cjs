@@ -38,7 +38,9 @@ function createPhoneHubServer({token,identity,capabilities,maintenance,timeoutMs
     const result=await Promise.race([Promise.resolve().then(()=>capability?capabilities(body.machine_id):maintenance()),
      new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('timeout')),timeoutMs);})]);
     if(!result||typeof result!=='object'||Array.isArray(result))throw Error('unconfirmed');
-    const receipt={...result,schema:capability?'phone-capabilities/v1':'phone-maintenance/v1',scope:'phone-hub',...identity,execution:false,request_nonce:body.request_nonce,observed_at:new Date().toISOString()};
+    const receipt={...result,schema:capability?'phone-capabilities/v1':'phone-maintenance/v1',scope:'phone-hub',...identity,
+     ...(capability?{physical_config_digest:result.config_digest,physical_build_digest:result.build_digest,physical_observed_at:result.observed_at}:{}),
+     execution:false,request_nonce:body.request_nonce,observed_at:new Date().toISOString()};
     send(200,{receipt,signature:createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex')});
    }catch{send(503,{error:capability?'phone_capabilities_unconfirmed':'phone_maintenance_unconfirmed'});}
   }catch(error){send(error.message==='timeout'?408:400,{error: error.message==='timeout'?'phone_request_timeout':'phone_request_invalid'});}

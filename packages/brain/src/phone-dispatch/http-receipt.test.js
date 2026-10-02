@@ -15,6 +15,7 @@ it('签名、nonce、完整Hub/physical身份、schema和时间逐项拒绝',asy
  for(const [key,value]of Object.entries({request_nonce:randomUUID(),hub_id:'foreign',boot_id:'foreign',http_endpoint:'http://evil:3459/',build_digest:'b'.repeat(64),config_digest:'b'.repeat(64),machine_id:'foreign',worker_id:'foreign',physical_boot_id:'foreign',action_digest:'b'.repeat(64),schema:'phone-ssh/v1',scope:'all-mmv',execution:true,observed_at:new Date(Date.now()-60000).toISOString(),authenticated:true,available:1}))expect(()=>verifyPhoneHubReceipt(signed({...r,[key]:value}),opts)).toThrow();
  expect(()=>verifyPhoneHubReceipt(signed(r),{...opts,binding:{...b}})).toThrow();
  for(const patch of [{physical_config_digest:'f'.repeat(64)},{physical_build_digest:'f'.repeat(64)},{physical_observed_at:new Date(Date.now()-60000).toISOString()},{physical_observed_at:undefined}])expect(()=>verifyPhoneHubReceipt(signed({...r,...patch}),opts)).toThrow();
+ for(const key of ['physical_config_digest','physical_build_digest','physical_observed_at'])expect(()=>verifyPhoneHubReceipt({...signed(r),receipt:{...r,[key]:'tampered'}},opts)).toThrow();
 });
 it('资源未知、counter/marker矛盾不验过；本地scope不能证明全部MMV静止',async()=>{
  const b=await binding(),nonce=randomUUID(),r=wire('capabilities',nonce),opts={binding:b,token,nonce,operation:'capabilities'};
