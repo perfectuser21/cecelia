@@ -1,4 +1,4 @@
-import { afterEach,expect,it } from 'vitest';
+import { afterEach,expect,it,vi } from 'vitest';
 import { mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -104,4 +104,13 @@ it('main精确生成契约索引经digest核验后可归入消费者，保留中
   expect(report.source.changed_files).toEqual([{path:'product-map/generated/contracts.json'}]);
   expect(report.affected_usages).toHaveLength(2);
   expect(report.head.definition_versions.workflows.map(w=>w.id).sort()).toEqual(h.definitions.workflows.map(w=>w.id).sort());
+});
+
+it('实际库名不符时只读身份后断开，即使CI变量为真也不向生产发送清理DDL',async()=>{
+ const {default:pg}=await import('pg'),{DB_DEFAULTS}=await import('../../db-config.js');
+ const {createImplementationScratch}=await import('../../../../../scripts/ci/implementation-snapshot.mjs');
+ const configured=DB_DEFAULTS.database;DB_DEFAULTS.database='cecelia_scratch';vi.stubEnv('CI','true');vi.stubEnv('GITHUB_ACTIONS','true');
+ const calls=[];const spy=vi.spyOn(pg,'Client').mockImplementation(function(){return {connect:async()=>calls.push('connect'),query:async sql=>{calls.push(sql);return {rows:[{name:'cecelia'}]};},end:async()=>calls.push('end')};});
+ try{await expect(createImplementationScratch()).rejects.toMatchObject({code:'IMPLEMENTATION_CI_SCRATCH_REQUIRED'});expect(calls).toEqual(['connect','SELECT current_database() name','end']);}
+ finally{spy.mockRestore();DB_DEFAULTS.database=configured;vi.unstubAllEnvs();}
 });
