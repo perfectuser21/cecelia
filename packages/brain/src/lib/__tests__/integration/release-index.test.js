@@ -87,3 +87,20 @@ it('CI证据结构缺失或assertion空项只降级unknown，不返回500或伪g
     expect(response.status,JSON.stringify(response.body)).toBe(201);expect(response.body.release.payload.verification.ci_status).toBe('unknown');
   }
 });
+it('历史固定AV缺规范Step UUID时step coverage明确unknown，不以Activity冒充完整验收',async()=>{
+  const original=fixture.activities[0],payload=structuredClone(original.payload);payload.steps[0].step_id=null;
+  const digest=service.evidenceHash({source:{repo:original.source_repo,path:original.source_path,commit:original.source_commit},payload});
+  const replacement=(await fixture.db.query('INSERT INTO activity_definition_versions(activity_id,payload,contract_sha256,payload_sha256,source_repo,source_path,source_commit) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *',[original.activity_id,payload,original.contract_sha256,digest,original.source_repo,original.source_path,original.source_commit])).rows[0];
+  const input=structuredClone(fixture.releaseInput);
+  for(const workflow of fixture.workflows){
+    const wp=structuredClone(workflow.payload);let changed=false;
+    for(const ref of wp.activities)if(ref.activity_version_id===original.id){ref.activity_version_id=replacement.id;changed=true;}
+    if(!changed)continue;
+    const sha=service.evidenceHash({source:{repo:workflow.source_repo,path:workflow.source_path,commit:workflow.source_commit},payload:wp});
+    const row=(await fixture.db.query('INSERT INTO workflow_definition_versions(workflow_id,payload,contract_sha256,payload_sha256,source_repo,source_path,source_commit) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id',[workflow.workflow_id,wp,workflow.contract_sha256,sha,workflow.source_repo,workflow.source_path,workflow.source_commit])).rows[0];
+    input.workflows=input.workflows.map(w=>w.workflow_definition_version_id===workflow.id?{workflow_definition_version_id:row.id,payload_sha256:sha}:w);
+  }
+  const response=await request(app).post('/releases').send(input);expect(response.status,JSON.stringify(response.body)).toBe(201);
+  expect(response.body.release.payload.verification).toMatchObject({step_coverage_status:'unknown',definition_status:'unknown',status:'unknown'});
+  expect(response.body.release.payload.verification.gaps).toContainEqual(expect.objectContaining({code:'step_identity_missing',activity_definition_version_id:replacement.id}));
+});
