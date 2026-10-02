@@ -28,7 +28,7 @@ export function validateImplementationSnapshot(snapshot){
   }
   return snapshot;
 }
-async function readSnapshot(db,q){
+export async function readImplementationSnapshotInTransaction(db,q){
   const gaps=[],gap=(code,details={})=>gaps.push({code,...details});
   const registrations=(await db.query('SELECT * FROM map_scope_repositories WHERE scope_key=$1 ORDER BY repo',[q.scope])).rows;
   const repositories=registrations.filter(r=>r.repo===q.repo||r.adapter_config?.source_repo===q.repo);
@@ -85,7 +85,7 @@ async function readSnapshot(db,q){
 }
 export async function exportImplementationSnapshot(pool,input){
   const q=validateSnapshotQuery(input),db=await pool.connect();
-  try{await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const result=await readSnapshot(db,q);await db.query('COMMIT');return result;}
+  try{await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const result=await readImplementationSnapshotInTransaction(db,q);await db.query('COMMIT');return result;}
   catch(error){await db.query('ROLLBACK');throw error;}finally{db.release();}
 }
 /** 目标主机与仓库由受信adapter常量选择，外部输入只作为编码后的path/query。 */

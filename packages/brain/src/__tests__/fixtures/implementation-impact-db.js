@@ -8,12 +8,12 @@ export const IMPACT_REPO='perfectuser21/zenithjoy-workspace';
 /** 真PG隔离schema；SHA与断言路径可与调用方真实git仓库对齐。 */
 export async function implementationImpactDatabase({
   baseRevision='a'.repeat(40),headRevision='b'.repeat(40),assertionRef='tests/controller.test.js',
-  scope='phones',registryRepo='phone-source',
+  scope='phones',registryRepo='phone-source',seedIds,
   readBinding=async b=>b.kind==='skill'?'---\nname: controller\nversion: 1.0.0\n---\n# controller\n':'export const controller=true;\n',
 }={}) {
   const fixture=await versionsDatabase(),db=fixture.db;
   try {
-    const ids=await seedWorkflows(db);await fixture.migrate();
+    const ids=await seedWorkflows(db,seedIds);await fixture.migrate();
     await minimumMapSchema(db);
     const contracts=contractsFixture();
     const capabilities=(await db.query('SELECT capability_id FROM workflows ORDER BY key')).rows.map(r=>r.capability_id);
