@@ -5,6 +5,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync,execFileSync } from 'node:child_process';
 describe('implementation-ci-workflow',()=>{
+it('主CI集成入口安装根扫描器与Brain锁依赖，不能被子workspace安装裁剪',()=>{
+ const workflow=yaml.load(readFileSync(new URL('../../../../../.github/workflows/ci.yml',import.meta.url),'utf8'));
+ const steps=workflow.jobs['brain-integration'].steps;
+ const tests=steps.findIndex(s=>s.name==='Integration Tests');
+ const installs=steps.slice(0,tests).filter(s=>/npm ci/.test(s.run||''));
+ expect(installs.length).toBeGreaterThan(0);
+ expect(installs.at(-1)['working-directory']||'.').toBe('.');
+ expect(installs.at(-1).run.trim()).toMatch(/^npm ci(?: --(?:ignore-scripts|no-audit|no-fund))*$/);
+ expect(steps[tests].run).toContain('src/__tests__/integration/');
+});
 it('实际PR/main触发存在，中央凭据只在main快照job，回归job不持Brain token',()=>{
   const path=new URL('../../../../../.github/workflows/implementation-impact.yml',import.meta.url);
   expect(existsSync(path),'不能只交CLI测试，必须有实际workflow').toBe(true);
