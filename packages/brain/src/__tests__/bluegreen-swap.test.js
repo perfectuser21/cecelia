@@ -26,7 +26,7 @@ const BG_LIB = resolve(REPO_ROOT, 'scripts/lib/bluegreen.sh');
  *  blueState: string — guard 调用 inspect --format '{{.State.Status}}' 时的返回值
  *  sidecarFails: bool — docker run sidecar 时返回 exit 1
  */
-function makeMockDocker(dir, { greenHealthy, blueState = 'running', sidecarFails = false }) {
+function makeMockDocker(dir, { greenHealthy, blueState = 'running', sidecarFails = false, imageSha = 'a'.repeat(40) }) {
   const log = join(dir, 'docker.log');
   // mock docker：区分 inspect 的 format 参数来区分 green health 和 blue state
   const script = `#!/usr/bin/env bash
@@ -49,6 +49,7 @@ case "$1" in
     fi
     exit 0
     ;;
+  image) echo "GIT_SHA=${imageSha}"; exit 0 ;;
   start) exit 0 ;;
   rm|stop|compose|kill) exit 0 ;;
   *) exit 0 ;;
@@ -473,4 +474,19 @@ describe('bluegreen-sidecar.sh（Gate3 failure 场景防护）', () => {
     expect(failLog).toMatch(/sidecar-partial-fail/);
     expect(failLog).toMatch(/recovered=blue-fallback/);
   });
+});
+
+it('目标镜像SHA不符时，在启动异步sidecar及删除blue之前拒绝', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'bg-sha-'));
+  const deployRoot = mkdtempSync(join(tmpdir(), 'bg-sha-root-'));
+  try {
+    const log = makeMockDocker(tmp, { greenHealthy: true, imageSha: 'b'.repeat(40) });
+    const { code, calls } = runSwap(tmp, log, { DEPLOY_ROOT_DIR: deployRoot });
+    expect(code).toBe(1);
+    expect(calls).not.toMatch(/run .*cecelia-bluegreen-sidecar/);
+    expect(calls).not.toMatch(/rm -f cecelia-node-brain(\n|$)/m);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+    rmSync(deployRoot, { recursive: true, force: true });
+  }
 });

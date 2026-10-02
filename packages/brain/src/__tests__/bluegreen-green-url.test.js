@@ -74,6 +74,7 @@ function runSwap(dir, extraEnv = {}) {
     {
       env: {
         ...process.env,
+        EXPECTED_SHA: 'a'.repeat(40),
         ...extraEnv,
         CECELIA_INTERNAL_ENV_FILE: credentialFile,
         PATH: `${dir}:${process.env.PATH}`,
