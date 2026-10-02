@@ -8,6 +8,7 @@ let f;
 afterEach(async()=>{await f?.close();f=null;});
 it('真实同步AV显式Enabler来源经HTTP冻结，旧legacy符号保未知且地图解释文件证据',async()=>{
  f=await releaseEvidenceDatabase({fullActivityBindings:true,enablerDeclarations:true});
+ expect(f.activities.every(a=>a.payload.implementation_bindings.some(b=>b.enabler_key==='test-lock'))).toBe(true);
  await f.db.query('CREATE TABLE journey_features (LIKE public.journey_features INCLUDING ALL)');
  const app=express();app.use(express.json());app.use('/releases',createReleasesRouter({pool:f.db,trustedCollectors:['fixture-collector']}));
  const response=await request(app).post('/releases').send(f.releaseInput);expect(response.status,response.body).toBe(201);
