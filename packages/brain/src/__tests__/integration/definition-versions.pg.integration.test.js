@@ -56,7 +56,7 @@ describe('不可变能力定义版本',()=>{
   it('Skill切换Code保持Activity UUID并生成新版本，固定revision引用在写事务前验证',async()=>{
     await fixture.migrate();const f=contractsFixture(),rev='c'.repeat(40);
     f.docs.keyword_acquisition.activities[0].implementation_bindings=[{kind:'skill',repo:'org/repo',path:'skills/check/SKILL.md',revision:rev}];f.refresh();
-    const readBinding=vi.fn(async()=> '# 预检');await syncActivityContracts(db,{...f,readBinding});
+    const readBinding=vi.fn(async()=> '---\nname: check\nversion: 1.0.0\n---\n# 预检');await syncActivityContracts(db,{...f,readBinding});
     const before=(await db.query("SELECT id,current_definition_version_id FROM journey_steps WHERE activity_key='preflight'")).rows[0];
     f.docs.keyword_acquisition.activities[0].implementation_bindings=[{kind:'code',repo:'org/repo',path:'src/check.js',revision:rev}];f.refresh();await syncActivityContracts(db,{...f,readBinding});
     const after=(await db.query('SELECT id,current_definition_version_id FROM journey_steps WHERE id=$1',[before.id])).rows[0];
@@ -65,4 +65,13 @@ describe('不可变能力定义版本',()=>{
     const prior=await counts();f.docs.keyword_acquisition.activities[0].implementation_bindings[0].revision='main';f.refresh();
     await expect(syncActivityContracts(db,{...f,readBinding})).rejects.toThrow('revision');expect(await counts()).toEqual(prior);
   });
+  it('相同内容新commit产生可追溯新快照，当前引用的来源commit与版本一致',async()=>{
+    await fixture.migrate();const f=contractsFixture();await syncActivityContracts(db,f);const original=await versions();
+    const fetch=f.fetchFn;f.fetchFn=async url=>url.includes('/commits/main')?{ok:true,text:async()=> 'd'.repeat(40)}:fetch(url);
+    await syncActivityContracts(db,f);expect(await counts()).toEqual({activities:18,workflows:4});
+    const rows=(await db.query(`SELECT r.source_commit,v.source_commit version_commit FROM workflow_activity_refs r JOIN activity_definition_versions v ON v.id=r.activity_definition_version_id WHERE r.active`)).rows;
+    expect(rows.every(r=>r.source_commit===r.version_commit&&r.version_commit==='d'.repeat(40))).toBe(true);
+    for(const row of original)expect((await db.query('SELECT * FROM activity_definition_versions WHERE id=$1',[row.id])).rows[0]).toEqual(row);
+  });
+
 });
