@@ -1,3 +1,4 @@
+import {manifestMatchesImplementationSource} from './implementation-context.js';
 /** 中央定义只读导出；身份由登记表给出，历史来源不以latest补齐。 */
 import {preparePilotManifestAdvance,advancePilotManifest} from './implementation-ci-pilot-manifest.js';
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
@@ -50,7 +51,7 @@ async function readSnapshot(db,q){
   let manifest=null,manifestBasis='unknown';
   if(repositories.length===1){
     const historical=(await db.query(`SELECT DISTINCT m.* FROM map_manifest_versions m JOIN map_projection_runs p ON p.manifest_version_id=m.id
-      WHERE m.scope_key=$1 AND p.scope_key=$1 AND p.fact_revisions->>$2=$3 AND p.status IN ('active','superseded') ORDER BY m.version DESC`,[q.scope,repositories[0].repo,q.revision])).rows;
+      WHERE m.scope_key=$1 AND p.scope_key=$1 AND p.fact_revisions->>$2=$3 AND p.status IN ('active','superseded') ORDER BY m.version DESC`,[q.scope,repositories[0].repo,q.revision])).rows.filter(r=>manifestMatchesImplementationSource(r.manifest,q.repo,q.revision));
     if(historical.length===1){manifest=historical[0];manifestBasis='historical_projection';}
     else if(historical.length>1)gap('manifest_snapshot_ambiguous',{revision:q.revision});
     else if(selected.length&&selected.every(w=>workflows.find(c=>c.id===w.workflow_id)?.current_definition_version_id===w.id)){
@@ -58,6 +59,7 @@ async function readSnapshot(db,q){
       manifestBasis='current_registration';
     }
   }
+  if(manifest&&!manifestMatchesImplementationSource(manifest.manifest,q.repo,q.revision))gap('manifest_source_mismatch',{revision:q.revision});
   if(!manifest)gap('scope_manifest_missing',{scope:q.scope,revision:q.revision});
   const capabilityIds=[...new Set(selected.map(w=>w.payload.capability_id))];
   const journeys=(await db.query(`WITH RECURSIVE chain AS(SELECT * FROM journeys WHERE id=ANY($1::uuid[])
