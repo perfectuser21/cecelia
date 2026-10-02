@@ -26,6 +26,15 @@ describe('目录配置与单库bootstrap', () => {
     expect(await api.findCapabilityDatabase({token:'test',parentPageId:id(30),notionReq})).toBe(id(20));
     expect(notionReq.mock.calls.every(c=>c[2]==='GET')).toBe(true);
   });
+  it('父页扫描有最大页数，独特cursor也不能无限扫描',async()=>{
+    let n=0;const notionReq=vi.fn(async()=>{if(++n>101)throw Error('测试保险');return{results:[],has_more:true,next_cursor:String(n)};});
+    await expect(api.findCapabilityDatabase({token:'test',parentPageId:id(30),notionReq})).rejects.toThrow(/上限/);
+    expect(n).toBeLessThanOrEqual(100);
+  });
+  it('父页条目过量或同页重复库身份不得认领',async()=>{
+    const notionReq=vi.fn().mockResolvedValue({results:Array.from({length:10001},()=>({type:'paragraph'})),has_more:false,next_cursor:null});
+    await expect(api.findCapabilityDatabase({token:'test',parentPageId:id(30),notionReq})).rejects.toThrow(/上限/);
+  });
   it('导出配置白名单入口', () => expect(api.validateDirectoryConfig).toBeTypeOf('function'));
   it('合法配置仅保受限库身份和显式bindings', () => expect(api.validateDirectoryConfig(input())).toEqual(input()));
   it.each([
