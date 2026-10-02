@@ -9,6 +9,7 @@
  * 外部命令（ssh / Bark）全部桩成可断言的 spy，绝不真发。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { sshTargetFor, resolvePrimaryWorkerId } from '../machine-registry.js';
 import {
   recordCommanderHeartbeat,
@@ -22,7 +23,6 @@ import {
 const GATEWAY = sshTargetFor(resolvePrimaryWorkerId());
 
 it('接班消息先经网关 SSH 读 SOP；心跳 JSON 经 shell 原样到达 curl', async () => {
-  const { execFileSync } = await import('node:child_process');
   const remote = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmd10020630', serial: 'S1', profile: 'legacy', taskId: 'run1', relaunchCount: 1 });
   // 实际 shell 解码 cron --message，不靠正则假设引号正确。
   const args = JSON.parse(execFileSync('/bin/sh', ['-c', `openclaw(){ python3 -c 'import sys,json;print(json.dumps(sys.argv[1:]))' "$@"; }; ${remote}`], { encoding: 'utf8' }));
@@ -113,7 +113,9 @@ describe('buildEscortRelaunchRemote', () => {
     expect(remote).toContain('不重新发起');
     expect(remote).toContain('Brain单=task-run-1');
     expect(remote).toContain('cmdr-escort.txt');
-    expect(remote).not.toMatch(/[^\\]'[^ ]*"/); // 不混引号
+    // 嵌套 SSH/JSON 需要多层引号；用真实 shell 校验语法，运输内容由上方行为回归读回。
+    const parsed = execFileSync('/bin/sh', ['-n', '-c', remote], { encoding: 'utf8' });
+    expect(parsed).toBe('');
   });
 });
 
