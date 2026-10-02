@@ -345,6 +345,36 @@ class PhoneRunnerTest(unittest.TestCase):
         state = r.journal.read(self.identity['dispatch_id'])
         self.assertTrue(load().process_absent(state['child_identity']))
 
+    def test_external_adb_fork_setsid_cannot_escape_terminal_proof(self):
+        r = self.setup_runner()
+        escaped = self.root / 'escaped-pid'
+        executed = self.root / 'external-adb-executed'
+        self.adb.write_text('#!' + sys.executable + '\nimport os,time\n'
+                            + 'open(' + repr(str(executed)) + ',"w").write("executed")\n'
+                            + 'pid=os.fork()\n'
+                            + 'if pid==0:\n os.setsid();open(' + repr(str(escaped))
+                            + ',"w").write(str(os.getpid()));time.sleep(20);os._exit(0)\n'
+                            + 'while not os.path.exists(' + repr(str(escaped)) + '):time.sleep(.01)\n'
+                            + 'print("device")\n')
+        self.adb.chmod(0o700)
+        try:
+            r.start(self.identity)
+            receipt = self.finish()
+            child_alive = False
+            if escaped.exists():
+                child_alive = load().process_matches(load().process_identity(int(escaped.read_text())))
+            self.assertFalse(receipt['status'] == 'completed' and child_alive,
+                             '外部ADB的setsid后代仍活，不能签completed或释放手机锁')
+            self.assertFalse(executed.exists(), '固定get-state不能exec能派生业务后代的外部ADB')
+        finally:
+            if escaped.exists():
+                pid = int(escaped.read_text())
+                try:
+                    mine = load().process_identity(pid)
+                    load().stop_verified(mine)
+                except (OSError, ValueError):
+                    pass
+
     def test_pending_intent_is_counted_and_broken_journal_denies_maintenance(self):
         r = self.setup_runner(fault=lambda stage: (_ for _ in ()).throw(RuntimeError('fault')))
         with self.assertRaises(RuntimeError):
