@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import signal
 import tempfile
+import threading
 import unittest
 import uuid
 from unittest.mock import patch
@@ -59,6 +60,17 @@ class AdmissionTest(unittest.TestCase):
                     with self.assertRaises(ValueError): journal.write_under_activity(key, {}, object())
         self.assertEqual(journal.read(key)['phase'], 'fixture')
         with self.assertRaises(ValueError): journal.write_under_activity(key, {}, held)
+
+    def test_activity_capability_cannot_be_borrowed_by_another_thread(self):
+        journal = Journal(self.journal_root); key = str(uuid.uuid4()); result = []
+        with journal.activity_locked() as held:
+            def borrowed():
+                try: journal.write_under_activity(key, {'phase':'forged'}, held); result.append('accepted')
+                except ValueError: result.append('denied')
+            thread = threading.Thread(target=borrowed); thread.start(); thread.join(timeout=1)
+            self.assertFalse(thread.is_alive())
+        self.assertEqual(result, ['denied'])
+        self.assertIsNone(journal.read(key))
 
     def test_pre_intent_persistent_account_is_not_terminal_and_dead_owner_not_removed(self):
         gate = admission.Admission()
