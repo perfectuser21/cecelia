@@ -1,7 +1,7 @@
 import {createRequire} from 'node:module';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {createBaselineEvidenceClient} from '../../execution-directory/baseline-evidence.js';
-import {completeReport} from '../helpers/fleet-health-fixture.js';
+import {completeReport} from '../helpers/fleet-config-fs-fixture.js';
 import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import pg from 'pg';

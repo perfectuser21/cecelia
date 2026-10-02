@@ -1,4 +1,4 @@
-import {completeReport as healthFixture,merge} from '../../__tests__/helpers/fleet-health-fixture.js';
+import {completeReport as healthFixture,merge} from '../../__tests__/helpers/fleet-config-fs-fixture.js';
 import {it,expect} from 'vitest';
 import * as contract from './node-profile.js';
 import {evaluateBaseAdmission} from './node-admission.js';

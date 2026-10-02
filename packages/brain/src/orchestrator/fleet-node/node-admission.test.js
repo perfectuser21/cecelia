@@ -1,4 +1,4 @@
-import {completeReport as healthFixture,merge} from '../../__tests__/helpers/fleet-health-fixture.js';
+import {completeReport as healthFixture,merge} from '../../__tests__/helpers/fleet-config-fs-fixture.js';
 import { describe, expect, it } from 'vitest';
 
 const NOW_MS = Date.parse('2026-07-27T08:00:00.000Z');
