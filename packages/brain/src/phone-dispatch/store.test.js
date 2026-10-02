@@ -21,7 +21,7 @@ it('HTTP binding迁移不补写既有508 lease，不创建grant或改当前节�
  const before=(await pool.query('SELECT * FROM phone_dispatches WHERE id=$1',[r.id])).rows[0];
  const grants=(await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows;
  const nodes=(await pool.query('SELECT * FROM execution_nodes ORDER BY canonical_id')).rows;
- await pool.query(readFileSync(new URL('../../migrations/510_phone_http_bindings.sql',import.meta.url),'utf8'));
+ await pool.query(readFileSync(new URL('../../migrations/511_phone_http_bindings.sql',import.meta.url),'utf8'));
  expect((await pool.query('SELECT * FROM phone_dispatches WHERE id=$1',[r.id])).rows[0]).toEqual(before);
  expect((await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows).toEqual(grants);
  expect((await pool.query('SELECT * FROM execution_nodes ORDER BY canonical_id')).rows).toEqual(nodes);
@@ -277,9 +277,9 @@ it('finish 保留已写handoff；提交后真实pool上的接棒入口仍能读�
  await checked.finish(r.id,receipt(r));expect(calls).toBe(1);
 });
 
-it('已部署Linux507、手机508、Hub510与C1 512各自留schema_version，不抢用同一版本号',async()=>{
- const rows=(await pool.query("SELECT version,description FROM schema_version WHERE version IN ('507','508','510','512') ORDER BY version")).rows;
- expect(rows.map(row=>row.version)).toEqual(['507','508','510','512']);
+it('已部署Linux507、手机508、Hub511与C1 512各自留schema_version，不抢用同一版本号',async()=>{
+ const rows=(await pool.query("SELECT version,description FROM schema_version WHERE version IN ('507','508','511','512') ORDER BY version")).rows;
+ expect(rows.map(row=>row.version)).toEqual(['507','508','511','512']);
  expect(rows[0].description).not.toContain('手机独立');
  expect(rows[1].description).toContain('手机独立');
 });
