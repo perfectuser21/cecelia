@@ -26,6 +26,17 @@ beforeEach(async () => {
 });
 afterEach(async () => { if (client) { await client.query('ROLLBACK'); if (schema) await client.query(`DROP SCHEMA ${schema} CASCADE`); await client.end(); } });
 describe('六层目录真实PG边界', () => {
+  it('认领旧writer链接只新增目录收据，不改其hash/标题',async()=>{
+    const id=randomUUID(),page=randomUUID(),dbId=randomUUID();
+    await client.query("INSERT INTO projection_links(target,entity_type,entity_id,external_id,content_hash) VALUES('notion','steps',$1,$2,'legacy-hash')",[id,page]);
+    let props={'步骤':{title:[{text:{content:'KR · 人工保留'}}]}};
+    const notionReq=async(_t,_p,method,body)=>{if(method==='PATCH')Object.assign(props,body.properties);return{id:page,parent:{database_id:dbId},properties:structuredClone(props)};};
+    const row={id,table:'steps',allowCreate:true,createProperties:{'步骤':{title:[{text:{content:'新标题'}}]}}};
+    await projectDirectoryPage(client,{token:'test',dbId,row,properties:{'Brain ID':{rich_text:[{text:{content:id}}]}},notionReq});
+    expect(props['步骤'].title[0].text.content).toBe('KR · 人工保留');
+    expect((await client.query("SELECT content_hash FROM projection_links WHERE target='notion'")).rows[0].content_hash).toBe('legacy-hash');
+    expect((await client.query("SELECT * FROM projection_links WHERE target='notion-directory'")).rows).toHaveLength(1);
+  });
   it('单快照读取真实refs，两流程共享同活动和step，未部署版本schema也能读取', async () => {
     const w1=randomUUID(),w2=randomUUID(),a=randomUUID(),s=randomUUID();
     await client.query(`INSERT INTO workflows VALUES($1,'A','a',NULL),($2,'B','b',NULL);
