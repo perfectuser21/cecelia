@@ -127,6 +127,15 @@ it('active已提交但阶段回执丢失跨24小时后，按实际current versio
  expect(await recover('script',machine,original,envelope)).toMatchObject({phase:'renew_wait',expected_version_id:p.execution_version_id});
  expect((await pool.query('SELECT state FROM linux_script_authorizations WHERE id=$1',[p.id])).rows[0].state).toBe('revoked');
 });
+it('启动失败但精确清理已签名确认时仅归档旧canary并重读安装身份，不能直接激活',async()=>{
+ const p=await service.prepare(machine,{expected_version_id:null}),r=(await signed(p)).receipt;r.schema_version='linux-script-canary-cleanup/v1';delete r.script_adapter_verified;
+ r.cases=r.cases.map(({proof,terminal,...c})=>({...c,not_started:false}));const envelope={receipt:r,signature:createHmac('sha256',f.deployment.key).update(JSON.stringify(r)).digest('hex')};
+ await expect(service.activate(machine,{runtime_id:p.id,expected_version_id:null,envelope})).rejects.toThrow('linux_pool_runtime_receipt_invalid');
+ const recover=createOnboardingRecovery({pool,runtimeAuthorization:service,readRuntime:async()=>f.deployment,afterTerminal:async()=>{}});
+ expect(await recover('script',machine,{runtime_json:JSON.stringify(p),expected_version_id:null},envelope)).toEqual({phase:'renew_wait',expected_version_id:null});
+ expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[p.evidence_task_id])).rows[0].status).toBe('archived');
+ expect((await pool.query('SELECT state FROM execution_grants WHERE node_version_id=$1',[p.execution_version_id])).rows.every(g=>g.state==='revoked')).toBe(true);
+});
 it('激活中途失败回滚task完成/证据/目录/grants；授权历史及过期不可扩张',async()=>{
  const p=await service.prepare(machine,{expected_version_id:null});await pool.query(`CREATE FUNCTION reject_script_active() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state='active' THEN RAISE EXCEPTION 'fixture_failure';END IF;RETURN NEW;END $$;CREATE TRIGGER reject_script_active BEFORE UPDATE ON execution_grants FOR EACH ROW EXECUTE FUNCTION reject_script_active()`);
  try{await expect(service.activate(machine,{runtime_id:p.id,expected_version_id:null,envelope:await signed(p)})).rejects.toThrow('fixture_failure');}finally{await pool.query('DROP TRIGGER reject_script_active ON execution_grants;DROP FUNCTION reject_script_active()');}

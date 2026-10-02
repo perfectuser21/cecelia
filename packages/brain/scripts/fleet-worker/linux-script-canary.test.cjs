@@ -31,6 +31,14 @@ function setup(){
  return {root,nonce,key,calls,config,deps,set lost(v){lost=v;},set removeFailure(v){removeFailure=v;}};
 }
 describe('真实受限adapter专用canary编排',()=>{
+ it('失败后只在所有精确墓碑齐全时返回独立cleanup回执，旧nonce不重启',async()=>{
+  const x=setup();x.lost=true;x.removeFailure=true;await expect(runLinuxScriptCanary({nonce:x.nonce,cleanupReceipt:true},x.deps)).rejects.toThrow();
+  await expect(runLinuxScriptCanary({nonce:x.nonce,cleanupReceipt:true},x.deps)).rejects.toThrow();x.removeFailure=false;
+  const e=await runLinuxScriptCanary({nonce:x.nonce,cleanupReceipt:true},x.deps);
+  expect(e.receipt).toMatchObject({schema_version:'linux-script-canary-cleanup/v1',nonce:x.nonce,execution:false,cleanup_confirmed:true});
+  expect(e.receipt.script_adapter_verified).toBeUndefined();expect(e.receipt.cases[0].cleanup).toMatchObject({absent:true,tombstoned:true});
+  expect(e.signature).toBe(createHmac('sha256',x.key).update(JSON.stringify(e.receipt)).digest('hex'));expect(x.calls.filter(a=>a==='start')).toHaveLength(1);
+ });
  it('写盘与读取使用同一边界，超限不覆盖已有可读日志',()=>{
   const x=setup(),store=createCanaryJournal(x.root,process.getuid(),{maxBytes:256}),state={schema_version:'linux-pool-canary-state/v1',nonce:x.nonce,cleanup_confirmed:true};
   store.save(state);expect(()=>store.save({...state,extra:'x'.repeat(256)})).toThrow();expect(store.read(x.nonce)).toEqual(state);

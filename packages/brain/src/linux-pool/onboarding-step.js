@@ -62,13 +62,15 @@ export function createLinuxOnboardingStep({pool,ssh=createOnboardingSSH(),creden
    case 'pool_canary':return next('pool_attest',{pool_envelope_json:JSON.stringify(await remote('pool_canary',{nonce:state.challenge.nonce}))});
    case 'pool_attest':{
     const envelope=JSON.parse(state.pool_envelope_json);
-    if(await recover('pool',id,state,envelope))return next('pool_challenge',{pool_envelope_json:null,attestation_id:null});
+    const recovered=await recover('pool',id,state,envelope);
+    if(recovered)return next(recovered.phase??'pool_challenge',{...(recovered===true?{}:recovered),pool_envelope_json:null,attestation_id:null});
     const found=(await pool.query(`SELECT id FROM linux_pool_attestations WHERE challenge_id=$1 AND machine_registry_id=$2 AND signed_payload=$3 AND signature=$4 AND state IN ('accepted','ready')`,
      [state.challenge.id,id,JSON.stringify(envelope.receipt),envelope.signature])).rows[0];
     const result=found??await poolAuthorization.attest(id,{challenge_id:state.challenge.id,envelope});return next('pool_ready',{attestation_id:result.id});
    }
    case 'pool_ready':{
-    if(await recover('pool',id,state,JSON.parse(state.pool_envelope_json)))return next('pool_challenge',{pool_envelope_json:null,attestation_id:null});
+    const recovered=await recover('pool',id,state,JSON.parse(state.pool_envelope_json));
+    if(recovered)return next(recovered.phase??'pool_challenge',{...(recovered===true?{}:recovered),pool_envelope_json:null,attestation_id:null});
     const found=(await pool.query(`SELECT a.execution_version_id FROM linux_pool_attestations a JOIN execution_nodes n ON n.machine_registry_id=a.machine_registry_id
      WHERE a.id=$1 AND a.machine_registry_id=$2 AND a.state='ready' AND n.current_version_id=a.execution_version_id`,[state.attestation_id,id])).rows[0];
     const result=found??await poolAuthorization.activate(id,{attestation_id:state.attestation_id,expected_version_id:state.expected_version_id});

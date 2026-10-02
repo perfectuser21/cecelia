@@ -122,7 +122,7 @@ def dispatch(p, deps=None):
   # 只准调用已安装的两个固定canary；回执由原CLI按本机凭据签名。
   if json.loads(read('/etc/cecelia/script-pool.json')).get('machine_registry_id') != p['machine_registry_id']: _deny()
   filename = 'linux-pool-canary.cjs' if action == 'pool_canary' else 'linux-script-canary.cjs'
-  return json.loads(run(_NODE, [_WORKER + filename, '--nonce', p['nonce']]))
+  return json.loads(run(_NODE, [_WORKER + filename, '--nonce', p['nonce'], '--cleanup-receipt']))
  finally:
   try:
    # 1Password仍是真身；正式安装文件自有600，失败路径也清理传输落点。

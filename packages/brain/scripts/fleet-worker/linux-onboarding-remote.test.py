@@ -67,7 +67,7 @@ class RemoteTests(unittest.TestCase):
   runtime['worker_boot_id']=str(uuid.uuid4())
   with self.assertRaises(ValueError):self.call(request)
   self.assertEqual(self.call({'action':'script_canary','machine_registry_id':self.machine,'nonce':'a'*64}),{'signature':'existing-canary'})
-  self.assertEqual(self.calls[-1][1],['/usr/local/libexec/cecelia/fleet-worker/linux-script-canary.cjs','--nonce','a'*64])
+  self.assertEqual(self.calls[-1][1],['/usr/local/libexec/cecelia/fleet-worker/linux-script-canary.cjs','--nonce','a'*64,'--cleanup-receipt'])
  def test_renewal_reads_current_boot_without_install_or_secret_transport(self):
   self.call();self.worker=str(uuid.uuid4());self.write('/run/cecelia-script/worker-boot-id',self.worker)
   request={k:self.request[k] for k in ['machine_registry_id','nonce','intent_id','pool','revision']};request['action']='installation'
