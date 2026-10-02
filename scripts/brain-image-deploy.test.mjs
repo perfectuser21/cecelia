@@ -37,6 +37,18 @@ test('Docker部署先保护后build，sidecar携带同一ledger卷和intent，�
  const sidecar=await readFile(new URL('./lib/bluegreen-sidecar.sh',import.meta.url),'utf8');
  assert.match(sidecar,/retention_finish success/);assert.match(sidecar,/retention_finish recovered/);
  const rollback=await readFile(new URL('./brain-rollback.sh',import.meta.url),'utf8');
- assert.ok(rollback.indexOf('retention_begin')<rollback.indexOf('# Stop current'));
- assert.match(rollback,/retention_finish success/);
+ assert.ok(rollback.indexOf('retention_rollback')<rollback.indexOf('# Stop current'));
+ assert.match(rollback,/retention_finish "\$CECELIA_ROLLBACK_OUTCOME"/);
+});
+test('默认disabled不引入不存在的Janitor挂载，可信intent才选择独立compose卷配置',async t=>{
+ const base=await readFile(new URL('../docker-compose.us-vps.yml',import.meta.url),'utf8');
+ assert.ok(!base.includes('/mnt/openclaw_data/cecelia-janitor'));
+ const f=await fixture(t);
+ const command='source "$1"; retention_begin 1.0.2 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; printf "%s" "${RETENTION_COMPOSE_ARGS[*]:-}"';
+ const disabled=await run('bash',['-euc',command,'_',f.helper],{env:{...process.env,FIXTURE_LOG:f.log,FIXTURE_DISABLED:'1'}});
+ assert.equal(disabled.stdout,'');
+ const enabled=await run('bash',['-euc',command,'_',f.helper],{env:{...process.env,FIXTURE_LOG:f.log}});
+ assert.match(enabled.stdout,/-f .*docker-compose.image-retention.yml/);
+ const overlay=await readFile(new URL('../docker-compose.image-retention.yml',import.meta.url),'utf8');
+ assert.match(overlay,/create_host_path: false/);assert.match(overlay,/\/run\/cecelia-docker-data/);
 });
