@@ -105,12 +105,17 @@ function validateCiEvidence(items, definitions, components) {
   const valid = [], gaps = [];
   for (const [index, { report, receipt }] of items.entries()) {
     const repo = report?.source?.repo, revision = report?.source?.head_revision;
+    if(receipt?.purpose==='admission_only'||report?.ci_context?.purpose==='admission_only'){gaps.push({code:'ci_admission_only',index});continue;}
     try { assertImplementationReport(report); } catch (error) { gaps.push({code:'ci_report_unverified',index,reason:error.code || 'IMPACT_REPORT_INVALID'}); continue; }
     let ok = report?.mapping_status === 'verified' && report?.truncated === false && Array.isArray(report?.gaps) && !report.gaps.length
       && components.some(c => c.kind === 'repo' && c.repo === repo && c.revision === revision)
       && receipt?.actor === 'implementation_ci_gate' && receipt?.verdict === 'PASS' && receipt?.scope === 'regression_tests'
       && same(receipt?.source, report?.source)
       && receipt?.report_sha256 === createHash('sha256').update(JSON.stringify(report)).digest('hex');
+    if(report.governance_evidence)ok &&= same(receipt?.governance_evidence?.files,report.governance_evidence.files)
+      && receipt?.governance_evidence?.policy_sha256===report.governance_evidence.policy_sha256
+      && receipt?.governance_evidence?.checks?.length===report.governance_evidence.checks.length
+      && receipt.governance_evidence.checks.every(c=>c&&c.exit_code===0&&!c.error&&report.governance_evidence.checks.some(r=>r.id===c.id&&r.path===c.path&&r.script_sha256===c.script_sha256));
     const assertions = report?.required_assertions;
     ok &&= Array.isArray(assertions) && assertions.length > 0 && Array.isArray(receipt?.assertions)
       && assertions.every(a => a && a.source_repo === repo && receipt.assertions.some(r => r && r.assertion_ref === a.assertion_ref && r.source_repo === repo && r.source_revision === revision

@@ -1,0 +1,166 @@
+name: Implementation impact
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      base_revision:
+        description: '固定基线40位SHA（须已有中央历史定义）'
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      source_repo: {required: true, type: string}
+      scope: {required: true, type: string}
+      base_revision: {required: true, type: string}
+      head_revision: {required: true, type: string}
+      mode: {required: true, type: string}
+      tooling_revision: {required: true, type: string}
+    secrets:
+      TS_AUTHKEY: {required: true}
+      CECELIA_INTERNAL_TOKEN: {required: true}
+      BRAIN_DEPLOY_URL: {required: false}
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: implementation-impact-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  snapshot-main:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+      - name: 固定main中央定义导出
+        env:
+          BRAIN_URL: ${{ secrets.BRAIN_DEPLOY_URL || 'http://100.79.41.61:5221' }}
+          CECELIA_INTERNAL_TOKEN: ${{ secrets.CECELIA_INTERNAL_TOKEN }}
+          MAP_SCOPE: ${{ inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr' }}
+          SOURCE_REPO: ${{ inputs.source_repo || github.repository }}
+          BASE: ${{ inputs.base_revision || github.event.before }}
+          HEAD: ${{ inputs.head_revision || github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$CECELIA_INTERNAL_TOKEN" || { echo '::error::CECELIA_INTERNAL_TOKEN未配置'; exit 1; }
+          [[ "$BASE" =~ ^[0-9a-f]{40}$ && "$HEAD" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          mkdir -p evidence
+          for side in base head; do
+            revision="$BASE"; if [[ "$side" == head ]]; then revision="$HEAD"; fi
+            curl --fail-with-body --silent --show-error --get "$BRAIN_URL/api/brain/implementation-ci/snapshot" \
+              -H "X-Internal-Token: $CECELIA_INTERNAL_TOKEN" \
+              --data-urlencode "scope=$MAP_SCOPE" --data-urlencode "repo=$SOURCE_REPO" --data-urlencode "revision=$revision" > "evidence/$side.json"
+          done
+          if jq -e '.snapshot.gaps[]? | select(.code == "definition_snapshot_missing")' evidence/head.json >/dev/null; then
+            jq -n --arg scope "$MAP_SCOPE" --arg repo "$SOURCE_REPO" --arg revision "$HEAD" '{scope:$scope,repo:$repo,revision:$revision}' > evidence/refresh-request.json
+            curl --fail-with-body --silent --show-error "$BRAIN_URL/api/brain/implementation-ci/refresh" \
+              -H "X-Internal-Token: $CECELIA_INTERNAL_TOKEN" -H 'Content-Type: application/json' \
+              --data-binary @evidence/refresh-request.json > evidence/head.json
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: implementation-snapshot-${{ inputs.head_revision || github.sha }}
+          path: evidence/head.json
+          retention-days: 90
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: implementation-baseline-${{ inputs.head_revision || github.sha }}
+          path: evidence/base.json
+          retention-days: 90
+          if-no-files-found: error
+  gate:
+    name: Implementation impact gate
+    needs: [snapshot-main]
+    if: always() && (github.event_name == 'pull_request' || needs.snapshot-main.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: isolated-ci
+          POSTGRES_DB: cecelia_scratch
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      DB_HOST: localhost
+      DB_PORT: '5432'
+      DB_NAME: cecelia_scratch
+      DB_USER: ci
+      DB_PASSWORD: isolated-ci
+      MAP_SCOPE: ${{ inputs.scope || vars.IMPLEMENTATION_MAP_SCOPE || 'cecelia-kr' }}
+      BASE: ${{ inputs.base_revision || github.event.pull_request.base.sha || github.event.before }}
+      HEAD: ${{ inputs.head_revision || github.event.pull_request.head.sha || github.sha }}
+      MODE: ${{ inputs.mode || (github.event_name == 'pull_request' && 'pr' || 'main') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: perfectuser21/cecelia
+          ref: ${{ inputs.tooling_revision || github.event.pull_request.base.sha || github.sha }}
+          path: tooling
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.source_repo || github.repository }}
+          ref: ${{ inputs.head_revision || github.event.pull_request.head.sha || github.sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tooling/package-lock.json
+      - name: 下载固定SHA中央bundle（PR无中央写凭据）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$BASE" =~ ^[0-9a-f]{40}$ && "$HEAD" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          mkdir -p "$RUNNER_TEMP/implementation-input" "$RUNNER_TEMP/implementation-output"
+          if [[ "$MODE" == main ]]; then
+            gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "implementation-snapshot-$HEAD" -D "$RUNNER_TEMP/implementation-input/head"
+            gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" -n "implementation-baseline-$HEAD" -D "$RUNNER_TEMP/implementation-input/base"
+          else
+            artifact=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=implementation-snapshot-$BASE" | jq -r --arg base "$BASE" '.artifacts | map(select(.expired == false and .workflow_run.head_branch == "main" and .workflow_run.head_sha == $base and .workflow_run.repository_id == .workflow_run.head_repository_id)) | first | .id // empty')
+            test -n "$artifact" || { echo '::error::固定base中央snapshot artifact缺失，不能用latest'; exit 1; }
+            artifact_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact" --jq '.workflow_run.id')
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$artifact_run" --jq '.event + " " + .path' | grep -Eq '^(push|workflow_dispatch) .github/workflows/implementation-impact.yml$' || exit 1
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > "$RUNNER_TEMP/implementation-input/base.zip"
+            unzip -q "$RUNNER_TEMP/implementation-input/base.zip" -d "$RUNNER_TEMP/implementation-input/base"
+            mv "$RUNNER_TEMP/implementation-input/base/head.json" "$RUNNER_TEMP/implementation-input/base/base.json"
+            mkdir -p "$RUNNER_TEMP/implementation-input/head"
+            cp "$RUNNER_TEMP/implementation-input/base/base.json" "$RUNNER_TEMP/implementation-input/head/head.json"
+          fi
+      - name: 固定回归依赖
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends zsh jq libxml2-utils python3
+      - run: npm ci --ignore-scripts
+        working-directory: tooling
+      - run: npm ci --ignore-scripts
+        working-directory: source
+      - name: scratch正式迁移
+        run: node tooling/packages/brain/src/migrate.js
+      - name: 实际变更影响与固定回归
+        run: |
+          node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$GITHUB_WORKSPACE/source" --scope "$MAP_SCOPE" \
+            --base "$BASE" --head "$HEAD" --mode "$MODE" \
+            --snapshot-base "$RUNNER_TEMP/implementation-input/base/base.json" \
+            --snapshot-head "$RUNNER_TEMP/implementation-input/head/head.json" --output-dir "$RUNNER_TEMP/implementation-output"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: implementation-evidence-${{ inputs.head_revision || github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/implementation-output/
+          retention-days: 90
+          if-no-files-found: error

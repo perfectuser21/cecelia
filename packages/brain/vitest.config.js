@@ -6,6 +6,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js',
+  'src/lib/__tests__/integration/implementation-ci-company.test.js',
+  'src/lib/__tests__/integration/implementation-ci-pilots.test.js',
+  'src/lib/__tests__/integration/capability-regressions.test.js',
+  'src/routes/__tests__/integration/capability-regressions.test.js',
+  'src/lib/__tests__/integration/capability-system-evidence.test.js',
+  'src/routes/__tests__/integration/implementation-ci.test.js',
+  'src/lib/__tests__/integration/capability-system.test.js',
+  'src/routes/__tests__/integration/capability-system.test.js',
+  'src/lib/__tests__/integration/implementation-ci-snapshot.test.js',
   'src/lib/__tests__/integration/implementation-report.test.js',
   'src/lib/__tests__/integration/release-index.test.js',
   'src/lib/__tests__/integration/run-definition-binding.test.js',

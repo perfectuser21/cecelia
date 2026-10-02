@@ -1,4 +1,5 @@
 /** 固定影响报告→本仓固定测试→执行收据；不执行网络报告携带的 command。 */
+import { collectGovernanceEvidence } from './registry-lint.mjs';
 import { createHash } from 'node:crypto';
 import { assertImplementationReport as assertReport } from '../../packages/brain/src/lib/implementation-report.js';
 import { execFileSync,spawnSync } from 'node:child_process';
@@ -59,6 +60,8 @@ export async function runImplementationGate({repoRoot,report,timeoutMs=300000}) 
   if(git(root,'status','--porcelain=v1','--untracked-files=no').trim())fail('IMPACT_SOURCE_STATE_DIRTY');
   const actual=git(root,'diff','--no-renames','--name-only','-z',source.base_revision,source.head_revision,'--').split('\0').filter(Boolean).sort();
   if(JSON.stringify(actual)!==JSON.stringify(changedPaths(source.changed_files)))fail('IMPACT_DIFF_MISMATCH');
+  const governance=collectGovernanceEvidence(root,source);
+  if(JSON.stringify(governance?.files||[])!==JSON.stringify(report.governance_evidence?.files||[]))fail('IMPACT_GOVERNANCE_SOURCE_MISMATCH');
   const prepared=[];
   for(const assertion of report.required_assertions)prepared.push(await prepareAssertion(root,assertion,repo,source.head_revision));
   const assertions=[];
@@ -77,7 +80,7 @@ export async function runImplementationGate({repoRoot,report,timeoutMs=300000}) 
   }
   return {schema_version:1,source,report_sha256:sha(JSON.stringify(report)),actor:'implementation_ci_gate',
     verdict:assertions.every(item=>item.exit_code===0&&!item.error)?'PASS':'FAIL',assertions,
-    scope:'regression_tests',business_runtime_status:'not_evaluated',recorded_at:new Date().toISOString()};
+    ...(governance&&{governance_evidence:governance}),scope:report.impact_status==='governance_only'?'governance_checks':'regression_tests',business_runtime_status:'not_evaluated',recorded_at:new Date().toISOString()};
 }
 
 async function main() {
