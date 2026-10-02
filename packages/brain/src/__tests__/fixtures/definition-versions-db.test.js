@@ -3,7 +3,7 @@ const state=vi.hoisted(()=>({config:{database:'cecelia_scratch',host:'/tmp'},que
 vi.mock('../../db-config.js',()=>({DB_DEFAULTS:state.config}));
 vi.mock('pg',()=>({default:{Client:class{
  async connect(){state.connects++;}
- async query(sql){state.queries.push(sql);if(/LIKE\s+public\./i.test(sql))throw Error('forbidden_public_copy');if(state.fail&&/CREATE TABLE/.test(sql))throw Error('fixture_setup_failure');return {rows:[{name:state.config.database,database:state.config.database,schema:state.schema}],rowCount:1};}
+ async query(sql){state.queries.push(sql);const match=sql.match(/SET search_path TO ([a-z0-9_]+)/);if(match)state.schema=match[1];if(state.fail&&/CREATE TABLE/.test(sql))throw Error('fixture_setup_failure');if(/LIKE\s+public\./i.test(sql))throw Error('forbidden_public_copy');return {rows:[{name:state.config.database,database:state.config.database,schema:state.schema}],rowCount:1};}
  async end(){state.ends++;}
 }}}));
 import {versionsDatabase} from './definition-versions-db.js';
