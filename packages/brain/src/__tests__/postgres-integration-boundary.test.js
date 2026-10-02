@@ -4,6 +4,7 @@ import integrationConfig from '../../vitest.integration.config.js';
 
 // 两个真 PG 回归曾被普通 QuickCheck 选进无 DB 的单元检查，连接错误掩盖真实断言。
 const realPostgresCases = [
+  'src/phone-dispatch/store.test.js',
   'src/__tests__/integration/account-quota-ledger.pg.integration.test.js',
   'src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js',
 ];
