@@ -41,3 +41,21 @@ test('只允许精确原镜像恢复回执解除失败部署保护；不会登�
  x.state.current=x.state.health=1;await x.ledger.finish(x.request.deployment_id,'recovered');
  const state=await x.store.read('ledger.json');assert.equal(state.pending,null);assert.equal(state.successes.length,0);
 });
+test('失败部署只能复用原pending恢复previous完整身份，未知目标不能清保护',async t=>{
+ const x=await setup(t);await x.ledger.begin(x.request);x.state.current=x.state.health=2;
+ const request={deployment_id:randomUUID(),version:'1.0.1',git_sha:sha(1),image_id:image(1)};
+ await assert.rejects(x.ledger.rollback({...request,image_id:image(3)}),/ROLLBACK_TARGET_MISMATCH/);
+ const result=await x.ledger.rollback(request);
+ assert.equal(result.deployment_id,x.request.deployment_id);assert.equal(result.outcome,'recovered');assert.equal(result.image_id,image(1));
+ assert.deepEqual(await x.ledger.rollback(request),result);
+ assert.ok((await x.store.read('ledger.json')).pending);
+ await assert.rejects(x.ledger.finish(x.request.deployment_id,'success'),/DEPLOYMENT_RECOVERING/);
+ x.state.current=x.state.health=1;await x.ledger.finish(result.deployment_id,result.outcome);
+ assert.equal((await x.store.read('ledger.json')).pending,null);assert.equal((await x.store.read('ledger.json')).successes.length,0);
+});
+test('没有未决部署时rollback建立正常回滚保护，并绑定实际目标完整ID',async t=>{
+ const x=await setup(t),request={deployment_id:randomUUID(),version:'1.0.3',git_sha:sha(3),image_id:image(3)};
+ const result=await x.ledger.rollback(request);assert.equal(result.deployment_id,request.deployment_id);assert.equal(result.outcome,'success');
+ x.state.current=x.state.health=3;await x.ledger.finish(result.deployment_id,result.outcome);
+ assert.equal((await x.store.read('ledger.json')).successes[0].image_id,image(3));
+});
