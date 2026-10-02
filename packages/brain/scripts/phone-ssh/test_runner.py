@@ -14,6 +14,7 @@ import time
 import unittest
 from unittest.mock import patch
 import uuid
+from adb_socket_fixture import SocketFixture
 
 
 def load():
@@ -29,12 +30,15 @@ class PhoneRunnerTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.count = self.root / 'launches'
         self.adb = self.root / 'adb'
+        self.daemon = SocketFixture(self.root, self.count)
         self.fake_adb()
 
     def tearDown(self):
+        self.daemon.close()
         self.tmp.cleanup()
 
     def fake_adb(self, sleep=0):
+        self.daemon.set(sleep=sleep)
         self.adb.write_text('#!' + sys.executable + '\nimport sys,time\n'
                             + 'assert sys.argv[1:]==["-s","fixture-serial","get-state"]\n'
                             + 'with open(' + repr(str(self.count)) + ',"a") as f:f.write("launch\\n")\n'
@@ -44,7 +48,7 @@ class PhoneRunnerTest(unittest.TestCase):
     def setup_runner(self, **extra):
         m = load()
         self.config = m.Config(journal_root=str(self.root / 'journal'), lock_root=str(self.root / 'locks'),
-                               adb=str(self.adb), machine_id='fixture-machine', worker_id='fixture-worker',
+                               adb=str(self.adb), adb_server_port=self.daemon.port, machine_id='fixture-machine', worker_id='fixture-worker',
                                host='fixture-host', drain_path=str(self.root / 'drain'),
                                assert_resources=lambda: None, hard_cap_sec=0.7, **extra)
         self.runner = m.Runner(self.config)
@@ -224,6 +228,7 @@ class PhoneRunnerTest(unittest.TestCase):
                   + 'c=runner.Config(journal_root=' + repr(self.config.journal_root)
                   + ',lock_root=' + repr(self.config.lock_root)
                   + ',adb=' + repr(self.config.adb)
+                  + ',adb_server_port=' + str(self.daemon.port)
                   + ',machine_id="fixture-machine",worker_id="fixture-worker",host="fixture-host",'
                   + 'drain_path=' + repr(self.config.drain_path)
                   + ',assert_resources=lambda:None);'
@@ -260,6 +265,7 @@ class PhoneRunnerTest(unittest.TestCase):
         self.assertEqual(receipt['reason'], 'phone_cancelled')
         self.assertEqual(r.cancel(self.identity), receipt)
         self.assertEqual(self.launches(), 1)
+        self.assertIsNone(self.daemon.child.poll())
 
     def test_dead_worker_cancel_requires_real_child_exit_before_lease_release(self):
         r = self.setup_runner()
