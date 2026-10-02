@@ -109,3 +109,16 @@ describe('真实受限adapter专用canary编排',()=>{
   for(const patch of [{getuid:()=>501},{lockHeld:false},{platform:'darwin'}]){const x=setup();await expect(runLinuxScriptCanary({nonce:x.nonce},{...x.deps,...patch})).rejects.toThrow();expect(x.calls).toEqual([]);}
  });
 });
+
+it('proof失败先落固定安全阶段，再请求精确cleanup；任意异常字段不能注入journal',async()=>{
+ const x=setup(),secret='sentinel-private-error';let failureBeforeCancel;
+ x.deps.collectProof=async()=>{throw Object.assign(Error(secret),{stage:secret,code:secret});};
+ const cancel=x.deps.client.cancel;x.deps.client.cancel=async body=>{
+  failureBeforeCancel=JSON.parse(fs.readFileSync(path.join(x.root,x.nonce+'.json'))).failure;
+  return cancel(body);
+ };
+ await expect(runLinuxScriptCanary({nonce:x.nonce},x.deps)).rejects.toThrow('linux_script_canary_unconfirmed');
+ expect(failureBeforeCancel).toEqual({stage:'proof_collection',code:'linux_script_canary_unconfirmed',observed_at:expect.any(String)});
+ const raw=fs.readFileSync(path.join(x.root,x.nonce+'.json'),'utf8');expect(raw).not.toContain(secret);expect(raw).not.toContain(x.key);
+ const state=JSON.parse(raw);expect(state.cleanup_confirmed).toBe(true);expect(state.envelope).toBeUndefined();
+});
