@@ -97,7 +97,7 @@ def dispatch(p, deps=None):
     fact = probe(p['pool'].get('canary_image'))
     if upgrade is not None:
      old = json.loads(read(_BASE+'/'+previous['intent_id']+'/intent.json', mode=0o600))
-     if old.get('binding')!=previous['binding'] or old.get('phase')!='started': _deny()
+     if old.get('binding')!=previous['binding'] or old.get('phase') not in ['started','installed']: _deny()
     directory = base / p['intent_id']; parents(directory, True); credential_stage = directory
     marker = directory / 'intent.json'
     bound = {k:p[k] for k in ['machine_registry_id','pool','revision','sources']}
