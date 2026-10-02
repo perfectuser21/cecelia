@@ -16,16 +16,16 @@ beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${sch
  CREATE TABLE capacity_reservations(id UUID,machine_id TEXT,status TEXT);
  CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB,updated_at TIMESTAMPTZ DEFAULT now());
  CREATE TABLE execution_nodes(machine_registry_id UUID PRIMARY KEY,current_version_id UUID);
- CREATE TABLE execution_node_versions(id uuid PRIMARY KEY,state text);
+ CREATE TABLE execution_node_versions(id uuid PRIMARY KEY,state text,machine_registry_id uuid);
  CREATE TABLE execution_grants(id uuid PRIMARY KEY,node_version_id uuid,state text,expires_at timestamptz,surface text,provider text,profile_id text);
  CREATE TABLE linux_script_authorizations(id UUID PRIMARY KEY,machine_registry_id UUID,execution_version_id UUID,state TEXT,authorization_expires_at TIMESTAMPTZ,grant_ids jsonb,policy JSONB,evidence_task_id UUID);
  CREATE FUNCTION fixture_grants() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE grant_id uuid:=gen_random_uuid(); BEGIN
- INSERT INTO execution_node_versions VALUES(NEW.execution_version_id,'active');
+ INSERT INTO execution_node_versions(id,state) VALUES(NEW.execution_version_id,'active');
  INSERT INTO execution_grants VALUES(grant_id,NEW.execution_version_id,'active',NEW.authorization_expires_at,'managed_script','script','shell');
  NEW.grant_ids:=jsonb_build_object('shell',grant_id);RETURN NEW;END $$;
  CREATE TRIGGER fixture_grants BEFORE INSERT ON linux_script_authorizations FOR EACH ROW EXECUTE FUNCTION fixture_grants();`);});
 afterAll(async()=>{await pool.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();});
-beforeEach(async()=>{await pool.query('TRUNCATE tasks,system_registry,execution_nodes,linux_script_authorizations,execution_node_versions,execution_grants');parent=randomUUID();machine={id:randomUUID(),name:'new-linux',metadata:{role:'worker',node_health:{os:'linux'},onboarding:{request:{name:'new-linux',address:'100.64.0.2',ssh_user:'root',ssh_port:22,credential_ref:'op://CS/test/private key',host_key_fingerprint:'SHA256:'+'a'.repeat(43),role:'worker',region:'HK'}}}};
+beforeEach(async()=>{await pool.query('TRUNCATE tasks,system_registry,execution_nodes,linux_script_authorizations,execution_node_versions,execution_grants,task_events,work_routing_receipts,capacity_reservations');parent=randomUUID();machine={id:randomUUID(),name:'new-linux',metadata:{role:'worker',node_health:{os:'linux'},onboarding:{request:{name:'new-linux',address:'100.64.0.2',ssh_user:'root',ssh_port:22,credential_ref:'op://CS/test/private key',host_key_fingerprint:'SHA256:'+'a'.repeat(43),role:'worker',region:'HK'}}}};
  machine.metadata.onboarding.id=machine.id;
  await pool.query("INSERT INTO tasks(id,status,payload) VALUES($1,'completed',$2)",[parent,{node_onboarding:{id:machine.metadata.onboarding.id,request:machine.metadata.onboarding.request}}]);
  await pool.query("INSERT INTO system_registry(id,type,name,status,metadata) VALUES($1,'machine',$2,'active',$3)",[machine.id,machine.name,machine.metadata]);});
@@ -141,7 +141,7 @@ it('原官方retry保留误收failed历史，以同机新私有controller棒从p
  expect((await pool.query('SELECT status,error_message FROM tasks WHERE id=$1',[id])).rows[0]).toMatchObject({status:'failed',error_message:old.error_message});
  expect((await f.retry(id)).task_id).toBe(next.task_id);
 });
-it.each(['event','route','source','revoked','occupied','other_error','foreign_claim'])('恢复拒绝%s，不能把公共payload变成controller授权',async kind=>{
+it.each(['event','route','source','revoked','occupied','other_error','foreign_claim','active_grant','unretired_runtime'])('恢复拒绝%s，不能把公共payload变成controller授权',async kind=>{
  const {f,id}=await failedController();
  if(kind==='event')await pool.query('DELETE FROM task_events WHERE task_id=$1',[id]);
  if(kind==='route')await pool.query('DELETE FROM work_routing_receipts WHERE task_id=$1',[id]);
@@ -150,5 +150,14 @@ it.each(['event','route','source','revoked','occupied','other_error','foreign_cl
  if(kind==='occupied')await pool.query("INSERT INTO capacity_reservations VALUES($1,$2,'running')",[randomUUID(),machine.name]);
  if(kind==='other_error')await pool.query("UPDATE tasks SET error_message='unrelated_failure' WHERE id=$1",[id]);
  if(kind==='foreign_claim')await pool.query("UPDATE tasks SET claimed_by='other-session' WHERE id=$1",[id]);
+ if(kind==='active_grant'){const v=randomUUID();await pool.query("INSERT INTO execution_node_versions VALUES($1,'active',$2)",[v,machine.id]);await pool.query("INSERT INTO execution_grants VALUES($1,$2,'active',now()+interval '1 hour','managed_script','script','shell')",[randomUUID(),v]);}
+ if(kind==='unretired_runtime')await pool.query("INSERT INTO linux_script_authorizations(id,machine_registry_id,execution_version_id,state,authorization_expires_at) VALUES($1,$2,$3,'prepared',now()+interval '1 hour')",[randomUUID(),machine.id,randomUUID()]);
  await expect(f.retry(id)).rejects.toThrow();expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);
+});
+
+it('并发原retry只登记一棒，新父子claim不冒领，source指针原子更新',async()=>{
+ const {f,id}=await failedController();const results=await Promise.all([f.retry(id),f.retry(id)]);
+ expect(results[0].task_id).toBe(results[1].task_id);
+ expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(2);
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(results[0].task_id);
 });

@@ -181,7 +181,7 @@ export function createOnboardingService({ pool, createTask = taskCreator, config
     return transaction(async db => {
       await lock(db, id);
       const previous = await latest(db, id);
-      if(previous.payload.node_onboarding.execution_task_id){await execution.retry(previous.payload.node_onboarding.execution_task_id);return present(previous);}
+      if(previous.payload.node_onboarding.execution_task_id){const resumed=await execution.retry(previous.payload.node_onboarding.execution_task_id,db);if(resumed?.task_id)previous.payload.node_onboarding.execution_task_id=resumed.task_id;return present(previous);}
       if (!['failed', 'cancelled'].includes(onboardingView(previous, now()).status)) throw enrollmentError('进行中或已完成的接入不能重复启动', 409);
       const meta = previous.payload.node_onboarding;
       if (meta.adoption) {

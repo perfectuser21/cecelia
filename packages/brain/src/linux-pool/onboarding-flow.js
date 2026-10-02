@@ -1,3 +1,4 @@
+import {prepareFailedControllerRetry} from './onboarding-retry.js';
 import {LINUX_POOL_AUTHORITY,LINUX_POOL_EXECUTOR_KIND} from './task-authority.js';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {transaction} from '../execution-directory/store.js';
@@ -98,9 +99,34 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
    if(completed)await afterTerminal(pool,id,'completed');
   }
  }
- async function retry(id){
-  await pool.query("UPDATE tasks SET payload=jsonb_set(jsonb_set(payload,'{linux_onboarding,error}','null'::jsonb),'{linux_onboarding,next_retry_at}','null'::jsonb),updated_at=now() WHERE id=$1 AND status='in_progress' AND claimed_by=$2",[id,actor]);
-  return view(id);
+ async function retry(id,existingDb){
+  const work=async c=>{
+   let task=(await c.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0],s=task?.payload?.linux_onboarding;
+   if(!s)throw error('linux_pool_retry_unconfirmed');
+   await c.query('SELECT pg_advisory_xact_lock(hashtext($1))',[key(s.machine_registry_id)]);
+   task=(await c.query('SELECT * FROM tasks WHERE id=$1 FOR UPDATE',[id])).rows[0];s=task.payload.linux_onboarding;
+   if(task.status==='in_progress'&&task.claimed_by===actor&&s.revoked!==true){
+    await c.query("UPDATE tasks SET payload=jsonb_set(jsonb_set(payload,'{linux_onboarding,error}','null'::jsonb),'{linux_onboarding,next_retry_at}','null'::jsonb),updated_at=now() WHERE id=$1",[id]);return id;
+   }
+   const source=(await c.query('SELECT * FROM tasks WHERE id=$1 FOR UPDATE',[s.parent_task_id])).rows[0];
+   const current=source?.payload?.node_onboarding?.execution_task_id;
+   if(current&&current!==id){
+    const next=(await c.query('SELECT * FROM tasks WHERE id=$1',[current])).rows[0];
+    if(next?.parent_task_id===id&&next.executor_kind===LINUX_POOL_EXECUTOR_KIND&&next.claimed_by===actor
+     &&next.status==='in_progress'&&next.payload?.linux_onboarding?.resume_of_task_id===id)return current;
+    throw error('linux_pool_retry_unconfirmed');
+   }
+   const machine=(await c.query("SELECT * FROM system_registry WHERE id=$1 AND type='machine' AND status='active' FOR UPDATE",[s.machine_registry_id])).rows[0];
+   if(!machine||!eligible(machine))throw error('linux_pool_retry_unconfirmed');
+   const state=await prepareFailedControllerRetry(c,task,source,machine,revision);
+   const next=await record(c,machine,state,id);
+   await c.query("INSERT INTO task_events(task_id,event_type,payload,created_at) VALUES($1,'linux_controller_retry',$2,now())",
+    [id,{actor,fact:'已验明旧专管任务被本机孤儿探针误收；保留failed历史并登记新控制棒',evidence:{continuation_task_id:next,source_task_id:source.id,revision}}]);
+   return next;
+  };
+  const taskId=existingDb?await work(existingDb):await transaction(pool,work);
+  // 外层enrollment事务尚未提交；只返回此处已核身份，不用另一连接读旧投影。
+  return existingDb?{task_id:taskId}:view(taskId);
  }
 
  async function checked(c,machineId,ok,taskId){

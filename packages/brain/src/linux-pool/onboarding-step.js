@@ -37,6 +37,7 @@ export function createLinuxOnboardingStep({pool,ssh=createOnboardingSSH(),creden
     const endpoint=isIP(request.address)?request.address:(await lookup(request.address)).address;
     const p=buildLinuxOnboardingPolicy({machine_registry_id:id,machine_id:machine.name,role:machine.metadata.role,endpoint_host:endpoint,
      observation:observed,image:ONBOARDING_IMAGE,image_id:observed.image_id});
+    if(state.resume_of_task_id&&state.policy_json&&JSON.stringify(p)!==state.policy_json)throw error('linux_pool_onboarding_budget_unavailable');
     return next('credentials',{policy_json:JSON.stringify(p)});
    }
    case 'credentials':{
