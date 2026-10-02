@@ -777,7 +777,7 @@ describe('production capability wiring', () => {
       taskId: TASK_ID,
       runId: RUN_ID,
       hop: 12,
-      observed: observed(),
+      observed: observed({role_assignments: {generator: {...target, strict_affinity: true}}}),
       decision: { phase: 'generate', reason: 'contract_approved' },
     })).resolves.toMatchObject({
       status: 'LAUNCHED',
@@ -886,7 +886,7 @@ describe('production capability wiring', () => {
       taskId: TASK_ID,
       runId: RUN_ID,
       hop: 13,
-      observed: observed(),
+      observed: observed({role_assignments: {generator: {...target, strict_affinity: true}}}),
       decision: { phase: 'generate' },
     })).rejects.toThrow('execution_transport_unavailable:xian-mac-m4');
 
@@ -951,7 +951,7 @@ describe('production capability wiring', () => {
       taskId: TASK_ID,
       runId: RUN_ID,
       hop: 15,
-      observed: observed(),
+      observed: observed({role_assignments: {generator: {...target, strict_affinity: true}}}),
       decision: { phase: 'generate' },
     })).rejects.toThrow('execution_transport_unavailable:xian-mac-m4');
     expect(spawnDetached).not.toHaveBeenCalled();
@@ -1022,7 +1022,7 @@ describe('production capability wiring', () => {
       taskId: TASK_ID,
       runId: RUN_ID,
       hop: 14,
-      observed: observed(),
+      observed: observed({role_assignments: {generator: {...target, strict_affinity: true}}}),
       decision: { phase: 'generate' },
     })).rejects.toThrow('remote_bridge_attestation_invalid');
 
@@ -1088,7 +1088,7 @@ describe('production capability wiring', () => {
       taskId: TASK_ID,
       runId: RUN_ID,
       hop: 14,
-      observed: observed(),
+      observed: observed({role_assignments: {generator: {...target, strict_affinity: true}}}),
       decision: { phase: 'generate' },
     })).rejects.toThrow('remote_bridge_prepare_request_failed');
 

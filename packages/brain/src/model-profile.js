@@ -8,6 +8,8 @@
  * 内存缓存 + DB 持久化，切换时刷新缓存，无需重启。
  */
 
+import { persistAgentModelChange } from './agent-model-change.js';
+
 // ============================================================
 // Fallback Profile（DB 不可用时的默认值）
 // ============================================================
@@ -230,7 +232,7 @@ export async function updateAgentModel(pool, agentId, modelId, options = {}) {
     // brain 层: 直接更新 thalamus 或 cortex
     previous.provider = config[agentId]?.provider;
     previous.model = config[agentId]?.model;
-    config[agentId] = { provider: newProvider, model: modelId };
+    config[agentId] = { ...config[agentId], provider: newProvider, model: modelId };
   } else {
     // executor 层: 更新 model_map
     const modelMap = { ...config.executor.model_map };
@@ -243,24 +245,27 @@ export async function updateAgentModel(pool, agentId, modelId, options = {}) {
     }
     modelMap[agentId] = newMap;
 
-    config.executor = { ...config.executor, model_map: modelMap };
+    // 执行器从 fixed_provider/default_provider 选路，而非从 model_map 推导。
+    // 只调整当前Agent选路，避免改变其他Agent的默认服务商。
+    previous.provider = config.executor.fixed_provider?.[agentId] || config.executor.default_provider;
+    config.executor = { ...config.executor, model_map: modelMap,
+      fixed_provider: { ...config.executor.fixed_provider, [agentId]: newProvider } };
   }
 
-  // 更新 DB
-  await pool.query(
-    'UPDATE model_profiles SET config = $1, updated_at = NOW() WHERE id = $2',
-    [JSON.stringify(config), profile.id]
-  );
-
-  // 刷新缓存
-  _activeProfile = { ...profile, config, is_active: true };
-  console.log(`[model-profile] Updated agent ${agentId} to model ${modelId} (provider: ${newProvider})`);
+  const current = { provider: newProvider, model: modelId };
+  const committed = await persistAgentModelChange(pool, {
+    profile, config, agent, previous, current,
+    actor: options.actor, sessionId: options.sessionId,
+  });
+  // 只从数据库已提交的结果刷新运行缓存。
+  _activeProfile = committed.profile;
 
   return {
     agent_id: agentId,
     previous,
-    current: { provider: newProvider, model: modelId },
+    current,
     profile: _activeProfile,
+    receipt: committed.receipt,
   };
 }
 
