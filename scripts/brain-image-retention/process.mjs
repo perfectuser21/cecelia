@@ -5,14 +5,14 @@ const LIMIT = 2 * 1024 * 1024;
 export async function runDockerProcess(executable, args, lease, timeoutMs) {
   await lease.assertHeld();
   return new Promise((resolve, reject) => {
-    let text = '', size = 0, failure, result, killTimer, settled = false;
+    let text = '', stderr = '', size = 0, failure, result, killTimer, settled = false;
     const child = spawn(process.execPath, [fileURLToPath(new URL('./process-supervisor.mjs', import.meta.url)), executable, ...args], {
       detached: true, stdio: ['ignore', 'pipe', 'pipe', lease.fd, 'ipc'],
       env: { ...process.env, DOCKER_HOST: 'unix:///var/run/docker.sock', DOCKER_CONTEXT: '', DOCKER_TLS_VERIFY: '', DOCKER_CERT_PATH: '' },
     });
     const finish = error => {
       if (settled) return; settled = true; clearTimeout(timer); clearTimeout(killTimer);
-      if (error) reject(error); else resolve(text);
+      if (error) reject(Object.assign(error, { exitCode: result, stdout: text, stderr })); else resolve(text);
     };
     const stop = code => {
       if (code) failure ??= fail(code);
@@ -28,7 +28,7 @@ export async function runDockerProcess(executable, args, lease, timeoutMs) {
     };
     const timer = setTimeout(() => stop('DOCKER_TIMEOUT'), timeoutMs);
     child.stdout.on('data', data => { size += data.length; if (size > LIMIT) stop('DOCKER_OUTPUT_LIMIT'); else text += data.toString(); });
-    child.stderr.on('data', data => { size += data.length; if (size > LIMIT) stop('DOCKER_OUTPUT_LIMIT'); });
+    child.stderr.on('data', data => { size += data.length; if (size > LIMIT) stop('DOCKER_OUTPUT_LIMIT'); else stderr += data.toString(); });
     child.on('message', message => {
       if (message?.type !== 'result' || !Number.isInteger(message.code) || result !== undefined) return;
       result = message.code; stop(result === 0 ? null : 'DOCKER_UNCONFIRMED');

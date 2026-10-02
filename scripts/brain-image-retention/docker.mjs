@@ -18,7 +18,7 @@ export function createDockerAdapter({ root, dataPath = '/run/cecelia-docker-data
   }
   async function snapshot(lease) {
     await identity(lease); const disk = await statfs(dataPath);
-    const imageIds = ids(await run(['image', 'ls', '--no-trunc', '--quiet'], lease), IMAGE);
+    const imageIds = ids(await run(['image', 'ls', '--all', '--no-trunc', '--quiet'], lease), IMAGE);
     const containerIds = ids(await run(['container', 'ls', '--all', '--quiet', '--no-trunc'], lease), /^[a-f0-9]{64}$/);
     const images = imageIds.length ? JSON.parse(await run(['image', 'inspect', ...imageIds], lease)) : [];
     const containers = containerIds.length ? JSON.parse(await run(['container', 'inspect', ...containerIds], lease)) : [];
@@ -31,10 +31,24 @@ export function createDockerAdapter({ root, dataPath = '/run/cecelia-docker-data
           ? x.Config.Env.find(value => value.startsWith('GIT_SHA=')).slice(8) : null })),
       containers: containers.map(x => ({ id: x.Id, image_id: x.Image, name: x.Name, running: x.State?.Running })) };
   }
+  async function absent(id, lease) {
+    if (!IMAGE.test(id)) throw fail('INVALID_IMAGE');
+    await identity(lease);
+    try {
+      const values = JSON.parse(await run(['image', 'inspect', id], lease));
+      if (!Array.isArray(values) || values.length !== 1 || values[0].Id !== id) throw fail('DOCKER_INSPECT_UNCONFIRMED');
+      return false;
+    } catch (error) {
+      if (error.code !== 'DOCKER_UNCONFIRMED' || error.exitCode !== 1
+          || error.stderr?.trim() !== `Error response from daemon: No such image: ${id}`
+          || error.stdout?.trim() !== '[]') throw fail('DOCKER_INSPECT_UNCONFIRMED');
+      await identity(lease); return true;
+    }
+  }
   async function remove(id, lease) {
     if (!IMAGE.test(id)) throw fail('INVALID_IMAGE');
     await identity(lease);
     return run(['image', 'rm', id], lease);
   }
-  return Object.freeze({ snapshot, remove });
+  return Object.freeze({ snapshot, remove, absent });
 }

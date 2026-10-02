@@ -40,7 +40,7 @@ export function createRetentionEngine({ store, docker, now = Date.now }) {
     if (row.evidence?.attempted === false) return store.complete(row.request.intent_id, { status: 'skipped', ...row.request, policy: POLICY, actor: ACTOR,
       digest: row.digest, identity: row.evidence.identity, attempted: false, reason: row.evidence.reason, confirmed_at: new Date(now()).toISOString() }, lease);
     let snapshot;
-    try { snapshot = await docker.snapshot(lease); if (observe(snapshot, row.evidence.identity, now()).has(row.request.image_id)) return uncertain(row); }
+    try { snapshot = await docker.snapshot(lease); if (observe(snapshot, row.evidence.identity, now()).has(row.request.image_id) || await docker.absent(row.request.image_id, lease) !== true) return uncertain(row); }
     catch { return uncertain(row); }
     return store.complete(row.request.intent_id, { status: 'success', ...row.request, policy: POLICY, actor: ACTOR,
       digest: row.digest, identity: row.evidence.identity, attempted: true, evidence: { image_id: row.request.image_id, absent: true },
@@ -78,6 +78,19 @@ export function createRetentionEngine({ store, docker, now = Date.now }) {
       return settle(row, lease);
     });
   }
+  async function recover(input) {
+    const body = request(input);
+    return store.withLock(async lease => {
+      const row = await store.intent(body.intent_id);
+      if (row) { if (row.digest !== digest(body)) throw fail('INTENT_CONFLICT'); return settle(row, lease); }
+      const value = await store.read(name(body.run_id));
+      if (!value || !value.images.some(x => x.id === body.image_id)) throw fail('IMAGE_NOT_PLANNED');
+      const claim = value.claims.find(x => x.image_id === body.image_id);
+      if (claim && digest(claim) !== digest(body)) throw fail('IMAGE_ALREADY_CLAIMED');
+      if (!claim && value.status === 'running') await store.save(name(body.run_id), { ...value, claims: [...value.claims, body] }, lease);
+      return skip(body, value, 'RESERVATION_INTERRUPTED', lease);
+    });
+  }
   async function receipt(intent_id) {
     return store.withLock(async lease => { const row = await store.intent(intent_id); return row ? settle(row, lease) : null; });
   }
@@ -105,5 +118,5 @@ export function createRetentionEngine({ store, docker, now = Date.now }) {
       return result;
     });
   }
-  return Object.freeze({ plan, execute, receipt, finishPlan });
+  return Object.freeze({ plan, execute, recover, receipt, finishPlan });
 }

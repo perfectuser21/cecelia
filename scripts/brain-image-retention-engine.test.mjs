@@ -12,7 +12,7 @@ async function setup(t){
  const root=await realpath(await mkdtemp(join(tmpdir(),'image-engine-')));t.after(()=>rm(root,{recursive:true,force:true}));
  const store=createStore(root),now=Date.now(),state={ids:[1,2,3,4,5],removed:[],unknown:false,available:10*GiB};
  await store.withLock(lease=>store.save('ledger.json',{schema_version:1,generation:1,pending:null,successes:[1,2,3].map(n=>({deployment_id:randomUUID(),image_id:image(n),version:`1.0.${n}`,git_sha:'a'.repeat(40),confirmed_at:new Date(now-n*1000).toISOString()}))},lease));
- const docker={snapshot:async()=>({machine_registry_id:US_MACHINE_ID,daemon_id:'daemon',docker_root_dir:'/mnt/data/docker',volume_dev:1,observed_at:new Date().toISOString(),
+ const docker={absent:async id=>!state.ids.some(n=>image(n)===id),snapshot:async()=>({machine_registry_id:US_MACHINE_ID,daemon_id:'daemon',docker_root_dir:'/mnt/data/docker',volume_dev:1,observed_at:new Date().toISOString(),
   images:state.ids.map(n=>({id:image(n),tags:[`cecelia-brain:1.0.${n}`],digests:[],created_at:new Date(now-2*86400000).toISOString()})),
   containers:[{id:'a'.repeat(64),image_id:image(1),name:'/cecelia-node-brain',running:true}],disk:{total_bytes:100*GiB,available_bytes:state.available}}),
   remove:async id=>{state.removed.push(id);if(!state.unknown){state.ids=state.ids.filter(n=>image(n)!==id);state.available+=6*GiB;}if(state.loseResponse)throw Error('lost response');}};
@@ -82,4 +82,9 @@ test('两项上限、过期计划及新增停止容器引用都不能发起删�
  assert.equal((await late.execute(x.request(plan))).reason,'PLAN_EXPIRED');
  const referenced=createRetentionEngine({store:x.store,docker:{snapshot:async()=>{const snapshot=await x.docker.snapshot();snapshot.containers.push({id:'b'.repeat(64),image_id:plan.images[1].id,name:'/stopped',running:false});return snapshot;},remove:async()=>assert.fail('不能删除引用镜像')}});
  assert.equal((await referenced.execute(x.request(plan,1))).status,'skipped');assert.equal(x.state.removed.length,0);
+});
+test('Brain任务先登记后断线，恢复仅持久未执行回执，不启动删除',async t=>{
+ const x=await setup(t),plan=await x.engine.plan(x.run),r=x.request(plan);
+ const result=await x.engine.recover(r);assert.equal(result.status,'skipped');assert.equal(result.attempted,false);
+ assert.deepEqual(await x.engine.recover(r),result);assert.equal((await x.engine.finishPlan(x.run)).status,'skipped');assert.equal(x.state.removed.length,0);
 });

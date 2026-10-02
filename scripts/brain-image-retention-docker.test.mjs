@@ -16,6 +16,7 @@ const s=JSON.parse(fs.readFileSync(path.join(root,'daemon.json')));let v;
 if(args[0]==='info')v={ID:s.daemon,DockerRootDir:s.data,OSType:'linux'};
 else if(args[0]==='image'&&args[1]==='ls'){process.stdout.write(s.absent?'':s.image+'\\n');process.exit(0);}
 else if(args[0]==='container'&&args[1]==='ls'){process.stdout.write(s.container+'\\n');process.exit(0);}
+else if(args[0]==='image'&&args[1]==='inspect'&&s.absent){process.stdout.write('[]');process.stderr.write(s.inspectError||('Error response from daemon: No such image: '+s.image));process.exit(1);}
 else if(args[0]==='image'&&args[1]==='inspect')v=[{Id:s.image,RepoTags:['cecelia-brain:1.0.1'],RepoDigests:[],Created:'2026-01-01T00:00:00Z'}];
 else if(args[0]==='container'&&args[1]==='inspect')v=[{Id:s.container,Image:s.image,Name:'/cecelia-node-brain',State:{Running:true}}];
 else if(args[0]==='image'&&args[1]==='rm'){if(s.fail)process.exit(1);s.absent=true;fs.writeFileSync(path.join(root,'daemon.json'),JSON.stringify(s));process.stdout.write('Deleted');process.exit(0);}
@@ -69,4 +70,13 @@ ${leaderExits?'process.exit(0);':'setInterval(()=>{},1000);'}
   if(descendant){try{process.kill(descendant,'SIGKILL');}catch(error){if(error.code!=='ESRCH')throw error;}}
   await result;
  }
+});
+test('精确完整ID inspect不存在才证缺失，权限/别ID/未知错误均拒绝',async t=>{
+ const x=await setup(t);await x.store.withLock(async lease=>{
+  assert.equal(await x.docker.absent(image,lease),false);
+  x.state.absent=true;await x.save();assert.equal(await x.docker.absent(image,lease),true);
+  for(const inspectError of ['permission denied','Error response from daemon: No such image: sha256:'+'c'.repeat(64),'daemon unavailable']){
+   x.state.inspectError=inspectError;await x.save();await assert.rejects(x.docker.absent(image,lease),/DOCKER_INSPECT_UNCONFIRMED/);
+  }
+ });
 });
