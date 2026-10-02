@@ -104,6 +104,21 @@ describe('recordCommanderHeartbeat', () => {
 });
 
 describe('buildEscortRelaunchRemote', () => {
+  it('隔离验收可显式指定心跳 API 与关闭对外投递，默认生产行为不变', () => {
+    const oldUrl = process.env.COMMANDER_BRAIN_URL;
+    const oldDelivery = process.env.COMMANDER_ESCORT_DELIVERY;
+    try {
+      process.env.COMMANDER_BRAIN_URL = 'http://localhost:5299';
+      process.env.COMMANDER_ESCORT_DELIVERY = 'none';
+      const remote = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmd10020930', taskId: 'drill', relaunchCount: 1 });
+      expect(remote).toContain('--no-deliver');
+      expect(remote).not.toContain('--announce');
+      expect(remote).toContain('http://localhost:5299/api/brain/commander-heartbeat');
+    } finally {
+      if (oldUrl === undefined) delete process.env.COMMANDER_BRAIN_URL; else process.env.COMMANDER_BRAIN_URL = oldUrl;
+      if (oldDelivery === undefined) delete process.env.COMMANDER_ESCORT_DELIVERY; else process.env.COMMANDER_ESCORT_DELIVERY = oldDelivery;
+    }
+  });
   it('同名 escort-<host>-<TAG>，消息注明接班只读接上不重发起，带 Brain 单号；远端串单引号安全', () => {
     const remote = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmd09300200', serial: 'ANGYVB4402004137', profile: 'legacy', taskId: 'task-run-1', relaunchCount: 2 });
     expect(remote).toContain("cron add --timeout 90000 --name 'escort-xian-m4-cmd09300200' --agent media");
@@ -150,11 +165,12 @@ describe('runCommanderWatchdog', () => {
     const bark = vi.fn().mockResolvedValue(true);
     const out = await runCommanderWatchdog(pool, { execFileFn: ssh.fn, bark, gateMs: 0, now: Date.parse('2026-09-30T03:10:00Z') });
     expect(out.relaunched).toBe(1);
-    expect(ssh.seen).toHaveLength(3);
+    expect(ssh.seen).toHaveLength(4);
     expect(ssh.seen[0].target).toBe(GATEWAY);
     expect(ssh.seen[0].remote).toBe('openclaw cron list --json');
     expect(ssh.seen[1].remote).toContain('cron rm old-escort-id-0000');
     expect(ssh.seen[2].remote).toContain("cron add --timeout 90000 --name 'escort-xian-m4-cmd09300200'");
+    expect(ssh.seen[3].remote).toBe("openclaw cron run 'esc-relaunched-1111' --timeout 90000");
     const upd = pool.calls.find((c) => /UPDATE tasks/.test(c.sql) && c.params[0] === 'task-run-1');
     const merged = JSON.parse(upd.params[1]);
     expect(merged).toMatchObject({ escort_id: 'esc-relaunched-1111', commander_relaunch_count: 1, commander_relaunched_at: '2026-09-30T03:10:00.000Z' });
