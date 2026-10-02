@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { machinesApi, Machine } from '../api/machines.api';
 import NodeOnboarding from './NodeOnboarding';
+import { ExistingNode } from './NodeOnboardingForm';
 
 const COUNTRY_FLAG: Record<string, string> = { US: '🇺🇸', CN: '🇨🇳', HK: '🇭🇰' };
 const LOCATION_LABEL: Record<string, string> = { US: '美国', Xian: '西安', HK: '香港', CN: '中国大陆', other: '其他', Unknown: '未知地区' };
@@ -37,6 +38,7 @@ function MachineCard({ machine, now, onClick }: { machine: Machine; now: number;
   const meta = machine.metadata;
   const managed = meta.onboarding?.state === 'managed';
   const health = healthState(machine, now);
+  const executionEnabled=machine.execution?.enabled===true&&Date.parse(machine.execution.verified_until||'')>now;
   const hasErrors = machine.conflicts.some(c => c.severity === 'error');
   const hasWarnings = machine.conflicts.some(c => c.severity === 'warning');
   const errorCount = machine.conflicts.filter(c => c.severity === 'error').length;
@@ -74,7 +76,7 @@ function MachineCard({ machine, now, onClick }: { machine: Machine; now: number;
       </div>
 
       {managed && <div className="mb-2 text-xs space-y-1">
-        <p className="text-gray-600 dark:text-gray-300"><span>监控纳管</span><span className="ml-2">{meta.node_health?.capabilities?.execution === true ? '执行已启用' : '执行未启用'}</span></p>
+        <p className="text-gray-600 dark:text-gray-300"><span>监控纳管</span><span className="ml-2">{executionEnabled ? '执行已启用' : '执行未启用'}</span></p>
         <p className={health.fresh ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'}>
           {health.valid ? <time dateTime={health.observedAt} title={new Date(health.observedAt!).toLocaleString('zh-CN')}>健康采样：{health.elapsed}{!health.fresh && '（已过期）'}</time> : health.elapsed}
         </p>
@@ -120,6 +122,7 @@ export default function MachinesPage() {
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const navigate = useNavigate();
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [existingNode, setExistingNode] = useState<ExistingNode>();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
@@ -140,6 +143,8 @@ export default function MachinesPage() {
   };
 
   useEffect(() => { fetchMachines(); }, []);
+  const managed=machines.some(m=>m.metadata.onboarding?.state==='managed');
+  useEffect(()=>{if(!managed)return;const timer=setInterval(()=>fetchMachines(),30_000);return()=>clearInterval(timer);},[managed]);
 
   const online = machines.filter(m => m.tailscale_online).length;
   const conflictCount = machines.filter(m => m.conflicts.some(c => c.severity === 'error')).length;
@@ -180,7 +185,7 @@ export default function MachinesPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-        <button onClick={() => setOnboardingOpen(true)} className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white">接入新机器</button>
+        <button onClick={() => { setExistingNode(undefined); setOnboardingOpen(true); }} className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white">接入新机器</button>
         <button
           onClick={() => fetchMachines()}
           disabled={loading}
@@ -193,7 +198,7 @@ export default function MachinesPage() {
       </div>
 
       {refreshError && <p role="alert" className="mb-4 text-sm text-red-600">{refreshError}</p>}
-      <NodeOnboarding open={onboardingOpen} onOpen={() => setOnboardingOpen(true)} onClose={() => setOnboardingOpen(false)} onCompleted={() => fetchMachines()} />
+      <NodeOnboarding existing={existingNode} open={onboardingOpen} onOpen={() => setOnboardingOpen(true)} onClose={() => setOnboardingOpen(false)} onCompleted={() => fetchMachines()} />
 
       {loading && <p role="status" className="mb-4 text-sm text-gray-500">正在加载设备…</p>}
 
@@ -204,12 +209,16 @@ export default function MachinesPage() {
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {groups[loc].map(machine => (
-              <MachineCard
-                key={machine.id}
-                machine={machine}
-                now={now}
-                onClick={() => navigate(`/machines/${machine.name}`)}
-              />
+              <div key={machine.id}>
+                <MachineCard machine={machine} now={now} onClick={() => navigate(`/machines/${machine.name}`)} />
+                {!machine.metadata.onboarding && <button aria-label={`接入管理：${machine.name}`}
+                  className="mt-2 text-sm text-blue-600" onClick={() => {
+                    const region = machine.metadata.physical_location;
+                    setExistingNode({ name: machine.name, address: machine.metadata.address || machine.metadata.tailscale_ip || machine.metadata.public_ip || '',
+                      region: region === 'US' || region === 'HK' || region === 'CN' ? region : 'other' });
+                    setOnboardingOpen(true);
+                  }}>接入管理</button>}
+              </div>
             ))}
           </div>
         </div>
