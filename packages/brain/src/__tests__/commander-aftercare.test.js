@@ -12,14 +12,15 @@ const receipt = (ctx) => ({ schema_version: 1, run_tag: ctx.tag, host: ctx.host,
   status: 'completed', actor: 'media', facts: ['真实终态已读回'], evidence: ['/receipt.json'] });
 
 function fixture() {
-  const ctx = context(), events = []; let time = 0, ack = null, busy = true;
+  const ctx = context(), events = []; let time = 0, ack = null, busy = true, enabled = true;
   const deps = {
     now: () => time, timeoutMs: 100, pollMs: 10,
     sleep: async (ms) => { time += ms; },
-    readJobs: async () => [{ id, name: `escort-${ctx.host}-${ctx.tag}`, state: { runningAtMs: busy ? 1 : undefined } }],
+    readJobs: async () => [{ id, name: `escort-${ctx.host}-${ctx.tag}`, schedule: { kind: 'every' }, enabled, state: { runningAtMs: busy ? 1 : undefined } }],
     readReceipt: async () => ack,
     requestTick: async () => { events.push('request'); },
     recordAftercare: async () => { events.push('record'); },
+    quiesceJob: async () => { enabled = false; events.push('disable'); },
     removeJob: async () => { events.push('remove'); },
   };
   return { ctx, deps, events, setAck: (v) => { ack = v; }, setBusy: (v) => { busy = v; } };
@@ -45,7 +46,7 @@ describe('Commander finalize→售后证据→tick结束→下岗', () => {
     f.deps.sleep = async () => { f.setBusy(false); };
     f.deps.requestTick = async () => { f.events.push('request'); f.setAck(receipt(f.ctx)); };
     expect((await run(f)).status).toBe('retired');
-    expect(f.events).toEqual(['request', 'record', 'remove']);
+    expect(f.events).toEqual(['request', 'record', 'disable', 'remove']);
   });
   it('非本run或旧nonce的售后文件不能允许下岗', async () => {
     const f = fixture(); f.setBusy(false); f.setAck({ ...receipt(f.ctx), nonce: 'previous-run' });
@@ -76,5 +77,19 @@ describe('Commander finalize→售后证据→tick结束→下岗', () => {
     const f = fixture(); f.ctx.finalized = false;
     expect((await run(f)).status).toBe('retained');
     expect(f.events).toEqual([]);
+  });
+  it('网关禁用未生效：不能在list与rm间让周期tick抢跑', async () => {
+    const f = fixture(); f.setBusy(false); f.setAck(receipt(f.ctx));
+    f.deps.quiesceJob = async () => {};
+    expect((await run(f)).status).toBe('retained');
+    expect(f.events).not.toContain('remove');
+  });
+  it('周期抢跑后disable不取消tick，等其自然结束才删', async () => {
+    const f = fixture(); f.setBusy(false); f.setAck(receipt(f.ctx));
+    const disable = f.deps.quiesceJob;
+    f.deps.quiesceJob = async () => { await disable(); f.setBusy(true); };
+    f.deps.sleep = async () => { expect(f.events).not.toContain('remove'); f.setBusy(false); };
+    expect((await run(f)).status).toBe('retired');
+    expect(f.events).toEqual(['record', 'disable', 'remove']);
   });
 });

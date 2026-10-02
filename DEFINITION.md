@@ -2,6 +2,8 @@
 
 **Brain 版本**: 1.357.1
 
+待发布：Commander 异步售后协调器（版本由合并后的 auto-version 五件套应用器统一生成；changes/cp-10011347-commander-contract-runtime.md）。
+
 
 
 
