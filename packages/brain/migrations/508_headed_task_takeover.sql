@@ -83,6 +83,12 @@ BEGIN
  SELECT * INTO owner FROM headed_task_takeovers WHERE task_id=OLD.id;
  IF NOT FOUND THEN RETURN NEW; END IF;
  IF TG_OP='DELETE' THEN RAISE EXCEPTION 'headed_task_owned'; END IF;
+ -- 人赢元数据与镜子同步不改变执行权；未知新列默认仍保护。
+ IF (to_jsonb(NEW)-ARRAY['title','description','priority','due_at','notion_id','notion_synced_at','updated_at','row_version'])
+    IS NOT DISTINCT FROM
+    (to_jsonb(OLD)-ARRAY['title','description','priority','due_at','notion_id','notion_synced_at','updated_at','row_version']) THEN
+  RETURN NEW;
+ END IF;
  IF current_setting('cecelia.headed_owner_generation',true) IS DISTINCT FROM owner.generation::text THEN
   RAISE EXCEPTION 'headed_task_owned';
  END IF;

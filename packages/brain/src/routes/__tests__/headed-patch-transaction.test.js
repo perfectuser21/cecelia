@@ -11,7 +11,7 @@ it('headed PATCH提交后才以独立pool运行接棒事务，失败响应不运
    const res={statusCode:200,status(code){this.statusCode=code;return this;},json(){calls.push('RESPONSE');return this;}};
    await headedTaskMutation(pool,async(_req,response,scoped)=>{
     await scoped.query('SELECT status FROM tasks WHERE id=$1',['task']);
-    await scoped.afterCommit(async original=>{expect(original).toBe(pool);calls.push('RELAY');});
+    await scoped.afterCommit(async original=>{expect(original).not.toBe(scoped);calls.push('RELAY');});
     response.status(failed?400:200).json({ok:!failed});
    })(req,res);
    expect(res.statusCode).toBe(failed?400:200);

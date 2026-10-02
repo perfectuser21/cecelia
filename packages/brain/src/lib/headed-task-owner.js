@@ -8,6 +8,27 @@ export async function assertAutomaticTaskOwner(pool,taskId){
  const task=(await pool.query("SELECT payload->'headed_takeover' AS headed_takeover FROM tasks WHERE id=$1",[taskId])).rows[0];
  if(task?.headed_takeover)throw conflict('headed_task_owned');
 }
+/** 外层已COMMIT：仅真实saveHandoff的原task UPDATE借用独立授权小事务。 */
+export function headedPostcommitPool(pool,owner){
+ return {
+  connect:()=>pool.connect(),
+  async query(sql,params){
+   const handoffWrite=typeof sql==='string'&&/^\s*UPDATE\s+tasks\b/i.test(sql)
+    &&/jsonb_build_object\('handoff',\s*\$2::jsonb\)/i.test(sql)&&/WHERE\s+id\s*=\s*\$1::uuid/i.test(sql)
+    &&params?.[0]===owner.task_id;
+   if(!handoffWrite)return pool.query(sql,params);
+   const db=await pool.connect();
+   try{
+    await db.query('BEGIN');
+    const authorized=await db.query(`SELECT t.id FROM tasks t JOIN headed_task_takeovers o ON o.task_id=t.id
+     WHERE t.id=$1 AND o.generation=$2 AND o.session_id=$3 AND t.status IN ('completed','completed_no_pr') FOR UPDATE OF t`,[owner.task_id,owner.generation,owner.session_id]);
+    if(authorized.rowCount!==1)throw conflict('headed_handoff_owner_conflict');
+    await db.query("SELECT set_config('cecelia.headed_owner_generation',$1,true)",[owner.generation]);
+    const result=await db.query(sql,params);await db.query('COMMIT');return result;
+   }catch(error){await db.query('ROLLBACK');throw error;}finally{db.release();}
+  },
+ };
+}
 export async function takeOverHeadedTask(pool,input){
  const {taskId,requestId,sessionId,expectedRowVersion,expectedExecutorKind,expectedCurrentRunId}=input;
  if(!UUID.test(taskId??'')||!UUID.test(requestId??'')||!/^[-a-zA-Z0-9_:]{1,128}$/.test(sessionId??'')

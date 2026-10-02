@@ -67,7 +67,7 @@ it('真实终态helper在外层COMMIT后保存handoff，跨session元数据可�
  process.env.CECELIA_INTERNAL_TOKEN='terminal-owner-fixture';process.env.HANDOFF_DOCS_DIR=handoffDocs;
  const send=(body,owned=true)=>fetch(`${origin}/tasks/${task}`,{method:'PATCH',headers:{'content-type':'application/json',...(owned?{authorization:'Bearer terminal-owner-fixture','x-session-id':'actual-session'}:{'x-session-id':'human-editor'})},body:JSON.stringify(body)});
  try{
-  const completed=await send({status:'completed'});expect(completed.status,JSON.stringify(await completed.json())).toBe(200);
+  const completed=await send({status:'completed'});const receipt=await completed.json();expect(completed.status,JSON.stringify(receipt)).toBe(200);expect(receipt.relay).toMatchObject({synthesized:true});
   const handoff=(await pool.query("SELECT result->'handoff' AS handoff FROM tasks WHERE id=$1",[task])).rows[0].handoff;
   expect(handoff).toMatchObject({task_id:task,session_id:'actual-session',synthesized:true});
   expect((await send({title:'完成后人类校正标题'},false)).status).toBe(200);
