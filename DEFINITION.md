@@ -1,6 +1,17 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.357.6
+**Brain 版本**: 1.360.3
+
+Kernel 派发按统一机器角色表生成 M1/M4 优先、MMV 最后的默认候选，并保持执行目录授权交集。未支持的机器字段在工作区准备和预约前以 unsupported_machine_policy 拒绝，含空值；既有六处机器指定继续生效，不新增别名。
+
+
+
+
+
+
+
+
+
 
 
 
@@ -16,7 +27,7 @@
 
 
 
-**Brain 版本**: 1.357.6
+**Brain 版本**: 1.360.3
 
 ## Brain 1.357.6 — 恢复目标跨路径永久回归
 
@@ -29,6 +40,37 @@
 - 可选执行目标仅在上述恢复事务中生效；按原始 payload 规范化 profile 摘要 CAS（摘要严格为64位小写hex字符串，非字符串请求在事务前400拒绝），复用当前目录版本和现存仓库授权，冻结 Commander 与全部执行角色，收据留目标/profile/授权版本证据。模型名仅允许非空标识段及供应商限定分隔，URL、绝对路径、空段和遍历段在事务前拒绝。无新许可或路由接口；实际派发仍走角色能力、候选机器亲和和容量 floor 门禁。
 - 永久回归覆盖真实 HTTP 入口、内部鉴权、真实隔离 PostgreSQL 事务/并发、授权撤销/过期/换代、容量拒绝及真实 Map/Radius/preflight。原有无目标恢复请求保持兼容。
 
+
+Linux脚本预约在授权事务中固定同版本worker/boot，启动转换按既有身份CAS；能力与fresh快照的版本、boot、policy、profile摘要混代时零预约。升级前空身份只从预约对应历史版本补齐，reaper不取新boot污染旧许可。真PG永久回归核旧boot拒绝与崩溃清理，维护拒绝使用真实worker_draining码并仅凭精确墓碑释放。
+
+可信接入后台提供部署文档写入器：分别验证池/脚本完整配置及0600凭据引用，按旧policy摘要CAS，在受保护目录互斥并fsync原子替换。拒绝符号链接、宽权限、未知字段和过大文档，文档不存secret；无HTTP配置写入口，浏览器不持有授权字段。尚待接自动SSH编排。
+
+Linux脚本准入使用验收过的受信池预算与独占逻辑槽1；fresh认证身份绑定boot/revision/config，预约在DB总额锁内再核version/grant/摘要。动态资源与维护仍由root每create/start复核。新Linux目录canonical ID直接进入managed，缺profile不可退回宿主SSH，不需手填机器环境白名单。真实PG→HTTP→Unix→持久adapter回归产生实际shell输出，资源/维护拒绝只凭精确墓碑释放，create未知持续占位；尚未HK现场部署。
+
+507新增脚本runtime验收真表：prepare用受信部署根自动登记子任务并创建pending版本/grants；root签名canary逐profile验真后，同事务finalizeTask写事实/证据/actor并CAS激活同一代，仅开放managed_script。nonce十分钟、授权最长24小时，过期不续期、撤销不复活；历史清理保留，US与scheduler硬拒。JSONB不得重排下发profile摘要。此片仅scratch真表验收，生产未迁移/激活，Linux物理准入与机器页自动编排仍待接线。
+
+Linux运行时受信部署独立绑定完整脚本profile、镜像ID、父任务与双凭据；root canary回执验签严格核对所有profile、version/grant、随机输出、宿主资源证明及完整取消墓碑。此验证零件尚未接数据库激活，生产仍pending。
+
+Linux脚本canary通过独立root许可调用真实Unix adapter，持久每个profile的预约/version/grant，核对完整宿主证明、随机标记输出及精确清理后签独立验收回执。未知启动不重跑，配置撤销后仍按旧journal恢复清理；安装器和bootstrap打包此入口。当前仅完成编排及安装产物回归，尚未执行HK现场验收或激活授权。
+
+Linux脚本客户端从受信目录版本读取profile摘要及凭据引用，启动在当前DB授权链内签独立root许可，历史清理绑定持久version/grant；Worker.token只做外层传输认证，不能伪造root回执。真实HTTP→Unix→持久runner→受限Docker合同已串通；请求尚未抵达时可先持久墓碑封住迟到启动。生产版本仍pending，未开放执行。
+
+脚本Worker客户端按流累计认证封套，超过128KiB立即取消读取；正文读取继续受原请求deadline约束，不再先整包缓存再判大小。
+
+Linux可信root bootstrap 使用Python3启动，内置官方Node24.21.0双架构归档digest并只取Node二进制，不依赖或替换宿主Node20；自动准备无补充组的nologin专用账号，随后交既有事务安装器落盘pending服务。固定本地Docker/systemd完整宿主、受保护profile/token/source及空slice先验，US/scheduler/零预算拒绝；stdin非阻塞读写共用deadline、异常路径保留未回收leader身份后清理专属进程组的有界命令/下载、持久flock与0600恢复回执，账号创建结果未知也不伪称回滚。失败保留安全账号，既有配置/units由安装器恢复，不改网络/daemon/旧业务cgroup。永久回归覆盖21项；官方arm64归档已在独立无网非root受限容器真执行Node版本并清理，尚非HK systemd现场验收。
+
+Linux受限脚本核心由root journal、独立30秒HMAC许可和固定Docker adapter组成，实际复用script-runner生命周期；profile/版本/grant/预约/worker boot/daemon身份先持久，所有create/start均再验许可与本机闸。start副作用前登记持久deadline，回执丢失与超时持锁均保留精确清理机会。创建回执未知永久占位，不以单次名称缺失签清理；旧grant撤销后只允许依据持久完整ID、标签和镜像核验清理。日志/资源限额固定，默认无网非root只读，不向服务账号开放Docker。Unix桥仅提供start/inspect/cancel并用独立root密钥签回执，普通Worker认证后仅转发，正文/回包/deadline均有界。可信bootstrap可经私有文件将独立执行key交双服务事务安装器：root桥保持宿主namespace、root私有状态与0600凭据，普通Worker仅获Unix连接组和只读root boot。配置丢失或重启旧boot只许历史清理；最终闸读取维护标记、安装锁、宿主身份及实际任务池配额/压力/磁盘。当前代码链已接安装入口，未在HK部署或开放Linux执行。
+Linux可信root bootstrap 使用Python3启动，内置官方Node24.21.0双架构归档digest并只取Node二进制，不依赖或替换宿主Node20；自动准备无补充组的nologin专用账号，随后交既有事务安装器落盘pending服务。固定本地Docker/systemd完整宿主、受保护profile/token/source及空slice先验，US/scheduler/零预算拒绝；stdin非阻塞读写共用deadline、异常路径保留未回收leader身份后清理专属进程组的有界命令/下载、持久flock与0600恢复回执，账号创建结果未知也不伪称回滚。失败保留安全账号，既有配置/units由安装器恢复，不改网络/daemon/旧业务cgroup。永久回归覆盖20项；官方arm64归档已在独立无网非root受限容器真执行Node版本并清理，尚非HK systemd现场验收。
+
+Linux 受管脚本事实证明入口复用完整宿主和父slice采集核心，但独立校验reservation/intent/generation、worker boot、目录version/grant、profile摘要、固定镜像及精确CPU/内存/swap/PID/日志配额。宿主boot与daemon须匹配可信绑定，所有容器操作均只读；原pool-canary的名称、标签前缀与用户限制保留。输出linux-script-proof/v1且execution=false，不兼容旧池验收schema，不产生执行许可。本片仅adapter证明零件，未接root执行桥/runner持久profile身份或HTTP启动，也未完成真实Linux canary。
+
+Linux 池 migration505 将 nonce 挑战、验收签名及 CAS 授权准备写入独立真表。内部 machines/linux-pool 路由只接受记录 ID 与 expected_version_id；完整期望及凭据绑定来自 CECELIA_LINUX_POOL_DEPLOYMENTS_FILE 指向的受保护部署登记文件和 1Password 同步凭据文件，默认未配置拒绝。验收绑定设备 UUID、固定 revision/config、host/worker boot、daemon、完整 slice 资源证明和精确清理；nonce 限时一次消费，历史不可改，同机器锁与预约共享。ready 仅建立 pending 版本与 managed_script/script 显式 profile 许可，容量为0，API execution=false；503 的 attested active 硬拒保留。US 稳定 UUID、scheduler 和零预算均拒绝。撤销即使部署配置或凭据不可用仍按持久身份执行；过期不得续期复活，历史清理定位保留。本片未部署或执行生产DDL，仍需可信bootstrap、Linux脚本adapter/真实执行清理、机器页调用及真实systemd池验收。
+
+Linux 执行池部署合同使用独立 systemd slice 的 CPU/内存/PID 限额；仅可信私有配置指定固定 Docker socket、固定池名和镜像 digest。零预算保持不可执行，US 调度节点按稳定设备 UUID 禁止执行。受信root安装器与持久canary已实现，Brain仅准备pending目录记录；尚未现网部署，不能将生成配置当作通过验收。
+
+Linux 池证明采集器限定可信 SSH/root 验收入口和完整 systemd 宿主/VM，容器内 systemd 保守拒绝；核对固定 Docker socket 的完整容器身份、镜像、非 root 隔离参数、宿主 PID 的真实父 slice，再读取该池及可见祖先的 CPU/内存/PID 限额和可用量。宿主 boot、进程出生时间、namespace、挂载与池配置在采集前后复验；采集输出仍 execution=false，只有后续canary完成精确清理才签名；Brain验收仅允许准备pending授权，仍不开放执行。
+
+Linux pending 服务提供只读健康采样与认证 nonce 身份回执，绑定设备 UUID、固定修订、配置摘要和进程 boot；核心资源及所有执行入口保持拒绝，采样器自报状态不能授予执行。采样合并并发、请求有界，令牌只读私有安装文件；systemd 采集服务自身另限0.25核/256MiB/64进程，与任务池分离。尚未安装到现网。
 
 OpenClaw shim 每次物理启动使用新幂等键；Brain 仅对已开始RPC且持久通道closed、或明确exited/dead的旧代自动精确取消。清理回执未知继续占位，确认absent后保留原HOME与机器亲和创建下一代；不自动重放RPC，未开始RPC的closed及Worker崩溃遗留锁仍保守拒绝。
 
@@ -66,6 +108,16 @@ Janitor 新动作的CI冒烟使用十类执行者精确名单、471叠加502合�
 
 
 Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增量；healthz 只隔离真实依赖，不污染机群配置读取。
+
+## Brain 1.360.0 — 管理台三入口与模型配置变更验证
+
+- 主导航收拢成运行与诊断、AI 管理、机器资源，默认运行页并保留旧路由。
+- 单 Agent 模型配置按原值条件事务写入；数据库读回与事件留痕提交后更新缓存，前端核对实际配置和回执。
+- 保留降级配置；仅改单 Agent 供应商选路；切换或刷新配置使旧回执失效。
+
+## Brain 1.359.4 — 公司 KR 分析正式登记
+
+- 将已运行的公司 KR 分析登记至既有 G5、workflows、主干活动与 steps；关联真实 Run，并投影到现有 Notion 工作流与步骤库。正式经营指标口径与数字保持由主理人设置。
 
 ## Brain 1.355.1 — 并发新增smoke入口生产隔离（原任务617259ae）
 
@@ -5334,3 +5386,5 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 - 真 PostgreSQL 事务回归覆盖真实 HTTP 选择项目、首次送审、修正再审、审批激活与 KR 放行；测试结束回滚。
 
 - KR 诊断的数据库入口挂 express-rate-limit，每来源每分钟30次，超额请求在SQL执行前返回429；无KR参数的健康入口独立可读。
+
+既有xian-M4维护只追加OS支持版本，原endpoint与grant范围不变。维护HMAC绑定真实runtime配置、boot与活动计数；固定canonical owned canary清理证明、同机锁/零活跃预约及35秒总事务fence缺一即拒绝。旧grant ID按精确UUID家族撤销全部代，补偿追加新版本并保留当前revoked/expiry。normal admission仅从冻结目录消费新OS floor，部署canonical及其它阈值保持。固定drain marker使用O_EXCL创建与nonce/inode/dev/内容journal，同合作锁精确释放；未知owner/工作区inode/cleanup保占位不自动清。

@@ -2,6 +2,7 @@
 # 列表内脚本失败 → CI 红（棘轮闸）
 # 新增脚本默认须加入此文件或 smoke-denylist.txt（新债不许欠）
 task-intake-smoke.sh
+agent-model-change-smoke.sh
 # 更新方式：在 CI 通过后从 smoke-debt.txt 迁移经确认能通过的脚本到此处
 abilities-api-smoke.sh
 ability-id-chain-pr2-smoke.sh
@@ -377,9 +378,13 @@ node-onboarding-smoke.sh
 
 app-server-generation-smoke.sh
 linux-resource-observation-smoke.sh
+linux-pool-authorization-smoke.sh
 execution-directory-smoke.sh
 
 attempt-runtime-limits-smoke.sh
 company-kr-analysis-smoke.sh
 
 smoke-production-guard-smoke.sh
+
+linux-script-runtime-smoke.sh
+kernel-codex-failover-smoke.sh

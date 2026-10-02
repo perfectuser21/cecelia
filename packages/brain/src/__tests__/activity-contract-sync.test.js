@@ -271,3 +271,31 @@ describe('buildBackboneActivityProps', () => {
     expect(t('Notes')).toContain('8bb3af55');
   });
 });
+
+// KR 专用投影独占创建这些活动，两个调度lane不可同时POST同一行。
+describe('KR活动投影唯一写口', () => {
+  it('通用活动推送从SQL选行时排除KR，不能在创建后才分流', async () => {
+    const { pushBackboneActivities } = await import('../activity-contract-sync.js');
+    const pool = { query: vi.fn().mockResolvedValueOnce({ rows: [{ notion_db_id: 'db' }] }).mockResolvedValueOnce({ rows: [] }) };
+    const notionReq = vi.fn();
+    await pushBackboneActivities(pool, 'token', { notionReq });
+    expect(pool.query.mock.calls[1][0]).toContain("capability_key IS DISTINCT FROM 'company_kr_analysis'");
+    expect(notionReq).not.toHaveBeenCalled();
+  });
+});
+
+describe('活动模型信息',()=>{
+  it('agent未固定模型时不能显示不调大模型',()=>{
+    const properties=buildBackboneActivityProps({contract:{name:'分析',invokers:['agent']}});
+    expect(properties.Cost.rich_text[0].text.content).toBe('调用大模型；实际型号见运行记录');
+  });
+});
+
+describe('活动正文模型信息',()=>{
+  it('正文与属性一致，未固定型号的agent仍标明调用大模型',async()=>{
+    const {buildBackboneActivityBody}=await import('../activity-contract-sync.js');
+    const blocks=buildBackboneActivityBody({contract:{name:'分析',invokers:['agent']}});
+    expect(JSON.stringify(blocks)).toContain('调用大模型；实际型号见运行记录');
+    expect(JSON.stringify(blocks)).not.toContain('不调大模型');
+  });
+});
