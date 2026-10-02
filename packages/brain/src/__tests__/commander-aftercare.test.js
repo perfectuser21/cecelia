@@ -16,7 +16,7 @@ function fixture() {
   const deps = {
     now: () => time, timeoutMs: 100, pollMs: 10,
     sleep: async (ms) => { time += ms; },
-    readJobs: async () => [{ id, name: `escort-${ctx.host}-${ctx.tag}`, schedule: { kind: 'every' }, enabled, state: { runningAtMs: busy ? 1 : undefined } }],
+    readJobs: async () => [{ id, name: `escort-${ctx.host}-${ctx.tag}`, schedule: { kind: 'every' }, enabled, state: { runningAtMs: busy ? 1 : undefined, lastRunStatus: 'ok' } }],
     readReceipt: async () => ack,
     requestTick: async () => { events.push('request'); },
     recordAftercare: async () => { events.push('record'); },
@@ -91,5 +91,13 @@ describe('Commander finalize→售后证据→tick结束→下岗', () => {
     f.deps.sleep = async () => { expect(f.events).not.toContain('remove'); f.setBusy(false); };
     expect((await run(f)).status).toBe('retired');
     expect(f.events).toEqual(['record', 'disable', 'remove']);
+  });
+  it('超时清掉running标记不能冒充自然成功退出', async () => {
+    const f = fixture(); f.setBusy(false); f.setAck(receipt(f.ctx));
+    const read = f.deps.readJobs;
+    f.deps.readJobs = async () => (await read()).map(job => ({ ...job, state: { lastRunStatus: 'error' } }));
+    expect((await run(f)).status).toBe('retained');
+    expect(f.events).not.toContain('record');
+    expect(f.events).not.toContain('remove');
   });
 });

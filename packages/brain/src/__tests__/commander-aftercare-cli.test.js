@@ -48,7 +48,7 @@ for (const fails of [false, true]) it(`实际CLI售后${fails ? '记账失败保
       fs.appendFileSync(root+'/calls',process.argv.slice(2).join(' ')+'\\n');
       if(process.argv[3]==='rm')fs.writeFileSync(root+'/removed','yes');
       if(process.argv[3]==='disable')fs.writeFileSync(root+'/disabled','yes');
-      console.log(JSON.stringify({jobs:fs.existsSync(root+'/removed')?[]:[{id:'${id}',name:'escort-fixture-host-cmd-test',schedule:{kind:'every'},enabled:!fs.existsSync(root+'/disabled'),state:{}}]}));`, { mode: 0o755 });
+      console.log(JSON.stringify({jobs:fs.existsSync(root+'/removed')?[]:[{id:'${id}',name:'escort-fixture-host-cmd-test',schedule:{kind:'every'},enabled:!fs.existsSync(root+'/disabled'),state:{lastRunStatus:'ok'}}]}));`, { mode: 0o755 });
     await execute(process.execPath, [script, '--worker', `${prefix}.request.json`], {
       env: { ...process.env, COMMANDER_AFTERCARE_DIR: root, COMMANDER_OPENCLAW_BIN: bin }, timeout: 10000 });
     const result = JSON.parse(await readFile(`${prefix}.result.json`, 'utf8'));

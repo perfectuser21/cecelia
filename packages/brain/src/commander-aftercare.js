@@ -34,7 +34,7 @@ export async function finishEscortAftercare(context, deps) {
       const owned = ownedIdleJob(await deps.readJobs(), context);
       if (!owned) return retained('ambiguous-or-unreadable-job');
       const receipt = await deps.readReceipt();
-      if (owned.idle && validReceipt(receipt, context)) {
+      if (owned.idle && owned.job.state.lastRunStatus === 'ok' && validReceipt(receipt, context)) {
         await deps.recordAftercare(receipt);
         // interval cron 的 disable 只挡未来周期，不取消当前 tick。
         await deps.quiesceJob(context.escortId);
@@ -42,6 +42,7 @@ export async function finishEscortAftercare(context, deps) {
           const checked = ownedIdleJob(await deps.readJobs(), context);
           if (!checked || checked.job.enabled !== false) return retained('quiescence-unconfirmed');
           if (checked.idle) {
+            if (checked.job.state.lastRunStatus !== 'ok') return retained('last-tick-not-successful');
             await deps.removeJob(context.escortId);
             return { status: 'retired', receipt };
           }
