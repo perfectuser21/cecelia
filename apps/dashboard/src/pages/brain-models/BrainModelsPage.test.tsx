@@ -191,3 +191,76 @@ describe('模型修改拒绝不完整证据', () => {
     expect(await screen.findByText(/配置读取失败/)).toBeTruthy();
   });
 });
+
+
+describe('模型修改凭证的所属配置', () => {
+  it('开始切换Profile时清除上一方案的成功记录', async () => {
+    mockChange({ receipt, readBackMatches: true });
+    render(<BrainModelsPage />);
+    await editThalamus();
+    await screen.findByText(/变更记录：change-001/);
+    mockFetch.mockImplementation(() => new Promise(() => {}));
+    fireEvent.click(screen.getByRole('button', { name: '切换到此 Profile' }));
+    expect(screen.queryByText(/变更记录：change-001/)).toBeNull();
+    expect(screen.queryByText(/已生效/)).toBeNull();
+  });
+
+  it('开始切换Profile时清除旧错误及编辑框', async () => {
+    mockChange({ receipt });
+    render(<BrainModelsPage />);
+    await editThalamus();
+    await screen.findByText(/未确认生效/);
+    mockFetch.mockImplementation(() => new Promise(() => {}));
+    fireEvent.click(screen.getByRole('button', { name: '切换到此 Profile' }));
+    expect(screen.queryByText(/未确认生效/)).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
+  });
+
+  it('刷新发现配置已改变时不再展示旧回执', async () => {
+    mockChange({ receipt, readBackMatches: true });
+    render(<BrainModelsPage />);
+    await editThalamus();
+    await screen.findByText(/变更记录：change-001/);
+    mockChange({});
+    fireEvent.click(screen.getByRole('button', { name: /刷新/ }));
+    await waitFor(() => expect(screen.queryByText(/变更记录：change-001/)).toBeNull());
+    expect(screen.queryByText(/已生效/)).toBeNull();
+  });
+
+  it('保存过程中禁用切换Profile及其他调整入口', async () => {
+    mockChange({});
+    render(<BrainModelsPage />);
+    await screen.findAllByText('调整');
+    mockFetch.mockImplementation(() => new Promise(() => {}));
+    fireEvent.click(screen.getAllByText('调整')[0]);
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'claude-sonnet-4-6' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    expect(screen.getByRole('button', { name: '切换到此 Profile' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.getAllByText('调整').every(button => button.hasAttribute('disabled'))).toBe(true);
+  });
+});
+
+
+it('刷新发现已切换到另一个Profile时清除原Profile的凭证', async () => {
+  mockChange({ receipt, readBackMatches: true });
+  render(<BrainModelsPage />);
+  await editThalamus();
+  await screen.findByText(/变更记录：change-001/);
+  mockFetch.mockImplementation((url: string) => {
+    if (url.endsWith('/active')) return makeResponse({ success: true, profile: {
+      ...mockActive.profile, id: 'another-profile', config: { ...mockActive.profile.config, thalamus: receipt.current },
+    } });
+    if (url.endsWith('/models')) return makeResponse(mockModels);
+    return makeResponse(mockProfiles);
+  });
+  fireEvent.click(screen.getByRole('button', { name: /刷新/ }));
+  await waitFor(() => expect(screen.queryByText(/变更记录：change-001/)).toBeNull());
+});
+
+it('切换Profile期间禁用模型调整入口', async () => {
+  render(<BrainModelsPage />);
+  await screen.findAllByText('调整');
+  mockFetch.mockImplementation(() => new Promise(() => {}));
+  fireEvent.click(screen.getByRole('button', { name: '切换到此 Profile' }));
+  expect(screen.getAllByText('调整').every(button => button.hasAttribute('disabled'))).toBe(true);
+});
