@@ -1,6 +1,7 @@
 import {execFileSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
+import {readFileSync} from 'node:fs';
 import pg from 'pg';
 import {beforeAll,afterAll,it,expect,vi} from 'vitest';
 import {DB_DEFAULTS} from '../db-config.js';
@@ -12,20 +13,32 @@ vi.mock('../db.js',()=>({default:{query:(...a)=>holder.pool.query(...a),connect:
 vi.mock('../task-updater.js',()=>({broadcastTaskState:vi.fn()}));
 const dbName=`phone_schedule_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const admin=new pg.Client({...DB_DEFAULTS,database:'postgres'});
-let pool,store;
+let pool,store,legacyBefore,legacyAfter;
 const phone={machine_id:'xian-mac-m1',serial:`fixture-${process.pid}`,host:'xian-m1',profile:'fixture-profile',account_id:'fixture-account',action:'adb_get_state'};
 const auth={registryAuthority:PHONE_SCHEDULE_REGISTRY_AUTHORITY};
 const now=new Date();now.setSeconds(10,0);const due=new Date(now);due.setSeconds(0,0);
 beforeAll(async()=>{
  await admin.connect();await admin.query(`CREATE DATABASE ${dbName}`);
+ const setup=new pg.Client({...DB_DEFAULTS,database:dbName});await setup.connect();await setup.query("CREATE TABLE schema_version(version VARCHAR(10) PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ DEFAULT now());INSERT INTO schema_version(version,description) VALUES('513','isolated fixture: defer new migration until historical lease exists')");await setup.end();
  execFileSync(process.execPath,['src/migrate.js'],{cwd:fileURLToPath(new URL('../../',import.meta.url)),env:{...process.env,NODE_ENV:'test',DB_NAME:dbName,DB_HOST:DB_DEFAULTS.host,DB_PORT:String(DB_DEFAULTS.port),DB_USER:DB_DEFAULTS.user,DB_PASSWORD:DB_DEFAULTS.password},stdio:'pipe'});
  pool=new pg.Pool({...DB_DEFAULTS,database:dbName,max:8});holder.pool=pool;
  for(const [,id,name]of LEGACY_BINDINGS)await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active') ON CONFLICT(id) DO NOTHING",[id,`C7 fixture ${name}`]);
  await importLegacyPolicy({pool,env:{FLEET_WORKER_XIAN_MAC_M1_URL:'http://fixture-m1:5231'}});
  await pool.query("INSERT INTO phone_registry(serial,nickname,host,profile,douyin_accounts,enabled) VALUES($1,'C7 fixture',$2,$3,$4,true)",[phone.serial,phone.host,phone.profile,JSON.stringify([{id:phone.account_id,current:true}])]);
+ await seedOldLease();await pool.query("DELETE FROM schema_version WHERE version='513'");await pool.query(readFileSync(new URL('../../migrations/513_phone_scheduled_slots.sql',import.meta.url),'utf8'));legacyAfter=await captureLegacy();
  store=await import('./schedule-store.js');
 },180000);
 afterAll(async()=>{if(pool)await pool.end();await admin.query(`DROP DATABASE IF EXISTS ${dbName}`);await admin.end();},30000);
+async function captureLegacy(){return {dispatch:(await pool.query('SELECT * FROM phone_dispatches WHERE serial=$1',[phone.serial])).rows[0],task:(await pool.query('SELECT * FROM tasks WHERE id=(SELECT task_id FROM phone_dispatches WHERE serial=$1)',[phone.serial])).rows[0],grants:(await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows};}
+async function seedOldLease(){
+ const old=(await pool.query('SELECT v.* FROM execution_nodes n JOIN execution_node_versions v ON v.id=n.current_version_id WHERE n.canonical_id=$1',[phone.machine_id])).rows[0];const version=randomUUID(),grant=randomUUID(),task=randomUUID(),dispatch=randomUUID(),reservation=randomUUID(),execution=randomUUID();
+ await pool.query("INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,platform,endpoints,profile,config_hash,state) VALUES($1,$2,2,'legacy-v1','fixture-worker','darwin',$3,$4,$5,'active')",[version,old.machine_registry_id,{phone_ssh:{host:phone.host,port:22,user:'administrator',hub:{host:'mmv',port:22,user:'administrator'}}},old.profile,old.config_hash]);await pool.query('UPDATE execution_nodes SET current_version_id=$1 WHERE canonical_id=$2',[version,phone.machine_id]);
+ await pool.query("INSERT INTO execution_grants(id,node_version_id,surface,provider,account_id,profile_id,provenance,state) VALUES($1,$2,'phone_ssh','adb',$3,'adb_get_state','isolated_c7_historical_fixture','active')",[grant,version,phone.account_id]);
+ const c=await pool.connect();try{await c.query('BEGIN');await c.query("INSERT INTO tasks(id,title,status,task_type,executor_kind,kind) VALUES($1,'C7 old leased fixture','queued','device_job','phone-ssh-controller','agent')",[task]);
+ await c.query("INSERT INTO capacity_reservations(id,machine_id,owner_kind,owner_key,task_id,config_digest,allocation_mode,policy_version,snapshot_time,snapshot_digest,intent_id,worker_id,worker_boot_id,execution_version_id,execution_grant_id) VALUES($1,$2,'phone',$3,$4,$5,'exclusive_unclassified','fixture',now(),$5,$6,'fixture-worker','fixture-boot',$7,$8)",[reservation,phone.machine_id,`phone-${dispatch}`,task,'f'.repeat(64),execution,version,grant]);
+ await c.query("INSERT INTO phone_dispatches(id,task_id,reservation_id,serial,machine_id,host,profile,account_id,execution_version_id,execution_grant_id,lease_token,execution_id,worker_id,worker_boot_id,config_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'fixture-worker','fixture-boot',$13)",[dispatch,task,reservation,phone.serial,phone.machine_id,phone.host,phone.profile,phone.account_id,version,grant,randomUUID(),execution,'f'.repeat(64)]);
+ await c.query("UPDATE tasks SET status='in_progress',payload=COALESCE(payload,'{}'::jsonb)||jsonb_build_object('phone_dispatch_id',$2::text),claimed_by='phone-fixture' WHERE id=$1",[task,dispatch]);await c.query('COMMIT');}catch(e){await c.query('ROLLBACK');throw e;}finally{c.release();}legacyBefore=await captureLegacy();
+}
 async function template(){const id=randomUUID();await pool.query("INSERT INTO recurring_tasks(id,title,task_type,cron_expression,recurrence_type,is_active,next_run_at,template) VALUES($1,'C7 fixture','device_job','* * * * *','cron',true,$2,$3)",[id,due,{timezone:'UTC',executor_kind:'phone-ssh-controller',phone_authority:true}]);return id;}
 async function register(id,enable=true,sharedPhone=null){const pins=sharedPhone||{...phone,serial:`fixture-${id}`};await pool.query("INSERT INTO phone_registry(serial,nickname,host,profile,douyin_accounts,enabled) VALUES($1,'C7 fixture',$2,$3,$4,true) ON CONFLICT(serial) DO NOTHING",[pins.serial,pins.host,pins.profile,JSON.stringify([{id:pins.account_id,current:true}])]);const r=await store.registerPhoneSchedule(pool,{templateId:id,phone:pins,parentTaskId:null,expiresAt:new Date(Date.now()+120000)},auth);if(enable)await store.setPhoneScheduleState(pool,{registrationId:r.id,revision:Number(r.revision),state:'active'},auth);return r;}
 async function run(id){return store.processPhoneScheduledSlot(pool,{templateId:id,now});}
@@ -53,4 +66,11 @@ it('生产Notion新页/已管理页两条真实SQL在queued owner上合法，混
  await pool.query("UPDATE tasks SET notion_props = COALESCE(notion_props,'{}'::jsonb) || jsonb_build_object('pushed_status', $2::text, 'pushed_project', $3::text), notion_synced_at=NOW() WHERE id=$1",[task.id,'queued','']);
  const row=(await pool.query('SELECT notion_id,notion_synced_at,notion_props FROM tasks WHERE id=$1',[task.id])).rows[0];expect(row.notion_id).toBeTruthy();expect(row.notion_synced_at).toBeInstanceOf(Date);expect(row.notion_props.pushed_status).toBe('queued');
  await expect(pool.query("UPDATE tasks SET notion_props='{}',notion_synced_at=now(),result='{}' WHERE id=$1",[task.id])).rejects.toThrow('phone_scheduled_task_managed');
+});
+
+it('513不回填或改动真508已leased历史，旧guard和未知占位保留',async()=>{expect(legacyAfter).toEqual(legacyBefore);expect((await pool.query('SELECT * FROM phone_task_owners WHERE task_id=$1',[legacyBefore.task.id])).rows).toEqual([]);await expect(pool.query("UPDATE tasks SET status='completed' WHERE id=$1",[legacyBefore.task.id])).rejects.toThrow('phone_task_managed');const id=await template();await register(id,true,phone);expect((await run(id)).state).toBe('overlap');expect((await totals(id)).tasks).toBe(0);});
+it('真实CAS阶段阻塞跨过登记期限，COMMIT必须再次拒绝且完整回滚',async()=>{
+ const id=await template();const r=await register(id);await store.setPhoneScheduleState(pool,{registrationId:r.id,revision:Number(r.revision),state:'active',expiresAt:new Date(Date.now()+1000)},auth);
+ await pool.query(`CREATE FUNCTION fixture_c7_expiry() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${id}'::uuid THEN PERFORM pg_sleep(1.5); END IF;RETURN NEW;END $$;CREATE TRIGGER fixture_c7_expiry BEFORE UPDATE ON recurring_tasks FOR EACH ROW EXECUTE FUNCTION fixture_c7_expiry()`);
+ try{await expect(run(id)).rejects.toThrow('phone_schedule_owner_required');expect(await totals(id)).toEqual({slots:0,owners:0,tasks:0,receipts:0});}finally{await pool.query('DROP TRIGGER fixture_c7_expiry ON recurring_tasks;DROP FUNCTION fixture_c7_expiry()');}
 });
