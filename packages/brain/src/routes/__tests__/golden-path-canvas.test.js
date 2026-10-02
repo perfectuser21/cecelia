@@ -1,7 +1,12 @@
 // Crystal 件7（手动v3）：map↔画布对齐——只读画布生成器 + run 终态回写端点
 // map=SSOT：golden_path 表（L4 step，order_no）→ n8n V4 画布 stages JSON
 // 死规矩：stage 元数据必须显式携带 step_id（判定点 e66cf847——name 会改、number 会插队，回写不能打错格子）
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+import { installGoldenPathAuditFixture } from '../../__tests__/helpers/golden-path-audit-fixture.js';
+let cleanupAudit;
+beforeEach(() => { cleanupAudit = installGoldenPathAuditFixture(); });
+afterEach(() => cleanupAudit());
 
 const mockQuery = vi.fn();
 vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));

@@ -13,6 +13,7 @@
  * Spec: docs/superpowers/specs/2026-07-02-a1-context-manifest-design.md
  */
 import { legacyReadEnabled } from './lib/golden-path-legacy.js';
+import { recordGoldenPathInternal } from './lib/golden-path-audit-runtime.js';
 
 const MAX_INVARIANT_LEN = 200;   // 单条铁律文字截断
 const MAX_FR_LINE_LEN = 120;     // 累积 FR 单行截断
@@ -50,7 +51,9 @@ export async function fetchLineContext({ pool }, { taskId = null, abilityId = nu
   const legacyGoldenPath = legacyReadEnabled();
 
   // 1. step 级：同源 GET /tasks/:id/golden-path-decisions?category=invariant（routes/abilities.js）
-  const stepRows = (taskId && legacyGoldenPath)
+  const stepAudited = taskId && legacyGoldenPath
+    && (await recordGoldenPathInternal('step_invariants')).persisted;
+  const stepRows = stepAudited
     ? await safeQuery('step invariants', `
       SELECT d.*, gp.order_no
       FROM decisions d
@@ -94,7 +97,7 @@ export async function fetchLineContext({ pool }, { taskId = null, abilityId = nu
   // 累积 FR：同源 GET /journeys/:id/golden-paths（routes/abilities.js:277），
   // 过滤 ability_status IN ('done','working')，按 owner_task_id 分组（ability:run=1:N）
   let cumulativeFR = [];
-  if (journeyId && legacyGoldenPath) {
+  if (journeyId && legacyGoldenPath && (await recordGoldenPathInternal('cumulative_fr')).persisted) {
     const frRows = await safeQuery('cumulative FR', `
       SELECT jf.id AS ability_id, jf.name AS ability_name, jf.status AS ability_status,
              gp.owner_task_id, gp.id, gp.order_no, gp.feature_id, gp.note

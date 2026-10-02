@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+import { installGoldenPathAuditFixture } from '../../__tests__/helpers/golden-path-audit-fixture.js';
+let cleanupAudit;
+beforeEach(() => { cleanupAudit = installGoldenPathAuditFixture(); });
+afterEach(() => cleanupAudit());
+
 const mockQuery = vi.fn();
 vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
 vi.mock('../../event-bus.js', () => ({ emit: vi.fn().mockResolvedValue(undefined) }));

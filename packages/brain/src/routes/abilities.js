@@ -6,7 +6,7 @@ import { sendGoldenPathRetired, guardLegacyRead } from '../lib/golden-path-legac
 import { observeGoldenPathLegacy } from '../lib/golden-path-observation.js';
 
 const router = express.Router();
-router.use(observeGoldenPathLegacy);
+router.use((req, res, next) => observeGoldenPathLegacy(req, res, next, { pool }));
 
 const ABILITY_KINDS = ['ability', 'feature'];
 const ABILITY_STATUS = ['working', 'broken', 'planned', 'building', 'done', 'deprecated'];

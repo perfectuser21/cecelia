@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.360.7
+**Brain 版本**: 1.360.8
 
 
 Linux接入控制目录在宿主保持私有凭据缓存，容器统一挂到root父目录下的/run/cecelia-fleet-control；共享凭据目录及其所有者不变，所有权校验不放宽。
@@ -38,7 +38,7 @@ Kernel 派发按统一机器角色表生成 M1/M4 优先、MMV 最后的默认�
 
 
 
-**Brain 版本**: 1.360.6
+**Brain 版本**: 1.360.8
 
 ## Brain 1.357.6 — 恢复目标跨路径永久回归
 
@@ -380,6 +380,19 @@ Worker 标准升级在预检前读取可信现役 plist 快照，保留既有地
 - Notion Projects 页正文（`notion-relay-projection.js`）开头新增目标/现状/已知事实/未决问题/变更日志（最近10条）渲染，指纹随 brief 变化
 - 新增 `PATCH /api/brain/projects/:id/brief`（`task-projects.js`）：主会话直接改 brief，走同一套 `applyProjectBriefDelta` 与 A 档规则
 - `packages/engine/hooks/stop.sh` 接力棒闸提示文案追加可选 `brief_delta` 示例（纯文案，不改判定逻辑，不涉及 engine 版本五件套）
+
+## Brain 1.359.2 — GP115独审五项证据缺口修正
+
+- 根serving manifest交叉核全部正式与unadmitted实例生命周期；未准入实例重叠流量拒绝窗口，未证明计数不冒零调用。观测起动无持久ACK时不开放listener；实际T0前仍须现场核部署控制与全部接流量实例，不能发现没有装观测的未知外部程序。
+- 正常bluegreen按DB最新heartbeat/end与DB clock确认60秒lease，不把仍alive旧实例立即永久记gap；过期无end、孤立intent及既有缺口仍永久失效。
+- 真实listener排空回执才写clean end；慢body/超时abandon持久gap。512MiB有界容量以真实30秒完整source168h文件通过reader实测，保留后续多周余量。
+- T0核实际event.created_at，naive列只由DB会话TimeZone转换且必须与payload绝对时刻精确对应；正规写入同一个DB SQL stamp赋created_at/payload，不准caller自由时刻。DB时区漂移无法证明就拒绝，独立归档保存DB验证回执；真实新事件倒签8天PG回归拒绝。无生产T0/flag/DDL/退役。
+
+## Brain 1.359.1 — GP115专属持久观测准备（任务115a39b8）
+
+- 旧HTTP与line-context两helper先专属fsync intent、现有cecelia_events可核INSERT ID、fsync ACK；DB/介质/回放缺口永久gap，公共event-bus容错不动，HTTP caller缺可信绑定恒unknown，内部仅恒定代码身份。
+- server非isolated启动显式开启，真实源码SHA与九文件hash、30秒heartbeat/60秒lease、start/listening/end与跨部署instance清单齐全；关机pool关闭前有界stop。unit/preview不产生后台DB、文件或timer副作用。
+- 独立窗口manifest核每instance pair，独立T0归档只从官方任务关联的真实event取得。payload.gp_db_created_at由数据库clock_timestamp SQL生成带区绝对时刻；旧naive日期不猜时区，不洗绿旧窗口。裁决依赖168真实小时、完整source/flag/ACK/lifecycle/lease及未知caller解释，无schema、flag或T0发布，也不退役。
 
 ## Brain 1.348.7 — golden_path 旧表退役第一刀：写路径 410、读路径默认 410（GOLDEN_PATH_LEGACY_READ=1 应急放行）、promote/line-context/ledger 停读停写（任务 7d312fd8，决策 3e867cad / f425e3fd）
 
@@ -5415,3 +5428,9 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 - KR 诊断的数据库入口挂 express-rate-limit，每来源每分钟30次，超额请求在SQL执行前返回429；无KR参数的健康入口独立可读。
 
 既有xian-M4维护只追加OS支持版本，原endpoint与grant范围不变。维护HMAC绑定真实runtime配置、boot与活动计数；固定canonical owned canary清理证明、同机锁/零活跃预约及35秒总事务fence缺一即拒绝。旧grant ID按精确UUID家族撤销全部代，补偿追加新版本并保留当前revoked/expiry。normal admission仅从冻结目录消费新OS floor，部署canonical及其它阈值保持。固定drain marker使用O_EXCL创建与nonce/inode/dev/内容journal，同合作锁精确释放；未知owner/工作区inode/cleanup保占位不自动清。
+
+## Brain 1.359.3 — GP115 受控T0发行与跨时区真实性
+
+- 专属issuer仅数据库单clock新INSERT发行，显式UTC naive存储语义，实际ID、微秒精确存储值、类型与绝对clock绑定，COMMIT及独立0600 fsync回执完成才返回可登记ID。
+- reader必须先有受保护发行档，再交叉核真实事件行；不按reader时区推断历史naive时间。缺发行、未知存储语义、冲突/介质故障均拒绝，清理后只保原发行档。
+- 永久真实Chicago writer/UTC reader倒签5h、正规发行/清理、缺发行、DB冲突、COMMIT未知及文件冲突回归；不启动生产T0、不改schema/flag/退役。

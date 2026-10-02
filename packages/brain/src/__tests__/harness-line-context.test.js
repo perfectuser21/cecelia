@@ -5,6 +5,11 @@
  * Spec: docs/superpowers/specs/2026-07-02-a1-context-manifest-design.md
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createGoldenPathAudit } from '../lib/golden-path-audit.js';
+import { setGoldenPathAudit } from '../lib/golden-path-audit-runtime.js';
 import {
   fetchLineContext,
   formatLineContextForPrompt,
@@ -56,14 +61,40 @@ function findCall(pool, re) {
 }
 
 let warnSpy;
+let auditRoot, auditEvents;
 beforeEach(() => {
   warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   // golden_path 旧表已退役（任务 7d312fd8）：step 路 / FR 路只在应急放行窗口下查旧表
   process.env.GOLDEN_PATH_LEGACY_READ = '1';
+  auditRoot = mkdtempSync(path.join(os.tmpdir(), 'gp-context-private-'));
+  auditEvents = [];
+  setGoldenPathAudit(createGoldenPathAudit({ root: auditRoot,
+    source: { git_sha: 'a'.repeat(40), manifest: {} }, flag: () => true,
+    store: { persist: async (_type, payload) => {
+      auditEvents.push(payload);
+      return { id: auditEvents.length, created_at: '2026-10-02T00:00:00Z', db_time: '2026-10-02T00:00:00Z' };
+    } } }));
 });
 afterEach(() => {
   warnSpy.mockRestore();
   delete process.env.GOLDEN_PATH_LEGACY_READ;
+  setGoldenPathAudit(null);
+  rmSync(auditRoot, { recursive: true, force: true });
+});
+
+describe('内部旧读的真实持久审计边界', () => {
+  it('两个旧读先审计，caller由代码固定，不取业务payload身份', async () => {
+    await fetchLineContext({ pool: makePool() }, { taskId: TASK_ID, journeyId: JOURNEY_ID });
+    expect(auditEvents.map(e => e.caller.operation)).toEqual(['step_invariants', 'cumulative_fr']);
+    expect(auditEvents.every(e => e.caller.kind === 'internal_code')).toBe(true);
+  });
+  it('审计runtime未建立时，两条旧读均拒绝，正常新查询保留', async () => {
+    setGoldenPathAudit(null);
+    const pool = makePool();
+    await fetchLineContext({ pool }, { taskId: TASK_ID, journeyId: JOURNEY_ID });
+    expect(pool.query.mock.calls.some(([sql]) => /golden_path/.test(sql))).toBe(false);
+    expect(pool.query.mock.calls.some(([sql]) => /global.*area/.test(sql))).toBe(true);
+  });
 });
 
 describe('fetchLineContext — golden_path 退役（GOLDEN_PATH_LEGACY_READ 未开）', () => {

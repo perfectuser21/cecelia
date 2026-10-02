@@ -1,0 +1,130 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { archiveGoldenPathT0, registerGoldenPathServing } from '../golden-path-archive.js';
+import { createGoldenPathJournal } from '../golden-path-journal.js';
+import { goldenPathSource } from '../golden-path-audit-runtime.js';
+import express from 'express';
+import { createGoldenPathAudit } from '../golden-path-audit.js';
+import { setGoldenPathAudit } from '../golden-path-audit-runtime.js';
+import { observeGoldenPathLegacy } from '../golden-path-observation.js';
+import { inspectGoldenPathWindow } from '../golden-path-window.js';
+
+const roots = [];
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+const BEGIN = Date.parse('2026-10-02T00:00:00Z'), WEEK = 7 * 24 * 3600_000;
+function fixture({ unissued = false, archived = false, short = false, unknown = false, gap = false, missingAck = false, flagOn = false, leaseGap = false, sourceMismatch = false, missingManifest = false, dbAckMismatch = false, frequencyMs = 60_000 } = {}) {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'gp-window-private-')); roots.push(root);
+  const windowId = randomUUID(), source = goldenPathSource({ GIT_SHA: 'a'.repeat(40) });
+  const window = { window_id: windowId, t0_event_id: 123, source };
+  const t0 = { event_type: 'golden_path_observation_t0', event_source: 'golden-path-retirement', issuance: { format: 'gp-t0-issuer-v1', storage_type: 'timestamp without time zone', storage_text: '2026-10-02T00:00:00.000000', clock_utc_text: '2026-10-02T00:00:00.000000' }, id: 123, created_at: new Date(BEGIN).toISOString(), payload: { window_id: windowId, source, gp_db_created_at: new Date(BEGIN).toISOString() } };
+  if (unissued) { delete t0.issuance; t0.db_time_verified = true; }
+  const journal = createGoldenPathJournal(path.join(root, windowId));
+  archiveGoldenPathT0(path.join(root, windowId), t0);
+  registerGoldenPathServing(root, journal.instanceId, windowId);
+  const rows = [];
+  // 真实私有文件中的确定性外部DB证据夹具；裁决/读取/hash链运行真实模块。
+  function append(record) {
+    const row = { ...record, source: record.source ?? source, window_id: windowId, instance_id: journal.instanceId,
+      seq: rows.length + 1, previous_hash: rows.at(-1)?.record_hash ?? null };
+    row.record_hash = createHash('sha256').update(JSON.stringify(row)).digest('hex'); rows.push(row);
+  }
+  append({ kind: 't0_receipt', event_id: t0.id, created_at: t0.created_at, payload: t0.payload });
+  let eventId = 200;
+  function event(lifecycle, at) {
+    const audit_id = randomUUID();
+    append({ kind: 'intent', event_type: 'golden_path_observation_health', payload: {
+      audit_id, lifecycle, healthy: true, legacy_read_enabled: flagOn,
+      instance_id: journal.instanceId, observer_actor: 'brain:golden-path-observation',
+      source, window_id: windowId, retirement_task_id: '7d312fd8-10b0-4f23-99ec-535a6e782326' } });
+    append({ kind: 'ack', audit_id, event_id: eventId++, created_at: new Date(at).toISOString(), gp_db_created_at: new Date(at).toISOString(), db_time: new Date(at).toISOString() });
+  }
+  event('instance_start', BEGIN); event('listening', BEGIN);
+  for (let at = BEGIN + frequencyMs; at < BEGIN + WEEK; at += frequencyMs) {
+    if (!leaseGap || at !== BEGIN + 60_000) event('heartbeat', at);
+  }
+  event('instance_end', BEGIN + WEEK);
+  if (unknown) {
+    const audit_id = randomUUID();
+    append({ kind: 'intent', event_type: 'golden_path_legacy_access', payload: {
+      audit_id, caller: { kind: 'unknown' }, legacy_read_enabled: false } });
+    append({ kind: 'ack', audit_id, event_id: eventId++, created_at: t0.created_at, gp_db_created_at: t0.created_at, db_time: t0.created_at });
+  }
+  if (gap) append({ kind: 'gap', reason: 'database_failure' });
+  if (sourceMismatch) append({ kind: 'gap_free_record', source: { ...source, git_sha: 'b'.repeat(40) } });
+  if (dbAckMismatch) {
+    const last = rows.at(-1); last.gp_db_created_at = new Date(BEGIN).toISOString();
+    delete last.record_hash; last.record_hash = createHash('sha256').update(JSON.stringify(last)).digest('hex');
+  }
+  if (missingAck) rows.pop();
+  writeFileSync(journal.file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
+  if (missingManifest) rmSync(path.join(root, windowId, 'instances.manifest.jsonl'));
+  const pool = { query: async input => {
+    const sql = input.text;
+    if (sql.includes('FROM tasks')) return { rows: [{ window }] };
+    if (sql.includes('FROM cecelia_events')) return { rows: archived ? [] : [{ ...t0, storage_type: t0.issuance?.storage_type, storage_text: t0.issuance?.storage_text }] };
+    if (sql.includes('clock_timestamp')) return { rows: [{ db_now: new Date(BEGIN + WEEK - (short ? 1 : 0)).toISOString() }] };
+    throw new Error('unexpected query');
+  } };
+  return { root, pool };
+}
+
+describe('七日裁决只读边界', () => {
+  it('真实30秒频率与完整source的168小时文件实际reader可接受', async () => {
+    const f = fixture({ frequencyMs: 30_000 });
+    expect(await inspectGoldenPathWindow(f)).toMatchObject({ accepted: true, actual_access_count: 0, reasons: [] });
+  });
+  it('DB七日清理后只用先前真实T0回执归档，不使用自报日期', async () => {
+    const f = fixture({ archived: true });
+    expect((await inspectGoldenPathWindow(f)).accepted).toBe(true);
+  });
+  it('旧自动归档即使自报db_time_verified也不是发行证据', async () => {
+    const result = await inspectGoldenPathWindow(fixture({ unissued: true }));
+    expect(result.accepted).toBe(false); expect(result.reasons).toContain('t0_or_source_unproven');
+  });
+  it.each([
+    ['差1毫秒', { short: true }, 'seven_real_days_incomplete'],
+    ['未知caller', { unknown: true }, 'caller_unresolved'],
+    ['持久gap', { gap: true }, 'coverage_gap'],
+    ['缺ACK', { missingAck: true }, 'ack_unproven'],
+    ['flag开启', { flagOn: true }, 'flag_or_health_invalid'],
+    ['lease断档', { leaseGap: true }, 'health_lease_gap'],
+    ['source漂移', { sourceMismatch: true }, 'source_unadmitted'],
+    ['manifest缺失', { missingManifest: true }, 'journal_manifest_missing'],
+    ['ACK数据库绝对时刻不一致', { dbAckMismatch: true }, 'ack_unproven'],
+  ])('%s不能被heartbeat或到期洗绿', async (_name, options, reason) => {
+    const result = await inspectGoldenPathWindow(fixture(options));
+    expect(result.accepted).toBe(false); expect(result.reasons).toContain(reason);
+  });
+  it('没有真身T0登记拒绝，不看旧blocked_until', async () => {
+    const pool = { query: async () => ({ rows: [{ window: null }] }) };
+    expect(await inspectGoldenPathWindow({ pool, root: '/unused' })).toMatchObject({ accepted: false, reasons: ['window_not_admitted'] });
+  });
+  it('未准入并行实例真实HTTP unknown必须使正式窗拒绝，不能仅看正式目录零调用', async () => {
+    const f = fixture(); expect((await inspectGoldenPathWindow(f)).accepted).toBe(true);
+    const source = goldenPathSource({ GIT_SHA: 'b'.repeat(40) }); let id = 30000;
+    const audit = createGoldenPathAudit({ root: f.root, source, flag: () => false, store: {
+      async persist() { const at = new Date(BEGIN + WEEK - 1000).toISOString(); return { id: id++, created_at: at, gp_db_created_at: at, db_time: at }; },
+    } });
+    await audit.start(); await audit.listening(); setGoldenPathAudit(audit);
+    const app = express(); app.use(express.json()); app.use(observeGoldenPathLegacy);
+    const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
+    try {
+      expect((await fetch(`http://127.0.0.1:${server.address().port}/golden_path`)).status).toBe(410);
+      const result = await inspectGoldenPathWindow(f);
+      expect(result.accepted).toBe(false); expect(result.reasons).toContain('serving_instance_unadmitted');
+      expect(result.actual_access_count).toBe(1);
+    } finally { setGoldenPathAudit(null); server.closeAllConnections(); await new Promise(r => server.close(r)); }
+  });
+
+  it('全局manifest漏登记的旧实例journal pair也不能被忽略', async () => {
+    const f = fixture(); expect((await inspectGoldenPathWindow(f)).accepted).toBe(true);
+    createGoldenPathJournal(path.join(f.root, 'unadmitted'));
+    const result = await inspectGoldenPathWindow(f);
+    expect(result.accepted).toBe(false); expect(result.reasons).toContain('serving_manifest_unproven');
+    expect(result.actual_access_count_complete).toBe(false);
+  });
+
+});

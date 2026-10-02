@@ -1,12 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createGoldenPathAudit } from '../golden-path-audit.js';
+import { setGoldenPathAudit } from '../golden-path-audit-runtime.js';
 
 const { query } = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock('../../db.js', () => ({ default: { query } }));
 import router from '../../routes/abilities.js';
 
 const savedFlag = process.env.GOLDEN_PATH_LEGACY_READ;
+let audit, root;
 function app() {
   const instance = express();
   instance.use(express.json());
@@ -34,14 +40,32 @@ const reads = [
 ];
 
 describe('golden_path 退役：应急只读与持久观测', () => {
+  it('记录程序与真实caller分离，任意自报身份不能冒充可信主体', async () => {
+    await request(app()).get('/api/brain/golden_path?token=private-token')
+      .set('X-Actor', 'forged-business-caller');
+    const payload = events()[0][1][2];
+    expect(payload.observer_actor).toBe('brain:golden-path-observation');
+    expect(payload.caller).toEqual({ kind: 'unknown', identity_source: 'not_bound' });
+    expect(JSON.stringify(payload)).not.toContain('forged-business-caller');
+  });
   beforeEach(() => {
     query.mockReset().mockResolvedValue({ rows: [] });
     delete process.env.GOLDEN_PATH_LEGACY_READ;
+    root = mkdtempSync(path.join(os.tmpdir(), 'gp-http-private-'));
+    audit = createGoldenPathAudit({ root, source: { git_sha: 'a'.repeat(40), manifest: {} },
+      flag: () => process.env.GOLDEN_PATH_LEGACY_READ === '1', store: { persist: async (type, payload) => {
+        await query('INSERT INTO cecelia_events (event_type,source,payload) VALUES ($1,$2,$3)',
+          [type, 'golden-path-retirement', payload]);
+        return { id: events().length, created_at: '2026-10-02T00:00:00Z', db_time: '2026-10-02T00:00:00Z' };
+      } } });
+    setGoldenPathAudit(audit);
   });
   afterEach(() => {
     if (savedFlag === undefined) delete process.env.GOLDEN_PATH_LEGACY_READ;
     else process.env.GOLDEN_PATH_LEGACY_READ = savedFlag;
     vi.restoreAllMocks();
+    setGoldenPathAudit(null);
+    rmSync(root, { recursive: true, force: true });
   });
 
   it.each(writes)('%s %s：flag=1 仍永久 410，不写业务表', async (method, path, body) => {
@@ -65,8 +89,9 @@ describe('golden_path 退役：应急只读与持久观测', () => {
     expect(domainQueries()).toEqual([]);
     expect(events()).toHaveLength(1);
     const payload = events()[0][1][2];
-    expect(payload).toEqual({
-      actor: 'brain', method: 'GET', route: template, path_kind: 'read', outcome: 'rejected',
+    expect(payload).toMatchObject({
+      observer_actor: 'brain:golden-path-observation', caller: { kind: 'unknown', identity_source: 'not_bound' },
+      method: 'GET', route: template, path_kind: 'read', outcome: 'rejected',
       legacy_read_enabled: false, retirement_task_id: '7d312fd8-10b0-4f23-99ec-535a6e782326',
     });
     expect(JSON.stringify(payload)).not.toContain('private');
@@ -90,7 +115,16 @@ describe('golden_path 退役：应急只读与持久观测', () => {
     expect(response.body.path_kind).toBe('write');
     expect(events()).toHaveLength(1);
     expect(domainQueries()).toEqual([]);
-    expect(console.error).toHaveBeenCalled();
+    expect(audit.status().healthy).toBe(false);
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it('应急旧读在审计介质失败时仍拒绝，不执行旧表查询', async () => {
+    process.env.GOLDEN_PATH_LEGACY_READ = '1';
+    query.mockRejectedValue(new Error('database unavailable'));
+    expect((await request(app()).get('/api/brain/golden_path')).status).toBe(410);
+    expect(domainQueries()).toEqual([]);
+    expect(audit.status().healthy).toBe(false);
   });
 
   it('大小写、尾斜线、HEAD 按 Express 路由语义留下命中', async () => {
