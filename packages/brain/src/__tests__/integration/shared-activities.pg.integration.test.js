@@ -60,7 +60,7 @@ describe('共享活动真实数据库合同', () => {
     expect(list.body.workflows.map(w=>w.activity_count)).toEqual([8,8]);
     const detail = await request(app).get(`/api/brain/workflows/${benchmark}`); expect(detail.status).toBe(200);
     expect(detail.body.workflow.activities.map(x=>x.slot_key)).toEqual(KEYS);
-    expect(detail.body.workflow.activities[0]).toMatchObject({activity_id:legacy[0],source_ref:'keyword_acquisition.preflight'});
+    expect(detail.body.workflow.activities[0]).toMatchObject({activity_id:legacy[0],canonical_id:legacy[0],source_ref:'keyword_acquisition.preflight'});
     expect(detail.body.workflow.activities[0].steps).toHaveLength(1);
     expect(detail.body.workflow.activities[0].gaps).toHaveLength(1);
   });
