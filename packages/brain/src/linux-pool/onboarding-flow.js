@@ -81,7 +81,7 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
    if(!permitted(source,machine)||requestHash(source.request)!==state.request_hash)throw error('linux_pool_control_unavailable');
    machine={...machine,metadata:{...machine.metadata,onboarding:{...machine.metadata.onboarding,request:source.request}}};
    const save=async value=>{
-    const result=await db.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding}',$2::jsonb),updated_at=now() WHERE id=$1 AND status='in_progress' AND claimed_by=$3 RETURNING id",[id,JSON.stringify(value),actor]);
+    const result=await db.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding}',$2::jsonb),updated_at=now() WHERE id=$1 AND status='in_progress' AND claimed_by=$3 AND payload->'linux_onboarding'=$4::jsonb RETURNING id",[id,JSON.stringify(value),actor,JSON.stringify(state)]);
     if(result.rowCount!==1)throw error('linux_pool_control_unavailable');state=structuredClone(value);return true;
    };
    try{
