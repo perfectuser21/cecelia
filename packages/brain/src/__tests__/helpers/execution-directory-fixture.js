@@ -8,4 +8,3 @@ export async function seedExecutionDirectoryFixture({machineIds}={}){
  return directory.refresh({pool:{query:async()=>({rows:machineIds?rows.filter(n=>machineIds.includes(n.canonical_id)):rows})}});
 }
 await seedExecutionDirectoryFixture();
-

@@ -142,3 +142,9 @@ describe('硬约束 2：命令执行面', () => {
     rejects('echo hi', /payload/);
   });
 });
+
+ describe('GPU 执行声明必须明确拒绝', () => {
+  it.each([{gpu: true}, {runtime_resources: {gpu: {count: 1}}}, {runtime_resources: {gpu: null}}])('不静默丢弃 %j', (extra) => {
+    expect(rejects(ok(extra), /GPU/).reason).toBe('gpu_execution_unsupported');
+  });
+});

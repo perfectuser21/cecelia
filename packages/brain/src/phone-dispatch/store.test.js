@@ -33,7 +33,11 @@ beforeAll(async()=>{
  CREATE TABLE initiative_runs(id UUID PRIMARY KEY,phase TEXT DEFAULT 'planning',map_recovery_contract_id UUID,orchestrator_version TEXT DEFAULT 'v2');CREATE TABLE map_recovery_consumptions(contract_id UUID,attempt_id UUID);
  CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);`);
  for(const [,id,name]of LEGACY_BINDINGS)await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')",[id,name]);
- for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','490_phone_registry','501_capacity_reservations','503_execution_directory','504_app_server_generations','507_linux_script_authorization','508_phone_dispatches'])await pool.query(readFileSync(new URL(`../../migrations/${name}.sql`,import.meta.url),'utf8'));
+ for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','490_phone_registry','501_capacity_reservations','503_execution_directory','504_app_server_generations','507_linux_script_authorization','272_janitor','510_us_brain_image_retention','508_phone_dispatches']){
+  await pool.query(readFileSync(new URL(`../../migrations/${name}.sql`,import.meta.url),'utf8'));
+  // Real migration 510 delegates version registration to migrate.js; execute the same wrapper after its SQL.
+  if(name==='510_us_brain_image_retention')await pool.query('INSERT INTO schema_version(version,description) VALUES($1,$2) ON CONFLICT(version) DO NOTHING',['510','us_brain_image_retention']);
+ }
  await importLegacyPolicy({pool,env:{FLEET_WORKER_XIAN_MAC_M1_URL:'http://m1:5231'}});
  const old=(await pool.query('SELECT * FROM execution_node_versions WHERE id=(SELECT current_version_id FROM execution_nodes WHERE canonical_id=$1)',[machine])).rows[0];
  const version=randomUUID();sshVersion=version;await pool.query(`INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,platform,endpoints,profile,config_hash,state) VALUES($1,$2,2,'legacy-v1',$3,'darwin',$4,$5,$6,'active')`,[version,old.machine_registry_id,old.worker_id,{phone_ssh:{host,port:22,user:'administrator',hub:{host:'us-vps',port:22,user:'administrator'}}},old.profile,old.config_hash]);
@@ -282,4 +286,11 @@ it('已部署Linux507、手机508、Hub511与C1 512各自留schema_version，不
  expect(rows.map(row=>row.version)).toEqual(['507','508','511','512']);
  expect(rows[0].description).not.toContain('手机独立');
  expect(rows[1].description).toContain('手机独立');
+});
+
+it('主线510已安装后补缺号508：真实版本账独立且保留image与phone两执行器',async()=>{
+ const versions=(await pool.query("SELECT version FROM schema_version WHERE version IN ('507','508','510') ORDER BY version")).rows.map(r=>r.version);
+ expect(versions).toEqual(['507','508','510']);
+ expect((await pool.query("SELECT enabled FROM janitor_config WHERE job_id='us-brain-image-retention-v1'")).rows).toEqual([{enabled:false}]);
+ for(const executor of ['image-janitor','phone-ssh-controller'])await expect(pool.query("INSERT INTO tasks(id,status,task_type,executor_kind) VALUES($1,'queued','dev',$2)",[randomUUID(),executor])).resolves.toMatchObject({rowCount:1});
 });

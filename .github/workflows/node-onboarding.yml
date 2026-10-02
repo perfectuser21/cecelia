@@ -3,11 +3,13 @@ on:
   pull_request:
     paths:
       - 'packages/brain/src/node-onboarding/**'
+      - 'packages/brain/src/linux-pool/**'
+      - 'packages/brain/src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js'
       - 'packages/brain/src/__tests__/machine-onboarding*'
       - 'packages/brain/src/routes/machines.js'
       - 'packages/brain/src/scheduler-jobs.js'
       - 'scripts/ops/node-*'
-      - 'scripts/ops/__tests__/node-onboarding.test.mjs'
+      - 'scripts/ops/__tests__/node-onboarding*.test.mjs'
       - 'apps/api/features/system/**'
       - '.github/workflows/node-onboarding.yml'
   workflow_dispatch:
@@ -36,7 +38,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: 真实采集与凭据生命周期回归
-        run: node --test --test-concurrency=1 scripts/ops/__tests__/node-onboarding.test.mjs
+        run: node --test --test-concurrency=1 scripts/ops/__tests__/node-onboarding*.test.mjs
       - name: 接入契约、HTTP 和真实数据库回归
         working-directory: packages/brain
         env:
@@ -45,3 +47,8 @@ jobs:
       - name: 设备页操作回归
         working-directory: apps/api
         run: npx vitest run features/system/pages/NodeOnboarding.test.tsx --maxWorkers=1
+      - name: Linux自动接入与续验真实数据库回归
+        working-directory: packages/brain
+        env:
+          TEST_DATABASE_URL: postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch
+        run: npx vitest run --config vitest.integration.config.js src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js src/__tests__/integration/linux-script-authorization.pg.integration.test.js src/linux-pool/onboarding-step.test.js --maxWorkers=1 --minWorkers=1

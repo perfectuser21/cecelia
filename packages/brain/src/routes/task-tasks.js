@@ -1,3 +1,5 @@
+import {registerHeadedTakeoverRoute} from './task-headed-takeover.js';
+import {assertGpuExecutionSupported} from '../lib/gpu-execution-contract.js';
 /**
  * Task Tasks route — 对应 tasks 表（Cecelia 执行任务）
  *
@@ -27,6 +29,7 @@ import { governanceErrorResponse } from '../lib/governance-errors.js';
 import { registerTaskDependencyRoutes } from './task-dependencies.js';
 
 const router = Router();
+registerHeadedTakeoverRoute(router,{pool,path:'/:id/headed-takeover'});
 
 // 状态机保护：已终止的任务不能回退到非终止状态（PATCH /:id 与 DELETE /:id 共用同一常量，
 // 避免两套终态定义产生语义分裂）
@@ -38,6 +41,8 @@ const CODING_MUTATION_TASK_TYPES = new Set(_CM);
 // POST /tasks — 创建新任务（供外部 agent 如 /architect 注册任务到 Brain 队列）
 router.post('/', async (req, res) => {
   try {
+    assertGpuExecutionSupported(req.body?.payload);
+    assertGpuExecutionSupported(req.body?.metadata);
     let {
       title,
       description = null,
@@ -352,6 +357,9 @@ router.post('/', async (req, res) => {
     if (governance) return res.status(governance.status).json(governance.body);
     if (err.code === 'parent_task_not_found') {
       return res.status(400).json({ error: 'parent_task_not_found', reason_code: 'parent_task_not_found', parent_task_id: err.parent_task_id });
+    }
+    if (err.code === 'gpu_execution_unsupported') {
+      return res.status(400).json({error: err.message, reason_code: err.code});
     }
     if (err.code === 'script_payload_invalid') {
       return res.status(400).json({ error: err.message, code: 'INVALID_SCRIPT_PAYLOAD', reason_code: err.reason, field: err.field });
