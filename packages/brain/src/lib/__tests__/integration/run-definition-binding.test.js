@@ -1,0 +1,45 @@
+import { afterEach,beforeEach,expect,it } from 'vitest';
+import express from 'express';
+import request from 'supertest';
+import { releaseEvidenceDatabase } from '../../../__tests__/fixtures/release-evidence-db.js';
+const releases=await import('../../release-index.js').catch(()=>({}));
+const service=await import('../../run-definition-binding.js').catch(()=>({}));
+const routes=await import('../../../routes/run-definitions.js').catch(()=>({}));
+let fixture,release,observation,app;
+beforeEach(async()=>{
+  expect(service.bindRunDefinition,'运行定义绑定服务必须存在').toBeTypeOf('function');
+  fixture=await releaseEvidenceDatabase();release=(await releases.createRelease(fixture.db,fixture.releaseInput)).release;
+  observation=(await releases.recordReleaseObservation(fixture.db,release.id,fixture.observationInput,{trustedCollector:'fixture-collector'})).observation;
+  app=express();app.use(express.json());app.use('/runs',routes.createRunDefinitionsRouter({pool:fixture.db}));
+});
+afterEach(async()=>{await fixture?.close();fixture=null;});
+const post=(id,body)=>request(app).post(`/runs/${id}/definition`).send(body);
+it('两个共享Activity Workflow各自冻结，外部run不产生task_runs；幂等和不可变',async()=>{
+  for(const [i,workflow] of fixture.workflows.entries()){
+    const input=fixture.runInput(release,observation,workflow);let r=await post(`external-${i}`,input);expect(r.status,r.body).toBe(201);
+    const binding=r.body.binding;r=await post(`external-${i}`,input);expect(r.status).toBe(200);expect(r.body.binding.id).toBe(binding.id);
+    const frozen=await service.getRunDefinitionBinding(fixture.db,`external-${i}`);expect(frozen.workflow.id).toBe(workflow.id);expect(frozen.binding.workflow_id).toBe(workflow.workflow_id);expect(frozen.activities.map(a=>a.id).sort()).toEqual(workflow.payload.activities.map(a=>a.activity_version_id).sort());
+    await expect(fixture.db.query('DELETE FROM run_definition_bindings WHERE id=$1',[binding.id])).rejects.toMatchObject({code:'P0001'});
+  }
+  expect((await fixture.db.query('SELECT count(*)::int n FROM task_runs')).rows[0].n).toBe(0);
+  expect(await service.getRunDefinitionBinding(fixture.db,'unknown-old-run')).toBeNull();
+});
+it('同run并发异Workflow只有一个赢家，失败批次无残留',async()=>{
+  const result=await Promise.all(fixture.workflows.map(w=>post('race',fixture.runInput(release,observation,w))));
+  expect(result.map(r=>r.status).sort()).toEqual([201,409]);expect((await fixture.db.query('SELECT count(*)::int n FROM run_definition_bindings')).rows[0].n).toBe(1);
+  const bad=fixture.runInput(release,observation);bad.expected_path[0].activity_id=fixture.workflows[1].workflow_id;
+  expect((await post('wrong-identity',bad)).status).toBe(422);expect((await fixture.db.query("SELECT count(*)::int n FROM run_definition_bindings WHERE run_id='wrong-identity'")).rows[0].n).toBe(0);
+});
+it('运行绑定不接受错版本/错观测，当前定义变化不改冻结历史',async()=>{
+  const input=fixture.runInput(release,observation);expect((await post('stable',input)).status).toBe(201);
+  const before=await service.getRunDefinitionBinding(fixture.db,'stable');
+  await fixture.db.query('UPDATE workflows SET current_definition_version_id=NULL WHERE id=$1',[input.workflow_id]);await fixture.db.query('UPDATE enablers SET active=false WHERE id=$1',[fixture.enabler]);
+  expect(await service.getRunDefinitionBinding(fixture.db,'stable')).toEqual(before);
+  expect((await post('bad-sha',{...input,snapshot_sha256:'0'.repeat(64)})).status).toBe(422);
+  const wrong=(await releases.recordReleaseObservation(fixture.db,release.id,{...fixture.observationInput,event_key:'drift',components:[]},{trustedCollector:'fixture-collector'})).observation;
+  expect((await post('bad-observation',{...input,observation_id:wrong.id})).status).toBe(409);
+});
+it('内部run只绑定既有task_run且必须run/workflow一致',async()=>{
+  const input=fixture.runInput(release,observation);delete input.external_origin;input.source_kind='internal';
+  input.task_run_id='11111111-1111-4111-8111-111111111111';expect((await post('internal',input)).status).toBe(422);
+});
