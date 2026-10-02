@@ -20,6 +20,7 @@ import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../
 import { resolveAllowedTransitions } from '../lib/task-status-transitions.js';
 import { afterTerminalTransition, isRelayTerminalStatus } from '../lib/task-terminal.js';
 import { getTaskType } from '../lib/task-type-registry.js';
+import { authoringMutationError } from '../workflow-authoring/task-guard.js';
 
 const router = Router();
 
@@ -385,6 +386,9 @@ router.patch('/tasks/:task_id', async (req, res) => {
       });
     }
 
+    const reservedError = authoringMutationError(null, { result });
+    if (reservedError) return res.status(409).json(reservedError);
+
     // Validate status value if provided
     if (status) {
       // completed_no_pr 补进来（任务简报未列此处，PR1 走查发现）：这道闸卡在转移表校验
@@ -407,7 +411,7 @@ router.patch('/tasks/:task_id', async (req, res) => {
       `SELECT id, status, claimed_by, executor_kind, task_type,
               payload->>'orchestrator' AS orchestrator,
               payload->>'review_required' AS review_required_raw,
-              review_status, pr_url, pr_merged_at
+              review_status, pr_url, pr_merged_at, payload, result
        FROM tasks WHERE id = $1`,
       [task_id]
     );
@@ -420,6 +424,8 @@ router.patch('/tasks/:task_id', async (req, res) => {
     }
 
     const task = taskResult.rows[0];
+    const authoringError = authoringMutationError(task, { status });
+    if (authoringError) return res.status(409).json(authoringError);
     const currentStatus = task.status;
 
     // status === currentStatus → 幂等 no-op：跳过 transition 校验与事件，仅应用 result 等字段

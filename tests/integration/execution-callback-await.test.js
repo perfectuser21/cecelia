@@ -53,7 +53,10 @@ afterEach(() => {
 
 describe('/execution-callback — callback_queue INSERT 行为', () => {
   it('INSERT 全部失败 → 返回 503', { timeout: 15000 }, async () => {
-    mockQuery.mockRejectedValue(new Error('DB unavailable'));
+    mockQuery.mockImplementation(async sql => {
+      if (/SELECT/.test(sql)) return { rows: [] };
+      throw new Error('DB unavailable');
+    });
 
     const res = await request(app)
       .post('/api/brain/execution-callback')
@@ -65,8 +68,21 @@ describe('/execution-callback — callback_queue INSERT 行为', () => {
 
     expect(res.status).toBe(503);
     expect(res.body.success).toBe(false);
-    // pool.query 应被调用 4 次（初始 + 3 retry）
-    expect(mockQuery).toHaveBeenCalledTimes(4);
+    // 完成门禁查询正常，真实 INSERT 仍须初始 + 3 次重试。
+    expect(mockQuery.mock.calls.filter(([sql]) => /INSERT INTO callback_queue/.test(sql))).toHaveLength(4);
+    expect(mockQuery.mock.calls.filter(([sql]) => /SELECT/.test(sql))).toHaveLength(1);
+  });
+
+  it('完成门禁读库失败 → 可重试503且不进入队列', async () => {
+    mockQuery.mockRejectedValue(new Error('guard DB unavailable'));
+    const res = await request(app).post('/api/brain/execution-callback').send({
+      task_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', status: 'success',
+    });
+    expect(res.status).toBe(503);
+    expect(res.body.success).toBe(false);
+    expect(res.body.code).toBe('WORKFLOW_AUTHORING_GUARD_UNAVAILABLE');
+    expect(mockQuery).toHaveBeenCalledTimes(1);
+    expect(mockQuery.mock.calls.some(([sql]) => /INSERT INTO callback_queue|UPDATE tasks/.test(sql))).toBe(false);
   });
 
   it('task_id 缺失 → 400（不触发 INSERT）', async () => {

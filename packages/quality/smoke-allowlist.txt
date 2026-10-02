@@ -394,5 +394,6 @@ linux-script-runtime-smoke.sh
 linux-onboarding-flow-smoke.sh
 us-image-retention-smoke.sh
 kernel-codex-failover-smoke.sh
+workflow-authoring-smoke.sh
 
 shared-activities-smoke.sh
