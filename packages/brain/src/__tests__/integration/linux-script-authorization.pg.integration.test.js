@@ -7,7 +7,7 @@ import {createHash,createHmac,randomUUID} from 'node:crypto';
 import pg from 'pg';
 import {beforeAll,beforeEach,afterAll,it,expect} from 'vitest';
 import {DB_DEFAULTS} from '../../db-config.js';
-import {fixture} from '../../linux-pool/runtime-receipt.test-fixture.js';
+import {fixture} from '../../linux-pool/__tests__/runtime-receipt-fixture.js';
 import {createLinuxRuntimeAuthorization} from '../../linux-pool/runtime-service.js';
 import {createOnboardingRecovery} from '../../linux-pool/onboarding-recovery.js';
 import {createLinuxOnboardingStep} from '../../linux-pool/onboarding-step.js';

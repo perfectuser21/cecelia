@@ -1,6 +1,6 @@
 import {createHmac,randomUUID} from 'node:crypto';
 import {it,expect} from 'vitest';
-import {fixture} from './runtime-receipt.test-fixture.js';
+import {fixture} from './__tests__/runtime-receipt-fixture.js';
 import {verifyCleanupEnvelope} from './cleanup-receipt.js';
 import {verifyRuntimeEnvelope} from './runtime-receipt.js';
 const sign=(receipt,key)=>({receipt,signature:createHmac('sha256',key).update(JSON.stringify(receipt)).digest('hex')});
