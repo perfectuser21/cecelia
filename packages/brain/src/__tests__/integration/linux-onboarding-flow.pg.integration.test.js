@@ -1,3 +1,7 @@
+import {buildLinuxOnboardingPolicy} from '../../linux-pool/onboarding-policy.js';
+import {ONBOARDING_IMAGE} from '../../linux-pool/onboarding-step.js';
+import {MACHINE_CAPACITY_LOCK_SQL} from '../../orchestrator/attempt-machine-capacity.js';
+import {assertLinuxPoolAuthority} from '../../linux-pool/task-authority.js';
 import pg from 'pg';
 import {randomUUID} from 'node:crypto';
 import {it,expect,beforeAll,afterAll,beforeEach} from 'vitest';
@@ -7,29 +11,32 @@ import {projectLinuxExecution} from '../../linux-pool/onboarding-projection.js';
 const options=process.env.TEST_DATABASE_URL?{connectionString:process.env.TEST_DATABASE_URL}:DB_DEFAULTS;
 const database=process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_URL).pathname.slice(1):DB_DEFAULTS.database;
 if(database!=='cecelia_scratch'&&!(process.env.CI&&database==='cecelia_test'))throw Error('local scratch only');
-const schema='linux_onboard_'+randomUUID().replaceAll('-',''),admin=new pg.Client(options),pool=new pg.Pool({...options,options:`-c search_path=${schema},public`});
+const schema='linux_onboard_'+randomUUID().replaceAll('-',''),admin=new pg.Client(options),pool=new pg.Pool({...options,application_name:schema,options:`-c search_path=${schema},public`});
 let machine,parent;
-beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY,title TEXT,task_type TEXT,status TEXT,payload JSONB,result JSONB,parent_task_id UUID,claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now(),created_at TIMESTAMPTZ DEFAULT now(),completed_at TIMESTAMPTZ);
+beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY,title TEXT,task_type TEXT,executor_kind TEXT,created_by TEXT,error_message TEXT,status TEXT,payload JSONB,result JSONB,parent_task_id UUID,claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now(),created_at TIMESTAMPTZ DEFAULT now(),completed_at TIMESTAMPTZ);
+ CREATE TABLE work_routing_receipts(task_id UUID,source TEXT,source_id TEXT,canonical_task_type TEXT);
+ CREATE TABLE task_events(task_id UUID,event_type TEXT,payload JSONB,created_at TIMESTAMPTZ DEFAULT now());
+ CREATE TABLE capacity_reservations(id UUID,machine_id TEXT,status TEXT);
  CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB,updated_at TIMESTAMPTZ DEFAULT now());
  CREATE TABLE execution_nodes(machine_registry_id UUID PRIMARY KEY,current_version_id UUID);
- CREATE TABLE execution_node_versions(id uuid PRIMARY KEY,state text);
+ CREATE TABLE execution_node_versions(id uuid PRIMARY KEY,state text,machine_registry_id uuid);
  CREATE TABLE execution_grants(id uuid PRIMARY KEY,node_version_id uuid,state text,expires_at timestamptz,surface text,provider text,profile_id text);
- CREATE TABLE linux_script_authorizations(id UUID PRIMARY KEY,machine_registry_id UUID,execution_version_id UUID,state TEXT,authorization_expires_at TIMESTAMPTZ,grant_ids jsonb);
+ CREATE TABLE linux_script_authorizations(id UUID PRIMARY KEY,machine_registry_id UUID,execution_version_id UUID,state TEXT,authorization_expires_at TIMESTAMPTZ,grant_ids jsonb,policy JSONB,evidence_task_id UUID);
  CREATE FUNCTION fixture_grants() RETURNS trigger LANGUAGE plpgsql AS $$ DECLARE grant_id uuid:=gen_random_uuid(); BEGIN
- INSERT INTO execution_node_versions VALUES(NEW.execution_version_id,'active');
+ INSERT INTO execution_node_versions(id,state) VALUES(NEW.execution_version_id,'active');
  INSERT INTO execution_grants VALUES(grant_id,NEW.execution_version_id,'active',NEW.authorization_expires_at,'managed_script','script','shell');
  NEW.grant_ids:=jsonb_build_object('shell',grant_id);RETURN NEW;END $$;
  CREATE TRIGGER fixture_grants BEFORE INSERT ON linux_script_authorizations FOR EACH ROW EXECUTE FUNCTION fixture_grants();`);});
 afterAll(async()=>{await pool.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();});
-beforeEach(async()=>{await pool.query('TRUNCATE tasks,system_registry,execution_nodes,linux_script_authorizations,execution_node_versions,execution_grants');parent=randomUUID();machine={id:randomUUID(),name:'new-linux',metadata:{role:'worker',node_health:{os:'linux'},onboarding:{request:{name:'new-linux',address:'100.64.0.2',ssh_user:'root',ssh_port:22,credential_ref:'op://CS/test/private key',host_key_fingerprint:'SHA256:'+'a'.repeat(43),role:'worker',region:'HK'}}}};
+beforeEach(async()=>{await pool.query('TRUNCATE tasks,system_registry,execution_nodes,linux_script_authorizations,execution_node_versions,execution_grants,task_events,work_routing_receipts,capacity_reservations');parent=randomUUID();machine={id:randomUUID(),name:'new-linux',metadata:{role:'worker',node_health:{os:'linux'},onboarding:{request:{name:'new-linux',address:'100.64.0.2',ssh_user:'root',ssh_port:22,credential_ref:'op://CS/test/private key',host_key_fingerprint:'SHA256:'+'a'.repeat(43),role:'worker',region:'HK'}}}};
  machine.metadata.onboarding.id=machine.id;
  await pool.query("INSERT INTO tasks(id,status,payload) VALUES($1,'completed',$2)",[parent,{node_onboarding:{id:machine.metadata.onboarding.id,request:machine.metadata.onboarding.request}}]);
  await pool.query("INSERT INTO system_registry(id,type,name,status,metadata) VALUES($1,'machine',$2,'active',$3)",[machine.id,machine.name,machine.metadata]);});
-const createTask=async args=>({success:true,task:(await args.db.query('INSERT INTO tasks(id,title,task_type,status,payload,parent_task_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING *',[randomUUID(),args.title,args.task_type,args.status,args.payload,args.parent_task_id])).rows[0]});
+const createTask=async (args,internal)=>{expect(assertLinuxPoolAuthority({...args,requested_task_type:args.task_type,task:args},internal)).toBe(true);return {success:true,task:(await args.db.query('INSERT INTO tasks(id,title,task_type,status,payload,parent_task_id,executor_kind,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[randomUUID(),args.title,args.task_type,args.status,args.payload,args.parent_task_id,args.executor_kind,args.created_by])).rows[0]};};
 const flow=extra=>createLinuxOnboardingFlow({pool,createTask,revision:'a'.repeat(40),afterTerminal:async()=>{},...extra});
 it('并发只登记一个内部接入子任务，nonce/intent服务端生成且observer不登记',async()=>{
  const f=flow({step:async()=>{}});const results=await Promise.all([f.ensure(machine,parent),f.ensure(machine,parent)]);expect(results[0]).toBe(results[1]);
- const rows=(await pool.query("SELECT * FROM tasks WHERE payload ? 'linux_onboarding'")).rows;expect(rows).toHaveLength(1);expect(rows[0].parent_task_id).toBe(parent);
+ const rows=(await pool.query("SELECT * FROM tasks WHERE payload ? 'linux_onboarding'")).rows;expect(rows).toHaveLength(1);expect(rows[0].parent_task_id).toBe(parent);expect(rows[0].executor_kind).toBe('linux-pool-controller');
  expect(rows[0].payload.linux_onboarding).toMatchObject({phase:'probe',nonce:expect.stringMatching(/^[a-f0-9]{64}$/),intent_id:expect.any(String)});
  expect(await f.ensure({...machine,metadata:{...machine.metadata,role:'observer'}},parent)).toBe(null);
 });
@@ -115,4 +122,83 @@ it.each(['grant_revoke','grant_expiry','version_revoke'])('%s后接入视图与�
   await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,identity_checked_at}','\"2000-01-01T00:00:00Z\"') WHERE id=$1",[id]);
   expect(await f.renew()).toBe(null);expect(await f.view(id)).toMatchObject({phase:'revoked',execution:false});
  }
+});
+
+async function failedController(){
+ const f=flow({step:async()=>{}}),id=await f.ensure(machine,parent),at=new Date().toISOString();
+ const report={type:'node_onboarding_receipt',id:machine.id,name:machine.name,mode:'enroll',verified:true,service:{active:true,enabled:true},health:{schema_version:1,node_id:machine.id,agent_version:'1',observed_at:at,boot_id:randomUUID(),sequence:2,hostname:machine.name,os:'linux',capabilities:{collector:true,janitor:true,execution:false},janitor:{mode:'observe',policy:'owned-cache-only'},resources:{memory_total_bytes:8e9,memory_available_bytes:4e9,cpu_load_1m:0,cpu_cores:4,disk_free_bytes:10e9,disk_total_bytes:40e9}}};
+ await pool.query("UPDATE tasks SET completed_at=$2,result=$3,payload=jsonb_set(jsonb_set(payload,'{node_onboarding,mode}','\"enroll\"'),'{node_onboarding,reconciled}','true') WHERE id=$1",[parent,at,{script:{exit_code:0,stdout:JSON.stringify(report)}}]);
+ await pool.query("UPDATE tasks SET status='failed',executor_kind=NULL,claimed_by=NULL,error_message=$2,payload=jsonb_set(payload,'{linux_onboarding,phase}','\"script_prepare\"') WHERE id=$1",[id,'S2锚点执法：task缺少 payload.anchor.{journey_id,gp_id,step_id}，拒绝点火']);
+ const policy=buildLinuxOnboardingPolicy({machine_registry_id:machine.id,machine_id:machine.name,role:'worker',endpoint_host:machine.metadata.onboarding.request.address,observation:report.health,image:ONBOARDING_IMAGE,image_id:'sha256:'+'c'.repeat(64)});
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,policy_json}',$2) WHERE id=$1",[id,JSON.stringify(JSON.stringify(policy))]);
+ const old=(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];
+ await pool.query("INSERT INTO work_routing_receipts VALUES($1,'scheduler',$2,'audit')",[id,'linux-pool-onboarding:'+old.payload.linux_onboarding.nonce]);
+ await pool.query("INSERT INTO task_events(task_id,event_type,payload) VALUES($1,'watchdog_safe_requeue',$2)",[id,{reason:'no_spawn_evidence',headed_manual:false,evidence:{active_process:false,process_log:false,dispatch_receipt:false}}]);
+ return {f,id,old};
+}
+it('原官方retry保留误收failed历史，以同机新私有controller棒从probe接续且幂等',async()=>{
+ const {f,id,old}=await failedController();const next=await f.retry(id);
+ expect(next.task_id).not.toBe(id);expect(next.phase).toBe('probe');
+ const row=(await pool.query('SELECT * FROM tasks WHERE id=$1',[next.task_id])).rows[0];
+ expect(row).toMatchObject({status:'in_progress',executor_kind:'linux-pool-controller',claimed_by:'linux-pool-onboarding',parent_task_id:id});
+ expect(row.payload.linux_onboarding.nonce).not.toBe(old.payload.linux_onboarding.nonce);
+ expect(row.payload.linux_onboarding.intent_id).not.toBe(old.payload.linux_onboarding.intent_id);
+ expect(row.payload.linux_onboarding.policy_json).toBe(old.payload.linux_onboarding.policy_json);
+ expect((await pool.query('SELECT status,error_message FROM tasks WHERE id=$1',[id])).rows[0]).toMatchObject({status:'failed',error_message:old.error_message});
+ expect((await f.retry(id)).task_id).toBe(next.task_id);
+});
+it.each(['event','route','source','revoked','occupied','other_error','foreign_claim','active_grant','unretired_runtime'])('恢复拒绝%s，不能把公共payload变成controller授权',async kind=>{
+ const {f,id}=await failedController();
+ if(kind==='event')await pool.query('DELETE FROM task_events WHERE task_id=$1',[id]);
+ if(kind==='route')await pool.query('DELETE FROM work_routing_receipts WHERE task_id=$1',[id]);
+ if(kind==='source')await pool.query('UPDATE tasks SET result=NULL WHERE id=$1',[parent]);
+ if(kind==='revoked')await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,execution_revoked}','true') WHERE id=$1",[parent]);
+ if(kind==='occupied')await pool.query("INSERT INTO capacity_reservations VALUES($1,$2,'running')",[randomUUID(),machine.name]);
+ if(kind==='other_error')await pool.query("UPDATE tasks SET error_message='unrelated_failure' WHERE id=$1",[id]);
+ if(kind==='foreign_claim')await pool.query("UPDATE tasks SET claimed_by='other-session' WHERE id=$1",[id]);
+ if(kind==='active_grant'){const v=randomUUID();await pool.query("INSERT INTO execution_node_versions VALUES($1,'active',$2)",[v,machine.id]);await pool.query("INSERT INTO execution_grants VALUES($1,$2,'active',now()+interval '1 hour','managed_script','script','shell')",[randomUUID(),v]);}
+ if(kind==='unretired_runtime')await pool.query("INSERT INTO linux_script_authorizations(id,machine_registry_id,execution_version_id,state,authorization_expires_at) VALUES($1,$2,$3,'prepared',now()+interval '1 hour')",[randomUUID(),machine.id,randomUUID()]);
+ await expect(f.retry(id)).rejects.toThrow();expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);
+});
+
+it('并发原retry只登记一棒，新父子claim不冒领，source指针原子更新',async()=>{
+ const {f,id}=await failedController();const results=await Promise.all([f.retry(id),f.retry(id)]);
+ expect(results[0].task_id).toBe(results[1].task_id);
+ expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(2);
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(results[0].task_id);
+});
+
+it('retry等待capacity期间不抢registry行锁，避免与runtime的capacity→registry锁序互锁',async()=>{
+ const {f,id}=await failedController(),other=await pool.connect();let pending,readError;
+ try{
+  await other.query('BEGIN');await other.query(MACHINE_CAPACITY_LOCK_SQL,[machine.name]);
+  pending=f.retry(id);let waiting=false;
+  for(let n=0;n<100;n++){
+   waiting=(await admin.query("SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event='advisory' AND query LIKE '%harness_attempt_machine%'",[schema])).rowCount>0;
+   if(waiting)break;await new Promise(r=>setTimeout(r,5));
+  }
+  expect(waiting).toBe(true);
+  try{await other.query('SELECT id FROM tasks WHERE id=$1 FOR SHARE NOWAIT',[id]);await other.query('SELECT id FROM system_registry WHERE id=$1 FOR SHARE NOWAIT',[machine.id]);}catch(e){readError=e.code;}
+ }finally{await other.query('ROLLBACK');other.release();await pending;}
+ expect(readError).toBeUndefined();
+});
+
+it.each(['missing','empty','malformed','shape','machine','profile','oversized','capacity','endpoint'])('原硬预算%s时拒绝误收恢复，不登记新棒或改来源指针',async kind=>{
+ const {f,id,old}=await failedController(),state=old.payload.linux_onboarding,p=JSON.parse(state.policy_json);
+ if(kind==='missing')delete state.policy_json;
+ else if(kind==='empty')state.policy_json='';
+ else if(kind==='malformed')state.policy_json='{';
+ else if(kind==='shape')state.policy_json='{}';
+ else {
+  if(kind==='machine')p.pool.machine_registry_id=randomUUID();
+  if(kind==='profile')p.profiles.shell.profile.memoryBytes=2**31;
+  if(kind==='oversized')p.pool.pool.cpu_cores=4;
+  if(kind==='capacity')p.capacity=2;
+  if(kind==='endpoint')p.pool.endpoint_host='100.64.0.99';
+  state.policy_json=JSON.stringify(p);
+ }
+ await pool.query('UPDATE tasks SET payload=$2 WHERE id=$1',[id,old.payload]);
+ await expect(f.retry(id)).rejects.toThrow('linux_pool_retry_unconfirmed');
+ expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(id);
 });

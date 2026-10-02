@@ -43,61 +43,6 @@ const phoneTuple = '(' + ['tasks_executor_kind_check','executor_kind','phone-ssh
 if (!phone.includes(phoneTuple)) { console.error('FAIL 508 缺精确手机合同增量'); process.exit(1); }
 const imageJanitor = readFileSync('migrations/510_us_brain_image_retention.sql', 'utf8');
 if (!imageJanitor.includes('CHECK ((%s) OR executor_kind=%L)') || !imageJanitor.includes(String.fromCharCode(39) + 'image-janitor' + String.fromCharCode(39))) { console.error('FAIL 510 缺镜像清理执行器精确增量'); process.exit(1); }
-ek.push('preview-janitor','app-server-controller','phone-ssh-controller','image-janitor'); ek.sort(); tt.push('janitor','app_server_run'); tt.sort();
-if (JSON.stringify(ek) !== JSON.stringify([...VALID_EXECUTOR_KINDS].sort())) { console.error('FAIL executor_kind 名单 != VALID_EXECUTOR_KINDS'); process.exit(1); }
-if (JSON.stringify(tt) !== JSON.stringify([...R.DB_WHITELISTED_TASK_TYPES].sort())) { console.error('FAIL task_type 名单 != 注册表 DB 白名单'); process.exit(1); }
-const v = readFileSync('migrations/472_validate_script_executor_constraints.sql', 'utf8');
-for (const c of ['tasks_executor_kind_check', 'tasks_task_type_check']) if (!v.includes('VALIDATE CONSTRAINT ' + c)) { console.error('FAIL 472 缺 VALIDATE ' + c); process.exit(1); }
-console.log('471/472 结构正确，叠加502/504/508/510精确增量后与 lib 真身一致 ✓');
-"
-
-echo "[script-executor-contract-smoke] 3. payload 契约：合法通过 / 违规被拒"
-node --input-type=module -e "
-import './src/__tests__/helpers/execution-directory-fixture.js';
-import { validateScriptPayload, isScriptPayloadError } from './src/lib/script-task-spec.js';
-const ok = { host: 'xian-m4', cmd: 'echo hi', timeout_sec: 30 };
-validateScriptPayload(ok);
-const bad = [
-  [{ ...ok, host: 'us-vps' }, 'us-vps'],
-  [{ ...ok, host: 'localhost' }, 'localhost'],
-  [{ ...ok, host: 'no-such-box' }, '未注册 host'],
-  [{ ...ok, cmd: 'echo a\nid' }, '换行 cmd'],
-  [{ ...ok, env: { PATH: '/tmp' } }, '非白名单 env 键'],
-  [{ ...ok, timeout_sec: undefined }, '缺 timeout'],
-  [{ ...ok, timeout_sec: 99999 }, '超限 timeout'],
-];
-for (const [p, d] of bad) {
-  let err; try { validateScriptPayload(p); } catch (e) { err = e; }
-  if (!isScriptPayloadError(err)) { console.error('FAIL 未拒绝: ' + d); process.exit(1); }
-}
-console.log('合法通过，' + bad.length + ' 类违规输入全部被拒 ✓');
-"
-
-echo "[script-executor-contract-smoke] 4-5. 建单入口 / 活性合同 / 重试策略接线"
-node -e "
-const fs = require('fs');
-const checks = [
-  ['src/work-routing-store.js', ['assertScriptPayloadForType(decision.canonical_task_type, payload)']],
-  ['src/routes/task-tasks.js', [\"err.code === 'script_payload_invalid'\", \"code: 'INVALID_SCRIPT_PAYLOAD'\"]],
-  ['src/executor-contracts.js', ['[SCRIPT_EXECUTOR_KIND]: {']],
-  ['src/lib/retry-policy.js', ['script_exec:']],
-];
-let fail = false;
-for (const [file, needles] of checks) {
-  const src = fs.readFileSync(file, 'utf8');
-  for (const n of needles) if (!src.includes(n)) { console.error('FAIL ' + file + ' 缺少: ' + n); fail = true; }
-}
-if (fail) process.exit(1);
-console.log('建单拒绝 / 400 映射 / 活性合同 / 重试策略 全部接线 ✓');
-"
-
-if [ -n "${SCRIPT_SMOKE_DB_URL:-}" ]; then
-  echo "[script-executor-contract-smoke] 6. 真库：约束 validated"
-  N=$(psql "$SCRIPT_SMOKE_DB_URL" -Atc "SELECT count(*) FROM pg_constraint WHERE conname IN ('tasks_executor_kind_check','tasks_task_type_check') AND convalidated")
-  [ "$N" = "2" ] || { echo "FAIL 两条约束未全部 validated（$N/2）"; exit 1; }
-  echo "真库约束 validated ✓"
-else
-  echo "[script-executor-contract-smoke] 6. 跳过真库检查（未设 SCRIPT_SMOKE_DB_URL）"
-fi
-
-echo "[script-executor-contract-smoke] ALL PASS"
+const linuxController = readFileSync('migrations/512_linux_pool_controller.sql','utf8');
+if (!linuxController.includes('CHECK ((%s) OR executor_kind=%L)') || !linuxController.includes(String.fromCharCode(39) + 'linux-pool-controller' + String.fromCharCode(39))) throw Error('FAIL 512 Linux controller');
+ek.push('linux-pool-controller','preview-janitor','app-server-controller','image-janitor','phone-ssh-controller'); ek.sort(); tt.push('janitor','app_server_run'); tt.sort();

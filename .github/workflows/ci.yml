@@ -983,6 +983,7 @@ jobs:
             src/node-onboarding/__tests__/registry-adoption.test.js \
             src/__tests__/integration/linux-script-authorization.pg.integration.test.js \
             src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js \
+            src/__tests__/integration/linux-controller-contract.pg.integration.test.js \
             src/linux-pool/__tests__/integration/active-grants.test.js \
             src/linux-pool/__tests__/integration/onboarding-revocation.test.js \
             src/__tests__/integration/script-managed-executor.pg.integration.test.js \

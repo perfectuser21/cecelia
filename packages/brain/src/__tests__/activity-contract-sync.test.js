@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import yaml from 'js-yaml';
+import { hash } from './fixtures/shared-activity-contracts.js';
 
 vi.mock('../alerting.js', () => ({ raise: vi.fn(async () => {}) }));
 
@@ -24,6 +25,7 @@ const HEAD = 'a'.repeat(40);
 const YAML = `
 version: 1
 capability: keyword_acquisition
+workflow: social-keyword-leadgen
 name: 关键词获客
 activities:
   - key: preflight
@@ -76,7 +78,12 @@ activities:
       - { key: open_search, name: 打开搜索, order: 1, reads: [Keyword.word], writes: [], check: "搜索框回读", implementation: { status: implemented, ref: "x" }, uses_llm: true }
     known_gaps: [{ gap: "现状在 delivery 才落库", task: 8bb3af55 }]
 `;
-const digestOf = (acts) => JSON.stringify({ capabilities: { keyword_acquisition: { sha256: 'c'.repeat(64), activities: acts } } });
+const contract = yaml.load(YAML);
+const activityHash = key => hash({...contract.activities.find(a=>a.key===key),from:'keyword_acquisition'});
+const digestOf = () => {
+  const activities=contract.activities.map(a=>({...a,from:'keyword_acquisition'}));
+  return JSON.stringify({capabilities:{keyword_acquisition:{sha256:hash({...contract,activities}),activities:Object.fromEntries(activities.map(a=>[a.key,hash(a)]))}}});
+};
 
 /** 假 fetch：按 URL 回 head / contracts.json / YAML，记录调用 */
 function fakeGithub({ digest, yaml = YAML, fail = false }) {
@@ -98,8 +105,11 @@ function fakePool(stepRows = [], memory = {}) {
   const rows = stepRows.map((r) => ({ ...r }));
   return {
     rows, memory, queries,
+    async connect() { return {query:this.query.bind(this),release(){}}; },
     async query(text, params = []) {
       queries.push({ text, params });
+      if (/INSERT INTO (activity|workflow)_definition_versions/.test(text)) return {rows:[{id:'version'}]};
+      if (/FROM workflows/.test(text)) return {rows: rows.length ? [{id:'w',key:'workflow',capability_id:'J',source_repo:CONTRACT_REPO,source_path:'product-map/contracts/keyword_acquisition.yaml',source_capability:'keyword_acquisition',source_workflow:'social-keyword-leadgen'}] : []};
       if (/FROM working_memory/.test(text)) {
         const v = memory[params[0]];
         return { rows: v ? [{ value_json: v }] : [] };
@@ -111,13 +121,13 @@ function fakePool(stepRows = [], memory = {}) {
         Object.assign(r, { name: params[1], contract: JSON.parse(params[2]), contract_sha256: params[3], contract_source: params[4] });
         return { rows: [] };
       }
-      if (/^\s*UPDATE journey_steps SET status = 'deprecated'/.test(text)) {
+      if (/^\s*UPDATE journey_steps SET status\s*=\s*'deprecated'/.test(text)) {
         rows.find((x) => x.id === params[0]).status = 'deprecated';
-        return { rows: [] };
+        return { rows: [{id:params[0]}] };
       }
       if (/^\s*INSERT INTO journey_steps/.test(text)) {
         rows.push({ id: `new-${params[4]}`, journey_id: params[0], name: params[1], step_number: params[2], capability_key: params[3], activity_key: params[4], contract: JSON.parse(params[5]), contract_sha256: params[6], contract_source: params[7], status: 'planned' });
-        return { rows: [] };
+        return { rows: [{id:`new-${params[4]}`}] };
       }
       return { rows: [] };
     },
@@ -138,7 +148,7 @@ describe('syncActivityContracts', () => {
     expect(out.head_sha).toBe(HEAD);
     const pf = pool.rows.find((r) => r.id === 's1');
     expect(pf.contract.key).toBe('preflight');
-    expect(pf.contract_sha256).toBe('p1');
+    expect(pf.contract_sha256).toBe(activityHash('preflight'));
     expect(pf.contract_source).toBe(`https://github.com/${CONTRACT_REPO}/blob/${HEAD}/product-map/contracts/keyword_acquisition.yaml`);
     expect(out.updated.sort()).toEqual(['keyword_acquisition.discovery', 'keyword_acquisition.preflight']);
   });
@@ -151,14 +161,14 @@ describe('syncActivityContracts', () => {
     expect(out.deprecated).toEqual(['keyword_acquisition.retired_step']);
   });
 
-  it('哈希全一致 → 不拉 YAML、不写库（没改不重推）', async () => {
+  it('哈希全一致 → 仍校验同commit契约，定义不重复更新', async () => {
     const gh = fakeGithub({ digest: digestOf({ preflight: 'p1', discovery: 'd1' }) });
     const rows = seeded().filter((r) => r.id !== 's9');
-    rows[0].contract_sha256 = 'p1'; rows[1].contract_sha256 = 'd1';
+    rows[0].contract_sha256 = activityHash('preflight'); rows[1].contract_sha256 = activityHash('discovery');
     const pool = fakePool(rows);
     const out = await syncActivityContracts(pool, deps(gh));
-    expect(gh.calls.some((u) => u.includes('.yaml'))).toBe(false);
-    expect(pool.queries.some((q) => /UPDATE journey_steps/.test(q.text))).toBe(false);
+    expect(gh.calls.some((u) => u.includes('.yaml'))).toBe(true);
+    expect(pool.queries.some((q) => /UPDATE journey_steps SET name/.test(q.text))).toBe(false);
     expect(out.updated).toEqual([]);
   });
 
@@ -167,7 +177,7 @@ describe('syncActivityContracts', () => {
     const pool = fakePool(seeded().filter((r) => r.activity_key === 'preflight'));
     const out = await syncActivityContracts(pool, deps(gh));
     const d = pool.rows.find((r) => r.activity_key === 'discovery');
-    expect(d).toMatchObject({ journey_id: 'J', step_number: 2, contract_sha256: 'd1' });
+    expect(d).toMatchObject({ journey_id: 'J', step_number: 2, contract_sha256: activityHash('discovery') });
     expect(out.inserted).toEqual(['keyword_acquisition.discovery']);
   });
 

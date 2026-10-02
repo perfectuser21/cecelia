@@ -25,12 +25,20 @@ BEGIN
 END;
 $$;
 CREATE FUNCTION headed_execution_insert_guard() RETURNS TRIGGER LANGUAGE plpgsql AS $$
-DECLARE item JSONB; task UUID; parent UUID; run_key TEXT;
+DECLARE item JSONB; task UUID; parent UUID; run_key TEXT; orphan_release UUID:=NULL;
  targets UUID[]:=ARRAY[]::uuid[]; run_keys TEXT[]:=ARRAY[]::text[];
 BEGIN
  -- 非RC快照可能在取闸后仍看不到已提交owner；不可视作无owner。
  IF current_setting('transaction_isolation')<>'read committed' THEN
   RAISE EXCEPTION 'headed_guard_isolation_unsupported';
+ END IF;
+ -- 只豁免device旧孤儿的完整净释放；新占锁/部分清理/换设备/重绑均无例外。
+ IF TG_TABLE_NAME='device_locks' AND TG_OP='UPDATE' THEN
+  IF OLD.locked_by ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+     AND NEW.locked_by IS NULL AND NEW.locked_at IS NULL AND NEW.expires_at IS NULL
+     AND NEW.device_name IS NOT DISTINCT FROM OLD.device_name THEN
+   orphan_release:=OLD.locked_by::uuid;
+  END IF;
  END IF;
  FOR item IN SELECT to_jsonb(NEW) UNION ALL SELECT to_jsonb(OLD) WHERE TG_OP='UPDATE' LOOP
   task:=NULL;run_key:=NULL;
@@ -67,6 +75,17 @@ BEGIN
   UNION ALL SELECT id FROM tasks WHERE payload->>'current_run_id'=ANY(run_keys)
   UNION ALL SELECT task_id FROM headed_task_takeovers WHERE previous_run_id=ANY(run_keys)
  ) associated ORDER BY id LOOP
+  IF task=orphan_release THEN
+   IF NOT pg_try_advisory_xact_lock_shared(hashtextextended('headed_task_owner:'||task::text,0)) THEN
+    RAISE EXCEPTION 'headed_task_owner_busy' USING ERRCODE='55P03';
+   END IF;
+   -- 取闸后重新核owner，不能因任务缺行而释放已受管资源。
+   IF EXISTS(SELECT 1 FROM headed_task_takeovers WHERE task_id=task) THEN
+    RAISE EXCEPTION 'headed_task_owned';
+   END IF;
+   PERFORM id FROM tasks WHERE id=task;
+   IF NOT FOUND THEN CONTINUE; END IF;
+  END IF;
   PERFORM headed_lock_task(task);
  END LOOP;
  RETURN NEW;
@@ -81,7 +100,10 @@ CREATE FUNCTION headed_task_owner_guard() RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE owner headed_task_takeovers%ROWTYPE;
 BEGIN
  SELECT * INTO owner FROM headed_task_takeovers WHERE task_id=OLD.id;
- IF NOT FOUND THEN RETURN NEW; END IF;
+ IF NOT FOUND THEN
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+ END IF;
  IF TG_OP='DELETE' THEN RAISE EXCEPTION 'headed_task_owned'; END IF;
  -- 人赢元数据与镜子同步不改变执行权；未知新列默认仍保护。
  IF (to_jsonb(NEW)-ARRAY['title','description','priority','due_at','notion_id','notion_props','notion_synced_at','updated_at','row_version'])

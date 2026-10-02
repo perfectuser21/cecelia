@@ -1,3 +1,6 @@
+import {MACHINE_CAPACITY_LOCK_SQL} from '../orchestrator/attempt-machine-capacity.js';
+import {prepareFailedControllerRetry} from './onboarding-retry.js';
+import {LINUX_POOL_AUTHORITY,LINUX_POOL_EXECUTOR_KIND} from './task-authority.js';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {transaction} from '../execution-directory/store.js';
 import {finalizeTask,afterTerminalTransition} from '../lib/task-terminal.js';
@@ -8,7 +11,7 @@ import canaryModule from '../../scripts/fleet-worker/linux-pool-canary.cjs';
 import poolModule from '../../scripts/fleet-worker/linux-pool-profile.cjs';
 import {US_SCHEDULER_ID,error} from './deployment.js';
 import {LIVE_RUNTIME_GRANTS_SQL,UNREVOKED_RUNTIME_GRANTS_SQL} from './active-grants.js';
-const creator=async args=>(await import('../actions.js')).createTask(args);
+const creator=async (args,internal)=>(await import('../actions.js')).createTask(args,internal);
 const identityCheck=async state=>{const d=await createRuntimeDeploymentReader()(state.machine_registry_id);return canaryModule.readLinuxPoolIdentity({profile:poolModule.validateLinuxPoolProfile(d.pool),token:d.workerToken,revision:d.expected.revision,nonce:randomBytes(32).toString('hex')});};
 const actor='linux-pool-onboarding',key=id=>'linux-onboarding:'+id;
 const safeErrors=new Set(['linux_pool_control_unavailable','linux_pool_prerequisites_unavailable','linux_pool_onboarding_budget_unavailable','linux_pool_credentials_unconfirmed',
@@ -19,8 +22,8 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
  const permitted=(source,machine)=>source?.id===machine.id&&source.request?.name===machine.name&&source.request.role==='worker'&&source.execution_revoked!==true;
  async function record(c,machine,state,parentId){
    const made=await createTask({db:c,title:'自动接入Linux执行池 '+machine.name,description:'可信SSH安装、池验收与受限脚本真实canary；只有同代授权激活才完成。',
-    task_type:'audit',status:'in_progress',source:'scheduler',source_id:'linux-pool-onboarding:'+state.nonce,trigger_source:'node_onboarding',allow_unscoped:true,
-    parent_task_id:parentId,mutation_intent:'read_only',declared_domain:'operations',created_by:actor,payload:{linux_onboarding:state}});
+    task_type:'audit',executor_kind:LINUX_POOL_EXECUTOR_KIND,status:'in_progress',source:'scheduler',source_id:'linux-pool-onboarding:'+state.nonce,trigger_source:'node_onboarding',allow_unscoped:true,
+    parent_task_id:parentId,mutation_intent:'read_only',declared_domain:'operations',created_by:actor,payload:{linux_onboarding:state}},{linuxPoolAuthority:LINUX_POOL_AUTHORITY});
    if(!made?.success||!made.task?.id)throw error('linux_pool_control_unavailable');const id=made.task.id;
    await c.query("UPDATE tasks SET claimed_by=$2,claimed_at=now(),started_at=COALESCE(started_at,now()) WHERE id=$1",[id,actor]);
    await c.query("UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,execution_task_id}',$2::jsonb),updated_at=now() WHERE id=$1",[state.parent_task_id,JSON.stringify(id)]);
@@ -97,9 +100,40 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
    if(completed)await afterTerminal(pool,id,'completed');
   }
  }
- async function retry(id){
-  await pool.query("UPDATE tasks SET payload=jsonb_set(jsonb_set(payload,'{linux_onboarding,error}','null'::jsonb),'{linux_onboarding,next_retry_at}','null'::jsonb),updated_at=now() WHERE id=$1 AND status='in_progress' AND claimed_by=$2",[id,actor]);
-  return view(id);
+ async function retry(id,existingDb){
+  const work=async c=>{
+   let task=(await c.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0],s=task?.payload?.linux_onboarding;
+   if(!s)throw error('linux_pool_retry_unconfirmed');
+   await c.query('SELECT pg_advisory_xact_lock(hashtext($1))',[key(s.machine_registry_id)]);
+   const machineId=s.machine_registry_id;
+   const candidate=(await c.query("SELECT name FROM system_registry WHERE id=$1 AND type='machine' AND status='active'",[s.machine_registry_id])).rows[0];
+   if(!candidate)throw error('linux_pool_retry_unconfirmed');
+   // 与runtime保持capacity→task/registry同序；取得行锁后复核机器名，防读取期间换代。
+   await c.query(MACHINE_CAPACITY_LOCK_SQL,[candidate.name]);
+   task=(await c.query('SELECT * FROM tasks WHERE id=$1 FOR UPDATE',[id])).rows[0];s=task.payload.linux_onboarding;
+   if(s.machine_registry_id!==machineId)throw error('linux_pool_retry_unconfirmed');
+   if(task.status==='in_progress'&&task.claimed_by===actor&&s.revoked!==true){
+    await c.query("UPDATE tasks SET payload=jsonb_set(jsonb_set(payload,'{linux_onboarding,error}','null'::jsonb),'{linux_onboarding,next_retry_at}','null'::jsonb),updated_at=now() WHERE id=$1",[id]);return id;
+   }
+   const source=(await c.query('SELECT * FROM tasks WHERE id=$1 FOR UPDATE',[s.parent_task_id])).rows[0];
+   const current=source?.payload?.node_onboarding?.execution_task_id;
+   if(current&&current!==id){
+    const next=(await c.query('SELECT * FROM tasks WHERE id=$1',[current])).rows[0];
+    if(next?.parent_task_id===id&&next.executor_kind===LINUX_POOL_EXECUTOR_KIND&&next.claimed_by===actor
+     &&next.status==='in_progress'&&next.payload?.linux_onboarding?.resume_of_task_id===id)return current;
+    throw error('linux_pool_retry_unconfirmed');
+   }
+   const machine=(await c.query("SELECT * FROM system_registry WHERE id=$1 AND type='machine' AND status='active' FOR UPDATE",[s.machine_registry_id])).rows[0];
+   if(!machine||machine.name!==candidate.name||!eligible(machine))throw error('linux_pool_retry_unconfirmed');
+   const state=await prepareFailedControllerRetry(c,task,source,machine,revision);
+   const next=await record(c,machine,state,id);
+   await c.query("INSERT INTO task_events(task_id,event_type,payload,created_at) VALUES($1,'linux_controller_retry',$2,now())",
+    [id,{actor,fact:'已验明旧专管任务被本机孤儿探针误收；保留failed历史并登记新控制棒',evidence:{continuation_task_id:next,source_task_id:source.id,revision}}]);
+   return next;
+  };
+  const taskId=existingDb?await work(existingDb):await transaction(pool,work);
+  // 外层enrollment事务尚未提交；只返回此处已核身份，不用另一连接读旧投影。
+  return existingDb?{task_id:taskId}:view(taskId);
  }
 
  async function checked(c,machineId,ok,taskId){

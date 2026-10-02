@@ -11,7 +11,7 @@ import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from '../../routes/task-mutation-rat
 if(DB_DEFAULTS.database!=='cecelia_scratch'&&!(process.env.CI==='true'&&DB_DEFAULTS.database==='cecelia_test'))throw Error('本地迁移仅cecelia_scratch；CI仅cecelia_test');
 const schema=`headed_takeover_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const admin=new pg.Client(DB_DEFAULTS);
-const pool=new pg.Pool({...DB_DEFAULTS,max:5,options:`-c search_path=${schema},public -c statement_timeout=1000`});
+const pool=new pg.Pool({...DB_DEFAULTS,max:5,options:`-c search_path=${schema} -c statement_timeout=1000`});
 const legacyQueries=[];
 // 仅替换全局池的连接目的地；SQL、原HTTP中间件、终态/交接生产函数均真实执行。
 vi.mock('../../db.js',()=>({default:{
@@ -324,24 +324,93 @@ it('有头接管使用独立未部署509版本记录，不占手机508',async()=
  expect(rows).toEqual([{version:'509',description:'有头会话一次性接管legacy bridge及持久执行屏障'}]);
 });
 
-it('真实Linux507、手机508、接管509顺序执行并保留三个独立版本记录',async()=>{
+it('真实507/508/509叠加image510/Linux512保独立台账、kind与owned guard',async()=>{
  const integrated=`headed_migrations_${process.pid}_${randomUUID().replaceAll('-','')}`;
- const client=new pg.Client({...DB_DEFAULTS,options:`-c search_path=${integrated},public`});
+ const client=new pg.Client({...DB_DEFAULTS,options:`-c search_path=${integrated}`});
  await client.connect();
  try{
   await client.query(`CREATE SCHEMA ${integrated}`);
   // 独立schema仅复制基础表形状，不复制已有迁移的函数、触发器或版本记录。
-  for(const table of ['tasks','task_runs','initiative_runs','harness_attempts','harness_attempt_cleanup_outbox','kernel_controller_sessions','callback_queue','device_locks'])
+  for(const table of ['tasks','task_runs','initiative_runs','harness_attempts','harness_attempt_cleanup_outbox','kernel_controller_sessions','callback_queue','work_routing_receipts','task_events','harness_gaps','harness_gap_dependencies','task_dependencies'])
    await client.query(`CREATE TABLE ${table} (LIKE ${schema}.${table} INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING INDEXES)`);
   await client.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');
    CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);
    ALTER TABLE tasks ADD CONSTRAINT tasks_executor_kind_check CHECK(executor_kind IN ('bridge','headed-session'));`);
-  for(const name of ['501_capacity_reservations','503_execution_directory','507_linux_script_authorization','508_phone_dispatches','509_headed_task_takeover'])
+  const engine=readFileSync(new URL('../../migrate.js',import.meta.url),'utf8');
+  // 只执行最低实际文件；ledger SQL直接取生产engine wrapper，禁止全量migrate或伪历史。
+  const wrapper=engine.match(/client\.query\(\s*`(INSERT INTO schema_version \(version, description\)[\s\S]*?DO NOTHING)`/)[1];
+  for(const name of ['065_device_locks','448_device_locks_phones','272_janitor','490_phone_registry','501_capacity_reservations','503_execution_directory','507_linux_script_authorization','508_phone_dispatches','509_headed_task_takeover','510_us_brain_image_retention','512_linux_pool_controller']){
+   await client.query('BEGIN');
    await client.query(readFileSync(new URL(`../../../migrations/${name}.sql`,import.meta.url),'utf8'));
-  const rows=(await client.query("SELECT version,description FROM schema_version WHERE version IN ('507','508','509') ORDER BY version")).rows;
-  expect(rows).toHaveLength(3);expect(rows.map(row=>row.version)).toEqual(['507','508','509']);
+   await client.query(wrapper,[name.split('_')[0],name.replace(/^\d+_/,'')]);
+   await client.query('COMMIT');
+  }
+  const rows=(await client.query("SELECT version,description FROM schema_version WHERE version IN ('507','508','509','510','512') ORDER BY version")).rows;
+  expect(rows).toHaveLength(5);expect(rows.map(row=>row.version)).toEqual(['507','508','509','510','512']);
   expect(rows[0].description).toContain('Linux');expect(rows[0].description).not.toContain('手机独立');
   expect(rows[1].description).toContain('手机独立');expect(rows[2].description).toContain('有头会话');
+  expect(rows[3].description).toBe('us_brain_image_retention');expect(rows[4].description).toBe('linux_pool_controller');
   expect((await client.query("SELECT count(*) AS n FROM execution_grants WHERE surface='phone_ssh'")).rows[0].n).toBe('0');
- }finally{await client.query(`DROP SCHEMA IF EXISTS ${integrated} CASCADE`);await client.end();}
+  for(const kind of ['bridge','headed-session','phone-ssh-controller','image-janitor','linux-pool-controller']){
+   const id=randomUUID();await client.query('INSERT INTO tasks(id,executor_kind) VALUES($1,$2)',[id,kind]);
+   expect((await client.query('SELECT executor_kind FROM tasks WHERE id=$1',[id])).rows[0].executor_kind).toBe(kind);
+  }
+  await expect(client.query("INSERT INTO tasks(id,executor_kind) VALUES($1,'invented')",[randomUUID()])).rejects.toMatchObject({code:'23514'});
+  const ownedId=randomUUID(),receipt=randomUUID(),run='stack-'+ownedId;
+  await client.query('INSERT INTO tasks(id,payload) VALUES($1,$2)',[ownedId,{routing_receipt_id:receipt,work_kind:'coding_review',current_run_id:run,review_required:true}]);
+  await client.query("INSERT INTO work_routing_receipts(id,task_id,canonical_task_type,work_kind) VALUES($1,$2,'data','coding_review')",[receipt,ownedId]);
+  const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+  await takeOverHeadedTask({connect:async()=>({query:client.query.bind(client),release(){}})},
+   {taskId:ownedId,requestId:randomUUID(),sessionId:'actual-stack-session',expectedRowVersion:0,expectedExecutorKind:'bridge',expectedCurrentRunId:run});
+  const before=(await client.query('SELECT * FROM tasks WHERE id=$1',[ownedId])).rows;
+  await expect(client.query("UPDATE tasks SET status='queued' WHERE id=$1",[ownedId])).rejects.toThrow('headed_task_owned');
+  await expect(client.query('DELETE FROM tasks WHERE id=$1',[ownedId])).rejects.toThrow('headed_task_owned');
+  expect((await client.query('SELECT * FROM tasks WHERE id=$1',[ownedId])).rows).toEqual(before);
+ }finally{await client.query('ROLLBACK');await client.query(`DROP SCHEMA IF EXISTS ${integrated} CASCADE`);await client.end();}
+});
+
+it('无owner普通DELETE真实影响一行且任务消失，不能以NEW=NULL抑制删除',async()=>{
+ const deleted=await pool.query('DELETE FROM tasks WHERE id=$1 RETURNING id',[task]);
+ expect(deleted.rowCount).toBe(1);expect(deleted.rows).toEqual([{id:task}]);
+ expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[task])).rows).toEqual([]);
+});
+it('无owner普通UPDATE仍返回NEW；不存在任务DELETE正常影响零行',async()=>{
+ const updated=await pool.query("UPDATE tasks SET title='ordinary-update' WHERE id=$1 RETURNING title",[task]);
+ expect(updated.rowCount).toBe(1);expect(updated.rows).toEqual([{title:'ordinary-update'}]);
+ expect((await pool.query('SELECT title FROM tasks WHERE id=$1',[task])).rows).toEqual([{title:'ordinary-update'}]);
+ expect((await pool.query('DELETE FROM tasks WHERE id=$1 RETURNING id',[randomUUID()])).rowCount).toBe(0);
+});
+it('真实接管后DELETE仍拒绝，完整task与owner原样保留',async()=>{
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+ await takeOverHeadedTask(pool,request());
+ const beforeTask=(await pool.query('SELECT * FROM tasks WHERE id=$1',[task])).rows;
+ const beforeOwner=(await pool.query('SELECT * FROM headed_task_takeovers WHERE task_id=$1',[task])).rows;
+ expect(beforeOwner).toHaveLength(1);
+ await expect(pool.query('DELETE FROM tasks WHERE id=$1',[task])).rejects.toThrow('headed_task_owned');
+ expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[task])).rows).toEqual(beforeTask);
+ expect((await pool.query('SELECT * FROM headed_task_takeovers WHERE task_id=$1',[task])).rows).toEqual(beforeOwner);
+});
+it('私有CASCADE普通父子真删；owned父子及owner均保留',async()=>{
+ await pool.query('CREATE TABLE headed_delete_children(task_id UUID PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE)');
+ const ordinary=randomUUID();await pool.query('INSERT INTO tasks(id) VALUES($1)',[ordinary]);
+ await pool.query('INSERT INTO headed_delete_children(task_id) VALUES($1)',[ordinary]);
+ expect((await pool.query('DELETE FROM tasks WHERE id=$1 RETURNING id',[ordinary])).rowCount).toBe(1);
+ expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[ordinary])).rows).toEqual([]);
+ expect((await pool.query('SELECT * FROM headed_delete_children WHERE task_id=$1',[ordinary])).rows).toEqual([]);
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+ await takeOverHeadedTask(pool,request());
+ await pool.query('INSERT INTO headed_delete_children(task_id) VALUES($1)',[task]);
+ const beforeTask=(await pool.query('SELECT * FROM tasks WHERE id=$1',[task])).rows;
+ const beforeOwner=(await pool.query('SELECT * FROM headed_task_takeovers WHERE task_id=$1',[task])).rows;
+ await expect(pool.query('DELETE FROM tasks WHERE id=$1',[task])).rejects.toThrow('headed_task_owned');
+ expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[task])).rows).toEqual(beforeTask);
+ expect((await pool.query('SELECT * FROM headed_task_takeovers WHERE task_id=$1',[task])).rows).toEqual(beforeOwner);
+ expect((await pool.query('SELECT * FROM headed_delete_children WHERE task_id=$1',[task])).rows).toEqual([{task_id:task}]);
+});
+it('现task_runs非cascade FK仍以23503拒绝普通父DELETE，父与run不变',async()=>{
+ const run=(await pool.query('INSERT INTO task_runs(task_id,run_id) VALUES($1,$2) RETURNING *',[task,legacyRun])).rows;
+ const beforeTask=(await pool.query('SELECT * FROM tasks WHERE id=$1',[task])).rows;
+ await expect(pool.query('DELETE FROM tasks WHERE id=$1',[task])).rejects.toMatchObject({code:'23503'});
+ expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[task])).rows).toEqual(beforeTask);
+ expect((await pool.query('SELECT * FROM task_runs WHERE task_id=$1',[task])).rows).toEqual(run);
 });

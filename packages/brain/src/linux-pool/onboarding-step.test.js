@@ -68,3 +68,21 @@ it('过期挑战仅在恢复服务已验签精确清理后重建，未知保留�
  x.deps.recover=async()=>true;await createLinuxOnboardingStep(x.deps)(x.task,x.machine,x.state,x.save);
  expect(x.state.phase).toBe('script_prepare');expect(x.state.runtime_json).toBe(null);expect(x.calls).toEqual([]);
 });
+it('误收接续仍按原硬预算验证；探测出不同policy时禁止进入凭据或安装',async()=>{
+ const x=setup(),step=createLinuxOnboardingStep(x.deps);await step(x.task,x.machine,x.state,x.save);
+ const policy=JSON.parse(x.state.policy_json);policy.pool.pool.cpu_cores=1;
+ await x.save({...x.state,phase:'probe',resume_of_task_id:randomUUID(),policy_json:JSON.stringify(policy)});
+ await expect(step(x.task,x.machine,x.state,x.save)).rejects.toThrow('linux_pool_onboarding_budget_unavailable');
+ expect(x.creates).toBe(0);expect(x.calls).toEqual(['probe','probe']);expect(x.state.phase).toBe('probe');
+});
+
+it.each([undefined,'','{','{}'])('接续probe不得在缺失或无效原硬预算%s时重算并进入凭据',async policy_json=>{
+ const x=setup();await x.save({...x.state,resume_of_task_id:randomUUID(),policy_json});
+ await expect(createLinuxOnboardingStep(x.deps)(x.task,x.machine,x.state,x.save)).rejects.toThrow('linux_pool_onboarding_budget_unavailable');
+ expect(x.state.phase).toBe('probe');expect(x.creates).toBe(0);
+});
+it('合法原硬预算全等时接续probe保留原序列化政策',async()=>{
+ const x=setup(),step=createLinuxOnboardingStep(x.deps);await step(x.task,x.machine,x.state,x.save);const prior=x.state.policy_json;
+ await x.save({...x.state,phase:'probe',resume_of_task_id:randomUUID()});await step(x.task,x.machine,x.state,x.save);
+ expect(x.state.phase).toBe('credentials');expect(x.state.policy_json).toBe(prior);
+});

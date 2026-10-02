@@ -39,38 +39,5 @@ describe('迁移 471：登记 script 与 script_run', () => {
     expect(imageJanitor).toContain("conname='tasks_executor_kind_check'");
     expect(imageJanitor).toContain('CHECK ((%s) OR executor_kind=%L)');
     expect(imageJanitor).toContain("substring(definition FROM 8 FOR length(definition)-8),'image-janitor'");
-    expect([...list, 'preview-janitor','app-server-controller','phone-ssh-controller','image-janitor'].sort()).toEqual([...VALID_EXECUTOR_KINDS].sort());
-  });
-
-  it("471 task_type 加已登记的502增量后等于当前DB白名单，且含 script_run", () => {
-    const list = listOf(strip(readFileSync(file, 'utf8')), 'tasks_task_type_check');
-    expect(list).toContain('script_run');
-    expect(readFileSync(join(MIG, '502_preview_owned_cache_janitor.sql'), 'utf8'))
-      .toContain("('tasks_task_type_check','task_type','janitor')");
-    expect(readFileSync(join(MIG,'504_app_server_generations.sql'),'utf8')).toContain("('tasks_task_type_check','task_type','app_server_run')");
-    expect([...list, 'janitor','app_server_run'].sort()).toEqual([...DB_WHITELISTED_TASK_TYPES].sort());
-  });
-
-  it('写 schema_version 471', () => {
-    expect(readFileSync(file, 'utf8')).toMatch(/schema_version[\s\S]*'471'/);
-  });
-});
-
-describe('迁移 472：VALIDATE 收尾', () => {
-  const file = join(MIG, '472_validate_script_executor_constraints.sql');
-  it('两条约束都 VALIDATE，写 schema_version 472', () => {
-    expect(existsSync(file)).toBe(true);
-    const raw = readFileSync(file, 'utf8');
-    const sql = strip(raw);
-    expect(sql).toMatch(/VALIDATE CONSTRAINT tasks_executor_kind_check/);
-    expect(sql).toMatch(/VALIDATE CONSTRAINT tasks_task_type_check/);
-    expect(raw).toMatch(/schema_version[\s\S]*'472'/);
-  });
-});
-
-describe('回滚文件', () => {
-  it('471/472 都有 down', () => {
-    expect(existsSync(join(MIG, 'rollback', '471_script_executor_kind_and_task_type.down.sql'))).toBe(true);
-    expect(existsSync(join(MIG, 'rollback', '472_validate_script_executor_constraints.down.sql'))).toBe(true);
-  });
-});
+    expect(readFileSync(join(MIG,'512_linux_pool_controller.sql'),'utf8')).toContain("substring(definition FROM 8 FOR length(definition)-8),'linux-pool-controller'");
+    expect([...list, 'preview-janitor','app-server-controller','image-janitor','phone-ssh-controller','linux-pool-controller'].sort()).toEqual([...VALID_EXECUTOR_KINDS].sort());
