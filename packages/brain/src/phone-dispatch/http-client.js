@@ -1,8 +1,15 @@
 import http from 'node:http';
 import {randomUUID} from 'node:crypto';
+import {digest} from './identity.js';
 import {isPhoneHubBinding} from './http-binding.js';
 import {credentialValid,verifyPhoneHubReceipt} from './http-receipt.js';
-const MAX_BYTES=16384;
+const MAX_BYTES=16384,observations=new WeakMap();
+// Only the successful native HTTP branch below can create observation authority.
+export function readPhoneCapacityObservation(value,binding){
+ const evidence=observations.get(value);if(!evidence)throw Error('phone_capacity_observation_required');
+ if(!isPhoneHubBinding(binding)||evidence.bindingDigest!==digest(binding))throw Error('phone_capacity_identity_mismatch');
+ return evidence;
+}
 export function createPhoneHttpClient({token,timeoutMs=5000}={}){
  if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>5000)throw Error('phone_http_deadline_invalid');
  async function read(operation,binding){
@@ -23,7 +30,9 @@ export function createPhoneHttpClient({token,timeoutMs=5000}={}){
     });
     req.on('error',()=>finish(Error('transport')));req.end(body);}catch{finish(Error('transport'));}
    });
-   return verifyPhoneHubReceipt(envelope,{binding,token,nonce,operation});
+   const receipt=verifyPhoneHubReceipt(envelope,{binding,token,nonce,operation});
+   if(operation==='capabilities')observations.set(receipt,Object.freeze({bindingDigest:digest(binding),nonce,receivedAt:Date.now()}));
+   return receipt;
   }catch{throw Error('phone_http_unconfirmed');}
  }
  const closed=async()=>{throw Error('phone_runtime_not_connected');};

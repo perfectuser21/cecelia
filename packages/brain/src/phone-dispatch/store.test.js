@@ -57,12 +57,12 @@ beforeAll(async()=>{
  const {createPhoneDispatchStore}=await import('./store.js');store=createPhoneDispatchStore({pool,afterTask:async()=>{}});
 });
 
-async function httpVersion(){
+async function httpVersion(capacity){
  const original=(await pool.query('SELECT v.* FROM execution_nodes n JOIN execution_node_versions v ON n.current_version_id=v.id WHERE n.canonical_id=$1',[machine])).rows[0];
  const revision=Number((await pool.query('SELECT max(revision) AS n FROM execution_node_versions WHERE machine_registry_id=$1',[original.machine_registry_id])).rows[0].n)+1;
  const binding={http_endpoint:'http://127.0.0.1:3459/',hub_id:'fixture-hub',hub_boot_id:'fixture-hub-boot',hub_config_digest:'a'.repeat(64),hub_build_digest:'b'.repeat(64),physical:{machine_id:machine,worker_id:original.worker_id,physical_boot_id:'fixture-phone-boot',config_digest:'c'.repeat(64),build_digest:'d'.repeat(64),action_digest:'e'.repeat(64)}};
  const id=randomUUID();await pool.query(`INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,worker_boot_id,platform,endpoints,profile,config_hash,state)
-  VALUES($1,$2,$3,'legacy-v1',$4,$5,'darwin',$6,$7,$8,'active')`,[id,original.machine_registry_id,revision,original.worker_id,binding.physical.physical_boot_id,{...original.endpoints,phone_hub:binding},original.profile,original.config_hash]);
+  VALUES($1,$2,$3,'legacy-v1',$4,$5,'darwin',$6,$7,$8,'active')`,[id,original.machine_registry_id,revision,original.worker_id,binding.physical.physical_boot_id,{...original.endpoints,phone_hub:binding},capacity===undefined?original.profile:{...original.profile,capacity},original.config_hash]);
  await pool.query('UPDATE execution_nodes SET current_version_id=$1 WHERE canonical_id=$2',[id,machine]);
  await pool.query("INSERT INTO execution_grants(node_version_id,surface,provider,account_id,profile_id,provenance,state) VALUES($1,'phone_ssh','adb',$2,'adb_get_state','isolated_c1_test','active')",[id,account]);
  await directory.refresh({pool});return {id,binding};
@@ -329,4 +329,17 @@ it('C6 dispatch磁盘低于5GiB或物理外锁busy均wait，无伪available',asy
   expect((await store.reserveHttp({...request,capacitySnapshot:await observation(binding,patch)})).outcome).toBe('wait');
  }
  expect((await pool.query('SELECT * FROM capacity_reservations')).rows).toHaveLength(0);
+});
+
+it('C6实际DB版本capacity非法拒绝；旧版本真实观测不能给新版本任务预约',async()=>{
+ await httpVersion();const request=await httpInput();await httpVersion();
+ await expect(store.reserveHttp(request)).rejects.toThrow('phone_capacity_identity_mismatch');
+ await httpVersion(0);await expect(store.reserveHttp(await httpInput())).rejects.toThrow('phone_capacity_profile_invalid');
+ expect((await pool.query('SELECT * FROM capacity_reservations')).rows).toHaveLength(0);
+});
+it('C6真实script占位阻止HTTP独占，即使物理观测无忙',async()=>{
+ await httpVersion();const {createScriptReservationStore}=await import('../orchestrator/script-reservation-store.js');
+ const script=await input();expect((await createScriptReservationStore(pool).reserve({taskId:script.taskId,machineId:machine,ownerKey:`script-${script.taskId}-a1`,configDigest:'a'.repeat(64),capacitySnapshot:snapshot()})).outcome).toBe('reserved');
+ expect((await store.reserveHttp(await httpInput())).outcome).toBe('wait');
+ expect((await pool.query('SELECT * FROM phone_dispatches')).rows).toHaveLength(0);
 });
