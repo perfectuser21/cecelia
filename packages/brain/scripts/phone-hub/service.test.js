@@ -79,3 +79,25 @@ it('phone maintenance只签自己的scope；unknown失败503，不能回签pendi
  await fixture(configured(),async base=>{const r=await post(base,'/maintenance/status',{request_nonce:randomUUID()});expect(r.status).toBe(200);expect(r.body.receipt).toMatchObject({scope:'phone-hub',pending:1,quiescent:false});});
  await fixture({...configured(),maintenance:async()=>{throw Error('unknown');}},async base=>{expect(await post(base,'/maintenance/status',{request_nonce:randomUUID()})).toEqual({status:503,body:{error:'phone_maintenance_unconfirmed'}});});
 });
+it('可选server-owned执行入口严格收body后只调用一次；物理失败保持503',async()=>{
+ const protocol=require('../phone-ssh/protocol.cjs');const identity=Object.fromEntries(['dispatch_id',...protocol.BINDINGS].map(k=>[k,randomUUID()]));Object.assign(identity,{machine_id:'fixture-machine',host:'fixture-host',serial:'fixture-serial',profile:'fixture-profile',account_id:'fixture-account',worker_id:'fixture-worker',worker_boot_id:'fixture-boot',action:'adb_get_state',config_digest:'f'.repeat(64)});
+ let calls=0;await fixture({...configured(),execution:async()=>{calls++;throw Error('actual physical unavailable');}},async base=>{
+  const result=await post(base,'/phones/fixture-serial/start',{request_nonce:randomUUID(),operation:'start',identity});expect(result.status).toBe(503);expect(calls).toBe(1);
+ });
+});
+it('执行入口拒绝公开route/env与路径身份错配，nonce一次消费，完整body和operation共享deadline',async()=>{
+ const protocol=require('../phone-ssh/protocol.cjs');const identity=Object.fromEntries(['dispatch_id',...protocol.BINDINGS].map(k=>[k,randomUUID()]));Object.assign(identity,{machine_id:'fixture-machine',host:'fixture-host',serial:'fixture:serial',profile:'fixture-profile',account_id:'fixture-account',worker_id:'fixture-worker',worker_boot_id:'fixture-boot',action:'adb_get_state',config_digest:'f'.repeat(64)});
+ let calls=0,aborted=false;
+ const options={...configured(),timeoutMs:70,execution:async(_,context)=>{calls++;context.signal.addEventListener('abort',()=>aborted=true);await new Promise(r=>setTimeout(r,500));throw Error('unconfirmed');}};
+ await fixture(options,async base=>{
+  const path='/phones/fixture%3Aserial/inspect',body={request_nonce:randomUUID(),operation:'inspect',identity};
+  for(const extra of [{route:'caller'},{env:{ANY:'caller'}},{identity:{...identity,serial:'other'}},{operation:'start'}])expect((await post(base,path,{...body,...extra})).status).toBe(400);
+  expect(calls).toBe(0);
+  const started=Date.now();expect((await post(base,path,body)).status).toBe(503);expect(Date.now()-started).toBeLessThan(400);expect(aborted).toBe(true);expect(calls).toBe(1);
+  expect((await post(base,path,body)).status).toBe(409);expect(calls).toBe(1);
+ });
+});
+it('server-owned callback返回未品牌化对象不能伪造物理成功回执',async()=>{
+ const protocol=require('../phone-ssh/protocol.cjs');const identity=Object.fromEntries(['dispatch_id',...protocol.BINDINGS].map(k=>[k,randomUUID()]));Object.assign(identity,{machine_id:'fixture-machine',host:'fixture-host',serial:'fixture-serial',profile:'fixture-profile',account_id:'fixture-account',worker_id:'fixture-worker',worker_boot_id:'fixture-boot',action:'adb_get_state',config_digest:'f'.repeat(64)});
+ await fixture({...configured(),execution:async()=>({physical:{},identity:{...identity,status:'completed',execution_exited:true,lock_released:true,lock_owner:identity.lease_token}})},async base=>{expect((await post(base,'/phones/fixture-serial/inspect',{request_nonce:randomUUID(),operation:'inspect',identity})).status).toBe(503);});
+});

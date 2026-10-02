@@ -18,7 +18,7 @@ from process_identity import boot_id
 from runner import Runner, Config
 from drain_marker import marker_identity
 
-SOURCE_FILES=('runner.py','worker.py','journal.py','phone_lease.py','process_identity.py','adb_socket.py','probe.py','drain_marker.py')
+SOURCE_FILES=('runner.py','worker.py','journal.py','phone_lease.py','process_identity.py','adb_socket.py','probe.py','drain_marker.py','http_physical.py')
 SCHEMA='phone-physical-probe/v1'
 
 def private_json(path):
@@ -86,9 +86,7 @@ def external_locks(root):
         else:raise ValueError('phone_lock_observation_unknown')
     return {'occupied':len(occupied)}
 
-def collect(*,manifest_path='/etc/cecelia/phone-ssh/probe.json',source_root='/opt/cecelia/phone-ssh',
-            config_path='/etc/cecelia/phone-ssh/worker.json',journal_root='/var/lib/cecelia/phone-ssh',
-            lock_root='/private/tmp/openclaw-phone/locks',drain_path='/var/run/cecelia/fleet-worker.drain'):
+def installed_identity(*,manifest_path='/etc/cecelia/phone-ssh/probe.json',source_root='/opt/cecelia/phone-ssh',config_path='/etc/cecelia/phone-ssh/worker.json'):
     manifest=private_json(manifest_path);identity=private_json(config_path)
     if set(identity)!={'machine_id','worker_id','host'} or set(manifest)!={'schema','machine_id','worker_id','host','source_hashes'} or manifest['schema']!=1 or any(manifest[k]!=identity[k] for k in identity):
         raise ValueError('phone_probe_manifest_invalid')
@@ -96,6 +94,15 @@ def collect(*,manifest_path='/etc/cecelia/phone-ssh/probe.json',source_root='/op
     if not isinstance(expected,dict) or set(expected)!=set(SOURCE_FILES):raise ValueError('phone_probe_manifest_invalid')
     actual={name:hash_bytes(Path(source_root)/name) for name in SOURCE_FILES}
     if actual!=expected:raise ValueError('phone_probe_build_mismatch')
+    build=hashlib.sha256(json.dumps(actual,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    config=hashlib.sha256(json.dumps({'manifest':manifest,'worker_identity':identity,'actual_hashes':actual},sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    return {**identity,'physical_boot_id':boot_id(),'config_digest':config,'build_digest':build,'action_digest':actual['adb_socket.py']}
+
+def collect(*,manifest_path='/etc/cecelia/phone-ssh/probe.json',source_root='/opt/cecelia/phone-ssh',
+            config_path='/etc/cecelia/phone-ssh/worker.json',journal_root='/var/lib/cecelia/phone-ssh',
+            lock_root='/private/tmp/openclaw-phone/locks',drain_path='/var/run/cecelia/fleet-worker.drain'):
+    installed=installed_identity(manifest_path=manifest_path,source_root=source_root,config_path=config_path)
+    identity={k:installed[k] for k in ('machine_id','worker_id','host')}
     # 缺失物理账不得初始化空账后谎称零；probe完全不创建journal。
     if not Path(journal_root).is_dir() or not (Path(journal_root)/'.activity.json').is_file():raise ValueError('phone_probe_journal_unknown')
     runner=Runner(Config(journal_root=str(journal_root),**identity))
@@ -112,10 +119,8 @@ def collect(*,manifest_path='/etc/cecelia/phone-ssh/probe.json',source_root='/op
     maintenance['draining']=before_marker is not None and after_marker is not None
     maintenance['stable']=maintenance['stable'] and before['revision']==after['revision'] and before_marker==after_marker and before_locks==after_locks
     maintenance['quiescent']=maintenance['draining'] and maintenance['stable'] and maintenance['pending']==0 and maintenance['in_flight']==0
-    build=hashlib.sha256(json.dumps(actual,sort_keys=True,separators=(',',':')).encode()).hexdigest()
-    config=hashlib.sha256(json.dumps({'manifest':manifest,'worker_identity':identity,'actual_hashes':actual},sort_keys=True,separators=(',',':')).encode()).hexdigest()
     return {'machine_id':identity['machine_id'],'worker_id':identity['worker_id'],'physical_boot_id':boot_id(),
-            'config_digest':config,'build_digest':build,'action':'adb_get_state','action_digest':actual['adb_socket.py'],
+            'config_digest':installed['config_digest'],'build_digest':installed['build_digest'],'action':'adb_get_state','action_digest':installed['action_digest'],
             'resources':real_resources(journal_root),'adb_daemon':daemon_observation(),'external_locks':{'occupied':occupied},
             'maintenance':maintenance,'observed_at':datetime.now(timezone.utc).isoformat()}
 

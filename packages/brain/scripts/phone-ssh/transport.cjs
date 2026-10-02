@@ -11,12 +11,15 @@ function sshArgs(target,command){
   '-o','PermitLocalCommand=no','-o','ControlMaster=no','-o','ControlPath=none','-o','ConnectTimeout=5',
   '-o','ServerAliveInterval=2','-o','ServerAliveCountMax=2','-l',target.user,'-p',String(target.port),'--',target.host,command];
 }
-function runSsh(file,args,input,{timeoutMs=10000,maxBytes=65536,spawnProcess=spawn}={}){
+function runSsh(file,args,input,{timeoutMs=10000,maxBytes=65536,spawnProcess=spawn,signal}={}){
  if(file!=='/usr/bin/ssh'||typeof input!=='string'||Buffer.byteLength(input)>16384)throw Error('phone_transport_invalid');
  return new Promise((resolve,reject)=>{
+  if(signal?.aborted){reject(Error('phone_ssh_cancelled'));return;}
   const child=spawnProcess(file,args,{shell:false,stdio:['pipe','pipe','pipe'],env:{PATH:'/usr/bin:/bin:/usr/sbin:/sbin',LANG:'C',...(process.env.HOME?{HOME:process.env.HOME}:{}),...(process.env.SSH_AUTH_SOCK?{SSH_AUTH_SOCK:process.env.SSH_AUTH_SOCK}:{})}});
   let done=false,total=0;const chunks=[];
-  const finish=(error,result)=>{if(done)return;done=true;clearTimeout(timer);if(error){child.kill('SIGKILL');reject(Error(error));}else resolve(result);};
+  const finish=(error,result)=>{if(done)return;done=true;clearTimeout(timer);signal?.removeEventListener('abort',abort);if(error){child.kill('SIGKILL');reject(Error(error));}else resolve(result);};
+  const abort=()=>finish('phone_ssh_cancelled');
+  signal?.addEventListener('abort',abort,{once:true});
   const timer=setTimeout(()=>finish('phone_ssh_timeout'),timeoutMs);
   child.on('error',()=>finish('phone_ssh_unavailable'));
   child.stdin.on('error',()=>finish('phone_ssh_stdin_unavailable'));
