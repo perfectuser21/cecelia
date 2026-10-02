@@ -295,6 +295,12 @@ bluegreen_swap() {
       echo "[bluegreen] ❌ 缺少部署目标 SHA，终止切换（blue 保留）"
       return 1
     fi
+    # docker run -d 只确认sidecar创建；目标SHA错误必须在blue仍存活时拦截。
+    if ! timeout -k 2 8 docker image inspect --format '{{range .Config.Env}}{{if eq (index (split . "=") 0) "GIT_SHA"}}{{.}}{{end}}{{end}}' "cecelia-brain:${version}" \
+      | node -e 'let s="";process.stdin.on("data",x=>{s+=x;if(s.length>128)process.exit(1)});process.stdin.on("end",()=>{if(s.trim()!=="GIT_SHA="+process.argv[1])process.exit(1)})' "$expected_sha"; then
+      echo "[bluegreen] ❌ 目标镜像 SHA 未确认，终止切换（blue 保留）"
+      return 1
+    fi
     docker rm -f "$sidecar_name" >/dev/null 2>&1 || true  # 清理上次残留
 
     # ── 打 blue-fallback 快照（sidecar compose up 失败时回退用）──────────────

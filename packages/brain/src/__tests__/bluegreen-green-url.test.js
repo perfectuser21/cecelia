@@ -35,6 +35,7 @@ case "$1" in
     if echo "$@" | grep -q 'State.Status'; then echo "running"; exit 0; fi
     if echo "$@" | grep -q 'State.Health'; then echo "healthy"; exit 0; fi
     echo "sha256:fake"; exit 0 ;;
+  image) echo "GIT_SHA=${'a'.repeat(40)}"; exit 0 ;;
   *) exit 0 ;;
 esac
 `;
