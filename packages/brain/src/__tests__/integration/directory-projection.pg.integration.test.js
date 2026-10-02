@@ -5,7 +5,7 @@ import { DB_DEFAULTS } from '../../db-config.js';
 import { projectDirectoryPage, runDirectoryProjection } from '../../projection/directory-projector.js';
 import { loadDirectorySource, buildDirectoryRows } from '../../projection/directory-source.js';
 import { configureDirectoryProjection } from '../../projection/directory-config.js';
-import { runtimeFixture,uid } from '../../projection/__tests__/directory-runtime.fixture.js';
+import { runtimeFixture,fixtureEntityId } from '../../projection/__tests__/directory-runtime.fixture.js';
 
 let client, schema;
 beforeEach(async () => {
@@ -34,7 +34,7 @@ describe('六层目录真实PG边界', () => {
     const f = runtimeFixture();
     const config = { ...f.config, value_stream_bindings: [] };
     await client.query('CREATE TABLE working_memory(key text PRIMARY KEY,value_json jsonb,updated_at timestamptz)');
-    await client.query('INSERT INTO areas VALUES($1,$2,$3)', [uid(21), '组织', uid(41)]);
+    await client.query('INSERT INTO areas VALUES($1,$2,$3)', [fixtureEntityId(21), '组织', fixtureEntityId(41)]);
     await client.query("INSERT INTO projection_targets(target,enabled,config) VALUES('notion-directory',true,$1)", [config]);
     const pool = { connect: async () => ({ query: client.query.bind(client), release() {} }) };
     const notionReq = async (...args) => {
@@ -52,7 +52,7 @@ describe('六层目录真实PG边界', () => {
     const target = (await client.query("SELECT last_success_at,last_error FROM projection_targets WHERE target='notion-directory'")).rows[0];
     if (offset === 0) {
       expect(result).toMatchObject({ failed: 0, synced: 1 });
-      expect(receipts).toEqual([{ entity_id: uid(21), external_id: uid(41) }]);
+      expect(receipts).toEqual([{ entity_id: fixtureEntityId(21), external_id: fixtureEntityId(41) }]);
       expect(target.last_success_at).not.toBeNull();
       expect(target.last_error).toBeNull();
     } else {
@@ -63,7 +63,7 @@ describe('六层目录真实PG边界', () => {
     }
   });
   it('真SQL反序persist同一共享refs后页面不重PATCH，成功receipt hash保持', async () => {
-    const w1=uid(701),w2=uid(702),activity=uid(703),page=uid(704),dbId=uid(705);
+    const w1=fixtureEntityId(701),w2=fixtureEntityId(702),activity=fixtureEntityId(703),page=fixtureEntityId(704),dbId=fixtureEntityId(705);
     await client.query("INSERT INTO workflows VALUES($1,'A','a',NULL),($2,'B','b',NULL)", [w1,w2]);
     await client.query("INSERT INTO journey_steps VALUES($1,'共享',$2)", [activity,w1]);
     const persist = async ids => {
@@ -116,7 +116,7 @@ describe('六层目录真实PG边界', () => {
     expect((await client.query('SELECT content_hash,last_synced_at FROM projection_links')).rows).toEqual(first);
   });
   it('唯一缺库bootstrap读回后原子登记，重复相同请求不新增库',async()=>{
-    const f=runtimeFixture(),parent=uid(600);let created=0,badDiscovery=true;
+    const f=runtimeFixture(),parent=fixtureEntityId(600);let created=0,badDiscovery=true;
     const tables={areas:'areas',value_streams:'notion_map_node_pages',activities:'journey_steps',workflows:'workflows',steps:'steps'};
     for(const [layer,table] of Object.entries(tables)){
       await client.query("INSERT INTO notion_projection_map(notion_db_id,brain_table,status) VALUES($1,$2,'active')",[f.dbs[layer],table]);
