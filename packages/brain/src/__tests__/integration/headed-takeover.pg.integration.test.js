@@ -345,3 +345,49 @@ it('真实Linux507、手机508、接管509顺序执行并保留三个独立版�
   expect((await client.query("SELECT count(*) AS n FROM execution_grants WHERE surface='phone_ssh'")).rows[0].n).toBe('0');
  }finally{await client.query(`DROP SCHEMA IF EXISTS ${integrated} CASCADE`);await client.end();}
 });
+
+it('无owner普通DELETE真实影响一行且任务消失，不能以NEW=NULL抑制删除',async()=>{
+ const deleted=await pool.query('DELETE FROM tasks WHERE id=$1 RETURNING id',[task]);
+ expect(deleted.rowCount).toBe(1);expect(deleted.rows).toEqual([{id:task}]);
+ expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[task])).rows).toEqual([]);
+});
+it('无owner普通UPDATE仍返回NEW；不存在任务DELETE正常影响零行',async()=>{
+ const updated=await pool.query("UPDATE tasks SET title='ordinary-update' WHERE id=$1 RETURNING title",[task]);
+ expect(updated.rowCount).toBe(1);expect(updated.rows).toEqual([{title:'ordinary-update'}]);
+ expect((await pool.query('SELECT title FROM tasks WHERE id=$1',[task])).rows).toEqual([{title:'ordinary-update'}]);
+ expect((await pool.query('DELETE FROM tasks WHERE id=$1 RETURNING id',[randomUUID()])).rowCount).toBe(0);
+});
+it('真实接管后DELETE仍拒绝，完整task与owner原样保留',async()=>{
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+ await takeOverHeadedTask(pool,request());
+ const beforeTask=(await pool.query('SELECT * FROM tasks WHERE id=$1',[task])).rows;
+ const beforeOwner=(await pool.query('SELECT * FROM headed_task_takeovers WHERE task_id=$1',[task])).rows;
+ expect(beforeOwner).toHaveLength(1);
+ await expect(pool.query('DELETE FROM tasks WHERE id=$1',[task])).rejects.toThrow('headed_task_owned');
+ expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[task])).rows).toEqual(beforeTask);
+ expect((await pool.query('SELECT * FROM headed_task_takeovers WHERE task_id=$1',[task])).rows).toEqual(beforeOwner);
+});
+it('私有CASCADE普通父子真删；owned父子及owner均保留',async()=>{
+ await pool.query('CREATE TABLE headed_delete_children(task_id UUID PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE)');
+ const ordinary=randomUUID();await pool.query('INSERT INTO tasks(id) VALUES($1)',[ordinary]);
+ await pool.query('INSERT INTO headed_delete_children(task_id) VALUES($1)',[ordinary]);
+ expect((await pool.query('DELETE FROM tasks WHERE id=$1 RETURNING id',[ordinary])).rowCount).toBe(1);
+ expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[ordinary])).rows).toEqual([]);
+ expect((await pool.query('SELECT * FROM headed_delete_children WHERE task_id=$1',[ordinary])).rows).toEqual([]);
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+ await takeOverHeadedTask(pool,request());
+ await pool.query('INSERT INTO headed_delete_children(task_id) VALUES($1)',[task]);
+ const beforeTask=(await pool.query('SELECT * FROM tasks WHERE id=$1',[task])).rows;
+ const beforeOwner=(await pool.query('SELECT * FROM headed_task_takeovers WHERE task_id=$1',[task])).rows;
+ await expect(pool.query('DELETE FROM tasks WHERE id=$1',[task])).rejects.toThrow('headed_task_owned');
+ expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[task])).rows).toEqual(beforeTask);
+ expect((await pool.query('SELECT * FROM headed_task_takeovers WHERE task_id=$1',[task])).rows).toEqual(beforeOwner);
+ expect((await pool.query('SELECT * FROM headed_delete_children WHERE task_id=$1',[task])).rows).toEqual([{task_id:task}]);
+});
+it('现task_runs非cascade FK仍以23503拒绝普通父DELETE，父与run不变',async()=>{
+ const run=(await pool.query('INSERT INTO task_runs(task_id,run_id) VALUES($1,$2) RETURNING *',[task,legacyRun])).rows;
+ const beforeTask=(await pool.query('SELECT * FROM tasks WHERE id=$1',[task])).rows;
+ await expect(pool.query('DELETE FROM tasks WHERE id=$1',[task])).rejects.toMatchObject({code:'23503'});
+ expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[task])).rows).toEqual(beforeTask);
+ expect((await pool.query('SELECT * FROM task_runs WHERE task_id=$1',[task])).rows).toEqual(run);
+});
