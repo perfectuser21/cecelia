@@ -18,23 +18,23 @@ export function buildDirectorySchemas(dbs) {
     ids.add(id);
   }
   return {
-    areas: { ...common(), Key: rich(), '价值流': relation(dbs.value_streams) },
-    value_streams: { ...common(), '所属部门': relation(dbs.areas), Capabilities: relation(dbs.capabilities) },
+    areas: { ...common(), Name: { title: {} }, Key: rich(), '价值流': relation(dbs.value_streams) },
+    value_streams: { ...common(), Name: { title: {} }, '所属部门': relation(dbs.areas), Capabilities: relation(dbs.capabilities) },
     capabilities: {
       ...common(), Name: { title: {} }, Key: rich(), '说明': rich(), '登记状态': { select: {} },
       '所属价值流': relation(dbs.value_streams), Workflows: relation(dbs.workflows),
     },
     workflows: {
-      ...common(), Key: rich(), Capability: relation(dbs.capabilities), Activities: relation(dbs.activities),
+      ...common(), Workflow: { title: {} }, '版本': rich(), Key: rich(), Capability: relation(dbs.capabilities), Activities: relation(dbs.activities),
       '渠道': rich(), '形态': rich(), Trigger: rich(), Input: rich(), Output: rich(),
       '执行策略': rich(), '活动编排': rich(), '登记状态': { select: {} },
     },
     activities: {
-      ...common(), '所属Workflows': relation(dbs.workflows), Steps: relation(dbs.steps),
+      ...common(), Name: { title: {} }, '所属Workflows': relation(dbs.workflows), Steps: relation(dbs.steps),
       '使用位置': rich(), '执行主体': rich(),
     },
     steps: {
-      ...common(), Key: rich(), '所属Activity': relation(dbs.activities), '所属Workflows': relation(dbs.workflows),
+      ...common(), '步骤': { title: {} }, Key: rich(), '所属Activity': relation(dbs.activities), '所属Workflows': relation(dbs.workflows),
       Input: rich(), Output: rich(), '验收标准': rich(), '证据读取': rich(),
       '实现来源': rich(), '执行主体': rich(), '登记状态': { select: {} },
     },
@@ -49,6 +49,9 @@ function checkSchema(name, dbId, actual, wanted, requireAll = false) {
   for (const [key, expected] of Object.entries(wanted)) {
     const have = actual.properties[key];
     if (have === undefined) {
+      if (expected.title && Object.values(actual.properties).some(p => p?.type === 'title' || p?.title)) {
+        throw new Error(`directory_schema:${name}:${key}:title_name_conflict`);
+      }
       if (requireAll) throw new Error(`directory_schema:${name}:${key}:missing_after_write`);
       missing[key] = expected;
       continue;
