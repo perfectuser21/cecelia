@@ -118,7 +118,9 @@ describe('task-tasks routes — PATCH 参数对齐', () => {
     const res = await request(app).patch('/tasks/task-priority').send({ priority: 'P0' });
 
     expect(res.status).toBe(200);
-    expect(mockPool.query.mock.calls[0][1]).toEqual(['P0', 'task-priority']);
+    expect(mockPool.query.mock.calls[0][0]).toContain("payload->'headed_takeover'");
+    const writes=mockPool.query.mock.calls.filter(([sql])=>/^UPDATE tasks/.test(sql));
+    expect(writes).toHaveLength(1);expect(writes[0][1]).toEqual(['P0', 'task-priority']);
   });
 
   it('blocked task 存在 unresolved Harness gap 时拒绝直写为 queued', async () => {
