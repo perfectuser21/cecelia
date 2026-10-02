@@ -109,7 +109,8 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
       if (error.code === 'WORKFLOW_AUTHORING_INCOMPLETE') {
         return res.status(409).json({ success: false, code: error.code, error: error.message });
       }
-      throw error;
+      return res.status(503).json({ success: false, code: 'WORKFLOW_AUTHORING_GUARD_UNAVAILABLE',
+        error: '任务完成门禁暂不可读，请重试回执' });
     }
 
     console.log(`[execution-callback] Received callback for task ${task_id}, status: ${status}`);
