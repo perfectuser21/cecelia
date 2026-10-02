@@ -42,6 +42,11 @@ Kernel 派发按统一机器角色表生成 M1/M4 优先、MMV 最后的默认�
 
 **Brain 版本**: 1.360.6
 
+## Brain 1.361.0 — 手机独立派发持久身份（统一排班723b0de1）
+
+- 新增独立 phone_ssh 执行许可与持久 phone_dispatches 身份、共享整机预约、一次启动和认证回执结算；送达未知保留占位，旧守护器不得重排。默认不授予手机执行权限，后续中枢接线与业务迁移继续沿原任务推进。
+- required smoke保留完整执行器名单和历史迁移合同，纳入508手机控制器精确增量与独立收口检查；手机身份smoke登记allowlist，永久回归覆盖实际Node合同块、script安全闸与唯一登记。
+
 ## Brain 1.357.6 — 恢复目标跨路径永久回归
 
 - 新增真实恢复入口→执行目标冻结→ground-truth同run候选→dispatcher的永久契约回归：无候选/旧us候选均派发西安team2，同新run西安候选保持Evaluator/Judge亲和；profile冲突和非法目标在入口拒绝且零派发。仅数据库、Git和执行边界夹具隔离，不改dispatcher算法或生产行为。
