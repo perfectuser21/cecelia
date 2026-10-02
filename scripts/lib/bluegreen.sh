@@ -317,7 +317,15 @@ bluegreen_swap() {
     # 缺这个 flag 会让两者全部 DNS 解析失败，全靠 15 分钟运行期自愈兜底掩盖
     # （任务 40f798ac，us-vps 生产实测：手动 POST drain-cancel 立即生效，证明
     # app 层逻辑本身没问题，纯粹是 sidecar 连不上）。
+    local retention_mounts=()
+    if [[ -n "${CECELIA_IMAGE_DEPLOYMENT_ID:-}" ]]; then
+      retention_mounts=(-v "${CECELIA_IMAGE_RETENTION_DIR}:${CECELIA_IMAGE_RETENTION_DIR}:rw"
+        -v /mnt/openclaw_data/docker:/run/cecelia-docker-data:ro
+        -e "CECELIA_IMAGE_DEPLOYMENT_ID=${CECELIA_IMAGE_DEPLOYMENT_ID}"
+        -e "CECELIA_IMAGE_RETENTION_DIR=${CECELIA_IMAGE_RETENTION_DIR}")
+    fi
     if docker run -d --rm \
+        ${retention_mounts[@]+"${retention_mounts[@]}"} \
         --name "$sidecar_name" \
         --add-host=host.docker.internal:host-gateway \
         -v /var/run/docker.sock:/var/run/docker.sock \

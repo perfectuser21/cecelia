@@ -397,7 +397,7 @@ export const EXTERNAL_WATCHDOG_TASK_TYPES = Object.freeze(
  *   script         = Brain 经 ssh 在跑场机起的确定性脚本（script_run）
  * content-* 的 surface 是 'external'（ZJ pipeline-worker 编排），启动同步对它的回队语义另有来历，不纳入。
  */
-const REMOTE_EXECUTION_SURFACES = new Set(['device', 'openclaw-agent', 'script', 'preview-janitor', 'app-server']);
+const REMOTE_EXECUTION_SURFACES = new Set(['device', 'openclaw-agent', 'script', 'preview-janitor', 'image-janitor', 'app-server']);
 /**
  * 进程不在 Brain 本机的任务类型（0929 实证：启动同步/活性探针靠本机进程证据判活，
  * 对这些类型恒判死 → 每次部署/每轮探针都被回队，同一活重复执行）。

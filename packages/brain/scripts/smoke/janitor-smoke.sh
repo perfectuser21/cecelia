@@ -17,7 +17,7 @@ printf '%s' "$RESP" | node --input-type=module -e '
 let body="";
 for await (const chunk of process.stdin) body+=chunk;
 const {jobs}=JSON.parse(body);
-const expected=["preview-owned-npm-cache-expiry-v1"];
+const expected=["preview-owned-npm-cache-expiry-v1","us-brain-image-retention-v1"];
 if (!Array.isArray(jobs) || JSON.stringify(jobs.map(j=>j.id).sort())!==JSON.stringify(expected)) {
   console.error("[janitor-smoke] FAIL: jobs 与固定白名单不符"); process.exit(1);
 }
