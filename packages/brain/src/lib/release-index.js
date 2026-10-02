@@ -78,6 +78,7 @@ async function readDefinitions(db, input) {
   for (const w of workflows) requireEvidence(input.workflows.find(i => i.workflow_definition_version_id === w.id)?.payload_sha256 === w.payload_sha256, 'Workflow摘要不符');
   for (const row of [...workflows, ...activities]) requireEvidence(input.components.some(c => c.kind === 'repo' && c.repo === row.source_repo && c.revision === row.source_commit), '定义来源repo/SHA与release不符');
   for (const a of activities) for (const binding of a.payload.implementation_bindings || []) {
+    if (binding.kind === 'raw' && binding.status === 'unresolved') continue;
     requireEvidence(['code', 'skill'].includes(binding.kind) && binding.status === 'verified', '定义实现绑定未验证');
     requireEvidence(input.components.some(c => c.kind === binding.kind && c.repo === binding.repo && c.revision === binding.revision && c.path === binding.path && c.digest === binding.digest), '定义Code/Skill绑定与release组件不符');
   }

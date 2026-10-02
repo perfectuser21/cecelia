@@ -15,6 +15,10 @@ export async function releaseEvidenceDatabase(options={}){
     }
     for(const doc of Object.values(fixture.contracts.docs))for(const activity of doc.activities)for(const step of activity.steps||[])delete step.implementation;
     if(options.fullActivityBindings)for(const doc of Object.values(fixture.contracts.docs))for(const activity of doc.activities)if(!activity.ref)activity.implementation_bindings=[{kind:'code',repo:IMPACT_REPO,path:'src/controller.js',revision:releaseHead}];
+    if(options.rawImplementationDescriptions)for(const doc of Object.values(fixture.contracts.docs))for(const activity of doc.activities)if(!activity.ref){
+      activity.runtime={entry:'discover-keyword.sh',phase:'source'};activity.execution={via:'xian-m4 batch2.sh:78 → harvest-keyword.sh:35-43 → douyin-phone-adb'};
+      for(const step of activity.steps||[])step.implementation={ref:'harvest-keyword.sh:35 open-search',status:'implemented'};
+    }
     await fixture.advance();
     const schema=(await db.query('SELECT current_schema() AS name')).rows[0].name;
     pool=new pg.Pool({...DB_DEFAULTS,max:6,options:`-c search_path=${schema}`});
