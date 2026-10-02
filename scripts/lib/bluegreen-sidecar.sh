@@ -50,13 +50,24 @@ _sidecar_log() {
     >> "$DEPLOY_ROOT/logs/cecelia-deploy-sidecar-failures.log" 2>/dev/null || true
 }
 
+# 外层时限覆盖 Docker socket/exec 握手；输出有界后才交给 shell 解析。
+# timeout/Node 留在新版 sidecar，旧 fallback 内仍只依赖 curl。
+_sidecar_docker() {
+  timeout -k 2 8 docker "$@" | node -e '
+    let text="", size=0;
+    process.stdin.on("data", data=>{
+      size+=data.length;if(size>262144)process.exit(1);text+=data.toString();
+    });
+    process.stdin.on("end",()=>process.stdout.write(text));'
+}
+
 # 镜像身份在 compose 前冻结；仅输出非敏感 GIT_SHA，不读取或打印其它环境值。
 _sidecar_image() {
-  docker image inspect --format '{{.Id}}|{{json .RepoTags}}|{{range .Config.Env}}{{if eq (index (split . "=") 0) "GIT_SHA"}}{{.}}{{end}}{{end}}' "$1"
+  _sidecar_docker image inspect --format '{{.Id}}|{{json .RepoTags}}|{{range .Config.Env}}{{if eq (index (split . "=") 0) "GIT_SHA"}}{{.}}{{end}}{{end}}' "$1"
 }
 _sidecar_same_target() {
   local observed
-  observed=$(docker inspect --format '{{.Id}} {{.Image}} {{.Name}} {{.State.Running}} {{index .Config.Labels "com.docker.compose.service"}}' cecelia-node-brain) || return 1
+  observed=$(_sidecar_docker inspect --format '{{.Id}} {{.Image}} {{.Name}} {{.State.Running}} {{index .Config.Labels "com.docker.compose.service"}}' cecelia-node-brain) || return 1
   [[ "$observed" == "$TARGET_CONTAINER $TARGET_IMAGE /cecelia-node-brain true node-brain" ]]
 }
 _sidecar_pin_target() {
@@ -67,15 +78,15 @@ _sidecar_pin_target() {
     TARGET_IMAGE="$FALLBACK_IMAGE"; TARGET_SHA="$FALLBACK_SHA"; TARGET_TAGS="$FALLBACK_TAGS"
   fi
   [[ "$TARGET_IMAGE" =~ ^sha256:[a-f0-9]{64}$ && "$TARGET_SHA" =~ ^[a-f0-9]{40}$ ]] || return 1
-  observed=$(docker inspect --format '{{.Id}} {{.Image}} {{.Name}} {{.State.Running}} {{index .Config.Labels "com.docker.compose.service"}}' cecelia-node-brain) || return 1
+  observed=$(_sidecar_docker inspect --format '{{.Id}} {{.Image}} {{.Name}} {{.State.Running}} {{index .Config.Labels "com.docker.compose.service"}}' cecelia-node-brain) || return 1
   read -r TARGET_CONTAINER extra name running service <<< "$observed"
   [[ "$TARGET_CONTAINER" =~ ^[a-f0-9]{64}$ ]] && _sidecar_same_target
 }
 _sidecar_health() {
   local health
   _sidecar_same_target || return 1
-  docker exec "$TARGET_CONTAINER" curl -q -fsm 3 http://127.0.0.1:5221/api/brain/healthz >/dev/null 2>&1 || return 1
-  health=$(docker exec "$TARGET_CONTAINER" curl -q -fsm 5 http://127.0.0.1:5221/api/brain/health) || return 1
+  _sidecar_docker exec "$TARGET_CONTAINER" curl -q -fsm 3 --max-filesize 262144 http://127.0.0.1:5221/api/brain/healthz >/dev/null 2>&1 || return 1
+  health=$(_sidecar_docker exec "$TARGET_CONTAINER" curl -q -fsm 5 --max-filesize 262144 http://127.0.0.1:5221/api/brain/health) || return 1
   printf '%s' "$health" | node -e '
     let data="";process.stdin.on("data",x=>data+=x);process.stdin.on("end",()=>{
       try { const h=JSON.parse(data), [sha,tags,version]=process.argv.slice(1);
@@ -118,7 +129,7 @@ cancel_drain_after_up() {
   DRAIN_CANCEL_OK=0
   for i in 1 2 3 4 5; do
     _sidecar_same_target || break
-    if response=$(docker exec "$TARGET_CONTAINER" curl -q -fsm 5 -X POST http://127.0.0.1:5221/api/brain/tick/drain-cancel) \
+    if response=$(_sidecar_docker exec "$TARGET_CONTAINER" curl -q -fsm 5 --max-filesize 262144 -X POST http://127.0.0.1:5221/api/brain/tick/drain-cancel) \
       && printf '%s' "$response" | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{try{if(JSON.parse(s).success!==true)process.exit(1)}catch{process.exit(1)}})' \
       && _sidecar_same_target; then
       DRAIN_CANCEL_OK=1; break
