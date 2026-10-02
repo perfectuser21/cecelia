@@ -86,6 +86,13 @@ it('POST步骤失败回滚主体和此前步骤，兼容旧area名称登记', as
   const legacy = await create({ name: '兼容名称', area: '部门' });
   expect(legacy.status).toBe(201); expect(legacy.body.area_id).toBe(department);
 });
+it.each([null, ''])('旧POST可选字段为空%j时仍使用原默认值', async empty => {
+  const response = await create({ maturity: empty, status: empty, description: empty,
+    e2e_test_path: empty, home: empty, trigger: empty, endpoint: empty });
+  expect(response.status, response.body.error).toBe(201);
+  expect(response.body).toMatchObject({ maturity: 'not_started', status: 'active', description: null,
+    e2e_test_path: null, home: null, trigger: null, endpoint: null });
+});
 it('相反并发父关系仅允许一方成功，最终无环或capability嵌套', async () => {
   const a = (await create({ name: 'A' })).body.id, b = (await create({ name: 'B' })).body.id;
   const results = await Promise.all([patch(a, { parent_journey_id: b }), patch(b, { parent_journey_id: a })]);
