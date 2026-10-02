@@ -10,8 +10,9 @@
 
 import crypto from 'crypto';
 import pool from '../db.js';
+import { brainBindingAttributes, validateMapBrainBindings } from '../lib/map-brain-bindings.js';
 
-const PROJECTOR_VERSION = '1.0.0';
+const PROJECTOR_VERSION = '2.0.0-brain-bindings';
 
 function stableNodeId(scopeKey, nodeType, nodeKey) {
   return crypto.createHash('sha256').update(`${scopeKey}:${nodeType}:${nodeKey}`).digest('hex');
@@ -26,10 +27,11 @@ function stableEdgeId(scopeKey, edgeType, edgeKey) {
  */
 function computeProjectionDigest(nodes, edges, manifestDigest, factRevisions) {
   const payload = {
+    projector_version: PROJECTOR_VERSION,
     manifest_digest: manifestDigest,
     fact_revisions: factRevisions,
     nodes: nodes
-      .map((n) => ({ id: n.node_id, type: n.node_type, key: n.node_key }))
+      .map((n) => ({ id: n.node_id, type: n.node_type, key: n.node_key, attributes: n.attributes }))
       .sort((a, b) => a.id.localeCompare(b.id)),
     edges: edges
       .map((e) => ({ id: e.edge_id, type: e.edge_type, key: e.edge_key }))
@@ -44,7 +46,7 @@ function computeProjectionDigest(nodes, edges, manifestDigest, factRevisions) {
  * @param {string} scopeKey - scope 标识
  * @returns {{ nodes: object[], edges: object[] }}
  */
-export function buildStructuralProjection(manifest, scopeKey) {
+export function buildStructuralProjection(manifest, scopeKey, bindingEvidence = {}) {
   const nodes = [];
   const edges = [];
   const nodeIdByKey = new Map();
@@ -71,12 +73,13 @@ export function buildStructuralProjection(manifest, scopeKey) {
 
   // 1. Value Stream 节点
   for (const vs of manifest.value_streams) {
-    registerNode('value_stream', vs.key, vs.name, { perceiver: vs.perceiver, order: vs.order });
+    registerNode('value_stream', vs.key, vs.name, { perceiver: vs.perceiver, order: vs.order, ...brainBindingAttributes(vs, bindingEvidence[vs.key]) });
   }
 
   // 2. Capability 节点 + contains 边
   for (const cap of manifest.capabilities) {
     const capId = registerNode('capability', cap.key, cap.name, {
+      ...brainBindingAttributes(cap, bindingEvidence[cap.key]),
       value_stream_key: cap.value_stream_key,
       order: cap.order,
       path_prefixes: cap.path_prefixes ?? [],
@@ -194,15 +197,15 @@ export async function runProjection({
   client: transactionClient = null,
   factRevisions: suppliedFactRevisions = null,
 }) {
-  const factRevisions = suppliedFactRevisions
-    ?? await getFactRevisions(scopeKey, transactionClient ?? pool);
-  const { nodes, edges } = buildStructuralProjection(manifest, scopeKey);
-  const projectionDigest = computeProjectionDigest(nodes, edges, manifestDigest, factRevisions);
-
   const ownsTransaction = !transactionClient;
   const client = transactionClient ?? await pool.connect();
   try {
     if (ownsTransaction) await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [`map-manifest:${scopeKey}`]);
+    const bindingEvidence = await validateMapBrainBindings(client, manifest, scopeKey);
+    const factRevisions = suppliedFactRevisions ?? await getFactRevisions(scopeKey, client);
+    const { nodes, edges } = buildStructuralProjection(manifest, scopeKey, bindingEvidence);
+    const projectionDigest = computeProjectionDigest(nodes, edges, manifestDigest, factRevisions);
 
     // 创建投影 run 记录（migration 405: manifest_version_id, 'building' status）
     const { rows: runRows } = await client.query(
