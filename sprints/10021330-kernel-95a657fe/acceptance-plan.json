@@ -1,0 +1,109 @@
+{
+  "contract_version": "1.0",
+  "role": "planner",
+  "task_id": "95a657fe-1ac3-4b79-9290-55775d3b2ffa",
+  "implementation_base_sha": "807b25e67922183472101ca96e27f20067ee5d80",
+  "target_environment": "local_api",
+  "review_required": true,
+  "execution_status": "planned_not_executed",
+  "entrypoint": {
+    "command": "bash sprints/10021330-kernel-95a657fe/smoke.sh",
+    "status": "proposer_must_materialize_and_verify_before_contract_freeze",
+    "reason": "Planner 不探索源码；真实同步路由、HTTP 字段和迁移命令由 Proposer 核实后绑定；此处命令不是已存在产物的执行证据。"
+  },
+  "preconditions": [
+    "只用 cecelia_scratch 独立 schema，执行前 SELECT current_database(),current_schema()，不符立即失败。",
+    "应用和SQL读写侧绑定同一目标；隔离实例禁用生产后台副作用；测试源固定commit，GitHub只读。",
+    "读取依赖 handoff 和最新源码确认未重复；最新 main 的复现证据不替换 frozen implementation_base_sha。",
+    "生产代码修改前依次通过 facts-check、version-sync、check-dod-mapping；先有业务 failing test。",
+    "每轮故障夹具独立清理；只清理本轮所属 scratch schema，不操作生产。",
+    "先补 Step 历史约束、累积 FR、step_id 和 map_repo 缺口；涉及已有行为时不得凭缺失数据认定不存在。"
+  ],
+  "wait_policy": {
+    "per_http_request_seconds": 15,
+    "per_scenario_seconds": 120,
+    "overall_seconds": 1200,
+    "semantics": "验收工具预算，非产品SLO；超时/缺依赖返回非零，不视为通过。"
+  },
+  "cases": [
+    {
+      "id": "AC1",
+      "title": "迁移与回填",
+      "fixture": "cecelia_scratch 新 schema；既有 journey_steps/KR/历史夹具；保存初始快照",
+      "action": "执行完整迁移两次；尝试重复 workflow_id/slot_key 及两个 active 引用占同一 sequence_no",
+      "expected": "两次迁移成功；两种冲突均被数据库拒绝；所有旧 workflow 关系已回填；原身份和历史精确不变",
+      "evidence": "迁移输出、约束错误、按主键排序 SQL 快照",
+      "verification_level": "L3"
+    },
+    {
+      "id": "AC2",
+      "title": "首次同步共享引用",
+      "fixture": "关键词已有 8 个定义、对标 0 活动；明确登记源映射；所有源文件固定 commit C1",
+      "action": "通过真实同步入口首次同步，再 SQL 查询两个 workflow 引用和活动定义",
+      "expected": "有效引用各 8；activity UUID 集合交集大小 7；定义总数增量恰为 1；新增 discovery 归对标 capability；来源 commit 全为 C1",
+      "evidence": "同步返回、INSERT RETURNING 证据、引用与定义 SQL 行",
+      "verification_level": "L3"
+    },
+    {
+      "id": "AC3",
+      "title": "HTTP 下钻闭环",
+      "fixture": "AC2 成功；鉴权主体与数据库租户一致；另设缺映射夹具",
+      "action": "真实 GET /workflows → /workflows/:id → /activity 消费者查询；独立 SQL 回读",
+      "expected": "列表计数=详情引用数=SQL计数；顺序、UUID、步骤、组件、repo/path/commit 一致；共享预检消费者集合等于两个登记 workflow；缺映射明确显示缺口",
+      "evidence": "原始 HTTP 状态/响应、SQL 查询与结果；鉴权凭据脱敏",
+      "verification_level": "L3"
+    },
+    {
+      "id": "AC4",
+      "title": "更新、幂等与读一致性",
+      "fixture": "AC2 基线；commit C2 只修改一个共享定义",
+      "action": "真实同步 C2；读取两个消费者；再次同步 C2；同步期间并发读取",
+      "expected": "两消费者同一 UUID 的定义同时更新；重跑无定义/引用/来源版本或更新时间变化；每个读取响应为完整 C1 或完整 C2，无混合",
+      "evidence": "前后全字段有序快照、并发响应与请求时间、重跑差异",
+      "verification_level": "L3"
+    },
+    {
+      "id": "AC5",
+      "title": "错误原子性",
+      "fixture": "对每个故障用独立 schema 或恢复到相同快照；至少一个文件已经成功获取",
+      "action": "逐项注入 GitHub失败、失效ref、循环ref、digest错误、写入阶段唯一冲突、两个同步事务并发唯一冲突",
+      "expected": "每项都有明确失败，非伪成功；失败事务所有定义与引用快照无差异；并发成功方可整体提交，失败方相对成功方提交结果无额外部分写入",
+      "evidence": "每项失败返回、SQL快照差异、并发事务时序；至少一个错误在写入阶段发生",
+      "verification_level": "L3"
+    },
+    {
+      "id": "AC6",
+      "title": "兼容与历史",
+      "fixture": "保存原 KR 五活动八步骤的 UUID、归属与历史全字段；共享引用准备完成",
+      "action": "查询 KR、company-kr-registration 和旧 Notion 投影读方输出",
+      "expected": "KR仍为五活动八步骤，原UUID/历史不变；多消费者完整；单归属列兼容但不丢共享消费者；验证过程未直写Notion/map_projection_*",
+      "evidence": "真实读取输出、历史快照差异、投影输入证据",
+      "verification_level": "L3"
+    },
+    {
+      "id": "AC7",
+      "title": "指标归属与去重",
+      "fixture": "独立样本：显式 workflow=W2 的共享活动 span；无 workflow 的共享活动 span；同一工作单位 Activity+Step 重叠 span",
+      "action": "执行真实 activity_flow_metrics 聚合，每个样本隔离后再联合聚合",
+      "expected": "样本一只归 W2 且计数1；样本二只归未知且计数1；样本三总计数1；联合计数3，不能被两消费者或两层 span 放大",
+      "evidence": "原始 span 行、聚合结果、去重键和统计单位的合同定义",
+      "verification_level": "L3"
+    },
+    {
+      "id": "AC8",
+      "title": "隔离、回归和交接",
+      "fixture": "两个租户的相似 workflow/slot_key；有效、无效和跨租户鉴权；冻结基线",
+      "action": "先在冻结基线和最新main证据上复现；永久回归修后运行；跨租户HTTP/SQL检查；运行真实smoke并核对CI",
+      "expected": "红态为业务断言失败而非导入/环境错误；修后绿；鉴权失败不泄露，跨租户无混读混写；永久测试在CI实际收集；真实smoke成功才功能完成",
+      "evidence": "红绿退出码和日志、CI run/head SHA、HTTP与SQL证据、actor/事实/handoff",
+      "verification_level": "L3"
+    }
+  ],
+  "proposer_bindings_required": [
+    "明确注册的源repo、源commit、两个workflow UUID、两个capability UUID和7个共享activity UUID。",
+    "真实同步入口、GET路由前缀、消费者查询参数和响应schema；鉴权主体。",
+    "迁移运行器、基线夹具和SQL快照查询；CI实际include/执行命令。",
+    "metrics 实际度量单位及去重键；若不是计数，保留对应等价去重关系并在合同中给出精确值。"
+  ],
+  "evidence_policy": "每个案例保存action/expected/exit_code/started_at/completed_at/actor/commit/脱敏HTTP/SQL；任何断言失败整体非零。不能把本计划、排队或mock结果作为真实验收。"
+}
