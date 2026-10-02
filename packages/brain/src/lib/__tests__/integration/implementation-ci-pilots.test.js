@@ -129,3 +129,16 @@ it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真
 
   }finally{if(server)await new Promise(resolve=>server.close(resolve));await fixture.close();rmSync(dir,{recursive:true,force:true});}
 });
+it('Cecelia事实alias沿用源仓扫描profile，不扩大到根目录运行文件',async()=>{
+  const fixture=await versionsDatabase(),dir=realpathSync(mkdtempSync(join(tmpdir(),'pilot-profile-')));
+  try{
+    for(const table of ['fact_snapshot_headers','graph_edges','graph_snapshot_versions','graph_edge_snapshots'])await fixture.db.query(`CREATE TABLE ${table}(LIKE public.${table} INCLUDING ALL)`);
+    mkdirSync(join(dir,'packages/brain/src'),{recursive:true});mkdirSync(join(dir,'runtime'));
+    writeFileSync(join(dir,'packages/brain/src/entry.js'),"import './lib.js';\n");writeFileSync(join(dir,'packages/brain/src/lib.js'),'export const lib=true;\n');
+    writeFileSync(join(dir,'runtime/phantom.js'),"import '../packages/brain/src/lib.js';\n");
+    const git=(...args)=>execFileSync('git',args,{cwd:dir,encoding:'utf8'}).trim();
+    git('init','-b','main');git('config','user.name','fixture');git('config','user.email','fixture@example.test');git('add','.');git('-c','core.hooksPath=/dev/null','commit','-m','fixture');
+    const scan=await scanRepo({name:'cecelia-kr-source',sourceName:'cecelia',root:dir},fixture.db);expect(scan.error).toBeUndefined();
+    expect((await fixture.db.query("SELECT src_path,dst_path FROM graph_edges WHERE repo='cecelia-kr-source'")).rows).toEqual([{src_path:'packages/brain/src/entry.js',dst_path:'packages/brain/src/lib.js'}]);
+  }finally{await fixture.close();rmSync(dir,{recursive:true,force:true});}
+});

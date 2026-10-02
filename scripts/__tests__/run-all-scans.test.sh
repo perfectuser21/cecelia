@@ -110,6 +110,7 @@ if [[ -n "${ENV_LOG:-}" ]]; then
   printf '%s|%s|%s|%s\n' "${SCAN_REPO_NAME:-}" "${SCAN_REPO_ROOT:-}" \
     "${SOURCE_DATABASE_URL:-}" "${GRAPH_REPOS:-}" >> "$ENV_LOG"
 fi
+[[ -z "${PROFILE_LOG:-}" ]] || printf '%s|%s\n' "${SCAN_REPO_NAME:-}" "${SCAN_SOURCE_REPO_NAME:-}" >> "$PROFILE_LOG"
 printf '%s\n' "$1" >> "$SCAN_LOG"
 if [[ -n "${HEAD_CHANGE_MARKER:-}" ]]; then : > "$HEAD_CHANGE_MARKER"; fi
 if [[ -n "${TARGET_HEAD_CHANGE_MARKER:-}" ]]; then : > "$TARGET_HEAD_CHANGE_MARKER"; fi
@@ -443,10 +444,12 @@ fi
 echo ""
 PILOT_RC=0
 env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SKIP_GIT_PULL=1 TEST_PILOTS=1 \
-  SCAN_LOG="$TMPD/pilot-scans" ENV_LOG="$TMPD/pilot-env" CURL_LOG="$TMPD/pilot-curl" \
+  PROFILE_LOG="$TMPD/pilot-profiles" SCAN_LOG="$TMPD/pilot-scans" ENV_LOG="$TMPD/pilot-env" CURL_LOG="$TMPD/pilot-curl" \
   SCAN_REPO_SPECS="cecelia|$TMPD/repo-a|postgresql://source/a;zenithjoy-workspace|$TMPD/repo-b|postgresql://source/b" \
   /bin/bash "$RUNNER" > "$TMPD/pilot-out" 2>&1 || PILOT_RC=$?
 if [[ $PILOT_RC -eq 0 && $(wc -l < "$TMPD/pilot-scans") -eq 10 ]] \
+  && grep -q '^cecelia-kr-source|cecelia$' "$TMPD/pilot-profiles" \
+  && grep -q '^zenithjoy-pilot-source|zenithjoy-workspace$' "$TMPD/pilot-profiles" \
   && grep -q '^cecelia-kr-source|' "$TMPD/pilot-env" \
   && grep -q '^zenithjoy-pilot-source|' "$TMPD/pilot-env" \
   && grep -q 'scope_key.*cecelia-kr' "$TMPD/pilot-curl" \
