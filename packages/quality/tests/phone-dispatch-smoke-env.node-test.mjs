@@ -33,3 +33,15 @@ assert.equal(process.env.TEST_DATABASE_URL,'');
   assert.equal(result.code,0,result.output);
  }finally{await rm(temp,{recursive:true,force:true});}
 });
+
+test('手机守卫负例不受调用者DB_HOST与DB_PORT污染而改变实际拒绝边界',async()=>{
+ const env={...process.env,DB_HOST:'/tmp',DB_PORT:'5999',DB_NAME:'other_scratch'};delete env.NODE_TEST_CONTEXT;
+ const result=await new Promise((done,reject)=>{
+  const child=spawn(process.execPath,['--test','--test-name-pattern=phone-dispatch-identity',resolve(root,'packages/quality/tests/smoke-production-guard.node-test.mjs')],{
+   cwd:root,env,
+  });
+  let output='';child.stdout.on('data',b=>output+=b);child.stderr.on('data',b=>output+=b);child.on('error',reject);child.on('close',code=>done({code,output}));
+ });
+ assert.equal(result.code,0,result.output);
+ assert.match(result.output,/tests 3\b/,'子进程必须实际执行三个守卫负例');
+});
