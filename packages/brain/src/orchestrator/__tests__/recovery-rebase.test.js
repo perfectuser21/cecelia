@@ -72,6 +72,15 @@ describe('恢复冻结已授权执行目标', () => {
       expect(f.calls).toHaveLength(0);
     }
   });
+
+  it.each([[['a'.repeat(64)]],[{}],[123],[true],[false],[null]])
+  ('非字符串摘要必须400且事务前零SQL：%j', async hash => {
+    const f = await targetFixture(); f.request.expected_profile_hash=hash;
+    await expect(createKernelRun(f.pool,f.input,f.deps)).rejects.toMatchObject({
+      code:'recovery_rebase_request_invalid',status:400,
+    });
+    expect(f.calls).toHaveLength(0);
+  });
 });
 
 describe('未封存失败任务的受控再基恢复', () => {

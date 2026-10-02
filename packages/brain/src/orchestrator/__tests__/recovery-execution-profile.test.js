@@ -4,6 +4,11 @@ import { matchesRecoveryRebase } from '../recovery-rebase.js';
 
 afterEach(() => vi.unstubAllEnvs());
 describe('恢复执行配置的原始规范化摘要', () => {
+  it.each([[['a'.repeat(64)]],[{}],[123],[true],[false],[null]])
+  ('profile摘要拒绝非字符串：%j', expected_profile_hash => {
+    expect(validRecoveryExecutionTarget({expected_profile_hash,
+      execution_target:{provider:'codex',account:'team2',machine:'xian-mac-m4'}})).toBe(false);
+  });
   it.each(['https://example.com/model','http://host','ftp://host/model','ssh://host/model',
     'file:///Users/account/model','/Users/account/model','~/model','C:/Users/account/model',
     'openai/../model','openai/./model','openai//model','openai::model','openai/model/','../model'])
