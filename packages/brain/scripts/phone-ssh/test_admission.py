@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -54,6 +55,22 @@ class AdmissionTest(unittest.TestCase):
         self.assertEqual(installed['build_digest'], self.fixture.physical['build_digest'])
         path = self.fixture.source / 'admission.py'
         path.write_bytes(path.read_bytes() + b'\n# tampered control\n')
+        with self.assertRaises(ValueError):
+            probe.installed_identity(manifest_path=self.fixture.install / 'probe.json',
+                                     config_path=self.fixture.install / 'worker.json', source_root=self.fixture.source)
+
+    def test_real_activation_dependency_is_pinned_by_physical_and_hub(self):
+        self.assertIn('activation.py', probe.SOURCE_FILES)
+        hub = Path(__file__).parent.parent / 'phone-hub' / 'configuration.cjs'
+        names = json.loads(subprocess.check_output(['node', '-e',
+            'process.stdout.write(JSON.stringify(require(process.argv[1]).SOURCE_FILES))', str(hub)]))
+        for name in ('admission.py', 'activation.py'):
+            self.assertIn('../phone-ssh/' + name, names)
+        installed = probe.installed_identity(manifest_path=self.fixture.install / 'probe.json',
+                                            config_path=self.fixture.install / 'worker.json', source_root=self.fixture.source)
+        self.assertEqual(installed['build_digest'], self.fixture.physical['build_digest'])
+        path = self.fixture.source / 'activation.py'
+        path.write_bytes(path.read_bytes() + b'\n# tampered validator\n')
         with self.assertRaises(ValueError):
             probe.installed_identity(manifest_path=self.fixture.install / 'probe.json',
                                      config_path=self.fixture.install / 'worker.json', source_root=self.fixture.source)
