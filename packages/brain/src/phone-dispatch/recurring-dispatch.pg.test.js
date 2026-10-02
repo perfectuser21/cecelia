@@ -111,3 +111,16 @@ it.each(['baseline','missed'])('B1 %s UPDATE触发器改变真实template指纹�
  await pool.query(`CREATE FUNCTION fixture_fingerprint() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${id}'::uuid THEN NEW.template:=NEW.template||'{"profile":"changed-in-trigger"}'::jsonb; END IF;RETURN NEW;END $$;CREATE TRIGGER fixture_fingerprint BEFORE UPDATE ON recurring_tasks FOR EACH ROW EXECUTE FUNCTION fixture_fingerprint()`);
  try{const summary=await run();expect(summary.errors).toBe(1);expect((await row(id)).template).toEqual(before.template);expect((await row(id)).next_run_at).toEqual(slot);expect(await tasks(id)).toHaveLength(0);expect((await pool.query('SELECT * FROM phone_task_owners WHERE template_id=$1',[id])).rows).toHaveLength(0);}finally{await pool.query('DROP TRIGGER fixture_fingerprint ON recurring_tasks;DROP FUNCTION fixture_fingerprint()');}
 });
+it('B1 真PG慢取锁只等内部1秒，600秒业务配置不能放大且不调用业务',async()=>{
+ const {withRecurringTemplateGate}=await import('./recurring-dispatch.js');let invoked=false,acquire;
+ await expect(withRecurringTemplateGate({options:{...pool.options,query_timeout:600000}},randomUUID(),()=>{invoked=true;},{clientFactory:config=>{
+  expect(config.connectionTimeoutMillis).toBe(1000);const c=new pg.Client(config);const query=c.query.bind(c);
+  c.query=(request,...args)=>{if(request?.text?.includes('pg_try_advisory_lock')){acquire=request;expect(request.query_timeout).toBe(1000);return query({...request,text:'SELECT pg_sleep(2) AS locked,$1::text AS fixture_key'},...args);}return query(request,...args);};return c;
+ }})).rejects.toThrow('timeout');expect(invoked).toBe(false);expect(acquire.text).toBe('SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked');
+});
+it.each(['querytimeout','idleEOF'])('B1 已提交task及capture广播后%s不把本地close当释放证明或flush',async fault=>{
+ const id=await template({phone:false});let hit=false;
+ if(fault==='querytimeout')await pool.query(`CREATE FUNCTION fixture_effect_timeout() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.payload->>'recurring_task_id'='${id}' AND NEW.due_at IS NOT NULL THEN PERFORM pg_sleep(.3);END IF;RETURN NEW;END $$;CREATE TRIGGER fixture_effect_timeout BEFORE UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION fixture_effect_timeout()`);
+ const query=pg.Client.prototype.query;const trace=[];const spy=vi.spyOn(pg.Client.prototype,'query').mockImplementation(function(sql,...args){trace.push(typeof sql==='string'?sql:sql.text);if(typeof sql==='string'&&sql.includes('SET assigned_to')&&!hit){hit=true;if(fault==='querytimeout')return query.call(this,{text:sql,values:args[0],query_timeout:30});return admin.query('SELECT pg_terminate_backend($1)',[this.processID]).then(()=>query.call(this,sql,...args));}return query.call(this,sql,...args);});
+ try{await run();expect(hit).toBe(true);expect(trace).not.toContain('SELECT * FROM tasks WHERE id = $1');expect(trace.some(s=>s.includes('INSERT INTO working_memory'))).toBe(false);expect(await tasks(id)).toHaveLength(1);}finally{spy.mockRestore();if(fault==='querytimeout')await pool.query('DROP TRIGGER fixture_effect_timeout ON tasks;DROP FUNCTION fixture_effect_timeout()');}
+});
