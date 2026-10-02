@@ -12,7 +12,7 @@ import { classifyAssertionRef } from '../../packages/brain/src/lib/gp-assertion-
 import { randomUUID } from 'node:crypto';
 import { readFileSync,realpathSync } from 'node:fs';
 import { DB_DEFAULTS } from '../../packages/brain/src/db-config.js';
-import { validateImplementationSnapshot,ciFailure } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
+import { validateImplementationSnapshot,ciFailure,isImplementationScratchDatabase } from '../../packages/brain/src/lib/implementation-ci-snapshot.js';
 import { runProjection } from '../../packages/brain/src/map/projector.js';
 import { digestMapManifest } from '../../packages/brain/src/lib/map-manifest-schema.js';
 import { scanRepo } from '../scan/scan-graph.mjs';
@@ -22,14 +22,15 @@ const TABLES=['areas','schema_version','journeys','workflows','journey_steps','s
   'map_scope_repositories','map_manifest_versions','map_projection_runs','map_projection_nodes','map_projection_edges',
   'graph_edges','graph_snapshot_versions','graph_edge_snapshots','fact_snapshot_headers','journey_step_links'];
 export async function createImplementationScratch(){
-  if(DB_DEFAULTS.database!=='cecelia_scratch')throw ciFailure('SCRATCH_REQUIRED','只允许cecelia_scratch');
+  if(!isImplementationScratchDatabase(DB_DEFAULTS.database))throw ciFailure('SCRATCH_REQUIRED','只允许本机scratch或GitHub Actions隔离test库');
   const client=new pg.Client(DB_DEFAULTS);await client.connect();
-  const schema=`implementation_ci_${randomUUID().replaceAll('-','')}`;
+  const schema=`implementation_ci_${randomUUID().replaceAll('-','')}`;let schemaCreated=false;
   const db={query:client.query.bind(client),connect:async()=>({query:client.query.bind(client),release(){}})};
-  const close=async()=>{try{await client.query('ROLLBACK');await client.query('SET search_path TO public');await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);}finally{await client.end();}};
+  const close=async()=>{try{if(schemaCreated){await client.query('ROLLBACK');await client.query('SET search_path TO public');await client.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);}}finally{await client.end();}};
   try{
-    if((await client.query('SELECT current_database() name')).rows[0].name!=='cecelia_scratch')throw ciFailure('SCRATCH_REQUIRED');
-    await client.query(`CREATE SCHEMA ${schema}`);
+    const actual=(await client.query('SELECT current_database() name')).rows[0].name;
+    if(actual!==DB_DEFAULTS.database||!isImplementationScratchDatabase(actual))throw ciFailure('SCRATCH_REQUIRED');
+    await client.query(`CREATE SCHEMA ${schema}`);schemaCreated=true;
     for(const table of TABLES)await client.query(`CREATE TABLE ${schema}.${table}(LIKE public.${table} INCLUDING ALL)`);
     await client.query(`SET search_path TO ${schema}`);
     for(const file of ['511_shared_activity_refs.sql','513_definition_versions.sql'])await client.query(readFileSync(new URL(`../../packages/brain/migrations/${file}`,import.meta.url),'utf8'));

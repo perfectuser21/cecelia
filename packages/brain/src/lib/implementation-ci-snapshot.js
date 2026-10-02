@@ -7,6 +7,9 @@ import { syncActivityContracts,CONTRACT_REPO } from '../activity-contract-sync.j
 import { registerCompanyKrWorkflow } from './company-kr-registration.js';
 import { resolveGitHubToken } from '../harness-credentials.js';
 export const ciFailure=(code,message,status=422)=>Object.assign(Error(message||code),{code:`IMPLEMENTATION_CI_${code}`,status});
+export function isImplementationScratchDatabase(database,env=process.env){
+  return database==='cecelia_scratch'||database==='cecelia_test'&&env.CI==='true'&&env.GITHUB_ACTIONS==='true';
+}
 export function validateSnapshotQuery(input){
   validateImplementationQuery({...input,kind:'code',path:'snapshot',revision:input?.revision});
   return {scope:input.scope,repo:input.repo,revision:input.revision};

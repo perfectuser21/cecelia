@@ -1,5 +1,5 @@
 import {expect,it} from 'vitest';
-import * as snapshot from '../../../../../scripts/ci/implementation-snapshot.mjs';
+import * as snapshot from '../implementation-ci-snapshot.js';
 it('仅本机scratch或GitHub Actions隔离test库可创建CI schema，任意生产/其它本机库拒绝',()=>{
  expect(snapshot.isImplementationScratchDatabase,'必须同时识别正式CI隔离库与本机scratch').toBeTypeOf('function');
  const allowed=snapshot.isImplementationScratchDatabase;
