@@ -61,6 +61,11 @@ suite('脚本收尾真实PG与runner闭环', () => {
     seen.push(args.at(-1));
     return execFile('sh', ['-c',args.at(-1)], { ...opts, env: { ...process.env,HOME:home } }, cb);
   } });
+  // 只隔离执行目录配置；仍走正式host白名单、SQL轮转、runner文件与终态收割。
+  const reap = deps => directory.withSnapshot({ expiresAt: Date.now() + 60000, nodes: [{
+    canonical_id: 'us-mac-m4', state: 'active', machine_status: 'active',
+    endpoints: { worker: 'http://127.0.0.1:19999/' }, grants: [{ state: 'active' }],
+  }] }, () => reapLegacyScriptRuns(pool, deps));
   function report(view, age = 0) {
     return { type:'node_onboarding_receipt',id:view.id,name:input.name,mode:'enroll',verified:true,
       service:{enabled:true,active:true},health:{schema_version:1,node_id:view.id,agent_version:'1',
@@ -85,7 +90,7 @@ suite('脚本收尾真实PG与runner闭环', () => {
   it('真实runner exit→terminal SQL→observer收账→Linux ensure唯一子任务；active不冒充执行授权', async () => {
     const view=await service.create(input,randomUUID());
     await runner(view,report(view));
-    expect((await reapLegacyScriptRuns(pool,transport())).completed).toBe(1);
+    expect((await reap(transport())).completed).toBe(1);
     await Promise.all([service.reconcile(),service.reconcile()]);
     const task=(await pool.query('SELECT * FROM tasks WHERE id=$1',[view.task_id])).rows[0];
     expect(task).toMatchObject({status:'completed',payload:{node_onboarding:{reconciled:true}},result:{script:{exit_code:0}}});
@@ -101,7 +106,7 @@ suite('脚本收尾真实PG与runner闭环', () => {
   it('真实过期回执仍拒绝注册，不能因独立调度放宽90秒', async () => {
     const view=await service.create(input,randomUUID());
     await runner(view,report(view,100_000));
-    await reapLegacyScriptRuns(pool,transport()); await service.reconcile();
+    await reap(transport()); await service.reconcile();
     expect((await service.get(view.id)).status).toBe('failed');
     expect((await pool.query('SELECT * FROM system_registry')).rows).toHaveLength(0);
     expect((await pool.query("SELECT * FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(0);
@@ -112,17 +117,27 @@ suite('脚本收尾真实PG与runner闭环', () => {
     const ids=Array.from({length:11},(_,i)=>`22222222-2222-4222-8222-${String(i+1).padStart(12,'0')}`);
     for(const id of ids)await pool.query("INSERT INTO tasks(id,task_type,status,executor_kind,payload) VALUES($1,'script_run','in_progress','script',$2)",
       [id,{host_id:'us-mac-m4',script_run_id:`script-${id}-a1`}]);
-    await reapLegacyScriptRuns(pool,transport(seen));
+    await reap(transport(seen));
     const selected=seen.map(command=>ids.find(id=>command.includes(id)));expect(new Set(selected).size).toBe(10);
     const cursor=selected.at(-1);await pool.query('DELETE FROM tasks WHERE id=$1',[cursor]);
-    seen.length=0;await reapLegacyScriptRuns(pool,transport(seen));
+    seen.length=0;await reap(transport(seen));
     expect(seen.some(command=>command.includes(ids[10]))).toBe(true);
     await pool.query('DELETE FROM tasks');
-    expect((await reapLegacyScriptRuns(pool,transport())).reaped).toBe(0);
+    expect((await reap(transport())).reaped).toBe(0);
     const id='11111111-1111-4111-8111-000000000001';
     await pool.query("INSERT INTO tasks(id,task_type,status,executor_kind,payload) VALUES($1,'script_run','in_progress','script',$2)",
       [id,{host_id:'us-mac-m4',script_run_id:`script-${id}-a1`}]);
-    seen.length=0;await reapLegacyScriptRuns(pool,transport(seen));
+    seen.length=0;await reap(transport(seen));
     expect(seen).toHaveLength(1);expect(seen[0]).toContain(id);
+  });
+
+  it('隔离目录未授权的host仍由正式名单拒绝，不执行transport也不写终态', async () => {
+    const id = randomUUID(); const seen = [];
+    await pool.query("INSERT INTO tasks(id,task_type,status,executor_kind,payload) VALUES($1,'script_run','in_progress','script',$2)",
+      [id, { host_id: 'us-vps', script_run_id: `script-${id}-a1` }]);
+    expect((await reap(transport(seen))).reaped).toBe(0);
+    expect(seen).toHaveLength(0);
+    expect((await pool.query('SELECT status FROM tasks WHERE id=$1', [id])).rows[0].status).toBe('in_progress');
+    expect(directory.current().nodes).toEqual([]);
   });
 });
