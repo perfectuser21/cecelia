@@ -8,11 +8,10 @@ if(DB_DEFAULTS.database!=='cecelia_scratch'&&!(process.env.CI==='true'&&DB_DEFAU
 const schema=`headed_takeover_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const admin=new pg.Client(DB_DEFAULTS);
 const pool=new pg.Pool({...DB_DEFAULTS,max:5,options:`-c search_path=${schema},public -c statement_timeout=1000`});
-let task;
+let task,legacyRun;
 beforeAll(async()=>{
  await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
  await pool.query(`CREATE TABLE tasks(id uuid PRIMARY KEY,status text DEFAULT 'queued',task_type text DEFAULT 'data',executor_kind text DEFAULT 'bridge',claimed_by text,claimed_at timestamptz,started_at timestamptz,updated_at timestamptz DEFAULT now(),row_version integer DEFAULT 0,payload jsonb DEFAULT '{}',status_history jsonb DEFAULT '[]',result jsonb,completed_at timestamptz,quota_exhausted_at timestamptz,pr_url text,pr_status text,error_message text,blocked_detail jsonb);
- CREATE TABLE headed_task_takeovers(task_id uuid PRIMARY KEY REFERENCES tasks(id),generation uuid NOT NULL,request_id uuid NOT NULL,session_id text NOT NULL,previous_run_id text,previous_owner jsonb NOT NULL,created_at timestamptz DEFAULT now());
  CREATE TABLE task_runs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id uuid REFERENCES tasks(id),run_id text,status text DEFAULT 'running',ended_at timestamptz);
  CREATE TABLE initiative_runs(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),current_task_id uuid REFERENCES tasks(id),phase text DEFAULT 'planning');
  CREATE TABLE harness_attempts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),run_id uuid REFERENCES initiative_runs(id),status text DEFAULT 'queued');
@@ -31,17 +30,85 @@ beforeAll(async()=>{
  if(existsSync(migration))await pool.query(readFileSync(migration,'utf8'));
 });
 afterAll(async()=>{await pool.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();});
-beforeEach(async()=>{task=randomUUID();const receipt=randomUUID();await pool.query('INSERT INTO tasks(id,payload) VALUES($1,$2)',[task,{routing_receipt_id:receipt,work_kind:'coding_review',current_run_id:'legacy-run',review_required:true}]);await pool.query("INSERT INTO work_routing_receipts(id,task_id,canonical_task_type,work_kind) VALUES($1,$2,'data','coding_review')",[receipt,task]);});
-it('真实双连接：takeover先持task行锁，资源创建必须NOWAIT失败而不能持资源等task',async()=>{
+beforeEach(async()=>{task=randomUUID();legacyRun='legacy-'+task;const receipt=randomUUID();await pool.query('INSERT INTO tasks(id,payload) VALUES($1,$2)',[task,{routing_receipt_id:receipt,work_kind:'coding_review',current_run_id:legacyRun,review_required:true}]);await pool.query("INSERT INTO work_routing_receipts(id,task_id,canonical_task_type,work_kind) VALUES($1,$2,'data','coding_review')",[receipt,task]);});
+it('真实双连接：takeover先持专用exclusive闸，资源创建try shared失败，不等task',async()=>{
  const owner=await pool.connect(),writer=await pool.connect();
  try{
-  await owner.query('BEGIN');await owner.query('SELECT id FROM tasks WHERE id=$1 FOR UPDATE',[task]);
+  await owner.query('BEGIN');await owner.query("SELECT pg_advisory_xact_lock(hashtextextended('headed_task_owner:'||$1::text,0))",[task]);
   const start=Date.now();
   await expect(writer.query('INSERT INTO task_runs(task_id,run_id) VALUES($1,$2)',[task,'race-run'])).rejects.toMatchObject({code:'55P03'});
   expect(Date.now()-start).toBeLessThan(750);
  }finally{await owner.query('ROLLBACK');owner.release();writer.release();}
 });
-const request=()=>({taskId:task,requestId:randomUUID(),sessionId:'actual-session',expectedRowVersion:0,expectedExecutorKind:'bridge',expectedCurrentRunId:'legacy-run'});
+const request=()=>({taskId:task,requestId:randomUUID(),sessionId:'actual-session',expectedRowVersion:0,expectedExecutorKind:'bridge',expectedCurrentRunId:legacyRun});
+it('普通任务FOR UPDATE仍保持既有FK等待，guard不新增55P03',async()=>{
+ const owner=await pool.connect(),writer=await pool.connect();
+ try{
+  await pool.query("UPDATE tasks SET executor_kind='brain-local' WHERE id=$1",[task]);
+  await owner.query('BEGIN');await owner.query('SELECT id FROM tasks WHERE id=$1 FOR UPDATE',[task]);
+  const outcome=writer.query('INSERT INTO task_runs(task_id,run_id) VALUES($1,$2)',[task,'ordinary-lock-run']).then(()=>({ok:true}),error=>({error}));
+  await owner.query('SELECT pg_sleep(0.05)');await owner.query('ROLLBACK');
+  expect(await outcome).toEqual({ok:true});
+ }finally{await owner.query('ROLLBACK');owner.release();writer.release();}
+});
+it('writer先持shared闸，API立即409；writer提交后API仍按active资源409',async()=>{
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+ const writer=await pool.connect();
+ try{
+  await writer.query('BEGIN');await writer.query('INSERT INTO task_runs(task_id,run_id) VALUES($1,$2)',[task,'uncommitted-real-run']);
+  await expect(takeOverHeadedTask(pool,request())).rejects.toMatchObject({statusCode:409});
+  await writer.query('COMMIT');await expect(takeOverHeadedTask(pool,request())).rejects.toMatchObject({statusCode:409});
+ }finally{await writer.query('ROLLBACK');writer.release();}
+});
+it('API不持exclusive闸等待既有task行锁，立即409并释放闸',async()=>{
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+ const writer=await pool.connect();
+ try{
+  await writer.query('BEGIN');await writer.query('SELECT id FROM tasks WHERE id=$1 FOR UPDATE',[task]);
+  await expect(takeOverHeadedTask(pool,request())).rejects.toMatchObject({statusCode:409});
+  expect((await pool.query("SELECT pg_try_advisory_xact_lock(hashtextextended('headed_task_owner:'||$1::text,0)) AS available",[task])).rows[0].available).toBe(true);
+ }finally{await writer.query('ROLLBACK');writer.release();}
+});
+it('旧REPEATABLE READ快照writer失败关闭，不能获得闸后遗漏已提交owner',async()=>{
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+ const other=randomUUID();await pool.query("INSERT INTO tasks(id,executor_kind) VALUES($1,'brain-local')",[other]);
+ const writer=await pool.connect();
+ try{
+  await writer.query('BEGIN ISOLATION LEVEL REPEATABLE READ');await writer.query('SELECT * FROM tasks WHERE id=$1',[task]);
+  await takeOverHeadedTask(pool,request());
+  await expect(writer.query('INSERT INTO callback_queue(task_id,run_id) VALUES($1,$2)',[other,legacyRun])).rejects.toThrow('headed_guard_isolation_unsupported');
+ }finally{await writer.query('ROLLBACK');writer.release();}
+});
+it('真实MVCC：INSERT语句先取快照，在接管提交后才进入guard，仍读到持久旧run映射',async()=>{
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+ const other=randomUUID();await pool.query("INSERT INTO tasks(id,executor_kind) VALUES($1,'brain-local')",[other]);
+ const barrier=randomUUID();
+ await pool.query(`CREATE FUNCTION pause_owner_fixture() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtextextended('${barrier}',0));RETURN NEW;END;$$;
+  CREATE TRIGGER a0_snapshot_barrier BEFORE INSERT ON callback_queue FOR EACH ROW EXECUTE FUNCTION pause_owner_fixture();`);
+ const holder=await pool.connect(),writer=await pool.connect();
+ let outcome;
+ try{
+  await holder.query('BEGIN');await holder.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[barrier]);
+  const pid=(await writer.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+  outcome=writer.query('INSERT INTO callback_queue(task_id,run_id) VALUES($1,$2)',[other,legacyRun]).then(()=>({ok:true}),error=>({error}));
+  let blocked=false;
+  for(let i=0;i<20;i++){blocked=(await pool.query('SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND NOT granted) AS blocked',[pid])).rows[0].blocked;if(blocked)break;await pool.query('SELECT pg_sleep(0.005)');}
+  expect(blocked).toBe(true);await takeOverHeadedTask(pool,request());await holder.query('ROLLBACK');
+  expect((await outcome).error?.message).toContain('headed_task_owned');
+ }finally{
+  await holder.query('ROLLBACK');if(outcome)await outcome;holder.release();writer.release();
+  await pool.query('DROP TRIGGER a0_snapshot_barrier ON callback_queue;DROP FUNCTION pause_owner_fixture();');
+  await pool.query('DELETE FROM callback_queue WHERE task_id=$1',[other]);
+ }
+});
+it('旧run关联不同task_id也不能越过原task的持久owner屏障',async()=>{
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+ await takeOverHeadedTask(pool,request());
+ const other=randomUUID();await pool.query("INSERT INTO tasks(id,executor_kind) VALUES($1,'brain-local')",[other]);
+ try{await expect(pool.query('INSERT INTO callback_queue(task_id,run_id) VALUES($1,$2)',[other,legacyRun])).rejects.toThrow('headed_task_owned');}
+ finally{await pool.query('DELETE FROM callback_queue WHERE task_id=$1',[other]);}
+});
 it('持久owner本人也不能删除callback屏障marker或再迁移executor',async()=>{
  const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
  const owner=await takeOverHeadedTask(pool,request());
@@ -97,7 +164,7 @@ it('队列处理器拒绝有run_id和缺run_id的旧回调，保持新owner',asy
  await takeOverHeadedTask(pool,request());
  const {processExecutionCallback}=await import('../../callback-processor.js');
  const seen=[];const guarded={query:(...args)=>{seen.push(args[0]);return pool.query(...args);},connect:()=>pool.connect()};
- for(const run_id of ['legacy-run',undefined])await expect(processExecutionCallback({task_id:task,run_id,status:'AI Done'},guarded)).rejects.toThrow('headed_task_owned');
+ for(const run_id of [legacyRun,undefined])await expect(processExecutionCallback({task_id:task,run_id,status:'AI Done'},guarded)).rejects.toThrow('headed_task_owned');
  expect(seen.every(sql=>sql.includes('headed_takeover'))).toBe(true);
  expect((await pool.query('SELECT status,claimed_by FROM tasks WHERE id=$1',[task])).rows[0]).toEqual({status:'in_progress',claimed_by:'session:actual-session'});
 });
