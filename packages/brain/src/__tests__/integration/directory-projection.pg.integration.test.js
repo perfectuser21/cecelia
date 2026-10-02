@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
-import { beforeEach, afterEach, describe, it, expect } from 'vitest';
+import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { projectDirectoryPage } from '../../projection/directory-projector.js';
+import { projectDirectoryPage, runDirectoryProjection } from '../../projection/directory-projector.js';
 import { loadDirectorySource, buildDirectoryRows } from '../../projection/directory-source.js';
 import { configureDirectoryProjection } from '../../projection/directory-config.js';
 import { runtimeFixture,uid } from '../../projection/__tests__/directory-runtime.fixture.js';
@@ -30,6 +30,38 @@ beforeEach(async () => {
 });
 afterEach(async () => { if (client) { await client.query('ROLLBACK'); if (schema) await client.query(`DROP SCHEMA ${schema} CASCADE`); await client.end(); } });
 describe('六层目录真实PG边界', () => {
+  it.each([0, 1000, 60000])('Notion分钟化并偏移%s毫秒：真运行仅精确日期能落PG成功receipt', async offset => {
+    const f = runtimeFixture();
+    const config = { ...f.config, value_stream_bindings: [] };
+    await client.query('CREATE TABLE working_memory(key text PRIMARY KEY,value_json jsonb,updated_at timestamptz)');
+    await client.query('INSERT INTO areas VALUES($1,$2,$3)', [uid(21), '组织', uid(41)]);
+    await client.query("INSERT INTO projection_targets(target,enabled,config) VALUES('notion-directory',true,$1)", [config]);
+    const pool = { connect: async () => ({ query: client.query.bind(client), release() {} }) };
+    const notionReq = async (...args) => {
+      const result = await f.notionReq(...args);
+      const date = result.properties?.['同步时间']?.date;
+      if (date?.start) date.start = new Date(Math.floor(Date.parse(date.start) / 60000) * 60000 + offset).toISOString().replace('Z', '+00:00');
+      return result;
+    };
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-02T13:43:27.456Z'));
+    let result;
+    try { result = await runDirectoryProjection(pool, { token: 'test', notionReq, force: true }); }
+    finally { vi.useRealTimers(); }
+    const receipts = (await client.query("SELECT entity_id,external_id FROM projection_links WHERE target='notion-directory'")).rows;
+    const target = (await client.query("SELECT last_success_at,last_error FROM projection_targets WHERE target='notion-directory'")).rows[0];
+    if (offset === 0) {
+      expect(result).toMatchObject({ failed: 0, synced: 1 });
+      expect(receipts).toEqual([{ entity_id: uid(21), external_id: uid(41) }]);
+      expect(target.last_success_at).not.toBeNull();
+      expect(target.last_error).toBeNull();
+    } else {
+      expect(result).toMatchObject({ failed: 1, synced: 0 });
+      expect(result.errors[0].code).toBe('目录属性读回不一致: 同步时间');
+      expect(receipts).toEqual([]);
+      expect(target.last_success_at).toBeNull();
+    }
+  });
   it('26关系完整分页才写真receipt；坏分页不刷新上次成功hash',async()=>{
     const id=randomUUID(),page=randomUUID(),dbId=randomUUID(),propertyId='relation';
     const relations=Array.from({length:26},()=>({id:randomUUID()}));let current=[],invalid=false;
