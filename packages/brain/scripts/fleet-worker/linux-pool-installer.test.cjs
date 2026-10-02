@@ -215,3 +215,12 @@ it('已绑定安装只读验证零锁文件零stop零发布，可供bootstrap候
   expect(fs.readFileSync(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/revision'),'utf8').trim()).toBe('c'.repeat(40));
  }finally{x.cleanup();}
 });
+it.each(['lock','transaction'])('只读旧安装验明也拒绝遗留未知%s，不替旧事务清场',async kind=>{
+ const x=await upgradeFixture();try{
+  x.options.verifyOnly=true;
+  if(kind==='lock')x.put('/run/cecelia/linux-pool.install.lock','unknown-owner');
+  else x.put('/var/lib/cecelia/fleet-install/txn-unknown/manifest.json','{}');
+  await expect(install(x)).rejects.toThrow('linux_pool_install_upgrade_unconfirmed');
+  expect(x.calls.some(([,a])=>a[0]==='stop')).toBe(false);
+ }finally{x.cleanup();}
+});
