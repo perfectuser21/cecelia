@@ -1,3 +1,4 @@
+import {projectGpuObservation} from './fleet-gpu-observation.js';
 import resourcePolicy from '../scripts/fleet-worker/attempt-resource-policy.cjs';
 /**
  * Fleet Resource Cache — 全局多机器资源感知
@@ -172,6 +173,7 @@ export function getFleetStatus() {
       physicalCapacity: entry.physicalCapacity,
       effectiveSlots: online ? entry.effectiveSlots : 0,
       pressure: online ? entry.pressure : 1,
+      gpu: projectGpuObservation({...entry.stats?.gpu,schema_version:'fleet-gpu-observation/v1',scope:'host'}),
       cpu: entry.stats?.cpu || null,
       memory: entry.stats?.memory || null,
       disk: entry.stats?.disk || null,

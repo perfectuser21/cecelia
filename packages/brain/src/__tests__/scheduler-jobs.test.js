@@ -1,4 +1,6 @@
 import './scheduler-jobs.fixtures.js';
+vi.mock('../image-retention-scheduler.js', () => ({ runImageRetentionJanitor: vi.fn().mockResolvedValue({ status: 'disabled' }) }));
+import { runImageRetentionJanitor } from '../image-retention-scheduler.js';
 vi.mock('../app-server/controller.js',()=>({reconcileAppServers:vi.fn().mockResolvedValue([])}));
 import { runPreviewCacheJanitor } from '../preview-cache-scheduler.js';
 import { runNodeOnboardingJob } from '../node-onboarding/service.js';
@@ -491,4 +493,10 @@ it('专属cache scheduler需要pool并进入默认停用Janitor合同', async ()
 it('机器体征始终先采集，Janitor网络等待不能排在体征前', () => {
   expect(JOBS[0].name).toBe('machine-vitals');
   expect(JOBS.findIndex(job => job.name === 'preview-owned-cache-janitor')).toBeGreaterThan(0);
+});
+
+it('US固定镜像策略进入默认停用Janitor合同且在体征采样之后',async()=>{
+ const job=JOBS.find(row=>row.name==='us-brain-image-janitor');expect(job).toMatchObject({needsPool:true});
+ const pool={};await job.handler(pool);expect(runImageRetentionJanitor).toHaveBeenCalledWith(pool);
+ expect(JOBS.findIndex(row=>row===job)).toBeGreaterThan(0);
 });

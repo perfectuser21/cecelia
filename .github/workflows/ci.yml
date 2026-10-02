@@ -528,6 +528,8 @@ jobs:
             exit 1
           fi
           echo "共执行 $found 个 ops shell 测试"
+      - name: US Brain image retention lock and journal contracts
+        run: node --test scripts/brain-image-retention.test.mjs scripts/brain-image-retention-docker.test.mjs scripts/brain-image-retention-ledger.test.mjs scripts/brain-image-retention-runtime.test.mjs scripts/brain-image-deploy.test.mjs scripts/brain-image-rollback.test.mjs scripts/brain-image-retention-engine.test.mjs scripts/brain-image-retention-absence.test.mjs scripts/brain-image-retention-identity.test.mjs
 
   # ─── Dashboard 部署放行闸 smoke（repo 根 scripts/smoke/）──────
   # 守 deploy-local.sh 的两段式部署：自检 → 起常驻 staging + 写放行标记 →【停住】，
@@ -946,6 +948,7 @@ jobs:
       - name: Integration Tests
         env:
           POSTGRES_INTEGRATION: '1'
+          NODE_ONBOARDING_TEST_DB: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
           DB_HOST: localhost
           DB_PORT: '5432'
@@ -962,12 +965,22 @@ jobs:
             src/__tests__/integration/account-quota-ledger.pg.integration.test.js \
             src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js \
             src/__tests__/commander-watchdog.pg.integration.test.js \
+            src/__tests__/integration/gpu-http-intake.pg.integration.test.js \
+            src/__tests__/integration/gpu-execution-request.pg.integration.test.js \
             src/__tests__/integration/script-executor-chain.pg.integration.test.js \
             src/__tests__/integration/script-executor-constraints.pg.integration.test.js \
             src/__tests__/integration/attempt-weighted-reservation.pg.integration.test.js \
             src/__tests__/integration/script-capacity-reservation.pg.integration.test.js \
             src/__tests__/integration/execution-directory.pg.integration.test.js \
+            src/__tests__/integration/execution-baseline.pg.integration.test.js \
             src/app-server/__tests__/integration/store.test.js \
+            src/__tests__/integration/linux-pool-authorization.pg.integration.test.js \
+            src/node-onboarding/__tests__/service.test.js \
+            src/node-onboarding/__tests__/registry-adoption.test.js \
+            src/__tests__/integration/linux-script-authorization.pg.integration.test.js \
+            src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js \
+            src/linux-pool/__tests__/integration/active-grants.test.js \
+            src/linux-pool/__tests__/integration/onboarding-revocation.test.js \
             src/__tests__/integration/script-managed-executor.pg.integration.test.js \
             src/__tests__/migration-333.test.js \
             src/__tests__/migration-400-fact-snapshot.test.js \

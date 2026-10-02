@@ -1,5 +1,6 @@
+import {assertGpuExecutionSupported} from './lib/gpu-execution-contract.js';
 import {assertAppServerAuthority} from './app-server/task-authority.js';
-import { assertPreviewCacheAuthority } from './preview-cache-authority.js';
+import { assertJanitorAuthority } from './janitor-authority.js';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
@@ -187,7 +188,9 @@ export function stripReanchorEvidence(evidence) {
 }
 
 export async function createRoutedTask(db, request, repositoryFacts = null, options = {}) {
-  assertPreviewCacheAuthority(request, options);
+  assertGpuExecutionSupported(request.metadata);
+  assertGpuExecutionSupported(request.task?.payload);
+  assertJanitorAuthority(request, options);
   assertAppServerAuthority(request, options);
   const ownsTransaction = options.transaction !== 'existing';
   const client = ownsTransaction && typeof db.connect === 'function'

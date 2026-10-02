@@ -1,0 +1,131 @@
+{
+  "key": "company_kr_analysis",
+  "name": "公司 KR 分析",
+  "version": "1.0.0",
+  "capability": "company_kr_analysis",
+  "capability_id": "dddddddd-f0f0-4000-8000-000000000004",
+  "capability_code": "G5",
+  "capability_name": "管家 · G5 战略 OKR",
+  "area_id": "bdf1f5c1-77bd-4c4c-9f6e-e7c1fc46f358",
+  "runtime": "notion-company-key-results",
+  "agent": "company-kr-analyst",
+  "activities": [
+    {
+      "key": "sync",
+      "name": "同步正式目标",
+      "executor": "code",
+      "location": "us-vps",
+      "implementation": "projection/company-key-results.js#runCompanyKrProjection"
+    },
+    {
+      "key": "prepare",
+      "name": "准备快照并登记分析任务",
+      "executor": "code",
+      "location": "us-vps",
+      "implementation": "lib/company-kr-analysis.js#requestCompanyKrAnalysis"
+    },
+    {
+      "key": "analyze",
+      "name": "AI 分析公司 KR",
+      "executor": "agent",
+      "location": "mmv",
+      "implementation": "openclaw-agent-executor.js#triggerOpenclawAgent"
+    },
+    {
+      "key": "save",
+      "name": "校验并保存独立建议",
+      "executor": "code",
+      "location": "us-vps",
+      "implementation": "lib/company-kr-analysis.js#consumeCompanyAnalysis"
+    },
+    {
+      "key": "publish",
+      "name": "回写 Notion 建议栏",
+      "executor": "code",
+      "location": "us-vps",
+      "implementation": "projection/company-kr-notion.js#projectCompanyAi"
+    }
+  ],
+  "steps": [
+    {
+      "key": "company_kr_analysis.read",
+      "activity": "sync",
+      "mode": "checkpoint",
+      "readback": {
+        "name": "读取 Notion 正式目标",
+        "implementation": "packages/brain/src/projection/company-kr-notion.js#readCompanySnapshot",
+        "asserts": "来源库正确，分页快照完整"
+      }
+    },
+    {
+      "key": "company_kr_analysis.ingest",
+      "activity": "sync",
+      "mode": "checkpoint",
+      "readback": {
+        "name": "同步正式值与目标状态",
+        "implementation": "packages/brain/src/projection/company-kr-inlet.js#ingestCompanyFormal",
+        "asserts": "Brain 正式值与主理人输入一致，关闭目标不再分析"
+      }
+    },
+    {
+      "key": "company_kr_analysis.snapshot",
+      "activity": "prepare",
+      "mode": "checkpoint",
+      "readback": {
+        "name": "形成正式目标与证据快照",
+        "implementation": "packages/brain/src/lib/company-kr-analysis.js#companyAnalysisSnapshot",
+        "asserts": "快照带来源、正式版本与 snapshot_id"
+      }
+    },
+    {
+      "key": "company_kr_analysis.dispatch",
+      "activity": "prepare",
+      "mode": "checkpoint",
+      "readback": {
+        "name": "按启用状态与时钟登记分析",
+        "implementation": "packages/brain/src/lib/company-kr-analysis.js#requestCompanyKrAnalysis",
+        "asserts": "同日同正式版本去重，执行者 company-kr-analyst"
+      }
+    },
+    {
+      "key": "company_kr_analysis.analyze",
+      "activity": "analyze",
+      "mode": "checkpoint",
+      "readback": {
+        "name": "专用分析员输出建议",
+        "implementation": "packages/brain/src/openclaw-agent-executor.js#triggerOpenclawAgent",
+        "asserts": "执行前复查启用与正式版本，产出完整建议 JSON"
+      }
+    },
+    {
+      "key": "company_kr_analysis.validate",
+      "activity": "save",
+      "mode": "checkpoint",
+      "readback": {
+        "name": "校验分析范围与证据",
+        "implementation": "packages/brain/src/lib/company-kr-analysis.js#parseCompanyAnalysis",
+        "asserts": "snapshot_id 相符，KR 完整且不重复，字段与数值合法"
+      }
+    },
+    {
+      "key": "company_kr_analysis.save",
+      "activity": "save",
+      "mode": "checkpoint",
+      "readback": {
+        "name": "保存建议并收账",
+        "implementation": "packages/brain/src/lib/company-kr-analysis.js#consumeCompanyAnalysis",
+        "asserts": "建议保存成功才收账；正式字段未被改写"
+      }
+    },
+    {
+      "key": "company_kr_analysis.publish",
+      "activity": "publish",
+      "mode": "checkpoint",
+      "readback": {
+        "name": "写回 AI 建议与分析状态",
+        "implementation": "packages/brain/src/projection/company-kr-notion.js#projectCompanyAi",
+        "asserts": "只写 AI 专属列；主理人决定后自行修改正式值"
+      }
+    }
+  ]
+}

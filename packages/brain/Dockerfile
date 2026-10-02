@@ -30,8 +30,22 @@ ENV GIT_SHA=${GIT_SHA}
 # 实测(PR#3801) Step4 直接报 "createdb: command not found" 失败退出。
 # sqlite：feishu-task-ledger 只读查 OpenClaw 执行流水（判断秋米有没有真派 agent 去干活）。
 # 容器是 Node 20，node:sqlite 要 22.5+ 才内置；CLI 只占 ~1.5MB，且 -readonly 能防写穿第三方状态库。
-RUN apk add --no-cache curl bash procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client sqlite \
+RUN apk add --no-cache curl bash procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client sqlite flock \
  && adduser -D -u 1001 cecelia
+
+# 接入控制面只安装公开CLI；service token运行时从只读凭据挂载读取。
+# https://releases.1password.com/developers/cli/2.32.1/
+RUN case "$(apk --print-arch)" in \
+      x86_64) OP_ARCH=amd64; OP_SHA=64a49db2d1b0333f3bee88546e3e84995e530e25f2c783fb5d4081d01a05b2a1 ;; \
+      aarch64) OP_ARCH=arm64; OP_SHA=cf6d114b12079ba5ac4f3ea6c69d331c06565c361aeae77f8c20868bd94c9885 ;; \
+      *) exit 1 ;; esac \
+ && curl --fail --silent --show-error --location --max-time 60 \
+      "https://cache.agilebits.com/dist/1P/op2/pkg/v2.32.1/op_linux_${OP_ARCH}_v2.32.1.zip" -o /tmp/op.zip \
+ && echo "${OP_SHA}  /tmp/op.zip" | sha256sum -c - \
+ && unzip -p /tmp/op.zip op > /usr/local/bin/op \
+ && chmod 0755 /usr/local/bin/op \
+ && test "$(/usr/local/bin/op --version)" = 2.32.1 \
+ && rm /tmp/op.zip
 
 # Install Codex CLI globally so triggerCodexReview() in executor.js can spawn it.
 # 历史事故：容器漏装 codex CLI → spawn ENOENT → cecelia-run breaker failures=351 OPEN
@@ -70,6 +84,7 @@ COPY packages/brain/scripts/fleet-worker/ ./scripts/fleet-worker/
 # 封印闸 contract-test-paths-seal.js 与 CI 共用同一条 Test Contract 解析链（同一把尺子）。
 # 库 SSOT 在 repo 根 scripts/lib（engine devgate / pyramid-guard 同用），容器内镜像到
 # /app/scripts/ 供 src 内相对 require（缺失时 Brain 启动即死 fail-closed，smoke 把关）。
+COPY scripts/brain-image-retention/ ./scripts/brain-image-retention/
 COPY scripts/lib/test-contract-paths.cjs ./scripts/lib/
 COPY scripts/extract-contract-e2e.cjs ./scripts/
 # skill 分发漂移 job（skill-dist-drift.js）经 ssh 把这份清单脚本送到目标机执行；SSOT 在 repo 根 scripts/。
