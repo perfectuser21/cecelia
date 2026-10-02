@@ -250,7 +250,7 @@ describe('收账权收归 — POST /harness/complete', () => {
   beforeEach(async () => {
     vi.resetModules();
     mockQuery.mockReset();
-    mockQuery.mockResolvedValue({ rowCount: 0, rows: [] });
+    mockQuery.mockResolvedValue({ rowCount: 1, rows: [] });
     finalizeMock.mockReset();
     vi.doMock('../db.js', () => ({ default: { query: (...a) => mockQuery(...a) } }));
     vi.doMock('../lib/harness-finalize.js', () => ({ finalizeHarnessTask: finalizeMock }));
