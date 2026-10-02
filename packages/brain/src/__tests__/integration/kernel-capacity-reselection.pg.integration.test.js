@@ -78,3 +78,11 @@ it('预检即确认全部机器资源满时wait:capacity且不消耗账号重试
   expect(f.calls).toHaveLength(0);expect(f.starts).toHaveLength(0);expect(authProbes).toBe(0);
  }finally{await f.close();}
 });
+it('routing strict_affinity不能被角色fallback覆盖，预检资源满时零跨机启动',async()=>{
+ const {createCapabilityGate}=await import('../../orchestrator/preflight/capability-gate.js');
+ const f=await fixture();try{
+  f.deps.preflightGate=createCapabilityGate({getMachineHealth:async()=>({ok:true}),getMachineCapacity:async({machine})=>({ok:true,available:machine==='xian-mac-m1'?0:1,physical_base_slots:1,effective_base_slots:1}),probeProviderAuth:async()=>({ok:true}),probeGitHub:async()=>({ok:true}),probeModelCapability:async()=>({ok:true})});
+  const ctx=await f.context({routing:{preferred_machine:'xian-mac-m1',strict_affinity:true},role_assignments:{planner:{provider:'codex',account:'team1',fallback_targets:[{provider:'codex',account:'team1',machine:'us-mac-m4'}]}}});
+  expect((await f.dispatch(ctx)).action).toBe('wait:capacity');expect(f.calls).toHaveLength(0);expect(f.starts).toHaveLength(0);
+ }finally{await f.close();}
+});
