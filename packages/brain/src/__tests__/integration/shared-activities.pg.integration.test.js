@@ -15,8 +15,9 @@ import { companyKrSpec as spec, registerCompanyKrWorkflow } from '../../lib/comp
 const migration = new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url);
 let client, schema, db, keyword, benchmark, capBenchmark, legacy;
 beforeEach(async () => {
-  if (!['cecelia_scratch', 'cecelia_test'].includes(DB_DEFAULTS.database)) throw new Error('仅允许隔离测试数据库');
+  if (!(DB_DEFAULTS.database==='cecelia_scratch' || (process.env.CI==='true' && DB_DEFAULTS.database==='cecelia_test'))) throw new Error('仅允许隔离测试数据库');
   client = new pg.Client(DB_DEFAULTS); await client.connect();
+  expect((await client.query('SELECT current_database() AS name')).rows[0].name).toBe(DB_DEFAULTS.database);
   schema = `shared_activity_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
   for (const table of ['enablers','enabler_calls','schema_version','journeys','workflows','journey_steps','steps','spans','ops_agents','ops_workflows','tasks','task_runs'])
@@ -56,11 +57,13 @@ describe('共享活动真实数据库合同', () => {
     expect((await client.query(`SELECT journey_id FROM journey_steps WHERE capability_key='benchmark_link_acquisition'`)).rows).toEqual([{journey_id:capBenchmark}]);
     const state = await snapshot(); await syncActivityContracts(db,contractsFixture()); expect(await snapshot()).toEqual(state);
     const app = express(); app.use('/api/brain',routes);
-    const list = await request(app).get('/api/brain/workflows'); expect(list.status).toBe(200);
+    const list = await request(app).get('/api/brain/workflows'); expect(list.status,list.body.error).toBe(200);
     expect(list.body.workflows.map(w=>w.activity_count)).toEqual([8,8]);
     const detail = await request(app).get(`/api/brain/workflows/${benchmark}`); expect(detail.status).toBe(200);
     expect(detail.body.workflow.activities.map(x=>x.slot_key)).toEqual(KEYS);
     expect(detail.body.workflow.activities[0]).toMatchObject({activity_id:legacy[0],canonical_id:legacy[0],source_ref:'keyword_acquisition.preflight'});
+    expect(detail.body.workflow.activities[0].usage.workflow_id).toBe(benchmark);
+    expect(detail.body.workflow.activities[0].legacy_workflow_id).toBe(keyword);
     expect(detail.body.workflow.activities[0].steps).toHaveLength(1);
     expect(detail.body.workflow.activities[0].gaps).toHaveLength(1);
   });
@@ -119,6 +122,34 @@ describe('共享活动真实数据库合同', () => {
     const result=await request(app).get(`/api/brain/workflows/${benchmark}`), activity=result.body.workflow.activities[0];
     expect(activity.steps).toHaveLength(2);expect(activity.steps[0].id).toBe(step);
     expect(activity.shared_components.map(c=>c.caller_type).sort()).toEqual(['activity','step']);
+  });
+
+  it('去共享、活动移除与恢复保留ID；顺序交换和迁移重放保持关系',async()=>{
+    await migrate();const fixture=contractsFixture();await syncActivityContracts(db,fixture);
+    fixture.docs.benchmark_link_acquisition.activities[0]={...fixture.docs.keyword_acquisition.activities[0],name:'对标独立预检'};
+    fixture.docs.keyword_acquisition.activities[0].order=2;
+    fixture.docs.keyword_acquisition.activities[1].order=1;
+    fixture.refresh();await syncActivityContracts(db,fixture);
+    const refs=(await client.query('SELECT * FROM workflow_activity_refs WHERE active ORDER BY workflow_id,sequence_no')).rows;
+    expect(refs.filter(r=>r.activity_id===legacy[0])).toHaveLength(1);
+    expect(refs.find(r=>r.workflow_id===keyword&&r.slot_key==='preflight').sequence_no).toBe(2);
+    const before=await snapshot();await migrate();expect(await snapshot()).toEqual(before);
+    const own=fixture.docs.benchmark_link_acquisition.activities[1];
+    const identity=(await client.query("SELECT id FROM journey_steps WHERE capability_key='benchmark_link_acquisition' AND activity_key='discovery'")).rows[0].id;
+    fixture.docs.benchmark_link_acquisition.activities.splice(1,1);fixture.refresh();await syncActivityContracts(db,fixture);
+    expect((await client.query('SELECT active FROM workflow_activity_refs WHERE workflow_id=$1 AND slot_key=$2',[benchmark,'discovery'])).rows[0].active).toBe(false);
+    expect((await client.query('SELECT status FROM journey_steps WHERE id=$1',[identity])).rows[0].status).toBe('deprecated');
+    fixture.docs.benchmark_link_acquisition.activities.splice(1,0,own);fixture.refresh();await syncActivityContracts(db,fixture);
+    expect((await client.query('SELECT activity_id FROM workflow_activity_refs WHERE workflow_id=$1 AND slot_key=$2',[benchmark,'discovery'])).rows[0].activity_id).toBe(identity);
+    const restored=await snapshot();await syncActivityContracts(db,fixture);expect(await snapshot()).toEqual(restored);
+  });
+  it('同顺序新定义可替代已退役定义，不改历史顺序或ID',async()=>{
+    await migrate();const f=contractsFixture();await syncActivityContracts(db,f);
+    const before=(await client.query("SELECT id,step_number FROM journey_steps WHERE capability_key='benchmark_link_acquisition'")).rows[0];
+    f.docs.benchmark_link_acquisition.activities[1].key='discover_v2';f.refresh();
+    await syncActivityContracts(db,f);
+    expect((await client.query('SELECT id,step_number,status FROM journey_steps WHERE id=$1',[before.id])).rows[0]).toEqual({...before,status:'deprecated'});
+    expect((await client.query("SELECT sequence_no FROM workflow_activity_refs WHERE workflow_id=$1 AND slot_key='discover_v2'",[benchmark])).rows[0].sequence_no).toBe(2);
   });
 
 });

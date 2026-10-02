@@ -13,10 +13,13 @@ export function contractsFixture() {
     ? { ...keyword.activities[1], name: '对标发现' } : { ref: `keyword_acquisition.${key}` }) };
   const docs = { keyword_acquisition: keyword, benchmark_link_acquisition: benchmark };
   const digest = { capabilities: {} };
+  const refresh = () => {
   for (const [cap, doc] of Object.entries(docs)) {
-    const activities = doc.activities.map(a => a.ref ? { ...keyword.activities.find(x => x.key === a.ref.split('.')[1]), from: 'keyword_acquisition' } : { ...a, from: cap });
+    const activities = doc.activities.map(a => a.ref ? { ...docs[a.ref.split('.')[0]].activities.find(x => x.key === a.ref.split('.')[1]), from: a.ref.split('.')[0] } : { ...a, from: cap });
     digest.capabilities[cap] = { sha256: hash({ ...doc, activities }), activities: Object.fromEntries(activities.map(a => [a.key, hash(a)])) };
   }
+  };
+  refresh();
   const calls = [];
   const fetchFn = async url => {
     calls.push(url);
@@ -24,5 +27,5 @@ export function contractsFixture() {
       : yaml.dump(docs[url.match(/contracts\/(\w+)\.yaml/)?.[1]]);
     return { ok: true, text: async () => text };
   };
-  return { docs, digest, calls, fetchFn, resolveToken: async () => 'test' };
+  return { docs, digest, calls, refresh, fetchFn, resolveToken: async () => 'test' };
 }
