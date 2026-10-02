@@ -91,4 +91,17 @@ describe('六层目录字段契约', () => {
     const b = boundary(p => { p[dbs.workflows].properties.Capability.relation.database_id = dbs.capabilities.replaceAll('-', ''); });
     expect((await ensureDirectorySchemas({ dbs, token: 'test', notionReq: b.notionReq })).verified).toBe(true);
   });
+  it('既有标题列改名时拒绝新增第二个title，既有版本列也必须验型', async () => {
+    const s = buildDirectorySchemas(dbs);
+    expect(s.workflows.Workflow).toEqual({ title: {} });
+    expect(s.workflows['版本']).toEqual({ rich_text: {} });
+    expect(s.activities.Name).toEqual({ title: {} });
+    expect(s.steps['步骤']).toEqual({ title: {} });
+    const b = boundary(p => {
+      delete p[dbs.workflows].properties.Workflow;
+      p[dbs.workflows].properties['改名标题'] = { type: 'title', title: {} };
+    });
+    await expect(ensureDirectorySchemas({ dbs, token: 'test', notionReq: b.notionReq })).rejects.toThrow(/workflows.*title/);
+    expect(b.calls.filter(c => c.method === 'PATCH')).toHaveLength(0);
+  });
 });
