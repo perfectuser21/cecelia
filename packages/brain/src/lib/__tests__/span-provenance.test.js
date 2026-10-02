@@ -32,3 +32,9 @@ it('绑定或固定版本不存在时保持缺证据错误，绝不借当前定�
   expect(()=>validateSpanBinding(normalizeSpan(raw(),0),null)).toThrow();
   const binding=fixed();binding.activities=[];expect(()=>validateSpanBinding(normalizeSpan(raw(),0),binding)).toThrow();
 });
+it('已绑定本机冻结摘要时，Span不能来自另一份代码或计划副本',()=>{
+  const context=fixed();context.binding.payload={runtime_snapshot_sha256:'a'.repeat(64)};
+  expect(()=>validateSpanBinding(normalizeSpan(raw(),0),context)).toThrow();
+  expect(()=>validateSpanBinding(normalizeSpan({...raw(),evidence:{runtime_snapshot_sha256:'b'.repeat(64)}},0),context)).toThrow();
+  expect(()=>validateSpanBinding(normalizeSpan({...raw(),evidence:{runtime_snapshot_sha256:'a'.repeat(64)}},0),context)).not.toThrow();
+});
