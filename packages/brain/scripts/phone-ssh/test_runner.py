@@ -199,6 +199,53 @@ class PhoneRunnerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             r.handle({**input, 'identity': {**self.identity, 'path': '/tmp/evil'}})
 
+    def test_concurrent_real_process_start_single_launch(self):
+        r = self.setup_runner()
+        self.fake_adb(0.2)
+        children = []
+        for _ in range(3):
+            pid = os.fork()
+            if pid == 0:
+                try:
+                    r.start(self.identity)
+                    os._exit(0)
+                except Exception:
+                    os._exit(1)
+            children.append(pid)
+        for pid in children:
+            self.assertEqual(os.waitpid(pid, 0)[1], 0)
+        self.assertEqual(self.finish()['status'], 'completed')
+        self.assertEqual(self.launches(), 1)
+
+    def test_worker_does_not_inherit_ssh_stdout_descriptors(self):
+        r = self.setup_runner()
+        self.fake_adb(0.5)
+        source = ('import runner;from dataclasses import replace;'
+                  + 'c=runner.Config(journal_root=' + repr(self.config.journal_root)
+                  + ',lock_root=' + repr(self.config.lock_root)
+                  + ',adb=' + repr(self.config.adb)
+                  + ',machine_id="fixture-machine",worker_id="fixture-worker",host="fixture-host",'
+                  + 'drain_path=' + repr(self.config.drain_path)
+                  + ',assert_resources=lambda:None);'
+                  + 'print(runner.Runner(c).start(' + repr(self.identity) + '))')
+        started = time.monotonic()
+        reply = subprocess.run([sys.executable, '-B', '-c', source], capture_output=True, timeout=2)
+        self.assertEqual(reply.returncode, 0, reply.stderr)
+        self.assertLess(time.monotonic() - started, 0.45)
+        self.assertEqual(self.finish()['status'], 'completed')
+
+    def test_symlink_journal_and_lock_guard_fail_closed(self):
+        r = self.setup_runner()
+        outside = self.root / 'outside'
+        outside.write_text('preserve')
+        root = Path(self.config.lock_root)
+        root.mkdir(parents=True)
+        (root / 'fixture-serial.guard').symlink_to(outside)
+        r.start(self.identity)
+        self.assertEqual(self.finish()['status'], 'failed')
+        self.assertEqual(outside.read_text(), 'preserve')
+        self.assertEqual(self.launches(), 0)
+
     def test_pending_intent_is_counted_and_broken_journal_denies_maintenance(self):
         r = self.setup_runner(fault=lambda stage: (_ for _ in ()).throw(RuntimeError('fault')))
         with self.assertRaises(RuntimeError):
