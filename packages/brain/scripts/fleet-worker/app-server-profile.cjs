@@ -4,9 +4,18 @@ const { createHash } = require('node:crypto');
 const KEYS = ['image', 'cpus', 'memoryBytes', 'pidsLimit', 'user', 'tmpBytes', 'network', 'homeKey', 'workspaceKey', 'authAccountId', 'hostTools'];
 const HASH = /^[a-f0-9]{64}$/;
 const DEFAULT_HOST_TOOLS = Object.freeze(['read', 'web_search', 'web_fetch']);
+// 2026-10-02 现网宿主 MCP 工具合同；精确枚举，不接受服务名或方法前缀通配。
+const NOTION_METHODS = ['create-a-comment', 'create-a-data-source', 'delete-a-block',
+  'get-block-children', 'get-self', 'get-user', 'get-users', 'list-data-source-templates',
+  'move-page', 'patch-block-children', 'patch-page', 'post-page', 'post-search',
+  'query-data-source', 'retrieve-a-block', 'retrieve-a-comment', 'retrieve-a-data-source',
+  'retrieve-a-database', 'retrieve-a-page', 'retrieve-a-page-property', 'retrieve-page-markdown',
+  'update-a-block', 'update-a-data-source', 'update-page-markdown'];
+const NOTION_TOOLS = ['notion-owner', 'notion-suyanqing', 'notion-yujin']
+  .flatMap(server => NOTION_METHODS.map(method => `${server}__API-${method}`));
 // 业务工具由受保护的部署配置明确选择；此表不含宿主执行或派生代理入口。
 const BUSINESS_TOOLS = new Set([...DEFAULT_HOST_TOOLS, 'message', 'memory_search', 'memory_get',
-  'sessions_list', 'sessions_history', 'session_status']);
+  'sessions_list', 'sessions_history', 'session_status', ...NOTION_TOOLS]);
 function resolveHostTools(input) {
   if (input === undefined) return DEFAULT_HOST_TOOLS;
   if (!Array.isArray(input) || input.length > 256 || new Set(input).size !== input.length
