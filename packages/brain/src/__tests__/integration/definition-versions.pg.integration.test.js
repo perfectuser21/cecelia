@@ -4,6 +4,7 @@ import request from 'supertest';
 import { randomUUID, createHash } from 'node:crypto';
 import { versionsDatabase,seedWorkflows } from '../fixtures/definition-versions-db.js';
 import { contractsFixture } from '../fixtures/shared-activity-contracts.js';
+import { snapshotDefinitions } from '../../lib/definition-versions.js';
 import { syncActivityContracts } from '../../activity-contract-sync.js';
 const holder=vi.hoisted(()=>({db:null}));
 vi.mock('../../db.js',()=>({default:{query:(...a)=>holder.db.query(...a),connect:(...a)=>holder.db.connect(...a)}}));
@@ -105,6 +106,26 @@ describe('不可变能力定义版本',()=>{
     const other=refs.find(r=>r.activity_id!==a.id);
     await expect(db.query('UPDATE workflow_activity_refs SET activity_definition_version_id=$1 WHERE id=$2',[av.id,other.id])).rejects.toThrow();
     await expect(db.query(`INSERT INTO workflow_definition_versions(workflow_id,payload,payload_sha256,contract_sha256,source_repo,source_path,source_commit) VALUES($1,$2,$3,$3,'org/repo','file',$4)`,[ids.keyword,{activities:[{activity_id:other.activity_id,activity_version_id:av.id}]},'e'.repeat(64),'a'.repeat(40)])).rejects.toThrow('对象错配');
+  });
+
+  it.each(['missing_document','wrong_document','wrong_commit','wrong_repo'])('公共快照写入器拒绝%s，现有版本与指针不变',async mode=>{
+    await fixture.migrate();const f=contractsFixture();await syncActivityContracts(db,f);
+    const existing=await versions(),before=await counts();
+    const refsBefore=(await db.query('SELECT * FROM workflow_activity_refs ORDER BY id')).rows;
+    const options={workflowIds:[ids.keyword],source:{repo:'perfectuser21/zenithjoy-workspace',path:'product-map/contracts/keyword_acquisition.yaml',commit:'a'.repeat(40)},bindingsByActivity:new Map(existing.map(v=>[v.activity_id,v.payload.implementation_bindings])),documentsByWorkflow:new Map([[ids.keyword,f.docs.keyword_acquisition]])};
+    if(mode==='missing_document')delete options.documentsByWorkflow;
+    if(mode==='wrong_document')options.documentsByWorkflow.set(ids.keyword,f.docs.benchmark_link_acquisition);
+    if(mode==='wrong_commit')options.source.commit='f'.repeat(40);
+    if(mode==='wrong_repo')options.source.repo='wrong/repo';
+    await expect(snapshotDefinitions(db,options)).rejects.toThrow(/完整契约|契约身份|来源不匹配/);
+    expect(await counts()).toEqual(before);expect(await versions()).toEqual(existing);
+    expect((await db.query('SELECT * FROM workflow_activity_refs ORDER BY id')).rows).toEqual(refsBefore);
+  });
+  it('数据库拒绝空契约和payload自身份错配',async()=>{
+    await fixture.migrate();
+    const insert=payload=>db.query(`INSERT INTO workflow_definition_versions(workflow_id,payload,payload_sha256,contract_sha256,source_repo,source_path,source_commit) VALUES($1,$2,$3,$3,'org/repo','file',$4)`,[ids.keyword,payload,'0'.repeat(64),'a'.repeat(40)]);
+    await expect(insert({workflow_id:ids.keyword,contract:null,activities:[]})).rejects.toThrow();
+    await expect(insert({workflow_id:ids.benchmark,contract:{},activities:[]})).rejects.toThrow();
   });
 
 });
