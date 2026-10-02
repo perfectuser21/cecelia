@@ -249,7 +249,7 @@ describe('runCommanderWatchdog', () => {
     const ssh2 = sshStub(undefined, [{ id: 'esc-by-wfrun-77', name: 'escort-xian-m4-cmd09300200' }]);
     const out2 = await runCommanderWatchdog(pool2, { execFileFn: ssh2.fn, bark: vi.fn(), gateMs: 0 });
     expect(out2.relaunched).toBe(1);
-    expect(ssh2.seen.map((s) => s.remote.split(' ').slice(0, 3).join(' '))).toEqual(['openclaw cron rm', 'openclaw cron add']);
+    expect(ssh2.seen.map((s) => s.remote.split(' ').slice(0, 3).join(' '))).toEqual(['openclaw cron rm', 'openclaw cron add', 'openclaw cron run']);
     expect(ssh2.seen[0].remote).toContain('cron rm esc-by-wfrun-77');
   });
 
