@@ -1,12 +1,14 @@
 import { fail, UUID, VERSION, IMAGE } from './policy.mjs';
 import { digest } from './storage.mjs';
-function current(snapshot) {
+function current(snapshot, expectedContainerId) {
   const matches = snapshot.containers.filter(x => x.name === '/cecelia-node-brain' && x.running === true);
+  if (expectedContainerId !== undefined && (matches.length !== 1 || matches[0].id !== expectedContainerId)) throw fail('DEPLOY_CONTAINER_MISMATCH');
   const image = matches.length === 1 && snapshot.images.find(x => x.id === matches[0].image_id);
   if (!image || !IMAGE.test(image.id) || !/^[a-f0-9]{40}$/.test(image.git_sha ?? '')) throw fail('CURRENT_IMAGE_UNKNOWN');
-  return image;
+  return { ...image, container_id: matches[0].id };
 }
-export function createDeploymentLedger({ store, docker, health, now = Date.now }) {
+export function createDeploymentLedger({ store, docker, health, now = Date.now, expectedContainerId }) {
+  if (expectedContainerId !== undefined && !/^[a-f0-9]{64}$/.test(expectedContainerId)) throw fail('INVALID_CONTAINER_ID');
   const name = id => { if (!UUID.test(id)) throw fail('INVALID_DEPLOYMENT'); return `deployment-${id}.json`; };
   async function state() {
     const value = await store.read('ledger.json');
@@ -75,7 +77,8 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now }
       if (ledger.pending.recovering && outcome !== 'recovered') throw fail('DEPLOYMENT_RECOVERING');
       let receipt = row.receipt;
       if (!receipt) {
-        const before = current(await docker.snapshot(lease)), observed = await health(), after = current(await docker.snapshot(lease));
+        const before = current(await docker.snapshot(lease), expectedContainerId), observed = await health(lease), after = current(await docker.snapshot(lease), expectedContainerId);
+        if (before.container_id !== after.container_id) throw fail('DEPLOY_CONTAINER_MISMATCH');
         const expectedSha = outcome === 'success' ? row.request.git_sha : row.previous.git_sha;
         if (before.id !== after.id || (outcome === 'success' && row.target_image_id && after.id !== row.target_image_id) || after.git_sha !== expectedSha || (outcome === 'recovered' && after.id !== row.previous.id)
             || (outcome === 'success' && !after.tags.includes(`cecelia-brain:${row.request.version}`))) throw fail('DEPLOY_IMAGE_MISMATCH');

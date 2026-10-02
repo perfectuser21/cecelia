@@ -31,6 +31,14 @@ export function createDockerAdapter({ root, dataPath = '/run/cecelia-docker-data
           ? x.Config.Env.find(value => value.startsWith('GIT_SHA=')).slice(8) : null })),
       containers: containers.map(x => ({ id: x.Id, image_id: x.Image, name: x.Name, running: x.State?.Running })) };
   }
+  async function containerHealth(id, lease) {
+    if (!/^[a-f0-9]{64}$/.test(id)) throw fail('INVALID_CONTAINER_ID');
+    const output = await run(['exec', id, 'curl', '-q', '-fsm', '10', '--max-filesize', '262144', '-w', '\n%{http_code}', 'http://127.0.0.1:5221/api/brain/health'], lease);
+    const boundary = output.lastIndexOf('\n'), body = output.slice(0, boundary);
+    if (boundary < 0 || !/^2[0-9]{2}$/.test(output.slice(boundary + 1).trim()) || Buffer.byteLength(body) > 262144) throw fail('DEPLOY_HEALTH_UNAVAILABLE');
+    const value = JSON.parse(body);
+    return { status: value.status, version: value.version, git_sha: value.git_sha };
+  }
   async function absent(id, lease) {
     if (!IMAGE.test(id)) throw fail('INVALID_IMAGE');
     await identity(lease);
@@ -50,5 +58,5 @@ export function createDockerAdapter({ root, dataPath = '/run/cecelia-docker-data
     await identity(lease);
     return run(['image', 'rm', id], lease);
   }
-  return Object.freeze({ snapshot, remove, absent });
+  return Object.freeze({ snapshot, remove, absent, containerHealth });
 }
