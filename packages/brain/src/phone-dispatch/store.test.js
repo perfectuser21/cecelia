@@ -195,9 +195,9 @@ it('finish 保留已写handoff；提交后真实pool上的接棒入口仍能读�
  await checked.finish(r.id,receipt(r));expect(calls).toBe(1);
 });
 
-it('已部署Linux507、手机508与Hub510各自留schema_version，不抢用同一版本号',async()=>{
- const rows=(await pool.query("SELECT version,description FROM schema_version WHERE version IN ('507','508','510') ORDER BY version")).rows;
- expect(rows.map(row=>row.version)).toEqual(['507','508','510']);
+it('已部署Linux507、手机508与Hub511各自留schema_version，不抢用同一版本号',async()=>{
+ const rows=(await pool.query("SELECT version,description FROM schema_version WHERE version IN ('507','508','511') ORDER BY version")).rows;
+ expect(rows.map(row=>row.version)).toEqual(['507','508','511']);
  expect(rows[0].description).not.toContain('手机独立');
  expect(rows[1].description).toContain('手机独立');
 });
