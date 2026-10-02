@@ -19,3 +19,9 @@ it('浮动revision、路径越界和空引用全部拒绝',async()=>{
   for(const patch of [{revision:'main'},{path:'../SKILL.md'}]) await expect(validateImplementationBindings({implementation_bindings:[{...binding,...patch}]},vi.fn())).rejects.toThrow();
   await expect(validateImplementationBindings({implementation_bindings:[binding]},async()=> '')).rejects.toThrow();
 });
+
+it('既有Skill digest=sha256:<hex>声明也必须核对，返回规范digest',async()=>{
+  await expect(validateImplementationBindings({implementation_bindings:[{...binding,digest:`sha256:${'0'.repeat(64)}`}]},async()=>skill)).rejects.toThrow('digest');
+  const [result]=await validateImplementationBindings({implementation_bindings:[binding]},async()=>skill);
+  expect(result.digest).toBe(`sha256:${result.content_sha256}`);
+});
