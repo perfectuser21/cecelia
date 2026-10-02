@@ -3,6 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {readFileSync,existsSync} from 'node:fs';
 import {beforeAll,afterAll,beforeEach,it,expect} from 'vitest';
 import {DB_DEFAULTS} from '../../db-config.js';
+import express from 'express';
 if(DB_DEFAULTS.database !== 'cecelia_scratch')throw Error('headed takeover migration tests require cecelia_scratch');
 const schema=`headed_takeover_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const admin=new pg.Client(DB_DEFAULTS);
@@ -58,6 +59,26 @@ it.each(['task_runs','capacity_reservations','callback_queue'])('存在%s未决�
  await expect(takeOverHeadedTask(pool,request())).rejects.toThrow('headed_takeover_active_execution');
  expect((await pool.query('SELECT status,executor_kind FROM tasks WHERE id=$1',[task])).rows[0]).toEqual({status:'queued',executor_kind:'bridge'});
  expect((await pool.query(`SELECT * FROM ${relation} WHERE task_id=$1`,[task])).rowCount).toBe(1);
+});
+it('真实HTTP：生产无token/错token拒绝；授权接管后仅本session PATCH心跳可写',async()=>{
+ const {registerHeadedTakeoverRoute,headedTaskMutation}=await import('../../routes/task-headed-takeover.js');
+ const app=express();app.use(express.json());registerHeadedTakeoverRoute(app,{pool});
+ app.patch('/tasks/:id',headedTaskMutation(pool,async(req,res,db)=>{
+  await db.query('UPDATE tasks SET updated_at=now() WHERE id=$1',[req.params.id]);res.json({ok:true});
+ }));
+ const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+ const origin=`http://127.0.0.1:${server.address().port}`,savedToken=process.env.CECELIA_INTERNAL_TOKEN,savedMode=process.env.NODE_ENV;
+ const body=request();const send=(path,method,headers={},data=body)=>fetch(origin+path,{method,headers:{'content-type':'application/json','x-session-id':body.sessionId,...headers},body:JSON.stringify(data)});
+ try{
+  process.env.NODE_ENV='production';delete process.env.CECELIA_INTERNAL_TOKEN;
+  expect((await send(`/tasks/${task}/headed-takeover`,'POST')).status).toBe(503);
+  process.env.CECELIA_INTERNAL_TOKEN='isolated-test-internal-token';
+  expect((await send(`/tasks/${task}/headed-takeover`,'POST')).status).toBe(401);
+  const headers={authorization:'Bearer isolated-test-internal-token'};
+  const response=await send(`/tasks/${task}/headed-takeover`,'POST',headers);expect(response.status).toBe(200);
+  expect((await send(`/tasks/${task}`,'PATCH',{...headers,'x-session-id':'other'},{})).status).toBe(409);
+  expect((await send(`/tasks/${task}`,'PATCH',headers,{})).status).toBe(200);
+ }finally{if(savedToken===undefined)delete process.env.CECELIA_INTERNAL_TOKEN;else process.env.CECELIA_INTERNAL_TOKEN=savedToken;process.env.NODE_ENV=savedMode;await new Promise(resolve=>server.close(resolve));}
 });
 it('持久接管后，任何迟到自动run/回执/预约INSERT都失败关闭',async()=>{
  await pool.query('INSERT INTO headed_task_takeovers(task_id,generation,request_id,session_id,previous_owner) VALUES($1,$2,$3,$4,$5)',[task,randomUUID(),randomUUID(),'actual-session',{kind:'bridge',run_status:'unknown'}]);
