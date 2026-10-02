@@ -40,7 +40,10 @@ class ProbeTest(unittest.TestCase):
         with self.assertRaises((ValueError,OSError)):self.collect(probe)
     def test_legacy_external_lock_is_occupied_never_reaped(self):
         probe=self.setup_probe();lock=self.locks/'fixture-serial.lock';lock.mkdir();(lock/'owner').write_text('old colleague')
-        self.assertEqual(self.collect(probe)['external_locks']['occupied'],1);self.assertTrue(lock.exists())
+        value=self.collect(probe)
+        self.assertEqual(value['external_locks']['occupied'],1);self.assertTrue(lock.exists())
+        self.assertFalse(value['maintenance']['quiescent'],'旧锁真实存在时不能以空runner账证明物理静默')
+        self.assertGreaterEqual(value['maintenance']['pending'],1)
         (self.locks/'evil.lock').symlink_to(lock)
         with self.assertRaises(ValueError):self.collect(probe)
     def test_public_probe_request_cannot_set_paths_host_or_environment(self):
@@ -58,7 +61,10 @@ class ProbeTest(unittest.TestCase):
         os.close(ready_w);os.close(go_r)
         try:
             self.assertEqual(os.read(ready_r,1),b'1')
-            self.assertEqual(self.collect(probe)['external_locks']['occupied'],1)
+            value=self.collect(probe)
+            self.assertEqual(value['external_locks']['occupied'],1)
+            self.assertFalse(value['maintenance']['quiescent'],'真实其他进程持guard也不能签物理静默')
+            self.assertGreaterEqual(value['maintenance']['pending'],1)
         finally:
             os.write(go_w,b'1');os.close(go_w);os.close(ready_r);os.waitpid(pid,0)
 if __name__=='__main__':unittest.main()
