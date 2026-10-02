@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.358.0
+**Brain 版本**: 1.359.0
 
 
 
@@ -53,6 +53,12 @@ Janitor 新动作的CI冒烟使用十类执行者精确名单、471叠加502合�
 
 
 Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增量；healthz 只隔离真实依赖，不污染机群配置读取。
+
+## Brain 1.359.0 — 手机独立派发持久身份（统一排班723b0de1）
+
+- 新增phone_ssh/adb/adb_get_state独立授权与phone-ssh-controller；默认没有手机grant，未启用SSH runner或切换业务cron。
+- 手机任务绑定唯一dispatch、lease、执行版本和账号；共享整机预约，启动意图先提交，失联保留unknown与占用，拒绝重复启动。
+- 强身份认证回执确认退出及自己的锁释放后，同事务结算任务与容量；旧writer不能改绑、回队或提前释放。真实PostgreSQL回归永久进入CI。
 
 ## Brain 1.355.1 — 并发新增smoke入口生产隔离（原任务617259ae）
 
