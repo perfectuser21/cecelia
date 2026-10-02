@@ -30,9 +30,10 @@ export function createOnboardingRecovery({pool,poolAuthorization,runtimeAuthoriz
   if(script){
    await runtimeAuthorization.retire(machineId,{runtime_id:id,expected_version_id:committed?row.execution_version_id:state.expected_version_id});
    const closed=await finalizeTask(pool,row.evidence_task_id,'archived',{relay:false,onlyIfStatus:['in_progress'],where:{sql:'claimed_by=$1',params:['linux-script-canary:'+id]},
-    mergeResult:{actor:'linux-pool-onboarding',fact:'旧验收未激活；已核验原canary完整清理，淘汰旧许可后重新验收',evidence:{receipt:verified.receipt,signature:verified.signature}}});
+    mergeResult:{actor:'linux-pool-onboarding',fact:'旧验收未激活；已核验原canary完整清理，淘汰旧许可后重新验收',evidence:{receipt:verified.receipt,signature:verified.signature,envelope_json:JSON.stringify({receipt:verified.receipt,signature:verified.signature})}}});
    if(closed.rowCount)await afterTerminal(pool,row.evidence_task_id,'archived');
   }else await poolAuthorization.retire(machineId,{challenge_id:id,expected_version_id:state.expected_version_id});
-  return committed||cleanupOnly?{phase:'renew_wait',expected_version_id:committed?row.execution_version_id:state.expected_version_id}:true;
+  return committed||cleanupOnly?{phase:'renew_wait',expected_version_id:committed?row.execution_version_id:state.expected_version_id,
+   ...(script&&cleanupOnly&&!committed?{last_cleanup_runtime_id:id}:{})}:true;
  };
 }

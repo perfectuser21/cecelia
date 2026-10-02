@@ -128,6 +128,20 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
    await c.query(MACHINE_CAPACITY_LOCK_SQL,[candidate.name]);
    task=(await c.query('SELECT * FROM tasks WHERE id=$1 FOR UPDATE',[id])).rows[0];s=task.payload.linux_onboarding;
    if(s.machine_registry_id!==machineId)throw error('linux_pool_retry_unconfirmed');
+   if(task.status==='in_progress'&&(s.last_cleanup_runtime_id||s.phase==='renew_wait'&&s.installation_json)){
+    if(task.claimed_by!==actor||task.executor_kind!==LINUX_POOL_EXECUTOR_KIND||task.created_by!==actor||s.revoked===true||s.phase!=='renew_wait')throw error('linux_pool_retry_unconfirmed');
+    const source=(await c.query('SELECT * FROM tasks WHERE id=$1 FOR UPDATE',[s.parent_task_id])).rows[0];
+    const machine=(await c.query("SELECT * FROM system_registry WHERE id=$1 AND type='machine' AND status='active' FOR SHARE",[machineId])).rows[0];
+    if(!machine||machine.name!==candidate.name||!eligible(machine)||!permitted(source?.payload?.node_onboarding,machine)
+     ||source.payload.node_onboarding.execution_task_id!==id||machine.metadata?.onboarding?.execution_task_id!==id
+     ||requestHash(source.payload.node_onboarding.request)!==s.request_hash)throw error('linux_pool_retry_unconfirmed');
+    const state=await bootstrapRecovery.prepareInstalled(c,task,source,machine),next=await record(c,machine,state,id);
+    const closed=await finalizeTask(c,id,'archived',{relay:false,onlyIfStatus:['in_progress'],where:{sql:'claimed_by=$1',params:[actor]},
+     mergeResult:{actor,fact:'旧安装与失败canary签名清理已核验；保留全部旧意图并登记新版工件接续棒',evidence:{continuation_task_id:next,cleanup_runtime_id:state.upgrade_cleanup_runtime_id,previous_attempt:state.previous_attempt,intent_id:state.intent_id,revision:state.revision,artifact_digest:state.artifact_digest}}});
+    if(closed.rowCount!==1)throw error('linux_pool_retry_unconfirmed');
+    await c.query("INSERT INTO task_events(task_id,event_type,payload,created_at) VALUES($1,'linux_installed_upgrade',$2,now())",[id,{actor,continuation_task_id:next,previous_attempt:state.previous_attempt,cleanup_runtime_id:state.upgrade_cleanup_runtime_id}]);
+    return next;
+   }
    if(task.status==='in_progress'&&task.claimed_by===actor&&s.revoked!==true){
     if(s.phase==='bootstrap'&&s.error==='linux_pool_ssh_unavailable'&&!s.upgrade_json){
      const source=(await c.query('SELECT * FROM tasks WHERE id=$1 FOR UPDATE',[s.parent_task_id])).rows[0];
@@ -146,6 +160,14 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
    const current=source?.payload?.node_onboarding?.execution_task_id;
    if(current&&current!==id){
     const next=(await c.query('SELECT * FROM tasks WHERE id=$1',[current])).rows[0];
+    if(task.status==='archived'){
+     const machine=(await c.query('SELECT metadata FROM system_registry WHERE id=$1',[machineId])).rows[0];
+     const ns=next?.payload?.linux_onboarding,e=task.result?.evidence;
+     if(task.result?.actor!==actor||e?.continuation_task_id!==current||e.cleanup_runtime_id!==s.last_cleanup_runtime_id
+      ||ns?.machine_registry_id!==machineId||ns.parent_task_id!==source.id||ns.upgrade_cleanup_runtime_id!==e.cleanup_runtime_id
+      ||ns.intent_id!==e.intent_id||ns.revision!==e.revision||ns.artifact_digest!==e.artifact_digest
+      ||JSON.stringify(ns.previous_attempt)!==JSON.stringify(e.previous_attempt)||machine?.metadata?.onboarding?.execution_task_id!==current)throw error('linux_pool_retry_unconfirmed');
+    }
     if(next?.parent_task_id===id&&next.executor_kind===LINUX_POOL_EXECUTOR_KIND&&next.claimed_by===actor
      &&next.status==='in_progress'&&next.payload?.linux_onboarding?.resume_of_task_id===id)return current;
     throw error('linux_pool_retry_unconfirmed');

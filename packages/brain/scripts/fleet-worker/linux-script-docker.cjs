@@ -44,7 +44,7 @@ function verify(value,r,id) {
   ||['Binds','Devices','DeviceRequests','CapAdd'].some(k=>h[k]!=null&&!equal(h[k],[]))
   ||['PidMode','UTSMode','UsernsMode','IpcMode'].some(k=>h[k]!=null&&!['','private'].includes(h[k]))
   ||h.NanoCpus!==p.cpus*1e9||h.Memory!==p.memoryBytes||h.MemorySwap!==p.memoryBytes||h.PidsLimit!==p.pidsLimit
-  ||h.LogConfig?.Type!=='local'||h.LogConfig.Config?.['max-size']!==String(p.logMaxSizeBytes)||h.LogConfig.Config?.['max-file']!==String(p.logMaxFiles))fail();
+  ||h.LogConfig?.Type!=='local'||h.LogConfig.Config?.compress!=='false'||h.LogConfig.Config?.['max-size']!==String(p.logMaxSizeBytes)||h.LogConfig.Config?.['max-file']!==String(p.logMaxFiles))fail();
  return {id:value.Id,name:containerName(r),status:value.State.Status,exit_code:value.State.ExitCode,labels:value.Config.Labels};
 }
 function createLinuxScriptDockerAdapter({platform=process.platform,getuid=process.getuid,loadRuntime,saveRuntime,assertCanLaunch,run=promisify(execFile)}={}) {
@@ -90,7 +90,7 @@ function createLinuxScriptDockerAdapter({platform=process.platform,getuid=proces
    r.phase='creating';await saveRuntime(r); // 创建意图必须先落盘；失败/丢回执保持未决，不重新create。
    await assertCanLaunch(r);
    const p=r.profile,args=['create',`--name=${containerName(r)}`,'--pull=never','--cgroup-parent=cecelia-workloads.slice',
-    '--log-driver=local',`--log-opt=max-size=${p.logMaxSizeBytes}`,`--log-opt=max-file=${p.logMaxFiles}`,
+    '--log-driver=local','--log-opt=compress=false',`--log-opt=max-size=${p.logMaxSizeBytes}`,`--log-opt=max-file=${p.logMaxFiles}`,
     '--network=none','--read-only','--cap-drop=ALL','--security-opt=no-new-privileges','--restart=no',
     `--cpus=${p.cpus}`,`--memory=${p.memoryBytes}`,`--memory-swap=${p.memoryBytes}`,`--pids-limit=${p.pidsLimit}`,
     `--user=${p.user}`,`--workdir=${p.cwd}`,'--entrypoint=/bin/sh',

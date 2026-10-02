@@ -12,6 +12,20 @@ describe('Linux root bridge Docker限制核心',()=>{
   expect(f.events.indexOf('save:creating')).toBeLessThan(f.events.indexOf('create'));expect(f.record.container_id).toBe(ID);expect(f.record.phase).toBe('bound');
   await a.start(ID);expect(f.calls.find(a=>a[0]==='start')).toEqual(['start',ID]);
  });
+ it('固定local禁用压缩，单文件日志预算可启动且不增加大小或份数',async()=>{
+  const f=fixture({logMaxFiles:1}),r=f.record;
+  const a=createLinuxScriptDockerAdapter(f.options);await a.create({...f.input,profile:r.profile});
+  const flags=f.calls.find(args=>args[0]==='create');
+  expect(flags).toContain('--log-opt=compress=false');expect(flags).toContain('--log-opt=max-file=1');
+  expect(flags).toContain('--log-opt=max-size=1048576');
+  await a.start(ID);expect(f.calls.filter(args=>args[0]==='start')).toEqual([['start',ID]]);
+ });
+ it.each([undefined,'true','FALSE',false])('日志压缩配置%s不精确时禁止start/remove/logs',async compress=>{
+  const f=fixture(),a=createLinuxScriptDockerAdapter(f.options);await a.create(f.input);
+  f.container.HostConfig.LogConfig.Config.compress=compress;
+  for(const method of ['start','remove','logs'])await expect(a[method](ID)).rejects.toThrow('linux_script_identity_mismatch');
+  expect(f.calls.some(args=>['start','rm','logs'].includes(args[0]))).toBe(false);
+ });
  it('外来profile/命令不可替换可信journal，零create',async()=>{
   for(const patch of [{profile:{...fixture().input.profile,cpus:8}},{command:'evil'},{env:{CI:'evil'}}]){
    const f=fixture(),a=createLinuxScriptDockerAdapter(f.options);await expect(a.create({...f.input,...patch})).rejects.toThrow('linux_script_identity_mismatch');expect(f.calls.some(a=>a[0]==='create')).toBe(false);
