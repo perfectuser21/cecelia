@@ -32,9 +32,9 @@ async function main(){
  const token='canary-control-'+randomUUID(),internal='canary-internal-'+randomUUID();
  worker=createFleetWorkerServer({attemptToken:token,appServerRunner:runner});await new Promise(r=>worker.listen(0,'127.0.0.1',r));
  const endpoint=`http://127.0.0.1:${worker.address().port}`,stream={id:randomUUID(),prepare_deadline:new Date(Date.now()+5000)};
- const row={...identity,id:identity.reservation_id,config:{profile:'canary'},stream};let revoked=false;
+ const row={...identity,id:identity.reservation_id,config:{profile:'canary'},stream};let revoked=false,revalidations=0;
  const {createAppServerClient}=await import('../../src/app-server/client.js');
- const client=createAppServerClient({env:{KERNEL_FLEET_BRIDGE_TOKEN:token},store:{async reserveStream(){if(revoked)throw Error('execution_grant_denied');return stream;},async withOperation(_id,action,fn){if(revoked&&action==='prepare-stream')throw Error('execution_grant_denied');return fn(row,endpoint);}}});
+ const client=createAppServerClient({env:{KERNEL_FLEET_BRIDGE_TOKEN:token},store:{async reserveStream(){if(revoked)throw Error('execution_grant_denied');return stream;},async withOperation(_id,action,fn){if(revoked&&action==='prepare-stream')throw Error('execution_grant_denied');return fn(row,endpoint,async()=>{revalidations++;if(revoked)throw Error('execution_grant_denied');});}}});
  // PG同机锁/持久许可由真实scratch回归验证；此fixture只负责离线网络与协议 canary。
  brain=http.createServer(async(req,res)=>{try{assert.equal(req.headers['x-cecelia-token'],internal);let bytes=0;for await(const chunk of req){bytes+=chunk.length;assert.ok(bytes<4096);}
   if(req.url==='/api/brain/internal/app-server/generations'){res.setHeader('content-type','application/json');res.end(JSON.stringify({status:'running',reservation_id:row.id}));return;}
@@ -57,10 +57,11 @@ async function main(){
   assert.ok(Object.hasOwn(await exchange(child,4,'configRequirements/read'),'requirements'));
  }
 
+ assert.equal(revalidations,1);
  revoked=true;await assert.rejects(client.prepareStream(row.id),/execution_grant_denied/);assert.equal((await runner.inspect(identity)).status,'running');
  const inspected=JSON.parse((await command(['inspect',state.container_id])).stdout)[0];assert.equal(inspected.HostConfig.Memory,profile.memoryBytes);assert.equal(inspected.HostConfig.NanoCpus,1e9);assert.equal(inspected.HostConfig.PidsLimit,64);assert.equal(inspected.Mounts.filter(m=>m.Type==='bind').length,0);
  const cleanup=await runner.cancel({...identity,container_id:state.container_id,challenge:randomUUID()});assert.equal(cleanup.absent,true);assert.equal(await docker.inspect(state.container_id),null);
- console.log(JSON.stringify({result:'PASS',canary_id:tag,image,reservation_id:identity.reservation_id,intent_id:identity.intent_id,container_id:state.container_id,stream_id:stream.id,plugin_client:pluginPath?'2026.9.7':'none',protocol:'0.158.0-experimental',initialize:true,post_initialize_roundtrip:true,shim_http_direct:true,grant_revoke_preserves_running:true,explicit_cancel_absent:true,host_mounts:0,model_calls:0}));
+ console.log(JSON.stringify({result:'PASS',canary_id:tag,image,reservation_id:identity.reservation_id,intent_id:identity.intent_id,container_id:state.container_id,stream_id:stream.id,plugin_client:pluginPath?'2026.9.7':'none',protocol:'0.158.0-experimental',initialize:true,post_initialize_roundtrip:true,shim_http_direct:true,grant_revalidation:true,grant_revoke_preserves_running:true,explicit_cancel_absent:true,host_mounts:0,model_calls:0}));
 }
 main().catch(error=>{console.error(/^appserver_[a-z_]+$/.test(error.message)?error.message:'appserver_rpc_canary_failed');process.exitCode=1;}).finally(async()=>{
  child?.kill();pluginClient?.close();runner.close();for(const server of [brain,worker])if(server){server.closeAllConnections();await new Promise(r=>server.close(r));}

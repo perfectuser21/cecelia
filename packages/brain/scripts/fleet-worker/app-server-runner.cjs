@@ -4,13 +4,14 @@ const { createBoundedAppServerStream } = require('./app-server-stream.cjs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { validateAppServerProfile, profileDigest, generationOwner } = require('./app-server-profile.cjs');
+const {verifyCanaryPermit}=require('./app-server-canary-permit.cjs');
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const BINDINGS = ['reservation_id', 'intent_id', 'launch_generation', 'machine_id', 'worker_id',
   'worker_boot_id', 'home_key', 'owner_key', 'config_digest', 'profile'];
-const ALLOWED = [...BINDINGS, 'container_id', 'challenge', 'stream_id'];
+const ALLOWED = [...BINDINGS, 'container_id', 'challenge', 'stream_id', 'canary_permit'];
 
-function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profiles = {}, docker, assertLocalResources, assertCanLaunch = () => {} }) {
+function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profiles = {}, docker, assertLocalResources, assertCanLaunch = () => {}, canaryKey }) {
   fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
   const stat = fs.lstatSync(stateRoot);
   if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0
@@ -134,9 +135,12 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
       assertCanLaunch();
       return locked(input, async state => {
         if (state?.tombstoned) throw new Error('appserver_launch_tombstoned');
+        const canary=input.canary_permit?verifyCanaryPermit(input.canary_permit,bindings(input),canaryKey):null;
+        if(state&&(JSON.stringify(state.canary??null)!==JSON.stringify(canary)))throw Error('appserver_canary_permit_invalid');
         if (state && state.status !== 'waiting_resources') return observe(state);
         if (input.worker_boot_id !== bootId) throw new Error('appserver_worker_changed');
         state ??= initial(input);
+        if(canary)state.canary=canary;
         acquireHome(state);
         save(state);
         const admit = async () => {
@@ -177,13 +181,23 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
         state.rpc_started = true; save(state);
       });
     },
+    async recordCanaryEvidence(input,evidence){
+      return locked(input,async state=>{
+        if(!state?.canary||state.tombstoned||state.stream_id!==input.stream_id||!['attached','closed'].includes(state.stream_status)
+          ||(state.stream_status==='closed'&&evidence.sealed!==true))throw Error('appserver_canary_evidence_invalid');
+        if(state.canary_evidence?.sealed===true)throw Error('appserver_canary_evidence_sealed');
+        state.canary_evidence={...state.canary,...evidence,stream_id:input.stream_id};save(state);
+      });
+    },
     async attach(input, {deadline = Infinity} = {}) {
       assertCanLaunch();
       if (!UUID.test(input.stream_id)) throw new Error('appserver_stream_identity_required');
       return locked(input, async state => {
         if (!state || state.tombstoned) throw new Error('appserver_launch_tombstoned');
+        if(state.canary&&state.canary.expires_at<=Date.now())throw Error('appserver_canary_permit_invalid');
         if (state.rpc_started) throw Error('appserver_stream_recovery_required');
         if (state.stream_status && state.stream_status !== 'closed') throw new Error('appserver_stream_busy');
+        if (input.worker_boot_id !== bootId) throw Error('appserver_worker_changed');
         if ((await observe(state)).status !== 'running') throw new Error('appserver_not_running');
         if (typeof assertLocalResources !== 'function') throw Error('appserver_local_resources_unavailable');
         await assertLocalResources(state.profile_snapshot);
@@ -196,6 +210,7 @@ function createAppServerRunner({ stateRoot, machineId, workerId, bootId, profile
         const child = createBoundedAppServerStream(raw);
         child.rpcAccountId = state.profile_snapshot.authAccountId ?? null;
         child.rpcHostTools = state.profile_snapshot.hostTools;
+        child.rpcCanary=Boolean(state.canary);child.rpcCanaryExpiresAt=state.canary?.expires_at;
         connections.set(state.reservation_id, child);
         const releaseStream = () => {
           pendingStreamCloses.set(state.reservation_id, {

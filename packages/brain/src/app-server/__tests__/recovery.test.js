@@ -45,3 +45,8 @@ it('未认证inspect不能触发恢复清理',async()=>{
  const f=fixture({status:'exited'});f.client.inspect=async()=>({authenticated:false,receipt:{status:'exited'}});
  expect((await f.controller.reconcile())[0].status).toBe('unconfirmed');expect(f.calls).toEqual([]);
 });
+it('普通周期恢复不能抢先清理尚未封存到Brain的验收证据',async()=>{
+ const f=fixture({status:'running',rpc_started:true,stream_status:'closed',stream_id:randomUUID()});
+ f.old.policy_version='app-server-canary-v1';
+ expect(await f.controller.reconcile()).toEqual([]);expect(f.calls).toEqual([]);
+});

@@ -29,7 +29,7 @@ export function createAppServerController({pool,env=process.env,homes=loadAppSer
    if(!input||Object.keys(input).some(k=>!['home_id','request_key'].includes(k))||!UUID.test(input.request_key))throw Error('appserver_request_invalid');
    const home=homes[input.home_id];if(!home)throw Error('appserver_home_unconfigured');validateHome(home);
    const pinned=await store.home(home.homeId);
-   if(pinned){const previous=await store.latest(home.homeId);if(previous)await guarded(previous.id,()=>previous.cancel_requested?cancel(previous.id):recover(previous.id));}
+   if(pinned){const previous=await store.latest(home.homeId);if(previous?.policy_version==='app-server-canary-v1')throw Error('appserver_canary_request_isolated');if(previous)await guarded(previous.id,()=>previous.cancel_requested?cancel(previous.id):recover(previous.id));}
    const candidates=pinned?[pinned.machine_id]:listComputeWorkerIds()
     .sort((a,b)=>Number(isPrimaryWorker(a))-Number(isPrimaryWorker(b))||a.localeCompare(b));
    let denied;
@@ -48,11 +48,11 @@ export function createAppServerController({pool,env=process.env,homes=loadAppSer
    }
    if(denied)throw denied;return {status:'waiting_resources'};
   },
-  async prepareStream(id){if(!UUID.test(id))throw Error('appserver_request_invalid');return guarded(id,()=>client.prepareStream(id));},
+  async prepareStream(id){if(!UUID.test(id))throw Error('appserver_request_invalid');if((await store.get(id)).policy_version==='app-server-canary-v1')throw Error('appserver_canary_stream_internal');return guarded(id,()=>client.prepareStream(id));},
   async inspect(id){if(!UUID.test(id))throw Error('appserver_request_invalid');const row=await store.get(id);if(row.status==='released')return view(row);return guarded(id,async()=>view(await observe(id)));},
   async cancel(id){if(!UUID.test(id))throw Error('appserver_request_invalid');const row=await store.get(id);if(row.status==='released')return view(row);return guarded(id,async()=>view(await cancel(id)));},
   async reconcile(){const rows=await store.listOutstanding();const outcomes=[];
-   for(const row of rows.slice(0,5)){try{outcomes.push(view(await guarded(row.id,()=>row.cancel_requested?cancel(row.id):recover(row.id))));}
+   for(const row of rows.filter(row=>row.policy_version!=='app-server-canary-v1').slice(0,5)){try{outcomes.push(view(await guarded(row.id,()=>row.cancel_requested?cancel(row.id):recover(row.id))));}
     catch{outcomes.push({...view(row),status:'unconfirmed'});}}
    return outcomes;
   },

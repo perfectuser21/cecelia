@@ -8,17 +8,22 @@ const {sampleLinuxResources,projectLinuxObservation}=require('./linux-resource-p
 const fail=()=>{throw Error('linux_pool_server_configuration_invalid');};
 const hash=value=>createHash('sha256').update(value).digest();
 function json(response,status,value){response.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});response.end(JSON.stringify(value));}
-async function readNonce(request,timeoutMs) {
+async function readJson(request,timeoutMs,maxBytes) {
   const chunks=[];let bytes=0;
   const deadline=setTimeout(()=>request.destroy(),timeoutMs);
-  try{for await(const chunk of request){bytes+=chunk.length;if(bytes>2048)throw Object.assign(Error(),{status:413});chunks.push(chunk);}}
+  try{for await(const chunk of request){bytes+=chunk.length;if(bytes>maxBytes)throw Object.assign(Error(),{status:413});chunks.push(chunk);}}
   finally{clearTimeout(deadline);}
   let input;try{input=JSON.parse(Buffer.concat(chunks).toString());}catch{throw Object.assign(Error(),{status:400});}
+  return input;
+}
+async function readNonce(request,timeoutMs) {
+  const input=await readJson(request,timeoutMs,2048);
   if(!input||Array.isArray(input)||Object.keys(input).length!==1||typeof input.nonce!=='string'||!/^[a-f0-9]{64}$/.test(input.nonce))throw Object.assign(Error(),{status:400});
   return input.nonce;
 }
-function createLinuxPoolServer({profile:input,token,revision,probe,bodyTimeoutMs=5000,headersTimeoutMs=5000}) {
+function createLinuxPoolServer({profile:input,token,revision,probe,scriptBridge,readWorkerBootId,bodyTimeoutMs=5000,headersTimeoutMs=5000}) {
   const profile=validateLinuxPoolProfile(input),bootId=randomUUID();
+  const workerBoot=()=>{const value=readWorkerBootId?readWorkerBootId():bootId;if(typeof value!=='string'||!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(value))fail();return value;};
   if(profile.scheduler_only||typeof token!=='string'||!/^[a-f0-9]{64}$/.test(token)||typeof revision!=='string'||!/^[a-f0-9]{40}$/.test(revision)
     ||![bodyTimeoutMs,headersTimeoutMs].every(v=>Number.isInteger(v)&&v>=50&&v<=5000)||headersTimeoutMs>bodyTimeoutMs)fail();
   const tokenHash=hash('Bearer '+token);
@@ -33,10 +38,22 @@ function createLinuxPoolServer({profile:input,token,revision,probe,bodyTimeoutMs
   const server=http.createServer({maxHeaderSize:4096,requestTimeout:bodyTimeoutMs,headersTimeout:headersTimeoutMs,
     connectionsCheckingInterval:Math.min(250,headersTimeoutMs)},async(request,response)=>{
     try {
+      if(scriptBridge&&request.url?.startsWith('/scripts/')) {
+        const auth=request.headers.authorization;
+        if(typeof auth!=='string'||!timingSafeEqual(hash(auth),tokenHash)){request.resume();json(response,401,{error:'unauthorized'});return;}
+        if(request.method!=='POST'){request.resume();json(response,405,{error:'method_not_allowed'});return;}
+        const match=request.url.match(/^\/scripts\/([a-f0-9-]{36})\/(start|inspect|cancel)$/);
+        if(!match){request.resume();json(response,400,{error:'linux_script_request_invalid'});return;}
+        const body=await readJson(request,bodyTimeoutMs,65536);
+        if(!body||body.reservation_id!==match[1]){json(response,400,{error:'linux_script_request_invalid'});return;}
+        try{const reply=await scriptBridge[match[2]](body);json(response,reply.status,reply.envelope);}
+        catch{json(response,409,{error:'linux_script_operation_unconfirmed'});}
+        return;
+      }
       if(request.url==='/health'&&request.method==='GET') {
         const observation=await health();
         json(response,200,{schema_version:'fleet-node-health/v1',machine_id:profile.machine_id,machine_registry_id:profile.machine_registry_id,
-          observed_at:observation.observed_at,worker:{version:revision,boot_id:bootId,protocol_version:'linux-pool-pending/v1'},
+          observed_at:observation.observed_at,worker:{version:revision,boot_id:workerBoot(),protocol_version:'linux-pool-pending/v1'},
           execution:false,pool_verified:false,reason:'execution_pool_unverified',drain:{active:true},
           resources:{cpu_cores:0,memory_bytes:0,disk_free_bytes:0,disk_used_percent:100,cpu_pressure_percent:100,memory_pressure_percent:100},
           linux_observation:observation});return;
@@ -47,7 +64,7 @@ function createLinuxPoolServer({profile:input,token,revision,probe,bodyTimeoutMs
         if(request.method!=='POST'){request.resume();json(response,405,{error:'method_not_allowed'});return;}
         const nonce=await readNonce(request,bodyTimeoutMs);
         const receipt={schema_version:'linux-pool-identity/v1',nonce,machine_registry_id:profile.machine_registry_id,
-          machine_id:profile.machine_id,worker_boot_id:bootId,revision,config_digest:profile.config_digest,execution:false,observed_at:new Date().toISOString()};
+          machine_id:profile.machine_id,worker_boot_id:workerBoot(),revision,config_digest:profile.config_digest,execution:false,observed_at:new Date().toISOString()};
         json(response,200,{receipt,signature:createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex')});return;
       }
       request.resume();json(response,403,{error:'linux_execution_not_authorized'});
@@ -81,7 +98,10 @@ if(require.main===module) {
     const profile=validateLinuxPoolProfile(input);
     const token=readInstalledFile('/etc/cecelia/fleet-worker.token',{mode:0o600,owner:process.getuid(),maxBytes:64});
     const revision=readInstalledFile('/usr/local/libexec/cecelia/fleet-worker/revision',{mode:0o644,owner:0,maxBytes:41});
-    createLinuxPoolServer({profile:input,token,revision}).listen(5231,profile.endpoint_host);
+    const enabled=fs.existsSync('/etc/cecelia/script-pool.json');
+    const scriptBridge=enabled?require('./linux-script-bridge.cjs').createLinuxScriptBridgeClient():undefined;
+    const readWorkerBootId=enabled?()=>readInstalledFile('/run/cecelia-script/worker-boot-id',{mode:0o644,owner:0,maxBytes:37}):undefined;
+    createLinuxPoolServer({profile:input,token,revision,scriptBridge,readWorkerBootId}).listen(5231,profile.endpoint_host);
   }catch{process.stderr.write('linux_pool_server_configuration_invalid\n');process.exitCode=1;}
 }
 module.exports={createLinuxPoolServer,readInstalledFile};

@@ -475,7 +475,7 @@ function createFleetWorkerRuntime({
   }
   return Object.freeze({
     appServerRunner: wrapLaunchRunner(createAppServerRunner({stateRoot:path.join(dataRoot,'app-servers'),machineId:workerId,workerId,bootId:launchAdmission.snapshot().boot_id,
-      assertCanLaunch,profiles:loadAppServerProfiles(env.CECELIA_APP_SERVER_PROFILES_FILE),docker:createAppServerDocker({assertCanLaunch}),
+      assertCanLaunch,canaryKey:attemptToken,profiles:loadAppServerProfiles(env.CECELIA_APP_SERVER_PROFILES_FILE),docker:createAppServerDocker({assertCanLaunch}),
       assertLocalResources:createLocalResourceAdmission({workerId,diskPaths:healthDiskPaths,...(runCommand?{runCommand}:{})})}),launchAdmission),
     launchAdmission,
     scriptRunner: wrapLaunchRunner(createScriptRunner({ assertCanLaunch,stateRoot: path.join(dataRoot, 'scripts'),

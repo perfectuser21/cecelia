@@ -49,11 +49,21 @@ export function createAppServerClient({pool,store,env=process.env,fetchFn=global
     ||envelope.receipt.stream_id!==body.stream_id||!Number.isFinite(envelope.receipt.expires_at)||envelope.receipt.expires_at<=Date.now()||envelope.receipt.expires_at>body.prepare_deadline)throw Error('appserver_worker_receipt_unverified');
    return {authenticated:true,receipt:envelope.receipt,streamToken};
   }
-  return {authenticated:true,receipt:envelope.receipt};
+  return {authenticated:true,receipt:envelope.receipt,signature:envelope.signature};
   }finally{clearTimeout(timer);}
  }
- const operation=(id,action)=>store.withOperation(id,action,async(row,url)=>{
+ const operation=(id,action)=>store.withOperation(id,action,async(row,url,revalidate)=>{
+  if(action==='start'||action==='prepare-stream'){
+   const caps=(await request(url,row.machine_id,'capabilities')).receipt;
+   if(caps.worker_id!==row.worker_id||caps.worker_boot_id!==row.worker_boot_id||caps.profiles?.[row.config.profile]!==row.config_digest)throw Error('appserver_worker_configuration_mismatch');
+   // 探测网络等待可能跨过grant/挑战期限；保留操作锁并在副作用前重验。
+   await revalidate();
+  }
   const body=workerIdentity(row);
+  if(action==='start'&&row.canary_authorization){
+   const a=row.canary_authorization,payload={authorization_id:a.id,nonce:a.nonce,expires_at:Number(new Date(a.challenge_expires_at)),identity:{...body}};
+   body.canary_permit={payload,signature:createHmac('sha256',token).update(JSON.stringify(payload)).digest('hex')};
+  }
   if(action==='prepare-stream')Object.assign(body,{stream_id:row.stream.id,prepare_deadline:Number(new Date(row.stream.prepare_deadline))});
   if(action==='cancel')Object.assign(body,{container_id:row.container_id,challenge:row.cleanup_challenge});
   const verified=await request(url,row.machine_id,action,body);
@@ -62,6 +72,12 @@ export function createAppServerClient({pool,store,env=process.env,fetchFn=global
   return verified;
  });
  return Object.freeze({
+  probeCapabilities:async(machineRegistryId,expectedVersionId)=>{
+   const node=(await pool.query(`SELECT v.*,n.canonical_id FROM execution_nodes n JOIN execution_node_versions v ON v.id=n.current_version_id
+    JOIN system_registry r ON r.id=n.machine_registry_id WHERE n.machine_registry_id=$1 AND v.id=$2 AND v.state='active' AND r.type='machine' AND r.status='active'`,[machineRegistryId,expectedVersionId])).rows[0];
+   if(!node)throw Error('appserver_authorization_node_unavailable');
+   return (await request(node.endpoints.worker,node.canonical_id,'capabilities')).receipt;
+  },
   capabilities:async(home,machine)=>authorize(pool,{snapshotVersion:directory.current()?.version,machineId:machine,surface:'app_server',provider:home.provider,account:home.account,repo:home.repo,profileId:home.profile},
    async auth=>(await request(auth.node.endpoints.worker,machine,'capabilities')).receipt),
   prepareStream:async id=>{await store.reserveStream(id);return operation(id,'prepare-stream');},

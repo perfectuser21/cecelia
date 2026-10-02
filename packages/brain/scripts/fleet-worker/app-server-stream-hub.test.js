@@ -8,6 +8,39 @@ function fixture(){const child=Object.assign(new EventEmitter(),{stdin:new PassT
  const runner={async attach(){attaches++;return child;},async markRpcStarted(){marks++;}};
  const identity={reservation_id:randomUUID(),stream_id:randomUUID()};return {child,runner,identity,get attaches(){return attaches;},get marks(){return marks;}};
 }
+it('验收流按持久身份选择窄策略，并把拒绝审计写回Worker',async()=>{
+ const f=fixture();f.child.rpcCanary=true;f.child.rpcCanaryExpiresAt=Date.now()+60000;
+ const audits=[];f.runner.recordCanaryEvidence=async(identity,evidence)=>{expect(identity).toEqual(f.identity);audits.push(evidence);};
+ const hub=api.createStreamHub({runner:f.runner}),ticket=await hub.prepare(f.identity),input=new PassThrough(),output=new PassThrough();
+ let seen='';output.on('data',chunk=>seen+=chunk);let forwarded=0;f.child.stdin.on('data',()=>forwarded++);
+ hub.claim(ticket.stream_id,ticket.token,input,output);
+ input.write(JSON.stringify({id:1,method:'thread/start',params:{}})+'\n');await new Promise(r=>setTimeout(r,20));
+ expect(forwarded).toBe(0);expect(JSON.parse(seen).error.message).toBe('appserver_canary_method_denied');
+ expect(audits.at(-1)).toMatchObject({complete:false,rejected:1});hub.close();
+});
+it.each(['malformed','unknown-response','truncated','server-truncated','clean'])('验收证据只在完整流终结后封存：%s',async ending=>{
+ const f=fixture();f.child.rpcCanary=true;f.child.rpcCanaryExpiresAt=Date.now()+60000;
+ const audits=[];f.runner.recordCanaryEvidence=async(_id,value)=>audits.push(value);
+ const hub=api.createStreamHub({runner:f.runner}),ticket=await hub.prepare(f.identity),input=new PassThrough(),output=new PassThrough();
+ let received=0,ready;const allReplies=new Promise(r=>ready=r);
+ output.on('data',()=>{if(++received===4)ready();});
+ f.child.stdin.on('data',chunk=>{const frame=JSON.parse(chunk);if(frame.id!==undefined){
+  const result=frame.method==='initialize'?{userAgent:'codex_cli_rs/0.158.0'}:frame.method==='model/list'?{data:[],nextCursor:null}:frame.method==='config/read'?{config:{}}:{requirements:null};
+  f.child.stdout.write(JSON.stringify({id:frame.id,result})+'\n');
+ }});
+ f.child.stdin.once('finish',()=>{f.child.stdout.end();f.child.emit('close');});
+ hub.claim(ticket.stream_id,ticket.token,input,output);
+ input.write(JSON.stringify({id:1,method:'initialize',params:{clientInfo:{name:'canary',version:'1'}}})+'\n');
+ input.write('{"method":"initialized"}\n');
+ for(const [id,method]of [[2,'model/list'],[3,'config/read'],[4,'configRequirements/read']])input.write(JSON.stringify({id,method})+'\n');
+ await allReplies;
+ expect(audits.some(e=>e.complete)).toBe(false);
+ if(ending==='malformed')input.end('{oops}\n');
+ else if(ending==='unknown-response'){f.child.stdout.write('{"id":999,"result":{}}\n');input.end();}
+ else {if(ending==='server-truncated')f.child.stdout.write('{"bad_tail":');input.end(ending==='truncated'?'{oops':'');}
+ await new Promise(r=>setTimeout(r,25));
+ expect(audits.at(-1)).toMatchObject({complete:ending==='clean',sealed:true});hub.close();
+});
 it('真实双向流单次领取，错误凭证不消耗，首次写入先持久化；结束只断流不取消预约',async()=>{
  expect(api.createStreamHub).toBeTypeOf('function');const f=fixture(),hub=api.createStreamHub({runner:f.runner});
  const prepared=await hub.prepare(f.identity);expect(f.attaches).toBe(1);

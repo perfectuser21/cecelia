@@ -35,9 +35,9 @@ SCRIPT_DOCKER_SOURCE="$SCRIPT_DIR/script-docker.cjs"
 RESOURCE_POLICY_SOURCE="$SCRIPT_DIR/attempt-resource-policy.cjs"
 CONTAINER_IDENTITY_SOURCE="$SCRIPT_DIR/attempt-container-identity.cjs"
 # 专用 runner 仅打包，不增加服务入口或默认可执行 profile。
-AUXILIARY_FILES=(app-server-profile.cjs app-server-docker.cjs app-server-attach.cjs app-server-stream.cjs app-server-runner.cjs app-server-rpc.cjs app-server-stream-hub.cjs app-server-contract.json app-server-shim.cjs linux-cgroup.cjs linux-resource-probe.cjs)
-STAGED_AUXILIARY_FILES=('' '' '' '' '' '' '' '' '' '' '')
-PRIOR_AUXILIARY_MODES=('' '' '' '' '' '' '' '' '' '' '')
+AUXILIARY_FILES=(app-server-profile.cjs app-server-docker.cjs app-server-attach.cjs app-server-stream.cjs app-server-runner.cjs app-server-rpc.cjs app-server-stream-hub.cjs app-server-contract.json app-server-shim.cjs linux-cgroup.cjs linux-resource-probe.cjs app-server-canary-policy.cjs app-server-canary-permit.cjs)
+STAGED_AUXILIARY_FILES=('' '' '' '' '' '' '' '' '' '' '' '' '')
+PRIOR_AUXILIARY_MODES=('' '' '' '' '' '' '' '' '' '' '' '' '')
 WORKSPACE_MANAGER_SOURCE="$SCRIPT_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SOURCE="$SCRIPT_DIR/attempt-runner.cjs"
 ORCHESTRATOR_RUNNER_SOURCE="$SCRIPT_DIR/orchestrator-runner.cjs"
