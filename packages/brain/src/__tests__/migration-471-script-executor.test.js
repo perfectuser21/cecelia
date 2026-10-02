@@ -34,7 +34,8 @@ describe('迁移 471：登记 script 与 script_run', () => {
     expect(readFileSync(join(MIG, '502_preview_owned_cache_janitor.sql'), 'utf8'))
       .toContain("('tasks_executor_kind_check','executor_kind','preview-janitor')");
     expect(readFileSync(join(MIG,'504_app_server_generations.sql'),'utf8')).toContain("('tasks_executor_kind_check','executor_kind','app-server-controller')");
-    expect([...list, 'preview-janitor','app-server-controller'].sort()).toEqual([...VALID_EXECUTOR_KINDS].sort());
+    expect(readFileSync(join(MIG,'507_phone_dispatches.sql'),'utf8')).toContain("('tasks_executor_kind_check','executor_kind','phone-ssh-controller')");
+    expect([...list, 'preview-janitor','app-server-controller','phone-ssh-controller'].sort()).toEqual([...VALID_EXECUTOR_KINDS].sort());
   });
 
   it("471 task_type 加已登记的502增量后等于当前DB白名单，且含 script_run", () => {
