@@ -42,7 +42,7 @@ function verifyContainer(value,expected,profile,imageId,policy) {
     ||!Number.isSafeInteger(h.PidsLimit)||h.PidsLimit<=0||h.PidsLimit>profile.pool.pids_limit)fail();
   if(policy.script&&(value.Config.WorkingDir!==policy.script.cwd||h.NanoCpus!==policy.script.cpus*1e9
     ||h.Memory!==policy.script.memoryBytes||h.PidsLimit!==policy.script.pidsLimit
-    ||h.LogConfig?.Type!=='local'||h.LogConfig.Config?.['max-size']!==String(policy.script.logMaxSizeBytes)
+    ||h.LogConfig?.Type!=='local'||h.LogConfig.Config?.compress!=='false'||h.LogConfig.Config?.['max-size']!==String(policy.script.logMaxSizeBytes)
     ||h.LogConfig.Config?.['max-file']!==String(policy.script.logMaxFiles)))fail();
   return s.Pid;
 }

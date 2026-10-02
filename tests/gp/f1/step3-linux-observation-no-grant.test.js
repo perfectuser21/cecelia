@@ -65,3 +65,10 @@ it('F1升级重放边：原started字节保留，目标完整回执丢失只验�
     'RemoteTests.test_upgrade_target_lost_response_revalidates_all_files_without_install',
     'RemoteTests.test_partial_upgrade_refuses_without_reinstall'],{encoding:'utf8',timeout:30000})).not.toThrow();
 });
+
+it('F1已安装升级保全部意图历史：原installed绑定可接续，未知phase与漂移仍拒绝',()=>{
+ const script=fileURLToPath(new URL('../../../packages/brain/scripts/fleet-worker/linux-onboarding-remote.test.py',import.meta.url));
+ expect(()=>execFileSync('python3',[script,'RemoteTests.test_upgrade_links_installed_attempt_and_preserves_prior_upgrade_chain',
+  'RemoteTests.test_unknown_prior_phase_never_installs','RemoteTests.test_upgrade_previous_binding_must_match_before_install'],
+  {encoding:'utf8',timeout:30000})).not.toThrow();
+});

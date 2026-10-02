@@ -97,6 +97,26 @@ class RemoteTests(unittest.TestCase):
   self.assertEqual(self.installs,2);self.assertEqual(self.old_marker.read_bytes(),self.old_bytes)
   marker=self.root/'var/lib/cecelia/onboarding'/request['intent_id']/'intent.json'
   self.assertEqual(json.loads(marker.read_text())['previous_attempt'],request['previous_attempt'])
+ def test_upgrade_links_installed_attempt_and_preserves_prior_upgrade_chain(self):
+  request=self.upgrade_request();self.call(request)
+  previous=self.root/'var/lib/cecelia/onboarding'/request['intent_id']/'intent.json'
+  old_bytes=previous.read_bytes();old=json.loads(old_bytes)
+  self.assertEqual(old['phase'],'installed')
+  next_request={**request,'intent_id':str(uuid.uuid4()),'upgrade':dict(request['upgrade']),
+   'previous_attempt':{'intent_id':request['intent_id'],'binding':old['binding']}}
+  next_request['upgrade']['intent_id']=next_request['intent_id']
+  def install(options):
+   self.assertEqual(json.loads(pathlib.Path(options['upgrade_file']).read_text())['intent_id'],next_request['intent_id'])
+   self.installs+=1
+   return {'installed':True}
+  self.deps['bootstrap']=install
+  self.call(next_request)
+  self.assertEqual(self.installs,3);self.assertEqual(previous.read_bytes(),old_bytes)
+  self.assertEqual(self.old_marker.read_bytes(),self.old_bytes)
+ def test_unknown_prior_phase_never_installs(self):
+  request=self.upgrade_request();old=json.loads(self.old_bytes);old['phase']='unknown';self.old_marker.write_text(json.dumps(old))
+  with self.assertRaises(ValueError):self.call(request)
+  self.assertEqual(self.installs,1)
  def test_upgrade_previous_binding_must_match_before_install(self):
   request=self.upgrade_request();request['previous_attempt']['binding']='f'*64
   with self.assertRaises(ValueError):self.call(request)

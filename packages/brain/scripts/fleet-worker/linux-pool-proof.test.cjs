@@ -135,7 +135,7 @@ describe('受管脚本真实容器证明',()=>{
     f.container.Config.WorkingDir=scriptProfile.cwd;
     f.container.Config.Labels=Object.fromEntries(Object.entries(identity).map(([k,v])=>['cecelia.script.'+k,String(v)]));
     f.container.Config.Labels['cecelia.script.profile_digest']=require('node:crypto').createHash('sha256').update(JSON.stringify(scriptProfile)).digest('hex');
-    f.container.HostConfig.LogConfig={Type:'local',Config:{'max-size':'65536','max-file':'2'}};
+    f.container.HostConfig.LogConfig={Type:'local',Config:{compress:'false','max-size':'65536','max-file':'2'}};
     return {...f,scriptProfile,identity,containerId:id,expectedHostBootId:'1347658b-2aa4-4b38-91c0-a7b85531b918',expectedDaemonId:'daemon-hk'};
   }
   const collect=f=>require('./linux-pool-proof.cjs').collectLinuxScriptProof(f);
@@ -158,6 +158,8 @@ describe('受管脚本真实容器证明',()=>{
     ['错误固定镜像',f=>f.container.Config.Image=f.profile.canary_image],
     ['错误工作目录',f=>f.container.Config.WorkingDir='/tmp'],
     ['无限日志',f=>f.container.HostConfig.LogConfig.Config={}],
+    ['默认压缩未知',f=>delete f.container.HostConfig.LogConfig.Config.compress],
+    ['启用日志压缩',f=>f.container.HostConfig.LogConfig.Config.compress='true'],
     ['宿主boot与验收身份不符',f=>f.expectedHostBootId='88cf1bbe-a1a3-44ac-9f21-f17477a61689'],
     ['daemon与验收身份不符',f=>f.expectedDaemonId='other-daemon'],
     ['缺失完整container ID',f=>f.containerId=null],
