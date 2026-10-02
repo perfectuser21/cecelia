@@ -244,7 +244,20 @@ class AdmissionTest(unittest.TestCase):
         try:
             os.close(fd); raw = os.open(self.host_root / 'host.guard', os.O_RDONLY)
             if raw != fd: os.dup2(raw, fd); os.close(raw)
-            with self.assertRaises(ValueError): host.verify()
+            os.set_inheritable(fd, True)
+            with self.assertRaisesRegex(ValueError, '^phone_host_description_unknown$'): host.verify()
+        finally:
+            os.dup2(original, fd); os.close(original); host.close()
+
+    def test_host_witness_numeric_fd_reuse_for_same_inode_is_rejected(self):
+        host = admission.HostExclusive().acquire()
+        # 私有fixture故障注入；生产入口不暴露witness数字FD。
+        fd = admission._HOSTS[host]['witness']; original = os.dup(fd)
+        try:
+            os.close(fd); raw = os.open(self.host_root / 'host.guard', os.O_RDONLY)
+            if raw != fd: os.dup2(raw, fd); os.close(raw)
+            os.set_inheritable(fd, True)
+            with self.assertRaisesRegex(ValueError, '^phone_host_description_unknown$'): host.verify()
         finally:
             os.dup2(original, fd); os.close(original); host.close()
 
