@@ -57,6 +57,18 @@ describe('组织入口真实事务回灌', () => {
     const before = await rows(); await expect(run({ bindings: [] })).rejects.toThrow(/binding_required/);
     expect(await rows()).toEqual(before);
   });
+  it('旧同名行已明确绑定一个分支，其它分支同名节点获得独立身份', async () => {
+    const old = randomUUID(), otherRoot = randomUUID(), otherDashboard = randomUUID();
+    await client.query(`INSERT INTO areas(id,name) VALUES($1,'Dashboard')`, [old]);
+    pages = [page(rootPage, 'Cecelia'), page(childPage, 'Dashboard', rootPage),
+      page(otherRoot, 'ZenithJoy'), page(otherDashboard, 'Dashboard', otherRoot)];
+    await run({ bindings: [{ brain_id: rootId, notion_id: rootPage, expected_name: 'Cecelia' },
+      { brain_id: old, notion_id: childPage, expected_name: 'Dashboard' }] });
+    const after = await rows(), first = after.find(x => x.notion_id === childPage), second = after.find(x => x.notion_id === otherDashboard);
+    expect(first.id).toBe(old); expect(second.id).not.toBe(old);
+    expect(first.parent_area_id).toBe(rootId); expect(second.parent_area_id).toBe(after.find(x => x.notion_id === otherRoot).id);
+    expect((await run()).changed).toBe(0);
+  });
   it.each(['cycle', 'missing_parent', 'partial_relation', 'wrong_database', 'duplicate_page'])('%s 拒绝不完整组织快照', async reason => {
     const before = await rows();
     if (reason === 'cycle') pages[0].properties['Parent item'].relation = [{ id: childPage }];
