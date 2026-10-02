@@ -54,8 +54,10 @@ function assertReport(report) {
   for(const usage of report.affected_usages){
     if(!Array.isArray(usage.evidence)||!usage.evidence.length)fail('IMPACT_USAGE_EVIDENCE_MISSING');
     for(const evidence of usage.evidence){
-      if(!evidence.capability_id||!evidence.activity_id||!report.required_assertions.some(item=>(item.source_bindings||[]).some(
-        binding=>binding.capability_id===evidence.capability_id&&binding.activity_id===evidence.activity_id)))fail('IMPACT_REGRESSION_MISSING');
+      const steps=evidence.assertion_step_ids??[null];
+      if(!Array.isArray(steps)||!steps.length)fail('IMPACT_REGRESSION_MISSING');
+      for(const step of steps)if(!evidence.capability_id||!evidence.activity_id||!report.required_assertions.some(item=>(item.source_bindings||[]).some(
+        binding=>binding.capability_id===evidence.capability_id&&binding.activity_id===evidence.activity_id&&(binding.step_id??null)===step)))fail('IMPACT_REGRESSION_MISSING');
     }
   }
 }
