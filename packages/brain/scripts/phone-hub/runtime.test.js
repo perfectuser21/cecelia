@@ -33,9 +33,9 @@ it('固定生产manifest按实际依赖bytes校验；变更hash/未知配置/不
   }
  });
 });
-it('Hub实际加载的admission与activation依赖逐项篡改均拒绝旧manifest',async()=>{
+it('Hub实际加载的admission、activation与permit依赖逐项篡改均拒绝旧manifest',async()=>{
  const {createRuntime}=require('./runtime.cjs');
- for(const name of ['admission.py','activation.py'])await configuredFixture(async f=>{
+ for(const name of ['admission.py','activation.py','permit.py'])await configuredFixture(async f=>{
   expect(f.manifest.source_hashes).toHaveProperty('../phone-ssh/'+name);
   fs.appendFileSync(path.join(f.installed,'../phone-ssh',name),'\n# changed dependency\n');
   const runtime=await createRuntime({configPath:f.configPath,tokenPath:f.tokenPath,sourceRoot:f.installed,runControl:f.control});

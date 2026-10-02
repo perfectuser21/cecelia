@@ -20,7 +20,7 @@ from process_identity import boot_id
 
 BASE = Path(__file__).resolve().parent
 PHYSICAL = ('runner.py', 'worker.py', 'journal.py', 'phone_lease.py', 'process_identity.py',
-         'adb_socket.py', 'probe.py', 'drain_marker.py', 'http_physical.py', 'admission.py', 'activation.py')
+         'adb_socket.py', 'probe.py', 'drain_marker.py', 'http_physical.py', 'admission.py', 'activation.py', 'permit.py')
 STATIC = tuple(dict.fromkeys((*PHYSICAL, 'activation.py')))
 
 
@@ -85,17 +85,17 @@ class ActivationTest(unittest.TestCase):
 
     def test_current_physical_probe_and_activation_static_manifest_agree(self):
         self.assertEqual(tuple(probe.SOURCE_FILES), PHYSICAL)
-        self.assertEqual(len(self.hashes), 11)
+        self.assertEqual(len(self.hashes), 12)
         installed = probe.installed_identity(manifest_path=self.install / 'probe.json',
                                             config_path=self.install / 'worker.json', source_root=self.source)
         for field in self.physical: self.assertEqual(installed[field], self.physical[field])
         activation.validate_activation(self.identity)
 
     def test_legacy_eight_physical_nine_activation_record_cannot_be_upgraded_implicitly(self):
-        legacy_hashes = {name: value for name, value in self.hashes.items() if name not in ('http_physical.py', 'admission.py')}
+        legacy_hashes = {name: value for name, value in self.hashes.items() if name not in ('http_physical.py', 'admission.py', 'permit.py')}
         legacy_manifest = {**self.manifest, 'source_hashes': legacy_hashes}
         legacy_probe = {**self.probe, 'source_hashes': {name: value for name, value in self.probe['source_hashes'].items()
-                                                      if name not in ('http_physical.py', 'admission.py', 'activation.py')}}
+                                                      if name not in ('http_physical.py', 'admission.py', 'activation.py', 'permit.py')}}
         self.write(self.install / 'activation-manifest.json', self.bytes(legacy_manifest))
         self.write(self.install / 'probe.json', self.bytes(legacy_probe))
         legacy_physical = {**self.physical, 'build_digest': digest(legacy_probe['source_hashes']),
@@ -107,7 +107,7 @@ class ActivationTest(unittest.TestCase):
         self.denied()
 
     def test_c2_nine_physical_ten_activation_pins_are_rejected(self):
-        hashes = {name: value for name, value in self.hashes.items() if name != 'admission.py'}
+        hashes = {name: value for name, value in self.hashes.items() if name not in ('admission.py', 'permit.py')}
         manifest = {**self.manifest, 'source_hashes': hashes}
         probe_record = {**self.probe, 'source_hashes': {name: value for name, value in hashes.items()
                                                       if name != 'activation.py'}}

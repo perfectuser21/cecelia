@@ -132,6 +132,10 @@ def discard_fork_context():
 
 
 class Admission:
+    def final_go(self, identity, host, child):
+        from permit import send
+        return send(identity, host, child)
+
     def _read(self):
         with _TrustedReads() as reads:
             value = _json(reads.read(_ROOT / 'admission-state.json'))
@@ -141,10 +145,19 @@ class Admission:
             if str(uuid.UUID(value['control_epoch'])) != value['control_epoch'] or not isinstance(value['pending'], dict):
                 raise ValueError('phone_admission_state_unknown')
             for key, entry in value['pending'].items():
-                _keys(entry, ('identity', 'pins', 'phase', 'owner', 'control_epoch'))
+                fields = ('identity', 'pins', 'phase', 'owner', 'control_epoch')
+                if entry.get('phase') == 'go_committed': fields += ('child', 'worker', 'control_revision')
+                _keys(entry, fields)
                 _identity(entry['identity'])
-                if key != entry['identity']['dispatch_id'] or entry['phase'] != 'pre_intent' or not isinstance(entry['pins'], dict) or not isinstance(entry['owner'], dict):
+                if key != entry['identity']['dispatch_id'] or entry['phase'] not in ('pre_intent', 'go_committed') or not isinstance(entry['pins'], dict) or not isinstance(entry['owner'], dict):
                     raise ValueError('phone_admission_state_unknown')
+                if entry['phase'] == 'go_committed':
+                    if type(entry['control_revision']) is not int or entry['control_revision'] < 0:
+                        raise ValueError('phone_admission_state_unknown')
+                    for name in ('child', 'worker'):
+                        _keys(entry[name], ('pid', 'boot_id', 'start_time', 'pgid', 'state'))
+                        if type(entry[name]['pid']) is not int or entry[name]['pid'] <= 1:
+                            raise ValueError('phone_admission_state_unknown')
             reads.verify(); return value
 
     def snapshot(self):

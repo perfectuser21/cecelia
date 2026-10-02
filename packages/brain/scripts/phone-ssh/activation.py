@@ -15,7 +15,7 @@ _INSTALL_ROOT = Path('/private/etc/cecelia/phone-ssh' if sys.platform == 'darwin
 _SOURCE_ROOT = Path('/opt/cecelia/phone-ssh')
 _SERVICE_UID = os.getuid()
 _PHYSICAL_FILES = ('runner.py', 'worker.py', 'journal.py', 'phone_lease.py', 'process_identity.py',
-                   'adb_socket.py', 'probe.py', 'drain_marker.py', 'http_physical.py', 'admission.py', 'activation.py')
+                   'adb_socket.py', 'probe.py', 'drain_marker.py', 'http_physical.py', 'admission.py', 'activation.py', 'permit.py')
 _SOURCE_FILES = tuple(dict.fromkeys((*_PHYSICAL_FILES, 'activation.py')))
 _IDENTITY_FIELDS = ('dispatch_id', 'reservation_id', 'task_id', 'machine_id', 'host', 'serial', 'profile',
                     'account_id', 'execution_version_id', 'execution_grant_id', 'lease_token', 'execution_id',
