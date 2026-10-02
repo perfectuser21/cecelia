@@ -136,7 +136,6 @@ if [[ -d "$DIST_DIR" ]]; then
 fi
 # 用 cp -R（留存版本要留在留存区，不能 mv 走）。
 if cp -R "$RELEASE_SRC" "$DIST_DIR"; then
-    rm -rf "${DIST_DIR}.rollback-bak" 2>/dev/null || true
     echo "✅ live dist/ 已回到 $TARGET_TAG"
 else
     echo "❌ 回档换入失败 → 回滚到换入前 live dist/"
@@ -144,6 +143,25 @@ else
     [[ "$HAD_LIVE" == true && -d "${DIST_DIR}.rollback-bak" ]] && mv "${DIST_DIR}.rollback-bak" "$DIST_DIR"
     exit 1
 fi
+
+# frontend 必须切换到目标冻结目录；仅替换 live dist 不会改变已有 bind mount。
+rebind_frontend() {
+    [[ -n "${CECELIA_SKIP_FRONTEND_RECREATE:-}" ]] && return 0
+    DASHBOARD_DIST_DIR="$1" docker compose --env-file "$MAIN_ROOT/.env.docker" -f "$MAIN_ROOT/docker-compose.yml" \
+        up -d --force-recreate --no-deps frontend
+}
+if ! rebind_frontend "$RELEASE_SRC"; then
+    echo "❌ frontend 回档重绑失败，恢复回档前版本，指针不动"
+    rm -rf "${DIST_DIR:?}"
+    if [[ "$HAD_LIVE" == true && -d "${DIST_DIR}.rollback-bak" ]]; then
+        mv "${DIST_DIR}.rollback-bak" "$DIST_DIR"
+        PREVIOUS_SRC="$RELEASES_DIR/$CURRENT_TAG"
+        [[ -d "$PREVIOUS_SRC" ]] || PREVIOUS_SRC="$DIST_DIR"
+        rebind_frontend "$PREVIOUS_SRC" || echo "❌ 上一版 frontend 重绑也失败，需部署告警介入"
+    fi
+    exit 1
+fi
+rm -rf "${DIST_DIR}.rollback-bak" 2>/dev/null || true
 
 # ── 2) 指针回拨 + 审计行 ──────────────────────────────────────────────────────
 # 关键：必须保留 manifest= 行（各 vN 的 brain_image 清单），否则回档后该 tag 的清单丢失，

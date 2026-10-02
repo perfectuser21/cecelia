@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { beforeEach,afterEach,it,expect } from 'vitest';
+import {migrationSlice} from '../../../__tests__/fixtures/minimum-definition-schema.js';
 import { releaseEvidenceDatabase } from '../../../__tests__/fixtures/release-evidence-db.js';
 const service=await import('../../capability-system.js').catch(()=>({}));
 let f;
 beforeEach(async()=>{
   expect(service.readCapabilitySystem).toBeTypeOf('function');f=await releaseEvidenceDatabase();
-  await f.db.query('CREATE TABLE journey_features (LIKE public.journey_features INCLUDING ALL)');
+  await f.db.query(migrationSlice('493_vs_model_areas_kind.sql','ALTER TABLE areas','-- ② journeys.kind'));
 });
 afterEach(async()=>{await f?.close();f=null;});
 it('同一共享Activity两个引用位置只计一个真身，返回完整层级与规范UUID',async()=>{

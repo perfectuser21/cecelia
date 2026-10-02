@@ -55,3 +55,55 @@ it.each(['reservation','node','grant','runtime'])('升级合同前拒绝真实�
  };
  await expect(createBootstrapRecovery(x.deps).prepare(x.db,x.task,x.source,x.machine)).rejects.toThrow();
 });
+
+function installedSetup(){
+ const x=setup(),s=x.task.payload.linux_onboarding,old=x.old.payload.linux_onboarding;
+ Object.assign(s,{...old,phase:'renew_wait',error:null,upgrade_json:JSON.stringify({schema_version:1,intent_id:old.intent_id}),previous_attempt:{intent_id:randomUUID(),binding:'6'.repeat(64)},last_cleanup_runtime_id:randomUUID(),runtime_json:null});
+ x.d.parent_task_id=x.task.id;x.source.payload.node_onboarding.execution_task_id=x.task.id;
+ x.machine.metadata.onboarding={execution_task_id:x.task.id};
+ const eid=randomUUID(),version=randomUUID(),grant=randomUUID(),nonce='9'.repeat(64),now=new Date().toISOString(),reservation=randomUUID();
+ const profile=x.d.profiles.shell.profile,pdigest=hash(JSON.stringify(profile)),job={profile:'shell',cmd:`printf '%s\\n' '${nonce}:shell'; sleep 8`,timeout_sec:20,env:{}};
+ const identity={reservation_id:reservation,intent_id:randomUUID(),launch_generation:1,machine_id:x.machine.name,owner_key:`script-${reservation}-a1`,config_digest:hash(JSON.stringify({job,profile_digest:pdigest})),worker_id:x.machine.name,worker_boot_id:x.d.expected.worker_boot_id,execution_version_id:version,execution_grant_id:grant,profile_id:'shell'};
+ const receipt={schema_version:'linux-script-canary-cleanup/v1',nonce,machine_id:x.machine.name,...x.d.expected,execution_version_id:version,started_at:now,completed_at:now,execution:false,cleanup_confirmed:true,cases:[{identity,profile_digest:pdigest,container_id:'8'.repeat(64),not_started:false,cleanup:{...identity,container_id:'8'.repeat(64),challenge:randomUUID(),status:'cleaned',absent:true,tombstoned:true}}]};
+ const row={id:s.last_cleanup_runtime_id,machine_registry_id:x.machine.id,evidence_task_id:eid,expected_version_id:null,execution_version_id:version,state:'revoked',policy_digest:x.d.policyDigest,nonce,created_at:now,grant_ids:{shell:grant},signed_payload:null,
+  evidence_status:'archived',evidence_parent_task_id:x.task.id,evidence_kind:'linux-pool-controller',evidence_created_by:'linux-pool-onboarding',evidence_payload:{machine_registry_id:x.machine.id,linux_script_runtime_id:s.last_cleanup_runtime_id,linux_runtime_retired:s.last_cleanup_runtime_id},evidence_result:{actor:'linux-pool-onboarding',evidence:{receipt,signature:createHmac('sha256',x.d.key).update(JSON.stringify(receipt)).digest('hex')}}};
+ row.evidence_result.evidence.envelope_json=JSON.stringify({receipt,signature:row.evidence_result.evidence.signature});
+ const query=x.db.query;x.db.query=async(sql,args)=>{
+  if(sql.includes('a.*,t.'))return {rows:args[0]===row.id?[row]:[],rowCount:args[0]===row.id?1:0};
+  if(sql.includes('SELECT * FROM tasks'))return {rows:[x.task],rowCount:1};
+  return query(sql,args);
+ };
+ return {...x,row,receipt};
+}
+it('已安装且签名清理的接续保原任务全字节，绑定包含上一层upgrade意图',async()=>{
+ const x=installedSetup(),before=structuredClone(x.task),s=x.task.payload.linux_onboarding;
+ const next=await createBootstrapRecovery(x.deps).prepareInstalled(x.db,x.task,x.source,x.machine);
+ expect(x.task).toEqual(before);expect(next).toMatchObject({phase:'bootstrap',resume_of_task_id:x.task.id,upgrade_cleanup_runtime_id:x.row.id,policy_json:s.policy_json,expected_version_id:s.expected_version_id});
+ expect(next.installation_json).toBeUndefined();expect(next.last_cleanup_runtime_id).toBeUndefined();expect(next.runtime_json).toBeUndefined();
+ expect(next.previous_attempt).toEqual({intent_id:s.intent_id,binding:hash(JSON.stringify({machine_registry_id:x.machine.id,pool:JSON.parse(s.policy_json).pool,revision:s.revision,sources:x.deps.artifacts.read(s.revision,s.artifact_digest).files,upgrade:JSON.parse(s.upgrade_json),previous_attempt:s.previous_attempt}))});
+ expect(next.intent_id).not.toBe(s.intent_id);expect(next.revision).toBe('c'.repeat(40));
+});
+it.each(['missing_marker','phase','runtime','source_pointer','registry_pointer','private_parent','machine','evidence_parent','evidence_kind','explicit_revoke','retire','signature','nonce','tombstone','policy','expected_version'])('已安装接续拒绝%s且零捕获新工件',async kind=>{
+ const x=installedSetup(),s=x.task.payload.linux_onboarding;let captures=0;x.deps.artifacts.capture=()=>{captures++;throw Error('must not capture');};
+ if(kind==='missing_marker')delete s.last_cleanup_runtime_id;if(kind==='phase')s.phase='script_canary';if(kind==='runtime')s.runtime_json='{}';
+ if(kind==='source_pointer')x.source.payload.node_onboarding.execution_task_id=randomUUID();if(kind==='registry_pointer')x.machine.metadata.onboarding.execution_task_id=randomUUID();
+ if(kind==='private_parent')x.d.parent_task_id=randomUUID();if(kind==='machine')x.row.machine_registry_id=randomUUID();if(kind==='evidence_parent')x.row.evidence_parent_task_id=randomUUID();
+ if(kind==='evidence_kind')x.row.evidence_kind='headed-session';if(kind==='explicit_revoke')x.row.evidence_payload.linux_runtime_revoked=true;
+ if(kind==='retire')x.row.evidence_payload.linux_runtime_retired=randomUUID();if(kind==='signature')x.row.evidence_result.evidence.signature='0'.repeat(64);
+ if(kind==='nonce')x.row.nonce='0'.repeat(64);if(kind==='tombstone'){x.receipt.cases[0].cleanup.absent=false;x.row.evidence_result.evidence.signature=createHmac('sha256',x.d.key).update(JSON.stringify(x.receipt)).digest('hex');}
+ if(kind==='policy')x.row.policy_digest='0'.repeat(64);if(kind==='expected_version')x.row.expected_version_id=randomUUID();
+ await expect(createBootstrapRecovery(x.deps).prepareInstalled(x.db,x.task,x.source,x.machine)).rejects.toThrow('linux_pool_bootstrap_recovery_unconfirmed');expect(captures).toBe(0);
+});
+it('接续棒每次SSH前重验旧归档、cleanup和完整旧binding，未知不能靠新payload自证',async()=>{
+ const x=installedSetup(),recovery=createBootstrapRecovery(x.deps),next=await recovery.prepareInstalled(x.db,x.task,x.source,x.machine);
+ const id=randomUUID(),old=structuredClone(x.task),read=x.deps.artifacts.read;
+ x.deps.artifacts.read=(rev,digest)=>rev===next.revision?{revision:rev,digest,files:{}}:read(rev,digest);
+ Object.assign(x.task,{status:'archived',result:{actor:'linux-pool-onboarding',evidence:{continuation_task_id:id}}});
+ x.source.payload.node_onboarding.execution_task_id=id;x.machine.metadata.onboarding.execution_task_id=id;
+ const child={id,status:'in_progress',executor_kind:'linux-pool-controller',created_by:'linux-pool-onboarding',claimed_by:'linux-pool-onboarding',payload:{linux_onboarding:next}};
+ await expect(recovery.authorize(x.db,child,x.source,x.machine)).resolves.toBeUndefined();
+ next.previous_attempt.binding='0'.repeat(64);await expect(recovery.authorize(x.db,child,x.source,x.machine)).rejects.toThrow('linux_pool_bootstrap_recovery_unconfirmed');
+ next.previous_attempt.binding=hash(JSON.stringify({machine_registry_id:x.machine.id,pool:JSON.parse(old.payload.linux_onboarding.policy_json).pool,revision:old.payload.linux_onboarding.revision,sources:read(old.payload.linux_onboarding.revision,old.payload.linux_onboarding.artifact_digest).files,upgrade:JSON.parse(old.payload.linux_onboarding.upgrade_json),previous_attempt:old.payload.linux_onboarding.previous_attempt}));
+ const marker=next.upgrade_cleanup_runtime_id;delete next.upgrade_cleanup_runtime_id;await expect(recovery.authorize(x.db,child,x.source,x.machine)).rejects.toThrow('linux_pool_bootstrap_recovery_unconfirmed');next.upgrade_cleanup_runtime_id=marker;
+ x.row.evidence_result.evidence.signature='0'.repeat(64);await expect(recovery.authorize(x.db,child,x.source,x.machine)).rejects.toThrow('linux_pool_bootstrap_recovery_unconfirmed');
+});
