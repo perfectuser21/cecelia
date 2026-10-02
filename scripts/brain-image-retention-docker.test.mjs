@@ -38,6 +38,7 @@ test('实际子进程adapter读取完整Docker身份及同卷statfs，仅完整I
 test('daemon/data卷身份变化及短ID拒绝，Docker非零或超限回执不可当成功',async t=>{
  const x=await setup(t);await x.store.withLock(async lease=>{
   x.state.daemon='other';await x.save();await assert.rejects(x.docker.snapshot(lease),/DAEMON_IDENTITY_CHANGED/);
+  await assert.rejects(x.docker.remove(image,lease),/DAEMON_IDENTITY_CHANGED/);
   x.state.daemon='daemon';x.state.data='/other';await x.save();await assert.rejects(x.docker.snapshot(lease),/DAEMON_IDENTITY_CHANGED/);
   x.state.data='/mnt/data/docker';x.state.fail=true;await x.save();await assert.rejects(x.docker.remove(image,lease),/DOCKER_UNCONFIRMED/);
   await assert.rejects(x.docker.remove('aaaa',lease),/INVALID_IMAGE/);

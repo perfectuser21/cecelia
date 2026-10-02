@@ -528,6 +528,8 @@ jobs:
             exit 1
           fi
           echo "共执行 $found 个 ops shell 测试"
+      - name: US Brain image retention lock and journal contracts
+        run: node --test scripts/brain-image-retention.test.mjs scripts/brain-image-retention-docker.test.mjs scripts/brain-image-retention-ledger.test.mjs
 
   # ─── Dashboard 部署放行闸 smoke（repo 根 scripts/smoke/）──────
   # 守 deploy-local.sh 的两段式部署：自检 → 起常驻 staging + 写放行标记 →【停住】，
