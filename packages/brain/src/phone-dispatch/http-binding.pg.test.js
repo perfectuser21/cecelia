@@ -30,6 +30,7 @@ it('真实PG保留旧版本binding，版本不可变且默认零grant',async()=>
  const next=await version({...endpoint(),hub_boot_id:'next-observed-hub-boot'});await pool.query('UPDATE execution_nodes SET current_version_id=$1 WHERE machine_registry_id=$2',[next,registryId]);
  expect((await resolvePhoneHubBinding(pool,{executionVersionId:id,machineId:'fixture-machine'})).hub_boot_id).toBe(endpoint().hub_boot_id);
  expect((await pool.query('SELECT * FROM execution_grants')).rows).toEqual([]);
+ expect((await pool.query("SELECT version FROM schema_version WHERE version='511'")).rows).toEqual([{version:'511'}]);
 });
 it('既有无HTTP节点仍合法，不派生URL或创建grant',async()=>{
  const id=randomUUID();await pool.query("INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,platform,endpoints,profile,config_hash) VALUES($1,$2,$3,'legacy-v1','old-worker','darwin',$4,'{}','old')",[id,registryId,++revision,{worker:'http://old:5231/'}]);
