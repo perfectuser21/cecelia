@@ -64,3 +64,23 @@ it('外部运行必须固定本机完整快照摘要，异摘要重传冲突',as
   expect((await post('fixed-runtime',{...input,runtime_snapshot_sha256:'0'.repeat(64)})).status).toBe(409);
   expect((await service.getRunDefinitionBinding(fixture.db,'fixed-runtime')).binding.payload.runtime_snapshot_sha256).toBe(input.runtime_snapshot_sha256);
 });
+it('首次绑定须当前部署仍匹配，同release观测更新可用原good，已绑定历史重放不重判',async()=>{
+  const input=fixture.runInput(release,observation);expect((await post('historical',input)).status).toBe(201);
+  const at=Date.now();
+  await releases.recordReleaseObservation(fixture.db,release.id,{...fixture.observationInput,event_key:'new-drift',components:[],observed_at:new Date(at+1000).toISOString()},{trustedCollector:'fixture-collector'});
+  expect((await post('historical',input)).status).toBe(200);expect((await post('new-after-drift',input)).status).toBe(409);
+  await releases.recordReleaseObservation(fixture.db,release.id,{...fixture.observationInput,event_key:'new-good',observed_at:new Date(at+2000).toISOString()},{trustedCollector:'fixture-collector'});
+  expect((await post('new-after-good',input)).status).toBe(201);
+  const other=(await releases.createRelease(fixture.db,{...fixture.releaseInput,release_key:'replacement'})).release;
+  await releases.recordReleaseObservation(fixture.db,other.id,{...fixture.observationInput,event_key:'replacement',observed_at:new Date(at+3000).toISOString()},{trustedCollector:'fixture-collector'});
+  expect((await releases.getReleaseGate(fixture.db,release.id)).deployed).toBe(false);
+  expect((await post('new-after-replacement',input)).status).toBe(409);
+  expect((await post('historical',input)).status).toBe(200);
+});
+it('调用方事务内绑定回滚时不残留运行身份',async()=>{
+  expect(service.bindRunDefinitionInTransaction).toBeTypeOf('function');
+  const db=await fixture.db.connect();
+  try{await db.query('BEGIN');await service.bindRunDefinitionInTransaction(db,'rolled-back',fixture.runInput(release,observation));await db.query('ROLLBACK');}
+  finally{db.release();}
+  expect(await service.getRunDefinitionBinding(fixture.db,'rolled-back')).toBeNull();
+});
