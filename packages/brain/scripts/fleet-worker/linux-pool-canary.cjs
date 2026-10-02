@@ -94,7 +94,7 @@ function isMissingContainerError(error,reference){
   .some(prefix=>String(error.stderr).trim()===prefix+reference);
 }
 
-async function runLinuxPoolCanary({nonce},deps={}){
+async function runLinuxPoolCanary({nonce,cleanupReceipt=false},deps={}){
  if((deps.platform??process.platform)!=='linux'||(deps.getuid??process.getuid)()!==0||!deps.lockHeld||!HEX.test(nonce??''))fail();
  const run=deps.runCommand??command,read=deps.readText??readBounded,readlink=deps.readlink??fs.promises.readlink;
  if(!['/usr/lib/systemd/systemd','/lib/systemd/systemd'].includes(await readlink('/proc/1/exe')))fail();
@@ -114,7 +114,17 @@ async function runLinuxPoolCanary({nonce},deps={}){
    ||String(await read('/proc/sys/kernel/random/boot_id')).trim()!==r.host_boot_id)fail();
   const current=await identity({...config,profile,nonce,fetchFn:deps.fetchFn});if(current.worker_boot_id!==r.worker_boot_id)fail();return state.envelope;
  }
- if(state?.cleanup_confirmed)fail();
+ const cleanupEnvelope=async()=>{
+  if(!cleanupReceipt||!state?.cleanup_confirmed||!HEX.test(state.container_id??'')&&!(state.not_started===true&&state.container_id===null))fail();
+  const config=await(deps.loadConfiguration??(()=>configuration(run)))(),profile=validateLinuxPoolProfile(config.input);
+  if(state.config_digest!==profile.config_digest||state.revision!==config.revision||!HEX.test(config.token??''))fail();
+  if(!state.cleanup_envelope){const receipt={schema_version:'linux-pool-canary-cleanup/v1',nonce,machine_id:profile.machine_id,
+    ...Object.fromEntries(['machine_registry_id','config_digest','revision','host_boot_id','worker_boot_id','daemon_id','container_id','image_id','started_at'].map(k=>[k,state[k]])),
+    completed_at:new Date().toISOString(),execution:false,cleanup_confirmed:true,not_started:state.not_started===true};
+   state.cleanup_envelope={receipt,signature:createHmac('sha256',config.token).update(JSON.stringify(receipt)).digest('hex')};store.save(state);}
+  return state.cleanup_envelope;
+ };
+ if(state?.cleanup_confirmed)return cleanupEnvelope();
  const stable=async()=>{if(String(await read('/proc/sys/kernel/random/boot_id')).trim()!==boot||await daemon()!==daemonId)fail();};
  const inspect=async reference=>{try{const values=JSON.parse(await docker(['inspect','--type=container',reference]));if(!Array.isArray(values)||values.length!==1)fail();return values[0];}
   catch(error){if(isMissingContainerError(error,reference))return null;throw error;}};
@@ -130,7 +140,8 @@ async function runLinuxPoolCanary({nonce},deps={}){
  if(state){
   if(state.schema_version!=='linux-pool-canary-state/v1'||state.name!=='cecelia-pool-canary-'+nonce||!state.labels
    ||state.labels['cecelia.pool.nonce']!==nonce||state.container_id!==null&&!HEX.test(state.container_id??''))fail();
-  try{if(state.phase==='intent'&&state.container_id===null){state.cleanup_confirmed=true;}else await cleanup();state.phase='failed';store.save(state);}catch{state.phase='unconfirmed';try{store.save(state);}catch{}}
+  try{if(state.phase==='intent'&&state.container_id===null){state.cleanup_confirmed=true;state.not_started=true;}else await cleanup();state.phase='failed';store.save(state);}catch{state.phase='unconfirmed';try{store.save(state);}catch{}}
+  if(cleanupReceipt&&state.cleanup_confirmed)return cleanupEnvelope();
   fail(); // 恢复只清理，绝不重跑旧canary或给旧证据重新签当前时间。
  }
  store.assertNoPending();
@@ -167,26 +178,26 @@ async function runLinuxPoolCanary({nonce},deps={}){
    started_at:state.started_at,completed_at:new Date().toISOString(),proof,execution:false,pool_verified:true,cleanup_confirmed:true};
   state.envelope={receipt,signature:createHmac('sha256',config.token).update(JSON.stringify(receipt)).digest('hex')};state.phase='complete';store.save(state);return state.envelope;
  }catch{
-  delete state.envelope;if(!createAttempted)state.cleanup_confirmed=true;state.phase='unconfirmed';try{store.save(state);}catch{}
+  delete state.envelope;if(!createAttempted){state.cleanup_confirmed=true;state.not_started=true;}state.phase='unconfirmed';try{store.save(state);}catch{}
   try{if(!state.cleanup_confirmed)await cleanup();state.phase='failed';store.save(state);}catch{state.phase='unconfirmed';try{store.save(state);}catch{}}
   fail();
  }
 }
 // flock由内核随进程退出释放，崩溃不会留下需猜测PID归属的陈旧文件锁。
 if(require.main===module){
- const args=process.argv.slice(2);
+ const args=process.argv.slice(2),cleanupReceipt=args[2]==='--cleanup-receipt';if(cleanupReceipt)args.splice(2,1);
  (async()=>{
   if(process.platform!=='linux'||process.getuid()!==0||args[0]!=='--nonce'||!HEX.test(args[1]??'')||![2,3].includes(args.length))fail();
   if(args.length===2){
    privateDirectory('/run/cecelia',0);const lock='/run/cecelia/linux-pool.canary.lock';let fd;
    try{fd=fs.openSync(lock,fs.constants.O_CREAT|fs.constants.O_RDWR|fs.constants.O_NOFOLLOW,0o600);const s=fs.fstatSync(fd);if(!s.isFile()||s.uid!==0||(s.mode&0o777)!==0o600||s.nlink!==1)fail();}finally{if(fd!==undefined)fs.closeSync(fd);}
-   const child=spawn('/usr/bin/flock',['--nonblock','--conflict-exit-code','75',lock,process.execPath,__filename,...args,'--under-lock'],
+   const child=spawn('/usr/bin/flock',['--nonblock','--conflict-exit-code','75',lock,process.execPath,__filename,...args,...(cleanupReceipt?['--cleanup-receipt']:[]),'--under-lock'],
     {stdio:'inherit',env:{PATH:'/usr/bin:/bin',HOME:'/'}});
    child.once('error',()=>{process.stderr.write('linux_pool_canary_unconfirmed\n');process.exitCode=1;});child.once('exit',code=>{process.exitCode=code===0?0:1;});return;
   }
   if(args[2]!=='--under-lock'||await fs.promises.readlink('/proc/'+process.ppid+'/exe')!=='/usr/bin/flock')fail();
   const release=acquireCanaryInstallFence({nonce:args[1],underFlock:true});
-  try{const envelope=await runLinuxPoolCanary({nonce:args[1]},{lockHeld:true});process.stdout.write(JSON.stringify(envelope)+'\n');}finally{release();}
+  try{const envelope=await runLinuxPoolCanary({nonce:args[1],cleanupReceipt},{lockHeld:true});process.stdout.write(JSON.stringify(envelope)+'\n');}finally{release();}
  })().catch(()=>{process.stderr.write('linux_pool_canary_unconfirmed\n');process.exitCode=1;});
 }
 module.exports={runLinuxPoolCanary,acquireCanaryInstallFence,isMissingContainerError,createCanaryJournal:journal,readLinuxPoolIdentity:identity,assertCanaryDirectory:privateDirectory};

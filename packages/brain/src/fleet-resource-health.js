@@ -1,3 +1,4 @@
+import {projectGpuObservation} from './fleet-gpu-observation.js';
 // 与 node-admission 的报告有效期及最大时钟偏差保持一致。
 const MAX_SAMPLE_AGE_MS = 90_000;
 const MAX_FUTURE_SKEW_MS = 30_000;
@@ -29,6 +30,7 @@ export function parseWorkerResources(health, machineId, now = Date.now()) {
   }
   return {
     status: 'online',
+    gpu: projectGpuObservation(health.gpu,now),
     observedAt,
     cpu: { cores: r.cpu_cores, usagePercent: r.cpu_pressure_percent },
     memory: { totalGB: r.memory_bytes / (1024 ** 3), usagePercent: r.memory_pressure_percent },

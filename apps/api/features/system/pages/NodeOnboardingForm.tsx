@@ -16,8 +16,10 @@ function validate(input: NodeOnboardingInput): string | null {
   return null;
 }
 
-export default function NodeOnboardingForm({ onCreated }: { onCreated: (request: NodeOnboardingRequest) => void }) {
-  const [input, setInput] = useState(initial);
+export type ExistingNode = { name: string; address: string; region: NodeOnboardingInput['region'] };
+export default function NodeOnboardingForm({ onCreated, existing }: { onCreated: (request: NodeOnboardingRequest) => void; existing?: ExistingNode }) {
+  const defaults = { ...initial, ...existing };
+  const [input, setInput] = useState(defaults);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submitting = useRef(false);
@@ -35,14 +37,14 @@ export default function NodeOnboardingForm({ onCreated }: { onCreated: (request:
     submitting.current = true; setBusy(true); setError(null);
     try {
       const result = await nodeOnboardingApi.create(data, attempt.current.key);
-      onCreated(result); setInput(initial); attempt.current = null;
+      onCreated(result); setInput(defaults); attempt.current = null;
     } catch (cause) { setError(cause instanceof Error ? cause.message : '接入请求提交失败'); }
     finally { submitting.current = false; setBusy(false); }
   }
   return (
     <form onSubmit={submit} noValidate autoComplete="off" className="space-y-4">
       <fieldset disabled={busy} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <label>机器名称<input className={inputStyle} value={input.name} onChange={event => update('name', event.target.value)} placeholder="例如 hk-node-02" /></label>
+        <label>机器名称<input readOnly={!!existing} className={inputStyle} value={input.name} onChange={event => update('name', event.target.value)} placeholder="例如 hk-node-02" /></label>
         <label>用途<select className={inputStyle} value={input.role} onChange={event => update('role', event.target.value)}>
           <option value="observer">监控节点</option><option value="worker">执行节点</option><option value="service">服务节点</option><option value="database">数据库节点</option>
         </select></label>
@@ -62,6 +64,8 @@ export default function NodeOnboardingForm({ onCreated }: { onCreated: (request:
         <p id="credential-help" className="mt-2 text-xs text-gray-500">仅填写 1Password 引用，凭据保存在 CS Vault。</p>
         <p id="fingerprint-help" className="mt-1 text-xs text-gray-500">首次连接前，请从云控制台核对主机 SHA256 指纹。</p>
       </fieldset>
+      {existing && <p className="text-sm text-gray-500">使用原设备记录；连接地址须与台账中的地址一致。</p>}
+      {input.role === 'worker' && <p className="text-sm text-gray-500">执行验收使用独占脚本槽 1；CPU 最多 2 核且不超过总核数一半，内存池最多 4 GiB，至少保留 2 GiB 和总内存一半。资源不足时等待，验收通过后才启用。</p>}
       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
       <button type="submit" disabled={busy} className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">{busy ? '正在提交…' : '开始接入'}</button>
     </form>

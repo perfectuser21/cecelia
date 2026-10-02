@@ -191,6 +191,14 @@ describe('triggerScriptRun：ssh 传输安全（假传输，不发真 ssh）', (
     expect(spawnFn.calls).toHaveLength(0);
   });
 
+  it('已存脚本含 GPU 声明，派发前终态拒绝且零进程', async () => {
+    const spawnFn = fakeSpawn('DISPATCHED\n');
+    const r = await triggerScriptRun(mkTask({runtime_resources: {gpu: {count: 1}}}), {spawnFn, pool: mkPool()});
+    expect(r).toMatchObject({success: false, reason: 'script_payload_invalid', taskTerminal: true});
+    expect(r.error).toMatch(/GPU/);
+    expect(spawnFn.calls).toHaveLength(0);
+  });
+
   it('远端没回 DISPATCHED 标记 → 不当成功（失败如实）', async () => {
     const r = await triggerScriptRun(mkTask(), { spawnFn: fakeSpawn('weird output\n'), pool: mkPool() });
     expect(r.success).toBe(false);
