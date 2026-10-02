@@ -1,3 +1,4 @@
+import {resolveEnablerSource} from './enabler-definition-sources.js';
 /** 规范注册表的只读清单：真身数量、引用位置和证据缺口分别统计。 */
 import { JOURNEY_ORGANIZATION_SQL } from './journey-organization.js';
 import { listWorkflows } from './workflow-read-service.js';
@@ -5,7 +6,7 @@ import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
 export const pick = (row, keys) => Object.fromEntries(keys.filter(k => row?.[k] !== undefined).map(k => [k, row[k]]));
 export { listSystemReleases, listSystemRuns, readSystemReleaseEvidence, readSystemRunEvidence } from './capability-system-evidence.js';
 function bindingProjection(binding,steps){
-  const result=pick(binding,['kind','repo','path','revision','digest','status','reason','scope','step_key','validation_scope']);
+  const result=pick(binding,['kind','repo','path','revision','digest','status','reason','scope','step_key','validation_scope','enabler_key']);
   if(binding.scope==='step'){
     const matches=(steps||[]).filter(s=>s.locator?.step_key===binding.step_key);
     result.step_id=matches.length===1?matches[0].step_id||null:null;
@@ -45,10 +46,14 @@ export async function readCapabilitySystem(db) {
     content_hash_verified:Boolean(s.source_sha256 && stepSha256({key:s.key,activity:s.activity_key,mode:s.mode,readback:s.readback})===s.source_sha256),
     source_verified:false}));
   // Step内容摘要不能证明Git来源，更不能证明执行成功。
+  const versions=rows.filter(a=>a.version_id).map(a=>({id:a.version_id,activity_id:a.id,source_repo:a.source_repo,source_commit:a.source_commit,
+    payload:{activity_id:a.id,implementation_bindings:a.implementation_bindings||[],steps:a.definition_steps||[]}}));
+  const components=versions.flatMap(a=>a.payload.implementation_bindings).filter(b=>b.status==='verified');
+  const calls=(await db.query('SELECT id,caller_type,caller_id,enabler_id FROM enabler_calls ORDER BY id')).rows;
   const enablers = (await db.query('SELECT id,key,name,kind,impl_ref,active FROM enablers ORDER BY key')).rows.map(e=>{
-    const match=/^([^/@]+\/[^/@]+)@([0-9a-f]{40}):(.+)$/.exec(e.impl_ref || '');
-    const binding=match && activities.flatMap(a=>a.implementation_bindings).find(b=>b.status==='verified'&&b.repo===match[1]&&b.revision===match[2]&&b.path===match[3]&&/^sha256:[0-9a-f]{64}$/.test(b.digest));
-    return {...e,source_verified:Boolean(binding),source_evidence:binding||null};
+    const sources=calls.filter(c=>c.enabler_id===e.id).map(c=>resolveEnablerSource({...c,enabler_key:e.key,impl_ref:e.impl_ref,active:e.active},versions,components));
+    return {...e,source_verified:sources.length>0&&sources.every(c=>c.source_status==='verified'),
+      validation_scope:'reference_only',symbol_status:'unverified',calls:sources,source_evidence:sources.flatMap(c=>c.source_evidence)};
   });
   const gaps=[];
   for(const j of journeys){

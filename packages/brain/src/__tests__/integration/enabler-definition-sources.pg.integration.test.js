@@ -20,6 +20,16 @@ it('真实同步AV显式Enabler来源经HTTP冻结，旧legacy符号保未知且
  expect(enabler).toMatchObject({source_verified:true,validation_scope:'reference_only',symbol_status:'unverified'});
  expect(enabler.calls).toContainEqual(expect.objectContaining({id:f.call,source_status:'verified'}));
  expect(registry.activities.some(a=>a.implementation_bindings.some(b=>b.enabler_key==='test-lock'))).toBe(true);
+ const next='c'.repeat(40);
+ for(const doc of Object.values(f.contracts.docs))for(const a of doc.activities)for(const b of a.implementation_bindings||[])b.revision='contract';
+ await f.sync(next,{bindings:[{kind:'code',repo:'perfectuser21/zenithjoy-workspace',path:'src/controller.js',enabler_key:'test-lock'}]});
+ const versions=(await f.db.query('SELECT * FROM workflow_definition_versions WHERE source_commit=$1',[next])).rows;
+ const input={...f.releaseInput,release_key:'next-source',ci_evidence:[],workflows:versions.map(w=>({workflow_definition_version_id:w.id,payload_sha256:w.payload_sha256})),components:f.releaseInput.components.map(c=>({...c,revision:next}))};
+ const newer=await request(app).post('/releases').send(input);expect(newer.status,newer.body).toBe(201);
+ const nextCall=newer.body.release.payload.allowed_enabler_calls.find(c=>c.id===f.call);
+ expect(nextCall.source_status).toBe('verified');expect(nextCall.source_evidence.every(e=>e.revision===next)).toBe(true);
+ expect(nextCall.source_evidence[0].activity_definition_version_id).not.toBe(call.source_evidence[0].activity_definition_version_id);
+ expect((await request(app).get('/releases/'+release.id)).body.release.manifest_sha256).toBe(release.manifest_sha256);
  await f.db.query("UPDATE enablers SET impl_ref='changed/path',active=false WHERE id=$1",[f.enabler]);
  const frozen=await request(app).get('/releases/'+release.id);expect(frozen.body.release.payload.allowed_enabler_calls).toEqual(release.payload.allowed_enabler_calls);
 });
