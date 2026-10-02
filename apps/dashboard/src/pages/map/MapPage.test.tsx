@@ -5,7 +5,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import planningManifest from '@features/core/planning';
-import MapPage from '@features/core/planning/pages/MapPage';
+import MapPage from '@features/core/planning/pages/LegacyFeatureMap';
 import ActivityFlowMetrics from '@features/core/planning/components/ActivityFlowMetrics';
 import systemHubManifest from '@features/core/system-hub';
 
@@ -125,6 +125,7 @@ describe('Universal Map 页面权威', () => {
     });
     render(<MapPage />);
     expect(await screen.findByText('0.5秒')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('旧地图来源仓库'), { target: { value: 'cecelia' } });
     fireEvent.click(await screen.findByRole('button', { name: /F0 事实投影/ }));
     expect((await screen.findAllByText('Error')).length).toBeGreaterThan(0);
     expect(screen.getByText('1.5秒')).toBeInTheDocument();
@@ -153,7 +154,7 @@ describe('Universal Map 页面权威', () => {
   it('Level 1 展示冻结清单、投影元数据、横切件和不适用前置', async () => {
     render(<MapPage />);
 
-    expect(await screen.findByRole('heading', { name: '通用地图' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Feature 地图' })).toBeInTheDocument();
     expect(await screen.findByText('Manifest v1')).toBeInTheDocument();
     expect(screen.getByText(`投影 ${'b'.repeat(12)}`)).toBeInTheDocument();
     expect(screen.getByText(`cecelia ${revision.slice(0, 12)}`)).toBeInTheDocument();
@@ -170,6 +171,8 @@ describe('Universal Map 页面权威', () => {
   it('从 Capability 下钻到 Feature/Assertion，再显示真实 receipt', async () => {
     render(<MapPage />);
 
+    await screen.findByRole('heading',{name:'Feature 地图'});
+    fireEvent.change(await screen.findByLabelText('旧地图来源仓库'),{target:{value:'cecelia'}});
     fireEvent.click(await screen.findByRole('button', { name: /F0 事实投影/ }));
     await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('/nodes/F0?scope=cecelia')));
     expect(await screen.findByRole('heading', { name: 'Level 2 · 事实投影' })).toBeInTheDocument();
@@ -233,6 +236,7 @@ describe('Universal Map 页面权威', () => {
     fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'zenithjoy-workspace' } });
     fireEvent.click(screen.getByRole('button', { name: '加载' }));
     await waitFor(() => expect(global.fetch).toHaveBeenCalledWith('/api/brain/map?scope=zenithjoy-workspace'));
+    fireEvent.change(await screen.findByLabelText('旧地图来源仓库'),{target:{value:'zenithjoy-workspace'}});
 
     fireEvent.click(await screen.findByRole('button', { name: /F0 事实投影/ }));
     fireEvent.click(await screen.findByRole('button', { name: /投影摘要稳定/ }));

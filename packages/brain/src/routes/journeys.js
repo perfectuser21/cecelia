@@ -325,6 +325,7 @@ router.get('/journey_steps', async (req, res) => {
     const params = [];
     const clauses = [];
     if (req.query.journey_id) { params.push(req.query.journey_id); clauses.push(`journey_id=$${params.length}`); }
+    if (req.query.activity_id) { params.push(req.query.activity_id); clauses.push(`id=$${params.length}`); }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     params.push(limit);
     const { rows } = await pool.query(

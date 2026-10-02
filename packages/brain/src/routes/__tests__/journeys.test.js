@@ -797,6 +797,15 @@ describe('近七日活动过程指标 API', () => {
     expect(res.body[0].flow_metrics).toEqual(metrics);
     expect(res.body[1].flow_metrics).toEqual([]);
   });
+  it('新能力地图按活动UUID精确读取，绑定SQL参数且不受列表截断影响', async () => {
+    const id = '7d312fd8-10b0-4f23-99ec-535a6e782326';
+    mockQuery.mockImplementation(async (sql) => ({ rows: String(sql).includes('activity_flow_metrics') ? [] : [{ id }] }));
+    const res = await get(`journey_steps?activity_id=${id}`);
+    expect(res.status).toBe(200);
+    expect(mockQuery.mock.calls[0][0]).toContain('WHERE id=$1');
+    expect(mockQuery.mock.calls[0][1]).toEqual([id, 100]);
+    expect(res.body).toEqual([{ id, flow_metrics: [] }]);
+  });
   it('仅 activity 格子接线，step/enabler 保持空，颜色不变', async () => {
     mockQuery.mockImplementation(async (sql) => ({ rows: String(sql).includes('activity_flow_metrics') ? metrics : [
       { id: 'cell-a', step_id: 'a1', activity_id: 'a1', cell_level: 'activity', cell_kind: 'element', cell_status: 'red' },
