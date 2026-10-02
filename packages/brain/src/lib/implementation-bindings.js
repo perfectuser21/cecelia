@@ -1,9 +1,14 @@
 /** 固定revision的引用核验≠业务可用验收；无法确认的旧描述及符号明确unresolved。 */
 import { createHash } from 'node:crypto';
 import yaml from 'js-yaml';
-export async function validateImplementationBindings(contract,readBinding) {
+export async function validateImplementationBindings(contract,readBinding,source) {
   const bindings=[];
   async function add(binding,location) {
+    const declared = binding;
+    if (binding?.revision === 'contract') {
+      if (binding.repo !== source?.repo || !/^[0-9a-f]{40}$/.test(source?.commit || '')) throw Error('contract实现版本必须来自同仓固定契约来源');
+      binding = { ...binding, revision: source.commit };
+    }
     if(!binding||!['skill','code'].includes(binding.kind)) throw Error('实现绑定kind必须是skill/code');
     if(!/^[\w.-]+\/[\w.-]+$/.test(binding.repo||'')) throw Error('实现绑定repo无效');
     if(!/^[0-9a-f]{40}$/.test(binding.revision||'')) throw Error('实现绑定revision必须是固定40位commit');
@@ -16,7 +21,7 @@ export async function validateImplementationBindings(contract,readBinding) {
     const digest=`sha256:${contentSha}`;
     if(binding.digest!==undefined&&binding.digest!==digest) throw Error('实现绑定digest不匹配');
     if(binding.sha256!==undefined&&binding.sha256!==contentSha) throw Error('实现绑定digest不匹配');
-    const result={...binding,...location,raw:binding,digest,content_sha256:contentSha,validation_scope:'reference_only',status:'verified'};
+    const result={...binding,...location,raw:declared,digest,content_sha256:contentSha,validation_scope:'reference_only',status:'verified'};
     if(binding.kind==='skill') {
       const frontmatter=content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
       const metadata=frontmatter?yaml.load(frontmatter[1]):null;
