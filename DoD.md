@@ -69,3 +69,18 @@
 
 - [x] [BEHAVIOR] headed 孤儿设备锁：真实普通任务占锁/删除/清扫完整三NULL与幂等；共享闸忙55P03、未知新占锁、部分清理、换设备、重绑、非RC与owned历史状态拒绝且整行保留；仅私有schema实际065/448/509及外键，callback SQL语义fixture保原终态断言；新smoke受原生产守卫与已核DB目标固定，执行真实HTTP接管/提交后handoff和设备PG。
   Test: manual:bash -c 'node --test packages/quality/tests/headed-takeover-smoke.node-test.mjs && cd packages/brain && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/headed-takeover.pg.integration.test.js src/__tests__/integration/device-lock-helpers.test.js src/__tests__/integration/callback-processor.integration.test.js --maxWorkers=1 --minWorkers=1'
+
+- [x] [BEHAVIOR] directoryschema 六层关系指向、稳定ID与机器列齐全；全库预检拒绝错类型/错目标，补缺幂等且真实响应读回，保人工列。
+  Test: manual:cd packages/brain && npx vitest run src/projection/__tests__/directory-schema.test.js --maxWorkers=1 --minWorkers=1
+
+- [x] [BEHAVIOR] directoryareas 组织树完整分页与明确身份绑定；原UUID和owner保留，人改名称/上级回灌，事件与改动同事务，错误或留痕失败零部分写，重复幂等。
+  Test: manual:cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/directory-areas.pg.integration.test.js src/projection/__tests__/directory-areas.test.js --maxWorkers=1 --minWorkers=1
+
+- [x] [BEHAVIOR] directorysource 六层保稳定真身ID与多消费者引用，显式两侧名称绑定，未知目录只报缺口，旧writer标题和收据不覆盖。
+  Test: manual:cd packages/brain && npx vitest run src/projection/__tests__/directory-source.test.js src/projection/__tests__/directory-projector.test.js src/projection/__tests__/directory-runtime.test.js --maxWorkers=1 --minWorkers=1
+
+- [x] [BEHAVIOR] directoryapi 正式鉴权入口白名单配置，单Capability目录bootstrap强读回幂等，schema错误零行写，分批周期与API接线永久覆盖。
+  Test: manual:cd packages/brain && npx vitest run src/projection/__tests__/directory-config.test.js src/routes/__tests__/directory-projection.test.js --maxWorkers=1 --minWorkers=1
+
+- [x] [BEHAVIOR] directoryreceipt 真scratch验证旧writer哈希保留、关系读回失败无成功收据、同页恢复不重复创建、bootstrap正式registry与目标配置同事务。
+  Test: manual:bash packages/brain/scripts/smoke/directory-projection-smoke.sh

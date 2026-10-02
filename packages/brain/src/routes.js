@@ -36,11 +36,14 @@ import impactContractsRouter from './routes/impact-contracts.js';
 import harnessGapsRouter from './routes/gaps.js';
 import agentOpsRouter from './routes/agent-ops.js';
 import crystalRouter from './routes/crystal.js';
+import { createDirectoryProjectionRouter } from './routes/directory-projection.js';
+import directoryPool from './db.js';
 
 export { triggerAutoRCA } from './routes/brain-meta.js';
 export { resolveRelatedFailureMemories } from './routes/shared.js';
 
 const router = Router();
+router.use('/projections/notion/directory', createDirectoryProjectionRouter({ pool: directoryPool }));
 for (const subRouter of [statusRouter, tasksRouter, tickRouter, actionsRouter, executionRouter, goalsRouter, analyticsRouter, brainMetaRouter, opsRouter, publishResultsRouter, publishJobsRouter, capacityBudgetRouter, harnessSelftestRouter]) {
   router.stack.push(...subRouter.stack);
 }
