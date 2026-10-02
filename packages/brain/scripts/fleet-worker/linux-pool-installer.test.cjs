@@ -135,6 +135,7 @@ async function upgradeFixture(){
  x.options.upgradePath='/staging/upgrade.json';x.options.revision='e'.repeat(40);x.put(x.options.upgradePath,JSON.stringify(x.upgrade));
  x.put('/proc/sys/kernel/random/boot_id',boot);x.put('/run/cecelia-script/worker-boot-id',worker,0o644);
  x.put('/sys/fs/cgroup/cecelia.slice/cecelia-workloads.slice/cgroup.procs','');x.put('/sys/fs/cgroup/cecelia.slice/cecelia-workloads.slice/cgroup.events','populated 0\nfrozen 0\n');
+ for(const [k,v] of Object.entries({'cpu.max':'50000 100000','memory.max':'536870912','memory.swap.max':'0','pids.max':'128'}))x.put('/sys/fs/cgroup/cecelia.slice/cecelia-workloads.slice/'+k,v+'\n');
  fs.mkdirSync(path.join(x.root,'var/lib/cecelia/script-runtime'),{recursive:true,mode:0o700});
  x.put('/proc/101/cmdline','/usr/local/libexec/cecelia/toolchain/bin/node\0/usr/local/libexec/cecelia/fleet-worker/linux-script-service.cjs\0');
  x.put('/proc/102/cmdline','/usr/local/libexec/cecelia/toolchain/bin/node\0/usr/local/libexec/cecelia/fleet-worker/linux-pool-server.cjs\0');
@@ -179,5 +180,26 @@ it.each(['boot','worker','source','unit','key','config','child','container','gat
   await expect(install(x)).rejects.toThrow('linux_pool_install_upgrade_unconfirmed');
   expect(x.calls.some(([,a])=>a[0]==='stop')).toBe(false);
   expect(fs.readFileSync(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/revision'),'utf8').trim()).toBe('c'.repeat(40));
+ }finally{x.cleanup();}
+});
+
+it('升级stop回执成功但原服务PID仍活时禁止发布新字节',async()=>{
+ const x=await upgradeFixture();try{
+  const run=x.deps.runCommand;x.deps.runCommand=async(c,a)=>a.includes('--property=ActiveState,MainPID')?{stdout:'ActiveState=active\nMainPID=101\n'}:run(c,a);
+  await expect(install(x)).rejects.toThrow('linux_pool_install_failed');
+  expect(fs.readFileSync(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/revision'),'utf8').trim()).toBe('c'.repeat(40));
+ }finally{x.cleanup();}
+});
+it('升级实际cgroup预算不同于固定unit与profile时零stop拒绝',async()=>{
+ const x=await upgradeFixture();try{
+  x.put('/sys/fs/cgroup/cecelia.slice/cecelia-workloads.slice/memory.max','1073741824');
+  await expect(install(x)).rejects.toThrow('linux_pool_install_upgrade_unconfirmed');expect(x.calls.some(([,a])=>a[0]==='stop')).toBe(false);
+ }finally{x.cleanup();}
+});
+it('升级回滚未知保留持久安装锁和原恢复快照，后续安装不能再次进入',async()=>{
+ const x=await upgradeFixture();try{
+  x.deps.fs={...fs,renameSync:()=>{throw Error('writes unavailable');}};
+  await expect(install(x)).rejects.toThrow('linux_pool_install_rollback_failed');
+  expect(fs.existsSync(path.join(x.root,'run/cecelia/linux-pool.install.lock'))).toBe(true);
  }finally{x.cleanup();}
 });
