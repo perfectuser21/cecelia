@@ -2,6 +2,7 @@ import { beforeEach,afterEach,it,expect } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import express from 'express';
 import request from 'supertest';
+import { minimumMapSchema } from '../fixtures/minimum-map-schema.js';
 import { versionsDatabase,seedWorkflows } from '../fixtures/definition-versions-db.js';
 import { contractsFixture,HEAD } from '../fixtures/shared-activity-contracts.js';
 import { syncActivityContracts } from '../../activity-contract-sync.js';
@@ -12,6 +13,7 @@ const query=(extra={})=>({scope:'phones',kind:'code',repo,path,revision:HEAD,...
 const get=(extra={})=>request(app).get('/api/brain/map/implementation-consumers').query(query(extra));
 async function seedMap(scope,capIds=capabilities,{bound=true,revision=HEAD}={}) {
   const decision=randomUUID(),manifestId=randomUUID(),runId=randomUUID();
+  await db.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','map','消费者测试','active')",[decision]);
   const manifest={scope_key:scope,schema_version:1,source_decision_id:decision,value_streams:[{key:'V',brain_binding:{entity_type:'value_stream',entity_id:ids.valueStream,source_repo:repo,source_revision:revision}}],capabilities:capIds.map((id,i)=>({key:`C${i}`,value_stream_key:'V',brain_binding:bound?{entity_type:'capability',entity_id:id,source_repo:repo,source_revision:revision}:undefined}))};
   const registryRepo=scope==='phones'?repo:`map-${scope}`;
   await db.query(`INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES($1,$2,'legacy-ledger-v1',$3)`,[scope,registryRepo,{source_repo:repo}]);
@@ -22,7 +24,7 @@ async function seedMap(scope,capIds=capabilities,{bound=true,revision=HEAD}={}) 
 }
 beforeEach(async()=>{
   fixture=await versionsDatabase();db=fixture.db;ids=await seedWorkflows(db);await fixture.migrate();
-  for(const table of ['map_scope_repositories','map_manifest_versions','map_projection_runs','map_projection_nodes','fact_snapshot_headers','graph_snapshot_versions','graph_edge_snapshots','journey_step_links'])await db.query(`CREATE TABLE ${table}(LIKE public.${table} INCLUDING ALL)`);
+  await minimumMapSchema(db);
   contracts=contractsFixture();contracts.docs.keyword_acquisition.activities[0].implementation_bindings=[{kind:'code',repo,path,revision:HEAD}];contracts.refresh();
   await syncActivityContracts(db,{...contracts,readBinding:async()=>'export const lock = true;\n'});
   capabilities=(await db.query('SELECT capability_id FROM workflows ORDER BY key')).rows.map(r=>r.capability_id);

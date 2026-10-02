@@ -1,5 +1,8 @@
 import { beforeEach,afterEach,describe,it,expect,vi } from 'vitest';
 import express from 'express';
+import pg from 'pg';
+import {DB_DEFAULTS} from '../../db-config.js';
+import {privateFixtureDatabase} from '../fixtures/private-fixture-db.js';
 import request from 'supertest';
 import { randomUUID, createHash } from 'node:crypto';
 import { versionsDatabase,seedWorkflows } from '../fixtures/definition-versions-db.js';
@@ -145,4 +148,22 @@ describe('不可变能力定义版本',()=>{
     await expect(insert({workflow_id:ids.benchmark,contract:{},activities:[]})).rejects.toThrow();
   });
 
+});
+
+it('私有fixture真实建表和外键只归己schema，无public复制且close释放多连接后删除自己的schema',async()=>{
+ const audit=[];const original=pg.Client.prototype.query;const spy=vi.spyOn(pg.Client.prototype,'query').mockImplementation(function(...args){audit.push(typeof args[0]==='string'?args[0]:args[0].text);return original.apply(this,args);});
+ let own;try{
+  own=await versionsDatabase();expect((await own.db.query('SELECT current_database() db,current_schema() schema')).rows[0]).toEqual({db:DB_DEFAULTS.database,schema:own.schema});
+  const foreign=(await own.db.query("SELECT target.nspname FROM pg_constraint c JOIN pg_class source ON source.oid=c.conrelid JOIN pg_namespace origin ON origin.oid=source.relnamespace JOIN pg_class referenced ON referenced.oid=c.confrelid JOIN pg_namespace target ON target.oid=referenced.relnamespace WHERE c.contype='f' AND origin.nspname=current_schema() AND target.nspname<>current_schema()")).rows;expect(foreign).toEqual([]);
+  const pool=own.createPool(2),a=await pool.connect(),b=await pool.connect();try{expect((await a.query('SELECT pg_backend_pid() id')).rows[0].id).not.toBe((await b.query('SELECT pg_backend_pid() id')).rows[0].id);}finally{a.release();b.release();}
+  await own.close();expect((await db.query('SELECT nspname FROM pg_namespace WHERE nspname=$1',[own.schema])).rows).toEqual([]);
+  expect(audit.some(q=>/LIKE\s+public\.|SET\s+search_path\s+TO\s+public|CREATE\s+(?:EXTENSION|DATABASE)/i.test(q))).toBe(false);
+ }finally{spy.mockRestore();await own?.close();}
+});
+it('私有fixture真实初始化SQL失败清理自己的schema与client，真实迁移台账和生成列保留',async()=>{
+ let failedSchema;await expect(privateFixtureDatabase('fixturefailure',async client=>{failedSchema=(await client.query('SELECT current_schema() name')).rows[0].name;await client.query('CREATE TABLE broken (');})).rejects.toMatchObject({code:'42601'});
+ expect((await db.query('SELECT nspname FROM pg_namespace WHERE nspname=$1',[failedSchema])).rows).toEqual([]);
+ expect((await db.query("SELECT version FROM schema_version ORDER BY version")).rows.map(r=>r.version)).toEqual(['059','494','495']);
+ expect((await db.query("SELECT is_generated FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='spans' AND column_name='duration_ms'")).rows).toEqual([{is_generated:'ALWAYS'}]);
+ const root=(await db.query('SELECT id FROM journeys WHERE parent_journey_id IS NULL LIMIT 1')).rows[0].id;await expect(db.query("INSERT INTO workflows(capability_id,key,name,channel) VALUES($1,'invalid-root','wrong','fixture')",[root])).rejects.toThrow('must reference a capability');
 });

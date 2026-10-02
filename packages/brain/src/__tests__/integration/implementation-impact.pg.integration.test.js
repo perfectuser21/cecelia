@@ -73,8 +73,8 @@ it('同revision多投影须显式digest消歧，绑定来源漂移不能伪verif
   await db.query("INSERT INTO map_projection_runs(scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES($1,$2,$3,$4,'other-projector',$5,'superseded',NOW())",['phones',projection.manifest_version_id,projection.manifest_digest,projection.fact_revisions,'e'.repeat(64)]);
   let r=await post();expect(r.status,r.body).toBe(200);expect(r.body.head.gaps).toContainEqual(expect.objectContaining({code:'projection_snapshot_ambiguous'}));expect(r.body.mapping_status).toBe('unknown');
   r=await post({head_projection_digest:projection.projection_digest});expect(r.status,r.body).toBe(200);expect(r.body.mapping_status).toBe('verified');
-  await db.query("UPDATE map_manifest_versions SET manifest=jsonb_set(manifest,'{capabilities,0,brain_binding,source_revision}',to_jsonb($1::text)) WHERE status='active'",[BASE]);
-  r=await post({head_projection_digest:projection.projection_digest});expect(r.status,r.body).toBe(200);expect(r.body.mapping_status).toBe('unknown');expect(r.body.head.gaps).toContainEqual(expect.objectContaining({code:'capability_source_mismatch'}));
+  const drift=await map(HEAD,capabilities,'phones','phone-source',repo,{capabilityRevision:BASE});
+  r=await post({head_projection_digest:drift.digest});expect(r.status,r.body).toBe(200);expect(r.body.mapping_status).toBe('unknown');expect(r.body.head.gaps).toContainEqual(expect.objectContaining({code:'capability_source_mismatch'}));
 });
 it('逐changed_file核覆盖，已映射共享依赖不能掩盖新入口缺口',async()=>{
   await advance();const r=await post({changed_files:['src/shared-lock.js','src/new-api.js']});
@@ -98,7 +98,6 @@ it('公开历史GET按旧version固定scope地图，head移除能力不能抹去
   const version=(await db.query('SELECT current_definition_version_id id FROM workflows WHERE id=$1',[ids.benchmark])).rows[0].id;
   const cap=(await db.query('SELECT capability_id FROM workflows WHERE id=$1',[ids.keyword])).rows[0].capability_id;
   await advance({remove:true,capIds:[cap]});
-  await db.query('CREATE TABLE fact_snapshot_headers(LIKE public.fact_snapshot_headers INCLUDING ALL)');
   await db.query("INSERT INTO fact_snapshot_headers(kind,repo,source_revision,scanner_version,scanned_at,row_count) VALUES('graph','phone-source',$1,'graph-v1',NOW(),1)",[HEAD]);
   const get=()=>request(app).get('/map/implementation-consumers').query({scope:'phones',kind:'code',repo,path:'src/controller.js',revision:BASE,workflow_version_id:version});
   let r=await get();expect(r.status,r.body).toBe(200);expect(r.body.workflows.map(w=>w.workflow_id)).toEqual([ids.benchmark]);
