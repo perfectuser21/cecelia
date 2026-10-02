@@ -1,11 +1,15 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { beforeEach,afterEach,it,expect } from 'vitest';
 import { releaseEvidenceDatabase } from '../../../__tests__/fixtures/release-evidence-db.js';
 import { createRelease,recordReleaseObservation } from '../../release-index.js';
 import { startRun } from '../../task-run.js';
+import { bindRunDefinition } from '../../run-definition-binding.js';
 let f,input,task;
 beforeEach(async()=>{
   f=await releaseEvidenceDatabase();task=randomUUID();await f.db.query("INSERT INTO tasks(id,title,status) VALUES($1,'固定定义起跑','in_progress')",[task]);
+  await f.db.query('DROP TABLE spans CASCADE');
+  for(const file of ['495_vs_model_spans.sql','513_span_occurrences.sql','515_span_definition_provenance.sql'])await f.db.query(readFileSync(new URL(`../../../../migrations/${file}`,import.meta.url),'utf8'));
   const release=(await createRelease(f.db,f.releaseInput)).release;
   const observation=(await recordReleaseObservation(f.db,release.id,f.observationInput,{trustedCollector:'fixture-collector'})).observation;
   input=f.runInput(release,observation);delete input.source_kind;delete input.external_origin;
@@ -27,4 +31,9 @@ it('同run ID不能被另一个任务冒领，也不改变原Workflow',async()=>
   const other=randomUUID();await f.db.query("INSERT INTO tasks(id,title,status) VALUES($1,'另一个任务','in_progress')",[other]);
   await expect(startRun({taskId:other,runId:'owned',source:'workflow',definition:input},{pool:f.db})).rejects.toThrow();
   expect((await f.db.query("SELECT task_id FROM task_runs WHERE run_id='owned'")).rows[0].task_id).toBe(task);
+});
+it('已登记外部运行不能再由旧起跑入口写成同名内部任务',async()=>{
+  await bindRunDefinition(f.db,'external-fixed',{...input,source_kind:'external',external_origin:'fixture'});
+  expect(await startRun({taskId:task,runId:'external-fixed',source:'legacy-dispatch'},{pool:f.db})).toBeNull();
+  expect((await f.db.query("SELECT * FROM task_runs WHERE run_id='external-fixed'")).rows).toHaveLength(0);
 });
