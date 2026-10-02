@@ -247,3 +247,48 @@ it('等待容量锁期间任务被撤销或换intent，不覆盖新状态也不�
  }finally{await other.query('ROLLBACK');other.release();await pending;}
  expect(calls).toBe(0);expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0].payload.linux_onboarding.nonce).toBe(nonce);
 });
+
+async function installedContinuation(extra={}){
+ let prepared=0;const prepareInstalled=async(_db,task)=>{
+  prepared++;const s=task.payload.linux_onboarding;
+  return {machine_registry_id:s.machine_registry_id,parent_task_id:s.parent_task_id,onboarding_id:s.onboarding_id,request_hash:s.request_hash,
+   phase:'bootstrap',revision:'b'.repeat(40),artifact_digest:'b'.repeat(64),intent_id:randomUUID(),nonce:'c'.repeat(64),expected_version_id:null,
+   policy_json:'preserved-policy',credential_files:{worker_credential_file:'/trusted/worker',execution_credential_file:'/trusted/key'},
+   resume_of_task_id:task.id,upgrade_cleanup_runtime_id:s.last_cleanup_runtime_id,upgrade_json:'{}',previous_attempt:{intent_id:s.intent_id,binding:'d'.repeat(64)}};
+ };
+ const f=flow({step:async()=>{},bootstrapRecovery:{prepareInstalled},...extra}),id=await f.ensure(machine,parent);
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding}',(payload->'linux_onboarding')||$2::jsonb) WHERE id=$1",
+  [id,JSON.stringify({phase:'renew_wait',last_cleanup_runtime_id:randomUUID(),installation_json:'old-install-receipt',upgrade_json:'old-upgrade',previous_attempt:{intent_id:randomUUID(),binding:'e'.repeat(64)}})]);
+ const before=(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];return {f,id,before,get prepared(){return prepared;}};
+}
+it('官方已安装接续并发只建一棒，旧payload完整保留且双指针原子前移，commit前不SSH',async()=>{
+ const x=await installedContinuation();const [a,b]=await Promise.all([x.f.retry(x.id),x.f.retry(x.id)]);
+ expect(a.task_id).not.toBe(x.id);expect(a.task_id).toBe(b.task_id);expect(x.prepared).toBe(1);
+ const old=(await pool.query('SELECT * FROM tasks WHERE id=$1',[x.id])).rows[0],next=(await pool.query('SELECT * FROM tasks WHERE id=$1',[a.task_id])).rows[0];
+ expect(old.status).toBe('archived');expect(old.payload).toEqual(x.before.payload);expect(old.result).toMatchObject({actor:'linux-pool-onboarding',evidence:{continuation_task_id:next.id}});
+ expect(next.parent_task_id).toBe(x.id);expect(next.claimed_by).toBe('linux-pool-onboarding');expect(next.executor_kind).toBe('linux-pool-controller');
+ expect(next.payload.linux_onboarding).toMatchObject({phase:'bootstrap',resume_of_task_id:x.id,upgrade_cleanup_runtime_id:x.before.payload.linux_onboarding.last_cleanup_runtime_id});
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(next.id);
+ expect((await pool.query('SELECT metadata FROM system_registry WHERE id=$1',[machine.id])).rows[0].metadata.onboarding.execution_task_id).toBe(next.id);
+ expect((await pool.query("SELECT payload FROM task_events WHERE task_id=$1 AND event_type='linux_installed_upgrade'",[x.id])).rows).toHaveLength(1);
+});
+it.each(['source_pointer','registry_pointer','phase','foreign_claim','revoked','wrong_kind'])('已安装接续%s漂移零新棒且旧历史不终态',async kind=>{
+ const x=await installedContinuation();
+ if(kind==='source_pointer')await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,execution_task_id}',$2::jsonb) WHERE id=$1",[parent,JSON.stringify(randomUUID())]);
+ if(kind==='registry_pointer')await pool.query("UPDATE system_registry SET metadata=jsonb_set(metadata,'{onboarding,execution_task_id}',$2::jsonb) WHERE id=$1",[machine.id,JSON.stringify(randomUUID())]);
+ if(kind==='phase')await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,phase}','\"refresh_installation\"') WHERE id=$1",[x.id]);
+ if(kind==='foreign_claim')await pool.query("UPDATE tasks SET claimed_by='foreign' WHERE id=$1",[x.id]);
+ if(kind==='revoked')await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,revoked}','true') WHERE id=$1",[x.id]);
+ if(kind==='wrong_kind')await pool.query("UPDATE tasks SET executor_kind='headed-session' WHERE id=$1",[x.id]);
+ await expect(x.f.retry(x.id)).rejects.toThrow();expect(x.prepared).toBe(0);
+ expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);
+ expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[x.id])).rows[0].status).toBe('in_progress');
+});
+it('新棒登记或终态事件失败回滚全部旧状态与双指针',async()=>{
+ let fail=false;const creator=async(...args)=>{const r=await createTask(...args);if(fail)throw Error('transaction-proof');return r;};
+ const x=await installedContinuation({createTask:creator});fail=true;
+ await expect(x.f.retry(x.id)).rejects.toThrow('transaction-proof');
+ expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[x.id])).rows[0]).toEqual(x.before);
+ expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(x.id);
+});
