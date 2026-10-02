@@ -6,7 +6,7 @@ const pageId = '00000000-0000-4000-8000-000000000003';
 const rich = value => ({ rich_text: [{ text: { content: value } }] });
 function fixture({ linked = true, identity = id, parent = dbId, readbackWrong = false, duplicate = false } = {}) {
   let properties = { 'Brain ID': rich(identity) };
-  const query = vi.fn(async sql => ({ rows: sql.includes('FROM projection_links') ? (linked ? [{ entity_type: 'workflows', entity_id: id, external_id: pageId }] : []) : [] }));
+  const query = vi.fn(async sql => ({ rows: sql.includes('FROM projection_links') && sql.includes('entity_type=$1') ? (linked ? [{ entity_type: 'workflows', entity_id: id, external_id: pageId }] : []) : [] }));
   const notionReq = vi.fn(async (_token, path, method, body) => {
     if (path.endsWith('/query')) return { results: duplicate ? [{ id: pageId }, { id: 'duplicate' }] : [], has_more: false };
     if (method === 'PATCH' || path === '/pages') properties = { ...properties, ...body.properties };
