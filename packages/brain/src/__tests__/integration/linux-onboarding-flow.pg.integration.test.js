@@ -16,7 +16,11 @@ const database=process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_U
 if(database!=='cecelia_scratch'&&!(process.env.CI&&database==='cecelia_test'))throw Error('local scratch only');
 const schema='linux_onboard_'+randomUUID().replaceAll('-',''),admin=new pg.Client(options),pool=new pg.Pool({...options,application_name:schema,options:`-c search_path=${schema},public`});
 let machine,parent;
-beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY,title TEXT,task_type TEXT,executor_kind TEXT,created_by TEXT,error_message TEXT,status TEXT,payload JSONB,result JSONB,parent_task_id UUID,claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now(),created_at TIMESTAMPTZ DEFAULT now(),completed_at TIMESTAMPTZ);
+beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY,title TEXT,goal_id UUID,project_id UUID,task_type TEXT,executor_kind TEXT,created_by TEXT,error_message TEXT,status TEXT,payload JSONB,result JSONB,parent_task_id UUID,claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now(),created_at TIMESTAMPTZ DEFAULT now(),completed_at TIMESTAMPTZ);
+ -- 与 migration 461 的生产去重合同一致：包括空 goal/project 和 Notion 专用豁免。
+ CREATE UNIQUE INDEX idx_tasks_dedup_active ON tasks (
+  title,COALESCE(goal_id,'00000000-0000-0000-0000-000000000000'),COALESCE(project_id,'00000000-0000-0000-0000-000000000000')
+ ) WHERE status IN ('queued','in_progress') AND COALESCE(payload->>'dedup_by_notion_page','false')<>'true';
  CREATE TABLE work_routing_receipts(task_id UUID,source TEXT,source_id TEXT,canonical_task_type TEXT);
  CREATE TABLE task_events(task_id UUID,event_type TEXT,payload JSONB,created_at TIMESTAMPTZ DEFAULT now());
  CREATE TABLE capacity_reservations(id UUID,machine_id TEXT,status TEXT);
