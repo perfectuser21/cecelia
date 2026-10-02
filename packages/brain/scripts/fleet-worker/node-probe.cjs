@@ -470,7 +470,7 @@ async function probeFleetWorkerHealth(options = {}) {
     postgresImageDigest,
   });
 
-  report.gpu=await sampleGpu({platform:options.platform??process.platform,execFileFn:options.execFileFn??execFileAsync,now:()=>Date.parse(observedAt)});
+  const gpuObservation=sampleGpu({platform:options.platform??process.platform,execFileFn:options.execFileFn??execFileAsync,now:()=>Date.parse(observedAt)});
 
   if ((options.platform ?? process.platform) === 'linux') {
     report.os.version = 'Linux';
@@ -480,6 +480,7 @@ async function probeFleetWorkerHealth(options = {}) {
       diskPaths: options.diskPaths ?? [options.repoRoot ?? env.CECELIA_REPO_ROOT ?? process.cwd(),
         env.CECELIA_FLEET_DATA_ROOT ?? '/var/lib/cecelia/fleet-worker', tmpdir()],
     });
+    report.gpu=await gpuObservation;
     return report;
   }
 
@@ -666,6 +667,7 @@ async function probeFleetWorkerHealth(options = {}) {
     // The complete fail-closed report above remains safe for admission.
   }
 
+  report.gpu=await gpuObservation;
   return report;
 }
 

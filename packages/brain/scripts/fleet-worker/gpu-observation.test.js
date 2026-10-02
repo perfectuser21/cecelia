@@ -28,3 +28,38 @@ it('实际健康入口附带GPU采样，失败不触发CPU内存字段改写',as
  const health=await probeFleetWorkerHealth(options);expect(health.gpu).toMatchObject({status:'present',devices:[{utilization_percent:7}]});
  expect(health.resources.cpu_cores).toBe(0);expect(health.resources.memory_bytes).toBe(0);
 });
+
+it('真实 Worker HTTP保留GPU白名单，Brain可读取且私有额外字段不外泄',async()=>{
+ const {createFleetWorkerServer}=require('./fleet-worker.cjs');
+ const gpu=await api.sampleGpu({platform:'darwin',execFileFn:async()=>({stdout:sample(0)})});
+ gpu.secret='private';gpu.devices[0].token='private';
+ const server=createFleetWorkerServer({probeHealth:async()=>({gpu,resources:{cpu_cores:4,memory_bytes:8*1024**3}})});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{
+  const response=await fetch(`http://127.0.0.1:${server.address().port}/health`);
+  const health=await response.json();
+  expect(health.gpu).toMatchObject({schema_version:'fleet-gpu-observation/v1',scope:'host',status:'present',devices:[{utilization_percent:0}]});
+  expect(JSON.stringify(health.gpu)).not.toContain('private');
+  const {projectGpuObservation}=await import('../../src/fleet-gpu-observation.js');
+  expect(projectGpuObservation(health.gpu).status).toBe('present');
+  expect(health.resources.cpu_cores).toBe(4);
+ }finally{await new Promise(resolve=>server.close(resolve));}
+});
+
+it('GPU超时与原CPU采样并行，真实HTTP仍在Brain五秒期限内返回',async()=>{
+ const {createFleetWorkerServer}=require('./fleet-worker.cjs');const {probeFleetWorkerHealth}=require('./node-probe.cjs');
+ const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+ const server=createFleetWorkerServer({probeHealth:()=>probeFleetWorkerHealth({machineId:'us-mac-m4',platform:'darwin',
+  execFileFn:async(file,args)=>{
+   if(file==='/usr/sbin/ioreg'){await sleep(1500);throw Error('GPU timed out');}
+   if(file==='sw_vers'){await sleep(3800);return {stdout:'15.5'};}
+   if(file==='sysctl'&&args[1]==='hw.ncpu')return {stdout:'10'};
+   if(file==='sysctl'&&args[1]==='hw.memsize')return {stdout:String(16*1024**3)};
+   return {stdout:''};
+  },statFn:async()=>{throw Error('missing');},fetchFn:async()=>({ok:false}),makeTempDirFn:async()=>{throw Error('fixture');}
+ })});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ try{const response=await fetch(`http://127.0.0.1:${server.address().port}/health`,{signal:AbortSignal.timeout(5000)});
+  expect(response.status).toBe(200);const health=await response.json();expect(health.resources.cpu_cores).toBe(10);expect(health.gpu.status).toBe('unknown');
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+},10000);

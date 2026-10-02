@@ -961,6 +961,7 @@ jobs:
             src/__tests__/integration/account-quota-ledger.pg.integration.test.js \
             src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js \
             src/__tests__/commander-watchdog.pg.integration.test.js \
+            src/__tests__/integration/gpu-http-intake.pg.integration.test.js \
             src/__tests__/integration/gpu-execution-request.pg.integration.test.js \
             src/__tests__/integration/script-executor-chain.pg.integration.test.js \
             src/__tests__/integration/script-executor-constraints.pg.integration.test.js \

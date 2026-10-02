@@ -1,3 +1,4 @@
+import {assertGpuExecutionSupported} from '../lib/gpu-execution-contract.js';
 /**
  * Task Tasks route — 对应 tasks 表（Cecelia 执行任务）
  *
@@ -38,6 +39,8 @@ const CODING_MUTATION_TASK_TYPES = new Set(_CM);
 // POST /tasks — 创建新任务（供外部 agent 如 /architect 注册任务到 Brain 队列）
 router.post('/', async (req, res) => {
   try {
+    assertGpuExecutionSupported(req.body?.payload);
+    assertGpuExecutionSupported(req.body?.metadata);
     let {
       title,
       description = null,
