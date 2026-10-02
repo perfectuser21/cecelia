@@ -1,20 +1,20 @@
 import { buildDirectorySchemas } from '../directory-schema.js';
-export const uid = n => `10000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+export const fixtureEntityId = n => `10000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 export function runtimeFixture() {
-  const dbs=Object.fromEntries(['areas','value_streams','capabilities','workflows','activities','steps'].map((k,i)=>[k,uid(i+1)]));
-  const config={dbs,value_stream_bindings:[{journey_id:uid(22),scope:'cecelia',node_key:'product'}],area_bindings:[]};
-  const source={areas:[{id:uid(21),notion_id:uid(41),name:'组织'}],journeys:[
-    {id:uid(22),name:'产品',kind:'value_stream',area_id:uid(21)},
-    {id:uid(23),name:'能力',kind:'capability',parent_journey_id:uid(22)}],
-    workflows:[{id:uid(24),name:'A',key:'a',capability_id:uid(23)}],
-    activities:[{id:uid(25),name:'动作',capability_key:'cap',activity_key:'one',contract:{}}],
-    steps:[{id:uid(26),key:'step',active:true,activity_id:uid(25),readback:{}}],
-    refs:[{workflow_id:uid(24),activity_id:uid(25),slot_key:'one',sequence_no:1,active:true}],
-    map_nodes:[{scope:'cecelia',node_key:'product',name:'产品',notion_id:uid(42),active:true}]};
+  const dbs=Object.fromEntries(['areas','value_streams','capabilities','workflows','activities','steps'].map((k,i)=>[k,fixtureEntityId(i+1)]));
+  const config={dbs,value_stream_bindings:[{journey_id:fixtureEntityId(22),scope:'cecelia',node_key:'product'}],area_bindings:[]};
+  const source={areas:[{id:fixtureEntityId(21),notion_id:fixtureEntityId(41),name:'组织'}],journeys:[
+    {id:fixtureEntityId(22),name:'产品',kind:'value_stream',area_id:fixtureEntityId(21)},
+    {id:fixtureEntityId(23),name:'能力',kind:'capability',parent_journey_id:fixtureEntityId(22)}],
+    workflows:[{id:fixtureEntityId(24),name:'A',key:'a',capability_id:fixtureEntityId(23)}],
+    activities:[{id:fixtureEntityId(25),name:'动作',capability_key:'cap',activity_key:'one',contract:{}}],
+    steps:[{id:fixtureEntityId(26),key:'step',active:true,activity_id:fixtureEntityId(25),readback:{}}],
+    refs:[{workflow_id:fixtureEntityId(24),activity_id:fixtureEntityId(25),slot_key:'one',sequence_no:1,active:true}],
+    map_nodes:[{scope:'cecelia',node_key:'product',name:'产品',notion_id:fixtureEntityId(42),active:true}]};
   const schemas=buildDirectorySchemas(dbs);
   const databases=new Map(Object.entries(schemas).map(([layer,properties])=>[dbs[layer],{id:dbs[layer],properties:Object.fromEntries(Object.entries(properties).map(([k,v])=>[k,{...v,type:Object.keys(v)[0]}]))}]));
-  const pages=new Map([[uid(41),{id:uid(41),parent:{database_id:dbs.areas},properties:{Name:{title:[{text:{content:'组织'}}]}}}],
-    [uid(42),{id:uid(42),parent:{database_id:dbs.value_streams},properties:{Name:{title:[{text:{content:'产品'}}]}}}]]);
+  const pages=new Map([[fixtureEntityId(41),{id:fixtureEntityId(41),parent:{database_id:dbs.areas},properties:{Name:{title:[{text:{content:'组织'}}]}}}],
+    [fixtureEntityId(42),{id:fixtureEntityId(42),parent:{database_id:dbs.value_streams},properties:{Name:{title:[{text:{content:'产品'}}]}}}]]);
   const links=[],writes=[],memory=new Map(); let next=100;
   const query=async(sql,args=[])=>{
     if(sql.includes('pg_try_advisory_lock'))return{rows:[{locked:true}]};
@@ -40,7 +40,7 @@ export function runtimeFixture() {
       const db=databases.get(id);if(method==='PATCH')Object.assign(db.properties,body.properties);return structuredClone(db);
     }
     if(path==='/pages'){
-      const page={id:uid(next++),parent:body.parent,properties:body.properties};pages.set(page.id,page);return structuredClone(page);
+      const page={id:fixtureEntityId(next++),parent:body.parent,properties:body.properties};pages.set(page.id,page);return structuredClone(page);
     }
     const page=pages.get(id);if(!page)throw new Error('404');
     if(method==='PATCH')Object.assign(page.properties,body.properties);return structuredClone(page);

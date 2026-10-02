@@ -189,7 +189,7 @@ export async function runDirectoryProjection(pool, { token, notionReq = defaultN
       try {
         await projectDirectoryPage(client, { token, dbId: dbs[row.layer], row: { ...row, pageId }, notionReq,
           properties: { ...row.properties, ...relations, '同步状态': { select: { name: gaps.length ? '有缺口' : '已同步' } },
-            '登记缺口': rich(gaps.join('\n')), '同步时间': { date: { start: new Date().toISOString() } } } });
+            '登记缺口': rich(gaps.join('\n')), '同步时间': { date: { start: new Date(Math.floor(Date.now() / 60000) * 60000).toISOString() } } } });
         if (gaps.length) stat.incomplete++; else stat.synced++;
       } catch (error) { stat.failed++; errors.push({ layer: row.layer, id: row.id, code: error.message }); }
     }

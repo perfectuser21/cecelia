@@ -25,7 +25,12 @@ def dispatch(p, deps=None):
  common = {'action', 'machine_registry_id', 'nonce'}
  keys = {'probe': {'image'}, 'bootstrap': {'intent_id', 'pool', 'revision', 'sources', 'worker_token', 'execution_key'},
          'installation': {'intent_id', 'pool', 'revision'}, 'runtime': {'configuration'}, 'pool_canary': set(), 'script_canary': set()}
- if action not in keys or set(p) != common | keys[action]: _deny()
+ upgrade = p.get('upgrade'); previous = p.get('previous_attempt')
+ extra = {'upgrade','previous_attempt'} if action == 'bootstrap' and upgrade is not None else set()
+ if action not in keys or set(p) != common | keys[action] | extra: _deny()
+ if extra and (not isinstance(upgrade,dict) or not isinstance(previous,dict) or set(previous)!={'intent_id','binding'}
+  or not re.fullmatch(_UUID,previous.get('intent_id','')) or not re.fullmatch(_HEX,previous.get('binding',''))
+  or previous['intent_id']==p['intent_id'] or upgrade.get('intent_id')!=p['intent_id']): _deny()
  def real(name): return root / name.lstrip('/')
  def parents(directory, create=False):
   chain = []; current = directory
@@ -90,19 +95,38 @@ def dispatch(p, deps=None):
     if set(p['sources']) != set(FILES + SCRIPT_FILES) or any(not isinstance(v, str) or len(v.encode()) > 262144 for v in p['sources'].values()): _deny()
     # 先核实完整宿主与固定镜像；不安装Docker、不改daemon或网络。
     fact = probe(p['pool'].get('canary_image'))
+    if upgrade is not None:
+     old = json.loads(read(_BASE+'/'+previous['intent_id']+'/intent.json', mode=0o600))
+     if old.get('binding')!=previous['binding'] or old.get('phase')!='started': _deny()
     directory = base / p['intent_id']; parents(directory, True); credential_stage = directory
     marker = directory / 'intent.json'
-    binding = hashlib.sha256(_json({k:p[k] for k in ['machine_registry_id','pool','revision','sources']}).encode()).hexdigest()
-    if marker.exists():
+    bound = {k:p[k] for k in ['machine_registry_id','pool','revision','sources']}
+    if upgrade is not None: bound.update({'upgrade':upgrade,'previous_attempt':previous})
+    binding = hashlib.sha256(_json(bound).encode()).hexdigest()
+    existed = marker.exists()
+    if existed:
      state = json.loads(read(str(marker.relative_to(root))))
-     if state.get('binding') != binding: _deny()
-    else:
+     if state.get('binding') != binding or state.get('phase') not in ['started','installed']: _deny()
+    # 新旧intent都保留；仅首次新intent允许安装，已有未知结果只能完整只读核目标。
+    if not existed or upgrade is not None:
      for name, source in p['sources'].items(): write(directory / name, source)
      write(directory / 'pool.json', _json(p['pool'])); write(directory / 'worker.token', p['worker_token']); write(directory / 'execution.key', p['execution_key'])
-     write(marker, _json({'binding':binding, 'phase':'started'}))
-     result = install({'source_dir':str(directory), 'profile_file':str(directory / 'pool.json'), 'token_file':str(directory / 'worker.token'),
-                        'execution_key_file':str(directory / 'execution.key'), 'revision':p['revision']})
-     if result.get('installed') is not True: _deny()
+     options = {'source_dir':str(directory), 'profile_file':str(directory / 'pool.json'), 'token_file':str(directory / 'worker.token'),
+                'execution_key_file':str(directory / 'execution.key'), 'revision':p['revision']}
+     if upgrade is not None:
+      expected = dict(upgrade)
+      if existed:
+       expected.update({'revision':p['revision'], 'worker_boot_id':read('/run/cecelia-script/worker-boot-id').strip(),
+        'source_sha256':{name:hashlib.sha256(value.encode()).hexdigest() for name,value in p['sources'].items() if name!='linux-pool-installer.cjs'}})
+       options['verify_only'] = True
+      write(directory / 'upgrade.json', _json(expected)); options['upgrade_file']=str(directory / 'upgrade.json')
+     state = {'binding':binding,'phase':'started'}
+     if upgrade is not None: state['previous_attempt']=previous
+     if not existed: write(marker, _json(state))
+     result = install(options)
+     if existed:
+      if result.get('verified') is not True or result.get('execution') is not False or result.get('revision')!=p['revision'] or result.get('config_digest')!=upgrade['config_digest']: _deny()
+     elif result.get('installed') is not True: _deny()
    if json.loads(read('/etc/cecelia/script-pool.json')) != p['pool'] or read(_WORKER + 'revision').strip() != p['revision']: _deny()
    key = read('/etc/cecelia/script-execution.key', 64, 0o600).strip()
    if action == 'bootstrap' and key != p['execution_key']: _deny()
@@ -111,7 +135,10 @@ def dispatch(p, deps=None):
    fact = probe(p['pool']['canary_image'])
    fact.update({'schema_version':'linux-onboarding-install/v1', 'intent_id':p['intent_id'], 'revision':p['revision'],
                 'worker_boot_id':read('/run/cecelia-script/worker-boot-id').strip(), 'pool':p['pool'], 'installed':True, 'execution':False})
-   if action == 'bootstrap': write(marker, _json({'binding':binding, 'phase':'installed'}))
+   if action == 'bootstrap':
+    completed={'binding':binding, 'phase':'installed'}
+    if upgrade is not None: completed['previous_attempt']=previous
+    write(marker, _json(completed))
    return {'receipt':fact, 'signature':hmac.new(key.encode(), _json(fact).encode(), hashlib.sha256).hexdigest()}
   if action == 'runtime':
    c = p['configuration']; pool = json.loads(read('/etc/cecelia/script-pool.json'))
