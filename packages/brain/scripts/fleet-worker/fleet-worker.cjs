@@ -20,7 +20,7 @@ const {
 const {
   createGitHubCredentialEnvelopeConsumer,
 } = require('./github-credential-envelope.cjs');
-const { probeFleetWorkerHealth } = require('./node-probe.cjs');
+const { probeFleetWorkerHealth, projectLinuxObservation } = require('./node-probe.cjs');
 const { createWorkspaceManager,createFleetRepoAllowlist } = require('./workspace-manager.cjs');
 const { createOrchestratorRunner, probeCredentialHome } = require('./orchestrator-runner.cjs');
 
@@ -95,6 +95,7 @@ function projectHealth(report) {
     ? report
     : {};
   return {
+    ...(source.linux_observation ? { linux_observation: projectLinuxObservation(source.linux_observation) } : {}),
     schema_version: safeString(source.schema_version, 'fleet-node-health/v1'),
     machine_id: safeString(source.machine_id, 'unconfigured'),
     observed_at: safeString(source.observed_at, '1970-01-01T00:00:00.000Z'),

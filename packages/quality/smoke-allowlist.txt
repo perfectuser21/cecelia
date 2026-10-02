@@ -376,6 +376,7 @@ managed-script-capacity-smoke.sh
 node-onboarding-smoke.sh
 
 app-server-generation-smoke.sh
+linux-resource-observation-smoke.sh
 execution-directory-smoke.sh
 
 attempt-runtime-limits-smoke.sh

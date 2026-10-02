@@ -875,8 +875,8 @@ node - "$runtime_dir/attempt-resource-policy.cjs" <<'NODE'
 const assert = require('node:assert/strict');
 assert.equal(require(process.argv[2]).resolveAttemptResourcePlan({workerId:'us-mac-m4',role:'generator'}).runner.memoryBytes, 4*1024**3);
 NODE
-app_server_files=(app-server-profile.cjs app-server-docker.cjs app-server-attach.cjs app-server-stream.cjs app-server-runner.cjs app-server-rpc.cjs app-server-stream-hub.cjs app-server-contract.json app-server-shim.cjs)
-for module in "${app_server_files[@]}"; do
+auxiliary_files=(app-server-profile.cjs app-server-docker.cjs app-server-attach.cjs app-server-stream.cjs app-server-runner.cjs app-server-rpc.cjs app-server-stream-hub.cjs app-server-contract.json app-server-shim.cjs linux-cgroup.cjs linux-resource-probe.cjs)
+for module in "${auxiliary_files[@]}"; do
   cmp -s "$SCRIPT_DIR/$module" "$runtime_dir/$module" \
     || fail "--apply did not install exact $module bytes"
   [[ "$(mode_of "$runtime_dir/$module")" == 644 ]] || fail "$module mode is not 644"
@@ -1139,7 +1139,7 @@ assert_resource_placement_failure_rolled_back() {
   chmod 0600 "$runtime_dir/attempt-container-identity.cjs"
   cp "$runtime_dir/attempt-container-identity.cjs" "$snapshot_dir/identity"
   local module
-  for module in "${app_server_files[@]}"; do
+  for module in "${auxiliary_files[@]}"; do
     printf 'prior-%s-%s\n' "$filename" "$module" > "$runtime_dir/$module"
     chmod 0600 "$runtime_dir/$module"
     cp "$runtime_dir/$module" "$snapshot_dir/$module"
@@ -1164,7 +1164,7 @@ assert_resource_placement_failure_rolled_back() {
   [[ "$(mode_of "$runtime_dir/attempt-resource-policy.cjs")" == 600 ]] || fail "$filename changed old policy mode"
   cmp -s "$snapshot_dir/identity" "$runtime_dir/attempt-container-identity.cjs" || fail "$filename changed old identity bytes"
   [[ "$(mode_of "$runtime_dir/attempt-container-identity.cjs")" == 600 ]] || fail "$filename changed old identity mode"
-  for module in "${app_server_files[@]}"; do
+  for module in "${auxiliary_files[@]}"; do
     cmp -s "$snapshot_dir/$module" "$runtime_dir/$module" || fail "$filename changed old $module bytes"
     [[ "$(mode_of "$runtime_dir/$module")" == 600 ]] || fail "$filename changed old $module mode"
   done
@@ -1193,12 +1193,12 @@ assert_resource_first_install_rolled_back() (
   [[ ! -e "$fresh_runtime/local-resource-admission.cjs" \
     && ! -e "$fresh_runtime/fleet-node-profiles.json" && ! -e "$fresh_runtime/attempt-resource-policy.cjs" && ! -e "$fresh_runtime/attempt-container-identity.cjs" ]] \
     || fail "first $filename rollback leaked newly installed resource files"
-  for module in "${app_server_files[@]}"; do
+  for module in "${auxiliary_files[@]}"; do
     [[ ! -e "$fresh_runtime/$module" ]] || fail "first $filename rollback leaked $module"
   done
 )
 
-for resource_file in fleet-node-profiles.json local-resource-admission.cjs attempt-resource-policy.cjs attempt-container-identity.cjs "${app_server_files[@]}"; do
+for resource_file in fleet-node-profiles.json local-resource-admission.cjs attempt-resource-policy.cjs attempt-container-identity.cjs "${auxiliary_files[@]}"; do
   assert_resource_placement_failure_rolled_back "$resource_file"
   assert_resource_first_install_rolled_back "$resource_file"
 done

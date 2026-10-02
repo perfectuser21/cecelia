@@ -10,6 +10,7 @@ const process = require('node:process');
 const { clearTimeout, setTimeout } = require('node:timers');
 const { promisify } = require('node:util');
 const { probeDiskResources } = require('./local-resource-admission.cjs');
+const { sampleLinuxResources, projectLinuxObservation } = require('./linux-resource-probe.cjs');
 
 const execFileAsync = promisify(execFile);
 const { AbortController } = globalThis;
@@ -468,6 +469,17 @@ async function probeFleetWorkerHealth(options = {}) {
     postgresImageDigest,
   });
 
+  if ((options.platform ?? process.platform) === 'linux') {
+    report.os.version = 'Linux';
+    report.linux_observation = await sampleLinuxResources({
+      ...options.linuxResourceOptions,
+      now: options.now ?? options.linuxResourceOptions?.now,
+      diskPaths: options.diskPaths ?? [options.repoRoot ?? env.CECELIA_REPO_ROOT ?? process.cwd(),
+        env.CECELIA_FLEET_DATA_ROOT ?? '/var/lib/cecelia/fleet-worker', tmpdir()],
+    });
+    return report;
+  }
+
   try {
     const run = createCommandRunner({
       execFileFn: options.execFileFn ?? execFileAsync,
@@ -656,4 +668,5 @@ async function probeFleetWorkerHealth(options = {}) {
 
 module.exports = {
   probeFleetWorkerHealth,
+  projectLinuxObservation,
 };
