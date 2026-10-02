@@ -12,6 +12,7 @@ DEPLOY_STATUS_FILE="/tmp/cecelia-deploy-status.json"
 source "$SCRIPT_DIR/lib/bluegreen.sh"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/internal-auth-token.sh"
+source "$SCRIPT_DIR/lib/brain-image-retention.sh"
 
 VERSION=$(node -e "console.log(require('$BRAIN_DIR/package.json').version)")
 ENV_REGION="${ENV_REGION:-us}"
@@ -23,6 +24,12 @@ export CECELIA_INTERNAL_ENV_FILE
 # ── 部署状态文件：供 Brain 重启后感知 deploy 结果 ──────────────────────────
 DEPLOY_SUCCESS=false
 _write_deploy_status() {
+    local retention_failed=false
+    if [[ "$DEPLOY_SUCCESS" == "true" ]]; then
+        retention_finish success || { DEPLOY_SUCCESS=false; retention_failed=true; }
+    else
+        retention_finish recovered || true
+    fi
     if [[ "$DEPLOY_SUCCESS" == "true" ]]; then
         printf '{"status":"success","version":"%s","finished_at":"%s"}' \
             "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEPLOY_STATUS_FILE" 2>/dev/null || true
@@ -30,6 +37,7 @@ _write_deploy_status() {
         printf '{"status":"failed","error":"brain-deploy.sh exited before success","finished_at":"%s"}' \
             "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$DEPLOY_STATUS_FILE" 2>/dev/null || true
     fi
+    if [[ "$retention_failed" == true ]]; then exit 1; fi
 }
 trap '_write_deploy_status' EXIT
 
@@ -315,6 +323,10 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
         ensure_cecelia_internal_token "$CECELIA_INTERNAL_ENV_FILE" || exit 1
     fi
 
+    if [[ "$DRY_RUN" == false ]]; then
+        retention_begin "$VERSION" "${EXPECTED_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}" || exit 1
+    fi
+
     # 1. Build image
     echo "[1/7] Building image..."
     if [[ "$DRY_RUN" == true ]]; then
@@ -459,7 +471,7 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
     if [[ "$DRY_RUN" == true ]]; then
         echo "  [dry-run] docker compose -f ${COMPOSE_FILE} up -d node-brain (cecelia-brain:${VERSION})"
     elif ! BRAIN_VERSION="${VERSION}" ENV_REGION="${ENV_REGION}" \
-      docker compose --env-file "$ROOT_DIR/.env.docker" \
+      docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
         -f "$ROOT_DIR/${COMPOSE_FILE}" up -d node-brain; then
         echo ""
         echo "[FAIL] docker compose up -d failed. Rolling back..."
@@ -467,12 +479,12 @@ if [[ "$DEPLOY_MODE" == "docker" ]]; then
             PREV_VERSION=$(tail -2 "$VERSIONS_FILE" | head -1)
             echo "  Rolling back to v${PREV_VERSION}..."
             BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
-              docker compose --env-file "$ROOT_DIR/.env.docker" \
+              docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
                 -f "$ROOT_DIR/${COMPOSE_FILE}" up -d node-brain || true
             echo "  Rolled back to v${PREV_VERSION}"
         else
             echo "  No previous version found. Stopping container."
-            docker compose --env-file "$ROOT_DIR/.env.docker" \
+            docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
               -f "$ROOT_DIR/${COMPOSE_FILE}" stop node-brain || true
         fi
         exit 1
@@ -483,6 +495,10 @@ fi  # end Docker mode
 # ─── launchd 模式 ────────────────────────────────────────────────────────────
 
 if [[ "$DEPLOY_MODE" == "launchd" ]]; then
+
+    if [[ "$DRY_RUN" == false ]]; then
+        retention_begin "$VERSION" "${EXPECTED_SHA:-$(git -C "$ROOT_DIR" rev-parse HEAD)}" || exit 1
+    fi
 
     # 1. Build image: SKIPPED (not using Docker)
     echo "[1/7] Building image... SKIPPED (launchd mode, no Docker)"
@@ -733,12 +749,12 @@ else
         PREV_VERSION=$(tail -2 "$VERSIONS_FILE" | head -1)
         echo "  Rolling back to v${PREV_VERSION}..."
         BRAIN_VERSION="${PREV_VERSION}" ENV_REGION="${ENV_REGION}" \
-          docker compose --env-file "$ROOT_DIR/.env.docker" \
+          docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
             -f "$ROOT_DIR/${COMPOSE_FILE}" up -d node-brain
         echo "  Rolled back to v${PREV_VERSION}"
     else
         echo "  No previous version found. Stopping container."
-        docker compose --env-file "$ROOT_DIR/.env.docker" \
+        docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$ROOT_DIR/.env.docker" \
           -f "$ROOT_DIR/${COMPOSE_FILE}" stop node-brain
     fi
 fi
