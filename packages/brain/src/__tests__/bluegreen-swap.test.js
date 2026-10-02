@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, chmodSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -405,6 +405,8 @@ describe('bluegreen-sidecar.sh（Gate3 failure 场景防护）', () => {
     tmp = mkdtempSync(join(tmpdir(), 'bg-sidecar-'));
     deployRoot = mkdtempSync(join(tmpdir(), 'deploy-root-'));
     writeFileSync(join(deployRoot, 'docker-compose.yml'), 'name: cecelia\nservices: {}\n');
+    mkdirSync(join(deployRoot, 'scripts/lib'), { recursive: true });
+    copyFileSync(resolve(REPO_ROOT, 'scripts/lib/brain-image-retention.sh'), join(deployRoot, 'scripts/lib/brain-image-retention.sh'));
   });
   afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });

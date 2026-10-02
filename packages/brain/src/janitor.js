@@ -1,7 +1,8 @@
 // docker-prune 已取消（2026-07-08 用户拍板：旧机制 + 部署自杀竞态 Issue 97cf5a41）。
 // 框架保留：新 job import 后加进 REGISTRY 即可。
 import { previewCacheJob } from './preview-cache-controller.js';
-const REGISTRY = [previewCacheJob];
+import { imageRetentionJob } from './image-retention-controller.js';
+const REGISTRY = [previewCacheJob, imageRetentionJob];
 
 export async function getJobs(pool) {
   const { rows: configs } = await pool.query(

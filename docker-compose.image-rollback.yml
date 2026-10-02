@@ -1,0 +1,3 @@
+services:
+  node-brain:
+    image: ${CECELIA_ROLLBACK_IMAGE:?rollback requires an exact image ID}

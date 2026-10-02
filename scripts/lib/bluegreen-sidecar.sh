@@ -25,11 +25,12 @@ if [[ "$ENV_REGION" == "us" && -f "$DEPLOY_ROOT/docker-compose.us-vps.yml" ]]; t
 fi
 CECELIA_INTERNAL_ENV_FILE="${CECELIA_INTERNAL_ENV_FILE:?CECELIA_INTERNAL_ENV_FILE 必填}"
 BARK_TOKEN="${BARK_TOKEN:-}"
+source "$DEPLOY_ROOT/scripts/lib/brain-image-retention.sh"
 # sidecar 本身由 `docker run` 起在独立容器内（见 bluegreen.sh bluegreen_swap），
 # 不在 node-brain 的 compose 网络里，也未 --network host。要够到宿主发布的
 # 5221 必须走 host.docker.internal（同 bluegreen_canary_host 的 /.dockerenv 判据，
 # 这里恒为容器内执行，直接定死，不必再判 /.dockerenv）。可用 BRAIN_URL 覆盖测试。
-BRAIN_URL="${BRAIN_URL:-http://host.docker.internal:5221}"
+export BRAIN_URL="${BRAIN_URL:-http://host.docker.internal:5221}"
 
 # 告警（non-fatal，token 缺失静默）
 _sidecar_bark() {
@@ -104,11 +105,12 @@ done
 # ── 主路径：用新版镜像 compose up ────────────────────────────────────────────
 echo "[sidecar] compose up node-brain (BRAIN_VERSION=${BRAIN_VERSION})..."
 if BRAIN_VERSION="$BRAIN_VERSION" ENV_REGION="$ENV_REGION" \
-    docker compose --env-file "$DEPLOY_ROOT/.env.docker" \
+    docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$DEPLOY_ROOT/.env.docker" \
       -f "$COMPOSE_FILE_PATH" up -d node-brain 2>&1; then
   echo "[sidecar] ✅ compose up 成功 v${BRAIN_VERSION}"
 
   cancel_drain_after_up
+  retention_finish success || exit 1
 
   exit 0
 fi
@@ -120,13 +122,14 @@ echo "[sidecar] ❌ compose up 失败 exit=${PRIMARY_EXIT}，尝试 blue-fallbac
 # blue-fallback = 删 blue 前由 bluegreen_swap 打的 docker tag，是最后一次健康 blue 的快照。
 # 退出码语义：fallback 成功 → exit 0（5221 已恢复）；fallback 也失败 → exit 1（5221 宕机）
 if BRAIN_VERSION=blue-fallback ENV_REGION="$ENV_REGION" \
-    docker compose --env-file "$DEPLOY_ROOT/.env.docker" \
+    docker compose ${RETENTION_COMPOSE_ARGS[@]+"${RETENTION_COMPOSE_ARGS[@]}"} --env-file "$DEPLOY_ROOT/.env.docker" \
       -f "$COMPOSE_FILE_PATH" up -d node-brain 2>&1; then
   echo "[sidecar] ✅ blue-fallback 恢复成功，5221 已恢复旧版本"
   _sidecar_bark "⚠️ 蓝绿 sidecar：v${BRAIN_VERSION} 新镜像启动失败，已回退 blue-fallback，5221 已恢复，请检查新镜像问题"
   _sidecar_log "[sidecar-partial-fail] primary_exit=${PRIMARY_EXIT} brain_version=${BRAIN_VERSION} recovered=blue-fallback"
 
   cancel_drain_after_up
+  retention_finish recovered || exit 1
 
   exit 0  # 5221 已恢复，sidecar 整体视为成功
 else
