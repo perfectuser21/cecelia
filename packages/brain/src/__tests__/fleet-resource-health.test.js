@@ -87,6 +87,14 @@ describe('资源报告必须可信且不能通过重复读取延寿', () => {
     });
   });
 
+  it.each(['valid-zero','invalid','stale','missing'])('GPU %s只影响GPU展示，不改变CPU容量',async mode=>{
+    if(mode!=='missing')health.gpu={schema_version:'fleet-gpu-observation/v1',status:'present',scope:'host',source:'macos-ioreg',
+      observed_at:new Date(Date.now()-(mode==='stale'?90000:0)).toISOString(),devices:[{name:'Apple M4',utilization_percent:mode==='invalid'?101:0,memory_kind:'unified',memory_used_bytes:327155712}]};
+    await collect();expect(fleet.getRemoteCapacity('us-mac-m4')).toMatchObject({online:true,effectiveSlots:4});
+    const gpu=fleet.getFleetStatus()[0].gpu;expect(gpu.status).toBe(mode==='valid-zero'?'present':'unknown');
+    if(mode==='valid-zero'){expect(gpu.devices[0].utilization_percent).toBe(0);expect(gpu.devices[0].memory_kind).toBe('unified');}
+  });
+
   it('允许30秒内时钟偏差及重复有效样本', async () => {
     health.observed_at = new Date(Date.now() + 30_000).toISOString();
     await collect();

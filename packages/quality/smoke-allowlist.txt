@@ -385,6 +385,7 @@ company-kr-analysis-smoke.sh
 
 smoke-production-guard-smoke.sh
 
+fleet-gpu-observation-smoke.sh
 linux-script-runtime-smoke.sh
 
 linux-onboarding-flow-smoke.sh
