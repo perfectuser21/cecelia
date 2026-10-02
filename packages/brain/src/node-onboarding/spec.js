@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
 import { resolvePrimaryWorkerId } from '../machine-registry.js';
+import {withLinuxExecution} from './execution-view.js';
 
 export const STAGES = [
   ['connect', '验证连接与身份'], ['probe', '检测系统'], ['install', '安装节点组件'],
@@ -92,7 +93,7 @@ export function validateReceipt(task, at = new Date()) {
   return r;
 }
 
-export function onboardingView(task, now = new Date()) {
+export function onboardingView(task, now = new Date(), execution) {
   const meta = task.payload.node_onboarding;
   let status = task.status;
   let report;
@@ -107,7 +108,7 @@ export function onboardingView(task, now = new Date()) {
   } else if (status !== 'in_progress') {
     status = 'queued';
   }
-  if (meta.registration_error) { status = 'failed'; report = null; error = '设备名已被其他记录占用，不能覆盖已有台账'; }
+  if (meta.registration_error) { status = 'failed'; report = null; error = meta.adoption ? '设备身份或连接地址已变化，不能覆盖已有台账' : '设备名已被其他记录占用，不能覆盖已有台账'; }
   const failedReceipt = readReceipt(task);
   const trustedFailure = status === 'failed' && failedReceipt?.id === meta.id
     && failedReceipt?.name === meta.request.name && failedReceipt?.mode === meta.mode;
@@ -118,7 +119,7 @@ export function onboardingView(task, now = new Date()) {
     INSTALL_FAILED: '节点服务安装失败，请检查服务管理环境', VERIFY_FAILED: '服务状态或连续健康样本未通过验收',
     TIMEOUT: '节点接入超过执行时限', INVALID_REQUEST: '节点接入参数不合法' };
   if (trustedFailure && Object.hasOwn(errors, failedReceipt.error_code)) error = errors[failedReceipt.error_code];
-  return {
+  const view = {
     id: meta.id, task_id: task.id, machine_name: meta.request.name,
     status, stage: status === 'completed' ? 'register' : [...states].find(([, value]) => value === 'failed')?.[0] ?? null,
     error, capabilities: report?.health.capabilities ?? null,
@@ -127,4 +128,5 @@ export function onboardingView(task, now = new Date()) {
       status: status === 'completed' ? 'completed' : states.get(key) || 'pending',
     })),
   };
+  return status==='completed'&&meta.request.role==='worker'&&report?.health.os==='linux'?withLinuxExecution(view,execution):view;
 }

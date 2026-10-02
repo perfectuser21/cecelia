@@ -60,6 +60,13 @@ describe('机器接入契约', () => {
 });
 
 describe('真实验收回执', () => {
+  it('Linux worker监控通过仍等待执行验收，只有当前active可完成；到期/换boot回续验阶段',()=>{
+    const t=task();t.payload.node_onboarding.request={...input,role:'worker'};
+    expect(onboardingView(t,now)).toMatchObject({status:'in_progress',capabilities:{execution:false}});
+    expect(onboardingView(t,now,{phase:'active',execution:true})).toMatchObject({status:'completed',capabilities:{execution:true}});
+    expect(onboardingView(t,now,{phase:'renewal',execution:false})).toMatchObject({status:'in_progress',capabilities:{execution:false}});
+    expect(onboardingView(t,now,{phase:'probe',execution:false,error:'linux_pool_ssh_unavailable'})).toMatchObject({status:'failed',error:expect.stringContaining('Docker')});
+  });
   it('只有身份、服务、两次采样与指标都通过才接受', () => {
     expect(validateReceipt(task(), now).health.node_id).toBe(id);
   });

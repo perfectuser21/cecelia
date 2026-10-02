@@ -22,7 +22,7 @@ async function configuration(){
  if(fields[0]!=='_cecelia'||!Number.isSafeInteger(uid)||uid<=0)fail();
  return {deployment,key:read('/etc/cecelia/script-execution.key',0o600,0,64),workerToken:read('/etc/cecelia/fleet-worker.token',0o600,uid,64)};
 }
-async function runLinuxScriptCanary({nonce},deps={}){
+async function runLinuxScriptCanary({nonce,cleanupReceipt=false},deps={}){
  if((deps.platform??process.platform)!=='linux'||(deps.getuid??process.getuid)()!==0||!deps.lockHeld||!HEX.test(nonce??''))fail();
  const load=deps.loadConfiguration??configuration,config=structuredClone(await load()),d=config.deployment,p=validateLinuxPoolProfile(d.pool);
  if(!HEX.test(config.key??'')||!HEX.test(config.workerToken??'')||config.key===config.workerToken)fail();
@@ -32,6 +32,13 @@ async function runLinuxScriptCanary({nonce},deps={}){
  const client=deps.client??createLinuxScriptBridgeClient(),collect=deps.collectProof??collectLinuxScriptProof;
  const identity=()=> (deps.identity??readLinuxPoolIdentity)({profile:p,token:config.workerToken,revision:d.revision,nonce});
  const pause=deps.sleep??(ms=>new Promise(r=>setTimeout(r,ms)));
+ const cleanupConfirmed=()=>Array.isArray(state.cases)&&state.cases.length>0&&state.cases.length<=32&&state.cases.every(r=>{
+  if(r.attempted===false)return r.container_id===null&&r.cleanup==null;
+  const c=r.cleanup;
+  return r.attempted===true&&(r.container_id===null||HEX.test(r.container_id??''))&&c?.status==='cleaned'
+   &&c.absent===true&&c.tombstoned===true&&UUID.test(c.challenge??'')&&c.container_id===r.container_id
+   &&Object.entries(r.identity).every(([k,v])=>c[k]===v);
+ });
  async function call(action,r,extras={}){
   const body={...r.identity,...extras,request_nonce:randomUUID()},permit=signLinuxScriptPermit({key:config.key,expected:r.expected,action,body});
   const reply=await client[action]({...body,permit}),e=reply.envelope,receipt=e?.receipt;
@@ -47,9 +54,21 @@ async function runLinuxScriptCanary({nonce},deps={}){
   }
   const challenge=randomUUID(),receipt=await call('cancel',r,{container_id:r.container_id,challenge});
   if(receipt.container_id!==r.container_id||receipt.status!=='cleaned'||receipt.absent!==true||receipt.tombstoned!==true||receipt.challenge!==challenge)fail();
-  r.cleanup=receipt;state.cleanup_confirmed=state.cases.every(c=>!c.attempted||!!c.cleanup);store.save(state);
+  r.cleanup=receipt;state.cleanup_confirmed=cleanupConfirmed();store.save(state);
  }
- if(state){for(const r of state.cases)try{await clean(r);}catch{/* 未决资源保持占位。 */}fail();}
+ if(state){
+  for(const r of state.cases)try{await clean(r);}catch{/* 未决资源保持占位。 */}
+  const confirmed=cleanupConfirmed();if(state.cleanup_confirmed!==confirmed){state.cleanup_confirmed=confirmed;store.save(state);}
+  if(cleanupReceipt&&confirmed){
+   if(!state.cleanup_envelope){const e=state.cases[0].expected;
+    const receipt={schema_version:'linux-script-canary-cleanup/v1',nonce,machine_id:state.cases[0].identity.machine_id,
+     ...Object.fromEntries(['machine_registry_id','pool_config_digest','revision','host_boot_id','worker_boot_id','daemon_id','execution_version_id'].map(k=>[k,e[k]])),
+     started_at:state.started_at,completed_at:new Date().toISOString(),execution:false,cleanup_confirmed:true,
+     cases:state.cases.map(r=>({identity:r.identity,profile_digest:r.expected.profile_digest,container_id:r.container_id,not_started:!r.attempted,cleanup:r.cleanup??null}))};
+    state.cleanup_envelope={receipt,signature:createHmac('sha256',config.key).update(JSON.stringify(receipt)).digest('hex')};store.save(state);
+   }return state.cleanup_envelope;
+  }fail();
+ }
  if(!p.execution_budget_available||d.execution_enabled!==true||!d.profiles||Array.isArray(d.profiles)
   ||Object.keys(d.profiles).length<1||Object.keys(d.profiles).length>32)fail();
  const entries=Object.entries(d.profiles);if(entries.some(([id,e])=>! /^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)||!UUID.test(e.execution_version_id??'')||!UUID.test(e.execution_grant_id??'')
@@ -87,15 +106,15 @@ async function runLinuxScriptCanary({nonce},deps={}){
 }
 if(require.main===module){
  (async()=>{
-  if(process.platform!=='linux'||process.getuid()!==0)fail();const a=process.argv.slice(2);
+  if(process.platform!=='linux'||process.getuid()!==0)fail();const a=process.argv.slice(2),cleanupReceipt=a[2]==='--cleanup-receipt';if(cleanupReceipt)a.splice(2,1);
   if(a[0]!=='--nonce'||!HEX.test(a[1]??'')||![2,3].includes(a.length))fail();
   if(a.length===2){
    assertCanaryDirectory('/run/cecelia',0);const lock='/run/cecelia/linux-script-canary.flock';let fd;
    try{fd=fs.openSync(lock,fs.constants.O_CREAT|fs.constants.O_RDWR|fs.constants.O_NOFOLLOW,0o600);const s=fs.fstatSync(fd);if(!s.isFile()||s.uid!==0||(s.mode&0o777)!==0o600||s.nlink!==1)fail();}finally{if(fd!==undefined)fs.closeSync(fd);}
-   const child=spawn('/usr/bin/flock',['--nonblock',lock,process.execPath,__filename,...a,'--under-lock'],{stdio:'inherit',env:{PATH:'/usr/bin:/bin',HOME:'/'}});
+   const child=spawn('/usr/bin/flock',['--nonblock',lock,process.execPath,__filename,...a,...(cleanupReceipt?['--cleanup-receipt']:[]),'--under-lock'],{stdio:'inherit',env:{PATH:'/usr/bin:/bin',HOME:'/'}});
    child.on('error',()=>{process.exitCode=1;});child.on('exit',code=>{process.exitCode=code??1;});return;}
   if(a[2]!=='--under-lock'||await fs.promises.readlink('/proc/'+process.ppid+'/exe')!=='/usr/bin/flock')fail();
-  const value=await runLinuxScriptCanary({nonce:a[1]},{lockHeld:true});process.stdout.write(JSON.stringify(value)+'\n');
+  const value=await runLinuxScriptCanary({nonce:a[1],cleanupReceipt},{lockHeld:true});process.stdout.write(JSON.stringify(value)+'\n');
  })().catch(()=>{process.stderr.write('linux_script_canary_unconfirmed\n');process.exitCode=1;});
 }
 module.exports={runLinuxScriptCanary};
