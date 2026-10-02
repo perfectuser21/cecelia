@@ -109,6 +109,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/ops-learnings-date-filter-timezone.pg.integration.test.js',
   'src/phone-dispatch/store.test.js',
   'src/phone-dispatch/http-binding.pg.test.js',
+  'src/phone-dispatch/schedule-store.pg.test.js',
 ];
 
 export default defineConfig({

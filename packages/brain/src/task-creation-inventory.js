@@ -9,6 +9,7 @@ export const TASK_CREATION_INVENTORY = Object.freeze([
   { module: 'node-onboarding/service.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
   { module: 'actions.js', source: 'api', creates_executable_task: false, migration_status: 'routed' },
   { module: 'lib/task-create.js', source: 'api', creates_executable_task: true, migration_status: 'routed' },
+  { module: 'phone-dispatch/schedule-store.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed', delegates_to: 'phone-dispatch/task-authority.js' },
   { module: 'phone-dispatch/task-authority.js', source: 'scheduler', creates_executable_task: true, migration_status: 'routed' },
   // 第 51 批（决策 bc242b62）：V4 attempt-run 薄端点的惰性 task 锚（status 直建 in_progress，非可执行任务）
   { module: 'routes/harness-attempt-run.js', source: 'child', creates_executable_task: false, migration_status: 'routed' },
