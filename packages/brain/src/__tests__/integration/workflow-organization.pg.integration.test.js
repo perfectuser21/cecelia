@@ -20,6 +20,7 @@ beforeEach(async () => {
   }
   await db.query(`SET search_path TO ${schema}`);
   await db.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url), 'utf8'));
+  await db.query(readFileSync(new URL('../../../migrations/512_definition_versions.sql', import.meta.url), 'utf8'));
   ids = Object.fromEntries(['company', 'media', 'support', 'stream', 'capA', 'capB', 'wfA', 'wfB', 'activity'].map(k => [k, randomUUID()]));
   await db.query(`INSERT INTO areas(id,name,parent_area_id) VALUES($1,'公司',NULL),($2,'新媒体',$1),($3,'客服',$1)`, [ids.company, ids.media, ids.support]);
   await db.query(`INSERT INTO journeys(id,name,parent_journey_id,area_id,capability_code) VALUES
@@ -44,6 +45,7 @@ it('真实HTTP工作流同时返回规范能力身份、部门继承及平台形
   expect(kw.organization.area_path.map(a => a.id)).toEqual([ids.company, ids.media]);
   expect(bm.organization).toMatchObject({ capability_id: ids.capB, source: 'direct', direct_area: { id: ids.support }, effective_area: { id: ids.support } });
   expect(kw.activities[0].activity_id).toBe(bm.activities[0].activity_id);
+  expect(kw.activities[0].usage).toHaveProperty('activity_definition_version_id', null);
   expect(bm.activities[0].legacy_workflow_id).toBe(ids.wfA);
   expect(bm.channel).toBe('douyin'); expect(bm.form).toBe('android_rpa');
 });
