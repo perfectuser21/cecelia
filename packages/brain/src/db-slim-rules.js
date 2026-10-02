@@ -15,6 +15,12 @@ const GRAPH_STALE = (alias) => `NOT EXISTS (
   WHERE r.status = 'active'
     AND kv.key = ${alias}.repo
     AND kv.value = ${alias}.source_revision
+) AND NOT EXISTS (
+  SELECT 1 FROM release_versions release,
+    jsonb_array_elements(COALESCE(release.payload->'ci_evidence','[]'::jsonb)) evidence,
+    LATERAL (VALUES(evidence->'report'->'base'->'graph_snapshot'),(evidence->'report'->'head'->'graph_snapshot')) side(snapshot)
+  WHERE side.snapshot->>'repo' = ${alias}.repo
+    AND side.snapshot->>'source_revision' = ${alias}.source_revision
 )`;
 
 export const SLIM_RULES = [

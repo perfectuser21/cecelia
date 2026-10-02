@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync,spawnSync } from 'node:child_process';
+import { collectGovernanceEvidence,applyGovernanceCoverage } from '../../../../../scripts/ci/registry-lint.mjs';
 import { runImplementationGate } from '../../../../../scripts/ci/implementation-gate.mjs';
 
+import { assertImplementationReport } from '../implementation-report.js';
+import { GOVERNANCE_CHECKS,GOVERNANCE_POLICY_SHA256 } from '../implementation-ci-governance.js';
 const roots=[];
 afterEach(()=>{vi.unstubAllEnvs();for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
 function fixture() {
@@ -96,4 +99,29 @@ it('真测试非零退出保留FAIL收据而不是映射成功冒充验证成功
   report.source.head_revision=git('rev-parse','HEAD');report.head.revision=report.source.head_revision;report.head.graph_snapshot.source_revision=report.source.head_revision;report.source.changed_files.push({path:'scripts/smoke/lock.sh'});
   refreshCoverage(report);
   const receipt=await runImplementationGate({repoRoot:root,report});expect(receipt.verdict).toBe('FAIL');expect(receipt.assertions[0].exit_code).toBe(7);
+});
+
+it('治理分类重读真实git字节，PR不能把依赖变化或替换校验脚本伪装治理',()=>{
+  const {root,report,git}=fixture();git('remote','set-url','origin','https://github.com/perfectuser21/cecelia.git');
+  mkdirSync(join(root,'scripts'),{recursive:true});writeFileSync(join(root,'DEFINITION.md'),'v1');
+  writeFileSync(join(root,'package-lock.json'),JSON.stringify({version:'1',dependencies:{x:'1'}}));
+  writeFileSync(join(root,'scripts/facts-check.mjs'),'process.exit(0)');git('add','.');git('commit','-qm','governance-base');const base=git('rev-parse','HEAD');
+  writeFileSync(join(root,'DEFINITION.md'),'v2');writeFileSync(join(root,'package-lock.json'),JSON.stringify({version:'2',dependencies:{x:'2'}}));
+  git('add','.');git('commit','-qm','governance-head');
+  const source={repo:'perfectuser21/cecelia',base_revision:base,head_revision:git('rev-parse','HEAD'),changed_files:[{path:'DEFINITION.md'},{path:'package-lock.json'}]};
+  const evidence=collectGovernanceEvidence(root,source,{runChecks:false});expect(evidence.files.map(f=>f.path)).toEqual(['DEFINITION.md']);
+  expect(()=>collectGovernanceEvidence(root,source)).toThrow('受信版本不同');
+});
+
+it('纯治理仅在PR准入且完整固定快照时允许零业务回归，main与额外业务路径仍阻断',()=>{
+ const {report}=fixture();report.source.repo='perfectuser21/cecelia';report.source.changed_files=[{path:'DEFINITION.md'}];
+ report.affected_usages=[];report.required_assertions=[];report.ci_context={purpose:'admission_only'};
+ report.gaps=[{code:'changed_file_unclaimed',path:'DEFINITION.md'},...['base','head'].map(side=>({code:'implementation_mapping_missing',side}))];report.unclaimed_paths=[{path:'DEFINITION.md'}];
+ for(const side of ['base','head']){report[side].affected_usages=[];report[side].gaps=[{code:'implementation_mapping_missing'}];report[side].file_coverage=[{change_index:0,path:'DEFINITION.md',matched_paths:[],truncated:false}];}
+ const hash='a'.repeat(64),evidence={source:report.source,policy_sha256:GOVERNANCE_POLICY_SHA256,files:[{path:'DEFINITION.md',kind:'governance',base_sha256:hash,head_sha256:hash}],
+ checks:GOVERNANCE_CHECKS.map(r=>({id:r.id,path:r.path,exit_code:0,script_sha256:hash,stdout_sha256:hash,stderr_sha256:hash}))};
+ const main=structuredClone(report);main.ci_context.purpose='release';
+ applyGovernanceCoverage(report,evidence);expect(()=>assertImplementationReport(report)).not.toThrow();expect(report.impact_status).toBe('governance_only');
+ applyGovernanceCoverage(main,evidence);expect(()=>assertImplementationReport(main)).toThrow();
+ report.head.graph_snapshot=null;expect(()=>assertImplementationReport(report)).toThrow('IMPACT_SNAPSHOT_UNKNOWN');
 });

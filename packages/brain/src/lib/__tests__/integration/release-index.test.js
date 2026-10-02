@@ -123,3 +123,31 @@ it.each(['file_coverage','graph_snapshot'])('报告缺少%s固定证据即使摘
   const response=await request(app).post('/releases').send(input);expect(response.status).toBe(201);
   expect(response.body.release.payload.verification.ci_status).toBe('unknown');
 });
+it('PR admission_only收据即使SHA及中央版本完全匹配也不能用于发布',async()=>{
+  const input=structuredClone(fixture.releaseInput);input.ci_evidence[0].receipt.purpose='admission_only';
+  const response=await request(app).post('/releases').send(input);expect(response.status).toBe(201);
+  expect(response.body.release.payload.verification.ci_status).toBe('unknown');
+  expect(response.body.release.payload.verification.gaps).toContainEqual(expect.objectContaining({code:'ci_admission_only',index:0}));
+  await observe(response.body.release.id);expect((await service.getReleaseGate(fixture.db,response.body.release.id)).deployed).toBe(false);
+});
+
+it('治理receipt必须逐项对应报告的受信检查脚本，不能用同数量任意PASS替换',async()=>{
+ const input=structuredClone(fixture.releaseInput),ci=input.ci_evidence[0];
+ ci.report.governance_evidence={files:[{path:'DEFINITION.md'}],policy_sha256:'a'.repeat(64),checks:[{id:'facts',path:'scripts/facts-check.mjs',script_sha256:'a'.repeat(64),exit_code:0}]};
+ ci.receipt.governance_evidence=structuredClone(ci.report.governance_evidence);
+ ci.receipt.governance_evidence.checks[0]={id:'forged',path:'scripts/forged.js',script_sha256:'b'.repeat(64),exit_code:0};
+ ci.receipt.report_sha256=createHash('sha256').update(JSON.stringify(ci.report)).digest('hex');
+ const response=await request(app).post('/releases').send(input);expect(response.status).toBe(201);
+ expect(response.body.release.payload.verification.ci_status).toBe('unknown');
+});
+
+it('治理receipt重复facts三次不能代替versions和dod唯一覆盖',async()=>{
+ const input=structuredClone(fixture.releaseInput),ci=input.ci_evidence[0];
+ const checks=['facts','versions','dod'].map(id=>({id,path:`scripts/${id}.js`,script_sha256:'a'.repeat(64),exit_code:0}));
+ ci.report.governance_evidence={files:[{path:'DEFINITION.md'}],policy_sha256:'a'.repeat(64),checks};
+ ci.receipt.governance_evidence={...structuredClone(ci.report.governance_evidence),checks:Array.from({length:3},()=>({...checks[0]}))};
+ ci.receipt.report_sha256=createHash('sha256').update(JSON.stringify(ci.report)).digest('hex');
+ const response=await request(app).post('/releases').send(input);expect(response.status).toBe(201);
+ expect(response.body.release.payload.verification.ci_status).toBe('unknown');
+ await observe(response.body.release.id);expect((await service.getReleaseGate(fixture.db,response.body.release.id)).deployed).toBe(false);
+});
