@@ -34,3 +34,12 @@ it('inactive或不唯一父身份不借已知文件变绿',()=>{
  const a=av('a',[binding('entry.sh')]);expect(resolveEnablerSource({...call,active:false},[a],[component('entry.sh')]).source_status).toBe('unknown');
  expect(resolveEnablerSource(call,[a,structuredClone(a)],[component('entry.sh')]).source_status).toBe('unknown');
 });
+it('同一AV的Activity与两个Step调用按位置独立选组，不互借也不相互污染',()=>{
+ const steps=['s1','s2'].map(key=>({step_id:key,locator:{activity_id:'a',step_key:key}}));
+ const a=av('a',[binding('entry.sh'),...steps.map(s=>binding(s.step_id+'.sh',{scope:'step',step_key:s.step_id}))],steps);
+ const components=['entry.sh','s1.sh','s2.sh'].map(component);
+ for(const [type,id,path] of [['activity','a','entry.sh'],['step','s1','s1.sh'],['step','s2','s2.sh']]){
+  const result=resolveEnablerSource({...call,caller_type:type,caller_id:id},[a],components);
+  expect(result.source_status).toBe('verified');expect(result.source_evidence.map(e=>e.path)).toEqual([path]);
+ }
+});
