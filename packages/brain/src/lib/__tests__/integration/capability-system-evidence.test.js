@@ -1,0 +1,51 @@
+import { randomUUID } from 'node:crypto';
+import { beforeEach,afterEach,it,expect } from 'vitest';
+import { releaseEvidenceDatabase } from '../../../__tests__/fixtures/release-evidence-db.js';
+import { createRelease,recordReleaseObservation } from '../../release-index.js';
+import { bindRunDefinition } from '../../run-definition-binding.js';
+import * as service from '../../capability-system-evidence.js';
+let f;
+beforeEach(async()=>{f=await releaseEvidenceDatabase();});
+afterEach(async()=>{await f?.close();f=null;});
+it('发布和运行列表按Workflow过滤及分页，不向展示面透出任意payload',async()=>{
+  const release=(await createRelease(f.db,f.releaseInput)).release;
+  const observation=(await recordReleaseObservation(f.db,release.id,f.observationInput,{trustedCollector:'fixture-collector'})).observation;
+  for(let i=0;i<2;i++)await bindRunDefinition(f.db,`indexed-${i}`,f.runInput(release,observation,f.workflows[i]));
+  const list=await service.listSystemReleases(f.db,{workflowId:f.workflows[0].workflow_id,limit:1,offset:0});
+  expect(list.total).toBe(1);expect(list.releases[0]).toMatchObject({id:release.id,gate:{deployed:true}});expect(list.releases[0]).not.toHaveProperty('payload');
+  const runs=await service.listSystemRuns(f.db,{workflowId:f.workflows[1].workflow_id,limit:1,offset:0});expect(runs.total).toBe(1);expect(runs.runs[0].run_id).toBe('indexed-1');expect(runs.runs[0]).not.toHaveProperty('payload');
+  expect((await service.listSystemRuns(f.db,{limit:1,offset:1})).runs).toHaveLength(1);
+});
+it('展示面执行绑定和部署证据不能把未产生Span的运行标记完成',async()=>{
+  const release=(await createRelease(f.db,f.releaseInput)).release;
+  const observation=(await recordReleaseObservation(f.db,release.id,f.observationInput,{trustedCollector:'fixture-collector'})).observation;
+  await bindRunDefinition(f.db,'no-span',f.runInput(release,observation));
+  const runs=await service.listSystemRuns(f.db,{limit:20,offset:0});expect(runs.runs[0]).toMatchObject({definition_status:'bound',evidence_status:'not_assessed'});
+  const releases=await service.listSystemReleases(f.db,{limit:20,offset:0});expect(releases.releases[0].gate.deployed).toBe(true);
+  expect(releases.releases[0]).not.toHaveProperty('business_outcome');
+});
+it('旧运行和未绑定执行段仍能盘点，不能被新版本绑定内连接吞掉',async()=>{
+  const task=randomUUID();await f.db.query("INSERT INTO tasks(id,title,status) VALUES($1,'历史运行','completed')",[task]);
+  await f.db.query("INSERT INTO task_runs(task_id,run_id,status,workflow_id) VALUES($1,'legacy-internal','success',$2)",[task,f.workflows[0].workflow_id]);
+  for(const run of ['legacy-internal','legacy-external'])await f.db.query("INSERT INTO spans(run_id,workflow_id,activity_id,started_at,executor_kind,outcome) VALUES($1,$2,$3,NOW(),'code','pass')",[run,f.workflows[0].workflow_id,f.activities[0].activity_id]);
+  const result=await service.listSystemRuns(f.db,{workflowId:f.workflows[0].workflow_id});
+  expect(result.runs).toHaveLength(2);expect(result.total).toBe(2);
+  expect(result.runs.every(r=>r.definition_status==='unknown'&&r.evidence_status==='unknown')).toBe(true);
+  expect(result.runs.find(r=>r.run_id==='legacy-internal').record_source).toBe('task_runs');
+  expect(result.runs.find(r=>r.run_id==='legacy-external').record_source).toBe('spans');
+});
+it('每条CI仅链接报告来源与release固定WV完整交集，缺失/外仓/错摘要不借整个release',async()=>{
+  const input=structuredClone(f.releaseInput),original=input.ci_evidence[0];
+  const extra=(ref,change)=>{const ci=structuredClone(original);ci.evidence_ref=ref;change(ci);input.ci_evidence.push(ci);};
+  extra('subset',ci=>{ci.report.head.definition_versions.workflows=ci.report.head.definition_versions.workflows.slice(0,1);});
+  extra('alien',ci=>{ci.report.source.repo='unrelated/repository';});
+  extra('digest',ci=>{for(const w of ci.report.head.definition_versions.workflows)w.payload_sha256='f'.repeat(64);});
+  extra('missing',ci=>{delete ci.report.head;});
+  extra('malformed',ci=>{ci.report.head.definition_versions.workflows={};});
+  extra('wrong-head',ci=>{ci.report.source.head_revision='c'.repeat(40);});
+  extra('wrong-identity',ci=>{for(const w of ci.report.head.definition_versions.workflows)w.workflow_id=randomUUID();});
+  const release=(await createRelease(f.db,input)).release,result=await service.readSystemReleaseEvidence(f.db,release.id);
+  expect(result.ci_evidence[0].definition_versions.map(w=>w.id).sort()).toEqual(f.workflows.map(w=>w.id).sort());
+  expect(result.ci_evidence.find(ci=>ci.evidence_ref==='subset').definition_versions.map(w=>w.id)).toEqual([original.report.head.definition_versions.workflows[0].id]);
+  for(const ref of ['alien','digest','missing','malformed','wrong-head','wrong-identity'])expect(result.ci_evidence.find(ci=>ci.evidence_ref===ref).definition_versions,ref).toEqual([]);
+});

@@ -95,6 +95,13 @@ cat > "$NODE_STUB" <<'STUB'
 if [[ -n "${NODE_LOG:-}" ]]; then
   printf '%s\n' "$*" >> "$NODE_LOG"
 fi
+if [[ "${1##*/}" == "pilot-graph-targets.mjs" ]]; then
+  case "${2:-}" in
+    cecelia) [[ -z "${TEST_PILOTS:-}" ]] || printf 'cecelia-kr-source|%s|cecelia-kr\n' "$3" ;;
+    zenithjoy-workspace) [[ -z "${TEST_PILOTS:-}" ]] || printf 'zenithjoy-pilot-source|%s|zenithjoy\n' "$3" ;;
+  esac
+  exit 0
+fi
 if [[ "${1##*/}" == "verify-scan-batch.mjs" ]]; then
   if [[ -n "${VERIFY_LOG:-}" ]]; then printf '%s\n' "${2:-}" > "$VERIFY_LOG"; fi
   exit "${VERIFY_EXIT:-0}"
@@ -103,6 +110,7 @@ if [[ -n "${ENV_LOG:-}" ]]; then
   printf '%s|%s|%s|%s\n' "${SCAN_REPO_NAME:-}" "${SCAN_REPO_ROOT:-}" \
     "${SOURCE_DATABASE_URL:-}" "${GRAPH_REPOS:-}" >> "$ENV_LOG"
 fi
+[[ -z "${PROFILE_LOG:-}" ]] || printf '%s|%s\n' "${SCAN_REPO_NAME:-}" "${SCAN_SOURCE_REPO_NAME:-}" >> "$PROFILE_LOG"
 printf '%s\n' "$1" >> "$SCAN_LOG"
 if [[ -n "${HEAD_CHANGE_MARKER:-}" ]]; then : > "$HEAD_CHANGE_MARKER"; fi
 if [[ -n "${TARGET_HEAD_CHANGE_MARKER:-}" ]]; then : > "$TARGET_HEAD_CHANGE_MARKER"; fi
@@ -434,5 +442,19 @@ else
 fi
 
 echo ""
+PILOT_RC=0
+env -i PATH="$CONTROL_BIN" NODE_BIN="$NODE_STUB" SKIP_GIT_PULL=1 TEST_PILOTS=1 \
+  PROFILE_LOG="$TMPD/pilot-profiles" SCAN_LOG="$TMPD/pilot-scans" ENV_LOG="$TMPD/pilot-env" CURL_LOG="$TMPD/pilot-curl" \
+  SCAN_REPO_SPECS="cecelia|$TMPD/repo-a|postgresql://source/a;zenithjoy-workspace|$TMPD/repo-b|postgresql://source/b" \
+  /bin/bash "$RUNNER" > "$TMPD/pilot-out" 2>&1 || PILOT_RC=$?
+if [[ $PILOT_RC -eq 0 && $(wc -l < "$TMPD/pilot-scans") -eq 10 ]] \
+  && grep -q '^cecelia-kr-source|cecelia$' "$TMPD/pilot-profiles" \
+  && grep -q '^zenithjoy-pilot-source|zenithjoy-workspace$' "$TMPD/pilot-profiles" \
+  && grep -q '^cecelia-kr-source|' "$TMPD/pilot-env" \
+  && grep -q '^zenithjoy-pilot-source|' "$TMPD/pilot-env" \
+  && grep -q 'scope_key.*cecelia-kr' "$TMPD/pilot-curl" \
+  && grep -q 'scope_key.*zenithjoy"' "$TMPD/pilot-curl"; then
+  pass "既有定时批次保留两仓四扫描器并追加两alias graph-only与scope重建"
+else fail "试点alias未纳入正式扫描批次: $(cat "$TMPD/pilot-out")"; fi
 echo "结果: PASS=$PASS FAIL=$ERRORS"
 [[ $ERRORS -eq 0 ]] || exit 1
