@@ -39,7 +39,9 @@ const post = body => request(app).post('/api/brain/spans').send(body);
 const rows = async () => (await pool.query('SELECT * FROM spans ORDER BY created_at,id')).rows;
 
 it('旧数据不猜occurrence，迁移重复无损，旧客户端继续按原键幂等', async () => {
-  const old = await post(span()); expect(old.status).toBe(200); const original = (await rows())[0];
+  await pool.query(`INSERT INTO spans(run_id,activity_id,started_at,executor_kind,outcome)
+    VALUES('real-run',$1,'2026-10-02T10:00:00Z','code','pass')`, [activity]);
+  const original = (await rows())[0];
   await migrate(); await migrate();
   expect((await rows())[0]).toEqual({ ...original, occurrence_key: null, payload_sha256: null });
   const replay = await post(span({ outcome: 'fail' }));
