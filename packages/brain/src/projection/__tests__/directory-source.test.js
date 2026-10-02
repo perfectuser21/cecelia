@@ -19,6 +19,59 @@ function sample() {
 }
 const config = { value_stream_bindings: [{ journey_id: fixtureEntityId(2), scope: 'cecelia', node_key: 'product' }] };
 describe('六层目录源映射', () => {
+  function versionedStep() {
+    const data=sample(),s=data.steps[0],a=data.activities[0];
+    Object.assign(s,{key:'cap.stage.read',step_order:1,mode:'checkpoint',source_sha256:'b'.repeat(64),
+      readback:{type:'metric',ref:'metrics.ready',expect:{op:'==',value:1}}});
+    Object.assign(a,{capability_key:'cap',activity_key:'stage',current_definition_version_id:fixtureEntityId(401)});
+    const contract={key:'read',name:'读取',order:1,reads:['Device.serial'],writes:['Device.ready'],check:'设备必须已经就绪',
+      implementation:{status:'implemented',ref:'runner.sh read'},dod:{mode:'checkpoint',readback:{type:'metric',ref:'metrics.ready'}}};
+    const entry={step_id:s.id,locator:{activity_id:a.id,step_key:'read'},contract,
+      registration:{id:s.id,key:s.key,step_order:s.step_order,mode:s.mode,readback:s.readback,source_sha256:s.source_sha256}};
+    a.definition_version={id:a.current_definition_version_id,activity_id:a.id,source_commit:'c'.repeat(40),
+      payload:{activity_id:a.id,contract:{steps:[contract]},steps:[entry],implementation_bindings:[
+        {scope:'activity',status:'verified',validation_scope:'reference_only'},
+        {scope:'step',step_key:'read',kind:'raw',status:'unresolved',raw:contract.implementation}]}};
+    return {data,s,a,entry};
+  }
+  it('精确当前Step声明补Input/Output/实现且保持未核验，原expect与canonical check/dod都展示', () => {
+    const {data,s,a,entry}=versionedStep(),row=api.buildDirectoryRows(data,config).find(r=>r.id===s.id);
+    expect(row.properties.Input.rich_text[0].text.content).toBe('["Device.serial"]');
+    expect(row.properties.Output.rich_text[0].text.content).toBe('["Device.ready"]');
+    expect(JSON.parse(row.properties['实现来源'].rich_text[0].text.content)).toEqual(entry.contract.implementation);
+    expect(row.gaps).not.toContain('implementation_unknown');expect(row.gaps).toContain('implementation_unverified');
+    expect(JSON.parse(row.properties['验收标准'].rich_text[0].text.content)).toEqual(s.readback.expect);
+    const evidence=JSON.parse(row.properties['证据读取'].rich_text[0].text.content);
+    expect(evidence.expect).toEqual(s.readback.expect);
+    expect(evidence.definition).toMatchObject({check:entry.contract.check,dod:entry.contract.dod,implementation_status:'unverified'});
+    expect(row.definitionVersion.id).toBe(a.current_definition_version_id);
+  });
+  it.each(['wrong-activity','wrong-version','wrong-step','wrong-locator','registration-key','registration-sha','registration-readback','duplicate','no-pointer'])('Step %s不接受声明且不从Activity继承实现', kind => {
+    const {data,s,a,entry}=versionedStep();
+    if(kind==='wrong-activity')a.definition_version.activity_id=fixtureEntityId(999);
+    if(kind==='wrong-version')a.definition_version.id=fixtureEntityId(999);
+    if(kind==='wrong-step')entry.step_id=fixtureEntityId(999);
+    if(kind==='wrong-locator')entry.locator.activity_id=fixtureEntityId(999);
+    if(kind==='registration-key')entry.registration.key='other';
+    if(kind==='registration-sha')entry.registration.source_sha256='d'.repeat(64);
+    if(kind==='registration-readback')entry.registration.readback={type:'none'};
+    if(kind==='duplicate')a.definition_version.payload.steps.push(structuredClone(entry));
+    if(kind==='no-pointer')a.current_definition_version_id=null;
+    const row=api.buildDirectoryRows(data,config).find(r=>r.id===s.id);
+    expect(row.properties['实现来源'].rich_text).toEqual([]);expect(row.gaps).toContain('implementation_unknown');
+    expect(row.properties.Input.rich_text).toEqual([]);
+  });
+  it('快照step未登记仅父Activity标gap，不新增Step；直接字段优先仍保canonical证据', () => {
+    const {data,s,a,entry}=versionedStep();
+    a.definition_version.payload.steps.push({step_id:null,locator:{activity_id:a.id,step_key:'missing'},registration:null,contract:{key:'missing'}});
+    s.contract={input:'直接输入',output:'直接输出',acceptance:'直接标准',implementation:'直接实现'};
+    const rows=api.buildDirectoryRows(data,config),row=rows.find(r=>r.id===s.id);
+    expect(rows.filter(r=>r.layer==='steps')).toHaveLength(1);
+    expect(rows.find(r=>r.id===a.id).gaps).toContain('step_registration_unresolved:missing');
+    for(const [field,value] of Object.entries({Input:'直接输入',Output:'直接输出','验收标准':'直接标准','实现来源':'直接实现'}))
+      expect(row.properties[field].rich_text[0].text.content).toBe(value);
+    expect(JSON.parse(row.properties['证据读取'].rich_text[0].text.content).definition.check).toBe(entry.contract.check);
+  });
   function versionedInput() {
     const data=sample(),w=data.workflows[0];
     w.current_definition_version_id=fixtureEntityId(301);

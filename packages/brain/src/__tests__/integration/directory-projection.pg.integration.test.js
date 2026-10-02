@@ -20,6 +20,7 @@ beforeEach(async () => {
     CREATE TABLE journeys(id uuid,name text,kind text,area_id uuid,parent_journey_id uuid);
     CREATE TABLE workflows(id uuid,name text,key text,capability_id uuid);
     CREATE TABLE workflow_definition_versions(id uuid,workflow_id uuid,payload jsonb,source_repo text,source_path text,source_commit text,created_at timestamptz);
+    CREATE TABLE activity_definition_versions(id uuid,activity_id uuid,payload jsonb,source_repo text,source_path text,source_commit text);
     CREATE TABLE journey_steps(id uuid,name text,workflow_id uuid);
     CREATE TABLE steps(id uuid,key text,activity_id uuid,active boolean,step_order int);
     CREATE TABLE workflow_activity_refs(workflow_id uuid,activity_id uuid,slot_key text,sequence_no int,active boolean);
@@ -31,6 +32,46 @@ beforeEach(async () => {
 });
 afterEach(async () => { if (client) { await client.query('ROLLBACK'); if (schema) await client.query(`DROP SCHEMA ${schema} CASCADE`); await client.end(); } });
 describe('六层目录真实PG边界', () => {
+  it('真PG精确current Activity/Step登记读取声明；历史、错step、注册漂移拒映射，未登记仅父gap', async () => {
+    const activity=fixtureEntityId(850),step=fixtureEntityId(851),version=fixtureEntityId(852),history=fixtureEntityId(853),workflow=fixtureEntityId(854);
+    await client.query('ALTER TABLE journey_steps ADD COLUMN current_definition_version_id uuid');
+    await client.query('ALTER TABLE steps ADD COLUMN source_sha256 text, ADD COLUMN mode text, ADD COLUMN readback jsonb');
+    const readback={type:'metric',expect:{op:'==',value:1}},sha='b'.repeat(64);
+    await client.query("INSERT INTO journey_steps VALUES($1,'共享',$2,$3)",[activity,workflow,version]);
+    await client.query("INSERT INTO workflow_activity_refs VALUES($1,$2,'read',1,true)",[workflow,activity]);
+    await client.query("INSERT INTO steps VALUES($1,'cap.stage.read',$2,true,1,$3,'checkpoint',$4)",[step,activity,sha,readback]);
+    const declared={key:'read',reads:['Device.serial'],writes:['Device.ready'],check:'设备应已就绪',implementation:{status:'implemented',ref:'runner.sh read'},
+      dod:{mode:'checkpoint',readback:{type:'metric',expect:{op:'==',value:1}}}};
+    const entry={step_id:step,locator:{activity_id:activity,step_key:'read'},contract:declared,
+      registration:{id:step,key:'cap.stage.read',step_order:1,mode:'checkpoint',readback,source_sha256:sha}};
+    const payload={activity_id:activity,contract:{},steps:[entry,{step_id:null,locator:{activity_id:activity,step_key:'unregistered'},contract:{key:'unregistered'},registration:null}],
+      implementation_bindings:[{scope:'activity',status:'verified'},{scope:'step',step_key:'read',kind:'raw',status:'unresolved'}]};
+    await client.query('INSERT INTO activity_definition_versions(id,activity_id,payload) VALUES($1,$2,$3),($4,$2,$5)',
+      [version,activity,payload,history,{...payload,steps:[{...entry,contract:{...declared,implementation:'历史实现'}}]}]);
+    const rows=buildDirectoryRows(await loadDirectorySource(client)),row=rows.find(r=>r.id===step);
+    expect(JSON.parse(row.properties['实现来源'].rich_text[0].text.content)).toEqual(declared.implementation);
+    expect(row.properties.Input.rich_text[0].text.content).toBe('["Device.serial"]');
+    expect(row.gaps).toContain('implementation_unverified');expect(row.definitionVersion.id).toBe(version);
+    expect(rows.find(r=>r.id===activity).gaps).toContain('step_registration_unresolved:unregistered');
+    expect(rows.filter(r=>r.layer==='steps')).toHaveLength(1);
+    const page=fixtureEntityId(855),dbId=fixtureEntityId(856);let properties;
+    const notionReq=async(_token,path,method,body)=>{
+      if(path.endsWith('/query'))return{results:[],has_more:false};
+      if(path==='/pages'||method==='PATCH')properties=structuredClone(body.properties);
+      return{id:page,parent:{database_id:dbId},properties:structuredClone(properties)};
+    };
+    await projectDirectoryPage(client,{token:'test',dbId,row,properties:row.properties,notionReq});
+    expect((await client.query('SELECT external_id FROM projection_links WHERE entity_id=$1',[step])).rows).toEqual([{external_id:page}]);
+    await client.query('UPDATE steps SET source_sha256=$2 WHERE id=$1',[step,'c'.repeat(64)]);
+    const stale=buildDirectoryRows(await loadDirectorySource(client));
+    expect(stale.find(r=>r.id===step).properties['实现来源'].rich_text).toEqual([]);
+    expect(stale.find(r=>r.id===activity).gaps).toContain('step_registration_unresolved:read');
+    await client.query('UPDATE steps SET source_sha256=$2 WHERE id=$1',[step,sha]);
+    for(const change of [{...payload,steps:[{...entry,step_id:fixtureEntityId(999)}]}, {...payload,activity_id:fixtureEntityId(999)}]) {
+      await client.query('UPDATE activity_definition_versions SET payload=$2 WHERE id=$1',[version,change]);
+      expect(buildDirectoryRows(await loadDirectorySource(client)).find(r=>r.id===step).properties['实现来源'].rich_text).toEqual([]);
+    }
+  });
   it('单SQL只读当前复合身份版本并将Input写读回落receipt；较新历史/错对象/无指针不能冒充当前', async () => {
     const current=fixtureEntityId(801),historical=fixtureEntityId(802),wrong=fixtureEntityId(803),legacy=fixtureEntityId(804);
     const workflows=[fixtureEntityId(811),fixtureEntityId(812),fixtureEntityId(813)];
