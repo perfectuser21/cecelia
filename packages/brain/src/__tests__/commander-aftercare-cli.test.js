@@ -24,14 +24,17 @@ it('独立安装器成套原子发布CLI、模块与ESM声明，拒盖普通目�
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-for (const fails of [false, true]) it(`实际CLI售后${fails ? '记账失败保留cron' : '写Brain并读回后注销'}`, async () => {
+for (const scenario of ['normal', 'brain-failure', 'cancelled', 'race', 'stale-readback']) it(`实际CLI售后：${scenario}`, async () => {
+  const fails = scenario === 'brain-failure';
   const root = await mkdtemp(join(tmpdir(), 'cmdr-aftercare-'));
-  let stored, patchCount = 0;
+  let stored, firstStored, patchCount = 0;
   const server = createServer(async (req, res) => {
     if (req.method === 'PATCH') {
       patchCount++; let data = ''; for await (const chunk of req) data += chunk;
-      stored = JSON.parse(data).result; res.writeHead(fails ? 503 : 200); res.end('{}');
-    } else { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ result: stored })); }
+      stored = JSON.parse(data).result; if (patchCount === 1) firstStored = stored;
+      res.writeHead(fails ? 503 : 200); res.end('{}');
+    } else { res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ result: scenario === 'stale-readback' && patchCount > 1 ? firstStored : stored })); }
   });
   await new Promise(accept => server.listen(0, '127.0.0.1', accept));
   try {
@@ -39,22 +42,39 @@ for (const fails of [false, true]) it(`实际CLI售后${fails ? '记账失败保
     const context = { tag: 'cmd-test', host: 'fixture-host', escortId: id, taskId: id,
       finalized: true, nonce: 'current-nonce', brainUrl: `http://127.0.0.1:${server.address().port}` };
     await writeFile(`${prefix}.request.json`, JSON.stringify(context)); await writeFile(`${prefix}.lock`, 'test');
+    if (scenario === 'cancelled') {
+      await writeFile(join(root, 'disabled'), 'yes'); await writeFile(join(root, 'cancelled'), 'yes');
+    }
     await writeFile(`${prefix}.json`, JSON.stringify({ schema_version: 1, run_tag: context.tag,
       host: context.host, escort_id: id, nonce: context.nonce, status: 'completed', finalize_verified: true,
-      actor: 'media', facts: ['终态真实读回'], evidence: ['/receipt.json'] }));
+      actor: 'work-commander', at: '2026-10-02T03:00:01.000Z', facts: ['终态真实读回'], evidence: ['/receipt.json'] }));
     const bin = join(root, 'cron');
     await writeFile(bin, `#!${process.execPath}\nconst fs=require('node:fs');
       const root=process.env.COMMANDER_AFTERCARE_DIR;
       fs.appendFileSync(root+'/calls',process.argv.slice(2).join(' ')+'\\n');
       if(process.argv[3]==='rm')fs.writeFileSync(root+'/removed','yes');
       if(process.argv[3]==='disable')fs.writeFileSync(root+'/disabled','yes');
-      console.log(JSON.stringify({jobs:fs.existsSync(root+'/removed')?[]:[{id:'${id}',name:'escort-fixture-host-cmd-test',schedule:{kind:'every'},enabled:!fs.existsSync(root+'/disabled'),state:{lastRunStatus:'ok'}}]}));`, { mode: 0o755 });
+      if(process.argv[3]==='disable'&&'${scenario}'==='race'&&!fs.existsSync(root+'/retried'))fs.writeFileSync(root+'/cancelled','yes');
+      if(process.argv[3]==='disable'&&'${scenario}'==='stale-readback'){
+        fs.writeFileSync(root+'/latest-tick','yes');
+        const p=root+'/escort-fixture-host-cmd-test.json';const ack=JSON.parse(fs.readFileSync(p));
+        ack.at='2026-10-02T03:00:06.000Z';fs.writeFileSync(p,JSON.stringify(ack));
+      }
+      if(process.argv[3]==='enable')fs.rmSync(root+'/disabled',{force:true});
+      if(process.argv[3]==='run'){fs.rmSync(root+'/cancelled',{force:true});fs.writeFileSync(root+'/retried','yes');}
+      const state=fs.existsSync(root+'/cancelled')?{lastRunStatus:'error',lastError:'Cron job disabled by operator.'}:{lastRunStatus:'ok',lastRunAtMs:Date.parse('2026-10-02T03:00:00.000Z'),lastDurationMs:2000};
+      if(fs.existsSync(root+'/latest-tick'))state.lastRunAtMs+=5000;
+      console.log(JSON.stringify({jobs:fs.existsSync(root+'/removed')?[]:[{id:'${id}',name:'escort-fixture-host-cmd-test',schedule:{kind:'every'},enabled:!fs.existsSync(root+'/disabled'),state}]}));`, { mode: 0o755 });
     await execute(process.execPath, [script, '--worker', `${prefix}.request.json`], {
       env: { ...process.env, COMMANDER_AFTERCARE_DIR: root, COMMANDER_OPENCLAW_BIN: bin }, timeout: 10000 });
     const result = JSON.parse(await readFile(`${prefix}.result.json`, 'utf8'));
-    expect(result.status).toBe(fails ? 'retained' : 'retired'); expect(patchCount).toBe(1);
+    const retained = fails || scenario === 'stale-readback';
+    expect(result.status).toBe(retained ? 'retained' : 'retired'); expect(patchCount).toBe(['race', 'stale-readback'].includes(scenario) ? 2 : 1);
     const calls = await readFile(join(root, 'calls'), 'utf8');
-    if (fails) expect(calls).not.toContain('cron rm');
+    if (retained) expect(calls).not.toContain('cron rm');
     else { expect(stored.commander_aftercare.nonce).toBe(context.nonce); expect(calls).toContain(`cron rm ${id}`); }
+    if (['cancelled', 'race'].includes(scenario)) {
+      expect(calls).toContain(`cron enable ${id}`); expect(calls).toContain(`cron run ${id}`);
+    }
   } finally { await new Promise(accept => server.close(accept)); await rm(root, { recursive: true, force: true }); }
 }, 15000);

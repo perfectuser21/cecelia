@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFile, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
+import { promisify, isDeepStrictEqual } from 'node:util';
 import { readFile, writeFile, mkdir, open, rename, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -74,6 +74,7 @@ async function worker(path) {
     readJobs: async () => JSON.parse(await cron('list', '--all', '--json')).jobs,
     readReceipt: () => readJson(`${prefix}.json`),
     requestTick: id => cron('run', id),
+    resumeJob: id => cron('enable', id),
     quiesceJob: id => cron('disable', id),
     recordAftercare: async receipt => {
       const url = `${(context.brainUrl || 'http://localhost:5221').replace(/\/$/, '')}/api/brain/tasks/${context.taskId}`;
@@ -84,7 +85,8 @@ async function worker(path) {
       const verified = await fetch(url, { signal: AbortSignal.timeout(15000) });
       if (!verified.ok) throw Error(`brain-readback-${verified.status}`);
       const row = await verified.json();
-      if ((row.task || row).result?.commander_aftercare?.nonce !== context.nonce) throw Error('brain-readback-mismatch');
+      const { recorded_at, ...readback } = (row.task || row).result?.commander_aftercare || {};
+      if (!isDeepStrictEqual(readback, receipt)) throw Error('brain-readback-mismatch');
     },
     removeJob: async id => {
       await cron('rm', id);

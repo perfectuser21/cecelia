@@ -155,11 +155,12 @@ export function buildEscortRelaunchRemote({ host, tag, serial, profile, taskId, 
     : '调度能力缺失：只读账本与日志、写心跳，不自选workflow或套用其他专属skill；记录缺能力证据。';
   const msg = `先执行 ${gatewayExec} ${sq(`cat ${sq(ESCORT_SOP)}`)} 读取网关 SOP 并严格遵守辅佐三原则。`
     + `你可能落在任意跑场机；SOP、日志、findings、openclaw CLI 均在网关，相关读写经 ${gatewayExec} 执行，不能把本机文件不存在当成网关文件不存在。`
+    + '终态优先：先检查同TAG协调器请求；已有finalize请求时只核终态并完成售后，不再发运行期心跳或触碰手机。'
     + skill
     + `接班：前任 escort 心跳中断（第${relaunchCount}次接班），你只读账本与日志接上现场，不重新发起 run、不重跑任何步骤。`
     + `本轮上下文: ${cap ? `cap=${cap} ` : ''}TAG=${tag} 机器=${host} serial=${serial ?? '未知'} profile=${profile ?? '未知'} `
     + `日志=/Users/administrator/.openclaw/m4-logs/${host}-live.log escort名=${name} Brain单=${taskId}。`
-    + `每轮末尾必须发心跳: ${gatewayExec} ${sq(heartbeat)}`;
+    + `仅运行期每轮末尾必须发心跳: ${gatewayExec} ${sq(heartbeat)}`;
   const delivery = process.env.COMMANDER_ESCORT_DELIVERY === 'none' ? '--no-deliver'
     : `--announce --channel feishu --to ${sq(ESCORT_FEISHU_TO)} --account main --best-effort-deliver`;
   return `openclaw cron add --timeout 90000 --name ${sq(name)} --agent work-commander --session ${sq(`session:${name}`)} `

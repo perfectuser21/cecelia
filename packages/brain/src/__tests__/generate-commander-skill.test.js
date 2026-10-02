@@ -28,7 +28,7 @@ it('真实CLI生成确定性专属skill，按order保留预算、分类、探针
   expect(output.skill.indexOf('## 1. preflight')).toBeLessThan(output.skill.indexOf('## 2. cleanup'));
   for (const text of ['120', '30', 'temporary_transport', 'identity_invalid', 'account_mismatch',
     'preflight_readback', '真实产物存在', '回执与真身一致', 'screen_asleep', '只对调度单设备唤醒',
-    '不选机器', 'nonce', '不得自行 cron rm']) expect(output.skill).toContain(text);
+    '不选机器', 'nonce', '不得自行 cron rm', '终态优先', '实际写回执时', '带时区']) expect(output.skill).toContain(text);
   expect(run(input).stdout).toBe(result.stdout);
 });
 

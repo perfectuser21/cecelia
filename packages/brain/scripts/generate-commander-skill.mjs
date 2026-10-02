@@ -53,6 +53,7 @@ export function generateCommanderSkill(input) {
     '本文件由契约与业务SOP生成。修改真身后重新生成，禁止在运行时改契约或手改本投影。',
     '照完整调度单执行；不选机器、不选手机、不组装 workflow。先确认起跑，再按当前活动证据和预算陪跑。',
     '读取SOP、日志、回执和写心跳必须经调度声明的网关；读不到记 unknown，不猜成功。',
+    '终态优先：先检查同TAG协调器请求；已有finalize请求时只核终态、完成售后，不再发运行期心跳或触碰手机。',
     '自动动作限可逆且不出本 run；不可逆或越界动作请示；代码问题只报根因和修法。',
     '空产出只按活动 empty_ok 判定，重试不超过契约 max_attempts；超预算平滑请求收工，保留已采产物。',
     '每tick核对同TAG/设备/锁，按网关给定心跳指令留痕。锁不属于本run时不得清场或解锁。', ''];
@@ -74,7 +75,7 @@ export function generateCommanderSkill(input) {
   out.push('## finalize、复盘与下岗', '',
     '只认同run程序finalize回执；核对真实终态、产物、探针、清场、放锁和执行器已退出。',
     '复盘写事实、证据、actor，区分异常与处置结果；不得把日志自报或cron入队当成功。',
-    '收到协调器请求后，完成售后才写同TAG、同nonce完成凭证并正常结束tick。',
+    '收到协调器请求后，完成售后才写同TAG、同nonce完成凭证；at在网关实际写回执时由程序生成带时区时间，禁止估算或抄请求时间；每个售后tick重新核验证据并写本轮回执，不能复用旧回执，然后正常结束tick。',
     'Cecelia确认Brain写入读回、在途tick自然成功后负责下岗；Commander不得自行 cron rm。', '');
   return { schema_version: 1, name, capability: input.capability, workflow: contract.workflow,
     contract_sha256: contractSha, sop_sha256: sopSha, skill: out.join('\n') };

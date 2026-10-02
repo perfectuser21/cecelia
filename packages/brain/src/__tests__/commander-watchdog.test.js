@@ -108,6 +108,7 @@ it('已声明能力的接班必须先读相同专属skill，缺能力不能自�
   const args = JSON.parse(execFileSync('/bin/sh', ['-c', `openclaw(){ python3 -c 'import sys,json;print(json.dumps(sys.argv[1:]))' "$@"; }; ${remote}`], { encoding: 'utf8' }));
   expect(args[args.indexOf('--message') + 1]).toContain('wf-keyword_acquisition/SKILL.md');
   expect(args[args.indexOf('--message') + 1]).toContain('专属skill');
+  expect(args[args.indexOf('--message') + 1]).toContain('终态优先');
   const legacy = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmdfixture', taskId: 'run1', relaunchCount: 1 });
   expect(legacy).toContain('能力缺失');
 });

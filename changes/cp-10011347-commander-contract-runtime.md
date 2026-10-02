@@ -12,4 +12,6 @@ Commander 售后协调器在真实 finalize 后异步请求末轮，只接受同
 
 阶段4：`generate-commander-skill.mjs` 设计时读取显式编译契约与业务SOP，按order生成活动正常态、预算、失败分类、探针与售后规则；纯stdin/stdout无网络和模型调用。接班读取同cap专属skill，缺能力不自选。生产未部署；真机验证结果以Brain阶段4原任务为准。
 
-角色一致性：陪跑与Brain接班统一召唤PRD指定的`work-commander`，保持同TAG/session/cap及网关访问。售后禁用运输可能中断抢跑tick，后续必须真实读回ok；error时保留，不把取消当自然成功。
+角色一致性：陪跑与Brain接班统一召唤PRD指定的`work-commander`，保持同TAG/session/cap及网关访问。售后禁用运输可能中断抢跑tick，后续必须真实读回ok，不把取消当自然成功。仅同ID、空闲且已禁用、错误精确为`Cron job disabled by operator.`并有同nonce有效回执时，协调器最多两次恢复原陪跑、请求真实售后末轮；重核身份与自然成功后才记账注销。其他错误、重名、回执不符或重试耗尽保留。
+
+售后回执绑定：首次确认与禁用后最终确认均要求回执`at`位于最新自然完成tick的实际起止时间内；时间必须带时区，tick时间字段缺失或非法即保留。最终tick发生变化时重新读取回执并真实写Brain，读回比较完整本次回执，不能只认同nonce旧值。生成skill与陪跑指令明确终态优先，已有finalize请求时只核终态并完成售后，不再发运行期心跳或碰手机；回执时间由网关程序当场生成。
