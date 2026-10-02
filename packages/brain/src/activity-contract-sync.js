@@ -35,9 +35,9 @@ async function ghText(path, accept, { fetchFn, token }, repo = CONTRACT_REPO) {
     signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
   if (!res?.ok) throw new Error(`github_${path.split('?')[0]}_http_${res?.status ?? 'unknown'}`);
-  return (await res.text()).trim();
+  return res.text();
 }
-const fetchHead = (d) => ghText('commits/main', 'application/vnd.github.sha', d);
+const fetchHead = async (d) => (await ghText('commits/main', 'application/vnd.github.sha', d)).trim();
 const fetchFile = (path, sha, d) => ghText(`contents/${path}?ref=${sha}`, 'application/vnd.github.raw', d);
 
 // ─── 同步：GitHub → journey_steps ───────────────────────────────────────────
