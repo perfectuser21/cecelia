@@ -235,3 +235,15 @@ it('升级授权复核错误不能进入SSH；容量事务正常结束且原inte
  await pool.query("UPDATE tasks SET payload=jsonb_set(jsonb_set(payload,'{linux_onboarding,phase}','\"bootstrap\"'),'{linux_onboarding,upgrade_json}','\"{}\"') WHERE id=$1",[id]);
  await f.advance(id);expect(calls).toBe(0);expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0].payload.linux_onboarding.phase).toBe('bootstrap');
 });
+
+it('等待容量锁期间任务被撤销或换intent，不覆盖新状态也不执行SSH',async()=>{
+ let calls=0;const f=flow({step:async()=>{calls++;}}),id=await f.ensure(machine,parent),other=await pool.connect(),nonce='f'.repeat(64);let pending;
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,phase}','\"bootstrap\"') WHERE id=$1",[id]);
+ try{
+  await other.query('BEGIN');await other.query(MACHINE_CAPACITY_LOCK_SQL,[machine.name]);pending=f.advance(id).catch(()=>null);
+  let waiting=false;for(let n=0;n<100;n++){waiting=(await admin.query("SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND wait_event='advisory' AND query LIKE '%harness_attempt_machine%'",[schema])).rowCount>0;if(waiting)break;await new Promise(r=>setTimeout(r,5));}expect(waiting).toBe(true);
+  await other.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,nonce}',$2::jsonb) WHERE id=$1",[id,JSON.stringify(nonce)]);
+  await other.query('COMMIT');await pending;
+ }finally{await other.query('ROLLBACK');other.release();await pending;}
+ expect(calls).toBe(0);expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[id])).rows[0].payload.linux_onboarding.nonce).toBe(nonce);
+});
