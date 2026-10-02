@@ -43,3 +43,16 @@ it('内部run只绑定既有task_run且必须run/workflow一致',async()=>{
   const input=fixture.runInput(release,observation);delete input.external_origin;input.source_kind='internal';
   input.task_run_id='11111111-1111-4111-8111-111111111111';expect((await post('internal',input)).status).toBe(422);
 });
+it('固定契约没有optional声明时不能将必经路径降为可选',async()=>{
+  const input=fixture.runInput(release,observation);input.expected_path[0].required=false;
+  expect((await post('false-optional',input)).status).toBe(422);
+});
+it('真实内部task_run身份匹配才可绑定，绑定服务不改既有执行行',async()=>{
+  const input=fixture.runInput(release,observation);delete input.external_origin;input.source_kind='internal';
+  const task=(await fixture.db.query("INSERT INTO tasks(title,status) VALUES('fixture','queued') RETURNING id")).rows[0];
+  const taskRun=(await fixture.db.query("INSERT INTO task_runs(task_id,run_id,workflow_id,status) VALUES($1,'internal-real',$2,'running') RETURNING *",[task.id,input.workflow_id])).rows[0];
+  input.task_run_id=taskRun.id;
+  expect((await post('internal-real',input)).status).toBe(201);
+  expect((await fixture.db.query('SELECT * FROM task_runs WHERE id=$1',[taskRun.id])).rows[0]).toEqual(taskRun);
+  expect((await post('wrong-run',input)).status).toBe(422);
+});

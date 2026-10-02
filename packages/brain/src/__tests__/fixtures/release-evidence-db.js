@@ -6,20 +6,21 @@ import { readImplementationImpact } from '../../lib/implementation-impact.js';
 import { DB_DEFAULTS } from '../../db-config.js';
 export const RELEASE_HEAD='b'.repeat(40);
 export async function releaseEvidenceDatabase(){
-  const fixture=await implementationImpactDatabase(); const {db,ids}=fixture;
+  const fixture=await implementationImpactDatabase(); const {db,ids}=fixture; let pool;
   try {
     for(const activity of (await db.query('SELECT id,capability_key,activity_key,contract FROM journey_steps')).rows){
       const key=activity.contract.steps[0].key;
       await db.query('INSERT INTO steps(activity_id,step_order,key,activity_key) VALUES($1,1,$2,$3)',[activity.id,`${activity.capability_key}.${activity.activity_key}.${key}`,activity.activity_key]);
     }
+    for(const doc of Object.values(fixture.contracts.docs))for(const activity of doc.activities)for(const step of activity.steps||[])delete step.implementation;
     await fixture.advance();
     const schema=(await db.query('SELECT current_schema() AS name')).rows[0].name;
-    const pool=new pg.Pool({...DB_DEFAULTS,max:6,options:`-c search_path=${schema}`});
+    pool=new pg.Pool({...DB_DEFAULTS,max:6,options:`-c search_path=${schema}`});
     const migration=new URL('../../../migrations/514_release_definition_evidence.sql',import.meta.url);
     if(existsSync(migration))await db.query(readFileSync(migration,'utf8'));
     const workflows=(await db.query('SELECT * FROM workflow_definition_versions WHERE source_commit=$1 ORDER BY workflow_id',[RELEASE_HEAD])).rows;
     const activities=(await db.query('SELECT * FROM activity_definition_versions WHERE source_commit=$1 ORDER BY activity_id',[RELEASE_HEAD])).rows;
-    const bound=activities.find(a=>a.payload.implementation_bindings.length),binding=bound.payload.implementation_bindings[0];
+    const bound=activities.find(a=>a.payload.implementation_bindings.some(b=>b.kind==='code')),binding=bound.payload.implementation_bindings.find(b=>b.kind==='code');
     const enabler=randomUUID(),call=randomUUID();
     await db.query("INSERT INTO enablers(id,key,name,kind,impl_ref) VALUES($1,'test-lock','锁','code',$2)",[enabler,`${IMPACT_REPO}@${RELEASE_HEAD}:${binding.path}`]);
     await db.query("INSERT INTO enabler_calls(id,caller_type,caller_id,enabler_id) VALUES($1,'activity',$2,$3)",[call,bound.activity_id,enabler]);
@@ -31,5 +32,5 @@ export async function releaseEvidenceDatabase(){
       return {release_id:release.id,observation_id:observation.id,workflow_id:workflow.workflow_id,workflow_definition_version_id:workflow.id,snapshot_sha256:workflow.payload_sha256,source_kind:'external',external_origin:'fixture-worker',attempt_key:'run-attempt-1',actor:'test:runner',expected_path:workflow.payload.activities.map(ref=>({reference_id:ref.reference_id,activity_id:ref.activity_id,activity_definition_version_id:ref.activity_version_id,required:true}))};
     }
     return {...fixture,db:pool,workflows,activities,ids,enabler,call,releaseInput,observationInput,runInput,async close(){await pool.end();await fixture.close();}};
-  }catch(error){await fixture.close();throw error;}
+  }catch(error){await pool?.end();await fixture.close();throw error;}
 }

@@ -54,3 +54,20 @@ it('CI PASS标签不足，receipt与report摘要不符或真实测试失败只�
   const input2=structuredClone(fixture.releaseInput);input2.release_key='failed-ci';input2.ci_evidence[0].receipt.assertions[0].exit_code=1;
   r=await request(app).post('/releases').send(input2);expect(r.body.release.payload.verification.ci_status).toBe('unknown');
 });
+it('manifest摘要可由HTTP下载JSON精确重算，额外未登记Code不能声称已逐项核验',async()=>{
+  const r=await post();const release=r.body.release;
+  expect(service.evidenceHash({environment:release.environment,target:release.target,payload:release.payload})).toBe(release.manifest_sha256);
+  const input=structuredClone(fixture.releaseInput);input.release_key='unbound-code';input.components.push({...input.components[1],path:'src/not-in-contract.js'});
+  expect((await request(app).post('/releases').send(input)).status).toBe(422);
+});
+it('回滚回读保留两release历史，仅实际组件相等的版本成为当前deployed',async()=>{
+  const first=(await post()).body.release;await observe(first.id);
+  const second=(await request(app).post('/releases').send({...fixture.releaseInput,release_key:'next-release',target:'other-host'})).body.release;
+  await observe(second.id,{environment:second.environment,target:second.target,event_key:'other-target',components:[]});
+  expect((await request(app).get(`/releases/${first.id}/gate`)).body.deployed).toBe(true);
+  await observe(first.id,{event_key:'drift-other',components:[],observed_at:new Date(Date.now()+1000).toISOString()});
+  expect((await request(app).get(`/releases/${first.id}/gate`)).body).toMatchObject({deployed:false,ever_deployed:true});
+  await observe(first.id,{event_key:'rollback',attempt_key:'rollback-1',observed_at:new Date(Date.now()+2000).toISOString()});
+  expect((await request(app).get(`/releases/${first.id}/gate`)).body).toMatchObject({deployed:true,ever_deployed:true});
+  expect((await fixture.db.query('SELECT count(*)::int n FROM release_observations')).rows[0].n).toBe(4);
+});
