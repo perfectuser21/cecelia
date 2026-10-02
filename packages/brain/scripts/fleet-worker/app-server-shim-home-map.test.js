@@ -87,3 +87,21 @@ it('白名单有界：128项可选择，129项拒绝',()=>{
   expect(()=>loadShimConfig(rejected.file,{CODEX_HOME:'/trusted/agent-127'})).toThrow('appserver_shim_config_invalid');
  }finally{accepted.close();rejected.close();}
 });
+
+const rawBase = '"brainUrl":"http://127.0.0.1:5221","internalToken":"' + 'x'.repeat(40) + '"';
+const cases = [
+  ['映射条目内转义重复 homeId 键', '{' + rawBase + ',"homeMap":[{"codexHome":"/a","homeId":"chat-a","home\\u0049d":"chat-b"}]}'],
+  ['顶层重复 homeMap 键', '{' + rawBase + ',"homeMap":[{"codexHome":"/a","homeId":"chat-a"}],"homeMap":[{"codexHome":"/b","homeId":"chat-b"}]}'],
+  ['JSON 解码后重复 codexHome 路径', '{' + rawBase + ',"homeMap":[{"codexHome":"/a","homeId":"chat-a"},{"codexHome":"\\u002fa","homeId":"chat-b"}]}'],
+  ['JSON 解码后重复 homeId 值', '{' + rawBase + ',"homeMap":[{"codexHome":"/a","homeId":"chat-a"},{"codexHome":"/b","homeId":"chat-\\u0061"}]}'],
+];
+it.each(cases)('%s 必须拒绝', (_name, raw) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'home-map-review-'));
+  const file = path.join(root, 'shim.json');
+  try {
+    fs.writeFileSync(file, raw, { mode: 0o600 });
+    expect(() => loadShimConfig(file, { CODEX_HOME: '/a' })).toThrow('appserver_shim_config_invalid');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
