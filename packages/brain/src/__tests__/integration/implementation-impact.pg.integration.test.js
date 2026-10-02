@@ -86,3 +86,11 @@ it('最后引用删除证据不能掩盖同次变更的另一未知新入口',as
   await advance({remove:true,bindings:[]});const r=await post({changed_files:['src/shared-lock.js','src/new-api.js']});
   expect(r.status,r.body).toBe(200);expect(r.body.head.impact_status).toBe('known_removed');expect(r.body.mapping_status).toBe('unknown');expect(r.body.unclaimed_paths).toEqual([{path:'src/new-api.js'}]);
 });
+it('新增入口有固定head绑定且base快照证明确未绑定时known_added，缺base证据仍unknown',async()=>{
+  await advance({bindings:[{kind:'code',repo,path:'src/new-entry.js'}],edges:[]});
+  let r=await post({changed_files:['src/new-entry.js']});expect(r.status,r.body).toBe(200);expect(r.body.head.affected_usages).toHaveLength(2);
+  expect(r.body.base.impact_status).toBe('known_added');expect(r.body.base.addition_evidence).toHaveLength(2);expect(r.body.mapping_status).toBe('verified');
+  expect(r.body.required_assertions[0].source_repo_basis).toBe('activity_definition');expect(r.body.required_assertions[0].source_bindings.every(b=>b.source_repo_basis==='activity_definition')).toBe(true);
+  await db.query('DELETE FROM graph_edge_snapshots WHERE source_revision=$1',[BASE]);await db.query('DELETE FROM graph_snapshot_versions WHERE source_revision=$1',[BASE]);
+  r=await post({changed_files:['src/new-entry.js']});expect(r.status,r.body).toBe(200);expect(r.body.mapping_status).toBe('unknown');expect(r.body.base.gaps).toContainEqual(expect.objectContaining({code:'graph_snapshot_missing'}));
+});

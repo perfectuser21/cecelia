@@ -8,13 +8,13 @@ const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SHA=/^[0-9a-f]{40}$/;
 const fail=(code,message,status=400)=>{throw Object.assign(Error(message),{code:`MAP_${code}`,status});};
 export function validateImplementationQuery(input) {
-  const {scope,kind,repo,path,revision,digest,workflow_version_id:versionId}=input;
+  const {scope,kind,repo,path,revision,digest,workflow_version_id:versionId}=input??{};
   if(typeof scope!=='string'||!scope||scope.length>128||!['code','skill'].includes(kind)
-    ||typeof repo!=='string'||!/^[-\w.]+\/[-\w.]+$/.test(repo)||!SHA.test(revision||''))fail('IMPLEMENTATION_INPUT_INVALID','scope、kind、规范repo及固定revision必填');
+    ||typeof repo!=='string'||!/^[-\w.]+\/[-\w.]+$/.test(repo)||typeof revision!=='string'||!SHA.test(revision))fail('IMPLEMENTATION_INPUT_INVALID','scope、kind、规范repo及固定revision必填');
   if(typeof path!=='string'||path.length>1024||!path||path.startsWith('/')||/[\\?#\0]/.test(path)
     ||path.split('/').some(part=>!part||part==='.'||part==='..'))fail('IMPLEMENTATION_INPUT_INVALID','实现path必须是规范仓库相对路径');
-  if(digest!==undefined&&!/^sha256:[0-9a-f]{64}$/.test(digest))fail('IMPLEMENTATION_INPUT_INVALID','digest格式无效');
-  if(versionId!==undefined&&!UUID.test(versionId))fail('IMPLEMENTATION_INPUT_INVALID','workflow_version_id格式无效');
+  if(digest!==undefined&&(typeof digest!=='string'||!/^sha256:[0-9a-f]{64}$/.test(digest)))fail('IMPLEMENTATION_INPUT_INVALID','digest格式无效');
+  if(versionId!==undefined&&(typeof versionId!=='string'||!UUID.test(versionId)))fail('IMPLEMENTATION_INPUT_INVALID','workflow_version_id格式无效');
   return {scope,kind,repo,path,revision,digest,versionId};
 }
 
@@ -66,21 +66,37 @@ async function readAssertions(db,usages,gaps) {
   const capabilities=[...new Set(usages.map(u=>u.capability_id))],activities=[...new Set(usages.map(u=>u.activity_id))];
   const rows=(await db.query(`SELECT id,journey_id,step_id,step_id_ref,assertion_ref,assertion_revision
     FROM journey_step_links WHERE journey_id=ANY($1::uuid[]) AND step_id=ANY($2::uuid[]) ORDER BY id`,[capabilities,activities])).rows;
-  const groups=new Map();
+  const groups=new Map(),covered=new Set();
+  const pair=(cap,activity,step)=>JSON.stringify([cap,activity,step||null]);
   for(const row of rows){
+    const matched=usages.filter(u=>u.capability_id===row.journey_id&&u.activity_id===row.step_id
+      &&u.assertion_step_ids.includes(row.step_id_ref||null));
+    if(!matched.length)continue;
     let command;try{command=canonicalAssertionCommandText(row.assertion_ref);}catch{continue;}
-    const group=groups.get(row.assertion_ref)||{assertion_ref:row.assertion_ref,command,capability_ids:[],source_bindings:[],validation_status:'not_evaluated'};
+    const sourceRepos=[...new Set(matched.map(u=>u.source_repo).filter(Boolean))];
+    const sourceRepo=sourceRepos.length===1?sourceRepos[0]:null;
+    if(!sourceRepo)gaps.push({code:'assertion_source_unknown',journey_step_link_id:row.id});
+    if(matched.some(u=>u.implementation_repo!==sourceRepo))gaps.push({code:'assertion_source_repo_mismatch',journey_step_link_id:row.id,source_repo:sourceRepo});
+    const key=JSON.stringify([sourceRepo,row.assertion_ref]);
+    const group=groups.get(key)||{assertion_ref:row.assertion_ref,source_repo:sourceRepo,source_repo_basis:'activity_definition',command,capability_ids:[],source_bindings:[],validation_status:'not_evaluated'};
     if(!group.capability_ids.includes(row.journey_id))group.capability_ids.push(row.journey_id);
-    group.source_bindings.push({assertion_source:'current_registration',journey_step_link_id:row.id,assertion_revision:row.assertion_revision,assertion_digest:assertionDigest(row.assertion_ref),activity_id:row.step_id,step_id:row.step_id_ref});
-    groups.set(row.assertion_ref,group);
+    group.source_bindings.push({assertion_source:'current_registration',source_repo:sourceRepo,source_repo_basis:'activity_definition',capability_id:row.journey_id,journey_step_link_id:row.id,assertion_revision:row.assertion_revision,assertion_digest:assertionDigest(row.assertion_ref),activity_id:row.step_id,step_id:row.step_id_ref});
+    groups.set(key,group);covered.add(pair(row.journey_id,row.step_id,row.step_id_ref));
   }
-  for(const capability of capabilities)if(![...groups.values()].some(g=>g.capability_ids.includes(capability)))gaps.push({code:'regression_missing',capability_id:capability});
+  const missing=new Set();
+  for(const usage of usages)for(const step of usage.assertion_step_ids){
+    const key=pair(usage.capability_id,usage.activity_id,step);
+    if(!covered.has(key)&&!missing.has(key)){
+      gaps.push({code:'regression_missing',capability_id:usage.capability_id,activity_id:usage.activity_id,step_id:step});missing.add(key);
+    }
+  }
   return [...groups.values()].sort((a,b)=>a.assertion_ref.localeCompare(b.assertion_ref));
 }
 
-export async function readImplementationConsumers(db,input) {
+export async function readImplementationConsumers(db,input,{pinnedContext=null}={}) {
   const q=validateImplementationQuery(input),gaps=[];
-  const context=await loadContext(db,q,gaps);
+  if(pinnedContext&&!q.versionId)fail('IMPLEMENTATION_INPUT_INVALID','固定context必须指定workflow_version_id');
+  const context=pinnedContext??await loadContext(db,q,gaps);
   const rows=await selectedVersions(db,q,[...context.mapped.keys()]);
   const activities=new Map(),workflows=new Map(),usages=[];
   for(const row of rows){
@@ -95,12 +111,12 @@ export async function readImplementationConsumers(db,input) {
     });
     activities.set(row.activity_version_id,{activity_id:row.activity_id,activity_definition_version_id:row.activity_version_id,definition_key:payload.definition_key,source_repo:row.source_repo,source_revision:row.source_commit,bindings,verification:payload.verification});
     workflows.set(row.workflow_version_id,{workflow_id:row.workflow_id,workflow_definition_version_id:row.workflow_version_id,key:row.workflow_payload.key,capability_id:capabilityId,map_node_key:context.mapped.get(capabilityId)});
-    usages.push({...row.usage,activity_definition_version_id:row.activity_version_id,workflow_id:row.workflow_id,workflow_definition_version_id:row.workflow_version_id,capability_id:capabilityId});
+    usages.push({...row.usage,source_repo:row.source_repo,implementation_repo:q.repo,assertion_step_ids:[...new Set(bindings.map(b=>b.scope==='step'?b.step_id||null:null))],activity_definition_version_id:row.activity_version_id,workflow_id:row.workflow_id,workflow_definition_version_id:row.workflow_version_id,capability_id:capabilityId});
   }
   if(!rows.length)gaps.push({code:'implementation_mapping_missing'});
   const requiredAssertions=await readAssertions(db,usages,gaps);
   return {scope_key:q.scope,source:{repo:q.repo,registry_repo:context.registryRepo,path:q.path,kind:q.kind,revision:q.revision,digest:q.digest||null},
     manifest_version_id:context.manifest_version_id,manifest_digest:context.manifest_digest,projection_run_id:context.projection_run_id,projection_digest:context.projection_digest,
-    mapping_status:gaps.length?'unknown':'verified',verification_status:'unknown',organization_status:q.versionId?'historical_membership_current_organization':'current',
+    mapping_status:gaps.length?'unknown':'verified',verification_status:'unknown',organization_status:pinnedContext?'historical_membership_unknown_organization':q.versionId?'historical_membership_current_organization':'current',
     activities:[...activities.values()],workflows:[...workflows.values()],usages,required_assertions:requiredAssertions,gaps};
 }

@@ -86,3 +86,13 @@ it('断言必须覆盖每个能力与Activity使用位置，不能借同能力�
   expect(r.body.gaps).toContainEqual(expect.objectContaining({code:'regression_missing',activity_id:missing}));
   expect(r.body.required_assertions[0].source_bindings.every(b=>b.capability_id&&b.activity_id)).toBe(true);
 });
+it('固定Step绑定必须有相同Step位置的断言，不能借Activity级或其他Step断言',async()=>{
+  const step=randomUUID();await db.query("INSERT INTO steps(id,activity_id,step_order,key,activity_key) VALUES($1,$2,1,'preflight_step','preflight')",[step,activityId]);
+  contracts.docs.keyword_acquisition.activities[0].implementation_bindings=[];
+  contracts.docs.keyword_acquisition.activities[0].steps[0].implementation_bindings=[{kind:'skill',repo,path:'skills/lock/SKILL.md',revision:HEAD}];contracts.refresh();
+  await syncActivityContracts(db,{...contracts,readBinding:async()=>'---\nname: lock\nversion: 1.0.0\n---\n# lock\n'});
+  let r=await get({kind:'skill',path:'skills/lock/SKILL.md'});expect(r.status,r.body).toBe(200);expect(r.body.mapping_status).toBe('unknown');
+  expect(r.body.gaps).toContainEqual(expect.objectContaining({code:'regression_missing',activity_id:activityId,step_id:step}));
+  await db.query('UPDATE journey_step_links SET step_id_ref=$1 WHERE step_id=$2',[step,activityId]);
+  r=await get({kind:'skill',path:'skills/lock/SKILL.md'});expect(r.status,r.body).toBe(200);expect(r.body.mapping_status).toBe('verified');expect(r.body.required_assertions[0].source_bindings.every(b=>b.step_id===step)).toBe(true);
+});
