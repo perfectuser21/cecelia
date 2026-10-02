@@ -95,6 +95,28 @@ describe('脚本收尾独立周期', () => {
     expect(reaper.handler).toHaveBeenCalledTimes(1);
   });
 
+  it('真实handler结束但旧哨兵写未settle时，不允许新观测覆盖后又被旧at倒灌', async () => {
+    const oldWrite=deferred(); pending.push(oldWrite);
+    let first=true;
+    const persisted=[];
+    pool.query.mockImplementation(async (_sql,args) => {
+      if(args?.[0]==='scheduler_job_last_run:script-reaper') {
+        if(first) { first=false; await oldWrite.promise; }
+        persisted.push(JSON.parse(args[1]).at);
+      }
+      return {rows:[]};
+    });
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const callsWhileWriting=job('script-reaper').handler.mock.calls.length;
+    oldWrite.resolve({});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(callsWhileWriting).toBe(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(job('script-reaper').handler).toHaveBeenCalledTimes(2);
+    expect(persisted).toEqual([...persisted].sort());
+  });
+
   it('preview不收割；正式环境tick disabled与drain不阻止既有任务收尾', async () => {
     vi.stubEnv('BRAIN_PREVIEW', '1');
     expect(startSchedulerJobsLoop(pool)).toBeNull();
