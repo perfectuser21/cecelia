@@ -100,3 +100,17 @@ it('空白或非字符串occurrence返回400不入库，数据库拒绝缺摘要
   await expect(pool.query(`INSERT INTO spans(run_id,activity_id,started_at,executor_kind,occurrence_key)
     VALUES('invalid',$1,now(),'code','missing-hash')`, [activity])).rejects.toThrow();
 });
+it.each(['occurrence', 'legacy'])('%s反序批次并发仍幂等且返回ids保持请求顺序', async protocol => {
+  await migrate();
+  await pool.query(`CREATE FUNCTION delay_span() RETURNS trigger AS $$BEGIN PERFORM pg_sleep(0.05);RETURN NEW;END$$ LANGUAGE plpgsql;
+    CREATE TRIGGER delay_span AFTER INSERT ON spans FOR EACH ROW EXECUTE FUNCTION delay_span()`);
+  const first = protocol === 'occurrence' ? span({ occurrence_key: 'a' }) : span();
+  const second = protocol === 'occurrence' ? span({ occurrence_key: 'b' }) : span({ started_at: '2026-10-02T10:00:00.500Z' });
+  const responses = await Promise.all([post([second, first]), post([first, second])]);
+  expect(responses.map(r => ({ status: r.status, error: r.body.error }))).toEqual([{ status: 200, error: undefined }, { status: 200, error: undefined }]);
+  expect(responses.map(r => r.body.inserted).sort()).toEqual([0, 2]);
+  const saved = (await rows()).sort((a, b) => protocol === 'occurrence' ? a.occurrence_key.localeCompare(b.occurrence_key) : a.started_at - b.started_at);
+  expect(saved).toHaveLength(2);
+  expect(responses[0].body.ids).toEqual(responses[0].body.inserted ? [saved[1].id, saved[0].id] : []);
+  expect(responses[1].body.ids).toEqual(responses[1].body.inserted ? [saved[0].id, saved[1].id] : []);
+});
