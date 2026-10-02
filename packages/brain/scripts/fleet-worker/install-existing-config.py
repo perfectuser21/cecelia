@@ -5,6 +5,7 @@ import ipaddress
 import json
 import os
 import plistlib
+import re
 import stat
 import sys
 
@@ -23,6 +24,7 @@ SETTINGS = {
     'TMPDIR': 'SHARED_TMPDIR',
     'DOCKER_HOST': 'WORKER_DOCKER_HOST',
 }
+CANONICAL_RUNNER = 'sha256:aeaf290525a623a2182fdce5376ca914e9de2d0b1bab0ba18d7d07b9ea379033'
 
 
 def protected_read(filename):
@@ -99,13 +101,63 @@ def check(filename, saved):
         raise ValueError('configuration changed')
 
 
+def canonical_runner(saved, expected):
+    value = load_snapshot(saved)
+    env = value['document'].get('EnvironmentVariables', {})
+    if (not re.fullmatch('[0-9a-f]{64}', expected)
+            or value['sha256'] != expected
+            or env.get('CECELIA_MACHINE_ID') != 'xian-mac-m4'
+            or not re.fullmatch('sha256:[0-9a-f]{64}', env.get('CECELIA_RUNNER_DIGEST', ''))):
+        raise ValueError('canonical runner CAS')
+    value['canonical_runner'] = {'expected_sha256': expected}
+    save_private(saved, json.dumps(value).encode())
+    print('RUNNER_DIGEST\t' + CANONICAL_RUNNER)
+
+
+def canonical_install_guard(machine):
+    if machine != 'xian-mac-m4':
+        raise ValueError('machine')
+    marker = '/var/run/cecelia/fleet-worker.drain'
+    if os.environ.get('NODE_ENV') == 'test':
+        marker = os.environ.get('FLEET_NODECTL_DRAIN_MARKER', marker)
+    owner = os.environ.get('FLEET_NODECTL_DRAIN_OWNER', '')
+    if not re.fullmatch('[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}', owner):
+        raise ValueError('owner')
+    root = os.path.dirname(marker)
+    lock = os.path.join(root, '.fleet-worker.drain.lock')
+    for fd, filename, directory in [(3, marker, False), (4, lock, True)]:
+        held, current = os.fstat(fd), os.lstat(filename)
+        if (stat.S_ISLNK(current.st_mode) or held.st_uid != os.geteuid()
+                or held.st_mode & 0o077 or (held.st_dev, held.st_ino) != (current.st_dev, current.st_ino)
+                or (not stat.S_ISDIR(held.st_mode) if directory else not stat.S_ISREG(held.st_mode))):
+            raise ValueError('lease')
+    os.lseek(3, 0, os.SEEK_SET)
+    body = os.read(3, 4097)
+    content = json.loads(body)
+    if len(body) > 4096 or content != {'schema': 'fleet-drain-owner/v1', 'machine': machine, 'owner': owner}:
+        raise ValueError('marker')
+    raw, _ = protected_read(os.path.join(root, '.fleet-worker.drain-owner-' + owner + '.json'))
+    receipt = json.loads(raw)
+    held = os.fstat(3)
+    if receipt != {'machine': machine, 'owner': owner, 'inode': held.st_ino, 'device': held.st_dev, 'content': body.decode()}:
+        raise ValueError('journal')
+
+
 def merge(filename, saved):
-    original = load_snapshot(saved)['document']
+    snapshot_value = load_snapshot(saved)
+    original = snapshot_value['document']
     raw, _ = protected_read(filename)
     rendered = plistlib.loads(raw)
     merged = dict(original)
     merged['ProgramArguments'] = rendered['ProgramArguments']
     merged['EnvironmentVariables'] = {**rendered.get('EnvironmentVariables', {}), **original.get('EnvironmentVariables', {})}
+    if 'canonical_runner' in snapshot_value:
+        intent = snapshot_value['canonical_runner']
+        if (intent != {'expected_sha256': snapshot_value['sha256']}
+                or original['EnvironmentVariables'].get('CECELIA_MACHINE_ID') != 'xian-mac-m4'
+                or rendered.get('ProgramArguments') != original.get('ProgramArguments')):
+            raise ValueError('canonical runner intent')
+        merged['EnvironmentVariables'] = {**original['EnvironmentVariables'], 'CECELIA_RUNNER_DIGEST': CANONICAL_RUNNER}
     save_private(filename, plistlib.dumps(merged))
 
 
@@ -118,6 +170,10 @@ if __name__ == '__main__':
             merge(*args)
         elif action == 'check' and len(args) == 2:
             check(*args)
+        elif action == 'canonical-runner' and len(args) == 2:
+            canonical_runner(*args)
+        elif action == 'canonical-install-guard' and len(args) == 1:
+            canonical_install_guard(*args)
         else:
             raise ValueError('action')
     except Exception:

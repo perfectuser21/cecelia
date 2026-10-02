@@ -1506,6 +1506,7 @@ value['EnvironmentVariables'].update({
     'CECELIA_FLEET_WORKER_PORT': '15231',
     'CECELIA_FLEET_WORKER_TOKEN_FILE': sys.argv[2],
     'DEPLOY_TOKEN': 'private-upgrade-sentinel-never-log',
+    'CECELIA_RUNNER_DIGEST': 'sha256:'+'0'*64,
 })
 value['WorkingDirectory'] = '/var/empty'
 with open(sys.argv[1], 'wb') as target:
@@ -1527,9 +1528,73 @@ assert env['CECELIA_FLEET_WORKER_HOST'] == '100.71.151.105'
 assert env['CECELIA_FLEET_WORKER_PORT'] == '15231'
 assert env['CECELIA_FLEET_WORKER_TOKEN_FILE'] == sys.argv[2]
 assert env['DEPLOY_TOKEN'] == 'private-upgrade-sentinel-never-log'
+assert env['CECELIA_RUNNER_DIGEST'] == 'sha256:'+'0'*64
 assert value['WorkingDirectory'] == '/var/empty'
 assert stat.S_IMODE(os.stat(sys.argv[1]).st_mode) == 0o600
 PYPLIST
+
+# 显式canonical恢复走实际installer与持锁wrapper，旧snapshot不吞新digest。
+canonical_marker="$test_root/owned-drain/fleet-worker.drain"
+canonical_owner="$(node -e 'console.log(require("crypto").randomUUID())')"
+export NODE_ENV=test FLEET_NODECTL_DRAIN_MARKER="$canonical_marker" FLEET_NODECTL_DRAIN_OWNER="$canonical_owner"
+export FLEET_WORKER_TEST_SCRIPT_DIR="$SCRIPT_DIR"
+node - <<'NODE'
+const {createDrainOwner}=require(process.env.FLEET_WORKER_TEST_SCRIPT_DIR+'/drain-owner.cjs');
+createDrainOwner({marker:process.env.FLEET_NODECTL_DRAIN_MARKER,runLaunchctl:()=>{}}).drain('xian-mac-m4',process.env.FLEET_NODECTL_DRAIN_OWNER);
+NODE
+python3 - "$installed_plist" <<'PYPLIST'
+import plistlib,sys
+p=sys.argv[1];d=plistlib.load(open(p,'rb'));d['EnvironmentVariables']['CECELIA_RUNNER_DIGEST']='sha256:'+'0'*64
+plistlib.dump(d,open(p,'wb'),fmt=plistlib.FMT_BINARY)
+PYPLIST
+cp "$installed_plist" "$test_root/before-canonical.plist"
+canonical_hash="$(shasum -a 256 "$installed_plist" | awk '{print $1}')"
+cat > "$test_root/canonical-wrapper" <<'WRAPPER'
+#!/usr/bin/env bash
+exec node - "$@" <<'NODE'
+const {restoreCanonicalRunner}=require(process.env.FLEET_WORKER_TEST_SCRIPT_DIR+'/canonical-runner-install.cjs');
+const args=process.argv.slice(2);
+try {restoreCanonicalRunner(args[0],args[3],process.env.FLEET_NODECTL_DRAIN_OWNER,{marker:process.env.FLEET_NODECTL_DRAIN_MARKER});}
+catch(e) {console.error(e.message);process.exit(1);}
+NODE
+WRAPPER
+chmod +x "$test_root/canonical-wrapper"
+saved_installer="$INSTALLER"; INSTALLER="$test_root/canonical-wrapper"
+: > "$launch_log"
+if stale_output="$(run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply --restore-canonical-runner "$(printf 'f%.0s' {1..64})" 2>&1)"; then
+  fail "canonical wrong-config CAS was accepted"
+fi
+cmp -s "$installed_plist" "$test_root/before-canonical.plist" || fail "wrong CAS changed old plist"
+[[ ! -s "$launch_log" ]] || fail "wrong CAS performed launch action"
+if unknown_output="$(FLEET_NODECTL_DRAIN_OWNER=11111111-1111-4111-8111-111111111111 run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply --restore-canonical-runner "$canonical_hash" 2>&1)"; then
+  fail "canonical other drain owner was accepted"
+fi
+cmp -s "$installed_plist" "$test_root/before-canonical.plist" || fail "other owner changed old plist"
+[[ ! -s "$launch_log" ]] || fail "other owner performed launch action"
+if ! canonical_output="$(run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply --restore-canonical-runner "$canonical_hash" 2>&1)"; then
+  fail "canonical cutover failed: $canonical_output"
+fi
+INSTALLER="$saved_installer"
+python3 - "$installed_plist" "$test_root/before-canonical.plist" <<'PYPLIST'
+import plistlib,sys
+actual=plistlib.load(open(sys.argv[1],'rb'));old=plistlib.load(open(sys.argv[2],'rb'))
+old['EnvironmentVariables']['CECELIA_RUNNER_DIGEST']='sha256:aeaf290525a623a2182fdce5376ca914e9de2d0b1bab0ba18d7d07b9ea379033'
+assert actual==old
+PYPLIST
+[[ -f "$canonical_marker" ]] || fail "cutover released own drain marker"
+[[ "$canonical_output" != *private-upgrade-sentinel-never-log* ]] || fail "canonical cutover leaked secret"
+# 启动验真失败实际恢复旧binary plist，不能把pointer/digest改回当作已恢复。
+cp "$test_root/before-canonical.plist" "$installed_plist"
+cp "$installed_worker" "$test_root/before-canonical-failed-worker"
+INSTALLER="$test_root/canonical-wrapper"
+if failed_cutover="$(FLEET_WORKER_STARTUP_PROBE_FAIL=1 run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply --restore-canonical-runner "$canonical_hash" 2>&1)"; then
+  fail "canonical failed-start cutover reported success"
+fi
+INSTALLER="$saved_installer"
+cmp -s "$installed_plist" "$test_root/before-canonical.plist" || fail "failed canonical cutover did not restore exact old plist"
+cmp -s "$installed_worker" "$test_root/before-canonical-failed-worker" || fail "failed canonical cutover changed old runtime"
+[[ -f "$canonical_marker" ]] || fail "failed canonical cutover released own marker"
+unset NODE_ENV FLEET_NODECTL_DRAIN_MARKER FLEET_NODECTL_DRAIN_OWNER FLEET_WORKER_TEST_SCRIPT_DIR
 
 # 快照阶段已有EXIT trap，但未取得的安装锁必须始终归原持有者。
 existing_lock="$install_dir/.fleet-worker.install.lock"
