@@ -28,29 +28,29 @@ it('actual helper native mixed queue excludes actual phone identities while ordi
   expect(await selectNextDispatchableTask(null, [a, b])).toBeNull(); expect(await f.snapshot()).toEqual(before);
 });
 it('full budget peeks do not evict for phone P0 or falsely use phone xian bypass; ordinary rows stay unchanged', async () => {
-  await fixture(); const id = await f.ordinary({}, 'P2'), before = await f.snapshot(); h.budget = fullBudget(false); h.eviction.mockResolvedValue(null);
+  await fixture(); const id = await f.ordinary({}, 'P2', 'dev'), before = await f.snapshot(); h.budget = fullBudget(false); h.eviction.mockResolvedValue(null);
   const query = f.pool.query.bind(f.pool), peeks = [];
   h.pool = { options: f.pool.options, connect: () => f.pool.connect(), query: async (sql, args) => { const result = await query(sql, args); if (/SELECT priority FROM tasks|SELECT task_type, location FROM tasks/.test(sql)) peeks.push(result.rows); return result; } };
   const { dispatchNextTask } = await import('../../dispatcher.js'); const result = await dispatchNextTask(null);
   expect(result.dispatched).toBe(false); expect(peeks).toHaveLength(2);
-  expect(peeks[0]).toEqual([{ priority: 'P2' }]); expect(peeks[1]).toEqual([{ task_type: 'research', location: 'us' }]);
+  expect(peeks[0]).toEqual([{ priority: 'P2' }]); expect(peeks[1]).toEqual([{ task_type: 'dev', location: 'us' }]);
   expect(h.eviction).not.toHaveBeenCalled(); expect(h.trigger).not.toHaveBeenCalled(); expect(await f.snapshot()).toEqual(before);
   expect((await query('SELECT claimed_by FROM tasks WHERE id=$1', [id])).rows[0].claimed_by).toBeNull();
 });
-it('dispatcher actual CAS honors ordinary queued-to-paused race and its exact native SQL refuses all phone IDs (SQL negative, not a rebinding race)', async () => {
+it.each(['paused', 'other-claim'])('dispatcher actual CAS honors ordinary %s race and its exact native SQL refuses all phone IDs (SQL negative, not a rebinding race)', async race => {
   await fixture(); const id = await f.ordinary({}, 'P1'), before = await f.snapshot(); h.budget = fullBudget(true);
   const query = f.pool.query.bind(f.pool); let claimSql, claimArgs;
   h.pool = { options: f.pool.options, connect: () => f.pool.connect(), query: async (sql, args) => {
     if (/SELECT t.id, t.title/.test(sql)) return query('SELECT * FROM tasks WHERE id=$1', [id]); // Native stale-candidate fault seam; no fabricated identity.
     if (/UPDATE tasks SET claimed_by = \$1, claimed_at/.test(sql)) {
       claimSql = sql; claimArgs = args;
-      const c = await f.pool.connect(); try { await c.query('BEGIN'); await c.query("UPDATE tasks SET status='paused' WHERE id=$1", [id]); await c.query('COMMIT'); } finally { c.release(); }
+      const c = await f.pool.connect(); try { await c.query('BEGIN'); await c.query(race === 'paused' ? "UPDATE tasks SET status='paused' WHERE id=$1" : "UPDATE tasks SET claimed_by='fixture-other' WHERE id=$1", [id]); await c.query('COMMIT'); } finally { c.release(); }
     }
     return query(sql, args);
   } };
   const { dispatchNextTask } = await import('../../dispatcher.js'); const result = await dispatchNextTask(null);
   expect(claimSql).toBeTruthy(); expect(result).toMatchObject({ dispatched: false, reason: 'already_claimed' });
-  expect(h.trigger).not.toHaveBeenCalled(); expect((await query('SELECT claimed_by,status FROM tasks WHERE id=$1', [id])).rows[0]).toEqual({ claimed_by: null, status: 'paused' });
+  expect(h.trigger).not.toHaveBeenCalled(); expect((await query('SELECT claimed_by,status FROM tasks WHERE id=$1', [id])).rows[0]).toEqual(race === 'paused' ? { claimed_by: null, status: 'paused' } : { claimed_by: 'fixture-other', status: 'queued' });
   for (const phoneId of [f.old, f.historical, f.owner]) expect((await query(claimSql, [claimArgs[0], phoneId])).rows).toEqual([]);
   expect(await f.snapshot()).toEqual(before);
 });

@@ -9,8 +9,10 @@ import { PHONE_SCHEDULE_REGISTRY_AUTHORITY } from '../../phone-dispatch/task-aut
 export async function createPhoneClaimFixture(onPool, { busyLegacy = false, workerHistorical = true } = {}) {
   if (DB_DEFAULTS.database !== 'cecelia_scratch' && !(process.env.CI === 'true' && /_test$/.test(DB_DEFAULTS.database))) throw Error('phone_claim_fixture_scratch_required');
   const schema = `phone_claim_${process.pid}_${randomUUID().replaceAll('-', '')}`;
-  const admin = new pg.Client(DB_DEFAULTS); await admin.connect(); await admin.query(`CREATE SCHEMA ${schema}`);
-  const pool = new pg.Pool({ ...DB_DEFAULTS, max: 5, options: `-c search_path=${schema}` }); onPool(pool);
+  const admin = new pg.Client(DB_DEFAULTS); let pool, created = false;
+  try {
+  await admin.connect(); await admin.query(`CREATE SCHEMA ${schema}`); created = true;
+  pool = new pg.Pool({ ...DB_DEFAULTS, max: 5, options: `-c search_path=${schema}` }); onPool(pool);
   await createPhoneScheduleSchema(pool);
   await pool.query(`ALTER TABLE tasks ADD COLUMN metadata JSONB DEFAULT '{}',ADD COLUMN assigned_to TEXT,ADD COLUMN queued_at TIMESTAMPTZ DEFAULT now(),ADD COLUMN started_at TIMESTAMPTZ,ADD COLUMN error_message TEXT,ADD COLUMN status_history JSONB;
     ALTER TABLE recurring_tasks ADD COLUMN created_at TIMESTAMPTZ DEFAULT now(),ADD COLUMN executor TEXT;
@@ -56,8 +58,13 @@ export async function createPhoneClaimFixture(onPool, { busyLegacy = false, work
   const ownerEvidence = (await pool.query('SELECT o.task_id,s.routing_receipt_id,w.source FROM phone_task_owners o JOIN phone_scheduled_slots s ON s.task_id=o.task_id JOIN work_routing_receipts w ON w.id=s.routing_receipt_id WHERE o.task_id=$1', [owner])).rows[0];
   if (ownerEvidence?.source !== 'scheduler') throw Error('phone_claim_fixture_receipt_missing');
   return { pool, admin, schema, location, old, historical, owner,
-    async ordinary(payload = {}, priority = 'P2') { const id = randomUUID(); await pool.query("INSERT INTO tasks(id,title,status,task_type,priority,payload,location) VALUES($1,$2,'queued','research',$3,$4,'us')", [id, `ordinary ${id}`, priority, payload]); return id; },
+    async ordinary(payload = {}, priority = 'P2', taskType = 'research') { const id = randomUUID(); await pool.query("INSERT INTO tasks(id,title,status,task_type,priority,payload,location) VALUES($1,$2,'queued',$5,$3,$4,'us')", [id, `ordinary ${id}`, priority, payload, taskType]); return id; },
     async snapshot() { return { tasks: (await pool.query('SELECT * FROM tasks WHERE id=ANY($1::uuid[]) ORDER BY id', [[old, historical, owner]])).rows, owners: (await pool.query('SELECT * FROM phone_task_owners')).rows, slots: (await pool.query('SELECT * FROM phone_scheduled_slots')).rows, leases: (await pool.query('SELECT * FROM phone_dispatches')).rows, capacity: (await pool.query('SELECT * FROM capacity_reservations')).rows, grants: (await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows }; },
     async close() { await pool.end(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); },
   };
+  } catch (error) {
+    if (pool) await pool.end();
+    if (created) await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+    await admin.end(); throw error;
+  }
 }
