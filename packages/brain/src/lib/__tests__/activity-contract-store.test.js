@@ -8,3 +8,9 @@ it('数据库唯一冲突原样上抛、事务回滚且连接归还',async()=>{
   expect(client.query).toHaveBeenCalledWith('ROLLBACK'); expect(client.release).toHaveBeenCalled();
   expect(client.query.mock.calls.some(([sql])=>sql==='COMMIT')).toBe(false);
 });
+it('已变化的登记快照以精确409冲突拒绝，仍回滚与归还连接',async()=>{
+ const client={query:vi.fn(async()=>({rows:[{contract_sync_revision:'2'}]})),release:vi.fn()};
+ await expect(storeActivityContracts({connect:async()=>client},[],'head','repo',[{contract_sync_revision:'1'}]))
+  .rejects.toMatchObject({code:'ACTIVITY_CONTRACT_SNAPSHOT_CHANGED',status:409});
+ expect(client.query).toHaveBeenCalledWith('ROLLBACK');expect(client.release).toHaveBeenCalled();
+});
