@@ -83,6 +83,23 @@ describe('不可变能力定义版本',()=>{
     expect(saved.source_commit).toBe(head);
     expect(saved.payload.implementation_bindings[0]).toMatchObject({kind,revision,content_sha256:sha256,digest:`sha256:${sha256}`,status:'verified'});
   });
+  it('本仓contract实现由默认读取器固定到同一来源SHA，真实数据库保存字节摘要及原始声明',async()=>{
+    await fixture.migrate();const f=contractsFixture(),head='a'.repeat(40);
+    const path='services/phone-adb-controller/preflight.sh',content='#!/bin/bash\n\nprintf ready\n';
+    f.docs.keyword_acquisition.activities[0].implementation_bindings=[{kind:'code',repo:'perfectuser21/zenithjoy-workspace',path,revision:'contract'}];
+    f.refresh();const fetch=f.fetchFn,seen=[];
+    f.fetchFn=async url=>{
+      if(url.includes(`/contents/${path}`)){seen.push(url);return {ok:true,text:async()=>content};}
+      return fetch(url);
+    };
+    await syncActivityContracts(db,f);
+    expect(seen.length).toBeGreaterThan(0);expect(seen.every(url=>new URL(url).searchParams.get('ref')===head)).toBe(true);
+    const saved=(await db.query(`SELECT v.payload,v.source_commit FROM journey_steps a JOIN activity_definition_versions v
+      ON v.id=a.current_definition_version_id WHERE a.capability_key='keyword_acquisition' AND a.activity_key='preflight'`)).rows[0];
+    expect(saved.source_commit).toBe(head);
+    expect(saved.payload.implementation_bindings[0]).toMatchObject({revision:head,raw:{revision:'contract'},status:'verified',content_sha256:createHash('sha256').update(content).digest('hex')});
+  });
+
   it('相同内容新commit产生可追溯新快照，当前引用的来源commit与版本一致',async()=>{
     await fixture.migrate();const f=contractsFixture();await syncActivityContracts(db,f);const original=await versions();
     const fetch=f.fetchFn;f.fetchFn=async url=>url.includes('/commits/main')?{ok:true,text:async()=> 'd'.repeat(40)}:fetch(url);
