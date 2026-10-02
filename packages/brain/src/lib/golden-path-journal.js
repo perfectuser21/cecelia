@@ -4,7 +4,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { registerGoldenPathInstance, readGoldenPathInstances } from './golden-path-archive.js';
 
 const digest = record => createHash('sha256').update(JSON.stringify(record)).digest('hex');
-const MAX_BYTES = 64 * 1024 * 1024;
+// 完整九文件source的30秒心跳约80MiB/7日；有界容量留多周保留余量。
+const MAX_BYTES = 512 * 1024 * 1024;
 export function listGoldenPathJournals(root) {
   const entries = fs.readdirSync(root);
   const instances = readGoldenPathInstances(root);

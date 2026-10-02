@@ -57,7 +57,9 @@ export async function startGoldenPathAudit({ pool, env = process.env } = {}) {
     if (receipt) { await audit.archiveT0(receipt); archivedT0 = receipt.id; }
   };
   await audit.recover();
-  await audit.start();
+  if (!(await audit.start()).persisted) {
+    audit.abandon('gp_startup_incomplete'); active = null; throw new Error('gp_startup_incomplete');
+  }
   return { disabled: false, window_id: windowId };
 }
 
@@ -77,10 +79,25 @@ export async function goldenPathAuditListening() {
   timer.unref();
 }
 
-export async function stopGoldenPathAudit(timeoutMs = 2_000) {
+export async function drainGoldenPathListener(server, timeoutMs = 10_000) {
+  let timer;
+  try {
+    return await Promise.race([
+      new Promise(resolve => server.close(error => resolve(!error))),
+      new Promise(resolve => { timer = setTimeout(() => resolve(false), timeoutMs); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+
+export async function stopGoldenPathAudit(options = {}) {
+  const { timeoutMs = 2_000, listenerDrained = true } = typeof options === 'number' ? { timeoutMs: options } : options;
   clearInterval(timer); timer = null;
   const audit = active;
   if (!audit) return { disabled: true };
+  if (!listenerDrained) {
+    audit.abandon('gp_shutdown_incomplete'); active = null; admissionLoader = null; archivedT0 = null; tickRunning = false;
+    return { completed: false, listener_drained: false };
+  }
   let timeout;
   const done = await Promise.race([
     audit.stop().then(() => true, () => false),

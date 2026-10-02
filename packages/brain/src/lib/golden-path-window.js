@@ -1,5 +1,6 @@
 import path from 'node:path';
-import { readGoldenPathT0Archive } from './golden-path-archive.js';
+import fs from 'node:fs';
+import { readGoldenPathT0Archive, readGoldenPathServing } from './golden-path-archive.js';
 import { isDeepStrictEqual } from 'node:util';
 import { readGoldenPathJournal, listGoldenPathJournals } from './golden-path-journal.js';
 
@@ -13,13 +14,19 @@ const validSource = source => /^[a-f0-9]{40}$/.test(source?.git_sha ?? '')
 export async function readGoldenPathT0({ pool, root, window }) {
   if (!window?.t0_event_id) return null;
   const sources = window.sources ?? (window.source ? [window.source] : []);
-  const matches = row => row?.id === window.t0_event_id && Number.isFinite(time(row.created_at))
+  const matches = row => row?.db_time_verified === true && row?.id === window.t0_event_id && Number.isFinite(time(row.created_at))
     && /([zZ]|[+-]\d\d:\d\d)$/.test(row.payload?.gp_db_created_at ?? '')
     && time(row.payload.gp_db_created_at) === time(row.created_at)
     && row.payload?.window_id === window.window_id
     && sources.length && sources.every(validSource)
     && sources.some(source => isDeepStrictEqual(source, row.payload.source));
-  const row = (await pool.query({ text: `SELECT id,payload,(payload->>'gp_db_created_at')::timestamptz AS created_at FROM cecelia_events
+  const row = (await pool.query({ text: `SELECT id,payload,
+    CASE WHEN pg_typeof(created_at)='timestamp without time zone'::regtype
+      THEN created_at AT TIME ZONE current_setting('TimeZone') ELSE created_at END AS created_at,
+    CASE WHEN pg_typeof(created_at)='timestamp without time zone'::regtype
+      THEN (payload->>'gp_db_created_at')::timestamptz AT TIME ZONE current_setting('TimeZone')=created_at
+      ELSE (payload->>'gp_db_created_at')::timestamptz=created_at END AS db_time_verified
+    FROM cecelia_events
     WHERE id=$1 AND event_type='golden_path_observation_t0' AND source='golden-path-retirement'`,
   values: [window.t0_event_id], query_timeout: 2_000 })).rows[0];
   if (row) return matches(row) ? row : null;
@@ -33,7 +40,7 @@ export async function readGoldenPathT0({ pool, root, window }) {
 
 // 只读裁决：T0与当前时刻都取DB真实行，不接受调用方自报时间/窗口或heartbeat零调用推断。
 export async function inspectGoldenPathWindow({ pool, root }) {
-  const result = { accepted: false, reasons: [], unknown_accesses: [], actual_access_count: 0 };
+  const result = { accepted: false, reasons: [], unknown_accesses: [], actual_access_count: 0, actual_access_count_complete: false };
   const reject = reason => { if (!result.reasons.includes(reason)) result.reasons.push(reason); };
   const window = (await pool.query({ text: `SELECT result->'gp_observation_window' AS window FROM tasks WHERE id=$1`, values: [TASK], query_timeout: 2_000 }))
     .rows[0]?.window;
@@ -57,6 +64,43 @@ export async function inspectGoldenPathWindow({ pool, root }) {
     files = listGoldenPathJournals(directory);
     if (!files.length || files.length > 1024) throw new Error('missing');
   } catch { reject('journal_manifest_missing'); return result; }
+  let serving;
+  try {
+    serving = readGoldenPathServing(root);
+    // 全局清单之外的已有pair（包括旧格式unadmitted）也必须被发现，不能假设没登记就不存在。
+    const directories = fs.readdirSync(root).filter(name => name === 'unadmitted' || /^[a-f0-9-]{36}$/.test(name));
+    if (directories.length > 1024) throw new Error('too_many_windows');
+    const diskInstances = directories.flatMap(name => listGoldenPathJournals(path.join(root, name))
+      .map(file => ({ instance_id: path.basename(file, '.jsonl'), window_id: name })));
+    if (diskInstances.length !== serving.length || diskInstances.some(instance => !serving.some(row =>
+      row.instance_id === instance.instance_id && row.window_id === instance.window_id))) throw new Error('orphan');
+    const registered = serving.filter(r => r.window_id === window.window_id);
+    if (registered.length !== files.length || registered.some(r => !files.includes(path.join(directory, `${r.instance_id}.jsonl`)))) {
+      throw new Error('unregistered');
+    }
+  } catch { reject('serving_manifest_unproven'); return result; }
+  for (const instance of serving.filter(r => r.window_id !== window.window_id)) {
+    try {
+      const dir = path.join(root, instance.window_id), file = path.join(dir, `${instance.instance_id}.jsonl`);
+      if (!listGoldenPathJournals(dir).includes(file)) throw new Error('missing');
+      const rows = readGoldenPathJournal(file);
+      const acks = new Map(rows.filter(r => r.kind === 'ack').map(r => [r.audit_id, r]));
+      const lifecycle = rows.filter(r => r.kind === 'intent' && r.payload.lifecycle);
+      const listening = lifecycle.find(r => r.payload.lifecycle === 'listening');
+      const end = lifecycle.find(r => r.payload.lifecycle === 'instance_end');
+      const from = time(acks.get(listening?.payload.audit_id)?.created_at);
+      const to = end ? time(acks.get(end.payload.audit_id)?.created_at) : now;
+      if (!Number.isFinite(from) || !Number.isFinite(to)) throw new Error('unknown_lifetime');
+      if (to < begin || from > cutoff) continue;
+      reject('serving_instance_unadmitted');
+      for (const row of rows.filter(r => r.kind === 'intent' && r.event_type === 'golden_path_legacy_access')) {
+        const at = time(acks.get(row.payload.audit_id)?.created_at);
+        if (!Number.isFinite(at) || at < begin || at > cutoff) continue;
+        result.actual_access_count += 1;
+        if (row.payload.caller?.kind !== 'internal_code') { result.unknown_accesses.push(row.payload.audit_id); reject('caller_unresolved'); }
+      }
+    } catch { reject('serving_instance_unproven'); }
+  }
   const spans = [], ids = new Map(), acknowledgements = new Map();
   for (const file of files) {
     let rows;
@@ -115,5 +159,6 @@ export async function inspectGoldenPathWindow({ pool, root }) {
   }
   if (covered < Math.min(now, cutoff)) reject('window_coverage_incomplete');
   result.accepted = result.reasons.length === 0;
+  result.actual_access_count_complete = result.accepted;
   return result;
 }

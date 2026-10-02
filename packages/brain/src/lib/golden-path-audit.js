@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { archiveGoldenPathT0 } from './golden-path-archive.js';
+import { archiveGoldenPathT0, registerGoldenPathServing } from './golden-path-archive.js';
 import { createGoldenPathJournal, readGoldenPathJournal } from './golden-path-journal.js';
 
 const HTTP_ROUTES = new Set(['/golden_path', '/golden_path/canvas', '/golden_path/:id/decisions',
@@ -10,7 +10,9 @@ const INTERNAL = new Set(['step_invariants', 'cumulative_fr']);
 export function createGoldenPathAudit({ root, store, source, flag, windowId = 'unadmitted', admission = null }) {
   if (windowId !== 'unadmitted' && !/^[a-f0-9-]{36}$/.test(windowId)) throw new Error('gp_window_invalid');
   const journal = createGoldenPathJournal(path.join(root, windowId));
+  registerGoldenPathServing(root, journal.instanceId, windowId);
   let healthy = true, lastGap = null, tail = Promise.resolve(), closed = false;
+  const pendingInstances = new Set();
   const append = record => journal.append({ ...record, source, window_id: windowId });
   // admission仅由server从实际DB T0行/先前可信归档加载，HTTP命中从不提供此字段。
   if (admission) archiveGoldenPathT0(path.join(root, windowId), admission);
@@ -20,6 +22,23 @@ export function createGoldenPathAudit({ root, store, source, flag, windowId = 'u
     healthy = false; lastGap = reason;
     try { append({ kind: 'gap', reason }); } catch { /* 缺lease/end就是不可证明，绝不恢复健康。 */ }
   };
+  async function leaseState(instanceId) {
+    const receipt = await store.lease(instanceId);
+    const at = Date.parse(receipt?.latest?.gp_db_created_at), now = new Date(receipt?.db_now).getTime();
+    if (receipt?.latest?.lifecycle === 'instance_end') return 'ended';
+    return Number.isFinite(at) && Number.isFinite(now) && at <= now && now - at <= 60_000
+      && receipt.latest.healthy !== false ? 'live' : 'expired';
+  }
+  async function checkPending() {
+    for (const instanceId of pendingInstances) {
+      try {
+        const state = await leaseState(instanceId);
+        if (state === 'live') continue;
+        pendingInstances.delete(instanceId);
+        if (state !== 'ended') gap('gp_previous_instance_unclosed');
+      } catch { pendingInstances.delete(instanceId); gap('gp_previous_instance_lease_unproven'); }
+    }
+  }
   async function persist(type, fields) {
     if (closed) return { persisted: false, reason: 'gp_audit_closed' };
     const payload = { ...fields, audit_id: randomUUID(), instance_id: journal.instanceId,
@@ -75,6 +94,14 @@ export function createGoldenPathAudit({ root, store, source, flag, windowId = 'u
         for (const file of files) {
           let rows;
           try { rows = readGoldenPathJournal(file); } catch { gap('gp_journal_corrupt'); continue; }
+          const priorId = path.basename(file, '.jsonl');
+          const complete = rows.some(r => r.kind === 'intent' && r.payload.lifecycle === 'instance_end'
+            && rows.some(ack => ack.kind === 'ack' && ack.audit_id === r.payload.audit_id));
+          if (file !== journal.file && !complete) {
+            try {
+              if (await leaseState(priorId) === 'live') { pendingInstances.add(priorId); continue; }
+            } catch { gap('gp_previous_instance_lease_unproven'); }
+          }
           for (const row of rows) {
             if (row.kind === 'gap') gap('gp_historical_gap');
             if (row.kind === 'intent') intents.set(row.payload.audit_id, row);
@@ -96,7 +123,9 @@ export function createGoldenPathAudit({ root, store, source, flag, windowId = 'u
       });
     },
     start: () => lifecycle('instance_start'), listening: () => lifecycle('listening'),
-    heartbeat: () => lifecycle('heartbeat'),
+    heartbeat: () => serial(async () => {
+      await checkPending(); return persist('golden_path_observation_health', { lifecycle: 'heartbeat', healthy });
+    }),
     async stop() { await lifecycle('instance_end'); closed = true; },
   };
 }

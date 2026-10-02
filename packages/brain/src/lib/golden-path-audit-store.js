@@ -13,6 +13,12 @@ async function acquire(pool, deadline) {
 }
 export function createGoldenPathAuditStore(pool, { timeoutMs = 4_000 } = {}) {
   return {
+    async lease(instanceId) {
+      return (await pool.query({ text: `SELECT clock_timestamp() AS db_now,
+        (SELECT payload FROM cecelia_events WHERE source='golden-path-retirement'
+          AND event_type='golden_path_observation_health' AND payload->>'instance_id'=$1
+          ORDER BY id DESC LIMIT 1) AS latest`, values: [instanceId], query_timeout: 2_000 })).rows[0];
+    },
     async persist(type, payload) {
       if (Object.hasOwn(payload, 'gp_db_created_at')) throw new Error('gp_audit_reserved_time');
       const deadline = Date.now() + timeoutMs;
@@ -50,8 +56,9 @@ export function createGoldenPathAuditStore(pool, { timeoutMs = 4_000 } = {}) {
           }
         }
         if (!row) row = (await query(
-          `INSERT INTO cecelia_events(event_type,source,payload)
-           VALUES ($1,'golden-path-retirement',$2::jsonb||jsonb_build_object('gp_db_created_at',clock_timestamp()))
+          `WITH stamp AS (SELECT clock_timestamp() AS time)
+           INSERT INTO cecelia_events(event_type,source,payload,created_at)
+           SELECT $1,'golden-path-retirement',$2::jsonb||jsonb_build_object('gp_db_created_at',stamp.time),stamp.time FROM stamp
            RETURNING id,(payload->>'gp_db_created_at')::timestamptz AS created_at,
              payload->>'gp_db_created_at' AS gp_db_created_at,clock_timestamp() AS db_time`, [type, JSON.stringify(payload)],
         )).rows[0];

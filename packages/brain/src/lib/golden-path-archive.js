@@ -63,3 +63,24 @@ export function archiveGoldenPathT0(root, receipt) {
   finally { fs.closeSync(fd); }
   syncDirectory(root);
 }
+
+export function registerGoldenPathServing(root, instanceId, windowId) {
+  const fd = fs.openSync(path.join(root, 'serving.manifest.jsonl'), fs.constants.O_WRONLY
+    | fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW, 0o600);
+  try {
+    fs.writeSync(fd, `${JSON.stringify(signed({ instance_id: instanceId, window_id: windowId }))}\n`);
+    fs.fsyncSync(fd);
+  } finally { fs.closeSync(fd); }
+  syncDirectory(root);
+}
+export function readGoldenPathServing(root) {
+  const text = readFile(path.join(root, 'serving.manifest.jsonl'), 1024 * 1024);
+  if (!text.endsWith('\n')) throw new Error('gp_serving_manifest_invalid');
+  const rows = text.split('\n').filter(Boolean).map(line => verified(JSON.parse(line)));
+  if (!rows.length || rows.length > 1024 || new Set(rows.map(r => r.instance_id)).size !== rows.length
+      || rows.some(r => !/^[a-f0-9-]{36}$/.test(r.instance_id)
+        || (r.window_id !== 'unadmitted' && !/^[a-f0-9-]{36}$/.test(r.window_id)))) {
+    throw new Error('gp_serving_manifest_invalid');
+  }
+  return rows;
+}

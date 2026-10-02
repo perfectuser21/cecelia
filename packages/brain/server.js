@@ -3,7 +3,7 @@ import { startExecutionDirectory } from './src/execution-directory/store.js';
 // OTel 必须在所有其他 import 之前初始化（auto-instrumentation 要求）
 import { initOtel } from './src/otel.js';
 import { isIsolatedRuntime } from './src/runtime-safety.js';
-import { startGoldenPathAudit, goldenPathAuditListening, stopGoldenPathAudit } from './src/lib/golden-path-audit-runtime.js';
+import { startGoldenPathAudit, goldenPathAuditListening, stopGoldenPathAudit, drainGoldenPathListener } from './src/lib/golden-path-audit-runtime.js';
 if (!isIsolatedRuntime()) await initOtel();
 
 import 'dotenv/config';
@@ -253,12 +253,10 @@ async function gracefulShutdown(signal) {
   console.log(`${signal} received, shutting down gracefully...`);
   const deadline = Date.now() + 25_000; // stay under launchd ExitTimeOut (30s)
 
-  // 1) Stop accepting new HTTP connections (existing keep-alive sockets still drain)
+  // 1) 停止接流量并明确排空结果；超时不能对观测写clean end。
+  let listenerDrained = false;
   try {
-    await Promise.race([
-      new Promise((resolve) => server.close(() => resolve())),
-      new Promise((resolve) => setTimeout(resolve, Math.max(1000, deadline - Date.now() - 15_000))),
-    ]);
+    listenerDrained = await drainGoldenPathListener(server, Math.max(1000, deadline - Date.now() - 15_000));
   } catch (e) {
     console.warn('[shutdown] server.close error:', e && e.message);
   }
@@ -275,7 +273,7 @@ async function gracefulShutdown(signal) {
   }
 
   // GP持久审计在listener排空后、pool关闭前有界结束；超时保留不可证明缺口。
-  await stopGoldenPathAudit();
+  await stopGoldenPathAudit({ listenerDrained });
   // 3) Drain pg pool
   try {
     await Promise.race([
@@ -730,7 +728,8 @@ if (!process.env.VITEST) {
   }
 
   if (!isIsolatedRuntime()) {
-    try { await startGoldenPathAudit({ pool }); } catch { console.warn('[gp-audit] startup unavailable'); }
+    // 观测启动失败禁止接流量；避免无登记serving实例被正式窗口遗漏。
+    await startGoldenPathAudit({ pool });
   }
   await listenWithRetry(server, Number(PORT), { maxAttempts: 3, retryDelayMs: 2_000 });
   if (!isIsolatedRuntime()) await goldenPathAuditListening();

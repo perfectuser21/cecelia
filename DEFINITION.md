@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.359.1
+**Brain 版本**: 1.359.2
 
 
 
@@ -303,6 +303,13 @@ Worker 标准升级在预检前读取可信现役 plist 快照，保留既有地
 - Notion Projects 页正文（`notion-relay-projection.js`）开头新增目标/现状/已知事实/未决问题/变更日志（最近10条）渲染，指纹随 brief 变化
 - 新增 `PATCH /api/brain/projects/:id/brief`（`task-projects.js`）：主会话直接改 brief，走同一套 `applyProjectBriefDelta` 与 A 档规则
 - `packages/engine/hooks/stop.sh` 接力棒闸提示文案追加可选 `brief_delta` 示例（纯文案，不改判定逻辑，不涉及 engine 版本五件套）
+
+## Brain 1.359.2 — GP115独审五项证据缺口修正
+
+- 根serving manifest交叉核全部正式与unadmitted实例生命周期；未准入实例重叠流量拒绝窗口，未证明计数不冒零调用。观测起动无持久ACK时不开放listener；实际T0前仍须现场核部署控制与全部接流量实例，不能发现没有装观测的未知外部程序。
+- 正常bluegreen按DB最新heartbeat/end与DB clock确认60秒lease，不把仍alive旧实例立即永久记gap；过期无end、孤立intent及既有缺口仍永久失效。
+- 真实listener排空回执才写clean end；慢body/超时abandon持久gap。512MiB有界容量以真实30秒完整source168h文件通过reader实测，保留后续多周余量。
+- T0核实际event.created_at，naive列只由DB会话TimeZone转换且必须与payload绝对时刻精确对应；正规写入同一个DB SQL stamp赋created_at/payload，不准caller自由时刻。DB时区漂移无法证明就拒绝，独立归档保存DB验证回执；真实新事件倒签8天PG回归拒绝。无生产T0/flag/DDL/退役。
 
 ## Brain 1.359.1 — GP115专属持久观测准备（任务115a39b8）
 
