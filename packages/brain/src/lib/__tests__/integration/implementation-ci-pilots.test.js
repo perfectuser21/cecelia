@@ -103,6 +103,11 @@ it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真
     const humanDraft=await submitMapManifest(db,humanManifest);await activateMapManifest(db,humanDraft.manifest_version.id);
     await expect(activateMapManifest(db,nextDraft.manifest_version.id,{expectedActive:{id:prior.id,digest:prior.digest}})).rejects.toMatchObject({code:'MAP_MANIFEST_ACTIVE_CONFLICT'});
     expect((await db.query("SELECT id FROM map_manifest_versions WHERE scope_key='zenithjoy' AND status='active'")).rows[0].id).toBe(humanDraft.manifest_version.id);
+    const runsBefore=(await db.query("SELECT id,status FROM map_projection_runs ORDER BY id")).rows;
+    await expect(activateMapManifest(db,nextDraft.manifest_version.id,{beforeCommit:async()=>{throw Object.assign(Error('main changed'),{code:'MAIN_MOVED'});}})).rejects.toMatchObject({code:'MAIN_MOVED'});
+    expect((await db.query("SELECT id,status FROM map_projection_runs ORDER BY id")).rows).toEqual(runsBefore);
+    expect((await db.query("SELECT id FROM map_manifest_versions WHERE scope_key='zenithjoy' AND status='active'")).rows[0].id).toBe(humanDraft.manifest_version.id);
+
 
     const edited=structuredClone((await db.query("SELECT manifest FROM map_manifest_versions WHERE scope_key='zenithjoy' AND status='active'")).rows[0].manifest);
     edited.capabilities[0].name='人工名称保留';edited.shared_prerequisites.reason='人工说明保留';

@@ -1,4 +1,5 @@
 /** 中央定义只读导出；身份由登记表给出，历史来源不以latest补齐。 */
+import {preparePilotManifestAdvance,advancePilotManifest} from './implementation-ci-pilot-manifest.js';
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
 import { validateImplementationQuery } from './implementation-consumers.js';
 import { syncActivityContracts,CONTRACT_REPO } from '../activity-contract-sync.js';
@@ -111,6 +112,7 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
     if((await response.text()).trim()!==q.revision)throw ciFailure('MAIN_MOVED','请求revision不等于远端main',409);
   };
   await checkMain();
+  const pilotPlan=await preparePilotManifestAdvance(pool,q);
   if(q.repo===CONTRACT_REPO)await syncActivityContracts(pool,{fetchFn,resolveToken:async()=>token,expectedRevision:q.revision,beforeCommit:checkMain,synchronizeSteps:true,readBinding});
   else{
     const readFile=async(path,revision=q.revision)=>{
@@ -121,7 +123,7 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
     await registerCompanyKrWorkflow(pool,{spec,revision:q.revision,readSource:async()=>text,beforeCommit:checkMain,definitionsOnly:true,
       readBinding:readBinding||(b=>{if(b.repo!==q.repo)throw ciFailure('CROSS_REPO_SNAPSHOT_MISSING');return readFile(b.path,b.revision);})});
   }
-  await checkMain();return exportImplementationSnapshot(pool,q);
+  await checkMain();await advancePilotManifest(pool,pilotPlan,checkMain);return exportImplementationSnapshot(pool,q);
 }
 
 /** 唯一登记键的窄入口；不接收路径、扫描命令或任意adapter参数。 */
