@@ -41,3 +41,18 @@ it('自洽hash不能冒充未登记scope或缺失规范映射',async()=>{
  await cover();const p=await plan(),e=evidence(p);e.report.scope='unregistered';e.report.assertion_plan_sha256=service.pilotPlanHash(service.pilotPlanBody(e.report));e.receipt.assertion_plan_sha256=e.report.assertion_plan_sha256;e.receipt.report_sha256=hash(e.report);
  const {release}=await createRelease(f.db,{...f.releaseInput,ci_evidence:[e]});expect(release.payload.verification.ci_status).toBe('unknown');
 });
+it('正式main refresh补齐原未登记四Step并保旧UUID，旧版本仍缺身份不能事后追认',async()=>{
+ const {refreshImplementationSnapshot,exportImplementationSnapshot}=await import('../../implementation-ci-snapshot.js');
+ const revision='c'.repeat(40),names=['open_benchmark_profile','list_recent_videos','resolve_video_links','persist_candidates'];
+ const before=(await f.db.query('SELECT id FROM steps ORDER BY id')).rows.map(r=>r.id);
+ const discovery=f.contracts.docs.benchmark_link_acquisition.activities.find(a=>a.key==='discovery');discovery.steps=[...discovery.steps,...names.map((key,i)=>({key,order:i+2}))];f.contracts.refresh();
+ await f.sync(revision);await f.map(revision);
+ const query={scope:'phones',repo:f.releaseInput.components[0].repo,revision},old=await exportImplementationSnapshot(f.db,query);
+ const oldPlan=service.buildPilotReleasePlan({...query,definitions:old.definitions,assertions:old.assertions});expect(oldPlan.gaps.filter(g=>g.code==='pilot_step_identity_missing').map(g=>g.step_key).sort()).toEqual([...names].sort());
+ const fetchFn=async(...args)=>String(args[0]).includes('/commits/main')?{ok:true,text:async()=>revision}:f.contracts.fetchFn(...args);
+ const next=await refreshImplementationSnapshot(f.db,query,{fetchFn,resolveToken:async()=> 'fixture',readBinding:async()=> 'export const controller=true;\n'});
+ expect(next.status,next.gaps).toBe('verified');const after=(await f.db.query('SELECT id FROM steps ORDER BY id')).rows.map(r=>r.id);expect(after).toHaveLength(before.length+4);expect(before.every(id=>after.includes(id))).toBe(true);
+ const frozen=(await f.db.query('SELECT payload FROM workflow_definition_versions WHERE id=$1',[old.definitions.workflows.find(w=>w.payload.activities.some(r=>old.definitions.activities.find(a=>a.id===r.activity_version_id)?.payload.steps.some(s=>!s.step_id))).id])).rows[0];expect(frozen.payload).toEqual(old.definitions.workflows.find(w=>w.payload.activities.some(r=>old.definitions.activities.find(a=>a.id===r.activity_version_id)?.payload.steps.some(s=>!s.step_id))).payload);
+ for(const w of next.definitions.workflows)for(const ref of w.payload.activities){const a=next.definitions.activities.find(a=>a.id===ref.activity_version_id);for(const step of [null,...a.payload.steps.map(s=>s.step_id)])await registerCapabilityRegression(f.db,{capability_id:w.payload.capability_id,activity_id:a.activity_id,step_id:step,assertion_ref:'scripts/smoke/lock.sh'});}
+ const full=await exportImplementationSnapshot(f.db,query);expect(service.buildPilotReleasePlan({...query,definitions:full.definitions,assertions:full.assertions}).verification_status).toBe('verified');expect(oldPlan.verification_status).toBe('unknown');
+});

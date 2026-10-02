@@ -1,5 +1,6 @@
 /** 完整已声明试点回归计划；与变更影响报告分离，不声称全仓覆盖或业务执行。 */
 import {createHash} from 'node:crypto';
+import {readImplementationSnapshotInTransaction} from './implementation-ci-snapshot.js';
 import {canonicalAssertionCommandText} from './gp-assertion-command.js';
 import {assertionDigest} from './journey-assertion-receipt.js';
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
@@ -60,11 +61,10 @@ export function assertPilotReleaseReport(report){
 }
 export async function validatePilotReleaseEvidence(db,report,receipt,definitions){
  assertPilotReleaseReport(report);
- const caps=[...new Set(definitions.workflows.map(w=>w.payload.capability_id))],activities=definitions.activities.map(a=>a.activity_id);
- const rows=(await db.query('SELECT id,journey_id,step_id,step_id_ref,assertion_ref,assertion_revision FROM journey_step_links WHERE journey_id=ANY($1::uuid[]) AND step_id=ANY($2::uuid[]) ORDER BY id',[caps,activities])).rows;
- const expected=buildPilotReleasePlan({scope:report.scope,repo:report.source.repo,revision:report.source.head_revision,definitions,assertions:rows});
+ const snapshot=await readImplementationSnapshotInTransaction(db,{scope:report.scope,repo:report.source.repo,revision:report.source.head_revision});
+ const expected=buildPilotReleasePlan({scope:report.scope,repo:report.source.repo,revision:report.source.head_revision,definitions:snapshot.definitions,assertions:snapshot.assertions});
  const fail=()=>{throw Object.assign(Error('固定完整计划与当前登记或执行收据不符'),{code:'PILOT_RELEASE_PLAN_MISMATCH'});};
- if(expected.verification_status!=='verified'||!same(pilotPlanBody(expected),pilotPlanBody(report)))fail();
+ if(snapshot.status!=='verified'||expected.verification_status!=='verified'||!same(pilotPlanBody(expected),pilotPlanBody(report))||!same(expected.definition_versions,buildPilotReleasePlan({scope:report.scope,repo:report.source.repo,revision:report.source.head_revision,definitions,assertions:snapshot.assertions}).definition_versions))fail();
  if(receipt?.purpose!=='release_verification'||receipt.actor!=='pilot_release_verification'||receipt.scope!=='declared_pilot_regressions'||receipt.verdict!=='PASS'||receipt.business_runtime_status!=='not_evaluated'||!same(receipt.source,report.source)||receipt.snapshot_sha256!==report.snapshot_sha256||receipt.assertion_plan_sha256!==report.assertion_plan_sha256||receipt.report_sha256!==createHash('sha256').update(JSON.stringify(report)).digest('hex'))fail();
  if(!Array.isArray(receipt.assertions)||receipt.assertions.length!==report.required_assertions.length||new Set(receipt.assertions.map(a=>a.assertion_ref)).size!==receipt.assertions.length)fail();
  for(const a of report.required_assertions)if(!receipt.assertions.some(r=>r.assertion_ref===a.assertion_ref&&r.source_repo===report.source.repo&&r.source_revision===report.source.head_revision&&same(r.source_bindings,a.source_bindings)&&r.exit_code===0&&!r.error&&!r.signal&&hash(r.test_sha256)))fail();
