@@ -972,6 +972,9 @@ jobs:
             src/__tests__/integration/linux-pool-authorization.pg.integration.test.js \
             src/node-onboarding/__tests__/service.test.js \
             src/__tests__/integration/linux-script-authorization.pg.integration.test.js \
+            src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js \
+            src/linux-pool/__tests__/integration/active-grants.test.js \
+            src/linux-pool/__tests__/integration/onboarding-revocation.test.js \
             src/__tests__/integration/script-managed-executor.pg.integration.test.js \
             src/__tests__/migration-333.test.js \
             src/__tests__/migration-400-fact-snapshot.test.js \

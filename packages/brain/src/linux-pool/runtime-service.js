@@ -50,7 +50,7 @@ export function createLinuxRuntimeAuthorization({pool,readDeployment=createRunti
    const grantIds={};for(const profileId of Object.keys(d.profiles)){const grant=randomUUID();grantIds[profileId]=grant;
     await db.query(`INSERT INTO execution_grants(id,node_version_id,surface,provider,profile_id,provenance,evidence_task_id,expires_at)
      VALUES($1,$2,'managed_script','script',$3,'linux_script_canary',$4,statement_timestamp()+interval '24 hours')`,[grant,version,profileId,evidence]);}
-   const {key,workerToken,policyDigest,...policy}=d;
+   const {key:_key,workerToken:_workerToken,policyDigest,...policy}=d;
    const r=(await db.query(`INSERT INTO linux_script_authorizations(id,machine_registry_id,expected_version_id,execution_version_id,evidence_task_id,policy,policy_digest,grant_ids,nonce,challenge_expires_at,authorization_expires_at)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,statement_timestamp()+interval '10 minutes',statement_timestamp()+interval '24 hours') RETURNING *`,
     [id,machineId,body.expected_version_id,version,evidence,policy,policyDigest,grantIds,randomBytes(32).toString('hex')])).rows[0];return prepared(r,d);
