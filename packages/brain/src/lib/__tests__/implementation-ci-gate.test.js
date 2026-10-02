@@ -17,8 +17,11 @@ function fixture() {
   writeFileSync(join(root,'controller.js'),'new');git('add','.');git('commit','-qm','head');const head=git('rev-parse','HEAD');
   const side=revision=>({revision,graph_snapshot:{repo:'example/repo',source_revision:revision,digest:'a'.repeat(64)},projection:{projection_run_id:'11111111-1111-4111-8111-111111111111',manifest_version_id:'22222222-2222-4222-8222-222222222222',manifest_digest:'b'.repeat(64),projection_digest:'c'.repeat(64)},definition_versions:{workflows:[{id:'33333333-3333-4333-8333-333333333333',payload_sha256:'d'.repeat(64)}],activities:[{id:'44444444-4444-4444-8444-444444444444',payload_sha256:'e'.repeat(64)}]},gaps:[],traversal:{truncated:false}});
   const report={source:{repo:'example/repo',base_revision:base,head_revision:head,changed_files:[{path:'controller.js'}]},base:side(base),head:side(head),mapping_status:'verified',gaps:[],affected_usages:[{workflow_id:'workflow',reference_id:'usage',activity_id:'activity',capability_ids:['capability'],evidence:[{capability_id:'capability',activity_id:'activity'}]}],required_assertions:[{assertion_ref:'scripts/smoke/lock.sh',source_repo:'example/repo',capability_ids:['capability'],source_bindings:[{journey_step_link_id:'link',assertion_revision:1,activity_id:'activity',capability_id:'capability'}],command:'touch MUST_NOT_EXECUTE'}]};
+  report.unclaimed_paths=[];
+  for(const key of ['base','head'])report[key].file_coverage=[{change_index:0,path:'controller.js',matched_paths:['controller.js'],truncated:false}];
   return {root,report,git};
 }
+function refreshCoverage(report){for(const side of ['base','head'])report[side].file_coverage=report.source.changed_files.map((item,index)=>({change_index:index,path:side==='base'?item.old_path||item.path:item.path,matched_paths:['controller.js'],truncated:false}));}
 it('真git diff与固定报告对账，只执行本仓测试，HTTP command不执行并保留来源收据',async()=>{
   const {root,report}=fixture();const receipt=await runImplementationGate({repoRoot:root,report});
   expect(receipt.verdict).toBe('PASS');expect(readFileSync(join(root,'actual-output'),'utf8')).toBe('tested');
@@ -49,7 +52,7 @@ it('真实CLI输出可回读收据，测试非零时进程非零退出',()=>{
   expect(run().status).toBe(0);expect(JSON.parse(readFileSync(output,'utf8')).verdict).toBe('PASS');
   writeFileSync(join(root,'scripts/smoke/lock.sh'),'exit 9\n');git('add','scripts/smoke/lock.sh');git('commit','-qm','fail-test');
   report.source.head_revision=git('rev-parse','HEAD');report.head.revision=report.source.head_revision;report.head.graph_snapshot.source_revision=report.source.head_revision;report.source.changed_files.push({path:'scripts/smoke/lock.sh'});
-  writeFileSync(input,JSON.stringify(report));expect(run().status).toBe(1);expect(JSON.parse(readFileSync(output,'utf8')).assertions[0].exit_code).toBe(9);
+  refreshCoverage(report);writeFileSync(input,JSON.stringify(report));expect(run().status).toBe(1);expect(JSON.parse(readFileSync(output,'utf8')).assertions[0].exit_code).toBe(9);
 });
 it('测试进程不继承外部BASH_ENV启动脚本',async()=>{
   const {root,report}=fixture();const startup=join(root,'foreign-startup.sh');writeFileSync(startup,'exit 73\n');vi.stubEnv('BASH_ENV',startup);
@@ -61,6 +64,7 @@ it('测试篡改后续测试时立即FAIL并停止，不能以旧字节hash记�
   git('add','scripts/smoke');git('commit','-qm','two-tests');report.source.head_revision=git('rev-parse','HEAD');report.head.revision=report.source.head_revision;report.head.graph_snapshot.source_revision=report.source.head_revision;
   report.source.changed_files.push({path:'scripts/smoke/lock.sh'},{path:'scripts/smoke/next.sh'});
   report.required_assertions.push({...report.required_assertions[0],assertion_ref:'scripts/smoke/next.sh'});
+  refreshCoverage(report);
   const receipt=await runImplementationGate({repoRoot:root,report});expect(receipt.verdict).toBe('FAIL');expect(receipt.assertions).toHaveLength(1);
   expect(receipt.assertions[0].error).toBe('IMPACT_SOURCE_CHANGED_DURING_TEST');
 });
@@ -75,8 +79,21 @@ it('Activity级回归不能冒充指定Step的回归',async()=>{
   const {root,report}=fixture();report.affected_usages[0].evidence[0].assertion_step_ids=['55555555-5555-4555-8555-555555555555'];
   await expect(runImplementationGate({repoRoot:root,report})).rejects.toThrow('IMPACT_REGRESSION_MISSING');
 });
+it.each(['missing','uncovered','empty-impact'])('逐文件覆盖证据与非空影响不能由整体verified代替：%s',async kind=>{
+  const {root,report}=fixture();
+  if(kind==='missing')delete report.base.file_coverage;
+  if(kind==='uncovered')for(const side of ['base','head'])report[side].file_coverage[0].matched_paths=[];
+  if(kind==='empty-impact'){report.affected_usages=[];report.required_assertions=[];}
+  await expect(runImplementationGate({repoRoot:root,report})).rejects.toThrow();
+});
+it('固定快照确证删除最后Activity仍执行base消费者回归',async()=>{
+  const {root,report}=fixture();report.head.definition_versions.activities=[];report.head.impact_status='known_removed';
+  report.head.removal_evidence=[{workflow_id:'workflow',reference_id:'usage',activity_id:'activity',head_workflow_definition_version_id:report.head.definition_versions.workflows[0].id}];
+  const receipt=await runImplementationGate({repoRoot:root,report});expect(receipt.verdict).toBe('PASS');expect(receipt.assertions).toHaveLength(1);
+});
 it('真测试非零退出保留FAIL收据而不是映射成功冒充验证成功',async()=>{
   const {root,report,git}=fixture();writeFileSync(join(root,'scripts/smoke/lock.sh'),'exit 7\n');git('add','.');git('commit','-qm','fail-test');
   report.source.head_revision=git('rev-parse','HEAD');report.head.revision=report.source.head_revision;report.head.graph_snapshot.source_revision=report.source.head_revision;report.source.changed_files.push({path:'scripts/smoke/lock.sh'});
+  refreshCoverage(report);
   const receipt=await runImplementationGate({repoRoot:root,report});expect(receipt.verdict).toBe('FAIL');expect(receipt.assertions[0].exit_code).toBe(7);
 });
