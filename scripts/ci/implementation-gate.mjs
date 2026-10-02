@@ -11,6 +11,17 @@ const sha=value=>createHash('sha256').update(value).digest('hex');
 const fail=code=>{throw Object.assign(Error(code),{code});};
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',maxBuffer:16*1024*1024});
 const objectId=value=>typeof value==='string'&&/^[0-9a-f]{40}$/.test(value);
+function testEnvironment() {
+  const env={PATH:`${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,CI:'true',NODE_ENV:'test',LANG:'C.UTF-8'};
+  // 测试库连接是显式能力；不继承解释器启动钩子、模块搜索覆盖或通用凭据。
+  for(const key of ['DB_HOST','DB_PORT','DB_NAME','DB_USER','DB_PASSWORD','PGHOST','PGPORT','PGDATABASE','PGUSER','PGPASSWORD','TZ','TMPDIR']){
+    if(process.env[key]!==undefined)env[key]=process.env[key];
+  }
+  return env;
+}
+function sourceUnchanged(root,head) {
+  return git(root,'rev-parse','HEAD').trim()===head&&!git(root,'status','--porcelain=v1','--untracked-files=no').trim();
+}
 function changedPaths(items) {
   if(!Array.isArray(items))fail('IMPACT_DIFF_MISSING');
   const paths=new Set();
@@ -67,14 +78,17 @@ export async function runImplementationGate({repoRoot,report,timeoutMs=300000}) 
   for(const assertion of report.required_assertions)prepared.push(await prepareAssertion(root,assertion,repo,source.head_revision));
   const assertions=[];
   for(const item of prepared){
+    if(!sourceUnchanged(root,source.head_revision)||(sha(await readFile(join(root,item.path)))!==item.test_sha256))fail('IMPACT_SOURCE_CHANGED_BEFORE_TEST');
     const result=spawnSync(item.command.executable,item.command.argv,{
       cwd:item.command.options.cwd,shell:false,encoding:'utf8',timeout:timeoutMs,maxBuffer:16*1024*1024,
-      env:{...process.env,CI:'true'},
+      env:testEnvironment(),
     });
+    const drift=!sourceUnchanged(root,source.head_revision);
     assertions.push({assertion_ref:item.assertion.assertion_ref,source_repo:repo,source_revision:source.head_revision,
       source_bindings:item.assertion.source_bindings,test_sha256:item.test_sha256,command_argv:[item.command.executable,...item.command.argv],
-      exit_code:result.status,signal:result.signal||null,error:result.error?.code||null,
+      exit_code:result.status,signal:result.signal||null,error:drift?'IMPACT_SOURCE_CHANGED_DURING_TEST':result.error?.code||null,
       stdout_sha256:sha(result.stdout||''),stderr_sha256:sha(result.stderr||'')});
+    if(drift)break;
   }
   return {schema_version:1,source,report_sha256:sha(JSON.stringify(report)),actor:'implementation_ci_gate',
     verdict:assertions.every(item=>item.exit_code===0&&!item.error)?'PASS':'FAIL',assertions,
