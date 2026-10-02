@@ -7,8 +7,9 @@ import stat
 from pathlib import Path
 import threading
 import uuid
+import weakref
 from activation import _TrustedReads, _json, _keys, _identity, validate_activation, _plain
-from process_identity import process_identity
+from process_identity import process_identity, process_matches
 
 _ROOT = Path('/private/etc/cecelia/phone-ssh' if os.uname().sysname == 'Darwin' else '/etc/cecelia/phone-ssh')
 _JOURNAL_ROOT = Path('/var/lib/cecelia/phone-ssh')
@@ -186,16 +187,28 @@ class Admission:
             held.verify(); return state['pending'][key]
 
 
+_HOSTS = weakref.WeakKeyDictionary()
+
+
 class HostExclusive:
-    """真实E FD生命周期原语；本身不证明旧业务已全受管或整机quiescent。"""
-    def __init__(self): self.fd, self.reads = None, None
+    """只有真实acquire铸造的私有E；不证明业务已全受管/整机quiescent。"""
+    def _owned(self, *, closed=False):
+        value = _HOSTS.get(self)
+        if not value or value['owner']['pid'] != os.getpid() or value['thread'] != threading.get_ident() or not process_matches(value['owner']):
+            raise ValueError('phone_host_handle_unknown')
+        if value['closed'] and not closed: raise ValueError('phone_host_not_held')
+        return value
+
+    @property
+    def fd(self):
+        self.verify()
+        return self._owned()['fd']
 
     def acquire(self):
-        if self.fd is not None: raise ValueError('phone_host_already_held')
-        reads = _HostReads(); reads.__enter__()
+        if self in _HOSTS: raise ValueError('phone_host_already_minted')
+        reads = _HostReads(); reads.__enter__(); witness = None
         try:
-            reads.read(_HOST_ROOT / 'host.guard')
-            fd = reads.files[-1][2]
+            reads.read(_HOST_ROOT / 'host.guard'); fd = reads.files[-1][2]
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with _HostReads() as ledger:
                 value = _json(ledger.read(_HOST_ROOT / '.host-activity.json'))
@@ -203,34 +216,82 @@ class HostExclusive:
                 if type(value['schema']) is not int or value['schema'] != 1 or value['activities'] != {}:
                     raise ValueError('phone_host_activity_unknown')
                 ledger.verify()
-            reads.verify()
-            os.set_inheritable(fd, True)
-            self.fd, self.reads = fd, reads
+            reads.verify(); witness = os.dup(fd)
+            os.set_inheritable(fd, True); os.set_inheritable(witness, True)
+            value = os.fstat(fd)
+            _HOSTS[self] = {'fd':fd, 'witness':witness, 'reads':reads, 'closed':False,
+                           'inode':(value.st_dev,value.st_ino), 'owner':process_identity(os.getpid()),
+                           'thread':threading.get_ident(), 'generation':str(uuid.uuid4())}
             return self
         except BaseException:
+            if witness is not None: os.close(witness)
             reads.__exit__(); raise
 
-    def verify(self):
-        if self.fd is None: raise ValueError('phone_host_not_held')
+    @staticmethod
+    def _prove(value):
         with _HostReads() as current:
-            current.read(_HOST_ROOT / 'host.guard')
-            now, held = os.fstat(current.files[-1][2]), os.fstat(self.fd)
-            if (now.st_dev, now.st_ino) != (held.st_dev, held.st_ino) or held.st_nlink != 1:
-                raise ValueError('phone_host_inode_changed')
+            current.read(_HOST_ROOT / 'host.guard'); probe = current.files[-1][2]
+            for fd in (value['fd'], value['witness']):
+                held = os.fstat(fd)
+                if (held.st_dev,held.st_ino) != value['inode'] or held.st_nlink != 1 or not os.get_inheritable(fd):
+                    raise ValueError('phone_host_fd_unknown')
+            now = os.fstat(probe)
+            if (now.st_dev,now.st_ino) != value['inode']: raise ValueError('phone_host_inode_changed')
+            # 先证明实际EX。若SH probe成功，拒绝且绝不升级修复已掉锁/降级的OFD。
+            try: fcntl.flock(probe, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError: pass
+            else: raise ValueError('phone_host_exclusive_unknown')
+            # 私有dup witness仍持同OFD的EX；独立open即便复用同inode/数字FD也被拒。
+            try:
+                fcntl.flock(value['fd'], fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(value['witness'], fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error: raise ValueError('phone_host_description_unknown') from error
             current.verify()
 
+    def verify(self):
+        value = self._owned(); self._prove(value)
+        if value['reads'] is not None: value['reads'].verify()
+
+    def fork(self):
+        self.verify(); value = self._owned()
+        # 一次token不暴露、不接受caller PID/FD；本方法自己执行唯一真实fork。
+        token = {'parent':dict(value['owner']), 'generation':value['generation']}
+        pid = os.fork()
+        if pid == 0:
+            if os.getppid() != token['parent']['pid'] or not process_matches(token['parent']) or value['generation'] != token['generation']:
+                raise ValueError('phone_host_fork_unknown')
+            self._prove(value)
+            value.update(owner=process_identity(os.getpid()), thread=threading.get_ident(), generation=str(uuid.uuid4()))
+        return pid
+
     def transfer(self):
-        self.verify()
-        if self.reads is not None:
-            # dup共享同一E open description；关闭metadata后保留这个真实FD。
-            fd = os.dup(self.fd)
-            self.reads.__exit__(); self.reads = None; self.fd = fd
-        os.set_inheritable(self.fd, True)
-        return self.fd
+        self.verify(); value = self._owned()
+        if value['reads'] is not None:
+            fd = os.dup(value['fd']); os.set_inheritable(fd, True)
+            value['reads'].__exit__(); value.update(reads=None, fd=fd, generation=str(uuid.uuid4()))
+        return value['fd']
+
+    def _detach_fds(self):
+        self.verify(); value = self._owned()
+        return (value['fd'],value['witness'])
+
+    def _after_detach(self):
+        value = _HOSTS.get(self)
+        if not value or value['closed'] or value['reads'] is not None or value['owner']['pid'] != os.getpid() or value['thread'] != threading.get_ident():
+            raise ValueError('phone_host_detach_unknown')
+        now = process_identity(os.getpid())
+        if any(now[k] != value['owner'][k] for k in ('pid','boot_id','start_time')) or now['pgid'] != os.getpid() or os.getsid(0) != os.getpid():
+            raise ValueError('phone_host_detach_unknown')
+        self._prove(value)
+        value.update(owner=now, generation=str(uuid.uuid4()))
 
     def close(self):
-        if self.reads is not None: self.reads.__exit__(); self.reads = None; self.fd = None
-        elif self.fd is not None: os.close(self.fd); self.fd = None
+        value = self._owned(closed=True)
+        if value['closed']: return
+        self.verify()
+        if value['reads'] is not None: value['reads'].__exit__(); value['reads'] = None
+        else: os.close(value['fd'])
+        os.close(value['witness']); value['closed'] = True
 
 
 def maintenance_snapshot(root):
