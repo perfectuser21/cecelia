@@ -49,7 +49,7 @@ export async function loadActivityContracts(registrations, digest, fetchFile, re
       || activities.some(a=>want.activities[a.key]!==hash(a))) throw new Error(`契约 digest 校验失败: ${cap}`);
     expanded.set(cap,activities);
   }
-  return registrations.map(workflow => ({ workflow, activities: expanded.get(workflow.source_capability).map((activity,i) => ({
+  return registrations.map(workflow => ({ workflow, contract:docs.get(workflow.source_capability), activities: expanded.get(workflow.source_capability).map((activity,i) => ({
     activity, source_ref: docs.get(workflow.source_capability).activities[i].ref || null,
     sha256: hash(activity),
   })) }));
