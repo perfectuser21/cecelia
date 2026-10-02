@@ -27,7 +27,7 @@ beforeAll(async()=>{
  CREATE TABLE work_routing_receipts(id uuid PRIMARY KEY,task_id uuid,canonical_task_type text,work_kind text);
  CREATE TABLE task_events(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id uuid,event_type text,payload jsonb);
  ALTER TABLE tasks ADD COLUMN success_metrics jsonb;
- ALTER TABLE tasks ADD COLUMN title text,ADD COLUMN description text,ADD COLUMN priority text,ADD COLUMN due_at timestamptz,ADD COLUMN notion_id text,ADD COLUMN notion_synced_at timestamptz,ADD COLUMN parent_task_id uuid,ADD COLUMN project_id uuid,ADD COLUMN summary text;
+ ALTER TABLE tasks ADD COLUMN title text,ADD COLUMN description text,ADD COLUMN priority text,ADD COLUMN due_at timestamptz,ADD COLUMN notion_id text,ADD COLUMN notion_synced_at timestamptz,ADD COLUMN notion_props jsonb,ADD COLUMN parent_task_id uuid,ADD COLUMN project_id uuid,ADD COLUMN summary text;
  CREATE TABLE harness_gaps(source_task_id uuid,status text);
  CREATE TABLE harness_gap_dependencies(source_task_id uuid,status text);
  CREATE TABLE task_dependencies(from_task_id uuid,edge_type text,status text);`);
@@ -46,6 +46,16 @@ it('真实双连接：takeover先持专用exclusive闸，资源创建try shared�
  }finally{await owner.query('ROLLBACK');owner.release();writer.release();}
 });
 const request=()=>({taskId:task,requestId:randomUUID(),sessionId:'actual-session',expectedRowVersion:0,expectedExecutorKind:'bridge',expectedCurrentRunId:legacyRun});
+it.each([false,true])('真实Notion生产SQL existing/newpage=%s可记投影指纹，payload/status/result仍保护',async newPage=>{
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');await takeOverHeadedTask(pool,request());
+ const before=(await pool.query('SELECT payload,status,result FROM tasks WHERE id=$1',[task])).rows[0];
+ // notion-push-sync.js pushTaskRows的两条真实SQL，blockedBy开启的完整指纹。
+ if(newPage)await pool.query("UPDATE tasks SET notion_id=$2, notion_props = COALESCE(notion_props,'{}'::jsonb) || jsonb_build_object('pushed_status', $3::text, 'pushed_project', $4::text, 'pushed_blockers', $5::text), notion_synced_at=NOW() WHERE id=$1",[task,'newpage-fixture','in_progress','project-fixture','blocker-fixture']);
+ else await pool.query("UPDATE tasks SET notion_props = COALESCE(notion_props,'{}'::jsonb) || jsonb_build_object('pushed_status', $2::text, 'pushed_project', $3::text, 'pushed_blockers', $4::text), notion_synced_at=NOW() WHERE id=$1",[task,'in_progress','project-fixture','blocker-fixture']);
+ const after=(await pool.query('SELECT payload,status,result,notion_props,notion_id,notion_synced_at FROM tasks WHERE id=$1',[task])).rows[0];
+ expect(after).toMatchObject(before);expect(after.notion_props).toEqual({pushed_status:'in_progress',pushed_project:'project-fixture',pushed_blockers:'blocker-fixture'});expect(after.notion_synced_at).toBeInstanceOf(Date);if(newPage)expect(after.notion_id).toBe('newpage-fixture');
+ for(const mutation of ["result='{}'::jsonb","payload='{}'::jsonb","status='queued'"]){await expect(pool.query(`UPDATE tasks SET notion_props='{}'::jsonb,${mutation} WHERE id=$1`,[task])).rejects.toThrow('headed_task_owned');}
+});
 it('owner在执行中和完成后均不阻止人赢title/due_at及Notion同步元数据，结果证据仍保护',async()=>{
  const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
  const owner=await takeOverHeadedTask(pool,request());
