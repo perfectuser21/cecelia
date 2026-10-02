@@ -4,7 +4,7 @@ vi.mock('../directory-areas.js', () => ({ syncDirectoryAreas: importer.sync }));
 import { runDirectoryJob } from '../directory-job.js';
 import { runtimeFixture } from './directory-runtime.fixture.js';
 
-beforeEach(() => importer.sync.mockReset());
+beforeEach(() => { importer.sync.mockReset(); });
 describe('目录定时任务的入口顺序', () => {
   it('组织入口失败不写页面、成功收据或继续投影', async () => {
     const f = runtimeFixture();
