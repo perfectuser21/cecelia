@@ -1,3 +1,4 @@
+import {assertAutomaticTaskOwner} from '../lib/headed-task-owner.js';
 import { COMPANY_KR_SQL_GUARD } from '../lib/company-kr-metrics.js';
 import { Router } from 'express';
 import pool from '../db.js';
@@ -111,6 +112,10 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
       }
       return res.status(503).json({ success: false, code: 'WORKFLOW_AUTHORING_GUARD_UNAVAILABLE',
         error: '任务完成门禁暂不可读，请重试回执' });
+    }
+    try { await assertAutomaticTaskOwner(pool, task_id); } catch (ownerError) {
+      if (ownerError.statusCode === 409) return res.status(409).json({success:false,error:ownerError.message});
+      throw ownerError;
     }
 
     console.log(`[execution-callback] Received callback for task ${task_id}, status: ${status}`);
@@ -320,6 +325,7 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
           claimed_at = NULL
         WHERE id = $1
           AND status IN ('in_progress', 'queued', 'dispatched')
+          AND NOT (COALESCE(payload,'{}'::jsonb) ? 'headed_takeover')
           AND ($14::text IS NULL OR payload->>'current_run_id' = $14::text)
       `, [task_id, newStatus, JSON.stringify(lastRunResult), status, resolvedPrUrl || null, isCompleted, findingsValue, prNumber, errorMessage, blockedDetail, isQuotaExhausted, execMetaJson, isTerminal, run_id || null]);
 

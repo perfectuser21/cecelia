@@ -1,4 +1,5 @@
 import { digestMapManifest, validateMapManifest } from './map-manifest-schema.js';
+import { hasBrainBindings, validateMapBrainBindings } from './map-brain-bindings.js';
 import { projectMapManifest } from './map-projection-store.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -68,6 +69,7 @@ export async function submitMapManifest(pool, input) {
     await begin(client);
     await lockScope(client, manifest.scope_key);
     await lockSourceDecision(client, manifest.source_decision_id);
+    await validateMapBrainBindings(client, manifest);
 
     const existing = await client.query(
       `SELECT id, scope_key, version, source_decision_id, manifest, digest,
@@ -146,7 +148,9 @@ export async function activateMapManifest(
     if (!manifestVersion) {
       throw new MapManifestError('MAP_MANIFEST_NOT_FOUND', 'Map manifest version not found', 404);
     }
+    await validateMapBrainBindings(client, manifestVersion.manifest, manifestVersion.scope_key);
     if (manifestVersion.status === 'active') {
+      if (hasBrainBindings(manifestVersion.manifest)) await projector({ client, manifestVersion, mode: 'rebuild' });
       await client.query('COMMIT');
       return { manifest_version: manifestVersion, activated: false };
     }

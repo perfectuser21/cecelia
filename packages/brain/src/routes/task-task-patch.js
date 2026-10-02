@@ -1,9 +1,12 @@
+import {headedTaskMutation} from './task-headed-takeover.js';
+import { rateLimit } from 'express-rate-limit';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import { afterTerminalTransition, isTerminalStatus } from '../lib/task-terminal.js';
 import { authoringMutationError } from '../workflow-authoring/task-guard.js';
 
 /** 注册 tasks/:id 的字段更新与状态保护路由。 */
 export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
-  router.patch('/:id', async (req, res) => {
+  router.patch('/:id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), headedTaskMutation(pool,async (req, res, pool) => {
     try {
       const {
         status,
@@ -145,7 +148,7 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
       }
       // 终态收口（lib/task-terminal.js）：动态 SET 写完终态后必经钩子（completed / completed_no_pr 接棒）
       if (!harnessDemoted && isTerminalStatus(result.rows[0].status) && isTerminalStatus(status)) {
-        await afterTerminalTransition(pool, req.params.id, result.rows[0].status, { sessionId: req.headers?.['x-session-id'] || null });
+        await pool.afterCommit(original => afterTerminalTransition(original, req.params.id, result.rows[0].status, { sessionId: req.headers?.['x-session-id'] || null }));
       }
       return res.json(harnessDemoted
         ? { ...result.rows[0], accepted: false, reason: harnessDemoteReason }
@@ -153,5 +156,5 @@ export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
     } catch (error) {
       return res.status(500).json({ error: 'Failed to update task', details: error.message });
     }
-  });
+  }));
 }

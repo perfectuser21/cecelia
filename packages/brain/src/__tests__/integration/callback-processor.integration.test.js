@@ -111,6 +111,15 @@ vi.mock('../../code-review-trigger.js', () => ({
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// 按实际SQL语义返回任务事实，不让新增owner SELECT消耗旧顺序响应。
+function taskReads(task){
+ mockPool.query.mockImplementation(async sql=>{
+  if(sql.includes("payload->'headed_takeover' AS headed_takeover"))return {rows:[{headed_takeover:null}]};
+  if(/^SELECT (pr_url, payload|task_type, pr_url, payload)/.test(sql))return {rows:[task]};
+  if(sql.includes("payload->>'failure_class' AS failure_class"))return {rows:[task]};
+  return {rows:[]};
+ });
+}
 describe('callback-processor 集成测试', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -198,11 +207,7 @@ describe('callback-processor 集成测试', () => {
     it('dev 任务 AI Done 且无 pr_url → completed_no_pr', async () => {
       const { processExecutionCallback } = await import('../../callback-processor.js');
 
-      // resolveCanonicalPrUrl 先查 DB（pr_url 未定义，无效 URL），再 maybeMarkCompletedNoPr 查 task_type
-      mockPool.query
-        .mockResolvedValueOnce({ rows: [{ pr_url: null, payload: {} }] })                    // resolveCanonicalPrUrl SELECT
-        .mockResolvedValueOnce({ rows: [{ task_type: 'dev', pr_url: null, payload: {} }] })  // maybeMarkCompletedNoPr SELECT
-        .mockResolvedValue({ rows: [] }); // newStatus=completed_no_pr → terminalCheck 不执行
+      taskReads({task_type:'dev',pr_url:null,payload:{}});
 
       const result = await processExecutionCallback({
         task_id: 'task-005',
@@ -215,6 +220,7 @@ describe('callback-processor 集成测试', () => {
 
       expect(result.success).toBe(true);
       expect(result.newStatus).toBe('completed_no_pr');
+      expect(mockPool.query.mock.calls[0][0]).toContain("payload->'headed_takeover'");
     });
 
     it('dev 任务有 pr_url → 保持 completed（不降级）', async () => {
@@ -238,10 +244,7 @@ describe('callback-processor 集成测试', () => {
     it('harness_mode=true 的 dev 任务无 PR → 保持 completed（harness 不降级）', async () => {
       const { processExecutionCallback } = await import('../../callback-processor.js');
 
-      mockPool.query
-        .mockResolvedValueOnce({ rows: [{ task_type: 'dev', payload: { harness_mode: true } }] }) // dev check
-        .mockResolvedValueOnce({ rows: [{ failure_class: null }] })                                 // terminal check
-        .mockResolvedValue({ rows: [] });
+      taskReads({task_type:'dev',payload:{harness_mode:true},failure_class:null});
 
       const result = await processExecutionCallback({
         task_id: 'task-007',
@@ -263,10 +266,7 @@ describe('callback-processor 集成测试', () => {
     it('pipeline_terminal_failure 时拒绝覆盖为 completed，返回 skipped', async () => {
       const { processExecutionCallback } = await import('../../callback-processor.js');
 
-      // pr_url 存在（跳过 completed_no_pr 检查），terminal check 返回 pipeline_terminal_failure
-      mockPool.query
-        .mockResolvedValueOnce({ rows: [{ failure_class: 'pipeline_terminal_failure' }] }) // terminal check
-        .mockResolvedValue({ rows: [] });
+      taskReads({failure_class:'pipeline_terminal_failure'});
 
       const result = await processExecutionCallback({
         task_id: 'task-008',
@@ -279,6 +279,8 @@ describe('callback-processor 集成测试', () => {
 
       expect(result.skipped).toBe(true);
       expect(result.reason).toBe('terminal_failure_guard');
+      expect(mockPool.query.mock.calls[0][0]).toContain("payload->'headed_takeover'");
+      expect(mockPool.query.mock.calls.some(([sql])=>/^UPDATE tasks/.test(sql))).toBe(false);
     });
   });
 
