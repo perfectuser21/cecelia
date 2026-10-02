@@ -256,3 +256,19 @@ class PermitTest(unittest.TestCase):
         with self.assertRaises(ValueError): permit.send(self.identity, self.host, child)
         self.assertEqual(len(admission.Admission().snapshot()['pending']), 2)
         self.assertFalse(select.select([self.server], [], [], 0.02)[0])
+
+    def test_unlocked_forged_host_cannot_borrow_someone_elses_exclusive_lock(self):
+        raw = os.open(self.fixture.host_root / 'host.guard', os.O_RDONLY)
+        fake = object.__new__(admission.HostExclusive)
+        fake.__dict__.update(fd=raw, reads=None)
+        child = None
+        try:
+            with self.assertRaises(ValueError):
+                child = permit.FixedSocketChild(self.identity, fake)
+                permit.send(self.identity, fake, child)
+        finally:
+            if child is not None:
+                if select.select([self.server], [], [], 0.05)[0]:
+                    self.respond(); child.wait()
+                child.close()
+            os.close(raw)
