@@ -46,6 +46,22 @@ describe('六层目录源映射', () => {
     expect(evidence.definition).toMatchObject({check:entry.contract.check,dod:entry.contract.dod,implementation_status:'unverified'});
     expect(row.definitionVersion.id).toBe(a.current_definition_version_id);
   });
+  it.each(['same','different-direct','different-binding'])('引用核验只对应实际展示声明：%s', kind => {
+    const {data,s,a,entry}=versionedStep();
+    entry.contract.implementation={kind:'code',repo:'owner/repo',revision:'a'.repeat(40),path:'verified.sh'};
+    a.definition_version.payload.implementation_bindings=[{scope:'step',step_key:'read',field:'implementation',
+      status:'verified',validation_scope:'reference_only',raw:structuredClone(entry.contract.implementation)}];
+    s.contract={implementation:structuredClone(entry.contract.implementation)};
+    if(kind==='different-direct')s.contract.implementation='different-unverified-direct.sh';
+    if(kind==='different-binding')a.definition_version.payload.implementation_bindings[0].raw={...entry.contract.implementation,path:'other.sh'};
+    const row=api.buildDirectoryRows(data,config).find(r=>r.id===s.id);
+    const evidence=JSON.parse(row.properties['证据读取'].rich_text[0].text.content);
+    expect(evidence.definition.implementation_status).toBe(kind==='same'?'reference_verified':'unverified');
+    expect(row.gaps).toContain(kind==='same'?'implementation_execution_unverified':'implementation_unverified');
+    if(kind!=='same')expect(row.gaps).not.toContain('implementation_execution_unverified');
+    expect(row.properties['实现来源'].rich_text[0].text.content).toBe(typeof s.contract.implementation==='string'?
+      s.contract.implementation:JSON.stringify(s.contract.implementation));
+  });
   it.each(['wrong-activity','wrong-version','wrong-step','wrong-locator','registration-key','registration-sha','registration-readback','duplicate','no-pointer'])('Step %s不接受声明且不从Activity继承实现', kind => {
     const {data,s,a,entry}=versionedStep();
     if(kind==='wrong-activity')a.definition_version.activity_id=fixtureEntityId(999);
