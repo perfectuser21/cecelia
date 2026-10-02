@@ -364,3 +364,14 @@ export async function findBareRuns(pool, { windowMinutes = 60 } = {}) {
   );
   return rows;
 }
+
+/** 补充真实执行的工作流身份；调用方负责事务，禁止抢占已有归属或改写运行事实。 */
+export async function attachRunsToWorkflow({ workflowId, taskIds }, deps = {}) {
+  if (!workflowId || !Array.isArray(taskIds)) throw new Error('工作流身份参数缺失');
+  if (!taskIds.length) return [];
+  const pool = await resolvePool(deps);
+  const rows = (await pool.query(`SELECT id,workflow_id FROM task_runs WHERE task_id=ANY($1::uuid[]) FOR UPDATE`, [taskIds])).rows;
+  if (rows.some(r => r.workflow_id && r.workflow_id !== workflowId)) throw new Error('Run 已有不同工作流归属');
+  return (await pool.query(`UPDATE task_runs SET workflow_id=$2,notion_synced_at=NULL
+    WHERE task_id=ANY($1::uuid[]) AND workflow_id IS NULL RETURNING id,run_id`, [taskIds, workflowId])).rows;
+}

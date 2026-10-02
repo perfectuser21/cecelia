@@ -5,7 +5,7 @@ import { defineConfig } from 'vitest/config';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
-  'src/phone-dispatch/store.test.js',
+  'src/__tests__/integration/company-kr-registration.pg.integration.test.js',
   'src/app-server/__tests__/integration/store.test.js',
   'src/__tests__/integration/execution-directory.pg.integration.test.js',
   'src/__tests__/integration/preview-cache.pg.integration.test.js',
@@ -106,6 +106,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/timestamp-utc-roundtrip.pg.integration.test.js',
   'src/__tests__/integration/project-compare-week-timezone.pg.integration.test.js',
   'src/__tests__/integration/ops-learnings-date-filter-timezone.pg.integration.test.js',
+  'src/phone-dispatch/store.test.js',
 ];
 
 export default defineConfig({
