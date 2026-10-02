@@ -98,3 +98,45 @@ it('两个controller并发认领只创建一任务，回执封存后不可覆写
   await pool.query("UPDATE janitor_runs SET status='skipped' WHERE id=$1",[run_id]);
  }finally{await f.close();}
 });
+it('终态事务已提交后COMMIT回执丢失，对账不新增任务或重删',async()=>{
+ const f=await setup();let injected=false;
+ const proxy={query:(...a)=>pool.query(...a),connect:async()=>{
+  const c=await pool.connect();let sealing=false;
+  return {release:(...a)=>c.release(...a),query:async(...a)=>{
+   if(String(a[0]).startsWith('UPDATE janitor_image_intents SET receipt='))sealing=true;
+   const result=await c.query(...a);
+   if(a[0]==='COMMIT'&&sealing&&!injected){injected=true;throw Error('committed response lost');}
+   return result;
+  }};
+ }};
+ try{
+  const controller=createImageRetentionController({pool:proxy,engine:f.engine});
+  const api=createJanitor([{JOB_ID:POLICY,JOB_NAME:'fixture',run:controller.run,reconcile:controller.reconcile}]);
+  await api.setJobConfig(pool,POLICY,{enabled:true});
+  await expect(api.runJob(pool,POLICY)).rejects.toMatchObject({code:'JANITOR_UNCONFIRMED'});expect(injected).toBe(true);
+  const run=(await pool.query("SELECT id FROM janitor_runs WHERE job_id=$1 AND status='running'",[POLICY])).rows[0];
+  const rows=(await pool.query('SELECT t.status,j.settled_at FROM tasks t JOIN janitor_image_intents j ON j.task_id=t.id WHERE j.run_id=$1',[run.id])).rows;
+  expect(rows).toHaveLength(1);expect(rows[0].status).toBe('completed');expect(rows[0].settled_at).not.toBeNull();
+  await api.setJobConfig(pool,POLICY,{enabled:false});expect((await api.reconcileJob(pool,POLICY)).status).toBe('success');
+  expect(f.state.calls).toHaveLength(1);expect((await pool.query('SELECT count(*)::int n FROM janitor_image_intents WHERE run_id=$1',[run.id])).rows[0].n).toBe(1);
+ }finally{await f.close();}
+});
+it('回执身份/actor/完整绑定任一漂移都不结算，原回执随后可恢复',async()=>{
+ const f=await setup();f.state.unknown=true;
+ try{
+  await f.api.setJobConfig(pool,POLICY,{enabled:true});await expect(f.api.runJob(pool,POLICY)).rejects.toMatchObject({code:'JANITOR_UNCONFIRMED'});
+  const row=(await pool.query('SELECT * FROM janitor_image_intents WHERE settled_at IS NULL ORDER BY created_at DESC LIMIT 1')).rows[0];
+  f.state.ids=f.state.ids.filter(n=>image(n)!==row.request.image_id);
+  const receipt=await f.engine.receipt(row.request.intent_id);
+  const variants=[{actor:'other'},{policy:'other'},{run_id:randomUUID()},{task_id:randomUUID()},{intent_id:randomUUID()},{image_id:image(8)},{digest:'b'.repeat(64)},
+    ...['machine_registry_id','daemon_id','docker_root_dir','volume_dev'].map(k=>({identity:{...receipt.identity,[k]:k==='volume_dev'?2:'other'}})),
+    {after:{...receipt.after,available_bytes:-1}},{evidence:{image_id:receipt.image_id,absent:false}}];
+  for(const variant of variants){
+   const controller=createImageRetentionController({pool,engine:{...f.engine,receipt:async()=>({...receipt,...variant})}});
+   expect((await controller.reconcile({run_id:row.run_id})).status).toBe('unconfirmed');
+   expect((await pool.query('SELECT receipt FROM janitor_image_intents WHERE task_id=$1',[row.task_id])).rows[0].receipt).toBeNull();
+   expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[row.task_id])).rows[0].status).toBe('blocked');
+  }
+  expect((await f.api.reconcileJob(pool,POLICY)).status).toBe('success');expect(f.state.calls).toHaveLength(1);
+ }finally{await f.close();}
+});
