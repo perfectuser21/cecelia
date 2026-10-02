@@ -4,6 +4,8 @@ import { beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { projectDirectoryPage } from '../../projection/directory-projector.js';
 import { loadDirectorySource, buildDirectoryRows } from '../../projection/directory-source.js';
+import { configureDirectoryProjection } from '../../projection/directory-config.js';
+import { runtimeFixture,uid } from '../../projection/__tests__/directory-runtime.fixture.js';
 
 let client, schema;
 beforeEach(async () => {
@@ -22,10 +24,36 @@ beforeEach(async () => {
     CREATE TABLE workflow_activity_refs(workflow_id uuid,activity_id uuid,slot_key text,sequence_no int,active boolean);
     CREATE TABLE notion_map_node_pages(scope text,node_key text,notion_id text,archived_at timestamptz);
     CREATE TABLE map_projection_runs(id uuid,scope_key text,status text);
-    CREATE TABLE map_projection_nodes(run_id uuid,node_key text,node_type text,name text,attributes jsonb);`);
+    CREATE TABLE map_projection_nodes(run_id uuid,node_key text,node_type text,name text,attributes jsonb);
+    CREATE TABLE projection_targets(target text PRIMARY KEY,enabled boolean,config jsonb,last_success_at timestamptz,last_error text,updated_at timestamptz);
+    CREATE TABLE notion_projection_map(notion_db_id text,title text,face text,brain_table text,direction text,vessel text,status text,space text);`);
 });
 afterEach(async () => { if (client) { await client.query('ROLLBACK'); if (schema) await client.query(`DROP SCHEMA ${schema} CASCADE`); await client.end(); } });
 describe('六层目录真实PG边界', () => {
+  it('唯一缺库bootstrap读回后原子登记，重复相同请求不新增库',async()=>{
+    const f=runtimeFixture(),parent=uid(600);let created=0;
+    const tables={areas:'areas',value_streams:'notion_map_node_pages',activities:'journey_steps',workflows:'workflows',steps:'steps'};
+    for(const [layer,table] of Object.entries(tables)){
+      await client.query("INSERT INTO notion_projection_map(notion_db_id,brain_table,status) VALUES($1,$2,'active')",[f.dbs[layer],table]);
+      f.databases.get(f.dbs[layer]).properties={};
+    }
+    await client.query("INSERT INTO notion_projection_map(notion_db_id,brain_table,status,direction) VALUES('unmapped:capabilities','capabilities','archived','none')");
+    const notionReq=async(token,path,method,body)=>{
+      if(path.startsWith(`/blocks/${parent}/children`))return{results:created?[{id:f.dbs.capabilities,type:'child_database',child_database:{title:'Capabilities'}}]:[],has_more:false};
+      if(path==='/databases'){
+        created++;f.databases.set(f.dbs.capabilities,{id:f.dbs.capabilities,parent:body.parent,description:body.description,properties:body.properties});
+        return{id:f.dbs.capabilities};
+      }
+      return f.notionReq(token,path,method,body);
+    };
+    const pool={connect:async()=>({query:client.query.bind(client),release(){}})};
+    const input={dbs:{...f.dbs,capabilities:null},parent_page_id:parent};
+    await configureDirectoryProjection(pool,input,{token:'test',notionReq});
+    await configureDirectoryProjection(pool,input,{token:'test',notionReq});
+    expect(created).toBe(1);
+    expect((await client.query("SELECT * FROM notion_projection_map WHERE brain_table='capabilities' AND status='active'")).rows).toHaveLength(1);
+    expect((await client.query("SELECT config FROM projection_targets WHERE target='notion-directory'")).rows[0].config.dbs.capabilities).toBe(f.dbs.capabilities);
+  });
   it('认领旧writer链接只新增目录收据，不改其hash/标题',async()=>{
     const id=randomUUID(),page=randomUUID(),dbId=randomUUID();
     await client.query("INSERT INTO projection_links(target,entity_type,entity_id,external_id,content_hash) VALUES('notion','steps',$1,$2,'legacy-hash')",[id,page]);
