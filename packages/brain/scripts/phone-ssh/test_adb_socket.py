@@ -1,10 +1,13 @@
 """真实本机socket协议回归：分片、失败、EOF、长度与整轮限时。"""
 import importlib
+import json
+import os
 from pathlib import Path
 import socket
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from adb_socket_fixture import SocketFixture
 
 
@@ -65,6 +68,24 @@ class AdbSocketTest(unittest.TestCase):
         self.fixture.set(hold=1)
         with self.assertRaisesRegex(ValueError, '^phone_adb_server_timeout$'):
             self.query(timeout_sec=0.15)
+
+    def test_production_config_has_no_socket_or_execution_override(self):
+        runner = importlib.import_module('runner')
+        path = self.root / 'worker.json'
+        base = {'machine_id': 'fixture-machine', 'worker_id': 'fixture-worker', 'host': 'fixture-host'}
+        def fixed_config_fd(requested, flags):
+            self.assertEqual(requested, '/etc/cecelia/phone-ssh/worker.json')
+            return os.open(path, flags)
+        path.write_text(json.dumps(base))
+        with patch('runner.safe_open', fixed_config_fd), patch.dict(os.environ, {'ADB_SERVER_SOCKET': 'tcp:attacker:5555'}):
+            config = runner.production_config()
+            self.assertEqual(config.adb_server_port, 5037)
+            self.assertIs(config.assert_resources, runner.denied_resources)
+        for key in ('adb_server_port', 'adb', 'assert_resources', 'host_server_socket'):
+            path.write_text(json.dumps({**base, key: 'attacker'}))
+            with patch('runner.safe_open', fixed_config_fd):
+                with self.assertRaises(ValueError):
+                    runner.production_config()
 
     def test_unavailable_daemon_not_started(self):
         with socket.socket() as unused:

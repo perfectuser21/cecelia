@@ -197,7 +197,7 @@ class PhoneRunnerTest(unittest.TestCase):
         r = self.setup_runner()
         input = {'schema': 'phone-ssh/v1', 'request_nonce': str(uuid.uuid4()), 'operation': 'inspect', 'identity': self.identity}
         self.assertEqual(r.handle(input)['receipt']['status'], 'unknown')
-        for key in ('path', 'env', 'argv', 'authenticated', 'endpoint'):
+        for key in ('path', 'env', 'argv', 'authenticated', 'endpoint', 'adb_server_port', 'adb', 'assert_resources'):
             with self.assertRaises(ValueError):
                 r.handle({**input, key: '/tmp/evil'})
         with self.assertRaises(ValueError):
