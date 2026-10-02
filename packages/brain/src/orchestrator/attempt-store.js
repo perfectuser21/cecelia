@@ -451,6 +451,13 @@ async function readConcurrentAttemptWinner(pool, runId, hop) {
   return null;
 }
 
+// 只由本store在已确认回滚后记入；错误文本/JSON/调用方属性不能伪造重选许可。
+const confirmedCapacityRollbacks = new WeakMap();
+export function isConfirmedCapacityRollback(error, input) {
+  const binding = confirmedCapacityRollbacks.get(error);
+  return Boolean(binding && ['id', 'runId', 'hop', 'machineId'].every(key => binding[key] === input?.[key]));
+}
+
 export function createAttemptStore(pool, {
   executionDirectory = false,
   transactionClient = false,
@@ -487,6 +494,8 @@ export function createAttemptStore(pool, {
         : pool;
       const ownsTransaction = isPool && !transactionClient;
       const releaseClient = isPool;
+      let capacityGuardRejected = false;
+      let discardClientError;
       try {
         if (ownsTransaction) await client.query('BEGIN');
         if (input.machineId != null) {
@@ -607,7 +616,13 @@ export function createAttemptStore(pool, {
           Number.isFinite(input.capacitySnapshot?.expires_at) ? input.capacitySnapshot.expires_at : 0,
         ],
         );
-        const winner = readAttemptCreationOutcome(result)
+        // 明确容量拒绝后再查一次并发run/hop winner；已有winner必须复用，不能换机。
+        const capacityRejected = result.rows?.length === 1
+          && result.rows[0].machine_capacity_contended === true && result.rows[0].attempt === null;
+        const concurrentWinner = ownsTransaction && capacityRejected
+          ? await readConcurrentAttemptWinner(client, input.runId, input.hop) : null;
+        capacityGuardRejected = ownsTransaction && capacityRejected && !concurrentWinner;
+        const winner = concurrentWinner ?? readAttemptCreationOutcome(result)
           ?? await readConcurrentAttemptWinner(client, input.runId, input.hop);
         if (!winner) {
           throw new Error(`Kernel run is terminal or missing: ${input.runId}`);
@@ -615,10 +630,20 @@ export function createAttemptStore(pool, {
         if (ownsTransaction) await client.query('COMMIT');
         return winner;
       } catch (error) {
-        if (ownsTransaction) await client.query('ROLLBACK').catch(() => {});
+        if (ownsTransaction) {
+          try {
+            await client.query('ROLLBACK');
+            if (capacityGuardRejected) confirmedCapacityRollbacks.set(error, Object.freeze({
+              id: input.id, runId: input.runId, hop: input.hop, machineId: input.machineId,
+            }));
+          } catch (rollbackError) {
+            // 丢弃仍可能持锁的未知事务连接；既不重选，也不将它归还可复用池。
+            discardClientError = rollbackError;
+          }
+        }
         throw error;
       } finally {
-        if (releaseClient) client.release();
+        if (releaseClient) client.release(discardClientError);
       }
     },
 

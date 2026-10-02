@@ -6,13 +6,16 @@ import { getNodeProfile } from './fleet-node/node-profile.js';
 
 const WAIT = Object.freeze({ outcome: 'wait', reason: 'capacity' });
 const digest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-function validSnapshot(input) {
+function validSnapshot(input,auth) {
   const s = input.capacitySnapshot;
   if (s?.verified !== true || s.machine !== input.machineId || s.expires_at <= Date.now()
     || !Number.isFinite(s.expires_at) || s.capacity?.ok !== true) return false;
+  if(auth?.node.platform==='linux'&&(s.execution_version_id!==auth.executionVersionId||s.execution_grant_id!==auth.grantId
+    ||s.worker_boot_id!==auth.node.worker_boot_id||s.policy_digest!==auth.node.config_hash
+    ||s.profile_digest!==auth.node.profile?.linux_script?.profiles?.[input.profileId]))return false;
   try {
     return [s.capacity.physical_base_slots, s.capacity.effective_base_slots,
-      getNodeProfile(input.machineId).capacity].every((n) => Number.isInteger(n) && n > 0);
+      auth?.node.platform==='linux'?auth.node.profile.capacity:getNodeProfile(input.machineId).capacity].every((n) => Number.isInteger(n) && n > 0);
   } catch { return false; }
 }
 const required = (row, message) => { if (!row) throw new Error(message); return row; };
@@ -47,7 +50,7 @@ export function createScriptReservationStore(pool,{executionDirectory=false}={})
             || existing.task_id !== input.taskId) throw new Error('configuration_conflict');
           return { outcome: existing.status === 'released' ? 'released' : 'reserved', reservation: existing };
         }
-        if (!validSnapshot(input)) return WAIT;
+        if (!validSnapshot(input,auth)) return WAIT;
         const task = (await client.query('SELECT status FROM tasks WHERE id=$1 FOR NO KEY UPDATE', [input.taskId])).rows[0];
         if (!['queued','in_progress'].includes(task?.status)) throw new Error('script_task_not_dispatchable');
         const occupied = (await client.query(`SELECT EXISTS (
@@ -58,20 +61,28 @@ export function createScriptReservationStore(pool,{executionDirectory=false}={})
               WHERE c.attempt_id=active.id AND c.status <> 'confirmed' AND c.target_machine_id=$1)
           UNION ALL SELECT 1 FROM capacity_reservations WHERE machine_id=$1 AND status <> 'released'
         ) AS occupied`, [input.machineId])).rows[0].occupied;
-        if (occupied || !validSnapshot(input)) return WAIT;
+        if (occupied || !validSnapshot(input,auth)) return WAIT;
         const reservation = (await client.query(`INSERT INTO capacity_reservations
-          (id,machine_id,owner_kind,owner_key,task_id,config_digest,allocation_mode,policy_version,snapshot_time,snapshot_digest${auth?',execution_version_id,execution_grant_id':''})
-          SELECT $1,$2,'script',$3,$4,$5,'exclusive_unclassified','script-exclusive-v1',to_timestamp($8/1000.0),$6${auth?',$9,$10':''}
+          (id,machine_id,owner_kind,owner_key,task_id,config_digest,allocation_mode,policy_version,snapshot_time,snapshot_digest${auth?',execution_version_id,execution_grant_id':''}${auth?.node.platform==='linux'?',worker_id,worker_boot_id':''})
+          SELECT $1,$2,'script',$3,$4,$5,'exclusive_unclassified','script-exclusive-v1',to_timestamp($8/1000.0),$6${auth?',$9,$10':''}${auth?.node.platform==='linux'?',$11,$12':''}
           WHERE $7::double precision > EXTRACT(EPOCH FROM clock_timestamp()) * 1000 RETURNING *`,
         [randomUUID(),input.machineId,input.ownerKey,input.taskId,input.configDigest,digest(input.capacitySnapshot),input.capacitySnapshot.expires_at,
-          input.capacitySnapshot.captured_at ?? Date.now(),...(auth?[auth.executionVersionId,auth.grantId]:[])])).rows[0];
+          input.capacitySnapshot.captured_at ?? Date.now(),...(auth?[auth.executionVersionId,auth.grantId]:[]),...(auth?.node.platform==='linux'?[auth.node.worker_id,auth.node.worker_boot_id]:[])])).rows[0];
         return reservation ? { outcome: 'reserved', reservation } : WAIT;
       });
     },
     async markLaunching(id, identity) {
       if (!identity.worker_id || !identity.worker_boot_id) throw new Error('worker_identity_required');
       return rowUpdate(`UPDATE capacity_reservations SET status='launching',worker_id=$2,worker_boot_id=$3,updated_at=NOW()
-        WHERE owner_kind='script' AND id=$1 AND status IN ('reserved','launching') RETURNING *`, [id,identity.worker_id,identity.worker_boot_id]);
+        WHERE owner_kind='script' AND id=$1 AND status IN ('reserved','launching') AND (worker_id IS NULL OR worker_id=$2) AND (worker_boot_id IS NULL OR worker_boot_id=$3)
+        ${executionDirectory?`AND (NOT EXISTS(SELECT 1 FROM execution_node_versions v WHERE v.id=execution_version_id AND v.platform='linux')
+          OR EXISTS(SELECT 1 FROM execution_node_versions v WHERE v.id=execution_version_id AND v.platform='linux' AND v.worker_id=$2 AND v.worker_boot_id=$3))`:''}
+        RETURNING *`, [id,identity.worker_id,identity.worker_boot_id]);
+    },
+    async historicalWorker(id){
+      if(!executionDirectory)return null;
+      return (await pool.query(`SELECT v.worker_id,v.worker_boot_id FROM capacity_reservations r JOIN execution_node_versions v ON v.id=r.execution_version_id
+        JOIN execution_nodes n ON n.machine_registry_id=v.machine_registry_id WHERE r.owner_kind='script' AND r.id=$1 AND v.platform='linux' AND n.canonical_id=r.machine_id`,[id])).rows[0]??null;
     },
     async markRunning(id, identity) {
       if (!/^[a-f0-9]{64}$/.test(identity.container_id)) throw new Error('exact_container_id_required');

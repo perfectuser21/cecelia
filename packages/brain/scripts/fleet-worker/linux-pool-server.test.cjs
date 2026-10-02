@@ -1,6 +1,7 @@
 'use strict';
 const {createHmac}=require('node:crypto');
 const net=require('node:net');
+const {randomUUID}=require('node:crypto');
 const {createLinuxPoolServer}=require('./linux-pool-server.cjs');
 const input={schema_version:1,machine_registry_id:'71d632df-252a-4991-ad6b-3647fbbea9f7',machine_id:'vps-hk',role:'worker',
   endpoint_host:'100.90.1.2',docker_host:'unix:///var/run/docker.sock',pool:{cpu_cores:0.5,memory_bytes:536870912,pids_limit:256},
@@ -12,6 +13,28 @@ async function fixture(probe=async()=>({status:'observed',cpu_cores:4,execution:
   return {url:'http://127.0.0.1:'+server.address().port,server,close:()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections();})};
 }
 describe('Linux pending观察服务',()=>{
+  it('接root桥时身份随root执行进程boot换代，拒绝无效boot文件',async()=>{
+    let boot=randomUUID();const server=createLinuxPoolServer({profile:input,token,revision,readWorkerBootId:()=>boot});
+    await new Promise(r=>server.listen(0,'127.0.0.1',r));const url='http://127.0.0.1:'+server.address().port;
+    const request=()=>fetch(url+'/v1/pool/identity',{method:'POST',headers:{Authorization:'Bearer '+token},body:JSON.stringify({nonce})});
+    try{expect((await (await request()).json()).receipt.worker_boot_id).toBe(boot);boot=randomUUID();expect((await (await request()).json()).receipt.worker_boot_id).toBe(boot);boot='invalid';expect((await request()).status).toBe(400);}
+    finally{await new Promise(r=>{server.close(r);server.closeAllConnections();});}
+  });
+  it('显式Unix桥接线只允许认证三动作，转发root签名原文；未配置保持拒绝',async()=>{
+    const calls=[],envelope={receipt:{status:'running'},signature:'root-signature'};
+    const bridge=Object.fromEntries(['start','inspect','cancel'].map(action=>[action,async body=>{calls.push([action,body]);return {status:200,envelope};}]));
+    const server=createLinuxPoolServer({profile:input,token,revision,scriptBridge:bridge});
+    await new Promise(r=>server.listen(0,'127.0.0.1',r));const url='http://127.0.0.1:'+server.address().port,id=randomUUID();
+    const body={reservation_id:id,request_nonce:randomUUID(),permit:{signature:'brain-permit'}};
+    try {
+      expect((await fetch(url+'/scripts/'+id+'/start',{method:'POST',body:JSON.stringify(body)})).status).toBe(401);
+      const response=await fetch(url+'/scripts/'+id+'/start',{method:'POST',headers:{Authorization:'Bearer '+token},body:JSON.stringify(body)});
+      expect(response.status).toBe(200);expect(await response.json()).toEqual(envelope);expect(calls).toEqual([['start',body]]);
+      expect((await fetch(url+'/scripts/'+randomUUID()+'/cancel',{method:'POST',headers:{Authorization:'Bearer '+token},body:JSON.stringify(body)})).status).toBe(400);
+      expect((await fetch(url+'/scripts/capabilities',{method:'POST',headers:{Authorization:'Bearer '+token},body:'{}'})).status).toBe(400);
+      expect(calls).toHaveLength(1);
+    } finally {await new Promise(r=>{server.close(r);server.closeAllConnections();});}
+  });
   it.each(['headers','body'])('持续滴流的%s不能刷新绝对接收期限',async kind=>{
     const server=createLinuxPoolServer({profile:input,token,revision,bodyTimeoutMs:100,headersTimeoutMs:100});
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));

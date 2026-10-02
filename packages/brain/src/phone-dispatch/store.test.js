@@ -16,12 +16,12 @@ let store;
 const snapshot=()=>({verified:true,machine,captured_at:Date.now(),expires_at:Date.now()+30_000,capacity:{ok:true,available:1,physical_base_slots:8,effective_base_slots:8}});
 async function input(){const taskId=randomUUID();await pool.query("INSERT INTO tasks(id,status,task_type,executor_kind) VALUES($1,'queued','device_job','phone-ssh-controller')",[taskId]);return {taskId,machineId:machine,host,serial,profileId:profile,account,capacitySnapshot:snapshot(),remoteIdentity:{worker_id:'remote-phone-worker',worker_boot_id:'remote-boot'}};}
 const receipt=(r,extras={})=>({authenticated:true,receipt:{dispatch_id:r.id,...Object.fromEntries(['reservation_id','task_id','machine_id','host','serial','profile','account_id','execution_version_id','execution_grant_id','lease_token','execution_id','worker_id','worker_boot_id','action','config_digest'].map(k=>[k,r[k]])),status:'completed',execution_exited:true,lock_released:true,lock_owner:r.lease_token,...extras}});
-it('HTTP binding迁移不补写既有507 lease，不创建grant或改当前节点',async()=>{
+it('HTTP binding迁移不补写既有508 lease，不创建grant或改当前节点',async()=>{
  const {dispatch:r}=await store.reserve(await input());
  const before=(await pool.query('SELECT * FROM phone_dispatches WHERE id=$1',[r.id])).rows[0];
  const grants=(await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows;
  const nodes=(await pool.query('SELECT * FROM execution_nodes ORDER BY canonical_id')).rows;
- await pool.query(readFileSync(new URL('../../migrations/509_phone_http_bindings.sql',import.meta.url),'utf8'));
+ await pool.query(readFileSync(new URL('../../migrations/510_phone_http_bindings.sql',import.meta.url),'utf8'));
  expect((await pool.query('SELECT * FROM phone_dispatches WHERE id=$1',[r.id])).rows[0]).toEqual(before);
  expect((await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows).toEqual(grants);
  expect((await pool.query('SELECT * FROM execution_nodes ORDER BY canonical_id')).rows).toEqual(nodes);
@@ -33,7 +33,7 @@ beforeAll(async()=>{
  CREATE TABLE initiative_runs(id UUID PRIMARY KEY,phase TEXT DEFAULT 'planning',map_recovery_contract_id UUID,orchestrator_version TEXT DEFAULT 'v2');CREATE TABLE map_recovery_consumptions(contract_id UUID,attempt_id UUID);
  CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);`);
  for(const [,id,name]of LEGACY_BINDINGS)await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')",[id,name]);
- for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','490_phone_registry','501_capacity_reservations','503_execution_directory','504_app_server_generations','507_phone_dispatches'])await pool.query(readFileSync(new URL(`../../migrations/${name}.sql`,import.meta.url),'utf8'));
+ for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','490_phone_registry','501_capacity_reservations','503_execution_directory','504_app_server_generations','507_linux_script_authorization','508_phone_dispatches'])await pool.query(readFileSync(new URL(`../../migrations/${name}.sql`,import.meta.url),'utf8'));
  await importLegacyPolicy({pool,env:{FLEET_WORKER_XIAN_MAC_M1_URL:'http://m1:5231'}});
  const old=(await pool.query('SELECT * FROM execution_node_versions WHERE id=(SELECT current_version_id FROM execution_nodes WHERE canonical_id=$1)',[machine])).rows[0];
  const version=randomUUID();await pool.query(`INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,platform,endpoints,profile,config_hash,state) VALUES($1,$2,2,'legacy-v1',$3,'darwin',$4,$5,$6,'active')`,[version,old.machine_registry_id,old.worker_id,{phone_ssh:{host,port:22,user:'administrator',hub:{host:'us-vps',port:22,user:'administrator'}}},old.profile,old.config_hash]);
@@ -193,4 +193,11 @@ it('finish 保留已写handoff；提交后真实pool上的接棒入口仍能读�
  const {dispatch:r}=await checked.reserve(v);await checked.withLaunch(r.id,()=>{});await checked.finish(r.id,receipt(r));
  expect(calls).toBe(1);expect((await pool.query('SELECT result FROM tasks WHERE id=$1',[v.taskId])).rows[0].result.handoff).toEqual(handoff);
  await checked.finish(r.id,receipt(r));expect(calls).toBe(1);
+});
+
+it('已部署Linux507、手机508与Hub510各自留schema_version，不抢用同一版本号',async()=>{
+ const rows=(await pool.query("SELECT version,description FROM schema_version WHERE version IN ('507','508','510') ORDER BY version")).rows;
+ expect(rows.map(row=>row.version)).toEqual(['507','508','510']);
+ expect(rows[0].description).not.toContain('手机独立');
+ expect(rows[1].description).toContain('手机独立');
 });
