@@ -17,7 +17,7 @@ beforeAll(async()=>{
  CREATE TABLE harness_attempts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),run_id uuid REFERENCES initiative_runs(id),status text DEFAULT 'queued');
  CREATE TABLE harness_attempt_cleanup_outbox(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),run_id uuid REFERENCES initiative_runs(id),status text DEFAULT 'pending');
  CREATE TABLE capacity_reservations(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id uuid REFERENCES tasks(id),status text DEFAULT 'reserved');
- CREATE TABLE kernel_controller_sessions(id text PRIMARY KEY,task_id uuid REFERENCES tasks(id),status text DEFAULT 'active');
+ CREATE TABLE kernel_controller_sessions(id text PRIMARY KEY,task_id uuid REFERENCES tasks(id),run_id uuid,status text DEFAULT 'active');
  CREATE TABLE callback_queue(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id uuid REFERENCES tasks(id),run_id text,processed_at timestamptz);
  CREATE TABLE device_locks(device_name text PRIMARY KEY,locked_by text);
  CREATE TABLE schema_version(version text PRIMARY KEY,description text,applied_at timestamptz);
@@ -141,6 +141,8 @@ it.each(['task_runs','capacity_reservations','callback_queue'])('存在%s未决�
 it('真实HTTP：生产无token/错token拒绝；授权接管后仅本session PATCH心跳可写',async()=>{
  const {registerHeadedTakeoverRoute,headedTaskMutation}=await import('../../routes/task-headed-takeover.js');
  const app=express();app.use(express.json());registerHeadedTakeoverRoute(app,{pool});
+ const {registerTaskPatchRoute}=await import('../../routes/task-task-patch.js');
+ const fieldRouter=express.Router();registerTaskPatchRoute(fieldRouter,{pool,terminalStatuses:['completed','failed','cancelled']});app.use('/fields',fieldRouter);
  app.patch('/tasks/:id',headedTaskMutation(pool,async(req,res,db)=>{
   await db.query('SELECT status FROM tasks WHERE id=$1',[req.params.id]);
   await db.query('UPDATE tasks SET updated_at=now() WHERE id=$1',[req.params.id]);res.json({ok:true});
@@ -155,6 +157,7 @@ it('真实HTTP：生产无token/错token拒绝；授权接管后仅本session PA
   expect((await send(`/tasks/${task}/headed-takeover`,'POST')).status).toBe(401);
   const headers={authorization:'Bearer isolated-test-internal-token'};
   const response=await send(`/tasks/${task}/headed-takeover`,'POST',headers);expect(response.status).toBe(200);
+  expect((await send(`/fields/${task}`,'PATCH',headers,{result:{substage:'facts'}})).status).toBe(200);
   expect((await send(`/tasks/${task}`,'PATCH',{...headers,'x-session-id':'other'},{})).status).toBe(409);
   expect((await send(`/tasks/${task}`,'PATCH',headers,{})).status).toBe(200);
  }finally{if(savedToken===undefined)delete process.env.CECELIA_INTERNAL_TOKEN;else process.env.CECELIA_INTERNAL_TOKEN=savedToken;process.env.NODE_ENV=savedMode;await new Promise(resolve=>server.close(resolve));}
