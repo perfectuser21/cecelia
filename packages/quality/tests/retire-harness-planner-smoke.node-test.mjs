@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,rm,mkdir,symlink} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {resolve} from 'node:path';
-import {fixture} from './fixtures/smoke-production-guard-fixture.mjs';
+import {fixture,root} from './fixtures/smoke-production-guard-fixture.mjs';
 import {createServer} from 'node:http';
 
 // 这里只验证真实shell/原生HTTP守卫/下游runner协议，PG行为另由真实PG入口验证。
@@ -13,6 +13,10 @@ async function transport(run){
  const log=resolve(temp,'runner.jsonl'),preload=resolve(temp,'runner.cjs');
  await writeFile(preload,`if(process.argv.some(a=>a.endsWith('/vitest.mjs'))){
  require('node:fs').appendFileSync(process.env.RETIRE_TEST_RUNNER_LOG,JSON.stringify({args:process.argv.slice(2),db:process.env.DB_NAME,url:process.env.TEST_DATABASE_URL,nodeEnv:process.env.NODE_ENV})+'\\n');
+ if(process.env.RETIRE_TEST_DB_CHECKER){
+  const result=require('node:child_process').spawnSync(process.execPath,[process.env.RETIRE_TEST_DB_CHECKER],{env:{...process.env,NODE_OPTIONS:''},stdio:'inherit'});
+  process.exit(result.status??1);
+ }
  process.exit(Number(process.env.RETIRE_TEST_RUNNER_EXIT));
  }`);
  const requests=[];
@@ -79,4 +83,30 @@ test('retire smoke本地只允许守卫已核scratch，成功运行同一唯一�
   assert.equal(r.code,0,r.output);const recorded=await calls();assert.equal(recorded.length,1);
   assert.equal(recorded[0].db,'cecelia_scratch');assert.equal(recorded[0].url,'');assert.ok(recorded[0].args.includes(entry));
  });
+});
+
+for(const [label,overrides,host,port] of [
+ ['HOST/PORT均未设',{DB_HOST:undefined,DB_PORT:undefined},'localhost',5432],
+ ['仅HOST显式',{DB_HOST:'127.0.0.1',DB_PORT:undefined},'127.0.0.1',5432],
+ ['仅PORT显式',{DB_HOST:undefined,DB_PORT:'5432'},'localhost',5432],
+])test(`retire smoke ${label}：实际同字节DB_DEFAULTS加载私有dotenv后仍绑定已核目标`,async()=>{
+ const temp=await mkdtemp(resolve(tmpdir(),'retire-dotenv-target-'));
+ try{
+  await mkdir(resolve(temp,'packages/brain/src'),{recursive:true});
+  await writeFile(resolve(temp,'package.json'),' {"type":"module"} ');
+  await symlink(resolve(root,'node_modules'),resolve(temp,'node_modules'));
+  // 仅复制生产配置模块源码；它只能读取自己私有的无凭据.env，不导入pg或连接网络。
+  await writeFile(resolve(temp,'packages/brain/src/db-config.js'),await readFile(resolve(root,'packages/brain/src/db-config.js')));
+  await writeFile(resolve(temp,'packages/.env'),'DB_HOST=example.invalid\nDB_PORT=15432\nDB_NAME=other_scratch\nTEST_DATABASE_URL=postgresql://example.invalid/other_scratch\n');
+  const checker=resolve(temp,'check.mjs');
+  await writeFile(checker,`import assert from 'node:assert/strict';
+import {DB_DEFAULTS} from './packages/brain/src/db-config.js';
+assert.deepEqual({host:DB_DEFAULTS.host,port:DB_DEFAULTS.port,database:DB_DEFAULTS.database},{host:${JSON.stringify(host)},port:${port},database:'cecelia_test'});
+assert.equal(process.env.TEST_DATABASE_URL,'');
+`);
+  await transport(async({smoke,env,calls})=>{
+   const r=await smoke('retire-harness-planner',{...env,...overrides,SMOKE_ALLOW_WRITE:'1',RETIRE_TEST_DB_CHECKER:checker});
+   assert.equal(r.code,0,r.output);assert.equal((await calls()).length,1);
+  });
+ }finally{await rm(temp,{recursive:true,force:true});}
 });
