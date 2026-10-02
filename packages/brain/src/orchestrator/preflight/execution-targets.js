@@ -1,4 +1,5 @@
 import { directory } from '../../execution-directory/directory.js';
+import { MACHINES, MACHINE_ROLES } from '../../machine-registry.js';
 
 function targetKey(target) {
   return `${target?.provider ?? ''}:${target?.account ?? ''}:${target?.machine ?? ''}`;
@@ -47,7 +48,9 @@ export function defaultCodexTargets({role, provider, account, model, candidateMa
   const policies = [payload, payload.routing ?? {}, roleAssignment];
   if (role === 'commander' || provider !== 'codex' || candidateMachine
       || policies.some(policy => MACHINE_POLICY_KEYS.some(key => Object.hasOwn(policy, key)))) return null;
-  const requested = ['xian-mac-m1', 'xian-mac-m4', 'us-mac-m4'].map(machine => ({
+  const requested = [MACHINE_ROLES.SECONDARY, MACHINE_ROLES.PRIMARY]
+    .flatMap(role => MACHINES.filter(machine => machine.machineRole === role))
+    .map(({id: machine}) => ({
     provider, account, ...(model ? {model} : {}), machine,
   }));
   return expandUnresolvedAccountTargets(requested).filter(target => directory.matches({
