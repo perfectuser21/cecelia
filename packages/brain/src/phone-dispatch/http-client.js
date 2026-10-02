@@ -2,13 +2,14 @@ import http from 'node:http';
 import {randomUUID} from 'node:crypto';
 import {isPhoneHubBinding} from './http-binding.js';
 import {credentialValid,verifyPhoneHubReceipt} from './http-receipt.js';
+import {phoneHttpExecutionIdentity,verifyPhoneHttpExecutionReceipt} from './http-execution.js';
 const MAX_BYTES=16384;
 export function createPhoneHttpClient({token,timeoutMs=5000}={}){
  if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>5000)throw Error('phone_http_deadline_invalid');
- async function read(operation,binding){
+ async function request(operation,binding,path,fields,verify){
   if(!isPhoneHubBinding(binding)||!credentialValid(token))throw Error('phone_http_binding_unavailable');
-  const nonce=randomUUID(),path=operation==='capabilities'?'/phones/capabilities':'/maintenance/status';
-  const body=JSON.stringify({request_nonce:nonce,...(operation==='capabilities'?{machine_id:binding.physical.machine_id}:{})});
+  const nonce=randomUUID();
+  const body=JSON.stringify({request_nonce:nonce,...fields});
   try{
    const envelope=await new Promise((resolve,reject)=>{
     let settled=false,req,timer;const finish=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);if(error){req?.destroy();reject(error);}else resolve(value);};
@@ -23,9 +24,13 @@ export function createPhoneHttpClient({token,timeoutMs=5000}={}){
     });
     req.on('error',()=>finish(Error('transport')));req.end(body);}catch{finish(Error('transport'));}
    });
-   return verifyPhoneHubReceipt(envelope,{binding,token,nonce,operation});
+   return verify(envelope,{binding,token,nonce,operation});
   }catch{throw Error('phone_http_unconfirmed');}
  }
- const closed=async()=>{throw Error('phone_runtime_not_connected');};
- return Object.freeze({capabilities:b=>read('capabilities',b),maintenance:b=>read('maintenance',b),start:closed,inspect:closed,cancel:closed});
+ const read=(operation,b)=>request(operation,b,operation==='capabilities'?'/phones/capabilities':'/maintenance/status',operation==='capabilities'?{machine_id:b?.physical?.machine_id}:{},verifyPhoneHubReceipt);
+ const execute=async(operation,b)=>{
+  const identity=phoneHttpExecutionIdentity(b);
+  return request(operation,b,`/phones/${encodeURIComponent(identity.serial)}/${operation}`,{operation,identity},verifyPhoneHttpExecutionReceipt);
+ };
+ return Object.freeze({capabilities:b=>read('capabilities',b),maintenance:b=>read('maintenance',b),start:b=>execute('start',b),inspect:b=>execute('inspect',b),cancel:b=>execute('cancel',b)});
 }
