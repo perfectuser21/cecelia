@@ -94,3 +94,16 @@ it('新增入口有固定head绑定且base快照证明确未绑定时known_added
   await db.query('DELETE FROM graph_edge_snapshots WHERE source_revision=$1',[BASE]);await db.query('DELETE FROM graph_snapshot_versions WHERE source_revision=$1',[BASE]);
   r=await post({changed_files:['src/new-entry.js']});expect(r.status,r.body).toBe(200);expect(r.body.mapping_status).toBe('unknown');expect(r.body.base.gaps).toContainEqual(expect.objectContaining({code:'graph_snapshot_missing'}));
 });
+it('公开历史GET按旧version固定scope地图，head移除能力不能抹去base使用关系',async()=>{
+  const version=(await db.query('SELECT current_definition_version_id id FROM workflows WHERE id=$1',[ids.benchmark])).rows[0].id;
+  const cap=(await db.query('SELECT capability_id FROM workflows WHERE id=$1',[ids.keyword])).rows[0].capability_id;
+  await advance({remove:true,capIds:[cap]});
+  await db.query('CREATE TABLE fact_snapshot_headers(LIKE public.fact_snapshot_headers INCLUDING ALL)');
+  await db.query("INSERT INTO fact_snapshot_headers(kind,repo,source_revision,scanner_version,scanned_at,row_count) VALUES('graph','phone-source',$1,'graph-v1',NOW(),1)",[HEAD]);
+  const get=()=>request(app).get('/map/implementation-consumers').query({scope:'phones',kind:'code',repo,path:'src/controller.js',revision:BASE,workflow_version_id:version});
+  let r=await get();expect(r.status,r.body).toBe(200);expect(r.body.workflows.map(w=>w.workflow_id)).toEqual([ids.benchmark]);
+  expect(r.body.organization_status).toBe('historical_membership_unknown_organization');expect(r.body.mapping_status).toBe('verified');
+  await db.query("DELETE FROM map_projection_runs WHERE fact_revisions->>'phone-source'=$1",[BASE]);
+  r=await get();expect(r.status,r.body).toBe(200);expect(r.body.mapping_status).toBe('unknown');expect(r.body.scope_status).toBe('unknown');expect(r.body.workflows.map(w=>w.workflow_id)).toEqual([ids.benchmark]);
+  expect(r.body.gaps).toContainEqual(expect.objectContaining({code:'projection_snapshot_missing'}));
+});
