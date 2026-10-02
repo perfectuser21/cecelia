@@ -74,8 +74,11 @@ export async function bindRunDefinitionInTransaction(db,runId,input){
   requireEvidence(workflow&&workflow.payload_sha256===input.snapshot_sha256,'运行Workflow固定版本或摘要不符');
   validatePath(input,workflow,release.payload.activities);
   if(input.source_kind==='internal'){
-    const taskRun=(await db.query('SELECT id,run_id,workflow_id FROM task_runs WHERE id=$1 FOR SHARE',[input.task_run_id])).rows[0];
+    const taskRun=(await db.query('SELECT id,run_id,workflow_id,status,ended_at,context FROM task_runs WHERE id=$1 FOR SHARE',[input.task_run_id])).rows[0];
     requireEvidence(taskRun&&taskRun.run_id===runId&&taskRun.workflow_id===input.workflow_id,'内部task_run不存在或运行/Workflow不一致');
+    requireEvidence(taskRun.status==='running'&&taskRun.ended_at===null,'内部运行已结束或未处于起跑状态','RUN_PREFLIGHT_UNVERIFIED',409);
+    const declaration=taskRun.context?.definition_preflight;
+    requireEvidence(declaration&&typeof declaration==='object'&&!Array.isArray(declaration)&&['release_id','workflow_definition_version_id','snapshot_sha256','runtime_snapshot_sha256','attempt_key'].every(k=>declaration[k]===input[k]),'内部运行缺少匹配的起跑前定义声明','RUN_PREFLIGHT_UNVERIFIED',409);
   }
   const binding=(await db.query(`INSERT INTO run_definition_bindings(run_id,release_id,observation_id,workflow_id,workflow_definition_version_id,snapshot_sha256,
     expected_path,source_kind,task_run_id,external_origin,attempt_key,actor,payload_sha256,payload)
