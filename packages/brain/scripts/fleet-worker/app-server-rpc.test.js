@@ -3,6 +3,31 @@ import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 let api;try{api=require('./app-server-rpc.cjs');}catch{api={};}
 const client=(policy,id,method,params={})=>policy.client({id,method,params});
+it('宿主MCP模式保留原生MCP关闭核验所需只读状态接口，拒绝未知参数',()=>{
+ const p=api.createRpcPolicy();
+ const params={threadId:'offline-thread',detail:'toolsAndAuthOnly'};
+ expect(client(p,1,'mcpServerStatus/list',params).forward).toEqual({id:1,method:'mcpServerStatus/list',params});
+ expect(p.server({id:1,result:{data:[],nextCursor:null}}).forward).toBeTruthy();
+ for(const bad of [{...params,execute:true},{...params,detail:'execute'},{...params,threadId:1}]){
+  expect(client(p,2,'mcpServerStatus/list',bad).reply.error.message).toBe('appserver_rpc_params_invalid');
+ }
+});
+it.each([null,'openclaw','openclaw_direct'])('现网72个Notion工具在%s显式授权后完整通过声明与回调，未授权账号和执行别名仍拒绝',namespace=>{
+ const names=require('./app-server-notion-tools.fixture.json');
+ expect(names).toHaveLength(72);
+ const p=api.createRpcPolicy({hostTools:names});
+ const tools=names.map(name=>({type:'function',name,description:name,inputSchema:{}}));
+ const dynamicTools=namespace?[{type:'namespace',name:namespace,description:'tools',tools}]:tools;
+ const forwarded=client(p,1,'thread/start',{dynamicTools}).forward;
+ expect(forwarded.params.dynamicTools).toEqual(dynamicTools);
+ for(const name of names)expect(p.server({id:name,method:'item/tool/call',params:{tool:name,...(namespace?{namespace}:{}),arguments:{},threadId:'t',turnId:'u',callId:'c'}}).forward).toBeTruthy();
+ const selected=api.createRpcPolicy({hostTools:['notion-owner__API-post-search']});
+ expect(client(selected,1,'thread/start',{dynamicTools:tools}).forward.params.dynamicTools.map(t=>t.name)).toEqual(['notion-owner__API-post-search']);
+ for(const tool of ['notion-yujin__API-post-search','notion-owner__API-exec','notion-unknown__API-post-search','exec','gateway_exec','sessions_spawn']){
+  expect(selected.server({id:tool,method:'item/tool/call',params:{tool,namespace:'openclaw',arguments:{},threadId:'old',turnId:'u',callId:'c'}}).reply.error.message).toBe('appserver_host_tool_denied');
+ }
+ expect(client(api.createRpcPolicy(),1,'thread/start',{dynamicTools:tools}).forward.params.dynamicTools).toEqual([]);
+});
 it('现网searchable namespace保留已授权业务工具，声明不能增加profile权限',()=>{
  const p=api.createRpcPolicy({hostTools:['read','message','memory_get']});
  const tools=[{type:'namespace',name:'openclaw',description:'OpenClaw tools',tools:

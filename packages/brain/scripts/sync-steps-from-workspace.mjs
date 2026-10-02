@@ -62,7 +62,7 @@ async function loadActivityMap(client, capabilityKey) {
   return new Map(rows.map((r) => [r.activity_key, r.id]));
 }
 
-export async function syncSteps(client, spec, { dryRun = false } = {}) {
+export async function syncSteps(client, spec, { dryRun = false, manageTransaction = true } = {}) {
   const activities = await loadActivityMap(client, spec.capability);
   const missing = [...new Set(spec.steps.filter((s) => !activities.has(s.activity)).map((s) => s.activity))];
   if (missing.length > 0) {
@@ -75,7 +75,7 @@ export async function syncSteps(client, spec, { dryRun = false } = {}) {
   let inserted = 0;
   let updated = 0;
   let unchanged = 0;
-  await client.query('BEGIN');
+  if (manageTransaction) await client.query('BEGIN');
   try {
     for (const step of spec.steps) {
       const activityId = activities.get(step.activity);
@@ -111,9 +111,9 @@ export async function syncSteps(client, spec, { dryRun = false } = {}) {
         );
       }
     }
-    await client.query(dryRun ? 'ROLLBACK' : 'COMMIT');
+    if (manageTransaction) await client.query(dryRun ? 'ROLLBACK' : 'COMMIT');
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (manageTransaction) await client.query('ROLLBACK');
     throw error;
   }
   return { capability: spec.capability, total: spec.steps.length, inserted, updated, unchanged, dryRun };
