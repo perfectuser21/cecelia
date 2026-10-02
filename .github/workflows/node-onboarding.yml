@@ -56,4 +56,4 @@ jobs:
         working-directory: packages/brain
         env:
           TEST_DATABASE_URL: postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch
-        run: npx vitest run --config vitest.integration.config.js src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js src/__tests__/integration/linux-script-authorization.pg.integration.test.js src/linux-pool/onboarding-step.test.js --maxWorkers=1 --minWorkers=1
+        run: npx vitest run --config vitest.integration.config.js src/__tests__/integration/linux-controller-contract.pg.integration.test.js src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js src/__tests__/integration/linux-script-authorization.pg.integration.test.js src/linux-pool/onboarding-step.test.js --maxWorkers=1 --minWorkers=1

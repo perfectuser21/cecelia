@@ -46,7 +46,7 @@ async function runWithProbe(kind, probeResult, taskOverrides = {}) {
 // ─── VALID_EXECUTOR_KINDS ─────────────────────────────────────────────────────
 
 describe('VALID_EXECUTOR_KINDS', () => {
-  it('包含十三个合法值（新增固定image-janitor）（2026-09-22 增 openclaw-agent；2026-09-25 增 script：executor=script 一等类型，链 bf5088a3 棒3）', () => {
+  it('包含十四个合法值（新增固定image-janitor）（2026-09-22 增 openclaw-agent；2026-09-25 增 script：executor=script 一等类型，链 bf5088a3 棒3）', () => {
     expect(VALID_EXECUTOR_KINDS).toEqual(
       expect.arrayContaining([
         'brain-local',
@@ -61,10 +61,11 @@ describe('VALID_EXECUTOR_KINDS', () => {
         'preview-janitor',
         'app-server-controller',
         'image-janitor',
+        'linux-pool-controller',
         'phone-ssh-controller',
       ])
     );
-    expect(VALID_EXECUTOR_KINDS).toHaveLength(13);
+    expect(VALID_EXECUTOR_KINDS).toHaveLength(14);
   });
 });
 

@@ -1,3 +1,4 @@
+import {assertLinuxPoolAuthority} from './linux-pool/task-authority.js';
 import {assertAppServerAuthority} from './app-server/task-authority.js';
 import { assertJanitorAuthority } from './janitor-authority.js';
 export const CHANGE_KINDS = Object.freeze(['new_capability', 'capability_change', 'bugfix', 'parameter_only']);
@@ -158,7 +159,7 @@ export function selectPipeline(input) {
 }
 
 export function routeWork(input, repositoryFacts = [], context = {}) {
-  const previewCache = assertJanitorAuthority(input, context) || assertAppServerAuthority(input, context);
+  const previewCache = assertLinuxPoolAuthority(input, context) || assertJanitorAuthority(input, context) || assertAppServerAuthority(input, context);
   const request = normalizeWorkRequest(input);
   const work_kind = previewCache ? 'operations' : classifyWork(request);
   const artifact_kind = previewCache ? 'execution' : classifyArtifactKind(request);

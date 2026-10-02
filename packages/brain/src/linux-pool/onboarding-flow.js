@@ -1,3 +1,4 @@
+import {LINUX_POOL_AUTHORITY,LINUX_POOL_EXECUTOR_KIND} from './task-authority.js';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {transaction} from '../execution-directory/store.js';
 import {finalizeTask,afterTerminalTransition} from '../lib/task-terminal.js';
@@ -8,7 +9,7 @@ import canaryModule from '../../scripts/fleet-worker/linux-pool-canary.cjs';
 import poolModule from '../../scripts/fleet-worker/linux-pool-profile.cjs';
 import {US_SCHEDULER_ID,error} from './deployment.js';
 import {LIVE_RUNTIME_GRANTS_SQL,UNREVOKED_RUNTIME_GRANTS_SQL} from './active-grants.js';
-const creator=async args=>(await import('../actions.js')).createTask(args);
+const creator=async (args,internal)=>(await import('../actions.js')).createTask(args,internal);
 const identityCheck=async state=>{const d=await createRuntimeDeploymentReader()(state.machine_registry_id);return canaryModule.readLinuxPoolIdentity({profile:poolModule.validateLinuxPoolProfile(d.pool),token:d.workerToken,revision:d.expected.revision,nonce:randomBytes(32).toString('hex')});};
 const actor='linux-pool-onboarding',key=id=>'linux-onboarding:'+id;
 const safeErrors=new Set(['linux_pool_control_unavailable','linux_pool_prerequisites_unavailable','linux_pool_onboarding_budget_unavailable','linux_pool_credentials_unconfirmed',
@@ -19,8 +20,8 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
  const permitted=(source,machine)=>source?.id===machine.id&&source.request?.name===machine.name&&source.request.role==='worker'&&source.execution_revoked!==true;
  async function record(c,machine,state,parentId){
    const made=await createTask({db:c,title:'自动接入Linux执行池 '+machine.name,description:'可信SSH安装、池验收与受限脚本真实canary；只有同代授权激活才完成。',
-    task_type:'audit',status:'in_progress',source:'scheduler',source_id:'linux-pool-onboarding:'+state.nonce,trigger_source:'node_onboarding',allow_unscoped:true,
-    parent_task_id:parentId,mutation_intent:'read_only',declared_domain:'operations',created_by:actor,payload:{linux_onboarding:state}});
+    task_type:'audit',executor_kind:LINUX_POOL_EXECUTOR_KIND,status:'in_progress',source:'scheduler',source_id:'linux-pool-onboarding:'+state.nonce,trigger_source:'node_onboarding',allow_unscoped:true,
+    parent_task_id:parentId,mutation_intent:'read_only',declared_domain:'operations',created_by:actor,payload:{linux_onboarding:state}},{linuxPoolAuthority:LINUX_POOL_AUTHORITY});
    if(!made?.success||!made.task?.id)throw error('linux_pool_control_unavailable');const id=made.task.id;
    await c.query("UPDATE tasks SET claimed_by=$2,claimed_at=now(),started_at=COALESCE(started_at,now()) WHERE id=$1",[id,actor]);
    await c.query("UPDATE tasks SET payload=jsonb_set(payload,'{node_onboarding,execution_task_id}',$2::jsonb),updated_at=now() WHERE id=$1",[state.parent_task_id,JSON.stringify(id)]);

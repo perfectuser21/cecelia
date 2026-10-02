@@ -179,8 +179,8 @@ async function createTask({ title, description, priority, project_id, area_id, g
         sequence_no: sequence_no ?? null,
       },
     }, null, typeof db.connect === 'function' && db.constructor?.name !== 'Client'
-      ? { previewCacheAuthority: internal.previewCacheAuthority, imageRetentionAuthority: internal.imageRetentionAuthority, appServerAuthority: internal.appServerAuthority }
-      : { transaction: 'existing', previewCacheAuthority: internal.previewCacheAuthority, imageRetentionAuthority: internal.imageRetentionAuthority, appServerAuthority: internal.appServerAuthority });
+      ? { previewCacheAuthority: internal.previewCacheAuthority, imageRetentionAuthority: internal.imageRetentionAuthority, appServerAuthority: internal.appServerAuthority, linuxPoolAuthority: internal.linuxPoolAuthority }
+      : { transaction: 'existing', previewCacheAuthority: internal.previewCacheAuthority, imageRetentionAuthority: internal.imageRetentionAuthority, appServerAuthority: internal.appServerAuthority, linuxPoolAuthority: internal.linuxPoolAuthority });
 
     const task = routed.task;
     console.log(`[Action] Created task: ${task.id} - ${title} (type: ${task.task_type})`);

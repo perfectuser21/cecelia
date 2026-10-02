@@ -10,7 +10,7 @@ import {
 const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const META = "payload->'node_onboarding'";
 const PROBE_INTERVAL_MS = 120_000;
-const taskCreator = async args => (await import('../actions.js')).createTask(args);
+const taskCreator = async (args, internal) => (await import('../actions.js')).createTask(args, internal);
 
 export function createOnboardingService({ pool, createTask = taskCreator, config = {}, now = () => new Date(), execution=createLinuxOnboardingFlow({pool,createTask}) }) {
   const present=async task=>onboardingView(task,now(),task.payload.node_onboarding.execution_task_id?await execution.view(task.payload.node_onboarding.execution_task_id):undefined);
