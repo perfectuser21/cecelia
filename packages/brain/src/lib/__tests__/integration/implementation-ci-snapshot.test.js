@@ -1,6 +1,6 @@
 import { afterEach,beforeEach,expect,it } from 'vitest';
 import { implementationImpactDatabase,IMPACT_REPO } from '../../../__tests__/fixtures/implementation-impact-db.js';
-const { exportImplementationSnapshot,refreshImplementationSnapshot,validateImplementationSnapshot } = await import('../../implementation-ci-snapshot.js').catch(()=>({}));
+const { exportImplementationSnapshot,refreshImplementationSnapshot,validateImplementationSnapshot,implementationGitHubUrl } = await import('../../implementation-ci-snapshot.js').catch(()=>({}));
 beforeEach(()=>expect(exportImplementationSnapshot,'固定CI快照服务必须实现').toBeTypeOf('function'));
 import { readFileSync } from 'node:fs';
 import { SLIM_RULES } from '../../../db-slim-rules.js';
@@ -76,4 +76,16 @@ it('刷新先核scope唯一登记，未登记和歧义均不读远端也不推�
   await expect(refreshImplementationSnapshot(db,query,options)).rejects.toMatchObject({code:'IMPLEMENTATION_CI_SCOPE_REPOSITORY_AMBIGUOUS'});
   expect(reads).toBe(0);
   expect((await db.query('SELECT id,current_definition_version_id FROM workflows ORDER BY id')).rows).toEqual(before);
+});
+
+it('GitHub目标只选固定adapter地址，path编码且不接受路径穿越，刷新禁止跟随redirect',async()=>{
+ expect(implementationGitHubUrl).toBeTypeOf('function');
+ expect(implementationGitHubUrl('perfectuser21/cecelia',{path:'src/a?token=#b.js',revision:'a'.repeat(40)})).toBe(`https://api.github.com/repos/perfectuser21/cecelia/contents/src/a%3Ftoken%3D%23b.js?ref=${'a'.repeat(40)}`);
+ for(const repo of ['evil.example/repo','perfectuser21/cecelia@evil.example'])expect(()=>implementationGitHubUrl(repo)).toThrow();
+ for(const path of ['../private','/outside','src/../private'])expect(()=>implementationGitHubUrl('perfectuser21/cecelia',{path,revision:'a'.repeat(40)})).toThrow();
+ fixture=await implementationImpactDatabase();let count=0;
+ await refreshImplementationSnapshot(fixture.db,query,{resolveToken:async()=>'',readBinding:async()=> 'export const controller=true;\n',fetchFn:async(url,options)=>{
+  if(count++===0){expect(url).toBe(`https://api.github.com/repos/${IMPACT_REPO}/commits/main`);expect(options.redirect).toBe('error');}
+  return fixture.contracts.fetchFn(url,options);
+ }});
 });

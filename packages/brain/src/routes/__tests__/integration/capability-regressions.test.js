@@ -18,3 +18,10 @@ it('内部鉴权及真实PG回读，登记不接受状态置绿或虚构Step身�
   expect((await request(app).post('/regressions').set('X-Internal-Token','fixture-registration-token').send({...body,cell_status:'green'})).status).toBe(400);
   expect((await request(app).post('/regressions').set('X-Internal-Token','fixture-registration-token').send({...body,step_id:'not-uuid'})).status).toBe(400);
 });
+
+it('真实HTTP回归登记写入口超出每分钟60次返回429且零新增记录',async()=>{
+ const before=(await f.db.query('SELECT count(*)::int n FROM journey_step_links')).rows[0].n;
+ for(let i=0;i<60;i++)expect((await request(app).post('/regressions').send({})).status).toBe(400);
+ expect((await request(app).post('/regressions').send({})).status).toBe(429);
+ expect((await f.db.query('SELECT count(*)::int n FROM journey_step_links')).rows[0].n).toBe(before);
+});

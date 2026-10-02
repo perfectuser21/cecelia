@@ -140,3 +140,14 @@ it('治理receipt必须逐项对应报告的受信检查脚本，不能用同数
  const response=await request(app).post('/releases').send(input);expect(response.status).toBe(201);
  expect(response.body.release.payload.verification.ci_status).toBe('unknown');
 });
+
+it('治理receipt重复facts三次不能代替versions和dod唯一覆盖',async()=>{
+ const input=structuredClone(fixture.releaseInput),ci=input.ci_evidence[0];
+ const checks=['facts','versions','dod'].map(id=>({id,path:`scripts/${id}.js`,script_sha256:'a'.repeat(64),exit_code:0}));
+ ci.report.governance_evidence={files:[{path:'DEFINITION.md'}],policy_sha256:'a'.repeat(64),checks};
+ ci.receipt.governance_evidence={...structuredClone(ci.report.governance_evidence),checks:Array.from({length:3},()=>({...checks[0]}))};
+ ci.receipt.report_sha256=createHash('sha256').update(JSON.stringify(ci.report)).digest('hex');
+ const response=await request(app).post('/releases').send(input);expect(response.status).toBe(201);
+ expect(response.body.release.payload.verification.ci_status).toBe('unknown');
+ await observe(response.body.release.id);expect((await service.getReleaseGate(fixture.db,response.body.release.id)).deployed).toBe(false);
+});
