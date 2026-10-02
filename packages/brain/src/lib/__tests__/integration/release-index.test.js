@@ -2,8 +2,8 @@ import { afterEach,beforeEach,expect,it } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { releaseEvidenceDatabase,RELEASE_HEAD } from '../../../__tests__/fixtures/release-evidence-db.js';
-const service=await import('../../release-index.js').catch(()=>({}));
-const routes=await import('../../../routes/releases.js').catch(()=>({}));
+import * as service from '../../release-index.js';
+import * as routes from '../../../routes/releases.js';
 let fixture,app;
 beforeEach(async()=>{
   expect(service.createRelease,'发布服务必须存在').toBeTypeOf('function');
