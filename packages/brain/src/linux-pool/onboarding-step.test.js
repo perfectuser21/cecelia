@@ -86,3 +86,11 @@ it('合法原硬预算全等时接续probe保留原序列化政策',async()=>{
  await x.save({...x.state,phase:'probe',resume_of_task_id:randomUUID()});await step(x.task,x.machine,x.state,x.save);
  expect(x.state.phase).toBe('credentials');expect(x.state.policy_json).toBe(prior);
 });
+
+it('受信升级只传原序列化合同与previous intent，回执仍验原nonce预算',async()=>{
+ const x=setup(),step=createLinuxOnboardingStep(x.deps);await step(x.task,x.machine,x.state,x.save);await step(x.task,x.machine,x.state,x.save);
+ const upgrade={schema_version:1,intent_id:x.state.intent_id},previous={intent_id:randomUUID(),binding:'a'.repeat(64)},ssh=x.deps.ssh;
+ await x.save({...x.state,upgrade_json:JSON.stringify(upgrade),previous_attempt:previous});
+ x.deps.ssh=async(...args)=>{expect(args[2].upgrade).toEqual(upgrade);expect(args[2].previous_attempt).toEqual(previous);return ssh(...args);};
+ await createLinuxOnboardingStep(x.deps)(x.task,x.machine,x.state,x.save);expect(x.state.phase).toBe('deployment');
+});
