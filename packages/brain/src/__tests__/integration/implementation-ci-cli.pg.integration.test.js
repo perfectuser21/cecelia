@@ -9,8 +9,16 @@ import yaml from 'js-yaml';
 import { contractsFixture } from '../fixtures/shared-activity-contracts.js';
 import { syncActivityContracts } from '../../activity-contract-sync.js';
 import { exportImplementationSnapshot } from '../../lib/implementation-ci-snapshot.js';
+import {digestMapManifest} from '../../lib/map-manifest-schema.js';
 let fixture,root,out;
 afterEach(async()=>{await fixture?.close();fixture=null;if(root)rmSync(root,{recursive:true,force:true});if(out)rmSync(out,{recursive:true,force:true});});
+async function completeFixtureMap(f){
+  for(const row of (await f.db.query('SELECT id,manifest FROM map_manifest_versions')).rows){
+    const manifest={...row.manifest,boundaries:[],crosscut_pool:[]};
+    for(const node of [...manifest.value_streams,...manifest.capabilities])node.name=node.key;
+    await f.db.query('UPDATE map_manifest_versions SET manifest=$2 WHERE id=$1',[row.id,manifest]);
+  }
+}
 async function setup({contracts=false,assertionChange=false,generatedChange=false}={}){
   root=mkdtempSync(join(tmpdir(),'implementation-real-git-'));out=mkdtempSync(join(tmpdir(),'implementation-evidence-'));
   const git=(...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8'}).trim();
@@ -31,13 +39,7 @@ async function setup({contracts=false,assertionChange=false,generatedChange=fals
   else if(assertionChange)writeFileSync(join(root,assertionRef),readFileSync(join(root,assertionRef),'utf8').replace('!==2','!==1')+'# registered regression change\n');
   else writeFileSync(join(root,'src/shared-lock.js'),'module.exports=2;\n');git('add','.');git('commit','-qm','head');const head=git('rev-parse','HEAD');
   fixture=await implementationImpactDatabase({baseRevision:base,headRevision:head,assertionRef,readBinding:async b=>execFileSync('git',['show',`${b.revision}:${b.path}`],{cwd:root,encoding:'utf8'})});
-  const completeMap=async()=>{
-    for(const row of (await fixture.db.query('SELECT id,manifest FROM map_manifest_versions')).rows){
-      const manifest={...row.manifest,boundaries:[],crosscut_pool:[]};
-      for(const node of [...manifest.value_streams,...manifest.capabilities])node.name=node.key;
-      await fixture.db.query('UPDATE map_manifest_versions SET manifest=$2 WHERE id=$1',[row.id,manifest]);
-    }
-  };
+  const completeMap=()=>completeFixtureMap(fixture);
   const syncGit=async revision=>syncActivityContracts(fixture.db,{resolveToken:async()=>'',synchronizeSteps:true,
     fetchFn:async url=>({ok:true,text:async()=>String(url).includes('/commits/main')?revision:
       git('show',`${revision}:${new URL(url).pathname.split('/contents/')[1]}`)}),
@@ -104,6 +106,26 @@ it('main精确生成契约索引经digest核验后可归入消费者，保留中
   expect(report.source.changed_files).toEqual([{path:'product-map/generated/contracts.json'}]);
   expect(report.affected_usages).toHaveLength(2);
   expect(report.head.definition_versions.workflows.map(w=>w.id).sort()).toEqual(h.definitions.workflows.map(w=>w.id).sort());
+});
+
+it('seedonly真实setup提交完整新map版本且两快照verified，不调用不安全CLI',async()=>{
+ const {base,head,b,h}=await setup();
+ expect(b.status,JSON.stringify(b.gaps)).toBe('verified');expect(h.status,JSON.stringify(h.gaps)).toBe('verified');
+ expect(b.gaps).toEqual([]);expect(h.gaps).toEqual([]);expect(b.revision).toBe(base);expect(h.revision).toBe(head);
+ const rows=(await fixture.db.query('SELECT * FROM map_manifest_versions ORDER BY version')).rows;
+ expect(rows.map(r=>r.version)).toEqual([1,2,3,4]);
+ for(const version of [1,3]){const original=rows.find(r=>r.version===version);expect(original.manifest).not.toHaveProperty('boundaries');expect(original.manifest.capabilities[0]).not.toHaveProperty('name');}
+ for(const version of [2,4]){
+  const row=rows.find(r=>r.version===version);expect(row.manifest.source_decision_id).toBe(row.source_decision_id);expect(row.digest).toBe(digestMapManifest(row.manifest));
+  expect((await fixture.db.query('SELECT id FROM decisions WHERE id=$1',[row.source_decision_id])).rows).toEqual([{id:row.source_decision_id}]);
+  expect(row.manifest.boundaries).toEqual([]);expect(row.manifest.crosscut_pool).toEqual([]);
+  expect(row.manifest.capabilities.every(n=>n.name===n.key)).toBe(true);
+  const projections=(await fixture.db.query('SELECT manifest_digest,projection_digest FROM map_projection_runs WHERE manifest_version_id=$1',[row.id])).rows;
+  expect(projections).toEqual([{manifest_digest:row.digest,projection_digest:row.digest}]);
+ }
+ const history=rows.map(({id,manifest,digest,source_decision_id,version})=>({id,manifest,digest,source_decision_id,version}));
+ await expect(fixture.db.query("UPDATE map_manifest_versions SET manifest=manifest||'{\"tampered\":true}' WHERE id=$1",[rows[0].id])).rejects.toMatchObject({code:'P0001'});
+ expect((await fixture.db.query('SELECT id,manifest,digest,source_decision_id,version FROM map_manifest_versions ORDER BY version')).rows).toEqual(history);
 });
 
 it('实际库名不符时只读身份后断开，即使CI变量为真也不向生产发送清理DDL',async()=>{
