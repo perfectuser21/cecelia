@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.360.3
+**Brain 版本**: 1.360.4
 
 
 Linux接入控制目录在宿主保持私有凭据缓存，容器统一挂到root父目录下的/run/cecelia-fleet-control；共享凭据目录及其所有者不变，所有权校验不放宽。
@@ -5400,3 +5400,5 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 - 真 PostgreSQL 事务回归覆盖真实 HTTP 选择项目、首次送审、修正再审、审批激活与 KR 放行；测试结束回滚。
 
 - KR 诊断的数据库入口挂 express-rate-limit，每来源每分钟30次，超额请求在SQL执行前返回429；无KR参数的健康入口独立可读。
+
+既有xian-M4维护只追加OS支持版本，原endpoint与grant范围不变。维护HMAC绑定真实runtime配置、boot与活动计数；固定canonical owned canary清理证明、同机锁/零活跃预约及35秒总事务fence缺一即拒绝。旧grant ID按精确UUID家族撤销全部代，补偿追加新版本并保留当前revoked/expiry。normal admission仅从冻结目录消费新OS floor，部署canonical及其它阈值保持。固定drain marker使用O_EXCL创建与nonce/inode/dev/内容journal，同合作锁精确释放；未知owner/工作区inode/cleanup保占位不自动清。
