@@ -1,11 +1,16 @@
 /** 定义与工作流关系在同一事务中落库。唯一冲突必须回滚并向上抛出。 */
+import { canonicalJson } from '../../scripts/sync-steps-from-workspace.mjs';
 import { contractPath } from './activity-contract-loader.js';
-export async function storeActivityContracts(pool, plans, head, repo) {
+export const REGISTRATIONS_SQL = `SELECT id,key,capability_id,source_repo,source_path,source_workflow,source_capability,status,contract_sync_revision
+  FROM workflows WHERE source_repo=$1 ORDER BY key`;
+export async function storeActivityContracts(pool, plans, head, repo, registrations = plans.map(p=>p.workflow)) {
   const out = {head_sha:head,updated:[],inserted:[],deprecated:[],unmapped:[]};
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',['shared-activity-contracts']);
+    const current=(await client.query(`${REGISTRATIONS_SQL} FOR UPDATE`,[repo])).rows;
+    if (canonicalJson(current)!==canonicalJson(registrations)) throw new Error('同步快照已变化，拒绝写入旧契约');
     const rows = (await client.query(`SELECT id,journey_id,capability_key,activity_key,contract_sha256,status FROM journey_steps
       WHERE capability_key IS NOT NULL AND activity_key IS NOT NULL FOR UPDATE`)).rows;
     const definitions = new Map();
@@ -14,7 +19,7 @@ export async function storeActivityContracts(pool, plans, head, repo) {
       if (definitions.has(key)) continue;
       const matches = rows.filter(r=>r.capability_key===a.from && r.activity_key===a.key);
       if (matches.length > 1) throw new Error(`活动定义不唯一: ${key}`);
-      const owner = plans.find(p=>p.workflow.source_capability===a.from)?.workflow;
+      const owner = registrations.find(w=>w.source_capability===a.from);
       if (!owner) throw new Error(`活动定义缺少已登记来源工作流: ${a.from}`);
       const {from,...contract} = a;
       const source = `https://github.com/${repo}/blob/${head}/${contractPath(from)}`;
@@ -37,6 +42,9 @@ export async function storeActivityContracts(pool, plans, head, repo) {
       }
       definitions.set(key,row.id);
     }
+    for (const w of registrations.filter(w=>w.status==='retired')) {
+      await client.query('UPDATE workflow_activity_refs SET active=false,updated_at=NOW() WHERE workflow_id=$1 AND active',[w.id]);
+    }
     for (const {workflow:w,activities} of plans) {
       // 先释放顺序唯一索引，容许交换两个槽位的顺序；保留旧引用历史。
       await client.query('UPDATE workflow_activity_refs SET active=false WHERE workflow_id=$1 AND active',[w.id]);
@@ -50,7 +58,7 @@ export async function storeActivityContracts(pool, plans, head, repo) {
         [w.id,a.key,definitions.get(`${a.from}.${a.key}`),a.order,source_ref,repo,w.source_path,head]);
       }
     }
-    const ownedCaps = plans.map(p=>p.workflow.source_capability);
+    const ownedCaps = registrations.map(w=>w.source_capability);
     for (const row of rows) {
       const key = `${row.capability_key}.${row.activity_key}`;
       if (ownedCaps.includes(row.capability_key) && !definitions.has(key) && row.status !== 'deprecated') {
@@ -59,6 +67,7 @@ export async function storeActivityContracts(pool, plans, head, repo) {
         if (result.rows.length) out.deprecated.push(key);
       }
     }
+    await client.query('UPDATE workflows SET contract_sync_revision=contract_sync_revision+1 WHERE source_repo=$1',[repo]);
     await client.query('COMMIT');
     return out;
   } catch(error) { await client.query('ROLLBACK'); throw error; }

@@ -4,7 +4,7 @@ import { stepSha256 as hash } from '../../scripts/sync-steps-from-workspace.mjs'
 const IDENT = /^[a-zA-Z0-9_-]+$/;
 export const contractPath = cap => `product-map/contracts/${cap}.yaml`;
 
-export async function loadActivityContracts(registrations, digest, fetchFile) {
+export async function loadActivityContracts(registrations, digest, fetchFile, registeredOwners = registrations) {
   const docs = new Map(), loading = new Set();
   async function load(cap, path = contractPath(cap)) {
     if (!IDENT.test(cap)) throw new Error(`无效能力: ${cap}`);
@@ -26,6 +26,10 @@ export async function loadActivityContracts(registrations, digest, fetchFile) {
     if (w.source_path !== contractPath(w.source_capability)) throw new Error(`来源路径映射无效: ${w.key}`);
     await load(w.source_capability,w.source_path);
     if (docs.get(w.source_capability).workflow !== w.source_workflow) throw new Error(`来源工作流映射无效: ${w.key}`);
+  }
+  for (const w of registeredOwners) {
+    const doc=docs.get(w.source_capability);
+    if (doc && (w.source_path !== contractPath(w.source_capability) || doc.workflow !== w.source_workflow)) throw new Error(`来源工作流映射无效: ${w.key}`);
   }
   function resolve(cap,key,trail = []) {
     const identity = `${cap}.${key}`;

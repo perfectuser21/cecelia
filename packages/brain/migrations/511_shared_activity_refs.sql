@@ -4,6 +4,7 @@ ALTER TABLE workflows ADD COLUMN IF NOT EXISTS source_repo text;
 ALTER TABLE workflows ADD COLUMN IF NOT EXISTS source_path text;
 ALTER TABLE workflows ADD COLUMN IF NOT EXISTS source_workflow text;
 ALTER TABLE workflows ADD COLUMN IF NOT EXISTS source_capability text;
+ALTER TABLE workflows ADD COLUMN IF NOT EXISTS contract_sync_revision bigint NOT NULL DEFAULT 0;
 UPDATE workflows SET source_repo='perfectuser21/zenithjoy-workspace',
   source_path='product-map/contracts/' || mapping.capability || '.yaml',
   source_workflow=mapping.workflow, source_capability=mapping.capability

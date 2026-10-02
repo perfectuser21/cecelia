@@ -10,7 +10,7 @@
  * 同步连续失败超 2h（副本落后真身）告 P1 一次，恢复即清。人在 Notion 手改镜子由 notion-projection-watch A8 抓。
  */
 import { loadActivityContracts } from './lib/activity-contract-loader.js';
-import { storeActivityContracts } from './lib/activity-contract-store.js';
+import { storeActivityContracts, REGISTRATIONS_SQL } from './lib/activity-contract-store.js';
 import { raise } from './alerting.js';
 import { resolveGitHubToken } from './harness-credentials.js';
 import { notionReq as defaultNotionReq, getToken } from './recurring-notion-sync.js';
@@ -46,13 +46,14 @@ const fetchFile = (path, sha, d) => ghText(`contents/${path}?ref=${sha}`, 'appli
  * GitHub 任一请求失败直接抛错（调用方记滞后），此前不写库。
  */
 export async function syncActivityContracts(pool, { fetchFn = globalThis.fetch, resolveToken = resolveGitHubToken } = {}) {
+  // 在网络取HEAD之前固定数据库版本，避免慢请求拿旧HEAD覆盖先完成的新同步。
+  const registrations = (await pool.query(REGISTRATIONS_SQL,[CONTRACT_REPO])).rows;
   const d = { fetchFn, token: await resolveToken() };
   const head = await fetchHead(d);
   const digest = JSON.parse(await fetchFile(CONTRACTS_DIGEST_PATH, head, d));
-  const registrations = (await pool.query(`SELECT id,key,capability_id,source_repo,source_path,source_workflow,source_capability
-    FROM workflows WHERE source_repo=$1 AND status <> 'retired' ORDER BY key`, [CONTRACT_REPO])).rows;
-  const plans = await loadActivityContracts(registrations,digest,path=>fetchFile(path,head,d));
-  return storeActivityContracts(pool,plans,head,CONTRACT_REPO);
+  const consumers = registrations.filter(w=>w.status !== 'retired');
+  const plans = await loadActivityContracts(consumers,digest,path=>fetchFile(path,head,d),registrations);
+  return storeActivityContracts(pool,plans,head,CONTRACT_REPO,registrations);
 }
 
 // ─── Notion 镜子：journey_steps（带契约的行）→「Backbone Activities」─────────
