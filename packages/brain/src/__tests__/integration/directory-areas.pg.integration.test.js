@@ -90,6 +90,22 @@ describe('组织入口真实事务回灌', () => {
     await client.query(`ALTER TABLE cecelia_events ADD CONSTRAINT reject_event CHECK (false)`);
     await expect(run()).rejects.toThrow(); expect(await rows()).toEqual(before);
   });
+  it('先开始但延迟取得连接的调用不能用旧快照覆盖已提交的新人工值', async () => {
+    await run();
+    const other = new pg.Client(DB_DEFAULTS); await other.connect(); await other.query(`SET search_path TO ${schema}`);
+    let releaseConnection, entered;
+    const gate = new Promise(resolve => { releaseConnection = resolve; });
+    const connecting = new Promise(resolve => { entered = resolve; });
+    const slowPool = { connect: async () => { entered(); await gate; return { query: other.query.bind(other), release() {} }; } };
+    let latest = '旧人工值';
+    const source = async () => ({ results: [page(rootPage, latest), page(childPage, '管家', rootPage)], has_more: false });
+    const first = syncDirectoryAreas(slowPool, { token: 'test', dbId, notionReq: source, actor: 'old-start' });
+    try {
+      await connecting; latest = '新人工值';
+      await run({ notionReq: source }); releaseConnection(); await first;
+      expect((await rows()).find(x => x.id === rootId).name).toBe('新人工值');
+    } finally { releaseConnection(); await first.catch(() => {}); await other.end(); }
+  });
   it('读分页必须走到完整终页；重复游标拒绝，不能处理半棵树', async () => {
     const before = await rows();
     await expect(run({ notionReq: async () => ({ results: [], has_more: true, next_cursor: 'same' }) })).rejects.toThrow(/pagination/);
