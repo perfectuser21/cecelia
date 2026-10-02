@@ -5,7 +5,13 @@
  */
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
 
-const mockPool = vi.hoisted(() => ({ query: vi.fn() }));
+const mockPool = vi.hoisted(() => {
+  const query = vi.fn();
+  return { query, connect: async () => ({
+    query: (sql, params) => /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) ? Promise.resolve({ rows: [] }) : query(sql, params),
+    release() {},
+  }) };
+});
 vi.mock('../db.js', () => ({ default: mockPool }));
 
 let routes;
@@ -56,7 +62,7 @@ describe('POST /spans', () => {
     expect(res._data).toMatchObject({ inserted: 1, skipped: 0, count: 1 });
     const [sql, params] = mockPool.query.mock.calls[0];
     expect(sql).toMatch(/INSERT INTO spans/);
-    expect(sql).toMatch(/ON CONFLICT \(run_id, \(COALESCE\(step_id, activity_id, enabler_id\)\), started_at\) DO NOTHING/);
+    expect(sql).toMatch(/ON CONFLICT \(run_id, \(COALESCE\(step_id, activity_id, enabler_id\)\), started_at\) WHERE occurrence_key IS NULL DO NOTHING/);
     expect(sql).toMatch(/RETURNING id/);
     expect(params[0]).toBe(GOOD.run_id);
     expect(params).toContain(ACT);
