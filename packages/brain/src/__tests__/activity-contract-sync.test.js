@@ -283,3 +283,10 @@ describe('KR活动投影唯一写口', () => {
     expect(notionReq).not.toHaveBeenCalled();
   });
 });
+
+describe('活动模型信息',()=>{
+  it('agent未固定模型时不能显示不调大模型',()=>{
+    const properties=buildBackboneActivityProps({contract:{name:'分析',invokers:['agent']}});
+    expect(properties.Cost.rich_text[0].text.content).toBe('调用大模型；实际型号见运行记录');
+  });
+});

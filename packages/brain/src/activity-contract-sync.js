@@ -156,7 +156,7 @@ export function buildBackboneActivityProps(r) {
     Failure: rich(describeFailure(c.failure)),
     '副作用': rich(lines((c.side_effects || []).map((s) => `${s.kind}@${s.target}: ${s.description}`)) || '无'),
     'Runs as': sel(runsAs(c.invokers)),
-    Cost: rich((c.model || []).length ? lines(c.model.map((m) => `${m.provider}/${m.model}: ${m.purpose}`)) : '不调大模型'),
+    Cost: rich((c.model || []).length ? lines(c.model.map((m) => `${m.provider}/${m.model}: ${m.purpose}`)) : (c.invokers || []).includes('agent') ? '调用大模型；实际型号见运行记录' : '不调大模型'),
     '步骤清单': rich(describeSteps(c.steps)),
     Notes: rich(lines((c.known_gaps || []).map((g) => `${g.gap}（${g.task}）`))),
     '对外承诺': rich(r.promise),
