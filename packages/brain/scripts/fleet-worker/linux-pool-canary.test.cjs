@@ -111,3 +111,14 @@ it('尚未调用Docker create的slice启动失败可确证无容器，不永久�
 it('PID1非systemd时在创建任何journal目录前拒绝',async()=>{const f=fixture();try{
  f.deps.stateRoot=path.join(f.root,'not-created');f.deps.readlink=async()=>'/usr/bin/node';await expect(run(f)).rejects.toThrow(/linux_/);expect(fs.existsSync(f.deps.stateRoot)).toBe(false);
 }finally{f.cleanup();}});
+
+it('缺失容器错误必须字面精确绑定引用，不能把正则元字符解释成匹配权限',()=>{
+ const {isMissingContainerError}=require('./linux-pool-canary.cjs');
+ expect(isMissingContainerError).toBeTypeOf('function');
+ for(const prefix of ['Error: No such container: ','Error response from daemon: No such object: ']){
+  expect(isMissingContainerError({code:1,stderr:prefix+'task.a'},'task.a')).toBe(true);
+  expect(isMissingContainerError({code:1,stderr:prefix+'taskXa'},'task.a')).toBe(false);
+  expect(isMissingContainerError({code:1,stderr:prefix+'other'},'.*')).toBe(false);
+  expect(isMissingContainerError({code:2,stderr:prefix+'task.a'},'task.a')).toBe(false);
+ }
+});
