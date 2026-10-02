@@ -56,3 +56,11 @@ it('真实内部task_run身份匹配才可绑定，绑定服务不改既有执�
   expect((await fixture.db.query('SELECT * FROM task_runs WHERE id=$1',[taskRun.id])).rows[0]).toEqual(taskRun);
   expect((await post('wrong-run',input)).status).toBe(422);
 });
+it('外部运行必须固定本机完整快照摘要，异摘要重传冲突',async()=>{
+  const input=fixture.runInput(release,observation);delete input.runtime_snapshot_sha256;
+  expect((await post('missing-runtime-digest',input)).status).toBe(422);
+  input.runtime_snapshot_sha256='f'.repeat(64);
+  expect((await post('fixed-runtime',input)).status).toBe(201);
+  expect((await post('fixed-runtime',{...input,runtime_snapshot_sha256:'0'.repeat(64)})).status).toBe(409);
+  expect((await service.getRunDefinitionBinding(fixture.db,'fixed-runtime')).binding.payload.runtime_snapshot_sha256).toBe(input.runtime_snapshot_sha256);
+});
