@@ -3,14 +3,29 @@ import express from 'express';
 import request from 'supertest';
 import { createKernelRun } from '../../../packages/brain/src/orchestrator/kernel-run-store.js';
 import { fixture } from '../../../packages/brain/src/orchestrator/__tests__/recovery-rebase.fixture.js';
+import { executionProfileHash } from '../../../packages/brain/src/orchestrator/recovery-execution-profile.js';
+import { seedExecutionDirectoryFixture } from '../../../packages/brain/src/__tests__/helpers/execution-directory-fixture.js';
 
 // 仅替换连接传输；入口、Controller/收据事务和原有 preflight 调用都是真模块。
 const db = vi.hoisted(() => ({ query: vi.fn(), connect: vi.fn() }));
 vi.mock('../../../packages/brain/src/db.js', () => ({ default: db }));
 afterEach(() => vi.unstubAllEnvs());
 
-it('F1接单：受鉴权的显式恢复重新进planning并返回新Controller和收据，原失败记录不变', async () => {
+it.each([false,true])('F1接单：受鉴权恢复含可选目标(%s)重新进planning，原失败记录不变', async withTarget => {
   const f = fixture();
+  if (withTarget) {
+    const snapshot = await seedExecutionDirectoryFixture();
+    const node = snapshot.nodes.find(n=>n.canonical_id==='xian-mac-m4');
+    const grant = node.grants.find(g=>g.surface==='harness'&&g.account_id==='team2');
+    Object.assign(f.request,{ expected_profile_hash:executionProfileHash({}),
+      execution_target:{machine:node.canonical_id,provider:'codex',account:'team2'} });
+    const client = await f.pool.connect(), query = client.query;
+    client.query = async (sql,params)=>{
+      if (/SELECT v\.\*,n.canonical_id/.test(sql)) return {rows:[node]};
+      if (/SELECT \* FROM execution_grants/.test(sql)) return {rows:[grant]};
+      return query(sql,params);
+    };
+  }
   db.connect.mockImplementation(f.pool.connect);
   const { default: router } = await import('../../../packages/brain/src/routes/initiatives.js');
   const app = express(); app.use(express.json());
@@ -31,6 +46,10 @@ it('F1接单：受鉴权的显式恢复重新进planning并返回新Controller�
   expect(accepted.body.base_sha).toBe(body.recovery_rebase.base_sha);
   expect(f.calls.some(c => /UPDATE (initiative_runs|work_routing_receipts)/.test(c.sql))).toBe(false);
   expect(f.calls.at(-1).sql).toBe('COMMIT');
+  if (withTarget) {
+    const receipt = f.calls.find(c=>/INSERT INTO work_routing_receipts/.test(c.sql));
+    expect(JSON.parse(receipt.params[15]).recovery_rebase.execution_profile.target).toEqual(f.request.execution_target);
+  }
   const unchanged = fixture(); delete unchanged.input.recoveryRebase;
   await expect(createKernelRun(unchanged.pool, unchanged.input, unchanged.deps))
     .rejects.toThrow('explicit recovery predecessor is invalid');

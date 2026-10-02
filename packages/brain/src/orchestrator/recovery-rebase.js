@@ -1,10 +1,12 @@
 import { lockMapProjectionAuthority, readMap } from '../lib/map-read-service.js';
 import { parseBaseRepo } from './github-pr-discovery.js';
 import { isCanonicalTaskBranch, WORKSPACE_REPOSITORIES } from './workspace-spec.js';
+import { freezeRecoveryExecutionProfile, profileValueKey, validRecoveryExecutionTarget } from './recovery-execution-profile.js';
 
 const SHA = /^[a-f0-9]{40}$/;
 const UUID = /^[a-f0-9-]{36}$/;
-const REQUEST_FIELDS = ['expected_receipt_id', 'base_sha', 'head_sha', 'actor', 'reason', 'sprint_dir'];
+const REQUEST_FIELDS = ['expected_receipt_id', 'base_sha', 'head_sha', 'actor', 'reason', 'sprint_dir',
+  'execution_target','expected_profile_hash'];
 
 function fail(code, status = 409) {
   throw Object.assign(new Error(code), { code, status });
@@ -24,11 +26,12 @@ export function validateRecoveryRebase(input) {
       || r.sprint_dir.split('/').some(p => p === '.' || p === '..')) {
     fail('recovery_rebase_request_invalid', 400);
   }
+  if (!validRecoveryExecutionTarget(r)) fail('recovery_rebase_request_invalid', 400);
 }
 
 export function matchesRecoveryRebase(stored, request, predecessorRunId) {
   return stored?.predecessor_run_id === predecessorRunId
-    && REQUEST_FIELDS.every(field => stored?.[field] === request[field]);
+    && REQUEST_FIELDS.every(field => profileValueKey(stored?.[field]) === profileValueKey(request[field]));
 }
 
 // 调用方已锁任务/前任；仅在 createKernelRun 的事务内执行。旧收据和旧run从不更新。
@@ -77,12 +80,14 @@ export async function rebaseReceiptForRecovery(client, { task, receipt, predeces
     { repo, baseSha: request.base_sha, headSha: request.head_sha },
   );
   if (diff?.isAncestor !== true || !Array.isArray(diff.changedFiles)) fail('recovery_rebase_lineage_invalid');
+  const execution = await freezeRecoveryExecutionProfile(client, { task, request, repo });
   const evidence = { ...receipt.evidence, base_sha: request.base_sha,
     prev_base_sha: receipt.evidence.base_sha, resigned_at: now.toISOString(),
     reanchor_reason: 'explicit_unsealed_recovery', recovery_rebase: {
       predecessor_run_id: predecessor.id, head_sha: request.head_sha, branch, repo,
       actor: request.actor, reason: request.reason, sprint_dir: request.sprint_dir,
       map_projection_run_id: map.projection_run_id,
+      ...(execution.evidence ? { execution_profile: execution.evidence } : {}),
     } };
   const generation = Number(receipt.anchor_generation ?? 1);
   if (!Number.isSafeInteger(generation) || generation < 1) fail('recovery_rebase_generation_invalid');
@@ -103,7 +108,7 @@ export async function rebaseReceiptForRecovery(client, { task, receipt, predeces
   );
   const successor = { ...receipt, ...inserted.rows[0], evidence, anchor_generation: generation + 1, superseded: false };
   const recovery = { ...request, predecessor_run_id: predecessor.id };
-  const payload = { routing_receipt_id: successor.id, base_sha: request.base_sha,
+  const payload = { ...execution.payload, routing_receipt_id: successor.id, base_sha: request.base_sha,
     sprint_dir: request.sprint_dir, recovery_rebase: recovery };
   await client.query(
     `UPDATE tasks SET payload=COALESCE(payload,'{}'::jsonb)||$2::jsonb,updated_at=NOW() WHERE id=$1`,
@@ -111,7 +116,8 @@ export async function rebaseReceiptForRecovery(client, { task, receipt, predeces
   );
   const event = { task_id: task.id, old_receipt_id: receipt.id, new_receipt_id: successor.id,
     old_base_sha: receipt.evidence.base_sha, new_base_sha: request.base_sha,
-    anchor_generation: generation + 1, ...recovery };
+    anchor_generation: generation + 1, ...recovery,
+    ...(execution.evidence ? { execution_profile: execution.evidence } : {}) };
   await client.query(
     `INSERT INTO cecelia_events (event_type,source,task_id,payload)
      VALUES ('kernel_unsealed_recovery_rebased','kernel_orchestrator',$1,$2::jsonb)`, [task.id, JSON.stringify(event)],
