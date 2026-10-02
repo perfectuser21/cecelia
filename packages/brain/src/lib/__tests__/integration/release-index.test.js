@@ -71,3 +71,9 @@ it('回滚回读保留两release历史，仅实际组件相等的版本成为当
   expect((await request(app).get(`/releases/${first.id}/gate`)).body).toMatchObject({deployed:true,ever_deployed:true});
   expect((await fixture.db.query('SELECT count(*)::int n FROM release_observations')).rows[0].n).toBe(4);
 });
+it('最新发布尝试实测到错误目标时不沿用较早成功',async()=>{
+  const release=(await post()).body.release;await observe(release.id);
+  await observe(release.id,{event_key:'wrong-target',target:'different-host',observed_at:new Date(Date.now()+1000).toISOString()});
+  const gate=(await request(app).get(`/releases/${release.id}/gate`)).body;
+  expect(gate).toMatchObject({deployed:false,ever_deployed:true,current_status:'drift'});
+});
