@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import { beforeEach, afterEach, describe, it, expect } from 'vitest';
 import express from 'express';
@@ -6,6 +7,7 @@ import request from 'supertest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { registerWorkflow, registrationDigest } from '../../workflow-authoring/registration.js';
 import { createWorkflowAuthoringRouter } from '../../routes/workflow-authoring.js';
+import { listWorkflows, readActivityConsumers } from '../../lib/workflow-read-service.js';
 
 let client, schema, definition;
 beforeEach(async () => {
@@ -139,6 +141,44 @@ async function registrySnapshot() {
   }
   return result;
 }
+describe('authoring 与真实511共享底座读模型贯通', () => {
+  it('真实迁移后登记、共享复用和重排均保留真身ID及引用ID，读模型返回实际顺序', async () => {
+    for (const table of ['spans', 'schema_version', 'steps', 'enablers', 'enabler_calls']) {
+      await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
+    }
+    await client.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url), 'utf8'));
+    const owner = await register();
+    const ownerView = (await listWorkflows(client, { id: owner.workflow_id }))[0];
+    expect(ownerView.activity_count).toBe(6);
+    expect(ownerView.activities.map(a => a.canonical_id)).toEqual(owner.activity_ids);
+    expect(ownerView.activities.map(a => a.sequence_no)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(await readActivityConsumers(client, owner.activity_ids[0])).toMatchObject([
+      { workflow_id: owner.workflow_id, slot_key: 'intake', sequence_no: 1 },
+    ]);
+
+    const consumer = await consumerDefinition(owner), used = await register(consumer);
+    const before = (await listWorkflows(client, { id: used.workflow_id }))[0];
+    expect(before.activities.map(a => a.canonical_id)).toEqual(owner.activity_ids);
+    const referenceIds = new Map(before.activities.map(a => [a.slot_key, a.usage.reference_id]));
+    expect([...referenceIds.values()].every(id => /^[0-9a-f-]{36}$/.test(id))).toBe(true);
+    expect(before.activities.every(a => a.source_ref === definition.source.ref
+      && a.source.commit === definition.source.revision && Object.hasOwn(a.source, 'repo')
+      && Object.hasOwn(a.source, 'path'))).toBe(true);
+    consumer.version = '1.1.0'; consumer.activities.reverse();
+    const reordered = await register(consumer, { operation: 'update', workflowId: used.workflow_id, expectedVersion: '1.0.0' });
+    const after = (await listWorkflows(client, { id: used.workflow_id }))[0];
+    expect(reordered.activity_ids).toEqual([...owner.activity_ids].reverse());
+    expect(after.activities.map(a => a.canonical_id)).toEqual(reordered.activity_ids);
+    expect(after.activities.map(a => a.sequence_no)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(after.activities.every(a => a.usage.reference_id === referenceIds.get(a.slot_key))).toBe(true);
+    const consumers = await readActivityConsumers(client, owner.activity_ids[0]);
+    expect(consumers).toHaveLength(2);
+    expect(consumers.find(c => c.workflow_id === used.workflow_id)).toMatchObject({ slot_key: 'intake', sequence_no: 6 });
+    expect(consumers.find(c => c.workflow_id === owner.workflow_id)).toMatchObject({ slot_key: 'intake', sequence_no: 1 });
+    expect((await listWorkflows(client, { id: owner.workflow_id }))[0].activities.map(a => a.canonical_id)).toEqual(owner.activity_ids);
+    expect((await client.query('SELECT count(*)::int n FROM journey_steps')).rows[0].n).toBe(6);
+  });
+});
 describe('共享引用真身与消费者合同保护：真实 PostgreSQL', () => {
   beforeEach(enableSharedReferences);
   it('复用只建引用不复制真身；全共享定义重复登记稳定且零改写', async () => {
