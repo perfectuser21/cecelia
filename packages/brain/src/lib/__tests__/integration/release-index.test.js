@@ -77,3 +77,13 @@ it('最新发布尝试实测到错误目标时不沿用较早成功',async()=>{
   const gate=(await request(app).get(`/releases/${release.id}/gate`)).body;
   expect(gate).toMatchObject({deployed:false,ever_deployed:true,current_status:'drift'});
 });
+it('CI证据结构缺失或assertion空项只降级unknown，不返回500或伪green',async()=>{
+  for(const [index,mutate] of [
+    input=>delete input.ci_evidence[0].receipt.source,
+    input=>input.ci_evidence[0].receipt.assertions=[null],
+  ].entries()){
+    const input=structuredClone(fixture.releaseInput);input.release_key=`malformed-ci-${index}`;mutate(input);
+    const response=await request(app).post('/releases').send(input);
+    expect(response.status,JSON.stringify(response.body)).toBe(201);expect(response.body.release.payload.verification.ci_status).toBe('unknown');
+  }
+});
