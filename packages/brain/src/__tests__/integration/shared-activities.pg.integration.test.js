@@ -29,7 +29,7 @@ beforeEach(async () => {
   legacy = [];
   for (const [i,key] of KEYS.entries()) {
     const id = randomUUID(); legacy.push(id);
-    await client.query(`INSERT INTO journey_steps(id,journey_id,name,step_number,capability_key,activity_key,workflow_id,status,backbone_version) VALUES($1,$2,$3,$4,'keyword_acquisition',$3,$5,'active','3.0')`, [id,parent,key,i+1,keyword]);
+    await client.query(`INSERT INTO journey_steps(id,journey_id,name,step_number,capability_key,activity_key,workflow_id,status,backbone_version) VALUES($1,$2,$3::text,$4,'keyword_acquisition',$3::text,$5,'active','3.0')`, [id,parent,key,i+1,keyword]);
   }
 });
 afterEach(async () => {
