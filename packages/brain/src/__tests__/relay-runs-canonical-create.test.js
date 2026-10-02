@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
@@ -31,6 +31,7 @@ async function buildApp() {
 }
 
 describe('canonical POST /orchestrator/relay-runs', () => {
+  afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
     mockPool.query.mockReset();
     mockPool.connect.mockReset();
@@ -46,6 +47,36 @@ describe('canonical POST /orchestrator/relay-runs', () => {
         created_source: 'foreground_handoff',
       },
     });
+  });
+
+  it('显式再基canonical入口缺少或错误internal token时401，合法token转交真实输入', async () => {
+    vi.stubEnv('CECELIA_INTERNAL_TOKEN', 'synthetic-internal-token');
+    const app = await buildApp();
+    const body = { initiative_id: INITIATIVE_ID, current_task_id: TASK_ID,
+      created_source: 'explicit_recovery', predecessor_run_id: RUN_ID,
+      recovery_rebase: { expected_receipt_id: TASK_ID, base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40),
+        actor: 'session:operator', reason: '真实恢复', sprint_dir: 'sprints',
+        expected_profile_hash:'a'.repeat(64),
+        execution_target:{provider:'codex',account:'team2',machine:'xian-mac-m4'} } };
+    for (const token of ['', 'wrong']) {
+      const response = await request(app).post('/api/brain/orchestrator/relay-runs')
+        .set('X-Internal-Token', token).send(body);
+      expect(response.status).toBe(401); expect(mockCreateKernelRun).not.toHaveBeenCalled();
+    }
+    const response = await request(app).post('/api/brain/orchestrator/relay-runs')
+      .set('X-Internal-Token', 'synthetic-internal-token').send(body);
+    expect(response.status).toBe(201);
+    expect(mockCreateKernelRun.mock.calls[0][1].recoveryRebase).toEqual(body.recovery_rebase);
+  });
+
+  it('生产未配置鉴权时再基入口503；旧adapter不能携带恢复请求', async () => {
+    vi.stubEnv('CECELIA_INTERNAL_TOKEN', ''); vi.stubEnv('NODE_ENV', 'production');
+    const app = await buildApp();
+    const body = { initiative_id: INITIATIVE_ID, current_task_id: TASK_ID,
+      created_source: 'explicit_recovery', recovery_rebase: {} };
+    expect((await request(app).post('/api/brain/orchestrator/relay-runs').send(body)).status).toBe(503);
+    expect((await request(app).post(`/api/brain/orchestrator/relay-runs/${INITIATIVE_ID}`).send(body)).status).toBe(400);
+    expect(mockCreateKernelRun).not.toHaveBeenCalled();
   });
 
   it.each([
