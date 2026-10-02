@@ -51,10 +51,22 @@ jobs:
           trap 'code=$?; if (( code != 0 )); then printf "%s\n" "{\"status\":\"unknown\",\"stage\":\"pilot_snapshot\",\"exit_code\":$code}" > evidence/gap.json; fi' EXIT
           test -n "$CECELIA_INTERNAL_TOKEN"
           jq -n --arg scope "$MAP_SCOPE" --arg repo "$SOURCE_REPO" --arg revision "$HEAD" '{scope:$scope,repo:$repo,revision:$revision}' > evidence/request.json
-          curl --fail-with-body --silent --show-error "$BRAIN_URL/api/brain/implementation-ci/refresh" \
+          status=$(curl --silent --show-error --output evidence/head.json --write-out '%{http_code}' "$BRAIN_URL/api/brain/implementation-ci/refresh" \
             -H "X-Internal-Token: $CECELIA_INTERNAL_TOKEN" -H 'Content-Type: application/json' \
-            --data-binary @evidence/request.json > evidence/head.json
+            --data-binary @evidence/request.json)
+          if [[ "$status" == 409 ]]; then
+            curl --fail-with-body --silent --show-error --get "$BRAIN_URL/api/brain/implementation-ci/snapshot" \
+              -H "X-Internal-Token: $CECELIA_INTERNAL_TOKEN" --data-urlencode "scope=$MAP_SCOPE" \
+              --data-urlencode "repo=$SOURCE_REPO" --data-urlencode "revision=$HEAD" > evidence/head.json
+          else
+            [[ "$status" == 200 ]]
+          fi
           jq -e '.snapshot.status == "verified" and (.snapshot.gaps | length == 0)' evidence/head.json
+      - name: 快照前置失败保留缺口
+        if: failure()
+        run: |
+          mkdir -p evidence
+          if [[ ! -f evidence/gap.json ]]; then printf '%s\n' '{"status":"unknown","stage":"pilot_snapshot","code":"PILOT_SNAPSHOT_FAILED"}' > evidence/gap.json; fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
