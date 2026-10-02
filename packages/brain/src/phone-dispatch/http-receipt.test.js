@@ -4,6 +4,27 @@ import {node,token,wire,signed} from '../__tests__/fixtures/phone-http.js';
 import {resolvePhoneHubBinding} from './http-binding.js';
 import {verifyPhoneHubReceipt} from './http-receipt.js';
 async function binding(){const n=node();return resolvePhoneHubBinding({query:async()=>({rows:[n]})},{executionVersionId:n.id,machineId:n.canonical_id});}
+it.each([
+ {external_occupied:-1}, {external_occupied:0}, {journal_pending:0},
+ {journal_pending:-1,external_occupied:0}, {journal_pending:0,external_occupied:-1},
+ {journal_pending:1,external_occupied:1,pending:1}, {},
+])('正确HMAC能力回执仍拒单边/负值/和不符/缺失物理计数 %j',async counters=>{
+ const b=await binding(),nonce=randomUUID(),r=wire('capabilities',nonce),m={...r.maintenance};delete m.journal_pending;delete m.external_occupied;
+ expect(()=>verifyPhoneHubReceipt(signed({...r,maintenance:{...m,...counters}}),{binding:b,token,nonce,operation:'capabilities'})).toThrow('phone_http_receipt_unconfirmed');
+});
+it.each([
+ {pending:1,journal_pending:0,external_occupied:1,occupied:0},
+ {pending:1,journal_pending:1,external_occupied:0,occupied:1},
+])('物理maintenance与实际外锁计数必须一致 %j',async({occupied,...counters})=>{
+ const b=await binding(),nonce=randomUUID(),r=wire('capabilities',nonce);
+ expect(()=>verifyPhoneHubReceipt(signed({...r,maintenance:{...r.maintenance,...counters},external_locks:{occupied}}),{binding:b,token,nonce,operation:'capabilities'})).toThrow('phone_http_receipt_unconfirmed');
+});
+it('Hub本地维护可缺两个物理计数，但有一边或坏计数即拒绝',async()=>{
+ const b=await binding(),nonce=randomUUID(),r=wire('maintenance',nonce),opts={binding:b,token,nonce,operation:'maintenance'};
+ expect(verifyPhoneHubReceipt(signed(r),opts).assurance).toBe('hub_control_only');
+ expect(verifyPhoneHubReceipt(signed({...r,hub_control:{...r.hub_control,journal_pending:0,external_occupied:0}}),opts).assurance).toBe('hub_control_only');
+ for(const patch of [{external_occupied:-1},{external_occupied:0},{journal_pending:0},{journal_pending:0,external_occupied:-1},{journal_pending:1,external_occupied:0}])expect(()=>verifyPhoneHubReceipt(signed({...r,hub_control:{...r.hub_control,...patch}}),opts)).toThrow('phone_http_receipt_unconfirmed');
+});
 it('现有Hub wire按原JSON回签；只返回原始资源，不制造available或authenticated位',async()=>{
  const b=await binding(),nonce=randomUUID(),r=wire('capabilities',nonce);
  const out=verifyPhoneHubReceipt(signed(r),{binding:b,token,nonce,operation:'capabilities'});

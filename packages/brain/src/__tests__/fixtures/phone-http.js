@@ -8,7 +8,7 @@ export const endpoint=()=>({http_endpoint:'http://127.0.0.1:3459/',hub_id:'fixtu
 export const node=()=>({id:randomUUID(),canonical_id:'fixture-machine',worker_id:'fixture-worker',worker_boot_id:'fixture-physical-boot',endpoints:{phone_hub:endpoint()}});
 export const maintenance=()=>({pending:0,in_flight:0,activity_revision:0,draining:false,stable:true,quiescent:false,marker_identity:null});
 export const physical=()=>({schema:'phone-physical-probe/v1',request_nonce:randomUUID(),...endpoint().physical,action:'adb_get_state',
- resources:{cpu_count:4,memory_total_bytes:8000000000,memory_free_bytes:1000000000,load_1m:0.2,data_free_bytes:1000000000},adb_daemon:{reachable:true},external_locks:{occupied:0},maintenance:maintenance(),observed_at:new Date().toISOString()});
+ resources:{cpu_count:4,memory_total_bytes:8000000000,memory_free_bytes:1000000000,load_1m:0.2,data_free_bytes:1000000000},adb_daemon:{reachable:true},external_locks:{occupied:0},maintenance:{...maintenance(),journal_pending:0,external_occupied:0},observed_at:new Date().toISOString()});
 export function wire(operation,nonce){
  const e=endpoint();
  return {...(operation==='capabilities'?physical():{proof_scope:'hub-control',hub_control:maintenance(),targets:[{machine_id:e.physical.machine_id,status:'verified',...maintenance()}],pending:0,stable:false,quiescent:false}),
