@@ -58,8 +58,10 @@ export async function registerJourney(pool, body, id) {
     await validateHierarchy(client, id, parentId);
     let row;
     if (id === undefined) {
-      const values = { description: null, maturity: 'not_started', status: 'active', e2e_test_path: null,
-        area_id: null, home: null, trigger: null, endpoint: null, ...data };
+      const defaults = { description: null, maturity: 'not_started', status: 'active', e2e_test_path: null,
+        area_id: null, home: null, trigger: null, endpoint: null };
+      const values = { ...defaults, ...data };
+      for (const [field, fallback] of Object.entries(defaults)) values[field] = data[field] || fallback;
       const columns = Object.keys(values);
       row = (await client.query(`INSERT INTO journeys (${columns.join(',')},notion_synced_at)
         VALUES (${columns.map((_, i) => `$${i + 1}`).join(',')},NULL) RETURNING *`, Object.values(values))).rows[0];
