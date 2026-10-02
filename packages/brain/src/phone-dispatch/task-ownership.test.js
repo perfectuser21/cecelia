@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import {isPhoneDispatchTask} from './task-ownership.js';
 
 const boundary = vi.hoisted(() => ({
   pool: { query: vi.fn() },
@@ -51,6 +52,7 @@ async function probeTwice() {
 describe('手机controller专属回执所有权不走旧device超时回队',()=>{
  it.each([false,true])('认领180min无spawn时连续probe不写task、不suspect、不传播guard错误（DBguard=%s）',async(enforceGuard)=>{
   task.task_type='device_job';task.executor_kind='phone-ssh-controller';task.claimed_by='phone-dispatch:test';task.error_message=null;task.payload={phone_dispatch_id:'test'};
+  expect(isPhoneDispatchTask(task)).toBe(true);
   if(enforceGuard){const query=boundary.pool.query.getMockImplementation();boundary.pool.query.mockImplementation(async(sql,...args)=>{
    if(/UPDATE tasks/.test(sql))throw Error('phone_task_managed');return query(sql,...args);
   });}
@@ -61,11 +63,13 @@ describe('手机controller专属回执所有权不走旧device超时回队',()=>
  it('旧device_job超过45min仍走双确认回队，payload伪造phone不能抢所有权',async()=>{
   task.task_type='device_job';task.executor_kind=null;task.claimed_by='legacy-device-worker';task.error_message=null;
   task.payload={phone_dispatch_id:'fake',executor_kind:'phone-ssh-controller'};
+  expect(isPhoneDispatchTask(task)).toBe(false);
   expect(await executor.probeTaskLiveness()).toEqual([]);expect(executor.suspectProcesses.has(task.id)).toBe(true);
   expect(await executor.probeTaskLiveness()).toEqual([expect.objectContaining({action:'liveness_safe_requeue'})]);expect(task.status).toBe('queued');
  });
  it('错误task_type不能借phone executor_kind豁免本机探活',async()=>{
   task.executor_kind='phone-ssh-controller';task.claimed_by='phone-dispatch:fake';
+  expect(isPhoneDispatchTask(task)).toBe(false);
   expect(await probeTwice()).toEqual([expect.objectContaining({action:'liveness_auto_requeue'})]);expect(task.status).toBe('queued');
  });
 });
