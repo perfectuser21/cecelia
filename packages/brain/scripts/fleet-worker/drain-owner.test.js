@@ -5,6 +5,21 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {it,expect} from 'vitest';
 const require=createRequire(import.meta.url);
+it('canonical安装持自属drain合作锁到子进程结束，其它正常undrain无法介入',()=>{
+ const {createDrainOwner}=require('./drain-owner.cjs');
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'drain-install-')),marker=path.join(root,'fleet-worker.drain'),id=randomUUID();
+ const owner=createDrainOwner({marker,runLaunchctl:()=>{}});
+ try {
+  owner.drain('xian-mac-m4',id); const original=fs.readFileSync(marker);
+  expect(owner.withOwned('xian-mac-m4',id,()=>{
+   expect(()=>owner.undrain('xian-mac-m4',id)).toThrow('drain_owner_busy');
+   expect(fs.readFileSync(marker)).toEqual(original); return 'installed';
+  })).toBe('installed');
+  expect(()=>owner.withOwned('xian-mac-m4',randomUUID(),()=>{})).toThrow('drain_owner_mismatch');
+  expect(owner.undrain('xian-mac-m4',id).released).toBe(true);
+  expect(()=>owner.withOwned('xian-mac-m4',id,()=>{})).toThrow('drain_owner_unconfirmed');
+ } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
 it('固定marker独占创建，别人owner/替换inode/合作锁不得覆盖或释放，失败重启保持drain',()=>{
  const {createDrainOwner}=require('./drain-owner.cjs');
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'drain-owner-')),marker=path.join(root,'fleet-worker.drain'),first=randomUUID(),other=randomUUID();

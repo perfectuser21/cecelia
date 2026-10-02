@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {readFileSync,existsSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {beforeAll,afterAll,beforeEach,it,expect} from 'vitest';
+import {beforeAll,afterAll,beforeEach,it,expect,vi} from 'vitest';
 import {DB_DEFAULTS} from '../../db-config.js';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
@@ -12,6 +12,17 @@ if(DB_DEFAULTS.database!=='cecelia_scratch'&&!(process.env.CI==='true'&&DB_DEFAU
 const schema=`headed_takeover_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const admin=new pg.Client(DB_DEFAULTS);
 const pool=new pg.Pool({...DB_DEFAULTS,max:5,options:`-c search_path=${schema},public -c statement_timeout=1000`});
+const legacyQueries=[];
+// 仅替换全局池的连接目的地；SQL、原HTTP中间件、终态/交接生产函数均真实执行。
+vi.mock('../../db.js',()=>({default:{
+ query:(sql,...args)=>{legacyQueries.push(sql);return pool.query(sql,...args);},
+ connect:async()=>{
+  const client=await pool.connect(),query=client.query,release=client.release;
+  client.query=function(sql,...args){legacyQueries.push(sql);return query.call(this,sql,...args);};
+  client.release=function(...args){this.query=query;this.release=release;return release.apply(this,args);};
+  return client;
+ },
+}}));
 let task,legacyRun;
 const handoffDocs=mkdtempSync(join(tmpdir(),'headed-takeover-handoff-'));
 beforeAll(async()=>{
@@ -33,11 +44,48 @@ beforeAll(async()=>{
  CREATE TABLE harness_gaps(source_task_id uuid,status text);
  CREATE TABLE harness_gap_dependencies(source_task_id uuid,status text);
  CREATE TABLE task_dependencies(from_task_id uuid,edge_type text,status text);`);
+ await pool.query(`ALTER TABLE tasks ADD COLUMN review_status text,ADD COLUMN pr_merged_at timestamptz,ADD COLUMN okr_initiative_id uuid,ADD COLUMN ability_id uuid;
+ CREATE FUNCTION reject_legacy_terminal() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+ IF NEW.status='completed' AND NEW.payload->>'reject_terminal'='yes' THEN RAISE EXCEPTION 'fixture_terminal_rejected'; END IF;
+ RETURN NEW; END $$;
+ CREATE CONSTRAINT TRIGGER reject_legacy_terminal AFTER UPDATE ON tasks DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_legacy_terminal();`);
  const migration=new URL('../../../migrations/509_headed_task_takeover.sql',import.meta.url);
  if(existsSync(migration))await pool.query(readFileSync(migration,'utf8'));
 });
 afterAll(async()=>{await pool.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();rmSync(handoffDocs,{recursive:true,force:true});});
 beforeEach(async()=>{task=randomUUID();legacyRun='legacy-'+task;const receipt=randomUUID();await pool.query('INSERT INTO tasks(id,payload) VALUES($1,$2)',[task,{routing_receipt_id:receipt,work_kind:'coding_review',current_run_id:legacyRun,review_required:true}]);await pool.query("INSERT INTO work_routing_receipts(id,task_id,canonical_task_type,work_kind) VALUES($1,$2,'data','coding_review')",[receipt,task]);});
+for(const owned of [false,true])for(const failed of [false,true])it(`真实legacy PATCH ${owned?'headed':'ordinary'} ${failed?'失败无handoff':'提交后保存handoff'}，执行原HTTP/terminal/saveHandoff`,async()=>{
+ await pool.query("UPDATE tasks SET status='in_progress',payload=payload||$2::jsonb WHERE id=$1",[task,{review_required:false,...(failed?{reject_terminal:'yes'}:{})}]);
+ if(owned){
+  const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+  // takeover的原合同只收queued旧bridge，因此先回queued再正常接管。
+  await pool.query("UPDATE tasks SET status='queued' WHERE id=$1",[task]);
+  await takeOverHeadedTask(pool,request());
+ }
+ const {default:router}=await import('../../routes/tasks.js');
+ const app=express();app.use(express.json());app.use('/api/brain',router);
+ const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
+ const oldToken=process.env.CECELIA_INTERNAL_TOKEN,oldDocs=process.env.HANDOFF_DOCS_DIR;
+ process.env.CECELIA_INTERNAL_TOKEN='legacy-relay-fixture';process.env.HANDOFF_DOCS_DIR=handoffDocs;legacyQueries.length=0;
+ try{
+  const response=await fetch(`http://127.0.0.1:${server.address().port}/api/brain/tasks/${task}`,{method:'PATCH',headers:{'content-type':'application/json',authorization:'Bearer legacy-relay-fixture','x-session-id':'actual-session'},body:JSON.stringify({status:'completed'})});
+  const body=await response.json();expect(response.status,JSON.stringify(body)).toBe(failed?500:200);
+  const row=(await pool.query('SELECT status,result FROM tasks WHERE id=$1',[task])).rows[0];
+  const savedIndex=legacyQueries.findIndex(sql=>/UPDATE tasks\s+SET result =/i.test(sql));
+  if(failed){
+   expect(row.status).toBe('in_progress');expect(row.result?.handoff).toBeUndefined();expect(savedIndex).toBe(-1);
+   if(owned)expect(legacyQueries).toContain('ROLLBACK');
+  }else{
+   expect(row.status).toBe('completed');expect(row.result.handoff).toMatchObject({task_id:task,session_id:'actual-session',synthesized:true});
+   expect(row.result.handoff_log).toHaveLength(1);expect(body.relay).toMatchObject({synthesized:true});expect(savedIndex).toBeGreaterThan(-1);
+   if(owned){expect(legacyQueries.indexOf('COMMIT')).toBeGreaterThan(-1);expect(legacyQueries.indexOf('COMMIT')).toBeLessThan(savedIndex);}
+  }
+ }finally{
+  if(oldToken===undefined)delete process.env.CECELIA_INTERNAL_TOKEN;else process.env.CECELIA_INTERNAL_TOKEN=oldToken;
+  if(oldDocs===undefined)delete process.env.HANDOFF_DOCS_DIR;else process.env.HANDOFF_DOCS_DIR=oldDocs;
+  await new Promise(resolve=>server.close(resolve));
+ }
+});
 it('真实双连接：takeover先持专用exclusive闸，资源创建try shared失败，不等task',async()=>{
  const owner=await pool.connect(),writer=await pool.connect();
  try{

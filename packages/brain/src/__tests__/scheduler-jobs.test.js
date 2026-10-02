@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../node-onboarding/service.js', () => ({
   runNodeOnboardingJob: vi.fn().mockResolvedValue({ reconciled: 0, errors: 0, scheduled: 0 }),
+  runNodeExecutionOnboardingJob: vi.fn().mockResolvedValue({ advanced: 0 }),
 }));
 import { runNodeOnboardingJob } from '../node-onboarding/service.js';
 
@@ -142,7 +143,8 @@ vi.mock('../openclaw-agent-executor.js', () => ({
 // script 收割（棒 3）同理：真实 handler 会 ssh 到跑场机读 .exit，纯路由单测绝不碰真机；
 // 收割逻辑由 script-executor.test.js / integration/script-executor-chain.pg.integration.test.js 覆盖。
 vi.mock('../script-executor.js', () => ({
-  reapScriptRuns: vi.fn().mockResolvedValue({ reaped: 0, completed: 0, failed: 0, retried: 0 }),
+  reapLegacyScriptRuns: vi.fn().mockResolvedValue({ reaped: 0, completed: 0, failed: 0, retried: 0 }),
+  reapManagedScriptRuns: vi.fn().mockResolvedValue({ reaped: 0, completed: 0, failed: 0, retried: 0 }),
 }));
 
 // 秋米设备对账的真实 handler 会扫库。「哨兵写入失败不影响 job 结果」那条用例的假 pool 对
@@ -279,8 +281,8 @@ describe('scheduler-jobs 注册表', () => {
   });
 
   // 任务 5cdbd52a：script_run 的收割者。没注册 = 脚本步派出去永远没人读 .exit，任务永远 in_progress。
-  it('JOBS 注册了 script-reaper（needsPool、在 scheduler-liveness 之前、handler 真接线 reapScriptRuns）', async () => {
-    const { reapScriptRuns } = await import('../script-executor.js');
+  it('JOBS 注册了 script-reaper（needsPool、在 scheduler-liveness 之前、handler 真接线 legacy收割）', async () => {
+    const { reapLegacyScriptRuns } = await import('../script-executor.js');
     const names = JOBS.map((j) => j.name);
     const j = JOBS.find((x) => x.name === 'script-reaper');
     expect(j).toBeTruthy();
@@ -289,7 +291,7 @@ describe('scheduler-jobs 注册表', () => {
     expect(names.indexOf('script-reaper')).toBeLessThan(names.indexOf('scheduler-liveness'));
     const pool = makePool();
     await runSchedulerJobsOnce(pool, [j]);
-    expect(reapScriptRuns).toHaveBeenCalledWith(pool);
+    expect(reapLegacyScriptRuns).toHaveBeenCalledWith(pool);
   });
 
   // 任务 8aa79219：owner_decision「到期按默认走」的执行者。没注册 = 协议承诺无人兑现，不可逆决策永卡、可逆决策不走默认。

@@ -76,7 +76,7 @@ export function createJanitor(registry) {
       ensureConnected();
       if (!lock?.locked) throw failure('JANITOR_BUSY', 423);
       acquired = true;
-      result = await callback(client, ensureConnected, controller.signal);
+      result = await callback(client, ensureConnected, controller.signal, onError);
     } catch (err) {
       operationError = err;
     } finally {
@@ -147,20 +147,32 @@ export function createJanitor(registry) {
   async function reconcileJob(pool, jobId) {
     const job = find(jobId);
     if (typeof job.reconcile !== 'function') throw failure('JANITOR_UNCONFIRMED');
-    return locked(pool, jobId, async (client, ensureConnected, signal) => {
-      const { rows } = await client.query("SELECT id FROM janitor_runs WHERE job_id=$1 AND status='running' ORDER BY started_at LIMIT 1", [jobId]);
-      if (!rows.length) return { status: 'idle' };
-      const result = await job.reconcile({ pool, run_id: rows[0].id, signal });
-      ensureConnected();
-      if (!result || !['success', 'failed', 'skipped'].includes(result.status)
-          || (result.freed_bytes != null && (!Number.isSafeInteger(result.freed_bytes) || result.freed_bytes < 0))) {
+    return locked(pool, jobId, async (client, ensureConnected, signal, invalidate) => {
+      try {
+        await client.query('BEGIN');
+        // Session锁丢失后独立claim事务仍可能执行；同run行锁串行化intent和终态。
+        const { rows } = await client.query("SELECT id FROM janitor_runs WHERE job_id=$1 AND status='running' ORDER BY started_at LIMIT 1 FOR UPDATE", [jobId]);
+        ensureConnected();
+        let result = { status: 'idle' };
+        if (rows.length) {
+          result = await job.reconcile({ pool, run_id: rows[0].id, signal, recovery_db: client });
+          ensureConnected();
+          if (!result || !['success', 'failed', 'skipped'].includes(result.status)
+              || (result.freed_bytes != null && (!Number.isSafeInteger(result.freed_bytes) || result.freed_bytes < 0))) {
+            throw failure('JANITOR_UNCONFIRMED');
+          }
+          const update = await client.query("UPDATE janitor_runs SET status=$1,output=$2,freed_bytes=$3,finished_at=now() WHERE id=$4 AND status='running'",
+            [result.status, `JANITOR_RECONCILED_${result.status.toUpperCase()}`, result.freed_bytes ?? null, rows[0].id]);
+          ensureConnected();
+          if (update.rowCount !== 1) throw failure('JANITOR_UNCONFIRMED');
+        }
+        await client.query('COMMIT');
+        ensureConnected();
+        return result;
+      } catch {
+        try { await client.query('ROLLBACK'); } catch { invalidate(); }
         throw failure('JANITOR_UNCONFIRMED');
       }
-      const update = await client.query("UPDATE janitor_runs SET status=$1,output=$2,freed_bytes=$3,finished_at=now() WHERE id=$4 AND status='running'",
-        [result.status, `JANITOR_RECONCILED_${result.status.toUpperCase()}`, result.freed_bytes ?? null, rows[0].id]);
-      ensureConnected();
-      if (update.rowCount !== 1) throw failure('JANITOR_UNCONFIRMED');
-      return result;
     });
   }
 

@@ -8,6 +8,11 @@ on:
       - 'packages/brain/src/__tests__/machine-onboarding*'
       - 'packages/brain/src/routes/machines.js'
       - 'packages/brain/src/scheduler-jobs.js'
+      - 'packages/brain/src/scheduler-completion-loop.js'
+      - 'packages/brain/src/script-executor.js'
+      - 'packages/brain/src/script-reaper-state.js'
+      - 'packages/brain/src/__tests__/scheduler-completion-loop.test.js'
+      - 'packages/brain/src/__tests__/script-reaper-state.test.js'
       - 'scripts/ops/node-*'
       - 'scripts/ops/__tests__/node-onboarding*.test.mjs'
       - 'apps/api/features/system/**'
@@ -43,7 +48,7 @@ jobs:
         working-directory: packages/brain
         env:
           NODE_ONBOARDING_TEST_DB: postgresql://onboarding_ci:onboarding_ci@localhost:5432/cecelia_scratch
-        run: npx vitest run src/node-onboarding/__tests__/spec.test.js src/node-onboarding/__tests__/router.test.js src/node-onboarding/__tests__/service.test.js src/__tests__/scheduler-jobs.test.js src/__tests__/task-creation-inventory.test.js --maxWorkers=1 --minWorkers=1
+        run: npx vitest run src/node-onboarding/__tests__/spec.test.js src/node-onboarding/__tests__/router.test.js src/node-onboarding/__tests__/service.test.js src/node-onboarding/__tests__/settlement.test.js src/node-onboarding/__tests__/service-completion-isolation.test.js src/__tests__/scheduler-jobs.test.js src/__tests__/scheduler-completion-loop.test.js src/__tests__/script-reaper-state.test.js src/__tests__/task-creation-inventory.test.js --maxWorkers=1 --minWorkers=1
       - name: 设备页操作回归
         working-directory: apps/api
         run: npx vitest run features/system/pages/NodeOnboarding.test.tsx --maxWorkers=1

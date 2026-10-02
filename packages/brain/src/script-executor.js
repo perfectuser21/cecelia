@@ -25,6 +25,7 @@ export {redactEnvValues} from './script-settlement.js';
  * run 留痕经棒 1 的 startRun/finishRun，终态经棒 2 的 finalizeTask，本文件不直写 task_runs / 终态。
  */
 import { usesManagedScript,prepareManagedScript,triggerManagedScript,reapManagedScripts } from './script-managed-executor.js';
+import { runScriptReaperLane } from './script-reaper-state.js';
 import { execFile as nodeExecFile, spawn as nodeSpawn } from 'node:child_process';
 import { assertExternalExecutionAllowed } from './runtime-safety.js';
 import { randomBytes } from 'node:crypto';
@@ -397,26 +398,45 @@ export async function triggerScriptRun(task, deps = {}) {
 /**
  * 收割在跑的 script_run：远端 .exit 落地即结算。
  * 三态：exit 0 → completed；exit≠0/超时 → 按 retry-policy 重排或 failed；NO_EXIT → 一律不动（还在跑），
- * 卡死交给活性合同 script（staleMinutes 75 + onStale fail）。取数 LIMIT 10、单条 ssh 20s，老任务先收。
+ * 卡死交给活性合同 script（staleMinutes 75 + onStale fail）。每轮10项按UUID游标轮转、最多4个SSH并发，每条20s。
  */
 export async function reapScriptRuns(pool, deps = {}) {
-  const managed = await reapManagedScripts(pool,deps,settleScriptRun);
+  const results = await Promise.allSettled([reapLegacyScriptRuns(pool, deps), reapManagedScriptRuns(pool, deps)]);
+  const failed = results.find(result => result.status === 'rejected');
+  if (failed) throw failed.reason;
+  return results.reduce((out, result) => {
+    for (const key of Object.keys(out)) out[key] += result.value[key];
+    return out;
+  }, { reaped: 0, completed: 0, failed: 0, retried: 0 });
+}
+
+export function reapManagedScriptRuns(pool, deps = {}) {
+  return runScriptReaperLane(pool, 'managed', () => reapManagedScripts(pool, deps, settleScriptRun));
+}
+
+export function reapLegacyScriptRuns(pool, deps = {}) {
+  return runScriptReaperLane(pool, 'legacy', state => reapLegacyBatch(pool, deps, state));
+}
+
+async function reapLegacyBatch(pool, deps, state) {
   const execFileFn = deps.execFileFn ?? transport.execFileFn ?? nodeExecFile;
   const { rows } = await pool.query(
     `SELECT id, payload FROM tasks
       WHERE task_type = 'script_run' AND status = 'in_progress' AND executor_kind = 'script'
         AND payload->>'script_run_id' IS NOT NULL AND payload->>'script_reservation_id' IS NULL
-      ORDER BY started_at ASC NULLS FIRST
+      ORDER BY ($1::uuid IS NULL OR id > $1::uuid) DESC, id ASC
       LIMIT ${REAP_BATCH}`,
+    [state.cursor],
   );
-  const out = managed;
+  if (rows.length) state.cursor = rows.at(-1).id;
+  const out = { reaped: 0, completed: 0, failed: 0, retried: 0 };
   const computeWorkers = listComputeWorkerIds();
-  for (const row of rows ?? []) {
+  async function reapRow(row) {
     const runId = row.payload?.script_run_id;
     const hostId = resolveMachineId(row.payload?.host_id ?? row.payload?.host);
     if (!isSafeRunId(runId) || !hostId || !computeWorkers.includes(hostId)) {
       console.warn(`[script] 收割跳过非法 run/host: task=${row.id} run=${String(runId).slice(0, 60)}`);
-      continue;
+      return;
     }
     const nonce = randomBytes(8).toString('hex');
     let stdout;
@@ -426,16 +446,24 @@ export async function reapScriptRuns(pool, deps = {}) {
       ], { timeout: REAP_SSH_TIMEOUT_MS, encoding: 'utf8', maxBuffer: 1024 * 1024 });
     } catch (err) {
       console.warn(`[script] 收割 ${runId} 探测失败（不动，下一轮再来）: ${err.message}`);
-      continue;
+      return;
     }
     const parsed = parseReapOutput(stdout, nonce);
-    if (!parsed) continue;
+    if (!parsed) return;
     const verdict = await settleScriptRun(pool, row, parsed, { hostId, runId });
-    if (verdict === 'skipped') continue;
+    if (verdict === 'skipped') return;
     out.reaped++;
     if (verdict === 'completed') out.completed++;
     else if (verdict === 'retried') out.retried++;
     else out.failed++;
   }
+  let index = 0;
+  await Promise.all(Array.from({ length: Math.min(4, rows.length) }, async () => {
+    while (index < rows.length) {
+      const row = rows[index++];
+      try { await reapRow(row); }
+      catch { console.warn(`[script] 收割结算未确认 task=${row.id}`); }
+    }
+  }));
   return out;
 }

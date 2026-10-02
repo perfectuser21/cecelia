@@ -1,6 +1,10 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.361.0
+**Brain 版本**: 1.361.1
+
+脚本终态收割与节点接入对账每10秒独立推进；观察超时后仍等待真实调用结束才允许同job再次运行，不受慢串行任务或派发暂停影响。健康验收仍要求90秒鲜度。
+
+现役西安M4可经显式固定canonical runner安装恢复：原受保护plist摘要CAS与自属drain合作锁/真实继承FD绑定，仅runner切到受信aeaf，显式路径同时要求Worker有效drain marker为同一固定marker（缺字段采用默认），其它字段与普通升级保留语义不变；旧快照继续用于launch前核验和失败回滚。
 
 手机定时建单 B1 仅消费服务端独立登记，使用同一 PostgreSQL session 模板闸分类并建立真实 slot/task/receipt/owner；登记未知或失效拒绝回退普通建单。baseline/missed 推进在实际 UPDATE 后重核期限和真实模板指纹；连接与取锁采用内部固定1秒预算，业务查询保留原预算。普通任务保留 CAS 与建单自身事务，默认告警和广播在确认释放闸后顺序完成。未安装生产模板、grant 或执行 controller，手机运行默认关闭。
 

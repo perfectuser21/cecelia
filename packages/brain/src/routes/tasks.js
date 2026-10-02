@@ -405,7 +405,6 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
       }
     }
 
-
     // Get current task
     const taskResult = await pool.query(
       `SELECT id, status, claimed_by, executor_kind, task_type,
@@ -617,7 +616,7 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
     const becameRelayTerminal = isRelayTerminalStatus(status) && !isStatusNoop && !harnessDemoted;
     const handoffArrivedOnTerminal = Boolean(result?.handoff) && isRelayTerminalStatus(updatedTask?.status);
     if (becameRelayTerminal || handoffArrivedOnTerminal) {
-      const hook = await pool.afterCommit(original => afterTerminalTransition(original, task_id, updatedTask?.status || status, { sessionId: req.headers['x-session-id'] || null }));
+      const hook = await pool.afterCommit(pool => afterTerminalTransition(pool, task_id, updatedTask?.status || status, { sessionId: req.headers['x-session-id'] || null }));
       relay = hook?.relay ?? null;
     }
 
@@ -693,7 +692,6 @@ router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), hea
         }
       }
     }
-
 
     res.json({
       // 被降级时不许再报 success:true —— 请求的状态变更没发生，
