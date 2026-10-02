@@ -2,7 +2,7 @@
 
 **Brain 版本**: 1.360.6
 
-手机定时建单 B1 仅消费服务端独立登记，使用同一 PostgreSQL session 模板闸分类并建立真实 slot/task/receipt/owner；登记未知或失效拒绝回退普通建单。普通任务保留 CAS 与建单自身事务，默认告警和广播在确认释放闸后顺序完成。未安装生产模板、grant 或执行 controller，手机运行默认关闭。
+手机定时建单 B1 仅消费服务端独立登记，使用同一 PostgreSQL session 模板闸分类并建立真实 slot/task/receipt/owner；登记未知或失效拒绝回退普通建单。baseline/missed 推进在实际 UPDATE 后重核期限和真实模板指纹；连接与取锁采用内部固定1秒预算，业务查询保留原预算。普通任务保留 CAS 与建单自身事务，默认告警和广播在确认释放闸后顺序完成。未安装生产模板、grant 或执行 controller，手机运行默认关闭。
 
 
 Linux接入控制目录在宿主保持私有凭据缓存，容器统一挂到root父目录下的/run/cecelia-fleet-control；共享凭据目录及其所有者不变，所有权校验不放宽。

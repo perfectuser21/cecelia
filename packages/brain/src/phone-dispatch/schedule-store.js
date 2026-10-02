@@ -46,8 +46,9 @@ export async function processPhoneScheduledSlot(pool,{templateId,now=new Date()}
    const updated=await c.query('UPDATE recurring_tasks SET next_run_at=$1,last_run_status=$2 WHERE id=$3 AND next_run_at IS NOT DISTINCT FROM $4::timestamptz AND is_active=true RETURNING id',[plan.nextRunAt,plan.action,templateId,t.next_run_at_raw]);
    if(updated.rowCount!==1)throw Error('phone_schedule_cas_lost');
    // BEFORE UPDATE triggers can wait past expiry. Read again after all mutation work, before COMMIT.
-   const current=(await c.query("SELECT r.state='active' AND r.expires_at>clock_timestamp() AND t.is_active AS valid FROM phone_schedule_registrations r JOIN recurring_tasks t ON t.id=r.template_id WHERE r.id=$1",[r.id])).rows[0];
+   const current=(await c.query("SELECT t.*,r.state='active' AND r.expires_at>clock_timestamp() AND t.is_active AS valid FROM phone_schedule_registrations r JOIN recurring_tasks t ON t.id=r.template_id WHERE r.id=$1",[r.id])).rows[0];
    if(current?.valid!==true)throw Error('phone_schedule_expired');
+   if(fingerprint(current)!==r.template_digest)throw Error('phone_schedule_template_changed');
    return {state:plan.action,slot:plan.slot,nextRunAt:plan.nextRunAt};
   }
   if(plan.action!=='run')return {state:plan.action};
