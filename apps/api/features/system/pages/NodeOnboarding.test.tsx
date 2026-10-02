@@ -8,6 +8,7 @@ const fingerprint = `SHA256:${'a'.repeat(43)}`;
 const queued = {
   id: 'request-1', task_id: 'task-1', machine_name: 'node-1', status: 'queued', stage: 'connection' as string | null, error: null as string | null,
   notice: undefined as string | undefined,
+  automatic: undefined as boolean | undefined,
   steps: [{ key: 'connection', label: '连接检查', status: 'pending' }],
 };
 let history: typeof queued[];
@@ -63,6 +64,27 @@ function fillForm() {
 async function tick() { await act(async () => { await vi.advanceTimersByTimeAsync(4000); }); }
 
 describe('设备页接入新机器', () => {
+  it('既有机器从卡片接入，锁定原名称并默认observer，提交不携带UUID或授权', async () => {
+    machines = [machine('vps-hk', 'HK', { public_ip: '192.0.2.42', role: '公网入口 & AI 执行节点' })];
+    mount(); fireEvent.click(await screen.findByRole('button', { name: '接入管理：vps-hk' }));
+    expect(screen.getByLabelText('机器名称', { exact: true })).toHaveValue('vps-hk');
+    expect(screen.getByLabelText('机器名称', { exact: true })).toHaveAttribute('readonly');
+    expect(screen.getByLabelText('连接地址', { exact: true })).toHaveValue('192.0.2.42');
+    expect(screen.getByLabelText('用途', { exact: true })).toHaveValue('observer');
+    for (const [label,value] of [['SSH 用户','root'],['1Password 引用','op://CS/node/private key'],['主机指纹',fingerprint]])
+      fireEvent.change(screen.getByLabelText(label,{exact:true}),{target:{value}});
+    fireEvent.change(screen.getByLabelText('用途',{exact:true}),{target:{value:'worker'}});
+    expect(screen.getByText(/独占脚本槽/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'开始接入'}));
+    await waitFor(()=>expect(submissions).toHaveLength(1));
+    expect(submissions[0].body).toEqual({name:'vps-hk',address:'192.0.2.42',ssh_user:'root',ssh_port:22,
+      credential_ref:'op://CS/node/private key',host_key_fingerprint:fingerprint,role:'worker',region:'HK'});
+  });
+  it('已纳管机器不提供再次采用动作',async()=>{
+    machines=[machine('managed-node','HK',{onboarding:{state:'managed'}})];mount();
+    await screen.findByRole('button',{name:/managed-node/});
+    expect(screen.queryByRole('button',{name:'接入管理：managed-node'})).not.toBeInTheDocument();
+  });
   it('校验必填内容、凭据引用与主机指纹，不发送明文密钥', async () => {
     mount(); const submit = await openForm();
     fireEvent.click(submit);
@@ -119,6 +141,14 @@ describe('设备页接入新机器', () => {
     const count = () => vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/brain/machines').length;
     expect(count()).toBe(2);
     await tick(); expect(count()).toBe(2);
+  });
+  it('执行接入完成后持续核验，授权续验时撤下完成提示，重新就绪才刷新设备', async () => {
+    current={...queued,status:'completed',automatic:true,notice:'执行已接入'};history=[current];vi.useFakeTimers();await act(async()=>{mount();});
+    expect(screen.getByText('执行已接入')).toBeInTheDocument();
+    current={...queued,status:'in_progress',automatic:true,notice:'正在续验执行授权'};await tick();
+    expect(screen.queryByText('接入完成')).not.toBeInTheDocument();expect(screen.getByText('正在续验执行授权')).toBeInTheDocument();
+    const count=()=>vi.mocked(fetch).mock.calls.filter(([url])=>url==='/api/brain/machines').length,before=count();
+    current={...queued,status:'completed',automatic:true};await tick();expect(count()).toBe(before+1);await tick();expect(count()).toBe(before+1);
   });
   it('轮询失败保留进度、显示中文错误且不误报成功', async () => {
     history = [queued]; vi.useFakeTimers(); await act(async () => { mount(); });
@@ -185,8 +215,8 @@ describe('设备页接入新机器', () => {
 
   it('展示所有地区并保持现有地区优先排序', async () => {
     machines = ['other', 'CN', 'HK', 'US', 'Xian', 'Europe'].map(loc => machine(`node-${loc}`, loc));
-    mount(); await screen.findByRole('button', { name: /node-US/ });
-    for (const node of machines) expect(screen.getByRole('button', { name: new RegExp(node.name) })).toBeInTheDocument();
+    mount(); await screen.findByRole('button', { name: /^node-US/ });
+    for (const node of machines) expect(screen.getByRole('button', { name: new RegExp(`^${node.name}`) })).toBeInTheDocument();
     expect(screen.getAllByRole('heading', { level: 2 }).map(item => item.textContent?.trim())).toEqual([
       '🇺🇸 美国', '🇭🇰 香港', '西安', '🇨🇳 中国大陆', '其他', 'Europe',
     ]);
@@ -253,6 +283,12 @@ describe('设备页接入新机器', () => {
     expect(within(card).getByText(/健康采样：.*分钟前/)).toBeInTheDocument();
     expect(screen.queryByText('1 台监控健康')).not.toBeInTheDocument();
     expect(within(card).queryByText(/离线/)).not.toBeInTheDocument();
+  });
+  it('机器卡片只相信后台同代执行投影，metadata自报不能启用执行', async () => {
+    const first=machine('trusted-node','HK',{onboarding:{state:'managed'},node_health:{observed_at:new Date().toISOString(),capabilities:{execution:false}}});
+    machines=[{...first,execution:{enabled:true,expires_at:new Date(Date.now()+60000).toISOString(),verified_until:new Date(Date.now()+60000).toISOString()}},machine('forged-node','HK',{onboarding:{state:'managed'},node_health:{observed_at:new Date().toISOString(),capabilities:{execution:true}}})] as typeof machines;
+    mount();expect(within(await screen.findByRole('button',{name:/trusted-node/})).getByText('执行已启用')).toBeInTheDocument();
+    expect(within(screen.getByRole('button',{name:/forged-node/})).getByText('执行未启用')).toBeInTheDocument();
   });
   it('页面停留期间健康采样会自然转为过期', async () => {
     vi.useFakeTimers();

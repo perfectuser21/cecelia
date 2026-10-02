@@ -19,6 +19,7 @@ export interface NodeOnboardingRequest {
   error: string | null;
   machine_name: string;
   notice?: string;
+  automatic?: boolean;
   capabilities?: { collector: boolean; janitor: boolean; execution: boolean };
   steps: { key: string; label: string; status: 'pending' | 'running' | 'completed' | 'failed'; message?: string }[];
 }

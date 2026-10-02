@@ -9,6 +9,8 @@ import {beforeAll,beforeEach,afterAll,it,expect} from 'vitest';
 import {DB_DEFAULTS} from '../../db-config.js';
 import {fixture} from '../../linux-pool/__tests__/runtime-receipt-fixture.js';
 import {createLinuxRuntimeAuthorization} from '../../linux-pool/runtime-service.js';
+import {createOnboardingRecovery} from '../../linux-pool/onboarding-recovery.js';
+import {createLinuxOnboardingStep} from '../../linux-pool/onboarding-step.js';
 import {directory} from '../../execution-directory/directory.js';
 import {authorize,resolveCleanup} from '../../execution-directory/store.js';
 import {routeWork} from '../../work-router.js';
@@ -92,6 +94,47 @@ it('到期、配置换代、机器scheduler/US和请求注入均不能签发或�
  await expect(service.activate(machine,{runtime_id:p.id,expected_version_id:null,envelope:await signed(p)})).rejects.toThrow('linux_pool_runtime_unavailable');
  await pool.query("UPDATE system_registry SET metadata='{\"role\":\"scheduler\"}' WHERE id=$1",[machine]);await expect(service.prepare(machine,{expected_version_id:null})).rejects.toThrow('linux_pool_machine_forbidden');
  await expect(service.prepare('1a379d80-ad36-47d3-88ba-e545ab299a54',{expected_version_id:null})).rejects.toThrow('linux_pool_machine_forbidden');
+});
+it('过期验收只在完整签名清理确认后撤销并归档旧子任务，再准备全新代；未知不换nonce',async()=>{
+ const p=await service.prepare(machine,{expected_version_id:null}),state={runtime_json:JSON.stringify(p),expected_version_id:null};
+ const recover=createOnboardingRecovery({pool,runtimeAuthorization:service,readRuntime:async()=>f.deployment,afterTerminal:async()=>{}});
+ const envelope=await signed(p);expect(await recover('script',machine,state,envelope)).toBe(false);
+ await pool.query("UPDATE linux_script_authorizations SET challenge_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[p.id]);
+ await expect(recover('script',machine,state,await signed(p,r=>r.cases[0].cleanup.absent=false))).rejects.toThrow('linux_pool_runtime_receipt_invalid');
+ expect((await pool.query('SELECT state FROM linux_script_authorizations WHERE id=$1',[p.id])).rows[0].state).toBe('prepared');
+ expect(await recover('script',machine,state,envelope)).toBe(true);expect(await recover('script',machine,state,envelope)).toBe(true);
+ expect((await pool.query('SELECT state FROM linux_script_authorizations WHERE id=$1',[p.id])).rows[0].state).toBe('revoked');
+ expect((await pool.query('SELECT status,result FROM tasks WHERE id=$1',[p.evidence_task_id])).rows[0]).toMatchObject({status:'archived',result:{actor:'linux-pool-onboarding',evidence:{signature:envelope.signature}}});
+ const next=await service.prepare(machine,{expected_version_id:null});expect(next.nonce).not.toBe(p.nonce);expect(next.execution_version_id).not.toBe(p.execution_version_id);
+});
+it('显式撤销prepared后过期不得被内部恢复重新prepare，撤销在途续验也持久阻断',async()=>{
+ const p=await service.prepare(machine,{expected_version_id:null}),envelope=await signed(p),state={runtime_json:JSON.stringify(p),expected_version_id:null};
+ const flowId=randomUUID();await pool.query("INSERT INTO tasks(id,status,payload) VALUES($1,'in_progress',$2)",[flowId,{linux_onboarding:{machine_registry_id:machine,phase:'renew_wait'}}]);
+ await service.revoke(machine,{runtime_id:p.id,expected_version_id:null});await pool.query("UPDATE linux_script_authorizations SET challenge_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[p.id]);
+ const recover=createOnboardingRecovery({pool,runtimeAuthorization:service,readRuntime:async()=>f.deployment,afterTerminal:async()=>{}});
+ await expect(recover('script',machine,state,envelope)).rejects.toThrow('linux_pool_explicitly_revoked');
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[flowId])).rows[0].payload.linux_onboarding.revoked).toBe(true);
+});
+it('active已提交但阶段回执丢失跨24小时后，按实际current version进入内部续验且不误用旧CAS',async()=>{
+ const p=await service.prepare(machine,{expected_version_id:null}),envelope=await signed(p);await service.activate(machine,{runtime_id:p.id,expected_version_id:null,envelope});
+ await pool.query("UPDATE linux_script_authorizations SET authorization_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[p.id]);
+ let state={phase:'script_activate',runtime_json:JSON.stringify(p),script_envelope_json:JSON.stringify(envelope),expected_version_id:null};
+ const recover=createOnboardingRecovery({pool,runtimeAuthorization:service,readRuntime:async()=>f.deployment,afterTerminal:async()=>{}});
+ const step=createLinuxOnboardingStep({pool,runtimeAuthorization:service,recover});
+ const original=structuredClone(state);
+ await step({id:f.deployment.parent_task_id},{id:machine,name:f.deployment.machine_id,metadata:{onboarding:{request:{}}}},state,async s=>{state=s;});
+ expect(state).toMatchObject({phase:'renew_wait',expected_version_id:p.execution_version_id});
+ expect(await recover('script',machine,original,envelope)).toMatchObject({phase:'renew_wait',expected_version_id:p.execution_version_id});
+ expect((await pool.query('SELECT state FROM linux_script_authorizations WHERE id=$1',[p.id])).rows[0].state).toBe('revoked');
+});
+it('启动失败但精确清理已签名确认时仅归档旧canary并重读安装身份，不能直接激活',async()=>{
+ const p=await service.prepare(machine,{expected_version_id:null}),r=(await signed(p)).receipt;r.schema_version='linux-script-canary-cleanup/v1';delete r.script_adapter_verified;
+ r.cases=r.cases.map(({proof,terminal,...c})=>({...c,not_started:false}));const envelope={receipt:r,signature:createHmac('sha256',f.deployment.key).update(JSON.stringify(r)).digest('hex')};
+ await expect(service.activate(machine,{runtime_id:p.id,expected_version_id:null,envelope})).rejects.toThrow('linux_pool_runtime_receipt_invalid');
+ const recover=createOnboardingRecovery({pool,runtimeAuthorization:service,readRuntime:async()=>f.deployment,afterTerminal:async()=>{}});
+ expect(await recover('script',machine,{runtime_json:JSON.stringify(p),expected_version_id:null},envelope)).toEqual({phase:'renew_wait',expected_version_id:null});
+ expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[p.evidence_task_id])).rows[0].status).toBe('archived');
+ expect((await pool.query('SELECT state FROM execution_grants WHERE node_version_id=$1',[p.execution_version_id])).rows.every(g=>g.state==='revoked')).toBe(true);
 });
 it('激活中途失败回滚task完成/证据/目录/grants；授权历史及过期不可扩张',async()=>{
  const p=await service.prepare(machine,{expected_version_id:null});await pool.query(`CREATE FUNCTION reject_script_active() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.state='active' THEN RAISE EXCEPTION 'fixture_failure';END IF;RETURN NEW;END $$;CREATE TRIGGER reject_script_active BEFORE UPDATE ON execution_grants FOR EACH ROW EXECUTE FUNCTION reject_script_active()`);

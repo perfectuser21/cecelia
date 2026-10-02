@@ -1,3 +1,4 @@
+import {hasGpuExecutionRequest, GPU_EXECUTION_MESSAGE} from './gpu-execution-contract.js';
 /**
  * script-task-spec.js — executor=script（task_type script_run）的 payload 契约与安全闸
  * （链 bf5088a3 棒 3，任务 5cdbd52a；设计稿 docs/superpowers/specs/2026-09-25-script-executor-design.md）。
@@ -180,6 +181,7 @@ export function validateScriptPayload(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     fail('payload', 'payload 必须是对象 {host, cmd, timeout_sec, ...}', 'payload_not_object');
   }
+  if (hasGpuExecutionRequest(payload)) fail('runtime_resources.gpu', GPU_EXECUTION_MESSAGE, 'gpu_execution_unsupported');
   return {
     host: checkHost(payload.host),
     cmd: checkCmd(payload.cmd),

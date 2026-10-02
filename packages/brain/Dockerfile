@@ -33,6 +33,20 @@ ENV GIT_SHA=${GIT_SHA}
 RUN apk add --no-cache curl bash procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client sqlite flock \
  && adduser -D -u 1001 cecelia
 
+# 接入控制面只安装公开CLI；service token运行时从只读凭据挂载读取。
+# https://releases.1password.com/developers/cli/2.32.1/
+RUN case "$(apk --print-arch)" in \
+      x86_64) OP_ARCH=amd64; OP_SHA=64a49db2d1b0333f3bee88546e3e84995e530e25f2c783fb5d4081d01a05b2a1 ;; \
+      aarch64) OP_ARCH=arm64; OP_SHA=cf6d114b12079ba5ac4f3ea6c69d331c06565c361aeae77f8c20868bd94c9885 ;; \
+      *) exit 1 ;; esac \
+ && curl --fail --silent --show-error --location --max-time 60 \
+      "https://cache.agilebits.com/dist/1P/op2/pkg/v2.32.1/op_linux_${OP_ARCH}_v2.32.1.zip" -o /tmp/op.zip \
+ && echo "${OP_SHA}  /tmp/op.zip" | sha256sum -c - \
+ && unzip -p /tmp/op.zip op > /usr/local/bin/op \
+ && chmod 0755 /usr/local/bin/op \
+ && test "$(/usr/local/bin/op --version)" = 2.32.1 \
+ && rm /tmp/op.zip
+
 # Install Codex CLI globally so triggerCodexReview() in executor.js can spawn it.
 # 历史事故：容器漏装 codex CLI → spawn ENOENT → cecelia-run breaker failures=351 OPEN
 # → 阻断所有 dispatch（spec_review/code_review_gate/arch_review/initiative_review）。

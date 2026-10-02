@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict';
+const {projectGpuObservation}=require('./gpu-observation.cjs');
 
 const { Buffer } = require('node:buffer');
 const { createHmac, createHash, timingSafeEqual, randomUUID } = require('node:crypto');
@@ -97,6 +98,7 @@ function projectHealth(report) {
     ? report
     : {};
   return {
+    ...(source.gpu ? {gpu: {schema_version: 'fleet-gpu-observation/v1', scope: 'host', ...projectGpuObservation(source.gpu)}} : {}),
     ...(source.linux_observation ? { linux_observation: projectLinuxObservation(source.linux_observation) } : {}),
     schema_version: safeString(source.schema_version, 'fleet-node-health/v1'),
     machine_id: safeString(source.machine_id, 'unconfigured'),
