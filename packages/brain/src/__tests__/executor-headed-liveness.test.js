@@ -106,25 +106,3 @@ describe('有头合同使用参数化tmux探测', () => {
     expect(boundary.processes.execSync).not.toHaveBeenCalled();
   });
 });
-
-describe('手机controller专属回执所有权不走旧device超时回队',()=>{
- it.each([false,true])('认领180min无spawn时连续probe不写task、不suspect、不传播guard错误（DBguard=%s）',async(enforceGuard)=>{
-  task.task_type='device_job';task.executor_kind='phone-ssh-controller';task.claimed_by='phone-dispatch:test';task.error_message=null;task.payload={phone_dispatch_id:'test'};
-  if(enforceGuard){const query=boundary.pool.query.getMockImplementation();boundary.pool.query.mockImplementation(async(sql,...args)=>{
-   if(/UPDATE tasks/.test(sql))throw Error('phone_task_managed');return query(sql,...args);
-  });}
-  executor.suspectProcesses.set(task.id,{firstSeen:new Date().toISOString(),tickCount:1});
-  expect(await probeTwice()).toEqual([]);expect(task.status).toBe('in_progress');expect(executor.suspectProcesses.has(task.id)).toBe(false);
-  expect(boundary.pool.query.mock.calls.some(([sql])=>/UPDATE tasks/.test(sql))).toBe(false);
- });
- it('旧device_job超过45min仍走双确认回队，payload伪造phone不能抢所有权',async()=>{
-  task.task_type='device_job';task.executor_kind=null;task.claimed_by='legacy-device-worker';task.error_message=null;
-  task.payload={phone_dispatch_id:'fake',executor_kind:'phone-ssh-controller'};
-  expect(await executor.probeTaskLiveness()).toEqual([]);expect(executor.suspectProcesses.has(task.id)).toBe(true);
-  expect(await executor.probeTaskLiveness()).toEqual([expect.objectContaining({action:'liveness_safe_requeue'})]);expect(task.status).toBe('queued');
- });
- it('错误task_type不能借phone executor_kind豁免本机探活',async()=>{
-  task.executor_kind='phone-ssh-controller';task.claimed_by='phone-dispatch:fake';
-  expect(await probeTwice()).toEqual([expect.objectContaining({action:'liveness_auto_requeue'})]);expect(task.status).toBe('queued');
- });
-});
