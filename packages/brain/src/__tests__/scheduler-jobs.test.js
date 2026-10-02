@@ -239,12 +239,23 @@ import { runReceiptCollector } from '../receipt-collector.js';
 import { runLaunchdPatrol } from '../launchd-patrol.js';
 import { maybeRunDirectionProposer } from '../direction-proposer.js';
 import { runPostdeployVerifier } from '../postdeploy-verifier.js';
+import { runDirectoryJob } from '../projection/directory-job.js';
 
 function makePool() {
   return { query: vi.fn().mockResolvedValue({ rows: [] }) };
 }
 
 describe('scheduler-jobs 注册表', () => {
+  it('目录投影job隔离外部边界并准确传递同一pool', async () => {
+    const pool = makePool();
+    const job = JOBS.find(row => row.name === 'notion-directory');
+    expect(job?.needsPool).toBe(true);
+    const results = await runSchedulerJobsOnce(pool, [job]);
+    expect(runDirectoryJob).toHaveBeenCalledTimes(1);
+    expect(runDirectoryJob).toHaveBeenCalledWith(pool);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ name: 'notion-directory', ok: true });
+  });
   it('节点接入对账使用数据库连接并保留 handler 结果', async () => {
     const pool = makePool();
     const job = JOBS.find(row => row.name === 'node-onboarding');
