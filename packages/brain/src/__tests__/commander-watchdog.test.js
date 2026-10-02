@@ -149,6 +149,27 @@ describe('runCommanderWatchdog', () => {
     return { fn, seen };
   }
 
+  it('add成功但首轮run失败：保留接班身份，落失败事件，不伪写恢复心跳', async () => {
+    const pool = makePool([
+      [/FROM tasks[\s\S]*commander_heartbeat_at/, { rows: [RUN] }],
+      [/UPDATE tasks/, (sql, params) => ({ rows: [{ id: params[0] }], rowCount: 1 })],
+    ]);
+    const execFileFn = vi.fn((cmd, args, opts, callback) => {
+      const remote = args.at(-1);
+      if (remote.includes('cron run')) return callback(new Error('queue unavailable'), '', '');
+      callback(null, remote.includes('cron list') ? '{"jobs":[]}' : '{"id":"esc-relaunched-1111"}', '');
+    });
+    const bark = vi.fn();
+    const out = await runCommanderWatchdog(pool, { execFileFn, bark, gateMs: 0 });
+    expect(out.relaunched).toBe(1);
+    const patch = JSON.parse(pool.calls.find(c => /UPDATE tasks/.test(c.sql)).params[1]);
+    expect(patch.escort_id).toBe('esc-relaunched-1111');
+    expect(patch.commander_heartbeat_at).toBeUndefined();
+    const events = pool.calls.filter(c => /INSERT INTO task_events/.test(c.sql)).map(c => c.params[1]);
+    expect(events).toEqual(['commander_relaunched', 'commander_activation_failed']);
+    expect(bark).not.toHaveBeenCalled();
+  });
+
   it('心跳过期（判据在 SQL）→ 先 rm 旧 escort 再 add 同名 escort，新 id 回写 payload，计数 +1，task_events commander_relaunched；不 Bark', async () => {
     const pool = makePool([
       [/FROM tasks[\s\S]*commander_heartbeat_at/, (sql, params) => {

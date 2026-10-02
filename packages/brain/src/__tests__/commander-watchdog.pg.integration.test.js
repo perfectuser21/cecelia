@@ -97,7 +97,9 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
     expect(p[young].escort_id).toBeUndefined();
     expect(p[barked].commander_relaunch_count).toBe(3);
     const ev = await client.query(`SELECT event_type FROM task_events WHERE task_id = ANY($1::uuid[])`, [[stale, never]]);
-    expect(ev.rows.map((r) => r.event_type)).toEqual(['commander_relaunched', 'commander_relaunched']);
+    expect(ev.rows.filter((r) => r.event_type === 'commander_relaunched')).toHaveLength(2);
+    expect(ev.rows.filter((r) => r.event_type === 'commander_activation_requested')).toHaveLength(2);
+    expect(ev.rows).toHaveLength(4);
     expect(bark).not.toHaveBeenCalled();
     // 刚接班的（commander_relaunched_at 新）下一轮不再拉
     const again = await runCommanderWatchdog(client, { execFileFn: ssh(), bark, gateMs: 0 });
