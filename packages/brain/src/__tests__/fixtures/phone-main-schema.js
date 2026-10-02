@@ -13,3 +13,7 @@ export function phoneMigrationFile(files,suffix) {
  if(matches.length!==1)throw Error(`phone_fixture_migration_ambiguous:${suffix}`);
  return matches[0];
 }
+
+export function assertPhoneFixtureDatabase(database,ci,message='phone_fixture_scratch_required') {
+ if(database!=='cecelia_scratch'&&!(ci==='true'&&database==='cecelia_test'))throw Error(message);
+}

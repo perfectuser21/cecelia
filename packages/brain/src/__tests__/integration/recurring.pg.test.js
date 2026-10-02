@@ -1,3 +1,4 @@
+import {assertPhoneFixtureDatabase} from '../fixtures/phone-main-schema.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
@@ -12,7 +13,7 @@ vi.mock('../../db.js', () => ({ default: {
   get options() { return holder.pool.options; }, query: (...args) => holder.pool.query(...args), connect: () => holder.pool.connect(),
 } }));
 vi.mock('../../task-updater.js', () => ({ broadcastTaskState: vi.fn() }));
-if (DB_DEFAULTS.database !== 'cecelia_scratch' && !(process.env.CI === 'true' && /_test$/.test(DB_DEFAULTS.database))) throw Error('recurring_fixture_scratch_required');
+assertPhoneFixtureDatabase(DB_DEFAULTS.database,process.env.CI,'recurring_fixture_scratch_required');
 const schema = `recurring_expiry_${process.pid}_${randomUUID().replaceAll('-', '')}`;
 const admin = new pg.Client(DB_DEFAULTS), now = new Date(); now.setSeconds(10, 0);
 const due = new Date(now); due.setSeconds(0, 0);

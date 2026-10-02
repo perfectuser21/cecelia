@@ -1,3 +1,4 @@
+import {assertPhoneFixtureDatabase} from '../__tests__/fixtures/phone-main-schema.js';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
 import {beforeAll,afterAll,afterEach,it,expect,vi} from 'vitest';
@@ -10,7 +11,7 @@ const holder=vi.hoisted(()=>({pool:null,queries:[],broadcasts:[]}));
 vi.mock('../db.js',()=>({default:{get options(){return holder.pool.options;},query:(...a)=>{holder.queries.push(String(a[0]));return holder.pool.query(...a);},connect:()=>holder.pool.connect()}}));
 vi.mock('../event-bus.js',()=>({emit:vi.fn((...args)=>holder.broadcasts.push(args))}));
 const schema=`phone_recurring_${process.pid}_${randomUUID().replaceAll('-','')}`;
-if(DB_DEFAULTS.database!=='cecelia_scratch'&&!(process.env.CI==='true'&&/_test$/.test(DB_DEFAULTS.database)))throw Error('phone_recurring_fixture_scratch_required');
+assertPhoneFixtureDatabase(DB_DEFAULTS.database,process.env.CI,'phone_recurring_fixture_scratch_required');
 const admin=new pg.Client(DB_DEFAULTS);
 let pool,engine,store,defaultDb;
 const auth={registryAuthority:PHONE_SCHEDULE_REGISTRY_AUTHORITY};

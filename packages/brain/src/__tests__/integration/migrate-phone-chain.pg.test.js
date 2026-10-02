@@ -1,3 +1,4 @@
+import {assertPhoneFixtureDatabase} from '../fixtures/phone-main-schema.js';
 import fs from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
@@ -7,7 +8,7 @@ import {runMigrations} from '../../migrate.js';
 import {createPhoneScheduleSchema} from '../fixtures/phone-schedule-schema.js';
 import {phoneMigrationFile} from '../fixtures/phone-main-schema.js';
 const schema=`phone_chain_${process.pid}_${randomUUID().replaceAll('-','')}`;
-if(DB_DEFAULTS.database!=='cecelia_scratch'&&!(process.env.CI==='true'&&/_test$/.test(DB_DEFAULTS.database)))throw Error('phone_chain_fixture_scratch_required');
+assertPhoneFixtureDatabase(DB_DEFAULTS.database,process.env.CI,'phone_chain_fixture_scratch_required');
 const admin=new pg.Client(DB_DEFAULTS);let pool;
 const directory=new URL('../../../migrations/',import.meta.url);
 const suffixes=['phone_http_bindings','phone_http_leases','phone_scheduled_slots'];

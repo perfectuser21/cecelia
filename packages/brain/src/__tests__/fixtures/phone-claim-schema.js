@@ -1,3 +1,4 @@
+import {assertPhoneFixtureDatabase} from './phone-main-schema.js';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
@@ -7,7 +8,7 @@ import { LEGACY_BINDINGS } from '../../execution-directory/legacy-policy.js';
 import { PHONE_SCHEDULE_REGISTRY_AUTHORITY } from '../../phone-dispatch/task-authority.js';
 
 export async function createPhoneClaimFixture(onPool, { busyLegacy = false, workerHistorical = true, publicClaims = false } = {}) {
-  if (DB_DEFAULTS.database !== 'cecelia_scratch' && !(process.env.CI === 'true' && /_test$/.test(DB_DEFAULTS.database))) throw Error('phone_claim_fixture_scratch_required');
+  assertPhoneFixtureDatabase(DB_DEFAULTS.database,process.env.CI,'phone_claim_fixture_scratch_required');
   const schema = `phone_claim_${process.pid}_${randomUUID().replaceAll('-', '')}`;
   const admin = new pg.Client(DB_DEFAULTS); let pool, created = false;
   try {

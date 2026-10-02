@@ -1,3 +1,4 @@
+import {assertPhoneFixtureDatabase} from '../__tests__/fixtures/phone-main-schema.js';
 import {createPhoneScheduleSchema} from '../__tests__/fixtures/phone-schedule-schema.js';
 import {observation} from '../__tests__/fixtures/phone-capacity.js';
 import {resolvePhoneHubBinding} from './http-binding.js';
@@ -12,7 +13,7 @@ import {LEGACY_BINDINGS} from '../execution-directory/legacy-policy.js';
 import {createAttemptStore} from '../orchestrator/attempt-store.js';
 if(process.env.TEST_DATABASE_URL)throw Error('phone_fixture_explicit_database_required');
 const options=DB_DEFAULTS;
-if(DB_DEFAULTS.database!=='cecelia_scratch'&&!(process.env.CI==='true'&&/_test$/.test(DB_DEFAULTS.database)))throw Error('phone_fixture_scratch_required');
+assertPhoneFixtureDatabase(DB_DEFAULTS.database,process.env.CI,'phone_fixture_scratch_required');
 const schema=`phone_dispatch_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const admin=new pg.Client(options),pool=new pg.Pool({...options,max:8,options:`-c search_path=${schema}`});
 const machine='xian-mac-m1',host='xian-m1',serial='test-phone',profile='test-profile',account='test-account';

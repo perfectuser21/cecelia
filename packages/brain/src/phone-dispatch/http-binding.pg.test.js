@@ -1,3 +1,4 @@
+import {assertPhoneFixtureDatabase} from '../__tests__/fixtures/phone-main-schema.js';
 import {createPhoneScheduleSchema,applyPhoneScheduleMigration} from '../__tests__/fixtures/phone-schedule-schema.js';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
@@ -6,7 +7,7 @@ import {DB_DEFAULTS} from '../db-config.js';
 import {endpoint} from '../__tests__/fixtures/phone-http.js';
 if(process.env.TEST_DATABASE_URL)throw Error('phone_fixture_explicit_database_required');
 const options=DB_DEFAULTS;
-if(DB_DEFAULTS.database!=='cecelia_scratch'&&!(process.env.CI==='true'&&/_test$/.test(DB_DEFAULTS.database)))throw Error('phone_fixture_scratch_required');
+assertPhoneFixtureDatabase(DB_DEFAULTS.database,process.env.CI,'phone_fixture_scratch_required');
 const schema=`phone_http_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const admin=new pg.Client(options),pool=new pg.Pool({...options,options:`-c search_path=${schema}`});
 const registryId=randomUUID();let revision=0;

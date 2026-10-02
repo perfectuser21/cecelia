@@ -1,3 +1,4 @@
+import {assertPhoneFixtureDatabase} from '../__tests__/fixtures/phone-main-schema.js';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
 import {beforeAll,afterAll,it,expect,vi} from 'vitest';
@@ -10,7 +11,7 @@ const holder=vi.hoisted(()=>({pool:null}));
 vi.mock('../db.js',()=>({default:{query:(...a)=>holder.pool.query(...a),connect:(...a)=>holder.pool.connect(...a)}}));
 vi.mock('../task-updater.js',()=>({broadcastTaskState:vi.fn()}));
 const schema=`phone_schedule_${process.pid}_${randomUUID().replaceAll('-','')}`;
-if(DB_DEFAULTS.database!=='cecelia_scratch'&&!(process.env.CI==='true'&&/_(test)$/.test(DB_DEFAULTS.database)))throw Error('phone_schedule_fixture_scratch_required');
+assertPhoneFixtureDatabase(DB_DEFAULTS.database,process.env.CI,'phone_schedule_fixture_scratch_required');
 const admin=new pg.Client(DB_DEFAULTS);
 let pool,store,legacyBefore,legacyAfter;
 const phone={machine_id:'xian-mac-m1',serial:`fixture-${process.pid}`,host:'xian-m1',profile:'fixture-profile',account_id:'fixture-account',action:'adb_get_state'};
