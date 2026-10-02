@@ -1,4 +1,5 @@
 import { runImageRetentionJanitor } from './image-retention-scheduler.js';
+import { startCompletionJobsLoop, stopCompletionJobsLoop } from './scheduler-completion-loop.js';
 import {reconcileAppServers} from './app-server/controller.js';
 import { runPreviewCacheJanitor } from './preview-cache-scheduler.js';
 import { runCompanyKrWorkflow } from './projection/company-kr-workflow.js';
@@ -190,7 +191,9 @@ const PROJECTION_JOB_NAME_SET = new Set([
 ]);
 
 export const PROJECTION_JOBS = JOBS.filter(job => PROJECTION_JOB_NAME_SET.has(job.name));
-export const SERIAL_JOBS = JOBS.filter(job => !PROJECTION_JOB_NAME_SET.has(job.name));
+const COMPLETION_JOB_NAMES = new Set(['script-reaper', 'node-onboarding']);
+export const COMPLETION_JOBS = JOBS.filter(job => COMPLETION_JOB_NAMES.has(job.name));
+export const SERIAL_JOBS = JOBS.filter(job => !PROJECTION_JOB_NAME_SET.has(job.name) && !COMPLETION_JOB_NAMES.has(job.name));
 
 function raceWithTimeout(promise, timeoutMs) {
   let timer;
@@ -271,6 +274,7 @@ export function startSchedulerJobsLoop(pool) {
     return null;
   }
   if (loopTimer) return loopTimer;
+  startCompletionJobsLoop(pool, COMPLETION_JOBS, runSchedulerJobsOnce);
   // 供死人开关比对：预期 job 数写库，加 job 自动同步，哨兵脚本无需硬编码
   writeSentinelRaw(pool, 'scheduler_jobs_expected', { count: JOBS.length });
   loopTimer = setInterval(() => {
@@ -289,6 +293,7 @@ export function startSchedulerJobsLoop(pool) {
 
 /** 停止 loop（测试用）。 */
 export function stopSchedulerJobsLoop() {
+  stopCompletionJobsLoop();
   if (loopTimer) {
     clearInterval(loopTimer);
     loopTimer = null;
