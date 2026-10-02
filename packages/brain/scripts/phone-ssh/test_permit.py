@@ -155,3 +155,59 @@ class PermitTest(unittest.TestCase):
         thread = threading.Thread(target=borrowed); thread.start(); thread.join(timeout=1)
         self.assertFalse(thread.is_alive()); self.assertEqual(result, ['denied'])
         self.assertFalse(select.select([self.server], [], [], 0.02)[0])
+
+    def test_parent_death_after_durable_go_before_byte_does_not_restart(self):
+        self.host.close(); owner = os.fork()
+        if owner == 0:
+            try:
+                host = admission.HostExclusive().acquire(); child = permit.FixedSocketChild(self.identity, host)
+                write = os.write
+                def die(fd, raw):
+                    if raw == b'1': os.kill(os.getpid(), signal.SIGKILL)
+                    return write(fd, raw)
+                with patch.object(permit.os, 'write', side_effect=die): permit.send(self.identity, host, child)
+            except BaseException: os._exit(126)
+            os._exit(127)
+        _, status = os.waitpid(owner, 0)
+        self.assertEqual(os.WTERMSIG(status), signal.SIGKILL)
+        state = admission.Admission().snapshot()['pending'][self.identity['dispatch_id']]
+        self.assertEqual(state['phase'], 'go_committed'); self.assertNotIn('receipt', state)
+        self.assertFalse(select.select([self.server], [], [], 0.02)[0])
+
+    def test_control_writers_obey_real_cross_process_admission_guard(self):
+        with admission.locked():
+            self.assertEqual(self.fixture.child(lambda: permit._replace_control(draining=True)), b'denied')
+        self.assertEqual(self.fixture.child(lambda: permit._replace_control(draining=True)), b'accepted')
+
+    def test_final_disk_and_activation_recheck_rejects_without_socket(self):
+        child = self.child()
+        class LowDisk:
+            f_bavail = 1
+            f_frsize = 1
+        with patch.object(permit.os, 'statvfs', return_value=LowDisk()):
+            with self.assertRaises(ValueError): permit.send(self.identity, self.host, child)
+        record = dict(self.fixture.fixture.record); record['expires_at'] = record['issued_at']
+        self.fixture.fixture.store(record)
+        with self.assertRaises(ValueError): permit.send(self.identity, self.host, child)
+        self.assertFalse(select.select([self.server], [], [], 0.02)[0])
+
+    def test_permit_actual_bytes_tamper_refuses_installed_identity(self):
+        import probe
+        path = self.fixture.fixture.source / 'permit.py'
+        path.write_bytes(path.read_bytes() + b'\n# changed permit\n')
+        with self.assertRaises(ValueError):
+            probe.installed_identity(manifest_path=self.fixture.fixture.install / 'probe.json',
+                                     config_path=self.fixture.fixture.install / 'worker.json',
+                                     source_root=self.fixture.fixture.source)
+
+    def test_expiry_during_go_fsync_stays_unknown_without_permit(self):
+        child = self.child(); publish = permit._publish
+        def expire(path, value):
+            publish(path, value)
+            if path.name == 'admission-state.json':
+                record = dict(self.fixture.fixture.record); record['expires_at'] = record['issued_at']
+                self.fixture.fixture.store(record)
+        with patch.object(permit, '_publish', side_effect=expire):
+            with self.assertRaises(ValueError): permit.send(self.identity, self.host, child)
+        self.assertEqual(admission.Admission().snapshot()['pending'][self.identity['dispatch_id']]['phase'], 'go_committed')
+        self.assertFalse(select.select([self.server], [], [], 0.02)[0])
