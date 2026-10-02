@@ -11,6 +11,7 @@ const MAINTENANCE_FIELDS=['pending','in_flight','activity_revision','draining','
 function validMaintenance(value,boot){
  return exactKeys(value,MAINTENANCE_FIELDS,['journal_pending','external_occupied'])&&maintenanceValid(value)&&
   (!value.marker_identity||!boot||value.marker_identity.boot_id===boot)&&
+  Object.hasOwn(value,'journal_pending')===Object.hasOwn(value,'external_occupied')&&
   (!Object.hasOwn(value,'journal_pending')||(int(value.journal_pending)&&int(value.external_occupied)&&value.pending===value.journal_pending+value.external_occupied));
 }
 function processValid(value,boot){return exactKeys(value,['pid','boot_id','start_time','pgid','state'])&&Number.isSafeInteger(value.pid)&&value.pid>1&&Number.isSafeInteger(value.pgid)&&value.pgid>0&&value.boot_id===boot&&string(value.start_time)&&string(value.state);}
@@ -21,7 +22,8 @@ function capabilityValid(r,b){
  if(!['machine_id','worker_id','physical_boot_id','action_digest'].every(k=>r[k]===p[k])||r.physical_config_digest!==p.config_digest||r.physical_build_digest!==p.build_digest||r.action!=='adb_get_state'||!fresh(r.physical_observed_at))return false;
  const v=r.resources;
  return exactKeys(v,['cpu_count','memory_total_bytes','memory_free_bytes','load_1m','data_free_bytes'])&&['cpu_count','memory_total_bytes','data_free_bytes'].every(k=>int(v[k])&&v[k]>0)&&int(v.memory_free_bytes)&&v.memory_free_bytes<=v.memory_total_bytes&&Number.isFinite(v.load_1m)&&v.load_1m>=0&&
-  exactKeys(r.adb_daemon,['reachable'])&&typeof r.adb_daemon.reachable==='boolean'&&exactKeys(r.external_locks,['occupied'])&&int(r.external_locks.occupied)&&validMaintenance(r.maintenance,p.physical_boot_id)&&r.maintenance.pending>=r.external_locks.occupied&&(!r.maintenance.quiescent||r.external_locks.occupied===0);
+  exactKeys(r.adb_daemon,['reachable'])&&typeof r.adb_daemon.reachable==='boolean'&&exactKeys(r.external_locks,['occupied'])&&int(r.external_locks.occupied)&&validMaintenance(r.maintenance,p.physical_boot_id)&&
+  Object.hasOwn(r.maintenance,'journal_pending')&&r.maintenance.external_occupied===r.external_locks.occupied&&r.maintenance.pending>=r.external_locks.occupied&&(!r.maintenance.quiescent||r.external_locks.occupied===0);
 }
 function maintenanceReceiptValid(r,b){
  if(!exactKeys(r,[...COMMON,'proof_scope','hub_control','targets','pending','stable','quiescent'])||r.proof_scope!=='hub-control'||!validMaintenance(r.hub_control,b.hub_boot_id)||!Array.isArray(r.targets)||r.targets.length<1||r.targets.length>16||typeof r.stable!=='boolean'||typeof r.quiescent!=='boolean')return false;
