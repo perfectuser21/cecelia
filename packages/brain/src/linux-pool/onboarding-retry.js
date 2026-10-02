@@ -1,8 +1,26 @@
 import {randomBytes,randomUUID} from 'node:crypto';
 import {requestHash,validateReceipt} from '../node-onboarding/spec.js';
-import {error} from './deployment.js';
+import {isIP} from 'node:net';
+import {isDeepStrictEqual} from 'node:util';
+import poolModule from '../../scripts/fleet-worker/linux-pool-profile.cjs';
+import {error,exact} from './deployment.js';
 const MISSING_ANCHOR='S2锚点执法：task缺少 payload.anchor.{journey_id,gp_id,step_id}，拒绝点火';
 const deny=()=>{throw error('linux_pool_retry_unconfirmed');};
+// 原预算必须完整、合法且绑定原机器；这里只验证既有证明，不从健康快照补造预算。
+function requireOriginalPolicy(value,machine,request){
+ try{
+  if(typeof value!=='string'||!value||value.length>65536)deny();
+  const p=JSON.parse(value),v=poolModule.validateLinuxPoolProfile(p.pool),b=v.pool;
+  if(!exact(p,['capacity','pool','profiles'])||p.capacity!==1||!v.execution_budget_available
+   ||v.machine_registry_id!==machine.id||v.machine_id!==machine.name||v.role!=='worker'
+   ||(isIP(request.address)&&v.endpoint_host!==request.address)
+   ||b.cpu_cores<.5||b.cpu_cores>2||b.memory_bytes<256*2**20||b.memory_bytes>4*2**30
+   ||b.memory_bytes%2**20!==0||b.pids_limit!==256||!exact(p.profiles,['shell'])
+   ||!exact(p.profiles.shell,['image_id','profile'])||!/^sha256:[a-f0-9]{64}$/.test(p.profiles.shell.image_id??''))deny();
+  if(!isDeepStrictEqual(p.profiles.shell.profile,{image:v.canary_image,cpus:b.cpu_cores,memoryBytes:Math.min(2**30,b.memory_bytes),
+   pidsLimit:64,logMaxSizeBytes:2**20,logMaxFiles:1,user:'65534:65534',cwd:'/tmp'}))deny();
+ }catch{deny();}
+}
 /** 只接续有正式误收证据的旧控制任务；不复活failed，不从外部请求导入状态。 */
 export async function prepareFailedControllerRetry(db,task,source,machine,revision){
  const s=task?.payload?.linux_onboarding,meta=source?.payload?.node_onboarding;
@@ -13,6 +31,7 @@ export async function prepareFailedControllerRetry(db,task,source,machine,revisi
   ||source.status!=='completed'||!source.completed_at||s.parent_task_id!==source.id
   ||requestHash(meta.request)!==s.request_hash||meta.request.role!=='worker'||meta.request.name!==machine.name
   ||machine.metadata?.onboarding?.execution_task_id!==task.id||!/^[a-f0-9]{40}$/.test(revision??''))deny();
+ requireOriginalPolicy(s.policy_json,machine,meta.request);
  try{if(validateReceipt(source,source.completed_at).health.os!=='linux')deny();}catch{deny();}
  const route=await db.query("SELECT 1 FROM work_routing_receipts WHERE task_id=$1 AND source='scheduler' AND source_id=$2 AND canonical_task_type='audit'",[task.id,'linux-pool-onboarding:'+s.nonce]);
  const event=await db.query(`SELECT 1 FROM task_events WHERE task_id=$1 AND event_type='watchdog_safe_requeue'
@@ -33,7 +52,7 @@ export async function prepareFailedControllerRetry(db,task,source,machine,revisi
  return {machine_registry_id:machine.id,onboarding_id:s.onboarding_id,parent_task_id:source.id,
   phase:'probe',request_hash:s.request_hash,nonce:randomBytes(32).toString('hex'),intent_id:randomUUID(),revision,
   expected_version_id:s.expected_version_id,resume_of_task_id:task.id,
-  ...(s.policy_json?{policy_json:s.policy_json}:{}),
+  policy_json:s.policy_json,
   ...(s.credentials?{credentials:s.credentials}:{}),...(s.credential_files?{credential_files:s.credential_files}:{}),
   ...(s.pool_policy_digest?{pool_policy_digest:s.pool_policy_digest}:{}),...(s.runtime_policy_digest?{runtime_policy_digest:s.runtime_policy_digest}:{})};
 }

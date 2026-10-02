@@ -143,6 +143,7 @@ it('原官方retry保留误收failed历史，以同机新私有controller棒从p
  expect(row).toMatchObject({status:'in_progress',executor_kind:'linux-pool-controller',claimed_by:'linux-pool-onboarding',parent_task_id:id});
  expect(row.payload.linux_onboarding.nonce).not.toBe(old.payload.linux_onboarding.nonce);
  expect(row.payload.linux_onboarding.intent_id).not.toBe(old.payload.linux_onboarding.intent_id);
+ expect(row.payload.linux_onboarding.policy_json).toBe(old.payload.linux_onboarding.policy_json);
  expect((await pool.query('SELECT status,error_message FROM tasks WHERE id=$1',[id])).rows[0]).toMatchObject({status:'failed',error_message:old.error_message});
  expect((await f.retry(id)).task_id).toBe(next.task_id);
 });
