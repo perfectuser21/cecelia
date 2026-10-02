@@ -158,7 +158,7 @@ FAIL=0
 run_scanner() {
   local scanner="$1" repo_name="${2:-}" repo_root="${3:-}" source_database_url="${4:-}"
   if [[ -n "$repo_name" ]]; then
-    SCAN_REPO_NAME="$repo_name" SCAN_REPO_ROOT="$repo_root" \
+    SCAN_REPO_NAME="$repo_name" SCAN_REPO_ROOT="$repo_root" SCAN_SOURCE_REPO_NAME="${5:-$repo_name}" \
       SOURCE_DATABASE_URL="${source_database_url:-${DATABASE_URL:-}}" \
       GRAPH_REPOS="$repo_name" "$NODE_BIN" "scripts/scan/${scanner}"
   else
@@ -223,6 +223,7 @@ fi
 }
 
 # 既有定时批次自动追加已显式登记的试点图；原仓四类事实与scope保持不变。
+TARGET_SOURCE_NAMES=("${TARGET_NAMES[@]}")
 PRIMARY_TARGET_COUNT=${#TARGET_NAMES[@]}
 PRIMARY_TARGET_NAMES="${TARGET_NAMES[*]}"
 PILOT_SCOPES=()
@@ -234,6 +235,7 @@ if [[ $DEFAULT_BATCH -eq 1 ]]; then
     fi
     while IFS='|' read -r _pilot_repo _pilot_root _pilot_scope; do
       [[ -z "$_pilot_repo" ]] && continue
+      TARGET_SOURCE_NAMES+=("${TARGET_NAMES[$_i]}")
       TARGET_NAMES+=("$_pilot_repo")
       TARGET_ROOTS+=("$_pilot_root")
       TARGET_DATABASE_URLS+=("")
@@ -247,7 +249,7 @@ for _target_index in "${!TARGET_NAMES[@]}"; do
   for _s in "${SCANNERS[@]}"; do
     if [[ $_target_index -ge $PRIMARY_TARGET_COUNT && "$_s" != "scan-graph.mjs" ]]; then continue; fi
     if run_scanner "$_s" "${TARGET_NAMES[$_target_index]}" \
-      "${TARGET_ROOTS[$_target_index]}" "${TARGET_DATABASE_URLS[$_target_index]}"; then
+      "${TARGET_ROOTS[$_target_index]}" "${TARGET_DATABASE_URLS[$_target_index]}" "${TARGET_SOURCE_NAMES[$_target_index]}"; then
       echo "OK: repo=${TARGET_NAMES[$_target_index]} ${_s}"
     else
       echo "FAIL: repo=${TARGET_NAMES[$_target_index]} ${_s}"
