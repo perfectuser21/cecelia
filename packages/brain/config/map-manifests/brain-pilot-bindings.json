@@ -2,7 +2,7 @@
   "phones": {
     "scope_key": "zenithjoy",
     "source_repo": "perfectuser21/zenithjoy-workspace",
-    "registry_repo": "zenithjoy-workspace",
+    "registry_repo": "zenithjoy-pilot-source",
     "mode": "create",
     "value_streams": [
       {

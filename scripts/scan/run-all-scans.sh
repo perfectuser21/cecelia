@@ -222,8 +222,30 @@ fi
   exit 3
 }
 
+# 既有定时批次自动追加已显式登记的试点图；原仓四类事实与scope保持不变。
+PRIMARY_TARGET_COUNT=${#TARGET_NAMES[@]}
+PRIMARY_TARGET_NAMES="${TARGET_NAMES[*]}"
+PILOT_SCOPES=()
+if [[ $DEFAULT_BATCH -eq 1 ]]; then
+  for ((_i=0; _i<PRIMARY_TARGET_COUNT; _i++)); do
+    if ! _pilot_targets="$("$NODE_BIN" scripts/scan/pilot-graph-targets.mjs "${TARGET_NAMES[$_i]}" "${TARGET_ROOTS[$_i]}")"; then
+      echo "ERROR: pilot graph target registration/source verification failed" >&2
+      exit 3
+    fi
+    while IFS='|' read -r _pilot_repo _pilot_root _pilot_scope; do
+      [[ -z "$_pilot_repo" ]] && continue
+      TARGET_NAMES+=("$_pilot_repo")
+      TARGET_ROOTS+=("$_pilot_root")
+      TARGET_DATABASE_URLS+=("")
+      TARGET_HEADS+=("${TARGET_HEADS[$_i]}")
+      PILOT_SCOPES+=("$_pilot_scope")
+    done <<< "$_pilot_targets"
+  done
+fi
+
 for _target_index in "${!TARGET_NAMES[@]}"; do
   for _s in "${SCANNERS[@]}"; do
+    if [[ $_target_index -ge $PRIMARY_TARGET_COUNT && "$_s" != "scan-graph.mjs" ]]; then continue; fi
     if run_scanner "$_s" "${TARGET_NAMES[$_target_index]}" \
       "${TARGET_ROOTS[$_target_index]}" "${TARGET_DATABASE_URLS[$_target_index]}"; then
       echo "OK: repo=${TARGET_NAMES[$_target_index]} ${_s}"
@@ -257,7 +279,7 @@ for _target_index in "${!TARGET_NAMES[@]}"; do
       exit 3
     fi
   fi
-  if [[ $DEFAULT_BATCH -eq 1 ]] \
+  if [[ $DEFAULT_BATCH -eq 1 && $_target_index -lt $PRIMARY_TARGET_COUNT ]] \
     && ! SCAN_REPO="${TARGET_NAMES[$_target_index]}" \
       "$NODE_BIN" scripts/scan/verify-scan-batch.mjs "${TARGET_HEADS[$_target_index]}"; then
     echo "ERROR: repo=${TARGET_NAMES[$_target_index]} 四类事实未锁定到同一 revision" >&2
@@ -273,10 +295,11 @@ fi
 if [[ -n "${MAP_REBUILD_SCOPES+x}" ]]; then
   MAP_SCOPES_RAW="$MAP_REBUILD_SCOPES"
 elif [[ -n "${SCAN_REPO_SPECS+x}" ]]; then
-  MAP_SCOPES_RAW="${TARGET_NAMES[*]}"
+  MAP_SCOPES_RAW="$PRIMARY_TARGET_NAMES"
 else
   MAP_SCOPES_RAW="cecelia"
 fi
+MAP_SCOPES_RAW="$MAP_SCOPES_RAW ${PILOT_SCOPES[*]:-}"
 MAP_SCOPES=()
 for _scope in $MAP_SCOPES_RAW; do
   [[ -n "${_scope//[[:space:]]/}" ]] && MAP_SCOPES+=("$_scope")
