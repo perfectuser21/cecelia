@@ -2,7 +2,8 @@ import {afterEach,beforeEach,expect,it} from 'vitest';
 import {existsSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {releaseEvidenceDatabase,RELEASE_HEAD} from '../../../__tests__/fixtures/release-evidence-db.js';
-import {createRelease,getRelease,recordReleaseObservation,getReleaseGate} from '../../release-index.js';
+import {createRelease,getRelease} from '../../release-index.js';
+import {registerCapabilityRegression} from '../../capability-regressions.js';
 let f,service;
 beforeEach(async()=>{expect(existsSync(new URL('../../pilot-release-verification.js',import.meta.url)),'必须有独立完整试点发布验证').toBe(true);service=await import('../../pilot-release-verification.js');f=await releaseEvidenceDatabase();});
 afterEach(async()=>{await f?.close();f=null;});
@@ -10,10 +11,10 @@ const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 async function plan(){return service.buildPilotReleasePlan({scope:'phones',repo:f.releaseInput.components[0].repo,revision:RELEASE_HEAD,definitions:{workflows:f.workflows,activities:f.activities},assertions:(await f.db.query('SELECT * FROM journey_step_links ORDER BY id')).rows});}
 async function cover(){
  for(const w of f.workflows)for(const ref of w.payload.activities){const a=f.activities.find(a=>a.id===ref.activity_version_id);
-  for(const step of [null,...a.payload.steps.map(s=>s.step_id)])await f.db.query(`INSERT INTO journey_step_links(journey_id,step_id,step_id_ref,step_order,assertion_ref) VALUES($1,$2,$3,1,'scripts/smoke/lock.sh')`,[w.payload.capability_id,a.activity_id,step]);
+  for(const step of [null,...a.payload.steps.map(s=>s.step_id)])await registerCapabilityRegression(f.db,{capability_id:w.payload.capability_id,activity_id:a.activity_id,step_id:step,assertion_ref:'scripts/smoke/lock.sh'});
  }
 }
-function evidence(report){report={...report,snapshot_sha256:'d'.repeat(64)};return {report,receipt:{schema_version:1,purpose:'release_verification',actor:'pilot_release_verification',scope:'declared_pilot_regressions',source:report.source,snapshot_sha256:report.snapshot_sha256,assertion_plan_sha256:report.assertion_plan_sha256,report_sha256:hash(report),verdict:'PASS',business_runtime_status:'not_evaluated',assertions:report.required_assertions.map(a=>({...a,source_revision:RELEASE_HEAD,test_sha256:'f'.repeat(64),exit_code:0,error:null,signal:null}))},evidence_ref:'fixture:pilot-release'};}
+function evidence(report){report={...structuredClone(report),snapshot_sha256:'d'.repeat(64)};return {report,receipt:{schema_version:1,purpose:'release_verification',actor:'pilot_release_verification',scope:'declared_pilot_regressions',source:report.source,snapshot_sha256:report.snapshot_sha256,assertion_plan_sha256:report.assertion_plan_sha256,report_sha256:hash(report),verdict:'PASS',business_runtime_status:'not_evaluated',assertions:report.required_assertions.map(a=>({...a,source_revision:RELEASE_HEAD,test_sha256:'f'.repeat(64),exit_code:0,error:null,signal:null}))},evidence_ref:'fixture:pilot-release'};}
 it('全部Activity与canonicalStep必须逐使用位置覆盖，Activity测试不能冒充Step',async()=>{
  const p=await plan();expect(p.verification_status).toBe('unknown');
  const missing=p.gaps.filter(g=>g.code==='pilot_regression_missing');expect(missing.some(g=>g.step_id)).toBe(true);
