@@ -169,9 +169,11 @@ async function getFactRevisions(scopeKey, queryable = pool) {
   const revisions = {};
   try {
     const { rows } = await queryable.query(
-      `SELECT repo, source_revision AS revision
-         FROM fact_snapshot_headers
-        WHERE kind = 'graph' AND repo = $1`,
+      `SELECT header.repo, header.source_revision AS revision
+         FROM fact_snapshot_headers AS header
+         JOIN map_scope_repositories AS registration ON registration.repo = header.repo
+        WHERE header.kind = 'graph' AND registration.scope_key = $1
+        ORDER BY header.repo`,
       [scopeKey]
     );
     for (const r of rows) {

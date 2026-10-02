@@ -116,3 +116,23 @@ export function brainBindingAttributes(node, evidence = {}) {
     ...evidence,
   };
 }
+
+const BINDING_ATTRIBUTE_KEYS = new Set([
+  'brain_binding', 'canonical_entity_id', 'canonical_entity_type', 'registration_status',
+  'hierarchy_status', 'source_status', 'mapping_status', 'source_evidence', 'validation_errors',
+]);
+
+/** 公开读模型只从manifest和当前事实派生身份，清除投影中残留的旧核验字段。 */
+export function currentBrainBindingAttributes(projectedNode, manifest, evidence) {
+  const attributes = projectedNode.attributes ?? {};
+  const clean = Object.fromEntries(Object.entries(attributes).filter(([key]) => !BINDING_ATTRIBUTE_KEYS.has(key)));
+  const target = structuralNodes(manifest).find(({ node, type }) => node.key === projectedNode.node_key && type === projectedNode.node_type);
+  if (!target?.node.brain_binding) {
+    return Object.keys(attributes).some(key => BINDING_ATTRIBUTE_KEYS.has(key))
+      ? { ...clean, mapping_status: 'unknown' } : attributes;
+  }
+  if (!brainBindingSchema(target.type).safeParse(target.node.brain_binding).success) {
+    return { ...clean, mapping_status: 'unknown', validation_errors: ['MAP_BRAIN_BINDING_INVALID'] };
+  }
+  return { ...clean, ...brainBindingAttributes(target.node, evidence[target.node.key]) };
+}
