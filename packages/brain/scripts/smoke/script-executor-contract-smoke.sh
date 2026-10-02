@@ -41,12 +41,14 @@ for (const [constraint,column,value] of [['tasks_executor_kind_check','executor_
 const phone = readFileSync('migrations/508_phone_dispatches.sql', 'utf8');
 const phoneTuple = '(' + ['tasks_executor_kind_check','executor_kind','phone-ssh-controller'].map(x => String.fromCharCode(39) + x + String.fromCharCode(39)).join(',') + ')';
 if (!phone.includes(phoneTuple)) { console.error('FAIL 508 缺精确手机合同增量'); process.exit(1); }
-ek.push('preview-janitor','app-server-controller','phone-ssh-controller'); ek.sort(); tt.push('janitor','app_server_run'); tt.sort();
+const imageJanitor = readFileSync('migrations/510_us_brain_image_retention.sql', 'utf8');
+if (!imageJanitor.includes('CHECK ((%s) OR executor_kind=%L)') || !imageJanitor.includes(String.fromCharCode(39) + 'image-janitor' + String.fromCharCode(39))) { console.error('FAIL 510 缺镜像清理执行器精确增量'); process.exit(1); }
+ek.push('preview-janitor','app-server-controller','image-janitor','phone-ssh-controller'); ek.sort(); tt.push('janitor','app_server_run'); tt.sort();
 if (JSON.stringify(ek) !== JSON.stringify([...VALID_EXECUTOR_KINDS].sort())) { console.error('FAIL executor_kind 名单 != VALID_EXECUTOR_KINDS'); process.exit(1); }
 if (JSON.stringify(tt) !== JSON.stringify([...R.DB_WHITELISTED_TASK_TYPES].sort())) { console.error('FAIL task_type 名单 != 注册表 DB 白名单'); process.exit(1); }
 const v = readFileSync('migrations/472_validate_script_executor_constraints.sql', 'utf8');
 for (const c of ['tasks_executor_kind_check', 'tasks_task_type_check']) if (!v.includes('VALIDATE CONSTRAINT ' + c)) { console.error('FAIL 472 缺 VALIDATE ' + c); process.exit(1); }
-console.log('471/472 结构正确，叠加502/504/508精确增量后与 lib 真身一致 ✓');
+console.log('471/472 结构正确，叠加502/504/508/510精确增量后与 lib 真身一致 ✓');
 "
 
 echo "[script-executor-contract-smoke] 3. payload 契约：合法通过 / 违规被拒"
