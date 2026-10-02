@@ -60,4 +60,21 @@ describe('legacy收割容量与轮转', () => {
     await running;
     expect(legacyCalls).toBe(1);
   });
+
+  it('同pool并发收割复用同一个在途lane，不重复读取或结算同task', async () => {
+    let finish;
+    const pool=fixture(rows(1));
+    const execFileFn=vi.fn((_cmd,_args,_opts,cb)=>{ finish=cb; });
+    const first=reapScriptRuns(pool,{execFileFn});
+    const second=reapScriptRuns(pool,{execFileFn});
+    await flush();
+    expect(execFileFn).toHaveBeenCalledTimes(1);
+    expect(pool.query).toHaveBeenCalledTimes(1);
+    finish(null,'NO_EXIT\n');
+    await Promise.all([first,second]);
+    const next=reapScriptRuns(pool,{execFileFn});
+    await flush();
+    expect(execFileFn).toHaveBeenCalledTimes(2);
+    finish(null,'NO_EXIT\n'); await next;
+  });
 });
