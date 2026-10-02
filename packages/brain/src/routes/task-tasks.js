@@ -1,3 +1,4 @@
+import {registerHeadedTakeoverRoute} from './task-headed-takeover.js';
 import {assertGpuExecutionSupported} from '../lib/gpu-execution-contract.js';
 /**
  * Task Tasks route — 对应 tasks 表（Cecelia 执行任务）
@@ -28,6 +29,7 @@ import { governanceErrorResponse } from '../lib/governance-errors.js';
 import { registerTaskDependencyRoutes } from './task-dependencies.js';
 
 const router = Router();
+registerHeadedTakeoverRoute(router,{pool,path:'/:id/headed-takeover'});
 
 // 状态机保护：已终止的任务不能回退到非终止状态（PATCH /:id 与 DELETE /:id 共用同一常量，
 // 避免两套终态定义产生语义分裂）

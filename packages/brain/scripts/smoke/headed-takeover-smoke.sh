@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 退役验收：私有真实API/PG与dispatch入口，不驱动共享Brain的全局tick。
+# 有头接管验收：私有真实HTTP/PG、接管和提交后handoff，以及设备孤儿锁安全清扫。
 set -euo pipefail
 # 在守卫前固定其原缺省目标，禁止后续dotenv填入未核HOST/PORT。
 export DB_HOST="${DB_HOST:-localhost}" DB_PORT="${DB_PORT:-5432}"
@@ -16,14 +16,15 @@ else
   expected_database=cecelia_scratch
 fi
 if [[ "${DB_NAME:-}" != "$expected_database" ]]; then
-  echo '退役smoke本地仅scratch，CI仅cecelia_test；拒绝未核数据库' >&2
+  echo '有头接管smoke本地仅scratch，CI仅cecelia_test；拒绝未核数据库' >&2
   exit 1
 fi
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
-# 真实Router POST/GET、路由收据、dispatchNextTask/finalizeTask/selector与终态查库。
-# 资源/policy仅私有测试fixture，不代表生产物理容量或共享全局tick整轮已通过。
+# 原生HTTP Bearer/session/CAS接管与legacy PATCH、实际COMMIT后saveHandoff查库；
+# 同时验证真实065/448/509设备锁迁移和ordinary删除→清扫，不接触生产执行体。
 exec node "$(node -p 'require.resolve("vitest/vitest.mjs")')" run \
   --config vitest.integration.config.js \
-  src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js \
+  src/__tests__/integration/headed-takeover.pg.integration.test.js \
+  src/__tests__/integration/device-lock-helpers.test.js \
   --maxWorkers=1 --minWorkers=1

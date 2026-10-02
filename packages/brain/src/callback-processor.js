@@ -1,3 +1,4 @@
+import {assertAutomaticTaskOwner} from './lib/headed-task-owner.js';
 import { COMPANY_KR_SQL_GUARD } from './lib/company-kr-metrics.js';
 /**
  * callback-processor.js
@@ -50,6 +51,7 @@ export async function processExecutionCallback(data, pool) {
   } = data;
 
   if (!task_id) throw new Error('task_id is required');
+  await assertAutomaticTaskOwner(pool, task_id);
 
   console.log(`[callback-processor] Processing callback for task ${task_id}, status: ${status}`);
 
@@ -132,6 +134,7 @@ export async function processExecutionCallback(data, pool) {
         claimed_at = CASE WHEN $13::boolean THEN NULL ELSE claimed_at END
       WHERE id = $1
         AND status IN ('in_progress', 'queued', 'dispatched')
+        AND NOT (COALESCE(payload,'{}'::jsonb) ? 'headed_takeover')
         AND ($14::text IS NULL OR payload->>'current_run_id' = $14::text)
     `, [
       task_id, newStatus, JSON.stringify(lastRunResult), status, resolvedPrUrl || null,
