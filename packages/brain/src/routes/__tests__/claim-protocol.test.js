@@ -183,27 +183,31 @@ describe('B. task-tasks.js POST /:id/claim: executor_kind 写入', () => {
   });
 
   it('claim 不传 executor_kind → 默认写 headed-session', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'task-2', ordinary_eligible: true }] });
     mockPool.query.mockResolvedValueOnce({
+      rowCount: 1,
       rows: [{ id: 'task-2', claimed_by: 'agent-1', claimed_at: new Date().toISOString() }],
     });
     const res = await request(app)
       .post('/tasks/task-2/claim')
       .send({ claimer: 'agent-1' });
     expect(res.status).toBe(200);
-    const [sql, params] = mockPool.query.mock.calls[0];
+    const [sql, params] = mockPool.query.mock.calls[1];
     expect(sql).toMatch(/executor_kind/);
     expect(params).toContain('headed-session');
   });
 
   it('claim 传入 executor_kind=bridge → 写 bridge', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'task-3', ordinary_eligible: true }] });
     mockPool.query.mockResolvedValueOnce({
+      rowCount: 1,
       rows: [{ id: 'task-3', claimed_by: 'bridge-1', claimed_at: new Date().toISOString() }],
     });
     const res = await request(app)
       .post('/tasks/task-3/claim')
       .send({ claimer: 'bridge-1', executor_kind: 'bridge' });
     expect(res.status).toBe(200);
-    const [sql, params] = mockPool.query.mock.calls[0];
+    const [sql, params] = mockPool.query.mock.calls[1];
     expect(sql).toMatch(/executor_kind/);
     expect(params).toContain('bridge');
   });

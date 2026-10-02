@@ -61,13 +61,21 @@ it('unknown authority boolean never defaults to ordinary', async () => {
  h.pool={options:f.pool.options,connect:()=>f.pool.connect(),query:(sql,args)=>/ordinary_eligible/.test(sql)?Promise.resolve({rows:[{id,ordinary_eligible:null}]}):query(sql,args)};
  expect((await claim(id)).status).toBe(500); expect((await query('SELECT claimed_by FROM tasks WHERE id=$1',[id])).rows[0].claimed_by).toBeNull();
 });
-it.each(['other-claim','delete'])('legal second-session ordinary %s wins finalCAS with original conflict shape', async point => {
- await setup(); const id=await f.ordinary(), query=f.pool.query.bind(f.pool); let changed=false;
+it.each(['other-claim','delete'])('real second-session ordinary %s uses actual509 writer contract, without invented deletion race', async point => {
+ await setup(); const id=await f.ordinary(), query=f.pool.query.bind(f.pool); let changed=false, mutationRows;
  h.pool={options:f.pool.options,connect:()=>f.pool.connect(),query:async(sql,args)=>{
-  if (/UPDATE tasks SET claimed_by = \$1/.test(sql)&&!changed) { changed=true; const c=await f.pool.connect(); try { await c.query('BEGIN'); await c.query(point==='delete'?'DELETE FROM tasks WHERE id=$1':"UPDATE tasks SET claimed_by='fixture-other',claimed_at='2026-01-01T00:00:00Z' WHERE id=$1",[id]); await c.query('COMMIT'); } finally { c.release(); } }
+  if (/UPDATE tasks SET claimed_by = \$1/.test(sql)&&!changed) { changed=true; const c=await f.pool.connect(); try { await c.query('BEGIN'); mutationRows=(await c.query(point==='delete'?'DELETE FROM tasks WHERE id=$1':"UPDATE tasks SET claimed_by='fixture-other',claimed_at='2026-01-01T00:00:00Z' WHERE id=$1",[id])).rowCount; await c.query('COMMIT'); } finally { c.release(); } }
   return query(sql,args);
  }};
- const result=await claim(id); expect(changed).toBe(true); expect(result).toEqual(point==='delete'?{status:404,body:{error:'Task not found',id}}:{status:409,body:{error:'Task already claimed',claimed_by:'fixture-other',claimed_at:'2026-01-01T00:00:00.000Z'}});
+ const result=await claim(id); expect(changed).toBe(true);
+ if(point==='delete') {
+  // Real509 unowned BEFORE DELETE returns NEW(null), suppressing physical deletion.
+  // Preserve that fact, never disable guard to invent a DELETE race.
+  expect(mutationRows).toBe(0); expect(result).toMatchObject({status:200,body:{id,claimed_by:'fixture-agent'}});
+  expect((await query('SELECT claimed_by FROM tasks WHERE id=$1',[id])).rows[0].claimed_by).toBe('fixture-agent');
+ } else {
+  expect(mutationRows).toBe(1); expect(result).toEqual({status:409,body:{error:'Task already claimed',claimed_by:'fixture-other',claimed_at:'2026-01-01T00:00:00.000Z'}});
+ }
  expect(h.trigger).not.toHaveBeenCalled();
 });
 it('exact final native CAS excludes all phone IDs (SQL negative, not identity rebinding race)', async () => {

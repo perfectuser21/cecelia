@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import pool from '../db.js';
 import { detectDomain } from '../domain-detector.js';
 import taskErrorReportRoutes from './task-error-report.js';
-import { queueLaneSql } from '../task-queue-lanes.js';
+import { queueLaneSql, phoneOrdinaryQueueSql } from '../task-queue-lanes.js';
 import { normalizeChangeKind, CHANGE_KINDS } from '../impact-contract/change-kind.js';
 import { registerTaskPatchRoute } from './task-task-patch.js';
 import { createRoutedTask } from '../work-routing-store.js';
@@ -552,24 +552,38 @@ router.post('/:id/claim', async (req, res) => {
     if (!claimer) {
       return res.status(400).json({ error: 'claimer is required' });
     }
+    if (rawExecutorKind === 'phone-ssh-controller') {
+      return res.status(400).json({ error: 'phone_executor_not_public' });
+    }
     const executorKind = rawExecutorKind || 'headed-session';
+    const authoritySql = `SELECT tasks.id, claimed_by, claimed_at,
+      (${phoneOrdinaryQueueSql('tasks')}) AS ordinary_eligible FROM tasks WHERE tasks.id = $1`;
+    const authority = await pool.query(authoritySql, [id]);
+    if (authority.rows.length === 0) return res.status(404).json({ error: 'Task not found', id });
+    if (authority.rows[0].ordinary_eligible === false) return res.status(409).json({ error: 'phone_task_owned' });
+    if (authority.rows[0].ordinary_eligible !== true) throw Error('public_claim_authority_unknown');
 
     const result = await pool.query(
       `UPDATE tasks SET claimed_by = $1, claimed_at = NOW(), executor_kind = COALESCE(executor_kind, $3)
-       WHERE id = $2 AND claimed_by IS NULL
+       WHERE id = $2 AND claimed_by IS NULL AND ${phoneOrdinaryQueueSql('tasks')}
        RETURNING id, claimed_by, claimed_at, executor_kind`,
       [claimer, id, executorKind]
     );
 
-    if (result.rows.length === 0) {
+    if (result.rowCount !== result.rows.length || ![0, 1].includes(result.rowCount)) {
+      throw Error('public_claim_mutation_result_unknown');
+    }
+    if (result.rowCount === 0) {
       // 已被其他 runner claim（或任务不存在）
       const existing = await pool.query(
-        'SELECT claimed_by, claimed_at FROM tasks WHERE id = $1',
+        authoritySql,
         [id]
       );
       if (existing.rows.length === 0) {
         return res.status(404).json({ error: 'Task not found', id });
       }
+      if (existing.rows[0].ordinary_eligible === false) return res.status(409).json({ error: 'phone_task_owned' });
+      if (existing.rows[0].ordinary_eligible !== true) throw Error('public_claim_authority_unknown');
       return res.status(409).json({
         error: 'Task already claimed',
         claimed_by: existing.rows[0].claimed_by,
