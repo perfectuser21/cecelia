@@ -12,7 +12,7 @@ const query=(extra={})=>({scope:'phones',kind:'code',repo,path,revision:HEAD,...
 const get=(extra={})=>request(app).get('/api/brain/map/implementation-consumers').query(query(extra));
 async function seedMap(scope,capIds=capabilities,{bound=true,revision=HEAD}={}) {
   const decision=randomUUID(),manifestId=randomUUID(),runId=randomUUID();
-  const manifest={scope_key:scope,schema_version:1,source_decision_id:decision,capabilities:capIds.map((id,i)=>({key:`C${i}`,brain_binding:bound?{entity_type:'capability',entity_id:id,source_repo:repo,source_revision:revision}:undefined}))};
+  const manifest={scope_key:scope,schema_version:1,source_decision_id:decision,value_streams:[{key:'V',brain_binding:{entity_type:'value_stream',entity_id:ids.valueStream,source_repo:repo,source_revision:revision}}],capabilities:capIds.map((id,i)=>({key:`C${i}`,value_stream_key:'V',brain_binding:bound?{entity_type:'capability',entity_id:id,source_repo:repo,source_revision:revision}:undefined}))};
   const registryRepo=scope==='phones'?repo:`map-${scope}`;
   await db.query(`INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES($1,$2,'legacy-ledger-v1',$3)`,[scope,registryRepo,{source_repo:repo}]);
   if(registryRepo!==repo)await db.query(`INSERT INTO fact_snapshot_headers(repo,kind,source_revision,scanner_version,scanned_at,row_count) VALUES($1,'graph',$2,'graph-v1',NOW(),1)`,[registryRepo,revision]);
@@ -72,4 +72,9 @@ it('陈旧来源图与缺回归如实报告，引用核验不等于业务验证'
   await db.query("UPDATE fact_snapshot_headers SET scanned_at=NOW()-INTERVAL '2 hours'");await db.query('DELETE FROM journey_step_links');
   const r=await get();expect(r.body.workflows).toHaveLength(2);expect(r.body.mapping_status).toBe('unknown');expect(r.body.verification_status).toBe('unknown');
   expect(r.body.gaps.map(g=>g.code)).toEqual(expect.arrayContaining(['graph_snapshot_stale','regression_missing']));
+});
+it('投影曾验证但业务父级已改，读取重新核规范身份而非信旧绿色',async()=>{
+  const other=randomUUID();await db.query("INSERT INTO journeys(id,name) VALUES($1,'另一个价值流')",[other]);
+  await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[other,capabilities[0]]);
+  const r=await get();expect(r.body.mapping_status).toBe('unknown');expect(r.body.gaps).toContainEqual(expect.objectContaining({code:'capability_authority_changed'}));
 });
