@@ -52,5 +52,5 @@ ALTER TABLE journey_steps DROP CONSTRAINT IF EXISTS activity_current_version_ide
 ALTER TABLE journey_steps ADD CONSTRAINT activity_current_version_identity FOREIGN KEY(id,current_definition_version_id) REFERENCES activity_definition_versions(activity_id,id);
 ALTER TABLE workflows DROP CONSTRAINT IF EXISTS workflow_current_version_identity;
 ALTER TABLE workflows ADD CONSTRAINT workflow_current_version_identity FOREIGN KEY(id,current_definition_version_id) REFERENCES workflow_definition_versions(workflow_id,id);
-INSERT INTO schema_version(version,description) VALUES('512','不可变Activity/Workflow定义快照与对象身份约束') ON CONFLICT(version) DO NOTHING;
+INSERT INTO schema_version(version,description) VALUES('513','不可变Activity/Workflow定义快照与对象身份约束') ON CONFLICT(version) DO NOTHING;
 COMMIT;

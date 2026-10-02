@@ -12,7 +12,7 @@ export async function versionsDatabase() {
   await client.query(`SET search_path TO ${schema}`);
   const db={query:client.query.bind(client),connect:async()=>({query:client.query.bind(client),release(){}})};
   return {client,db,async migrate(){
-    for(const file of ['511_shared_activity_refs.sql','512_definition_versions.sql']) {
+    for(const file of ['511_shared_activity_refs.sql','513_definition_versions.sql']) {
       const path=new URL(`../../../migrations/${file}`,import.meta.url);
       if(!existsSync(path)) throw Error(`版本迁移不存在: ${file}`);
       await client.query(readFileSync(path,'utf8'));

@@ -149,7 +149,7 @@ describe('authoring 与真实共享关系和版本底座读模型贯通', () => 
     // 真实迁移仅落隔离 schema，避免解析到 public 的版本表或触发器。
     await client.query(`SET search_path TO ${schema}`);
     await client.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url), 'utf8'));
-    await client.query(readFileSync(new URL('../../../migrations/512_definition_versions.sql', import.meta.url), 'utf8'));
+    await client.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql', import.meta.url), 'utf8'));
     const owner = await register();
     const ownerView = (await listWorkflows(client, { id: owner.workflow_id }))[0];
     expect(ownerView.activity_count).toBe(6);

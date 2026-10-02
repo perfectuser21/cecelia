@@ -18,7 +18,7 @@ beforeEach(async () => {
   }
   await client.query(`SET search_path TO ${schema},public`);
   await client.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql',import.meta.url),'utf8'));
-  await client.query(readFileSync(new URL('../../../migrations/512_definition_versions.sql',import.meta.url),'utf8'));
+  await client.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql',import.meta.url),'utf8'));
   db = { connect: async () => ({ query: client.query.bind(client), release() {} }) };
   await client.query(`INSERT INTO journeys(id,name,parent_journey_id,capability_code) VALUES($1,'管家 · G5 算力与基础设施调度',$2,'G5')`, [spec.capability_id, randomUUID()]);
   await client.query(`INSERT INTO ops_agents(id,source,host_alias,name) VALUES(1,'openclaw','mmv',$1)`, [spec.agent]);

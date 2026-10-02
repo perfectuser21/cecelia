@@ -40,7 +40,7 @@ afterEach(async () => {
 async function migrate() {
   expect(existsSync(migration), '共享关系迁移必须存在').toBe(true);
   await client.query(readFileSync(migration,'utf8'));
-  await client.query(readFileSync(new URL('../../../migrations/512_definition_versions.sql',import.meta.url),'utf8'));
+  await client.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql',import.meta.url),'utf8'));
 }
 async function snapshot() {
   return (await client.query(`SELECT jsonb_build_object('activities',(SELECT jsonb_agg(to_jsonb(a) ORDER BY id) FROM journey_steps a),

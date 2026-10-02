@@ -20,7 +20,7 @@ beforeEach(async () => {
   }
   await db.query(`SET search_path TO ${schema}`);
   await db.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url), 'utf8'));
-  await db.query(readFileSync(new URL('../../../migrations/512_definition_versions.sql', import.meta.url), 'utf8'));
+  await db.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql', import.meta.url), 'utf8'));
   ids = Object.fromEntries(['company', 'media', 'support', 'stream', 'capA', 'capB', 'wfA', 'wfB', 'activity'].map(k => [k, randomUUID()]));
   await db.query(`INSERT INTO areas(id,name,parent_area_id) VALUES($1,'公司',NULL),($2,'新媒体',$1),($3,'客服',$1)`, [ids.company, ids.media, ids.support]);
   await db.query(`INSERT INTO journeys(id,name,parent_journey_id,area_id,capability_code) VALUES
