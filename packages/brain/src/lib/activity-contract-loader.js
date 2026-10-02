@@ -30,6 +30,8 @@ export async function loadActivityContracts(registrations, digest, fetchFile, re
   for (const w of registeredOwners) {
     const doc=docs.get(w.source_capability);
     if (doc && (w.source_path !== contractPath(w.source_capability) || doc.workflow !== w.source_workflow)) throw new Error(`来源工作流映射无效: ${w.key}`);
+    if (doc && ((doc.brain_workflow_key !== undefined && doc.brain_workflow_key !== w.key)
+      || (doc.source_repo !== undefined && doc.source_repo !== w.source_repo))) throw new Error(`契约显式身份映射冲突: ${w.key}`);
   }
   function resolve(cap,key,trail = []) {
     const identity = `${cap}.${key}`;
