@@ -42,12 +42,22 @@ export function validateDirectoryConfig(input) {
 }
 
 export async function findCapabilityDatabase({ token, parentPageId, notionReq }) {
-  const candidates = []; let cursor = null;
+  const candidates = [], cursors = new Set(); let cursor = null, pages = 0, entries = 0;
   do {
+    if (++pages > 100) throw new Error('能力目录父页分页超过上限');
     const response = await notionReq(token, `/blocks/${parentPageId}/children?page_size=100${cursor ? `&start_cursor=${encodeURIComponent(cursor)}` : ''}`, 'GET');
+    if (!Array.isArray(response?.results) || typeof response.has_more !== 'boolean' || response.results.some(b => !b || typeof b !== 'object')) {
+      throw new Error('能力目录父页分页snapshot不完整');
+    }
+    entries += response.results.length;
+    if (entries > 10000) throw new Error('能力目录父页条目超过上限');
     candidates.push(...response.results.filter(b => !b.archived && !b.in_trash && b.type === 'child_database' && b.child_database.title === 'Capabilities'));
-    if (response.has_more && (!response.next_cursor || response.next_cursor === cursor)) throw new Error('能力目录父页分页不完整');
+    if (response.has_more && (typeof response.next_cursor !== 'string' || !response.next_cursor || response.next_cursor.length > 2000 || cursors.has(response.next_cursor))) {
+      throw new Error('能力目录父页分页cursor缺失或循环');
+    }
+    if (!response.has_more && response.next_cursor != null) throw new Error('能力目录父页分页终态cursor无效');
     cursor = response.has_more ? response.next_cursor : null;
+    if (cursor) cursors.add(cursor);
   } while (cursor);
   if (candidates.length > 1) throw new Error('能力目录重复，拒绝创建或认领');
   if (!candidates.length) return null;

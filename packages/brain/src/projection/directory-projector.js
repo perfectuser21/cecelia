@@ -25,6 +25,51 @@ function value(property) {
   return property;
 }
 
+/** Page响应只带前25个relation；只展开本次需比较的机器列，不跟随远端next_url。 */
+async function completeRelations(page, pageId, properties, token, notionReq) {
+  if (compact(page?.id) !== compact(pageId)) throw new Error('目录关系读回页面身份不符');
+  const filled = { ...page.properties };
+  const propertyKey = id => {
+    if (typeof id !== 'string' || !id || id.length > 2000) throw new Error('目录关系属性身份无效');
+    try { return decodeURIComponent(id); } catch { throw new Error('目录关系属性身份编码无效'); }
+  };
+  const uuid = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+  for (const [name, expected] of Object.entries(properties)) {
+    const actual = filled[name];
+    if (!Array.isArray(expected?.relation) || actual?.has_more !== true) continue;
+    if (actual.type !== 'relation' || !Array.isArray(actual.relation)) throw new Error('目录关系分页属性形状无效');
+    const key = propertyKey(actual.id), path = `/pages/${pageId}/properties/${encodeURIComponent(key)}?page_size=100`;
+    const relation = [], seenIds = new Set(), cursors = new Set();
+    let cursor = null, count = 0;
+    do {
+      if (++count > 100) throw new Error('目录关系分页超过上限');
+      const response = await notionReq(token, `${path}${cursor ? `&start_cursor=${encodeURIComponent(cursor)}` : ''}`, 'GET');
+      if (response?.object !== 'list' || response.type !== 'property_item' || !Array.isArray(response.results) ||
+        typeof response.has_more !== 'boolean' || response.property_item?.type !== 'relation' ||
+        propertyKey(response.property_item?.id) !== key) throw new Error('目录关系分页形状或属性身份无效');
+      if (relation.length + response.results.length > 10000) throw new Error('目录关系分页条目超过上限');
+      for (const item of response.results) {
+        if (item?.object !== 'property_item' || item.type !== 'relation' || propertyKey(item.id) !== key ||
+          typeof item.relation?.id !== 'string' || !uuid.test(item.relation.id)) throw new Error('目录关系分页条目身份无效');
+        const relatedId = compact(item.relation.id);
+        if (seenIds.has(relatedId)) throw new Error('目录关系分页条目重复');
+        seenIds.add(relatedId); relation.push({ id: item.relation.id });
+      }
+      if (!response.has_more) {
+        if (response.next_cursor != null) throw new Error('目录关系分页终态cursor无效');
+        break;
+      }
+      if (typeof response.next_cursor !== 'string' || !response.next_cursor || response.next_cursor.length > 2000 || cursors.has(response.next_cursor)) {
+        throw new Error('目录关系分页cursor缺失或循环');
+      }
+      cursor = response.next_cursor; cursors.add(cursor);
+    } while (cursor);
+    if (actual.relation.some(item => !seenIds.has(compact(item.id)))) throw new Error('目录关系分页快照不一致');
+    filled[name] = { ...actual, relation, has_more: false };
+  }
+  return { ...page, properties: filled };
+}
+
 export async function projectDirectoryPage(pool, { token, dbId, row, properties, notionReq = defaultNotionReq, finalize = true }) {
   const links = (await pool.query(`SELECT entity_type,entity_id,external_id FROM projection_links
     WHERE target IN ('notion','notion-directory') AND entity_type=$1 AND entity_id=$2`, [row.table, row.id])).rows;
@@ -49,6 +94,7 @@ export async function projectDirectoryPage(pool, { token, dbId, row, properties,
     if (occupied.length) throw new Error('目录页已由其它真身占用');
   }
   if (!finalize && existingPage && text(existingPage.properties?.['Brain ID']) === row.id) return pageId;
+  if (existingPage) existingPage = await completeRelations(existingPage, pageId, properties, token, notionReq);
   const unchanged = existingPage && Object.entries(properties).filter(([k])=>k!=='同步时间').every(([key,expected])=>
     JSON.stringify(value(existingPage.properties?.[key]))===JSON.stringify(value(expected)));
   let readback = existingPage;
@@ -60,6 +106,7 @@ export async function projectDirectoryPage(pool, { token, dbId, row, properties,
     readback = await notionReq(token, `/pages/${pageId}`, 'GET');
   }
   assertPage(readback, dbId, row.id, false);
+  readback = await completeRelations(readback, pageId, properties, token, notionReq);
   for (const [key, expected] of Object.entries(properties)) {
     if (unchanged && key === '同步时间') continue;
     if (JSON.stringify(value(readback.properties?.[key])) !== JSON.stringify(value(expected))) throw new Error(`目录属性读回不一致: ${key}`);
