@@ -6,3 +6,4 @@
 - 退役smoke改为守卫核DB后执行私有真实HTTP/PG派发入口验收，覆盖退役终态与资源拒绝；保留生产dispatcher字节，验收范围不包括共享全局tick整轮。
 - 在守卫前冻结退役smoke原默认HOST/PORT，真实私有dotenv回归覆盖未设与部分显式目标，阻止配置加载后漂移到未核服务。
 - 合入固定共享活动511与六活动工作流主线；回执保留authoring/有头所有权双门禁及各自失败封闭，保留限流、提交后交接和退役目标冻结。
+- 修复未部署509无owner DELETE返回NULL抑制普通删除；仅DELETE返回OLD，保留owned拒绝、UPDATE与数据库CASCADE/FK约束。

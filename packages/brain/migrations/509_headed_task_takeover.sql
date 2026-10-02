@@ -81,7 +81,10 @@ CREATE FUNCTION headed_task_owner_guard() RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE owner headed_task_takeovers%ROWTYPE;
 BEGIN
  SELECT * INTO owner FROM headed_task_takeovers WHERE task_id=OLD.id;
- IF NOT FOUND THEN RETURN NEW; END IF;
+ IF NOT FOUND THEN
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+ END IF;
  IF TG_OP='DELETE' THEN RAISE EXCEPTION 'headed_task_owned'; END IF;
  -- 人赢元数据与镜子同步不改变执行权；未知新列默认仍保护。
  IF (to_jsonb(NEW)-ARRAY['title','description','priority','due_at','notion_id','notion_props','notion_synced_at','updated_at','row_version'])
