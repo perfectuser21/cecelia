@@ -119,6 +119,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: 固定回归依赖
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends zsh jq libxml2-utils python3
+      - run: npm ci --ignore-scripts
+        working-directory: tooling
+      - run: npm ci --ignore-scripts
+        working-directory: source
+      - name: scratch正式迁移
+        run: node tooling/packages/brain/src/migrate.js
       - name: 下载固定SHA中央bundle（PR无中央写凭据）
         env:
           GH_TOKEN: ${{ github.token }}
@@ -153,19 +161,11 @@ jobs:
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$artifact_run" --jq '.event + " " + .path' | grep -Eq '^(push|workflow_dispatch) .github/workflows/implementation-impact.yml$'
             gap_code=IMPLEMENTATION_CI_ARTIFACT_DOWNLOAD_FAILED
             gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact/zip" > "$RUNNER_TEMP/implementation-input/base.zip"
-            unzip -q "$RUNNER_TEMP/implementation-input/base.zip" -d "$RUNNER_TEMP/implementation-input/base"
-            mv "$RUNNER_TEMP/implementation-input/base/head.json" "$RUNNER_TEMP/implementation-input/base/base.json"
+            mkdir -p "$RUNNER_TEMP/implementation-input/base"
+            unzip -p "$RUNNER_TEMP/implementation-input/base.zip" head.json > "$RUNNER_TEMP/implementation-input/base/base.json"
             mkdir -p "$RUNNER_TEMP/implementation-input/head"
             cp "$RUNNER_TEMP/implementation-input/base/base.json" "$RUNNER_TEMP/implementation-input/head/head.json"
           fi
-      - name: 固定回归依赖
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends zsh jq libxml2-utils python3
-      - run: npm ci --ignore-scripts
-        working-directory: tooling
-      - run: npm ci --ignore-scripts
-        working-directory: source
-      - name: scratch正式迁移
-        run: node tooling/packages/brain/src/migrate.js
       - name: 实际变更影响与固定回归
         run: |
           node tooling/scripts/ci/implementation-pr-gate.mjs --repo-root "$GITHUB_WORKSPACE/source" --scope "$MAP_SCOPE" \
