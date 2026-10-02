@@ -46,3 +46,12 @@ it('浏览器影响报告保留受影响引用与断言身份，不公开回归�
   expect(result.body.required_assertions.length).toBeGreaterThan(0);
   expect(JSON.stringify(result.body)).not.toContain('"command":');
 });
+it('正式CI证据HTTP不把外仓/缺固定报告的记录关联为本release业务Workflow',async()=>{
+  const input=structuredClone(f.releaseInput),alien=structuredClone(input.ci_evidence[0]),missing=structuredClone(input.ci_evidence[0]);
+  alien.evidence_ref='unrelated';alien.report.source.repo='unrelated/repository';missing.evidence_ref='missing';delete missing.report.head;
+  input.ci_evidence.push(alien,missing);
+  const release=(await createRelease(f.db,input)).release;
+  const response=await request(app).get(`/map/releases/${release.id}/evidence`);expect(response.status).toBe(200);
+  expect(response.body.ci_evidence[0].definition_versions).toHaveLength(2);
+  expect(response.body.ci_evidence.slice(1).map(ci=>ci.definition_versions)).toEqual([[],[]]);
+});

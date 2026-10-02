@@ -34,3 +34,18 @@ it('旧运行和未绑定执行段仍能盘点，不能被新版本绑定内连�
   expect(result.runs.find(r=>r.run_id==='legacy-internal').record_source).toBe('task_runs');
   expect(result.runs.find(r=>r.run_id==='legacy-external').record_source).toBe('spans');
 });
+it('每条CI仅链接报告来源与release固定WV完整交集，缺失/外仓/错摘要不借整个release',async()=>{
+  const input=structuredClone(f.releaseInput),original=input.ci_evidence[0];
+  const extra=(ref,change)=>{const ci=structuredClone(original);ci.evidence_ref=ref;change(ci);input.ci_evidence.push(ci);};
+  extra('subset',ci=>{ci.report.head.definition_versions.workflows=ci.report.head.definition_versions.workflows.slice(0,1);});
+  extra('alien',ci=>{ci.report.source.repo='unrelated/repository';});
+  extra('digest',ci=>{for(const w of ci.report.head.definition_versions.workflows)w.payload_sha256='f'.repeat(64);});
+  extra('missing',ci=>{delete ci.report.head;});
+  extra('malformed',ci=>{ci.report.head.definition_versions.workflows={};});
+  extra('wrong-head',ci=>{ci.report.source.head_revision='c'.repeat(40);});
+  extra('wrong-identity',ci=>{for(const w of ci.report.head.definition_versions.workflows)w.workflow_id=randomUUID();});
+  const release=(await createRelease(f.db,input)).release,result=await service.readSystemReleaseEvidence(f.db,release.id);
+  expect(result.ci_evidence[0].definition_versions.map(w=>w.id).sort()).toEqual(f.workflows.map(w=>w.id).sort());
+  expect(result.ci_evidence.find(ci=>ci.evidence_ref==='subset').definition_versions.map(w=>w.id)).toEqual([original.report.head.definition_versions.workflows[0].id]);
+  for(const ref of ['alien','digest','missing','malformed','wrong-head','wrong-identity'])expect(result.ci_evidence.find(ci=>ci.evidence_ref===ref).definition_versions,ref).toEqual([]);
+});
