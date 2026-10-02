@@ -1,25 +1,10 @@
-import { spawn } from 'node:child_process';
+import { runDockerProcess } from './process.mjs';
 import { stat, statfs } from 'node:fs/promises';
 import { fail, IMAGE, US_MACHINE_ID } from './policy.mjs';
-const LIMIT = 2 * 1024 * 1024;
-export function createDockerAdapter({ root, expected, executable = 'docker', now = Date.now, timeoutMs = 30000 }) {
+export function createDockerAdapter({ root, dataPath = '/run/cecelia-docker-data', expected, executable = 'docker', now = Date.now, timeoutMs = 30000 }) {
   if (expected?.machine_registry_id !== US_MACHINE_ID || !expected.daemon_id || !expected.docker_root_dir?.startsWith('/')
       || !Number.isSafeInteger(expected.volume_dev)) throw fail('HOST_IDENTITY_UNKNOWN');
-  async function run(args, lease) {
-    await lease.assertHeld();
-    return new Promise((resolve, reject) => {
-      let text = '', size = 0, failure;
-      // fd3沿用同一锁：父Node中断时，在途Docker CLI仍持锁直至退出。
-      const child = spawn(executable, args, { stdio: ['ignore', 'pipe', 'pipe', lease.fd],
-        env: { ...process.env, DOCKER_HOST: 'unix:///var/run/docker.sock', DOCKER_CONTEXT: '', DOCKER_TLS_VERIFY: '', DOCKER_CERT_PATH: '' } });
-      const stop = code => { failure ??= fail(code); child.kill('SIGKILL'); };
-      const timer = setTimeout(() => stop('DOCKER_TIMEOUT'), timeoutMs);
-      child.stdout.on('data', data => { size += data.length; if (size > LIMIT) stop('DOCKER_OUTPUT_LIMIT'); else text += data.toString(); });
-      child.stderr.on('data', data => { size += data.length; if (size > LIMIT) stop('DOCKER_OUTPUT_LIMIT'); });
-      child.once('error', error => { failure = error; });
-      child.once('close', code => { clearTimeout(timer); if (failure) reject(failure); else if (code !== 0) reject(fail('DOCKER_UNCONFIRMED')); else resolve(text); });
-    });
-  }
+  const run = (args, lease) => runDockerProcess(executable, args, lease, timeoutMs);
   const ids = (text, pattern) => {
     const values = [...new Set(text.trim().split(/\s+/).filter(Boolean))];
     if (values.length > 1000 || values.some(id => !pattern.test(id))) throw fail('DOCKER_ID_LIST_INVALID');
@@ -27,12 +12,12 @@ export function createDockerAdapter({ root, expected, executable = 'docker', now
   };
   async function identity(lease) {
     const info = JSON.parse(await run(['info', '--format', '{{json .}}'], lease));
-    const volume = await stat(root);
+    const volume = await stat(root), dataVolume = await stat(dataPath);
     if (info.OSType !== 'linux' || info.ID !== expected.daemon_id || info.DockerRootDir !== expected.docker_root_dir
-        || volume.dev !== expected.volume_dev) throw fail('DAEMON_IDENTITY_CHANGED');
+        || volume.dev !== expected.volume_dev || dataVolume.dev !== expected.volume_dev) throw fail('DAEMON_IDENTITY_CHANGED');
   }
   async function snapshot(lease) {
-    await identity(lease); const disk = await statfs(root);
+    await identity(lease); const disk = await statfs(dataPath);
     const imageIds = ids(await run(['image', 'ls', '--no-trunc', '--quiet'], lease), IMAGE);
     const containerIds = ids(await run(['container', 'ls', '--all', '--quiet', '--no-trunc'], lease), /^[a-f0-9]{64}$/);
     const images = imageIds.length ? JSON.parse(await run(['image', 'inspect', ...imageIds], lease)) : [];
