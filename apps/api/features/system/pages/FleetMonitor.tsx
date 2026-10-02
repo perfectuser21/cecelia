@@ -25,20 +25,22 @@ interface ServerStats {
   gpu?: GpuObservation;
   cpu: {
     cores: number;
-    model: string;
-    loadAvg1: number;
-    loadAvg5: number;
-    loadAvg15: number;
+    model: string | null;
+    loadAvg1: number | null;
+    loadAvg5: number | null;
+    loadAvg15: number | null;
     usagePercent: number;
   } | null;
   memory: {
     totalGB: number;
-    usedGB: number;
+    usedGB: number | null;
     usagePercent: number;
   } | null;
   disk: {
-    total: string;
-    used: string;
+    total: string | null;
+    used: string | null;
+    freeBytes?: number;
+    scope?: 'execution_paths';
     usagePercent: number;
   } | null;
   uptime: number | null;
@@ -142,8 +144,7 @@ function ServerCard({ server }: { server: ServerStats }) {
             <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
               <Cpu className="w-3 h-3" />
               <span>{server.cpu.cores} cores</span>
-              <span className="text-slate-600">|</span>
-              <span>load {server.cpu.loadAvg1}/{server.cpu.loadAvg5}/{server.cpu.loadAvg15}</span>
+              {server.cpu.loadAvg1 != null && <span>load {server.cpu.loadAvg1}/{server.cpu.loadAvg5}/{server.cpu.loadAvg15}</span>}
             </div>
             <UsageBar percent={server.cpu.usagePercent} label="CPU" />
           </div>
@@ -152,18 +153,20 @@ function ServerCard({ server }: { server: ServerStats }) {
           <div className="space-y-2.5 mb-3">
             <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
               <MemoryStick className="w-3 h-3" />
-              <span>{server.memory.usedGB}GB / {server.memory.totalGB}GB</span>
+              <span>{server.memory.usedGB == null ? `总内存 ${server.memory.totalGB.toFixed(1)} GB` : `${server.memory.usedGB}GB / ${server.memory.totalGB}GB`}</span>
             </div>
-            <UsageBar percent={server.memory.usagePercent} label="Memory" />
+            <UsageBar percent={server.memory.usagePercent} label={server.memory.usedGB == null ? '内存压力' : 'Memory'} />
           </div>
 
           {/* Disk */}
           <div className="space-y-2.5 mb-3">
             <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
               <HardDrive className="w-3 h-3" />
-              <span>{server.disk.used} / {server.disk.total}</span>
+              <span>{server.disk.scope === 'execution_paths'
+                ? `执行数据路径最小可用 ${server.disk.freeBytes == null ? '未知' : `${(server.disk.freeBytes / 1024 ** 3).toFixed(1)} GiB`}`
+                : `${server.disk.used ?? '未知'} / ${server.disk.total ?? '未知'}`}</span>
             </div>
-            <UsageBar percent={server.disk.usagePercent} label="Disk" />
+            <UsageBar percent={server.disk.usagePercent} label={server.disk.scope === 'execution_paths' ? '执行数据路径最高占用' : 'Disk'} />
           </div>
 
           {/* Footer */}
