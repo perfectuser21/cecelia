@@ -2,7 +2,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {existsSync,mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {execFileSync} from 'node:child_process';
+import {execFileSync,spawnSync} from 'node:child_process';
 import yaml from 'js-yaml';
 import {pilotPlanHash} from '../pilot-release-verification.js';
 const roots=[];afterEach(()=>{vi.unstubAllEnvs();for(const r of roots.splice(0))rmSync(r,{recursive:true,force:true});});
@@ -34,4 +34,13 @@ it('实际主线工作流与凭据隔离存在，不依赖影响workflow整体�
  expect(w.name).toBe('Pilot release verification');expect(w.on.pull_request).toBeUndefined();expect(w.on.push.branches).toEqual(['main']);
  expect(JSON.stringify(w.jobs.verify)).not.toContain('CECELIA_INTERNAL_TOKEN');expect(JSON.stringify(w.jobs.verify)).toContain('pilot-release-verification.mjs');
  for(const job of Object.values(w.jobs))for(const s of job.steps||[])if(s.uses?.startsWith('actions/setup-node'))expect(s.with?.cache).toBeUndefined();
+});
+
+it('并发main同步同SHA时仅409回读固定快照，unknown不得变PASS',()=>{
+ const w=yaml.load(readFileSync(new URL('../../../../../.github/workflows/pilot-release-verification.yml',import.meta.url),'utf8'));
+ const step=w.jobs.snapshot.steps.find(s=>s.name?.includes('刷新并导出'));
+ for(const status of ['verified','unknown']){const root=mkdtempSync(join(tmpdir(),'pilot-refresh-race-'));roots.push(root);mkdirSync(join(root,'bin'));writeFileSync(join(root,'bin/curl'),`#!/bin/bash\nif [[ " $* " == *" --get "* ]]; then printf '{"snapshot":{"status":"%s","gaps":[]}}\\n' "$FIXTURE_STATUS"; else printf 409; fi\n`,{mode:0o755});
+  const r=spawnSync('/bin/bash',['-c',step.run],{cwd:root,encoding:'utf8',env:{PATH:`${root}/bin:${process.env.PATH}`,FIXTURE_STATUS:status,BRAIN_URL:'http://fixture.invalid',CECELIA_INTERNAL_TOKEN:'fixture',SOURCE_REPO:'perfectuser21/zenithjoy-workspace',MAP_SCOPE:'zenithjoy',HEAD:'a'.repeat(40)}});
+  if(status==='verified')expect(r.status,r.stderr).toBe(0);else{expect(r.status).not.toBe(0);expect(existsSync(join(root,'evidence/gap.json'))).toBe(true);}
+ }
 });
