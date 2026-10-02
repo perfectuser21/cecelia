@@ -10,7 +10,7 @@ vi.mock('react-router-dom', () => ({
 }));
 
 const diagnostics = {
-  path: '/system', label: '诊断与复盘', icon: Activity, featureKey: 'diagnostics',
+  path: '/system', label: '运行与诊断', icon: Activity, featureKey: 'diagnostics',
   children: [
     { path: '/system', label: '运行健康', icon: Activity, featureKey: 'health', exact: true },
     { path: '/system/cecelia', label: '执行概览', icon: Activity, featureKey: 'execution' },
@@ -18,7 +18,7 @@ const diagnostics = {
 };
 
 const resources = {
-  path: '/machines', label: '机器与资源', icon: Activity, featureKey: 'resources',
+  path: '/machines', label: '机器资源', icon: Activity, featureKey: 'resources',
   children: [
     { path: '/machines', label: '设备清单', icon: Activity, featureKey: 'machines' },
     { path: '/system/infra', label: '资源监控', icon: Activity, featureKey: 'infra' },
@@ -45,26 +45,26 @@ describe('可折叠主导航路径归类', () => {
   it.each(['/system/team', '/system/infra', '/system/claude'])('%s 不激活诊断总览或展开诊断分类', path => {
     renderNavigation(path);
     expect(screen.getByRole('link', { name: '运行健康' })).not.toHaveClass('bg-slate-600/25');
-    expect(screen.getByRole('button', { name: /诊断与复盘/ })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: /运行与诊断/ })).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('执行详情只高亮执行概览，诊断总览不重复高亮', () => {
     renderNavigation('/system/cecelia/runs/run-1');
     expect(screen.getByRole('link', { name: '执行概览' })).toHaveClass('bg-slate-600/25');
     expect(screen.getByRole('link', { name: '运行健康' })).not.toHaveClass('bg-slate-600/25');
-    expect(screen.getByRole('button', { name: /诊断与复盘/ })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: /运行与诊断/ })).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('设备详情仍归机器与资源分类', () => {
+  it('设备详情仍归机器资源分类', () => {
     renderNavigation('/machines/us-vps');
     expect(screen.getByRole('link', { name: '设备清单' })).toHaveClass('bg-slate-600/25');
-    expect(screen.getByRole('button', { name: /机器与资源/ })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: /机器资源/ })).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('总览自身仍可激活并支持折叠', () => {
     renderNavigation('/system');
     expect(screen.getByRole('link', { name: '运行健康' })).toHaveClass('bg-slate-600/25');
-    const toggle = screen.getByRole('button', { name: /诊断与复盘/ });
+    const toggle = screen.getByRole('button', { name: /运行与诊断/ });
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -72,7 +72,7 @@ describe('可折叠主导航路径归类', () => {
 
   it('侧栏收起时只高亮当前路径所属分类', () => {
     renderNavigation('/system/infra', true);
-    expect(screen.getByRole('button', { name: '机器与资源' })).toHaveClass('bg-slate-600/30');
-    expect(screen.getByRole('button', { name: '诊断与复盘' })).not.toHaveClass('bg-slate-600/30');
+    expect(screen.getByRole('button', { name: '机器资源' })).toHaveClass('bg-slate-600/30');
+    expect(screen.getByRole('button', { name: '运行与诊断' })).not.toHaveClass('bg-slate-600/30');
   });
 });

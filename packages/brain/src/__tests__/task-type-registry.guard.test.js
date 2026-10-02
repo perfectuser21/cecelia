@@ -84,10 +84,10 @@ const REGISTRY = join(SRC, 'lib', 'task-type-registry.js');
 export const REMAINING_LEGACY_SITES = {
   // kind: map（long-lived）— 唯一残留 :2239 _TASK_ROUTES（task_type→handler 函数，无法表示为注册表纯数据字段）
   'executor.js': ['2239:_TASK_ROUTES'],
-  // kind: map（long-lived）— Task 4 评估：:60 model_map 是 task_type→{provider,model,cascade}
+  // kind: map（long-lived）— Task 4 评估：:62 model_map 是 task_type→{provider,model,cascade}
   // 的模型路由调优配置（嵌套对象，非简单字符串），逐 type 独立调参（如 harness_planner 用 opus、
   // harness_generate 用 sonnet），无匹配注册表单一字段，且属运营调参数据非"哪类"分类标签
-  'model-profile.js': ['60:model_map'],
+  'model-profile.js': ['62:model_map'],
   // kind: map（long-lived）— Task 4 评估：4 处 task_types 是 CTO/CPO/CMO/CFO/COO
   // 五个业务角色的任务归属划分（key===value 恒等映射，充当归属集合），是与现有 9 个字段
   // （surface/coding/pr/executor/watchdog/push_to_notion/tick_dispatchable/cleanup_class/db）
