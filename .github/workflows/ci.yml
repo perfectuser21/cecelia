@@ -967,6 +967,7 @@ jobs:
             src/__tests__/integration/attempt-weighted-reservation.pg.integration.test.js \
             src/__tests__/integration/script-capacity-reservation.pg.integration.test.js \
             src/__tests__/integration/execution-directory.pg.integration.test.js \
+            src/__tests__/integration/execution-baseline.pg.integration.test.js \
             src/app-server/__tests__/integration/store.test.js \
             src/__tests__/integration/linux-pool-authorization.pg.integration.test.js \
             src/__tests__/integration/linux-script-authorization.pg.integration.test.js \

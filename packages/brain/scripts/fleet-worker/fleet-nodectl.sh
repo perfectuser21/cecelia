@@ -8,7 +8,6 @@ LAUNCHCTL="${FLEET_NODECTL_LAUNCHCTL:-/bin/launchctl}"
 DRAIN_MARKER="${FLEET_NODECTL_DRAIN_MARKER:-/var/run/cecelia/fleet-worker.drain}"
 HEALTH_FILE="${FLEET_NODECTL_HEALTH_FILE:-}"
 LOCAL_MACHINE="${CECELIA_MACHINE_ID:-}"
-PLIST="${FLEET_NODECTL_PLIST:-/Library/LaunchDaemons/com.perfect21.fleet-worker.plist}"
 LABEL='com.perfect21.fleet-worker'
 PINNED_NODE="${FLEET_NODECTL_PINNED_NODE:-/usr/local/libexec/cecelia/toolchain/bin/node}"
 PATH_NODE="${FLEET_NODECTL_PATH_NODE-$(command -v node || true)}"
@@ -176,11 +175,9 @@ case "$command_name" in
       echo "dry-run: would drain $machine_id"
     else
       require_local_apply "$machine_id"
-      if [[ ! -f "$DRAIN_MARKER" ]]; then
-        mkdir -p "$(dirname "$DRAIN_MARKER")"
-        printf '%s\n' "$machine_id" > "$DRAIN_MARKER"
-        "$LAUNCHCTL" bootout "system/$LABEL" >/dev/null 2>&1 || true
-      fi
+      [[ -n "$NODE_EXECUTABLE" ]] || die "node_unavailable"
+      FLEET_NODECTL_DRAIN_MARKER="$DRAIN_MARKER" FLEET_NODECTL_LAUNCHCTL="$LAUNCHCTL" \
+        "$NODE_EXECUTABLE" "$SCRIPT_DIR/drain-owner.cjs" drain "$machine_id"
       echo "drained: $machine_id"
     fi
     ;;
@@ -189,22 +186,9 @@ case "$command_name" in
       echo "dry-run: would undrain $machine_id"
     else
       require_local_apply "$machine_id"
-      if [[ -f "$DRAIN_MARKER" ]]; then
-        rm -f "$DRAIN_MARKER"
-        if "$LAUNCHCTL" print "system/$LABEL" >/dev/null 2>&1; then
-          launch_ok=true
-        else
-          launch_ok=false
-          if "$LAUNCHCTL" bootstrap system "$PLIST"; then
-            launch_ok=true
-          fi
-        fi
-        if [[ "$launch_ok" != true ]] \
-          || ! "$LAUNCHCTL" kickstart -k "system/$LABEL"; then
-          printf '%s\n' "$machine_id" > "$DRAIN_MARKER"
-          exit 1
-        fi
-      fi
+      [[ -n "$NODE_EXECUTABLE" ]] || die "node_unavailable"
+      FLEET_NODECTL_DRAIN_MARKER="$DRAIN_MARKER" FLEET_NODECTL_LAUNCHCTL="$LAUNCHCTL" \
+        "$NODE_EXECUTABLE" "$SCRIPT_DIR/drain-owner.cjs" undrain "$machine_id"
       echo "undrained: $machine_id"
     fi
     ;;
