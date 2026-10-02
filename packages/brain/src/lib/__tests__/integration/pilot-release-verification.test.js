@@ -1,6 +1,9 @@
 import {afterEach,beforeEach,expect,it} from 'vitest';
 import {existsSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import express from 'express';
+import request from 'supertest';
+import {createReleasesRouter} from '../../../routes/releases.js';
 import {releaseEvidenceDatabase,RELEASE_HEAD} from '../../../__tests__/fixtures/release-evidence-db.js';
 import {createRelease,getRelease} from '../../release-index.js';
 import {registerCapabilityRegression} from '../../capability-regressions.js';
@@ -29,6 +32,17 @@ it('真实首次release冻结完整计划，人改断言后历史读与同payloa
  expect((await getRelease(f.db,release.id)).payload.assertion_plans).toEqual(release.payload.assertion_plans);
  expect((await createRelease(f.db,input)).release.id).toBe(release.id);
  const next=await createRelease(f.db,{...input,release_key:'new-after-registration-change'});expect(next.release.payload.verification.ci_status).toBe('unknown');
+});
+it('正式HTTP接受规范化raw描述并保留未解析原文，不允许raw替代固定Activity实现',async()=>{
+ for(const fullActivityBindings of [true,false]){
+  await f.close();f=await releaseEvidenceDatabase({fullActivityBindings,rawImplementationDescriptions:true});await cover();
+  const raw=f.activities.flatMap(a=>a.payload.implementation_bindings.filter(b=>b.kind==='raw'));
+  expect(raw.length).toBeGreaterThan(9);expect(raw.every(b=>b.status==='unresolved')).toBe(true);
+  const app=express();app.use(express.json({limit:'2mb'}));app.use('/releases',createReleasesRouter({pool:f.db}));
+  const r=await request(app).post('/releases').send({...f.releaseInput,ci_evidence:[evidence(await plan())]});
+  expect(r.status,r.body).toBe(201);expect(r.body.release.payload.verification.status).toBe(fullActivityBindings?'verified':'unknown');
+  expect((await f.db.query('SELECT payload FROM activity_definition_versions WHERE id=$1',[f.activities[0].id])).rows[0].payload).toEqual(f.activities[0].payload);
+ }
 });
 it('漏Step/漏登记断言、重复回执、PR purpose以及篡改计划均不能发布绿',async()=>{
  await cover();const p=await plan();
