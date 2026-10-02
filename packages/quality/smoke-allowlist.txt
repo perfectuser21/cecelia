@@ -371,6 +371,8 @@ harness-weighted-reservation-smoke.sh
 fleet-local-resource-admission-smoke.sh
 phone-registry-sync-smoke.sh
 alertness-schema-smoke.sh
+activity-contract-runtime-smoke.sh
+activity-event-ledger-smoke.sh
 
 preview-owned-cache-smoke.sh
 

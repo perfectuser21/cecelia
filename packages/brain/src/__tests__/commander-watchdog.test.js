@@ -9,6 +9,7 @@
  * 外部命令（ssh / Bark）全部桩成可断言的 spy，绝不真发。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { sshTargetFor, resolvePrimaryWorkerId } from '../machine-registry.js';
 import {
   recordCommanderHeartbeat,
@@ -20,6 +21,23 @@ import {
 } from '../commander-watchdog.js';
 
 const GATEWAY = sshTargetFor(resolvePrimaryWorkerId());
+
+it('接班消息先经网关 SSH 读 SOP；心跳 JSON 经 shell 原样到达 curl', async () => {
+  const remote = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmd10020630', serial: 'S1', profile: 'legacy', taskId: 'run1', relaunchCount: 1 });
+  // 实际 shell 解码 cron --message，不靠正则假设引号正确。
+  const args = JSON.parse(execFileSync('/bin/sh', ['-c', `openclaw(){ python3 -c 'import sys,json;print(json.dumps(sys.argv[1:]))' "$@"; }; ${remote}`], { encoding: 'utf8' }));
+  const message = args[args.indexOf('--message') + 1];
+  expect(message).toContain(`ssh -o BatchMode=yes -o ConnectTimeout=10 ${GATEWAY}`);
+  const heartbeat = message.match(/每轮末尾必须发心跳: (.*)$/)?.[1];
+  expect(heartbeat).toBeTruthy();
+  const output = execFileSync('/bin/sh', ['-c', `
+    curl(){ python3 -c 'import sys,json;print(json.dumps(sys.argv[1:]))' "$@"; }
+    ssh(){ while [ "$1" = "-o" ]; do shift 2; done; shift; eval "$1"; }
+    ${heartbeat}
+  `], { encoding: 'utf8' });
+  const curlArgs = JSON.parse(output);
+  expect(JSON.parse(curlArgs[curlArgs.indexOf('-d') + 1])).toMatchObject({ tag: 'cmd10020630', host: 'xian-m4', serial: 'S1' });
+});
 
 function makePool(handlers) {
   const calls = [];
@@ -85,17 +103,57 @@ describe('recordCommanderHeartbeat', () => {
   });
 });
 
+it('已声明能力的接班必须先读相同专属skill，缺能力不能自选', () => {
+  const remote = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmdfixture', cap: 'keyword_acquisition', taskId: 'run1', relaunchCount: 1 });
+  const args = JSON.parse(execFileSync('/bin/sh', ['-c', `openclaw(){ python3 -c 'import sys,json;print(json.dumps(sys.argv[1:]))' "$@"; }; ${remote}`], { encoding: 'utf8' }));
+  expect(args[args.indexOf('--message') + 1]).toContain('wf-keyword_acquisition/SKILL.md');
+  expect(args[args.indexOf('--message') + 1]).toContain('专属skill');
+  expect(args[args.indexOf('--message') + 1]).toContain('终态优先');
+  const legacy = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmdfixture', taskId: 'run1', relaunchCount: 1 });
+  expect(legacy).toContain('能力缺失');
+});
+
+it('自启动真实心跳携带cap后落账，接班沿同cap加载专属skill', async () => {
+  let patch;
+  const pool = { query: async (sql, params) => {
+    if (sql.includes('UPDATE tasks')) { patch = JSON.parse(params[1]); return { rowCount: 1 }; }
+    if (sql.includes("payload->>'tag'")) return { rows: [{ id: 'run1', payload: { escort_id: 'id1' } }] };
+    return { rows: [] };
+  }};
+  const result = await recordCommanderHeartbeat(pool, { tag: 'cmdfixture', host: 'xian-m4',
+    cap: 'benchmark_link_acquisition', serial: 'S1', profile: 'legacy' });
+  expect(result.matched).toBe(true); expect(patch.cap).toBe('benchmark_link_acquisition');
+  expect(buildEscortRelaunchRemote({ ...patch, taskId: 'run1', relaunchCount: 1 })).toContain('wf-benchmark_link_acquisition/SKILL.md');
+});
+
 describe('buildEscortRelaunchRemote', () => {
+  it('隔离验收可显式指定心跳 API 与关闭对外投递，默认生产行为不变', () => {
+    const oldUrl = process.env.COMMANDER_BRAIN_URL;
+    const oldDelivery = process.env.COMMANDER_ESCORT_DELIVERY;
+    try {
+      process.env.COMMANDER_BRAIN_URL = 'http://localhost:5299';
+      process.env.COMMANDER_ESCORT_DELIVERY = 'none';
+      const remote = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmd10020930', taskId: 'drill', relaunchCount: 1 });
+      expect(remote).toContain('--no-deliver');
+      expect(remote).not.toContain('--announce');
+      expect(remote).toContain('http://localhost:5299/api/brain/commander-heartbeat');
+    } finally {
+      if (oldUrl === undefined) delete process.env.COMMANDER_BRAIN_URL; else process.env.COMMANDER_BRAIN_URL = oldUrl;
+      if (oldDelivery === undefined) delete process.env.COMMANDER_ESCORT_DELIVERY; else process.env.COMMANDER_ESCORT_DELIVERY = oldDelivery;
+    }
+  });
   it('同名 escort-<host>-<TAG>，消息注明接班只读接上不重发起，带 Brain 单号；远端串单引号安全', () => {
     const remote = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmd09300200', serial: 'ANGYVB4402004137', profile: 'legacy', taskId: 'task-run-1', relaunchCount: 2 });
-    expect(remote).toContain("cron add --timeout 90000 --name 'escort-xian-m4-cmd09300200' --agent media");
+    expect(remote).toContain("cron add --timeout 90000 --name 'escort-xian-m4-cmd09300200' --agent work-commander");
     expect(remote).toContain("--session 'session:escort-xian-m4-cmd09300200' --every 10m");
     expect(remote).toContain('接班');
     expect(remote).toContain('只读账本与日志接上');
     expect(remote).toContain('不重新发起');
     expect(remote).toContain('Brain单=task-run-1');
     expect(remote).toContain('cmdr-escort.txt');
-    expect(remote).not.toMatch(/[^\\]'[^ ]*"/); // 不混引号
+    // 嵌套 SSH/JSON 需要多层引号；用真实 shell 校验语法，运输内容由上方行为回归读回。
+    const parsed = execFileSync('/bin/sh', ['-n', '-c', remote], { encoding: 'utf8' });
+    expect(parsed).toBe('');
   });
 });
 
@@ -114,6 +172,27 @@ describe('runCommanderWatchdog', () => {
     return { fn, seen };
   }
 
+  it('add成功但首轮run失败：保留接班身份，落失败事件，不伪写恢复心跳', async () => {
+    const pool = makePool([
+      [/FROM tasks[\s\S]*commander_heartbeat_at/, { rows: [RUN] }],
+      [/UPDATE tasks/, (sql, params) => ({ rows: [{ id: params[0] }], rowCount: 1 })],
+    ]);
+    const execFileFn = vi.fn((cmd, args, opts, callback) => {
+      const remote = args.at(-1);
+      if (remote.includes('cron run')) return callback(new Error('queue unavailable'), '', '');
+      callback(null, remote.includes('cron list') ? '{"jobs":[]}' : '{"id":"esc-relaunched-1111"}', '');
+    });
+    const bark = vi.fn();
+    const out = await runCommanderWatchdog(pool, { execFileFn, bark, gateMs: 0 });
+    expect(out.relaunched).toBe(1);
+    const patch = JSON.parse(pool.calls.find(c => /UPDATE tasks/.test(c.sql)).params[1]);
+    expect(patch.escort_id).toBe('esc-relaunched-1111');
+    expect(patch.commander_heartbeat_at).toBeUndefined();
+    const events = pool.calls.filter(c => /INSERT INTO task_events/.test(c.sql)).map(c => c.params[1]);
+    expect(events).toEqual(['commander_relaunched', 'commander_activation_failed']);
+    expect(bark).not.toHaveBeenCalled();
+  });
+
   it('心跳过期（判据在 SQL）→ 先 rm 旧 escort 再 add 同名 escort，新 id 回写 payload，计数 +1，task_events commander_relaunched；不 Bark', async () => {
     const pool = makePool([
       [/FROM tasks[\s\S]*commander_heartbeat_at/, (sql, params) => {
@@ -130,11 +209,12 @@ describe('runCommanderWatchdog', () => {
     const bark = vi.fn().mockResolvedValue(true);
     const out = await runCommanderWatchdog(pool, { execFileFn: ssh.fn, bark, gateMs: 0, now: Date.parse('2026-09-30T03:10:00Z') });
     expect(out.relaunched).toBe(1);
-    expect(ssh.seen).toHaveLength(3);
+    expect(ssh.seen).toHaveLength(4);
     expect(ssh.seen[0].target).toBe(GATEWAY);
     expect(ssh.seen[0].remote).toBe('openclaw cron list --json');
     expect(ssh.seen[1].remote).toContain('cron rm old-escort-id-0000');
     expect(ssh.seen[2].remote).toContain("cron add --timeout 90000 --name 'escort-xian-m4-cmd09300200'");
+    expect(ssh.seen[3].remote).toBe("openclaw cron run 'esc-relaunched-1111' --timeout 90000");
     const upd = pool.calls.find((c) => /UPDATE tasks/.test(c.sql) && c.params[0] === 'task-run-1');
     const merged = JSON.parse(upd.params[1]);
     expect(merged).toMatchObject({ escort_id: 'esc-relaunched-1111', commander_relaunch_count: 1, commander_relaunched_at: '2026-09-30T03:10:00.000Z' });
@@ -213,7 +293,7 @@ describe('runCommanderWatchdog', () => {
     const ssh2 = sshStub(undefined, [{ id: 'esc-by-wfrun-77', name: 'escort-xian-m4-cmd09300200' }]);
     const out2 = await runCommanderWatchdog(pool2, { execFileFn: ssh2.fn, bark: vi.fn(), gateMs: 0 });
     expect(out2.relaunched).toBe(1);
-    expect(ssh2.seen.map((s) => s.remote.split(' ').slice(0, 3).join(' '))).toEqual(['openclaw cron rm', 'openclaw cron add']);
+    expect(ssh2.seen.map((s) => s.remote.split(' ').slice(0, 3).join(' '))).toEqual(['openclaw cron rm', 'openclaw cron add', 'openclaw cron run']);
     expect(ssh2.seen[0].remote).toContain('cron rm esc-by-wfrun-77');
   });
 

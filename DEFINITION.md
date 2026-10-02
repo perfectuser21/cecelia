@@ -40,6 +40,8 @@ Kernel 派发按统一机器角色表生成 M1/M4 优先、MMV 最后的默认�
 
 
 
+待发布：Commander 契约生成专属陪跑 skill、work-commander角色一致性与异步售后协调器；禁用取消抢跑tick时限次恢复真实售后，再核自然成功下岗（版本由合并后的 auto-version 五件套应用器统一生成；changes/cp-10011347-commander-contract-runtime.md）。
+
 
 
 

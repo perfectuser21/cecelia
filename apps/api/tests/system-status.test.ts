@@ -10,11 +10,29 @@ import request from 'supertest';
 // Store original fetch
 const originalFetch = global.fetch;
 
+const { databaseQuery } = vi.hoisted(() => ({
+  databaseQuery: vi.fn().mockRejectedValue(new Error('status fixture must not access a database')),
+}));
+
+vi.mock('../src/task-system/db.js', () => ({ default: { query: databaseQuery } }));
+
+// These status fixtures exercise real HTTP handlers, without starting storage or polling.
+vi.mock('../src/system/memory.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/system/memory.js')>(),
+  initMemoryTable: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../src/system/degrade.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../src/system/degrade.js')>(),
+  startHealthChecks: vi.fn(),
+}));
+
 describe('/api/system/status', () => {
   let app: express.Application;
   let mockFetch: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
+    databaseQuery.mockClear();
     // Create fresh mock for each test
     mockFetch = vi.fn();
     global.fetch = mockFetch as any;
@@ -80,6 +98,14 @@ describe('/api/system/status', () => {
     expect(['healthy', 'degraded', 'unhealthy']).toContain(response.body.status);
     expect(response.body.service).toBe('cecelia-workspace');
     expect(response.body).toHaveProperty('timestamp');
+  });
+
+  it('keeps the HTTP status fixture independent of the memory database', async () => {
+    const response = await request(app).get('/api/system/health');
+
+    expect(response.status).toBe(200);
+    expect(response.body.service).toBe('cecelia-workspace');
+    expect(databaseQuery).not.toHaveBeenCalled();
   });
 
   it('returns services with latency info from /api/system/health', async () => {

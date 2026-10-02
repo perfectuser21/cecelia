@@ -1802,6 +1802,14 @@ jobs:
           echo "::error::Brain not healthy in 90s"
           docker logs cecelia-brain-smoke
           exit 1
+      - name: Create isolated activity event scratch database
+        env:
+          PGHOST: localhost
+          PGPORT: '5432'
+          PGDATABASE: postgres
+          PGUSER: cecelia
+          PGPASSWORD: ${{ secrets.CI_DB_PASSWORD }}
+        run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE cecelia_activity_event_scratch'
       - name: Map Manifest real PG positive
         env:
           SMOKE_ALLOW_WRITE: '1'
@@ -1818,6 +1826,7 @@ jobs:
           BRAIN_URL: http://localhost:5221
           BRAIN_CONTAINER: cecelia-brain-smoke
           DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_test
+          ACTIVITY_EVENT_DATABASE_URL: postgresql://cecelia:${{ secrets.CI_DB_PASSWORD }}@localhost:5432/cecelia_activity_event_scratch
           DB_HOST: localhost
           DB_PORT: '5432'
           DB_NAME: cecelia_test
