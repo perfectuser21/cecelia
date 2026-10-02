@@ -149,3 +149,23 @@ it('phone 与真实 script store 共用整机容量，无owner借道',async()=>{
  await store.withLaunch(r.id,()=>{});await store.finish(r.id,receipt(r));expect((await scripts.reserve(req)).outcome).toBe('reserved');
  expect((await store.reserve(await input())).outcome).toBe('wait');
 });
+it.each(['grant','snapshot'])('registry 行锁等待越过 %s 期限时最终launch拒绝且unknown保留占位',async(kind)=>{
+ const {dispatch:r}=await store.reserve(await input()),blocker=await pool.connect();
+ const expires=Date.now()+200,snapshotForLaunch={...directory.current(),expiresAt:kind==='snapshot'?expires:Date.now()+30_000};
+ if(kind==='grant')await pool.query('UPDATE execution_grants SET expires_at=to_timestamp($2/1000.0) WHERE id=$1',[r.execution_grant_id,expires]);
+ await blocker.query('BEGIN');await blocker.query('SELECT serial FROM phone_registry WHERE serial=$1 FOR UPDATE',[serial]);
+ let calls=0,waiting=false;
+ const pending=directory.withSnapshot(snapshotForLaunch,()=>store.withLaunch(r.id,()=>{calls++;return 'launched';})).then(value=>value,error=>error);
+ try{
+  for(let i=0;i<100;i++){
+   const wait=(await pool.query("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT * FROM phone_registry%') AS waiting")).rows[0].waiting;
+   if(wait){waiting=true;break;}await new Promise(resolve=>setTimeout(resolve,5));
+  }
+  await new Promise(resolve=>setTimeout(resolve,Math.max(0,expires-Date.now()+20)));
+ }finally{await blocker.query('COMMIT');blocker.release();}
+ const result=await pending;expect(waiting).toBe(true);expect(result).toBeInstanceOf(Error);
+ expect(result.message).toBe(kind==='grant'?'execution_grant_denied':'execution_snapshot_unavailable');expect(calls).toBe(0);
+ expect((await store.get(r.id)).state).toBe('unknown');
+ expect((await pool.query('SELECT status FROM capacity_reservations WHERE id=$1',[r.reservation_id])).rows[0].status).toBe('cleanup_pending');
+ await expect(store.withLaunch(r.id,()=>{calls++;})).rejects.toThrow('phone_launch_forbidden');expect(calls).toBe(0);
+});
