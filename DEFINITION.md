@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.360.5
+**Brain 版本**: 1.360.6
 
 现役西安M4可经显式固定canonical runner安装恢复：原受保护plist摘要CAS与自属drain合作锁/真实继承FD绑定，仅runner切到受信aeaf，显式路径同时要求Worker有效drain marker为同一固定marker（缺字段采用默认），其它字段与普通升级保留语义不变；旧快照继续用于launch前核验和失败回滚。
 
@@ -39,6 +39,19 @@ Kernel 派发按统一机器角色表生成 M1/M4 优先、MMV 最后的默认�
 
 
 
+
+**Brain 版本**: 1.360.5
+
+## Brain 1.357.6 — 恢复目标跨路径永久回归
+
+- 新增真实恢复入口→执行目标冻结→ground-truth同run候选→dispatcher的永久契约回归：无候选/旧us候选均派发西安team2，同新run西安候选保持Evaluator/Judge亲和；profile冲突和非法目标在入口拒绝且零派发。仅数据库、Git和执行边界夹具隔离，不改dispatcher算法或生产行为。
+
+## Brain 1.357.5 — 失败 Kernel 恢复冻结已授权执行目标
+
+- 内部鉴权的 canonical 创建入口仅在显式恢复请求下允许同任务 failed 前任重新进入 planning；核验最新收据、失败前任、无活动尝试、fresh 地图、同仓同分支实际 Git head 与 base 血统。
+- 在同一事务追加接班收据、更新任务锚点并签发新 Controller/run；旧收据、失败 run、旧封存合同均保留，新 run 不继承旧裁决。并发重试返回同一 Controller，失败整笔回滚；留事实、Git/map 证据与 actor。
+- 可选执行目标仅在上述恢复事务中生效；按原始 payload 规范化 profile 摘要 CAS（摘要严格为64位小写hex字符串，非字符串请求在事务前400拒绝），复用当前目录版本和现存仓库授权，冻结 Commander 与全部执行角色，收据留目标/profile/授权版本证据。模型名仅允许非空标识段及供应商限定分隔，URL、绝对路径、空段和遍历段在事务前拒绝。无新许可或路由接口；实际派发仍走角色能力、候选机器亲和和容量 floor 门禁。
+- 永久回归覆盖真实 HTTP 入口、内部鉴权、真实隔离 PostgreSQL 事务/并发、授权撤销/过期/换代、容量拒绝及真实 Map/Radius/preflight。原有无目标恢复请求保持兼容。
 
 
 失败canary的同nonce恢复可返回独立cleanup-only签名：只有已确认完整身份和精确墓碑，或持久尚未尝试创建事实，才允许后台淘汰旧挑战。该schema不兼容activate，不产生成功验收；未知仍占位。淘汰后等旧预约释放并重读安装身份，再运行全新canary，保留显式撤销停止语义。

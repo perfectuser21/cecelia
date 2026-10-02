@@ -6,6 +6,7 @@ import { resolvePlannerRecoveryRunAuthority } from './planner-recovery-run-autho
 import { KERNEL_RUN_ELIGIBLE_TASK_TYPES } from '../lib/task-type-registry.js';
 import { finishRun } from '../lib/task-run.js';
 import { afterTerminalTransition } from '../lib/task-terminal.js';
+import { matchesRecoveryRebase, rebaseReceiptForRecovery, validateRecoveryRebase } from './recovery-rebase.js';
 
 const ACTIVE_PHASES = new Set([
   'planning',
@@ -84,6 +85,7 @@ async function terminalizeLockedKernelAttempts(client, {
 }
 
 function validateCreateInput(input) {
+  validateRecoveryRebase(input);
   if (!ACTIVE_PHASES.has(input?.phase)) {
     throw new Error(`invalid Kernel run start phase: ${input?.phase}`);
   }
@@ -127,6 +129,7 @@ export async function loadActiveKernelRun(db, taskId, { forUpdate = false } = {}
   const { rows } = await db.query(
     `SELECT id, initiative_id, current_task_id, phase,
             orchestrator_heartbeat_at, orchestrator_pid, orchestrator_host,
+            controller_session_id, controller_generation,
             controller_lease_expires_at,
             started_at, created_source, predecessor_run_id,
             planner_recovery_receipt_id, commander_mode,
@@ -482,6 +485,11 @@ export async function createKernelRun(pool, input, deps = {}) {
       { forUpdate: true },
     );
     if (active) {
+      if (input.recoveryRebase && (active.predecessor_run_id !== input.predecessorRunId
+          || !matchesRecoveryRebase(task.payload?.recovery_rebase, input.recoveryRebase,
+            input.predecessorRunId))) {
+        throw Object.assign(new Error('recovery_rebase_active_run'), { status: 409 });
+      }
       if (
         plannerRecovery
         && (
@@ -494,7 +502,9 @@ export async function createKernelRun(pool, input, deps = {}) {
       }
       await client.query('COMMIT');
       committed = true;
-      return { created: false, run: active };
+      return { created: false, run: active,
+        ...(input.recoveryRebase ? { base_sha: task.payload.base_sha,
+          routing_receipt_id: task.payload.routing_receipt_id } : {}) };
     }
 
     let predecessor = null;
@@ -514,10 +524,10 @@ export async function createKernelRun(pool, input, deps = {}) {
                      AND recovery.source_task_id=predecessor.current_task_id
                 ) AS planner_recovery_consumed
            FROM initiative_runs predecessor
-           JOIN initiative_contracts contract
+           ${input.recoveryRebase ? 'LEFT JOIN' : 'JOIN'} initiative_contracts contract
              ON contract.id = predecessor.contract_id
           WHERE predecessor.id = $1
-          FOR SHARE OF predecessor, contract`,
+          FOR SHARE OF predecessor${input.recoveryRebase ? '' : ', contract'}`,
         [input.predecessorRunId],
       );
       predecessor = predecessorRows[0] ?? null;
@@ -530,9 +540,11 @@ export async function createKernelRun(pool, input, deps = {}) {
         || predecessor.initiative_id !== input.initiativeId
         || !['done', 'failed'].includes(predecessor.phase)
         || !['trusted', 'reconstructed'].includes(predecessor.record_trust_status)
-        || !predecessor.contract_id
-        || predecessor.contract_status !== 'approved'
-        || !/^[a-f0-9]{40}$/.test(predecessor.approved_sha ?? '')
+        || (input.recoveryRebase
+          ? predecessor.phase !== 'failed' || (predecessor.contract_id != null
+            && (predecessor.contract_status !== 'approved' || !/^[a-f0-9]{40}$/.test(predecessor.approved_sha ?? '')))
+          : !predecessor.contract_id || predecessor.contract_status !== 'approved'
+            || !/^[a-f0-9]{40}$/.test(predecessor.approved_sha ?? ''))
       ) {
         throw new Error('explicit recovery predecessor is invalid');
       }
@@ -556,7 +568,7 @@ export async function createKernelRun(pool, input, deps = {}) {
           AND receipt.task_id = $2`,
       [receiptId, input.taskId],
     );
-    const receipt = receiptRows[0];
+    let receipt = receiptRows[0];
     if (
       !receipt
       || receipt.superseded
@@ -566,6 +578,11 @@ export async function createKernelRun(pool, input, deps = {}) {
       || receipt.impact_contract_required !== true
     ) {
       throw new Error('routing_receipt_invalid');
+    }
+    if (input.recoveryRebase) {
+      receipt = await rebaseReceiptForRecovery(client, {
+        task, receipt, predecessor, request: input.recoveryRebase,
+      }, deps.recoveryRebaseDeps);
     }
     assertRouteSnapshotLaunchAuthority({
       taskStatus: task.status,
@@ -634,7 +651,7 @@ export async function createKernelRun(pool, input, deps = {}) {
         impactContractPolicyReason,
         impactContractPolicyDecisionId,
         preflight.recovery_contract?.id ?? null,
-        predecessor?.contract_id ?? null,
+        input.recoveryRebase ? null : predecessor?.contract_id ?? null,
         plannerRecovery?.predecessorRunId ?? predecessor?.id ?? null,
         plannerRecovery?.receiptId ?? null,
         // Session Controller ownership（sprint 08131104）：controller_session_id 先于 Kernel
@@ -654,8 +671,8 @@ export async function createKernelRun(pool, input, deps = {}) {
       created: true,
       run: rows[0],
       // 重锚定（任务 d9c405e2）后收据/base_sha 已变，调用方须用它覆写内存 task.payload 再起跑场。
-      base_sha: preflight.receipt?.evidence?.base_sha ?? null,
-      routing_receipt_id: preflight.receipt?.id ?? null,
+      base_sha: preflight.receipt?.evidence?.base_sha ?? (input.recoveryRebase ? receipt.evidence.base_sha : null),
+      routing_receipt_id: preflight.receipt?.id ?? (input.recoveryRebase ? receipt.id : null),
     };
   } catch (error) {
     if (!committed) {
