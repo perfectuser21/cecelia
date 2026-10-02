@@ -84,3 +84,8 @@ it('调用方事务内绑定回滚时不残留运行身份',async()=>{
   finally{db.release();}
   expect(await service.getRunDefinitionBinding(fixture.db,'rolled-back')).toBeNull();
 });
+it('完整路径同时包含Activity与其全部规范Step，不能通过省略必经层级缩小验收',async()=>{
+  const input=fixture.runInput(release,observation);const step=input.expected_path.find(p=>p.step_id),activity=input.expected_path.find(p=>!p.step_id);
+  expect((await post('missing-step',{...input,expected_path:input.expected_path.filter(p=>p!==step)})).status).toBe(422);
+  expect((await post('missing-activity',{...input,expected_path:input.expected_path.filter(p=>p!==activity)})).status).toBe(422);
+});
