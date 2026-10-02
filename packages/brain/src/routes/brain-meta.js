@@ -1535,7 +1535,9 @@ router.patch('/model-profiles/active/agent', async (req, res) => {
       return res.status(400).json({ success: false, error: 'agent_id and model_id are required' });
     }
 
-    const result = await updateAgentModel(pool, agent_id, model_id, { provider });
+    const result = await updateAgentModel(pool, agent_id, model_id, {
+      provider, actor: 'dashboard', sessionId: req.get('x-session-id')?.slice(0, 200),
+    });
 
     // WebSocket 广播
     websocketService.broadcast(websocketService.WS_EVENTS.PROFILE_CHANGED, {
@@ -1549,7 +1551,7 @@ router.patch('/model-profiles/active/agent', async (req, res) => {
   } catch (err) {
     console.error('[API] update-agent-model error:', err.message);
     const status = err.message.includes('Unknown agent') || err.message.includes('not allowed') || err.message.includes('locked to provider')
-      ? 400 : err.message.includes('No active profile') ? 404 : 500;
+      ? 400 : err.message.includes('No active profile') ? 404 : err.message.includes('修改冲突') ? 409 : 500;
     res.status(status).json({ success: false, error: err.message });
   }
 });

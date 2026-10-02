@@ -16,7 +16,9 @@ export async function authorize(db,input,operation=a=>a){
   if(!expected)throw Error('execution_node_unavailable');
   await c.query(MACHINE_CAPACITY_LOCK_SQL,[input.machineId]);
   const node=(await c.query(`SELECT v.*,n.canonical_id FROM execution_nodes n JOIN execution_node_versions v ON v.id=n.current_version_id
-    JOIN system_registry r ON r.id=n.machine_registry_id WHERE n.canonical_id=$1 AND v.state='active' AND r.type='machine' AND r.status='active'`,[input.machineId])).rows[0];
+    JOIN system_registry r ON r.id=n.machine_registry_id WHERE n.canonical_id=$1 AND v.state='active' AND r.type='machine' AND r.status='active'
+    AND (v.platform<>'linux' OR (r.id<>'1a379d80-ad36-47d3-88ba-e545ab299a54'::uuid
+     AND COALESCE(r.metadata->>'role','') NOT IN ('scheduler','scheduler_only') AND COALESCE(r.metadata->>'scheduler_only','false')<>'true'))`,[input.machineId])).rows[0];
   if(!node||node.id!==expected.id||!endpointValid(node.endpoints?.worker))throw Error('execution_version_stale');
   if(input.executionVersionId&&input.executionVersionId!==node.id)throw Error('execution_version_stale');
   const grant=(await c.query(`SELECT * FROM execution_grants WHERE node_version_id=$1 AND surface=$2 AND provider=$3
@@ -69,11 +71,15 @@ export async function importLegacyPolicy({pool,env=process.env}){
   await c.query('UPDATE execution_nodes SET current_version_id=$2 WHERE machine_registry_id=$1',[n.machine_registry_id,n.id]);
  });
 }
+export const GRANT_LINEAGE_PREFIX='baseline_clone/v1:';
+export function grantRootId(grant){return grant.provenance.startsWith(GRANT_LINEAGE_PREFIX)?grant.provenance.slice(GRANT_LINEAGE_PREFIX.length):grant.id;}
 export async function revokeGrant({pool,grantId}){
  await transaction(pool,async c=>{
-  const row=(await c.query(`SELECT n.canonical_id FROM execution_grants g JOIN execution_node_versions v ON v.id=g.node_version_id JOIN execution_nodes n USING(machine_registry_id) WHERE g.id=$1`,[grantId])).rows[0];
+  const row=(await c.query(`SELECT n.canonical_id,n.machine_registry_id,g.id,g.provenance FROM execution_grants g JOIN execution_node_versions v ON v.id=g.node_version_id JOIN execution_nodes n USING(machine_registry_id) WHERE g.id=$1`,[grantId])).rows[0];
   if(!row)throw Error('execution_grant_missing');await c.query(MACHINE_CAPACITY_LOCK_SQL,[row.canonical_id]);
-  await c.query("UPDATE execution_grants SET state='revoked' WHERE id=$1",[grantId]);
+  const root=grantRootId(row);
+  await c.query(`UPDATE execution_grants g SET state='revoked' FROM execution_node_versions v WHERE g.node_version_id=v.id
+    AND v.machine_registry_id=$1 AND (g.id=$2 OR g.provenance=$3)`,[row.machine_registry_id,root,GRANT_LINEAGE_PREFIX+root]);
  });await directory.refresh({pool});
 }
 const startedPools=new WeakMap();

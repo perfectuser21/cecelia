@@ -1,3 +1,4 @@
+import {createExecutionBaselineRouter} from './src/routes/execution-baseline.js';
 import {createAppServerRouter} from './src/routes/app-server.js';
 import { startExecutionDirectory } from './src/execution-directory/store.js';
 // OTel 必须在所有其他 import 之前初始化（auto-instrumentation 要求）
@@ -322,6 +323,7 @@ app.use('/api/brain/graph', graphRoutes);
 // POST 原样写 -、GET 转 _ 读，写进去的键永远读不到。
 app.use('/api/brain/janitor', janitorRoutes);
 app.use('/api/brain/internal/app-server', createAppServerRouter({pool}));
+app.use('/api/brain/internal/execution-directory',createExecutionBaselineRouter({pool}));
 app.use('/api/brain/profile/facts', profileFactsRoutes);
 
 // Cron 手动触发（E2E 测试用）

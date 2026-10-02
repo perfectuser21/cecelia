@@ -8,6 +8,16 @@ let api={};try{api=require('./app-server-profile.cjs');}catch(e){if(e.code!=='MO
 const sample=()=>({image:'sha256:'+'a'.repeat(64),cpus:2,memoryBytes:1073741824,pidsLimit:128,
  user:'1000:1000',tmpBytes:67108864,network:'none',homeKey:'b'.repeat(64),workspaceKey:'c'.repeat(64)});
 describe('OpenClaw 受保护固定执行配置',()=>{
+ it('Notion只接收已核精确名字，选定账号工具集改变授权digest',()=>{
+  const hostTools=require('./app-server-notion-tools.fixture.json');
+  const full=api.validateAppServerProfile({...sample(),hostTools});
+  expect(full.hostTools).toEqual(hostTools);
+  const readOnly={...sample(),hostTools:['notion-owner__API-post-search']};
+  expect(api.profileDigest(full)).not.toBe(api.profileDigest(readOnly));
+  for(const name of ['notion-owner__API-exec','notion-owner__API-post-search-extra','notion-unknown__API-post-search','notion-owner__*','notion-owner__API-post-search\n']){
+   expect(()=>api.validateAppServerProfile({...sample(),hostTools:[name]})).toThrow('appserver_profile_invalid');
+  }
+ });
  it('业务工具精确名单进入不可变profile和digest，宿主执行与派生入口不能登记',()=>{
   const names=['message','memory_get','read'];
   const profile=api.validateAppServerProfile({...sample(),hostTools:names});
