@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { it,expect } from 'vitest';
+import { describe,it,expect } from 'vitest';
 const repo=fileURLToPath(new URL('../../../../',import.meta.url));
 
 /** 按Dockerfile最后一阶段的本地COPY组装真实字节；依赖使用当前已安装生产依赖，不mock源码模块。 */
@@ -25,6 +25,7 @@ function runtimeArtifact(root){
  symlinkSync(realpathSync(path.join(repo,'node_modules')),path.join(root,'node_modules'),'dir');
 }
 
+describe('linux-pool-runtime-artifact 实际发布工件',()=>{
 it('实际Dockerfile布局可导入machines及完整Linux服务链；无部署配置仍启动HTTP且拒绝授权',()=>{
  const root=mkdtempSync(path.join(tmpdir(),'linux-pool-runtime-'));
  try{
@@ -51,3 +52,5 @@ it('实际Dockerfile布局可导入machines及完整Linux服务链；无部署�
   expect(result.stdout).toContain('linux_pool_runtime_artifact_ok');
  }finally{rmSync(root,{recursive:true,force:true});}
 },20000);
+
+});

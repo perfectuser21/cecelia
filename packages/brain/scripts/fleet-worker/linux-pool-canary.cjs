@@ -87,6 +87,13 @@ function acquireCanaryInstallFence({filename='/run/cecelia/linux-pool.install.lo
  try{fs.writeFileSync(fd,JSON.stringify({owner_kind:'linux-pool-canary',nonce}));fs.fsyncSync(fd);owned=fs.fstatSync(fd);}finally{fs.closeSync(fd);}
  return ()=>{try{const current=fs.lstatSync(filename);if(current.dev===owned.dev&&current.ino===owned.ino)fs.unlinkSync(filename);}catch(error){if(error.code!=='ENOENT')throw error;}};
 }
+function isMissingContainerError(error,reference){
+ if(error.code!==1||typeof reference!=='string')return false;
+ return ['Error: No such container: ','Error: No such object: ',
+  'Error response from daemon: No such container: ','Error response from daemon: No such object: ']
+  .some(prefix=>String(error.stderr).trim()===prefix+reference);
+}
+
 async function runLinuxPoolCanary({nonce,cleanupReceipt=false},deps={}){
  if((deps.platform??process.platform)!=='linux'||(deps.getuid??process.getuid)()!==0||!deps.lockHeld||!HEX.test(nonce??''))fail();
  const run=deps.runCommand??command,read=deps.readText??readBounded,readlink=deps.readlink??fs.promises.readlink;
@@ -120,7 +127,7 @@ async function runLinuxPoolCanary({nonce,cleanupReceipt=false},deps={}){
  if(state?.cleanup_confirmed)return cleanupEnvelope();
  const stable=async()=>{if(String(await read('/proc/sys/kernel/random/boot_id')).trim()!==boot||await daemon()!==daemonId)fail();};
  const inspect=async reference=>{try{const values=JSON.parse(await docker(['inspect','--type=container',reference]));if(!Array.isArray(values)||values.length!==1)fail();return values[0];}
-  catch(error){if(error.code===1&&new RegExp('^Error(?: response from daemon)?: No such (?:container|object): '+reference+'$').test(String(error.stderr).trim()))return null;throw error;}};
+  catch(error){if(isMissingContainerError(error,reference))return null;throw error;}};
  const cleanup=async()=>{
   if(state.daemon_id!==daemonId)fail();await stable();
   let object=await inspect(state.container_id??state.name);
@@ -193,4 +200,4 @@ if(require.main===module){
   try{const envelope=await runLinuxPoolCanary({nonce:args[1],cleanupReceipt},{lockHeld:true});process.stdout.write(JSON.stringify(envelope)+'\n');}finally{release();}
  })().catch(()=>{process.stderr.write('linux_pool_canary_unconfirmed\n');process.exitCode=1;});
 }
-module.exports={runLinuxPoolCanary,acquireCanaryInstallFence,createCanaryJournal:journal,readLinuxPoolIdentity:identity,assertCanaryDirectory:privateDirectory};
+module.exports={runLinuxPoolCanary,acquireCanaryInstallFence,isMissingContainerError,createCanaryJournal:journal,readLinuxPoolIdentity:identity,assertCanaryDirectory:privateDirectory};
