@@ -26,6 +26,8 @@ PINS={'x64':'fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6',
       'arm64':'6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2'}
 FILES=('linux-pool-installer.cjs','linux-pool-profile.cjs','linux-pool-proof.cjs','linux-pool-server.cjs',
        'linux-pool-canary.cjs','linux-resource-probe.cjs','linux-cgroup.cjs')
+SCRIPT_FILES=('linux-script-canary.cjs','linux-script-service.cjs','linux-script-launch-gate.cjs','linux-script-runtime.cjs','linux-script-docker.cjs',
+              'linux-script-permit.cjs','linux-script-bridge.cjs','script-runner.cjs')
 US_ID='1a379d80-ad36-47d3-88ba-e545ab299a54'
 MAX_ARCHIVE=64*1024*1024
 MAX_NODE=128*1024*1024
@@ -103,7 +105,7 @@ def bootstrap(options,deps=None):
  run=deps.get('run',run_command);readlink=deps.get('readlink',os.readlink)
  if deps.get('platform',platform.system())!='Linux' or deps.get('getuid',os.geteuid)()!=0:fail('root_linux_required')
  required={'source_dir','profile_file','token_file','revision'}
- if not isinstance(options,dict) or not required<=options.keys() or options.keys()-required-{'node_archive'}:fail('input_invalid')
+ if not isinstance(options,dict) or not required<=options.keys() or options.keys()-required-{'node_archive','execution_key_file'}:fail('input_invalid')
  if not isinstance(options['revision'],str) or not re.fullmatch('[a-f0-9]{40}',options['revision']):fail('input_invalid')
  def real(value):
   if not isinstance(value,str) or not value.startswith('/') or '\0' in value or os.path.normpath(value)!=value:fail('input_invalid')
@@ -146,7 +148,11 @@ def bootstrap(options,deps=None):
   if profile.get('machine_registry_id')==US_ID or profile.get('role')!='worker' or profile.get('pool',{}).get('cpu_cores',0)<=0 or profile.get('pool',{}).get('memory_bytes',0)<=0:fail('machine_forbidden')
   token=read(real(options['token_file']),0o600,65).strip()
   if not re.fullmatch(b'[a-f0-9]{64}',token):fail('token_invalid')
-  source={name:read(real(options['source_dir'])/name) for name in FILES}
+  execution_key=None
+  if options.get('execution_key_file'):
+   execution_key=read(real(options['execution_key_file']),0o600,65).strip()
+   if not re.fullmatch(b'[a-f0-9]{64}',execution_key) or execution_key==token:fail('execution_key_invalid')
+  source={name:read(real(options['source_dir'])/name) for name in FILES+(SCRIPT_FILES if execution_key else ())}
   if readlink('/proc/1/exe') not in ['/usr/lib/systemd/systemd','/lib/systemd/systemd']:fail('host_unavailable')
   try:run('/usr/bin/systemd-detect-virt',['--container']);fail('host_unavailable')
   except CommandFailure as error:
@@ -187,6 +193,7 @@ def bootstrap(options,deps=None):
   validate="const p=require(process.argv[1]);p.renderLinuxUnits(p.validateLinuxPoolProfile(JSON.parse(require('fs').readFileSync(0,'utf8'))));"
   run(str(node),['--input-type=commonjs','-e',validate,str(sources/'linux-pool-profile.cjs')],input=raw_profile.decode())
   write(stage/'profile.json',raw_profile);write(stage/'worker.token',token)
+  if execution_key:write(stage/'execution.key',execution_key)
   def lookup(kind):
    try:return run('/usr/bin/getent',[kind,'_cecelia']).strip().split(':')
    except CommandFailure as error:
@@ -216,7 +223,8 @@ def bootstrap(options,deps=None):
   account_prepared=True;receipt('prepared')
   # 非登录账号是幂等前置；失败不删除可能已被系统使用的uid/gid，不声称整体回滚。
   raw=run(str(node),[str(sources/'linux-pool-installer.cjs'),'--source-dir',str(sources),'--profile-file',str(stage/'profile.json'),
-   '--token-file',str(stage/'worker.token'),'--node-path',str(node),'--revision',options['revision']])
+   '--token-file',str(stage/'worker.token'),'--node-path',str(node),'--revision',options['revision']]
+   +(['--execution-key-file',str(stage/'execution.key')] if execution_key else []))
   result=json.loads(raw)
   if result.get('installed') is not True or result.get('execution') is not False or result.get('revision')!=options['revision'] or not re.fullmatch('[a-f0-9]{64}',result.get('config_digest','')):fail('install_failed')
   receipt('prepared',installed=True)
@@ -235,6 +243,7 @@ if __name__=='__main__':
  parser=argparse.ArgumentParser(description='Cecelia Linux pool trusted bootstrap')
  for name in ['source-dir','profile-file','token-file','revision']:parser.add_argument('--'+name,required=True)
  parser.add_argument('--node-archive')
+ parser.add_argument('--execution-key-file')
  try:
   options=vars(parser.parse_args());options={k:v for k,v in options.items() if v is not None}
   print(json.dumps(bootstrap(options)))

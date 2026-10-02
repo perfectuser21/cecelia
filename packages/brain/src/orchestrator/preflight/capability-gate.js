@@ -141,6 +141,7 @@ export function createCapabilityGate(deps = {}) {
       ? candidateTargets
       : [preferredTarget];
     const failedTargetKeys = new Set(failedTargets.map(targetKey));
+    const capacityBlockedTargets = new Set();
     let machine;
     let health;
     let capacity;
@@ -184,7 +185,9 @@ export function createCapabilityGate(deps = {}) {
         }
         continue;
       }
-      if (!health?.ok || !capacity?.ok || Number(capacity?.available ?? 0) < 1) {
+      if (!health?.ok || !capacity?.ok || !Number.isFinite(capacity?.available) || capacity.available < 1) {
+        if (health?.ok === true && capacity?.ok === true && Number.isFinite(capacity.available)
+            && capacity.available <= 0) capacityBlockedTargets.add(targetKey(candidate));
         lastNodeProbe = {
           machine_health: health ?? null,
           machine_capacity: capacity ?? null,
@@ -381,6 +384,12 @@ export function createCapabilityGate(deps = {}) {
         probeDetail: lastProviderProbe ?? lastNodeProbe,
         quotaEvidence,
       });
+      if (candidates.length > 0 && candidates.every(candidate => capacityBlockedTargets.has(targetKey(candidate)))) {
+        blocked.action = 'wait:capacity';
+        blocked.fallback_reason = 'machine_capacity_unavailable';
+        blocked.evidence.fallback_reason = blocked.fallback_reason;
+        blocked.evidence.capacity_blocked_machines = [...new Set(candidates.map(candidate => candidate.machine))];
+      }
       await deps.emitAlert?.({
         kind: 'kernel_capability_preflight_blocked',
         action: blocked.action,
@@ -489,6 +498,8 @@ export function createCapabilityGate(deps = {}) {
       from_target: preferredTarget,
       to_target: selectedTarget,
       machine_capacity: capacity,
+      ...(capacityBlockedTargets.size ? {capacity_blocked_machines: [...new Set(candidates
+        .filter(candidate => capacityBlockedTargets.has(targetKey(candidate))).map(candidate => candidate.machine))]} : {}),
       fallback_reason: fallbackReason,
       failure_class: targetKey(selectedTarget) === targetKey(preferredTarget)
         ? 'none'

@@ -24,7 +24,29 @@ function fixture(){
  return {root,calls,put,profile,options,deps,cleanup:()=>fs.rmSync(root,{recursive:true,force:true})};
 }
 const install=(x)=>require('./linux-pool-installer.cjs').installLinuxPool(x.options,x.deps);
+const SCRIPT_FILES=['linux-script-canary.cjs','linux-script-service.cjs','linux-script-launch-gate.cjs','linux-script-runtime.cjs','linux-script-docker.cjs','linux-script-permit.cjs','linux-script-bridge.cjs','script-runner.cjs'];
+function withScripts(x){x.options.executionKeyPath='/staging/execution.key';x.put(x.options.executionKeyPath,'d'.repeat(64));for(const name of SCRIPT_FILES)x.put('/staging/source/'+name,fs.readFileSync(path.join(__dirname,name)),0o644);return x;}
 describe('可信Linux pool安装事务',()=>{
+ it('显式独立root执行凭据安装Unix服务与私有pool，普通账号没有Docker权限或root key',async()=>{const x=withScripts(fixture());try{
+  const result=await install(x);expect(result).toMatchObject({installed:true,execution:false});
+  const key=path.join(x.root,'etc/cecelia/script-execution.key');expect(fs.readFileSync(key,'utf8')).toBe('d'.repeat(64));expect(fs.statSync(key).mode&0o777).toBe(0o600);
+  expect(JSON.parse(fs.readFileSync(path.join(x.root,'etc/cecelia/script-pool.json'),'utf8'))).toEqual(x.profile);
+  const unit=fs.readFileSync(path.join(x.root,'etc/systemd/system/cecelia-linux-script.service'),'utf8');
+  expect(unit).toContain('User=root');expect(unit).toContain('Group=_cecelia');expect(unit).toContain('RuntimeDirectoryMode=0750');expect(unit).not.toContain('SupplementaryGroups=docker');
+  for(const directive of ['ProtectSystem=','ProtectHome=','ReadWritePaths=','PrivateMounts='])expect(unit).not.toContain(directive);
+  expect(require(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/linux-script-service.cjs')).createLinuxScriptService).toBeTypeOf('function');
+  expect(require(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/linux-script-canary.cjs')).runLinuxScriptCanary).toBeTypeOf('function');
+  const starts=x.calls.filter(([c,a])=>c==='/usr/bin/systemctl'&&a[0]==='start').map(([,a])=>a[1]);expect(starts).toEqual(['cecelia-linux-script.service','cecelia-linux-pool.service']);
+  expect(JSON.stringify(result)).not.toContain('d'.repeat(64));
+ }finally{x.cleanup();}});
+ it('桥启动失败回滚全部root凭据和两个服务，绝不留下半安装执行入口',async()=>{const x=withScripts(fixture()),run=x.deps.runCommand;try{
+  x.deps.runCommand=async(c,a)=>{if(a[0]==='start'&&a[1]==='cecelia-linux-script.service')throw Error('start failed');return run(c,a);};
+  await expect(install(x)).rejects.toThrow('linux_pool_install_failed');
+  expect(fs.existsSync(path.join(x.root,'etc/cecelia/script-execution.key'))).toBe(false);expect(fs.existsSync(path.join(x.root,'etc/systemd/system/cecelia-linux-script.service'))).toBe(false);
+ }finally{x.cleanup();}});
+ it('执行key不能与普通Worker.token相同',async()=>{const x=withScripts(fixture());try{
+  x.put(x.options.executionKeyPath,'b'.repeat(64));await expect(install(x)).rejects.toThrow('linux_pool_install_execution_key_invalid');expect(fs.existsSync(path.join(x.root,'etc'))).toBe(false);
+ }finally{x.cleanup();}});
  it('固定slice/非root pending服务与可信配置落盘，完整依赖可加载，身份revision固定',async()=>{const x=fixture();try{
   const result=await install(x);expect(result).toMatchObject({installed:true,execution:false,revision:'c'.repeat(40)});
   const base=path.join(x.root,'usr/local/libexec/cecelia/fleet-worker');
