@@ -16,6 +16,16 @@ const post=async(base,path,body,auth=token)=>{
 const configured=()=>({token,identity:{hub_id:'fixture-hub',boot_id:'fixture-real-observation',build_digest:'a'.repeat(64)},
  capabilities:async machine=>({machine_id:machine,physical_boot_id:'fixture-physical-observation'}),
  maintenance:async()=>({scope:'phone-hub',pending:1,quiescent:false})});
+it('真实HTTP区分Hub与physical的不同config/build digest且全部进入HMAC',async()=>{
+ const hubConfig='b'.repeat(64),physicalConfig='c'.repeat(64),physicalBuild='d'.repeat(64);
+ const physicalTime=new Date(Date.now()-60000).toISOString();
+ await fixture({...configured(),identity:{...configured().identity,config_digest:hubConfig},capabilities:async()=>({config_digest:physicalConfig,build_digest:physicalBuild,observed_at:physicalTime})},async base=>{
+  const result=await post(base,'/phones/capabilities',{request_nonce:randomUUID(),machine_id:'fixture-machine'});
+  expect(result.body.receipt).toMatchObject({config_digest:hubConfig,build_digest:'a'.repeat(64),physical_config_digest:physicalConfig,physical_build_digest:physicalBuild,physical_observed_at:physicalTime});
+  expect(Date.parse(result.body.receipt.observed_at)).toBeGreaterThan(Date.parse(physicalTime));
+  expect(result.body.signature).toBe(createHmac('sha256',token).update(JSON.stringify(result.body.receipt)).digest('hex'));
+ });
+});
 it('默认无配置与无凭据都503，不签执行或维护成功',async()=>{
  for(const options of [{},{...configured(),token:undefined},{...configured(),identity:undefined}]){
   await fixture(options,async base=>{
