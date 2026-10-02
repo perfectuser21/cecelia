@@ -2,6 +2,8 @@
 
 **Brain 版本**: 1.361.0
 
+现役西安M4可经显式固定canonical runner安装恢复：原受保护plist摘要CAS与自属drain合作锁/真实继承FD绑定，仅runner切到受信aeaf，显式路径同时要求Worker有效drain marker为同一固定marker（缺字段采用默认），其它字段与普通升级保留语义不变；旧快照继续用于launch前核验和失败回滚。
+
 
 Linux接入控制目录在宿主保持私有凭据缓存，容器统一挂到root父目录下的/run/cecelia-fleet-control；共享凭据目录及其所有者不变，所有权校验不放宽。
 
