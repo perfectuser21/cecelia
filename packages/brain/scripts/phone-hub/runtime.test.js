@@ -1,4 +1,4 @@
-import {it,expect} from 'vitest';
+import {it,expect,vi} from 'vitest';
 import {createRequire} from 'node:module';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -75,4 +75,34 @@ it('已启动不可变版本的实际文件改变后不继续签发旧hash',asyn
   await expect(runtime.capabilities('fixture-target')).rejects.toThrow('phone_hub_version_changed');
   await expect(runtime.maintenance()).rejects.toThrow('phone_hub_version_changed');
  });
+});
+
+it('生产Hub入口只绑定manifest声明的实际本机Tailscale IPv4，不占loopback/wildcard',async()=>{
+ const {startRuntimeListener}=require('./runtime.cjs');
+ const interfaces=vi.spyOn(os,'networkInterfaces').mockReturnValue({utun9:[{address:'100.100.100.100',family:'IPv4',internal:false}],lo0:[{address:'127.0.0.1',family:'IPv4',internal:true}]});
+ try{
+  const server={listen:vi.fn((_port,_host,ready)=>ready()),once:vi.fn(),removeListener:vi.fn()};
+  await startRuntimeListener({configured:true,identity:{http_endpoint:'http://100.100.100.100:3459/'},server});
+  expect(server.listen).toHaveBeenCalledWith(3459,'100.100.100.100',expect.any(Function));
+ }finally{interfaces.mockRestore();}
+});
+it('缺失可信配置、非本机、DNS、公网、loopback或wildcard都拒绝启动监听',async()=>{
+ const {startRuntimeListener}=require('./runtime.cjs');
+ const interfaces=vi.spyOn(os,'networkInterfaces').mockReturnValue({utun9:[{address:'100.100.100.100',family:'IPv4',internal:false}]});
+ try{
+  for(const endpoint of ['http://100.100.100.101:3459/','http://fixture-hub:3459/','http://8.8.8.8:3459/','http://127.0.0.1:3459/','http://0.0.0.0:3459/','http://100.63.255.255:3459/','http://100.128.0.1:3459/','http://100.100.100.100:3457/','http://100.100.100.100:3459/path','http://[::]:3459/']){
+   const server={listen:vi.fn()};await expect(startRuntimeListener({configured:true,identity:{http_endpoint:endpoint},server})).rejects.toThrow('phone_hub_listener_untrusted');expect(server.listen).not.toHaveBeenCalled();
+  }
+  const server={listen:vi.fn()};await expect(startRuntimeListener({configured:false,server})).rejects.toThrow('phone_hub_listener_untrusted');expect(server.listen).not.toHaveBeenCalled();
+ }finally{interfaces.mockRestore();}
+});
+it('本机Tailscale端口被占用时保留bind失败，不能fallback或改占loopback',async()=>{
+ const {startRuntimeListener}=require('./runtime.cjs');
+ const interfaces=vi.spyOn(os,'networkInterfaces').mockReturnValue({utun9:[{address:'100.100.100.100',family:'IPv4',internal:false}]});
+ try{
+  let failed;const failure=Object.assign(Error('occupied'),{code:'EADDRINUSE'});
+  const server={once:vi.fn((_event,handler)=>{failed=handler;}),removeListener:vi.fn(),listen:vi.fn(()=>failed(failure))};
+  await expect(startRuntimeListener({configured:true,identity:{http_endpoint:'http://100.100.100.100:3459/'},server})).rejects.toBe(failure);
+  expect(server.listen).toHaveBeenCalledTimes(1);
+ }finally{interfaces.mockRestore();}
 });
