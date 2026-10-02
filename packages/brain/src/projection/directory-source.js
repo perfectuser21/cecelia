@@ -25,7 +25,7 @@ function currentStepDefinition(step, activity) {
     registration.step_order !== step.step_order || registration.mode !== step.mode || !isDeepStrictEqual(registration.readback, step.readback)) return null;
   const bindings = (Array.isArray(version.payload.implementation_bindings) ? version.payload.implementation_bindings : [])
     .filter(binding => binding.scope === 'step' && binding.step_key === contract.key && binding.field === 'implementation');
-  const referenceVerified = bindings.length > 0 && bindings.every(b => b.status === 'verified' && b.validation_scope === 'reference_only');
+  const referenceVerified = bindings.length > 0 && bindings.every(b => b.status === 'verified' && b.validation_scope === 'reference_only' && isDeepStrictEqual(b.raw, contract.implementation));
   return { version, contract, implementationStatus: referenceVerified ? 'reference_verified' : 'unverified' };
 }
 const fieldList = value => Array.isArray(value) && value.every(item => typeof item === 'string') ? value : undefined;
@@ -112,7 +112,8 @@ export function buildDirectoryRows(data, config = {}) {
     const definition = currentStepDefinition(s, a), declared = definition?.contract;
     const directImplementation = contract.implementation ?? readback.implementation;
     const implementation = directImplementation ?? declared?.implementation;
-    const evidence = definition ? { ...readback, definition: { check: declared.check, dod: declared.dod, implementation_status: definition.implementationStatus } } : readback;
+    const implementationStatus = definition?.implementationStatus === 'reference_verified' && isDeepStrictEqual(implementation, declared.implementation) ? 'reference_verified' : 'unverified';
+    const evidence = definition ? { ...readback, definition: { check: declared.check, dod: declared.dod, implementation_status: implementationStatus } } : readback;
     const row = make('steps', s, { '步骤': title(readback.name || contract.name || s.key), Key: rich(s.key),
       Input: rich(contract.input ?? fieldList(declared?.reads)), Output: rich(contract.output ?? fieldList(declared?.writes)),
       '验收标准': rich(contract.acceptance ?? readback.asserts ?? readback.expect ?? declared?.check),
@@ -121,7 +122,7 @@ export function buildDirectoryRows(data, config = {}) {
       ...(s.activity_id ? { '所属Activity': [ref('activities', s.activity_id)] } : {}),
       '所属Workflows': unique(refs.filter(r => r.activity_id === s.activity_id).map(r => ref('workflows', r.workflow_id))),
     }, [...(!implementation ? ['implementation_unknown'] : []), ...(!a ? ['activity_unknown'] : []),
-      ...(definition && implementation ? [definition.implementationStatus === 'reference_verified' ? 'implementation_execution_unverified' : 'implementation_unverified'] : [])]);
+      ...(definition && implementation ? [implementationStatus === 'reference_verified' ? 'implementation_execution_unverified' : 'implementation_unverified'] : [])]);
     row.definitionVersion = versionEvidence(definition?.version);
   }
   const order = Object.keys(DIRECTORY_TABLES);
