@@ -78,3 +78,11 @@ it('投影曾验证但业务父级已改，读取重新核规范身份而非信�
   await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[other,capabilities[0]]);
   const r=await get();expect(r.body.mapping_status).toBe('unknown');expect(r.body.gaps).toContainEqual(expect.objectContaining({code:'capability_authority_changed'}));
 });
+it('断言必须覆盖每个能力与Activity使用位置，不能借同能力另一Activity变绿',async()=>{
+  contracts.docs.keyword_acquisition.activities[1].implementation_bindings=[{kind:'code',repo,path,revision:HEAD}];contracts.refresh();
+  await syncActivityContracts(db,{...contracts,readBinding:async()=>'export const lock = true;\n'});
+  const missing=(await db.query("SELECT id FROM journey_steps WHERE capability_key='keyword_acquisition' AND activity_key='discovery'")).rows[0].id;
+  const r=await get();expect(r.status,r.body).toBe(200);expect(r.body.mapping_status).toBe('unknown');
+  expect(r.body.gaps).toContainEqual(expect.objectContaining({code:'regression_missing',activity_id:missing}));
+  expect(r.body.required_assertions[0].source_bindings.every(b=>b.capability_id&&b.activity_id)).toBe(true);
+});
