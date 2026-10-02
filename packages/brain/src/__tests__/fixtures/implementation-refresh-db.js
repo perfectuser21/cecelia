@@ -18,7 +18,7 @@ export async function implementationRefreshDatabase({manifestRevision='a'.repeat
   await pool.query('UPDATE map_manifest_versions SET manifest=$1',[buildPilotManifest('phones',{revision:manifestRevision,decision:row.source_decision_id})]);
   const revision='b'.repeat(40),query={scope:'zenithjoy',repo:IMPACT_REPO,revision};
   f.contracts.docs.keyword_acquisition.activities[0].implementation_bindings[0].revision=revision;f.contracts.refresh();
-  let readers=0,releaseReaders,arrived,mainRevision=revision,readTransactions=0,afterRead;
+  let readers=0,releaseReaders,arrived,mainRevision=revision,readTransactions=0,afterRead,beforeCommitSeen=false;
   const bothReading=new Promise(r=>releaseReaders=r),atWindow=new Promise(r=>arrived=r),resume=new Promise(r=>releaseWinner=r);
   const connect=pool.connect.bind(pool);
   const db={query:pool.query.bind(pool),connect:async()=>{const c=await connect();let readonly=false;return {query:async(sql,...args)=>{
@@ -26,9 +26,13 @@ export async function implementationRefreshDatabase({manifestRevision='a'.repeat
    const result=await c.query(sql,...args);if(readonly&&sql==='COMMIT')afterRead?.();return result;
   },release:()=>c.release()};}};
   // 每次options对应一个HTTP调用，避免同一个闭包把两个请求的main检查混在一起。
-  const options=({waitMs=1000,error}={})=>{let heads=0;return {conflictWaitMs:waitMs,resolveToken:async()=>'',readBinding:async()=> 'export const controller=true;\n',fetchFn:async(...args)=>{
+  const options=({waitMs=1000,error}={})=>{let heads=0,winner=false;return {conflictWaitMs:waitMs,resolveToken:async()=>'',readBinding:async()=> 'export const controller=true;\n',fetchFn:async(...args)=>{
    const url=String(args[0]);
-   if(url.includes('/commits/main')){if(++heads===4&&mainRevision===revision){arrived();await resume;}return {ok:true,text:async()=>mainRevision};}
+   if(url.includes('/commits/main')){
+    // 第一次第三读位于赢家beforeCommit且仍持写锁；败者此时不可能通过CAS。
+    if(++heads===3&&!beforeCommitSeen){beforeCommitSeen=true;winner=true;}
+    if(heads===4&&winner){arrived();await resume;}return {ok:true,text:async()=>mainRevision};
+   }
    if(url.includes('/contents/product-map/generated/contracts.json')){if(error)throw error;if(++readers===2)releaseReaders();await bothReading;}
    return f.contracts.fetchFn(...args);
   }};};

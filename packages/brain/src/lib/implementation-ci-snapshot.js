@@ -101,8 +101,8 @@ export function implementationGitHubUrl(repo,{path,revision}={}){
 /** 原同步已回滚归还连接；仅复用同M赢家完整产物，不重同步或代赢家推进地图。 */
 async function reuseConcurrentSnapshot(pool,q,checkMain,conflict,waitMs){
   const deadline=Date.now()+Math.min(5000,Math.max(0,Number.isFinite(waitMs)?waitMs:5000));
+  await checkMain();
   while(Date.now()<deadline){
-    await checkMain();
     // 人改映射/父级不能被一次CAS重试掩盖；此函数只读，不执行返回的接力计划。
     await preparePilotManifestAdvance(pool,q);
     const snapshot=await exportImplementationSnapshot(pool,q);
@@ -112,6 +112,7 @@ async function reuseConcurrentSnapshot(pool,q,checkMain,conflict,waitMs){
     const remaining=deadline-Date.now();if(remaining<=0)break;
     await new Promise(resolve=>setTimeout(resolve,Math.min(50,remaining)));
   }
+  await checkMain();
   throw conflict;
 }
 export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalThis.fetch,resolveToken=resolveGitHubToken,
