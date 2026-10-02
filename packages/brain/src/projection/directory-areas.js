@@ -19,6 +19,7 @@ export async function readDirectoryAreas({ token, dbId, notionReq }) {
       page_size: 100, ...(cursor ? { start_cursor: cursor } : {}),
     });
     if (!Array.isArray(response?.results)) throw new Error('directory_areas:invalid_snapshot');
+    if (typeof response.has_more !== 'boolean') throw new Error('directory_areas:pagination_incomplete');
     for (const page of response.results) {
       if (normalize(page.parent?.database_id) !== normalize(dbId) || page.archived || page.in_trash) {
         throw new Error('directory_areas:wrong_database_or_archived_page');
