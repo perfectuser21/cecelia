@@ -23,6 +23,7 @@ beforeAll(async()=>{
  CREATE TABLE schema_version(version text PRIMARY KEY,description text,applied_at timestamptz);
  CREATE TABLE work_routing_receipts(id uuid PRIMARY KEY,task_id uuid,canonical_task_type text,work_kind text);
  CREATE TABLE task_events(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),task_id uuid,event_type text,payload jsonb);
+ ALTER TABLE tasks ADD COLUMN success_metrics jsonb;
  CREATE TABLE harness_gaps(source_task_id uuid,status text);
  CREATE TABLE harness_gap_dependencies(source_task_id uuid,status text);
  CREATE TABLE task_dependencies(from_task_id uuid,edge_type text,status text);`);
@@ -130,6 +131,12 @@ it('窄接管保持coding_review路由、旧run只unknown留痕，同request幂�
  expect(first.previous_owner.run_status).toBe('unknown');
  expect((await pool.query('SELECT * FROM task_events WHERE task_id=$1',[task])).rowCount).toBe(1);
  await expect(takeOverHeadedTask(pool,{...input,requestId:randomUUID(),sessionId:'other'})).rejects.toThrow('headed_takeover_conflict');
+ await expect(takeOverHeadedTask(pool,{...input,expectedRowVersion:99})).rejects.toThrow('headed_takeover_conflict');
+});
+it('task_run有ended_at但状态仍running不足以证明终态，接管409',async()=>{
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+ await pool.query("INSERT INTO task_runs(task_id,run_id,status,ended_at) VALUES($1,$2,'running',now())",[task,legacyRun]);
+ await expect(takeOverHeadedTask(pool,request())).rejects.toThrow('headed_takeover_active_execution');
 });
 it.each(['task_runs','capacity_reservations','callback_queue'])('存在%s未决记录接管409，不改任何旧记录',async relation=>{
  const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
@@ -157,7 +164,7 @@ it('真实HTTP：生产无token/错token拒绝；授权接管后仅本session PA
   expect((await send(`/tasks/${task}/headed-takeover`,'POST')).status).toBe(401);
   const headers={authorization:'Bearer isolated-test-internal-token'};
   const response=await send(`/tasks/${task}/headed-takeover`,'POST',headers);expect(response.status).toBe(200);
-  expect((await send(`/fields/${task}`,'PATCH',headers,{result:{substage:'facts'}})).status).toBe(200);
+  const fields=await send(`/fields/${task}`,'PATCH',headers,{result:{substage:'facts'}});expect(fields.status,JSON.stringify(await fields.json())).toBe(200);
   expect((await send(`/tasks/${task}`,'PATCH',{...headers,'x-session-id':'other'},{})).status).toBe(409);
   expect((await send(`/tasks/${task}`,'PATCH',headers,{})).status).toBe(200);
  }finally{if(savedToken===undefined)delete process.env.CECELIA_INTERNAL_TOKEN;else process.env.CECELIA_INTERNAL_TOKEN=savedToken;process.env.NODE_ENV=savedMode;await new Promise(resolve=>server.close(resolve));}
