@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { PIPELINE_TASK_TYPES, queueLaneSql } from '../task-queue-lanes.js';
+import * as lanes from '../task-queue-lanes.js';
 
 describe('task queue lanes', () => {
+  it('ordinary phone exclusion SQL allows only fixed source aliases and rejects injection or caller objects', () => {
+    expect(lanes.phoneOrdinaryQueueSql).toBeTypeOf('function');
+    for (const alias of ['t', 'tasks']) {
+      expect(lanes.phoneOrdinaryQueueSql(alias)).toContain(`${alias}.executor_kind IS DISTINCT FROM 'phone-ssh-controller'`);
+      expect(lanes.phoneOrdinaryQueueSql(alias)).toContain(`o.task_id = ${alias}.id`);
+    }
+    for (const alias of ['candidate', 'tasks; DELETE FROM tasks', { verified: true }, null]) expect(() => lanes.phoneOrdinaryQueueSql(alias)).toThrow('phone_queue_sql_alias_invalid');
+  });
   it('生成互斥的等待队列分类 SQL，并覆盖内容生产与 Harness 流水线', () => {
     const sql = queueLaneSql('candidate');
 
