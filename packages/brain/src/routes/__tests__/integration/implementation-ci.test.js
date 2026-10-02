@@ -46,6 +46,17 @@ it('CAS等待到期明确409，仍无重复同步或把unknown当成功',async()
   expect(fixture.stats().contractReads).toBe(2);
  }finally{fixture.release();await Promise.allSettled(jobs);}
 });
+it.each(['snapshot','final_main'])('%s开始后跨等待预算仍拒绝已验证结果',async phase=>{
+ fixture=await implementationRefreshDatabase({manifestRevision:'b'.repeat(40)});
+ const delay=()=>new Promise(r=>setTimeout(r,200));
+ if(phase==='snapshot')fixture.onRead(delay);
+ else fixture.onMain(({heads,winner})=>!winner&&heads===4?delay():undefined);
+ const jobs=concurrentRefresh(fixture,80);
+ try{await fixture.atWindow;const loser=await Promise.race(jobs);
+  expect(loser.status).toBe(409);expect(loser.body.error.code).toBe('ACTIVITY_CONTRACT_SNAPSHOT_CHANGED');
+  expect(fixture.stats().contractReads).toBe(2);
+ }finally{fixture.release();await Promise.allSettled(jobs);}
+});
 it.each(['waiting','verified'])('复用期间%s阶段main前移必须409，不能换SHA继续',async phase=>{
  fixture=await implementationRefreshDatabase(phase==='verified'?{manifestRevision:'b'.repeat(40)}:{});
  if(phase==='verified')fixture.onRead(()=>fixture.setMain('c'.repeat(40)));
