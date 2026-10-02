@@ -106,3 +106,8 @@ it('B1 真实子进程SIGKILL只释放自己的session gate，注册随后取得
 },10000);
 
 it('B1 custom DB普通建单不新增默认广播',async()=>{const id=await template({phone:false});const query=pg.Client.prototype.query;const trace=[];const spy=vi.spyOn(pg.Client.prototype,'query').mockImplementation(function(sql,...args){trace.push(String(sql));return query.call(this,sql,...args);});try{const summary=await engine.runRecurringTasksJob(pool,{now});expect(summary.created).toHaveLength(1);expect(trace).not.toContain('SELECT * FROM tasks WHERE id = $1');expect((await tasks(id))[0].payload.routing_receipt_id).toBeTruthy();}finally{spy.mockRestore();}});
+it.each(['baseline','missed'])('B1 %s UPDATE触发器改变真实template指纹必须回滚',async action=>{
+ const slot=action==='baseline'?null:new Date(due.getTime()-3600000);const id=await template({slot,extra:action==='missed'?{catchup_minutes:0}:{}});await register(id);const before=await row(id);
+ await pool.query(`CREATE FUNCTION fixture_fingerprint() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${id}'::uuid THEN NEW.template:=NEW.template||'{"profile":"changed-in-trigger"}'::jsonb; END IF;RETURN NEW;END $$;CREATE TRIGGER fixture_fingerprint BEFORE UPDATE ON recurring_tasks FOR EACH ROW EXECUTE FUNCTION fixture_fingerprint()`);
+ try{const summary=await run();expect(summary.errors).toBe(1);expect((await row(id)).template).toEqual(before.template);expect((await row(id)).next_run_at).toEqual(slot);expect(await tasks(id)).toHaveLength(0);expect((await pool.query('SELECT * FROM phone_task_owners WHERE template_id=$1',[id])).rows).toHaveLength(0);}finally{await pool.query('DROP TRIGGER fixture_fingerprint ON recurring_tasks;DROP FUNCTION fixture_fingerprint()');}
+});
