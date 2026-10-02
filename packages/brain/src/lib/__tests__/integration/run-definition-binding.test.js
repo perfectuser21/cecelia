@@ -89,3 +89,12 @@ it('完整路径同时包含Activity与其全部规范Step，不能通过省略�
   expect((await post('missing-step',{...input,expected_path:input.expected_path.filter(p=>p!==step)})).status).toBe(422);
   expect((await post('missing-activity',{...input,expected_path:input.expected_path.filter(p=>p!==activity)})).status).toBe(422);
 });
+it('外部run不能占用真实内部task_run的run_id，即使Workflow相同',async()=>{
+  const task=(await fixture.db.query("INSERT INTO tasks(title,status) VALUES('internal-owner','queued') RETURNING id")).rows[0];
+  for(const [index,workflow] of fixture.workflows.entries()){
+    const runId=`already-internal-${index}`;
+    await fixture.db.query("INSERT INTO task_runs(task_id,run_id,workflow_id,status) VALUES($1,$2,$3,'running')",[task.id,runId,workflow.workflow_id]);
+    expect((await post(runId,fixture.runInput(release,observation,fixture.workflows[0]))).status).toBe(409);
+    expect(await service.getRunDefinitionBinding(fixture.db,runId)).toBeNull();
+  }
+});
