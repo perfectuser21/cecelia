@@ -1,6 +1,16 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.360.4
+**Brain 版本**: 1.360.5
+
+
+Linux接入控制目录在宿主保持私有凭据缓存，容器统一挂到root父目录下的/run/cecelia-fleet-control；共享凭据目录及其所有者不变，所有权校验不放宽。
+
+
+
+
+
+GPU 观测通过 Mac Worker 的限时 IORegistry 采样与既有健康缓存传入机器监控页，保留来源、采样时刻、真实零与未知；超过90秒降级未知。Apple统一内存用量仅展示，不额外计显存容量。Linux无可信完整设备观测保持未知。结构化GPU执行声明在真建单入口拒绝，已有script任务派发前再次终态拒绝；当前没有GPU执行授权。
+
 
 
 Kernel 派发按统一机器角色表生成 M1/M4 优先、MMV 最后的默认候选，并保持执行目录授权交集。未支持的机器字段在工作区准备和预约前以 unsupported_machine_policy 拒绝，含空值；既有六处机器指定继续生效，不新增别名。
@@ -28,7 +38,7 @@ Kernel 派发按统一机器角色表生成 M1/M4 优先、MMV 最后的默认�
 
 
 
-**Brain 版本**: 1.360.4
+**Brain 版本**: 1.360.5
 
 ## Brain 1.357.6 — 恢复目标跨路径永久回归
 
@@ -41,6 +51,22 @@ Kernel 派发按统一机器角色表生成 M1/M4 优先、MMV 最后的默认�
 - 可选执行目标仅在上述恢复事务中生效；按原始 payload 规范化 profile 摘要 CAS（摘要严格为64位小写hex字符串，非字符串请求在事务前400拒绝），复用当前目录版本和现存仓库授权，冻结 Commander 与全部执行角色，收据留目标/profile/授权版本证据。模型名仅允许非空标识段及供应商限定分隔，URL、绝对路径、空段和遍历段在事务前拒绝。无新许可或路由接口；实际派发仍走角色能力、候选机器亲和和容量 floor 门禁。
 - 永久回归覆盖真实 HTTP 入口、内部鉴权、真实隔离 PostgreSQL 事务/并发、授权撤销/过期/换代、容量拒绝及真实 Map/Radius/preflight。原有无目标恢复请求保持兼容。
 
+
+失败canary的同nonce恢复可返回独立cleanup-only签名：只有已确认完整身份和精确墓碑，或持久尚未尝试创建事实，才允许后台淘汰旧挑战。该schema不兼容activate，不产生成功验收；未知仍占位。淘汰后等旧预约释放并重读安装身份，再运行全新canary，保留显式撤销停止语义。
+
+池内部淘汰标记存tasks.payload独立字段，与linux_onboarding阶段快照分离；retire提交后回执丢失仍可幂等恢复，不因错误快照覆盖而误认显式撤销。
+
+Linux接入在首次SSH前将当前镜像40位GIT_SHA对应15个Worker源码和完整远端bootstrap程序原子存入root私有artifacts缓存，任务持久revision+工件摘要。跨Brain升级后所有SSH和安装仍读取原工件字节；缓存缺失或摘要错误拒绝，不能以新源码冒充旧revision或更换既有intent。
+
+接入内部淘汰与显式撤销分开持久：外部撤销在同接入锁内停止已生成自动阶段，不能由过期恢复复活；已提交active丢回执跨24小时按同代原签名和实际current version转内部续验。执行角色上限和后续采样SSH均来自原登记任务，设备metadata仅可缩权。
+
+执行就绪投影与自动续验同时核实际execution_node_versions及逐项grant身份、状态和到期；单独撤销version/grant立即撤下就绪，禁止后台续验重新授权。
+
+现有机器接入入口对Linux worker自动登记执行子任务，固定SSH核root实际资源后生成保守单shell profile，复用CS独立凭据，bootstrap签名身份→505池证明→507真实adapter验收→同代active。凭据绑定可由root私有credential-bindings.json指定既有item，浏览器不能提供授权身份。Brain独占会话锁覆盖外部步骤，原始签名/profile保持序列化，未知保留intent与nonce。到期前一小时或boot改变自动撤销旧许可、等所有旧预约精确清理、重读安装身份并新代验收；过期挑战仅凭完整验签清理归档重建，显式撤销不自动复活。机器卡片只投影当前未过期授权及服务内部fresh身份，元数据不可伪造；US永久scheduler_only。缺Docker/systemd/cgroup前置如实报出，受信控制目录最窄RW挂载，生产HK现场验收仍由部署阶段执行。
+
+Brain接入控制面固定SSH指纹、禁agent/转发/密码交互，只经stdin传镜像内Python程序与私有payload。root复用已有bootstrap和有界命令，先持久intent，安装回执丢失只核现场不重装；安装事实按独立root key回签nonce/intent/boot/daemon/镜像/pool，Brain验真后才可登记部署。runtime配置绑定当前boot，canary仅调用两条已安装固定CLI；传输secret所有退出路径清理。Brain镜像固定op2.32.1双架构归档SHA，不含凭据；arm64在无网只读Alpine容器实测版本通过。仍待持久阶段编排与机器页接线，未部署生产。
+
+接入控制面保守预算最多2核且不超过半机，内存保留至少2GiB/半机且池最多4GiB，独占槽1；首个受信shell profile无网、非root，观测过期或预算不足拒绝配置。独立256bit Worker/root凭据按机器UUID的CS标签查找，创建意图必须先提交，结果未知只找回不重复创建；先1Password读回再双写私有600文件，secret不进入参数或回执。控制面模块尚未接机器页编排、镜像op安装和生产部署。
 
 Linux脚本预约在授权事务中固定同版本worker/boot，启动转换按既有身份CAS；能力与fresh快照的版本、boot、policy、profile摘要混代时零预约。升级前空身份只从预约对应历史版本补齐，reaper不取新boot污染旧许可。真PG永久回归核旧boot拒绝与崩溃清理，维护拒绝使用真实worker_draining码并仅凭精确墓碑释放。
 

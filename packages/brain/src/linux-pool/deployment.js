@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import profileModule from '../../scripts/fleet-worker/linux-pool-profile.cjs';
 import serverModule from '../../scripts/fleet-worker/linux-pool-server.cjs';
+export const ONBOARDING_CONTROL_ROOT='/run/cecelia-fleet-control';
 export const US_SCHEDULER_ID='1a379d80-ad36-47d3-88ba-e545ab299a54';
 export const UUID=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
 export const HEX=/^[a-f0-9]{64}$/;

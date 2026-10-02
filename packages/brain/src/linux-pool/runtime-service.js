@@ -6,6 +6,8 @@ import {finalizeTask,afterTerminalTransition} from '../lib/task-terminal.js';
 import {US_SCHEDULER_ID,UUID,exact,error} from './deployment.js';
 import {createRuntimeDeploymentReader} from './runtime-deployment.js';
 import {verifyRuntimeEnvelope} from './runtime-receipt.js';
+import {UNREVOKED_RUNTIME_GRANTS_SQL} from './active-grants.js';
+import {lockOnboardingRevocation,stopAutomaticOnboarding} from './onboarding-revocation.js';
 const taskCreator=async args=>(await import('../actions.js')).createTask(args);
 const request=(body,keys)=>{if(!exact(body,keys))throw error('linux_pool_request_invalid');};
 const cas=(node,id)=>{if(id!==null&&!UUID.test(id??'')||(node?.current_version_id??null)!==id)throw error('linux_pool_version_conflict');};
@@ -83,14 +85,26 @@ export function createLinuxRuntimeAuthorization({pool,readDeployment=createRunti
    await db.query("UPDATE linux_script_authorizations SET state='active',activated_at=clock_timestamp() WHERE id=$1",[r.id]);completed=r.evidence_task_id;return activeResult(r);
   });await directory.refresh({pool});if(completed)await afterTerminal(pool,completed,'completed');return result;
  }
- async function revoke(machineId,body){
+ async function retireOrRevoke(machineId,body,internal){
   request(body,['runtime_id','expected_version_id']);if(!UUID.test(machineId??'')||!UUID.test(body.runtime_id??''))throw error('linux_pool_request_invalid');
   const found=(await pool.query('SELECT * FROM linux_script_authorizations WHERE id=$1 AND machine_registry_id=$2',[body.runtime_id,machineId])).rows[0];if(!found)throw error('linux_pool_runtime_unavailable');
   await transaction(pool,async db=>{
+   // 外部撤销先等正在执行的接入阶段提交，再持久阻止下一阶段；内部调用已持同一会话锁。
+   if(!internal)await lockOnboardingRevocation(db,machineId);
    await db.query(MACHINE_CAPACITY_LOCK_SQL,[found.policy.machine_id]);const node=(await db.query('SELECT * FROM execution_nodes WHERE machine_registry_id=$1',[machineId])).rows[0];cas(node,body.expected_version_id);
+   const authority=(await db.query(`SELECT a.state,(${UNREVOKED_RUNTIME_GRANTS_SQL}) AS intact,t.payload FROM linux_script_authorizations a
+    JOIN tasks t ON t.id=a.evidence_task_id WHERE a.id=$1 FOR UPDATE OF a,t`,[found.id])).rows[0];
+   if(internal){
+    if(authority.payload?.linux_runtime_revoked===true||authority.state==='revoked'&&authority.payload?.linux_runtime_retired!==found.id
+     ||authority.state==='active'&&!authority.intact)throw error('linux_pool_explicitly_revoked');
+    await db.query("UPDATE tasks SET payload=jsonb_set(COALESCE(payload,'{}'),'{linux_runtime_retired}',$2::jsonb),updated_at=now() WHERE id=$1",[found.evidence_task_id,JSON.stringify(found.id)]);
+   }else{
+    await db.query("UPDATE tasks SET payload=jsonb_set(COALESCE(payload,'{}'),'{linux_runtime_revoked}','true'),updated_at=now() WHERE id=$1",[found.evidence_task_id]);
+    await stopAutomaticOnboarding(db,machineId);
+   }
    await db.query("UPDATE linux_script_authorizations SET state='revoked' WHERE id=$1",[found.id]);
    await db.query("UPDATE execution_grants SET state='revoked' WHERE node_version_id=$1",[found.execution_version_id]);await db.query("UPDATE execution_node_versions SET state='revoked' WHERE id=$1",[found.execution_version_id]);
   });await directory.refresh({pool});return {id:found.id,authorization_state:'revoked',execution:false};
  }
- return {prepare,activate,revoke};
+ return {prepare,activate,revoke:(machineId,body)=>retireOrRevoke(machineId,body,false),retire:(machineId,body)=>retireOrRevoke(machineId,body,true)};
 }

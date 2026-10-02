@@ -1,3 +1,4 @@
+import {assertGpuExecutionSupported} from './lib/gpu-execution-contract.js';
 import {assertAppServerAuthority} from './app-server/task-authority.js';
 import { assertJanitorAuthority } from './janitor-authority.js';
 import { createHash } from 'node:crypto';
@@ -187,6 +188,8 @@ export function stripReanchorEvidence(evidence) {
 }
 
 export async function createRoutedTask(db, request, repositoryFacts = null, options = {}) {
+  assertGpuExecutionSupported(request.metadata);
+  assertGpuExecutionSupported(request.task?.payload);
   assertJanitorAuthority(request, options);
   assertAppServerAuthority(request, options);
   const ownsTransaction = options.transaction !== 'existing';
