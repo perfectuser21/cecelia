@@ -1,17 +1,5 @@
 """稳定marker与全局journal revision；仅本地事实，不代称另一机器空闲。"""
-from pathlib import Path
-import stat
-
-def marker_identity(path):
-    try:
-        value=Path(path).lstat()
-    except FileNotFoundError:
-        return None
-    except OSError as error:
-        raise ValueError('phone_maintenance_unconfirmed') from error
-    if not stat.S_ISREG(value.st_mode):
-        raise ValueError('phone_maintenance_unconfirmed')
-    return (value.st_dev,value.st_ino,value.st_size,value.st_mtime_ns,value.st_ctime_ns)
+from drain_marker import marker_identity
 
 def read_maintenance(journal,marker,scan=None):
     before_marker=marker_identity(marker)
@@ -33,4 +21,5 @@ def read_maintenance(journal,marker,scan=None):
     in_flight=max(before['in_flight'],after['in_flight'],result.get('in_flight',0))
     draining=before_marker is not None and after_marker is not None
     return {'draining':draining,'stable':stable,'pending':result['pending'],'in_flight':in_flight,
-            'activity_revision':after['revision'],'quiescent':stable and draining and in_flight==0 and result['pending']==0}
+            'activity_revision':after['revision'],'marker_identity':after_marker,
+            'quiescent':stable and draining and in_flight==0 and result['pending']==0}

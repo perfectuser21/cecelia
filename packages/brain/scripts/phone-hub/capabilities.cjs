@@ -2,6 +2,7 @@
 const {randomUUID}=require('node:crypto');
 const {targetValid}=require('../phone-ssh/protocol.cjs');
 const transport=require('../phone-ssh/transport.cjs');
+const {valid:maintenanceValid}=require('./maintenance.cjs');
 const PROBE_COMMAND='/opt/homebrew/bin/python3 /opt/cecelia/phone-ssh/probe.py';
 const fields=['machine_id','worker_id','physical_boot_id','config_digest','build_digest','action_digest','ssh'];
 function targetValidFull(target){return target&&Object.keys(target).length===fields.length&&fields.every(k=>Object.hasOwn(target,k))&&
@@ -12,13 +13,13 @@ function observationValid(value,target,nonce){
  const allowed=['schema','request_nonce','machine_id','worker_id','physical_boot_id','config_digest','build_digest','action','action_digest','resources','adb_daemon','external_locks','maintenance','observed_at'];
  const m=value?.maintenance;
  return value&&Object.keys(value).length===allowed.length&&Object.keys(value).every(k=>allowed.includes(k))&&
-  m&&['pending','in_flight','activity_revision'].every(k=>Number.isSafeInteger(m[k])&&m[k]>=0)&&['draining','stable','quiescent'].every(k=>typeof m[k]==='boolean')&&
-  (!m.quiescent||(m.draining&&m.stable&&m.pending===0&&m.in_flight===0))&&value.schema==='phone-physical-probe/v1'&&value.request_nonce===nonce&&
+  maintenanceValid(m)&&(!m.marker_identity||m.marker_identity.boot_id===value.physical_boot_id)&&
+  value.schema==='phone-physical-probe/v1'&&value.request_nonce===nonce&&
   ['machine_id','worker_id','physical_boot_id','config_digest','build_digest','action_digest'].every(k=>value[k]===target[k])&&value.action==='adb_get_state'&&
   resources&&['cpu_count','memory_total_bytes','data_free_bytes'].every(k=>Number.isSafeInteger(resources[k])&&resources[k]>0)&&
   Number.isSafeInteger(resources.memory_free_bytes)&&resources.memory_free_bytes>=0&&resources.memory_free_bytes<=resources.memory_total_bytes&&
   Number.isFinite(resources.load_1m)&&resources.load_1m>=0&&typeof value.adb_daemon?.reachable==='boolean'&&
-  Number.isSafeInteger(value.external_locks?.occupied)&&value.external_locks.occupied>=0&&
+  Number.isSafeInteger(value.external_locks?.occupied)&&value.external_locks.occupied>=0&&m.pending>=value.external_locks.occupied&&(!m.quiescent||value.external_locks.occupied===0)&&
   Number.isFinite(Date.parse(value.observed_at))&&Date.now()-Date.parse(value.observed_at)>=-1000&&Date.now()-Date.parse(value.observed_at)<=5000;
 }
 function createCapabilities({targets,run=transport.runSsh,timeoutMs=5000}){

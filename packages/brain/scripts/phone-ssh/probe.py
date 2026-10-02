@@ -16,8 +16,9 @@ import uuid
 from journal import Journal, safe_open
 from process_identity import boot_id
 from runner import Runner, Config
+from drain_marker import marker_identity
 
-SOURCE_FILES=('runner.py','worker.py','journal.py','phone_lease.py','process_identity.py','adb_socket.py','probe.py')
+SOURCE_FILES=('runner.py','worker.py','journal.py','phone_lease.py','process_identity.py','adb_socket.py','probe.py','drain_marker.py')
 SCHEMA='phone-physical-probe/v1'
 
 def private_json(path):
@@ -98,22 +99,16 @@ def collect(*,manifest_path='/etc/cecelia/phone-ssh/probe.json',source_root='/op
     # 缺失物理账不得初始化空账后谎称零；probe完全不创建journal。
     if not Path(journal_root).is_dir() or not (Path(journal_root)/'.activity.json').is_file():raise ValueError('phone_probe_journal_unknown')
     runner=Runner(Config(journal_root=str(journal_root),**identity))
-    # helper随Hub部署；物理probe自身用固定marker+全局revision进行同样稳定扫描。
-    def marker():
-        try:
-            value=Path(drain_path).lstat()
-        except FileNotFoundError:return None
-        if not stat.S_ISREG(value.st_mode):raise ValueError('phone_drain_unconfirmed')
-        return (value.st_dev,value.st_ino,value.st_size,value.st_mtime_ns,value.st_ctime_ns)
-    before_marker=marker();before=runner.journal.activity_snapshot()
+    before_marker=marker_identity(drain_path);before=runner.journal.activity_snapshot()
     before_locks=external_locks(lock_root)
     maintenance=runner.maintenance()
     after_locks=external_locks(lock_root)
-    after=runner.journal.activity_snapshot();after_marker=marker()
+    after=runner.journal.activity_snapshot();after_marker=marker_identity(drain_path)
     occupied=max(before_locks['occupied'],after_locks['occupied'])
     maintenance['journal_pending']=maintenance['pending']
     maintenance['external_occupied']=occupied
     maintenance['pending']+=occupied
+    maintenance['marker_identity']=after_marker
     maintenance['draining']=before_marker is not None and after_marker is not None
     maintenance['stable']=maintenance['stable'] and before['revision']==after['revision'] and before_marker==after_marker and before_locks==after_locks
     maintenance['quiescent']=maintenance['draining'] and maintenance['stable'] and maintenance['pending']==0 and maintenance['in_flight']==0
