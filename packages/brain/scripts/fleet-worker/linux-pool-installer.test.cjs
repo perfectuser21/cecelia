@@ -224,3 +224,10 @@ it.each(['lock','transaction'])('只读旧安装验明也拒绝遗留未知%s，
   expect(x.calls.some(([,a])=>a[0]==='stop')).toBe(false);
  }finally{x.cleanup();}
 });
+it.each(['slice-path','slice-reload'])('升级必须核loaded slice合同%s，磁盘unit匹配不能替代loaded状态',async kind=>{
+ const x=await upgradeFixture();try{
+  const run=x.deps.runCommand;x.deps.runCommand=async(c,a)=>a.at(-1)==='cecelia-workloads.slice'&&a.includes('--property=FragmentPath,NeedDaemonReload')
+   ?{stdout:`FragmentPath=${kind==='slice-path'?'/run/other.slice':'/etc/systemd/system/cecelia-workloads.slice'}\nNeedDaemonReload=${kind==='slice-reload'?'yes':'no'}\n`}:run(c,a);
+  await expect(install(x)).rejects.toThrow('linux_pool_install_upgrade_unconfirmed');expect(x.calls.some(([,a])=>a[0]==='stop')).toBe(false);
+ }finally{x.cleanup();}
+});
