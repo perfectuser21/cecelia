@@ -105,6 +105,18 @@ class PermitTest(unittest.TestCase):
     def test_actual_permit_source_dependency_is_pinned(self):
         import probe
         self.assertIn('permit.py', probe.SOURCE_FILES)
+        installed = probe.installed_identity(manifest_path=self.fixture.fixture.install / 'probe.json',
+                                            config_path=self.fixture.fixture.install / 'worker.json',
+                                            source_root=self.fixture.fixture.source)
+        self.assertEqual(installed['config_digest'], self.fixture.fixture.physical['config_digest'])
+        old = dict(self.fixture.fixture.probe)
+        old['source_hashes'] = {key:value for key,value in old['source_hashes'].items() if key != 'permit.py'}
+        self.assertEqual(len(old['source_hashes']), 11)
+        self.fixture.write(self.fixture.fixture.install / 'probe.json', json.dumps(old).encode())
+        with self.assertRaises(ValueError):
+            probe.installed_identity(manifest_path=self.fixture.fixture.install / 'probe.json',
+                                     config_path=self.fixture.fixture.install / 'worker.json',
+                                     source_root=self.fixture.fixture.source)
 
     def test_child_alone_keeps_ex_after_parent_fd_is_closed(self):
         child = self.child(); permit.send(self.identity, self.host, child)
@@ -234,4 +246,13 @@ class PermitTest(unittest.TestCase):
         state['control_epoch'] = str(uuid.uuid4())
         self.fixture.write(self.fixture.root / 'admission-state.json', json.dumps(state).encode())
         with self.assertRaises(ValueError): permit.send(self.identity, self.host, child)
+        self.assertFalse(select.select([self.server], [], [], 0.02)[0])
+
+    def test_another_real_registered_unknown_dispatch_blocks_new_go(self):
+        child = self.child(); other = dict(self.identity); other['dispatch_id'] = str(uuid.uuid4())
+        record = dict(self.fixture.fixture.record); record['identity'] = other
+        self.fixture.fixture.store(record); admission.Admission().register(other)
+        self.fixture.fixture.store(self.fixture.fixture.record)
+        with self.assertRaises(ValueError): permit.send(self.identity, self.host, child)
+        self.assertEqual(len(admission.Admission().snapshot()['pending']), 2)
         self.assertFalse(select.select([self.server], [], [], 0.02)[0])
