@@ -1,10 +1,13 @@
 /** 公司 KR 现有实现的版本化登记；不创建目标、不改变分析配置。 */
+import { loadCompanyKrSource } from './company-kr-source.js';
+import { snapshotDefinitions } from './definition-versions.js';
+import { validateImplementationBindings } from './implementation-bindings.js';
 import { readFileSync } from 'node:fs';
 import { canonicalJson, stepSha256, parseStepDod, syncSteps } from '../../scripts/sync-steps-from-workspace.mjs';
 import { attachRunsToWorkflow } from './task-run.js';
 
 export const companyKrSpec = JSON.parse(readFileSync(new URL('../../config/company-kr-workflow.json', import.meta.url), 'utf8'));
-const SOURCE = 'https://github.com/perfectuser21/cecelia/blob/main/packages/brain/config/company-kr-workflow.json';
+
 
 export function activityContract(activity, order, spec = companyKrSpec) {
   return { name: activity.name, key: activity.key, order, version: spec.version,
@@ -19,8 +22,10 @@ export function activityContract(activity, order, spec = companyKrSpec) {
   };
 }
 
-export async function registerCompanyKrWorkflow(pool) {
-  const s = companyKrSpec, client = await pool.connect();
+export async function registerCompanyKrWorkflow(pool,sourceOptions={}) {
+  const s = companyKrSpec, source=await loadCompanyKrSource(s,sourceOptions), client = await pool.connect();
+  const sourceUrl=`https://github.com/${source.repo}/blob/${source.commit}/${source.path}`;
+  const bindingsByActivity=new Map();
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['company-kr-registration']);
@@ -53,12 +58,13 @@ export async function registerCompanyKrWorkflow(pool) {
         WHERE journey_steps.workflow_id=EXCLUDED.workflow_id AND journey_steps.executor_kind=EXCLUDED.executor_kind
           AND journey_steps.capability_key=EXCLUDED.capability_key RETURNING id`,
       [s.capability_id, activity.name, activity.implementation, i + 1, s.capability, activity.key, s.version,
-        w.id, activity.executor, canonicalJson(contract), hash, SOURCE]);
+        w.id, activity.executor, canonicalJson(contract), hash, sourceUrl]);
       if (!result.rows.length) throw new Error(`活动归属冲突: ${activity.key}`);
-      await client.query(`INSERT INTO workflow_activity_refs(workflow_id,slot_key,activity_id,sequence_no,source_repo,source_path,active)
-        VALUES($1,$2,$3,$4,'perfectuser21/cecelia','packages/brain/config/company-kr-workflow.json',true)
-        ON CONFLICT(workflow_id,slot_key) DO UPDATE SET activity_id=EXCLUDED.activity_id,sequence_no=EXCLUDED.sequence_no,active=true`,
-      [w.id,activity.key,result.rows[0].id,i+1]);
+      bindingsByActivity.set(result.rows[0].id,await validateImplementationBindings(contract));
+      await client.query(`INSERT INTO workflow_activity_refs(workflow_id,slot_key,activity_id,sequence_no,source_repo,source_path,source_commit,active)
+        VALUES($1,$2,$3,$4,'perfectuser21/cecelia','packages/brain/config/company-kr-workflow.json',$5,true)
+        ON CONFLICT(workflow_id,slot_key) DO UPDATE SET activity_id=EXCLUDED.activity_id,sequence_no=EXCLUDED.sequence_no,source_commit=EXCLUDED.source_commit,active=true`,
+      [w.id,activity.key,result.rows[0].id,i+1,source.commit]);
     }
     const foreign = (await client.query(`SELECT s.key FROM steps s JOIN journey_steps a ON a.id=s.activity_id
       WHERE s.key=ANY($1::text[]) AND NOT EXISTS(SELECT 1 FROM workflow_activity_refs r WHERE r.activity_id=a.id AND r.workflow_id=$2 AND r.active)`, [s.steps.map(x => x.key), w.id])).rows;
@@ -71,6 +77,7 @@ export async function registerCompanyKrWorkflow(pool) {
     if (runtime.rows.length !== 1) throw new Error('KR 同步作业缺失或归属冲突');
     const tasks = (await client.query(`SELECT id FROM tasks WHERE dept=$1 AND payload->'company_kr_analysis'->>'version'='1'`, [s.agent])).rows;
     const runs = await attachRunsToWorkflow({ workflowId: w.id, taskIds: tasks.map(t => t.id) }, { pool: client });
+    await snapshotDefinitions(client,{workflowIds:[w.id],source,bindingsByActivity,documentsByWorkflow:new Map([[w.id,s]])});
     await client.query('COMMIT');
     return { workflow_id: w.id, activities: s.activities.length, steps, runs };
   } catch (error) { await client.query('ROLLBACK'); throw error; }

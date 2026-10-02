@@ -9,6 +9,7 @@
  * 按显式登记工作流加载同commit所有契约与ref，验证digest后定义+使用关系单事务同步；无消费者旧活动标 deprecated。
  * 同步连续失败超 2h（副本落后真身）告 P1 一次，恢复即清。人在 Notion 手改镜子由 notion-projection-watch A8 抓。
  */
+import { validateImplementationBindings } from './lib/implementation-bindings.js';
 import { loadActivityContracts } from './lib/activity-contract-loader.js';
 import { storeActivityContracts, REGISTRATIONS_SQL } from './lib/activity-contract-store.js';
 import { raise } from './alerting.js';
@@ -28,8 +29,8 @@ const SOURCE_COL = '正本（只读·改请走 git）';
 
 // ─── GitHub（只读）──────────────────────────────────────────────────────────
 
-async function ghText(path, accept, { fetchFn, token }) {
-  const res = await fetchFn(`https://api.github.com/repos/${CONTRACT_REPO}/${path}`, {
+async function ghText(path, accept, { fetchFn, token }, repo = CONTRACT_REPO) {
+  const res = await fetchFn(`https://api.github.com/repos/${repo}/${path}`, {
     headers: { Accept: accept, Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28' },
     signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
@@ -45,7 +46,7 @@ const fetchFile = (path, sha, d) => ghText(`contents/${path}?ref=${sha}`, 'appli
  * @returns {{head_sha, updated:string[], inserted:string[], deprecated:string[], unmapped:string[]}}
  * GitHub 任一请求失败直接抛错（调用方记滞后），此前不写库。
  */
-export async function syncActivityContracts(pool, { fetchFn = globalThis.fetch, resolveToken = resolveGitHubToken } = {}) {
+export async function syncActivityContracts(pool, { fetchFn = globalThis.fetch, resolveToken = resolveGitHubToken, readBinding } = {}) {
   // 在网络取HEAD之前固定数据库版本，避免慢请求拿旧HEAD覆盖先完成的新同步。
   const registrations = (await pool.query(REGISTRATIONS_SQL,[CONTRACT_REPO])).rows;
   const d = { fetchFn, token: await resolveToken() };
@@ -53,6 +54,13 @@ export async function syncActivityContracts(pool, { fetchFn = globalThis.fetch, 
   const digest = JSON.parse(await fetchFile(CONTRACTS_DIGEST_PATH, head, d));
   const consumers = registrations.filter(w=>w.status !== 'retired');
   const plans = await loadActivityContracts(consumers,digest,path=>fetchFile(path,head,d),registrations);
+  const checked=new Map();
+  for(const plan of plans) for(const item of plan.activities) {
+    const key=`${item.activity.from}.${item.activity.key}`;
+    if(!checked.has(key)) checked.set(key,await validateImplementationBindings(item.activity,readBinding||
+      (binding=>ghText(`contents/${binding.path}?ref=${binding.revision}`,'application/vnd.github.raw',d,binding.repo))));
+    item.bindings=checked.get(key);
+  }
   return storeActivityContracts(pool,plans,head,CONTRACT_REPO,registrations);
 }
 

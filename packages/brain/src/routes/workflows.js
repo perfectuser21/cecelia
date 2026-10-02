@@ -5,6 +5,7 @@
  */
 import { Router } from 'express';
 import pool from '../db.js';
+import { readDefinitionHistory } from '../lib/definition-history.js';
 import { listWorkflows, readActivityConsumers } from '../lib/workflow-read-service.js';
 
 const router = Router();
@@ -47,4 +48,14 @@ router.get('/activities/:id/consumers',async (req,res) => {
   }
   catch(error) { return res.status(500).json({error:error.message}); }
 });
+for(const [path,kind] of [['workflows','workflow'],['activities','activity']]) {
+  router.get(`/${path}/:id/versions/:versionId?`,async(req,res)=>{
+    if(!UUID_RE.test(req.params.id)||(req.params.versionId&&!UUID_RE.test(req.params.versionId))) return res.status(400).json({error:'定义和版本ID必须是uuid'});
+    try {
+      const value=await readDefinitionHistory(pool,{kind,id:req.params.id,versionId:req.params.versionId});
+      if(value===undefined) return res.status(404).json({error:'定义或版本不存在'});
+      return res.json(req.params.versionId?{version:value}:{versions:value});
+    } catch(error) {return res.status(500).json({error:error.message});}
+  });
+}
 export default router;
