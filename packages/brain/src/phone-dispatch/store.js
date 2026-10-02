@@ -87,7 +87,10 @@ export function createPhoneDispatchStore({pool,afterTask=afterTerminalTransition
    if(row.state==='terminal'){if(row.terminal_digest!==hash)throw Error('phone_terminal_conflict');return row;}
    await db.query("UPDATE phone_dispatches SET state='terminal',terminal_receipt=$2::jsonb,terminal_digest=$3,terminal_status=$4,updated_at=now() WHERE id=$1",[id,JSON.stringify(r),hash,r.status]);
    await db.query("UPDATE capacity_reservations SET status='released',released_at=now(),confirmed_receipt=$2::jsonb,updated_at=now() WHERE id=$1 AND owner_kind='phone'",[row.reservation_id,JSON.stringify(r)]);
-   const evidence={fact:'认证远端回执确认同一手机执行已退出，自己的锁已解除，共享容量已释放',actor:`phone-worker:${row.worker_id}`,phone_dispatch_receipt:r,handoff:{schema_version:1,summary:'手机派发持久身份结算完成',next_steps:[]}};
+   // locked 已持有任务行锁；保留主理人或上棒写好的交接，仅缺失时补合成回执。
+   const task=(await db.query('SELECT result FROM tasks WHERE id=$1',[row.task_id])).rows[0];
+   const evidence={fact:'认证远端回执确认同一手机执行已退出，自己的锁已解除，共享容量已释放',actor:`phone-worker:${row.worker_id}`,phone_dispatch_receipt:r,
+    ...(task?.result?.handoff==null?{handoff:{schema_version:1,summary:'手机派发持久身份结算完成',next_steps:[],synthesized:true}}:{})};
    const result=await finalizeTask(db,row.task_id,r.status,{relay:false,onlyIfStatus:'in_progress',mergeResult:evidence});
    if(result.rowCount!==1)throw Error('phone_task_settlement_conflict');completed={task:row.task_id,status:r.status};return get(id,db);
   });if(completed)await afterTask(pool,completed.task,completed.status);return out;},
