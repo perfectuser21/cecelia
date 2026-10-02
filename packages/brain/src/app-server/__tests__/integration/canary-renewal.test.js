@@ -69,3 +69,49 @@ it('过期prepared挑战清理确认后归档原验收任务为失败，新代�
   expect(await service(f).advance(next.successor_id)).toMatchObject({state:'active'});
  }finally{await f.close();}
 });
+it('根撤销抢在renew创建后继前，恢复必须拒绝复活',async()=>{
+ const f=await fixture();let release;try{
+  const a=await service(f).prepare(f.input);await service(f).advance(a.id);f.restart(true);let ready;
+  const entered=new Promise(r=>ready=r),gate=new Promise(r=>release=r);
+  const authorizationStore={...f.authorizationStore,renew:async id=>{ready();await gate;return f.authorizationStore.renew(id);}};
+  const advancing=service(f,{authorizationStore}).advance(a.id);const assertion=expect(advancing).rejects.toThrow('appserver_authorization_renewal_denied');
+  await entered;await f.authorizationStore.revoke(a.id);release();await assertion;
+  expect((await f.pool.query('SELECT count(*)::int AS n FROM app_server_authorizations')).rows[0].n).toBe(1);
+  expect(await service(f).advance(a.id)).toMatchObject({state:'revoked'});
+  expect((await f.pool.query("SELECT count(*)::int AS n FROM execution_grants WHERE surface='app_server' AND state='active'")).rows[0].n).toBe(0);
+ }finally{release?.();await f.close();}
+});
+it('后继已提交但响应丢失复用同一后继，不覆盖completed历史',async()=>{
+ const f=await fixture();try{
+  const a=await service(f).prepare(f.input);await service(f).advance(a.id);
+  const before=(await f.pool.query('SELECT status,result FROM tasks WHERE id=$1',[a.evidence_task_id])).rows[0];f.restart(true);let lost=true;
+  const authorizationStore={...f.authorizationStore,renew:async id=>{const next=await f.authorizationStore.renew(id);if(lost){lost=false;throw Error('lost successor response');}return next;}};
+  await expect(service(f,{authorizationStore}).advance(a.id)).rejects.toThrow('lost successor response');
+  const successor=(await f.pool.query('SELECT successor_id FROM app_server_authorization_jobs WHERE authorization_id=$1',[a.id])).rows[0].successor_id;
+  expect(await service(f).advance(a.id)).toMatchObject({state:'renewing',successor_id:successor});
+  expect((await f.pool.query('SELECT status,result FROM tasks WHERE id=$1',[a.evidence_task_id])).rows[0]).toEqual(before);
+  expect(await service(f).advance(successor)).toMatchObject({state:'active'});
+  expect((await f.pool.query('SELECT count(*)::int AS n FROM app_server_authorizations')).rows[0].n).toBe(2);expect(f.calls.filter(x=>x==='create')).toHaveLength(4);
+ }finally{await f.close();}
+});
+it('后继两代已清理但激活前撤销根，不能提交active且旧completed保留',async()=>{
+ const f=await fixture();let release;try{
+  const a=await service(f).prepare(f.input);await service(f).advance(a.id);const before=(await f.pool.query('SELECT status,result FROM tasks WHERE id=$1',[a.evidence_task_id])).rows[0];
+  f.restart(true);const {successor_id}=await service(f).advance(a.id);let ready;
+  const entered=new Promise(r=>ready=r),gate=new Promise(r=>release=r);
+  const evidence={...f.evidence,activate:async id=>{ready();await gate;return f.evidence.activate(id);}};
+  const advancing=service(f,{evidence}).advance(successor_id);const assertion=expect(advancing).rejects.toThrow('appserver_canary_authorization_denied');
+  await entered;await f.authorizationStore.revoke(a.id);release();await assertion;
+  expect(await service(f).advance(successor_id)).toMatchObject({state:'revoked'});
+  expect((await f.pool.query("SELECT count(*)::int AS n FROM execution_grants WHERE surface='app_server' AND state='active'")).rows[0].n).toBe(0);
+  expect((await f.pool.query('SELECT status,result FROM tasks WHERE id=$1',[a.evidence_task_id])).rows[0]).toEqual(before);
+ }finally{release?.();await f.close();}
+});
+it('job登记失败与prepare及任务同事务回滚',async()=>{
+ const f=await fixture();try{
+  await f.pool.query(`CREATE FUNCTION fixture_job_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture_job_failure';END $$;CREATE TRIGGER fixture_job_failure BEFORE INSERT ON app_server_authorization_jobs FOR EACH ROW EXECUTE FUNCTION fixture_job_failure();`);
+  await expect(service(f).prepare(f.input)).rejects.toThrow('fixture_job_failure');
+  for(const table of ['app_server_authorizations','app_server_authorization_jobs','tasks'])expect((await f.pool.query('SELECT count(*)::int AS n FROM '+table)).rows[0].n).toBe(0);
+  expect((await f.pool.query("SELECT count(*)::int AS n FROM execution_grants WHERE surface='app_server'")).rows[0].n).toBe(0);
+ }finally{await f.close();}
+});
