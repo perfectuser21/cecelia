@@ -89,11 +89,13 @@ class AdmissionTest(unittest.TestCase):
                 root.chmod(0o755)
                 with self.assertRaises(ValueError): admission.HostExclusive().acquire()
                 root.chmod(0o700)
-                host = admission.HostExclusive().acquire()
-                try:
+                def replacement():
+                    host = admission.HostExclusive().acquire()
                     (root / 'host.guard').unlink(); self.write(root / 'host.guard', b'')
                     with self.assertRaises(ValueError): host.verify()
-                finally: host.close()
+                    with self.assertRaises(ValueError): host.close()
+                # 破坏路径后的句柄无close权限；仅此自有fork自然退出关继承FD。
+                self.assertEqual(self.child(replacement), b'accepted')
 
     def test_arbitrary_writable_host_parent_and_symlink_are_not_trusted(self):
         parent = self.fixture.root / 'writable'; parent.mkdir(mode=0o777); parent.chmod(0o777)
@@ -176,7 +178,7 @@ class AdmissionTest(unittest.TestCase):
             child = os.fork()
             if child == 0:
                 os.setsid(); os.close(ready_w)
-                os.read(release_r, 1); host.close(); os._exit(0)
+                os.read(release_r, 1); os._exit(0)
             os.write(ready_w, str(child).encode()); os._exit(0)
         os.close(ready_w); os.close(release_r)
         child = int(os.read(ready_r, 64)); os.close(ready_r); os.waitpid(owner, 0)
@@ -188,7 +190,7 @@ class AdmissionTest(unittest.TestCase):
     def test_transferred_host_fd_survives_metadata_descriptor_cleanup(self):
         host = admission.HostExclusive().acquire()
         read, write = os.pipe()
-        child = os.fork()
+        child = host.fork()
         if child == 0:
             os.close(read)
             try:
@@ -208,12 +210,13 @@ class AdmissionTest(unittest.TestCase):
         host = admission.HostExclusive().acquire()
         ready_r, ready_w = os.pipe(); go_r, go_w = os.pipe()
         with journal.locked(key):
-            child = os.fork()
+            child = host.fork()
             if child == 0:
                 try:
                     os.close(ready_r); os.close(go_w)
                     fd = host.transfer()
-                    worker.detach(keep_fds=(fd, ready_w, go_r))
+                    worker.detach(keep_fds=(*host._detach_fds(), ready_w, go_r))
+                    host._after_detach()
                     journal.after_detach()
                     admission.discard_fork_context()
                     os.write(ready_w, b'R'); os.close(ready_w)
