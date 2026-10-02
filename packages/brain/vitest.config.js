@@ -20,6 +20,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/lib/__tests__/integration/implementation-ci-snapshot.test.js',
   'src/lib/__tests__/integration/implementation-report.test.js',
   'src/lib/__tests__/integration/release-index.test.js',
+  'src/lib/__tests__/integration/pilot-release-verification.test.js',
   'src/lib/__tests__/integration/run-definition-binding.test.js',
   'src/lib/__tests__/integration/task-run-definition.test.js',
   'src/routes/__tests__/integration/releases.test.js',

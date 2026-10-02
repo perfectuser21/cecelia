@@ -41,7 +41,9 @@ export async function listSystemRuns(db,options={}) {
   return {runs,total,limit,offset};
 }
 function ciWorkflowVersions(item,workflows){
-  const reported=item.report?.head?.definition_versions?.workflows,source=item.report?.source;
+  const protocol=item.report?.protocol;
+  const reported=protocol==='pilot_release_verification_v1'?item.report?.definition_versions?.workflows:
+    protocol===undefined?item.report?.head?.definition_versions?.workflows:undefined,source=item.report?.source;
   if(!Array.isArray(reported)||!source)return [];
   const fields=['id','workflow_id','payload_sha256','source_repo','source_commit'];
   return workflows.filter(w=>w.source_repo===source.repo&&w.source_commit===source.head_revision
