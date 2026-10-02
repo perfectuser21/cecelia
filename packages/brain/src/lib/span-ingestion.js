@@ -1,5 +1,6 @@
 /** 新Span按真实发生位置幂等；摘要只信任服务端规范化的持久字段。 */
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
+import { normalizeSpanProvenance } from './span-provenance.js';
 const SPAN_FIELDS = ['run_id','workflow_id','activity_id','step_id','enabler_id','started_at','ended_at','wait_ms',
   'executor_kind','executor_id','model','tokens_in','tokens_out','cost_usd','attempts','fallback','outcome','evidence','occurrence_key','payload_sha256'];
 const INSERT = `INSERT INTO spans (${SPAN_FIELDS.join(',')}) VALUES (${SPAN_FIELDS.map((_,i)=>`$${i+1}`).join(',')})`;
@@ -80,8 +81,9 @@ export function normalizeSpan(raw, index) {
   if (occurrence_key !== null && (typeof occurrence_key !== 'string' || !occurrence_key.trim())) throw new Error(`spans[${index}].occurrence_key must be a non-empty string`);
   const normalized = Object.fromEntries(SPAN_FIELDS.slice(0, 18).map((field, i) => [field, params[i]]));
   normalized.evidence = evidence === null ? null : JSON.parse(evidence);
-  const payload_sha256 = occurrence_key === null ? null : stepSha256(normalized);
-  return { params: [...params, occurrence_key, payload_sha256], occurrence_key, payload_sha256 };
+  const provenance=normalizeSpanProvenance(raw);
+  const payload_sha256 = occurrence_key === null ? null : stepSha256(provenance.identity_protocol===2?{...normalized,...provenance}:normalized);
+  return { params: [...params, occurrence_key, payload_sha256], occurrence_key, payload_sha256,identity_protocol:provenance.identity_protocol,provenance,normalized };
 }
 
 export async function writeSpans(pool, rows) {
