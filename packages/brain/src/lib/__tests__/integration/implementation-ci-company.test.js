@@ -2,9 +2,11 @@ import { afterEach,expect,it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { versionsDatabase } from '../../../__tests__/fixtures/definition-versions-db.js';
 import { companyKrSpec,registerCompanyKrWorkflow } from '../../company-kr-registration.js';
+import {migrationTable} from '../../../__tests__/fixtures/minimum-definition-schema.js';
 let fixture;afterEach(async()=>{await fixture?.close();fixture=null;});
 it('公司KR正式adapter固定同repo源码、完整codefile绑定与UUID，不接执行任务或改运行历史',async()=>{
   fixture=await versionsDatabase();await fixture.migrate();const {db}=fixture,s=companyKrSpec,vs=randomUUID();
+  await db.query(migrationTable('433_ops_projection.sql','ops_agents'));
   await db.query('INSERT INTO areas(id,name) VALUES($1,$2)',[s.area_id,'公司']);
   await db.query('INSERT INTO journeys(id,name,parent_journey_id,capability_code) VALUES($1,$2,NULL,NULL),($3,$4,$1,$5)',[vs,'管家',s.capability_id,s.capability_name,s.capability_code]);
   await db.query("INSERT INTO ops_agents(source,host_alias,name) VALUES('openclaw','mmv',$1)",[s.agent]);

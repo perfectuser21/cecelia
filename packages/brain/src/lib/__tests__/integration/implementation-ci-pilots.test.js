@@ -1,5 +1,6 @@
 import { expect,it,vi } from 'vitest';
 import pg from 'pg';
+import {preparePilotSchema} from '../../../__tests__/fixtures/pilot-private-schema.js';
 import {coverageDatabase} from '../../../__tests__/fixtures/capability-coverage-db.js';
 import { versionsDatabase } from '../../../__tests__/fixtures/definition-versions-db.js';
 import { randomUUID } from 'node:crypto';
@@ -23,10 +24,6 @@ import { exportImplementationSnapshot,refreshImplementationSnapshot } from '../.
 import { readImplementationImpact } from '../../implementation-impact.js';
 import { createImplementationScratch,importImplementationSnapshot,projectImplementationSnapshot } from '../../../../../../scripts/ci/implementation-snapshot.mjs';
 import { runProjection } from '../../../map/projector.js';
-async function preparePilotSchema(db,graphOnly=false){
- const tables=graphOnly?['fact_snapshot_headers','graph_edges','graph_snapshot_versions','graph_edge_snapshots']:['decisions','map_scope_repositories','map_manifest_versions','map_projection_runs','map_projection_nodes','map_projection_edges','fact_snapshot_headers','graph_edges','graph_snapshot_versions','graph_edge_snapshots','journey_step_links','journey_features','test_registry','api_registry','db_schema_registry','journey_assertion_receipts'];
- for(const table of tables)await db.query(`CREATE TABLE ${table}(LIKE public.${table} INCLUDING ALL)`);
-}
 it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真实Git扫描后固定投影',async()=>{
   const fixture=await versionsDatabase(),dir=realpathSync(mkdtempSync(join(tmpdir(),'pilot-registration-')));let server;
   try{
@@ -172,10 +169,12 @@ it.each(['coverage','pilot','graph'])('seedonly %s调用真实设置链，query�
    expect(triggers).toContainEqual({tgname:'trg_journey_assertion_receipts_append_only'});
    const decision=randomUUID();await f.db.query('INSERT INTO decisions(id) VALUES($1)',[decision]);
    await f.db.query("INSERT INTO journeys(id,name,parent_journey_id) VALUES('afa6abca-53c0-4815-8594-b7fb81ca547f','获客',NULL),('a1000000-0000-4000-8000-000000000001','关键词','afa6abca-53c0-4815-8594-b7fb81ca547f'),('a1000000-0000-4000-8000-000000000002','对标','afa6abca-53c0-4815-8594-b7fb81ca547f')");
-   const draft=await submitMapManifest(f.db,buildPilotManifest('phones',{revision:'a'.repeat(40),decision}));
+   const manifest=buildPilotManifest('phones',{revision:'a'.repeat(40),decision});
+   await f.db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES('zenithjoy','zenithjoy-pilot-source','legacy-ledger-v1',$1)",[{source_repo:manifest.capabilities[0].brain_binding.source_repo}]);
+   const draft=await submitMapManifest(f.db,manifest);
    expect(draft.manifest_version.source_decision_id).toBe(decision);
    await expect(f.db.query("UPDATE map_manifest_versions SET manifest=manifest||'{\"tampered\":true}' WHERE id=$1",[draft.manifest_version.id])).rejects.toMatchObject({code:'P0001'});
   }else expect((await f.db.query("SELECT to_regclass('graph_edge_snapshots') relation")).rows[0].relation).toBe('graph_edge_snapshots');
- }finally{await f?.close();spy.mockRestore();}
+ }finally{try{await f?.close();}finally{spy.mockRestore();}}
  expect(calls.some(sql=>/DROP SCHEMA/.test(sql))).toBe(true);
 });

@@ -1,13 +1,15 @@
 import { afterEach,beforeEach,expect,it,vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import {migrationSlice} from '../../../__tests__/fixtures/minimum-definition-schema.js';
 import { releaseEvidenceDatabase } from '../../../__tests__/fixtures/release-evidence-db.js';
 import { createCapabilitySystemRouter } from '../../capability-system.js';
 import { createRelease,recordReleaseObservation } from '../../../lib/release-index.js';
 import { bindRunDefinition } from '../../../lib/run-definition-binding.js';
 let f,app;
 beforeEach(async()=>{
-  f=await releaseEvidenceDatabase();await f.db.query('CREATE TABLE journey_features (LIKE public.journey_features INCLUDING ALL)');
+  f=await releaseEvidenceDatabase();
+  await f.db.query(migrationSlice('493_vs_model_areas_kind.sql','ALTER TABLE areas','-- ② journeys.kind'));
   app=express();app.use('/map',createCapabilitySystemRouter({pool:f.db}));
 });
 afterEach(async()=>{vi.unstubAllEnvs();await f?.close();});
