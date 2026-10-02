@@ -1,3 +1,5 @@
+import {buildLinuxOnboardingPolicy} from '../../linux-pool/onboarding-policy.js';
+import {ONBOARDING_IMAGE} from '../../linux-pool/onboarding-step.js';
 import {MACHINE_CAPACITY_LOCK_SQL} from '../../orchestrator/attempt-machine-capacity.js';
 import {assertLinuxPoolAuthority} from '../../linux-pool/task-authority.js';
 import pg from 'pg';
@@ -127,6 +129,8 @@ async function failedController(){
  const report={type:'node_onboarding_receipt',id:machine.id,name:machine.name,mode:'enroll',verified:true,service:{active:true,enabled:true},health:{schema_version:1,node_id:machine.id,agent_version:'1',observed_at:at,boot_id:randomUUID(),sequence:2,hostname:machine.name,os:'linux',capabilities:{collector:true,janitor:true,execution:false},janitor:{mode:'observe',policy:'owned-cache-only'},resources:{memory_total_bytes:8e9,memory_available_bytes:4e9,cpu_load_1m:0,cpu_cores:4,disk_free_bytes:10e9,disk_total_bytes:40e9}}};
  await pool.query("UPDATE tasks SET completed_at=$2,result=$3,payload=jsonb_set(jsonb_set(payload,'{node_onboarding,mode}','\"enroll\"'),'{node_onboarding,reconciled}','true') WHERE id=$1",[parent,at,{script:{exit_code:0,stdout:JSON.stringify(report)}}]);
  await pool.query("UPDATE tasks SET status='failed',executor_kind=NULL,claimed_by=NULL,error_message=$2,payload=jsonb_set(payload,'{linux_onboarding,phase}','\"script_prepare\"') WHERE id=$1",[id,'S2锚点执法：task缺少 payload.anchor.{journey_id,gp_id,step_id}，拒绝点火']);
+ const policy=buildLinuxOnboardingPolicy({machine_registry_id:machine.id,machine_id:machine.name,role:'worker',endpoint_host:machine.metadata.onboarding.request.address,observation:report.health,image:ONBOARDING_IMAGE,image_id:'sha256:'+'c'.repeat(64)});
+ await pool.query("UPDATE tasks SET payload=jsonb_set(payload,'{linux_onboarding,policy_json}',$2) WHERE id=$1",[id,JSON.stringify(JSON.stringify(policy))]);
  const old=(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0];
  await pool.query("INSERT INTO work_routing_receipts VALUES($1,'scheduler',$2,'audit')",[id,'linux-pool-onboarding:'+old.payload.linux_onboarding.nonce]);
  await pool.query("INSERT INTO task_events(task_id,event_type,payload) VALUES($1,'watchdog_safe_requeue',$2)",[id,{reason:'no_spawn_evidence',headed_manual:false,evidence:{active_process:false,process_log:false,dispatch_receipt:false}}]);
@@ -176,4 +180,24 @@ it('retry等待capacity期间不抢registry行锁，避免与runtime的capacity�
   try{await other.query('SELECT id FROM tasks WHERE id=$1 FOR SHARE NOWAIT',[id]);await other.query('SELECT id FROM system_registry WHERE id=$1 FOR SHARE NOWAIT',[machine.id]);}catch(e){readError=e.code;}
  }finally{await other.query('ROLLBACK');other.release();await pending;}
  expect(readError).toBeUndefined();
+});
+
+it.each(['missing','empty','malformed','shape','machine','profile','oversized','capacity','endpoint'])('原硬预算%s时拒绝误收恢复，不登记新棒或改来源指针',async kind=>{
+ const {f,id,old}=await failedController(),state=old.payload.linux_onboarding,p=JSON.parse(state.policy_json);
+ if(kind==='missing')delete state.policy_json;
+ else if(kind==='empty')state.policy_json='';
+ else if(kind==='malformed')state.policy_json='{';
+ else if(kind==='shape')state.policy_json='{}';
+ else {
+  if(kind==='machine')p.pool.machine_registry_id=randomUUID();
+  if(kind==='profile')p.profiles.shell.profile.memoryBytes=2**31;
+  if(kind==='oversized')p.pool.pool.cpu_cores=4;
+  if(kind==='capacity')p.capacity=2;
+  if(kind==='endpoint')p.pool.endpoint_host='100.64.0.99';
+  state.policy_json=JSON.stringify(p);
+ }
+ await pool.query('UPDATE tasks SET payload=$2 WHERE id=$1',[id,old.payload]);
+ await expect(f.retry(id)).rejects.toThrow('linux_pool_retry_unconfirmed');
+ expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);
+ expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(id);
 });
