@@ -37,7 +37,7 @@ it.each(['workflow_id','reference_id','activity_definition_version_id','step_id'
 });
 it('丢确认后重传一条，真实再执行第二条；异内容409保原事实',async()=>{
   expect((await post(span())).body.inserted).toBe(1);expect((await post(span())).body.skipped).toBe(1);
-  expect((await post(span(0,{occurrence_key:'position-2'}))).body.inserted).toBe(1);
+  const second=await post(span(0,{occurrence_key:'position-2'}));expect(second.body,JSON.stringify(second.body)).toMatchObject({inserted:1});
   expect((await post(span(0,{outcome:'fail'}))).status).toBe(409);expect(await count()).toBe(2);
 });
 it('当前引用与步骤变化不改历史归属，Enabler按冻结caller验证',async()=>{
@@ -56,5 +56,15 @@ it('旧未绑定运行仍幂等，已绑定运行禁止降级v1，数据库同�
 });
 it('反序批次并发只保存一组，返回顺序仍与输入一致',async()=>{
   const a=span(0,{occurrence_key:'a'}),b=span(0,{occurrence_key:'b'});
-  const r=await Promise.all([post([b,a]),post([a,b])]);expect(r.map(x=>x.status)).toEqual([200,200]);expect(r.map(x=>x.body.inserted).sort()).toEqual([0,2]);expect(await count()).toBe(2);
+  const r=await Promise.all([post([b,a]),post([a,b])]);expect(r.map(x=>x.status),JSON.stringify(r.map(x=>x.body))).toEqual([200,200]);expect(r.map(x=>x.body.inserted).sort()).toEqual([0,2]);expect(await count()).toBe(2);
+});
+it('含引号run ID的新旧混合批次使用一致加锁顺序',async()=>{
+  await f.db.query(`CREATE FUNCTION delay_protocol_span() RETURNS trigger AS $$BEGIN PERFORM pg_sleep(0.06);RETURN NEW;END$$ LANGUAGE plpgsql;
+    CREATE TRIGGER delay_protocol_span AFTER INSERT ON spans FOR EACH ROW EXECUTE FUNCTION delay_protocol_span()`);
+  const old=run_id=>({run_id,activity_id:span().activity_id,started_at:'2026-10-02T10:00:00Z',executor_kind:'code',occurrence_key:'old'});
+  const a=old('a"'),b=old('aA');
+  const first=post([b,a]).then(r=>r);
+  await new Promise(resolve=>setTimeout(resolve,20));
+  const result=await Promise.all([first,post([span(),a,b])]);
+  expect(result.map(r=>r.status),JSON.stringify(result.map(r=>r.body))).toEqual([200,200]);expect(await count()).toBe(3);
 });
