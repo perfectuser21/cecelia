@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterEach,beforeEach,expect,it } from 'vitest';
 import express from 'express';
 import request from 'supertest';
@@ -103,4 +104,22 @@ it('历史固定AV缺规范Step UUID时step coverage明确unknown，不以Activi
   const response=await request(app).post('/releases').send(input);expect(response.status,JSON.stringify(response.body)).toBe(201);
   expect(response.body.release.payload.verification).toMatchObject({step_coverage_status:'unknown',definition_status:'unknown',status:'unknown'});
   expect(response.body.release.payload.verification.gaps).toContainEqual(expect.objectContaining({code:'step_identity_missing',activity_definition_version_id:replacement.id}));
+});
+
+it('删去共享消费者断言覆盖后即使report与receipt重新摘要自洽也不能green',async()=>{
+  const input=structuredClone(fixture.releaseInput),ci=input.ci_evidence[0],assertion=ci.report.required_assertions[0];
+  const omitted=assertion.source_bindings[0].capability_id;
+  assertion.source_bindings=assertion.source_bindings.filter(b=>b.capability_id!==omitted);
+  assertion.capability_ids=assertion.capability_ids.filter(id=>id!==omitted);
+  ci.receipt.assertions[0].source_bindings=assertion.source_bindings;
+  ci.receipt.report_sha256=createHash('sha256').update(JSON.stringify(ci.report)).digest('hex');
+  const response=await request(app).post('/releases').send(input);expect(response.status).toBe(201);
+  expect(response.body.release.payload.verification.ci_status).toBe('unknown');
+  await observe(response.body.release.id);expect((await service.getReleaseGate(fixture.db,response.body.release.id)).deployed).toBe(false);
+});
+it.each(['file_coverage','graph_snapshot'])('报告缺少%s固定证据即使摘要匹配也不能green',async field=>{
+  const input=structuredClone(fixture.releaseInput),ci=input.ci_evidence[0];delete ci.report.head[field];
+  ci.receipt.report_sha256=createHash('sha256').update(JSON.stringify(ci.report)).digest('hex');
+  const response=await request(app).post('/releases').send(input);expect(response.status).toBe(201);
+  expect(response.body.release.payload.verification.ci_status).toBe('unknown');
 });
