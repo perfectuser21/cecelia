@@ -50,7 +50,8 @@ it('固定契约没有optional声明时不能将必经路径降为可选',async(
 it('真实内部task_run身份匹配才可绑定，绑定服务不改既有执行行',async()=>{
   const input=fixture.runInput(release,observation);delete input.external_origin;input.source_kind='internal';
   const task=(await fixture.db.query("INSERT INTO tasks(title,status) VALUES('fixture','queued') RETURNING id")).rows[0];
-  const taskRun=(await fixture.db.query("INSERT INTO task_runs(task_id,run_id,workflow_id,status) VALUES($1,'internal-real',$2,'running') RETURNING *",[task.id,input.workflow_id])).rows[0];
+  const declaration=Object.fromEntries(['release_id','workflow_definition_version_id','snapshot_sha256','runtime_snapshot_sha256','attempt_key'].map(k=>[k,input[k]]));
+  const taskRun=(await fixture.db.query("INSERT INTO task_runs(task_id,run_id,workflow_id,status,context) VALUES($1,'internal-real',$2,'running',$3) RETURNING *",[task.id,input.workflow_id,{definition_preflight:declaration}])).rows[0];
   input.task_run_id=taskRun.id;
   expect((await post('internal-real',input)).status).toBe(201);
   expect((await fixture.db.query('SELECT * FROM task_runs WHERE id=$1',[taskRun.id])).rows[0]).toEqual(taskRun);
@@ -97,4 +98,23 @@ it('外部run不能占用真实内部task_run的run_id，即使Workflow相同',a
     expect((await post(runId,fixture.runInput(release,observation,fixture.workflows[0]))).status).toBe(409);
     expect(await service.getRunDefinitionBinding(fixture.db,runId)).toBeNull();
   }
+});
+
+it.each(['terminal','ended','undeclared','different-preflight'])('内部首次绑定禁止运行后追认：%s',async kind=>{
+  const input=fixture.runInput(release,observation);delete input.external_origin;input.source_kind='internal';
+  const declaration=Object.fromEntries(['release_id','workflow_definition_version_id','snapshot_sha256','runtime_snapshot_sha256','attempt_key'].map(k=>[k,input[k]]));
+  if(kind==='different-preflight')declaration.attempt_key='other-attempt';
+  const task=(await fixture.db.query("INSERT INTO tasks(title,status) VALUES('unbound-history','queued') RETURNING id")).rows[0];
+  const row=(await fixture.db.query("INSERT INTO task_runs(task_id,run_id,workflow_id,status,ended_at,context) VALUES($1,$2,$3,$4,$5,$6) RETURNING id",[task.id,kind,input.workflow_id,kind==='terminal'?'success':'running',kind==='ended'?'2026-01-02T00:00:00Z':null,kind==='undeclared'?{}:{definition_preflight:declaration}])).rows[0];
+  input.task_run_id=row.id;
+  expect((await post(kind,input)).status).toBe(409);expect(await service.getRunDefinitionBinding(fixture.db,kind)).toBeNull();
+});
+it('起跑前已固定内部绑定在完成后仍可幂等回读',async()=>{
+  const input=fixture.runInput(release,observation);delete input.external_origin;input.source_kind='internal';
+  const declaration=Object.fromEntries(['release_id','workflow_definition_version_id','snapshot_sha256','runtime_snapshot_sha256','attempt_key'].map(k=>[k,input[k]]));
+  const task=(await fixture.db.query("INSERT INTO tasks(title,status) VALUES('declared-start','queued') RETURNING id")).rows[0];
+  const row=(await fixture.db.query("INSERT INTO task_runs(task_id,run_id,workflow_id,status,context) VALUES($1,'completed-bound',$2,'running',$3) RETURNING id",[task.id,input.workflow_id,{definition_preflight:declaration}])).rows[0];input.task_run_id=row.id;
+  expect((await post('completed-bound',input)).status).toBe(201);
+  await fixture.db.query("UPDATE task_runs SET status='success',ended_at=now() WHERE id=$1",[row.id]);
+  expect((await post('completed-bound',input)).status).toBe(200);
 });
