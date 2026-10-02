@@ -5,6 +5,7 @@ vi.mock('../projection/company-key-results.js', () => ({ runCompanyKrProjection:
 
 vi.mock('../node-onboarding/service.js', () => ({
   runNodeOnboardingJob: vi.fn().mockResolvedValue({ reconciled: 0, errors: 0, scheduled: 0 }),
+  runNodeExecutionOnboardingJob: vi.fn().mockResolvedValue({ advanced: 0 }),
 }));
 
 vi.mock('../daily-review-scheduler.js', () => ({
@@ -138,7 +139,8 @@ vi.mock('../openclaw-agent-executor.js', () => ({
 // script 收割（棒 3）同理：真实 handler 会 ssh 到跑场机读 .exit，纯路由单测绝不碰真机；
 // 收割逻辑由 script-executor.test.js / integration/script-executor-chain.pg.integration.test.js 覆盖。
 vi.mock('../script-executor.js', () => ({
-  reapScriptRuns: vi.fn().mockResolvedValue({ reaped: 0, completed: 0, failed: 0, retried: 0 }),
+  reapLegacyScriptRuns: vi.fn().mockResolvedValue({ reaped: 0, completed: 0, failed: 0, retried: 0 }),
+  reapManagedScriptRuns: vi.fn().mockResolvedValue({ reaped: 0, completed: 0, failed: 0, retried: 0 }),
 }));
 
 // 秋米设备对账的真实 handler 会扫库。「哨兵写入失败不影响 job 结果」那条用例的假 pool 对

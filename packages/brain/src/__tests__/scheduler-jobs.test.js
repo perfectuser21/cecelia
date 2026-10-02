@@ -68,8 +68,8 @@ describe('scheduler-jobs 注册表', () => {
   });
 
   // 任务 5cdbd52a：script_run 的收割者。没注册 = 脚本步派出去永远没人读 .exit，任务永远 in_progress。
-  it('JOBS 注册了 script-reaper（needsPool、在 scheduler-liveness 之前、handler 真接线 reapScriptRuns）', async () => {
-    const { reapScriptRuns } = await import('../script-executor.js');
+  it('JOBS 注册了 script-reaper（needsPool、在 scheduler-liveness 之前、handler 真接线 legacy收割）', async () => {
+    const { reapLegacyScriptRuns } = await import('../script-executor.js');
     const names = JOBS.map((j) => j.name);
     const j = JOBS.find((x) => x.name === 'script-reaper');
     expect(j).toBeTruthy();
@@ -78,7 +78,7 @@ describe('scheduler-jobs 注册表', () => {
     expect(names.indexOf('script-reaper')).toBeLessThan(names.indexOf('scheduler-liveness'));
     const pool = makePool();
     await runSchedulerJobsOnce(pool, [j]);
-    expect(reapScriptRuns).toHaveBeenCalledWith(pool);
+    expect(reapLegacyScriptRuns).toHaveBeenCalledWith(pool);
   });
 
   // 任务 8aa79219：owner_decision「到期按默认走」的执行者。没注册 = 协议承诺无人兑现，不可逆决策永卡、可逆决策不走默认。
