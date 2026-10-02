@@ -44,3 +44,18 @@ it('MMV hub仅转发受信清单路由，下游nonce和绑定错误拒绝',async
  expect((await h.handle(input)).receipt.status).toBe('unknown');
  await expect(h.handle({...input,route:{...route,host:'attacker'}})).rejects.toThrow(/phone_/);expect(calls).toBe(1);
 });
+it('真实输送子进程stdout超限和超时被终止，错误不暴露原文',async()=>{
+ const require=createRequire(import.meta.url);let transport;try{transport=require('../../scripts/phone-ssh/transport.cjs');}catch{}
+ expect(transport?.runSsh).toBeTypeOf('function');
+ const {spawn}=require('node:child_process');
+ for(const mode of ['oversized','timeout']){
+  let spawned=false;let exited;const exitPromise=new Promise(resolve=>{exited=resolve;});
+  const spawnProcess=(file,args,options)=>{
+   spawned=true;
+   const code=mode==='oversized'?'process.stdout.write("secret".repeat(100));setInterval(()=>{},1000)':'setInterval(()=>{},1000)';
+   const child=spawn(process.execPath,['-e',code],options);child.on('close',exited);return child;
+  };
+  await expect(transport.runSsh('/usr/bin/ssh',[], '{}',{spawnProcess,maxBytes:64,timeoutMs:300})).rejects.toThrow(mode==='oversized'?'phone_ssh_reply_oversized':'phone_ssh_timeout');
+  expect(spawned).toBe(true);await exitPromise;
+ }
+});

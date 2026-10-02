@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 import uuid
 
 
@@ -293,6 +294,44 @@ class PhoneRunnerTest(unittest.TestCase):
             r.inspect(self.identity)
         with self.assertRaises(ValueError):
             r.maintenance()
+
+    def test_fsync_failure_no_launch_and_real_launcher_death_intent_stays_unknown(self):
+        r = self.setup_runner()
+        with patch('journal.os.fsync', side_effect=OSError('disk failure')):
+            with self.assertRaises(OSError):
+                r.start(self.identity)
+        self.assertEqual(self.launches(), 0)
+        # 使用另一身份，真实进程在持久intent之后退出。
+        self.identity['dispatch_id'] = str(uuid.uuid4())
+        pid = os.fork()
+        if pid == 0:
+            self.config.fault = lambda stage: os._exit(91)
+            r.start(self.identity)
+            os._exit(1)
+        self.assertEqual(os.WEXITSTATUS(os.waitpid(pid, 0)[1]), 91)
+        self.assertEqual(r.start(self.identity)['status'], 'unknown')
+        self.assertEqual(r.cancel(self.identity)['status'], 'failed')
+        self.assertEqual(self.launches(), 0)
+
+    def test_private_journal_symlink_and_world_readable_root_denied(self):
+        r = self.setup_runner()
+        Path(self.config.journal_root).chmod(0o755)
+        with self.assertRaises(ValueError):
+            load().Runner(self.config)
+        Path(self.config.journal_root).chmod(0o700)
+        elsewhere = self.root / 'elsewhere'
+        elsewhere.mkdir()
+        (Path(self.config.journal_root) / self.identity['dispatch_id']).symlink_to(elsewhere)
+        with self.assertRaises(ValueError):
+            r.start(self.identity)
+        self.assertEqual(list(elsewhere.iterdir()), [])
+
+    def test_unconfigured_resource_hook_fails_without_adb(self):
+        r = self.setup_runner()
+        self.config.assert_resources = load().denied_resources
+        r.start(self.identity)
+        self.assertEqual(self.finish()['status'], 'failed')
+        self.assertEqual(self.launches(), 0)
 
     def test_pending_intent_is_counted_and_broken_journal_denies_maintenance(self):
         r = self.setup_runner(fault=lambda stage: (_ for _ in ()).throw(RuntimeError('fault')))
