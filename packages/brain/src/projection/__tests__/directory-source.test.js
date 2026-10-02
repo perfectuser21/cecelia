@@ -18,6 +18,14 @@ function sample() {
 }
 const config = { value_stream_bindings: [{ journey_id: uid(2), scope: 'cecelia', node_key: 'product' }] };
 describe('六层目录源映射', () => {
+  it('显式binding分别固定两个模型名称，不要求同名；KR asserts不能丢',()=>{
+    const data=sample();data.journeys[0].name='工厂价值流';data.map_nodes[0].name='工厂';
+    data.steps[0].readback={asserts:'完整建议JSON',implementation:'repo#run'};
+    const rows=api.buildDirectoryRows(data,{value_stream_bindings:[{...config.value_stream_bindings[0],expected_node_name:'工厂',expected_journey_name:'工厂价值流'}]});
+    expect(rows.find(r=>r.id===uid(2)).pageId).toBe(uid(102));
+    expect(rows.find(r=>r.id===uid(7)).properties['验收标准'].rich_text[0].text.content).toBe('完整建议JSON');
+    expect(rows.find(r=>r.id===uid(4)).gaps).toEqual(expect.arrayContaining(['workflow_trigger_undeclared','workflow_input_undeclared','workflow_output_undeclared']));
+  });
   it('导出独立源映射入口', () => expect(api.buildDirectoryRows).toBeTypeOf('function'));
   it('共享活动和步骤使用所有active引用，保真身ID而非legacy单父', () => {
     const rows = api.buildDirectoryRows(sample(), config);
