@@ -34,7 +34,8 @@ export function validRecoveryExecutionTarget(request) {
     && ['machine','provider','account'].every(key => typeof target[key] === 'string'
       && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(target[key]) && target[key].length <= (key === 'machine' ? 256 : 128))
     && (!Object.hasOwn(target,'model') || (typeof target.model === 'string'
-      && /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(target.model) && target.model.length <= 256));
+      && /^[A-Za-z0-9][A-Za-z0-9._-]*(?:[:/][A-Za-z0-9][A-Za-z0-9._-]*)*$/.test(target.model)
+      && target.model.length <= 256));
 }
 
 function fail(code) {
