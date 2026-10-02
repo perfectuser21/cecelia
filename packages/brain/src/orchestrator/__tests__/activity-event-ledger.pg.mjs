@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { mkdtemp, copyFile, readFile, writeFile, rm } from 'node:fs/promises';
+import { randomUUID, createHash } from 'node:crypto';
+import { mkdtemp, copyFile, readFile, writeFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,7 @@ assert.ok(address.pathname === '/cecelia_scratch'
 const pool = new pg.Pool({ connectionString, connectionTimeoutMillis: 3000 });
 const schema = 'activity_event_' + randomUUID().replaceAll('-', '');
 const cwd = await mkdtemp(join(tmpdir(), 'activity-event-ledger-'));
-const cli = fileURLToPath(new URL('../../../scripts/activity-contract-run.js', import.meta.url));
+const cli = process.env.ACTIVITY_EVENT_TEST_CLI || fileURLToPath(new URL('../../../scripts/activity-contract-run.js', import.meta.url));
 const fixture = new URL('./fixtures/activity-runtime/activity.mjs', import.meta.url);
 const migration = await readFile(new URL('../../../migrations/367_harness_commander_phase1.sql', import.meta.url), 'utf8');
 const eventTable = migration.match(/CREATE TABLE IF NOT EXISTS harness_run_events \([\s\S]*?\n\);/)[0];
@@ -31,7 +31,7 @@ dbUrl.searchParams.set('options', '-csearch_path=' + schema + ',public');
 const childEnv = { ...process.env, ACTIVITY_EVENT_DATABASE_URL: dbUrl.href };
 let db;
 
-async function run(runId, sourceId, activities, extra = {}, args = []) {
+async function run(runId, sourceId, activities, extra = {}, args = [], observeStarted) {
   const runTag = extra.run_tag || 'ledger-smoke';
   const trace = join(cwd, randomUUID() + '.jsonl');
   const receiptPath = trace + '.receipt';
@@ -46,8 +46,15 @@ async function run(runId, sourceId, activities, extra = {}, args = []) {
   child.stdin.on('error', () => {});
   child.stdin.end(JSON.stringify(envelope));
   const timer = setTimeout(() => child.kill('SIGKILL'), 60000);
-  const code = await new Promise(resolve => child.on('close', resolve));
-  clearTimeout(timer);
+  const finished = new Promise(resolve => child.on('close', resolve));
+  let code;
+  try {
+    if (observeStarted) await observeStarted(child, { envelope, receiptPath, stdout: () => stdout });
+    code = await finished;
+  } finally {
+    clearTimeout(timer);
+    if (child.exitCode === null) { child.kill('SIGTERM'); await finished; }
+  }
   assert.equal(stderr, '');
   const result = JSON.parse(stdout);
   assert.deepEqual(JSON.parse(await readFile(receiptPath, 'utf8')), result);
@@ -75,6 +82,42 @@ try {
   await db.query(eventTable);
   await db.query(appendFunction);
   await copyFile(fixture, join(cwd, 'activity.mjs'));
+  // START由真实CLI发布；活动阻塞时从另一数据库连接读取已经提交的事件。
+  await writeFile(join(cwd, 'startup-block.mjs'), `import fs from 'node:fs';
+    const input=JSON.parse(fs.readFileSync(0,'utf8'));fs.appendFileSync(input.trace,'{"action":"startup-block"}\\n');
+    while(!fs.existsSync(input.release))await new Promise(done=>setTimeout(done,20));
+    process.stdout.write(JSON.stringify({schema_version:1,run_tag:input.run_tag,status:'completed',outputs:{},metrics:{},evidence:[]}));`);
+  const startupRun = await newRun(), startupSource = randomUUID(), startupId = randomUUID();
+  const startupPath = join(cwd, 'startup.json'), release = join(cwd, 'startup-release');
+  const blockedActivity = make('startup_block', 1);blockedActivity.runtime.entry = 'startup-block.mjs';
+  let startBytes;
+  const startupGood = await run(startupRun, startupSource, [blockedActivity], { release },
+    ['--startup-receipt', startupPath, '--startup-id', startupId], async (child, { envelope, receiptPath, stdout }) => {
+      try {
+        for (let i = 0; i < 150; i++) {
+          try { startBytes = await readFile(startupPath, 'utf8'); break; } catch {}
+          if (child.exitCode !== null) break;
+          await new Promise(done => setTimeout(done, 20));
+        }
+        assert.ok(startBytes, 'actual_cli_START_receipt_required: ' + stdout());
+        assert.equal(child.exitCode, null, 'START_before_terminal_required');
+        const start = JSON.parse(startBytes), digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+        assert.deepEqual(start, { schema_version: 1, event_type: 'WF_RUN_STARTED', run_tag: envelope.input.run_tag,
+          workflow: envelope.contract.workflow, cursor: 1, startup_id: startupId, at: start.at,
+          contract_sha256: digest(envelope.contract), input_sha256: digest(envelope.input) });
+        assert.equal((await stat(startupPath)).mode & 0o777, 0o600);
+        assert.equal(JSON.parse(await readFile(receiptPath, 'utf8')).status, 'running');
+        const committed = await events(startupRun, startupSource);
+        assert.equal(committed[0].event_type, 'WF_RUN_STARTED', 'startup_requires_committed_START_row');
+        assert.equal(committed[0].payload.local_cursor, 1);
+        assert.equal(committed[0].payload.event.run_tag, start.run_tag);
+      } finally { await writeFile(release, ''); }
+    });
+  assert.equal(startupGood.code, 0, JSON.stringify(startupGood.result));
+  assert.equal(startupGood.traceRows.length, 1, 'exactly_one_actual_activity');
+  assert.equal(await readFile(startupPath, 'utf8'), startBytes, 'finalize_cannot_mutate_startup');
+  console.log('PASS opt-in真实START终态前0600发布：另一连接已见提交事件、running progress及真实输入/契约摘要，终态后不变且活动一次');
+
   const runId = await newRun(), sourceId = randomUUID();
   await db.query("SELECT append_harness_run_event($1,'PREEXISTING','fixture',$2,1,'{}')", [runId, randomUUID()]);
   const good = await run(runId, sourceId, [make('partial', 1), make('deliver', 2), make('finalize', 3, 'finalize')]);
@@ -149,14 +192,21 @@ try {
   const correctionPool = new pg.Pool({ connectionString: dbUrl.href, connectionTimeoutMillis: 3000 });
   try {
     const correctedRun = await newRun(), correctedSource = randomUUID();
+    let startCallbackCommitted = false;
     const corrected = await runActivityContractWithEventStore({ workflow: 'ledger-smoke', activities: [make('deliver', 1),
       { ...make('deliver', 2, 'finalize'), key: 'deliver_final' }, make('finalize', 3, 'finalize')] },
     { run_tag: 'ledger-smoke', trace: join(cwd, 'corrected.jsonl'), fragments: [{ id: 'retained', owner: 'partial' }] },
     { cwd, pool: correctionPool, runId: correctedRun, sourceId: correctedSource, onEvent: async event => {
       const rows = await events(correctedRun, correctedSource);
       assert.equal(rows.at(-1).payload.local_cursor, event.cursor, 'external_callback_requires_committed_event');
+      if (event.event_type === 'WF_RUN_STARTED') {
+        assert.equal(rows.at(-1).event_type, 'WF_RUN_STARTED');
+        assert.equal(rows.at(-1).payload.receipt.status, 'running');
+        startCallbackCommitted = true;
+      }
       if (event.event_type === 'WF_RUN_FINALIZED') throw new Error('private_terminal_callback_failure');
     } });
+    assert.equal(startCallbackCommitted, true, 'actual_START_callback_requires_committed_row');
     const rows = await events(correctedRun, correctedSource);
     assert.equal(rows.at(-1).event_type, 'WF_RUN_FINALIZATION_CORRECTED');
     const { event_ledger: correctedLedger, ...correctedReceipt } = corrected;
@@ -221,13 +271,17 @@ try {
       THEN RAISE EXCEPTION 'private_start_failure'; END IF; RETURN NEW; END $$`);
   await db.query('CREATE TRIGGER reject_activity_start BEFORE INSERT ON harness_run_events FOR EACH ROW EXECUTE FUNCTION reject_activity_start()');
   const startRun = await newRun(), startSource = randomUUID();
-  const startFailed = await run(startRun, startSource, [make('partial', 1), make('finalize', 2, 'finalize')]);
+  const rejectedStartup = join(cwd, 'rejected-startup.json');
+  const startFailed = await run(startRun, startSource, [make('partial', 1), make('finalize', 2, 'finalize')], {},
+    ['--startup-receipt', rejectedStartup, '--startup-id', randomUUID()]);
+  await assert.rejects(stat(rejectedStartup), error => error.code === 'ENOENT');
+  assert.ok(!(await events(startRun, startSource)).some(row => row.event_type === 'WF_RUN_STARTED'));
   assert.equal(startFailed.result.reason_code, 'event_sink_failed');
   assert.deepEqual(startFailed.traceRows.map(row => row.action), ['finalize']);
   assert.equal(startFailed.result.outputs.cleanup, true);
   assert.equal((await events(startRun, startSource)).at(-1).event_type, 'WF_RUN_FINALIZED');
   await db.query('DROP TRIGGER reject_activity_start ON harness_run_events');
-  console.log('PASS 开始事件真实拒写阻止主链副作用，既有finalize清理策略保持');
+  console.log('PASS opt-in开始事件真实拒写：无startup凭证/无已提交START/无主链副作用，既有finalize清理策略保持');
 
   const servicePool = new pg.Pool({ connectionString: dbUrl.href, connectionTimeoutMillis: 3000 });
   try {

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { writeFileSync, renameSync, mkdirSync, realpathSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { writeFileSync, renameSync, mkdirSync, realpathSync, linkSync, unlinkSync, openSync, closeSync, fchmodSync, fsyncSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runActivityContract } from '../src/orchestrator/activity-runtime.js';
 
@@ -11,33 +12,76 @@ const EVENT_ERRORS = new Set(['activity_run_id_invalid', 'activity_source_id_inv
   'invalid_cli_argument', 'secret_material_forbidden', 'non_json_value_forbidden', 'structured_value_too_deep',
   'free_text_too_long', 'array_item_limit_exceeded', 'object_key_limit_exceeded', 'cyclic_value_forbidden']);
 
+// 对未创建的文件也解析已有父目录的真实路径，避免同目录symlink绕过同路径拒绝。
+function receiptIdentity(path) {
+  try { return realpathSync(path); }
+  catch (error) {
+    if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
+    return resolve(receiptIdentity(dirname(path)), basename(path));
+  }
+}
+
 // stdin={contract:{workflow,activities},input:{run_tag,...}}；stdout=唯一终态JSON。
 export async function main(argv = process.argv.slice(2), stream = process.stdin) {
-  let envelope, receiptPath, eventPool, eventDb = false;
+  let envelope, receiptPath, startupPath, startupId, eventPool, eventDb = false;
+  const startupOptIn = argv.some(value => ['--startup-receipt', '--startup-id'].includes(value));
+  let startupArgumentsValidated = !startupOptIn;
   const abort = new AbortController();
   const stop = () => abort.abort();
   process.on('SIGTERM', stop); process.on('SIGINT', stop);
   const persist = receipt => {
-    if (!receiptPath) return;
+    // opt-in参数尚未完整验证时，失败只写stdout，不触碰任何progress/旧START文件。
+    if (!startupArgumentsValidated || !receiptPath) return;
+    // 参数拒绝后的终态写入同样不能覆写被声明为startup的文件。
+    if (startupPath && receiptIdentity(startupPath) === receiptIdentity(receiptPath)) return;
     mkdirSync(dirname(receiptPath), { recursive: true });
     const pending = receiptPath + '.' + process.pid + '.tmp';
     writeFileSync(pending, JSON.stringify(receipt) + '\n', { mode: 0o600, flush: true });
     renameSync(pending, receiptPath);
+  };
+  const publishStartup = event => {
+    mkdirSync(dirname(startupPath), { recursive: true });
+    const pending = startupPath + '.' + randomUUID() + '.tmp';
+    let descriptor;
+    try {
+      const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+      const receipt = { schema_version: 1, event_type: event.event_type, run_tag: event.run_tag,
+        workflow: event.workflow, cursor: event.cursor, startup_id: startupId,
+        at: new Date().toISOString(), contract_sha256: digest(envelope.contract), input_sha256: digest(envelope.input) };
+      // 独占临时文件；link 是同目录原子且不覆写的最终发布点。
+      descriptor = openSync(pending, 'wx', 0o600);
+      fchmodSync(descriptor, 0o600);
+      writeFileSync(descriptor, JSON.stringify(receipt) + '\n');
+      fsyncSync(descriptor);
+      closeSync(descriptor);
+      descriptor = null;
+      linkSync(pending, startupPath);
+    } finally {
+      if (descriptor !== undefined) {
+        try { if (descriptor !== null) closeSync(descriptor); } finally { unlinkSync(pending); }
+      }
+    }
   };
   let result;
   try {
     let cwd = process.cwd(), runId, sourceId;
     for (let i = 0; i < argv.length; i++) {
       if (argv[i] === '--event-db') { if (eventDb) throw new Error('invalid_cli_argument'); eventDb = true; continue; }
-      if (!['--cwd', '--receipt', '--brain-run-id', '--event-source-id'].includes(argv[i])
+      if (!['--cwd', '--receipt', '--brain-run-id', '--event-source-id', '--startup-receipt', '--startup-id'].includes(argv[i])
         || !argv[i + 1] || argv[i + 1].startsWith('--')) throw new Error('invalid_cli_argument');
       const option = argv[i++], value = argv[i];
       if (option === '--cwd') cwd = resolve(value);
       else if (option === '--receipt') receiptPath = resolve(value);
       else if (option === '--brain-run-id') { if (runId) throw new Error('invalid_cli_argument'); runId = value; }
+      else if (option === '--startup-receipt') { if (startupPath) throw new Error('invalid_cli_argument'); startupPath = resolve(value); }
+      else if (option === '--startup-id') { if (startupId) throw new Error('invalid_cli_argument'); startupId = value; }
       else { if (sourceId) throw new Error('invalid_cli_argument'); sourceId = value; }
     }
+    if (Boolean(startupPath) !== Boolean(startupId)
+      || (startupId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(startupId))
+      || (startupPath && (!receiptPath || receiptIdentity(startupPath) === receiptIdentity(receiptPath)))) throw new Error('invalid_cli_argument');
     if (eventDb ? !runId || !sourceId : runId || sourceId) throw new Error('event_db_binding_required');
+    startupArgumentsValidated = true;
     stream.setEncoding?.('utf8');
     let text = '';
     for await (const chunk of stream) {
@@ -46,7 +90,10 @@ export async function main(argv = process.argv.slice(2), stream = process.stdin)
     }
     envelope = JSON.parse(text);
     const options = { cwd, signal: abort.signal,
-      onEvent: async (event, receipt) => { persist({ ...receipt, cursor: event.cursor, last_event: event }); } };
+      onEvent: async (event, receipt) => {
+        persist({ ...receipt, cursor: event.cursor, last_event: event });
+        if (startupPath && event.event_type === 'WF_RUN_STARTED') publishStartup(event);
+      } };
     if (eventDb) {
       if (!process.env.ACTIVITY_EVENT_DATABASE_URL) throw new Error('activity_event_database_url_required');
       const [{ default: pg }, { runActivityContractWithEventStore }] = await Promise.all([
