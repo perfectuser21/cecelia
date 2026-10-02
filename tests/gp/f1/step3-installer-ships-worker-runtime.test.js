@@ -59,7 +59,7 @@ describe('GP F1 step3 — installer 覆盖 worker 运行时依赖', () => {
   it('真实健康模块只读 OrbStack bundle，服务账号不触碰管理员目录', async () => {
     for (const readable of [true, false]) {
       const calls = [];
-      const report = await probeFleetWorkerHealth({ machineId: 'xian-mac-m1',
+      const report = await probeFleetWorkerHealth({ machineId: 'xian-mac-m1', platform: 'darwin',
         execFileFn: async (file, args, options) => {
           calls.push(file);
           if (file !== '/usr/libexec/PlistBuddy' || !readable) throw Error('EPERM');
