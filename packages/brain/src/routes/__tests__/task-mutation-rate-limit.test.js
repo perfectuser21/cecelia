@@ -3,6 +3,7 @@ import express from 'express';
 import request from 'supertest';
 import { registerHeadedTakeoverRoute } from '../task-headed-takeover.js';
 import { registerTaskPatchRoute } from '../task-task-patch.js';
+import { rateLimit } from 'express-rate-limit';
 
 const effects = vi.hoisted(() => ({ query: vi.fn(), terminal: vi.fn() }));
 vi.mock('../../db.js', () => ({ default: { query: effects.query } }));
@@ -29,6 +30,17 @@ async function burst(app, method, paths, body, expectedStatus) {
 }
 
 describe('task mutation rate limit: real HTTP, database fixture only', () => {
+  it('shared immutable budget produces draft-7 headers through the real library', async () => {
+    const { TASK_MUTATION_RATE_LIMIT_OPTIONS: options } = await import('../task-mutation-rate-limit.js');
+    expect(Object.isFrozen(options)).toBe(true);
+    expect(options).toEqual({ windowMs: 60_000, limit: 300, standardHeaders: 'draft-7', legacyHeaders: false });
+    const app = appWithJson(); app.patch('/task', rateLimit(options), (_req, res) => res.json({ ok: true }));
+    const response = await request(app).patch('/task').send({ limit: 99999, skip: true });
+    expect(response.status).toBe(200);
+    expect(response.headers.ratelimit).toMatch(/limit=300, remaining=299/);
+    expect(response.headers['ratelimit-policy']).toBe('300;w=60');
+    expect(response.headers['x-ratelimit-limit']).toBeUndefined();
+  });
   it.each(['/tasks/:id/headed-takeover', '/:id/headed-takeover'])('POST %s counts failed authentication before database work', async path => {
     vi.stubEnv('CECELIA_INTERNAL_TOKEN', 'isolated-rate-test');
     const pool = { query: vi.fn(), connect: vi.fn() }, app = appWithJson();

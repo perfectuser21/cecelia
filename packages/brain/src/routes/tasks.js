@@ -1,4 +1,6 @@
 import {headedTaskMutation,registerHeadedTakeoverRoute} from './task-headed-takeover.js';
+import { rateLimit } from 'express-rate-limit';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import { COMPANY_KR_SQL_GUARD } from '../lib/company-kr-metrics.js';
 import { Router } from 'express';
 import pool from '../db.js';
@@ -364,7 +366,7 @@ router.post('/learnings-received', async (req, res) => {
  * 更新任务状态（Engine 调用）
  */
 registerHeadedTakeoverRoute(router,{pool});
-router.patch('/tasks/:task_id', headedTaskMutation(pool,async (req, res, pool) => {
+router.patch('/tasks/:task_id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), headedTaskMutation(pool,async (req, res, pool) => {
   try {
     const { task_id } = req.params;
     const { status, result } = req.body;

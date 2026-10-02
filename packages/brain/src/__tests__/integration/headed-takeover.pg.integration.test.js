@@ -6,6 +6,8 @@ import {join} from 'node:path';
 import {beforeAll,afterAll,beforeEach,it,expect} from 'vitest';
 import {DB_DEFAULTS} from '../../db-config.js';
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from '../../routes/task-mutation-rate-limit.js';
 if(DB_DEFAULTS.database!=='cecelia_scratch'&&!(process.env.CI==='true'&&DB_DEFAULTS.database==='cecelia_test'))throw Error('本地迁移仅cecelia_scratch；CI仅cecelia_test');
 const schema=`headed_takeover_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const admin=new pg.Client(DB_DEFAULTS);
@@ -193,7 +195,7 @@ it('真实HTTP：生产无token/错token拒绝；授权接管后仅本session PA
  const app=express();app.use(express.json());registerHeadedTakeoverRoute(app,{pool});
  const {registerTaskPatchRoute}=await import('../../routes/task-task-patch.js');
  const fieldRouter=express.Router();registerTaskPatchRoute(fieldRouter,{pool,terminalStatuses:['completed','failed','cancelled']});app.use('/fields',fieldRouter);
- app.patch('/tasks/:id',headedTaskMutation(pool,async(req,res,db)=>{
+ app.patch('/tasks/:id',rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS),headedTaskMutation(pool,async(req,res,db)=>{
   await db.query('SELECT status FROM tasks WHERE id=$1',[req.params.id]);
   await db.query('UPDATE tasks SET updated_at=now() WHERE id=$1',[req.params.id]);res.json({ok:true});
  }));

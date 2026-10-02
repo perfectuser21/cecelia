@@ -1,4 +1,6 @@
 import {timingSafeEqual} from 'node:crypto';
+import { rateLimit } from 'express-rate-limit';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import {takeOverHeadedTask,headedOwner,headedPostcommitPool} from '../lib/headed-task-owner.js';
 const METADATA_FIELDS=new Set(['title','description','priority','due_at','notion_id','notion_synced_at']);
 function authenticate(req){
@@ -11,7 +13,7 @@ function authenticate(req){
 }
 function reject(res,error){return res.status(error.statusCode??(['55P03','40P01'].includes(error.code)?409:500)).json({error:error.message});}
 export function registerHeadedTakeoverRoute(router,{pool,path='/tasks/:id/headed-takeover'}){
- router.post(path,async(req,res)=>{
+ router.post(path,rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS),async(req,res)=>{
   try{
    authenticate(req);
    const sessionId=String(req.headers['x-session-id']??'');
