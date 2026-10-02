@@ -3,6 +3,17 @@ import { runDirectoryProjection } from '../directory-projector.js';
 import { runtimeFixture,uid } from './directory-runtime.fixture.js';
 import { readFileSync } from 'node:fs';
 describe('目录运行循环',()=>{
+  it('整轮预算耗尽拒绝新外部调用，不能靠scheduler超时放开锁后继续写',async()=>{
+    const f=runtimeFixture();
+    await expect(runDirectoryProjection(f.pool,{token:'test',notionReq:f.notionReq,force:true,budgetMs:0})).rejects.toThrow(/预算/);
+    expect(f.writes).toEqual([]);
+  });
+  it('未映射的旧Areas报catalog gap，不创建/写页或刷failed',async()=>{
+    const f=runtimeFixture();f.source.areas.push({id:uid(997),name:'旧域'});
+    const result=await runDirectoryProjection(f.pool,{token:'test',notionReq:f.notionReq,force:true});
+    expect(result.failed).toBe(0);expect(result.catalog_gaps).toContainEqual({id:uid(997),gap:'area_page_binding_missing'});
+    expect(f.pages.size).toBe(6);
+  });
   it('正式路由和现代scheduler永久接线，smoke包括真实PG',()=>{
     expect(readFileSync(new URL('../../routes.js',import.meta.url),'utf8')).toContain('createDirectoryProjectionRouter');
     expect(readFileSync(new URL('../../scheduler-jobs.js',import.meta.url),'utf8')).toContain("name: 'notion-directory'");
