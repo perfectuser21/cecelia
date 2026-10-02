@@ -105,7 +105,13 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
    let task=(await c.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0],s=task?.payload?.linux_onboarding;
    if(!s)throw error('linux_pool_retry_unconfirmed');
    await c.query('SELECT pg_advisory_xact_lock(hashtext($1))',[key(s.machine_registry_id)]);
+   const machineId=s.machine_registry_id;
+   const candidate=(await c.query("SELECT name FROM system_registry WHERE id=$1 AND type='machine' AND status='active'",[s.machine_registry_id])).rows[0];
+   if(!candidate)throw error('linux_pool_retry_unconfirmed');
+   // 与runtime保持capacity→task/registry同序；取得行锁后复核机器名，防读取期间换代。
+   await c.query(MACHINE_CAPACITY_LOCK_SQL,[candidate.name]);
    task=(await c.query('SELECT * FROM tasks WHERE id=$1 FOR UPDATE',[id])).rows[0];s=task.payload.linux_onboarding;
+   if(s.machine_registry_id!==machineId)throw error('linux_pool_retry_unconfirmed');
    if(task.status==='in_progress'&&task.claimed_by===actor&&s.revoked!==true){
     await c.query("UPDATE tasks SET payload=jsonb_set(jsonb_set(payload,'{linux_onboarding,error}','null'::jsonb),'{linux_onboarding,next_retry_at}','null'::jsonb),updated_at=now() WHERE id=$1",[id]);return id;
    }
@@ -117,10 +123,6 @@ export function createLinuxOnboardingFlow({pool,createTask=creator,revision=proc
      &&next.status==='in_progress'&&next.payload?.linux_onboarding?.resume_of_task_id===id)return current;
     throw error('linux_pool_retry_unconfirmed');
    }
-   const candidate=(await c.query("SELECT name FROM system_registry WHERE id=$1 AND type='machine' AND status='active'",[s.machine_registry_id])).rows[0];
-   if(!candidate)throw error('linux_pool_retry_unconfirmed');
-   // 与runtime保持capacity→registry同序；取得行锁后复核机器名，防读取期间换代。
-   await c.query(MACHINE_CAPACITY_LOCK_SQL,[candidate.name]);
    const machine=(await c.query("SELECT * FROM system_registry WHERE id=$1 AND type='machine' AND status='active' FOR UPDATE",[s.machine_registry_id])).rows[0];
    if(!machine||machine.name!==candidate.name||!eligible(machine))throw error('linux_pool_retry_unconfirmed');
    const state=await prepareFailedControllerRetry(c,task,source,machine,revision);

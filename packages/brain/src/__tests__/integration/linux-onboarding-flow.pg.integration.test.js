@@ -173,7 +173,7 @@ it('retry等待capacity期间不抢registry行锁，避免与runtime的capacity�
    if(waiting)break;await new Promise(r=>setTimeout(r,5));
   }
   expect(waiting).toBe(true);
-  try{await other.query('SELECT id FROM system_registry WHERE id=$1 FOR SHARE NOWAIT',[machine.id]);}catch(e){readError=e.code;}
+  try{await other.query('SELECT id FROM tasks WHERE id=$1 FOR SHARE NOWAIT',[id]);await other.query('SELECT id FROM system_registry WHERE id=$1 FOR SHARE NOWAIT',[machine.id]);}catch(e){readError=e.code;}
  }finally{await other.query('ROLLBACK');other.release();await pending;}
  expect(readError).toBeUndefined();
 });
