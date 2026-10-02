@@ -100,11 +100,11 @@ function planAreas(existing, source, bindings) {
 export async function syncDirectoryAreas(pool, { token, dbId, notionReq, bindings = [], actor }) {
   if (typeof actor !== 'string' || !actor.trim() || actor.length > 255) throw new Error('directory_areas:actor_required');
   if (!Array.isArray(bindings)) throw new Error('directory_areas:invalid_bindings');
-  const source = await readDirectoryAreas({ token, dbId, notionReq });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query("SELECT pg_advisory_xact_lock(hashtext('directory-areas-ingest'))");
+    const source = await readDirectoryAreas({ token, dbId, notionReq });
     await client.query('LOCK TABLE areas IN SHARE ROW EXCLUSIVE MODE');
     const existing = (await client.query('SELECT * FROM areas')).rows;
     const plan = planAreas(existing, source, bindings), changes = [];
