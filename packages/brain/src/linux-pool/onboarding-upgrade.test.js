@@ -37,3 +37,21 @@ it.each(['kind','phase','claim','source','policy','runtime_digest','pool_digest'
  if(kind==='artifact')x.deps.artifacts.read=()=>{throw Error('missing');};if(kind==='same_revision')x.deps.artifacts.capture=()=>({revision:s.revision,digest:s.artifact_digest});
  await expect(createBootstrapRecovery(x.deps).prepare(x.db,x.task,x.source,x.machine)).rejects.toThrow();if(kind!=='same_revision')expect(capture).toBe(0);
 });
+
+it('每次远端升级前重新读取私有合同；授权后漂移拒绝，禁止只信task内缓存',async()=>{
+ const x=setup(),recovery=createBootstrapRecovery(x.deps),state=await recovery.prepare(x.db,x.task,x.source,x.machine),originalRead=x.deps.artifacts.read;
+ x.deps.artifacts.read=(revision,digest)=>revision===state.revision?{revision,digest,files:{}}:originalRead(revision,digest);
+ const upgraded={...x.task,payload:{linux_onboarding:state}};
+ await expect(recovery.authorize(x.db,upgraded,x.source,x.machine)).resolves.toBeUndefined();
+ x.d.expected.host_boot_id=randomUUID();await expect(recovery.authorize(x.db,upgraded,x.source,x.machine)).rejects.toThrow();
+});
+it.each(['reservation','node','grant','runtime'])('升级合同前拒绝真实资源状态%s，原意图不改',async kind=>{
+ const x=setup(),query=x.db.query;x.db.query=async(sql,args)=>{
+  if(kind==='reservation'&&sql.includes('capacity_reservations'))return {rowCount:1,rows:[{}]};
+  if(kind==='node'&&sql.includes('current_version_id'))return {rowCount:1,rows:[{current_version_id:randomUUID()}]};
+  if(kind==='grant'&&sql.includes('execution_grants'))return {rowCount:1,rows:[{}]};
+  if(kind==='runtime'&&sql.includes('linux_script_authorizations'))return {rows:[{state:'revoked',status:'archived',payload:{},result:{}}]};
+  return query(sql,args);
+ };
+ await expect(createBootstrapRecovery(x.deps).prepare(x.db,x.task,x.source,x.machine)).rejects.toThrow();
+});
