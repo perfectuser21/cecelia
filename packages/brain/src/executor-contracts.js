@@ -31,6 +31,7 @@ export const VALID_EXECUTOR_KINDS = [
   'phone-ssh-controller',
   'app-server-controller',
   'preview-janitor',
+  'image-janitor',
   'brain-local',
   'relay-container',
   KERNEL_EXECUTOR_KIND,
@@ -127,6 +128,7 @@ export const EXECUTOR_CONTRACTS = {
   'phone-ssh-controller': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
   // 固定HTTP回执由专属controller收割；本机进程与时间均不能证明远端删除状态。
   'app-server-controller': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
+  'image-janitor': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
   'preview-janitor': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
   /**
    * brain-local: Brain 直接 spawn 的本地进程（cecelia-run / codex exec）

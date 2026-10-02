@@ -156,7 +156,7 @@ write_executable "$fake_bin/sudo" \
   'fi' \
   'if [[ "${1:-}" == "/bin/kill" && "${FLEET_TEST_SUDO_FAIL_KILL:-0}" == 1 ]]; then exit 25; fi' \
   'if [[ "${1:-}" == "/bin/mkdir" && "${*: -1}" == "/var/run/cecelia" ]]; then exit 0; fi' \
-  'if [[ "${1:-}" == "/usr/bin/touch" && "${2:-}" == "/var/run/cecelia/fleet-worker.drain" ]]; then' \
+  'if [[ "${1:-}" == "/usr/local/libexec/cecelia/toolchain/bin/node" && "${2:-}" == "/usr/local/libexec/cecelia/fleet-worker/drain-owner.cjs" && "${3:-}" == "emergency" ]]; then' \
   '  [[ "${FLEET_TEST_SUDO_FAIL_TOUCH:-0}" == 1 ]] && exit 26' \
   '  [[ -n "${FLEET_TEST_NODE_LOG:-}" ]] && printf "drain emergency\n" >> "$FLEET_TEST_NODE_LOG"' \
   '  exit 0' \
@@ -416,7 +416,7 @@ if CECELIA_MACHINE_ID=us-mac-m4 \
 fi
 [[ ! -e "$remote_transfer_stage" ]] \
   || fail "truncated remote transport left root staging behind"
-grep -Fq 'sudo -n /usr/bin/touch /var/run/cecelia/fleet-worker.drain' \
+grep -Fq 'sudo -n /usr/local/libexec/cecelia/toolchain/bin/node /usr/local/libexec/cecelia/fleet-worker/drain-owner.cjs emergency' \
   "$transport_log" \
   || fail "truncated remote transport did not fail closed with drain"
 
@@ -727,6 +727,7 @@ node_source="$payload_root/source/packages/brain/scripts/fleet-worker"
 mkdir -p "$node_source"
 cp "$fake_bin/nodectl" "$node_source/fleet-nodectl.sh"
 printf 'bundle\n' > "$payload_root/repository.bundle"
+printf '77b9d1e2-58f2-42f3-b8df-5342318235fb\n' > "$payload_root/drain-owner"
 printf 'runner\n' > "$payload_root/runner.tar"
 
 run_node_apply_for_test() (
