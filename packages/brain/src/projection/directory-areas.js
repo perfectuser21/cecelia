@@ -87,7 +87,9 @@ function planAreas(existing, source, bindings) {
   }
   const plan = source.map(row => {
     const before = byNotion.get(row.notion_id);
-    if (!before && existing.some(old => old.name === row.name && !old.notion_id)) throw new Error(`directory_areas:binding_required:${row.name}`);
+    if (!before && existing.some(old => old.name === row.name && !old.notion_id && !boundBrains.has(old.id))) {
+      throw new Error(`directory_areas:binding_required:${row.name}`);
+    }
     return { ...row, id: before?.id ?? randomUUID(), before: before ?? null };
   });
   const ids = new Map(plan.map(row => [row.notion_id, row.id]));
