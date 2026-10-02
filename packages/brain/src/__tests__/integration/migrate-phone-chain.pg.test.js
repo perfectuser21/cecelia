@@ -34,6 +34,9 @@ it('real main spans retain generated duration and occurrence indexes in private 
  const indexes=(await pool.query("SELECT indexname,indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename='spans'")).rows;
  expect(indexes.find(r=>r.indexname==='uq_spans_idem').indexdef).toContain('WHERE (occurrence_key IS NULL)');
  expect(indexes.find(r=>r.indexname==='uq_spans_occurrence').indexdef).toContain('WHERE (occurrence_key IS NOT NULL)');
- await expect(pool.query("INSERT INTO spans(run_id,enabler_id,started_at,executor_kind,occurrence_key,payload_sha256) VALUES('fixture',NULL,now(),'code','bad','x')")).rejects.toThrow();
+ const enabler=randomUUID();await pool.query('INSERT INTO enablers(id) VALUES($1)',[enabler]);
+ await expect(pool.query("INSERT INTO spans(run_id,enabler_id,started_at,executor_kind,occurrence_key,payload_sha256) VALUES('fixture',$1,now(),'code','bad','x')",[enabler])).rejects.toThrow('spans_occurrence_payload_check');
+ const span=(await pool.query("INSERT INTO spans(run_id,enabler_id,started_at,ended_at,executor_kind,occurrence_key,payload_sha256) VALUES('fixture',$1,'2026-10-02T00:00:00Z','2026-10-02T00:00:01Z','code','once',$2) RETURNING duration_ms",[enabler,'a'.repeat(64)])).rows[0];expect(span.duration_ms).toBe(1000);
+ await expect(pool.query("INSERT INTO spans(run_id,enabler_id,started_at,executor_kind,occurrence_key,payload_sha256) VALUES('fixture',$1,now(),'code','once',$2)",[enabler,'a'.repeat(64)])).rejects.toThrow('uq_spans_occurrence');
  expect((await pool.query('SELECT current_database() db,current_schema() schema')).rows[0]).toEqual({db:DB_DEFAULTS.database,schema});
 });

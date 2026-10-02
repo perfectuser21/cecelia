@@ -1,18 +1,19 @@
 import {createPhoneScheduleSchema,applyPhoneScheduleMigration} from '../__tests__/fixtures/phone-schedule-schema.js';
 import {randomUUID} from 'node:crypto';
-import {readFileSync} from 'node:fs';
 import pg from 'pg';
 import {beforeAll,afterAll,it,expect} from 'vitest';
 import {DB_DEFAULTS} from '../db-config.js';
 import {endpoint} from '../__tests__/fixtures/phone-http.js';
-const options=process.env.TEST_DATABASE_URL?{connectionString:process.env.TEST_DATABASE_URL}:DB_DEFAULTS;
-if(!/_(scratch|test)$/.test(process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_URL).pathname:DB_DEFAULTS.database))throw Error('scratch/test required');
+if(process.env.TEST_DATABASE_URL)throw Error('phone_fixture_explicit_database_required');
+const options=DB_DEFAULTS;
+if(DB_DEFAULTS.database!=='cecelia_scratch'&&!(process.env.CI==='true'&&/_test$/.test(DB_DEFAULTS.database)))throw Error('phone_fixture_scratch_required');
 const schema=`phone_http_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const admin=new pg.Client(options),pool=new pg.Pool({...options,options:`-c search_path=${schema}`});
 const registryId=randomUUID();let revision=0;
 async function version(e){const id=randomUUID();await pool.query("INSERT INTO execution_node_versions(id,machine_registry_id,revision,identity_mode,worker_id,platform,endpoints,profile,config_hash) VALUES($1,$2,$3,'legacy-v1','fixture-worker','darwin',$4,'{}',$5)",[id,registryId,++revision,{phone_hub:e},'a'.repeat(64)]);return id;}
 beforeAll(async()=>{
  await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
+ expect((await pool.query('SELECT current_database() db,current_schema() schema')).rows[0]).toEqual({db:DB_DEFAULTS.database,schema});
  await createPhoneScheduleSchema(pool,{skipHttp:true});await applyPhoneScheduleMigration(pool,'515_phone_http_bindings');
  await pool.query("INSERT INTO system_registry(id,type,status) VALUES($1,'machine','active')",[registryId]);await pool.query("INSERT INTO execution_nodes(machine_registry_id,canonical_id) VALUES($1,'fixture-machine')",[registryId]);
 });

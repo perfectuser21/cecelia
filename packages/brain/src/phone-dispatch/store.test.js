@@ -1,4 +1,4 @@
-import {createPhoneScheduleSchema,applyPhoneScheduleMigration} from '../__tests__/fixtures/phone-schedule-schema.js';
+import {createPhoneScheduleSchema} from '../__tests__/fixtures/phone-schedule-schema.js';
 import {observation} from '../__tests__/fixtures/phone-capacity.js';
 import {resolvePhoneHubBinding} from './http-binding.js';
 import {randomUUID} from 'node:crypto';
@@ -10,8 +10,9 @@ import {directory} from '../execution-directory/directory.js';
 import {importLegacyPolicy,revokeGrant} from '../execution-directory/store.js';
 import {LEGACY_BINDINGS} from '../execution-directory/legacy-policy.js';
 import {createAttemptStore} from '../orchestrator/attempt-store.js';
-const options=process.env.TEST_DATABASE_URL?{connectionString:process.env.TEST_DATABASE_URL}:DB_DEFAULTS;
-if(!/_(scratch|test)$/.test(process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_URL).pathname:DB_DEFAULTS.database))throw Error('scratch/test required');
+if(process.env.TEST_DATABASE_URL)throw Error('phone_fixture_explicit_database_required');
+const options=DB_DEFAULTS;
+if(DB_DEFAULTS.database!=='cecelia_scratch'&&!(process.env.CI==='true'&&/_test$/.test(DB_DEFAULTS.database)))throw Error('phone_fixture_scratch_required');
 const schema=`phone_dispatch_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const admin=new pg.Client(options),pool=new pg.Pool({...options,max:8,options:`-c search_path=${schema}`});
 const machine='xian-mac-m1',host='xian-m1',serial='test-phone',profile='test-profile',account='test-account';
@@ -31,6 +32,7 @@ it('HTTP binding迁移不补写既有508 lease，不创建grant或改当前节�
 });
 beforeAll(async()=>{
  await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
+ expect((await pool.query('SELECT current_database() db,current_schema() schema')).rows[0]).toEqual({db:DB_DEFAULTS.database,schema});
  await createPhoneScheduleSchema(pool,{skipHttp:true});
  for(const [,id,name]of LEGACY_BINDINGS)await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')",[id,name]);
  await importLegacyPolicy({pool,env:{FLEET_WORKER_XIAN_MAC_M1_URL:'http://m1:5231'}});
@@ -39,7 +41,7 @@ beforeAll(async()=>{
  await pool.query('UPDATE execution_nodes SET current_version_id=$1 WHERE canonical_id=$2',[version,machine]);
  expect((await pool.query("SELECT * FROM execution_grants WHERE surface='phone_ssh'")).rows).toHaveLength(0);
  await pool.query("INSERT INTO phone_registry(serial,nickname,host,profile,douyin_accounts) VALUES($1,'test',$2,$3,$4::jsonb)",[serial,host,profile,JSON.stringify([{id:account,current:true}])]);
- // Seed an actual 508 row before 512; ALTER must preserve identity, grants and pointer.
+ // Seed an actual 508 row before 516; ALTER must preserve identity, grants and pointer.
  const taskId=randomUUID(),id=randomUUID(),reservation=randomUUID(),execution=randomUUID(),lease=randomUUID();
  const grant=(await pool.query("INSERT INTO execution_grants(node_version_id,surface,provider,account_id,profile_id,provenance,state) VALUES($1,'phone_ssh','adb',$2,'adb_get_state','isolated_migration_fixture','active') RETURNING id",[version,account])).rows[0].id;
  await pool.query("INSERT INTO tasks(id,status,task_type,executor_kind) VALUES($1,'queued','device_job','phone-ssh-controller')",[taskId]);
@@ -64,7 +66,7 @@ async function httpVersion(capacity){
  await pool.query("INSERT INTO execution_grants(node_version_id,surface,provider,account_id,profile_id,provenance,state) VALUES($1,'phone_ssh','adb',$2,'adb_get_state','isolated_c1_test','active')",[id,account]);
  await directory.refresh({pool});return {id,binding};
 }
-async function httpInput(){const {remoteIdentity,...value}=await input();
+async function httpInput(){const {remoteIdentity:_remoteIdentity,...value}=await input();
  const current=(await pool.query('SELECT current_version_id FROM execution_nodes WHERE canonical_id=$1',[machine])).rows[0];
  try{const binding=await resolvePhoneHubBinding(pool,{executionVersionId:current.current_version_id,machineId:machine});value.capacitySnapshot=await observation(binding);}catch(error){if(error.message!=='phone_http_binding_unavailable')throw error;}
  return value;
@@ -280,7 +282,7 @@ it('finish 保留已写handoff；提交后真实pool上的接棒入口仍能读�
  await checked.finish(r.id,receipt(r));expect(calls).toBe(1);
 });
 
-it('已部署Linux507、手机508、Hub511与C1 512各自留schema_version，不抢用同一版本号',async()=>{
+it('已部署Linux507、手机508、Hub515与C1 516各自留schema_version，不抢用同一版本号',async()=>{
  const rows=(await pool.query("SELECT version,description FROM schema_version WHERE version IN ('507','508','511','512','513','514','515','516') ORDER BY version")).rows;
  expect(rows.map(row=>row.version)).toEqual(['507','508','511','512','513','514','515','516']);
  expect(rows[0].description).not.toContain('手机独立');
@@ -294,7 +296,7 @@ it('主线510已安装后补缺号508：真实版本账独立且保留image与ph
  for(const executor of ['image-janitor','phone-ssh-controller'])await expect(pool.query("INSERT INTO tasks(id,status,task_type,executor_kind) VALUES($1,'queued','dev',$2)",[randomUUID(),executor])).resolves.toMatchObject({rowCount:1});
 });
 it('C6 HTTP不能信caller verified位、available1或60秒snapshot',async()=>{
- await httpVersion();const {remoteIdentity,...request}=await input();
+ await httpVersion();const {remoteIdentity:_remoteIdentity,...request}=await input();
  await expect(store.reserveHttp(request)).rejects.toThrow('phone_capacity_observation_required');
  expect((await pool.query('SELECT * FROM phone_dispatches')).rows).toHaveLength(0);
  expect((await pool.query('SELECT * FROM capacity_reservations')).rows).toHaveLength(0);

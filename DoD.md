@@ -1,5 +1,5 @@
 # DoD — 受控再基恢复
-- [x] [BEHAVIOR] C7 B2.1 recurring过期收口：DISTINCT ON候选前及最终UPDATE同时排除真实phone执行器与持久owner；真实513producer/旧508租约/历史无owner手机保持原账，伪payload普通及同title邻居合法过期，保取消去重、原字段/history及仅RETURNING计数。最终目标故障为真实SQL负例，不声称非法身份重绑竞态。
+- [x] [BEHAVIOR] C7 B2.1 recurring过期收口：DISTINCT ON候选前及最终UPDATE同时排除真实phone执行器与持久owner；真实517producer/旧508租约/历史无owner手机保持原账，伪payload普通及同title邻居合法过期，保取消去重、原字段/history及仅RETURNING计数。最终目标故障为真实SQL负例，不声称非法身份重绑竞态。
   Test: manual:bash -c 'cd packages/brain && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/recurring.pg.test.js src/phone-dispatch/recurring-dispatch.pg.test.js src/phone-dispatch/schedule-store.pg.test.js src/phone-dispatch/recurring-dispatch.test.js src/phone-dispatch/schedule-store.test.js src/__tests__/recurring-engine.test.js --maxWorkers=1 --minWorkers=1'
 - [x] [BEHAVIOR] headed HTTP限流：接管POST两注册路径、执行与字段PATCH真实第301请求429；双alias共享预算，错误认证计数，拒绝前不新增数据库/owner/终态副作用；固定draft7/Retry-After且无legacy头，原普通结果/metadata及接管合同保留。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/routes/__tests__/task-mutation-rate-limit.test.js src/routes/__tests__/task-task-patch.test.js src/routes/__tests__/task-headed-takeover.test.js src/routes/__tests__/headed-patch-transaction.test.js src/lib/__tests__/headed-task-owner.test.js src/routes/__tests__/tasks-result-backfill.test.js src/routes/__tests__/tasks-completed-gate.test.js --maxWorkers=1 --minWorkers=1"
@@ -19,7 +19,7 @@
   Test: manual:bash -c "cd packages/brain && npx vitest run src/orchestrator/__tests__/recovery-target-cross-path.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] identity 身份与许可：手机SSH执行面独立授权；身份字段逐项绑定，未知或过期容量拒绝，动作只允许adb_get_state。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/phone-dispatch/identity.test.js src/phone-dispatch/contracts.test.js src/execution-directory --maxWorkers=1 --minWorkers=1"
-- [x] [BEHAVIOR] ledger 持久台账：真实PostgreSQL验证已部署image510后补缺号508与507独立台账及十三执行器，验证同单唯一预约、同机互斥、一次launch、丢回复保留占位、认证回执幂等结算及旧writer保护。
+- [x] [BEHAVIOR] ledger 持久台账：真实PostgreSQL验证已部署image510后补缺号508与507独立台账及十四执行器，验证同单唯一预约、同机互斥、一次launch、丢回复保留占位、认证回执幂等结算及旧writer保护。
   Test: manual:bash -c 'cd packages/brain && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/phone-dispatch/store.test.js src/__tests__/integration/execution-directory.pg.integration.test.js src/__tests__/integration/script-capacity-reservation.pg.integration.test.js src/app-server/__tests__/integration/store.test.js --maxWorkers=1 --minWorkers=1'
 - [x] [BEHAVIOR] ownership 兼容合同：独立controller不交普通派发器终止，保留历史471名单并核对后续合法增量；手机独立所有权跨180分钟不误回队，旧device宽限保留。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/__tests__/executor-contracts.test.js src/__tests__/migration-471-script-executor.test.js src/__tests__/executor-headed-liveness.test.js src/phone-dispatch/task-ownership.test.js --maxWorkers=1 --minWorkers=1"
@@ -27,7 +27,7 @@
   Test: manual:bash -c "node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs && node packages/quality/scripts/devgate/check-dod-mapping.cjs DoD.md"
 - [x] [BEHAVIOR] smoke 写入护栏：新smoke默认及显式生产目标拒绝且没有业务写请求；永久守卫验证覆盖真实shell入口。
   Test: manual:bash -c "node --test packages/quality/tests/smoke-production-guard.node-test.mjs packages/quality/tests/phone-dispatch-smoke-env.node-test.mjs"
-- [x] [BEHAVIOR] required smoke合同：T1/F4精确十三执行器并核手机独立收口；script保留471历史名单并叠加508精确增量；手机身份smoke在allowlist唯一登记，永久执行真实Node合同块及完整script shell回归。
+- [x] [BEHAVIOR] required smoke合同：T1/F4精确十四执行器并核手机独立收口；script保留471历史名单并叠加508精确增量；手机身份smoke在allowlist唯一登记，永久执行真实Node合同块及完整script shell回归。
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/__tests__/script-executor-contract-smoke.test.js src/__tests__/executor-contracts.test.js src/__tests__/migration-471-script-executor.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] legacy bridge一次有头接管（真实Linux507/手机508/接管509三独立迁移版本）：生产token、原路由、CAS幂等、活run/预约/callback拒绝、真实双连接advisory闸、普通writer及人赢元数据兼容，真实终态helper提交后持久保存handoff。
 
@@ -95,3 +95,8 @@
 
 - [x] [BEHAVIOR] directoryreceipt 真scratch验证旧writer哈希保留、关系读回失败无成功收据、同页恢复不重复创建、bootstrap正式registry与目标配置同事务。
   Test: manual:bash packages/brain/scripts/smoke/directory-projection-smoke.sh
+
+- [x] [BEHAVIOR] 整链迁移：实际495生成spans后叠加主线511共享活动、512Linux、513不可变定义、514发生位置；未发布Hub515/历史HTTP516/定时517独立真账，真实runMigrations不SKIP手机、重跑0新增；所有手机夹具仅自有私有schema，无public fallback。
+  Test: manual:bash -c 'cd packages/brain && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/migrate-phone-chain.pg.test.js src/phone-dispatch/http-binding.pg.test.js src/phone-dispatch/store.test.js src/phone-dispatch/schedule-store.pg.test.js src/phone-dispatch/recurring-dispatch.pg.test.js src/__tests__/integration/recurring.pg.test.js src/__tests__/integration/dispatch-helpers.pg.test.js src/__tests__/integration/worker-pool-dispatch.pg.test.js src/__tests__/integration/execution-dispatch-now.pg.test.js src/__tests__/integration/task-tasks-claim.pg.test.js --maxWorkers=1 --minWorkers=1'
+- [x] [BEHAVIOR] 整链兼容：C7唯一createTask保持main Linux私有权限两事务分支/image/GPU；普通DELETE真实第二会话删除1后claim404，owned仍受守卫，509孤儿三NULL清扫保持；authoring→headed callback双门和四INSERT保留。
+  Test: manual:bash -c 'cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/lib/task-create.test.js src/linux-pool/task-authority.test.js src/routes/__tests__/execution-headed-callback-owner.test.js src/__tests__/task-creation-inventory.test.js src/__tests__/task-type-registry.guard.test.js --maxWorkers=1 --minWorkers=1'

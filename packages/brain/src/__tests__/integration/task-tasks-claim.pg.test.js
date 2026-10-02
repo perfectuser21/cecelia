@@ -69,7 +69,7 @@ it.each(['other-claim','delete'])('real second-session ordinary %s uses actual50
  }};
  const result=await claim(id); expect(changed).toBe(true);
  if(point==='delete') {
-  expect(mutationRows).toBe(1); expect(result).toEqual({status:404,body:{error:'Task not found'}});
+  expect(mutationRows).toBe(1); expect(result).toEqual({status:404,body:{error:'Task not found',id}});
   expect((await query('SELECT id FROM tasks WHERE id=$1',[id])).rows).toEqual([]);
  } else {
   expect(mutationRows).toBe(1); expect(result).toEqual({status:409,body:{error:'Task already claimed',claimed_by:'fixture-other',claimed_at:'2026-01-01T00:00:00.000Z'}});

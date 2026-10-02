@@ -50,7 +50,7 @@ if [[ ! -f "$CONTRACTS_JS" ]]; then
   fail "executor-contracts.js 不存在: $CONTRACTS_JS"
 else
   node --input-type=module <<EOF 2>/dev/null \
-    && ok "EXECUTOR_CONTRACTS 十二合同结构正确" \
+    && ok "EXECUTOR_CONTRACTS 十四合同结构正确" \
     || fail "executor-contracts.js 导入/结构检查失败"
 import { EXECUTOR_CONTRACTS, VALID_EXECUTOR_KINDS, assessTaskLiveness } from '${CONTRACTS_JS}';
 // PR1-B 由七增八：openclaw-agent = 秋米中文 GTD 任务的执行者（Brain 经 ssh 在 MMV 起 agent）
