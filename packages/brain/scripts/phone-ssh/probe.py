@@ -18,7 +18,7 @@ from process_identity import boot_id
 from runner import Runner, Config
 from drain_marker import marker_identity
 
-SOURCE_FILES=('runner.py','worker.py','journal.py','phone_lease.py','process_identity.py','adb_socket.py','probe.py','drain_marker.py','http_physical.py')
+SOURCE_FILES=('runner.py','worker.py','journal.py','phone_lease.py','process_identity.py','adb_socket.py','probe.py','drain_marker.py','http_physical.py','admission.py','activation.py')
 SCHEMA='phone-physical-probe/v1'
 
 def private_json(path):

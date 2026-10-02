@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import threading
 import uuid
 
 
@@ -55,9 +56,34 @@ def atomic_json(path, value):
             pass
 
 
+class _ActivityHeld:
+    def __init__(self, journal, fd):
+        self.journal, self.fd, self.pid = journal, fd, os.getpid()
+        self.thread = threading.get_ident()
+        value = os.fstat(fd); self.inode = (value.st_dev, value.st_ino)
+
+    def verify(self):
+        if self.pid != os.getpid() or self.thread != threading.get_ident() or self.journal._held_activity is not self:
+            raise ValueError('phone_activity_context_unknown')
+        now = os.fstat(self.fd)
+        path = self.journal.root / '.activity.guard'
+        current = path.lstat()
+        if (now.st_dev, now.st_ino) != self.inode or (current.st_dev, current.st_ino) != self.inode:
+            raise ValueError('phone_activity_inode_changed')
+
+
 class Journal:
+    def after_detach(self):
+        # detach已关闭非E FD；只丢弃fork复制的元数据，不close可复用数字FD。
+        if self._held_activity is not None and self._held_activity.pid != os.getpid():
+            self._held_activity = None
+        if self._held_dispatch is not None and self._held_dispatch[0] != os.getpid():
+            self._held_dispatch = None
+
     def __init__(self, root):
         self.root = private_dir(root)
+        self._held_activity = None
+        self._held_dispatch = None
         with self.activity_locked():
             if not (self.root / '.activity.json').exists():
                 if any(p.name != '.activity.guard' for p in self.root.iterdir()):
@@ -67,11 +93,21 @@ class Journal:
 
     @contextmanager
     def activity_locked(self):
+        from admission import journal_guard
+        with journal_guard(self.root):
+            with self._activity_locked() as held: yield held
+
+    @contextmanager
+    def _activity_locked(self):
+        if self._held_activity is not None: raise ValueError('phone_activity_lock_nested')
         fd = safe_open(self.root / '.activity.guard', os.O_CREAT | os.O_RDWR)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
-            yield
+            held = _ActivityHeld(self, fd)
+            self._held_activity = held
+            yield held
         finally:
+            self._held_activity = None
             os.close(fd)
 
     def _activity(self):
@@ -121,11 +157,20 @@ class Journal:
 
     @contextmanager
     def locked(self, key):
+        from admission import journal_guard
+        with journal_guard(self.root):
+            with self._dispatch_locked(key): yield
+
+    @contextmanager
+    def _dispatch_locked(self, key):
+        if self._held_dispatch is not None: raise ValueError('phone_dispatch_lock_nested')
         fd = safe_open(self.root / (key + '.guard'), os.O_CREAT | os.O_RDWR)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
+            self._held_dispatch = (os.getpid(), threading.get_ident(), key, fd)
             yield
         finally:
+            self._held_dispatch = None
             os.close(fd)
 
     def read(self, key):
@@ -147,15 +192,31 @@ class Journal:
         return value
 
     def write(self, key, state):
-        with self.activity_locked():
-            activity = self._activity()
-            activity['revision'] += 1
-            # 全局revision先持久化；崩溃不能出现状态已变而revision未变。
-            atomic_json(self.root / '.activity.json', activity)
-            directory = private_dir(self.root / key)
-            state['revision'] = state.get('revision', 0) + 1
-            atomic_json(directory / 'state.json', state)
-            fsync_dir(self.root)
+        from admission import installed_for_journal
+        if installed_for_journal(self.root) and self._held_dispatch is None:
+            with self.locked(key): self.write(key, state)
+            return
+        with self.activity_locked() as held:
+            self.write_under_activity(key, state, held)
+
+    def write_under_activity(self, key, state, held):
+        if held is not self._held_activity or not isinstance(held, _ActivityHeld):
+            raise ValueError('phone_activity_context_unknown')
+        held.verify()
+        from admission import assert_journal_guard, installed_for_journal
+        assert_journal_guard(self.root)
+        if installed_for_journal(self.root):
+            dispatch = self._held_dispatch
+            if dispatch is None or dispatch[:3] != (os.getpid(), threading.get_ident(), key):
+                raise ValueError('phone_dispatch_context_unknown')
+        activity = self._activity()
+        activity['revision'] += 1
+        # 全局revision先持久化；崩溃不能出现状态已变而revision未变。
+        atomic_json(self.root / '.activity.json', activity)
+        directory = private_dir(self.root / key)
+        state['revision'] = state.get('revision', 0) + 1
+        atomic_json(directory / 'state.json', state)
+        fsync_dir(self.root)
 
     def keys(self):
         for path in self.root.iterdir():

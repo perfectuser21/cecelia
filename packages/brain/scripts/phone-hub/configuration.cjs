@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path');
 const {createHash}=require('node:crypto');
 const {targetValidFull}=require('./capabilities.cjs');
 const SOURCE_FILES=Object.freeze(['service.cjs','execution.cjs','capabilities.cjs','maintenance.cjs','configuration.cjs','runtime.cjs','control.py','maintenance.py',
- '../phone-ssh/journal.py','../phone-ssh/process_identity.py','../phone-ssh/drain_marker.py','../phone-ssh/transport.cjs','../phone-ssh/protocol.cjs','../phone-ssh/runner.py','../phone-ssh/http_physical.py']);
+ '../phone-ssh/journal.py','../phone-ssh/process_identity.py','../phone-ssh/drain_marker.py','../phone-ssh/transport.cjs','../phone-ssh/protocol.cjs','../phone-ssh/runner.py','../phone-ssh/http_physical.py','../phone-ssh/admission.py','../phone-ssh/activation.py']);
 const CONFIG='/etc/cecelia/phone-hub/config.json',TOKEN='/etc/cecelia/phone-hub/token';
 function trustedBytes(file,privateFile=false){
  const fd=fs.openSync(file,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);

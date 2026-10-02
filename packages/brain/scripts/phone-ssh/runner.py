@@ -126,6 +126,9 @@ class Runner:
             if pid == 0:
                 try:
                     worker.detach()
+                    self.journal.after_detach()
+                    from admission import discard_fork_context
+                    discard_fork_context()
                     worker.run(self.config, identity, self.journal)
                     os._exit(0)
                 except Exception:
@@ -176,6 +179,8 @@ class Runner:
             return self.view(identity, state)
 
     def maintenance(self):
+        from admission import maintenance_snapshot
+        admission_before = maintenance_snapshot(self.journal.root)
         before = self.journal.activity_snapshot()
         pending = 0
         for key in self.journal.keys():
@@ -189,9 +194,11 @@ class Runner:
                 self.view(state['identity'], state)
                 pending += not bool(state.get('receipt')) or (state.get('worker_identity') is not None and not process_absent(state['worker_identity']))
         after = self.journal.activity_snapshot()
-        return {'pending': pending, 'activity_revision': after['revision'],
-                'in_flight': max(before['in_flight'], after['in_flight']),
-                'stable': before['revision'] == after['revision']}
+        admission_after = maintenance_snapshot(self.journal.root)
+        admission_pending = max(admission_before['pending'], admission_after['pending'])
+        return {'pending': pending + admission_pending, 'activity_revision': after['revision'],
+                'in_flight': max(before['in_flight'], after['in_flight']) + admission_pending,
+                'stable': before['revision'] == after['revision'] and admission_before['revision'] == admission_after['revision']}
 
     def handle_http(self, request, *, installation=None):
         from http_physical import handle

@@ -33,6 +33,15 @@ it('固定生产manifest按实际依赖bytes校验；变更hash/未知配置/不
   }
  });
 });
+it('Hub实际加载的admission与activation依赖逐项篡改均拒绝旧manifest',async()=>{
+ const {createRuntime}=require('./runtime.cjs');
+ for(const name of ['admission.py','activation.py'])await configuredFixture(async f=>{
+  expect(f.manifest.source_hashes).toHaveProperty('../phone-ssh/'+name);
+  fs.appendFileSync(path.join(f.installed,'../phone-ssh',name),'\n# changed dependency\n');
+  const runtime=await createRuntime({configPath:f.configPath,tokenPath:f.tokenPath,sourceRoot:f.installed,runControl:f.control});
+  expect(runtime.configured).toBe(false);
+ });
+});
 it('真实本地控制journal追踪nativeowner；配置target未探明不能用本地空账签端到端静默',async()=>{
  const {createRuntime}=require('./runtime.cjs');
  await configuredFixture(async f=>{
