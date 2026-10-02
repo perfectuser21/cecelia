@@ -1,3 +1,4 @@
+import GpuStatus, {type GpuObservation} from './GpuStatus';
 import { useState, useEffect, useCallback } from 'react';
 import {
   Server,
@@ -21,6 +22,7 @@ interface ServerStats {
   role: string;
   status: 'online' | 'offline';
   error?: string;
+  gpu?: GpuObservation;
   cpu: {
     cores: number;
     model: string;
@@ -130,6 +132,8 @@ function ServerCard({ server }: { server: ServerStats }) {
           {server.role}
         </span>
       </div>
+
+      <GpuStatus gpu={server.gpu} />
 
       {isOnline && server.cpu && server.memory && server.disk ? (
         <>

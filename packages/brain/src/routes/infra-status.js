@@ -1,3 +1,5 @@
+import {getFleetStatus} from '../fleet-resource-cache.js';
+import {projectGpuObservation} from '../fleet-gpu-observation.js';
 /**
  * Infrastructure Fleet Status routes
  *
@@ -250,6 +252,7 @@ async function collectRemoteWindowsStats(server) {
 // GET /servers
 router.get('/servers', async (_req, res) => {
   try {
+    const gpuById = new Map(getFleetStatus().map(node => [node.id, node.gpu]));
     const results = await Promise.allSettled(
       SERVERS.map(async (server) => {
         const base = {
@@ -259,6 +262,7 @@ router.get('/servers', async (_req, res) => {
           tailscaleIp: server.tailscaleIp,
           publicIp: server.publicIp || null,
           role: server.role,
+          gpu: gpuById.get(server.id) ?? projectGpuObservation(null),
         };
 
         try {

@@ -11,6 +11,7 @@ const { clearTimeout, setTimeout } = require('node:timers');
 const { promisify } = require('node:util');
 const { probeDiskResources } = require('./local-resource-admission.cjs');
 const { sampleLinuxResources, projectLinuxObservation } = require('./linux-resource-probe.cjs');
+const {sampleGpu}=require('./gpu-observation.cjs');
 
 const execFileAsync = promisify(execFile);
 const { AbortController } = globalThis;
@@ -468,6 +469,8 @@ async function probeFleetWorkerHealth(options = {}) {
     runnerVersion,
     postgresImageDigest,
   });
+
+  report.gpu=await sampleGpu({platform:options.platform??process.platform,execFileFn:options.execFileFn??execFileAsync,now:()=>Date.parse(observedAt)});
 
   if ((options.platform ?? process.platform) === 'linux') {
     report.os.version = 'Linux';
