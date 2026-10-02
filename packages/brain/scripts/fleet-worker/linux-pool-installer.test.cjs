@@ -148,6 +148,7 @@ async function upgradeFixture(){
    x.calls.push([c,a]);const unit=a.at(-1);
    if(a.includes('--property=ActiveState'))return {stdout:'active\n'};
    if(a.includes('--property=ActiveState,MainPID'))return {stdout:stopped.has(unit)?'ActiveState=inactive\nMainPID=0\n':'ActiveState=active\nMainPID=101\n'};
+   if(a.includes('--property=FragmentPath,NeedDaemonReload'))return {stdout:`FragmentPath=/etc/systemd/system/${unit}\nNeedDaemonReload=no\n`};
    if(a.includes('--property=FragmentPath,NeedDaemonReload,MainPID'))return {stdout:`FragmentPath=/etc/systemd/system/${unit}\nNeedDaemonReload=no\nMainPID=${unit==='cecelia-linux-script.service'?101:102}\n`};
    return {stdout:'LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n'};
   }

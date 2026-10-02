@@ -119,6 +119,8 @@ async function installLinuxPool(options,deps={}) {
     }
     const fixed={[SLICE]:units.slice,[SERVICE]:units.service.replace('[Unit]\n','[Unit]\nRequires='+BRIDGE+'\nAfter='+BRIDGE+'\n'),[BRIDGE]:SCRIPT_UNIT};
     for(const[name,data]of Object.entries(fixed))if(!readFile('/etc/systemd/system/'+name,{mode:0o644}).data.equals(Buffer.from(data)))upgradeFail();
+    const sliceMeta=Object.fromEntries(String((await systemctl(['show','--property=FragmentPath,NeedDaemonReload',SLICE])).stdout).trim().split('\n').map(line=>line.split('=')));
+    if(sliceMeta.FragmentPath!=='/etc/systemd/system/'+SLICE||sliceMeta.NeedDaemonReload!=='no')upgradeFail();
     for(const name of services){
      const meta=Object.fromEntries(String((await systemctl(['show','--property=FragmentPath,NeedDaemonReload,MainPID',name])).stdout).trim().split('\n').map(line=>line.split('=')));
      if(meta.FragmentPath!=='/etc/systemd/system/'+name||meta.NeedDaemonReload!=='no'||!/^\d+$/.test(meta.MainPID)||Number(meta.MainPID)<=1)upgradeFail();
