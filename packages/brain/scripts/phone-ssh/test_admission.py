@@ -9,6 +9,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 import admission
+import probe
 from journal import Journal
 from runner import Runner, Config
 import test_activation as activation_fixture
@@ -44,6 +45,17 @@ class AdmissionTest(unittest.TestCase):
             os._exit(0)
         os.close(write); result = os.read(read, 64); os.close(read); os.waitpid(pid, 0)
         return result
+
+    def test_new_admission_code_is_part_of_real_physical_static_hashes(self):
+        self.assertIn('admission.py', probe.SOURCE_FILES)
+        installed = probe.installed_identity(manifest_path=self.fixture.install / 'probe.json',
+                                            config_path=self.fixture.install / 'worker.json', source_root=self.fixture.source)
+        self.assertEqual(installed['build_digest'], self.fixture.physical['build_digest'])
+        path = self.fixture.source / 'admission.py'
+        path.write_bytes(path.read_bytes() + b'\n# tampered control\n')
+        with self.assertRaises(ValueError):
+            probe.installed_identity(manifest_path=self.fixture.install / 'probe.json',
+                                     config_path=self.fixture.install / 'worker.json', source_root=self.fixture.source)
 
     def test_real_admission_lock_blocks_all_second_process_journal_writers(self):
         journal = Journal(self.journal_root)
