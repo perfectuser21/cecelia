@@ -206,3 +206,12 @@ it('升级回滚未知保留持久安装锁和原恢复快照，后续安装不�
   expect(fs.existsSync(path.join(x.root,'run/cecelia/linux-pool.install.lock'))).toBe(true);
  }finally{x.cleanup();}
 });
+it('已绑定安装只读验证零锁文件零stop零发布，可供bootstrap候选和回执丢失复核',async()=>{
+ const x=await upgradeFixture();try{
+  x.options.verifyOnly=true;const result=await install(x);
+  expect(result).toMatchObject({verified:true,execution:false,revision:'c'.repeat(40)});
+  expect(x.calls.some(([,a])=>['stop','start','enable','disable','daemon-reload'].includes(a[0]))).toBe(false);
+  expect(fs.existsSync(path.join(x.root,'run/cecelia/linux-pool.install.lock'))).toBe(false);
+  expect(fs.readFileSync(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/revision'),'utf8').trim()).toBe('c'.repeat(40));
+ }finally{x.cleanup();}
+});
