@@ -1,3 +1,4 @@
+import { validateMapBrainBindings } from './map-brain-bindings.js';
 import { loadMapAnchorProjection } from './map-anchor-resolver.js';
 import { buildMapProjection, MAP_PROJECTOR_VERSION } from './map-projector.js';
 
@@ -185,6 +186,7 @@ export async function projectMapManifest({
   await lockScope(client, 'map-manifest', manifestVersion.scope_key);
   await lockScope(client, 'map-projection', manifestVersion.scope_key);
   const authoritativeManifest = await readAuthoritativeManifest(client, manifestVersion, mode);
+  const bindingEvidence = await validateMapBrainBindings(client, authoritativeManifest.manifest, authoritativeManifest.scope_key);
   const anchorProjection = await loadAnchorProjection(client, {
     scopeKey: authoritativeManifest.scope_key,
     capabilityKeys: authoritativeManifest.manifest.capabilities.map(({ key }) => key),
@@ -194,6 +196,7 @@ export async function projectMapManifest({
     manifestDigest: authoritativeManifest.digest,
     factRevisions: factRevisions ?? anchorProjection.fact_revisions,
     anchorProjection,
+    bindingEvidence,
   });
   if (projection.projector_version !== MAP_PROJECTOR_VERSION) {
     throw new MapProjectionStoreError(

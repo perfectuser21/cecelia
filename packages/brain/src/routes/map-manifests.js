@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 
+import { MapBrainBindingError } from '../lib/map-brain-bindings.js';
 import { validateMapManifest } from '../lib/map-manifest-schema.js';
 import {
   MapManifestError,
@@ -10,7 +11,7 @@ import {
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 
 function sendError(res, error) {
-  if (error instanceof MapManifestError) {
+  if (error instanceof MapManifestError || error instanceof MapBrainBindingError) {
     const body = {
       error: {
         code: error.code,

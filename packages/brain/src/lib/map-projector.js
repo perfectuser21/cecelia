@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
+import { brainBindingAttributes } from './map-brain-bindings.js';
 
 import { digestMapManifest, validateMapManifest } from './map-manifest-schema.js';
 
-export const MAP_PROJECTOR_VERSION = 'map-projector-v1';
+export const MAP_PROJECTOR_VERSION = 'map-projector-v2-brain-bindings';
 
 export class MapProjectionError extends Error {
   constructor(code, message, details = undefined) {
@@ -112,10 +113,11 @@ function createEdge(
   };
 }
 
-function addStructuralNodes(manifest, nodes) {
+function addStructuralNodes(manifest, nodes, bindingEvidence) {
   const scopeKey = manifest.scope_key;
   for (const stream of manifest.value_streams) {
     nodes.push(createNode(scopeKey, 'value_stream', stream, 'value_streams', {
+      ...brainBindingAttributes(stream, bindingEvidence[stream.key]),
       aliases: aliasesOf(stream),
       order: stream.order,
       perceiver: stream.perceiver,
@@ -123,6 +125,7 @@ function addStructuralNodes(manifest, nodes) {
   }
   for (const capability of manifest.capabilities) {
     nodes.push(createNode(scopeKey, 'capability', capability, 'capabilities', {
+      ...brainBindingAttributes(capability, bindingEvidence[capability.key]),
       aliases: aliasesOf(capability),
       order: capability.order,
       path_prefixes: capability.path_prefixes ?? [],
@@ -263,13 +266,14 @@ export function buildMapProjection({
   manifestDigest,
   factRevisions = {},
   anchorProjection = undefined,
+  bindingEvidence = {},
 }) {
   const manifest = requireManifest(input, manifestDigest);
   const normalizedFacts = normalizeFacts(factRevisions);
   const nodes = [];
   const edges = [];
 
-  addStructuralNodes(manifest, nodes);
+  addStructuralNodes(manifest, nodes, bindingEvidence);
   const ids = nodeLookup(nodes);
   addContainsEdges(manifest, ids, edges);
   addBoundaryEdges(manifest, ids, edges);

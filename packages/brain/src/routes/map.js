@@ -9,6 +9,8 @@ import {
 } from '../lib/map-read-service.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { MapRadiusError, resolveImpactRadius } from '../map/radius.js';
+import { readImplementationImpact } from '../lib/implementation-impact.js';
+import { readImplementationConsumers } from '../lib/implementation-consumers.js';
 
 function errorStatus(error) {
   if (Number.isInteger(error?.status)) return error.status;
@@ -72,6 +74,12 @@ export function createMapRouter({
     const readAt = now();
     return consistentRead(res, (client) => services.readMap(client, { scopeKey, now: readAt }));
   });
+
+  router.post('/implementation-impact', internalAuthOrLoopback, async (req,res) =>
+    consistentRead(res,client=>readImplementationImpact(client,req.body)));
+
+  router.get('/implementation-consumers', async (req, res) =>
+    consistentRead(res,client=>readImplementationConsumers(client,req.query)));
 
   router.get('/nodes/:key', async (req, res) => {
     const scopeKey = req.query.scope;
