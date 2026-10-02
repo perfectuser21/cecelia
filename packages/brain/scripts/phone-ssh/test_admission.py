@@ -75,6 +75,38 @@ class AdmissionTest(unittest.TestCase):
             probe.installed_identity(manifest_path=self.fixture.install / 'probe.json',
                                      config_path=self.fixture.install / 'worker.json', source_root=self.fixture.source)
 
+    def test_native_system_sticky_tmp_allows_only_private_host_directory(self):
+        native = '/private/tmp' if os.uname().sysname == 'Darwin' else '/tmp'
+        with tempfile.TemporaryDirectory(prefix='phone-host-native-', dir=native) as folder:
+            root = Path(folder); root.chmod(0o700)
+            self.write(root / 'host.guard', b'')
+            self.write(root / '.host-activity.json', b'{"schema":1,"activities":{}}')
+            with patch.object(admission, '_HOST_ROOT', root):
+                host = admission.HostExclusive().acquire()
+                try: host.verify(); self.assertEqual(self.child(lambda: admission.HostExclusive().acquire()), b'denied')
+                finally: host.close()
+                root.chmod(0o755)
+                with self.assertRaises(ValueError): admission.HostExclusive().acquire()
+                root.chmod(0o700)
+                host = admission.HostExclusive().acquire()
+                try:
+                    (root / 'host.guard').unlink(); self.write(root / 'host.guard', b'')
+                    with self.assertRaises(ValueError): host.verify()
+                finally: host.close()
+
+    def test_arbitrary_writable_host_parent_and_symlink_are_not_trusted(self):
+        parent = self.fixture.root / 'writable'; parent.mkdir(mode=0o777); parent.chmod(0o777)
+        root = parent / 'host'; root.mkdir(mode=0o700)
+        self.write(root / 'host.guard', b'')
+        self.write(root / '.host-activity.json', b'{"schema":1,"activities":{}}')
+        with patch.object(admission, '_HOST_ROOT', root):
+            with self.assertRaises(ValueError): admission.HostExclusive().acquire()
+            parent.chmod(0o1777)
+            with self.assertRaises(ValueError): admission.HostExclusive().acquire()
+        link = self.fixture.root / 'host-link'; link.symlink_to(self.host_root, target_is_directory=True)
+        with patch.object(admission, '_HOST_ROOT', link):
+            with self.assertRaises((ValueError, OSError)): admission.HostExclusive().acquire()
+
     def test_real_admission_lock_blocks_all_second_process_journal_writers(self):
         journal = Journal(self.journal_root)
         with admission.locked():
