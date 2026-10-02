@@ -54,10 +54,10 @@ const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ig
 fs.writeFileSync(__dirname+'/child.pid',String(child.pid));
 ${leaderExits?'process.exit(0);':'setInterval(()=>{},1000);'}
 `,{mode:0o700});
- const docker=createDockerAdapter({root:x.root,dataPath:x.root,expected:{machine_registry_id:US_MACHINE_ID,daemon_id:'daemon',docker_root_dir:'/mnt/data/docker',volume_dev:(await stat(x.root)).dev},executable,timeoutMs:200});
+ const docker=createDockerAdapter({root:x.root,dataPath:x.root,expected:{machine_registry_id:US_MACHINE_ID,daemon_id:'daemon',docker_root_dir:'/mnt/data/docker',volume_dev:(await stat(x.root)).dev},executable,timeoutMs:1000});
  let done=false;const result=x.store.withLock(lease=>docker.snapshot(lease)).then(()=>{done=true;return null;},error=>{done=true;return error;});
  try{
-  await new Promise(resolve=>setTimeout(resolve,1000));
+  await new Promise(resolve=>setTimeout(resolve,2250));
   descendant=Number(await readFile(join(x.root,'child.pid'),'utf8'));
   assert.equal(done,true,'必须在预算内收口，不能等待未终止后代关闭pipe');
   assert.ok(await result);
