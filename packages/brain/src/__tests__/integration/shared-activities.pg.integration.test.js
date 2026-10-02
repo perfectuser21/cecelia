@@ -152,4 +152,13 @@ describe('共享活动真实数据库合同', () => {
     expect((await client.query("SELECT sequence_no FROM workflow_activity_refs WHERE workflow_id=$1 AND slot_key='discover_v2'",[benchmark])).rows[0].sequence_no).toBe(2);
   });
 
+  it('空活动的已登记workflow仍同步，活动零消费者与不存在明确区分',async()=>{
+    await migrate();const f=contractsFixture();await syncActivityContracts(db,f);
+    f.docs.keyword_acquisition.activities=[];f.docs.benchmark_link_acquisition.activities=[];f.refresh();await syncActivityContracts(db,f);
+    expect((await client.query('SELECT count(*)::int n FROM workflow_activity_refs WHERE active')).rows[0].n).toBe(0);
+    const app=express();app.use('/api/brain',routes);
+    expect((await request(app).get(`/api/brain/activities/${legacy[0]}/consumers`)).body.consumers).toEqual([]);
+    expect((await request(app).get(`/api/brain/activities/${randomUUID()}/consumers`)).status).toBe(404);
+  });
+
 });
