@@ -9,7 +9,13 @@
  */
 
 import pool from '../db.js';
+import { validateMapBrainBindings } from '../lib/map-brain-bindings.js';
+import { runProjection } from './projector.js';
 import { digestMapManifest } from '../lib/map-manifest-schema.js';
+
+const defaultProjector = ({ client, manifestVersion: m }) => runProjection({
+  client, manifestId: m.id, manifestDigest: m.digest, scopeKey: m.scope_key, manifest: m.manifest,
+});
 
 /** 计算 manifest 的 canonical SHA-256 digest */
 export function computeManifestDigest(manifest) {
@@ -48,10 +54,12 @@ export async function submitManifestDraft(
       [`map-manifest:${scopeKey}`],
     );
 
+    await validateMapBrainBindings(client, manifest, scopeKey);
+
     // 幂等：已存在相同 digest
     const existing = await client.query(
-      `SELECT id, version, digest, status FROM map_manifest_versions WHERE digest = $1`,
-      [digest]
+      `SELECT id, version, digest, status FROM map_manifest_versions WHERE digest = $1 AND scope_key = $2`,
+      [digest, scopeKey]
     );
     if (existing.rows.length > 0) {
       await client.query('ROLLBACK');
@@ -84,14 +92,14 @@ export async function submitManifestDraft(
  */
 export async function activateManifest(
   { manifestId, scopeKey },
-  { projector = null, db = pool } = {},
+  { projector = defaultProjector, db = pool } = {},
 ) {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
     await client.query(
       'SELECT pg_advisory_xact_lock(hashtext($1::text))',
-      [`map-activation:${scopeKey}`],
+      [`map-manifest:${scopeKey}`],
     );
 
     // 获取要激活的 manifest
@@ -104,9 +112,10 @@ export async function activateManifest(
     if (target.length === 0) throw new Error(`manifest 不存在: ${manifestId}`);
     const m = target[0];
     if (m.scope_key !== scopeKey) throw new Error(`scope_key 不匹配: ${m.scope_key} vs ${scopeKey}`);
+    await validateMapBrainBindings(client, m.manifest, scopeKey);
     let projection = null;
     if (projector) {
-      projection = await projector({ client, manifestVersion: m, mode: 'activation' });
+      projection = await projector({ client, manifestVersion: m, mode: m.status === 'active' ? 'rebuild' : 'activation' });
     }
 
     if (m.status === 'active') {

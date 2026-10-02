@@ -5,6 +5,8 @@
  * 业务意图输入一次，通过此 schema 校验后激活，不允许逐节点 CRUD。
  */
 
+import { brainBindingJsonSchema } from '../lib/map-brain-bindings.js';
+
 export const MANIFEST_SCHEMA_V1 = {
   $schema: 'http://json-schema.org/draft-07/schema#',
   title: 'MapManifest',
@@ -33,6 +35,7 @@ export const MANIFEST_SCHEMA_V1 = {
         required: ['key', 'name', 'perceiver', 'order'],
         additionalProperties: false,
         properties: {
+          brain_binding: brainBindingJsonSchema('value_stream'),
           key: { type: 'string', pattern: '^[a-z0-9_-]+$', minLength: 1 },
           name: { type: 'string', minLength: 1 },
           perceiver: { type: 'string', minLength: 1 },
@@ -50,6 +53,7 @@ export const MANIFEST_SCHEMA_V1 = {
         properties: {
           key: { type: 'string', pattern: '^[A-Za-z0-9_-]+$', minLength: 1 },
           name: { type: 'string', minLength: 1 },
+          brain_binding: brainBindingJsonSchema('capability'),
           value_stream_key: { type: 'string', pattern: '^[a-z0-9_-]+$', minLength: 1 },
           order: { type: 'integer', minimum: 1 },
           aliases: { type: 'array', items: { type: 'string' }, default: [] },

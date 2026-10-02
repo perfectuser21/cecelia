@@ -403,3 +403,4 @@ headed-takeover-smoke.sh
 directory-projection-smoke.sh
 definition-versions-smoke.sh
 span-ingestion-smoke.sh
+implementation-impact-smoke.sh
