@@ -10,7 +10,7 @@ it('默认Codex并发竞争M1/M4后MMV兜底，每run只有一条预约且只启
   expect(rows).toHaveLength(3);expect(new Set(rows.map(r=>r.run_id)).size).toBe(3);
   const fallback=rows.find(r=>r.machine_id==='us-mac-m4');expect(fallback.task_bundle.inputs.capability_evidence.capacity_reselection.skipped_machines).toEqual(['xian-mac-m1','xian-mac-m4']);
   for(const row of rows){expect(row.account_id).toBe('team2');expect(row.task_bundle.inputs.capability_evidence.to_target.machine).toBe(row.machine_id);}
-  expect(f.prepared.every(x=>x.spec.execution.accountHome==='/trusted/codex/team2')).toBe(true);
+  expect(f.prepared.every(x=>x.spec.execution.codexHome==='/trusted/codex/team2')).toBe(true);
   expect(f.calls.every(x=>x.capacitySnapshot.machine===x.machineId&&x.capacitySnapshot.account===x.accountId)).toBe(true);
   const previous=f.starts.length;await f.dispatch(contexts.find(c=>c.runId===fallback.run_id));expect(f.starts).toHaveLength(previous);
  }finally{await f.close();}
@@ -31,5 +31,41 @@ it('预检后真实grant撤销，最终事务拒绝且零启动零预约',async(
   f.deps.attemptStore.createAttempt=async input=>{await f.pool.query("UPDATE execution_grants SET state='revoked' WHERE surface='harness' AND provider='codex'");return f.store.createAttempt(input);};
   await expect(f.dispatch(await f.context())).rejects.toThrow('execution_grant_denied');
   expect(f.starts).toHaveLength(0);expect((await f.pool.query('SELECT id FROM harness_attempts')).rows).toHaveLength(0);
+ }finally{await f.close();}
+});
+it('已有candidateMachine亲和保持M4，容量拒绝时不能默认换机',async()=>{
+ const f=await fixture();try{
+  const first=await f.context();first.observed.candidate={machine_id:'xian-mac-m4'};
+  expect((await f.dispatch(first)).status).toBe('LAUNCHED');expect(f.starts[0].target.machine).toBe('xian-mac-m4');
+  const next=await f.context();next.observed.candidate={machine_id:'xian-mac-m4'};
+  expect((await f.dispatch(next)).action).toBe('wait:capacity');expect(f.starts).toHaveLength(1);
+ }finally{await f.close();}
+});
+it.each(['commit-ack-lost','rollback-ack-lost','external-transaction'])('真实PG未知事务不可跨机重选：%s',async mode=>{
+ const {createAttemptStore}=await import('../../orchestrator/attempt-store.js');
+ const f=await fixture();let outer;try{
+  if(mode!=='commit-ack-lost')await f.dispatch(await f.context());
+  const calls=[],wrap=client=>({query:async(sql,values)=>{
+   const result=await client.query(sql,values);
+   if(sql==='COMMIT'&&mode==='commit-ack-lost'||sql==='ROLLBACK'&&mode==='rollback-ack-lost')throw Error('machine_capacity_contended');
+   return result;
+  },release:()=>client.release()});
+  let store;
+  if(mode==='external-transaction'){outer=await f.pool.connect();await outer.query('BEGIN');store=createAttemptStore(outer,{transactionClient:true,executionDirectory:true});}
+  else store=createAttemptStore({query:(...args)=>f.pool.query(...args),connect:async()=>wrap(await f.pool.connect())},{executionDirectory:true});
+  f.deps.attemptStore={...f.store,createAttempt:async input=>{calls.push(input.machineId);return store.createAttempt(input);}};
+  const ctx=await f.context(),started=f.starts.length;expect((await f.dispatch(ctx)).action).toBe('wait:capacity');
+  expect(calls).toEqual(['xian-mac-m1']);expect(f.starts).toHaveLength(started);
+  if(outer){await outer.query('ROLLBACK');outer.release();outer=null;}
+  const rows=(await f.pool.query('SELECT machine_id FROM harness_attempts WHERE run_id=$1',[ctx.runId])).rows;
+  expect(rows).toEqual(mode==='commit-ack-lost'?[{machine_id:'xian-mac-m1'}]:[]);
+ }finally{if(outer){await outer.query('ROLLBACK');outer.release();}await f.close();}
+});
+it('预检选择不属于剩余候选或快照绑定漂移时，零预约零启动',async()=>{
+ const f=await fixture();try{
+  const original=f.deps.preflightGate;
+  f.deps.preflightGate={...original,evaluate:async args=>{const result=await original.evaluate(args);result.snapshot.machine='us-mac-m4';return result;}};
+  await expect(f.dispatch(await f.context())).rejects.toThrow('preflight_target_identity_mismatch');
+  expect(f.calls).toHaveLength(0);expect(f.starts).toHaveLength(0);
  }finally{await f.close();}
 });
