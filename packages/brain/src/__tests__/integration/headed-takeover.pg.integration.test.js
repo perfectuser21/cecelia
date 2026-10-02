@@ -4,7 +4,7 @@ import {readFileSync,existsSync} from 'node:fs';
 import {beforeAll,afterAll,beforeEach,it,expect} from 'vitest';
 import {DB_DEFAULTS} from '../../db-config.js';
 import express from 'express';
-if(DB_DEFAULTS.database !== 'cecelia_scratch')throw Error('headed takeover migration tests require cecelia_scratch');
+if(DB_DEFAULTS.database!=='cecelia_scratch'&&!(process.env.CI==='true'&&DB_DEFAULTS.database==='cecelia_test'))throw Error('本地迁移仅cecelia_scratch；CI仅cecelia_test');
 const schema=`headed_takeover_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const admin=new pg.Client(DB_DEFAULTS);
 const pool=new pg.Pool({...DB_DEFAULTS,max:5,options:`-c search_path=${schema},public -c statement_timeout=1000`});
@@ -42,6 +42,17 @@ it('真实双连接：takeover先持task行锁，资源创建必须NOWAIT失败�
  }finally{await owner.query('ROLLBACK');owner.release();writer.release();}
 });
 const request=()=>({taskId:task,requestId:randomUUID(),sessionId:'actual-session',expectedRowVersion:0,expectedExecutorKind:'bridge',expectedCurrentRunId:'legacy-run'});
+it('持久owner本人也不能删除callback屏障marker或再迁移executor',async()=>{
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+ const owner=await takeOverHeadedTask(pool,request());
+ const db=await pool.connect();
+ try{
+  for(const sql of ["UPDATE tasks SET payload=payload-'headed_takeover' WHERE id=$1","UPDATE tasks SET executor_kind='bridge' WHERE id=$1"]){
+   await db.query('BEGIN');await db.query("SELECT set_config('cecelia.headed_owner_generation',$1,true)",[owner.generation]);
+   await expect(db.query(sql,[task])).rejects.toThrow('headed_task_identity_immutable');await db.query('ROLLBACK');
+  }
+ }finally{await db.query('ROLLBACK');db.release();}
+});
 it('窄接管保持coding_review路由、旧run只unknown留痕，同request幂等不迁移二次owner',async()=>{
  const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
  const input=request(),first=await takeOverHeadedTask(pool,input),same=await takeOverHeadedTask(pool,input);
