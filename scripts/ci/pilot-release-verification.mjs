@@ -22,7 +22,8 @@ export async function runPilotReleaseVerification({repoRoot,snapshot,outputDir,e
   const report={...buildPilotReleasePlan({scope:s.scope,repo:s.repo,revision:s.revision,definitions:s.definitions,assertions:s.assertions}),snapshot_sha256:s.snapshot_sha256};
   save('head.json',{snapshot:s});save('report.json',report);assertPilotReleaseReport(report);
   for(const a of s.definitions.activities)for(const b of a.payload.implementation_bindings||[]){
-   if(b.status!=='verified'||b.repo!==s.repo||b.revision!==s.revision||typeof b.path!=='string'||b.path.startsWith('/')||b.path.split('/').some(p=>!p||p==='..'||p==='.')||b.path.includes('\\'))fail('PILOT_RELEASE_COMPONENT_UNKNOWN');
+   if(b.kind==='raw'&&b.status==='unresolved')continue;
+   if(!['code','skill'].includes(b.kind)||b.status!=='verified'||b.repo!==s.repo||b.revision!==s.revision||typeof b.path!=='string'||b.path.startsWith('/')||b.path.split('/').some(p=>!p||p==='..'||p==='.')||b.path.includes('\\'))fail('PILOT_RELEASE_COMPONENT_UNKNOWN');
    const bytes=execFileSync('git',['show',`${s.revision}:${b.path}`],{cwd:repoRoot,maxBuffer:16*1024*1024});
    if(b.digest!==`sha256:${sha(bytes)}`||!bytes.equals(readFileSync(resolve(repoRoot,b.path))))fail('PILOT_RELEASE_COMPONENT_CHANGED');
   }
