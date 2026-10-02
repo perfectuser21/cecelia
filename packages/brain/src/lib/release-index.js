@@ -25,7 +25,7 @@ function canonical(value) {
   return value;
 }
 export const evidenceHash = value => createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
-const same = (a, b) => evidenceHash(a) === evidenceHash(b);
+const same = (a, b) => a !== undefined && b !== undefined && evidenceHash(a) === evidenceHash(b);
 export async function evidenceTransaction(pool, key, fn) {
   const client = await (pool || defaultPool).connect();
   try {
@@ -111,12 +111,12 @@ function validateCiEvidence(items, definitions, components) {
       && receipt?.report_sha256 === createHash('sha256').update(JSON.stringify(report)).digest('hex');
     const assertions = report?.required_assertions;
     ok &&= Array.isArray(assertions) && assertions.length > 0 && Array.isArray(receipt?.assertions)
-      && assertions.every(a => a.source_repo === repo && receipt.assertions.some(r => r.assertion_ref === a.assertion_ref && r.source_repo === repo && r.source_revision === revision
+      && assertions.every(a => a && a.source_repo === repo && receipt.assertions.some(r => r && r.assertion_ref === a.assertion_ref && r.source_repo === repo && r.source_revision === revision
         && r.exit_code === 0 && !r.error && !r.signal && typeof r.test_sha256 === 'string' && HASH.test(r.test_sha256) && same(r.source_bindings, a.source_bindings)));
     for (const kind of ['workflows', 'activities']) {
       const evidence = report?.head?.definition_versions?.[kind];
       const expected = definitions[kind].filter(row => row.source_repo === repo);
-      ok &&= Array.isArray(evidence) && expected.every(row => evidence.some(e => e.id === row.id && e.payload_sha256 === row.payload_sha256 && e.source_commit === row.source_commit && e.source_repo === row.source_repo));
+      ok &&= Array.isArray(evidence) && expected.every(row => evidence.some(e => e && e.id === row.id && e.payload_sha256 === row.payload_sha256 && e.source_commit === row.source_commit && e.source_repo === row.source_repo));
     }
     if (ok) valid.push(repo); else gaps.push({ code: 'ci_evidence_unverified', index });
   }

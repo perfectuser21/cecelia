@@ -54,26 +54,26 @@ export async function bindRunDefinition(pool,runId,input){
 /** 调用方须已BEGIN；内部任务创建与固定身份共用提交/回滚。 */
 export async function bindRunDefinitionInTransaction(db,runId,input){
   validateInput(runId,input);const hash=evidenceHash(input);
-    await lockRunProtocol(db,runId);
-    const existing=(await db.query('SELECT * FROM run_definition_bindings WHERE run_id=$1',[runId])).rows[0];
-    if(existing){requireEvidence(existing.payload_sha256===hash,'run已绑定其他定义','CONFLICT',409);return {binding:existing,created:false};}
-    const release=await getRelease(db,input.release_id);
-    await lockReleaseTarget(db,release.environment,release.target);
-    requireEvidence((await getReleaseGate(db,release.id)).deployed,'当前部署已漂移或release已替换','DEPLOYMENT_UNVERIFIED',409);
-    const observation=(await db.query('SELECT * FROM release_observations WHERE id=$1 AND release_id=$2',[input.observation_id,input.release_id])).rows[0];
-    requireEvidence(observation&&evaluateReleaseObservation(release,observation).deployed,'运行需要CI核验及匹配的实际部署观测','DEPLOYMENT_UNVERIFIED',409);
-    const workflow=release.payload.workflows.find(w=>w.id===input.workflow_definition_version_id&&w.workflow_id===input.workflow_id);
-    requireEvidence(workflow&&workflow.payload_sha256===input.snapshot_sha256,'运行Workflow固定版本或摘要不符');
-    validatePath(input,workflow,release.payload.activities);
-    if(input.source_kind==='internal'){
-      const taskRun=(await db.query('SELECT id,run_id,workflow_id FROM task_runs WHERE id=$1 FOR SHARE',[input.task_run_id])).rows[0];
-      requireEvidence(taskRun&&taskRun.run_id===runId&&taskRun.workflow_id===input.workflow_id,'内部task_run不存在或运行/Workflow不一致');
-    }
-    const binding=(await db.query(`INSERT INTO run_definition_bindings(run_id,release_id,observation_id,workflow_id,workflow_definition_version_id,snapshot_sha256,
-      expected_path,source_kind,task_run_id,external_origin,attempt_key,actor,payload_sha256,payload)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,[runId,input.release_id,input.observation_id,input.workflow_id,input.workflow_definition_version_id,
-      input.snapshot_sha256,JSON.stringify(input.expected_path),input.source_kind,input.task_run_id||null,input.external_origin||null,input.attempt_key,input.actor,hash,input])).rows[0];
-    return {binding,created:true};
+  await lockRunProtocol(db,runId);
+  const existing=(await db.query('SELECT * FROM run_definition_bindings WHERE run_id=$1',[runId])).rows[0];
+  if(existing){requireEvidence(existing.payload_sha256===hash,'run已绑定其他定义','CONFLICT',409);return {binding:existing,created:false};}
+  const release=await getRelease(db,input.release_id);
+  await lockReleaseTarget(db,release.environment,release.target);
+  requireEvidence((await getReleaseGate(db,release.id)).deployed,'当前部署已漂移或release已替换','DEPLOYMENT_UNVERIFIED',409);
+  const observation=(await db.query('SELECT * FROM release_observations WHERE id=$1 AND release_id=$2',[input.observation_id,input.release_id])).rows[0];
+  requireEvidence(observation&&evaluateReleaseObservation(release,observation).deployed,'运行需要CI核验及匹配的实际部署观测','DEPLOYMENT_UNVERIFIED',409);
+  const workflow=release.payload.workflows.find(w=>w.id===input.workflow_definition_version_id&&w.workflow_id===input.workflow_id);
+  requireEvidence(workflow&&workflow.payload_sha256===input.snapshot_sha256,'运行Workflow固定版本或摘要不符');
+  validatePath(input,workflow,release.payload.activities);
+  if(input.source_kind==='internal'){
+    const taskRun=(await db.query('SELECT id,run_id,workflow_id FROM task_runs WHERE id=$1 FOR SHARE',[input.task_run_id])).rows[0];
+    requireEvidence(taskRun&&taskRun.run_id===runId&&taskRun.workflow_id===input.workflow_id,'内部task_run不存在或运行/Workflow不一致');
+  }
+  const binding=(await db.query(`INSERT INTO run_definition_bindings(run_id,release_id,observation_id,workflow_id,workflow_definition_version_id,snapshot_sha256,
+    expected_path,source_kind,task_run_id,external_origin,attempt_key,actor,payload_sha256,payload)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,[runId,input.release_id,input.observation_id,input.workflow_id,input.workflow_definition_version_id,
+    input.snapshot_sha256,JSON.stringify(input.expected_path),input.source_kind,input.task_run_id||null,input.external_origin||null,input.attempt_key,input.actor,hash,input])).rows[0];
+  return {binding,created:true};
 }
 export async function getRunDefinitionBinding(db,runId){
   evidenceText(runId,'run_id');db ||= defaultPool;
