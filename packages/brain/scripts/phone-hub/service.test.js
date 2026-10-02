@@ -79,3 +79,9 @@ it('phone maintenance只签自己的scope；unknown失败503，不能回签pendi
  await fixture(configured(),async base=>{const r=await post(base,'/maintenance/status',{request_nonce:randomUUID()});expect(r.status).toBe(200);expect(r.body.receipt).toMatchObject({scope:'phone-hub',pending:1,quiescent:false});});
  await fixture({...configured(),maintenance:async()=>{throw Error('unknown');}},async base=>{expect(await post(base,'/maintenance/status',{request_nonce:randomUUID()})).toEqual({status:503,body:{error:'phone_maintenance_unconfirmed'}});});
 });
+it('可选server-owned执行入口严格收body后只调用一次；物理失败保持503',async()=>{
+ const protocol=require('../phone-ssh/protocol.cjs');const identity=Object.fromEntries(['dispatch_id',...protocol.BINDINGS].map(k=>[k,randomUUID()]));Object.assign(identity,{machine_id:'fixture-machine',host:'fixture-host',serial:'fixture-serial',profile:'fixture-profile',account_id:'fixture-account',worker_id:'fixture-worker',worker_boot_id:'fixture-boot',action:'adb_get_state',config_digest:'f'.repeat(64)});
+ let calls=0;await fixture({...configured(),execution:async()=>{calls++;throw Error('actual physical unavailable');}},async base=>{
+  const result=await post(base,'/phones/fixture-serial/start',{request_nonce:randomUUID(),operation:'start',identity});expect(result.status).toBe(503);expect(calls).toBe(1);
+ });
+});
