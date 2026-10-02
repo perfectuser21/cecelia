@@ -7,7 +7,9 @@
 
 手机第二刀提供 MMV 固定 SSH 工具及 Mac 一次性 adb_get_state runner：两跳严格 known_hosts、固定命令和 JSON stdin，回执绑定 nonce 与完整持久身份；远端私有 fsync journal 一次 launch intent、取消墓碑、真实孩子限时退出与自己的旧协议手机锁释放。首动作仅通过固定 127.0.0.1:5037 向既有 ADB daemon 查询 host-serial:<serial>:get-state，采用4hex长度帧、分片精确读取、总时限与响应长度界限；不exec外部ADB、不自动启动或终止daemon，FAIL/EOF/畸形帧均失败。未知或坏 journal 保留占位，旧锁包括 stale 均拒绝接管，不关闭 APP。Brain 生产 runtime 不直接使用 SSH 工具；既定主线仍是 Brain HTTP→MMV→SSH→手机宿主。
 
-本刀未接调度、未部署、未开放 grant；资源 hook 默认拒绝。预预约只读 capabilities、HTTP hub 认证、真实容量/资源采样、跨进程维护 HTTP 汇总与部署激活由后续刀次完成；当前仅提供保守 phone maintenance 读取接口，不宣称生产就绪。socket孩子只运行固定内置查询，不调用配置hook；资源hook默认拒绝且只作GO前检查。本查询的退出证明不推广为后续采收/触达的通用进程树退出证明。
+HTTP子阶段A提供独立phone-hub :3459协议与部署manifest校验库：固定Bearer/HMAC、nonce、限额及硬超时；缺固定配置/600凭据/初始化journal时503，执行接口一律503。manifest覆盖可信HTTP端点、固定SSH物理binding及全部实际依赖bytes；物理只读probe核对真实boot/worker/build/config/action、OS资源、既有daemon及外部锁，不返回available，不创建缺失物理账。共享journal全部写入采用跨进程fcntl全局持久revision；本地控制账只证明hub-control，物理target未知时pending=null且不能静默，marker/revision竞态拒绝放行。安装后bytes改变必须新版本绑定，旧进程拒绝继续签旧hash。
+
+本刀未接调度、未部署、未开放 grant；资源 hook 默认拒绝。HTTP子阶段A只提供观测与维护合同，DB真实occupied/available、controller、不可变目录绑定及部署激活由后续子阶段完成，不宣称生产就绪。socket孩子只运行固定内置查询，不调用配置hook；资源hook默认拒绝且只作GO前检查。本查询的退出证明不推广为后续采收/触达的通用进程树退出证明。
 
 
 
