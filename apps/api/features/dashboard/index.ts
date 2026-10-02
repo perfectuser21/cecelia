@@ -13,7 +13,7 @@ const manifest: FeatureManifest = {
 
   routes: [
     // 默认进入交代事情。
-    { path: '/', redirect: '/workbench/inbox', requireAuth: true },
+    { path: '/', redirect: '/system', requireAuth: true },
     // Dashboard 退役重定向 → 军师台
     { path: '/dashboard', redirect: '/strategist' },
     { path: '/dashboard/command', redirect: '/strategist' },
