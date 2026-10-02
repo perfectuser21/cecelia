@@ -1,9 +1,11 @@
 import {headedTaskMutation} from './task-headed-takeover.js';
+import { rateLimit } from 'express-rate-limit';
+import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from './task-mutation-rate-limit.js';
 import { afterTerminalTransition, isTerminalStatus } from '../lib/task-terminal.js';
 
 /** 注册 tasks/:id 的字段更新与状态保护路由。 */
 export function registerTaskPatchRoute(router, { pool, terminalStatuses }) {
-  router.patch('/:id', headedTaskMutation(pool,async (req, res, pool) => {
+  router.patch('/:id', rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS), headedTaskMutation(pool,async (req, res, pool) => {
     try {
       const {
         status,
