@@ -331,7 +331,7 @@ it('真实507/508/509叠加image510/Linux512保独立台账、kind与owned guard
  try{
   await client.query(`CREATE SCHEMA ${integrated}`);
   // 独立schema仅复制基础表形状，不复制已有迁移的函数、触发器或版本记录。
-  for(const table of ['tasks','task_runs','initiative_runs','harness_attempts','harness_attempt_cleanup_outbox','kernel_controller_sessions','callback_queue','device_locks','work_routing_receipts','task_events','harness_gaps','harness_gap_dependencies','task_dependencies'])
+  for(const table of ['tasks','task_runs','initiative_runs','harness_attempts','harness_attempt_cleanup_outbox','kernel_controller_sessions','callback_queue','work_routing_receipts','task_events','harness_gaps','harness_gap_dependencies','task_dependencies'])
    await client.query(`CREATE TABLE ${table} (LIKE ${schema}.${table} INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING INDEXES)`);
   await client.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');
    CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);
@@ -339,7 +339,7 @@ it('真实507/508/509叠加image510/Linux512保独立台账、kind与owned guard
   const engine=readFileSync(new URL('../../migrate.js',import.meta.url),'utf8');
   // 只执行最低实际文件；ledger SQL直接取生产engine wrapper，禁止全量migrate或伪历史。
   const wrapper=engine.match(/client\.query\(\s*`(INSERT INTO schema_version \(version, description\)[\s\S]*?DO NOTHING)`/)[1];
-  for(const name of ['272_janitor','501_capacity_reservations','503_execution_directory','507_linux_script_authorization','508_phone_dispatches','509_headed_task_takeover','510_us_brain_image_retention','512_linux_pool_controller']){
+  for(const name of ['065_device_locks','448_device_locks_phones','272_janitor','490_phone_registry','501_capacity_reservations','503_execution_directory','507_linux_script_authorization','508_phone_dispatches','509_headed_task_takeover','510_us_brain_image_retention','512_linux_pool_controller']){
    await client.query('BEGIN');
    await client.query(readFileSync(new URL(`../../../migrations/${name}.sql`,import.meta.url),'utf8'));
    await client.query(wrapper,[name.split('_')[0],name.replace(/^\d+_/,'')]);
@@ -366,7 +366,7 @@ it('真实507/508/509叠加image510/Linux512保独立台账、kind与owned guard
   await expect(client.query("UPDATE tasks SET status='queued' WHERE id=$1",[ownedId])).rejects.toThrow('headed_task_owned');
   await expect(client.query('DELETE FROM tasks WHERE id=$1',[ownedId])).rejects.toThrow('headed_task_owned');
   expect((await client.query('SELECT * FROM tasks WHERE id=$1',[ownedId])).rows).toEqual(before);
- }finally{await client.query(`DROP SCHEMA IF EXISTS ${integrated} CASCADE`);await client.end();}
+ }finally{await client.query('ROLLBACK');await client.query(`DROP SCHEMA IF EXISTS ${integrated} CASCADE`);await client.end();}
 });
 
 it('无owner普通DELETE真实影响一行且任务消失，不能以NEW=NULL抑制删除',async()=>{

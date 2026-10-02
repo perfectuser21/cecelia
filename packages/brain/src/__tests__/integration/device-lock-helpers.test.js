@@ -192,7 +192,7 @@ const request=id=>({taskId:id,requestId:randomUUID(),sessionId:'device-guard-fix
 async function nativeOwner(pool,id){
  // native-owned-state-fixture: only合法历史DB结构，不声称由takeOver授权或生产回执生成。
  const generation=randomUUID(),session='native-owned-state-fixture';
- await pool.query("UPDATE tasks SET executor_kind='headed-session',payload=$2 WHERE id=$1",[id,{headed_takeover:{generation,session_id:session}}]);
+ await pool.query("UPDATE tasks SET status='failed',executor_kind='headed-session',payload=$2 WHERE id=$1",[id,{headed_takeover:{generation,session_id:session}}]);
  await pool.query('INSERT INTO headed_task_takeovers(task_id,generation,request_id,session_id,previous_owner) VALUES($1,$2,$3,$4,$5)',[id,generation,randomUUID(),session,{fixture:'native-owned-state-fixture'}]);
 }
 describe.sequential('509孤儿释放最窄边界/真实PG',()=>{
@@ -246,6 +246,7 @@ describe.sequential('509孤儿释放最窄边界/真实PG',()=>{
    await nativeOwner(pool,id);
    const state=async()=>({task:(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0],owner:(await pool.query('SELECT * FROM headed_task_takeovers WHERE task_id=$1',[id])).rows[0],lock:(await pool.query('SELECT * FROM device_locks WHERE device_name=$1',[PHONE])).rows[0]});
    const before=await state();expect(before.owner.task_id).toBe(id);
+   await expect(sweepStaleDeviceLocks(pool)).rejects.toThrow('headed_task_owned');
    await expect(releaseDeviceLocksHeldBy(id,pool)).rejects.toThrow('headed_task_owned');
    await expect(pool.query('UPDATE device_locks SET locked_by=$2 WHERE device_name=$1',[PHONE,'manual-rebind'])).rejects.toThrow('headed_task_owned');
    await expect(pool.query('UPDATE device_locks SET locked_by=$2 WHERE device_name=$1',[PHONE,randomUUID()])).rejects.toThrow();
