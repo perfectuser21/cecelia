@@ -229,7 +229,7 @@ class PhoneRunnerTest(unittest.TestCase):
                   + ',assert_resources=lambda:None);'
                   + 'print(runner.Runner(c).start(' + repr(self.identity) + '))')
         started = time.monotonic()
-        reply = subprocess.run([sys.executable, '-B', '-c', source], capture_output=True, timeout=2)
+        reply = subprocess.run([sys.executable, '-B', '-c', source], capture_output=True, timeout=2, cwd=Path(__file__).parent)
         self.assertEqual(reply.returncode, 0, reply.stderr)
         self.assertLess(time.monotonic() - started, 0.45)
         self.assertEqual(self.finish()['status'], 'completed')
@@ -245,6 +245,54 @@ class PhoneRunnerTest(unittest.TestCase):
         self.assertEqual(self.finish()['status'], 'failed')
         self.assertEqual(outside.read_text(), 'preserve')
         self.assertEqual(self.launches(), 0)
+
+    def test_running_cancel_stops_real_adb_and_preserves_terminal(self):
+        r = self.setup_runner()
+        self.fake_adb(10)
+        r.start(self.identity)
+        deadline = time.monotonic() + 2
+        while self.launches() == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(self.launches(), 1)
+        r.cancel(self.identity)
+        receipt = self.finish()
+        self.assertEqual(receipt['status'], 'failed')
+        self.assertEqual(receipt['reason'], 'phone_cancelled')
+        self.assertEqual(r.cancel(self.identity), receipt)
+        self.assertEqual(self.launches(), 1)
+
+    def test_dead_worker_cancel_requires_real_child_exit_before_lease_release(self):
+        r = self.setup_runner()
+        self.fake_adb(10)
+        r.start(self.identity)
+        deadline = time.monotonic() + 2
+        while self.launches() == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        state = r.journal.read(self.identity['dispatch_id'])
+        self.assertEqual(state['phase'], 'running')
+        os.kill(state['worker_identity']['pid'], signal.SIGKILL)
+        os.waitpid(state['worker_identity']['pid'], 0)
+        for _ in range(100):
+            receipt = r.cancel(self.identity)
+            if receipt['status'] == 'failed':
+                break
+            time.sleep(0.01)
+        self.assertEqual(receipt['status'], 'failed')
+        self.assertTrue(load().process_absent(state['child_identity']))
+        self.assertFalse((Path(self.config.lock_root) / 'fixture-serial.lock').exists())
+
+    def test_forged_terminal_journal_not_trusted(self):
+        r = self.setup_runner()
+        r.cancel(self.identity)
+        key = self.identity['dispatch_id']
+        with r.journal.locked(key):
+            state = r.journal.read(key)
+            state['receipt']['serial'] = 'other'
+            r.journal.write(key, state)
+        with self.assertRaises(ValueError):
+            r.inspect(self.identity)
+        with self.assertRaises(ValueError):
+            r.maintenance()
 
     def test_pending_intent_is_counted_and_broken_journal_denies_maintenance(self):
         r = self.setup_runner(fault=lambda stage: (_ for _ in ()).throw(RuntimeError('fault')))
