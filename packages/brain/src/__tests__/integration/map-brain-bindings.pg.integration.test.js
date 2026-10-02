@@ -180,6 +180,8 @@ it('正式地图和节点GET复核漂移并重建权威绑定属性，不改持�
   expect(persisted).toEqual(before);
   await db.query("UPDATE map_projection_nodes SET attributes=attributes || $1::jsonb WHERE run_id=(SELECT id FROM map_projection_runs WHERE scope_key=$2 AND status='active') AND node_key='F1'",[JSON.stringify({canonical_entity_id:otherCap,canonical_entity_type:'value_stream',brain_binding:{entity_id:otherCap},mapping_status:'verified',validation_errors:['obsolete']}),scope]);
   const current=await read(); expect(current).toMatchObject({canonical_entity_id:cap,canonical_entity_type:'capability',brain_binding:manifest(scope).capabilities[0].brain_binding,mapping_status:'verified'}); expect(current.validation_errors).toBeUndefined();
+  await db.query("UPDATE map_projection_nodes SET node_type='crosscut' WHERE run_id=(SELECT id FROM map_projection_runs WHERE scope_key=$1 AND status='active') AND node_key='F1'",[scope]);
+  const wrongType=await read(); expect(wrongType.mapping_status).toBe('unknown'); expect(wrongType.canonical_entity_id).toBeUndefined();
 });
 it('无绑定manifest清除投影残留规范UUID，保留旧key/id及普通属性', async () => {
   const scope='public-legacy'; await register(scope); const draft=await stores.route.submit(manifest(scope,false)); await stores.route.activate(draft.id,scope);
