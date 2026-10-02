@@ -12,7 +12,8 @@ beforeEach(()=>{
   throw Error('unexpected SQL before owner rejection');
  });
 });
-it.each(['old-run',undefined])('HTTP旧回调run=%s在queue/run/副作用之前拒绝',async run_id=>{
+for (const run_id of ['old-run',undefined]) {
+it(`HTTP旧回调run=${String(run_id)}在queue/run/副作用之前拒绝`,async()=>{
  const app=express();app.use(express.json());app.use(router);
  const saved=process.env.CECELIA_INTERNAL_TOKEN;process.env.CECELIA_INTERNAL_TOKEN='isolated-http-owner-test';
  try{
@@ -21,3 +22,4 @@ it.each(['old-run',undefined])('HTTP旧回调run=%s在queue/run/副作用之前�
   expect(pool.query).toHaveBeenCalledTimes(1);expect(pool.connect).not.toHaveBeenCalled();
  }finally{if(saved===undefined)delete process.env.CECELIA_INTERNAL_TOKEN;else process.env.CECELIA_INTERNAL_TOKEN=saved;}
 });
+}
