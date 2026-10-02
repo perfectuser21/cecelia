@@ -5,7 +5,7 @@ import {verifyCleanupEnvelope} from './cleanup-receipt.js';
 import {verifyRuntimeEnvelope} from './runtime-receipt.js';
 const sign=(receipt,key)=>({receipt,signature:createHmac('sha256',key).update(JSON.stringify(receipt)).digest('hex')});
 function sample(){const f=fixture(),r=structuredClone(f.receipt);r.schema_version='linux-script-canary-cleanup/v1';delete r.script_adapter_verified;
- r.cases=r.cases.map(({proof,terminal,...c})=>({...c,not_started:false}));return {...f,r};}
+ r.cases=r.cases.map(({proof:_proof,terminal:_terminal,...c})=>({...c,not_started:false}));return {...f,r};}
 it('独立cleanup签名只确认完整身份墓碑，不能被激活验收入口接受',()=>{
  const f=sample(),e=sign(f.r,f.deployment.key);expect(verifyCleanupEnvelope('script',e,f.challenge,f.deployment,f.now).receipt).toEqual(f.r);
  expect(()=>verifyRuntimeEnvelope(e,f.challenge,f.deployment,f.now)).toThrow();
