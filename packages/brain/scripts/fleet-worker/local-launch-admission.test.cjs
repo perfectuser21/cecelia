@@ -37,3 +37,13 @@ it('聊天attach尚未完成时持续计数，不因HTTP请求端断开归零',a
  const runner=wrapLaunchRunner({attach:async()=>{await pending;return 'attached';}},gate);
  const work=runner.attach();expect(gate.snapshot().in_flight_launches).toBe(1);release();await work;expect(gate.snapshot().in_flight_launches).toBe(0);
 });
+
+it('维护lease独占与health/普通launch共享计数，未知清理不会因重启标记解除而放行',async()=>{
+ const gate=createLocalLaunchAdmission({lstat:()=>({})});let release,entered;const held=new Promise(r=>release=r),started=new Promise(r=>entered=r);
+ const maintaining=gate.withMaintenance(async()=>{entered();await held;});await started;
+ await expect(gate.track(async()=>{})).rejects.toThrow('worker_maintenance_busy');
+ await expect(gate.withMaintenance(async()=>{})).rejects.toThrow('worker_maintenance_busy');
+ release();await maintaining;expect(gate.snapshot().in_flight_launches).toBe(0);
+ gate.setMaintenancePending(true);expect(gate.snapshot().maintenance_pending).toBe(1);expect(()=>gate.assertCanLaunch()).toThrow();
+ await expect(gate.withMaintenance(async()=>{})).rejects.toThrow('worker_maintenance_busy');
+});

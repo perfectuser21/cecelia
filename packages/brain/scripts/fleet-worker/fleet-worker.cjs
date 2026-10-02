@@ -13,6 +13,8 @@ const {
   createFileAttemptStateStore,
 } = require('./attempt-runner.cjs');
 const { createAttemptResourceManager } = require('./attempt-resources.cjs');
+const { createBaselineProbe } = require('./baseline-probe.cjs');
+const { runtimeConfigDigest } = require('./runtime-config.cjs');
 const { createLocalResourceAdmission,createLocalLaunchAdmission,wrapLaunchRunner } = require('./local-resource-admission.cjs');
 const {
   createCredentialEnvelopeConsumer,
@@ -473,13 +475,24 @@ function createFleetWorkerRuntime({
   } catch (error) {
     console.warn(`[fleet-worker] credential_home_probe_failed: ${logCode(error?.message, 'unknown')}`);
   }
+  const scriptProfiles=loadProtectedScriptProfiles(env.CECELIA_SCRIPT_PROFILES_FILE);
+  const appServerProfiles=loadAppServerProfiles(env.CECELIA_APP_SERVER_PROFILES_FILE);
+  const config={workerId,runnerImageDigest,postgresImageDigest,roots,healthDiskPaths,
+    repoRoot:env.CECELIA_REPO_ROOT??'/var/lib/cecelia/repository',repoAllowlist:createFleetRepoAllowlist(env),
+    orchestratorMaxConcurrent:Number(env.CECELIA_ORCHESTRATOR_MAX_CONCURRENT??2),
+    markerPath:env.CECELIA_DRAIN_MARKER??'/var/run/cecelia/fleet-worker.drain',
+    orbstackHome:env.CECELIA_ORBSTACK_HOME??null,scriptProfiles,appServerProfiles};
+  const baselineProbe=createBaselineProbe({root:path.join(dataRoot,'baseline-maintenance'),gate:launchAdmission,machineId:workerId,repoRoot:env.CECELIA_REPO_ROOT??'/var/lib/cecelia/repository',workspaceBase:roots.runtime,getConfigDigest:()=>runtimeConfigDigest(config),...(runCommand?{runCommand}:{}),assertLocalResources:createLocalResourceAdmission({workerId,diskPaths:healthDiskPaths,...(runCommand?{runCommand}:{})})});
   return Object.freeze({
+    baselineProbe,
+    get runtimeConfigDigest(){return runtimeConfigDigest(config);},
+    getRuntimeConfigDigest:()=>runtimeConfigDigest(config),
     appServerRunner: wrapLaunchRunner(createAppServerRunner({stateRoot:path.join(dataRoot,'app-servers'),machineId:workerId,workerId,bootId:launchAdmission.snapshot().boot_id,
-      assertCanLaunch,profiles:loadAppServerProfiles(env.CECELIA_APP_SERVER_PROFILES_FILE),docker:createAppServerDocker({assertCanLaunch}),
+      assertCanLaunch,profiles:appServerProfiles,docker:createAppServerDocker({assertCanLaunch}),
       assertLocalResources:createLocalResourceAdmission({workerId,diskPaths:healthDiskPaths,...(runCommand?{runCommand}:{})})}),launchAdmission),
     launchAdmission,
     scriptRunner: wrapLaunchRunner(createScriptRunner({ assertCanLaunch,stateRoot: path.join(dataRoot, 'scripts'),
-      machineId: workerId, workerId, profiles: loadProtectedScriptProfiles(env.CECELIA_SCRIPT_PROFILES_FILE),
+      machineId: workerId, workerId, profiles: scriptProfiles,
       assertLocalResources: createLocalResourceAdmission({workerId,diskPaths:healthDiskPaths,...(runCommand?{runCommand}:{})}),
       docker: createScriptDockerAdapter({assertCanLaunch}) }),launchAdmission),
     attemptRunner,
@@ -641,6 +654,16 @@ function createFleetWorkerServer(options = {}) {
       }catch(error){writeJson(response,error.message==='worker_draining'?429:409,{error:/^(appserver_[a-z_]+|worker_draining)$/.test(error.message)?error.message:'appserver_operation_unconfirmed'});}
       return;
     }
+    if(['/maintenance/baseline-proof','/maintenance/baseline-cleanup'].includes(request.url)){
+      if(!validBearer(request,attemptToken)){writeJson(response,401,{error:'unauthorized'});return;}
+      try{if(request.method!=='POST'||!attemptReady||reconciliationFailed||!options.baselineProbe)throw Error('worker_baseline_unconfirmed');
+        const body=await readJson(request,4096);
+        const attempts=await attemptRunner.maintenance(),scripts=await options.scriptRunner.maintenance(),orchestrators=await options.orchestratorRunner.maintenance(),appServers=options.appServerRunner?await options.appServerRunner.maintenance():{pending:0};
+        if([attempts.pending,scripts.pending,orchestrators.preparing,orchestrators.prepared,orchestrators.running_processes,appServers.pending].some(n=>n!==0))throw Error('worker_baseline_unconfirmed');
+        const receipt=await options.baselineProbe[request.url.endsWith('cleanup')?'cleanup':'run'](body);writeJson(response,200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
+      }catch{writeJson(response,503,{error:'worker_baseline_unconfirmed'});}
+      return;
+    }
     if(request.url==='/maintenance/status'){
       if(!validBearer(request,attemptToken)){writeJson(response,401,{error:'unauthorized'});return;}
       try{
@@ -650,11 +673,13 @@ function createFleetWorkerServer(options = {}) {
         if(!attemptReady||reconciliationFailed)throw Error('maintenance_reconciliation_unconfirmed');
         const gate=options.launchAdmission;
         if(!gate||[attemptRunner,options.scriptRunner,options.orchestratorRunner,...(options.appServerRunner?[options.appServerRunner]:[])].some(r=>typeof r?.maintenance!=='function'))throw Error('maintenance_unconfigured');
+        const configBefore=options.getRuntimeConfigDigest?.()??options.runtimeConfigDigest??null;
         const before=gate.snapshot(),attempts=await attemptRunner.maintenance(),scripts=await options.scriptRunner.maintenance(),orchestrators=await options.orchestratorRunner.maintenance(),appServers=options.appServerRunner?await options.appServerRunner.maintenance():{pending:0},after=gate.snapshot();
-        const stable=before.activity_revision===after.activity_revision;
-        const counts=[attempts.pending,scripts.pending,orchestrators.preparing,orchestrators.prepared,orchestrators.running_processes,appServers.pending];
+        const configAfter=options.getRuntimeConfigDigest?.()??options.runtimeConfigDigest??null;
+        const stable=before.activity_revision===after.activity_revision&&configBefore===configAfter;
+        const counts=[after.maintenance_pending??0,attempts.pending,scripts.pending,orchestrators.preparing,orchestrators.prepared,orchestrators.running_processes,appServers.pending];
         if(!counts.every(n=>Number.isSafeInteger(n)&&n>=0))throw Error('maintenance_unknown');
-        const receipt={schema_version:'fleet-maintenance/v1',machine_id:machineId,...after,observed_at:new Date().toISOString(),request_nonce:body.request_nonce,
+        const receipt={schema_version:'fleet-maintenance/v1',machine_id:machineId,...after,observed_at:new Date().toISOString(),request_nonce:body.request_nonce,config_digest:configAfter,
           in_flight_launches:Math.max(before.in_flight_launches,after.in_flight_launches),observation_stable:stable,attempts,scripts,orchestrators,app_servers:appServers,
           quiescent:stable&&before.draining&&after.draining&&before.in_flight_launches===0&&after.in_flight_launches===0&&counts.every(n=>n===0)};
         writeJson(response,200,{receipt,signature:createHmac('sha256',attemptToken).update(JSON.stringify(receipt)).digest('hex')});
@@ -694,7 +719,7 @@ function createFleetWorkerServer(options = {}) {
         // in and open a duplicate probe.
         let started;
         try {
-          started = Promise.resolve(probeHealth());
+          started = options.launchAdmission?options.launchAdmission.track(()=>probeHealth()):Promise.resolve(probeHealth());
         } catch (error) {
           started = Promise.reject(error);
         }
@@ -875,6 +900,8 @@ function main(env = process.env) {
   const runtime = createFleetWorkerRuntime({ env });
   const server = createFleetWorkerServer({
     env,
+    baselineProbe: runtime.baselineProbe,
+    getRuntimeConfigDigest: runtime.getRuntimeConfigDigest,
     appServerRunner: runtime.appServerRunner,
     launchAdmission: runtime.launchAdmission,
     scriptRunner: runtime.scriptRunner,
