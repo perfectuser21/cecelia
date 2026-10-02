@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.357.5
+**Brain 版本**: 1.357.6
 
 
 
@@ -16,7 +16,11 @@
 
 
 
-**Brain 版本**: 1.357.5
+**Brain 版本**: 1.357.6
+
+## Brain 1.357.6 — 恢复目标跨路径永久回归
+
+- 新增真实恢复入口→执行目标冻结→ground-truth同run候选→dispatcher的永久契约回归：无候选/旧us候选均派发西安team2，同新run西安候选保持Evaluator/Judge亲和；profile冲突和非法目标在入口拒绝且零派发。仅数据库、Git和执行边界夹具隔离，不改dispatcher算法或生产行为。
 
 ## Brain 1.357.5 — 失败 Kernel 恢复冻结已授权执行目标
 
