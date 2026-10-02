@@ -169,3 +169,10 @@ export function getDeploymentNodeProfile(machineId){
  const profile=profilesById.get(machineId);if(!profile)throw Error('unknown_fleet_node');return profile;
 }
 export function listDeploymentNodeProfiles(){return profiles;}
+
+// 支持版本只来自已注册且冻结的执行目录对象；部署registry验证仍严格canonical。
+export function validateRegisteredAdmissionProfile(profile){
+ if(!executionProfileReader().some(n=>n.profile===profile&&n.canonical_id===profile?.machine_id&&n.platform==='darwin'&&n.identity_mode==='legacy-v1'&&n.state==='active'))return false;
+ if(!/^\d+\.\d+\.\d+$/.test(profile.version_policy?.os??''))return false;
+ return validateNodeProfile({...profile,version_policy:{...profile.version_policy,os:CANONICAL_BASELINE.version_policy.os}});
+}

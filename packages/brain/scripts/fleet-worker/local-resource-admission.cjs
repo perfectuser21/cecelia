@@ -146,12 +146,14 @@ function guardLaunchCommand(runCommand,assertCanLaunch) {
 }
 function createLocalLaunchAdmission({markerPath='/var/run/cecelia/fleet-worker.drain',lstat=lstatSync}={}) {
   if(typeof markerPath!=='string'||!path.isAbsolute(markerPath))throw Error('worker_drain_marker_invalid');
-  const bootId=randomUUID();let active=0,revision=0;
+  const bootId=randomUUID();let active=0,revision=0,maintenanceLease=false,maintenancePending=false;
   const draining=()=>{try{lstat(markerPath);return true;}catch(error){return error.code!=='ENOENT';}};
-  const assertCanLaunch=()=>{if(draining())throw Object.assign(Error('worker_draining'),{statusCode:429});};
+  const assertCanLaunch=()=>{if(draining()||maintenanceLease||maintenancePending)throw Object.assign(Error('worker_draining'),{statusCode:429});};
   return Object.freeze({assertCanLaunch,
-    snapshot:()=>({boot_id:bootId,draining:draining(),in_flight_launches:active,activity_revision:revision}),
-    track:async operation=>{active++;revision++;try{return await operation();}finally{active--;revision++; }},
+    snapshot:()=>({boot_id:bootId,draining:draining(),in_flight_launches:active,activity_revision:revision,maintenance_pending:maintenancePending?1:0}),
+    setMaintenancePending:value=>{maintenancePending=value===true;revision++;},
+    withMaintenance:async (operation,recoverPending=false)=>{if(maintenanceLease||(maintenancePending&&!recoverPending)||active!==0||!draining())throw Error('worker_maintenance_busy');maintenanceLease=true;active++;revision++;try{return await operation();}finally{maintenanceLease=false;active--;revision++;}},
+    track:async operation=>{if(maintenanceLease||maintenancePending)throw Error('worker_maintenance_busy');active++;revision++;try{return await operation();}finally{active--;revision++; }},
     guardCommand:runCommand=>guardLaunchCommand(runCommand,assertCanLaunch),
   });
 }
