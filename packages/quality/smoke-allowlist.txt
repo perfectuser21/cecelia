@@ -388,3 +388,4 @@ smoke-production-guard-smoke.sh
 
 us-image-retention-smoke.sh
 linux-script-runtime-smoke.sh
+kernel-codex-failover-smoke.sh
