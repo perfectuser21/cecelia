@@ -46,11 +46,12 @@ const fetchFile = (path, sha, d) => ghText(`contents/${path}?ref=${sha}`, 'appli
  * @returns {{head_sha, updated:string[], inserted:string[], deprecated:string[], unmapped:string[]}}
  * GitHub 任一请求失败直接抛错（调用方记滞后），此前不写库。
  */
-export async function syncActivityContracts(pool, { fetchFn = globalThis.fetch, resolveToken = resolveGitHubToken, readBinding } = {}) {
+export async function syncActivityContracts(pool, { fetchFn = globalThis.fetch, resolveToken = resolveGitHubToken, readBinding, expectedRevision, beforeCommit, synchronizeSteps = false } = {}) {
   // 在网络取HEAD之前固定数据库版本，避免慢请求拿旧HEAD覆盖先完成的新同步。
   const registrations = (await pool.query(REGISTRATIONS_SQL,[CONTRACT_REPO])).rows;
   const d = { fetchFn, token: await resolveToken() };
   const head = await fetchHead(d);
+  if(expectedRevision !== undefined && head !== expectedRevision) throw Object.assign(new Error('远端main已变化'),{code:'IMPLEMENTATION_CI_MAIN_MOVED',status:409});
   const digest = JSON.parse(await fetchFile(CONTRACTS_DIGEST_PATH, head, d));
   const consumers = registrations.filter(w=>w.status !== 'retired');
   const plans = await loadActivityContracts(consumers,digest,path=>fetchFile(path,head,d),registrations);
@@ -61,7 +62,7 @@ export async function syncActivityContracts(pool, { fetchFn = globalThis.fetch, 
       (binding=>ghText(`contents/${binding.path}?ref=${binding.revision}`,'application/vnd.github.raw',d,binding.repo)),{repo:CONTRACT_REPO,commit:head}));
     item.bindings=checked.get(key);
   }
-  return storeActivityContracts(pool,plans,head,CONTRACT_REPO,registrations);
+  return storeActivityContracts(pool,plans,head,CONTRACT_REPO,registrations,{beforeCommit,synchronizeSteps});
 }
 
 // ─── Notion 镜子：journey_steps（带契约的行）→「Backbone Activities」─────────
