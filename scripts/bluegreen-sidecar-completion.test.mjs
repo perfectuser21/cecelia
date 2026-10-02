@@ -30,6 +30,7 @@ async function fixture(t, scenario = '') {
     const fs=require('node:fs');
     const args=process.argv.slice(2), root=process.env.FIXTURE_ROOT, scenario=process.env.SCENARIO;
     fs.appendFileSync(root+'/calls',JSON.stringify(args)+'\\n');
+    if(scenario==='docker-hang'){setInterval(()=>{},1000);return;}
     const exists=fs.existsSync(root+'/started'), recovered=fs.existsSync(root+'/fallback');
     let id=recovered?'${previousImage}':'${image}', s=recovered?'${previousSha}':'${sha}';
     if(args[0]==='info') {
@@ -63,11 +64,11 @@ async function fixture(t, scenario = '') {
       if(!args.includes('${container}'))process.exit(91);
       if(args.some(x=>x.endsWith('/healthz')))process.exit(scenario==='unhealthy'?22:0);
       if(args.some(x=>x.endsWith('/health'))) {
-        fs.writeFileSync(root+'/healthy','');console.log(JSON.stringify({status:scenario==='degraded'?'degraded':'healthy',version:recovered?'1.360.3':'1.360.5',git_sha:scenario==='wrong-sha'?'${previousSha}':s}));if(args.includes('-w'))process.stdout.write(scenario==='health-redirect'?'302':'200');process.exit(0);
+        fs.writeFileSync(root+'/healthy','');console.log(JSON.stringify({status:scenario==='degraded'?'degraded':'healthy',version:recovered?'1.360.3':'1.360.5',git_sha:scenario==='wrong-sha'?'${previousSha}':s,...(scenario==='health-oversize'?{padding:'x'.repeat(300000)}:{})}));if(args.includes('-w'))process.stdout.write(scenario==='health-redirect'?'302':'200');return;
       }
       if(args.some(x=>x.endsWith('/drain-cancel'))) {
         if(scenario==='drain-fail')process.exit(22);
-        console.log(JSON.stringify({success:scenario!=='drain-false'}));process.exit(0);
+        console.log(JSON.stringify({success:scenario!=='drain-false',...(scenario==='drain-oversize'?{padding:'x'.repeat(300000)}:{})}));return;
       }
     }
     process.exit(90);
@@ -96,14 +97,14 @@ test('宿主端口不可达时经固定容器localhost确认健康、恢复drain
   assert.ok(execs.some(x => x.includes('http://127.0.0.1:5221/api/brain/health')));
   assert.ok(execs.every(x => x.includes(container)));
 });
-for (const scenario of ['request-sha', 'wrong-image', 'wrong-sha', 'drift', 'unhealthy', 'degraded', 'drain-fail', 'drain-false', 'finish-fail', 'finish-drift', 'health-redirect']) {
+for (const scenario of ['request-sha', 'wrong-image', 'wrong-sha', 'drift', 'unhealthy', 'degraded', 'drain-fail', 'drain-false', 'finish-fail', 'finish-drift', 'health-redirect', 'health-oversize', 'drain-oversize', 'docker-hang']) {
   test(`${scenario} 必须非零并保持pending、不得写成功历史`, async t => {
     const f = await fixture(t, scenario);
-    assert.notEqual(f.code, 0);
+    assert.equal(f.code, 1, 'sidecar必须自己非零收口，不能由测试父进程超时冒充');
     assert.equal(f.ledger.pending.deployment_id, deployment);
     assert.deepEqual(f.ledger.successes, []);
     assert.ok(!f.calls.some(x => ['rm', 'run'].includes(x[0])));
-    if (!['drain-fail', 'drain-false', 'finish-fail', 'finish-drift', 'health-redirect'].includes(scenario)) assert.ok(!f.calls.some(x => x.some(a => a.endsWith('/drain-cancel'))));
+    if (!['drain-fail', 'drain-false', 'finish-fail', 'finish-drift', 'health-redirect', 'drain-oversize'].includes(scenario)) assert.ok(!f.calls.some(x => x.some(a => a.endsWith('/drain-cancel'))));
   });
 }
 test('fallback只确认旧镜像真实恢复，不新增成功部署历史', async t => {
