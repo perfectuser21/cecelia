@@ -104,4 +104,29 @@ describe('六层目录字段契约', () => {
     await expect(ensureDirectorySchemas({ dbs, token: 'test', notionReq: b.notionReq })).rejects.toThrow(/workflows.*title/);
     expect(b.calls.filter(c => c.method === 'PATCH')).toHaveLength(0);
   });
+  it('预检后人新增同名不同类型列，写前重读拒绝而不覆盖', async () => {
+    const b = boundary(p => { delete p[dbs.areas].properties['Brain ID']; });
+    let reads = 0;
+    const notionReq = async (...args) => {
+      const result = await b.notionReq(...args);
+      if (args[2] === 'GET' && ++reads === names.length) {
+        b.pages[dbs.areas].properties['Brain ID'] = { type: 'number', number: {} };
+      }
+      return result;
+    };
+    await expect(ensureDirectorySchemas({ dbs, token: 'test', notionReq })).rejects.toThrow(/areas.*Brain ID.*rich_text/);
+    expect(b.calls.filter(c => c.method === 'PATCH')).toHaveLength(0);
+    expect(b.pages[dbs.areas].properties['Brain ID']).toEqual({ type: 'number', number: {} });
+  });
+  it('无需补列也最终重新验全部库，预检后关系漂移不能标成功', async () => {
+    const b = boundary(); let reads = 0;
+    const notionReq = async (...args) => {
+      const result = await b.notionReq(...args);
+      if (args[2] === 'GET' && ++reads === names.length) {
+        b.pages[dbs.workflows].properties.Capability.relation.database_id = dbs.areas;
+      }
+      return result;
+    };
+    await expect(ensureDirectorySchemas({ dbs, token: 'test', notionReq })).rejects.toThrow(/workflows.*Capability.*target/);
+  });
 });
