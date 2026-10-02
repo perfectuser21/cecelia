@@ -41,6 +41,8 @@ it('真实HTTP工作流同时返回规范能力身份、部门继承及平台形
   const kw = response.body.workflows.find(w => w.id === ids.wfA);
   const bm = response.body.workflows.find(w => w.id === ids.wfB);
   expect(kw.capability_code).toBe('test_kw');
+  expect(kw.definition_status).toBe('unknown');
+  expect(kw.activities[0].definition_status).toBe('unknown');
   expect(kw.organization).toMatchObject({ capability_id: ids.capA, value_stream_id: ids.stream, source: 'inherited', direct_area: null, effective_area: { id: ids.media } });
   expect(kw.organization.area_path.map(a => a.id)).toEqual([ids.company, ids.media]);
   expect(bm.organization).toMatchObject({ capability_id: ids.capB, source: 'direct', direct_area: { id: ids.support }, effective_area: { id: ids.support } });
