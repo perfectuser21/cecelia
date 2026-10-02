@@ -9,6 +9,7 @@ import subprocess
 import sys
 import shutil
 import tempfile
+import time
 import unittest
 import uuid
 from unittest.mock import patch
@@ -120,6 +121,14 @@ class ActivationTest(unittest.TestCase):
             with self.subTest(changes=changes):
                 self.store({**self.record, **changes}); self.denied()
         self.store(); activation.validate_activation(self.identity)
+
+    def test_expiry_is_rechecked_after_final_file_verification(self):
+        self.store({**self.record, 'expires_at': stamp(0.2)})
+        original = activation._TrustedReads.verify
+        def slow(reads):
+            time.sleep(0.25)
+            return original(reads)
+        with patch.object(activation._TrustedReads, 'verify', slow): self.denied()
 
     def test_missing_permissions_hardlink_and_symlink_fail_closed(self):
         record = self.install / 'activation.json'
