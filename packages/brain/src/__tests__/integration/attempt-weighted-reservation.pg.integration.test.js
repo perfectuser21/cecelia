@@ -10,6 +10,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { createAttemptStore } from '../../orchestrator/attempt-store.js';
+import { executionProfileHash, freezeRecoveryExecutionProfile } from '../../orchestrator/recovery-execution-profile.js';
 
 const database = process.env.TEST_DATABASE_URL
   ? decodeURIComponent(new URL(process.env.TEST_DATABASE_URL).pathname.slice(1))
@@ -66,6 +67,26 @@ afterAll(async () => {
 });
 
 describe('真实 PG 加权预约与未确认取消', () => {
+  it('恢复冻结的合法目标仍被未释放floor占位拒绝，不授予capacity或扩大grant', async () => {
+    const blocker = await input('generator',1,{capacitySnapshot:snapshot(1,{autonomous_progress_floor:true})});
+    await store.createAttempt(blocker);
+    const previousGrants = (await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows;
+    const client = await pool.connect();
+    let frozen;
+    try {
+      await client.query('BEGIN');
+      frozen = await freezeRecoveryExecutionProfile(client,{task:{payload:{}},repo:'perfectuser21/cecelia',
+        request:{expected_profile_hash:executionProfileHash({}),execution_target:{provider:'codex',account:'team1',machine}}});
+      await client.query('COMMIT');
+    } catch (error) { await client.query('ROLLBACK');throw error; }
+    finally { client.release(); }
+    const role = frozen.payload.role_assignments.evaluator;
+    const rival = await input('evaluator');
+    await expect(store.createAttempt({...rival,machineId:role.machine,provider:role.provider,accountId:role.account}))
+      .rejects.toThrow('capacity_contended');
+    expect((await pool.query('SELECT id FROM harness_attempts')).rows).toEqual([{id:blocker.id}]);
+    expect((await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows).toEqual(previousGrants);
+  });
   it('并发 generator(4)+generator(4) 不能超出六基础槽', async () => {
     const inputs = await Promise.all([input(), input()]);
     const outcomes = await Promise.allSettled(inputs.map((value) => store.createAttempt(value)));

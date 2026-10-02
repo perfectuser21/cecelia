@@ -57,6 +57,10 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
     );
     return rows[0].id;
   }
+  async function insertCompletedAt(serial, completedAt) {
+    const id = await insertRun({ payload: { serial, source: 'cron', wf_id: 'device-boundary', leads: 1 }, status: 'completed' });
+    await client.query(`UPDATE tasks SET completed_at = $2::timestamptz AT TIME ZONE 'UTC' WHERE id = $1`, [id, new Date(completedAt).toISOString()]);
+  }
   const ssh = () => vi.fn((c, a, o, cb) => cb(null, '{"id": "esc-it-0001"}', ''));
 
   it('心跳：tag 命中写 payload；账本 run_id LIKE %-<TAG>__% 命中；serial 唯一命中；起跑登记落 working_memory 后被心跳合并', async () => {
@@ -144,5 +148,51 @@ describe.skipIf(!DB_AVAILABLE)('commander-watchdog — pg 集成（真实 SQL，
     const wm = await client.query(`SELECT value_json FROM working_memory WHERE key = 'workflow_trend_bark:last_day'`);
     expect(wm.rows[0].value_json.day).toBe(out.day);
     expect(await runWorkflowTrendBark(client, { now, bark, windowOverride: true })).toMatchObject({ skipped: 'already_today' });
+  });
+  it.each([0, 6, 12, 18, 23])('北京 %i 时趋势 SQL：自然日分组与设备 24h 边界独立', async (hour) => {
+    // 当日去重状态在事务内隔离；ROLLBACK 恢复已有测试库记录。
+    await client.query(`DELETE FROM working_memory WHERE key = 'workflow_trend_bark:last_day'`);
+    await client.query(`INSERT INTO phone_registry (serial, nickname, host, profile, enabled) VALUES
+      ('S-STALE', '小测', 'xian-m4', 'p', true), ('S-FRESH', '小新', 'xian-m4', 'p', true),
+      ('S-LIMIT', '边界', 'xian-m4', 'p', true), ('S-IDLE', '小闲', 'xian-m4', 'p', true)`);
+    // SQL 事务时钟确定北京 D-1/D-2 中午；同日多个验收时刻覆盖午夜前后，不依赖 CI 起跑时间。
+    const { rows: [clock] } = await client.query(`SELECT NOW() AS actual,
+      (date_trunc('day', NOW() AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'Asia/Shanghai') AS midnight,
+      ((date_trunc('day', NOW() AT TIME ZONE 'Asia/Shanghai') - interval '1 day' + interval '12 hours') AT TIME ZONE 'Asia/Shanghai') AS d1,
+      ((date_trunc('day', NOW() AT TIME ZONE 'Asia/Shanghai') - interval '2 days' + interval '12 hours') AT TIME ZONE 'Asia/Shanghai') AS d2`);
+    const now = clock.midnight.getTime() + hour * 3600e3;
+    const d1 = `${(clock.actual.getTime() - clock.d1.getTime()) / 3600e3} hours`;
+    const d2 = `${(clock.actual.getTime() - clock.d2.getTime()) / 3600e3} hours`;
+    // 自然日统计专用 serial 不登记设备；北京昨天中午并不保证已过 24 小时。
+    const mk = (wf, ago, leads) => insertRun({ payload: { serial: 'S-TREND', source: 'cron', wf_id: wf, leads }, status: 'completed', dueAgo: ago, completedAgo: ago });
+    await mk('zero-wf', d1, 0); await mk('zero-wf', d2, 0);
+    await mk('ok-wf', d1, 0); await mk('ok-wf', d2, 3);
+    await insertCompletedAt('S-STALE', now - 25 * 3600e3);
+    await insertCompletedAt('S-FRESH', now - 3600e3);
+    await insertCompletedAt('S-LIMIT', now - 24 * 3600e3);
+    const bark = vi.fn().mockResolvedValue(true);
+    // 用当前时刻（北京日期由 SQL 与 JS 同算）但强制窗口
+    const out = await runWorkflowTrendBark(client, { bark, now, windowOverride: true, staleSerialMs: 24 * 3600e3 });
+    expect(out.zeroLeads).toEqual(['zero-wf']);
+    expect(out.staleSerials).toEqual(['S-STALE']);
+    expect(bark).toHaveBeenCalledTimes(2);
+    const wm = await client.query(`SELECT value_json FROM working_memory WHERE key = 'workflow_trend_bark:last_day'`);
+    expect(wm.rows[0].value_json.day).toBe(out.day);
+    expect(await runWorkflowTrendBark(client, { bark, now, windowOverride: true })).toMatchObject({ skipped: 'already_today' });
+  });
+
+  it('设备成功批恰好 24h 不叫，超过 1ms 才叫；近期无批设备不叫', async () => {
+    await client.query(`INSERT INTO phone_registry (serial, nickname, host, profile, enabled) VALUES
+      ('S-EXACT', '整点', 'xian-m4', 'p', true), ('S-OVER', '超时', 'xian-m4', 'p', true),
+      ('S-NONE', '无批', 'xian-m4', 'p', true)`);
+    const { rows: [clock] } = await client.query('SELECT NOW() AS actual');
+    const now = clock.actual.getTime();
+    await insertCompletedAt('S-EXACT', now - 24 * 3600e3);
+    await insertCompletedAt('S-OVER', now - 24 * 3600e3 - 1);
+    const bark = vi.fn().mockResolvedValue(true);
+    const out = await runWorkflowTrendBark(client, { bark, now, windowOverride: true });
+    expect(out.staleSerials).toEqual(['S-OVER']);
+    expect(out.zeroLeads).toEqual([]);
+    expect(bark).toHaveBeenCalledTimes(1);
   });
 });
