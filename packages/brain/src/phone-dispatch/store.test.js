@@ -16,6 +16,16 @@ let store;
 const snapshot=()=>({verified:true,machine,captured_at:Date.now(),expires_at:Date.now()+30_000,capacity:{ok:true,available:1,physical_base_slots:8,effective_base_slots:8}});
 async function input(){const taskId=randomUUID();await pool.query("INSERT INTO tasks(id,status,task_type,executor_kind) VALUES($1,'queued','device_job','phone-ssh-controller')",[taskId]);return {taskId,machineId:machine,host,serial,profileId:profile,account,capacitySnapshot:snapshot(),remoteIdentity:{worker_id:'remote-phone-worker',worker_boot_id:'remote-boot'}};}
 const receipt=(r,extras={})=>({authenticated:true,receipt:{dispatch_id:r.id,...Object.fromEntries(['reservation_id','task_id','machine_id','host','serial','profile','account_id','execution_version_id','execution_grant_id','lease_token','execution_id','worker_id','worker_boot_id','action','config_digest'].map(k=>[k,r[k]])),status:'completed',execution_exited:true,lock_released:true,lock_owner:r.lease_token,...extras}});
+it('HTTP binding迁移不补写既有507 lease，不创建grant或改当前节点',async()=>{
+ const {dispatch:r}=await store.reserve(await input());
+ const before=(await pool.query('SELECT * FROM phone_dispatches WHERE id=$1',[r.id])).rows[0];
+ const grants=(await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows;
+ const nodes=(await pool.query('SELECT * FROM execution_nodes ORDER BY canonical_id')).rows;
+ await pool.query(readFileSync(new URL('../../migrations/509_phone_http_bindings.sql',import.meta.url),'utf8'));
+ expect((await pool.query('SELECT * FROM phone_dispatches WHERE id=$1',[r.id])).rows[0]).toEqual(before);
+ expect((await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows).toEqual(grants);
+ expect((await pool.query('SELECT * FROM execution_nodes ORDER BY canonical_id')).rows).toEqual(nodes);
+});
 beforeAll(async()=>{
  await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
  await pool.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');

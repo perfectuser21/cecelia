@@ -19,6 +19,11 @@ it('默认缺凭据／假binding以及执行三方法零network',async()=>{
   const client=createPhoneHttpClient({token});for(const op of ['start','inspect','cancel'])await expect(client[op](b)).rejects.toThrow('phone_runtime_not_connected');expect(calls).toBe(0);
  });
 });
+it('真实Hub新签名不能把物理旧采样时间刷新成新鲜观测',async()=>{
+ const {createPhoneHubServer}=createRequire(import.meta.url)('../../scripts/phone-hub/service.cjs'),e=endpoint();
+ const hub=createPhoneHubServer({token,identity:{hub_id:e.hub_id,boot_id:e.hub_boot_id,build_digest:e.hub_build_digest,config_digest:e.hub_config_digest,http_endpoint:e.http_endpoint,hub_process_identity:{pid:123,boot_id:e.hub_boot_id,start_time:'fixture-start',pgid:123,state:'S'}},capabilities:async()=>({...physical(),observed_at:new Date(Date.now()-60000).toISOString()}),maintenance:async()=>({})});
+ await serverFixture((req,res)=>hub.emit('request',req,res),async()=>{await expect(createPhoneHttpClient({token}).capabilities(await binding())).rejects.toThrow('phone_http_unconfirmed');});
+});
 it('chunked超限、重定向、坏JSON与nonce替换真实HTTP拒绝且不跟随',async()=>{
  for(const kind of ['redirect','oversize','bad-json','nonce']){
   let calls=0;await serverFixture((req,res)=>{calls++;let raw='';req.on('data',c=>raw+=c);req.on('end',()=>{

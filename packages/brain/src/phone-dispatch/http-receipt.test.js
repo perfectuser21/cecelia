@@ -19,7 +19,7 @@ it('签名、nonce、完整Hub/physical身份、schema和时间逐项拒绝',asy
 it('资源未知、counter/marker矛盾不验过；本地scope不能证明全部MMV静止',async()=>{
  const b=await binding(),nonce=randomUUID(),r=wire('capabilities',nonce),opts={binding:b,token,nonce,operation:'capabilities'};
  for(const patch of [{resources:{}},{external_locks:{occupied:1}},{maintenance:{...r.maintenance,quiescent:true}},{resources:{...r.resources,cpu_count:0}}])expect(()=>verifyPhoneHubReceipt(signed({...r,...patch}),opts)).toThrow();
- const m=wire('maintenance',nonce);expect(verifyPhoneHubReceipt(signed(m),{...opts,operation:'maintenance'}).proof_scope).toBe('hub-control');
+ const m=wire('maintenance',nonce);expect(verifyPhoneHubReceipt(signed(m),{...opts,operation:'maintenance'})).toMatchObject({proof_scope:'hub-control',assurance:'hub_control_only'});
  const unknown={...m,pending:null,stable:false,quiescent:false,targets:[{machine_id:b.physical.machine_id,status:'unknown'}]};
  expect(verifyPhoneHubReceipt(signed(unknown),{...opts,operation:'maintenance'}).pending).toBe(null);
  for(const patch of [{pending:0},{stable:true},{quiescent:true},{proof_scope:'all-mmv'},{targets:[]}])expect(()=>verifyPhoneHubReceipt(signed({...unknown,...patch}),{...opts,operation:'maintenance'})).toThrow();

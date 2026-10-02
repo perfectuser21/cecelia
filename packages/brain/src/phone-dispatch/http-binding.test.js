@@ -18,7 +18,7 @@ it('缺boot/hash/物理身份、多余键和非固定HTTP入口拒绝',()=>{
 it('旧版本精确查询；错误machine、缺端点、callerURL和env不替代目录',async()=>{
  const n=node();process.env.PHONE_HUB_URL='http://evil:3459/';
  try{
-  for(const rows of [[],[{...n,canonical_id:'foreign'}],[{...n,endpoints:{worker:'http://old:5231/',phone_ssh:{host:'old'}}}]])await expect(resolvePhoneHubBinding({query:async()=>({rows})},{executionVersionId:n.id,machineId:n.canonical_id})).rejects.toThrow('phone_http_binding_unavailable');
+  for(const rows of [[],[{...n,canonical_id:'foreign'}],[{...n,worker_id:'foreign'}],[{...n,worker_boot_id:'foreign'}],[{...n,endpoints:{worker:'http://old:5231/',phone_ssh:{host:'old'}}}]])await expect(resolvePhoneHubBinding({query:async()=>({rows})},{executionVersionId:n.id,machineId:n.canonical_id})).rejects.toThrow('phone_http_binding_unavailable');
   await expect(resolvePhoneHubBinding({query:async()=>{throw Error('should not query');}},{executionVersionId:n.id,machineId:n.canonical_id,url:'http://evil:3459/'})).rejects.toThrow('phone_http_binding_invalid');
  }finally{delete process.env.PHONE_HUB_URL;}
 });
