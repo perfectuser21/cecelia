@@ -8,7 +8,7 @@ vi.mock('pg',()=>({default:{Client:class{
 }}}));
 import {versionsDatabase} from './definition-versions-db.js';
 beforeEach(()=>{state.config.database='cecelia_scratch';state.config.host='/tmp';state.queries=[];state.connects=0;state.ends=0;state.fail=false;vi.unstubAllEnvs();vi.stubEnv('CI','');});
-it.each([['other_test','true'],['cecelia_test',''],['cecelia','true'],['cecelia_scratch','fake']])('unsafe target %s/CI=%s is rejected before any connect',async(database,ci)=>{
+it.each([['other_test','true'],['cecelia_test',''],['cecelia','true'],['cecelia_scratch','fake'],['cecelia_scratch','false'],['cecelia_scratch','1']])('unsafe target %s/CI=%s is rejected before any connect',async(database,ci)=>{
  state.config.database=database;vi.stubEnv('CI',ci);if(database==='cecelia_scratch')state.config.host='localhost';
  await expect(versionsDatabase()).rejects.toThrow();expect(state.connects).toBe(0);expect(state.queries).toEqual([]);
 });
