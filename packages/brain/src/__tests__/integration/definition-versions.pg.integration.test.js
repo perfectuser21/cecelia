@@ -74,4 +74,20 @@ describe('不可变能力定义版本',()=>{
     for(const row of original)expect((await db.query('SELECT * FROM activity_definition_versions WHERE id=$1',[row.id])).rows[0]).toEqual(row);
   });
 
+  it('历史快照保存引用UUID与Step身份/未注册locator；数据库拒绝错配引用版本',async()=>{
+    await fixture.migrate();const f=contractsFixture();await syncActivityContracts(db,f);
+    const a=(await db.query("SELECT id FROM journey_steps WHERE activity_key='preflight'")).rows[0];const step=randomUUID();
+    await db.query(`INSERT INTO steps(id,activity_id,step_order,key,activity_key) VALUES($1,$2,1,'preflight_step','preflight')`,[step,a.id]);
+    await syncActivityContracts(db,f);
+    const av=(await db.query('SELECT v.* FROM journey_steps a JOIN activity_definition_versions v ON v.id=a.current_definition_version_id WHERE a.id=$1',[a.id])).rows[0];
+    expect(av.payload.steps).toHaveLength(1);
+    expect(av.payload.steps[0]).toMatchObject({step_id:step,locator:{activity_id:a.id,step_key:'preflight_step'}});
+    const wv=(await db.query('SELECT v.* FROM workflows w JOIN workflow_definition_versions v ON v.id=w.current_definition_version_id WHERE w.id=$1',[ids.keyword])).rows[0];
+    expect(wv.payload.activities.every(r=>r.reference_id)).toBe(true);
+    const refs=(await db.query('SELECT * FROM workflow_activity_refs WHERE active ORDER BY workflow_id,sequence_no')).rows;
+    const other=refs.find(r=>r.activity_id!==a.id);
+    await expect(db.query('UPDATE workflow_activity_refs SET activity_definition_version_id=$1 WHERE id=$2',[av.id,other.id])).rejects.toThrow();
+    await expect(db.query(`INSERT INTO workflow_definition_versions(workflow_id,payload,payload_sha256,contract_sha256,source_repo,source_path,source_commit) VALUES($1,$2,$3,$3,'org/repo','file',$4)`,[ids.keyword,{activities:[{activity_id:other.activity_id,activity_version_id:av.id}]},'e'.repeat(64),'a'.repeat(40)])).rejects.toThrow('对象错配');
+  });
+
 });
