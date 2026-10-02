@@ -133,7 +133,7 @@ it('启动失败但精确清理已签名确认时仅归档旧canary并重读安�
  r.cases=r.cases.map(({proof,terminal,...c})=>({...c,not_started:false}));const envelope={receipt:r,signature:createHmac('sha256',f.deployment.key).update(JSON.stringify(r)).digest('hex')};
  await expect(service.activate(machine,{runtime_id:p.id,expected_version_id:null,envelope})).rejects.toThrow('linux_pool_runtime_receipt_invalid');
  const recover=createOnboardingRecovery({pool,runtimeAuthorization:service,readRuntime:async()=>f.deployment,afterTerminal:async()=>{}});
- expect(await recover('script',machine,{runtime_json:JSON.stringify(p),expected_version_id:null},envelope)).toEqual({phase:'renew_wait',expected_version_id:null});
+ expect(await recover('script',machine,{runtime_json:JSON.stringify(p),expected_version_id:null},envelope)).toEqual({phase:'renew_wait',expected_version_id:null,last_cleanup_runtime_id:p.id});
  expect((await pool.query('SELECT status FROM tasks WHERE id=$1',[p.evidence_task_id])).rows[0].status).toBe('archived');
  expect((await pool.query('SELECT state FROM execution_grants WHERE node_version_id=$1',[p.execution_version_id])).rows.every(g=>g.state==='revoked')).toBe(true);
 });
