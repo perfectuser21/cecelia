@@ -10,13 +10,21 @@ import { contractsFixture } from '../fixtures/shared-activity-contracts.js';
 import { syncActivityContracts } from '../../activity-contract-sync.js';
 import { exportImplementationSnapshot } from '../../lib/implementation-ci-snapshot.js';
 import {digestMapManifest} from '../../lib/map-manifest-schema.js';
+import {randomUUID} from 'node:crypto';
 let fixture,root,out;
 afterEach(async()=>{await fixture?.close();fixture=null;if(root)rmSync(root,{recursive:true,force:true});if(out)rmSync(out,{recursive:true,force:true});});
 async function completeFixtureMap(f){
-  for(const row of (await f.db.query('SELECT id,manifest FROM map_manifest_versions')).rows){
-    const manifest={...row.manifest,boundaries:[],crosscut_pool:[]};
+  for(const row of (await f.db.query("SELECT id,scope_key,manifest FROM map_manifest_versions WHERE status='active'")).rows){
+    const id=randomUUID(),decision=randomUUID();
+    const manifest={...row.manifest,source_decision_id:decision,boundaries:[],crosscut_pool:[]};
     for(const node of [...manifest.value_streams,...manifest.capabilities])node.name=node.key;
-    await f.db.query('UPDATE map_manifest_versions SET manifest=$2 WHERE id=$1',[row.id,manifest]);
+    const digest=digestMapManifest(manifest);
+    const version=(await f.db.query('SELECT COALESCE(max(version),0)+1 next FROM map_manifest_versions WHERE scope_key=$1',[row.scope_key])).rows[0].next;
+    await f.db.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','map','完整CLI种子版本','active')",[decision]);
+    await f.db.query("UPDATE map_manifest_versions SET status='superseded' WHERE id=$1",[row.id]);
+    await f.db.query("INSERT INTO map_manifest_versions(id,scope_key,version,source_decision_id,manifest,digest,status,activated_at) VALUES($1,$2,$3,$4,$5,$6,'active',NOW())",[id,row.scope_key,version,decision,manifest,digest]);
+    // 种子在导出快照前完成；保留真实原projection/fact revision及节点，只换到完整新manifest。
+    await f.db.query('UPDATE map_projection_runs SET manifest_version_id=$2,manifest_digest=$3,projection_digest=$3 WHERE manifest_version_id=$1',[row.id,id,digest]);
   }
 }
 async function setup({contracts=false,assertionChange=false,generatedChange=false}={}){
@@ -108,8 +116,8 @@ it('main精确生成契约索引经digest核验后可归入消费者，保留中
   expect(report.head.definition_versions.workflows.map(w=>w.id).sort()).toEqual(h.definitions.workflows.map(w=>w.id).sort());
 });
 
-it('seedonly真实setup提交完整新map版本且两快照verified，不调用不安全CLI',async()=>{
- const {base,head,b,h}=await setup();
+it.each([{}, {contracts:true}, {assertionChange:true}, {contracts:true,generatedChange:true}])('seedonly真实setup提交完整新map版本且两快照verified，不调用不安全CLI %j',async options=>{
+ const {base,head,b,h}=await setup(options);
  expect(b.status,JSON.stringify(b.gaps)).toBe('verified');expect(h.status,JSON.stringify(h.gaps)).toBe('verified');
  expect(b.gaps).toEqual([]);expect(h.gaps).toEqual([]);expect(b.revision).toBe(base);expect(h.revision).toBe(head);
  const rows=(await fixture.db.query('SELECT * FROM map_manifest_versions ORDER BY version')).rows;

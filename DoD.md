@@ -106,3 +106,6 @@
 
 - [x] [BEHAVIOR] phonrunnerinfra 真实smoke直接执行固定SSH client身份/protocol与Python永久回归，仅自有临时进程、锁和socketfixture；生产资源/HTTP activation仍拒绝，不连接DB、API、设备或既有5037。
   Test: manual:bash packages/brain/scripts/smoke/phone-runner-infra-smoke.sh
+
+- [x] [BEHAVIOR] cliseed 真实privatePG与Git设置链在完整402不可变约束下以新decision/manifest版本及对应projection生成base/head verified快照，历史内容不UPDATE；本地只验证seed-only，完整CLI仍由正式CI执行。
+  Test: manual:bash -c 'export DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL=""; if [ "${CI:-}" != true ]; then export DB_HOST="${DB_HOST:-/tmp}"; fi; cd packages/brain && node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/implementation-ci-cli.pg.integration.test.js -t seedonly --maxWorkers=1 --minWorkers=1'
