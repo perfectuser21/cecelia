@@ -140,11 +140,14 @@ async function upgradeFixture(){
  x.put('/proc/101/cmdline','/usr/local/libexec/cecelia/toolchain/bin/node\0/usr/local/libexec/cecelia/fleet-worker/linux-script-service.cjs\0');
  x.put('/proc/102/cmdline','/usr/local/libexec/cecelia/toolchain/bin/node\0/usr/local/libexec/cecelia/fleet-worker/linux-pool-server.cjs\0');
  x.deps.statfs=()=>({type:0x63677270});
- const run=x.deps.runCommand;x.deps.runCommand=async(c,a)=>{
+ const run=x.deps.runCommand,stopped=new Set();x.deps.runCommand=async(c,a)=>{
+  if(c==='/usr/bin/systemctl'&&a[0]==='stop')stopped.add(a[1]);
+  if(c==='/usr/bin/systemctl'&&a[0]==='start')stopped.delete(a[1]);
   if(c==='/usr/bin/docker'&&a[0]==='ps'){x.calls.push([c,a]);return {stdout:''};}
   if(c==='/usr/bin/systemctl'&&a[0]==='show'&&!a.includes('--property=DropInPaths')){
    x.calls.push([c,a]);const unit=a.at(-1);
    if(a.includes('--property=ActiveState'))return {stdout:'active\n'};
+   if(a.includes('--property=ActiveState,MainPID'))return {stdout:stopped.has(unit)?'ActiveState=inactive\nMainPID=0\n':'ActiveState=active\nMainPID=101\n'};
    if(a.includes('--property=FragmentPath,NeedDaemonReload,MainPID'))return {stdout:`FragmentPath=/etc/systemd/system/${unit}\nNeedDaemonReload=no\nMainPID=${unit==='cecelia-linux-script.service'?101:102}\n`};
    return {stdout:'LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n'};
   }

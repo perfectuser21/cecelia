@@ -6,6 +6,7 @@ const {execFile}=require('node:child_process');
 const {promisify}=require('node:util');
 const {randomUUID,createHash,timingSafeEqual}=require('node:crypto');
 const {validateLinuxPoolProfile,renderLinuxUnits}=require('./linux-pool-profile.cjs');
+const {parseCpuMax}=require('./linux-cgroup.cjs');
 const FILES=Object.freeze(['linux-pool-canary.cjs','linux-pool-profile.cjs','linux-pool-proof.cjs','linux-pool-server.cjs','linux-resource-probe.cjs','linux-cgroup.cjs']);
 const SERVICE='cecelia-linux-pool.service';
 const BRIDGE='cecelia-linux-script.service';
@@ -86,6 +87,9 @@ async function installLinuxPool(options,deps={}) {
     ||fs.readdirSync(target,{withFileTypes:true}).some(x=>x.isDirectory()||x.isSymbolicLink())||pseudo(cg+'/cgroup.procs').trim())upgradeFail();
    const events=pseudo(cg+'/cgroup.events').trim().split('\n');
    if(events.length!==2||!events.includes('populated 0')||!events.includes('frozen 0'))upgradeFail();
+   if(parseCpuMax(pseudo(cg+'/cpu.max'),2)!==profile.pool.cpu_cores
+    ||pseudo(cg+'/memory.max').trim()!==String(profile.pool.memory_bytes)||pseudo(cg+'/memory.swap.max').trim()!=='0'
+    ||pseudo(cg+'/pids.max').trim()!==String(profile.pool.pids_limit))upgradeFail();
    if(String((await run('/usr/bin/docker',['ps','--filter','label=cecelia.script.machine_id='+profile.machine_id,'--format','{{.ID}}'])).stdout).trim())upgradeFail();
    const stateRoot='/var/lib/cecelia/script-runtime',directory=real(stateRoot);secureParents(path.join(directory,'entry'));
    const stateStat=fs.lstatSync(directory);if(!stateStat.isDirectory()||stateStat.isSymbolicLink()||stateStat.uid!==rootUid||(stateStat.mode&0o777)!==0o700)upgradeFail();
@@ -94,6 +98,10 @@ async function installLinuxPool(options,deps={}) {
     const journal=JSON.parse(readFile(stateRoot+'/'+match[1]+'/'+match[1]+'.json',{mode:0o600,max:65536}).data);
     if(journal.status!=='cleaned')upgradeFail();
     if(match[2]){const record=JSON.parse(readFile(stateRoot+'/'+entry,{mode:0o600,max:65536}).data);if(record.identity?.machine_id!==profile.machine_id||record.identity?.reservation_id!==match[1])upgradeFail();}
+   }
+   if(!installed)for(const name of services){
+    const stopped=Object.fromEntries(String((await systemctl(['show','--property=ActiveState,MainPID',name])).stdout).trim().split('\n').map(line=>line.split('=')));
+    if(stopped.ActiveState!=='inactive'||stopped.MainPID!=='0')upgradeFail();
    }
    if(installed){
     if(readFile('/usr/local/libexec/cecelia/fleet-worker/revision',{mode:0o644}).data.toString().trim()!==upgrade.revision
@@ -162,7 +170,7 @@ async function installLinuxPool(options,deps={}) {
    {name:'/etc/systemd/system/'+BRIDGE,data:Buffer.from(SCRIPT_UNIT),mode:0o644,uid:rootUid,gid:rootGid},
   ]:[]),
  ];
- const createdDirs=[],enableAttempted=new Set(),startAttempted=new Set();let lockFd,lockStat,stage,mutated=false;
+ const createdDirs=[],enableAttempted=new Set(),startAttempted=new Set();let lockFd,lockStat,stage,mutated=false,uncertain=false;
  const lock='/run/cecelia/linux-pool.install.lock',originals=new Map();
  function mkdir(name){
   const target=real(name);if(fs.existsSync(target)){const s=fs.lstatSync(target);if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==rootUid||(s.mode&0o022))fail('linux_pool_install_untrusted_path');return;}
@@ -184,7 +192,7 @@ async function installLinuxPool(options,deps={}) {
   for(const entry of entries){mkdir(path.dirname(entry.name));let snapshot=null;try{snapshot=readFile(entry.name,{owner:entry.uid,mode:entry.mode,max:134217728});}catch(error){if(error.code!=='ENOENT')throw error;}originals.set(entry.name,snapshot);}
   mkdir('/var/lib/cecelia/fleet-install');stage=real('/var/lib/cecelia/fleet-install/txn-'+randomUUID());fs.mkdirSync(stage,{mode:0o700});
   for(const[name,snapshot]of originals){if(snapshot){const target=path.join(stage,String([...originals.keys()].indexOf(name)));const fd=fs.openSync(target,'wx',0o600);try{fs.writeFileSync(fd,snapshot.data);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}}}syncDir(stage);
-  const manifest={schema_version:1,prior,entries:[...originals].map(([name,snapshot],index)=>({name,backup:snapshot?String(index):null,...(snapshot?{mode:snapshot.mode,uid:snapshot.uid,gid:snapshot.gid}:{})}))};
+  const manifest={schema_version:1,prior,...(upgrade?{upgrade_intent_id:upgrade.intent_id}:{}),entries:[...originals].map(([name,snapshot],index)=>({name,backup:snapshot?String(index):null,...(snapshot?{mode:snapshot.mode,uid:snapshot.uid,gid:snapshot.gid}:{})}))};
   const manifestFd=fs.openSync(path.join(stage,'manifest.json'),'wx',0o600);try{fs.writeFileSync(manifestFd,JSON.stringify(manifest));fs.fsyncSync(manifestFd);}finally{fs.closeSync(manifestFd);}syncDir(stage);
   await idle();
   mutated=true;for(const name of [...services].reverse())if(prior[name].active)await systemctl(['stop',name]);
@@ -202,13 +210,13 @@ async function installLinuxPool(options,deps={}) {
     for(const name of [...services].reverse())if(enableAttempted.has(name)&&!prior[name].enabled)await systemctl(['disable',name]);
     for(const[name,snapshot]of originals){if(snapshot)publish({name,...snapshot});else {try{fs.unlinkSync(real(name));syncDir(path.dirname(real(name)));}catch(e){if(e.code!=='ENOENT')throw e;}}}
     await systemctl(['daemon-reload']);for(const name of services){if(prior[name].enabled)await systemctl(['enable',name]);if(prior[name].active)await systemctl(['start',name]);}
-   }catch{stage=null;fail('linux_pool_install_rollback_failed');}
+   }catch{stage=null;uncertain=true;fail('linux_pool_install_rollback_failed');}
    fail('linux_pool_install_failed');
   }
   if(error.message?.startsWith('linux_'))throw error;fail('linux_pool_install_failed');
  }finally{
   if(stage)fs.rmSync(stage,{recursive:true,force:true});
-  if(lockFd!==undefined){fs.closeSync(lockFd);const current=fs.lstatSync(real(lock));if(current.dev===lockStat.dev&&current.ino===lockStat.ino)fs.unlinkSync(real(lock));}
+  if(lockFd!==undefined){fs.closeSync(lockFd);const current=fs.lstatSync(real(lock));if(!uncertain&&current.dev===lockStat.dev&&current.ino===lockStat.ino)fs.unlinkSync(real(lock));}
   for(const dir of createdDirs.reverse()){try{fs.rmdirSync(dir);}catch(error){if(!['ENOTEMPTY','EEXIST','ENOENT'].includes(error.code))throw error;}}
  }
 }
