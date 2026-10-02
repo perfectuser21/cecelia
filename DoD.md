@@ -3,6 +3,11 @@
   Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/routes/__tests__/task-mutation-rate-limit.test.js src/routes/__tests__/task-task-patch.test.js src/routes/__tests__/task-headed-takeover.test.js src/routes/__tests__/headed-patch-transaction.test.js src/lib/__tests__/headed-task-owner.test.js src/routes/__tests__/tasks-result-backfill.test.js src/routes/__tests__/tasks-completed-gate.test.js --maxWorkers=1 --minWorkers=1"
 
 
+- [x] [BEHAVIOR] OpenClaw 创建/更新 workflow 按六活动推进，重试幂等，未验收不能登记，任务回执保留。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/workflow-authoring --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] 登记真实落库并回读身份与顺序，版本冲突、共享活动变化和失败事务不覆盖已有流程。
+  Test: manual:bash -c "cd packages/brain && npx vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-authoring.pg.integration.test.js --maxWorkers=1 --minWorkers=1"
+
 - [x] [BEHAVIOR] 显式受鉴权入口追加收据、签发Controller、保留失败事实；旧入口与无显式请求仍拒绝。
   Test: manual:bash -c "npx vitest run tests/gp/f1/step1-controlled-recovery.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] Map/Git/活跃身份改变即拒绝，旧恢复保护保持。
@@ -37,3 +42,6 @@
 
 - [x] [BEHAVIOR] 退役隔离验收：原守卫核DB、锁空连接串后运行唯一真实PG入口；私有API建单/GET、真实路由收据与dispatch/terminal/selector查退役事实；测试内allow/full/unknown/drain/billing保持原闸、普通邻居不变且零执行；本地仅scratch、CI仅test。覆盖范围不包含共享全局tick整轮。
   Test: manual:bash -c 'node --test packages/quality/tests/retire-harness-planner-smoke.node-test.mjs && cd packages/brain && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js --maxWorkers=1 --minWorkers=1'
+
+- [x] [BEHAVIOR] headed-authoring 集成：真实回执先核保留结果与authoring完成，再核有头owner，两读失败均不入队；原四次INSERT重试、普通PATCH与有头提交后交接保持，真实隔离数据库登记与共享活动均保留。
+  Test: manual:bash -c 'cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/workflow-authoring/task-guard.test.js src/routes/__tests__/execution-headed-callback-owner.test.js ../../tests/integration/execution-callback-await.test.js --maxWorkers=1 --minWorkers=1 && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/headed-takeover.pg.integration.test.js src/__tests__/integration/workflow-authoring.pg.integration.test.js src/__tests__/integration/shared-activities.pg.integration.test.js --maxWorkers=1 --minWorkers=1'

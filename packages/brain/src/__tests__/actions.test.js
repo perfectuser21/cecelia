@@ -552,7 +552,7 @@ describe('actions.js', () => {
   describe('updateTask', () => {
     it('正常更新 status', async () => {
       const fakeTask = { id: 'task-upd', status: 'completed' };
-      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [fakeTask] });
 
       const result = await updateTask({
         task_id: 'task-upd',
@@ -578,7 +578,7 @@ describe('actions.js', () => {
 
     it('同时更新 status 和 priority', async () => {
       const fakeTask = { id: 'task-both', status: 'completed', priority: 'P0' };
-      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [fakeTask] });
 
       const result = await updateTask({
         task_id: 'task-both',
@@ -596,7 +596,7 @@ describe('actions.js', () => {
     });
 
     it('任务不存在返回失败', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [] });
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
 
       const result = await updateTask({
         task_id: 'task-404',
@@ -636,14 +636,14 @@ describe('actions.js', () => {
 
     it('completed 状态设置 completed_at', async () => {
       const fakeTask = { id: 'task-comp', status: 'completed' };
-      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [fakeTask] });
 
       await updateTask({
         task_id: 'task-comp',
         status: 'completed',
       });
 
-      const sql = mockQuery.mock.calls[0][0];
+      const sql = mockQuery.mock.calls.find(([query]) => /UPDATE tasks/.test(query))[0];
       expect(sql).toContain('completed_at = NOW()');
     });
 
@@ -696,11 +696,11 @@ describe('actions.js', () => {
 
     it('转 in_progress / completed 不受终态守卫影响', async () => {
       const fakeTask = { id: 'task-c', status: 'completed' };
-      mockQuery.mockResolvedValueOnce({ rows: [fakeTask] });
+      mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [fakeTask] });
 
       await updateTask({ task_id: 'task-c', status: 'completed' });
 
-      const sql = mockQuery.mock.calls[0][0];
+      const sql = mockQuery.mock.calls.find(([query]) => /UPDATE tasks/.test(query))[0];
       expect(sql).not.toContain(`status NOT IN`);
     });
   });

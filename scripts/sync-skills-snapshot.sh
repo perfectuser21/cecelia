@@ -34,6 +34,7 @@ SKILLS=(
   capability-proposer
   capability-reviewer
   capability-mapper
+  workflow-authoring
 )
 
 if [[ ! -d "$SSOT_DIR" ]]; then
@@ -63,6 +64,12 @@ for skill in "${SKILLS[@]}"; do
   fi
 
   cp "$src" "$dest"
+  if [[ "$skill" == "workflow-authoring" ]]; then
+    # OpenClaw 调用器随 skill 真身同步；快照中的脚本用于 Brain 契约验收。
+    mkdir -p "$DEST_DIR/$skill/scripts"
+    cp "$SSOT_DIR/$skill/scripts/client.mjs" "$DEST_DIR/$skill/scripts/client.mjs"
+    cp "$SSOT_DIR/$skill/scripts/self-definition.mjs" "$DEST_DIR/$skill/scripts/self-definition.mjs"
+  fi
   echo "  ✓ $skill  (+${added} / -${removed} 行)"
   synced=$((synced + 1))
 done
