@@ -3,11 +3,11 @@ import { mkdir, copyFile, writeFile, rename, lstat, symlink } from 'node:fs/prom
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const source = dirname(fileURLToPath(import.meta.url));
-const destination = process.argv[2] || join(homedir(), '.local/share/cecelia/commander-runtime');
+const destination = resolve(process.argv[2] || join(homedir(), '.local/share/cecelia/commander-runtime'));
 const files = ['scripts/commander-aftercare.mjs', 'src/commander-aftercare.js'];
 await mkdir(dirname(destination), { recursive: true });
 try {
