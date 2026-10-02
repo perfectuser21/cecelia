@@ -19,7 +19,7 @@ beforeEach(async () => {
   client = new pg.Client(DB_DEFAULTS); await client.connect();
   schema = `shared_activity_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['schema_version','journeys','workflows','journey_steps','steps','spans','ops_agents','ops_workflows','tasks','task_runs'])
+  for (const table of ['enablers','enabler_calls','schema_version','journeys','workflows','journey_steps','steps','spans','ops_agents','ops_workflows','tasks','task_runs'])
     await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
   await client.query(`SET search_path TO ${schema}`);
   db = { query: client.query.bind(client), connect: async () => ({ query: client.query.bind(client), release() {} }) }; holder.db = db;
@@ -106,6 +106,19 @@ describe('共享活动真实数据库合同', () => {
     await client.query(`INSERT INTO spans(run_id,activity_id,workflow_id,started_at,executor_kind) VALUES('own',$1,$2,now(),'code')`,[activity,benchmark]);
     const expected=(await client.query('SELECT parent_journey_id FROM journeys WHERE id=$1',[capBenchmark])).rows[0].parent_journey_id;
     expect((await client.query('SELECT value_stream_id FROM activity_flow_metrics WHERE activity_id=$1',[activity])).rows[0].value_stream_id).toBe(expected);
+  });
+
+  it('部分旧步骤不遮盖契约；共享组件包含Activity及Step调用',async()=>{
+    await migrate(); await syncActivityContracts(db,contractsFixture());
+    const step=randomUUID(), enabler=randomUUID();
+    await client.query(`INSERT INTO steps(id,activity_id,step_order,key,activity_key,readback) VALUES($1,$2,1,'preflight_step','preflight','{"name":"旧名"}')`,[step,legacy[0]]);
+    await client.query(`UPDATE journey_steps SET contract=jsonb_set(contract,'{steps}',contract->'steps'||'[{"key":"second","order":2,"name":"新增步骤"}]'::jsonb) WHERE id=$1`,[legacy[0]]);
+    await client.query(`INSERT INTO enablers(id,key,name,kind) VALUES($1,'shared','共享组件','code')`,[enabler]);
+    await client.query(`INSERT INTO enabler_calls(caller_type,caller_id,enabler_id) VALUES('activity',$1,$3),('step',$2,$3)`,[legacy[0],step,enabler]);
+    const app=express();app.use('/api/brain',routes);
+    const result=await request(app).get(`/api/brain/workflows/${benchmark}`), activity=result.body.workflow.activities[0];
+    expect(activity.steps).toHaveLength(2);expect(activity.steps[0].id).toBe(step);
+    expect(activity.shared_components.map(c=>c.caller_type).sort()).toEqual(['activity','step']);
   });
 
 });
