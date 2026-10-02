@@ -26,7 +26,9 @@ it('skipped需原因和分支证据，不能用静态步骤补造通过',()=>{
   const rows=[span(),span({step_id:'step',outcome:'skipped',evidence:{skip_reason:'无需操作'}})];
   expect(reconcile(rows).evidence_status).toBe('incomplete');
   rows[1].evidence.branch_evidence={condition:'empty-input',observed:true};
-  const r=reconcile(rows);expect(r.evidence_status).toBe('verified');expect(r.business_outcome).toBe('skipped');
+  expect(reconcile(rows).evidence_status).toBe('incomplete');
+  const optional=structuredClone(context);optional.binding.expected_path[1].required=false;
+  const r=reconcile(rows,{context:optional});expect(r.evidence_status).toBe('verified');expect(r.business_outcome).toBe('skipped');
 });
 it('旧生命周期success不掩盖丢失Span，存在冲突须显式报告',()=>{
   const r=reconcile([span({outcome:'fail'})],{task_run:{status:'success'}});expect(r.business_outcome).toBe('fail');expect(r.gaps).toContainEqual(expect.objectContaining({code:'LIFECYCLE_OUTCOME_CONFLICT'}));
