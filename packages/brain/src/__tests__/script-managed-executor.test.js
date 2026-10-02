@@ -1,7 +1,16 @@
 import {describe,expect,it,vi} from 'vitest';
 import {usesManagedScript,prepareManagedScript,triggerManagedScript} from '../script-managed-executor.js';
+import {randomUUID} from 'node:crypto';
 const host='us-mac-m4';
 describe('受管模式显式启用边界',()=>{
+  it.each(['version','boot','policy','profile'])('Linux能力与fresh预约快照混%s代时零数据库预约',async kind=>{
+    const capability={execution_version_id:randomUUID(),worker_id:host,worker_boot_id:randomUUID(),policy_digest:'a'.repeat(64),profiles:{safe:'b'.repeat(64)}};
+    const snapshot={execution_version_id:capability.execution_version_id,worker_boot_id:capability.worker_boot_id,policy_digest:capability.policy_digest,profile_digest:capability.profiles.safe};
+    if(kind==='version')snapshot.execution_version_id=randomUUID();if(kind==='boot')snapshot.worker_boot_id=randomUUID();if(kind==='policy')snapshot.policy_digest='c'.repeat(64);if(kind==='profile')snapshot.profile_digest='d'.repeat(64);
+    const pool={connect:vi.fn(()=>{throw Error('must not reserve');})},deps={env:{SCRIPT_MANAGED_MACHINES:host},managed:{client:{capabilities:async()=>capability},collectSnapshot:async()=>snapshot}};
+    expect(await prepareManagedScript({id:randomUUID(),payload:{managed_script:{profile:'safe'}}},{host,artifact_paths:[],cmd:'printf ok',timeout_sec:20,env:{}},pool,deps)).toMatchObject({outcome:'wait',reason:'script_admission_changed'});
+    expect(pool.connect).not.toHaveBeenCalled();
+  });
   it('启用机上所有脚本进入共同入口，未声明profile不得退回SSH',async()=>{
     const task={payload:{}},deps={env:{SCRIPT_MANAGED_MACHINES:host}};
     expect(usesManagedScript(task,{host},deps)).toBe(true);
