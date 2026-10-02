@@ -141,3 +141,39 @@ it('持续回归换机账号变化时accountHome与预约快照同步变化',asy
  expect(last.accountId).toBe(second.target.account);expect(last.capacitySnapshot.account).toBe(second.target.account);
  }finally{await f.close();}
 });
+
+const unsupportedMachinePolicies = [
+ ['payload', 'machineId'], ['payload', 'preferred_machine'],
+ ...['machine', 'machineId', 'machine_id', 'requested_machine_id', 'executor_machine'].map(key => ['routing', key]),
+ ...['machineId', 'machine_id', 'requested_machine_id', 'executor_machine', 'preferred_machine'].map(key => ['roleAssignment', key]),
+];
+function machinePolicyPayload(location, key, value) {
+ const policy = {[key]: value};
+ return location === 'routing' ? {routing: policy}
+  : location === 'roleAssignment' ? {role_assignments: {planner: policy}} : policy;
+}
+it.each(unsupportedMachinePolicies.flatMap(([location, key]) => ['xian-mac-m1', null].map(value => [location, key, value])))
+ ('未支持的机器字段在工作区及预约副作用前拒绝：%s.%s=%s', async (location, key, value) => {
+ const f = await fixture(); try {
+  let resolved = 0;
+  const resolveWorkspace = f.deps.resolveWorkspaceSpec;
+  f.deps.resolveWorkspaceSpec = async args => { resolved++; return resolveWorkspace(args); };
+  const result = await f.dispatch(await f.context(machinePolicyPayload(location, key, value)));
+  expect(result).toMatchObject({control_status: 'BLOCKED', action: 'wait:human_review',
+   fallback_reason: 'unsupported_machine_policy', should_create_attempt: false, should_enter_generator_fix: false});
+  expect(resolved).toBe(0);
+  expect(f.calls).toHaveLength(0); expect(f.prepared).toHaveLength(0); expect(f.starts).toHaveLength(0);
+  expect((await f.pool.query('SELECT id FROM harness_attempts')).rows).toHaveLength(0);
+  expect((await f.pool.query('SELECT id FROM capacity_reservations')).rows).toHaveLength(0);
+ } finally { await f.close(); }
+});
+it.each([
+ ...['machine', 'machine_id', 'requested_machine_id', 'executor_machine'].map(key => ['payload', key]),
+ ['routing', 'preferred_machine'], ['roleAssignment', 'machine'],
+])('既有机器字段仍固定到M1：%s.%s', async (location, key) => {
+ const f = await fixture(); try {
+  expect((await f.dispatch(await f.context(machinePolicyPayload(location, key, 'xian-mac-m1')))).status).toBe('LAUNCHED');
+  expect(f.starts.map(start => start.target.machine)).toEqual(['xian-mac-m1']);
+  expect((await f.pool.query('SELECT machine_id FROM harness_attempts')).rows).toEqual([{machine_id: 'xian-mac-m1'}]);
+ } finally { await f.close(); }
+});
