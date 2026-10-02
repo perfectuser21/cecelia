@@ -51,6 +51,22 @@ describe('脚本收尾独立周期', () => {
     expect(SERIAL_JOBS.map(item => item.name)).not.toContain('node-onboarding');
   });
 
+  it('managed收割和Linux外部phase各自挂起，不阻塞legacy与observer收账', async () => {
+    const managed = job('managed-script-reaper');
+    const execution = job('node-execution-onboarding');
+    expect(managed).toBeDefined();
+    expect(execution).toBeDefined();
+    hang(managed); hang(execution);
+    startSchedulerJobsLoop(pool);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(managed.handler).toHaveBeenCalledTimes(1);
+    expect(execution.handler).toHaveBeenCalledTimes(1);
+    expect(job('script-reaper').handler).toHaveBeenCalledTimes(3);
+    expect(job('node-onboarding').handler).toHaveBeenCalledTimes(3);
+    expect(SERIAL_JOBS).not.toContain(managed);
+    expect(SERIAL_JOBS).not.toContain(execution);
+  });
+
   it('handler超时但尚未settle时保留互斥，实际结束后才允许下一轮', async () => {
     const reaper = job('script-reaper');
     reaper.timeoutMs = 100;
