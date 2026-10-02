@@ -9,7 +9,7 @@ const holder = vi.hoisted(() => ({ pool: null }));
 vi.mock('../../db.js', () => ({ default: { query: (...args) => holder.pool.query(...args), connect: (...args) => holder.pool.connect(...args) } }));
 import router from '../../routes/spans.js';
 let admin, pool, schema, app, activity, workflow;
-const migration = new URL('../../../migrations/513_span_occurrences.sql', import.meta.url);
+const migration = new URL('../../../migrations/514_span_occurrences.sql', import.meta.url);
 beforeEach(async () => {
   if (!(DB_DEFAULTS.database === 'cecelia_scratch' || (process.env.CI === 'true' && DB_DEFAULTS.database === 'cecelia_test'))) throw new Error('Span测试仅允许隔离scratch或CI测试库');
   if (!process.env.CI && DB_DEFAULTS.host !== '/tmp') throw new Error('本地Span测试只允许/tmp PostgreSQL');
