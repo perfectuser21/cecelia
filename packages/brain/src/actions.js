@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pool from './db.js';
 import { broadcastTaskState } from './task-updater.js';
 import { afterTerminalTransition, isTerminalStatus } from './lib/task-terminal.js';
+import { assertAuthoringCompletion } from './workflow-authoring/task-guard.js';
 import { detectDomain } from './domain-detector.js';
 import { getDomainRole } from './role-registry.js';
 import { createRoutedTask } from './work-routing-store.js';
@@ -299,6 +300,7 @@ async function createProject({ name, description, repo_path, repo_paths, kr_ids,
  * Update task status/priority
  */
 async function updateTask({ task_id, status, priority }) {
+  await assertAuthoringCompletion(pool, status, 'id = $1', [task_id]);
   const updates = [];
   const values = [];
   let idx = 1;
@@ -600,6 +602,8 @@ async function batchUpdateTasks({ filter, update }) {
     whereClause += ` AND project_id = $${idx++}`;
     values.push(filter.project_id);
   }
+
+  await assertAuthoringCompletion(pool, update.status, whereClause, values);
 
   // Build update
   const updates = [];

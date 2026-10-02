@@ -6,10 +6,11 @@
  * Notion：「Backbone Activities」镜子（notion_projection_map 登记，迁移 482），每行带「正本（只读·改请走 git）」链接。
  *
  * scheduler job backbone-contract-sync：60s 一轮调用，同步段 30min 自 gate（只读 GitHub API，us-vps 零执行不受影响）；
- * 仓库哈希没变不拉 YAML、不写库；变了按 (capability_key, activity_key) 写回，仓库删掉的活动标 deprecated（不删行）。
+ * 按显式登记工作流加载同commit所有契约与ref，验证digest后定义+使用关系单事务同步；无消费者旧活动标 deprecated。
  * 同步连续失败超 2h（副本落后真身）告 P1 一次，恢复即清。人在 Notion 手改镜子由 notion-projection-watch A8 抓。
  */
-import yaml from 'js-yaml';
+import { loadActivityContracts } from './lib/activity-contract-loader.js';
+import { storeActivityContracts, REGISTRATIONS_SQL } from './lib/activity-contract-store.js';
 import { raise } from './alerting.js';
 import { resolveGitHubToken } from './harness-credentials.js';
 import { notionReq as defaultNotionReq, getToken } from './recurring-notion-sync.js';
@@ -24,8 +25,6 @@ const STATE_KEY = 'activity_contract_sync';
 const HTTP_TIMEOUT_MS = 15_000;
 const RT_MAX = 1900;
 const SOURCE_COL = '正本（只读·改请走 git）';
-
-const contractPath = (cap) => `product-map/contracts/${cap}.yaml`;
 
 // ─── GitHub（只读）──────────────────────────────────────────────────────────
 
@@ -47,54 +46,14 @@ const fetchFile = (path, sha, d) => ghText(`contents/${path}?ref=${sha}`, 'appli
  * GitHub 任一请求失败直接抛错（调用方记滞后），此前不写库。
  */
 export async function syncActivityContracts(pool, { fetchFn = globalThis.fetch, resolveToken = resolveGitHubToken } = {}) {
+  // 在网络取HEAD之前固定数据库版本，避免慢请求拿旧HEAD覆盖先完成的新同步。
+  const registrations = (await pool.query(REGISTRATIONS_SQL,[CONTRACT_REPO])).rows;
   const d = { fetchFn, token: await resolveToken() };
   const head = await fetchHead(d);
   const digest = JSON.parse(await fetchFile(CONTRACTS_DIGEST_PATH, head, d));
-  const { rows } = await pool.query(
-    `SELECT id, journey_id, capability_key, activity_key, contract_sha256, status
-       FROM journey_steps WHERE capability_key IS NOT NULL AND activity_key IS NOT NULL`);
-  const out = { head_sha: head, updated: [], inserted: [], deprecated: [], unmapped: [] };
-
-  const byCap = new Map();
-  for (const r of rows) byCap.set(r.capability_key, [...(byCap.get(r.capability_key) || []), r]);
-
-  for (const [cap, capRows] of byCap) {
-    const want = digest?.capabilities?.[cap]?.activities;
-    if (!want) { out.unmapped.push(cap); continue; }
-    const stale = Object.entries(want).filter(([k, sha]) => !capRows.some((r) => r.activity_key === k && r.contract_sha256 === sha && r.status !== 'deprecated'));
-    if (stale.length) {
-      const doc = yaml.load(await fetchFile(contractPath(cap), head, d));
-      const source = `https://github.com/${CONTRACT_REPO}/blob/${head}/${contractPath(cap)}`;
-      const own = new Map((doc.activities || []).filter((a) => !a.ref).map((a) => [a.key, a]));
-      for (const [key, sha] of stale) {
-        const a = own.get(key);
-        if (!a) { out.unmapped.push(`${cap}.${key}`); continue; }
-        const row = capRows.find((r) => r.activity_key === key);
-        if (row) {
-          await pool.query(
-            `UPDATE journey_steps SET name = $2, contract = $3, contract_sha256 = $4, contract_source = $5,
-                    status = CASE WHEN status = 'deprecated' THEN 'planned' ELSE status END, updated_at = NOW()
-              WHERE id = $1`,
-            [row.id, a.name, JSON.stringify(a), sha, source]);
-          out.updated.push(`${cap}.${key}`);
-        } else {
-          await pool.query(
-            `INSERT INTO journey_steps (journey_id, name, step_number, capability_key, activity_key, contract, contract_sha256, contract_source, status, backbone_version)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'planned', '3.0')
-             ON CONFLICT (journey_id, step_number) DO NOTHING`,
-            [capRows[0].journey_id, a.name, Math.round(a.order), cap, key, JSON.stringify(a), sha, source]);
-          out.inserted.push(`${cap}.${key}`);
-        }
-      }
-    }
-    for (const r of capRows) {
-      if (r.status !== 'deprecated' && !(r.activity_key in want)) {
-        await pool.query(`UPDATE journey_steps SET status = 'deprecated', updated_at = NOW() WHERE id = $1`, [r.id]);
-        out.deprecated.push(`${cap}.${r.activity_key}`);
-      }
-    }
-  }
-  return out;
+  const consumers = registrations.filter(w=>w.status !== 'retired');
+  const plans = await loadActivityContracts(consumers,digest,path=>fetchFile(path,head,d),registrations);
+  return storeActivityContracts(pool,plans,head,CONTRACT_REPO,registrations);
 }
 
 // ─── Notion 镜子：journey_steps（带契约的行）→「Backbone Activities」─────────

@@ -14,7 +14,7 @@ let executor;
 beforeAll(async()=>{
  await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
  await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY,title TEXT,task_type TEXT,executor_kind TEXT CONSTRAINT tasks_executor_kind_check CHECK(executor_kind IN ('brain-local','image-janitor')),status TEXT,payload JSONB DEFAULT '{}',error_message TEXT,claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now(),created_at TIMESTAMPTZ DEFAULT now());`);
- await pool.query(readFileSync(new URL('../../../migrations/511_linux_pool_controller.sql',import.meta.url),'utf8'));
+ await pool.query(readFileSync(new URL('../../../migrations/512_linux_pool_controller.sql',import.meta.url),'utf8'));
  executor=await import('../../executor.js');
 });
 afterAll(async()=>{await pool.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();});

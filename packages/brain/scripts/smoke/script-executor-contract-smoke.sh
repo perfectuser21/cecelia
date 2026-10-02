@@ -43,8 +43,8 @@ const phoneTuple = '(' + ['tasks_executor_kind_check','executor_kind','phone-ssh
 if (!phone.includes(phoneTuple)) { console.error('FAIL 508 缺精确手机合同增量'); process.exit(1); }
 const imageJanitor = readFileSync('migrations/510_us_brain_image_retention.sql', 'utf8');
 if (!imageJanitor.includes('CHECK ((%s) OR executor_kind=%L)') || !imageJanitor.includes(String.fromCharCode(39) + 'image-janitor' + String.fromCharCode(39))) { console.error('FAIL 510 缺镜像清理执行器精确增量'); process.exit(1); }
-const linuxController = readFileSync('migrations/511_linux_pool_controller.sql','utf8');
-if (!linuxController.includes('CHECK ((%s) OR executor_kind=%L)') || !linuxController.includes(String.fromCharCode(39) + 'linux-pool-controller' + String.fromCharCode(39))) throw Error('FAIL 511 Linux controller');
+const linuxController = readFileSync('migrations/512_linux_pool_controller.sql','utf8');
+if (!linuxController.includes('CHECK ((%s) OR executor_kind=%L)') || !linuxController.includes(String.fromCharCode(39) + 'linux-pool-controller' + String.fromCharCode(39))) throw Error('FAIL 512 Linux controller');
 ek.push('linux-pool-controller','preview-janitor','app-server-controller','image-janitor','phone-ssh-controller'); ek.sort(); tt.push('janitor','app_server_run'); tt.sort();
 if (JSON.stringify(ek) !== JSON.stringify([...VALID_EXECUTOR_KINDS].sort())) { console.error('FAIL executor_kind 名单 != VALID_EXECUTOR_KINDS'); process.exit(1); }
 if (JSON.stringify(tt) !== JSON.stringify([...R.DB_WHITELISTED_TASK_TYPES].sort())) { console.error('FAIL task_type 名单 != 注册表 DB 白名单'); process.exit(1); }

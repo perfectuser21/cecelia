@@ -1,6 +1,7 @@
 /** 公司KR登记的定向镜子：复用现有库，仅投影已登记的这一条工作流。 */
 import { notionReq as defaultNotionReq } from '../recurring-notion-sync.js';
 import { configuredCompanyToken } from './company-kr-notion.js';
+import { readWorkflowActivities } from '../lib/workflow-read-service.js';
 import { companyKrSpec } from '../lib/company-kr-registration.js';
 import { propsDigest } from '../lib/notion-projection-engine.js';
 import { buildBackboneActivityProps } from '../activity-contract-sync.js';
@@ -99,9 +100,8 @@ async function projectRows(pool, token, notionReq) {
       paragraph(`运行明细：https://app.notion.com/p/${compact(w.runtime_notion_id)}\nKR 表：https://app.notion.com/p/684c40c2ba6383a7b6ba8161f110a18c`),
       paragraph('步骤登记可查 Workflow Steps；活动登记可查 Backbone Activities。历史运行没有逐步骤 span，不据工作流定义补造执行事实。')],
   });
-  const activities = (await pool.query('SELECT * FROM journey_steps WHERE workflow_id=$1 ORDER BY step_number', [w.id])).rows;
-  const steps = (await pool.query(`SELECT s.*,a.executor_kind FROM steps s JOIN journey_steps a ON a.id=s.activity_id
-    WHERE a.workflow_id=$1 AND s.active=true ORDER BY s.step_order`, [w.id])).rows;
+  const activities = await readWorkflowActivities(pool,w.id);
+  const steps = activities.flatMap(a => a.steps.map(s => ({...s,executor_kind:a.executor_kind})));
   const stepIds = new Map();
   for (const row of steps) {
     const properties = stepProperties(row, wf);

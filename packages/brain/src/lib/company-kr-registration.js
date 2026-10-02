@@ -39,6 +39,7 @@ export async function registerCompanyKrWorkflow(pool) {
     if (!w) throw new Error('工作流已有不同归属，拒绝覆盖');
     const agent = (await client.query(`SELECT name FROM ops_agents WHERE source='openclaw' AND host_alias='mmv' AND name=$1`, [s.agent])).rows;
     if (agent.length !== 1) throw new Error('公司 KR 分析员登记缺失或重复');
+    await client.query('UPDATE workflow_activity_refs SET active=false WHERE workflow_id=$1 AND active',[w.id]);
     for (const [i, activity] of s.activities.entries()) {
       const contract = activityContract(activity, i + 1), hash = stepSha256(contract);
       const result = await client.query(`INSERT INTO journey_steps
@@ -54,9 +55,13 @@ export async function registerCompanyKrWorkflow(pool) {
       [s.capability_id, activity.name, activity.implementation, i + 1, s.capability, activity.key, s.version,
         w.id, activity.executor, canonicalJson(contract), hash, SOURCE]);
       if (!result.rows.length) throw new Error(`活动归属冲突: ${activity.key}`);
+      await client.query(`INSERT INTO workflow_activity_refs(workflow_id,slot_key,activity_id,sequence_no,source_repo,source_path,active)
+        VALUES($1,$2,$3,$4,'perfectuser21/cecelia','packages/brain/config/company-kr-workflow.json',true)
+        ON CONFLICT(workflow_id,slot_key) DO UPDATE SET activity_id=EXCLUDED.activity_id,sequence_no=EXCLUDED.sequence_no,active=true`,
+      [w.id,activity.key,result.rows[0].id,i+1]);
     }
     const foreign = (await client.query(`SELECT s.key FROM steps s JOIN journey_steps a ON a.id=s.activity_id
-      WHERE s.key=ANY($1::text[]) AND a.workflow_id IS DISTINCT FROM $2`, [s.steps.map(x => x.key), w.id])).rows;
+      WHERE s.key=ANY($1::text[]) AND NOT EXISTS(SELECT 1 FROM workflow_activity_refs r WHERE r.activity_id=a.id AND r.workflow_id=$2 AND r.active)`, [s.steps.map(x => x.key), w.id])).rows;
     if (foreign.length) throw new Error('步骤已有其它工作流归属');
     const steps = await syncSteps(client, parseStepDod(JSON.stringify(s)), { manageTransaction: false });
     const runtime = await client.query(`UPDATE ops_workflows SET workflow_id=$1,stage_count=$2,uses_agents=$3::jsonb,

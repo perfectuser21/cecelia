@@ -39,7 +39,7 @@ describe('迁移 471：登记 script 与 script_run', () => {
     expect(imageJanitor).toContain("conname='tasks_executor_kind_check'");
     expect(imageJanitor).toContain('CHECK ((%s) OR executor_kind=%L)');
     expect(imageJanitor).toContain("substring(definition FROM 8 FOR length(definition)-8),'image-janitor'");
-    expect(readFileSync(join(MIG,'511_linux_pool_controller.sql'),'utf8')).toContain("substring(definition FROM 8 FOR length(definition)-8),'linux-pool-controller'");
+    expect(readFileSync(join(MIG,'512_linux_pool_controller.sql'),'utf8')).toContain("substring(definition FROM 8 FOR length(definition)-8),'linux-pool-controller'");
     expect([...list, 'preview-janitor','app-server-controller','image-janitor','phone-ssh-controller','linux-pool-controller'].sort()).toEqual([...VALID_EXECUTOR_KINDS].sort());
   });
 
