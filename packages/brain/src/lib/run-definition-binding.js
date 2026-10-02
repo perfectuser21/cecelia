@@ -61,6 +61,10 @@ export async function bindRunDefinitionInTransaction(db,runId,input){
   await lockRunProtocol(db,runId);
   const existing=(await db.query('SELECT * FROM run_definition_bindings WHERE run_id=$1',[runId])).rows[0];
   if(existing){requireEvidence(existing.payload_sha256===hash,'run已绑定其他定义','CONFLICT',409);return {binding:existing,created:false};}
+  if(input.source_kind==='external'){
+    const internal=(await db.query('SELECT 1 FROM task_runs WHERE run_id=$1 LIMIT 1',[runId])).rows.length;
+    requireEvidence(!internal,'run_id已属于内部task_run','RUN_SOURCE_CONFLICT',409);
+  }
   const release=await getRelease(db,input.release_id);
   await lockReleaseTarget(db,release.environment,release.target);
   requireEvidence((await getReleaseGate(db,release.id)).deployed,'当前部署已漂移或release已替换','DEPLOYMENT_UNVERIFIED',409);
