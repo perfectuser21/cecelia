@@ -24,4 +24,21 @@ describe('固定preview cache控制面', () => {
     expect(createTask).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled();
     await expect(controller.claim({ machine: 'm4' }, 'fixture')).rejects.toThrow('INVALID_CACHE_PLAN');
   });
+  it('零intent直调没有恢复事务保护仍未知；多intent有事务也不能伪装skipped', async () => {
+    const client = { receipt: vi.fn(), execute: vi.fn() };
+    const pool = { query: async () => ({ rows: [] }) };
+    const controller = createPreviewCacheController({ pool, client });
+    expect(await controller.reconcile({ run_id: 'fixture' })).toEqual({ status: 'unconfirmed' });
+    const recovery_db = { query: async () => ({ rows: [{}, {}] }) };
+    expect(await controller.reconcile({ run_id: 'fixture', recovery_db })).toEqual({ status: 'unconfirmed' });
+    expect(client.receipt).not.toHaveBeenCalled(); expect(client.execute).not.toHaveBeenCalled();
+  });
+  it('旧plan响应在signal取消后才到达，不得开始claim或execute', async () => {
+    const abort = new AbortController(); const connect = vi.fn(); const execute = vi.fn();
+    const controller = createPreviewCacheController({ pool: { connect }, client: {
+      plan: async () => { abort.abort(); return { policy: PREVIEW_CACHE_POLICY, resources: [{}] }; }, execute,
+    } });
+    await expect(controller.run({ run_id: 'fixture', signal: abort.signal })).rejects.toThrow();
+    expect(connect).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled();
+  });
 });

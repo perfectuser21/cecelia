@@ -975,6 +975,7 @@ jobs:
             src/__tests__/integration/linux-pool-authorization.pg.integration.test.js \
             src/phone-dispatch/store.test.js \
             src/node-onboarding/__tests__/service.test.js \
+            src/node-onboarding/__tests__/settlement.test.js \
             src/node-onboarding/__tests__/registry-adoption.test.js \
             src/__tests__/integration/linux-script-authorization.pg.integration.test.js \
             src/__tests__/integration/linux-onboarding-flow.pg.integration.test.js \
