@@ -195,7 +195,7 @@ fi
 
 cd "$ROOT"
 node --input-type=module > "$health" <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile('us-mac-m4');
 const policy = profile.version_policy;

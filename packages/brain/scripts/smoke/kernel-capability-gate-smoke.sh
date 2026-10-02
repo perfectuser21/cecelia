@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 node --input-type=module <<'NODE'
+import './packages/brain/src/__tests__/helpers/execution-directory-fixture.js';
 import {
   buildCapabilityEvidence,
   createCapabilityGate,
@@ -63,4 +64,3 @@ grep -q 'preflightGate.evaluate' packages/brain/src/orchestrator/dispatcher.js
 grep -q 'validateSnapshotForDispatch' packages/brain/src/orchestrator/dispatcher.js
 
 echo "kernel-capability-gate-smoke: PASS"
-

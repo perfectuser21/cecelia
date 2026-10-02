@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 'use strict';
+const { CONTAINER_ID, verifyContainerIdentity } = require('./attempt-container-identity.cjs');
+const { resolveAttemptResourcePlan, dockerLimitArgs } = require('./attempt-resource-policy.cjs');
 
 const { execFile, spawn } = require('node:child_process');
 const { createHash, randomBytes } = require('node:crypto');
@@ -397,6 +399,7 @@ function isExplicitlyMissingDockerObject(error) {
 }
 
 function createDockerAdapter({
+  workerId,
   runCommand = defaultRunCommand,
   runtimeRoot,
   writeCredential = defaultWriteCredential,
@@ -451,6 +454,7 @@ function createDockerAdapter({
   }
 
   async function prepareContainer(input) {
+      const resourcePlan = resolveAttemptResourcePlan({ workerId, role: input?.role, postgres: Boolean(input?.runtimeNetwork) });
       const attemptId = input?.attemptId;
       assertAttemptId(attemptId);
       if (
@@ -567,6 +571,7 @@ function createDockerAdapter({
         : [];
       const createArgs = [
         'create',
+        ...dockerLimitArgs(resourcePlan.runner),
         '--name',
         containerName,
         ...labelArgs(input.labels),
@@ -642,7 +647,7 @@ function createDockerAdapter({
         }),
         input.image,
       ];
-      let created;
+      let created, createAttempted = false;
       try {
         if (needsGitHubCredential) {
           await runCommand(
@@ -687,30 +692,25 @@ function createDockerAdapter({
             '+',
           ], undefined);
         }
+        createAttempted = true;
         created = await runCommand('docker', createArgs);
-        if (!String(created?.stdout ?? '').trim()) {
+        if (!CONTAINER_ID.test(String(created?.stdout ?? '').trim())) {
           throw new Error('attempt_container_id_missing');
         }
       } catch (error) {
-        let removalError = null;
-        try {
-          await runCommand(
-            'docker',
-            ['rm', '-f', '--', containerName],
-            undefined,
-          );
-        } catch (cleanupError) {
-          if (!isExplicitlyMissingDockerObject(cleanupError)) {
-            removalError = cleanupError;
+        if (createAttempted) {
+          const containerId = String(created?.stdout ?? '').trim();
+          try {
+            if (!CONTAINER_ID.test(containerId)) throw new Error('attempt_container_identity_unverified');
+            await removeContainer({ attemptId, runId: input.runId, image: input.image, containerId });
+          } catch (cleanupError) {
+            const rollbackError = new Error(`attempt_container_rollback_failed:${error.message}`, {
+              cause: new AggregateError([error, cleanupError]),
+            });
+            rollbackError.cleanupUnconfirmed = true;
+            if (CONTAINER_ID.test(containerId)) rollbackError.rollbackContainerId = containerId;
+            throw rollbackError;
           }
-        }
-        if (removalError) {
-          const rollbackError = new Error(
-            `attempt_container_rollback_failed:${error.message}`,
-            { cause: new AggregateError([error, removalError]) },
-          );
-          rollbackError.rollbackContainerId = containerName;
-          throw rollbackError;
         }
         fs.rmSync(attemptRuntime, { recursive: true, force: true });
         throw error;
@@ -723,7 +723,16 @@ function createDockerAdapter({
       });
   }
 
+  async function verifyIdentity({ attemptId, runId, image, containerId, cleanup = false }) {
+    if ((!(cleanup && runId == null) && !UUID_PATTERN.test(runId ?? '')) || (!(cleanup && image == null) && !IMAGE_DIGEST_PATTERN.test(image ?? ''))) throw new Error('attempt_container_identity_unverified');
+    return verifyContainerIdentity({ runCommand, containerId, allowMissing: cleanup, containerName: `cecelia-fleet-${attemptId}`, image,
+      labels: { 'cecelia.fleet.attempt_id': attemptId, ...(runId == null ? {} : {'cecelia.fleet.run_id': runId}), 'cecelia.fleet.worker_id': workerId },
+      labelPatterns: { 'cecelia.fleet.run_id': UUID_PATTERN },
+      errorCode: 'attempt_container_identity_unverified' });
+  }
+
   async function startContainer({
+    role, hasPostgres = false, runId, image,
     attemptId,
     containerId,
     credentialFifo,
@@ -753,21 +762,23 @@ function createDockerAdapter({
     ) {
       throw new Error('attempt_github_credential_fifo_invalid');
     }
-    const containerName = `cecelia-fleet-${attemptId}`;
     assertCanLaunch();
+    await verifyIdentity({ attemptId, runId, image, containerId });
     let blockedByDrain=false;
     try {
-      await runCommand('docker', ['start', containerName], undefined);
+      const plan = resolveAttemptResourcePlan({ workerId, role, postgres: hasPostgres });
+      await runCommand('docker', ['update', ...dockerLimitArgs(plan.runner), '--', containerId], undefined);
+      await runCommand('docker', ['start', containerId], undefined);
       if (githubCredential) {
         await writeGitHubCredential(
-          containerName,
+          containerId,
           '/tmp/cecelia-prompts/github-credential.fifo',
           githubCredential.token,
         );
       }
       if (credential) {
         await writeCredential(
-          containerName,
+          containerId,
           '/tmp/cecelia-prompts/credential.fifo',
           credential.authJson,
         );
@@ -785,8 +796,20 @@ function createDockerAdapter({
     return Object.freeze({ containerId });
   }
 
+  async function removeContainer({ containerId, attemptId, runId, image } = {}) {
+    assertAttemptId(attemptId);
+    const verifiedId = await verifyIdentity({ attemptId, runId, image, containerId, cleanup: true });
+    if (verifiedId) {
+      try { await runCommand('docker', ['rm', '-f', '--', verifiedId], undefined); }
+      catch (error) { if (!isExplicitlyMissingDockerObject(error)) throw error; }
+    }
+    fs.rmSync(path.join(root, attemptId), { recursive: true, force: true });
+    return Object.freeze({ removed: true });
+  }
+
   return Object.freeze({
     prepare: prepareContainer,
+    verifyIdentity,
     start: startContainer,
 
     async inspect({ containerId } = {}) {
@@ -820,23 +843,13 @@ function createDockerAdapter({
       });
     },
 
-    async remove({ containerId, attemptId, containerMissing = false } = {}) {
-      assertAttemptId(attemptId);
-      if (!containerMissing) {
-        try {
-          await runCommand('docker', ['rm', '-f', '--', containerId], undefined);
-        } catch (error) {
-          if (!isExplicitlyMissingDockerObject(error)) throw error;
-        }
-      }
-      fs.rmSync(path.join(root, attemptId), { recursive: true, force: true });
-      return Object.freeze({ removed: true });
-    },
+    remove: removeContainer,
 
     async listOwned({ workerId } = {}) {
       const result = await runCommand('docker', [
         'ps',
         '-a',
+        '--no-trunc',
         '--filter',
         `label=cecelia.fleet.worker_id=${workerId}`,
         '--format',
@@ -1542,9 +1555,11 @@ function createAttemptRunner({
   }
 
   async function releaseRuntimeService(state) {
+    if (identityUnverified(state)) throw new Error('attempt_container_identity_unverified');
     if (!state.runtime_resources || Object.keys(state.runtime_resources).length === 0) {
       return;
     }
+    await verifyCleanupState(state);
     await resourceManager.releaseService({
       attemptId: state.attempt_id,
       runtime: state.runtime_resources,
@@ -1557,6 +1572,8 @@ function createAttemptRunner({
   const cancellationRequests = new Set();
   const terminalWaiters = new Set();
   const finalizationPromises = new Map();
+  const unverifiedIdentities = new Set();
+  const identityUnverified = state => state.resource_identity_unverified || unverifiedIdentities.has(state.attempt_id);
 
   async function waitForInFlightPrepare(attemptId, lease) {
     const preparing = prepareOperations.get(attemptId);
@@ -1660,6 +1677,29 @@ function createAttemptRunner({
     );
   }
 
+  const isIdentityFailure = error => /^(attempt_container_identity_unverified|attempt_runtime_resource_owner_mismatch|attempt_resource_identity_required)$/.test(error?.message);
+  async function parkUnverifiedIdentity(state) {
+    unverifiedIdentities.add(state.attempt_id);
+    pendingCredentials.delete(state.attempt_id);
+    await stateStore.save({ ...state, status: 'quarantined', resource_identity_unverified: true });
+  }
+
+  async function verifyCleanupState(state) {
+    try {
+      if (identityUnverified(state) || typeof docker.verifyIdentity !== 'function') throw new Error('attempt_container_identity_unverified');
+      // Historical journals lack an image field. Their immutable ID plus exact labels
+      // still binds cleanup; the adapter verifies the observed pinned image with Docker.
+      const containerId = await docker.verifyIdentity({ attemptId: state.attempt_id, runId: state.run_id,
+        containerId: state.container_id, image: state.runner_image_digest, cleanup: true });
+      if (state.runtime_resources?.postgres) {
+        if (typeof resourceManager.resolveIdentity !== 'function') throw new Error('attempt_resource_identity_required');
+        state.runtime_resources = await resourceManager.resolveIdentity({ attemptId: state.attempt_id,
+          runtime: state.runtime_resources, allowMissing: true });
+      }
+      return { containerMissing: containerId === null };
+    } catch (error) { await parkUnverifiedIdentity(state); throw error; }
+  }
+
   function finalizeAttempt(attemptId, lease = null, expected = null) {
     const existing = finalizationPromises.get(attemptId);
     if (existing) return existing;
@@ -1671,6 +1711,7 @@ function createAttemptRunner({
       if (state.worker_id !== workerId) {
         throw new Error('attempt_worker_owner_mismatch');
       }
+      if (identityUnverified(state)) return Object.freeze({ status: 'quarantined', attempt_id: attemptId, reason: 'attempt_container_identity_unverified' });
       if (
         expected
         && (
@@ -1683,6 +1724,9 @@ function createAttemptRunner({
       if (lease !== null) {
         assertLeaseFence(state, lease);
       }
+      let cleanupIdentity;
+      try { cleanupIdentity = await verifyCleanupState(state); }
+      catch { return Object.freeze({ status: 'quarantined', attempt_id: attemptId, reason: 'attempt_container_identity_unverified' }); }
       pendingCredentials.delete(attemptId);
       const retainsGeneratorCandidate = state.role === 'generator'
         && expected?.statusCode === 0;
@@ -1702,7 +1746,7 @@ function createAttemptRunner({
         await docker.remove({
           containerId: state.container_id,
           attemptId: state.attempt_id,
-          ...(expected?.containerMissing === true
+          ...(cleanupIdentity.containerMissing === true
             ? { containerMissing: true }
             : {}),
         });
@@ -1755,7 +1799,8 @@ function createAttemptRunner({
     resources,
   }) {
     const cleanupFailures = [];
-    let containerCleanupFailed = false;
+    let containerCleanupFailed = error?.cleanupUnconfirmed === true;
+    if (containerCleanupFailed) cleanupFailures.push(new Error('attempt_cleanup_identity_unconfirmed'));
     const rollbackContainerId = containerId ?? error?.rollbackContainerId;
     if (rollbackContainerId) {
       try {
@@ -1967,6 +2012,8 @@ function createAttemptRunner({
       }
 
       assertCanLaunch();
+      const resourceLimits = resolveAttemptResourcePlan({ workerId, role: target.role,
+        postgres: executionContract.runtimeRequirements.postgres === true });
       await assertLocalResources({ phase: 'prepare', attemptId: request.attempt_id });
       assertCanLaunch();
       const { credential, githubCredential } = consumeAttemptCredentials(
@@ -2010,7 +2057,7 @@ function createAttemptRunner({
           await assertLocalResources({ phase: 'postgres', attemptId: request.attempt_id });
           assertCanLaunch();
           resources = await resourceManager.provision({
-            attemptId: request.attempt_id,
+            attemptId: request.attempt_id, role: target.role,
             // F3（复审实测坐实）：resourceManager（attempt-resources.cjs
             // validateRequirements）只认 {postgres} 这一个字段，见到未知键
             // 一律 throw attempt_runtime_requirements_invalid。node_deps 是
@@ -2068,6 +2115,8 @@ function createAttemptRunner({
         lease_generation: request.lease_generation,
         provider: providerSpec.provider,
         role: target.role,
+        resource_limits: resourceLimits,
+        runner_image_digest: runnerImageDigest,
         prepare_request_fingerprint: requestFingerprint,
         credential_delivery_status: 'pending',
         ...(credential ? { credential: credential.metadata } : {}),
@@ -2202,7 +2251,13 @@ function createAttemptRunner({
             deduped: true,
           });
         }
+        if (identityUnverified(state)) throw new Error('attempt_container_identity_unverified');
         if (state.status === 'starting') {
+          try {
+            if (typeof docker.verifyIdentity !== 'function') throw new Error('attempt_container_identity_unverified');
+            await docker.verifyIdentity({ attemptId, runId: state.run_id, containerId: state.container_id,
+              image: state.runner_image_digest, cleanup: true });
+          } catch (error) { await parkUnverifiedIdentity(state); throw error; }
           const inspected = await docker.inspect({
             containerId: state.container_id,
           });
@@ -2268,6 +2323,22 @@ function createAttemptRunner({
         }
 
         assertCanLaunch();
+        state.resource_limits = resolveAttemptResourcePlan({ workerId, role: state.role,
+          postgres: Boolean(state.runtime_resources?.postgres) });
+        try {
+          if (typeof docker.verifyIdentity !== 'function') throw new Error('attempt_container_identity_unverified');
+          await docker.verifyIdentity({ attemptId, runId: state.run_id, containerId: state.container_id,
+            image: state.runner_image_digest ?? runnerImageDigest });
+          if (state.runtime_resources?.postgres) {
+            if (typeof resourceManager.resolveIdentity !== 'function' || typeof resourceManager.enforceLimits !== 'function') throw new Error('attempt_resource_identity_required');
+            state.runtime_resources = await resourceManager.resolveIdentity({ attemptId, runtime: state.runtime_resources });
+          }
+        } catch (error) { await parkUnverifiedIdentity(state); throw error; }
+        await stateStore.save(state);
+        if (state.runtime_resources?.postgres) {
+          try { await resourceManager.enforceLimits({ attemptId, role: state.role, runtime: state.runtime_resources }); }
+          catch (error) { if (isIdentityFailure(error)) await parkUnverifiedIdentity(state); throw error; }
+        }
         await assertLocalResources({ phase: 'start', attemptId });
         assertCanLaunch();
         if (cancellationRequests.has(attemptId)) return finalizeCancelledStart(state, lease);
@@ -2282,7 +2353,8 @@ function createAttemptRunner({
         assertCanLaunch();
         try {
           await docker.start({
-            attemptId,
+            attemptId, role: state.role, hasPostgres: Boolean(state.runtime_resources?.postgres),
+            runId: state.run_id, image: state.runner_image_digest ?? runnerImageDigest,
             containerId: state.container_id,
             credentialFifo: state.credential_fifo,
             githubCredentialFifo: state.github_credential_fifo,
@@ -2305,6 +2377,7 @@ function createAttemptRunner({
         } catch (error) {
           if(error.message==='worker_draining')throw error;
           pendingCredentials.delete(attemptId);
+          if (isIdentityFailure(error)) { await parkUnverifiedIdentity(state); throw error; }
           const cleanup = await finalizeAttempt(attemptId, lease);
           if (cleanup.status !== 'cleaned') {
             throw new Error(`attempt_start_rollback_failed:${error.message}`, {
@@ -2458,15 +2531,15 @@ function createAttemptRunner({
       const reclaimedCandidates = [];
 
       for (const state of ownedStates) {
+        if (identityUnverified(state)) continue;
         if (state.status === 'candidate') {
           if (state.container_id) {
-            const inspected = await docker.inspect({ containerId: state.container_id });
+            let cleanupIdentity;
+            try { cleanupIdentity = await verifyCleanupState(state); } catch { continue; }
             await docker.remove({
               containerId: state.container_id,
               attemptId: state.attempt_id,
-              ...(inspected.status === 'missing'
-                ? { containerMissing: true }
-                : {}),
+              ...(cleanupIdentity.containerMissing ? { containerMissing: true } : {}),
             });
             await releaseResources(state);
             await releaseSourceCandidate(state);

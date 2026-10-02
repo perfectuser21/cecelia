@@ -9,6 +9,14 @@ fail() {
   exit 1
 }
 
+mode_of() {
+  case "$(uname -s)" in
+    Darwin) stat -f '%Lp' "$1" ;;
+    Linux) stat -c '%a' "$1" ;;
+    *) fail "unsupported operating system for mode assertion" ;;
+  esac
+}
+
 [[ -f "$INSTALLER" ]] || fail "missing install-fleet-worker.sh entrypoint"
 
 test_root="$(mktemp -d)"
@@ -858,6 +866,25 @@ PYPLIST
 
 [[ -f "$installed_worker" && -f "$installed_probe" ]] \
   || fail "--apply did not install a stable Worker runtime"
+cmp -s "$SCRIPT_DIR/attempt-container-identity.cjs" "$runtime_dir/attempt-container-identity.cjs" \
+  || fail "--apply did not install exact container identity verifier"
+node -e 'require(process.argv[1])' "$runtime_dir/attempt-runner.cjs"
+cmp -s "$SCRIPT_DIR/attempt-resource-policy.cjs" "$runtime_dir/attempt-resource-policy.cjs" \
+  || fail "--apply did not install exact shared resource policy"
+node - "$runtime_dir/attempt-resource-policy.cjs" <<'NODE'
+const assert = require('node:assert/strict');
+assert.equal(require(process.argv[2]).resolveAttemptResourcePlan({workerId:'us-mac-m4',role:'generator'}).runner.memoryBytes, 4*1024**3);
+NODE
+app_server_files=(app-server-profile.cjs app-server-docker.cjs app-server-attach.cjs app-server-stream.cjs app-server-runner.cjs app-server-rpc.cjs app-server-stream-hub.cjs app-server-contract.json app-server-shim.cjs)
+for module in "${app_server_files[@]}"; do
+  cmp -s "$SCRIPT_DIR/$module" "$runtime_dir/$module" \
+    || fail "--apply did not install exact $module bytes"
+  [[ "$(mode_of "$runtime_dir/$module")" == 644 ]] || fail "$module mode is not 644"
+done
+node - "$runtime_dir/app-server-runner.cjs" <<'NODE'
+const assert = require('node:assert/strict');
+assert.equal(typeof require(process.argv[2]).createAppServerRunner, 'function');
+NODE
 cmp -s "$SCRIPT_DIR/local-resource-admission.cjs" "$installed_local_admission" \
   || fail "--apply did not install exact local admission module bytes"
 cmp -s "$SCRIPT_DIR/../../config/fleet-node-profiles.json" "$installed_profile_registry" \
@@ -995,13 +1022,9 @@ run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply >/dev/null \
 [[ "$(grep -Fc 'acl +a ' "$acl_log")" -eq 4 ]] \
   || fail "repeat --apply duplicated an existing ACL"
 
-mode_of() {
-  case "$(uname -s)" in
-    Darwin) stat -f '%Lp' "$1" ;;
-    Linux) stat -c '%a' "$1" ;;
-    *) fail "unsupported operating system for mode assertion" ;;
-  esac
-}
+
+
+cp "$installed_plist" "$test_root/canonical-worker.plist"
 
 cp "$installed_plist" "$test_root/canonical-worker.plist"
 
@@ -1109,6 +1132,18 @@ assert_resource_placement_failure_rolled_back() {
   chmod 0640 "$installed_profile_registry"
   cp "$installed_local_admission" "$snapshot_dir/admission"
   cp "$installed_profile_registry" "$snapshot_dir/profiles"
+  printf 'prior-policy-%s\n' "$filename" > "$runtime_dir/attempt-resource-policy.cjs"
+  chmod 0600 "$runtime_dir/attempt-resource-policy.cjs"
+  cp "$runtime_dir/attempt-resource-policy.cjs" "$snapshot_dir/policy"
+  printf 'prior-identity-%s\n' "$filename" > "$runtime_dir/attempt-container-identity.cjs"
+  chmod 0600 "$runtime_dir/attempt-container-identity.cjs"
+  cp "$runtime_dir/attempt-container-identity.cjs" "$snapshot_dir/identity"
+  local module
+  for module in "${app_server_files[@]}"; do
+    printf 'prior-%s-%s\n' "$filename" "$module" > "$runtime_dir/$module"
+    chmod 0600 "$runtime_dir/$module"
+    cp "$runtime_dir/$module" "$snapshot_dir/$module"
+  done
   rm -f "$FLEET_WORKER_MV_FAIL_ONCE"
   if failure_output="$(FLEET_WORKER_MV="$test_root/mv" \
     FLEET_WORKER_MV_FAIL_TARGET="$runtime_dir/$filename" \
@@ -1125,6 +1160,14 @@ assert_resource_placement_failure_rolled_back() {
   [[ "$(mode_of "$installed_local_admission")" == 600 \
     && "$(mode_of "$installed_profile_registry")" == 640 ]] \
     || fail "$filename placement rollback changed old resource file modes"
+  cmp -s "$snapshot_dir/policy" "$runtime_dir/attempt-resource-policy.cjs" || fail "$filename changed old policy bytes"
+  [[ "$(mode_of "$runtime_dir/attempt-resource-policy.cjs")" == 600 ]] || fail "$filename changed old policy mode"
+  cmp -s "$snapshot_dir/identity" "$runtime_dir/attempt-container-identity.cjs" || fail "$filename changed old identity bytes"
+  [[ "$(mode_of "$runtime_dir/attempt-container-identity.cjs")" == 600 ]] || fail "$filename changed old identity mode"
+  for module in "${app_server_files[@]}"; do
+    cmp -s "$snapshot_dir/$module" "$runtime_dir/$module" || fail "$filename changed old $module bytes"
+    [[ "$(mode_of "$runtime_dir/$module")" == 600 ]] || fail "$filename changed old $module mode"
+  done
   [[ "$(<"$launch_state")" == running ]] || fail "$filename rollback did not restore loaded service"
 }
 
@@ -1148,11 +1191,14 @@ assert_resource_first_install_rolled_back() (
   grep -Fq 'install_failed_rolled_back' <<<"$failure_output" \
     || fail "first $filename placement failure lacked rollback signature"
   [[ ! -e "$fresh_runtime/local-resource-admission.cjs" \
-    && ! -e "$fresh_runtime/fleet-node-profiles.json" ]] \
+    && ! -e "$fresh_runtime/fleet-node-profiles.json" && ! -e "$fresh_runtime/attempt-resource-policy.cjs" && ! -e "$fresh_runtime/attempt-container-identity.cjs" ]] \
     || fail "first $filename rollback leaked newly installed resource files"
+  for module in "${app_server_files[@]}"; do
+    [[ ! -e "$fresh_runtime/$module" ]] || fail "first $filename rollback leaked $module"
+  done
 )
 
-for resource_file in fleet-node-profiles.json local-resource-admission.cjs; do
+for resource_file in fleet-node-profiles.json local-resource-admission.cjs attempt-resource-policy.cjs attempt-container-identity.cjs "${app_server_files[@]}"; do
   assert_resource_placement_failure_rolled_back "$resource_file"
   assert_resource_first_install_rolled_back "$resource_file"
 done

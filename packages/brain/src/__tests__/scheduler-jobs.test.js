@@ -1,4 +1,5 @@
 import './scheduler-jobs.fixtures.js';
+vi.mock('../app-server/controller.js',()=>({reconcileAppServers:vi.fn().mockResolvedValue([])}));
 import { runPreviewCacheJanitor } from '../preview-cache-scheduler.js';
 import { runNodeOnboardingJob } from '../node-onboarding/service.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

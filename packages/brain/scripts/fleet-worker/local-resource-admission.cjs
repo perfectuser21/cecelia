@@ -157,6 +157,6 @@ function createLocalLaunchAdmission({markerPath='/var/run/cecelia/fleet-worker.d
 }
 function wrapLaunchRunner(runner,admission) {
   return Object.freeze(Object.fromEntries(Object.entries(runner).map(([key,value])=>[key,
-    ['prepare','start'].includes(key)&&typeof value==='function'?(...args)=>admission.track(()=>value.apply(runner,args)):value])));
+    ['prepare','start','attach'].includes(key)&&typeof value==='function'?(...args)=>admission.track(()=>value.apply(runner,args)):value])));
 }
 module.exports = { createLocalResourceAdmission, probeDiskResources, createLocalLaunchAdmission, wrapLaunchRunner, guardLaunchCommand };

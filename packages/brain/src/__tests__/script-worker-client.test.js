@@ -4,7 +4,7 @@ import {createScriptWorkerClient} from '../script-worker-client.js';
 const machine='us-mac-m4',token='fixture-script-worker-auth-'.repeat(3);
 const body={reservation_id:'11111111-1111-4111-8111-111111111111',owner_key:'script-t-a1',intent_id:'i',launch_generation:1,config_digest:'a'.repeat(64)};
 function client(change) {
-  return createScriptWorkerClient({urls:{[machine]:'http://127.0.0.1:1'},token,fetchFn:async(_url,request)=>{
+  return createScriptWorkerClient({authorizeRequest:async(_m,_a,_b,run)=>run('http://127.0.0.1:1'),token,fetchFn:async(_url,request)=>{
     const sent=JSON.parse(request.body);
     const receipt={...sent,machine_id:machine,status:'cleaned',absent:true,tombstoned:true};
     const envelope={receipt,signature:createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex')};
@@ -29,7 +29,7 @@ describe('认证脚本worker客户端',()=>{
     await expect(invalid.cancel(machine,body)).rejects.toThrow();
   });
   it.each([404,503])('HTTP%s缺失/故障不能作为清理证明',async(status)=>{
-    const invalid=createScriptWorkerClient({urls:{[machine]:'http://127.0.0.1:1'},token,fetchFn:async()=>new Response('{}',{status})});
+    const invalid=createScriptWorkerClient({authorizeRequest:async(_m,_a,_b,run)=>run('http://127.0.0.1:1'),token,fetchFn:async()=>new Response('{}',{status})});
     await expect(invalid.cancel(machine,body)).rejects.toThrow(`http_${status}`);
   });
 });

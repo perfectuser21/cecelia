@@ -9,14 +9,14 @@ const machines=(deps)=>String((deps.env??process.env).SCRIPT_MANAGED_MACHINES??'
 export const usesManagedScript=(task,spec,deps={})=>Boolean(task.payload?.managed_script)||machines(deps).includes(spec.host);
 function dependencies(pool,deps) {
   const env=deps.env??process.env;
-  const client=deps.managed?.client??createScriptWorkerClient({env});
+  const client=deps.managed?.client??createScriptWorkerClient({env,pool});
   const collectSnapshot=deps.managed?.collectSnapshot??(async(machine)=>{
     const probes=createProductionCapabilityProbes({env,cacheTtlMs:0});
     const capacity=await probes.getMachineBaseCapacity({machine});
     const captured_at=Date.now();
     return {verified:true,machine,captured_at,expires_at:captured_at+1000,capacity};
   });
-  return {client,collectSnapshot,store:createScriptReservationStore(pool)};
+  return {client,collectSnapshot,store:createScriptReservationStore(pool,{executionDirectory:deps.managed?.executionDirectory??true})};
 }
 function body(row) {
   return {reservation_id:row.id,machine_id:row.machine_id,owner_key:row.owner_key,intent_id:row.intent_id,
@@ -39,14 +39,14 @@ export async function prepareManagedScript(task,spec,pool,deps={}) {
   const attempt=(task.payload?.script_attempts?.length??0)+1;
   const ownerKey=`script-${task.id}-a${attempt}`;
   const configDigest=digest({job,profile_digest:capabilities.profiles[managed.profile]});
-  const result=await store.reserve({taskId:task.id,machineId:spec.host,ownerKey,configDigest,capacitySnapshot});
+  const result=await store.reserve({taskId:task.id,machineId:spec.host,ownerKey,configDigest,capacitySnapshot,profileId:managed.profile});
   if(result.outcome==='wait')return result;
   if(result.outcome==='released')return {outcome:'blocked',reason:'script_attempt_already_released'};
   const bound=await pool.query(`UPDATE tasks SET payload=payload||$2::jsonb,updated_at=NOW()
     WHERE id=$1 AND status IN ('queued','in_progress')
       AND jsonb_array_length(COALESCE(payload->'script_attempts','[]'::jsonb))=$3
       AND (payload->>'script_run_id' IS NULL OR payload->>'script_run_id'=$4)
-      AND EXISTS (SELECT 1 FROM capacity_reservations WHERE id=$5 AND status IN ('reserved','launching','running'))
+      AND EXISTS (SELECT 1 FROM capacity_reservations WHERE owner_kind='script' AND id=$5 AND status IN ('reserved','launching','running'))
     RETURNING id`,[task.id,JSON.stringify({script_reservation_id:result.reservation.id,host_id:spec.host}),attempt-1,ownerKey,result.reservation.id]);
   if(!bound.rowCount)return {outcome:'stale',reason:'script_attempt_superseded'};
   return {...result,job,capabilities,store,client};
@@ -72,7 +72,7 @@ export async function triggerManagedScript(task,spec,pool,deps={}) {
       AND payload->>'script_reservation_id'=$3
       AND (payload->>'script_run_id' IS NULL OR payload->>'script_run_id'=$4)
       AND jsonb_array_length(COALESCE(payload->'script_attempts','[]'::jsonb))=$5
-      AND EXISTS (SELECT 1 FROM capacity_reservations WHERE id=$3::uuid AND status IN ('reserved','launching','running')) RETURNING id`,
+      AND EXISTS (SELECT 1 FROM capacity_reservations WHERE owner_kind='script' AND id=$3::uuid AND status IN ('reserved','launching','running')) RETURNING id`,
   [task.id,JSON.stringify({script_run_id:row.owner_key,script_reservation_id:row.id,script_managed:true,script_dispatch_id:dispatchId}),row.id,row.owner_key,task.payload?.script_attempts?.length??0]);
   if(!current.rowCount)return {success:true,taskId:task.id,executor:'script',pending:true};
   const fresh=row.status==='reserved';

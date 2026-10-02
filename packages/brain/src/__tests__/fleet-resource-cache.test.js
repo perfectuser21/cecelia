@@ -1,3 +1,4 @@
+import {seedExecutionDirectoryFixture} from './helpers/execution-directory-fixture.js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../routes/infra-status.js', () => ({
@@ -6,7 +7,7 @@ vi.mock('../routes/infra-status.js', () => ({
     { id: 'xian-mac-m4', name: 'Xian M4', tailscaleIp: '100.86.57.69', role: 'Codex', sshUser: 'test' },
     { id: 'xian-mac-m1', name: 'Xian M1', tailscaleIp: '100.103.88.66', role: 'CI', sshUser: 'test' },
   ],
-  COMPUTE_SERVERS: ['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1'],
+  COMPUTE_SERVERS: ['us-mac-m4', 'xian-mac-m1', 'xian-mac-m4'],
   collectLocalStats: vi.fn(() => ({
     status: 'online',
     cpu: { cores: 10, usagePercent: 15 },
@@ -48,11 +49,12 @@ describe('fleet-resource-cache', () => {
     fleetCache = await import('../fleet-resource-cache.js');
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     fleetCache.stopFleetRefresh();
     vi.unstubAllGlobals();
     vi.useRealTimers();
     vi.resetModules();
+    await seedExecutionDirectoryFixture();
   });
 
   it('未启动时 getFleetStatus 返回空数组', () => {
@@ -72,7 +74,7 @@ describe('fleet-resource-cache', () => {
     await vi.advanceTimersByTimeAsync(100);
     const status = fleetCache.getFleetStatus();
     expect(status.length).toBe(3);
-    expect(status.map(s => s.id)).toEqual(['us-mac-m4', 'xian-mac-m4', 'xian-mac-m1']);
+    expect(status.map(s => s.id)).toEqual(['us-mac-m4', 'xian-mac-m1', 'xian-mac-m4']);
   });
 
   it('采集后机器 online 且有 effectiveSlots', async () => {
@@ -83,6 +85,12 @@ describe('fleet-resource-cache', () => {
     expect(cap.online).toBe(true);
     expect(cap.effectiveSlots).toBeGreaterThanOrEqual(0);
     expect(cap.physicalCapacity).toBe(8);
+  });
+
+  it('真实 fleet 采样按 Worker 共享 policy 的 1GiB/.5CPU 基础槽估算', async () => {
+    fleetCache.startFleetRefresh(); await vi.advanceTimersByTimeAsync(100);
+    const { calculatePhysicalCapacity } = await import('../platform-utils.js');
+    expect(calculatePhysicalCapacity).toHaveBeenCalledWith(16384,10,1024,0.5);
   });
 
   it('getTotalEffectiveSlots 返回正数', async () => {
@@ -139,11 +147,12 @@ describe('容量采集走 worker HTTP（弃 ssh/isLocal）', () => {
     fleetCache = await import('../fleet-resource-cache.js');
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     fleetCache.stopFleetRefresh();
     vi.unstubAllGlobals();
     vi.useRealTimers();
     vi.resetModules();
+    await seedExecutionDirectoryFixture();
   });
 
   it('stats 来自 worker /health 映射，且不再触碰 ssh/local 采集', async () => {

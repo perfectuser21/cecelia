@@ -1,8 +1,7 @@
 import { listCanonicalMachineIds } from './preflight/canonical-machine-id.js';
 
 const TRANSPORT_METHODS = ['launch', 'inspect', 'cancel'];
-const [LOCAL_MACHINE_ID, ...REMOTE_MACHINE_IDS] = listCanonicalMachineIds();
-const REMOTE_MACHINE_SET = new Set(REMOTE_MACHINE_IDS);
+import { resolvePrimaryWorkerId } from '../machine-registry.js';
 
 function validateTransport(name, transport) {
   for (const method of TRANSPORT_METHODS) {
@@ -15,14 +14,14 @@ function validateTransport(name, transport) {
 export function createExecutionTransportRouter({
   local,
   remote,
-  localMachineId = LOCAL_MACHINE_ID,
+  localMachineId = resolvePrimaryWorkerId(),
 } = {}) {
   validateTransport('local', local);
   validateTransport('remote', remote);
 
   const transportFor = (machine) => {
     if (machine === localMachineId) return local;
-    if (REMOTE_MACHINE_SET.has(machine)) return remote;
+    if (listCanonicalMachineIds().includes(machine)) return remote;
     throw new Error(`execution_transport_unavailable:${String(machine)}`);
   };
 

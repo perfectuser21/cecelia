@@ -33,7 +33,8 @@ describe('迁移 471：登记 script 与 script_run', () => {
     expect(list).toContain('script');
     expect(readFileSync(join(MIG, '502_preview_owned_cache_janitor.sql'), 'utf8'))
       .toContain("('tasks_executor_kind_check','executor_kind','preview-janitor')");
-    expect([...list, 'preview-janitor'].sort()).toEqual([...VALID_EXECUTOR_KINDS].sort());
+    expect(readFileSync(join(MIG,'504_app_server_generations.sql'),'utf8')).toContain("('tasks_executor_kind_check','executor_kind','app-server-controller')");
+    expect([...list, 'preview-janitor','app-server-controller'].sort()).toEqual([...VALID_EXECUTOR_KINDS].sort());
   });
 
   it("471 task_type 加已登记的502增量后等于当前DB白名单，且含 script_run", () => {
@@ -41,7 +42,8 @@ describe('迁移 471：登记 script 与 script_run', () => {
     expect(list).toContain('script_run');
     expect(readFileSync(join(MIG, '502_preview_owned_cache_janitor.sql'), 'utf8'))
       .toContain("('tasks_task_type_check','task_type','janitor')");
-    expect([...list, 'janitor'].sort()).toEqual([...DB_WHITELISTED_TASK_TYPES].sort());
+    expect(readFileSync(join(MIG,'504_app_server_generations.sql'),'utf8')).toContain("('tasks_task_type_check','task_type','app_server_run')");
+    expect([...list, 'janitor','app_server_run'].sort()).toEqual([...DB_WHITELISTED_TASK_TYPES].sort());
   });
 
   it('写 schema_version 471', () => {

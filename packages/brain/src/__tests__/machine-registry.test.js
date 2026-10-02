@@ -25,9 +25,9 @@ describe('machine-registry（角色模型 SSOT）', () => {
     );
   });
 
-  it('bridge url：env 覆盖优先，否则 tailscaleIp:5231', () => {
+  it('bridge url：仅目录受信endpoint，调用env不能覆盖', () => {
     expect(workerBridgeUrlFor('us-mac-m4', { FLEET_WORKER_US_MAC_M4_URL: 'http://override:5231' }))
-      .toBe('http://override:5231');
+      .toBe('http://100.71.151.105:5231');
     expect(workerBridgeUrlFor('us-mac-m4', {})).toBe('http://100.71.151.105:5231');
     expect(workerBridgeUrlFor('nonexistent', {})).toBeNull();
   });

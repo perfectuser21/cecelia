@@ -1,3 +1,4 @@
+import { directory,currentNode,endpointValid } from './execution-directory/directory.js';
 /**
  * machine-registry.js — 机器清单与角色模型（单一事实来源）
  *
@@ -135,20 +136,12 @@ export function machineRoleOf(machineId) {
 }
 
 export function listComputeWorkerIds() {
-  return MACHINES
-    .filter((m) => m.machineRole === MACHINE_ROLES.PRIMARY
-      || m.machineRole === MACHINE_ROLES.SECONDARY)
-    .map((m) => m.id);
+  return (directory.current()?.nodes??[]).filter(n=>n.state==='active'&&n.machine_status==='active'&&endpointValid(n.endpoints?.worker)&&n.grants.some(g=>g.state==='active'&&(!g.expires_at||Date.parse(g.expires_at)>Date.now()))).map(n=>n.canonical_id);
 }
 
-/** worker 桥地址：FLEET_WORKER_<ID大写下划线>_URL env 覆盖优先，否则 tailscaleIp:5231 */
-export function workerBridgeUrlFor(machineId, env = process.env) {
-  const machine = MACHINES.find((m) => m.id === machineId);
-  if (!machine) return null;
-  const envKey = `FLEET_WORKER_${machineId.toUpperCase().replaceAll('-', '_')}_URL`;
-  if (env[envKey]) return env[envKey];
-  if (!machine.tailscaleIp) return null;
-  return `http://${machine.tailscaleIp}:5231`;
+/** worker 桥地址来自已发布执行目录。 */
+export function workerBridgeUrlFor(machineId) {
+  return currentNode(machineId)?.endpoints?.worker ?? null;
 }
 
 /**

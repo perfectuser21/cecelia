@@ -1,3 +1,4 @@
+import { directory } from '../execution-directory/directory.js';
 import { Buffer } from 'node:buffer';
 import { createHash, randomUUID as nodeRandomUUID } from 'node:crypto';
 import {
@@ -14,7 +15,7 @@ import { isPrimaryWorker, listComputeWorkerIds } from '../machine-registry.js';
 
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const ACCOUNT_PATTERN = /^team[1-5]$/;
-const MACHINES = new Set(listComputeWorkerIds());
+
 const MAX_AUTH_JSON_BYTES = 196_608;
 
 function fail(code) {
@@ -172,14 +173,17 @@ export function createCredentialBroker({
       accountId,
       machineId,
       deadlineAt,
+      repo,
+
     } = {}) {
       if (!isPrimaryWorker(controllerMachineId)) {
         fail('credential_broker_us_authority_required');
       }
       if (!UUID_PATTERN.test(attemptId ?? '')) fail('credential_attempt_invalid');
       if (!ACCOUNT_PATTERN.test(accountId ?? '')) fail('credential_account_not_allowed');
-      if (!MACHINES.has(machineId)) fail('credential_machine_not_allowed');
+      if (!listComputeWorkerIds().includes(machineId)) fail('credential_machine_not_allowed');
 
+      if(!directory.matches({machineId,surface:'harness',provider:'codex',account:accountId,repo}))fail('credential_grant_not_allowed');
       const nowMs = now();
       if (!validTimestamp(nowMs)) fail('credential_clock_invalid');
       const deadlineMs = parseDeadline(deadlineAt, nowMs);

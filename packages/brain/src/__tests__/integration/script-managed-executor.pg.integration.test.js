@@ -1,3 +1,5 @@
+import {directory} from '../../execution-directory/directory.js';
+import {importLegacyPolicy} from '../../execution-directory/store.js';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync,readFileSync,rmSync } from 'node:fs';
@@ -25,7 +27,9 @@ const containers=new Map();let starts=0,server,runner,deps,rejectStart=false,rej
 const token='test-worker-secret-'.repeat(4),machine='us-mac-m4';
 beforeAll(async()=>{
   await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
-  await pool.query(`CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);
+  await pool.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');
+    INSERT INTO system_registry(id,type,name,status) VALUES('ed3555dc-4777-446c-bdf0-d928d6a08ef1','machine','mac-mini-m4-us','active');
+    CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);
     CREATE TABLE tasks(id UUID PRIMARY KEY,title TEXT DEFAULT 'fixture',task_type TEXT DEFAULT 'script_run',status TEXT,
       priority TEXT DEFAULT 'P2',executor_kind TEXT DEFAULT 'script',payload JSONB DEFAULT '{}',result JSONB DEFAULT '{"handoff":{"schema_version":"v1","next_steps":[]}}',
       claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,completed_at TIMESTAMPTZ,
@@ -35,7 +39,7 @@ beforeAll(async()=>{
     CREATE TABLE task_events(task_id UUID,event_type TEXT,payload JSONB,created_at TIMESTAMPTZ);
     CREATE TABLE initiative_runs(id UUID PRIMARY KEY,phase TEXT DEFAULT 'planning',orchestrator_version TEXT DEFAULT 'v2');`);
   for(const file of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile',
-    '363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations']) {
+    '363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations','503_execution_directory']) {
     await pool.query(readFileSync(new URL(`../../../migrations/${file}.sql`,import.meta.url),'utf8'));
   }
   runner=createScriptRunner({assertLocalResources:async()=>{if(rejectStart||(rejectCreated&&containers.size>0))throw Object.assign(new Error('attempt_local_resources_unavailable'),{statusCode:429});},stateRoot:root,machineId:machine,workerId:machine,bootId:'boot-fixture',
@@ -52,12 +56,13 @@ beforeAll(async()=>{
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
   const api=await import('../../script-worker-client.js').catch(()=>({}));
   expect(api.createScriptWorkerClient,'必须通过实际认证client调用worker').toBeTypeOf('function');
-  deps={pool,env:{SCRIPT_MANAGED_MACHINES:machine},managed:{client:api.createScriptWorkerClient({
-    urls:{[machine]:`http://127.0.0.1:${server.address().port}`},token}),
+  const env={SCRIPT_MANAGED_MACHINES:machine,FLEET_WORKER_US_MAC_M4_URL:`http://127.0.0.1:${server.address().port}`,EXECUTION_LEGACY_SCRIPT_PROFILES:JSON.stringify({[machine]:['harmless']})};
+  await importLegacyPolicy({pool,env});await directory.refresh({pool});
+  deps={pool,env,managed:{client:api.createScriptWorkerClient({pool,env,token}),
     collectSnapshot:async()=>({verified:true,machine,captured_at:Date.now(),expires_at:Date.now()+60_000,
       capacity:{ok:true,physical_base_slots:6,effective_base_slots:6}})}};
 });
-beforeEach(async()=>{await pool.query('TRUNCATE capacity_reservations,tasks,task_runs,task_events CASCADE');starts=0;rejectStart=false;rejectCreated=false;holdRunning=false;dockerFault=null;containers.clear();});
+beforeEach(async()=>{await pool.query('TRUNCATE capacity_reservations,task_runs,task_events CASCADE;DELETE FROM tasks');await directory.refresh({pool});starts=0;rejectStart=false;rejectCreated=false;holdRunning=false;dockerFault=null;containers.clear();});
 afterAll(async()=>{runner?.close();if(server)await new Promise(r=>server.close(r));await pool.end();await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();rmSync(root,{recursive:true,force:true});});
 function interceptQueries(before) {
   const call=async(query,sql,args)=>{await before(sql,args);return query(sql,args);};

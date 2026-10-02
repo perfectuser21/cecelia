@@ -1,3 +1,4 @@
+import resourcePolicy from '../scripts/fleet-worker/attempt-resource-policy.cjs';
 /**
  * Fleet Resource Cache — 全局多机器资源感知
  *
@@ -12,7 +13,7 @@
  *   - offline_reason: 'no_ping_grace_exceeded' | 'fetch_failed' | null
  */
 
-import { SERVERS, COMPUTE_SERVERS } from './routes/infra-status.js';
+import { current } from './execution-directory/directory.js';
 import { workerBridgeUrlFor } from './machine-registry.js';
 import { calculatePhysicalCapacity } from './platform-utils.js';
 import { parseWorkerResources, cachedResourceReason } from './fleet-resource-health.js';
@@ -69,7 +70,7 @@ async function collectServerStats(server, prevLastPingAt) {
 
     const totalMemMB = Math.round(stats.memory.totalGB * 1024);
     const cpuCores = stats.cpu.cores;
-    const physicalCapacity = calculatePhysicalCapacity(totalMemMB, cpuCores, 400, 0.5);
+    const physicalCapacity = calculatePhysicalCapacity(totalMemMB, cpuCores, resourcePolicy.BASE_SLOT.memoryBytes / 1024 ** 2, resourcePolicy.BASE_SLOT.cpus);
 
     const cpuPressure = stats.cpu.usagePercent / 100;
     const memPressure = stats.memory.usagePercent / 100;
@@ -114,7 +115,7 @@ async function collectServerStats(server, prevLastPingAt) {
  * 刷新所有编程机器的缓存
  */
 async function refreshFleetCache() {
-  const computeServers = SERVERS.filter(s => COMPUTE_SERVERS.includes(s.id));
+  const computeServers = (current()?.nodes??[]).map(n=>({id:n.canonical_id,name:n.name}));
 
   const _results = await Promise.allSettled(
     computeServers.map(async (server) => {

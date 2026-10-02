@@ -11,6 +11,7 @@ fail() { echo "❌ $1"; ERRORS=$((ERRORS+1)); }
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 SCRIPT="$REPO_ROOT/scripts/scan/rescan-if-changed.sh"
+SOURCE_SCRIPT="$SCRIPT"
 TMPD=$(mktemp -d -t rescan-test.XXXXXX)
 trap 'rm -rf "$TMPD"' EXIT
 

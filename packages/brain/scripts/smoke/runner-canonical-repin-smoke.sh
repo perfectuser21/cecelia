@@ -13,7 +13,7 @@ bash "$ROOT/packages/brain/scripts/fleet-worker/canonical-pin-consistency.test.s
 cd "$ROOT"
 node --input-type=module <<'NODE'
 import { readFileSync } from 'node:fs';
-import { listNodeProfiles } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { listDeploymentNodeProfiles as listNodeProfiles } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const src = readFileSync('packages/brain/src/orchestrator/fleet-node/node-profile.js', 'utf8');
 const pinned = src.match(/runner_image_digest: '([^']+)'/)?.[1];

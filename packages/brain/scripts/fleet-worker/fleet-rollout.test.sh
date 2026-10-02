@@ -824,8 +824,15 @@ if run_rollout moon-base --apply >/dev/null 2>&1; then
   fail "unknown rollout target was accepted"
 fi
 
-if grep -Eni '\.codex|auth\.json|credentials|CODEX_ACCOUNT|token|prompt|bridge.*/run' \
-  "$artifact_log" "$transport_log" "$node_log"; then
+# 工作区根目录名不是归档内容；仅替换精确根前缀，根下敏感路径仍参与扫描。
+scan_log="$test_root/authority-scan.log"
+python3 - "$(cd "$SCRIPT_DIR/../../../.." && pwd)" \
+  "$artifact_log" "$transport_log" "$node_log" > "$scan_log" <<'PYSCAN'
+import pathlib, sys
+for filename in sys.argv[2:]:
+    print(pathlib.Path(filename).read_text().replace(sys.argv[1] + '/', '<repo-root>/').replace(sys.argv[1] + ' ', '<repo-root> '))
+PYSCAN
+if grep -Eni '\.codex|auth\.json|credentials|CODEX_ACCOUNT|token|prompt|bridge.*/run' "$scan_log"; then
   fail "rollout artifacts or transport contain account, Prompt, or Bridge authority"
 fi
 

@@ -1,3 +1,4 @@
+import {seedExecutionDirectoryPgFixture,refreshExecutionDirectoryPgFixture} from '../helpers/execution-directory-pg-fixture.js';
 import { seedLifecycleAttempt } from '../../../tests/helpers/lifecycle-attempt-fixture.js';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -5,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import pg from 'pg';
 import request from 'supertest';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { deriveCounters } from '../../orchestrator/counters.js';
 import { derive } from '../../orchestrator/derive.js';
@@ -105,6 +106,7 @@ async function createIsolatedDatabase() {
     stdio: 'pipe',
   });
   testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 10 });
+  await seedExecutionDirectoryPgFixture(testPool);
 }
 
 async function dropIsolatedDatabase() {
@@ -344,6 +346,7 @@ async function collect(run, options = {}) {
   );
 }
 
+beforeEach(async()=>refreshExecutionDirectoryPgFixture(testPool));
 beforeAll(createIsolatedDatabase, 30_000);
 afterAll(dropIsolatedDatabase, 30_000);
 
@@ -359,12 +362,12 @@ describe('Kernel restart recovery on real PostgreSQL decision log', () => {
     const attemptId = randomUUID();
     await testPool.query(
       `INSERT INTO harness_attempts (
-         id, run_id, hop, phase, role, provider, task_bundle,
+         id, run_id, hop, phase, role, provider, account_id, task_bundle,
        callback_secret_hash, status, lease_owner, lease_expires_at,
          provider_session_id, logical_cycle_id, attempt_kind, workstream_key,
          execution_transport, machine_id, requested_machine_id, local_container_naming
        ) VALUES (
-         $1,$2,$3,'generate','generator','codex','{}'::jsonb,
+         $1,$2,$3,'generate','generator','codex','team1','{"inputs":{"workspace_spec":{"repo":"perfectuser21/cecelia"}}}'::jsonb,
          'old-hash','running','old-owner',NOW()-INTERVAL '1 minute',
          'provider-thread','task-cycle','initial','ws1','local-docker','us-mac-m4','us-mac-m4','legacy-unsuffixed'
        )`,

@@ -29,17 +29,17 @@ jobs:
         with:
           node-version: '20'
 
+      - name: 验证超长diff请求构造
+        run: bash scripts/__tests__/pr-review-large-diff.test.sh
+
       - name: 获取 PR diff
         id: get-diff
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 获取 PR 的文件变更 diff（限制大小防止超出 API 限制）
-          PR_DIFF=$(gh pr diff ${{ github.event.pull_request.number }} 2>/dev/null | head -500 || echo "无法获取 diff")
-          # 转义换行，写入环境变量文件
-          echo "PR_DIFF<<DIFF_EOF" >> "$GITHUB_ENV"
-          echo "$PR_DIFF" >> "$GITHUB_ENV"
-          echo "DIFF_EOF" >> "$GITHUB_ENV"
+          # 沿用500行审查范围；内容只经文件传递，单行生成物不能污染进程环境。
+          gh pr diff ${{ github.event.pull_request.number }} > "$RUNNER_TEMP/pr-review-raw.diff"
+          head -n 500 "$RUNNER_TEMP/pr-review-raw.diff" > "$RUNNER_TEMP/pr-review.diff"
 
       - name: 调用 OpenRouter API 进行代码审查（含重试，fail-closed）
         id: ai-review
@@ -68,11 +68,11 @@ jobs:
           - 区分严重问题（🔴）、建议优化（🟡）、正面反馈（🟢）
           - 如果没有发现严重问题，在🔴严重问题下明确写"未发现严重问题""
 
-          USER_PROMPT="请审查以下代码变更：
-
-          \`\`\`diff
-          ${PR_DIFF}
-          \`\`\`"
+          jq -n --arg sys "$SYSTEM_PROMPT" --rawfile diff "$RUNNER_TEMP/pr-review.diff" \
+            '{model:"deepseek/deepseek-chat",messages:[
+              {role:"system",content:$sys},
+              {role:"user",content:("请审查以下代码变更：\n\n```diff\n"+$diff+"\n```")}
+            ],max_tokens:2000,temperature:0.1}' > "$RUNNER_TEMP/pr-review-request.json"
 
           # 调用 OpenRouter API（DeepSeek V3）— 最多重试 3 次，fail-closed
           MAX_RETRY=3
@@ -89,19 +89,7 @@ jobs:
               -H "Content-Type: application/json" \
               -H "X-Title: Cecelia PR Review" \
               --max-time 60 \
-              -d "$(jq -n \
-                --arg sys "$SYSTEM_PROMPT" \
-                --arg usr "$USER_PROMPT" \
-                '{
-                  "model": "deepseek/deepseek-chat",
-                  "messages": [
-                    {"role": "system", "content": $sys},
-                    {"role": "user", "content": $usr}
-                  ],
-                  "max_tokens": 2000,
-                  "temperature": 0.1
-                }'
-              )" 2>/dev/null || echo "")
+              --data-binary "@$RUNNER_TEMP/pr-review-request.json" 2>/dev/null || echo "")
 
             REVIEW_CONTENT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null || echo "")
 
@@ -131,14 +119,14 @@ jobs:
           fi
 
           # 写入文件供后续步骤使用
-          echo "$REVIEW_CONTENT" > /tmp/review-result.txt
+          echo "$REVIEW_CONTENT" > "$RUNNER_TEMP/review-result.txt"
           echo "审查结果已保存"
 
       - name: 将审查结果发布为 PR 评论
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          REVIEW_CONTENT=$(cat /tmp/review-result.txt)
+          REVIEW_CONTENT=$(cat "$RUNNER_TEMP/review-result.txt")
           COMMENT_BODY="## 🤖 AI 代码审查（DeepSeek V3）
 
           ${REVIEW_CONTENT}
@@ -153,4 +141,4 @@ jobs:
       - name: 检测严重问题（🔴 则 job 失败）
         run: |
           echo "正在检测审查结果中是否包含🔴严重问题..."
-          cat /tmp/review-result.txt | node scripts/devgate/detect-review-issues.js
+          cat "$RUNNER_TEMP/review-result.txt" | node scripts/devgate/detect-review-issues.js
