@@ -1,9 +1,9 @@
 /** 两个精确源码版本各自反查依赖和冻结定义，再合并使用位置；缺证据绝不借latest。 */
 import { createHash } from 'node:crypto';
+import { resolveImplementationRegistryRepo,loadImplementationRevisionContext } from './implementation-context.js';
 import { readImplementationConsumers, validateImplementationQuery } from './implementation-consumers.js';
 const SHA=/^[0-9a-f]{40}$/;
 const HASH=/^[0-9a-f]{64}$/;
-const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const fail=message=>{throw Object.assign(Error(message),{code:'MAP_IMPLEMENTATION_IMPACT_INPUT_INVALID',status:400});};
 const unique=rows=>[...new Map(rows.map(row=>[JSON.stringify(row),row])).values()];
 const digest=value=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -43,38 +43,12 @@ export function reverseImplementationPaths(edges,starts,{max_depth=64,max_nodes=
   return {paths:[...paths.keys()].sort(),depths:Object.fromEntries(paths),truncated,max_depth,max_nodes};
 }
 
-async function registryRepo(db,q) {
-  const rows=(await db.query(`SELECT repo FROM map_scope_repositories WHERE scope_key=$1 AND (repo=$2 OR adapter_config->>'source_repo'=$2)`,[q.scope,q.repo])).rows;
-  if(rows.length!==1)throw Object.assign(Error('scope与源码repo须有唯一显式登记'),{code:'MAP_IMPLEMENTATION_REPO_NOT_CONFIGURED',status:422});
-  return rows[0].repo;
-}
 async function graphSnapshot(db,repo,revision,gaps) {
   const snapshot=(await db.query('SELECT * FROM graph_snapshot_versions WHERE repo=$1 AND source_revision=$2',[repo,revision])).rows[0];
   if(!snapshot){gaps.push({code:'graph_snapshot_missing',repo,revision});return null;}
   const edges=(await db.query('SELECT src_path,dst_path,edge_type,detail FROM graph_edge_snapshots WHERE repo=$1 AND source_revision=$2 ORDER BY src_path,dst_path,edge_type',[repo,revision])).rows;
   if(Number(snapshot.row_count)!==edges.length)gaps.push({code:'graph_snapshot_incomplete',expected:Number(snapshot.row_count),actual:edges.length});
   return {snapshot:{...snapshot,id:`${repo}@${revision}`,digest:digest(edges)},edges};
-}
-async function pinnedContext(db,q,revision,registry,projectionDigest,gaps) {
-  const rows=(await db.query(`SELECT p.id projection_run_id,p.projection_digest,p.manifest_digest projection_manifest_digest,p.fact_revisions,
-    m.id manifest_version_id,m.digest manifest_digest,m.manifest
-    FROM map_projection_runs p JOIN map_manifest_versions m ON m.id=p.manifest_version_id
-    WHERE p.scope_key=$1 AND m.scope_key=$1 AND p.status IN ('active','superseded') AND p.fact_revisions->>$2=$3
-      AND ($4::text IS NULL OR p.projection_digest=$4) ORDER BY p.created_at DESC,p.id`,[q.scope,registry,revision,projectionDigest||null])).rows;
-  if(!rows.length){gaps.push({code:'projection_snapshot_missing',revision});return null;}
-  if(new Set(rows.map(row=>`${row.manifest_digest}:${row.projection_digest}`)).size>1){gaps.push({code:'projection_snapshot_ambiguous',revision});return null;}
-  const context=rows[0],mapped=new Map();
-  if(context.manifest_digest!==context.projection_manifest_digest)gaps.push({code:'projection_manifest_mismatch',revision});
-  const nodes=(await db.query("SELECT node_key,attributes FROM map_projection_nodes WHERE run_id=$1 AND node_type='capability'",[context.projection_run_id])).rows;
-  for(const node of context.manifest.capabilities||[]){
-    const binding=node.brain_binding;
-    if(!binding||binding.entity_type!=='capability'||!UUID.test(binding.entity_id||'')){gaps.push({code:'capability_mapping_missing',node_key:node.key});continue;}
-    mapped.set(binding.entity_id,node.key);
-    if(binding.source_repo!==q.repo||binding.source_revision!==revision)gaps.push({code:'capability_source_mismatch',node_key:node.key,revision});
-    const projected=nodes.find(n=>n.node_key===node.key)?.attributes;
-    if(projected?.canonical_entity_id!==binding.entity_id||projected?.mapping_status!=='verified')gaps.push({code:'capability_mapping_unverified',node_key:node.key});
-  }
-  return {...context,mapped,registryRepo:registry};
 }
 async function definitions(db,q,revision,gaps) {
   const workflows=(await db.query(`SELECT id,workflow_id,source_repo,source_path,source_commit,payload_sha256,contract_sha256,payload
@@ -96,7 +70,7 @@ function matchedBindings(activity,q,revision,paths){return (activity.payload.imp
 async function readSide(db,q,side,registry) {
   const revision=q[`${side}_revision`],gaps=[];
   const graph=await graphSnapshot(db,registry,revision,gaps);
-  const context=await pinnedContext(db,q,revision,registry,q[`${side}_projection_digest`],gaps);
+  const context=await loadImplementationRevisionContext(db,q,revision,registry,q[`${side}_projection_digest`],gaps);
   const versions=await definitions(db,q,revision,gaps);
   const starts=q.changed_files.map(change=>side==='base'?change.old_path||change.path:change.path);
   const traversal=reverseImplementationPaths(graph?.edges||[],starts,q);
@@ -171,7 +145,7 @@ async function confirmAbsentUsages(db,base,head,{added=false}={}) {
   head[added?'addition_evidence':'removal_evidence']=unique(evidence);
 }
 export async function readImplementationImpact(db,input) {
-  const q=validateImplementationImpact(input),registry=await registryRepo(db,q);
+  const q=validateImplementationImpact(input),registry=await resolveImplementationRegistryRepo(db,q);
   const base=await readSide(db,q,'base',registry),head=await readSide(db,q,'head',registry);
   await confirmAbsentUsages(db,base,head);
   await confirmAbsentUsages(db,head,base,{added:true});
