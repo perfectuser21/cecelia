@@ -74,3 +74,8 @@ it('真实CAS阶段阻塞跨过登记期限，COMMIT必须再次拒绝且完整�
  await pool.query(`CREATE FUNCTION fixture_c7_expiry() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${id}'::uuid THEN PERFORM pg_sleep(1.5); END IF;RETURN NEW;END $$;CREATE TRIGGER fixture_c7_expiry BEFORE UPDATE ON recurring_tasks FOR EACH ROW EXECUTE FUNCTION fixture_c7_expiry()`);
  try{await expect(run(id)).rejects.toThrow('phone_schedule_owner_required');expect(await totals(id)).toEqual({slots:0,owners:0,tasks:0,receipts:0});}finally{await pool.query('DROP TRIGGER fixture_c7_expiry ON recurring_tasks;DROP FUNCTION fixture_c7_expiry()');}
 });
+it('本地真实迁移只在scratch及私有schema，CI也固定schema隔离',async()=>{
+ const row=(await pool.query('SELECT current_database() database,current_schema() schema')).rows[0];
+ expect(row.database).toBe(DB_DEFAULTS.database);expect(row.schema).toMatch(/^phone_schedule_[a-z0-9_]+$/);
+ if(process.env.CI!=='true')expect(row.database).toBe('cecelia_scratch');
+});
