@@ -64,6 +64,27 @@ function fillForm() {
 async function tick() { await act(async () => { await vi.advanceTimersByTimeAsync(4000); }); }
 
 describe('设备页接入新机器', () => {
+  it('既有机器从卡片接入，锁定原名称并默认observer，提交不携带UUID或授权', async () => {
+    machines = [machine('vps-hk', 'HK', { public_ip: '192.0.2.42', role: '公网入口 & AI 执行节点' })];
+    mount(); fireEvent.click(await screen.findByRole('button', { name: '接入管理：vps-hk' }));
+    expect(screen.getByLabelText('机器名称', { exact: true })).toHaveValue('vps-hk');
+    expect(screen.getByLabelText('机器名称', { exact: true })).toHaveAttribute('readonly');
+    expect(screen.getByLabelText('连接地址', { exact: true })).toHaveValue('192.0.2.42');
+    expect(screen.getByLabelText('用途', { exact: true })).toHaveValue('observer');
+    for (const [label,value] of [['SSH 用户','root'],['1Password 引用','op://CS/node/private key'],['主机指纹',fingerprint]])
+      fireEvent.change(screen.getByLabelText(label,{exact:true}),{target:{value}});
+    fireEvent.change(screen.getByLabelText('用途',{exact:true}),{target:{value:'worker'}});
+    expect(screen.getByText(/独占脚本槽/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'开始接入'}));
+    await waitFor(()=>expect(submissions).toHaveLength(1));
+    expect(submissions[0].body).toEqual({name:'vps-hk',address:'192.0.2.42',ssh_user:'root',ssh_port:22,
+      credential_ref:'op://CS/node/private key',host_key_fingerprint:fingerprint,role:'worker',region:'HK'});
+  });
+  it('已纳管机器不提供再次采用动作',async()=>{
+    machines=[machine('managed-node','HK',{onboarding:{state:'managed'}})];mount();
+    await screen.findByRole('button',{name:/managed-node/});
+    expect(screen.queryByRole('button',{name:'接入管理：managed-node'})).not.toBeInTheDocument();
+  });
   it('校验必填内容、凭据引用与主机指纹，不发送明文密钥', async () => {
     mount(); const submit = await openForm();
     fireEvent.click(submit);
