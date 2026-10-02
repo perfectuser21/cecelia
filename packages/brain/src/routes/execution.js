@@ -43,6 +43,7 @@ import { checkDeviceLockForManualDispatch, releaseDeviceLockNonFatal } from '../
 import { afterTerminalTransition } from '../lib/task-terminal.js';
 import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 import { rateLimit } from 'express-rate-limit';
+import { authoringMutationError, assertAuthoringCompletion } from '../workflow-authoring/task-guard.js';
 
 const router = Router();
 
@@ -97,6 +98,18 @@ router.post('/execution-callback', executionCallbackRateLimit, internalAuthOrLoo
         success: false,
         error: 'task_id is required'
       });
+    }
+
+    // 必须在 callback_queue 入队前验证，避免重放器再次处理被拒绝的伪造回执。
+    const reservedError = authoringMutationError(null, { result });
+    if (reservedError) return res.status(409).json(reservedError);
+    try {
+      await assertAuthoringCompletion(pool, normalizeCallbackStatus(status), 'id = $1', [task_id]);
+    } catch (error) {
+      if (error.code === 'WORKFLOW_AUTHORING_INCOMPLETE') {
+        return res.status(409).json({ success: false, code: error.code, error: error.message });
+      }
+      throw error;
     }
 
     console.log(`[execution-callback] Received callback for task ${task_id}, status: ${status}`);
