@@ -56,13 +56,20 @@ next_release_tag() {
         n="${t#"$TAG_PREFIX"}"
         [[ "$n" =~ ^[0-9]+$ ]] && (( n > max )) && max=$n
     done < <(git -C "$MAIN_ROOT" tag -l "${TAG_PREFIX}*" 2>/dev/null)
+    # 未部署的 release 也占用版本号，即使 git tag 写入失败也不能覆写冻结目录。
+    for t in "$RELEASES_DIR"/"$TAG_PREFIX"*; do
+        [[ -d "$t" ]] || continue
+        n="${t##*/}"; n="${n#"$TAG_PREFIX"}"
+        [[ "$n" =~ ^[0-9]+$ ]] && (( n > max )) && max=$n
+    done
     echo "${TAG_PREFIX}$((max + 1))"
 }
 
 # 留存区只保留最近 RETAIN_N 份（按版本号升序，删最旧）。
 # 不用 mapfile/readarray（macOS 自带 bash 3.2 无此内建）。
 prune_releases() {
-    local sorted count drop t
+    local sorted count drop t current=""
+    [[ -f "$RELEASE_FILE" ]] && current=$(grep '^current=' "$RELEASE_FILE" | head -1 | cut -d= -f2)
     sorted=$(ls -1 "$RELEASES_DIR" 2>/dev/null \
         | grep -E "^${TAG_PREFIX}[0-9]+$" \
         | sort -t v -k2 -n)
@@ -70,9 +77,13 @@ prune_releases() {
     count=$(printf '%s\n' "$sorted" | grep -c .)
     drop=$((count - RETAIN_N))
     (( drop <= 0 )) && return 0
-    printf '%s\n' "$sorted" | head -n "$drop" | while IFS= read -r t; do
+    while IFS= read -r t; do
+        # 在服目录和本次发布源不能删；剩余目录按版本顺序清理。
+        [[ "$t" == "$current" || "$t" == "${1:-}" ]] && continue
+        (( drop <= 0 )) && break
         [[ -n "$t" ]] && rm -rf "${RELEASES_DIR:?}/$t"
-    done
+        drop=$((drop - 1))
+    done <<< "$sorted"
 }
 
 # 读 .staging-pending（release/full 用）→ STAGED_DIST/PORT/PID。
@@ -109,13 +120,13 @@ write_release_manifest() {
     mv "${RELEASE_FILE}.tmp" "$RELEASE_FILE"
 }
 
-# dist/ 通过目录 rename 原子换入后，Docker/OrbStack 的 bind mount 仍可能抓着旧目录 inode。
-# 必须只重建 frontend 让 /app 重新绑定 live dist；--no-deps 防止连带重启 Brain。
+# OrbStack 可能缓存被 rename 的 dist/ 路径；直接挂载不再换名的冻结 release。
+# 只重建 frontend；--no-deps 防止连带重启 Brain。
 rebind_frontend() {
     if [[ -n "${CECELIA_SKIP_FRONTEND_RECREATE:-}" ]]; then
         return 0
     fi
-    docker compose --env-file "$MAIN_ROOT/.env.docker" -f "$MAIN_ROOT/docker-compose.yml" \
+    DASHBOARD_DIST_DIR="$1" docker compose --env-file "$MAIN_ROOT/.env.docker" -f "$MAIN_ROOT/docker-compose.yml" \
         up -d --force-recreate --no-deps frontend
 }
 
@@ -146,7 +157,7 @@ do_release() {
     fi
     write_release_manifest "$RELEASE_TAG" "$PROMOTE_COMMIT" "$BRAIN_IMAGE"
     echo "📌 已登记 release manifest=${RELEASE_TAG}（brain_image=${BRAIN_IMAGE:-none}，current 未动）"
-    prune_releases
+    prune_releases "$RELEASE_TAG"
     # 供 full 模式 / 调用方解析
     echo "RELEASE_TAG=$RELEASE_TAG"
 }
@@ -176,8 +187,12 @@ do_deploy() {
         if [[ "$HAD_OLD" == true ]]; then
             mkdir -p "$RELEASES_DIR"
             if [[ -n "$OLD_TAG" ]]; then
-                rm -rf "${RELEASES_DIR:?}/$OLD_TAG"
-                mv "${DIST_DIR}.old" "$RELEASES_DIR/$OLD_TAG"
+                if [[ -d "$RELEASES_DIR/$OLD_TAG" ]]; then
+                    # 旧 release 可能仍被容器挂载，不能以 live 副本替换它。
+                    rm -rf "${DIST_DIR}.old"
+                else
+                    mv "${DIST_DIR}.old" "$RELEASES_DIR/$OLD_TAG"
+                fi
                 ROLLBACK_SRC="$RELEASES_DIR/$OLD_TAG"
                 echo "📦 旧版已留存：.dist-releases/$OLD_TAG"
             else
@@ -195,18 +210,18 @@ do_deploy() {
         exit 1
     fi
 
-    echo "🔄 重新绑定 frontend → live dist/（不重启 Brain）"
-    if ! rebind_frontend; then
+    echo "🔄 重新绑定 frontend → .dist-releases/${tag}（不重启 Brain）"
+    if ! rebind_frontend "$SRC"; then
         echo "❌ frontend 重绑失败，恢复上一版 live dist/"
         if [[ -n "$ROLLBACK_SRC" && -d "$ROLLBACK_SRC" ]]; then
             rm -rf "${DIST_DIR:?}"
             cp -R "$ROLLBACK_SRC" "$DIST_DIR"
-            rebind_frontend || echo "❌ 上一版 frontend 重绑也失败，5211 需要部署告警介入"
+            rebind_frontend "$ROLLBACK_SRC" || echo "❌ 上一版 frontend 重绑也失败，5211 需要部署告警介入"
         fi
         exit 1
     fi
-    echo "✅ frontend 已重新绑定 live dist/，Brain 未重启"
-    prune_releases
+    echo "✅ frontend 已绑定冻结 release，Brain 未重启"
+    prune_releases "$tag"
 
     # 写指针：current/commit/promoted_at 覆盖；manifest/history（release 已写）保留。
     local DEPLOY_COMMIT
