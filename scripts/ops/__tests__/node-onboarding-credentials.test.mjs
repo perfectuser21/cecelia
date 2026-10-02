@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, chmod, rm, symlink, link, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, chmod, rm, symlink, link, realpath, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -103,9 +103,11 @@ import { readFile, stat, access, chmod } from 'node:fs/promises';
 import { runCommand } from ${JSON.stringify(runnerUrl)};
 import { onboard } from ${JSON.stringify(new URL('../node-onboarding.mjs', import.meta.url).href)};
 const key = ${JSON.stringify(join(f.directory, 'cecelia-onboarding', request.id, 'key'))};
+let verifiedKeys = 0;
 const runner = async (command, args, options) => {
   if (command === 'op') return runCommand(command, args, options);
   assert.equal(await readFile(key, 'utf8'), 'FIXTURE-PRIVATE-KEY'); assert.equal((await stat(key)).mode & 0o777, 0o600);
+  verifiedKeys++;
   throw new Error('FIXTURE-PRIVATE-KEY ' + process.env.EXPECTED_TOKEN);
 };
 for (let attempt = 0; attempt < 2; attempt++) {
@@ -113,6 +115,7 @@ for (let attempt = 0; attempt < 2; attempt++) {
   assert.equal(receipt.error_code, 'CONNECT_FAILED'); await assert.rejects(access(key));
   assert.ok(!JSON.stringify(receipt).includes(process.env.EXPECTED_TOKEN)); assert.ok(!JSON.stringify(receipt).includes('FIXTURE-PRIVATE-KEY'));
 }
+assert.equal(verifiedKeys, 2, '私钥断言必须成功执行，不能被接入异常回执吞掉');
 await chmod(${JSON.stringify(f.path)}, 0o644);
 const receipt = await onboard(${JSON.stringify(request)}, { runner });
 assert.equal(receipt.error_code, 'CREDENTIAL_FAILED'); await assert.rejects(access(key));
@@ -140,7 +143,10 @@ for (const [label, damage] of [
 ]) {
   test(`存在但不安全的缓存安全拒绝：${label}`, async () => {
     const f = await fixture();
-    try { await damage(f); const result = invoke(f); assert.equal(result.status, 1); assert.equal(result.value.error, '1Password 凭据缓存不安全或格式无效'); }
+    try {
+      await damage(f); const result = invoke(f); assert.equal(result.status, 1); assert.equal(result.value.error, '1Password 凭据缓存不安全或格式无效');
+      await assert.rejects(access(join(f.home, 'executed')), { code: 'ENOENT' });
+    }
     finally { await f.cleanup(); }
   });
 }
