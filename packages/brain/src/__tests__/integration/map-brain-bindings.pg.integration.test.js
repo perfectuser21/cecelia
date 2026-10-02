@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
+import express from 'express';
+import request from 'supertest';
+import { createMapRouter } from '../../routes/map.js';
+import { createMapManifestRouter } from '../../routes/map-manifests.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { submitMapManifest, activateMapManifest } from '../../lib/map-manifest-store.js';
@@ -38,7 +42,7 @@ async function state(scope) {
 beforeAll(async () => {
   await admin.connect();
   await admin.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['journeys', 'workflows', 'areas', 'decisions', 'map_scope_repositories', 'fact_snapshot_headers', 'map_manifest_versions', 'map_projection_runs', 'map_projection_nodes', 'map_projection_edges']) {
+  for (const table of ['journeys', 'workflows', 'areas', 'decisions', 'map_scope_repositories', 'fact_snapshot_headers', 'map_manifest_versions', 'map_projection_runs', 'map_projection_nodes', 'map_projection_edges', 'graph_edges', 'api_registry', 'test_registry', 'db_schema_registry']) {
     await admin.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
   }
   db = new pg.Pool({ ...DB_DEFAULTS, max: 5, options: `-c search_path=${schema}` });
@@ -128,4 +132,60 @@ it('lib真实projector持久化规范绑定，重新激活能降低已过期sour
   await db.query("UPDATE fact_snapshot_headers SET source_revision=$1 WHERE repo=$2",['c'.repeat(40),scope]);
   await stores.lib.activate(draft.id,scope,project);
   expect(await read()).toMatchObject({canonical_entity_id:cap,mapping_status:'unknown',source_status:'unknown'});
+});
+
+function httpApp() {
+  const app=express(); app.use(express.json());
+  app.use('/map/manifests',createMapManifestRouter({pool:db,projector}));
+  app.use('/map',createMapRouter({pool:db})); return app;
+}
+it('HTTP提交与激活保留绑定领域错误422及原始code', async () => {
+  const scope='http-errors'; await register(scope); const app=httpApp(),m=manifest(scope);
+  m.capabilities[0].brain_binding.entity_id=randomUUID();
+  const submitted=await request(app).post('/map/manifests').send(m);
+  expect(submitted.status,submitted.body).toBe(422); expect(submitted.body.error.code).toBe('MAP_BRAIN_BINDING_NOT_FOUND');
+  const draft=await stores.lib.submit(manifest(scope));
+  await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap]);
+  try {
+    const activated=await request(app).post(`/map/manifests/${draft.id}/activate`);
+    expect(activated.status,activated.body).toBe(422); expect(activated.body.error.code).toBe('MAP_BRAIN_BINDING_PARENT_MISMATCH');
+  } finally { await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[vs,cap]); }
+});
+it('默认projector按显式登记repo读取revision，不能把scope充当repo', async () => {
+  const scope='projection-alias'; await register(scope);
+  await db.query('UPDATE map_scope_repositories SET repo=$1 WHERE scope_key=$2',[`${scope}-source`,scope]);
+  await db.query('UPDATE fact_snapshot_headers SET repo=$1 WHERE repo=$2',[`${scope}-source`,scope]);
+  const draft=await stores.route.submit(manifest(scope));
+  await activateManifest({manifestId:draft.id,scopeKey:scope},{db});
+  const run=(await db.query("SELECT fact_revisions FROM map_projection_runs WHERE scope_key=$1 AND status='active'",[scope])).rows[0];
+  expect(run.fact_revisions).toEqual({[`${scope}-source`]:revision});
+});
+it('正式地图和节点GET复核漂移并重建权威绑定属性，不改持久投影', async () => {
+  const scope='public-read'; await register(scope); const draft=await stores.route.submit(manifest(scope)); await stores.route.activate(draft.id,scope);
+  const app=httpApp();
+  const read=async()=>{
+    const map=await request(app).get('/map').query({scope}); expect(map.status,map.body).toBe(200);
+    const node=await request(app).get('/map/nodes/F1').query({scope}); expect(node.status,node.body).toBe(200);
+    expect(node.body.node.attributes).toEqual(map.body.nodes.find(n=>n.key==='F1').attributes);
+    return node.body.node.attributes;
+  };
+  const before=await read(); expect(before.mapping_status).toBe('verified');
+  await db.query("UPDATE fact_snapshot_headers SET source_revision=$1 WHERE repo=$2",['b'.repeat(40),scope]);
+  expect(await read()).toMatchObject({source_status:'unknown',mapping_status:'unknown',source_evidence:null});
+  await db.query('UPDATE fact_snapshot_headers SET source_revision=$1 WHERE repo=$2',[revision,scope]);
+  await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap]);
+  try { expect(await read()).toMatchObject({hierarchy_status:'unknown',mapping_status:'unknown',validation_errors:['MAP_BRAIN_BINDING_PARENT_MISMATCH']}); }
+  finally { await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[vs,cap]); }
+  const persisted=(await db.query("SELECT n.attributes FROM map_projection_nodes n JOIN map_projection_runs r ON r.id=n.run_id WHERE r.scope_key=$1 AND n.node_key='F1'",[scope])).rows[0].attributes;
+  expect(persisted).toEqual(before);
+  await db.query("UPDATE map_projection_nodes SET attributes=attributes || $1::jsonb WHERE run_id=(SELECT id FROM map_projection_runs WHERE scope_key=$2 AND status='active') AND node_key='F1'",[JSON.stringify({canonical_entity_id:otherCap,canonical_entity_type:'value_stream',brain_binding:{entity_id:otherCap},mapping_status:'verified',validation_errors:['obsolete']}),scope]);
+  const current=await read(); expect(current).toMatchObject({canonical_entity_id:cap,canonical_entity_type:'capability',brain_binding:manifest(scope).capabilities[0].brain_binding,mapping_status:'verified'}); expect(current.validation_errors).toBeUndefined();
+});
+it('无绑定manifest清除投影残留规范UUID，保留旧key/id及普通属性', async () => {
+  const scope='public-legacy'; await register(scope); const draft=await stores.route.submit(manifest(scope,false)); await stores.route.activate(draft.id,scope);
+  const app=httpApp(),read=()=>request(app).get('/map/nodes/F1').query({scope});
+  const before=await read(); expect(before.status,before.body).toBe(200);
+  await db.query("UPDATE map_projection_nodes SET attributes=attributes || $1::jsonb WHERE run_id=(SELECT id FROM map_projection_runs WHERE scope_key=$2 AND status='active') AND node_key='F1'",[JSON.stringify({canonical_entity_id:cap,brain_binding:manifest(scope).capabilities[0].brain_binding,mapping_status:'verified'}),scope]);
+  const after=await read(); expect(after.status,after.body).toBe(200); expect(after.body.node.id).toBe(before.body.node.id); expect(after.body.node.key).toBe('F1');
+  expect(after.body.node.attributes.canonical_entity_id).toBeUndefined(); expect(after.body.node.attributes.brain_binding).toBeUndefined(); expect(after.body.node.attributes.mapping_status).toBe('unknown');
 });
