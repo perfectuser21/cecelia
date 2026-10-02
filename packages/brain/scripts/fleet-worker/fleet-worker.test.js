@@ -418,7 +418,10 @@ describe('Fleet Worker health-only service', () => {
         domain: 'system',
         kind: 'LaunchDaemon',
       });
-      expect(report.time_sync).toEqual({ synchronized: true });
+      expect(report.time_sync.synchronized).toBe(true);
+      expect(report.time_sync.diagnostic).toMatchObject({ category: 'passed', exit_code: 0, parse_status: 'within_policy' });
+      expect(report.time_sync.diagnostic).not.toHaveProperty('stdout');
+      expect(report.time_sync.diagnostic).not.toHaveProperty('stderr');
       expect(report.callback).toEqual({ reachable: true });
       expect(report.worktree).toEqual({ root_ready: true });
       expect(report.container).toEqual({ probe_succeeded: true });
