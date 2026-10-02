@@ -1,11 +1,20 @@
-import {afterEach,it,expect} from 'vitest';
+import {afterEach,beforeEach,it,expect,vi} from 'vitest';
+import pg from 'pg';
 import express from 'express';
 import request from 'supertest';
 import {releaseEvidenceDatabase} from '../fixtures/release-evidence-db.js';
 import {createReleasesRouter} from '../../routes/releases.js';
 import {readCapabilitySystem} from '../../lib/capability-system.js';
-let f;
-afterEach(async()=>{await f?.close();f=null;});
+let f,queryGuard;
+const nativeQuery=pg.Client.prototype.query;
+beforeEach(()=>{
+ queryGuard=vi.spyOn(pg.Client.prototype,'query').mockImplementation(function(sql,...args){
+  const text=typeof sql==='string'?sql:sql.text;
+  if(/LIKE\s+public\.|SET\s+search_path\s+(?:TO|=)\s*public/i.test(text))throw Error('fixture_public_query_forbidden');
+  return nativeQuery.call(this,sql,...args);
+ });
+});
+afterEach(async()=>{try{await f?.close();f=null;}finally{queryGuard.mockRestore();}});
 it('真实同步AV显式Enabler来源经HTTP冻结，旧legacy符号保未知且地图解释文件证据',async()=>{
  f=await releaseEvidenceDatabase({fullActivityBindings:true,enablerDeclarations:true});
  expect(f.activities.every(a=>a.payload.implementation_bindings.some(b=>b.enabler_key==='test-lock'))).toBe(true);
