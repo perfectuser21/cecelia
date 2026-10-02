@@ -1,10 +1,13 @@
 /** 新Span按真实发生位置幂等；摘要只信任服务端规范化的持久字段。 */
 import { stepSha256 } from '../../scripts/sync-steps-from-workspace.mjs';
+import { normalizeSpanProvenance,validateSpanBinding,SPAN_IDENTITY_FIELDS } from './span-provenance.js';
 const SPAN_FIELDS = ['run_id','workflow_id','activity_id','step_id','enabler_id','started_at','ended_at','wait_ms',
   'executor_kind','executor_id','model','tokens_in','tokens_out','cost_usd','attempts','fallback','outcome','evidence','occurrence_key','payload_sha256'];
 const INSERT = `INSERT INTO spans (${SPAN_FIELDS.join(',')}) VALUES (${SPAN_FIELDS.map((_,i)=>`$${i+1}`).join(',')})`;
 const LEGACY_SQL = `${INSERT} ON CONFLICT (run_id, (COALESCE(step_id, activity_id, enabler_id)), started_at) WHERE occurrence_key IS NULL DO NOTHING RETURNING id`;
 const OCCURRENCE_SQL = `${INSERT} ON CONFLICT (run_id, occurrence_key) WHERE occurrence_key IS NOT NULL DO NOTHING RETURNING id`;
+const V2_FIELDS=[...SPAN_FIELDS,'identity_protocol',...SPAN_IDENTITY_FIELDS];
+const V2_SQL=`INSERT INTO spans (${V2_FIELDS.join(',')}) VALUES (${V2_FIELDS.map((_,i)=>`$${i+1}`).join(',')}) ON CONFLICT (run_id, occurrence_key) WHERE occurrence_key IS NOT NULL DO NOTHING RETURNING id`;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EXECUTOR_KINDS = new Set(['code', 'agent', 'human']);
@@ -80,8 +83,9 @@ export function normalizeSpan(raw, index) {
   if (occurrence_key !== null && (typeof occurrence_key !== 'string' || !occurrence_key.trim())) throw new Error(`spans[${index}].occurrence_key must be a non-empty string`);
   const normalized = Object.fromEntries(SPAN_FIELDS.slice(0, 18).map((field, i) => [field, params[i]]));
   normalized.evidence = evidence === null ? null : JSON.parse(evidence);
-  const payload_sha256 = occurrence_key === null ? null : stepSha256(normalized);
-  return { params: [...params, occurrence_key, payload_sha256], occurrence_key, payload_sha256 };
+  const provenance=normalizeSpanProvenance(raw);
+  const payload_sha256 = occurrence_key === null ? null : stepSha256(provenance.identity_protocol===2?{...normalized,...provenance}:normalized);
+  return { params: [...params, occurrence_key, payload_sha256], occurrence_key, payload_sha256,identity_protocol:provenance.identity_protocol,provenance,normalized };
 }
 
 export async function writeSpans(pool, rows) {
@@ -93,9 +97,22 @@ export async function writeSpans(pool, rows) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // 与首次绑定使用同一运行锁；排序避免多运行批次反序死锁。
+    // 旧协议由数据库触发器校验，迁移前客户端仍保持原SQL形状。
+    const v2=rows.filter(row=>row.identity_protocol===2);
+    if(v2.length){
+      for(const runId of [...new Set(ordered.map(({row})=>row.params[0]))])await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,515))',[runId]);
+      const {getRunDefinitionBinding}=await import('./run-definition-binding.js');
+      const contexts=new Map();
+      for(const row of v2){
+        if(!contexts.has(row.params[0]))contexts.set(row.params[0],await getRunDefinitionBinding(client,row.params[0]));
+        validateSpanBinding(row,contexts.get(row.params[0]));
+      }
+    }
     const inserted = [];
     for (const { row, index } of ordered) {
-      const result = await client.query(row.occurrence_key === null ? LEGACY_SQL : OCCURRENCE_SQL, row.params);
+      const result = await client.query(row.identity_protocol===2?V2_SQL:row.occurrence_key === null ? LEGACY_SQL : OCCURRENCE_SQL,
+        row.identity_protocol===2?[...row.params,2,...SPAN_IDENTITY_FIELDS.map(field=>row.provenance[field])]:row.params);
       if (result.rows.length) inserted.push({ id: result.rows[0].id, index });
       else if (row.occurrence_key !== null) {
         // INSERT等待竞争事务后，下一条READ COMMITTED查询读取获胜者，不覆盖执行事实。
@@ -109,6 +126,10 @@ export async function writeSpans(pool, rows) {
     await client.query('COMMIT');
     const ids = inserted.sort((a, b) => a.index - b.index).map(row => row.id);
     return { inserted: ids.length, skipped: rows.length - ids.length, count: rows.length, ids };
-  } catch (error) { await client.query('ROLLBACK'); throw error; }
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if(error.code==='23514'&&error.constraint?.startsWith('spans_bound_run_'))Object.assign(error,{status:422,code:error.constraint==='spans_bound_run_protocol'?'SPAN_IDENTITY_PROTOCOL_REQUIRED':'SPAN_RUN_IDENTITY_MISMATCH'});
+    throw error;
+  }
   finally { client.release(); }
 }

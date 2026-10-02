@@ -42,7 +42,7 @@ export async function createPhoneClaimFixture(onPool, { busyLegacy = false, work
   } catch (error) { await c.query('ROLLBACK'); throw error; } finally { c.release(); }
   if (busyLegacy) await pool.query("INSERT INTO dispatch_events(task_id,event_type,reason) VALUES($1,'dispatched','worker_pool:slot7')", [old]);
   await beforeSchedule(pool);
-  await applyPhoneScheduleMigration(pool, '517_phone_scheduled_slots');
+  await applyPhoneScheduleMigration(pool, '519_phone_scheduled_slots');
   await pool.query(`CREATE FUNCTION fixture_worker_payload() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.payload ? 'phone_schedule' THEN NEW.payload:=NEW.payload||'{"parallel_worker":true,"pipeline":"canvas","canonical":"exploratory"}'::jsonb;NEW.created_at:=now()-interval '1 hour';END IF;RETURN NEW;END $$;
     CREATE TRIGGER fixture_worker_payload BEFORE INSERT ON tasks FOR EACH ROW EXECUTE FUNCTION fixture_worker_payload()`);
   const now = new Date(); now.setSeconds(10, 0); const due = new Date(now); due.setSeconds(0, 0);

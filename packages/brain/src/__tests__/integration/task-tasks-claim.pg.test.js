@@ -13,8 +13,8 @@ afterEach(async () => { if (server) { server.closeAllConnections(); await new Pr
 async function setup() {
  f = await createPhoneClaimFixture(pool => h.pool = pool, { publicClaims: true });
  expect(f.location).toEqual({ db: DB_DEFAULTS.database, schema: f.schema });
- const ledger = (await f.pool.query("SELECT version FROM schema_version WHERE version IN ('471','508','509','517') ORDER BY version")).rows;
- expect(ledger).toEqual(['471','508','509','517'].map(version => ({ version })));
+ const ledger = (await f.pool.query("SELECT version FROM schema_version WHERE version IN ('471','508','509','519') ORDER BY version")).rows;
+ expect(ledger).toEqual(['471','508','509','519'].map(version => ({ version })));
  const tasks = (await import('../../routes/task-tasks.js')).default, legacy = (await import('../../routes/tasks.js')).default;
  const app = express(); app.use(express.json());
  // Actual server registration precedence: nested tasks, legacy brain routes, canonical fallback.

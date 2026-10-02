@@ -27,5 +27,5 @@ export async function createPhoneScheduleSchema(pool,{ skipHttp = false } = {}){
  await applyPhoneMainSchema(pool);
  await pool.query(`CREATE TABLE kernel_controller_sessions(id TEXT PRIMARY KEY,task_id UUID REFERENCES tasks(id),run_id UUID,status TEXT);
  CREATE TABLE callback_queue(id UUID PRIMARY KEY DEFAULT gen_random_uuid(),task_id UUID REFERENCES tasks(id),run_id TEXT,processed_at TIMESTAMPTZ);`);
- for(const name of ['065_device_locks','448_device_locks_phones','509_headed_task_takeover',...(skipHttp ? [] : ['515_phone_http_bindings','516_phone_http_leases'])])await applyPhoneScheduleMigration(pool,name);
+ for(const name of ['065_device_locks','448_device_locks_phones','509_headed_task_takeover',...(skipHttp ? [] : ['517_phone_http_bindings','518_phone_http_leases'])])await applyPhoneScheduleMigration(pool,name);
 }

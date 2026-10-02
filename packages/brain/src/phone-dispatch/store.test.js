@@ -26,7 +26,7 @@ it('HTTP binding迁移不补写既有508 lease，不创建grant或改当前节�
  const before=(await pool.query('SELECT * FROM phone_dispatches WHERE id=$1',[r.id])).rows[0];
  const grants=(await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows;
  const nodes=(await pool.query('SELECT * FROM execution_nodes ORDER BY canonical_id')).rows;
- await pool.query(readFileSync(new URL('../../migrations/515_phone_http_bindings.sql',import.meta.url),'utf8'));
+ await pool.query(readFileSync(new URL('../../migrations/517_phone_http_bindings.sql',import.meta.url),'utf8'));
  expect((await pool.query('SELECT * FROM phone_dispatches WHERE id=$1',[r.id])).rows[0]).toEqual(before);
  expect((await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows).toEqual(grants);
  expect((await pool.query('SELECT * FROM execution_nodes ORDER BY canonical_id')).rows).toEqual(nodes);
@@ -42,7 +42,7 @@ beforeAll(async()=>{
  await pool.query('UPDATE execution_nodes SET current_version_id=$1 WHERE canonical_id=$2',[version,machine]);
  expect((await pool.query("SELECT * FROM execution_grants WHERE surface='phone_ssh'")).rows).toHaveLength(0);
  await pool.query("INSERT INTO phone_registry(serial,nickname,host,profile,douyin_accounts) VALUES($1,'test',$2,$3,$4::jsonb)",[serial,host,profile,JSON.stringify([{id:account,current:true}])]);
- // Seed an actual 508 row before 516; ALTER must preserve identity, grants and pointer.
+ // Seed an actual 508 row before 518; ALTER must preserve identity, grants and pointer.
  const taskId=randomUUID(),id=randomUUID(),reservation=randomUUID(),execution=randomUUID(),lease=randomUUID();
  const grant=(await pool.query("INSERT INTO execution_grants(node_version_id,surface,provider,account_id,profile_id,provenance,state) VALUES($1,'phone_ssh','adb',$2,'adb_get_state','isolated_migration_fixture','active') RETURNING id",[version,account])).rows[0].id;
  await pool.query("INSERT INTO tasks(id,status,task_type,executor_kind) VALUES($1,'queued','device_job','phone-ssh-controller')",[taskId]);
@@ -52,7 +52,7 @@ beforeAll(async()=>{
   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'fixture-worker','fixture-boot',$13)`,[id,taskId,reservation,serial,machine,host,profile,account,version,grant,lease,execution,'f'.repeat(64)]);
  const capture=async()=>({row:(await pool.query('SELECT * FROM phone_dispatches WHERE id=$1',[id])).rows[0],grants:(await pool.query('SELECT * FROM execution_grants ORDER BY id')).rows,nodes:(await pool.query('SELECT * FROM execution_nodes ORDER BY canonical_id')).rows});
  migrationBefore=await capture();
- const httpLeaseMigration=new URL('../../migrations/516_phone_http_leases.sql',import.meta.url);await pool.query(readFileSync(httpLeaseMigration,'utf8'));
+ const httpLeaseMigration=new URL('../../migrations/518_phone_http_leases.sql',import.meta.url);await pool.query(readFileSync(httpLeaseMigration,'utf8'));
  migrationAfter=await capture();
  const {createPhoneDispatchStore}=await import('./store.js');store=createPhoneDispatchStore({pool,afterTask:async()=>{}});
 });
@@ -283,9 +283,9 @@ it('finish 保留已写handoff；提交后真实pool上的接棒入口仍能读�
  await checked.finish(r.id,receipt(r));expect(calls).toBe(1);
 });
 
-it('已部署Linux507、手机508、Hub515与C1 516各自留schema_version，不抢用同一版本号',async()=>{
- const rows=(await pool.query("SELECT version,description FROM schema_version WHERE version IN ('507','508','511','512','513','514','515','516') ORDER BY version")).rows;
- expect(rows.map(row=>row.version)).toEqual(['507','508','511','512','513','514','515','516']);
+it('已部署Linux507、手机508、Hub517与C1 518各自留schema_version，不抢用同一版本号',async()=>{
+ const rows=(await pool.query("SELECT version,description FROM schema_version WHERE version IN ('507','508','511','512','513','514','515','516','517','518') ORDER BY version")).rows;
+ expect(rows.map(row=>row.version)).toEqual(['507','508','511','512','513','514','515','516','517','518']);
  expect(rows[0].description).not.toContain('手机独立');
  expect(rows[1].description).toContain('手机独立');
 });

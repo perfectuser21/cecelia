@@ -23,20 +23,25 @@ it('actual checkout phone bodies apply after real main ledger instead of prefix 
  const original=fs.readdirSync.bind(fs);vi.spyOn(fs,'readdirSync').mockImplementation((...args)=>String(args[0]).endsWith('/migrations')?selected:original(...args));
  const applied=await runMigrations(pool);expect(applied).toHaveLength(3);
  expect((await pool.query("SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('phone_task_owners','phone_scheduled_slots') ORDER BY table_name")).rows).toHaveLength(2);
- const ledger=(await pool.query('SELECT version FROM schema_version WHERE version=ANY($1) ORDER BY version',[['511','512','513','514',...applied]])).rows;
- expect(ledger).toHaveLength(7);expect(new Set(ledger.map(r=>r.version)).size).toBe(7);
+ const ledger=(await pool.query('SELECT version FROM schema_version WHERE version=ANY($1) ORDER BY version',[['511','512','513','514','515','516',...applied]])).rows;
+ expect(ledger).toHaveLength(9);expect(new Set(ledger.map(r=>r.version)).size).toBe(9);
  expect((await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='phone_dispatches' AND column_name='http_binding'")).rows).toHaveLength(1);
  expect(await runMigrations(pool)).toEqual([]);
 });
 it('real main spans retain generated duration and occurrence indexes in private schema',async()=>{
  const columns=(await pool.query("SELECT column_name,is_generated FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='spans'")).rows;
  expect(columns).toContainEqual({column_name:'duration_ms',is_generated:'ALWAYS'});
- expect(columns.map(r=>r.column_name)).toEqual(expect.arrayContaining(['run_id','started_at','activity_id','step_id','enabler_id','occurrence_key','payload_sha256']));
+ expect(columns.map(r=>r.column_name)).toEqual(expect.arrayContaining(['run_id','started_at','activity_id','step_id','enabler_id','occurrence_key','payload_sha256','identity_protocol','run_binding_id','workflow_definition_version_id','activity_definition_version_id']));
  const indexes=(await pool.query("SELECT indexname,indexdef FROM pg_indexes WHERE schemaname=current_schema() AND tablename='spans'")).rows;
  expect(indexes.find(r=>r.indexname==='uq_spans_idem').indexdef).toContain('WHERE (occurrence_key IS NULL)');
  expect(indexes.find(r=>r.indexname==='uq_spans_occurrence').indexdef).toContain('WHERE (occurrence_key IS NOT NULL)');
+ const tables=(await pool.query("SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND table_name IN ('release_versions','release_observations','run_definition_bindings')")).rows;expect(tables).toHaveLength(3);
+ const triggers=(await pool.query("SELECT tgname FROM pg_trigger WHERE tgrelid=ANY(ARRAY['spans'::regclass,'task_runs'::regclass,'release_versions'::regclass,'release_observations'::regclass,'run_definition_bindings'::regclass]) AND NOT tgisinternal")).rows.map(r=>r.tgname);expect(triggers).toEqual(expect.arrayContaining(['spans_check_run_protocol','task_runs_check_definition_identity','immutable_release_version','immutable_release_observation','immutable_run_definition_binding']));
+ const workflowColumn=(await pool.query("SELECT column_name,data_type FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='task_runs' AND column_name='workflow_id'")).rows;expect(workflowColumn).toEqual([{column_name:'workflow_id',data_type:'uuid'}]);
  const enabler=randomUUID();await pool.query('INSERT INTO enablers(id) VALUES($1)',[enabler]);
  await expect(pool.query("INSERT INTO spans(run_id,enabler_id,started_at,executor_kind,occurrence_key,payload_sha256) VALUES('fixture',$1,now(),'code','bad','x')",[enabler])).rejects.toThrow('spans_occurrence_payload_check');
+ await expect(pool.query("INSERT INTO spans(run_id,enabler_id,started_at,executor_kind,identity_protocol) VALUES('fixture',$1,now(),'code',2)",[enabler])).rejects.toMatchObject({code:'23514',constraint:'spans_bound_run_identity'});
+ const release=(await pool.query("INSERT INTO release_versions(release_key,manifest_sha256,request_sha256,environment,target,actor,payload) VALUES($1,$2,$2,'fixture','private','fixture','{}') RETURNING id",[randomUUID(),'b'.repeat(64)])).rows[0];await expect(pool.query("UPDATE release_versions SET actor='changed' WHERE id=$1",[release.id])).rejects.toThrow('禁止UPDATE/DELETE');
  const span=(await pool.query("INSERT INTO spans(run_id,enabler_id,started_at,ended_at,executor_kind,occurrence_key,payload_sha256) VALUES('fixture',$1,'2026-10-02T00:00:00Z','2026-10-02T00:00:01Z','code','once',$2) RETURNING duration_ms",[enabler,'a'.repeat(64)])).rows[0];expect(span.duration_ms).toBe(1000);
  await expect(pool.query("INSERT INTO spans(run_id,enabler_id,started_at,executor_kind,occurrence_key,payload_sha256) VALUES('fixture',$1,now(),'code','once',$2)",[enabler,'a'.repeat(64)])).rejects.toThrow('uq_spans_occurrence');
  expect((await pool.query('SELECT current_database() db,current_schema() schema')).rows[0]).toEqual({db:DB_DEFAULTS.database,schema});

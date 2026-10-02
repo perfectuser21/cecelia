@@ -9,7 +9,20 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/task-tasks-claim.pg.test.js',
   'src/__tests__/integration/task-tasks-patch.pg.test.js',
   'src/__tests__/integration/task-tasks-delete.pg.test.js',
+  'src/phone-dispatch/http-binding.pg.test.js',
+  'src/phone-dispatch/schedule-store.pg.test.js',
+  'src/phone-dispatch/recurring-dispatch.pg.test.js',
   'src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js',
+  'src/lib/__tests__/integration/implementation-report.test.js',
+  'src/lib/__tests__/integration/release-index.test.js',
+  'src/lib/__tests__/integration/run-definition-binding.test.js',
+  'src/lib/__tests__/integration/task-run-definition.test.js',
+  'src/routes/__tests__/integration/releases.test.js',
+  'src/routes/__tests__/integration/run-definitions.test.js',
+  'src/routes/__tests__/integration/run-reconciliation.test.js',
+  'src/__tests__/integration/span-provenance.pg.integration.test.js',
+
+  'src/lib/__tests__/integration/implementation-context.test.js',
   'src/__tests__/integration/workflow-authoring.pg.integration.test.js',
   'src/__tests__/integration/kernel-recovery-rebase.pg.integration.test.js',
   'src/__tests__/integration/gpu-http-intake.pg.integration.test.js',
@@ -120,9 +133,6 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/project-compare-week-timezone.pg.integration.test.js',
   'src/__tests__/integration/ops-learnings-date-filter-timezone.pg.integration.test.js',
   'src/phone-dispatch/store.test.js',
-  'src/phone-dispatch/http-binding.pg.test.js',
-  'src/phone-dispatch/schedule-store.pg.test.js',
-  'src/phone-dispatch/recurring-dispatch.pg.test.js',
 ];
 
 export default defineConfig({

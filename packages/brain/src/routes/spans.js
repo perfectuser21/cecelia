@@ -19,14 +19,14 @@ router.post('/spans', internalAuthOrLoopback, async (req, res) => {
   try {
     rows = items.map(normalizeSpan);
   } catch (e) {
-    return res.status(400).json({ error: e.message });
+    return res.status(e.status || 400).json({ error: e.message,...(e.code?.startsWith('SPAN_')?{code:e.code}:{}) });
   }
 
   try {
     return res.json(await writeSpans(pool, rows));
   } catch (e) {
     return res.status(e.status || 500).json({ error: e.message,
-      ...(e.code === 'SPAN_OCCURRENCE_CONFLICT' ? { code: e.code, run_id: e.run_id, occurrence_key: e.occurrence_key } : {}),
+      ...(e.code?.startsWith('SPAN_') ? { code: e.code, run_id: e.run_id, occurrence_key: e.occurrence_key } : {}),
     });
   }
 });
