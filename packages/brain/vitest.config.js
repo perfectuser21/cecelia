@@ -8,6 +8,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/migrate-phone-chain.pg.test.js',
   'src/__tests__/integration/task-tasks-claim.pg.test.js',
   'src/__tests__/integration/task-tasks-patch.pg.test.js',
+  'src/__tests__/integration/task-tasks-delete.pg.test.js',
   'src/__tests__/integration/retired-harness-dispatch.pg.integration.test.js',
   'src/__tests__/integration/workflow-authoring.pg.integration.test.js',
   'src/__tests__/integration/kernel-recovery-rebase.pg.integration.test.js',
