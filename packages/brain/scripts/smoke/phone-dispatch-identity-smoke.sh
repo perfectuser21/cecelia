@@ -4,8 +4,8 @@ if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${
   exit 1
 fi
 
-# guard 已核对 Brain 容器及同一 DB_* 目标；不接受测试连接串覆盖。
-unset TEST_DATABASE_URL
+# guard 已核对 Brain 容器及同一 DB_* 目标；空值锁定使dotenv不能重新灌入连接串。
+export TEST_DATABASE_URL=''
 export NODE_ENV=test
 export DB_NAME="${DB_NAME:?已核对的 DB_NAME 必须显式提供}"
 export DB_HOST="${DB_HOST:-localhost}" DB_PORT="${DB_PORT:-5432}"
