@@ -1,3 +1,4 @@
+import {resolveEnablerSource} from './enabler-definition-sources.js';
 import {validatePilotReleaseEvidence} from './pilot-release-verification.js';
 /** 发布版本、实测记录只追加；green仅由冻结定义、CI证据和实际组件共同派生。 */
 import { createHash } from 'node:crypto';
@@ -94,14 +95,7 @@ async function readEnablerCalls(db, activities, components) {
     FROM enabler_calls c JOIN enablers e ON e.id=c.enabler_id
     WHERE (c.caller_type='activity' AND c.caller_id=ANY($1::uuid[]))
       OR (c.caller_type='step' AND c.caller_id=ANY($2::uuid[])) ORDER BY c.id`, [activityIds, steps.map(s => s.step_id).filter(Boolean)])).rows;
-  return calls.map(call => {
-    const step = call.caller_type === 'step' ? steps.find(s => s.step_id === call.caller_id) : null;
-    const activity_id = step?.locator?.activity_id || (call.caller_type === 'activity' ? call.caller_id : null);
-    const match = /^([^/@]+\/[^/@]+)@([0-9a-f]{40}):(.+)$/.exec(call.impl_ref || '');
-    const component = match && components.find(c => c.kind !== 'repo' && c.repo === match[1] && c.revision === match[2] && c.path === match[3]);
-    const verified = Boolean(call.active && activityIds.includes(activity_id) && component);
-    return { ...call, activity_id, step_id: step?.step_id || null, source_status: verified ? 'verified' : 'unknown', source_evidence: component || null };
-  });
+  return calls.map(call => resolveEnablerSource(call, activities, components));
 }
 function governanceChecksMatch(expected,observed){
   if(!Array.isArray(expected)||!Array.isArray(observed)||expected.length!==observed.length)return false;

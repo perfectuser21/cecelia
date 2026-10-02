@@ -9,6 +9,8 @@ fi
 if [[ "${CI:-}" != true ]]; then export DB_HOST="${DB_HOST:-/tmp}"; fi
 cd "$BRAIN_DIR"
 node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js \
+  src/lib/__tests__/enabler-definition-sources.test.js \
+  src/__tests__/integration/enabler-definition-sources.pg.integration.test.js \
   src/lib/__tests__/span-provenance.test.js \
   src/lib/__tests__/pilot-release-verification.test.js \
   src/__tests__/integration/pilot-release-ci.pg.integration.test.js \
