@@ -132,9 +132,10 @@ export async function createRelease(pool, input) {
     const definitions = await readDefinitions(db, input);
     const allowed_enabler_calls = await readEnablerCalls(db, definitions.activities, input.components);
     const ci = validateCiEvidence(input.ci_evidence, definitions, input.components);
-    const gaps = [...ci.gaps, ...allowed_enabler_calls.filter(c => c.source_status !== 'verified').map(c => ({ code: 'enabler_source_unknown', enabler_call_id: c.id }))];
+    const stepGaps = definitions.activities.flatMap(a => (a.payload.steps || []).filter(s => !s.step_id || !UUID.test(s.step_id) || s.locator?.activity_id !== a.activity_id).map(s => ({code:'step_identity_missing',activity_definition_version_id:a.id,step_key:s.locator?.step_key || null})));
+    const gaps = [...stepGaps, ...ci.gaps, ...allowed_enabler_calls.filter(c => c.source_status !== 'verified').map(c => ({ code: 'enabler_source_unknown', enabler_call_id: c.id }))];
     const payload = { schema_version: 1, ...definitions, components: input.components, ci_evidence: input.ci_evidence, allowed_enabler_calls,
-      verification: { definition_status: 'verified', ci_status: ci.status, status: gaps.length ? 'unknown' : 'verified', gaps } };
+      verification: { definition_status: stepGaps.length ? 'unknown' : 'verified', step_coverage_status: stepGaps.length ? 'unknown' : 'verified', ci_status: ci.status, status: gaps.length ? 'unknown' : 'verified', gaps } };
     const manifestHash = evidenceHash({ environment: input.environment, target: input.target, payload });
     const release = (await db.query(`INSERT INTO release_versions(release_key,manifest_sha256,request_sha256,environment,target,actor,payload)
       VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [input.release_key, manifestHash, requestHash, input.environment, input.target, input.actor, payload])).rows[0];

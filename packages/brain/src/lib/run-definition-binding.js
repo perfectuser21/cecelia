@@ -38,7 +38,11 @@ function validatePath(input,workflow,activities){
     const key=`${entry.reference_id}:${entry.step_id||''}`;
     requireEvidence(!identities.has(key),'预期路径身份重复');identities.add(key);
   }
-  for(const ref of workflow.payload.activities)requireEvidence(input.expected_path.some(p=>p.reference_id===ref.reference_id),'预期路径缺失Workflow引用（条件分支请标required=false）');
+  for(const ref of workflow.payload.activities){
+    requireEvidence(identities.has(`${ref.reference_id}:`),'预期路径缺少Activity层级');
+    const activity=activities.find(a=>a.id===ref.activity_version_id);
+    for(const step of activity.payload.steps||[])if(step.step_id)requireEvidence(identities.has(`${ref.reference_id}:${step.step_id}`),'预期路径缺少规范Step');
+  }
 }
 async function lockRunProtocol(db,runId){
   await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,515))',[runId]);
