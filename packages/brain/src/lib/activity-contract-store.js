@@ -1,4 +1,5 @@
 /** 定义与工作流关系在同一事务中落库。唯一冲突必须回滚并向上抛出。 */
+import { snapshotDefinitions } from './definition-versions.js';
 import { canonicalJson } from '../../scripts/sync-steps-from-workspace.mjs';
 import { contractPath } from './activity-contract-loader.js';
 export const REGISTRATIONS_SQL = `SELECT id,key,capability_id,source_repo,source_path,source_workflow,source_capability,status,contract_sync_revision
@@ -30,6 +31,8 @@ export async function storeActivityContracts(pool, plans, head, repo, registrati
             status=CASE WHEN status='deprecated' THEN 'planned' ELSE status END,updated_at=NOW() WHERE id=$1`,
           [row.id,a.name,JSON.stringify(contract),sha256,source]);
           out.updated.push(key);
+        } else {
+          await client.query('UPDATE journey_steps SET contract_source=$2 WHERE id=$1 AND contract_source IS DISTINCT FROM $2',[row.id,source]);
         }
       } else {
         row = (await client.query(`INSERT INTO journey_steps(journey_id,name,step_number,capability_key,activity_key,contract,contract_sha256,contract_source,status,backbone_version)
@@ -51,7 +54,8 @@ export async function storeActivityContracts(pool, plans, head, repo, registrati
       for (const {activity:a,source_ref} of activities) {
         await client.query(`INSERT INTO workflow_activity_refs(workflow_id,slot_key,activity_id,sequence_no,source_ref,source_repo,source_path,source_commit,active)
           VALUES($1,$2,$3,$4,$5,$6,$7,$8,true) ON CONFLICT(workflow_id,slot_key) DO UPDATE SET
-          activity_id=EXCLUDED.activity_id,sequence_no=EXCLUDED.sequence_no,source_ref=EXCLUDED.source_ref,
+          activity_id=EXCLUDED.activity_id,activity_definition_version_id=CASE WHEN workflow_activity_refs.activity_id=EXCLUDED.activity_id THEN workflow_activity_refs.activity_definition_version_id ELSE NULL END,
+          sequence_no=EXCLUDED.sequence_no,source_ref=EXCLUDED.source_ref,
           source_repo=EXCLUDED.source_repo,source_path=EXCLUDED.source_path,source_commit=EXCLUDED.source_commit,active=true,
           updated_at=CASE WHEN (workflow_activity_refs.activity_id,workflow_activity_refs.sequence_no,workflow_activity_refs.source_ref,workflow_activity_refs.source_commit)
             IS DISTINCT FROM (EXCLUDED.activity_id,EXCLUDED.sequence_no,EXCLUDED.source_ref,EXCLUDED.source_commit) THEN NOW() ELSE workflow_activity_refs.updated_at END`,
@@ -67,6 +71,10 @@ export async function storeActivityContracts(pool, plans, head, repo, registrati
         if (result.rows.length) out.deprecated.push(key);
       }
     }
+    const bindingsByActivity=new Map();
+    for(const plan of plans) for(const item of plan.activities) bindingsByActivity.set(definitions.get(`${item.activity.from}.${item.activity.key}`),item.bindings);
+    await snapshotDefinitions(client,{workflowIds:plans.map(p=>p.workflow.id),source:{repo,path:'product-map/generated/contracts.json',commit:head},
+      bindingsByActivity,documentsByWorkflow:new Map(plans.map(p=>[p.workflow.id,p.contract]))});
     await client.query('UPDATE workflows SET contract_sync_revision=contract_sync_revision+1 WHERE source_repo=$1',[repo]);
     await client.query('COMMIT');
     return out;

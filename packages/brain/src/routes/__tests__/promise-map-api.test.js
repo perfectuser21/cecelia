@@ -5,7 +5,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockQuery = vi.fn();
-vi.mock('../../db.js', () => ({ default: { query: mockQuery } }));
+vi.mock('../../db.js', () => ({ default: { query: mockQuery, connect: async () => ({
+  query: async (sql, values) => /^(BEGIN|COMMIT|ROLLBACK|LOCK TABLE)/.test(sql)
+    ? { rows: [] } : sql.includes('AS organization FROM journeys')
+      ? { rows: [{ organization: { gaps: [] } }] } : mockQuery(sql, values),
+  release() {},
+}) } }));
 
 async function makeApp() {
   vi.resetModules();
