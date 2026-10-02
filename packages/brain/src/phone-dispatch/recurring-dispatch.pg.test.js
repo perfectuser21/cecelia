@@ -42,7 +42,55 @@ async function run(){return engine.runRecurringTasksJob(defaultDb,{now});}
 it('B1 registered模板经真实engine创建固定phone task/receipt/slot/owner',async()=>{const id=await template();await register(id);const s=await run();expect(s.errors).toBe(0);const t=await tasks(id);expect(t).toHaveLength(1);expect(t[0]).toMatchObject({executor_kind:'phone-ssh-controller',created_by:'phone-schedule-service',status:'queued'});expect((await pool.query('SELECT * FROM phone_task_owners WHERE task_id=$1',[t[0].id])).rows).toHaveLength(1);});
 it.each(['inactive','revoked','expired','changed'])('B1 registry %s绝不回退ordinary及推进slot',async state=>{const id=await template();await register(id,state==='revoked'?'revoked':state==='inactive'?'inactive':'active',state==='expired'?new Date(Date.now()-1000):undefined);if(state==='changed')await pool.query("UPDATE recurring_tasks SET template=template||'{\"timezone\":\"Asia/Shanghai\"}' WHERE id=$1",[id]);const s=await run();expect(s.errors).toBe(1);expect(await tasks(id)).toHaveLength(0);expect((await row(id)).next_run_at).toEqual(due);});
 it.each(['baseline','missed'])('B1 phone %s UPDATE触发器跨expiry后必须回滚',async action=>{
- const slot=action==='baseline'?null:new Date(due.getTime()-3600000);const id=await template({slot});await register(id,'active',new Date(Date.now()+400));
+ const slot=action==='baseline'?null:new Date(due.getTime()-3600000);const id=await template({slot,extra:action==='missed'?{catchup_minutes:0}:{}});await register(id,'active',new Date(Date.now()+400));
  await pool.query(`CREATE FUNCTION fixture_expiry() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='${id}'::uuid THEN PERFORM pg_sleep(.7); END IF; RETURN NEW; END $$;CREATE TRIGGER fixture_expiry BEFORE UPDATE ON recurring_tasks FOR EACH ROW EXECUTE FUNCTION fixture_expiry()`);
  try{const s=await run();expect(s.errors).toBe(1);expect((await row(id)).next_run_at).toEqual(slot);expect(await tasks(id)).toHaveLength(0);}finally{await pool.query('DROP TRIGGER fixture_expiry ON recurring_tasks;DROP FUNCTION fixture_expiry()');}
 });
+async function registrationBarrier(id){
+ const query=pg.Client.prototype.query;let pending,pid,classified=false;const trace=[];
+ const spy=vi.spyOn(pg.Client.prototype,'query').mockImplementation(function(sql,...args){
+  const text=String(sql);trace.push({pid:this.processID,text});
+  if(text.includes('pg_advisory_xact_lock')&&args[0]?.[0]===`phone-schedule:${id}`)pid=this.processID;
+  const answer=query.call(this,sql,...args);
+  if(text.includes('AS registered')&&args[0]?.[0]===id&&!classified){classified=true;return Promise.resolve(answer).then(async result=>{
+   pending=register(id);pending.catch(()=>{});
+   for(let i=0;i<100;i++){
+    if(pid){const r=await admin.query("SELECT wait_event_type,wait_event FROM pg_stat_activity WHERE pid=$1",[pid]);if(r.rows[0]?.wait_event==='advisory')return result;}
+    await new Promise(resolve=>setTimeout(resolve,5));
+   }
+   throw Error('fixture_registration_did_not_wait');
+  });}
+  return answer;
+ });
+ return {trace,async close(){try{await pending;}finally{spy.mockRestore();}}};
+}
+it.each(['missed','overlap','create_error'])('B1 默认真实P2 %s与pool max1注册等待不闭环',async branch=>{
+ const id=await template({slot:branch==='missed'?new Date(due.getTime()-3600000):due,extra:branch==='missed'?{catchup_minutes:0}:{}});
+ if(branch==='overlap'){await pool.query('UPDATE recurring_tasks SET skip_streak=2 WHERE id=$1',[id]);await pool.query("INSERT INTO tasks(title,status,task_type,trigger_source,payload) VALUES($1,'queued','research','recurring',$2)",[`open ${id}`,{recurring_task_id:id}]);}
+ if(branch==='create_error')await pool.query(`CREATE FUNCTION fixture_receipt_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.source_id LIKE 'recurring:${id}:%' THEN RAISE EXCEPTION 'fixture_receipt_error';END IF;RETURN NEW;END $$;CREATE TRIGGER fixture_receipt_fail BEFORE INSERT ON work_routing_receipts FOR EACH ROW EXECUTE FUNCTION fixture_receipt_fail()`);
+ const barrier=await registrationBarrier(id);
+ try{
+  const summary=await run();await barrier.close();
+  expect(summary[branch==='missed'?'missed':branch==='overlap'?'skipped_overlap':'errors']).toBe(1);
+  const saved=(await pool.query("SELECT value_json FROM working_memory WHERE key='alerting_buffers'")).rows[0].value_json;
+  expect(saved.p2.some(x=>x.eventType===`recurring_${branch==='missed'?'missed':branch==='overlap'?'skip_streak':'create_failed'}_${id}`)).toBe(true);
+  const unlock=barrier.trace.findIndex(x=>x.text.includes('pg_advisory_unlock'));
+  const persist=barrier.trace.findIndex(x=>x.text.includes('working_memory'));expect(unlock).toBeGreaterThan(-1);expect(persist).toBeGreaterThan(unlock);
+ }finally{await barrier.close();if(branch==='create_error')await pool.query('DROP TRIGGER fixture_receipt_fail ON work_routing_receipts;DROP FUNCTION fixture_receipt_fail()');}
+},10000);
+it('B1 createTask提交后metadata失败仍广播，再await告警；CAS及task/receipt原状保留',async()=>{
+ const id=await template({phone:false,extra:{payload:{progress:7}}});
+ await pool.query(`CREATE FUNCTION fixture_metadata_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.payload->>'recurring_task_id'='${id}' AND NEW.due_at IS NOT NULL THEN RAISE EXCEPTION 'fixture_metadata_error';END IF;RETURN NEW;END $$;CREATE TRIGGER fixture_metadata_fail BEFORE UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION fixture_metadata_fail()`);
+ const trace=[];const query=pg.Client.prototype.query;const spy=vi.spyOn(pg.Client.prototype,'query').mockImplementation(function(sql,...args){trace.push(String(sql));return query.call(this,sql,...args);});
+ try{const summary=await run();expect(summary.errors).toBe(1);expect(summary.created).toHaveLength(0);const t=await tasks(id);expect(t).toHaveLength(1);expect(t[0].payload.routing_receipt_id).toBeTruthy();expect((await row(id)).last_run_status).toBe('error');expect((await row(id)).next_run_at.getTime()).toBeGreaterThan(due.getTime());const unlock=trace.findIndex(x=>x.includes('pg_advisory_unlock'));const broadcast=trace.findIndex(x=>x==='SELECT * FROM tasks WHERE id = $1');const persist=trace.findIndex(x=>x.includes('INSERT INTO working_memory'));expect(broadcast).toBeGreaterThan(unlock);expect(persist).toBeGreaterThan(broadcast);}finally{spy.mockRestore();await pool.query('DROP TRIGGER fixture_metadata_fail ON tasks;DROP FUNCTION fixture_metadata_fail()');}
+});
+it('B1 真PGquerytimeout销毁唯一session，未知在途不早unlock，注册最终可取同gate',async()=>{
+ const {withRecurringTemplateGate}=await import('./recurring-dispatch.js');const id=randomUUID();let captured;
+ const query=pg.Client.prototype.query;const trace=[];const spy=vi.spyOn(pg.Client.prototype,'query').mockImplementation(function(sql,...args){trace.push(String(sql));return query.call(this,sql,...args);});
+ try{await expect(withRecurringTemplateGate(defaultDb,id,c=>c.query('SELECT pg_sleep(.5)'),{clientFactory:config=>{captured=new pg.Client({...config,query_timeout:50});return captured;}})).rejects.toThrow('timeout');expect(trace.some(x=>x.includes('pg_advisory_unlock'))).toBe(false);let lock=false;for(let i=0;i<100&&!lock;i++){lock=(await pool.query('SELECT pg_try_advisory_lock(hashtextextended($1,0)) locked',[`phone-schedule:${id}`])).rows[0].locked;if(!lock)await new Promise(r=>setTimeout(r,10));}expect(lock).toBe(true);await pool.query('SELECT pg_advisory_unlock(hashtextextended($1,0))',[`phone-schedule:${id}`]);}finally{spy.mockRestore();}
+});
+it('B1 并发真实job同registered slot仅一个owner，busy不ordinary fallback',async()=>{const id=await template();await register(id);const sums=await Promise.all([run(),run()]);expect(sums.reduce((n,s)=>n+s.created.length,0)).toBe(1);expect(await tasks(id)).toHaveLength(1);});
+it('B1 registered查询SQL失败拒绝，没有ordinary task或推进',async()=>{const id=await template();await pool.query('ALTER TABLE phone_schedule_registrations RENAME TO fixture_registration_unavailable');try{const s=await run();expect(s.errors).toBe(1);expect(await tasks(id)).toHaveLength(0);expect((await row(id)).next_run_at).toEqual(due);}finally{await pool.query('ALTER TABLE fixture_registration_unavailable RENAME TO phone_schedule_registrations');}});
+it('B1 普通模板payload伪phone authority不升权，原receipt/metadata事务保留',async()=>{const id=await template({phone:false,extra:{executor_kind:'phone-ssh-controller',phone_authority:true,payload:{policy:'phone-schedule-v1',verified:true}}});const s=await run();expect(s.created).toHaveLength(1);const t=(await tasks(id))[0];expect(t.executor_kind).toBeNull();expect(t.created_by).not.toBe('phone-schedule-service');expect(t.payload.routing_receipt_id).toBeTruthy();expect(t.due_at).toBeInstanceOf(Date);expect((await pool.query('SELECT * FROM phone_task_owners WHERE task_id=$1',[t.id])).rows).toEqual([]);});
+it.each(['baseline','missed'])('B1 active phone %s正确推进且无task/owner',async action=>{const id=await template({slot:action==='baseline'?null:new Date(due.getTime()-3600000),extra:action==='missed'?{catchup_minutes:0}:{}});await register(id);const s=await run();expect(s[action]).toBe(1);expect((await row(id)).next_run_at.getTime()).toBeGreaterThan(now.getTime());expect(await tasks(id)).toHaveLength(0);});
+it('B1 真实idle session EOF永久fatal，不再写业务且关闭自己的session',async()=>{const {withRecurringTemplateGate}=await import('./recurring-dispatch.js');let next=false;await expect(withRecurringTemplateGate(defaultDb,randomUUID(),async c=>{await admin.query('SELECT pg_terminate_backend($1)',[c.processID]);await new Promise(r=>setTimeout(r,30));await c.query('SELECT 1');next=true;})).rejects.toThrow();expect(next).toBe(false);});

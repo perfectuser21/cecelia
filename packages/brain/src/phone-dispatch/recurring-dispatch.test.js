@@ -4,7 +4,7 @@ import {withRecurringTemplateGate} from './recurring-dispatch.js';
 function fixture(){
  const trace=[];class Client extends EventEmitter{
   async connect(){trace.push('connect');expect(this.listenerCount('error')).toBe(1);}
-  async query(sql){trace.push(sql);if(sql.includes('pg_try_advisory_lock'))return {rows:[{locked:true}]};if(sql.includes('pg_advisory_unlock'))return {rows:[{unlocked:true}]};return {rows:[]};}
+  async query(sql){trace.push(sql);if(sql.includes('pg_try_advisory_lock'))return {rows:[{locked:true}]};if(sql.includes('AS registered'))return {rows:[{registered:false}]};if(sql.includes('pg_advisory_unlock'))return {rows:[{unlocked:true}]};return {rows:[]};}
   async end(){trace.push('end');}
   connection={stream:{destroy:()=>trace.push('destroy')}};
  }
