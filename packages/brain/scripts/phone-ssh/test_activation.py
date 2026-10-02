@@ -133,6 +133,18 @@ class ActivationTest(unittest.TestCase):
         alias = self.root / 'install-alias'; alias.symlink_to(self.install, target_is_directory=True)
         with patch.object(activation, '_INSTALL_ROOT', alias): self.denied()
 
+    def test_fifo_config_cannot_block_before_regular_file_rejection(self):
+        path = self.install / 'activation.json'; path.unlink(); os.mkfifo(path, 0o600)
+        code = ('import activation,sys,json;from pathlib import Path;'
+                'activation._INSTALL_ROOT=Path(sys.argv[1]);activation._SOURCE_ROOT=Path(sys.argv[2]);'
+                'activation.validate_activation(json.loads(sys.argv[3]))')
+        try:
+            p = subprocess.run([sys.executable, '-B', '-c', code, str(self.install), str(self.source),
+                                json.dumps(self.identity)], cwd=BASE, capture_output=True, timeout=1)
+        except subprocess.TimeoutExpired:
+            self.fail('FIFO配置读取必须立即拒绝，不能阻塞等待writer')
+        self.assertNotEqual(p.returncode, 0)
+
     def test_all_source_files_and_static_manifest_are_pinned(self):
         for name in NINE:
             with self.subTest(name=name):
