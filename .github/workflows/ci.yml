@@ -977,6 +977,7 @@ jobs:
             src/phone-dispatch/store.test.js \
             src/phone-dispatch/http-binding.pg.test.js \
             src/phone-dispatch/schedule-store.pg.test.js \
+            src/phone-dispatch/recurring-dispatch.pg.test.js \
             src/node-onboarding/__tests__/service.test.js \
             src/node-onboarding/__tests__/registry-adoption.test.js \
             src/__tests__/integration/linux-script-authorization.pg.integration.test.js \

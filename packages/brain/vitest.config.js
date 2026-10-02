@@ -116,6 +116,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/phone-dispatch/store.test.js',
   'src/phone-dispatch/http-binding.pg.test.js',
   'src/phone-dispatch/schedule-store.pg.test.js',
+  'src/phone-dispatch/recurring-dispatch.pg.test.js',
 ];
 
 export default defineConfig({
