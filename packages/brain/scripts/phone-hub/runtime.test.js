@@ -1,4 +1,4 @@
-import {it,expect} from 'vitest';
+import {it,expect,vi} from 'vitest';
 import {createRequire} from 'node:module';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -31,6 +31,15 @@ it('固定生产manifest按实际依赖bytes校验；变更hash/未知配置/不
    if(mode==='token-mode')fs.chmodSync(f.tokenPath,0o644);
    const runtime=await createRuntime({configPath:mode==='missing'?path.join(f.root,'missing'):f.configPath,tokenPath:f.tokenPath,sourceRoot:f.installed,runControl:f.control});expect(runtime.configured).toBe(false);
   }
+ });
+});
+it('Hub实际加载的admission、activation与permit依赖逐项篡改均拒绝旧manifest',async()=>{
+ const {createRuntime}=require('./runtime.cjs');
+ for(const name of ['admission.py','activation.py','permit.py'])await configuredFixture(async f=>{
+  expect(f.manifest.source_hashes).toHaveProperty('../phone-ssh/'+name);
+  fs.appendFileSync(path.join(f.installed,'../phone-ssh',name),'\n# changed dependency\n');
+  const runtime=await createRuntime({configPath:f.configPath,tokenPath:f.tokenPath,sourceRoot:f.installed,runControl:f.control});
+  expect(runtime.configured).toBe(false);
  });
 });
 it('真实本地控制journal追踪nativeowner；配置target未探明不能用本地空账签端到端静默',async()=>{
@@ -75,4 +84,57 @@ it('已启动不可变版本的实际文件改变后不继续签发旧hash',asyn
   await expect(runtime.capabilities('fixture-target')).rejects.toThrow('phone_hub_version_changed');
   await expect(runtime.maintenance()).rejects.toThrow('phone_hub_version_changed');
  });
+});
+
+it('生产Hub入口只绑定manifest声明的实际本机Tailscale IPv4，不占loopback/wildcard',async()=>{
+ const {startRuntimeListener}=require('./runtime.cjs');
+ const interfaces=vi.spyOn(os,'networkInterfaces').mockReturnValue({utun9:[{address:'100.100.100.100',family:'IPv4',internal:false}],lo0:[{address:'127.0.0.1',family:'IPv4',internal:true}]});
+ try{
+  const server={listen:vi.fn((_port,_host,ready)=>ready()),once:vi.fn(),removeListener:vi.fn()};
+  await startRuntimeListener({configured:true,identity:{http_endpoint:'http://100.100.100.100:3459/'},server});
+  expect(server.listen).toHaveBeenCalledWith(3459,'100.100.100.100',expect.any(Function));
+ }finally{interfaces.mockRestore();}
+});
+it('缺失可信配置、非本机、DNS、公网、loopback或wildcard都拒绝启动监听',async()=>{
+ const {startRuntimeListener}=require('./runtime.cjs');
+ const interfaces=vi.spyOn(os,'networkInterfaces').mockReturnValue({utun9:[{address:'100.100.100.100',family:'IPv4',internal:false}]});
+ try{
+  for(const endpoint of ['http://100.100.100.101:3459/','http://fixture-hub:3459/','http://8.8.8.8:3459/','http://127.0.0.1:3459/','http://0.0.0.0:3459/','http://100.63.255.255:3459/','http://100.128.0.1:3459/','http://100.100.100.100:3457/','http://100.100.100.100:3459/path','http://[::]:3459/','http://user@100.100.100.100:3459/','http://100.100.100.100:3459/?unsafe=1','http://100.100.100.100:3459/#unsafe','http://0100.100.100.100:3459/']){
+   const server={listen:vi.fn()};await expect(startRuntimeListener({configured:true,identity:{http_endpoint:endpoint},server})).rejects.toThrow('phone_hub_listener_untrusted');expect(server.listen).not.toHaveBeenCalled();
+  }
+  const server={listen:vi.fn()};await expect(startRuntimeListener({configured:false,server})).rejects.toThrow('phone_hub_listener_untrusted');expect(server.listen).not.toHaveBeenCalled();
+ }finally{interfaces.mockRestore();}
+});
+it('本机Tailscale端口被占用时保留bind失败，不能fallback或改占loopback',async()=>{
+ const {startRuntimeListener}=require('./runtime.cjs');
+ const interfaces=vi.spyOn(os,'networkInterfaces').mockReturnValue({utun9:[{address:'100.100.100.100',family:'IPv4',internal:false}]});
+ try{
+  let failed;const failure=Object.assign(Error('occupied'),{code:'EADDRINUSE'});
+  const server={once:vi.fn((_event,handler)=>{failed=handler;}),removeListener:vi.fn(),listen:vi.fn(()=>failed(failure))};
+  await expect(startRuntimeListener({configured:true,identity:{http_endpoint:'http://100.100.100.100:3459/'},server})).rejects.toBe(failure);
+  expect(server.listen).toHaveBeenCalledTimes(1);
+ }finally{interfaces.mockRestore();}
+});
+
+it('internal网卡不能代替本机Tailscale非内部地址证据',async()=>{
+ const {startRuntimeListener}=require('./runtime.cjs');
+ const interfaces=vi.spyOn(os,'networkInterfaces').mockReturnValue({lo0:[{address:'100.100.100.100',family:'IPv4',internal:true}]});
+ try{const server={listen:vi.fn()};await expect(startRuntimeListener({configured:true,identity:{http_endpoint:'http://100.100.100.100:3459/'},server})).rejects.toThrow('phone_hub_listener_untrusted');expect(server.listen).not.toHaveBeenCalled();}finally{interfaces.mockRestore();}
+});
+
+it('真实生产入口缺配置时快速退出1且不调用任何监听',async()=>{
+ await configuredFixture(async f=>{
+  const preload=path.join(f.root,'deny-listener.cjs');
+  fs.writeFileSync(preload,`const fs=require('node:fs'),net=require('node:net');const open=fs.openSync;fs.openSync=function(file,...args){if(typeof file==='string'&&file.startsWith('/etc/cecelia/phone-hub/'))throw Object.assign(Error('missing fixture config'),{code:'ENOENT'});return open.call(this,file,...args);};net.Server.prototype.listen=function(){process.stderr.write('unexpected_listener');process.exit(42);};`,{mode:0o600});
+  let failure;try{execFileSync(process.execPath,['--require',preload,path.join(source,'runtime.cjs')],{timeout:2000,encoding:'utf8',stdio:['ignore','pipe','pipe']});}catch(error){failure=error;}
+  expect(failure?.status).toBe(1);expect(failure?.signal).toBe(null);expect(failure?.stderr).toBe('phone_hub_listener_unavailable\n');
+ });
+});
+it('真实私有ephemeral socket发生EADDRINUSE后只做一次bind且拒绝',async()=>{
+ const net=require('node:net'),{startRuntimeListener}=require('./runtime.cjs');
+ const occupied=net.createServer();await new Promise(resolve=>occupied.listen(0,'127.0.0.1',resolve));
+ const contender=net.createServer(),nativeListen=contender.listen.bind(contender),port=occupied.address().port;
+ const call=vi.spyOn(contender,'listen').mockImplementation((_port,_host,ready)=>nativeListen(port,'127.0.0.1',ready));
+ const interfaces=vi.spyOn(os,'networkInterfaces').mockReturnValue({utun9:[{address:'100.100.100.100',family:'IPv4',internal:false}]});
+ try{await expect(startRuntimeListener({configured:true,identity:{http_endpoint:'http://100.100.100.100:3459/'},server:contender})).rejects.toMatchObject({code:'EADDRINUSE'});expect(call).toHaveBeenCalledTimes(1);expect(contender.listening).toBe(false);}finally{interfaces.mockRestore();call.mockRestore();await new Promise(resolve=>occupied.close(resolve));}
 });

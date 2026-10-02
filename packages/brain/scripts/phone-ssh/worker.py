@@ -12,7 +12,10 @@ from phone_lease import PhoneLease
 from process_identity import process_identity, process_matches
 
 
-def detach():
+def detach(keep_fds=()):
+    if any(type(fd) is not int or fd <= 2 for fd in keep_fds):
+        raise ValueError('phone_owned_fd_unknown')
+    for fd in keep_fds: os.fstat(fd)
     os.setsid()
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     signal.signal(signal.SIGPIPE, signal.SIG_IGN)
@@ -24,12 +27,16 @@ def detach():
         for name in names:
             try:
                 fd = int(name)
-                if fd > 2:
+                if fd > 2 and fd not in keep_fds:
                     os.close(fd)
             except (ValueError, OSError):
                 pass
     except OSError:
-        os.closerange(3, resource.getrlimit(resource.RLIMIT_NOFILE)[0])
+        # fallback也保留真实白名单，不能因/proc或/dev/fd不可用释放E。
+        for fd in range(3, resource.getrlimit(resource.RLIMIT_NOFILE)[0]):
+            if fd not in keep_fds:
+                try: os.close(fd)
+                except OSError: pass
 
 
 def terminate_child(pid, identity):
