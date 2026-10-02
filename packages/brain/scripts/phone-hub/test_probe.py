@@ -1,6 +1,8 @@
 import hashlib
+import fcntl
 import importlib
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -45,4 +47,18 @@ class ProbeTest(unittest.TestCase):
         probe=self.setup_probe()
         for request in [{'schema':'phone-physical-probe/v1','request_nonce':'invalid'}, {'schema':'phone-physical-probe/v1','request_nonce':'123','host':'attacker'}]:
             with self.assertRaises(ValueError):probe.validate_request(request)
+    def test_real_other_process_guard_is_occupied_before_lock_directory_exists(self):
+        probe=self.setup_probe();ready_r,ready_w=os.pipe();go_r,go_w=os.pipe()
+        guard=self.locks/'fixture-serial.guard'
+        pid=os.fork()
+        if pid==0:
+            os.close(ready_r);os.close(go_w)
+            fd=os.open(guard,os.O_CREAT|os.O_RDWR,0o600);fcntl.flock(fd,fcntl.LOCK_EX)
+            os.write(ready_w,b'1');os.read(go_r,1);os.close(fd);os._exit(0)
+        os.close(ready_w);os.close(go_r)
+        try:
+            self.assertEqual(os.read(ready_r,1),b'1')
+            self.assertEqual(self.collect(probe)['external_locks']['occupied'],1)
+        finally:
+            os.write(go_w,b'1');os.close(go_w);os.close(ready_r);os.waitpid(pid,0)
 if __name__=='__main__':unittest.main()
