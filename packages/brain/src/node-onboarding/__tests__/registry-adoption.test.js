@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import { createOnboardingService } from '../service.js';
+import { matchesAdoption } from '../registry-adoption.js';
 
 const database = process.env.NODE_ONBOARDING_TEST_DB;
 const suite = database ? describe : describe.skip;
@@ -41,6 +42,8 @@ suite('既有机器采用原UUID（真实PG）', () => {
   }
   it('同名可信公网地址接入保留UUID和台账，默认observer不继承文字执行角色',async()=>{
     const view=await service.create(input,randomUUID());expect(view.id).toBe(id);expect((await machine()).metadata).toEqual(original);
+    const meta=(await db.query('SELECT payload FROM tasks WHERE id=$1',[view.task_id])).rows[0].payload.node_onboarding;
+    expect(matchesAdoption(await machine(),meta)).toBe(true);
     await finish(view);expect((await service.get(id)).status).toBe('completed');
     const row=await machine();expect(row).toMatchObject({id,status:'legacy-status',description:'原说明'});
     expect(row.metadata).toMatchObject({...original,role:'observer',onboarding:{id,state:'managed'},node_health:{node_id:id}});
