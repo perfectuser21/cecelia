@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # 退役验收：私有真实API/PG与dispatch入口，不驱动共享Brain的全局tick。
 set -euo pipefail
+# 在守卫前固定其原缺省目标，禁止后续dotenv填入未核HOST/PORT。
+export DB_HOST="${DB_HOST:-localhost}" DB_PORT="${DB_PORT:-5432}"
 if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" --db-env; then
   exit 1
 fi
