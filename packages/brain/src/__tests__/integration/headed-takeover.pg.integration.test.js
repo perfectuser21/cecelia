@@ -64,6 +64,7 @@ it('真实HTTP：生产无token/错token拒绝；授权接管后仅本session PA
  const {registerHeadedTakeoverRoute,headedTaskMutation}=await import('../../routes/task-headed-takeover.js');
  const app=express();app.use(express.json());registerHeadedTakeoverRoute(app,{pool});
  app.patch('/tasks/:id',headedTaskMutation(pool,async(req,res,db)=>{
+  await db.query('SELECT status FROM tasks WHERE id=$1',[req.params.id]);
   await db.query('UPDATE tasks SET updated_at=now() WHERE id=$1',[req.params.id]);res.json({ok:true});
  }));
  const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));
@@ -110,4 +111,29 @@ it('真实双连接：旧run先创建持task KEY SHARE，接管等提交后必�
   const active=await owner.query('SELECT id FROM task_runs WHERE task_id=$1 AND ended_at IS NULL',[task]);
   expect(active.rowCount).toBe(1);
  }finally{await owner.query('ROLLBACK');await writer.query('ROLLBACK');owner.release();writer.release();}
+});
+it('普通任务已有更新锁不受影响；同事务常规run创建仍可用',async()=>{
+ const updater=await pool.connect(),writer=await pool.connect();
+ try{
+  await updater.query('BEGIN');await updater.query("UPDATE tasks SET payload=payload||'{\"ordinary\":true}'::jsonb WHERE id=$1",[task]);
+  await writer.query("INSERT INTO task_runs(task_id,run_id) VALUES($1,'normal-peer')",[task]);
+  await updater.query("INSERT INTO task_runs(task_id,run_id) VALUES($1,'normal-own')",[task]);
+  await updater.query('COMMIT');
+  expect((await pool.query('SELECT id FROM task_runs WHERE task_id=$1',[task])).rowCount).toBe(2);
+ }finally{await updater.query('ROLLBACK');updater.release();writer.release();}
+});
+it('已接管历史run的attempt和cleanup间接映射也被保护；缺失parent失败关闭',async()=>{
+ const run=randomUUID();await pool.query("INSERT INTO initiative_runs(id,current_task_id,phase) VALUES($1,$2,'done')",[run,task]);
+ await pool.query('INSERT INTO headed_task_takeovers(task_id,generation,request_id,session_id,previous_owner) VALUES($1,$2,$3,$4,$5)',[task,randomUUID(),randomUUID(),'actual-session',{run_status:'unknown'}]);
+ for(const relation of ['harness_attempts','harness_attempt_cleanup_outbox']){
+  await expect(pool.query(`INSERT INTO ${relation}(run_id) VALUES($1)`,[run])).rejects.toThrow('headed_task_owned');
+  await expect(pool.query(`INSERT INTO ${relation}(run_id) VALUES($1)`,[randomUUID()])).rejects.toThrow('headed_execution_parent_missing');
+ }
+});
+it('两个真实session并发接管，同task只有一个owner，败者409',async()=>{
+ const {takeOverHeadedTask}=await import('../../lib/headed-task-owner.js');
+ const results=await Promise.allSettled([takeOverHeadedTask(pool,request()),takeOverHeadedTask(pool,{...request(),sessionId:'other-session'})]);
+ expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
+ expect(results.find(r=>r.status==='rejected').reason.statusCode).toBe(409);
+ expect((await pool.query('SELECT task_id FROM headed_task_takeovers WHERE task_id=$1',[task])).rowCount).toBe(1);
 });
