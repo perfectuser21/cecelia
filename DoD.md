@@ -87,3 +87,19 @@
 
 - [x] [BEHAVIOR] fixture安全：精确库与本地/tmp在connect前核验；ownschema真实495及地图402/405/407/410约束，actual059/494及发布515缺失拒绝，pool并发/失败清理真实核；原实现影响与发布证据smoke完整执行，原断言及生产SQL保持。
   Test: manual:bash -c 'export DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL=""; if [ "${CI:-}" != true ]; then export DB_HOST="${DB_HOST:-/tmp}"; fi; cd packages/brain && node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/definition-versions.pg.integration.test.js src/__tests__/fixtures/definition-versions-db.test.js src/__tests__/fixtures/release-evidence-db.test.js --maxWorkers=1 --minWorkers=1'
+
+
+- [x] [BEHAVIOR] 固定两跳协议：受信节点端点与中枢清单绑定，固定argv/JSONstdin，严格known_hosts；nonce、退出码、输出限额、完整身份及终态退出/解锁证据校验后才认证。
+  Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/phone-dispatch/client.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] 持久一次启动：真实fork并发只执行一次，原回执重读幂等，fsync失败与launcher死亡保持未决；cancel-before-start永久墓碑，未知不重新启动；永久真实fork+setsid回归证明不再exec能派生后代的外部ADB。
+  Test: manual:bash -c "python3 -B -m unittest discover -s packages/brain/scripts/phone-ssh -p test_*.py"
+
+- [x] [BEHAVIOR] 精确进程与旧锁兼容：真实fcntl、限时孩子、SSH描述符脱离、boot/PID/starttime绑定；只释放自己的lease，旧stale锁和同事锁保留，不关闭APP；最终查询前再次检查drain，默认资源hook拒绝。首动作只查既有127.0.0.1:5037 ADBserver，不自动启动daemon；真实socket分片/FAIL/EOF/长度/总超时及取消覆盖，不能推广为通用业务进程树退出证明。
+  Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run scripts/phone-ssh/runner.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] 基线合同：持久身份、receipt字段和旧device_job宽限保留；新SSH工具没有Brain生产runtime接线或默认grant。
+  Test: manual:bash -c "cd packages/brain && node ../../node_modules/vitest/vitest.mjs run src/phone-dispatch/identity.test.js src/phone-dispatch/contracts.test.js src/phone-dispatch/task-ownership.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] 门禁：事实、版本及DoD映射通过；本刀范围限本地真实进程与协议库，HTTP调度与生产激活仍属下一刀。
+  Test: manual:bash -c "node scripts/facts-check.mjs && bash scripts/check-version-sync.sh && node packages/quality/scripts/devgate/check-dod-mapping.cjs"
