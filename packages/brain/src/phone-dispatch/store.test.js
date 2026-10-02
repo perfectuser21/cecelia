@@ -283,3 +283,10 @@ it('已部署Linux507、手机508、Hub510与C1 511各自留schema_version，不
  expect(rows[0].description).not.toContain('手机独立');
  expect(rows[1].description).toContain('手机独立');
 });
+
+it('C6 HTTP不能信caller verified位、available1或60秒snapshot',async()=>{
+ await httpVersion();const request=await httpInput();
+ await expect(store.reserveHttp(request)).rejects.toThrow('phone_capacity_observation_required');
+ expect((await pool.query('SELECT * FROM phone_dispatches')).rows).toHaveLength(0);
+ expect((await pool.query('SELECT * FROM capacity_reservations')).rows).toHaveLength(0);
+});
