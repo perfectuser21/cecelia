@@ -5,6 +5,7 @@ import { defineConfig } from 'vitest/config';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
+  'src/__tests__/integration/kernel-recovery-rebase.pg.integration.test.js',
   'src/__tests__/integration/gpu-http-intake.pg.integration.test.js',
   'src/__tests__/integration/gpu-execution-request.pg.integration.test.js',
   'src/linux-pool/__tests__/integration/active-grants.test.js',
