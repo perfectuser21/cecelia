@@ -9,12 +9,12 @@ import uuid
 from unittest.mock import patch
 import admission
 from journal import Journal
-from test_activation import ActivationTest
+import test_activation as activation_fixture
 
 
 class AdmissionTest(unittest.TestCase):
     def setUp(self):
-        self.fixture = ActivationTest('test_valid_longer_than_five_second_window_is_immutable_and_read_only')
+        self.fixture = activation_fixture.ActivationTest('test_valid_longer_than_five_second_window_is_immutable_and_read_only')
         self.fixture.setUp(); self.addCleanup(self.fixture.doCleanups)
         self.root = self.fixture.root / 'admission'; self.root.mkdir(mode=0o700)
         self.journal_root = self.fixture.root / 'journal'
@@ -75,10 +75,11 @@ class AdmissionTest(unittest.TestCase):
         self.write(path, b'{}')
         with self.assertRaises(ValueError): admission.Admission().snapshot()
         self.write(path, original)
-        with admission.locked():
-            guard = self.root / 'admission.guard'; guard.unlink(); self.write(guard, b'')
-            with self.assertRaises(ValueError):
-                with admission.locked(): pass
+        with self.assertRaises(ValueError):
+            with admission.locked():
+                guard = self.root / 'admission.guard'; guard.unlink(); self.write(guard, b'')
+                with self.assertRaises(ValueError):
+                    with admission.locked(): pass
         (self.root / 'admission.guard').unlink()
         with self.assertRaises(OSError): admission.Admission().snapshot()
 
@@ -99,6 +100,24 @@ class AdmissionTest(unittest.TestCase):
             os.kill(child, 0)
             self.assertEqual(self.child(lambda: admission.HostExclusive().acquire()), b'denied')
         finally: os.write(release_w, b'D'); os.close(release_w)
+
+    def test_transferred_host_fd_survives_metadata_descriptor_cleanup(self):
+        host = admission.HostExclusive().acquire()
+        read, write = os.pipe()
+        child = os.fork()
+        if child == 0:
+            os.close(read)
+            try:
+                fd = host.transfer()
+                # 传给detach的白名单只需真正E FD，不保留已关闭metadata FD数字。
+                self.assertEqual(host.fd, fd)
+                host.verify()
+                self.assertEqual(self.child(lambda: admission.HostExclusive().acquire()), b'denied')
+                host.close(); os.write(write, b'accepted')
+            except Exception: os.write(write, b'denied')
+            os._exit(0)
+        os.close(write); result = os.read(read, 64); os.close(read); os.waitpid(child, 0)
+        host.close(); self.assertEqual(result, b'accepted')
 
     def test_host_pending_legacy_activity_is_not_reaped_or_treated_as_free(self):
         raw = b'{"schema":1,"activities":{"unknown-owner":{"pid":1}}}'
