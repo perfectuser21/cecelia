@@ -133,7 +133,7 @@ async function upgradeFixture(){
  x.upgrade={schema_version:1,machine_registry_id:x.profile.machine_registry_id,config_digest:require('./linux-pool-profile.cjs').validateLinuxPoolProfile(x.profile).config_digest,
   revision:'c'.repeat(40),host_boot_id:boot,daemon_id:'daemon-fixed',worker_boot_id:worker,source_sha256:sources,intent_id:randomUUID()};
  x.options.upgradePath='/staging/upgrade.json';x.options.revision='e'.repeat(40);x.put(x.options.upgradePath,JSON.stringify(x.upgrade));
- x.put('/proc/sys/kernel/random/boot_id',boot);x.put('/run/cecelia-script/worker-boot-id',worker);
+ x.put('/proc/sys/kernel/random/boot_id',boot);x.put('/run/cecelia-script/worker-boot-id',worker,0o644);
  x.put('/sys/fs/cgroup/cecelia.slice/cecelia-workloads.slice/cgroup.procs','');x.put('/sys/fs/cgroup/cecelia.slice/cecelia-workloads.slice/cgroup.events','populated 0\nfrozen 0\n');
  fs.mkdirSync(path.join(x.root,'var/lib/cecelia/script-runtime'),{recursive:true,mode:0o700});
  x.put('/proc/101/cmdline','/usr/local/libexec/cecelia/toolchain/bin/node\0/usr/local/libexec/cecelia/fleet-worker/linux-script-service.cjs\0');

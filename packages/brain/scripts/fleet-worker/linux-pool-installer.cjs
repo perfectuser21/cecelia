@@ -4,7 +4,7 @@ const nativeFs=require('node:fs');
 const path=require('node:path');
 const {execFile}=require('node:child_process');
 const {promisify}=require('node:util');
-const {randomUUID}=require('node:crypto');
+const {randomUUID,createHash,timingSafeEqual}=require('node:crypto');
 const {validateLinuxPoolProfile,renderLinuxUnits}=require('./linux-pool-profile.cjs');
 const FILES=Object.freeze(['linux-pool-canary.cjs','linux-pool-profile.cjs','linux-pool-proof.cjs','linux-pool-server.cjs','linux-resource-probe.cjs','linux-cgroup.cjs']);
 const SERVICE='cecelia-linux-pool.service';
@@ -20,10 +20,11 @@ async function installLinuxPool(options,deps={}) {
   env:{PATH:'/usr/bin:/bin',HOME:'/',DOCKER_HOST:'unix:///var/run/docker.sock'}}));
  const systemctl=args=>run('/usr/bin/systemctl',args);
  if((deps.platform??process.platform)!=='linux'||(deps.getuid??process.getuid)()!==0)fail('linux_pool_install_root_linux_required');
- if(!options||Object.keys(options).some(k=>!['sourceDir','profilePath','tokenPath','nodePath','revision','executionKeyPath'].includes(k))
+ if(!options||Object.keys(options).some(k=>!['sourceDir','profilePath','tokenPath','nodePath','revision','executionKeyPath','upgradePath'].includes(k))
   ||!['sourceDir','profilePath','tokenPath','nodePath'].every(k=>typeof options[k]==='string'&&path.isAbsolute(options[k])&&!options[k].includes('\0')&&path.normalize(options[k])===options[k])
   ||!/^[a-f0-9]{40}$/.test(options.revision??''))fail('linux_pool_install_input_invalid');
  const withBridge=options.executionKeyPath!==undefined,services=withBridge?[BRIDGE,SERVICE]:[SERVICE];
+ if(options.upgradePath!==undefined&&(!withBridge||typeof options.upgradePath!=='string'||!path.isAbsolute(options.upgradePath)||path.normalize(options.upgradePath)!==options.upgradePath||options.upgradePath.includes('\0')))fail('linux_pool_install_input_invalid');
  if(withBridge&&(typeof options.executionKeyPath!=='string'||!path.isAbsolute(options.executionKeyPath)||path.normalize(options.executionKeyPath)!==options.executionKeyPath||options.executionKeyPath.includes('\0')))fail('linux_pool_install_input_invalid');
  function secureParents(filename){
   let current=path.dirname(filename);
@@ -53,6 +54,76 @@ async function installLinuxPool(options,deps={}) {
  }
  const serviceStates=async()=>{const result={};for(const name of services)result[name]=await serviceState(name);return result;};
  let profile,input,token,executionKey,node,source,units,account,prior;
+ const upgradeFail=()=>fail('linux_pool_install_upgrade_unconfirmed');
+ const hash=data=>createHash('sha256').update(data).digest('hex');
+ const equalSecret=(a,b)=>a.length===b.length&&timingSafeEqual(a,b);
+ let upgrade;
+ function pseudo(name){
+  const filename=real(name);let fd;
+  try{fd=fs.openSync(filename,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);const before=fs.fstatSync(fd);
+   if(!before.isFile())upgradeFail();const buffer=Buffer.alloc(65537),size=fs.readSync(fd,buffer,0,buffer.length,0),after=fs.fstatSync(fd),current=fs.lstatSync(filename);
+   if(size>65536||current.isSymbolicLink()||before.dev!==current.dev||before.ino!==current.ino||before.ctimeMs!==after.ctimeMs)upgradeFail();
+   return buffer.subarray(0,size).toString();
+  }finally{if(fd!==undefined)fs.closeSync(fd);}
+ }
+ async function upgradeIdle({installed=true}={}){
+  try{
+   if(!upgrade){upgrade=JSON.parse(readFile(options.upgradePath,{mode:0o600,max:65536}).data);
+    const keys=['schema_version','machine_registry_id','config_digest','revision','host_boot_id','daemon_id','worker_boot_id','source_sha256','intent_id'];
+    if(Object.keys(upgrade).length!==keys.length||keys.some(k=>!Object.hasOwn(upgrade,k))||upgrade.schema_version!==1
+     ||upgrade.machine_registry_id!==profile.machine_registry_id||upgrade.config_digest!==profile.config_digest
+     ||!['host_boot_id','worker_boot_id','intent_id'].every(k=>/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(upgrade[k]??''))
+     ||!/^[a-f0-9]{40}$/.test(upgrade.revision??'')||typeof upgrade.daemon_id!=='string'||!upgrade.daemon_id)upgradeFail();
+    const names=[...FILES,...SCRIPT_FILES];
+    if(!upgrade.source_sha256||Object.keys(upgrade.source_sha256).length!==names.length||names.some(n=>!/^[a-f0-9]{64}$/.test(upgrade.source_sha256[n]??'')))upgradeFail();
+   }
+   if(pseudo('/proc/sys/kernel/random/boot_id').trim()!==upgrade.host_boot_id)upgradeFail();
+   const info=JSON.parse((await run('/usr/bin/docker',['info','--format','{{json .}}'])).stdout);
+   if(info.ID!==upgrade.daemon_id||info.CgroupDriver!=='systemd'||info.CgroupVersion!=='2')upgradeFail();
+   const cg='/sys/fs/cgroup/cecelia.slice/cecelia-workloads.slice',target=real(cg);secureParents(path.join(target,'cgroup.procs'));
+   const stat=fs.lstatSync(target);
+   if(!stat.isDirectory()||stat.isSymbolicLink()||stat.uid!==rootUid||(deps.statfs??(p=>fs.statfsSync(p)))(target).type!==0x63677270
+    ||fs.readdirSync(target,{withFileTypes:true}).some(x=>x.isDirectory()||x.isSymbolicLink())||pseudo(cg+'/cgroup.procs').trim())upgradeFail();
+   const events=pseudo(cg+'/cgroup.events').trim().split('\n');
+   if(events.length!==2||!events.includes('populated 0')||!events.includes('frozen 0'))upgradeFail();
+   if(String((await run('/usr/bin/docker',['ps','--filter','label=cecelia.script.machine_id='+profile.machine_id,'--format','{{.ID}}'])).stdout).trim())upgradeFail();
+   const stateRoot='/var/lib/cecelia/script-runtime',directory=real(stateRoot);secureParents(path.join(directory,'entry'));
+   const stateStat=fs.lstatSync(directory);if(!stateStat.isDirectory()||stateStat.isSymbolicLink()||stateStat.uid!==rootUid||(stateStat.mode&0o777)!==0o700)upgradeFail();
+   for(const entry of fs.readdirSync(directory)){
+    const match=entry.match(/^([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})(\.runtime\.json)?$/);if(!match)upgradeFail();
+    const journal=JSON.parse(readFile(stateRoot+'/'+match[1]+'/'+match[1]+'.json',{mode:0o600,max:65536}).data);
+    if(journal.status!=='cleaned')upgradeFail();
+    if(match[2]){const record=JSON.parse(readFile(stateRoot+'/'+entry,{mode:0o600,max:65536}).data);if(record.identity?.machine_id!==profile.machine_id||record.identity?.reservation_id!==match[1])upgradeFail();}
+   }
+   if(installed){
+    if(readFile('/usr/local/libexec/cecelia/fleet-worker/revision',{mode:0o644}).data.toString().trim()!==upgrade.revision
+     ||readFile('/run/cecelia-script/worker-boot-id',{mode:0o644}).data.toString().trim()!==upgrade.worker_boot_id)upgradeFail();
+    for(const[name,digest]of Object.entries(upgrade.source_sha256))if(hash(readFile('/usr/local/libexec/cecelia/fleet-worker/'+name,{mode:0o644}).data)!==digest)upgradeFail();
+    if(!equalSecret(readFile('/etc/cecelia/fleet-worker.token',{owner:account.uid,mode:0o600}).data,Buffer.from(token))
+     ||!equalSecret(readFile('/etc/cecelia/script-execution.key',{mode:0o600}).data,Buffer.from(executionKey))
+     ||hash(readFile('/usr/local/libexec/cecelia/toolchain/bin/node',{mode:0o755,max:134217728}).data)!==hash(node.data))upgradeFail();
+    for(const[name,owner]of [['fleet-pool.json',account.uid],['script-pool.json',rootUid]]){
+     const p=validateLinuxPoolProfile(JSON.parse(readFile('/etc/cecelia/'+name,{owner,mode:0o600}).data));if(p.config_digest!==profile.config_digest)upgradeFail();
+    }
+    const fixed={[SLICE]:units.slice,[SERVICE]:units.service.replace('[Unit]\n','[Unit]\nRequires='+BRIDGE+'\nAfter='+BRIDGE+'\n'),[BRIDGE]:SCRIPT_UNIT};
+    for(const[name,data]of Object.entries(fixed))if(!readFile('/etc/systemd/system/'+name,{mode:0o644}).data.equals(Buffer.from(data)))upgradeFail();
+    for(const name of services){
+     const meta=Object.fromEntries(String((await systemctl(['show','--property=FragmentPath,NeedDaemonReload,MainPID',name])).stdout).trim().split('\n').map(line=>line.split('=')));
+     if(meta.FragmentPath!=='/etc/systemd/system/'+name||meta.NeedDaemonReload!=='no'||!/^\d+$/.test(meta.MainPID)||Number(meta.MainPID)<=1)upgradeFail();
+     const module=name===BRIDGE?'linux-script-service.cjs':'linux-pool-server.cjs';
+     if(pseudo('/proc/'+meta.MainPID+'/cmdline')!=='/usr/local/libexec/cecelia/toolchain/bin/node\0/usr/local/libexec/cecelia/fleet-worker/'+module+'\0')upgradeFail();
+    }
+   }
+   if(fs.lstatSync(target).ino!==stat.ino||pseudo(cg+'/cgroup.procs').trim()||!pseudo(cg+'/cgroup.events').split('\n').includes('populated 0'))upgradeFail();
+  }catch{upgradeFail();}
+ }
+
+ async function idle(afterStop=false){
+  const state=String((await systemctl(['show','--property=ActiveState','--value',SLICE])).stdout).trim();
+  if(options.upgradePath!==undefined){if(!['active','inactive'].includes(state))upgradeFail();return upgradeIdle({installed:!afterStop});}
+  if(state!=='inactive')fail('linux_pool_install_pool_busy');
+ }
+
  try{
   input=JSON.parse(readFile(options.profilePath,{mode:0o600,max:65536}).data.toString());
   profile=validateLinuxPoolProfile(input);
@@ -74,7 +145,7 @@ async function installLinuxPool(options,deps={}) {
   const group=String((await run('/usr/bin/getent',['group','_cecelia'])).stdout).trim().split(':');
   if(group.length!==4||group[0]!=='_cecelia'||Number(group[2])!==account.gid)fail('linux_pool_install_account_required');
   if(withBridge&&String((await run('/usr/bin/id',['-G','_cecelia'])).stdout).trim()!==String(account.gid))fail('linux_pool_install_account_required');
-  if(String((await systemctl(['show','--property=ActiveState','--value',SLICE])).stdout).trim()!=='inactive')fail('linux_pool_install_pool_busy');
+  await idle();
   prior=await serviceStates();
  }catch(error){if(error.message?.startsWith('linux_'))throw error;fail('linux_pool_install_preflight_failed');}
  const entries=[
@@ -108,14 +179,16 @@ async function installLinuxPool(options,deps={}) {
   try{lockFd=fs.openSync(real(lock),'wx',0o600);}catch(error){if(error.code==='EEXIST')fail('linux_pool_install_locked');throw error;}
   lockStat=fs.fstatSync(lockFd);fs.writeFileSync(lockFd,randomUUID());fs.fsyncSync(lockFd);
   // 锁后重新检查池；其它root管理器仍需遵守同一维护协议。
-  if(String((await systemctl(['show','--property=ActiveState','--value',SLICE])).stdout).trim()!=='inactive')fail('linux_pool_install_pool_busy');
+  await idle();
   prior=await serviceStates();
   for(const entry of entries){mkdir(path.dirname(entry.name));let snapshot=null;try{snapshot=readFile(entry.name,{owner:entry.uid,mode:entry.mode,max:134217728});}catch(error){if(error.code!=='ENOENT')throw error;}originals.set(entry.name,snapshot);}
   mkdir('/var/lib/cecelia/fleet-install');stage=real('/var/lib/cecelia/fleet-install/txn-'+randomUUID());fs.mkdirSync(stage,{mode:0o700});
   for(const[name,snapshot]of originals){if(snapshot){const target=path.join(stage,String([...originals.keys()].indexOf(name)));const fd=fs.openSync(target,'wx',0o600);try{fs.writeFileSync(fd,snapshot.data);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}}}syncDir(stage);
   const manifest={schema_version:1,prior,entries:[...originals].map(([name,snapshot],index)=>({name,backup:snapshot?String(index):null,...(snapshot?{mode:snapshot.mode,uid:snapshot.uid,gid:snapshot.gid}:{})}))};
   const manifestFd=fs.openSync(path.join(stage,'manifest.json'),'wx',0o600);try{fs.writeFileSync(manifestFd,JSON.stringify(manifest));fs.fsyncSync(manifestFd);}finally{fs.closeSync(manifestFd);}syncDir(stage);
+  await idle();
   mutated=true;for(const name of [...services].reverse())if(prior[name].active)await systemctl(['stop',name]);
+  if(upgrade)await idle(true);
   for(const entry of entries)publish(entry);
   await systemctl(['daemon-reload']);
   for(const name of services){enableAttempted.add(name);await systemctl(['enable',name]);startAttempted.add(name);await systemctl(['start',name]);
@@ -140,8 +213,8 @@ async function installLinuxPool(options,deps={}) {
  }
 }
 if(require.main===module){
- const args=process.argv.slice(2),keys={'--source-dir':'sourceDir','--profile-file':'profilePath','--token-file':'tokenPath','--node-path':'nodePath','--revision':'revision','--execution-key-file':'executionKeyPath'},options={};
- try{if(![10,12].includes(args.length))fail('linux_pool_install_input_invalid');for(let i=0;i<args.length;i+=2){const key=Object.hasOwn(keys,args[i])?keys[args[i]]:null;if(!key||Object.hasOwn(options,key))fail('linux_pool_install_input_invalid');options[key]=args[i+1];}
+ const args=process.argv.slice(2),keys={'--source-dir':'sourceDir','--profile-file':'profilePath','--token-file':'tokenPath','--node-path':'nodePath','--revision':'revision','--execution-key-file':'executionKeyPath','--upgrade-file':'upgradePath'},options={};
+ try{if(![10,12,14].includes(args.length))fail('linux_pool_install_input_invalid');for(let i=0;i<args.length;i+=2){const key=Object.hasOwn(keys,args[i])?keys[args[i]]:null;if(!key||Object.hasOwn(options,key))fail('linux_pool_install_input_invalid');options[key]=args[i+1];}
   installLinuxPool(options).then(result=>process.stdout.write(JSON.stringify(result)+'\n')).catch(error=>{process.stderr.write((error.message.startsWith('linux_')?error.message:'linux_pool_install_failed')+'\n');process.exitCode=1;});
  }catch{process.stderr.write('linux_pool_install_input_invalid\n');process.exitCode=1;}
 }
