@@ -67,6 +67,7 @@ function installedSetup(){
  const receipt={schema_version:'linux-script-canary-cleanup/v1',nonce,machine_id:x.machine.name,...x.d.expected,execution_version_id:version,started_at:now,completed_at:now,execution:false,cleanup_confirmed:true,cases:[{identity,profile_digest:pdigest,container_id:'8'.repeat(64),not_started:false,cleanup:{...identity,container_id:'8'.repeat(64),challenge:randomUUID(),status:'cleaned',absent:true,tombstoned:true}}]};
  const row={id:s.last_cleanup_runtime_id,machine_registry_id:x.machine.id,evidence_task_id:eid,expected_version_id:null,execution_version_id:version,state:'revoked',policy_digest:x.d.policyDigest,nonce,created_at:now,grant_ids:{shell:grant},signed_payload:null,
   evidence_status:'archived',evidence_parent_task_id:x.task.id,evidence_kind:'linux-pool-controller',evidence_created_by:'linux-pool-onboarding',evidence_payload:{machine_registry_id:x.machine.id,linux_script_runtime_id:s.last_cleanup_runtime_id,linux_runtime_retired:s.last_cleanup_runtime_id},evidence_result:{actor:'linux-pool-onboarding',evidence:{receipt,signature:createHmac('sha256',x.d.key).update(JSON.stringify(receipt)).digest('hex')}}};
+ row.evidence_result.evidence.envelope_json=JSON.stringify({receipt,signature:row.evidence_result.evidence.signature});
  const query=x.db.query;x.db.query=async(sql,args)=>{
   if(sql.includes('a.*,t.'))return {rows:args[0]===row.id?[row]:[],rowCount:args[0]===row.id?1:0};
   if(sql.includes('SELECT * FROM tasks'))return {rows:[x.task],rowCount:1};
@@ -92,4 +93,17 @@ it.each(['missing_marker','phase','runtime','source_pointer','registry_pointer',
  if(kind==='nonce')x.row.nonce='0'.repeat(64);if(kind==='tombstone'){x.receipt.cases[0].cleanup.absent=false;x.row.evidence_result.evidence.signature=createHmac('sha256',x.d.key).update(JSON.stringify(x.receipt)).digest('hex');}
  if(kind==='policy')x.row.policy_digest='0'.repeat(64);if(kind==='expected_version')x.row.expected_version_id=randomUUID();
  await expect(createBootstrapRecovery(x.deps).prepareInstalled(x.db,x.task,x.source,x.machine)).rejects.toThrow('linux_pool_bootstrap_recovery_unconfirmed');expect(captures).toBe(0);
+});
+it('接续棒每次SSH前重验旧归档、cleanup和完整旧binding，未知不能靠新payload自证',async()=>{
+ const x=installedSetup(),recovery=createBootstrapRecovery(x.deps),next=await recovery.prepareInstalled(x.db,x.task,x.source,x.machine);
+ const id=randomUUID(),old=structuredClone(x.task),read=x.deps.artifacts.read;
+ x.deps.artifacts.read=(rev,digest)=>rev===next.revision?{revision:rev,digest,files:{}}:read(rev,digest);
+ Object.assign(x.task,{status:'archived',result:{actor:'linux-pool-onboarding',evidence:{continuation_task_id:id}}});
+ x.source.payload.node_onboarding.execution_task_id=id;x.machine.metadata.onboarding.execution_task_id=id;
+ const child={id,status:'in_progress',executor_kind:'linux-pool-controller',created_by:'linux-pool-onboarding',claimed_by:'linux-pool-onboarding',payload:{linux_onboarding:next}};
+ await expect(recovery.authorize(x.db,child,x.source,x.machine)).resolves.toBeUndefined();
+ next.previous_attempt.binding='0'.repeat(64);await expect(recovery.authorize(x.db,child,x.source,x.machine)).rejects.toThrow('linux_pool_bootstrap_recovery_unconfirmed');
+ next.previous_attempt.binding=hash(JSON.stringify({machine_registry_id:x.machine.id,pool:JSON.parse(old.payload.linux_onboarding.policy_json).pool,revision:old.payload.linux_onboarding.revision,sources:read(old.payload.linux_onboarding.revision,old.payload.linux_onboarding.artifact_digest).files,upgrade:JSON.parse(old.payload.linux_onboarding.upgrade_json),previous_attempt:old.payload.linux_onboarding.previous_attempt}));
+ const marker=next.upgrade_cleanup_runtime_id;delete next.upgrade_cleanup_runtime_id;await expect(recovery.authorize(x.db,child,x.source,x.machine)).rejects.toThrow('linux_pool_bootstrap_recovery_unconfirmed');next.upgrade_cleanup_runtime_id=marker;
+ x.row.evidence_result.evidence.signature='0'.repeat(64);await expect(recovery.authorize(x.db,child,x.source,x.machine)).rejects.toThrow('linux_pool_bootstrap_recovery_unconfirmed');
 });

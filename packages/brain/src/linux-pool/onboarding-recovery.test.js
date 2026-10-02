@@ -28,6 +28,9 @@ it('真实签名cleanup退役后保留精确runtime marker，未知签名不生�
  const state={runtime_json:JSON.stringify({id}),expected_version_id:randomUUID()};
  expect(await recover('script',machine,state,envelope)).toEqual({phase:'renew_wait',expected_version_id:state.expected_version_id,last_cleanup_runtime_id:id});
  expect(retired).toHaveLength(1);
+ const archived=calls.find(([sql])=>sql.startsWith('UPDATE tasks'));
+ const persisted=archived[1].map(v=>{try{return JSON.parse(v);}catch{return null;}}).find(v=>v?.evidence);
+ expect(persisted.evidence.envelope_json).toBe(JSON.stringify(envelope));
  await expect(recover('script',machine,state,{...envelope,signature:'0'.repeat(64)})).rejects.toThrow('linux_pool_cleanup_receipt_invalid');
  expect(retired).toHaveLength(1);
 });
