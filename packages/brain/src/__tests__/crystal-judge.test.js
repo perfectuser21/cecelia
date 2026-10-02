@@ -18,4 +18,12 @@ describe('maybeRunCrystalJudge', () => {
     expect(r.reason).toBe('outside_window');
     expect(pool.query).not.toHaveBeenCalled();
   });
+  it('北京05:02窗口首笔数据库读取失败仍拒绝同一错误，不伪判已执行', async () => {
+    const error = new Error('fixture_db_down');
+    const pool = { query: vi.fn().mockRejectedValue(error) };
+    await expect(maybeRunCrystalJudge(pool, new Date('2026-10-02T21:02:00.000Z'))).rejects.toBe(error);
+    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(pool.query.mock.calls[0][0]).toMatch(/SELECT 1 FROM crystal_report/);
+  });
+
 });
