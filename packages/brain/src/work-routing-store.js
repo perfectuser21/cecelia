@@ -1,3 +1,4 @@
+import {assertLinuxPoolAuthority} from './linux-pool/task-authority.js';
 import {assertGpuExecutionSupported} from './lib/gpu-execution-contract.js';
 import {assertAppServerAuthority} from './app-server/task-authority.js';
 import { assertJanitorAuthority } from './janitor-authority.js';
@@ -192,6 +193,7 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
   assertGpuExecutionSupported(request.task?.payload);
   assertJanitorAuthority(request, options);
   assertAppServerAuthority(request, options);
+  assertLinuxPoolAuthority(request, options);
   const ownsTransaction = options.transaction !== 'existing';
   const client = ownsTransaction && typeof db.connect === 'function'
     ? await db.connect()

@@ -6,7 +6,7 @@ const {createHash,createHmac,timingSafeEqual,randomUUID}=require('node:crypto');
 const {createCanaryJournal,readLinuxPoolIdentity,assertCanaryDirectory}=require('./linux-pool-canary.cjs');
 const {readInstalledFile}=require('./linux-pool-server.cjs');
 const {validateLinuxPoolProfile}=require('./linux-pool-profile.cjs');
-const {collectLinuxScriptProof}=require('./linux-pool-proof.cjs');
+const {collectLinuxScriptProof,readProofFailureStage}=require('./linux-pool-proof.cjs');
 const {createLinuxScriptBridgeClient}=require('./linux-script-bridge.cjs');
 const {signLinuxScriptPermit}=require('./linux-script-permit.cjs');
 const HEX=/^[a-f0-9]{64}$/,UUID=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
@@ -83,26 +83,35 @@ async function runLinuxScriptCanary({nonce,cleanupReceipt=false},deps={}){
    daemon_id:d.daemon_id,execution_version_id:entry.execution_version_id,execution_grant_id:entry.execution_grant_id,profile_digest:hash(entry.profile)};
   return {identity:bound,expected,profile:entry.profile,job,attempted:false,container_id:null};
  })};store.save(state);
+ let stage='start';
  try{
   for(const r of state.cases){
-   r.attempted=true;state.cleanup_confirmed=false;store.save(state);
+   stage='start';r.attempted=true;state.cleanup_confirmed=false;store.save(state);
    const started=await call('start',r,{job:r.job});if(!HEX.test(started.container_id??'')||started.status!=='running')fail();r.container_id=started.container_id;store.save(state);
+   stage='proof_collection';
    r.proof=await collect({profile:d.pool,scriptProfile:r.profile,identity:r.identity,containerId:r.container_id,expectedHostBootId:d.host_boot_id,expectedDaemonId:d.daemon_id});
+   stage='proof_contract';
    if(r.proof?.schema_version!=='linux-script-proof/v1'||r.proof.execution!==false||r.proof.script_verified!==true||hash(r.proof.identity)!==hash(r.identity)
     ||r.proof.container_id!==r.container_id||r.proof.profile_digest!==r.expected.profile_digest||r.proof.host_boot_id!==d.host_boot_id||r.proof.daemon_id!==d.daemon_id
     ||r.proof.machine_registry_id!==p.machine_registry_id||r.proof.config_digest!==p.config_digest)fail();
+   stage='terminal';
    const deadline=Date.now()+15000;let found;
    do{found=await call('inspect',r);if(found.status==='exited')break;if(Date.now()>deadline)fail();await pause(100);}while(true);
    r.terminal=found.terminal;if(r.terminal?.exit_code!==0||r.terminal.timed_out===true||r.terminal.stdout!==nonce+':'+r.identity.profile_id+'\n'||r.terminal.stderr!=='')fail();
-   await clean(r);
+   stage='cleanup';await clean(r);
   }
+  stage='final_stability';
   if(hash(await load())!==binding||(await identity()).worker_boot_id!==d.worker_boot_id||!state.cleanup_confirmed)fail();
   const receipt={schema_version:'linux-script-canary/v1',nonce,machine_registry_id:p.machine_registry_id,machine_id:p.machine_id,pool_config_digest:p.config_digest,
    revision:d.revision,host_boot_id:d.host_boot_id,worker_boot_id:d.worker_boot_id,daemon_id:d.daemon_id,execution_version_id:entries[0][1].execution_version_id,
    execution:false,script_adapter_verified:true,cleanup_confirmed:true,started_at:state.started_at,completed_at:new Date().toISOString(),
    cases:state.cases.map(r=>({identity:r.identity,profile_digest:r.expected.profile_digest,container_id:r.container_id,proof:r.proof,terminal:r.terminal,cleanup:r.cleanup}))};
   state.envelope={receipt,signature:createHmac('sha256',config.key).update(JSON.stringify(receipt)).digest('hex')};store.save(state);return state.envelope;
- }catch{for(const r of state.cases)try{await clean(r);}catch{/* 不猜测消失，不删除未知容器。 */}fail();}
+ }catch(error){
+  state.failure={stage:readProofFailureStage(error)??stage,code:'linux_script_canary_unconfirmed',observed_at:new Date().toISOString()};
+  try{store.save(state);}catch{/* 诊断落盘失败也必须精确清理并保留原错误码。 */}
+  for(const r of state.cases)try{await clean(r);}catch{/* 不猜测消失，不删除未知容器。 */}fail();
+ }
 }
 if(require.main===module){
  (async()=>{

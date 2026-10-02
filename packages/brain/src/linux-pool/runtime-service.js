@@ -1,3 +1,4 @@
+import {LINUX_POOL_AUTHORITY,LINUX_POOL_EXECUTOR_KIND} from './task-authority.js';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {directory} from '../execution-directory/directory.js';
 import {transaction} from '../execution-directory/store.js';
@@ -8,7 +9,7 @@ import {createRuntimeDeploymentReader} from './runtime-deployment.js';
 import {verifyRuntimeEnvelope} from './runtime-receipt.js';
 import {UNREVOKED_RUNTIME_GRANTS_SQL} from './active-grants.js';
 import {lockOnboardingRevocation,stopAutomaticOnboarding} from './onboarding-revocation.js';
-const taskCreator=async args=>(await import('../actions.js')).createTask(args);
+const taskCreator=async (args,internal)=>(await import('../actions.js')).createTask(args,internal);
 const request=(body,keys)=>{if(!exact(body,keys))throw error('linux_pool_request_invalid');};
 const cas=(node,id)=>{if(id!==null&&!UUID.test(id??'')||(node?.current_version_id??null)!==id)throw error('linux_pool_version_conflict');};
 export function createLinuxRuntimeAuthorization({pool,readDeployment=createRuntimeDeploymentReader(),createTask=taskCreator,afterTerminal=afterTerminalTransition}={}){
@@ -39,8 +40,8 @@ export function createLinuxRuntimeAuthorization({pool,readDeployment=createRunti
    if(!(await db.query('SELECT id FROM tasks WHERE id=$1 FOR SHARE',[d.parent_task_id])).rowCount)throw error('linux_pool_parent_task_unavailable');
    const id=randomUUID(),version=randomUUID(),claimant='linux-script-canary:'+id;
    const made=await createTask({db,title:`验收Linux受管脚本池 ${d.machine_id} ${id}`,description:'核验root受限adapter的真实输出、宿主slice与精确清理，完成后方可激活同代授权。',
-    task_type:'audit',status:'in_progress',source:'scheduler',source_id:'linux-script-canary:'+id,trigger_source:'linux_pool_onboarding',allow_unscoped:true,
-    parent_task_id:d.parent_task_id,mutation_intent:'read_only',declared_domain:'operations',created_by:'linux-pool-onboarding',payload:{linux_script_runtime_id:id,machine_registry_id:machineId}});
+    task_type:'audit',executor_kind:LINUX_POOL_EXECUTOR_KIND,status:'in_progress',source:'scheduler',source_id:'linux-script-canary:'+id,trigger_source:'linux_pool_onboarding',allow_unscoped:true,
+    parent_task_id:d.parent_task_id,mutation_intent:'read_only',declared_domain:'operations',created_by:'linux-pool-onboarding',payload:{linux_script_runtime_id:id,machine_registry_id:machineId}},{linuxPoolAuthority:LINUX_POOL_AUTHORITY});
    if(!made?.success||!UUID.test(made.task?.id??''))throw error('linux_pool_evidence_task_unavailable');
    const evidence=made.task.id;await db.query("UPDATE tasks SET claimed_by=$2,claimed_at=now(),started_at=COALESCE(started_at,now()),updated_at=now() WHERE id=$1 AND status='in_progress'",[evidence,claimant]);
    if(!node)await db.query('INSERT INTO execution_nodes(machine_registry_id,canonical_id) VALUES($1,$2)',[machineId,d.machine_id]);

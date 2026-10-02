@@ -346,3 +346,13 @@ describe('syncOrphanTasksOnStartup requeue 行为', () => {
     expect(sql).toMatch(/started_at\s*=\s*NULL/i);
   });
 });
+
+it('Linux audit专管kind启动同步保持父任务及证据的原claim',async()=>{
+ vi.clearAllMocks();mockQuery.mockResolvedValue({rows:[],rowCount:1}).mockResolvedValueOnce({rows:[
+  {id:'linux-parent',task_type:'audit',executor_kind:'linux-pool-controller',claimed_by:'linux-pool-onboarding',payload:{},started_at:new Date(Date.now()-600000).toISOString()},
+  {id:'linux-evidence',task_type:'audit',executor_kind:'linux-pool-controller',claimed_by:'linux-script-canary:fixture',payload:{},started_at:new Date(Date.now()-600000).toISOString()}
+ ]});
+ const {syncOrphanTasksOnStartup}=await import('../executor.js');const result=await syncOrphanTasksOnStartup();
+ expect(result.requeued).toBe(0);expect(result.orphans_fixed).toBe(0);expect(result.external_skipped).toBe(2);
+ expect(mockQuery.mock.calls.some(([sql])=>/UPDATE tasks/.test(sql))).toBe(false);
+});

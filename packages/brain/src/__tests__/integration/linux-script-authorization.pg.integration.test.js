@@ -1,3 +1,4 @@
+import {assertLinuxPoolAuthority} from '../../linux-pool/task-authority.js';
 import {readFileSync,mkdtempSync,rmSync} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,7 +31,7 @@ const database=process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_U
 if(!/_(scratch|test)$/.test(database))throw Error('scratch/test database required');
 const schema=`linux_script_${process.pid}_${randomUUID().replaceAll('-','')}`,admin=new pg.Client(options),pool=new pg.Pool({...options,max:8,options:`-c search_path=${schema},public`});
 let f,machine,service,created=[];
-const createTask=async args=>{routeWork({...args,requested_task_type:args.task_type});created.push(args);const task=(await args.db.query("INSERT INTO tasks(id,status,parent_task_id,payload) VALUES($1,$2,$3,$4) RETURNING *",[randomUUID(),args.status,args.parent_task_id,args.payload])).rows[0];return {success:true,task};};
+const createTask=async (args,internal)=>{expect(assertLinuxPoolAuthority({...args,requested_task_type:args.task_type,task:args},internal)).toBe(true);routeWork({...args,requested_task_type:args.task_type,task:args},[],internal);created.push(args);const task=(await args.db.query("INSERT INTO tasks(id,status,parent_task_id,payload) VALUES($1,$2,$3,$4) RETURNING *",[randomUUID(),args.status,args.parent_task_id,args.payload])).rows[0];return {success:true,task};};
 function signed(prepared,mutate=()=>{}){
  const r=structuredClone(f.receipt);r.nonce=prepared.nonce;r.execution_version_id=prepared.execution_version_id;
  const i=r.cases[0].identity;i.execution_version_id=prepared.execution_version_id;i.execution_grant_id=prepared.grant_ids.safe;
@@ -63,7 +64,7 @@ beforeEach(async()=>{
 });
 afterAll(async()=>{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();});
 it('prepare自动子任务及pending同代许可；验签完成事实证据actor后才原子激活',async()=>{
- const p=await service.prepare(machine,{expected_version_id:null});expect(p.execution).toBe(false);expect(created).toHaveLength(1);expect(created[0].parent_task_id).toBe(f.deployment.parent_task_id);
+ const p=await service.prepare(machine,{expected_version_id:null});expect(p.execution).toBe(false);expect(created).toHaveLength(1);expect(created[0].parent_task_id).toBe(f.deployment.parent_task_id);expect(created[0].executor_kind).toBe('linux-pool-controller');
  expect(createHash('sha256').update(JSON.stringify(p.runtime_configuration.profiles.safe.profile)).digest('hex')).toBe(f.deployment.authority.profiles.safe);
  expect((await pool.query('SELECT state FROM execution_node_versions WHERE id=$1',[p.execution_version_id])).rows[0].state).toBe('pending');
  await expect(pool.query("UPDATE execution_node_versions SET state='active' WHERE id=$1",[p.execution_version_id])).rejects.toThrow('execution_attested_activation_not_enabled');
