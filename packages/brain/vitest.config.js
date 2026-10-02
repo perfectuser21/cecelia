@@ -10,6 +10,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
   'src/linux-pool/__tests__/integration/active-grants.test.js',
   'src/linux-pool/__tests__/integration/onboarding-revocation.test.js',
 
+  'src/__tests__/integration/company-kr-registration.pg.integration.test.js',
   'src/app-server/__tests__/integration/store.test.js',
   'src/__tests__/integration/execution-directory.pg.integration.test.js',
   'src/__tests__/integration/preview-cache.pg.integration.test.js',
