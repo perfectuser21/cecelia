@@ -30,7 +30,7 @@ const { default: router } = await import('../routes/task-tasks.js');
 function findPatchHandler() {
   for (const layer of router.stack) {
     if (layer.route && layer.route.path === '/:id' && layer.route.methods.patch) {
-      return layer.route.stack[0].handle;
+      return layer.route.stack.at(-1).handle;
     }
   }
   throw new Error('PATCH /:id handler not found');
