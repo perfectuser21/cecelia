@@ -13,11 +13,12 @@ beforeEach(async () => {
   expect((await client.query('SELECT current_database() AS name')).rows[0].name).toBe(DB_DEFAULTS.database);
   schema = `kr_registration_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['journeys','workflows','ops_agents','journey_steps','steps','ops_workflows','tasks','task_runs','schema_version','spans','enablers','enabler_calls']) {
+  for (const table of ['journeys','workflows','ops_agents','journey_steps','steps','ops_workflows','tasks','task_runs','schema_version','spans','enablers','enabler_calls','areas']) {
     await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
   }
   await client.query(`SET search_path TO ${schema},public`);
   await client.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql',import.meta.url),'utf8'));
+  await client.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql',import.meta.url),'utf8'));
   db = { connect: async () => ({ query: client.query.bind(client), release() {} }) };
   await client.query(`INSERT INTO journeys(id,name,parent_journey_id,capability_code) VALUES($1,'管家 · G5 算力与基础设施调度',$2,'G5')`, [spec.capability_id, randomUUID()]);
   await client.query(`INSERT INTO ops_agents(id,source,host_alias,name) VALUES(1,'openclaw','mmv',$1)`, [spec.agent]);
@@ -60,4 +61,14 @@ describe('KR 注册事务', () => {
     await expect(registerCompanyKrWorkflow(db)).rejects.toThrow('活动归属冲突');
     expect((await client.query('SELECT id FROM workflows')).rows[0].id).toBe(first.workflow_id);
   });
+  it('KR快照固定真实配置commit，错误commit内容不得给缓存spec盖戳',async()=>{
+    const result=await registerCompanyKrWorkflow(db);
+    const rows=(await client.query('SELECT * FROM workflow_definition_versions WHERE workflow_id=$1',[result.workflow_id])).rows;
+    expect(rows).toHaveLength(1);expect(rows[0].source_commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(rows[0].payload.contract).toEqual(spec);
+    const before=(await client.query('SELECT * FROM journey_steps ORDER BY id')).rows;
+    await expect(registerCompanyKrWorkflow(db,{revision:'e'.repeat(40),readSource:async()=>JSON.stringify({...spec,name:'冒名版本'})})).rejects.toThrow('配置与固定commit不一致');
+    expect((await client.query('SELECT * FROM journey_steps ORDER BY id')).rows).toEqual(before);
+  });
+
 });

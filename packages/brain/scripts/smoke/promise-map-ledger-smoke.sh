@@ -45,9 +45,11 @@ grep -q "ON CONFLICT (step_id, cell_kind, cell_key) WHERE cell_kind IS NOT NULL"
   || { echo "FAIL: cell 通道未用 partial 冲突目标"; exit 1; }
 grep -q "journey_features/:id/blast-radius" packages/brain/src/routes/journeys.js \
   || { echo "FAIL: blast-radius 端点缺失"; exit 1; }
-grep -q "router.patch('/journeys/:id'" packages/brain/src/routes/journeys.js \
-  || { echo "FAIL: PATCH /journeys/:id 缺失"; exit 1; }
-echo "OK: 落账 API 四要件齐"
+grep -Eq "^[[:space:]]*router\.patch\('/journeys/:id'," packages/brain/src/routes/journey-registration.js \
+  || { echo "FAIL: PATCH /journeys/:id 定义缺失"; exit 1; }
+grep -Eq "^[[:space:]]*router\.use\(journeyRegistrationRouter\(pool\)\);" packages/brain/src/routes/journeys.js \
+  || { echo "FAIL: journeys 父路由未挂载 journeyRegistrationRouter"; exit 1; }
+echo "OK: 落账 API 五要件齐"
 
 # 5. Notion push 格子行合同（棒4-2，决策 10a68212 改）：格子行进 Backbone-Step Map 且按 updated_at 增量可更新，
 #    每轮 LIMIT 50 防洪水（原合同「排除格子行」已被承诺地图翻色进 Notion 的需求取代）

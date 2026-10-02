@@ -108,6 +108,7 @@ function fakePool(stepRows = [], memory = {}) {
     async connect() { return {query:this.query.bind(this),release(){}}; },
     async query(text, params = []) {
       queries.push({ text, params });
+      if (/INSERT INTO (activity|workflow)_definition_versions/.test(text)) return {rows:[{id:'version'}]};
       if (/FROM workflows/.test(text)) return {rows: rows.length ? [{id:'w',key:'workflow',capability_id:'J',source_repo:CONTRACT_REPO,source_path:'product-map/contracts/keyword_acquisition.yaml',source_capability:'keyword_acquisition',source_workflow:'social-keyword-leadgen'}] : []};
       if (/FROM working_memory/.test(text)) {
         const v = memory[params[0]];
@@ -167,7 +168,7 @@ describe('syncActivityContracts', () => {
     const pool = fakePool(rows);
     const out = await syncActivityContracts(pool, deps(gh));
     expect(gh.calls.some((u) => u.includes('.yaml'))).toBe(true);
-    expect(pool.queries.some((q) => /UPDATE journey_steps/.test(q.text))).toBe(false);
+    expect(pool.queries.some((q) => /UPDATE journey_steps SET name/.test(q.text))).toBe(false);
     expect(out.updated).toEqual([]);
   });
 
