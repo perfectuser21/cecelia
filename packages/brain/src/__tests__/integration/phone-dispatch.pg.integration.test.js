@@ -169,3 +169,18 @@ it.each(['grant','snapshot'])('registry 行锁等待越过 %s 期限时最终lau
  expect((await pool.query('SELECT status FROM capacity_reservations WHERE id=$1',[r.reservation_id])).rows[0].status).toBe('cleanup_pending');
  await expect(store.withLaunch(r.id,()=>{calls++;})).rejects.toThrow('phone_launch_forbidden');expect(calls).toBe(0);
 });
+it('finish 保留已写handoff；提交后真实pool上的接棒入口仍能读取下一棒',async()=>{
+ const {createPhoneDispatchStore}=await import('../../phone-dispatch/store.js'),v=await input();
+ const handoff={schema_version:1,summary:'existing',next_steps:[{kind:'task',title:'next baton'}]};
+ await pool.query('UPDATE tasks SET result=$2::jsonb WHERE id=$1',[v.taskId,JSON.stringify({handoff,other_evidence:'preserve'})]);
+ let calls=0;
+ const checked=createPhoneDispatchStore({pool,afterTask:async(db,taskId,status)=>{
+  expect(db).toBe(pool);expect(taskId).toBe(v.taskId);expect(status).toBe('completed');calls++;
+  const committed=(await db.query('SELECT status,result FROM tasks WHERE id=$1',[taskId])).rows[0];
+  expect(committed.status).toBe('completed');expect(committed.result.handoff).toEqual(handoff);
+  expect(committed.result.other_evidence).toBe('preserve');
+ }});
+ const {dispatch:r}=await checked.reserve(v);await checked.withLaunch(r.id,()=>{});await checked.finish(r.id,receipt(r));
+ expect(calls).toBe(1);expect((await pool.query('SELECT result FROM tasks WHERE id=$1',[v.taskId])).rows[0].result.handoff).toEqual(handoff);
+ await checked.finish(r.id,receipt(r));expect(calls).toBe(1);
+});
