@@ -125,3 +125,59 @@ it('首次发布中途失败且尚无unit，不stop不存在服务，清除已�
  await expect(install(x)).rejects.toThrow('linux_pool_install_failed');
  expect(fs.existsSync(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/linux-pool-profile.cjs'))).toBe(false);expect(fs.existsSync(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/linux-pool-canary.cjs'))).toBe(false);expect(x.calls.some(([,a])=>a[0]==='stop')).toBe(false);
 }finally{x.cleanup();}});
+
+async function upgradeFixture(){
+ const x=withScripts(fixture());await install(x);x.calls.length=0;
+ const {createHash,randomUUID}=require('node:crypto'),sha=b=>createHash('sha256').update(b).digest('hex');
+ const boot=randomUUID(),worker=randomUUID(),sources=Object.fromEntries([...SOURCE_FILES,...SCRIPT_FILES].map(n=>[n,sha(fs.readFileSync(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker',n)))]));
+ x.upgrade={schema_version:1,machine_registry_id:x.profile.machine_registry_id,config_digest:require('./linux-pool-profile.cjs').validateLinuxPoolProfile(x.profile).config_digest,
+  revision:'c'.repeat(40),host_boot_id:boot,daemon_id:'daemon-fixed',worker_boot_id:worker,source_sha256:sources,intent_id:randomUUID()};
+ x.options.upgradePath='/staging/upgrade.json';x.options.revision='e'.repeat(40);x.put(x.options.upgradePath,JSON.stringify(x.upgrade));
+ x.put('/proc/sys/kernel/random/boot_id',boot);x.put('/run/cecelia-script/worker-boot-id',worker);
+ x.put('/sys/fs/cgroup/cecelia.slice/cecelia-workloads.slice/cgroup.procs','');x.put('/sys/fs/cgroup/cecelia.slice/cecelia-workloads.slice/cgroup.events','populated 0\nfrozen 0\n');
+ fs.mkdirSync(path.join(x.root,'var/lib/cecelia/script-runtime'),{recursive:true,mode:0o700});
+ x.put('/proc/101/cmdline','/usr/local/libexec/cecelia/toolchain/bin/node\0/usr/local/libexec/cecelia/fleet-worker/linux-script-service.cjs\0');
+ x.put('/proc/102/cmdline','/usr/local/libexec/cecelia/toolchain/bin/node\0/usr/local/libexec/cecelia/fleet-worker/linux-pool-server.cjs\0');
+ x.deps.statfs=()=>({type:0x63677270});
+ const run=x.deps.runCommand;x.deps.runCommand=async(c,a)=>{
+  if(c==='/usr/bin/docker'&&a[0]==='ps'){x.calls.push([c,a]);return {stdout:''};}
+  if(c==='/usr/bin/systemctl'&&a[0]==='show'&&!a.includes('--property=DropInPaths')){
+   x.calls.push([c,a]);const unit=a.at(-1);
+   if(a.includes('--property=ActiveState'))return {stdout:'active\n'};
+   if(a.includes('--property=FragmentPath,NeedDaemonReload,MainPID'))return {stdout:`FragmentPath=/etc/systemd/system/${unit}\nNeedDaemonReload=no\nMainPID=${unit==='cecelia-linux-script.service'?101:102}\n`};
+   return {stdout:'LoadState=loaded\nActiveState=active\nUnitFileState=enabled\n'};
+  }
+  return run(c,a);
+ };
+ return x;
+}
+it('完整旧安装绑定且真实空闲的active slice可升级，原预算unit保持，绝不stop slice或业务容器',async()=>{
+ const x=await upgradeFixture();try{
+  const slice=fs.readFileSync(path.join(x.root,'etc/systemd/system/cecelia-workloads.slice'));
+  expect(await install(x)).toMatchObject({installed:true,revision:'e'.repeat(40)});
+  expect(fs.readFileSync(path.join(x.root,'etc/systemd/system/cecelia-workloads.slice'))).toEqual(slice);
+  const stops=x.calls.filter(([c,a])=>c==='/usr/bin/systemctl'&&a[0]==='stop').map(([,a])=>a[1]);
+  expect(stops).toEqual(['cecelia-linux-pool.service','cecelia-linux-script.service']);
+  expect(x.calls.some(([c,a])=>c==='/usr/bin/docker'&&!['info','ps'].includes(a[0]))).toBe(false);
+ }finally{x.cleanup();}
+});
+it.each(['boot','worker','source','unit','key','config','child','container','gate','loaded-unit'])('active升级%s证据不符必须在stop前拒绝',async kind=>{
+ const x=await upgradeFixture();try{
+  if(kind==='boot')x.put('/proc/sys/kernel/random/boot_id',require('node:crypto').randomUUID());
+  if(kind==='worker')x.put('/run/cecelia-script/worker-boot-id',require('node:crypto').randomUUID());
+  if(kind==='source')x.put('/usr/local/libexec/cecelia/fleet-worker/linux-pool-proof.cjs','changed',0o644);
+  if(kind==='unit')x.put('/etc/systemd/system/cecelia-linux-script.service','changed',0o644);
+  if(kind==='key')x.put('/etc/cecelia/script-execution.key','f'.repeat(64));
+  if(kind==='config')x.put('/etc/cecelia/script-pool.json',JSON.stringify({...x.profile,endpoint_host:'100.64.0.99'}));
+  if(kind==='child')x.put('/sys/fs/cgroup/cecelia.slice/cecelia-workloads.slice/cgroup.procs','989\n');
+  if(kind==='gate')fs.mkdirSync(path.join(x.root,'var/lib/cecelia/script-runtime',require('node:crypto').randomUUID()+'.gate'),{mode:0o700});
+  const run=x.deps.runCommand;x.deps.runCommand=async(c,a)=>{
+   if(kind==='container'&&c==='/usr/bin/docker'&&a[0]==='ps')return {stdout:'a'.repeat(64)+'\n'};
+   if(kind==='loaded-unit'&&a.includes('--property=FragmentPath,NeedDaemonReload,MainPID'))return {stdout:'FragmentPath=/run/custom.service\nNeedDaemonReload=no\nMainPID=101\n'};
+   return run(c,a);
+  };
+  await expect(install(x)).rejects.toThrow('linux_pool_install_upgrade_unconfirmed');
+  expect(x.calls.some(([,a])=>a[0]==='stop')).toBe(false);
+  expect(fs.readFileSync(path.join(x.root,'usr/local/libexec/cecelia/fleet-worker/revision'),'utf8').trim()).toBe('c'.repeat(40));
+ }finally{x.cleanup();}
+});
