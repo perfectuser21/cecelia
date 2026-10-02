@@ -15,7 +15,7 @@ beforeAll(async()=>{
  await pool.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,status TEXT);CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT);CREATE TABLE capacity_reservations(id UUID PRIMARY KEY);CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);`);
  await pool.query(readFileSync(new URL('../../migrations/503_execution_directory.sql',import.meta.url),'utf8'));
  // RED uses the real pre-migration DB: malformed bindings must be rejected even when the new migration is absent.
- const migration=new URL('../../migrations/510_phone_http_bindings.sql',import.meta.url);if(existsSync(migration))await pool.query(readFileSync(migration,'utf8'));
+ const migration=new URL('../../migrations/511_phone_http_bindings.sql',import.meta.url);if(existsSync(migration))await pool.query(readFileSync(migration,'utf8'));
  await pool.query("INSERT INTO system_registry VALUES($1,'machine','active')",[registryId]);await pool.query("INSERT INTO execution_nodes(machine_registry_id,canonical_id) VALUES($1,'fixture-machine')",[registryId]);
 });
 afterAll(async()=>{await pool.end();await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);await admin.end();});
