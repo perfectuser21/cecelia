@@ -246,9 +246,14 @@ class AdmissionTest(unittest.TestCase):
             os.dup2(original, fd); os.close(original); host.close()
 
     def test_host_fd_assignment_and_cross_thread_borrow_are_rejected(self):
-        host = admission.HostExclusive().acquire(); result = []
+        host = admission.HostExclusive().acquire()
         try:
             with self.assertRaises((ValueError, AttributeError)): host.fd = host.fd
+        finally: host.close()
+
+    def test_host_cross_thread_verify_is_rejected(self):
+        host = admission.HostExclusive().acquire(); result = []
+        try:
             def borrowed():
                 try: host.verify(); result.append('accepted')
                 except ValueError: result.append('denied')
