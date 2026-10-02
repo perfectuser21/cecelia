@@ -45,6 +45,13 @@ export function createDeploymentLedger({ store, docker, health, now = Date.now }
         return { deployment_id: request.deployment_id, outcome: 'success', image_id };
       }
       const pending = ledger.pending;
+      if (!pending.recovering && pending.target_image_id === image_id
+          && pending.request.git_sha === request.git_sha && pending.request.version === request.version) {
+        const row = await store.read(name(pending.deployment_id));
+        if (row?.receipt || (row && (digest(row.request) !== digest(pending.request) || row.target_image_id !== image_id))) throw fail('DEPLOYMENT_CONFLICT');
+        if (!row) await store.save(name(pending.deployment_id), { request: pending.request, previous: pending.previous, target_image_id: image_id, receipt: null }, lease);
+        return { deployment_id: pending.deployment_id, outcome: 'success', image_id };
+      }
       if (pending.previous.id !== image_id || pending.previous.git_sha !== request.git_sha
           || !pending.previous.tags.includes(`cecelia-brain:${request.version}`)) throw fail('ROLLBACK_TARGET_MISMATCH');
       const row = await store.read(name(pending.deployment_id));

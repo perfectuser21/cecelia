@@ -53,7 +53,7 @@ export function protectedImages(snapshot, ledger, now = Date.now()) {
 export function selectImages(snapshot, ledger, now = Date.now(), { continuing = false } = {}) {
   const keep = protectedImages(snapshot, ledger, now);
   if (continuing ? recovered(snapshot.disk) : !canStart(snapshot.disk)) return [];
-  return snapshot.images.filter(image => !keep.has(image.id) && image.tags.length === 1 && image.digests.length === 0
+  return snapshot.images.filter(image => !keep.has(image.id) && image.tags.length === 1 && (image.digests.length === 0 || (image.digests.length === 1 && image.digests[0] === `cecelia-brain@${image.id}`))
     && image.tags[0].startsWith('cecelia-brain:') && VERSION.test(image.tags[0].slice('cecelia-brain:'.length))
     && Date.parse(image.created_at) <= now - 86400000)
     .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || a.id.localeCompare(b.id)).slice(0, 2);
