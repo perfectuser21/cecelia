@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.359.2
+**Brain 版本**: 1.359.3
 
 
 
@@ -5349,3 +5349,9 @@ Cecelia 运行三个独立 Brain 实例，常驻于宿主机。
 - 真 PostgreSQL 事务回归覆盖真实 HTTP 选择项目、首次送审、修正再审、审批激活与 KR 放行；测试结束回滚。
 
 - KR 诊断的数据库入口挂 express-rate-limit，每来源每分钟30次，超额请求在SQL执行前返回429；无KR参数的健康入口独立可读。
+
+## Brain 1.359.3 — GP115 受控T0发行与跨时区真实性
+
+- 专属issuer仅数据库单clock新INSERT发行，显式UTC naive存储语义，实际ID、微秒精确存储值、类型与绝对clock绑定，COMMIT及独立0600 fsync回执完成才返回可登记ID。
+- reader必须先有受保护发行档，再交叉核真实事件行；不按reader时区推断历史naive时间。缺发行、未知存储语义、冲突/介质故障均拒绝，清理后只保原发行档。
+- 永久真实Chicago writer/UTC reader倒签5h、正规发行/清理、缺发行、DB冲突、COMMIT未知及文件冲突回归；不启动生产T0、不改schema/flag/退役。

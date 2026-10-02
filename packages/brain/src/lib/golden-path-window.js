@@ -1,6 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
-import { readGoldenPathT0Archive, readGoldenPathServing } from './golden-path-archive.js';
+import { readGoldenPathT0Archive, readGoldenPathServing, assertGoldenPathProtectedDirectory } from './golden-path-archive.js';
 import { isDeepStrictEqual } from 'node:util';
 import { readGoldenPathJournal, listGoldenPathJournals } from './golden-path-journal.js';
 
@@ -14,27 +14,29 @@ const validSource = source => /^[a-f0-9]{40}$/.test(source?.git_sha ?? '')
 export async function readGoldenPathT0({ pool, root, window }) {
   if (!window?.t0_event_id) return null;
   const sources = window.sources ?? (window.source ? [window.source] : []);
-  const matches = row => row?.db_time_verified === true && row?.id === window.t0_event_id && Number.isFinite(time(row.created_at))
-    && /([zZ]|[+-]\d\d:\d\d)$/.test(row.payload?.gp_db_created_at ?? '')
-    && time(row.payload.gp_db_created_at) === time(row.created_at)
-    && row.payload?.window_id === window.window_id
-    && sources.length && sources.every(validSource)
-    && sources.some(source => isDeepStrictEqual(source, row.payload.source));
-  const row = (await pool.query({ text: `SELECT id,payload,
+  // 受保护发行档是必要来源；旧自动归档/任务自报时间都不是发行证明。
+  let receipt;
+  try { assertGoldenPathProtectedDirectory(root); receipt = readGoldenPathT0Archive(path.join(root, window.window_id)); } catch { return null; }
+  const proof = receipt?.issuance;
+  if (proof?.format !== 'gp-t0-issuer-v1' || !['timestamp without time zone', 'timestamp with time zone'].includes(proof.storage_type)
+      || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}$/.test(proof.storage_text ?? '')
+      || proof.storage_text !== proof.clock_utc_text
+      || receipt.id !== window.t0_event_id || receipt.payload?.window_id !== window.window_id
+      || !sources.length || !sources.every(validSource) || !sources.some(source => isDeepStrictEqual(source, receipt.payload?.source))
+      || !/([zZ]|[+-]\d\d:\d\d)$/.test(receipt.payload?.gp_db_created_at ?? '')
+      || !Number.isFinite(time(receipt.created_at)) || time(receipt.created_at) !== time(receipt.payload.gp_db_created_at)
+      || time(`${proof.clock_utc_text}Z`) !== time(receipt.created_at)) return null;
+  const row = (await pool.query({ text: `SELECT id,event_type,source AS event_source,payload,pg_typeof(created_at)::text AS storage_type,
     CASE WHEN pg_typeof(created_at)='timestamp without time zone'::regtype
-      THEN created_at AT TIME ZONE current_setting('TimeZone') ELSE created_at END AS created_at,
-    CASE WHEN pg_typeof(created_at)='timestamp without time zone'::regtype
-      THEN (payload->>'gp_db_created_at')::timestamptz AT TIME ZONE current_setting('TimeZone')=created_at
-      ELSE (payload->>'gp_db_created_at')::timestamptz=created_at END AS db_time_verified
+      THEN to_char(created_at,'YYYY-MM-DD"T"HH24:MI:SS.US')
+      ELSE to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US') END AS storage_text
     FROM cecelia_events
-    WHERE id=$1 AND event_type='golden_path_observation_t0' AND source='golden-path-retirement'`,
+    WHERE id=$1`,
   values: [window.t0_event_id], query_timeout: 2_000 })).rows[0];
-  if (row) return matches(row) ? row : null;
-  // 事件保留期后仅接受先前server持久化的独立实际DB回执，不读任务自报日期。
-  try {
-    const archived = readGoldenPathT0Archive(path.join(root, window.window_id));
-    return matches(archived) ? archived : null;
-  } catch { return null; }
+  if (row && (row.event_type !== 'golden_path_observation_t0' || row.event_source !== 'golden-path-retirement' || row.id !== receipt.id || row.storage_type !== proof.storage_type || row.storage_text !== proof.storage_text
+      || !isDeepStrictEqual(row.payload, receipt.payload))) return null;
+  // 事件清理后仍只用原发行档；存在但不一致的真实DB行绝不由归档覆盖。
+  return receipt;
 
 }
 

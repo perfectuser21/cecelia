@@ -12,7 +12,7 @@ function readFile(file, maxBytes) {
   const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
     const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > maxBytes || (stat.mode & 0o077)) throw new Error('gp_archive_invalid');
+    if (!stat.isFile() || stat.uid !== process.getuid() || stat.size > maxBytes || (stat.mode & 0o077)) throw new Error('gp_archive_invalid');
     return fs.readFileSync(fd, 'utf8');
   } finally { fs.closeSync(fd); }
 }
@@ -43,11 +43,19 @@ export function readGoldenPathInstances(root) {
       || ids.some(id => !/^[a-f0-9-]{36}$/.test(id))) throw new Error('gp_archive_invalid');
   return ids;
 }
+export function assertGoldenPathProtectedDirectory(root) {
+  const stat = fs.lstatSync(root);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid() || (stat.mode & 0o077)) {
+    throw new Error('gp_t0_directory_unprotected');
+  }
+}
 export function readGoldenPathT0Archive(root) {
+  assertGoldenPathProtectedDirectory(root);
   return verified(JSON.parse(readFile(path.join(root, 't0-receipt.json'), 64 * 1024)));
 }
-// 只由server加载真实DB行后调用，caller/任务自报日期从不进入此入口。
+// 专属issuer写发行档；runtime仅重存已验证发行档，旧普通DB归档没有发行资格。
 export function archiveGoldenPathT0(root, receipt) {
+  assertGoldenPathProtectedDirectory(root);
   const normalized = JSON.parse(JSON.stringify(receipt));
   const file = path.join(root, 't0-receipt.json');
   let fd;
