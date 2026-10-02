@@ -98,8 +98,24 @@ export function implementationGitHubUrl(repo,{path,revision}={}){
     ||typeof revision!=='string'||!/^[0-9a-f]{40}$/.test(revision))throw ciFailure('SOURCE_PATH_INVALID');
   return `${base}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(revision)}`;
 }
+/** 原同步已回滚归还连接；仅复用同M赢家完整产物，不重同步或代赢家推进地图。 */
+async function reuseConcurrentSnapshot(pool,q,checkMain,conflict,waitMs){
+  const deadline=Date.now()+Math.min(5000,Math.max(0,Number.isFinite(waitMs)?waitMs:5000));
+  while(Date.now()<deadline){
+    await checkMain();
+    // 人改映射/父级不能被一次CAS重试掩盖；此函数只读，不执行返回的接力计划。
+    await preparePilotManifestAdvance(pool,q);
+    const snapshot=await exportImplementationSnapshot(pool,q);
+    if(snapshot.scope!==q.scope||snapshot.repo!==q.repo||snapshot.revision!==q.revision)throw conflict;
+    if(snapshot.status==='verified'&&snapshot.gaps.length===0){await checkMain();return snapshot;}
+    if(snapshot.gaps.some(g=>!['manifest_source_mismatch','scope_manifest_missing','definition_snapshot_missing'].includes(g.code)))throw conflict;
+    const remaining=deadline-Date.now();if(remaining<=0)break;
+    await new Promise(resolve=>setTimeout(resolve,Math.min(50,remaining)));
+  }
+  throw conflict;
+}
 export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalThis.fetch,resolveToken=resolveGitHubToken,
-  readBinding,allowRepos=(process.env.CECELIA_IMPLEMENTATION_CI_REPOS??`${CONTRACT_REPO},perfectuser21/cecelia`).split(',').map(r=>r.trim()).filter(Boolean)}={}){
+  readBinding,conflictWaitMs=5000,allowRepos=(process.env.CECELIA_IMPLEMENTATION_CI_REPOS??`${CONTRACT_REPO},perfectuser21/cecelia`).split(',').map(r=>r.trim()).filter(Boolean)}={}){
   const q=validateSnapshotQuery(input);
   if(!allowRepos.includes(q.repo))throw ciFailure('REFRESH_UNCONFIGURED','main同步repo未授权',503);
   if(![CONTRACT_REPO,'perfectuser21/cecelia'].includes(q.repo))throw ciFailure('SYNC_ADAPTER_MISSING','该repo缺少固定main同步adapter',422);
@@ -118,7 +134,13 @@ export async function refreshImplementationSnapshot(pool,input,{fetchFn=globalTh
   };
   await checkMain();
   const pilotPlan=await preparePilotManifestAdvance(pool,q);
-  if(q.repo===CONTRACT_REPO)await syncActivityContracts(pool,{fetchFn,resolveToken:async()=>token,expectedRevision:q.revision,beforeCommit:checkMain,synchronizeSteps:true,readBinding});
+  if(q.repo===CONTRACT_REPO){
+    try{await syncActivityContracts(pool,{fetchFn,resolveToken:async()=>token,expectedRevision:q.revision,beforeCommit:checkMain,synchronizeSteps:true,readBinding});}
+    catch(error){
+      if(error.code!=='ACTIVITY_CONTRACT_SNAPSHOT_CHANGED'||error.status!==409)throw error;
+      return reuseConcurrentSnapshot(pool,q,checkMain,error,conflictWaitMs);
+    }
+  }
   else{
     const readFile=async(path,revision=q.revision)=>{
       const response=await fetchFn(implementationGitHubUrl(q.repo,{path,revision}),{redirect:'error',headers:{Accept:'application/vnd.github.raw',Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});

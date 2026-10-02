@@ -28,7 +28,7 @@ export async function implementationRefreshDatabase({manifestRevision='a'.repeat
   // 每次options对应一个HTTP调用，避免同一个闭包把两个请求的main检查混在一起。
   const options=({waitMs=1000,error}={})=>{let heads=0;return {conflictWaitMs:waitMs,resolveToken:async()=>'',readBinding:async()=> 'export const controller=true;\n',fetchFn:async(...args)=>{
    const url=String(args[0]);
-   if(url.includes('/commits/main')){if(++heads===4){arrived();await resume;}return {ok:true,text:async()=>mainRevision};}
+   if(url.includes('/commits/main')){if(++heads===4&&mainRevision===revision){arrived();await resume;}return {ok:true,text:async()=>mainRevision};}
    if(url.includes('/contents/product-map/generated/contracts.json')){if(error)throw error;if(++readers===2)releaseReaders();await bothReading;}
    return f.contracts.fetchFn(...args);
   }};};

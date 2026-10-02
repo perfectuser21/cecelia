@@ -11,7 +11,9 @@ export async function storeActivityContracts(pool, plans, head, repo, registrati
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',['shared-activity-contracts']);
     const current=(await client.query(`${REGISTRATIONS_SQL} FOR UPDATE`,[repo])).rows;
-    if (canonicalJson(current)!==canonicalJson(registrations)) throw new Error('同步快照已变化，拒绝写入旧契约');
+    if (canonicalJson(current)!==canonicalJson(registrations)) throw Object.assign(new Error('同步快照已变化，拒绝写入旧契约'),{
+      code:'ACTIVITY_CONTRACT_SNAPSHOT_CHANGED',status:409,
+    });
     const rows = (await client.query(`SELECT id,journey_id,capability_key,activity_key,contract_sha256,status FROM journey_steps
       WHERE capability_key IS NOT NULL AND activity_key IS NOT NULL FOR UPDATE`)).rows;
     const definitions = new Map();
