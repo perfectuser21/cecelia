@@ -49,6 +49,13 @@ export async function listWorkflows(pool, {capabilityId,valueStreamId,status,id}
 export async function readWorkflowActivities(pool,workflowId) {
   return (await listWorkflows(pool,{id:workflowId}))[0]?.activities || [];
 }
+export async function readActivity(pool, activityId) {
+  return (await pool.query(`SELECT a.*,a.id AS canonical_id,
+    CASE WHEN v.id IS NULL THEN 'unknown' ELSE 'versioned' END AS definition_status,
+    to_jsonb(v) AS definition_version
+    FROM journey_steps a LEFT JOIN activity_definition_versions v
+      ON v.activity_id=a.id AND v.id=a.current_definition_version_id WHERE a.id=$1`, [activityId])).rows[0];
+}
 export async function readActivityConsumers(pool,activityId) {
   return (await pool.query(`SELECT (SELECT COALESCE(jsonb_agg(to_jsonb(consumer) ORDER BY consumer.key,consumer.sequence_no),'[]'::jsonb)
     FROM (SELECT w.id AS workflow_id,w.key,w.name,w.capability_id,r.slot_key,r.sequence_no,
