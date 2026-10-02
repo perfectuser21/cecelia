@@ -8,17 +8,26 @@ const FIELDS = ['policy', 'resource_id', 'generation', 'task_id', 'intent_id', '
 const digest = request => createHash('sha256').update(JSON.stringify(FIELDS.map(k => request[k]))).digest('hex');
 const unknown = () => ({ status: 'unconfirmed' });
 export function createPreviewCacheController({ pool, client = createPreviewCacheClient(), createTask = taskCreator } = {}) {
-  async function transaction(fn) {
+  async function transaction(fn, signal) {
     const db = await pool.connect();
-    try { await db.query('BEGIN'); const value = await fn(db); await db.query('COMMIT'); return value; }
+    try {
+      signal?.throwIfAborted();
+      await db.query('BEGIN'); const value = await fn(db);
+      signal?.throwIfAborted();
+      await db.query('COMMIT'); return value;
+    }
     catch (error) { await db.query('ROLLBACK'); throw error; } finally { db.release(); }
   }
-  async function claim(candidate, runId) {
+  async function claim(candidate, runId, signal) {
     const r = candidate?.request;
     if (candidate?.machine !== 'mmv' || r?.policy !== POLICY || !UUID.test(r.resource_id)
         || !Number.isSafeInteger(r.generation) || r.generation < 1 || !Number.isFinite(Date.parse(r.expires_at))) throw new Error('INVALID_CACHE_PLAN');
     const source = `${POLICY}:mmv:${r.resource_id}:${r.generation}`;
     return transaction(async db => {
+      // run→source统一锁序。恢复持同一run行锁直到终态提交，不能留下后提交intent。
+      const run = (await db.query('SELECT job_id,status FROM janitor_runs WHERE id=$1 FOR UPDATE', [runId])).rows[0];
+      signal?.throwIfAborted();
+      if (run?.job_id !== POLICY || run.status !== 'running') throw new Error('INVALID_CACHE_RUN');
       // 独立source锁/唯一表跨router_version保留task与intent，不能先SELECT再认领。
       await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [source]);
       const old = (await db.query('SELECT * FROM janitor_cache_intents WHERE source_id=$1', [source])).rows[0];
@@ -39,7 +48,7 @@ export function createPreviewCacheController({ pool, client = createPreviewCache
       await db.query(`UPDATE tasks SET status='in_progress',claimed_by=$2,claimed_at=now(),started_at=now(),blocked_at=NULL,
         updated_at=now() WHERE id=$1 AND status='blocked'`, [taskId, claimant]);
       return { ...row, fresh: true };
-    });
+    }, signal);
   }
   function verified(row, receipt) {
     return receipt?.status === 'success' && receipt.actor === 'preview-agent:mmv' && receipt.policy_version === POLICY
@@ -73,11 +82,13 @@ export function createPreviewCacheController({ pool, client = createPreviewCache
       error_message='PREVIEW_CACHE_UNCONFIRMED' WHERE id=$1 AND claimed_by=$2 AND status='in_progress'`, [row.task_id, row.claimant]);
   }
   async function run({ run_id, signal }) {
+    signal?.throwIfAborted();
     const plan = await client.plan(signal);
+    signal?.throwIfAborted();
     if (plan?.policy !== POLICY || !Array.isArray(plan.resources)) throw new Error('INVALID_CACHE_PLAN');
     if (!plan.resources.length) return { status: 'skipped', freed_bytes: 0 };
     let row;
-    try { row = await claim(plan.resources[0], run_id); } catch { return unknown(); }
+    try { row = await claim(plan.resources[0], run_id, signal); } catch { return unknown(); }
     if (!row.fresh) return row.settled_at ? { status: 'skipped', freed_bytes: 0 } : unknown();
     try {
       signal?.throwIfAborted();
@@ -88,8 +99,12 @@ export function createPreviewCacheController({ pool, client = createPreviewCache
       return result;
     } catch { await block(row).catch(() => {}); return unknown(); }
   }
-  async function reconcile({ run_id, signal }) {
-    const rows = (await pool.query('SELECT * FROM janitor_cache_intents WHERE run_id=$1', [run_id])).rows;
+  async function reconcile({ run_id, signal, recovery_db }) {
+    signal?.throwIfAborted();
+    const rows = (await (recovery_db ?? pool).query('SELECT * FROM janitor_cache_intents WHERE run_id=$1', [run_id])).rows;
+    signal?.throwIfAborted();
+    // 仅runner持run行锁的恢复事务可判零intent；直调或异常多intent仍不确定。
+    if (!rows.length && recovery_db) return { status: 'skipped', freed_bytes: 0 };
     if (rows.length !== 1) return unknown();
     try { return await settle(rows[0], await client.receipt(rows[0].request.intent_id, signal)); }
     catch { return unknown(); }
