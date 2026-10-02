@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {it,expect} from 'vitest';
-import {fixture} from './runtime-receipt.test-fixture.js';
+import {fixture} from './__tests__/runtime-receipt-fixture.js';
 import {createLinuxRuntimeAdmission} from './runtime-admission.js';
 import workerModule from '../../scripts/fleet-worker/linux-pool-server.cjs';
 import canaryModule from '../../scripts/fleet-worker/linux-pool-canary.cjs';
