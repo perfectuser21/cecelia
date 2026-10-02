@@ -5,8 +5,8 @@ import { promisify } from 'node:util';
 import { Readable } from 'node:stream';
 
 const require = createRequire(import.meta.url);
-const { probeFleetWorkerHealth } = require('./node-probe.cjs');
-const { createFleetWorkerServer } = require('./fleet-worker.cjs');
+const { probeFleetWorkerHealth } = require('../../../packages/brain/scripts/fleet-worker/node-probe.cjs');
+const { createFleetWorkerServer } = require('../../../packages/brain/scripts/fleet-worker/fleet-worker.cjs');
 const runRealChild = promisify(execFile);
 const servers = [];
 const SENTINEL = 'SECRET_CLOCK_DIAGNOSTIC_SENTINEL';
