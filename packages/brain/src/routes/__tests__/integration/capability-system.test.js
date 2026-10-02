@@ -55,3 +55,11 @@ it('正式CI证据HTTP不把外仓/缺固定报告的记录关联为本release�
   expect(response.body.ci_evidence[0].definition_versions).toHaveLength(2);
   expect(response.body.ci_evidence.slice(1).map(ci=>ci.definition_versions)).toEqual([[],[]]);
 });
+it('完整试点新协议HTTP按top固定版本精确链接，外仓与未知协议零回退',async()=>{
+ const input=structuredClone(f.releaseInput),base=input.ci_evidence[0];
+ for(const [name,change] of [['pilot',()=>{}],['alien',c=>c.report.source.repo='alien/repo'],['future',c=>c.report.protocol='future']]){
+  const c=structuredClone(base);c.evidence_ref=name;c.report.protocol='pilot_release_verification_v1';c.report.definition_versions=c.report.head.definition_versions;c.report.definition_versions.workflows=c.report.definition_versions.workflows.slice(0,1);change(c);input.ci_evidence.push(c);
+ }
+ const {release}=await createRelease(f.db,input),response=await request(app).get(`/map/releases/${release.id}/evidence`);
+ expect(response.status).toBe(200);expect(response.body.ci_evidence.map(c=>c.definition_versions.length)).toEqual([2,1,0,0]);
+});
