@@ -1,8 +1,6 @@
 """HTTP物理协议的永久真实安装字节、子进程、socket和持久回执回归。"""
-import copy
 import hashlib
 import json
-import os
 from pathlib import Path
 import tempfile
 import time
@@ -11,7 +9,6 @@ import uuid
 from adb_socket_fixture import SocketFixture
 from runner import Config, Runner, BINDINGS
 from process_identity import boot_id
-from journal import Journal
 import probe
 
 class HttpPhysicalTest(unittest.TestCase):
@@ -35,6 +32,7 @@ class HttpPhysicalTest(unittest.TestCase):
     def test_real_socket_and_identity_reply_then_duplicate_start_does_not_repeat(self):
         self.config.assert_http_activation=lambda identity:None
         request=self.request('start');first=self.handle(request)
+        self.assertIn(first['identity']['status'],('unknown','running'))
         deadline=time.monotonic()+4
         while time.monotonic()<deadline:
             reply=self.handle(self.request())
@@ -45,7 +43,7 @@ class HttpPhysicalTest(unittest.TestCase):
         self.assertEqual(self.handle(request)['identity'],reply['identity']);self.assertEqual(len((self.root/'launches').read_text().splitlines()),1)
     def test_production_default_activation_denies_before_intent_and_no_socket(self):
         with self.assertRaisesRegex(ValueError,'phone_activation_unconfigured'):self.handle(self.request('start'))
-        self.assertEqual(self.runner.journal.keys(),[]);self.assertFalse((self.root/'launches').exists())
+        self.assertEqual(list(self.runner.journal.keys()),[]);self.assertFalse((self.root/'launches').exists())
     def test_public_fields_wrong_physical_or_lease_identity_never_reflected(self):
         for key in ('route','argv','env','installation','activation'):
             request=self.request();request[key]='caller'
@@ -55,6 +53,24 @@ class HttpPhysicalTest(unittest.TestCase):
             with self.assertRaises(ValueError):self.handle(request)
         request=self.request();request['identity']={**self.identity,'host':'caller'}
         with self.assertRaises(ValueError):self.handle(request)
+    def test_existing_cancelled_lease_rejects_every_changed_identity_field(self):
+        self.handle(self.request('cancel'))
+        for key in ['dispatch_id',*BINDINGS]:
+            request=self.request();request['identity']={**self.identity,key:str(uuid.uuid4())}
+            if key=='config_digest':request['identity'][key]='0'*64
+            if key=='dispatch_id':
+                # 新dispatch只inspect为unknown，不会把旧取消回执借给新lease。
+                self.assertEqual(self.handle(request)['identity']['status'],'unknown')
+            else:
+                with self.assertRaises(ValueError):self.handle(request)
+    def test_installed_version_changed_during_operation_cannot_sign_reply(self):
+        original=self.runner.inspect
+        def changed(identity):
+            value=original(identity)
+            self.installation['manifest_path'].write_text('{}')
+            return value
+        self.runner.inspect=changed
+        with self.assertRaises(ValueError):self.handle(self.request())
     def test_cancel_tombstone_is_real_and_manifest_change_cannot_sign(self):
         request=self.request('cancel');reply=self.handle(request)
         self.assertEqual(reply['identity']['status'],'failed');self.assertTrue(reply['identity']['execution_exited'])

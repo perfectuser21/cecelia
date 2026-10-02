@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import signal
 import uuid
 from journal import Journal, safe_open
 from phone_lease import PhoneLease
@@ -18,6 +19,10 @@ BINDINGS = ['reservation_id', 'task_id', 'machine_id', 'host', 'serial', 'profil
 UUID_FIELDS = ['dispatch_id', 'reservation_id', 'task_id', 'execution_version_id',
                'execution_grant_id', 'lease_token', 'execution_id']
 SCHEMA = 'phone-ssh/v1'
+
+
+def denied_http_activation(identity):
+    raise ValueError('phone_activation_unconfigured')
 
 
 def denied_resources():
@@ -37,6 +42,7 @@ class Config:
     drain_path: str = '/var/run/cecelia/fleet-worker.drain'
     hard_cap_sec: float = 5
     assert_resources: object = field(default=denied_resources, repr=False)
+    assert_http_activation: object = field(default=denied_http_activation, repr=False)
     fault: object = field(default=lambda stage: None, repr=False)
 
     def assert_can_launch(self):
@@ -187,6 +193,10 @@ class Runner:
                 'in_flight': max(before['in_flight'], after['in_flight']),
                 'stable': before['revision'] == after['revision']}
 
+    def handle_http(self, request, *, installation=None):
+        from http_physical import handle
+        return handle(self, request, installation=installation)
+
     def handle(self, request):
         if not isinstance(request, dict) or set(request) != {'schema', 'request_nonce', 'operation', 'identity'} or request['schema'] != SCHEMA or request['operation'] not in ('start', 'inspect', 'cancel'):
             raise ValueError('phone_request_invalid')
@@ -210,10 +220,14 @@ def production_config():
 
 
 def main():
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(ValueError('phone_runner_timeout')))
+    signal.alarm(5)
     raw = sys.stdin.buffer.read(16385)
     if len(raw) > 16384 or len(sys.argv) != 1:
         raise ValueError('phone_request_invalid')
-    result = Runner(production_config()).handle(json.loads(raw))
+    request = json.loads(raw)
+    runner = Runner(production_config())
+    result = runner.handle_http(request) if request.get('schema') == 'phone-physical-execution/v1' else runner.handle(request)
     sys.stdout.write(json.dumps(result, separators=(',', ':')) + '\n')
 
 

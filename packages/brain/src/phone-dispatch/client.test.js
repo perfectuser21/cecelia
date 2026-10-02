@@ -59,3 +59,12 @@ it('真实输送子进程stdout超限和超时被终止，错误不暴露原文'
   expect(spawned).toBe(true);await exitPromise;
  }
 });
+it('新HTTP deadline AbortSignal终止自己的真实输送子进程，未启动请求不spawn',async()=>{
+ const transport=createRequire(import.meta.url)('../../scripts/phone-ssh/transport.cjs'),{spawn}=createRequire(import.meta.url)('node:child_process');
+ const controller=new AbortController();let closed;
+ const exited=new Promise(resolve=>closed=resolve);
+ const spawnProcess=(file,args,options)=>{const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],options);child.on('close',closed);return child;};
+ const pending=transport.runSsh('/usr/bin/ssh',[],'{}',{spawnProcess,signal:controller.signal,timeoutMs:1000});controller.abort();
+ await expect(pending).rejects.toThrow('phone_ssh_cancelled');await exited;
+ await expect(transport.runSsh('/usr/bin/ssh',[],'{}',{spawnProcess:()=>{throw Error('must not spawn');},signal:controller.signal})).rejects.toThrow('phone_ssh_cancelled');
+});
