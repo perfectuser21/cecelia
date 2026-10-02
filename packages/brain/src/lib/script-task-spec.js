@@ -17,6 +17,7 @@
  * 派发入口终态 failed（确定性错误，不重试）。纯函数，不碰 DB / 网络。
  */
 import { resolveMachineId, machineRoleOf, listComputeWorkerIds, MACHINE_ROLES } from '../machine-registry.js';
+import {currentNode,directory} from '../execution-directory/directory.js';
 
 export const SCRIPT_TASK_TYPE = 'script_run';
 export const SCRIPT_PAYLOAD_INVALID = 'script_payload_invalid';
@@ -77,7 +78,12 @@ function checkHost(raw) {
   if (LOOPBACK.test(lower)) {
     fail('host', `host ${show(trimmed)} 是本机/回环地址：脚本只能在跑场机执行，Brain 所在机器零执行（铁律 96054a8b）`, 'host_loopback');
   }
-  const id = resolveMachineId(lower);
+  const registered=currentNode(lower);
+  const linuxScript=registered?.platform==='linux'&&registered.identity_mode==='attested-v1'
+    && registered.profile?.execution===true&&registered.machine_registry_id!=='1a379d80-ad36-47d3-88ba-e545ab299a54'
+    && !['scheduler','scheduler_only'].includes(registered.metadata?.role)&&registered.metadata?.scheduler_only!==true
+    && registered.grants.some(g=>g.surface==='managed_script'&&directory.matches({machineId:lower,surface:'managed_script',provider:'script',profileId:g.profile_id}));
+  const id = resolveMachineId(lower)||(linuxScript?lower:null);
   if (!id) {
     fail('host', `host ${show(trimmed)} 未在 machine-registry 注册：只允许已注册的跑场机（${listComputeWorkerIds().join(' / ')}）`, 'host_unregistered');
   }

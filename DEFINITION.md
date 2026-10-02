@@ -1,6 +1,10 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.359.11
+**Brain 版本**: 1.360.2
+
+
+
+
 
 
 
@@ -22,6 +26,25 @@
 
 
 
+Linux脚本预约在授权事务中固定同版本worker/boot，启动转换按既有身份CAS；能力与fresh快照的版本、boot、policy、profile摘要混代时零预约。升级前空身份只从预约对应历史版本补齐，reaper不取新boot污染旧许可。真PG永久回归核旧boot拒绝与崩溃清理，维护拒绝使用真实worker_draining码并仅凭精确墓碑释放。
+
+可信接入后台提供部署文档写入器：分别验证池/脚本完整配置及0600凭据引用，按旧policy摘要CAS，在受保护目录互斥并fsync原子替换。拒绝符号链接、宽权限、未知字段和过大文档，文档不存secret；无HTTP配置写入口，浏览器不持有授权字段。尚待接自动SSH编排。
+
+Linux脚本准入使用验收过的受信池预算与独占逻辑槽1；fresh认证身份绑定boot/revision/config，预约在DB总额锁内再核version/grant/摘要。动态资源与维护仍由root每create/start复核。新Linux目录canonical ID直接进入managed，缺profile不可退回宿主SSH，不需手填机器环境白名单。真实PG→HTTP→Unix→持久adapter回归产生实际shell输出，资源/维护拒绝只凭精确墓碑释放，create未知持续占位；尚未HK现场部署。
+
+507新增脚本runtime验收真表：prepare用受信部署根自动登记子任务并创建pending版本/grants；root签名canary逐profile验真后，同事务finalizeTask写事实/证据/actor并CAS激活同一代，仅开放managed_script。nonce十分钟、授权最长24小时，过期不续期、撤销不复活；历史清理保留，US与scheduler硬拒。JSONB不得重排下发profile摘要。此片仅scratch真表验收，生产未迁移/激活，Linux物理准入与机器页自动编排仍待接线。
+
+Linux运行时受信部署独立绑定完整脚本profile、镜像ID、父任务与双凭据；root canary回执验签严格核对所有profile、version/grant、随机输出、宿主资源证明及完整取消墓碑。此验证零件尚未接数据库激活，生产仍pending。
+
+Linux脚本canary通过独立root许可调用真实Unix adapter，持久每个profile的预约/version/grant，核对完整宿主证明、随机标记输出及精确清理后签独立验收回执。未知启动不重跑，配置撤销后仍按旧journal恢复清理；安装器和bootstrap打包此入口。当前仅完成编排及安装产物回归，尚未执行HK现场验收或激活授权。
+
+Linux脚本客户端从受信目录版本读取profile摘要及凭据引用，启动在当前DB授权链内签独立root许可，历史清理绑定持久version/grant；Worker.token只做外层传输认证，不能伪造root回执。真实HTTP→Unix→持久runner→受限Docker合同已串通；请求尚未抵达时可先持久墓碑封住迟到启动。生产版本仍pending，未开放执行。
+
+脚本Worker客户端按流累计认证封套，超过128KiB立即取消读取；正文读取继续受原请求deadline约束，不再先整包缓存再判大小。
+
+Linux可信root bootstrap 使用Python3启动，内置官方Node24.21.0双架构归档digest并只取Node二进制，不依赖或替换宿主Node20；自动准备无补充组的nologin专用账号，随后交既有事务安装器落盘pending服务。固定本地Docker/systemd完整宿主、受保护profile/token/source及空slice先验，US/scheduler/零预算拒绝；stdin非阻塞读写共用deadline、异常路径保留未回收leader身份后清理专属进程组的有界命令/下载、持久flock与0600恢复回执，账号创建结果未知也不伪称回滚。失败保留安全账号，既有配置/units由安装器恢复，不改网络/daemon/旧业务cgroup。永久回归覆盖21项；官方arm64归档已在独立无网非root受限容器真执行Node版本并清理，尚非HK systemd现场验收。
+
+Linux受限脚本核心由root journal、独立30秒HMAC许可和固定Docker adapter组成，实际复用script-runner生命周期；profile/版本/grant/预约/worker boot/daemon身份先持久，所有create/start均再验许可与本机闸。start副作用前登记持久deadline，回执丢失与超时持锁均保留精确清理机会。创建回执未知永久占位，不以单次名称缺失签清理；旧grant撤销后只允许依据持久完整ID、标签和镜像核验清理。日志/资源限额固定，默认无网非root只读，不向服务账号开放Docker。Unix桥仅提供start/inspect/cancel并用独立root密钥签回执，普通Worker认证后仅转发，正文/回包/deadline均有界。可信bootstrap可经私有文件将独立执行key交双服务事务安装器：root桥保持宿主namespace、root私有状态与0600凭据，普通Worker仅获Unix连接组和只读root boot。配置丢失或重启旧boot只许历史清理；最终闸读取维护标记、安装锁、宿主身份及实际任务池配额/压力/磁盘。当前代码链已接安装入口，未在HK部署或开放Linux执行。
 Linux可信root bootstrap 使用Python3启动，内置官方Node24.21.0双架构归档digest并只取Node二进制，不依赖或替换宿主Node20；自动准备无补充组的nologin专用账号，随后交既有事务安装器落盘pending服务。固定本地Docker/systemd完整宿主、受保护profile/token/source及空slice先验，US/scheduler/零预算拒绝；stdin非阻塞读写共用deadline、异常路径保留未回收leader身份后清理专属进程组的有界命令/下载、持久flock与0600恢复回执，账号创建结果未知也不伪称回滚。失败保留安全账号，既有配置/units由安装器恢复，不改网络/daemon/旧业务cgroup。永久回归覆盖20项；官方arm64归档已在独立无网非root受限容器真执行Node版本并清理，尚非HK systemd现场验收。
 
 Linux 受管脚本事实证明入口复用完整宿主和父slice采集核心，但独立校验reservation/intent/generation、worker boot、目录version/grant、profile摘要、固定镜像及精确CPU/内存/swap/PID/日志配额。宿主boot与daemon须匹配可信绑定，所有容器操作均只读；原pool-canary的名称、标签前缀与用户限制保留。输出linux-script-proof/v1且execution=false，不兼容旧池验收schema，不产生执行许可。本片仅adapter证明零件，未接root执行桥/runner持久profile身份或HTTP启动，也未完成真实Linux canary。
@@ -70,6 +93,12 @@ Janitor 新动作的CI冒烟使用十类执行者精确名单、471叠加502合�
 
 
 Janitor 兼容回归保留迁移 471 的历史合同，并核对 502 精确增量；healthz 只隔离真实依赖，不污染机群配置读取。
+
+## Brain 1.360.0 — 管理台三入口与模型配置变更验证
+
+- 主导航收拢成运行与诊断、AI 管理、机器资源，默认运行页并保留旧路由。
+- 单 Agent 模型配置按原值条件事务写入；数据库读回与事件留痕提交后更新缓存，前端核对实际配置和回执。
+- 保留降级配置；仅改单 Agent 供应商选路；切换或刷新配置使旧回执失效。
 
 ## Brain 1.359.4 — 公司 KR 分析正式登记
 
