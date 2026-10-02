@@ -167,7 +167,9 @@ async function emitRunFinished(row, runId, deps) {
  * @param {{pool?: {query: Function}}} [deps]
  * @returns {Promise<{id: string|null, run_id: string, created: boolean}|null>}
  */
-export async function startRun({ taskId, runId, source, context } = {}, deps = {}) {
+export async function startRun({ taskId, runId, source, context, definition } = {}, deps = {}) {
+  // 显式声明固定定义的执行在首个副作用前必须落账成功；普通历史调用保留原语义。
+  if(definition!==undefined)return startDefinedRun({taskId,runId,source,context,definition},deps);
   try {
     if (!taskId || !runId) throw new Error('startRun requires taskId and runId');
     const ctx = buildRunContext({ ...(context || {}), source });
@@ -187,6 +189,25 @@ export async function startRun({ taskId, runId, source, context } = {}, deps = {
     console.warn(`[task-run] startRun failed (non-fatal) task=${taskId} run=${runId}: ${err.message}`);
     return null;
   }
+}
+
+async function startDefinedRun({taskId,runId,source,context,definition},deps){
+  if(!taskId||!runId||!definition||typeof definition!=='object')throw Error('固定定义起跑缺少任务、运行或版本');
+  const definition_preflight=Object.fromEntries(['release_id','workflow_definition_version_id','snapshot_sha256','runtime_snapshot_sha256','attempt_key']
+    .filter(key=>definition[key]!==undefined).map(key=>[key,definition[key]]));
+  const ctx=buildRunContext({...context,source,definition_preflight});
+  const pool=await resolvePool(deps),client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,515))',[String(runId)]);
+    const inserted=await client.query(`INSERT INTO task_runs(task_id,run_id,status,context,workflow_id)
+      VALUES($1,$2,'running',$3,$4) ON CONFLICT(run_id) DO NOTHING RETURNING *`,[taskId,String(runId),ctx,definition.workflow_id]);
+    const run=inserted.rows[0]||(await client.query('SELECT * FROM task_runs WHERE run_id=$1',[String(runId)])).rows[0];
+    if(!run||run.task_id!==taskId||run.workflow_id!==definition.workflow_id)throw Error('固定运行已属于另一个任务或Workflow');
+    const {bindRunDefinitionInTransaction}=await import('./run-definition-binding.js');
+    const fixed=await bindRunDefinitionInTransaction(client,String(runId),{...definition,source_kind:'internal',task_run_id:run.id});
+    await client.query('COMMIT');return {id:run.id,run_id:run.run_id,created:inserted.rows.length>0,binding:fixed.binding};
+  }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }
 
 /**
