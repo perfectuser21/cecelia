@@ -83,9 +83,9 @@ export function createAppServerStore({pool,createTask=createGenerationTask,after
       if(action==='prepare-stream'){
        const stream=(await db.query('SELECT * FROM app_server_streams WHERE reservation_id=$1',[id])).rows[0];
        if(!stream||Number(new Date(stream.prepare_deadline))<=Date.now())throw Error('appserver_stream_recovery_required');
-       return operation({...row,stream},auth.node.endpoints.worker);
+       return operation({...row,stream},auth.node.endpoints.worker,()=>launchAuthority(db,row));
       }
-      return operation(row,auth.node.endpoints.worker);
+      return operation(row,auth.node.endpoints.worker,()=>launchAuthority(db,row));
      });
     }
     if(action==='cancel'&&!row.cancel_requested)throw Error('appserver_cancel_intent_required');

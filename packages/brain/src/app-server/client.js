@@ -52,10 +52,12 @@ export function createAppServerClient({pool,store,env=process.env,fetchFn=global
   return {authenticated:true,receipt:envelope.receipt,signature:envelope.signature};
   }finally{clearTimeout(timer);}
  }
- const operation=(id,action)=>store.withOperation(id,action,async(row,url)=>{
+ const operation=(id,action)=>store.withOperation(id,action,async(row,url,revalidate)=>{
   if(action==='start'||action==='prepare-stream'){
    const caps=(await request(url,row.machine_id,'capabilities')).receipt;
    if(caps.worker_id!==row.worker_id||caps.worker_boot_id!==row.worker_boot_id||caps.profiles?.[row.config.profile]!==row.config_digest)throw Error('appserver_worker_configuration_mismatch');
+   // 探测网络等待可能跨过grant/挑战期限；保留操作锁并在副作用前重验。
+   await revalidate();
   }
   const body=workerIdentity(row);
   if(action==='start'&&row.canary_authorization){

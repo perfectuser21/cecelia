@@ -138,3 +138,50 @@ it('RPC已开始但双向流未封存，重建保持占位且绝不重放initial
   expect((await f.pool.query('SELECT status FROM tasks WHERE id=$1',[a.evidence_task_id])).rows[0].status).toBe('in_progress');
  }finally{req?.destroy();await f.close();}
 });
+it.each(['start','prepareStream'])('锁内cap响应延迟跨越grant有效期时必须拒绝普通%s',async action=>{
+ const f=await fixture();try{
+  await f.pool.query(`CREATE FUNCTION review_short_lifetime() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.authorization_expires_at=statement_timestamp()+interval '3 seconds'; RETURN NEW; END $$; CREATE TRIGGER a_review_short_lifetime BEFORE INSERT ON app_server_authorizations FOR EACH ROW EXECUTE FUNCTION review_short_lifetime();`);
+  const a=await f.authorizationStore.prepare(f.input);expect(await (await service(f)).advance(a.id)).toMatchObject({state:'active'});await directory.refresh({pool:f.pool});
+  const capabilities=await f.client.probeCapabilities(a.machine_registry_id,a.node_version_id);
+  const {reservation:row}=await f.store.reserve({home:f.home,requestKey:randomUUID(),machineId:'xian-mac-m1',capacitySnapshot:await f.collectSnapshot('xian-mac-m1'),capabilities});
+  if(action==='prepareStream')await f.store.observe(row.id,await f.client.start(row.id));
+  const {createAppServerClient}=await import('../../client.js');
+  const client=createAppServerClient({pool:f.pool,store:f.store,env:f.env,fetchFn:async(url,options)=>{
+   const response=await fetch(url,options);
+   if(url.endsWith('/capabilities'))await new Promise(r=>setTimeout(r,Math.max(0,Number(new Date(a.authorization_expires_at))-Date.now()+40)));
+   return response;
+  }});
+  await expect(client[action](row.id)).rejects.toThrow();
+  expect(f.calls.filter(x=>x==='create')).toHaveLength(action==='start'?2:3);expect(f.calls.filter(x=>x==='attach')).toHaveLength(2);
+ }finally{await f.close();}
+},10000);
+it('cap断网释放锁但保留预算；撤销阻断普通capabilities，历史精确取消可达',async()=>{
+ const f=await fixture();let release;try{
+  const a=await f.authorizationStore.prepare(f.input);await (await service(f)).advance(a.id);await directory.refresh({pool:f.pool});
+  const capabilities=await f.client.probeCapabilities(a.machine_registry_id,a.node_version_id);
+  const {reservation:row}=await f.store.reserve({home:f.home,requestKey:randomUUID(),machineId:'xian-mac-m1',capacitySnapshot:await f.collectSnapshot('xian-mac-m1'),capabilities});
+  const {createAppServerClient}=await import('../../client.js');let entered;
+  const held=new Promise(r=>release=r),reached=new Promise(r=>entered=r);let fetches=0;
+  const client=createAppServerClient({pool:f.pool,store:f.store,env:f.env,fetchFn:async()=>{fetches++;entered();await held;throw Error('network failed');}});
+  const starting=client.start(row.id);const assertion=expect(starting).rejects.toThrow('appserver_worker_unavailable');await reached;
+  expect((await f.pool.query("SELECT pg_try_advisory_xact_lock(hashtextextended('app-server-home:'||$1,0)) AS locked",[f.home.homeKey])).rows[0].locked).toBe(false);
+  const revoking=f.authorizationStore.revoke(a.id);release();await assertion;await revoking;
+  expect((await f.store.get(row.id)).status).toBe('reserved');expect(f.calls.filter(x=>x==='create')).toHaveLength(2);
+  await expect(client.capabilities(f.home,'xian-mac-m1')).rejects.toThrow('execution_grant_denied');expect(fetches).toBe(1);
+  await f.store.requestCancel(row.id);expect(await f.store.confirmCleanup(row.id,await f.client.cancel(row.id))).toMatchObject({status:'released'});
+ }finally{release?.();await f.close();}
+});
+it.each(['start','prepareStream'])('pending挑战在cap探测期间到期后拒绝%s',async action=>{
+ const f=await fixture();try{
+  await f.pool.query(`CREATE FUNCTION short_challenge() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.challenge_expires_at=statement_timestamp()+interval '1 second'; RETURN NEW; END $$; CREATE TRIGGER a_short_challenge BEFORE INSERT ON app_server_authorizations FOR EACH ROW EXECUTE FUNCTION short_challenge();`);
+  const a=await f.authorizationStore.prepare(f.input),capabilities=await f.client.probeCapabilities(a.machine_registry_id,a.node_version_id);
+  const {reservation:row}=await f.store.reserveCanary({authorizationId:a.id,sequence:1,capacitySnapshot:await f.collectSnapshot('xian-mac-m1'),capabilities});
+  if(action==='prepareStream')await f.store.observe(row.id,await f.client.start(row.id));
+  const {createAppServerClient}=await import('../../client.js');
+  const client=createAppServerClient({pool:f.pool,store:f.store,env:f.env,fetchFn:async(url,options)=>{
+   const response=await fetch(url,options);if(url.endsWith('/capabilities'))await new Promise(r=>setTimeout(r,Math.max(0,Number(new Date(a.challenge_expires_at))-Date.now()+40)));return response;
+  }});
+  await expect(client[action](row.id)).rejects.toThrow('appserver_canary_authorization_denied');
+  expect(f.calls.filter(x=>x==='create')).toHaveLength(action==='start'?0:1);expect(f.calls.filter(x=>x==='attach')).toHaveLength(0);
+ }finally{await f.close();}
+});

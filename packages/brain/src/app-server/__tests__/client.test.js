@@ -6,7 +6,7 @@ function capabilityReply(row,body,token){const receipt={machine_id:row.machine_i
 
 it('Worker响应缺签名、重放nonce或HOME/boot不同均不得形成认证封套',async()=>{
  const token='a'.repeat(32),row={id:randomUUID(),intent_id:randomUUID(),launch_generation:1,machine_id:'xian-mac-m1',worker_id:'worker',worker_boot_id:randomUUID(),owner_key:'openclaw-'+ 'c'.repeat(64),home_key:'d'.repeat(64),config_digest:'e'.repeat(64),config:{profile:'chat'}};
- const store={withOperation:async(_id,_action,fn)=>fn(row,'http://m1:5231')};
+ const store={withOperation:async(_id,_action,fn)=>fn(row,'http://m1:5231',async()=>{})};
  for(const mutation of ['signature','nonce','home','boot']){
   const client=createAppServerClient({pool:{},store,env:{KERNEL_FLEET_BRIDGE_TOKEN:token},fetchFn:async(_url,options)=>{
    const body=JSON.parse(options.body);if(_url.endsWith('/capabilities'))return capabilityReply(row,body,token);const receipt={...workerIdentity(row),status:'running',request_nonce:body.request_nonce};
@@ -55,7 +55,7 @@ it('真实无长度HTTP流超过上限后对端连接关闭，不等待服务端
 it('流许可只暴露签名绑定的header票；prepare使用持久流ID和最终目录operation',async()=>{
  const token='a'.repeat(32),ticket='b'.repeat(64),id=randomUUID(),streamId=randomUUID();
  const row={id,intent_id:randomUUID(),launch_generation:1,machine_id:'xian-mac-m1',worker_id:'worker',worker_boot_id:randomUUID(),owner_key:'openclaw-'+ 'c'.repeat(64),home_key:'d'.repeat(64),config_digest:'e'.repeat(64),config:{profile:'chat'},stream:{id:streamId,prepare_deadline:new Date(Date.now()+5000)}};
- const store={reserveStream:async()=>row.stream,withOperation:async(_id,action,fn)=>{expect(action).toBe('prepare-stream');return fn(row,'http://m1:5231');}};
+ const store={reserveStream:async()=>row.stream,withOperation:async(_id,action,fn)=>{expect(action).toBe('prepare-stream');return fn(row,'http://m1:5231',async()=>{});}};
  const {createHash}=await import('node:crypto');
  const client=createAppServerClient({pool:{},store,env:{KERNEL_FLEET_BRIDGE_TOKEN:token},fetchFn:async(url,options)=>{
   const body=JSON.parse(options.body);if(url.endsWith('/capabilities'))return capabilityReply(row,body,token);expect(url).toBe(`http://m1:5231/app-servers/${id}/prepare-stream`);expect(body.stream_id).toBe(streamId);
@@ -69,7 +69,7 @@ it('验收start携带完整身份签名短期许可，保留Worker原始回执�
  const token='a'.repeat(32),row={id:randomUUID(),intent_id:randomUUID(),launch_generation:1,machine_id:'xian-mac-m1',worker_id:'worker',worker_boot_id:randomUUID(),owner_key:'openclaw-'+ 'c'.repeat(64),home_key:'d'.repeat(64),config_digest:'e'.repeat(64),config:{profile:'chat'},canary_authorization:{id:randomUUID(),nonce:randomUUID(),challenge_expires_at:new Date(Date.now()+60000)}};
  const {createRequire}=await import('node:module');const {verifyCanaryPermit}=createRequire(import.meta.url)('../../../scripts/fleet-worker/app-server-canary-permit.cjs');
  let sent,signature;
- const client=createAppServerClient({pool:{},store:{withOperation:async(_id,_action,fn)=>fn(row,'http://m1:5231')},env:{KERNEL_FLEET_BRIDGE_TOKEN:token},fetchFn:async(_url,options)=>{
+ const client=createAppServerClient({pool:{},store:{withOperation:async(_id,_action,fn)=>fn(row,'http://m1:5231',async()=>{})},env:{KERNEL_FLEET_BRIDGE_TOKEN:token},fetchFn:async(_url,options)=>{
   sent=JSON.parse(options.body);if(_url.endsWith('/capabilities'))return capabilityReply(row,sent,token);const receipt={...workerIdentity(row),status:'running',request_nonce:sent.request_nonce};signature=createHmac('sha256',token).update(JSON.stringify(receipt)).digest('hex');return new Response(JSON.stringify({receipt,signature}));
  }});
  const result=await client.start(row.id);
