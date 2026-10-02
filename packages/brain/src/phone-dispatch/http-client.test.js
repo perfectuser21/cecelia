@@ -2,14 +2,14 @@ import {it,expect} from 'vitest';
 import {createRequire} from 'node:module';
 import {node,token,wire,signed,serverFixture,physical,maintenance,endpoint} from '../__tests__/fixtures/phone-http.js';
 import {resolvePhoneHubBinding} from './http-binding.js';
-import {createPhoneHttpClient} from './http-client.js';
+import {createPhoneHttpClient,readPhoneCapacityObservation} from './http-client.js';
 async function binding(){const n=node();return resolvePhoneHubBinding({query:async()=>({rows:[n]})},{executionVersionId:n.id,machineId:n.canonical_id});}
 it('真实HTTP Bearer与每次fresh nonce，对接现有Hub service的精确HMAC wire',async()=>{
  const require=createRequire(import.meta.url),{createPhoneHubServer}=require('../../scripts/phone-hub/service.cjs'),e=endpoint();
  const handler=createPhoneHubServer({token,identity:{hub_id:e.hub_id,boot_id:e.hub_boot_id,build_digest:e.hub_build_digest,config_digest:e.hub_config_digest,http_endpoint:e.http_endpoint,hub_process_identity:{pid:123,boot_id:e.hub_boot_id,start_time:'fixture-process-start',pgid:123,state:'S'}},capabilities:async()=>physical(),maintenance:async()=>({proof_scope:'hub-control',hub_control:maintenance(),targets:[{machine_id:e.physical.machine_id,status:'verified',...maintenance()}],pending:0,stable:false,quiescent:false})});
  await serverFixture((req,res)=>handler.emit('request',req,res),async()=>{
   const b=await binding(),client=createPhoneHttpClient({token});
-  const one=await client.capabilities(b),two=await client.capabilities(b);expect(one.request_nonce).not.toBe(two.request_nonce);expect(one.resources.cpu_count).toBe(4);expect(await client.maintenance(b)).toMatchObject({proof_scope:'hub-control',pending:0});
+  const one=await client.capabilities(b),two=await client.capabilities(b);expect(one.request_nonce).not.toBe(two.request_nonce);expect(one.resources.cpu_count).toBe(4);const m=await client.maintenance(b);expect(m).toMatchObject({proof_scope:'hub-control',pending:0});expect(()=>readPhoneCapacityObservation(m,b)).toThrow('phone_capacity_observation_required');expect(readPhoneCapacityObservation(one,b).nonce).toBe(one.request_nonce);
   await expect(createPhoneHttpClient({token:'wrong-private-token-'.repeat(3)}).capabilities(b)).rejects.toThrow('phone_http_unconfirmed');
  });
 });
