@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { upsertRegistrationPage, workflowProperties, stepProperties, runProperties } from '../company-kr-registration-notion.js';
+import { projectCompanyKrRegistration, upsertRegistrationPage, workflowProperties, stepProperties, runProperties } from '../company-kr-registration-notion.js';
+
+vi.mock('../../lib/workflow-read-service.js',()=>({readWorkflowActivities:vi.fn(async()=>{throw Error('共享关系读取证据');})}));
 
 describe('公司KR登记投影', () => {
   it('正式workflow和步骤关系使用实际ID；历史run不捏造步骤完成关系', () => {
@@ -41,6 +43,13 @@ describe('公司KR登记投影', () => {
     const notionReq=vi.fn().mockResolvedValueOnce({results:[]}).mockRejectedValueOnce(Error('503'));
     await expect(upsertRegistrationPage(pool,'token',{table:'steps',row:{id:'s'},dbId:'db',properties:{},filter:{},notionReq})).rejects.toThrow('503');
     expect(pool.query.mock.calls.some(([sql])=>sql.includes('INSERT'))).toBe(false);
+  });
+
+  it('登记投影从共享关系服务读取活动',async()=>{
+    const query=vi.fn(async sql=>({rows:sql.includes('pg_try_advisory_lock')?[{locked:true}]:sql.includes('FROM workflows')?[{id:'w',name:'KR',runtime_notion_id:'runtime'}]:[]}));
+    const pool={connect:async()=>({query,release(){}})};
+    const notionReq=vi.fn(async()=>({id:'page',results:[]}));
+    await expect(projectCompanyKrRegistration(pool,{token:'test',notionReq})).rejects.toThrow('共享关系读取证据');
   });
 
 });
