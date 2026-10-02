@@ -22,6 +22,9 @@
 import pool from './db.js';
 import { createTask } from './actions.js';
 import { raise } from './alerting.js';
+import {broadcastTaskState} from './task-updater.js';
+import {withRecurringTemplateGate} from './phone-dispatch/recurring-dispatch.js';
+import {processPhoneScheduledSlot} from './phone-dispatch/schedule-store.js';
 import { buildMutationRoute } from './system-coding-route.js';
 import { RECURRING_CODING_MUTATION_TASK_TYPES } from './lib/task-type-registry.js';
 import {
@@ -58,7 +61,7 @@ function toIso(d) {
   return d ? d.toISOString() : null;
 }
 
-async function createInstance(db, rt, slot) {
+async function createInstance(db, rt, slot, captureBroadcast) {
   const template = templateOf(rt);
   const slotIso = slot.toISOString();
   const executor = rt.executor || 'cecelia';
@@ -104,6 +107,7 @@ async function createInstance(db, rt, slot) {
   });
   const task = creation?.task;
   if (!task?.id) throw new Error('createTask 未返回任务');
+  captureBroadcast?.(task.id);
 
   // createRoutedTask 的核心 INSERT 不写 assigned_to/due_at，建单后紧接着补写
   const dueAt = new Date(slot.getTime() + minutesOr(template.due_offset_minutes, 0) * MINUTE_MS);
@@ -115,7 +119,7 @@ async function createInstance(db, rt, slot) {
   return task;
 }
 
-async function processTemplate(db, rt, now, raiseFn, summary) {
+async function processTemplate(db, rt, now, raiseFn, summary, captureBroadcast) {
   const plan = planTemplate(rt, now);
   if (plan.action === 'wait') return;
 
@@ -179,7 +183,7 @@ async function processTemplate(db, rt, now, raiseFn, summary) {
   }
 
   try {
-    const task = await createInstance(db, rt, plan.slot);
+    const task = await createInstance(db, rt, plan.slot, captureBroadcast);
     await db.query(`UPDATE recurring_tasks SET last_run_status = 'created', skip_streak = 0 WHERE id = $1`, [rt.id]);
     summary.created.push({
       task_id: task.id, task_title: task.title, recurring_task_id: rt.id, recurring_title: rt.title,
@@ -276,12 +280,28 @@ export async function runRecurringTasksJob(db = pool, { now = new Date(), raiseF
 
   for (const rt of rows) {
     summary.checked++;
+    const effects=[];
+    const captureRaise=(...args)=>{effects.push(()=>safeRaise(raiseFn,...args));};
+    const captureBroadcast=db===pool?id=>effects.push(()=>broadcastTaskState(id)):undefined;
+    let flush=true;
     try {
-      await processTemplate(db, rt, now, raiseFn, summary);
+      const outcome=await withRecurringTemplateGate(db,rt.id,async(client,ordinary,registered)=>{
+        if(!registered)return processTemplate(ordinary,rt,now,captureRaise,summary,captureBroadcast);
+        const r=await processPhoneScheduledSlot(client,{templateId:rt.id,now});
+        if(r.state==='created')summary.created.push({task_id:r.task.id,task_title:r.task.title,recurring_task_id:rt.id,recurring_title:rt.title,slot:r.task.payload.recurring_slot,next_run_at:toIso(r.nextRunAt)});
+        else if(r.state==='baseline')summary.baseline++;
+        else if(r.state==='missed'){summary.missed++;captureRaise('P2',`recurring_missed_${rt.id}`,`⏰ 定时任务「${rt.title}」错过时间点 ${r.slot.toISOString()}（超出补跑窗口，未建单），下一次 ${toIso(r.nextRunAt)}`);}
+        else if(r.state==='overlap')summary.skipped_overlap++;
+        return r;
+      });
+      if(outcome?.state==='busy')summary.lost_race++;
     } catch (err) {
+      flush=err.gateSessionClosed===true;
       summary.errors++;
       console.error(`[recurring] 模板 ${rt.id}「${rt.title}」处理失败: ${err.message}`);
     }
+    // Defaults persist through the main pool. Only invoke after this gate session is gone.
+    if(flush)for(const effect of effects)await effect();
   }
 
   try {

@@ -16,6 +16,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockCreateTask = vi.hoisted(() => vi.fn());
 vi.mock('../actions.js', () => ({ createTask: mockCreateTask }));
 vi.mock('../db.js', () => ({ default: { query: vi.fn() } }));
+vi.mock('../phone-dispatch/recurring-dispatch.js',()=>({withRecurringTemplateGate:async(db,id,run)=>run(db,db,false)}));
 vi.mock('../alerting.js', () => ({ raise: vi.fn().mockResolvedValue(undefined) }));
 
 import {
