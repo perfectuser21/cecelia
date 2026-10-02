@@ -50,15 +50,17 @@ if [[ ! -f "$CONTRACTS_JS" ]]; then
   fail "executor-contracts.js 不存在: $CONTRACTS_JS"
 else
   node --input-type=module <<EOF 2>/dev/null \
-    && ok "EXECUTOR_CONTRACTS 十二合同结构正确" \
+    && ok "EXECUTOR_CONTRACTS 十三合同结构正确" \
     || fail "executor-contracts.js 导入/结构检查失败"
 import { EXECUTOR_CONTRACTS, VALID_EXECUTOR_KINDS, assessTaskLiveness } from '${CONTRACTS_JS}';
 // PR1-B 由七增八：openclaw-agent = 秋米中文 GTD 任务的执行者（Brain 经 ssh 在 MMV 起 agent）
 // 棒3 由八增九：script = executor=script 一等任务类型（Brain 经 ssh 在跑场机执行确定性脚本）
-const EXPECTED = ['brain-local','relay-container','kernel-process','headed-session','bridge','external-worker','codex-review-local','openclaw-agent','script','preview-janitor','app-server-controller','image-janitor'];
+const EXPECTED = ['brain-local','relay-container','kernel-process','headed-session','bridge','external-worker','codex-review-local','openclaw-agent','script','preview-janitor','app-server-controller','image-janitor','phone-ssh-controller'];
 if (JSON.stringify([...VALID_EXECUTOR_KINDS].sort()) !== JSON.stringify(EXPECTED.sort())) throw new Error('VALID_EXECUTOR_KINDS 名单不对');
 const appServer = EXECUTOR_CONTRACTS['app-server-controller'];
 if (await appServer.probe(null, null) !== 'unknown' || appServer.staleMinutes !== null || appServer.onStale !== 'none') throw new Error('app-server 只允许专属控制器确认清理');
+const phone = EXECUTOR_CONTRACTS['phone-ssh-controller'];
+if (await phone.probe(null, null) !== 'unknown' || phone.staleMinutes !== null || phone.onStale !== 'none') throw new Error('phone 只允许专属控制器凭强回执收口');
 const imageJanitor = EXECUTOR_CONTRACTS['image-janitor'];
 if (await imageJanitor.probe(null, null) !== 'unknown' || imageJanitor.staleMinutes !== null || imageJanitor.onStale !== 'none') throw new Error('镜像清理只能由持久化回执确认终态');
 const janitor = EXECUTOR_CONTRACTS['preview-janitor'];

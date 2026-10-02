@@ -28,6 +28,7 @@ export const OPENCLAW_AGENT_EXECUTOR_KIND = 'openclaw-agent';
 export const SCRIPT_EXECUTOR_KIND = 'script';
 
 export const VALID_EXECUTOR_KINDS = [
+  'phone-ssh-controller',
   'app-server-controller',
   'preview-janitor',
   'image-janitor',
@@ -123,6 +124,8 @@ async function _defaultKernelPool() {
 // ─── 五合同 ────────────────────────────────────────────────────────────────────
 
 export const EXECUTOR_CONTRACTS = {
+  // 手机租约与容量由认证远端退出/解锁回执结算，超时不能回队。
+  'phone-ssh-controller': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
   // 固定HTTP回执由专属controller收割；本机进程与时间均不能证明远端删除状态。
   'app-server-controller': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
   'image-janitor': { probe: async () => 'unknown', staleMinutes: null, onStale: 'none' },
