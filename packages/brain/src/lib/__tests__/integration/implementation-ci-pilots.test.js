@@ -193,3 +193,17 @@ it('boundaryonly非CI试点入口在adapter前拒绝，误选不得复制public'
   expect(spy).toHaveBeenCalledTimes(0);expect(failure).toMatchObject({code:'IMPLEMENTATION_FIXTURE_CI_REQUIRED'});
  }finally{try{spy.mockRestore();}finally{vi.unstubAllEnvs();}}
 });
+
+it('graphclosure：seedonly与拒绝边界真实PG设置不加载完整graph扫描器',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'pilot-lazy-graph-'));
+ try{
+  const brain=fileURLToPath(new URL('../../../..',import.meta.url));
+  const config=join(dir,'integration.config.mjs');
+  const base=new URL('../../../../vitest.integration.config.js',import.meta.url).href;
+  writeFileSync(config,`import base from ${JSON.stringify(base)};export default {...base,plugins:[...(base.plugins||[]),{name:'deny-unused-pilot-graph',enforce:'pre',load(id){if(id.split('?')[0].endsWith('/scripts/scan/scan-graph.mjs'))throw Error('PILOT_GRAPH_EAGER_IMPORT_DENIED');}}],test:{...base.test,root:${JSON.stringify(brain)}}};`);
+  const vitest=fileURLToPath(new URL('../../../../../../node_modules/vitest/vitest.mjs',import.meta.url));
+  const run=await promisify(execFile)(process.execPath,[vitest,'run','--config',config,'src/lib/__tests__/integration/implementation-ci-pilots.test.js','-t','seedonly|boundaryonly','--maxWorkers=1','--minWorkers=1'],{cwd:brain,env:process.env,timeout:30000,maxBuffer:1024*1024});
+  expect(run.stdout+run.stderr).not.toContain('PILOT_GRAPH_EAGER_IMPORT_DENIED');
+  expect(run.stdout).toMatch(/4 passed/);
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
