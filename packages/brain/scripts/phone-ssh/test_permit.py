@@ -3,6 +3,7 @@ import json
 import os
 import select
 import socket
+import signal
 import unittest
 from unittest.mock import patch
 import admission
@@ -20,6 +21,8 @@ class PermitTest(unittest.TestCase):
         self.addCleanup(self.server.close)
         self.port_patch = patch.object(permit, '_PORT', self.server.getsockname()[1]); self.port_patch.start()
         self.addCleanup(self.port_patch.stop)
+        data_patch = patch.object(permit, '_DATA_ROOT', self.fixture.root); data_patch.start()
+        self.addCleanup(data_patch.stop)
         self.control = {'schema':'phone-admission-control/v1','revision':0,
                         'control_epoch':admission.Admission().snapshot()['control_epoch'], 'draining':False,
                         'writer_contract':'phone-admission-writers/v1','host_gate_contract':'managed-phone-host/v1'}
@@ -44,7 +47,7 @@ class PermitTest(unittest.TestCase):
         self.assertFalse(select.select([self.server], [], [], 0.02)[0])
         permit.send(self.identity, self.host, child)
         state = admission.Admission().snapshot()['pending'][self.identity['dispatch_id']]
-        self.assertEqual(state['phase'], 'go_sent')
+        self.assertEqual(state['phase'], 'go_committed')
         self.assertEqual(state['child']['pid'], child.pid)
         self.respond(); self.assertEqual(child.wait(), 'device')
         with self.assertRaises(ValueError): permit.send(self.identity, self.host, child)
@@ -67,3 +70,35 @@ class PermitTest(unittest.TestCase):
         with self.assertRaises((ValueError, OSError)): permit.send(self.identity, self.host, child)
         self.assertFalse(select.select([self.server], [], [], 0.02)[0])
         self.assertEqual(admission.Admission().snapshot()['pending'][self.identity['dispatch_id']]['phase'], 'pre_intent')
+
+    def test_real_go_committed_then_write_failure_preserves_unknown(self):
+        child = self.child(); write = os.write
+        def lose(fd, raw):
+            if raw == b'1': raise BrokenPipeError('fixture lost delivery')
+            return write(fd, raw)
+        with patch.object(permit.os, 'write', side_effect=lose):
+            with self.assertRaises(BrokenPipeError): permit.send(self.identity, self.host, child)
+        state = admission.Admission().snapshot()['pending'][self.identity['dispatch_id']]
+        self.assertEqual(state['phase'], 'go_committed')
+        self.assertNotIn('receipt', state)
+        with self.assertRaises(ValueError): permit.send(self.identity, self.host, child)
+        self.assertFalse(select.select([self.server], [], [], 0.02)[0])
+
+    def test_control_writer_changes_epoch_and_revision_and_blocks_old_pending(self):
+        child = self.child(); before = admission.Admission().snapshot()
+        permit._replace_control(draining=True)
+        current = permit._control()
+        self.assertEqual(current['revision'], self.control['revision'] + 1)
+        self.assertNotEqual(current['control_epoch'], self.control['control_epoch'])
+        self.assertEqual(admission.Admission().snapshot()['control_epoch'], current['control_epoch'])
+        self.assertEqual(admission.Admission().snapshot()['pending'], before['pending'])
+        with self.assertRaises(ValueError): permit.send(self.identity, self.host, child)
+
+    def test_raw_handle_or_identity_cannot_mint_permission(self):
+        with self.assertRaises(ValueError): permit.send(self.identity, self.host, object())
+        forged = object.__new__(permit.FixedSocketChild)
+        with self.assertRaises(ValueError): permit.send(self.identity, self.host, forged)
+
+    def test_actual_permit_source_dependency_is_pinned(self):
+        import probe
+        self.assertIn('permit.py', probe.SOURCE_FILES)
