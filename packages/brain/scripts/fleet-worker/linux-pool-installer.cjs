@@ -21,9 +21,10 @@ async function installLinuxPool(options,deps={}) {
   env:{PATH:'/usr/bin:/bin',HOME:'/',DOCKER_HOST:'unix:///var/run/docker.sock'}}));
  const systemctl=args=>run('/usr/bin/systemctl',args);
  if((deps.platform??process.platform)!=='linux'||(deps.getuid??process.getuid)()!==0)fail('linux_pool_install_root_linux_required');
- if(!options||Object.keys(options).some(k=>!['sourceDir','profilePath','tokenPath','nodePath','revision','executionKeyPath','upgradePath'].includes(k))
+ if(!options||Object.keys(options).some(k=>!['sourceDir','profilePath','tokenPath','nodePath','revision','executionKeyPath','upgradePath','verifyOnly'].includes(k))
   ||!['sourceDir','profilePath','tokenPath','nodePath'].every(k=>typeof options[k]==='string'&&path.isAbsolute(options[k])&&!options[k].includes('\0')&&path.normalize(options[k])===options[k])
   ||!/^[a-f0-9]{40}$/.test(options.revision??''))fail('linux_pool_install_input_invalid');
+ if(options.verifyOnly!==undefined&&(options.verifyOnly!==true||options.upgradePath===undefined))fail('linux_pool_install_input_invalid');
  const withBridge=options.executionKeyPath!==undefined,services=withBridge?[BRIDGE,SERVICE]:[SERVICE];
  if(options.upgradePath!==undefined&&(!withBridge||typeof options.upgradePath!=='string'||!path.isAbsolute(options.upgradePath)||path.normalize(options.upgradePath)!==options.upgradePath||options.upgradePath.includes('\0')))fail('linux_pool_install_input_invalid');
  if(withBridge&&(typeof options.executionKeyPath!=='string'||!path.isAbsolute(options.executionKeyPath)||path.normalize(options.executionKeyPath)!==options.executionKeyPath||options.executionKeyPath.includes('\0')))fail('linux_pool_install_input_invalid');
@@ -156,6 +157,7 @@ async function installLinuxPool(options,deps={}) {
   await idle();
   prior=await serviceStates();
  }catch(error){if(error.message?.startsWith('linux_'))throw error;fail('linux_pool_install_preflight_failed');}
+ if(options.verifyOnly)return {verified:true,execution:false,revision:upgrade.revision,config_digest:profile.config_digest};
  const entries=[
   ...source.map(({name,data})=>({name:'/usr/local/libexec/cecelia/fleet-worker/'+name,data,mode:0o644,uid:rootUid,gid:rootGid})),
   {name:'/usr/local/libexec/cecelia/fleet-worker/revision',data:Buffer.from(options.revision+'\n'),mode:0o644,uid:rootUid,gid:rootGid},
@@ -222,7 +224,7 @@ async function installLinuxPool(options,deps={}) {
 }
 if(require.main===module){
  const args=process.argv.slice(2),keys={'--source-dir':'sourceDir','--profile-file':'profilePath','--token-file':'tokenPath','--node-path':'nodePath','--revision':'revision','--execution-key-file':'executionKeyPath','--upgrade-file':'upgradePath'},options={};
- try{if(![10,12,14].includes(args.length))fail('linux_pool_install_input_invalid');for(let i=0;i<args.length;i+=2){const key=Object.hasOwn(keys,args[i])?keys[args[i]]:null;if(!key||Object.hasOwn(options,key))fail('linux_pool_install_input_invalid');options[key]=args[i+1];}
+ try{if(args.at(-1)==='--verify-only'){args.pop();options.verifyOnly=true;}if(![10,12,14].includes(args.length))fail('linux_pool_install_input_invalid');for(let i=0;i<args.length;i+=2){const key=Object.hasOwn(keys,args[i])?keys[args[i]]:null;if(!key||Object.hasOwn(options,key))fail('linux_pool_install_input_invalid');options[key]=args[i+1];}
   installLinuxPool(options).then(result=>process.stdout.write(JSON.stringify(result)+'\n')).catch(error=>{process.stderr.write((error.message.startsWith('linux_')?error.message:'linux_pool_install_failed')+'\n');process.exitCode=1;});
  }catch{process.stderr.write('linux_pool_install_input_invalid\n');process.exitCode=1;}
 }
