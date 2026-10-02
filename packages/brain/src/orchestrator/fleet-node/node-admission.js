@@ -1,4 +1,4 @@
-import { validateNodeProfile } from './node-profile.js';
+import { validateNodeProfile,validateRegisteredAdmissionProfile } from './node-profile.js';
 
 const GIB = 1024 ** 3;
 const MAX_REPORT_AGE_MS = 90_000;
@@ -222,7 +222,7 @@ export function evaluateBaseAdmission(report, options = {}) {
     collector.add('health_report_malformed', 'report', 'Fleet node health report must be an object.');
     return resultFor(profile, report, reasons);
   }
-  if (!validateNodeProfile(profile)) {
+  if (!validateNodeProfile(profile)&&!validateRegisteredAdmissionProfile(profile)) {
     collector.add(
       'admission_profile_invalid',
       'profile',

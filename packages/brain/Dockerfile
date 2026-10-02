@@ -30,7 +30,7 @@ ENV GIT_SHA=${GIT_SHA}
 # 实测(PR#3801) Step4 直接报 "createdb: command not found" 失败退出。
 # sqlite：feishu-task-ledger 只读查 OpenClaw 执行流水（判断秋米有没有真派 agent 去干活）。
 # 容器是 Node 20，node:sqlite 要 22.5+ 才内置；CLI 只占 ~1.5MB，且 -readonly 能防写穿第三方状态库。
-RUN apk add --no-cache curl bash procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client sqlite \
+RUN apk add --no-cache curl bash procps tini docker-cli docker-cli-compose git openssh-client ca-certificates github-cli postgresql-client sqlite flock \
  && adduser -D -u 1001 cecelia
 
 # Install Codex CLI globally so triggerCodexReview() in executor.js can spawn it.
@@ -70,6 +70,7 @@ COPY packages/brain/scripts/fleet-worker/ ./scripts/fleet-worker/
 # 封印闸 contract-test-paths-seal.js 与 CI 共用同一条 Test Contract 解析链（同一把尺子）。
 # 库 SSOT 在 repo 根 scripts/lib（engine devgate / pyramid-guard 同用），容器内镜像到
 # /app/scripts/ 供 src 内相对 require（缺失时 Brain 启动即死 fail-closed，smoke 把关）。
+COPY scripts/brain-image-retention/ ./scripts/brain-image-retention/
 COPY scripts/lib/test-contract-paths.cjs ./scripts/lib/
 COPY scripts/extract-contract-e2e.cjs ./scripts/
 # skill 分发漂移 job（skill-dist-drift.js）经 ssh 把这份清单脚本送到目标机执行；SSOT 在 repo 根 scripts/。

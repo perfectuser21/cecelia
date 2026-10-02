@@ -1,0 +1,15 @@
+services:
+  node-brain:
+    volumes:
+      # US历史Brain镜像策略：同卷私有状态与只读Docker数据卷身份；宿主预建700，默认job关闭。
+      - type: bind
+        source: ${CECELIA_IMAGE_RETENTION_DIR:-/mnt/openclaw_data/cecelia-janitor}
+        target: ${CECELIA_IMAGE_RETENTION_DIR:-/mnt/openclaw_data/cecelia-janitor}
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /mnt/openclaw_data/docker
+        target: /run/cecelia-docker-data
+        read_only: true
+        bind:
+          create_host_path: false

@@ -66,3 +66,26 @@ it('真实maintenance回执包含聊天未清理实例，不能因旧三类为�
  try{expect(await status()).toMatchObject({app_servers:{pending:1},quiescent:false});pending=0;expect(await status()).toMatchObject({app_servers:{pending:0},quiescent:true});}
  finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
+
+it('默认runtime的受签维护回执绑定真实已加载node配置，重启同配置摘要稳定、基线变化摘要变化',async()=>{
+ const {createFleetWorkerRuntime}=require('./fleet-worker.cjs');const root=fs.mkdtempSync(path.join(os.tmpdir(),'node-config-')),tokenFile=path.join(root,'token'),marker=path.join(root,'drain');
+ const token='node-runtime-maintenance-token-'.repeat(3);fs.writeFileSync(tokenFile,token,{mode:0o600});fs.writeFileSync(marker,'owned');
+ const env={CECELIA_MACHINE_ID:'xian-mac-m4',CECELIA_RUNNER_DIGEST:`sha256:${'a'.repeat(64)}`,CECELIA_FLEET_WORKER_TOKEN_FILE:tokenFile,CECELIA_FLEET_DATA_ROOT:path.join(root,'data'),CECELIA_DRAIN_MARKER:marker};
+ const make=e=>createFleetWorkerRuntime({env:e,runCommand:async()=>({ok:true,stdout:'[]'}),probeCredentialHome:()=>{}});
+ try{const runtime=make(env),second=make(env),changed=make({...env,CECELIA_RUNNER_DIGEST:`sha256:${'b'.repeat(64)}`});
+  expect(runtime.runtimeConfigDigest).toMatch(/^[a-f0-9]{64}$/);expect(second.runtimeConfigDigest).toBe(runtime.runtimeConfigDigest);expect(changed.runtimeConfigDigest).not.toBe(runtime.runtimeConfigDigest);expect(make({...env,CECELIA_REPO_ROOT:'/different/protected-repository'}).runtimeConfigDigest).not.toBe(runtime.runtimeConfigDigest);
+  const server=createFleetWorkerServer({machineId:env.CECELIA_MACHINE_ID,attemptToken:token,...runtime,attemptRunner:{...runtime.attemptRunner,reconcile:async()=>{}}});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  try{const nonce=randomUUID(),response=await fetch(`http://127.0.0.1:${server.address().port}/maintenance/status`,{method:'POST',headers:{authorization:`Bearer ${token}`},body:JSON.stringify({request_nonce:nonce})}),signed=await response.json();
+   expect(signed.receipt).toMatchObject({request_nonce:nonce,config_digest:runtime.runtimeConfigDigest,quiescent:true,boot_id:runtime.launchAdmission.snapshot().boot_id});
+   expect(signed.signature).toBe(createHmac('sha256',token).update(JSON.stringify(signed.receipt)).digest('hex'));
+  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+it('真实health副作用计入维护活动，独占probe期间不能藏新health探针',async()=>{
+ const gate=createLocalLaunchAdmission({lstat:()=>({})}),token='health-gate-test-token-'.repeat(3);let release,entered;
+ const held=new Promise(r=>release=r),started=new Promise(r=>entered=r);const server=createFleetWorkerServer({machineId:'xian-mac-m4',attemptToken:token,launchAdmission:gate,healthCacheTtlMs:0,probeHealth:async()=>{entered();await held;return {};}});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ let health;try{health=fetch(`http://127.0.0.1:${server.address().port}/health`);await started;expect(gate.snapshot().in_flight_launches).toBe(1);await expect(gate.withMaintenance(async()=>{})).rejects.toThrow();release();await health;
+  await gate.withMaintenance(async()=>{const response=await fetch(`http://127.0.0.1:${server.address().port}/health`);expect(response.status).toBe(503);});
+ }finally{release();if(health)await health.catch(()=>{});server.closeAllConnections();await new Promise(r=>server.close(r));}
+});

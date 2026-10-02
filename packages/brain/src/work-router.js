@@ -1,6 +1,6 @@
 import {assertPhoneTaskAuthority} from './phone-dispatch/task-authority.js';
 import {assertAppServerAuthority} from './app-server/task-authority.js';
-import { assertPreviewCacheAuthority } from './preview-cache-authority.js';
+import { assertJanitorAuthority } from './janitor-authority.js';
 export const CHANGE_KINDS = Object.freeze(['new_capability', 'capability_change', 'bugfix', 'parameter_only']);
 export const ROUTER_VERSION = 'work-router-v1';
 const SOURCES = new Set(['inbox', 'conversation', 'api', 'thalamus', 'discovery', 'scheduler', 'child']);
@@ -160,7 +160,7 @@ export function selectPipeline(input) {
 
 export function routeWork(input, repositoryFacts = [], context = {}) {
   const phone = assertPhoneTaskAuthority(input, context);
-  const previewCache = assertPreviewCacheAuthority(input, context) || assertAppServerAuthority(input, context) || phone;
+  const previewCache = assertJanitorAuthority(input, context) || assertAppServerAuthority(input, context) || phone;
   const request = normalizeWorkRequest(input);
   const work_kind = previewCache ? 'operations' : classifyWork(request);
   const artifact_kind = previewCache ? 'execution' : classifyArtifactKind(request);
