@@ -13,7 +13,7 @@ test('默认无受信配置没有删除能力，可信配置严格固定US与实
  assert.equal(await createRuntime({root,dataPath:root}),null);
  const store=createStore(root),config={schema_version:1,machine_registry_id:US_MACHINE_ID,daemon_id:'daemon',docker_root_dir:'/mnt/data/docker',volume_dev:(await stat(root)).dev};
  await store.withLock(lease=>store.save('config.json',config,lease));
- assert.ok(await createRuntime({root,dataPath:root}));
+ assert.equal(typeof (await createRuntime({root,dataPath:root})).engine?.plan,'function');
  await store.withLock(lease=>store.save('config.json',{...config,command:'anything'},lease));
  await assert.rejects(createRuntime({root,dataPath:root}),/INVALID_HOST_CONFIG/);
 });

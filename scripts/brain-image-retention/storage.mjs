@@ -66,10 +66,10 @@ export function createStore(root) {
   }
   const intentName = id => { if (!UUID.test(id)) throw fail('INVALID_INTENT'); return `intent-${id}.json`; };
   const intent = id => read(intentName(id));
-  async function claim(request, lease) {
+  async function claim(request, lease, evidence) {
     const name = intentName(request.intent_id), old = await read(name), hash = digest(request);
     if (old) { if (old.digest !== hash) throw fail('INTENT_CONFLICT'); return old; }
-    const row = { schema_version: 1, request, digest: hash, receipt: null };
+    const row = { schema_version: 1, request, digest: hash, receipt: null, ...(evidence ? { evidence } : {}) };
     await save(name, row, lease); return row;
   }
   async function complete(id, receipt, lease) {

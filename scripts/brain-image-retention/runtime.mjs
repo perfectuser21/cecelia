@@ -3,6 +3,7 @@ import { isAbsolute, normalize } from 'node:path';
 import { createStore } from './storage.mjs';
 import { createDockerAdapter } from './docker.mjs';
 import { createDeploymentLedger } from './ledger.mjs';
+import { createRetentionEngine } from './engine.mjs';
 import { fail, US_MACHINE_ID } from './policy.mjs';
 export const ROOT = '/mnt/openclaw_data/cecelia-janitor';
 export async function readHealth(base = 'http://127.0.0.1:5221') {
@@ -31,5 +32,5 @@ export async function createRuntime({ root = ROOT, dataPath, executable, health 
   const container = await lstat('/.dockerenv').then(() => true).catch(error => { if (error.code === 'ENOENT') return false; throw error; });
   const { schema_version, ...expected } = config;
   const docker = createDockerAdapter({ root, dataPath: dataPath ?? (container ? '/run/cecelia-docker-data' : config.docker_root_dir), expected, ...(executable ? { executable } : {}) });
-  return Object.freeze({ store, docker, ledger: createDeploymentLedger({ store, docker, health }) });
+  return Object.freeze({ store, docker, engine: createRetentionEngine({ store, docker }), ledger: createDeploymentLedger({ store, docker, health }) });
 }
