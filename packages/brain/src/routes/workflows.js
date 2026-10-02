@@ -6,7 +6,7 @@
 import { Router } from 'express';
 import pool from '../db.js';
 import { readDefinitionHistory } from '../lib/definition-history.js';
-import { listWorkflows, readActivityConsumers } from '../lib/workflow-read-service.js';
+import { listWorkflows, readActivity, readActivityConsumers } from '../lib/workflow-read-service.js';
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -38,6 +38,14 @@ router.get('/workflows/:id', async (req,res) => {
     if (!workflow) return res.status(404).json({error:'工作流不存在'});
     return res.json({workflow});
   } catch(error) { return res.status(500).json({error:error.message}); }
+});
+router.get('/activities/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'activity id 必须是 uuid' });
+  try {
+    const activity = await readActivity(pool, req.params.id);
+    if (!activity) return res.status(404).json({ error: '活动不存在' });
+    return res.json({ activity });
+  } catch (error) { return res.status(500).json({ error: error.message }); }
 });
 router.get('/activities/:id/consumers',async (req,res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(400).json({error:'activity id 必须是 uuid'});
