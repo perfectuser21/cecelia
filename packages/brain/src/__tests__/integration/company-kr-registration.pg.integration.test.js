@@ -1,4 +1,5 @@
 /** [BEHAVIOR] 真 PostgreSQL：注册重放、冲突回滚、历史与未来 Run 关联；不用生产库。 */
+import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { beforeEach, afterEach, describe, it, expect } from 'vitest';
@@ -7,14 +8,16 @@ import { companyKrSpec as spec, registerCompanyKrWorkflow } from '../../lib/comp
 
 let client, schema, db;
 beforeEach(async () => {
-  if (!['cecelia_scratch', 'cecelia_test'].includes(DB_DEFAULTS.database)) throw new Error('登记测试只允许 scratch/test');
+  if (!(DB_DEFAULTS.database==='cecelia_scratch' || (process.env.CI==='true' && DB_DEFAULTS.database==='cecelia_test'))) throw new Error('登记测试只允许 scratch/test');
   client = new pg.Client(DB_DEFAULTS); await client.connect();
+  expect((await client.query('SELECT current_database() AS name')).rows[0].name).toBe(DB_DEFAULTS.database);
   schema = `kr_registration_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['journeys','workflows','ops_agents','journey_steps','steps','ops_workflows','tasks','task_runs']) {
+  for (const table of ['journeys','workflows','ops_agents','journey_steps','steps','ops_workflows','tasks','task_runs','schema_version','spans','enablers','enabler_calls']) {
     await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
   }
   await client.query(`SET search_path TO ${schema},public`);
+  await client.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql',import.meta.url),'utf8'));
   db = { connect: async () => ({ query: client.query.bind(client), release() {} }) };
   await client.query(`INSERT INTO journeys(id,name,parent_journey_id,capability_code) VALUES($1,'管家 · G5 算力与基础设施调度',$2,'G5')`, [spec.capability_id, randomUUID()]);
   await client.query(`INSERT INTO ops_agents(id,source,host_alias,name) VALUES(1,'openclaw','mmv',$1)`, [spec.agent]);

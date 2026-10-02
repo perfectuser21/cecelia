@@ -5,6 +5,7 @@
  */
 import { Router } from 'express';
 import pool from '../db.js';
+import { listWorkflows, readActivityConsumers } from '../lib/workflow-read-service.js';
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -12,37 +13,38 @@ const STATUSES = new Set(['active', 'paused', 'retired']);
 
 router.get('/workflows', async (req, res) => {
   const { capability_id: capabilityId, value_stream_id: valueStreamId, status } = req.query;
-  const where = [];
-  const params = [];
   if (capabilityId !== undefined) {
     if (!UUID_RE.test(String(capabilityId))) return res.status(400).json({ error: 'capability_id 必须是 uuid' });
-    params.push(String(capabilityId));
-    where.push(`w.capability_id = $${params.length}`);
   }
   if (valueStreamId !== undefined) {
     if (!UUID_RE.test(String(valueStreamId))) return res.status(400).json({ error: 'value_stream_id 必须是 uuid' });
-    params.push(String(valueStreamId));
-    where.push(`c.parent_journey_id = $${params.length}`);
   }
   if (status !== undefined) {
     if (!STATUSES.has(String(status))) return res.status(400).json({ error: 'status 只支持 active|paused|retired' });
-    params.push(String(status));
-    where.push(`w.status = $${params.length}`);
   }
-  const sql = `SELECT w.id, w.key, w.name, w.channel, w.form, w.version, w.status, w.capability_id,
-                      c.name AS capability_name, c.parent_journey_id AS value_stream_id,
-                      (SELECT count(*)::int FROM journey_steps js WHERE js.workflow_id = w.id) AS activity_count,
-                      w.created_at, w.updated_at
-                 FROM workflows w
-                 JOIN journeys c ON c.id = w.capability_id
-                 ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-                ORDER BY w.key`;
   try {
-    const r = await pool.query(sql, params);
-    return res.json({ workflows: r.rows, total: r.rows.length });
+    const rows = await listWorkflows(pool,{capabilityId,valueStreamId,status});
+    return res.json({ workflows: rows, total: rows.length });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
 
+router.get('/workflows/:id', async (req,res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({error:'workflow id 必须是 uuid'});
+  try {
+    const workflow = (await listWorkflows(pool,{id:req.params.id}))[0];
+    if (!workflow) return res.status(404).json({error:'工作流不存在'});
+    return res.json({workflow});
+  } catch(error) { return res.status(500).json({error:error.message}); }
+});
+router.get('/activities/:id/consumers',async (req,res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({error:'activity id 必须是 uuid'});
+  try {
+    const consumers=await readActivityConsumers(pool,req.params.id);
+    if (!consumers) return res.status(404).json({error:'活动不存在'});
+    return res.json({consumers});
+  }
+  catch(error) { return res.status(500).json({error:error.message}); }
+});
 export default router;
