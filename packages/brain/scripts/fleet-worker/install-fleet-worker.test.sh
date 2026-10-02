@@ -1560,6 +1560,20 @@ NODE
 WRAPPER
 chmod +x "$test_root/canonical-wrapper"
 saved_installer="$INSTALLER"; INSTALLER="$test_root/canonical-wrapper"
+python3 - "$installed_plist" <<'PYPLIST'
+import plistlib,sys
+p=sys.argv[1];d=plistlib.load(open(p,'rb'));d['EnvironmentVariables']['CECELIA_DRAIN_MARKER']='/var/run/cecelia/unrelated-worker.drain'
+plistlib.dump(d,open(p,'wb'),fmt=plistlib.FMT_BINARY)
+PYPLIST
+cp "$installed_plist" "$test_root/before-wrong-worker-marker.plist"
+wrong_marker_hash="$(shasum -a 256 "$installed_plist" | awk '{print $1}')"
+: > "$launch_log"
+if wrong_marker_output="$(run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply --restore-canonical-runner "$wrong_marker_hash" 2>&1)"; then
+  fail "canonical unrelated Worker drain marker was accepted"
+fi
+cmp -s "$installed_plist" "$test_root/before-wrong-worker-marker.plist" || fail "wrong Worker marker refusal changed old plist"
+[[ ! -s "$launch_log" ]] || fail "wrong Worker marker refusal performed launch action"
+cp "$test_root/before-canonical.plist" "$installed_plist"
 : > "$launch_log"
 if stale_output="$(run_installer_with_id "$test_root/id-root" xian-mac-m4 --apply --restore-canonical-runner "$(printf 'f%.0s' {1..64})" 2>&1)"; then
   fail "canonical wrong-config CAS was accepted"

@@ -107,6 +107,7 @@ def canonical_runner(saved, expected):
     if (not re.fullmatch('[0-9a-f]{64}', expected)
             or value['sha256'] != expected
             or env.get('CECELIA_MACHINE_ID') != 'xian-mac-m4'
+            or env.get('CECELIA_DRAIN_MARKER', '/var/run/cecelia/fleet-worker.drain') != '/var/run/cecelia/fleet-worker.drain'
             or not re.fullmatch('sha256:[0-9a-f]{64}', env.get('CECELIA_RUNNER_DIGEST', ''))):
         raise ValueError('canonical runner CAS')
     value['canonical_runner'] = {'expected_sha256': expected}
@@ -155,6 +156,7 @@ def merge(filename, saved):
         intent = snapshot_value['canonical_runner']
         if (intent != {'expected_sha256': snapshot_value['sha256']}
                 or original['EnvironmentVariables'].get('CECELIA_MACHINE_ID') != 'xian-mac-m4'
+                or original['EnvironmentVariables'].get('CECELIA_DRAIN_MARKER', '/var/run/cecelia/fleet-worker.drain') != '/var/run/cecelia/fleet-worker.drain'
                 or rendered.get('ProgramArguments') != original.get('ProgramArguments')):
             raise ValueError('canonical runner intent')
         merged['EnvironmentVariables'] = {**original['EnvironmentVariables'], 'CECELIA_RUNNER_DIGEST': CANONICAL_RUNNER}

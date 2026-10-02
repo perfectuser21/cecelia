@@ -25,10 +25,11 @@ function withFiles(fn) {
   finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
 describe('升级读取现役配置而不泄露或覆盖', () => {
-  it.each(['hash', 'hash-type', 'us-mac-m4', 'xian-mac-m1', 'missing-digest'])('canonical恢复拒绝%s且快照零写', kind => withFiles(f => {
+  it.each(['hash', 'hash-type', 'us-mac-m4', 'xian-mac-m1', 'missing-digest', 'other-marker'])('canonical恢复拒绝%s且快照零写', kind => withFiles(f => {
     const original = doc(); const node = ['us-mac-m4', 'xian-mac-m1'].includes(kind) ? kind : 'xian-mac-m4';
     original.EnvironmentVariables.CECELIA_MACHINE_ID = node;
     if (kind === 'missing-digest') delete original.EnvironmentVariables.CECELIA_RUNNER_DIGEST;
+    if (kind === 'other-marker') original.EnvironmentVariables.CECELIA_DRAIN_MARKER = '/var/run/cecelia/unrelated-worker.drain';
     writePlist(f.prior, original);
     execFileSync('python3', [helper, 'snapshot', f.prior, node, runtime, f.snapshot]);
     const before = fs.readFileSync(f.snapshot);
@@ -55,7 +56,8 @@ describe('升级读取现役配置而不泄露或覆盖', () => {
     expect(spawnSync('python3', [helper, 'check', f.prior, f.snapshot]).status).toBe(0);
   }));
   it.each([false, true])('XML/binary %s：一份快照驱动探测和最终plist，保留密钥仅落0600', binary => withFiles(f => {
-    const original = doc(); writePlist(f.prior, original, binary);
+    const original = doc(); original.EnvironmentVariables.CECELIA_DRAIN_MARKER = '/var/run/cecelia/custom-legacy.drain';
+    writePlist(f.prior, original, binary);
     const result = spawnSync('python3', [helper, 'snapshot', f.prior, machine, runtime, f.snapshot], { encoding: 'utf8' });
     expect(result.status).toBe(0); expect(result.stdout).toContain('WORKER_BIND_HOST\t100.71.151.105');
     expect(result.stdout).toContain('WORKER_COMMAND_PATH\t/controlled/bin:/usr/bin:/bin');
