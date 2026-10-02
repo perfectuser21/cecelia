@@ -22,7 +22,7 @@ it('磁盘5GiB边界与DB结构预算；CPU负载和free memory不发明门槛',
 it('busy、draining、未知与真实观测过期都不能被资源预算抹平',async()=>{
  const b=await binding(),{derivePhoneCapacity}=await capacity(),real=await observation(b);
  expect(derivePhoneCapacity(real,b,{capacity:8},Date.now()+5001)).toBe(null);
- for(const patch of [{external_locks:{occupied:1},maintenance:{...real.maintenance,pending:1,external_occupied:1}}, {maintenance:{...real.maintenance,draining:true}}, {maintenance:{...real.maintenance,stable:false}}]){
+ for(const patch of [{external_locks:{occupied:1},maintenance:{...real.maintenance,pending:1,external_occupied:1}}, {maintenance:{...real.maintenance,draining:true,marker_identity:{boot_id:b.physical.physical_boot_id,...Object.fromEntries(['dev','ino','size','mtime_ns','ctime_ns','uid','gid','mode'].map(k=>[k,'1']))}}}, {maintenance:{...real.maintenance,stable:false}}]){
   expect(derivePhoneCapacity(await observation(b,patch),b,{capacity:8})).toBe(null);
  }
  const n=node();n.id=b.execution_version_id;const other=await resolvePhoneHubBinding({query:async()=>({rows:[{...n,endpoints:{phone_hub:{...n.endpoints.phone_hub,hub_id:'different'}}}]})},{executionVersionId:n.id,machineId:n.canonical_id});
