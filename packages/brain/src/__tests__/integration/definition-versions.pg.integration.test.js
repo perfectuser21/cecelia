@@ -1,7 +1,7 @@
 import { beforeEach,afterEach,describe,it,expect,vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { versionsDatabase,seedWorkflows } from '../fixtures/definition-versions-db.js';
 import { contractsFixture } from '../fixtures/shared-activity-contracts.js';
 import { syncActivityContracts } from '../../activity-contract-sync.js';
@@ -64,6 +64,23 @@ describe('不可变能力定义版本',()=>{
     expect(readBinding).toHaveBeenCalledWith(expect.objectContaining({revision:rev,path:'src/check.js'}));
     const prior=await counts();f.docs.keyword_acquisition.activities[0].implementation_bindings[0].revision='main';f.refresh();
     await expect(syncActivityContracts(db,{...f,readBinding})).rejects.toThrow('revision');expect(await counts()).toEqual(prior);
+  });
+  it.each([
+    ['skill', 'skills/check/SKILL.md', '---\nname: check\nversion: 1.0.0\n---\n# 预检\n'],
+    ['skill', 'skills/check/SKILL.md', '---\r\nname: check\r\nversion: 1.0.0\r\n---\r\n# 预检\r\n'],
+    ['code', 'src/check.js', '\n  export const ready = true;\n\n'],
+  ])('默认GitHub读取保留%s原文空白及digest，只有HEAD响应裁剪',async(kind,path,content)=>{
+    await fixture.migrate();const f=contractsFixture(),revision='c'.repeat(40),head='a'.repeat(40);
+    const sha256=createHash('sha256').update(content).digest('hex');
+    f.docs.keyword_acquisition.activities[0].implementation_bindings=[{kind,repo:'org/repo',path,revision,sha256,digest:`sha256:${sha256}`}];
+    f.refresh();const fetch=f.fetchFn;
+    f.fetchFn=async url=>url.includes('/repos/org/repo/')?{ok:true,text:async()=>content}
+      :url.includes('/commits/main')?{ok:true,text:async()=>`${head}\n`}:fetch(url);
+    await expect(syncActivityContracts(db,f)).resolves.toMatchObject({head_sha:head});
+    const saved=(await db.query(`SELECT v.payload,v.source_commit FROM journey_steps a JOIN activity_definition_versions v
+      ON v.id=a.current_definition_version_id WHERE a.capability_key='keyword_acquisition' AND a.activity_key='preflight'`)).rows[0];
+    expect(saved.source_commit).toBe(head);
+    expect(saved.payload.implementation_bindings[0]).toMatchObject({kind,revision,content_sha256:sha256,digest:`sha256:${sha256}`,status:'verified'});
   });
   it('相同内容新commit产生可追溯新快照，当前引用的来源commit与版本一致',async()=>{
     await fixture.migrate();const f=contractsFixture();await syncActivityContracts(db,f);const original=await versions();
