@@ -1,5 +1,6 @@
 """C4唯一permit真实socket/pipe/fork故障回归；纯私有fixture。"""
 import json
+import fcntl
 import os
 import select
 import socket
@@ -211,3 +212,18 @@ class PermitTest(unittest.TestCase):
             with self.assertRaises(ValueError): permit.send(self.identity, self.host, child)
         self.assertEqual(admission.Admission().snapshot()['pending'][self.identity['dispatch_id']]['phase'], 'go_committed')
         self.assertFalse(select.select([self.server], [], [], 0.02)[0])
+
+    def test_native_fork_failure_does_not_leak_owned_pipe_or_host_fds(self):
+        def opened():
+            found = set()
+            for fd in range(3, 256):
+                try: fcntl.fcntl(fd, fcntl.F_GETFD); found.add(fd)
+                except OSError: pass
+            return found
+        before = opened()
+        try:
+            with patch.object(permit.os, 'fork', side_effect=OSError('fixture fork unavailable')):
+                with self.assertRaises(OSError): permit.FixedSocketChild(self.identity, self.host)
+            self.assertEqual(opened(), before)
+        finally:
+            for fd in opened() - before: os.close(fd)
