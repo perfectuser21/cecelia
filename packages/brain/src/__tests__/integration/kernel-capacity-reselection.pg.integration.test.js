@@ -69,3 +69,12 @@ it('预检选择不属于剩余候选或快照绑定漂移时，零预约零启�
   expect(f.calls).toHaveLength(0);expect(f.starts).toHaveLength(0);
  }finally{await f.close();}
 });
+it('预检即确认全部机器资源满时wait:capacity且不消耗账号重试',async()=>{
+ const {createCapabilityGate}=await import('../../orchestrator/preflight/capability-gate.js');
+ const f=await fixture();let authProbes=0;try{
+  f.deps.preflightGate=createCapabilityGate({getMachineHealth:async()=>({ok:true}),getMachineCapacity:async()=>({ok:true,available:0}),probeProviderAuth:async()=>{authProbes++;return {ok:true};}});
+  const result=await f.dispatch(await f.context());
+  expect(result).toMatchObject({action:'wait:capacity',fallback_reason:'machine_capacity_unavailable',should_create_attempt:false});
+  expect(f.calls).toHaveLength(0);expect(f.starts).toHaveLength(0);expect(authProbes).toBe(0);
+ }finally{await f.close();}
+});
