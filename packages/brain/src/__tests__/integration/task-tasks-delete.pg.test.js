@@ -60,12 +60,22 @@ it('exact final native SQL excludes protected IDs (SQL negative, no unlawful reb
  for(const phone of [f.owner,f.old,f.historical]){const values=[...args];values[0]=phone;expect((await query(sql,values)).rowCount).toBe(0);}
  expect(await f.snapshot()).toEqual(before);
 });
-it.each(['canonical','nested'])('%s adapter unknown boolean and native mutation-count mismatch fail closed',async alias=>{
+it.each(['canonical','nested'])('%s adapter unknown authority boolean fails closed before any write',async alias=>{
  await setup();const id=await f.ordinary(),query=f.pool.query.bind(f.pool);
  h.pool={options:f.pool.options,connect:()=>f.pool.connect(),query:async(sql,args)=>/ordinary_eligible/.test(sql)?{rows:[{status:'queued',ordinary_eligible:null}]}:query(sql,args)};
  expect((await softDelete(id,alias)).status).toBe(500);expect((await query('SELECT status FROM tasks WHERE id=$1',[id])).rows[0].status).toBe('queued');
- h.pool={options:f.pool.options,connect:()=>f.pool.connect(),query:async(sql,args)=>{const r=await query(sql,args);return /^UPDATE tasks SET status = 'cancelled'/.test(sql)?{...r,rowCount:0}:r;}};
+});
+for(const alias of ['canonical','nested'])it.each(['rowcount-zero','rows-empty','too-many'])(`${alias} adapter native mutation %s cannot report success`,async fault=>{
+ await setup();const id=await f.ordinary(),query=f.pool.query.bind(f.pool);
+ h.pool={options:f.pool.options,connect:()=>f.pool.connect(),query:async(sql,args)=>{
+  const r=await query(sql,args);
+  if(!/^UPDATE tasks SET status = 'cancelled'/.test(sql))return r;
+  if(fault==='rowcount-zero')return {...r,rowCount:0};
+  if(fault==='rows-empty')return {...r,rows:[]};
+  return {...r,rowCount:2,rows:[r.rows[0],r.rows[0]]};
+ }};
  expect((await softDelete(id,alias)).status).toBe(500);
+ expect((await query('SELECT status FROM tasks WHERE id=$1',[id])).rows[0].status).toBe('cancelled');
 });
 it('adapter final0 while ordinary still exists reports conflict without false success',async()=>{
  await setup();const id=await f.ordinary(),query=f.pool.query.bind(f.pool);
