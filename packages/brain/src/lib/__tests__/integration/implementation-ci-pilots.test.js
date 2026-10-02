@@ -1,5 +1,6 @@
 import { expect,it,vi } from 'vitest';
 import pg from 'pg';
+import {DB_DEFAULTS} from '../../../db-config.js';
 import {preparePilotSchema} from '../../../__tests__/fixtures/pilot-private-schema.js';
 import {coverageDatabase} from '../../../__tests__/fixtures/capability-coverage-db.js';
 import { versionsDatabase } from '../../../__tests__/fixtures/definition-versions-db.js';
@@ -22,8 +23,10 @@ import { contractsFixture } from '../../../__tests__/fixtures/shared-activity-co
 import { syncActivityContracts } from '../../../activity-contract-sync.js';
 import { exportImplementationSnapshot,refreshImplementationSnapshot } from '../../implementation-ci-snapshot.js';
 import { readImplementationImpact } from '../../implementation-impact.js';
-import { createImplementationScratch,importImplementationSnapshot,projectImplementationSnapshot } from '../../../../../../scripts/ci/implementation-snapshot.mjs';
+import { createImplementationScratch as originalImplementationScratch,importImplementationSnapshot,projectImplementationSnapshot } from '../../../../../../scripts/ci/implementation-snapshot.mjs';
 import { runProjection } from '../../../map/projector.js';
+const implementationFixture={create:originalImplementationScratch};
+function createImplementationScratch(){return implementationFixture.create();}
 it('旧登记/完整地图不变：正式CLI独立alias无事实为unknown，真实Git扫描后固定投影',async()=>{
   const fixture=await versionsDatabase(),dir=realpathSync(mkdtempSync(join(tmpdir(),'pilot-registration-')));let server;
   try{
@@ -177,4 +180,12 @@ it.each(['coverage','pilot','graph'])('seedonly %s调用真实设置链，query�
   }else expect((await f.db.query("SELECT to_regclass('graph_edge_snapshots') relation")).rows[0].relation).toBe('graph_edge_snapshots');
  }finally{try{await f?.close();}finally{spy.mockRestore();}}
  expect(calls.some(sql=>/DROP SCHEMA/.test(sql))).toBe(true);
+});
+
+it('boundaryonly本机scratch试点入口在adapter前拒绝，误选不得复制public',async()=>{
+ const spy=vi.spyOn(implementationFixture,'create').mockImplementation(async()=>{throw Error('deny_real_clone');});
+ try{
+  let failure;try{await createImplementationScratch();}catch(error){failure=error;}
+  expect(spy).toHaveBeenCalledTimes(0);expect(failure).toMatchObject({code:'IMPLEMENTATION_FIXTURE_CI_REQUIRED'});
+ }finally{spy.mockRestore();}
 });

@@ -2,7 +2,8 @@ import { afterEach,expect,it,vi } from 'vitest';
 import { mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync,spawnSync } from 'node:child_process';
+import childProcess,{ execFileSync } from 'node:child_process';
+import {DB_DEFAULTS} from '../../db-config.js';
 import { fileURLToPath } from 'node:url';
 import { implementationImpactDatabase,IMPACT_REPO } from '../fixtures/implementation-impact-db.js';
 import yaml from 'js-yaml';
@@ -61,7 +62,7 @@ async function setup({contracts=false,assertionChange=false,generatedChange=fals
 }
 function cli(base,head,mode='main'){
   const script=fileURLToPath(new URL('../../../../../scripts/ci/implementation-pr-gate.mjs',import.meta.url));
-  return spawnSync(process.execPath,[script,'--repo-root',root,'--scope','phones','--base',base,'--head',head,'--mode',mode,
+  return childProcess.spawnSync(process.execPath,[script,'--repo-root',root,'--scope','phones','--base',base,'--head',head,'--mode',mode,
     '--snapshot-base',join(out,'base.json'),'--snapshot-head',join(out,'head.json'),'--output-dir',out],{encoding:'utf8',env:process.env});
 }
 it('真实CLI从两个git版本扫描图/投影并运行回归，main收据保留中央definition IDs且零中央写入',async()=>{
@@ -134,6 +135,15 @@ it.each([{}, {contracts:true}, {assertionChange:true}, {contracts:true,generated
  const history=rows.map(({id,manifest,digest,source_decision_id,version})=>({id,manifest,digest,source_decision_id,version}));
  await expect(fixture.db.query("UPDATE map_manifest_versions SET manifest=manifest||'{\"tampered\":true}' WHERE id=$1",[rows[0].id])).rejects.toMatchObject({code:'P0001'});
  expect((await fixture.db.query('SELECT id,manifest,digest,source_decision_id,version FROM map_manifest_versions ORDER BY version')).rows).toEqual(history);
+});
+
+it('boundaryonly本机scratch完整CLI入口在spawn前拒绝，误选不得复制public',()=>{
+ root=mkdtempSync(join(tmpdir(),'cli-boundary-root-'));out=mkdtempSync(join(tmpdir(),'cli-boundary-out-'));
+ const spy=vi.spyOn(childProcess,'spawnSync').mockImplementation(()=>{throw Error('deny_real_spawn');});
+ try{
+  let failure;try{cli('a'.repeat(40),'b'.repeat(40));}catch(error){failure=error;}
+  expect(spy).toHaveBeenCalledTimes(0);expect(failure).toMatchObject({code:'IMPLEMENTATION_FIXTURE_CI_REQUIRED'});
+ }finally{spy.mockRestore();}
 });
 
 it('实际库名不符时只读身份后断开，即使CI变量为真也不向生产发送清理DDL',async()=>{
