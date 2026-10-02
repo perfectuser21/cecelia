@@ -1,4 +1,4 @@
-import { emit } from '../event-bus.js';
+import { recordGoldenPathHttp } from './golden-path-audit-runtime.js';
 import { legacyReadEnabled, sendGoldenPathRetired } from './golden-path-legacy.js';
 
 // 只识别仍注册的旧入口，使用模板而非请求 URL，避免参数/正文/凭据进入事件账。
@@ -27,12 +27,7 @@ export async function observeGoldenPathLegacy(req, res, next) {
   const [kind, , route] = match;
   const enabled = legacyReadEnabled();
   const allowed = kind === 'read' && enabled;
-  await emit('golden_path_legacy_access', 'golden-path-retirement', {
-    actor: 'brain', method: req.method, route, path_kind: kind,
-    outcome: allowed ? 'legacy_read_allowed' : 'rejected',
-    legacy_read_enabled: enabled,
-    retirement_task_id: '7d312fd8-10b0-4f23-99ec-535a6e782326',
-  });
-  if (!allowed) return sendGoldenPathRetired(res, { write: kind === 'write' });
+  const audit = await recordGoldenPathHttp({ method: req.method, route, path_kind: kind, allowed });
+  if (!allowed || !audit.persisted) return sendGoldenPathRetired(res, { write: kind === 'write' });
   return next();
 }

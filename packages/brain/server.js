@@ -3,6 +3,7 @@ import { startExecutionDirectory } from './src/execution-directory/store.js';
 // OTel 必须在所有其他 import 之前初始化（auto-instrumentation 要求）
 import { initOtel } from './src/otel.js';
 import { isIsolatedRuntime } from './src/runtime-safety.js';
+import { startGoldenPathAudit, goldenPathAuditListening, stopGoldenPathAudit } from './src/lib/golden-path-audit-runtime.js';
 if (!isIsolatedRuntime()) await initOtel();
 
 import 'dotenv/config';
@@ -273,6 +274,8 @@ async function gracefulShutdown(signal) {
     console.warn('[shutdown] websocket close error:', e && e.message);
   }
 
+  // GP持久审计在listener排空后、pool关闭前有界结束；超时保留不可证明缺口。
+  await stopGoldenPathAudit();
   // 3) Drain pg pool
   try {
     await Promise.race([
@@ -726,7 +729,11 @@ if (!process.env.VITEST) {
 
   }
 
+  if (!isIsolatedRuntime()) {
+    try { await startGoldenPathAudit({ pool }); } catch { console.warn('[gp-audit] startup unavailable'); }
+  }
   await listenWithRetry(server, Number(PORT), { maxAttempts: 3, retryDelayMs: 2_000 });
+  if (!isIsolatedRuntime()) await goldenPathAuditListening();
 
   // Acceptance 公网 listener（刀 1，决策 c08c2173）：token 未配置时静默不启动
   try {

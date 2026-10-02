@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.359.0
+**Brain 版本**: 1.359.1
 
 
 
@@ -303,6 +303,12 @@ Worker 标准升级在预检前读取可信现役 plist 快照，保留既有地
 - Notion Projects 页正文（`notion-relay-projection.js`）开头新增目标/现状/已知事实/未决问题/变更日志（最近10条）渲染，指纹随 brief 变化
 - 新增 `PATCH /api/brain/projects/:id/brief`（`task-projects.js`）：主会话直接改 brief，走同一套 `applyProjectBriefDelta` 与 A 档规则
 - `packages/engine/hooks/stop.sh` 接力棒闸提示文案追加可选 `brief_delta` 示例（纯文案，不改判定逻辑，不涉及 engine 版本五件套）
+
+## Brain 1.359.1 — GP115专属持久观测准备（任务115a39b8）
+
+- 旧HTTP与line-context两helper先专属fsync intent、现有cecelia_events可核INSERT ID、fsync ACK；DB/介质/回放缺口永久gap，公共event-bus容错不动，HTTP caller缺可信绑定恒unknown，内部仅恒定代码身份。
+- server非isolated启动显式开启，真实源码SHA与九文件hash、30秒heartbeat/60秒lease、start/listening/end与跨部署instance清单齐全；关机pool关闭前有界stop。unit/preview不产生后台DB、文件或timer副作用。
+- 独立窗口manifest核每instance pair，独立T0归档只从官方任务关联的真实event取得。payload.gp_db_created_at由数据库clock_timestamp SQL生成带区绝对时刻；旧naive日期不猜时区，不洗绿旧窗口。裁决依赖168真实小时、完整source/flag/ACK/lifecycle/lease及未知caller解释，无schema、flag或T0发布，也不退役。
 
 ## Brain 1.348.7 — golden_path 旧表退役第一刀：写路径 410、读路径默认 410（GOLDEN_PATH_LEGACY_READ=1 应急放行）、promote/line-context/ledger 停读停写（任务 7d312fd8，决策 3e867cad / f425e3fd）
 
