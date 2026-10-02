@@ -58,6 +58,66 @@ def atomic_json(path, value):
 class Journal:
     def __init__(self, root):
         self.root = private_dir(root)
+        with self.activity_locked():
+            if not (self.root / '.activity.json').exists():
+                if any(p.name != '.activity.guard' for p in self.root.iterdir()):
+                    raise ValueError('phone_activity_unconfirmed')
+                atomic_json(self.root / '.activity.json', {'schema': 1, 'revision': 0, 'activities': {}})
+            self._activity()
+
+    @contextmanager
+    def activity_locked(self):
+        fd = safe_open(self.root / '.activity.guard', os.O_CREAT | os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            yield
+        finally:
+            os.close(fd)
+
+    def _activity(self):
+        fd = safe_open(self.root / '.activity.json', os.O_RDONLY)
+        with os.fdopen(fd) as handle:
+            raw = handle.read(65537)
+        try:
+            value = json.loads(raw)
+            if len(raw) > 65536 or set(value) != {'schema', 'revision', 'activities'} or value['schema'] != 1 or type(value['revision']) is not int or value['revision'] < 0 or not isinstance(value['activities'], dict):
+                raise ValueError('invalid')
+            for token, activity in value['activities'].items():
+                if str(uuid.UUID(token)) != token or set(activity) != {'kind', 'owner'} or activity['kind'] not in ('capabilities', 'maintenance') or not isinstance(activity['owner'], dict):
+                    raise ValueError('invalid')
+        except (ValueError, TypeError, AttributeError) as error:
+            raise ValueError('phone_activity_unconfirmed') from error
+        return value
+
+    def activity_snapshot(self):
+        with self.activity_locked():
+            value = self._activity()
+            return {'revision': value['revision'], 'in_flight': len(value['activities'])}
+
+    def begin_activity(self, kind, owner=None):
+        from process_identity import process_identity
+        if kind not in ('capabilities', 'maintenance'):
+            raise ValueError('phone_activity_invalid')
+        owner = owner or process_identity(os.getpid())
+        token = str(uuid.uuid4())
+        with self.activity_locked():
+            value = self._activity()
+            value['activities'][token] = {'kind': kind, 'owner': owner}
+            value['revision'] += 1
+            atomic_json(self.root / '.activity.json', value)
+        return token
+
+    def end_activity(self, token, owner=None):
+        from process_identity import process_identity
+        owner = owner or process_identity(os.getpid())
+        with self.activity_locked():
+            value = self._activity()
+            record = value['activities'].get(token)
+            if not record or any(record['owner'].get(k) != owner.get(k) for k in ('pid', 'boot_id', 'start_time', 'pgid')):
+                raise ValueError('phone_activity_owner_mismatch')
+            del value['activities'][token]
+            value['revision'] += 1
+            atomic_json(self.root / '.activity.json', value)
 
     @contextmanager
     def locked(self, key):
@@ -87,17 +147,30 @@ class Journal:
         return value
 
     def write(self, key, state):
-        directory = private_dir(self.root / key)
-        state['revision'] = state.get('revision', 0) + 1
-        atomic_json(directory / 'state.json', state)
-        fsync_dir(self.root)
+        with self.activity_locked():
+            activity = self._activity()
+            activity['revision'] += 1
+            # 全局revision先持久化；崩溃不能出现状态已变而revision未变。
+            atomic_json(self.root / '.activity.json', activity)
+            directory = private_dir(self.root / key)
+            state['revision'] = state.get('revision', 0) + 1
+            atomic_json(directory / 'state.json', state)
+            fsync_dir(self.root)
 
     def keys(self):
         for path in self.root.iterdir():
-            if path.name.endswith('.guard'):
+            if path.name in ('.activity.guard', '.activity.json'):
+                fd = safe_open(path, os.O_RDONLY)
+                os.close(fd)
                 continue
+            name = path.name[:-6] if path.name.endswith('.guard') else path.name
             try:
-                uuid.UUID(path.name)
+                if str(uuid.UUID(name)) != name:
+                    raise ValueError('invalid')
             except ValueError as error:
                 raise ValueError('phone_journal_unconfirmed') from error
+            if path.name.endswith('.guard'):
+                fd = safe_open(path, os.O_RDONLY)
+                os.close(fd)
+                continue
             yield path.name
