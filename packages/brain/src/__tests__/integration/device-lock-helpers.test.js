@@ -1,31 +1,10 @@
-import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
-import pg from 'pg';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-
-import { DB_DEFAULTS } from '../../db-config.js';
-import {
-  acquireDeviceLock,
-  releaseDeviceLocksHeldBy,
-  sweepStaleDeviceLocks,
-} from '../../device-lock-helpers.js';
-
-const { Pool } = pg;
-const BRAIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
-const PHONE = 'ANGYVB4311010223'; // migration 448 种子行
-const PHONE_2 = 'e6c7ef34'; // migration 448 种子行（xian-m1 第二台）
-let adminPool;
-let testPool;
-let databaseName;
-
-function quotedIdentifier(value) {
-  if (!/^device_locks_[a-z0-9_]+$/.test(value)) {
-    throw new Error(`unsafe test database identifier: ${value}`);
-  }
-  return `"${value}"`;
-}
-
+import {randomUUID} from 'node:crypto';
+import {afterEach,beforeEach,describe,expect,it} from 'vitest';
+import {deviceLockFixture} from '../helpers/headed-device-pg-fixture.js';
+import {takeOverHeadedTask} from '../../lib/headed-task-owner.js';
+import {acquireDeviceLock,releaseDeviceLocksHeldBy,sweepStaleDeviceLocks} from '../../device-lock-helpers.js';
+const PHONE='ANGYVB4311010223',PHONE_2='e6c7ef34';
+let fixture,testPool;
 async function seedTask(status) {
   const taskId = randomUUID();
   // title 带 taskId 唯一化：tasks 表 idx_tasks_dedup_active 对活跃任务按
@@ -37,39 +16,8 @@ async function seedTask(status) {
   return taskId;
 }
 
-beforeAll(async () => {
-  databaseName = `device_locks_${process.pid}_${randomUUID().replaceAll('-', '')}`;
-  adminPool = new Pool({ ...DB_DEFAULTS, database: 'postgres', max: 1 });
-  await adminPool.query(`CREATE DATABASE ${quotedIdentifier(databaseName)}`);
-  execFileSync(process.execPath, ['src/migrate.js'], {
-    cwd: BRAIN_ROOT,
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      DB_HOST: DB_DEFAULTS.host,
-      DB_PORT: String(DB_DEFAULTS.port),
-      DB_USER: DB_DEFAULTS.user,
-      DB_PASSWORD: DB_DEFAULTS.password,
-      DB_NAME: databaseName,
-    },
-    stdio: 'pipe',
-  });
-  testPool = new Pool({ ...DB_DEFAULTS, database: databaseName, max: 8 });
-}, 60_000);
-
-afterAll(async () => {
-  if (testPool) await testPool.end();
-  if (adminPool && databaseName) {
-    await adminPool.query(`DROP DATABASE IF EXISTS ${quotedIdentifier(databaseName)}`);
-  }
-  if (adminPool) await adminPool.end();
-}, 30_000);
-
-beforeEach(async () => {
-  await testPool.query(
-    'UPDATE device_locks SET locked_by=NULL, locked_at=NULL, expires_at=NULL',
-  );
-});
+beforeEach(async()=>{fixture=await deviceLockFixture();testPool=fixture.pool;});
+afterEach(async()=>{if(fixture)await fixture.close();fixture=null;});
 
 describe.sequential('device-lock-helpers on PostgreSQL', () => {
   it('并发 acquire 同一设备恰一个赢', async () => {
@@ -210,11 +158,14 @@ describe.sequential('device-lock-helpers on PostgreSQL', () => {
   }, 15_000);
 
   it('sweepStaleDeviceLocks：持有 task id 不存在于 tasks 表 → 释放', async () => {
-    const ghostTaskId = randomUUID();
+    const ghostTaskId = await seedTask('queued');
+    expect((await acquireDeviceLock(ghostTaskId,PHONE,30,testPool)).result).toBe('acquired');
     await testPool.query(
       'UPDATE device_locks SET locked_by=$1, locked_at=NOW(), expires_at=NULL WHERE device_name=$2',
       [String(ghostTaskId), PHONE],
     );
+    expect((await testPool.query('DELETE FROM tasks WHERE id=$1 RETURNING id',[ghostTaskId])).rowCount).toBe(1);
+    expect((await testPool.query('SELECT id FROM tasks WHERE id=$1',[ghostTaskId])).rowCount).toBe(0);
     const swept = await sweepStaleDeviceLocks(testPool);
     expect(swept).toBe(1);
     const { rows } = await testPool.query(
@@ -222,5 +173,83 @@ describe.sequential('device-lock-helpers on PostgreSQL', () => {
       [PHONE],
     );
     expect(rows[0].locked_by).toBeNull();
+    expect((await testPool.query('SELECT locked_at,expires_at FROM device_locks WHERE device_name=$1',[PHONE])).rows).toEqual([{locked_at:null,expires_at:null}]);
+    expect(await sweepStaleDeviceLocks(testPool)).toBe(0);
   }, 15_000);
+});
+
+async function orphan(){
+ const id=await seedTask('queued');expect((await acquireDeviceLock(id,PHONE,30,testPool)).result).toBe('acquired');
+ expect((await testPool.query('DELETE FROM tasks WHERE id=$1',[id])).rowCount).toBe(1);return id;
+}
+async function lockRow(){return (await testPool.query('SELECT * FROM device_locks WHERE device_name=$1',[PHONE])).rows[0];}
+async function routedTask(){
+ const id=await seedTask('queued'),receipt=randomUUID();
+ await testPool.query("UPDATE tasks SET payload=$2 WHERE id=$1",[id,{routing_receipt_id:receipt,work_kind:'coding_review'}]);
+ await testPool.query("INSERT INTO work_routing_receipts VALUES($1,$2,'data','coding_review')",[receipt,id]);return id;
+}
+const request=id=>({taskId:id,requestId:randomUUID(),sessionId:'device-guard-fixture',expectedRowVersion:0,expectedExecutorKind:'bridge',expectedCurrentRunId:null});
+async function nativeOwner(pool,id){
+ // native-owned-state-fixture: only合法历史DB结构，不声称由takeOver授权或生产回执生成。
+ const generation=randomUUID(),session='native-owned-state-fixture';
+ await pool.query("UPDATE tasks SET executor_kind='headed-session',payload=$2 WHERE id=$1",[id,{headed_takeover:{generation,session_id:session}}]);
+ await pool.query('INSERT INTO headed_task_takeovers(task_id,generation,request_id,session_id,previous_owner) VALUES($1,$2,$3,$4,$5)',[id,generation,randomUUID(),session,{fixture:'native-owned-state-fixture'}]);
+}
+describe.sequential('509孤儿释放最窄边界/真实PG',()=>{
+ it('never-existing UUID新acquire拒绝，设备整行不变',async()=>{
+  const before=await lockRow();await expect(acquireDeviceLock(randomUUID(),PHONE,30,testPool)).rejects.toThrow('headed_task_identity_missing');expect(await lockRow()).toEqual(before);
+ });
+ it('其它execution relation缺task仍拒；真实task_runs FK阻DELETE',async()=>{
+  await expect(testPool.query('INSERT INTO task_runs(task_id) VALUES($1)',[randomUUID()])).rejects.toThrow('headed_task_identity_missing');
+  const id=await seedTask('queued');await testPool.query('INSERT INTO task_runs(task_id) VALUES($1)',[id]);
+  await expect(testPool.query('DELETE FROM tasks WHERE id=$1',[id])).rejects.toMatchObject({code:'23503'});
+  expect((await testPool.query('SELECT id FROM tasks WHERE id=$1',[id])).rowCount).toBe(1);
+ });
+ it('孤儿完整三NULL允许，partial clear/改device_name/重绑UUID或manual拒且整行保留',async()=>{
+  await orphan();const before=await lockRow();
+  for(const [sql,params] of [
+   ['UPDATE device_locks SET locked_by=NULL WHERE device_name=$1',[PHONE]],
+   ['UPDATE device_locks SET device_name=$2,locked_by=NULL,locked_at=NULL,expires_at=NULL WHERE device_name=$1',[PHONE,'renamed-device']],
+   ['UPDATE device_locks SET locked_by=$2 WHERE device_name=$1',[PHONE,randomUUID()]],
+   ['UPDATE device_locks SET locked_by=$2 WHERE device_name=$1',[PHONE,'manual-rebind']]]){
+   await expect(testPool.query(sql,params)).rejects.toThrow('headed_task_identity_missing');expect(await lockRow()).toEqual(before);
+  }
+  expect(await sweepStaleDeviceLocks(testPool)).toBe(1);expect(await lockRow()).toMatchObject({locked_by:null,locked_at:null,expires_at:null});expect(await sweepStaleDeviceLocks(testPool)).toBe(0);
+ });
+ it('旧UUID闸忙55P03；释放后才扫，不绕共享闸',async()=>{
+  const id=await orphan(),before=await lockRow(),db=await testPool.connect();
+  try{await db.query('BEGIN');await db.query("SELECT pg_advisory_xact_lock(hashtextextended('headed_task_owner:'||$1::text,0))",[id]);
+   await expect(sweepStaleDeviceLocks(testPool)).rejects.toMatchObject({code:'55P03'});expect(await lockRow()).toEqual(before);
+  }finally{await db.query('ROLLBACK');db.release();}
+  expect(await sweepStaleDeviceLocks(testPool)).toBe(1);
+ });
+ it('非RC不允许孤儿释放，queued重建仍活跃不扫',async()=>{
+  const id=await orphan(),before=await lockRow(),db=await testPool.connect();
+  try{await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ');await expect(sweepStaleDeviceLocks(db)).rejects.toThrow('headed_guard_isolation_unsupported');}finally{await db.query('ROLLBACK');db.release();}
+  expect(await lockRow()).toEqual(before);await testPool.query("INSERT INTO tasks(id,status) VALUES($1,'queued')",[id]);expect(await sweepStaleDeviceLocks(testPool)).toBe(0);
+  expect(await releaseDeviceLocksHeldBy(id,testPool)).toBe(1);
+ });
+ it('真takeOver已有设备锁409；真takeOver后新占设备拒绝',async()=>{
+  const id=await routedTask();await acquireDeviceLock(id,PHONE,30,testPool);
+  await expect(takeOverHeadedTask(testPool,request(id))).rejects.toMatchObject({statusCode:409,message:'headed_takeover_active_execution'});
+  await releaseDeviceLocksHeldBy(id,testPool);await takeOverHeadedTask(testPool,request(id));
+  const before=await lockRow();await expect(acquireDeviceLock(id,PHONE,30,testPool)).rejects.toThrow('headed_task_owned');expect(await lockRow()).toEqual(before);
+ });
+ for(const recreated of [false,true])it(`native-owned-state-fixture ${recreated?'重建owned':'历史owned'}锁不释放/重绑，task+owner+整行保留`,async()=>{
+  const id=randomUUID();let historical;
+  try{
+   historical=await deviceLockFixture({seedBeforeGuard:async pool=>{
+    await pool.query("INSERT INTO tasks(id,status) VALUES($1,'queued')",[id]);await acquireDeviceLock(id,PHONE,30,pool);
+   }});
+   const pool=historical.pool;
+   if(recreated){await pool.query('DELETE FROM tasks WHERE id=$1',[id]);await pool.query("INSERT INTO tasks(id,status) VALUES($1,'queued')",[id]);}
+   await nativeOwner(pool,id);
+   const state=async()=>({task:(await pool.query('SELECT * FROM tasks WHERE id=$1',[id])).rows[0],owner:(await pool.query('SELECT * FROM headed_task_takeovers WHERE task_id=$1',[id])).rows[0],lock:(await pool.query('SELECT * FROM device_locks WHERE device_name=$1',[PHONE])).rows[0]});
+   const before=await state();expect(before.owner.task_id).toBe(id);
+   await expect(releaseDeviceLocksHeldBy(id,pool)).rejects.toThrow('headed_task_owned');
+   await expect(pool.query('UPDATE device_locks SET locked_by=$2 WHERE device_name=$1',[PHONE,'manual-rebind'])).rejects.toThrow('headed_task_owned');
+   await expect(pool.query('UPDATE device_locks SET locked_by=$2 WHERE device_name=$1',[PHONE,randomUUID()])).rejects.toThrow();
+   expect(await state()).toEqual(before);
+  }finally{if(historical)await historical.close();}
+ });
 });

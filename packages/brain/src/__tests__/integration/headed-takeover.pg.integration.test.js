@@ -11,7 +11,7 @@ import { TASK_MUTATION_RATE_LIMIT_OPTIONS } from '../../routes/task-mutation-rat
 if(DB_DEFAULTS.database!=='cecelia_scratch'&&!(process.env.CI==='true'&&DB_DEFAULTS.database==='cecelia_test'))throw Error('本地迁移仅cecelia_scratch；CI仅cecelia_test');
 const schema=`headed_takeover_${process.pid}_${randomUUID().replaceAll('-','')}`;
 const admin=new pg.Client(DB_DEFAULTS);
-const pool=new pg.Pool({...DB_DEFAULTS,max:5,options:`-c search_path=${schema},public -c statement_timeout=1000`});
+const pool=new pg.Pool({...DB_DEFAULTS,max:5,options:`-c search_path=${schema} -c statement_timeout=1000`});
 const legacyQueries=[];
 // 仅替换全局池的连接目的地；SQL、原HTTP中间件、终态/交接生产函数均真实执行。
 vi.mock('../../db.js',()=>({default:{
@@ -326,7 +326,7 @@ it('有头接管使用独立未部署509版本记录，不占手机508',async()=
 
 it('真实507/508/509叠加image510/Linux512保独立台账、kind与owned guard',async()=>{
  const integrated=`headed_migrations_${process.pid}_${randomUUID().replaceAll('-','')}`;
- const client=new pg.Client({...DB_DEFAULTS,options:`-c search_path=${integrated},public`});
+ const client=new pg.Client({...DB_DEFAULTS,options:`-c search_path=${integrated}`});
  await client.connect();
  try{
   await client.query(`CREATE SCHEMA ${integrated}`);
