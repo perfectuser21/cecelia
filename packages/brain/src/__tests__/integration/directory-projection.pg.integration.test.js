@@ -62,6 +62,36 @@ describe('六层目录真实PG边界', () => {
       expect(target.last_success_at).toBeNull();
     }
   });
+  it('真SQL反序persist同一共享refs后页面不重PATCH，成功receipt hash保持', async () => {
+    const w1=uid(701),w2=uid(702),activity=uid(703),page=uid(704),dbId=uid(705);
+    await client.query("INSERT INTO workflows VALUES($1,'A','a',NULL),($2,'B','b',NULL)", [w1,w2]);
+    await client.query("INSERT INTO journey_steps VALUES($1,'共享',$2)", [activity,w1]);
+    const persist = async ids => {
+      await client.query('DELETE FROM workflow_activity_refs');
+      for (const id of ids) await client.query("INSERT INTO workflow_activity_refs VALUES($1,$2,'same',1,true)", [id,activity]);
+    };
+    let props, writes=0;
+    const notionReq = async (_token,path,method,body) => {
+      if (path.endsWith('/query')) return { results: [], has_more: false };
+      if (path === '/pages' || method === 'PATCH') { writes++; props=structuredClone(body.properties); }
+      return { id: page, parent: { database_id: dbId }, properties: structuredClone(props) };
+    };
+    await persist([w2,w1]);
+    const firstSource=await loadDirectorySource(client);
+    expect(firstSource.refs.map(r=>r.workflow_id)).toEqual([w2,w1]);
+    const first=buildDirectoryRows(firstSource).find(r=>r.id===activity);
+    await projectDirectoryPage(client,{token:'test',dbId,row:first,properties:first.properties,notionReq});
+    const receipt=(await client.query('SELECT entity_id,external_id,content_hash FROM projection_links')).rows;
+    expect(receipt).toHaveLength(1);expect(writes).toBe(1);
+    await persist([w1,w2]);
+    const secondSource=await loadDirectorySource(client);
+    expect(secondSource.refs.map(r=>r.workflow_id)).toEqual([w1,w2]);
+    const second=buildDirectoryRows(secondSource).find(r=>r.id===activity);
+    await projectDirectoryPage(client,{token:'test',dbId,row:second,properties:second.properties,notionReq});
+    expect(writes).toBe(1);
+    expect(second.properties).toEqual(first.properties);
+    expect((await client.query('SELECT entity_id,external_id,content_hash FROM projection_links')).rows).toEqual(receipt);
+  });
   it('26关系完整分页才写真receipt；坏分页不刷新上次成功hash',async()=>{
     const id=randomUUID(),page=randomUUID(),dbId=randomUUID(),propertyId='relation';
     const relations=Array.from({length:26},()=>({id:randomUUID()}));let current=[],invalid=false;

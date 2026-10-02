@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { propsDigest } from '../../lib/notion-projection-engine.js';
 
 const api = await import('../directory-source.js').catch(() => ({}));
 const uid = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -18,6 +19,23 @@ function sample() {
 }
 const config = { value_stream_bindings: [{ journey_id: uid(2), scope: 'cecelia', node_key: 'product' }] };
 describe('六层目录源映射', () => {
+  it('跨Workflow同sequence和slot的引用输入反序仍有相同使用位置、编排和属性hash', () => {
+    const data = sample();
+    data.refs = [
+      { workflow_id: uid(5), activity_id: uid(6), slot_key: 'same', sequence_no: 1, active: true },
+      { workflow_id: uid(4), activity_id: uid(6), slot_key: 'same', sequence_no: 1, active: true },
+      { workflow_id: uid(4), activity_id: uid(6), slot_key: 'later', sequence_no: 2, active: true },
+    ];
+    const forward = api.buildDirectoryRows(data, config);
+    const reverse = api.buildDirectoryRows({ ...data, refs: [...data.refs].reverse() }, config);
+    const properties = rows => rows.map(r => ({ id: r.id, properties: r.properties }));
+    expect(properties(reverse)).toEqual(properties(forward));
+    expect(reverse.map(r => propsDigest(r.properties))).toEqual(forward.map(r => propsDigest(r.properties)));
+    expect(forward.find(r => r.id === uid(6)).properties['使用位置'].rich_text[0].text.content).toBe(
+      `${uid(4)} / same / 1\n${uid(5)} / same / 1\n${uid(4)} / later / 2`);
+    expect(forward.find(r => r.id === uid(4)).properties['活动编排'].rich_text[0].text.content).toBe(
+      `1. same → ${uid(6)}\n2. later → ${uid(6)}`);
+  });
   it('显式binding分别固定两个模型名称，不要求同名；KR asserts不能丢',()=>{
     const data=sample();data.journeys[0].name='工厂价值流';data.map_nodes[0].name='工厂';
     data.steps[0].readback={asserts:'完整建议JSON',implementation:'repo#run'};
