@@ -4,6 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { submitMapManifest, activateMapManifest } from '../../lib/map-manifest-store.js';
 import { submitManifestDraft, activateManifest } from '../../map/manifest-store.js';
+import * as bindings from '../../lib/map-brain-bindings.js';
+import { projectMapManifest } from '../../lib/map-projection-store.js';
 import { runProjection } from '../../map/projector.js';
 
 if (!(DB_DEFAULTS.database === 'cecelia_scratch' || process.env.CI === 'true' && DB_DEFAULTS.database === 'cecelia_test')) throw Error('仅允许scratch/CI测试库');
@@ -105,4 +107,25 @@ it('激活持锁阻止并发改父，双入口并发激活串行化', async () =
   await activation;
   await Promise.all([stores.route.activate(first.id,scope),stores.lib.activate(second.id,scope)]);
   const result=await state(scope); expect(result.manifests.filter(x=>x.status==='active')).toHaveLength(1); expect(result.runs.filter(x=>x.status==='active')).toHaveLength(1);
+});
+
+it('只读核验复查父级漂移与来源，严格入口拒绝歧义repo', async () => {
+  expect(typeof bindings.readMapBrainBindings).toBe('function');
+  const scope='read-drift'; await register(scope); const m=manifest(scope);
+  expect((await bindings.readMapBrainBindings(db,m)).F1.mapping_status).toBe('verified');
+  await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[otherVs,cap]);
+  try { expect((await bindings.readMapBrainBindings(db,m)).F1).toMatchObject({ hierarchy_status:'unknown',mapping_status:'unknown',validation_errors:['MAP_BRAIN_BINDING_PARENT_MISMATCH'] }); }
+  finally { await db.query('UPDATE journeys SET parent_journey_id=$1 WHERE id=$2',[vs,cap]); }
+  await db.query("INSERT INTO map_scope_repositories(scope_key,repo,adapter_key,adapter_config) VALUES($1,'ambiguous-alias','test-v1',$2)",[scope,JSON.stringify({source_repo:'owner/repo'})]);
+  await expect(stores.route.submit(m)).rejects.toMatchObject({code:'MAP_BRAIN_BINDING_AMBIGUOUS_REPO'});
+});
+it('lib真实projector持久化规范绑定，重新激活能降低已过期source证据', async () => {
+  const scope='lib-projection'; await register(scope); const m=manifest(scope); const draft=await stores.lib.submit(m);
+  const project=args=>projectMapManifest({...args,loadAnchorProjection:async()=>({nodes:[],edges:[],fact_revisions:{}})});
+  await stores.lib.activate(draft.id,scope,project);
+  const read=async()=> (await db.query("SELECT n.attributes FROM map_projection_nodes n JOIN map_projection_runs r ON r.id=n.run_id WHERE r.scope_key=$1 AND r.status='active' AND n.node_key='F1'",[scope])).rows[0].attributes;
+  expect(await read()).toMatchObject({canonical_entity_id:cap,mapping_status:'verified',source_evidence:{scanned_at:expect.any(String)}});
+  await db.query("UPDATE fact_snapshot_headers SET source_revision=$1 WHERE repo=$2",['c'.repeat(40),scope]);
+  await stores.lib.activate(draft.id,scope,project);
+  expect(await read()).toMatchObject({canonical_entity_id:cap,mapping_status:'unknown',source_status:'unknown'});
 });
