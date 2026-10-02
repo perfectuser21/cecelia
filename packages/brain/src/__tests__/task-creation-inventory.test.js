@@ -17,7 +17,7 @@ async function listProductionModules(directory) {
     if (entry.isDirectory()) {
       if (entry.name === '__tests__') continue;
       modules.push(...await listProductionModules(absolute));
-    } else if (entry.isFile() && entry.name.endsWith('.js')) {
+    } else if (entry.isFile() && entry.name.endsWith('.js') && !/\.(?:test|spec)\.js$/.test(entry.name)) {
       modules.push(absolute);
     }
   }
