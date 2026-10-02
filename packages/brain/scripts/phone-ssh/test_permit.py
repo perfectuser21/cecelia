@@ -4,6 +4,7 @@ import os
 import select
 import socket
 import signal
+import threading
 import unittest
 from unittest.mock import patch
 import admission
@@ -102,3 +103,55 @@ class PermitTest(unittest.TestCase):
     def test_actual_permit_source_dependency_is_pinned(self):
         import probe
         self.assertIn('permit.py', probe.SOURCE_FILES)
+
+    def test_child_alone_keeps_ex_after_parent_fd_is_closed(self):
+        child = self.child(); permit.send(self.identity, self.host, child)
+        self.host.close()
+        self.assertEqual(self.fixture.child(lambda: admission.HostExclusive().acquire()), b'denied')
+        self.respond(); self.assertEqual(child.wait(), 'device')
+        host = admission.HostExclusive().acquire(); host.close()
+        self.assertEqual(admission.Admission().snapshot()['pending'][self.identity['dispatch_id']]['phase'], 'go_committed')
+
+    def test_activation_writer_revision_revokes_old_pending_without_clear(self):
+        child = self.child(); record = dict(self.fixture.fixture.record)
+        record['expires_at'] = record['issued_at']
+        permit._replace_control(draining=False, activation_record=record)
+        with self.assertRaises(ValueError): permit.send(self.identity, self.host, child)
+        self.assertFalse(select.select([self.server], [], [], 0.02)[0])
+        self.assertEqual(admission.Admission().snapshot()['pending'][self.identity['dispatch_id']]['phase'], 'pre_intent')
+
+    def test_worker_dies_after_durable_go_child_keeps_ex_until_fixed_socket_exit(self):
+        self.host.close(); ready_r, ready_w = os.pipe(); owner = os.fork()
+        if owner == 0:
+            try:
+                os.close(ready_r); host = admission.HostExclusive().acquire()
+                child = permit.FixedSocketChild(self.identity, host)
+                permit.send(self.identity, host, child)
+                os.write(ready_w, str(child.pid).encode()); os.close(ready_w)
+                signal.pause()
+            except BaseException: os._exit(126)
+        os.close(ready_w)
+        try:
+            self.assertTrue(select.select([ready_r], [], [], 2)[0])
+            self.assertTrue(os.read(ready_r, 64))
+            self.assertTrue(select.select([self.server], [], [], 2)[0])
+            conn, _ = self.server.accept()
+            try:
+                os.kill(owner, signal.SIGKILL); os.waitpid(owner, 0); owner = None
+                self.assertEqual(self.fixture.child(lambda: admission.HostExclusive().acquire()), b'denied')
+                state = admission.Admission().snapshot()['pending'][self.identity['dispatch_id']]
+                self.assertEqual(state['phase'], 'go_committed'); self.assertNotIn('receipt', state)
+            finally: conn.close()
+        finally:
+            os.close(ready_r)
+            if owner is not None:
+                os.kill(owner, signal.SIGKILL); os.waitpid(owner, 0)
+
+    def test_child_handle_cannot_be_borrowed_by_another_thread(self):
+        child = self.child(); result = []
+        def borrowed():
+            try: permit.send(self.identity, self.host, child); result.append('accepted')
+            except ValueError: result.append('denied')
+        thread = threading.Thread(target=borrowed); thread.start(); thread.join(timeout=1)
+        self.assertFalse(thread.is_alive()); self.assertEqual(result, ['denied'])
+        self.assertFalse(select.select([self.server], [], [], 0.02)[0])
