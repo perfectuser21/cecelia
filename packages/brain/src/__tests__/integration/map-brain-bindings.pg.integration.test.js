@@ -1,21 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import pg from 'pg';
+import {privateFixtureDatabase} from '../fixtures/private-fixture-db.js';
+import {minimumDefinitionSchema} from '../fixtures/minimum-definition-schema.js';
+import {minimumMapSchema} from '../fixtures/minimum-map-schema.js';
 import express from 'express';
 import request from 'supertest';
 import { createMapRouter } from '../../routes/map.js';
 import { createMapManifestRouter } from '../../routes/map-manifests.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DB_DEFAULTS } from '../../db-config.js';
 import { submitMapManifest, activateMapManifest } from '../../lib/map-manifest-store.js';
 import { submitManifestDraft, activateManifest } from '../../map/manifest-store.js';
 import * as bindings from '../../lib/map-brain-bindings.js';
 import { projectMapManifest } from '../../lib/map-projection-store.js';
 import { runProjection } from '../../map/projector.js';
 
-if (!(DB_DEFAULTS.database === 'cecelia_scratch' || process.env.CI === 'true' && DB_DEFAULTS.database === 'cecelia_test')) throw Error('仅允许scratch/CI测试库');
-const schema = `mapbinding_${randomUUID().replaceAll('-', '')}`;
-const admin = new pg.Client(DB_DEFAULTS);
-let db;
+let fixture,db;
 const vs = randomUUID(), cap = randomUUID(), otherVs = randomUUID(), otherCap = randomUUID(), decision = randomUUID();
 const revision = 'a'.repeat(40);
 function manifest(scope, binding = true) {
@@ -40,20 +38,12 @@ async function state(scope) {
   return { manifests: manifests.rows, runs: runs.rows };
 }
 beforeAll(async () => {
-  await admin.connect();
-  await admin.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['journeys', 'workflows', 'areas', 'decisions', 'map_scope_repositories', 'fact_snapshot_headers', 'map_manifest_versions', 'map_projection_runs', 'map_projection_nodes', 'map_projection_edges', 'graph_edges', 'api_registry', 'test_registry', 'db_schema_registry']) {
-    await admin.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
-  }
-  db = new pg.Pool({ ...DB_DEFAULTS, max: 5, options: `-c search_path=${schema}` });
+  fixture=await privateFixtureDatabase('mapbinding',async client=>{await minimumDefinitionSchema(client,{runs:false});await minimumMapSchema(client);});
+  db=fixture.createPool(5);
   await db.query("INSERT INTO journeys(id,name,parent_journey_id) VALUES($1,'流',NULL),($2,'能力',$1),($3,'另一流',NULL),($4,'另一能力',$3)", [vs,cap,otherVs,otherCap]);
   await db.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','map','绑定测试','active')", [decision]);
 });
-afterAll(async () => {
-  await db?.end();
-  await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
-  await admin.end();
-});
+afterAll(async () => {await fixture?.close();});
 describe.each(Object.keys(stores))('%s 绑定事务', name => {
   const store = stores[name];
   it('拒绝不存在UUID、错类型、错父级和越界repo；旧active与projection不变', async () => {
@@ -190,4 +180,13 @@ it('无绑定manifest清除投影残留规范UUID，保留旧key/id及普通属�
   await db.query("UPDATE map_projection_nodes SET attributes=attributes || $1::jsonb WHERE run_id=(SELECT id FROM map_projection_runs WHERE scope_key=$2 AND status='active') AND node_key='F1'",[JSON.stringify({canonical_entity_id:cap,brain_binding:manifest(scope).capabilities[0].brain_binding,mapping_status:'verified'}),scope]);
   const after=await read(); expect(after.status,after.body).toBe(200); expect(after.body.node.id).toBe(before.body.node.id); expect(after.body.node.key).toBe('F1');
   expect(after.body.node.attributes.canonical_entity_id).toBeUndefined(); expect(after.body.node.attributes.brain_binding).toBeUndefined(); expect(after.body.node.attributes.mapping_status).toBe('unknown');
+});
+
+it('map私有完整迁移外键只归己schema，links真实revision trigger与step FK仍生效',async()=>{
+ expect((await db.query("SELECT target.nspname FROM pg_constraint c JOIN pg_class source ON source.oid=c.conrelid JOIN pg_namespace origin ON origin.oid=source.relnamespace JOIN pg_class referenced ON referenced.oid=c.confrelid JOIN pg_namespace target ON target.oid=referenced.relnamespace WHERE c.contype='f' AND origin.nspname=current_schema() AND target.nspname<>current_schema()")).rows).toEqual([]);
+ const activity=(await db.query("INSERT INTO journey_steps(journey_id,name,step_number) VALUES($1,'revision fixture',1) RETURNING id",[cap])).rows[0].id;
+ const link=(await db.query("INSERT INTO journey_step_links(journey_id,step_id,step_order,assertion_ref) VALUES($1,$2,1,'tests/old.test.js') RETURNING id,assertion_revision",[cap,activity])).rows[0];
+ expect((await db.query("UPDATE journey_step_links SET assertion_ref='tests/new.test.js' WHERE id=$1 RETURNING assertion_revision",[link.id])).rows[0].assertion_revision).toBe(String(Number(link.assertion_revision)+1));
+ await expect(db.query('UPDATE journey_step_links SET step_id_ref=$1 WHERE id=$2',[randomUUID(),link.id])).rejects.toMatchObject({code:'23503'});
+ expect((await db.query("SELECT version FROM schema_version WHERE version IN ('400','402','405','407','410') ORDER BY version")).rows.map(r=>r.version)).toEqual(['400','402','405','407','410']);
 });

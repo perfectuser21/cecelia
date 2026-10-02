@@ -129,3 +129,6 @@
 
 - [x] [BEHAVIOR] B23c软DELETE：同handler两真实HTTP入口在UPDATE前排真实phone执行器/owner，最终SQL同时保护phone及completed/cancelled；缺行404、终态409、unknown500和实际计数一致0/1，无假取消成功；普通NULL状态/执行器与伪payload照常取消，真实第二连接DELETE/完成/取消竞态及finalSQL负例独立，driver adapter单列，无执行器清理或新授权。
   Test: manual:bash -c 'cd packages/brain && DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL="" node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/task-tasks-delete.pg.test.js src/__tests__/integration/task-tasks-patch.pg.test.js src/__tests__/integration/task-tasks-claim.pg.test.js src/routes/__tests__/task-tasks.test.js src/__tests__/routes/task-tasks.test.js src/__tests__/task-type-registry.guard.test.js --maxWorkers=1 --minWorkers=1'
+
+- [x] [BEHAVIOR] fixture安全：精确库与本地/tmp在connect前核验；ownschema真实495及地图402/405/407/410约束，actual059/494及发布515缺失拒绝，pool并发/失败清理真实核；原实现影响与发布证据smoke完整执行，原断言及生产SQL保持。
+  Test: manual:bash -c 'export DB_NAME="${DB_NAME:-cecelia_scratch}" TEST_DATABASE_URL=""; if [ "${CI:-}" != true ]; then export DB_HOST="${DB_HOST:-/tmp}"; fi; cd packages/brain && node ../../node_modules/vitest/vitest.mjs run --config vitest.integration.config.js src/__tests__/integration/definition-versions.pg.integration.test.js src/__tests__/fixtures/definition-versions-db.test.js src/__tests__/fixtures/release-evidence-db.test.js --maxWorkers=1 --minWorkers=1'

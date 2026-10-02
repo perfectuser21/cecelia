@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import pg from 'pg';
+import {privateFixtureDatabase} from '../fixtures/private-fixture-db.js';
+import {minimumDefinitionSchema} from '../fixtures/minimum-definition-schema.js';
 import express from 'express';
 import request from 'supertest';
 import { beforeEach, afterEach, it, expect, vi } from 'vitest';
@@ -8,27 +9,18 @@ import { DB_DEFAULTS } from '../../db-config.js';
 const holder = vi.hoisted(() => ({ pool: null }));
 vi.mock('../../db.js', () => ({ default: { query: (...args) => holder.pool.query(...args), connect: (...args) => holder.pool.connect(...args) } }));
 import router from '../../routes/spans.js';
-let admin, pool, schema, app, activity, workflow;
+let fixture, pool, app, activity, workflow;
 const migration = new URL('../../../migrations/514_span_occurrences.sql', import.meta.url);
 beforeEach(async () => {
-  if (!(DB_DEFAULTS.database === 'cecelia_scratch' || (process.env.CI === 'true' && DB_DEFAULTS.database === 'cecelia_test'))) throw new Error('Span测试仅允许隔离scratch或CI测试库');
-  if (!process.env.CI && DB_DEFAULTS.host !== '/tmp') throw new Error('本地Span测试只允许/tmp PostgreSQL');
-  admin = new pg.Client(DB_DEFAULTS); await admin.connect();
-  expect((await admin.query('SELECT current_database() name')).rows[0].name).toBe(DB_DEFAULTS.database);
-  schema = `span_ingestion_${randomUUID().replaceAll('-', '')}`; await admin.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['schema_version', 'journeys', 'workflows', 'enablers', 'journey_steps', 'steps', 'task_runs']) await admin.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
-  pool = new pg.Pool({ ...DB_DEFAULTS, options: `-c search_path=${schema}` }); holder.pool = pool;
-  await pool.query(readFileSync(new URL('../../../migrations/495_vs_model_spans.sql', import.meta.url), 'utf8'));
-  const journey = randomUUID(); activity = randomUUID(); workflow = randomUUID();
-  await pool.query("INSERT INTO journeys(id,name) VALUES($1,'Span验收')", [journey]);
-  await pool.query("INSERT INTO workflows(id,capability_id,key,name,channel) VALUES($1,$2,'span-test','工作流','test')", [workflow, journey]);
+  fixture=await privateFixtureDatabase('spaningestion',db=>minimumDefinitionSchema(db));
+  pool=fixture.createPool(DB_DEFAULTS.max);holder.pool=pool;
+  const journey = randomUUID(),capability=randomUUID(); activity = randomUUID(); workflow = randomUUID();
+  await pool.query("INSERT INTO journeys(id,name,parent_journey_id) VALUES($1,'Span验收',NULL),($2,'Span能力',$1)", [journey,capability]);
+  await pool.query("INSERT INTO workflows(id,capability_id,key,name,channel) VALUES($1,$2,'span-test','工作流','test')", [workflow, capability]);
   await pool.query("INSERT INTO journey_steps(id,journey_id,name,step_number) VALUES($1,$2,'活动',1)", [activity, journey]);
   app = express(); app.use(express.json()); app.use('/api/brain', router);
 });
-afterEach(async () => {
-  if (pool) await pool.end();
-  if (admin) { if (schema) await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); }
-});
+afterEach(async () => {await fixture?.close();});
 async function migrate() {
   expect(existsSync(migration), 'occurrence迁移必须存在').toBe(true);
   await pool.query(readFileSync(migration, 'utf8'));
