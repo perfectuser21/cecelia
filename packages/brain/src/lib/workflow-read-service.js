@@ -1,9 +1,12 @@
 /** 工作流列表、详情及活动消费者共享同一个关系读模型；单条SQL保证一致快照。 */
+import { JOURNEY_ORGANIZATION_SQL } from './journey-organization.js';
 const activities = `SELECT COALESCE(jsonb_agg(item ORDER BY sequence_no),'[]'::jsonb) FROM (
   SELECT r.sequence_no, to_jsonb(a) || jsonb_build_object(
     'legacy_workflow_id',a.workflow_id,'workflow_id',w.id,
-    'usage',jsonb_build_object('workflow_id',w.id,'reference_id',r.id,'slot_key',r.slot_key,'sequence_no',r.sequence_no),
+    'usage',jsonb_build_object('workflow_id',w.id,'reference_id',r.id,'slot_key',r.slot_key,'sequence_no',r.sequence_no,
+      'activity_definition_version_id',r.activity_definition_version_id),
     'activity_id',a.id,'canonical_id',a.id,'definition_key',a.capability_key || '.' || a.activity_key,
+    'definition_status',CASE WHEN r.activity_definition_version_id IS NULL THEN 'unknown' ELSE 'versioned' END,
     'slot_key',r.slot_key,'sequence_no',r.sequence_no,'source_ref',r.source_ref,
     'source',jsonb_build_object('repo',r.source_repo,'path',r.source_path,'commit',r.source_commit),
     'steps',CASE WHEN a.contract ? 'steps' THEN
@@ -34,7 +37,9 @@ export async function listWorkflows(pool, {capabilityId,valueStreamId,status,id}
   for (const [column,value] of [['w.capability_id',capabilityId],['c.parent_journey_id',valueStreamId],['w.status',status],['w.id',id]]) {
     if (value !== undefined) { params.push(value); where.push(`${column} = $${params.length}`); }
   }
-  return (await pool.query(`SELECT w.*,c.name AS capability_name,c.parent_journey_id AS value_stream_id,
+  return (await pool.query(`SELECT w.*,c.name AS capability_name,c.capability_code,c.parent_journey_id AS value_stream_id,
+    CASE WHEN w.current_definition_version_id IS NULL THEN 'unknown' ELSE 'versioned' END AS definition_status,
+    (${JOURNEY_ORGANIZATION_SQL}) AS organization,
     (SELECT count(*)::int FROM workflow_activity_refs r WHERE r.workflow_id=w.id AND r.active) AS activity_count,
     (${activities}) AS activities
     FROM workflows w
@@ -43,6 +48,13 @@ export async function listWorkflows(pool, {capabilityId,valueStreamId,status,id}
 }
 export async function readWorkflowActivities(pool,workflowId) {
   return (await listWorkflows(pool,{id:workflowId}))[0]?.activities || [];
+}
+export async function readActivity(pool, activityId) {
+  return (await pool.query(`SELECT a.*,a.id AS canonical_id,
+    CASE WHEN v.id IS NULL THEN 'unknown' ELSE 'versioned' END AS definition_status,
+    to_jsonb(v) AS definition_version
+    FROM journey_steps a LEFT JOIN activity_definition_versions v
+      ON v.activity_id=a.id AND v.id=a.current_definition_version_id WHERE a.id=$1`, [activityId])).rows[0];
 }
 export async function readActivityConsumers(pool,activityId) {
   return (await pool.query(`SELECT (SELECT COALESCE(jsonb_agg(to_jsonb(consumer) ORDER BY consumer.key,consumer.sequence_no),'[]'::jsonb)
