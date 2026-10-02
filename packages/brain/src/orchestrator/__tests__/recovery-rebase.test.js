@@ -64,6 +64,14 @@ describe('恢复冻结已授权执行目标', () => {
       expect(f.calls).toHaveLength(0);
     }
   });
+
+  it('模型URL或遍历必须在事务与授权前拒绝，不写目标payload/收据', async () => {
+    for (const model of ['https://example.com/model','ftp://host/model','C:/Users/account/model','vendor/../model']) {
+      const f = await targetFixture(); f.request.execution_target.model=model;
+      await expect(createKernelRun(f.pool,f.input,f.deps)).rejects.toThrow('recovery_rebase_request_invalid');
+      expect(f.calls).toHaveLength(0);
+    }
+  });
 });
 
 describe('未封存失败任务的受控再基恢复', () => {

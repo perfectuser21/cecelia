@@ -4,6 +4,18 @@ import { matchesRecoveryRebase } from '../recovery-rebase.js';
 
 afterEach(() => vi.unstubAllEnvs());
 describe('恢复执行配置的原始规范化摘要', () => {
+  it.each(['https://example.com/model','http://host','ftp://host/model','ssh://host/model',
+    'file:///Users/account/model','/Users/account/model','~/model','C:/Users/account/model',
+    'openai/../model','openai/./model','openai//model','openai::model','openai/model/','../model'])
+  ('模型标识拒绝URL、绝对路径、空段或遍历段：%s', model => {
+    expect(validRecoveryExecutionTarget({expected_profile_hash:'a'.repeat(64),
+      execution_target:{provider:'codex',account:'team2',machine:'xian-mac-m4',model}})).toBe(false);
+  });
+  it.each(['gpt-5.6-sol','claude-opus-4-6','openai/gpt-5.6-sol','openai:gpt-5.6-sol','vendor/family/model:latest'])
+  ('保留普通模型与供应商限定标识：%s', model => {
+    expect(validRecoveryExecutionTarget({expected_profile_hash:'a'.repeat(64),
+      execution_target:{provider:'codex',account:'team2',machine:'xian-mac-m4',model}})).toBe(true);
+  });
   it('只消费原始payload，环境Commander变化不会更改摘要', () => {
     const before = executionProfileHash({ branch:'cp-test',base_sha:'a'.repeat(40) });
     vi.stubEnv('KERNEL_COMMANDER_PROFILE_JSON', '{"primary":{"machine":"untrusted"}}');
