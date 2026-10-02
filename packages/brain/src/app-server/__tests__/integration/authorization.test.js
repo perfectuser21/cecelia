@@ -13,16 +13,16 @@ let version;
 beforeAll(async()=>{
  await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);
  await pool.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');
-  CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT);
-  CREATE TABLE capacity_reservations(id UUID PRIMARY KEY);
+  CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT,task_type TEXT CONSTRAINT tasks_task_type_check CHECK(task_type IN ('dev','janitor')),executor_kind TEXT CONSTRAINT tasks_executor_kind_check CHECK(executor_kind IN ('headed-session','preview-janitor')));
+  CREATE TABLE initiative_runs(id UUID PRIMARY KEY,phase TEXT DEFAULT 'planning',map_recovery_contract_id UUID,orchestrator_version TEXT DEFAULT 'v2');CREATE TABLE map_recovery_consumptions(contract_id UUID,attempt_id UUID);
   CREATE TABLE schema_version(version TEXT PRIMARY KEY,description TEXT,applied_at TIMESTAMPTZ);`);
  for(const [,id,name]of LEGACY_BINDINGS)await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')",[id,name]);
- await pool.query(readFileSync(new URL('../../../../migrations/503_execution_directory.sql',import.meta.url),'utf8'));
- await pool.query("ALTER TABLE execution_grants DROP CONSTRAINT execution_grants_surface_check;ALTER TABLE execution_grants ADD CONSTRAINT execution_grants_surface_check CHECK(surface IN ('harness','legacy_executor','managed_script','app_server'))");
+ for(const name of ['357_harness_provider_attempts','362_kernel_attempt_telemetry_reconcile','363_kernel_fleet_execution_receipts','364_kernel_local_container_naming','425_harness_attempt_cleanup_outbox','501_capacity_reservations','503_execution_directory','504_app_server_generations','506_app_server_streams'])await pool.query(readFileSync(new URL(`../../../../migrations/${name}.sql`,import.meta.url),'utf8'));
  await importLegacyPolicy({pool,env:{FLEET_WORKER_US_MAC_M4_URL:'http://mmv:5231',FLEET_WORKER_XIAN_MAC_M1_URL:'http://m1:5231',FLEET_WORKER_XIAN_MAC_M4_URL:'http://m4:5231'}});
  version=(await pool.query("SELECT current_version_id FROM execution_nodes WHERE canonical_id='xian-mac-m1'")).rows[0].current_version_id;
  const migration=new URL('../../../../migrations/508_app_server_authorizations.sql',import.meta.url);
  await pool.query(readFileSync(migration,'utf8'));
+ await pool.query(readFileSync(new URL('../../../../migrations/509_app_server_canary_attempts.sql',import.meta.url),'utf8'));
 });
 async function transaction(fn){const db=await pool.connect();try{await db.query('BEGIN');const value=await fn(db);await db.query('COMMIT');return value;}catch(e){await db.query('ROLLBACK');throw e;}finally{db.release();}}
 async function prepared(profile=`chat-${randomUUID()}`,challenge='10 minutes'){

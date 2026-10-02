@@ -29,3 +29,13 @@ it('验收入口沿用内部鉴权且仅返回脱敏状态；撤销不接收附�
   expect((await post(`/authorizations/${id}/revoke`,{},env.CECELIA_INTERNAL_TOKEN)).status).toBe(200);
  }finally{await new Promise(r=>server.close(r));}
 });
+it('内部推进只接收授权ID且不给客户端流票或任意协议输入',async()=>{
+ const env={CECELIA_INTERNAL_TOKEN:'b'.repeat(32)},id=randomUUID(),advance=vi.fn(async()=>({id,state:'active',token:'private-ticket'}));
+ const app=express();app.use(express.json());app.use(createAppServerRouter({env,controller:{},authorizationStore:{},canaryService:{advance}}));
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+ const post=body=>fetch(`http://127.0.0.1:${server.address().port}/authorizations/${id}/advance`,{method:'POST',headers:{'content-type':'application/json','x-cecelia-token':env.CECELIA_INTERNAL_TOKEN},body:JSON.stringify(body)});
+ try{
+  expect((await post({method:'turn/start'})).status).toBe(409);expect(advance).not.toHaveBeenCalled();
+  expect(await (await post({})).json()).toEqual({id,state:'active'});expect(advance).toHaveBeenCalledWith(id);
+ }finally{await new Promise(r=>server.close(r));}
+});

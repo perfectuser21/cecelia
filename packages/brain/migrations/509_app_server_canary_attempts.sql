@@ -36,3 +36,27 @@ CREATE TABLE app_server_canary_evidence (
 CREATE FUNCTION app_server_canary_evidence_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN RAISE EXCEPTION 'appserver_canary_evidence_immutable';END $$;
 CREATE TRIGGER app_server_canary_evidence_immutable BEFORE UPDATE OR DELETE ON app_server_canary_evidence FOR EACH ROW EXECUTE FUNCTION app_server_canary_evidence_immutable();
+
+-- 调度状态不改写授权历史；续验链根的显式撤销单向生效。
+CREATE TABLE app_server_authorization_jobs (
+ authorization_id UUID PRIMARY KEY REFERENCES app_server_authorizations(id),
+ root_authorization_id UUID NOT NULL REFERENCES app_server_authorizations(id),
+ successor_id UUID UNIQUE REFERENCES app_server_authorizations(id),
+ retired_for_renewal BOOLEAN NOT NULL DEFAULT false,
+ explicitly_revoked BOOLEAN NOT NULL DEFAULT false,
+ next_run_at TIMESTAMPTZ DEFAULT statement_timestamp(),
+ last_error TEXT CHECK(length(last_error)<=160)
+);
+INSERT INTO app_server_authorization_jobs(authorization_id,root_authorization_id)
+ SELECT id,id FROM app_server_authorizations;
+CREATE FUNCTION app_server_authorization_job_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN RAISE EXCEPTION 'appserver_authorization_job_immutable';END IF;
+ IF TG_OP='UPDATE' AND (NEW.authorization_id<>OLD.authorization_id OR NEW.root_authorization_id<>OLD.root_authorization_id
+  OR OLD.successor_id IS NOT NULL AND NEW.successor_id IS DISTINCT FROM OLD.successor_id
+  OR OLD.retired_for_renewal AND NOT NEW.retired_for_renewal
+  OR OLD.explicitly_revoked AND NOT NEW.explicitly_revoked)
+ THEN RAISE EXCEPTION 'appserver_authorization_job_immutable';END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER app_server_authorization_job_guard BEFORE UPDATE OR DELETE ON app_server_authorization_jobs FOR EACH ROW EXECUTE FUNCTION app_server_authorization_job_guard();

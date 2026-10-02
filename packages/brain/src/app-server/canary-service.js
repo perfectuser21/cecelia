@@ -3,6 +3,7 @@ import {createAppServerClient} from './client.js';
 import {createAuthorizationStore} from './authorization-store.js';
 import {createCanaryEvidenceStore} from './canary-evidence.js';
 import {readCanaryAuthorization} from './canary-authority.js';
+import {authorizationJob} from './authorization-lifecycle.js';
 import {runCanaryProtocol} from './canary-protocol.js';
 import {loadAppServerHomes} from './config.js';
 import {UUID} from './identity.js';
@@ -12,7 +13,7 @@ export function createAppServerCanaryService({pool,env=process.env,homes=loadApp
  store=createAppServerStore({pool}),client=createAppServerClient({pool,store,env}),
  authorizationStore=createAuthorizationStore({pool,homes,client}),
  evidence=createCanaryEvidenceStore({pool,store,client,token:env.KERNEL_FLEET_BRIDGE_TOKEN}),
- collectSnapshot,protocol=runCanaryProtocol,pollMs=100,pollTimeoutMs=25000}={}){
+ collectSnapshot,protocol=runCanaryProtocol,pollMs=100,pollTimeoutMs=25000,now=Date.now}={}){
  collectSnapshot??=async machine=>{const capacity=await createProductionCapabilityProbes({env,cacheTtlMs:0}).getMachineBaseCapacity({machine});const captured_at=Date.now();return {verified:true,machine,captured_at,expires_at:captured_at+1000,capacity};};
  async function observed(id){const verified=await client.inspect(id);await store.observe(id,verified);return verified;}
  async function cleanup(id){
@@ -29,12 +30,26 @@ export function createAppServerCanaryService({pool,env=process.env,homes=loadApp
   }
  }
  async function advanceLocked(id){
-  const a=await readCanaryAuthorization(pool,id);
-  if(a.state==='active')return evidence.activate(id);
-  if(a.state==='revoked'||Number(new Date(a.challenge_expires_at))<=Date.now()){
-   const rows=(await pool.query('SELECT reservation_id FROM app_server_canary_attempts WHERE authorization_id=$1 ORDER BY sequence_no',[id])).rows;
-   for(const row of rows)await cleanup(row.reservation_id);
-   return {id,state:a.state==='revoked'?'revoked':'expired'};
+  const a=await readCanaryAuthorization(pool,id),job=await authorizationJob(pool,id);
+  const cleanAuthorization=async()=>{
+   const rows=(await pool.query("SELECT id FROM capacity_reservations WHERE execution_grant_id=$1 AND owner_kind='app_server' AND status<>'released' ORDER BY created_at",[a.grant_id])).rows;
+   for(const row of rows)await cleanup(row.id);
+   await authorizationStore.settle(id);
+  };
+  const renew=async()=>{await cleanAuthorization();const next=await authorizationStore.renew(id);return {id,state:'renewing',successor_id:next.id};};
+  if(a.state==='revoked'||job.root_revoked){
+   if(job.retired_for_renewal&&!job.root_revoked)return renew();
+   await cleanAuthorization();return {id,state:'revoked'};
+  }
+  if(a.state==='active'){
+   const version=(await pool.query('SELECT current_version_id FROM execution_nodes WHERE machine_registry_id=$1',[a.machine_registry_id])).rows[0]?.current_version_id;
+   const caps=await client.probeCapabilities(a.machine_registry_id,version);
+   if(version===a.node_version_id&&caps.worker_boot_id===a.worker_boot_id&&caps.profiles?.[a.home.profile]===a.home.configDigest
+    &&Number(new Date(a.authorization_expires_at))-now()>3600000)return evidence.activate(id);
+   await authorizationStore.retire(id);return renew();
+  }
+  if(Number(new Date(a.challenge_expires_at))<=now()){
+   await authorizationStore.retire(id);return renew();
   }
   for(const sequence of [1,2]){
    let current;
@@ -65,7 +80,7 @@ export function createAppServerCanaryService({pool,env=process.env,homes=loadApp
   }
   return evidence.activate(id);
  }
- return Object.freeze({
+ const api={
   prepare:input=>authorizationStore.prepare(input),
   async advance(id){
    if(!UUID.test(id))throw Error('appserver_authorization_request_invalid');
@@ -73,8 +88,26 @@ export function createAppServerCanaryService({pool,env=process.env,homes=loadApp
    try{
     locked=(await db.query('SELECT pg_try_advisory_lock(hashtextextended($1,0)) AS locked',[key])).rows[0].locked;
     if(!locked)return {id,state:'busy'};
-    return await advanceLocked(id);
+    try{
+     const result=await advanceLocked(id);
+     await pool.query('UPDATE app_server_authorization_jobs SET next_run_at=$2,last_error=NULL WHERE authorization_id=$1',
+      [id,['renewing','revoked'].includes(result.state)?null:new Date(Date.now()+(result.state==='active'?60000:30000))]);
+     return result;
+    }catch(error){
+     await pool.query('UPDATE app_server_authorization_jobs SET next_run_at=clock_timestamp()+interval \'30 seconds\',last_error=$2 WHERE authorization_id=$1',
+      [id,/^appserver_[a-z_0-9]+$/.test(error.message)?error.message:'appserver_canary_unconfirmed']);throw error;
+    }
    }finally{if(locked)await db.query('SELECT pg_advisory_unlock(hashtextextended($1,0))',[key]);db.release();}
   },
- });
+  async run(){
+   const due=(await pool.query('SELECT authorization_id FROM app_server_authorization_jobs WHERE next_run_at<=clock_timestamp() ORDER BY next_run_at LIMIT 2')).rows,results=[];
+   for(const row of due){try{results.push(await api.advance(row.authorization_id));}catch{results.push({id:row.authorization_id,state:'unconfirmed'});}}
+   return results;
+  },
+ };return Object.freeze(api);
+}
+const running=new WeakSet();
+export async function reconcileAppServerCanaries(pool){
+ if(running.has(pool))return {state:'busy'};running.add(pool);
+ try{return await createAppServerCanaryService({pool}).run();}finally{running.delete(pool);}
 }

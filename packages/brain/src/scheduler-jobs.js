@@ -1,4 +1,5 @@
 import {reconcileAppServers} from './app-server/controller.js';
+import {reconcileAppServerCanaries} from './app-server/canary-service.js';
 import { runPreviewCacheJanitor } from './preview-cache-scheduler.js';
 import { runCompanyKrWorkflow } from './projection/company-kr-workflow.js';
 /**
@@ -85,6 +86,7 @@ export const JOBS = [
   // harness 派发热路径读到的就是过期缓存（beeba317 终审 Fix 3）。
   { name: 'machine-vitals', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: (pool) => sampleMachineVitals(pool), description: '本机体征采样（docker容器数/VM内存/盘，60s，harness admission 数据源，beeba317）' },
   { name: 'app-server-reconcile', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: reconcileAppServers, description: '按持久HOME/代际身份恢复探查与取消；无授权不启动，不按TTL释放' },
+  { name: 'app-server-canary', needsPool: true, timeoutMs: 180_000, handler: reconcileAppServerCanaries, description: '持久两代验收与期限/boot续验，显式撤销停止整条续验链' },
   { name: 'preview-owned-cache-janitor', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: runPreviewCacheJanitor, description: 'MMV专属npm cache过期回收：默认停用、真实任务与持久回执对账' },
   { name: 'arch-review', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerArchReview, description: '架构巡检（自带4h窗口+guard）' },
   { name: 'ci-patrol', needsPool: true, timeoutMs: DEFAULT_TIMEOUT_MS, handler: triggerCiPatrol, description: 'CI/CD 巡检（自带北京08:00窗口+当日去重）' },

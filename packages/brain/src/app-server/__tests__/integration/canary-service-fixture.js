@@ -50,7 +50,7 @@ export async function fixture(){
  const createTask=async({db})=>({success:true,task:(await db.query("INSERT INTO tasks(id,status,task_type,executor_kind) VALUES($1,'in_progress','app_server_run','app-server-controller') RETURNING *",[randomUUID()])).rows[0]});
  const store=createAppServerStore({pool,createTask,afterTask:async()=>{}}),env={KERNEL_FLEET_BRIDGE_TOKEN:token};
  const client=createAppServerClient({pool,store,env});
- const authorizationStore=createAuthorizationStore({pool,homes:{[home.homeId]:home},client,createTask});
+ const authorizationStore=createAuthorizationStore({pool,homes:{[home.homeId]:home},client,createTask,afterTask:async()=>{}});
  const evidence=createCanaryEvidenceStore({pool,store,client,token,afterTask:async()=>{}});
  const node=(await pool.query("SELECT * FROM execution_nodes WHERE canonical_id='xian-mac-m1'")).rows[0];
  const input={home_id:home.homeId,machine_registry_id:node.machine_registry_id,expected_version_id:node.current_version_id};

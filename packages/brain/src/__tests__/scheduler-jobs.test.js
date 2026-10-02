@@ -1,4 +1,6 @@
 vi.mock('../app-server/controller.js',()=>({reconcileAppServers:vi.fn().mockResolvedValue([])}));
+vi.mock('../app-server/canary-service.js',()=>({reconcileAppServerCanaries:vi.fn().mockResolvedValue([])}));
+import {reconcileAppServerCanaries} from '../app-server/canary-service.js';
 vi.mock('../preview-cache-scheduler.js', () => ({ runPreviewCacheJanitor: vi.fn().mockResolvedValue({ status: 'disabled' }) }));
 import { runPreviewCacheJanitor } from '../preview-cache-scheduler.js';
 vi.mock('../projection/company-key-results.js', () => ({ runCompanyKrProjection: vi.fn(async () => ({ skipped: true })) }));
@@ -241,6 +243,11 @@ function makePool() {
 }
 
 describe('scheduler-jobs 注册表', () => {
+  it('持久Mac验收与续验接入真实周期注册表',async()=>{
+    const job=JOBS.find(j=>j.name==='app-server-canary'),pool=makePool();
+    expect(job.needsPool).toBe(true);await runSchedulerJobsOnce(pool,[job]);
+    expect(reconcileAppServerCanaries).toHaveBeenCalledWith(pool);
+  });
   it('节点接入对账使用数据库连接并保留 handler 结果', async () => {
     const pool = makePool();
     const job = JOBS.find(row => row.name === 'node-onboarding');
