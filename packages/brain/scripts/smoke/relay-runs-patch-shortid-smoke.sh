@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 # smoke: relay-runs PATCH 短号防呆
 set -euo pipefail
+
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
 BRAIN=${BRAIN_URL:-http://localhost:5221}
 
 # 查询一个活跃的 relay run，取其 initiative_id 前 8 位作为短号测试
-SHORT_ID=$(curl -s "$BRAIN/api/brain/orchestrator/relay-runs?limit=1" | jq -r '.[0].initiative_id // empty' | cut -c1-8)
+SHORT_ID=$(curl -q -s "$BRAIN/api/brain/orchestrator/relay-runs?limit=1" | jq -r '.[0].initiative_id // empty' | cut -c1-8)
 if [ -z "$SHORT_ID" ]; then
   echo "[smoke] 无活跃 relay run，跳过短号测试"
   exit 0
 fi
 # 用短号 PATCH（只改 phase=planning，最小影响）
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/$SHORT_ID" \
+STATUS=$(curl -q -s -o /dev/null -w "%{http_code}" -X PATCH "$BRAIN/api/brain/orchestrator/relay-runs/$SHORT_ID" \
   -H "Content-Type: application/json" -d '{"phase":"planning"}')
 # 409 也合法：短号已正确解析到 run，被终态冲突/歧义闸拒绝是业务语义（例如 attempt-run
 # 冒烟回滚后的 failed run 恰好是最新一条）。本 smoke 只防短号解析失败（400/500）。

@@ -108,10 +108,7 @@ export async function resolveExecutor(task, deps = {}) {
         `显式路由失败：读取机器表失败，无法校验 {machine:'${reqMachine || ''}', executor:'${reqExecutor || ''}'}（不静默改派）: ${err.message}`,
       );
     }
-    console.warn(
-      `[resolveExecutor] loadMachines 失败，降级 ${FALLBACK_ROUTE.machineId}/claude 兜底: ${err.message}`,
-    );
-    return { ...FALLBACK_ROUTE };
+    throw new ExecutorRouteError('execution_directory_unavailable');
   }
 
   const activeMachines = (machines || []).filter((m) => m.status === 'active');
@@ -182,7 +179,7 @@ export async function resolveExecutor(task, deps = {}) {
   }
 
   // ── 4. 兜底：无匹配 → us-m4 / claude ──────────────────────────────
-  return { ...FALLBACK_ROUTE };
+  throw new ExecutorRouteError('execution_grant_denied');
 }
 
 /**

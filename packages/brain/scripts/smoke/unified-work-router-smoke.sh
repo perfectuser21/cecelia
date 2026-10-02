@@ -22,9 +22,9 @@ NODE_EXECUTABLE="$(command -v node)"
 PSQL_EXECUTABLE="$(command -v psql)"
 DATABASE_NAME="$($NODE_EXECUTABLE -e "const u=new URL(process.argv[1]);process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DB_URL")"
 [[ "$DATABASE_NAME" =~ _scratch$ ]] || fail "拒绝连接非 scratch 库: ${DATABASE_NAME:-<empty>}"
-ACTIVE_DATABASE="$($PSQL_EXECUTABLE "$DB_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')"
+ACTIVE_DATABASE="$($PSQL_EXECUTABLE -X "$DB_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')"
 [[ "$ACTIVE_DATABASE" == "$DATABASE_NAME" ]] || fail "连接目标不一致: $ACTIVE_DATABASE"
-SCHEMA_VERSION="$($PSQL_EXECUTABLE "$DB_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT max(version) FROM schema_version')"
+SCHEMA_VERSION="$($PSQL_EXECUTABLE -X "$DB_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT max(version) FROM schema_version')"
 [[ "$SCHEMA_VERSION" -ge 423 ]] || fail "schema_version=$SCHEMA_VERSION, expected>=423"
 
 printf '%s\n' '── Unified Work Router scratch smoke ──'

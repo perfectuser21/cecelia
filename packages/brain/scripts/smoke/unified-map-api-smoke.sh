@@ -2,6 +2,11 @@
 # test/scratch-only 真验火：通过运行中的 Brain 验证 Unified Map 唯一读入口。
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT_DIR"
 
@@ -23,16 +28,16 @@ if [[ -z "${CECELIA_INTERNAL_TOKEN:-}" && -f "$INTERNAL_AUTH_HELPER" ]]; then
 fi
 brain_curl() {
   if [[ -n "${CECELIA_INTERNAL_TOKEN:-}" ]]; then
-    "$CURL_EXECUTABLE" -H "Authorization: Bearer ${CECELIA_INTERNAL_TOKEN}" "$@"
+    "$CURL_EXECUTABLE" -q -H "Authorization: Bearer ${CECELIA_INTERNAL_TOKEN}" "$@"
   else
-    "$CURL_EXECUTABLE" "$@"
+    "$CURL_EXECUTABLE" -q "$@"
   fi
 }
 DATABASE_NAME="$($NODE_EXECUTABLE -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DATABASE_NAME" =~ (_test|_scratch)$ ]] || fail "拒绝连接非测试库: ${DATABASE_NAME:-<empty>}"
-[[ "$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')" == "$DATABASE_NAME" ]] \
+[[ "$($PSQL_EXECUTABLE -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc 'SELECT current_database()')" == "$DATABASE_NAME" ]] \
   || fail '数据库连接目标不一致'
-[[ "$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='407')")" == 't' ]] \
+[[ "$($PSQL_EXECUTABLE -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "SELECT EXISTS(SELECT 1 FROM schema_version WHERE version='407')")" == 't' ]] \
   || fail 'schema_version 407 不存在'
 
 SMOKE_SCOPE="unified-map-api-smoke-$$"
@@ -41,7 +46,7 @@ SMOKE_DECISION_ID="$($NODE_EXECUTABLE -e "process.stdout.write(require('node:cry
 export DATABASE_URL SMOKE_SCOPE SMOKE_REPO SMOKE_DECISION_ID
 
 cleanup() {
-  "$PSQL_EXECUTABLE" "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
+  "$PSQL_EXECUTABLE" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -q \
     -c "DELETE FROM map_projection_runs WHERE scope_key='$SMOKE_SCOPE'" \
     -c "DELETE FROM map_manifest_versions WHERE scope_key='$SMOKE_SCOPE'" \
     -c "DELETE FROM map_scope_repositories WHERE scope_key='$SMOKE_SCOPE'" \
@@ -179,7 +184,7 @@ pass 'POST /rebuild 保持确定性 Projection digest'
 
 cleanup
 trap - EXIT
-RESIDUE="$($PSQL_EXECUTABLE "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "
+RESIDUE="$($PSQL_EXECUTABLE -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "
   SELECT
     (SELECT count(*) FROM map_projection_runs WHERE scope_key='$SMOKE_SCOPE')::text || '|' ||
     (SELECT count(*) FROM map_manifest_versions WHERE scope_key='$SMOKE_SCOPE')::text || '|' ||

@@ -1,3 +1,5 @@
+import {createAppServerRouter} from './src/routes/app-server.js';
+import { startExecutionDirectory } from './src/execution-directory/store.js';
 // OTel 必须在所有其他 import 之前初始化（auto-instrumentation 要求）
 import { initOtel } from './src/otel.js';
 import { isIsolatedRuntime } from './src/runtime-safety.js';
@@ -318,6 +320,7 @@ app.use('/api/brain/graph', graphRoutes);
 // 旧 app 级 GET（available 语义 + 连字符转下划线取键）已删：与 kv.js 双实现分脑——
 // POST 原样写 -、GET 转 _ 读，写进去的键永远读不到。
 app.use('/api/brain/janitor', janitorRoutes);
+app.use('/api/brain/internal/app-server', createAppServerRouter({pool}));
 app.use('/api/brain/profile/facts', profileFactsRoutes);
 
 // Cron 手动触发（E2E 测试用）
@@ -587,6 +590,8 @@ if (isIsolatedRuntime() || process.env.SKIP_MIGRATIONS === 'true') {
     }
   }
 }
+
+if (!isIsolatedRuntime()) await startExecutionDirectory({pool});
 
 if (!isIsolatedRuntime()) try {
   const selfCheckOk = await runSelfCheck(pool);

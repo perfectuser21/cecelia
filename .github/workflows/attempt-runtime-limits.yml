@@ -1,0 +1,39 @@
+name: Harness per-attempt resource isolation
+on:
+  pull_request:
+    paths:
+      - 'packages/brain/scripts/fleet-worker/attempt-*'
+      - 'packages/brain/src/fleet-resource-cache.js'
+      - 'packages/brain/src/orchestrator/fleet-node/node-profile.js'
+      - '.github/workflows/attempt-runtime-limits.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: attempt-limits-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  docker-hard-limits:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Resolve isolated test images to immutable IDs
+        run: |
+          docker pull node:22-bookworm-slim
+          docker pull pgvector/pgvector:pg15
+          echo "HARNESS_LIMITS_CANARY_IMAGE=$(docker image inspect --format '{{.Id}}' node:22-bookworm-slim)" >> "$GITHUB_ENV"
+          echo "HARNESS_LIMITS_CANARY_POSTGRES_IMAGE=$(docker image inspect --format '{{.Id}}' pgvector/pgvector:pg15)" >> "$GITHUB_ENV"
+      - name: Real adapters enforce one shared budget and isolate runner OOM
+        run: |
+          set -o pipefail
+          node packages/brain/scripts/fleet-worker/attempt-limits-canary.cjs | tee attempt-runtime-limits.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: attempt-runtime-limits-evidence
+          path: attempt-runtime-limits.log
+          if-no-files-found: ignore

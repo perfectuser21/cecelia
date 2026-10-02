@@ -1,6 +1,8 @@
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { confirmExpiredParentCleanup, inspectLocalContainer } from './attempt-resource-cleanup.js';
+import { directory } from '../execution-directory/directory.js';
+import { legacyRecords } from '../execution-directory/legacy-policy.js';
 import * as runtimeSafety from '../runtime-safety.js';
 
 const id = '11111111-1111-4111-8111-111111111111';
@@ -75,7 +77,12 @@ describe('恢复前精确旧进程清理', () => {
       vi.stubEnv('KERNEL_FLEET_REMOTE_ENABLED', 'true');
       vi.stubEnv('KERNEL_FLEET_BRIDGE_TOKEN', 'unit-http-transport-secret-at-least-32-characters');
       vi.stubEnv('FLEET_WORKER_US_MAC_M4_URL', workerUrl);
+      const node=legacyRecords({env:{FLEET_WORKER_US_MAC_M4_URL:workerUrl}})[0];
+      await directory.refresh({pool:{query:async()=>({rows:[node]})}});
+      const persisted={...parent,requested_machine_id:'us-mac-m4',provider:'codex',account_id:'team1',task_bundle:{inputs:{_server_execution:{executionVersionId:node.id}}}};
+      const pool={query:vi.fn(async sql=>({rows:sql.includes('FROM harness_attempts')?[persisted]:[{...node,canonical_id:'us-mac-m4'}]}))};
       const receipt = await confirmExpiredParentCleanup({ ...parent, execution_transport: 'fleet-worker', local_container_naming: 'generation-v1' }, {
+        pool,
         fetchFn: (url, options) => {
           expect(new URL(url).origin).toBe(workerUrl);
           return fetch(url, options);

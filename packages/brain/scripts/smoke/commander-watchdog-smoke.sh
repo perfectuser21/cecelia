@@ -7,6 +7,11 @@
 #   3. JOBS 注册：commander-watchdog / workflow-trend-bark 在 scheduler-liveness 之前
 #   4. 有 Brain（BRAIN_URL）时：POST /commander-heartbeat 非法 tag → 400；kind=launch 无在途单 → 202
 set -euo pipefail
+
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
 cd "$(dirname "$0")/../.."
 
 echo "[cmdr-smoke] 1. 看门狗 proven-to-fire（心跳伪造过期）"
@@ -66,11 +71,11 @@ const names = JOBS.map((j) => j.name); const l = names.indexOf('scheduler-livene
 for (const n of ['commander-watchdog', 'workflow-trend-bark']) { const i = names.indexOf(n); if (i < 0 || i > l) { console.error('FAIL JOBS', n, i, l); process.exit(1); } console.log('PASS', n, 'JOBS[' + i + '] < liveness[' + l + ']'); }
 "
 
-if [ -n "${BRAIN_URL:-}" ] && curl -sf -m 5 "$BRAIN_URL/api/brain/tick/status" >/dev/null 2>&1; then
+if [ -n "${BRAIN_URL:-}" ] && curl -q -sf -m 5 "$BRAIN_URL/api/brain/tick/status" >/dev/null 2>&1; then
   echo "[cmdr-smoke] 4. Brain 心跳入口"
-  CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X POST -H 'Content-Type: application/json' -d '{"tag":"bad tag"}' "$BRAIN_URL/api/brain/commander-heartbeat")
+  CODE=$(curl -q -s -o /dev/null -w '%{http_code}' -m 10 -X POST -H 'Content-Type: application/json' -d '{"tag":"bad tag"}' "$BRAIN_URL/api/brain/commander-heartbeat")
   [ "$CODE" = "400" ] || { echo "FAIL 非法 tag 返回 $CODE"; exit 1; }; echo "非法 tag → 400 ✓"
-  CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X POST -H 'Content-Type: application/json' -d '{"kind":"launch","tag":"smoke0000000000","host":"xian-m4","escort_id":"smoke-esc"}' "$BRAIN_URL/api/brain/commander-heartbeat")
+  CODE=$(curl -q -s -o /dev/null -w '%{http_code}' -m 10 -X POST -H 'Content-Type: application/json' -d '{"kind":"launch","tag":"smoke0000000000","host":"xian-m4","escort_id":"smoke-esc"}' "$BRAIN_URL/api/brain/commander-heartbeat")
   [ "$CODE" = "202" ] || { echo "FAIL launch 登记返回 $CODE"; exit 1; }; echo "kind=launch 无在途单 → 202 ✓"
 fi
 echo "[cmdr-smoke] ✅ 全部通过"

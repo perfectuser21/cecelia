@@ -1,3 +1,6 @@
+import { hostname } from 'node:os';
+import { withLegacyRelayExecution } from './execution-directory/legacy-relay.js';
+import { withLegacyExecution,legacyExecutorEntries } from './execution-directory/legacy-executor.js';
 import { assertExternalExecutionAllowed } from './runtime-safety.js';
 /**
  * harness-skill-relay — N3 最小接线（harness-skill-relay initiative，主理人 2026-07-04 拍板）。
@@ -836,6 +839,11 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       return { ok: false, deferred: true, reason: 'no_available_claude_account' };
     }
 
+    // 在凭据签发和工作区启动之外先核绑定，最终 doSpawn 仍在同机锁内复核。
+    await (deps.authorizeLegacyRelay??withLegacyRelayExecution)({pool:dbPool,location:hostname(),provider:isCodex?'codex':isGrok?'grok':'claude',
+      credentialIdentity:isCodex?codexRelayHome:isGrok?grokRelayHome:acctOpts.env.CECELIA_CREDENTIALS,
+      repo:task.payload?.repo??parseBaseRepoOrDefault(task.payload?.base_repo)},()=>{});
+
     // 5. github token
     const tokenFn = deps.tokenFn
       || (await import('./harness-credentials.js')).resolveGitHubToken;
@@ -882,7 +890,9 @@ export async function spawnSkillRelaySession(task, deps = {}) {
       const spawnExtraMounts = isCodex
         ? [`${codexRelayCredDir}:/home/cecelia/.codex:rw`]
         : (spawnExecutor === 'grok' ? grokExtraMounts : undefined);
-      await spawnFn({
+      await (deps.authorizeLegacyRelay??withLegacyRelayExecution)({pool:dbPool,location:hostname(),provider:spawnExecutor,
+        credentialIdentity:isCodex?codexRelayHome:(spawnExecutor==='grok'?grokRelayHome:acctOpts.env.CECELIA_CREDENTIALS),
+        repo:task.payload?.repo??parseBaseRepoOrDefault(task.payload?.base_repo)},()=>spawnFn({
         containerId,
         task: { ...task, task_type: 'harness_controller' },
         prompt,
@@ -910,7 +920,7 @@ export async function spawnSkillRelaySession(task, deps = {}) {
           GITHUB_TOKEN: githubToken,
           BRAIN_URL: 'http://host.docker.internal:5221',
         },
-      });
+      }));
     };
 
     try {
@@ -994,7 +1004,6 @@ export async function spawnSkillRelaySession(task, deps = {}) {
 // ─── xian bridge 分支实现 ────────────────────────────────────────────────────
 
 const XIAN_RELAY_DEADLINE_HOURS = 8;
-const XIAN_BRIDGE_URL = 'http://100.86.57.69:3458';
 const XIAN_BRAIN_URL = 'http://100.86.57.69:5221';
 
 /**
@@ -1023,7 +1032,7 @@ async function _spawnXianBridgeSession(task, { dbPool, now, short, initiativeId,
     || `sprints/${stampMMDDHHNN(now())}-relay-xian-${short}`;
   const containerId = `cecelia-relay-xian-${short}-${Math.random().toString(16).slice(2, 6)}`;
   const xianBrainUrl = process.env.XIAN_BRAIN_URL || XIAN_BRAIN_URL;
-  const bridgeBaseUrl = process.env.XIAN_CODEX_BRIDGE_URL || XIAN_BRIDGE_URL;
+  const bridgeBaseUrl = legacyExecutorEntries().find(e=>e.machineId==='xian-mac-m4'&&e.executor==='codex')?.url;
 
   // 2. 取 github token（复用既有 harness-credentials.js）
   let githubToken = '';
@@ -1053,7 +1062,7 @@ async function _spawnXianBridgeSession(task, { dbPool, now, short, initiativeId,
     || (await import('./spawn/detached.js')).spawnCodexBridgeDetached;
 
   try {
-    await bridgeFn(`${bridgeBaseUrl}/run`, bridgePayload);
+    await withLegacyExecution({pool:dbPool,machineId:'xian-mac-m4',provider:'codex',endpoint:bridgeBaseUrl,account:bridgePayload.account_id,repo:task.payload?.repo??parseBaseRepoOrDefault(task.payload?.base_repo)},()=>bridgeFn(`${bridgeBaseUrl}/run`, bridgePayload));
   } catch (spawnErr) {
     // 5. spawn 失败 → 回滚 task（INV-2：loud 失败，不静默降级）
     console.error(`[skill-relay][xian][ALERT] bridge spawn 失败: ${spawnErr.message}`);
@@ -1228,6 +1237,11 @@ async function _spawnHeadedSession(task, {
     console.warn(`[skill-relay][headed][GUARD] tmux 存活检查失败（保守放行 spawn）: ${err.message}`);
   }
   // ─── end 雷11 ────────────────────────────────────────────────────────────────
+  const authorizeRelay=operation=>(deps.authorizeLegacyRelay??withLegacyRelayExecution)({pool:dbPool,location:sshHost,provider:headedExecutor,
+    credentialIdentity:isClaudeHeaded?process.env.HEADED_CLAUDE_CONFIG_DIR:(isGrokHeaded?process.env.GROK_RELAY_HOME:codexRelayHome),
+    repo:task.payload?.repo??parseBaseRepoOrDefault(task.payload?.base_repo)},operation);
+  try { await authorizeRelay(()=>{}); } catch(error) { return {ok:false,mode:headedHost,error:error.message}; }
+
 
   // issue 45dd6925：缺省生成的 sprint_dir 必须回写 payload，否则重派换新目录（断点恢复产物路径漂移）。
   // 放在雷11去重守卫之后：命中守卫 early-return 时不产生 DB 副作用。
@@ -1365,9 +1379,9 @@ async function _spawnHeadedSession(task, {
       innerCmd = `cd ${worktreePath} && export HARNESS_TASK_ID=${task.id}${identityEnv} && CODEX_HOME=${codexRelayCredDir || ''} codex --dangerously-bypass-approvals-and-sandbox \\"\\$(cat ${promptFile})\\"`;
     }
     try {
-      execFn(
+      await authorizeRelay(()=>execFn(
         `ssh ${SSH_OPTS} ${sshHost} "tmux new-session -d -s ${tmuxSession} '${innerCmd}'"`
-      );
+      ));
     } catch (spawnErr) {
       console.error(`[skill-relay][headed][ALERT] ssh tmux spawn failed: ${spawnErr.message}`);
       if (!kernelAuthority) {
@@ -1381,12 +1395,12 @@ async function _spawnHeadedSession(task, {
   } else {
     // 测试注入路径
     try {
-      await sshSpawnFn({
+      await authorizeRelay(()=>sshSpawnFn({
         sshHost,
         tmuxSession,
         promptFile,
         prompt,
-      });
+      }));
     } catch (spawnErr) {
       console.error(`[skill-relay][headed][ALERT] ssh spawn failed: ${spawnErr.message}`);
       try {

@@ -4,6 +4,9 @@
 # ops_schedule_entries deactivation 用应用时钟 collectedAt（W1：刚写入行不被误标 offline）。
 # 纯 psql，确定性，CI real-env-smoke 在 cecelia_test 上跑；端点逻辑由 vitest 覆盖。
 set -euo pipefail
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-${BRAIN:-http://localhost:5221}}" "${DATABASE_URL:-postgresql://localhost/cecelia}"; then
+  exit 0
+fi
 
 pass() { printf 'PASS: %s\n' "$1"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
@@ -14,7 +17,7 @@ NODE="$(command -v node)"
 DB_NAME="$("$NODE" -e "const u=new URL(process.argv[1]); process.stdout.write(decodeURIComponent(u.pathname.slice(1)))" "$DATABASE_URL")"
 [[ "$DB_NAME" =~ (_test|_scratch)$ ]] || fail "拒绝连接非测试库: ${DB_NAME:-<empty>}"
 
-q() { "$PSQL" "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"; }
+q() { "$PSQL" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"; }
 
 TAG="ops-smoke-$$"
 cleanup() {

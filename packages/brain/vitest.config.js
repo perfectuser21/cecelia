@@ -6,6 +6,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const POSTGRES_INTEGRATION_TESTS = [
   'src/__tests__/integration/kernel-recovery-rebase.pg.integration.test.js',
+  'src/app-server/__tests__/integration/store.test.js',
+  'src/__tests__/integration/execution-directory.pg.integration.test.js',
+  'src/__tests__/integration/preview-cache.pg.integration.test.js',
   'src/__tests__/integration/task-intake.pg.integration.test.js',
   'src/__tests__/integration/account-quota-ledger.pg.integration.test.js',
   'src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js',
@@ -107,7 +110,7 @@ export const POSTGRES_INTEGRATION_TESTS = [
 
 export default defineConfig({
   test: {
-    setupFiles: ['src/__tests__/helpers/supertest-loopback.js'],
+    setupFiles: ['src/__tests__/helpers/supertest-loopback.js','src/__tests__/helpers/execution-directory-fixture.js'],
     globals: true,
     env: {
       CECELIA_MAP_REPO_SCOPES: 'perfectuser21/cecelia=cecelia,cecelia=cecelia',
@@ -149,6 +152,7 @@ export default defineConfig({
     exclude: [
       // 与 CI unit 一致：真实 PG 与建库迁移 fixture 只交集成层。
       'src/__tests__/integration/**',
+      'src/__tests__/real-env/**',
       // DB 集成测试（pool.query 直连，beforeAll import pool）
       'src/__tests__/actions-dedup.test.js',
       'src/__tests__/actions-goal-validation.test.js',

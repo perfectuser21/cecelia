@@ -1,3 +1,6 @@
+vi.mock('../app-server/controller.js',()=>({reconcileAppServers:vi.fn().mockResolvedValue([])}));
+vi.mock('../preview-cache-scheduler.js', () => ({ runPreviewCacheJanitor: vi.fn().mockResolvedValue({ status: 'disabled' }) }));
+import { runPreviewCacheJanitor } from '../preview-cache-scheduler.js';
 vi.mock('../projection/company-key-results.js', () => ({ runCompanyKrProjection: vi.fn(async () => ({ skipped: true })) }));
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -688,4 +691,15 @@ describe('scheduler-jobs Preview Brain 隔离（BRAIN_PREVIEW=1 幂等保护）'
     const logged = consoleSpy.mock.calls.flat().join(' ');
     expect(logged).toMatch(/BRAIN_PREVIEW/);
   });
+});
+
+it('专属cache scheduler需要pool并进入默认停用Janitor合同', async () => {
+  const job = JOBS.find(row => row.name === 'preview-owned-cache-janitor');
+  expect(job).toMatchObject({ needsPool: true });
+  const pool = {}; await job.handler(pool);
+  expect(runPreviewCacheJanitor).toHaveBeenCalledWith(pool);
+});
+it('机器体征始终先采集，Janitor网络等待不能排在体征前', () => {
+  expect(JOBS[0].name).toBe('machine-vitals');
+  expect(JOBS.findIndex(job => job.name === 'preview-owned-cache-janitor')).toBeGreaterThan(0);
 });

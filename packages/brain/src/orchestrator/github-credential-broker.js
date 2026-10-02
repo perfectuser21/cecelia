@@ -1,10 +1,11 @@
+import { directory } from '../execution-directory/directory.js';
 import { Buffer } from 'node:buffer';
 import { createHash, randomUUID as nodeRandomUUID } from 'node:crypto';
 
 import { isPrimaryWorker, listComputeWorkerIds } from '../machine-registry.js';
 
 const UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const MACHINES = new Set(listComputeWorkerIds());
+
 const MAX_TOKEN_BYTES = 16_384;
 
 function fail(code) {
@@ -34,6 +35,10 @@ export function createGitHubCredentialBroker({
       attemptId,
       machineId,
       deadlineAt,
+      repo,
+      provider,
+      accountId,
+
     } = {}) {
       if (!isPrimaryWorker(controllerMachineId)) {
         fail('github_credential_broker_us_authority_required');
@@ -41,9 +46,10 @@ export function createGitHubCredentialBroker({
       if (!UUID_PATTERN.test(attemptId ?? '')) {
         fail('github_credential_attempt_invalid');
       }
-      if (!MACHINES.has(machineId)) {
+      if (!listComputeWorkerIds().includes(machineId)) {
         fail('github_credential_machine_not_allowed');
       }
+      if(!directory.matches({machineId,surface:'harness',provider:provider,account:accountId,repo}))fail('credential_grant_not_allowed');
       const nowMs = now();
       if (!Number.isFinite(nowMs) || Math.abs(nowMs) > 8_640_000_000_000_000) {
         fail('github_credential_clock_invalid');

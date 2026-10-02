@@ -16,7 +16,7 @@ import crypto from 'crypto';
 import { promisify } from 'util';
 import { exec } from 'child_process';
 import { validateAllContentTypes } from './content-types/content-type-validator.js';
-import { SERVERS, COMPUTE_SERVERS, buildSshCommand } from './routes/infra-status.js';
+import { SERVERS, computeServerIds, buildSshCommand } from './routes/infra-status.js';
 
 const _execAsync = promisify(exec);
 
@@ -252,7 +252,7 @@ export async function runSelfCheck(pool, opts = {}) {
  * 为什么在真环境跑:这是环境接缝(容器→外部机器),CI 干净环境测不到。
  */
 export async function checkComputeSshReachability({ execFn = _execAsync } = {}) {
-  const targets = SERVERS.filter(s => COMPUTE_SERVERS.includes(s.id) && !s.isLocal);
+  const targets = SERVERS.filter(s => computeServerIds().includes(s.id) && !s.isLocal);
   const unreachable = [];
   for (const server of targets) {
     try {

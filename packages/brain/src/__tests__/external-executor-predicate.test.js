@@ -58,8 +58,8 @@ describe('isExternallyExecuted —— 外部执行体统一谓词', () => {
 });
 
 describe('外部执行体集合从注册表派生，不手抄', () => {
-  it('EXTERNALLY_EXECUTED_TASK_TYPES 恰为 device_job / qiumi_task / script_run', () => {
-    expect([...EXTERNALLY_EXECUTED_TASK_TYPES].sort()).toEqual(['device_job', 'qiumi_task', 'script_run']);
+  it('EXTERNALLY_EXECUTED_TASK_TYPES 恰为 device_job / janitor / qiumi_task / script_run', () => {
+    expect([...EXTERNALLY_EXECUTED_TASK_TYPES].sort()).toEqual(['app_server_run','device_job', 'janitor', 'qiumi_task', 'script_run']);
   });
 
   it('EXTERNALLY_EXECUTED_KINDS = 上述类型在注册表里声明的 executor（去 null 去重）', () => {
@@ -67,6 +67,6 @@ describe('外部执行体集合从注册表派生，不手抄', () => {
       EXTERNALLY_EXECUTED_TASK_TYPES.map((t) => TASK_TYPE_REGISTRY[t].executor).filter(Boolean),
     )].sort();
     expect([...EXTERNALLY_EXECUTED_KINDS].sort()).toEqual(expected);
-    expect([...EXTERNALLY_EXECUTED_KINDS].sort()).toEqual(['openclaw-agent', 'script']);
+    expect([...EXTERNALLY_EXECUTED_KINDS].sort()).toEqual(['app-server-controller','openclaw-agent', 'preview-janitor', 'script']);
   });
 });

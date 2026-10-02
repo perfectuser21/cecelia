@@ -1,3 +1,4 @@
+import {seedExecutionDirectoryFixture} from './helpers/execution-directory-fixture.js';
 import http from 'node:http';
 import { once } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +18,7 @@ describe('真实HTTP资源报告进入派单容量', () => {
     if (server) await new Promise(resolve => server.close(resolve));
   });
   it('健康响应有容量，原地址改回传过期样本后容量归零并说明原因', async () => {
+    await seedExecutionDirectoryFixture({machineIds:['us-mac-m4']});
     let observedAt = new Date().toISOString();
     let requests = 0;
     server = http.createServer((req, res) => {

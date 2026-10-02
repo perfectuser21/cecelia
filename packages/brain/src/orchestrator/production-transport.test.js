@@ -5,12 +5,16 @@ vi.mock('../runtime-safety.js', () => ({ assertExternalExecutionAllowed: () => {
 import { resolvePrimaryWorkerId } from '../machine-registry.js';
 import { signMachineAttestation } from './machine-attestation.js';
 import {
-  createProductionExecutionTransport,
+  createProductionExecutionTransport as createActualProductionTransport,
   DEFAULT_LOCAL_MACHINE_ID,
   DEFAULT_REMOTE_BRIDGE_PREPARE_TIMEOUT_MS,
   DEFAULT_REMOTE_BRIDGE_START_TIMEOUT_MS,
   DEFAULT_REMOTE_BRIDGE_TIMEOUT_MS,
 } from './production-transport.js';
+
+// 本文件仅验证传输协议；目录DB权威由真实PG集成用例验证。
+const createProductionExecutionTransport=options=>createActualProductionTransport({...options,
+ executionAuthority:async(_method,input,run)=>run(input,{canonical_id:input?.target?.machine,endpoints:{worker:options.env?.[`FLEET_WORKER_${input?.target?.machine?.toUpperCase().replaceAll('-','_')}_URL`]}})});
 
 const CALLBACK_URL = 'http://brain.internal:5221';
 const SHARED_SECRET = 'fleet-worker-secret-at-least-32-bytes';

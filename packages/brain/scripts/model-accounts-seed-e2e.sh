@@ -13,7 +13,7 @@ set -euo pipefail
 
 CONN="${DATABASE_URL:-${DB_URL:-${DB:-}}}"
 
-psql "$CONN" -v ON_ERROR_STOP=1 <<'SQL'
+psql -X "$CONN" -v ON_ERROR_STOP=1 <<'SQL'
 DELETE FROM ops_model_accounts WHERE account_id LIKE 'e2e-%';
 INSERT INTO ops_model_accounts (account_id, provider, plan, five_hour_pct, seven_day_pct, reset_at, host_alias, forwardable, forward_targets, status, last_error, last_checked_at, updated_at)
 VALUES

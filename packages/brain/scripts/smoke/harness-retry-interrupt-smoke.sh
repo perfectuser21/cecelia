@@ -18,6 +18,11 @@
 # 跳过条件：缺 docker / brain 容器不健康 → exit 0 + 打印 SKIP。
 set -euo pipefail
 
+# 真 Brain 写入必须显式授权，并核对本机测试容器。
+if ! node "$(dirname "${BASH_SOURCE[0]}")/../lib/smoke-production-guard.mjs" "${BRAIN_URL:-http://localhost:5221}"; then
+  exit 0
+fi
+
 SMOKE_NAME="harness-retry-interrupt"
 log() { echo "[smoke:$SMOKE_NAME] $*"; }
 fail() { log "FAIL $*"; exit 1; }
@@ -35,8 +40,8 @@ if ! docker ps --format '{{.Names}}' | grep -q "^${BRAIN_CONTAINER}$"; then
 fi
 
 # Health check
-if ! curl -sf "${BRAIN_URL}/api/brain/health" >/dev/null 2>&1; then
-  if ! curl -sf "${BRAIN_URL}/health" >/dev/null 2>&1; then
+if ! curl -q -sf "${BRAIN_URL}/api/brain/health" >/dev/null 2>&1; then
+  if ! curl -q -sf "${BRAIN_URL}/health" >/dev/null 2>&1; then
     skip "Brain ${BRAIN_URL} 不健康（health 端点 5xx/无响应）"
   fi
 fi
@@ -62,7 +67,7 @@ docker exec "$BRAIN_CONTAINER" node -e "
 log "✅ retry-policies module 可 import + 行为正确"
 
 # ── 3. /api/brain/harness-interrupts GET ───────────────────────────────────
-HTTP_CODE=$(curl -s -o /tmp/harness-interrupts-get.json -w '%{http_code}' "${BRAIN_URL}/api/brain/harness-interrupts" || echo 000)
+HTTP_CODE=$(curl -q -s -o /tmp/harness-interrupts-get.json -w '%{http_code}' "${BRAIN_URL}/api/brain/harness-interrupts" || echo 000)
 if [[ "$HTTP_CODE" != "200" ]]; then
   cat /tmp/harness-interrupts-get.json 2>/dev/null || true
   fail "GET /api/brain/harness-interrupts 返回 $HTTP_CODE"
@@ -77,7 +82,7 @@ log "✅ GET /api/brain/harness-interrupts → 200, 含 interrupts 字段"
 DUMMY_TASK_ID="00000000-0000-0000-0000-000000000abc"
 
 # 缺 decision → 400
-HTTP_CODE=$(curl -s -o /tmp/resume-empty.json -w '%{http_code}' \
+HTTP_CODE=$(curl -q -s -o /tmp/resume-empty.json -w '%{http_code}' \
   -X POST "${BRAIN_URL}/api/brain/harness-interrupts/${DUMMY_TASK_ID}/resume" \
   -H 'content-type: application/json' \
   --data '{}' || echo 000)
@@ -88,7 +93,7 @@ fi
 log "✅ POST resume 缺 decision → 400"
 
 # 非法 action → 400
-HTTP_CODE=$(curl -s -o /tmp/resume-bad.json -w '%{http_code}' \
+HTTP_CODE=$(curl -q -s -o /tmp/resume-bad.json -w '%{http_code}' \
   -X POST "${BRAIN_URL}/api/brain/harness-interrupts/${DUMMY_TASK_ID}/resume" \
   -H 'content-type: application/json' \
   --data '{"decision":{"action":"nuke_everything"}}' || echo 000)

@@ -30,6 +30,14 @@ WORKER_SOURCE="$SCRIPT_DIR/fleet-worker.cjs"
 PROBE_SOURCE="$SCRIPT_DIR/node-probe.cjs"
 PROFILE_REGISTRY_SOURCE="$SCRIPT_DIR/../../config/fleet-node-profiles.json"
 LOCAL_RESOURCE_ADMISSION_SOURCE="$SCRIPT_DIR/local-resource-admission.cjs"
+SCRIPT_RUNNER_SOURCE="$SCRIPT_DIR/script-runner.cjs"
+SCRIPT_DOCKER_SOURCE="$SCRIPT_DIR/script-docker.cjs"
+RESOURCE_POLICY_SOURCE="$SCRIPT_DIR/attempt-resource-policy.cjs"
+CONTAINER_IDENTITY_SOURCE="$SCRIPT_DIR/attempt-container-identity.cjs"
+# 专用 runner 仅打包，不增加服务入口或默认可执行 profile。
+APP_SERVER_FILES=(app-server-profile.cjs app-server-docker.cjs app-server-attach.cjs app-server-stream.cjs app-server-runner.cjs app-server-rpc.cjs app-server-stream-hub.cjs app-server-contract.json app-server-shim.cjs)
+STAGED_APP_SERVER_FILES=('' '' '' '' '' '' '' '')
+PRIOR_APP_SERVER_MODES=('' '' '' '' '' '' '' '')
 WORKSPACE_MANAGER_SOURCE="$SCRIPT_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SOURCE="$SCRIPT_DIR/attempt-runner.cjs"
 ORCHESTRATOR_RUNNER_SOURCE="$SCRIPT_DIR/orchestrator-runner.cjs"
@@ -54,6 +62,10 @@ STAGED_WORKER=''
 STAGED_PROBE=''
 STAGED_PROFILE_REGISTRY=''
 STAGED_LOCAL_RESOURCE_ADMISSION=''
+STAGED_SCRIPT_RUNNER=''
+STAGED_SCRIPT_DOCKER=''
+STAGED_RESOURCE_POLICY=''
+STAGED_CONTAINER_IDENTITY=''
 STAGED_WORKSPACE_MANAGER=''
 STAGED_ATTEMPT_RUNNER=''
 STAGED_ORCHESTRATOR_RUNNER=''
@@ -88,6 +100,10 @@ WORKER_COMMAND_PATH="$COMMAND_PATH"
 WORKER_SCRIPT="$RUNTIME_DIR/fleet-worker.cjs"
 PROFILE_REGISTRY_SCRIPT="$RUNTIME_DIR/fleet-node-profiles.json"
 LOCAL_RESOURCE_ADMISSION_SCRIPT="$RUNTIME_DIR/local-resource-admission.cjs"
+SCRIPT_RUNNER_SCRIPT="$RUNTIME_DIR/script-runner.cjs"
+SCRIPT_DOCKER_SCRIPT="$RUNTIME_DIR/script-docker.cjs"
+RESOURCE_POLICY_SCRIPT="$RUNTIME_DIR/attempt-resource-policy.cjs"
+CONTAINER_IDENTITY_SCRIPT="$RUNTIME_DIR/attempt-container-identity.cjs"
 WORKSPACE_MANAGER_SCRIPT="$RUNTIME_DIR/workspace-manager.cjs"
 ATTEMPT_RUNNER_SCRIPT="$RUNTIME_DIR/attempt-runner.cjs"
 ORCHESTRATOR_RUNNER_SCRIPT="$RUNTIME_DIR/orchestrator-runner.cjs"
@@ -151,7 +167,7 @@ load_runner_digest() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(profile.runner_image_digest);
@@ -165,7 +181,7 @@ load_postgres_image() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(profile.runtime_resources.postgres.image_digest);
@@ -179,7 +195,7 @@ load_disk_min_free_gib() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(String(profile.resources.disk_min_free_gib));
@@ -193,7 +209,7 @@ load_worker_bind_host() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(profile.worker_bind_host);
@@ -207,7 +223,7 @@ load_brain_health_url() {
     cd "$REPO_ROOT"
     FLEET_WORKER_PROFILE_MACHINE="$machine_id" \
       "$NODE_EXECUTABLE" --input-type=module <<'NODE'
-import { getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
+import { getDeploymentNodeProfile as getNodeProfile } from './packages/brain/src/orchestrator/fleet-node/node-profile.js';
 
 const profile = getNodeProfile(process.env.FLEET_WORKER_PROFILE_MACHINE);
 process.stdout.write(profile.brain_health_url);
@@ -651,11 +667,19 @@ render_access_plist() {
 }
 
 cleanup_transaction() {
+  local staged module
+  for staged in "${STAGED_APP_SERVER_FILES[@]}"; do
+    [[ -z "$staged" ]] || rm -f "$staged"
+  done
   [[ -z "$EXISTING_CONFIG_SNAPSHOT" ]] || rm -f "$EXISTING_CONFIG_SNAPSHOT"
   [[ -z "$STAGED_WORKER" ]] || rm -f "$STAGED_WORKER"
   [[ -z "$STAGED_PROBE" ]] || rm -f "$STAGED_PROBE"
   [[ -z "$STAGED_PROFILE_REGISTRY" ]] || rm -f "$STAGED_PROFILE_REGISTRY"
   [[ -z "$STAGED_LOCAL_RESOURCE_ADMISSION" ]] || rm -f "$STAGED_LOCAL_RESOURCE_ADMISSION"
+  [[ -z "$STAGED_SCRIPT_RUNNER" ]] || rm -f "$STAGED_SCRIPT_RUNNER"
+  [[ -z "$STAGED_SCRIPT_DOCKER" ]] || rm -f "$STAGED_SCRIPT_DOCKER"
+  [[ -z "$STAGED_RESOURCE_POLICY" ]] || rm -f "$STAGED_RESOURCE_POLICY"
+  [[ -z "$STAGED_CONTAINER_IDENTITY" ]] || rm -f "$STAGED_CONTAINER_IDENTITY"
   [[ -z "$STAGED_WORKSPACE_MANAGER" ]] || rm -f "$STAGED_WORKSPACE_MANAGER"
   [[ -z "$STAGED_ATTEMPT_RUNNER" ]] || rm -f "$STAGED_ATTEMPT_RUNNER"
   [[ -z "$STAGED_ORCHESTRATOR_RUNNER" ]] || rm -f "$STAGED_ORCHESTRATOR_RUNNER"
@@ -667,11 +691,16 @@ cleanup_transaction() {
   [[ -z "$STAGED_ACCESS_HELPER" ]] || rm -f "$STAGED_ACCESS_HELPER"
   [[ -z "$STAGED_ACCESS_PLIST" ]] || rm -f "$STAGED_ACCESS_PLIST"
   if [[ -n "$BACKUP_DIR" && -d "$BACKUP_DIR" ]]; then
+    for module in "${APP_SERVER_FILES[@]}"; do rm -f "$BACKUP_DIR/$module"; done
     rm -f \
       "$BACKUP_DIR/worker" \
       "$BACKUP_DIR/probe" \
       "$BACKUP_DIR/fleet-node-profiles" \
       "$BACKUP_DIR/local-resource-admission" \
+      "$BACKUP_DIR/script-runner" \
+      "$BACKUP_DIR/script-docker" \
+      "$BACKUP_DIR/resource-policy" \
+      "$BACKUP_DIR/container-identity" \
       "$BACKUP_DIR/workspace-manager" \
       "$BACKUP_DIR/attempt-runner" \
       "$BACKUP_DIR/orchestrator-runner" \
@@ -691,7 +720,7 @@ cleanup_transaction() {
 }
 
 prepare_transaction_paths() {
-  local runtime_parent candidate_lock
+  local runtime_parent candidate_lock index
 
   [[ ! -L "$RUNTIME_DIR" ]] || die "runtime_path_invalid"
   runtime_parent="$(dirname "$RUNTIME_DIR")"
@@ -706,6 +735,13 @@ prepare_transaction_paths() {
   STAGED_PROBE="$(mktemp "$RUNTIME_DIR/.node-probe.cjs.XXXXXX")"
   STAGED_PROFILE_REGISTRY="$(mktemp "$RUNTIME_DIR/.fleet-node-profiles.json.XXXXXX")"
   STAGED_LOCAL_RESOURCE_ADMISSION="$(mktemp "$RUNTIME_DIR/.local-resource-admission.cjs.XXXXXX")"
+  STAGED_SCRIPT_RUNNER="$(mktemp "$RUNTIME_DIR/.script-runner.cjs.XXXXXX")"
+  STAGED_SCRIPT_DOCKER="$(mktemp "$RUNTIME_DIR/.script-docker.cjs.XXXXXX")"
+  STAGED_RESOURCE_POLICY="$(mktemp "$RUNTIME_DIR/.attempt-resource-policy.cjs.XXXXXX")"
+  STAGED_CONTAINER_IDENTITY="$(mktemp "$RUNTIME_DIR/.attempt-container-identity.cjs.XXXXXX")"
+  for index in "${!APP_SERVER_FILES[@]}"; do
+    STAGED_APP_SERVER_FILES[$index]="$(mktemp "$RUNTIME_DIR/.${APP_SERVER_FILES[$index]}.XXXXXX")"
+  done
   STAGED_WORKSPACE_MANAGER="$(
     mktemp "$RUNTIME_DIR/.workspace-manager.cjs.XXXXXX"
   )"
@@ -728,12 +764,25 @@ prepare_transaction_paths() {
 }
 
 stage_generation() {
+  local index
+  for index in "${!APP_SERVER_FILES[@]}"; do
+    cp "$SCRIPT_DIR/${APP_SERVER_FILES[$index]}" "${STAGED_APP_SERVER_FILES[$index]}"
+    chmod 0644 "${STAGED_APP_SERVER_FILES[$index]}"
+  done
   cp "$WORKER_SOURCE" "$STAGED_WORKER"
   cp "$PROBE_SOURCE" "$STAGED_PROBE"
   cp "$PROFILE_REGISTRY_SOURCE" "$STAGED_PROFILE_REGISTRY"
   chmod 0644 "$STAGED_PROFILE_REGISTRY"
   cp "$LOCAL_RESOURCE_ADMISSION_SOURCE" "$STAGED_LOCAL_RESOURCE_ADMISSION"
+  cp "$SCRIPT_RUNNER_SOURCE" "$STAGED_SCRIPT_RUNNER"
+  cp "$SCRIPT_DOCKER_SOURCE" "$STAGED_SCRIPT_DOCKER"
+  cp "$RESOURCE_POLICY_SOURCE" "$STAGED_RESOURCE_POLICY"
+  cp "$CONTAINER_IDENTITY_SOURCE" "$STAGED_CONTAINER_IDENTITY"
+  chmod 0644 "$STAGED_RESOURCE_POLICY"
+  chmod 0644 "$STAGED_CONTAINER_IDENTITY"
   chmod 0644 "$STAGED_LOCAL_RESOURCE_ADMISSION"
+  chmod 0644 "$STAGED_SCRIPT_RUNNER"
+  chmod 0644 "$STAGED_SCRIPT_DOCKER"
   cp "$WORKSPACE_MANAGER_SOURCE" "$STAGED_WORKSPACE_MANAGER"
   cp "$ATTEMPT_RUNNER_SOURCE" "$STAGED_ATTEMPT_RUNNER"
   cp "$ORCHESTRATOR_RUNNER_SOURCE" "$STAGED_ORCHESTRATOR_RUNNER"
@@ -1058,9 +1107,17 @@ prepare_logs
 prepare_transaction_paths
 stage_generation
 
+for index in "${!APP_SERVER_FILES[@]}"; do
+  module="${APP_SERVER_FILES[$index]}"
+  PRIOR_APP_SERVER_MODES[$index]="$(snapshot_file "$RUNTIME_DIR/$module" "$BACKUP_DIR/$module")"
+done
 prior_worker_mode="$(snapshot_file "$WORKER_SCRIPT" "$BACKUP_DIR/worker")"
 prior_profile_registry_mode="$(snapshot_file "$PROFILE_REGISTRY_SCRIPT" "$BACKUP_DIR/fleet-node-profiles")"
 prior_local_resource_admission_mode="$(snapshot_file "$LOCAL_RESOURCE_ADMISSION_SCRIPT" "$BACKUP_DIR/local-resource-admission")"
+prior_script_runner_mode="$(snapshot_file "$SCRIPT_RUNNER_SCRIPT" "$BACKUP_DIR/script-runner")"
+prior_script_docker_mode="$(snapshot_file "$SCRIPT_DOCKER_SCRIPT" "$BACKUP_DIR/script-docker")"
+prior_resource_policy_mode="$(snapshot_file "$RESOURCE_POLICY_SCRIPT" "$BACKUP_DIR/resource-policy")"
+prior_container_identity_mode="$(snapshot_file "$CONTAINER_IDENTITY_SCRIPT" "$BACKUP_DIR/container-identity")"
 prior_probe_mode="$(
   snapshot_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe"
 )"
@@ -1105,9 +1162,17 @@ if [[ "$prior_service_loaded" == true ]]; then
 fi
 
 placement_ok=true
-"$MOVE" "$STAGED_PROBE" "$RUNTIME_DIR/node-probe.cjs" || placement_ok=false
+for index in "${!APP_SERVER_FILES[@]}"; do
+  [[ "$placement_ok" != true ]] || "$MOVE" "${STAGED_APP_SERVER_FILES[$index]}" \
+    "$RUNTIME_DIR/${APP_SERVER_FILES[$index]}" || placement_ok=false
+done
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_PROBE" "$RUNTIME_DIR/node-probe.cjs" || placement_ok=false
 [[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_PROFILE_REGISTRY" "$PROFILE_REGISTRY_SCRIPT" || placement_ok=false
 [[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_LOCAL_RESOURCE_ADMISSION" "$LOCAL_RESOURCE_ADMISSION_SCRIPT" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_SCRIPT_RUNNER" "$SCRIPT_RUNNER_SCRIPT" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_SCRIPT_DOCKER" "$SCRIPT_DOCKER_SCRIPT" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_RESOURCE_POLICY" "$RESOURCE_POLICY_SCRIPT" || placement_ok=false
+[[ "$placement_ok" != true ]] || "$MOVE" "$STAGED_CONTAINER_IDENTITY" "$CONTAINER_IDENTITY_SCRIPT" || placement_ok=false
 [[ "$placement_ok" == false ]] \
   || "$MOVE" "$STAGED_WORKSPACE_MANAGER" "$WORKSPACE_MANAGER_SCRIPT" \
   || placement_ok=false
@@ -1166,11 +1231,24 @@ if [[ "$launch_ok" != true ]]; then
   "$LAUNCHCTL" bootout "system/$ACCESS_LABEL" >/dev/null 2>&1 || true
   "$LAUNCHCTL" bootout "system/$LABEL" >/dev/null 2>&1 || true
   rollback_ok=true
+  for index in "${!APP_SERVER_FILES[@]}"; do
+    module="${APP_SERVER_FILES[$index]}"
+    restore_file "$RUNTIME_DIR/$module" "$BACKUP_DIR/$module" "${PRIOR_APP_SERVER_MODES[$index]}" \
+      || rollback_ok=false
+  done
   restore_file "$WORKER_SCRIPT" "$BACKUP_DIR/worker" "$prior_worker_mode" \
     || rollback_ok=false
   restore_file "$PROFILE_REGISTRY_SCRIPT" "$BACKUP_DIR/fleet-node-profiles" "$prior_profile_registry_mode" \
     || rollback_ok=false
   restore_file "$LOCAL_RESOURCE_ADMISSION_SCRIPT" "$BACKUP_DIR/local-resource-admission" "$prior_local_resource_admission_mode" \
+    || rollback_ok=false
+  restore_file "$SCRIPT_RUNNER_SCRIPT" "$BACKUP_DIR/script-runner" "$prior_script_runner_mode" \
+    || rollback_ok=false
+  restore_file "$SCRIPT_DOCKER_SCRIPT" "$BACKUP_DIR/script-docker" "$prior_script_docker_mode" \
+    || rollback_ok=false
+  restore_file "$RESOURCE_POLICY_SCRIPT" "$BACKUP_DIR/resource-policy" "$prior_resource_policy_mode" \
+    || rollback_ok=false
+  restore_file "$CONTAINER_IDENTITY_SCRIPT" "$BACKUP_DIR/container-identity" "$prior_container_identity_mode" \
     || rollback_ok=false
   restore_file "$RUNTIME_DIR/node-probe.cjs" "$BACKUP_DIR/probe" "$prior_probe_mode" \
     || rollback_ok=false

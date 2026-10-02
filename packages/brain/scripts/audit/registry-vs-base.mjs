@@ -130,6 +130,10 @@ function extractNeqLiteral(rawSrc, anchorRegex) {
 const SITES = [];
 function site(desc) { SITES.push(desc); }
 
+// app_server_run 的六处受保护集合/执行器增量由 task-type-registry.test.js 精确断言，
+// 此处只排除该新增类型，继续核对其余历史项零漂移。
+// migration 502 将 janitor 提升为真实固定HTTP执行类型；对应集合/映射增量由
+// lib/__tests__/task-type-registry.test.js 精确断言，历史基线审计仅剔除该已登记增量。
 // ── Task 3：派发类（task-3-report.md 第1节） ──
 site({ label: 'dispatch-helpers.js:89 (SQL NOT IN)', file: 'dispatch-helpers.js',
   extract: (s) => extractInlineArray(s, /t\.task_type\s+NOT\s+IN\s*\(([^)]*)\)/),
@@ -139,7 +143,7 @@ site({ label: 'dispatch-helpers.js:89 (SQL NOT IN)', file: 'dispatch-helpers.js'
   //   qiumi_task —— PR2 曾打上第二道闸（tick_dispatchable=false），PR3 接线后已放开，
   //                 它现在不在集合里、这半条剔除是空转的；留着是因为它终归是基线里不存在的
   //                 新类型，哪天第二道闸又被关上，审计不该跟着变红。
-  current: () => R.TICK_DISPATCH_EXCLUDED.filter((t) => t !== 'qiumi_task' && t !== 'project'), compare: 'set',
+  current: () => R.TICK_DISPATCH_EXCLUDED.filter((t) => t !== 'qiumi_task' && t !== 'project' && t !== 'janitor' && t !== 'app_server_run'), compare: 'set',
   note: '「project 在、qiumi_task 此刻不在 TICK_DISPATCH_EXCLUDED 里」由 lib/__tests__/task-type-registry.test.js 的专属严格相等断言钉住（PR3 起 qiumi_task 那条是 not.toContain），本审计只负责证明其余项相对基线零漂移' });
 site({ label: 'dispatcher.js:89 INITIATIVE_LOCK_TASK_TYPES', file: 'dispatcher.js',
   extract: (s) => extractNamedLiteral(s, 'INITIATIVE_LOCK_TASK_TYPES'),
@@ -236,7 +240,7 @@ site({ label: 'anchor-check.js:14 ANCHOR_EXEMPT_TASK_TYPES', file: 'anchor-check
   // 不免锚的话每条秋米任务都会在路由之前被锚点闸终态 failed。script_run 是链 bf5088a3
   // 棒3 新增（executor=script 一等任务类型，PR #5574/#5577）。两者都是基线里不存在的
   // 新类型——比较前剔除，其余项必须逐一等于基线原文。
-  current: () => R.ANCHOR_EXEMPT_TASK_TYPES.filter((t) => t !== 'qiumi_task' && t !== 'script_run'), compare: 'set',
+  current: () => R.ANCHOR_EXEMPT_TASK_TYPES.filter((t) => t !== 'qiumi_task' && t !== 'script_run' && t !== 'app_server_run'), compare: 'set',
   note: '本站点是补充六的直接起因——Task 1 fixture 原是抄简报（38项）不是抄本文件（51项），Task 4 才发现改用本文件补全；此处必须用本审计脚本精确核对，不再信任何转述。「qiumi_task/script_run ∈ ANCHOR_EXEMPT_TASK_TYPES」由 lib/__tests__/task-type-registry.test.js 的专属断言钉住，本审计只负责证明其余项相对基线零漂移' });
 site({ label: 'monitor-loop.js:37 HARNESS_TASK_TYPES', file: 'monitor-loop.js',
   extract: (s) => extractNamedLiteral(s, 'HARNESS_TASK_TYPES'), current: () => R.MONITOR_LONG_RUNNING_TASK_TYPES, compare: 'set' });
@@ -249,12 +253,12 @@ site({ label: 'recovery-loop.js:44 HARNESS_TASK_TYPES', file: 'recovery-loop.js'
 site({ label: 'task-cleanup.js:23 RECURRING_TASK_TYPES', file: 'task-cleanup.js',
   extract: (s) => extractNamedLiteral(s, 'RECURRING_TASK_TYPES'), current: () => R.RECURRING_TASK_TYPES, compare: 'set' });
 site({ label: 'task-cleanup.js:30 PROTECTED_TASK_TYPES', file: 'task-cleanup.js',
-  extract: (s) => extractNamedLiteral(s, 'PROTECTED_TASK_TYPES'), current: () => R.PROTECTED_TASK_TYPES, compare: 'set' });
+  extract: (s) => extractNamedLiteral(s, 'PROTECTED_TASK_TYPES'), current: () => R.PROTECTED_TASK_TYPES.filter((t) => t !== 'janitor' && t !== 'app_server_run'), compare: 'set' });
 site({ label: 'alertness/escalation.js:73 CANCEL_EXEMPT_TYPES', file: 'alertness/escalation.js',
-  extract: (s) => extractNamedLiteral(s, 'CANCEL_EXEMPT_TYPES'), current: () => R.CANCEL_EXEMPT_TYPES, compare: 'set' });
+  extract: (s) => extractNamedLiteral(s, 'CANCEL_EXEMPT_TYPES'), current: () => R.CANCEL_EXEMPT_TYPES.filter((t) => t !== 'janitor' && t !== 'app_server_run'), compare: 'set' });
 site({ label: 'alertness/escalation.js:364 buildPauseLowPriorityQuery（内联 SQL）', file: 'alertness/escalation.js',
   extract: (s) => extractInlineArray(s, /WHERE status IN \('queued', 'pending'\)[\s\S]*?task_type NOT IN \(([^)]*)\)/),
-  current: () => R.ESCALATION_EXEMPT_TASK_TYPES, compare: 'set' });
+  current: () => R.ESCALATION_EXEMPT_TASK_TYPES.filter((t) => t !== 'janitor' && t !== 'app_server_run'), compare: 'set' });
 site({ label: 'credential-expiry-checker.js:203 SKIP_TASK_TYPES', file: 'credential-expiry-checker.js',
   extract: (s) => extractNamedLiteral(s, 'SKIP_TASK_TYPES'), current: () => R.AUTH_RECOVERY_SKIP_TASK_TYPES, compare: 'set' });
 site({ label: 'nightly-orchestrator.js:91（内联 SQL）', file: 'nightly-orchestrator.js',
@@ -322,6 +326,8 @@ site({
     const rest = { ...EXECUTOR_KIND_FOR };
     delete rest.qiumi_task;
     delete rest.script_run;
+    delete rest.janitor;
+    delete rest.app_server_run;
     return rest;
   },
   compare: 'object',

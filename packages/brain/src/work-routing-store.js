@@ -1,3 +1,5 @@
+import {assertAppServerAuthority} from './app-server/task-authority.js';
+import { assertPreviewCacheAuthority } from './preview-cache-authority.js';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
@@ -185,6 +187,8 @@ export function stripReanchorEvidence(evidence) {
 }
 
 export async function createRoutedTask(db, request, repositoryFacts = null, options = {}) {
+  assertPreviewCacheAuthority(request, options);
+  assertAppServerAuthority(request, options);
   const ownsTransaction = options.transaction !== 'existing';
   const client = ownsTransaction && typeof db.connect === 'function'
     ? await db.connect()
@@ -193,7 +197,7 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
     if (ownsTransaction) await client.query('BEGIN');
     const facts = repositoryFacts ?? await loadRepositoryFacts(client);
     let routedRequest = request;
-    let decision = routeWork(routedRequest, facts);
+    let decision = routeWork(routedRequest, facts, options);
     await client.query(
       'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
       [`work-route:${request.source}:${request.source_id}:${decision.router_version}`],
@@ -229,7 +233,7 @@ export async function createRoutedTask(db, request, repositoryFacts = null, opti
           facts,
         );
       routedRequest = { ...routedRequest, ...evidence };
-      decision = routeWork(routedRequest, facts);
+      decision = routeWork(routedRequest, facts, options);
     }
     if (
       decision.work_kind === 'coding_mutation'

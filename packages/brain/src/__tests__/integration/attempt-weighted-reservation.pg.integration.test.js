@@ -1,3 +1,6 @@
+import { importLegacyPolicy } from '../../execution-directory/store.js';
+import { directory } from '../../execution-directory/directory.js';
+import { LEGACY_BINDINGS } from '../../execution-directory/legacy-policy.js';
 import { confirmExpiredParentCleanup } from '../../orchestrator/attempt-resource-cleanup.js';
 import { reserveExpiredAttemptReplacement } from '../../orchestrator/attempt-resource-replacement.js';
 import { reconcileExpiredKernelAttempt } from '../../harness-relay-watchdog.js';
@@ -27,8 +30,8 @@ async function input(role = 'generator', slots = 6, extras = {}) {
   const runId = randomUUID();
   await pool.query("INSERT INTO initiative_runs(id,orchestrator_version) VALUES($1,'v2')", [runId]);
   return { id: randomUUID(), runId, hop: 1, phase: 'generate', role,
-    provider: 'codex', machineId: machine, callbackSecretHash: 'a'.repeat(64),
-    bundle: { inputs: {} }, capacitySnapshot: snapshot(slots), ...extras };
+    provider: 'codex', accountId: 'team1', machineId: machine, callbackSecretHash: 'a'.repeat(64),
+    bundle: { inputs: {workspace_spec:{repo:"perfectuser21/cecelia"}} }, capacitySnapshot: snapshot(slots), ...extras };
 }
 const store = createAttemptStore(pool);
 beforeAll(async () => {
@@ -37,19 +40,24 @@ beforeAll(async () => {
   await admin.query(`CREATE SCHEMA ${schema}`);
   const client = await pool.connect();
   try {
-    await client.query(`CREATE TABLE schema_version(version TEXT PRIMARY KEY, description TEXT, applied_at TIMESTAMPTZ);
+    await client.query(`CREATE TABLE system_registry(id UUID PRIMARY KEY,type TEXT,name TEXT,status TEXT,metadata JSONB DEFAULT '{}');
+      CREATE TABLE tasks(id UUID PRIMARY KEY,status TEXT);
+      CREATE TABLE schema_version(version TEXT PRIMARY KEY, description TEXT, applied_at TIMESTAMPTZ);
       CREATE TABLE initiative_runs(id UUID PRIMARY KEY, phase TEXT DEFAULT 'planning', map_recovery_contract_id UUID,
         orchestrator_version TEXT DEFAULT 'v2');
       CREATE TABLE map_recovery_consumptions(contract_id UUID, attempt_id UUID);`);
     for (const name of ['357_harness_provider_attempts', '362_kernel_attempt_telemetry_reconcile',
       '363_kernel_fleet_execution_receipts', '364_kernel_local_container_naming',
-      '425_harness_attempt_cleanup_outbox']) {
+      '425_harness_attempt_cleanup_outbox', '501_capacity_reservations', '503_execution_directory']) {
       await client.query(readFileSync(new URL(`../../../migrations/${name}.sql`, import.meta.url), 'utf8'));
     }
     await client.query('ALTER TABLE harness_attempts ADD COLUMN failure_class TEXT');
   } finally { client.release(); }
+  for(const [,id,name] of LEGACY_BINDINGS) await pool.query("INSERT INTO system_registry(id,type,name,status) VALUES($1,'machine',$2,'active')",[id,name]);
+  await importLegacyPolicy({pool,env:{FLEET_WORKER_US_MAC_M4_URL:'http://mmv:5231'}});
 });
 beforeEach(async () => {
+  await directory.refresh({pool});
   await pool.query('TRUNCATE harness_attempt_cleanup_outbox, harness_attempts, initiative_runs, map_recovery_consumptions CASCADE');
 });
 afterAll(async () => {

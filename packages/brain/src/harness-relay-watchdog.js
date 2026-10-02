@@ -186,7 +186,7 @@ export async function reconcileExpiredKernelAttempt({
   collectSnapshot,
   replaceExpiredAttempt = reserveExpiredAttemptReplacement,
 }) {
-  const store = injectedAttemptStore ?? createAttemptStore(db);
+  const store = injectedAttemptStore ?? createAttemptStore(db, { executionDirectory: true });
   const originalParentAttempt = await store.getById(attemptId);
   if (
     !originalParentAttempt
@@ -246,7 +246,7 @@ export async function reconcileExpiredKernelAttempt({
     replacement = await replaceExpiredAttempt({
       pool: db, parentAttempt: originalParentAttempt, childInput,
       ...(collectSnapshot ? { collectSnapshot } : {}),
-      confirmCleanup: confirmCleanup ?? confirmExpiredParentCleanup,
+      confirmCleanup: confirmCleanup ?? (parent => confirmExpiredParentCleanup(parent, { pool: db })),
     });
   } catch (error) {
     return { ok: false, action: 'wait:capacity', failure_code: error?.message ?? 'replacement_cleanup_unconfirmed' };
@@ -581,7 +581,7 @@ export async function resumeKernelAttempt(attempt, {
       ? Promise.resolve({})
       : import('./spawn/detached.js'),
   ]);
-  const store = injectedAttemptStore ?? createAttemptStore(dbPool);
+  const store = injectedAttemptStore ?? createAttemptStore(dbPool, { executionDirectory: true });
   if (
     !originalParentAttempt?.id
     || !reclaimedParentAttempt?.id
@@ -638,6 +638,7 @@ export async function resumeKernelAttempt(attempt, {
       loadToken: injectedResolveGitHubToken ?? resolveGitHubToken,
     });
   const launcher = injectedLauncher ?? transportFactory({
+    pool: dbPool,
     env,
     attemptStore: store,
     spawnDetached: injectedSpawnDetached ?? detached.spawnDockerDetached,
@@ -891,7 +892,7 @@ export async function resumeKernelAttempt(attempt, {
 
 async function _recoverKernelRun(run, task, deps, out) {
   const dbPool = deps.pool || deps.dbPool || pool;
-  const attemptStore = deps.attemptStore ?? createAttemptStore(dbPool);
+  const attemptStore = deps.attemptStore ?? createAttemptStore(dbPool, { executionDirectory: true });
   const onRecoveryAlert = deps.onRecoveryAlert ?? (async (detail) => {
     const { raise } = await import('./alerting.js');
     const alertCode = detail.kind === 'failure_persistence'
@@ -945,6 +946,7 @@ async function _recoverKernelRun(run, task, deps, out) {
       reserveChildHop: (parentAttempt) => reserveResumeIntent(dbPool, parentAttempt),
       onRecoveryAlert,
       confirmCleanup: (parent) => confirmExpiredParentCleanup(parent, {
+        pool: dbPool,
         env: deps.env ?? process.env, launcher: deps.launcher,
         transportFactory: deps.transportFactory ?? createProductionExecutionTransport,
         fetchFn: deps.fetchFn, removeContainer: deps.removeContainer,

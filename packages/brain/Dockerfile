@@ -66,6 +66,7 @@ COPY --from=deps /repo/package-lock.json /repo/package-lock.json
 # 源代码
 COPY packages/brain/server.js ./
 COPY packages/brain/src/ ./src/
+COPY packages/brain/scripts/fleet-worker/ ./scripts/fleet-worker/
 # 封印闸 contract-test-paths-seal.js 与 CI 共用同一条 Test Contract 解析链（同一把尺子）。
 # 库 SSOT 在 repo 根 scripts/lib（engine devgate / pyramid-guard 同用），容器内镜像到
 # /app/scripts/ 供 src 内相对 require（缺失时 Brain 启动即死 fail-closed，smoke 把关）。
@@ -84,6 +85,7 @@ COPY packages/brain/package.json ./
 
 # 构建期启动导入守卫：新增 workspace-local runtime 依赖时，镜像必须当场失败而非部署后秒死。
 RUN node --input-type=module -e "await import('./src/lib/map-manifest-schema.js')"
+RUN node --input-type=module -e "const {legacyRecords}=await import('./src/execution-directory/legacy-policy.js'); legacyRecords({env:{}})"
 
 # Root user: 容器内需要访问 /var/run/docker.sock 调 dockerd spawn 兄弟容器。
 # macOS 宿主没有 docker group，gid 映射不稳定；direct root 最简单。

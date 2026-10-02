@@ -1,3 +1,4 @@
+import {seedExecutionDirectoryFixture} from './helpers/execution-directory-fixture.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../routes/infra-status.js', () => ({
@@ -23,6 +24,7 @@ describe('资源报告必须可信且不能通过重复读取延寿', () => {
   let fleet;
   let health;
   beforeEach(async () => {
+    await seedExecutionDirectoryFixture({machineIds:['us-mac-m4']});
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-01T08:00:00Z'));
     health = report();

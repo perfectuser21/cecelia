@@ -6,15 +6,24 @@ BRAIN_URL="${BRAIN_URL:-http://localhost:5221}"
 echo "[janitor-smoke] 开始验证..."
 
 echo "[janitor-smoke] 检查 GET /jobs..."
-RESP=$(curl -sf "${BRAIN_URL}/api/brain/janitor/jobs" 2>&1) || {
+RESP=$(curl -q -sf "${BRAIN_URL}/api/brain/janitor/jobs" 2>&1) || {
   echo "[janitor-smoke] FAIL: GET /jobs 无响应"
   exit 1
 }
 echo "$RESP" | grep -q '"jobs"' || { echo "[janitor-smoke] FAIL: 返回缺少 jobs 字段"; exit 1; }
 
-# docker-prune 已取消——部署自杀竞态 Issue 97cf5a41，2026-07-08。
-# REGISTRY 现为空，jobs 应为空数组，不再触发 docker-prune run。
-echo "$RESP" | grep -q 'docker-prune' && { echo "[janitor-smoke] FAIL: docker-prune 应已取消，不应出现在 jobs 列表"; exit 1; }
-echo "$RESP" | grep -q '"jobs":\[\]' || { echo "[janitor-smoke] FAIL: jobs 应为空数组（REGISTRY 已清空）"; exit 1; }
+# 只读验证固定白名单；旧docker-prune不能恢复，新增动作仍由显式配置启用。
+printf '%s' "$RESP" | node --input-type=module -e '
+let body="";
+for await (const chunk of process.stdin) body+=chunk;
+const {jobs}=JSON.parse(body);
+const expected=["preview-owned-npm-cache-expiry-v1"];
+if (!Array.isArray(jobs) || JSON.stringify(jobs.map(j=>j.id).sort())!==JSON.stringify(expected)) {
+  console.error("[janitor-smoke] FAIL: jobs 与固定白名单不符"); process.exit(1);
+}
+if (jobs.some(j=>typeof j.enabled!=="boolean" || typeof j.name!=="string")) {
+  console.error("[janitor-smoke] FAIL: jobs 状态结构无效"); process.exit(1);
+}
+'
 
 echo "[janitor-smoke] PASS"
