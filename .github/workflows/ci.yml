@@ -1221,8 +1221,8 @@ jobs:
             echo "🔧 DoD 含 apps/dashboard 前端命令，安装全 workspace 依赖（根 npm ci）"
             npm ci
           else
-            echo "DoD 仅后端命令，安装 brain 依赖"
-            cd packages/brain && npm ci
+            echo "DoD 后端命令，安装 Brain 与根锁定工具依赖"
+            npm ci --workspace=packages/brain --include-workspace-root
           fi
       - name: Setup /workspace symlink + playground deps
         if: steps.detect.outputs.has_dynamic == 'true'

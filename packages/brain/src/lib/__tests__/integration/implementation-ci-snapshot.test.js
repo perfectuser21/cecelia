@@ -1,3 +1,4 @@
+import {randomUUID,createHash} from 'node:crypto';
 import { afterEach,beforeEach,expect,it } from 'vitest';
 import { implementationImpactDatabase,IMPACT_REPO } from '../../../__tests__/fixtures/implementation-impact-db.js';
 const { exportImplementationSnapshot,refreshImplementationSnapshot,validateImplementationSnapshot,implementationGitHubUrl } = await import('../../implementation-ci-snapshot.js').catch(()=>({}));
@@ -27,7 +28,15 @@ it('真实缺scope、规范绑定、固定版本分别给准确缺口，不猜re
   fixture=await implementationImpactDatabase();const {db}=fixture;
   const missing=await exportImplementationSnapshot(db,{...query,scope:'zenithjoy'});
   expect(missing.status).toBe('unknown');expect(missing.gaps).toContainEqual(expect.objectContaining({code:'scope_repository_missing'}));
-  await db.query("UPDATE map_manifest_versions SET manifest=jsonb_set(manifest,'{capabilities,0,brain_binding}','null'::jsonb)");
+  const previous=(await db.query("SELECT * FROM map_manifest_versions WHERE scope_key='phones' AND status='active'")).rows[0];
+  const manifest=structuredClone(previous.manifest),id=randomUUID(),decision=randomUUID();
+  manifest.source_decision_id=decision;manifest.capabilities[0].brain_binding=null;
+  const digest=createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
+  await db.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','map','缺绑定测试','active')",[decision]);
+  await db.query("UPDATE map_manifest_versions SET status='superseded' WHERE scope_key='phones'");
+  await db.query("INSERT INTO map_manifest_versions(id,scope_key,version,source_decision_id,manifest,digest,status,activated_at) VALUES($1,'phones',$2,$3,$4,$5,'active',NOW())",[id,previous.version+1,decision,manifest,digest]);
+  await db.query("UPDATE map_projection_runs SET status='superseded',fact_revisions=$1 WHERE scope_key='phones'",[{'phone-source':'b'.repeat(40)}]);
+  await db.query("INSERT INTO map_projection_runs(id,scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES($1,'phones',$2,$3,$4,'binding-v2',$3,'active',NOW())",[randomUUID(),id,digest,{'phone-source':query.revision}]);
   const unbound=await exportImplementationSnapshot(db,query);
   expect(unbound.gaps).toContainEqual(expect.objectContaining({code:'capability_mapping_missing',node_key:'F0'}));
   const revision=await exportImplementationSnapshot(db,{...query,revision:'c'.repeat(40)});

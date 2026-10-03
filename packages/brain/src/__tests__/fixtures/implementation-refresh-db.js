@@ -1,4 +1,8 @@
 import pg from 'pg';
+import {randomUUID} from 'node:crypto';
+import {migrationTable,migrationSlice} from './minimum-definition-schema.js';
+import {submitMapManifest,activateMapManifest} from '../../lib/map-manifest-store.js';
+import {runProjection} from '../../map/projector.js';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { implementationImpactDatabase,IMPACT_REPO } from './implementation-impact-db.js';
 import { buildPilotManifest } from '../../../../../scripts/map/register-capability-pilots.mjs';
@@ -12,10 +16,15 @@ export async function implementationRefreshDatabase({manifestRevision='a'.repeat
  try{
   const schema=(await f.db.query('SELECT current_schema() name')).rows[0].name;
   pool=new pg.Pool({...DB_DEFAULTS,max:4,options:`-c search_path=${schema}`});
-  for(const table of ['decisions','map_projection_edges','fact_snapshot_headers','graph_edges','journey_features','test_registry','api_registry','db_schema_registry','journey_assertion_receipts'])await pool.query(`CREATE TABLE ${table}(LIKE public.${table} INCLUDING ALL)`);
-  const row=(await pool.query('SELECT * FROM map_manifest_versions')).rows[0];
-  await pool.query('INSERT INTO decisions(id) VALUES($1)',[row.source_decision_id]);
-  await pool.query('UPDATE map_manifest_versions SET manifest=$1',[buildPilotManifest('phones',{revision:manifestRevision,decision:row.source_decision_id})]);
+  await pool.query(migrationTable('000_base_schema.sql','pending_actions'));
+  await pool.query(migrationTable('334_golden_paths.sql','golden_paths'));
+  await pool.query(migrationSlice('372_golden_path_contract_versions.sql','CREATE TABLE IF NOT EXISTS golden_path_contract_versions','INSERT INTO schema_version'));
+  await pool.query(migrationSlice('374_gp_assertion_receipts.sql','CREATE TABLE IF NOT EXISTS journey_assertion_receipts','INSERT INTO schema_version'));
+  const decision=randomUUID();
+  await pool.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','map','并发契约设置','active')",[decision]);
+  const manifest=buildPilotManifest('phones',{revision:manifestRevision,decision});
+  const draft=await submitMapManifest(pool,manifest);
+  await activateMapManifest(pool,draft.manifest_version.id,{projector:({client,manifestVersion:m})=>runProjection({client,scopeKey:m.scope_key,manifestId:m.id,manifestDigest:m.digest,manifest:m.manifest})});
   const revision='b'.repeat(40),query={scope:'zenithjoy',repo:IMPACT_REPO,revision};
   f.contracts.docs.keyword_acquisition.activities[0].implementation_bindings[0].revision=revision;f.contracts.refresh();
   let readers=0,releaseReaders,arrived,mainRevision=revision,readTransactions=0,afterRead,onMain,beforeCommitSeen=false;

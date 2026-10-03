@@ -67,7 +67,8 @@ it('新manifest已推进但图仍旧SHA时不污染base历史；混合来源不�
   expect(context?.manifest_version_id).toBe(original.map.manifest.id);expect(gaps).toEqual([]);
   const snapshot=await exportImplementationSnapshot(db,query);
   expect(snapshot.status,JSON.stringify(snapshot.gaps)).toBe('verified');expect(snapshot.map.manifest.id).toBe(original.map.manifest.id);
-  await db.query("UPDATE map_manifest_versions SET manifest=jsonb_set(manifest,'{value_streams,0,brain_binding,source_revision}',to_jsonb($1::text)) WHERE id=$2",['b'.repeat(40),original.map.manifest.id]);
+  await db.query("UPDATE map_projection_runs SET fact_revisions=$1 WHERE scope_key='phones'",[{'phone-source':'b'.repeat(40)}]);
+  await fixture.map(revision,fixture.capabilities,query.scope,'phone-source',query.repo,{capabilityRevision:'b'.repeat(40)});
   const mixed=[];expect(await loadImplementationRevisionContext(db,query,revision,'phone-source',null,mixed)).toBeNull();expect(mixed.length).toBeGreaterThan(0);
   expect((await exportImplementationSnapshot(db,query)).status).toBe('unknown');
 });
