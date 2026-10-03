@@ -962,6 +962,7 @@ jobs:
             --config vitest.integration.config.js \
             src/__tests__/integration/ \
             src/__tests__/integration/account-quota-ledger.pg.integration.test.js \
+            src/routes/__tests__/integration/implementation-ci.test.js \
             src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js \
             src/__tests__/commander-watchdog.pg.integration.test.js \
             src/__tests__/integration/gpu-http-intake.pg.integration.test.js \

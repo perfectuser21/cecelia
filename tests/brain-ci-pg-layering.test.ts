@@ -10,6 +10,7 @@ import { REPO_ROOT } from './helpers/repo-root.js';
 
 const POSTGRES_TESTS = [
   'src/__tests__/integration/account-quota-ledger.pg.integration.test.js',
+  'src/routes/__tests__/integration/implementation-ci.test.js',
   'src/__tests__/integration/escalation-cancel-pending-sql.integration.test.js',
   'src/__tests__/commander-watchdog.pg.integration.test.js',
   'src/__tests__/integration/script-executor-chain.pg.integration.test.js',
