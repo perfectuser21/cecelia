@@ -26,6 +26,7 @@ import { resolveMachineId, resolvePrimaryWorkerId, sshTargetFor } from './machin
 import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { sendBark as defaultBark } from './notifier.js';
 import { deriveRunTag, workflowRunLabel } from './workflow-run-lost-deadline.js';
+import { buildCommanderHeartbeat, runRoleHandover } from './commander-role-handover.js';
 
 export const DEFAULT_HEARTBEAT_STALE_MS = 15 * 60 * 1000;
 export const MAX_RELAUNCH = 3;
@@ -141,14 +142,14 @@ export async function recordCommanderHeartbeat(pool, body = {}, deps = {}) {
 
 // ── 看门狗 ────────────────────────────────────────────────────────────────
 /** 接班 escort 的 `openclaw cron add` 远端串（消息与 wf-launch.sh 同骨架，加接班条款与 Brain 单号）。 */
-export function buildEscortRelaunchRemote({ host, tag, serial, profile, taskId, relaunchCount, cap }) {
+export function buildEscortRelaunchRemote({ host, tag, serial, profile, taskId, relaunchCount, cap }, deps = {}) {
   const name = `escort-${host}-${tag}`;
   const gateway = gatewayTarget();
   if (!gateway) throw new Error('gateway_not_dispatchable');
   const gatewayExec = `ssh -o BatchMode=yes -o ConnectTimeout=10 ${gateway}`;
   const heartbeatUrl = `${(process.env.COMMANDER_BRAIN_URL || 'http://localhost:5221').replace(/\/$/, '')}/api/brain/commander-heartbeat`;
-  const heartbeat = `curl -fsS --max-time 8 -X POST ${sq(heartbeatUrl)} `
-    + `-H ${sq('Content-Type: application/json')} -d ${sq(JSON.stringify({ tag, host, serial: serial ?? '', escort_name: name }))}`;
+  const heartbeat = buildCommanderHeartbeat({ taskId, tag, host, serial, profile, cap, escortName: name,
+    gateway, heartbeatUrl }, deps.buildHeartbeatCommand);
   const skillRoot = process.env.COMMANDER_SKILL_ROOT || '/Users/administrator/openclaw-root/workspaces-root/clawd-work-commander/skills';
   const skill = typeof cap === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(cap)
     ? `先执行 ${gatewayExec} ${sq(`cat ${sq(`${skillRoot}/wf-${cap}/SKILL.md`)}`)} 读取相同workflow专属skill；核对commander_capability=${cap}。读不到或不匹配只保留现场和缺证据，不套用别的workflow。`
@@ -161,7 +162,7 @@ export function buildEscortRelaunchRemote({ host, tag, serial, profile, taskId, 
     + `本轮上下文: ${cap ? `cap=${cap} ` : ''}TAG=${tag} 机器=${host} serial=${serial ?? '未知'} profile=${profile ?? '未知'} `
     + `日志=/Users/administrator/.openclaw/m4-logs/${host}-live.log escort名=${name} Brain单=${taskId}。`
     + `仅运行期每轮末尾必须发心跳: ${gatewayExec} ${sq(heartbeat)}`;
-  const delivery = process.env.COMMANDER_ESCORT_DELIVERY === 'none' ? '--no-deliver'
+  const delivery = deps.delivery === 'none' || process.env.COMMANDER_ESCORT_DELIVERY === 'none' ? '--no-deliver'
     : `--announce --channel feishu --to ${sq(ESCORT_FEISHU_TO)} --account main --best-effort-deliver`;
   return `openclaw cron add --timeout 90000 --name ${sq(name)} --agent work-commander --session ${sq(`session:${name}`)} `
     + `--every 10m ${delivery} --message ${sq(msg)}`;
@@ -216,11 +217,28 @@ export function findEscortByName(listJson, name) {
   } catch { return null; }
 }
 
-async function relaunchEscort(pool, task, ctx, { execFileFn, now, bark }) {
+async function relaunchEscort(pool, task, ctx, { execFileFn, now, bark, roleHandover, buildHeartbeatCommand }) {
   const gateway = gatewayTarget();
   if (!gateway) return { ok: false, error: 'gateway_not_dispatchable' };
   const sshOpts = { timeout: SSH_TIMEOUT_MS, encoding: 'utf8', maxBuffer: 1024 * 1024 };
   const name = `escort-${ctx.host}-${ctx.tag}`;
+  if (roleHandover !== undefined) {
+    if (typeof roleHandover !== 'function') return { ok: false, error: 'invalid_role_handover' };
+    try {
+      const remote = command => sshRun(execFileFn, [...SSH_BASE_ARGS, gateway, command], sshOpts);
+      return await runRoleHandover(task, ctx, {
+        roleHandover, now, maxAdopt: MAX_ADOPT,
+        list: () => remote('openclaw cron list --all --json'),
+        remove: id => remote(`openclaw cron rm ${sq(id)}`),
+        add: () => remote(buildEscortRelaunchRemote({ ...ctx, taskId: task.id,
+          relaunchCount: ctx.relaunchCount + 1 }, { buildHeartbeatCommand, delivery: 'none' })),
+        activate: id => remote(`openclaw cron run ${sq(id)} --timeout 90000`),
+        patch: patch => mergeTaskPayload(pool, task.id, patch),
+        event: (type, evidence) => recordTaskEventSafe(pool, task.id, type, evidence),
+      });
+    } catch (error) { return { ok: false, error: error.message }; }
+  }
+
   // 与 wf-run.sh 自己的看门狗（#2035，按 id 判 absent 才重拉）共存：同名 escort 仍在表就收养其 id、不再加一个
   // （两个陪跑互相串线）；连续收养 2 次心跳仍不来 = 那个 escort 是死的，转入 rm+add。
   const adoptCount = positiveInt(task.payload?.commander_adopt_count, 0);
@@ -253,7 +271,7 @@ async function relaunchEscort(pool, task, ctx, { execFileFn, now, bark }) {
   let out = '';
   try {
     out = await sshRun(execFileFn, [...SSH_BASE_ARGS, gateway,
-      buildEscortRelaunchRemote({ ...ctx, taskId: task.id, relaunchCount: count })], sshOpts);
+      buildEscortRelaunchRemote({ ...ctx, taskId: task.id, relaunchCount: count }, { buildHeartbeatCommand })], sshOpts);
   } catch (err) {
     return { ok: false, error: `ssh_add_failed: ${String(err.stderr || err.message).slice(0, 200)}` };
   }
@@ -331,15 +349,15 @@ export async function runCommanderWatchdog(pool, deps = {}) {
       const ctx = await resolveRelaunchContext(pool, task);
       if (!ctx.tag || !ctx.host) {
         out.skipped += 1;
-        await mergeTaskPayload(pool, task.id, { commander_relaunched_at: new Date(now).toISOString() });
+        if (deps.roleHandover === undefined) await mergeTaskPayload(pool, task.id, { commander_relaunched_at: new Date(now).toISOString() });
         await recordTaskEventSafe(pool, task.id, 'commander_relaunch_skipped', { reason: !ctx.tag ? 'no_tag' : 'no_host', serial: ctx.serial });
         continue;
       }
-      const r = await relaunchEscort(pool, task, ctx, { execFileFn, now, bark });
+      const r = await relaunchEscort(pool, task, ctx, { execFileFn, now, bark, roleHandover: deps.roleHandover, buildHeartbeatCommand: deps.buildHeartbeatCommand });
       if (r.ok && r.adopted) { out.adopted += 1; continue; }
       if (r.ok) { out.relaunched += 1; if (r.barked) out.barked += 1; continue; }
       out.failed += 1;
-      await mergeTaskPayload(pool, task.id, { commander_relaunched_at: new Date(now).toISOString() });
+      if (deps.roleHandover === undefined) await mergeTaskPayload(pool, task.id, { commander_relaunched_at: new Date(now).toISOString() });
       await recordTaskEventSafe(pool, task.id, 'commander_relaunch_failed', { error: r.error, tag: ctx.tag, host: ctx.host });
       console.warn(`[cmdr-watchdog] ${task.id} escort 接班失败: ${r.error}`);
     } catch (err) {

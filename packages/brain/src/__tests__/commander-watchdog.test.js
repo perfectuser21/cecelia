@@ -22,21 +22,17 @@ import {
 
 const GATEWAY = sshTargetFor(resolvePrimaryWorkerId());
 
-it('接班消息先经网关 SSH 读 SOP；心跳 JSON 经 shell 原样到达 curl', async () => {
-  const remote = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmd10020630', serial: 'S1', profile: 'legacy', taskId: 'run1', relaunchCount: 1 });
-  // 实际 shell 解码 cron --message，不靠正则假设引号正确。
+it('接班消息先经网关 SSH 读 SOP；默认静态Node心跳的完整context独立argv运输', () => {
+  const remote = buildEscortRelaunchRemote({ host: 'xian-m4', tag: 'cmd10020630', serial: 'S1', profile: 'legacy', cap: 'keyword_acquisition', taskId: 'run1', relaunchCount: 1 });
   const args = JSON.parse(execFileSync('/bin/sh', ['-c', `openclaw(){ python3 -c 'import sys,json;print(json.dumps(sys.argv[1:]))' "$@"; }; ${remote}`], { encoding: 'utf8' }));
   const message = args[args.indexOf('--message') + 1];
   expect(message).toContain(`ssh -o BatchMode=yes -o ConnectTimeout=10 ${GATEWAY}`);
   const heartbeat = message.match(/每轮末尾必须发心跳: (.*)$/)?.[1];
   expect(heartbeat).toBeTruthy();
-  const output = execFileSync('/bin/sh', ['-c', `
-    curl(){ python3 -c 'import sys,json;print(json.dumps(sys.argv[1:]))' "$@"; }
-    ssh(){ while [ "$1" = "-o" ]; do shift 2; done; shift; eval "$1"; }
-    ${heartbeat}
-  `], { encoding: 'utf8' });
-  const curlArgs = JSON.parse(output);
-  expect(JSON.parse(curlArgs[curlArgs.indexOf('-d') + 1])).toMatchObject({ tag: 'cmd10020630', host: 'xian-m4', serial: 'S1' });
+  const sshArgs = JSON.parse(execFileSync('/bin/sh', ['-c', `ssh(){ python3 -c 'import sys,json;print(json.dumps(sys.argv[1:]))' "$@"; }; ${heartbeat}`], { encoding: 'utf8' }));
+  const nodeArgs = JSON.parse(execFileSync('python3', ['-c', 'import json,shlex,sys;print(json.dumps(shlex.split(sys.argv[1])))', sshArgs.at(-1)], { encoding: 'utf8' }));
+  expect(nodeArgs[1]).toBe('-e');
+  expect(JSON.parse(nodeArgs[3])).toMatchObject({tag:'cmd10020630',host:'xian-m4',serial:'S1',profile:'legacy',cap:'keyword_acquisition',escortName:'escort-xian-m4-cmd10020630'});
 });
 
 function makePool(handlers) {
@@ -179,8 +175,8 @@ describe('runCommanderWatchdog', () => {
     ]);
     const execFileFn = vi.fn((cmd, args, opts, callback) => {
       const remote = args.at(-1);
-      if (remote.includes('cron run')) return callback(new Error('queue unavailable'), '', '');
-      callback(null, remote.includes('cron list') ? '{"jobs":[]}' : '{"id":"esc-relaunched-1111"}', '');
+      if (remote.startsWith('openclaw cron run ')) return callback(new Error('queue unavailable'), '', '');
+      callback(null, remote.startsWith('openclaw cron list ') ? '{"jobs":[]}' : '{"id":"esc-relaunched-1111"}', '');
     });
     const bark = vi.fn();
     const out = await runCommanderWatchdog(pool, { execFileFn, bark, gateMs: 0 });
