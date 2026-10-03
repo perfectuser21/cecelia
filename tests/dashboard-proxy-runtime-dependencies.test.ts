@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { resolve, dirname, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
@@ -37,8 +37,9 @@ function runtimePaths(lock: Lock, start: string) {
 }
 
 describe('Dashboard production proxy dependency boundary', () => {
-  it('both native entry paths call the original literal slash matcher before preparation', () => {
-    const source = ts.createSourceFile('proxy-adapter.ts', readFileSync(resolve(root, 'apps/api/src/dashboard/proxy-adapter.ts'), 'utf8'), ts.ScriptTarget.Latest, true);
+  it('both native entry paths call the original literal slash matcher before preparation', async () => {
+    const content = await readFile(resolve(root, 'apps/api/src/dashboard/proxy-adapter.ts'), 'utf8');
+    const source = ts.createSourceFile('proxy-adapter.ts', content, ts.ScriptTarget.Latest, true);
     const calls: ts.CallExpression[] = [];
     const visit = (node: ts.Node) => { if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'defaultPathMatches') calls.push(node); ts.forEachChild(node, visit); };
     visit(source);
@@ -46,9 +47,10 @@ describe('Dashboard production proxy dependency boundary', () => {
     const imports = source.statements.filter(ts.isImportDeclaration).map(node => (node.moduleSpecifier as ts.StringLiteral).text);
     expect(imports).toContain('node:url');
   });
-  it('production entry and adapter do not import the dev-only compatibility library', () => {
+  it('production entry and adapter do not import the dev-only compatibility library', async () => {
     for (const file of ['apps/api/src/dashboard/server.ts', 'apps/api/src/dashboard/proxy-adapter.ts']) {
-      const source = ts.createSourceFile(file, readFileSync(resolve(root, file), 'utf8'), ts.ScriptTarget.Latest, true);
+      const content = await readFile(resolve(root, file), 'utf8');
+      const source = ts.createSourceFile(file, content, ts.ScriptTarget.Latest, true);
       const imports = source.statements.filter(ts.isImportDeclaration).map(node => (node.moduleSpecifier as ts.StringLiteral).text);
       expect(imports).not.toContain('http-proxy-middleware');
       expect(imports).not.toContain('hpm-docker-baseline');
@@ -56,8 +58,9 @@ describe('Dashboard production proxy dependency boundary', () => {
     }
   });
   for (const [file, start] of [['package-lock.json', 'apps/api'], ['apps/api/package-lock.json', '']] as const) {
-    it(`${file} excludes vulnerable glob traversal from the real API runtime graph`, () => {
-      const lock: Lock = JSON.parse(readFileSync(resolve(root, file), 'utf8'));
+    it(`${file} excludes vulnerable glob traversal from the real API runtime graph`, async () => {
+      const content = await readFile(resolve(root, file), 'utf8');
+      const lock: Lock = JSON.parse(content);
       const paths = runtimePaths(lock, start);
       const forbidden = [...paths].filter(([key]) => ['http-proxy-middleware', 'micromatch', 'braces'].includes(lock.packages[key].name || key.split('node_modules/').at(-1)!));
       expect(forbidden.map(([, chain]) => chain.join(' → '))).toEqual([]);
