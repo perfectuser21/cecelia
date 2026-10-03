@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { execFileSync, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createServer } from 'node:http';
+import { runRoleHandover } from '../commander-role-handover.js';
 import { runCommanderWatchdog, buildEscortRelaunchRemote } from '../commander-watchdog.js';
 const OLD='11111111-1111-4111-8111-111111111111',NEW='22222222-2222-4222-8222-222222222222';
 const context={tag:'cmdfixture',host:'xian-m4',serial:'S1',profile:'legacy',cap:'keyword_acquisition'};
@@ -35,7 +36,7 @@ function fixture({listed=[],prepareError=false,commitFailures=0,patchFailures=0,
   if(command.includes('cron add')){adds++;actualJobs=[{id:NEW,name:NAME}];if(unknownAdd)return cb(Error('transport response lost'),'','');return cb(null,JSON.stringify({id:NEW}),'');}
   cb(null,'{}','');
  });
- const tick=()=>runCommanderWatchdog(pool,{execFileFn,roleHandover,bark:vi.fn(),gateMs:0,now:Date.parse('2026-10-03T00:00:00Z')});
+ const tick=(extra={})=>runCommanderWatchdog(pool,{execFileFn,roleHandover,bark:vi.fn(),gateMs:0,now:Date.parse('2026-10-03T00:00:00Z'),...extra});
  return {tick,task,pool,calls,patches,phases,roleHandover,failNextCommit:()=>{commitFailures=1;},get adds(){return adds;}};
 }
 describe('persistent optional role handover',()=>{
@@ -135,4 +136,31 @@ it('injected heartbeat only accepts a single absolute Python argv without compou
  const ctx={...context,taskId:'fixture-run',relaunchCount:1};
  expect(buildEscortRelaunchRemote(ctx,{buildHeartbeatCommand:()=>"/usr/bin/python3 '/fixture/heartbeat.py' 'tick'"})).toContain('/fixture/heartbeat.py');
  for(const command of ['/usr/bin/python3 /fixture/heartbeat.py; curl bad','/usr/bin/python3 /fixture/heartbeat.py && rm x','echo x','/usr/bin/python3 /fixture/heartbeat.py $(id)',"/usr/bin/python3 -c 'print(1)'",'/usr/bin/python3 -m module'])expect(()=>buildEscortRelaunchRemote(ctx,{buildHeartbeatCommand:()=>command})).toThrow();
+});
+
+
+describe('explicit durable stale-existing role policy',()=>{
+ it('opt-in replaces existing role without fabricating adoption count',async()=>{
+  const f=fixture({listed:[{id:OLD,name:NAME,enabled:false}]});f.task.payload.commander_adopt_count=0;expect((await f.tick({existingRolePolicy:'replace-stale-existing'})).relaunched).toBe(1);expect(f.adds).toBe(1);expect(f.calls.some(s=>s.includes('cron rm'))).toBe(true);expect(f.task.payload.escort_id).toBe(NEW);expect(f.task.payload.commander_adopt_count).toBe(0);expect(f.roleHandover.mock.calls.every(([request])=>request.existingRolePolicy==='replace-stale-existing')).toBe(true);
+ });
+ it.each([null,'unknown',{},1])('watchdog rejects invalid policy %j before IO',async policy=>{
+  const f=fixture();await expect(f.tick({existingRolePolicy:policy})).rejects.toThrow('invalid_existing_role_policy');expect(f.pool.query).not.toHaveBeenCalled();expect(f.roleHandover).not.toHaveBeenCalled();expect(f.calls).toEqual([]);
+ });
+ it('watchdog rejects missing durable hook before gate and SQL',async()=>{
+  const f=fixture();await expect(f.tick({existingRolePolicy:'replace-stale-existing',roleHandover:undefined})).rejects.toThrow('existing_role_policy_requires_handover');expect(f.pool.query).not.toHaveBeenCalled();expect(f.calls).toEqual([]);
+ });
+ it.each([null,'unknown',{},1])('direct handover rejects invalid policy %j before recovery',async policy=>{
+  const hook=vi.fn(),list=vi.fn();await expect(runRoleHandover({id:'fixture-run'},context,{existingRolePolicy:policy,roleHandover:hook,list})).rejects.toThrow('invalid_existing_role_policy');expect(hook).not.toHaveBeenCalled();expect(list).not.toHaveBeenCalled();
+ });
+ it('direct opt-in without durable hook rejects before list',async()=>{
+  const list=vi.fn();await expect(runRoleHandover({id:'fixture-run'},context,{existingRolePolicy:'replace-stale-existing',list})).rejects.toThrow('existing_role_policy_requires_handover');expect(list).not.toHaveBeenCalled();
+ });
+ it('opt-in never discards pending recovered operation',async()=>{
+  const f=fixture({recovery:{state:'prepared',operationId:'old-op',mode:'adopt',previousEscortId:OLD}});expect((await f.tick({existingRolePolicy:'replace-stale-existing'})).failed).toBe(1);expect(f.phases).toEqual(['recover']);expect(f.adds).toBe(0);expect(f.calls).toEqual([]);
+ });
+});
+
+
+it('invalid opt-in validation does not advance the watchdog memory gate',async()=>{
+ const f=fixture(),now=Date.now()+3600000;await expect(f.tick({existingRolePolicy:'invalid',now,gateMs:300000})).rejects.toThrow('invalid_existing_role_policy');expect(f.pool.query).not.toHaveBeenCalled();expect((await f.tick({now,gateMs:300000})).scanned).toBe(1);
 });

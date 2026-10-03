@@ -5,6 +5,12 @@ const CONTEXT_KEYS = ['tag', 'host', 'serial', 'profile', 'cap', 'escortName'];
 const nonempty = value => typeof value === 'string' && value.trim().length > 0;
 const quote = value => `'${String(value).replace(/'/g, `'\\''`)}'`;
 
+export function validateExistingRolePolicy(policy, roleHandover) {
+  if (policy === undefined) return;
+  if (policy !== 'replace-stale-existing') throw new Error('invalid_existing_role_policy');
+  if (typeof roleHandover !== 'function') throw new Error('existing_role_policy_requires_handover');
+}
+
 // Only this constant is executable source. All deployment/run identity enters as argv data.
 const HEARTBEAT_PROGRAM = `
 const {execFileSync}=require('node:child_process');
@@ -61,9 +67,11 @@ function validateCommitted(result, request) {
  * A recovered prepared/unknown operation is retained until the adapter supplies an independently observed candidate.
  */
 export async function runRoleHandover(task, ctx, io) {
+  validateExistingRolePolicy(io.existingRolePolicy, io.roleHandover);
   const context = { tag: ctx.tag, host: ctx.host, serial: ctx.serial, profile: ctx.profile, cap: ctx.cap,
     escortName: `escort-${ctx.host}-${ctx.tag}` };
-  const request = { taskId: task.id, context, previousEscortId: ctx.escortId ?? null };
+  const request = { taskId: task.id, context, previousEscortId: ctx.escortId ?? null,
+    ...(io.existingRolePolicy === undefined ? {} : { existingRolePolicy: io.existingRolePolicy }) };
   const hook = async (phase, fields = {}) => io.roleHandover({ ...request, ...fields, phase });
   let operation = await hook('recover');
   if (CONTEXT_KEYS.some(key => !SAFE.test(context[key] ?? ''))) throw new Error('incomplete_handover_context');
@@ -73,7 +81,8 @@ export async function runRoleHandover(task, ctx, io) {
     if (!Array.isArray(parsed.jobs)) throw new Error('unreadable_handover_list');
     const hits = parsed.jobs.filter(job => job?.name === context.escortName);
     if (hits.length > 1 || (hits.length === 1 && !UUID.test(hits[0].id))) throw new Error('ambiguous_handover_list');
-    const adopt = hits.length === 1 && (Number(task.payload?.commander_adopt_count) || 0) < io.maxAdopt;
+    const maxAdopt = io.existingRolePolicy === 'replace-stale-existing' ? 0 : io.maxAdopt;
+    const adopt = hits.length === 1 && (Number(task.payload?.commander_adopt_count) || 0) < maxAdopt;
     request.mode = adopt ? 'adopt' : 'replace';
     operation = await hook('prepare');
     if (operation?.state !== 'prepared' || !nonempty(operation.operationId)) throw new Error('handover_prepare_refused');

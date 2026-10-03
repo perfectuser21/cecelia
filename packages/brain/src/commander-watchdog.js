@@ -26,7 +26,7 @@ import { resolveMachineId, resolvePrimaryWorkerId, sshTargetFor } from './machin
 import { recordTaskEventSafe } from './lib/task-event-log.js';
 import { sendBark as defaultBark } from './notifier.js';
 import { deriveRunTag, workflowRunLabel } from './workflow-run-lost-deadline.js';
-import { buildCommanderHeartbeat, runRoleHandover } from './commander-role-handover.js';
+import { buildCommanderHeartbeat, runRoleHandover, validateExistingRolePolicy } from './commander-role-handover.js';
 
 export const DEFAULT_HEARTBEAT_STALE_MS = 15 * 60 * 1000;
 export const MAX_RELAUNCH = 3;
@@ -217,7 +217,7 @@ export function findEscortByName(listJson, name) {
   } catch { return null; }
 }
 
-async function relaunchEscort(pool, task, ctx, { execFileFn, now, bark, roleHandover, buildHeartbeatCommand }) {
+async function relaunchEscort(pool, task, ctx, { execFileFn, now, bark, roleHandover, buildHeartbeatCommand, existingRolePolicy }) {
   const gateway = gatewayTarget();
   if (!gateway) return { ok: false, error: 'gateway_not_dispatchable' };
   const sshOpts = { timeout: SSH_TIMEOUT_MS, encoding: 'utf8', maxBuffer: 1024 * 1024 };
@@ -227,7 +227,7 @@ async function relaunchEscort(pool, task, ctx, { execFileFn, now, bark, roleHand
     try {
       const remote = command => sshRun(execFileFn, [...SSH_BASE_ARGS, gateway, command], sshOpts);
       return await runRoleHandover(task, ctx, {
-        roleHandover, now, maxAdopt: MAX_ADOPT,
+        roleHandover, now, maxAdopt: MAX_ADOPT, existingRolePolicy,
         list: () => remote('openclaw cron list --all --json'),
         remove: id => remote(`openclaw cron rm ${sq(id)}`),
         add: () => remote(buildEscortRelaunchRemote({ ...ctx, taskId: task.id,
@@ -316,6 +316,7 @@ async function relaunchEscort(pool, task, ctx, { execFileFn, now, bark, roleHand
  * @returns {Promise<{scanned:number, relaunched:number, barked:number, failed:number, skipped:number}>}
  */
 export async function runCommanderWatchdog(pool, deps = {}) {
+  validateExistingRolePolicy(deps.existingRolePolicy, deps.roleHandover);
   const now = deps.now ?? Date.now();
   const gateMs = deps.gateMs ?? DEFAULT_GATE_MS;
   if (gateMs > 0 && now - lastWatchdogAt < gateMs) return { scanned: 0, relaunched: 0, barked: 0, failed: 0, skipped: 0, skipped_reason: 'interval_gate' };
@@ -353,7 +354,8 @@ export async function runCommanderWatchdog(pool, deps = {}) {
         await recordTaskEventSafe(pool, task.id, 'commander_relaunch_skipped', { reason: !ctx.tag ? 'no_tag' : 'no_host', serial: ctx.serial });
         continue;
       }
-      const r = await relaunchEscort(pool, task, ctx, { execFileFn, now, bark, roleHandover: deps.roleHandover, buildHeartbeatCommand: deps.buildHeartbeatCommand });
+      const r = await relaunchEscort(pool, task, ctx, { execFileFn, now, bark, roleHandover: deps.roleHandover,
+        buildHeartbeatCommand: deps.buildHeartbeatCommand, existingRolePolicy: deps.existingRolePolicy });
       if (r.ok && r.adopted) { out.adopted += 1; continue; }
       if (r.ok) { out.relaunched += 1; if (r.barked) out.barked += 1; continue; }
       out.failed += 1;

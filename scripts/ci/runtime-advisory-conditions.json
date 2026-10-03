@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "advisory": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
-  "reviewedBase": "57c4b2dae5a1c6a6b28886464728c46bf7219839",
+  "reviewedBase": "3ab8b198e4ea5408f70401eed16cb9c9f60073c2",
   "expiresAt": "2026-10-10T00:00:00Z",
   "owner": "commander advisory governance / root",
   "source": {
     "count": 3474,
-    "sha256": "f4239ee648aae10ed5ccdc6c9aaa61c70a3cef8d4435e8db7e644e59bdb70bdb"
+    "sha256": "81be9ac0a0184a0e46f63c519129f65a6d88e6e7b4441e113945b219606c8d89"
   },
   "closure": {
     "count": 4,
@@ -35,8 +35,11 @@
   "linkScope": "两tracked link是文档/工具skill指针，API HPM运行入口没有消费它们。只核git mode120000/blob与实际readlink原文字，不跟读target，不声称外部skill安全；其他runtime symlink一律拒。",
   "removal": "安全上游版本发布或依赖移除即删除；任何新consumer/锁/安装包/配置漂移或到期立即拒绝豁免。TODO(owner): 2026-10-10前重审或移除；禁止静默延期。",
   "evidence": [
-    "/tmp/commander-braces-independent-conditions-review-20261003.json",
-    "/tmp/commander-braces-independent-reachability-20261003.log"
+    "/tmp/commander-stale-role-policy-db-boundary-root-spec-20261003.json",
+    "/tmp/commander-stale-role-policy-independent-quality-20261003.json",
+    "/tmp/commander-stale-policy-braces-root-reachability-20261003.log",
+    "/tmp/commander-stale-policy-braces-root-live-audit-20261003.json",
+    "/tmp/commander-stale-policy-braces-risk-root-spec-20261003.json"
   ],
   "notPatched": "braces3.0.3仍受影响；无上游patched版本，本条件不是漏洞修复/全CI通过"
 }
