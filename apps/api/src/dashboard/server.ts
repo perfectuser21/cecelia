@@ -10,7 +10,7 @@ import compression from 'compression';
 import { createServer } from 'http';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { createProxyMiddleware } from 'http-proxy-middleware';
+import { createDashboardProxy } from './proxy-adapter.js';
 import routes from './routes.js';
 import devRoutes from '../dev/routes.js';
 import engineRoutes from '../engine/routes.js';
@@ -75,7 +75,7 @@ app.use(compression() as unknown as express.RequestHandler);
 // Proxy /api/quality to cecelia-quality API
 // Note: Express strips the mount path, so /api/quality/state becomes /state in the middleware
 // We need to prepend /api to make it /api/state for the target server
-app.use('/api/quality', createProxyMiddleware({
+app.use('/api/quality', createDashboardProxy({
   target: QUALITY_API,
   changeOrigin: true,
   pathRewrite: (path) => `/api${path}`  // /state → /api/state
@@ -90,7 +90,7 @@ app.use('/api/orchestrator', orchestratorQueueRoutes);
 // Proxy remaining /api/orchestrator/* to semantic-brain API
 // All other orchestrator routes (chat, voice, state, health, realtime) are in Brain
 // Note: Express strips mount path, so /api/orchestrator/chat becomes /chat
-const orchestratorProxy = createProxyMiddleware({
+const orchestratorProxy = createDashboardProxy({
   target: BRAIN_API,
   changeOrigin: true,
   pathRewrite: (path) => `/api/brain/orchestrator${path}`,  // /chat → /api/brain/orchestrator/chat
@@ -101,7 +101,7 @@ const orchestratorProxy = createProxyMiddleware({
 app.use('/api/orchestrator', orchestratorProxy);
 
 // Proxy /api/autumnrice/* to semantic-brain API (R-cell one-click execution)
-app.use('/api/autumnrice', createProxyMiddleware({
+app.use('/api/autumnrice', createDashboardProxy({
   target: BRAIN_API,
   changeOrigin: true,
   pathRewrite: (path) => `/api/brain/autumnrice${path}`,  // /run → /api/brain/autumnrice/run
@@ -110,7 +110,7 @@ app.use('/api/autumnrice', createProxyMiddleware({
 // Brain API routes → proxy to cecelia-semantic-brain Node.js service
 // Must be BEFORE express.json() so the request body stream is not consumed
 const BRAIN_NODE_API = process.env.BRAIN_NODE_API || 'http://localhost:5221';
-const brainProxy = createProxyMiddleware({
+const brainProxy = createDashboardProxy({
   target: BRAIN_NODE_API,
   changeOrigin: true,
   pathRewrite: (path) => `/api/brain${path}`,
@@ -121,7 +121,7 @@ const brainProxy = createProxyMiddleware({
 app.use('/api/brain', brainProxy);
 
 // Dedicated WebSocket proxy for Brain — no pathRewrite, so /ws stays /ws at port 5221
-const brainWsProxy = createProxyMiddleware({
+const brainWsProxy = createDashboardProxy({
   target: BRAIN_NODE_API,
   changeOrigin: true,
   ws: true,
@@ -132,7 +132,7 @@ app.use('/api/v1/vps-monitor', vpsMonitorRoutes);
 app.use('/api/v1', n8nApiRoutes);
 
 // Proxy remaining /api/v1/* to autopilot backend (fallback)
-app.use('/api/v1', createProxyMiddleware({
+app.use('/api/v1', createDashboardProxy({
   target: AUTOPILOT_BACKEND,
   changeOrigin: true,
   timeout: 8000,
@@ -151,7 +151,7 @@ app.use('/api/v1', createProxyMiddleware({
 }));
 
 // Proxy /n8n/* to N8N container (workflow automation)
-app.use('/n8n', createProxyMiddleware({
+app.use('/n8n', createDashboardProxy({
   target: N8N_BACKEND,
   changeOrigin: true,
   ws: true,

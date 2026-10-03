@@ -1,4 +1,5 @@
 'use strict';
+const { clockCommandObservation, observeTimeSync } = require('./time-sync-observation.cjs');
 
 const { Buffer } = require('node:buffer');
 const { execFile } = require('node:child_process');
@@ -25,7 +26,6 @@ const DEFAULT_DRAIN_MARKER = '/var/run/cecelia/fleet-worker.drain';
 const DEFAULT_WORKER_VERSION = '1.273.146';
 const DEFAULT_RUNNER_VERSION = 'cecelia-runner/v1';
 const DEFAULT_POSTGRES_IMAGE = 'pgvector/pgvector:pg15@sha256:a20a57d7aa5217a6af0a391ccf69f4a8512406d6c14be08132f801468cc3cc62';
-const MAX_CLOCK_OFFSET_SECONDS = 1;
 const EMPTY_DIGEST = `sha256:${'0'.repeat(64)}`;
 
 function boundedInteger(value, fallback, minimum, maximum) {
@@ -80,22 +80,23 @@ function createCommandRunner({
   maxBuffer,
 }) {
   return async function run(file, args, extraOptions = {}) {
+    const options = { shell: false, timeout: commandTimeoutMs, maxBuffer, encoding: 'utf8', ...extraOptions };
+    const isClock = file === 'sntp' && args.length === 2
+      && args[0] === '-d' && args[1] === 'time.apple.com';
+    const startedAt = isClock ? new Date().toISOString() : null;
+    const startedTick = isClock ? process.hrtime.bigint() : null;
     try {
-      const result = await execFileFn(file, args, {
-        shell: false,
-        timeout: commandTimeoutMs,
-        maxBuffer,
-        encoding: 'utf8',
-        ...extraOptions,
-      });
+      const result = await execFileFn(file, args, options);
       const normalized = normalizeCommandResult(result);
       return {
         ok: true,
+        ...(isClock ? { clock_observation: clockCommandObservation(true, null, options, startedAt, startedTick) } : {}),
         stdout: normalized.stdout.slice(0, maxBuffer),
         stderr: normalized.stderr.slice(0, maxBuffer),
       };
-    } catch {
-      return { ok: false, stdout: '', stderr: '' };
+    } catch (error) {
+      return { ok: false, stdout: '', stderr: '',
+        ...(isClock ? { clock_observation: clockCommandObservation(false, error, options, startedAt, startedTick) } : {}) };
     }
   };
 }
@@ -150,18 +151,6 @@ function parsePower(output) {
     sleep_disabled: /(?:^|\s)sleep\s+0(?:\s|$)/m.test(text),
     auto_power_on: /(?:^|\s)autorestart\s+1(?:\s|$)/m.test(text),
   };
-}
-
-function parseTimeSynchronization(output) {
-  const text = String(output ?? '');
-  const explicitOffset = text.match(
-    /offset\s*[:=]?\s*([+-]?\d+(?:\.\d+)?)/i,
-  );
-  const genericOffset = text.match(
-    /(?:^|\s)([+-]\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)?(?:\s|$)/im,
-  );
-  const value = Number.parseFloat(explicitOffset?.[1] ?? genericOffset?.[1]);
-  return Number.isFinite(value) && Math.abs(value) <= MAX_CLOCK_OFFSET_SECONDS;
 }
 
 function tailscaleConnected(result) {
@@ -600,7 +589,6 @@ async function probeFleetWorkerHealth(options = {}) {
     const loadAverage = parseLoadAverage(loadResult.stdout);
     const disk = diskResult;
     const power = parsePower(powerResult.stdout);
-    const timeOutput = `${timeResult.stdout}\n${timeResult.stderr}`;
 
     report.os.version = osResult.ok
       ? parseVersion(osResult.stdout)
@@ -651,8 +639,7 @@ async function probeFleetWorkerHealth(options = {}) {
         && tailscaleInterfaceConnected(ifconfigResult, workerBindHost)
       );
     report.callback.reachable = callbackReachable;
-    report.time_sync.synchronized = timeResult.ok
-      && parseTimeSynchronization(timeOutput);
+    report.time_sync = observeTimeSync(timeResult);
     report.power = {
       sleep_disabled: powerResult.ok && power.sleep_disabled,
       auto_power_on: powerResult.ok && power.auto_power_on,
