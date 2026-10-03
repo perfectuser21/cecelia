@@ -16,7 +16,11 @@ const database=process.env.TEST_DATABASE_URL?new URL(process.env.TEST_DATABASE_U
 if(database!=='cecelia_scratch'&&!(process.env.CI&&database==='cecelia_test'))throw Error('local scratch only');
 const schema='linux_onboard_'+randomUUID().replaceAll('-',''),admin=new pg.Client(options),pool=new pg.Pool({...options,application_name:schema,options:`-c search_path=${schema},public`});
 let machine,parent;
-beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY,title TEXT,task_type TEXT,executor_kind TEXT,created_by TEXT,error_message TEXT,status TEXT,payload JSONB,result JSONB,parent_task_id UUID,claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now(),created_at TIMESTAMPTZ DEFAULT now(),completed_at TIMESTAMPTZ);
+beforeAll(async()=>{await admin.connect();await admin.query(`CREATE SCHEMA ${schema}`);await pool.query(`CREATE TABLE tasks(id UUID PRIMARY KEY,title TEXT,goal_id UUID,project_id UUID,task_type TEXT,executor_kind TEXT,created_by TEXT,error_message TEXT,status TEXT,payload JSONB,result JSONB,parent_task_id UUID,claimed_by TEXT,claimed_at TIMESTAMPTZ,started_at TIMESTAMPTZ,updated_at TIMESTAMPTZ DEFAULT now(),created_at TIMESTAMPTZ DEFAULT now(),completed_at TIMESTAMPTZ);
+ -- 与 migration 461 的生产去重合同一致：包括空 goal/project 和 Notion 专用豁免。
+ CREATE UNIQUE INDEX idx_tasks_dedup_active ON tasks (
+  title,COALESCE(goal_id,'00000000-0000-0000-0000-000000000000'),COALESCE(project_id,'00000000-0000-0000-0000-000000000000')
+ ) WHERE status IN ('queued','in_progress') AND COALESCE(payload->>'dedup_by_notion_page','false')<>'true';
  CREATE TABLE work_routing_receipts(task_id UUID,source TEXT,source_id TEXT,canonical_task_type TEXT);
  CREATE TABLE task_events(task_id UUID,event_type TEXT,payload JSONB,created_at TIMESTAMPTZ DEFAULT now());
  CREATE TABLE capacity_reservations(id UUID,machine_id TEXT,status TEXT);
@@ -35,7 +39,7 @@ beforeEach(async()=>{await pool.query('TRUNCATE tasks,system_registry,execution_
  machine.metadata.onboarding.id=machine.id;
  await pool.query("INSERT INTO tasks(id,status,payload) VALUES($1,'completed',$2)",[parent,{node_onboarding:{id:machine.metadata.onboarding.id,request:machine.metadata.onboarding.request}}]);
  await pool.query("INSERT INTO system_registry(id,type,name,status,metadata) VALUES($1,'machine',$2,'active',$3)",[machine.id,machine.name,machine.metadata]);});
-const createTask=async (args,internal)=>{expect(assertLinuxPoolAuthority({...args,requested_task_type:args.task_type,task:args},internal)).toBe(true);return {success:true,task:(await args.db.query('INSERT INTO tasks(id,title,task_type,status,payload,parent_task_id,executor_kind,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[randomUUID(),args.title,args.task_type,args.status,args.payload,args.parent_task_id,args.executor_kind,args.created_by])).rows[0]};};
+const createTask=async (args,internal)=>{expect(assertLinuxPoolAuthority({...args,requested_task_type:args.task_type,task:args},internal)).toBe(true);return {success:true,task:(await args.db.query('INSERT INTO tasks(id,title,task_type,status,payload,parent_task_id,executor_kind,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',[randomUUID(),args.title,args.task_type,args.status,{...args.payload,parent_task_id:args.parent_task_id,routing_receipt_id:randomUUID(),work_kind:'operational_action'},args.parent_task_id,args.executor_kind,args.created_by])).rows[0]};};
 const flow=extra=>createLinuxOnboardingFlow({pool,createTask,revision:'a'.repeat(40),afterTerminal:async()=>{},...extra});
 it('并发只登记一个内部接入子任务，nonce/intent服务端生成且observer不登记',async()=>{
  const f=flow({step:async()=>{}});const results=await Promise.all([f.ensure(machine,parent),f.ensure(machine,parent)]);expect(results[0]).toBe(results[1]);
@@ -294,6 +298,65 @@ it('新棒登记或终态事件失败回滚全部旧状态与双指针',async()=
  expect((await pool.query('SELECT * FROM tasks WHERE id=$1',[x.id])).rows[0]).toEqual(x.before);
  expect((await pool.query("SELECT id FROM tasks WHERE payload ? 'linux_onboarding'")).rows).toHaveLength(1);
  expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(x.id);
+});
+
+async function handoffSnapshot(){
+ return {tasks:(await pool.query('SELECT * FROM tasks ORDER BY id')).rows,registry:(await pool.query('SELECT * FROM system_registry ORDER BY id')).rows,
+  events:(await pool.query('SELECT * FROM task_events ORDER BY task_id,event_type')).rows};
+}
+it.each(['creator_before','creator_after','source_pointer','registry_pointer','result_link','event'])('接续%s失败在自有或外层事务均完整回滚',async point=>{
+ let armed=false;const creator=async(...args)=>{
+  if(armed&&point==='creator_before')throw Error('handoff-proof');
+  const made=await createTask(...args);if(armed&&point==='creator_after')throw Error('handoff-proof');return made;
+ };
+ const x=await installedContinuation({createTask:creator});armed=true;
+ const trigger=['source_pointer','registry_pointer','result_link','event'].includes(point),table=point==='registry_pointer'?'system_registry':point==='event'?'task_events':'tasks';
+ if(trigger){
+  const condition=point==='source_pointer'?`OLD.id='${parent}'::uuid`:point==='registry_pointer'?'TRUE':point==='result_link'?"OLD.status='archived' AND NEW.result->'evidence'->>'continuation_task_id' IS NOT NULL":'TRUE';
+  await pool.query(`CREATE FUNCTION reject_handoff() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'handoff-proof'; END $$;
+   CREATE TRIGGER reject_handoff BEFORE ${point==='event'?'INSERT':'UPDATE'} ON ${table} FOR EACH ROW WHEN (${condition}) EXECUTE FUNCTION reject_handoff()`);
+ }
+ const before=await handoffSnapshot();
+ try{
+  await expect(x.f.retry(x.id)).rejects.toThrow('handoff-proof');expect(await handoffSnapshot()).toEqual(before);
+  const c=await pool.connect();try{
+   await c.query('BEGIN');await expect(x.f.retry(x.id,c)).rejects.toThrow('handoff-proof');await c.query('ROLLBACK');
+  }finally{await c.query('ROLLBACK');c.release();}
+  expect(await handoffSnapshot()).toEqual(before);
+ }finally{if(trigger)await pool.query(`DROP TRIGGER reject_handoff ON ${table};DROP FUNCTION reject_handoff()`);}
+});
+it('归档到新棒登记的事务中间外部只见旧active，提交后只见新active',async()=>{
+ let armed=false,entered,release;const reached=new Promise(r=>{entered=r;}),wait=new Promise(r=>{release=r;});
+ const creator=async(...args)=>{if(armed){entered((await args[0].db.query('SELECT status FROM tasks WHERE id=$1',[args[0].parent_task_id])).rows[0].status);await wait;}return createTask(...args);};
+ const x=await installedContinuation({createTask:creator});armed=true;const pending=x.f.retry(x.id).then(value=>({value}),err=>({err}));
+ try{
+  expect(await reached).toBe('archived');
+  expect((await pool.query("SELECT id FROM tasks WHERE status IN ('queued','in_progress')")).rows).toEqual([{id:x.id}]);
+  expect((await pool.query('SELECT payload FROM tasks WHERE id=$1',[parent])).rows[0].payload.node_onboarding.execution_task_id).toBe(x.id);
+ }finally{release();await pending;}
+ const outcome=await pending;expect(outcome.err).toBeUndefined();const next=outcome.value;
+ expect((await pool.query("SELECT id FROM tasks WHERE status IN ('queued','in_progress')")).rows).toEqual([{id:next.task_id}]);
+});
+it('外层事务成功返回后仍可整体回滚，未提交接续不影响读者',async()=>{
+ const x=await installedContinuation(),before=await handoffSnapshot(),c=await pool.connect();
+ try{await c.query('BEGIN');const next=await x.f.retry(x.id,c);expect(next.task_id).not.toBe(x.id);expect(await handoffSnapshot()).toEqual(before);await c.query('ROLLBACK');}
+ finally{await c.query('ROLLBACK');c.release();}
+ expect(await handoffSnapshot()).toEqual(before);
+});
+it('无关同标题活跃任务仍按原唯一索引拒绝，旧棒和双指针完整保留',async()=>{
+ const x=await installedContinuation();await pool.query('UPDATE tasks SET goal_id=$2 WHERE id=$1',[x.id,randomUUID()]);
+ await pool.query("INSERT INTO tasks(id,title,status,payload) VALUES($1,$2,'queued','{}')",[randomUUID(),x.before.title]);
+ const before=await handoffSnapshot();await expect(x.f.retry(x.id)).rejects.toMatchObject({code:'23505',constraint:'idx_tasks_dedup_active'});
+ expect(await handoffSnapshot()).toEqual(before);
+});
+it.each(['parent_task_id','payload','created_by','executor_kind','status','task_type','title'])('creator返回的%s不属于当前接续时拒绝认领或前移',async field=>{
+ let armed=false;const creator=async(...args)=>{
+  const made=await createTask(...args);if(!armed)return made;
+  const value=field==='parent_task_id'?randomUUID():field==='payload'?{unrelated:true}:field==='status'?'queued':'foreign';
+  await args[0].db.query(`UPDATE tasks SET ${field}=$2 WHERE id=$1`,[made.task.id,value]);return made;
+ };
+ const x=await installedContinuation({createTask:creator});armed=true;const before=await handoffSnapshot();
+ await expect(x.f.retry(x.id)).rejects.toThrow('linux_pool_retry_unconfirmed');expect(await handoffSnapshot()).toEqual(before);
 });
 
 it('真实SQL重验签名清理与私有旧安装，再原子接续；证据签名损坏不建棒',async()=>{
