@@ -62,6 +62,14 @@ Kernel 派发按统一机器角色表生成 M1/M4 优先、MMV 最后的默认�
 
 **Brain 版本**: 1.368.1
 
+type: feat
+scope: brain
+summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/自属锁证明，补齐admission与activation导入依赖；生产资源和HTTP激活默认拒绝，不接Brain派发、不安装Hub、不授grant
+
+type: fix
+scope: brain
+summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
 ## Brain 1.367.0 — legacy bridge任务一次性有头接管
 
 - 增加严格认证、真实row_version CAS与原coding路由资格检查；持久owner与advisory屏障保护执行及结果证据，保留人赢元数据编辑、同session心跳/result回写及提交后owner授权交接。
