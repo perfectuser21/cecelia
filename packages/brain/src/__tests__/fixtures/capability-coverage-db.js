@@ -1,13 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { releaseEvidenceDatabase, RELEASE_HEAD } from './release-evidence-db.js';
+import {migrationSql,migrationSlice} from './minimum-definition-schema.js';
 import { IMPACT_REPO } from './implementation-impact-db.js';
 
 export async function coverageDatabase() {
   const f = await releaseEvidenceDatabase();
   try {
-    for (const table of ['skill_registry', 'api_registry', 'journey_features', 'fact_snapshot_headers']) {
-      await f.db.query(`CREATE TABLE ${table}(LIKE public.${table} INCLUDING ALL)`);
-    }
+    await f.db.query(migrationSlice('283_skill_registry_and_journey_step_links.sql','CREATE TABLE IF NOT EXISTS skill_registry','-- 迁移数据'));
+    await f.db.query(migrationSlice('470_skill_registry_task_bindings.sql','ALTER TABLE skill_registry','INSERT INTO skill_registry'));
+    await f.db.query(migrationSlice('491_skill_registry_ledger_columns.sql','ALTER TABLE skill_registry','ALTER TABLE skill_registry DROP CONSTRAINT'));
+    await f.db.query(migrationSlice('444_ops_dispatch_manual.sql','ALTER TABLE ops_workflows','ALTER TABLE ops_agents'));
+    await f.db.query(migrationSql('295_journey_features_kind_group.sql'));
+    const removed=await f.db.query(`DELETE FROM map_scope_repositories WHERE scope_key='cecelia' AND repo='cecelia' AND adapter_key='legacy-ledger-v1' AND adapter_config='{"ledger_partition":"cecelia"}'::jsonb
+      AND NOT EXISTS (SELECT 1 FROM map_manifest_versions WHERE scope_key='cecelia')
+      AND NOT EXISTS (SELECT 1 FROM map_projection_runs WHERE scope_key='cecelia') RETURNING scope_key,repo`);
+    if(removed.rowCount!==1||removed.rows.length!==1)throw Error('fixture_default_registration_mismatch');
     // resources 为既有生产台账；scratch 未初始化此历史表，仅建立隔离夹具。
     await f.db.query('CREATE TABLE resources(id uuid PRIMARY KEY,category text,name text,area_id uuid,config jsonb,notes text,tags text[])');
     const activity = f.activities.find(a => a.payload.implementation_bindings.some(b => b.kind === 'code'));

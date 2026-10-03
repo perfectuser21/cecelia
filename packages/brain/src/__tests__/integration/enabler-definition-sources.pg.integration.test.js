@@ -1,15 +1,28 @@
-import {afterEach,it,expect} from 'vitest';
+import {afterEach,beforeEach,it,expect,vi} from 'vitest';
+import pg from 'pg';
+import {DB_DEFAULTS} from '../../db-config.js';
+import {implementationRefreshDatabase} from '../fixtures/implementation-refresh-db.js';
+import {digestMapManifest} from '../../lib/map-manifest-schema.js';
+import {migrationSlice} from '../fixtures/minimum-definition-schema.js';
 import express from 'express';
 import request from 'supertest';
 import {releaseEvidenceDatabase} from '../fixtures/release-evidence-db.js';
 import {createReleasesRouter} from '../../routes/releases.js';
 import {readCapabilitySystem} from '../../lib/capability-system.js';
-let f;
-afterEach(async()=>{await f?.close();f=null;});
+let f,queryGuard;
+const nativeQuery=pg.Client.prototype.query;
+beforeEach(()=>{
+ queryGuard=vi.spyOn(pg.Client.prototype,'query').mockImplementation(function(sql,...args){
+  const text=typeof sql==='string'?sql:sql.text;
+  if(/LIKE\s+public\.|SET\s+search_path\s+(?:TO|=)\s*public/i.test(text))throw Error('fixture_public_query_forbidden');
+  return nativeQuery.call(this,sql,...args);
+ });
+});
+afterEach(async()=>{try{await f?.close();f=null;}finally{queryGuard.mockRestore();}});
 it('真实同步AV显式Enabler来源经HTTP冻结，旧legacy符号保未知且地图解释文件证据',async()=>{
  f=await releaseEvidenceDatabase({fullActivityBindings:true,enablerDeclarations:true});
+ await f.db.query(migrationSlice('493_vs_model_areas_kind.sql','ALTER TABLE areas','-- ② journeys.kind'));
  expect(f.activities.every(a=>a.payload.implementation_bindings.some(b=>b.enabler_key==='test-lock'))).toBe(true);
- await f.db.query('CREATE TABLE journey_features (LIKE public.journey_features INCLUDING ALL)');
  const app=express();app.use(express.json());app.use('/releases',createReleasesRouter({pool:f.db,trustedCollectors:['fixture-collector']}));
  const response=await request(app).post('/releases').send(f.releaseInput);expect(response.status,response.body).toBe(201);
  const release=response.body.release,call=release.payload.allowed_enabler_calls.find(c=>c.id===f.call);
@@ -33,4 +46,22 @@ it('真实同步AV显式Enabler来源经HTTP冻结，旧legacy符号保未知且
  expect((await request(app).get('/releases/'+release.id)).body.release.manifest_sha256).toBe(release.manifest_sha256);
  await f.db.query("UPDATE enablers SET impl_ref='changed/path',active=false WHERE id=$1",[f.enabler]);
  const frozen=await request(app).get('/releases/'+release.id);expect(frozen.body.release.payload.allowed_enabler_calls).toEqual(release.payload.allowed_enabler_calls);
+});
+
+it('refreshseedonly：真实私有FK与完整新地图版本保历史不可变，设置链零public查询',async()=>{
+ f=await implementationRefreshDatabase({manifestRevision:'b'.repeat(40)});
+ const identity=(await f.db.query('SELECT current_database() database,current_schema() schema')).rows[0];
+ expect(identity.database).toBe(DB_DEFAULTS.database);expect(identity.schema).toMatch(/^versions_[a-f0-9]+$/);
+ const versions=(await f.db.query('SELECT * FROM map_manifest_versions ORDER BY version')).rows;
+ expect(versions).toHaveLength(2);expect(versions.map(v=>v.version)).toEqual([1,2]);
+ expect(versions.map(v=>v.status)).toEqual(['superseded','active']);
+ const current=versions[1];expect(current.source_decision_id).toBe(current.manifest.source_decision_id);
+ expect(current.digest).toBe(digestMapManifest(current.manifest));
+ expect(current.manifest.capabilities.every(n=>n.brain_binding.source_revision==='b'.repeat(40))).toBe(true);
+ const decisions=(await f.db.query('SELECT id FROM decisions')).rows.map(r=>r.id);
+ expect(decisions).toContain(current.source_decision_id);
+ const foreignKeys=(await f.db.query("SELECT ns.nspname target FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_class parent ON parent.oid=c.confrelid JOIN pg_namespace ns ON ns.oid=parent.relnamespace WHERE t.oid='journey_assertion_receipts'::regclass AND c.contype='f'")).rows;
+ expect(foreignKeys).toHaveLength(2);expect(foreignKeys.every(r=>r.target===identity.schema)).toBe(true);
+ await expect(f.db.query('UPDATE map_manifest_versions SET manifest=$1 WHERE id=$2',[{},versions[0].id])).rejects.toThrow(/immutable/i);
+ expect((await f.db.query('SELECT manifest,digest FROM map_manifest_versions WHERE id=$1',[versions[0].id])).rows[0]).toEqual({manifest:versions[0].manifest,digest:versions[0].digest});
 });

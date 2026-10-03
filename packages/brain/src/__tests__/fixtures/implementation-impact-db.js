@@ -1,5 +1,6 @@
 import { randomUUID,createHash } from 'node:crypto';
 import { versionsDatabase,seedWorkflows } from './definition-versions-db.js';
+import { minimumMapSchema } from './minimum-map-schema.js';
 import { contractsFixture } from './shared-activity-contracts.js';
 import { syncActivityContracts } from '../../activity-contract-sync.js';
 
@@ -13,22 +14,24 @@ export async function implementationImpactDatabase({
   const fixture=await versionsDatabase(),db=fixture.db;
   try {
     const ids=await seedWorkflows(db,seedIds);await fixture.migrate();
-    for(const table of ['map_scope_repositories','map_manifest_versions','map_projection_runs','map_projection_nodes','graph_snapshot_versions','graph_edge_snapshots','journey_step_links'])await db.query(`CREATE TABLE ${table}(LIKE public.${table} INCLUDING ALL)`);
+    await minimumMapSchema(db);
     const contracts=contractsFixture();
     const capabilities=(await db.query('SELECT capability_id FROM workflows ORDER BY key')).rows.map(r=>r.capability_id);
     async function graph(revision,edges=[['src/controller.js','src/shared-lock.js']],key=registryRepo){
       await db.query("INSERT INTO graph_snapshot_versions(repo,source_revision,scanner_version,row_count,scanned_at) VALUES($1,$2,'graph-v1',$3,NOW())",[key,revision,edges.length]);
       for(const [src,dst] of edges)await db.query("INSERT INTO graph_edge_snapshots(repo,source_revision,src_path,dst_path,edge_type) VALUES($1,$2,$3,$4,'import')",[key,revision,src,dst]);
     }
-    async function map(revision,capIds=capabilities,mapScope=scope,key=registryRepo,sourceRepo=IMPACT_REPO){
+    async function map(revision,capIds=capabilities,mapScope=scope,key=registryRepo,sourceRepo=IMPACT_REPO,{capabilityRevision=revision}={}){
       await db.query("UPDATE map_manifest_versions SET status='superseded' WHERE scope_key=$1",[mapScope]);
       await db.query("UPDATE map_projection_runs SET status='superseded' WHERE scope_key=$1",[mapScope]);
-      const id=randomUUID(),run=randomUUID();
-      const version=(await db.query('SELECT COALESCE(MAX(version),0)+1 AS next FROM map_manifest_versions WHERE scope_key=$1',[mapScope])).rows[0].next;
+      const id=randomUUID(),run=randomUUID(),decision=randomUUID();
+      await db.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','map','影响测试','active')",[decision]);
       const binding=(type,entity_id)=>({entity_type:type,entity_id,source_repo:sourceRepo,source_revision:revision});
-      const manifest={scope_key:mapScope,schema_version:1,value_streams:[{key:'flow',brain_binding:binding('value_stream',ids.valueStream)}],capabilities:capIds.map((cap,i)=>({key:`F${i}`,value_stream_key:'flow',brain_binding:binding('capability',cap)}))};
+      const manifest={scope_key:mapScope,schema_version:1,source_decision_id:decision,value_streams:[{key:'flow',brain_binding:binding('value_stream',ids.valueStream)}],capabilities:capIds.map((cap,i)=>({key:`F${i}`,value_stream_key:'flow',brain_binding:binding('capability',cap)}))};
+      if(manifest.capabilities[0])manifest.capabilities[0].brain_binding.source_revision=capabilityRevision;
       const digest=createHash('sha256').update(JSON.stringify(manifest)).digest('hex');
-      await db.query("INSERT INTO map_manifest_versions(id,scope_key,version,source_decision_id,manifest,digest,status,activated_at) VALUES($1,$2,$3,$4,$5,$6,'active',NOW())",[id,mapScope,version,randomUUID(),manifest,digest]);
+      const version=(await db.query('SELECT COALESCE(max(version),0)+1 next FROM map_manifest_versions WHERE scope_key=$1',[mapScope])).rows[0].next;
+      await db.query("INSERT INTO map_manifest_versions(id,scope_key,version,source_decision_id,manifest,digest,status,activated_at) VALUES($1,$2,$3,$4,$5,$6,'active',NOW())",[id,mapScope,version,decision,manifest,digest]);
       await db.query("INSERT INTO map_projection_runs(id,scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at) VALUES($1,$2,$3,$4,$5,'binding-v2',$4,'active',NOW())",[run,mapScope,id,digest,{[key]:revision}]);
       for(const node of manifest.capabilities)await db.query("INSERT INTO map_projection_nodes(run_id,node_id,node_type,node_key,name,attributes) VALUES($1,$2,'capability',$3,'能力',$4)",[run,randomUUID().replaceAll('-','').padStart(64,'0'),node.key,{brain_binding:node.brain_binding,canonical_entity_id:node.brain_binding.entity_id,mapping_status:'verified'}]);
       return {id,run,digest};
