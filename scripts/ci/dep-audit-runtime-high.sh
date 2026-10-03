@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# dep-audit-runtime-high.sh — runtime(--omit=dev) high+ 检查，带文档化包级白名单
+# dep-audit-runtime-high.sh — runtime(--omit=dev) high+ 检查，带现有文档化白名单及精确advisory条件
 #
 # 背景：npm audit 查实时 advisory 库，新 CVE 随时公布会让同一份 lockfile 从 pass 翻 fail。
 # 对"无 non-breaking 修复 + 在本项目用法下不可利用"的 runtime high+ advisory，加文档化豁免，
 # 但仍拦截所有其它 runtime high+（防供应链攻击）。配套 dep-audit-critical.sh（critical 全量）。
 #
+# braces只由runtime-advisory-filter.cjs按精确GHSA+冻结证据+期限逐条判断，禁止包级豁免。
 # 白名单纪律：每条必须注明 (1) 为什么不可利用/可接受 (2) 为什么不能 non-breaking 修 (3) 移除条件+TODO。
 # 严禁为图省事把可 non-breaking 修的 advisory 加进来。
 #
@@ -50,33 +51,11 @@ ALLOW_PKGS=(
 )
 
 JSON=$(npm audit --audit-level=high --omit=dev --json 2>/dev/null || true)
-[ -z "$JSON" ] && { echo "[dep-audit-runtime-high] npm audit 无输出，视为通过"; exit 0; }
+[ -z "$JSON" ] && { echo "[dep-audit-runtime-high] npm audit 无输出，拒绝通过"; exit 1; }
 
-UNWAIVED=$(echo "$JSON" | ALLOW="${ALLOW_PKGS[*]:-}" python3 -c "
-import sys, json, os
-allow = set(os.environ.get('ALLOW','').split())
-d = json.load(sys.stdin)
-bad = {}
-for name, v in d.get('vulnerabilities', {}).items():
-    if name in allow:
-        continue
-    # 只信这个包自己直接挂着的 advisory（via 里的 dict 项，带它自己的 severity/cvss）。
-    # 不用顶层 v['severity']——那是 npm 沿整条依赖链滚算出来的聚合值，会被链上别的
-    # 包的高危漏洞拉高，哪怕这个包跟那条 CVE 的关系只是'依赖了持有它的包'，不是
-    # '自己有洞'。真正持有该 CVE 的包会在同一份 audit 输出里单独有自己的顶层条目
-    # （自己的 via 里就有这条 advisory），用它自己的条目判断即可，不需要在这里对
-    # 每一层继承者重复拦一次，否则会出现包没有任何自己的 CVE 却被拦下的假阳性。
-    advisories = [via for via in v.get('via', []) if isinstance(via, dict)]
-    if not advisories:
-        continue  # 纯继承（via 全是包名字符串），没有自己的 advisory，交给真正持有 CVE 的那个包条目处理
-    own_high = [a for a in advisories if a.get('severity') in ('high', 'critical')]
-    if not own_high:
-        continue
-    titles = [a.get('title','') for a in own_high]
-    bad[name] = (own_high[0].get('severity'), '; '.join(t for t in titles if t)[:70])
-for n, (sev, t) in sorted(bad.items()):
-    print(f'{n}\t{sev}\t{t}')
-")
+UNWAIVED=$(echo "$JSON" | ALLOW="${ALLOW_PKGS[*]:-}" node "$(dirname "$0")/runtime-advisory-filter.cjs")
+FILTER_EXIT=$?
+[ "$FILTER_EXIT" -eq 0 ] || { echo "::error::runtime advisory schema/条件验证失败，拒绝豁免"; exit 1; }
 
 if [ -n "$UNWAIVED" ]; then
   echo "::error::dep-audit-runtime-high 发现未豁免的 runtime high+ 漏洞："
@@ -84,5 +63,5 @@ if [ -n "$UNWAIVED" ]; then
   echo "  处理：npm audit fix 升级；确属无 non-breaking 修复+不可利用才加入本脚本白名单（须注明原因+TODO）"
   exit 1
 fi
-echo "✅ dep-audit-runtime-high 通过（包级白名单豁免 ${#ALLOW_PKGS[@]} 条已文档化）"
+echo "✅ dep-audit-runtime-high 通过（既有包级豁免 ${#ALLOW_PKGS[@]} 条；精确advisory冻结条件已核）"
 exit 0

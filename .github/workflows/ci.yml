@@ -185,6 +185,7 @@ jobs:
       - name: npm audit — runtime high+
         run: |
           npm ci --ignore-scripts
+          node --test scripts/ci/__tests__/runtime-advisory-filter.test.mjs
           # runtime 依赖（packages/brain, apps/api）不允许 high+，--omit=dev 排除 vite/rollup/workbox 等 build 工具
           # 用带文档化包级白名单的脚本：对"无 non-breaking 修复 + 本项目用法下不可利用"的 advisory
           # 做文档化豁免（当前：uuid 仅用 v4 不可利用 / protobufjs 深层传递依赖 / dompurify 渲染可信内容），
