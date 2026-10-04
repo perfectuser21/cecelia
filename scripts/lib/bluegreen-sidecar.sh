@@ -87,13 +87,18 @@ _sidecar_health() {
   _sidecar_same_target || return 1
   _sidecar_docker exec "$TARGET_CONTAINER" curl -q -fsm 3 --max-filesize 262144 http://127.0.0.1:5221/api/brain/healthz >/dev/null 2>&1 || return 1
   health=$(_sidecar_docker exec "$TARGET_CONTAINER" curl -q -fsm 5 --max-filesize 262144 http://127.0.0.1:5221/api/brain/health) || return 1
-  printf '%s' "$health" | node -e '
-    let data="";process.stdin.on("data",x=>data+=x);process.stdin.on("end",()=>{
-      try { const h=JSON.parse(data), [sha,tags,version]=process.argv.slice(1);
-        if(h.status!=="healthy" || h.git_sha!==sha || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(h.version)
-          || !JSON.parse(tags).includes("cecelia-brain:"+h.version) || (version && h.version!==version)) process.exit(1);
-      } catch {process.exit(1);}
-    });' "$TARGET_SHA" "$TARGET_TAGS" "$HEALTH_VERSION" || return 1
+  # 健康口径与官方收账同源（policy.deployHealth）：tick 被有意封停（决策 751f73be）使 /health 恒为 degraded，
+  # 仅折算这一个原因；导入失败（旧镜像无该模块）= 严格口径，不放宽。version/git_sha/tags 逐项核对不变。
+  printf '%s' "$health" | node --input-type=module -e '
+    const [sha,tags,version]=process.argv.slice(1);
+    let data="";for await (const x of process.stdin) data+=x;
+    let fold=h=>h;
+    try { const m=await import(process.env.CECELIA_RETENTION_POLICY||"/app/scripts/brain-image-retention/policy.mjs");
+      if(typeof m.deployHealth==="function") fold=h=>({...h,...m.deployHealth(h)}); } catch {}
+    try { const h=fold(JSON.parse(data));
+      if(h.status!=="healthy" || h.git_sha!==sha || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(h.version)
+        || !JSON.parse(tags).includes("cecelia-brain:"+h.version) || (version && h.version!==version)) process.exit(1);
+    } catch {process.exit(1);}' "$TARGET_SHA" "$TARGET_TAGS" "$HEALTH_VERSION" || return 1
   _sidecar_same_target
 }
 # 当前发布的官方CLI持锁收尾；健康探测在固定目标容器内执行，旧fallback无需新CLI。
