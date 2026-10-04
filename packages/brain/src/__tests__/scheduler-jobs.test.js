@@ -284,6 +284,25 @@ describe('scheduler-jobs 注册表', () => {
     expect(names.indexOf('conversation-ttl-archiver')).toBeGreaterThan(names.indexOf('conversation-capture'));
   });
 
+  // 闹钟总账（任务 fe10d1a0，决策 9e9d90b6）：新增定时只能经本表注册，且必须结构化声明"多久响一次"。
+  // 漏声明 = 总账「多久响一次」列留空、活性尺子对不上；重名 = 总账唯一键 (source,host,label) 互相覆盖。
+  it('每个 JOB 声明结构化 cadence（everySec 或 cron+tz），name 唯一', () => {
+    const names = JOBS.map((j) => j.name);
+    expect(new Set(names).size).toBe(names.length);
+    for (const j of JOBS) {
+      const c = j.cadence;
+      expect(c, `${j.name} 缺 cadence`).toBeTruthy();
+      if (c.everySec !== undefined) {
+        expect(Number.isFinite(c.everySec) && c.everySec > 0, `${j.name}.cadence.everySec`).toBe(true);
+        expect(c.cron, `${j.name} 不能同时声明 everySec 与 cron`).toBeUndefined();
+      } else {
+        expect(typeof c.cron, `${j.name}.cadence 须是 everySec 或 cron`).toBe('string');
+        expect(c.cron.trim().split(/\s+/), `${j.name} cron 须五段`).toHaveLength(5);
+        expect(typeof c.tz, `${j.name} cron 必须带 tz`).toBe('string');
+      }
+    }
+  });
+
   // PR3 补充五：秋米设备任务改成派生子任务后，父 qiumi_task 挂在 blocked 且 blocked_until 为 NULL——
   // 自动解闸器捞不到它，这个 job 是唯一的放行方。没注册 = 每条设备任务的父行永远挂着，
   // 中文表里永远停在「进行中」。
