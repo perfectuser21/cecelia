@@ -1427,8 +1427,12 @@ async function pushOpsGraph(pool, token) {
 
   // 2. 孤儿排程行（无对应 agent，如 gha）→ 独立行 role=scheduled
   const orphanRows = (await pool.query(
+    // 闹钟总账自有行（Brain job/recurring 落表行、盘点静态快照）不是"运行图谱"里的运行单元，不推——
+    // 否则 70+ 行 job 每分钟刷新 updated_at 会把本查询的 LIMIT 50 吃光（任务 fe10d1a0，Notion 推送另立任务）。
     `SELECT * FROM ops_schedule_entries
      WHERE active = TRUE AND (notion_synced_at IS NULL OR updated_at > notion_synced_at)
+       AND source <> 'inventory-20261004'
+       AND COALESCE(registered_via, '') NOT IN ('brain-job', 'brain-loop', 'recurring')
      ORDER BY updated_at LIMIT 50`)).rows
     .filter((s) => !agentKeys.has(`${s.source}|${s.host_alias}|${s.label}`));
   await upsertOpsRows(pool, token, {

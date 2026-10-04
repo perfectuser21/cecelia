@@ -97,7 +97,7 @@ export const REMAINING_LEGACY_SITES = {
   // task_type（不是全量），且值与 SKILL_WHITELIST/EXECUTOR_SKILL_MAP 都不同（如
   // harness_initiative 这里写 'harness(skill-relay)'，两处已有映射表都是别的值）——是运行舱只读
   // 展示端点自己的第三份独立"推不出=null"降级展示文案，不是"哪类"的分类标签，无匹配注册表字段
-  'routes/agent-ops.js': ['17:SKILL_BY_TASK_TYPE'],
+  'routes/agent-ops.js': ['21:SKILL_BY_TASK_TYPE'],
   // kind: map（long-lived）— Task 6 评估：:101 STEP_SYSTEM_PROMPTS 是
   // 6 个 content-* task_type 各自专属的完整 LLM system prompt 长文本（调 LLM 用），不是分类标签，
   // 无法也不应该折进注册表的 T() 字段

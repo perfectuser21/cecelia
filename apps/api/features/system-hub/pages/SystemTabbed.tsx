@@ -1,4 +1,4 @@
-import { Activity, Bot, Workflow, Server, Cpu, Map, Users } from 'lucide-react';
+import { Activity, Bot, Workflow, Server, Cpu, Map, Users, AlarmClock } from 'lucide-react';
 import { Brain } from 'lucide-react';
 import TabbedPage from '../../shared/components/TabbedPage';
 import type { TabConfig } from '../../shared/components/TabbedPage';
@@ -24,6 +24,13 @@ const tabs: TabConfig[] = [
     icon: Workflow,
     path: '/system/automation',
     component: () => import('./SystemAutomationTab'),
+  },
+  {
+    id: 'alarms',
+    label: '闹钟总账',
+    icon: AlarmClock,
+    path: '/system/alarms',
+    component: () => import('./AlarmLedgerTab'),
   },
   {
     id: 'infra',

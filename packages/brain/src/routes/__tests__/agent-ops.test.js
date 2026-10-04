@@ -64,6 +64,23 @@ describe('buildGraphPayload', () => {
     expect(gha.schedule_desc).toContain('cron');
   });
 
+  it('recurring 排程行（已落表）进图：agent_type=brain_recurring、死的标 suspicious、非采集来源不判 stale', async () => {
+    const pool = poolReturning({
+      'FROM ops_agents': [],
+      'FROM ops_schedule_entries': [
+        { source: 'brain', host_alias: 'local', label: '死模板', kind: 'brain_recurring', schedule_desc: '0 4 * * *', last_run_at: new Date('2026-08-01T00:00:00Z'), registered_via: 'recurring', active: true },
+        { source: 'brain', host_alias: 'us-vps', label: 'ci-patrol', kind: 'brain_job', schedule_desc: 'cron(Asia/Shanghai): 0 8 * * *', registered_via: 'brain-job', active: true },
+      ],
+      'FROM ops_source_heartbeats': [{ source: 'gha', host_alias: 'github', last_report_at: now, source_status: 'ok' }],
+    });
+    const p = await buildGraphPayload(pool, now);
+    const dead = p.units.find((u) => u.name === '死模板');
+    expect(dead).toMatchObject({ agent_type: 'brain_recurring', role: 'scheduled', suspicious: true, stale: false });
+    const job = p.units.find((u) => u.name === 'ci-patrol');
+    expect(job).toMatchObject({ agent_type: 'schedule', kind: 'brain_job', stale: false });
+    expect(job.suspicious).toBeUndefined();
+  });
+
   it('per-source freshness 附加到每行 + 表缺失 503', async () => {
     const p = await buildGraphPayload(graphPool(), now);
     expect(p.units.every((u) => u.stale === false)).toBe(true);
@@ -121,14 +138,17 @@ describe('buildAgentsPayload', () => {
 });
 
 describe('buildCalendarPayload', () => {
-  it('合并实跑+排程+recurring；死排程标 suspicious 禁绿灯', async () => {
+  it('合并实跑+排程+recurring（模板已落 ops_schedule_entries）；死排程标 suspicious 禁绿灯', async () => {
     const now = new Date('2026-09-05T12:00:00Z');
     const pool = poolReturning({
       'FROM tasks': [{ id: 't1', title: 'X', task_type: 'dev', status: 'completed', location: 'us', updated_at: now }],
-      'FROM ops_schedule_entries': [{ source: 'launchd', host_alias: 'local', label: 'com.cecelia.backup-db', kind: 'launchd_calendar', schedule_desc: 'c', next_run_utc: now, last_state: 'ok', active: true }],
-      'FROM recurring_tasks': [
-        { title: '活的', cron_expression: '0 3 * * *', last_run_at: new Date('2026-09-05T03:00:00Z'), next_run_at: null, last_run_status: 'ok', is_active: true },
-        { title: '死的', cron_expression: '0 4 * * *', last_run_at: new Date('2026-08-01T00:00:00Z'), next_run_at: null, last_run_status: null, is_active: true },
+      // 闹钟总账（任务 fe10d1a0）：recurring 模板由 recurring-tasks job 投影成 kind=brain_recurring 的排程行，
+      // 不再由本 API 临时拼接；suspicious 判定改读表里的 last_run_at。
+      'FROM ops_schedule_entries': [
+        { source: 'launchd', host_alias: 'local', label: 'com.cecelia.backup-db', kind: 'launchd_calendar', schedule_desc: 'c', next_run_utc: now, last_state: 'ok', active: true },
+        { source: 'brain', host_alias: 'local', label: '活的', kind: 'brain_recurring', schedule_desc: '0 3 * * *', last_run_at: new Date('2026-09-05T03:00:00Z'), last_state: 'created', registered_via: 'recurring', active: true },
+        { source: 'brain', host_alias: 'local', label: '死的', kind: 'brain_recurring', schedule_desc: '0 4 * * *', last_run_at: new Date('2026-08-01T00:00:00Z'), last_state: null, registered_via: 'recurring', active: true },
+        { source: 'brain', host_alias: 'local', label: '从没跑过', kind: 'brain_recurring', schedule_desc: '0 5 * * *', last_run_at: null, registered_via: 'recurring', active: true },
       ],
     });
     const p = await buildCalendarPayload(pool, now);
@@ -139,6 +159,14 @@ describe('buildCalendarPayload', () => {
     expect(dead.suspicious).toBe(true);
     expect(dead.kind).toBe('brain_recurring');
     expect(p.schedules.find((s) => s.label === '活的').suspicious).toBe(false);
+    expect(p.schedules.find((s) => s.label === '从没跑过').suspicious).toBe(true);
+    expect(p.schedules.find((s) => s.label === 'com.cecelia.backup-db').suspicious).toBe(false); // 非 recurring 不套这条判定
+  });
+  it('排程查询排除盘点静态快照行（只进 /alarms，不进实时采集视图）', async () => {
+    let sqlSeen = '';
+    const pool = { query: async (sql) => { if (String(sql).includes('FROM ops_schedule_entries')) sqlSeen = String(sql); return { rows: [] }; } };
+    await buildCalendarPayload(pool, new Date());
+    expect(sqlSeen).toContain("source <> 'inventory-20261004'");
   });
   it('task_type 映射不出 → skill 为 null（禁编造）', async () => {
     expect(SKILL_BY_TASK_TYPE['dev']).toBe('/dev');

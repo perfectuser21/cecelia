@@ -28,6 +28,9 @@
  *     handler 返回后才写，Brain 停机重启后的首轮它必然是旧值，会把自己误判 dead 再"恢复"，
  *     白发一条 Bark 一条 P2。此刻正在跑就是最诚实的活性证据。
  *
+ *  8. 闹钟总账（任务 fe10d1a0）：同一份活性结论同时 UPSERT 一行 ops_schedule_entries(kind=brain_job)，
+ *     单一真身仍是哨兵；总账写入失败（如 517 迁移未跑）只告警不拖垮本 job——活性判定是主业，总账是附带投影。
+ *
  * JOBS 经 opts.jobs 注入，不 import scheduler-jobs.js（会成环：scheduler-jobs → 本模块 →
  * scheduler-jobs；仓库先例 routes/sentinel.js 同样"不 import，避免拖入 handler 依赖链"）。
  */
@@ -35,6 +38,7 @@ import { classifyDeclaredLiveness } from './ops-liveness.js';
 import { writeHeartbeat, classifyError } from './ops-collector.js';
 import { raise as defaultRaise } from './alerting.js';
 import { sendBark as defaultBark } from './notifier.js';
+import { upsertBrainJobLedger, deactivateRetiredBrainJobs } from './ops-alarm-ledger.js';
 
 export const SCHEDULER_SOURCE = 'scheduler';
 export const SCHEDULER_MACHINE = 'us-vps';
@@ -73,6 +77,7 @@ export async function runSchedulerLiveness(pool, opts = {}) {
 
     const deadFlips = []; // 本轮翻 dead 的 job，按轮攒起来发一条 Bark
     let recovered = 0;
+    let ledgerOk = true;
     for (const job of jobs) {
       const rec = sentinels.get(job.name) ?? null;
       const intervalSec = Number.isFinite(job.livenessIntervalSec) && job.livenessIntervalSec > 0
@@ -109,6 +114,14 @@ export async function runSchedulerLiveness(pool, opts = {}) {
         [job.name, SCHEDULER_MACHINE, JSON.stringify(meta), lastRunAt, statusOf(rec), intervalSec,
           lv.liveness, lv.silent_sec, lv.warn_after_sec, lv.dead_after_sec, collectedAt],
       );
+      if (ledgerOk) {
+        try {
+          await upsertBrainJobLedger(pool, { job, lastRunAt, rec, lv, collectedAt });
+        } catch (e) {
+          ledgerOk = false; // 一轮只告警一次，避免 72 条重复刷日志
+          console.warn(`[scheduler-liveness] 总账写入失败（本轮其余 job 跳过总账）: ${e.message}`);
+        }
+      }
       const row = changed[0];
       if (!row) continue;
       // 只在翻转时告警：ok/warn/cold → dead 本轮攒起来一条 Bark；dead → ok/warn 恢复告一次
@@ -151,6 +164,14 @@ export async function runSchedulerLiveness(pool, opts = {}) {
        WHERE source='${SCHEDULER_SOURCE}' AND wf_id <> ALL($1::text[]) AND liveness IS DISTINCT FROM 'cold'`,
       [jobNames],
     );
+
+    if (ledgerOk) {
+      try {
+        await deactivateRetiredBrainJobs(pool, jobNames, collectedAt);
+      } catch (e) {
+        console.warn(`[scheduler-liveness] 总账下线清理失败: ${e.message}`);
+      }
+    }
 
     await writeHeartbeat(pool, SCHEDULER_SOURCE, SCHEDULER_MACHINE, 'ok', null, null, collectedAt);
     return { ok: true, jobs: jobs.length, flippedDead: deadFlips.length, recovered };

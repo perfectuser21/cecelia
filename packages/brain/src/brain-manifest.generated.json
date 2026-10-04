@@ -228,21 +228,6 @@
               "dangerous": false
             },
             {
-              "name": "okr_initiative_plan",
-              "description": "规划 OKR Scope 下的下一个 Initiative",
-              "dangerous": false
-            },
-            {
-              "name": "okr_scope_plan",
-              "description": "规划 OKR Project 下的下一个 Scope",
-              "dangerous": false
-            },
-            {
-              "name": "okr_project_plan",
-              "description": "规划 OKR Project 层完成后的下一步",
-              "dangerous": false
-            },
-            {
               "name": "create_learning",
               "description": "保存经验教训到 learnings 表",
               "dangerous": false
@@ -645,18 +630,6 @@
       "dangerous": false,
       "description": "创建计划提案"
     },
-    "okr_initiative_plan": {
-      "dangerous": false,
-      "description": "规划 OKR Scope 下的下一个 Initiative"
-    },
-    "okr_scope_plan": {
-      "dangerous": false,
-      "description": "规划 OKR Project 下的下一个 Scope"
-    },
-    "okr_project_plan": {
-      "dangerous": false,
-      "description": "规划 OKR Project 层完成后的下一步"
-    },
     "create_learning": {
       "dangerous": false,
       "description": "保存经验教训到 learnings 表"
@@ -783,7 +756,7 @@
   ],
   "allSkills": {},
   "skillWhitelist": {},
-  "generatedAt": "2026-09-24T01:43:11.164Z",
+  "generatedAt": "2026-10-04T06:52:19.075Z",
   "generatedBy": "packages/brain/scripts/generate-manifest.mjs",
   "sourceFiles": [
     "src/brain-manifest.js",

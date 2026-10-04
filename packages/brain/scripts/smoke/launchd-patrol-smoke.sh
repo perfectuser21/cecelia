@@ -45,7 +45,7 @@ if (!src.includes(\"name: 'launchd-patrol'\") || !src.includes('runLaunchdPatrol
   console.error('FAIL: scheduler-jobs.js 未注册 launchd-patrol');
   process.exit(1);
 }
-if (!/name: 'launchd-patrol', needsPool: false/.test(src)) {
+if (!/name: 'launchd-patrol',(?: cadence: \{[^}]*\},)? needsPool: false/.test(src)) {
   console.error('FAIL: launchd-patrol 应为 needsPool:false');
   process.exit(1);
 }

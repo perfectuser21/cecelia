@@ -98,6 +98,16 @@ describe('runOpsCollector', () => {
     expect(brief.params[3]).toBe('openclaw_cron');          // kind
     expect(brief.params[4]).toContain('25 6 * * 1-5');      // schedule_desc
     expect(brief.params[6]).toBe('error');                  // last_state
+    // 闹钟总账（517）：新机器列追加在原参数之后——enabled / last_status 与采集口径同源；
+    // SET 里不出现人工列与挂树列，否则 5 分钟一轮会冲掉人的结论
+    expect(brief.params[10]).toBe(true);                    // enabled
+    expect(brief.params[13]).toBe('失败');                   // last_status ← last_state=error
+    const ok = schedWrites.find((q) => q.params[2] === '悦升云端增长情报日报');
+    expect(ok.params[13]).toBe('正常');
+    const setPart = brief.sql.split('DO UPDATE SET')[1];
+    for (const col of ['owner_manual', 'note_manual', 'tree_bucket_manual', 'journey_id', 'workflow_id', 'registered_via', 'ledger_status']) {
+      expect(setPart).not.toContain(col);
+    }
     expect(r.results.openclaw_crons).toMatchObject({ ok: true, schedules: 2 });
   });
 
