@@ -124,7 +124,6 @@ export function buildJourneyResolver(journeys) {
  */
 export function planInventoryImport(items, journeys, existingRows) {
   const resolve = buildJourneyResolver(journeys);
-  const existing = new Map(existingRows.map((r) => [`${r.source}|${r.host_alias}|${r.label}`, r]));
   const plan = { tree_updates: [], inserts: [], unmatched: [], unresolved_tree: [] };
   const usedLabels = new Set();
 
