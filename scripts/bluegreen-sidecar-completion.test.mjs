@@ -64,7 +64,7 @@ async function fixture(t, scenario = '') {
       if(!args.includes('${container}'))process.exit(91);
       if(args.some(x=>x.endsWith('/healthz')))process.exit(scenario==='unhealthy'?22:0);
       if(args.some(x=>x.endsWith('/health'))) {
-        fs.writeFileSync(root+'/healthy','');console.log(JSON.stringify({status:scenario==='degraded'?'degraded':'healthy',version:recovered?'1.360.3':'1.360.5',git_sha:scenario==='wrong-sha'?'${previousSha}':s,...(scenario==='health-oversize'?{padding:'x'.repeat(300000)}:{})}));if(args.includes('-w'))process.stdout.write(scenario==='health-redirect'?'302':'200');return;
+        fs.writeFileSync(root+'/healthy','');console.log(JSON.stringify({status:['degraded','sealed-degraded','sealed-open-breaker'].includes(scenario)?'degraded':'healthy',...(scenario==='sealed-degraded'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:[]}}}:{}),...(scenario==='sealed-open-breaker'?{organs:{scheduler:{enabled:false},circuit_breaker:{open:['cecelia-run']}}}:{}),version:recovered?'1.360.3':'1.360.5',git_sha:scenario==='wrong-sha'?'${previousSha}':s,...(scenario==='health-oversize'?{padding:'x'.repeat(300000)}:{})}));if(args.includes('-w'))process.stdout.write(scenario==='health-redirect'?'302':'200');return;
       }
       if(args.some(x=>x.endsWith('/drain-cancel'))) {
         if(scenario==='drain-fail')process.exit(22);
@@ -85,7 +85,7 @@ exec ${JSON.stringify(process.execPath)} "$@"
   // 缩短重试时钟；生产仍为90轮，错误路径保留多次尝试。
   await writeFile(join(root, 'bin/seq'), '#!/bin/sh\nprintf \"1\\n2\\n3\\n\"\n', { mode: 0o755 });
   await writeFile(join(root, 'bin/sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, NODE_OPTIONS: `--import=${root}/deny-http.mjs`, FIXTURE_ROOT: root, SCENARIO: scenario, BRAIN_VERSION: '1.360.5', EXPECTED_SHA: scenario === 'request-sha' ? previousSha : sha, ENV_REGION: 'us', DEPLOY_ROOT: root, CECELIA_INTERNAL_ENV_FILE: `${root}/internal.env`, CECELIA_IMAGE_DEPLOYMENT_ID: deployment, CECELIA_IMAGE_RETENTION_DIR: `${root}/ledger`, BARK_TOKEN: '' };
+  const env = { ...process.env, PATH: `${root}/bin:${process.env.PATH}`, NODE_OPTIONS: `--import=${root}/deny-http.mjs`, FIXTURE_ROOT: root, SCENARIO: scenario, BRAIN_VERSION: '1.360.5', EXPECTED_SHA: scenario === 'request-sha' ? previousSha : sha, ENV_REGION: 'us', DEPLOY_ROOT: root, CECELIA_INTERNAL_ENV_FILE: `${root}/internal.env`, CECELIA_IMAGE_DEPLOYMENT_ID: deployment, CECELIA_IMAGE_RETENTION_DIR: `${root}/ledger`, CECELIA_RETENTION_POLICY: `${root}/scripts/brain-image-retention/policy.mjs`, BARK_TOKEN: '' };
   const result = await run('bash', [new URL('./lib/bluegreen-sidecar.sh', import.meta.url).pathname], { env, timeout: 20000 }).then(x => ({ ...x, code: 0 }), e => ({ ...e, code: e.code }));
   return { ...result, root, calls: (await readFile(join(root, 'calls'), 'utf8')).trim().split('\n').map(JSON.parse), ledger: JSON.parse(await readFile(join(root, 'ledger/ledger.json'), 'utf8')) };
 }
@@ -99,7 +99,7 @@ test('宿主端口不可达时经固定容器localhost确认健康、恢复drain
   assert.ok(execs.some(x => x.includes('http://127.0.0.1:5221/api/brain/health')));
   assert.ok(execs.every(x => x.includes(container)));
 });
-for (const scenario of ['request-sha', 'wrong-image', 'wrong-sha', 'drift', 'unhealthy', 'degraded', 'drain-fail', 'drain-false', 'finish-fail', 'finish-drift', 'health-redirect', 'health-oversize', 'drain-oversize', 'docker-hang']) {
+for (const scenario of ['request-sha', 'wrong-image', 'wrong-sha', 'drift', 'unhealthy', 'degraded', 'sealed-open-breaker', 'drain-fail', 'drain-false', 'finish-fail', 'finish-drift', 'health-redirect', 'health-oversize', 'drain-oversize', 'docker-hang']) {
   test(`${scenario} 必须非零并保持pending、不得写成功历史`, async t => {
     const f = await fixture(t, scenario);
     assert.equal(f.code, 1, 'sidecar必须自己非零收口，不能由测试父进程超时冒充');
@@ -117,4 +117,12 @@ test('fallback只确认旧镜像真实恢复，不新增成功部署历史', asy
   const row = JSON.parse(await readFile(join(f.root, `ledger/deployment-${deployment}.json`), 'utf8'));
   assert.equal(row.receipt.outcome, 'recovered');
   assert.equal(row.receipt.image_id, previousImage);
+});
+test('tick 被有意封停（决策 751f73be）的 degraded：sidecar 健康确认与官方收账同口径折算，完成 drain 恢复与 ledger 收尾', async t => {
+  const f = await fixture(t, 'sealed-degraded');
+  assert.equal(f.code, 0, f.stdout + f.stderr);
+  assert.equal(f.ledger.pending, null);
+  assert.equal(f.ledger.successes.length, 1);
+  assert.equal(f.ledger.successes[0].git_sha, sha);
+  assert.ok(f.calls.some(x => x.some(a => a.endsWith('/drain-cancel'))), '健康确认后必须恢复 drain');
 });
