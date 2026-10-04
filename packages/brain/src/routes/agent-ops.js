@@ -1,13 +1,17 @@
 /**
  * agent-ops.js — 运行舱只读端点（指挥舱 G1 S1 刀1，task 6fcb5356）
  * GET /agent-ops/agents   — agent/机器清单 + per-source freshness
- * GET /agent-ops/calendar — 过去24h实跑 + 排程面（ops_schedule_entries + recurring_tasks）
+ * GET /agent-ops/calendar — 过去24h实跑 + 排程面（ops_schedule_entries；recurring_tasks 模板已落表）
+ * GET /agent-ops/alarms   — 闹钟总账：统一 11 列 + 来源心跳 + 未登记数（任务 fe10d1a0）
  * 契约：0条须 source_status 佐证；42P01→503 migration_pending 禁 200 空数组；stale 用服务端时钟。
  */
 import { Router } from 'express';
 import pool from '../db.js';
 import { INTERVAL_MS } from '../ops-collector.js';
 import { MODEL_ACCOUNT_STATUS } from '../ops-model-accounts-collector.js';
+import { statusFromCollectorState } from '../ops-alarm-ledger.js';
+import { importInventorySnapshot } from '../ops-alarm-import.js';
+import { internalAuthOrLoopback } from '../middleware/internal-auth.js';
 
 // MODEL_ACCOUNT_STATUS 单源 import（INV-3 [枚举单份]）——只从 collector 引用，禁在此手抄字面量副本。
 export { MODEL_ACCOUNT_STATUS };
@@ -120,38 +124,37 @@ export async function buildModelAccountsPayload(dbPool, now = new Date()) {
   };
 }
 
+const RECURRING_DEAD_MS = 3 * 24 * 3600 * 1000;
+
+// executeTick 废弃族：recurring 模板长期无实跑 → ⚠️，禁画绿灯。模板已落 ops_schedule_entries(kind=brain_recurring)，
+// 判定改读表里的 last_run_at（原先在 API 层拼接 recurring_tasks 时现算）。
+function isSuspiciousSchedule(s, now) {
+  return s.kind === 'brain_recurring' && (!s.last_run_at || (now - new Date(s.last_run_at)) > RECURRING_DEAD_MS);
+}
+
+// 盘点静态快照行（source=inventory-20261004）只进 /alarms 总账，不进 calendar/graph 的"实时采集"视图。
+const LIVE_SCHEDULES_SQL = `SELECT * FROM ops_schedule_entries WHERE active = TRUE AND source <> 'inventory-20261004' ORDER BY source, label`;
+
 export async function buildCalendarPayload(dbPool, now = new Date()) {
-  let tasks, schedules, recurring;
+  let tasks, schedules;
   try {
     tasks = (await dbPool.query(
       `SELECT id, title, task_type, status, location, claimed_by, executor_kind, updated_at
        FROM tasks WHERE updated_at > NOW() - INTERVAL '24 hours'
          AND status IN ('in_progress','completed','failed','blocked','cancelled')
        ORDER BY updated_at DESC LIMIT 200`)).rows;
-    schedules = (await dbPool.query(`SELECT * FROM ops_schedule_entries WHERE active = TRUE ORDER BY source, label`)).rows;
-    recurring = (await dbPool.query(
-      `SELECT title, cron_expression, last_run_at, next_run_at, last_run_status, is_active
-       FROM recurring_tasks WHERE is_active = TRUE`)).rows;
+    schedules = (await dbPool.query(LIVE_SCHEDULES_SQL)).rows;
   } catch (err) {
     if (isMissingTable(err)) throw migrationPendingError(err);
     throw err;
   }
-  const DEAD_MS = 3 * 24 * 3600 * 1000;
   return {
     runs: tasks.map((t) => ({
       ...t,
       skill: SKILL_BY_TASK_TYPE[t.task_type] ?? null, // 推不出=null，前端显示"未标注"，禁编造
       machine: t.location || null,                     // 只有 us/hk/xian 粒度，如实透出
     })),
-    schedules: [
-      ...schedules.map((s) => ({ ...s, suspicious: false })),
-      ...recurring.map((r) => ({
-        source: 'brain', host_alias: 'local', label: r.title, kind: 'brain_recurring',
-        schedule_desc: r.cron_expression || '', next_run_utc: r.next_run_at, last_state: r.last_run_status,
-        // executeTick 废弃族：长期无实跑的排程标 ⚠️，禁画绿灯
-        suspicious: !r.last_run_at || (now - new Date(r.last_run_at)) > DEAD_MS,
-      })),
-    ],
+    schedules: schedules.map((s) => ({ ...s, suspicious: isSuspiciousSchedule(s, now) })),
     server_now: now.toISOString(),
   };
 }
@@ -168,20 +171,16 @@ export function computeAgentRole(orchestrates = [], orchestratedBy = []) {
 // 合并投影：一行=一个"运行单元"。ops_agents 每行为主，launchd 的 schedule 按 name==label 合并进同一行；
 // 无对应 agent 的排程(gha/brain_recurring)独立成行 role=scheduled。调度(desc/next_run)是属性不是独立库。
 export async function buildGraphPayload(dbPool, now = new Date()) {
-  let agents, schedules, hbs, recurring;
+  let agents, schedules, hbs;
   try {
     agents = (await dbPool.query(`SELECT * FROM ops_agents ORDER BY source, host_alias, name`)).rows;
-    schedules = (await dbPool.query(`SELECT * FROM ops_schedule_entries WHERE active = TRUE ORDER BY source, label`)).rows;
+    schedules = (await dbPool.query(LIVE_SCHEDULES_SQL)).rows;
     hbs = (await dbPool.query(`SELECT * FROM ops_source_heartbeats`)).rows;
-    recurring = (await dbPool.query(
-      `SELECT title, cron_expression, last_run_at, next_run_at, last_run_status, is_active
-       FROM recurring_tasks WHERE is_active = TRUE`)).rows;
   } catch (err) {
     if (isMissingTable(err)) throw migrationPendingError(err);
     throw err;
   }
   const staleMs = STALE_FACTOR * INTERVAL_MS;
-  const DEAD_MS = 3 * 24 * 3600 * 1000;
   const staleByKey = new Map(hbs.map((h) => [`${h.source}|${h.host_alias}`,
     h.source_status !== 'ok' || !h.last_report_at || (now - new Date(h.last_report_at)) > staleMs]));
   const sources = hbs.map((h) => ({
@@ -221,31 +220,112 @@ export async function buildGraphPayload(dbPool, now = new Date()) {
     };
   });
 
-  // 孤儿排程（无对应 agent）：独立成行 role=scheduled
+  // 孤儿排程（无对应 agent）：独立成行 role=scheduled。
+  // recurring_tasks 模板、Brain job 已落 ops_schedule_entries（registered_via 非空，来源不是采集腿，
+  // 没有 per-source 心跳可比对 → stale=false）；死 recurring 排程标 suspicious。
   for (const s of schedules) {
     const k = `${s.source}|${s.host_alias}|${s.label}`;
     if (consumed.has(k)) continue;
+    const selfRegistered = Boolean(s.registered_via) && s.registered_via !== 'external-legacy';
     units.push({
-      source: s.source, host_alias: s.host_alias, name: s.label, agent_type: 'schedule',
-      status: 'active', last_seen_at: null, role: 'scheduled',
+      source: s.source, host_alias: s.host_alias, name: s.label,
+      agent_type: s.kind === 'brain_recurring' ? 'brain_recurring' : 'schedule',
+      status: 'active', last_seen_at: s.kind === 'brain_recurring' ? s.last_run_at : null, role: 'scheduled',
       orchestrates: [], orchestrated_by: [],
       kind: s.kind, schedule_desc: s.schedule_desc, next_run_utc: s.next_run_utc,
-      stale: staleByKey.get(`${s.source}|${s.host_alias}`) ?? true,
-    });
-  }
-  // recurring_tasks（Brain 内部定时）：并入，死排程标 suspicious
-  for (const r of recurring) {
-    units.push({
-      source: 'brain', host_alias: 'local', name: r.title, agent_type: 'brain_recurring',
-      status: 'active', last_seen_at: r.last_run_at, role: 'scheduled',
-      orchestrates: [], orchestrated_by: [],
-      kind: 'brain_recurring', schedule_desc: r.cron_expression || '', next_run_utc: r.next_run_at,
-      suspicious: !r.last_run_at || (now - new Date(r.last_run_at)) > DEAD_MS,
-      stale: staleByKey.get('brain|local') ?? false,
+      ...(s.kind === 'brain_recurring' ? { suspicious: isSuspiciousSchedule(s, now) } : {}),
+      stale: staleByKey.get(`${s.source}|${s.host_alias}`) ?? !selfRegistered,
     });
   }
 
   return { units, sources, global_stale, stale_threshold_ms: staleMs, server_now: now.toISOString() };
+}
+
+/** 定时机制（总账「定时机制」列）：采集腿的 kind 归一；盘点快照行的 kind 本身就是机制名。 */
+export function mechanismOf(kind) {
+  const k = String(kind ?? '');
+  if (k === 'brain_job') return 'brain-job';
+  if (k === 'brain_recurring') return 'recurring_tasks';
+  if (k === 'gha_cron') return 'gha-schedule';
+  if (k.startsWith('launchd')) return 'launchd';
+  if (k.startsWith('openclaw_')) return 'openclaw-cron';
+  return k || 'unknown';
+}
+
+function toAlarmRow(r) {
+  const capability = r.journey_parent_id ? String(r.journey_name).split(' · ').pop() : null;
+  const treePath = r.journey_id
+    ? [r.department_name, r.value_stream_name, capability].filter(Boolean).join(' / ')
+    : (r.tree_bucket_manual || null);
+  return {
+    id: String(r.id),
+    name: r.label,
+    machine: r.host_alias,
+    source: r.source,
+    mechanism: mechanismOf(r.kind),
+    cadence: r.schedule_desc || '',
+    interval_sec: r.interval_sec ?? null,
+    enabled: r.enabled !== false,
+    tree: {
+      path: treePath,
+      department: r.journey_id ? (r.department_name ?? null) : null,
+      value_stream: r.journey_id ? (r.value_stream_name ?? null) : null,
+      capability,
+      bucket: r.tree_bucket_manual ?? null,
+    },
+    last_run_at: r.last_run_at ?? null,
+    last_success_at: r.last_success_at ?? null,
+    last_status: r.last_status ?? statusFromCollectorState(r.last_state, r.last_exit_code),
+    liveness: r.liveness ?? null,
+    silent_sec: r.silent_sec ?? null,
+    next_run_utc: r.next_run_utc ?? null,
+    note: r.note_manual || r.note || null,
+    owner: r.owner_manual ?? null,
+    registered_via: r.registered_via ?? null,
+    ledger_status: r.ledger_status,
+  };
+}
+
+// GET /agent-ops/alarms — 闹钟总账：统一 11 列（# 名称 机器 机制 周期 启用 挂树 上次运行 上次成功 最近状态 备注）
+// + 各来源采集心跳 + 未登记数。数据全部来自 ops_schedule_entries（不建新表，决策 9e9d90b6）。
+export async function buildAlarmsPayload(dbPool, now = new Date()) {
+  let rows, hbs;
+  try {
+    rows = (await dbPool.query(
+      `SELECT e.*, j.name AS journey_name, j.parent_journey_id AS journey_parent_id,
+              vs.name AS value_stream_name, a.name AS department_name
+         FROM ops_schedule_entries e
+         LEFT JOIN journeys j ON j.id = e.journey_id
+         LEFT JOIN journeys vs ON vs.id = COALESCE(j.parent_journey_id, j.id)
+         LEFT JOIN areas a ON a.id = vs.area_id
+        WHERE e.active = TRUE
+        ORDER BY e.source, e.host_alias, e.label`)).rows;
+    hbs = (await dbPool.query(`SELECT * FROM ops_source_heartbeats ORDER BY source, host_alias`)).rows;
+  } catch (err) {
+    if (isMissingTable(err) || err?.code === '42703') throw migrationPendingError(err); // 42703=517 新列未迁
+    throw err;
+  }
+  const staleMs = STALE_FACTOR * INTERVAL_MS;
+  const alarms = rows.map(toAlarmRow);
+  const tally = (key) => alarms.reduce((m, a) => { m[a[key]] = (m[a[key]] || 0) + 1; return m; }, {});
+  return {
+    alarms,
+    summary: {
+      total: alarms.length,
+      enabled: alarms.filter((a) => a.enabled).length,
+      by_mechanism: tally('mechanism'),
+      by_status: tally('last_status'),
+      unregistered: alarms.filter((a) => a.ledger_status === 'unregistered').length, // 棘轮只许降
+      without_tree: alarms.filter((a) => !a.tree.path).length,
+    },
+    sources: hbs.map((h) => ({
+      source: h.source, host_alias: h.host_alias, source_status: h.source_status,
+      reason_code: h.reason_code, last_error: h.last_error,
+      last_report_at: h.last_report_at, last_collected_at: h.last_collected_at,
+      stale: h.source_status !== 'ok' || !h.last_report_at || (now - new Date(h.last_report_at)) > staleMs,
+    })),
+    server_now: now.toISOString(),
+  };
 }
 
 const router = Router();
@@ -268,5 +348,24 @@ router.get('/agents', handle(buildAgentsPayload));
 router.get('/calendar', handle(buildCalendarPayload));
 router.get('/graph', handle(buildGraphPayload)); // 合并视图：运行单元行（agent+schedule 去重，role/workflow 现算）
 router.get('/model-accounts', handle(buildModelAccountsPayload)); // 8 模型账号配额快照（刀2）
+router.get('/alarms', handle(buildAlarmsPayload)); // 闹钟总账（扩 ops_schedule_entries，任务 fe10d1a0）
+
+// POST /agent-ops/alarms/import — 盘点静态快照一次性导入（E.4）。内部令牌鉴权；缺省 dry_run=true，必须显式 false 才写。
+router.post('/alarms/import', internalAuthOrLoopback, async (req, res) => {
+  const items = req.body?.items;
+  if (!Array.isArray(items) || items.length === 0 || items.length > 1000) {
+    return res.status(400).json({ success: false, error: { code: 'bad_request', message: 'items 必须是 1~1000 条的数组' } });
+  }
+  try {
+    const data = await importInventorySnapshot(pool, items, { dryRun: req.body?.dry_run !== false });
+    res.json({ success: true, data });
+  } catch (err) {
+    if (isMissingTable(err) || err?.code === '42703') {
+      return res.status(503).json({ success: false, error: { code: 'migration_pending', message: '517 迁移未跑' } });
+    }
+    console.error('[agent-ops] alarms import', err);
+    res.status(500).json({ success: false, error: { code: 'internal', message: err.message } });
+  }
+});
 
 export default router;

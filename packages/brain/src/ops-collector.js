@@ -8,6 +8,7 @@
 import { existsSync } from 'fs';
 import { defaultExec, buildHostCmd } from './host-exec.js';
 import { summarizeLiveness } from './ops-liveness.js';
+import { statusFromCollectorState } from './ops-alarm-ledger.js';
 
 export const OWN_LABEL_RE = /(cecelia|zenithjoy|perfect21|openclaw|claude|n8n|cloudflare)/i;
 export const INTERVAL_MS = parseInt(process.env.OPS_COLLECTOR_INTERVAL_MS || String(5 * 60 * 1000), 10);
@@ -554,6 +555,8 @@ export function parseOpenclawCrons(raw) {
       desc = JSON.stringify(sch);
     }
     const next = j?.state?.nextRunAtMs ?? j?.nextRunAtMs ?? null;
+    const lastRunMs = Number(j?.state?.lastRunAtMs ?? j?.lastRunAtMs ?? 0);
+    const lastRunAt = Number.isFinite(lastRunMs) && lastRunMs > 0 ? new Date(lastRunMs).toISOString() : null;
     const lastState = j?.enabled === false
       ? 'disabled'
       : (j?.lastRunStatus ?? j?.status ?? null);
@@ -564,6 +567,9 @@ export function parseOpenclawCrons(raw) {
       next_run_utc: Number.isFinite(Number(next)) && next ? new Date(Number(next)).toISOString() : null,
       last_state: lastState,
       last_exit_code: null,
+      interval_sec: kind === 'every' && Number(sch.everyMs) > 0 ? Math.round(Number(sch.everyMs) / 1000) : null,
+      last_run_at: lastRunAt,
+      last_success_at: lastState === 'ok' ? lastRunAt : null,
     };
   });
 }
@@ -914,12 +920,22 @@ async function writeSchedulesSnapshot(pool, source, host, entries, collectedAt) 
     await pool.query(
       // updated_at 显式写 collectedAt（应用时钟），与下方 deactivation 阈值同源——
       // 若用 NOW()（DB 时钟）而 DB 时钟落后于应用时钟，本轮刚写的行会 updated_at < collectedAt 被误标 active=FALSE 闪断。
-      `INSERT INTO ops_schedule_entries (source, host_alias, label, kind, schedule_desc, next_run_utc, last_state, last_exit_code, active, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9)
+      // 闹钟总账（517，任务 fe10d1a0）：机器列随快照一起写；SET 里只有机器列——
+      // owner_manual/note_manual/tree_bucket_manual 与挂树列（journey_id/workflow_id/ledger_status/registered_via）
+      // 是人或导入脚本的结论，机器每 5 分钟覆盖会冲掉。前 9 个参数位置不动（测试按下标断言），新列只追加在后。
+      `INSERT INTO ops_schedule_entries (source, host_alias, label, kind, schedule_desc, next_run_utc, last_state, last_exit_code, active, updated_at,
+          interval_sec, enabled, last_run_at, last_success_at, last_status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$10,$11,$12,$13,$14)
        ON CONFLICT (source, host_alias, label) DO UPDATE SET
          kind=EXCLUDED.kind, schedule_desc=EXCLUDED.schedule_desc, next_run_utc=EXCLUDED.next_run_utc,
-         last_state=EXCLUDED.last_state, last_exit_code=EXCLUDED.last_exit_code, active=TRUE, updated_at=$9`,
-      [source, host, s.label, s.kind, s.schedule_desc || '', s.next_run_utc || null, s.last_state || null, s.last_exit_code ?? null, collectedAt]
+         last_state=EXCLUDED.last_state, last_exit_code=EXCLUDED.last_exit_code, active=TRUE, updated_at=$9,
+         interval_sec=EXCLUDED.interval_sec, enabled=EXCLUDED.enabled,
+         last_run_at=COALESCE(EXCLUDED.last_run_at, ops_schedule_entries.last_run_at),
+         last_success_at=COALESCE(EXCLUDED.last_success_at, ops_schedule_entries.last_success_at),
+         last_status=EXCLUDED.last_status`,
+      [source, host, s.label, s.kind, s.schedule_desc || '', s.next_run_utc || null, s.last_state || null, s.last_exit_code ?? null, collectedAt,
+        s.interval_sec ?? null, s.last_state !== 'disabled', s.last_run_at ?? null, s.last_success_at ?? null,
+        statusFromCollectorState(s.last_state, s.last_exit_code)]
     );
   }
   if (entries.length) {
@@ -978,6 +994,7 @@ export async function runOpsCollector(pool, opts = {}) {
           label: l.label, kind: 'launchd_interval',
           schedule_desc: `约每 ${p.StartInterval} 秒`, // 锚点=加载时刻，禁假精确
           next_run_utc: null, last_state: lastState, last_exit_code: l.lastExitCode,
+          interval_sec: Number(p.StartInterval) > 0 ? Number(p.StartInterval) : null,
         });
       }
     }
