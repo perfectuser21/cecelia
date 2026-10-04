@@ -4,7 +4,7 @@ import { createStore } from './storage.mjs';
 import { createDockerAdapter } from './docker.mjs';
 import { createDeploymentLedger } from './ledger.mjs';
 import { createRetentionEngine } from './engine.mjs';
-import { fail, US_MACHINE_ID } from './policy.mjs';
+import { deployHealth, fail, US_MACHINE_ID } from './policy.mjs';
 export const ROOT = '/mnt/openclaw_data/cecelia-janitor';
 export async function readHealth(base = 'http://127.0.0.1:5221') {
   const response = await fetch(`${base}/api/brain/health`, { redirect: 'error', signal: AbortSignal.timeout(10000) });
@@ -17,7 +17,7 @@ export async function readHealth(base = 'http://127.0.0.1:5221') {
     }
   } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
   const value = JSON.parse(Buffer.concat(chunks).toString());
-  return { status: value.status, version: value.version, git_sha: value.git_sha };
+  return deployHealth(value);
 }
 export async function createRuntime({ root = ROOT, dataPath, executable, health = readHealth, expectedContainerId } = {}) {
   const store = createStore(root);

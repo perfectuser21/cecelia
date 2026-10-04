@@ -1,6 +1,6 @@
 import { runDockerProcess } from './process.mjs';
 import { stat, statfs } from 'node:fs/promises';
-import { fail, IMAGE, US_MACHINE_ID } from './policy.mjs';
+import { deployHealth, fail, IMAGE, US_MACHINE_ID } from './policy.mjs';
 export function createDockerAdapter({ root, dataPath = '/run/cecelia-docker-data', expected, executable = 'docker', now = Date.now, timeoutMs = 30000 }) {
   if (expected?.machine_registry_id !== US_MACHINE_ID || !expected.daemon_id || !expected.docker_root_dir?.startsWith('/')
       || !Number.isSafeInteger(expected.volume_dev)) throw fail('HOST_IDENTITY_UNKNOWN');
@@ -36,8 +36,7 @@ export function createDockerAdapter({ root, dataPath = '/run/cecelia-docker-data
     const output = await run(['exec', id, 'curl', '-q', '-fsm', '10', '--max-filesize', '262144', '-w', '\n%{http_code}', 'http://127.0.0.1:5221/api/brain/health'], lease);
     const boundary = output.lastIndexOf('\n'), body = output.slice(0, boundary);
     if (boundary < 0 || !/^2[0-9]{2}$/.test(output.slice(boundary + 1).trim()) || Buffer.byteLength(body) > 262144) throw fail('DEPLOY_HEALTH_UNAVAILABLE');
-    const value = JSON.parse(body);
-    return { status: value.status, version: value.version, git_sha: value.git_sha };
+    return deployHealth(JSON.parse(body));
   }
   async function absent(id, lease) {
     if (!IMAGE.test(id)) throw fail('INVALID_IMAGE');

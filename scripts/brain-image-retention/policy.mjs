@@ -5,6 +5,22 @@ export const UUID = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
 export const VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 const GiB = 2 ** 30;
 export function fail(code) { return Object.assign(new Error(code), { code }); }
+/**
+ * 部署收账（ledger.finish）读到的健康口径。
+ * /api/brain/health 的 healthy 要求 tick 循环在跑；tick 被有意封停（决策 751f73be）时它恒为 degraded，
+ * 收账要求 healthy → 容器已换成功却永远收不了账，台账 pending 卡死后续全部部署（2026-10-04 实证）。
+ * 只有当 degraded 的唯一原因是「调度器被有意关闭」才折算为 healthy：scheduler.enabled===false，
+ * 且断路器无 OPEN、docker/fleet 均无异常（与 /health 的 healthy 公式逐项对应）。缺字段/形状不明一律不折算。
+ * version 与 git_sha 原样返回，收账仍要它们与部署身份逐项相符。
+ */
+export function deployHealth(value) {
+  const sealedOnly = value?.status === 'degraded'
+    && value.organs?.scheduler?.enabled === false
+    && Array.isArray(value.organs?.circuit_breaker?.open) && value.organs.circuit_breaker.open.length === 0
+    && !(value.docker_runtime?.enabled === true && value.docker_runtime?.status === 'unhealthy')
+    && !(value.fleet_transport?.enabled === true && value.fleet_transport?.status === 'unavailable');
+  return { status: sealedOnly ? 'healthy' : value?.status, version: value?.version, git_sha: value?.git_sha };
+}
 function disk(value) {
   if (!Number.isSafeInteger(value?.total_bytes) || value.total_bytes <= 0 || !Number.isSafeInteger(value.available_bytes)
       || value.available_bytes < 0 || value.available_bytes > value.total_bytes) throw fail('DISK_SAMPLE_UNKNOWN');
