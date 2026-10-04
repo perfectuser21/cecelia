@@ -82,10 +82,22 @@ _sidecar_pin_target() {
   read -r TARGET_CONTAINER extra name running service <<< "$observed"
   [[ "$TARGET_CONTAINER" =~ ^[a-f0-9]{64}$ ]] && _sidecar_same_target
 }
+# /healthz 以 tick 存活为 200 条件；tick 被有意封停（决策 751f73be）后恒为 503（body: db=connected, tick=dead）。
+# 只放行「503 且 db=connected」——DB 连不上仍失败；tick 死亡是否属有意封停，由后面的 /health 折算判定
+#（scheduler.enabled=false 才折算，否则 degraded 照旧失败）。传输失败/其他状态码一律失败。
+_sidecar_healthz() {
+  local out code body
+  out=$(_sidecar_docker exec "$TARGET_CONTAINER" curl -q -sm 3 --max-filesize 262144 -w '\n%{http_code}' http://127.0.0.1:5221/api/brain/healthz 2>/dev/null) || return 1
+  code="${out##*$'\n'}"; body="${out%$'\n'*}"
+  [[ "$code" == 200 ]] && return 0
+  [[ "$code" == 503 ]] || return 1
+  printf '%s' "$body" | node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{
+    try{process.exit(JSON.parse(s).db==="connected"?0:1)}catch{process.exit(1)}})'
+}
 _sidecar_health() {
   local health
   _sidecar_same_target || return 1
-  _sidecar_docker exec "$TARGET_CONTAINER" curl -q -fsm 3 --max-filesize 262144 http://127.0.0.1:5221/api/brain/healthz >/dev/null 2>&1 || return 1
+  _sidecar_healthz || return 1
   health=$(_sidecar_docker exec "$TARGET_CONTAINER" curl -q -fsm 5 --max-filesize 262144 http://127.0.0.1:5221/api/brain/health) || return 1
   # 健康口径与官方收账同源（policy.deployHealth）：tick 被有意封停（决策 751f73be）使 /health 恒为 degraded，
   # 仅折算这一个原因；导入失败（旧镜像无该模块）= 严格口径，不放宽。version/git_sha/tags 逐项核对不变。

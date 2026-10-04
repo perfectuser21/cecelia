@@ -1,4 +1,7 @@
 # DoD — 受控再基恢复
+- [x] [BEHAVIOR] deployhealthz 部署链剩余两处 healthy 硬编码：sidecar 的 /healthz 探针在封停 tick（503 且 db=connected）下放行、DB 异常仍失败；Auto Staging Deploy 的等待脚本对封停 tick 的 degraded 与部署收账同口径视为就绪，断路器 OPEN 与非封停原因的 degraded 仍超时失败。
+  Test: manual:bash -c "node --test scripts/bluegreen-sidecar-completion.test.mjs scripts/brain-image-retention-health.test.mjs && bash scripts/__tests__/wait-for-production-sha.test.sh && bash scripts/__tests__/bluegreen-sidecar-drain-log.test.sh"
+
 - [x] [BEHAVIOR] sidecarhealth 蓝绿 sidecar 健康确认与官方收账同口径：tick 被有意封停导致的 degraded 折算 healthy 后完成 drain 恢复与 ledger 收尾；无该折算依据（缺 organs、断路器 OPEN）仍非零并保持 pending；导入失败按严格口径。
   Test: manual:bash -c "node --test scripts/bluegreen-sidecar-completion.test.mjs scripts/brain-image-retention-health.test.mjs && bash scripts/__tests__/bluegreen-sidecar-drain-log.test.sh"
 
