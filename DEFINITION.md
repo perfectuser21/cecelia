@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.371.2
+**Brain 版本**: 1.371.3
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,12 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.371.3 — 部署链剩余两处 healthy 硬编码：sidecar /healthz 探针与 Auto Staging Deploy 等待脚本
+
+- `scripts/lib/bluegreen-sidecar.sh`：`/api/brain/healthz` 以 tick 存活为 200 条件，tick 被有意封停（决策 751f73be）后恒为 503，`curl -f` 在「等 healthz」第一步就失败，后面折算 `/health` 的逻辑（#5949）根本走不到——1.371.2 部署时再次复现，drain 与台账都要手工收尾。新增 `_sidecar_healthz`：只放行「503 且 body.db=connected」，DB 异常/传输失败/其他状态码仍失败；tick 死亡是否属有意封停仍由后面的 `/health` 折算判定（`scheduler.enabled=false` 才折算）。
+- `scripts/wait-for-production-sha.sh`：Auto Staging Deploy 用它等生产 healthy+同 SHA，自 1.370.13 起每次因 degraded 超时失败，Dashboard staging 从未出包。改为与部署收账同口径（`policy.deployHealth`，导入失败=严格口径）。
+- 回归：sidecar fixture 忠实模拟 `/healthz` 503 与 `curl -f`；`wait-for-production-sha.test.sh` 新增封停放行、断路器 OPEN/非封停仍超时三个用例（任务 a9adc667）。
 
 ## Brain 1.371.2 — 蓝绿 sidecar 健康确认折算「有意封停 tick」的 degraded
 
