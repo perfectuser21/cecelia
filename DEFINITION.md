@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.371.1
+**Brain 版本**: 1.371.2
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,12 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.371.2 — 蓝绿 sidecar 健康确认折算「有意封停 tick」的 degraded
+
+- `scripts/lib/bluegreen-sidecar.sh` 的 `_sidecar_health` 内联 node 也硬要求 `/health` 为 healthy：tick 被有意封停（决策 751f73be）后恒为 degraded，新容器已起来，sidecar 却在「等 healthz」一步判 `healthz_poll_timeout_or_identity_mismatch` 退出——drain 不恢复、台账不收账（#5947 只修了官方收账 CLI 这一处，2026-10-04 部署 1.371.1 时暴露第二处）。
+- 改为复用 `policy.deployHealth`（路径可由 `CECELIA_RETENTION_POLICY` 覆盖，默认 `/app/scripts/brain-image-retention/policy.mjs`）；导入失败 = 严格口径；version/git_sha/tags 逐项核对不变。
+- 回归：`scripts/bluegreen-sidecar-completion.test.mjs` 新增 `sealed-degraded`（成功收尾）与 `sealed-open-breaker`（仍非零保持 pending）两个场景（任务 a9adc667）。
 
 ## Brain 1.371.1 — 部署收账不再被「有意封停 tick」的 degraded 卡死
 
