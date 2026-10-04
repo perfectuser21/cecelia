@@ -75,33 +75,4 @@ fresh_active="$(q "SELECT active FROM ops_schedule_entries WHERE host_alias='${T
 [[ "$fresh_active" == "t" ]] || fail "本轮刚写入排程被误标 offline（W1 时钟错配回归！）active=$fresh_active"
 pass "W1 deactivation 应用时钟：刚写入行保 active，缺席行 deactivate"
 
-# 5. 闹钟总账（迁移 517，任务 fe10d1a0）：排程台账加列、人工列/挂树列不被机器 upsert 冲掉、口径 CHECK 拦非法值
-for c in interval_sec enabled last_run_at last_success_at last_status liveness silent_sec registered_via ledger_status \
-         workflow_id journey_id ops_workflow_id owner_manual note_manual tree_bucket_manual; do
-  has="$(q "SELECT count(*) FROM information_schema.columns WHERE table_name='ops_schedule_entries' AND column_name='$c'")"
-  [[ "$has" == "1" ]] || fail "ops_schedule_entries 缺列 $c（迁移 517 未跑？）"
-done
-pass "迁移 517：排程台账 15 个总账列齐全（未新建表）"
-
-q "INSERT INTO ops_schedule_entries (source,host_alias,label,kind,schedule_desc,active,owner_manual,note_manual,tree_bucket_manual,registered_via,ledger_status)
-   VALUES ('crontab','${TAG}-mmv','ledger-job @ 5 * * * *','crontab','cron(UTC): 5 * * * *',TRUE,'alex','人写备注','暂存归属','external-legacy','registered')" >/dev/null
-# 采集腿同款 upsert：SET 里只有机器列
-q "INSERT INTO ops_schedule_entries (source,host_alias,label,kind,schedule_desc,active,interval_sec,enabled,last_status)
-   VALUES ('crontab','${TAG}-mmv','ledger-job @ 5 * * * *','crontab','cron(UTC): 6 * * * *',TRUE,3600,TRUE,'正常')
-   ON CONFLICT (source,host_alias,label) DO UPDATE SET
-     schedule_desc=EXCLUDED.schedule_desc, interval_sec=EXCLUDED.interval_sec, enabled=EXCLUDED.enabled, last_status=EXCLUDED.last_status" >/dev/null
-kept="$(q "SELECT owner_manual||'|'||note_manual||'|'||tree_bucket_manual||'|'||registered_via||'|'||ledger_status FROM ops_schedule_entries WHERE host_alias='${TAG}-mmv'")"
-[[ "$kept" == "alex|人写备注|暂存归属|external-legacy|registered" ]] || fail "机器 upsert 冲掉了人工列/登记列：$kept"
-fresh="$(q "SELECT interval_sec||'|'||last_status FROM ops_schedule_entries WHERE host_alias='${TAG}-mmv'")"
-[[ "$fresh" == "3600|正常" ]] || fail "机器列未更新：$fresh"
-pass "机器 upsert 只动机器列，人工列/登记列原样保留"
-
-for bad in "ledger_status='maybe'" "last_status='乱写'" "registered_via='cron-by-hand'"; do
-  col="${bad%%=*}"; val="${bad#*=}"
-  if q "INSERT INTO ops_schedule_entries (source,host_alias,label,kind,${col}) VALUES ('crontab','${TAG}-mmv','bad-${col}','crontab',${val})" >/dev/null 2>&1; then
-    fail "CHECK 约束没拦住非法值 ${bad}（口径会漂移）"
-  fi
-done
-pass "CHECK 约束拦住非法 ledger_status / last_status / registered_via"
-
 echo "✅ ops-registry-smoke 全通过"

@@ -6,4 +6,4 @@
 - `ops-collector.js` 采集腿写新机器列（人工列与挂树列永不进 SET）；Notion「Ops 运行图谱」推送排除总账自有行。
 - `GET /api/brain/agent-ops/alarms`：统一 11 列 + 来源心跳 + 未登记数；`POST /agent-ops/alarms/import`（内部令牌，缺省干跑）+ `scripts/ops/import-alarm-ledger-inventory.mjs` 导入 2026-10-04 盘点静态快照（`source=inventory-20261004`，已被采集的来源只补挂树列，只补空）。
 - Dashboard：System → 「闹钟总账」页签（`/system/alarms`），只读表格，可按机器/机制/状态/部门筛选。
-- 回归：`ops-alarm-ledger.test.js`、`ops-alarm-ledger.pg.integration.test.js`、`ops-registry-smoke.sh`（任务 fe10d1a0）。
+- 回归：`ops-alarm-ledger.test.js`、`ops-alarm-ledger.pg.integration.test.js`、`alarm-ledger-smoke.sh`（任务 fe10d1a0）。

@@ -409,3 +409,4 @@ capability-kr-regression-smoke.sh
 pilot-release-verification-smoke.sh
 phone-runner-infra-smoke.sh
 dead-man-switch-usvps-smoke.sh
+alarm-ledger-smoke.sh
