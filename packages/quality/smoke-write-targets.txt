@@ -1,6 +1,7 @@
 # 已逐项确认：真实 Brain HTTP mutation 与 SQL 写入口；独立 HTTP fixture 不在此表。
 8table-schema-smoke.sh
 advancement-items-smoke.sh
+alarm-ledger-smoke.sh
 all-features-smoke.sh
 attempt-run-smoke.sh
 blade-bc-harness-gates-smoke.sh
