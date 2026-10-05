@@ -27,7 +27,7 @@ import pool from '../src/db.js';
 // claude 在交互 shell 里是函数（alias/shell function），不是可执行文件——
 // child_process.spawn 走的是真实 execve，必须给绝对路径，否则报 ENOENT。
 const CLAUDE_BIN = process.env.CLAUDE_BIN || '/opt/homebrew/bin/claude';
-const CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || '/Users/administrator/.claude-account2';
+const CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || '/Users/administrator/.claude';
 const EVAL_PROMPT_PATH =
   process.env.EVAL_PROMPT_PATH || '/Users/administrator/perfect21/skill-eval-formb-assets/eval-prompt.txt';
 // eval-prompt.txt 里硬编码了一个示例路径（daily-report-v1-2 的调研路径），
