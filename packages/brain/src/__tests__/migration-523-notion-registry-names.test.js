@@ -24,6 +24,11 @@ describe('migration 523 notion registry standard names', () => {
     expect(sql).toMatch(/title = '闹钟总账'[\s\S]*notion_db_id = '3d3c40c2-ba63-815e-be8a-f5048c070d80'/);
   });
 
+  it('页面链接表 projection_links 的实体类型随键改名（目录投影按 DIRECTORY_TABLES 查链接，不改会判「页已被占用」）', () => {
+    expect(sql).toMatch(/UPDATE projection_links SET entity_type = 'activities'[\s\S]*WHERE entity_type = 'journey_steps'/);
+    expect(readFileSync(down, 'utf8')).toMatch(/UPDATE projection_links SET entity_type = 'journey_steps'[\s\S]*WHERE entity_type = 'activities'/);
+  });
+
   it('写 schema_version 523，事务包裹，有回滚文件', () => {
     expect(sql).toMatch(/^BEGIN;/m);
     expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'523'/);
