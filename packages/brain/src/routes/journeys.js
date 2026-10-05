@@ -611,13 +611,15 @@ router.get('/journey_steps/:step_id/ledger', async (req, res) => {
          js.name,
          p.step_number,
          js.promise,
-         p.capability_id AS journey_id,
+         COALESCE(p.capability_id, first_cell.journey_id) AS journey_id,
          j.name AS journey_name,
          j.home,
          j.domain
        FROM activities js
-       JOIN activity_placement p ON p.activity_id = js.id
-       JOIN journeys j ON j.id = p.capability_id
+       LEFT JOIN activity_placement p ON p.activity_id = js.id
+       -- 还没挂进流程的老步骤：回退到它的格子记的能力，台账照常可读
+       LEFT JOIN LATERAL (SELECT c.journey_id FROM activity_cells c WHERE c.step_id = js.id ORDER BY c.created_at LIMIT 1) first_cell ON true
+       JOIN journeys j ON j.id = COALESCE(p.capability_id, first_cell.journey_id)
        WHERE js.id=$1`,
       [stepId]
     );

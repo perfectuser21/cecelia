@@ -88,6 +88,8 @@ describe('migration 350: 承诺地图两域 seed', () => {
     try {
       await client.query('BEGIN');
       await client.query('ALTER TABLE activities RENAME TO journey_steps');
+      // 350 的 ON CONFLICT (journey_id, step_number) 靠迁移 527 之前的唯一约束：在这个会回滚的事务里临时补上，验证的是历史种子自身的幂等
+      await client.query('CREATE UNIQUE INDEX tmp_350_replay ON journey_steps (journey_id, step_number)');
       await client.query('ALTER TABLE activity_cells RENAME TO journey_step_links');
       const before = await count(client);
       await client.query(sql);
