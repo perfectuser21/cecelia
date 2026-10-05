@@ -23,3 +23,8 @@ export async function minimumDefinitionSchema(db,{runs=true}={}){
  await db.query(migrationSql('494_vs_model_workflows.sql'));
  if(runs){await db.query(migrationSql('059_task_runs.sql'));await db.query(migrationSql('495_vs_model_spans.sql'));}
 }
+
+// 迁移 522 起 journey_steps / journey_step_links / enablers 在 public 里是旧名视图（真表 activities / activity_cells / warehouse_items）。
+// 夹具 `CREATE TABLE x (LIKE public.<t> INCLUDING ALL)` 复制结构必须从真表复制（视图拿不到主键/默认值）；复制出来的表在隔离 schema 里仍叫旧名，被测代码照旧名查。
+export const LIKE_SOURCE=Object.freeze({journey_steps:"activities",journey_step_links:"activity_cells",enablers:"warehouse_items"});
+export const likeSource=(table)=>LIKE_SOURCE[table]??table;

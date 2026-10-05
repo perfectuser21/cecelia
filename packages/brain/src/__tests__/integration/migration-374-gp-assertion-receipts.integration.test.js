@@ -48,6 +48,10 @@ async function rejectReceipts(values) {
 beforeAll(async () => {
   client = await pool.connect();
   await client.query('BEGIN');
+  // 迁移 522 起 journey_step_links 是视图（真表 activity_cells）。374 是旧迁移，对旧名做 ALTER TABLE，
+  // 视图上做不了：在本事务内把真表临时改回旧名重放（afterAll 的 ROLLBACK 会还原），验证的是旧迁移自身的幂等。
+  await client.query('DROP VIEW IF EXISTS journey_step_links');
+  await client.query('ALTER TABLE activity_cells RENAME TO journey_step_links');
   await client.query(migration);
   await client.query(migration);
   const journeyId = (await client.query("INSERT INTO journeys (name, description) VALUES ($1, 'assertion receipt migration fixture') RETURNING id", [fixture])).rows[0].id;
