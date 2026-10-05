@@ -55,7 +55,7 @@ describe('migration 347: journey_steps 新字段', () => {
   it('journey_steps 有 promise 列', async () => {
     const r = await pool.query(`
       SELECT column_name FROM information_schema.columns
-      WHERE table_name='journey_steps' AND column_name='promise'
+      WHERE table_name='activities' AND column_name='promise'
     `);
     expect(r.rows).toHaveLength(1);
   });
@@ -63,7 +63,7 @@ describe('migration 347: journey_steps 新字段', () => {
   it('journey_steps 有 backbone_version 列（默认 1.0）', async () => {
     const r = await pool.query(`
       SELECT column_name, column_default FROM information_schema.columns
-      WHERE table_name='journey_steps' AND column_name='backbone_version'
+      WHERE table_name='activities' AND column_name='backbone_version'
     `);
     expect(r.rows).toHaveLength(1);
     expect(r.rows[0].column_default).toMatch(/1\.0/);
@@ -96,7 +96,7 @@ describe('migration 347: journey_step_links 新字段', () => {
   it('journey_step_links 有 feature_id 列', async () => {
     const r = await pool.query(`
       SELECT column_name FROM information_schema.columns
-      WHERE table_name='journey_step_links' AND column_name='feature_id'
+      WHERE table_name='activity_cells' AND column_name='feature_id'
     `);
     expect(r.rows).toHaveLength(1);
   });
@@ -104,7 +104,7 @@ describe('migration 347: journey_step_links 新字段', () => {
   it('journey_step_links 有 cell_kind 列', async () => {
     const r = await pool.query(`
       SELECT column_name FROM information_schema.columns
-      WHERE table_name='journey_step_links' AND column_name='cell_kind'
+      WHERE table_name='activity_cells' AND column_name='cell_kind'
     `);
     expect(r.rows).toHaveLength(1);
   });
@@ -112,7 +112,7 @@ describe('migration 347: journey_step_links 新字段', () => {
   it('journey_step_links 有 cell_status 列（默认 gray）', async () => {
     const r = await pool.query(`
       SELECT column_name, column_default FROM information_schema.columns
-      WHERE table_name='journey_step_links' AND column_name='cell_status'
+      WHERE table_name='activity_cells' AND column_name='cell_status'
     `);
     expect(r.rows).toHaveLength(1);
     expect(r.rows[0].column_default).toMatch(/gray/);
@@ -121,7 +121,7 @@ describe('migration 347: journey_step_links 新字段', () => {
   it('journey_step_links 有 assertion_ref 列', async () => {
     const r = await pool.query(`
       SELECT column_name FROM information_schema.columns
-      WHERE table_name='journey_step_links' AND column_name='assertion_ref'
+      WHERE table_name='activity_cells' AND column_name='assertion_ref'
     `);
     expect(r.rows).toHaveLength(1);
   });
@@ -129,7 +129,7 @@ describe('migration 347: journey_step_links 新字段', () => {
   it('journey_step_links 有 na_reason 列', async () => {
     const r = await pool.query(`
       SELECT column_name FROM information_schema.columns
-      WHERE table_name='journey_step_links' AND column_name='na_reason'
+      WHERE table_name='activity_cells' AND column_name='na_reason'
     `);
     expect(r.rows).toHaveLength(1);
   });
@@ -139,7 +139,7 @@ describe('migration 347: journey_step_links 新字段', () => {
       SELECT pg_get_constraintdef(c.oid) AS def
       FROM pg_constraint c
       JOIN pg_class t ON t.oid = c.conrelid
-      WHERE t.relname = 'journey_step_links' AND c.contype = 'c'
+      WHERE t.relname = 'activity_cells' AND c.contype = 'c'
         AND pg_get_constraintdef(c.oid) LIKE '%cell_status%'
     `);
     expect(r.rows.length).toBeGreaterThanOrEqual(1);

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
+import { likeSource } from '../fixtures/minimum-definition-schema.js';
 import { companyKrSpec as spec, registerCompanyKrWorkflow } from '../../lib/company-kr-registration.js';
 
 let client, schema, db;
@@ -14,7 +15,7 @@ beforeEach(async () => {
   schema = `kr_registration_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
   for (const table of ['journeys','workflows','ops_agents','journey_steps','steps','ops_workflows','tasks','task_runs','schema_version','spans','enablers','enabler_calls','areas']) {
-    await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
+    await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
   }
   await client.query(`SET search_path TO ${schema},public`);
   await client.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql',import.meta.url),'utf8'));

@@ -19,7 +19,7 @@ describe('migration 349: promise map 和解补齐（348 thin 版之上）', () =
   });
 
   it('journey_steps.backbone_version 已归一为 NOT NULL', async () => {
-    const c = await cols('journey_steps');
+    const c = await cols('activities');
     expect(c.promise).toBeDefined();
     expect(c.backbone_version).toBe('NO'); // 349 归一：SET NOT NULL DEFAULT '1.0'
   });
@@ -39,7 +39,7 @@ describe('migration 349: promise map 和解补齐（348 thin 版之上）', () =
   });
 
   it('journey_step_links 格子列全齐（cell_key 由 349 补）且 step_order 可空', async () => {
-    const c = await cols('journey_step_links');
+    const c = await cols('activity_cells');
     for (const k of ['feature_id', 'cell_kind', 'cell_key', 'cell_status', 'assertion_ref', 'na_reason'])
       expect(c[k], k).toBeDefined();
     expect(c.step_order).toBe('YES');
@@ -50,7 +50,7 @@ describe('migration 349: promise map 和解补齐（348 thin 版之上）', () =
       SELECT conname FROM pg_constraint WHERE conname='journey_step_links_journey_id_step_id_key'`);
     expect(cons).toHaveLength(0);
     const { rows: idx } = await pool.query(`
-      SELECT indexname FROM pg_indexes WHERE tablename='journey_step_links'`);
+      SELECT indexname FROM pg_indexes WHERE tablename='activity_cells'`);
     const names = idx.map(r => r.indexname);
     expect(names).toContain('uq_jsl_membership');
     expect(names).toContain('uq_jsl_cell');
@@ -60,7 +60,7 @@ describe('migration 349: promise map 和解补齐（348 thin 版之上）', () =
   it('cell_kind 与 cell_key_required CHECK 已建（cell_status CHECK 由 348 内联提供）', async () => {
     const { rows } = await pool.query(`
       SELECT conname FROM pg_constraint c JOIN pg_class t ON c.conrelid=t.oid
-      WHERE t.relname='journey_step_links' AND c.contype='c'`);
+      WHERE t.relname='activity_cells' AND c.contype='c'`);
     const names = rows.map(r => r.conname);
     expect(names).toContain('jsl_cell_kind_check');
     expect(names).toContain('jsl_cell_key_required');
