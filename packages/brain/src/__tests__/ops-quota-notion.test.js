@@ -75,4 +75,22 @@ describe('ensureOpsDbProps — 缺列即补（幂等）', () => {
     expect(r2.added).toEqual([]);
     expect(full).toHaveBeenCalledTimes(1);
   });
+
+  it('传 title：库标题不同才 PATCH 改名（闹钟总账），相同不发', async () => {
+    const calls = [];
+    const wanted = { Name: { title: {} } };
+    const stale = vi.fn(async (token, path, method, body) => {
+      calls.push({ path, method, body });
+      if (method === 'GET') return { title: [{ plain_text: 'Ops 运行图谱' }], properties: wanted };
+      return { ok: true };
+    });
+    const r = await ensureOpsDbProps('tok', 'db-1', wanted, { notionReq: stale, title: '闹钟总账' });
+    expect(r.retitled).toBe(true);
+    expect(calls[1]).toMatchObject({ path: '/databases/db-1', method: 'PATCH', body: { title: [{ type: 'text', text: { content: '闹钟总账' } }] } });
+
+    const same = vi.fn(async () => ({ title: [{ plain_text: '闹钟总账' }], properties: wanted }));
+    const r2 = await ensureOpsDbProps('tok', 'db-1', wanted, { notionReq: same, title: '闹钟总账' });
+    expect(r2.retitled).toBe(false);
+    expect(same).toHaveBeenCalledTimes(1);
+  });
 });
