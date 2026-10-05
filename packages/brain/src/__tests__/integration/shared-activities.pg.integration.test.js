@@ -117,7 +117,7 @@ describe('共享活动真实数据库合同', () => {
     const step=randomUUID(), enabler=randomUUID();
     await client.query(`INSERT INTO steps(id,activity_id,step_order,key,activity_key,readback) VALUES($1,$2,1,'preflight_step','preflight','{"name":"旧名"}')`,[step,legacy[0]]);
     await client.query(`UPDATE journey_steps SET contract=jsonb_set(contract,'{steps}',contract->'steps'||'[{"key":"second","order":2,"name":"新增步骤"}]'::jsonb) WHERE id=$1`,[legacy[0]]);
-    await client.query(`INSERT INTO enablers(id,key,name,kind) VALUES($1,'shared','共享组件','code')`,[enabler]);
+    await client.query(`INSERT INTO enablers(id,key,name,kind,shelf) VALUES($1,'shared','共享组件','code','generic_action')`,[enabler]);
     await client.query(`INSERT INTO enabler_calls(caller_type,caller_id,enabler_id) VALUES('activity',$1,$3),('step',$2,$3)`,[legacy[0],step,enabler]);
     const app=express();app.use('/api/brain',routes);
     const result=await request(app).get(`/api/brain/workflows/${benchmark}`), activity=result.body.workflow.activities[0];
