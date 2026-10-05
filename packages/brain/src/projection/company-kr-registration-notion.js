@@ -118,7 +118,7 @@ async function projectRows(pool, token, notionReq) {
       ...(row.executor_kind === 'agent' && agent?.notion_id ? { Agent: relation(agent.notion_id) } : {}),
     };
     const key = `${row.capability_key}.${row.activity_key}`;
-    const pageId = await upsertRegistrationPage(pool, token, { table: 'journey_steps', row, dbId: dbs.activities,
+    const pageId = await upsertRegistrationPage(pool, token, { table: 'activities', row, dbId: dbs.activities,
       properties, filter: { property: 'Key', rich_text: { equals: key } }, notionReq,
       verifyRecovered: page => textOf(page, 'Key') === key,
     });

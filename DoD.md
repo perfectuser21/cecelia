@@ -1,6 +1,14 @@
 # DoD — 受控再基恢复
 - [x] [BEHAVIOR] contractsteps v3.0 第 4 刀（路 A）：契约 Step 同步到 Brain steps 的映射改对——读回取 dod.readback、模式取 dod.mode（此前只认 step.readback，获客线 44 步读回在 Brain 里全是 {}），名字/动作（脚本引用）/进出（reads/writes）/失败处理（合同显式声明的 retry:N|abort，没写为 null）一并落库；syncSteps 新列只在来源带了才进指纹且旧来源不会清空新列；生产同步默认同时落 Step；「不写读回不许过」：同步前每个 Step 必须有 dod.readback（type=none 须写原因），缺口一次列全并整轮拒绝、不写任何库。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/contract-steps.test.js src/__tests__/activity-contract-sync.test.js --maxWorkers=1 --minWorkers=1"
+- [x] [BEHAVIOR] notionwarehouse v3.0 第 3 刀 c 段：迁移 524 给 warehouse_items/activity_uses 补 notion_id/notion_synced_at/notion_digest（用料补 updated_at，两表同触发器只在业务列变化时抬 updated_at）；新模块 notion-warehouse-projection 把仓库物件（8 货架中文选项带色、被用于）与用料（Activity/物件双 relation）推到 Notion：库缺则在目录父页下建并带来源标记、认领同名同标记库、登记注册表，重跑不重复建，前提不足不建库；用料等两边页面都在才推，Activity 页 id 取目录投影链接；指纹没变不打 Notion；接进 runNotionPushSync 并吞错不连坐。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/notion-warehouse-projection.test.js src/__tests__/migration-524-warehouse-uses-notion-columns.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] notioncardcols v3.0 第 3 刀 b 段：目录投影把 Activity 页补成 15 列机器列（承诺/输入/输出/前提/不变量/NFR/失败语义/读回/判定点/对抗/保质期/用料）加 8 个带红绿灰黄色的格子列（来自 activity_cells 的 8 个标准格，缺格按灰、子项格不进卡片、不串别家），Step 页补动作/失败处理/模式三列；列名取值只在 activity-card.js 定义一次，目录 schema 与目录源共用；空值不编造；目录源 SQL 增载格子与用料并有真 PG 测试。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/projection/__tests__/activity-card.test.js src/projection/__tests__/directory-schema.test.js src/projection/__tests__/directory-source.test.js --maxWorkers=1 --minWorkers=1"
+
+- [x] [BEHAVIOR] notionregistrynames v3.0 第 3 刀 a 段：迁移 523 把 notion_projection_map 的键 journey_steps/journey_step_links 换成标准名 activities/activity_cells（先清未映射占位）、旧「价值流与能力」混合库停推（价值流与 Capabilities 早已各有独立库）、Ops 运行图谱登记名改闹钟总账；代码里 resolveDbId/推送表键/目录投影表映射/LEGACY_DB_CONSTANTS 同步标准名；pushOpsGraph 幂等把 Notion 库标题改为闹钟总账；守卫禁止代码再用旧名作注册表键。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/notion-registry-standard-keys.test.js src/__tests__/migration-523-notion-registry-names.test.js src/__tests__/ops-quota-notion.test.js --maxWorkers=1 --minWorkers=1"
 
 - [x] [BEHAVIOR] sqlstandardnames v3.0 第 2 刀 b 段：生产代码（packages/brain/src 与 scripts/ci）里的 SQL 全部改写标准表名 activities / activity_cells / warehouse_items，不再往旧名视图读写（守卫测试抓 FROM/JOIN/INTO/UPDATE/TABLE/EXISTS/REFERENCES 与列限定写法，注释、对外 API 路径、Notion 注册表键、RENAME TO 重放除外）；新增 /activity-cells、/warehouse-items 路径别名；隔离 schema 夹具镜像生产形状（真表标准名 + 旧名视图，重放旧迁移期间临时叫回旧名）；匹配 SQL 的单元/集成/根测试随之改到标准名。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/sql-standard-table-names.test.js src/__tests__/vocab-alias.test.js src/__tests__/activity-contract-sync.test.js src/__tests__/notion-push-sync.test.js src/routes/__tests__/journeys.test.js --maxWorkers=1 --minWorkers=1"
