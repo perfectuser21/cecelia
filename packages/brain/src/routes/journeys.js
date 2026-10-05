@@ -275,7 +275,7 @@ router.get('/issues', async (req, res) => {
         params.push(req.query.status); clauses.push(`status=$${params.length}`);
       }
     }
-    if (req.query.journey_id) { params.push(req.query.journey_id); clauses.push(`p.capability_id=$${params.length}`); }
+    if (req.query.journey_id) { params.push(req.query.journey_id); clauses.push(`journey_id=$${params.length}`); }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     params.push(limit);
     const { rows } = await pool.query(
@@ -325,7 +325,7 @@ router.get('/journey_steps', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 100, 500);
     const params = [];
     const clauses = [];
-    if (req.query.journey_id) { params.push(req.query.journey_id); clauses.push(`journey_id=$${params.length}`); }
+    if (req.query.journey_id) { params.push(req.query.journey_id); clauses.push(`p.capability_id=$${params.length}`); }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     params.push(limit);
     const { rows } = await pool.query(

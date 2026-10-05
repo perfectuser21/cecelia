@@ -302,6 +302,26 @@ describe('GET /api/brain/journey_steps', () => {
   });
 });
 
+describe('GET /api/brain/journey_steps 位置过滤（位置由流程引用推出）', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  it('journey_id 过滤走 activity_placement.capability_id，响应列回显 journey_id / step_number', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'a1', journey_id: 'j1', step_number: 2 }] });
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+    const request = await import('supertest');
+    const res = await request.default(await bindFixture(app)).get('/api/brain/journey_steps?journey_id=j1');
+    expect(res.status).toBe(200);
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toMatch(/LEFT JOIN activity_placement p ON p\.activity_id = a\.id WHERE p\.capability_id=\$1/);
+    expect(sql).toMatch(/p\.capability_id AS journey_id, p\.step_number/);
+    expect(params).toEqual(['j1', 100]);
+  });
+});
+
 describe('POST /api/brain/journey_steps', () => {
   beforeEach(() => { mockQuery.mockReset(); });
 
