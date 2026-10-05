@@ -146,7 +146,7 @@ export const BACKBONE_DB_PROPS = {
 };
 
 export async function pushBackboneActivities(pool, token, { notionReq = defaultNotionReq, logSyncError = async () => {} } = {}) {
-  const dbId = await resolveDbId(pool, 'journey_steps');
+  const dbId = await resolveDbId(pool, 'activities');
   if (!dbId || !token) return null;
   const { rows } = await pool.query(
     `SELECT id, capability_key, activity_key, contract, contract_sha256, contract_source, promise, status, notion_id, notion_digest
@@ -159,7 +159,7 @@ export async function pushBackboneActivities(pool, token, { notionReq = defaultN
   const { added } = await ensureOpsDbProps(token, dbId, BACKBONE_DB_PROPS, { notionReq });
   if (added.length) console.log(`[backbone-contract-sync] Backbone Activities 补列: ${added.join(', ')}`);
   return pushRegisteredRows(pool, token, {
-    table: 'journey_steps', dbId, rows, buildProps: buildBackboneActivityProps,
+    table: 'activities', dbId, rows, buildProps: buildBackboneActivityProps,
     notionReq, logSyncError, label: 'backbone_activity',
   });
 }

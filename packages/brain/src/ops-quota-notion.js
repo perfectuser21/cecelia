@@ -61,12 +61,18 @@ export function buildQuotaProps(q) {
  * @param {object} wantedProps 列定义（OPS_DB_PROPS.<lib>）
  * @param {{notionReq: Function}} deps 注入 notionReq(token, path, method, body)
  */
-export async function ensureOpsDbProps(token, dbId, wantedProps, { notionReq }) {
+export async function ensureOpsDbProps(token, dbId, wantedProps, { notionReq, title = null }) {
   const db = await notionReq(token, `/databases/${dbId}`, 'GET');
   const missing = diffMissingProps(db?.properties, wantedProps);
   const added = Object.keys(missing);
   if (added.length > 0) {
     await notionReq(token, `/databases/${dbId}`, 'PATCH', { properties: missing });
   }
-  return { added };
+  // 库标题随 Brain 登记名走（闹钟总账）：不同才改，幂等
+  const current = (db?.title || []).map(t => t.plain_text ?? t.text?.content ?? '').join('');
+  const retitled = Boolean(title) && current !== title;
+  if (retitled) {
+    await notionReq(token, `/databases/${dbId}`, 'PATCH', { title: [{ type: 'text', text: { content: title } }] });
+  }
+  return { added, retitled };
 }

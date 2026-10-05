@@ -57,7 +57,7 @@ const STEP_LINKS_DB      = '3e8c40c2-ba63-8194-a47c-dcf5f4b508bb';
 export const LEGACY_DB_CONSTANTS = Object.freeze({
   issues: ISSUES_DB,
   decisions: DECISIONS_DB, initiative_contracts: INITIATIVE_CONTRACTS_DB,
-  tasks: NOTION_TASKS_DB, skill_registry: SKILL_REGISTRY_DB, journey_step_links: STEP_LINKS_DB,
+  tasks: NOTION_TASKS_DB, skill_registry: SKILL_REGISTRY_DB, activity_cells: STEP_LINKS_DB,
 });
 
 /**
@@ -1083,7 +1083,7 @@ async function pushJourneyStepLinks(pool, token) {
     LIMIT 50
   `);
   if (rows.length === 0) return;
-  const dbId = STEP_LINKS_DB || await resolveDbId(pool, 'journey_step_links');
+  const dbId = STEP_LINKS_DB || await resolveDbId(pool, 'activity_cells');
   let schemaProps = {};
   try {
     // 只读一次 schema：既判 Order 列有无，也算缺列（有缺才 PATCH，不重发已有列）
@@ -1100,7 +1100,7 @@ async function pushJourneyStepLinks(pool, token) {
     await logSyncError(pool, `[step_link] 补列/读 schema 失败: ${err.message}`);
   }
   await pushRegisteredRows(pool, token, {
-    table: 'journey_step_links', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'step_link',
+    table: 'activity_cells', dbId, rows, notionReq, logSyncError, isStaleRelationError, isWrongDatabaseError, label: 'step_link',
     buildProps: (l) => buildStepLinkNotionProperties(l, schemaProps),
   });
 }
@@ -1358,8 +1358,9 @@ async function ensureOpsDbsProps(pool, token, dbs) {
   for (const [lib, dbId] of pairs) {
     if (!dbId || !OPS_DB_PROPS[lib]) continue;
     try {
-      const { added } = await ensureOpsDbProps(token, dbId, OPS_DB_PROPS[lib], { notionReq });
+      const { added, retitled } = await ensureOpsDbProps(token, dbId, OPS_DB_PROPS[lib], { notionReq, title: lib === 'graph' ? '闹钟总账' : null });
       if (added.length) console.log(`[ops-push] ${lib} 库补列: ${added.join(', ')}`);
+      if (retitled) console.log(`[ops-push] ${lib} 库改名: 闹钟总账`);
     } catch (err) {
       await logSyncError(pool, `[ops-push] ${lib} 库补列失败: ${err.message}`);
     }
@@ -1772,6 +1773,13 @@ export async function runNotionPushSync(pool) {
     await runProbeProjection(pool, { token, logSyncError });
   } catch (err) {
     console.warn(`[notion-push-sync] probe projection 失败（非阻断）: ${err.message}`);
+  }
+  // 仓库物件库 + 用料库（v3.0 第 3 刀 c 段）：缺库自建并登记，前提不足自跳过，吞错不连坐
+  try {
+    const { runWarehouseProjection } = await import('./notion-warehouse-projection.js');
+    await runWarehouseProjection(pool, { token, logSyncError });
+  } catch (err) {
+    console.warn(`[notion-push-sync] warehouse projection 失败（非阻断）: ${err.message}`);
   }
   // 价值流镜子（决策 e00d9cc3）：结构地图 active run → 「价值流 Value Streams」库；未登记自跳过，吞错不连坐
   try {

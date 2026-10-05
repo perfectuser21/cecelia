@@ -24,6 +24,9 @@ beforeEach(async () => {
     CREATE TABLE activities(id uuid,name text,workflow_id uuid);
     CREATE TABLE steps(id uuid,key text,activity_id uuid,active boolean,step_order int);
     CREATE TABLE workflow_activity_refs(workflow_id uuid,activity_id uuid,slot_key text,sequence_no int,active boolean);
+    CREATE TABLE activity_cells(step_id uuid,cell_key text,cell_status text,parent_cell_key text);
+    CREATE TABLE warehouse_items(id uuid,name text);
+    CREATE TABLE activity_uses(activity_id uuid,item_id uuid,role text);
     CREATE TABLE notion_map_node_pages(scope text,node_key text,notion_id text,archived_at timestamptz);
     CREATE TABLE map_projection_runs(id uuid,scope_key text,status text);
     CREATE TABLE map_projection_nodes(run_id uuid,node_key text,node_type text,name text,attributes jsonb);
@@ -32,6 +35,17 @@ beforeEach(async () => {
 });
 afterEach(async () => { if (client) { await client.query('ROLLBACK'); if (schema) await client.query(`DROP SCHEMA ${schema} CASCADE`); await client.end(); } });
 describe('六层目录真实PG边界', () => {
+  it('目录源载入 Activity 的 8 格状态与用料，供 Notion 卡片列使用', async () => {
+    const activity=fixtureEntityId(860),item=fixtureEntityId(861),workflow=fixtureEntityId(862);
+    await client.query('ALTER TABLE activities ADD COLUMN current_definition_version_id uuid, ADD COLUMN capability_key text, ADD COLUMN activity_key text');
+    await client.query("INSERT INTO activities(id,name,workflow_id,capability_key,activity_key) VALUES($1,'采集',$2,'cap','act')",[activity,workflow]);
+    await client.query("INSERT INTO activity_cells VALUES($1,'promise','green',NULL),($1,'readback.net','red','readback')",[activity]);
+    await client.query("INSERT INTO warehouse_items VALUES($1,'设备锁')",[item]);
+    await client.query("INSERT INTO activity_uses VALUES($1,$2,'uses')",[activity,item]);
+    const source=await loadDirectorySource(client);
+    expect(source.cells).toEqual([{step_id:activity,cell_key:'promise',cell_status:'green',parent_cell_key:null},{step_id:activity,cell_key:'readback.net',cell_status:'red',parent_cell_key:'readback'}]);
+    expect(source.uses).toEqual([{activity_id:activity,item_name:'设备锁',role:'uses'}]);
+  });
   it('真PG精确current Activity/Step登记读取声明；历史、错step、注册漂移拒映射，未登记仅父gap', async () => {
     const activity=fixtureEntityId(850),step=fixtureEntityId(851),version=fixtureEntityId(852),history=fixtureEntityId(853),workflow=fixtureEntityId(854);
     await client.query('ALTER TABLE activities ADD COLUMN current_definition_version_id uuid');
@@ -204,7 +218,7 @@ describe('六层目录真实PG边界', () => {
   });
   it('唯一缺库bootstrap读回后原子登记，重复相同请求不新增库',async()=>{
     const f=runtimeFixture(),parent=fixtureEntityId(600);let created=0,badDiscovery=true;
-    const tables={areas:'areas',value_streams:'notion_map_node_pages',activities:'journey_steps',workflows:'workflows',steps:'steps'};
+    const tables={areas:'areas',value_streams:'notion_map_node_pages',activities:'activities',workflows:'workflows',steps:'steps'};
     for(const [layer,table] of Object.entries(tables)){
       await client.query("INSERT INTO notion_projection_map(notion_db_id,brain_table,status) VALUES($1,$2,'active')",[f.dbs[layer],table]);
       f.databases.get(f.dbs[layer]).properties={};
