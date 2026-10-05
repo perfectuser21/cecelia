@@ -14,7 +14,7 @@
 // （不 mock 它们），仅注入外层边界（db/mapClient/diffGate）驱动真实裁决路径。
 import { describe, it, expect, vi } from 'vitest';
 import { evaluateDiffGate } from '../../../packages/brain/src/impact-contract/diff-gate.js';
-import { createHarnessImpactGates } from '../../../packages/brain/src/impact-contract/harness-gates.js';
+import { createHarnessImpactGates, verifyImpactMergeFence } from '../../../packages/brain/src/impact-contract/harness-gates.js';
 
 const TASK_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const BASE_REV = 'a'.repeat(40);
@@ -95,5 +95,37 @@ describe('F1 step3 造完真验 — Diff Impact Gate 确定性码 fail-closed �
     expect(receipt.reason_code).toBe('no_anchor');
     expect(receipt.reason).toBe('no_anchor');
     expect(receipt.reason).not.toBe('mapper_stale');
+  });
+
+  // 迁移 522 起 journey_step_links 只是旧名视图，真表是 activity_cells：merge fence 的 receipt 校验 SQL 必须读真表，
+  // 不能再往旧名视图读（边上的守卫：真 import harness-gates，仅注入外层 db 边界）。
+  it('merge fence 的 receipt 校验 SQL 读真表 activity_cells，不再碰旧名视图 journey_step_links', async () => {
+    const assertion = {
+      assertion_id: 'packages/brain/src/assert-brain.test.js',
+      command: 'npx vitest run packages/brain/src/assert-brain.test.js',
+      journey_step_link_id: '11111111-1111-4111-8111-111111111111',
+      assertion_revision: 2,
+      assertion_digest: 'd'.repeat(64),
+    };
+    const active = { id: '22222222-2222-4222-8222-222222222222', contract_hash: 'c'.repeat(64), contract_body: { required_assertions: [assertion] } };
+    const db = {
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [active] })
+        .mockResolvedValueOnce({ rows: [{
+          journey_step_link_id: assertion.journey_step_link_id,
+          assertion_revision: assertion.assertion_revision,
+          assertion_digest: assertion.assertion_digest,
+          assertion_ref_snapshot: assertion.assertion_id,
+          command_argv: ['npx', 'vitest', 'run', assertion.assertion_id],
+          current_assertion_revision: assertion.assertion_revision,
+          current_assertion_ref: assertion.assertion_id,
+        }] }),
+    };
+    await expect(verifyImpactMergeFence(db, {
+      taskId: TASK_ID, runId: 'run-1', headRevision: HEAD_SHA, expectedContractHash: active.contract_hash,
+    })).resolves.toMatchObject({ gate: 'pass' });
+    const receiptSql = db.query.mock.calls[1][0];
+    expect(receiptSql).toMatch(/JOIN activity_cells AS link/i);
+    expect(receiptSql).not.toMatch(/journey_step_links/i);
   });
 });

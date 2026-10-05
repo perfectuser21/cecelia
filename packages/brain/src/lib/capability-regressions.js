@@ -16,12 +16,12 @@ export async function registerCapabilityRegression(pool,input){
       WHERE r.active AND r.activity_id=$1 AND w.capability_id=$2 AND w.status<>'retired' LIMIT 1`,[input.activity_id,input.capability_id])).rows[0];
     if(!usage)fail('Capability没有使用此Activity，拒绝登记');
     if(input.step_id&&!(await db.query('SELECT id FROM steps WHERE id=$1 AND activity_id=$2 AND active',[input.step_id,input.activity_id])).rows.length)fail('Step不属于此Activity或已退役');
-    const old=(await db.query("SELECT * FROM journey_step_links WHERE step_id=$1 AND cell_kind='scenario' AND cell_key=$2 FOR UPDATE",[input.activity_id,key])).rows[0];
+    const old=(await db.query("SELECT * FROM activity_cells WHERE step_id=$1 AND cell_kind='scenario' AND cell_key=$2 FOR UPDATE",[input.activity_id,key])).rows[0];
     if(old&&(old.journey_id!==input.capability_id||(old.step_id_ref||null)!==(input.step_id||null)||old.cell_level!==level||old.enabler_id))fail('既有登记身份冲突',409);
     if(old&&old.assertion_ref===input.assertion_ref){await db.query('COMMIT');return {registration:old,created:false,verification_status:'not_evaluated'};}
     if(old&&input.expected_assertion_ref!==old.assertion_ref)fail('回归引用已变化，必须明确匹配旧值',409);
-    const registration=old?(await db.query(`UPDATE journey_step_links SET assertion_ref=$2,cell_status='gray',status='planned',notion_synced_at=NULL WHERE id=$1 RETURNING *`,[old.id,input.assertion_ref])).rows[0]
-      :(await db.query(`INSERT INTO journey_step_links(journey_id,step_id,step_id_ref,cell_kind,cell_key,cell_status,status,assertion_ref,cell_level,notion_synced_at)
+    const registration=old?(await db.query(`UPDATE activity_cells SET assertion_ref=$2,cell_status='gray',status='planned',notion_synced_at=NULL WHERE id=$1 RETURNING *`,[old.id,input.assertion_ref])).rows[0]
+      :(await db.query(`INSERT INTO activity_cells(journey_id,step_id,step_id_ref,cell_kind,cell_key,cell_status,status,assertion_ref,cell_level,notion_synced_at)
         VALUES($1,$2,$3,'scenario',$4,'gray','planned',$5,$6,NULL) RETURNING *`,[input.capability_id,input.activity_id,input.step_id||null,key,input.assertion_ref,level])).rows[0];
     await db.query('COMMIT');return {registration,created:!old,verification_status:'not_evaluated',...(old&&{previous_assertion_ref:old.assertion_ref})};
   }catch(error){await db.query('ROLLBACK');throw error;}finally{db.release();}

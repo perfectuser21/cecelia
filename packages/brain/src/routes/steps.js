@@ -44,7 +44,7 @@ router.get('/enablers', async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT id, key, name, kind, impl_ref, owner, description, active, created_at, updated_at
-         FROM enablers ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+         FROM warehouse_items ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
         ORDER BY key`,
       params,
     );

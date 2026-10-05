@@ -45,7 +45,7 @@ function fixture() {
         attributes: { path_prefixes: ['packages/brain/'] },
       }] };
     }
-    if (text.includes('FROM journey_step_links')) {
+    if (text.includes('FROM activity_cells')) {
       return { rows: [{
         id: '22222222-2222-4222-8222-222222222222',
         assertion_ref: TEST_REF, assertion_revision: 1, capability_code: 'F1',

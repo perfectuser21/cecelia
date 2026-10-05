@@ -92,7 +92,7 @@ async function readDefinitions(db, input) {
 async function readEnablerCalls(db, activities, components) {
   const activityIds = activities.map(a => a.activity_id), steps = activities.flatMap(a => a.payload.steps || []);
   const calls = (await db.query(`SELECT c.id,c.caller_type,c.caller_id,c.enabler_id,e.key enabler_key,e.impl_ref,e.active
-    FROM enabler_calls c JOIN enablers e ON e.id=c.enabler_id
+    FROM enabler_calls c JOIN warehouse_items e ON e.id=c.enabler_id
     WHERE (c.caller_type='activity' AND c.caller_id=ANY($1::uuid[]))
       OR (c.caller_type='step' AND c.caller_id=ANY($2::uuid[])) ORDER BY c.id`, [activityIds, steps.map(s => s.step_id).filter(Boolean)])).rows;
   return calls.map(call => resolveEnablerSource(call, activities, components));
@@ -141,7 +141,7 @@ export async function createRelease(pool, input) {
   return evidenceTransaction(pool, `release:${input.release_key}`, async db => {
     const existing = (await db.query('SELECT * FROM release_versions WHERE release_key=$1', [input.release_key])).rows[0];
     if (existing) { requireEvidence(existing.request_sha256 === requestHash, 'release_key已绑定其他内容', 'CONFLICT', 409); return { release: existing, created: false }; }
-    await db.query('LOCK TABLE journey_steps,steps,enablers,enabler_calls IN SHARE MODE');
+    await db.query('LOCK TABLE activities,steps,warehouse_items,enabler_calls IN SHARE MODE');
     const definitions = await readDefinitions(db, input);
     const allowed_enabler_calls = await readEnablerCalls(db, definitions.activities, input.components);
     const ci = await validateCiEvidence(db, input.ci_evidence, definitions, input.components);

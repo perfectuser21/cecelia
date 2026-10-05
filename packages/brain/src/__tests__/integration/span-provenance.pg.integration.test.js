@@ -4,6 +4,7 @@ import { beforeEach,afterEach,it,expect,vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { releaseEvidenceDatabase } from '../fixtures/release-evidence-db.js';
+import { withLegacyNames } from '../fixtures/minimum-definition-schema.js';
 const holder=vi.hoisted(()=>({pool:null}));
 vi.mock('../../db.js',()=>({default:{query:(...a)=>holder.pool.query(...a),connect:(...a)=>holder.pool.connect(...a)}}));
 import router from '../../routes/spans.js';
@@ -16,7 +17,7 @@ beforeEach(async()=>{
   f=await releaseEvidenceDatabase();holder.pool=f.db;
   // LIKE INCLUDING ALL会重命名复制索引；按真实495建立Span表，避免夹具残留假旧索引。
   await f.db.query('DROP TABLE spans CASCADE');
-  for(const file of ['495_vs_model_spans.sql','514_span_occurrences.sql','516_span_definition_provenance.sql'])await f.db.query(readFileSync(new URL(`../../../migrations/${file}`,import.meta.url),'utf8'));
+  await withLegacyNames(f.db,async()=>{for(const file of ['495_vs_model_spans.sql','514_span_occurrences.sql','516_span_definition_provenance.sql'])await f.db.query(readFileSync(new URL(`../../../migrations/${file}`,import.meta.url),'utf8'));});
   release=(await releases.createRelease(f.db,f.releaseInput)).release;
   const observation=(await releases.recordReleaseObservation(f.db,release.id,f.observationInput,{trustedCollector:'fixture-collector'})).observation;
   bindings=[];

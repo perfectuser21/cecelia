@@ -61,7 +61,7 @@ export async function resolveCompletedRepairGaps(db, {
             WHERE NOT EXISTS (
               SELECT 1
                 FROM journey_assertion_receipts AS binding_receipt
-                JOIN journey_step_links AS binding_link
+                JOIN activity_cells AS binding_link
                   ON binding_link.id = binding_receipt.journey_step_link_id
                 JOIN initiative_runs AS binding_run
                   ON binding_run.id::TEXT = binding_receipt.run_id

@@ -18,11 +18,9 @@ import { digestMapManifest } from '../../packages/brain/src/lib/map-manifest-sch
 import { scanRepo } from '../scan/scan-graph.mjs';
 import { replaceRepoEdges } from '../../packages/brain/src/lib/graph-store.js';
 
-const TABLES=['areas','schema_version','journeys','workflows','journey_steps','steps','spans',
+const TABLES=['areas','schema_version','journeys','workflows','activities','steps','spans',
   'map_scope_repositories','map_manifest_versions','map_projection_runs','map_projection_nodes','map_projection_edges',
-  'graph_edges','graph_snapshot_versions','graph_edge_snapshots','fact_snapshot_headers','journey_step_links'];
-// 迁移 522 起 journey_steps / journey_step_links 在 public 里是旧名视图（真表 activities / activity_cells）：LIKE 必须从真表复制才带主键与默认值，复制出的表在 scratch schema 里仍叫旧名。
-const PHYSICAL={journey_steps:'activities',journey_step_links:'activity_cells'};
+  'graph_edges','graph_snapshot_versions','graph_edge_snapshots','fact_snapshot_headers','activity_cells'];
 export async function createImplementationScratch(){
   if(!isImplementationScratchDatabase(DB_DEFAULTS.database))throw ciFailure('SCRATCH_REQUIRED','只允许本机scratch或GitHub Actions隔离test库');
   const client=new pg.Client(DB_DEFAULTS);await client.connect();
@@ -33,9 +31,12 @@ export async function createImplementationScratch(){
     const actual=(await client.query('SELECT current_database() name')).rows[0].name;
     if(actual!==DB_DEFAULTS.database||!isImplementationScratchDatabase(actual))throw ciFailure('SCRATCH_REQUIRED');
     await client.query(`CREATE SCHEMA ${schema}`);schemaCreated=true;
-    for(const table of TABLES)await client.query(`CREATE TABLE ${schema}.${table}(LIKE public.${PHYSICAL[table]??table} INCLUDING ALL)`);
+    for(const table of TABLES)await client.query(`CREATE TABLE ${schema}.${table}(LIKE public.${table} INCLUDING ALL)`);
     await client.query(`SET search_path TO ${schema}`);
+    // 511/513 是旧迁移，按旧名 journey_steps 建外键：重放期间把 activities 临时叫回旧名，之后改回（外键按对象 id 跟随）。
+    await client.query('ALTER TABLE activities RENAME TO journey_steps');
     for(const file of ['511_shared_activity_refs.sql','513_definition_versions.sql'])await client.query(readFileSync(new URL(`../../packages/brain/migrations/${file}`,import.meta.url),'utf8'));
+    await client.query('ALTER TABLE journey_steps RENAME TO activities');
     return {db,close,schema};
   }catch(error){await close();throw error;}
 }
@@ -57,17 +58,17 @@ export async function importImplementationSnapshot(db,input){
     for(const row of s.canonical.areas)await insertRow(db,'areas',row);
     for(const row of s.canonical.journeys)await insertRow(db,'journeys',row);
     for(const row of s.canonical.workflows)await insertRow(db,'workflows',{...row,current_definition_version_id:null});
-    for(const row of s.canonical.activities)await insertRow(db,'journey_steps',{...row,current_definition_version_id:null});
+    for(const row of s.canonical.activities)await insertRow(db,'activities',{...row,current_definition_version_id:null});
     for(const row of s.canonical.steps)await insertRow(db,'steps',row);
     for(const row of s.definitions.activities)await insertRow(db,'activity_definition_versions',row,{immutable:true});
     for(const row of s.definitions.workflows)await insertRow(db,'workflow_definition_versions',row,{immutable:true});
     // 活跃关系是当前登记；固定版本查询始终走WV.payload，不用此表改写历史。
     for(const row of s.canonical.references)await insertRow(db,'workflow_activity_refs',{...row,activity_definition_version_id:null});
     for(const row of s.definitions.workflows)await db.query('UPDATE workflows SET current_definition_version_id=$2 WHERE id=$1',[row.workflow_id,row.id]);
-    for(const row of s.definitions.activities)await db.query('UPDATE journey_steps SET current_definition_version_id=$2 WHERE id=$1',[row.activity_id,row.id]);
+    for(const row of s.definitions.activities)await db.query('UPDATE activities SET current_definition_version_id=$2 WHERE id=$1',[row.activity_id,row.id]);
     for(const row of s.map.repositories)await insertRow(db,'map_scope_repositories',row);
     // 断言来源保持current_registration，两侧使用同一明确导出的登记。
-    for(const row of s.assertions)await insertRow(db,'journey_step_links',row);
+    for(const row of s.assertions)await insertRow(db,'activity_cells',row);
     await db.query('COMMIT');
   }catch(error){await db.query('ROLLBACK');throw error;}
 }

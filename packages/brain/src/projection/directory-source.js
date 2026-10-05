@@ -136,7 +136,7 @@ export async function loadDirectorySource(pool) {
     'journeys',COALESCE((SELECT jsonb_agg(to_jsonb(j)) FROM journeys j),'[]'::jsonb),
     'workflows',COALESCE((SELECT jsonb_agg(to_jsonb(w) || jsonb_build_object('definition_version',to_jsonb(v))) FROM workflows w
       LEFT JOIN workflow_definition_versions v ON v.workflow_id=w.id AND v.id::text=to_jsonb(w)->>'current_definition_version_id'),'[]'::jsonb),
-    'activities',COALESCE((SELECT jsonb_agg(to_jsonb(a) || jsonb_build_object('definition_version',to_jsonb(v))) FROM journey_steps a
+    'activities',COALESCE((SELECT jsonb_agg(to_jsonb(a) || jsonb_build_object('definition_version',to_jsonb(v))) FROM activities a
       LEFT JOIN activity_definition_versions v ON v.activity_id=a.id AND v.id::text=to_jsonb(a)->>'current_definition_version_id'
       WHERE (to_jsonb(a)->>'capability_key' IS NOT NULL AND to_jsonb(a)->>'activity_key' IS NOT NULL)
       OR EXISTS(SELECT 1 FROM workflow_activity_refs r WHERE r.activity_id=a.id AND r.active)),'[]'::jsonb),

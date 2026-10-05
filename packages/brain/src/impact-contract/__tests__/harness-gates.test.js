@@ -464,7 +464,7 @@ describe('Harness Impact Gate 生产接线适配器', () => {
     const receiptSql = db.query.mock.calls[1][0];
     expect(receiptSql).toMatch(/JOIN harness_attempts AS attempt/i);
     expect(receiptSql).toMatch(/attempt\.run_id::text = receipt\.run_id/i);
-    expect(receiptSql).toMatch(/JOIN journey_step_links AS link/i);
+    expect(receiptSql).toMatch(/JOIN activity_cells AS link/i);
     expect(receiptSql).toMatch(/attempt\.status = 'completed'/i);
     expect(receiptSql).toMatch(/outcome' IN \('PASS', 'FIXED'\)/i);
   });

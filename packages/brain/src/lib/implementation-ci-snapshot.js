@@ -48,7 +48,7 @@ export async function readImplementationSnapshotInTransaction(db,q){
   if(activities.length!==activityVersions.length)gap('activity_snapshot_missing');
   const workflowIds=selected.map(w=>w.workflow_id),activityIds=activities.map(a=>a.activity_id);
   const refs=selected.flatMap(w=>w.payload.activities.map(r=>r.reference_id));
-  const canonicalActivities=(await db.query('SELECT * FROM journey_steps WHERE id=ANY($1::uuid[]) ORDER BY id',[activityIds])).rows;
+  const canonicalActivities=(await db.query('SELECT * FROM activities WHERE id=ANY($1::uuid[]) ORDER BY id',[activityIds])).rows;
   const references=(await db.query('SELECT * FROM workflow_activity_refs WHERE id=ANY($1::uuid[]) ORDER BY id',[refs])).rows;
   const steps=(await db.query('SELECT * FROM steps WHERE activity_id=ANY($1::uuid[]) ORDER BY id',[activityIds])).rows;
   let manifest=null,manifestBasis='unknown';
@@ -77,7 +77,7 @@ export async function readImplementationSnapshotInTransaction(db,q){
   for(const id of capabilityIds)if(!mapped.has(id))gap('workflow_capability_unmapped',{capability_id:id});
   const areaIds=[...new Set(journeys.map(j=>j.area_id).filter(Boolean))];
   const areas=(await db.query('SELECT * FROM areas WHERE id=ANY($1::uuid[]) ORDER BY id',[areaIds])).rows;
-  const assertions=(await db.query('SELECT * FROM journey_step_links WHERE journey_id=ANY($1::uuid[]) AND step_id=ANY($2::uuid[]) ORDER BY id',[capabilityIds,activityIds])).rows;
+  const assertions=(await db.query('SELECT * FROM activity_cells WHERE journey_id=ANY($1::uuid[]) AND step_id=ANY($2::uuid[]) ORDER BY id',[capabilityIds,activityIds])).rows;
   const body=json({schema_version:1,...q,status:gaps.length?'unknown':'verified',gaps,
     canonical:{areas,journeys,workflows:workflows.filter(w=>workflowIds.includes(w.id)),activities:canonicalActivities,steps,references},
     definitions:{workflows:selected,activities},map:{manifest,repositories,source_basis:manifestBasis},assertion_source:'current_registration',assertions});

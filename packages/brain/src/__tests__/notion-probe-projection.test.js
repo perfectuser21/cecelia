@@ -156,7 +156,7 @@ describe('pushStepProbes / pushProbeReceipts — 注册表门 + 业务行过滤 
     const q = pool.calls.find((c) => /FROM step_probes sp/.test(c.sql)).sql;
     expect(q).toMatch(/sp\.notion_synced_at IS NULL OR sp\.updated_at > sp\.notion_synced_at/);
     expect(q).toMatch(/LIMIT 50/);
-    expect(q).toMatch(/LEFT JOIN journey_step_links jsl/);
+    expect(q).toMatch(/LEFT JOIN activity_cells jsl/);
   });
 
   it('回执 SELECT 只捞 business_probe_runner 且 notion_synced_at IS NULL（行不可变，只增）', async () => {

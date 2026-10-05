@@ -24,16 +24,22 @@ describe('vocabAlias', () => {
     expect(run('/acceptance-criteria?journey_id=j1')).toBe('/journey_step_links?journey_id=j1');
   });
 
+  it('[BEHAVIOR] 标准名路径别名：/activity-cells/:id → /journey_step_links/:id，/warehouse-items?key=x → /enablers?key=x', () => {
+    expect(run('/activity-cells/abc')).toBe('/journey_step_links/abc');
+    expect(run('/warehouse-items?key=x')).toBe('/enablers?key=x');
+    expect(run('/activities/abc')).toBe('/activities/abc');
+  });
+
   it('[BEHAVIOR] 旧路径与无关路径原样放行', () => {
     expect(run('/journeys')).toBe('/journeys');
     expect(run('/value-streams-x')).toBe('/value-streams-x');
     expect(run('/tasks?status=queued')).toBe('/tasks?status=queued');
   });
 
-  it('六组映射齐全', () => {
+  it('八组映射齐全（含迁移 522 后的标准名别名）', () => {
     expect([...ALIAS_MAP.keys()].sort()).toEqual([
-      '/acceptance-criteria', '/backbone-activities', '/capabilities',
-      '/features-registry', '/value-streams', '/work-items',
+      '/acceptance-criteria', '/activity-cells', '/backbone-activities', '/capabilities',
+      '/features-registry', '/value-streams', '/warehouse-items', '/work-items',
     ]);
   });
 });

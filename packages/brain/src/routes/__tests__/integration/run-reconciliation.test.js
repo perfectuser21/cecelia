@@ -3,13 +3,14 @@ import { afterEach,beforeEach,it,expect } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { releaseEvidenceDatabase } from '../../../__tests__/fixtures/release-evidence-db.js';
+import { withLegacyNames } from '../../../__tests__/fixtures/minimum-definition-schema.js';
 import { createRelease,recordReleaseObservation } from '../../../lib/release-index.js';
 import { bindRunDefinition } from '../../../lib/run-definition-binding.js';
 import { createRunReconciliationRouter } from '../../run-reconciliation.js';
 let f,app;
 beforeEach(async()=>{
   f=await releaseEvidenceDatabase();await f.db.query('DROP TABLE spans CASCADE');
-  for(const file of ['495_vs_model_spans.sql','514_span_occurrences.sql','516_span_definition_provenance.sql'])await f.db.query(readFileSync(new URL(`../../../../migrations/${file}`,import.meta.url),'utf8'));
+  for(const file of ['495_vs_model_spans.sql','514_span_occurrences.sql','516_span_definition_provenance.sql'])await withLegacyNames(f.db,()=>f.db.query(readFileSync(new URL(`../../../../migrations/${file}`,import.meta.url),'utf8')));
   app=express();app.use('/runs',createRunReconciliationRouter({pool:f.db}));
 });
 afterEach(async()=>{await f?.close();f=null;});

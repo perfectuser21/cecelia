@@ -8,7 +8,7 @@ async function saveVersion(client,kind,id,payload,source) {
     VALUES($1,$2::jsonb,$3,$4,$5,$6,$7) ON CONFLICT(${column},source_repo,source_path,payload_sha256) DO NOTHING RETURNING id`,[id,canonicalJson(payload),hash,source.repo,source.path,source.commit,contractHash])).rows[0];
   if(!row) row=(await client.query(`SELECT id FROM ${table} WHERE ${column}=$1 AND payload_sha256=$2 AND source_repo=$3 AND source_path=$4`,[id,hash,source.repo,source.path])).rows[0];
   if(!row) throw Error('定义版本未返回身份');
-  const object=kind==='activity'?'journey_steps':'workflows';
+  const object=kind==='activity'?'activities':'workflows';
   await client.query(`UPDATE ${object} SET current_definition_version_id=$2 WHERE id=$1 AND current_definition_version_id IS DISTINCT FROM $2`,[id,row.id]);
   return row.id;
 }
@@ -36,7 +36,7 @@ export async function snapshotDefinitions(client,{workflowIds,source,bindingsByA
     verifyDocument(workflow,documentsByWorkflow.get(id));
     workflows.set(id,workflow);
   }
-  const activities=(await client.query(`SELECT DISTINCT a.* FROM journey_steps a JOIN workflow_activity_refs r ON r.activity_id=a.id
+  const activities=(await client.query(`SELECT DISTINCT a.* FROM activities a JOIN workflow_activity_refs r ON r.activity_id=a.id
     WHERE r.workflow_id=ANY($1::uuid[]) AND r.active ORDER BY a.id`,[workflowIds])).rows;
   const versions=new Map(),sources=new Map();
   for(const a of activities) {

@@ -18,7 +18,7 @@ async function radius(changedFiles) {
     })),
     db: { query: async (sql) => {
       if (sql.includes('FROM graph_snapshot_versions')) return { rows: [{ snapshot_revision: revision }] };
-      if (sql.includes('FROM journey_step_links')) return { rows: ['F1', 'G1'].map((capability, index) => ({
+      if (sql.includes('FROM activity_cells')) return { rows: ['F1', 'G1'].map((capability, index) => ({
         id: `11111111-1111-4111-8111-11111111111${index}`,
         assertion_ref: 'packages/brain/src/map/radius.test.js', assertion_revision: 1,
         capability_code: capability,

@@ -67,7 +67,7 @@ describe('GET /api/brain/enablers', () => {
     expect(res._status).toBe(200);
     expect(res._data.enablers).toHaveLength(1);
     const [sql, params] = mockPool.query.mock.calls[0];
-    expect(sql).toMatch(/FROM enablers/);
+    expect(sql).toMatch(/FROM warehouse_items/);
     expect(params).toEqual(['return_to_results']);
   });
 });

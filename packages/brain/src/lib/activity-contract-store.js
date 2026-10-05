@@ -14,7 +14,7 @@ export async function storeActivityContracts(pool, plans, head, repo, registrati
     if (canonicalJson(current)!==canonicalJson(registrations)) throw Object.assign(new Error('同步快照已变化，拒绝写入旧契约'),{
       code:'ACTIVITY_CONTRACT_SNAPSHOT_CHANGED',status:409,
     });
-    const rows = (await client.query(`SELECT id,journey_id,capability_key,activity_key,contract_sha256,status FROM journey_steps
+    const rows = (await client.query(`SELECT id,journey_id,capability_key,activity_key,contract_sha256,status FROM activities
       WHERE capability_key IS NOT NULL AND activity_key IS NOT NULL FOR UPDATE`)).rows;
     const definitions = new Map();
     for (const plan of plans) for (const item of plan.activities) {
@@ -29,17 +29,17 @@ export async function storeActivityContracts(pool, plans, head, repo, registrati
       let row = matches[0];
       if (row) {
         if (row.contract_sha256 !== sha256 || row.status === 'deprecated') {
-          await client.query(`UPDATE journey_steps SET name=$2,contract=$3::jsonb,contract_sha256=$4,contract_source=$5,
+          await client.query(`UPDATE activities SET name=$2,contract=$3::jsonb,contract_sha256=$4,contract_source=$5,
             status=CASE WHEN status='deprecated' THEN 'planned' ELSE status END,updated_at=NOW() WHERE id=$1`,
           [row.id,a.name,JSON.stringify(contract),sha256,source]);
           out.updated.push(key);
         } else {
-          await client.query('UPDATE journey_steps SET contract_source=$2 WHERE id=$1 AND contract_source IS DISTINCT FROM $2',[row.id,source]);
+          await client.query('UPDATE activities SET contract_source=$2 WHERE id=$1 AND contract_source IS DISTINCT FROM $2',[row.id,source]);
         }
       } else {
-        row = (await client.query(`INSERT INTO journey_steps(journey_id,name,step_number,capability_key,activity_key,contract,contract_sha256,contract_source,status,backbone_version)
-          VALUES($1,$2,CASE WHEN EXISTS(SELECT 1 FROM journey_steps WHERE journey_id=$1 AND step_number=$3)
-            THEN (SELECT COALESCE(max(step_number),0)+1 FROM journey_steps WHERE journey_id=$1) ELSE $3 END,
+        row = (await client.query(`INSERT INTO activities(journey_id,name,step_number,capability_key,activity_key,contract,contract_sha256,contract_source,status,backbone_version)
+          VALUES($1,$2,CASE WHEN EXISTS(SELECT 1 FROM activities WHERE journey_id=$1 AND step_number=$3)
+            THEN (SELECT COALESCE(max(step_number),0)+1 FROM activities WHERE journey_id=$1) ELSE $3 END,
             $4,$5,$6::jsonb,$7,$8,'planned','3.0') RETURNING id`,
         [owner.capability_id,a.name,a.order,from,a.key,JSON.stringify(contract),sha256,source])).rows[0];
         if (!row) throw new Error(`活动插入未返回身份: ${key}`);
@@ -68,7 +68,7 @@ export async function storeActivityContracts(pool, plans, head, repo, registrati
     for (const row of rows) {
       const key = `${row.capability_key}.${row.activity_key}`;
       if (ownedCaps.includes(row.capability_key) && !definitions.has(key) && row.status !== 'deprecated') {
-        const result = await client.query(`UPDATE journey_steps SET status='deprecated',updated_at=NOW() WHERE id=$1
+        const result = await client.query(`UPDATE activities SET status='deprecated',updated_at=NOW() WHERE id=$1
           AND NOT EXISTS(SELECT 1 FROM workflow_activity_refs WHERE activity_id=$1 AND active) RETURNING id`,[row.id]);
         if (result.rows.length) out.deprecated.push(key);
       }

@@ -22,9 +22,9 @@ function pool(probes, cells) {
   const rows = cells.map((c) => ({ ...c })); const calls = [];
   return { rows, calls, query: async (sql, params) => {
     calls.push(sql);
-    if (/UPDATE journey_step_links/.test(sql)) { const r = rows.find((x) => x.id === params[1]); if (r) r.cell_status = params[0]; return { rows: [] }; }
+    if (/UPDATE (journey_step_links|activity_cells)\b/.test(sql)) { const r = rows.find((x) => x.id === params[1]); if (r) r.cell_status = params[0]; return { rows: [] }; }
     if (/step_id_ref = ANY/.test(sql)) return { rows: rows.filter((r) => r.cell_level !== 'activity' && params[1].includes(r.step_id_ref)) };
-    if (/SELECT cell_status FROM journey_step_links/.test(sql)) return { rows: rows.filter((r) => r.cell_level !== 'activity' && r.step_id === params[1]) };
+    if (/SELECT cell_status FROM (journey_step_links|activity_cells)\b/.test(sql)) return { rows: rows.filter((r) => r.cell_level !== 'activity' && r.step_id === params[1]) };
     if (/FROM tasks/.test(sql)) return { rows: [{ journey_id: J }] };
     if (/FROM step_probes/.test(sql)) return { rows: probes };
     return { rows: [] };

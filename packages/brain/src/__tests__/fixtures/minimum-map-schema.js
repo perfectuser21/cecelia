@@ -1,5 +1,6 @@
-import {migrationSql,migrationSlice,migrationTable} from './minimum-definition-schema.js';
+import {migrationSql,migrationSlice,migrationTable,withLegacyNames} from './minimum-definition-schema.js';
 export async function minimumMapSchema(db){
+ await withLegacyNames(db,async()=>{
  await db.query(migrationTable('009_fix_decisions_schema.sql','decisions'));
  for(const table of ['api_registry','db_schema_registry','test_registry'])await db.query(migrationTable('282_dev_management_tables.sql',table));
  await db.query(migrationSql('351_graph_edges.sql'));
@@ -10,4 +11,5 @@ export async function minimumMapSchema(db){
  await db.query(migrationSlice('349_promise_map_reconcile.sql','ALTER TABLE journey_step_links',null));
  await db.query(migrationSlice('374_gp_assertion_receipts.sql','ALTER TABLE journey_step_links','CREATE TABLE IF NOT EXISTS journey_assertion_receipts'));
  await db.query(migrationSlice('496_probe_targets_cells_levels.sql','ALTER TABLE journey_step_links','-- step 级格子'));
+ });
 }

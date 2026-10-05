@@ -32,7 +32,7 @@ function fixture({
     if (text.includes('FROM map_projection_nodes')) {
       return { rows: [{ node_key: 'F1', name: 'Factory', attributes: capabilityAttributes }] };
     }
-    if (text.includes('FROM journey_step_links')) {
+    if (text.includes('FROM activity_cells')) {
       return { rows: assertionRows ?? [{
         id: LINK_ID, assertion_ref: assertionRef, assertion_revision: 1,
         capability_code: 'F1',

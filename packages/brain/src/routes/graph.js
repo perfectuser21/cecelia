@@ -42,8 +42,8 @@ async function promisesForFeatures(featureIds) {
   if (featureIds.length === 0) return new Map();
   const { rows } = await pool.query(
     `SELECT l.feature_id, s.name AS step_name, s.promise, j.name AS journey_name
-     FROM journey_step_links l
-     JOIN journey_steps s ON s.id = l.step_id
+     FROM activity_cells l
+     JOIN activities s ON s.id = l.step_id
      JOIN journeys j ON j.id = s.journey_id
      WHERE l.feature_id = ANY($1)`, [featureIds]);
   const map = new Map();
@@ -115,8 +115,8 @@ router.get('/related', async (req, res) => {
     if (ids.length > 0) {
       const { rows } = await pool.query(
         `SELECT DISTINCT l2.feature_id, f.name
-         FROM journey_step_links l1
-         JOIN journey_step_links l2 ON l2.step_id = l1.step_id AND l2.feature_id IS NOT NULL
+         FROM activity_cells l1
+         JOIN activity_cells l2 ON l2.step_id = l1.step_id AND l2.feature_id IS NOT NULL
          JOIN journey_features f ON f.id = l2.feature_id
          WHERE l1.feature_id = ANY($1) AND NOT (l2.feature_id = ANY($1))`, [ids]);
       step_siblings = rows;

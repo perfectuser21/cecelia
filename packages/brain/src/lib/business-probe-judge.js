@@ -161,7 +161,7 @@ const PROBE_SELECT = `SELECT sp.probe_key, sp.stage, sp.severity, sp.spec, sp.sp
               jsl.id AS journey_step_link_id, jsl.assertion_revision, jsl.journey_id,
               jsl.step_id AS activity_step_id
          FROM step_probes sp
-         JOIN journey_step_links jsl ON jsl.id = sp.journey_step_link_id`;
+         JOIN activity_cells jsl ON jsl.id = sp.journey_step_link_id`;
 
 const CHILD_LEVELS = Object.freeze(['step', 'enabler']);
 
@@ -184,7 +184,7 @@ async function resolveChildCells(pool, specs) {
   if (journeys.size === 0) return map;
   const r = await pool.query(
     `SELECT id, journey_id, step_id, cell_level, step_id_ref, enabler_id, assertion_revision
-       FROM journey_step_links
+       FROM activity_cells
       WHERE journey_id = ANY($1::uuid[])
         AND cell_level IN ('step', 'enabler')
         AND (step_id_ref = ANY($2::uuid[]) OR enabler_id = ANY($3::uuid[]))`,
@@ -217,7 +217,7 @@ async function rollupActivity(pool, { journeyId, activityStepId, ownStatuses }) 
   const statuses = [...ownStatuses];
   if (journeyId && activityStepId) {
     const r = await pool.query(
-      `SELECT cell_status FROM journey_step_links
+      `SELECT cell_status FROM activity_cells
         WHERE journey_id = $1 AND step_id = $2 AND cell_level IN ('step', 'enabler')`,
       [journeyId, activityStepId],
     );
@@ -355,7 +355,7 @@ export async function handleRunFinished(payload = {}, deps = {}) {
 
     const cells = {};
     const paint = async (linkId, status) => {
-      await pool.query(`UPDATE journey_step_links SET cell_status = $1 WHERE id = $2`, [status, linkId]);
+      await pool.query(`UPDATE activity_cells SET cell_status = $1 WHERE id = $2`, [status, linkId]);
       cells[linkId] = status;
     };
     // 先翻子格（step/enabler），再汇总活动格：汇总读的是子格已更新后的颜色

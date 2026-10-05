@@ -18,7 +18,7 @@ if (!JSON.stringify(b[0]).includes(r.contract_source)) { console.error('FAIL 只
 if (!JSON.stringify(b).includes('探针 pf_lock_acquired')) { console.error('FAIL 正文缺后置条件'); process.exit(1); }
 let calls = 0; const notionReq = async (_t, p, m) => { calls++; return m === 'GET' ? { results: [], has_more: false } : {}; };
 let digest = null;
-const pool = { async query(t, p) { if (/FROM journey_steps/.test(t)) return { rows: [{ ...r, notion_body_digest: digest }] }; if (/notion_body_digest =/.test(t)) digest = p[1]; return { rows: [] }; } };
+const pool = { async query(t, p) { if (/FROM (journey_steps|activities)\b/.test(t)) return { rows: [{ ...r, notion_body_digest: digest }] }; if (/notion_body_digest =/.test(t)) digest = p[1]; return { rows: [] }; } };
 await syncBackboneBodies(pool, 'tok', { notionReq });
 const first = calls;
 await syncBackboneBodies(pool, 'tok', { notionReq });

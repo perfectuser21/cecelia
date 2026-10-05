@@ -57,7 +57,7 @@ grep -q "l.updated_at > l.notion_synced_at" packages/brain/src/notion-push-sync.
   || { echo "FAIL: notion push 格子行未走 updated_at 增量"; exit 1; }
 grep -q "buildStepLinkNotionProperties(l, schemaProps)" packages/brain/src/notion-push-sync.js \
   || { echo "FAIL: notion push 格子行未走 buildStepLinkNotionProperties（Cell* 列）"; exit 1; }
-grep -A12 "FROM journey_step_links l" packages/brain/src/notion-push-sync.js | grep -q "LIMIT 50" \
+grep -A12 "FROM activity_cells l" packages/brain/src/notion-push-sync.js | grep -q "LIMIT 50" \
   || { echo "FAIL: notion push 格子行每轮上限 50 缺失"; exit 1; }
 echo "OK: notion push 格子行增量可更新合同在位"
 

@@ -3,7 +3,7 @@ import { pathToFileURL } from 'url';
 const COUNT_QUERIES = {
   positive_missing: `
     SELECT COUNT(*)::int AS count
-    FROM journey_step_links
+    FROM activity_cells
     WHERE cell_kind IS NOT NULL
       AND cell_status IN ('green','pending')
       AND assertion_ref IS NULL
@@ -11,7 +11,7 @@ const COUNT_QUERIES = {
   `,
   orphan_nfr: `
     SELECT COUNT(*)::int AS count
-    FROM journey_step_links cell
+    FROM activity_cells cell
     WHERE cell.cell_kind='element'
       AND cell.cell_key='NFR'
       AND NOT EXISTS (
@@ -26,14 +26,14 @@ const COUNT_QUERIES = {
   `,
   invalid_base_ref: `
     SELECT COUNT(*)::int AS count
-    FROM journey_step_links cell
+    FROM activity_cells cell
     LEFT JOIN journey_features feature ON feature.id=cell.feature_id
     WHERE cell.cell_kind='base_ref'
       AND (cell.feature_id IS NULL OR feature.id IS NULL)
   `,
   unknown_assertion: `
     SELECT COUNT(*)::int AS count
-    FROM journey_step_links
+    FROM activity_cells
     WHERE assertion_ref IS NOT NULL
       AND assertion_ref NOT LIKE 'manual:%'
       AND assertion_ref NOT LIKE 'eval:%'

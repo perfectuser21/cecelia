@@ -111,7 +111,7 @@ describe('场景B：radius 停摆 — 回退 journey_step_links + WARN', () => {
     const { getCascadeList } = await import('../../cascade-list.js');
     await getCascadeList(['any-file.js']).catch(() => {});
 
-    const jslCall = poolSpy.mock.calls.find(([sql]) => String(sql).includes('journey_step_links'));
+    const jslCall = poolSpy.mock.calls.find(([sql]) => String(sql).includes('activity_cells'));
     expect(jslCall).toBeDefined();
   });
 });

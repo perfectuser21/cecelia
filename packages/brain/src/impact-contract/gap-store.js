@@ -296,7 +296,7 @@ async function transitionGapStatusOnClient(db, gapId, newStatus, {
               link.assertion_revision AS current_assertion_revision,
               verification_run.current_task_id AS verification_task_id
        FROM journey_assertion_receipts AS receipt
-       JOIN journey_step_links AS link ON link.id = receipt.journey_step_link_id
+       JOIN activity_cells AS link ON link.id = receipt.journey_step_link_id
        JOIN initiative_runs AS verification_run
          ON verification_run.id::text = receipt.run_id
         AND verification_run.current_task_id = $2

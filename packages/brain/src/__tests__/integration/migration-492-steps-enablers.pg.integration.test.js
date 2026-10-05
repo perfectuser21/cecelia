@@ -85,6 +85,13 @@ async function runMigration() {
   await client.query('BEGIN');
   try {
     await client.query(migrationSql);
+    // 492 按旧名 journey_steps 建外键；重放后对齐生产形状（522 起 activities 是物理表，旧名是视图），sync 脚本读标准名
+    // 重放幂等：第二次 journey_steps 已是视图，不再换名。
+    const kind = (await client.query("SELECT relkind FROM pg_class WHERE relname = 'journey_steps' AND relnamespace = current_schema()::regnamespace")).rows[0]?.relkind;
+    if (kind === 'r') {
+      await client.query('ALTER TABLE journey_steps RENAME TO activities');
+      await client.query('CREATE VIEW journey_steps AS SELECT * FROM activities');
+    }
     await client.query('COMMIT');
   } catch (error) {
     await client.query('ROLLBACK');

@@ -33,7 +33,7 @@ export async function readCapabilitySystem(db) {
   const rows = (await db.query(`SELECT a.id,a.name,a.status,a.capability_key,a.activity_key,a.current_definition_version_id,
     a.contract IS NOT NULL contract_present,v.id version_id,v.source_repo,v.source_path,v.source_commit,
     v.payload->'implementation_bindings' implementation_bindings,v.payload->'steps' definition_steps
-    FROM journey_steps a LEFT JOIN activity_definition_versions v ON v.id=a.current_definition_version_id AND v.activity_id=a.id
+    FROM activities a LEFT JOIN activity_definition_versions v ON v.id=a.current_definition_version_id AND v.activity_id=a.id
     ORDER BY a.name,a.id`)).rows;
   const refs = (await db.query(`SELECT r.activity_id,r.workflow_id,r.id reference_id,r.slot_key,r.sequence_no
     FROM workflow_activity_refs r WHERE r.active ORDER BY r.workflow_id,r.sequence_no,r.id`)).rows;
@@ -50,7 +50,7 @@ export async function readCapabilitySystem(db) {
     payload:{activity_id:a.id,implementation_bindings:a.implementation_bindings||[],steps:a.definition_steps||[]}}));
   const components=versions.flatMap(a=>a.payload.implementation_bindings).filter(b=>b.status==='verified');
   const calls=(await db.query('SELECT id,caller_type,caller_id,enabler_id FROM enabler_calls ORDER BY id')).rows;
-  const enablers = (await db.query('SELECT id,key,name,kind,impl_ref,active FROM enablers ORDER BY key')).rows.map(e=>{
+  const enablers = (await db.query('SELECT id,key,name,kind,impl_ref,active FROM warehouse_items ORDER BY key')).rows.map(e=>{
     const sources=calls.filter(c=>c.enabler_id===e.id).map(c=>resolveEnablerSource({...c,enabler_key:e.key,impl_ref:e.impl_ref,active:e.active},versions,components));
     return {...e,source_verified:sources.length>0&&sources.every(c=>c.source_status==='verified'),
       validation_scope:'reference_only',symbol_status:'unverified',calls:sources,source_evidence:sources.flatMap(c=>c.source_evidence)};
