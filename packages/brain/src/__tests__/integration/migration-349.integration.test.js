@@ -19,7 +19,7 @@ describe('migration 349: promise map 和解补齐（348 thin 版之上）', () =
   });
 
   it('journey_steps.backbone_version 已归一为 NOT NULL', async () => {
-    const c = await cols('journey_steps');
+    const c = await cols('activities');
     expect(c.promise).toBeDefined();
     expect(c.backbone_version).toBe('NO'); // 349 归一：SET NOT NULL DEFAULT '1.0'
   });
@@ -39,7 +39,7 @@ describe('migration 349: promise map 和解补齐（348 thin 版之上）', () =
   });
 
   it('journey_step_links 格子列全齐（cell_key 由 349 补）且 step_order 可空', async () => {
-    const c = await cols('journey_step_links');
+    const c = await cols('activity_cells');
     for (const k of ['feature_id', 'cell_kind', 'cell_key', 'cell_status', 'assertion_ref', 'na_reason'])
       expect(c[k], k).toBeDefined();
     expect(c.step_order).toBe('YES');

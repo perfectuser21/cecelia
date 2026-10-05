@@ -21,6 +21,8 @@ import { replaceRepoEdges } from '../../packages/brain/src/lib/graph-store.js';
 const TABLES=['areas','schema_version','journeys','workflows','journey_steps','steps','spans',
   'map_scope_repositories','map_manifest_versions','map_projection_runs','map_projection_nodes','map_projection_edges',
   'graph_edges','graph_snapshot_versions','graph_edge_snapshots','fact_snapshot_headers','journey_step_links'];
+// 迁移 522 起 journey_steps / journey_step_links 在 public 里是旧名视图（真表 activities / activity_cells）：LIKE 必须从真表复制才带主键与默认值，复制出的表在 scratch schema 里仍叫旧名。
+const PHYSICAL={journey_steps:'activities',journey_step_links:'activity_cells'};
 export async function createImplementationScratch(){
   if(!isImplementationScratchDatabase(DB_DEFAULTS.database))throw ciFailure('SCRATCH_REQUIRED','只允许本机scratch或GitHub Actions隔离test库');
   const client=new pg.Client(DB_DEFAULTS);await client.connect();
@@ -31,7 +33,7 @@ export async function createImplementationScratch(){
     const actual=(await client.query('SELECT current_database() name')).rows[0].name;
     if(actual!==DB_DEFAULTS.database||!isImplementationScratchDatabase(actual))throw ciFailure('SCRATCH_REQUIRED');
     await client.query(`CREATE SCHEMA ${schema}`);schemaCreated=true;
-    for(const table of TABLES)await client.query(`CREATE TABLE ${schema}.${table}(LIKE public.${table} INCLUDING ALL)`);
+    for(const table of TABLES)await client.query(`CREATE TABLE ${schema}.${table}(LIKE public.${PHYSICAL[table]??table} INCLUDING ALL)`);
     await client.query(`SET search_path TO ${schema}`);
     for(const file of ['511_shared_activity_refs.sql','513_definition_versions.sql'])await client.query(readFileSync(new URL(`../../packages/brain/migrations/${file}`,import.meta.url),'utf8'));
     return {db,close,schema};
