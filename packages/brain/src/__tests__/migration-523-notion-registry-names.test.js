@@ -24,6 +24,12 @@ describe('migration 523 notion registry standard names', () => {
     expect(sql).toMatch(/title = '闹钟总账'[\s\S]*notion_db_id = '3d3c40c2-ba63-815e-be8a-f5048c070d80'/);
   });
 
+  it('旧名兼容视图仍带 notion_id 列：补未映射占位行，registry_coverage 才不报「带 notion_id 列却未登记」', () => {
+    expect(sql).toMatch(/INSERT INTO notion_projection_map[\s\S]*'unmapped:journey_steps'[\s\S]*'journey_steps'[\s\S]*'archived'/);
+    expect(sql).toMatch(/'unmapped:journey_step_links'[\s\S]*'journey_step_links'/);
+    expect(sql).toMatch(/WHERE NOT EXISTS \(SELECT 1 FROM notion_projection_map WHERE notion_db_id = 'unmapped:journey_steps'/);
+  });
+
   it('页面链接表 projection_links 的实体类型随键改名（目录投影按 DIRECTORY_TABLES 查链接，不改会判「页已被占用」）', () => {
     expect(sql).toMatch(/UPDATE projection_links SET entity_type = 'activities'[\s\S]*WHERE entity_type = 'journey_steps'/);
     expect(readFileSync(down, 'utf8')).toMatch(/UPDATE projection_links SET entity_type = 'journey_steps'[\s\S]*WHERE entity_type = 'activities'/);
