@@ -7,7 +7,7 @@ afterAll(() => pool.end());
 
 describe('dev-registry migration — 7 张表存在', () => {
   const TABLES = [
-    'journeys', 'journey_steps', 'journey_features',
+    'journeys', 'activities', 'journey_features',
     'api_registry', 'db_schema_registry', 'test_registry', 'issues',
   ];
 
@@ -28,7 +28,7 @@ describe('dev-registry migration — 7 张表存在', () => {
     expect(rows.length).toBeGreaterThan(0);
   });
 
-  it('journey_steps 有 UNIQUE(journey_id, step_number)', async () => {
+  it('activities 有 UNIQUE(journey_id, step_number)', async () => {
     const { rows } = await pool.query(
       `SELECT indexname FROM pg_indexes
        WHERE tablename IN ('journey_steps','activities') AND indexdef LIKE '%journey_id%step_number%'`,

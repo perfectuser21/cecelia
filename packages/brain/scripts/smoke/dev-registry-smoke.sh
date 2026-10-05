@@ -17,7 +17,7 @@ if ! psql -X "$DB" -tAc "SELECT 1" >/dev/null 2>&1; then
 fi
 
 echo "[smoke] 验证 7 张表存在..."
-for TABLE in journeys journey_steps journey_features api_registry db_schema_registry test_registry issues; do
+for TABLE in journeys activities journey_features api_registry db_schema_registry test_registry issues; do
   COUNT=$(psql -X "$DB" -tAc "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='$TABLE'")
   [ "$COUNT" = "1" ] || { echo "FAIL: 表 $TABLE 不存在"; exit 1; }
 done
