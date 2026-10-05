@@ -13,6 +13,10 @@ DELETE FROM notion_projection_map
 UPDATE notion_projection_map SET brain_table = 'activities', updated_at = NOW() WHERE brain_table = 'journey_steps';
 UPDATE notion_projection_map SET brain_table = 'activity_cells', updated_at = NOW() WHERE brain_table = 'journey_step_links';
 
+-- ①b 页面链接的实体类型同步改名：目录投影与注册推送按 DIRECTORY_TABLES / 表键查 projection_links，
+--     实体类型不改，已建页面会被当成「未链接」，且与旧链接冲突报「目录页已由其它真身占用」
+UPDATE projection_links SET entity_type = 'activities', updated_at = NOW() WHERE entity_type = 'journey_steps';
+
 -- ② 旧混合库停推（Notion 页保留只读，不删）
 UPDATE notion_projection_map
    SET status = 'archived', direction = 'none',
