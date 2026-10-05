@@ -17,7 +17,7 @@ export async function storeActivityContracts(pool, plans, head, repo, registrati
     if (canonicalJson(current)!==canonicalJson(registrations)) throw Object.assign(new Error('同步快照已变化，拒绝写入旧契约'),{
       code:'ACTIVITY_CONTRACT_SNAPSHOT_CHANGED',status:409,
     });
-    const rows = (await client.query(`SELECT id,journey_id,capability_key,activity_key,contract_sha256,status FROM activities
+    const rows = (await client.query(`SELECT id,capability_key,activity_key,contract_sha256,status FROM activities
       WHERE capability_key IS NOT NULL AND activity_key IS NOT NULL FOR UPDATE`)).rows;
     const definitions = new Map();
     for (const plan of plans) for (const item of plan.activities) {
@@ -40,11 +40,10 @@ export async function storeActivityContracts(pool, plans, head, repo, registrati
           await client.query('UPDATE activities SET contract_source=$2 WHERE id=$1 AND contract_source IS DISTINCT FROM $2',[row.id,source]);
         }
       } else {
-        row = (await client.query(`INSERT INTO activities(journey_id,name,step_number,capability_key,activity_key,contract,contract_sha256,contract_source,status,backbone_version)
-          VALUES($1,$2,CASE WHEN EXISTS(SELECT 1 FROM activities WHERE journey_id=$1 AND step_number=$3)
-            THEN (SELECT COALESCE(max(step_number),0)+1 FROM activities WHERE journey_id=$1) ELSE $3 END,
-            $4,$5,$6::jsonb,$7,$8,'planned','3.0') RETURNING id`,
-        [owner.capability_id,a.name,a.order,from,a.key,JSON.stringify(contract),sha256,source])).rows[0];
+        // Activity 在树里的位置（能力/流程/顺序）由下面的流程引用决定，不再写 journey_id / step_number（迁移 527）
+        row = (await client.query(`INSERT INTO activities(name,capability_key,activity_key,contract,contract_sha256,contract_source,status,backbone_version)
+          VALUES($1,$2,$3,$4::jsonb,$5,$6,'planned','3.0') RETURNING id`,
+        [a.name,from,a.key,JSON.stringify(contract),sha256,source])).rows[0];
         if (!row) throw new Error(`活动插入未返回身份: ${key}`);
         out.inserted.push(key);
       }

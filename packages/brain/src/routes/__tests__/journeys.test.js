@@ -302,23 +302,86 @@ describe('GET /api/brain/journey_steps', () => {
   });
 });
 
-describe('POST /api/brain/journey_steps', () => {
+describe('GET /api/brain/journey_steps 位置过滤（位置由流程引用推出）', () => {
   beforeEach(() => { mockQuery.mockReset(); });
 
-  it('creates a step and returns 200 (upsert endpoint)', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'xyz', name: 'Step 1', journey_id: 'j1', step_number: 1 }] });
-
+  it('journey_id 过滤走 activity_placement.capability_id，响应列回显 journey_id / step_number', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 'a1', journey_id: 'j1', step_number: 2 }] });
     const { default: router } = await import('../journeys.js');
     const express = await import('express');
     const app = express.default();
     app.use(express.default.json());
     app.use('/api/brain', router);
-
     const request = await import('supertest');
-    const res = await request.default(await bindFixture(app))
-      .post('/api/brain/journey_steps')
-      .send({ journey_id: 'j1', name: 'Step 1', step_number: 1 });
+    const res = await request.default(await bindFixture(app)).get('/api/brain/journey_steps?journey_id=j1');
     expect(res.status).toBe(200);
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toMatch(/LEFT JOIN activity_placement p ON p\.activity_id = a\.id WHERE p\.capability_id=\$1/);
+    expect(sql).toMatch(/p\.capability_id AS journey_id, p\.step_number/);
+    expect(params).toEqual(['j1', 100]);
+  });
+});
+
+describe('POST /api/brain/journey_steps', () => {
+  beforeEach(() => { mockQuery.mockReset(); });
+
+  async function postStep(body) {
+    const { default: router } = await import('../journeys.js');
+    const express = await import('express');
+    const app = express.default();
+    app.use(express.default.json());
+    app.use('/api/brain', router);
+    const request = await import('supertest');
+    return request.default(await bindFixture(app)).post('/api/brain/journey_steps').send(body);
+  }
+
+  it('该序号已有步骤：更新它（位置在流程引用里，不写 journey_id / step_number）', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ activity_id: 'a1' }] })            // 按能力+槽位找已有引用
+      .mockResolvedValueOnce({ rows: [{ id: 'a1', name: 'Step 1' }] });    // UPDATE activities
+    const res = await postStep({ journey_id: 'j1', name: 'Step 1', step_number: 1 });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ id: 'a1', journey_id: 'j1', step_number: 1 });
+    expect(mockQuery.mock.calls[0][0]).toMatch(/FROM workflow_activity_refs r JOIN workflows w[\s\S]*w\.capability_id = \$1 AND r\.slot_key = \$2/);
+    expect(mockQuery.mock.calls[0][1]).toEqual(['j1', 'step_1']);
+    expect(mockQuery.mock.calls[1][0]).toMatch(/UPDATE activities SET/);
+  });
+
+  it('该序号没有步骤：放进能力的主线流程（恰好一个流程就用它），新建 Activity 与引用，不写旧列', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })                                           // 无已有引用
+      .mockResolvedValueOnce({ rows: [{ id: 'w1', key: 'only_flow' }] })              // 能力下恰好一个流程
+      .mockResolvedValueOnce({ rows: [{ id: 'a2', name: 'n' }] })                    // INSERT activities
+      .mockResolvedValueOnce({ rows: [] });                                          // INSERT 引用
+    const res = await postStep({ journey_id: 'j1', name: 'n', step_number: 3, promise: 'p' });
+    expect(res.status).toBe(200);
+    const insertActivity = mockQuery.mock.calls[2][0];
+    expect(insertActivity).toMatch(/INSERT INTO activities \(name, description, status, promise, backbone_version, notion_synced_at\)/);
+    expect(insertActivity).not.toMatch(/journey_id|step_number/);
+    expect(mockQuery.mock.calls[3][0]).toMatch(/INSERT INTO workflow_activity_refs/);
+    expect(mockQuery.mock.calls[3][1]).toEqual(['w1', 'step_3', 'a2', 3]);
+  });
+
+  it('能力下没有流程或有多个流程且没有主线：新建 gp_steps 主线流程再放', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'w1', key: 'a' }, { id: 'w2', key: 'b' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'wNew' }] })                             // INSERT workflows
+      .mockResolvedValueOnce({ rows: [{ id: 'a3' }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const res = await postStep({ journey_id: 'abcdef12-0000-4000-8000-000000000000', name: 'n', step_number: 1 });
+    expect(res.status).toBe(200);
+    expect(mockQuery.mock.calls[2][0]).toMatch(/INSERT INTO workflows/);
+    expect(mockQuery.mock.calls[2][1][1]).toBe('gp_steps_abcdef12');
+    expect(mockQuery.mock.calls[4][1][0]).toBe('wNew');
+  });
+
+  it('能力不存在（外键失败）→ 404', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockRejectedValueOnce(Object.assign(new Error('fk'), { code: '23503' }));
+    expect((await postStep({ journey_id: 'ghost', name: 'n', step_number: 1 })).status).toBe(404);
   });
 
   it('returns 400 when required fields missing', async () => {
@@ -727,23 +790,27 @@ describe('PATCH /journey_features/:id workflow_ref', () => {
 describe('POST /journey_steps promise', () => {
   beforeEach(() => { mockQuery.mockReset(); });
 
-  it('insert+update 都带 promise/backbone_version', async () => {
-    mockQuery.mockResolvedValueOnce({ rows: [{ id: 's1' }] });
-
+  it('更新与新建都带 promise/backbone_version', async () => {
     const { default: router } = await import('../journeys.js');
     const express = await import('express');
     const app = express.default();
     app.use(express.default.json());
     app.use('/api/brain', router);
-
     const request = await import('supertest');
-    const res = await request.default(await bindFixture(app))
-      .post('/api/brain/journey_steps')
-      .send({ journey_id: 'j1', name: 'n', step_number: 1, promise: 'p' });
-    expect(res.status).toBe(200);
-    const sql = mockQuery.mock.calls[0][0];
-    expect(sql).toContain('promise');
-    expect(sql).toContain('backbone_version');
+    const post = async () => request.default(await bindFixture(app)).post('/api/brain/journey_steps').send({ journey_id: 'j1', name: 'n', step_number: 1, promise: 'p', backbone_version: '3.0' });
+
+    mockQuery.mockResolvedValueOnce({ rows: [{ activity_id: 'a1' }] }).mockResolvedValueOnce({ rows: [{ id: 'a1' }] });
+    expect((await post()).status).toBe(200);
+    const update = mockQuery.mock.calls[1];
+    expect(update[0]).toMatch(/promise=COALESCE\(\$4, promise\)[\s\S]*backbone_version=COALESCE\(\$5, backbone_version\)/);
+    expect(update[1]).toEqual(['a1', 'n', null, 'p', '3.0']);
+
+    mockQuery.mockReset();
+    mockQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ id: 'w1', key: 'k' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'a2' }] }).mockResolvedValueOnce({ rows: [] });
+    expect((await post()).status).toBe(200);
+    expect(mockQuery.mock.calls[2][0]).toContain('promise');
+    expect(mockQuery.mock.calls[2][1]).toEqual(['n', null, 'planned', 'p', '3.0']);
   });
 });
 

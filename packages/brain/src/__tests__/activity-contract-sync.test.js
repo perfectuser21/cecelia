@@ -146,8 +146,9 @@ function fakePool(stepRows = [], memory = {}) {
         return { rows: [{id:params[0]}] };
       }
       if (/^\s*INSERT INTO activities/.test(text)) {
-        rows.push({ id: `new-${params[4]}`, journey_id: params[0], name: params[1], step_number: params[2], capability_key: params[3], activity_key: params[4], contract: JSON.parse(params[5]), contract_sha256: params[6], contract_source: params[7], status: 'planned' });
-        return { rows: [{id:`new-${params[4]}`}] };
+        // 新 Activity 不再带 journey_id / step_number：位置由流程引用推出（迁移 527）
+        rows.push({ id: `new-${params[2]}`, name: params[0], capability_key: params[1], activity_key: params[2], contract: JSON.parse(params[3]), contract_sha256: params[4], contract_source: params[5], status: 'planned' });
+        return { rows: [{id:`new-${params[2]}`}] };
       }
       return { rows: [] };
     },
@@ -192,12 +193,18 @@ describe('syncActivityContracts', () => {
     expect(out.updated).toEqual([]);
   });
 
-  it('仓库新增活动 → 按 order 插入同 journey 新行（backbone 3.0）', async () => {
+  it('仓库新增活动 → 只按身份（能力键+活动键）插入，不写 journey_id / step_number；顺序走流程引用（backbone 3.0）', async () => {
     const gh = fakeGithub({ digest: digestOf({ preflight: 'p1', discovery: 'd1' }) });
     const pool = fakePool(seeded().filter((r) => r.activity_key === 'preflight'));
     const out = await syncActivityContracts(pool, deps(gh));
     const d = pool.rows.find((r) => r.activity_key === 'discovery');
-    expect(d).toMatchObject({ journey_id: 'J', step_number: 2, contract_sha256: activityHash('discovery') });
+    expect(d).toMatchObject({ name: '发现', capability_key: 'keyword_acquisition', contract_sha256: activityHash('discovery') });
+    expect(d).not.toHaveProperty('journey_id');
+    expect(d).not.toHaveProperty('step_number');
+    const insert = pool.queries.find((q) => /^\s*INSERT INTO activities/.test(q.text));
+    expect(insert.text).not.toMatch(/journey_id|step_number/);
+    const ref = pool.queries.find((q) => /INSERT INTO workflow_activity_refs/.test(q.text) && q.params[1] === 'discovery');
+    expect(ref.params[3]).toBe(2); // 顺序 = 合同里的 order，落在流程引用的 sequence_no
     expect(out.inserted).toEqual(['keyword_acquisition.discovery']);
   });
 

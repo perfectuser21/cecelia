@@ -1,4 +1,6 @@
 # DoD — 受控再基恢复
+- [x] [BEHAVIOR] activityplacement v3.0 第 5 刀②：迁移 527 新增 activity_placement 视图（每个 Activity 一行，能力/流程/顺序/槽位由生效流程引用推出，共用时归属引用优先），journey_id/step_number 放开非空并去掉按它们唯一的约束、Activity 身份改按 (capability_key, activity_key) 唯一；合同入库、workflow-authoring、公司 KR 注册不再写这两列，无引用底座一律拒绝登记；登记能力带 steps 经主线流程挂靠、价值流不能带步骤；POST /journey_steps 改为在能力的流程里按序号放步骤（已有则更新）；读者（journey_steps 列表/台账/blast-radius/级联清单/金路径/战情室/依赖图/夜检）改读 activity_placement，API 响应仍回显 journey_id/step_number。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-527-activity-placement.test.js src/__tests__/activity-contract-sync.test.js src/routes/__tests__/journeys.test.js src/routes/__tests__/promise-map-api.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] directorylegacynotionid 目录投影里 Activity 行的页面身份不再取旧同步留下的 notion_id（可能指向别的库或回收站），只认目录链接与 Brain ID 查询，部门页不受影响；修迁移 526 挂靠后目录投影每轮报「目录页身份或数据库不符」。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/projection/__tests__/directory-source.test.js --maxWorkers=1 --minWorkers=1"
 

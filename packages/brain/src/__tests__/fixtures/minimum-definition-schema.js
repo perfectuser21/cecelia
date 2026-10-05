@@ -15,8 +15,12 @@ export async function minimumDefinitionSchema(db,{runs=true}={}){
  await db.query(migrationTable('005_schema_version_and_config.sql','schema_version'));
  for(const table of ['journeys','journey_steps','journey_features'])await db.query(migrationTable('282_dev_management_tables.sql',table));
  await db.query(migrationSql('397_journeys_capability_self_ref.sql'));
+ // 迁移 527：Activity 的位置由流程引用推出，journey_id / step_number 不再必填也不再按它们唯一，身份按 (capability_key, activity_key) 唯一
+ await db.query(`ALTER TABLE journey_steps ALTER COLUMN journey_id DROP NOT NULL,ALTER COLUMN step_number DROP NOT NULL;
+ALTER TABLE journey_steps DROP CONSTRAINT IF EXISTS journey_steps_journey_id_step_number_key;`);
  await db.query(migrationSlice('348_promise_map_schema.sql','ALTER TABLE journey_steps','-- 3. journey_features'));
  await db.query(migrationSlice('482_backbone_activity_contracts.sql','ALTER TABLE journey_steps','-- 二、获客'));
+ await db.query('DROP INDEX IF EXISTS uq_journey_steps_activity;CREATE UNIQUE INDEX IF NOT EXISTS uq_activities_capability_activity ON journey_steps(capability_key,activity_key) WHERE activity_key IS NOT NULL;');
  await db.query(migrationSlice('483_backbone_body_digest.sql','ALTER TABLE journey_steps','INSERT INTO schema_version'));
  await db.query(migrationSlice('492_steps_enablers.sql','CREATE TABLE IF NOT EXISTS steps','INSERT INTO enablers'));
  await db.query(migrationTable('436_ops_workflows.sql','ops_workflows'));
