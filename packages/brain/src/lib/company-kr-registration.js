@@ -52,17 +52,18 @@ export async function registerCompanyKrWorkflow(pool,sourceOptions={}) {
     await client.query('UPDATE workflow_activity_refs SET active=false WHERE workflow_id=$1 AND active',[w.id]);
     for (const [i, activity] of s.activities.entries()) {
       const contract = activityContract(activity, i + 1,s), hash = stepSha256(contract);
+      // 位置（能力/流程/顺序）由下面的流程引用决定，不写 journey_id / step_number（迁移 527）；身份 = (capability_key, activity_key)
       const result = await client.query(`INSERT INTO activities
-        (journey_id,name,description,step_number,status,capability_key,activity_key,backbone_version,workflow_id,executor_kind,contract,contract_sha256,contract_source)
-        VALUES($1,$2,$3,$4,'active',$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
-        ON CONFLICT(journey_id,activity_key) WHERE activity_key IS NOT NULL DO UPDATE SET
-          name=EXCLUDED.name,description=EXCLUDED.description,step_number=EXCLUDED.step_number,
+        (name,description,status,capability_key,activity_key,backbone_version,workflow_id,executor_kind,contract,contract_sha256,contract_source)
+        VALUES($1,$2,'active',$3,$4,$5,$6,$7,$8::jsonb,$9,$10)
+        ON CONFLICT(capability_key,activity_key) WHERE activity_key IS NOT NULL DO UPDATE SET
+          name=EXCLUDED.name,description=EXCLUDED.description,
           backbone_version=EXCLUDED.backbone_version,contract=EXCLUDED.contract,
           contract_sha256=EXCLUDED.contract_sha256,contract_source=EXCLUDED.contract_source,
           updated_at=CASE WHEN activities.contract_sha256 IS DISTINCT FROM EXCLUDED.contract_sha256 THEN NOW() ELSE activities.updated_at END
         WHERE activities.workflow_id=EXCLUDED.workflow_id AND activities.executor_kind=EXCLUDED.executor_kind
           AND activities.capability_key=EXCLUDED.capability_key RETURNING id`,
-      [s.capability_id, activity.name, activity.implementation, i + 1, s.capability, activity.key, s.version,
+      [activity.name, activity.implementation, s.capability, activity.key, s.version,
         w.id, activity.executor, canonicalJson(contract), hash, sourceUrl]);
       if (!result.rows.length) throw new Error(`活动归属冲突: ${activity.key}`);
       bindingsByActivity.set(result.rows[0].id,await validateImplementationBindings(contract,sourceOptions.readBinding||(b=>readCompanyKrFile(b.revision,b.path)),source));

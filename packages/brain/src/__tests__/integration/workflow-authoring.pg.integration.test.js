@@ -16,7 +16,7 @@ beforeEach(async () => {
   client = new pg.Client(DB_DEFAULTS); await client.connect();
   schema = `workflow_authoring_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
-  for (const table of ['journeys','workflows','journey_steps','skill_registry','tasks']) {
+  for (const table of ['journeys','workflows','journey_steps','journey_step_links','workflow_activity_refs','skill_registry','tasks']) {
     await client.query(`CREATE TABLE ${schema}.${likeSource(table)} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
   }
   await client.query(`SET search_path TO ${schema},public`);
@@ -59,7 +59,7 @@ describe('管理流程最终登记：真实 PostgreSQL', () => {
   it('同版本不同定义拒绝，原定义保留', async () => {
     await register(); definition.activities[0].name = '不同定义';
     await expect(register()).rejects.toMatchObject({ code: 'workflow_version_conflict' });
-    expect((await client.query('SELECT name FROM journey_steps ORDER BY step_number')).rows[0].name).toBe('intake');
+    expect((await client.query('SELECT a.name FROM journey_steps a JOIN workflow_activity_refs r ON r.activity_id = a.id ORDER BY r.sequence_no')).rows[0].name).toBe('intake');
   });
   it('显式更新比较版本，保留活动身份；过期版本不能覆盖', async () => {
     const old = await register(); definition.version = '1.1.0'; definition.activities[0].name = '澄清需求';
@@ -75,12 +75,20 @@ describe('管理流程最终登记：真实 PostgreSQL', () => {
     await expect(register()).rejects.toMatchObject({ code: 'workflow_ownership_conflict' });
     expect((await client.query('SELECT count(*)::int n FROM journey_steps')).rows[0].n).toBe(6);
   });
-  it('无引用底座不能在旧活动之间插入新活动', async () => {
-    const owner = await register(); const changed = structuredClone(definition); changed.version = '1.1.0';
-    changed.activities.splice(1, 0, { ...structuredClone(changed.activities[0]), key: 'inserted' });
-    await expect(register(changed, { operation: 'update', workflowId: owner.workflow_id, expectedVersion: '1.0.0' }))
-      .rejects.toMatchObject({ code: 'shared_activity_references_not_ready', status: 409 });
-    expect((await client.query('SELECT version FROM workflows WHERE id=$1', [owner.workflow_id])).rows[0].version).toBe('1.0.0');
+  it('没有引用底座（位置与顺序只存在流程引用里）一律拒绝登记，保留草案，零写入', async () => {
+    await client.query('DROP TABLE workflow_activity_refs');
+    await expect(register()).rejects.toMatchObject({ code: 'shared_activity_references_not_ready', status: 409 });
+    expect((await client.query('SELECT count(*)::int n FROM workflows')).rows[0].n).toBe(0);
+    expect((await client.query('SELECT count(*)::int n FROM journey_steps')).rows[0].n).toBe(0);
+  });
+  it('新登记的活动不再写 journey_id / step_number，位置全在流程引用里（顺序 = 定义顺序）', async () => {
+    const owner = await register();
+    const rows = (await client.query('SELECT journey_id, step_number FROM journey_steps')).rows;
+    expect(rows).toHaveLength(6);
+    expect(rows.every(r => r.journey_id === null && r.step_number === null)).toBe(true);
+    const refs = (await client.query('SELECT activity_id, sequence_no FROM workflow_activity_refs WHERE workflow_id = $1 ORDER BY sequence_no', [owner.workflow_id])).rows;
+    expect(refs.map(r => r.activity_id)).toEqual(owner.activity_ids);
+    expect(refs.map(r => r.sequence_no)).toEqual([1, 2, 3, 4, 5, 6]);
   });
   it('流程更新版本必须严格递增', async () => {
     const owner = await register(); const changed = structuredClone(definition); changed.version = '0.9.0';
@@ -122,6 +130,7 @@ describe('管理流程最终登记：真实 PostgreSQL', () => {
 });
 
 async function enableSharedReferences() {
+  await client.query('DROP TABLE IF EXISTS workflow_activity_refs'); // 夹具默认就带一张按真表复制的引用表；这里换成带外键的手建版
   await client.query(`CREATE TABLE workflow_activity_refs (
     workflow_id uuid NOT NULL REFERENCES workflows(id), slot_key text NOT NULL,
     activity_id uuid NOT NULL REFERENCES activities(id), sequence_no integer NOT NULL CHECK(sequence_no>0),
@@ -150,6 +159,7 @@ describe('authoring 与真实共享关系和版本底座读模型贯通', () => 
     }
     // 真实迁移仅落隔离 schema，避免解析到 public 的版本表或触发器。
     await client.query(`SET search_path TO ${schema}`);
+    await client.query('DROP TABLE IF EXISTS workflow_activity_refs'); // 让 511 迁移自己建这张表
     await withLegacyNames(client, async () => {
       await client.query(readFileSync(new URL('../../../migrations/511_shared_activity_refs.sql', import.meta.url), 'utf8'));
       await client.query(readFileSync(new URL('../../../migrations/513_definition_versions.sql', import.meta.url), 'utf8'));

@@ -106,11 +106,9 @@ async function guardConsumers(client, workflow, definition, existing) {
   }
 }
 
-async function registrationReceipt(client, workflow, definition, options, shared, activityIds, replayed) {
+async function registrationReceipt(client, workflow, definition, options, activityIds, replayed) {
   const stored = (await client.query('SELECT id,key,version,status FROM workflows WHERE id=$1', [workflow.id])).rows[0];
-  const actualIds = (shared
-    ? (await client.query('SELECT activity_id AS id FROM workflow_activity_refs WHERE workflow_id=$1 AND active ORDER BY sequence_no', [workflow.id])).rows
-    : (await client.query("SELECT id FROM activities WHERE workflow_id=$1 AND status='active' ORDER BY step_number", [workflow.id])).rows).map(row => row.id);
+  const actualIds = (await client.query('SELECT activity_id AS id FROM workflow_activity_refs WHERE workflow_id=$1 AND active ORDER BY sequence_no', [workflow.id])).rows.map(row => row.id);
   if (canonicalDefinition(actualIds) !== canonicalDefinition(activityIds) || stored.version !== definition.version) {
     throw registrationError('registration_readback_failed', '登记回读的有序活动与定义不一致');
   }
@@ -124,7 +122,7 @@ export async function registerWorkflow(client, definition, options = {}) {
   validateDefinition(definition);
   const digest = registrationDigest(definition);
   if (options.definitionSha256 !== digest) throw registrationError('definition_digest_conflict', '登记定义与已验收定义不一致');
-  // capability锁同时保护遗留(journey_id,step_number)唯一性；不重编号其它流程。
+  // capability锁保护同一能力下并发登记；不重编号其它流程。
   await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`workflow-authoring:${definition.capability_id}`]);
   await validateReferences(client, definition, { requireActive: true });
   let workflow = (await client.query('SELECT * FROM workflows WHERE key=$1 FOR UPDATE', [definition.key])).rows[0];
@@ -132,9 +130,9 @@ export async function registerWorkflow(client, definition, options = {}) {
     throw registrationError('workflow_ownership_conflict', '同 key 已属于其它能力、渠道或执行形态');
   }
   if (options.operation === 'update' && (!workflow || workflow.id !== options.workflowId)) throw registrationError('workflow_ownership_conflict', '更新目标与稳定 key 不一致');
-  const shared = await sharedReferencesAvailable(client);
-  if (!shared && definition.activities.some(a => a.reuse_activity_id)) throw registrationError('shared_activity_references_not_ready', '共享活动引用底座尚未部署；保留草案，不复制共享真身');
-  const existing = workflow ? (await client.query('SELECT * FROM activities WHERE workflow_id=$1 ORDER BY step_number FOR UPDATE', [workflow.id])).rows : [];
+  // 位置与顺序只存在流程引用里（迁移 527 起 activities 不再带 journey_id / step_number）：没有引用底座一律拒绝，保留草案
+  if (!(await sharedReferencesAvailable(client))) throw registrationError('shared_activity_references_not_ready', '共享活动引用底座尚未部署；保留草案，不登记');
+  const existing = workflow ? (await client.query('SELECT * FROM activities WHERE workflow_id=$1 ORDER BY created_at, id FOR UPDATE', [workflow.id])).rows : [];
   const sameDefinition = workflow && (await hasRegistrationReceipt(client, workflow, digest)
     || existing.some(a => a.contract?.workflow_authoring?.definition_sha256 === digest));
   if (workflow && workflow.version === definition.version) {
@@ -143,16 +141,12 @@ export async function registerWorkflow(client, definition, options = {}) {
     if (options.operation !== 'update' || options.expectedVersion !== workflow.version) throw registrationError('workflow_version_conflict', '当前版本已变化或未声明预期版本');
     if (!versionIncreases(definition.version, workflow.version)) throw registrationError('workflow_version_conflict', '更新版本必须严格递增');
     if (existing.some(a => a.contract?.workflow_authoring?.workflow_key !== definition.key)) throw registrationError('workflow_ownership_conflict', '该工作流由其它登记源维护，不能覆盖');
-    const incomingKeys = definition.activities.filter(a => !a.reuse_activity_id).map(a => `${definition.key}.${a.key}`);
-    const remaining = existing.filter(a => incomingKeys.includes(a.activity_key)).map(a => a.activity_key);
-    const actualOrder = [...remaining, ...incomingKeys.filter(key => !remaining.includes(key))];
-    if (!shared && actualOrder.join('|') !== incomingKeys.join('|')) throw registrationError('shared_activity_references_not_ready', '活动重排或中间插入需要有序引用底座');
   }
   if (sameDefinition) {
     const ids = definition.activities.map(a => a.reuse_activity_id ?? existing.find(old => old.activity_key === `${definition.key}.${a.key}`)?.id);
-    return registrationReceipt(client, workflow, definition, options, shared, ids, true);
+    return registrationReceipt(client, workflow, definition, options, ids, true);
   }
-  if (workflow && shared) await guardConsumers(client, workflow, definition, existing);
+  if (workflow) await guardConsumers(client, workflow, definition, existing);
   if (!workflow) {
     workflow = (await client.query(`INSERT INTO workflows(key,name,capability_id,channel,form,version,status)
       VALUES($1,$2,$3,$4,$5,$6,'active') RETURNING *`,
@@ -161,8 +155,7 @@ export async function registerWorkflow(client, definition, options = {}) {
     workflow = (await client.query(`UPDATE workflows SET name=$2,version=$3,status='active',updated_at=NOW() WHERE id=$1 RETURNING *`,
       [workflow.id,definition.name,definition.version])).rows[0];
   }
-  if (shared) await client.query('UPDATE workflow_activity_refs SET active=false WHERE workflow_id=$1', [workflow.id]);
-  let nextNumber = Number((await client.query('SELECT COALESCE(MAX(step_number),0)+1 AS n FROM activities WHERE journey_id=$1', [definition.capability_id])).rows[0].n);
+  await client.query('UPDATE workflow_activity_refs SET active=false WHERE workflow_id=$1', [workflow.id]);
   const activityIds = [], ownedKeys = [];
   for (const [index, activity] of definition.activities.entries()) {
     let activityId = activity.reuse_activity_id;
@@ -173,22 +166,23 @@ export async function registerWorkflow(client, definition, options = {}) {
       if (old?.status === 'active' && sameActivityContract(old.contract, contract)) {
         activityId = old.id;
       } else {
-        const result = await client.query(`INSERT INTO activities(journey_id,name,description,step_number,status,
+        // 位置（能力/流程/顺序）由下面的流程引用决定，不写 journey_id / step_number（迁移 527）；身份 = (capability_key, activity_key)
+        const result = await client.query(`INSERT INTO activities(name,description,status,
         capability_key,activity_key,backbone_version,workflow_id,executor_kind,contract,contract_sha256,contract_source)
-        VALUES($1,$2,$3,$4,'active',$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
-        ON CONFLICT(journey_id,activity_key) WHERE activity_key IS NOT NULL DO UPDATE SET
+        VALUES($1,$2,'active',$3,$4,$5,$6,$7,$8::jsonb,$9,$10)
+        ON CONFLICT(capability_key,activity_key) WHERE activity_key IS NOT NULL DO UPDATE SET
           name=EXCLUDED.name,description=EXCLUDED.description,status='active',backbone_version=EXCLUDED.backbone_version,
           executor_kind=EXCLUDED.executor_kind,contract=EXCLUDED.contract,contract_sha256=EXCLUDED.contract_sha256,
           contract_source=EXCLUDED.contract_source,notion_synced_at=NULL,updated_at=NOW()
         WHERE activities.workflow_id=EXCLUDED.workflow_id RETURNING id`,
-      [definition.capability_id,activity.name,activity.implementation.ref,old?.step_number ?? nextNumber++,definition.key,key,
+      [activity.name,activity.implementation.ref,definition.key,key,
         definition.version,workflow.id,activity.executor_kind,JSON.stringify(contract),registrationDigest(contract),`${definition.source.ref}@${definition.source.revision}`]);
         if (!result.rows.length) throw registrationError('activity_ownership_conflict', '活动归属冲突');
         activityId = result.rows[0].id;
       }
     }
     activityIds.push(activityId);
-    if (shared) await client.query(`INSERT INTO workflow_activity_refs(workflow_id,slot_key,activity_id,sequence_no,source_ref,source_commit,active)
+    await client.query(`INSERT INTO workflow_activity_refs(workflow_id,slot_key,activity_id,sequence_no,source_ref,source_commit,active)
       VALUES($1,$2,$3,$4,$5,$6,true) ON CONFLICT(workflow_id,slot_key) DO UPDATE SET
       activity_id=EXCLUDED.activity_id,sequence_no=EXCLUDED.sequence_no,source_ref=EXCLUDED.source_ref,
       source_commit=EXCLUDED.source_commit,active=true,updated_at=NOW()`,
@@ -197,5 +191,5 @@ export async function registerWorkflow(client, definition, options = {}) {
   await client.query(`UPDATE activities SET status='deprecated',notion_synced_at=NULL,updated_at=NOW()
     WHERE workflow_id=$1 AND status<>'deprecated' AND NOT(activity_key=ANY($2::text[])) AND contract->'workflow_authoring'->>'workflow_key'=$3`,
   [workflow.id,ownedKeys,definition.key]);
-  return registrationReceipt(client, workflow, definition, options, shared, activityIds, false);
+  return registrationReceipt(client, workflow, definition, options, activityIds, false);
 }

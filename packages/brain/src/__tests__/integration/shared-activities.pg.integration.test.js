@@ -59,7 +59,9 @@ describe('共享活动真实数据库合同', () => {
     expect(kw).toHaveLength(8); expect(bm).toHaveLength(8);
     expect(kw.filter(x=>bm.some(y=>y.activity_id===x.activity_id))).toHaveLength(7);
     expect(kw.map(x=>x.activity_id)).toEqual(legacy);
-    expect((await client.query(`SELECT journey_id FROM journey_steps WHERE capability_key='benchmark_link_acquisition'`)).rows).toEqual([{journey_id:capBenchmark}]);
+    // 位置由流程引用推出（迁移 527）：对标自己定义的活动，归属那条引用（source_ref 为空）所在流程的能力就是对标
+    expect((await client.query(`SELECT w.capability_id FROM journey_steps a JOIN workflow_activity_refs r ON r.activity_id=a.id AND r.active AND r.source_ref IS NULL
+      JOIN workflows w ON w.id=r.workflow_id WHERE a.capability_key='benchmark_link_acquisition'`)).rows).toEqual([{capability_id:capBenchmark}]);
     const state = await snapshot(); await syncActivityContracts(db,contractsFixture()); expect(await snapshot()).toEqual(state);
     const app = express(); app.use('/api/brain',routes);
     const list = await request(app).get('/api/brain/workflows'); expect(list.status,list.body.error).toBe(200);
@@ -97,9 +99,9 @@ describe('共享活动真实数据库合同', () => {
     await client.query(`INSERT INTO ops_agents(id,source,host_alias,name) VALUES(1,'openclaw','mmv',$1)`,[spec.agent]);
     await client.query(`INSERT INTO ops_workflows(id,source,wf_id,name) VALUES(1,'scheduler',$1,$1)`,[spec.runtime]);
     const first=await registerCompanyKrWorkflow(db);
-    const ids=(await client.query('SELECT id FROM journey_steps WHERE workflow_id=$1 ORDER BY step_number',[first.workflow_id])).rows;
+    const ids=(await client.query('SELECT a.id FROM journey_steps a JOIN workflow_activity_refs r ON r.activity_id=a.id AND r.workflow_id=$1 AND r.active ORDER BY r.sequence_no',[first.workflow_id])).rows;
     await registerCompanyKrWorkflow(db);
-    expect((await client.query('SELECT id FROM journey_steps WHERE workflow_id=$1 ORDER BY step_number',[first.workflow_id])).rows).toEqual(ids);
+    expect((await client.query('SELECT a.id FROM journey_steps a JOIN workflow_activity_refs r ON r.activity_id=a.id AND r.workflow_id=$1 AND r.active ORDER BY r.sequence_no',[first.workflow_id])).rows).toEqual(ids);
     const app=express(); app.use('/api/brain',routes);
     const detail=await request(app).get(`/api/brain/workflows/${first.workflow_id}`);
     expect(detail.body.workflow.activities).toHaveLength(5);
@@ -150,10 +152,10 @@ describe('共享活动真实数据库合同', () => {
   });
   it('同顺序新定义可替代已退役定义，不改历史顺序或ID',async()=>{
     await migrate();const f=contractsFixture();await syncActivityContracts(db,f);
-    const before=(await client.query("SELECT id,step_number FROM journey_steps WHERE capability_key='benchmark_link_acquisition'")).rows[0];
+    const before=(await client.query("SELECT id FROM journey_steps WHERE capability_key='benchmark_link_acquisition'")).rows[0];
     f.docs.benchmark_link_acquisition.activities[1].key='discover_v2';f.refresh();
     await syncActivityContracts(db,f);
-    expect((await client.query('SELECT id,step_number,status FROM journey_steps WHERE id=$1',[before.id])).rows[0]).toEqual({...before,status:'deprecated'});
+    expect((await client.query('SELECT id,status FROM journey_steps WHERE id=$1',[before.id])).rows[0]).toEqual({...before,status:'deprecated'});
     expect((await client.query("SELECT sequence_no FROM workflow_activity_refs WHERE workflow_id=$1 AND slot_key='discover_v2'",[benchmark])).rows[0].sequence_no).toBe(2);
   });
 
