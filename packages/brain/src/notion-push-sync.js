@@ -1774,6 +1774,13 @@ export async function runNotionPushSync(pool) {
   } catch (err) {
     console.warn(`[notion-push-sync] probe projection 失败（非阻断）: ${err.message}`);
   }
+  // 仓库物件库 + 用料库（v3.0 第 3 刀 c 段）：缺库自建并登记，前提不足自跳过，吞错不连坐
+  try {
+    const { runWarehouseProjection } = await import('./notion-warehouse-projection.js');
+    await runWarehouseProjection(pool, { token, logSyncError });
+  } catch (err) {
+    console.warn(`[notion-push-sync] warehouse projection 失败（非阻断）: ${err.message}`);
+  }
   // 价值流镜子（决策 e00d9cc3）：结构地图 active run → 「价值流 Value Streams」库；未登记自跳过，吞错不连坐
   try {
     const { runValueStreamMirror } = await import('./notion-map-value-streams.js');

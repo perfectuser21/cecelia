@@ -72,10 +72,10 @@ describe('ensureWarehouseDatabases：缺库才建，建后登记，重跑不重�
     const pool = {
       query: vi.fn(async (sql, params) => {
         if (/FROM projection_targets/.test(sql)) return { rows: [{ config: { parent_page_id: 'parent-1' } }] };
+        if (/INSERT INTO notion_projection_map/.test(sql)) { registry.push({ brain_table: params[2], notion_db_id: params[0] }); return { rowCount: 1, rows: [] }; }
         if (/FROM notion_projection_map/.test(sql) && /SELECT/.test(sql)) {
           return { rows: registry.filter(r => r.brain_table === params[0]).map(r => ({ notion_db_id: r.notion_db_id })) };
         }
-        if (/INSERT INTO notion_projection_map/.test(sql)) { registry.push({ brain_table: params[2], notion_db_id: params[0] }); return { rowCount: 1, rows: [] }; }
         return { rows: [] };
       }),
     };
