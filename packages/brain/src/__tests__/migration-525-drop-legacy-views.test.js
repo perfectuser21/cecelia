@@ -11,10 +11,19 @@ describe('migration 525 drop legacy views / retire base_ref cells', () => {
   const at = text => sql.indexOf(text);
 
   it('先备份、再补用料、最后删格子（顺序不能反）', () => {
-    expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS migration_525_base_ref_cells_backup AS\s+SELECT \* FROM activity_cells WHERE cell_kind = 'base_ref'/);
+    expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS migration_525_base_ref_cells_backup AS\s+SELECT[\s\S]*FROM activity_cells WHERE cell_kind = 'base_ref'/);
     expect(sql).toMatch(/INSERT INTO activity_uses[\s\S]*legacy_feature_id = c\.feature_id[\s\S]*ON CONFLICT \(activity_id, item_id\) DO NOTHING/);
     expect(at('CREATE TABLE IF NOT EXISTS migration_525')).toBeLessThan(at('INSERT INTO activity_uses'));
     expect(at('INSERT INTO activity_uses')).toBeLessThan(at("DELETE FROM activity_cells WHERE cell_kind = 'base_ref'"));
+  });
+
+  it('备份表不带 notion_* 列（否则注册表覆盖检查会把它当「带 notion_id 的表」）；没有仓库物件的底座特性先补建物件再并入，不丢链接', () => {
+    const backup = sql.slice(sql.indexOf('CREATE TABLE IF NOT EXISTS migration_525'), sql.indexOf('INSERT INTO warehouse_items'));
+    expect(backup).not.toMatch(/notion_/);
+    expect(backup).not.toMatch(/SELECT \*/);
+    expect(sql).toMatch(/INSERT INTO warehouse_items \(key, name, kind, shelf, description, legacy_feature_id\)[\s\S]*NOT EXISTS \(SELECT 1 FROM warehouse_items i WHERE i\.legacy_feature_id = jf\.id\)/);
+    expect(at('INSERT INTO warehouse_items')).toBeLessThan(at('INSERT INTO activity_uses'));
+    expect(readFileSync(down, 'utf8')).not.toMatch(/SELECT b\.\*/);
   });
 
   it('三个旧名视图下线（只删视图，不 CASCADE），旧名注册表占位同删', () => {
@@ -30,6 +39,6 @@ describe('migration 525 drop legacy views / retire base_ref cells', () => {
     expect(existsSync(down)).toBe(true);
     const rollback = readFileSync(down, 'utf8');
     expect(rollback).toMatch(/CREATE VIEW journey_steps AS SELECT \* FROM activities/);
-    expect(rollback).toMatch(/INSERT INTO activity_cells\s+SELECT b\.\* FROM migration_525_base_ref_cells_backup/);
+    expect(rollback).toMatch(/INSERT INTO activity_cells \([\s\S]*FROM migration_525_base_ref_cells_backup/);
   });
 });
