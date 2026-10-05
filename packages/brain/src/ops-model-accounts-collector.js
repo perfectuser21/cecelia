@@ -50,7 +50,7 @@ const FAILURE_STREAK_THRESHOLD = 3;
  */
 export const MODEL_ACCOUNTS = Object.freeze([
   { account_id: 'claude-account1', provider: 'claude', plan: 'max', host_alias: 'mmv',
-    forwardable: false, forward_targets: [], credential_path: '~/.claude-account1/.credentials.json',
+    forwardable: false, forward_targets: [], credential_path: '~/.claude/.credentials.json',
     runtime_account_id: 'account1' },
   { account_id: 'claude-account2', provider: 'claude', plan: 'max', host_alias: 'mmv',
     forwardable: false, forward_targets: [], credential_path: '~/.claude-account2/.credentials.json',

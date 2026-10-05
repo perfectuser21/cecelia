@@ -38,10 +38,10 @@ test('buildCommand: codex 用 CODEX_HOME + exec --cd --sandbox workspace-write',
 });
 
 test('buildCommand: claude 用真身路径 + CLAUDE_CONFIG_DIR（绝不用裸 claude）', () => {
-  const c = buildCommand('claude', { home: '/h/.claude-account2' }, '任务书', '/w');
+  const c = buildCommand('claude', { home: '/h/.claude' }, '任务书', '/w');
   assert.equal(c.cmd, '/opt/homebrew/bin/claude');
   assert.deepEqual(c.args, ['-p', '--dangerously-skip-permissions', '任务书']);
-  assert.equal(c.env.CLAUDE_CONFIG_DIR, '/h/.claude-account2');
+  assert.equal(c.env.CLAUDE_CONFIG_DIR, '/h/.claude');
   assert.equal(c.cwd, '/w');
 });
 
@@ -127,9 +127,9 @@ test('dispatchWithRotation: maxRetries 限制尝试次数（maxRetries+1 家）'
   assert.equal(r.reason, 'pool_exhausted');
 });
 
-test('ACCOUNT_POOL: 含本机四账号，claude 只有 account2（account1 是 controller 主线）', () => {
+test('ACCOUNT_POOL: 单 Claude 账号即 controller 主线，不下场当 worker；池内只有 codex×2 + grok', () => {
   const names = ACCOUNT_POOL.map((a) => `${a.vendor}:${a.name}`);
-  assert.deepEqual(names, ['codex:team1', 'codex:team2', 'claude:account2', 'grok:grok']);
+  assert.deepEqual(names, ['codex:team1', 'codex:team2', 'grok:grok']);
   assert.equal(USABLE_THRESHOLD, 90);
 });
 

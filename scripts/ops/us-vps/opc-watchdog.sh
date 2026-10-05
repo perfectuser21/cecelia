@@ -62,7 +62,7 @@ check(){ # $1=probe $2=ok(0=好/1=坏) $3=failtext
   else
     n=$((n+1)); echo "$n" > "$STATE/failcount.$probe"
     log "probe FAIL($n): $probe"
-    [ "$n" -ge $FAIL_THRESHOLD ] && alert "$probe" "$failtext（连续 $n 次探测失败）"
+    [ "$n" -ge $FAIL_THRESHOLD ] && alert "$probe" "${failtext}（连续 $n 次探测失败）"
   fi
 }
 

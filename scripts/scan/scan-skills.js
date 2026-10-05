@@ -7,7 +7,7 @@ const pg = require('pg');
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL || 'postgresql://localhost/cecelia' });
 
 // 动态查找最新 superpowers 版本目录（避免版本升级后静默失效）
-const superpowersBase = path.join(process.env.HOME, '.claude-account1', 'plugins', 'cache',
+const superpowersBase = path.join(process.env.HOME, '.claude', 'plugins', 'cache',
   'superpowers-marketplace', 'superpowers');
 
 const SKILL_DIRS = [

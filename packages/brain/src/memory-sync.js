@@ -18,9 +18,8 @@ import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 
-// auto-memory 目录路径（兼容多 account）
+// auto-memory 目录路径（单账号，唯一目录 ~/.claude）
 const MEMORY_DIRS = [
-  join(homedir(), '.claude-account1', 'projects', '-Users-administrator-perfect21-cecelia', 'memory'),
   join(homedir(), '.claude', 'projects', '-Users-administrator-perfect21-cecelia', 'memory'),
 ];
 
