@@ -204,7 +204,7 @@ describe('六层目录真实PG边界', () => {
   });
   it('唯一缺库bootstrap读回后原子登记，重复相同请求不新增库',async()=>{
     const f=runtimeFixture(),parent=fixtureEntityId(600);let created=0,badDiscovery=true;
-    const tables={areas:'areas',value_streams:'notion_map_node_pages',activities:'journey_steps',workflows:'workflows',steps:'steps'};
+    const tables={areas:'areas',value_streams:'notion_map_node_pages',activities:'activities',workflows:'workflows',steps:'steps'};
     for(const [layer,table] of Object.entries(tables)){
       await client.query("INSERT INTO notion_projection_map(notion_db_id,brain_table,status) VALUES($1,$2,'active')",[f.dbs[layer],table]);
       f.databases.get(f.dbs[layer]).properties={};
