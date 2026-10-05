@@ -44,7 +44,8 @@ async function promisesForFeatures(featureIds) {
     `SELECT l.feature_id, s.name AS step_name, s.promise, j.name AS journey_name
      FROM activity_cells l
      JOIN activities s ON s.id = l.step_id
-     JOIN journeys j ON j.id = s.journey_id
+     JOIN activity_placement p ON p.activity_id = s.id
+     JOIN journeys j ON j.id = p.capability_id
      WHERE l.feature_id = ANY($1)`, [featureIds]);
   const map = new Map();
   for (const r of rows) {

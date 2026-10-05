@@ -163,7 +163,8 @@ router.get('/golden-paths/:id', async (req, res) => {
     let steps_count = 0;
     if (gp.journey_id) {
       const { rows: stepRows } = await pool.query(
-        'SELECT id, step_number, name, promise, status FROM activities WHERE journey_id=$1 ORDER BY step_number',
+        `SELECT a.id, p.step_number, a.name, a.promise, a.status FROM activities a
+           JOIN activity_placement p ON p.activity_id = a.id WHERE p.capability_id=$1 ORDER BY p.step_number`,
         [gp.journey_id]
       );
       steps = stepRows;

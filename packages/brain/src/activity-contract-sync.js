@@ -153,7 +153,7 @@ export async function pushBackboneActivities(pool, token, { notionReq = defaultN
        FROM activities
       WHERE contract IS NOT NULL AND capability_key IS DISTINCT FROM 'company_kr_analysis'
         AND (notion_synced_at IS NULL OR updated_at > notion_synced_at)
-      ORDER BY capability_key, step_number
+      ORDER BY capability_key, activity_key
       LIMIT 50`);
   if (rows.length === 0) return { created: 0, patched: 0, skipped: 0, failed: 0, cleared: 0 };
   const { added } = await ensureOpsDbProps(token, dbId, BACKBONE_DB_PROPS, { notionReq });
@@ -253,7 +253,7 @@ export async function syncBackboneBodies(pool, token, { notionReq = defaultNotio
     `SELECT id, notion_id, capability_key, activity_key, contract, contract_sha256, contract_source, promise, status, notion_body_digest
        FROM activities
       WHERE contract IS NOT NULL AND notion_id IS NOT NULL
-      ORDER BY capability_key, step_number`);
+      ORDER BY capability_key, activity_key`);
   const stat = { rewritten: 0, unchanged: 0, failed: 0 };
   for (const r of rows) {
     const blocks = buildBackboneActivityBody(r);

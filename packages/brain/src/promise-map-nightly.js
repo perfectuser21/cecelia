@@ -113,7 +113,8 @@ export async function buildNightlyAssertions(queryPool) {
   // promise 缺失只查承诺地图域（home/domain 非空）——全库存量步骤走豁免（判定点④同源）
   const { rows: stepsNoPromise } = await queryPool.query(`
     SELECT js.id, js.name FROM activities js
-    JOIN journeys j ON j.id = js.journey_id
+    JOIN activity_placement p ON p.activity_id = js.id
+    JOIN journeys j ON j.id = p.capability_id
     WHERE js.promise IS NULL
       AND (j.home IS NOT NULL OR j.domain IS NOT NULL)
     LIMIT 10
