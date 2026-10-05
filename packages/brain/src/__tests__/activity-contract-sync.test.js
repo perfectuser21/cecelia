@@ -50,8 +50,8 @@ activities:
     side_effects: [{ kind: internal_write, target: 设备锁, description: "持锁期间独占手机" }]
     invokers: [code]
     steps:
-      - { key: acquire_device_lock, name: 拿设备锁, order: 1, reads: [Device.serial], writes: [], check: "lock-acquire rc=0", implementation: { status: implemented, ref: "douyin-phone-adb:2131" }, uses_llm: false }
-      - { key: read_account_mark, name: 读账号标记, order: 2, reads: [Device.serial], writes: [], check: "我页抖音号 == sender_id", implementation: { status: missing, ref: "6b133a81" }, uses_llm: false }
+      - { key: acquire_device_lock, name: 拿设备锁, order: 1, reads: [Device.serial], writes: [Device.lock_holder], check: "lock-acquire rc=0", implementation: { status: implemented, ref: "douyin-phone-adb:2131" }, uses_llm: false, on_fail: "retry:3", dod: { mode: checkpoint, readback: { type: metric, ref: metrics.lock_acquired, expect: { op: "==", value: 1 } } } }
+      - { key: read_account_mark, name: 读账号标记, order: 2, reads: [Device.serial], writes: [], check: "我页抖音号 == sender_id", implementation: { status: missing, ref: "6b133a81" }, uses_llm: false, dod: { mode: hard, readback: { type: evidence, glob: "{tag}-acct.xml", match: "抖音号", expect: { op: ">=", value: 1 } } } }
   - key: discovery
     name: 发现
     order: 2
@@ -75,7 +75,7 @@ activities:
     invokers: [code, agent]
     model: [{ provider: openrouter, model: bytedance/ui-tars-1.5-7b, purpose: 视觉定位兜底 }]
     steps:
-      - { key: open_search, name: 打开搜索, order: 1, reads: [Keyword.word], writes: [], check: "搜索框回读", implementation: { status: implemented, ref: "x" }, uses_llm: true }
+      - { key: open_search, name: 打开搜索, order: 1, reads: [Keyword.word], writes: [], check: "搜索框回读", implementation: { status: implemented, ref: "x" }, uses_llm: true, dod: { mode: checkpoint, readback: { type: metric, ref: metrics.search_opened } } }
     known_gaps: [{ gap: "现状在 delivery 才落库", task: 8bb3af55 }]
 `;
 const contract = yaml.load(YAML);
@@ -100,15 +100,34 @@ function fakeGithub({ digest, yaml = YAML, fail = false }) {
 }
 
 /** 假 pool：journey_steps 行 + working_memory，按 SQL 文本路由 */
+/** syncSteps 的 INSERT/UPDATE 参数顺序固定：key 或 (activity_id, step_order, key, activity_key, mode, readback, ...)；按列名取，不靠位置猜。 */
+function stepRow(text, params) {
+  const cols = {};
+  const insert = text.match(/INSERT INTO steps\s*\(([^)]*)\)/);
+  if (insert) insert[1].split(',').map((c) => c.trim()).forEach((c, i) => { cols[c] = params[i]; });
+  else for (const m of text.matchAll(/(\w+)\s*=\s*(?:COALESCE\()?\$(\d+)/g)) cols[m[1]] = params[Number(m[2]) - 1];
+  if (!insert) cols.key = params[0];
+  for (const k of ['readback', 'inputs', 'outputs']) if (typeof cols[k] === 'string') cols[k] = JSON.parse(cols[k]);
+  return cols;
+}
 function fakePool(stepRows = [], memory = {}) {
   const queries = [];
   const rows = stepRows.map((r) => ({ ...r }));
   return {
-    rows, memory, queries,
+    rows, memory, queries, steps: [],
     async connect() { return {query:this.query.bind(this),release(){}}; },
     async query(text, params = []) {
       queries.push({ text, params });
       if (/INSERT INTO (activity|workflow)_definition_versions/.test(text)) return {rows:[{id:'version'}]};
+      if (/FROM information_schema\.columns/.test(text) && /'steps'/.test(text)) return { rows: [{ n: 5 }] };
+      if (/FROM activities\s+WHERE capability_key = \$1/.test(text)) return { rows: rows.filter((r) => r.capability_key === params[0] && r.activity_key).map((r) => ({ activity_key: r.activity_key, id: r.id })) };
+      if (/SELECT id,key FROM steps WHERE activity_id/.test(text)) return { rows: this.steps.filter((x) => x.activity_id === params[0]).map((x) => ({ id: x.key, key: x.key })) };
+      if (/SELECT activity_id, step_order, source_sha256 FROM steps WHERE key/.test(text)) {
+        const found = this.steps.filter((x) => x.key === params[0]);
+        return { rows: found, rowCount: found.length };
+      }
+      if (/^\s*INSERT INTO steps/.test(text)) { this.steps.push(stepRow(text, params)); return { rows: [], rowCount: 1 }; }
+      if (/^\s*UPDATE steps/.test(text)) { Object.assign(this.steps.find((x) => x.key === params[0]), stepRow(text, params)); return { rows: [], rowCount: 1 }; }
       if (/FROM workflows/.test(text)) return {rows: rows.length ? [{id:'w',key:'workflow',capability_id:'J',source_repo:CONTRACT_REPO,source_path:'product-map/contracts/keyword_acquisition.yaml',source_capability:'keyword_acquisition',source_workflow:'social-keyword-leadgen'}] : []};
       if (/FROM working_memory/.test(text)) {
         const v = memory[params[0]];
@@ -191,6 +210,36 @@ describe('syncActivityContracts', () => {
 
 describe('runBackboneContractJob', () => {
   const noPush = async () => null;
+
+  it('生产同步按合同落 Step：读回取 dod.readback、模式取 dod.mode，名字/动作/进出/失败处理照合同，没声明的不编造', async () => {
+    const gh = fakeGithub({ digest: digestOf({}) });
+    const pool = fakePool(seeded());
+    const now = Date.parse('2026-10-05T05:00:00Z');
+    const r = await runBackboneContractJob(pool, { ...deps(gh), now, force: true, push: noPush });
+    expect(r.sync.ok).toBe(true);
+    const lock = pool.steps.find((x) => x.key === 'keyword_acquisition.preflight.acquire_device_lock');
+    expect(lock).toMatchObject({
+      mode: 'checkpoint', readback: { type: 'metric', ref: 'metrics.lock_acquired', expect: { op: '==', value: 1 } },
+      name: '拿设备锁', action: 'douyin-phone-adb:2131', inputs: ['Device.serial'], outputs: ['Device.lock_holder'], on_fail: 'retry:3',
+    });
+    const mark = pool.steps.find((x) => x.key === 'keyword_acquisition.preflight.read_account_mark');
+    expect(mark).toMatchObject({ mode: 'hard', readback: { type: 'evidence' } });
+    expect(mark.on_fail ?? null).toBeNull();
+  });
+
+  it('合同里有 Step 没写读回：整轮同步拒绝（不写库），按滞后处理', async () => {
+    const bad = YAML.replace(', dod: { mode: checkpoint, readback: { type: metric, ref: metrics.search_opened } }', '');
+    const digestBad = () => {
+      const c = yaml.load(bad); const acts = c.activities.map((a) => ({ ...a, from: 'keyword_acquisition' }));
+      return JSON.stringify({ capabilities: { keyword_acquisition: { sha256: hash({ ...c, activities: acts }), activities: Object.fromEntries(acts.map((a) => [a.key, hash(a)])) } } });
+    };
+    const gh = fakeGithub({ digest: digestBad(), yaml: bad });
+    const pool = fakePool(seeded());
+    const r = await runBackboneContractJob(pool, { ...deps(gh), now: Date.parse('2026-10-05T05:00:00Z'), force: true, push: noPush });
+    expect(r.sync.ok).toBe(false);
+    expect(r.sync.error).toMatch(/step_readback_missing.*keyword_acquisition\.discovery\.open_search/);
+    expect(pool.steps).toEqual([]);
+  });
 
   it('30min 自 gate：上次检查未满间隔 → 不打 GitHub', async () => {
     const gh = fakeGithub({ digest: digestOf({}) });

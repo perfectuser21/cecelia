@@ -2,10 +2,13 @@
 import { snapshotDefinitions } from './definition-versions.js';
 import { canonicalJson,syncSteps } from '../../scripts/sync-steps-from-workspace.mjs';
 import { contractPath } from './activity-contract-loader.js';
+import { declareStepsFromContract, assertStepsHaveReadback } from './contract-steps.js';
 export const REGISTRATIONS_SQL = `SELECT id,key,capability_id,source_repo,source_path,source_workflow,source_capability,status,contract_sync_revision
   FROM workflows WHERE source_repo=$1 ORDER BY key`;
 export async function storeActivityContracts(pool, plans, head, repo, registrations = plans.map(p=>p.workflow), {beforeCommit,synchronizeSteps=false} = {}) {
   const out = {head_sha:head,updated:[],inserted:[],deprecated:[],unmapped:[]};
+  // 不写读回不许过：要同步 Step 就先验每个 Step 都有读回，缺了整轮拒绝，一行都不写
+  if(synchronizeSteps)assertStepsHaveReadback(plans.flatMap(p=>p.activities.map(i=>i.activity)));
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -77,13 +80,7 @@ export async function storeActivityContracts(pool, plans, head, repo, registrati
       for(const [key,activityId] of definitions){
         const activity=plans.flatMap(p=>p.activities).find(i=>`${i.activity.from}.${i.activity.key}`===key).activity;
         const existing=(await client.query('SELECT id,key FROM steps WHERE activity_id=$1',[activityId])).rows;
-        const declared=(activity.steps||[]).map((step,index)=>{
-          if(typeof step.key!=='string'||!step.key)throw new Error(`步骤缺少稳定key: ${key}`);
-          const candidates=existing.filter(s=>s.key===step.key||s.key===`${key}.${step.key}`);
-          if(candidates.length>1)throw new Error(`步骤规范身份不唯一: ${key}.${step.key}`);
-          return {key:candidates[0]?.key||`${key}.${step.key}`,activity:activity.key,order:step.order||index+1,
-            mode:step.mode||'checkpoint',readback:step.readback||{}};
-        });
+        const declared=declareStepsFromContract(activity,key,existing);
         if(declared.length)await syncSteps(client,{capability:activity.from,steps:declared},{manageTransaction:false});
       }
     }

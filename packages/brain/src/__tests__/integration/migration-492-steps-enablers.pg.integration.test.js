@@ -236,6 +236,29 @@ describe('sync-steps-from-workspace — 43 步投影', () => {
     expect(after.rows[0].readback.expect.value).toBe(2);
   });
 
+  it('带名字/动作/进出/失败处理的 Step（合同来源）：新列落库、重跑不变、只改动作算更新；只带读回的旧来源不会把新列清空', async () => {
+    await seedActivities();
+    await runMigration();
+    await client.query('ALTER TABLE steps ADD COLUMN name text, ADD COLUMN action text, ADD COLUMN inputs jsonb, ADD COLUMN outputs jsonb, ADD COLUMN on_fail text');
+    const spec = parseStepDod(fixtureJson);
+    const rich = { ...spec, steps: spec.steps.map((st, i) => (i === 0
+      ? { ...st, name: '拿设备锁', action: 'harvest-cron.sh preflight_lock_acquire', inputs: ['Device.serial'], outputs: ['Device.lock_holder'], on_fail: 'retry:3' }
+      : st)) };
+    await syncSteps(client, rich);
+    const first = (await client.query('SELECT name, action, inputs, outputs, on_fail FROM steps WHERE key = $1', [spec.steps[0].key])).rows[0];
+    expect(first).toEqual({ name: '拿设备锁', action: 'harvest-cron.sh preflight_lock_acquire', inputs: ['Device.serial'], outputs: ['Device.lock_holder'], on_fail: 'retry:3' });
+
+    expect(await syncSteps(client, rich)).toMatchObject({ inserted: 0, updated: 0 });
+
+    const changed = { ...rich, steps: rich.steps.map((st, i) => (i === 0 ? { ...st, action: 'douyin-phone-adb lock-acquire' } : st)) };
+    expect(await syncSteps(client, changed)).toMatchObject({ updated: 1 });
+    expect((await client.query('SELECT action FROM steps WHERE key = $1', [spec.steps[0].key])).rows[0].action).toBe('douyin-phone-adb lock-acquire');
+
+    await syncSteps(client, spec); // step-dod.json 旧来源只带读回：新列保持，不被置空
+    const kept = (await client.query('SELECT name, on_fail FROM steps WHERE key = $1', [spec.steps[0].key])).rows[0];
+    expect(kept).toEqual({ name: '拿设备锁', on_fail: 'retry:3' });
+  });
+
   it('同名活动有旧骨干版本时挂到最新 backbone_version', async () => {
     await seedActivities({ withBackboneV2Shadow: true });
     await runMigration();

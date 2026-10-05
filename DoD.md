@@ -1,4 +1,6 @@
 # DoD — 受控再基恢复
+- [x] [BEHAVIOR] contractsteps v3.0 第 4 刀（路 A）：契约 Step 同步到 Brain steps 的映射改对——读回取 dod.readback、模式取 dod.mode（此前只认 step.readback，获客线 44 步读回在 Brain 里全是 {}），名字/动作（脚本引用）/进出（reads/writes）/失败处理（合同显式声明的 retry:N|abort，没写为 null）一并落库；syncSteps 新列只在来源带了才进指纹且旧来源不会清空新列；生产同步默认同时落 Step；「不写读回不许过」：同步前每个 Step 必须有 dod.readback（type=none 须写原因），缺口一次列全并整轮拒绝、不写任何库。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/lib/__tests__/contract-steps.test.js src/__tests__/activity-contract-sync.test.js --maxWorkers=1 --minWorkers=1"
 - [x] [BEHAVIOR] notionwarehouse v3.0 第 3 刀 c 段：迁移 524 给 warehouse_items/activity_uses 补 notion_id/notion_synced_at/notion_digest（用料补 updated_at，两表同触发器只在业务列变化时抬 updated_at）；新模块 notion-warehouse-projection 把仓库物件（8 货架中文选项带色、被用于）与用料（Activity/物件双 relation）推到 Notion：库缺则在目录父页下建并带来源标记、认领同名同标记库、登记注册表，重跑不重复建，前提不足不建库；用料等两边页面都在才推，Activity 页 id 取目录投影链接；指纹没变不打 Notion；接进 runNotionPushSync 并吞错不连坐。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/notion-warehouse-projection.test.js src/__tests__/migration-524-warehouse-uses-notion-columns.test.js --maxWorkers=1 --minWorkers=1"
 
