@@ -64,7 +64,7 @@ describe('buildProbeCmd（真采集命令：探针走 stdin，凭据不出宿主
     // 429 有独立分类（0920，任务 424d9dd2）：此前归 unknown，与「真没查到」混为一谈，
     // 读侧既看不出该退避、也看不出账号其实健康。
     expect(r.results).toEqual([{ account_id: 'claude-account1', status: 'rate_limited' }]);
-    expect(calls[0]).toContain('--probe-run claude ~/.claude-account1/.credentials.json');
+    expect(calls[0]).toContain('--probe-run claude ~/.claude/.credentials.json');
     // 失败路径走 upsertModelAccountFailure（不含 pct 列），last_error 在第 8 个参数位
     expect(queries[0][7]).toBe('anthropic usage HTTP 429');
   });
