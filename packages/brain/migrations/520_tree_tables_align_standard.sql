@@ -1,18 +1,20 @@
--- 520: 表名对齐框架标准 v2.0（决策 61143c32，任务 b90c0f9a）——第一段：建真表 + 旧名兼容视图，不改代码
+-- 520: 表名对齐框架标准 v2.0（决策 61143c32，任务 b90c0f9a）——第一段：价值流/能力拆两张真表，其余标准名先以视图立起来，不改代码
 --
 -- 树：areas → value_streams → capabilities → workflows → activities → steps；卡片格子 activity_cells；
 -- 仓库：warehouse_items（八货架）+ 连线 activity_items / item_deps。
 --
 -- ① journeys 拆成 value_streams / capabilities 两张真表（PostgreSQL 表继承：journeys 变成空壳父表，
---    SELECT/UPDATE/DELETE/FOR UPDATE 透过父表照旧可用；INSERT 进父表由触发器按 parent_journey_id 分流到子表并带 RETURNING）。
---    原来指向 journeys(id) 的 13 条外键：只会指能力的（workflows、ops_schedule_entries）改指 capabilities；
---    混指两种的（design_docs/issues/conversations/golden_paths/captures/advancement_items/ability_groups/journey_features）
---    和 Activity/格子 改为触发器守卫（继承可见两张子表），删除级联由子表 AFTER DELETE 触发器照原语义模拟。
--- ② journey_steps → activities，journey_step_links → activity_cells，旧名留自动可更新视图（ON CONFLICT/RETURNING/FOR UPDATE 实测可用）。
+--    SELECT/UPDATE/DELETE/FOR UPDATE 透过父表照旧；INSERT 进父表由触发器按 parent_journey_id 分流到子表并带 RETURNING，
+--    子表已有同 id 时按 ON CONFLICT DO NOTHING 语义跳过——旧种子迁移重放要靶这个）。
+--    原来指向 journeys(id) 的 13 条外键：workflows 改指 capabilities（原守卫触发器语义相同）；其余（闹钟总账、Activity、格子、
+--    design_docs/issues/conversations/golden_paths/captures/advancement_items/ability_groups/journey_features）改为触发器守卫
+--    （继承可见两张子表），删除级联由子表 AFTER DELETE 触发器照原语义模拟。第二段按表逐个收紧成真外键。
+-- ② activities / activity_cells / warehouse_items 三个标准名先建成自动可更新视图（指向 journey_steps / journey_step_links / enablers），
+--    物理表本段不改名：几十个集成测试与旧迁移重放都按旧表名查索引/约束/LIKE 复制，改名会整片红；第二段切完代码再把物理表换名、旧名降视图。
 -- ③ 50 个直接挂在价值流上的 Activity 归位到能力（新建 2 个能力、5 条流程）；格子 journey_id 跟随所属 Activity。
--- ④ enablers → warehouse_items，加八货架 shelf 列；合并旧树 7 条 enabler、3 条界面类 ability、格子里 12 项底座类 base_ref；
---    新建 activity_items（Activity 用了哪些物件）与 item_deps（物件间依赖）；底座类格子复制成连线，格子行本段保留（blast-radius 还在读）。
--- 改前原值进 migration_520_backup；第二段（切代码、删视图、收紧外键）另开 PR。
+-- ④ 仓库：enablers 加八货架 shelf 列；合并旧树 7 条 enabler、3 条界面类 ability、10 项底座件；新建 activity_items / item_deps。
+--    底座类格子行保留（blast-radius 还按 feature_id 读它），第二段切到 activity_items 后再删。
+-- 改前原值进 migration_520_backup。
 BEGIN;
 
 -- ===== 备份
@@ -36,12 +38,6 @@ SELECT 'journey_step_links.rehome', l.id::text, jsonb_build_object('journey_id',
 ON CONFLICT DO NOTHING;
 
 INSERT INTO migration_520_backup (table_name, row_id, payload)
-SELECT 'journey_step_links.deleted', l.id::text, to_jsonb(l)
-  FROM journey_step_links l
- WHERE l.cell_kind = 'base_ref' OR l.cell_level = 'enabler'
-ON CONFLICT DO NOTHING;
-
-INSERT INTO migration_520_backup (table_name, row_id, payload)
 SELECT 'journey_features', f.id::text, jsonb_build_object('status', f.status, 'workflow_ref', f.workflow_ref)
   FROM journey_features f
  WHERE f.kind = 'enabler'
@@ -49,15 +45,11 @@ SELECT 'journey_features', f.id::text, jsonb_build_object('status', f.status, 'w
     OR f.id IN (SELECT l.feature_id FROM journey_step_links l WHERE l.cell_kind = 'base_ref' AND l.feature_id IS NOT NULL)
 ON CONFLICT DO NOTHING;
 
--- ===== Activity / 格子 改名 + 兼容视图
-ALTER TABLE journey_steps RENAME TO activities;
-ALTER TABLE journey_step_links RENAME TO activity_cells;
-COMMENT ON TABLE activities IS '树第 5 层：Activity（原 journey_steps，迁移 520 改名）；journey_id 暂保留列名，第二段改 capability_id';
-COMMENT ON TABLE activity_cells IS 'Activity 卡片上的格子（原 journey_step_links，迁移 520 改名）：一行一格，颜色由探针算';
-CREATE VIEW journey_steps AS SELECT * FROM activities;
-CREATE VIEW journey_step_links AS SELECT * FROM activity_cells;
-COMMENT ON VIEW journey_steps IS '兼容视图 → activities（迁移 520）；第二段切完代码即删';
-COMMENT ON VIEW journey_step_links IS '兼容视图 → activity_cells（迁移 520）；第二段切完代码即删';
+-- ===== 标准名视图：activities / activity_cells（物理表 journey_steps / journey_step_links 本段不动）
+CREATE VIEW activities AS SELECT * FROM journey_steps;
+CREATE VIEW activity_cells AS SELECT * FROM journey_step_links;
+COMMENT ON VIEW activities IS '树第 5 层：Activity（标准名，迁移 520 先以视图立名 → journey_steps；第二段物理换名）';
+COMMENT ON VIEW activity_cells IS 'Activity 卡片上的格子（标准名，迁移 520 先以视图立名 → journey_step_links；第二段物理换名）';
 
 -- ===== 价值流 / 能力 拆两张真表（继承）
 DROP VIEW IF EXISTS capabilities;
@@ -65,8 +57,8 @@ DROP VIEW IF EXISTS value_streams;
 
 ALTER TABLE workflows            DROP CONSTRAINT IF EXISTS workflows_capability_id_fkey;
 ALTER TABLE ops_schedule_entries DROP CONSTRAINT IF EXISTS ops_schedule_entries_journey_id_fkey;
-ALTER TABLE activities           DROP CONSTRAINT IF EXISTS journey_steps_journey_id_fkey;
-ALTER TABLE activity_cells       DROP CONSTRAINT IF EXISTS journey_step_links_journey_id_fkey;
+ALTER TABLE journey_steps        DROP CONSTRAINT IF EXISTS journey_steps_journey_id_fkey;
+ALTER TABLE journey_step_links   DROP CONSTRAINT IF EXISTS journey_step_links_journey_id_fkey;
 ALTER TABLE design_docs          DROP CONSTRAINT IF EXISTS design_docs_journey_id_fkey;
 ALTER TABLE issues               DROP CONSTRAINT IF EXISTS issues_journey_id_fkey;
 ALTER TABLE conversations        DROP CONSTRAINT IF EXISTS conversations_journey_id_fkey;
@@ -74,13 +66,13 @@ ALTER TABLE golden_paths         DROP CONSTRAINT IF EXISTS golden_paths_journey_
 ALTER TABLE captures             DROP CONSTRAINT IF EXISTS captures_ref_journey_id_fkey;
 ALTER TABLE advancement_items    DROP CONSTRAINT IF EXISTS advancement_items_journey_id_fkey;
 ALTER TABLE journey_features     DROP CONSTRAINT IF EXISTS journey_features_journey_id_fkey;
+ALTER TABLE journeys             DROP CONSTRAINT IF EXISTS journeys_parent_journey_id_fkey;
 -- ability_groups 是生产库里没有迁移建表的孤儿表（CI/scratch 不存在），所有触碰都要条件化
 DO $$ BEGIN
   IF to_regclass('public.ability_groups') IS NOT NULL THEN
     EXECUTE 'ALTER TABLE ability_groups DROP CONSTRAINT IF EXISTS ability_groups_journey_id_fkey';
   END IF;
 END $$;
-ALTER TABLE journeys             DROP CONSTRAINT IF EXISTS journeys_parent_journey_id_fkey;
 
 -- 约束名避开 capabilities_legacy 遗留的 capabilities_pkey
 CREATE TABLE value_streams (
@@ -117,9 +109,14 @@ SELECT id, notion_id, name, description, journey_type, maturity, status, e2e_tes
   FROM ONLY journeys WHERE parent_journey_id IS NOT NULL;
 DELETE FROM ONLY journeys;
 
--- INSERT INTO journeys → 按 parent_journey_id 分流到子表（RETURNING 照常返回 NEW）
+-- INSERT INTO journeys → 按 parent_journey_id 分流到子表（RETURNING 照常返回 NEW）；子表已有同 id → 按 ON CONFLICT DO NOTHING 跳过
+-- （父表空壳看不到子表行，ON CONFLICT 子句在父表上永不触发；旧种子迁移重放 / 幂等测试靶这里。DO UPDATE 语义不支持——现有代码没有。）
 CREATE OR REPLACE FUNCTION journeys_route_insert() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  IF EXISTS (SELECT 1 FROM value_streams WHERE id = NEW.id) OR EXISTS (SELECT 1 FROM capabilities WHERE id = NEW.id) THEN
+    DELETE FROM ONLY journeys WHERE id = NEW.id;
+    RETURN NULL;
+  END IF;
   IF NEW.parent_journey_id IS NULL THEN
     INSERT INTO value_streams (id, notion_id, name, description, journey_type, maturity, status, e2e_test_path, area_id, notion_synced_at,
                                created_at, updated_at, home, "trigger", endpoint, "domain", biz_area, parent_journey_id, capability_code, notion_digest)
@@ -148,15 +145,13 @@ END $$;
 CREATE TRIGGER trg_value_streams_kind_locked BEFORE UPDATE OF parent_journey_id ON value_streams FOR EACH ROW EXECUTE FUNCTION journeys_child_kind_locked();
 CREATE TRIGGER trg_capabilities_kind_locked  BEFORE UPDATE OF parent_journey_id ON capabilities  FOR EACH ROW EXECUTE FUNCTION journeys_child_kind_locked();
 
--- 只指能力的两条真外键
+-- workflows 只挂能力：真外键取代原守卫触发器（语义相同）
 ALTER TABLE workflows ADD CONSTRAINT workflows_capability_id_fkey
   FOREIGN KEY (capability_id) REFERENCES capabilities(id) ON DELETE CASCADE;
 DROP TRIGGER IF EXISTS trg_workflows_capability_guard ON workflows;
 DROP FUNCTION IF EXISTS workflows_capability_guard();
-ALTER TABLE ops_schedule_entries ADD CONSTRAINT ops_schedule_entries_journey_id_fkey
-  FOREIGN KEY (journey_id) REFERENCES capabilities(id) ON DELETE SET NULL;
 
--- 混指两种的引用：触发器守卫（透过父表 journeys 看到两张子表）
+-- 其余引用：触发器守卫（透过父表 journeys 看到两张子表）；第二段按表收紧成真外键
 CREATE OR REPLACE FUNCTION journey_ref_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE v uuid; col text := TG_ARGV[0];
 BEGIN
@@ -166,22 +161,23 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
-CREATE TRIGGER trg_journey_ref_activities        BEFORE INSERT OR UPDATE OF journey_id     ON activities        FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
-CREATE TRIGGER trg_journey_ref_activity_cells    BEFORE INSERT OR UPDATE OF journey_id     ON activity_cells    FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
-CREATE TRIGGER trg_journey_ref_design_docs       BEFORE INSERT OR UPDATE OF journey_id     ON design_docs       FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
-CREATE TRIGGER trg_journey_ref_issues            BEFORE INSERT OR UPDATE OF journey_id     ON issues            FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
-CREATE TRIGGER trg_journey_ref_conversations     BEFORE INSERT OR UPDATE OF journey_id     ON conversations     FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
-CREATE TRIGGER trg_journey_ref_golden_paths      BEFORE INSERT OR UPDATE OF journey_id     ON golden_paths      FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
-CREATE TRIGGER trg_journey_ref_captures          BEFORE INSERT OR UPDATE OF ref_journey_id ON captures          FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('ref_journey_id');
-CREATE TRIGGER trg_journey_ref_advancement_items BEFORE INSERT OR UPDATE OF journey_id     ON advancement_items FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
-CREATE TRIGGER trg_journey_ref_journey_features  BEFORE INSERT OR UPDATE OF journey_id     ON journey_features  FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
+CREATE TRIGGER trg_journey_ref_ops_schedule_entries BEFORE INSERT OR UPDATE OF journey_id     ON ops_schedule_entries FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
+CREATE TRIGGER trg_journey_ref_journey_steps        BEFORE INSERT OR UPDATE OF journey_id     ON journey_steps        FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
+CREATE TRIGGER trg_journey_ref_journey_step_links   BEFORE INSERT OR UPDATE OF journey_id     ON journey_step_links   FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
+CREATE TRIGGER trg_journey_ref_design_docs          BEFORE INSERT OR UPDATE OF journey_id     ON design_docs          FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
+CREATE TRIGGER trg_journey_ref_issues               BEFORE INSERT OR UPDATE OF journey_id     ON issues               FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
+CREATE TRIGGER trg_journey_ref_conversations        BEFORE INSERT OR UPDATE OF journey_id     ON conversations        FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
+CREATE TRIGGER trg_journey_ref_golden_paths         BEFORE INSERT OR UPDATE OF journey_id     ON golden_paths         FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
+CREATE TRIGGER trg_journey_ref_captures             BEFORE INSERT OR UPDATE OF ref_journey_id ON captures             FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('ref_journey_id');
+CREATE TRIGGER trg_journey_ref_advancement_items    BEFORE INSERT OR UPDATE OF journey_id     ON advancement_items    FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
+CREATE TRIGGER trg_journey_ref_journey_features     BEFORE INSERT OR UPDATE OF journey_id     ON journey_features     FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id');
 DO $$ BEGIN
   IF to_regclass('public.ability_groups') IS NOT NULL THEN
     EXECUTE $t$CREATE TRIGGER trg_journey_ref_ability_groups BEFORE INSERT OR UPDATE OF journey_id ON ability_groups FOR EACH ROW EXECUTE FUNCTION journey_ref_guard('journey_id')$t$;
   END IF;
 END $$;
 
--- 删除价值流/能力时照原外键语义：Activity/格子 级联删，文档/议题/捕获/推进项/旧树 置空，对话/黄金路径/能力组 拒绝
+-- 删除价值流/能力时照原外键语义：Activity/格子 级联删，闹钟/文档/议题/捕获/推进项/旧树 置空，对话/黄金路径/能力组 拒绝
 CREATE OR REPLACE FUNCTION journeys_child_after_delete() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE hit int;
 BEGIN
@@ -195,8 +191,9 @@ BEGIN
       RAISE EXCEPTION '% 行 % 仍被 ability_groups 引用，拒绝删除（迁移 520）', TG_TABLE_NAME, OLD.id USING ERRCODE = 'foreign_key_violation';
     END IF;
   END IF;
-  DELETE FROM activity_cells WHERE journey_id = OLD.id;
-  DELETE FROM activities WHERE journey_id = OLD.id;
+  DELETE FROM journey_step_links WHERE journey_id = OLD.id;
+  DELETE FROM journey_steps WHERE journey_id = OLD.id;
+  UPDATE ops_schedule_entries SET journey_id = NULL WHERE journey_id = OLD.id;
   UPDATE design_docs SET journey_id = NULL WHERE journey_id = OLD.id;
   UPDATE issues SET journey_id = NULL WHERE journey_id = OLD.id;
   UPDATE captures SET ref_journey_id = NULL WHERE ref_journey_id = OLD.id;
@@ -208,7 +205,6 @@ CREATE TRIGGER trg_value_streams_after_delete AFTER DELETE ON value_streams FOR 
 CREATE TRIGGER trg_capabilities_after_delete  AFTER DELETE ON capabilities  FOR EACH ROW EXECUTE FUNCTION journeys_child_after_delete();
 
 -- ===== 50 个挂在价值流上的 Activity 归位到能力
--- 新建 2 个能力（Shopify 店铺运营、ZenithJoy 客户开通与绑定），部门随价值流
 INSERT INTO capabilities (id, name, description, parent_journey_id, status, area_id, biz_area)
 SELECT v.id::uuid, v.name, v.description, v.parent::uuid, 'active', p.area_id, 'zenithjoy'
   FROM (VALUES
@@ -218,7 +214,6 @@ SELECT v.id::uuid, v.name, v.description, v.parent::uuid, 'active', p.area_id, '
   JOIN value_streams p ON p.id = v.parent::uuid
 ON CONFLICT (id) DO NOTHING;
 
--- 新建 5 条流程承接归位的 Activity
 INSERT INTO workflows (capability_id, key, name, channel, form, status)
 SELECT v.capability_id::uuid, v.key, v.name, v.channel, v.form, 'active'
   FROM (VALUES
@@ -231,8 +226,8 @@ SELECT v.capability_id::uuid, v.key, v.name, v.channel, v.form, 'active'
  WHERE EXISTS (SELECT 1 FROM capabilities c WHERE c.id = v.capability_id::uuid)
 ON CONFLICT (key) DO NOTHING;
 
--- 归位映射：价值流 → 能力（+ 流程）；Harness 6 条编号 +100 避开 F1 既有 1~11
-UPDATE activities a SET journey_id = m.cap::uuid, workflow_id = COALESCE(w.id, a.workflow_id), updated_at = NOW()
+-- 归位映射：价值流 → 能力（+ 流程）
+UPDATE journey_steps a SET journey_id = m.cap::uuid, workflow_id = COALESCE(w.id, a.workflow_id), updated_at = NOW()
   FROM (VALUES
   ('dddb0a71-3cda-4153-b38c-2c3a29164b1c', '3cb652ee-2756-4bff-8fa2-27ef94da1555', 'video_remake_pipeline'),   -- AI 爆款视频翻拍 9
   ('636a918c-8b23-4df5-baec-b1eb3308fffb', 'b5e6287e-2597-41a9-b26f-8dba2cc18db0', 'line_health_patrol'),      -- ZenithJoy 运营中枢 3
@@ -244,63 +239,62 @@ UPDATE activities a SET journey_id = m.cap::uuid, workflow_id = COALESCE(w.id, a
    AND EXISTS (SELECT 1 FROM capabilities c WHERE c.id = m.cap::uuid);
 
 -- Shopify：商品上架 → 既有能力「商品上架」+ 其流程；其余 3 个 → 店铺运营
-UPDATE activities a SET journey_id = '6bd7e841-14bf-4630-b667-418c39a64918', workflow_id = COALESCE((SELECT id FROM workflows WHERE key = 'shopify_product_draft_listing'), a.workflow_id), updated_at = NOW()
+UPDATE journey_steps a SET journey_id = '6bd7e841-14bf-4630-b667-418c39a64918', workflow_id = COALESCE((SELECT id FROM workflows WHERE key = 'shopify_product_draft_listing'), a.workflow_id), updated_at = NOW()
  WHERE a.journey_id = '8a33a19a-71eb-4e8b-a69b-4d0507321b4e' AND a.name = '商品上架(草稿创建)'
    AND EXISTS (SELECT 1 FROM capabilities WHERE id = '6bd7e841-14bf-4630-b667-418c39a64918');
-UPDATE activities a SET journey_id = 'c0de0520-0000-4000-8000-000000000001', workflow_id = COALESCE((SELECT id FROM workflows WHERE key = 'shopify_store_ops'), a.workflow_id), updated_at = NOW()
+UPDATE journey_steps a SET journey_id = 'c0de0520-0000-4000-8000-000000000001', workflow_id = COALESCE((SELECT id FROM workflows WHERE key = 'shopify_store_ops'), a.workflow_id), updated_at = NOW()
  WHERE a.journey_id = '8a33a19a-71eb-4e8b-a69b-4d0507321b4e'
    AND EXISTS (SELECT 1 FROM capabilities WHERE id = 'c0de0520-0000-4000-8000-000000000001');
 
 -- 客户智能获客路径：8 个共享 Activity（capability_key=keyword_acquisition，归关键词获客所有，对标获客经 workflow_activity_refs 共用）+ 10 条已废弃 Path2
-UPDATE activities a SET journey_id = 'a1000000-0000-4000-8000-000000000001', updated_at = NOW()
+UPDATE journey_steps a SET journey_id = 'a1000000-0000-4000-8000-000000000001', updated_at = NOW()
  WHERE a.journey_id = 'afa6abca-53c0-4815-8594-b7fb81ca547f'
    AND EXISTS (SELECT 1 FROM capabilities WHERE id = 'a1000000-0000-4000-8000-000000000001');
 
--- Cecelia Harness Pipeline（已废弃价值流）6 个 Activity → F1 开发闭环，编号 +100
-UPDATE activities a SET journey_id = 'e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29', step_number = a.step_number + 100,
+-- Cecelia Harness Pipeline（已废弃价值流）6 个 Activity → F1 开发闭环，编号 +100 避开 F1 既有 1~11
+UPDATE journey_steps a SET journey_id = 'e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29', step_number = a.step_number + 100,
        workflow_id = COALESCE((SELECT id FROM workflows WHERE key = 'harness_relay_pipeline'), a.workflow_id), updated_at = NOW()
  WHERE a.journey_id = (SELECT id FROM value_streams WHERE name = 'Cecelia Harness Pipeline' LIMIT 1)
    AND EXISTS (SELECT 1 FROM capabilities WHERE id = 'e6f803f2-8c48-4cce-a7a1-5b1bda5e9c29');
 
 -- 格子跟随所属 Activity 的能力
-UPDATE activity_cells c SET journey_id = a.journey_id, updated_at = NOW()
-  FROM activities a
+UPDATE journey_step_links c SET journey_id = a.journey_id, updated_at = NOW()
+  FROM journey_steps a
  WHERE a.id = c.step_id AND c.journey_id IS DISTINCT FROM a.journey_id;
 
 -- 归位后仍直接挂在价值流上的 Activity：生产按上面的映射应为 0；其他环境（scratch/staging 的测试数据）只告警不中断，
--- 第二段收紧 activities.journey_id → capabilities 外键前再清
+-- 第二段收紧 journey_steps.journey_id → capabilities 外键前再清
 DO $$
 DECLARE n int;
 BEGIN
-  SELECT count(*) INTO n FROM activities a JOIN value_streams v ON v.id = a.journey_id;
+  SELECT count(*) INTO n FROM journey_steps a JOIN value_streams v ON v.id = a.journey_id;
   IF n > 0 THEN RAISE WARNING '迁移 520：仍有 % 个 Activity 直接挂在价值流上（非生产数据或映射外），第二段收紧外键前需归位', n; END IF;
 END $$;
 
--- ===== 仓库：enablers → warehouse_items + 八货架；连线 activity_items / item_deps
-ALTER TABLE enablers RENAME TO warehouse_items;
-COMMENT ON TABLE warehouse_items IS '仓库物件（原 enablers，迁移 520 改名）：八个货架 shelf；被哪些 Activity 用见 activity_items，物件间依赖见 item_deps';
-ALTER TABLE warehouse_items DROP CONSTRAINT IF EXISTS enablers_kind_check;
-ALTER TABLE warehouse_items ADD CONSTRAINT warehouse_items_kind_check
+-- ===== 仓库：enablers 加八货架 + 标准名视图 warehouse_items；连线 activity_items / item_deps
+ALTER TABLE enablers DROP CONSTRAINT IF EXISTS enablers_kind_check;
+ALTER TABLE enablers ADD CONSTRAINT enablers_kind_check
   CHECK (kind IN ('code','agent','service','data','ui','infra','external','account','doc'));
-ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS shelf text;
-ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS failure_semantics text;
-ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS shelf_life_days integer;
-ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS source_table text;
-ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS source_ref text;
-ALTER TABLE warehouse_items ADD COLUMN IF NOT EXISTS legacy_feature_id uuid NULL REFERENCES journey_features(id) ON DELETE SET NULL;
-COMMENT ON COLUMN warehouse_items.shelf IS '八货架：platform_action 平台动作 | generic_action 通用动作 | data 数据 | service 服务 | ui 界面 | infrastructure 基础设施 | external_dependency 外部依赖 | account_secret 账号与密钥';
-COMMENT ON COLUMN warehouse_items.impl_ref IS '位置（repo:path#symbol / URL / 主机）';
-COMMENT ON COLUMN warehouse_items.source_table IS '喂数据的登记表：skill_registry / api_registry / db_schema_registry / system_registry / ops_model_accounts …';
+ALTER TABLE enablers ADD COLUMN IF NOT EXISTS shelf text;
+ALTER TABLE enablers ADD COLUMN IF NOT EXISTS failure_semantics text;
+ALTER TABLE enablers ADD COLUMN IF NOT EXISTS shelf_life_days integer;
+ALTER TABLE enablers ADD COLUMN IF NOT EXISTS source_table text;
+ALTER TABLE enablers ADD COLUMN IF NOT EXISTS source_ref text;
+ALTER TABLE enablers ADD COLUMN IF NOT EXISTS legacy_feature_id uuid NULL REFERENCES journey_features(id) ON DELETE SET NULL;
+COMMENT ON TABLE enablers IS '仓库物件（标准名 warehouse_items 视图指向本表，第二段物理换名）：八个货架 shelf；被哪些 Activity 用见 activity_items，物件间依赖见 item_deps';
+COMMENT ON COLUMN enablers.shelf IS '八货架：platform_action 平台动作 | generic_action 通用动作 | data 数据 | service 服务 | ui 界面 | infrastructure 基础设施 | external_dependency 外部依赖 | account_secret 账号与密钥';
+COMMENT ON COLUMN enablers.impl_ref IS '位置（repo:path#symbol / URL / 主机）';
+COMMENT ON COLUMN enablers.source_table IS '喂数据的登记表：skill_registry / api_registry / db_schema_registry / system_registry / ops_model_accounts …';
 
-UPDATE warehouse_items SET shelf = 'platform_action' WHERE key = 'return_to_results' AND shelf IS NULL;
-UPDATE warehouse_items SET shelf = 'infrastructure'   WHERE key = 'device_lock'        AND shelf IS NULL;
-UPDATE warehouse_items SET shelf = 'account_secret'   WHERE key = 'account_selfcheck'  AND shelf IS NULL;
+UPDATE enablers SET shelf = 'platform_action' WHERE key = 'return_to_results' AND shelf IS NULL;
+UPDATE enablers SET shelf = 'infrastructure'   WHERE key = 'device_lock'        AND shelf IS NULL;
+UPDATE enablers SET shelf = 'account_secret'   WHERE key = 'account_selfcheck'  AND shelf IS NULL;
 
 -- legacy_feature_id：旧树 enabler/界面类按名字找；底座类按格子 base_ref 的 feature_id 找（旧树里它们是 kind=feature 的"底座件"行）
-INSERT INTO warehouse_items (key, name, kind, shelf, impl_ref, description, legacy_feature_id)
+INSERT INTO enablers (key, name, kind, shelf, impl_ref, description, legacy_feature_id)
 SELECT v.key, v.name, v.kind, v.shelf, v.impl_ref, v.description,
        COALESCE((SELECT f.id FROM journey_features f WHERE f.name = v.legacy_name ORDER BY f.created_at LIMIT 1),
-                (SELECT c.feature_id FROM activity_cells c WHERE c.cell_kind = 'base_ref' AND c.cell_key = v.cell_key AND c.feature_id IS NOT NULL LIMIT 1))
+                (SELECT c.feature_id FROM journey_step_links c WHERE c.cell_kind = 'base_ref' AND c.cell_key = v.cell_key AND c.feature_id IS NOT NULL LIMIT 1))
   FROM (VALUES
   -- 旧树 kind=enabler 7 条
   ('brain_tick_scheduler',    'Brain Tick 调度引擎',   'service', 'service',        'cecelia:packages/brain/src/tick.js',                 '调度器主循环',                         'Brain Tick 调度引擎',    NULL),
@@ -327,18 +321,17 @@ SELECT v.key, v.name, v.kind, v.shelf, v.impl_ref, v.description,
   ) AS v(key, name, kind, shelf, impl_ref, description, legacy_name, cell_key)
 ON CONFLICT (key) DO NOTHING;
 
-ALTER TABLE warehouse_items ALTER COLUMN shelf SET NOT NULL;
-ALTER TABLE warehouse_items ADD CONSTRAINT warehouse_items_shelf_check
+ALTER TABLE enablers ALTER COLUMN shelf SET NOT NULL;
+ALTER TABLE enablers ADD CONSTRAINT enablers_shelf_check
   CHECK (shelf IN ('platform_action','generic_action','data','service','ui','infrastructure','external_dependency','account_secret'));
 
-CREATE VIEW enablers AS
-  SELECT id, key, name, kind, impl_ref, owner, description, active, created_at, updated_at FROM warehouse_items;
-COMMENT ON VIEW enablers IS '兼容视图 → warehouse_items（迁移 520）；第二段切完代码即删';
+CREATE VIEW warehouse_items AS SELECT * FROM enablers;
+COMMENT ON VIEW warehouse_items IS '仓库物件（标准名，迁移 520 先以视图立名 → enablers；第二段物理换名）';
 
 CREATE TABLE IF NOT EXISTS activity_items (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  activity_id   uuid NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
-  item_id       uuid NOT NULL REFERENCES warehouse_items(id) ON DELETE CASCADE,
+  activity_id   uuid NOT NULL REFERENCES journey_steps(id) ON DELETE CASCADE,
+  item_id       uuid NOT NULL REFERENCES enablers(id) ON DELETE CASCADE,
   role          text NOT NULL DEFAULT 'uses' CHECK (role IN ('uses','depends','produces')),
   assertion_ref text,
   cell_status   text CHECK (cell_status IS NULL OR cell_status IN ('gray','red','pending','green')),
@@ -346,12 +339,12 @@ CREATE TABLE IF NOT EXISTS activity_items (
   created_at    timestamptz NOT NULL DEFAULT now(),
   UNIQUE (activity_id, item_id)
 );
-COMMENT ON TABLE activity_items IS '连线：这件事（Activity）用了仓库里哪些物件（迁移 520；由 enabler_calls / activities.enabler_id / 底座类格子 合并）';
+COMMENT ON TABLE activity_items IS '连线：这件事（Activity）用了仓库里哪些物件（迁移 520；由 enabler_calls / journey_steps.enabler_id / 底座类格子 合并）';
 CREATE INDEX IF NOT EXISTS idx_activity_items_item ON activity_items (item_id);
 
 CREATE TABLE IF NOT EXISTS item_deps (
-  item_id            uuid NOT NULL REFERENCES warehouse_items(id) ON DELETE CASCADE,
-  depends_on_item_id uuid NOT NULL REFERENCES warehouse_items(id) ON DELETE CASCADE,
+  item_id            uuid NOT NULL REFERENCES enablers(id) ON DELETE CASCADE,
+  depends_on_item_id uuid NOT NULL REFERENCES enablers(id) ON DELETE CASCADE,
   note               text,
   created_at         timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (item_id, depends_on_item_id),
@@ -361,25 +354,25 @@ COMMENT ON TABLE item_deps IS '连线：物件依赖物件（标准：写在物�
 
 INSERT INTO activity_items (activity_id, item_id, role)
 SELECT ec.caller_id, ec.enabler_id, 'uses' FROM enabler_calls ec
- WHERE ec.caller_type = 'activity' AND EXISTS (SELECT 1 FROM activities a WHERE a.id = ec.caller_id)
+ WHERE ec.caller_type = 'activity' AND EXISTS (SELECT 1 FROM journey_steps a WHERE a.id = ec.caller_id)
 ON CONFLICT (activity_id, item_id) DO NOTHING;
 INSERT INTO activity_items (activity_id, item_id, role)
-SELECT a.id, a.enabler_id, 'uses' FROM activities a WHERE a.enabler_id IS NOT NULL
+SELECT a.id, a.enabler_id, 'uses' FROM journey_steps a WHERE a.enabler_id IS NOT NULL
 ON CONFLICT (activity_id, item_id) DO NOTHING;
 INSERT INTO activity_items (activity_id, item_id, role, assertion_ref, cell_status, legacy_cell_id)
-SELECT c.step_id, c.enabler_id, 'uses', c.assertion_ref, c.cell_status, c.id FROM activity_cells c
+SELECT c.step_id, c.enabler_id, 'uses', c.assertion_ref, c.cell_status, c.id FROM journey_step_links c
  WHERE c.cell_level = 'enabler' AND c.enabler_id IS NOT NULL
 ON CONFLICT (activity_id, item_id) DO NOTHING;
 INSERT INTO activity_items (activity_id, item_id, role, assertion_ref, cell_status, legacy_cell_id)
 SELECT c.step_id, w.id, 'depends', c.assertion_ref, c.cell_status, c.id
-  FROM activity_cells c
+  FROM journey_step_links c
   JOIN (VALUES
     ('CRM 表底座','crm_table_base'), ('客户画像卡','customer_profile_card'), ('记忆库租户隔离','memory_tenant_isolation'),
     ('Agent 运行时底座','agent_runtime_base'), ('后台静默发送通道','silent_send_channel'), ('消息/动态采集通道','message_capture_channel'),
     ('绑定/安装（共享前置）','wechat_bind_install'), ('接管开关','takeover_switch'), ('批量混剪核心渲染','batch_remix_render_core'),
     ('GP锚定校验','gp_anchor_check')
   ) AS m(cell_key, item_key) ON m.cell_key = c.cell_key
-  JOIN warehouse_items w ON w.key = m.item_key
+  JOIN enablers w ON w.key = m.item_key
  WHERE c.cell_kind = 'base_ref'
 ON CONFLICT (activity_id, item_id) DO NOTHING;
 
@@ -390,23 +383,35 @@ SELECT a.id, b.id, v.note
   ('message_capture_channel', 'wechat_bind_install', '采集通道依赖先完成绑定/安装'),
   ('takeover_switch',         'crm_table_base',      '接管开关落在 CRM 底表字段上')
   ) AS v(item_key, dep_key, note)
-  JOIN warehouse_items a ON a.key = v.item_key
-  JOIN warehouse_items b ON b.key = v.dep_key
+  JOIN enablers a ON a.key = v.item_key
+  JOIN enablers b ON b.key = v.dep_key
 ON CONFLICT DO NOTHING;
 
 -- 底座类格子（cell_kind=base_ref / cell_level=enabler）已复制成 activity_items 连线；格子行本段保留——
--- /journey_features/:id/blast-radius 仍按 feature_id 读这些格子算塌红范围，第二段把它切到 activity_items 后再删格子行。
--- 原行已存 migration_520_backup 'journey_step_links.deleted'，第二段删除时直接可回滚。
+-- /journey_features/:id/blast-radius 仍按 feature_id 读这些格子算塌红范围，第二段切到 activity_items 后再删。
 
--- 旧树里的 enabler 与界面类 ability：只标不删，workflow_ref 指向物件 key
-UPDATE journey_features f SET status = 'deprecated', workflow_ref = 'item:' || w.key, updated_at = NOW()
-  FROM warehouse_items w
+-- 旧树里的 enabler / 底座件 / 界面类 ability：只标不删，workflow_ref 指向物件 key。
+-- 例外：被 base_ref 格子引用的底座件不改 workflow_ref——journey_features 上有触发器把 workflow_ref 同步成格子的 assertion_ref，
+-- 'item:' 不是探针语法会把格子判成"不认识的断言"（migration-373 数据刀口径）；这些行的溯源靠 enablers.legacy_feature_id。
+UPDATE journey_features f SET status = 'deprecated',
+       workflow_ref = CASE WHEN EXISTS (SELECT 1 FROM journey_step_links l WHERE l.feature_id = f.id) THEN f.workflow_ref ELSE 'item:' || w.key END,
+       updated_at = NOW()
+  FROM enablers w
  WHERE w.legacy_feature_id = f.id AND f.status <> 'deprecated';
 UPDATE journey_features SET status = 'deprecated', workflow_ref = 'item:crm_customer_list_page', updated_at = NOW()
  WHERE id IN ('ca5fe5ec-7cab-418f-a3f6-d64287679e0c','1129d745-c536-4ed0-8724-d7a3aaa696bd') AND status <> 'deprecated';
 
+-- 投影注册表：两个带 notion_id 列的标准名视图登记为占位（守夜 findUnregisteredNotionTables 口径），真身仍是旧名镜子
+INSERT INTO notion_projection_map (notion_db_id, title, face, brain_table, direction, vessel, status, space, notes)
+SELECT v.db_id, v.title, 'mirror', v.brain_table, 'none', '(标准名视图，无独立血管)', 'archived', 'system', v.notes
+  FROM (VALUES
+  ('unmapped:activities',     '（标准名视图）activities',     'activities',     '迁移 520：→ journey_steps 的视图；镜子真身仍是 Activity（活动）库 c213e387'),
+  ('unmapped:activity_cells', '（标准名视图）activity_cells', 'activity_cells', '迁移 520：→ journey_step_links 的视图；镜子真身仍是 Activity 卡片格子库 3e8c40c2')
+  ) AS v(db_id, title, brain_table, notes)
+ WHERE NOT EXISTS (SELECT 1 FROM notion_projection_map m WHERE m.notion_db_id = v.db_id);  -- 注册表无唯一键（一库多表），用 NOT EXISTS 幂等
+
 INSERT INTO schema_version (version, description)
-VALUES ('520', '表名对齐标准：journeys 拆 value_streams/capabilities 真表(继承)；journey_steps→activities；journey_step_links→activity_cells；enablers→warehouse_items 八货架 + activity_items/item_deps；50 个 Activity 归位；旧名兼容视图')
+VALUES ('520', '表名对齐标准（第一段）：journeys 拆 value_streams/capabilities 真表(继承)；activities/activity_cells/warehouse_items 标准名视图；enablers 八货架 + activity_items/item_deps；50 个 Activity 归位')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

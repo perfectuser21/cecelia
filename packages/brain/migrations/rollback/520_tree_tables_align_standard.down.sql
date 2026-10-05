@@ -1,39 +1,41 @@
--- Rollback 520：撤回表名对齐（连线表删除、仓库改回 enablers、格子/Activity 改回旧名、价值流/能力并回 journeys、外键与视图复原）
+-- Rollback 520：撤回表名对齐第一段（连线表删除、enablers 复原、标准名视图删除、价值流/能力并回 journeys、外键与旧视图复原）
 BEGIN;
+
+DELETE FROM notion_projection_map WHERE notion_db_id IN ('unmapped:activities','unmapped:activity_cells');
 
 -- 仓库连线与物件
 DROP TABLE IF EXISTS item_deps;
 DROP TABLE IF EXISTS activity_items;
-DROP VIEW IF EXISTS enablers;
-DELETE FROM warehouse_items WHERE legacy_feature_id IS NOT NULL OR key IN (
+DROP VIEW IF EXISTS warehouse_items;
+DELETE FROM enablers WHERE legacy_feature_id IS NOT NULL OR key IN (
   'crm_table_base','customer_profile_card','memory_tenant_isolation','agent_runtime_base','silent_send_channel',
   'message_capture_channel','wechat_bind_install','takeover_switch','batch_remix_render_core','gp_anchor_check',
   'crm_customer_list_page','staff_tools_hub');
-ALTER TABLE warehouse_items DROP CONSTRAINT IF EXISTS warehouse_items_shelf_check;
-ALTER TABLE warehouse_items DROP CONSTRAINT IF EXISTS warehouse_items_kind_check;
-ALTER TABLE warehouse_items DROP COLUMN IF EXISTS shelf;
-ALTER TABLE warehouse_items DROP COLUMN IF EXISTS failure_semantics;
-ALTER TABLE warehouse_items DROP COLUMN IF EXISTS shelf_life_days;
-ALTER TABLE warehouse_items DROP COLUMN IF EXISTS source_table;
-ALTER TABLE warehouse_items DROP COLUMN IF EXISTS source_ref;
-ALTER TABLE warehouse_items DROP COLUMN IF EXISTS legacy_feature_id;
-ALTER TABLE warehouse_items ADD CONSTRAINT enablers_kind_check CHECK (kind IN ('code','agent'));
-ALTER TABLE warehouse_items RENAME TO enablers;
+ALTER TABLE enablers DROP CONSTRAINT IF EXISTS enablers_shelf_check;
+ALTER TABLE enablers DROP CONSTRAINT IF EXISTS enablers_kind_check;
+ALTER TABLE enablers DROP COLUMN IF EXISTS shelf;
+ALTER TABLE enablers DROP COLUMN IF EXISTS failure_semantics;
+ALTER TABLE enablers DROP COLUMN IF EXISTS shelf_life_days;
+ALTER TABLE enablers DROP COLUMN IF EXISTS source_table;
+ALTER TABLE enablers DROP COLUMN IF EXISTS source_ref;
+ALTER TABLE enablers DROP COLUMN IF EXISTS legacy_feature_id;
+ALTER TABLE enablers ADD CONSTRAINT enablers_kind_check CHECK (kind IN ('code','agent'));
 
 -- 旧树状态还原
 UPDATE journey_features f SET status = b.payload->>'status', workflow_ref = b.payload->>'workflow_ref', updated_at = NOW()
   FROM migration_520_backup b WHERE b.table_name = 'journey_features' AND f.id = b.row_id::uuid;
 
 -- 守卫与级联触发器
-DROP TRIGGER IF EXISTS trg_journey_ref_activities        ON activities;
-DROP TRIGGER IF EXISTS trg_journey_ref_activity_cells    ON activity_cells;
-DROP TRIGGER IF EXISTS trg_journey_ref_design_docs       ON design_docs;
-DROP TRIGGER IF EXISTS trg_journey_ref_issues            ON issues;
-DROP TRIGGER IF EXISTS trg_journey_ref_conversations     ON conversations;
-DROP TRIGGER IF EXISTS trg_journey_ref_golden_paths      ON golden_paths;
-DROP TRIGGER IF EXISTS trg_journey_ref_captures          ON captures;
-DROP TRIGGER IF EXISTS trg_journey_ref_advancement_items ON advancement_items;
-DROP TRIGGER IF EXISTS trg_journey_ref_journey_features  ON journey_features;
+DROP TRIGGER IF EXISTS trg_journey_ref_ops_schedule_entries ON ops_schedule_entries;
+DROP TRIGGER IF EXISTS trg_journey_ref_journey_steps        ON journey_steps;
+DROP TRIGGER IF EXISTS trg_journey_ref_journey_step_links   ON journey_step_links;
+DROP TRIGGER IF EXISTS trg_journey_ref_design_docs          ON design_docs;
+DROP TRIGGER IF EXISTS trg_journey_ref_issues               ON issues;
+DROP TRIGGER IF EXISTS trg_journey_ref_conversations        ON conversations;
+DROP TRIGGER IF EXISTS trg_journey_ref_golden_paths         ON golden_paths;
+DROP TRIGGER IF EXISTS trg_journey_ref_captures             ON captures;
+DROP TRIGGER IF EXISTS trg_journey_ref_advancement_items    ON advancement_items;
+DROP TRIGGER IF EXISTS trg_journey_ref_journey_features     ON journey_features;
 DO $$ BEGIN
   IF to_regclass('public.ability_groups') IS NOT NULL THEN
     EXECUTE 'DROP TRIGGER IF EXISTS trg_journey_ref_ability_groups ON ability_groups';
@@ -49,28 +51,23 @@ DROP FUNCTION IF EXISTS journeys_child_after_delete();
 DROP FUNCTION IF EXISTS journeys_child_kind_locked();
 DROP FUNCTION IF EXISTS journeys_route_insert();
 
--- Activity / 格子 归位还原（先于并回 journeys，引用的是 id 不受影响）
-DROP VIEW IF EXISTS journey_steps;
-DROP VIEW IF EXISTS journey_step_links;
-UPDATE activities a SET journey_id = (b.payload->>'journey_id')::uuid, step_number = (b.payload->>'step_number')::int,
+-- Activity / 格子 归位还原
+UPDATE journey_steps a SET journey_id = (b.payload->>'journey_id')::uuid, step_number = (b.payload->>'step_number')::int,
        workflow_id = (b.payload->>'workflow_id')::uuid, updated_at = NOW()
   FROM migration_520_backup b WHERE b.table_name = 'journey_steps' AND a.id = b.row_id::uuid;
-UPDATE activity_cells c SET journey_id = (b.payload->>'journey_id')::uuid
+UPDATE journey_step_links c SET journey_id = (b.payload->>'journey_id')::uuid
   FROM migration_520_backup b WHERE b.table_name = 'journey_step_links.rehome' AND c.id = b.row_id::uuid;
-ALTER TABLE activities RENAME TO journey_steps;
-ALTER TABLE activity_cells RENAME TO journey_step_links;
-INSERT INTO journey_step_links
-SELECT (jsonb_populate_record(NULL::journey_step_links, b.payload)).*
-  FROM migration_520_backup b WHERE b.table_name = 'journey_step_links.deleted'
-ON CONFLICT (id) DO NOTHING;
+
+-- 标准名视图
+DROP VIEW IF EXISTS activities;
+DROP VIEW IF EXISTS activity_cells;
 
 -- 新建的 5 条流程与 2 个能力
 DELETE FROM workflows WHERE key IN ('harness_relay_pipeline','video_editing_pipeline','line_health_patrol','customer_onboarding','shopify_store_ops');
 DELETE FROM capabilities WHERE id IN ('c0de0520-0000-4000-8000-000000000001','c0de0520-0000-4000-8000-000000000002');
 
 -- 价值流 / 能力 并回 journeys 父表
-ALTER TABLE workflows            DROP CONSTRAINT IF EXISTS workflows_capability_id_fkey;
-ALTER TABLE ops_schedule_entries DROP CONSTRAINT IF EXISTS ops_schedule_entries_journey_id_fkey;
+ALTER TABLE workflows DROP CONSTRAINT IF EXISTS workflows_capability_id_fkey;
 INSERT INTO journeys (id, notion_id, name, description, journey_type, maturity, status, e2e_test_path, area_id, notion_synced_at,
                       created_at, updated_at, home, "trigger", endpoint, "domain", biz_area, parent_journey_id, capability_code, notion_digest)
 SELECT id, notion_id, name, description, journey_type, maturity, status, e2e_test_path, area_id, notion_synced_at,
