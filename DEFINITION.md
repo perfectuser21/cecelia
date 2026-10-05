@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.374.0
+**Brain 版本**: 1.375.0
 
 六层目录的机器列合同独立维护：补列前核验全部目标库的属性类型与关系指向，仅新增缺失字段并GET读回；不改人工Parent、负责人或旧关系，冲突与未写入不能伪报成功。
 
@@ -69,6 +69,13 @@ summary: 增加固定socket查询与SSH协议纯库、持久journal及强进程/
 type: fix
 scope: brain
 summary: 版本、实现影响、地图及发布证据测试改用精确scratch或CI测试库自有schema和真实最低DDL，拒非法连接、保真实约束与原断言，完整执行原两smoke；不启用手机运行能力
+
+## Brain 1.375.0 — 树+仓库定稿 v3.0 第 1 刀：Activity 15 列、Step 8 列、8 格固定、顺序归关系表、activity_uses
+
+- 迁移 521（任务 dd66b90e，决策「树+仓库定稿 v3.0」）：Activity（`journey_steps` / 标准名 `activities`）加 inputs / outputs / preconditions / invariants / nfr / failure / readback / judgment / adversarial / shelf_life_days，前七列从 `contract` JSON 拆填（只填空值，contract 留全量快照），shelf_life_days 默认 7。Step（`steps`）加 name / action / inputs / outputs / on_fail（只许 `retry:N` | `abort`），name 先从 key 末段推。
+- 8 格固定：每个未退役 Activity 恰好有 promise / nfr / judgment / invariants / failure / readback / adversarial / shelf_life 八个标准格。客服线旧格子名按名映射（FR→promise…，98 行）；获客线 `stage:*` / `regression:*`、所有场景格、能力点格、Step 级格子标 `parent_cell_key='readback'` 子项，`producer_source_revision` 标 invariants 子项；缺的补灰格（生产 926 行，id 记备份）。生产演练：128/128 Activity 恰好 8 格。
+- `activity_items` 改名 `activity_uses`（Activity 用仓库的哪几件）。有 workflow_id 但没有 `workflow_activity_refs` 行的 32 个 Activity 补关系行（sequence_no = step_number，source_ref = `migration:521`）。
+- `activities` / `activity_cells` 视图重建带新列；回滚先删视图再去列、按备份还原格子名与删补行；scratch up→down→up→up 幂等。回归：`migration-521-activity-columns.test.js`。
 
 ## Brain 1.374.0 — 表名对齐框架标准（第一段）：价值流/能力两张真表，activities / activity_cells / warehouse_items 标准名立起，仓库八货架
 
