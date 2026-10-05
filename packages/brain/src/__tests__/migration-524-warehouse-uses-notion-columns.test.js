@@ -19,6 +19,12 @@ describe('migration 524 warehouse/uses notion columns', () => {
     expect(sql).toMatch(/CREATE TRIGGER trg_touch_warehouse_items_updated_at/);
     expect(sql).toMatch(/CREATE TRIGGER trg_touch_activity_uses_updated_at/);
   });
+  it('带 notion_id 列的三张表/视图都有注册表占位（registry_coverage）：enablers 视图归档，两张新表待建库', () => {
+    expect(sql).toMatch(/'unmapped:enablers'[\s\S]*'enablers'[\s\S]*'archived'/);
+    expect(sql).toMatch(/'unmapped:warehouse_items'[\s\S]*'warehouse_items'[\s\S]*'pending_vessel'/);
+    expect(sql).toMatch(/'unmapped:activity_uses'[\s\S]*'activity_uses'[\s\S]*'pending_vessel'/);
+    expect(readFileSync(down, 'utf8')).toMatch(/DELETE FROM notion_projection_map WHERE notion_db_id IN \('unmapped:enablers', 'unmapped:warehouse_items', 'unmapped:activity_uses'\)/);
+  });
   it('旧名视图 enablers 重建带新列；写 schema_version 524；事务包裹；有回滚', () => {
     expect(sql).toMatch(/CREATE OR REPLACE VIEW enablers AS SELECT \* FROM warehouse_items/);
     expect(sql).toMatch(/INSERT INTO schema_version[\s\S]*'524'/);

@@ -107,6 +107,14 @@ describe('ensureWarehouseDatabases：缺库才建，建后登记，重跑不重�
     expect(w.registry.map(r => r.brain_table).sort()).toEqual(['activity_uses', 'warehouse_items']);
   });
 
+  it('登记真库时顺手清掉同表的「待建库」占位行（不留两行互相矛盾）', async () => {
+    const w = world();
+    await ensureWarehouseDatabases(w.pool, 'tok', { notionReq: w.notionReq, resolveActivities: activitiesResolver });
+    const deletes = w.pool.query.mock.calls.filter(([sql]) => /DELETE FROM notion_projection_map/.test(sql));
+    expect(deletes.map(([, params]) => params[0]).sort()).toEqual(['activity_uses', 'warehouse_items']);
+    expect(deletes[0][0]).toMatch(/notion_db_id = 'unmapped:' \|\| \$1/);
+  });
+
   it('注册表已有 active 库：不建库、不扫父页', async () => {
     const w = world({ registered: { warehouse_items: 'reg-w', activity_uses: 'reg-u' } });
     const dbs = await ensureWarehouseDatabases(w.pool, 'tok', { notionReq: w.notionReq, resolveActivities: activitiesResolver });

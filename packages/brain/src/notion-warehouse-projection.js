@@ -113,6 +113,8 @@ async function register(pool, dbId, table) {
      SELECT $1, $2, $3, $4, 'mirror', 'push', 'active', 'system'
       WHERE NOT EXISTS (SELECT 1 FROM notion_projection_map WHERE notion_db_id = $1 AND brain_table = $3)`,
     [dbId, TITLES[table], table, VESSELS[table]]);
+  // 迁移 524 给这两张表留的「待建库」占位行，真库登记后就没用了（留着会和真行互相矛盾）
+  await pool.query(`DELETE FROM notion_projection_map WHERE notion_db_id = 'unmapped:' || $1 AND brain_table = $1`, [table]);
 }
 
 /**

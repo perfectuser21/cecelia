@@ -1,6 +1,8 @@
 -- Rollback 524：去掉两表的 Notion 记账列与触发器；旧名视图先删再建（视图不能删列）
 BEGIN;
 
+DELETE FROM notion_projection_map WHERE notion_db_id IN ('unmapped:enablers', 'unmapped:warehouse_items', 'unmapped:activity_uses');
+
 DROP VIEW IF EXISTS enablers;
 
 DROP TRIGGER IF EXISTS trg_touch_warehouse_items_updated_at ON warehouse_items;

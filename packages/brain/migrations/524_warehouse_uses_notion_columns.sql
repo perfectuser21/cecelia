@@ -37,6 +37,21 @@ CREATE TRIGGER trg_touch_activity_uses_updated_at
 -- 旧名视图 enablers 冻结了列清单；新列追加在表尾，OR REPLACE 只追加列，合法
 CREATE OR REPLACE VIEW enablers AS SELECT * FROM warehouse_items;
 
+-- 带 notion_id 列的表/视图都要在注册表有一行（registry_coverage）：enablers 是旧名兼容视图（无独立血管，归档），
+-- warehouse_items / activity_uses 的 Notion 库由 notion-warehouse-projection 首次运行时建并登记真行（同时清掉这两条占位）
+INSERT INTO notion_projection_map (notion_db_id, title, face, brain_table, direction, vessel, status, space, reconcile, notes)
+SELECT 'unmapped:enablers', '（旧名兼容视图）enablers', 'mirror', 'enablers', 'none', '(旧名兼容视图，无独立血管)', 'archived', 'system',
+       '{"count": true}'::jsonb, '迁移 524：enablers 现在只是 warehouse_items 的兼容视图；镜子真身是仓库物件库，键 warehouse_items'
+ WHERE NOT EXISTS (SELECT 1 FROM notion_projection_map WHERE notion_db_id = 'unmapped:enablers' AND brain_table = 'enablers');
+INSERT INTO notion_projection_map (notion_db_id, title, face, brain_table, direction, vessel, status, space, reconcile, notes)
+SELECT 'unmapped:warehouse_items', '（待建库）warehouse_items', 'mirror', 'warehouse_items', 'none', '(notion-warehouse-projection 首次运行时建库并登记)', 'pending_vessel', 'system',
+       '{"count": true}'::jsonb, '仓库物件库（8 货架）；建库后本占位行被真行取代'
+ WHERE NOT EXISTS (SELECT 1 FROM notion_projection_map WHERE brain_table = 'warehouse_items');
+INSERT INTO notion_projection_map (notion_db_id, title, face, brain_table, direction, vessel, status, space, reconcile, notes)
+SELECT 'unmapped:activity_uses', '（待建库）activity_uses', 'mirror', 'activity_uses', 'none', '(notion-warehouse-projection 首次运行时建库并登记)', 'pending_vessel', 'system',
+       '{"count": true}'::jsonb, '用料库（Activity 用了哪件物件）；建库后本占位行被真行取代'
+ WHERE NOT EXISTS (SELECT 1 FROM notion_projection_map WHERE brain_table = 'activity_uses');
+
 COMMENT ON COLUMN warehouse_items.notion_id IS '仓库物件库页面 id（notion-warehouse-projection 回写）';
 COMMENT ON COLUMN activity_uses.notion_id IS '用料库页面 id（notion-warehouse-projection 回写）';
 
