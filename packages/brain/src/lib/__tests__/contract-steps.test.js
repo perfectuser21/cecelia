@@ -4,7 +4,7 @@
  * 结果获客线 44 步的 readback 在 Brain 里全是 {}。这里锁住映射，并把「不写读回不许过」做成硬闸。
  */
 import { describe, it, expect } from 'vitest';
-import { declareStepsFromContract, assertStepsHaveReadback } from '../lib/contract-steps.js';
+import { declareStepsFromContract, assertStepsHaveReadback } from '../contract-steps.js';
 
 const step = (over = {}) => ({
   key: 'acquire_device_lock', name: '拿设备锁', order: 1, reads: ['Device.serial'], writes: ['Device.lock_holder'],
