@@ -114,7 +114,7 @@ function fakePool(stepRows = [], memory = {}) {
   const queries = [];
   const rows = stepRows.map((r) => ({ ...r }));
   return {
-    rows, memory, queries, steps: [],
+    rows, memory, queries, steps: [], cells: [],
     async connect() { return {query:this.query.bind(this),release(){}}; },
     async query(text, params = []) {
       queries.push({ text, params });
@@ -126,6 +126,7 @@ function fakePool(stepRows = [], memory = {}) {
         const found = this.steps.filter((x) => x.key === params[0]);
         return { rows: found, rowCount: found.length };
       }
+      if (/^\s*INSERT INTO activity_cells/.test(text)) { this.cells.push({ journey_id: params[0], step_id: params[1], cell_key: params[2] }); return { rows: [], rowCount: 1 }; }
       if (/^\s*INSERT INTO steps/.test(text)) { this.steps.push(stepRow(text, params)); return { rows: [], rowCount: 1 }; }
       if (/^\s*UPDATE steps/.test(text)) { Object.assign(this.steps.find((x) => x.key === params[0]), stepRow(text, params)); return { rows: [], rowCount: 1 }; }
       if (/FROM workflows/.test(text)) return {rows: rows.length ? [{id:'w',key:'workflow',capability_id:'J',source_repo:CONTRACT_REPO,source_path:'product-map/contracts/keyword_acquisition.yaml',source_capability:'keyword_acquisition',source_workflow:'social-keyword-leadgen'}] : []};
@@ -198,6 +199,17 @@ describe('syncActivityContracts', () => {
     const d = pool.rows.find((r) => r.activity_key === 'discovery');
     expect(d).toMatchObject({ journey_id: 'J', step_number: 2, contract_sha256: activityHash('discovery') });
     expect(out.inserted).toEqual(['keyword_acquisition.discovery']);
+  });
+
+  it('仓库新增活动 → 同一事务里补齐固定 8 个验收格（灰），已有活动不重复补', async () => {
+    const gh = fakeGithub({ digest: digestOf({ preflight: 'p1', discovery: 'd1' }) });
+    const pool = fakePool(seeded().filter((r) => r.activity_key === 'preflight'));
+    await syncActivityContracts(pool, deps(gh));
+    const newId = pool.rows.find((r) => r.activity_key === 'discovery').id;
+    const mine = pool.cells.filter((c) => c.step_id === newId);
+    expect(mine.map((c) => c.cell_key)).toEqual(['promise', 'nfr', 'judgment', 'invariants', 'failure', 'readback', 'adversarial', 'shelf_life']);
+    expect(mine.every((c) => c.journey_id === 'J')).toBe(true);
+    expect(pool.cells.some((c) => c.step_id === 's1')).toBe(false);
   });
 
   it('GitHub 失败 → 抛错（由 job 记滞后），不写库', async () => {
