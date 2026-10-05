@@ -74,6 +74,17 @@ describe('收敛对账（真 PG）', () => {
     expect(r.issues.some(i => i.code === 'undeclared_step')).toBe(true);
   });
 
+  it('readback 格还不存在（合同同步新建的 Activity 没有格子）：对账时先补齐固定 8 格再翻色，不静默丢颜色', async () => {
+    const { a, s1, s2 } = await seedActivity();
+    await client.query('DELETE FROM activity_cells WHERE step_id = $1', [a]);
+    await span('r1', a, s1, 1); await span('r1', a, s2, 5);
+    await reconcileActivity(client, a, { runsWanted: 5, requiredGreen: 1 });
+    const cells = (await client.query("SELECT cell_key, cell_status FROM activity_cells WHERE step_id=$1 ORDER BY cell_key", [a])).rows;
+    expect(cells).toHaveLength(8);
+    expect(cells.find(c => c.cell_key === 'readback').cell_status).toBe('green');
+    expect(cells.filter(c => c.cell_key !== 'readback').every(c => c.cell_status === 'gray')).toBe(true);
+  });
+
   it('活动不存在 → 抛错', async () => {
     await expect(reconcileActivity(client, randomUUID(), {})).rejects.toThrow(/activity_not_found/);
   });

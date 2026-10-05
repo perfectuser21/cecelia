@@ -201,17 +201,6 @@ describe('syncActivityContracts', () => {
     expect(out.inserted).toEqual(['keyword_acquisition.discovery']);
   });
 
-  it('仓库新增活动 → 同一事务里补齐固定 8 个验收格（灰），已有活动不重复补', async () => {
-    const gh = fakeGithub({ digest: digestOf({ preflight: 'p1', discovery: 'd1' }) });
-    const pool = fakePool(seeded().filter((r) => r.activity_key === 'preflight'));
-    await syncActivityContracts(pool, deps(gh));
-    const newId = pool.rows.find((r) => r.activity_key === 'discovery').id;
-    const mine = pool.cells.filter((c) => c.step_id === newId);
-    expect(mine.map((c) => c.cell_key)).toEqual(['promise', 'nfr', 'judgment', 'invariants', 'failure', 'readback', 'adversarial', 'shelf_life']);
-    expect(mine.every((c) => c.journey_id === 'J')).toBe(true);
-    expect(pool.cells.some((c) => c.step_id === 's1')).toBe(false);
-  });
-
   it('GitHub 失败 → 抛错（由 job 记滞后），不写库', async () => {
     const gh = fakeGithub({ digest: '{}', fail: true });
     const pool = fakePool(seeded());
