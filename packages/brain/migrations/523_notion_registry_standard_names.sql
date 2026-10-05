@@ -13,6 +13,17 @@ DELETE FROM notion_projection_map
 UPDATE notion_projection_map SET brain_table = 'activities', updated_at = NOW() WHERE brain_table = 'journey_steps';
 UPDATE notion_projection_map SET brain_table = 'activity_cells', updated_at = NOW() WHERE brain_table = 'journey_step_links';
 
+-- ①a 旧名兼容视图（journey_steps / journey_step_links）仍带 notion_id 列：registry_coverage 要求带 notion_id 列的表/视图都有登记，
+--     补「无独立血管」占位（与 520/521 为标准名视图留的同形），真镜子是上面改名后的 activities / activity_cells
+INSERT INTO notion_projection_map (notion_db_id, title, face, brain_table, direction, vessel, status, space, reconcile, notes)
+SELECT 'unmapped:journey_steps', '（旧名兼容视图）journey_steps', 'mirror', 'journey_steps', 'none', '(旧名兼容视图，无独立血管)', 'archived', 'system',
+       '{"count": true}'::jsonb, '迁移 523：journey_steps 现在只是 activities 的兼容视图；镜子真身是 Activity（活动）库 c213e387，键 activities'
+ WHERE NOT EXISTS (SELECT 1 FROM notion_projection_map WHERE notion_db_id = 'unmapped:journey_steps' AND brain_table = 'journey_steps');
+INSERT INTO notion_projection_map (notion_db_id, title, face, brain_table, direction, vessel, status, space, reconcile, notes)
+SELECT 'unmapped:journey_step_links', '（旧名兼容视图）journey_step_links', 'mirror', 'journey_step_links', 'none', '(旧名兼容视图，无独立血管)', 'archived', 'system',
+       '{"count": true}'::jsonb, '迁移 523：journey_step_links 现在只是 activity_cells 的兼容视图；镜子真身是 Activity 卡片格子库，键 activity_cells'
+ WHERE NOT EXISTS (SELECT 1 FROM notion_projection_map WHERE notion_db_id = 'unmapped:journey_step_links' AND brain_table = 'journey_step_links');
+
 -- ①b 页面链接的实体类型同步改名：目录投影与注册推送按 DIRECTORY_TABLES / 表键查 projection_links，
 --     实体类型不改，已建页面会被当成「未链接」，且与旧链接冲突报「目录页已由其它真身占用」
 UPDATE projection_links SET entity_type = 'activities', updated_at = NOW() WHERE entity_type = 'journey_steps';

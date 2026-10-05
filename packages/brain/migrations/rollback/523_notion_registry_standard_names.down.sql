@@ -4,6 +4,8 @@ BEGIN;
 UPDATE notion_projection_map SET brain_table = 'journey_steps', updated_at = NOW() WHERE brain_table = 'activities';
 UPDATE notion_projection_map SET brain_table = 'journey_step_links', updated_at = NOW() WHERE brain_table = 'activity_cells';
 
+DELETE FROM notion_projection_map WHERE notion_db_id IN ('unmapped:journey_steps', 'unmapped:journey_step_links');
+
 UPDATE projection_links SET entity_type = 'journey_steps', updated_at = NOW() WHERE entity_type = 'activities';
 
 UPDATE notion_projection_map
