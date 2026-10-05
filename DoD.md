@@ -1,4 +1,7 @@
 # DoD — 受控再基恢复
+- [x] [BEHAVIOR] treetables 表名对齐框架标准第一段：迁移 520 把 journeys 拆成 value_streams/capabilities 两张继承真表（父表空壳 + INSERT 分流触发器，SELECT/UPDATE/FOR UPDATE 照旧），只指能力的外键改指 capabilities、混指的改触发器守卫并照原语义级联；journey_steps→activities、journey_step_links→activity_cells、enablers→warehouse_items 且旧名留自动可更新视图；50 个挂价值流的 Activity 归位到能力（新建 2 能力 5 流程）；仓库 shelf 八货架 NOT NULL+CHECK，22 件物件全上架，activity_items/item_deps 连线建表并从 enabler_calls/底座格子合并；ability_groups 孤儿表条件化；备份表 + 回滚可逆。
+  Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-520-tree-tables-align.test.js --maxWorkers=1 --minWorkers=1"
+
 - [x] [BEHAVIOR] workflowlayer 流程层登记：迁移 519 把 22 条旧 ability 转成 workflows 流程（legacy_feature_id 溯源、全部 INSERT 带能力存在守卫、ON CONFLICT 幂等），26 个有闹钟的能力补默认流程，闹钟先归位能力（价值流上的 OKR 闹钟→G5、未挂的按实际归位、收盘报告→经营播报、热点/天气保持个人区）再按能力→流程回填 workflow_id 只填空值；旧树只标 deprecated 不删（PC 发布套 21、重复 11、已转换 22 带 workflow_ref、smoke 垃圾）；原值进 migration_519_backup，回滚按备份还原并删溯源列。
   Test: manual:bash -c "cd packages/brain && npx vitest run src/__tests__/migration-519-workflow-layer.test.js --maxWorkers=1 --minWorkers=1"
 
