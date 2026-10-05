@@ -345,7 +345,7 @@ case "$1" in
     echo 'sha256:${'1'.repeat(64)}|["cecelia-brain:9.9.9"]|GIT_SHA=${'a'.repeat(40)}'
     exit 0 ;;
   exec)
-    if [[ "$*" == *"/healthz"* ]]; then exit 0; fi
+    if [[ "$*" == *"/healthz"* ]]; then printf '{"status":"ok","db":"connected"}\\n200'; exit 0; fi
     if [[ "$*" == *"/health"* ]]; then echo '{"status":"healthy","version":"9.9.9","git_sha":"${'a'.repeat(40)}"}'; exit 0; fi
     if [[ "$*" == *"/drain-cancel"* ]]; then echo '{"success":true}'; exit 0; fi
     exit 1 ;;
