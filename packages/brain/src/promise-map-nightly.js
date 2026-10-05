@@ -105,6 +105,10 @@ export async function buildNightlyAssertions(queryPool) {
       AND NOT EXISTS (
         SELECT 1 FROM activity_cells jsl WHERE jsl.feature_id = jf.id
       )
+      AND NOT EXISTS (
+        -- 底座引用格子已并入用料（迁移 525）：有 Activity 用到对应仓库物件也算有链接
+        SELECT 1 FROM warehouse_items wi JOIN activity_uses au ON au.item_id = wi.id WHERE wi.legacy_feature_id = jf.id
+      )
   `);
   // promise 缺失只查承诺地图域（home/domain 非空）——全库存量步骤走豁免（判定点④同源）
   const { rows: stepsNoPromise } = await queryPool.query(`

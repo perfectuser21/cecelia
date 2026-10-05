@@ -11,7 +11,7 @@ q() { "$PSQL" -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "$1"; }
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"; BRAIN_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # 1. 11 张镜子表都有指纹槽
-missing="$(q "WITH t(n) AS (VALUES ('issues'),('journeys'),('journey_features'),('journey_step_links'),('decisions'),('initiative_contracts'),('ops_agents'),('ops_skills'),('ops_workflows'),('ops_runs'),('ops_schedule_entries'))
+missing="$(q "WITH t(n) AS (VALUES ('issues'),('journeys'),('journey_features'),('activity_cells'),('decisions'),('initiative_contracts'),('ops_agents'),('ops_skills'),('ops_workflows'),('ops_runs'),('ops_schedule_entries'))
 SELECT coalesce(string_agg(n,','),'') FROM t WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns c WHERE c.table_name=t.n AND c.column_name='notion_digest')")"
 [[ -z "$missing" ]] || fail "缺 notion_digest 列: $missing"
 pass "migration 451：11 张镜子表均有 notion_digest 指纹槽"
