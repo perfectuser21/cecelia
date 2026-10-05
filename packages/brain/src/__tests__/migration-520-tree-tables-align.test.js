@@ -111,17 +111,16 @@ describe('migration 520 — 表名对齐标准：两张真表 / activities / act
     expect(sql).toMatch(/CREATE VIEW enablers AS\s+SELECT id, key, name, kind, impl_ref, owner, description, active, created_at, updated_at FROM warehouse_items;/);
   });
 
-  it('连线表：activity_items（Activity→物件，唯一）与 item_deps（物件→物件，禁自指）；底座类格子迁为连线后从格子表删除', () => {
+  it('连线表：activity_items（Activity→物件，唯一）与 item_deps（物件→物件，禁自指）；底座类格子复制成连线、本段不删（blast-radius 还在读）', () => {
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS activity_items \([\s\S]*?activity_id\s+uuid NOT NULL REFERENCES activities\(id\) ON DELETE CASCADE[\s\S]*?item_id\s+uuid NOT NULL REFERENCES warehouse_items\(id\) ON DELETE CASCADE[\s\S]*?UNIQUE \(activity_id, item_id\)/);
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS item_deps \([\s\S]*?PRIMARY KEY \(item_id, depends_on_item_id\),\s*CHECK \(item_id <> depends_on_item_id\)/);
     expect(sql).toMatch(/FROM enabler_calls ec\s+WHERE ec\.caller_type = 'activity'/);
     expect(sql).toMatch(/FROM activities a WHERE a\.enabler_id IS NOT NULL/);
     expect(sql).toMatch(/WHERE c\.cell_level = 'enabler' AND c\.enabler_id IS NOT NULL/);
     expect(sql).toMatch(/\('CRM 表底座','crm_table_base'\)[\s\S]*?WHERE c\.cell_kind = 'base_ref'/);
-    expect(sql).toMatch(/DELETE FROM activity_cells WHERE cell_kind = 'base_ref' OR cell_level = 'enabler';/);
-    // 删除必须在备份与迁连线之后
-    expect(sql.indexOf("'journey_step_links.deleted'")).toBeLessThan(sql.indexOf("DELETE FROM activity_cells WHERE cell_kind = 'base_ref'"));
-    expect(sql.indexOf("WHERE c.cell_kind = 'base_ref'")).toBeLessThan(sql.indexOf("DELETE FROM activity_cells WHERE cell_kind = 'base_ref'"));
+    // 第一段不删格子行：blast-radius 端点仍按 feature_id 读 base_ref 格子；原行已备份，第二段切换后再删
+    expect(sql).not.toMatch(/DELETE FROM activity_cells WHERE cell_kind/);
+    expect(sql).toContain("'journey_step_links.deleted'");
     // 旧树 enabler/界面类 只标不删
     expect(sql).not.toMatch(/DELETE FROM journey_features/);
     expect(sql).toMatch(/UPDATE journey_features f SET status = 'deprecated', workflow_ref = 'item:' \|\| w\.key/);

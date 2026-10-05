@@ -7,6 +7,7 @@ import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { syncActivityContracts } from '../../activity-contract-sync.js';
 import { contractsFixture, KEYS } from '../fixtures/shared-activity-contracts.js';
+import { likeSource } from '../fixtures/like-source.js';
 vi.mock('../../alerting.js', () => ({ raise: vi.fn() }));
 const holder = vi.hoisted(() => ({ db: null }));
 vi.mock('../../db.js', () => ({ default: { query: (...args) => holder.db.query(...args), connect: (...args) => holder.db.connect(...args) } }));
@@ -21,7 +22,7 @@ beforeEach(async () => {
   schema = `shared_activity_${randomUUID().replaceAll('-', '')}`;
   await client.query(`CREATE SCHEMA ${schema}`);
   for (const table of ['areas','enablers','enabler_calls','schema_version','journeys','workflows','journey_steps','steps','spans','ops_agents','ops_workflows','tasks','task_runs'])
-    await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${table} INCLUDING ALL)`);
+    await client.query(`CREATE TABLE ${schema}.${table} (LIKE public.${likeSource(table)} INCLUDING ALL)`);
   await client.query(`SET search_path TO ${schema}`);
   db = { query: client.query.bind(client), connect: async () => ({ query: client.query.bind(client), release() {} }) }; holder.db = db;
   const parent = randomUUID(), capKeyword = randomUUID(); capBenchmark = randomUUID();
@@ -117,7 +118,7 @@ describe('共享活动真实数据库合同', () => {
     const step=randomUUID(), enabler=randomUUID();
     await client.query(`INSERT INTO steps(id,activity_id,step_order,key,activity_key,readback) VALUES($1,$2,1,'preflight_step','preflight','{"name":"旧名"}')`,[step,legacy[0]]);
     await client.query(`UPDATE journey_steps SET contract=jsonb_set(contract,'{steps}',contract->'steps'||'[{"key":"second","order":2,"name":"新增步骤"}]'::jsonb) WHERE id=$1`,[legacy[0]]);
-    await client.query(`INSERT INTO enablers(id,key,name,kind) VALUES($1,'shared','共享组件','code')`,[enabler]);
+    await client.query(`INSERT INTO enablers(id,key,name,kind,shelf) VALUES($1,'shared','共享组件','code','generic_action')`,[enabler]);
     await client.query(`INSERT INTO enabler_calls(caller_type,caller_id,enabler_id) VALUES('activity',$1,$3),('step',$2,$3)`,[legacy[0],step,enabler]);
     const app=express();app.use('/api/brain',routes);
     const result=await request(app).get(`/api/brain/workflows/${benchmark}`), activity=result.body.workflow.activities[0];
