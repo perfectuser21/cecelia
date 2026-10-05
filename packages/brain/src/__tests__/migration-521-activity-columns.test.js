@@ -55,13 +55,22 @@ describe('migration 521 — Activity/Step 列整形 + 8 格固定 + 顺序归关
     const map = sql.match(/UPDATE journey_step_links l SET cell_key = m\.new_key[\s\S]*?\) AS m\(old_key, new_key\)[\s\S]*?;/)?.[0] || '';
     for (const [o, n] of RENAMES) expect(map, `${o}→${n}`).toContain(`('${o}', '${n}')`);
     expect(map).toMatch(/l\.cell_level = 'activity' AND l\.cell_kind = 'element' AND l\.cell_key = m\.old_key/);
+    // 旧名归一触发器：旧种子迁移重放（348/350 幂等测试）再插 'FR' 会被归到 'promise' 撞唯一键 → DO NOTHING，行数不涨
+    expect(sql).toMatch(/CREATE OR REPLACE FUNCTION cells_normalize_key\(\)[\s\S]*?WHEN 'FR' THEN 'promise'[\s\S]*?WHEN '保质期' THEN 'shelf_life'/);
+    expect(sql).toMatch(/CREATE TRIGGER trg_cells_normalize_key BEFORE INSERT OR UPDATE OF cell_key ON journey_step_links/);
+    expect(downSql).toMatch(/DROP TRIGGER IF EXISTS trg_cells_normalize_key ON journey_step_links;\s*DROP FUNCTION IF EXISTS cells_normalize_key\(\);/);
     const eightList = EIGHT.map((k) => `'${k}'`).join(', ');
     expect(sql).toContain(eightList);
     expect(sql).toMatch(/SET parent_cell_key = 'readback'[\s\S]*?WHERE cell_level = 'activity' AND cell_kind IN \('element', 'scenario', 'capability'\)[\s\S]*?cell_key NOT IN \(/);
     expect(sql).toMatch(/SET parent_cell_key = 'invariants'[\s\S]*?cell_key = 'producer_source_revision'/);
     expect(sql).toMatch(/SET parent_cell_key = 'readback'[\s\S]*?WHERE cell_level = 'step'/);
     expect(sql).toMatch(/WITH ins AS \(\s*INSERT INTO journey_step_links \(journey_id, step_id, cell_level, cell_kind, cell_key, cell_status, status, notion_synced_at\)[\s\S]*?CROSS JOIN \(VALUES[\s\S]*?WHERE a\.status <> 'deprecated'[\s\S]*?NOT EXISTS[\s\S]*?RETURNING id\s*\)\s*INSERT INTO migration_521_backup/);
-    expect(sql).not.toMatch(/DELETE FROM journey_step_links/);
+    // 只允许一处删除：旧名行与标准键行并存的重复行（非生产旧种子重放造成），且没被回执/探针引用，删的整行进备份
+    const deletes = sql.match(/DELETE FROM journey_step_links[\s\S]*?;/g) || [];
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0]).toMatch(/EXISTS \(SELECT 1 FROM journey_step_links x WHERE x\.step_id = l\.step_id AND x\.cell_kind = l\.cell_kind AND x\.cell_key = m\.new_key\)[\s\S]*?NOT EXISTS \(SELECT 1 FROM journey_assertion_receipts r[\s\S]*?NOT EXISTS \(SELECT 1 FROM step_probes p/);
+    expect(sql).toMatch(/'journey_step_links\.dedup_deleted', id::text, to_jsonb\(dup\)/);
+    expect(downSql).toMatch(/jsonb_populate_record\(NULL::journey_step_links, b\.payload\)[\s\S]*?'journey_step_links\.dedup_deleted'/);
   });
 
   it('有流程但没有关系行的 Activity 补 workflow_activity_refs（sequence_no = step_number，source_ref 标记迁移，冲突跳过）', () => {
