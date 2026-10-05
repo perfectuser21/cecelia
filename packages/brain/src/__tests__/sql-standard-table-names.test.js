@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 const ROOTS = [
   fileURLToPath(new URL('../', import.meta.url)),
   fileURLToPath(new URL('../../../../scripts/ci/', import.meta.url)),
+  fileURLToPath(new URL('../../scripts/', import.meta.url)),
 ];
 const OLD = 'journey_steps|journey_step_links|enablers';
 const SQL_OLD = new RegExp(`\\b(FROM|JOIN|INTO|UPDATE|TABLE|EXISTS|DELETE\\s+FROM|REFERENCES)\\s+(?:public\\.)?(${OLD})\\b`, 'i');
@@ -21,7 +22,7 @@ function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) {
-      if (['__tests__', 'node_modules', 'migrations', 'fixtures'].includes(name)) continue;
+      if (['__tests__', 'node_modules', 'migrations', 'fixtures', 'smoke'].includes(name)) continue;
       walk(p, out);
     } else if (/\.(js|mjs|cjs)$/.test(name) && !/\.(test|spec)\./.test(name)) out.push(p);
   }
@@ -45,7 +46,7 @@ describe('生产代码 SQL 只写标准表名', () => {
     expect(legacySqlLines('SELECT * FROM activities a JOIN activity_cells c ON c.step_id=a.id')).toHaveLength(0);
   });
 
-  it('packages/brain/src 与 scripts/ci 的非测试代码里没有往旧名视图读写的 SQL', () => {
+  it('packages/brain/src、packages/brain/scripts、scripts/ci 的非测试代码里没有往旧名视图读写的 SQL', () => {
     const offenders = [];
     for (const root of ROOTS) {
       for (const file of walk(root)) {

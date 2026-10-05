@@ -37,7 +37,7 @@ function mkPool(probes) {
     if (/FROM tasks/.test(sql)) return { rows: [{ journey_id: 'j' }] };
     if (/FROM step_probes/.test(sql)) return { rows: probes };
     if (/INSERT INTO journey_assertion_receipts/.test(sql)) { inserts.push({ sql, p }); return { rows: [{ id: 'rcpt-' + inserts.length }] }; }
-    if (/UPDATE journey_step_links/.test(sql)) { updates.push(p); return { rows: [] }; }
+    if (/UPDATE (journey_step_links|activity_cells)\b/.test(sql)) { updates.push(p); return { rows: [] }; }
     return { rows: [] };
   } };
   return { pool, inserts, updates };

@@ -54,7 +54,7 @@ export function parseStepDod(jsonText) {
 async function loadActivityMap(client, capabilityKey) {
   const { rows } = await client.query(
     `SELECT DISTINCT ON (activity_key) activity_key, id
-       FROM journey_steps
+       FROM activities
       WHERE capability_key = $1 AND activity_key IS NOT NULL
       ORDER BY activity_key, backbone_version DESC, step_number ASC`,
     [capabilityKey]
