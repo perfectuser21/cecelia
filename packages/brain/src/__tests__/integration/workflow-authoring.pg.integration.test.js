@@ -8,7 +8,7 @@ import { DB_DEFAULTS } from '../../db-config.js';
 import { registerWorkflow, registrationDigest } from '../../workflow-authoring/registration.js';
 import { createWorkflowAuthoringRouter } from '../../routes/workflow-authoring.js';
 import { listWorkflows, readActivityConsumers } from '../../lib/workflow-read-service.js';
-import { likeSource } from '../fixtures/like-source.js';
+import { likeSource } from '../fixtures/minimum-definition-schema.js';
 
 let client, schema, definition;
 beforeEach(async () => {

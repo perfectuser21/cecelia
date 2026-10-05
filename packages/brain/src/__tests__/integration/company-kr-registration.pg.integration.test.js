@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { beforeEach, afterEach, describe, it, expect } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { likeSource } from '../fixtures/like-source.js';
+import { likeSource } from '../fixtures/minimum-definition-schema.js';
 import { companyKrSpec as spec, registerCompanyKrWorkflow } from '../../lib/company-kr-registration.js';
 
 let client, schema, db;

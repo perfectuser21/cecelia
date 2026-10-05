@@ -5,7 +5,7 @@ import express from 'express';
 import request from 'supertest';
 import { beforeEach, afterEach, it, expect, vi } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { likeSource } from '../fixtures/like-source.js';
+import { likeSource } from '../fixtures/minimum-definition-schema.js';
 const holder = vi.hoisted(() => ({ pool: null }));
 vi.mock('../../db.js', () => ({ default: {
   query: (...args) => holder.pool.query(...args), connect: (...args) => holder.pool.connect(...args),

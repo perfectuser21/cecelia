@@ -7,7 +7,7 @@ import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { DB_DEFAULTS } from '../../db-config.js';
 import { syncActivityContracts } from '../../activity-contract-sync.js';
 import { contractsFixture, KEYS } from '../fixtures/shared-activity-contracts.js';
-import { likeSource } from '../fixtures/like-source.js';
+import { likeSource } from '../fixtures/minimum-definition-schema.js';
 vi.mock('../../alerting.js', () => ({ raise: vi.fn() }));
 const holder = vi.hoisted(() => ({ db: null }));
 vi.mock('../../db.js', () => ({ default: { query: (...args) => holder.db.query(...args), connect: (...args) => holder.db.connect(...args) } }));
