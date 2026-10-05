@@ -302,7 +302,8 @@ export async function runBackboneContractJob(pool, opts = {}) {
   if (opts.force || !(Number.isFinite(last) && now - last < CHECK_INTERVAL_MS)) {
     const at = new Date(now).toISOString();
     try {
-      const r = await syncActivityContracts(pool, { fetchFn: opts.fetchFn, resolveToken: opts.resolveToken });
+      // 生产同步同时落 Step（读回/名字/动作/进出/失败处理照合同）；合同有 Step 没读回则整轮拒绝，按滞后告警
+      const r = await syncActivityContracts(pool, { fetchFn: opts.fetchFn, resolveToken: opts.resolveToken, synchronizeSteps: opts.synchronizeSteps ?? true });
       sync = { ok: true, ...r };
       await writeState(pool, { checked_at: at, ok: true, head_sha: r.head_sha, lag_since: null, alerted: false, last: r });
     } catch (err) {

@@ -119,6 +119,7 @@ function fakePool(stepRows = [], memory = {}) {
     async query(text, params = []) {
       queries.push({ text, params });
       if (/INSERT INTO (activity|workflow)_definition_versions/.test(text)) return {rows:[{id:'version'}]};
+      if (/FROM information_schema\.columns/.test(text) && /'steps'/.test(text)) return { rows: [{ n: 5 }] };
       if (/FROM activities\s+WHERE capability_key = \$1/.test(text)) return { rows: rows.filter((r) => r.capability_key === params[0] && r.activity_key).map((r) => ({ activity_key: r.activity_key, id: r.id })) };
       if (/SELECT id,key FROM steps WHERE activity_id/.test(text)) return { rows: this.steps.filter((x) => x.activity_id === params[0]).map((x) => ({ id: x.key, key: x.key })) };
       if (/SELECT activity_id, step_order, source_sha256 FROM steps WHERE key/.test(text)) {

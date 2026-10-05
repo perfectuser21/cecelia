@@ -7,7 +7,7 @@ const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(
 export const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 export function contractsFixture() {
   const keyword = { capability: 'keyword_acquisition', workflow: 'social-keyword-leadgen', activities: KEYS.map((key, i) => ({
-    key, name: key, order: i + 1, version: '1.0.0', steps: [{ key: `${key}_step`, order: 1, implementation: { status: 'missing' } }],
+    key, name: key, order: i + 1, version: '1.0.0', steps: [{ key: `${key}_step`, order: 1, implementation: { status: 'missing' }, dod: { mode: 'checkpoint', readback: { type: 'metric', ref: 'metrics.fixture_step' } } }],
   })) };
   const benchmark = { capability: 'benchmark_link_acquisition', workflow: 'social-benchmark-leadgen', activities: KEYS.map(key => key === 'discovery'
     ? { ...keyword.activities[1], name: '对标发现' } : { ref: `keyword_acquisition.${key}` }) };
