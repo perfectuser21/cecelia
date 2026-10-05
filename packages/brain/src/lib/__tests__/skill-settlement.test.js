@@ -31,6 +31,13 @@ describe('parseSkillMd', () => {
   it('取 frontmatter 的 name/description，承诺草稿只取第一句', () => {
     expect(parseSkillMd(SKILL_MD)).toEqual({ name: '抖音关键词搜索', description: '用关键词在抖音搜出最新视频并存成线索。第二句不该进承诺。', promise_draft: '用关键词在抖音搜出最新视频并存成线索。' });
   });
+  it('病态输入不拖慢（CodeQL ReDoS）：大量换行与空白、未闭合 frontmatter 也在毫秒级返回', () => {
+    const evil = `---${' \n'.repeat(60000)}`;
+    const started = Date.now();
+    expect(parseSkillMd(evil)).toEqual({ name: null, description: null, promise_draft: null });
+    expect(parseSkillMd(`---\ndescription: ${'。'.repeat(60000)}\n---`).promise_draft).toBe('。');
+    expect(Date.now() - started).toBeLessThan(500);
+  });
   it('没有 frontmatter：不编造，全空', () => {
     expect(parseSkillMd('# 只有正文')).toEqual({ name: null, description: null, promise_draft: null });
   });
